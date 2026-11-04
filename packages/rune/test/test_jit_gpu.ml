@@ -95,8 +95,24 @@ let attention c =
   if c.Attentions.dtype = Nx.Dtype.Any Nx.float64 then assume (has_float64 d);
   Attentions.law s c
 
+(* The gradient law on the GPU, compiled or mapped by vmap. *)
+let attention_grad ~vmap c =
+  let d, s = on_gpu () in
+  if c.Attentions.dtype = Nx.Dtype.Any Nx.float64 then assume (has_float64 d);
+  Attentions.grad_law s ~vmap c
+
 let attention_dtypes =
   Nx.Dtype.[ Any Nx.float16; Any Nx.bfloat16; Any Nx.float32; Any Nx.float64 ]
+
+(* The gradient law's examples: the forward's, and its bfloat16 prefill
+   with lse's cotangent alone. *)
+let grad_examples =
+  let ex = Attentions.examples attention_dtypes in
+  ex @ [ { (List.nth ex 1) with seed = 1 } ]
+
+(* A case vmap maps: dense keys, no lengths, two lead indices or more. *)
+let mappable (c : Attentions.t) =
+  { c with page = None; lengths = None; lead = max 2 c.lead }
 
 (* The prefix law on the GPU, a float64 case discarded where its kernels lack
    float64. *)
@@ -970,6 +986,18 @@ let () =
                "jit holds nx's bound against a float64 reference"
                (Gen.with_pp Attentions.pp (Attentions.gen attention_dtypes))
                attention;
+             prop ~count:24 ~examples:grad_examples
+               "its compiled gradient holds rune's bound against a float64 \
+                reference"
+               (Gen.with_pp Attentions.pp (Attentions.gen attention_dtypes))
+               (attention_grad ~vmap:false);
+             prop ~count:8
+               ~examples:(List.map mappable grad_examples)
+               "its gradient mapped by vmap holds rune's bound against a \
+                float64 reference"
+               (Gen.with_pp Attentions.pp
+                  (Gen.map mappable (Attentions.gen attention_dtypes)))
+               (attention_grad ~vmap:true);
            ];
          group "checks"
            [

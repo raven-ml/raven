@@ -383,6 +383,11 @@ All notable changes to this project will be documented in this file.
   columns at a time, and splits a decode step's keys across the cores:
   8 heads decoding over 4096 float32 keys take 0.10 ms where they took
   0.22.
+- `Rune.jit` computes the gradient of `Nx.attention` on CUDA's tensor cores
+  in kernels of its own for float16 and bfloat16 keys and values of up to
+  64 dimensions, recomputing each weight from `lse`, where it ran the
+  derivative's contractions over the whole pair loop: 8 heads of 2048
+  bfloat16 rows take 0.55 ms where they took 2.3 ms on an RTX 5000 Ada.
 - `Nx.attention` differentiates through one construct of its own, linear in
   the tangents and transposed by flipping it, which recomputes each pair's
   weight from `lse`: reverse mode keeps the call's operands, `o` and `lse`,

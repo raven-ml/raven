@@ -28,7 +28,14 @@
     rescale and one addition more a weight. [o] is [acc / l] rounded once
     into its dtype. A tile skipped holds no visible pair; a NaN or an
     infinity at a hidden key within a row's length reaches [o] only through
-    a tile that runs. *)
+    a tile that runs.
+
+    {!linear} computes the derivative's transpose as three kernels: [δ] by
+    rows, then [q̄] by query rows over their keys and [k̄] and [v̄] by keys
+    over their group's rows, each pair's weight recomputed from [lse] and
+    no sum split across workgroups. Each product runs on the tensor core,
+    the weights and the scores' cotangents rounded once to the operands'
+    dtype; each sum adds in a fixed order of the shapes and the target. *)
 
 open Tolk
 
@@ -45,3 +52,21 @@ val lower :
 
     Raises [Invalid_argument] if [op] is not an [Attention]. *)
 
+type operand = Nx_array.Dtype.any * int array * Ops.t
+(** The type for an operand of the derivative: its dtype, shape and node. *)
+
+val linear :
+  device:Ops.device ->
+  renderer:Renderer.t ->
+  Attention.spec ->
+  transposed:bool ->
+  operand array ->
+  operand array ->
+  Ops.t array option
+(** [linear ~device ~renderer spec ~transposed data args] is the nodes of
+    {!Attention.linear}'s results, computed on [device] by kernels [renderer]
+    renders, where it has them: transposed, dense keys, [o] of the query's
+    dtype, no load [spec.tangents] marks, keys and values of [1] to [64]
+    dimensions, rows and keys, and a float16 or bfloat16 query on a tensor
+    core that chains its accumulator, as {!lower}'s. Elsewhere it is
+    [None], and the derivative computes as its default. *)

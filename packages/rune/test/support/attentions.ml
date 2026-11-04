@@ -213,12 +213,22 @@ let float_dtype (Nx.Dtype.Any dt) =
   | "float64" -> F Nx.float64
   | _ -> F Nx.float32
 
-let law (module S : Nx.Devices) c =
-  cover "paged" (c.page <> None);
-  cover "lengths" (c.lengths <> None);
-  cover (mask_name c.mask) true;
+(* A case's operands, rounded to its dtype and held as float32. *)
+type inputs = {
+  q : Nx.host Nx.float32_t;
+  k : Nx.host Nx.float32_t;
+  v : Nx.host Nx.float32_t;
+  table : Nx.host Nx.int64_t option;
+  lengths : Nx.host Nx.int64_t option;
+  docs : Nx.host Nx.int64_t * Nx.host Nx.int64_t;
+  blocks : Nx.host Nx.bool_t;
+  slopes : Nx.host Nx.float32_t;
+  poisoned : Nx.host Nx.float32_t -> Nx.host Nx.float32_t;
+      (** NaN at keys past each row's length, which no row reads. *)
+}
+
+let inputs c =
   let (F dt) = float_dtype c.dtype in
-  let wide = Nx.Dtype.name dt = "float64" in
   let lead = [| c.lead |] in
   let pages = match c.page with Some p -> c.tk / p | None -> 0 in
   let kshape, vshape =
@@ -278,6 +288,15 @@ let law (module S : Nx.Devices) c =
         Nx.create Nx.float32 s a
     | _ -> x
   in
+  { q; k; v; table; lengths; docs; blocks; slopes; poisoned }
+
+let law (module S : Nx.Devices) c =
+  cover "paged" (c.page <> None);
+  cover "lengths" (c.lengths <> None);
+  cover (mask_name c.mask) true;
+  let (F dt) = float_dtype c.dtype in
+  let wide = Nx.Dtype.name dt = "float64" in
+  let { q; k; v; table; lengths; docs; blocks; slopes; poisoned } = inputs c in
   let compiled (type a) (acc : (float, a) Nx.dtype) =
     let place x = Nx.place S.on (Nx.cast dt x) in
     let f q k v =
@@ -363,3 +382,195 @@ let law (module S : Nx.Devices) c =
         done
       end)
     lse_ref
+
+(* Gradients
+
+   The gradient in [q], [k] and [v] of [Σ w∘o + Σ w₂∘lse], [lse]'s cotangent
+   zero where [lse] is [-∞], against the host's eager gradient of the same
+   rounded values in float64. Each pair's exact weight is [p], [Σ_j p = 1]
+   at a row with a visible key, [δ = w·o - w₂] and [A = V Σ|w| + |δ|] for
+   [V] the greatest [|v|], so that the score's cotangent
+   [ds = p (w·v - δ)] is at most [p A]; the other operands lie within
+   [[-1, 1]]. To first order, with [W = e{^w} - 1] for the
+   forward law's [w] bounding each recomputed weight's relative error, [B]
+   the forward law's bound on [o] at [M <= V], and [γ_n = γ(n, 2u)]:
+   - [δ] is within [γ_(dv+1) (Σ|w o| + |w₂|) + Σ|w| B];
+   - [ds] within [p D], [D = W A + γ_(dv+1) V Σ|w| + Δδ + u_v A], [u_v] the
+     operands' unit roundoff where a narrow float's [ds] and [p] are rounded
+     once for their products ({!Rune.section-numerics}), and for float16 at
+     most [2{^-25}] more a pair, below its smallest normal;
+   - [q̄] within [scale (D + γ_(tk+1) A + tk f) + u_q |q̄|], [f] that floor;
+   - [k̄] within [scale (Σ_i p (D + γ_(n+1) A) + n f) + u_q |k̄|] and [v̄]
+     within [Σ_i p (W + u_v + γ_(n+1)) |w| + n f + u_q |v̄|], over the [n]
+     rows that read a key, each [Σ_i p x] the reference's [v̄] of a
+     cotangent [x].
+   Each result rounds once to [q]'s dtype, [u_q] of it, and for float16 at
+   most [f] more below its smallest normal. A float64 case doubles each
+   bound for the reference's own error. A
+   share of cases draws [w = 0], where [A = |w₂|] and [lse]'s cotangent
+   alone reaches the scores. *)
+
+let grad_law (module S : Nx.Devices) ~vmap c =
+  if vmap && (c.page <> None || c.lengths <> None) then
+    invalid_arg "Attentions.grad_law: a mapped case of pages or lengths";
+  let (F dt) = float_dtype c.dtype in
+  let wide = Nx.Dtype.name dt = "float64" in
+  let u = if wide then 0x1p-53 else 0x1p-24 in
+  let uq = unit_roundoff c.dtype in
+  let narrow = uq > 0x1p-20 in
+  let half = uq = 0x1p-11 in
+  if not vmap then begin
+    cover "paged" (c.page <> None);
+    cover "lengths" (c.lengths <> None);
+    cover "NaN past each row's length" (c.nans && c.lengths <> None)
+  end;
+  cover (mask_name c.mask) true;
+  (* The derivative's kernels take such a case on a GPU whose tensor core
+     chains ({!Rune.section-numerics}); only the bench rows pin that they
+     run. *)
+  cover "a narrow float of the kernels' shapes"
+    (narrow && c.page = None && (not c.alibi) && c.tq > 0 && c.tk > 0
+     && c.dk <= 64 && c.dv > 0 && c.dv <= 64);
+  let lse_alone = c.seed mod 4 = 1 in
+  cover "lse's cotangent alone" lse_alone;
+  let { q; k; v; table; lengths; docs; blocks; slopes; poisoned } = inputs c in
+  let rounded x = Nx.cast Nx.float32 (Nx.cast dt x) in
+  let wo = rounded (draw c 4 [| c.lead; c.hq; c.tq; c.dv |]) in
+  let wo = if lse_alone then Nx.zeros_like wo else wo in
+  let wl = rounded (draw c 5 [| c.lead; c.hq; c.tq |]) in
+  let loss (type a s d) (acc : (float, a) Nx.dtype) ~lengths
+      (wo : (float, s, d) Nx.t) wl q k v =
+    let o, lse = call acc c ~table ~lengths ~docs ~blocks ~slopes q k v in
+    let finite x = Nx.where (Nx.isfinite x) x (Nx.zeros_like x) in
+    Nx.add
+      (Nx.sum (Nx.mul (Nx.cast acc wo) (Nx.cast acc o)))
+      (Nx.sum (Nx.mul (Nx.cast acc wl) (finite lse)))
+  in
+  let grad (type a s d) (acc : (float, a) Nx.dtype) ~lengths
+      (xs : (float, s, d) Nx.t list) =
+    match xs with
+    | [ q; k; v; wo; wl ] ->
+        Rune.grad Nx.Ptree.(list tensor)
+          (function
+            | [ q; k; v ] -> loss acc ~lengths wo wl q k v
+            | _ -> invalid_arg "grad")
+          [ q; k; v ]
+    | _ -> invalid_arg "grad"
+  in
+  let compiled (type a) (acc : (float, a) Nx.dtype) =
+    let place x = Nx.place S.on (Nx.cast dt x) in
+    let f =
+      if vmap then Rune.vmap Nx.Ptree.(list tensor @-> returns (list tensor)) (grad acc ~lengths:None)
+      else grad acc ~lengths
+    in
+    let g = Rune.jit Nx.Ptree.(list tensor @-> returns (list tensor)) f in
+    let before = Rune.evaluations () in
+    let gs = g [ place q; place (poisoned k); place (poisoned v); place wo; place wl ] in
+    equal ~msg:"compiled, not evaluated" Testable.int 0 (Rune.evaluations () - before);
+    List.map (fun x -> Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x))) gs
+  in
+  let f64 x = Nx.cast Nx.float64 x in
+  let reference wo wl = grad Nx.float64 ~lengths [ f64 q; f64 k; f64 v; wo; wl ] in
+  let refs = List.map Nx.to_array (reference (f64 wo) (f64 wl)) in
+  let gs = if wide then compiled Nx.float64 else compiled Nx.float32 in
+  let o_ref, lse_ref =
+    let o, lse = call Nx.float64 c ~table ~lengths ~docs ~blocks ~slopes (f64 q) (f64 k) (f64 v) in
+    (Nx.to_array o, Nx.to_array lse)
+  in
+  (* The forward law's constants, by row. *)
+  let scale = 1. /. Float.sqrt (Float.of_int c.dk) in
+  let a = scale *. Float.of_int c.dk in
+  let b =
+    a
+    +. (if c.alibi then Float.of_int (c.tq + c.tk) else 0.)
+    +. if c.rising then 0.25 *. Float.of_int c.tk else 0.
+  in
+  let eta = (Float.of_int ((2 * c.dk) + 4) *. u *. a) +. (2. *. u *. b) in
+  let ln = Float.log (Float.of_int (max 1 c.tk)) in
+  let rows = c.lead * c.hq * c.tq in
+  let wo_a = Nx.to_array (f64 wo) and wl_a = Nx.to_array (f64 wl) in
+  let floor = if half then 0x1p-25 else 0. in
+  let vmax = if c.positive then 1.01 else 1. in
+  let uv = if narrow then uq else 0. in
+  let n = c.lead * c.tq * (c.hq / max 1 c.hk) in
+  let ga = Array.make rows 0. and gd = Array.make rows 0. and wr = Array.make rows 0. in
+  (* A row of no visible key has no weight: its terms stay zero. *)
+  for i = 0 to rows - 1 do
+    let l = lse_ref.(i) in
+    if Float.is_finite l then begin
+    let eps =
+      (((1.37 *. Float.of_int (c.tk - 1)) +. 19. +. (3. *. ln)) *. u) +. (u *. Float.abs l)
+    in
+    let w = ((1. +. u) *. ((2. *. eta) +. eps)) +. (((2. *. b) +. ln +. 19.) *. u) in
+    let big_w = Float.expm1 w in
+    let sw = ref 0. and swo = ref 0. and omax = ref 0. in
+    for d = 0 to c.dv - 1 do
+      let j = (i * c.dv) + d in
+      sw := !sw +. Float.abs wo_a.(j);
+      swo := !swo +. Float.abs (wo_a.(j) *. o_ref.(j));
+      omax := Float.max !omax (Float.abs o_ref.(j))
+    done;
+    let delta =
+      let s = ref 0. in
+      for d = 0 to c.dv - 1 do
+        s := !s +. (wo_a.((i * c.dv) + d) *. o_ref.((i * c.dv) + d))
+      done;
+      !s -. wl_a.(i)
+    in
+    let bo =
+      (uq *. !omax)
+      +. (vmax
+          *. (((1. +. uq) *. (big_w +. (gamma (c.tk + 1) (2. *. u) *. Float.exp w)))
+             +. uv +. (floor *. Float.of_int c.tk)))
+    in
+    let aa = (vmax *. !sw) +. Float.abs delta in
+    let dd =
+      (gamma (c.dv + 1) (2. *. u) *. (!swo +. Float.abs wl_a.(i))) +. (!sw *. bo)
+    in
+    ga.(i) <- aa;
+    gd.(i) <-
+      (big_w *. aa) +. (gamma (c.dv + 1) (2. *. u) *. vmax *. !sw) +. dd +. (uv *. aa);
+    wr.(i) <- big_w
+    end
+  done;
+  (* [Σ_i p x_i] as the reference's [v̄] of the cotangent [x]. *)
+  let summed x =
+    let x = Nx.create Nx.float64 [| c.lead; c.hq; c.tq; c.dv |] x in
+    Nx.to_array (List.nth (reference x (Nx.zeros_like (f64 wl))) 2)
+  in
+  let k_terms =
+    summed
+      (Array.init (rows * c.dv) (fun j ->
+           let i = j / max 1 c.dv in
+           gd.(i) +. (gamma (n + 1) (2. *. u) *. ga.(i))))
+  in
+  let v_terms =
+    summed
+      (Array.init (rows * c.dv) (fun j ->
+           let i = j / max 1 c.dv in
+           (wr.(i) +. uv +. gamma (n + 1) (2. *. u)) *. Float.abs wo_a.(j)))
+  in
+  let twice x = if wide then 2. *. x else x in
+  let check name refs gs bound =
+    equal ~msg:(name ^ "'s elements") Testable.int (Array.length refs) (Array.length gs);
+    Array.iteri
+      (fun j r ->
+        less
+          ~msg:(Printf.sprintf "%s at %d" name j)
+          float_exact
+          ~than:(twice (bound j +. (uq *. Float.abs r) +. floor) +. 1e-300)
+          (Float.abs (gs.(j) -. r)))
+      refs
+  in
+  match (refs, gs) with
+  | [ rq; rk; rv ], [ cq; ck; cv ] ->
+      check "q̄" rq cq (fun j ->
+          let i = j / max 1 c.dk in
+          scale *. (gd.(i) +. (gamma (c.tk + 1) (2. *. u) *. ga.(i)) +. (floor *. Float.of_int c.tk)));
+      (* A key's row of [k̄] or [v̄] is the [j / d]th, its [Σ_i p x] the
+         reference's column 0 there. *)
+      let row d j = j / max 1 d * max 1 c.dv in
+      check "k̄" rk ck (fun j ->
+          scale *. ((if c.dv = 0 then 0. else k_terms.(row c.dk j)) +. (floor *. Float.of_int n)));
+      check "v̄" rv cv (fun j -> v_terms.(j) +. (floor *. Float.of_int n))
+  | _ -> invalid_arg "Attentions.grad_law"

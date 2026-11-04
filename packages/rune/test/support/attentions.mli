@@ -64,3 +64,12 @@ val examples : Nx.Dtype.any list -> t list
 val law : (module Nx.Devices) -> t -> unit
 (** [law s c] checks [c] compiled on [s]'s devices, and that the call is
     compiled, not evaluated. *)
+
+val grad_law : (module Nx.Devices) -> vmap:bool -> t -> unit
+(** [grad_law s ~vmap c] checks the gradient in the query, keys and values of
+    a loss over [c]'s [o] and [lse], compiled on [s]'s devices, against the
+    host's eager float64 gradient within the bound rune.mli's numerics
+    compose, and that the call is compiled. Where [vmap], the compiled
+    gradient is that of each lead index, mapped by {!Rune.vmap}.
+
+    Raises [Invalid_argument] if [vmap] and [c] has pages or lengths. *)

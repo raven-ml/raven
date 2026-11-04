@@ -355,6 +355,23 @@ let skipping a x ~at ~b ~kh ~rows ~keys ~vote ~ids:(id0, id1, id2) body =
           let run = ld (Ops.after r [ set; voted ]) (int 0) in
           guard ~outer:inside id2 run body)
 
+(* [vote a x ~inside ~b ~kh ~len ~over pairs] is whether a pair of
+   [pairs], each a [(row, key)] of a thread, is visible to some thread of
+   the ranges [over], [[]] for the thread alone. It reads inside the guard
+   of the tile's class, so that only a tile of unknown class votes. *)
+let vote a x ~inside ~b ~kh ~len ~over pairs =
+  let open Ops.O in
+  let any =
+    List.fold_left
+      (fun any ((row : row), key) ->
+        let ok, _ = key_at a x ~inside ~b ~kh ~within:(row.live &&: (key < len)) key in
+        Ops.bitwise_or any (seen a x ~inside ~b ~row ~key ~ok))
+      (Ops.O.bool false) pairs
+  in
+  let any = inside any in
+  if over = [] then any
+  else Ops.ne (Ops.reduce (Ops.cast any Int32) Max over) (Ops.int ~dtype:Int32 0)
+
 (* The state [(m', α, p)] of a tile of base-2 scores [x2] over a row's old
    maximum [m]. *)
 let softmax acc m x2 =
@@ -545,18 +562,8 @@ let simt ~local ~width ~splits a xs =
   in
   (* A thread's vote: whether its row sees a key of the tile. *)
   let vote inside =
-    let any =
-      List.fold_left Ops.bitwise_or (Ops.O.bool false)
-        (List.init bk (fun i ->
-             let ky = key i in
-             let ok, _ = key_at a x ~inside ~b ~kh ~within:(live &&: (ky < len)) ky in
-             seen a x ~inside ~b ~row ~key:ky ~ok))
-    in
-    (* Read inside the guard of the tile's class, so that only a tile of
-       unknown class votes. *)
-    let any = inside any in
-    if not local then any
-    else Ops.ne (Ops.reduce (Ops.cast any Int32) Max [ l ]) (Ops.int ~dtype:Int32 0)
+    vote a x ~inside ~b ~kh ~len ~over:(if local then [ l ] else [])
+      (List.init bk (fun i -> (row, key i)))
   in
   let row_span =
     (gt * int bq, Ops.minimum ((gt * int bq) + int Stdlib.(bq - 1)) (int Stdlib.(gr - 1)))
@@ -709,6 +716,63 @@ let key_of keys k kc =
            let dst = log2 keys.(pow2 i) in
            (kc // int (pow2 i)) % int 2 * int (pow2 dst)))
 
+(* A chaining core's fragment facts: its dimensions and lanes, where each
+   element of the next product's [A] comes from ({!chained}), and a lane's
+   rows of the accumulator: its row bits among the elements number them,
+   its row lanes share them with the lanes that differ in a column bit. *)
+type facts = {
+  n_ : int;
+  m_ : int;
+  k_ : int;
+  lanes : int;
+  sources : (int * int) array;
+  keymap : int array;
+  tsteps : int;
+  ea : int;
+  ec : int;
+  slot_of : int -> int;
+  slots : int;
+  first_of : int -> int;
+}
+
+let facts (tc : Tc.t) =
+  let n_, m_, k_ = Tc.dims tc in
+  let ch =
+    match Tc.chain tc tc A with
+    | Some ch -> ch
+    | None -> invalid_arg "Lower_attention: a core that does not chain"
+  in
+  let sources, keymap = chained tc ch in
+  let elems (f : Tc.fragment) = 1 lsl List.length f.elements in
+  let ec = elems tc.frag_c in
+  let slot_of e =
+    List.fold_left ( + ) 0
+      (List.mapi
+         (fun i b ->
+           match b with
+           | Tc.M _ when (e lsr i) land 1 = 1 ->
+               1 lsl count Mb (List.filteri (fun j _ -> j < i) tc.frag_c.elements)
+           | _ -> 0)
+         tc.frag_c.elements)
+  in
+  let first_of s =
+    Option.get (List.find_opt (fun e -> slot_of e = s) (List.init ec Fun.id))
+  in
+  {
+    n_;
+    m_;
+    k_;
+    lanes = Tc.threads tc;
+    sources;
+    keymap;
+    tsteps = k_ / n_;
+    ea = elems tc.frag_a;
+    ec;
+    slot_of;
+    slots = 1 lsl count Mb tc.frag_c.elements;
+    first_of;
+  }
+
 (* Slots of the tensor-core kernel's buffers. *)
 let slot_acc = 103
 let slot_ks = 104
@@ -718,6 +782,33 @@ let slot_sum = 107
 
 (* The padding of a row of a tile in workgroup memory, in elements. *)
 let pad = 8
+
+(* [stage ~tid ~threads ~n ~at src dst ~width ~first ~cols] copies [n]
+   rows of [src], row [i] where [at ~within i] gives [(ok, start)], of
+   [width] elements, the [cols] from [first] on, into [dst]'s rows of
+   [cols + pad], eight elements a thread at a time; elements past the row,
+   or of a row not [ok], are zeros. *)
+let stage ~tid ~threads ~n ~at src dst ~width ~first ~cols =
+  let open Ops.O in
+  let per = ceil_div cols 8 in
+  let total = Stdlib.(n * per) in
+  List.concat
+    (List.init (ceil_div total threads) (fun i ->
+         let cid = tid + int Stdlib.(i * threads) in
+         let inside_tile = cid < int total in
+         let rl = cid // int per and c0 = cid % int per * int 8 in
+         let ok, start = at ~within:inside_tile rl in
+         List.init 8 (fun e ->
+             let col = c0 + int e in
+             let src_col = first + col in
+             let v =
+               ld_gated src ((start * int width) + src_col)
+                 (ok &&: (col < int cols) &&: (src_col < int width))
+             in
+             Ops.store
+               (Ops.index dst
+                  [ Ops.where inside_tile ((rl * int Stdlib.(cols + pad)) + col) Ops.invalid ])
+               v)))
 
 type core = {
   tc : Tc.t;
@@ -731,15 +822,9 @@ let core c a xs =
   let x = args ~scratch:false a xs in
   let tc = c.tc and bk = c.keys in
   let acc = Arith.dtype a.acc and vt = Ops.dtype x.q in
-  let n_, m_, k_ = Tc.dims tc in
-  let lanes = Tc.threads tc in
-  let ch =
-    match Tc.chain tc tc A with
-    | Some ch -> ch
-    | None -> invalid_arg "Lower_attention: a core that does not chain"
-  in
-  let sources, keymap = chained tc ch in
-  let tsteps = k_ / n_ in
+  let f = facts tc in
+  let n_ = f.n_ and m_ = f.m_ and k_ = f.k_ and lanes = f.lanes in
+  let sources = f.sources and keymap = f.keymap and tsteps = f.tsteps in
   let dkp = ceil_div a.dk k_ * k_ in
   let dcp = ceil_div c.cols n_ * n_ in
   let ksteps = dkp / k_ and ntiles = bk / n_ and vsteps = bk / k_ in
@@ -750,23 +835,8 @@ let core c a xs =
   let chunks = max 1 (ceil_div a.dv c.cols) in
   let heads = numel a.lead * a.hk in
   let threads = c.warps * lanes in
-  let elems (f : Tc.fragment) = 1 lsl List.length f.elements in
-  let ea = elems tc.frag_a and eb = elems tc.frag_b and ec = elems tc.frag_c in
-  (* A lane's rows: the accumulator's row bits among its elements number
-     them, its row lanes share them with the lanes that differ in a column
-     bit. *)
-  let slot_of e =
-    List.fold_left Stdlib.( + ) 0
-      (List.mapi
-         (fun i b ->
-           match b with
-           | Tc.M _ when (e lsr i) land 1 = 1 ->
-               1 lsl count Mb (List.filteri (fun j _ -> j < i) tc.frag_c.elements)
-           | _ -> 0)
-         tc.frag_c.elements)
-  in
-  let slots = 1 lsl count Mb tc.frag_c.elements in
-  let first_of s = Option.get (List.find_opt (fun e -> slot_of e = s) (List.init ec Fun.id)) in
+  let ea = f.ea and eb = 1 lsl List.length tc.frag_b.elements and ec = f.ec in
+  let slot_of = f.slot_of and slots = f.slots and first_of = f.first_of in
   let sharers = 1 lsl count Nb tc.frag_c.lanes in
   let open Ops.O in
   let gh = range Global (Int heads) 0 in
@@ -822,33 +892,14 @@ let core c a xs =
   let vs = Shape.placeholder ~slot:slot_vs ~addrspace:Local [ Stdlib.(bk * (dcp + pad)) ] vt in
   let red = Shape.placeholder ~slot:slot_red ~addrspace:Local [ Stdlib.(bq * sharers) ] acc in
   let key i = (j * int bk) + i in
-  (* [copy src dst width cols] copies a tile of [src]'s rows, of [width]
-     elements a row, the [cols] from [first] on, into [dst]'s rows of
-     [cols + pad], eight elements a thread at a time; elements past the row
-     or the keys read are zeros. *)
+  (* [copy inside src dst ~width ~first ~cols] stages the tile's keys of
+     [src] ({!stage}). *)
   let copy inside src dst ~width ~first ~cols =
-    let per = ceil_div cols 8 in
-    let total = Stdlib.(bk * per) in
-    List.concat
-      (List.init (ceil_div total threads) (fun i ->
-           let cid = tid + int Stdlib.(i * threads) in
-           let inside_tile = cid < int total in
-           let kl = cid // int per and c0 = cid % int per * int 8 in
-           let ky = key kl in
-           let ok, at =
-             key_at a x ~inside ~b ~kh ~within:(inside_tile &&: (ky < len)) ky
-           in
-           List.init 8 (fun e ->
-               let col = c0 + int e in
-               let src_col = first + col in
-               let v =
-                 ld_gated src ((at * int width) + src_col)
-                   (ok &&: (col < int cols) &&: (src_col < int width))
-               in
-               Ops.store
-                 (Ops.index dst
-                    [ Ops.where inside_tile ((kl * int Stdlib.(cols + pad)) + col) Ops.invalid ])
-                 v)))
+    let at ~within kl =
+      let ky = key kl in
+      key_at a x ~inside ~b ~kh ~within:(within &&: (ky < len)) ky
+    in
+    stage ~tid ~threads ~n:bk ~at src dst ~width ~first ~cols
   in
   let first_col = gc * int c.cols in
   let body inside =
@@ -975,20 +1026,12 @@ let core c a xs =
   in
   (* A lane's vote: whether its rows see a key of the tile. *)
   let vote inside =
-    let any =
-      List.fold_left Ops.bitwise_or (Ops.O.bool false)
-        (List.concat
-           (List.init ntiles (fun nt ->
-                List.init ec (fun e ->
-                    let r = row_of (coord tc.frag_c Mb lane e) in
-                    let ky = key (int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e) in
-                    let ok, _ =
-                      key_at a x ~inside ~b ~kh ~within:(r.live &&: (ky < len)) ky
-                    in
-                    seen a x ~inside ~b ~row:r ~key:ky ~ok))))
-    in
-    let any = inside any in
-    Ops.ne (Ops.reduce (Ops.cast any Int32) Max [ warp; lane ]) (Ops.int ~dtype:Int32 0)
+    vote a x ~inside ~b ~kh ~len ~over:[ warp; lane ]
+      (List.concat
+         (List.init ntiles (fun nt ->
+              List.init ec (fun e ->
+                  ( row_of (coord tc.frag_c Mb lane e),
+                    key (int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e) )))))
   in
   let rows =
     (gt * int bq, Ops.minimum ((gt * int bq) + int Stdlib.(bq - 1)) (int Stdlib.(gr - 1)))
@@ -1200,6 +1243,468 @@ let plan (r : Renderer.t) a =
           ~threads:(warps * Tc.threads tc) ~tiles:(ceil_div a.tk keys)
       in
       Some { tc; warps; keys; cols; splits }
+  | _ -> None
+
+(* The derivative's kernels
+
+   The transposed derivative ({!Attention}), from the cotangents [ō] and
+   [l̄se], recomputes each pair's weight from the call's [lse],
+   [p = 2^(x·log₂e - lse·log₂e)], [0] where hidden or where [lse] is [-∞],
+   and never stores one (FlashAttention-2's backward, Dao 2023, §3.2 and
+   Algorithm 2, without its atomics):
+
+     δ   = ō·o - l̄se                    a kernel of one row a thread
+     dP  = ō vᵀ        ds = p (dP - δ)   r̄ the pair program's transpose of ds
+     q̄  = scale Σ_j r̄ k_j               by query rows, over their keys
+     k̄  = scale Σ_i r̄ q_i               by keys, over their group's rows
+     v̄  = Σ_i p ō_i
+
+   For a narrow float on a core that chains as {!core}'s, both kernels run
+   their products on it: a warp holds [M] query rows ([dq]) or [M] keys
+   ([dkdv]) and their operands in registers, the other side's tiles in
+   workgroup memory; [p] and [r̄], rounded once to the operands' dtype, are
+   the [A] operands of the products they chain into. The keys' kernel
+   computes [Sᵀ = K Qᵀ] and [dPᵀ = V ōᵀ], so that its accumulators chain
+   along the rows it sums over. Each sum runs in a fixed order, so the bits
+   are the shapes' and the target's. Tiles skip as the forward's. *)
+
+(* A derivative kernel's operands: {!args}'s, [o] being the kernel's first
+   output and [lse] the call's, then the cotangent [ō] and the rows' [δ]. *)
+type dargs = { x : args; bo : Ops.t; delta : Ops.t }
+
+(* [dargs a ~outs xs] reads [xs]: [outs] outputs, then [q], [k], [v], the
+   lengths where given, the captures, [lse], [ō] and [δ]. *)
+let dargs a ~outs xs =
+  let os = List.filteri (fun i _ -> i < outs) xs in
+  let rest = List.filteri (fun i _ -> i >= outs) xs in
+  match rest with
+  | q :: k :: v :: rest ->
+      let len, rest =
+        match (a.lengths, rest) with
+        | true, l :: rest -> (Some l, rest)
+        | _ -> (None, rest)
+      in
+      let nc = Array.length a.loads in
+      let caps = Array.of_list (List.filteri (fun i _ -> i < nc) rest) in
+      (match List.filteri (fun i _ -> i >= nc) rest with
+      | [ lse; bo; delta ] ->
+          let x =
+            { o = List.hd os; lse; sum = None; q; k; v; table = None; len; caps }
+          in
+          (Array.of_list os, { x; bo; delta })
+      | _ -> invalid_arg "Lower_attention: the derivative's arguments")
+  | _ -> invalid_arg "Lower_attention: the derivative's arguments"
+
+(* The pair of [row] and [key], read where [ok], of raw score [raw]: whether
+   it is visible, its score in base 2, and [back ds], the score's cotangent
+   [ds] read back to the scaled score by the program's transpose [tr], [0]
+   where hidden. *)
+let pair_back a x ~tr ~inside ~b ~row ~key ~ok raw =
+  let acc = Arith.dtype a.acc in
+  let coord = pair_coord a ~b ~row ~key in
+  let caps = caps_at a.loads x.caps ~inside ~coord ~ok in
+  let s = Ops.mul raw (fl acc a.scale) in
+  let seen, x2 = pair_of a ~coord ~ok ~caps s in
+  let back ds =
+    match tr with
+    | None -> fl acc 0.
+    | Some tr ->
+        let outs =
+          Arith.scalar tr ~coord (Array.concat [ [| [ s ] |]; caps; [| [ ds ] |] ])
+        in
+        Ops.where seen (List.hd outs.(0)) (fl acc 0.)
+  in
+  (seen, x2, back)
+
+(* A pair's weight from its row's [lse], [0] where hidden or [lse] is
+   [-∞]. *)
+let weight acc ~seen ~x2 ~lse =
+  Ops.where
+    (seen &&: Ops.ne lse (fl acc Float.neg_infinity))
+    (Ops.exp2 (Ops.sub x2 (Ops.mul lse (fl acc ln2e))))
+    (fl acc 0.)
+
+(* The kernel of [δ]: one thread a row, [ō·o] summed in column order, minus
+   [l̄se]. Arguments: [δ], [o], [ō], [l̄se]. *)
+let delta_kernel a xs =
+  match xs with
+  | [ delta; o; bo; blse ] ->
+      let acc = Arith.dtype a.acc in
+      let rows = numel a.lead * a.hq * a.tq in
+      let bq = simt_rows in
+      let open Ops.O in
+      let gr = range Global (Int (ceil_div rows bq)) 0 in
+      let l = range Local (Int bq) 1 in
+      let i = (gr * int bq) + l in
+      let live = i < int rows in
+      let r = Shape.placeholder ~slot:slot_m ~addrspace:Reg [ 1 ] acc in
+      let init = st (Ops.after r [ gr; l ]) (int 0) (fl acc 0.) in
+      let c = range Loop (Int a.dv) 2 in
+      let r_c = Ops.after r [ init; c ] in
+      let at = (i * int a.dv) + c in
+      let term = Ops.cast (ld_gated bo at live) acc * Ops.cast (ld_gated o at live) acc in
+      let sum = Ops.end_ (st r_c (int 0) (ld r_c (int 0) + term)) [ c ] in
+      let dot = ld (Ops.after r [ sum ]) (int 0) in
+      let v = dot - Ops.cast (ld_gated blse i live) acc in
+      let store = Ops.store (Ops.index delta [ Ops.where live i Ops.invalid ]) v in
+      let kernel = Ops.kernel_info ~name:"attention_delta" ~opts_to_apply:[] () in
+      Ops.sink ~kernel [ Ops.end_ store [ gr; l ] ]
+  | _ -> invalid_arg "Lower_attention: the δ kernel's arguments"
+
+(* [mma tc ~lane ~steps a b ~acc] is [acc] plus the products of [steps]
+   steps of [K], step [kk]'s [A] operand [a kk] and [B] element [e] at
+   [b kk ~k ~n], [k] and [n] its fragment's coordinates at [lane]. *)
+let mma (tc : Tc.t) ~lane ~steps a b ~acc =
+  let n_, m_, k_ = Tc.dims tc in
+  let eb = 1 lsl List.length tc.frag_b.elements in
+  let rec go kk acc =
+    if kk = steps then acc
+    else
+      let bfrag =
+        Shape.stack
+          (List.init eb (fun e ->
+               b kk ~k:(coord tc.frag_b Kb lane e) ~n:(coord tc.frag_b Nb lane e)))
+      in
+      go (kk + 1) (Ops.wmma (a kk) bfrag ~acc ~dims:(n_, m_, k_) ~threads:(Tc.threads tc))
+  in
+  go 0 acc
+
+(* [chain_a f vt p kk] is step [kk]'s [A] operand of the accumulators' elements
+   [p.(tile).(e)], each rounded once to [vt]. *)
+let chain_a f vt p kk =
+  Shape.stack
+    (List.init f.ea (fun e ->
+         let t, e' = f.sources.(e) in
+         Ops.cast p.(Stdlib.((kk * f.tsteps) + t)).(e') vt))
+
+(* An accumulator of zeros. *)
+let zeros_c f acc = Shape.stack (List.init f.ec (fun _ -> fl acc 0.))
+
+type dcore = {
+  dtc : Tc.t;
+  qwarps : int;  (* [dq]'s warps, of [M] rows each. *)
+  qkeys : int;  (* [dq]'s keys a tile. *)
+  kwarps : int;  (* [dkdv]'s warps, of [M] keys each. *)
+  krows : int;  (* [dkdv]'s rows a tile. *)
+}
+
+(* By rows: [q̄] of the rows a workgroup holds, over each tile of keys. A
+   warp holds [M] rows, their [Q] and [ō] operands in registers; the tile's
+   keys and values are staged in workgroup memory. Arguments: [q̄], then
+   {!dargs}'s. *)
+let core_dq c a tr xs =
+  let os, d = dargs a ~outs:1 xs in
+  let x = d.x in
+  let tc = c.dtc and bk = c.qkeys in
+  let f = facts tc in
+  let n_ = f.n_ and m_ = f.m_ and k_ = f.k_ in
+  let acc = Arith.dtype a.acc and vt = Ops.dtype x.q in
+  let dkp = ceil_div a.dk k_ * k_ and dvp = ceil_div a.dv k_ * k_ in
+  let ksteps = dkp / k_ and csteps = dvp / k_ in
+  let ntiles = bk / n_ and vsteps = bk / k_ and dtiles = dkp / n_ in
+  let bq = c.qwarps * m_ in
+  let gr = grouped a in
+  let tiles_q = ceil_div gr bq in
+  let heads = numel a.lead * a.hk in
+  let threads = c.qwarps * f.lanes in
+  let open Ops.O in
+  let gh = range Global (Int heads) 0 in
+  let gtr = range Global (Int tiles_q) 1 in
+  let gt = int Stdlib.(tiles_q - 1) - gtr in
+  let warp = range Local (Int c.qwarps) 3 in
+  let lane = range Warp (Int f.lanes) 4 in
+  let tid = (warp * int f.lanes) + lane in
+  let b = gh // int a.hk and kh = gh % int a.hk in
+  let base = (gt * int bq) + (warp * int m_) in
+  let row_of r = row_at a ~b ~kh (base + r) in
+  let len = length a x b in
+  let _, tiles = run_tiles ~tk:a.tk ~bk ~splits:1 ~gs:None len in
+  let jr = range Loop (Sym tiles) 5 in
+  let at = [ gh; gtr; warp; lane ] in
+  let operands buf width steps =
+    Array.init steps (fun kk ->
+        Shape.stack
+          (List.init f.ea (fun e ->
+               let r = row_of (coord tc.frag_a Mb lane e) in
+               let col = int Stdlib.(kk * k_) + coord tc.frag_a Kb lane e in
+               ld_gated buf ((r.index * int width) + col) (r.live &&: (col < int width)))))
+  in
+  let qa = operands x.q a.dk ksteps and oa = operands d.bo a.dv csteps in
+  (* Each row slot's [lse] and [δ]. *)
+  let per_slot buf =
+    Array.init f.slots (fun s ->
+        let r = row_of (coord tc.frag_c Mb lane (f.first_of s)) in
+        ld_gated buf r.index r.live)
+  in
+  let lses = per_slot x.lse and deltas = per_slot d.delta in
+  let g, g_init = reg slot_acc Stdlib.(dtiles * f.ec) acc (fl acc 0.) ~at in
+  let g_j = Ops.after g [ g_init; jr ] in
+  let ks = Shape.placeholder ~slot:slot_ks ~addrspace:Local [ Stdlib.(bk * (dkp + pad)) ] vt in
+  let vs = Shape.placeholder ~slot:slot_vs ~addrspace:Local [ Stdlib.(bk * (dvp + pad)) ] vt in
+  let key i = (jr * int bk) + i in
+  let keys_at inside ~within kl =
+    let ky = key kl in
+    key_at a x ~inside ~b ~kh ~within:(within &&: (ky < len)) ky
+  in
+  let body inside =
+    let tile src dst width cols =
+      Ops.after dst
+        [
+          Ops.group
+            (stage ~tid ~threads ~n:bk ~at:(keys_at inside) (inside src) (inside dst)
+               ~width ~first:(int 0) ~cols);
+        ]
+    in
+    let ks = tile x.k ks a.dk dkp and vs = tile x.v vs a.dv dvp in
+    (* S = Q Kᵀ and dP = ō Vᵀ, each tile of [N] keys an accumulator. *)
+    let scores buf w steps ops =
+      Array.init ntiles (fun nt ->
+          mma tc ~lane ~steps (fun kk -> ops.(kk))
+            (fun kk ~k ~n ->
+              let kl = int Stdlib.(nt * n_) + n in
+              ld buf ((kl * int Stdlib.(w + pad)) + int Stdlib.(kk * k_) + k))
+            ~acc:(zeros_c f acc))
+    in
+    let s = scores ks dkp ksteps qa and dp = scores vs dvp csteps oa in
+    let rbar =
+      Array.init ntiles (fun nt ->
+          Array.init f.ec (fun e ->
+              let sl = f.slot_of e in
+              let r = row_of (coord tc.frag_c Mb lane e) in
+              let ky = key (int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e) in
+              let ok, _ = key_at a x ~inside ~b ~kh ~within:(r.live &&: (ky < len)) ky in
+              let el u = Ops.index u [ Ops.int ~dtype:Int32 e ] in
+              let seen, x2, back =
+                pair_back a x ~tr ~inside ~b ~row:r ~key:ky ~ok (el s.(nt))
+              in
+              let p = weight acc ~seen ~x2 ~lse:lses.(sl) in
+              back (Ops.where seen (p * (el dp.(nt) - deltas.(sl))) (fl acc 0.))))
+    in
+    (* q̄ += r̄ K, [K] read along its keys. *)
+    let g1 =
+      Array.init dtiles (fun dt ->
+          let g0 =
+            Shape.stack
+              (List.init f.ec (fun e -> ld (inside g_j) (int Stdlib.((dt * f.ec) + e))))
+          in
+          mma tc ~lane ~steps:vsteps (chain_a f vt rbar)
+            (fun kk ~k ~n ->
+              let kl = int Stdlib.(kk * k_) + key_of f.keymap k_ k in
+              ld ks ((kl * int Stdlib.(dkp + pad)) + int Stdlib.(dt * n_) + n))
+            ~acc:g0)
+    in
+    let g_w = inside g_j in
+    Ops.group
+      (List.concat
+         (List.init dtiles (fun dt ->
+              List.init f.ec (fun e ->
+                  st g_w (int Stdlib.((dt * f.ec) + e))
+                    (Ops.index g1.(dt) [ Ops.int ~dtype:Int32 e ])))))
+  in
+  let vote inside =
+    vote a x ~inside ~b ~kh ~len ~over:[ warp; lane ]
+      (List.concat
+         (List.init ntiles (fun nt ->
+              List.init f.ec (fun e ->
+                  ( row_of (coord tc.frag_c Mb lane e),
+                    key (int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e) )))))
+  in
+  let rows = (gt * int bq, Ops.minimum ((gt * int bq) + int Stdlib.(bq - 1)) (int Stdlib.(gr - 1))) in
+  let keys = (key (int 0), key (int Stdlib.(bk - 1))) in
+  let loop =
+    Ops.end_ (skipping a x ~at:(jr :: at) ~b ~kh ~rows ~keys ~vote ~ids:(7, 8, 9) body) [ jr ]
+  in
+  let g_out = Ops.after g [ loop ] in
+  let stores =
+    List.concat
+      (List.init dtiles (fun dt ->
+           List.init f.ec (fun e ->
+               let r = row_of (coord tc.frag_c Mb lane e) in
+               let col = int Stdlib.(dt * n_) + coord tc.frag_c Nb lane e in
+               let ok = r.live &&: (col < int a.dk) in
+               let v = ld g_out (int Stdlib.((dt * f.ec) + e)) * fl acc a.scale in
+               Ops.store
+                 (Ops.index os.(0) [ Ops.where ok ((r.index * int a.dk) + col) Ops.invalid ])
+                 (Ops.cast v vt))))
+  in
+  let kernel = Ops.kernel_info ~name:"attention_dq" ~opts_to_apply:[] () in
+  Ops.sink ~kernel [ Ops.end_ (Ops.group stores) at ]
+
+(* By keys: [k̄] and [v̄] of the keys a workgroup holds, over each tile of
+   their group's rows. A warp holds [M] keys, their [K] and [V] operands in
+   registers; the tile's query rows and their [ō] are staged in workgroup
+   memory. Arguments: [k̄], [v̄], then {!dargs}'s. *)
+let core_dkdv c a tr xs =
+  let os, d = dargs a ~outs:2 xs in
+  let x = d.x in
+  let tc = c.dtc and br = c.krows in
+  let f = facts tc in
+  let n_ = f.n_ and m_ = f.m_ and k_ = f.k_ in
+  let acc = Arith.dtype a.acc and vt = Ops.dtype x.q in
+  let dkp = ceil_div a.dk k_ * k_ and dvp = ceil_div a.dv k_ * k_ in
+  let ksteps = dkp / k_ and csteps = dvp / k_ in
+  let ntiles = br / n_ and rsteps = br / k_ in
+  let dtiles = dkp / n_ and ctiles = dvp / n_ in
+  let bkk = c.kwarps * m_ in
+  let gr = grouped a in
+  let tiles_k = ceil_div a.tk bkk in
+  let tiles_r = ceil_div gr br in
+  let heads = numel a.lead * a.hk in
+  let threads = c.kwarps * f.lanes in
+  let open Ops.O in
+  let gh = range Global (Int heads) 0 in
+  let gt = range Global (Int tiles_k) 1 in
+  let warp = range Local (Int c.kwarps) 3 in
+  let lane = range Warp (Int f.lanes) 4 in
+  let tid = (warp * int f.lanes) + lane in
+  let b = gh // int a.hk and kh = gh % int a.hk in
+  let k0 = gt * int bkk in
+  let base = k0 + (warp * int m_) in
+  let len = length a x b in
+  (* A tile of keys past the row's length sees no row. *)
+  let jr = range Loop (Sym (Ops.where (k0 < len) (int tiles_r) (int 0))) 5 in
+  let at = [ gh; gt; warp; lane ] in
+  let key_of_m r = base + r in
+  let operands buf width steps =
+    Array.init steps (fun kk ->
+        Shape.stack
+          (List.init f.ea (fun e ->
+               let ky = key_of_m (coord tc.frag_a Mb lane e) in
+               let ok, at = key_at a x ~inside:Fun.id ~b ~kh ~within:(ky < len) ky in
+               let col = int Stdlib.(kk * k_) + coord tc.frag_a Kb lane e in
+               ld_gated buf ((at * int width) + col) (ok &&: (col < int width)))))
+  in
+  let ka = operands x.k a.dk ksteps and va = operands x.v a.dv csteps in
+  let gk, gk_init = reg slot_acc Stdlib.(dtiles * f.ec) acc (fl acc 0.) ~at in
+  let gv, gv_init = reg slot_sum Stdlib.(ctiles * f.ec) acc (fl acc 0.) ~at in
+  let gk_j = Ops.after gk [ gk_init; jr ] and gv_j = Ops.after gv [ gv_init; jr ] in
+  let qs = Shape.placeholder ~slot:slot_ks ~addrspace:Local [ Stdlib.(br * (dkp + pad)) ] vt in
+  let dos = Shape.placeholder ~slot:slot_vs ~addrspace:Local [ Stdlib.(br * (dvp + pad)) ] vt in
+  let row i = row_at a ~b ~kh ((jr * int br) + i) in
+  let rows_at ~within rl =
+    let r = row rl in
+    (within &&: r.live, r.index)
+  in
+  let body inside =
+    let tile src dst width cols =
+      Ops.after dst
+        [
+          Ops.group
+            (stage ~tid ~threads ~n:br ~at:rows_at (inside src) (inside dst) ~width
+               ~first:(int 0) ~cols);
+        ]
+    in
+    let qs = tile x.q qs a.dk dkp and dos = tile d.bo dos a.dv dvp in
+    (* Sᵀ = K Qᵀ and dPᵀ = V ōᵀ, each tile of [N] rows an accumulator. *)
+    let scores buf w steps ops =
+      Array.init ntiles (fun nt ->
+          mma tc ~lane ~steps (fun kk -> ops.(kk))
+            (fun kk ~k ~n ->
+              let rl = int Stdlib.(nt * n_) + n in
+              ld buf ((rl * int Stdlib.(w + pad)) + int Stdlib.(kk * k_) + k))
+            ~acc:(zeros_c f acc))
+    in
+    let s = scores qs dkp ksteps ka and dp = scores dos dvp csteps va in
+    let pairs =
+      Array.init ntiles (fun nt ->
+          Array.init f.ec (fun e ->
+              let ky = key_of_m (coord tc.frag_c Mb lane e) in
+              let r = row (int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e) in
+              let ok, _ = key_at a x ~inside ~b ~kh ~within:(r.live &&: (ky < len)) ky in
+              let el u = Ops.index u [ Ops.int ~dtype:Int32 e ] in
+              let seen, x2, back =
+                pair_back a x ~tr ~inside ~b ~row:r ~key:ky ~ok (el s.(nt))
+              in
+              let lse = ld_gated (inside x.lse) r.index r.live in
+              let delta = ld_gated (inside d.delta) r.index r.live in
+              let p = weight acc ~seen ~x2 ~lse in
+              (p, back (Ops.where seen (p * (el dp.(nt) - delta)) (fl acc 0.)))))
+    in
+    let p = Array.map (Array.map fst) pairs and rbar = Array.map (Array.map snd) pairs in
+    (* v̄ += Pᵀ ō and k̄ += r̄ᵀ Q, the staged rows read along the rows. *)
+    let sums g_j tiles buf w ops =
+      Array.init tiles (fun t ->
+          let g0 =
+            Shape.stack
+              (List.init f.ec (fun e -> ld (inside g_j) (int Stdlib.((t * f.ec) + e))))
+          in
+          mma tc ~lane ~steps:rsteps (chain_a f vt ops)
+            (fun kk ~k ~n ->
+              let rl = int Stdlib.(kk * k_) + key_of f.keymap k_ k in
+              ld buf ((rl * int Stdlib.(w + pad)) + int Stdlib.(t * n_) + n))
+            ~acc:g0)
+    in
+    let v1 = sums gv_j ctiles dos dvp p and k1 = sums gk_j dtiles qs dkp rbar in
+    let put g_j tiles g1 =
+      let g_w = inside g_j in
+      List.concat
+        (List.init tiles (fun t ->
+             List.init f.ec (fun e ->
+                 st g_w (int Stdlib.((t * f.ec) + e)) (Ops.index g1.(t) [ Ops.int ~dtype:Int32 e ]))))
+    in
+    Ops.group (put gv_j ctiles v1 @ put gk_j dtiles k1)
+  in
+  let vote inside =
+    vote a x ~inside ~b ~kh ~len ~over:[ warp; lane ]
+      (List.concat
+         (List.init ntiles (fun nt ->
+              List.init f.ec (fun e ->
+                  ( row (int Stdlib.(nt * n_) + coord tc.frag_c Nb lane e),
+                    key_of_m (coord tc.frag_c Mb lane e) )))))
+  in
+  let rows = (jr * int br, Ops.minimum ((jr * int br) + int Stdlib.(br - 1)) (int Stdlib.(gr - 1))) in
+  let keys = (k0, k0 + int Stdlib.(bkk - 1)) in
+  let loop =
+    Ops.end_ (skipping a x ~at:(jr :: at) ~b ~kh ~rows ~keys ~vote ~ids:(7, 8, 9) body) [ jr ]
+  in
+  let gk_out = Ops.after gk [ loop ] and gv_out = Ops.after gv [ loop ] in
+  let stores out g tiles width scale =
+    List.concat
+      (List.init tiles (fun t ->
+           List.init f.ec (fun e ->
+               let ky = key_of_m (coord tc.frag_c Mb lane e) in
+               let col = int Stdlib.(t * n_) + coord tc.frag_c Nb lane e in
+               let ok = (ky < int a.tk) &&: (col < int width) in
+               let at = (((gh * int a.tk) + ky) * int width) + col in
+               let v = ld g (int Stdlib.((t * f.ec) + e)) in
+               let v = match scale with Some s -> v * fl acc s | None -> v in
+               Ops.store (Ops.index out [ Ops.where ok at Ops.invalid ]) (Ops.cast v vt))))
+  in
+  let kernel = Ops.kernel_info ~name:"attention_dkdv" ~opts_to_apply:[] () in
+  Ops.sink ~kernel
+    [
+      Ops.end_
+        (Ops.group (stores os.(0) gk_out dtiles a.dk (Some a.scale) @ stores os.(1) gv_out ctiles a.dv None))
+        at;
+    ]
+
+(* [dplan renderer a] is the derivative's kernels' shape for [a] on
+   [renderer]'s target, if it takes them: {!plan}'s core, dense keys, [o] of
+   the query's dtype, no load whose cotangent is asked for, and keys and
+   values of at most 64 dimensions. A warp then holds its operands, its
+   accumulators and those of a tile of 32 keys or rows in registers, up to
+   250 of them on sm_89 with no spill, and two workgroups of 4 warps share a
+   compute unit. On fudge's RTX 5000 Ada, tiles of 64 spilled and took up to
+   2.1 times as long, 8 warps 1.1 to 1.25 times, and keys of 128 dimensions
+   spilled and took twice as long as the derivative's default. *)
+let dplan (r : Renderer.t) a ~marked =
+  let vt = Arith.dtype a.vt in
+  match plan r a with
+  | Some c
+    when Option.is_none a.paged
+         && (not (Array.exists Fun.id marked))
+         && Dtype.equal (Arith.dtype a.out) vt
+         && a.dk > 0 && a.dv > 0 && a.dk <= 64 && a.dv <= 64 ->
+      let _, m, _ = Tc.dims c.tc in
+      let warps n = max 1 (min 4 (ceil_div n m)) in
+      Some
+        {
+          dtc = c.tc;
+          qwarps = warps (grouped a);
+          qkeys = 32;
+          kwarps = warps a.tk;
+          krows = 32;
+        }
   | _ -> None
 
 (* Operands *)
@@ -1432,3 +1937,81 @@ let lower ~device ~(renderer : Renderer.t)
         [| o; Shape.reshape (List.nth outs 1) lse_shape |]
   | _ -> unlowered (Nx.Prim.name op)
 
+(* The derivative's lowering *)
+
+type operand = D.any * int array * Ops.t
+
+let linear ~device ~(renderer : Renderer.t) (spec : Attention.spec) ~transposed
+    (data : operand array) (args : operand array) =
+  let n = Array.length data in
+  let vt, sq, _ = data.(0) in
+  let _, sk, _ = data.(1) in
+  let _, sv, _ = data.(2) in
+  let r = Array.length sq in
+  let lead = Array.sub sq 0 (r - 3) in
+  let hq = sq.(r - 3) and tq = sq.(r - 2) and dk = sq.(r - 1) in
+  let lens = if spec.lengths then Some data.(3) else None in
+  let first = 3 + Bool.to_int spec.lengths in
+  let loads = Array.sub data first (n - 2 - first) in
+  let out, _, o_node = data.(n - 2) in
+  let acc, _, lse_node = data.(n - 1) in
+  let hk = sk.(r - 3) and tk = sk.(r - 2) in
+  let dv = sv.(Array.length sv - 1) in
+  if (not transposed) || spec.paged || numel lead * hq * tq = 0 || tk = 0 || hk = 0
+  then None
+  else
+    let caps = Array.map (fun (dt, _, u) -> capture device dt u) loads in
+    let a =
+      {
+        lead;
+        hq;
+        hk;
+        tq;
+        tk;
+        dk;
+        dv;
+        paged = None;
+        lengths = spec.lengths;
+        prog = spec.prog;
+        scale = spec.scale;
+        vt;
+        acc;
+        out;
+        loads = Array.map snd caps;
+        classes = classes_of spec.prog r;
+      }
+    in
+    match dplan renderer a ~marked:spec.tangents with
+    | None -> None
+    | Some c ->
+        let rows = numel lead * hq * tq in
+        let nkeys = numel lead * hk * tk in
+        let operand (_, _, u) = flat (arg device u) in
+        let buf dt m = Ops.new_buffer device (max 1 m) (Arith.dtype dt) in
+        let shaped dt s u = Shape.reshape u (Arith.dims dt s) in
+        let bo = operand args.(0) and blse = operand args.(1) in
+        let delta =
+          List.hd
+            (Shape.custom_kernel
+               [ buf acc rows; flat (arg device o_node); bo; blse ]
+               (delta_kernel a))
+        in
+        let call =
+          [ operand data.(0); operand data.(1); operand data.(2) ]
+          @ Option.to_list (Option.map operand lens)
+          @ Array.to_list (Array.map fst caps)
+          @ [ flat (arg device lse_node); bo; delta ]
+        in
+        let tr = Attention.score_transpose spec in
+        let dq = Shape.custom_kernel (buf vt (rows * dk) :: call) (core_dq c a tr) in
+        let kv =
+          Shape.custom_kernel
+            ([ buf vt (nkeys * dk); buf vt (nkeys * dv) ] @ call)
+            (core_dkdv c a tr)
+        in
+        Some
+          [|
+            shaped vt sq (List.hd dq);
+            shaped vt sk (List.nth kv 0);
+            shaped vt sv (List.nth kv 1);
+          |]

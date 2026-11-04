@@ -25,6 +25,12 @@ type spec = {
 }
 (** The type for what a derivative knows of its call beside its values. *)
 
+val score_transpose : spec -> Nx_kernel.Prog.t option
+(** [score_transpose spec] is the program reading a pair's score cotangent
+    [s̄] back to its scaled score, over the pair program's operands then
+    [s̄], or [None] where the program's score does not read the scaled
+    score. *)
+
 val linear :
   spec -> transposed:bool -> 'd Nx.Prim.any array -> 'd Nx.Prim.any array ->
   'd Nx.Prim.any array

@@ -1138,7 +1138,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   the scores' product in float32, cast to the query's dtype, `softmax`,
   then the product with the values, each a kernel and the scores stored).
 - **Raven:** `lower_attention.ml` (`lower`, `simt`, `simt_width`, `core`,
-  `plan`, `classes`, `skipping`, `run_tiles`, `combine`, `host_combine`).
+  `plan`, `classes`, `skipping`, `run_tiles`, `combine`, `host_combine`,
+  `dplan`, `delta_kernel`, `core_dq`, `core_dkdv`, `linear`).
 - **Differs:** one kernel folds each query row over its keys in tiles of
   32 or 64 with a running maximum, sum and accumulator in base 2 (online
   softmax), never storing a score; the rows of a group of query heads
@@ -1150,12 +1151,20 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   workgroup's vote finds a visible pair. Few workgroups, or on the host
   few rows, split each row's keys into runs, folded in order by a second
   kernel; a host thread adds a vector of its row's columns at a time.
+  Reverse mode on such a core, for keys and values of at most 64
+  dimensions with no float capture or page table, runs three kernels in
+  place of tinygrad's differentiated composition, which stores the
+  scores and the weights: [δ = ō·o - l̄se] by rows, [q̄] by query rows
+  over their keys and [k̄] and [v̄] by keys over their group's rows, each
+  weight recomputed from [lse], the weights and the scores' cotangents
+  rounded once to the operands' dtype for their products, no atomics.
 - **nx:** `nx_kernel.mli` (attention: the pair program, visibility,
   [o] and [lse]), `nx.mli` (`attention`: the bound, the weights rounded
   once to [v]'s dtype for float16 and bfloat16, and a skipped hidden key's
   non-finite value).
 - **Class:** stated bound: `nx.mli`'s, with `rune.mli`'s compiled
-  `Nx.logsumexp` for [ε].
+  `Nx.logsumexp` for [ε]; the derivative's, `rune.mli`'s Attention
+  numerics.
 - **Reason:** (b): nx states attention as one operation over pairs whose
   kernels store nothing of the pair loop's shape; tinygrad's composition
   stores the scores and computes the weights in the query's dtype, which
@@ -1175,7 +1184,14 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   chain at a time; with each thread's columns a vector and the keys of
   fewer rows than `local_workgroups` split, four interleaved rounds
   against those kernels, 2.94-3.40 to 2.12-2.27 ms and 216-233 to 96-120
-  us.
+  us. The gradient of a loss over 8 heads of 2048 bfloat16 rows,
+  `Cuda/attention/jit-grad-bf16-8x2048x64-*`, six rounds against the
+  differentiated composition: 2.31-2.56 ms to 548-567 us full and
+  2.27-2.34 ms to 415-417 us causal; kaun's
+  `Attention/causal-8x256x64-grad-compiled` on the host 2.31-2.53 to
+  2.06-2.31 ms, 699 words a call in both.
 - **Pinned by:** `rune attention › jit within nx's bound of a float64
   reference › every dtype`; `Rune.jit on a GPU › attention › jit holds nx's
-  bound against a float64 reference`; the rows above.
+  bound against a float64 reference`, `› its compiled gradient holds
+  rune's bound against a float64 reference` and `› its gradient mapped by
+  vmap holds rune's bound against a float64 reference`; the rows above.

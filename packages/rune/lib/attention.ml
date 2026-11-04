@@ -237,6 +237,8 @@ let plan spec =
     Memo.plain plans spec.prog !mask ~make:(fun k ->
         make_plan k.prog (Array.sub (Memo.operands k) 1 (n - 1)))
 
+let score_transpose spec = (plan spec).reads.(0)
+
 (* The pieces both directions read *)
 
 type ('v, 's, 'a, 'd) pieces = {

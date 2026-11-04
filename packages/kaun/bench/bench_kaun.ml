@@ -13,7 +13,7 @@
    layer (512 -> 512, batch 128) forward, and forward+backward; - a layer norm
    over 8 x 512 tokens of 512 features; - causal attention over 8 heads of 256
    positions, with and without sinks, forward, and its gradient in the
-   queries.
+   queries, and that gradient compiled.
 
    Every case measures only the operation: inputs, parameters and optimizer
    state are built once in setup, outside the timed region. The train-step cases
@@ -162,7 +162,8 @@ let () =
   let acts = Nx.Rng.normal Nx.float32 [| 8; 512; 512 |] in
 
   (* Causal attention over 8 heads of 256 positions of 64 features, with and
-     without sinks: its output, and its gradient in the queries. *)
+     without sinks: its output, and its gradient in the queries, eager and
+     compiled. *)
   let heads () = Nx.Rng.normal Nx.float32 [| 8; 256; 64 |] in
   let aq = heads () and ak = heads () and av = heads () in
   let sinks = Nx.Rng.normal Nx.float32 [| 8; 1 |] in
@@ -170,6 +171,9 @@ let () =
     Kaun.Attention.scaled_dot_product_attention ~mask:Nx.causal ?sinks q ak av
   in
   let attend_grad ?sinks q = Rune.grad' (fun q -> Nx.sum (attend ?sinks q)) q in
+  let attend_grad_jit =
+    Rune.jit Nx.Ptree.(tensor @-> returns tensor) (fun q -> attend_grad q)
+  in
 
   let budgets =
     [
@@ -204,6 +208,8 @@ let () =
         [
           Thumper.bench "causal 8x256x64" (fun () -> attend aq);
           Thumper.bench "causal 8x256x64 grad" (fun () -> attend_grad aq);
+          Thumper.bench "causal 8x256x64 grad compiled" (fun () ->
+              Nx.sync (attend_grad_jit aq));
           Thumper.bench "causal sinks 8x256x64" (fun () -> attend ~sinks aq);
           Thumper.bench "causal sinks 8x256x64 grad" (fun () ->
               attend_grad ~sinks aq);

@@ -1294,6 +1294,32 @@ let attention_call (type s) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~tk mask =
         fun () -> ignore (synced (f q k v)));
   }
 
+(* Attention's gradient compiled: the query's, keys' and values' of
+   [Σ w∘o] over {!attention_call}'s call, [w] drawn as the operands are. *)
+let attention_grad_call (type s) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~tk mask =
+  {
+    at =
+      (fun (type d) (at : d Nx.Placement.t) ->
+        let draw i s =
+          Nx.place at
+            (Nx.cast dt (Nx.Rng.normal ~key:(Nx.Rng.key i) f32 s))
+        in
+        let q = draw 80 [| 1; hq; tq; 64 |] and w = draw 83 [| 1; hq; tq; 64 |] in
+        let k = draw 81 [| 1; hk; tk; 64 |] and v = draw 82 [| 1; hk; tk; 64 |] in
+        let mask : (d Nx.pair -> d Nx.bool_t) option =
+          match mask with Causal -> Some Nx.causal | _ -> None
+        in
+        let loss = function
+          | [ q; k; v ] ->
+              let o, _ = Nx.attention ?mask ~acc:f32 ~kv:(Nx.Dense { k; v }) q in
+              Nx.sum (Nx.mul (Nx.cast f32 w) (Nx.cast f32 o))
+          | _ -> invalid_arg "attention_grad_call"
+        in
+        let s = Nx.Ptree.(list tensor) in
+        let f = Rune.jit Nx.Ptree.(s @-> returns s) (Rune.grad s loss) in
+        fun () -> ignore (synced_all s (f [ q; k; v ])));
+  }
+
 (* Attention compiled on the host: a causal prefill of 8 heads of 512 rows
    and a decode step of one row a head over 4096 keys, float32. *)
 let host_attention_rows () =
@@ -1470,8 +1496,9 @@ let gpu_rows g =
               fun () -> ignore (synced (f q k)));
         };
       (* Attention: a prefill of 8 heads, 2048 and 4096 rows, full, causal
-         and in a window of 128 keys; a decode step of one row a head over
-         4096 keys; gpt-oss's decode, 64 query heads over 8 key heads. *)
+         and in a window of 128 keys, and the gradient of one of 2048; a
+         decode step of one row a head over 4096 keys; gpt-oss's decode, 64
+         query heads over 8 key heads. *)
       on_gpu g "attention/jit-bf16-8x2048x64-full"
         (attention_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
       on_gpu g "attention/jit-bf16-8x2048x64-causal"
@@ -1482,6 +1509,10 @@ let gpu_rows g =
         (attention_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:4096 ~tk:4096 Window);
       on_gpu g "attention/jit-f32-8x2048x64-full"
         (attention_call f32 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
+      on_gpu g "attention/jit-grad-bf16-8x2048x64-full"
+        (attention_grad_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
+      on_gpu g "attention/jit-grad-bf16-8x2048x64-causal"
+        (attention_grad_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Causal);
       on_gpu g "attention/jit-bf16-decode-8x4096x64"
         (attention_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:1 ~tk:4096 Full);
       on_gpu g "attention/jit-f32-decode-8x4096x64"

@@ -156,10 +156,12 @@ and rune), raven / llama.cpp b12048 Vulkan:
   moves a chunk between every pair of devices: time it against tinygrad's
   ring and hierarchical allreduce on a machine with several GPUs, and if
   it is slower, write those in nx's partition
-- attention under `Rune.jit`: tensor-core backward kernels (the
-  derivative traces the composition; fused SIMT backward kernels ran 2-3x
-  slower); causal saves little (one wave of uneven workgroups); RDNA4 and
-  Metal core paths
+- attention under `Rune.jit`: causal saves little, since a grid under 1.3
+  waves takes as long as its longest workgroup (rows already launch longest
+  first): pair row tiles i and n-1-i, or split long rows' keys; the
+  tensor-core backward leaves head dimensions over 64, float captures'
+  cotangents, paged keys, forward mode and float32 on the composition; RDNA4
+  and Metal core paths
 - a fresh process's first calls fault 72-188 pages each for 1 MiB results
   until rig's buffer cache warms
 - jera's compiled rows gain 2-8 words, one launch per stored piece of an

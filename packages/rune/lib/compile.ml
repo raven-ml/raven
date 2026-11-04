@@ -1502,17 +1502,42 @@ and construct st cs env c base =
       in
       bind (Array.append out tadds)
   | Root { solution; _ } -> bind (Array.map (operand st env) solution)
-  (* Attention's derivative is its default's operations ({!Attention}). *)
-  | Attention_linear { spec; transposed; data; args } ->
-      let operands = Array.append data args in
-      let nd = Array.length data in
-      let q, _ =
-        Trace.trace Staged ~name:"Nx.attention" (Array.map form operands)
-          (fun vs ->
-            Program.attention_linear spec ~transposed (Array.sub vs 0 nd)
-              (Array.sub vs nd (Array.length vs - nd)))
+  (* Attention's derivative: kernels of its own where {!Lower_attention}
+     writes them for the target, else its default's operations
+     ({!Attention}). *)
+  | Attention_linear { spec; transposed; data; args } -> (
+      let operand (V x) : Lower_attention.operand =
+        (D.Any (Nx.dtype x), Nx.shape x, node st env x)
       in
-      bind (inline st cs env q operands)
+      let lowered =
+        if st.split || not transposed then None
+        else
+          match Engine.renderer st.rig with
+          | renderer ->
+              Lower_attention.linear ~device:st.device ~renderer spec ~transposed
+                (Array.map operand data) (Array.map operand args)
+          | exception (Invalid_argument _ | Failure _) -> None
+      in
+      match lowered with
+      | Some ys ->
+          (* Each result reads every operand, none at its own index. *)
+          let r =
+            combine
+              (List.map
+                 (fun (V x) -> (reach env x, false))
+                 (Array.to_list (Array.append data args)))
+          in
+          bind (Array.map (fun y -> (y, r, false)) ys)
+      | None ->
+          let operands = Array.append data args in
+          let nd = Array.length data in
+          let q, _ =
+            Trace.trace Staged ~name:"Nx.attention" (Array.map form operands)
+              (fun vs ->
+                Program.attention_linear spec ~transposed (Array.sub vs 0 nd)
+                  (Array.sub vs nd (Array.length vs - nd)))
+          in
+          bind (inline st cs env q operands))
   | Solve { system; transposed; b; data; captures; _ } ->
       (* The linear solve's program, its operator applications calls of [J]
          or [Jᵀ], its additions dropped: the default's. *)

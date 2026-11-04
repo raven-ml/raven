@@ -1640,11 +1640,18 @@ val jit :
     bfloat16 weights are rounded once to [v]'s dtype for the value product,
     as {!Nx.attention} allows. Its derivatives recompute each pair's weight
     from [lse] and sum their products by contractions and maps of the whole
-    pair loop, each within its row above. A tile of keys that the mask hides from every row
-    a workgroup computes is skipped, so a NaN or an infinity in a value at
-    a key hidden from a row within its length may make that row's [o] a
-    NaN, where nx.cpu's eager result is finite; the derivatives make it
-    one.
+    pair loop, each within its row above. Reverse mode on a tensor core,
+    for float16 and bfloat16 keys and values of at most 64 dimensions, a
+    float32 accumulator, [o] in the query's dtype, no float capture and no
+    page table, sums them in kernels of its own
+    instead: each weight and each score's cotangent rounds once to the
+    operands' dtype before its product, which adds that dtype's unit
+    roundoff times the product's magnitude, and for float16 at most
+    [2{^-25}] times the other factor's for a value below [2{^-14}]. A tile
+    of keys that the mask hides from every row a workgroup computes is
+    skipped, so a NaN or an infinity in a value at a key hidden from a row
+    within its length may make that row's [o] a NaN, where nx.cpu's eager
+    result is finite; the derivatives make it one.
 
     {b Matrices.} A routine computes each matrix of a [float32] or [float64]
     operand, of [m] rows, [n] columns and [k = min m n], to first order in [u]
