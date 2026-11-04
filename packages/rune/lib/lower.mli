@@ -20,7 +20,8 @@
       a [Bitcast] its operand's bits as {!Lower_arith.bitcast} reads them.
     - A [Gather], a [Scatter], a [Fold], an [Assemble], a [Sort] and a
       [Unique] compute as {!Lower_index} states, a [Linalg] as
-      {!Lower_linalg} states, and an [Fft] transforms as {!Lower_fft} does.
+      {!Lower_linalg} states, an [Fft] transforms as {!Lower_fft} does, and
+      an [Attention] computes as {!Lower_attention} states.
 
     {b Numerics.} A result is what {!Nx.Prim.t} states of its operation, within
     the bounds the modules above state. Those bounds implement
@@ -34,6 +35,7 @@ val draws : Nx_kernel.Prog.t -> bool
 
 val op :
   ?dst:Lower_index.dst ->
+  ?renderer:Renderer.t Lazy.t ->
   device:Ops.device ->
   host:bool ->
   ('v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) ->
@@ -41,12 +43,14 @@ val op :
   Ops.t array
 (** [op ~dst ~device ~host node o] is the node of each result of [o], in
     position order, computed on [device], whose kernels compile for the host's
-    processors where [host] holds ({!Tolk_engine.target}). It reads each
-    operand [x] from [node x]. A [Scatter] takes its storage from [dst] where
+    processors where [host] holds ({!Tolk_engine.target}) and are rendered by
+    [renderer]. It reads each operand [x] from [node x]. A [Scatter] takes
+    its storage from [dst] where
     {!Lower_index.scatter} does; another operation ignores it.
 
     Raises [Invalid_argument], naming the operation, for one it does not lower:
-    [Check], which its caller lowers itself, a [Linalg] that {!Lower_linalg.op}
+    [Check], which its caller lowers itself, an [Attention] without
+    [renderer], a [Linalg] that {!Lower_linalg.op}
     refuses, a boolean [Add] [Scatter] or [Fold], a [Sort] along an axis of
     more than [2{^31}] elements ({!Lower_index.sort}), a [Unique] of more
     than [2{^31}] rows, an [Fft] of a precision other than [float32] and

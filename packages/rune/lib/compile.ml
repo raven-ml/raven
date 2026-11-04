@@ -1150,7 +1150,8 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
             decline "an Assemble past 16 times eager's work"
         | _ -> (
             let ys =
-              match Lower.op ?dst ~device ~host read op with
+              let renderer = lazy (Engine.renderer rig) in
+              match Lower.op ?dst ~renderer ~device ~host read op with
               | ys -> ys
               | exception Invalid_argument why -> decline "%s" why
             in

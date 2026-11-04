@@ -373,6 +373,13 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` computes `Nx.attention` in kernels of its own, folding each
+  query row over its keys in tiles with an online softmax, where it composed
+  contractions that stored the scores: nothing of the pair loop's shape is
+  held, a tile the mask hides is skipped, float16 and bfloat16 run both
+  products on CUDA's tensor cores, and a decode step splits its keys. On an
+  RTX 5000 Ada, 8 heads of 2048 bfloat16 rows of 64 take 0.10 ms where the
+  composition took 1.8 ms.
 - `Rune.jit ~beam` (and `BEAM`, `JITBEAM`) compiles a program over devices
   of which none is named by its kind, such as memory devices or `CUDA:1`
   alone. It evaluated such a program uncompiled, with the right values and

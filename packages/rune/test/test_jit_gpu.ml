@@ -10,7 +10,8 @@
    next wait, so the call returns while its work runs, a key split there has
    the host's words, and a program over the GPU and a memory device, devices
    of two targets, compiles to eager's values with replicas equal bit for bit,
-   and a running operation of a prefix is the prefix of its result. It skips
+   and a running operation of a prefix is the prefix of its result, and
+   attention holds its bound against a float64 reference. It skips
    without a GPU, or without the compiler the GPU's kernels need. *)
 
 open Windtrap
@@ -83,6 +84,16 @@ let law c =
   Scatters.law ~flushes:(flushes d) s c
 
 let casts16 dt () = Casts16.law (snd (on_gpu ())) dt
+
+(* The attention law on the GPU, a float64 case discarded where its kernels
+   lack float64. *)
+let attention c =
+  let d, s = on_gpu () in
+  if c.Attentions.dtype = Nx.Dtype.Any Nx.float64 then assume (has_float64 d);
+  Attentions.law s c
+
+let attention_dtypes =
+  Nx.Dtype.[ Any Nx.float16; Any Nx.bfloat16; Any Nx.float32; Any Nx.float64 ]
 
 (* The prefix law on the GPU, a float64 case discarded where its kernels lack
    float64. *)
@@ -924,6 +935,14 @@ let () =
                "a routed MXFP4 expert of 12 tokens streams its matrices across \
                 threads"
                test_routed_prompt;
+           ];
+         group "attention"
+           [
+             prop ~count:12
+               ~examples:(Attentions.examples attention_dtypes)
+               "jit holds nx's bound against a float64 reference"
+               (Gen.with_pp Attentions.pp (Attentions.gen attention_dtypes))
+               attention;
            ];
          group "checks"
            [

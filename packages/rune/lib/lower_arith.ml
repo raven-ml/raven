@@ -653,25 +653,45 @@ let coord s a =
 
 (* Programs *)
 
-let prog (p : P.t) s ins =
-  if Stdlib.(Array.length ins <> Iarray.length p.ins) then
-    invalid_arg "Lower_arith.prog: one node per operand";
+(* The parts of each output of [p], its leaves' parts given by [leaf]. *)
+let run (p : P.t) leaf =
   let dtype_of i = P.dtype p i in
   let values = Array.make (Iarray.length p.nodes) [] in
   Iarray.iteri
     (fun i (n : P.node) ->
       values.(i) <-
         (match n with
-        | In k -> parts (Iarray.get p.ins k) ins.(k)
-        | Coord a -> [ coord s a ]
-        | Const (dt, b) -> const dt b s
+        | (In _ | Coord _ | Const _) as n -> leaf n
         | Op1 (k, dt, j) -> op1 k ~src:(dtype_of j) dt values.(j)
         | Op2 (k, j, l) -> op2 k (dtype_of j) values.(j) values.(l)
         | Op3 (k, j, l, m) ->
             op3 k (dtype_of l) values.(j) values.(l) values.(m)))
     p.nodes;
-  Iarray.to_array p.outs
-  |> Array.map (fun o -> of_parts (dtype_of o) values.(o))
+  Iarray.to_array p.outs |> Array.map (fun o -> values.(o))
+
+let prog (p : P.t) s ins =
+  if Stdlib.(Array.length ins <> Iarray.length p.ins) then
+    invalid_arg "Lower_arith.prog: one node per operand";
+  let leaf : P.node -> _ = function
+    | In k -> parts (Iarray.get p.ins k) ins.(k)
+    | Coord a -> [ coord s a ]
+    | Const (dt, b) -> const dt b s
+    | _ -> assert false
+  in
+  let outs = run p leaf in
+  Array.mapi (fun i v -> of_parts (P.dtype p (Iarray.get p.outs i)) v) outs
+
+let scalar (p : P.t) ~coord ins =
+  if Stdlib.(Array.length ins <> Iarray.length p.ins) then
+    invalid_arg "Lower_arith.scalar: one element per operand";
+  let leaf : P.node -> _ = function
+    | In k -> ins.(k)
+    | Coord a -> [ coord a ]
+    | Const (dt, b) ->
+        List.map (fun c -> Ops.const ~dtype:(dtype dt) c) (values dt b)
+    | _ -> assert false
+  in
+  run p leaf
 
 let cast ~src dt x = of_parts dt (cast_parts ~src dt (parts src x))
 

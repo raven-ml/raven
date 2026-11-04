@@ -167,7 +167,8 @@ let set_of (type d) (loads : d Nx.Prim.load iarray)
 (* [op], a loop over the window of its loop's shape at [origin] on [here],
    reading its coordinates along each axis where windows start apart, where it
    reads them, as the window there of [arange] of the whole axis on [here],
-   broadcast to its shape. Every other window starts at [0]. *)
+   broadcast to its shape. Every other window starts at [0]. Attention, which
+   is lowered whole, reads each coordinate offset by its window's start. *)
 let windowed (type r) here (op : r Nx.Prim.t) (origin : Nx.Prim.origin) :
     r Nx.Prim.t =
   let { Nx.Prim.start; extents } = origin and shape = loop_shape op in
@@ -207,6 +208,15 @@ let windowed (type r) here (op : r Nx.Prim.t) (origin : Nx.Prim.origin) :
   let no_set () = invalid_arg "Rune.jit: a loop over a window lies nowhere" in
   match op with
   | _ when n = 0 -> op
+  (* Attention's pair program reads its coordinates in the whole: each
+     offset by its window's start. *)
+  | Attention a ->
+      let shift : P.node -> P.E.any option = function
+        | Coord c when c < n && start.(c) > 0 ->
+            Some P.E.(any (coord c + const D.Int64 (Int64.of_int start.(c))))
+        | _ -> None
+      in
+      Attention { a with prog = P.subst ~ins:a.prog.ins shift a.prog }
   | Map m -> (
       match set_of m.loads m.at with
       | None -> no_set ()

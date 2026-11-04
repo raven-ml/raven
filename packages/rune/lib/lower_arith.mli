@@ -79,6 +79,15 @@ val prog : Nx_kernel.Prog.t -> int array -> Ops.t array -> Ops.t array
 
     Raises [Invalid_argument] unless [ins] has one node per operand of [p]. *)
 
+val scalar :
+  Nx_kernel.Prog.t -> coord:(int -> Ops.t) -> Ops.t list array -> Ops.t list array
+(** [scalar p ~coord ins] is the {!parts} of each output of [p] at one index
+    of a kernel, its operand [i]'s parts the scalars [ins.(i)] and a
+    [Coord a] the [Int64] scalar [coord a]. It computes as {!prog} does.
+
+    Raises [Invalid_argument] unless [ins] has an element per operand of
+    [p]. *)
+
 val binary :
   Nx_kernel.Prog.binary ->
   Nx_array.Dtype.any ->

@@ -3,11 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Nx.attention under rune's transformations, which give its operation the
-   meaning of the operations it composes, drawn over dense and paged keys,
-   lengths, grouped heads, and masks and scores that capture arrays:
+(* Nx.attention under rune's transformations, drawn over dense and paged
+   keys, lengths, grouped heads, and masks and scores that capture arrays:
    - Rune.jit against the eager kernel, each within nx.mli's bound of the
-     exact result, rune.mli's constants for the compiled one;
+     exact result, rune.mli's constants for the compiled one, and against a
+     float64 reference at every dtype (Attentions);
    - Rune.vmap against each lane eagerly, bit for bit: a vmapped axis is a
      lead axis of the one operation, and nx.cpu's rows are their own;
    - Rune.jvp against central differences, and Rune.grad against them.
@@ -221,6 +221,55 @@ let law_jit dt acc c =
 
 let bits a = Array.map Int64.bits_of_float (Nx.to_array a)
 
+(* Keys and values cut across two devices along their keys, Rune.jit
+   against the eager call on one device: each part's coordinates are the
+   whole's, so a causal or captured mask hides the same pairs. nx.mli's bound
+   over parts doubles [η] and takes [ε] three times the parts' plus a
+   Logsumexp of two: within four times the one-device sum of bounds. *)
+module Two = (val Nx.devices [ Nx_support.memory 0; Nx_support.memory 1 ])
+
+let law_cut dt acc c =
+  cover "lengths" (c.lengths <> None);
+  cover "causal" (c.mask = Causal);
+  let c = { c with page = None; tk = 2 * c.tk; alibi = false } in
+  let c = if c.mask = Captured then { c with mask = Causal } else c in
+  let lead = [| 2 |] in
+  let k, v = keys dt c lead in
+  let q = draw dt c 1. [| 2; hq c; c.tq; c.dk |] in
+  let o, lse = call acc c ~lead q k v in
+  let f (type d) (q : (float, _, d) Nx.t) k v =
+    let lengths =
+      Option.map
+        (fun l ->
+          Nx.place (Nx.beside q)
+            (Nx.create Nx.int64 lead (Array.map Int64.of_int (Array.sub l 0 2))))
+        c.lengths
+    in
+    let mask = if c.mask = Causal then Some Nx.causal else None in
+    Nx.attention ?lengths ?mask ~acc ~kv:(Nx.Dense { k; v }) q
+  in
+  let split x = Nx.place (Nx.Placement.split ~axis:2 Two.v) x in
+  let o', lse' =
+    Rune.jit T.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor)) f
+      (Nx.place Two.on q) (split k) (split v)
+  in
+  let host x = Nx.to_array (Nx.place Nx.Host.on x) in
+  let o = Nx.to_array o and o' = host o' in
+  let lse = Nx.to_array lse and lse' = host lse' in
+  Array.iteri
+    (fun i l ->
+      if l = Float.neg_infinity then
+        equal ~msg:"an empty row's lse" float_exact l lse'.(i)
+      else begin
+        let tl, to_ = tolerances dt acc c l in
+        at_most ~msg:"lse" float_exact ~than:(4. *. tl) (Float.abs (l -. lse'.(i)));
+        for d = 0 to c.dv - 1 do
+          let j = (i * c.dv) + d in
+          at_most ~msg:"o" float_exact ~than:(4. *. to_) (Float.abs (o.(j) -. o'.(j)))
+        done
+      end)
+    lse
+
 (* Lanes of query rows over keys and values the lanes share. *)
 let law_vmap dt acc c =
   cover "paged" (c.page <> None);
@@ -358,6 +407,17 @@ let () =
          group "jit within the bounds of eager"
            (three ~examples 12 (law_jit f32 f32) (law_jit f64 f64)
               (law_jit f32 f64));
+         group "jit within nx's bound of a float64 reference"
+           (let dts = Nx.Dtype.[ Any Nx.float16; Any Nx.bfloat16; Any Nx.float32; Any Nx.float64 ] in
+            [
+              prop
+                ~examples:(Rune_support.Attentions.examples dts)
+                ~count:12 "every dtype"
+                (Gen.with_pp Rune_support.Attentions.pp (Rune_support.Attentions.gen dts))
+                (Rune_support.Attentions.law (module Nx.Host));
+            ]);
+         group "jit over keys cut across two devices"
+           (three 12 (law_cut f32 f32) (law_cut f64 f64) (law_cut f32 f64));
          group "vmap is each lane, bit for bit"
            (three 60 (law_vmap f32 f32) (law_vmap f64 f64) (law_vmap f32 f64));
          group "vmap over lanes' own pools is each lane, bit for bit"

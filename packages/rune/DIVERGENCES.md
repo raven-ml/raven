@@ -1141,3 +1141,34 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   bound`, `› real transforms hold their bound`, `› real inverse transforms
   hold their bound`, which cover transforms of no point, odd and mixed
   factors and a prime factor above 250.
+
+### L11. Attention folds its keys in kernels of its own
+
+- **Reference:** `mixin/rand.py:298-330` (`scaled_dot_product_attention`:
+  the scores' product in float32, cast to the query's dtype, `softmax`,
+  then the product with the values, each a kernel and the scores stored).
+- **Raven:** `lower_attention.ml` (`lower`, `simt`, `core`, `plan`,
+  `classes`, `skipping`, `run_tiles`, `combine`).
+- **Differs:** one kernel folds each query row over its keys in tiles of
+  32 or 64 with a running maximum, sum and accumulator in base 2 (online
+  softmax), never storing a score; the rows of a group of query heads
+  share each tile of keys. On a target whose tensor core of a narrow
+  float's products chains its accumulator into its own operand, float16
+  and bfloat16 attention computes both products on the core and rounds
+  each weight once to the values' dtype. A tile the mask's ranges over the
+  tile's pairs hide is skipped; one they leave unknown runs where a
+  workgroup's vote finds a visible pair. Few workgroups split each row's
+  keys into runs, folded in order by a second kernel.
+- **nx:** `nx_kernel.mli` (attention: the pair program, visibility,
+  [o] and [lse]), `nx.mli` (`attention`: the bound, the weights rounded
+  once to [v]'s dtype for float16 and bfloat16, and a skipped hidden key's
+  non-finite value).
+- **Class:** stated bound: `nx.mli`'s, with `rune.mli`'s compiled
+  `Nx.logsumexp` for [ε].
+- **Reason:** (b): nx states attention as one operation over pairs whose
+  kernels store nothing of the pair loop's shape; tinygrad's composition
+  stores the scores and computes the weights in the query's dtype, which
+  nx's bound does not allow.
+- **Pinned by:** `rune attention › jit within nx's bound of a float64
+  reference › every dtype`; `Rune.jit on a GPU › attention › jit holds nx's
+  bound against a float64 reference`.

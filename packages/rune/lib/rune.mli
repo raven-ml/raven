@@ -1633,12 +1633,18 @@ val jit :
     a scatter and {!Nx.combine_patches}. Special values are eager's, and a
     variance is never negative.
 
-    {b Attention.} {!Nx.attention} compiles, and differentiates, as two
-    contractions, a map of its mask and score, a log-sum-exp and a map of
-    its weights, each within its row above, so its results hold
-    {!Nx.attention}'s bound with those rows' constants. A NaN or an infinity
-    in a value at a key hidden from a row within its length makes that
-    row's [o] a NaN there, where nx.cpu's eager result is finite.
+    {b Attention.} A compiled {!Nx.attention} folds each query row over its
+    keys in tiles, with a running maximum, sum and accumulator, so its
+    results hold {!Nx.attention}'s bound with [ε] the bound of a compiled
+    {!Nx.logsumexp} of [tk] terms above. On a tensor core, float16 and
+    bfloat16 weights are rounded once to [v]'s dtype for the value product,
+    as {!Nx.attention} allows. It differentiates as two contractions, a map
+    of its mask and score, a log-sum-exp and a map of its weights, each
+    within its row above. A tile of keys that the mask hides from every row
+    a workgroup computes is skipped, so a NaN or an infinity in a value at
+    a key hidden from a row within its length may make that row's [o] a
+    NaN, where nx.cpu's eager result is finite; the derivatives make it
+    one.
 
     {b Matrices.} A routine computes each matrix of a [float32] or [float64]
     operand, of [m] rows, [n] columns and [k = min m n], to first order in [u]
