@@ -65,11 +65,32 @@ let map1 (type v s d) e (dt : (v, s) D.t) shape (prog : P.t)
             at = None;
           }))
 
-(* The map of the expression [out] over [loads], into [dt]. *)
-let map (type v s d) e (dt : (v, s) D.t) shape (loads : d Prim.any list)
-    (out : (v, s) E.t) : (v, s, d) Nx.t =
+(* Programs and patterns made once per domain, by what they depend on: a
+   derivative's call otherwise builds and parses them each time. *)
+let programs : (string * int * string list, P.t) Hashtbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Hashtbl.create 16)
+
+let patterns : (int * string, Nx.Pattern.t) Hashtbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Hashtbl.create 16)
+
+(* The map of the expression [out ()] over [loads], into [dt]; [name] with
+   the loads' dtypes and the rank names the expression. *)
+let map (type v s d) e ~name (dt : (v, s) D.t) shape (loads : d Prim.any list)
+    (out : unit -> (v, s) E.t) : (v, s, d) Nx.t =
   let ins = List.map (fun (Prim.Any x) -> D.Any (Nx.dtype x)) loads in
-  map1 e dt shape (P.of_exprs ~ins:(ia (Array.of_list ins)) [| E.any out |]) loads
+  let key =
+    (name, Array.length shape, List.map (fun (D.Any d) -> D.name d) ins)
+  in
+  let tbl = Domain.DLS.get programs in
+  let prog =
+    match Hashtbl.find_opt tbl key with
+    | Some p -> p
+    | None ->
+        let p = P.of_exprs ~ins:(ia (Array.of_list ins)) [| E.any (out ()) |] in
+        Hashtbl.add tbl key p;
+        p
+  in
+  map1 e dt shape prog loads
 
 (* [x] with [ones] axes of one element after its own, broadcast to [s]. *)
 let spread e ~ones s x =
@@ -84,14 +105,14 @@ let positions e ~pages ~page (table : 'd Nx.int64_t) =
   let t = Array.append lead [| max_pages; page |] in
   let x = spread e ~ones:1 t table in
   let y =
-    map e D.Int64 t [ Prim.Any x ]
-      E.(
+    map e ~name:(Printf.sprintf "positions %d %d" pages page) D.Int64 t
+      [ Prim.Any x ] (fun () -> E.(
         let x = input 0 D.Int64 in
         let i64 n = const D.Int64 (Int64.of_int n) in
         where
           (i64 0 <= x && x < i64 pages)
           ((x * i64 page) + coord r)
-          (i64 (-1)))
+          (i64 (-1))))
   in
   reshape e (Array.append lead [| max_pages * page |]) y
 
@@ -136,15 +157,14 @@ let paged_write e (positions : 'd Nx.int64_t) (pool : ('v, 's, 'd) Nx.t)
   in
   let dt = Nx.dtype y in
   let idx =
-    map e D.Int64 s [ Prim.Any p ]
-      E.(maximum (input 0 D.Int64) (const D.Int64 0L))
+    map e ~name:"clamped" D.Int64 s [ Prim.Any p ] (fun () ->
+        E.(maximum (input 0 D.Int64) (const D.Int64 0L)))
   in
   let updates =
-    map e dt s [ Prim.Any y; Prim.Any p ]
-      E.(
+    map e ~name:"read" dt s [ Prim.Any y; Prim.Any p ] (fun () -> E.(
         where
           (input 1 D.Int64 < const D.Int64 0L)
-          (const dt (D.zero dt)) (input 0 dt))
+          (const dt (D.zero dt)) (input 0 dt)))
   in
   let into =
     Nx.copy
@@ -236,14 +256,23 @@ type ('v, 's, 'a, 'd) pieces = {
    axes' names. *)
 let contract (type a v s w r d) (acc : (float, a) D.t) ~lead spec
     (a : (v, s, d) Nx.t) (b : (w, r, d) Nx.t) =
-  let l = String.concat " " (List.init lead (Printf.sprintf "z%d")) in
-  let spec =
-    String.concat ""
-      (List.map
-         (fun c -> if c = '#' then l else String.make 1 c)
-         (List.of_seq (String.to_seq spec)))
+  let tbl = Domain.DLS.get patterns in
+  let pattern =
+    match Hashtbl.find_opt tbl (lead, spec) with
+    | Some p -> p
+    | None ->
+        let l = String.concat " " (List.init lead (Printf.sprintf "z%d")) in
+        let text =
+          String.concat ""
+            (List.map
+               (fun c -> if c = '#' then l else String.make 1 c)
+               (List.of_seq (String.to_seq spec)))
+        in
+        let p = Nx.Pattern.v text in
+        Hashtbl.add tbl (lead, spec) p;
+        p
   in
-  Nx.contract ~acc acc (Nx.Pattern.v spec) a b
+  Nx.contract ~acc acc pattern a b
 
 (* [x], [[lead…; hq; tq; d]], as [[lead…; hk; g; tq; d]]. *)
 let grouped e pc ~hk x =
@@ -263,12 +292,11 @@ let within (type v s d) e (lengths : d Nx.int64_t option) (x : (v, s, d) Nx.t)
       let sx = Nx.shape x in
       let key = Array.length sx - 2 in
       let dt = Nx.dtype x in
-      map e dt sx
-        [ Prim.Any x; Prim.Any (spread e ~ones:3 sx len) ]
-        E.(
+      map e ~name:"within" dt sx
+        [ Prim.Any x; Prim.Any (spread e ~ones:3 sx len) ] (fun () -> E.(
           where
             (coord key < input 1 D.Int64)
-            (input 0 dt) (const dt (D.zero dt)))
+            (input 0 dt) (const dt (D.zero dt))))
 
 let pieces (type v s a d) e spec ~(acc : (float, a) D.t) (q : (v, s, d) Nx.t)
     (kv : (v, s, d) Nx.kv) (lengths : d Nx.int64_t option)
@@ -309,8 +337,9 @@ let pieces (type v s a d) e spec ~(acc : (float, a) D.t) (q : (v, s, d) Nx.t)
   let key = r - 1 in
   let at = 1 + Option.fold ~none:0 ~some:(fun _ -> 1) lengths in
   let seen =
-    map e D.Bool f (Prim.Any visible :: extra)
-      E.(
+    map e
+      ~name:(Printf.sprintf "seen %b %b" (Option.is_some lengths) (Option.is_some positions))
+      D.Bool f (Prim.Any visible :: extra) (fun () -> E.(
         let seen = input 0 D.Bool in
         let seen =
           match lengths with
@@ -319,20 +348,19 @@ let pieces (type v s a d) e spec ~(acc : (float, a) D.t) (q : (v, s, d) Nx.t)
         in
         match positions with
         | Some _ -> seen && const D.Int64 0L <= input at D.Int64
-        | None -> seen)
+        | None -> seen))
   in
   let row = spread e ~ones:1 f lse in
   let p =
-    map e acc f
-      [ Prim.Any seen; Prim.Any score; Prim.Any row ]
-      E.(
+    map e ~name:"weight" acc f
+      [ Prim.Any seen; Prim.Any score; Prim.Any row ] (fun () -> E.(
         let row = input 2 acc in
         where (input 0 D.Bool)
           (where
              (row = const acc Float.neg_infinity)
              (const acc 0.)
              (exp (input 1 acc - row)))
-          (const acc 0.))
+          (const acc 0.)))
   in
   { lead = l; f; shape; k; v; positions; s; seen; p }
 
@@ -340,9 +368,8 @@ let pieces (type v s a d) e spec ~(acc : (float, a) D.t) (q : (v, s, d) Nx.t)
    counts. *)
 let where_seen e pc x =
   let dt = Nx.dtype x in
-  map e dt pc.f
-    [ Prim.Any pc.seen; Prim.Any x ]
-    E.(where (input 0 D.Bool) (input 1 dt) (const dt (D.zero dt)))
+  map e ~name:"seen only" dt pc.f
+    [ Prim.Any pc.seen; Prim.Any x ] (fun () -> E.(where (input 0 D.Bool) (input 1 dt) (const dt (D.zero dt))))
 
 let tangent (type v s w r a d) e spec ~(acc : (float, a) D.t)
     (q : (v, s, d) Nx.t) (kv : (v, s, d) Nx.kv) lengths
