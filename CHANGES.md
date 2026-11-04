@@ -1019,10 +1019,15 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Kernels built by hand whose reduce runs one trip, or whose rows, columns
+  or reduce are empty, compile and run: a sum over one trip raised "some
+  reduce srcs aren't ranges", a product of no row did not terminate, and
+  `Heuristic.hand_coded_optimizations` upcast an empty kernel into vectors
+  past its storage. A kernel holding a range of no trip takes no hand-coded
+  optimisation.
 - Clang selects a half by its bits, in a selection and in a gated load
   (`Cstyle.clang`): C computed `c ? a : b` of two `__fp16`s in float, which
   could quiet a signalling NaN. A `__bf16` takes the same form.
-
 - Kernels that each store into regions of the same two buffers, as the
   stores of crossed assemblies `[a; b]` and `[b; a]` over several devices
   do, schedule: `Schedule.create_schedule` ordered each before the other and

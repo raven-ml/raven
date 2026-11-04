@@ -3280,6 +3280,104 @@ let reduces_under_gates =
         unbounded_loop;
     ]
 
+(* Kernels of few trips
+
+   [out[i, j]] is a reduce over [k] of [a[i, k] * b[k, j]], under a gate on
+   [fl[i]] or none: products of [m] by [k] by [n], each of which may be 0 or 1,
+   so that a reduce runs no trip or one, and a buffer may hold no element, its
+   ranges and indices in the weak integer or in [Int32]. The values are
+   {!nonzero}: the sign of a sum of zeros is left open. *)
+
+type few = {
+  shape : int * int * int;
+  index : Dtype.t;
+  rop : Op.t;
+  gate : gate option;
+  heuristic : bool;
+}
+
+let few_kernel { shape = m, k, n; index; rop; gate; heuristic } =
+  let open Ops.O in
+  let int n = Ops.int ~dtype:index n in
+  let param slot size = Shape.param ~shape:[ Int size ] slot Float32 in
+  let out = param 0 Stdlib.(m * n)
+  and a = param 1 Stdlib.(m * k)
+  and b = param 2 Stdlib.(k * n)
+  and fl = Shape.param ~shape:[ Int m ] 3 Int32 in
+  let range size axis = Ops.range ~dtype:index (Int size) [ axis ] in
+  let i = range m 0 and j = range n 1 and kk = range k 2 in
+  let ld buf at = Ops.load (Ops.index buf [ at ]) [] in
+  let x = ld a ((i * int k) + kk) * ld b ((kk * int n) + j) in
+  let r = Ops.reduce x rop [ kk ] in
+  let on = ld fl i <> Ops.int ~dtype:Int32 0 in
+  let v =
+    match gate with
+    | None -> r
+    | Some Selected -> Ops.where on r (Ops.float ~dtype:Float32 rest_value)
+    | Some _ -> Ops.where on r (Shape.const_like r `Invalid)
+  in
+  let store = Ops.store (Ops.index out [ (i * int n) + j ]) v in
+  let opts_to_apply = if heuristic then None else Some [] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ?opts_to_apply ())
+    [ Ops.end_ store [ i; j ] ]
+
+let few_gen =
+  let open Gen in
+  let size = of_list ~pp:Format.pp_print_int [ 0; 1; 2; 4; 8 ] in
+  let trips = of_list ~pp:Format.pp_print_int [ 0; 1; 2; 3; 16 ] in
+  let rop = of_list Op.[ Add; Max; Mul ] in
+  let gate = of_list [ None; Some Stored; Some Selected ] in
+  let index = of_list Dtype.[ Weak_int; Int32 ] in
+  let pp ppf { shape = m, k, n; index; rop; gate; heuristic } =
+    Format.fprintf ppf "%d by %d by %d in %a, %a, %s, %s" m k n Dtype.pp index
+      Op.pp rop
+      (match gate with None -> "ungated" | Some g -> gate_name g)
+      (if heuristic then "the heuristic" else "no optimisation")
+  in
+  with_pp pp
+    (let+ m = size and+ k = trips and+ n = size and+ index = index
+     and+ rop = rop and+ gate = gate and+ heuristic = bool in
+     { shape = (m, k, n); index; rop; gate; heuristic })
+
+(* What [few_kernel f] writes, evaluated node by node over [buffers], on
+   [out] filled with {!sentinel}. *)
+let few_expected f buffers =
+  let m, _, n = f.shape in
+  let out = Array.make (m * n) (`Float sentinel) in
+  List.iter
+    (fun (slot, e, v) -> if slot = 0 then out.(e) <- v)
+    (Interpreter.writes ~buffers (few_kernel f));
+  out
+
+let few_trips device f =
+  let m, k, n = f.shape in
+  cover "a reduce of no trip" (k = 0);
+  cover "a reduce of one trip" (k = 1);
+  cover "a buffer of no element" (m = 0 || n = 0 || k = 0);
+  cover "a gated product" (Option.is_some f.gate);
+  cover "a typed index" (not (Dtype.equal f.index Dtype.Weak_int));
+  let buffers =
+    [
+      (1, floats (nonzero 1 (m * k)));
+      (2, floats (nonzero 2 (k * n)));
+      (3, ints (Array.init m (fun i -> i mod 2)));
+    ]
+  in
+  let run = gated_runner device (few_kernel f) in
+  equal (array Dtypes.value) (few_expected f buffers)
+    (List.assoc 0
+       (run ((0, floats (Array.make (m * n) sentinel)) :: buffers)))
+
+let few_trips_tests =
+  group "kernels of few trips"
+    [
+      prop "on the host, write what they compute node by node" few_gen
+        (few_trips Host);
+      prop "on CUDA, write what they compute node by node" few_gen
+        (few_trips Cuda);
+    ]
+
 (* Reductions over a variable size
 
    A kernel reduces [x], of [hi] floats, over a range whose size is a variable
@@ -6569,4 +6667,5 @@ let () =
          effects;
          folded_effects;
          reduces_under_gates;
+         few_trips_tests;
        ])

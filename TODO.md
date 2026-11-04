@@ -131,8 +131,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - `Heuristic.block`'s unroll of the last reduce dimension can pick an
   argmax's range instead of the contraction's (speed only; patched
   tinygrad does the same)
-- hand-built kernels with a reduce of 0 or 1 trips, or a parameter of size
-  0, fail in tolk before any optimisation
 - `simplify.ml`'s `mark_gated` and `coalesce.ml` read only a bare
   `Op.Const` where a typed constant (`Ops.is_literal`) also holds (speed)
 - HIP's unstaged tensor-core operands load 8 bytes again since D261's copy

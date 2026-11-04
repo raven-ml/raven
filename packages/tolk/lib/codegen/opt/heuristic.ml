@@ -1739,25 +1739,34 @@ let general k =
   k
 
 let hand_coded_with ~core_threads k =
-  let s = streams k in
-  let stream s = stream (K.copy k) s in
-  let early = match s with Some s when early k s -> stream s | _ -> None in
-  (* Past [stream_first] a decoded operand streams too: the other rules share
-     only their upcast of 4 rows, and decode each value in every other tile,
-     16 times at 64 rows. *)
-  let late () =
-    match s with
-    | Some ((w, _, reuse) as s)
-      when Bigint.(leq reuse (of_int stream_first)) || decoded w ->
-        stream s
-    | _ -> None
+  (* A range of no trip leaves no work to share among lanes or threads, and
+     the rules below take each range to run: an upcast of the outputs over an
+     empty reduce reads vectors of its empty operands. *)
+  let no_trip u =
+    op u = Op.Range && Dtype.Value.(compare (vmax u) (of_int 0)) < 0
   in
-  match early with
-  | Some k -> k
-  | None -> (
-      match tensor_cores ~core_threads k with
-      | Some tk -> tk
-      | None -> ( match late () with Some k -> k | None -> general k))
+  if List.exists no_trip (Nodes.to_list (backward_slice ~calls:Skip (K.ast k)))
+  then K.copy k
+  else
+    let s = streams k in
+    let stream s = stream (K.copy k) s in
+    let early = match s with Some s when early k s -> stream s | _ -> None in
+    (* Past [stream_first] a decoded operand streams too: the other rules share
+       only their upcast of 4 rows, and decode each value in every other tile,
+       16 times at 64 rows. *)
+    let late () =
+      match s with
+      | Some ((w, _, reuse) as s)
+        when Bigint.(leq reuse (of_int stream_first)) || decoded w ->
+          stream s
+      | _ -> None
+    in
+    match early with
+    | Some k -> k
+    | None -> (
+        match tensor_cores ~core_threads k with
+        | Some tk -> tk
+        | None -> ( match late () with Some k -> k | None -> general k))
 
 let hand_coded_optimizations k = hand_coded_with ~core_threads k
 

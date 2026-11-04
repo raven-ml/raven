@@ -112,16 +112,21 @@ let merge_ranges u =
   let merge (r0, r1) =
     let s1 = nth r1 0 in
     let n = replace r0 ~src:[ simplify O.(nth r0 0 * s1) ] in
-    let q = O.(n // s1) and m = O.(n % s1) in
-    let subs = Tbl.create 2 in
-    Tbl.replace subs r0 q;
-    Tbl.replace subs r1 m;
-    let ret =
-      graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:subs u
-        (After_sources merge_rewrite)
-    in
-    let left = backward_slice ~calls:Skip ret in
-    if Nodes.mem q left || Nodes.mem m left then None else Some ret
+    (* Where the product is [r0]'s own size, as when [r0] runs no trip, [n] is
+       [r0], and substituting [n / size r1] for it never ends: the ranges stay
+       apart. *)
+    if n == r0 then None
+    else
+      let q = O.(n // s1) and m = O.(n % s1) in
+      let subs = Tbl.create 2 in
+      Tbl.replace subs r0 q;
+      Tbl.replace subs r1 m;
+      let ret =
+        graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:subs u
+          (After_sources merge_rewrite)
+      in
+      let left = backward_slice ~calls:Skip ret in
+      if Nodes.mem q left || Nodes.mem m left then None else Some ret
   in
   List.find_map
     (fun p -> if merges p then merge p else None)
@@ -348,21 +353,29 @@ let no_range u = not (op_in_backward_slice_with_self ~calls:Skip u [ Op.Range ])
    a product raises it to [n], and a maximum, or a bool sum or product (an or,
    an and), which are idempotent, is the value. Ranges that run no time, as a
    variable's of size 0, make the reduction its identity, where the sum of an
-   infinity would be NaN and the maximum the value. *)
+   infinity would be NaN and the maximum the value. A range of one trip folds
+   to its one value, a constant, which binds nothing: the reduction drops it,
+   so that [x] summed over [r] of size 1 is [x] at [r = 0]. *)
 let reduce_unparented red =
   match arg red with
   | Reduce { op = (Op.Add | Op.Max | Op.Mul) as rop; _ } -> (
-      let value, rngs = (nth red 0, List.tl (src red)) in
-      if not (List.for_all (fun x -> op x = Op.Range) rngs) then
+      let value = nth red 0 in
+      let rngs, folded =
+        List.partition (fun x -> op x = Op.Range) (List.tl (src red))
+      in
+      if not (List.for_all is_literal folded) then
         invalid_arg "some reduce srcs aren't ranges";
       let within = ranges value in
-      match List.partition (fun x -> Nodes.mem x within) rngs with
-      | _, [] -> None
-      | parented, r :: rs ->
-          let ret =
-            if List.is_empty parented then value
-            else replace red ~src:(value :: parented)
-          in
+      let parented, unparented =
+        List.partition (fun x -> Nodes.mem x within) rngs
+      in
+      let ret =
+        if List.is_empty parented then value
+        else replace red ~src:(value :: parented)
+      in
+      match unparented with
+      | [] -> if List.is_empty folded then None else Some ret
+      | r :: rs ->
           let n = uprod (nth r 0) (List.map (fun r -> nth r 0) rs) in
           let ret =
             match rop with

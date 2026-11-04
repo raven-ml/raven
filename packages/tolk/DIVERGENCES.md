@@ -7606,3 +7606,41 @@ and an initial value is added after it (D260).
   have two kernels that two Afters list, and `create_linear_with_vars ›
   writes › stores crossed into two buffers write both`; rune's `Jit_devices
   › assemblies give eager's bits › crossed assemblies of computed pieces`.
+
+## D331. A reduce of one trip or none, and a range of no trip, compile
+
+- **tinygrad:** `codegen/simplify.py:84` (`reduce_unparented`), which
+  asserts that every source of a reduce past its value is a range, where
+  `uop/symbolic.py:289` folds a range of one trip to its one value, a
+  constant; `codegen/simplify.py:34-38` (`merge_ranges`), which merges a
+  range of size 0 into a range of the size it has, the same node, and
+  substitutes its quotient for it; `codegen/opt/heuristic.py:8`
+  (`hand_coded_optimizations`), which optimises a kernel that runs no trip
+  of a range as any other.
+- **tolk:** `Simplify.pm_reduce_unparented`, `Simplify.pm_simplify_ranges`
+  and `Heuristic.hand_coded_optimizations`.
+- **Differs:** a constant source of a reduce, a range of one trip folded,
+  binds nothing, and the reduce drops it, a typed integer's constant (a
+  cast of one) too: a sum over one trip is its one value. Two ranges merge
+  only into a range other than the first, so a first range of no trip stays
+  whole. A kernel holding a range of no trip
+  takes no hand-coded optimisation.
+- **Reason:** (e): tinygrad raises on kernels built by hand that compute a
+  value. `out[i, j] = Σ_k a[i, k] b[k, j]` over one `k` raises "some
+  reduce srcs aren't ranges", with or without optimisations; over no row
+  `i`, `graph_rewrite` stalls, its substitution reaching itself; over no
+  `k`, the heuristic's upcast of `j` by 4 merges loads of `b`, which holds
+  no element, into a vector past its end ("invalid shrink"). tolk raised the
+  same, and on CUDA its streamed product found no contracted range, and on
+  the host over no column an upcast of rows put two lanes' stores at one
+  address ("attempting multiple stores"). A kernel that runs no trip of a
+  range does no work along it to share among lanes or threads: an
+  unoptimised one writes the same values, a sum over no trip its identity.
+- **Pinned by:** the Codegen suite's `kernels of few trips › on the host,
+  write what they compute node by node` and `› on CUDA, ...`, over products
+  of 0 to 8 rows and columns and of 0 to 16 trips, sums, maxima and
+  products, gated or not, with and without the heuristic, against the
+  interpreter, their indices in the weak integer or `Int32`; the Simplify
+  suite's `pm_reduce_simplify › a sum over a range of size 1 is its value
+  where the range is 0` and `› a sum over a typed range of size 1 is its
+  value where it is 0`.

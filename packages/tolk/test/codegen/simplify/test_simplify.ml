@@ -471,12 +471,20 @@ let reduce_simplifying =
           let inner = sum (Ops.cast Ops.O.(s + r) Float32) [ s ] in
           let u = sum inner [ r ] in
           equal uop u (reduce_simplify u));
-      test "a sum over a range of size 1 is refused, the range folding to 0"
+      test "a sum over a range of size 1 is its value where the range is 0"
         (fun () ->
           let one = reduce_range 1 2 in
-          raises_match (Exn.invalid_arg ?sub:None) (fun () ->
-              reduce_simplify
-                (sum (Ops.where Ops.O.(one < Ops.int 0) two zero) [ one ])));
+          sums_to (`Float 2.)
+            (reduce_simplify
+               (sum (Ops.where Ops.O.(one < Ops.int 1) two zero) [ one ])));
+      cases "a sum over a typed range of size 1 is its value where it is 0"
+        ~id:(Format.asprintf "%a" Dtype.pp)
+        Dtype.[ Int32; Int64; Uint32 ]
+        (fun dt ->
+          let one = Ops.range ~dtype:dt (Int 1) [ 2 ] in
+          let below = Ops.O.(one < Ops.int ~dtype:dt 1) in
+          sums_to (`Float 2.)
+            (reduce_simplify (sum (Ops.where below two zero) [ one ])));
       test "a maximum is left" (fun () ->
           let u =
             Ops.reduce (Ops.where Ops.O.(r < Ops.int 3) two zero) Max [ r ]

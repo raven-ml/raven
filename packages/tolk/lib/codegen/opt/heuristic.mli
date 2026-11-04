@@ -15,7 +15,9 @@
 
 val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
 (** [hand_coded_optimizations k] is a copy of [k] with optimisations applied;
-    [k] itself is left as it is. The first of these that applies decides:
+    [k] itself is left as it is. A kernel holding a range of size 0, which
+    does no work along it, takes none. Otherwise the first of these that
+    applies decides:
 
     - {b streaming}, below, when the reuse of the streamed operand is at most
       32, the contraction sums at least 256 values an output, or a number of
