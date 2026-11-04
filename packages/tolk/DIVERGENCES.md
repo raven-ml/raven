@@ -6228,20 +6228,18 @@ and an initial value is added after it (D260).
   which stores the value of every store whose value reaches its
   destination's buffer: "you don't usually have to do this for assign unless
   there's a WAR hazard like TestAssign.test_assign_double_diamond_reduce").
-- **tolk:** no `realize_store_after_src`; `Rangeify.fix_store_hazard` and
-  `Rangeify.fix_repeated_store` decide within a kernel, and
-  `Schedule.create_schedule` across kernels (D160); `test/gen/tinygrad.patch`,
-  which gives tinygrad the same rules.
+- **tolk:** no `realize_store_after_src`; `Rangeify.fix_store_hazard`
+  decides within a kernel, and `Schedule.create_schedule` across kernels
+  (D160); `test/gen/tinygrad.patch`, which gives tinygrad the same rules.
 - **Differs:** a store whose value reads its destination's storage is not
   staged for that alone. Within its kernel, whose iterations run in
   parallel, the value is staged where it reads the destination at another
-  index than it writes (`fix_store_hazard`, as tinygrad), or where the store
-  writes an element on several trips of a range its index lacks, as a store
-  into a broadcast of its destination does (`fix_repeated_store`). A value
-  that reads its destination only at the element it writes, as an optimizer
-  step `p := p - lr * g` or a loop's carry `c := c * 2 + exp2 c` does, loads
-  each element before it stores it, a data dependency of the store: one
-  kernel. Across kernels, another kernel reading the destination's old state
+  index than it writes (`fix_store_hazard`, as tinygrad); a store into a
+  broadcast, which writes an element on several trips, is refused (D345).
+  A value that reads its destination only at the element it writes, as an
+  optimizer step `p := p - lr * g` or a loop's carry `c := c * 2 + exp2 c`
+  does, loads each element before it stores it, a data dependency of the
+  store: one kernel. Across kernels, another kernel reading the destination's old state
   runs before the store, or reads a copy where no order does (D160): the
   double diamond, each store reading through a sum what the other
   overwrites, is a cycle that one copy breaks.
@@ -6264,8 +6262,7 @@ and an initial value is added after it (D260).
   written is one kernel`, `› a value that reads its destination through a
   bitcast of one size is one kernel`, `› a value that reads its destination
   at another element is staged`, `› a value that reduces its destination
-  reads the sums first`, `› a value stored into a broadcast of its
-  destination is staged` and `› a value whose destination another store
+  reads the sums first` and `› a value whose destination another store
   reads runs after it`), each against the values its tensors write; the
   Indexing suite's `run_rangeify › stores › a value stored into storage it
   reads is not stored whole here`; the program `assign_double_diamond`,
@@ -8126,3 +8123,41 @@ and an initial value is added after it (D260).
   32 registers, the decodes of each code counted in the linearized
   program, against the rule) and `staging off decodes once a row tile`; on
   fudge, kaun's `Quant/host/mxfp4-product-of-1024-*-bfloat16-tokens`.
+
+## D345. A store through a broadcast is refused
+
+- **tinygrad:** `uop/ops.py:585-587` (`UOp.store`, which stores through
+  any view); `tensor.py:234-271` (`Tensor.assign`, which stores into the
+  view it is called on, an expand included); `codegen/opt/postrange.py:52`
+  (`convert_loop_to_global`, which makes the store's rows threads).
+- **tolk:** `Prepare.prepare_rangeify` (`refuse_broadcast_store`, among
+  its earliest rewrites, after inline calls are inlined); no
+  `fix_repeated_store` in `Rangeify`, nor in `test/gen/tinygrad.patch`.
+- **Differs:** preparing a tensor graph raises `Invalid_argument` where a
+  store's destination is an `Op.Expand` that stretches an axis of one
+  element to more, or a movement, index, bitcast, `Op.After`, `Op.Detach`
+  or `Op.Contiguous_backward` of one, whether the builder wrote it or an
+  inline call bound a parameter its body stores into to such an argument.
+  Several of the destination's elements are one cell of its storage, so
+  the store would write that cell once per element, in no order. A view of
+  the broadcast that reaches each cell once, such as one row of it, is
+  refused too; an expand that only adds axes of one, or empties one, is no
+  broadcast.
+  tinygrad stores through it: the kernel of
+  `row.reshape(1, 4).expand(4, 4).assign(y)` loops over `y`'s rows into
+  `row`. So `fix_repeated_store`, which staged such a store's value where
+  it read its destination, has no store left to stage, and goes.
+- **Reason:** (e): at the pinned commit that kernel keeps `y`'s last row
+  on the host, where its rows run in turn; on a GPU its rows become
+  threads, which race for each cell. No raven library stores through a
+  broadcast: nx's in-place writes refuse an array that reaches an element
+  twice (`Nx_array.set`, `Nx_array.transfer`, the door's
+  `Repeated_elements`), and nx and rune write a donated value in place only
+  where it is C-contiguous.
+- **Pinned by:** the Prepare suite's `prepare_rangeify › broadcast stores`:
+  the refusals of the broadcast, its transpose, bitcast, detach and
+  gradient marker, a gated store, a broadcast of a state and a state of a
+  broadcast, one row of it, an index of its first axis, and an inline call
+  that writes a broadcast argument; the stores through an expand that only
+  adds axes of one and through a transpose, against the values they write;
+  and an expand that empties an axis, not refused.

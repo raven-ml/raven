@@ -732,7 +732,9 @@ val load : t -> t list -> t
 (** [load p rest] is the {!Op.Load} through [p]. *)
 
 val store : ?gate:t -> t -> t -> t
-(** [store p x] is the {!Op.Store} of [x] through [p], guarded by [gate]. *)
+(** [store p x] is the {!Op.Store} of [x] through [p], guarded by [gate]. A
+    tensor graph that stores through a broadcast is refused when it is
+    prepared ({!Prepare.prepare_rangeify}). *)
 
 val end_ : t -> t list -> t
 (** [end_ u rs] is the {!Op.End} of the ranges [rs] around [u], or [u] if [rs]

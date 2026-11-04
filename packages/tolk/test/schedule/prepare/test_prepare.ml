@@ -857,6 +857,86 @@ let calls_inline =
           rejects (fun () -> prepare call));
     ]
 
+(* Stores into broadcasts
+
+   Through an expand that stretches an axis of one element, several elements
+   of a view are one cell of its storage: in [row[c] = y[4r + c]] each of
+   [y]'s four rows would land on [row]. *)
+
+let broadcast_stores =
+  let row = Shape.param ~device:cpu ~shape:[ Int 4 ] 0 Float32 in
+  let y = Shape.param ~device:cpu ~shape:(ints [ 4; 4 ]) 1 Float32 in
+  let wide u = Shape.expand (Shape.reshape u (ints [ 1; 4 ])) (ints [ 4; 4 ]) in
+  let first u = Shape.shrink u [ Some (Ops.Int 0, Ops.Int 1); None ] in
+  let into ?gate dest v =
+    Ops.sink [ Ops.after row [ Ops.store ?gate dest v ] ]
+  in
+  let refused ~msg sink =
+    raises_match ~msg
+      (Exn.invalid_arg ~sub:"a store into a broadcast of shape (4, 4)")
+      (fun () -> prepare sink)
+  in
+  let iota n = Array.init n (fun j -> `Float (float_of_int j)) in
+  let sorted u buffers = List.sort compare (Tensors.writes ~buffers u) in
+  group "prepare_rangeify › broadcast stores"
+    [
+      test "a store through a broadcast, or a view of one, is refused"
+        (fun () ->
+          refused ~msg:"the broadcast" (into (wide row) y);
+          refused ~msg:"its transpose"
+            (into (Shape.permute (wide row) [ 1; 0 ]) y);
+          refused ~msg:"its bitcast"
+            (into (Ops.bitcast (wide row) Int32) (Ops.bitcast y Int32));
+          refused ~msg:"its detach" (into (Ops.v Detach ~src:[ wide row ]) y);
+          refused ~msg:"a gated store"
+            (into ~gate:(Ops.bool true) (wide row) y);
+          let other = Shape.param ~device:cpu ~shape:[ Int 4 ] 2 Float32 in
+          let state = Ops.after row [ Ops.store row other ] in
+          refused ~msg:"a broadcast of a state" (into (wide state) y);
+          refused ~msg:"a state of a broadcast"
+            (into (Ops.after (wide row) [ Ops.store row other ]) y);
+          refused ~msg:"its gradient marker"
+            (into (Ops.v Contiguous_backward ~src:[ wide row ]) y);
+          let cube = Shape.reshape row (ints [ 1; 1; 4 ]) in
+          let deep = Shape.expand cube (ints [ 4; 4; 4 ]) in
+          refused ~msg:"an index of the first axis of a broadcast"
+            (into (Ops.index deep [ Ops.int 1 ]) y);
+          raises_match ~msg:"one row of it"
+            (Exn.invalid_arg ~sub:"a store into a broadcast of shape (1, 4)")
+            (fun () -> prepare (into (first (wide row)) (first y))));
+      test "an inline call that writes a broadcast argument is refused"
+        (fun () ->
+          let arg = Shape.reshape (wide row) (ints [ 16 ]) in
+          raises_match
+            (Exn.invalid_arg ~sub:"a store into a broadcast of shape (16,)")
+            (fun () ->
+              prepare (Ops.sink [ Ops.call copy_body [ arg; input 1 ] ])));
+      test "an expand that only adds axes of one is stored through" (fun () ->
+          let y = Shape.param ~device:cpu ~shape:(ints [ 1; 4 ]) 1 Float32 in
+          let u = prepare (into (Shape.expand row (ints [ 1; 4 ])) y) in
+          equal
+            (list (triple int int Dtypes.value))
+            (List.init 4 (fun j -> (0, j, `Float (float_of_int j))))
+            (sorted u [ (1, iota 4) ]));
+      (* It writes nothing: preparing drops it, as any store of no element. *)
+      test "an expand that empties an axis is not refused" (fun () ->
+          let none = Shape.param ~device:cpu ~shape:(ints [ 0; 4 ]) 1 Float32 in
+          let empty = Shape.expand (Shape.reshape row (ints [ 1; 4 ])) in
+          let sink = prepare (into (empty (ints [ 0; 4 ])) none) in
+          equal ~msg:"no store left" bool false (has Store sink));
+      test "a transpose of storage is stored through" (fun () ->
+          let a = Shape.param ~device:cpu ~shape:(ints [ 4; 4 ]) 0 Float32 in
+          let sink =
+            Ops.sink [ Ops.after a [ Ops.store (Shape.permute a [ 1; 0 ]) y ] ]
+          in
+          let transposed k = (4 * (k mod 4)) + (k / 4) in
+          equal
+            (list (triple int int Dtypes.value))
+            (List.init 16 (fun k ->
+                 (0, k, `Float (float_of_int (transposed k)))))
+            (sorted (prepare sink) [ (1, iota 16) ]));
+    ]
+
 let earliest =
   group "prepare_rangeify › earliest rewrites"
     [
@@ -1055,6 +1135,7 @@ let () =
          contiguous_view_laws;
          outputs;
          calls_inline;
+         broadcast_stores;
          earliest;
          cost;
        ])

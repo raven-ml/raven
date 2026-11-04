@@ -4012,27 +4012,7 @@ index 8238ec207..dc9252d67 100644
    return src.substitute(replaced, extra_pm=pm_gate_substitute)
  
  def remove_noop_bufferize(idx,b2):
-@@ -191,8 +333,18 @@ def fix_store_hazard(ctx:LimitBufsContext, dst:UOp, src:UOp):
-   loads = [u for u in src.toposort(gate=lambda u: u.op not in {Ops.STAGE, Ops.AFTER}) if u.op is Ops.INDEX and u.buf_uop is dst.buf_uop]
-   if any(u.src[1].get_idx() is not dst.src[1].get_idx() for u in loads): return dst.store(stage(ctx, src))
- 
-+# a store reading its destination that writes an element on several trips of a range it runs over that its index lacks, as
-+# a store into a broadcast of its destination does, reads what an earlier trip wrote: it stores a stage of its value
-+def fix_repeated_store(ctx:LimitBufsContext, e:UOp, dst:UOp, src:UOp):
-+  if not any(u.op is Ops.INDEX and u.buf_uop is dst.buf_uop for u in src.toposort(gate=lambda u: u.op not in {Ops.STAGE, Ops.AFTER})):
-+    return None
-+  if any(r.op is Ops.RANGE and r not in dst.src[1].get_idx().ranges for r in e.src[1:]):
-+    return e.replace(src=(dst.store(stage(ctx, src)),)+e.src[1:])
-+  return None
-+
- pm_limit_bufs = PatternMatcher([(UPat(set.union(GroupOp.Binary, GroupOp.Ternary), name="root"), _limit_bufs),
--  (UPat(Ops.INDEX, name="dst").store(UPat.var("src")), fix_store_hazard)])
-+  (UPat(Ops.INDEX, name="dst").store(UPat.var("src")), fix_store_hazard),
-+  (UPat(Ops.END, src=(UPat(Ops.INDEX, name="dst").store(UPat.var("src")),), allow_any_len=True, name="e"), fix_repeated_store)])
- 
- # *****************
- # 4. put in buffers for bufferize
-@@ -224,10 +376,19 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
+@@ -224,10 +366,19 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
      return buf.after(*ended_stores)
  
    if x.arg.addrspace == AddrSpace.GLOBAL:
@@ -4054,7 +4034,7 @@ index 8238ec207..dc9252d67 100644
  # collapse any BUFFERIZE to single input BUFFERIZE
  def flatten_bufferize(x:UOp):
    if len(x.src) == 2: return None
-@@ -255,6 +416,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -255,6 +406,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
    # this must run in the same rewrite that adds the cast, or the expander expands the whole casted buffer into one big VECTORIZE
    (UPat(Ops.INDEX, src=(UPat(Ops.CAST, dtype=dtypes.weaks, src=(UPat.var("buf"),)),), allow_any_len=True, name="u"),
     lambda u,buf: u.replace(src=(buf,)+u.src[1:]).cast(u.dtype)),
@@ -4064,7 +4044,7 @@ index 8238ec207..dc9252d67 100644
  
    # move RESHAPEs through MSELECT/MSTACK
    (UPat((Ops.MSELECT, Ops.MSTACK), src=UPat(Ops.RESHAPE), name="m"),
-@@ -275,33 +439,50 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -275,33 +429,50 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
  class LocalAddBufferContext:
    map:dict = field(default_factory=dict)
    ranges:dict = field(default_factory=dict)
@@ -4129,7 +4109,7 @@ index 8238ec207..dc9252d67 100644
    (UPat((Ops.BUFFER, Ops.ALLOC, Ops.MSTACK, Ops.MSELECT), name="buf"), add_buf),
    # Only storage parameters get kernel-local slots; scalar parameters retain their enclosing call's slots.
    (UPat(Ops.PARAM, name="buf"), lambda ctx, buf:
-@@ -329,23 +510,107 @@ def split_store(x:UOp) -> UOp|None:
+@@ -329,23 +500,107 @@ def split_store(x:UOp) -> UOp|None:
    ret = graph_rewrite(ret, pm_renumber_range, ctx={a:i for i,a in enumerate(lctx.ranges)}, walk=True)
  
    # create the Kernel. NOTE: buffers can be on different devices here now, they are compiled to SDMA copies later by schedule

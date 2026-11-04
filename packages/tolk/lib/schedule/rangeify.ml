@@ -750,17 +750,6 @@ let fix_store_hazard ctx dst value =
     Some (store dst (stage ctx value))
   else None
 
-(* So does a store, ended over the ranges [e] closes, that reads its
-   destination and writes an element on several trips of a range its index
-   lacks, as a store into a broadcast of its destination does: a later trip
-   would read what an earlier one wrote. *)
-let fix_repeated_store ctx e dst value =
-  let own = ranges (get_idx (nth dst 1)) in
-  let repeated r = op r = Op.Range && not (Nodes.mem r own) in
-  if List.exists repeated (List.tl (src e)) && reads_of dst value <> [] then
-    Some (replace e ~src:(store dst (stage ctx value) :: List.tl (src e)))
-  else None
-
 let pm_limit_bufs =
   Pattern_matcher.v
     (fun () -> [
@@ -770,11 +759,6 @@ let pm_limit_bufs =
       rule_ctx
         (Upat.op Op.Store ~src:[ Upat.op Op.Index ~name:"dst"; Upat.var "src" ])
         (fun ctx m -> fix_store_hazard ctx (m "dst") (m "src"));
-      rule_ctx
-        (Upat.op Op.End ~name:"e" ~allow_any_len:true
-           ~src:
-             [ Upat.op Op.Store ~src:[ Upat.op Op.Index ~name:"dst"; Upat.var "src" ] ])
-        (fun ctx m -> fix_repeated_store ctx (m "e") (m "dst") (m "src"));
     ])
 
 (* Buffers *)

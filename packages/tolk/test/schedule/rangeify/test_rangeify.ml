@@ -801,27 +801,6 @@ let self_reads =
           in
           equal int 1 (kernels_of sink);
           writes sink);
-      (* Through the expand, the four rows of [dest] are one element each of
-         [row], and each stores the same sum: an element loaded after another
-         row stored it would add the column's sum again. *)
-      test "a value stored into a broadcast of its destination is staged"
-        (fun () ->
-          let row = Shape.param ~device:cpu ~shape:[ Int 4 ] 5 Float32 in
-          let wide u = Shape.expand u (ints [ 4; 4 ]) in
-          let dest = wide (Shape.reshape row (ints [ 1; 4 ])) in
-          let sums = wide (Shape.rop (input 1) Add [ 0 ]) in
-          let sink =
-            Ops.sink [ Ops.after row [ Ops.store dest Ops.O.(dest + sums) ] ]
-          in
-          equal int ~msg:"the sums, the stage and its store" 3
-            (List.length
-            (List.filter_map
-               (fun u ->
-                 if Ops.op u = End && Ops.op (Ops.nth u 0) = Store then
-                   Some (List.length (Ops.src u) - 1)
-                 else None)
-               (Ops.toposort ~calls:Enter (schedule sink))));
-          writes sink);
       (* Two kernels: the other store reads the destination before its
          overwrite. *)
       test "a value whose destination another store reads runs after it"

@@ -87,7 +87,14 @@ val prepare_rangeify : Ops.t -> Ops.t
 
     Raises [Invalid_argument] if an inline call's argument does not fit its
     parameter: a storage parameter's size, a scalar's shape, or the data type.
-*)
+    Raises [Invalid_argument] if a store's destination, inline calls inlined,
+    is a broadcast: an {!Op.Expand} that stretches an axis of one element to
+    more, a symbolic size included, or a movement, index, bitcast,
+    {!Op.After}, {!Op.Detach} or {!Op.Contiguous_backward} of one. Several of
+    its elements are one cell, which the store would write once per element,
+    in no order; a view of the broadcast whose elements share no cell, such
+    as one row of it, is refused too. An expand that only adds axes of one,
+    or empties an axis, stretches none. *)
 
 val contiguous_view : Ops.t -> (Ops.t * Ops.sint) option
 (** [contiguous_view u] is [Some (b, offset)] if the elements of [u], in

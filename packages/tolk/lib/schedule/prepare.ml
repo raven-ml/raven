@@ -194,6 +194,39 @@ let pp_shape ppf s =
     s
     (if List.length s = 1 then "," else "")
 
+(* Stores into broadcasts *)
+
+(* Whether [u] views an expand that stretches an axis of one element to more:
+   several of its elements are then one cell, which a store through [u] would
+   write once per element, in no order. In [row[c] = y[4r + c]], [y]'s four
+   rows land on [row]. An expand that only adds axes of one, or empties one,
+   stretches none. An index of a view keeps its axes after those it
+   selects. *)
+let rec broadcast u =
+  match op u with
+  | Op.Expand ->
+      let to_ = shape u and from = shape (nth u 0) in
+      let added = List.length to_ - List.length from in
+      let ones = List.init added (fun _ -> Int 1) in
+      let stretched f t =
+        Sint.equal f (Int 1)
+        && not (Sint.equal t (Int 1) || Sint.equal t (Int 0))
+      in
+      List.exists2 stretched (ones @ from) to_ || broadcast (nth u 0)
+  | Op.Index | Op.Bitcast | Op.After | Op.Detach | Op.Contiguous_backward ->
+      broadcast (nth u 0)
+  | o when Op.Set.mem o Op.Set.movement -> broadcast (nth u 0)
+  | _ -> false
+
+let refuse_broadcast_store dest =
+  if broadcast dest then
+    invalid_arg
+      (Format.asprintf
+         "a store into a broadcast of shape %a writes several elements into \
+          one cell; store into the storage it views"
+         pp_shape (shape dest));
+  None
+
 (* A large reduction over few outputs is split into two kernels, to turn some of
    the reduction into outputs. The split axis moves last, so the second
    reduction reads it with the most locality. The first reduction's output is
@@ -540,6 +573,9 @@ let earliest_rewrites =
   Pattern_matcher.append Shape.mop_cleanup
     (Pattern_matcher.v
        (fun () -> [
+         rule
+           (Upat.op Op.Store ~allow_any_len:true ~src:[ var "dest"; Upat.wild ])
+           (fun m -> refuse_broadcast_store (m "dest"));
          rule
            (Upat.op Op.Reduce ~name:"reduce" ~src:[ var "x" ])
            (fun m -> split_reduceop (m "reduce") (m "x"));
