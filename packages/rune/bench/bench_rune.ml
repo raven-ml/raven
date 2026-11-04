@@ -1414,10 +1414,162 @@ let shared_scalar p x y =
   done;
   (Nx.add x !s, Nx.mul y !s)
 
+(* Assemblies: values made of pieces, as Nx.stack, Nx.concatenate, Nx.set
+   and Nx.pad make them, at the host and at a GPU, whose time their form
+   decides: a selection fused into the reader, or storage of their own. *)
+
+(* A function of float32 values at any placement. *)
+type 'd v32 = (float, Nx.float32_elt, 'd) Nx.t
+type over = { f : 'd. 'd v32 list -> 'd v32 }
+
+(* [over_values shapes o] is a call of [o.f] compiled over uniform values of
+   [shapes]. *)
+let over_values shapes o =
+  {
+    at =
+      (fun at ->
+        let xs =
+          List.mapi
+            (fun i s ->
+              Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key (500 + i)) f32 s))
+            shapes
+        in
+        let f = Rune.jit Nx.Ptree.(list tensor @-> returns tensor) o.f in
+        fun () -> ignore (synced (f xs)));
+  }
+
+(* Rotary embedding's two halves of the rows of [x], each rotated by [c] and
+   [s], joined. *)
+let rotated x c s =
+  let w = (Nx.shape x).(1) / 2 in
+  let x1 = Nx.slice [ Nx.A; Nx.R (0, w) ] x in
+  let x2 = Nx.slice [ Nx.A; Nx.R (w, 2 * w) ] x in
+  Nx.concatenate ~axis:1
+    [ Nx.sub (Nx.mul x1 c) (Nx.mul x2 s); Nx.add (Nx.mul x2 c) (Nx.mul x1 s) ]
+
+let assembly_calls =
+  let rows k s = List.init k (fun _ -> s) in
+  let last xs = List.nth xs (List.length xs - 1) in
+  let init xs = List.filteri (fun i _ -> i < List.length xs - 1) xs in
+  [
+    (* 64 rows of 64 sines stacked, and 8 rows of 1024. *)
+    ( "stack-64-sines-of-64",
+      over_values (rows 64 [| 64 |])
+        { f = (fun xs -> Nx.stack (List.map Nx.sin xs)) } );
+    ( "stack-8-sines-of-1024",
+      over_values (rows 8 [| 1024 |])
+        { f = (fun xs -> Nx.stack (List.map Nx.sin xs)) } );
+    (* 256 argument rows of 64 stacked: a copy a row, one program. *)
+    ("stack-256-rows-of-64", over_values (rows 256 [| 64 |]) { f = Nx.stack });
+    (* 16 products of [64; 1024] weights by one [1024; 1] vector. *)
+    ( "stack-16-matvecs",
+      over_values
+        (rows 16 [| 64; 1024 |] @ [ [| 1024; 1 |] ])
+        {
+          f =
+            (fun xs ->
+              let v = last xs in
+              Nx.stack
+                (List.map
+                   (fun w -> Nx.reshape [| 64 |] (Nx.matmul w v))
+                   (init xs)));
+        } );
+    (* 64 sines of 32 and of 96 alternately, concatenated. *)
+    ( "cat-unequal-64-sines",
+      over_values
+        (List.init 64 (fun i -> if i mod 2 = 0 then [| 32 |] else [| 96 |]))
+        { f = (fun xs -> Nx.concatenate ~axis:0 (List.map Nx.sin xs)) } );
+    (* Four [4096; 64] pieces stacked along a new last axis and scaled. *)
+    ( "stack-4-minor-axis",
+      over_values
+        (rows 4 [| 4096; 64 |] @ [ [| 4096; 64; 4 |] ])
+        {
+          f =
+            (function
+            | [ a; b; c; d; e ] ->
+                Nx.mul
+                  (Nx.stack ~axis:2 [ Nx.sin a; Nx.cos b; Nx.sin c; Nx.cos d ])
+                  e
+            | _ -> invalid_arg "stack-4-minor-axis");
+        } );
+    (* A row set into a [1024; 1024] matrix at a position the program holds,
+       read by a sum: one view over another. *)
+    ( "set-row-of-1024x1024-summed",
+      over_values
+        [ [| 1024; 1024 |]; [| 1024 |] ]
+        {
+          f =
+            (function
+            | [ x; v ] -> Nx.sum ~axes:[ 1 ] (Nx.set [ Nx.I 3 ] v x)
+            | _ -> invalid_arg "set-row");
+        } );
+    (* Rotary embedding of queries and keys of [512; 128], read by
+       attention. *)
+    ( "rope-in-attention-512x128",
+      over_values
+        [
+          [| 512; 128 |]; [| 512; 64 |]; [| 512; 64 |]; [| 512; 128 |];
+          [| 512; 128 |];
+        ]
+        {
+          f =
+            (function
+            | [ x; c; s; y; v ] ->
+                let r4 t = Nx.reshape [| 1; 1; 512; 128 |] t in
+                let q = r4 (rotated x c s) and k = r4 (rotated y c s) in
+                let o, _ =
+                  Nx.attention ~acc:f32 ~kv:(Nx.Dense { k; v = r4 v }) q
+                in
+                Nx.reshape [| 512; 128 |] o
+            | _ -> invalid_arg "rope-in-attention");
+        } );
+  ]
+
+(* The host's assembly rows. 64 rows of 64 sines is [Jit]'s own row. *)
+let assembly_rows () =
+  List.filter_map
+    (fun (name, c) ->
+      if name = "stack-64-sines-of-64" then None
+      else Some (warm name (fun () -> c.at Nx.Host.on) (fun call -> call ())))
+    assembly_calls
+
 let gpu_rows g =
   if not (opens g) then []
   else
-    [
+    List.map (fun (name, c) -> on_gpu g name c) assembly_calls
+    @ [
+      (* The decode step's key cache concatenated with its new row, and a
+         double-word sum of 10^6 float64 numbers, a pad of one piece. *)
+      on_gpu g "kv-concat-decode"
+        {
+          at =
+            (fun at ->
+              let draw i s =
+                Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key i) f32 s)
+              in
+              let cache = draw 58 [| 4096; 128 |]
+              and row = draw 59 [| 1; 128 |] in
+              let f =
+                Rune.jit (pair_fn ()) (fun cache row ->
+                    Nx.concatenate ~axis:0 [ cache; row ])
+              in
+              fun () -> ignore (synced (f cache row)));
+        };
+      on_gpu g "wide-sum-1e6"
+        {
+          at =
+            (fun at ->
+              let x =
+                Nx.place at
+                  (Nx.Rng.uniform ~key:(Nx.Rng.key 50) f64 [| 1_000_000 |])
+              in
+              let f =
+                Rune.jit (split_fn ()) (fun x ->
+                    let s = Nx_wide.sum (Nx_wide.v x) in
+                    (Nx_wide.hi s, Nx_wide.lo s))
+              in
+              fun () -> ignore (synced2 (f x)));
+        };
       (* A float64 sine, hundreds of operations an element, read by a sum and by
          an elementwise output: their two kernels read it stored, or each
          computes it. *)
@@ -1563,7 +1715,7 @@ let () =
          Thumper.group "Declined" (declined_rows ());
          Thumper.group "DeepChain" (deep_rows ());
          Thumper.group "Remat" (remat_rows ());
-         Thumper.group "Jit" (jit_rows ());
+         Thumper.group "Jit" (jit_rows () @ assembly_rows ());
          Thumper.group "WarmStart" (warm_rows ());
          Thumper.group "MlpGrad" (mlp_rows ());
          Thumper.group "PerSampleGrads" (per_sample_rows ());
