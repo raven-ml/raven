@@ -75,15 +75,27 @@ value talon_utf_8_invalid_byte(value b, value i, value stop)
   return Val_long(talon_utf_8_invalid(b, Long_val(i), Long_val(stop)));
 }
 
+/* [ascii(p, end)] is 1 iff every byte of [p, end) is below 0x80. */
+static int ascii(const uint8_t *p, const uint8_t *end)
+{
+  uint64_t w;
+  while (end - p >= 8 && (memcpy(&w, p, 8), (w & ASCII) == 0)) p += 8;
+  while (p < end && *p < 0x80) p++;
+  return p == end;
+}
+
 /* [talon_utf_8_row(b, o, mask, n)] is the first of the [n] rows of [b], row
    [r] being the bytes [o[r], o[r + 1]), that is not valid UTF-8, or -1. A
    row whose bit in [mask], [Some m], is clear is not read: bit [r mod 8] of
-   byte [r / 8]. */
+   byte [r / 8]. The offsets never decrease, so the rows lie in
+   [o[0], o[n]): when its bytes are ASCII, each row is valid however they are
+   cut, and no row is read. */
 intnat talon_utf_8_row(value b, value o, value mask, intnat n)
 {
   const uint8_t *v = Bytes_ba(b);
   const int64_t *off = Offsets_ba(o);
   const uint8_t *m = Is_block(mask) ? Bytes_ba(Field(mask, 0)) : NULL;
+  if (n > 0 && ascii(v + off[0], v + off[n])) return -1;
   for (intnat r = 0; r < n; r++) {
     if (m != NULL && ((m[r >> 3] >> (r & 7)) & 1) == 0) continue;
     if (invalid(v + off[r], v + off[r + 1]) != NULL) return r;

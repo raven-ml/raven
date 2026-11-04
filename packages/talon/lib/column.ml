@@ -1058,6 +1058,15 @@ let unheld : type a. a Type.t -> t -> (int * string) option =
 
 let held c = function Some e -> Error e | None -> Ok c
 
+(* [bytes_of offsets values] is [Nx_ragged.v ~offsets values]. Its check of the
+   offsets is of_layout's for text, and its refusal names of_layout. *)
+let bytes_of offsets values =
+  let prefix = "Nx_ragged.v: " in
+  try Nx_ragged.v ~offsets values
+  with Invalid_argument m when String.starts_with ~prefix m ->
+    let k = String.length prefix in
+    refuse "%s" (String.sub m k (String.length m - k))
+
 let rec of_layout : type a. a Type.t -> layout -> (t, int * string) result =
  fun ty l ->
   match (ty, l) with
@@ -1067,10 +1076,10 @@ let rec of_layout : type a. a Type.t -> layout -> (t, int * string) result =
         refuse "a child of %a does not lay out %a" pp_any child.type_ Type.pp ty;
       if null_count child > 0 then
         refuse "a child with a null does not lay out %a" Type.pp ty;
-      let length = rows_of offsets child in
-      check_validity validity length;
       let values = match child.data with Fixed p -> p | _ -> assert false in
-      let r = Nx_ragged.v ~offsets (Nx.unpack Nx.uint8 values) in
+      let r = bytes_of offsets (Nx.unpack Nx.uint8 values) in
+      let length = Nx_ragged.length r in
+      check_validity validity length;
       let c = of_bits (Any ty) validity ~length (Bytes r) in
       match ty with
       | String -> held c (Strings.utf_8 ~by:"Column.of_layout" ?mask:validity r)

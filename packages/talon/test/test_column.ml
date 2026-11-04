@@ -732,6 +732,7 @@ let layouts =
 let int8s_layout = fixed Nx.int8 [| 1; 2 |]
 let child = Column.v Type.int8 [| 1; 2 |]
 let of_layout ty l () = Column.of_layout (Type.Any ty) l
+let text_child = Column.v Type.uint8 [| 97; 98 |]
 
 let layout_refusals =
   let open Type in
@@ -781,6 +782,29 @@ let layout_refusals =
       (of_layout (list int16) (varsize [| 0L; 2L |] child))
     @@ __POS_OF__
          {| Column.of_layout: a child of int8 does not lay out list[int16] |};
+    refuse "text offsets that are 2-D"
+      (of_layout string
+         (Varsize
+            {
+              validity = None;
+              offsets = Nx.zeros Nx.int64 [| 1; 1 |];
+              child = text_child;
+            }))
+    @@ __POS_OF__
+         {| Column.of_layout: offsets of shape [1; 1], not 1-D with an entry |};
+    refuse "no text offsets" (of_layout string (varsize [||] text_child))
+    @@ __POS_OF__
+         {| Column.of_layout: offsets of shape [0], not 1-D with an entry |};
+    refuse "text offsets that start below 0"
+      (of_layout string (varsize [| -1L; 0L |] text_child))
+    @@ __POS_OF__ {| Column.of_layout: offsets start at -1, below 0 |};
+    refuse "text offsets that decrease"
+      (of_layout string (varsize [| 0L; 2L; 1L |] text_child))
+    @@ __POS_OF__ {| Column.of_layout: offset 2 is 1, below the 2 before it |};
+    refuse "text offsets past the child"
+      (of_layout string (varsize [| 0L; 3L |] text_child))
+    @@ __POS_OF__
+         {| Column.of_layout: offset 1 is 3, past the 2 rows of the values |};
     refuse "text over a child of another type"
       (of_layout string (varsize [| 0L; 2L |] child))
     @@ __POS_OF__
@@ -1111,12 +1135,52 @@ let counts =
         | _ -> None);
   ]
 
+(* Text rows, some null, the last [len] of which a slice keeps, so that the
+   kept rows' offsets start past [0]; and indices into the kept rows, some
+   outside them. *)
+let text_picks =
+  let row =
+    Gen.frequency
+      [
+        (1, Gen.constant None);
+        (5, Gen.map Option.some (Option.get (G.value Type.string)));
+      ]
+  in
+  Gen.bind (Gen.array ~size:(Gen.int_range 0 12) row) (fun vs ->
+      let n = Array.length vs in
+      Gen.triple (Gen.constant vs) (Gen.int_range 0 n)
+        (Gen.list ~size:(Gen.int_range 0 12) (Gen.int_range (-2) (n + 1))))
+
+let take_text (vs, len, is) =
+  let n = Array.length vs in
+  let kept = Array.sub vs (n - len) len in
+  let at i = if i >= 0 && i < len then kept.(i) else None in
+  cover "an index outside the kept rows"
+    (List.exists (fun i -> i < 0 || i >= len) is);
+  cover "a null row"
+    (List.exists (fun i -> i >= 0 && i < len && at i = None) is);
+  cover "an empty text" (List.exists (fun i -> at i = Some "") is);
+  cover "a text of several bytes"
+    (List.exists (function Some s -> String.length s > 1 | None -> false)
+       (List.map at is));
+  cover "kept rows after the first" (len < n && len > 0);
+  let c =
+    run_x
+      (Query.slice ~offset:(n - len) ~length:len)
+      (Column.of_options Type.string vs)
+  in
+  equal (rows Type.string)
+    (Array.of_list (List.map at is))
+    (Column.options Kind.string (take_column is c))
+
 let nulls_cases =
   group "nulls"
     [
       stateful "null_count is the number of null rows, read once" counts;
       stateful ~domains:2
         "null_count from two domains at once is the number of null rows" counts;
+      prop "a text column's rows at indices are its rows there, null outside"
+        text_picks take_text;
       test "a validity with every row set has no null" (fun () ->
           let c = column_of [| true; true; true |] in
           is_some (Column.validity c);

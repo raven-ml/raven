@@ -191,6 +191,28 @@ let take_random =
   let t = Talon.v [ ("key", nullable ~valid:key_valid key_values) ] in
   fun () -> Talon.take indices t
 
+(* [text_layout ()] is the layout of 2^20 ASCII texts, ["s0"] to ["s99999"],
+   which [Column.of_layout] checks as a text column: offsets and UTF-8. It is
+   made in the case's worker, so that no other case's process holds it. *)
+let text_layout () =
+  let text i = "s" ^ string_of_int (i * 7919 mod 100_000) in
+  let texts = Array.init n text in
+  let bytes = String.concat "" (Array.to_list texts) in
+  let offsets = Array.make (n + 1) 0L in
+  Array.iteri
+    (fun i t ->
+      offsets.(i + 1) <- Int64.add offsets.(i) (Int64.of_int (String.length t)))
+    texts;
+  Column.Varsize
+    {
+      validity = None;
+      offsets = Nx.create Nx.int64 [| n + 1 |] offsets;
+      child =
+        Column.of_tensor
+          (Nx.init Nx.uint8 [| String.length bytes |] (fun i ->
+               Char.code bytes.[i.(0)]));
+    }
+
 (* Three parts of odd lengths, the second and third starting inside a byte of
    the validity. *)
 let concat_3 =
@@ -298,6 +320,8 @@ let () =
               kleene Expr.(Col.bool "a" || Col.bool "b"));
           Thumper.bench "Nulls/take-random" take_random;
           Thumper.bench "Nulls/concat-3" concat_3;
+          Thumper.bench_with_setup ~setup:text_layout "Layout/text-1M" (fun l ->
+              Column.of_layout (Type.Any Type.string) l);
           Thumper.bench "Nulls/sort" (fun () ->
               run Query.(of_table nulls |> sort [ Order.asc "key" ]));
           Thumper.bench "Nulls/group-sum" (fun () ->

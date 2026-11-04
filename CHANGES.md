@@ -3773,6 +3773,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- Reading text from Parquet, and `Column.of_layout` on text, check the
+  offsets once, through the ragged array they make, and the UTF-8 of all
+  rows at once when their bytes are ASCII: decision-support query 19 at scale
+  factor 1 runs 4.9 billion instructions a run where it ran 6.3, and query 12
+  3.8 where it ran 4.7. Text offsets that `Column.of_layout` refuses name the
+  offset that is out of place, as in `offset 2 is 1, below the 2 before it`.
 - `Expr.mean` of integers of at most 32 bits sums them exactly in int64
   and rounds the sum once, so a mean of many large values no longer
   carries a float64 sum's rounding; where that sum was exact the result is

@@ -690,7 +690,9 @@ module Column : sig
       [[|n|]] for [n] rows, offsets that are not 1-D, start below [0], decrease
       or reach past the child, a child of another type (for text, a [uint8]
       column with a null), or fields of other names, types or lengths than
-      [ty]'s. *)
+      [ty]'s; under [Rune.jit], for traced offsets of [binary]
+      ({!Query.section-compiled}), offsets out of place raise when the call
+      returns, naming [Nx_ragged.v]. *)
 
   val parse : Type.any -> t -> (t, int * string) result
   (** [parse ty c] is the column of type [ty] whose rows are the values that the

@@ -785,6 +785,31 @@ let synthesized =
           in
           equal text "parquet (1 column)\n  x int32 ← required int32"
             (format_text (Error.get_ok (P.sniff b))));
+      test "a text dictionary index past the dictionary is an error"
+        (fun () ->
+          (* A dictionary page of the texts "a" and "b", then a data page of
+             two indices at bit width 3: an RLE run of 2 of index 5. *)
+          let dict =
+            thrift
+              (Struct
+                 [
+                   (1, I32 2);
+                   (2, I32 10);
+                   (3, I32 10);
+                   (7, Struct [ (1, I32 2); (2, I32 0) ]);
+                 ])
+            ^ "\x01\x00\x00\x00a\x01\x00\x00\x00b"
+          in
+          let data = page ~data_page:[ (2, I32 8) ] 2 "\x03\x04\x05" in
+          let file =
+            parquet ~rows:2
+              ~column:[ (1, I32 6); (6, I32 0) ]
+              ~chunk:[ (9, I64 (4 + String.length dict)); (11, I64 4) ]
+              (dict ^ data)
+          in
+          expect (outcome (read_x file))
+          @@ __POS_OF__
+               {| row group 0: bytes 27-44: the dictionary indices: a value is out of its bounds |});
       test "an RLE boolean run of value 2 is an error" (fun () ->
           (* Four booleans: a 4-byte length, then an RLE run of 4 of value 2. *)
           let file =

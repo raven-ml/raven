@@ -285,10 +285,31 @@ let tensors =
             (Nx.shape (to_tensor Nx.int32 [] numbers)));
     ]
 
+let at is = Nx.create Nx.int64 [| Array.length is |] is
+
+(* Text rows of zero, one and several bytes, read at strided and broadcast
+   indices: a view's positions, not its memory's. *)
+let texts = v [ ("s", Column.v Type.string [| ""; "a"; "bcd"; "\xc3\xa9" |]) ]
+
+let text_at idx = Column.options Kind.string (column (take idx texts) "s")
+
+let text_views =
+  [
+    test "take reads text at strided indices" (fun () ->
+        let idx = Nx.slice [ Nx.Rs (1, 4, 2) ] (at [| 0L; 1L; 2L; 3L |]) in
+        equal (array (option string))
+          [| Some "a"; Some "\xc3\xa9" |]
+          (text_at idx));
+    test "take reads text at broadcast indices" (fun () ->
+        let idx = Nx.broadcast_to [| 3 |] (at [| 2L |]) in
+        equal (array (option string))
+          [| Some "bcd"; Some "bcd"; Some "bcd" |]
+          (text_at idx));
+  ]
+
 (* Refusals *)
 
 let refuse name f expected = (name, (fun () -> ignore (f ())), expected)
-let at is = Nx.create Nx.int64 [| Array.length is |] is
 
 let refusals =
   [
@@ -362,6 +383,7 @@ let () =
                  equal int 0
                    (List.length (batches (one (Column.v Type.int8 [||])))));
            ];
+         group "Text views" text_views;
          equality;
          canonical_columns;
          tensors;

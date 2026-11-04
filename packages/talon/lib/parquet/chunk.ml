@@ -524,18 +524,23 @@ let gather s idx =
         reading i64 offsets @@ fun offsets ->
         let m = A1.dim idx in
         let out = fresh Nx.int64 (m + 1) in
+        (* The indices were checked against the dictionary as they decoded. *)
         let total =
           writing out @@ fun out ->
-          out.{0} <- 0L;
+          let sum = ref 0L in
+          A1.unsafe_set out 0 0L;
           for i = 0 to m - 1 do
-            let j = Int64.to_int idx.{i} in
-            out.{i + 1} <-
-              Int64.add out.{i} (Int64.sub offsets.{j + 1} offsets.{j})
+            let j = Int64.to_int (A1.unsafe_get idx i) in
+            sum :=
+              Int64.add !sum
+                (Int64.sub
+                   (A1.unsafe_get offsets (j + 1))
+                   (A1.unsafe_get offsets j));
+            A1.unsafe_set out (i + 1) !sum
           done;
-          Int64.to_int out.{m}
+          Int64.to_int !sum
         in
         let d = fresh Nx.uint8 total in
-        (* The indices were checked against the dictionary as they decoded. *)
         reading u8 data (fun data ->
             peek out @@ fun o ->
             writing d @@ fun dst ->
