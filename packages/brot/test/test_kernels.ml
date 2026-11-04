@@ -1232,6 +1232,25 @@ let grown_law =
           ]
       end)
 
+(* A cache that doubles after the last kernel call of an encoding, as one
+   call over 900 distinct words of the seeded table's 1024 entries does, is
+   released holding its new table alone: the one it left is not kept for the
+   kernels to read. Encoding one word more, whose call takes the kernels'
+   tables from the cache again, then frees nothing. *)
+let test_released_state_holds_one_table () =
+  let words =
+    List.init 900 (fun i ->
+        String.init 5 (fun k ->
+            Char.chr (97 + (i / int_of_float (6. ** float_of_int k) mod 6))))
+  in
+  let t = grown_byte_level None in
+  ignore (ids t (String.concat " " words) : int array);
+  let released = Brot.hold_cache t live_words in
+  ignore (ids t "a" : int array);
+  let refreshed = Brot.hold_cache t live_words in
+  at_most ~msg:"live words of the released state" int ~than:(refreshed + 512)
+    released
+
 (* The tokenizer and the reference are read once, on the first case. *)
 let law ?(text = law_text) ?(cover = cover_law) name make =
   let loaded =
@@ -1317,6 +1336,8 @@ let () =
              test "a stray lead byte takes in nothing after it"
                test_stray_lead_byte;
              grown_law;
+             test "a released state holds one table"
+               test_released_state_holds_one_table;
              law "gpt2" gpt2_reference;
              law "mistral" mistral_reference;
              law ~text:cl100k_text ~cover:cover_cl100k "llama3"

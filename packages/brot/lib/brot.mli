@@ -1026,11 +1026,13 @@ val bpe :
       that runs without one. Each starts at 16 KB, grows to hold the
       vocabulary's short entries, and doubles as the pretokens it meets fill
       half of it, up to 32 bytes per entry, and never shrinks: about 32 MB
-      over 100 MB of web text. While it doubles, the table it leaves is held
-      too, half the size of the new one. Default: [1048576]: 32 MB each at
-      most, 48 MB while the last doubling runs, so a tokenizer's caches hold
-      at most [Domain.recommended_domain_count ()] times 32 MB (448 MB on 14
-      cores). [0] disables caching.
+      over 100 MB of web text. While it doubles, an encoding briefly holds
+      the table it leaves too, half the size of the new one, and several
+      encodings may double at once. Default: [1048576]: 32 MB each at most, 48
+      MB while it doubles, so a tokenizer's caches hold at most
+      [Domain.recommended_domain_count ()] times 32 MB between encodings (448
+      MB on 14 cores) and times 48 MB while they all double (672 MB). [0]
+      disables caching.
     - [dropout]: probability \[[0]; [1]\] of skipping merges (data
       augmentation). Default: none (no dropout).
     - [continuing_subword_prefix]: prefix for non-initial subwords (e.g.,

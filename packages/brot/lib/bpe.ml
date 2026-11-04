@@ -881,9 +881,6 @@ let make_state model =
     st_cursor = Kernel.cursor ();
   }
 
-let with_state model f =
-  Cache.with_state model.states ~make:make_state ~spare:private_state model f
-
 (* Before a kernel call: the cache doubles as it fills, from a kernel's stores
    ([counted]) or OCaml's, and moves when it does, so the kernels' tables are
    taken from it again, and the spans the cursor walked ahead, whose sets were
@@ -894,6 +891,16 @@ let refresh model st =
     st.st_sp <- sp_kernel_tables model st.st_cache;
     Kernel.restart st.st_cursor
   end
+
+(* A state goes back to the pool with the kernels' tables taken from its cache
+   again, so that a table the cache doubled out of after the last kernel call
+   is not kept for them. *)
+let with_state model f =
+  Cache.with_state model.states ~make:make_state ~spare:private_state model
+    (fun st ->
+      let value = f st in
+      refresh model st;
+      value)
 
 (* After a kernel call: the entries it stored count toward the cache's
    growth. *)
