@@ -474,14 +474,8 @@ let find ?(totals = [||]) t leaves skeleton ~paths trace =
         asked
       |> union (fun (p, _) (q, _) -> probe_id p = probe_id q) []
     in
-    (* A program threads its totals' running values, its last arguments. *)
-    let totals =
-      Array.map (fun (Program.Addition (_, f, _)) -> Program.F f) body.Program.adds
-    in
     let compile = compiled ~beam:t.beam ~parallel:t.parallel t.name in
-    let site =
-      Program.site ~name:t.name ~compile body (Array.append forms totals)
-    in
+    let site = Program.site ~name:t.name ~compile body forms in
     let axes =
       union Program.same_axis (List.map fst maps) (Program.axes site)
     in

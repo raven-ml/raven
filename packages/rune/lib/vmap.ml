@@ -2269,10 +2269,7 @@ and call ~name ?held i axis n (body : Program.t) args site seeds =
                 (totals_out w n shared (Array.sub out no (Array.length shared)))))
     in
     let prog, _ = Trace.trace Jit ~name forms mapped in
-    let totals =
-      Array.map (fun (Program.Addition (_, f, _)) -> Program.F f) prog.adds
-    in
-    ((prog, Array.append forms totals), !laned_out, None)
+    ((prog, forms), !laned_out, None)
   in
   let lanes = Array.append la (Array.map (fun _ -> true) extra) in
   let derivation = Program.Vmap { lanes; shared; n; named } in

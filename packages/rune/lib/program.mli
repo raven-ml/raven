@@ -625,9 +625,10 @@ val site :
   form array ->
   site
 (** [site ~name ~compile p forms] is the site of [p] over arguments of [forms],
-    for the entry point [name]: its compiled form is [compile p forms], applied
-    to arguments of [forms], and each program derived from [p] is compiled by
-    [compile] too. *)
+    for the entry point [name]: its compiled form is [compile p fs], where [fs]
+    is [forms] then the forms of the running values in of the totals [p]
+    threads, applied to arguments of [fs], and each program derived from [p] is
+    compiled by [compile] too. *)
 
 val axes : site -> axis list
 (** [axes s] is the maps that [s]'s program or a program it carries names

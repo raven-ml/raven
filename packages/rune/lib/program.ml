@@ -569,10 +569,11 @@ let bare s body =
   }
 
 let site ~name ~compile p forms =
+  let running = Array.map (fun (Addition (_, f, _)) -> F f) p.adds in
   {
     name;
     compile;
-    compiled = Some (compile p forms);
+    compiled = Some (compile p (Array.append forms running));
     axes = named p;
     customs = holds custom p;
     table = Table.create ();

@@ -1937,10 +1937,7 @@ and call ~name ~tape i (body : Program.t) args site seeds =
       | _ -> invalid_arg "Rune: a call's derivative"
     in
     let prog, _ = Trace.trace Jit ~name forms derive in
-    let totals =
-      Array.map (fun (Program.Addition (_, f, _)) -> Program.F f) prog.adds
-    in
-    ((prog, Array.append forms totals), !has_y, None)
+    ((prog, forms), !has_y, None)
   in
   let reverse = Option.is_some tape && Program.customs site in
   (* The seeds' tangents enter the derivation beside the arguments'. *)
