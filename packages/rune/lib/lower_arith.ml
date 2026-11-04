@@ -293,26 +293,13 @@ let int_pow d x e =
     in
     where (e < num e 0) inverse power
 
-(* Integer division. A zero divisor gives 0, and the remainder the dividend.
-   Both sides of a selection compute, so the divisor is made safe before it
-   divides, unless its bounds hold no zero: then the bounds of the result are
-   the quotient's, as a later reduction reads them. tolk's quotient of the
-   least value by -1 wraps to the least value, its negation, and its remainder
-   is 0, as nx's are. *)
+(* Integer division: tolk's quotient by 0 is 0 and its remainder the dividend,
+   and the least value's quotient by -1 wraps to it and its remainder is 0, as
+   nx's are. *)
 let int_div d ~rem x y =
-  let vx = value d x and vy = value d y in
-  let back v = store d (if is_wide d then bits v else Ops.bitcast v Uint32) in
-  let divide v =
-    Ops.alu vx (if rem then Op.Truncmod else Op.Truncdiv) [ v ]
-  in
-  let lo = Ops.vmin vy and hi = Ops.vmax vy in
-  let below = Dtype.Value.( < ) in
-  if Stdlib.(below (`Int Bigint.zero) lo || below hi (`Int Bigint.zero)) then
-    back (divide vy)
-  else
-    let zero = vy = num vy 0 in
-    let safe = where zero (num vy 1) vy in
-    where zero (if rem then x else num x 0) (back (divide safe))
+  let op = if rem then Op.Truncmod else Op.Truncdiv in
+  let q = Ops.alu (value d x) op [ value d y ] in
+  store d (if is_wide d then bits q else Ops.bitcast q Uint32)
 
 (* Threefry-2x32 with 20 rounds: the counter and the key are word pairs, the low
    word first, and so is the result. Each group of four rounds gives its

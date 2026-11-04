@@ -8512,9 +8512,9 @@ and an initial value is added after it (D260).
   of a negative dividend skips a divisor of 0; an emulated 64-bit quotient
   selects 0 where both words of the divisor are 0. A division whose
   divisor's bounds hold no 0, as an index's by a positive constant, keeps
-  tinygrad's source. rune still selects 1 for a zero divisor
-  (`Lower_arith.int_div`), and D145 does on padding. tinygrad's sources
-  move with the rules, through `test/gen/tinygrad.patch`.
+  tinygrad's source. rune divides as it lowers any divisor
+  (`Lower_arith.int_div`), and D145 still selects 1 on padding. tinygrad's
+  sources move with the rules, through `test/gen/tinygrad.patch`.
 - **Reason:** (e): at the pinned commit, the host's kernel of an integer
   division by a loaded 0 dies with SIGFPE, and CUDA's uint8 quotient of 0
   by 0 is 255, where tinygrad's interpreter gives 0.
