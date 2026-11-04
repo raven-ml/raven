@@ -31,8 +31,9 @@
    its part: the order per target stays C order. A float's Add of such
    runs, each one slice, sums each on one thread where its targets fit the
    cache (Sums in row order below). A combine whose result is the same in
-   any order, an integer's, folds each thread's share of the updates into
-   targets of its own instead, where they are few (Owned targets below).
+   any order, an integer's or a real float's Max and Min, folds each
+   thread's share of the updates into targets of its own instead, where
+   they are few (Owned targets below).
 
    Add adds left to right from the target's element, x + u1 + ... + un,
    with no +0 before it, so that a -0 target and -0 updates sum to -0, as
@@ -1246,19 +1247,38 @@ static void sorted(scatter *c, int64_t v, int threads) {
 /* Owned targets
 
    An integer's Add wraps, and its Max and Min pick one of their operands,
-   so the result is the same in any order of the updates. Where few runs
-   of many updates reach few targets, each thread then folds its shares of
-   the updates into a copy of the targets of its own, and the copies fold
-   into the destination after: each update is read once, with no sort and
-   no part of the targets. A target no update reaches keeps its bits
-   through the fold, x + 0 or the extreme of x and x. A boolean's Max and
-   Min store 0 or 1, and would rewrite an unreached true byte of 2, so
-   booleans sort. A copy takes at most half a core's L2, as a sorted
-   scatter's bin does, and the copies together no more elements than the
-   updates, so their fold costs no more than the updates do. 1M int64 Adds
-   into 100 targets on four threads took 47 instructions an update sorted
-   and 11 so, as many as on one thread; 10M took 12.9 ms sorted on fudge's
-   14 threads under load 8 to 25, 6.6 on one thread, and 2.4 so. */
+   so the result is the same in any order of the updates. So do a float's
+   and a narrow float's Max and Min, under the contract: on operands that
+   aren't NaN they pick one by prog.mli's order, -0 below +0, which is
+   total, so the extreme of a target's element and its updates is one
+   operand's bits in any order (nx_maximum of +0 and -0 is +0 either way
+   round, the AND of their bits). A NaN operand makes the result a NaN in
+   any order, whose sign and payload nx_cpu.mli leaves free to change with
+   the threads. A complex number's extremes don't fold: a NaN result is the
+   first NaN operand in C order, whose other part prog.mli keeps, and the
+   copies would give another's (1M complex128 Max into 100 targets, with
+   NaNs of distinct imaginary parts, gave other bits than one thread in 38
+   runs of 50).
+
+   Where few runs of many updates reach few targets, each thread then
+   folds its shares of the updates into a copy of the targets of its own,
+   and the copies fold into the destination after: each update is read
+   once, with no sort and no part of the targets. A target no update
+   reaches keeps its bits through the fold, x + 0 or the extreme of x and
+   x, a signalling NaN's included: nx_maximum and nx_minimum answer a NaN
+   first operand with its bits, by selection and masks rather than
+   arithmetic, and a narrow float's combine_one stores either operand's
+   code, both x's. A boolean's Max and Min store 0 or 1, and would rewrite
+   an unreached true byte of 2, so booleans sort. float4_e2m1fn's elements
+   share bytes, and the copies take whole bytes per element, so it doesn't
+   fold, as int4 and uint4 don't. A copy takes at most half a core's L2, as
+   a sorted scatter's bin does, and the copies together no more elements
+   than the updates, so their fold costs no more than the updates do. 1M
+   int64 Adds into 100 targets on four threads took 47 instructions an
+   update sorted and 11 so, as many as on one thread; 10M took 12.9 ms
+   sorted on fudge's 14 threads under load 8 to 25, 6.6 on one thread, and
+   2.4 so. 1M float64 Max into 100 targets took 62 sorted and 25 so, as
+   many as on one thread, and bfloat16's 137 and 100. */
 
 /* Updates of a run each share of it takes. */
 #define OWN_SHARE (64 * 1024)
@@ -1278,6 +1298,9 @@ static int order_free(int combine, int dt) {
   switch (dt) {
     case NX_INT8: case NX_UINT8: case NX_INT16: case NX_UINT16:
     case NX_INT32: case NX_UINT32: case NX_INT64: case NX_UINT64: return 1;
+    case NX_FLOAT16: case NX_BFLOAT16: case NX_FLOAT8_E4M3FN:
+    case NX_FLOAT8_E5M2: case NX_FLOAT32: case NX_FLOAT64:
+      return combine != NX_COMBINE_ADD;
     default: return 0;
   }
 }
@@ -1317,7 +1340,8 @@ static void fold_owned(int64_t lo, int64_t hi, int worker, void *ctx) {
   int64_t w = c->a[0].bits / 8, zero = 0;
   nx_array a[4] = {c->a[0], c->a[1], c->a[2], c->a[3]};
   a[2].base = (uint8_t *)&zero;
-  scatter s = {.a = a, .m = 1, .sd = 1, .su = 1};
+  scatter s = {.a = a, .dt = c->dt, .combine = c->combine, .m = 1,
+               .sd = 1, .su = 1};
   for (int64_t k = 0; o->used[k] != 2; k++) {
     if (!o->used[k]) continue;
     a[3].base = o->own + k * o->total * w;

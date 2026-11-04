@@ -2097,6 +2097,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.reduce_segments` and `Nx.scatter` of floats and narrow floats by
+  `Max` or `Min` into few targets fold each thread's share of the updates
+  into targets of its own, as integers' do, in place of sorting them by
+  target: 1M float64 maxima into 100 segments take 25 instructions an
+  update where they took 62. Complex numbers still sort: a NaN result keeps
+  the first NaN's other part, which a fold would not.
 - `Nx.reduce_segments` and `Nx.scatter` of floats, narrow floats and
   complex numbers by `Add`, over fewer slices than threads whose targets fit
   the host's largest cache, sum each slice in row order on one thread in

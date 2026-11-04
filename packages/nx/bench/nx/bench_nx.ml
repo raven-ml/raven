@@ -844,7 +844,8 @@ let segments_1m () =
   (ids, Nx.copy ids)
 
 (* The same segments over 1M float64 rows drawn once from a fixed key: a
-   group-by's float sum, each group summed in row order on one thread. *)
+   group-by's float sum, each group summed in row order on one thread, and
+   its maximum, which threads fold into segments of their own. *)
 let segments_f64_1m () =
   let ids, _ = segments_1m () in
   (ids, on_host (Nx.Rng.uniform ~key:(Nx.Rng.key 15) D.Float64 [| 1 lsl 20 |]))
@@ -961,6 +962,9 @@ let index_rows =
       Thumper.bench_with_setup "segment-sum-f64-1M-into-100"
         ~setup:segments_f64_1m (fun (ids, x) ->
           Nx.reduce_segments Add ~segments:100 ids x);
+      Thumper.bench_with_setup "segment-max-f64-1M-into-100"
+        ~setup:segments_f64_1m (fun (ids, x) ->
+          Nx.reduce_segments Max ~segments:100 ids x);
       Thumper.bench_with_setup "take-windows-8B-1M" ~setup:windows_1m
         (fun (at, w) -> Nx.take ~axis:0 at w);
       Thumper.bench_with_setup "set-row-8M" ~setup:set_8m

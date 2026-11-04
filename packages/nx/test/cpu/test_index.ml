@@ -395,6 +395,47 @@ let owned_examples =
         ~m:200_000 ~draw:twos short)
     Nx_kernel.[ Max; Min ]
 
+(* [x] as an element of the float or complex dtype [d], both parts [x]. *)
+let of_float (D.Any dt as d) x =
+  match dt with
+  | D.Float32 -> f32 x
+  | D.Float64 -> f64 x
+  | D.Complex64 -> f32 x ^ f32 x
+  | D.Complex128 -> f64 x ^ f64 x
+  | _ -> encode d x
+
+(* Float Max and Min, which threads fold into targets of their own, at
+   [d]: updates of the zero below, numbers past it and, one in a few
+   hundred each, the zero above and a signalling NaN, so that a target's
+   extreme ties at zero or is a NaN; into targets that are signalling NaNs
+   and -0 in turn, 900 to 999 of which no update reaches and keep their
+   bits. *)
+let extremes d combine =
+  let rs = Random.State.make [| 3 |] in
+  let short = Array.init 900 (fun i -> Int64.of_int (i * 7 mod 900)) in
+  let m = 200_000 and toward = if combine = Nx_kernel.Max then -1. else 1. in
+  let update _ =
+    match Random.State.int rs 1000 with
+    | 0 | 1 -> signalling d rs
+    | 2 | 3 | 4 -> of_float d (-.toward *. 0.)
+    | k when k < 300 -> of_float d (toward *. 0.)
+    | _ -> of_float d toward
+  in
+  let target k = if k mod 2 = 0 then signalling d rs else of_float d (-0.) in
+  {
+    combine;
+    saxis = 0;
+    into = operand d [| 1000 |] (plain 1) target;
+    sidx = int64s [| m |] (plain 1) (positions_of short);
+    updates = operand d [| m |] (plain 1) update;
+    sviews = [];
+  }
+
+let float_extremes =
+  List.concat_map
+    (fun d -> List.map (extremes d) Nx_kernel.[ Max; Min ])
+    nan_dtypes
+
 (* An embedding gradient's rows: into transposed and the updates stepped
    and reversed; a narrow float's sum of half a million updates. *)
 let row_examples =
@@ -681,7 +722,7 @@ let row_order_examples =
 
 let threaded_examples =
   narrow_examples @ row_examples @ sub_byte_examples @ owned_examples
-  @ row_order_examples @ [ wide_rows ]
+  @ float_extremes @ row_order_examples @ [ wide_rows ]
 
 (* Scatters of many updates against the reference: large shapes, long axes
    of few slices, hundreds of thousands of updates into one axis, and
@@ -775,7 +816,9 @@ let cpu (b : Support.backend) =
       prop ~count:10 "large gathers on the job's threads" large_gathers
         (run (gather_agrees b));
       prop ~count:10
-        ~examples:(blocked_examples @ owned_examples @ row_order_examples)
+        ~examples:
+          (blocked_examples @ owned_examples @ float_extremes
+         @ row_order_examples)
         "scatters of many updates combine each target's updates in C order"
         many_scatters
         (run (fun c ->
