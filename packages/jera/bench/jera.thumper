@@ -6,6 +6,7 @@
 # ocaml: 5.5.2 · 64-bit · release
 # forced: blessed root-newton-kepler-1k/eager root-newton-kepler-1k/compiled minimize-bracket-1k/eager minimize-bracket-1k/compiled system-newton-bratu-64/eager system-newton-bratu-64/compiled system-newton-bratu-64/grad system-broyden-16/eager system-broyden-16/compiled system-broyden-16/grad system-anderson-tanh-64/eager system-anderson-tanh-64/compiled system-anderson-tanh-64/grad system-lanes-inverse-10k/eager system-lanes-inverse-10k/compiled system-lanes-inverse-10k/grad minimize-lbfgs-rosenbrock-64/eager minimize-lbfgs-rosenbrock-64/compiled minimize-lbfgs-rosenbrock-64/grad minimize-lbfgs-nnls-200/eager minimize-lbfgs-nnls-200/compiled minimize-bfgs-convex-16/eager minimize-bfgs-convex-16/compiled minimize-bfgs-convex-16/grad minimize-newton-convex-16/eager minimize-newton-convex-16/compiled minimize-newton-convex-16/grad minimize-lm-exponential-200/eager minimize-lm-exponential-200/compiled minimize-lm-exponential-200/grad minimize-nelder-mead-rosenbrock-4/eager minimize-nelder-mead-rosenbrock-4/compiled under load 7.8 on 14 cores
 # forced: blessed system-broyden-16/eager minimize-lbfgs-rosenbrock-64/eager minimize-lbfgs-nnls-200/eager minimize-bfgs-convex-16/eager minimize-newton-convex-16/eager minimize-lm-exponential-200/eager under load 37.4 on 14 cores
+# forced: blessed minimize-lbfgs-rosenbrock-64/eager minimize-lbfgs-nnls-200/eager minimize-bfgs-convex-16/eager under load 26.4 on 14 cores
 
 grid-cubic-16x16-eval-1k/compiled	alloc_words	exact	1858
 grid-cubic-16x16-eval-1k/eager	alloc_words	exact	139400
@@ -22,14 +23,14 @@ linear-gmres-convection-256/compiled	alloc_words	exact	1445
 linear-gmres-convection-256/eager	alloc_words	exact	3723169
 linear-gmres-convection-256/grad	alloc_words	exact	1523
 minimize-bfgs-convex-16/compiled	alloc_words	exact	1427
-minimize-bfgs-convex-16/eager	alloc_words	exact	878267
+minimize-bfgs-convex-16/eager	alloc_words	exact	917955
 minimize-bfgs-convex-16/grad	alloc_words	exact	1427
 minimize-bracket-1k/compiled	alloc_words	exact	1413
 minimize-bracket-1k/eager	alloc_words	exact	218694
 minimize-lbfgs-nnls-200/compiled	alloc_words	exact	1483
-minimize-lbfgs-nnls-200/eager	alloc_words	exact	11650760
+minimize-lbfgs-nnls-200/eager	alloc_words	exact	11862584
 minimize-lbfgs-rosenbrock-64/compiled	alloc_words	exact	1427
-minimize-lbfgs-rosenbrock-64/eager	alloc_words	exact	41671081
+minimize-lbfgs-rosenbrock-64/eager	alloc_words	exact	41527394
 minimize-lbfgs-rosenbrock-64/grad	alloc_words	exact	1427
 minimize-lm-exponential-200/compiled	alloc_words	exact	1427
 minimize-lm-exponential-200/eager	alloc_words	exact	882938
