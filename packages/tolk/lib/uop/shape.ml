@@ -3245,6 +3245,18 @@ let rec storage_phase u =
           (known align, 0))
   | _ -> (16, 0)
 
+let fits_start ~param:(align, phase) (a, p) = a >= align && p mod align = phase
+let allocated_start = (16, 0)
+
+let param_start body slot =
+  List.find_map
+    (fun u ->
+      match (op u, arg u) with
+      | Op.Param, Param p when p.addrspace = Dtype.Global && p.slot = slot ->
+          Some (p.align, p.phase)
+      | _ -> None)
+    (toposort ~calls:Skip body)
+
 let param_like ?name u slot =
   match op u with
   | Op.Param when addrspace u = Some Dtype.Alu ->

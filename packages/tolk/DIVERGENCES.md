@@ -8341,20 +8341,28 @@ and an initial value is added after it (D260).
   call's arguments contiguous).
 - **tolk:** `Prepare.prepare_rangeify` (`call_storage`, among its earliest
   rewrites); `Indexing.realize_custom_kernel_srcs`, for a precompiled
-  call's lowered body too.
+  call's lowered body too; `Spec.tensor`, which leaves a call's arguments
+  to it.
 - **Differs:** for a call compiled on its own, a kernel given as code or a
   precompiled call, preparing a tensor graph passes an argument that is a
   run of storage's elements, or of a state of it, from the first, of the
   storage's type, as the storage or the state. Indexing then passes
   storage, a state of it, a call's result, a load, a scalar of a
   precompiled call and a shrink of storage that loops move along, whose
-  elements on each trip are a run (for a kernel given as code, on a 16-byte
-  boundary on every trip), as they are, and stores any other argument
-  whole. It
+  elements on each trip are a run, as they are, and stores any other
+  argument whole. It
   raises `Invalid_argument` where the call writes such an argument
   (`Shape.written_params`, every argument where the body does not show its
   writes), and where it reads a constant or another value that loops move
-  along. tinygrad stores any such argument whole and the kernel writes the
+  along. An argument passed as it is must start where its parameter
+  assumes (D54, `Shape.storage_phase`): one that does not is stored whole,
+  storage the call only reads outside loops by preparing the graph
+  (`copy_off_start`), and it raises, naming both starts, where the call
+  writes it, where loops move it, and where the parameter assumes a start
+  off the 16 bytes new storage starts on. The tensor graph's specification
+  checks no call's arguments against its parameters, so these copies and
+  refusals are reached; the kernel graph's still checks them. tinygrad
+  stores any such argument whole and the kernel writes the
   copy: at the pinned commit, a kernel copying four floats into `a[2:6]`,
   `a[::2]`, the first four of `a`'s transpose or a broadcast of `a[0:1]`
   leaves `a` and the call's result all zeros. It passes a constant as it
@@ -8364,9 +8372,13 @@ and an initial value is added after it (D260).
   call does, writing through storage, a run from the first element and a
   loop's row, which rune's loops update in place. Its lowered body matched
   no rule before, and a view at a constant offset was passed as its
-  storage: a call reading `a[4:8]` read `a[0:4]`.
+  storage: a call reading `a[4:8]` read `a[0:4]`. A precompiled call's
+  rows were passed whatever their start, its parameter's assumption
+  included.
 - **Reason:** (e): the write landed in a copy, or at other elements, with
-  no error, and a constant reached a kernel as no storage. A row a loop
+  no error, and a constant reached a kernel as no storage; with the
+  specification checks off, a row off its parameter's boundary reached
+  the call, whose vector accesses assume the boundary. A row a loop
   moves along is what rune's loops pass, and its kernels write new
   storage or a state of it, so no raven library makes a refused call.
 - **Pinned by:** the Prepare suite's `prepare_rangeify › calls compiled on
@@ -8379,4 +8391,9 @@ and an initial value is added after it (D260).
   refused; writes through a run from the first element, through a second
   kernel's state of one, and through a loop's row on each trip, and a
   loop's column refused; a kernel's read of a value of a loop's row
-  refused, and its write into rows off 16 bytes).
+  refused; a read of a run off 16 bytes and of storage 4 bytes past a
+  boundary, which are copied, their writes refused; reads and writes of a
+  loop's column and of rows off 16 bytes refused, by both calls, with the
+  specification checks on; a view stored whole for a parameter 4 bytes past
+  a boundary refused); the Spec suite's `tensor › arguments against their
+  parameters`.

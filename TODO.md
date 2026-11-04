@@ -143,10 +143,8 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - D340's `Shape.written_params` change (call bodies lowered inside a kernel
   write their stores) is not mirrored in tinygrad.patch: the generator failed
   on a schedule-level call body
-- the `contiguous_view` law flakes at replay
-  `r1:AgMBAQICAAAAAAIDAQEBAQABAAA:e35293ae`; a call's argument that is a
-  view at a misaligned offset or along loop columns gets an opaque spec
-  error instead of D350's refusal
+- the host decode (D92, D348) loads a code's 32 bytes as 32 `vpinsrb`, so
+  1-row products are bound by the decode
 - integer division by zero is left to rune and D145; tolk's C renderers
   define every other integer case (D342, D346)
 - memory-bound host kernels split at 2^18 bytes (D80): a threshold between

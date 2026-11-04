@@ -2341,17 +2341,20 @@ let copies : (string * copy) list =
   [ ("a precompiled call", precompiled_copy); ("a kernel", kernel_copy) ]
 
 (* The values of [into] after a run of [sink], [into] holding [init] before
-   it and [from] holding [values]. *)
-let run_copy ~into ~init ~from values sink =
+   it and [from] holding [values], placed by [at] (default as it is). *)
+let run_copy ?(at = Fun.id) ~into ~init ~from values sink =
   let linear, _ = Schedule.create_linear_with_vars sink in
   let out = Run.buffer host Float32 (floats init) in
   let bound =
-    [ (into, out); (from, Run.buffer host Float32 (floats values)) ]
+    [ (into, out); (from, at (Run.buffer host Float32 (floats values))) ]
   in
   Engine.run (Engine.link ~devices ~bound (compile linear)) [||];
   Run.values Float32 out
 
 let at_offset a = Shape.shrink a [ Some (Ops.Int 4, Ops.Int 8) ]
+
+(* Elements 1 to 4: 4 bytes past the 16-byte boundary a parameter takes. *)
+let off_boundary a = Shape.shrink a [ Some (Ops.Int 1, Ops.Int 5) ]
 let first_four a = Shape.shrink a [ Some (Ops.Int 0, Ops.Int 4) ]
 let dims = List.map (fun n -> Ops.Int n)
 
@@ -2383,9 +2386,16 @@ let row r b =
   let at = Ops.O.(r * int 4) in
   Shape.shrink b [ Some (Sym at, Sym Ops.O.(at + int 4)) ]
 
-(* [f ()] without the checks of the graphs between stages, which refuse some
-   arguments before scheduling does. *)
-let unchecked f = Setting.context [ B (Setting.spec, 0) ] f
+(* The column [r] of [ys] seen as 4 rows of 3. *)
+let column ys r =
+  let m = Shape.reshape ys (dims [ 4; 3 ]) in
+  Shape.shrink m [ None; Some (Ops.Sym r, Ops.Sym Ops.O.(r + int 1)) ]
+
+(* Four floats from [5 r]: rows 20 bytes apart, off 16 bytes on trips 1 and
+   2. *)
+let row_off r b =
+  let at = Ops.O.(r * int 5) in
+  Shape.shrink b [ Some (Ops.Sym at, Ops.Sym Ops.O.(at + int 4)) ]
 
 let calls_of_views =
   let reads (call : copy) view expected () =
@@ -2410,6 +2420,7 @@ let calls_of_views =
   let unwritable =
     [
       ("a run at an offset", at_offset);
+      ("a run off 16 bytes", off_boundary);
       ("every other element", every_other);
       ("a transpose", transposed);
       ( "a broadcast",
@@ -2428,6 +2439,7 @@ let calls_of_views =
           List.iter
             (fun (_, call) ->
               reads call at_offset [| 4.; 5.; 6.; 7. |] ();
+              reads call off_boundary [| 1.; 2.; 3.; 4. |] ();
               reads call every_other [| 0.; 2.; 4.; 6. |] ();
               reads call transposed [| 0.; 4.; 1.; 5. |] ())
             copies);
@@ -2445,6 +2457,50 @@ let calls_of_views =
                   Schedule.create_linear_with_vars
                     (Ops.sink [ Ops.after d [ call [ d; three ] ] ])))
             copies);
+      test "a call reads storage off its parameter's start through a copy"
+        (fun () ->
+          List.iter
+            (fun (msg, (call : copy)) ->
+              let y = Ops.new_buffer ~phase:4 "CPU" 4 Float32
+              and d = Ops.new_buffer "CPU" 4 Float32 in
+              let sink = Ops.sink [ Ops.after d [ call [ d; y ] ] ] in
+              run_copy ~at:off_phase ~into:d ~init:(Array.make 4 0.) ~from:y
+                y_values sink
+              |> equal ~msg values (floats y_values))
+            copies);
+      test "a call that writes storage off its parameter's start is refused"
+        (fun () ->
+          List.iter
+            (fun (msg, (call : copy)) ->
+              let a = Ops.new_buffer ~phase:4 "CPU" 4 Float32
+              and y = Ops.new_buffer "CPU" 4 Float32 in
+              raises_match ~msg
+                (Exn.invalid_arg
+                   ~sub:
+                     "writes its argument 0, of shape (4,), which starts 4 \
+                      bytes past a 16-byte boundary, where its parameter \
+                      assumes a start on a 16-byte boundary") (fun () ->
+                  Schedule.create_linear_with_vars
+                    (Ops.sink [ Ops.after a [ call [ a; y ] ] ])))
+            copies);
+      test
+        "a call whose parameter starts off 16 bytes is refused a view stored \
+         whole" (fun () ->
+          let a = Ops.new_buffer "CPU" 8 Float32
+          and d = Ops.new_buffer "CPU" 4 Float32 in
+          let p ?phase slot =
+            Shape.param ~shape:[ Int 4 ] ~device:"CPU" ?phase slot Float32
+          in
+          let body = Ops.sink [ Ops.store (p 0) (p ~phase:4 1) ] in
+          let call = Ops.call ~precompile:true body [ d; every_other a ] in
+          raises_match
+            (Exn.invalid_arg
+               ~sub:
+                 "reads its argument 1, of shape (4,), which would be stored \
+                  whole on a 16-byte boundary, where its parameter assumes a \
+                  start 4 bytes past a 16-byte boundary") (fun () ->
+              Schedule.create_linear_with_vars
+                (Ops.sink [ Ops.after d [ call ] ])));
       test "a call reads a state of a view at its elements" (fun () ->
           List.iter
             (fun (msg, (call : copy)) ->
@@ -2515,37 +2571,64 @@ let calls_of_views =
       test "a call in a loop that writes a column of storage is refused"
         (fun () ->
           List.iter
-            (fun (msg, (call : copy), sub) ->
+            (fun (msg, (call : copy)) ->
               let _, _, sink =
-                looped ~n:3 (fun args -> call args) (fun ys xs r ->
-                    let m = Shape.reshape ys (dims [ 4; 3 ]) in
-                    let column =
-                      Shape.shrink m
-                        [ None; Some (Sym r, Sym Ops.O.(r + int 1)) ]
-                    in
-                    [ column; row r xs ])
+                looped ~n:3
+                  (fun args -> call args)
+                  (fun ys xs r -> [ column ys r; row r xs ])
               in
-              unchecked (fun () ->
-                  raises_match ~msg (Exn.invalid_arg ?sub) (fun () ->
-                      Schedule.create_linear_with_vars sink)))
-            [
-              (* Its argument is checked when its call is made. *)
-              ("a precompiled call", precompiled_copy, None);
-              ("a kernel", kernel_copy, Some "writes its argument 0");
-            ]);
-      test "a kernel in a loop that writes rows off 16 bytes is refused"
+              raises_match ~msg (Exn.invalid_arg ~sub:"writes its argument 0")
+                (fun () -> Schedule.create_linear_with_vars sink))
+            copies);
+      test "a call in a loop that reads a column of storage is refused"
         (fun () ->
-          let _, _, sink =
-            looped ~size:15 ~n:3 kernel_copy (fun ys xs r ->
-                let at = Ops.O.(r * int 5) in
-                let off b =
-                  Shape.shrink b [ Some (Sym at, Sym Ops.O.(at + int 4)) ]
-                in
-                [ off ys; row r xs ])
-          in
-          unchecked (fun () ->
-              raises_match (Exn.invalid_arg ~sub:"writes its argument 0")
-                (fun () -> Schedule.create_linear_with_vars sink)));
+          List.iter
+            (fun (msg, (call : copy)) ->
+              let _, _, sink =
+                looped ~n:3
+                  (fun args -> call args)
+                  (fun ys xs r -> [ row r ys; column xs r ])
+              in
+              raises_match ~msg
+                (Exn.invalid_arg
+                   ~sub:
+                     "reads its argument 1, of shape (4, 1), which moves with \
+                      a loop and is no row") (fun () ->
+                  Schedule.create_linear_with_vars sink))
+            copies);
+      test "a call in a loop that writes rows off 16 bytes is refused"
+        (fun () ->
+          List.iter
+            (fun (msg, (call : copy)) ->
+              let _, _, sink =
+                looped ~size:15 ~n:3
+                  (fun args -> call args)
+                  (fun ys xs r -> [ row_off r ys; row r xs ])
+              in
+              raises_match ~msg
+                (Exn.invalid_arg
+                   ~sub:
+                     "writes its argument 0, of shape (4,), which starts on a \
+                      4-byte boundary, where its parameter assumes a start on \
+                      a 16-byte boundary") (fun () ->
+                  Schedule.create_linear_with_vars sink))
+            copies);
+      test "a call in a loop that reads rows off 16 bytes is refused" (fun () ->
+          List.iter
+            (fun (msg, (call : copy)) ->
+              let _, _, sink =
+                looped ~size:15 ~n:3
+                  (fun args -> call args)
+                  (fun ys xs r -> [ row r ys; row_off r xs ])
+              in
+              raises_match ~msg
+                (Exn.invalid_arg
+                   ~sub:
+                     "reads its argument 1, of shape (4,), which starts on a \
+                      4-byte boundary, where its parameter assumes a start on \
+                      a 16-byte boundary") (fun () ->
+                  Schedule.create_linear_with_vars sink))
+            copies);
     ]
 
 (* Aranges past 2^31 elements: [(n, start, step, dtype, first)] reads the

@@ -524,16 +524,49 @@ let run_from_start a =
         Some b
     | _ -> None
 
+(* Storage, or a state of it, that a call only reads outside loops, and that
+   starts elsewhere than its parameter assumes, stored into new storage, which
+   starts on a 16-byte boundary: rune's jit makes storage at its inputs' phases,
+   and a kernel's placeholder takes the boundary. *)
+let copy_off_start c i a =
+  let reads =
+    match Shape.written_params (body c) with
+    | Some w -> not (List.mem i w)
+    | None -> false
+  in
+  let loops =
+    List.exists
+      (fun r -> Axis_type.equal (axis_type r) Axis_type.Loop)
+      (Nodes.to_list (ranges a))
+  in
+  match Shape.param_start (body c) i with
+  | Some param
+    when reads && (not loops)
+         && has_buffer_identity ~after_ok:true a
+         && (not (fits_start ~param (storage_phase a)))
+         && fits_start ~param allocated_start ->
+      let buf =
+        alloc
+          ?vmin_vmax:(stored_bounds a (dtype a))
+          ?device:(device a) (shape a) (dtype a)
+      in
+      after buf [ store buf a ]
+  | _ -> a
+
 (* A call compiled on its own takes flat storage at each argument
-   ({!Indexing.run_rangeify}): a run of storage from its first element is
-   passed as the storage. *)
+   ({!Indexing.run_rangeify}): a run of storage from its first element is passed
+   as the storage, and storage it only reads off its parameter's start is
+   copied. *)
 let call_storage c =
-  if is_inline_call c || not (Op.Set.mem (op (body c)) compiled_on_its_own)
-  then None
+  if is_inline_call c || not (Op.Set.mem (op (body c)) compiled_on_its_own) then
+    None
   else
     let args = List.tl (src c) in
     let args' =
-      List.map (fun a -> Option.value (run_from_start a) ~default:a) args
+      List.mapi
+        (fun i a ->
+          copy_off_start c i (Option.value (run_from_start a) ~default:a))
+        args
     in
     if List.for_all2 ( == ) args args' then None
     else Some (replace c ~src:(nth c 0 :: args'))

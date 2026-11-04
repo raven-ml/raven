@@ -65,7 +65,10 @@ val prepare_rangeify : Ops.t -> Ops.t
           call, takes as an argument that is a run of storage's elements, or
           of a state of it, from the first, of the storage's type, the
           storage or the state ({!contiguous_view}), which the call writes
-          through;
+          through; storage or a state of it that the call only reads, outside
+          loops, and that starts elsewhere than its parameter assumes
+          ({!Shape.storage_phase}), is stored into new storage, where new
+          storage starts as the parameter assumes;
         - the sink's sources lose their movements;
         - a copy to the device the value is on is the value; a store of a copy
           into storage on the copy's device, or into a run of its elements
@@ -112,4 +115,12 @@ val contiguous_view : Ops.t -> (Ops.t * Ops.sint) option
     bitcast, an expression of constants and bound variables. It is [None]
     otherwise: when the movements reorder, skip, repeat or pad elements, when
     the offset reads a range or an unbound variable, when [u] is empty, and when
-    its size is symbolic. *)
+    its size is symbolic.
+
+    A run is found when [u] is shrinks and permutes of a reshape of [b]. Other
+    runs are found where the simplified index of [u]'s elements is the range
+    plus a constant, and some are not: 27 elements viewed as [[3; 3; 3]], shrunk
+    to the first two along axis 0, reshaped to [[18]] and shrunk to elements 6
+    to 9, whose index keeps divisions the simplifier does not recombine; flips
+    that cancel across a reshape; and a read within one copy of an expanded
+    value. A caller then treats [u] as a value of its own. *)

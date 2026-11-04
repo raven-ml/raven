@@ -90,10 +90,8 @@ let loops s =
 
 (* A shrink of storage that loops move along, a run of its elements on each
    trip: its axes of one element come first, its one partial axis next, and
-   whole axes after. A kernel given as code takes it only on a 16-byte
-   boundary on every trip, which its parameter assumes; a precompiled call's
-   parameter states its own. *)
-let loop_row ~precompiled s =
+   whole axes after. *)
+let loop_row s =
   let run extents fulls =
     let rec go = function
       | (e, _) :: rest when Sint.equal e (Int 1) -> go rest
@@ -102,26 +100,30 @@ let loop_row ~precompiled s =
     in
     go (List.combine extents fulls)
   in
-  let aligned () =
-    let align, phase = Shape.storage_phase s in
-    align >= 16 && phase mod 16 = 0
-  in
   op s = Op.Shrink
   && has_buffer_identity ~after_ok:true (nth s 0)
   && loops s
   && run (shape s) (shape (nth s 0))
-  && (precompiled || aligned ())
+
+let pp_start ppf (align, phase) =
+  if phase = 0 then Format.fprintf ppf "on a %d-byte boundary" align
+  else Format.fprintf ppf "%d bytes past a %d-byte boundary" phase align
 
 (* A call compiled on its own, a kernel given as code or a precompiled call,
    takes flat storage at each argument: storage or a state of it, a row loops
-   move along, a call's result or a load, and a scalar of a precompiled call
-   are passed as they are. Any other argument is stored whole first, so the
+   move along, a call's result or a load, and a scalar of a precompiled call are
+   passed as they are, where they start as their parameter assumes
+   ({!Ops.type-param_arg}). Any other argument is stored whole first, so the
    call reads a copy of it; one the call writes, or may write where its body
-   does not show its writes, is refused, since the write would land in the
-   copy: given [a[::2]], the call would write every other element of [a]
-   into storage of its own. A constant, which needs no storage, and another
-   value loops move along, which a store before the call cannot hold, are
-   refused. *)
+   does not show its writes, is refused, since the write would land in the copy:
+   given [a[::2]], the call would write every other element of [a] into storage
+   of its own. A constant, which needs no storage, and another value loops move
+   along, which a store before the call cannot hold, are refused. An argument
+   that starts elsewhere than its parameter assumes is stored whole, as
+   {!Prepare.prepare_rangeify} stores storage the call only reads, where the
+   call only reads it outside loops and new storage starts where the parameter
+   assumes; it is refused otherwise: given rows 20 bytes apart, a kernel that
+   loads four floats at once would load them off their boundary. *)
 let realize_custom_kernel_srcs ctx c =
   let rec strip s = if op s = Op.Reshape then strip (nth s 0) else s in
   let precompiled = match arg c with Call i -> i.precompile | _ -> false in
@@ -137,7 +139,7 @@ let realize_custom_kernel_srcs ctx c =
     || op a = Op.Load
     || op a = Op.Call
     || (precompiled && addrspace a = Some Dtype.Alu && shape a = [])
-    || loop_row ~precompiled a
+    || loop_row a
   in
   let refuse i a why =
     invalid_arg
@@ -145,24 +147,47 @@ let realize_custom_kernel_srcs ctx c =
          pp_shape (shape a) why)
   in
   let reads_storage u =
-    List.exists
-      (fun n -> Op.Set.mem (op n) storage)
-      (toposort ~calls:Skip u)
+    List.exists (fun n -> Op.Set.mem (op n) storage) (toposort ~calls:Skip u)
   in
   List.iteri
     (fun i a ->
       let s = strip a in
-      if passed s then ()
+      let param = Shape.param_start (nth c 0) i in
+      let fits start =
+        Option.fold ~none:true
+          ~some:(fun param -> Shape.fits_start ~param start)
+          param
+      in
+      let start = Shape.storage_phase s in
+      let off_start why =
+        refuse i a
+          (Format.asprintf
+             "which starts %a, where its parameter assumes a start %a: %s"
+             pp_start start pp_start (Option.get param) why)
+      in
+      if passed s && fits start then ()
+      else if written i && passed s then
+        off_start "the call cannot take it as it is, and would write a copy"
       else if written i then
         refuse i a
-          "which is neither storage, a run of its elements from the first, \
-           nor a row a loop moves along: the write would land in a copy"
+          "which is neither storage, a run of its elements from the first, nor \
+           a row a loop moves along: the write would land in a copy"
       else if not (reads_storage s) then
         refuse i a "a constant: store it into storage first"
+      else if loops s && passed s then
+        off_start
+          "the call cannot take it as it is, and no store before the call can \
+           hold a value a loop moves along"
       else if loops s then
         refuse i a
-          "which moves with a loop and is no row of storage it can take: \
-           store it into storage first"
+          "which moves with a loop and is no row of storage it can take: store \
+           it into storage first"
+      else if not (fits Shape.allocated_start) then
+        refuse i a
+          (Format.asprintf
+             "which would be stored whole %a, where its parameter assumes a \
+              start %a"
+             pp_start Shape.allocated_start pp_start (Option.get param))
       else begin
         realize ctx s;
         Tbl.replace ctx.non_removable s ()

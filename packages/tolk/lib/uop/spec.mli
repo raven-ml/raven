@@ -33,7 +33,8 @@ val shared : t
     - casts, ranges, indexes with integer indexes, ends of bounded loops, and
       loop back-edges on a scalar boolean condition;
     - parameters, local and register buffers, binaries, groups of effects,
-      orderings of storage, custom code, calls of opaque bodies, barriers and
+      orderings of storage, custom code, calls of opaque bodies whose arguments
+      start where their parameters assume ({!Shape.storage_phase}), barriers and
       instructions;
     - loads and stores through an index or a shrink, a gated load's alternative
       being of the load's type and a store's value of its target's type, and
@@ -56,9 +57,10 @@ val tensor : t
     a buffer ({!Op.Alloc}); variables without a device; unlowered
     {!Op.Special}s; movement, the shape of a reshape or an expand being
     integers; reductions; copies to a device other than a disk;
-    {!Op.Detach}, {!Op.Contiguous_backward} and {!Op.Stage}; and programs as
+    {!Op.Detach}, {!Op.Contiguous_backward} and {!Op.Stage}; programs as
     compilation fills them in: a sink, then its linear form, its source and its
-    binary. *)
+    binary; and calls of opaque bodies wherever their arguments start, since
+    scheduling decides what each becomes. *)
 
 val program : t
 (** [program] is {!shared} as programs restrict it: every width is stated, so a

@@ -1034,6 +1034,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 - On the host, consecutive `int8` and `uint8` loads and stores merge into
   vectors of up to one register (`Coalesce.memory_coalescing`): a 1-token MXFP4
   product, which read its codes a byte at a time, runs 1.5 times as fast.
+- A kernel given as code or a precompiled call reads a view at any offset,
+  such as `a[1:5]`, or storage off its parameter's 16-byte boundary,
+  through a copy, where scheduling failed a specification check. An
+  argument it cannot take, a write off that boundary, a loop's column or
+  rows off it, raises `Invalid_argument` naming the argument and why; with
+  checks off, a precompiled call took such rows.
 - A kernel given as code (`Shape.custom_kernel`) or a precompiled call
   (`Ops.call ~precompile:true`) that writes an argument other than storage,
   a run of it from the first element or a row a loop moves along raises

@@ -441,6 +441,20 @@ val storage_phase : Ops.t -> int * int
     access reads, and anything else that is not storage or a view of it have
     [(16, 0)]. *)
 
+val fits_start : param:int * int -> int * int -> bool
+(** [fits_start ~param start] is [true] iff storage that starts at [start]
+    ({!storage_phase}) starts where a parameter that assumes [param] takes it:
+    known modulo at least the parameter's alignment, at its phase. *)
+
+val allocated_start : int * int
+(** [allocated_start] is [(16, 0)], the start of storage that scheduling
+    allocates: on a 16-byte boundary. *)
+
+val param_start : Ops.t -> int -> (int * int) option
+(** [param_start body slot] is the start [(align, phase)] that the storage
+    parameter in [slot] of the call body [body] assumes ({!Ops.type-param_arg}),
+    or [None] if [body] takes no storage there. *)
+
 val view_as : Ops.t -> Ops.sint list -> Ops.t
 (** [view_as u shape] views the flat storage [u] as [shape]. *)
 
@@ -534,8 +548,10 @@ val custom_kernel : Ops.t list -> (Ops.t list -> Ops.t) -> Ops.t list
     argument takes slot [i]: a variable's is the variable, unbound, and any
     other's is a buffer of its shape ({!placeholder_like}). An argument the
     kernel writes is storage, a run of its elements from the first, or a
-    row a loop moves along: scheduling refuses any other, which the kernel
-    would write a copy of ({!Indexing.run_rangeify}). *)
+    row a loop moves along, on a 16-byte boundary as its placeholder
+    assumes, and so is one a loop moves along that it reads: scheduling
+    refuses any other, which the kernel would write a copy of or access off
+    its boundary ({!Indexing.run_rangeify}). *)
 
 (** {1:launches Launches} *)
 

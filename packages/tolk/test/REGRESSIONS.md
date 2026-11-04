@@ -1501,8 +1501,8 @@ evaluable graph writes the same into its parameters and buffers before and
 after (`Tensors`); call-local storage is scratch. `PR › pm_mops › laws` states
 that an index of a chain of movements, rewritten, reads the element they place
 there, and `PR › contiguous_view › laws` that a view found is exactly a run of
-its storage and that reshapes, shrinks and permutes are found exactly when they
-are one. The other groups state one rule each.
+its storage and that shrinks and permutes are found exactly when they are one.
+The other groups state one rule each.
 
 Three mutants of `prepare.ml` survive, all equivalent: `op item = After && op s
 = Store` as `||` (an item that is not an after of a store is kept whichever
@@ -1547,6 +1547,7 @@ lasts only while the index carries it, and a caller masks padded values.
 | tinygrad: uop/ops.py `contiguous_view` on CL and WEBGPU | no view | dropped: excluded (README) |
 | tinygrad: uop/ops.py:895 `contiguous_view` on flips that cancel across a reshape (no upstream test) | a run it does not find: tinygrad HEAD gives `None` for a `(2, 1, 16)` view flipped on axis 0, reshaped to `(2, 16)` and flipped on axis 0 again, which is the identity | `PR › contiguous_view › flips that cancel across a reshape are not found` |
 | tinygrad: uop/ops.py:895 `contiguous_view` on a read within one copy of an expanded value (no upstream test) | a run it does not find: tinygrad HEAD gives `None` for a `(1, 2, 4, 2)` view expanded to `(2, 2, 4, 2)`, reshaped to `(32,)` and shrunk to `(6, 9)`, elements 6 to 8 of the storage | `PR › contiguous_view › a read within one copy of an expanded value is not found` |
+| tinygrad: uop/ops.py:895 `contiguous_view` on a shrink of a reshape of a shrink (no upstream test) | a run it does not find: tinygrad HEAD gives `None` for a `(3, 3, 3)` view shrunk to `((0, 2), (0, 3), (0, 3))`, reshaped to `(18,)` and shrunk to `(6, 10)`, elements 6 to 9 of the storage | `PR › contiguous_view › a shrink of a reshape of a shrink is not found` |
 
 ## Rangeify
 

@@ -503,10 +503,12 @@ let pads =
 
    The laws: a view found, [Some (b, offset)], has its elements, in row-major
    order, [b]'s from [offset] on (Tensors), [b] holding distinct elements; and
-   reshapes, shrinks and permutes are found exactly when their elements are such
-   a run. Two runs are not found, as in tinygrad, whose rewrite of the index
-   does not reach them: flips that cancel across a reshape, and a read within
-   one copy of an expanded value. *)
+   shrinks and permutes of storage's elements are found exactly when their
+   elements are such a run. Other runs are not always found, as in tinygrad,
+   whose simplification of the index does not reach them: flips that cancel
+   across a reshape, a read within one copy of an expanded value, and a shrink
+   of a reshape of a shrink, whose index is the range plus a constant through
+   divisions the simplifier does not recombine. *)
 
 let view_witness = option (pair uop int)
 
@@ -543,6 +545,13 @@ let contiguous_views =
          (Shape.shrink
             (Shape.reshape (Shape.expand x (ints [ 2; 2; 4; 2 ])) (ints [ 32 ]))
             [ Some (Int 6, Int 9) ]));
+      (let x = stored [ 3; 3; 3 ] in
+       case "a shrink of a reshape of a shrink is not found" None
+         (Shape.shrink
+            (Shape.reshape
+               (Shape.shrink x [ Some (Int 0, Int 2); None; None ])
+               (ints [ 18 ]))
+            [ Some (Int 6, Int 10) ]));
       case "an expand repeats" None
         (Shape.expand (Shape.reshape b (ints [ 1; 32 ])) (ints [ 2; 32 ]));
       case "a pad adds elements" None (Shape.pad b [ Some (Int 1, Int 0) ]);
@@ -678,9 +687,8 @@ let contiguous_view_laws =
   group "contiguous_view › laws"
     [
       prop "a view found is exactly a run of its storage" chain found_is_a_run;
-      prop
-        "reshapes, shrinks and permutes are found exactly when they are a run"
-        (chains [ `Reshape; `Shrink; `Permute ])
+      prop "shrinks and permutes are found exactly when they are a run"
+        (chains [ `Shrink; `Permute ])
         found_exactly_when_a_run;
     ]
 

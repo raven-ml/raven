@@ -112,8 +112,7 @@ let args_fit c =
         when p.addrspace = Dtype.Global
              && p.slot >= 0
              && p.slot < Array.length args ->
-          let align, phase = storage_phase args.(p.slot) in
-          align >= p.align && phase mod p.align = p.phase
+          fits_start ~param:(p.align, p.phase) (storage_phase args.(p.slot))
       | _ -> true)
     (toposort ~calls:Skip (body c))
 
@@ -334,6 +333,16 @@ let tensor : t =
   Pattern_matcher.append
     (Pattern_matcher.fold
        (fun () -> [
+         (* Scheduling decides what a call's argument becomes: it passes one
+            that starts where its parameter assumes, stores another whole, or
+            refuses it (Indexing.run_rangeify). The kernel graph's calls fit
+            their parameters. *)
+         check
+           (pat [ Op.Call ]
+              ~src:[ Upat.v ~op:opaque_call_bodies () ]
+              ~allow_any_len:true ~name:"x")
+           "x"
+           (fun x -> match arg x with Call _ -> true | _ -> false);
          check
            (pat
               [ Op.Sin; Op.Log2; Op.Exp2; Op.Sqrt; Op.Recip ]

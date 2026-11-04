@@ -71,8 +71,7 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
     call) that the call reads and that is neither storage, a state of it, a
     call's result, a load, a scalar of a precompiled call, nor a row of
     storage that loops ({!Ops.Axis_type.Loop}) move along (an {!Op.Shrink}
-    whose elements on each trip are a run, on a 16-byte boundary on every
-    trip for a kernel given as code), or a gathered source that is not
+    whose elements on each trip are a run), or a gathered source that is not
     storage. A
     value stored into a destination it reads is not: within a kernel,
     {!Rangeify.get_kernel_graph} stages a value that
@@ -122,7 +121,12 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
     not show its writes) that would be stored whole, since the call would
     write the copy, or reads one that is a constant, which needs no storage,
     or another value loops move along, which a store before the call cannot
-    hold. *)
+    hold. An argument passed as it is must start where its parameter
+    assumes ({!Shape.storage_phase}, {!Ops.type-param_arg}): one that does
+    not is stored whole, and it raises where the call writes it, where loops
+    move it, as rows 20 bytes apart for a parameter on a 16-byte boundary,
+    and where the parameter assumes a start that new storage
+    ({!Shape.allocated_start}) lacks. *)
 
 (**/**)
 

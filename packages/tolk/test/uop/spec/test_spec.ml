@@ -360,6 +360,22 @@ let arguments =
             (judge Spec.kernel_graph (call_on_rows ~align:4 5)));
     ]
 
+(* In a tensor graph, scheduling decides what an argument becomes: passed as it
+   is where it fits its parameter, stored whole or refused otherwise. *)
+let tensor_arguments =
+  group "tensor › arguments against their parameters"
+    [
+      test "accepts a row a float apart for a parameter that starts on 16 bytes"
+        (fun () ->
+          equal verdict (Some true)
+            (judge Spec.tensor (call_on_rows ~align:16 5)));
+      test
+        "a program refuses a row a float apart for a parameter that starts on \
+         16 bytes" (fun () ->
+          equal verdict (Some false)
+            (judge Spec.program (call_on_rows ~align:16 5)));
+    ]
+
 (* A program's parameters name no device: its call's arguments do. *)
 
 let storage ?device () = Shape.param ~shape:[ Int 16 ] ?device 0 Float32
@@ -386,5 +402,6 @@ let () =
          construction;
          loops;
          arguments;
+         tensor_arguments;
          parameters;
        ])
