@@ -24,10 +24,10 @@
 22 Ops.LOAD dtypes.f32 [21]
 23 Ops.CONST dtypes.weakint [] 4096
 24 Ops.PARAM dtypes.f32 [23] ParamArg(slot=1, dtype=dtypes.f32)
-25 Ops.CONST dtypes.weakint [] 8
+25 Ops.CONST dtypes.weakint [] 4
 26 Ops.CAST dtypes.i32 [25] dtypes.i32
-27 Ops.SHL dtypes.i32 [13, 26]
-28 Ops.ADD dtypes.i32 [27, 19]
+27 Ops.SHL dtypes.i32 [19, 26]
+28 Ops.ADD dtypes.i32 [27, 13]
 29 Ops.INDEX dtypes.f32 [24, 28]
 30 Ops.LOAD dtypes.f32 [29]
 31 Ops.ADD dtypes.f32 [22, 30]
@@ -56,7 +56,7 @@
 54 Ops.LOAD dtypes.f32 [53]
 55 Ops.CMPEQ dtypes.bool [13, 3]
 56 Ops.STORE dtypes.void [4, 54, 55]
-57 Ops.SINK dtypes.void [56] KernelInfo(name="r_16_256", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),), optimized=True)
+57 Ops.SINK dtypes.void [56] KernelInfo(name="r_16_256", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)),), optimized=True)
 58 Ops.PARAM dtypes.u8 [10] ParamArg(slot=0, dtype=dtypes.u8, name="args")
 59 Ops.BITCAST dtypes.u64 [58] dtypes.u64
 60 Ops.INDEX dtypes.u64 [59, 3]
@@ -104,11 +104,11 @@
 102 Ops.INDEX dtypes.f32 [101, 3]
 103 Ops.LOAD dtypes.f32 [102]
 104 Ops.STORE dtypes.void [63, 103]
-105 Ops.SINK dtypes.void [104] KernelInfo(name="r_16_256", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),), estimates=Estimates(ops=4368, lds=17536, mem=16388), optimized=True)
+105 Ops.SINK dtypes.void [104] KernelInfo(name="r_16_256", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)),), estimates=Estimates(ops=4368, lds=17536, mem=16388), optimized=True)
 106 Ops.IF dtypes.void [55, 63]
 107 Ops.ENDIF dtypes.void [106]
-108 Ops.LINEAR dtypes.void [10, 58, 0, 67, 64, 88, 74, 59, 75, 76, 11, 13, 23, 77, 68, 2, 3, 69, 7, 8, 17, 18, 25, 26, 27, 70, 19, 28, 78, 79, 71, 72, 73, 80, 81, 82, 90, 91, 92, 83, 89, 93, 94, 95, 65, 66, 84, 85, 86, 87, 96, 97, 98, 99, 100, 60, 61, 101, 102, 103, 62, 63, 55, 106, 104, 107, 105]
-109 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void r_16_256(device unsigned char* args_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  float buf0[1];\n  float buf1[1];\n  threadgroup __attribute__((aligned(16))) float buf2[16];\n  unsigned long val0 = (*(((device unsigned long*)(args_16))+1));\n  int lidx0 = lid.x; /* 16 */\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val1 = (*(((device float*)(val0))+((lidx0<<8)+Lidx0)));\n    *(buf0+0) = ((*(buf0+0))+val1);\n  }\n  *(buf2+lidx0) = (*(buf0+0));\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  *(buf1+0) = 0.0f;\n  for (int Lidx101 = 0; Lidx101 < 16; Lidx101++) {\n    float val2 = (*(buf2+Lidx101));\n    *(buf1+0) = ((*(buf1+0))+val2);\n  }\n  unsigned long val3 = (*(((device unsigned long*)(args_16))+0));\n  if ((lidx0==0)) {\n    *(((device float*)(val3))+0) = (*(buf1+0));\n  }\n}"
+108 Ops.LINEAR dtypes.void [10, 58, 0, 67, 64, 88, 74, 59, 75, 76, 11, 13, 23, 77, 68, 2, 3, 69, 7, 8, 17, 18, 25, 26, 70, 19, 27, 28, 78, 79, 71, 72, 73, 80, 81, 82, 90, 91, 92, 83, 89, 93, 94, 95, 65, 66, 84, 85, 86, 87, 96, 97, 98, 99, 100, 60, 61, 101, 102, 103, 62, 63, 55, 106, 104, 107, 105]
+109 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void r_16_256(device unsigned char* args_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  float buf0[1];\n  float buf1[1];\n  threadgroup __attribute__((aligned(16))) float buf2[16];\n  unsigned long val0 = (*(((device unsigned long*)(args_16))+1));\n  int lidx0 = lid.x; /* 16 */\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val1 = (*(((device float*)(val0))+((Lidx0<<4)+lidx0)));\n    *(buf0+0) = ((*(buf0+0))+val1);\n  }\n  *(buf2+lidx0) = (*(buf0+0));\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  *(buf1+0) = 0.0f;\n  for (int Lidx101 = 0; Lidx101 < 16; Lidx101++) {\n    float val2 = (*(buf2+Lidx101));\n    *(buf1+0) = ((*(buf1+0))+val2);\n  }\n  unsigned long val3 = (*(((device unsigned long*)(args_16))+0));\n  if ((lidx0==0)) {\n    *(((device float*)(val3))+0) = (*(buf1+0));\n  }\n}"
 110 Ops.PROGRAM dtypes.void [105, 108, 109] ProgramInfo(local_size=(16, 1, 1), params=(%1, %24), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 111 Ops.SINK dtypes.void [57, 110]
 

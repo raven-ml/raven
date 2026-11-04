@@ -1037,6 +1037,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A GPU kernel whose few outputs each sum by a workgroup's threads reads
+  consecutive addresses across them (`Heuristic.hand_coded_optimizations`):
+  a compiled row sum of 2048 rows of 8192 float32 runs 3.0x faster on an RTX
+  5000 Ada, a column sum of 16384 rows of 2048 2.9x.
 - `Ops.vmin` and `Ops.vmax` of a gated load of a constant table hold its
   alternative, which it reads where its gate fails; they held the table's
   values alone.

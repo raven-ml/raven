@@ -55,7 +55,7 @@
 53 Ops.CAST dtypes.i32 [52] dtypes.i32
 54 Ops.CMPEQ dtypes.bool [22, 11]
 55 Ops.STORE dtypes.void [4, 53, 54]
-56 Ops.SINK dtypes.void [55] KernelInfo(name="r_32_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)),), optimized=True)
+56 Ops.SINK dtypes.void [55] KernelInfo(name="r_32_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)),), optimized=True)
 57 Ops.BUFFER dtypes.i32 [7] ParamArg(slot=0, dtype=dtypes.i32, addrspace=AddrSpace.REG)
 58 Ops.AFTER dtypes.i32 [57, 3]
 59 Ops.INDEX dtypes.i32 [58, 11]
@@ -81,10 +81,10 @@
 79 Ops.SUB dtypes.u32 [6, 78]
 80 Ops.CAST dtypes.i32 [79] dtypes.i32
 81 Ops.STORE dtypes.void [4, 80]
-82 Ops.SINK dtypes.void [81] KernelInfo(name="r_32_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)),), estimates=Estimates(ops=18944, lds=40960, mem=2304), optimized=True)
+82 Ops.SINK dtypes.void [81] KernelInfo(name="r_32_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)),), estimates=Estimates(ops=18944, lds=40960, mem=2304), optimized=True)
 83 Ops.IF dtypes.void [54, 4]
 84 Ops.ENDIF dtypes.void [83]
-85 Ops.SINK dtypes.void [81] KernelInfo(name="r_32_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)),), optimized=True)
+85 Ops.SINK dtypes.void [81] KernelInfo(name="r_32_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)),), optimized=True)
 86 Ops.LINEAR dtypes.void [0, 1, 24, 25, 32, 7, 57, 5, 64, 2, 3, 16, 22, 26, 27, 28, 29, 30, 31, 33, 34, 58, 65, 35, 36, 37, 38, 66, 67, 68, 10, 11, 59, 13, 14, 60, 17, 61, 62, 63, 69, 70, 71, 72, 73, 74, 75, 76, 77, 4, 78, 6, 79, 80, 54, 83, 81, 84, 85]
 87 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) r_32_16(int* data0_32, float* data1_512, float* data2_32) {\n  int buf0[1];\n  __attribute__((shared, aligned(16)))int buf1[16];\n  int gidx0 = __ockl_get_group_id(0); /* 32 */\n  int lidx0 = __ockl_get_local_id(0); /* 16 */\n  float val0 = (*(data1_512+((gidx0<<4)+lidx0)));\n  float val1 = (*(data2_32+gidx0));\n  *(buf1+lidx0) = (((int)((val0==val1)))*(16-lidx0));\n  __builtin_amdgcn_fence(__ATOMIC_RELEASE, \"workgroup\");__builtin_amdgcn_s_barrier();__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, \"workgroup\");\n  *(buf0+0) = -2147483648;\n  for (int Lidx102 = 0; Lidx102 < 16; Lidx102++) {\n    int val2 = (*(buf0+0));\n    int val3 = (*(buf1+Lidx102));\n    int alu3 = ((val2<val3)?val3:val2);\n    *(buf0+0) = alu3;\n  }\n  if ((lidx0==0)) {\n    *(data0_32+gidx0) = ((int)((16u-((unsigned int)((*(buf0+0)))))));\n  }\n}"
 88 Ops.PROGRAM dtypes.void [82, 86, 87] ProgramInfo(global_size=(32, 1, 1), local_size=(16, 1, 1), params=(%1, %25, %32), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))

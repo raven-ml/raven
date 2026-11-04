@@ -2035,6 +2035,70 @@ let decoded_writes =
       if not cored then
         equal (list Kernel_opts.write) (writes (kernel name)) (writes o))
 
+(* Grouping *)
+
+(* The loads of [k]: its accesses that no store writes through. *)
+let loads k =
+  let stored =
+    List.filter_map
+      (fun u -> if Ops.op u = Op.Store then Some (Ops.nth u 0) else None)
+      (Ops.toposort ~calls:Skip (K.ast k))
+  in
+  List.filter (fun b -> not (List.memq b stored)) (K.bufs k)
+
+let unit_in k r =
+  List.exists
+    (fun b -> stride r (Ops.get_idx (Ops.nth b 1)) = Some Bigint.one)
+    (loads k)
+
+let divides_16 r = Bigint.(equal (rem (size r) (of_int 16)) zero)
+
+(* The fastest thread of a workgroup: of its thread ranges, a warp's, then the
+   first made. *)
+let fastest o =
+  let key r =
+    match Ops.arg r with
+    | Range { axis_type = Warp; axis_id } -> Some (0, axis_id)
+    | Range { axis_type = Local; axis_id } -> Some (1, axis_id)
+    | _ -> None
+  in
+  List.filter_map (fun r -> Option.map (fun k -> (k, r)) (key r)) (K.rngs o)
+  |> List.sort (fun (a, _) (b, _) -> Stdlib.compare a b)
+  |> function
+  | (_, r) :: _ -> Some r
+  | [] -> None
+
+(* The GPU cases whose kernel groups a reduce and a load reads at unit stride
+   one of the first three reduce axes that 16 divides, or an output axis that 16
+   divides. None of the recorded cases has an output axis whose split leaves no
+   group, where the group's threads read as the kernel allows. *)
+let grouped_cases =
+  List.filter
+    (fun (_, k, o) ->
+      let reduce =
+        List.filteri (fun i _ -> i < 3) (ranges_at k ~reduce:true [ Weak ])
+      in
+      let outputs = ranges_at k ~reduce:false [ Global; Weak ] in
+      K.group_for_reduces o > 0
+      && List.exists (fun r -> divides_16 r && unit_in k r) (reduce @ outputs))
+    gpu_cases
+
+let fastest_threads_coalesce =
+  cases
+    "a group's fastest threads read at unit stride where a load reads a reduce \
+     or output axis so"
+    ~id:(fun (c, _, _) -> c.name)
+    grouped_cases
+    (fun (_, _, o) ->
+      match fastest o with
+      | None -> fail "the kernel has no threads"
+      | Some r ->
+          let strides =
+            List.map (fun b -> stride r (Ops.get_idx (Ops.nth b 1))) (loads o)
+          in
+          mem ~msg:"the loads' strides along it" (option bigint)
+            (Some Bigint.one) strides)
+
 let () =
   exit
     (Windtrap.run "Tolk.Heuristic"
@@ -2044,6 +2108,7 @@ let () =
          warp_tiles;
          blocks;
          keeps_kernel_writes;
+         fastest_threads_coalesce;
          group "streaming"
            [
              loads_once_a_tile;

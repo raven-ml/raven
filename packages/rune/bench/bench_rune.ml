@@ -1405,6 +1405,16 @@ let cumsum_at dt shape =
         fun () -> ignore (synced (f x)));
   }
 
+(* A sum along [axis] of uniform float32 values of [shape]. *)
+let sum_at shape axis =
+  {
+    at =
+      (fun at ->
+        let x = Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key 55) f32 shape) in
+        let f = Rune.jit' (fun x -> Nx.sum ~axes:[ axis ] x) in
+        fun () -> ignore (synced (f x)));
+  }
+
 (* [x + s] and [y * s] for [s] made of [p] by 184 steps [s * s - 0.5], two
    operations each. *)
 let shared_scalar p x y =
@@ -1599,6 +1609,12 @@ let gpu_rows g =
               in
               fun () -> ignore (synced2 (f x)));
         };
+      (* Sums of 2048 rows of 8192 and of 2048 columns of 16384 float32: few
+         outputs, each summed by a workgroup's threads together, which read
+         consecutive addresses where they take consecutive elements of a row,
+         or consecutive columns. *)
+      on_gpu g "sum-rows-float32-2048x8192" (sum_at [| 2048; 8192 |] 1);
+      on_gpu g "sum-columns-float32-16384x2048" (sum_at [| 16384; 2048 |] 0);
       (* Running sums: rows of 400 and of 1024, whose time is mostly one
          launch per stage, and long rows of 50500. *)
       on_gpu g "cumsum-float32-100x400" (cumsum_at f32 [| 100; 400 |]);

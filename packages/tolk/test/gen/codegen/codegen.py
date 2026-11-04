@@ -119,6 +119,12 @@ def single_kernel_softmax(x):
     return (inp - imx.detach()).exp().div(ss).reshape(x.shape)
 
 
+def readout():
+    """[3, 256] sums of exp(x[t, b, i] + y[b, t, j]) over 1024 b and 64 t, one kernel."""
+    x, y = empty(64, 1024, 3).permute(1, 0, 2), empty(1024, 64, 256)
+    with Context(SPLIT_REDUCEOP=0): return last((x.reshape(1024, 64, 3, 1) + y.reshape(1024, 64, 1, 256)).exp().sum((0, 1)))
+
+
 def where_fold():
     a = empty(4, 4)
     b = a.shrink(((1, 2), None)).pad(((1, 2), None)).bool()
@@ -139,6 +145,9 @@ PROGRAMS = {
     "sum_all": lambda: last(empty(4096).sum()),
     "big_sum": lambda: last(empty(1 << 20).sum()),
     "max": lambda: last(empty(32, 32).max(0)),
+    # a sum over a batch and a horizon of a value one operand reads along an output axis: the threads of a workgroup take
+    # consecutive outputs ahead of the group's threads
+    "readout": readout,
     "matmul": lambda: matmul(16),
     "matmul_big": lambda: matmul(256),
     "matmul_half": lambda: matmul(64, dtypes.half),

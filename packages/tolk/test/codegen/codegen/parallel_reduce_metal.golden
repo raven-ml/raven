@@ -25,10 +25,10 @@
 23 Ops.LOAD dtypes.f32 [22]
 24 Ops.CONST dtypes.weakint [] 128
 25 Ops.PARAM dtypes.f32 [24] ParamArg(slot=0, dtype=dtypes.f32)
-26 Ops.CONST dtypes.weakint [] 3
+26 Ops.CONST dtypes.weakint [] 4
 27 Ops.CAST dtypes.i32 [26] dtypes.i32
-28 Ops.SHL dtypes.i32 [14, 27]
-29 Ops.ADD dtypes.i32 [28, 20]
+28 Ops.SHL dtypes.i32 [20, 27]
+29 Ops.ADD dtypes.i32 [28, 14]
 30 Ops.INDEX dtypes.f32 [25, 29]
 31 Ops.LOAD dtypes.f32 [30]
 32 Ops.ADD dtypes.f32 [23, 31]
@@ -92,7 +92,7 @@
 90 Ops.INDEX dtypes.f32 [89, 3]
 91 Ops.LOAD dtypes.f32 [90]
 92 Ops.STORE dtypes.void [88, 91, 85]
-93 Ops.SINK dtypes.void [86, 92] KernelInfo(name="parallel_reduce", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),), optimized=True)
+93 Ops.SINK dtypes.void [86, 92] KernelInfo(name="parallel_reduce", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)),), optimized=True)
 94 Ops.CONST dtypes.weakint [] 24
 95 Ops.PARAM dtypes.u8 [94] ParamArg(slot=0, dtype=dtypes.u8, name="args")
 96 Ops.BITCAST dtypes.u64 [95] dtypes.u64
@@ -180,13 +180,13 @@
 178 Ops.INDEX dtypes.f32 [177, 3]
 179 Ops.LOAD dtypes.f32 [178]
 180 Ops.STORE dtypes.void [176, 179]
-181 Ops.SINK dtypes.void [170, 180] KernelInfo(name="parallel_reduce", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),), estimates=Estimates(ops=912, lds=2816, mem=520), optimized=True)
+181 Ops.SINK dtypes.void [170, 180] KernelInfo(name="parallel_reduce", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)),), estimates=Estimates(ops=912, lds=2816, mem=520), optimized=True)
 182 Ops.IF dtypes.void [85, 101]
 183 Ops.ENDIF dtypes.void [182]
 184 Ops.IF dtypes.void [85, 176]
 185 Ops.ENDIF dtypes.void [184]
-186 Ops.LINEAR dtypes.void [94, 95, 0, 105, 102, 119, 147, 11, 135, 153, 2, 3, 96, 112, 113, 12, 14, 24, 114, 106, 120, 6, 107, 121, 8, 9, 26, 27, 18, 19, 28, 108, 122, 20, 29, 115, 116, 109, 110, 111, 123, 124, 125, 117, 126, 118, 127, 128, 129, 137, 138, 139, 155, 156, 157, 130, 136, 140, 141, 142, 154, 158, 159, 160, 103, 148, 104, 149, 131, 132, 133, 134, 150, 151, 152, 143, 144, 161, 162, 145, 163, 146, 164, 165, 166, 97, 98, 99, 171, 172, 173, 174, 167, 168, 169, 177, 178, 179, 100, 175, 101, 176, 85, 182, 170, 183, 184, 180, 185, 181]
-187 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void parallel_reduce(device unsigned char* args_24, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  float buf0[1];\n  float buf1[1];\n  float buf2[1];\n  float buf3[1];\n  threadgroup __attribute__((aligned(16))) float buf4[16];\n  threadgroup __attribute__((aligned(16))) float buf5[16];\n  unsigned long val0 = (*(((device unsigned long*)(args_24))+0));\n  int lidx0 = lid.x; /* 16 */\n  *(buf0+0) = 0.0f;\n  *(buf2+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n    float val1 = (*(((device float*)(val0))+((lidx0<<3)+Lidx0)));\n    *(buf0+0) = ((*(buf0+0))+val1);\n    *(buf2+0) = fma(val1,val1,(*(buf2+0)));\n  }\n  *(buf4+lidx0) = (*(buf0+0));\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  *(buf5+lidx0) = (*(buf2+0));\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  *(buf1+0) = 0.0f;\n  *(buf3+0) = 0.0f;\n  for (int Lidx101 = 0; Lidx101 < 16; Lidx101++) {\n    float val2 = (*(buf4+Lidx101));\n    float val3 = (*(buf5+Lidx101));\n    *(buf1+0) = ((*(buf1+0))+val2);\n    *(buf3+0) = ((*(buf3+0))+val3);\n  }\n  unsigned long val4 = (*(((device unsigned long*)(args_24))+1));\n  unsigned long val5 = (*(((device unsigned long*)(args_24))+2));\n  bool alu14 = (lidx0==0);\n  if (alu14) {\n    *(((device float*)(val4))+0) = (*(buf1+0));\n  }\n  if (alu14) {\n    *(((device float*)(val5))+0) = (*(buf3+0));\n  }\n}"
+186 Ops.LINEAR dtypes.void [94, 95, 0, 105, 102, 119, 147, 11, 135, 153, 2, 3, 96, 112, 113, 12, 14, 24, 114, 106, 120, 6, 107, 121, 8, 9, 26, 27, 18, 19, 108, 122, 20, 28, 29, 115, 116, 109, 110, 111, 123, 124, 125, 117, 126, 118, 127, 128, 129, 137, 138, 139, 155, 156, 157, 130, 136, 140, 141, 142, 154, 158, 159, 160, 103, 148, 104, 149, 131, 132, 133, 134, 150, 151, 152, 143, 144, 161, 162, 145, 163, 146, 164, 165, 166, 97, 98, 99, 171, 172, 173, 174, 167, 168, 169, 177, 178, 179, 100, 175, 101, 176, 85, 182, 170, 183, 184, 180, 185, 181]
+187 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void parallel_reduce(device unsigned char* args_24, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  float buf0[1];\n  float buf1[1];\n  float buf2[1];\n  float buf3[1];\n  threadgroup __attribute__((aligned(16))) float buf4[16];\n  threadgroup __attribute__((aligned(16))) float buf5[16];\n  unsigned long val0 = (*(((device unsigned long*)(args_24))+0));\n  int lidx0 = lid.x; /* 16 */\n  *(buf0+0) = 0.0f;\n  *(buf2+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n    float val1 = (*(((device float*)(val0))+((Lidx0<<4)+lidx0)));\n    *(buf0+0) = ((*(buf0+0))+val1);\n    *(buf2+0) = fma(val1,val1,(*(buf2+0)));\n  }\n  *(buf4+lidx0) = (*(buf0+0));\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  *(buf5+lidx0) = (*(buf2+0));\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  *(buf1+0) = 0.0f;\n  *(buf3+0) = 0.0f;\n  for (int Lidx101 = 0; Lidx101 < 16; Lidx101++) {\n    float val2 = (*(buf4+Lidx101));\n    float val3 = (*(buf5+Lidx101));\n    *(buf1+0) = ((*(buf1+0))+val2);\n    *(buf3+0) = ((*(buf3+0))+val3);\n  }\n  unsigned long val4 = (*(((device unsigned long*)(args_24))+1));\n  unsigned long val5 = (*(((device unsigned long*)(args_24))+2));\n  bool alu14 = (lidx0==0);\n  if (alu14) {\n    *(((device float*)(val4))+0) = (*(buf1+0));\n  }\n  if (alu14) {\n    *(((device float*)(val5))+0) = (*(buf3+0));\n  }\n}"
 188 Ops.PROGRAM dtypes.void [181, 186, 187] ProgramInfo(local_size=(16, 1, 1), params=(%25, %1, %87), globals=(0, 1, 2), outs=(1, 2), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 189 Ops.SINK dtypes.void [93, 188]
 

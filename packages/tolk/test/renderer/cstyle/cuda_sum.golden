@@ -10,7 +10,7 @@ extern "C" __global__ void __launch_bounds__(16) r_16_16(float* data0_1, float* 
   int lidx0 = threadIdx.x; /* 16 */
   *(buf0+0) = 0.0f;
   for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
-    float val0 = (*(data1_256+((lidx0<<4)+Lidx0)));
+    float val0 = (*(data1_256+((Lidx0<<4)+lidx0)));
     *(buf0+0) = ((*(buf0+0))+val0);
   }
   *(buf2+lidx0) = (*(buf0+0));

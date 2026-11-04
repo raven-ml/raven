@@ -96,10 +96,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - whether memory-bound host kernels take lanes at all: no upcast ran 4-7%
   faster than 64-byte lanes in two of seven loaded fudge runs of a 4M
   float32 select-zero; decide on the scheduled quiet re-record
-- Metal groups: after D137, lorenz-step-batch-1024's r_3_256_16_64_64 went
-  10.7 -> 18.9 ms (loads stride across 16 threads). Decided without Apple
-  timing (maintainer, 2026-10-31): a rule for loads that stride across a
-  group's threads, checked by reading the Metal source
 - AMD beam search times 16-21% of candidates below 2 GHz: hold rig's stable
   power state around a search, or ties within noise
 - comgr's per-process setup is paid on every compile: each HIP compile

@@ -395,6 +395,10 @@ codegen/codegen/range_outer_op_before_phi_nested_range_clang.golden
 codegen/codegen/range_outer_op_before_phi_nested_range_cuda.golden
 codegen/codegen/range_outer_op_before_phi_nested_range_hip.golden
 codegen/codegen/range_outer_op_before_phi_nested_range_metal.golden
+codegen/codegen/readout_clang.golden
+codegen/codegen/readout_cuda.golden
+codegen/codegen/readout_hip.golden
+codegen/codegen/readout_metal.golden
 codegen/codegen/reduce_expand_clang.golden
 codegen/codegen/reduce_expand_cuda.golden
 codegen/codegen/reduce_expand_hip.golden
@@ -1395,6 +1399,12 @@ codegen/opt/heuristic/q8_0_blocks_avx2.golden
 codegen/opt/heuristic/q8_0_blocks_cpu.golden
 codegen/opt/heuristic/q8_0_blocks_cuda.golden
 codegen/opt/heuristic/q8_0_blocks_metal.golden
+codegen/opt/heuristic/readout.golden
+codegen/opt/heuristic/readout_amd.golden
+codegen/opt/heuristic/readout_avx2.golden
+codegen/opt/heuristic/readout_cpu.golden
+codegen/opt/heuristic/readout_cuda.golden
+codegen/opt/heuristic/readout_metal.golden
 codegen/opt/heuristic/renderers.golden
 codegen/opt/heuristic/routed_at_bound.golden
 codegen/opt/heuristic/routed_at_bound_amd.golden

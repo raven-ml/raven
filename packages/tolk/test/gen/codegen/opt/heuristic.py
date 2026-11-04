@@ -54,6 +54,12 @@ def renderers():
 def last(*tensors): return kernels(*tensors)[-1]
 
 
+def readout():
+    """[3, 256] sums of exp(x[t, b, i] + y[b, t, j]) over 1024 b and 64 t."""
+    x, y = empty(64, 1024, 3).permute(1, 0, 2), empty(1024, 64, 256)
+    with Context(SPLIT_REDUCEOP=0): return last((x.reshape(1024, 64, 3, 1) + y.reshape(1024, 64, 1, 256)).exp().sum((0, 1)))
+
+
 def empty(*shape, dtype=dtypes.float): return Tensor.empty(*shape, dtype=dtype)
 
 
@@ -150,6 +156,9 @@ KERNELS = {
     "sum_two_axes": lambda: last(empty(16, 5, 7, 32).sum((1, 3))),
     "outer_add": lambda: last(empty(4, 1) + empty(1, 256)),
     "max_rows": lambda: last(empty(2048, 16).max(1)),
+    # a sum over a batch and a horizon, neither read at unit stride, of a value one operand reads along an output axis, as a
+    # readout's gradient sums, one kernel: grouping its batch from the top made tinygrad's r_3_256_16_64_64
+    "readout": lambda: readout(),
     "matmul": lambda: last(empty(128, 128) @ empty(128, 128)),
     "matmul_half": lambda: last(empty(128, 128, dtype=dtypes.half).matmul(empty(128, 128, dtype=dtypes.half), dtype=dtypes.float)),
     "matmul_half_ragged": lambda: last(empty(17, 23, dtype=dtypes.half).matmul(empty(23, 29, dtype=dtypes.half), dtype=dtypes.float)),

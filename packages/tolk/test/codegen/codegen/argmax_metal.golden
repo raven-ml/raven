@@ -55,7 +55,7 @@
 53 Ops.CAST dtypes.i32 [52] dtypes.i32
 54 Ops.CMPEQ dtypes.bool [22, 11]
 55 Ops.STORE dtypes.void [4, 53, 54]
-56 Ops.SINK dtypes.void [55] KernelInfo(name="r_32_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)),), optimized=True)
+56 Ops.SINK dtypes.void [55] KernelInfo(name="r_32_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)),), optimized=True)
 57 Ops.CONST dtypes.weakint [] 24
 58 Ops.PARAM dtypes.u8 [57] ParamArg(slot=0, dtype=dtypes.u8, name="args")
 59 Ops.BITCAST dtypes.u64 [58] dtypes.u64
@@ -104,7 +104,7 @@
 102 Ops.SUB dtypes.u32 [6, 101]
 103 Ops.CAST dtypes.i32 [102] dtypes.i32
 104 Ops.STORE dtypes.void [63, 103]
-105 Ops.SINK dtypes.void [104] KernelInfo(name="r_32_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)),), estimates=Estimates(ops=18944, lds=40960, mem=2304), optimized=True)
+105 Ops.SINK dtypes.void [104] KernelInfo(name="r_32_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)),), estimates=Estimates(ops=18944, lds=40960, mem=2304), optimized=True)
 106 Ops.IF dtypes.void [54, 63]
 107 Ops.ENDIF dtypes.void [106]
 108 Ops.LINEAR dtypes.void [57, 58, 7, 64, 5, 71, 73, 59, 74, 75, 79, 80, 81, 82, 0, 2, 3, 16, 22, 24, 76, 26, 27, 28, 29, 77, 78, 83, 84, 85, 65, 72, 86, 87, 37, 88, 89, 90, 91, 10, 11, 66, 13, 14, 67, 17, 68, 69, 70, 92, 93, 94, 95, 96, 97, 98, 99, 100, 60, 61, 62, 63, 101, 6, 102, 103, 54, 106, 104, 107, 105]

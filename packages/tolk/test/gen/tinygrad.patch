@@ -1377,7 +1377,7 @@ index 0838d70c9..dadd54ab5 100644
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index ec97cac6f..928507e2a 100644
+index ec97cac6f..9e238a9a7 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
 @@ -1,9 +1,337 @@
@@ -1789,7 +1789,7 @@ index ec97cac6f..928507e2a 100644
        return tk
  
    # make a copy so it does not mutate the input
-@@ -57,25 +425,24 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -57,33 +425,51 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
          if unit_stride_axes_mul_4 and (axis:=unit_stride_axes_mul_4[0]) in k.upcastable_dims(reduce=None):
            k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST)))
  
@@ -1832,8 +1832,39 @@ index ec97cac6f..928507e2a 100644
 +        k.apply_opt(Opt(OptOps.SPLIT, axis, (a, AxisType.UPCAST)))
  
    # are we grouping? (requires local shape support)
-   if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -110,47 +477,106 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+-  if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
+-    for axis in k.axes_of(AxisType.WEAK, reduce=True)[:3]:
++  # consecutive threads of a SIMD group read consecutive addresses where they can: the group's threads take consecutive indices of the
++  # reduce axis they split, of the first three, one a load reads at unit stride first. where no load reads the axis the group takes at
++  # unit stride but one reads an output axis so, GROUP_THREADS threads first take consecutive indices of that axis, the fastest
++  GROUP_THREADS = 16
++  def loaded(k:Scheduler):
++    stored = [u.src[0] for u in k.ast.toposort() if u.op is Ops.STORE]
++    return [b for b in k.bufs if b not in stored]
++  def unit(k:Scheduler, axis:int) -> bool: return any(k.rngs[axis] in units(b) for b in loaded(k))
++  def grouped(k:Scheduler) -> int|None:
++    axes = k.axes_of(AxisType.WEAK, reduce=True)[:3]
++    for axis in [a for a in axes if unit(k, a)] + [a for a in axes if not unit(k, a)]:
+       try:
+-        k.apply_opt(Opt(OptOps.SPLIT, axis, (16, AxisType.LOCAL, True)))
+-        break
++        k.apply_opt(Opt(OptOps.SPLIT, axis, (GROUP_THREADS, AxisType.LOCAL)))
++        return axis
+       except KernelOptError: pass
++    return None
++  def threads_across(k:Scheduler, axis:int) -> bool:
++    try: k.apply_opt(Opt(OptOps.SPLIT, axis, (GROUP_THREADS, AxisType.LOCAL)))
++    except KernelOptError: return False
++    return True
++  if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
++    def across(axis:int) -> bool: return unit(k, axis) and threads_across(t:=k.copy(), axis) and grouped(t) is not None
++    outputs = [] if (taken:=grouped(k.copy())) is not None and unit(k, taken) else k.axes_of(AxisType.GLOBAL, AxisType.WEAK, reduce=False)
++    if (axis:=next((a for a in outputs if across(a)), None)) is not None: threads_across(k, axis)
++    grouped(k)
+ 
+   # no more opt if we are grouping
+   if k.group_for_reduces: return k
+@@ -110,47 +496,106 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
@@ -1956,7 +1987,7 @@ index ec97cac6f..928507e2a 100644
      k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (4, AxisType.UPCAST)))
  
    # **** local groups ****
-@@ -172,11 +598,13 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -172,11 +617,13 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      else:
        # prioritize making expand axes local
        local_axis_ranking = [(any(k.rngs[axis] not in b.src[1].get_idx().backward_slice for b in k.bufs), axis) \

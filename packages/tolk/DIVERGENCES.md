@@ -8507,3 +8507,54 @@ and an initial value is added after it (D260).
   what its tensors compute`, `a pad of a quotient by a constant table writes
   what it computes` on the host and on each GPU, and the Codegen suite's
   `padto_idiv_upcast`, whose padding loads the zeros they divide by.
+
+## D357. A group's threads read consecutive addresses
+
+- **tinygrad:** `codegen/opt/heuristic.py:80-86` (`hand_coded_optimizations`'
+  grouping: the first of the first three reduce axes that splits by 16 into
+  local threads from the top, `(16, AxisType.LOCAL, True)`);
+  `codegen/opt/postrange.py:71` (`shift_to`, whose split from the top makes
+  the new range the axis's outer part); `codegen/gpudims.py:55-67` (the
+  workgroup's thread ranges in the order they were made, the first
+  `lidx0`).
+- **tolk:** `Heuristic.group` and `Heuristic.group_threads`;
+  `test/gen/tinygrad.patch`, which gives tinygrad's heuristic the same rule
+  before the goldens are recorded.
+- **Differs:** the group's 16 threads take consecutive indices of the axis
+  they split, its inner end, and of the first three reduce axes, one that a
+  load reads at unit stride first. Where no load reads the axis the group
+  takes at unit stride but one reads an output axis so, 16 threads first take
+  consecutive indices of the first such axis whose split leaves the group
+  one, and, made first, are the workgroup's fastest. tinygrad's group takes
+  the outer end of the first axis, so that each thread sums a run of it and
+  consecutive threads read a run apart: the threads of a sum of rows of 8192
+  read 512 floats apart, and the sum of a readout over a batch and a horizon
+  (`r_3_256_16_64_64`) read its second operand 1048576 floats apart from one
+  `lid.x` to the next. The CUDA C++ Best Practices Guide, §10.2.1 ("Coalesced
+  Access to Global Memory"): "Global memory loads and stores by threads of a
+  warp are coalesced by the device into as few as possible transactions",
+  and, §10.2.1.4, "non-unit-stride global memory accesses should be avoided
+  whenever possible". Apple's "Creating threads and threadgroups" (SIMD
+  groups): "The threads in a threadgroup are further organized into
+  single-instruction, multiple-data (SIMD) groups, also known as warps or
+  wavefronts, that execute concurrently." The rule is the renderers' alike,
+  as the SIMD group is every GPU target's unit of a load. Kernels that
+  stream, take a tensor core or no group keep tinygrad's choices; a sum's
+  order changes with the threads' parts.
+- **Reason:** (d): rune's compiled sums of few outputs on fudge's RTX 5000
+  Ada, rune bench rows `Cuda/sum-rows-float32-2048x8192` (71.7-72.7 us
+  against 23.7-23.8 us) and `Cuda/sum-columns-float32-16384x2048` (872-988
+  against 297-298 us), and `Cuda/set-row-of-1024x1024-summed` (11.2-14.2
+  against 7.8-7.9 us), three interleaved runs each under the timing lock;
+  no other `Cuda/` row moved past its range, and the old Lorenz training
+  step's loss and gradient at a batch of 1024 kept its 57 ms. Apple timing
+  is pending: fudge has no Metal device, and the Metal source is checked
+  instead.
+- **Pinned by:** the Codegen suite's `consecutive lid.x threads of the
+  readout read one address or consecutive ones` (Metal, CUDA and HIP);
+  `Tolk.Heuristic`'s `a group's fastest threads read at unit stride where a
+  load reads a reduce or output axis so` (every recorded GPU case that
+  groups and has a load at unit stride along one of the first three reduce
+  axes or an output axis that 16 divides) and its `readout` cases; the goldens generated from tinygrad with
+  this rule; the rune bench rows above on fudge, their baselines pending the
+  scheduled re-record.

@@ -68,9 +68,15 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
       workgroups remain;
     - {b streaming}, when the reuse is at most 32, or the streamed operand is
       decoded, whatever its reuse;
-    - {b grouping}: when the upcastable axes hold at most 2048 elements, the
-      first of the first three reduce axes that splits by 16 into local threads
-      from the top; nothing more is applied then.
+    - {b grouping}: when the upcastable axes hold at most 2048 elements, 16
+      local threads take consecutive indices of one of the first three reduce
+      axes: the first that splits by 16 of those a load reads at unit stride,
+      then of the others. Where no load reads the axis the group takes at unit
+      stride but one reads an output axis so, 16 threads first take
+      consecutive indices of the first such axis whose split leaves the group
+      one, and are the workgroup's fastest ([lidx0]). Consecutive threads of
+      a SIMD group then read consecutive addresses where a load allows it,
+      which coalesces the group's load. Nothing more is applied then.
 
     {b Streaming} applies on a renderer with local indices and shared memory,
     when {!Setting.mv} is on, to a kernel where no range's bound reads an axis

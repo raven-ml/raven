@@ -7505,6 +7505,57 @@ let lanes_and_threads =
           equal (array Dtypes.value) (int_values expected) (on_cuda_out k inputs));
     ]
 
+(* Threads of a workgroup
+
+   Consecutive threads of a SIMD group read one address or consecutive ones
+   where a load allows it, so that the group's load coalesces. The readout sums
+   over a batch and a horizon, which no load reads at unit stride, a value whose
+   second operand it reads along an output axis: its fastest threads, [lidx0]
+   ([lid.x] on Metal), take consecutive outputs, and the first operand, which no
+   output of that axis reads apart, is one address for them. Grouping the batch
+   from the top, as tinygrad names [r_3_256_16_64_64], read the second operand
+   1048576 floats apart from one [lid.x] to the next. *)
+
+(* The address, in elements, that the load [l] reads with [lidx0] at [t] and
+   every other index, of a workgroup, a thread or a loop, at 0. *)
+let address_at l t =
+  let i = Ops.get_idx (Ops.nth (Ops.nth l 0) 1) in
+  let at u =
+    let value v =
+      Some (u, Ops.const ~dtype:(Ops.dtype u) (`Int (Bigint.of_int v)))
+    in
+    match (Ops.op u, Ops.arg u) with
+    | Special, String "lidx0" -> value t
+    | (Special | Range), _ -> value 0
+    | _ -> None
+  in
+  let subs = List.filter_map at (Ops.toposort ~calls:Skip i) in
+  Shape.sym_infer (Sym (Ops.substitute ~calls:Skip ~pass:Fixed_point i subs)) []
+
+(* The loads of global memory among a program's instructions. *)
+let global_loads prg =
+  List.filter
+    (fun u ->
+      Ops.op u = Op.Load
+      && Ops.op (Ops.nth u 0) = Op.Index
+      && Ops.addrspace (Ops.nth (Ops.nth u 0) 0) = Some Dtype.Global)
+    (Ops.src (Ops.nth prg 1))
+
+let threads_of_workgroups =
+  let on_gpu row = row "case" = "readout" && row "target" <> "clang" in
+  cases
+    "consecutive lid.x threads of the readout read one address or consecutive \
+     ones"
+    ~id:(fun row -> row "name")
+    (List.filter on_gpu (Golden.rows "cases.golden"))
+    (fun row ->
+      let steps =
+        List.map
+          (fun l -> address_at l 1 - address_at l 0)
+          (global_loads (program row))
+      in
+      equal (list int) [ 0; 1 ] (List.sort_uniq Int.compare steps))
+
 let () =
   Disk_cache.play (("breaking graph", lowers_a_breaking_graph) :: parts);
   exit
@@ -7524,6 +7575,7 @@ let () =
          counted_beside_host_blocks;
          weak_ranges;
          lanes_and_threads;
+         threads_of_workgroups;
          variable_sizes;
          multiply_adds;
          shared_ranges;
