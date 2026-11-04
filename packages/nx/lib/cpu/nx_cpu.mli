@@ -241,25 +241,33 @@
     [gather] and [scatter] compute every case, at every dtype, and refuse with
     [Shape_mismatch] operands and destinations whose shapes do not fit. A
     scatter's [Add] adds a target's updates left to right,
-    [(… ((x + u1) + u2) + …) + un]. A narrow float's keeps its float32 sums
-    and the positions it sorts by target in host memory the call holds
-    until it returns. A {e slice} is the updates at one index off the
-    scattered axis, with their positions and targets; a {e row of slices}
-    is the slices at successive indices of the last axis off it, joined
-    with the axes before it where every operand steps through them as
-    one. Over [m] updates and [t] targets along the scattered axis, the
-    Add takes 12 KiB and [32 m] bytes on each of its threads; in place of
-    the [32 m], [40 m + 8] bytes once where its positions step 0 along each
-    of fewer rows of slices than threads, and otherwise, where its slices
-    are fewer than its threads and its dtype is [float4_e2m1fn], 32 bytes
-    for each update in all. Where its slices are fewer than its threads,
-    each the only slice of its row or one whose positions differ along its
-    row, at a dtype of [w] bytes, [w ≥ 1], it takes instead [(8 + w) m]
-    bytes in all where [t ≥ m], else [(8 + w) min (m, 2{^22})], and on
-    each thread [16 w + 136] KiB and five eighths of a core's L2 cache or
-    [5 t / 512] bytes, whichever is more; where [m] exceeds both [t] and
-    2{^19}, about [5 t] bytes in all in place of each thread's L2 or
-    [5 t / 512]. *)
+    [(… ((x + u1) + u2) + …) + un]. A {e slice} is the updates at one index
+    off the scattered axis, with their positions and targets; a {e row of
+    slices} is the slices at successive indices of the last axis off it,
+    joined with the axes before it where every operand steps through them
+    as one. Over [m] updates and [t] targets along the scattered axis, the
+    [Add] of a float of a byte or more or of a complex number, of [s]
+    slices fewer than its threads, each the only slice of its row or, for
+    a narrow float, one whose positions differ along its row, with
+    [m ≥ 2{^16}] but for a narrow float, sums each slice on one thread
+    where [s t] elements of its dtype, of [float32] for a narrow float, fit
+    in the host's largest cache, and otherwise sorts its updates by target
+    on every thread.
+
+    A narrow float's [Add] keeps its float32 sums and the positions it
+    sorts by target in host memory the call holds until it returns. It
+    takes 12 KiB and [32 m] bytes on each of its threads; in place of the
+    [32 m], [40 m + 8] bytes once where its positions step 0 along each of
+    fewer rows of slices than threads, and otherwise, where its slices are
+    fewer than its threads and its dtype is [float4_e2m1fn], 32 bytes for
+    each update in all. Where it sums each slice on one thread, it takes
+    instead [5 t + 64] bytes on each thread that sums one. Where it sorts
+    its updates on every thread, at a dtype of [w] bytes, it takes instead
+    [(8 + w) m] bytes in all where [t ≥ m], else [(8 + w) min (m, 2{^22})],
+    and on each thread [16 w + 136] KiB and five eighths of a core's L2
+    cache or [5 t / 512] bytes, whichever is more; where [m] exceeds both
+    [t] and 2{^19}, about [5 t] bytes in all in place of each thread's L2
+    or [5 t / 512]. *)
 
 (** {1:sorts_folds Sorts, assemblies and folds}
 
@@ -490,6 +498,11 @@ val with_target : string -> (unit -> 'a) -> 'a
     kernels while [f] runs, on every thread. Raises [Invalid_argument] where
     [t] is not in {!targets}. For tests, while no other domain calls
     nx.cpu. *)
+
+val with_cache : int -> (unit -> 'a) -> 'a
+(** [with_cache n f] is [f ()], every call choosing its algorithms while
+    [f] runs as if the host's largest cache held [n] bytes. The bits are
+    the same. For tests, while no other domain calls nx.cpu. *)
 
 val unique_seed : int64 -> unit
 (** [unique_seed s] keys [unique]'s hash by [s] for the calls that start

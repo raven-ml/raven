@@ -670,9 +670,18 @@ let threaded_scatters =
          (1, long_scatters);
        ])
 
+(* Float Adds of one slice, 70 000 updates into an axis of a thousand,
+   which sum in row order on one thread: float64, complex128 and
+   float8_e5m2. *)
+let row_order_examples =
+  List.map
+    (fun d ->
+      scatter_example d Nx_kernel.Add ~ts:[| 1000 |] ~axis:0 ~m:70_000 cycled)
+    D.[ Any Float64; Any Complex128; Any Float8_e5m2 ]
+
 let threaded_examples =
   narrow_examples @ row_examples @ sub_byte_examples @ owned_examples
-  @ [ wide_rows ]
+  @ row_order_examples @ [ wide_rows ]
 
 (* Scatters of many updates against the reference: large shapes, long axes
    of few slices, hundreds of thousands of updates into one axis, and
@@ -683,6 +692,21 @@ let many_scatters =
        [
          (3, large_scatters); (3, long_scatters); (1, blocked_scatters);
          (3, row_scatters);
+       ])
+
+(* Float Adds of many updates into one axis, which sort them where the
+   cache doesn't hold the targets: long axes of few slices and narrow
+   floats' Adds. *)
+let sorted_adds =
+  Gen.with_pp pp_scatter
+    (Gen.frequency
+       [
+         ( 1,
+           scatter_gen ~dtypes:float_dtypes ~combines:Nx_kernel.[ Add ]
+             ~shapes:(Gen.of_list [ [| 1000 |]; [| 5 |] ])
+             ~ms:(Gen.int_range 70_000 100_000)
+             () );
+         (1, narrow_adds);
        ])
 
 (* Guard pages *)
@@ -734,6 +758,7 @@ let law_scatter_guards (b : Support.backend) (c, side) =
 
 let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
+  let sorted f x = b.around (fun () -> Nx_cpu.with_cache 0 (fun () -> f x)) in
   group ("nx.cpu " ^ b.name)
     [
       prop "a float Add gives the same result through any views" float_adds
@@ -749,7 +774,8 @@ let cpu (b : Support.backend) =
         (run (law_nan_extremes b));
       prop ~count:10 "large gathers on the job's threads" large_gathers
         (run (gather_agrees b));
-      prop ~count:10 ~examples:(blocked_examples @ owned_examples)
+      prop ~count:10
+        ~examples:(blocked_examples @ owned_examples @ row_order_examples)
         "scatters of many updates combine each target's updates in C order"
         many_scatters
         (run (fun c ->
@@ -759,6 +785,15 @@ let cpu (b : Support.backend) =
       prop ~count:16 ~examples:threaded_examples
         "a scatter's bits are one thread's" threaded_scatters
         (run (law_threads b));
+      prop ~count:10 ~examples:blocked_examples
+        "a float Add that sorts its updates combines each target's updates \
+         in C order"
+        sorted_adds
+        (sorted (law_scatter_reference b));
+      prop ~count:10 ~examples:narrow_examples
+        "a float Add that sorts its updates has one thread's bits"
+        sorted_adds
+        (sorted (law_threads b));
       test "boolean extremes are of truths" (fun () ->
           b.around (test_bool_extremes b));
       test "a float16 sum runs in float32 and rounds once" (fun () ->

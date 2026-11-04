@@ -843,6 +843,12 @@ let segments_1m () =
   let ids = Nx.place Nx.Host.on (Nx.cast D.Int64 ids) in
   (ids, Nx.copy ids)
 
+(* The same segments over 1M float64 rows drawn once from a fixed key: a
+   group-by's float sum, each group summed in row order on one thread. *)
+let segments_f64_1m () =
+  let ids, _ = segments_1m () in
+  (ids, on_host (Nx.Rng.uniform ~key:(Nx.Rng.key 15) D.Float64 [| 1 lsl 20 |]))
+
 (* 1M windows of 8 bytes at positions drawn once from a fixed key, as a
    ragged row's bytes are packed into a word. *)
 let windows_1m () =
@@ -951,6 +957,9 @@ let index_rows =
           Nx.scatter ~combine:Add ~axis:0 ids updates sums);
       Thumper.bench_with_setup "segment-sum-i64-1M-into-100"
         ~setup:segments_1m (fun (ids, x) ->
+          Nx.reduce_segments Add ~segments:100 ids x);
+      Thumper.bench_with_setup "segment-sum-f64-1M-into-100"
+        ~setup:segments_f64_1m (fun (ids, x) ->
           Nx.reduce_segments Add ~segments:100 ids x);
       Thumper.bench_with_setup "take-windows-8B-1M" ~setup:windows_1m
         (fun (at, w) -> Nx.take ~axis:0 at w);

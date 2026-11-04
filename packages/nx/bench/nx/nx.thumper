@@ -19,6 +19,7 @@
 # forced: blessed attention/prefill-f64-8x1024x64-causal under load 32.0 on 14 cores
 # forced: blessed index/segment-sum-i64-1M-into-100 index/take-windows-8B-1M under load 24.1 on 14 cores
 # forced: blessed ragged/ids-text-64K-of-4-to-20B ragged/ids-text-1M-of-5B-100-values ragged/ids-text-1M-of-12B-10K-values under load 33.8 on 14 cores
+# forced: blessed index/segment-sum-f64-1M-into-100 under load 14.9 on 14 cores
 
 attention/decode-f32-64x8x4096x64	alloc_words	exact	899
 attention/decode-f32-64x8x4096x64	wall_time	batch=1	n=20	1.364e-03	9.401e-04 9.802e-04 9.986e-04 9.990e-04 1.039e-03 1.198e-03 1.219e-03 1.260e-03 1.295e-03 1.346e-03 1.383e-03 1.600e-03 1.727e-03 2.126e-03 2.527e-03 3.246e-03 3.993e-03 3.993e-03 5.491e-03 1.163e-02
@@ -189,6 +190,8 @@ index/embedding-grad-bf16-zipf	alloc_words	exact	402
 index/embedding-grad-f32-uniform	alloc_words	exact	402
 index/embedding-grad-f32-zipf	alloc_words	exact	402
 index/scatter-add-64K-into-1K	alloc_words	exact	97
+index/segment-sum-f64-1M-into-100	alloc_words	exact	255
+index/segment-sum-f64-1M-into-100	wall_time	batch=8	n=20	9.856e-04	8.527e-04 8.557e-04 8.750e-04 8.805e-04 8.814e-04 8.847e-04 8.960e-04 9.169e-04 9.240e-04 9.582e-04 1.013e-03 1.167e-03 1.269e-03 1.366e-03 1.373e-03 1.410e-03 1.424e-03 1.434e-03 1.442e-03 1.455e-03
 index/segment-sum-i64-1M-into-100	alloc_words	exact	255
 index/segment-sum-i64-1M-into-100	wall_time	batch=16	n=20	4.244e-04	1.168e-04 1.192e-04 1.462e-04 1.649e-04 1.954e-04 2.871e-04 3.279e-04 3.958e-04 4.091e-04 4.138e-04 4.350e-04 4.380e-04 4.946e-04 6.251e-04 7.187e-04 8.237e-04 8.841e-04 9.539e-04 1.152e-03 1.728e-03
 index/set-held-3-axes-4K-of-32K	alloc_words	exact	1378

@@ -28,10 +28,11 @@
    each run's updates are sorted into bins of their targets (Sorted
    scatters below), or each thread also takes a part of the targets along
    the axis and walks every update of its run, applying those that land in
-   its part: the order per target stays C order. A combine whose result is
-   the same in any order, an integer's, folds each thread's share of the
-   updates into targets of its own instead, where they are few (Owned
-   targets below).
+   its part: the order per target stays C order. A float's Add of such
+   runs, each one slice, sums each on one thread where its targets fit the
+   cache (Sums in row order below). A combine whose result is the same in
+   any order, an integer's, folds each thread's share of the updates into
+   targets of its own instead, where they are few (Owned targets below).
 
    Add adds left to right from the target's element, x + u1 + ... + un,
    with no +0 before it, so that a -0 target and -0 updates sum to -0, as
@@ -324,6 +325,9 @@ struct scatter {
   int narrow;
   uint8_t *sums;
   int64_t each;
+  /* Whether each unit sums its targets in row order on its thread (Sums in
+     row order). */
+  int in_order;
   /* A sorted scatter (Sorted scatters): the run's [n] slices, at [pd],
      [pi], [pu] and [pt] in the destination, the positions, the updates and
      into; the block's first step [b0], its [steps] and [chunks], of at most
@@ -783,6 +787,97 @@ static void narrow_run(const scatter *c, int worker, int64_t u, int64_t pd,
   sum_sorted(c, pd, pu, n, moved ? p2 : p, moved ? r2 : r, k, sum, row, next);
 }
 
+/* Sums in row order
+
+   A float's, a narrow float's or a complex number's Add whose units are
+   single slices, fewer than the threads, as a 1-d scatter's or a group-by's
+   sum, sums each unit's updates on one thread in row order, into the
+   destination itself, where the targets the units reach at once fit the
+   host's largest cache: [t] elements of the dtype a unit, or a narrow
+   float's [t] float32 sums and a flag each that an update reached it,
+   whose reached targets it encodes once at the end. The bits are the
+   sorted scatter's, whose bins apply each target's updates in the same
+   order. Sorting the updates into bins on every thread costs more than it
+   saves where the targets stay in the cache. Per update, by callgrind on
+   fudge (its LL the 24 MiB L3, 2026-11-04), sorted and in row order:
+
+     rows into groups              instructions   last-level misses
+     float64, 1M into 100 to 100K  49-50 / 13-14  0.22-0.29 / 0-0.03
+     float64, 10M into 100 to 100K    50 / 13        0.26 / 0.25
+     float64, 10M into 1M (8 MB)      49 / 14        0.67 / 0.28
+     float64, 10M into 3M (24 MB)     50 / 16        0.95 / 0.64
+     float64, 10M into 10M (80 MB)    51 / 22        1.34 / 1.39
+     bfloat16, 1M into 100            80 / 15        0.10 / 0.005
+     complex128, 1M into 100          57 / 18        0.50 / 0.08
+
+   The sort's own count, copy and second read of each update cost the
+   instructions more. Past the cache the misses tie, but in row order they
+   are reads at random on one thread, where the sort's stream on every
+   thread, so the cache bounds row order. Wall times, which a loaded
+   machine can't judge, are re-checked at the quiet re-record. Rows of
+   several slices, an embedding gradient's, still sort: their entries are
+   rows' steps, a sort's cost shared by a row's slices. */
+
+/* Whether each unit is one slice: a row of one slice, or a narrow
+   float's slice whose positions differ along its row (slices). */
+static int one_slice(const scatter *c) {
+  return c->len == 1 || c->run_len == 1;
+}
+
+/* The bytes a narrow float's flags of [t] targets take, padded to a
+   line. */
+static int64_t flags_of(int64_t t) { return (t + 63) & -64; }
+
+/* Whether the scatter [c], of [units] units, sums each in row order on
+   its thread. */
+static int in_order(const scatter *c, int64_t units) {
+  if (c->combine != NX_COMBINE_ADD || !one_slice(c)) return 0;
+  int64_t w = 4;
+  switch (c->dt) {
+    case NX_FLOAT16: case NX_BFLOAT16: case NX_FLOAT8_E4M3FN:
+    case NX_FLOAT8_E5M2: case NX_FLOAT32: break;
+    case NX_FLOAT64: case NX_COMPLEX64: w = 8; break;
+    case NX_COMPLEX128: w = 16; break;
+    default: return 0;
+  }
+  return units * (int64_t)c->dim * w <= nx_cpu_llc;
+}
+
+/* Updates a narrow float's unit in row order decodes at once. */
+#define DECODED 256
+
+/* Sums a narrow float's unit, the slice at [pd], [pi] and [pu], in row
+   order in its worker's sums, whose flags start and end clear. The updates
+   decode DECODED at a time, as a row converts. */
+static void narrow_in_order(const scatter *c, int worker, int64_t pd,
+                            int64_t pi, int64_t pu) {
+  const nx_array *d = &c->a[0], *u = &c->a[3];
+  const int64_t *x = (const int64_t *)c->a[2].base;
+  int64_t t = (int64_t)c->dim, da = c->da, ia = c->ia;
+  uint8_t *reached = c->sums + worker * c->each;
+  float *sums = (float *)(reached + flags_of(t));
+  float row[DECODED];
+  for (int64_t k = 0; k < c->m; k += DECODED) {
+    int64_t n = c->m - k < DECODED ? c->m - k : DECODED;
+    load_row(c->dt, u, pu + k * c->ua, c->ua, n, row);
+    const int64_t *at = x + pi + k * ia;
+    for (int64_t j = 0; j < n; j++) {
+      uint64_t p = (uint64_t)at[j * ia];
+      if (p >= c->dim) continue;
+      if (!reached[p]) {
+        sums[p] = nx_bits_to_float(c->dt, code_at(d, pd + (int64_t)p * da));
+        reached[p] = 1;
+      }
+      sums[p] = nx_add_f32(sums[p], row[j]);
+    }
+  }
+  for (int64_t p = 0; p < t; p++) {
+    if (!reached[p]) continue;
+    code_put(d, pd + p * da, narrow_of_float(c->dt, sums[p]));
+    reached[p] = 0;
+  }
+}
+
 /* The first target of part [k] of the axis's targets. */
 static uint64_t part_first(const scatter *c, int64_t k) {
   return c->dim * (uint64_t)k / (uint64_t)c->parts;
@@ -795,7 +890,9 @@ static void scatter_units(int64_t lo, int64_t hi, int worker, void *ctx) {
     int64_t part = u % c->parts, p[4];
     uint64_t first = part_first(c, part), next = part_first(c, part + 1);
     int64_t n = run_at(c, u / c->parts, p);
-    if (c->narrow)
+    if (c->narrow && c->in_order)
+      narrow_in_order(c, worker, p[0], p[1], p[2]);
+    else if (c->narrow)
       narrow_run(c, worker, u, p[0], p[1], p[2], n, first, next - first);
     else c->run(c, p[0], p[1], p[2], n, first, next - first);
   }
@@ -887,12 +984,6 @@ static int part_order(scatter *c, int64_t units, int64_t bytes, double cost,
    L2. Threads that split the targets instead each read every update: 1-d
    scatters of 16 Mi updates ran 1.2 to 1.7 times slower so on an x86-64
    of six cores, and the embedding gradient's row 1.3 times. */
-
-/* Whether each unit is one slice: a row of one slice, or a narrow
-   float's slice whose positions differ along its row (slices). */
-static int one_slice(const scatter *c) {
-  return c->len == 1 || c->run_len == 1;
-}
 
 /* The bytes of a sorted entry: the update where a unit is one slice, else
    its row's step. */
@@ -1373,28 +1464,35 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
      so doesn't; a narrow float's rows of several slices sort them by
      target once a row (narrow_rows). Where the result is the same in any
      order of the updates and the targets are few, each thread folds its
-     shares into targets of its own (Owned targets). Otherwise each thread
-     takes a part of the targets and walks every update of its run. */
+     shares into targets of its own (Owned targets). A float's Add of
+     single slices whose targets fit the cache sums each on one thread
+     instead of sorting (Sums in row order). Otherwise each thread takes a
+     part of the targets and walks every update of its run. */
   c.parts = 1;
   int few = units < threads && (c.m >= PART_UPDATES || c.narrow);
   int rows = few && c.narrow && c.len > 1 && c.si == 0;
   int own = few && !rows && owns(&c, total, updates, threads);
-  int sort = few && !rows && !own && (one_slice(&c) || c.si == 0) &&
-             a[0].bits >= 8;
-  if (few && !sort && !rows && !own) c.parts = (threads + units - 1) / units;
+  c.in_order = few && !rows && !own && in_order(&c, units);
+  int sort = few && !rows && !own && !c.in_order &&
+             (one_slice(&c) || c.si == 0) && a[0].bits >= 8;
+  if (few && !sort && !rows && !own && !c.in_order)
+    c.parts = (threads + units - 1) / units;
   /* Into's steps may part the loop's axes further; a row of one slice, or
      of positions stepping 0, stays one. */
   if (sort) units = slices(&c, us, r, axis, a[1].dim + r);
   if ((uint64_t)c.parts > c.dim) c.parts = (int64_t)c.dim;
   if (!sort) copy_into(a, total);
-  /* A worker's scratch for a narrow float's sums: three rows of floats,
-     then two words for each of its unit's positions and two for their
-     sort; a row's sort keeps those words once, and a word more for each
-     run, and parted targets' units each for their part's positions. */
+  /* A worker's scratch for a narrow float's sums: its targets' flags and
+     float32 sums in row order; else three rows of floats, then two words
+     for each of its unit's positions and two for their sort; a row's sort
+     keeps those words once, and a word more for each run, and parted
+     targets' units each for their part's positions. */
   int64_t jobs = units * c.parts;
   int workers = jobs < threads ? (int)jobs : threads;
   int parted = c.narrow && c.parts > 1;
-  if (c.narrow && !sort)
+  if (c.narrow && c.in_order)
+    c.each = flags_of((int64_t)c.dim) + 4 * (int64_t)c.dim;
+  else if (c.narrow && !sort)
     c.each = (rows || parted ? 0 : 32 * c.m) + 12 * UNIT_ROW;
   /* Parted targets' count of their positions takes a share of the
      updates' cost, as its bytes are of the positions' and the updates'. */

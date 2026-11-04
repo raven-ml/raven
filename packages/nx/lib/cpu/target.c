@@ -245,6 +245,14 @@ value nx_cpu_targets(value unit) {
   CAMLreturn(l);
 }
 
+/* Sets nx_cpu_llc to [bytes] and answers its value before: with_cache's
+   scope. */
+value nx_cpu_swap_llc(value bytes) {
+  value was = Val_long(nx_cpu_llc);
+  nx_cpu_llc = Long_val(bytes);
+  return was;
+}
+
 /* Makes the host's table named [name] the one the kernels run, and answers
    the name of the one they ran before. */
 value nx_cpu_swap_target(value name) {

@@ -544,6 +544,14 @@ let with_target t f =
   let was = swap_target t in
   Fun.protect ~finally:(fun () -> ignore (swap_target was : string)) f
 
+(* The largest cache (target.c) *)
+
+external swap_llc : int -> int = "nx_cpu_swap_llc" [@@noalloc]
+
+let with_cache n f =
+  let was = swap_llc n in
+  Fun.protect ~finally:(fun () -> ignore (swap_llc was : int)) f
+
 (* Attention *)
 
 external attention_c :

@@ -2097,6 +2097,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.reduce_segments` and `Nx.scatter` of floats, narrow floats and
+  complex numbers by `Add`, over fewer slices than threads whose targets fit
+  the host's largest cache, sum each slice in row order on one thread in
+  place of sorting the updates by target on every thread, with the same
+  bits: 1M float64 sums into 100 segments take 13 instructions an update
+  where they took 49, bfloat16 15 where 80, complex128 18 where 57.
 - `Nx_ragged.ids` packs rows of one length with one row of masks, and
   takes an unsigned integer's elements as their own order keys, in place
   of a gather of masks and a copy: talon's H2O group-by q01 at 1e6 rows
