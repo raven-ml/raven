@@ -56,7 +56,7 @@ let compiles (module S : Nx.Devices) =
     Nx.Dtype.[ Any Nx.float32; Any Nx.float16; Any Nx.bfloat16 ]
 
 (* The first GPU, skipping where its renderer cannot be made: without its
-   compiler's library, jit evaluates each call uncompiled. *)
+   compiler's library, each compiled call raises. *)
 let on_gpu () =
   match Lazy.force gpu with
   | None -> skip ~reason:"no GPU" ()

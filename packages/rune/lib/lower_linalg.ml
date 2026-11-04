@@ -8,7 +8,8 @@ module D = Nx_array.Dtype
 module P = Nx.Prim
 
 let unlowered what =
-  invalid_arg (Printf.sprintf "Rune.Lower.op: %s is not lowered" what)
+  let why = Printf.sprintf "Rune.Lower.op: %s is not lowered" what in
+  raise (Lower_arith.Unlowered why)
 
 let dtype = Ops.dtype
 let ints l = List.map (fun n -> Ops.Int n) l

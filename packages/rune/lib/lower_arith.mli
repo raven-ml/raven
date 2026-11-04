@@ -46,6 +46,11 @@
 
 open Tolk
 
+exception Unlowered of string
+(** The exception the lowering raises, with a message naming the operation,
+    for an operation it has no lowering for. Any other exception it raises is a
+    mistake, its caller's or its own. *)
+
 (** {1:lowering Lowering} *)
 
 val dtype : Nx_array.Dtype.any -> Dtype.t

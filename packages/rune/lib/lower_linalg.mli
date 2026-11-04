@@ -70,5 +70,5 @@ val op :
 (** [op ~device node l] is the node of each result of [l], in position order,
     computed on [device]. It reads each operand [x] from [node x].
 
-    Raises [Invalid_argument] naming the routine for a complex operand and for
-    [Eig] and [Eig_values]. *)
+    Raises {!Lower_arith.Unlowered} naming the routine for a complex operand and
+    for [Eig] and [Eig_values]. *)

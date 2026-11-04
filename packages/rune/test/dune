@@ -62,6 +62,55 @@
  (locks %{workspace_root}/gpu)
  (libraries nx nx_quant rig rig.gpus rune rune_support tolk tolk.engine windtrap))
 
+; Settings are read when the program starts, so CACHEDB is set here, to a
+; directory of the sandbox. The tests tagged no-clang run in a second process,
+; where CC names a program that does not exist; no-nvrtc in a third, where
+; NVRTC_PATH names no file and LD_LIBRARY_PATH no directory; broken-nvrtc in a
+; fourth, where NVRTC_PATH names a file that is no library. It opens this
+; machine's first GPU, so it holds the lock GPU tests share.
+
+(test
+ (name test_jit_compiler)
+ (modules test_jit_compiler)
+ (locks %{workspace_root}/gpu)
+ (libraries nx rig.gpus rune rune_support tolk tolk.engine windtrap)
+ (deps
+  (sandbox always)
+  not_a_library)
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (progn
+    (run
+     %{test}
+     --exclude-tag
+     no-clang
+     --exclude-tag
+     no-nvrtc
+     --exclude-tag
+     broken-nvrtc)
+    (setenv
+     CC
+     /nonexistent/clang
+     (run %{test} --tag no-clang))
+    (setenv
+     NVRTC_PATH
+     ./no_nvrtc
+     (setenv
+      LD_LIBRARY_PATH
+      ""
+      (run %{test} --tag no-nvrtc)))
+    (setenv
+     NVRTC_PATH
+     ./not_a_library
+     (run %{test} --tag broken-nvrtc))))))
+
+(rule
+ (target not_a_library)
+ (action
+  (write-file %{target} "This file is no library.\n")))
+
 (test
  (name test_program)
  (modules test_program)

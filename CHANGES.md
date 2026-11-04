@@ -373,6 +373,15 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` raises the `Failure` that names a missing compiler library, as
+  NVRTC's, and any failure inside the compiler, at the call, where it
+  evaluated the program uncompiled. On a set of GPUs, which has no eager
+  kernels, a missing NVRTC raised nx's "no kernels to compute" in place of its
+  cause. A call is evaluated only where the compiler declines it, as for an
+  operation it does not lower.
+- `Rune.jit` compiles a call that adds to a `Rune.Total` under `Rune.grad`,
+  and the derivative of a scan whose step gives back its carry. Both were
+  evaluated uncompiled.
 - `Rune.jit` walks every scatter's updates in a kernel of its own, many updates
   into few targets in chunks, where it compared each element with each update:
   2^20 updates into 16 targets take 0.06 ms on an RTX 5000 Ada, against 2.8.

@@ -8,6 +8,8 @@ open Lower_bits
 module D = Nx_array.Dtype
 module P = Nx_kernel.Prog
 
+exception Unlowered of string
+
 (* Elements *)
 
 let dtype (D.Any dt) : Dtype.t =

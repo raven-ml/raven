@@ -2309,8 +2309,9 @@ let int_scaled () =
            sum = false;
          })
   in
-  raises_match
-    (Exn.invalid_arg ~sub:"a contraction scaled in int32 is not lowered")
+  raises
+    (Rune.Lower_arith.Unlowered
+       "Rune.Lower_reduce: a contraction scaled in int32 is not lowered")
     (fun () -> Lowered.run op)
 
 (* A complex product, and a complex128 extreme's scan, are not lowered. *)
@@ -2324,7 +2325,7 @@ let refused_complex ~scan m () =
     else fst (P.eval ~by:"t" (reduce_op m [ 0 ] x))
   in
   raises_match
-    (function Invalid_argument _ -> true | _ -> false)
+    (function Rune.Lower_arith.Unlowered _ -> true | _ -> false)
     (fun () -> Lowered.run op)
 
 (* A boolean is its byte: the bytes a reduction or a scan of booleans leaves are

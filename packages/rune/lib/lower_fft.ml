@@ -28,9 +28,10 @@ let precision op u =
   match (Ops.dtype u : Dtype.t) with
   | Float32 | Float64 -> Ops.dtype u
   | _ ->
-      invalid_arg
-        (Printf.sprintf
-           "Rune.Lower_fft: a %s of another precision is not lowered" op)
+      raise
+        (Lower_arith.Unlowered
+           (Printf.sprintf
+              "Rune.Lower_fft: a %s of another precision is not lowered" op))
 
 (* [only u axis b] is [b] at [axis] of [u]'s axes, [None] elsewhere. *)
 let only u axis b =

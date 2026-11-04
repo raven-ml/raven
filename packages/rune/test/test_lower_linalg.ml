@@ -800,8 +800,9 @@ let values_law (c, shape) =
 (* Refusals *)
 
 let refuses f =
-  raises_match (function Invalid_argument _ -> true | _ -> false) (fun () ->
-      Lowered.run f)
+  raises_match
+    (function Rune.Lower_arith.Unlowered _ -> true | _ -> false)
+    (fun () -> Lowered.run f)
 
 let refused () =
   let z = Nx.create D.Complex64 [| 1; 1 |] [| Complex.one |] in

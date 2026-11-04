@@ -9,7 +9,8 @@ module Arith = Lower_arith
 module Bits = Lower_bits
 
 let unlowered what =
-  invalid_arg (Printf.sprintf "Rune.Lower.op: %s is not lowered" what)
+  let why = Printf.sprintf "Rune.Lower.op: %s is not lowered" what in
+  raise (Lower_arith.Unlowered why)
 
 (* Work
 

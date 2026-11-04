@@ -43,14 +43,16 @@ val c2c : Nx_kernel.direction -> axes:int list -> Ops.t -> Ops.t
 (** [c2c d ~axes x] is the transform [d] of the complex [x] along each of
     [axes].
 
-    Raises [Invalid_argument] for parts other than [float32] and [float64]. *)
+    Raises {!Lower_arith.Unlowered} for parts other than [float32] and
+    [float64]. *)
 
 val r2c : axes:int list -> Ops.t -> Ops.t
 (** [r2c ~axes x] is the [Forward] transform of the real [x], keeping bins [0]
     to [n/2] along the last of [axes], where [n] is [x]'s extent there. For
     [n = 0] it is one bin of [+0].
 
-    Raises [Invalid_argument] for parts other than [float32] and [float64]. *)
+    Raises {!Lower_arith.Unlowered} for parts other than [float32] and
+    [float64]. *)
 
 val c2r : axes:int list -> n:int -> Ops.t -> Ops.t
 (** [c2r ~axes ~n x] is the [Inverse] transform of the complex [x] along each of
@@ -59,4 +61,5 @@ val c2r : axes:int list -> n:int -> Ops.t -> Ops.t
     [X'[k]] is [X[k]] for [k <= n/2] and [conj X[n - k]] above, with the
     imaginary parts of bin [0], and of bin [n/2] for an even [n], taken as [0].
 
-    Raises [Invalid_argument] for parts other than [float32] and [float64]. *)
+    Raises {!Lower_arith.Unlowered} for parts other than [float32] and
+    [float64]. *)

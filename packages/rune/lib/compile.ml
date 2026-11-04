@@ -1153,7 +1153,7 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
               let renderer = lazy (Engine.renderer rig) in
               match Lower.op ?dst ~renderer ~device ~host read op with
               | ys -> ys
-              | exception Invalid_argument why -> decline "%s" why
+              | exception Arith.Unlowered why -> decline "%s" why
             in
             match op with
             | Place (q, x) -> placed st env q x ys
@@ -2778,14 +2778,6 @@ let rigs (p : Program.t) forms =
   Array.iter (fun (V y) -> value y) p.outputs;
   match List.rev !seen with [] -> decline "no value" | rigs -> rigs
 
-(* What a program the compiler takes must not raise to compile: an operation it
-   does not lower, or tolk refusing the graph, as a target whose compiler is
-   missing does. *)
-let declined = function
-  | Declined why -> Some why
-  | Invalid_argument why | Failure why -> Some why
-  | _ -> None
-
 (* Whether two settings are equal: [Tolk.Setting.shaping] gives one list while
    no setting changes, so equal lists are mostly one. *)
 let same_settings ((s, d) : settings) ((s', d') : settings) =
@@ -2826,8 +2818,8 @@ let variant t layouts phases donated settings =
                 lower ~rigs:t.rigs ~split:(Option.is_some t.split)
                   ~uploads:t.uploads t.program t.forms ~layouts ~phases ~donated
           in
-          (* A declined variant is kept; another failure, as an interrupted
-             search, keeps nothing. *)
+          (* A declined variant is kept; another failure, as a compiler's or
+             an interrupted search, keeps nothing and raises. *)
           let linked =
             (* A split program holds no memory between calls: each call
                makes its devices' arenas before its first kernel and returns
@@ -2842,12 +2834,9 @@ let variant t layouts phases donated settings =
                 (lowered ())
             with
             | l -> Ok l
-            | exception e -> (
-                match declined e with
-                | Some why ->
-                    report "evaluates a variant uncompiled: %s" why;
-                    Error why
-                | None -> raise e)
+            | exception Declined why ->
+                report "evaluates a variant uncompiled: %s" why;
+                Error why
           in
           let v = { layouts; phases; donated; settings; linked } in
           Atomic.set t.variants (v :: Atomic.get t.variants);
@@ -2918,7 +2907,7 @@ let make ~name ?beam ?parallel ?first p forms =
           let v = foreseen args in
           match lower v with
           | lowered -> (v, lowered)
-          | exception e when Option.is_some (declined e) -> at_contiguous ())
+          | exception Declined _ -> at_contiguous ())
       | Some _ | None -> at_contiguous ()
     in
     {
@@ -2940,8 +2929,7 @@ let make ~name ?beam ?parallel ?first p forms =
     }
   with
   | t -> Ok t
-  | exception e -> (
-      match declined e with Some why -> Error why | None -> raise e)
+  | exception Declined why -> Error why
 
 (* Calls *)
 

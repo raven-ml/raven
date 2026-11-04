@@ -10,7 +10,8 @@ module Arith = Lower_arith
 module Reduce = Lower_reduce
 
 let unlowered what =
-  invalid_arg (Printf.sprintf "Rune.Lower.op: %s is not lowered" what)
+  let why = Printf.sprintf "Rune.Lower.op: %s is not lowered" what in
+  raise (Lower_arith.Unlowered why)
 
 (* Padded loads
 

@@ -88,7 +88,7 @@ val reduce :
     mean then the variance for [Moments], or the extreme then its [int64]
     position for [Arg]. Each drops [axes].
 
-    Raises [Invalid_argument] for a complex [Prod]. *)
+    Raises {!Lower_arith.Unlowered} for a complex [Prod]. *)
 
 val scan :
   Nx_kernel.reduction ->
@@ -106,8 +106,8 @@ val scan :
     slice of [n] terms takes [O(n)] work, in about [2 log₁₆ n] kernels for a
     [Monoid] and [2 log₂ n] for a [Logsumexp] or [Moments].
 
-    Raises [Invalid_argument] for a complex [Prod], and a [complex128] [Max],
-    [Min] or [Arg]. *)
+    Raises {!Lower_arith.Unlowered} for a complex [Prod], and a [complex128]
+    [Max], [Min] or [Arg]. *)
 
 (** {1:contractions Contractions}
 
@@ -188,5 +188,5 @@ val contract :
     [n] and each group takes one block: [g n] products. A group's bits so do
     not depend on the other groups' counts.
 
-    Raises [Invalid_argument] for a scale with an [acc] other than [float32]
-    or [float64]. *)
+    Raises {!Lower_arith.Unlowered} for a scale with an [acc] other than
+    [float32] or [float64]. *)

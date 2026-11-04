@@ -33,8 +33,6 @@ module Arith = Lower_arith
    table entry is in range, and the program's output 0 holds. A tile whose
    pairs are all hidden is skipped ([guard]). *)
 
-let unlowered what =
-  invalid_arg (Printf.sprintf "Rune.Lower.op: %s is not lowered" what)
 
 (* Problems *)
 
@@ -1935,7 +1933,7 @@ let lower ~device ~(renderer : Renderer.t)
           else Shape.reshape (List.nth outs 0) o_shape
         in
         [| o; Shape.reshape (List.nth outs 1) lse_shape |]
-  | _ -> unlowered (Nx.Prim.name op)
+  | _ -> invalid_arg ("Lower_attention.lower: " ^ Nx.Prim.name op)
 
 (* The derivative's lowering *)
 

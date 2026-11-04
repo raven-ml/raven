@@ -1810,9 +1810,14 @@ val jit :
     set, as weights offloaded to other devices are, since a split program keeps
     the storage it derives from an argument between calls, and so would hold
     the copies on that set's devices. It also declines a
-    program with a value on a device that computes nothing ({!Rig.computes}),
-    and one tolk cannot compile. An evaluated call's results are fresh, as a
-    compiled call's are, and a call with donated arguments consumes them. It
+    program with a value on a device that computes nothing ({!Rig.computes}).
+    It declines nothing else: a compiler that fails on a program it takes, as
+    one whose library or program is missing, that rejects its source or that
+    ends before answering, raises its failure at the call that compiles,
+    [Failure] or {!Tolk.Renderer.Compiler.Compile_error} naming that compiler,
+    on every set, as does any other failure to compile. An evaluated call's
+    results are fresh, as a compiled call's are, and a call with donated
+    arguments consumes them. It
     holds each value of the program from the operation that makes it until
     the last that reads it, as the function applied eagerly lets each go.
     With donated arguments, it gives each of them whose memory no other

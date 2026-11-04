@@ -48,15 +48,15 @@ val op :
     [Scatter] takes its storage from [dst] where {!Lower_index.scatter} does;
     another operation ignores it.
 
-    Raises [Invalid_argument], naming the operation, for one it does not lower:
-    [Check], which its caller lowers itself, a [Linalg] that {!Lower_linalg.op}
-    refuses, a boolean [Add] [Scatter] or [Fold], a [Sort] along an axis of
-    more than [2{^31}] elements ({!Lower_index.sort}), a [Unique] of more
-    than [2{^31}] rows, an [Fft] of a precision other than [float32] and
-    [float64] or whose result's precision is not its operand's, a [Contract]
-    scaled in an accumulator other than [float32] or [float64], a reduction
-    or a scan of a complex [Prod], and a scan of a [complex128] [Max], [Min]
-    or [Arg]. *)
+    Raises {!Lower_arith.Unlowered}, naming the operation, for one it does not
+    lower: [Check], which its caller lowers itself, a [Linalg] that
+    {!Lower_linalg.op} refuses, a boolean [Add] [Scatter] or [Fold], a [Sort]
+    along an axis of more than [2{^31}] elements ({!Lower_index.sort}), a
+    [Unique] of more than [2{^31}] rows, an [Fft] of a precision other than
+    [float32] and [float64] or whose result's precision is not its operand's,
+    a [Contract] scaled in an accumulator other than [float32] or [float64], a
+    reduction or a scan of a complex [Prod], and a scan of a [complex128]
+    [Max], [Min] or [Arg]. *)
 
 (**/**)
 

@@ -13,10 +13,12 @@ type monoid = Nx_kernel.monoid = Sum | Prod | Max | Min
 let refuse m ~scan (D.Any dt) =
   match (m, dt) with
   | Prod, (D.Complex64 | D.Complex128) ->
-      invalid_arg "Rune.Lower_reduce: a complex Prod is not lowered"
+      raise
+        (Arith.Unlowered "Rune.Lower_reduce: a complex Prod is not lowered")
   | (Max | Min), D.Complex128 when scan ->
-      invalid_arg
-        "Rune.Lower_reduce: a complex128 Max or Min scan is not lowered"
+      raise
+        (Arith.Unlowered
+           "Rune.Lower_reduce: a complex128 Max or Min scan is not lowered")
   | _ -> ()
 
 let extents u = List.init (Shape.ndim u) (Bits.extent u)
@@ -591,10 +593,11 @@ let entered acc ~other { dtype; node; scale } =
         [ Arith.cast ~src:bf16 acc (Arith.cast ~src:acc bf16 v) ]
       else [ v ]
   | Some _, D.Any d ->
-      invalid_arg
-        (Printf.sprintf
-           "Rune.Lower_reduce: a contraction scaled in %s is not lowered"
-           (D.name d))
+      raise
+        (Arith.Unlowered
+           (Printf.sprintf
+              "Rune.Lower_reduce: a contraction scaled in %s is not lowered"
+              (D.name d)))
 
 (* Segments
 

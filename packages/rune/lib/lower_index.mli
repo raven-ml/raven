@@ -96,7 +96,7 @@ val scatter :
     before. [dst] defaults to [Filled] by a fresh buffer that [into] is stored
     into.
 
-    Raises [Invalid_argument] for a boolean [Add]. *)
+    Raises {!Lower_arith.Unlowered} for a boolean [Add]. *)
 
 val fold :
   Nx_array.Dtype.any -> Nx_kernel.pad -> int iarray -> Ops.t -> Ops.t
@@ -106,7 +106,7 @@ val fold :
     index of the other axes, for [l] windows of [size] elements [step] apart
     over an axis of [n].
 
-    Raises [Invalid_argument] for a boolean [d]. *)
+    Raises {!Lower_arith.Unlowered} for a boolean [d]. *)
 
 val crowded : int iarray -> Nx_array.Move.range iarray list -> bool
 (** [crowded shape regions] is whether an assembly into [shape] of pieces at
@@ -142,7 +142,8 @@ val sort :
     [log² n / 2] kernels a pass for [n] elements, two passes for a 64-bit
     dtype or [complex64], four for [complex128].
 
-    Raises [Invalid_argument] for an axis of more than [2{^31}] elements. *)
+    Raises {!Lower_arith.Unlowered} for an axis of more than [2{^31}]
+    elements. *)
 
 val unique :
   host:bool -> Renderer.t -> Ops.device -> size:int -> Ops.t -> Ops.t array
@@ -154,7 +155,7 @@ val unique :
     sort of [n] [uint64] words for each column, then scatters by {!scatter}:
     [O(w n log² n)] work.
 
-    Raises [Invalid_argument] for more than [2{^31}] rows. *)
+    Raises {!Lower_arith.Unlowered} for more than [2{^31}] rows. *)
 
 (**/**)
 
