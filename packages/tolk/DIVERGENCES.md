@@ -7369,14 +7369,11 @@ and an initial value is added after it (D260).
   depends on them without it, which places nothing differently:
   `reg_placeholder_then_reduce`'s golden reads its register directly where
   its store's value depends on the range. Not covered: an effect with no
-  index, a rewrite after the expander, and an upcast or unroll of a range
-  an effect reads only through the `After` (`C[r // 8] += 1` with `r`
-  upcast by 4 counts 2 of 8), since the expander drops an `After`'s
-  upcast ranges, as it does for one a builder writes
-  (`a store ordered after a range runs once per step` with its range
-  upcast counts 1 of 4, here and in tinygrad); lanes of one address that
-  is read and written cannot be steps, which is Postrange's to refuse, and
-  the same holds of an upcast `C[r // 8] += 1` that folds only after opts.
+  index, and a rewrite after the expander. The expander drops an `After`'s
+  upcast ranges, so lanes of a range an effect reads only through the
+  `After` would run it once: such a range, if weak, breaks its promise,
+  which a store whose cells show it is refused for before any optimisation
+  (D333), and a serial one takes no lanes.
 - **Reason:** (e): an effect that runs once per step of its loops as built
   runs once, or runs in a loop of no trip.
 - **Pinned by:** the Codegen suite's `effects at an index that folds run as
@@ -7568,9 +7565,10 @@ and an initial value is added after it (D260).
 - **Reason:** (e): `n[0] = n[0] + 1`, which no range holds, beside `out[i] =
   a[i] + 1` over 2^20 `i` on CUDA, runs in each of the 8192 workgroups the
   heuristic makes, and a workgroup that starts after another's write reads
-  it: `n` counts 10 to 13 for 1. A store that a range holds and whose index
-  does not read it writes one cell from each of the range's points, which
-  run in no order (`Ops.Axis_type.Weak`), so one of them suffices.
+  it: `n` counts 10 to 13 for 1. A store to global memory whose index does
+  not read a thread range a builder wrote runs in the thread where that
+  range is 0, as `Ops.Axis_type` defines it; under a weak range made
+  global, such a store breaks the range's promise (D333).
 - **Pinned by:** the Codegen suite: `calls, custom code and stores on CUDA ›
   a plain store beside stores across workgroups runs once`, `› a store
   whose folded index is bound to a loop runs once a step`, its storage read
@@ -7705,3 +7703,55 @@ and an initial value is added after it (D260).
   over `assign_flipped_beside_call_1`: `x.assign(x.flip(1) + f(a))` beside
   `a * 3`, `f` a function compiled on its own; norn's `Norn.Smc › evidence ›
   a conjugate normal`.
+
+## D333. A weak range is its builder's promise, refused where a store breaks it
+
+- **tinygrad:** `uop/ops.py:17-21` (`AxisType`, whose `WEAK` states
+  nothing of its trips' independence); `codegen/opt/postrange.py:239-242`
+  (`apply_opts`, which optimises a kernel whatever its stores);
+  `:65-67` (`shift_to`, which splits a range whatever its bound reads, by
+  any amount that divides it); `:137-138` (`PADTO`, which guards a buffer's
+  access where its first index reads the padded range).
+- **tolk:** `Ops.Axis_type.Weak`, which states the promise;
+  `Postrange.apply_opts`, which refutes it before any optimisation
+  (`refute_weak`); `Postrange.Scheduler.split_size`; the pad of
+  `Postrange.Scheduler.apply_opt`.
+- **Differs:** a weak range is its builder's promise that two points of the
+  kernel whose values of it differ never meet at a cell of global or
+  workgroup memory that one of them writes, so its trips may become lanes,
+  threads or host blocks; a value carried from trip to trip needs a `Loop`.
+  Before any optimisation, a store to global or workgroup memory raises
+  where it names fewer cells than it has points along one of its weak
+  ranges, or along all of them together, its validity and gate reading none
+  of them: an offset's cells are the multiples of the greatest common
+  divisor of the constant factors of its terms that read the ranges,
+  between those terms' least and greatest sums, and a range's points are
+  counted over every value of the variables. Only a range whose bound is
+  a constant or a variable is counted, its points at the bound's greatest
+  value, which some launch reaches for every such bound at once. A range
+  whose bound reads memory or another range is not known at launch, and no
+  split makes it lanes or threads. A pad guards every access whose index
+  reads the padded range, through its storage's `After` too. tinygrad
+  optimises such kernels as any other. Silent, as broken promises whose
+  result is unspecified: a store whose validity or gate reads the ranges;
+  two stores whose cells meet across points (`A[r] = 1; A[r + 1] = 2`); a
+  read at a cell another point writes (`C[r + 1] = C[r] + 1`); cells that
+  memory names; the effects of calls and custom code; a store whose cells
+  are few only at some value of the variables (`O[r // m]`). A range whose
+  points another range's bound restricts can be refused falsely
+  (`O[max(i, 1) + 4 j]` over `j < i`).
+- **Reason:** (e): at the pinned commit, `C[r // 8] += 1` over a weak
+  `r < 16` upcast by 4 counts 2 a cell where 8 is wanted, and on a GPU its
+  threads race; `C[i] += 1` over `j < 4 (i + 1)`, `j` upcast by 4, counts
+  `[1; 2]` for `[4; 8]`; a counter ordered after a serial loop of 6 trips
+  padded to 8 counts 8, and a register maximum over it takes the padding's
+  0.
+- **Pinned by:** the Codegen suite's `weak ranges` group: the refusals of
+  `C[r // 8] += 1` over a weak `r < 16` on lanes, in host blocks and on
+  threads, and over `r < 8`, of `C[r + s] += 1`, `C[0] += 1` after `r`, `O[0] = r`,
+  `O[r // 8] = 5`, `C[16 (r // 8)] += 1`, `O[2i + 2j] = 1` and workgroup
+  memory staged under a weak range; the counts of the same stores over
+  serial ranges; the kernels it does not refuse (a packed triangle, a store
+  gated or valid at one point, loaded and variable bounds, bounds that share
+  a variable, a range of no trip, a scatter to cells memory names); the refused upcast of `j < 4 (i + 1)`; and the
+  padded counters and maximum.

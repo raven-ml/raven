@@ -43,17 +43,44 @@ type t
     The role of a loop variable ({!Op.Range}) in a kernel. *)
 module Axis_type : sig
   (** The type for axis types, in the order ranges nest: a kernel's ranges
-      sort by axis type, then identity. *)
+      sort by axis type, then identity.
+
+      A thread range a builder writes ({!Global}, {!Local}, {!Warp}) runs its
+      points at once: workgroups are independent, and the threads of one meet
+      through the barriers the builder orders them by. A store to global
+      memory whose index does not read such a range runs in the thread where
+      that range is [0]. *)
   type t =
     | Global  (** Across the workgroups of a launch. *)
     | Local  (** Across the threads of a workgroup. *)
     | Warp  (** Across the threads of a warp. *)
     | Weak
-        (** A loop not yet assigned to hardware. Its trips may run at once and
-            in any order, as threads or lanes, so no trip reads a cell of
-            global memory that another writes, and trips that write one such
-            cell write one value. A {!Loop} runs them in turn. *)
-    | Loop  (** A serial loop. *)
+        (** A loop not yet assigned to hardware, whose builder promises that
+            its trips are independent: of two points of the kernel whose
+            values of the range differ, the other ranges free, where one
+            writes a cell of global or workgroup memory, the other neither
+            reads nor writes that cell, even to write the same value. Its
+            trips may then run at once and in any order, as threads, lanes or
+            blocks of the host's threads.
+
+            Trips meet only in the {!Op.Reduce} that closes the range, as a
+            reduction's range does, or in code the builder makes atomic. A
+            trip reads a register cell only after writing it in that trip, or
+            one no trip writes: a value carried from trip to trip, as an
+            accumulator or a counter, needs a {!Loop}, as does workgroup
+            memory used again from trip to trip. A weak range whose bound
+            reads memory or another range, or that has none ({!val-loop}),
+            runs its trips in turn.
+
+            A store that names fewer cells of global or workgroup memory than
+            it has points along its weak ranges, each alone or all together,
+            where neither its validity nor its gate reads them, breaks the
+            promise visibly: its kernel is refused when it is optimised
+            ({!Postrange.apply_opts}). Any other broken promise gives
+            unspecified results. *)
+    | Loop
+        (** A serial loop: each trip runs after the one before it, and reads
+            what it wrote. *)
     | Upcast  (** Unrolled into vector lanes of a thread. *)
     | Placeholder  (** Stands for an axis while it is built. *)
 
@@ -745,7 +772,9 @@ val range : ?axis_type:Axis_type.t -> ?dtype:Dtype.t -> sint -> int list -> t
     has its bound ordered after them ({!after}). *)
 
 val loop : int -> t
-(** [loop axis] is the unbounded loop of identity [[axis]]. *)
+(** [loop axis] is the unbounded loop of identity [[axis]], which a backedge
+    ({!Op.Backedge}) repeats. It runs its trips in turn, whatever its type, and
+    is no optimisation's axis. *)
 
 val special : sint -> string -> t
 (** [special end_ name] is the hardware index [name], bounded by [end_]. *)

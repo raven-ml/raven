@@ -404,6 +404,13 @@ module Scheduler = struct
         (Format.asprintf "a %a axis comes from a %a axis, not a %a one"
            Axis_type.pp (role target) pp_types (split_targets target)
            Axis_type.pp (axis_type rng))
+    else if not (is_literal (nth rng 0) || known_at_launch rng) then
+      (* Lanes and threads share one count of trips, known when the kernel
+         launches: a bound that reads memory or another range, as
+         [j < 4 (i + 1)], is not. *)
+      Error
+        (strf "the trips of %s are not known at launch: it stays serial"
+           (Render.render rng))
     else
       match divides (nth rng 0) amount with
       | Some s -> Ok s
@@ -601,9 +608,12 @@ module Scheduler = struct
             replace rng ~src:[ const_like (nth rng 0) (`Int new_sz) ]
           in
           let valid_ = O.(replaced_rng < z sz) in
+          (* Every access along the padded range is guarded, its offsets
+             aside: a counter [C[0]] ordered after the range would count the
+             padding. *)
           let pad_buf b =
             let i = nth b 1 in
-            if mem_ranges rng i then
+            if mem_ranges rng b then
               [
                 ( b,
                   replace b
@@ -967,11 +977,125 @@ let threads_fixed ast =
       | _ -> false)
     (toposort ~calls:Enter ast)
 
+(* Weak ranges
+
+   A weak range is its builder's promise that two points of the kernel whose
+   values of it differ never meet at a cell of global or workgroup memory that
+   one of them writes ({!Ops.Axis_type.Weak}). A store breaks it where it can
+   be counted: it names fewer cells than it has points along a set of its weak
+   ranges, the other ranges fixed, and neither its validity nor its gate reads
+   the set, so two of those points write one cell. The sets are each weak
+   range alone and all of them together: [C[r + s]] names 7 cells for 16
+   points of [r] and [s], 4 for 4 of each. Only a range whose bound is a
+   constant or a variable is counted: the greatest value of another bound, as
+   [j < i + 1] or [j < n (4 - n)], need not be reached, so its size need not
+   count points. A range whose trips are not known at launch stays serial
+   ([Scheduler.split_size]). *)
+
+(* The constant factor of [t], if it is [c * x]: its values are multiples of
+   it. *)
+let factor t =
+  let literal u =
+    if is_literal u then
+      match value u with `Int c -> Some (Bigint.abs c) | _ -> None
+    else None
+  in
+  match (op t, src t) with
+  | Op.Mul, [ a; b ] -> (
+      match literal b with
+      | Some c -> c
+      | None -> Option.value (literal a) ~default:Bigint.one)
+  | _ -> Bigint.one
+
+(* The cells the offset [o] names along the ranges [set], the others fixed: at
+   most the multiples of [g] between the least and the greatest sum of its
+   terms that read [set], [g] the greatest common divisor of their constant
+   factors. [C[16 (r // 8)]] names 2 cells, not 17. *)
+let cells set o =
+  let reads u = List.exists (fun r -> mem_ranges r u) set in
+  let rec sum ((lo, hi, g) as acc) t =
+    if op t = Op.Add then sum (sum acc (nth t 0)) (nth t 1)
+    else if not (reads t) then acc
+    else
+      ( Bigint.add lo (V.to_z (vmin t)),
+        Bigint.add hi (V.to_z (vmax t)),
+        Bigint.gcd g (factor t) )
+  in
+  let lo, hi, g = sum (Bigint.zero, Bigint.zero, Bigint.zero) o in
+  if Bigint.equal g Bigint.zero then Bigint.one
+  else Bigint.(succ (div (sub hi lo) g))
+
+let weak_store st =
+  let idx = nth st 0 in
+  let space = addrspace (buf_uop (nth idx 0)) in
+  (* A bound that is a constant or a variable reaches its greatest value at
+     some launch, every such bound at one launch: then the product of the
+     ranges' sizes counts points that one launch runs. *)
+  let exact r =
+    let b = without_after (nth r 0) in
+    is_literal b
+    ||
+    match (op b, arg b) with
+    | Op.Param, Param p -> p.addrspace = Dtype.Alu
+    | _ -> false
+  in
+  let weak r =
+    axis_type r = Axis_type.Weak
+    && (not (Dtype.equal (dtype r) Dtype.Void))
+    && exact r
+    && Bigint.gt (size r) Bigint.one
+  in
+  (* A store inside a range of no trip never runs. *)
+  let runs = Nodes.fold (fun r ok -> ok && Bigint.gt (size r) Bigint.zero) in
+  let weak =
+    if
+      (space = Some Dtype.Global || space = Some Dtype.Local)
+      && runs (ranges st) true
+    then
+      Nodes.fold (fun r acc -> if weak r then r :: acc else acc) (ranges st) []
+    else []
+  in
+  let offsets = List.tl (src idx) in
+  let gate = match src st with [ _; _; g ] -> Some g | _ -> None in
+  let refute set =
+    let reads u = List.exists (fun r -> mem_ranges r u) set in
+    let points =
+      List.fold_left (fun p r -> Bigint.mul p (size r)) Bigint.one set
+    in
+    let named =
+      List.fold_left
+        (fun p o -> Bigint.mul p (cells set (get_idx o)))
+        Bigint.one offsets
+    in
+    if
+      (not (List.exists (fun o -> reads (get_valid o)) offsets))
+      && (not (Option.fold ~none:false ~some:reads gate))
+      && Bigint.lt named points
+    then
+      invalid_arg
+        (strf
+           "the store to %s names %s cells for %s points of %s: a range whose \
+            points meet at a cell must not be Weak"
+           (Render.render idx) (Bigint.to_string named)
+           (Bigint.to_string points)
+           (String.concat " and " (List.map Render.render set)))
+  in
+  List.iter (fun r -> refute [ r ]) weak;
+  match weak with _ :: _ :: _ -> refute weak | _ -> ()
+
+(* Raises if a store of [k] breaks a weak range's promise where it can be
+   counted. *)
+let refute_weak k =
+  List.iter
+    (fun u -> if op u = Op.Store && op (nth u 0) = Op.Index then weak_store u)
+    (Scheduler.slice k)
+
 let apply_opts ?beam ~hand_coded ast ren =
   let info = match arg ast with Kernel i -> Some i | _ -> None in
   if Option.exists (fun (i : kernel_info) -> i.optimized) info then ast
   else
     let k = Scheduler.v ast ren in
+    refute_weak k;
     Scheduler.convert_loop_to_global k;
     let fixed = lazy (threads_fixed ast) in
     let k =

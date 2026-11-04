@@ -3261,22 +3261,23 @@ let loaded_bounds ?(devices = devices) ?(d = "CPU") () =
         test name (fun () ->
             equal values (counted_floats l) (counted ~opts:upcast_rows ()))
   in
+  (* A loop whose trips store at one row in turn is serial; the trips of a
+     sum meet only in it, so its loop may be weak. *)
   let loops =
     List.concat_map
-      (fun axis_type ->
-        List.map
-          (fun (count, own, sum) -> { count; own; sum; axis_type })
-          [
-            (Clamped, true, false);
-            (Clamped, false, false);
-            (Bare, true, false);
-            (Bare, false, false);
-            (Clamped, true, true);
-            (Bare, false, true);
-            (Rows, true, false);
-            (Rows, true, true);
-          ])
-      [ Ops.Axis_type.Loop; Weak ]
+      (fun (count, own, sum) ->
+        let l = { count; own; sum; axis_type = Ops.Axis_type.Loop } in
+        if sum then [ l; { l with axis_type = Weak } ] else [ l ])
+      [
+        (Clamped, true, false);
+        (Clamped, false, false);
+        (Bare, true, false);
+        (Bare, false, false);
+        (Clamped, true, true);
+        (Bare, false, true);
+        (Rows, true, false);
+        (Rows, true, true);
+      ]
   in
   List.concat_map
     (fun l -> List.map (one l) [ "unoptimized"; "optimized"; "upcast" ])

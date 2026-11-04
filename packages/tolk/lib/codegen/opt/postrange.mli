@@ -16,7 +16,8 @@
     kernel: a split replaces an axis [r] of size [n] by [r'] of size [n / a] and
     a new axis [s] of size [a], and every use of [r] by [r' * a + s], or
     [s * (n / a) + r'] from the top; a pad grows an axis to a multiple and
-    guards its accesses, and an integer division whose divisor reads the axis
+    guards every access along it, an access through storage ordered after the
+    axis included, and an integer division whose divisor reads the axis
     divides by [1] on the padding, whose loads read zeros; a swap exchanges two
     global axes' identities; a tensor core replaces a reduction of products by
     a matrix multiply-accumulate ({!Op.Wmma}). *)
@@ -150,8 +151,9 @@ module Scheduler : sig
       the ranges reductions and ends close stay flat.
 
       Raises [Invalid_argument] if [amount] is not greater than [1], if [r]'s
-      role is not among [split_targets target], or if [amount] does not divide
-      [r]'s size. *)
+      role is not among [split_targets target], if [r]'s trips are not known at
+      launch ({!Ops.known_at_launch}), or if [amount] does not divide [r]'s
+      size. *)
 
   val apply_opt : ?append_opt:bool -> t -> Opt.t -> (Ops.t list, string) result
   (** [apply_opt k opt] applies [opt] to [k], records it among [k]'s applied
@@ -162,14 +164,15 @@ module Scheduler : sig
       It is [Error] with the reason if [opt] does not apply, leaving [k] as it
       was unless a tensor core's reduction is found ambiguous after its axes are
       split. It does not apply when its axis is out of range, a split's target
-      cannot come from its axis's role, or exceeds what the renderer allows (32
-      lanes of a reduce axis or 16 of another, locals only with local indices,
-      the workgroup's shared memory), an upcast of an axis a range's bound
-      reads ({!read_by_bounds}) or an opaque operation reads ({!read_by_opaque}),
-      a local split of an axis an opaque operation does not read
-      ({!unread_by_opaque}), a local split of a reduce axis where a range's
-      bound reads an axis or
-      whose reduction runs inside an unrolled reduce axis, a pad's axis is not
+      cannot come from its axis's role or its axis's trips are not known at
+      launch ({!Ops.known_at_launch}), as [j < 4 (i + 1)]'s, or a split
+      exceeds what the renderer allows (32 lanes of a reduce axis or 16 of
+      another, locals only with local indices, the workgroup's shared memory),
+      an upcast of an axis a range's bound reads ({!read_by_bounds}) or an
+      opaque operation reads ({!read_by_opaque}), a local split of an axis an
+      opaque operation does not read ({!unread_by_opaque}), a local split of a
+      reduce axis where a range's bound reads an axis or whose reduction runs
+      inside an unrolled reduce axis, a pad's axis is not
       of a constant size, would more than quadruple, or is read by an opaque
       operation, or no tensor core fits, as none does a kernel where a range's
       bound reads an axis, one with an opaque operation, or one where an
@@ -217,5 +220,19 @@ val apply_opts :
     optimisations it asks for still apply. A kernel [ast] already optimised
     ([optimized]) is returned as it is.
 
-    Raises [Invalid_argument] if an optimisation asked for does not apply, with
-    the reason {!Scheduler.apply_opt} gives. *)
+    Before any optimisation, it refuses a kernel whose store breaks a weak
+    range's promise visibly ({!Ops.Axis_type.Weak}): a store to global or
+    workgroup memory that names fewer cells than it has points along one of
+    its weak ranges, or along all of them together, where neither its validity
+    nor its gate reads them, as [C[r // 8] += 1] over a weak [r < 16] or
+    [C[r + s] += 1] over weak [r] and [s]. An offset's cells are counted as the
+    multiples of the greatest common divisor of the constant factors of its
+    terms that read the ranges, between those terms' least and greatest sums,
+    over every value of the kernel's variables. Only a range whose bound is a
+    constant or a variable is counted, its points at the bound's greatest
+    value; a store inside a range of no trip is not counted, and a kernel
+    already optimised is not checked.
+
+    Raises [Invalid_argument] if a store breaks a weak range's promise
+    visibly, naming the store and the ranges, or if an optimisation asked for
+    does not apply, with the reason {!Scheduler.apply_opt} gives. *)

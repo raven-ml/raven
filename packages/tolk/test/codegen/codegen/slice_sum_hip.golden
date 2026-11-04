@@ -17,7 +17,7 @@
 15 Ops.INDEX dtypes.f32 [14, 9]
 16 Ops.CONST dtypes.weakint [] 16
 17 Ops.CAST dtypes.i32 [16] dtypes.i32
-18 Ops.RANGE dtypes.i32 [17] (AxisType.WEAK, 1)
+18 Ops.RANGE dtypes.i32 [17] (AxisType.LOOP, 1)
 19 Ops.AFTER dtypes.f32 [14, 18]
 20 Ops.INDEX dtypes.f32 [19, 9]
 21 Ops.LOAD dtypes.f32 [20]

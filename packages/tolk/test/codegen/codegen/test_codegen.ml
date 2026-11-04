@@ -6614,6 +6614,273 @@ let counted_once =
           | _ -> assert false);
     ]
 
+(* Weak ranges
+
+   A weak range is its builder's promise that two points of the kernel whose
+   values of it differ never meet at a cell of global or workgroup memory that
+   one of them writes. A store that names fewer cells than it has points along
+   its weak ranges, its validity and gate free of them, breaks it where tolk
+   sees: the kernel is refused before any optimisation, on every target. The
+   same store along a serial loop counts each step, whatever the optimisations
+   make of the kernel's other ranges. *)
+
+let upcast axis amount =
+  Opt.Split { axis; amount; target = Upcast; top = false }
+
+let weak_kernel ?opts l =
+  Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply:opts ()) l
+
+let not_weak f = raises_match (Exn.invalid_arg ~sub:"must not be Weak") f
+
+(* Whether lowering [k ()] for the host raises that a range must not be
+   weak. *)
+let refused k () = not_weak (fun () -> ignore (effects_of k [] [ 0 ]))
+
+(* [C[r // 8] += 1] over [r < 16] of [axis_type]: each cell counts 8 steps. *)
+let quotient_counter ?opts axis_type () =
+  let r = Ops.range ~axis_type (Int 16) [ 0 ] in
+  let cell = at (int_param ~name:"C" 0 2) Ops.O.(r // int 8) in
+  weak_kernel ?opts [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
+
+(* [C[r + s] += 1] over [r, s < 4] of [axis_type]. *)
+let sum_counter ?opts axis_type () =
+  let r = Ops.range ~axis_type (Int 4) [ 0 ]
+  and s = Ops.range ~axis_type (Int 4) [ 1 ] in
+  let cell = at (int_param ~name:"C" 0 7) Ops.O.(r + s) in
+  weak_kernel ?opts
+    [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r; s ] ]
+
+(* [C[r // 8] += 1] over a weak [r < 8]: the index is [C[0]] before any
+   optimisation, the store bound to [r] through its storage. *)
+let folded_counter () =
+  let r = Ops.range (Int 8) [ 0 ] in
+  let cell = at (int_param ~name:"C" 0 1) Ops.O.(r // int 8) in
+  weak_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
+
+(* [O[r + 2s] = 1] over a weak [r < n] and a weak [s < 4 - n], [n] from 1 to
+   3: at each [n], distinct cells. *)
+let shared_variable () =
+  let n = bounded_var "n" 3 in
+  let r = Ops.range (Sym n) [ 0 ]
+  and s = Ops.range (Sym Ops.O.(int 4 - n)) [ 1 ] in
+  let o = int_param ~name:"O" 0 5 in
+  weak_kernel
+    [ Ops.end_ (Ops.store (at o Ops.O.(r + (s * int 2))) (i32 1)) [ r; s ] ]
+
+(* [O[j] = r] over a weak [r < 2] and a weak [j] of no trip: nothing runs. *)
+let no_trip () =
+  let r = Ops.range (Int 2) [ 0 ] and j = Ops.range (Int 0) [ 1 ] in
+  let o = int_param ~name:"O" 0 1 in
+  weak_kernel [ Ops.end_ (Ops.store (at o j) (Ops.cast r Int32)) [ r; j ] ]
+
+(* [C[0] += 1] ordered after a weak [r < 8]. *)
+let counter_after () =
+  let r = Ops.range (Int 8) [ 0 ] in
+  let cell = first (Ops.after (int_param ~name:"C" 0 1) [ r ]) in
+  weak_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
+
+(* [O[cell r] = value r] over a weak [r < 16], [O] of [n] cells. *)
+let weak_store n cell value () =
+  let r = Ops.range (Int 16) [ 0 ] in
+  let o = int_param ~name:"O" 0 n in
+  weak_kernel [ Ops.end_ (Ops.store (at o (cell r)) (value r)) [ r ] ]
+
+(* [C[16 (r // 8)] += 1] over a weak [r < 16]: two cells, 16 apart. *)
+let strided_counter () =
+  let r = Ops.range (Int 16) [ 0 ] in
+  let cell = at (int_param ~name:"C" 0 17) Ops.O.(int 16 * (r // int 8)) in
+  weak_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
+
+(* [O[2i + 2j] = 1] over weak [i, j < 4]: each range alone names 4 cells, both
+   together 7 for 16 points. *)
+let even_sum () =
+  let i = Ops.range (Int 4) [ 0 ] and j = Ops.range (Int 4) [ 1 ] in
+  let o = int_param ~name:"O" 0 16 in
+  let cell = Ops.O.((i * int 2) + (j * int 2)) in
+  weak_kernel [ Ops.end_ (Ops.store (at o cell) (i32 1)) [ i; j ] ]
+
+(* [L[t] = A[8g + t]; O[8g + t] = L[7 - t]] over a weak [g < 4] and a local
+   [t < 8], [L] workgroup memory: every point of [g] writes [L]. *)
+let staged_under_weak () =
+  let a = int_param ~name:"A" 1 32 and o = int_param ~name:"O" 0 32 in
+  let l = Shape.placeholder ~slot:2 ~addrspace:Local [ 8 ] Int32 in
+  let g = Ops.range (Int 4) [ 0 ]
+  and t = Ops.range ~axis_type:Local (Int 8) [ 1 ] in
+  let row x = Ops.O.((g * int 8) + x) in
+  let w = Ops.store (at l t) (Ops.load (at a (row t)) []) in
+  let back = Ops.load (at (Ops.after l [ w ]) Ops.O.(int 7 - t)) [] in
+  weak_kernel [ Ops.end_ (Ops.store (at o (row t)) back) [ g; t ] ]
+
+(* [O[i(i + 1) / 2 + j] = 1] over weak [i < 4] and [j < i + 1]: ten points,
+   ten cells. *)
+let packed_triangle () =
+  let i = Ops.range (Int 4) [ 0 ] in
+  let j = Ops.range (Sym Ops.O.(i + int 1)) [ 1 ] in
+  let o = int_param ~name:"O" 0 10 in
+  let cell = Ops.O.(((i * (i + int 1)) // int 2) + j) in
+  weak_kernel [ Ops.end_ (Ops.store (at o cell) (i32 1)) [ i; j ] ]
+
+(* [O[0] = r] at the one point [r = 2] of a weak [r < 4], by the store's gate
+   or by its index's validity. *)
+let stored_at_two ?opts ~gate () =
+  let r = Ops.range (Int 4) [ 0 ] in
+  let o = int_param ~name:"O" 0 1 in
+  let two = Ops.eq r (Ops.int 2) in
+  let store =
+    if gate then Ops.store ~gate:two (first o) (Ops.cast r Int32)
+    else Ops.store (at o (Shape.valid (Ops.int 0) two)) (Ops.cast r Int32)
+  in
+  weak_kernel ?opts [ Ops.end_ store [ r ] ]
+
+(* [O[j % 4] = j] over a weak [j < X[0]]. *)
+let loaded_bound () =
+  let x = int_param ~name:"X" 1 1 and o = int_param ~name:"O" 0 4 in
+  let j = Ops.range ~dtype:Int32 (Sym (Ops.load (first x) [])) [ 0 ] in
+  weak_kernel
+    [ Ops.end_ (Ops.store (at o Ops.O.(j % int 4)) (Ops.cast j Int32)) [ j ] ]
+
+(* [O[r] = r] over a weak [r < n], [n <= 8]. *)
+let variable_bound () =
+  let r = Ops.range (Sym (bounded_var "n" 8)) [ 0 ] in
+  let o = int_param ~name:"O" 0 8 in
+  weak_kernel [ Ops.end_ (Ops.store (at o r) (Ops.cast r Int32)) [ r ] ]
+
+(* [O[I[r]] = V[r]] over a weak [r < 8]: cells that memory names, distinct
+   when [I] is a permutation, as rune's scatter writes them. *)
+let scattered () =
+  let o = int_param ~name:"O" 0 8
+  and idx = int_param ~name:"I" 1 8
+  and v = int_param ~name:"V" 2 8 in
+  let r = Ops.range (Int 8) [ 0 ] in
+  let cell = Ops.cast (Ops.load (at idx r) []) Weak_int in
+  weak_kernel
+    [ Ops.end_ (Ops.store (at o cell) (Ops.load (at v r) [])) [ r ] ]
+
+(* [C[i] += 1] over a weak [i < 2] and a weak [j < 4(i + 1)], [j] upcast by
+   4. *)
+let row_counted_trips () =
+  let i = Ops.range (Int 2) [ 0 ] in
+  let j = Ops.range (Sym Ops.O.(int 4 * (i + int 1))) [ 1 ] in
+  let cell = at (int_param ~name:"C" 0 2) i in
+  weak_kernel ~opts:[ upcast 1 4 ]
+    [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ i; j ] ]
+
+(* [C[0] += 1] over a serial [r < 6], valid where [r <> 3] if [gated], padded
+   to [8]. *)
+let padded_counter ~gated () =
+  let r = effect_loop 6 0 in
+  let c = Ops.after (int_param ~name:"C" 0 1) [ r ] in
+  let cell =
+    if gated then at c (Shape.valid (Ops.int 0) Ops.O.(r <> int 3))
+    else first c
+  in
+  weak_kernel ~opts:[ Opt.Padto { axis = 0; amount = 8 } ]
+    [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
+
+(* [O[0] = max over j < 6 of A[j]], a register accumulating it along a serial
+   [j] padded to 8. *)
+let padded_maximum () =
+  let a = int_param ~name:"A" 1 6 and o = int_param ~name:"O" 0 1 in
+  let acc = Shape.placeholder ~slot:2 ~addrspace:Reg [ 1 ] Int32 in
+  let j = effect_loop 6 0 in
+  let init = Ops.store (first acc) (i32 (-1000)) in
+  let acc_j = Ops.after acc [ init; j ] in
+  let step =
+    Ops.store (first acc_j)
+      (Ops.maximum (Ops.load (first acc_j) []) (Ops.load (at a j) []))
+  in
+  let total = Ops.load (first (Ops.after acc [ Ops.end_ step [ j ] ])) [] in
+  weak_kernel ~opts:[ Opt.Padto { axis = 0; amount = 8 } ]
+    [ Ops.store (first o) total ]
+
+(* The contents of slot 0 after one run of [k ()] on CUDA. *)
+let on_cuda_slot0 k =
+  let d, r = on_cuda () in
+  List.assoc 0 (Run.on d (compiled_for r (k ())) [])
+
+let weak_ranges =
+  group "weak ranges"
+    [
+      cases "C[r // 8] += 1 over a weak r < 16 is refused" ~id:fst
+        [
+          ("on lanes", refused (quotient_counter ~opts:[ upcast 0 4 ] Weak));
+          ("in host blocks", refused (quotient_counter ~opts:[] Weak));
+          ( "on threads",
+            fun () ->
+              let r = renderer_for (target "CUDA" "CUDA" "sm_89") in
+              not_weak (fun () ->
+                  Codegen.to_program (quotient_counter Weak ()) r) );
+        ]
+        (fun (_, run) -> run ());
+      test "C[r // 8] += 1 over a serial r < 16 counts 8 a cell"
+        (writes (quotient_counter Loop) [] [ [ 8; 8 ] ]);
+      test "C[r // 8] += 1 over a serial r < 16 counts 8 a cell on CUDA"
+        (fun () ->
+          equal (array Dtypes.value) (int_values [ 8; 8 ])
+            (on_cuda_slot0 (quotient_counter Loop)));
+      test "C[r + s] += 1 over weak r and s is refused, unoptimised"
+        (refused (sum_counter ~opts:[] Weak));
+      test "C[r + s] += 1 over weak r and s is refused"
+        (refused (sum_counter Weak));
+      test "C[r + s] += 1 over serial r and s counts each sum"
+        (writes (sum_counter Loop) [] [ [ 1; 2; 3; 4; 3; 2; 1 ] ]);
+      test "C[0] += 1 after a weak r is refused" (refused counter_after);
+      test "C[r // 8] += 1 over a weak r < 8, an index that folds, is refused"
+        (refused folded_counter);
+      test "O[0] = r over a weak r is refused"
+        (refused
+           (weak_store 1 (fun _ -> Ops.int 0) (fun r -> Ops.cast r Int32)));
+      test "O[r // 8] = 5 over a weak r < 16, one value a cell, is refused"
+        (refused (weak_store 2 (fun r -> Ops.O.(r // int 8)) (fun _ -> i32 5)));
+      test "C[16 (r // 8)] += 1 over a weak r < 16 is refused"
+        (refused strided_counter);
+      test "O[2i + 2j] = 1 over weak i and j is refused" (refused even_sum);
+      test "workgroup memory staged under a weak range is refused" (fun () ->
+          not_weak (fun () ->
+              Postrange.apply_opts ~hand_coded:Fun.id (staged_under_weak ())
+                (Lazy.force host)));
+      test "a packed triangle of weak ranges writes each cell once"
+        (writes packed_triangle [] [ List.init 10 (fun _ -> 1) ]);
+      test "a store gated to one point of a weak range is not refused"
+        (fun () ->
+          ignore
+            (Postrange.apply_opts ~hand_coded:Fun.id
+               (stored_at_two ~opts:[] ~gate:true ())
+               (Lazy.force host)));
+      test "a store valid at one point of a weak range runs there"
+        (writes (stored_at_two ~gate:false) [] [ [ 2 ] ]);
+      test "a store valid at one point of a weak range upcast by 4 runs there"
+        (writes (stored_at_two ~opts:[ upcast 0 4 ] ~gate:false) [] [ [ 2 ] ]);
+      test "a weak range of a loaded bound is not refused"
+        (writes loaded_bound [ (1, int_values [ 3 ]) ] [ [ 0; 1; 2; 0 ] ]);
+      test "a weak range of a variable bound is not refused"
+        (writes ~vars:[ ("n", 5) ] variable_bound []
+           [ [ 0; 1; 2; 3; 4; 0; 0; 0 ] ]);
+      test "weak ranges whose bounds share a variable are not refused"
+        (writes ~vars:[ ("n", 2) ] shared_variable [] [ [ 1; 1; 1; 1; 0 ] ]);
+      test "a store in a range of no trip is not refused"
+        (writes no_trip [] [ [ 0 ] ]);
+      test "a scatter to distinct cells that memory names is not refused"
+        (writes scattered
+           [
+             (1, int_values [ 3; 0; 7; 1; 6; 2; 5; 4 ]);
+             (2, int_values [ 10; 11; 12; 13; 14; 15; 16; 17 ]);
+           ]
+           [ [ 11; 13; 15; 10; 17; 16; 14; 12 ] ]);
+      test "a range whose trips another range bounds takes no lanes"
+        (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"known at launch") (fun () ->
+              ignore (effects_of row_counted_trips [] [ 0 ])));
+      test "a serial counter padded from 6 steps to 8 counts 6"
+        (writes (padded_counter ~gated:false) [] [ [ 6 ] ]);
+      test "a serial counter valid where r <> 3, padded from 6 to 8, counts 5"
+        (writes (padded_counter ~gated:true) [] [ [ 5 ] ]);
+      test "a register maximum padded from 6 steps to 8 ignores the padding"
+        (writes padded_maximum
+           [ (1, int_values [ -5; -3; -7; -2; -9; -4 ]) ]
+           [ [ -2 ] ]);
+    ]
+
 let () =
   Disk_cache.play (("breaking graph", lowers_a_breaking_graph) :: parts);
   exit
@@ -6630,6 +6897,7 @@ let () =
          fixed_threads;
          bfloat16_vectors_on_cuda;
          counted_once;
+         weak_ranges;
          variable_sizes;
          multiply_adds;
          shared_ranges;

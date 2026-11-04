@@ -1028,6 +1028,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A weak range promises its trips never meet in memory: `Postrange.apply_opts`
+  refuses a store that visibly breaks it (`C[r // 8] += 1` counted 2 for 8 on
+  lanes). Carried values need a `Loop`; pads guard every access along them.
 - A kernel indexed in a typed integer, such as `Int32`, shrinks a range to
   its guard and merges loads and stores at constant offsets into vectors, as
   one indexed in the weak integer does.

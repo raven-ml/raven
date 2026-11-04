@@ -588,7 +588,7 @@ def slice_sum(dest, src):
     G = UOp.range(src.shape[0], 0, dtype=dtypes.int)
     reg = UOp.placeholder((1,), dest.dtype, 0, addrspace=AddrSpace.REG)
     reg = reg.after(G)[0].set(0)
-    R = UOp.range(src.shape[1], 1, AxisType.WEAK)
+    R = UOp.range(src.shape[1], 1, AxisType.LOOP)
     reg = reg[0].set(reg.after(R)[0] + src[G, :][R], end=R)
     return dest[G].set(reg[0], end=G).sink(arg=KernelInfo(name=f"slice_sum_{src.shape[0]}_{src.shape[1]}", opts_to_apply=()))
 
@@ -596,7 +596,7 @@ def slice_sum(dest, src):
 def simple_qkv(O, Q, K, V):
     N, d = Q.shape[0], Q.shape[1]
     i, d_out = UOp.range(N, 0), UOp.range(d, 1)
-    j, k_inner = UOp.range(N, 2, axis_type=AxisType.WEAK), UOp.range(d, 3, axis_type=AxisType.WEAK)
+    j, k_inner = UOp.range(N, 2, axis_type=AxisType.LOOP), UOp.range(d, 3, axis_type=AxisType.LOOP)
     qk_acc = UOp.placeholder((1,), Q.dtype, 0, addrspace=AddrSpace.REG)
     qk_acc = qk_acc.after(i, j)[0].set(0.0)
     qk_acc = qk_acc[0].set(qk_acc.after(k_inner)[0] + Q[i, k_inner] * K[j, k_inner], end=k_inner)
