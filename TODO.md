@@ -137,6 +137,13 @@ and rune), raven / llama.cpp b12048 Vulkan:
   `Op.Const` where a typed constant (`Ops.is_literal`) also holds (speed)
 - HIP's unstaged tensor-core operands load 8 bytes again since D261's copy
   rule: unmeasured on nonnormal
+- `wmma_accumulate`'s branch for a nonzero accumulator (D24's `(c + acc)
+  + P`) has no test and no library caller since D260: pin it with a reduce
+  over a hand-built core or delete it
+- lowering tests and goldens on `Cstyle.metal` or HIP renderers need the
+  vendor compiler, so they run only where it exists (macOS, ROCm hosts):
+  build those renderers without their compilers, as `Renderer.v` does for
+  the tensor-core tables, so Linux CI runs them
 
 ## rune, kaun, vega
 
