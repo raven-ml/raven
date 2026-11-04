@@ -3674,7 +3674,7 @@ let applies_operations_to_vectors_of_lanes row =
    test skips. *)
 let computes_on_vectors row =
   match make (target (row "device") (row "renderer") (row "arch")) with
-  | r -> r.vector_alu
+  | r -> r.vector_lanes > 1
   | exception Failure _ -> false
 
 let lanes_of u =
@@ -3711,16 +3711,43 @@ let vector_types src =
   in
   go [] 0
 
-(* [prg] computes each of its elementwise operations on vectors once, as one
-   vector of [n] lanes, and its source declares that vector. *)
-let one_vector n prg =
+(* The host computes an operation of [n] lanes in vectors of at most 64: those
+   of 64 lanes, then one of the rest, the last 65 as 33 and 32 where one lane
+   would be left, as (lanes, count) pairs in the order [vector_operations]
+   gives. *)
+let host_lanes = 64
+
+let host_vectors n =
+  let k = n / host_lanes and r = n mod host_lanes in
+  let whole k = List.init k (fun _ -> host_lanes) in
+  let widths =
+    if n <= host_lanes then [ n ]
+    else if r = 1 then whole (k - 1) @ [ 33; 32 ]
+    else whole k @ if r = 0 then [] else [ r ]
+  in
+  List.map
+    (fun w -> (w, List.length (List.filter (( = ) w) widths)))
+    (List.sort_uniq compare widths)
+
+(* [prg] computes each of its elementwise operations on vectors once, as the
+   vectors of at most 64 lanes of [n] ([host_vectors]), and its source declares
+   no vector wider. *)
+let in_vectors n prg =
   let ops = vector_operations (Ops.src (Ops.nth prg 1)) in
   greater ~msg:"operations on vectors" int ~than:0 (List.length ops);
   equal
     (list (triple op_w int int))
-    (List.map (fun (o, _, _) -> (o, n, 1)) ops)
+    (List.concat_map
+       (fun o -> List.map (fun (l, c) -> (o, l, c)) (host_vectors n))
+       (List.sort_uniq compare (List.map (fun (o, _, _) -> o) ops)))
     ops;
-  equal (list int) [ n ] (List.filter (( = ) n) (vector_types (source prg)))
+  equal (list int)
+    (List.map fst (host_vectors n))
+    (List.filter
+       (fun l -> List.mem_assoc l (host_vectors n))
+       (vector_types (source prg)));
+  equal (list int) []
+    (List.filter (fun l -> l > host_lanes) (vector_types (source prg)))
 
 (* A sum of the two high nibbles of each pair of bytes, its output axis of 3
    upcast whole and its reduce unrolled: a body of 6 lanes. *)
@@ -3768,7 +3795,7 @@ let rows_kernel rows cols =
 
 let selects_rows rows cols () =
   let prg = Codegen.to_program (rows_kernel rows cols) (Lazy.force host) in
-  one_vector (rows * cols) prg;
+  in_vectors (rows * cols) prg;
   let x = Array.init (rows * cols) (fun k -> Float.of_int ((k * 7 mod 11) - 5))
   and y = Array.init cols (fun k -> Float.of_int ((k * 5 mod 9) - 4)) in
   let floats = Array.map (fun f -> `Float f) in
@@ -3797,16 +3824,15 @@ let lanes_kernel n =
         [ i ];
     ]
 
-(* Each operation of the selection computes one vector of [n] lanes, and no
-   lane of the selection apart. *)
+(* Each operation of the selection computes the vectors of at most 64 lanes of
+   [n] ([host_vectors]), and no lane of the selection apart. *)
 let selects_lanes n () =
   let prg = Codegen.to_program (lanes_kernel n) (Lazy.force host) in
   let uops = Ops.src (Ops.nth prg 1) in
-  equal
-    (list (triple op_w int int))
-    (List.sort compare (List.map (fun o -> (o, n, 1)) Op.[ Cmplt; Sub; Where ]))
-    (vector_operations uops);
-  equal (list int) [ n ] (List.filter (( = ) n) (vector_types (source prg)));
+  in_vectors n prg;
+  equal (list op_w) Op.[ Cmplt; Sub; Where ]
+    (List.sort_uniq compare
+       (List.map (fun (o, _, _) -> o) (vector_operations uops)));
   let apart u =
     Op.Set.mem (Ops.op u) Op.Set.elementwise
     && Shape.shape_opt u = Some []
@@ -3846,9 +3872,10 @@ let held_kernel rows cols =
     ~kernel:(Ops.kernel_info ~opts_to_apply:[ whole 1; whole 0 ] ())
     [ Ops.end_ (Ops.store (Ops.index out [ at ]) twice) [ i; j ] ]
 
-(* Each operation of the steps computes one vector of all lanes, the flag's on
-   one vector of the columns' lanes, and no lane apart: a selection by a flag
-   broadcast across lanes keeps the operations after it on vectors. *)
+(* Each operation of the steps computes the vectors of at most 64 lanes of all
+   lanes ([host_vectors]), the flag's one vector of the columns' lanes, and no
+   lane apart: a selection by a flag broadcast across lanes keeps the
+   operations after it on vectors. *)
 let holds_lanes rows cols () =
   let n = rows * cols in
   let prg = Codegen.to_program (held_kernel rows cols) (Lazy.force host) in
@@ -3860,17 +3887,21 @@ let holds_lanes rows cols () =
     && not (Ops.op u = Op.Cast && Ops.op (Ops.nth u 0) = Op.Const)
   in
   equal (list Uops.uop) [] (List.filter apart uops);
+  let vectors (o, n, count) =
+    List.map (fun (l, c) -> (o, l, c * count)) (host_vectors n)
+  in
   equal
     (list (triple op_w int int))
     (List.sort compare
-       Op.
-         [
-           (Mul, cols, 1);
-           (Cmplt, cols, 1);
-           (Mul, n, 2);
-           (Add, n, 2);
-           (Where, n, 2);
-         ])
+       (List.concat_map vectors
+          Op.
+            [
+              (Mul, cols, 1);
+              (Cmplt, cols, 1);
+              (Mul, n, 2);
+              (Add, n, 2);
+              (Where, n, 2);
+            ]))
     (vector_operations uops);
   let x = Array.init n (fun k -> Float.of_int ((k * 7 mod 11) - 5) /. 2.)
   and y = Array.init cols (fun k -> Float.of_int ((k * 5 mod 9) - 4) /. 2.) in
@@ -4043,6 +4074,107 @@ let half_zeros_kernel () =
     ~kernel:(Ops.kernel_info ~opts_to_apply:[ whole ] ())
     [ Ops.end_ store [ r0; r1 ] ]
 
+(* A selection of [b - a] where [a] is below [b] and of [a * c] elsewhere,
+   over [rows * cols] elements of [dt], [c] a factor of each column, which
+   keeps the axes apart, both upcast whole (an upcast takes at most 16):
+   operations of [rows * cols] lanes. *)
+let wide_kernel dt (rows, cols) =
+  let n = rows * cols in
+  let open Ops.O in
+  let param slot = Shape.param ~shape:[ Int n ] slot dt in
+  let out = param 0 and a = param 1 and b = param 2 in
+  let c = Shape.param ~shape:[ Int cols ] 3 dt in
+  let i = Ops.range (Int rows) [ 0 ] and j = Ops.range (Int cols) [ 1 ] in
+  let at p =
+    if p == c then Ops.index c [ j ] else Ops.index p [ (i * int cols) + j ]
+  in
+  let whole axis =
+    Opt.Split { axis; amount = 0; target = Upcast; top = false }
+  in
+  let opts = if rows = 1 then [ whole 0 ] else [ whole 1; whole 0 ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
+    [
+      Ops.end_
+        (Ops.store (at out)
+           (Ops.where (at a < at b) (at b - at a) (at a * at c)))
+        [ i; j ];
+    ]
+
+let wide_gen =
+  let open Gen in
+  (* 65 lanes, the only count up to 256 of a rest of one, is drawn three times
+     so that every run reaches it. *)
+  let shape =
+    of_list
+      ~pp:(fun ppf (r, c) -> Format.fprintf ppf "%d by %d" r c)
+      [
+        (1, 2); (1, 16); (3, 11); (3, 16); (4, 16); (8, 16); (12, 16);
+        (16, 16); (5, 13); (13, 5); (5, 13); (5, 16); (9, 9); (7, 14);
+        (13, 10); (11, 12);
+      ]
+  in
+  let dtype =
+    of_list ~pp:Dtype.pp
+      Dtype.
+        [
+          Float32; Float64; Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32;
+          Uint64;
+        ]
+  in
+  pair dtype shape
+
+(* The elements [seed] draws for slot [slot] of [n] of [dt]: small values, not
+   negative where [dt] is unsigned, whose products fit it. *)
+let wide_values dt n seed =
+  let st = Random.State.make [| seed |] in
+  Array.init n (fun _ ->
+      let v = Random.State.int st 7 - (if Dtype.is_unsigned dt then 0 else 3) in
+      if Dtype.is_float dt then `Float (Float.of_int v)
+      else `Int (Bigint.of_int v))
+
+(* On the host, an operation of any lanes computes vectors of at most 64 of
+   them ([host_vectors]), none apart, and the program writes what its kernel
+   writes, node by node. *)
+let computes_wide (dt, (rows, cols)) =
+  let n = rows * cols in
+  cover "an operation of at most 64 lanes" (n <= host_lanes);
+  cover "vectors of 64 lanes alone" (n > host_lanes && n mod host_lanes = 0);
+  cover "vectors of 64 lanes and a rest of one lane"
+    (n > host_lanes && n mod host_lanes = 1);
+  cover "vectors of 64 lanes and a vector of the rest"
+    (n > host_lanes && n mod host_lanes > 1);
+  let k = wide_kernel dt (rows, cols) in
+  let prg = Codegen.to_program k (Lazy.force host) in
+  let widths = List.map fst (host_vectors n) in
+  let ops = vector_operations (Ops.src (Ops.nth prg 1)) in
+  equal (list (triple op_w int int)) []
+    (List.filter (fun (_, l, _) -> not (List.mem l widths)) ops);
+  (* The selection's vectors hold all its lanes: none is computed apart. *)
+  let lanes o =
+    List.fold_left
+      (fun t (o', l, c) -> if Op.equal o o' then t + (l * c) else t)
+      0 ops
+  in
+  equal (list (pair op_w int))
+    (List.map (fun o -> (o, n)) Op.[ Cmplt; Sub; Where ])
+    (List.map (fun o -> (o, lanes o)) Op.[ Cmplt; Sub; Where ]);
+  equal (list int) []
+    (List.filter (fun l -> l > host_lanes) (vector_types (source prg)));
+  let buffers =
+    [
+      (1, wide_values dt n 1);
+      (2, wide_values dt n 2);
+      (3, wide_values dt cols 3);
+    ]
+  in
+  let expected = Array.make n (`Int Bigint.zero) in
+  List.iter
+    (fun (slot, e, v) -> if slot = 0 then expected.(e) <- v)
+    (Interpreter.writes ~buffers k);
+  equal (array Dtypes.value) expected
+    (List.assoc 0 (Run.on_host prg buffers))
+
 let vectors =
   group "vectors in programs"
     [
@@ -4072,7 +4204,7 @@ let vectors =
           let prg =
             Codegen.to_program (six_lanes_kernel ()) (Lazy.force host)
           in
-          one_vector 6 prg;
+          in_vectors 6 prg;
           let bytes = Array.map (fun b -> `Int (Bigint.of_int b)) in
           equal (array Dtypes.value)
             (bytes [| 0x1 + 0x2; 0xf + 0x0; 0x7 + 0x8 |])
@@ -4081,6 +4213,12 @@ let vectors =
                   [ (1, bytes [| 0x10; 0x2f; 0xf3; 0x04; 0x7a; 0x80 |]) ])));
       test "a host program of 48 lanes computes one vector" (selects_rows 3 16);
       test "a host program of 24 lanes computes one vector" (selects_rows 3 8);
+      test "a host program of 128 lanes computes vectors of 64"
+        (selects_rows 8 16);
+      test "a host program of 80 lanes computes vectors of 64 and 16"
+        (selects_rows 5 16);
+      test "a host program of 65 lanes computes vectors of 33 and 32"
+        (selects_rows 5 13);
       cases
         "a host selection by a broadcast of computed lanes computes no lane \
          apart"
@@ -4088,8 +4226,12 @@ let vectors =
         [ (12, 3); (4, 3) ]
         (fun (rows, cols) -> holds_lanes rows cols ());
       cases "a host program of n lanes computes one vector"
-        ~id:(Printf.sprintf "%d lanes") [ 3; 5; 7; 9; 12; 15 ] (fun n ->
+        ~id:(Printf.sprintf "%d lanes") [ 3; 5; 7; 9; 12; 15; 16 ] (fun n ->
           selects_lanes n ());
+      prop ~count:50
+        "a host operation of any lanes computes vectors of at most 64 and \
+         writes what its kernel writes"
+        wide_gen computes_wide;
       cases "a host sum of a product's unrolled lanes multiplies no vectors"
         ~id:(Printf.sprintf "%d lanes") [ 3; 4; 9 ] (fun n ->
           sums_products n ());

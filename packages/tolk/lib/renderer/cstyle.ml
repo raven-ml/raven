@@ -1063,6 +1063,11 @@ let mask_logic op a b =
   | Op.Cmplt -> Some (strf "((~%s)&%s)" a b)
   | _ -> None
 
+(* The most lanes a vector operation computes at once: Clang's time on a
+   vector it puts together from loaded rows grows much faster than its lanes
+   past 64, and vectors of 64 run as fast as wider ones. *)
+let clang_lanes = 64
+
 let clang_vectors =
   let r = rule_ctx in
   let vec ?(op = Op.Set.elementwise) () = Upat.v ~op ~name:"x" () in
@@ -1473,7 +1478,7 @@ let clang (target : Helpers.Target.t) =
   in
   Renderer.v ~name:"ClangRenderer"
     ~registers:(fun () -> Compiler_cpu.registers arch)
-    ~vector_alu:true ~has_local:false ~global_max:[ 1; 0; 0 ]
+    ~vector_lanes:clang_lanes ~has_local:false ~global_max:[ 1; 0; 0 ]
     ~extra_matcher:clang_extra_matcher ~packed_args:true
     ~code_for_op:lang.code_for_op ~native
     ~render:(render (clang_kernel ~cpu:(target.device = "CPU")) lang)

@@ -86,7 +86,7 @@ let on_cuda () =
 (* [r] rebuilt with [has_shared] and [load_matrix], named [name]. *)
 let rebuilt ~name ?(has_shared = true) ?(load_matrix = true) (r : Renderer.t) =
   Renderer.v ~name ~suffix:r.suffix ~supports_float4:r.supports_float4
-    ~half8:r.half8 ~registers:r.registers ~vector_alu:r.vector_alu
+    ~half8:r.half8 ~registers:r.registers ~vector_lanes:r.vector_lanes
     ~has_local:r.has_local ~has_shared ~global_max:r.global_max
     ~local_max:r.local_max ?global_prod_max:r.global_prod_max
     ~shared_max:r.shared_max ~async_copy:r.async_copy

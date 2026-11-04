@@ -268,7 +268,7 @@ type t = {
   supports_float4 : bool;
   half8 : bool;
   registers : unit -> registers option;
-  vector_alu : bool;
+  vector_lanes : int;
   has_local : bool;
   has_shared : bool;
   global_max : int list;
@@ -294,7 +294,7 @@ let int32_max = [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ]
 
 let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     ?(half8 = false)
-    ?(registers = fun () -> None) ?(vector_alu = false) ?(has_local = true)
+    ?(registers = fun () -> None) ?(vector_lanes = 1) ?(has_local = true)
     ?(has_shared = true) ?(global_max = int32_max) ?(local_max = int32_max)
     ?global_prod_max ?(shared_max = 32768) ?(async_copy = false)
     ?(load_matrix = false)
@@ -313,7 +313,7 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     supports_float4;
     half8;
     registers;
-    vector_alu;
+    vector_lanes;
     has_local;
     has_shared;
     global_max;

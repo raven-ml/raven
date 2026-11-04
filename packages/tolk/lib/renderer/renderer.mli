@@ -188,9 +188,13 @@ type t = private {
           when first needed. It sets the widest merged access
           ({!Coalesce.memory_coalescing}) and, on the [CPU] device, how many
           lanes a kernel's accumulators hold ({!Heuristic}). *)
-  vector_alu : bool;
-      (** Arithmetic, logic, comparisons, selections and conversions compute on
-          all the lanes of a vector at once. Otherwise each lane is computed
+  vector_lanes : int;
+      (** The most lanes of a vector that arithmetic, logic, comparisons,
+          selections and conversions compute at once: an operation of more
+          lanes computes them in vectors of [vector_lanes] and a last of the
+          rest, its last [vector_lanes + 1] lanes as two vectors of
+          [vector_lanes / 2 + 1] and [vector_lanes - vector_lanes / 2] where
+          one lane would be left. At [1] or less, each lane is computed
           apart. *)
   has_local : bool;
       (** The target launches workgroups of several threads, numbered by local
@@ -256,7 +260,7 @@ val v :
   ?supports_float4:bool ->
   ?half8:bool ->
   ?registers:(unit -> registers option) ->
-  ?vector_alu:bool ->
+  ?vector_lanes:int ->
   ?has_local:bool ->
   ?has_shared:bool ->
   ?global_max:int list ->
@@ -281,7 +285,7 @@ val v :
     describe a target that renders nothing:
     - [name] is ["Renderer"] and [suffix] is [""];
     - [supports_float4], [has_local] and [has_shared] are [true], [registers]
-      gives [None], and [half8] and [vector_alu] are [false];
+      gives [None], [half8] is [false] and [vector_lanes] is [1];
     - [global_max] and [local_max] are [0x8FFFFFFF] on each axis, the greatest
       size a 32-bit signed index holds, and [global_prod_max] is [None];
     - [shared_max] is [32768], and [async_copy] and [load_matrix] are

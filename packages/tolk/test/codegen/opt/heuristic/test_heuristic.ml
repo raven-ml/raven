@@ -1492,6 +1492,52 @@ let iterations_bounded =
       at_most ~msg:name int ~than:512
         (iteration_lanes (optimized (Lazy.force k) file)))
 
+(* Clang for an AVX2 processor, which renders without compiling. *)
+let clang_avx2 =
+  lazy
+    (Renderer.with_compiler (Renderer.Compiler.v Fun.id)
+       (Cstyle.clang
+          {
+            Helpers.Target.device = "CPU";
+            renderer = "CLANG";
+            arch = "x86_64,haswell";
+            interface = "";
+            indices = "";
+          }))
+
+(* The lanes of each vector type a host source declares. *)
+let vector_types src =
+  let key = "ext_vector_type(" in
+  let rec go acc i =
+    match String.index_from_opt src i 'e' with
+    | None -> acc
+    | Some j
+      when j + String.length key <= String.length src
+           && String.sub src j (String.length key) = key ->
+        let k = j + String.length key in
+        let close = String.index_from src k ')' in
+        go (int_of_string (String.sub src k (close - k)) :: acc) close
+    | Some j -> go acc (j + 1)
+  in
+  go [] 0
+
+(* Recorded host kernels for AVX2, their lanes as the hand-coded optimisations
+   choose them, up to 512 an iteration: Clang computes at most 64 lanes of a
+   vector at once, so their sources declare no wider vector. *)
+let vectors_bounded =
+  cases "on AVX2 a recorded host kernel's program declares vectors of at most \
+         64 lanes"
+    ~id:fst host_kernels
+    (fun (name, k) ->
+      let prg = Codegen.to_program (Lazy.force k) (Lazy.force clang_avx2) in
+      let src =
+        match Ops.arg (Ops.nth prg 2) with
+        | Ops.String s -> s
+        | _ -> failf "a program's third source is its source"
+      in
+      equal ~msg:name (list int) []
+        (List.filter (fun l -> l > 64) (vector_types src)))
+
 (* rune's contraction of 8 groups on AVX2's file: its stores' axis takes 16
    lanes, an upcast by 4 of its other output axis would leave 64 lanes for
    its 16 rows, 1024, past 512, and the fill by 2 leaves 32: its rows unroll
@@ -2020,6 +2066,7 @@ let () =
              iterations_bounded;
              room_for_unroll;
              room_past_32;
+             vectors_bounded;
            ];
          group "the tensor core's floor" [ floored ];
          decode_bound;

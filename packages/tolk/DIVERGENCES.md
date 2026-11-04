@@ -3632,22 +3632,26 @@ driver signals its own (D146).
   lane, on every target);
   `renderer/cstyle.py:40`, which writes every conversion as a C cast, for a
   vector a reinterpretation of its bits.
-- **tolk:** `Renderer.t`'s `vector_alu`; `Codegen.lanes_of`,
-  `Codegen.in_order`, `Codegen.vector_operation`, `Codegen.distinct_lanes`,
+- **tolk:** `Renderer.t`'s `vector_lanes`; `Codegen.lanes_of`,
+  `Codegen.in_order`, `Codegen.vector_operation`, `Codegen.lanes_at`,
+  `Codegen.split_widths`, `Codegen.split_lanes`, `Codegen.distinct_lanes`,
   `Codegen.vector_dtypes`, `Codegen.do_devectorize`,
   `Codegen.address_lanes`, `Codegen.pm_vector_constants`,
   `Codegen.product_operands` and `Codegen.first_lane`;
-  `Cstyle.mask_widths`, `Cstyle.clang_vectors` and `Cstyle.clang_kernel`;
+  `Cstyle.mask_widths`, `Cstyle.clang_lanes`, `Cstyle.clang_vectors` and
+  `Cstyle.clang_kernel`;
   `Decomp_dtype.emulates`; `Uop_weak.pm_commit_weak`'s cast over a stack;
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
   are recorded, and makes its compiled patterns match a repeated source
   lazily, as its interpreted ones do: a stack whose first lane is a constant
   and whose others are lanes of a vector raised in a bind of the first lane's
   source that the match never needed.
-- **Differs:** a renderer may compute on vectors (`Renderer.vector_alu`;
-  Clang does). There an elementwise operation of several lanes on a type the
-  target computes natively stays one operation on a vector of its lanes, on
-  one axis, when each source holds them in order: a vector
+- **Differs:** a renderer may compute on vectors (`Renderer.vector_lanes`
+  past 1; Clang's is 64). There an elementwise operation of several lanes on
+  a type the target computes natively stays one operation on a vector of its
+  lanes, on one axis, or past `vector_lanes` lanes vectors of that many and a
+  last of the rest, the last `vector_lanes + 1` as two vectors where one lane
+  would be left (D241), when each source holds them in order: a vector
   operation, or a view (reshapes, broadcasts, permutations, stacks) of
   constants (a literal), of loads of memory, of lanes of vectors and of vector
   operations, a load or a lane in as many lanes as read it (a shuffle), or a
@@ -3725,11 +3729,11 @@ driver signals its own (D146).
   vector, a conv kernel's 9 unrolled lanes made the conv rows' linearize,
   render and warm stages 19%, 26% and 17% slower.
 
-  Any number of lanes is one vector, which LLVM computes in the next power of
-  two. Computed lane by lane, Clang compiles each lane's copy of a body, in a
-  time that grows faster than the copies: jera's compiled Milstein march over
-  3 elements fuses into one kernel of 3 lanes, whose test compiled in 57 s
-  cold, and in 14 s as one vector.
+  Any number of lanes up to 64 is one vector, which LLVM computes in the next
+  power of two. Computed lane by lane, Clang compiles each lane's copy of a
+  body, in a time that grows faster than the copies: jera's compiled
+  Milstein march over 3 elements fuses into one kernel of 3 lanes, whose test
+  compiled in 57 s cold, and in 14 s as one vector.
 
   A broadcast or a permutation of a vector operation's lanes is a shuffle, as
   a load in several lanes is. Computed apart, an operation that read one went
@@ -3784,7 +3788,11 @@ driver signals its own (D146).
   case), `› a host program of 6 lanes computes one vector`, `› a host program
   of 48 lanes computes one vector`, `› a host program of 24 lanes computes
   one vector`, `› a host program of n lanes computes one vector`, `› a host
-  selection by a broadcast of computed lanes computes no lane apart` and `› a
+  program of 128 lanes computes vectors of 64`, `› a host program of 80
+  lanes computes vectors of 64 and 16`, `› a host program of 65 lanes
+  computes vectors of 33 and 32`, `› a host operation of any lanes computes
+  vectors of at most 64 and writes what its kernel writes` (every case), `› a
+  host selection by a broadcast of computed lanes computes no lane apart` and `› a
   host sum of a product's unrolled lanes multiplies no vectors` (every case),
   `› a host selection of 8, 16 or 32 lanes by a
   comparison of integers takes each lane's arm` and `› a host selection of 3,
@@ -6872,7 +6880,8 @@ and an initial value is added after it (D260).
   lane of the kernel).
 - **tolk:** `Heuristic.converted_lanes`, `Heuristic.conversion_lanes`,
   `Heuristic.iteration_lanes`, `Heuristic.unroll_lanes`,
-  `Heuristic.lanes_after` and `Heuristic.fits`; `test/gen/tinygrad.patch`,
+  `Heuristic.lanes_after` and `Heuristic.fits`; `Cstyle.clang_lanes` and
+  `Codegen.split_lanes`; `test/gen/tinygrad.patch`,
   which gives tinygrad the same before the goldens are recorded.
 - **Differs:** on the host, the upcasts after the masked and shared ones
   and the unroll (D186) apply only while each conversion (`CAST`) computes
@@ -6924,18 +6933,34 @@ and an initial value is added after it (D260).
   unroll by 8 to 4, and `matmul_1000` ran 1.02-1.06 times as long there.
   Computing a vector operation wider than 256 lanes lane by lane instead,
   in the renderer (D141), compiled the contraction in 0.26 s but ran it in
-  25.5 µs against 21.4 and `paired_products` in 177 µs against 113. In
-  vectors of 16 lanes instead, Clang took 0.07 s on the contraction against
-  1.11-1.15 s and 0.05 s on `paired_products` against 0.19-0.20 s (CPU
-  time), and they ran in 19.8-20.6 µs against 20.5-21.4 and 108-113 µs
-  either way, one P-core, interleaved. `conv` holds no vector that wide, so
-  its lanes are the bound's alone: at 576 it ran 529-555 µs against
-  596-604, but a bound of 1024 took three of rune's products from 16 output
-  lanes unrolled whole to 32 lanes and no unroll, 2724-2726 µs against
-  2301-2310, 2416-2417 against 2029-2078 and 2948-3004 against 2754-2848,
-  and another to 1024 lanes, 672-685 µs against 659-669, though with the
-  split Clang took at most 0.2 s on each of the 28 suite kernels it or that
-  bound changes. The split is not taken: it leaves `conv` as it is.
+  25.5 µs against 21.4 and `paired_products` in 177 µs against 113.
+
+  Clang computes at most 64 lanes of a vector operation at once (D141's
+  `Renderer.vector_lanes`): an operation of more lanes is vectors of 64 and a
+  last of the rest. Of the 15,220 host kernels, 54 hold one; Clang's CPU time
+  on them falls from 5.8 s to 3.8 s in all, the contraction's from 1.06 s
+  to 0.11 s, `paired_products`' from 0.19 s to 0.06 s, and the slowest's
+  from 1.06 s to 0.19 s, none slower (two compiles each, interleaved, one
+  P-core); rune's compile bench row `products/segments-grad` takes 0.53-0.56
+  s cold against 1.45-1.46 s. Run times hold: the tolk bench's
+  `host/paired_products/heuristic` 110-119 µs against 113-120 (16 runs,
+  interleaved, one P-core), the contraction 21.5 µs against 23.2-24.2, and
+  rune's bench rows allocate the same words. Vectors of 16 cut Clang further
+  past 64 lanes (the contraction 0.07 s) but not below: on the 589 kernels of
+  17 to 64 lanes it took 19.6 s against 19.9, `conv_half` and `gpt_oss_kv`
+  ran 1.5% and 1.2% longer in each of ten interleaved pairs, and the compile
+  bench's `lanes/held-fp8-36` 1.30-1.36 times as long. A rest of one lane
+  would be computed apart, which made Clang's loop strength reduction take
+  seconds (D141): the last 65 lanes are vectors of 33 and 32. In the tolk
+  bench's stages, the split makes `gpt_oss_decode/codegen` allocate 0.7%
+  more words, building the vectors of 64 for operations whose lanes later
+  fold apart (its instructions are the same), and `adam_mlp`'s linearize,
+  render and warm 4.5-6% fewer. `conv` holds no vector that wide, so its
+  lanes are the bound's alone: at 576 it ran 529-555 µs against 596-604,
+  but a bound of 1024 took three of rune's products from 16 output lanes
+  unrolled whole to 32 lanes and no unroll, 2724-2726 µs against 2301-2310,
+  2416-2417 against 2029-2078 and 2948-3004 against 2754-2848, and another
+  to 1024 lanes, 672-685 µs against 659-669.
 - **Pinned by:** the Heuristic suite's `the host's lanes › on AVX2 a
   recorded host kernel's conversions take their lanes` and `› on the host a
   conversion computes at most 64 lanes`, over every recorded kernel and
@@ -6949,8 +6974,13 @@ and an initial value is added after it (D260).
   32` and `› an output upcast leaves 4 lanes for the unroll of an axis past
   32`; rune's `Lower_reduce › work › a Contracting contraction of 8 groups
   works in blocks`; rune's compile bench row `products/segments-grad` (5.5
-  s cold before, 1.5 s after, on fudge), whose baseline, with the tolk
-  bench's `host/conv/heuristic`, the scheduled re-record records.
+  s cold before, 1.5 s after, 0.55 s with vectors of at most 64 lanes, on
+  fudge), whose baseline, with the tolk bench's `host/conv/heuristic`, the
+  scheduled re-record records. The vectors: the Heuristic suite's `the
+  host's lanes › on AVX2 a recorded host kernel's program declares vectors
+  of at most 64 lanes`, and the Codegen suite's `vectors in programs › a
+  host operation of any lanes computes vectors of at most 64 and writes what
+  its kernel writes`.
 
 ## D260. A tensor core accumulates its running sum at the reduce
 

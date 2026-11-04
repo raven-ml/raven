@@ -333,11 +333,45 @@ let in_order n x =
         else Some (stack l)
     | _ -> None
 
+(* The [w] lanes from lane [a] of [x], an operand of a vector operation: a
+   vector of lanes in order, or a scalar every lane reads, which reads them
+   all. *)
+let lanes_at x a w =
+  if shape x = [] || is_invalid x then x
+  else
+    let lane k =
+      if is Op.Stack x then nth x (a + k) else index_ints x [ a + k ]
+    in
+    stack (List.init w lane)
+
+(* The widths of the vectors [n] lanes split into, more than [lanes]: vectors
+   of [lanes] and a last of the rest. A rest of one lane would be computed
+   apart, which made Clang's loop strength reduction take seconds: the last
+   [lanes + 1] lanes are two vectors instead. *)
+let split_widths lanes n =
+  let k = n / lanes and r = n mod lanes in
+  let whole k = List.init k (fun _ -> lanes) in
+  if r = 1 then whole (k - 1) @ [ (lanes / 2) + 1; lanes - (lanes / 2) ]
+  else if r = 0 then whole k
+  else whole k @ [ r ]
+
+(* The operation [b] of [n] lanes on the operands [src], in the vectors of
+   [split_widths lanes n], as the stack of their lanes. *)
+let split_lanes lanes b src n =
+  let chunk (a, chunks) w =
+    let c = replace b ~src:(List.map (fun x -> lanes_at x a w) src) in
+    (a + w, List.rev_append (List.init w (fun k -> index_ints c [ k ])) chunks)
+  in
+  stack (List.rev (snd (List.fold_left chunk (0, []) (split_widths lanes n))))
+
 (* An elementwise operation of a renderer that computes on vectors keeps its
    lanes whole, on one axis, the flat order of its shape: each source is a
    vector of those lanes in order, or a scalar every lane reads. Where every
-   source is a scalar, the operation is computed once and expanded. *)
-let vector_operation b s =
+   source is a scalar, the operation is computed once and expanded. An
+   operation of more lanes than the renderer's [lanes] computes them in vectors
+   of [lanes]: Clang's time grows faster than the lanes of the vectors it puts
+   together. *)
+let vector_operation lanes b s =
   let n = Helpers.prod (int_shape s) in
   let operand x =
     if is_invalid (base x) then base x
@@ -348,9 +382,12 @@ let vector_operation b s =
       | None, None -> invalid_arg "a vector operand of lanes out of order"
   in
   let src = List.map operand (src b) in
-  if List.equal ( == ) src (Ops.src b) then None
-  else if List.for_all (fun x -> shape x = []) src then
-    Some (mop (replace b ~src) (Expand s))
+  let scalar x = shape x = [] in
+  if n > lanes && not (List.for_all scalar src) then
+    let split = split_lanes lanes b src n in
+    Some (if List.compare_length_with s 1 = 0 then split else reshape split s)
+  else if List.equal ( == ) src (Ops.src b) then None
+  else if List.for_all scalar src then Some (mop (replace b ~src) (Expand s))
   else
     let flat = replace b ~src in
     Some (if List.compare_length_with s 1 = 0 then flat else reshape flat s)
@@ -382,7 +419,7 @@ let distinct_lanes n srcs =
    it computes natively, if it computes on vectors at all. Weak types are those
    of addresses, which are computed lane by lane. *)
 let vector_dtypes (ren : Renderer.t) =
-  if not ren.vector_alu then []
+  if ren.vector_lanes <= 1 then []
   else
     let emulated = Decomp_dtype.emulates ren in
     List.filter (fun dt -> not (emulated dt)) (Renderer.supported_dtypes ren)
@@ -391,12 +428,13 @@ let vector_dtypes (ren : Renderer.t) =
    except an elementwise operation on the [vectors] types of several distinct
    lanes whose sources hold them in order ([in_order]): a source of lanes
    computed apart would be put together lane by lane, and lanes that repeat
-   are computed once each apart. *)
-let do_devectorize vectors b =
+   are computed once each apart. Such an operation computes vectors of at most
+   [lanes] lanes ({!vector_operation}). *)
+let do_devectorize (vectors, lanes) b =
   let s = shape b in
   let invalid x = is_invalid (base x) in
   let on_vectors x = Dtype.mem (dtype x) vectors in
-  let lanes x =
+  let in_lanes x =
     Option.is_some (splat x)
     || (on_vectors x && Option.is_some (in_order (Helpers.prod (int_shape s)) x))
   in
@@ -411,11 +449,11 @@ let do_devectorize vectors b =
     Op.Set.mem (op b) Op.Set.elementwise
     && Helpers.prod (int_shape s) > 1
     && on_vectors b
-    && List.for_all (fun x -> invalid x || lanes x) (src b)
+    && List.for_all (fun x -> invalid x || in_lanes x) (src b)
     && distinct_lanes
          (Helpers.prod (int_shape s))
          (List.filter (fun x -> not (invalid x)) (src b))
-  then vector_operation b s
+  then vector_operation lanes b s
   else
     let lane idx =
       replace b
@@ -558,9 +596,9 @@ let devectorizer2 =
            (Upat.v
               ~op:(Op.Set.union Op.Set.elementwise (ops [ Op.Load; Op.Store ]))
               ~name:"b" ())
-           (fun vectors m ->
+           (fun ctx m ->
              if is_ldmatrix (m "b") then None
-             else do_devectorize vectors (m "b"));
+             else do_devectorize ctx (m "b"));
          (* an index of storage by a vector indexes each lane apart, at an
             address computed lane by lane *)
          rule
@@ -582,7 +620,7 @@ let devectorizer2 =
          rule_ctx
            (Upat.op Op.Index
               ~src:[ Upat.v ~op:Op.Set.defines ~name:"b" (); Upat.var "i" ])
-           (fun vectors m ->
+           (fun (vectors, _) m ->
              if vectors = [] || shape (m "i") <> [] then None
              else
                Option.map
@@ -1438,7 +1476,9 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
       sink
   in
   let sink =
-    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(vector_dtypes ren) sink
+    graph_rewrite ~calls:Skip ~pass:Fixed_point
+      ~ctx:(vector_dtypes ren, ren.vector_lanes)
+      sink
       (After_sources
          (Pattern_matcher.concat
             [

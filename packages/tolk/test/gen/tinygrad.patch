@@ -14,7 +14,7 @@ index c19a95f13..b70de225a 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index f4535a4f7..1d4d4a536 100644
+index f4535a4f7..50912b607 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,31 +2,31 @@ from dataclasses import replace, dataclass, field
@@ -54,7 +54,7 @@ index f4535a4f7..1d4d4a536 100644
  from tinygrad.device import TinyELF
  from tinygrad.uop.ops import _broadcast_shape, identity_element
  from tinygrad.schedule.rangeify import BufferizeOpts
-@@ -98,44 +98,193 @@ def broadcast_and_devec_wmma(b:UOp):
+@@ -98,44 +98,221 @@ def broadcast_and_devec_wmma(b:UOp):
      src.append(b.replace(src=tuple([x.index(*idx) for x in src_expanded])))
    return UOp.stack(*src).reshape(b.shape)
  
@@ -145,10 +145,33 @@ index f4535a4f7..1d4d4a536 100644
 +  if (l:=lanes_of(x)) is None or len(l) != n: return None
 +  return x if x.op is Ops.STACK and len(x.src) == n and all(a is b for a,b in zip(l, x.src)) else UOp.stack(*l)
 +
++# the w lanes from lane a of x, an operand of a vector operation: a vector of lanes in order, or a scalar every lane reads, which reads
++# them all
++def lanes_at(x:UOp, a:int, w:int) -> UOp:
++  if x.shape == () or x.is_invalid: return x
++  return UOp.stack(*[x.src[a+k] if x.op is Ops.STACK else x.index(UOp.const(a+k)) for k in range(w)])
++
++# the widths of the vectors n lanes split into, more than lanes: vectors of lanes and a last of the rest. a rest of one lane would be
++# computed apart, which made clang's loop strength reduction take seconds: the last lanes+1 lanes are two vectors instead
++def split_widths(lanes:int, n:int) -> list[int]:
++  k, r = divmod(n, lanes)
++  if r == 1: return [lanes]*(k-1) + [lanes//2+1, lanes-lanes//2]
++  return [lanes]*k + ([r] if r else [])
++
++# the operation b of n lanes on the operands src, in the vectors of split_widths(lanes, n), as the stack of their lanes
++def split_lanes(lanes:int, b:UOp, src:tuple[UOp, ...], n:int) -> UOp:
++  out, a = [], 0
++  for w in split_widths(lanes, n):
++    c = b.replace(src=tuple(lanes_at(x, a, w) for x in src))
++    out += [c.index(UOp.const(k)) for k in range(w)]
++    a += w
++  return UOp.stack(*out)
++
 +# an elementwise operation of a renderer that computes on vectors keeps its lanes whole, on one axis, the flat order of its shape:
 +# each source is a vector of those lanes in order, or a scalar every lane reads. where every source is a scalar, the operation is
-+# computed once and expanded
-+def vector_operation(b:UOp) -> UOp|None:
++# computed once and expanded. an operation of more lanes than the renderer's lanes computes them in vectors of lanes: clang's time
++# grows faster than the lanes of the vectors it puts together
++def vector_operation(lanes:int, b:UOp) -> UOp|None:
 +  n = prod(b.shape)
 +  def operand(x:UOp) -> UOp:
 +    if x.base.is_invalid: return x.base
@@ -156,6 +179,9 @@ index f4535a4f7..1d4d4a536 100644
 +    if (v:=in_order(n, x)) is not None: return v
 +    raise RuntimeError("a vector operand of lanes out of order")
 +  src = tuple(operand(x) for x in b.src)
++  if n > lanes and not all(x.shape == () for x in src):
++    split = split_lanes(lanes, b, src, n)
++    return split if len(b.shape) == 1 else split.reshape(b.shape)
 +  if all(x is y for x,y in zip(src, b.src)): return None
 +  if all(x.shape == () for x in src): return b.replace(src=src)._mop(Ops.EXPAND, arg=b.shape)
 +  return b.replace(src=src) if len(b.shape) == 1 else b.replace(src=src).reshape(b.shape)
@@ -163,7 +189,7 @@ index f4535a4f7..1d4d4a536 100644
 +# the dtypes whose elementwise operations ren computes on vectors: those it computes natively, if it computes on vectors at all.
 +# weak dtypes are those of addresses, which are computed lane by lane
 +def vector_dtypes(ren:Renderer) -> tuple[DType, ...]:
-+  if not ren.vector_alu: return ()
++  if ren.vector_lanes <= 1: return ()
 +  emulated = emulates(ren)
 +  return tuple(dt for dt in sorted(ren.supported_dtypes()) if not emulated(dt))
 +
@@ -178,15 +204,17 @@ index f4535a4f7..1d4d4a536 100644
 +
 +# elementwise operations, loads and stores of vectors compute each lane apart, except an elementwise operation of several distinct
 +# lanes on the dtypes ctx holds, those computed on vectors, whose sources hold them in order (in_order): a source of lanes computed apart
-+# would be put together lane by lane, and lanes that repeat are computed once each apart
-+def do_devectorize(ctx:tuple[DType, ...], b:UOp):
++# would be put together lane by lane, and lanes that repeat are computed once each apart. such an operation computes vectors of at most
++# ctx's lanes (vector_operation)
++def do_devectorize(ctx:tuple[tuple[DType, ...], int], b:UOp):
    if b.shape == (): return None
    # broadcasting needs to be already unpacked, Invalid matches any dtype and shape
    if not all(x.shape == b.shape or x.base.is_invalid for x in b.src): return None
-+  def lanes(x:UOp) -> bool: return splat(x) is not None or (x.dtype in ctx and in_order(prod(b.shape), x) is not None)
-+  if b.op in GroupOp.Elementwise and prod(b.shape) > 1 and b.dtype in ctx and \
-+     all(x.base.is_invalid or lanes(x) for x in b.src) and \
-+     distinct_lanes(prod(b.shape), [x for x in b.src if not x.base.is_invalid]): return vector_operation(b)
++  vectors, lanes = ctx
++  def in_lanes(x:UOp) -> bool: return splat(x) is not None or (x.dtype in vectors and in_order(prod(b.shape), x) is not None)
++  if b.op in GroupOp.Elementwise and prod(b.shape) > 1 and b.dtype in vectors and \
++     all(x.base.is_invalid or in_lanes(x) for x in b.src) and \
++     distinct_lanes(prod(b.shape), [x for x in b.src if not x.base.is_invalid]): return vector_operation(lanes, b)
    src = []
    for idx_c in itertools.product(*[[UOp.const(i) for i in range(x)] for x in b.shape]):
      src.append(b.replace(src=tuple(x.base if x.base.is_invalid else x.index(*idx_c) for x in b.src)))
@@ -258,11 +286,11 @@ index f4535a4f7..1d4d4a536 100644
 +  # an index of storage by a vector indexes each lane apart, at an address computed lane by lane
 +  (UPat(Ops.INDEX, src=(UPat((Ops.PARAM, Ops.BUFFER, Ops.ALLOC), name="b"), UPat(GroupOp.Elementwise, name="i"))), vector_index),
 +  (UPat(Ops.INDEX, src=(UPat((Ops.PARAM, Ops.BUFFER, Ops.ALLOC), name="b"), UPat.var("i"))),
-+   lambda ctx,b,i: None if not ctx or i.shape != () or (a:=address_lanes(i)) is None else b.index(a)),
++   lambda ctx,b,i: None if not ctx[0] or i.shape != () or (a:=address_lanes(i)) is None else b.index(a)),
    # INDEX without src is nothing (TODO: this should be in mop_cleanup)
    (UPat(Ops.INDEX, src=(UPat.var('x'),)), lambda x: x),
    # unpack WMMA
-@@ -172,28 +321,95 @@ def merge_reduce_ends(sink:UOp):
+@@ -172,28 +349,95 @@ def merge_reduce_ends(sink:UOp):
      if len(ends) <= 1: continue
      by_ctx: dict[frozenset[UOp], list[UOp]] = {}
      for e in ends: by_ctx.setdefault(frozenset(e.ranges), []).append(e)
@@ -366,7 +394,7 @@ index f4535a4f7..1d4d4a536 100644
    # fix group for reduce
    (UPat(Ops.REDUCE, name="x"), fix_group_for_reduce),
    # remove reduces
-@@ -251,6 +467,151 @@ pm_implicit_barriers = PatternMatcher([
+@@ -251,6 +495,151 @@ pm_implicit_barriers = PatternMatcher([
    (UPat((Ops.END, Ops.BACKEDGE), name="end"), add_war_barrier),
  ])
  
@@ -518,7 +546,7 @@ index f4535a4f7..1d4d4a536 100644
  def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    if DEBUG >= 5: print(render_uir(ast))
    if SPEC: type_verify(ast, spec_tensor)
-@@ -260,6 +621,8 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -260,6 +649,8 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # preprocess
    sink = graph_rewrite(sink, pm_mops, name="early movement ops", bottom_up=True)
@@ -527,7 +555,7 @@ index f4535a4f7..1d4d4a536 100644
  
    # first we optimize
    if optimize:
-@@ -280,7 +643,9 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -280,7 +671,9 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # ** expander (expand_rewrite) **
    # reduce_unparented: a REDUCE whose src folded to a CONST (e.g. x*0) has no parented ranges, collapse it before the expander
@@ -538,7 +566,7 @@ index f4535a4f7..1d4d4a536 100644
  
    # expand
    sink = graph_rewrite(sink, expander, ctx=build_range_map(sink), name="expander")
-@@ -288,7 +653,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -288,7 +681,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    slots = itertools.count(max([u.arg.slot+1 for u in sink.toposort() if u.op in {Ops.BUFFER, Ops.ALLOC}], default=0))
  
    # remove reduce
@@ -547,16 +575,16 @@ index f4535a4f7..1d4d4a536 100644
  
    # add locals
    sink = graph_rewrite(sink, pm_add_local_buffers, ctx=slots, name="add local buffers")
-@@ -301,7 +666,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -301,7 +694,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic_simple+pm_expand_broadcast+pm_add_loads, name="*** expand broadcast / add loads")
  
    # devectorize
 -  sink = graph_rewrite(sink, symbolic_simple+devectorizer2+indexing_simplify, name="devectorize2")
-+  sink = graph_rewrite(sink, symbolic_simple+devectorizer2+indexing_simplify, ctx=vector_dtypes(ren), name="devectorize2")
++  sink = graph_rewrite(sink, symbolic_simple+devectorizer2+indexing_simplify, ctx=(vector_dtypes(ren), ren.vector_lanes), name="devectorize2")
  
    # some coalescing misses without this
    sink = graph_rewrite(sink, sym, name="early symbolic")
-@@ -326,11 +691,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -326,11 +719,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic, name="final symbolic")
  
    sink = graph_rewrite(sink, pm_cast_float_alu, name="cast float alu operands")
@@ -571,7 +599,7 @@ index f4535a4f7..1d4d4a536 100644
    pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
    sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
  
-@@ -345,11 +712,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -345,11 +740,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # final rules for the renderer (without sym)
    extra_matcher = ren.extra_matcher if ren.extra_matcher is not None else PatternMatcher([])
@@ -585,7 +613,7 @@ index f4535a4f7..1d4d4a536 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -443,9 +811,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+@@ -443,9 +839,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  
@@ -610,7 +638,7 @@ index f4535a4f7..1d4d4a536 100644
  
  def do_assemble(ctx:Renderer, prg:UOp, lin:UOp) -> UOp|None:
    if getattr(type(ctx), "asm") is Renderer.asm: return None
-@@ -493,7 +875,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
+@@ -493,7 +903,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
      full_sink = full_rewrite_to_sink(ast, renderer, optimize=not ast.arg.optimized)
      prog_info = ProgramInfo.from_sink(full_sink, renderer.target)
      if (isinstance(renderer, ISARenderer) or renderer.packed_args) and full_sink.arg.estimates is None:
@@ -2559,10 +2587,10 @@ index 34d111b14..80db84b3d 100644
    def cumsum(self, axis:int=0) -> Self:
      """
 diff --git a/tinygrad/renderer/__init__.py b/tinygrad/renderer/__init__.py
-index 7fb5ccac2..733b483e3 100644
+index 7fb5ccac2..7d16f2fd2 100644
 --- a/tinygrad/renderer/__init__.py
 +++ b/tinygrad/renderer/__init__.py
-@@ -67,12 +67,22 @@ class Renderer:
+@@ -67,12 +67,23 @@ class Renderer:
    inline_prefix: str|None = None
    # TODO: make this generic with a list of supported types
    supports_float4: bool = True
@@ -2571,8 +2599,9 @@ index 7fb5ccac2..733b483e3 100644
 +  # the target's vector registers, their number and the bytes of each, if known: a merged access fills up to one, and on the host
 +  # they bound the lanes a kernel's accumulators hold
 +  registers: tuple[int, int]|None = None
-+  # arithmetic, logic, comparisons, selections and conversions compute on all the lanes of a vector at once
-+  vector_alu: bool = False
++  # the most lanes of a vector that arithmetic, logic, comparisons, selections and conversions compute at once: an operation of more
++  # lanes computes them in vectors of vector_lanes and a last of the rest. at 1, each lane is computed apart
++  vector_lanes: int = 1
    has_local: bool = True
    has_shared: bool = True
    # NOTE: these two should be in (x,y,z) order to match the max_sizes argument in get_grouped_dims
@@ -2586,7 +2615,7 @@ index 7fb5ccac2..733b483e3 100644
    tensor_cores: list[TensorCore] = []
    extra_matcher: PatternMatcher|None = None
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
-index 6eec3e198..8b96614c8 100644
+index 6eec3e198..10723171d 100644
 --- a/tinygrad/renderer/cstyle.py
 +++ b/tinygrad/renderer/cstyle.py
 @@ -5,9 +5,28 @@ from tinygrad.renderer import tc
@@ -2728,7 +2757,7 @@ index 6eec3e198..8b96614c8 100644
  
      # NOTE: this relies on bufs dict preserving order
      return (name, kernel, list(bufs.values()))
-@@ -284,7 +324,123 @@ class CStyleLanguage(Renderer):
+@@ -284,7 +324,125 @@ class CStyleLanguage(Renderer):
                '\n'.join(inlines[b][1]) + "\n}" for b in bodies]
      return self.render_kernel(*self._render(uops), uops+[u for b in inlines for u in b.src], prefix or None)
  
@@ -2848,11 +2877,13 @@ index 6eec3e198..8b96614c8 100644
 +
  class ClangRenderer(CStyleLanguage):
 +  string_rewrite = PatternMatcher([(UPat((Ops.CMPLT, Ops.CMPNE, Ops.CMPEQ), name="x"), _opaque_compare)]) + clang_vectors + base_rewrite
-+  vector_alu = True
++  # clang's time on a vector it puts together from loaded rows grows much faster than its lanes past 64, and vectors of 64 run as fast as
++  # wider ones
++  vector_lanes = 64
    float4 = "(float4)"
    float4_style = ('{', '}')
    gep_arr_threshold = 0
-@@ -301,7 +457,8 @@ class ClangRenderer(CStyleLanguage):
+@@ -301,7 +459,8 @@ class ClangRenderer(CStyleLanguage):
    code_for_op = {**({k:v for k,v in CStyleLanguage.code_for_op.items() if k not in [Ops.EXP2, Ops.SIN, Ops.LOG2, Ops.RECIP]}),
                   Ops.SQRT: lambda x,dtype: f"__builtin_sqrt({x})" if dtype == dtypes.float64 else f"__builtin_sqrtf({x})",
                   Ops.TRUNC: lambda x,dtype: f"__builtin_trunc({x})" if dtype == dtypes.float64 else f"__builtin_truncf({x})",
@@ -2862,7 +2893,7 @@ index 6eec3e198..8b96614c8 100644
  
    # LLVM legalizes double => half cast on systems that don't support it natively (like x86 cpus without AVX512-FP16) into a compiler-rt libcall.
    extra_matcher = PatternMatcher([(UPat.var("x", dtypes.float64).cast(dtypes.float16), lambda x: x.cast(dtypes.float32).cast(dtypes.float16))]) \
-@@ -313,7 +470,15 @@ class ClangRenderer(CStyleLanguage):
+@@ -313,7 +472,15 @@ class ClangRenderer(CStyleLanguage):
      vec = self._render_dtype(dt, count, AddrSpace.REG)
      return f"typedef {self.render_dtype(dt)} {vec} __attribute__((aligned({alignment}),ext_vector_type({count})));"
  
@@ -2879,7 +2910,7 @@ index 6eec3e198..8b96614c8 100644
    def _render_body(self, function_name, kernel, bufs, uops, pref=None) -> str: return super().render_kernel(function_name, kernel, bufs, uops, pref)
    def _render_entry(self, function_name:str, bufs:list[tuple[str,tuple[UOp,bool]]]) -> str: return ""
  
-@@ -328,6 +493,21 @@ class ClangRenderer(CStyleLanguage):
+@@ -328,6 +495,21 @@ class ClangRenderer(CStyleLanguage):
      super().__init__(target)
      from tinygrad.runtime.support.compiler_cpu import ClangCompiler
      self.compiler = ClangCompiler(target.arch.split(","))
@@ -2901,7 +2932,7 @@ index 6eec3e198..8b96614c8 100644
  
  class OpenCLRenderer(CStyleLanguage):
    # language options
-@@ -337,6 +517,7 @@ class OpenCLRenderer(CStyleLanguage):
+@@ -337,6 +519,7 @@ class OpenCLRenderer(CStyleLanguage):
    smem_prefix = "__local "
    barrier = "barrier(CLK_LOCAL_MEM_FENCE);"
    float4 = "(float4)"
@@ -2909,7 +2940,7 @@ index 6eec3e198..8b96614c8 100644
    code_for_workitem = {"g": lambda x: f"get_group_id({x})", "l": lambda x: f"get_local_id({x})"}
    type_map = {**CStyleLanguage.type_map, dtypes.i8: "char", dtypes.u8: "uchar", dtypes.u32: "uint", dtypes.u16: "ushort",
                dtypes.u64: "ulong", dtypes.bf16: "ushort"}
-@@ -364,6 +545,7 @@ class OpenCLRenderer(CStyleLanguage):
+@@ -364,6 +547,7 @@ class OpenCLRenderer(CStyleLanguage):
                                        (d != dtypes.double or "cl_khr_fp64" in self.target.arch) and d not in dtypes.fp8s}
  
  class MetalRenderer(CStyleLanguage):
@@ -2917,7 +2948,7 @@ index 6eec3e198..8b96614c8 100644
    def __init__(self, target:Target):
      super().__init__(target)
      from tinygrad.runtime.ops_metal import MetalCompiler
-@@ -415,9 +597,11 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
+@@ -415,9 +599,11 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
  _nms = list("xyzwabcdefghijkl") + [f'v{i}' for i in range(16, 32)]
  
  class CUDARenderer(CStyleLanguage):
@@ -2929,7 +2960,7 @@ index 6eec3e198..8b96614c8 100644
  
    def __init__(self, target:Target, use_nvcc=False):
      super().__init__(target)
-@@ -441,14 +625,15 @@ class CUDARenderer(CStyleLanguage):
+@@ -441,14 +627,15 @@ class CUDARenderer(CStyleLanguage):
      Ops.LOG2: lambda x,dtype: f"hlog2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"log2({x})",
      Ops.EXP2: lambda x,dtype: f"hexp2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"exp2({x})",
      Ops.SQRT: lambda x,dtype: f"hsqrt({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"sqrt({x})",
@@ -2947,7 +2978,7 @@ index 6eec3e198..8b96614c8 100644
       if x.addrspace not in (AddrSpace.GLOBAL, AddrSpace.LOCAL) else None),
    ]) + base_rewrite
  
-@@ -465,6 +650,8 @@ class CUDARenderer(CStyleLanguage):
+@@ -465,6 +652,8 @@ class CUDARenderer(CStyleLanguage):
      if any(dt in dtypes.fp8s for dt, _ in used_dtypes): prefix.append("#include <cuda_fp8.h>")
      if any(dt == dtypes.half for dt, _ in used_dtypes): prefix.append("#include <cuda_fp16.h>")
      if any(dt == dtypes.bfloat16 for dt, _ in used_dtypes): prefix.append("#include <cuda_bf16.h>")
@@ -2956,7 +2987,7 @@ index 6eec3e198..8b96614c8 100644
      prefix += [self.render_vector_prefix(dt, count) for dt, count in used_dtypes if (count in (4,8) and dt in {dtypes.half, dtypes.bfloat16})
        or (count in (2,4,8,16) and dt in dtypes.fp8s)]
      dt_map_in = { dtypes.f32: "tf32", dtypes.f16: "f16", dtypes.bf16: "bf16", dtypes.fp8e4m3: "e4m3", dtypes.fp8e5m2: "e5m2" }
-@@ -501,6 +688,7 @@ def _ocml(op): return lambda x,dtype: f"__ocml_{op}_f{ {dtypes.half:16, dtypes.d
+@@ -501,6 +690,7 @@ def _ocml(op): return lambda x,dtype: f"__ocml_{op}_f{ {dtypes.half:16, dtypes.d
  
  class HIPRenderer(CStyleLanguage):
    shared_max = 65536
@@ -2964,7 +2995,7 @@ index 6eec3e198..8b96614c8 100644
    # NOTE: this is only really needed on gfx12, even though gfx11 reports the same limitation
    global_max = (2147483647, 65535, 65535)
    global_prod_max = (0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF)
-@@ -521,8 +709,9 @@ class HIPRenderer(CStyleLanguage):
+@@ -521,8 +711,9 @@ class HIPRenderer(CStyleLanguage):
      if amd_fp8s(target.arch):
        self.extra_matcher += tc.pm_wmma_fp8(dtypes.uint64 if self.is_cdna(target.arch) else dtypes.uint32)
        self.string_rewrite = PatternMatcher([
@@ -2976,7 +3007,7 @@ index 6eec3e198..8b96614c8 100644
            f" {fp8_index(x.dtype)})"),
          (UPat(Ops.CAST, dtypes.fp8s, (UPat(dtype=dtypes.float),), name="x",),
            lambda ctx,x: f"f32_to_fp8({ctx[x.src[0]]}, {fp8_index(x.dtype)})"),
-@@ -538,7 +727,8 @@ class HIPRenderer(CStyleLanguage):
+@@ -538,7 +729,8 @@ class HIPRenderer(CStyleLanguage):
    kernel_typedef = 'extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, {launch_bounds})))'
    code_for_workitem = {"g": lambda x: f"__ockl_get_group_id({x})", "l": lambda x: f"__ockl_get_local_id({x})"}
    code_for_op = {**CStyleLanguage.code_for_op, Ops.TRUNC: _ocml("trunc"), Ops.SIN: _ocml("sin"),
