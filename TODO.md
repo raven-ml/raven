@@ -171,10 +171,18 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - talon benches: record the query suite's DuckDB/Polars baselines on a
   quiet fudge (`baseline.py` refuses loaded runs; H2O 1e8 needs more than
   a run's 16 GiB), and bless `Talon_csv/read-mixed` on the Mac
-- talon perf on fudge (c51b4b858, 14 threads, load 5-71, DuckDB 1.5.6,
-  Polars 1.44.2), geomean vs the faster engine: decision support SF1
-  11.7x, SF10 22.0x, H2O 1e7 group-by 7.9x, join 7.1x.
-  SF10 q13 peaks at 14.45 GiB. Logs: ~/wt/tmp/talon-baselines on fudge
+- talon perf on fudge against the faster of DuckDB 1.5.6 and Polars
+  1.44.2, engines re-run beside talon under load 15-30 (2026-11-04):
+  H2O 1e7 group-by geomean 2.4x at 673340f4e (q04 4.8-7.0x, q01
+  2.8-4.0x before 5441600cd took it from 148 to 96 instructions a row);
+  decision support SF1 at cfef1ad82 q19 ~16x, q12 ~18x, q07 ~15x, q02
+  ~40x (45% of its instructions are per-byte positions in
+  `Nx_ragged.take`: the range-copy op, _plans/todo-campaign/design/
+  ragged-copy.md). What is left: integer sums cast to int64 before
+  summing, one pass per aggregate, Parquet text decoded per row
+  (talon-dict-text.adjudication.md), sort-based joins. The 2026-11-03
+  engine logs ran 2-4x slow; the SF1/H2O data was deleted on 2026-11-04
+  (regenerate with queries/{decision,h2o}_data.py)
 - talon 1.0 plan (_plans/talon/product/plan.md, on the Mac): windows and
   ewm, as-of and interval joins, interval sets and folds, zoned time,
   hash/sample/shuffle, Pivot and nesting, dense round trips, partial
