@@ -1436,6 +1436,33 @@ let divides_on_padding name () =
   Engine.run ~vars s (slots storage);
   equal slot_values (expected ~vars big storage) (by_slot storage contents)
 
+(* A quotient of bytes by a constant table of 1 to [n], padded by two bytes on
+   each side: on the padding the table's load reads 0, which no entry of the
+   table holds. [n] is large enough that the padding stays a run-time condition
+   of the kernel's lanes. *)
+let divides_by_a_table ?(devices = devices) d () =
+  let n = 252 and pad = 2 in
+  let a = Ops.new_buffer d n Uint8
+  and out = Ops.new_buffer d (n + (2 * pad)) Uint8 in
+  let bytes = String.init n (fun i -> Char.chr (i + 1)) in
+  let table = Ops.v Op.Binary ~arg:(Ops.Bytes bytes) in
+  let q = Ops.O.((a // table) + (a % table)) in
+  let padded = Shape.pad q [ Some (Ops.Int pad, Ops.Int pad) ] in
+  let big = Ops.sink [ Ops.after out [ Ops.store out padded ] ] in
+  let s, vars, storage = linked ~devices big in
+  Engine.run ~vars s [||];
+  let of_node u = List.find (fun s -> s.node == u) storage in
+  let xs = Array.map Dtype.Value.to_int (of_node a).before in
+  let at i =
+    if i < pad || i >= n + pad then 0
+    else
+      let x = xs.(i - pad) and d = i - pad + 1 in
+      (x / d) + (x mod d)
+  in
+  equal values
+    (Array.init (n + (2 * pad)) (fun i -> `Int (Bigint.of_int (at i))))
+    (contents (of_node out))
+
 (* [parameterized name] is the recorded program [name] linked with its buffers
    made parameters of their slots, which each run binds, and the program with
    those parameters. *)
@@ -3046,6 +3073,8 @@ let schedules =
         ~id:Fun.id
         [ "pad_idiv"; "pad_idiv_stored"; "pad_idiv_nested"; "pad_idiv_shrunk" ]
         (fun name -> divides_on_padding name ());
+      test "a pad of a quotient by a constant table writes what it computes"
+        (divides_by_a_table "CPU");
       cases "a schedule runs on the buffers each run binds to its parameters"
         ~id:Fun.id [ "contiguous"; "copy_view" ] (fun name ->
           runs_on_its_slots name ());
@@ -4490,6 +4519,8 @@ let on_a_gpu (kind, _) =
       extremes_prop
         "divisions and shifts at the extremes compute as the interpreter"
         (fun () -> devices "CPU:1");
+      test "a pad of a quotient by a constant table writes what it computes"
+        (divides_by_a_table ~devices "CPU:1");
       wide_count_cases
         "a narrow type shifted by a uint32 count computes as the interpreter"
         (fun () -> devices "CPU:1");

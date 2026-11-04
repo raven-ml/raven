@@ -477,7 +477,9 @@ let program : t =
               ~src:
                 [
                   Upat.or_bitcasted
-                    (pat [ Op.Param; Op.Buffer; Op.Alloc; Op.After ]);
+                    (Upat.v
+                       ~op:(Op.Set.union Op.Set.defines (ops [ Op.After ]))
+                       ());
                   Upat.wild;
                   Upat.or_casted (pat [ Op.Const ]);
                 ]);

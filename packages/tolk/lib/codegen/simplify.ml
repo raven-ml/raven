@@ -321,7 +321,7 @@ let pin_effects sink =
    without it. *)
 let unpin x idx =
   let b = nth idx 0 in
-  let deps = List.tl (src b) in
+  let deps = List.drop 1 (src b) in
   if op b <> Op.After || not (List.for_all (fun d -> op d = Op.Range) deps)
   then None
   else

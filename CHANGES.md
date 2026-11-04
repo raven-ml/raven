@@ -1037,6 +1037,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A kernel that reads a constant table (`Op.Binary`) compiles, where it
+  raised `Failure "tl"`, or failed verification when it read the table in
+  vectors.
 - A custom kernel (`Shape.custom_kernel`) in a precompiled call's body whose
   code closes over a bound variable reads that variable's value, where it
   could read another scalar the call passes.
