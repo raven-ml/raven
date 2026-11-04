@@ -105,59 +105,72 @@ so BERT-base runs against HF tokenizers' `encode_batch_fast`, and T5 has no
 reference.
 
 Measured 2026-11-03 on fudge: Intel Core Ultra 5 235 (P-cores 0-5, E-cores
-6-13), Debian 13, OCaml 5.5.2. brot at 64e0c2a22. gigatoken at cd5ee648c6
+6-13), Debian 13, OCaml 5.5.2. brot at f988690df. gigatoken at cd5ee648c6
 (0.11.0), built from source with its release profile by rustc 1.101.0-nightly
 (2026-11-02); tokenizers 0.23.3.
 
 - Counts: callgrind with its cache and branch models, one thread, over the
   first 4,983,259 bytes (1,003 documents), without `bench_owt`'s summing of
-  the ids. brot: the mean of four warm passes (a run of six passes minus a run
-  of two), since the collector's cycles are whole and fall in some passes
-  only. The reference: one warm pass (three minus two).
+  the ids. brot: the mean of eight warm passes (a run of ten passes minus a
+  run of two), since the collector's cycles are whole and fall in some passes
+  only; four passes left GPT-2's count 1.4 instructions per byte apart between
+  two builds whose kernels counted the same. The reference: one warm pass
+  (three minus two). BERT-base's row is from 64e0c2a22.
 - Wall: the best of three passes over 99,729,892 bytes (20,177 documents).
   The two engines alternate, one process at a time; one-thread runs are
   pinned to the P-cores. The machine was shared: the 1-minute load during
-  the pair is shown.
+  the pair is shown, and a pair under one load can disagree with the next by
+  a factor of two. Two eight-thread GPT-2 pairs under load 16-24 disagreed by
+  a factor of seven and are left out.
 
 Ratios are brot's cost over the reference's: above 1, brot is slower.
 
 | Pipeline                           | brot instr/B | ref instr/B | ratio | brot mispredicts/KB | ref mispredicts/KB | ratio | brot LL misses/KB | ref LL misses/KB | ratio |
 | ---------------------------------- | ------------ | ----------- | ----- | ------------------- | ------------------ | ----- | ----------------- | ---------------- | ----- |
-| GPT-2, gigatoken                   | 31.4         | 28.8        | 1.09  | 37.5                | 20.2               | 1.86  | 43.1              | 16.3             | 2.64  |
-| LLaMA (Prepend/Replace normalizer) | 61.6         | 109.2       | 0.56  | 238.7               | 1516.5             | 0.16  | 133.6             | 156.0            | 0.86  |
-| Mistral (Metaspace)                | 61.2         | 62.4        | 0.98  | 234.7               | 574.2              | 0.41  | 137.8             | 165.2            | 0.83  |
+| GPT-2, gigatoken                   | 32.1         | 28.8        | 1.11  | 41.8                | 20.2               | 2.07  | 48.9              | 16.3             | 3.00  |
+| LLaMA (Prepend/Replace normalizer) | 43.9         | 109.2       | 0.40  | 200.1               | 1516.5             | 0.13  | 94.9              | 156.0            | 0.61  |
+| Mistral (Metaspace)                | 43.2         | 62.4        | 0.69  | 191.1               | 574.2              | 0.33  | 89.2              | 165.2            | 0.54  |
+| Llama 3 (cl100k), brot alone       | 35.7         |             |       | 63.6                |                    |       | 60.5              |                  |       |
 | BERT-base, HF tokenizers           | 140.6        | 3221.7      | 0.04  | 894.9               |                    |       | 71.1              |                  |       |
 
 | Pipeline                           | Threads | brot MB/s | ref MB/s | ratio | load  |
 | ---------------------------------- | ------- | --------- | -------- | ----- | ----- |
-| GPT-2, gigatoken                   | 1       | 229.4     | 804.9    | 3.51  | 23-31 |
-| GPT-2, gigatoken                   | 8       | 502.0     | 975.1    | 1.94  | 56-63 |
-| LLaMA (Prepend/Replace normalizer) | 1       | 107.5     | 66.5     | 0.62  | 33-35 |
-| Mistral (Metaspace)                | 1       | 65.0      | 62.8     | 0.97  | 49-51 |
+| GPT-2, gigatoken                   | 1       | 474.4     | 816.6    | 1.72  | 24-27 |
+| LLaMA (Prepend/Replace normalizer) | 1       | 190.1     | 71.4     | 0.38  | 18-20 |
+| Mistral (Metaspace)                | 1       | 203.5     | 145.4    | 0.71  | 13    |
 | BERT-base, HF tokenizers           | 1       | 62.7      | 2.7      | 0.04  | 28-29 |
 
-- Before 64e0c2a22, at c51b4b858, GPT-2 counted 41.6 instructions per byte,
-  228.4 mispredictions and 108.7 last-level misses per KB (four-pass mean): the
-  walker popped a span at a time and left every byte beyond ASCII to the
-  scalar walker, the cache probe branched on a front table and on each way,
-  and each chunk of a batch allocated an ids buffer that kept the collector
-  cycling. LLaMA and Mistral counted 64 and 62 instructions and 359 and 351
-  mispredictions per KB.
-- Wall ratios moved with the load: the second GPT-2 pair, under load 41-43,
-  gave 2.27. Over the 4.98 MB prefix, pinned to one P-core under load 31,
-  three rounds alternating the two engines gave 0.88-1.42 (589 against 774
-  MB/s at best), where c51b4b858 gave 1.70-3.58. The 100 MB corpus holds
-  more distinct pretokens than a 262,144-entry cache: brot evicts and merges
-  again where gigatoken's table grows, and writes 90 MB of fresh result per
-  pass.
-- GPT-2, four warm passes: the kernel (`brot_byte_level_encode_ids32`, the
-  batch walk `harvest`, the merge of misses) is 87% of brot's instructions,
-  major GC marking and sweeping 5%, the added-token scan (`skip_one`) 6%. Of
-  its mispredictions the batch walk's per-batch tests (bytes beyond ASCII, an
-  apostrophe, the loops' exits) are 27%, the merges of the cache's misses 16%,
-  the probe loop 13%, the collector 20% and OCaml's calls per document
-  (indirect branches through `caml_c_call` and `caml_apply`) 8%.
-- LLaMA and Mistral, one warm pass: the SentencePiece merge (`Bpe.go` with
-  `merge_run`, `sp_load`, `sp_merge_short`) is about half of brot's
-  instructions and the `Replace` normalizer (`replace_byte`, `count_byte`) a
-  quarter.
+- At 47055829c, before brot read SentencePiece spaces in place of ▁ and
+  before its BPE cache grew, LLaMA and Mistral counted 61.1 and 61.2
+  instructions per byte, 236.4 and 234.1 mispredictions and 129.7 and 138.9
+  last-level misses per KB (eight-pass mean), a quarter of the instructions
+  spent marking the spaces with ▁ (`replace_byte`, `count_byte`) and most of
+  the misses on the two copies of each document that marking made. GPT-2
+  counted 32.1 instructions per byte, as now: its path did not change. Its
+  one-thread wall pair then gave 229.4 against 804.9 MB/s, LLaMA's 107.5
+  against 66.5 and Mistral's 65.0 against 62.8.
+- GPT-2 over the 100 MB corpus, which holds 320k distinct pretokens of up to
+  15 bytes: with the 8 MB cache, brot evicted and merged again what
+  gigatoken's table kept. Grown, the cache peaks at 32 MB, and a pass after
+  the first takes 0.195-0.20 s of user time where the 8 MB cache took
+  0.305-0.31 (gigatoken 0.115-0.14), under load 13-37. The first pass, whose
+  misses are mostly a pretoken's first occurrence, moves within the noise.
+- Pages: gigatoken asks for 2 MB pages for its pretoken table
+  (`MADV_HUGEPAGE`), and with fudge's transparent huge pages set to
+  `defrag=madvise` gets them; brot's tables land on 4 KB pages
+  (`AnonHugePages` 0), so a probe can miss the TLB, which callgrind does not
+  model. Over the 100 MB corpus under load 32-39, gigatoken with huge pages
+  turned off spent 7-17% more user time per Mistral pass, and brot with its
+  blocks of 4 MB or more on huge pages (an `LD_PRELOAD` experiment) 1-7%
+  less. With that, brot's Mistral passes took 0.76-0.79 s of user time
+  against gigatoken's 0.76-0.87.
+- GPT-2, eight warm passes: the kernel (`brot_byte_level_encode_ids32`, the
+  batch walk `harvest`, the merge of misses) is 84% of brot's instructions,
+  major GC marking and sweeping 7%, the added-token scan (`skip_one`) 6%.
+- Mistral, eight warm passes: the SentencePiece kernel (`Bpe.go` with
+  `merge_run`, `sp_load`, `sp_merge_short`) is 76% of brot's instructions, the
+  search for a ▁ to read as a space (`index_byte`) 6%, the collector 6% and
+  the added-token scan 4%. Of its mispredictions the merge of the cache's
+  misses (`merge_run`) is 44% and the unit walk 27%; of its last-level read
+  misses the collector's marking is 35% and the added-token scan, which reads
+  each document first, 30%.

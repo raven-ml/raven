@@ -8,6 +8,7 @@
 # forced: blessed BERT-base/Encode/batch_ids_32 GPT-2/Encode/batch_ids_32 LLaMA/Encode/batch_ids_32 Llama-3/Encode/batch_ids_32 Mistral/Encode/batch_ids_32 T5-base/Encode/batch_ids_32 under load 65.7 on 14 cores
 # forced: blessed Llama-3/Encode/ids_long_cold under load 62.1 on 14 cores
 # forced: blessed GPT-2/Encode/batch_ids_32 BERT-base/Encode/batch_ids_32 LLaMA/Encode/batch_ids_32 Llama-3/Encode/batch_ids_32 T5-base/Encode/batch_ids_32 Mistral/Encode/batch_ids_32 under load 31.5 on 14 cores
+# forced: blessed GPT-2/Encode/single_long GPT-2/Encode/ids_long GPT-2/Encode/batch_ids_32 LLaMA/Encode/single_short LLaMA/Encode/single_long LLaMA/Encode/ids_long LLaMA/Encode/batch_32 LLaMA/Encode/batch_ids_32 LLaMA/Decode/long Llama-3/Encode/single_long Llama-3/Encode/ids_long Llama-3/Encode/batch_ids_32 Llama-3/Encode/ids_long_cold Mistral/Encode/single_short Mistral/Encode/single_long Mistral/Encode/ids_long Mistral/Encode/batch_32 Mistral/Encode/batch_ids_32 under load 15.1 on 14 cores
 
 BERT-base/Decode/long	alloc_words	exact	4687665
 BERT-base/Encode/batch_32	alloc_words	exact	127210
@@ -17,30 +18,30 @@ BERT-base/Encode/single_long	alloc_words	exact	168694
 BERT-base/Encode/single_short	alloc_words	exact	3968
 GPT-2/Decode/long	alloc_words	exact	216476
 GPT-2/Encode/batch_32	alloc_words	exact	66698
-GPT-2/Encode/batch_ids_32	alloc_words	exact	5298
-GPT-2/Encode/ids_long	alloc_words	exact	14573
-GPT-2/Encode/single_long	alloc_words	exact	91429
+GPT-2/Encode/batch_ids_32	alloc_words	exact	5266
+GPT-2/Encode/ids_long	alloc_words	exact	14564
+GPT-2/Encode/single_long	alloc_words	exact	91420
 GPT-2/Encode/single_short	alloc_words	exact	2077
-LLaMA/Decode/long	alloc_words	exact	846900
-LLaMA/Encode/batch_32	alloc_words	exact	122602
-LLaMA/Encode/batch_ids_32	alloc_words	exact	20266
-LLaMA/Encode/ids_long	alloc_words	exact	55915
-LLaMA/Encode/single_long	alloc_words	exact	180949
-LLaMA/Encode/single_short	alloc_words	exact	3824
+LLaMA/Decode/long	alloc_words	exact	846889
+LLaMA/Encode/batch_32	alloc_words	exact	114799
+LLaMA/Encode/batch_ids_32	alloc_words	exact	12394
+LLaMA/Encode/ids_long	alloc_words	exact	44761
+LLaMA/Encode/single_long	alloc_words	exact	169795
+LLaMA/Encode/single_short	alloc_words	exact	3581
 Llama-3/Decode/long	alloc_words	exact	208550
 Llama-3/Encode/batch_32	alloc_words	exact	108266
-Llama-3/Encode/batch_ids_32	alloc_words	exact	5862
-Llama-3/Encode/ids_long	alloc_words	exact	27414
-Llama-3/Encode/ids_long_cold	alloc_words	exact	27365
+Llama-3/Encode/batch_ids_32	alloc_words	exact	5830
+Llama-3/Encode/ids_long	alloc_words	exact	27406
+Llama-3/Encode/ids_long_cold	alloc_words	exact	27354
 Llama-3/Encode/ids_long_cold	wall_time	batch=1	n=20	7.652e-04	5.676e-04 5.697e-04 5.784e-04 5.785e-04 5.871e-04 6.002e-04 6.134e-04 6.243e-04 7.425e-04 7.597e-04 7.707e-04 7.774e-04 8.563e-04 8.748e-04 8.760e-04 8.852e-04 8.953e-04 1.058e-03 1.103e-03 3.303e-03
-Llama-3/Encode/single_long	alloc_words	exact	154140
+Llama-3/Encode/single_long	alloc_words	exact	154132
 Llama-3/Encode/single_short	alloc_words	exact	3376
 Mistral/Decode/long	alloc_words	exact	830037
-Mistral/Encode/batch_32	alloc_words	exact	117962
-Mistral/Encode/batch_ids_32	alloc_words	exact	21776
-Mistral/Encode/ids_long	alloc_words	exact	56570
-Mistral/Encode/single_long	alloc_words	exact	176339
-Mistral/Encode/single_short	alloc_words	exact	3679
+Mistral/Encode/batch_32	alloc_words	exact	108751
+Mistral/Encode/batch_ids_32	alloc_words	exact	12496
+Mistral/Encode/ids_long	alloc_words	exact	43258
+Mistral/Encode/single_long	alloc_words	exact	163027
+Mistral/Encode/single_short	alloc_words	exact	3392
 Pre-tokenize/bert	alloc_words	exact	164180
 Pre-tokenize/byte_level	alloc_words	exact	209334
 Pre-tokenize/byte_level/short	alloc_words	exact	4656

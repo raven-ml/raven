@@ -173,9 +173,7 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - brot vs gigatoken cd5ee648c6 on fudge (bench README, "Against
   gigatoken"): GPT-2 runs at 0.34 of its speed on one thread (1.4x its
   instructions, 11x its mispredicts, 6x its last-level misses, in
-  `brot_byte_level_encode_ids32` and `mask_refill`) and 0.36 on eight;
-  Mistral at 0.74 with equal instructions and misses, unexplained;
-  SentencePiece pipelines spend 25% in `Normalizer.replace_byte`
+  `brot_byte_level_encode_ids32` and `mask_refill`) and 0.36 on eight
 
 ## repo
 
