@@ -126,6 +126,12 @@ and rune), raven / llama.cpp b12048 Vulkan:
   its promise of module variables per load (D146)
 - HIP's unstaged tensor-core operands load 8 bytes again since D261's copy
   rule: unmeasured on nonnormal
+- D355's guard constants are built with `vconst_like` in tolk and now in
+  tinygrad.patch; tolk with `const_like` fails the host division-extremes
+  test on a leftover `Expand`
+- kernels the schedule splits read a one-value variable only from the run,
+  so `Engine.run ~vars:[]` raises "unbound" for them where a call's bound
+  value would serve (the `.mli` allows either; no caller reaches it)
 
 ## rune, kaun, vega
 
