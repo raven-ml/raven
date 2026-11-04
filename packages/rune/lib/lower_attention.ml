@@ -401,6 +401,11 @@ let run_tiles ~tk ~bk ~splits ~gs len =
    has one row a thread. *)
 
 let simt_rows = 64
+
+(* The rows a SIMT workgroup holds for [a]: [simt_rows], or a warp's worth
+   of 32 threads for fewer rows, a decode step's one query a head, whose
+   other threads would hold no row. *)
+let rows_of a = if grouped a <= 32 then 32 else simt_rows
 let simt_keys = 32
 
 let simt ~local ~splits a xs =
@@ -408,7 +413,7 @@ let simt ~local ~splits a xs =
   let sum = Option.get x.sum in
   let acc = Arith.dtype a.acc in
   let gr = grouped a in
-  let bq = if local then simt_rows else 1 in
+  let bq = if local then rows_of a else 1 in
   let bk = simt_keys in
   let tiles_q = (gr + bq - 1) / bq in
   let rows = numel a.lead * a.hq * a.tq in
@@ -1335,8 +1340,8 @@ let lower ~device ~(renderer : Renderer.t)
                 if not local then 1
                 else
                   splits_for ~stream:renderer.stream_threads
-                    ~workgroups:(numel lead * a.hk * ceil_div (grouped a) simt_rows)
-                    ~threads:simt_rows ~tiles:(ceil_div tk simt_keys)
+                    ~workgroups:(numel lead * a.hk * ceil_div (grouped a) (rows_of a))
+                    ~threads:(rows_of a) ~tiles:(ceil_div tk simt_keys)
               in
               let sum =
                 Ops.new_buffer device (max 1 (rows * splits * dv)) acc_t

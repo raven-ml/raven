@@ -163,6 +163,60 @@ let paged_write e (positions : 'd Nx.int64_t) (pool : ('v, 's, 'd) Nx.t)
   in
   permute e [| 1; 0; 2; 3 |] (reshape e [| hk; pages; page; d |] summed)
 
+(* The programs a call's derivative runs, made once per pair program and
+   marked loads: its visibility and its score alone; the score's tangent,
+   over the pair program's operands then the tangents of its operand 0 and
+   of each marked load; and that tangent's transpose's outputs, one program
+   per tangent operand that receives a cotangent, over the pair program's
+   operands then the score's cotangent. *)
+type plan = {
+  visible : P.t;
+  score : P.t;
+  tangent : P.t option;
+  reads : P.t option array;  (** Operand 0's, then each marked load's. *)
+}
+
+let plans : plan Memo.t = Memo.create ()
+
+let make_plan (prog : P.t) tangents =
+  let n = Iarray.length prog.ins in
+  let one k (p : P.t) = P.subst ~outs:[| k |] ~ins:p.ins (fun _ -> None) p in
+  let marked = Array.init n (fun i -> i = 0 || tangents.(i - 1)) in
+  let b = Scalar.start prog ~tangents:marked ~extra:[||] in
+  let tangent =
+    match Scalar.tangent b 1 with
+    | Some t -> Some (Scalar.finish b ~outs:[| t |])
+    | None -> None
+  in
+  let count = Array.fold_left (fun c t -> if t then c + 1 else c) 1 tangents in
+  let reads =
+    match tangent with
+    | None -> Array.make count None
+    | Some tp ->
+        let m = Iarray.length tp.ins in
+        let acc = P.dtype prog (Iarray.get prog.outs 1) in
+        let linear = Array.init m (fun i -> i >= n) in
+        let tr, got = Scalar.transpose tp ~linear ~cts:[| (0, acc) |] in
+        let next = ref 0 in
+        Array.init (m - n) (fun i ->
+            match tr with
+            | Some tr when got.(n + i) ->
+                let k = !next in
+                incr next;
+                Some (one k tr)
+            | _ -> None)
+  in
+  { visible = one 0 prog; score = one 1 prog; tangent; reads }
+
+let plan spec =
+  let n = Iarray.length spec.prog.ins in
+  if not (Memo.fits n) then make_plan spec.prog spec.tangents
+  else
+    let mask = ref 1 in
+    Array.iteri (fun i t -> if t then mask := !mask lor (1 lsl (i + 1))) spec.tangents;
+    Memo.plain plans spec.prog !mask ~make:(fun k ->
+        make_plan k.prog (Array.sub (Memo.operands k) 1 (n - 1)))
+
 (* The pieces both directions read *)
 
 type ('v, 's, 'a, 'd) pieces = {
@@ -219,16 +273,9 @@ let pieces (type v s a d) e spec ~(acc : (float, a) D.t) (q : (v, s, d) Nx.t)
   let gq = reshape e (shape [| hk; hq / hk; tq; Nx.dim (-1) q |]) q in
   let s = reshape e f (contract acc ~lead:l "# h g i d, # h j d -> # h g i j | d" gq k) in
   let s = Nx.mul s (Nx.scalar_like s spec.scale) in
-  let visible =
-    map1 e D.Bool f
-      (P.subst ~outs:[| 0 |] ~ins:spec.prog.ins (fun _ -> None) spec.prog)
-      (Prim.Any s :: loads)
-  in
-  let score =
-    map1 e acc f
-      (P.subst ~outs:[| 1 |] ~ins:spec.prog.ins (fun _ -> None) spec.prog)
-      (Prim.Any s :: loads)
-  in
+  let pl = plan spec in
+  let visible = map1 e D.Bool f pl.visible (Prim.Any s :: loads) in
+  let score = map1 e acc f pl.score (Prim.Any s :: loads) in
   (* A pair is seen where its key is before the row's length and its table
      entry is in range. *)
   let extra =
@@ -278,16 +325,6 @@ let where_seen e pc x =
     [ Prim.Any pc.seen; Prim.Any x ]
     E.(where (input 0 D.Bool) (input 1 dt) (const dt (D.zero dt)))
 
-(* The score's tangent program: over the pair program's operands, then the
-   tangents of its operand 0 and of each load [spec.tangents] marks. *)
-let score_tangent spec =
-  let n = Iarray.length spec.prog.ins in
-  let tangents = Array.init n (fun i -> i = 0 || spec.tangents.(i - 1)) in
-  let b = Scalar.start spec.prog ~tangents ~extra:[||] in
-  match Scalar.tangent b 1 with
-  | Some t -> Some (Scalar.finish b ~outs:[| t |])
-  | None -> None
-
 let tangent (type v s w r a d) e spec ~(acc : (float, a) D.t)
     (q : (v, s, d) Nx.t) (kv : (v, s, d) Nx.kv) lengths
     (loads : d Prim.any list) (o : (w, r, d) Nx.t) (lse : (float, a, d) Nx.t)
@@ -308,7 +345,7 @@ let tangent (type v s w r a d) e spec ~(acc : (float, a) D.t)
   let ds = Nx.add (raw dq pc.k) (raw q dk) in
   let ds = Nx.mul ds (Nx.scalar_like ds spec.scale) in
   let dx =
-    match score_tangent spec with
+    match (plan spec).tangent with
     | None -> Nx.zeros_like pc.s
     | Some tp ->
         map1 e acc pc.f tp ((Prim.Any pc.s :: loads) @ (Prim.Any ds :: dloads))
@@ -343,26 +380,11 @@ let cotangent (type v s w r a d) e spec ~(acc : (float, a) D.t)
   (* The program's transpose: the score's cotangent [ds] read back to the
      operands its tangent was computed from: operand 0, then each marked
      load. *)
-  let n = Iarray.length spec.prog.ins in
-  let marked = Array.length (Array.of_list (List.filter Fun.id (Array.to_list spec.tangents))) in
   let reads =
-    match score_tangent spec with
-    | None -> Array.make (marked + 1) None
-    | Some tp ->
-        let m = Iarray.length tp.ins in
-        let linear = Array.init m (fun i -> i >= n) in
-        let tr, got = Scalar.transpose tp ~linear ~cts:[| (0, D.Any acc) |] in
-        let next = ref 0 in
-        Array.init (m - n) (fun i ->
-            if not got.(n + i) then None
-            else
-              match tr with
-              | None -> None
-              | Some tr ->
-                  let k = !next in
-                  incr next;
-                  let one = P.subst ~outs:[| k |] ~ins:tr.ins (fun _ -> None) tr in
-                  Some (map1 e acc pc.f one ((Prim.Any pc.s :: loads) @ [ Prim.Any ds ])))
+    Array.map
+      (Option.map (fun one ->
+           map1 e acc pc.f one ((Prim.Any pc.s :: loads) @ [ Prim.Any ds ])))
+      (plan spec).reads
   in
   let zero () = Nx.zeros_like pc.s in
   let bs = Option.value reads.(0) ~default:(zero ()) in
