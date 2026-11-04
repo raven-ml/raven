@@ -1007,6 +1007,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 - `Renderer.t` gains `stream_threads` and `local_workgroups`, the threads
   that keep a part's memory busy and the fewest workgroups a split leaves,
   which `Heuristic` read as constants and rune's attention lowering reads too.
+- On the host, `Heuristic.hand_coded_optimizations` keeps an iteration within
+  512 lanes, its unroll's among them: rune's contraction of 8 groups of
+  data-chosen rows compiled in 5.3 s at 1024 lanes, and now in 1.1 s.
 - A kernel whose index computes in a typed integer, such as `Int32`, takes
   the optimisations of the same kernel in the weak integer: `Heuristic` read
   a stride, tile or divisor of a typed constant as unknown, so 119 of its

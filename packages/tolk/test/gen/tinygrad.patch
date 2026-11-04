@@ -1310,10 +1310,10 @@ index 0838d70c9..dadd54ab5 100644
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index ec97cac6f..3267e2ce0 100644
+index ec97cac6f..928507e2a 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
-@@ -1,9 +1,324 @@
+@@ -1,9 +1,337 @@
 -import itertools
 +import itertools, math
  from tinygrad.codegen.opt import Opt, OptOps, KernelOptError
@@ -1427,9 +1427,22 @@ index ec97cac6f..3267e2ce0 100644
 +    known[u] = s
 +    return s
 +  return max([prod(spread(u).values()) for u in k.ast.toposort() if u.op is Ops.CAST] + [1])
++# an iteration computes the lanes of every upcast axis, those of an unrolled reduce among them, and clang's time grows much faster than
++# its lanes where they put together vectors gathered from apart, while past 512 lanes an unroll ran no faster. so on the host an
++# iteration computes at most ITERATION_LANES, and an output upcast counts too the lanes an unroll of the last unrollable axis would
++# take: the axis whole when it holds at most 32, else 4
++ITERATION_LANES = 512
++def unroll_lanes(k:Scheduler) -> int:
++  if not (axes:=k.upcastable_dims(reduce=True)): return 1
++  return s if isinstance(s:=k.full_shape[axes[-1]], int) and s <= 32 else 4
++def iteration_lanes(k:Scheduler, upcast:tuple[int, int]|None=None, unroll:tuple[int, int]|None=None) -> int|None:
++  def by(o): return 1 if o is None else o[1] if o[1] > 0 else k.full_shape[o[0]]
++  room = 1 if upcast is None else unroll_lanes(k)
++  return n * by(upcast) * by(unroll) * room if isinstance(n:=k.upcast_size(), int) else None
 +def host_fits(k:Scheduler, upcast:tuple[int, int]|None=None, unroll:tuple[int, int]|None=None) -> bool:
 +  return (regs:=host_registers(k)) is None or \
-+    (held_registers(k, regs, upcast, unroll) <= regs[0] // HELD_SHARE and conversion_lanes(k, upcast, unroll) <= CONVERTED_LANES)
++    (held_registers(k, regs, upcast, unroll) <= regs[0] // HELD_SHARE and conversion_lanes(k, upcast, unroll) <= CONVERTED_LANES and
++     (n:=iteration_lanes(k, upcast, unroll)) is not None and n <= ITERATION_LANES)
 +
 +# on the host the first output upcast of a reduce kernel takes the axis its stores write at unit stride to a host vector of the
 +# accumulators' lanes, HOST_VECTOR_BYTES, the largest power of two that divides it and fits: as the target's vector width splits a
@@ -1640,7 +1653,7 @@ index ec97cac6f..3267e2ce0 100644
  
  def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # first try the tensor cores
-@@ -24,23 +339,63 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -24,23 +352,63 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      2: allows kernels with M, N, K axes that are not multiples of the tensor core dimensions by applying padding those axes as needed
    TC_MIN_GLOBALS -- do not upcast N when it would drop the specified global count
    """
@@ -1709,7 +1722,7 @@ index ec97cac6f..3267e2ce0 100644
        return tk
  
    # make a copy so it does not mutate the input
-@@ -57,25 +412,24 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -57,25 +425,24 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
          if unit_stride_axes_mul_4 and (axis:=unit_stride_axes_mul_4[0]) in k.upcastable_dims(reduce=None):
            k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST)))
  
@@ -1753,7 +1766,7 @@ index ec97cac6f..3267e2ce0 100644
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -110,47 +464,106 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -110,47 +477,106 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
@@ -1876,7 +1889,7 @@ index ec97cac6f..3267e2ce0 100644
      k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (4, AxisType.UPCAST)))
  
    # **** local groups ****
-@@ -172,11 +585,13 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -172,11 +598,13 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      else:
        # prioritize making expand axes local
        local_axis_ranking = [(any(k.rngs[axis] not in b.src[1].get_idx().backward_slice for b in k.bufs), axis) \

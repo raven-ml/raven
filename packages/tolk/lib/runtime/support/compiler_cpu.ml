@@ -368,10 +368,11 @@ let flags ~version arch = fixed ~llvm:(llvm_major version) (selection arch)
 
    On arm64, LLVM's interleaved load combine looks for loads that shuffles put
    together into an interleaved vector, to read them with one ldN, and its time
-   grows much faster than the lanes it meets: rune's contraction of 8 groups of
-   data-chosen rows, whose host kernel computes 1024 lanes gathered from 32
-   loaded rows, took Clang 19 for apple-m1 293 s, 274 s of them in that pass,
-   and 8 s without it. Every Clang compiles arm64 without it. *)
+   grows much faster than the lanes it meets: a host kernel of rune's
+   contraction of 8 groups of data-chosen rows that computes 1024 lanes
+   gathered from 32 loaded rows took Clang 19 for apple-m1 293 s, 274 s of
+   them in that pass, and 8 s without it. Every Clang compiles arm64 without
+   it. *)
 let compile_args selected ~llvm =
   let slp =
     match llvm with Some (18 | 19) -> [ "-fno-slp-vectorize" ] | _ -> []

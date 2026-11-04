@@ -185,21 +185,24 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     registers ({!Renderer.t.registers}), counts its lanes in registers
     ({!held_registers}): its upcasts after the masked and shared ones, and its
     unroll, take only what keeps the accumulators of its hottest loop within
-    half the registers and each conversion within 64 lanes, those of the upcast
+    half the registers, each conversion within 64 lanes, those of the upcast
     axes its value reads that hold distinct values ([n] lanes of an axis read as
     a quotient by [d] hold [n / gcd n d], and a reduce's lanes are summed before
-    it); and a file of no fewer registers, each no narrower, takes no fewer
-    output lanes. These upcasts apply however few elements the upcastable axes
-    hold. The first upcasts the axis its stores write at unit stride, when every
-    access that reads the axis reads it at unit stride, by the largest power of
-    two, at most 16, that keeps the lanes within a vector of the accumulators'
-    type, divides the axis and fits; the upcasts by 3 or 4 follow while they
-    fit, whatever the lanes; when none is left, one more, by 2, of an output
-    axis that an access reading a reduce axis does not index, while it fits. The
-    unroll takes what fits while the lanes upcast fill fewer registers than the
-    target has, and next to a wholly unrolled axis of at most 3, unrolls the
-    next reduce axis by the largest power of two that keeps the unrolled lanes
-    within a vector of the reduce's type.
+    it), and an iteration within 512 lanes, the product of its upcast axes, the
+    unrolled ones among them; an output upcast counts too the lanes an unroll of
+    the last unrollable axis would take, the axis whole when it holds at most
+    32, 4 otherwise. A file of no fewer registers, each no narrower, takes no
+    fewer output lanes. These upcasts apply however few elements the upcastable
+    axes hold. The first upcasts the axis its stores write at unit stride, when
+    every access that reads the axis reads it at unit stride, by the largest
+    power of two, at most 16, that keeps the lanes within a vector of the
+    accumulators' type, divides the axis and fits; the upcasts by 3 or 4 follow
+    while they fit, whatever the lanes; when none is left, one more, by 2, of an
+    output axis that an access reading a reduce axis does not index, while it
+    fits. The unroll takes what fits while the lanes upcast fill fewer registers
+    than the target has, and next to a wholly unrolled axis of at most 3,
+    unrolls the next reduce axis by the largest power of two that keeps the
+    unrolled lanes within a vector of the reduce's type.
 
     The optimisations do not depend on the integer type of [k]'s ranges and
     index: a bound, stride, tile or divisor that is a constant of a type

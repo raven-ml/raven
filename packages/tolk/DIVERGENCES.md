@@ -2453,7 +2453,7 @@ host's accumulators in its vector registers.
   where it reads it only as `r / d`, is upcast, later axes first, by the
   largest amount up to 16 that divides the axis and one such operand's `f`
   and keeps the kernel within the host's budget (D186's registers and D241's
-  conversions). An operand is decoded when its value converts integers it
+  conversions and iteration). An operand is decoded when its value converts integers it
   reads into floats, by a cast or a bitcast, outside any access's address.
   The axis's lanes then share one decode of each value. A host renderer
   that does not know its registers takes at most 4. On a GPU a streamed contraction takes the
@@ -6817,9 +6817,9 @@ and an initial value is added after it (D260).
 - **Differs:** on the host (a renderer that knows its vector registers,
   D186), the contiguous upcast and the upcasts by 3, 4 or 2 apply however
   few elements the upcastable axes hold, bounded by the register budget
-  (D186) and the conversions' lanes (D241) alone. Other devices, and a host
-  renderer that knows no registers, keep tinygrad's 1024 elements: on a GPU
-  the outputs are its threads.
+  (D186) and the conversions' and the iteration's lanes (D241) alone. Other
+  devices, and a host renderer that knows no registers, keep tinygrad's
+  1024 elements: on a GPU the outputs are its threads.
 - **Reason:** (d): rune's host products of few outputs over long sums,
   gpt-oss's decode projections and lorenz_simple's step. On the host an
   upcast takes lanes that share a load and run independent chains, where a
@@ -6849,19 +6849,25 @@ and an initial value is added after it (D260).
   `host/matvec_tall/heuristic` and `lorenz/r_32_3_2_4_3_400/heuristic`,
   whose fudge baselines the scheduled re-record records.
 
-## D241. A host conversion takes at most 64 lanes
+## D241. A host conversion takes at most 64 lanes, an iteration 512
 
 - **tinygrad:** `codegen/opt/heuristic.py:111-150` (the upcasts while
   fewer than 32 lanes and the unroll while fewer than 64, counting every
   lane of the kernel).
-- **tolk:** `Heuristic.converted_lanes`, `Heuristic.conversion_lanes` and
-  `Heuristic.fits`; `test/gen/tinygrad.patch`, which gives tinygrad the
-  same before the goldens are recorded.
+- **tolk:** `Heuristic.converted_lanes`, `Heuristic.conversion_lanes`,
+  `Heuristic.iteration_lanes`, `Heuristic.unroll_lanes`,
+  `Heuristic.lanes_after` and `Heuristic.fits`; `test/gen/tinygrad.patch`,
+  which gives tinygrad the same before the goldens are recorded.
 - **Differs:** on the host, the upcasts after the masked and shared ones
   and the unroll (D186) apply only while each conversion (`CAST`) computes
   at most 64 lanes: of the upcast axes its value reads, the lanes holding
   distinct values, `n / gcd n d` of `n` lanes read as a quotient by `d`,
-  and none of a reduce's closed axes, whose lanes it sums first.
+  and none of a reduce's closed axes, whose lanes it sums first. They also
+  keep an iteration within 512 lanes, the product of the upcast axes, the
+  unrolled ones among them; an output upcast counts too the lanes an unroll
+  of the last unrollable axis would take, the axis whole when it holds at
+  most 32, 4 otherwise, as tinygrad's 32 output lanes leave room below its
+  64 for the unroll.
 - **Reason:** (d): Clang's straight-line vectorizer, which packs a
   conversion's vector from the lanes it converts, takes time much faster
   than linear in them where they are loads gathered from apart: 98% of
@@ -6875,13 +6881,49 @@ and an initial value is added after it (D260).
   unroll, 89-98 µs, where 32 by 4 took 332-336 and 16 by 4 338-344. The
   routed products read their block's expert as a row's quotient and keep
   their unroll by 8, which ran 1.35 times as fast as by 2.
+
+  The iteration's lanes: Clang's time grows much faster than them where
+  they put together vectors from many loaded rows, 97% of it in InstCombine
+  and VectorCombine (`-ftime-report`). rune's `Lower_reduce › work › a
+  Contracting contraction of 8 groups works in blocks` builds
+  `r_23_4_16_4_16`, 16 by 4 output lanes by its 16 rows unrolled whole,
+  each row loaded at an index read from memory. Clang 19 for fudge's
+  processor (CPU time) took 5.3-5.6 s on it, and over its other upcasts and
+  unrolls 0.04-0.05 s at 64 lanes, 0.07-0.09 at 128, 0.17-0.23 at 256 and
+  0.9-1.1 at 512. It now takes 32 output lanes by its rows, 512 lanes, in
+  1.1 s; it runs as fast (22.2-22.8 µs against 22.4, one P-core) and keeps
+  its rows' loads out of its output loop, which an unroll by 4 or none
+  would load four times (73,600 estimated bytes against 153,088, past that
+  test's bound). Of the 15,220 host kernels the tolk, rune and jera suites
+  optimise, 23 change, all rune's: of the 17 past 512 lanes, a product of
+  64 output lanes summed over 32 values unrolled whole (2048 lanes) ran
+  605-629 µs and 517-533 with 16 output lanes, one over 16 values (1024)
+  700-726 and 670-719, and the rest tie; past 256 lanes the next slowest
+  compiles in 0.24 s, where 0.44 s was. The cost: the Heuristic suite's
+  `conv` on AVX2 unrolls its 3 by 3 window by 3 alone, 192 lanes against
+  576, and runs 1.12 times as long (620 µs against 554, one P-core), though
+  Clang takes 0.08 s on it at 576: the lanes stand for Clang's time only
+  as a bound. 256 lanes would hold every kernel within 0.25 s, but take
+  the routed MXFP4 decodes (`decoded_rows_*`, gpt-oss's experts) from their
+  unroll by 8 to 4, and `matmul_1000` ran 1.02-1.06 times as long there.
+  Computing a vector operation wider than 256 lanes lane by lane instead,
+  in the renderer (D141), compiled the contraction in 0.26 s but ran it in
+  25.5 µs against 21.4 and `paired_products` in 177 µs against 113.
 - **Pinned by:** the Heuristic suite's `the host's lanes › on AVX2 a
   recorded host kernel's conversions take their lanes` and `› on the host a
   conversion computes at most 64 lanes`, over every recorded kernel and
   lorenz_simple's on four register files, and the host cases of `the
   optimisations chosen are tinygrad's`; rune's compile bench row
   `products/vecmat-bf16`, whose fudge baseline the scheduled re-record
-  records.
+  records. The iteration: the Heuristic suite's `the host's lanes › on the
+  host an iteration computes at most 512 lanes`, over the same kernels and
+  rune's contraction of 8 groups (`contracting_groups.graph`), `› on AVX2
+  an output upcast leaves room for the whole unroll of an axis of at most
+  32` and `› an output upcast leaves 4 lanes for the unroll of an axis past
+  32`; rune's `Lower_reduce › work › a Contracting contraction of 8 groups
+  works in blocks`; rune's compile bench row `products/segments-grad` (5.5
+  s cold before, 1.5 s after, on fudge), whose baseline, with the tolk
+  bench's `host/conv/heuristic`, the scheduled re-record records.
 
 ## D260. A tensor core accumulates its running sum at the reduce
 

@@ -1129,15 +1129,59 @@ let conversion_lanes ?upcast ?unroll k =
     1
     (toposort ~calls:Skip (K.ast k))
 
+(* An iteration computes the lanes of every upcast axis, those of an unrolled
+   reduce among them, and the C compiler's time grows much faster than its
+   lanes where they put together vectors gathered from apart: rune's
+   contraction of 8 groups of rows read at indices read from memory, which
+   multiplies its output lanes by its 16 rows unrolled, compiles in 0.04 s at
+   64 lanes, 0.23 s at 256, 0.9-1.1 s at 512 and 5.3 s at 1024. Past 512 an
+   unroll ran no faster: a product of 64 output lanes summed over 32 values
+   unrolled whole, 2048 lanes, took 605-629 us, and 517-533 us with 16 output
+   lanes. So on the host an iteration computes at most [iteration_lanes], and
+   an output upcast leaves room for an unroll ([unroll_lanes]), as tinygrad's
+   32 output lanes leave room below its 64 for it: that
+   contraction then takes 32 output lanes and keeps its rows unrolled, loaded
+   outside its output loop. *)
+let iteration_lanes = 512
+
+(* The lanes an unroll of [k]'s last unrollable axis would take: the axis
+   whole when it holds at most 32, 4 otherwise. *)
+let unroll_lanes k =
+  match K.upcastable_dims ~reduce:true k with
+  | [] -> 1
+  | dims -> (
+      match known_size (shape_at k (last dims)) with
+      | Some n when Bigint.(leq n (of_int 32)) -> Bigint.to_int n
+      | _ -> 4)
+
+(* The lanes an iteration of [k] computes once [upcast] and [unroll] are
+   applied, those the unroll would take after an upcast among them, if its
+   upcast axes' sizes are known. *)
+let lanes_after ?upcast ?unroll k =
+  let by = function
+    | Some (_, n) when n > 0 -> n
+    | Some (axis, _) -> Bigint.to_int (size_at k axis)
+    | None -> 1
+  in
+  let room = if Option.is_some upcast then unroll_lanes k else 1 in
+  Option.map
+    (fun n -> Bigint.to_int n * by upcast * by unroll * room)
+    (known_size (K.upcast_size k))
+
 (* Whether [k] stays within the host's budget once [upcast] and [unroll] are
    applied: its hottest loop holds its accumulators within half the registers,
-   and a conversion takes at most [converted_lanes]; always off the host. *)
+   a conversion takes at most [converted_lanes] and an iteration at most
+   [iteration_lanes]; always off the host. *)
 let fits ?upcast ?unroll k =
   match registers k with
   | None -> true
-  | Some file ->
+  | Some file -> (
       held ?upcast ?unroll k file <= file.count / held_share
       && conversion_lanes ?upcast ?unroll k <= converted_lanes
+      &&
+      match lanes_after ?upcast ?unroll k with
+      | Some n -> n <= iteration_lanes
+      | None -> false)
 
 (* On the host, the first output upcast of a reduce kernel takes the axis its
    stores write at unit stride to a host vector of the accumulators' type

@@ -1,6 +1,7 @@
 /* The kernel r_23_4_16_4_16 of rune's Contracting contraction of 8
-   groups (Lower_reduce's work suite), as tolk renders it for x86_64: each
-   iteration multiplies 1024 lanes gathered from 32 loaded rows. LLVM's
+   groups (Lower_reduce's work suite), rendered for x86_64 with 16 by 4
+   output lanes and its 16 rows unrolled: each iteration multiplies 1024
+   lanes gathered from 32 loaded rows. LLVM's
    interleaved load combine took Clang 19 293 s on it for apple-m1. */
 typedef float float8 __attribute__((aligned(4),ext_vector_type(8)));
 typedef long long16 __attribute__((aligned(8),ext_vector_type(16)));

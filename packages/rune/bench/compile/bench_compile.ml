@@ -451,6 +451,24 @@ let vecmat_bf16 () =
   let x = Nx.place Nx.Host.on (Nx.Rng.uniform Nx.float32 [| 1; 2880 |]) in
   compile (fun x -> Nx.matmul x (Nx.cast Nx.float32 w)) x
 
+(* The gradient in [w] of 256 rows of 16 float32 values by the 16 by 16
+   matrix of [w] each row's id names, of 8: a contraction of each group's
+   rows, read at positions its ids hold, whose host kernel's lanes, put
+   together from many loaded rows, set Clang's work. *)
+let segments_grad () =
+  let rows = 256 and k = 16 and groups = 8 in
+  let ids =
+    Nx.place Nx.Host.on
+      (Nx.create Nx.int64 [| rows |]
+         (Array.init rows (fun r -> Int64.of_int (r mod groups))))
+  in
+  let x = Nx.place Nx.Host.on (Nx.Rng.uniform Nx.float32 [| rows; k |]) in
+  let y = Nx.place Nx.Host.on (Nx.Rng.uniform Nx.float32 [| rows; k |]) in
+  let w = Nx.place Nx.Host.on (Nx.Rng.uniform Nx.float32 [| groups; k; k |]) in
+  compile
+    (Rune.grad' (fun w -> Nx.sum (Nx.mul (Nx.matmul_segments ids x w) y)))
+    w
+
 (* Eight nested float64 sines of 1024 values on CUDA's first GPU: one kernel of
    some thousand lines, whose binary the GPU's driver loads. *)
 let cuda_sines () =
@@ -492,6 +510,7 @@ let cases =
     ("special/gammaincinv-grad-f64", gammaincinv_grad);
     ("wide/sum-1e6", wide_sum);
     ("products/vecmat-bf16", vecmat_bf16);
+    ("products/segments-grad", segments_grad);
     ("devices/dp-step-16", data_parallel);
     ("devices/partials-16", partials);
     ("cuda/sin-nested-8", cuda_sines);

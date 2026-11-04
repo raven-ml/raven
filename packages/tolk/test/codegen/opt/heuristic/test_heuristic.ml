@@ -919,12 +919,21 @@ let lorenz =
       "r_128_16_3_4_4_3_3_400_400"; "r_32_256_50_4_4_2_4_4"; "r_32_3_2_4_3_400";
     ]
 
+(* rune's contraction of 8 groups of 256 rows, each row read at an index read
+   from memory, as rune lowers it for the host. *)
+let contracting_groups =
+  ( "contracting_groups",
+    lazy
+      (Graph.of_string
+         (In_channel.with_open_bin "contracting_groups.graph"
+            In_channel.input_all)) )
+
 let host_kernels =
   List.map
     (fun name -> (name, lazy (kernel name)))
     (List.sort_uniq String.compare
        (List.map (fun c -> c.kernel) recorded_cases))
-  @ lorenz
+  @ lorenz @ [ contracting_groups ]
 
 let optimized k file =
   let s = K.v k (host file) in
@@ -1470,6 +1479,59 @@ let conversions_bounded =
       at_most ~msg:name int ~than:64
         (conversion_lanes (optimized (Lazy.force k) file)))
 
+(* The lanes an iteration of [s] computes: the product of its upcast axes,
+   those its unroll takes among them. *)
+let iteration_lanes s =
+  match K.upcast_size s with Ops.Int n -> n | _ -> failf "unknown lanes"
+
+let iterations_bounded =
+  cases "on the host an iteration computes at most 512 lanes"
+    ~id:(fun (name, _, file) -> name ^ " " ^ file_id file)
+    budget_rows
+    (fun (name, k, file) ->
+      at_most ~msg:name int ~than:512
+        (iteration_lanes (optimized (Lazy.force k) file)))
+
+(* rune's contraction of 8 groups on AVX2's file: its stores' axis takes 16
+   lanes, an upcast by 4 of its other output axis would leave 64 lanes for
+   its 16 rows, 1024, past 512, and the fill by 2 leaves 32: its rows unroll
+   whole. *)
+let room_for_unroll =
+  test "on AVX2 an output upcast leaves room for the whole unroll of an axis \
+        of at most 32"
+    (fun () ->
+      let s = optimized (Lazy.force (snd contracting_groups)) (16, 32) in
+      equal ~msg:"output lanes" int 32 (output_lanes s);
+      equal ~msg:"iteration lanes" int 512 (iteration_lanes s))
+
+(* [out[i, j, l] = Σ_r a[i, r] b[j, r] c[l, r]] over 64 [i], [j] and [l] and
+   128 [r]: each output axis is one an operand does not read, so each takes
+   an upcast. *)
+let triple_products =
+  let n = 64 and k = 128 in
+  let out = Shape.param ~shape:[ Ops.Int (n * n * n) ] 0 Float32 in
+  let operand slot = Shape.param ~shape:[ Ops.Int (n * k) ] slot Float32 in
+  let a = operand 1 and b = operand 2 and c = operand 3 in
+  let i = Ops.range (Int n) [ 0 ] and j = Ops.range (Int n) [ 1 ] in
+  let l = Ops.range (Int n) [ 2 ] and r = Ops.range (Int k) [ 3 ] in
+  let open Ops.O in
+  let at x row = Ops.index x [ (row * int k) + r ] in
+  let column = Ops.index c [ (r * int n) + l ] in
+  let sum = Ops.reduce (at a i * at b j * column) Add [ r ] in
+  let stored = Ops.index out [ (((i * int n) + j) * int n) + l ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store stored sum) [ i; j; l ] ]
+
+(* On a file of 64 registers of 64 bytes, whose accumulators would hold 256
+   of [triple_products]' output lanes, an output upcast leaves 4 lanes for
+   the unroll of its 128 summed values: 128 output lanes, unrolled by 4. *)
+let room_past_32 =
+  test "an output upcast leaves 4 lanes for the unroll of an axis past 32"
+    (fun () ->
+      let s = optimized triple_products (64, 64) in
+      equal ~msg:"output lanes" int 128 (output_lanes s);
+      equal ~msg:"iteration lanes" int 512 (iteration_lanes s))
+
 (* The tensor core's floor *)
 
 (* A renderer of CDNA's cores, whose workgroup is 64 threads. *)
@@ -1951,7 +2013,14 @@ let () =
          group "the host's budget"
            [ held_cases; budget; more_registers; doubles ];
          group "the host's lanes"
-           [ lane_cases; conversion_cases; conversions_bounded ];
+           [
+             lane_cases;
+             conversion_cases;
+             conversions_bounded;
+             iterations_bounded;
+             room_for_unroll;
+             room_past_32;
+           ];
          group "the tensor core's floor" [ floored ];
          decode_bound;
          group "the host's decodes"
