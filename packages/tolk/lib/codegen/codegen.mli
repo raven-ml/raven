@@ -48,7 +48,8 @@ val full_rewrite_to_sink :
     holds. A kernel whose builder fixed its threads takes neither, and one
     that buffers values does not take the heuristic ({!Postrange.apply_opts}).
     Its tensor cores' operands are then staged through shared memory
-    ({!Stage.operands}). The settings {!Setting.disable_fast_idiv}
+    ({!Stage.operands}), and on the host its decoded operand through a panel
+    ({!Stage.decodes}). The settings {!Setting.disable_fast_idiv}
     and {!Setting.transcendental} choose how divisions by constants and
     transcendental functions are decomposed ({!Decomp_op.late_patterns},
     {!Transcendental.val-patterns}). When the setting {!Setting.spec} is [1] or

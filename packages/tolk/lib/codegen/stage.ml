@@ -782,3 +782,133 @@ let admits (ren : Renderer.t) sink =
   && depth ren [ copy ] > 0
   && List.for_all (fun u -> (not (Op.equal (op u) Op.Wmma)) || core u) all
 
+
+(* Decoded panels on the host *)
+
+let decoded o =
+  let converts u =
+    (op u = Op.Cast || op u = Op.Bitcast)
+    && Dtype.is_float (dtype u)
+    && Dtype.is_int (dtype (nth u 0))
+  in
+  List.exists converts
+    (toposort ~calls:Skip ~gate:(fun u -> op u <> Op.Index) o)
+
+(* The panel lies on the stack of the thread that runs the kernel: a rig pool's
+   worker has 8 MiB, the calling thread its own, which a thread a program starts
+   takes at the C library's default, 512 KiB on macOS. An eighth of that leaves
+   the rest to the caller. *)
+let panel_bytes = 64 * 1024
+
+let by_axis rs =
+  List.sort (fun a b -> List.compare Int.compare (axis_id a) (axis_id b)) rs
+
+(* The decoded operands of [all]'s sums of products, each with the ranges its
+   sum closes. *)
+let decoded_operands all =
+  let strip u = if Op.equal (op u) Op.Cast then nth u 0 else u in
+  List.concat_map
+    (fun r ->
+      match arg r with
+      | Reduce { op = Op.Add; _ } when Op.equal (op (strip (nth r 0))) Op.Mul ->
+          List.filter_map
+            (fun o -> if decoded o then Some (o, List.tl (src r)) else None)
+            (src (strip (nth r 0)))
+      | _ -> [])
+    (List.filter (fun u -> Op.equal (op u) Op.Reduce) all)
+
+(* [sink] with [o]'s values within one trip of the output [loops] it reads
+   ([inner], its sum's ranges and its lanes) stored into a register buffer
+   before those trips' other loops, and read back from it; the loops [o] reads
+   renumbered to run outside the others. *)
+let panel all sink ~loops ~lanes o inner =
+  (* The panel's loops, then its lanes, each a stride of the extents after it: a
+     trip's lanes lie together. *)
+  let inner =
+    List.stable_sort
+      (fun a b -> Bool.compare (lanes a) (lanes b))
+      (by_axis inner)
+  in
+  let address rs =
+    List.fold_left (fun acc r -> O.((acc * int (extent r)) + r)) (int 0) rs
+  in
+  let next_id =
+    ref
+      (List.fold_left
+         (fun n u ->
+           if Op.equal (op u) Op.Range then List.fold_left max n (axis_id u)
+           else n)
+         0 all)
+  in
+  let fresh r =
+    incr next_id;
+    let axis_type = if lanes r then Axis_type.Upcast else Axis_type.Loop in
+    range ~axis_type (Int (extent r)) [ !next_id ]
+  in
+  let copies = List.map fresh inner in
+  let slot =
+    List.fold_left
+      (fun n u ->
+        match (op u, arg u) with
+        | (Op.Buffer | Op.Alloc), Param p -> max n (p.slot + 1)
+        | _ -> n)
+      0 all
+  in
+  let size = List.fold_left (fun n r -> n * extent r) 1 inner in
+  let buf = Shape.alloc ~slot ~addrspace:Dtype.Reg [ Int size ] (dtype o) in
+  let value = substitute ~calls:Skip ~pass:Once o (List.combine inner copies) in
+  let stored = end_ (store (index buf [ address copies ]) value) copies in
+  let read = index (after buf [ stored ]) [ address inner ] in
+  (* Loops nest in the order of their axes: renumbered, the loops [o] reads take
+     the first of the output loops' axes. *)
+  let reads r = Nodes.mem r (ranges o) in
+  let order =
+    List.filter reads loops @ List.filter (fun r -> not (reads r)) loops
+  in
+  let renamed =
+    List.map2
+      (fun r at ->
+        ( r,
+          replace r
+            ~arg:(Range { axis_type = axis_type r; axis_id = axis_id at }) ))
+      order loops
+  in
+  let sink = substitute ~calls:Skip ~pass:Once sink [ (o, read) ] in
+  substitute ~calls:Skip ~pass:Once sink renamed
+
+let decodes (ren : Renderer.t) sink =
+  let all = toposort ~calls:Skip sink in
+  let summed =
+    List.concat_map
+      (fun u -> if Op.equal (op u) Op.Reduce then List.tl (src u) else [])
+      all
+  in
+  (* The output loops: the weak ranges no sum closes. *)
+  let loops =
+    by_axis
+      (List.filter
+         (fun u ->
+           Op.equal (op u) Op.Range
+           && axis_type u = Axis_type.Weak
+           && not (List.memq u summed))
+         all)
+  in
+  let known r = Option.is_some (constant (nth r 0)) in
+  let lanes r = axis_type r = Axis_type.Upcast in
+  let inner o =
+    List.filter (fun r -> not (List.memq r loops)) (Nodes.to_list (ranges o))
+  in
+  let stages (o, closed) =
+    let inner = inner o in
+    let size = List.fold_left (fun n r -> n * extent r) 1 inner in
+    List.exists (fun r -> (not (Nodes.mem r (ranges o))) && extent r > 1) loops
+    && inner <> []
+    && List.for_all (fun r -> known r && (lanes r || List.memq r closed)) inner
+    && size * Dtype.itemsize (dtype o) <= panel_bytes
+  in
+  match decoded_operands all with
+  | [ ((o, _) as d) ]
+    when Setting.value Setting.stage
+         && ren.target.device = "CPU" && List.for_all known loops && stages d ->
+      panel all sink ~loops ~lanes o (inner o)
+  | _ -> sink

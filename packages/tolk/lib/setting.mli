@@ -170,7 +170,8 @@ val tc_min_globals : int t
 
 val stage : bool t
 (** [stage] stages a tensor core's operands through shared memory where the
-    target has it ({!Stage}), and gives a staged core its own tile
+    target has it, and a decoded operand through a panel on the host
+    ({!Stage}), and gives a staged core its own tile
     ({!Heuristic.hand_coded_optimizations}), from [STAGE]. Off, no operand is
     staged and no core takes the staged tile. Defaults to [true]. *)
 

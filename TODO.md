@@ -118,9 +118,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - LLVM 20+ and Apple Clang keep the straight-line vectorizer that D167
   turns off under LLVM 18 and 19: run the reduced kernel of 73455ffe7
   through them (the Mac's Homebrew LLVM) and extend D167 if they miscompile
-- the host's routed decode (D92): dense at 64 rows runs 1.4x slower than
-  the stored decode (12.05 against 8.5 ms on a P-core); register files of
-  32 (NEON, AVX-512) take 16 rows, unmeasured
 - programs that share a cubin load it once each (31 of 74 loads in a
   gpt-oss first call, about 1.8 ms): sharing needs `Rig.Image.load` to drop
   its promise of module variables per load (D146)

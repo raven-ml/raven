@@ -2504,13 +2504,14 @@ host's accumulators in its vector registers.
   datatype and the size of the architecture's register set" (Van Zee and
   van de Geijn, TOMS, §4.3). On fudge's AVX2, one P-core, interleaved, the
   kernels of kaun's `Quant/host/mxfp4-product-of-1024-{10,64}-bfloat16-tokens`
-  took 4.29 and 18.6 ms with 4 rows and take 2.90 and 15.1 ms; float32
-  rows 3.46 and 16.3 ms, now 2.27 and 12.05 ms, against 2.6 and 8.5 ms for the decode
-  stored and the 4-row product; rune's `Jit/experts-mxfp4-512x4of32-256`
+  took 4.29 and 18.6 ms with 4 rows and 2.90 and 15.1 ms with 8; float32
+  rows 3.46 and 16.3 ms, then 2.27 and 12.05 ms, against 2.6 and 8.5 ms for
+  the decode stored and the 4-row product, a gap D348's panel closes;
+  rune's `Jit/experts-mxfp4-512x4of32-256`
   64.3-64.7 ms, now 48-53 ms. Past the budget, 16 rows by 4 columns took
   13.7 and 54-56 ms at 64 rows and 512 tokens, 8 rows by 8 columns 13.3 and
   54-58, 16 rows by 2 columns 14.6 and 65. Files of 32 registers (NEON,
-  AVX-512) take 16 rows unmeasured. Before D163's dropped digit,
+  AVX-512) take 16 rows unmeasured: fudge has neither. Before D163's dropped digit,
   `Nx.map_segments` over `Nx_quant.apply` on a prompt took 195-226 ms with
   blocks of 16 rows upcast by 4 against 6.0-6.9 s without.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are
@@ -8067,3 +8068,61 @@ and an initial value is added after it (D260).
   masked to its non-negative bits, whose bounds are narrowed but still let
   them overflow; rune's `jit › add, sub, mul, neg and abs wrap as eager's`,
   shifts included, and its GPU suite's `integers ›` the same law.
+
+## D348. On the host, a decoded operand is decoded once for every row tile
+
+- **tinygrad:** none: no pass stages an operand on the host, and
+  `codegen/opt/heuristic.py:111-137` shares a decoded value only between the
+  rows a tile upcasts; `codegen/late/linearizer.py` nests a kernel's output
+  loops in the order of their axes.
+- **tolk:** `Stage.decodes`, `Stage.panel`, `Stage.panel_bytes` and
+  `Stage.decoded` (moved from `Heuristic`); `Codegen.full_rewrite_to_sink`,
+  which runs it after `Stage.operands`; `Setting.stage`.
+- **Differs:** on the host (`target.device = "CPU"`), after the opts, a
+  kernel where exactly one operand of its sums of products is decoded
+  (D92's `decoded`), whose output loops all have constant bounds and one of at
+  least two trips does not read the operand, and whose operand's other
+  ranges are its sum's ranges and upcast lanes of constant extents taking at
+  most 64 KiB of values, stages the operand's values over those ranges, its
+  panel, into a buffer of the register address space: a loop over fresh
+  copies of the sum's ranges, the lanes upcast, stores them, and the product
+  reads them back after it. The output loops the operand reads take the
+  first of the output loops' axes, in order, so that they nest outside the
+  others and the panel is decoded once for all those loops' trips. The
+  goldens run with `STAGE=0`, as for D262, and do not move.
+- **Reason:** (d): D92's tile shares a decode between the rows it upcasts,
+  8 on AVX2, so 64 rows decoded each value 8 times, and the decode, about
+  2.5 cycles a value on fudge's P-core, was the whole gap to a stored
+  decode: kaun's float32 rows by an MXFP4 matrix of 1024 by 1024 took 12.05
+  ms against 8.5 ms stored. A packed panel of one matrix is reused across
+  the rows of the other: "the micro-panel Br is reused in every iteration of
+  Loop 5. As such, it is desirable for Br to remain in the L1 cache while
+  Loop 5 is being executed" (Low et al., "Analytical Modeling is Enough for
+  High Performance BLIS", ACM TOMS, §4.3.2), and BLIS casts while it packs
+  ("casting may be performed as needed when the matrices are packed", Van
+  Zee and van de Geijn, TOMS, §5.1.3). The panel stays below an L1 only
+  where it fits: on fudge's P-core 64 float32 rows by matrices of 2880, 4096
+  and 8192 (panels of 46, 64 and 128 KiB, past the 48 KiB L1) took 98.4,
+  189 and 749 ms decoded per tile and 69.3, 145 and 532 ms staged, so the
+  bound is the stack the panel lies on: rig's pool workers have 8 MiB, the
+  calling thread its own, 512 KiB for a secondary thread on macOS. The
+  scheduler stays target-free (D92's ruling): the panel is the host's
+  codegen. On fudge, one P-core, interleaved, load 15-17, two undisturbed
+  rounds of 41 runs, medians: float32 rows of 10 2.37-2.38 to 1.66-1.67 ms,
+  of 64 13.2-13.3 to 9.8-10.4 ms, beside 10.2-10.3 ms for the stored decode;
+  kaun's bfloat16 rows (`Quant/host/mxfp4-product-of-1024-{10,64}-bfloat16-tokens`)
+  3.01-3.03 to 2.15-2.17 ms and 16.3-16.5 to 10.5-10.6 ms, and in kaun's
+  bench itself (`check --quick`, two rounds) 2.90-2.92 to 2.05 ms and 15.11
+  to 9.17-9.35 ms, 698 words allocated a call on both; one row (0.66,
+  0.82 ms) and rune's `Jit/experts-mxfp4-512x4of32-256` (35-37 ms), whose
+  operand reads the rows' blocks, keep their kernels. Files of 32 registers
+  (NEON, AVX-512) take 16 rows a tile (D92), so 64 rows take 4 tiles and
+  share one panel: unmeasured, fudge has neither.
+- **Pinned by:** the Stage suite's `decoded panels`: `on the host a staged
+  decoded product computes the bits of the same optimisations unstaged`
+  (compiled and run, panels staged, refused at one row tile and past 64
+  KiB), `on the host a decoded operand read by several row tiles is decoded
+  once` (products of 1 to 128 rows by 32 to 8192 values on files of 16 and
+  32 registers, the decodes of each code counted in the linearized
+  program, against the rule) and `staging off decodes once a row tile`; on
+  fudge, kaun's `Quant/host/mxfp4-product-of-1024-*-bfloat16-tokens`.

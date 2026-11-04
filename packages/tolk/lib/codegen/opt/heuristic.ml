@@ -63,17 +63,6 @@ let reads r b = Nodes.mem r (backward_slice_with_self ~calls:Skip (idx b))
 let ranges_of ?reduce k types =
   List.map (List.nth (K.rngs k)) (K.axes_of ?reduce k types)
 
-(* Whether [o] is decoded: its value converts integers it reads into floats,
-   by a cast or a bitcast, outside any access's address. *)
-let decoded o =
-  let converts u =
-    (op u = Op.Cast || op u = Op.Bitcast)
-    && Dtype.is_float (dtype u)
-    && Dtype.is_int (dtype (nth u 0))
-  in
-  List.exists converts
-    (toposort ~calls:Skip ~gate:(fun u -> op u <> Op.Index) o)
-
 (* Whether [k] sums a product with a decoded operand. Decoding packed values
    splits the reduce into a range over the bytes and one over a byte's values,
    and the tensor cores take the bytes. *)
@@ -84,7 +73,7 @@ let decoded_product k =
       let m = if op m = Op.Cast then nth m 0 else m in
       match arg r with
       | Reduce { op = Op.Add; _ } when op m = Op.Mul ->
-          List.exists decoded (src m)
+          List.exists Stage.decoded (src m)
       | _ -> false)
   | None -> false
 
@@ -1672,9 +1661,10 @@ let streams k =
    budget, so the tile's rows share one decode of each value (BLIS's fusing
    factor: as many uses of a value loaded into registers as the register set
    holds). On AVX2, 64 rows by an MXFP4 matrix of 1024 by 1024 take 8 rows,
-   their stores apart, and 4 columns beside them, and decode each value 8
-   times, where 4 rows decoded it 16; a prompt's routed product in blocks of
-   16 rows decodes its block's matrix twice. A host that does not know its
+   their stores apart, and 4 columns beside them, where 4 rows decoded each
+   value 16 times; the tiles' 8 trips then share a panel of its decoded
+   values ({!Stage.decodes}). A prompt's routed product in blocks of 16 rows
+   decodes its block's matrix twice. A host that does not know its
    registers takes at most [unbudgeted_rows], upcast_more's largest
    amount. *)
 let unbudgeted_rows = 4
@@ -1683,7 +1673,7 @@ let share_decodes k =
   match contraction k with
   | None -> ()
   | Some (m, _) ->
-      let operands = List.filter decoded (src m) in
+      let operands = List.filter Stage.decoded (src m) in
       let cap = if budgeted k then upcast_max else unbudgeted_rows in
       (* The outputs along [axis], of [n], that read one value of [o]. *)
       let shared axis n o =
@@ -1757,7 +1747,7 @@ let hand_coded_with ~core_threads k =
     let late () =
       match s with
       | Some ((w, _, reuse) as s)
-        when Bigint.(leq reuse (of_int stream_first)) || decoded w ->
+        when Bigint.(leq reuse (of_int stream_first)) || Stage.decoded w ->
           stream s
       | _ -> None
     in

@@ -1028,6 +1028,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On the host, a product with a decoded operand, such as an MXFP4 or Q8_0
+  matrix, decodes each value once for all its row tiles (`Stage.decodes`):
+  64 float32 rows by an MXFP4 matrix of 1024 by 1024 took 13.2 ms and take
+  9.8-10.4 ms on one core, as fast as storing the decoded matrix first.
 - A host program splits a loop into blocks only when every store to memory,
   call and piece of custom code depends on it (`Postrange.misses`): code
   beside the loop ran once per block, an atomic counter counting 8 for 1.

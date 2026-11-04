@@ -4,7 +4,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Staging a tensor core's operands through shared memory.
+(** Staging a tensor core's operands through shared memory, and a decoded
+    operand through a panel on the host ({!section-panels}).
 
     A tensor core ({!Op.Wmma}) reads each operand as fragments of a tile: the
     box of addresses its index spans over the workgroup's threads and the
@@ -97,3 +98,47 @@ val layout : itemsize:int -> cols:int -> Ops.t -> Ops.t -> Ops.t
     [16]-byte slots of a [128]-byte line of shared memory's banks. *)
 
 (**/**)
+
+(** {1:panels Decoded panels on the host}
+
+    A product with an operand decoded from integer codes, as a quantised
+    matrix's is, decodes each value in every tile of outputs that reads it.
+    The rows a tile holds share a decode, but each trip of an output loop the
+    operand does not read decodes the value again: 64 rows in tiles of 8 decode
+    each value 8 times. Staged, the values the operand takes within one trip of
+    the output loops it reads, its panel, are decoded once into a buffer on
+    the stack, and every trip of the other output loops reads them back, as a
+    packed panel of a matrix is reused across the rows of the other (Low et
+    al., "Analytical Modeling is Enough for High Performance BLIS", ACM TOMS,
+    §4.3.2):
+
+    {v
+      for each trip of the loops the operand reads:      (its columns)
+        for its sum's ranges and lanes:  panel <- decode
+        for each trip of the other loops:                (the row tiles)
+          sum the product, reading the panel
+    v} *)
+
+val decoded : Ops.t -> bool
+(** [decoded o] is [true] iff [o] converts integers it reads into floats, by a
+    cast or a bitcast, outside any access's address. *)
+
+val decodes : Renderer.t -> Ops.t -> Ops.t
+(** [decodes ren sink] is the kernel [sink], whose optimisations are applied,
+    with its decoded operand's panel staged where [ren] targets the host
+    (["CPU"]). It stages where exactly one operand [o] of [sink]'s sums of
+    products is {!decoded}, every output loop (a weak range no sum closes) has
+    a constant bound, one of them of at least two trips does not read [o], and
+    [o]'s other ranges are its sum's ranges or upcast lanes of constant
+    extents, of which [o]'s values take at most 64 KiB: the panel lies on the
+    stack of the thread that runs the kernel.
+
+    Staged, [o]'s values over those ranges are stored, before the output loops
+    that do not read [o] run, into a buffer of registers' address space
+    ({!Dtype.Reg}), in rows of its sum's ranges, its lanes together, and [o]
+    reads them back; the output loops that read [o] take the first of the
+    output loops' axes, in their order, so that they run outside the others.
+    Staging moves values and never rounds them, and the output loops' trips
+    are independent: a staged kernel computes the bits of the kernel of the
+    same optimisations unstaged. [sink] is returned as it is where
+    {!Setting.stage} is off. *)

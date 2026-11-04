@@ -83,10 +83,13 @@ let on_cuda () =
       | r -> (d, r)
       | exception Failure why -> skip ~reason:why ())
 
-(* [r] rebuilt with [has_shared] and [load_matrix], named [name]. *)
-let rebuilt ~name ?(has_shared = true) ?(load_matrix = true) (r : Renderer.t) =
+(* [r] rebuilt with [has_shared], [load_matrix] and [registers], named
+   [name]. *)
+let rebuilt ~name ?(has_shared = true) ?(load_matrix = true) ?registers
+    (r : Renderer.t) =
+  let registers = Option.value registers ~default:r.registers in
   Renderer.v ~name ~suffix:r.suffix ~supports_float4:r.supports_float4
-    ~half8:r.half8 ~registers:r.registers ~vector_lanes:r.vector_lanes
+    ~half8:r.half8 ~registers ~vector_lanes:r.vector_lanes
     ~has_local:r.has_local ~has_shared ~global_max:r.global_max
     ~local_max:r.local_max ?global_prod_max:r.global_prod_max
     ~shared_max:r.shared_max ~async_copy:r.async_copy
@@ -695,6 +698,219 @@ let sources =
             "packages/tolk/test/codegen/stage/f16_padded.cu");
     ]
 
+
+(* Decoded panels on the host
+
+   [c = Σ_r a.(i, r) * (float32 codes.(j, r) * scales.(j, r / 32))] in float32,
+   for [a] of [m] by [k], and [n] rows of [k] byte codes, each block of 32
+   scaled by its float32 scale: a product whose right operand is decoded from
+   integer codes, as a quantised matrix's is. *)
+
+type decoded = { dm : int; dk : int; dn : int }
+
+let decoded_kernel ?opts_to_apply p =
+  let c = Shape.param ~shape:[ Ops.Int (p.dm * p.dn) ] 0 Float32
+  and a = Shape.param ~shape:[ Ops.Int (p.dm * p.dk) ] 1 Float32
+  and codes = Shape.param ~shape:[ Ops.Int (p.dn * p.dk) ] 2 Uint8
+  and scales = Shape.param ~shape:[ Ops.Int (p.dn * p.dk / 32) ] 3 Float32 in
+  let blocks = p.dk / 32 in
+  let open Ops.O in
+  let i = Ops.range ~axis_type:Weak (Int p.dm) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int p.dn) [ 1 ]
+  and r = Ops.range ~axis_type:Weak (Int p.dk) [ 2 ] in
+  let value =
+    Ops.cast (Ops.index codes [ (j * int p.dk) + r ]) Float32
+    * Ops.index scales [ (j * int blocks) + (r // int 32) ]
+  in
+  let sum = Ops.reduce (Ops.index a [ (i * int p.dk) + r ] * value) Add [ r ] in
+  let store = Ops.store (Ops.index c [ (i * int p.dn) + j ]) sum in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ?opts_to_apply ())
+    [ Ops.end_ store [ i; j ] ]
+
+let host_target = Tolk_engine.target Rig.host
+let host = lazy (Cstyle.clang host_target)
+
+(* The host's renderer with a register file of [count] registers of [bytes]
+   bytes, which compiles nothing. *)
+let host_file (count, bytes) =
+  let r = Lazy.force host in
+  Renderer.with_compiler
+    (Renderer.Compiler.v Fun.id)
+    (rebuilt ~name:r.name ~has_shared:r.has_shared ~load_matrix:r.load_matrix
+       ~registers:(fun () -> Some { Renderer.count; bytes })
+       r)
+
+(* The optimisations the hand-coded rules choose for [p] on [r]. *)
+let decoded_opts p r =
+  let s = Postrange.Scheduler.v (decoded_kernel p) r in
+  Postrange.Scheduler.convert_loop_to_global s;
+  Postrange.Scheduler.applied_opts (Heuristic.hand_coded_optimizations s)
+
+let staged_program ~staged p r =
+  Setting.context
+    Setting.[ B (stage, staged) ]
+    (fun () ->
+      let k = decoded_kernel ~opts_to_apply:(decoded_opts p r) p in
+      Codegen.linearize k r)
+
+(* The times the instructions of [prg] decode each code: at each load of a code,
+   the product of the trips of the loops around it whose ranges its address does
+   not read. *)
+let decodes prg =
+  let instrs = Ops.src (Ops.nth prg 1) in
+  let code_load u =
+    is Load u
+    && Ops.dtype u = Dtype.Uint8
+    && Ops.addrspace (Ops.nth u 0) = Some Dtype.Global
+  in
+  (* A loop the launch splits into blocks runs all its iterations. *)
+  let split =
+    match Ops.arg (Ops.nth prg 0) with
+    | Kernel { split = Some { iterations = Int n; _ }; _ } -> Some n
+    | _ -> None
+  in
+  let constant u =
+    List.for_all (fun u -> is Const u || is Cast u) (Ops.toposort ~calls:Skip u)
+  in
+  let trips r =
+    match split with
+    | Some n when not (constant (Ops.nth r 0)) -> n
+    | _ -> Dtype.Value.to_int (Ops.vmax r) + 1
+  in
+  (* The ranges an address reads: a range's own sources order its loop after
+     others' and are not read. *)
+  let reads x =
+    let seen = Ops.Tbl.create 64 and acc = ref [] in
+    let rec walk u =
+      if not (Ops.Tbl.mem seen u) then begin
+        Ops.Tbl.add seen u ();
+        if is Range u then acc := u :: !acc else List.iter walk (Ops.src u)
+      end
+    in
+    walk x;
+    !acc
+  in
+  let rec go open_ most = function
+    | [] -> most
+    | u :: rest when is Range u -> go (u :: open_) most rest
+    | u :: rest when is End u ->
+        go
+          (List.filter (fun r -> not (List.memq r (List.tl (Ops.src u)))) open_)
+          most rest
+    | u :: rest when code_load u ->
+        let n =
+          List.fold_left
+            (fun n r ->
+              if List.memq r (reads (Ops.nth u 0)) then n else n * trips r)
+            1 open_
+        in
+        go open_ (max most n) rest
+    | _ :: rest -> go open_ most rest
+  in
+  go [] 0 instrs
+
+(* The rows of a tile: the largest divisor of [m] up to 16 that leaves half the
+   registers to the rest, one register a row. *)
+let rec tile_rows m at_most =
+  if m mod at_most = 0 then at_most else tile_rows m (at_most - 1)
+
+(* A panel holds the values one trip of the columns' loop reads: the 4 columns
+   the tile upcasts by [k] values, of 4 bytes. *)
+let panel_fits p = 4 * p.dk * 4 <= 64 * 1024
+
+let expected_decodes p (count, _) =
+  let trips = p.dm / tile_rows p.dm (min 16 (count / 2)) in
+  if trips >= 2 && panel_fits p then 1 else trips
+
+let decoded_cases =
+  let shapes =
+    List.concat_map
+      (fun dm ->
+        List.map (fun dk -> { dm; dk; dn = 64 }) [ 32; 1024; 4096; 8192 ])
+      [ 1; 2; 8; 10; 16; 17; 24; 64; 128 ]
+  in
+  let rows =
+    List.concat_map
+      (fun file -> List.map (fun p -> (p, file)) shapes)
+      [ (16, 32); (32, 16) ]
+  in
+  cases
+    "on the host a decoded operand read by several row tiles is decoded once"
+    ~id:(fun (p, (c, b)) ->
+      Printf.sprintf "%d rows by %d of %d on %dx%d" p.dm p.dk p.dn c b)
+    rows
+    (fun (p, file) ->
+      let prg = staged_program ~staged:true p (host_file file) in
+      equal int (expected_decodes p file) (decodes prg))
+
+let decoded_stage_off =
+  test "staging off decodes once a row tile" (fun () ->
+      let p = { dm = 64; dk = 1024; dn = 64 } in
+      equal int 8
+        (decodes (staged_program ~staged:false p (host_file (16, 32)))))
+
+(* Floats of 8 significant bits times powers of two, codes of any byte, and
+   scales of powers of two: the sums round. *)
+let decoded_inputs seed p =
+  let st = Random.State.make [| seed |] in
+  let float () =
+    `Float
+      (Float.ldexp
+         (Float.of_int (Random.State.int st 256 - 128))
+         (Random.State.int st 9 - 8))
+  in
+  [
+    (1, Array.init (p.dm * p.dk) (fun _ -> float ()));
+    ( 2,
+      Array.init (p.dn * p.dk) (fun _ ->
+          `Int (Bigint.of_int (Random.State.int st 256))) );
+    ( 3,
+      Array.init
+        (p.dn * p.dk / 32)
+        (fun _ -> `Float (Float.ldexp 1. (Random.State.int st 9 - 4))) );
+  ]
+
+let decoded_bits (p, seed) =
+  let r = Lazy.force host in
+  let run staged =
+    let prg = staged_program ~staged p r in
+    let prg = Codegen.compile prg r in
+    List.assoc 0 (Run.on_host prg (decoded_inputs seed p))
+  in
+  let staged = decodes (staged_program ~staged:true p r) in
+  let unstaged = decodes (staged_program ~staged:false p r) in
+  cover "staged" (staged < unstaged);
+  cover "one row tile" (unstaged = 1);
+  cover "past the panel" (unstaged > 1 && staged = unstaged);
+  equal (array Dtypes.value) (run false) (run true)
+
+let decoded_law =
+  let gen =
+    let open Gen in
+    let+ dm = of_list [ 1; 3; 8; 10; 16; 24; 64 ]
+    and+ dk =
+      frequency [ (4, of_list [ 32; 96; 256; 1024 ]); (1, constant 8192) ]
+    and+ dn = of_list [ 4; 8; 12; 32 ]
+    and+ seed = int_range 0 1_000_000 in
+    ({ dm; dk; dn }, seed)
+  in
+  prop ~count:16
+    ~examples:
+      [
+        ({ dm = 64; dk = 256; dn = 8 }, 1);
+        ({ dm = 10; dk = 1024; dn = 4 }, 2);
+        ({ dm = 1; dk = 64; dn = 4 }, 3);
+        ({ dm = 64; dk = 8192; dn = 8 }, 4);
+      ]
+    "on the host a staged decoded product computes the bits of the same \
+     optimisations unstaged"
+    (Gen.with_pp
+       (fun ppf (p, seed) ->
+         Format.fprintf ppf "%d rows by [%d; %d], seed %d" p.dm p.dn p.dk seed)
+       gen)
+    decoded_bits
+
 let () =
   exit
     (Windtrap.run "Tolk.Stage"
@@ -708,4 +924,6 @@ let () =
          staged_tiles;
          ldmatrix_rows;
          sources;
+         group "decoded panels"
+           [ decoded_law; decoded_cases; decoded_stage_off ];
        ])
