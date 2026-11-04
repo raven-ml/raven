@@ -127,9 +127,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   that conversion too)
 - integer division by zero is left to rune and D145; tolk's C renderers
   define every other integer case (D342, D346)
-- memory-bound host kernels split at 2^18 bytes (D80): a threshold between
-  2^16 and 2^18, or a thread cap apart from the block count (a field in
-  rig's host launch), are unmeasured
 
 ## rune, kaun, vega
 

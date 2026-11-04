@@ -2110,6 +2110,19 @@ D320 compiles a cubin again, measured with the driver's cache missing.
   operations or bytes 64 KiB copies split in 2 made
   `Jit/sort-with-positions-4096` and `Jit/eigh-float32-64x8x8` 1.5-1.6 times
   as slow. Such a kernel keeps a block for each 2^18 operations or bytes.
+  A block for each 2^17 or 2^16 bytes made a row slower, as did a cap on a
+  launch's threads apart from its blocks (6 interleaved runs each at loads
+  3.4-6.0, over every row of the rune and tolk benches whose split moves). At
+  2^17 bytes rune's `Jit/cumsum-scaled-float32-100x400` takes 27.0-30.2 us
+  against 35.0-38.0 and `JitLoops/iterate-64-rows-into-4096x64-replay`
+  77.0-83.8 against 83.8-91.3, but `JitLoops/newton-grad-1024-replay`, whose
+  512 KiB copy takes 4 blocks for 2, is slower in 6 of 6 runs (paired median
+  1.04; 1.12 at 2^16 bytes). A block for each 2^16 bytes up to 64, run on the
+  threads 2^18 bytes ask and the others queued on them, gained no row beyond
+  the spread of the unchanged rows and made `newton-grad` slower in 6 of 6
+  runs (1.16), `Jit/cumsum-neg-log-uniform-8x1024` in 5 of 6 (1.12) and
+  `host/max_rows/heuristic` in 6 of 6 (1.01). So a launch runs a thread for
+  each block, up to the performance cores.
   One of fudge's cores moves about a byte in the time of an operation (14-17
   bytes a nanosecond, one block of `x * 2` over [4096; 64]): a copy or a
   cheap elementwise kernel, counted by its operations alone, ran on one
