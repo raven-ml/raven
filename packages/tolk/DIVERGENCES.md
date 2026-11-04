@@ -8200,3 +8200,30 @@ and an initial value is added after it (D260).
   scalars and in vectors of 4 lanes, against `Ops.exec_alu`; and `a narrow
   type shifted by a uint32 count computes as the interpreter`, by constant
   counts of 8 to 65537.
+
+## D347. Compiles run on as many domains as the cores the process may occupy
+
+- **tinygrad:** `helpers.py:258-269` (`_get_cpu_count`, the CPUs of the
+  process's affinity, at most the quota of `/sys/fs/cgroup/cpu.max` rounded
+  down) and `:275` (`PARALLEL`'s default, divided among pytest-xdist's
+  workers).
+- **tolk:** `Setting.parallel`'s default, `Setting.cpu_count`, and
+  `tolk_cores` in `lib/helpers_stubs.c`, which reads `rig_pool_cores` of
+  `rig.pool`.
+- **Differs:** `PARALLEL` defaults to the count rig's host pool sizes its
+  jobs by: the CPUs of the affinity mask, at most the smallest CPU quota of
+  the process's cgroup v2 and its ancestors rounded up, then at most the
+  domains OCaml's runtime recommends; on macOS rig counts the physical
+  cores, where tinygrad counts the logical CPUs. tinygrad reads the quota of
+  the mount's root cgroup alone and rounds it down. tolk has no pytest-xdist
+  to divide by.
+- **Reason:** (c): compiles and rig's host launches share the host's cores,
+  so one count, kept in rig's pool, bounds both. A process in a cgroup below
+  the root, as each systemd scope or slice is, keeps its quota there, which
+  the root's file does not state; a quota of 1.5 CPUs rounded down leaves a
+  third of it idle.
+- **Pinned by:** the Setting suite's `parallel is between one and the
+  domains the runtime recommends`, which bounds the default alone, and rig's
+  pool suite, which reads the count from trees of cgroup files (`a cgroup
+  without cpu.max` and its neighbours). No suite sets a quota or an affinity
+  on its own process, so none pins the default to the count.

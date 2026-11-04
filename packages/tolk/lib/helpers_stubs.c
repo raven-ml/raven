@@ -5,8 +5,9 @@
 
 /* Setting a file's times through a descriptor, which OCaml's Unix library
    does only by path ([Unix.utimes]), renaming a file over one that is open,
-   which OCaml's rename does not do on Windows, and starting a process with no
-   signal blocked, which [Unix.create_process] does not do. */
+   which OCaml's rename does not do on Windows, starting a process with no
+   signal blocked, which [Unix.create_process] does not do, and the cores the
+   process may occupy, which rig_pool.h counts. */
 
 #define _GNU_SOURCE
 
@@ -23,6 +24,8 @@
 #include <caml/osdeps.h>
 #include <caml/signals.h>
 #include <caml/unixsupport.h>
+
+#include "rig_pool.h"
 
 /* caml/unixsupport.h declares the unix library's functions without
    CAMLextern: a stub DLL loaded at run time on Windows would call them
@@ -232,4 +235,10 @@ CAMLprim value tolk_spawn(value v_prog, value v_argv, value v_fds)
   if (r != 0) caml_unix_error(r, "create_process", v_prog);
   CAMLreturn(Val_long(pid));
 #endif
+}
+
+CAMLprim value tolk_cores(value unit)
+{
+  (void)unit;
+  return Val_int(rig_pool_cores());
 }

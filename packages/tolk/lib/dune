@@ -9,7 +9,7 @@
   compiler_worker
   comgr_worker
   nvrtc_worker)
- (libraries unix)
+ (libraries unix rig.pool)
  ; MTLCompiler, which runs in the process, is found at run time, as NVRTC and
  ; comgr are by their workers, so that the library builds and runs without
  ; CUDA, ROCm or Metal.

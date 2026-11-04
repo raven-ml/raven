@@ -1041,6 +1041,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   past the width, compute what `Ops.exec_alu` gives (`Cstyle.clang`,
   `Cstyle.cuda`, `Cstyle.hip`, `Cstyle.metal`): C leaves both undefined,
   and such a division killed a host kernel with SIGFPE.
+- `Setting.parallel` defaults to the cores the process may occupy as rig's
+  host pool counts them: a CPU quota on the process's own cgroup or an
+  ancestor, such as a systemd slice, now bounds it, a quota of 1.5 CPUs
+  counts 2, and on macOS it counts physical cores.
 - A host program splits a loop into blocks only when every store to memory,
   call and piece of custom code depends on it (`Postrange.misses`): code
   beside the loop ran once per block, an atomic counter counting 8 for 1.

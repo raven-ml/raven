@@ -227,8 +227,11 @@ val default_int : string t
 val parallel : int t
 (** [parallel] is the number of domains compiling kernels and running the beam
     search, from [PARALLEL]. [0] works on the calling domain. Defaults to the
-    number of CPUs available to the process, bounded by its cgroup's CPU quota
-    and by the runtime's maximum number of domains. *)
+    cores the process may occupy, as rig's host pool counts them, and at most
+    the domains the runtime recommends: on Linux the CPUs of the main
+    thread's affinity mask, at most the CPU quota of its cgroup v2 or any
+    ancestor rounded up; on macOS its physical cores. The count is taken
+    once, when the program starts. *)
 
 val spec : int t
 (** [spec] is whether the graphs passed between stages are checked against

@@ -297,23 +297,11 @@ let emulated_dtypes =
 let default_float = string ~reach:Output "DEFAULT_FLOAT" "float32"
 let default_int = string ~reach:Output "DEFAULT_INT" "int32"
 
-(* A container's CPU quota lives in the cgroup v2 file as "QUOTA PERIOD", or
-   "max PERIOD" when unlimited. *)
-let cpu_count =
-  let count = Domain.recommended_domain_count () in
-  match
-    In_channel.with_open_text "/sys/fs/cgroup/cpu.max" In_channel.input_all
-  with
-  | exception Sys_error _ -> count
-  | contents -> (
-      match String.split_on_char ' ' (String.trim contents) with
-      | [ quota; period ] when quota <> "max" -> (
-          match (parse_int quota, parse_int period) with
-          | Ok quota, Ok period when period <> 0 ->
-              min count (max 1 (quota / period))
-          | _ -> count)
-      | _ -> count)
+external cores : unit -> int = "tolk_cores" [@@noalloc]
 
+(* The cores the process may occupy, by its affinity and its cgroups' CPU
+   quotas (rig_pool.h), and at most the domains the runtime runs at once. *)
+let cpu_count = min (cores ()) (Domain.recommended_domain_count ())
 let parallel = int ~reach:Process "PARALLEL" cpu_count
 let spec = int ~reach:Process "SPEC" 1
 let check_oob = bool ~reach:Process "CHECK_OOB" false
