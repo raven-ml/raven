@@ -483,7 +483,12 @@ val identity_element : Op.t -> Dtype.t -> Dtype.const
 
     Raises [Invalid_argument] for any other [op]. *)
 
-(** {1:graphs Graphs} *)
+(** {1:graphs Graphs}
+
+    A walk of a graph, by {!toposort}, {!topovisit}, {!graph_rewrite} or a
+    function built on them, that an exception ends, one raised asynchronously
+    as {!Sys.Break} is included, leaves later walks on any domain their
+    results. *)
 
 (** The type for how a walk of a graph treats a call ({!Op.Call}), whose first
     source is its body. *)

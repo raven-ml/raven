@@ -872,10 +872,16 @@ let parents dt =
   if dt = Void then invalid_arg "void does not promote"
   else recursive_parents.(index dt)
 
-let least_upper_of dt dts =
-  let common p = List.for_all (fun dt -> List.memq p (parents dt)) dts in
-  (* [parents dt] is sorted, and the top of the lattice is common. *)
-  List.find common (parents dt)
+let rec common p = function
+  | [] -> true
+  | dt :: dts -> List.memq p (parents dt) && common p dts
+
+(* [parents dt] is sorted, and the top of the lattice is common. *)
+let rec first_common dts = function
+  | [] -> raise Not_found
+  | p :: ps -> if common p dts then p else first_common dts ps
+
+let least_upper_of dt dts = first_common dts (parents dt)
 
 (* The least upper bound of each pair of data types other than [Void], at
    [index a * count + index b]. Most promotions are of two operands. *)

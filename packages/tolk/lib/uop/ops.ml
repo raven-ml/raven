@@ -204,7 +204,7 @@ type t = {
   arg : arg;
   dtype : Dtype.t;
   id : int;
-  memos : memos;
+  mutable memos : memos; [@atomic]
 }
 
 (* Properties computed on first use. Each is a function of the node, so
@@ -452,7 +452,21 @@ let memos () =
     storage_base_memo = None;
   }
 
-let node op src arg dtype id = { op; src; arg; dtype; id; memos = memos () }
+(* A node's memos until one is set: most nodes a rewrite makes are dropped
+   before any property of theirs is asked. Never written. *)
+let no_memos = memos ()
+
+let node op src arg dtype id = { op; src; arg; dtype; id; memos = no_memos }
+
+(* The memos of [u], made once one is set. Domains that race to make them
+   each make them, and all keep the first made. *)
+let own_memos u =
+  let m = u.memos in
+  if m != no_memos then m
+  else
+    let m = memos () in
+    if Atomic.Loc.compare_and_set [%atomic.loc u.memos] no_memos m then m
+    else u.memos
 
 (* Data types *)
 
@@ -468,11 +482,15 @@ let rec base u =
     base (first u.op u.src)
   else u
 
+let rec all_of dt = function
+  | [] -> true
+  | s :: rest -> Dtype.equal s.dtype dt && all_of dt rest
+
 let promo_dtype us =
   match us with
   | [] -> invalid_arg "no types to promote"
   | u :: rest ->
-      if List.for_all (fun s -> Dtype.equal s.dtype u.dtype) rest then u.dtype
+      if all_of u.dtype rest then u.dtype
       else Dtype.least_upper (List.map (fun s -> s.dtype) us)
 
 let dtype_of op src arg =
@@ -542,21 +560,6 @@ let dtype_of op src arg =
 
 external reraise : exn -> 'a = "%reraise"
 
-(* The slot of the node of [hash] and parts [op], [src] and [arg] in [sh], or
-   the unused slot where it goes. *)
-let rec slot sh hash op src arg i =
-  let h = Array.unsafe_get sh.hashes i in
-  if h = -1 then i
-  else if
-    h = hash
-    &&
-    match Weak.get sh.nodes i with
-    | Some u ->
-        u.op = op && List.equal ( == ) u.src src && equal_arg u.arg arg
-    | None -> false
-  then i
-  else slot sh hash op src arg ((i + 1) land ((1 lsl sh.log_size) - 1))
-
 (* Rebuilds [sh] with its live nodes, at most a quarter full. A node moves
    with [Weak.get] and [Weak.set]: [Weak.blit] scans both arrays whole during a
    phase of the major collection, which would make a rebuild quadratic. *)
@@ -592,25 +595,30 @@ let rebuild sh =
   sh.log_size <- bits;
   sh.used <- !moved
 
-(* The node of [op], [src] and [arg], found in [sh] or added to it. A node
-   found may be collected before it is read again, and is then made anew in
-   its slot. *)
-let intern sh hash op src arg =
-  let i = slot sh hash op src arg (hash land ((1 lsl sh.log_size) - 1)) in
-  let unused = Array.unsafe_get sh.hashes i = -1 in
-  match if unused then None else Weak.get sh.nodes i with
-  | Some u -> u
-  | None ->
-      let dtype = dtype_of op src arg in
-      let u = node op src arg dtype (Atomic.fetch_and_add next_id 1) in
-      let some = Some u in
-      Array.unsafe_set sh.hashes i hash;
-      Weak.set sh.nodes i some;
-      if unused then begin
-        sh.used <- sh.used + 1;
-        if 2 * sh.used > 1 lsl sh.log_size then rebuild sh
-      end;
-      u
+(* The node of [op], [src] and [arg], found in [sh] from slot [i] on or added to
+   it at the first unused slot, its hash and its node set with nothing
+   allocated between. A slot whose node was collected is passed over, and
+   freed once the shard is rebuilt. *)
+let rec intern sh hash op src arg i =
+  let h = Array.unsafe_get sh.hashes i in
+  let next = (i + 1) land ((1 lsl sh.log_size) - 1) in
+  if h = -1 then begin
+    let dtype = dtype_of op src arg in
+    let u = node op src arg dtype (Atomic.fetch_and_add next_id 1) in
+    let some = Some u in
+    Array.unsafe_set sh.hashes i hash;
+    Weak.set sh.nodes i some;
+    sh.used <- sh.used + 1;
+    if 2 * sh.used > 1 lsl sh.log_size then rebuild sh;
+    u
+  end
+  else if h <> hash then intern sh hash op src arg next
+  else
+    match Weak.get sh.nodes i with
+    | Some u
+      when u.op = op && List.equal ( == ) u.src src && equal_arg u.arg arg ->
+        u
+    | _ -> intern sh hash op src arg next
 
 let v ?(src = []) ?(arg = No_arg) op =
   let hash = node_hash op src arg in
@@ -621,7 +629,7 @@ let v ?(src = []) ?(arg = No_arg) op =
      whole: a slot takes its hash and its node with no poll between, and a
      rebuilt shard replaces the old one only once whole. *)
   Mutex.lock sh.lock;
-  match intern sh hash op src arg with
+  match intern sh hash op src arg (hash land ((1 lsl sh.log_size) - 1)) with
   | u ->
       Mutex.unlock sh.lock;
       u
@@ -804,7 +812,7 @@ and arg_repr u =
   | Some s -> s
   | None ->
       let s = repr_arg u.arg in
-      u.memos.arg_repr_memo <- Some s;
+      (own_memos u).arg_repr_memo <- Some s;
       s
 
 and repr_sint s = repr_sint_with repr s
@@ -884,8 +892,9 @@ let unset = node Op.Noop [] No_arg Dtype.Void (-3)
    The domain holds its pool weakly: the passes of a compile follow each other
    within a few major collections and reuse the arrays, and once tolk is idle
    the next collection frees them unmarked. Arrays of nodes come back filled
-   with [unset], which a walk's new rows start as; arrays of ints come back as
-   they were left. A walk that an exception ends gives its arrays back too. *)
+   with [unset], which a walk's new rows start as, and arrays of pairs with
+   each pair free; other arrays of ints come back as they were left. A walk
+   that an exception ends gives its arrays back too. *)
 module Pool = struct
   (* A stack of arrays. A cell is made before it is linked, so that nothing
      allocates, and no other thread of the domain runs, between reading a
@@ -898,78 +907,121 @@ module Pool = struct
      follow the passes. *)
   let length = 257
 
+  (* [top] is at least the class of each array given back since the stacks
+     were made, so that finding the largest scans no class above it. *)
+  type 'a pool = { weak : 'a stack array Weak.t; mutable top : int }
   type held = {
-    ints : int array stack array Weak.t;
-    nodes : t array stack array Weak.t;
+    ints : int array pool;
+    pairs : int array pool;
+    nodes : t array pool;
   }
 
   let held =
     Domain.DLS.new_key (fun () ->
-        { ints = Weak.create 1; nodes = Weak.create 1 })
+        {
+          ints = { weak = Weak.create 1; top = 0 };
+          pairs = { weak = Weak.create 1; top = 0 };
+          nodes = { weak = Weak.create 1; top = 0 };
+        })
 
-  (* The domain's stacks in [w], made anew once collected. Threads of the domain
-     that both find them collected each make them, and one is kept. *)
-  let stacks w =
-    match Weak.get w 0 with
+  (* The domain's stacks of [pool], made anew once collected. Threads of the
+     domain that both find them collected each make them, and one is kept. *)
+  let stacks pool =
+    match Weak.get pool.weak 0 with
     | Some p -> p
     | None ->
         let p = Array.make length Nil in
-        Weak.set w 0 (Some p);
+        Weak.set pool.weak 0 (Some p);
+        pool.top <- 0;
         p
 
   (* The bits of the least power of two at least [n]. *)
   let bits n =
-    let rec go b = if 1 lsl b >= n then b else go (b + 1) in
-    go 0
+    let b = ref 0 in
+    while 1 lsl !b < n do
+      incr b
+    done;
+    !b
 
-  let give stacks a =
-    let b = bits (Array.length a) in
+  let give pool a =
+    let stacks = stacks pool and b = bits (Array.length a) in
     let cell = Cell { a; next = Nil } in
     match cell with
     | Cell c ->
         c.next <- stacks.(b);
-        stacks.(b) <- cell
+        stacks.(b) <- cell;
+        if b > pool.top then pool.top <- b
     | Nil -> ()
 
+  (* An array of class [b] from [stacks], or [make (1 lsl b)]. *)
+  let take stacks b make =
+    match stacks.(b) with
+    | Cell c ->
+        stacks.(b) <- c.next;
+        c.a
+    | Nil -> make (1 lsl b)
+
+  (* The class of the largest array in [stacks] of class [b] to [c], [b] if
+     none. *)
+  let rec largest stacks b c =
+    if c <= b then b
+    else
+      match stacks.(c) with Cell _ -> c | Nil -> largest stacks b (c - 1)
+
+  let make_ints n = Array.make n Ids.free
+  let make_nodes n = Array.make n unset
+
   (* An array of at least [n] entries. *)
-  let ints n =
-    let p = stacks (Domain.DLS.get held).ints and b = bits n in
-    match p.(b) with
-    | Cell c ->
-        p.(b) <- c.next;
-        c.a
-    | Nil -> Array.make (1 lsl b) Ids.free
+  let ints n = take (stacks (Domain.DLS.get held).ints) (bits n) make_ints
 
-  (* [ints n] with its even entries [Ids.free], by a loop: [Array.fill] checks
-     each entry as it would a pointer's. *)
-  let free_pairs n =
-    let a = ints n in
-    for i = 0 to (Array.length a / 2) - 1 do
-      Array.unsafe_set a (2 * i) Ids.free
-    done;
-    a
+  (* The largest array of at least [n] entries: a walk that outgrows its
+     arrays takes the largest, which an earlier pass over the program left,
+     rather than doubling them, each doubling a copy of what it holds. *)
+  let largest_ints n =
+    let pool = (Domain.DLS.get held).ints in
+    let stacks = stacks pool and b = bits n in
+    take stacks (largest stacks b pool.top) make_ints
 
-  let nodes n =
-    let p = stacks (Domain.DLS.get held).nodes and b = bits n in
-    match p.(b) with
-    | Cell c ->
-        p.(b) <- c.next;
-        c.a
-    | Nil -> Array.make (1 lsl b) unset
+  (* Pairs of ints, each free, of at least [n] ints. *)
+  let pairs n = take (stacks (Domain.DLS.get held).pairs) (bits n) make_ints
 
-  let give_ints a = give (stacks (Domain.DLS.get held).ints) a
+  let largest_pairs n =
+    let pool = (Domain.DLS.get held).pairs in
+    let stacks = stacks pool and b = bits n in
+    take stacks (largest stacks b pool.top) make_ints
+
+  let nodes n = take (stacks (Domain.DLS.get held).nodes) (bits n) make_nodes
+
+  let largest_nodes n =
+    let pool = (Domain.DLS.get held).nodes in
+    let stacks = stacks pool and b = bits n in
+    take stacks (largest stacks b pool.top) make_nodes
+
+  let give_ints a = give (Domain.DLS.get held).ints a
+
+  (* Gives [a] back, each of its pairs free. *)
+  let give_pairs a = give (Domain.DLS.get held).pairs a
 
   (* Gives [a] back, of which the first [used] entries may be set. *)
   let give_nodes a used =
     Array.fill a 0 used unset;
-    give (stacks (Domain.DLS.get held).nodes) a
+    give (Domain.DLS.get held).nodes a
+
+  (* Copies the first [n] entries of [src] to [dst]. [Array.blit] writes each
+     int into an array of the major heap as it would a pointer. *)
+  let copy_ints (src : int array) (dst : int array) n =
+    for i = 0 to n - 1 do
+      Array.unsafe_set dst i (Array.unsafe_get src i)
+    done
 end
 
 (* The nodes a walk meets, numbered in the order it meets them, so that what it
    keeps for a node lies in a row of plain arrays and its stack holds numbers.
-   A row is the node and [width - 1] more nodes in [nodes], and [iwidth] ints in
-   [ints]. A node's number is found by its id in [Ids]' slots, each a pair of
-   ints, the id and the number, so that a lookup reads one line. *)
+   A row is the node and [width - 1] more nodes in [nodes], and in [ints] the
+   index of the node's pair and [iwidth] more ints. A node's number is found by
+   its id in [Ids]' slots, each a pair of ints, the id and the number, so that
+   a lookup reads one line. Releasing frees each row's pair, so the pairs go
+   back to the pool free whatever their length. *)
 module Local = struct
   type node = t
 
@@ -981,21 +1033,23 @@ module Local = struct
     mutable nodes : node array;
     mutable ints : int array;
     width : int;
-    iwidth : int;
+    stride : int;
+    mutable moving : bool;
   }
 
   let create ~width ~iwidth =
     let nodes = Pool.nodes (8 * width) in
     let rows = Array.length nodes / width in
     {
-      slots = Pool.free_pairs 16;
+      slots = Pool.pairs 16;
       bits = 3;
       count = 0;
       rows;
       nodes;
-      ints = (if iwidth = 0 then [||] else Pool.ints (rows * iwidth));
+      ints = Pool.ints (rows * (iwidth + 1));
       width;
-      iwidth;
+      stride = iwidth + 1;
+      moving = false;
     }
 
   (* The pair holding [id], or the free pair where it goes. *)
@@ -1012,46 +1066,57 @@ module Local = struct
     if Array.unsafe_get t.slots (2 * i) = Ids.free then Ids.free
     else Array.unsafe_get t.slots ((2 * i) + 1)
 
-  (* Doubles the pairs. *)
+  (* Moves the pairs to the largest the pool holds, at least twice as many,
+     leaving the old ones free. While they move, [moving] keeps [release] from
+     trusting the rows' pairs. *)
   let grow_slots t =
-    let bits = t.bits + 1 in
-    let slots = Pool.free_pairs (2 lsl bits) and mask = (1 lsl bits) - 1 in
+    let slots = Pool.largest_pairs (4 lsl t.bits) in
+    let bits = Pool.bits (Array.length slots) - 1 in
+    let mask = (1 lsl bits) - 1 and old = t.slots in
+    t.moving <- true;
     for i = 0 to (1 lsl t.bits) - 1 do
-      let id = Array.unsafe_get t.slots (2 * i) in
+      let id = Array.unsafe_get old (2 * i) in
       if id <> Ids.free then begin
+        let l = Array.unsafe_get old ((2 * i) + 1) in
         let j = probe slots mask id (Ids.slot bits id) in
         Array.unsafe_set slots (2 * j) id;
-        Array.unsafe_set slots
-          ((2 * j) + 1)
-          (Array.unsafe_get t.slots ((2 * i) + 1))
+        Array.unsafe_set slots ((2 * j) + 1) l;
+        Array.unsafe_set t.ints (l * t.stride) j;
+        Array.unsafe_set old (2 * i) Ids.free
       end
     done;
-    Pool.give_ints t.slots;
     t.slots <- slots;
-    t.bits <- bits
+    t.bits <- bits;
+    t.moving <- false;
+    Pool.give_pairs old
 
-  (* Doubles the rows. *)
+  (* Moves the rows to the largest arrays the pool holds, each long enough for
+     at least twice the rows. An array given back stops being the walk's before
+     anything else can raise. *)
   let grow_rows t =
-    let nodes = Pool.nodes (2 * Array.length t.nodes) in
+    let rows = 2 * t.rows in
+    let nodes = Pool.largest_nodes (rows * t.width)
+    and ints = Pool.largest_ints (rows * t.stride) in
     Array.blit t.nodes 0 nodes 0 (t.count * t.width);
+    Pool.copy_ints t.ints ints (t.count * t.stride);
     Pool.give_nodes t.nodes (t.count * t.width);
     t.nodes <- nodes;
-    t.rows <- Array.length nodes / t.width;
-    if t.iwidth > 0 then begin
-      let ints = Pool.ints (t.rows * t.iwidth) in
-      Array.blit t.ints 0 ints 0 (t.count * t.iwidth);
-      Pool.give_ints t.ints;
-      t.ints <- ints
-    end
+    Pool.give_ints t.ints;
+    t.ints <- ints;
+    t.rows <- min (Array.length nodes / t.width) (Array.length ints / t.stride)
 
   (* The number of [u], which it is given if it has none. A new row holds [u],
-     [unset] nodes and [Ids.free] ints. *)
+     [unset] nodes and [Ids.free] ints. Its pair is set last, after the row
+     counts, with nothing between that could raise: every pair set belongs to
+     a row that [release] frees, even if an exception from a signal ends the
+     walk. *)
   let add t (u : node) =
     let i = pair t u.id in
     if Array.unsafe_get t.slots (2 * i) <> Ids.free then
       Array.unsafe_get t.slots ((2 * i) + 1)
     else begin
       let l = t.count in
+      if l = t.rows then grow_rows t;
       (* At most three quarters full. *)
       let i =
         if 4 * (l + 1) <= 3 lsl t.bits then i
@@ -1059,27 +1124,35 @@ module Local = struct
           grow_slots t;
           pair t u.id)
       in
-      Array.unsafe_set t.slots (2 * i) u.id;
-      Array.unsafe_set t.slots ((2 * i) + 1) l;
-      if l = t.rows then grow_rows t;
       Array.unsafe_set t.nodes (l * t.width) u;
-      for k = l * t.iwidth to ((l + 1) * t.iwidth) - 1 do
+      Array.unsafe_set t.ints (l * t.stride) i;
+      for k = (l * t.stride) + 1 to ((l + 1) * t.stride) - 1 do
         Array.unsafe_set t.ints k Ids.free
       done;
       t.count <- l + 1;
+      Array.unsafe_set t.slots (2 * i) u.id;
+      Array.unsafe_set t.slots ((2 * i) + 1) l;
       l
     end
 
   let node t l = Array.unsafe_get t.nodes (l * t.width)
   let get t l k = Array.unsafe_get t.nodes ((l * t.width) + k)
   let set t l k x = Array.unsafe_set t.nodes ((l * t.width) + k) x
-  let iget t l k = Array.unsafe_get t.ints ((l * t.iwidth) + k)
-  let iset t l k x = Array.unsafe_set t.ints ((l * t.iwidth) + k) x
+  let iget t l k = Array.unsafe_get t.ints ((l * t.stride) + k + 1)
+  let iset t l k x = Array.unsafe_set t.ints ((l * t.stride) + k + 1) x
 
+  (* Gives the arrays back, the pairs freed row by row. Pairs that were moving
+     when an exception ended the walk are dropped. *)
   let release t =
-    Pool.give_ints t.slots;
+    if not t.moving then begin
+      for l = 0 to t.count - 1 do
+        Array.unsafe_set t.slots (2 * Array.unsafe_get t.ints (l * t.stride))
+          Ids.free
+      done;
+      Pool.give_pairs t.slots
+    end;
     Pool.give_nodes t.nodes (t.count * t.width);
-    if t.iwidth > 0 then Pool.give_ints t.ints
+    Pool.give_ints t.ints
 end
 
 (* A stack of entries of four ints, which pushing allocates nothing for. *)
@@ -1092,8 +1165,8 @@ module Work = struct
 
   let push s w x y z =
     if s.len = Array.length s.a then begin
-      let a = Pool.ints (2 * s.len) in
-      Array.blit s.a 0 a 0 s.len;
+      let a = Pool.largest_ints (2 * s.len) in
+      Pool.copy_ints s.a a s.len;
       Pool.give_ints s.a;
       s.a <- a
     end;
@@ -1115,10 +1188,12 @@ end
 (* Each node is pushed with a flag: unset, its sources are pushed after it; set,
    its sources are done and it is. A node pushed twice before it is done is
    finished at its first pop with the flag set. A row's int is set once its node
-   is done. *)
+   is done, and its number pushed on [order], from which the list is made last
+   first, so that it is made once. *)
 let toposort ?gate ~calls root =
-  let seen = Local.create ~width:1 ~iwidth:1 and work = Work.create () in
-  let order = ref [] in
+  let seen = Local.create ~width:1 ~iwidth:1
+  and work = Work.create ()
+  and order = Work.create () in
   let rec push_srcs = function
     | [] -> ()
     | s :: rest ->
@@ -1142,19 +1217,27 @@ let toposort ?gate ~calls root =
         end
         else begin
           Local.iset seen l 0 1;
-          order := node :: !order
+          Work.push order l 0 0 0
         end
       end
-    done
+    done;
+    let nodes = ref [] in
+    for e = Work.length order - 1 downto 0 do
+      nodes := Local.node seen (Work.get order e 0) :: !nodes
+    done;
+    !nodes
+  in
+  let release () =
+    Local.release seen;
+    Work.release work;
+    Work.release order
   in
   match walk () with
-  | () ->
-      Local.release seen;
-      Work.release work;
-      List.rev !order
+  | nodes ->
+      release ();
+      nodes
   | exception e ->
-      Local.release seen;
-      Work.release work;
+      release ();
       reraise e
 
 let topovisit root f cache =
@@ -1189,6 +1272,10 @@ let topovisit root f cache =
       Work.release work;
       reraise e
 
+let rec all_known get = function
+  | [] -> true
+  | s :: srcs -> Option.is_some (get s) && all_known get srcs
+
 (* A recursive property is filled bottom-up over the nodes that lack it, so a
    deep graph never recurses deeply. *)
 let memoized ~calls ~get ~set ~compute u =
@@ -1199,8 +1286,7 @@ let memoized ~calls ~get ~set ~compute u =
       let srcs =
         if calls = Skip && u.op = Op.Call then drop 1 u.src else u.src
       in
-      if List.for_all (fun s -> Option.is_some (get s)) srcs then
-        set u (compute u)
+      if all_known get srcs then set u (compute u)
       else
         List.iter
           (fun n -> set n (compute n))
@@ -1218,7 +1304,7 @@ let backward_slice ~calls u =
   | Skip, Some s -> s
   | Skip, None ->
       let s = walk () in
-      u.memos.backward_slice_memo <- Some s;
+      (own_memos u).backward_slice_memo <- Some s;
       s
 
 let backward_slice_with_self ~calls u =
@@ -1230,7 +1316,7 @@ let backward_slice_with_self ~calls u =
 let ops_reached u =
   memoized ~calls:Skip
     ~get:(fun n -> n.memos.ops_reached_memo)
-    ~set:(fun n s -> n.memos.ops_reached_memo <- Some s)
+    ~set:(fun n s -> (own_memos n).ops_reached_memo <- Some s)
     ~compute:(fun n ->
       let srcs = if n.op = Op.Call then drop 1 n.src else n.src in
       let sets = List.map (fun s -> Option.get s.memos.ops_reached_memo) srcs in
@@ -1323,7 +1409,7 @@ let digest n arg_key src_key =
 let key u =
   memoized ~calls:Enter
     ~get:(fun n -> n.memos.key_memo)
-    ~set:(fun n k -> n.memos.key_memo <- Some k)
+    ~set:(fun n k -> (own_memos n).key_memo <- Some k)
     ~compute:(fun n ->
       digest n (arg_key n) (fun s -> Option.get s.memos.key_memo))
     u
@@ -1778,7 +1864,7 @@ let rec min_max u =
   | Some b -> b
   | None ->
       let b = at_width u.dtype (compute_min_max u) in
-      u.memos.min_max_memo <- Some b;
+      (own_memos u).min_max_memo <- Some b;
       b
 
 and operand_bounds u s =
@@ -2143,13 +2229,13 @@ let rec ended_ranges u =
         | Op.Barrier -> List.concat_map ended_ranges u.src
         | _ -> []
       in
-      u.memos.ended_ranges_memo <- Some l;
+      (own_memos u).ended_ranges_memo <- Some l;
       l
 
 let rec ranges u =
   memoized ~calls:Enter
     ~get:(fun n -> n.memos.ranges_memo)
-    ~set:(fun n r -> n.memos.ranges_memo <- Some r)
+    ~set:(fun n r -> (own_memos n).ranges_memo <- Some r)
     ~compute:compute_ranges u
 
 (* The node itself if it is a range, then the ranges of its sources in order of
@@ -2323,7 +2409,7 @@ let rec get_valid u =
 let rec device u =
   memoized ~calls:Enter
     ~get:(fun n -> n.memos.device_memo)
-    ~set:(fun n d -> n.memos.device_memo <- Some d)
+    ~set:(fun n d -> (own_memos n).device_memo <- Some d)
     ~compute:compute_device u
 
 and compute_device u =
@@ -2345,7 +2431,7 @@ let is_virtual u = Option.is_none (device u) || Dtype.mem u.dtype Dtype.weaks
 let rec addrspace u =
   memoized ~calls:Enter
     ~get:(fun n -> n.memos.addrspace_memo)
-    ~set:(fun n a -> n.memos.addrspace_memo <- Some a)
+    ~set:(fun n a -> (own_memos n).addrspace_memo <- Some a)
     ~compute:compute_addrspace u
 
 (* A node of no value has no memory: it lives in the ALU. *)
@@ -2389,7 +2475,7 @@ let storage_base u =
   in
   let b, path = walk [] u in
   let memo = Some b in
-  List.iter (fun n -> n.memos.storage_base_memo <- memo) path;
+  List.iter (fun n -> (own_memos n).storage_base_memo <- memo) path;
   b
 
 let needs_storage u =
@@ -3936,6 +4022,6 @@ let function_name (k : kernel_info) = Helpers.to_function_name k.name
 (* Memos *)
 
 let shape_memo u = u.memos.shape_memo
-let set_shape_memo u s = u.memos.shape_memo <- Some s
+let set_shape_memo u s = (own_memos u).shape_memo <- Some s
 let movement_memo u = u.memos.marg_memo
-let set_movement_memo u m = u.memos.marg_memo <- Some m
+let set_movement_memo u m = (own_memos u).marg_memo <- Some m

@@ -52,8 +52,9 @@ let expected what v = fail "expected %s, found %s" what (kind v)
 
 (* Printing *)
 
-let quote s =
-  let b = Buffer.create (String.length s + 2) in
+(* Writes [s] to [b] between quotes, escaping quotes, backslashes and
+   characters outside printable ASCII. *)
+let add_quoted b s =
   Buffer.add_char b '"';
   let escape = function
     | ('"' | '\\') as c ->
@@ -65,28 +66,54 @@ let quote s =
     | c -> Buffer.add_string b (strf "\\x%02x" (Char.code c))
   in
   String.iter escape s;
-  Buffer.add_char b '"';
-  Buffer.contents b
+  Buffer.add_char b '"'
 
-let rec print index = function
-  | None_ -> "None"
-  | Bool b -> if b then "True" else "False"
-  | Int z -> Bigint.to_string z
+(* Writes [v] to [b], each node as its index. *)
+let rec add_value b index = function
+  | None_ -> Buffer.add_string b "None"
+  | Bool x -> Buffer.add_string b (if x then "True" else "False")
+  | Int z -> Buffer.add_string b (Bigint.to_string z)
   | Float f
     when Float.is_nan f
          && not (Int64.equal (Int64.bits_of_float f) 0x7FF8_0000_0000_0000L) ->
-      strf "nan(0x%016Lx)" (Int64.bits_of_float f)
-  | Float f -> Format.asprintf "%a" Dtype.pp_const (`Float f)
-  | Invalid -> "Invalid"
-  | Str s -> quote s
-  | Bytes s -> "b" ^ quote s
-  | Name (p, n) -> p ^ "." ^ n
-  | Node u -> "%" ^ string_of_int (index u)
-  | Tuple [ v ] -> "(" ^ print index v ^ ",)"
-  | Tuple l -> "(" ^ String.concat ", " (List.map (print index) l) ^ ")"
+      Buffer.add_string b (strf "nan(0x%016Lx)" (Int64.bits_of_float f))
+  | Float f ->
+      Buffer.add_string b (Format.asprintf "%a" Dtype.pp_const (`Float f))
+  | Invalid -> Buffer.add_string b "Invalid"
+  | Str s -> add_quoted b s
+  | Bytes s ->
+      Buffer.add_char b 'b';
+      add_quoted b s
+  | Name (p, n) ->
+      Buffer.add_string b p;
+      Buffer.add_char b '.';
+      Buffer.add_string b n
+  | Node u ->
+      Buffer.add_char b '%';
+      Buffer.add_string b (string_of_int (index u))
+  | Tuple [ v ] ->
+      Buffer.add_char b '(';
+      add_value b index v;
+      Buffer.add_string b ",)"
+  | Tuple l ->
+      Buffer.add_char b '(';
+      List.iteri
+        (fun i v ->
+          if i > 0 then Buffer.add_string b ", ";
+          add_value b index v)
+        l;
+      Buffer.add_char b ')'
   | Record (n, fields) ->
-      let field (k, v) = k ^ "=" ^ print index v in
-      n ^ "(" ^ String.concat ", " (List.map field fields) ^ ")"
+      Buffer.add_string b n;
+      Buffer.add_char b '(';
+      List.iteri
+        (fun i (k, v) ->
+          if i > 0 then Buffer.add_string b ", ";
+          Buffer.add_string b k;
+          Buffer.add_char b '=';
+          add_value b index v)
+        fields;
+      Buffer.add_char b ')'
 
 (* Parsing *)
 
@@ -95,7 +122,7 @@ let rec print index = function
 type cursor = { text : string; mutable pos : int; stop : int }
 
 (* The character at the cursor, or ['\000'] past its end: the format writes
-   none ([quote] escapes it), so no value reads it as its own. *)
+   none ([add_quoted] escapes it), so no value reads it as its own. *)
 let peek c = if c.pos < c.stop then String.unsafe_get c.text c.pos else '\000'
 let advance c = c.pos <- c.pos + 1
 
@@ -783,9 +810,9 @@ let to_string sink =
   let line u =
     int (index u);
     Buffer.add_char b ' ';
-    Buffer.add_string b (print index (op.write (Ops.op u)));
+    add_value b index (op.write (Ops.op u));
     Buffer.add_char b ' ';
-    Buffer.add_string b (print index (dtype.write (Ops.dtype u)));
+    add_value b index (dtype.write (Ops.dtype u));
     Buffer.add_string b " [";
     List.iteri
       (fun i v ->
@@ -794,7 +821,9 @@ let to_string sink =
       (Ops.src u);
     Buffer.add_char b ']';
     Option.iter
-      (fun v -> Buffer.add_string b (" " ^ print index v))
+      (fun v ->
+        Buffer.add_char b ' ';
+        add_value b index v)
       (arg_value (Ops.arg u));
     Buffer.add_char b '\n'
   in

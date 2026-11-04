@@ -867,6 +867,41 @@ let graphs =
           equal uops
             [ size; a; b; Ops.O.(a + b); c; Ops.O.((a + b) * c) ]
             (Ops.toposort ~calls:Enter Ops.O.((a + b) * c)));
+      test "an exception at any allocation of a walk leaves later walks right"
+        (fun () ->
+          (* A chain of 40 sums outgrows a walk's first rows and pairs, so some
+             raises land as they grow. A walk the exception ends gives its
+             arrays back, and later walks take them: a walk in another's gate
+             holds its arrays while the other holds its own, so an array given
+             back twice would be both walks'. *)
+          let leaf = var "leaf" 0 4 and other = var "other" 0 4 in
+          let rec chain n u =
+            if n = 0 then u else chain (n - 1) Ops.O.(u + Ops.int n)
+          in
+          let root = chain 40 leaf in
+          let walk ?gate u = Ops.toposort ?gate ~calls:Enter u in
+          let rewrite () =
+            Ops.substitute ~calls:Enter ~pass:Fixed_point root [ (leaf, other) ]
+          in
+          let order = walk root and renamed = rewrite () in
+          let below = Ops.Tbl.create 64 in
+          List.iter (fun u -> Ops.Tbl.replace below u (walk u)) order;
+          let gate u =
+            equal uops (Ops.Tbl.find below u) (walk u);
+            true
+          in
+          let rec from k =
+            if k > 100_000 then fail "the walks make over 100000 allocations";
+            let made =
+              interrupted k (fun () ->
+                  ignore (walk root);
+                  ignore (rewrite ()))
+            in
+            equal uops order (walk ~gate root);
+            equal uop renamed (rewrite ());
+            match made with Some n when n < k -> () | _ -> from (k + 1)
+          in
+          from 1);
       test "toposort enters only the nodes the gate accepts" (fun () ->
           let a = var "a" 0 4 and b = var "b" 0 4 in
           let s = Ops.O.(a + b) in
