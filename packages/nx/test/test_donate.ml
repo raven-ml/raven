@@ -832,6 +832,29 @@ let test_strided_copied () =
   copied ~msg:"every other element" ~bytes:(4 * n) grew;
   equal (array float_exact) (Array.make n (-1.)) (elements y)
 
+(* A value that is a broadcast of the first row of memory it owns, of as
+   many elements as the value: an update of it cannot be written in place,
+   which would store every row into that one row, so it computes into fresh
+   memory, and every row it does not set keeps the donor's elements. *)
+let test_broadcast_copied () =
+  let make () =
+    let a =
+      A.of_array D.Float32 [| 12 |]
+        (Array.init 12 (fun i -> Float.of_int ((i mod 4) + 1)))
+    in
+    let row = A.move (Slice [| { start = 0; count = 4; step = 1 } |]) a in
+    let wide = A.move (Broadcast [| 3; 4 |]) (Option.get row) in
+    Nx.Repr.unsafe_of_array Nx.Host.v (Option.get wide)
+  in
+  let nines = Nx.create f32 [| 4 |] (Array.make 4 9.) in
+  let y, grew =
+    grown_on Rig.host make (fun x -> Nx.set Nx.[ L [ 1 ] ] nines (Nx.donate x))
+  in
+  copied ~msg:"a broadcast" ~bytes:48 grew;
+  equal ~msg:"the rows" (array float_exact)
+    [| 1.; 2.; 3.; 4.; 9.; 9.; 9.; 9.; 1.; 2.; 3.; 4. |]
+    (elements y)
+
 (* A value that is not donated, or that shares the donated memory, keeps its
    elements, and the result is the same. *)
 let test_kept () =
@@ -3107,6 +3130,8 @@ let () =
                test_where_in_place;
              test "a strided operand computes into fresh memory"
                test_strided_copied;
+             test "a broadcast operand computes into fresh memory"
+               test_broadcast_copied;
              test "an undonated or shared operand keeps its elements" test_kept;
              test "an operation may read the donor beside its handle"
                test_donor_beside;

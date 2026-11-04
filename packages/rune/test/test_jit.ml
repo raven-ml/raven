@@ -1842,6 +1842,23 @@ let test_lending () =
   check_row ~msg:"over a get" (fun x -> Nx.neg (Nx.get [ 0 ] x));
   check_row ~msg:"over an unsqueeze" (fun x ->
       Nx.neg (Nx.unsqueeze ~axes:[ 0 ] x));
+  (* A broadcast of the first row of memory it owns, of as many elements as
+     the result: a result written there would store every row into that
+     row, so it lends nothing. *)
+  let wide () =
+    let a =
+      Nx_array.of_array Nx_array.Dtype.Float32 [| 12 |]
+        (Array.init 12 (fun i -> Float.of_int ((i mod 4) + 1)))
+    in
+    let first = { Nx_array.Move.start = 0; count = 4; step = 1 } in
+    let row = Nx_array.move (Slice [| first |]) a in
+    let w = Nx_array.move (Broadcast [| 3; 4 |]) (Option.get row) in
+    Nx.Repr.unsafe_of_array Nx.Host.v (Option.get w)
+  in
+  let set_row w = Nx.set Nx.[ L [ 1 ] ] (Nx.full f32 [| 4 |] 9.) w in
+  let took, y = in_place (Rune.jit' set_row) (wide ()) in
+  equal ~msg:"a broadcast argument" bits_t (bits (set_row (wide ()))) (bits y);
+  equal ~msg:"a broadcast argument: in place" bool false took;
   let pair = T.(tensor @-> returns (pair tensor tensor)) in
   let g = Rune.jit pair (fun x -> (Nx.neg x, Nx.add x x)) in
   let x = fresh xs in
