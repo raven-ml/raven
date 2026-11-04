@@ -942,7 +942,7 @@ let () =
          group "integers"
            [
              prop ~count:20 ~examples:Wraps.examples
-               "add, sub, mul, neg and abs wrap as eager's"
+               "integer arithmetic at its type's edges gives eager's values"
                (Gen.with_pp Wraps.pp Wraps.gen)
                (fun c -> Wraps.law (snd (on_gpu ())) c);
            ];

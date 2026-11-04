@@ -128,8 +128,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   rule: unmeasured on nonnormal
 - `Bigint.of_string` is quadratic on long decimal strings (CPython limits
   that conversion too)
-- integer division by zero is left to rune and D145; tolk's C renderers
-  define every other integer case (D342, D346)
 
 ## rune, kaun, vega
 

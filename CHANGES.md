@@ -1048,6 +1048,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 - Compiling float64 `Nx.betaincinv`'s gradient allocates 207 M words
   against 228 M and runs 12% fewer instructions, with unchanged output;
   rune's other compiles allocate 4-22% fewer words.
+- An integer division by 0 gives 0 and its remainder the dividend, as
+  `Ops.exec_alu` computes them (`Cstyle.clang`, `Cstyle.cuda`, `Cstyle.hip`,
+  `Cstyle.metal`): C leaves it undefined, a host kernel died with SIGFPE, and
+  CUDA's `uint8` quotient of 0 by 0 was 255.
 - On the host, consecutive `int8` and `uint8` loads and stores merge into
   vectors of up to one register (`Coalesce.memory_coalescing`): a 1-token MXFP4
   product, which read its codes a byte at a time, runs 1.5 times as fast.

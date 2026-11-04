@@ -387,14 +387,17 @@ let wraps_signed d () =
 
 (* Divisions and shifts at the extremes
 
-   A signed type's least value divided by -1 and a shift by a count at or past
-   the type's width have values: the quotient wraps to the least value and the
-   remainder is 0; a left shift and an unsigned right shift give 0, a signed
-   right shift 0 or -1 by the sign. C leaves each undefined, and x86 traps on
-   that division. A kernel of one integer type writes [a / b], [a mod b],
-   [a << k] and [a >> k] of [lanes] loaded operands, drawn at the type's
-   extremes, which the interpreter's values must match. It runs in scalars, and
-   in vectors of 4 lanes, which C does not promote to [int]. *)
+   A division by 0, a signed type's least value divided by -1 and a shift by a
+   count at or past the type's width have values: a quotient by 0 is 0 and a
+   remainder by 0 the dividend; the least value's quotient by -1 wraps to the
+   least value and its remainder is 0; a left shift and an unsigned right shift
+   give 0, a signed right shift 0 or -1 by the sign. C leaves each undefined,
+   and x86 traps on both divisions. A kernel of one integer type writes the
+   truncated and floored quotients and remainders of [a] by [b], [a // a],
+   [a << k], [a >> k], and [a]'s quotient and remainder by a constant 0, of
+   [lanes] loaded operands, drawn at the type's extremes, which the
+   interpreter's values must match. It runs in scalars, and in vectors of 4
+   lanes, which C does not promote to [int]. *)
 
 let lanes = 64
 
@@ -404,7 +407,8 @@ let extreme_kernel ~opts dt =
   let open Ops.O in
   let i = Ops.range ~axis_type:Weak (Int lanes) [ 0 ] in
   let at slot = Ops.index (Shape.placeholder ~slot [ lanes ] dt) [ i ] in
-  let a = at 4 and b = at 5 and k = at 6 in
+  let a = at 9 and b = at 10 and k = at 11 in
+  let zero = Ops.int ~dtype:dt 0 in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"extremes" ~opts_to_apply:opts ())
     [
@@ -413,8 +417,13 @@ let extreme_kernel ~opts dt =
            [
              Ops.store (at 0) (Ops.alu a Truncdiv [ b ]);
              Ops.store (at 1) (Ops.alu a Truncmod [ b ]);
-             Ops.store (at 2) (a lsl k);
-             Ops.store (at 3) (a lsr k);
+             Ops.store (at 2) (Ops.alu a Div [ b ]);
+             Ops.store (at 3) (Ops.alu a Mod [ b ]);
+             Ops.store (at 4) (Ops.alu a Div [ a ]);
+             Ops.store (at 5) (a lsl k);
+             Ops.store (at 6) (a lsr k);
+             Ops.store (at 7) (Ops.alu a Truncdiv [ zero ]);
+             Ops.store (at 8) (Ops.alu a Truncmod [ zero ]);
            ])
         [ i ];
     ]
@@ -440,9 +449,6 @@ let edges dt =
   [ Dtype.min dt; near (Dtype.min dt) 1; of_int dt (-1); of_int dt 0;
     of_int dt 1; of_int dt 2; near (Dtype.max dt) (-1); Dtype.max dt ]
 
-let divisors dt =
-  List.filter (fun v -> not Dtype.Value.(v = of_int 0)) (edges dt)
-
 (* Counts either side of the type's width and of the widths C computes in. *)
 let counts dt =
   let w = Dtype.bitsize dt in
@@ -465,17 +471,16 @@ let pp_extremes ppf e =
   Format.fprintf ppf "%a: a %a, b %a, k %a" Dtype.pp e.dt vs e.a vs e.b vs
     e.k
 
-(* Each type's every pair of an edge and a divisor, and its counts in turn. *)
+(* Each type's every pair of edges, and its counts in turn. *)
 let extreme_examples =
   List.map
     (fun dt ->
-      let e = Array.of_list (edges dt) and d = Array.of_list (divisors dt) in
-      let c = Array.of_list (counts dt) in
-      let pair j = j mod (Array.length e * Array.length d) in
+      let e = Array.of_list (edges dt) and c = Array.of_list (counts dt) in
+      let n = Array.length e in
       {
         dt;
-        a = Array.init lanes (fun j -> e.(pair j / Array.length d));
-        b = Array.init lanes (fun j -> d.(pair j mod Array.length d));
+        a = Array.init lanes (fun j -> e.(j / n mod n));
+        b = Array.init lanes (fun j -> e.(j mod n));
         k = Array.init lanes (fun j -> c.(j mod Array.length c));
       })
     Dtype.ints
@@ -485,15 +490,12 @@ let extreme_gen =
   let* dt = of_list Dtype.ints in
   let drawn l random = frequency [ (3, of_list l); (1, random) ] in
   let any = map (of_int dt) int in
-  let nonzero =
-    map (fun v -> if Dtype.Value.(v = of_int 0) then of_int dt 1 else v) any
-  in
   let max_count =
     if Dtype.bitsize dt > 8 then 200 else Dtype.Value.to_int (Dtype.max dt)
   in
   let lane l random = array ~size:(constant lanes) (drawn l random) in
   let+ a = lane (edges dt) any
-  and+ b = lane (divisors dt) nonzero
+  and+ b = lane (edges dt) any
   and+ k = lane (counts dt) (map (of_int dt) (int_range 0 max_count)) in
   { dt; a; b; k }
 
@@ -504,6 +506,11 @@ let extremes_compute d { dt; a; b; k } =
   cover "the least value by -1"
     (signed
     && Array.exists2 (fun x y -> Dtype.Value.(x = Dtype.min dt) && is y (-1)) a b);
+  cover "a negative value by 0"
+    (Array.exists2 (fun x y -> Dtype.Value.(x < of_int 0) && is y 0) a b);
+  cover "a positive value by 0"
+    (Array.exists2 (fun x y -> Dtype.Value.(of_int 0 < x) && is y 0) a b);
+  cover "0 by itself" (Array.exists (fun x -> is x 0) a);
   cover "a count of the width" (Array.exists (fun n -> is n w) k);
   cover "a count of 64 or more"
     (Array.exists (fun n -> Dtype.Value.(of_int 64 <= n)) k);
@@ -517,17 +524,22 @@ let extremes_compute d { dt; a; b; k } =
       let out =
         Run.on d
           (extreme_program d ~opts dt)
-          [
-            (0, zeros); (1, zeros); (2, zeros); (3, zeros); (4, a); (5, b);
-            (6, k);
-          ]
+          (List.init 9 (fun slot -> (slot, zeros))
+          @ [ (9, a); (10, b); (11, k) ])
       in
       let msg = Format.asprintf "%a in %s" Dtype.pp dt how in
-      equal ~msg:(msg ^ ": a / b") values (each Truncdiv a b) (List.assoc 0 out);
-      equal ~msg:(msg ^ ": a mod b") values (each Truncmod a b)
-        (List.assoc 1 out);
-      equal ~msg:(msg ^ ": a << k") values (each Shl a k) (List.assoc 2 out);
-      equal ~msg:(msg ^ ": a >> k") values (each Shr a k) (List.assoc 3 out))
+      let expect slot what v =
+        equal ~msg:(msg ^ what) values v (List.assoc slot out)
+      in
+      expect 0 ": a / b" (each Truncdiv a b);
+      expect 1 ": a mod b" (each Truncmod a b);
+      expect 2 ": a // b, floored" (each Div a b);
+      expect 3 ": a mod b, floored" (each Mod a b);
+      expect 4 ": a // a, floored" (each Div a a);
+      expect 5 ": a << k" (each Shl a k);
+      expect 6 ": a >> k" (each Shr a k);
+      expect 7 ": a / 0" (each Truncdiv a zeros);
+      expect 8 ": a mod 0" (each Truncmod a zeros))
     [ ("scalars", []); ("vectors", in_vectors) ]
 
 let extremes_prop name d =

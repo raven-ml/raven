@@ -654,7 +654,7 @@ index f4535a4f7..77d16d16b 100644
      # instruction selection
      if isinstance(renderer, ISARenderer):
 diff --git a/tinygrad/codegen/decomp/dtype.py b/tinygrad/codegen/decomp/dtype.py
-index d9fee876d..6e58952f2 100644
+index d9fee876d..51bffdbde 100644
 --- a/tinygrad/codegen/decomp/dtype.py
 +++ b/tinygrad/codegen/decomp/dtype.py
 @@ -1,5 +1,6 @@
@@ -665,7 +665,16 @@ index d9fee876d..6e58952f2 100644
  from tinygrad.helpers import flatten, DEBUG, EMULATED_DTYPES
  from tinygrad.uop import GroupOp
  from tinygrad.uop.ops import UOp, UPat, Ops, PatternMatcher, graph_rewrite, shape_to_shape_arg
-@@ -140,6 +141,26 @@ def f2f_store(st, idx, val, fr:DType, to:DType):
+@@ -66,6 +67,8 @@ def l2i(op: Ops, dt: DType, *uops:UOp):
+         diff = l2i(Ops.SUB, dtypes.uint, *r, b0, b1)
+         q = ((q[0] | shl(cond.cast(dtypes.uint), i % 32), q[1]) if i < 32 else (q[0], q[1] | shl(cond.cast(dtypes.uint), i % 32)))
+         r = l2i(Ops.WHERE, dtypes.uint, cond, *diff, *r)
++      # no remainder is below a divisor of 0, so every quotient bit is set: the quotient by 0 is 0, the remainder already the dividend
++      q = ((nz:=(b0 | b1).ne(0)).where(q[0], z), nz.where(q[1], z))
+       if dt == dtypes.int:
+         (nq0, nq1), (nr0, nr1) = l2i(Ops.BITCAST, dt, *l2i(Ops.NEG, dtypes.uint, *q)), l2i(Ops.BITCAST, dt, *l2i(Ops.NEG, dtypes.uint, *r))
+         (q0, q1), (r0, r1) = l2i(Ops.BITCAST, dt, *q), l2i(Ops.BITCAST, dt, *r)
+@@ -140,6 +143,26 @@ def f2f_store(st, idx, val, fr:DType, to:DType):
  
  def f2f_rewrite(ctx:FloatDecompCtx, x:UOp) -> UOp: return graph_rewrite(x, pm_float_decomp, ctx=ctx, bottom_up=True)
  
@@ -692,7 +701,7 @@ index d9fee876d..6e58952f2 100644
  pm_long_decomp: PatternMatcher = PatternMatcher([
    # the decomp's own bottom-up rewrite can mint bare consts mid-flight: word splitting commits them at the long sibling's dtype
    (UPat(GroupOp.All, name='x'), lambda x: commit_weak_consts(x, next((s.dtype for s in x.src if s.dtype in l2i_dt), None))),
-@@ -184,6 +205,9 @@ pm_float_decomp: PatternMatcher = PatternMatcher([
+@@ -184,6 +207,9 @@ pm_float_decomp: PatternMatcher = PatternMatcher([
     f2f(f2f(val.cast(ctx.to).bitcast(f2f_dt[ctx.to]), ctx.to, ctx.fr), ctx.fr, ctx.to) if x.dtype == ctx.fr else None),
    (UPat(GroupOp.ALU|{Ops.STACK, Ops.INDEX}, dtypes.floats, name="x"), lambda ctx,x:
     x.replace(src=tuple(s.cast(ctx.to) if s.dtype == ctx.fr else s for s in x.src)) if x.dtype == ctx.fr else None),
@@ -702,7 +711,7 @@ index d9fee876d..6e58952f2 100644
    (UPat(Ops.STORE, src=(UPat.var("idx"), UPat(Ops.BITCAST, dtypes.floats, name="val")), name='st'), lambda ctx,st,idx,val:
     st.replace(src=(idx, val.src[0].bitcast(f2f_dt[ctx.fr]))) if val.dtype == ctx.fr and idx.dtype == f2f_dt[ctx.fr] else None),
    (UPat(Ops.STORE, src=(UPat.var("idx").or_casted(), UPat.var("val", dtypes.floats)), name='st'), lambda ctx,st,idx,val:
-@@ -195,9 +219,14 @@ class DTypeDecompCtx:
+@@ -195,9 +221,14 @@ class DTypeDecompCtx:
    renderer: Renderer
    dtypes: set[DType] = field(default_factory=set)
  
@@ -720,7 +729,7 @@ index d9fee876d..6e58952f2 100644
      if DEBUG >= 2: print(f"emulating {fr} as {to}")
      pm = pm_float_decomp if fr in dtypes.floats else pm_long_decomp
 diff --git a/tinygrad/codegen/decomp/op.py b/tinygrad/codegen/decomp/op.py
-index cff34616d..1fbdab705 100644
+index cff34616d..8f11f9bdc 100644
 --- a/tinygrad/codegen/decomp/op.py
 +++ b/tinygrad/codegen/decomp/op.py
 @@ -1,6 +1,6 @@
@@ -731,7 +740,7 @@ index cff34616d..1fbdab705 100644
  from tinygrad.uop.ops import UOp, UPat, Ops, PatternMatcher
  from tinygrad.renderer import Renderer
  
-@@ -51,56 +51,93 @@ def threefry2x32(x: UOp, key: UOp):
+@@ -51,56 +51,97 @@ def threefry2x32(x: UOp, key: UOp):
  
  # ***** decomposition patterns *****
  
@@ -742,10 +751,15 @@ index cff34616d..1fbdab705 100644
 +  if type(d.val) is not int or (w:=truncate[a.dtype](d.val)) == d.val: return d
 +  return d.const_like(w)
 +
++# a quotient by 0 is 0 and the remainder the dividend: the correction would take 1 from a negative dividend's, so it skips a divisor
++# whose bounds reach 0 where it is 0
  def floordiv_to_idiv(a:UOp, b:UOp) -> UOp:
 +  b = divisor(a, b)
    if (a.vmin >= 0 and b.vmin >= 0) or (a.vmax <= 0 and b.vmax <= 0): return a.alu(Ops.TRUNCDIV, b)
-   return a.alu(Ops.TRUNCDIV, b) - (a.alu(Ops.TRUNCMOD, b).ne(0) & (a<0).ne(b<0))
+-  return a.alu(Ops.TRUNCDIV, b) - (a.alu(Ops.TRUNCMOD, b).ne(0) & (a<0).ne(b<0))
++  differs = (a<0).ne(b<0)
++  if b.vmin <= 0 <= b.vmax: differs = differs & b.ne(0)
++  return a.alu(Ops.TRUNCDIV, b) - (a.alu(Ops.TRUNCMOD, b).ne(0) & differs)
  
  def floormod_to_mod(a:UOp, b:UOp) -> UOp:
 +  b = divisor(a, b)
@@ -833,7 +847,7 @@ index cff34616d..1fbdab705 100644
    if Ops.NEG in ops:
      pat += [(UPat.var('x')*UPat.cvar('c'), lambda ctx,x,c: x.alu(Ops.NEG) if c.val == x.dtype.const(-1) else None)]
      if Ops.SUB in ops: pat += [(UPat.var('x')+UPat.var('y').alu(Ops.NEG), lambda ctx,x,y: x.alu(Ops.SUB, y))]
-@@ -117,8 +154,7 @@ def get_late_rewrite_patterns(ops:tuple[Ops, ...], disable_fast_idiv:bool) -> Pa
+@@ -117,8 +158,7 @@ def get_late_rewrite_patterns(ops:tuple[Ops, ...], disable_fast_idiv:bool) -> Pa
      pat += [(UPat.var('a')*UPat.var('b')+UPat.var('c'), lambda a,b,c: a.alu(Ops.MULACC, b, c))]
      # also fuse (x << n) + c → MULACC(x, 2^n, c) since MUL→SHL may run first
      if Ops.SHL in ops: pat += [(UPat.var('x').alu(Ops.SHL, UPat.cvar('n'))+UPat.var('c'), lambda x,n,c: x.alu(Ops.MULACC, x.const_like(1<<n.val), c))]
@@ -1265,7 +1279,7 @@ index 48f88612f..10d74c422 100644
          assert len(idx.src) == 2, "index has 2 sources"
          mask: UOp = UOp.uprod(*[x.eq(0) for x in missing_locals])
 diff --git a/tinygrad/codegen/late/coalesce.py b/tinygrad/codegen/late/coalesce.py
-index 65fb29491..512e9b17f 100644
+index 65fb29491..7bdb9b872 100644
 --- a/tinygrad/codegen/late/coalesce.py
 +++ b/tinygrad/codegen/late/coalesce.py
 @@ -39,7 +39,9 @@ def _drop_valid_stmts(valid:UOp, idx:UOp, height:int, width:int) -> list[UOp]:
@@ -2620,7 +2634,7 @@ index 7fb5ccac2..7d16f2fd2 100644
    tensor_cores: list[TensorCore] = []
    extra_matcher: PatternMatcher|None = None
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
-index 6eec3e198..2875b0b96 100644
+index 6eec3e198..85f29394d 100644
 --- a/tinygrad/renderer/cstyle.py
 +++ b/tinygrad/renderer/cstyle.py
 @@ -5,9 +5,28 @@ from tinygrad.renderer import tc
@@ -2683,7 +2697,7 @@ index 6eec3e198..2875b0b96 100644
  
    # call an external function by symbol: the CUSTOM_FUNCTION body names the callee, the srcs are the args and set the types
    (UPat(Ops.CALL, src=(UPat(Ops.CUSTOM_FUNCTION, name="f"),), allow_any_len=True, name="x"), lambda ctx,x,f:
-@@ -86,6 +103,48 @@ base_rewrite = PatternMatcher([
+@@ -86,6 +103,61 @@ base_rewrite = PatternMatcher([
  pm_narrow_uint = PatternMatcher([(UPat((Ops.ADD, Ops.SUB, Ops.MUL, Ops.NEG, Ops.SHL, Ops.MULACC), (dtypes.uint8, dtypes.uint16), name="x"),
                                    lambda x: x.replace(src=tuple(s.cast(dtypes.uint32) for s in x.src)).cast(x.dtype))])
  
@@ -2705,19 +2719,32 @@ index 6eec3e198..2875b0b96 100644
 +pm_wrap_signed = PatternMatcher([(UPat((Ops.ADD, Ops.SUB, Ops.MUL, Ops.NEG, Ops.SHL, Ops.MULACC), dtypes.sints, name="x"),
 +  lambda x: None if wrap_defined(x) else x.replace(src=tuple(s.cast(dtypes.uint64 if x.dtype.itemsize == 8 else dtypes.uint32) for s in x.src)).cast(x.dtype))])
 +
-+# C leaves a signed division of the least value by -1 undefined, and x86 traps on it, on a vector lane of any width too; a shift by a
-+# count at or past the width of its operand or lane is undefined as well. A division whose operands' bounds reach both computes on
-+# magnitudes in the unsigned type and takes its sign after; a shift whose count's bounds leave the width shifts by the count's low
-+# bits and selects the result past it
++# C leaves a division by zero undefined, and a signed division of the least value by -1; x86 traps on both, on a vector lane of any
++# width too. A shift by a count at or past the width of its operand or lane is undefined as well. A division whose divisor's bounds
++# reach 0 divides by (d != 0).where(d, 1) and selects its value at 0 after: a quotient by 0 is 0 and a remainder the dividend; one
++# whose operands' bounds reach the least value and -1 computes on magnitudes in the unsigned type and takes its sign after; a shift
++# whose count's bounds leave the width shifts by the count's low bits and selects the result past it
++def not_zero(d:UOp) -> UOp: return d.alu(Ops.CMPNE, d.const_like(0))
++def nonzero(d:UOp) -> UOp: return not_zero(d).where(d, d.const_like(1))
++# nonzero(d), which bounds cannot tell from 0
++def is_nonzero(d:UOp) -> bool:
++  return d.op is Ops.WHERE and (c:=d.src[0]).op is Ops.CMPNE and c.src[0] is d.src[1] and c.src[1].vmin == c.src[1].vmax == 0 \
++    and not d.src[2].vmin <= 0 <= d.src[2].vmax
 +def defined_div(x:UOp) -> UOp|None:
 +  a, b = x.src
 +  (alo, ahi), (blo, bhi) = x._operand(a), x._operand(b)
-+  if not (alo <= x.dtype.min <= ahi and blo <= -1 <= bhi): return None
-+  u = {1: dtypes.uint8, 2: dtypes.uint16, 4: dtypes.uint32, 8: dtypes.uint64}[x.dtype.itemsize]
-+  def magnitude(v:UOp) -> UOp: return (v < 0).where((w:=v.cast(u)).alu(Ops.NEG), w)
-+  r = magnitude(a).alu(x.op, magnitude(b))
-+  sign = (a < 0).alu(Ops.CMPNE, b < 0) if x.op is Ops.TRUNCDIV else a < 0
-+  return sign.where(r.alu(Ops.NEG), r).cast(x.dtype)
++  by_zero = blo <= 0 <= bhi and not is_nonzero(b)
++  overflow = x.dtype in dtypes.sints and alo <= x.dtype.min <= ahi and blo <= -1 <= bhi
++  if not (by_zero or overflow): return None
++  if not overflow: r = a.alu(x.op, nonzero(b))
++  else:
++    u = {1: dtypes.uint8, 2: dtypes.uint16, 4: dtypes.uint32, 8: dtypes.uint64}[x.dtype.itemsize]
++    def magnitude(v:UOp) -> UOp: return (v < 0).where((w:=v.cast(u)).alu(Ops.NEG), w)
++    d = magnitude(b)
++    q = magnitude(a).alu(x.op, nonzero(d) if by_zero else d)
++    sign = (a < 0).alu(Ops.CMPNE, b < 0) if x.op is Ops.TRUNCDIV else a < 0
++    r = sign.where(q.alu(Ops.NEG), q).cast(x.dtype)
++  return not_zero(b).where(r, x.const_like(0) if x.op is Ops.TRUNCDIV else a) if by_zero else r
 +def defined_shift(x:UOp) -> UOp|None:
 +  a, k = x.src
 +  w = x.dtype.itemsize*8
@@ -2726,13 +2753,13 @@ index 6eec3e198..2875b0b96 100644
 +  inside = k < w
 +  if x.op is Ops.SHR and x.dtype in dtypes.sints: return x.replace(src=(a, inside.where(k, w-1) & (w-1)))
 +  return inside.where(x.replace(src=(a, k & (w-1))), 0)
-+pm_defined_div_shift = PatternMatcher([(UPat((Ops.TRUNCDIV, Ops.TRUNCMOD), dtypes.sints, name="x"), defined_div),
++pm_defined_div_shift = PatternMatcher([(UPat((Ops.TRUNCDIV, Ops.TRUNCMOD), dtypes.ints, name="x"), defined_div),
 +  (UPat((Ops.SHL, Ops.SHR), dtypes.ints, name="x"), defined_shift)])
 +
  def create_non_native_float_pats(dts:tuple[DType, ...], casting:bool=True):
    patterns = PatternMatcher([
      # a weak CONST states no width and cannot be restated: commit it at the emulated dtype a sibling src states
-@@ -117,8 +176,9 @@ pm_manual_bf16_cast = PatternMatcher([
+@@ -117,8 +189,9 @@ pm_manual_bf16_cast = PatternMatcher([
  # a bfloat16 stored as ushort renders its const as the bit pattern
  pm_bf16_ushort_const = PatternMatcher([(UPat.cvar("c").cast(dtypes.bfloat16), lambda ctx,c: f"{to_storage_scalar(c.val, dtypes.bfloat16)}u")])
  
@@ -2744,7 +2771,7 @@ index 6eec3e198..2875b0b96 100644
  
  def _wmma_name(u:UOp) -> str:
    return f"WMMA_{'_'.join(map(str, u.arg[0]))}_{u.arg[1].name}_{u.dtype.name}"
-@@ -127,6 +187,24 @@ def _wmma_name(u:UOp) -> str:
+@@ -127,6 +200,24 @@ def _wmma_name(u:UOp) -> str:
  def wmma_args(uops:list[UOp]):
    return dedup((_wmma_name(uop), uop.arg[0], uop.arg[1], uop.dtype, tuple(x.shape[-1] for x in uop.src)) for uop in uops if uop.op is Ops.WMMA)
  
@@ -2769,7 +2796,7 @@ index 6eec3e198..2875b0b96 100644
  class CStyleLanguage(Renderer):
    abi: str = ""
    kernel_typedef: str = "void"
-@@ -158,7 +236,8 @@ class CStyleLanguage(Renderer):
+@@ -158,7 +249,8 @@ class CStyleLanguage(Renderer):
      Ops.ADD: lambda a,b,dtype: f"({a}+{b})", Ops.SUB: lambda a,b,dtype: f"({a}-{b})", Ops.MUL: lambda a,b,dtype: f"({a}*{b})",
      Ops.TRUNCMOD: lambda a,b,dtype: f"({a}%{b})", Ops.TRUNCDIV: lambda a,b,dtype: f"({a}/{b})", Ops.CMPNE: lambda a,b,dtype: f"({a}!={b})",
      Ops.SHR: lambda a,b,dtype: f"({a}>>{b})", Ops.SHL: lambda a,b,dtype: f"({a}<<{b})", Ops.CMPLT: lambda a,b,dtype: f"({a}<{b})",
@@ -2779,7 +2806,7 @@ index 6eec3e198..2875b0b96 100644
  
    string_rewrite = base_rewrite
  
-@@ -209,6 +288,7 @@ class CStyleLanguage(Renderer):
+@@ -209,6 +301,7 @@ class CStyleLanguage(Renderer):
      else: return f"{self[u]}"
    def render_access(self, u:UOp): return f"*{self.render_ptr(u)}"
    def render_cast(self, u:UOp, val:str) -> str: return f"({self.render_type(u)})({val})"
@@ -2787,7 +2814,7 @@ index 6eec3e198..2875b0b96 100644
  
    # LEGACY
    def render_dtype(self, dt:DType, mutable=True) -> str:
-@@ -218,6 +298,7 @@ class CStyleLanguage(Renderer):
+@@ -218,6 +311,7 @@ class CStyleLanguage(Renderer):
    def _render(self, uops:list[UOp]) -> tuple[str, list[str], list[tuple[str,tuple[UOp,bool]]]]:
      r: dict[UOp, str] = {}
      self.r = r
@@ -2795,7 +2822,7 @@ index 6eec3e198..2875b0b96 100644
  
      child_count = Counter(v for ru in uops for v in ru.src)
      # find which PARAMs are stored to with a single toposort
-@@ -265,12 +346,13 @@ class CStyleLanguage(Renderer):
+@@ -265,12 +359,13 @@ class CStyleLanguage(Renderer):
          r[u] = l
        else:
          if u.op not in {Ops.RANGE, Ops.BUFFER, Ops.BINARY} and u.dtype != dtypes.void:
@@ -2811,7 +2838,7 @@ index 6eec3e198..2875b0b96 100644
  
      # NOTE: this relies on bufs dict preserving order
      return (name, kernel, list(bufs.values()))
-@@ -284,7 +366,125 @@ class CStyleLanguage(Renderer):
+@@ -284,7 +379,125 @@ class CStyleLanguage(Renderer):
                '\n'.join(inlines[b][1]) + "\n}" for b in bodies]
      return self.render_kernel(*self._render(uops), uops+[u for b in inlines for u in b.src], prefix or None)
  
@@ -2937,7 +2964,7 @@ index 6eec3e198..2875b0b96 100644
    float4 = "(float4)"
    float4_style = ('{', '}')
    gep_arr_threshold = 0
-@@ -301,11 +501,12 @@ class ClangRenderer(CStyleLanguage):
+@@ -301,11 +514,12 @@ class ClangRenderer(CStyleLanguage):
    code_for_op = {**({k:v for k,v in CStyleLanguage.code_for_op.items() if k not in [Ops.EXP2, Ops.SIN, Ops.LOG2, Ops.RECIP]}),
                   Ops.SQRT: lambda x,dtype: f"__builtin_sqrt({x})" if dtype == dtypes.float64 else f"__builtin_sqrtf({x})",
                   Ops.TRUNC: lambda x,dtype: f"__builtin_trunc({x})" if dtype == dtypes.float64 else f"__builtin_truncf({x})",
@@ -2952,7 +2979,7 @@ index 6eec3e198..2875b0b96 100644
  
    def render_vector_prefix(self, dt:DType, count:int) -> str:
      # round (down) to power of two (this is actually the default clang behavior)
-@@ -313,7 +514,15 @@ class ClangRenderer(CStyleLanguage):
+@@ -313,7 +527,15 @@ class ClangRenderer(CStyleLanguage):
      vec = self._render_dtype(dt, count, AddrSpace.REG)
      return f"typedef {self.render_dtype(dt)} {vec} __attribute__((aligned({alignment}),ext_vector_type({count})));"
  
@@ -2969,7 +2996,7 @@ index 6eec3e198..2875b0b96 100644
    def _render_body(self, function_name, kernel, bufs, uops, pref=None) -> str: return super().render_kernel(function_name, kernel, bufs, uops, pref)
    def _render_entry(self, function_name:str, bufs:list[tuple[str,tuple[UOp,bool]]]) -> str: return ""
  
-@@ -328,6 +537,21 @@ class ClangRenderer(CStyleLanguage):
+@@ -328,6 +550,21 @@ class ClangRenderer(CStyleLanguage):
      super().__init__(target)
      from tinygrad.runtime.support.compiler_cpu import ClangCompiler
      self.compiler = ClangCompiler(target.arch.split(","))
@@ -2991,7 +3018,7 @@ index 6eec3e198..2875b0b96 100644
  
  class OpenCLRenderer(CStyleLanguage):
    # language options
-@@ -337,10 +561,11 @@ class OpenCLRenderer(CStyleLanguage):
+@@ -337,10 +574,11 @@ class OpenCLRenderer(CStyleLanguage):
    smem_prefix = "__local "
    barrier = "barrier(CLK_LOCAL_MEM_FENCE);"
    float4 = "(float4)"
@@ -3004,7 +3031,7 @@ index 6eec3e198..2875b0b96 100644
  
    string_rewrite = pm_bf16_ushort_const + PatternMatcher([
      (UPat(Ops.BITCAST, name="x"), lambda ctx,x: f"as_{ctx.render_dtype(x.dtype)}(({ctx.render_dtype(x.src[0].dtype)})({ctx[x.src[0]]}))"
-@@ -364,6 +589,7 @@ class OpenCLRenderer(CStyleLanguage):
+@@ -364,6 +602,7 @@ class OpenCLRenderer(CStyleLanguage):
                                        (d != dtypes.double or "cl_khr_fp64" in self.target.arch) and d not in dtypes.fp8s}
  
  class MetalRenderer(CStyleLanguage):
@@ -3012,7 +3039,7 @@ index 6eec3e198..2875b0b96 100644
    def __init__(self, target:Target):
      super().__init__(target)
      from tinygrad.runtime.ops_metal import MetalCompiler
-@@ -385,7 +611,7 @@ class MetalRenderer(CStyleLanguage):
+@@ -385,7 +624,7 @@ class MetalRenderer(CStyleLanguage):
    code_for_op = {**CStyleLanguage.code_for_op, Ops.SIN: lambda x,dtype: f"precise::sin({x})"}
  
    # upcast to float32 all the ops that don't support bfloat16
@@ -3021,7 +3048,7 @@ index 6eec3e198..2875b0b96 100644
      # NOTE: this is copied from PTX
      (UPat((Ops.SQRT, Ops.EXP2, Ops.LOG2, Ops.SIN, Ops.TRUNC), dtype=dtypes.bfloat16, name="x"),
        lambda x: (UOp(x.op, src=tuple(vv.cast(dtypes.float) for vv in x.src), arg=x.arg).cast(dtypes.bfloat16))),
-@@ -415,9 +641,11 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
+@@ -415,9 +654,11 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
  _nms = list("xyzwabcdefghijkl") + [f'v{i}' for i in range(16, 32)]
  
  class CUDARenderer(CStyleLanguage):
@@ -3033,7 +3060,7 @@ index 6eec3e198..2875b0b96 100644
  
    def __init__(self, target:Target, use_nvcc=False):
      super().__init__(target)
-@@ -441,14 +669,15 @@ class CUDARenderer(CStyleLanguage):
+@@ -441,14 +682,15 @@ class CUDARenderer(CStyleLanguage):
      Ops.LOG2: lambda x,dtype: f"hlog2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"log2({x})",
      Ops.EXP2: lambda x,dtype: f"hexp2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"exp2({x})",
      Ops.SQRT: lambda x,dtype: f"hsqrt({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"sqrt({x})",
@@ -3052,7 +3079,7 @@ index 6eec3e198..2875b0b96 100644
       if x.addrspace not in (AddrSpace.GLOBAL, AddrSpace.LOCAL) else None),
    ]) + base_rewrite
  
-@@ -465,6 +694,8 @@ class CUDARenderer(CStyleLanguage):
+@@ -465,6 +707,8 @@ class CUDARenderer(CStyleLanguage):
      if any(dt in dtypes.fp8s for dt, _ in used_dtypes): prefix.append("#include <cuda_fp8.h>")
      if any(dt == dtypes.half for dt, _ in used_dtypes): prefix.append("#include <cuda_fp16.h>")
      if any(dt == dtypes.bfloat16 for dt, _ in used_dtypes): prefix.append("#include <cuda_bf16.h>")
@@ -3061,7 +3088,7 @@ index 6eec3e198..2875b0b96 100644
      prefix += [self.render_vector_prefix(dt, count) for dt, count in used_dtypes if (count in (4,8) and dt in {dtypes.half, dtypes.bfloat16})
        or (count in (2,4,8,16) and dt in dtypes.fp8s)]
      dt_map_in = { dtypes.f32: "tf32", dtypes.f16: "f16", dtypes.bf16: "bf16", dtypes.fp8e4m3: "e4m3", dtypes.fp8e5m2: "e5m2" }
-@@ -501,6 +732,7 @@ def _ocml(op): return lambda x,dtype: f"__ocml_{op}_f{ {dtypes.half:16, dtypes.d
+@@ -501,6 +745,7 @@ def _ocml(op): return lambda x,dtype: f"__ocml_{op}_f{ {dtypes.half:16, dtypes.d
  
  class HIPRenderer(CStyleLanguage):
    shared_max = 65536
@@ -3069,7 +3096,7 @@ index 6eec3e198..2875b0b96 100644
    # NOTE: this is only really needed on gfx12, even though gfx11 reports the same limitation
    global_max = (2147483647, 65535, 65535)
    global_prod_max = (0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF)
-@@ -521,8 +753,9 @@ class HIPRenderer(CStyleLanguage):
+@@ -521,8 +766,9 @@ class HIPRenderer(CStyleLanguage):
      if amd_fp8s(target.arch):
        self.extra_matcher += tc.pm_wmma_fp8(dtypes.uint64 if self.is_cdna(target.arch) else dtypes.uint32)
        self.string_rewrite = PatternMatcher([
@@ -3081,7 +3108,7 @@ index 6eec3e198..2875b0b96 100644
            f" {fp8_index(x.dtype)})"),
          (UPat(Ops.CAST, dtypes.fp8s, (UPat(dtype=dtypes.float),), name="x",),
            lambda ctx,x: f"f32_to_fp8({ctx[x.src[0]]}, {fp8_index(x.dtype)})"),
-@@ -538,14 +771,15 @@ class HIPRenderer(CStyleLanguage):
+@@ -538,14 +784,15 @@ class HIPRenderer(CStyleLanguage):
    kernel_typedef = 'extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, {launch_bounds})))'
    code_for_workitem = {"g": lambda x: f"__ockl_get_group_id({x})", "l": lambda x: f"__ockl_get_local_id({x})"}
    code_for_op = {**CStyleLanguage.code_for_op, Ops.TRUNC: _ocml("trunc"), Ops.SIN: _ocml("sin"),
@@ -4717,7 +4744,7 @@ index c359a697f..1b9fad6d6 100644
    (UPat(Ops.CALL, src=(UPat(tuple(OPAQUE_CALL_BODIES)),), allow_any_len=True), lambda: True),
    # after on PARAM or AFTER
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
-index c99bf3c34..9c8d751cb 100644
+index c99bf3c34..ea8637f4b 100644
 --- a/tinygrad/uop/symbolic.py
 +++ b/tinygrad/uop/symbolic.py
 @@ -1,8 +1,8 @@
@@ -4808,7 +4835,7 @@ index c99bf3c34..9c8d751cb 100644
  pm_data_invalid = PatternMatcher([
    (invalid_pat.broadcast(name="s"), lambda i,s: i.expand(s.shape)),
    (UPat(GroupOp.Unary|{Ops.CAST, Ops.BITCAST}, src=(invalid_pat,)), lambda i: i),
-@@ -121,9 +156,16 @@ def fold_const_where(gate:UOp, c0:UOp, c1:UOp, w:UOp) -> UOp:
+@@ -121,12 +156,20 @@ def fold_const_where(gate:UOp, c0:UOp, c1:UOp, w:UOp) -> UOp:
    ret = c0 if gate.val else c1
    return ret.ccast(w.dtype) if ret.op is Ops.CONST and ret.dtype in dtypes.weaks and w.dtype not in dtypes.weaks else ret
  
@@ -4825,8 +4852,13 @@ index c99bf3c34..9c8d751cb 100644
 +   lambda a,x,c: None if a.op is Ops.ADD and dtypes.is_float(a.dtype) and math.copysign(1.0, c.arg) > 0 else x),
    (UPat({Ops.SHL, Ops.SHR}, src=(UPat.var("x"), UPat.const(0))), lambda x: x),          # x<<0 / x>>0 -> x
    (UPat.var("x") * 1, lambda x: x),    # x*1 -> x
-   (UPat.var("x") // UPat.var("x"), lambda x: x.const_like(1)), # x//x -> 1
-@@ -168,8 +210,9 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
+-  (UPat.var("x") // UPat.var("x"), lambda x: x.const_like(1)), # x//x -> 1
++  # x//x -> 1, but at 0, where it is 0
++  (UPat.var("x") // UPat.var("x"), lambda x: None if x.vmin <= 0 <= x.vmax else x.const_like(1)),
+   (UPat.var("x") // 1, lambda x: x),   # x//1 -> x
+   (UPat.var("x", dtypes.sints+(dtypes.weakint,)) // -1, lambda x: -x), # x//-1 -> -x
+   ((UPat.var("x") ^ UPat.var("y", dtypes.weakint)) ^ UPat.var("y"), lambda x,y: x), # (x^y)^y -> x
+@@ -168,8 +211,9 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
     a.replace(src=tuple(s.ccast(dt) if s.dtype in dtypes.weaks else s for s in a.src))
     if (dt:=promo_dtype(a.src)) not in dtypes.weaks else None),
    # ** two stage ALU folding **
@@ -4838,7 +4870,7 @@ index c99bf3c34..9c8d751cb 100644
      for op in GroupOp.Associative),
    # bool MUL is AND, ADD/MAX is OR. prevents other rules to rewrite bool ADD/MUL incorrectly
    (UPat.var('x', dtype=dtypes.bool) * UPat.var('y', dtype=dtypes.bool), lambda x,y: x&y),
-@@ -177,13 +220,8 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
+@@ -177,13 +221,8 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
    (UPat.var('x', dtype=dtypes.bool).maximum(UPat.var('y', dtype=dtypes.bool)), lambda x,y: x|y),
    # *** div rules ***
    (UPat.cvar('x', arg=0) / 0, lambda x: x.const_like(float('nan'))),   # 0/0 -> nan
@@ -4854,7 +4886,7 @@ index c99bf3c34..9c8d751cb 100644
    # *** cast/bitcast ***
    (UPat((Ops.CAST, Ops.BITCAST), name="root"), lambda root: root.src[0] if root.dtype == root.src[0].dtype else None),
    # a BITCAST reads its operand at the width it states, so a weak const is nonsense here: the bare arm is bool only
-@@ -196,17 +234,18 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
+@@ -196,17 +235,18 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
    (UPat.var("x").cast(dtypes.bool), lambda x: x != 0),
    # ** pow **
    (UPat.var("x").alu(Ops.POW, UPat.cvar("c")), simplify_pow),
@@ -4878,7 +4910,7 @@ index c99bf3c34..9c8d751cb 100644
  ])+mop_cleanup
  
  # ******** phase 2 builds on phase 1, it includes the old "symbolic", rules that match deeper ********
-@@ -237,24 +276,39 @@ commutative = PatternMatcher([
+@@ -237,24 +277,39 @@ commutative = PatternMatcher([
    (UPat(GroupOp.Commutative, dtype=dtypes.weakint, name='x'), lambda x: x.replace(src=x.src[::-1]) if x.src[1].tuplize < x.src[0].tuplize else None),
  ])
  
@@ -4922,7 +4954,7 @@ index c99bf3c34..9c8d751cb 100644
    ((UPat.var("y") + UPat.var("x", dtypes.wints)) + UPat.var("x") * UPat.cvar("c"),
     lambda x,y,c: y+m if fits(x, c.vmin+1) and no_overflow(m:=x*(c+1)) else None),
    ((UPat.var("y") + UPat.var("x", dtypes.wints) * UPat.cvar("c")) + UPat.var("x"),
-@@ -282,26 +336,27 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -282,26 +337,27 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
    ((UPat.var("y", dtypes.wints)+UPat.var("c").where(UPat.var("t"), UPat.var("f"))) + UPat.var("c").where(UPat.var("tt"), UPat.var("ff")), \
     lambda y,c,t,tt,f,ff: y+m if (t.op == tt.op == Ops.CONST or f.op == ff.op == Ops.CONST) and no_overflow(m:=c.where(t+tt, f+ff)) else None),
    # complementary zero branches under the same condition select directly
@@ -4960,7 +4992,7 @@ index c99bf3c34..9c8d751cb 100644
    # x//d<c -> x<c*d for d>0
    ((UPat.var("x", dtype=dtypes.weakint)//UPat.cvar("d"))<UPat.cvar("c"),
     lambda x,d,c: (x<c.val*d.val) if d.val > 0 else None),
-@@ -312,8 +367,12 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -312,8 +368,12 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
    # *** rules from symbolic ***
    # generic lt folding
    (UPat.var("x", dtypes.weakint)<UPat.cvar("c"), lambda x,c: lt_folding(x, c.val)),
@@ -4975,7 +5007,7 @@ index c99bf3c34..9c8d751cb 100644
    # canonicalize a simplex with positive coefficients > 0. NOTE: not x < 1 means x > 0
    ((UPat.var("x", dtypes.weakint)<1).logical_not(), lambda x: (newx<1).logical_not() if (newx:=canonicalize_simplex(x)) is not None else None),
    # a range mod its own upper bound is just the range
-@@ -330,12 +389,16 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -330,12 +390,16 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
      and not (u.op is Ops.SHR and u.src[1].vmax >= 32)
      and not (u.op in (Ops.MOD, Ops.TRUNCMOD) and u.src[0].vmin <= dtypes.int.min and u.src[1].vmin <= -1 <= u.src[1].vmax) else None),
    ((UPat.var("x", dtypes.weakint) + UPat.cvar("c")).cast(dtypes.sints, name="cast"), lambda x,c,cast:x.cast(cast.dtype)+cast.const_like(c.val)),
@@ -4993,7 +5025,7 @@ index c99bf3c34..9c8d751cb 100644
    # the rules above key on bare CONSTs, so a redundantly committed const has to be uncast in the same fixpoint
  ])+div_and_mod_symbolic+pm_uncast_const
  
-@@ -351,6 +414,12 @@ def parse_valid(v:UOp) -> tuple[UOp, bool, int]|None:
+@@ -351,6 +415,12 @@ def parse_valid(v:UOp) -> tuple[UOp, bool, int]|None:
    if (a:=lt.src[0]).op is Ops.CONST: return lt.src[1], neg, int(a.val) + (0 if neg else 1)
    return a, not neg, int(lt.src[1].vmin) if neg else int(lt.src[1].vmax)-1
  
@@ -5006,7 +5038,7 @@ index c99bf3c34..9c8d751cb 100644
  def uop_given_valid(valid:UOp, uop:UOp, try_simplex=True) -> UOp:
    # return simplified uop (might be the same as input)
  
-@@ -371,15 +440,16 @@ def uop_given_valid(valid:UOp, uop:UOp, try_simplex=True) -> UOp:
+@@ -371,15 +441,16 @@ def uop_given_valid(valid:UOp, uop:UOp, try_simplex=True) -> UOp:
        # For X0 + X1 + ... > 0, check whether every Xi > 0 gives the same simplified output.
        candidate = [(Xi, UOp.variable(f"fake{i}", 1, Xi.vmax, Xi.dtype)) for Xi in expr.split_uop(Ops.ADD)]
        if any(X not in uop.backward_slice_with_self for X,_ in candidate): continue
@@ -5026,7 +5058,7 @@ index c99bf3c34..9c8d751cb 100644
    return uop
  
  def _valid_priority(v: UOp, valids:list[UOp]) -> tuple[int, int]:
-@@ -399,8 +469,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
+@@ -399,8 +470,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
  
  # ******** phase 3 is the complete symbolic ********
  
@@ -5037,7 +5069,7 @@ index c99bf3c34..9c8d751cb 100644
    # max(x*m) = max(x)*m needs x*m monotone in x, and an unsigned multiply wraps
    if r.arg[0] is Ops.MAX and dtypes.is_unsigned(r.dtype): return None
    inside, outside = [], []
-@@ -409,7 +480,14 @@ def reduce_mul_chain(r:UOp) -> UOp|None:
+@@ -409,7 +481,14 @@ def reduce_mul_chain(r:UOp) -> UOp|None:
      if m not in r.src[1:] and all(r not in m_parents for r in r.src[1:]) and (r.arg[0] != Ops.MAX or m.vmin >= 0): outside.append(m)
      else: inside.append(m)
    if len(outside) == 0: return None
@@ -5053,7 +5085,7 @@ index c99bf3c34..9c8d751cb 100644
  
  def drop_and_clauses(cond:UOp, x:UOp, i:UOp) -> UOp|None:
    keep, drop = partition(cond.split_uop(Ops.AND), lambda c: any(r in x.ranges for r in c.ranges))
-@@ -432,10 +510,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
+@@ -432,10 +511,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
    return UOp.const(True).uprod(*keep).where(ret_idx, ret_idx.const_like(0))
  
  # where after gated load becomes alt value, TODO: this is sort of duplicated with rules in devectorizer
@@ -5069,7 +5101,7 @@ index c99bf3c34..9c8d751cb 100644
  ])
  
  def gated_given_valid(cond:UOp, x:UOp, i:UOp) -> UOp|None:
-@@ -475,9 +555,6 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
+@@ -475,9 +556,6 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
    # store of where with invalid -> gated store
    (UPat(Ops.STORE, src=(UPat(Ops.INDEX, name="index"), UPat.var("cond").where(UPat.var("val"), invalid_pat))),
     lambda index, cond, val, i: UOp.store(index.src[0].index(index.src[1].valid(cond)), val)),

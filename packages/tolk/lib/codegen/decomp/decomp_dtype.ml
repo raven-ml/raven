@@ -253,7 +253,12 @@ and long_division op dt (a0, a1, b0, b1) =
     (q := match !q with q0, q1 -> if i < 32 then (set q0, q1) else (q0, set q1));
     r := pair (l2i Op.Where uint [ cond; d0; d1; r0; r1 ])
   done;
-  let (q0, q1), (r0, r1) = (!q, !r) in
+  (* No remainder is below a divisor of 0, so every quotient bit is set: the
+     quotient by 0 is 0. The remainder is already the dividend. *)
+  let nonzero = O.(b0 lor b1 <> int 0) in
+  let (q0, q1), (r0, r1) =
+    (match !q with q0, q1 -> (where nonzero q0 z, where nonzero q1 z)), !r
+  in
   match (a_neg, b_neg) with
   | Some a_neg, Some b_neg ->
       let as_dt (w0, w1) = pair (l2i Op.Bitcast dt [ w0; w1 ]) in

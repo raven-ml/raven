@@ -3948,6 +3948,9 @@ merged into D137, which holds the loops that consumers of one domain share.
   every lane. `Norn.Nuts`'s compiled transition concatenates `parents + next /
   spans` between two constants, and its kernel divided the padding's lanes by
   zero: `test_nuts`, `test_calibration` and `test_posteriordb` died with SIGFPE.
+  D355 defines a division whose divisor's bounds reach 0; this entry still
+  covers a divisor whose bounds miss the zeros its padding loads, as a gated
+  load of a constant table's, whose bounds leave out the gate's alternative.
 - **Pinned by:** the `Tolk_engine` suite (`test/engine/tolk_engine`):
   `link and run › a pad of integer divisions writes what its tensors compute`,
   over `pad_idiv`, `pad_idiv_stored` (a divisor of at least 1, stored),
@@ -8216,8 +8219,9 @@ and an initial value is added after it (D260).
   over its extremes' pairs, its comparison with its first operand, a
   product by 4, which becomes a shift, and a sum and a shift of a value
   masked to its non-negative bits, whose bounds are narrowed but still let
-  them overflow; rune's `jit › add, sub, mul, neg and abs wrap as eager's`,
-  shifts included, and its GPU suite's `integers ›` the same law.
+  them overflow; rune's `jit › integer arithmetic at its type's edges gives
+  eager's values`, shifts included, and its GPU suite's `integers ›` the
+  same law.
 
 ## D348. On the host, a decoded operand is decoded once for every row tile
 
@@ -8339,8 +8343,7 @@ and an initial value is added after it (D260).
   0 past the width, or for a signed right shift shifts by the count capped
   at the width less one. D342's shift reads its count so too. An index's division by a positive constant and a
   shift by a constant count keep tinygrad's source. A zero divisor is
-  outside this entry: rune selects 1 for it (`Lower_arith.int_div`), and
-  D145 does on padding. tinygrad's sources move with the rule, through
+  D355's. tinygrad's sources move with the rule, through
   `test/gen/tinygrad.patch`.
 - **Reason:** (e): at the pinned commit, the host's kernel of an int32
   division of the least value by -1 dies with SIGFPE, and on the host's
@@ -8481,3 +8484,49 @@ and an initial value is added after it (D260).
   variable a call binds to each name, in the program's order`, `› is the
   variable itself, at no slot, where the call leaves it free` and `› is the
   call's argument in the slot of a scalar parameter`.
+
+## D355. A division by zero is defined
+
+- **tinygrad:** `renderer/cstyle.py:159` (`code_for_op`, which writes `/` and
+  `%` whatever the divisor); `uop/symbolic.py:129` (`x//x -> 1`);
+  `codegen/decomp/op.py:54-57` (`floordiv_to_idiv`, which corrects a
+  negative dividend's quotient whatever the divisor);
+  `codegen/decomp/dtype.py:55-73` (an emulated 64-bit quotient, each bit of
+  which a divisor of 0 sets); `helpers.py:74,77` (`cdiv` and `floordiv`,
+  whose quotient by 0 is 0, which `python_alu` computes, `uop/ops.py:1537`).
+- **tolk:** `Cstyle.pm_defined_div_shift`, in the extra matchers of
+  `Cstyle.clang`, `Cstyle.cuda`, `Cstyle.hip` and `Cstyle.metal`;
+  `Shape.symbolic_simple` (`x // x`); `Decomp_op.floordiv_to_idiv`;
+  `Decomp_dtype`'s `long_division`.
+- **Differs:** C leaves an integer division by zero undefined, its
+  quotient's and its remainder's; CUDA, HIP and Metal follow C++, which does
+  the same. x86 traps on it, scalar or in a lane. tolk's integer quotient by
+  0 is 0 and its remainder the dividend (`Ops.exec_alu`), as nx states its
+  values and as tinygrad's interpreter computes them. A `Truncdiv` or
+  `Truncmod` of an integer type whose divisor's bounds
+  (`Ops.operand_bounds`) reach 0 divides by `where (d <> 0) d 1` and
+  selects 0, or the dividend, where the divisor is 0; where D346 divides
+  magnitudes, it divides by the divisor's magnitude made so. The rule reads
+  such a divisor as nonzero, which its bounds cannot show. `x // x` folds
+  to 1 only where `x`'s bounds hold no 0; a floored division's correction
+  of a negative dividend skips a divisor of 0; an emulated 64-bit quotient
+  selects 0 where both words of the divisor are 0. A division whose
+  divisor's bounds hold no 0, as an index's by a positive constant, keeps
+  tinygrad's source. rune still selects 1 for a zero divisor
+  (`Lower_arith.int_div`), and D145 does on padding. tinygrad's sources
+  move with the rules, through `test/gen/tinygrad.patch`.
+- **Reason:** (e): at the pinned commit, the host's kernel of an integer
+  division by a loaded 0 dies with SIGFPE, and CUDA's uint8 quotient of 0
+  by 0 is 255, where tinygrad's interpreter gives 0.
+- **Pinned by:** the Tolk_engine suite's `divisions and shifts at the
+  extremes compute as the interpreter`, on the host (`kernels on the host`)
+  and on each GPU (`GPUs ›`, run on fudge's CUDA and NV): every integer
+  type's truncated and floored quotients and remainders of operands drawn
+  at its extremes, -1 to 2 and 0 included as divisors, `a // a`, and a
+  quotient and remainder by a constant 0, in scalars and in vectors of 4
+  lanes, against `Ops.exec_alu`; the Symbolic suite's `identities › x // x
+  is 1 where x's bounds hold no 0`; the Decomp_dtype suite's `emulated
+  64-bit integers › i64 quotient by 0, which is 0` and its neighbours, for
+  both types and the remainder; rune's `jit › integer arithmetic at its
+  type's edges gives eager's values`, its GPU suite's `integers ›` the same
+  law, and `Lower_arith › divisions by constants give eager's bits`.

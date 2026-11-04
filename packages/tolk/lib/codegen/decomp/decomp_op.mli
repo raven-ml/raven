@@ -41,7 +41,8 @@ val simplifying_patterns : Op.Set.t -> (unit, Ops.t) Ops.Pattern_matcher.t
     - a floor division ({!Op.Div}) of an integer by a power of two, read
       in the integer's type, to a right shift if [ops] has {!Op.Shr}, and any
       other to a truncating division ({!Op.Truncdiv}), corrected where the
-      operands' signs can differ;
+      operands' signs can differ and the divisor is not [0], by which the
+      quotient is [0];
     - a floor remainder ({!Op.Mod}) of an integer by a power of two, read
       in the integer's type, to a mask if [ops] has {!Op.And}, and any other to
       a truncating remainder ({!Op.Truncmod}), corrected where the operands'

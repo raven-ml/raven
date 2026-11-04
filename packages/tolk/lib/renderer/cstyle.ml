@@ -551,37 +551,71 @@ let unsigned_of (dt : Dtype.t) =
   | Int64 -> Uint64
   | dt -> dt
 
-(* C leaves a signed division of the least value by -1 undefined, and x86 traps
-   on it, on a vector lane of any width too; a shift by a count at or past the
-   width of its operand, or of its lane, is undefined as well. tolk's quotient
-   wraps to the least value and the remainder is 0, and such a shift is the
-   exact shift wrapped: 0, or -1 for a negative value shifted right. A division
-   whose operands' bounds reach both computes on magnitudes in the unsigned type
-   and takes its sign after: -2^31 / -1 is 2^31 / 1, negated to -2^31. A shift
-   whose count's bounds leave the width shifts by the count's low bits and
-   selects the result past it. *)
+(* C leaves a division by zero undefined, and a signed division of the least
+   value by -1; x86 traps on both, on a vector lane of any width too. A shift by
+   a count at or past the width of its operand, or of its lane, is undefined as
+   well. tolk's quotient by zero is 0 and its remainder the dividend; the least
+   value's quotient by -1 wraps to it and its remainder is 0; such a shift is
+   the exact shift wrapped: 0, or -1 for a negative value shifted right. A
+   division whose divisor's bounds reach 0 divides by [where (d <> 0) d 1]
+   and selects its value at 0 after. One whose operands' bounds reach the
+   least value and -1 computes on magnitudes in the unsigned type and takes
+   its sign after: -2^31 / -1 is 2^31 / 1, negated to -2^31. A shift whose
+   count's bounds leave the width shifts by the count's low bits and selects
+   the result past it. *)
 let pm_defined_div_shift =
+  let zero = Dtype.Value.of_int 0 in
   let reaches v (lo, hi) = Dtype.Value.(lo <= v && v <= hi) in
+  let not_zero d = alu d Op.Cmpne [ vconst_like d (`Int Bigint.zero) ] in
+  let nonzero d = where (not_zero d) d (vconst_like d (`Int Bigint.one)) in
+  (* [nonzero d], which bounds cannot tell from 0 *)
+  let is_nonzero d =
+    match (op d, src d) with
+    | Op.Where, [ c; t; f ] ->
+        Op.equal (op c) Op.Cmpne
+        && nth c 0 == t
+        && reaches zero (vmin (nth c 1), vmax (nth c 1))
+        && Dtype.Value.(vmin (nth c 1) = vmax (nth c 1))
+        && not (reaches zero (vmin f, vmax f))
+    | _ -> false
+  in
   let division x =
     let a = nth x 0 and b = nth x 1 and dt = dtype x in
-    if
-      not
-        (reaches (Dtype.min dt) (operand_bounds x a)
-        && reaches (Dtype.Value.of_int (-1)) (operand_bounds x b))
-    then None
+    let bounds = operand_bounds x b in
+    let by_zero = reaches zero bounds && not (is_nonzero b) in
+    let overflow =
+      List.mem dt Dtype.sints
+      && reaches (Dtype.min dt) (operand_bounds x a)
+      && reaches (Dtype.Value.of_int (-1)) bounds
+    in
+    if not (by_zero || overflow) then None
     else
-      let negative v = O.(v < int 0) and minus v = alu v Op.Neg [] in
-      let magnitude v =
-        let w = cast v (unsigned_of dt) in
-        where (negative v) (minus w) w
+      let r =
+        if not overflow then alu a (op x) [ nonzero b ]
+        else
+          let negative v = O.(v < int 0) and minus v = alu v Op.Neg [] in
+          let magnitude v =
+            let w = cast v (unsigned_of dt) in
+            where (negative v) (minus w) w
+          in
+          let d = magnitude b in
+          let r =
+            alu (magnitude a) (op x) [ (if by_zero then nonzero d else d) ]
+          in
+          let sign =
+            if Op.equal (op x) Op.Truncdiv then
+              alu (negative a) Op.Cmpne [ negative b ]
+            else negative a
+          in
+          cast (where sign (minus r) r) dt
       in
-      let r = alu (magnitude a) (op x) [ magnitude b ] in
-      let sign =
-        if Op.equal (op x) Op.Truncdiv then
-          alu (negative a) Op.Cmpne [ negative b ]
-        else negative a
-      in
-      Some (cast (where sign (minus r) r) dt)
+      if not by_zero then Some r
+      else
+        let at_zero =
+          if Op.equal (op x) Op.Truncdiv then vconst_like x (`Int Bigint.zero)
+          else a
+        in
+        Some (where (not_zero b) r at_zero)
   in
   let shift x =
     let a = nth x 0 and k = nth x 1 and dt = dtype x in
@@ -599,7 +633,7 @@ let pm_defined_div_shift =
       rule
         (Upat.v
            ~op:(Op.Set.of_list Op.[ Truncdiv; Truncmod ])
-           ~dtype:Dtype.sints ~name:"x" ())
+           ~dtype:Dtype.ints ~name:"x" ())
         (fun m -> division (m "x"));
       rule
         (Upat.v ~op:(Op.Set.of_list Op.[ Shl; Shr ]) ~dtype:Dtype.ints

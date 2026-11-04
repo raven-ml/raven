@@ -5523,7 +5523,7 @@ let () =
              test "a jit inside a jit" test_nested;
              test "an integer maximum of a running sum wraps" test_wrapped_max;
              prop ~count:20 ~examples:Wraps.examples
-               "add, sub, mul, neg and abs wrap as eager's"
+               "integer arithmetic at its type's edges gives eager's values"
                (Gen.with_pp Wraps.pp Wraps.gen)
                (Wraps.law (module Nx.Host));
              test "results are fresh" test_fresh;

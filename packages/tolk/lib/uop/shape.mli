@@ -651,8 +651,9 @@ val symbolic_simple : (unit, Ops.t) Ops.Pattern_matcher.t
       value, or [0];
     - {b identities}: [x + 0], [x lxor 0], [x lor 0], [x lsl 0], [x lsr 0],
       [x * 1] and [x // 1] are [x], a float [x + 0] only for [-0.]; [x // -1] is
-      [-x] for a signed or weak [x]; [x // x] is [1]; [(x lxor y) lxor y] is [x]
-      for a weak [y]; [(x % y) % y] is [x % y]; a boolean [x land c] and
+      [-x] for a signed or weak [x]; [x // x] is [1] where [x]'s bounds hold
+      no [0]; [(x lxor y) lxor y] is [x] for a weak [y]; [(x % y) % y] is
+      [x % y]; a boolean [x land c] and
       [x lor c] with [c] constant are [x] or [c]; [x = true], a double negation, [where x true false] and an
       idempotent operation of [x] with itself are [x]; [where x false true] is
       the negation of [x]; a boolean cast to an integer and equal to [0] or [1]

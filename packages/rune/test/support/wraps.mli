@@ -3,16 +3,18 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Integer arithmetic past its type's range: nx.mli and nx_kernel's [Prog]
+(** Integer arithmetic at its type's edges: nx.mli and nx_kernel's [Prog]
     promise that [Add], [Sub], [Mul], [Neg], [Abs] and a left shift on
-    integers wrap modulo [2{^ bits}], so a compiled kernel gives eager's values
+    integers wrap modulo [2{^ bits}], that a quotient by [0] is [0] and a
+    remainder by [0] the dividend, and that the least value's quotient by [-1]
+    is itself and its remainder [0]. A compiled kernel gives eager's values
     there, and so do comparisons of those values, which a compiler that took
-    overflow for impossible would fold: [x + y > x] to [y > 0], [abs x < 0] to
-    [false]. *)
+    overflow or a division by [0] for impossible would fold: [x + y > x] to
+    [y > 0], [abs x < 0] to [false]. *)
 
 (** The type for operations. [Neg], [Abs] and [Lshift n], {!Nx.lshift} by
-    [n], read the first operand. *)
-type op = Add | Sub | Mul | Neg | Abs | Lshift of int
+    [n], read the first operand; [Div] is {!Nx.div} and [Mod] {!Nx.mod_}. *)
+type op = Add | Sub | Mul | Neg | Abs | Lshift of int | Div | Mod
 
 type t =
   | Case : {
@@ -42,5 +44,5 @@ val examples : t list
 val law : (module Nx.Devices) -> t -> unit
 (** [law s c] checks that on [s]'s first device the compiled [op x y], [op x y
     > x] and [op x y < 0] have eager's values, with no call evaluated. It
-    covers each operation and each signed dtype, and a case whose exact result
-    leaves the dtype's range. *)
+    covers each operation and each signed dtype, a case whose exact result
+    leaves the dtype's range, and a division by [0]. *)

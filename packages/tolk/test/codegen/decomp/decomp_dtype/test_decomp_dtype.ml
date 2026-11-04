@@ -818,6 +818,7 @@ let wrap dt z = Dtype.truncate dt (`Int z)
 let nonzero dt =
   Gen.such_that (fun v -> not (Bigint.equal (z_of v) Bigint.zero)) (value_of dt)
 
+let zero = Gen.constant (`Int Bigint.zero)
 let shift_count = Gen.map (fun n -> `Int (Bigint.of_int n)) (Gen.int_range 0 63)
 
 (* [law name ins out f args oracle] is the property that the emulated [f]
@@ -926,6 +927,10 @@ let long_laws dt =
     slow
     @@ binary ~count:2000 dt ~b:(nonzero dt)
          "truncating remainder, over 2000 cases" Truncmod Bigint.rem;
+    binary ~count:20 dt ~b:zero "quotient by 0, which is 0" Truncdiv (fun _ _ ->
+        Bigint.zero);
+    binary ~count:20 dt ~b:zero "remainder by 0, which is the dividend" Truncmod
+      (fun a _ -> a);
     binary dt ~b:shift_count ~examples:(shl_examples dt) "shl" Shl (fun a n ->
         Bigint.shift_left a (Bigint.to_int n));
     binary dt ~b:shift_count ~examples:(shr_examples dt) "shr" Shr (fun a n ->

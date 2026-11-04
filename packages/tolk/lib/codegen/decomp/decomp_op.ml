@@ -126,13 +126,20 @@ let divisor a d =
     | Some w, `Int z when not (Bigint.equal w z) -> const_like d (`Int w)
     | _ -> d
 
+(* A quotient by 0 is 0 and the remainder the dividend, whose sign differs
+   from 0's when it is negative: the correction skips a divisor of 0 where
+   the divisor's bounds reach it. *)
 let floordiv_to_idiv a b =
   let b = divisor a b in
   if same_sign a b then alu a Truncdiv [ b ]
   else
-    O.(
-      alu a Truncdiv [ b ]
-      - ((alu a Truncmod [ b ] <> int 0) land sign_differs a b))
+    let differs = sign_differs a b in
+    let differs =
+      if Dtype.Value.(vmin b <= of_int 0 && of_int 0 <= vmax b) then
+        O.(differs land (b <> int 0))
+      else differs
+    in
+    O.(alu a Truncdiv [ b ] - ((alu a Truncmod [ b ] <> int 0) land differs))
 
 let floormod_to_mod a b =
   let b = divisor a b in

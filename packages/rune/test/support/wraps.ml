@@ -6,7 +6,7 @@
 open Windtrap
 open Witness
 
-type op = Add | Sub | Mul | Neg | Abs | Lshift of int
+type op = Add | Sub | Mul | Neg | Abs | Lshift of int | Div | Mod
 
 type t =
   | Case : {
@@ -24,12 +24,15 @@ let name = function
   | Neg -> "neg"
   | Abs -> "abs"
   | Lshift _ -> "lshift"
+  | Div -> "div"
+  | Mod -> "mod"
 
 let bits (Nx.Dtype.Any dt) = Nx.Dtype.bits dt
 
 (* The operations of [d]: a shift by one, and by one short of its width, which
    moves the lowest bit into the sign. *)
-let ops d = [ Add; Sub; Mul; Neg; Abs; Lshift 1; Lshift (bits d - 1) ]
+let ops d =
+  [ Add; Sub; Mul; Neg; Abs; Lshift 1; Lshift (bits d - 1); Div; Mod ]
 
 let pp ppf (Case c) =
   let values ppf a =
@@ -125,6 +128,8 @@ let exact op x y =
   | Neg -> -.x
   | Abs -> Float.abs x
   | Lshift n -> Float.ldexp x n
+  | Div -> if y = 0. then 0. else Float.trunc (x /. y)
+  | Mod -> if y = 0. then x else Float.rem x y
 
 (* [op] and its comparisons, at every device brand. *)
 let run (type v s) (module S : Nx.Devices) (dt : (v, s) Nx.dtype) op xs ys =
@@ -137,6 +142,8 @@ let run (type v s) (module S : Nx.Devices) (dt : (v, s) Nx.dtype) op xs ys =
     | Neg -> Nx.neg x
     | Abs -> Nx.abs x
     | Lshift n -> Nx.lshift x n
+    | Div -> Nx.div x y
+    | Mod -> Nx.mod_ x y
   in
   let above : type d. (v, s, d) Nx.t -> (v, s, d) Nx.t -> d Nx.bool_t =
    fun x y -> Nx.greater (r x y) x
@@ -179,4 +186,7 @@ let law s (Case { dt; op; xs; ys }) =
       xs ys
   in
   cover "a result past the range" past;
+  let divides = match op with Div | Mod -> true | _ -> false in
+  cover "a division by 0"
+    (divides && Array.exists (fun y -> value d y = 0.) ys);
   run s dt op xs ys

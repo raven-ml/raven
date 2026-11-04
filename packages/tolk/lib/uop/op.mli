@@ -80,7 +80,8 @@ type t =
   | Mul  (** [x * y]. *)
   | Shl  (** Shifts [x] left by [y] bits. *)
   | Shr  (** Shifts [x] right by [y] bits. *)
-  | Truncdiv  (** Integer division rounding toward zero. *)
+  | Truncdiv
+      (** Integer division rounding toward zero; a quotient by [0] is [0]. *)
   | Max
       (** The greater of [x] and [y], computed as [y] where [x < y] and as [x]
           elsewhere. Where neither is less than the other, a NaN against any
@@ -88,7 +89,9 @@ type t =
           [Max] as commutative ({!Set.commutative}) and may swap them. It is
           neither IEEE 754's maximum, which gives NaN, nor its maximumNumber,
           which gives the number; a caller that needs one tests for NaN. *)
-  | Truncmod  (** The remainder of {!Truncdiv}: it has the sign of [x]. *)
+  | Truncmod
+      (** The remainder of {!Truncdiv}: it has the sign of [x], and is [x] by
+          [0]. *)
   | Cmplt  (** [x < y]. *)
   | Cmpne  (** [x <> y]. *)
   | Cmpeq  (** [x = y]. *)
@@ -100,8 +103,12 @@ type t =
   | Sub  (** [x - y]. *)
   | Fdiv  (** Floating-point division. *)
   | Pow  (** [x]{^ [y]}. *)
-  | Div  (** Integer division rounding toward negative infinity. *)
-  | Mod  (** The remainder of {!Div}: it has the sign of [y]. *)
+  | Div
+      (** Integer division rounding toward negative infinity; a quotient by
+          [0] is [0]. *)
+  | Mod
+      (** The remainder of {!Div}: it has the sign of [y], and is [x] by
+          [0]. *)
   | Where  (** [y] where [x] holds, [z] otherwise. *)
   | Mulacc  (** [x * y + z]. *)
   (* Control flow, constants and target code *)

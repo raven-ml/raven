@@ -180,7 +180,10 @@ let identities =
           folds_to Ops.O.(a // int 1) a);
       test "x // -1 is -x" (fun () ->
           folds_to Ops.O.(a // int (-1)) Ops.O.(~-a));
-      test "x // x is 1" (fun () -> folds_to Ops.O.(a // a) (Ops.int 1));
+      test "x // x is 1 where x's bounds hold no 0" (fun () ->
+          let p = var "p" 1 8 in
+          folds_to Ops.O.(p // p) (Ops.int 1);
+          folds_to Ops.O.(a // a) Ops.O.(a // a));
       test "(x lxor y) lxor y is x for a weak y" (fun () ->
           folds_to Ops.O.(a lxor b lxor b) a;
           let typed = Ops.O.(x lxor y lxor y) in
