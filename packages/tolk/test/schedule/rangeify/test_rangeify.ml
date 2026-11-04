@@ -587,6 +587,22 @@ let shared =
           equal int 1 (kernels_of (stores2 hi lo)));
       test "a two-sum's sum and error are written as their tensors write them"
         (fun () -> writes (stores2 hi lo));
+      test "outputs that store their own storage back are no kernel"
+        (fun () ->
+          (* [flip u] flips [u]'s sign bit, through a mask the stores share:
+             flipped twice, each stores its storage's own value. *)
+          let at slot =
+            Shape.param ~device:cpu ~shape:[ Int 16 ] slot Float32
+          in
+          let a = at 0 and b = at 4 in
+          let sign =
+            Shape.const_like ~dtype:Uint32 a (`Int (Bigint.of_int 0x80000000))
+          in
+          let flip u =
+            Ops.bitcast Ops.O.(Ops.bitcast u Uint32 lxor sign) Float32
+          in
+          let back o = Ops.after o [ Ops.store o (flip (flip o)) ] in
+          equal int 0 (kernels_of (Ops.sink [ back a; back b ])));
       test "outputs that share only a load run as two kernels" (fun () ->
           equal int 2 (kernels_of (stores2 Ops.O.(x + x) Ops.O.(x * x))));
       test "outputs that share a reduction run as one kernel" (fun () ->

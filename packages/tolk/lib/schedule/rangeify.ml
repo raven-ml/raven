@@ -863,8 +863,12 @@ let flatten_bufferize x =
       else Some ret
   | [] -> None
 
+(* Whether an effect an After waits on does nothing: a noop, the empty stack
+   that a group of stores leaves once each store is dropped, as a store of a
+   value into itself is, or an end of one. *)
 let rec is_noop_after_dep x =
   (op x = Op.Noop && src x = []) [@mutate off "a noop has no sources"]
+  || (op x = Op.Stack && src x = [])
   || (op x = Op.End && is_noop_after_dep (nth x 0))
 
 let remove_noop_afters x =
