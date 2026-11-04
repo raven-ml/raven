@@ -164,6 +164,12 @@ and rune), raven / llama.cpp b12048 Vulkan:
   until rig's buffer cache warms
 - jera's compiled rows gain 2-8 words, one launch per stored piece of an
   assembly
+- the scatter walk (I4) on a GPU: a scatter of a few updates pays one or
+  two launches more than the comparison it replaced (7 rows, 1.5-3 µs);
+  writing the walk's first chunk over the target (no fill) would remove one.
+  Its launch-cost constants live in rune keyed on host or GPU, and
+  `stream_threads` is sm_89's default on every target, the host included:
+  both belong in the renderer's facts
 
 ## nx
 
