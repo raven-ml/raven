@@ -1039,6 +1039,9 @@ word comes from its lock and from samples the dashboard saw arrive.
   the most lanes an operation computes at once: Clang's time grew far faster
   than the lanes, and rune's contraction of 8 groups now compiles in 0.11 s
   instead of 1.06 s, its run time the same.
+- `Postrange.Scheduler.shift_to` refuses lanes a register store depends on
+  (upcast scratch stored `[4; 4; 4; 4; 8; …]` for `[1; …; 8]`); `threadless`
+  keeps off GPU threads a weak range sharing storage with code outside it.
 - A weak range promises its trips never meet in memory: `Postrange.apply_opts`
   refuses a store that visibly breaks it (`C[r // 8] += 1` counted 2 for 8 on
   lanes). Carried values need a `Loop`; pads guard every access along them.

@@ -1540,7 +1540,7 @@ let locals ~threads k =
     List.filter_map
       (fun axis ->
         let r = List.nth (K.rngs k) axis in
-        if is_literal (nth r 0) && not (List.memq r (K.unread_by_opaque k))
+        if is_literal (nth r 0) && not (List.memq r (K.threadless k))
         then Some (List.exists (fun b -> not (indexes r b)) (K.bufs k), axis)
         else None)
       (K.axes_of ~reduce:false k [ Global; Weak ])

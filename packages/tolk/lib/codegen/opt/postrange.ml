@@ -47,6 +47,161 @@ let known_size = function
 let mem_ranges r u = Nodes.mem r (ranges u)
 let special_name u = match arg u with String s -> s | _ -> ""
 
+(* Lanes and threads
+
+   Which ranges take no lanes, because lanes share their thread's registers,
+   and which weak ranges take no threads, because threads run unordered with
+   the code outside them (the Rewriting section of postrange.mli). *)
+
+let is_storage u =
+  match (op u, arg u) with
+  | (Op.Param | Op.Buffer | Op.Alloc), Param p -> p.addrspace <> Dtype.Alu
+  | _ -> false
+
+let is_reg u =
+  match (op u, arg u) with
+  | (Op.Param | Op.Buffer | Op.Alloc), Param p -> p.addrspace = Dtype.Reg
+  | _ -> false
+
+(* The ranges [roots] depend on in data. A register cell holds what the same
+   step stored, so a load of one depends on its offsets and gate alone. *)
+let rec data_ranges roots =
+  let seen = Tbl.create 64 and acc = ref [] in
+  let add r = if not (List.memq r !acc) then acc := r :: !acc in
+  let rec go u =
+    if not (Tbl.mem seen u) then begin
+      Tbl.add seen u ();
+      match (op u, src u) with
+      | Op.Range, s ->
+          add u;
+          List.iter go s
+      | Op.Index, _ :: offsets when is_reg (buf_uop u) -> List.iter go offsets
+      | Op.After, first :: _ when not (is_group u) -> go first
+      | Op.Reduce, value :: closed ->
+          List.iter
+            (fun r -> if not (List.memq r closed) then add r)
+            (data_ranges [ value ])
+      | _ -> List.iter go (src_without_body u)
+    end
+  in
+  List.iter go roots;
+  !acc
+
+(* The ranges a register store's cells, value or gate depend on, or the
+   condition that repeats a loop: none of them takes lanes, nor do those a
+   loop's bound reads ({!Scheduler.read_by_bounds}). *)
+let lane_bound slice =
+  let roots =
+    List.fold_left
+      (fun acc u ->
+        match (op u, src u) with
+        | Op.Store, at :: rest when op at = Op.Index && is_reg (buf_uop at)
+          ->
+            List.tl (src at) @ rest @ acc
+        | Op.Backedge, [ _; _; cond ] -> cond :: acc
+        | _ -> acc)
+      [] slice
+  in
+  data_ranges roots
+
+(* The storage the pointer [a] points into, if it is one. *)
+let pointee a =
+  match op a with
+  | Op.Index | Op.After | Op.Param | Op.Buffer | Op.Alloc ->
+      let s = buf_uop a in
+      if is_storage s then Some s else None
+  | _ -> None
+
+let is_effect u =
+  match op u with Op.Store | Op.Call | Op.Custom -> true | _ -> false
+
+(* The storage each of [effects] writes. A call writes the arguments its body
+   writes ({!Shape.written_params}), code every pointer it is passed. *)
+let writers effects =
+  List.concat_map
+    (fun u ->
+      let by a = Option.map (fun s -> (s, u)) (pointee a) in
+      match (op u, src u) with
+      | Op.Store, at :: _ -> Option.to_list (by at)
+      | Op.Call, _ ->
+          let args = src_without_body u in
+          let written =
+            match written_params (body u) with
+            | Some w -> List.filteri (fun i _ -> List.mem i w) args
+            | None -> args
+          in
+          List.filter_map by written
+      | Op.Custom, args -> List.filter_map by args
+      | _ -> [])
+    effects
+
+(* The storage among [stored] that the effect [e] reads in data: through a
+   load or a pointer it passes, following an [After]'s first source. *)
+let reads stored e =
+  let seen = Tbl.create 16 and acc = ref [] in
+  let note s =
+    if List.memq s stored && not (List.memq s !acc) then acc := s :: !acc
+  in
+  let rec go u =
+    if not (Tbl.mem seen u) then begin
+      Tbl.add seen u ();
+      match (op u, src u) with
+      | Op.Index, _ :: offsets ->
+          note (buf_uop u);
+          List.iter go offsets
+      | Op.After, first :: _ when not (is_group u) -> go first
+      | (Op.Param | Op.Buffer | Op.Alloc), _ -> if is_storage u then note u
+      | _ -> List.iter go (src_without_body u)
+    end
+  in
+  (match (op e, src e) with
+  | Op.Store, at :: rest ->
+      if op at = Op.Index then List.iter go (List.tl (src at));
+      List.iter go rest
+  | _ -> List.iter go (src_without_body e));
+  !acc
+
+(* The weak ranges among [rngs] that take no threads: an effect that depends
+   on one and an effect that does not access one storage, one of them
+   writing it; for a register, the one that does not reads what the other
+   writes. *)
+let thread_bound slice rngs =
+  let effects = List.filter is_effect slice in
+  (* Only a range that some effects depend on and others do not stays
+     serial. *)
+  let parts r =
+    axis_type r = Axis_type.Weak
+    && List.exists (mem_ranges r) effects
+    && not (List.for_all (mem_ranges r) effects)
+  in
+  let weak = List.filter parts rngs in
+  let writes = if weak = [] then [] else writers effects in
+  if writes = [] then []
+  else
+    let stored = List.map fst writes in
+    let read x = op x = Op.Index && List.memq (buf_uop x) stored in
+    (* Effects' reads are walked only where stored storage is read. *)
+    let read_in u =
+      match (op u, src u) with
+      | (Op.Call | Op.Custom | Op.Customi), _ -> true
+      | Op.Store, _ :: rest -> List.exists read rest
+      | _, s -> List.exists read s
+    in
+    let reads =
+      if not (List.exists read_in slice) then []
+      else
+        List.concat_map
+          (fun e -> List.map (fun s -> (s, e)) (reads stored e))
+          effects
+    in
+    let meets r (s, w) =
+      let shared = not (is_reg s) and dep = mem_ranges r w in
+      let across (s', e) = s' == s && mem_ranges r e <> dep in
+      (shared && List.exists across writes)
+      || ((shared || dep) && List.exists across reads)
+    in
+    List.filter (fun r -> List.exists (meets r) writes) weak
+
 module Scheduler = struct
   (* What the axis queries read of a kernel. The heuristic and the search ask
      them many times between two rewrites of the kernel, so they are computed
@@ -61,6 +216,8 @@ module Scheduler = struct
     opaque : Ops.t list;
     read_by_opaque : Ops.t list;
     unread_by_opaque : Ops.t list;
+    lane_bound : Ops.t list;
+    mutable threadless : Ops.t list option;
     mutable full_shape : sint list option;
   }
 
@@ -186,6 +343,11 @@ module Scheduler = struct
         (fun r -> op r = Op.Range && List.exists (fun rs -> not (List.memq r rs)) read)
         slice
     in
+    let lane_bound =
+      if List.exists (fun u -> is_reg u || op u = Op.Backedge) slice then
+        lane_bound slice
+      else []
+    in
     {
       of_ast = ast;
       slice;
@@ -196,6 +358,8 @@ module Scheduler = struct
       opaque;
       read_by_opaque;
       unread_by_opaque;
+      lane_bound;
+      threadless = None;
       full_shape = None;
     }
 
@@ -216,6 +380,17 @@ module Scheduler = struct
   let opaque k = (view k).opaque
   let read_by_opaque k = (view k).read_by_opaque
   let unread_by_opaque k = (view k).unread_by_opaque
+  let lane_bound k = (view k).lane_bound
+
+  (* Computed when a split into threads asks. *)
+  let threadless k =
+    let w = view k in
+    match w.threadless with
+    | Some l -> l
+    | None ->
+        let l = w.unread_by_opaque @ thread_bound w.slice w.rngs in
+        w.threadless <- Some l;
+        l
 
   let shape_len k = List.length (rngs k)
   let full_shape k =
@@ -254,7 +429,8 @@ module Scheduler = struct
         let r = List.nth rngs i in
         Option.is_some (known_size (List.nth shape i))
         && (not (List.memq r (read_by_bounds k)))
-        && not (List.memq r (read_by_opaque k)))
+        && (not (List.memq r (read_by_opaque k)))
+        && not (List.memq r (lane_bound k)))
       (axes_of ~reduce k (split_targets Upcast))
 
   let group_for_reduces k =
@@ -372,15 +548,14 @@ module Scheduler = struct
           (src k.ast)
       in
       (* exclude any output ranges from global that don't appear in all
-         BUFFERIZE, or that a call or custom code does not read: every thread
-         would run it *)
+         BUFFERIZE, or that take no threads *)
       let globalizable =
         List.fold_left
           (fun ret x -> List.filter (fun r -> mem_ranges r x) ret)
           weak (of_op k Op.Stage)
       in
       let globalizable =
-        List.filter (fun r -> not (List.memq r (unread_by_opaque k))) globalizable
+        List.filter (fun r -> not (List.memq r (threadless k))) globalizable
       in
       let global r =
         (r, replace r ~arg:(Range { axis_type = Global; axis_id = axis_id r }))
@@ -410,6 +585,21 @@ module Scheduler = struct
          [j < 4 (i + 1)], is not. *)
       Error
         (strf "the trips of %s are not known at launch: it stays serial"
+           (Render.render rng))
+    else if
+      target = Upcast
+      && (List.memq rng (read_by_bounds k) || List.memq rng (lane_bound k))
+    then
+      Error
+        (strf
+           "a register store or a loop's bound or condition depends on %s: it \
+            takes no lanes"
+           (Render.render rng))
+    else if target = Local && List.memq rng (threadless k) then
+      Error
+        (strf
+           "%s takes no threads: a call or custom code does not read it, or \
+            code outside it shares storage with its steps"
            (Render.render rng))
     else
       match divides (nth rng 0) amount with

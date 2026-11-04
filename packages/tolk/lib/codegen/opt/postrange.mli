@@ -102,11 +102,17 @@ module Scheduler : sig
       over [j]. Every thread of a launch runs each such operation, so none of
       them can take threads, which would run it once in each. *)
 
+  val threadless : t -> Ops.t list
+  (** [threadless k] is [k]'s ranges that take no threads: those
+      {!unread_by_opaque}, and the weak ranges whose steps share storage with
+      the code outside them ({!section-rewriting}). *)
+
   val upcastable_dims : ?reduce:bool -> t -> int list
   (** [upcastable_dims ~reduce k] is the positions of [k]'s global, local and
       weak axes of a known size that no range's bound reads
-      ({!read_by_bounds}) and no opaque operation reads ({!read_by_opaque}), that
-      are reduce axes if [reduce] is [true] and are not if it is [false]
+      ({!read_by_bounds}), no opaque operation reads ({!read_by_opaque}) and no
+      register store or loop's condition depends on ({!section-rewriting}),
+      that are reduce axes if [reduce] is [true] and are not if it is [false]
       (default). *)
 
   val group_for_reduces : t -> int
@@ -127,14 +133,37 @@ module Scheduler : sig
   (** [colored_shape k] is the size of each of [k]'s axes, right-aligned in four
       columns and coloured by its role ({!Ops.Axis_type.color}). *)
 
-  (** {1:rewriting Rewriting} *)
+  (** {1:rewriting Rewriting}
+
+      A split into lanes ({!Opt.Upcast}) runs points of an axis in one thread,
+      which holds one copy of each register: points that write a register cell
+      different values leave one of them. A step of a weak axis reads a
+      register cell only after writing it, or one no step writes
+      ({!Ops.Axis_type.Weak}), so an axis takes lanes unless a register
+      store's cells, value or gate, or the condition that repeats a loop
+      ({!Op.Backedge}), depends on it in data: a value depends on what its
+      sources depend on, a register load on its offsets and gate alone, since
+      its cell holds what the same step stored, an {!Op.After} on its first
+      source, and a reduction on its value but the axes it closes.
+
+      Threads have their own registers, but run unordered with the code outside
+      their axis, and an effect that does not depend on a thread axis runs in
+      one of its threads ({!Ops.Axis_type}). So a weak axis takes no threads,
+      global or local, when an effect that depends on it and one that does not
+      access one storage of global or workgroup memory and one of them writes
+      it, or when one that does not depend on it reads a register one depending
+      on it writes, which holds the last step's value. The effects are stores,
+      calls and code in the target's language: each reads what its data loads
+      and the pointers it passes, and writes what it stores into, a call the
+      arguments its body writes ({!Shape.written_params}) and code every
+      pointer it is passed. *)
 
   val convert_loop_to_global : t -> unit
   (** [convert_loop_to_global k] makes global each weak range that an end of
       [k]'s sink closes and no reduction does, whose bound a launch computes
       ({!Ops.known_at_launch}), that every buffered value ({!Op.Stage}) runs
-      inside and every opaque operation reads ({!unread_by_opaque}), if [k]'s
-      renderer has local indices. *)
+      inside and that take threads ({!threadless}), if [k]'s renderer has
+      local indices. *)
 
   val shift_to :
     ?top:bool ->
@@ -152,8 +181,10 @@ module Scheduler : sig
 
       Raises [Invalid_argument] if [amount] is not greater than [1], if [r]'s
       role is not among [split_targets target], if [r]'s trips are not known at
-      launch ({!Ops.known_at_launch}), or if [amount] does not divide [r]'s
-      size. *)
+      launch ({!Ops.known_at_launch}), if [target] is {!Opt.Upcast} and [r]
+      takes no lanes ({!read_by_bounds}, {!section-rewriting}), or
+      {!Opt.Local} and [r] takes no threads ({!threadless}), or if [amount]
+      does not divide [r]'s size. *)
 
   val apply_opt : ?append_opt:bool -> t -> Opt.t -> (Ops.t list, string) result
   (** [apply_opt k opt] applies [opt] to [k], records it among [k]'s applied
@@ -165,9 +196,11 @@ module Scheduler : sig
       was unless a tensor core's reduction is found ambiguous after its axes are
       split. It does not apply when its axis is out of range, a split's target
       cannot come from its axis's role or its axis's trips are not known at
-      launch ({!Ops.known_at_launch}), as [j < 4 (i + 1)]'s, or a split
-      exceeds what the renderer allows (32 lanes of a reduce axis or 16 of
-      another, locals only with local indices, the workgroup's shared memory),
+      launch ({!Ops.known_at_launch}), as [j < 4 (i + 1)]'s, its axis takes no
+      lanes for an upcast or no threads for a local split
+      ({!section-rewriting}), a split exceeds what the renderer allows (32
+      lanes of a reduce axis or 16 of another, locals only with local indices,
+      the workgroup's shared memory),
       an upcast of an axis a range's bound reads ({!read_by_bounds}) or an
       opaque operation reads ({!read_by_opaque}), a local split of an axis an
       opaque operation does not read ({!unread_by_opaque}), a local split of a

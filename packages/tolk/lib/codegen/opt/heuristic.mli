@@ -168,8 +168,8 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     - if nothing is upcast, the last upcastable axis is upcast by 4 when 4
       divides it;
     - for a renderer with local indices, global and weak axes of a constant size
-      that every call and custom code reads
-      ({!Postrange.Scheduler.unread_by_opaque}) become local: up to three
+      that take threads ({!Postrange.Scheduler.threadless}) become local: up
+      to three
       axes, those some access does not index first,
       split by the first of 32 (axis [0] only), 16, 8, 4, 3 and 2 that divides
       them while the workgroup stays within 128 threads, or 32 when blocked.

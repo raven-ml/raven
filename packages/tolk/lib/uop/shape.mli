@@ -521,10 +521,11 @@ val written_params : Ops.t -> int list option
     an {!Op.Store} stores into, through indices, movements and {!Op.After}s,
     and, for a call the body makes, the parameters it passes where that call's
     body writes, at any depth; a call whose body does not show its writes
-    writes every parameter it is passed. A body of an {!Op.Linear} writes what
-    its calls write, in loops too. [None] when [body] does not show what it
-    writes: a {!Op.Program}, a {!Op.Custom_function}, or a sink holding code
-    of the target's ({!Op.Custom}). *)
+    writes every parameter it is passed. A body of an {!Op.Linear}, a
+    schedule's calls or the lines a body inside a kernel is lowered to, writes
+    what its calls and stores write, in loops too. [None] when [body] does not
+    show what it writes: a {!Op.Program}, a {!Op.Custom_function}, or a sink
+    or lines holding code of the target's ({!Op.Custom}, {!Op.Customi}). *)
 
 val custom_kernel : Ops.t list -> (Ops.t list -> Ops.t) -> Ops.t list
 (** [custom_kernel args f] calls the kernel [f] builds on placeholders of

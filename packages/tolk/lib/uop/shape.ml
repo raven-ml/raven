@@ -3419,16 +3419,17 @@ let rec written_params body =
   let rec entry e =
     match op e with
     | Op.Call -> call e
+    | Op.Store -> add (nth e 0)
     | Op.End | Op.Backedge -> entry (nth e 0)
     | Op.Linear -> List.iter entry (src e)
     | _ -> ()
   in
   let shown () = Some (List.sort Int.compare !slots) in
+  let code = List.exists (fun u -> op u = Op.Custom || op u = Op.Customi) in
   match op body with
   | Op.Sink ->
       let nodes = toposort ~calls:Skip body in
-      if List.exists (fun u -> op u = Op.Custom || op u = Op.Customi) nodes
-      then None
+      if code nodes then None
       else begin
         List.iter
           (fun u ->
@@ -3440,8 +3441,13 @@ let rec written_params body =
         shown ()
       end
   | Op.Linear ->
-      List.iter entry (src body);
-      shown ()
+      (* A schedule's calls, or a kernel's lines: a body lowered inside a
+         kernel holds its stores and code. *)
+      if code (src body) then None
+      else begin
+        List.iter entry (src body);
+        shown ()
+      end
   | Op.Store ->
       add (nth body 0);
       shown ()

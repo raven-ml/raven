@@ -7023,6 +7023,378 @@ let weak_ranges =
            [ [ -2 ] ]);
     ]
 
+(* Lanes and threads
+
+   Lanes of a range run in one thread and share its registers: a range takes
+   no lanes when a register store, or the condition of a loop inside it,
+   depends on it in data. Threads each have their own registers, but run
+   unordered with the code outside the range: a weak range stays serial on a
+   GPU when that code shares storage with its steps. *)
+
+let reg slot n = Shape.placeholder ~slot ~addrspace:Reg [ n ] Int32
+let local axis amount = Opt.Split { axis; amount; target = Local; top = false }
+let no_lanes f = raises_match (Exn.invalid_arg ~sub:"takes no lanes") f
+let iota n = [ (1, int_values (List.init n Fun.id)) ]
+
+
+(* [R[cell r] = A[r] + 1; D[r] = R[cell r]] over a weak [r < 8], [R] a
+   register of [n] cells that each step uses as scratch. *)
+let scratch ?(n = 1) cell opts () =
+  let a = int_param ~name:"A" 1 8 and d = int_param ~name:"D" 0 8 in
+  let rg = reg 2 n in
+  let r = Ops.range (Int 8) [ 0 ] in
+  let set = Ops.store (at rg (cell r)) Ops.O.(at a r + i32 1) in
+  let got = Ops.load (at (Ops.after rg [ set ]) (cell r)) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (at d r) got) [ r ] ]
+
+let scratch_zero = scratch (fun _ -> Ops.int 0)
+let scratch_quarter = scratch ~n:2 (fun r -> Ops.O.(r // int 4))
+
+(* [R[2x + y] = A[4x + y]; D[4x + y] = R[2x + y]] over weak [x < 2] and
+   [y < 4]: two points of one step meet at a cell of [R]. *)
+let scratch_two opts () =
+  let a = int_param ~name:"A" 1 8 and d = int_param ~name:"D" 0 8 in
+  let rg = reg 2 8 in
+  let x = Ops.range (Int 2) [ 0 ] and y = Ops.range (Int 4) [ 1 ] in
+  let cell = Ops.O.((x * int 2) + y) and flat = Ops.O.((x * int 4) + y) in
+  let set = Ops.store (at rg cell) (at a flat) in
+  let got = Ops.load (at (Ops.after rg [ set ]) cell) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (at d flat) got) [ x; y ] ]
+
+(* [R[r] = A[r]; R[r + 1] = 100; D[r] = R[r]] over a weak [r < 8]. *)
+let scratch_next opts () =
+  let a = int_param ~name:"A" 1 8 and d = int_param ~name:"D" 0 8 in
+  let rg = reg 2 9 in
+  let r = Ops.range (Int 8) [ 0 ] in
+  let s1 = Ops.store (at rg r) (at a r) in
+  let s2 = Ops.store (at (Ops.after rg [ s1 ]) Ops.O.(r + int 1)) (i32 100) in
+  let got = Ops.load (at (Ops.after rg [ s1; s2 ]) r) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (at d r) got) [ r ] ]
+
+(* Each step of a weak [r < 8] fills a register table [T[j] = j] over a
+   serial [j < 8], then [S[0] = T[r]] and [D[r] = S[0]]: the cells of [S]
+   hold the same value at every step, but the load from [T] does not. *)
+let table opts () =
+  let d = int_param ~name:"D" 0 8 in
+  let t = reg 2 8 and s = reg 3 1 in
+  let r = Ops.range (Int 8) [ 0 ] and j = loop 8 1 in
+  let tr = Ops.after t [ r ] in
+  let fill = Ops.end_ (Ops.store (at tr j) (Ops.cast j Int32)) [ j ] in
+  let sr = Ops.after s [ r ] in
+  let set = Ops.store (first sr) (Ops.load (at (Ops.after tr [ fill ]) r) []) in
+  let got = Ops.load (first (Ops.after sr [ set ])) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (at d r) got) [ r ] ]
+
+(* Each step of a weak [r < 4] resets a register counter and counts while
+   [count < bound r t], [t] a register table [T[e] = e + 1] the step fills,
+   then [C[r] = A[r] + count]. *)
+let counter bound opts () =
+  let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 4 in
+  let cnt = reg 2 1 and t = reg 3 4 in
+  let r = Ops.range (Int 4) [ 0 ] and l = Ops.loop 1 in
+  let tr = Ops.after t [ r ] in
+  let fills = List.init 4 (fun e -> Ops.store (at tr (Ops.int e)) (i32 (e + 1))) in
+  let tw = Ops.after tr fills in
+  let cnt_r = Ops.after cnt [ r ] in
+  let reset = Ops.store (first cnt_r) (i32 0) in
+  let cnt1 = Ops.after cnt_r [ reset ] in
+  let next = Ops.O.(Ops.load (first (Ops.after cnt1 [ l ])) [] + i32 1) in
+  let step =
+    Ops.backedge (Ops.store (first cnt1) next) ~loop:l
+      ~cond:Ops.O.(next < bound r tw)
+  in
+  let count = Ops.load (first (Ops.after cnt1 [ step ])) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (at c r) Ops.O.(at a r + count)) [ r ] ]
+
+let to_three = counter (fun _ _ -> i32 3)
+let to_step = counter (fun r _ -> Ops.O.(Ops.cast r Int32 + i32 1))
+let to_table = counter (fun r t -> Ops.load (at t r) [])
+
+(* Each step of a weak [r < 8] fills a register table [T[j] = j + 1] over a
+   serial [j < 2], then [S[0] = T[1]] through an index valid where [r < 4],
+   which reads 0 elsewhere, then [D[r] = S[0]]. *)
+let valid_where_low_load opts () =
+  let d = int_param ~name:"D" 0 8 in
+  let t = reg 2 2 and s = reg 3 1 in
+  let r = Ops.range (Int 8) [ 0 ] and j = loop 2 1 in
+  let tr = Ops.after t [ r ] in
+  let fill =
+    Ops.end_ (Ops.store (at tr j) Ops.O.(Ops.cast j Int32 + i32 1)) [ j ]
+  in
+  let low = Ops.O.(r < int 4) in
+  let cell = at (Ops.after tr [ fill ]) (Shape.valid (Ops.int 1) low) in
+  let sr = Ops.after s [ r ] in
+  let set = Ops.store (first sr) (Ops.load cell []) in
+  let got = Ops.load (first (Ops.after sr [ set ])) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (at d r) got) [ r ] ]
+
+(* [R[0] = 5] through an index valid where [r < 4], at each step of a weak
+   [r < 8], then [D[r] = R[0]] there: the store's validity alone reads
+   [r]. *)
+let valid_where_low opts () =
+  let d = int_param ~name:"D" 0 8 in
+  let rg = reg 2 1 in
+  let r = Ops.range (Int 8) [ 0 ] in
+  let low = Ops.O.(r < int 4) in
+  let valid u = Shape.valid u low in
+  let set = Ops.store (at (Ops.after rg [ r ]) (valid (Ops.int 0))) (i32 5) in
+  let got = Ops.load (first (Ops.after rg [ set ])) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (at d (valid r)) got) [ r ] ]
+
+(* [S[0] = 5] at each step of a weak [r < 8], then [R[0] = S[0] + 1] and
+   [D[r] = R[0] + A[r]]. *)
+let through_other opts () =
+  let a = int_param ~name:"A" 1 8 and d = int_param ~name:"D" 0 8 in
+  let s = reg 2 1 and rg = reg 3 1 in
+  let r = Ops.range (Int 8) [ 0 ] in
+  let ss = Ops.store (first (Ops.after s [ r ])) (i32 5) in
+  let set =
+    Ops.store (first rg) Ops.O.(Ops.load (first (Ops.after s [ ss ])) [] + i32 1)
+  in
+  let got = Ops.load (first (Ops.after rg [ set ])) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (at d r) Ops.O.(got + at a r)) [ r ] ]
+
+(* [G[r] = r], then [R[0] = 5] ordered after it, then [D[r] = R[0] + A[r]]
+   over a weak [r < 8]: the register store follows [r] in order only. *)
+let ordered_after opts () =
+  let d = int_param ~name:"D" 0 8 and g = int_param ~name:"G" 2 8 in
+  let a = int_param ~name:"A" 1 8 in
+  let rg = reg 3 1 in
+  let r = Ops.range (Int 8) [ 0 ] in
+  let gs = Ops.store (at g r) (Ops.cast r Int32) in
+  let set = Ops.store (first (Ops.after rg [ gs ])) (i32 5) in
+  let got = Ops.load (first (Ops.after rg [ set ])) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (at d r) Ops.O.(got + at a r)) [ r ] ]
+
+(* [R[0] = A[8i]] at each step of a weak [i < 4], then [C[i] = R[0] +
+   sum_j A[8i + j]] over a reduce [j < 8], tinygrad's
+   [reg_placeholder_then_reduce]. *)
+let then_reduce opts () =
+  let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 32 in
+  let rg = reg 2 1 in
+  let i = Ops.range (Int 4) [ 0 ] and j = Ops.range (Int 8) [ 1 ] in
+  let ri = Ops.after rg [ i ] in
+  let set = Ops.store (first ri) (at a Ops.O.(i * int 8)) in
+  let sum = Ops.reduce (at a Ops.O.((i * int 8) + j)) Op.Add [ j ] in
+  let got = Ops.load (first (Ops.after ri [ set ])) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (at c i) Ops.O.(sum + got)) [ i ] ]
+
+(* [R[0] = sum_j A[8i + j]] at each step of a weak [i < 4], over a reduce
+   [j < 8], then [C[i] = R[0]]. *)
+let reduced_into opts () =
+  let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 32 in
+  let rg = reg 2 1 in
+  let i = Ops.range (Int 4) [ 0 ] and j = Ops.range (Int 8) [ 1 ] in
+  let ri = Ops.after rg [ i ] in
+  let sum = Ops.reduce (at a Ops.O.((i * int 8) + j)) Op.Add [ j ] in
+  let set = Ops.store (first ri) sum in
+  let got = Ops.load (first (Ops.after ri [ set ])) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (at c i) got) [ i ] ]
+
+(* [G[r] = A[r]] over a weak [r < n], then [D[0] = G[n - 1]]. *)
+let read_after ?opts n () =
+  let d = int_param ~name:"D" 0 1 and a = int_param ~name:"A" 1 n in
+  let g = int_param ~name:"G" 2 n in
+  let r = Ops.range (Int n) [ 0 ] in
+  let e = Ops.end_ (Ops.store (at g r) (at a r)) [ r ] in
+  weak_kernel ?opts
+    [ e; Ops.store (first d) (at (Ops.after g [ e ]) (Ops.int (n - 1))) ]
+
+(* [R[0] = A[r]] over a weak [r < 8], then [D[0] = R[0]]. *)
+let live_out ?opts () =
+  let d = int_param ~name:"D" 0 1 and a = int_param ~name:"A" 1 8 in
+  let rg = reg 2 1 in
+  let r = Ops.range (Int 8) [ 0 ] in
+  let e = Ops.end_ (Ops.store (first rg) (at a r)) [ r ] in
+  weak_kernel ?opts
+    [ e; Ops.store (first d) (Ops.load (first (Ops.after rg [ e ])) []) ]
+
+(* [G[0] = 5] before a weak [r < n], then [D[r] = G[0] + A[r]]. *)
+let written_before ?opts n () =
+  let d = int_param ~name:"D" 0 n and a = int_param ~name:"A" 1 n in
+  let g = int_param ~name:"G" 2 1 in
+  let r = Ops.range (Int n) [ 0 ] in
+  let set = Ops.store (first g) (i32 5) in
+  let v = Ops.O.(first (Ops.after g [ set ]) + at a r) in
+  weak_kernel ?opts [ Ops.end_ (Ops.store (at d r) v) [ r ] ]
+
+(* The call of [p[0] = q[0]] on [dst] and [src]: it writes [dst] only. *)
+let copy_call dst src =
+  let p = int_param ~name:"p" 0 1 and q = int_param ~name:"q" 1 1 in
+  Ops.call ~name:"copy" (Ops.sink [ Ops.store (first p) (first q) ]) [ dst; src ]
+
+(* [G[r] = A[r]] by [write] over a weak [r < n], then [D[0] = G[n - 1]]. *)
+let effect_then_read write ?opts n () =
+  let d = int_param ~name:"D" 0 1 and a = int_param ~name:"A" 1 n in
+  let g = int_param ~name:"G" 2 n in
+  let r = Ops.range (Int n) [ 0 ] in
+  let e = Ops.end_ (write (at g r) (at a r)) [ r ] in
+  weak_kernel ?opts
+    [ e; Ops.store (first d) (at (Ops.after g [ e ]) (Ops.int (n - 1))) ]
+
+let by_call = effect_then_read copy_call
+let by_code = effect_then_read (fun g a -> code "{0}[0] = {1}[0];" [ g; a ])
+
+(* [O[r] = A[r]] by a call over a weak [r < 8], then [D[0] = A[0]]: the call
+   only reads [A]. *)
+let call_beside_read ?opts () =
+  let d = int_param ~name:"D" 0 1 and a = int_param ~name:"A" 1 8 in
+  let o = int_param ~name:"O" 2 8 in
+  let r = Ops.range (Int 8) [ 0 ] in
+  weak_kernel ?opts
+    [ Ops.end_ (copy_call (at o r) (at a r)) [ r ]; Ops.store (first d) (first a) ]
+
+(* Parameters [0] and [1] of a call's body. *)
+let p0 = int_param ~name:"p" 0 1
+let p1 = int_param ~name:"q" 1 1
+
+let cuda_target () = renderer_for (target "CUDA" "CUDA" "sm_89")
+
+(* The workgroup and thread indices of [k ()] lowered for CUDA, its calls'
+   bodies lowered first, as a program's are. *)
+let threads_on_cuda k =
+  let name u = match Ops.arg u with String s -> s | _ -> "" in
+  List.filter_map
+    (fun u -> if Ops.op u = Op.Special then Some (name u) else None)
+    (Ops.toposort ~calls:Skip
+       (Codegen.full_rewrite_to_sink (k ()) (cuda_target ())))
+
+(* The contents of slot 0 after one run of [k ()] on CUDA with [inputs]. *)
+let on_cuda_out k inputs =
+  let d, r = on_cuda () in
+  List.assoc 0 (Run.on d (compiled_for r (k ())) inputs)
+
+(* The register kernels above, with their inputs and a split each takes. *)
+let register_kernels =
+  [
+    ("R[0] scratch", scratch_zero, iota 8, upcast 0 4);
+    ("R[r // 4] scratch", scratch_quarter, iota 8, upcast 0 4);
+    ("R[2x + y] scratch", scratch_two, iota 8, upcast 1 4);
+    ("R[r]; R[r + 1]", scratch_next, iota 8, upcast 0 4);
+    ("S[0] = T[r]", table, [], upcast 0 4);
+    ("S[0] = T[1] valid where r < 4", valid_where_low_load, [], upcast 0 8);
+    ("R[0] = 5 valid where r < 4", valid_where_low, [], upcast 0 4);
+    ("a count to 3", to_three, iota 4, upcast 0 2);
+    ("a count to r + 1", to_step, iota 4, upcast 0 2);
+    ("a count to T[r]", to_table, iota 4, upcast 0 2);
+    ("R[0] = S[0] + 1", through_other, iota 8, upcast 0 4);
+    ("R[0] = 5 after G[r] = r", ordered_after, iota 8, upcast 0 4);
+    ("R[0] = A[8i] then a sum", then_reduce, iota 32, upcast 1 4);
+    ("R[0] = a sum", reduced_into, iota 32, upcast 1 4);
+    ("R[0] = A[8i] then a sum, i upcast", then_reduce, iota 32, upcast 0 2);
+  ]
+
+let lanes_and_threads =
+  let name (n, _, _, _) = n in
+  group "lanes and threads"
+    [
+      cases "a register kernel under a split computes what it does serially"
+        ~id:name register_kernels (fun (_, k, inputs, opt) ->
+          let serial = effects_of (k []) inputs [ 0 ] in
+          match effects_of (k [ opt ]) inputs [ 0 ] with
+          | split -> equal (list (array Dtypes.value)) serial split
+          | exception Invalid_argument _ -> ());
+      cases "a register store or a loop's condition along a range keeps it \
+             from lanes"
+        ~id:name
+        [
+          ("R[0] scratch", scratch_zero, iota 8, upcast 0 4);
+          ("R[r // 4] scratch", scratch_quarter, iota 8, upcast 0 4);
+          ("R[2x + y] scratch", scratch_two, iota 8, upcast 1 4);
+          ("R[r]; R[r + 1]", scratch_next, iota 8, upcast 0 4);
+          ("S[0] = T[r]", table, [], upcast 0 4);
+          ("S[0] = T[1] valid where r < 4", valid_where_low_load, [], upcast 0 8);
+          ("R[0] = 5 valid where r < 4", valid_where_low, [], upcast 0 4);
+          ("a count to r + 1", to_step, iota 4, upcast 0 2);
+          ("a count to T[r]", to_table, iota 4, upcast 0 2);
+          ("R[0] = A[8i] then a sum, i upcast", then_reduce, iota 32, upcast 0 2);
+        ]
+        (fun (_, k, inputs, opt) ->
+          no_lanes (fun () -> ignore (effects_of (k [ opt ]) inputs [ 0 ])));
+      cases "the axes a register store depends on are not upcastable" ~id:fst
+        [ ("R[0] scratch", (scratch_zero, [])); ("R[0] = S[0] + 1", (through_other, [ 0 ])) ]
+        (fun (_, (k, expected)) ->
+          let s = Postrange.Scheduler.v (k [] ()) (Lazy.force host) in
+          equal (list int) expected (Postrange.Scheduler.upcastable_dims s));
+      test "R[0] scratch over a range made global takes no lanes" (fun () ->
+          no_lanes (fun () ->
+              Codegen.to_program (scratch_zero [ upcast 0 4 ] ()) (cuda_target ())));
+      cases "a register kernel whose stores hold one value at every step takes \
+             lanes"
+        ~id:(fun (n, _, _, _, _) -> n)
+        [
+          ("a count to 3", to_three, iota 4, upcast 0 2, [ 3; 4; 5; 6 ]);
+          ( "R[0] = S[0] + 1", through_other, iota 8, upcast 0 4,
+            List.init 8 (fun x -> x + 6) );
+          ( "R[0] = 5 after G[r] = r", ordered_after, iota 8, upcast 0 4,
+            List.init 8 (fun x -> x + 5) );
+          ( "R[0] = A[8i] then a sum, j unrolled", then_reduce, iota 32,
+            upcast 1 4, List.init 4 (fun i -> (72 * i) + 28) );
+          ( "R[0] = a sum, j unrolled", reduced_into, iota 32, upcast 1 4,
+            List.init 4 (fun i -> (64 * i) + 28) );
+        ]
+        (fun (_, k, inputs, opt, expected) ->
+          writes (k [ opt ]) inputs [ expected ] ());
+      test "R[0] scratch on CUDA threads computes each step"
+        (fun () ->
+          equal (array Dtypes.value)
+            (int_values (List.init 8 succ))
+            (on_cuda_out (scratch_zero []) (iota 8)));
+      cases "a range whose steps share storage with the code around it takes \
+             no threads on CUDA"
+        ~id:fst
+        [
+          ("G[n - 1] read after", read_after 64);
+          ("R[0] read after", fun () -> live_out ());
+          ("G[0] written before", written_before 64);
+          ("G[r] written by a call", by_call 64);
+          ("G[r] written by code", by_code 64);
+        ]
+        (fun (_, k) -> equal (list string) [] (threads_on_cuda k));
+      test "a range whose steps share only what no code writes takes threads \
+            on CUDA"
+        (fun () ->
+          equal (list string) [ "gidx0" ]
+            (threads_on_cuda (call_beside_read ~opts:[])));
+      cases "a range whose steps share storage with the code around it takes \
+             no local split"
+        ~id:fst
+        [
+          ("G[n - 1] read after", read_after ~opts:[ local 0 4 ] 64);
+          ("G[0] written before", written_before ~opts:[ local 0 4 ] 64);
+        ]
+        (fun (_, k) ->
+          raises_match (Exn.invalid_arg ~sub:"shares storage with its steps")
+            (fun () -> Codegen.to_program (k ()) (cuda_target ())));
+      cases "a body lowered to its lines writes what its stores write"
+        ~id:fst
+        [
+          ("a store", (Ops.store (first p0) (first p1), Some [ 0 ]));
+          ("code", (code "{0}[0] = 1;" [ first p1 ], None));
+        ]
+        (fun (_, (line, expected)) ->
+          let body = Ops.sink [ line ] in
+          let lines =
+            Ops.v Op.Linear
+              ~src:(Ops.toposort ~calls:Skip body)
+              ~arg:(String "f")
+          in
+          equal (option (list int)) expected (Shape.written_params lines));
+      cases "a range whose steps share storage with the code around it computes \
+             its serial values on CUDA"
+        ~id:(fun (n, _, _, _) -> n)
+        [
+          ("G[65535] read after", read_after 65536, iota 65536, [ 65535 ]);
+          ("R[0] read after", (fun () -> live_out ()), iota 8, [ 7 ]);
+          ( "G[0] written before", written_before 65536, iota 65536,
+            List.init 65536 (fun x -> x + 5) );
+          ("G[65535] written by a call", by_call 65536, iota 65536, [ 65535 ]);
+          ("G[65535] written by code", by_code 65536, iota 65536, [ 65535 ]);
+        ]
+        (fun (_, k, inputs, expected) ->
+          equal (array Dtypes.value) (int_values expected) (on_cuda_out k inputs));
+    ]
+
 let () =
   Disk_cache.play (("breaking graph", lowers_a_breaking_graph) :: parts);
   exit
@@ -7040,6 +7412,7 @@ let () =
          bfloat16_vectors_on_cuda;
          counted_once;
          weak_ranges;
+         lanes_and_threads;
          variable_sizes;
          multiply_adds;
          shared_ranges;

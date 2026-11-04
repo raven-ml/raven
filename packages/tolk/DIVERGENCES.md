@@ -7925,3 +7925,53 @@ and an initial value is added after it (D260).
   one write, one waiting for the other, run apart` and its laws, through
   launches; rune's `Jit › fully sharded › *`; the bench rows
   `launch/host/*`, `launch/cuda/*` and `launch/lower-256`.
+
+## D340. Lanes keep registers apart and threads keep the code around them
+
+- **tinygrad:** `codegen/opt/postrange.py:52-60` (`convert_loop_to_global`,
+  which makes a weak output range global whatever the code around it);
+  `:65-73` (`shift_to`, which splits a range into lanes whatever its register
+  stores read); `:84-85` (`upcastable_dims`).
+- **tolk:** `Postrange.Scheduler.threadless`, which
+  `convert_loop_to_global`, `shift_to` (and the splits of `apply_opt`) and
+  `Heuristic`'s local splits read; `shift_to` and `upcastable_dims` for
+  lanes; `Shape.written_params`.
+- **Differs:** the lanes of a range share one thread's registers, so a range
+  takes no lanes where a register store's cells, value or gate, or the
+  condition a backedge repeats on, depends on it in data, a register load by
+  its offsets and gate alone, an `After` by its first source, a reduction by
+  its value less the ranges it closes. Under the weak promise a step reads a
+  register cell only after writing it, or one no step writes, so a register
+  store that depends on no lane writes what each step would. Threads run
+  unordered with the code outside their range, and an effect that does not
+  depend on a thread range runs in one of its threads, so a weak range takes
+  no threads (it stays weak, and a local split of it is refused) where an
+  effect depending on it and one not depending on it access one storage of
+  global or workgroup memory, one of them writing it, or the second reads a
+  register the first writes. Effects are stores, calls, which write the
+  arguments their body writes, and code, which writes every pointer it is
+  passed; a body lowered to lines inside a kernel writes what its stores
+  write, where tolk read it as writing nothing. tinygrad splits and makes
+  global such ranges as any other.
+- **Reason:** (e): over a weak `r < 8`, `R[0] = A[r] + 1; D[r] = R[0]`
+  upcast by 4 stores `[4; 4; 4; 4; 8; 8; 8; 8]` for `[1; …; 8]`, on CUDA
+  too once `r` is global, and `R[r // 4]` the same; `S[0] = T[r]` over a
+  table each step fills stores `[0; 0; 0; 0; 4; 4; 4; 4]` for `[0; …; 7]`;
+  a counter repeated while below `r + 1` or `T[r]` fails verification. On
+  CUDA, `G[r] = A[r]` over 65536 steps then `D[0] = G[65535]` reads 0 for
+  65535, by a store, a call or code; `R[0] = A[r]` then `D[0] = R[0]` reads
+  0 for 7; `G[0] = 5` before `r`, read at every step, reads 0 in some
+  workgroups.
+- **Pinned by:** the Codegen suite's `lanes and threads` group: the register
+  kernels under a split, against their serial values, and the refusals of
+  `R[0]`, `R[r // 4]`, `R[2x + y]` and `R[r]; R[r + 1]` scratch, a table
+  read at `T[r]` or through an index valid where `r < 4`, a store valid
+  where `r < 4`, counters to `r + 1` and `T[r]`, and a register written per
+  step beside a reduction, upcast; the axes `upcastable_dims` leaves out;
+  scratch over a range made global; the
+  splits kept (a counter to 3, a register written from another, a register
+  ordered after a store, a register beside or holding a reduction, its
+  range unrolled); the ranges given no threads on CUDA under the heuristic
+  and their values (reads after, a register read after, a write before,
+  writes by a call and by code), the local splits refused, the range a
+  read-only call keeps global, and a lowered body's writes.
