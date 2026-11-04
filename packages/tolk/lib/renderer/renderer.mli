@@ -236,6 +236,11 @@ type t = private {
           ({!Heuristic}). Fixed per target, as [stream_threads] is. *)
   extra_matcher : (unit, Ops.t) Ops.Pattern_matcher.t;
       (** The rewrites the target needs after every other. *)
+  launch_members : int;
+      (** The most members a launch's program holds ({!Shape.launch}): a
+          launch calls each member on its own, and the target's compiler
+          takes longer for each past this count. A larger launch runs as
+          several. *)
   packed_args : bool;
       (** A kernel takes its arguments as bytes: one parameter, which holds
           each argument at its offset ({!Device.Tiny_elf.iter_sig}), a buffer
@@ -274,6 +279,7 @@ val v :
   ?stream_threads:int ->
   ?local_workgroups:int ->
   ?extra_matcher:(unit, Ops.t) Ops.Pattern_matcher.t ->
+  ?launch_members:int ->
   ?packed_args:bool ->
   ?code_for_op:(Op.t * (string list -> Dtype.t -> string)) list ->
   ?native:(Dtype.t -> bool) ->
@@ -295,6 +301,7 @@ val v :
     - [per_byte_first] is [64], [sm_89]'s crossover, [stream_threads] is
       [32768] and [local_workgroups] [256], [sm_89]'s, which every target
       takes until its own are measured;
+    - [launch_members] is [max_int], until a target's compiler is measured;
     - [packed_args] is [false];
     - [native] holds for every data type;
     - [render] raises [Invalid_argument];

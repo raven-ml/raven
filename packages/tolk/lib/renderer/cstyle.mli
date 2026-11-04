@@ -38,8 +38,13 @@
     after the language's own definitions, under the name the body holds, which
     code generation gives it. The function is qualified
     as the language's device functions are ([__device__] in {!cuda}, a device
-    attribute in {!hip}). Its parameters are the body's, by slot, and each
-    argument is cast to its parameter's type.
+    attribute in {!hip}), and inline unless a call of it is compiled on its
+    own ({!Ops.type-call_info}, as a launch's calls are): such a function is
+    kept out of line ([__noinline__] in {!cuda}, the [noinline] attribute
+    elsewhere), so that the compiler compiles it once however many calls it
+    has. Its parameters are the body's, by slot, and each argument is cast to
+    its parameter's type. The choices {!cuda} makes for a program, its
+    asynchronous copies and matrix loads, read the bodies it calls too.
 
     A floating-point division ({!Op.Fdiv}) is the language's [/] on every
     target, whether or not the target lists it among its native operations: that

@@ -196,6 +196,12 @@ val split_targets : Opt.target -> Ops.Axis_type.t list
     [target]: global, local and weak axes to {!Opt.Upcast}, and global and weak
     axes to {!Opt.Local}. *)
 
+val threads_fixed : Ops.t -> bool
+(** [threads_fixed ast] is [true] iff the builder of the kernel [ast], or of a
+    body it calls, fixed its threads: it holds workgroup or register storage
+    ({!Dtype.Local}, {!Dtype.Reg}), a barrier, a matrix multiply-accumulate or
+    custom code. *)
+
 val apply_opts :
   ?beam:(Scheduler.t -> Scheduler.t) ->
   hand_coded:(Scheduler.t -> Scheduler.t) ->

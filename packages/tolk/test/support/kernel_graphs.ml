@@ -130,19 +130,28 @@ let linear_writes ?(vars = []) ?(params = []) ?(buffers = []) linear =
         Hashtbl.replace memory (scratch, p.slot) v;
         v
   in
-  let run call =
+  let writes_of call =
     if not (is_kernel_call call) then
       fail "a schedule's call is a call of a %a, not a kernel" Op.pp
         (Ops.op (Ops.nth call 0));
     let args = List.tl (Ops.src call) in
-    List.iter
-      (fun (k, i, v) ->
-        let a = List.nth args k in
-        (values_of a).(i) <- v;
-        match storage a with
-        | false, p, _ -> Hashtbl.replace written (p.slot, i) v
-        | true, _, _ -> ())
+    List.map
+      (fun (k, i, v) -> (List.nth args k, i, v))
       (kernel_writes ~vars ~params values_of call)
+  in
+  let apply (a, i, v) =
+    (values_of a).(i) <- v;
+    match storage a with
+    | false, p, _ -> Hashtbl.replace written (p.slot, i) v
+    | true, _, _ -> ()
+  in
+  (* A launch's members run at once: each reads memory as the launch found
+     it. *)
+  let run call =
+    if Ops.op call = Call && Shape.is_launch (Ops.nth call 0) then
+      List.iter apply
+        (List.concat_map writes_of (Shape.launch_members call))
+    else List.iter apply (writes_of call)
   in
   (* A loop runs its body once a trip, its range replaced by the trip. *)
   let rec entry trips u =

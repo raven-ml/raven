@@ -128,6 +128,24 @@ val to_program :
     do not depend on a body's, even where a node of the body is one of the
     program's.
 
+    A launch ({!Shape.is_launch}) runs its members at once. Each member is
+    lowered as a kernel of its own, with its optimisations, its check
+    ({!Uniform.check}) and its launch dimensions, and its instructions become
+    a body the launch calls, members of one kernel one body, each passed its
+    hardware indices, its named variables and, on the host, its split loop's
+    bounds. On a target with workgroups, the launch's workgroups are its
+    members' laid end to end, and its threads the most any member has: a
+    member runs inside a loop of one trip or none whose bound reads the
+    workgroup index, and the thread index where the member has fewer
+    threads, and is passed its workgroup and thread indices decomposed by its
+    own sizes, the first axis fastest, as the target numbers threads. On the
+    host, the launch's split loop runs its members' split iterations laid end
+    to end ({!Ops.kernel_info.split}), a block running, of each member, the
+    iterations it overlaps. Each member is a call of its own, its body out of
+    line on every target, the call being compiled on its own
+    ({!Ops.type-call_info}), so that a compiler compiles the body once. The
+    launch's estimates are the sum of its members'.
+
     [ast] is a kernel's sink. [to_program ast ren] and
     [compile (linearize ast ren) ren] are equal programs: [to_program] is the
     pipeline that keeps what it makes, {!linearize} and {!compile} the one that
@@ -164,7 +182,8 @@ val to_program :
     read back from disk too.
 
     Raises [Invalid_argument] if [ast] is not an {!Op.Sink} with kernel
-    information, if a call of a sink inside it has no name, or as
+    information, if a call of a sink inside it has no name, if a launch's
+    member has a symbolic launch dimension or split, or as
     {!full_rewrite_to_sink} does. Raises
     {!Renderer.Compiler.Compile_error} if the compiler rejects the source. *)
 

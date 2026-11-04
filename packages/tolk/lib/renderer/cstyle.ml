@@ -84,6 +84,7 @@ type lang = {
   infinity : string;
   nan : string;
   inline_prefix : string; (* the qualifier of a call body's function *)
+  noinline : string; (* the attribute of a body compiled out of line *)
   suffix64 : string; (* the suffix of a 64-bit integer literal, after [u] *)
   bitcast : string -> string -> string -> string;
       (* [bitcast t s x] reads [x], of type [s], as a [t] *)
@@ -748,6 +749,7 @@ let cstyle =
     infinity = "INFINITY";
     nan = "NAN";
     inline_prefix = "";
+    noinline = "__attribute__((noinline))";
     suffix64 = "l";
     bitcast = strf "__builtin_bit_cast(%s, (%s)(%s))";
     promoted = Dtype.[ Int8; Int16 ];
@@ -983,11 +985,33 @@ let callees uops =
   scan uops;
   List.rev !found
 
+(* The bodies that a call compiled on its own calls ({!Ops.call_info}): a
+   compiler keeps them out of line, so that it compiles each once however
+   many calls it has. *)
+let outlined uops =
+  let found = ref [] in
+  let rec scan us =
+    List.iter
+      (fun u ->
+        if is Op.Call u && is Op.Linear (nth u 0) then begin
+          (match arg u with
+          | Call { precompile = true; _ } ->
+              if not (List.memq (nth u 0) !found) then
+                found := nth u 0 :: !found
+          | _ -> ());
+          scan (src (nth u 0))
+        end)
+      us
+  in
+  scan uops;
+  !found
+
 (* The program declares each external function it calls, which it links
    against, and defines a function for each call body, after the bodies it
    calls. *)
 let render render_kernel l uops =
   let callees = callees uops in
+  let outlined = outlined uops in
   let declare callee =
     match arg callee with
     | Custom_function f -> strf "extern void %s();" f.name
@@ -996,8 +1020,12 @@ let render render_kernel l uops =
         let params =
           List.map (fun (n, p) -> strf "%s %s" (param_type l p) n) bufs
         in
-        strf "static inline %s void %s(%s) {\n%s\n}" l.inline_prefix
-          (body_name callee)
+        let qualifiers =
+          if List.memq callee outlined then
+            strf "static %s %s" l.inline_prefix l.noinline
+          else strf "static inline %s" l.inline_prefix
+        in
+        strf "%s void %s(%s) {\n%s\n}" qualifiers (body_name callee)
           (String.concat ", " params)
           (String.concat "\n" lines)
   in
@@ -1623,6 +1651,7 @@ let cuda_lang =
     kernel_typedef = strf "extern \"C\" __global__ void __launch_bounds__(%d)";
     smem_prefix = "__shared__ __align__(16) ";
     inline_prefix = "__device__";
+    noinline = "__noinline__";
     smem_prefix_for_cast = false;
     barrier = "__syncthreads();";
     float4 = (fun t -> "make_" ^ t);
@@ -1923,10 +1952,18 @@ let cuda_renderer ~sync (target : Helpers.Target.t) =
   (* ldmatrix "Requires sm_75 or higher" (PTX ISA §9.7.16.5.15). *)
   let load_matrix = ver >= 75 in
   let render uops =
-    let copies = async_copy && List.exists copies_async uops in
+    (* The program's choices read the bodies it calls too, whose loads and
+       copies it renders. *)
+    let all =
+      List.concat_map
+        (fun b -> if is Op.Linear b then src b else [])
+        (callees uops)
+      @ uops
+    in
+    let copies = async_copy && List.exists copies_async all in
     let l = if copies then cuda_async_lang else cuda_lang in
     let marked =
-      List.exists (fun u -> is Op.Load u && ldmatrix_mark u <> None) uops
+      List.exists (fun u -> is Op.Load u && ldmatrix_mark u <> None) all
     in
     let l =
       if not marked then l
@@ -1939,7 +1976,10 @@ let cuda_renderer ~sync (target : Helpers.Target.t) =
     render (cuda_kernel ~copies ~marked) l uops
   in
   let name = if sync then "CUDARenderer without cp.async" else "CUDARenderer" in
-  Renderer.v ~name ~half8:true
+  (* NVRTC's time a call site of a launch falls to its least at 64 members
+     (0.064 s, 1.0 ms a member, on fudge with CUDA 13) and grows past them:
+     96 members 1.4 ms a member, 128 1.9 ms, 256 4.5 ms. *)
+  Renderer.v ~name ~half8:true ~launch_members:64
     ~global_max:[ 2147483647; 65535; 65535 ]
     ~local_max:[ 1024; 1024; 64 ] ~shared_max:49152 ~async_copy
     ~load_matrix ~tensor_cores

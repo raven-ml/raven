@@ -46,7 +46,14 @@
    [gated] runs, on the first CUDA GPU, a 2048-cubed bfloat16 product stored
    only where its block of 128 rows is flagged, with 5 of its 16 blocks off and
    with every block on: a block flagged off skips its loop. Without a CUDA GPU
-   the group is empty. *)
+   the group is empty.
+
+   [launch] runs assemblies whose pieces' stores, of one state, run as one
+   launch, on the host and on the first CUDA GPU: 64 alike pieces of 64 rows
+   of [2^x], and 16 products of a [64; 1024] matrix and a vector, each piece
+   a reduce. [launch/lower-256] lowers, for the host, the launch of 256 alike
+   pieces up to its instructions, the compile work that grows with the
+   pieces. *)
 
 open Tolk
 
@@ -472,6 +479,104 @@ let searches =
                 (Postrange.Scheduler.copy s)));
     ]
 
+(* Launches *)
+
+(* [n] pieces assembled into the rows of one float32 buffer of [d]: each
+   piece's rows of [width] are [2^x] of a buffer of its own, or, when [k] is
+   above [1], a product of a [width; k] matrix of its own and a vector of
+   [k], one row a piece. The stores of one state, they run as one launch. *)
+let assembly d ~n ~width ~k =
+  let slot = ref 0 in
+  let buf size =
+    incr slot;
+    Ops.new_buffer ~slot:!slot d size Float32
+  in
+  let rows = if k > 1 then 1 else width in
+  let wide = if k > 1 then width else 64 in
+  let out = Ops.new_buffer ~slot:0 d (n * rows * wide) Float32 in
+  let piece () =
+    if k = 1 then
+      Shape.reshape (Ops.exp2 (buf (rows * wide))) [ Int rows; Int wide ]
+    else
+      let a = Shape.reshape (buf (wide * k)) [ Int 1; Int wide; Int k ] in
+      let v =
+        Shape.expand (Shape.reshape (buf k) [ Int 1; Int 1; Int k ])
+          [ Int 1; Int wide; Int k ]
+      in
+      Shape.reshape (Shape.rop Ops.O.(a * v) Add [ 2 ]) [ Int rows; Int wide ]
+  in
+  let region i =
+    Shape.shrink
+      (Shape.reshape out [ Int (n * rows); Int wide ])
+      [ Some (Int (i * rows), Int ((i + 1) * rows)); None ]
+  in
+  Ops.sink
+    [ Ops.after out (List.init n (fun i -> Ops.store (region i) (piece ()))) ]
+
+(* A run of [big]'s schedule on [d], linked, which returns once its writes are
+   done. *)
+let scheduled d big =
+  let devices _ = d in
+  let linear, vars = Schedule.create_linear_with_vars big in
+  let compiled =
+    Realize.compile_linear ~targets:(fun _ -> Tolk_engine.target d) linear
+  in
+  let storage =
+    List.filter_map
+      (fun u ->
+        match (Ops.op u, Ops.arg u) with
+        | Buffer, Param p ->
+            Some (u, values element d p.dtype (Shape.max_numel u))
+        | _ -> None)
+      (Ops.toposort ~calls:Skip big)
+  in
+  let s = Tolk_engine.link ~devices ~bound:storage compiled in
+  fun () ->
+    Tolk_engine.run ~vars s [||];
+    List.iter (fun (_, b) -> Rig.Buffer.wait b Read) storage
+
+(* The launches timed: 64 pieces of 64 rows of 64 elements, alike, and 16
+   products of a [64; 1024] matrix and a vector, each a reduce. *)
+let launch_cases =
+  [ ("alike-64", (64, 64, 1)); ("products-16", (16, 64, 1024)) ]
+
+let launch_rows d =
+  List.map
+    (fun (row, (n, width, k)) ->
+      Thumper.bench_with_setup
+        ~setup:(fun () -> scheduled (d ()) (assembly "LAUNCH" ~n ~width ~k))
+        row
+        (fun run -> run ()))
+    launch_cases
+
+(* The launch of 256 alike pieces lowered for the host: its members' work
+   and the launch's own grow with the pieces, the cost of a first compile
+   before the C compiler. *)
+let launch_kernel n =
+  let linear, _ =
+    Schedule.create_linear_with_vars ~capturing:true
+      (assembly "CPU" ~n ~width:64 ~k:1)
+  in
+  match
+    List.find_opt
+      (fun e -> Ops.op e = Call && Shape.is_launch (Ops.body e))
+      (Ops.src linear)
+  with
+  | Some e -> Ops.body e
+  | None -> failwith "bench: no launch"
+
+let launch () =
+  Thumper.group "launch"
+    [
+      Thumper.group "host" (launch_rows (fun () -> Rig.host));
+      Thumper.group "cuda" ~metrics:[ Thumper.Metric.wall_time ]
+        (if cuda_opens () then launch_rows cuda else []);
+      Thumper.bench_with_setup
+        ~setup:(fun () -> launch_kernel 256)
+        "lower-256"
+        (fun k -> Codegen.linearize k renderer);
+    ]
+
 (* [outputs] builds and schedules a program of many outputs of one element in
    two chains, each output one more than the output two before it, as a chain
    of scalars makes: the whole of [Schedule.create_linear_with_vars], over
@@ -505,6 +610,7 @@ let suite () =
       stream ();
       contract ();
       gated ();
+      launch ();
       Thumper.group "search"
         (searches
         ::
@@ -532,6 +638,7 @@ let () =
                  `Id "gpt_oss/";
                  `Id "stream/";
                  `Id "gated/";
+                 `Id "launch/";
                ])
            (suite ()))
   | _ ->

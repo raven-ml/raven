@@ -1028,6 +1028,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- The stores of one state, as an assembly's pieces into the regions of one
+  buffer, run as one launch whose members are their kernels
+  (`Shape.launch`), each lowered and optimised as its own; alike pieces share
+  one body, called out of line. A member that reduces or fixes its
+  threads joins only members of its kernel. 16 products of a matrix and a
+  vector run in one launch where they took 16.
 - Clang computes a vector operation of more than 64 lanes as vectors of 64
   (`Cstyle.clang`), and `Renderer.t`'s `vector_alu` becomes `vector_lanes`,
   the most lanes an operation computes at once: Clang's time grew far faster

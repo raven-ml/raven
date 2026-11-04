@@ -118,6 +118,25 @@ val create_linear_with_vars :
       then takes it as a nameless parameter, its own call passing the bound
       variable, so that kernels which differ in that value alone are one
       program;
+    + unless [by_storage], the kernels of one write, as the stores of one
+      state into its regions are, run as one launch ({!Shape.launch}) whose
+      members are their kernels: the kernels of one write run in any order
+      ({!create_schedule}), so they can run at once. A schedule ordered by
+      its storage takes none, since a launch holds every member's storage at
+      once, where the order would make and free each in turn. A kernel
+      joins where no order of the schedule leads from it to another member,
+      through kernels that read what one writes or overwrite what one reads;
+      the launch then runs where its members would. A member is a call of a kernel whose ranges have constant
+      sizes and whose storage lies on one device that is no disk. A member
+      that fixes its threads ({!Postrange.threads_fixed}) or reduces, and may
+      then share values between a workgroup's threads through barriers, joins
+      only members of the same kernel, so that each of the launch's
+      workgroups has its threads, and on Metal, which declares workgroup
+      memory only in a kernel function, runs alone; any other member joins
+      every other such member of its device. A launch passes at most 512
+      arguments, the 4 KiB of parameters CUDA takes, and with
+      {!Setting.max_kernel_buffers} at [n] above [0] at most [n] buffers. A
+      launch of one member is that member's call;
     + a kernel that only copies a buffer between devices, or to or from a disk,
       becomes a call of a store, between views of its arguments where it
       copies a run of one into a run of the other;

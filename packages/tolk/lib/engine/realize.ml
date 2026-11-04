@@ -151,7 +151,35 @@ let note prg key ast renderer =
       l := { name = k.name; key; ast; renderer; opts = k.applied_opts } :: !l
   | Some _, _ | None, _ -> ()
 
+(* [linear] with each launch of more members than its renderer's program
+   holds ({!Renderer.t.launch_members}) run as several, in order: members
+   run in any order. Alike members make alike launches, one program. *)
+let split_launches targets linear =
+  let rec chunks n = function
+    | [] -> []
+    | ms ->
+        let first = List.filteri (fun i _ -> i < n) ms in
+        first :: chunks n (List.filteri (fun i _ -> i >= n) ms)
+  in
+  let launched = function [ m ] -> m | ms -> Shape.launch ms in
+  let rec entries l = List.concat_map entry (src l)
+  and entry e =
+    match op e with
+    | Op.Call when Shape.is_launch (body e) -> (
+        match get_call_to_compile targets e with
+        | Some (ast, ren) when List.length (src ast) > ren.launch_members ->
+            List.map launched
+              (chunks ren.launch_members (Shape.launch_members e))
+        | _ -> [ e ])
+    | (Op.End | Op.Backedge) when op (nth e 0) = Op.Linear ->
+        let body = nth e 0 in
+        [ replace e ~src:(replace body ~src:(entries body) :: List.tl (src e)) ]
+    | _ -> [ e ]
+  in
+  replace linear ~src:(entries linear)
+
 let lower_and_compile ?search ~targets linear =
+  let linear = split_launches targets linear in
   let calls =
     List.filter_map
       (fun c ->

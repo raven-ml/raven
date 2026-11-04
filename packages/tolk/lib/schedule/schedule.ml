@@ -306,7 +306,7 @@ exception Cycle
 
 (* The kernels in an order of the graph [children], [in_degree] counting the
    kernels each waits for: each as it becomes ready. *)
-let ready_order ~children in_degree =
+let ready_order ~entry ~children in_degree =
   let queue = Queue.create () in
   List.iter
     (fun (k, d) -> if d = 0 then Queue.push k queue)
@@ -314,7 +314,7 @@ let ready_order ~children in_degree =
   let linearized = ref [] in
   while not (Queue.is_empty queue) do
     let rk = Queue.pop queue in
-    linearized := scheduled rk :: !linearized;
+    linearized := entry rk :: !linearized;
     List.iter
       (fun x ->
         let d = Option.get (Ordered.find_opt in_degree x) - 1 in
@@ -339,12 +339,12 @@ let ready_order ~children in_degree =
    makes the next, and the last reader of a gathered value runs before the
    kernels that make more. A pick walks the ready kernels: [O(k²)] for [k]
    kernels at worst. *)
-let storage_order ~written ~children in_degree =
+let storage_order ~entry ~written ~children in_degree =
   let kernels = Array.of_list (List.map fst (Ordered.bindings in_degree)) in
   let count = Array.length kernels in
   let number = Tbl.create count in
   Array.iteri (fun i k -> Tbl.replace number k i) kernels;
-  let entries = Array.map scheduled kernels in
+  let entries = Array.map entry kernels in
   let made_here b = Tbl.mem written b && not (on_disk b) in
   let storage =
     Array.map (fun e -> List.filter made_here (Memory.taken e)) entries
@@ -418,8 +418,8 @@ let storage_order ~written ~children in_degree =
     raise Cycle;
   v Op.Linear ~src:(List.rev !linearized)
 
-let linearize ~by_storage ~children sched_sink in_degree =
-  if not by_storage then ready_order ~children in_degree
+let linearize ?(entry = scheduled) ~by_storage ~children sched_sink in_degree =
+  if not by_storage then ready_order ~entry ~children in_degree
   else
     (* The storage the kernels write. *)
     let written = Tbl.create 16 in
@@ -428,7 +428,7 @@ let linearize ~by_storage ~children sched_sink in_degree =
         if op u = Op.After && not (is_join u) then
           Tbl.replace written (buf_uop u) ())
       (toposort ~calls:Skip ~gate:in_graph sched_sink);
-    storage_order ~written ~children in_degree
+    storage_order ~entry ~written ~children in_degree
 
 (* The state the kernels [ks] of the after [u] write over: the latest state of
    [u]'s storage their calls are given, as a loop is given its carry's first
@@ -580,7 +580,152 @@ let cuts ~copies ~order edges =
   in
   run ()
 
-let rec schedule ~by_storage ~copies sched_sink =
+(* Launches
+
+   The kernels of one write store into one state, each elements of its own:
+   they run in any order, so they can run at once, as one launch whose
+   members are the kernels (Shape.launch). A kernel that two writes list
+   joins the launch of both. Kernels of a write join when no path of the
+   graph leads from one to another: one that reads what another writes, or
+   one that reads what a kernel waiting for another overwrites, must run
+   apart. A launch then takes the place of its members, its edges theirs,
+   and the graph stays free of any cycle it did not have: a cycle through
+   the launch would be a path between two of its members.
+
+     w0 = { k1; k2; k3 }    k3 reads s, j overwrites s, k2 waits for j:
+     k3 -> j -> k2          k1 and k2 run as one launch, k3 apart
+
+   A member is a call of a kernel whose ranges have constant bounds: a
+   launch lays its members' work end to end, which it must know when it is
+   compiled. *)
+
+(* Whether the kernel [k] can be a member of a launch: a kernel of one
+   device, of whose storage none lies on a disk. A kernel between devices is
+   a copy, which the schedule orders on its own. *)
+let launchable k =
+  let one_device () =
+    let storage =
+      List.filter_map
+        (fun a ->
+          if addrspace a = Some Dtype.Alu || is_bound_var a then None
+          else Some (buf_uop (unwrap_src a)))
+        (src_without_body k)
+    in
+    match List.sort_uniq Stdlib.compare (List.map device storage) with
+    | [ Some d ] -> not (is_disk_device d)
+    | _ -> false
+  in
+  op k = Op.Call
+  && one_device ()
+  && (match arg k with Call c -> not c.precompile | _ -> false)
+  && (match (op (body k), arg (body k)) with
+     | Op.Sink, Kernel _ -> true
+     | _ -> false)
+  && List.for_all
+       (fun u -> op u <> Op.Range || op (nth u 0) = Op.Const)
+       (toposort ~calls:Skip (body k))
+
+(* The graph [children] and [in_degree] with the kernels of each write of
+   [writes], in order, run as launches where they can, and the launches made,
+   each the node that stands for its members. [edges] holds every edge of the
+   graph, last first. *)
+let contract ~writes ~children ~in_degree edges =
+  let rep = Tbl.create 64 and members = Tbl.create 16 in
+  let rep_of k = Option.value (Tbl.find_opt rep k) ~default:k in
+  let members_of r = Option.value (Tbl.find_opt members r) ~default:[ r ] in
+  let self_loops = Tbl.create 4 in
+  List.iter (fun (t, k, _) -> if t == k then Tbl.replace self_loops k ()) edges;
+  let succ r =
+    List.concat_map
+      (fun m ->
+        List.map rep_of (Option.value (Tbl.find_opt children m) ~default:[]))
+      (members_of r)
+  in
+  (* Whether a path leads from [a] to [b], through the launches made. *)
+  let reaches a b =
+    let seen = Tbl.create 32 in
+    let rec go = function
+      | [] -> false
+      | x :: _ when x == b -> true
+      | x :: rest ->
+          if Tbl.mem seen x then go rest
+          else begin
+            Tbl.replace seen x ();
+            go (succ x @ rest)
+          end
+    in
+    go (succ a)
+  in
+  let join p c =
+    let ms = members_of p @ members_of c in
+    Tbl.replace members p ms;
+    Tbl.remove members c;
+    List.iter (fun m -> Tbl.replace rep m p) ms
+  in
+  List.iter
+    (fun ks ->
+      let cands =
+        dedup_nodes
+          (List.map rep_of
+             (List.filter
+                (fun k -> launchable k && not (Tbl.mem self_loops k))
+                ks))
+      in
+      if List.compare_length_with cands 1 > 0 then
+        ignore
+          (List.fold_left
+             (fun parts c ->
+               match
+                 List.find_opt
+                   (fun p -> not (reaches c p || reaches p c))
+                   parts
+               with
+               | Some p ->
+                   join p c;
+                   parts
+               | None -> parts @ [ c ])
+             [] cands))
+    writes;
+  if Tbl.length members = 0 then None
+  else begin
+    (* Each launch is the call of its members in the order the walk met
+       them. *)
+    let order = Tbl.create 64 in
+    List.iteri
+      (fun i (k, _) -> Tbl.replace order k i)
+      (Ordered.bindings in_degree);
+    let launches = Tbl.create 16 and node = Tbl.create 64 in
+    Tbl.iter
+      (fun r ms ->
+        let ms =
+          List.sort
+            (fun a b -> Int.compare (Tbl.find order a) (Tbl.find order b))
+            ms
+        in
+        let l = Shape.launch (List.map scheduled ms) in
+        Tbl.replace launches l ();
+        Tbl.replace node r l)
+      members;
+    let node_of k =
+      let r = rep_of k in
+      Option.value (Tbl.find_opt node r) ~default:r
+    in
+    let children' = Tbl.create 64 and in_degree' = Ordered.create () in
+    List.iter
+      (fun (k, _) -> Ordered.replace in_degree' (node_of k) 0)
+      (Ordered.bindings in_degree);
+    List.iter
+      (fun (t, k, _) ->
+        let t = node_of t and k = node_of k in
+        Tbl.replace children' t
+          (k :: Option.value (Tbl.find_opt children' t) ~default:[]);
+        Ordered.replace in_degree' k
+          (Option.get (Ordered.find_opt in_degree' k) + 1))
+      (List.rev edges);
+    Some (launches, children', in_degree')
+  end
+
+let rec schedule ~launches ~by_storage ~copies sched_sink =
   (* The graph of kernels: edges go from a kernel to those that must run after
      it, each through the read it orders, if any. *)
   let children = Tbl.create 64 and in_degree = Ordered.create () in
@@ -665,19 +810,41 @@ let rec schedule ~by_storage ~copies sched_sink =
           end
           else List.iter (fun t -> add_child ~war k t) write_kernels)
     (List.rev !reads);
-  match linearize ~by_storage ~children sched_sink in_degree with
+  let order = List.rev in_degree.Ordered.keys in
+  let contracted =
+    if not launches then None
+    else
+      let writes =
+        List.filter_map
+          (fun u ->
+            if op u = Op.After && not (is_join u) then
+              match fst (split_after u) with
+              | _ :: _ :: _ as ks -> Some ks
+              | _ -> None
+            else None)
+          (toposort ~calls:Skip ~gate:in_graph sched_sink)
+      in
+      contract ~writes ~children ~in_degree !edges
+  in
+  let linearized () =
+    match contracted with
+    | None -> linearize ~by_storage ~children sched_sink in_degree
+    | Some (launches, children, in_degree) ->
+        let entry k = if Tbl.mem launches k then k else scheduled k in
+        linearize ~entry ~by_storage ~children sched_sink in_degree
+  in
+  match linearized () with
   | linear -> linear
   | exception Cycle -> (
-      let order = List.rev in_degree.Ordered.keys in
       match cuts ~copies ~order (List.rev !edges) with
       | [] -> invalid_arg "cycle detected in assign graph"
       | cut ->
-          schedule ~by_storage ~copies:false
+          schedule ~launches ~by_storage ~copies:false
             (copy_before_overwrites sched_sink
                (List.map (fun w -> (w.reader, w.state)) cut)))
 
 let create_schedule ?(by_storage = false) sched_sink =
-  schedule ~by_storage ~copies:true sched_sink
+  schedule ~launches:false ~by_storage ~copies:true sched_sink
 
 (* A linear in a linear is inlined into it. *)
 let flatten_linear () =
@@ -781,8 +948,10 @@ let rec resolve_linear_call ~several ?(outer_binds = []) linear_call =
   let params, values =
     List.partition (fun (_, x) -> op x = Op.Param && not (is_bound_var x)) binds
   in
-  let apply_binds si =
+  let rec apply_binds si =
     match (op si, src si) with
+    | Op.Call, b :: _ when Shape.is_launch b ->
+        Shape.launch (List.map apply_binds (Shape.launch_members si))
     | Op.Call, b :: _ when op b = Op.Linear ->
         resolve_linear_call ~several ~outer_binds:binds si
     (* Compiled parameters already have their slots in the program. *)
@@ -837,6 +1006,104 @@ let bound_several u =
   Hashtbl.fold
     (fun name xs acc -> if List.length xs > 1 then name :: acc else acc)
     values []
+
+(* Launches of one device
+
+   A launch the schedule made runs on one device, so its members split by the
+   devices of their storage once the schedule's parameters are bound: a
+   member whose storage lies on several devices, as a copy's does, or on a
+   disk, runs alone. A member whose kernel fixes its threads, or reduces,
+   which may make it share values between the threads of a workgroup through
+   workgroup memory and barriers, joins only members of the same kernel:
+   their workgroups then have one size and one layout of workgroup memory, so
+   every thread of a workgroup reaches each barrier of the member it runs.
+   Any other member joins every such member of its device. A launch passes
+   at most [launch_params_max] arguments and, with
+   {!Setting.max_kernel_buffers} at [n] above [0], at most [n] buffers. *)
+
+let device_of_member m =
+  let storage =
+    List.filter (fun b -> addrspace b <> Some Dtype.Alu) (Memory.taken m)
+  in
+  match List.sort_uniq String.compare (List.filter_map device storage) with
+  | [ d ]
+    when (not (is_disk_device d))
+         && List.for_all (fun b -> device b <> None) storage ->
+      Some d
+  | _ -> None
+
+let holds_threads b =
+  Postrange.threads_fixed b
+  || List.exists (fun u -> op u = Op.Reduce) (toposort ~calls:Enter b)
+
+(* CUDA passes a kernel at most 4 KiB of parameters (CUDA C++ Programming
+   Guide, "Function Parameters"), 512 of 8 bytes. *)
+let launch_params_max = 512
+
+(* Metal declares workgroup memory only in a kernel function, so a member
+   that may hold some runs alone there. *)
+let is_metal d = String.length d >= 5 && String.sub d 0 5 = "METAL"
+
+let split_launch e =
+  let limit = Setting.value Setting.max_kernel_buffers in
+  let alone = ref [] and classes = ref [] in
+  List.iter
+    (fun m ->
+      match device_of_member m with
+      | None -> alone := m :: !alone
+      | Some d when is_metal d && holds_threads (body m) ->
+          alone := m :: !alone
+      | Some d -> (
+          let key = if holds_threads (body m) then Some (body m) else None in
+          let same (d', k', _) =
+            String.equal d d'
+            && match (k', key) with
+               | None, None -> true
+               | Some a, Some b -> a == b
+               | _ -> false
+          in
+          match List.find_opt same !classes with
+          | Some (_, _, ms) -> ms := m :: !ms
+          | None -> classes := (d, key, ref [ m ]) :: !classes))
+    (Shape.launch_members e);
+  (* The members of a class, in order, as launches of at most [limit]
+     buffers. *)
+  let chunks ms =
+    let passed ms = dedup_nodes (List.concat_map src_without_body ms) in
+    let fits ms =
+      let args = passed ms in
+      List.length args <= launch_params_max
+      && (limit = 0
+         || List.length
+              (List.filter (fun a -> addrspace a <> Some Dtype.Alu) args)
+            <= limit)
+    in
+    List.rev
+      (List.fold_left
+         (fun acc m ->
+           match acc with
+           | cur :: rest when fits (m :: cur) -> (m :: cur) :: rest
+           | _ -> [ m ] :: acc)
+         [] ms)
+  in
+  let launched ms =
+    match List.rev ms with [ m ] -> m | ms -> Shape.launch ms
+  in
+  List.rev !alone
+  @ List.concat_map
+      (fun (_, _, ms) -> List.map launched (chunks (List.rev !ms)))
+      (List.rev !classes)
+
+(* [linear] with each launch split by device and kind, in loops too. *)
+let rec split_launches linear =
+  let entry e =
+    match op e with
+    | Op.Call when Shape.is_launch (body e) -> split_launch e
+    | (Op.End | Op.Backedge) when op (nth e 0) = Op.Linear ->
+        [ replace e ~src:(split_launches (nth e 0) :: List.tl (src e)) ]
+    | _ -> [ e ]
+  in
+  replace linear ~src:(List.concat_map entry (src linear))
 
 (* Scheduling calls *)
 
@@ -925,7 +1192,7 @@ let lower_sink_to_linear ~by_storage call =
         if setting Setting.spec <> 0 then
           Spec.type_verify ~calls:Skip Spec.tensor fn;
         place
-          (create_schedule ~by_storage
+          (schedule ~launches:(not by_storage) ~by_storage ~copies:true
              (Rangeify.get_kernel_graph (Prepare.prepare_rangeify fn)))
       in
       let read_or_make () =
@@ -1638,6 +1905,7 @@ let create_linear_with_vars ?(capturing = false) ?(by_storage = false) big_sink
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:several linear_call
       (After_sources pm_resolve_linear_call)
   in
+  let linear = split_launches linear in
   let linear =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() linear
       (After_sources pm_copy_from_store)
@@ -1654,7 +1922,15 @@ let create_linear_with_vars ?(capturing = false) ?(by_storage = false) big_sink
   let used_vars =
     List.concat_map
       (fun si ->
-        List.filter_map (fun v -> (param_of v).name) (variables (nth si 0)))
+        (* A launch's members read the variables of their bodies. *)
+        let bodies =
+          if op si = Op.Call && Shape.is_launch (nth si 0) then
+            List.map body (src (nth si 0))
+          else [ nth si 0 ]
+        in
+        List.concat_map
+          (fun b -> List.filter_map (fun v -> (param_of v).name) (variables b))
+          bodies)
       (src linear)
   in
   let var_vals =

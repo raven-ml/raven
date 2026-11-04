@@ -282,6 +282,7 @@ type t = {
   stream_threads : int;
   local_workgroups : int;
   extra_matcher : (unit, Ops.t) Pattern_matcher.t;
+  launch_members : int;
   packed_args : bool;
   code_for_op : (Op.t * (string list -> Dtype.t -> string)) list;
   native : Dtype.t -> bool;
@@ -301,7 +302,8 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     ?(tensor_cores = [])
     ?(per_byte_first = 64) ?(stream_threads = 32768)
     ?(local_workgroups = 256)
-    ?(extra_matcher = Pattern_matcher.v (fun () -> [])) ?(packed_args = false)
+    ?(extra_matcher = Pattern_matcher.v (fun () -> []))
+    ?(launch_members = max_int) ?(packed_args = false)
     ?(code_for_op = [])
     ?(native = fun _ -> true)
     ?(render = fun _ -> invalid_arg "needs a renderer")
@@ -327,6 +329,7 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     stream_threads;
     local_workgroups;
     extra_matcher;
+    launch_members;
     packed_args;
     code_for_op;
     native;

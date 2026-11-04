@@ -533,6 +533,31 @@ val custom_kernel : Ops.t list -> (Ops.t list -> Ops.t) -> Ops.t list
     argument takes slot [i]: a variable's is the variable, unbound, and any
     other's is a buffer of its shape ({!placeholder_like}). *)
 
+(** {1:launches Launches} *)
+
+val is_launch : Ops.t -> bool
+(** [is_launch u] is [true] iff [u] is a launch: a kernel's {!Op.Sink} whose
+    sources are calls of kernels compiled on their own
+    ({!Ops.type-call_info}), its members. A launch runs its members at once,
+    each lowered as a kernel of its own ({!Codegen.to_program}), so a member
+    must touch no element that another writes. *)
+
+val launch : Ops.t list -> Ops.t
+(** [launch calls] is the call of the launch of the kernel calls [calls]: its
+    arguments are those of [calls], each once, storage first, and each member
+    calls its kernel, compiled on its own, on the launch's parameters at
+    those arguments. The launch's kernel information is named ["launch"] and
+    [optimized], since each member keeps its own optimisations.
+
+    Raises [Invalid_argument] if a call is not of a kernel's sink, or is
+    compiled on its own. *)
+
+val launch_members : Ops.t -> Ops.t list
+(** [launch_members c] is the calls of the members of the launch [c] calls,
+    each on [c]'s arguments: [launch_members (launch cs)] is [cs].
+
+    Raises [Invalid_argument] if [c] is not a call of a launch. *)
+
 (** {1:programs Programs} *)
 
 val program_info_of_sink : ?target:Helpers.Target.t -> Ops.t -> Ops.program_info
@@ -540,7 +565,8 @@ val program_info_of_sink : ?target:Helpers.Target.t -> Ops.t -> Ops.program_info
     from its {!Op.Special} nodes, each named variable they read at slot [-1],
     as a launch binds it by name; its parameters and buffers from its
     {!Op.Param} nodes; and which buffers it reads and writes from its loads
-    and stores, outside the bodies of the calls it makes. When none is found
+    and stores, and those of the bodies of the calls it makes at the
+    arguments they pass. When none is found
     reading or writing, every buffer is taken to do both. [target] defaults to
     the empty target. *)
 

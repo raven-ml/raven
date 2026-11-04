@@ -3,8 +3,17 @@
 
 (test
  (name test_schedule)
+ (modules test_schedule)
  (package tolk)
  (libraries windtrap tolk tolk_test str unix)
  (deps
   (sandbox always)
   (glob_files *.golden)))
+
+; The launches run their schedules on the host and on each GPU present.
+
+(test
+ (name test_launch)
+ (modules test_launch)
+ (package tolk)
+ (libraries windtrap tolk tolk.engine tolk_test tolk_run rig rig.cuda))

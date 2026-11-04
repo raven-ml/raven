@@ -1318,17 +1318,14 @@ let views =
           let linear, _ =
             Schedule.create_linear_with_vars ~capturing:true sink
           in
-          let kernels =
-            List.filter_map
-              (fun n ->
-                if Ops.op n = Call && Ops.op (Ops.nth n 0) = Sink then
-                  Some (Ops.nth n 0)
-                else None)
-              (Ops.toposort ~calls:Skip linear)
-          in
-          match kernels with
-          | [ a; b ] -> equal uop ~msg:"the kernels" a b
-          | ks -> failf "%d kernels, not 2" (List.length ks));
+          (* The two stores are of one state: one launch runs them. *)
+          match Ops.src linear with
+          | [ l ] when Shape.is_launch (Ops.nth l 0) -> (
+              match Shape.launch_members l with
+              | [ a; b ] ->
+                  equal uop ~msg:"the kernels" (Ops.nth a 0) (Ops.nth b 0)
+              | ms -> failf "%d members, not 2" (List.length ms))
+          | es -> failf "%d entries, not one launch" (List.length es));
       test "a store into rows of a buffer after a store has no view" (fun () ->
           let buffer = Ops.new_buffer ~slot:3 cpu 64 Float32 in
           let first = Ops.new_buffer ~slot:4 cpu 64 Float32 in
@@ -3020,7 +3017,7 @@ let loop_equal_states () =
    [q], 4 rows by 2, as two assemblies [[a; b]] and [[b; a]] along a new last
    axis are: the stores of one value, [a] into [p]'s first column and [q]'s
    second, are one kernel, which both [p]'s and [q]'s writes list, and so are
-   [b]'s. *)
+   [b]'s. The two kernels, of one write, run as one launch. *)
 let crossed () =
   let x = f32 1 and p = f32 ~n:8 2 and q = f32 ~n:8 3 in
   let column b j =
@@ -3035,7 +3032,45 @@ let crossed () =
       [ Ops.store (column buf 0) first; Ops.store (column buf 1) second ]
   in
   let linear = keeps_values [ assembled p a b; assembled q b a ] in
-  equal int ~msg:"one call a column" 2 (List.length (Ops.src linear))
+  match Ops.src linear with
+  | [ l ] when Shape.is_launch (Ops.nth l 0) ->
+      equal int ~msg:"one kernel a column" 2
+        (List.length (Shape.launch_members l))
+  | es -> failf "%d entries, not one launch" (List.length es)
+
+(* [a] stored into [p]'s first column and [q]'s second, one kernel (as
+   [crossed] makes it), [c] into [q]'s first, and into [p]'s second [t]'s
+   new value, which reads [q] once stored: the two stores into [p] are one
+   write, and the second waits for the first through [t]'s kernel, so they
+   cannot run as one launch. *)
+let waits_through_another () =
+  let x = f32 1 and p = f32 ~n:8 2 and q = f32 ~n:8 3 and t = f32 ~n:8 4 in
+  let column b j =
+    Shape.shrink
+      (Shape.reshape b [ Int 4; Int 2 ])
+      [ None; Some (Int j, Int (j + 1)) ]
+  in
+  let col v = Shape.reshape v [ Int 4; Int 1 ] in
+  let a = col Ops.O.(x * fl 0.25) and c = col Ops.O.(x + fl 1.) in
+  let q1 =
+    Ops.after q [ Ops.store (column q 1) a; Ops.store (column q 0) c ]
+  in
+  let t1 = assign t Ops.O.(q1 + fl 1.) in
+  let p1 =
+    Ops.after p
+      [
+        Ops.store (column p 0) a;
+        Ops.store (column p 1) (column Ops.O.(t1 * fl 2.) 0);
+      ]
+  in
+  let linear = keeps_values [ p1; t1 ] in
+  let writes_p m = List.memq p (Ops.src_without_body m) in
+  List.iter
+    (fun e ->
+      if Ops.op e = Call && Shape.is_launch (Ops.nth e 0) then
+        equal int ~msg:"members of a launch writing p" 1
+          (List.length (List.filter writes_p (Shape.launch_members e))))
+    (Ops.src linear)
 
 let writes =
   group "create_linear_with_vars › writes"
@@ -3051,6 +3086,8 @@ let writes =
       test "custom kernels reading one buffer write nothing over it"
         kernels_apart;
       test "stores crossed into two buffers write both" crossed;
+      test "stores of one write, one waiting for the other, run apart"
+        waits_through_another;
     ]
 
 (* Laws

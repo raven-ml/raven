@@ -1998,7 +1998,326 @@ let kernel_of ast =
   | Op.Sink, Kernel k -> k
   | _ -> invalid_arg "a program is made of a sink with kernel information"
 
+(* Launches
+
+   A launch's members run as one program. Each member is lowered as a kernel
+   of its own: its optimisations, its uniform gates and its launch
+   dimensions, checked ({!Uniform.check}) while its hardware indices are
+   still indices. Its hardware indices then become parameters, and on the
+   host its split loop's bounds stay parameters, its named variables too,
+   and its instructions become a body the launch calls, alike members one
+   body.
+
+   On a GPU, the launch's workgroups are its members' laid end to end, and
+   its threads the most any member has. Member [i] runs inside a loop of one
+   trip where the workgroup index [g] falls in its workgroups, and its
+   threads, none past its own:
+
+     g:  0 .. nb_0 - 1 | nb_0 .. nb_0 + nb_1 - 1 | ...
+         member 0       member 1
+     for r < (o_i <= g < o_i + nb_i && l < nt_i) { member_i (g - o_i + r, l) }
+
+   and is passed its workgroup and thread indices decomposed by its own
+   sizes, the first axis fastest, as a GPU numbers threads, so that its warps
+   hold the threads they hold in its own launch. The loop's bound reads only
+   the workgroup index where a member holds a barrier: such a member shares
+   its launch only with members of its kernel ({!Schedule}), whose threads
+   are as many as the launch's. The trip [r], passed as an argument, keeps
+   each call in its loop. On the host, the launch's split iterations are its
+   members' laid end to end, and a block [[lo, hi)] runs, of each member it
+   meets, the iterations it overlaps. A body is out of line: inlined, a
+   compiler compiles it again at each call. Each member is a call of its
+   own, since a call's storage argument is a parameter, which no selection
+   picks: a launch's source grows with its members. *)
+
+type member = {
+  m_body : t;  (* the member's instructions, as a body *)
+  m_slots : int;  (* the slots its body takes *)
+  m_vars : (int * t) list;  (* each named variable's slot, and the variable *)
+  m_specials : (char * int * int * int * Dtype.t) list;
+      (* each hardware index: its kind, axis, size, slot and type *)
+  m_split : (split * Dtype.t) option;
+  m_estimates : estimates;
+}
+
+(* The member of the kernel [b], lowered once for every call of it. *)
+let lower_member ctx b ~nargs =
+  let b =
+    graph_rewrite ~calls:Skip ~pass:Once ~ctx b (After_sources pm_lower_calls)
+  in
+  let optimize = not (kernel_of b).optimized in
+  let low = full_rewrite_to_sink ~optimize b ctx.ren in
+  let nodes = toposort ~calls:Skip low in
+  let params =
+    List.filter_map
+      (fun u ->
+        match (op u, arg u) with Op.Param, Param p -> Some (u, p) | _ -> None)
+      nodes
+  in
+  let split = (kernel_info low).split in
+  let m_split =
+    Option.map
+      (fun (s : split) ->
+        let dt =
+          List.find_map
+            (fun (u, (p : param_arg)) ->
+              if p.slot = s.lo then Some (dtype u) else None)
+            params
+        in
+        (s, Option.value dt ~default:Dtype.Int32))
+      split
+  in
+  let slots =
+    List.fold_left
+      (fun n (_, (p : param_arg)) -> max n (p.slot + 1))
+      nargs params
+  in
+  let is_bound (p : param_arg) =
+    match split with Some s -> p.slot = s.lo || p.slot = s.hi | None -> false
+  in
+  (* A named variable is passed as the launch's, which a run binds. *)
+  let vars =
+    List.filter_map
+      (fun (u, (p : param_arg)) ->
+        if p.name <> None && addrspace u = Some Dtype.Alu && not (is_bound p)
+        then Some (p.slot, replace u ~arg:(Param { p with slot = -1 }))
+        else None)
+      params
+  in
+  let next = ref slots in
+  let specials =
+    List.filter_map
+      (fun u ->
+        if not (is Op.Special u) then None
+        else
+          let name = match arg u with String s -> s | _ -> assert false in
+          if not (is_literal (nth u 0)) then
+            invalid_arg "a launch's member has a symbolic launch dimension";
+          let slot = !next in
+          incr next;
+          let p =
+            param ~vmin_vmax:(vmin u, vmax u) ~addrspace:Dtype.Alu slot
+              (dtype u)
+          in
+          Some
+            ( (u, p),
+              ( name.[0],
+                Char.code name.[String.length name - 1] - Char.code '0',
+                int_vmax u + 1,
+                slot,
+                dtype u ) ))
+      nodes
+  in
+  let subs, m_specials = List.split specials in
+  let low =
+    if subs = [] then low else substitute ~calls:Skip ~pass:Once low subs
+  in
+  let lines =
+    line_rewrite (Linearizer.linearize low)
+      (pm_linearize_cleanups ++ pm_alloc_to_buf)
+      ()
+  in
+  let name = numbered ctx "member" low in
+  let m_body = v Op.Linear ~src:lines ~arg:(String name) in
+  let m_estimates =
+    whole_loop (kernel_info low) m_body
+      (Renderer.Estimates.of_uops ~ignore_indexing:true lines)
+  in
+  { m_body; m_slots = !next; m_vars = vars; m_specials; m_split; m_estimates }
+
+(* What a call [c] of the member [m] passes, by the member's slots: its
+   arguments, then the variables the launch binds. *)
+let member_args m c =
+  let a = Array.make m.m_slots (int 0) in
+  List.iteri (fun i x -> a.(i) <- x) (src_without_body c);
+  List.iter (fun (slot, x) -> a.(slot) <- x) m.m_vars;
+  a
+
+let sizes kind m =
+  let a = Array.make 3 1 in
+  List.iter (fun (k, ax, n, _, _) -> if k = kind then a.(ax) <- n) m.m_specials;
+  Array.to_list a
+
+let prod = List.fold_left ( * ) 1
+
+(* The index on axis [ax] of sizes [ns] of the linear index [i], the first
+   axis fastest. *)
+let decomposed i ns ax =
+  let open O in
+  let below = prod (List.filteri (fun j _ -> Stdlib.(j < ax)) ns) in
+  let i = if below = 1 then i else i // int below in
+  let rest = prod (List.filteri (fun j _ -> Stdlib.(j >= ax)) ns) in
+  if Stdlib.(List.nth ns ax = rest) then i else i % int (List.nth ns ax)
+
+(* A sum of counts; a symbolic count is left out. *)
+let add_count a b =
+  match (a, b) with
+  | Int x, Int y -> Int (x + y)
+  | Int x, Sym _ | Sym _, Int x -> Int x
+  | Sym _, Sym _ -> Int 0
+
+let launcher ren ast =
+  let ctx = { ren; names = Hashtbl.create 8 } in
+  (* Members of one kernel are lowered once. *)
+  let lowered = Tbl.create 8 in
+  let ms =
+    List.map
+      (fun c ->
+        let b = body c and nargs = List.length (src_without_body c) in
+        let m =
+          match Tbl.find_opt lowered b with
+          | Some (n, m) when n = nargs -> m
+          | _ ->
+              let m = lower_member ctx b ~nargs in
+              Tbl.replace lowered b (nargs, m);
+              m
+        in
+        (m, member_args m c))
+      (src ast)
+  in
+  (* The host splits a launch into blocks by its cost: its members'. *)
+  let estimates =
+    List.fold_left
+      (fun (e : estimates) (m, _) ->
+        {
+          ops = add_count e.ops m.m_estimates.ops;
+          lds = add_count e.lds m.m_estimates.lds;
+          mem = add_count e.mem m.m_estimates.mem;
+        })
+      { ops = Int 0; lds = Int 0; mem = Int 0 }
+      ms
+  in
+  let nlaunch =
+    List.fold_left
+      (fun n c ->
+        List.fold_left
+          (fun n a ->
+            match (op a, arg a) with
+            | Op.Param, Param p -> max n (p.slot + 1)
+            | _ -> n)
+          n (src_without_body c))
+      0 (src ast)
+  in
+  let call_of (m, args) r filled =
+    let a = Array.copy args in
+    List.iter (fun (slot, x) -> a.(slot) <- x) filled;
+    call ~precompile:true ~name:"member" m.m_body
+      (Array.to_list a @ [ cast r Dtype.Int32 ])
+  in
+  let info = kernel_info ast in
+  let open O in
+  if ren.has_local then begin
+    let nb m = prod (sizes 'g' m) and nt m = prod (sizes 'l' m) in
+    let lt = List.fold_left (fun a (m, _) -> max a (nt m)) 1 ms in
+    let total = List.fold_left (fun a (m, _) -> Stdlib.(a + nb m)) 0 ms in
+    let g = range ~axis_type:Global (Int total) [ 0 ] in
+    let l = range ~axis_type:Local (Int lt) [ 1 ] in
+    let _, ends =
+      List.fold_left
+        (fun (o, ends) ((m, _) as ma) ->
+          let i = List.length ends in
+          let n = nb m and t = nt m in
+          let inside = (g >= int o) land (g < int Stdlib.(o + n)) in
+          let inside =
+            if Stdlib.(t < lt) then inside land (l < int t) else inside
+          in
+          let r =
+            range ~axis_type:Loop
+              (Sym (where inside (int 1) (int 0)))
+              [ Stdlib.(i + 2) ]
+          in
+          let blk = g - int o + r in
+          let gs = sizes 'g' m and ls = sizes 'l' m in
+          let filled =
+            List.map
+              (fun (k, ax, _, slot, dt) ->
+                let x =
+                  if k = 'g' then decomposed blk gs ax else decomposed l ls ax
+                in
+                (slot, cast x dt))
+              m.m_specials
+          in
+          (Stdlib.(o + n), end_ (call_of ma r filled) [ r ] :: ends))
+        (0, []) ms
+    in
+    sink
+      ~kernel:{ info with optimized = true; estimates = Some estimates }
+      [ end_ (group (List.rev ends)) [ g; l ] ]
+  end
+  else begin
+    let iters m =
+      match m.m_split with
+      | Some ({ iterations = Int n; _ }, _) -> n
+      | Some _ -> invalid_arg "a launch's member has a symbolic split"
+      | None -> 1
+    in
+    let total = List.fold_left (fun a (m, _) -> Stdlib.(a + iters m)) 0 ms in
+    let bound slot name =
+      param
+        ~vmin_vmax:(`Int Bigint.zero, `Int (Bigint.of_int total))
+        ~name ~addrspace:Dtype.Alu slot Dtype.Int32
+    in
+    (* The bounds' names are fresh among the variables the members read. *)
+    let names =
+      List.concat_map
+        (fun (m, _) ->
+          List.filter_map
+            (fun (_, v) -> (param_arg_of v).name)
+            m.m_vars)
+        ms
+    in
+    let rec fresh ?(i = 0) base =
+      let name =
+        if Stdlib.(i = 0) then base else base ^ "_" ^ string_of_int i
+      in
+      if List.mem name names then fresh ~i:Stdlib.(i + 1) base else name
+    in
+    let lo = bound nlaunch (fresh "block_lo")
+    and hi = bound Stdlib.(nlaunch + 1) (fresh "block_hi") in
+    let _, ends =
+      List.fold_left
+        (fun (o, ends) ((m, _) as ma) ->
+          let i = List.length ends in
+          let e = int Stdlib.(o + iters m) in
+          let a = where (lo < int o) (int o) lo in
+          let z = where (hi < e) hi e in
+          let r =
+            range ~axis_type:Loop
+              (Sym (where (a < z) (int 1) (int 0)))
+              [ Stdlib.(i + 1) ]
+          in
+          let c =
+            match m.m_split with
+            | Some (s, dt) ->
+                call_of ma r
+                  [
+                    (s.lo, cast (a - int o + r) dt);
+                    (s.hi, cast (z - int o + r) dt);
+                  ]
+            | None -> call_of ma r []
+          in
+          (Stdlib.(o + iters m), end_ c [ r ] :: ends))
+        (0, []) ms
+    in
+    sink
+      ~kernel:
+        {
+          info with
+          optimized = true;
+          estimates = Some estimates;
+          split =
+            Some
+              {
+                iterations = Int total;
+                lo = nlaunch;
+                hi = Stdlib.(nlaunch + 1);
+              };
+        }
+      [ group (List.rev ends) ]
+  end
+
 let linearized ?beam ast (ren : Renderer.t) =
+  let ast = if Shape.is_launch ast then launcher ren ast else ast in
   let optimize = not (kernel_of ast).optimized in
   let ast =
     graph_rewrite ~calls:Skip ~pass:Once

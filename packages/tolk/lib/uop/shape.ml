@@ -3447,6 +3447,92 @@ let rec written_params body =
       shown ()
   | _ -> None
 
+(* Launches *)
+
+let is_kernel_sink u =
+  op u = Op.Sink && match arg u with Kernel _ -> true | _ -> false
+
+(* A launch's calls of its members are compiled on their own. *)
+let is_member_call c =
+  op c = Op.Call
+  && is_kernel_sink (nth c 0)
+  && match arg c with Call { precompile; _ } -> precompile | _ -> false
+
+let is_launch u =
+  is_kernel_sink u && src u <> [] && List.for_all is_member_call (src u)
+
+(* The launch's parameters are its calls' arguments, each once, storage
+   first: members then read one parameter where they share storage. *)
+let launch calls =
+  List.iter
+    (fun c ->
+      if
+        op c <> Op.Call
+        || (not (is_kernel_sink (nth c 0)))
+        || match arg c with Call { precompile; _ } -> precompile | _ -> true
+      then invalid_arg "a launch's member is a call of a kernel")
+    calls;
+  let seen = Tbl.create 16 and order = ref [] in
+  List.iter
+    (fun c ->
+      List.iter
+        (fun a ->
+          if not (Tbl.mem seen a) then begin
+            Tbl.replace seen a ();
+            order := a :: !order
+          end)
+        (src_without_body c))
+    calls;
+  let scalar a = addrspace a = Some Dtype.Alu in
+  let order = List.rev !order in
+  let args =
+    List.filter (fun a -> not (scalar a)) order @ List.filter scalar order
+  in
+  let params = Tbl.create 16 in
+  List.iteri
+    (fun i a ->
+      (* A kernel's parameters name no device: its call's arguments do. *)
+      let p =
+        if scalar a then
+          if op a = Op.Param then param_like a i
+          else
+            param ~vmin_vmax:(vmin a, vmax a) ~addrspace:Dtype.Alu i
+              (Dtype.strong (dtype a))
+        else
+          let p = param_like a i in
+          match arg p with
+          | Param q -> replace p ~arg:(Param { q with device = None })
+          | _ -> p
+      in
+      Tbl.replace params a p)
+    args;
+  let member c =
+    let name = match arg c with Call k -> k.name | _ -> None in
+    call ?name ~precompile:true (nth c 0)
+      (List.map (Tbl.find params) (src_without_body c))
+  in
+  call
+    (sink
+       ~kernel:(kernel_info ~name:"launch" ~optimized:true ())
+       (List.map member calls))
+    args
+
+let launch_members c =
+  if op c <> Op.Call || not (is_launch (nth c 0)) then
+    invalid_arg "launch_members takes a call of a launch";
+  let args = Array.of_list (src_without_body c) in
+  let passed p =
+    match (op p, arg p) with
+    | Op.Param, Param q when q.slot >= 0 && q.slot < Array.length args ->
+        args.(q.slot)
+    | _ -> invalid_arg "a launch's member is passed its parameters"
+  in
+  List.map
+    (fun m ->
+      let name = match arg m with Call k -> k.name | _ -> None in
+      call ?name (nth m 0) (List.map passed (src_without_body m)))
+    (src (nth c 0))
+
 let custom_kernel args f =
   (* A variable stays a variable of the kernel, unbound, in its own slot. *)
   let placeholder i s =
@@ -3464,6 +3550,62 @@ let custom_kernel args f =
   List.mapi (fun i s -> if written i then after s [ kernel ] else s) args
 
 (* Programs *)
+
+(* The slot of the buffer parameter that the load or store [u] accesses, and
+   how. *)
+let accessed u =
+  if op u <> Op.Store && op u <> Op.Load then None
+  else
+    let s0 = nth u 0 in
+    let idx =
+      if op s0 = Op.Index || op s0 = Op.Shrink then Some s0
+      else if op s0 = Op.Cast && op (nth s0 0) = Op.Index then Some (nth s0 0)
+      else None
+    in
+    match idx with
+    | Some idx ->
+        let buf = buf_uop (nth idx 0) in
+        if op buf <> Op.Param then None
+        else
+          Some
+            ( (if op u = Op.Store then `Write else `Read),
+              (param_arg_of buf).slot )
+    | None -> None
+
+(* The slots of the buffer parameters of its caller that the call [c] writes
+   and reads, through the loads and stores of its body, an instruction list
+   or a sink, and of the calls the body makes. *)
+let rec call_accesses c =
+  let b = nth c 0 in
+  let nodes =
+    match op b with
+    | Op.Linear -> src b
+    | Op.Sink -> toposort ~calls:Skip b
+    | _ -> []
+  in
+  let args = Array.of_list (src_without_body c) in
+  let rec param_of a =
+    match op a with
+    | Op.Param -> if addrspace a = Some Dtype.Alu then None else Some a
+    | _ -> ( match src a with x :: _ -> param_of x | [] -> None)
+  in
+  let passed slot =
+    if slot < 0 || slot >= Array.length args then []
+    else
+      match param_of args.(slot) with
+      | Some p -> [ (param_arg_of p).slot ]
+      | None -> []
+  in
+  List.fold_left
+    (fun (w, r) u ->
+      match accessed u with
+      | Some (`Write, slot) -> (passed slot @ w, r)
+      | Some (`Read, slot) -> (w, passed slot @ r)
+      | None when op u = Op.Call ->
+          let cw, cr = call_accesses u in
+          (List.concat_map passed cw @ w, List.concat_map passed cr @ r)
+      | None -> (w, r))
+    ([], []) nodes
 
 let program_info_of_sink
     ?(target =
@@ -3483,22 +3625,15 @@ let program_info_of_sink
         if addrspace u <> Some Dtype.Alu then
           globals := (param_arg_of u).slot :: !globals
       end;
-      if op u = Op.Store || op u = Op.Load then begin
-        let s0 = nth u 0 in
-        let idx =
-          if op s0 = Op.Index || op s0 = Op.Shrink then Some s0
-          else if op s0 = Op.Cast && (op (nth s0 0)) = Op.Index then
-            Some (nth s0 0)
-          else None
-        in
-        match idx with
-        | Some idx ->
-            let buf = buf_uop (nth idx 0) in
-            if op buf = Op.Param then
-              let slot = (param_arg_of buf).slot in
-              if op u = Op.Store then outs := slot :: !outs
-              else ins := slot :: !ins
-        | None -> ()
+      (match accessed u with
+      | Some (`Write, slot) -> outs := slot :: !outs
+      | Some (`Read, slot) -> ins := slot :: !ins
+      | None -> ());
+      (* A call writes and reads its arguments where its body does. *)
+      if op u = Op.Call then begin
+        let w, r = call_accesses u in
+        outs := w @ !outs;
+        ins := r @ !ins
       end;
       if op u = Op.Special then
         match arg u with

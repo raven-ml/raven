@@ -67,6 +67,10 @@ val lower_and_compile :
     the call's first storage argument ({!get_call_arg_uops}): a kernel's
     parameters name no device.
 
+    A launch ({!Shape.launch}) of more members than the renderer's program
+    holds ({!Renderer.t.launch_members}) is first split into launches of at
+    most that many, in order, run one after another.
+
     The kernels of one program key ({!Codegen.program_key}) take one program,
     compiled once: a key whose program this process has made or the disk
     keeps ({!Codegen.read}) takes it, read on the calling domain, and the
