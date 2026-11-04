@@ -384,27 +384,38 @@ let sums ?(name = "sums") ?opts m k =
         [ i ];
     ]
 
-(* Values whose sums round differently in another order. *)
-let scattered n =
-  floats (Array.init n (fun x -> Float.sin (Float.of_int x) *. 1e3))
+(* Values whose sums round differently in another order, from [seed]. *)
+let scattered ?(seed = 0) n =
+  let at x = Float.of_int (x + (seed * 7919)) in
+  floats (Array.init n (fun x -> Float.sin (at x) *. 1e3))
 
-(* The bits of [sums m k] on scattered values, unoptimised so that its loop
-   runs [m] iterations, launched on the host in [blocks] blocks: its
-   parameters are the addresses of out, a and b, then the bounds of its whole
-   loop, [0] and [m], two int32s, and a call runs the iterations its threads
-   number. *)
-let sums_in ~blocks m k =
-  let prg = Codegen.to_program (sums ~opts:[] m k) (Lazy.force clang) in
-  let elf = Device.Tiny_elf.of_program prg in
-  let image = Result.get_ok (Rig.Image.load host elf.lib) in
-  let fn = require_some (Rig.Image.resolve image elf.name) in
+(* The function of [sums m k], unoptimised so that its loop runs [m]
+   iterations, compiled and loaded once for each [m] and [k]. *)
+let sums_fn =
+  let loaded = Hashtbl.create 8 in
+  fun m k ->
+    match Hashtbl.find_opt loaded (m, k) with
+    | Some fn -> fn
+    | None ->
+        let prg = Codegen.to_program (sums ~opts:[] m k) (Lazy.force clang) in
+        let elf = Device.Tiny_elf.of_program prg in
+        let image = Result.get_ok (Rig.Image.load host elf.lib) in
+        let fn = require_some (Rig.Image.resolve image elf.name) in
+        Hashtbl.replace loaded (m, k) fn;
+        fn
+
+(* The bits of [sums m k] on scattered values of [seed], launched on the host
+   in [blocks] blocks of [(m + blocks - 1) / blocks] threads: its parameters are
+   the addresses of out, a and b, then the bounds of its whole loop, [0] and
+   [m], two int32s, and a call runs the iterations its threads number. *)
+let sums_in ?seed ~blocks m k =
   let s =
     Rig.Submission.(
       make host
         [|
           launch
             ~refs:[| write 0 ~at:0; read 1 ~at:8; read 2 ~at:16 |]
-            fn ~params:32;
+            (sums_fn m k) ~params:32;
         |])
   in
   let run = Rig.Submission.Run.make s in
@@ -419,29 +430,122 @@ let sums_in ~blocks m k =
        ~buffers:
          [|
            out;
-           Run.buffer host Float32 (scattered (m * k));
-           Run.buffer host Float32 (scattered k);
+           Run.buffer host Float32 (scattered ?seed (m * k));
+           Run.buffer host Float32 (scattered ?seed k);
          |]
       : Rig.Point.t);
   Array.map
     (function `Float x -> Int64.bits_of_float x | _ -> assert false)
     (Run.values Float32 out)
 
-let same_bits_in_any_blocks () =
-  let one = sums_in ~blocks:1 512 64 in
-  not_equal ~msg:"the sums are written" (array int64) (Array.make 512 0L) one;
-  List.iter
-    (fun blocks ->
-      equal
-        ~msg:(Printf.sprintf "%d blocks" blocks)
-        (array int64) one (sums_in ~blocks 512 64))
-    [ 3; 32 ]
+(* A split loop of [m] iterations, in [blocks] blocks, on values of [seed]:
+   one block, a block per iteration, a last block that runs fewer iterations
+   than the others, or none. *)
+let gen_split =
+  let open Gen in
+  let* m = of_list [ 1; 2; 3; 17; 512; 1031 ] in
+  let* blocks =
+    frequency [ (1, constant 1); (1, constant m); (4, int_range 1 m) ]
+  in
+  let+ seed = int_range 0 1000 in
+  (m, blocks, seed)
+
+let same_bits_in_any_blocks (m, blocks, seed) =
+  let per = (m + blocks - 1) / blocks in
+  cover "one block" (blocks = 1);
+  cover "a block per iteration" (m > 1 && blocks = m);
+  cover "a shorter last block" (m mod per <> 0);
+  cover "an empty last block" ((blocks - 1) * per >= m);
+  let one = sums_in ~seed ~blocks:1 m 64 in
+  not_equal ~msg:"the sums are written" (array int64) (Array.make m 0L) one;
+  equal (array int64) one (sums_in ~seed ~blocks m 64)
+
+(* [out[i] = 2 a[i]] over [m] floats: a kernel that moves 8 bytes for each
+   operation. *)
+let doubled m =
+  let buffer slot = Shape.placeholder ~slot [ m ] Float32 in
+  let i = Ops.range (Int m) [ 0 ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:(Printf.sprintf "doubled_%d" m) ())
+    [
+      Ops.end_
+        (Ops.store
+           (Ops.index (buffer 0) [ i ])
+           Ops.O.(Ops.index (buffer 1) [ i ] * Ops.float 2.))
+        [ i ];
+    ]
+
+let doubled_program =
+  let compiled = Hashtbl.create 8 in
+  fun m ->
+    match Hashtbl.find_opt compiled m with
+    | Some prg -> prg
+    | None ->
+        let prg = Codegen.to_program (doubled m) (Lazy.force clang) in
+        Hashtbl.replace compiled m prg;
+        prg
+
+(* The blocks a host launch of the compiled [prg] runs in, by its split and
+   estimates. *)
+let launch_blocks prg =
+  match Ops.arg (Ops.nth prg 0) with
+  | Ops.Kernel { split = Some s; estimates = Some e; _ } -> (
+      match (s.iterations, e.ops, e.mem) with
+      | Int extent, Int ops, Int bytes ->
+          fst (Engine.blocks ~extent ~ops ~bytes)
+      | _ -> failwith "a split of symbolic estimates")
+  | _ -> 1
+
+let doubles_in_blocks (m, seed) =
+  let prg = doubled_program m in
+  let blocks = launch_blocks prg in
+  cover "one block" (blocks = 1);
+  cover "several blocks" (blocks > 1);
+  let a =
+    Array.init m (fun x -> Float.of_int (((x + (seed * 7919)) mod 2001) - 1000))
+  in
+  let out = List.assoc 0 (Run.on_host prg [ (1, floats a) ]) in
+  equal values (floats (Array.map (fun x -> 2. *. x) a)) out
+
+(* The blocks of a launch as {!Tolk_engine.link} states them: a block for each
+   2^18 operations, or for each 2^18 bytes up to 8 blocks, whichever gives
+   more, at least one and at most one per iteration. Each row is its name,
+   the loop's iterations, operations and bytes, and its blocks and the
+   iterations of each. *)
+let block_rows =
+  [
+    ("a small kernel", 1024, 1000, 8192, (1, 1024));
+    ("just below both", 4096, (1 lsl 18) - 1, (1 lsl 18) - 1, (1, 4096));
+    ("operations alone", 4096, 1 lsl 20, 0, (4, 1024));
+    ("a copy, bytes alone", 65536, 0, 1 lsl 20, (4, 16384));
+    ("bytes beyond operations", 16384, 1 lsl 18, 3 lsl 18, (3, 5462));
+    ("bytes up to 8 blocks", 65536, 1 lsl 20, 1 lsl 30, (8, 8192));
+    ("operations beyond bytes", 512, 1 lsl 24, 1 lsl 16, (64, 8));
+    ("operations past 8 blocks", 512, 1 lsl 24, 1 lsl 30, (64, 8));
+    ("a shorter last block", 10, 4 lsl 18, 0, (4, 3));
+    ("at most one per iteration", 3, 1 lsl 30, 1 lsl 30, (3, 1));
+    ("no iteration", 0, 1 lsl 20, 1 lsl 20, (1, 1));
+  ]
 
 let in_blocks =
   group "host programs in blocks"
     [
-      test "a program writes the same bits in 1, 3 and 32 blocks"
+      cases
+        ~id:(fun (name, _, _, _, _) -> name)
+        "a launch runs a block for each 2^18 operations or bytes, bytes up to 8"
+        block_rows
+        (fun (_, extent, ops, bytes, expected) ->
+          equal (pair int int) expected (Engine.blocks ~extent ~ops ~bytes));
+      prop ~count:60
+        ~examples:[ (512, 1, 0); (17, 17, 1); (17, 3, 2); (17, 10, 3) ]
+        "a program writes the same bits in any blocks" gen_split
         same_bits_in_any_blocks;
+      prop ~count:12
+        ~examples:[ (1000, 0); (65536, 1) ]
+        "a kernel that moves many bytes for few operations writes its values"
+        Gen.(
+          pair (of_list [ 1; 1000; 65536; 65537; 262144 ]) (int_range 0 1000))
+        doubles_in_blocks;
       test "a run of a large kernel computes its sums" (fun () ->
           let m = 4096 and k = 256 in
           let prg =

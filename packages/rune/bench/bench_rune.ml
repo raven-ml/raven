@@ -543,6 +543,13 @@ let jit_rows () =
   let long_rows = between f64 53 (-1.) 1. [| 100; 50500 |] in
   let short_rows = between f32 57 (-1.) 1. [| 4096; 32 |] in
   let wide = between f64 50 0. 1. [| 1_000_000 |] in
+  let kv_cache = between f32 58 (-1.) 1. [| 4096; 128 |]
+  and kv_row = between f32 59 (-1.) 1. [| 1; 128 |] in
+  let views =
+    List.map
+      (fun (k, rows) -> between f32 k (-1.) 1. [| rows; 64 |])
+      [ (60, 1000); (61, 24); (62, 3072) ]
+  in
   let radius = host (Nx.full f64 [| 1 |] 0.7) in
   let experts_ids = positions 64 32 |> Nx.reshape [| 16; 4 |] in
   let experts_x = between f32 52 (-1.) 1. [| 16; 1; 256 |] in
@@ -762,6 +769,21 @@ let jit_rows () =
             let s = Nx_wide.sum (Nx_wide.v x) in
             (Nx_wide.hi s, Nx_wide.lo s)))
       (fun f -> synced2 (f wide));
+    (* A decode step's key cache: its 4096 rows of 128 and the step's new row,
+       concatenated into the cache the next step reads, 2 MiB copied. *)
+    warm "kv-concat-decode"
+      (fun () ->
+        Rune.jit (pair_fn ()) (fun cache row ->
+            Nx.concatenate ~axis:0 [ cache; row ]))
+      (fun f -> synced (f kv_cache kv_row));
+    (* Blocks of 1000, 24 and 3072 rows of 64 concatenated and doubled: 1 MiB
+       read and 1 MiB written for little arithmetic. *)
+    warm "cat-3-views-scaled-4096x64"
+      (fun () ->
+        Rune.jit
+          Nx.Ptree.(list tensor @-> returns tensor)
+          (fun xs -> Nx.mul_s (Nx.concatenate ~axis:0 xs) 2.))
+      (fun f -> synced (f views));
     data_parallel_step ();
     sharded_backward ();
   ]

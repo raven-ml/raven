@@ -83,9 +83,12 @@ val link :
       ({!Rig.Claim.hold}) while it is reachable, so no call consumes it. A link
       that raises holds none of them.
     - A kernel is launched on the device of its first argument. A host program
-      is launched on its device's host, which
-      splits its loop over its cores where the program splits one
-      ({!Tolk.Ops.kernel_info.split}).
+      is launched on its device's host, which splits its loop over its cores
+      where the program splits one ({!Tolk.Ops.kernel_info.split}): into a
+      block for each 2{^18} operations the program's estimates count
+      ({!Tolk.Ops.type-estimates}), or for each 2{^18} bytes of memory they
+      count up to 8 blocks, whichever gives more, at least one block and at
+      most one per iteration.
     - A copy is a copy part of a submission of its source's device, or else of
       its destination's, where that device copies and reaches both sides and
       they are both GPU memory or both memory the host computes on
@@ -227,3 +230,11 @@ val time :
     is lost during the run, or if another domain's device whose work the
     run's profile recorded is lost before the profile reads it
     ({!Rig.Profile.take}). *)
+
+(**/**)
+
+val blocks : extent:int -> ops:int -> bytes:int -> int * int
+(** [blocks ~extent ~ops ~bytes] is the number of blocks a host launch of a
+    split loop of [extent] iterations runs in, the loop estimated to do [ops]
+    operations and move [bytes] bytes of memory, and the iterations of each
+    block but the last ({!link}). For the suites. *)

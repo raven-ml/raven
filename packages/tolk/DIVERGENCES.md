@@ -982,7 +982,7 @@ scope, see README.
   launch of rig's host, with ten scalars past the argument registers` and
   `› a split host program calls no function it does not define`; the
   Tolk_engine suite, `host programs in blocks › a program writes the same
-  bits in 1, 3 and 32 blocks` and `link and run › custom kernels with
+  bits in any blocks` and `link and run › custom kernels with
   variables` (four tests).
 
 ## D29. A float32 tensor core takes operands widened from its narrow input
@@ -2029,7 +2029,9 @@ D320 compiles a cubin again, measured with the driver's cache missing.
   `Codegen.full_rewrite_to_sink`, `Codegen.pm_number_params` and
   `Codegen.whole_loop`; `Ops.kernel_info`'s
   `split`; `Shape.program_info_of_sink`; `Realize.get_call_kernel_args`;
-  `Tolk_engine.block_ops`, `Tolk_engine.blocks` and `Tolk_engine.split_grid`;
+  `Tolk_engine.block_ops`, `Tolk_engine.block_bytes`,
+  `Tolk_engine.memory_blocks`, `Tolk_engine.blocks` and
+  `Tolk_engine.split_grid`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same split, estimates,
   launch dimensions and variable values, and runs a split program as one
   block; `test/gen/renderer/renderer.py`, whose estimate tables count a split
@@ -2048,9 +2050,12 @@ D320 compiles a cubin again, measured with the driver's cache missing.
   records `split = (n, lo, hi)`, the iterations and the two slots, by which
   each launch finds the bounds; `n` is its program's first global size, and
   its estimates count the whole loop, exactly when they read no other
-  variable: counted in the loop's 32-bit type, a count past 2^31 would wrap. A host launch cuts `[0, n)` into `min(n, ops / 2^18)` blocks, at least
-  one, each a group of rig's host of as many threads as iterations, which
-  its pool runs on the performance cores, and the entry (D28) runs the
+  variable: counted in the loop's 32-bit type, a count past 2^31 would wrap.
+  A host launch cuts `[0, n)` into
+  `min(n, max(ops / 2^18, min(8, mem / 2^18)))` blocks, at least one, `ops`
+  and `mem` the estimates' operations and bytes of memory, each a group of
+  rig's host of as many threads as iterations, which its pool runs on the
+  performance cores, and the entry (D28) runs the
   iterations its threads number; tinygrad's own launch (`whole_loop` in
   `engine/realize.py`) runs one block, the whole loop.
 - **Reason:** (d): sofo's and symo's training steps on the CPU (outside the
@@ -2063,18 +2068,38 @@ D320 compiles a cubin again, measured with the driver's cache missing.
   `lorenz/r_128_16_3_4_4_3_3_400_400/heuristic` takes 0.79 and 0.63 ms
   against 5.85 and 6.04 ms, and rune's `Jit/sin-float32-64K` 82 and 74 us
   against 360 and 356 us, `Jit/normal-float32-1M` 2.8 and 2.6 ms against
-  16.9 ms. tinygrad deleted its CPU threading (`OptOps.THREAD`)
-  at 4197f7423, before the pin.
+  16.9 ms. A block repays its wake and join at 2^18 operations of one core,
+  and one of fudge's cores moves about a byte in the time of an operation
+  (19 operations and 14-17 bytes a nanosecond, one block of `sin` over
+  [8; 1024] and of `x * 2` over [4096; 64]), so a block also takes 2^18
+  bytes: a copy or a cheap elementwise kernel, counted by its operations
+  alone, ran on one core. Bytes ask at most 8 blocks, measured: a
+  memory-bound kernel gains to about 8 blocks, and on a loaded host each
+  further thread can be held up (rune's `Jit/kv-concat-decode`, 4 MiB, 4
+  interleaved runs at load 4.6-6.6: 6 blocks 62-69 us, 8 57-95, 16
+  83-143, 32 89-185). Against the operations alone, 5 interleaved runs each
+  at load 4.8-5.8, rune's `Jit/cumsum-float32-4096x32` takes 39.6-50.5 us
+  against 72.1-80.0, `JitLoops/iterate-64-rows-into-4096x64-replay`
+  83.9-91.2 against 114.7-123.7 and `JitLoops/newton-grad-1024-replay`
+  26.0-26.7 against 30.2-31.5, and no row of the rune or tolk bench whose
+  split moves is slower. In the assembly prototype's cases, 4 interleaved
+  runs each at load 4.6-5.4, `x * 2` over [4096; 64] takes 36.1-42.2
+  against 124.0-277.0, and a decode step whose key and value
+  concatenations are stores that attention reads 126.8-128.4 against
+  243.6-256.7. tinygrad deleted its CPU threading (`OptOps.THREAD`) at
+  4197f7423, before the pin.
 - **Pinned by:** the Codegen suite: `host programs in blocks › a host program
   splits the loop each store's address reads`, `› a split loop's estimates
   count its whole loop past 2^31`, `› stores of separate loops
   split none`, `› a store of no loop splits none`, `› a reduction's loop is
   never split`, `› a serial loop is never split`, `› a loop shrunk by its
   guard splits at its shrunk end, unguarded`, `› a split loop of 2^25 iterations keeps 32-bit indices` and `› a split's bounds and a variable take slots of their own past buffers that skip one`; the
-  Tolk_engine suite: `host programs in blocks › a program writes the same bits in 1, 3 and 32
-  blocks` and `› a run of a large kernel computes its sums`, `a variable
-  named as a block's bounds is a variable like any other`, and `a kernel
-  whose estimates fit no int › splits and runs`.
+  Tolk_engine suite: `host programs in blocks › a launch runs a block for
+  each 2^18 operations or bytes, bytes up to 8`, `› a program writes the
+  same bits in any blocks`, `› a kernel that moves many bytes for few
+  operations writes its values` and `› a run of a large kernel computes its
+  sums`, `a variable named as a block's bounds is a variable like any
+  other`, and `a kernel whose estimates fit no int › splits and runs`.
 
 ## D81. Withdrawn
 

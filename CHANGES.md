@@ -1048,6 +1048,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 - `Shape.arange` is exact in integer types at any length up to `max_int - 2^30`:
   past 1518500249 elements it raised, so rune's `Unique` did, and bounds near an
   int's range or a last element past `stop - step` gave wrong elements.
+- A host launch splits its loop into blocks by the bytes it moves as well as
+  its operations, up to 8 blocks (`Tolk_engine.link`): a copy or a cheap
+  elementwise kernel of a few MiB, such as an embedding's gradient or a
+  running sum's chunks, ran on one core.
+
 - A kernel indexed in a typed integer, such as `Int32`, shrinks a range to
   its guard and merges loads and stores at constant offsets into vectors, as
   one indexed in the weak integer does.

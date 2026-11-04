@@ -510,14 +510,27 @@ let nested b f =
 
 (* Launches *)
 
-(* A block repays waking the host's threads and joining them once it does 2^18
-   operations. *)
+(* A block repays waking the host's threads and joining them once its work
+   takes as long as 2^18 operations on one core. A block of [o] operations that
+   moves [m] bytes of memory takes [max (o / r) (m / w)] on a core that does [r]
+   operations and moves [w] bytes a second, so moving [2^18 w / r] bytes repays
+   it too. A core of an Intel Core Ultra 5 235 does about 19 operations a
+   nanosecond and moves 14 to 17 bytes: about a byte for each operation. *)
 let block_ops = 1 lsl 18
+let block_bytes = 1 lsl 18
 
-(* The blocks a split launch of [extent] iterations and [ops] operations runs
-   in, and the iterations of each but the last. *)
-let blocks ~extent ~ops =
-  let n = max 1 (min extent (ops / block_ops)) in
+(* The most blocks a kernel's bytes ask: a kernel that only moves bytes gains
+   to about this many, and each further thread is one more that another
+   program's work can hold up. On the Core Ultra 5 235, a copy of 4 MiB runs
+   alike in 6 or 8 blocks and slower in 16, 32 or 64. *)
+let memory_blocks = 8
+
+(* The blocks a split launch of [extent] iterations, [ops] operations and
+   [bytes] bytes moved runs in, and the iterations of each but the last. A copy
+   does no operation: its blocks are its bytes'. *)
+let blocks ~extent ~ops ~bytes =
+  let by_bytes = min memory_blocks (bytes / block_bytes) in
+  let n = max 1 (min extent (max (ops / block_ops) by_bytes)) in
   (n, max 1 ((extent + n - 1) / n))
 
 let le bytes at width v =
@@ -603,14 +616,14 @@ let counter b (s : Ops.sint) =
       fail b.fn "a split loop's iterations move with its loop's trips"
   | Sym _ -> Shape.sym_compile s (reader b.cells)
 
-(* How a run computes the estimated operations [s], saturated at an [int]'s
-   bounds: a loop bounded by a loaded value counts its type's greatest trips,
-   which only need to be many. *)
+(* How a run computes the estimate [s], operations or bytes, saturated at an
+   [int]'s bounds: a loop bounded by a loaded value counts its type's greatest
+   trips, which only need to be many. *)
 let magnitude b (s : Ops.sint) =
   match s with
   | Int n -> fun _ -> n
   | Sym u when moves u ->
-      fail b.fn "a split loop's operations move with its loop's trips"
+      fail b.fn "a split loop's estimates move with its loop's trips"
   | Sym _ ->
       let z = Shape.sym_compile_z s (reader b.cells) in
       fun env ->
@@ -621,15 +634,19 @@ let magnitude b (s : Ops.sint) =
 
 (* The grid of a host program that splits its loop of [extent] iterations into
    blocks: a group of threads per block, a thread per iteration. *)
-let split_grid b (extent : Ops.sint) (ops : Ops.sint) : grid * grid =
-  match (extent, ops) with
-  | Int extent, Int ops ->
-      let n, t = blocks ~extent ~ops in
+let split_grid b (extent : Ops.sint) (ops : Ops.sint) (bytes : Ops.sint) :
+    grid * grid =
+  match (extent, ops, bytes) with
+  | Int extent, Int ops, Int bytes ->
+      let n, t = blocks ~extent ~ops ~bytes in
       ((Fixed n, Fixed 1, Fixed 1), (Fixed t, Fixed 1, Fixed 1))
-  | extent, ops ->
-      let extent = counter b extent and ops = magnitude b ops in
-      let n env = fst (blocks ~extent:(extent env) ~ops:(ops env)) in
-      let t env = snd (blocks ~extent:(extent env) ~ops:(ops env)) in
+  | extent, ops, bytes ->
+      let extent = counter b extent in
+      let ops = magnitude b ops and bytes = magnitude b bytes in
+      let split env =
+        blocks ~extent:(extent env) ~ops:(ops env) ~bytes:(bytes env)
+      in
+      let n env = fst (split env) and t env = snd (split env) in
       ( (Int (new_word b (Computed n)), Fixed 1, Fixed 1),
         (Int (new_word b (Computed t)), Fixed 1, Fixed 1) )
 
@@ -760,10 +777,12 @@ let launch b call prg d =
             fields
           |> Option.value ~default:(passed s.iterations)
         in
-        let ops =
-          match k.estimates with Some e -> passed e.ops | None -> extent
+        let ops, bytes =
+          match k.estimates with
+          | Some e -> (passed e.ops, passed e.mem)
+          | None -> (extent, Int 0)
         in
-        split_grid b extent ops
+        split_grid b extent ops bytes
     | None when host -> (one, one)
     | None ->
         let dims d = triple (List.map (fun s -> value b (passed s)) d) in
