@@ -614,8 +614,9 @@ val vmin : t -> Dtype.value
 val vmax : t -> Dtype.value
 (** [vmax u] is an upper bound of every value [u] can take. Bounds follow
     interval arithmetic through the integer operations, the less-than and
-    equality comparisons, selections, casts and loads from constant tables;
-    elsewhere they are the bounds of [u]'s type. A committed integer wraps at
+    equality comparisons, selections, casts and loads from constant tables, a
+    gated load's alternative included; elsewhere they are the bounds of [u]'s
+    type. A committed integer wraps at
     its width, and so does a weak integer operand of an operation on one
     ({!operand_bounds}): an interval that leaves its type is one value wrapped,
     or the type's bounds. A table holding a NaN has its type's bounds. *)

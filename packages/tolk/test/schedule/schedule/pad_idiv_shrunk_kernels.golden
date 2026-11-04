@@ -17,16 +17,15 @@
 15 Ops.INDEX dtypes.i32 [12, 14]
 16 Ops.PARAM dtypes.i32 [9] ParamArg(slot=2, dtype=dtypes.i32)
 17 Ops.INDEX dtypes.i32 [16, 14]
-18 Ops.WHERE dtypes.i32 [11, 17, 5]
-19 Ops.TRUNCDIV dtypes.i32 [15, 18]
-20 Ops.CONST dtypes.weakint [] 0
-21 Ops.WHERE dtypes.i32 [11, 19, 20]
-22 Ops.STORE dtypes.void [4, 21]
-23 Ops.END dtypes.void [22, 3]
-24 Ops.SINK dtypes.void [23] KernelInfo()
-25 Ops.PARAM dtypes.i32 [9] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
-26 Ops.PARAM dtypes.i32 [9] ParamArg(slot=2, dtype=dtypes.i32, device="CPU")
-27 Ops.CALL dtypes.void [24, 1, 25, 26] CallInfo()
-28 Ops.AFTER dtypes.i32 [1, 27]
-29 Ops.SINK dtypes.void [28]
+18 Ops.TRUNCDIV dtypes.i32 [15, 17]
+19 Ops.CONST dtypes.weakint [] 0
+20 Ops.WHERE dtypes.i32 [11, 18, 19]
+21 Ops.STORE dtypes.void [4, 20]
+22 Ops.END dtypes.void [21, 3]
+23 Ops.SINK dtypes.void [22] KernelInfo()
+24 Ops.PARAM dtypes.i32 [9] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+25 Ops.PARAM dtypes.i32 [9] ParamArg(slot=2, dtype=dtypes.i32, device="CPU")
+26 Ops.CALL dtypes.void [23, 1, 24, 25] CallInfo()
+27 Ops.AFTER dtypes.i32 [1, 26]
+28 Ops.SINK dtypes.void [27]
 

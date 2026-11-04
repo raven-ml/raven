@@ -3917,50 +3917,17 @@ into D188, which holds the host's vector width.
 Reductions of one domain that read none of each other shared their loop;
 merged into D137, which holds the loops that consumers of one domain share.
 
-## D145. An integer division on padding divides by 1 there
+## D145. Withdrawn
 
-- **tinygrad:** `schedule/indexing.py:98-103`
-  (`convert_pad_to_where_to_keep_behavior_local`) and `:169`
-  (`apply_movement_op` on a `PAD`, which makes the source's ranges invalid on
-  the padding); `codegen/opt/postrange.py:127-143` (`PADTO`, which gates the
-  loads of the padded axis). Either way the source is computed on every lane,
-  and its loads read zeros on the padding.
-- **tolk:** `Indexing.constant`, `Indexing.guard_division_on_padding` and
-  its rule in `Indexing.pm_apply_rangeify`; `Postrange.Scheduler.apply` (its
-  `pad_division`, in `Padto`);
-  `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
-  are recorded.
-- **Differs:** a `TRUNCDIV`, `TRUNCMOD`, `DIV` or `MOD` of integers divides by
-  `where(valid, d, 1)` in two places. Rangeify guards a division whose ranges
-  are invalid somewhere, unless its divisor is a nonzero constant through casts
-  and movements: a stored divisor's bounds say nothing of the zeros its padding
-  loads. A range's validity is read after the symbolic rules lift its gates to
-  the top and merge them: a shrink after a pad leaves the gate below an
-  addition, and a pad of a pad nests one gate in another. `PADTO` guards a
-  division whose divisor reads the padded range. Where the divisor is a gated
-  load, the selection becomes the load's alternative, so the padding loads 1.
-  tinygrad divides by the zeros its padding loads.
-- **Reason:** (b). A division by zero traps on x86 (arm64 gives 0), and C
-  leaves it undefined everywhere. tinygrad's scalar C evaluates such a division
-  lazily only while it has one use, inlined into the selection that drops it;
-  with more uses it computes the quotient into a variable before the selection
-  or the store's gate, and traps too. The host's vector lanes (D141) divide on
-  every lane. `Norn.Nuts`'s compiled transition concatenates `parents + next /
-  spans` between two constants, and its kernel divided the padding's lanes by
-  zero: `test_nuts`, `test_calibration` and `test_posteriordb` died with SIGFPE.
-  D355 defines a division whose divisor's bounds reach 0; this entry still
-  covers a divisor whose bounds miss the zeros its padding loads, as a gated
-  load of a constant table's, whose bounds leave out the gate's alternative.
-- **Pinned by:** the `Tolk_engine` suite (`test/engine/tolk_engine`):
-  `link and run › a pad of integer divisions writes what its tensors compute`,
-  over `pad_idiv`, `pad_idiv_stored` (a divisor of at least 1, stored),
-  `pad_idiv_nested` (a quotient padded twice) and `pad_idiv_shrunk` (a quotient
-  shrunk, then padded); the `Codegen` suite's `on the host, a program writes
-  what its kernel writes › padto_idiv_upcast`. Each traps on x86 without the
-  rule; arm64 does not trap. The Schedule suite's recorded `pad_idiv*` graphs
-  and the Codegen suite's `padto_idiv_upcast` goldens, from the equally patched
-  tinygrad; norn's `Norn.Nuts › reproducibility › a compiled transition is
-  the eager one` on x86.
+Rangeify and `PADTO` divided an integer division by `where(valid, d, 1)` on
+padding, whose loads read zeros, since x86 traps on a division by zero. D355
+defines every division whose divisor's bounds reach 0, and the bounds of a load
+on padding hold the zero it reads: a load of storage is bounded by its type,
+and a gated load of a constant table by its alternative too (D355). The padding
+divides as tinygrad's interpreter does, without the guard. The Tolk_engine
+suite's `a pad of integer divisions writes what its tensors compute` and `a pad
+of a quotient by a constant table writes what it computes` (on the host and
+each GPU) and the Codegen suite's `padto_idiv_upcast` keep the values.
 
 ## D146. The runtime is rig: no command queues, batches or host batches
 
@@ -4036,31 +4003,30 @@ merged into D137, which holds the loops that consumers of one domain share.
   kernels (`bf16_clang`, `clang_*_bf16`). On rune: missing (the cases above
   went with the old rune's rewrite).
 
-## D148. A selection keeps its guard of a conversion or a division
+## D148. A selection keeps its guard of a conversion
 
 - **tinygrad:** `uop/symbolic.py:240-247` (`fold_where_closure`, which
   assumes a selection's condition true in its true branch and false in the
   other, unless an `INDEX` is involved).
 - **tolk:** `Shape.guards_partial` and `Shape.fold_where_closure`.
 - **Differs:** the condition is not assumed in the branches where it reaches
-  the operand of a conversion of a float to an integer or of an integer
-  divisor in one of them. tinygrad folds `where c (cast (where c q 0)) f` to
-  `where c (cast q) f`, and `where c (x // where c d 1) 0` to
-  `where c (x // d) 0`. `gen/tinygrad.patch` makes the same exception, and no
-  golden changes.
+  the operand of a conversion of a float to an integer in one of them.
+  tinygrad folds `where c (cast (where c q 0)) f` to `where c (cast q) f`.
+  `gen/tinygrad.patch` makes the same exception, and no golden changes. A
+  guard of an integer divisor, `where c (x // where c d 1) 0`, folds as
+  tinygrad folds it: D355 defines the division by any divisor whose bounds
+  reach 0.
 - **Reason:** (b). C leaves a conversion of a float outside the integer's
-  range undefined, and a division by zero traps on x86. Clang computes an
-  operation in every lane of a vector and selects between vectors with masks,
-  which keep an undefined lane the selection discards; LLVM then folds it into
-  any value. rune guards such an operand, as the quadrant of a sine's
-  reduction, by a selection on the condition that discards it, and the fold
-  removed the guard: the compiled sine of `[0; inf]` on x86 read
-  `0x1.c9e8dep+97` for `sin 0`.
+  range undefined. Clang computes an operation in every lane of a vector and
+  selects between vectors with masks, which keep an undefined lane the
+  selection discards; LLVM then folds it into any value. rune guards such an
+  operand, as the quadrant of a sine's reduction, by a selection on the
+  condition that discards it, and the fold removed the guard: the compiled
+  sine of `[0; inf]` on x86 read `0x1.c9e8dep+97` for `sin 0`.
 - **Pinned by:** the `Symbolic` suite's `selections › a guard of a conversion
-  to an integer is kept in the branches` and `› a guard of an integer divisor
-  is kept in the branches`. On rune: missing (the old rune's `a compiled
-  program › computes eager's values within the stated rounding`, whose third
-  example was that sine, went with its rewrite).
+  to an integer is kept in the branches`. On rune: missing (the old rune's `a
+  compiled program › computes eager's values within the stated rounding`,
+  whose third example was that sine, went with its rewrite).
 
 ## D149. Withdrawn
 
@@ -8493,11 +8459,14 @@ and an initial value is added after it (D260).
   negative dividend's quotient whatever the divisor);
   `codegen/decomp/dtype.py:55-73` (an emulated 64-bit quotient, each bit of
   which a divisor of 0 sets); `helpers.py:74,77` (`cdiv` and `floordiv`,
-  whose quotient by 0 is 0, which `python_alu` computes, `uop/ops.py:1537`).
+  whose quotient by 0 is 0, which `python_alu` computes, `uop/ops.py:1537`);
+  `uop/ops.py:1102-1104` (`_min_max`, which bounds a load of a constant table
+  by the table's values, whatever its gate).
 - **tolk:** `Cstyle.pm_defined_div_shift`, in the extra matchers of
   `Cstyle.clang`, `Cstyle.cuda`, `Cstyle.hip` and `Cstyle.metal`;
   `Shape.symbolic_simple` (`x // x`); `Decomp_op.floordiv_to_idiv`;
-  `Decomp_dtype`'s `long_division`.
+  `Decomp_dtype`'s `long_division`; `Ops.vmin` and `Ops.vmax` of a gated
+  load of a constant table.
 - **Differs:** C leaves an integer division by zero undefined, its
   quotient's and its remainder's; CUDA, HIP and Metal follow C++, which does
   the same. x86 traps on it, scalar or in a lane. tolk's integer quotient by
@@ -8513,8 +8482,11 @@ and an initial value is added after it (D260).
   selects 0 where both words of the divisor are 0. A division whose
   divisor's bounds hold no 0, as an index's by a positive constant, keeps
   tinygrad's source. rune divides as it lowers any divisor
-  (`Lower_arith.int_div`), and D145 still selects 1 on padding. tinygrad's
-  sources move with the rules, through `test/gen/tinygrad.patch`.
+  (`Lower_arith.int_div`). A gated load of a constant table is bounded by
+  its alternative too, which it reads where its gate fails: a pad's padding
+  reads 0 there, which the table's values alone left out, so a division by
+  such a load went unguarded. tinygrad's sources move with the rules, through
+  `test/gen/tinygrad.patch`.
 - **Reason:** (e): at the pinned commit, the host's kernel of an integer
   division by a loaded 0 dies with SIGFPE, and CUDA's uint8 quotient of 0
   by 0 is 255, where tinygrad's interpreter gives 0.
@@ -8529,4 +8501,9 @@ and an initial value is added after it (D260).
   64-bit integers › i64 quotient by 0, which is 0` and its neighbours, for
   both types and the remainder; rune's `jit › integer arithmetic at its
   type's edges gives eager's values`, its GPU suite's `integers ›` the same
-  law, and `Lower_arith › divisions by constants give eager's bits`.
+  law, and `Lower_arith › divisions by constants give eager's bits`; the
+  Symbolic suite's `bounds › a gated load of a constant table may read its
+  alternative`; the Tolk_engine suite's `a pad of integer divisions writes
+  what its tensors compute`, `a pad of a quotient by a constant table writes
+  what it computes` on the host and on each GPU, and the Codegen suite's
+  `padto_idiv_upcast`, whose padding loads the zeros they divide by.

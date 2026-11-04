@@ -1037,6 +1037,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Ops.vmin` and `Ops.vmax` of a gated load of a constant table hold its
+  alternative, which it reads where its gate fails; they held the table's
+  values alone.
 - A kernel that reads a constant table (`Op.Binary`) compiles, where it
   raised `Failure "tl"`, or failed verification when it read the table in
   vectors.
@@ -2000,7 +2003,7 @@ word comes from its lock and from samples the dashboard saw arrive.
   aborted clang or failed to link `__truncsfbf2`.
 - Compiled kernels that pad or concatenate an integer quotient no longer die
   with SIGFPE on x86, as `Norn.Nuts`'s compiled transition did: the padding
-  divided by the zeros it loads, and now divides by 1.
+  divides by the zeros it loads, a division now defined.
 - `Search.beam_search` takes `~link` and `~time`, which
   `Tolk_engine.link_call`, `Tolk_engine.slots` and `Tolk_engine.time` provide,
   and accepts positional scalar arguments, so `Rune.jit ~beam` searches a loop

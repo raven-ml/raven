@@ -798,10 +798,6 @@ let symbolic_selections =
           let q = Ops.cast (Ops.where near f (Ops.O.float 0.)) Dtype.Int32 in
           let sel = Ops.where near q x in
           equal uop sel (symbolic sel));
-      test "a guard of an integer divisor is kept in the branches" (fun () ->
-          let d = Ops.where cond y (Ops.int 1) in
-          let sel = Ops.where cond Ops.O.(x // d) (Ops.int 0) in
-          equal uop sel (symbolic sel));
       test "where g x 0 <> 0 is g land (x <> 0)" (fun () ->
           by_symbolic
             Ops.O.(Ops.where cond b (int 0) <> int 0)
@@ -860,6 +856,17 @@ let bounds =
             Ops.range ~axis_type:Weak (Sym (Ops.cast cond Weak_int)) [ 0 ]
           in
           by_symbolic r r);
+      test "a gated load of a constant table may read its alternative"
+        (fun () ->
+          let table = Ops.v Op.Binary ~arg:(Ops.Bytes "\002\003\005") in
+          let at = Ops.index table [ var "t" 0 2 ] in
+          let bounds u = (Ops.vmin u, Ops.vmax u) in
+          let bounds_of = pair Dtypes.value Dtypes.value in
+          let i n = `Int (Bigint.of_int n) in
+          let alt n = Ops.int ~dtype:Uint8 n in
+          equal bounds_of (i 2, i 5) (bounds (Ops.load at []));
+          equal bounds_of (i 0, i 5) (bounds (Ops.load at [ alt 0; cond ]));
+          equal bounds_of (i 2, i 9) (bounds (Ops.load at [ alt 9; cond ])));
       test "a maximum of operands whose bounds do not overlap is the greater"
         (fun () ->
           by_symbolic (Ops.maximum a (Ops.int 10)) (Ops.int 10);

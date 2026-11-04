@@ -1421,7 +1421,8 @@ let sizes_from_calls ?(devices = devices) ?(debug = 0) () =
 
 (* The pad_idiv programs pad integer quotients of their inputs: of the inputs
    themselves, of a stored divisor at least 1, padded twice, and shrunk. Their
-   inputs hold no zero, and their padding, which reads zeros, divides by none. *)
+   inputs hold no zero: a kernel divides by zero only on the padding, which
+   reads zeros and whose quotients the pad drops. *)
 let divides_on_padding name () =
   let big = program name in
   let s, vars, storage = linked big in

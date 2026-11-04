@@ -1916,8 +1916,16 @@ and compute_min_max u : Dtype.value * Dtype.value =
           | Bytes b ->
               let values = table_values dt b in
               let is_nan = function `Float x -> Float.is_nan x | _ -> false in
+              (* a gated load reads its alternative where its gate fails *)
+              let alt =
+                match u.src with
+                | [ _; alt; _ ] ->
+                    let lo, hi = bounds alt in
+                    [ lo; hi ]
+                | _ -> []
+              in
               if List.exists is_nan values then unbounded dt
-              else extremes values
+              else extremes (values @ alt)
           | _ -> invalid_arg "a constant table needs bytes")
       | Op.Const, Const ((`Bool _ | `Int _) as c) -> (c, c)
       | Op.Const, Const (`Float x) when not (Float.is_nan x) ->

@@ -1973,7 +1973,7 @@ index ec97cac6f..928507e2a 100644
        deleted_shape = 0
        for axis, local_sz in sorted(to_local[:3]):
 diff --git a/tinygrad/codegen/opt/postrange.py b/tinygrad/codegen/opt/postrange.py
-index d7f19cd30..b71ba6758 100644
+index d7f19cd30..ca5a6580d 100644
 --- a/tinygrad/codegen/opt/postrange.py
 +++ b/tinygrad/codegen/opt/postrange.py
 @@ -1,10 +1,10 @@
@@ -2110,19 +2110,7 @@ index d7f19cd30..b71ba6758 100644
        # TODO: upcasted is only wrong for a range pinned in WMMA tc_upcast_axes
        check(rng.axis_type not in {AxisType.UPCAST, AxisType.WARP}, "cannot pad upcasted or warp")
        new_sz = round_up(int(rng.vmax+1), cast(int, opt.arg))
-@@ -139,6 +185,11 @@ class Scheduler:
-       for r in self.reduceops:
-         if rng in r.src[1:]:
-           replaces[r] = r.replace(src=(valid.where(r.src[0], UOp.const(identity_element(r.arg[0], r.dtype), r.dtype)),)+r.src[1:])
-+      # an integer division whose divisor reads the padded range divides by 1 on the padding: the padding loads zeros,
-+      # and a division by zero traps on x86 even in a lane no store keeps
-+      for u in self.ast.toposort():
-+        if u.op in {Ops.TRUNCDIV, Ops.TRUNCMOD, Ops.DIV, Ops.MOD} and dtypes.is_int(u.dtype) and rng in (d:=u.src[1]).ranges:
-+          replaces[u] = u.replace(src=(u.src[0], valid.where(d, UOp.const(d.dtype.const(1)))))
-       self.ast = self.ast.substitute(replaces, f"padto {rng.axis_id} {opt.arg}")
-       ret = replaced_rng
-     elif opt.op is OptOps.SWAP:
-@@ -154,6 +205,39 @@ class Scheduler:
+@@ -154,6 +200,39 @@ class Scheduler:
      if append_opt: self.applied_opts.append(opt)
      return ret
  
@@ -2162,7 +2150,7 @@ index d7f19cd30..b71ba6758 100644
    def _apply_tc_opt(self, use_tensor_cores:int, axis:int, tc_select:int, opt_level:int) -> None|list[UOp]:
      if not (reduceops := self.reduceops): raise KernelOptError("no reduce ops for TensorCore")
      reduceop = reduceops[0]
-@@ -163,21 +247,28 @@ class Scheduler:
+@@ -163,21 +242,28 @@ class Scheduler:
        in0, in1 = mul.src
        for tc in self.ren.tensor_cores if tc_select == -1 else [self.ren.tensor_cores[tc_select]]:
          if self.ren.target.device in ("CUDA", "NV") and tc.dtype_in == dtypes.float and not ALLOW_TF32: continue
@@ -2203,7 +2191,7 @@ index d7f19cd30..b71ba6758 100644
            check(not any(r in self.reduce_ranges for r in axes[:2]), "tensor core N and M can't be contracted")
  
            # do optimizations and save the ranges
-@@ -200,7 +291,11 @@ class Scheduler:
+@@ -200,7 +286,11 @@ class Scheduler:
              reduceop = get_single_element([x for x in self.reduceops if axes[2] in x.src[1:]])
              gate, mul = (r0.src[0], r0.src[1]) if (r0:=reduceop.src[0]).op is Ops.WHERE else (None, r0)
              if mul.op is Ops.CAST: mul = mul.src[0]
@@ -2216,7 +2204,7 @@ index d7f19cd30..b71ba6758 100644
              srcs = [x.substitute({ne[a]: ne[b] for a,b in rl.items()}, walk=True) for x,rl in zip(ins, tc.relabel())]
  
              # get upcast axes for the tensor cores
-@@ -236,13 +331,18 @@ def args_from_ast(ast:UOp, dname:str) -> tuple[list[Buffer], dict[str, int]]:
+@@ -236,13 +326,18 @@ def args_from_ast(ast:UOp, dname:str) -> tuple[list[Buffer], dict[str, int]]:
    glbls = sorted([x for x in ast.backward_slice if x.op is Ops.PARAM and x.arg.slot >= 0], key=lambda x: x.arg.slot)
    return [Buffer(dname, x.max_numel() * x.dtype.itemsize) for x in glbls], {k.expr:int(k.vmax+k.vmin)//2 for k in ast.variables()}
  
@@ -2236,7 +2224,7 @@ index d7f19cd30..b71ba6758 100644
      from tinygrad.codegen.opt.search import beam_search
      rawbufs, var_vals = args_from_ast(ast, ren.target.device)
      # beam search may open devices
-@@ -251,6 +351,6 @@ def apply_opts(ast:UOp, ren:Renderer, beam:int=0) -> UOp:
+@@ -251,6 +346,6 @@ def apply_opts(ast:UOp, ren:Renderer, beam:int=0) -> UOp:
    elif not NOOPT and (ast.arg is None or ast.arg.applied_opts == ()):
      from tinygrad.codegen.opt.heuristic import hand_coded_optimizations
      # NOTE: hand_coded_optimizations doesn't support multiblock opts yet
@@ -2634,7 +2622,7 @@ index 7fb5ccac2..7d16f2fd2 100644
    tensor_cores: list[TensorCore] = []
    extra_matcher: PatternMatcher|None = None
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
-index 6eec3e198..85f29394d 100644
+index 6eec3e198..dc135ab13 100644
 --- a/tinygrad/renderer/cstyle.py
 +++ b/tinygrad/renderer/cstyle.py
 @@ -5,9 +5,28 @@ from tinygrad.renderer import tc
@@ -2724,8 +2712,8 @@ index 6eec3e198..85f29394d 100644
 +# reach 0 divides by (d != 0).where(d, 1) and selects its value at 0 after: a quotient by 0 is 0 and a remainder the dividend; one
 +# whose operands' bounds reach the least value and -1 computes on magnitudes in the unsigned type and takes its sign after; a shift
 +# whose count's bounds leave the width shifts by the count's low bits and selects the result past it
-+def not_zero(d:UOp) -> UOp: return d.alu(Ops.CMPNE, d.const_like(0))
-+def nonzero(d:UOp) -> UOp: return not_zero(d).where(d, d.const_like(1))
++def not_zero(d:UOp) -> UOp: return d.alu(Ops.CMPNE, d.vconst_like(0))
++def nonzero(d:UOp) -> UOp: return not_zero(d).where(d, d.vconst_like(1))
 +# nonzero(d), which bounds cannot tell from 0
 +def is_nonzero(d:UOp) -> bool:
 +  return d.op is Ops.WHERE and (c:=d.src[0]).op is Ops.CMPNE and c.src[0] is d.src[1] and c.src[1].vmin == c.src[1].vmax == 0 \
@@ -2744,7 +2732,7 @@ index 6eec3e198..85f29394d 100644
 +    q = magnitude(a).alu(x.op, nonzero(d) if by_zero else d)
 +    sign = (a < 0).alu(Ops.CMPNE, b < 0) if x.op is Ops.TRUNCDIV else a < 0
 +    r = sign.where(q.alu(Ops.NEG), q).cast(x.dtype)
-+  return not_zero(b).where(r, x.const_like(0) if x.op is Ops.TRUNCDIV else a) if by_zero else r
++  return not_zero(b).where(r, x.vconst_like(0) if x.op is Ops.TRUNCDIV else a) if by_zero else r
 +def defined_shift(x:UOp) -> UOp|None:
 +  a, k = x.src
 +  w = x.dtype.itemsize*8
@@ -3396,7 +3384,7 @@ index 7ead5c9c6..9db88bbed 100644
    ret = ret.call(*ctx.replacements, precompile=True)
    if VIZ: graph_rewrite(ret, PatternMatcher([]), name="View Call")
 diff --git a/tinygrad/schedule/indexing.py b/tinygrad/schedule/indexing.py
-index 3c92ff0b2..8a4df187a 100644
+index 3c92ff0b2..2ab47f54e 100644
 --- a/tinygrad/schedule/indexing.py
 +++ b/tinygrad/schedule/indexing.py
 @@ -1,17 +1,35 @@
@@ -3546,41 +3534,16 @@ index 3c92ff0b2..8a4df187a 100644
    return x.replace(src=tuple(create_bufferize_and_index_srcs(ctx, x)))
  
  def convert_pad_to_where_to_keep_behavior_local(ctx:IndexingContext, x:UOp):
-@@ -102,6 +144,22 @@ def convert_pad_to_where_to_keep_behavior_local(ctx:IndexingContext, x:UOp):
-   valid: UOp = UOp.const(True).uprod([r.get_valid() for r in ctx.range_map[x][0]])
-   return valid.where(bx.src[0], UOp.const(x.dtype.const(0)))
- 
-+def constant(u:UOp) -> bool:
-+  # whether u is a constant through casts and movements
-+  while u.op in {Ops.CAST, Ops.RESHAPE, Ops.EXPAND, Ops.PERMUTE, Ops.SHRINK}: u = u.src[0]
-+  return u.op is Ops.CONST
-+
-+# an integer division computed where its ranges are invalid, on a pad's padding, divides by 1 there, unless its divisor
-+# is a nonzero constant: the padding loads zeros whatever the divisor's bounds, and a division by zero traps on x86 even
-+# in a lane whose result the pad drops. A range's validity is read after symbolic lifts its gates to the top and merges
-+# them: a shrink after a pad leaves the gate below an add, and a pad of a pad nests one gate in another
-+def guard_division_on_padding(ctx:IndexingContext, x:UOp):
-+  if x not in ctx.range_map or not dtypes.is_int(x.dtype): return None
-+  a, d = create_bufferize_and_index_srcs(ctx, x)
-+  valid = [c for r in ctx.range_map[x][0] if not (c:=graph_rewrite(r, symbolic, name="validity").get_valid()).vmin]
-+  if not valid or (constant(d) and d.vmin == d.vmax != 0): return x.replace(src=(a, d))
-+  return x.replace(src=(a, valid[0].uprod(*valid[1:]).where(d, UOp.const(d.dtype.const(1)))))
-+
- def convert_reduce_to_reduce_with_ranges(ctx:IndexingContext, x:UOp):
-   if x.arg[1] == 0: return None
-   if x not in ctx.range_map: raise RuntimeError("REDUCE has no ranges in rangeify, UOp verification failed")
-@@ -133,6 +191,10 @@ pm_apply_rangeify = PatternMatcher([
+@@ -133,6 +175,8 @@ pm_apply_rangeify = PatternMatcher([
    (UPat((Ops.PAD, Ops.INDEX), name="x"), convert_pad_to_where_to_keep_behavior_local),
    # STACK -> WHERE select on the leading range
    (UPat(Ops.STACK, name="x"), convert_stack_to_where),
 +  # INDEX before ranges -> a load at the loaded index
 +  (UPat(Ops.INDEX, name="x"), convert_gather),
-+  # an integer division on padding divides by 1 there
-+  (UPat((Ops.TRUNCDIV, Ops.TRUNCMOD, Ops.DIV, Ops.MOD), name="x"), guard_division_on_padding),
    # finally, apply_rangeify
    (UPat(GroupOp.All-{Ops.STAGE, Ops.INDEX}, name="x"), create_bufferize_and_index_based_on_ranges),
    # remove movement op
-@@ -178,6 +240,103 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
+@@ -178,6 +222,103 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
      case _: raise RuntimeError(f"{op} is not a MovementOp")
    return rngs
  
@@ -3684,7 +3647,7 @@ index 3c92ff0b2..8a4df187a 100644
  @rewrite_group(new_ctx=False)
  def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
    if debug: print("**************************")
-@@ -189,6 +348,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -189,6 +330,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
    # get the consumer map
    with cpu_profile("consumer map in rangeify", "TINY"):
      tsink_toposort = tsink.toposort(gate_kernel_sink)
@@ -3692,7 +3655,7 @@ index 3c92ff0b2..8a4df187a 100644
      consumer_map: dict[UOp, dict[UOp, None]] = {x:{} for x in tsink_toposort}
      for c in tsink_toposort:
        for x in data_srcs(c.op, c.src):
-@@ -219,10 +379,13 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -219,10 +361,13 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
      #  2. from the single consumer if this op only has one consumer
      #  3. potentially new if this op has 2+ consumers
  
@@ -3709,7 +3672,7 @@ index 3c92ff0b2..8a4df187a 100644
        # all ranges are ended now
        ending_ranges[x] = []
        # mark all ranges as ended
-@@ -257,14 +420,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -257,14 +402,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
        out_rngs = tuple(_out_rngs)
  
        # we have to (partially) realize here if there's new ranges
@@ -3733,7 +3696,7 @@ index 3c92ff0b2..8a4df187a 100644
          out_rngs = tuple(rctx.new_range(x.shape[i]) for i in range(len(out_rngs)))
      ending_ranges[x] += broadcast_ending_ranges
  
-@@ -292,7 +460,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -292,7 +442,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
  
      # REDUCE creates ranges for the axes it is reducing
      if x.op is Ops.REDUCE:
@@ -4300,7 +4263,7 @@ index 8238ec207..9164c859f 100644
  
    # bufferize -> store
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index f0a41c9b5..4186a996c 100644
+index f0a41c9b5..3dfe7d2e4 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -1,6 +1,7 @@
@@ -4406,7 +4369,7 @@ index f0a41c9b5..4186a996c 100644
        if self.op is Ops.ADD: return wrapped(self.dtype, s0_vmin+s1_vmin, s0_vmax+s1_vmax)
        if self.op is Ops.SUB: return wrapped(self.dtype, s0_vmin-s1_vmax, s0_vmax-s1_vmin)
        if self.op is Ops.AND and dtypes.is_int(self.dtype) and s1_vmin == s1_vmax and (s0_vmin >= 0 or s1_vmax >= 0):
-@@ -1091,32 +1139,56 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1091,32 +1139,59 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
        if self.op is Ops.OR and self.dtype == dtypes.bool: return s0_vmin or s1_vmin, s0_vmax or s1_vmax
        if self.op is Ops.AND and self.dtype == dtypes.bool: return s0_vmin and s1_vmin, s0_vmax and s1_vmax
      if self.op is Ops.WHERE:
@@ -4430,7 +4393,10 @@ index f0a41c9b5..4186a996c 100644
      if self.op is Ops.LOAD and (b:=self.src[0].buf_uop).op is Ops.BINARY:
 -      return min(e:=memoryview(b.arg).cast(unwrap(self.dtype.fmt)).tolist()), max(e)
 +      e = memoryview(b.arg).cast(unwrap(self.dtype.fmt)).tolist()
-+      return unbounded(self.dtype) if any(v != v for v in e) else (min(e), max(e))
++      if any(v != v for v in e): return unbounded(self.dtype)
++      # a gated load reads its alternative where its gate fails
++      if len(self.src) == 3: e += self._operand(self.src[1])
++      return min(e), max(e)
      # a NAN is outside every interval
      if self.op is Ops.CONST and self.val is not Invalid and not (isinstance(self.val, float) and math.isnan(self.val)): return self.val, self.val
 -    if self.op is Ops.PAD: return min(self.src[0].vmin, 0), max(self.src[0].vmax, 0)  # PAD adds zeros
@@ -4476,7 +4442,7 @@ index f0a41c9b5..4186a996c 100644
  
    @functools.cached_property
    def _sym_fxn(self):
-@@ -1150,9 +1222,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1150,9 +1225,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
  
    @staticmethod
    def alloc(shape:tuple[sint, ...], dtype:DType, slot:int|None=None, addrspace=AddrSpace.GLOBAL, device=None, axis:int|None=None,
@@ -4488,7 +4454,7 @@ index f0a41c9b5..4186a996c 100644
                             addrspace=addrspace, device=device, spec=spec, bind_on_realize=bind_on_realize, name=name))
      return ret.reshape(()) if not shape else ret.view_as(shape, axis)
    def alloc_like(self, slot:int|None=None, addrspace=AddrSpace.GLOBAL): return UOp.alloc(self.max_shard_shape, self.dtype, slot, addrspace)
-@@ -1263,7 +1335,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1263,7 +1338,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
      placeholders = [s.replace(arg=replace(s.arg, slot=i, val=None)) if s.is_variable else UOp.placeholder_like(s, slot=i)
                      for i,s in enumerate(srcs)]
      kernel = fxn(*placeholders).call(*srcs, grad_fxn=grad_fxn)
@@ -4499,7 +4465,7 @@ index f0a41c9b5..4186a996c 100644
  
    @functools.cached_property
    def kernel_params(self) -> tuple[UOp, ...]:
-@@ -1300,6 +1374,8 @@ class KernelInfo:
+@@ -1300,6 +1377,8 @@ class KernelInfo:
    beam: int = 0
    optimized: bool = False       # the AST has been through the optimizer, skip re-optimization
    kernel: bool = True           # launched by the runtime, not called from another kernel
@@ -4508,7 +4474,7 @@ index f0a41c9b5..4186a996c 100644
    @property
    def function_name(self): return to_function_name(self.name)
  
-@@ -1326,6 +1402,7 @@ class ProgramInfo:
+@@ -1326,6 +1405,7 @@ class ProgramInfo:
      ins: list[int] = []
      global_size: list[int] = [1, 1, 1]
      local_size: list[int] = [1, 1, 1]
@@ -4516,7 +4482,7 @@ index f0a41c9b5..4186a996c 100644
      for u in sink.toposort():
        if u.op is Ops.PARAM: _params.append(u)
        if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
-@@ -1363,22 +1440,99 @@ class CallInfo:
+@@ -1363,22 +1443,99 @@ class CallInfo:
  
  # ******** ops in python ********
  
@@ -4621,7 +4587,7 @@ index f0a41c9b5..4186a996c 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.TRUNCMOD: cmod, Ops.TRUNCDIV: cdiv, Ops.DIV: floordiv, Ops.MOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1389,6 +1543,10 @@ def exec_alu(op:Ops, dtype:DType, operands):
+@@ -1389,6 +1546,10 @@ def exec_alu(op:Ops, dtype:DType, operands):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)
@@ -4632,7 +4598,7 @@ index f0a41c9b5..4186a996c 100644
    return truncate_fxn(alu) if (truncate_fxn:=truncate.get(dtype)) is not None else alu
  
  # ***** pattern matcher *****
-@@ -1887,3 +2045,38 @@ sint = int|UOp
+@@ -1887,3 +2048,38 @@ sint = int|UOp
  Variable = UOp
  
  ConstLike = ConstType|Variable|tuple[ConstType, ...]
@@ -4744,7 +4710,7 @@ index c359a697f..1b9fad6d6 100644
    (UPat(Ops.CALL, src=(UPat(tuple(OPAQUE_CALL_BODIES)),), allow_any_len=True), lambda: True),
    # after on PARAM or AFTER
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
-index c99bf3c34..ea8637f4b 100644
+index c99bf3c34..f43b91859 100644
 --- a/tinygrad/uop/symbolic.py
 +++ b/tinygrad/uop/symbolic.py
 @@ -1,8 +1,8 @@
@@ -4910,15 +4876,13 @@ index c99bf3c34..ea8637f4b 100644
  ])+mop_cleanup
  
  # ******** phase 2 builds on phase 1, it includes the old "symbolic", rules that match deeper ********
-@@ -237,24 +277,39 @@ commutative = PatternMatcher([
+@@ -237,24 +277,37 @@ commutative = PatternMatcher([
    (UPat(GroupOp.Commutative, dtype=dtypes.weakint, name='x'), lambda x: x.replace(src=x.src[::-1]) if x.src[1].tuplize < x.src[0].tuplize else None),
  ])
  
-+# the operand C leaves u undefined for some values of: a float converted to an integer, outside the integer's range, and an
-+# integer divisor, at zero
++# the operand C leaves u undefined for some values of: a float converted to an integer, outside the integer's range
 +def _partial_operand(u:UOp) -> UOp|None:
 +  if u.op is Ops.CAST and dtypes.is_int(u.dtype) and dtypes.is_float(u.src[0].dtype): return u.src[0]
-+  if u.op in {Ops.TRUNCDIV, Ops.TRUNCMOD, Ops.DIV, Ops.MOD} and dtypes.is_int(u.dtype): return u.src[1]
 +  return None
 +def _guards_partial(cond:UOp, u:UOp) -> bool:
 +  return any((o:=_partial_operand(n)) is not None and cond in o.toposort(enter_calls=False) for n in u.toposort(enter_calls=False))
@@ -4933,8 +4897,8 @@ index c99bf3c34..ea8637f4b 100644
 +  # and so are loads: memory coalescing addresses a load of several elements by a SHRINK in place of an INDEX, and a
 +  # register's read by the register alone
 +  if any(u.op_in_backward_slice_with_self(Ops.INDEX, Ops.LOAD) for u in (cond, t, f)): return None
-+  # a conversion or a division that the selection keeps from an operand it is undefined for stays guarded: C computes it in
-+  # every lane of a vector, and a selection of vectors keeps an undefined lane it discards
++  # a conversion that the selection keeps from an operand it is undefined for stays guarded: C computes it in every lane of
++  # a vector, and a selection of vectors keeps an undefined lane it discards
 +  if _guards_partial(cond, t) or _guards_partial(cond, f): return None
    return cond.where(t.substitute({cond: cond.const_like(True)}), f.substitute({cond: cond.const_like(False)}))
  
@@ -4954,7 +4918,7 @@ index c99bf3c34..ea8637f4b 100644
    ((UPat.var("y") + UPat.var("x", dtypes.wints)) + UPat.var("x") * UPat.cvar("c"),
     lambda x,y,c: y+m if fits(x, c.vmin+1) and no_overflow(m:=x*(c+1)) else None),
    ((UPat.var("y") + UPat.var("x", dtypes.wints) * UPat.cvar("c")) + UPat.var("x"),
-@@ -282,26 +337,27 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -282,26 +335,27 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
    ((UPat.var("y", dtypes.wints)+UPat.var("c").where(UPat.var("t"), UPat.var("f"))) + UPat.var("c").where(UPat.var("tt"), UPat.var("ff")), \
     lambda y,c,t,tt,f,ff: y+m if (t.op == tt.op == Ops.CONST or f.op == ff.op == Ops.CONST) and no_overflow(m:=c.where(t+tt, f+ff)) else None),
    # complementary zero branches under the same condition select directly
@@ -4992,7 +4956,7 @@ index c99bf3c34..ea8637f4b 100644
    # x//d<c -> x<c*d for d>0
    ((UPat.var("x", dtype=dtypes.weakint)//UPat.cvar("d"))<UPat.cvar("c"),
     lambda x,d,c: (x<c.val*d.val) if d.val > 0 else None),
-@@ -312,8 +368,12 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -312,8 +366,12 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
    # *** rules from symbolic ***
    # generic lt folding
    (UPat.var("x", dtypes.weakint)<UPat.cvar("c"), lambda x,c: lt_folding(x, c.val)),
@@ -5007,7 +4971,7 @@ index c99bf3c34..ea8637f4b 100644
    # canonicalize a simplex with positive coefficients > 0. NOTE: not x < 1 means x > 0
    ((UPat.var("x", dtypes.weakint)<1).logical_not(), lambda x: (newx<1).logical_not() if (newx:=canonicalize_simplex(x)) is not None else None),
    # a range mod its own upper bound is just the range
-@@ -330,12 +390,16 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -330,12 +388,16 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
      and not (u.op is Ops.SHR and u.src[1].vmax >= 32)
      and not (u.op in (Ops.MOD, Ops.TRUNCMOD) and u.src[0].vmin <= dtypes.int.min and u.src[1].vmin <= -1 <= u.src[1].vmax) else None),
    ((UPat.var("x", dtypes.weakint) + UPat.cvar("c")).cast(dtypes.sints, name="cast"), lambda x,c,cast:x.cast(cast.dtype)+cast.const_like(c.val)),
@@ -5025,7 +4989,7 @@ index c99bf3c34..ea8637f4b 100644
    # the rules above key on bare CONSTs, so a redundantly committed const has to be uncast in the same fixpoint
  ])+div_and_mod_symbolic+pm_uncast_const
  
-@@ -351,6 +415,12 @@ def parse_valid(v:UOp) -> tuple[UOp, bool, int]|None:
+@@ -351,6 +413,12 @@ def parse_valid(v:UOp) -> tuple[UOp, bool, int]|None:
    if (a:=lt.src[0]).op is Ops.CONST: return lt.src[1], neg, int(a.val) + (0 if neg else 1)
    return a, not neg, int(lt.src[1].vmin) if neg else int(lt.src[1].vmax)-1
  
@@ -5038,7 +5002,7 @@ index c99bf3c34..ea8637f4b 100644
  def uop_given_valid(valid:UOp, uop:UOp, try_simplex=True) -> UOp:
    # return simplified uop (might be the same as input)
  
-@@ -371,15 +441,16 @@ def uop_given_valid(valid:UOp, uop:UOp, try_simplex=True) -> UOp:
+@@ -371,15 +439,16 @@ def uop_given_valid(valid:UOp, uop:UOp, try_simplex=True) -> UOp:
        # For X0 + X1 + ... > 0, check whether every Xi > 0 gives the same simplified output.
        candidate = [(Xi, UOp.variable(f"fake{i}", 1, Xi.vmax, Xi.dtype)) for Xi in expr.split_uop(Ops.ADD)]
        if any(X not in uop.backward_slice_with_self for X,_ in candidate): continue
@@ -5058,7 +5022,7 @@ index c99bf3c34..ea8637f4b 100644
    return uop
  
  def _valid_priority(v: UOp, valids:list[UOp]) -> tuple[int, int]:
-@@ -399,8 +470,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
+@@ -399,8 +468,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
  
  # ******** phase 3 is the complete symbolic ********
  
@@ -5069,7 +5033,7 @@ index c99bf3c34..ea8637f4b 100644
    # max(x*m) = max(x)*m needs x*m monotone in x, and an unsigned multiply wraps
    if r.arg[0] is Ops.MAX and dtypes.is_unsigned(r.dtype): return None
    inside, outside = [], []
-@@ -409,7 +481,14 @@ def reduce_mul_chain(r:UOp) -> UOp|None:
+@@ -409,7 +479,14 @@ def reduce_mul_chain(r:UOp) -> UOp|None:
      if m not in r.src[1:] and all(r not in m_parents for r in r.src[1:]) and (r.arg[0] != Ops.MAX or m.vmin >= 0): outside.append(m)
      else: inside.append(m)
    if len(outside) == 0: return None
@@ -5085,7 +5049,7 @@ index c99bf3c34..ea8637f4b 100644
  
  def drop_and_clauses(cond:UOp, x:UOp, i:UOp) -> UOp|None:
    keep, drop = partition(cond.split_uop(Ops.AND), lambda c: any(r in x.ranges for r in c.ranges))
-@@ -432,10 +511,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
+@@ -432,10 +509,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
    return UOp.const(True).uprod(*keep).where(ret_idx, ret_idx.const_like(0))
  
  # where after gated load becomes alt value, TODO: this is sort of duplicated with rules in devectorizer
@@ -5101,7 +5065,7 @@ index c99bf3c34..ea8637f4b 100644
  ])
  
  def gated_given_valid(cond:UOp, x:UOp, i:UOp) -> UOp|None:
-@@ -475,9 +556,6 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
+@@ -475,9 +554,6 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
    # store of where with invalid -> gated store
    (UPat(Ops.STORE, src=(UPat(Ops.INDEX, name="index"), UPat.var("cond").where(UPat.var("val"), invalid_pat))),
     lambda index, cond, val, i: UOp.store(index.src[0].index(index.src[1].valid(cond)), val)),

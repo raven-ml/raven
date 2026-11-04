@@ -2540,17 +2540,14 @@ let commutative =
     ])
 
 (* The operand C leaves [u] undefined for some values of: a float converted to
-   an integer, outside the integer's range, and an integer divisor, at zero. *)
+   an integer, outside the integer's range. *)
 let partial_operand u =
   match op u with
   | Op.Cast when Dtype.is_int (dtype u) && Dtype.is_float (dtype (nth u 0)) ->
       Some (nth u 0)
-  | (Op.Truncdiv | Op.Truncmod | Op.Div | Op.Mod)
-    when Dtype.is_int (dtype u) ->
-      Some (nth u 1)
   | _ -> None
 
-let partial_ops = Op.[ Cast; Truncdiv; Truncmod; Div; Mod ]
+let partial_ops = Op.[ Cast ]
 
 (* Whether [u] holds an undefined-prone operation whose operand reads [cond]: a
    selection by [cond] may be its guard. *)
@@ -2585,9 +2582,9 @@ let fold_where_closure cond t f =
   else if not (reaches ~calls:Enter t cond || reaches ~calls:Enter f cond)
   then None
   else if
-    (* a conversion or a division that the selection keeps from an operand it
-       is undefined for stays guarded: C computes it in every lane of a
-       vector, and a selection of vectors keeps an undefined lane it discards *)
+    (* a conversion that the selection keeps from an operand it is undefined
+       for stays guarded: C computes it in every lane of a vector, and a
+       selection of vectors keeps an undefined lane it discards *)
     guards_partial cond t || guards_partial cond f
   then None
   else

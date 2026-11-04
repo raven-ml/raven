@@ -710,12 +710,12 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
     - {b selections}: a selection by a negation swaps its branches; within
       [where c t f], [c] is [true] in [t] and [false] in [f], unless [c],
       [t] or [f] reaches an {!Op.Index} or an {!Op.Load}, or [c] reaches the
-      operand of a conversion of a float to an integer or of an integer
-      divisor in a branch, where it may be the guard of a value that operation
-      is undefined for; [where g x 0 <> 0] is [g land (x <> 0)]; nested
-      selections sharing a branch merge their conditions with [land] or [lor],
-      or with [land] of the inner one's negation where the outer's other branch
-      is the inner's first;
+      operand of a conversion of a float to an integer in a branch, where it
+      may be the guard of a value that conversion is undefined for;
+      [where g x 0 <> 0] is [g land (x <> 0)]; nested selections sharing a
+      branch merge their conditions with [land] or [lor], or with [land] of
+      the inner one's negation where the outer's other branch is the inner's
+      first;
       an operation on two selections by the same condition, one of whose branch
       pairs is constant, selects between the operations on the branches, also as
       the last two terms of an integer sum; for integers,

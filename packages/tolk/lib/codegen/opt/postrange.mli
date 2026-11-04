@@ -17,10 +17,9 @@
     a new axis [s] of size [a], and every use of [r] by [r' * a + s], or
     [s * (n / a) + r'] from the top; a pad grows an axis to a multiple and
     guards every access along it, an access through storage ordered after the
-    axis included, and an integer division whose divisor reads the axis
-    divides by [1] on the padding, whose loads read zeros; a swap exchanges two
-    global axes' identities; a tensor core replaces a reduction of products by
-    a matrix multiply-accumulate ({!Op.Wmma}). *)
+    axis included; a swap exchanges two global axes' identities; a tensor core
+    replaces a reduction of products by a matrix multiply-accumulate
+    ({!Op.Wmma}). *)
 
 (** {1:schedulers Schedulers} *)
 
