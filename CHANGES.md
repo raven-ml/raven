@@ -1037,6 +1037,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A custom kernel (`Shape.custom_kernel`) in a precompiled call's body whose
+  code closes over a bound variable reads that variable's value, where it
+  could read another scalar the call passes.
 - `Tolk_engine.run ~vars` binds a custom kernel's variable
   (`Shape.custom_kernel`) to the run's value, where the kernel read the value
   its call bound.

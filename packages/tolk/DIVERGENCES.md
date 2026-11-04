@@ -5493,10 +5493,13 @@ the walk of `Rangeify.fix_store_hazard`.
   a body into a call; tolk takes a call's body as built (`Ops.call`), so the
   schedule does it, once, for every builder. No body the schedule splits
   into kernels then binds a name: stores of one kernel (D137) and calls
-  merged into one (D199) read each value from a slot of their own. A name
-  of one value that a loop's kernels read is among the schedule's
-  variables, which tinygrad, without loops in a schedule, reads from its
-  top-level kernels alone.
+  merged into one (D199) read each value from a slot of their own. A kernel
+  the body calls, such as a custom kernel whose code binds a variable,
+  reads it from the body's slots as the kernels split from the body do
+  (`Schedule.pm_pass_kernel_bound`), which resolving the scope fills
+  (`Schedule.resolve_linear_call`). A name of one value that a loop's
+  kernels read is among the schedule's variables, which tinygrad, without
+  loops in a schedule, reads from its top-level kernels alone.
 - **Reason:** (b): rune's compiled programs over several devices
   (`Pieces.split`, `Compile.moving`) bind each device's window start, of a
   move or of a loop's coordinates, to a variable named by its bound, so that
@@ -5517,9 +5520,13 @@ the walk of `Rangeify.fix_store_hazard`.
   one`, `› loop bodies that differ in their bound values alone are one` and
   its law `calls and stores of a loop that bind one name to several values
   join, and no kernel binds a name to two`; `Tolk_engine › link and run › a
-  scan's calls that read one name at two values carry each its own` and `› a
-  scan's stores that read one name at two values store each its own`, and the
-  same on each GPU; `Tolk_engine › link and run › one program launched on
+  scan's calls that read one name at two values carry each its own`, `› a
+  scan's stores that read one name at two values store each its own` and
+  `› a scan's custom kernel that closes over a bound variable runs as one
+  with the scan's own and reads its value`, and `› custom kernels with
+  variables › a custom kernel that closes over a bound variable reads its
+  value`, and the same on each GPU;
+  `Tolk_engine › link and run › one program launched on
   several devices computes each device's window at its start` and `› kernels
   whose sizes are one name of two values run each its own`, and the same on
   each GPU; rune's `rune jit › jit › two assemblies of alike pieces compile`,

@@ -1521,9 +1521,35 @@ and pm_canonicalize_alloc =
              canonicalize_alloc ctx (m "b"));
        ]))
 
+(* A kernel the body calls, such as a custom kernel, reads the variables its
+   code binds as the kernels the schedule splits from the body do: from the
+   body's slots, which its scope resolves ({!resolve_linear_call}). *)
+and pm_pass_kernel_bound =
+  lazy
+    (Pattern_matcher.v (fun () -> [
+         rule_ctx (Upat.op Op.Call ~name:"c") (fun ctx m ->
+             let c = m "c" in
+             let b = body c in
+             match (op b, arg b) with
+             | Op.Sink, Kernel _ ->
+                 let b =
+                   graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx b
+                     (Before_sources pm_pass_bound)
+                 in
+                 Some
+                   (canonicalize_call_body
+                      (replace c ~src:(b :: List.tl (src c))))
+             | _ -> None);
+       ]))
+
 and pm_canonicalize_body =
   lazy
-    (Pattern_matcher.concat [ Lazy.force pm_canonicalize_alloc; pm_pass_bound ])
+    (Pattern_matcher.concat
+       [
+         Lazy.force pm_pass_kernel_bound;
+         Lazy.force pm_canonicalize_alloc;
+         pm_pass_bound;
+       ])
 
 (* Forced as the module initialises, on one domain: the compilers' domains
    would race to force it first, and a lazy value that two domains force at

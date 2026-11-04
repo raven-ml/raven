@@ -1250,6 +1250,40 @@ let custom_kernel_sized_by_variable ?(devices = devices) () =
       equal values ~msg:(Printf.sprintf "k = %d" n) want (contents (of_node o)))
     [ ([ ("k", 5) ], 5); ([], 3) ]
 
+(* A custom kernel on CPU:1 that takes [k], bound to 2, and closes over a
+   variable named [closure], bound to 5, storing [a] plus both into [o1],
+   beside a kernel of the schedule's own storing [a] plus [k] into [o0]: each
+   store with its own values. *)
+let custom_kernel_closes ?(devices = devices) closure () =
+  let var name x =
+    let v = Ops.variable name (`Int Bigint.zero) (`Int (Bigint.of_int 8)) in
+    Shape.bind v (`Int (Bigint.of_int x))
+  in
+  let k = var "k" 2 and m = var closure 5 in
+  let add = function
+    | [ out; v; src ] ->
+        let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+        let at b = Ops.index b [ i ] in
+        let sum = Ops.O.(at src + Ops.cast v Int32 + Ops.cast m Int32) in
+        Ops.sink
+          ~kernel:(Ops.kernel_info ())
+          [ Ops.end_ (Ops.store (at out) sum) [ i ] ]
+    | _ -> invalid_arg "add takes three arguments"
+  in
+  let a = Ops.new_buffer "CPU:1" 4 Int32 in
+  let o0 = Ops.new_buffer "CPU:1" 4 Int32
+  and o1 = Ops.new_buffer "CPU:1" 4 Int32 in
+  let k4 = Shape.reshape (Ops.cast k Int32) [ Int 1 ] in
+  let s0 = Ops.after o0 [ Ops.store o0 Ops.O.(a + k4) ] in
+  let big = Ops.sink [ s0; List.hd (Shape.custom_kernel [ o1; k; a ] add) ] in
+  let s, vars, storage = linked ~devices big in
+  Engine.run ~vars s [||];
+  let of_node u = List.find (fun s -> s.node == u) storage in
+  let xs = Array.map Dtype.Value.to_int (of_node a).before in
+  let plus v = Array.map (fun x -> `Int (Bigint.of_int (x + v))) xs in
+  equal values ~msg:"the schedule's" (plus 2) (contents (of_node o0));
+  equal values ~msg:"the custom kernel's" (plus 7) (contents (of_node o1))
+
 (* The custom kernels whose variable sits among their buffers. *)
 let custom_kernel_scalars ?(devices = devices) () =
   [
@@ -1257,6 +1291,9 @@ let custom_kernel_scalars ?(devices = devices) () =
       (custom_kernel_rebound ~devices);
     test "a custom kernel sized by its variable runs the run's binding"
       (custom_kernel_sized_by_variable ~devices);
+    cases "a custom kernel that closes over a bound variable reads its value"
+      ~id:Fun.id [ "m"; "k" ]
+      (fun closure -> custom_kernel_closes ~devices closure ());
     test
       "custom kernels run as one that read one name at two values read each \
        its own" (custom_kernels_of_one_name ~devices ~n:1 (3, 5));
@@ -1653,6 +1690,61 @@ let stores_bound_apart ?(devices = devices) d () =
   Engine.run ~vars s [||];
   let stored j = floats (Array.map (fun v -> (2. ** v) +. Float.of_int j) x) in
   equal (list values) [ stored 0; stored 1 ]
+    (List.map (Run.values Float32) [ List.nth given 0; List.nth given 1 ])
+
+(* A scan of three trips on [d] whose body stores its input plus [k], bound to
+   2, and calls a custom kernel that takes [k] and closes over a variable named
+   [closure], bound to 5, storing the input plus both: one kernel a trip, each
+   store with its own values, whether [closure] is another name, which a run
+   reads by name, or [k] at another value, which the loop's call passes. *)
+let custom_kernel_closes_in_loop ?(devices = devices) ~closure d () =
+  let p slot = Shape.param ~shape:[ Int 4 ] ~device:d slot Float32 in
+  let var name x =
+    let v = Ops.variable name (`Int Bigint.zero) (`Int (Bigint.of_int 8)) in
+    Shape.bind v (`Int (Bigint.of_int x))
+  in
+  let k = var "k" 2 and m = var closure 5 in
+  let add = function
+    | [ out; v; src ] ->
+        let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+        let at b = Ops.index b [ i ] in
+        Ops.sink
+          ~kernel:(Ops.kernel_info ())
+          [
+            Ops.end_
+              (Ops.store (at out)
+                 Ops.O.(at src + Ops.cast v Float32 + Ops.cast m Float32))
+              [ i ];
+          ]
+    | _ -> invalid_arg "add takes three arguments"
+  in
+  let body =
+    Ops.sink
+      [
+        Ops.store (p 0) Ops.O.(p 2 + Ops.cast k Float32);
+        List.hd (Shape.custom_kernel [ p 1; k; p 2 ] add);
+      ]
+  in
+  let bufs = List.init 3 (fun _ -> Ops.new_buffer d 4 Float32) in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let e = Ops.end_ (Ops.call ~precompile:true body bufs) [ r ] in
+  let outs = [ List.nth bufs 0; List.nth bufs 1 ] in
+  let linear, vars =
+    Schedule.create_linear_with_vars
+      (Ops.sink (List.map (fun b -> Ops.after b [ e ]) outs))
+  in
+  equal int ~msg:"calls a trip" 1 (calls_in_loop linear);
+  let x = [| -1.; 0.; 2.; 3. |] in
+  let given =
+    List.map (fun _ -> Run.buffer (devices d) Float32 (floats x)) bufs
+  in
+  let s =
+    Engine.link ~devices ~bound:(List.combine bufs given)
+      (compile ~devices linear)
+  in
+  Engine.run ~vars s [||];
+  let plus j = floats (Array.map (fun v -> v +. Float.of_int j) x) in
+  equal (list values) [ plus 2; plus 7 ]
     (List.map (Run.values Float32) [ List.nth given 0; List.nth given 1 ])
 
 (* A copy of 16 floats of the host stored into rows 2 and 3 of an 8 by 8 grid
@@ -2954,6 +3046,11 @@ let schedules =
         (carries_bound_apart "CPU");
       test "a scan's stores that read one name at two values store each its own"
         (stores_bound_apart "CPU");
+      cases
+        "a scan's custom kernel that closes over a bound variable runs as one \
+         with the scan's own and reads its value"
+        ~id:Fun.id [ "m"; "k" ]
+        (fun closure -> custom_kernel_closes_in_loop ~closure "CPU" ());
       test "a store into rows of a buffer of a value read through other \
             storage writes what it computes" stores_rows_read_elsewhere;
       test "a copy stored into rows of a buffer writes them alone"
@@ -4439,6 +4536,12 @@ let on_a_gpu (kind, _) =
         (carries_bound_apart ~devices "CPU:1");
       test "a scan's stores that read one name at two values store each its own"
         (stores_bound_apart ~devices "CPU:1");
+      cases
+        "a scan's custom kernel that closes over a bound variable runs as one \
+         with the scan's own and reads its value"
+        ~id:Fun.id [ "m"; "k" ]
+        (fun closure ->
+          custom_kernel_closes_in_loop ~closure ~devices "CPU:1" ());
       test "a loop's move copies the rows its trips name"
         (copies_moving_rows ~devices "CPU:1" "CPU");
       test "a loop's move into storage made at link moves with its trips"
