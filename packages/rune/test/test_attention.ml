@@ -176,8 +176,8 @@ let tolerances dt acc c lse =
   ( (2. *. eta) +. kernel +. compiled,
     w ~exp:5. kernel +. w ~exp:19. compiled +. (2. *. gamma) +. (2. *. uq) )
 
-(* A case each of [law_jit]'s 12 draws may miss: paged, with lengths and a
-   captured mask. *)
+(* A case that reaches every cover of each law on every run: paged, with
+   lengths and a captured mask, which [law_cut] makes causal. *)
 let examples =
   [
     {
@@ -549,12 +549,13 @@ let () =
             [
               prop
                 ~examples:(Rune_support.Attentions.examples dts)
-                ~count:12 "every dtype"
+                ~count:6 "every dtype"
                 (Gen.with_pp Rune_support.Attentions.pp (Rune_support.Attentions.gen dts))
                 (Rune_support.Attentions.law (module Nx.Host));
             ]);
          group "jit over keys cut across two devices"
-           (three 24 (law_cut f32 f32) (law_cut f64 f64) (law_cut f32 f64));
+           (three ~examples 12 (law_cut f32 f32) (law_cut f64 f64)
+              (law_cut f32 f64));
          group "vmap is each lane, bit for bit"
            (three 60 (law_vmap f32 f32) (law_vmap f64 f64) (law_vmap f32 f64));
          group "vmap over lanes' own pools is each lane, bit for bit"
@@ -567,8 +568,8 @@ let () =
               (law_jvp f32 f64 ~h:1e-2 ~tol:1e-2));
          group "the gradient compiled and in forward mode"
            [
-             prop ~count:24 "float32" case (law_grad f32 ~tol:1e-3);
-             prop ~count:24 "float64" case (law_grad f64 ~tol:1e-9);
+             prop ~examples ~count:12 "float32" case (law_grad f32 ~tol:1e-3);
+             prop ~examples ~count:12 "float64" case (law_grad f64 ~tol:1e-9);
            ];
          group "past a row's length"
            [ test "the derivative reads no key or value there" test_past_length ];

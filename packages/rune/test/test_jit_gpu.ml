@@ -979,19 +979,22 @@ let () =
                 threads"
                test_routed_prompt;
            ];
+         (* Each case compiles programs of its own shapes. The examples reach
+            every cover, each mask and each dtype, on every run; four draws
+            add shapes of their own. *)
          group "attention"
            [
-             prop ~count:12
+             prop ~count:4
                ~examples:(Attentions.examples attention_dtypes)
                "jit holds nx's bound against a float64 reference"
                (Gen.with_pp Attentions.pp (Attentions.gen attention_dtypes))
                attention;
-             prop ~count:24 ~examples:grad_examples
+             prop ~count:4 ~examples:grad_examples
                "its compiled gradient holds rune's bound against a float64 \
                 reference"
                (Gen.with_pp Attentions.pp (Attentions.gen attention_dtypes))
                (attention_grad ~vmap:false);
-             prop ~count:8
+             prop ~count:4
                ~examples:(List.map mappable grad_examples)
                "its gradient mapped by vmap holds rune's bound against a \
                 float64 reference"
