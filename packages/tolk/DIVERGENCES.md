@@ -7755,3 +7755,41 @@ and an initial value is added after it (D260).
   gated or valid at one point, loaded and variable bounds, bounds that share
   a variable, a range of no trip, a scatter to cells memory names); the refused upcast of `j < 4 (i + 1)`; and the
   padded counters and maximum.
+
+## D335. A long arange is laid out in rows, typed by its last element
+
+- **tinygrad:** `mixin/op.py:189-218` (`arange`): its type is checked and
+  chosen from `start` and `stop - step` (`:211-214`), and its elements are
+  the running sum (`_cumalu`, `:775-779`) of `n` steps, whose pool
+  (`mixin/movement.py:614`, `_pool`) repeats the input, `2n - 1` elements
+  padded, to `(n + 1)(2n - 1)` elements before it cuts the windows.
+- **tolk:** `Shape.arange` and its `run`.
+- **Differs:** up to 1518500249 elements, the most whose pool's views fit
+  an OCaml `int`, an arange is tinygrad's running sum. A longer one of `n`
+  elements lays them out in rows of `b`, the power of two with
+  `b² <= n < 4b²`: an element is its row's first element, an arange by
+  `b * step`, plus its offset along the row, an arange by `step`, each
+  built the same way. A float arange
+  that long is laid out in `Int64` and cast, so each element is its integer
+  rounded once. An arange of more than `max_int - 2^30` elements raises.
+  The type of a nonempty arange is checked and chosen from `start` and its
+  last element, `start + (n - 1) * step`, where tinygrad reads
+  `stop - step`, and its length and bounds are computed exactly.
+- **Reason:** rows: (a): a shape is an OCaml `int`, 63 bits, where
+  tinygrad's is a Python integer, and the pool's views past `max_int`
+  elements raised. (b): rune's `Unique`, which numbers its rows by an
+  arange, lowers up to `2^31` rows and raised past 1518500249. A row and a
+  column of about `sqrt n` elements keep both aranges within an int's
+  views, and their kernel is elementwise. Rows summed in a float type would
+  round each part, and `Float32` elements were then off by hundreds near
+  `10^10`. Bounds: (e): when `stop - start` is not a multiple of `step`,
+  the last element passes `stop - step`, and `arange ~dtype:Int8 ~step:2
+  129` wrapped its last element, 128, to -128, as tinygrad does.
+- **Pinned by:** the Ops suite's `aranges › an arange's element i is start +
+  i * step at any length`, over integer and float types; `movement ›
+  arange rejects more than max_int - 2^30 elements`, `› arange counts its
+  elements past an int's range` and `› arange's type holds its last
+  element, past [stop - step]`; the Tolk_engine suite's `aranges › an
+  arange past 2^31 elements holds start + i * step`, on the host and on
+  each GPU; rune's `Lower_index › numbering › a Unique of 2^31 rows is
+  lowered`.

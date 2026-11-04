@@ -337,11 +337,13 @@ val arange : ?start:int -> ?step:int -> ?dtype:Dtype.t -> int -> Ops.t
     (default [0]) up to [stop], excluded, by [step] (default [1]), down to it
     for a negative [step], of type [dtype] (default the first of
     {!Dtype.default_int}, {!Dtype.Int32}, {!Dtype.Int64} and {!Dtype.Uint64}
-    that holds them). It is empty if [stop] is not beyond [start]. Its elements
-    are running sums of [step].
+    that holds them). It is empty if [stop] is not beyond [start]. Element [i]
+    is the integer [start + i * step], exact in an integer type. In a float
+    type it is computed in that type, or {!Dtype.Float32} if narrower, up to
+    [1518500249] elements, and past that it is the integer rounded once.
 
-    Raises [Invalid_argument] if [step] is [0] or [dtype] does not hold the
-    integers. *)
+    Raises [Invalid_argument] if [step] is [0], [dtype] does not hold the
+    integers, or there are more than [max_int - 2^30] of them. *)
 
 val nbytes : Ops.t -> int
 (** [nbytes u] is the number of bytes of [u]'s elements. *)

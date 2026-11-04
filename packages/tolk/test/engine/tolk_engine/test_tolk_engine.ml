@@ -1901,6 +1901,67 @@ let valid_slot_store =
       raises_match (Exn.invalid_arg ~sub:"Invalid, which is no number")
         (fun () -> Schedule.create_linear_with_vars (store_at_valid_slot "CPU")))
 
+(* Aranges past 2^31 elements: [(n, start, step, dtype, first)] reads the
+   elements [first] to [first + 2] of an arange of [n] elements from [start] by
+   [step], about 2^31, 2^32 or at its end, where an index or a value computed
+   in 32 bits would wrap. *)
+let long_aranges =
+  [
+    ((1 lsl 31) + 5, 0, 1, None, (1 lsl 31) - 2);
+    ((1 lsl 31) + 5, 0, 1, None, (1 lsl 31) + 2);
+    (1 lsl 31, 0, 1, None, (1 lsl 31) - 3);
+    (3 lsl 30, -(1 lsl 31), 1, Some Dtype.Int32, (3 lsl 30) - 3);
+    ((1 lsl 32) + 3, (1 lsl 32) + 2, -1, None, (1 lsl 32) - 2);
+    (1 lsl 32, (1 lsl 32) - 1, -1, Some Dtype.Uint32, (1 lsl 31) - 1);
+    ((1 lsl 40) + 1, -7, 3, None, (1 lsl 40) - 2);
+    ((1 lsl 31) + 5, 0, 1, Some Dtype.Float32, (1 lsl 31) + 2);
+    ((1 lsl 32) + 3, -9, 1, Some Dtype.Float64, (1 lsl 32) - 2);
+  ]
+
+let long_arange_id (n, start, step, dtype, first) =
+  let dtype = Option.fold ~none:"default" ~some:Dtype.name dtype in
+  Printf.sprintf "%d from %d by %d in %s, at %d" n start step dtype first
+
+(* What the one kernel storing three of an arange's elements into storage of
+   three writes on [device]: it reads no other element, so the arange takes
+   no memory. A schedule that stores more fails before it is linked. *)
+let arange_window ?(devices = devices) device (n, start, step, dtype, first) =
+  let u = Shape.arange ~start ~step ?dtype (start + (n * step)) in
+  let dtype' = Ops.dtype u in
+  let renderer = Engine.renderer (devices device) in
+  if not (List.mem dtype' (Renderer.supported_dtypes renderer)) then
+    skip ~reason:(Dtype.name dtype' ^ " is not supported") ();
+  let out = Ops.new_buffer device 3 dtype' in
+  let view = Shape.shrink u [ Some (Int first, Int (first + 3)) ] in
+  let big = Ops.sink [ Ops.after out [ Ops.store out view ] ] in
+  let linear, _ = Schedule.create_linear_with_vars big in
+  equal ~msg:"kernels" int 1 (List.length (Ops.src linear));
+  List.iter
+    (fun b ->
+      if Ops.op b = Op.Buffer then
+        at_most ~msg:"stored elements" int ~than:3 (Shape.max_numel b))
+    (Ops.toposort ~calls:Skip linear);
+  let s, vars, storage = linked ~devices big in
+  Engine.run ~vars s (slots storage);
+  (* The integer, rounded once to a float type. *)
+  let at i : Dtype.value =
+    let v = start + (i * step) in
+    match dtype' with
+    | Float32 ->
+        `Float (Int32.float_of_bits (Int32.bits_of_float (Float.of_int v)))
+    | Float64 -> `Float (Float.of_int v)
+    | _ -> `Int (Bigint.of_int v)
+  in
+  equal
+    (list (array Dtypes.value))
+    [ Array.init 3 (fun j -> at (first + j)) ]
+    (List.map contents storage)
+
+let arange_windows ?devices device =
+  cases "an arange past 2^31 elements holds start + i * step"
+    ~id:long_arange_id long_aranges
+    (arange_window ?devices device)
+
 let gathered_stores =
   group "a store through a gather"
     [
@@ -3364,6 +3425,7 @@ let on_a_gpu (kind, _) =
       group "custom kernels with variables" (custom_kernel_scalars ~devices ());
       group "loops bounded by a loaded value"
         (loaded_bounds ~devices ~d:"CPU:1" ());
+      group "aranges" [ arange_windows ~devices "CPU:1" ];
       test "kernels whose sizes are one name of two values run each its own"
         (sizes_from_calls ~devices);
       test "kernels whose sizes are one name of two values report at DEBUG=2"
@@ -3434,6 +3496,7 @@ let () =
          schedules;
          gathered_stores;
          group "a store through a shrink" [ valid_slot_store ];
+         group "aranges" [ arange_windows "CPU" ];
          refusals;
          runs;
          timing;

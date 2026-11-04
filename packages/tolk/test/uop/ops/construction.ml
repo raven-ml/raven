@@ -314,6 +314,153 @@ let flipped dims axes i =
   in
   List.fold_left2 (fun acc j d -> (acc * d) + j) 0 (coords (rank - 1) i []) dims
 
+(* Aranges of any length *)
+
+(* The values of [u]'s elements [lo] to [lo + k - 1]: what the one kernel that
+   stores them into storage of [k] elements writes. It reads no other element,
+   so an arange of billions of elements is read without its memory; a schedule
+   that stores more fails before it is run. *)
+let window u lo k =
+  let out = Ops.new_buffer ~slot:0 cpu k (Ops.dtype u) in
+  let view = Shape.shrink u [ Some (Int lo, Int (lo + k)) ] in
+  let sink = Ops.sink [ Ops.after out [ Ops.store out view ] ] in
+  let linear, _ = Schedule.create_linear_with_vars sink in
+  equal ~msg:"kernels" int 1 (List.length (Ops.src linear));
+  List.iter
+    (fun b ->
+      if Ops.op b = Op.Buffer then
+        at_most ~msg:"stored elements" int ~than:k (Shape.max_numel b))
+    (Ops.toposort ~calls:Skip linear);
+  List.map (fun (_, _, v) -> v) (Kernel_graphs.linear_writes linear)
+
+(* Short lengths, lengths about the powers of two where an element's index or
+   value leaves 32 bits, and past them up to the longest. *)
+let long_lengths =
+  [
+    3;
+    1000;
+    (1 lsl 30) - 1;
+    1 lsl 30;
+    (1 lsl 30) + 1;
+    1518500249;
+    1518500250;
+    (1 lsl 31) - 1;
+    1 lsl 31;
+    (1 lsl 31) + 1;
+    (1 lsl 32) + 3;
+    (1 lsl 46) + 5;
+    (1 lsl 60) + 7;
+    max_int - (1 lsl 30);
+  ]
+
+(* The longest arange that is a running sum. *)
+let pooled_run = 1518500249
+
+(* The integer [v] in [dt]: rounded once to a float type, whose double holds
+   it exactly below [2^53]. *)
+let element dt v : Dtype.value =
+  match dt with
+  | Dtype.Float32 ->
+      `Float (Int32.float_of_bits (Int32.bits_of_float (Float.of_int v)))
+  | Float64 | Float16 | Bfloat16 -> `Float (Float.of_int v)
+  | _ -> `Int (Bigint.of_int v)
+
+(* An arange of [n] elements from [start] by [step], the type it is asked for
+   or [None], and the first of three elements read. An integer type, when
+   given, holds the elements, and a float type is given where it holds them
+   exactly or the arange is laid out in rows, its elements below [2^53]; the
+   weak integer holds them all. Past [2^46] elements, a step of [1] keeps the
+   arange within an int. *)
+let gen_long_arange =
+  let open Gen in
+  let pp_int = Format.pp_print_int in
+  let* n = of_list ~pp:pp_int long_lengths in
+  let* step =
+    of_list ~pp:pp_int (if n > 1 lsl 46 then [ 1; -1 ] else [ 1; -1; 3; -7 ])
+  in
+  let span = (n - 1) * abs step in
+  let* start =
+    of_list ~pp:pp_int
+      (if step > 0 then [ 0; -5; -(span / 2); min_int ]
+       else [ span; span + 9; max_int ])
+  in
+  let last = start + ((n - 1) * step) in
+  let lo' = Stdlib.min start last and hi' = Stdlib.max start last in
+  let below m = -m <= lo' && hi' <= m in
+  let holds dt =
+    match dt with
+    | Dtype.Float32 ->
+        below (1 lsl 24) || (n > pooled_run && below ((1 lsl 53) - 1))
+    | Float64 -> below (1 lsl 53)
+    | Float16 -> below (1 lsl 11)
+    | Bfloat16 -> below (1 lsl 8)
+    | Weak_int -> true
+    | _ ->
+        let lo, hi = Dtypes.int_bounds dt in
+        Bigint.(leq lo (of_int lo') && leq (of_int hi') hi)
+  in
+  let pp_type ppf = function
+    | None -> Format.pp_print_string ppf "default"
+    | Some dt -> Dtype.pp ppf dt
+  in
+  let* dtype =
+    of_list ~pp:pp_type
+      (None
+      :: List.filter_map
+           (fun dt -> if holds dt then Some (Some dt) else None)
+           Dtype.
+             [
+               Int8;
+               Uint8;
+               Int16;
+               Uint16;
+               Int32;
+               Uint32;
+               Int64;
+               Uint64;
+               Weak_int;
+               Float16;
+               Bfloat16;
+               Float32;
+               Float64;
+             ])
+  in
+  let+ first =
+    of_list ~pp:pp_int
+      (List.map (min (n - 3))
+         [ 0; n - 3; (1 lsl 31) - 2; (1 lsl 32) - 2; n / 2 ])
+  in
+  (n, start, step, dtype, first)
+
+let long_aranges =
+  group "aranges"
+    [
+      prop "an arange's element i is start + i * step at any length" ~count:200
+        gen_long_arange (fun (n, start, step, dtype, first) ->
+          cover "a length past 2^30.5" (n > pooled_run);
+          cover "a length past 2^31" (n > 1 lsl 31);
+          cover "a length past 2^32" (n > 1 lsl 32);
+          cover "a descending arange" (step < 0);
+          cover "a start at an int's bounds"
+            (start = min_int || start = max_int);
+          cover "an unsigned type"
+            (Option.fold ~none:false ~some:Dtype.is_unsigned dtype);
+          cover "a float type past 2^30.5"
+            (n > pooled_run
+            && Option.fold ~none:false ~some:Dtype.is_float dtype);
+          cover "elements across 2^31"
+            (first < 1 lsl 31 && first + 3 > 1 lsl 31);
+          cover "the weak integer" (dtype = Some Dtype.Weak_int);
+          let u = Shape.arange ~start ~step ?dtype (start + (n * step)) in
+          equal shape (ints [ n ]) (Shape.shape u);
+          (* A weak arange is stored at the type that holds an int. *)
+          let u = if dtype = Some Weak_int then Ops.cast u Int64 else u in
+          equal (list value)
+            (List.init 3 (fun j ->
+                 element (Ops.dtype u) (start + ((first + j) * step))))
+            (window u first 3));
+    ]
+
 let movement =
   let p = param [ 2; 3; 4 ] 0 Float32 in
   group "movement"
@@ -336,6 +483,28 @@ let movement =
         (fun () ->
           rejects (fun () -> Shape.arange ~step:0 4);
           rejects (fun () -> Shape.arange ~dtype:Int8 200));
+      test "arange rejects more than max_int - 2^30 elements" (fun () ->
+          rejects (fun () -> Shape.arange (max_int - (1 lsl 30) + 1));
+          rejects (fun () -> Shape.arange ~start:(-(1 lsl 61)) (1 lsl 61)));
+      test "arange counts its elements past an int's range" (fun () ->
+          let step = 1 lsl 60 in
+          let u = Shape.arange ~start:min_int ~step max_int in
+          let at k =
+            Bigint.(add (of_int min_int) (mul (of_int k) (of_int step)))
+          in
+          equal (list Dtypes.const)
+            (List.init 8 (fun k -> `Int (at k)))
+            (Array.to_list (Tensors.eval u));
+          let u = Shape.arange ~dtype:Int8 ~start:(-100) ~step:max_int (-50) in
+          equal (list Dtypes.const) [ i (-100) ]
+            (Array.to_list (Tensors.eval u)));
+      test "arange's type holds its last element, past [stop - step]"
+        (fun () ->
+          rejects (fun () -> Shape.arange ~dtype:Int8 ~step:2 129);
+          let u = Shape.arange ~step:2 ((1 lsl 31) + 1) in
+          equal (list value)
+            [ `Int (Bigint.of_int (1 lsl 31)) ]
+            (window u (1 lsl 30) 1));
       test "rop rejects a repeated axis" (fun () ->
           rejects (fun () -> Shape.rop p Op.Add [ 1; 1 ]));
       test "permute rejects an order that is not a permutation" (fun () ->
@@ -744,6 +913,7 @@ let groups =
     elementwise;
     constants;
     kernel_nodes;
+    long_aranges;
     movement;
     devices;
     storage;

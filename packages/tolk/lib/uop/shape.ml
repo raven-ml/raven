@@ -1018,30 +1018,71 @@ let cumalu u axis op =
   if List.exists (fun d -> equal_sint d (Int 0)) (shape u) then u
   else transpose (scan ~dense:true (transpose u axis last) op) axis last
 
+let full dt c k = expand (const ~dtype:dt (`Int (Bigint.of_int c))) [ Int k ]
+
+(* The longest run built as a pooled running sum: its pool repeats the [2n - 1]
+   padded steps to [(n + 1)(2n - 1)] elements, which fit an int up to here. *)
+let pooled_run = 1518500249
+
+(* The longest arange: its rows, of [b <= 2^30] elements since [b² <= n], pad
+   the last one by fewer than [2^30] within an int. *)
+let longest_arange = max_int - (1 lsl 30)
+
+(* The [n] elements [start + i * step], of type [dt]. Past [pooled_run] they are
+   laid out in rows of [b] elements, [b] the power of two with
+   [b² <= n < 4b²]: a row's first element is an element of the run by
+   [b * step], to which the run by [step] of the offsets along the row is
+   added. The first elements are elements of the arange, and the offsets,
+   fewer than [b <= √n] steps, are far within [dt], so every element is
+   exact in an integer type, an unsigned one wrapping as it does in the
+   running sum. *)
+let rec run ~start ~step dt n =
+  if n <= pooled_run then
+    let before = Bigint.(sub (of_int start) (of_int step)) in
+    add (pooled_cumalu (full dt step n) Op.Add) (const (`Int before))
+  else
+    let rec side b = if b <= n / (4 * b) then side (2 * b) else b in
+    let b = side 1 in
+    let a = Helpers.ceildiv n b in
+    let grid = [ Int a; Int b ] in
+    let firsts = reshape (run ~start ~step:(b * step) dt a) [ Int a; Int 1 ] in
+    let offsets = reshape (run ~start:0 ~step dt b) [ Int 1; Int b ] in
+    let rows = add (expand firsts grid) (expand offsets grid) in
+    shrink (reshape rows [ Sint.(Int a * Int b) ]) [ Some (Int 0, Int n) ]
+
 let arange ?(start = 0) ?(step = 1) ?dtype stop =
   if step = 0 then invalid_arg "an arange of step 0";
+  let z = Bigint.of_int in
+  let count = Bigint.(cdiv (sub (z stop) (z start)) (z step)) in
+  if Bigint.(gt count (z longest_arange)) then
+    invalid_argf "an arange [%d, %d) by %d has more than %d elements" start
+      stop step longest_arange;
+  let n = if Bigint.sign count <= 0 then 0 else Bigint.to_int count in
+  (* The bounds of the elements, [start] and the last; an empty arange's are
+     tinygrad's, [start] and [stop - step]. *)
   let lo, hi =
-    if step > 0 then (start, stop - step) else (stop - step, start)
+    let last =
+      if n > 0 then Bigint.add (z start) (Bigint.mul (z (n - 1)) (z step))
+      else Bigint.sub (z stop) (z step)
+    in
+    if step > 0 then (z start, last) else (last, z start)
   in
   let dt =
-    match dtype with
-    | Some dt -> dt
-    | None -> Dtype.commit_int (Bigint.of_int lo) (Bigint.of_int hi)
+    match dtype with Some dt -> dt | None -> Dtype.commit_int lo hi
   in
-  if
-    Value.(`Int (Bigint.of_int lo) < Dtype.min dt)
-    || Value.(Dtype.max dt < `Int (Bigint.of_int hi))
-  then
+  if Value.(`Int lo < Dtype.min dt) || Value.(Dtype.max dt < `Int hi) then
     invalid_argf "arange [%d, %d) is not representable in %s" start stop
       (repr_dtype dt);
-  let n = Helpers.ceildiv (stop - start) step in
-  let full dt c k = expand (const ~dtype:dt (`Int (Bigint.of_int c))) [ Int k ] in
-  if n <= 0 then full dt 0 0
+  if n = 0 then full dt 0 0
   else
+    (* Rows of a float type are laid out in [Int64], which holds the integers
+       exactly, so that each element is rounded once. *)
     let acc =
-      if Dtype.is_float dt then Dtype.least_upper [ dt; Float32 ] else dt
+      if not (Dtype.is_float dt) then dt
+      else if n > pooled_run then Int64
+      else Dtype.least_upper [ dt; Float32 ]
     in
-    cast (add (pooled_cumalu (full acc step n) Op.Add) (int (start - step))) dt
+    cast (run ~start ~step acc n) dt
 
 (* Variables *)
 
