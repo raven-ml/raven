@@ -821,6 +821,18 @@ val failure : unit -> string option
        between cycles and runs fewer of them. The bytes of buffers the minor
        heap holds bring a minor collection once they reach the same
        amount.}
+    {- A dropped buffer of another device holds its memory until a
+       collection frees it, as a host buffer does. Its device's {e room} is
+       the bytes its budget has left. The memory of a {!memory_device}, of a
+       driver's device whose driver declares [host_addresses]
+       ({!Rig_edge.type-facts}), and the [Pinned] and [Mapped] memory of a
+       driver's device brings a cycle as host buffers do, floors included,
+       with the device's {!allocated} bytes standing for the host buffers
+       live; or sooner, once the dropped bytes reach [custom_major_ratio] /
+       150 of the room, so a device nearing its budget collects in time.
+       A device's other memory brings a cycle at that share of the room
+       alone. Either amount is at least a page, and for a buffer of at most
+       [custom_minor_max_size] bytes at least the minor heap's bytes.}
     {- The host keeps collected buffers of 64 KiB or more for reuse. It keeps
        up to 32 MiB of them, and beyond that only while the bytes of its kept
        and live buffers together stay within the peak of its live buffers

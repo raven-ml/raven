@@ -40,6 +40,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- Dropped buffers of memory the host addresses (a memory device's, Metal's,
+  `Pinned`, `Mapped`) bring a major cycle only after half the host's
+  last-level cache (4 MiB at least), as host buffers do, unless their device
+  nears its budget. A small heap ran one every few calls: a data-parallel
+  step over 16 memory devices runs a quarter fewer instructions a call.
 - A Metal launch of exactly 4,096 bytes of parameters takes them from the
   parameter arena instead of `setBytes`, which Apple documents for data
   smaller than 4 KB. A parameter arena Metal places off 256 bytes now

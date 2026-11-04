@@ -165,24 +165,44 @@ static struct custom_operations token_ops = {
    links at any distance from the executable. */
 CAMLextern _Atomic uintnat caml_custom_minor_max_bsz;
 
+/* Half the host's last-level cache, which [caml_rig_heap_init] reads once
+   ([program_bound]). */
+static size_t heap_cycle_floor;
+
+/* The memory a major cycle is due after for the program's own memory, with
+   [live] bytes of it held in buffers: [caml_custom_get_max_major], the major
+   heap's bytes over 150 times the ratio, plus the same share of [live], and
+   at least [heap_cycle_floor] ("Pacing the collector" below). */
+static mlsize_t program_bound(mlsize_t live) {
+  uintnat ratio =
+      atomic_load_explicit(&caml_custom_major_ratio, memory_order_relaxed);
+  mlsize_t share = caml_custom_get_max_major() + live / 150 * ratio;
+  return share > heap_cycle_floor ? share : heap_cycle_floor;
+}
+
 /* The memory a major cycle is due after, for a token of [mem] bytes of a
    device with [room] bytes left in its budget: the share of the room the
    collector applies to its heap, so that the garbage floating in the
    device's memory stays a share of what the device could still allocate.
    Memory the host shares, of which [live] bytes are allocated ([live] < 0
-   otherwise), is the program's own: there the share is at most that of the
-   heap and those bytes, as for host buffers, since a share of a large room
-   could leave gigabytes of garbage in the host's memory. It is at least a
-   page, since a bound of 0 would mean the heap's, and at least the minor
-   heap's bytes for a token the minor heap may hold, whose memory paces minor
-   collections too: a nearly full device would otherwise run them once per few
-   small buffers. */
+   otherwise), is the program's own: there the bound is the program's
+   ([program_bound]) where the room's share is more, since a share of a
+   large room could leave gigabytes of garbage in the host's memory. Its
+   floor matters for a small heap: on fudge, a data-parallel step over 16
+   memory devices, which drops their results each call, ran a major cycle
+   every three to six calls without it and 31% more instructions a call. It
+   is at least a page, since a bound of 0 would mean the heap's, and at least
+   the minor heap's bytes for a token the minor heap may hold, whose memory
+   paces minor collections too: a device nearly full would otherwise run
+   them once per few small buffers. Host buffers take none ([heap_bigarray]):
+   their bound never shrinks with a room, and the minor heap's would only
+   loosen it. */
 static mlsize_t pace(mlsize_t mem, mlsize_t room, intnat live) {
   uintnat ratio =
       atomic_load_explicit(&caml_custom_major_ratio, memory_order_relaxed);
   mlsize_t max = room / 150 * ratio;
   if (live >= 0) {
-    mlsize_t program = caml_custom_get_max_major() + (mlsize_t)live / 150 * ratio;
+    mlsize_t program = program_bound((mlsize_t)live);
     if (program < max) max = program;
   }
   mlsize_t floor = (mlsize_t)rig_page_bytes();
@@ -490,9 +510,6 @@ value caml_rig_let_go_count(value unit) {
   return Val_long(atomic_load(&let_go_count));
 }
 
-/* Half the host's last-level cache, which [caml_rig_heap_init] reads once. */
-static size_t heap_cycle_floor;
-
 /* The bytes of the host's last-level cache for pacing, at least
    HEAP_LLC_LEAST. 8 MiB is below the last level of every host rig is tested
    on, and stands for the hosts that report none and for those that report
@@ -575,17 +592,11 @@ value caml_rig_host_cache_bytes(value v_unit) {
   return Val_long((intnat)host_cache_bytes());
 }
 
-/* The memory a major cycle is due after: [caml_custom_get_max_major], the
-   major heap's bytes over 150 times the ratio, plus the same share of the
-   bytes buffers hold live, and at least [heap_cycle_floor]. */
+/* The memory a major cycle is due after for host buffers: the program's
+   bound over the bytes buffers hold live. */
 static mlsize_t heap_cycle_bytes(void) {
-  mlsize_t live =
-      (mlsize_t)atomic_load_explicit(&heap_live, memory_order_relaxed);
-  mlsize_t share =
-      caml_custom_get_max_major() +
-      live / 150 *
-          atomic_load_explicit(&caml_custom_major_ratio, memory_order_relaxed);
-  return share > heap_cycle_floor ? share : heap_cycle_floor;
+  return program_bound(
+      (mlsize_t)atomic_load_explicit(&heap_live, memory_order_relaxed));
 }
 
 /* Reusing freed buffers

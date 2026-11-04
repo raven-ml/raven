@@ -934,12 +934,13 @@ let test_paced () =
   ignore (Sys.opaque_identity heap);
   equal int 0 (forced () - before)
 
-(* Major cycles per dropped host buffer of a MiB, over [k] of them. *)
-let cycles_per_mib k =
+(* Major cycles per dropped buffer of a MiB on [d], the host by default,
+   over [k] of them. *)
+let cycles_per_mib ?(d = Rig.host) k =
   Gc.full_major ();
   let before = (Gc.quick_stat ()).major_collections in
   for _ = 1 to k do
-    ignore (Sys.opaque_identity (B.create Rig.host (kib * kib)))
+    ignore (Sys.opaque_identity (B.create d (kib * kib)))
   done;
   Float.of_int ((Gc.quick_stat ()).major_collections - before) /. Float.of_int k
 
@@ -952,6 +953,46 @@ let margin = 1.5
 let test_paced_host () =
   let rate = cycles_per_mib 256 in
   at_most ~msg:"cycles per MiB" float_exact ~than:(margin /. 4.) rate
+
+(* A memory device's memory is the host's: with a budget that leaves it
+   room, its dropped buffers bring a major cycle at most once per half the
+   host's last-level cache or 4 MiB, whichever is more, as host buffers do,
+   whatever [custom_major_ratio] says of the heap. At a ratio of 1, the
+   heap's and the device's share would bring a cycle per buffer. *)
+let test_paced_memory_device () =
+  let d = Result.get_ok (Rig.memory_device "memory:paced-floor") in
+  let cache = Option.value (Rig.cache_bytes Rig.host) ~default:0 in
+  let floor = Int.max (cache / 2) (4 * kib * kib) in
+  let was = (Gc.get ()).custom_major_ratio in
+  Gc.set { (Gc.get ()) with custom_major_ratio = 1 };
+  let rate =
+    Fun.protect
+      ~finally:(fun () ->
+        Gc.set { (Gc.get ()) with custom_major_ratio = was })
+      (fun () -> cycles_per_mib ~d 256)
+  in
+  at_most ~msg:"cycles per MiB" float_exact
+    ~than:(margin *. Float.of_int (kib * kib) /. Float.of_int floor)
+    rate
+
+(* A memory device nearing its budget still collects in time: dropped
+   buffers of 20 budgets of 4 MiB, a budget no larger than the floor of host
+   memory's pace, never force a collection. One uncounted run takes a fresh
+   heap's start, as in [test_paced]. *)
+let test_paced_memory_budget () =
+  let budget = 4 * kib * kib in
+  let d = Result.get_ok (Rig.memory_device "memory:paced-budget") in
+  Rig.set_budget d budget;
+  let run () =
+    for _ = 1 to 20 * 16 do
+      ignore (Sys.opaque_identity (B.create d (budget / 16)))
+    done
+  in
+  run ();
+  let forced () = (Gc.quick_stat ()).forced_major_collections in
+  let before = forced () in
+  run ();
+  equal int 0 (forced () - before)
 
 (* Small dropped host buffers that reach the major heap pace cycles as large
    ones do: at most once per 4 MiB, whatever [custom_major_ratio] says of the
@@ -1586,6 +1627,13 @@ let tests =
           "at a small heap, dropped host buffers bring a cycle per 4 MiB at \
            most"
           test_paced_host;
+        test
+          "a memory device's dropped buffers bring a cycle per half the \
+           last-level cache at most"
+          test_paced_memory_device;
+        test "a memory device's dropped buffers of many budgets never force a \
+              collection"
+          test_paced_memory_budget;
         test "small dropped host buffers bring a cycle per 4 MiB at most"
           test_paced_host_small;
         test "a larger minor heap leaves the major pace as it was"
