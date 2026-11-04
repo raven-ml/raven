@@ -19,7 +19,7 @@
 
     {b Checks and reads.} {!v} and {!of_lengths} state their invariant as a
     check ({!Nx.check}), which raises at the call on the host and at the next
-    wait on the set elsewhere. {!take}, {!concat}, {!ids} and {!rank} read on
+    wait on the set elsewhere. {!take}, {!concat}, {!unique} and {!rank} read on
     the host the lengths that are data and size their work, and {!to_strings}
     reads the bytes it returns; each states its reads as a cost. A read waits
     for the set, and of a traced value raises [Invalid_argument] naming the
@@ -140,24 +140,25 @@ val quantile : float array -> (float, 's, 'd) t -> (float, 's, 'd) Nx.t
     Raises [Invalid_argument] if a probability is outside \[[0], [1]\] or NaN.
 *)
 
-val ids : ('v, 's, 'd) t -> 'd Nx.int64_t
-(** [ids r] numbers the rows of [r] in order of first appearance: equal rows
-    have one id, and the first row of each new value takes the next. Ids are
-    relative to [r]: the ids of two ragged arrays compare only when computed
-    over their {!concat}.
+val unique : ?size:int -> ('v, 's, 'd) t -> 'd Nx.groups
+(** [unique r] groups the equal rows of [r] as {!Nx.unique} groups keys,
+    numbered in order of first appearance, with each group's first row and
+    number of rows. With [size], [first] and [counts] have [size] entries, as
+    {!Nx.unique}'s do. Ids are relative to [r]: the ids of two ragged arrays
+    compare only when computed over their {!concat}.
+    [(unique ~size:0 r).ids] numbers the rows alone.
 
     Cost: rows are told apart by their elements' keys ({!Nx.order_key}, the
-    narrowest as wide as the element) packed into 64-bit words. Where every
-    row holds at most 7 bytes of keys, a row is one word, its length folded
-    in where lengths differ, and one unsized {!Nx.unique} of the words
-    numbers the rows, with its reads. Otherwise a row is its length, where
-    lengths differ, and its words, in rounds of up to 64 bytes of keys: each
-    round numbers its rows' words with a sized {!Nx.unique}, and a row goes on
-    to the next while it has keys left and its group so far holds another
-    row. One read of the longest and shortest rows comes first, and one of the
-    rows left after each round but the last.
+    narrowest as wide as the element) packed into 64-bit words, in rounds of
+    up to 64 bytes of keys. One round that covers every row is one
+    {!Nx.unique} with [size]. Otherwise each round numbers its rows with a
+    sized {!Nx.unique}, and a row goes on while it has keys left and its
+    group so far holds another row. Reads: the longest and shortest rows
+    first, the rows left after each round that a row outlasts, and without
+    [size] the number of groups.
 
-    Raises [Invalid_argument] if [r]'s values are complex. *)
+    Raises [Invalid_argument] if [size] is negative or [r]'s values are
+    complex. *)
 
 val rank : ('v, 's, 'd) t -> 'd Nx.int64_t
 (** [rank r] is the dense rank of each row of [r]: the number of distinct rows
@@ -170,6 +171,6 @@ val rank : ('v, 's, 'd) t -> 'd Nx.int64_t
     columns, one sort per column: their class, their next keys in up to eight
     words, and how many keys each holds in the round. One read of the rows'
     lengths comes before the rounds, and one of the rows left after each round
-    but the last.
+    that a row outlasts.
 
     Raises [Invalid_argument] if [r]'s values are complex. *)

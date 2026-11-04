@@ -16,10 +16,10 @@
       [Nx.order_key uint64] of its value, a float with [-0.] made [0.] first, so
       that every NaN is one word, the greatest;
     - for a compound value (text, a byte string, a tensor, a record, a list):
-      the code of its row of element words, [Nx_ragged.ids] of the rows for
-      identity and [Nx_ragged.rank] for order. Text's elements are its bytes; a
-      tensor's are its elements' words, row-major; a record's are each field's
-      null flag and value word; a list's, each element's;
+      the code of its row of element words, [Nx_ragged.unique]'s ids of the
+      rows for identity and [Nx_ragged.rank] for order. Text's elements are its
+      bytes; a tensor's are its elements' words, row-major; a record's are each
+      field's null flag and value word; a list's, each element's;
     - for an extension: its storage's.
 
     A key of [k] columns therefore has at most [2k] words: a null flag word for
@@ -50,7 +50,8 @@ val identity : Column.t list -> Nx.host Nx.uint64_t
 val groups : Column.t list -> Nx.host Nx.groups
 (** [groups cs] is [Nx.unique (identity cs)]: the rows of [cs] grouped by their
     keys, numbered in order of first appearance. A single compound column
-    without a null is grouped once, its code being those numbers already.
+    without a null is grouped as its rows of element words are, by
+    [Nx_ragged.unique], in one numbering.
 
     Raises [Invalid_argument] if [cs] is empty. *)
 

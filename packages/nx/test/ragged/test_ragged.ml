@@ -689,6 +689,29 @@ let model_ranks compare rows =
       Int64.of_int (index 0 distinct))
     rows
 
+(* [same_groups ids r] checks that [Nx_ragged.unique ~size r] groups the rows
+   of [r] as [Nx.unique ~size] groups their [ids], numbered in order of first
+   appearance: unsized, and sized to no group, to all but one, to all, and to
+   two more. *)
+let same_groups ids r =
+  let k = Array.fold_left (fun k i -> Int.max k (Int64.to_int i + 1)) 0 ids in
+  List.iter
+    (fun size ->
+      let at =
+        match size with None -> "unsized" | Some l -> Printf.sprintf "size %d" l
+      in
+      let want : Nx.host Nx.groups = Nx.unique ?size (int64s ids) in
+      let got : Nx.host Nx.groups = Nx_ragged.unique ?size r in
+      let field name f =
+        equal ~msg:(at ^ ", " ^ name) (array int64) (Nx.to_array (f want))
+          (Nx.to_array (f got))
+      in
+      field "ids" (fun g -> g.ids);
+      field "first" (fun g -> g.first);
+      field "counts" (fun g -> g.counts);
+      field "count" (fun g -> Nx.reshape [| 1 |] g.count))
+    [ None; Some 0; Some (Int.max 0 (k - 1)); Some k; Some (k + 2) ]
+
 let model_ids compare rows =
   let seen = ref [] in
   Array.map
@@ -843,25 +866,25 @@ let identifying (E e) =
   in
   (* The rows and their ragged array, and all but the first row through
      [sub]. *)
-  let both f model ((_, rows, _) as d) =
+  let both check ((_, rows, _) as d) =
     covered d;
     let r = ragged_of e.dtype d in
-    equal (array int64) (model e.compare rows) (Nx.to_array (f r));
+    check rows r;
     let n = Array.length rows in
     if n > 0 then
-      equal ~msg:"all but the first row" (array int64)
-        (model e.compare (Array.sub rows 1 (n - 1)))
-        (Nx.to_array (f (Nx_ragged.sub r ~offset:1 ~length:(n - 1))))
+      check (Array.sub rows 1 (n - 1)) (Nx_ragged.sub r ~offset:1 ~length:(n - 1))
   in
   [
     prop
-      (name ^ " rows' ids number them in order of first appearance")
+      (name ^ " equal rows group as their ids, in order of first appearance")
       drawn
-      (both Nx_ragged.ids model_ids);
+      (both (fun rows r -> same_groups (model_ids e.compare rows) r));
     prop
       (name ^ " rows' ranks are dense in the sort order, a prefix first")
       drawn
-      (both Nx_ragged.rank model_ranks);
+      (both (fun rows r ->
+           equal (array int64) (model_ranks e.compare rows)
+             (Nx.to_array (Nx_ragged.rank r))));
   ]
 
 (* Texts packed into words, drawn three ways over bytes that hold NUL and
@@ -925,7 +948,7 @@ let first_appearance (type a) (xs : a array) =
     xs
 
 let text_ids =
-  prop "texts' ids number them in order of first appearance, as their ranks"
+  prop "texts group in order of first appearance, numbered as their ranks"
     packed_texts (fun ss ->
       let has p = Array.exists p ss in
       let lengths p = has (fun s -> p (String.length s)) in
@@ -973,11 +996,10 @@ let text_ids =
       cover "rows split past 64 bytes" (split 64);
       cover "rows split in the third round" (split 128);
       let r = Nx_ragged.of_strings ss in
-      let ids = Nx.to_array (Nx_ragged.ids r) in
-      equal (array int64) (first_appearance ss) ids;
+      same_groups (first_appearance ss) r;
       equal ~msg:"ranks numbered in order of first appearance" (array int64)
         (first_appearance (Nx.to_array (Nx_ragged.rank r)))
-        ids)
+        (first_appearance ss))
 
 (* NaNs of each payload and sign, as order keys make them one key. *)
 let nan_ids =
@@ -1011,11 +1033,10 @@ let nan_ids =
                 (List.map (fun r -> Int64.of_int (List.length r)) rows)))
           (Nx.concatenate ~axis:0 (List.concat rows))
       in
-      equal (array int64) [| 0L; 0L; 1L; 1L; 2L; 2L; 3L |]
-        (Nx.to_array (Nx_ragged.ids r)))
+      same_groups [| 0L; 0L; 1L; 1L; 2L; 2L; 3L |] r)
 
 let identities =
-  group "ids and rank"
+  group "unique and rank"
     (List.concat_map identifying elements
     @ [
         text_ids;
@@ -1027,17 +1048,20 @@ let identities =
                 (Nx.create Nx.int32 [| 5; 2 |]
                    [| 1l; 2l; 1l; 3l; 1l; 2l; 0l; 0l; 1l; 2l |])
             in
-            equal (array int64) [| 0L; 1L; 2L; 0L |]
-              (Nx.to_array (Nx_ragged.ids r));
+            same_groups [| 0L; 1L; 2L; 0L |] r;
             equal (array int64) [| 0L; 2L; 1L; 0L |]
               (Nx.to_array (Nx_ragged.rank r)));
-        test "ids and rank refuse complex values" (fun () ->
+        test "unique and rank refuse complex values" (fun () ->
             let r =
               Nx_ragged.of_lengths (int64s [| 1L |])
                 (Nx.zeros Nx.complex64 [| 1 |])
             in
-            invalid ~by:"Nx_ragged.ids" (fun () -> Nx_ragged.ids r);
+            invalid ~by:"Nx_ragged.unique" (fun () -> Nx_ragged.unique r);
             invalid ~by:"Nx_ragged.rank" (fun () -> Nx_ragged.rank r));
+        test "unique refuses a negative size" (fun () ->
+            let r = Nx_ragged.of_strings [| "a" |] in
+            invalid ~by:"Nx_ragged.unique" (fun () ->
+                Nx_ragged.unique ~size:(-1) r));
       ])
 
 (* Sets *)
@@ -1067,8 +1091,15 @@ let sets =
           lies_on_set rank;
           equal ~msg:"rank" (array int64) [| 2L; 1L; 0L; 2L |]
             (Nx.to_array rank);
+          let g = Nx_ragged.unique r in
+          lies_on_set g.ids;
+          lies_on_set g.first;
           equal ~msg:"ids" (array int64) [| 0L; 1L; 2L; 0L |]
-            (Nx.to_array (Nx_ragged.ids r)));
+            (Nx.to_array g.ids);
+          equal ~msg:"first" (array int64) [| 0L; 1L; 2L |]
+            (Nx.to_array g.first);
+          equal ~msg:"counts" (array int64) [| 2L; 1L; 1L |]
+            (Nx.to_array g.counts));
       test "a failed check on a set raises at the set's next wait" (fun () ->
           let offsets = on_set (int64s [| 0L; 2L; 1L |]) in
           let r = Nx_ragged.v ~offsets (on_set (Nx.zeros Nx.int32 [| 3 |])) in
@@ -1120,9 +1151,9 @@ let reads =
       ( "Nx_ragged.to_strings",
         fun { trace } -> ignore (Nx_ragged.to_strings (Nx_ragged.map trace r))
       );
-      ( "Nx_ragged.ids",
+      ( "Nx_ragged.unique",
         fun { trace } ->
-          ignore (Nx_ragged.ids (Nx_ragged.v ~offsets:(trace o) values)) );
+          ignore (Nx_ragged.unique (Nx_ragged.v ~offsets:(trace o) values)) );
       ( "Nx_ragged.rank",
         fun { trace } ->
           ignore (Nx_ragged.rank (Nx_ragged.v ~offsets:(trace o) values)) );

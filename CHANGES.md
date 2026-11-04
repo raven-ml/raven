@@ -2290,6 +2290,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** `Nx_ragged.unique` groups equal rows as `Nx.unique` groups
+  keys, each group's first row and count with its ids, and replaces
+  `Nx_ragged.ids`, which is `(Nx_ragged.unique ~size:0 r).ids`.
 - `Nx.reduce_segments` and `Nx.scatter` of floats and narrow floats by
   `Max` or `Min` into few targets fold each thread's share of the updates
   into targets of its own, as integers' do, in place of sorting them by
@@ -3773,6 +3776,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- A group-by on one text, tensor, list or record column without nulls
+  takes its groups from `Nx_ragged.unique`, in place of two segment
+  scatters over its ids: H2O group-by q01 at 1e6 rows takes 111
+  instructions a row where it took 148.
 - Reading text from Parquet, and `Column.of_layout` on text, check the
   offsets once, through the ragged array they make, and the UTF-8 of all
   rows at once when their bytes are ASCII: decision-support query 19 at scale

@@ -488,21 +488,54 @@ let rank r =
    in their group and have keys left go on to the next round, keyed by their
    group's first row in place of their length: each row's code is the first
    row of its group so far, so a group is numbered by its first row and the
-   codes rank groups by first appearance. *)
+   codes rank groups by first appearance. Where one numbering tells every row
+   apart, it gives the groups. *)
 let round_words = 8
 
-let ids r =
+(* The groups of the rows [rows] by their [code], the first row of each row's
+   group: a group opens at the row whose code is itself, and the groups
+   opened up to a row number it. The openings' positions are the groups'
+   first rows and a segment sum of ones their counts, of the number of
+   groups read without [size]; [size] 0 asks for the ids alone, which skips
+   both. [Nx.unique] of the codes gives the same groups, at 12% more
+   instructions where every row is its own group. *)
+let opened ?size rows code =
+  let opens = Nx.equal code rows in
+  let rank = Nx.sub_s (Nx.cumsum (Nx.cast Nx.int64 opens)) 1L in
+  let count = Nx.add_s (Nx.reshape [||] (last rank)) 1L in
+  let ids = Nx.take code rank in
+  match size with
+  | Some 0 ->
+      let none = Nx.zeros_at (Nx.beside ids) Nx.int64 [| 0 |] in
+      { Nx.ids; first = none; counts = none; count }
+  | _ ->
+      let k =
+        match size with
+        | Some k -> k
+        | None -> Int64.to_int (ints "unique" [ count ]).(0)
+      in
+      {
+        Nx.ids;
+        first = Nx.positions ~size:k opens;
+        counts = Nx.reduce_segments Add ~segments:k ids (Nx.ones_like ids);
+        count;
+      }
+
+let unique ?size r =
+  (match size with
+  | Some k when k < 0 -> err "unique" "size %d, not at least 0" k
+  | _ -> ());
   let n = length r in
   let values, offsets = elements r in
-  let (P keys) = keys "ids" values in
+  let (P keys) = keys "unique" values in
   let dt = Nx.dtype keys in
   let w = Nx.Dtype.bits dt / 8 in
   let q = 8 / w in
   let start = starts offsets and len = lengths { offsets; values } in
   let here = Nx.beside len in
-  if n = 0 then Nx.zeros_at here Nx.int64 [| 0 |]
+  if n = 0 then Nx.unique ?size (Nx.zeros_at here Nx.uint64 [| 0 |])
   else
-    let read = ints "ids" [ Nx.max len; Nx.min len ] in
+    let read = ints "unique" [ Nx.max len; Nx.min len ] in
     let longest = Int64.to_int read.(0) and shortest = Int64.to_int read.(1) in
     (* Every window of a round from an element of a row lies in [keys]. *)
     let keys = Nx.pad [| (0, round_words * q) |] (Nx.Dtype.zero dt) keys in
@@ -544,7 +577,7 @@ let ids r =
         Nx.reshape [| n |]
           (words ~at:start ~rem:len ~least:shortest ~most:longest 1)
       in
-      if shortest = longest then (Nx.unique ~size:0 word).ids
+      if shortest = longest then Nx.unique ?size word
       else
         (* Row [c] of [tags] is the word whose last key is [c]. *)
         let k = arange q in
@@ -556,7 +589,7 @@ let ids r =
             (Nx.zeros_at here dt [| q; q |])
         in
         let tag = Nx.take ~axis:0 len (packed tags) in
-        (Nx.unique ~size:0 (Nx.bitwise_or word (Nx.reshape [| n |] tag))).ids
+        Nx.unique ?size (Nx.bitwise_or word (Nx.reshape [| n |] tag))
     else
       (* The key of the rows [active] from their key [seen] on: [head], if
          any, then as many words as the [longest] row left needs, up to
@@ -582,7 +615,7 @@ let ids r =
         let _, _, key =
           key ~seen:0 ~active:rows ~longest ~least:shortest first_head
         in
-        (Nx.unique ~size:0 key).ids
+        Nx.unique ?size key
       else
         let rec round ~seen ~active ~longest ~least code =
           let m = Nx.dim 0 active in
@@ -602,7 +635,7 @@ let ids r =
             in
             let read =
               let kept fill = Nx.where keep left (Nx.full_like left fill) in
-              ints "ids"
+              ints "unique"
                 [ Nx.count keep; Nx.max (kept 0L); Nx.min (kept Int64.max_int) ]
             in
             let m = Int64.to_int read.(0) in
@@ -614,8 +647,5 @@ let ids r =
                 ~least:(Int64.to_int read.(2))
                 code
         in
-        (* A row opens its group where its code is itself, and the groups
-           opened up to a row rank it. *)
-        let code = round ~seen:0 ~active:rows ~longest ~least:shortest rows in
-        let opens = Nx.cast Nx.int64 (Nx.equal code rows) in
-        Nx.take code (Nx.sub_s (Nx.cumsum opens) 1L)
+        opened ?size rows
+          (round ~seen:0 ~active:rows ~longest ~least:shortest rows)

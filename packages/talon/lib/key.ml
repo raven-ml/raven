@@ -22,31 +22,31 @@ let element : type a b. (a, b, Nx.host) Nx.t -> Nx.host Nx.uint64_t =
   | _, Complex128 -> parts (Nx.real Nx.float64 x) (Nx.imag Nx.float64 x)
   | _ -> Nx.order_key Nx.uint64 x
 
-(* [code use r] numbers the rows of [r] by their elements. *)
+(* Rows of elements of any dtype. *)
+type rows = Rows : ('v, 's, Nx.host) Nx_ragged.t -> rows
+
+(* [code use r] numbers the rows of [r] by their elements. Codes are at least
+   [0], so their bits are their words. *)
 let code use r =
   let code =
-    match use with Identity -> Nx_ragged.ids r | Order -> Nx_ragged.rank r
+    match use with
+    | Identity -> (Nx_ragged.unique ~size:0 r).ids
+    | Order -> Nx_ragged.rank r
   in
-  Nx.cast Nx.uint64 code
+  Nx.bitcast Nx.uint64 code
 
-(* [rows use x] is the code of each row of the [[n; w]] words [x]. *)
-let rows use x =
-  let offsets = Nx.arange Nx.int64 0 (Nx.dim 0 x + 1) 1 in
-  code use (Nx_ragged.v ~offsets x)
+(* [matrix x] is the [[n; w]] words [x] as [n] rows. *)
+let matrix x =
+  Nx_ragged.v ~offsets:(Nx.arange Nx.int64 0 (Nx.dim 0 x + 1) 1) x
 
 let rec value use c =
   let word =
     match Column.data c with
     | Fixed (P x) when Nx.ndim x = 1 -> element x
-    | Fixed (P x) -> rows use (Nx.flatten ~start_dim:1 (element x))
-    | Bytes r -> code use r
-    | List { offsets; child } ->
-        let words =
-          match words use child with [ w ] -> w | ws -> Nx.stack ~axis:1 ws
-        in
-        code use (Nx_ragged.v ~offsets words)
     | Fields [] -> Nx.zeros Nx.uint64 [| Column.length c |]
-    | Fields cs -> rows use (Nx.stack ~axis:1 (List.concat_map (words use) cs))
+    | _ ->
+        let (Rows r) = rows use c in
+        code use r
   in
   (* The values under a null are any: its word is 0, or for [Identity] the
      word of a fixed value's zero, which keeps the words of a column of small
@@ -61,6 +61,20 @@ let rec value use c =
   match Column.validity c with
   | None -> word
   | Some v -> Nx.where (Nx.cast Nx.bool v) word (zero ())
+
+(* [rows use c] is the rows of elements that code the values of [c], a
+   compound column: a tensor, text, a list or a record of a field or more. *)
+and rows use c =
+  match Column.data c with
+  | Fixed (P x) -> Rows (matrix (Nx.flatten ~start_dim:1 (element x)))
+  | Bytes r -> Rows r
+  | List { offsets; child } ->
+      let words =
+        match words use child with [ w ] -> w | ws -> Nx.stack ~axis:1 ws
+      in
+      Rows (Nx_ragged.v ~offsets words)
+  | Fields cs ->
+      Rows (matrix (Nx.stack ~axis:1 (List.concat_map (words use) cs)))
 
 (* [words use c] is [c]'s null flag, if it has a validity, and its value
    word. *)
@@ -77,22 +91,17 @@ let identity = function
       | [ w ] -> Nx.reshape [| Nx.dim 0 w; 1 |] w
       | ws -> Nx.stack ~axis:1 ws)
 
-(* [of_ids ids] is the groups that [ids], numbered in order of first appearance
-   from 0, give their rows: each group's first row is the least of its rows. *)
-let of_ids ids : Nx.host Nx.groups =
-  let n = Nx.dim 0 ids in
-  let k = if n = 0 then 0 else Int64.to_int (Nx.item [] (Nx.max ids)) + 1 in
-  let first =
-    Nx.reduce_segments Nx.Min ~segments:k ids (Nx.arange Nx.int64 0 n 1)
-  and counts = Nx.reduce_segments Nx.Add ~segments:k ids (Nx.ones_like ids) in
-  { ids; first; counts; count = Nx.scalar Nx.int64 (Int64.of_int k) }
-
+(* A single compound column without a null is grouped by its rows, which
+   gives the groups with their numbering. *)
 let groups cs =
   match cs with
   | [ c ] when Column.known_zero c -> (
       match Column.data c with
       | Fixed (P x) when Nx.ndim x = 1 -> Nx.unique (identity cs)
-      | _ -> of_ids (Nx.bitcast Nx.int64 (value Identity c)))
+      | Fields [] -> Nx.unique (identity cs)
+      | _ ->
+          let (Rows r) = rows Identity c in
+          Nx_ragged.unique r)
   | _ -> Nx.unique (identity cs)
 
 let order = function

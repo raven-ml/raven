@@ -1588,6 +1588,9 @@ let floats () =
     (Nx.ones D.Int64 [| 1_000_000 |])
     (Nx.create D.Float64 [| 1_000_000 |] v)
 
+(* The rows' numbers alone, as a key's code is. *)
+let ids r = (Nx_ragged.unique ~size:0 r).ids
+
 let ragged_rows =
   Thumper.group "ragged"
     [
@@ -1597,15 +1600,17 @@ let ragged_rows =
         ~setup:(texts 1024 512 1536) take_texts;
       Thumper.bench_with_setup "ids-text-64K-of-4-to-20B"
         ~setup:(texts 65536 4 20)
-        (fun (_, r) -> Nx_ragged.ids r);
+        (fun (_, r) -> ids r);
       Thumper.bench_with_setup "ids-text-1M-of-5B-100-values"
         ~setup:(codes (Printf.sprintf "id%03d") 100)
-        Nx_ragged.ids;
+        ids;
+      Thumper.bench_with_setup "groups-text-1M-of-5B-100-values"
+        ~setup:(codes (Printf.sprintf "id%03d") 100)
+        (fun r -> Nx_ragged.unique r);
       Thumper.bench_with_setup "ids-text-1M-of-12B-10K-values"
         ~setup:(codes (Printf.sprintf "id%010d") 10_000)
-        Nx_ragged.ids;
-      Thumper.bench_with_setup "ids-f64-1M-rows-of-1" ~setup:floats
-        Nx_ragged.ids;
+        ids;
+      Thumper.bench_with_setup "ids-f64-1M-rows-of-1" ~setup:floats ids;
     ]
 
 (* Nx.attention as a model calls it: a causal prefill of 8 heads of 1024
