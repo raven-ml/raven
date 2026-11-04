@@ -4539,7 +4539,9 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   `Rangeify.stage_reads`, `Rangeify.reduced`, `Rangeify.stage_copies` and
   `Rangeify.stage_bounds` (the copies of each stage);
   `Rangeify.inline_budget` and `Rangeify.copied`;
-  `Rangeify.inlined`; `copies` in `Rangeify.remove_bufferize`;
+  `Rangeify.inlined`; `copies` and `computes` in
+  `Rangeify.remove_bufferize`; `Rangeify.destination`, which
+  `Rangeify.pm_remove_bufferize` applies to a store's destination;
   `Rangeify.pm_cleanups` and `Rangeify.get_kernel_graph`, which counts the
   reads before the cleanups; across kernels, `Rangeify.store_shared`,
   `Rangeify.candidates`, `Rangeify.kept`, `Rangeify.computed_nodes`,
@@ -4562,6 +4564,21 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   arithmetic runs. `e` and `t` leave out the axes the value does not vary
   along, whose index the inlining substitutes into nothing, and take a
   symbolic size at its largest.
+
+  A view of storage, a read whose index computes only positions, is
+  inlined at any count, as tinygrad inlines it: stored, it would copy
+  storage its readers load in place, saving no work. Positions are weak
+  integers and their comparisons, on no device. An elementwise operation, a
+  reduction or custom code on a device, as a position loaded from storage,
+  or of another type computes; so does any value that is not a read, a
+  mask of positions included, and each is weighed as above. A stage a store
+  writes through is inlined whatever it costs, past the budget and past
+  tinygrad's own checks too (more than three buffers, a reduction reading
+  one): kept, it would take the stores, and the storage would hold what it
+  held. A user's materialisation is kept, and written as asked.
+  47 stores of one state into the rows of a `[2; 47; 9]` buffer read its
+  view at 47 indices, 8 copied nodes 46 times past the first, 368 in all,
+  and wrote a copy of it.
 
   A read's copies leave out the reuse of a dropped digit. An output range of
   constant size that each component of the index reading it reads through
@@ -4817,8 +4834,14 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   it does not vary along`, `› a read counts at most the trips of its
   reductions`, `› a value reduced through padding counts the padding's
   trips`, `› a value inlined into a windowed stage counts in its copies`, `›
-  a value broadcast through a reshape is inlined` and `› a value read
-  through padding is inlined`; `work bound › a stage is stored when its
+  a value broadcast through a reshape is inlined`, `› a value read
+  through padding is inlined`, `› a view of storage read past the budget
+  is inlined`, `› a gather at loaded positions read past the budget is
+  stored`, `› a mask of positions read past the budget is stored` and `›
+  stores through a stage of their destination write the destination`; the
+  Launch suite's `launches › on the host, the stores of one
+  state write each piece's values` and `› on CUDA, the stores of one state
+  write each piece's values`, up to 160 stores; `work bound › a stage is stored when its
   copies beyond the first pass the budget`, over values read once, twice, in
   windows and by routed rows; the `dropped digits` group: `a dropped digit's
   reuse is no copy`, over quotients, remainders, a middle digit and a chain

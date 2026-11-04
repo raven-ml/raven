@@ -256,6 +256,26 @@ let writes_as_apart name p =
     (written name big (apart linear, vars))
     (written name big (linear, vars))
 
+(* The bits a program of elementwise integer pieces leaves in its buffer: each
+   piece's rows hold [3 x + 1] of its buffer [x], whose element [j] is
+   [element dt j]. *)
+let assembled p =
+  List.concat_map
+    (fun q ->
+      List.init (q.rows * p.width) (fun j ->
+          match element p.dtype j with
+          | `Int x -> string_of_int ((3 * Bigint.to_int x) + 1)
+          | _ -> invalid_arg "assembled: an integer program"))
+    p.pieces
+
+(* However many stores of one state a program makes, its buffer holds what
+   each stored. *)
+let writes_pieces name p =
+  cover "past a hundred pieces" (List.length p.pieces > 100);
+  let big = sink name p in
+  equal (list string) ~msg:(Format.asprintf "%a" pp_program p) (assembled p)
+    (written name big (Schedule.create_linear_with_vars big))
+
 (* Generators *)
 
 let dtypes =
@@ -308,6 +328,27 @@ let gen_program =
                                    [ (1, constant 1); (2, constant 64) ])
                                 bool)
                              (pair bool bool))))))))
+
+(* Up to 160 elementwise pieces of [int32] rows. *)
+let gen_many =
+  Gen.(
+    map
+      (fun ((n, rows), (width, fill)) ->
+        {
+          dtype = Int32;
+          width;
+          pieces = List.init n (fun _ -> { kind = Elementwise; rows; k = 1 });
+          fill;
+          later = false;
+          bound = false;
+        })
+      (pair
+         (pair
+            (frequency [ (1, int_range 1 8); (3, int_range 101 160) ])
+            (int_range 1 2))
+         (pair
+            (one_of [ constant 1; constant 9; constant 64 ])
+            bool)))
 
 (* Cases *)
 
@@ -486,5 +527,11 @@ let () =
             "on CUDA, the stores of one state run as one launch and write what \
              their kernels apart write"
             gen_program (writes_as_apart "CUDA");
+          prop ~count:12
+            "on the host, the stores of one state write each piece's values"
+            gen_many (writes_pieces "CPU");
+          prop ~count:12
+            "on CUDA, the stores of one state write each piece's values"
+            gen_many (writes_pieces "CUDA");
         ];
     ]

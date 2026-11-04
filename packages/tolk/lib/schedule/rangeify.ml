@@ -521,7 +521,22 @@ let remove_bufferize ~reads src buf idx =
        copies beyond the first exceed the budget stays stored, so that an
        inlining adds at most the budget to the work of its readers, and to
        their code, which each copy at a distinct index adds to and a trip does
-       not; the kernels of a program then grow at most linearly in it. *)
+       not; the kernels of a program then grow at most linearly in it. A view
+       of storage, a read whose index computes only positions, is loaded where
+       it is read however many copies its reads make: stored, it would be a
+       copy of storage its readers can load in place. Positions are weak
+       integers and their comparisons on no device; a node on a device, as a
+       position loaded from storage, or of another type computes. *)
+    let computes x =
+      let positional =
+        Option.is_none (device x)
+        && List.exists (Dtype.equal (dtype x)) Dtype.[ Weak_int; Bool ]
+      in
+      (Op.Set.mem (op x) Op.Set.elementwise
+      || List.mem (op x) Op.[ Reduce; Custom; Customi ])
+      && not positional
+    in
+    let view = op src = Op.Index && not (List.exists computes computed) in
     let copies () =
       (* The copied nodes are among the computed ones, so most values are
          under the budget before their copies are counted. *)
@@ -539,7 +554,8 @@ let remove_bufferize ~reads src buf idx =
     in
     if
       Tbl.length accessed > 3
-      || recomputes || read_by_every_output || copies ()
+      || recomputes || read_by_every_output
+      || ((not view) && copies ())
     then None
     else
       (* A call returns no value here: a reduction reaches one only through the
@@ -618,6 +634,17 @@ let pm_const_buffer_folding =
              else None);
        ]))
 
+(* The store of [value] at [idx] of the stage [buf] of [src], into [src]'s
+   storage. A user's materialisation is written as asked. *)
+let destination src buf idx value =
+  let dead () =
+    List.exists
+      (fun v -> op v = Op.Const && is_invalid v)
+      (List.tl (Ops.src idx))
+  in
+  if (opts buf).keep = Whole || dead () then None
+  else Some (store (inlined src buf idx) value)
+
 let pm_remove_bufferize =
   Pattern_matcher.v
     (fun () -> [
@@ -626,6 +653,18 @@ let pm_remove_bufferize =
            (Upat.f (var "src") Op.Stage ~allow_any_len:true ~name:"buf")
            Op.Index ~allow_any_len:true ~name:"idx")
         (fun reads m -> remove_bufferize ~reads (m "src") (m "buf") (m "idx"));
+      (* A store writes its destination's storage. Indexing stages a view that
+         several stores write through, as it stages any value its consumers
+         index differently; kept, the stage would take the stores and the
+         storage would hold what it held. So a stage a store writes through is
+         inlined whatever its copies cost. *)
+      rule
+        (Upat.store
+           (Upat.f
+              (Upat.f (var "src") Op.Stage ~allow_any_len:true ~name:"buf")
+              Op.Index ~allow_any_len:true ~name:"idx")
+           [ var "v" ])
+        (fun m -> destination (m "src") (m "buf") (m "idx") (m "v"));
       (* A store of a value into itself does nothing. *)
       rule (Upat.store (var "x") [ var "x" ]) (fun _ -> Some (v Op.Noop));
       rule

@@ -3839,7 +3839,7 @@ index 9a24394a6..159972ddf 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 8238ec207..dc9252d67 100644
+index 8238ec207..9164c859f 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
 @@ -1,13 +1,13 @@
@@ -3987,7 +3987,7 @@ index 8238ec207..dc9252d67 100644
    # see if we can't do it, should this ever hit?
    assert len(buf.src) == len(idx.src), f"index on wrong bufferize, {len(buf.src)} != {len(idx.src)}"
    assert all(x.op in {Ops.RANGE, Ops.CONST} for x in buf.src[1:])
-@@ -72,13 +189,35 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
+@@ -72,13 +189,40 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
        accessed_buffers.append(x)
      if x.op is Ops.REDUCE: reduces.append(x)
      return True
@@ -4013,18 +4013,23 @@ index 8238ec207..dc9252d67 100644
 +  # window. its producers are inlined already, so the copies compound: k values each reading the one before at two
 +  # positions are 2^k copies of the first. a value whose copies beyond the first exceed the budget stays stored, so that an
 +  # inlining adds at most the budget to the work of its readers, and to their code, which each copy at a distinct index adds
-+  # to and a trip does not
++  # to and a trip does not. a view of storage, a read whose index computes only positions, is loaded where it is read
++  # however many copies its reads make: stored, it would be a copy of storage its readers can load in place. positions are
++  # weakints and their comparisons on no device; a node on a device, as a position loaded from storage, or of another
++  # dtype computes.
 +  # each read counts at every axis of the stage's ranges, and other stages can share an axis, a device range or one a
 +  # symbolic size names, so the least count bounds the stage's copies from above
 +  rngs = [r for r in buf.src[1:] if r.op is Ops.RANGE]
 +  copies = max(min([ctx.copies.get(r.arg, 0) for r in rngs], default=1), 1)
 +  copied = len([x for x in computed if any(r in x.ranges for r in rngs)])
-+  if copied * (copies - 1) > INLINE_BUDGET: return None
++  def positional(x:UOp) -> bool: return x.device is None and x.dtype in (dtypes.weakint, dtypes.bool)
++  computes = any((x.op in GroupOp.Elementwise or x.op in {Ops.REDUCE, Ops.CUSTOM, Ops.CUSTOMI}) and not positional(x) for x in computed)
++  if not (src.op is Ops.INDEX and not computes) and copied * (copies - 1) > INLINE_BUDGET: return None
 +
    # if any reduces access a buffer, don't remove this buffer
    buffer_in_reduce = False
    def buf_gate(x:UOp):
-@@ -92,8 +231,11 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
+@@ -92,10 +236,23 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
  
    # if it makes it here, the bufferize is removed
    # this is the ranges replaced
@@ -4033,12 +4038,33 @@ index 8238ec207..dc9252d67 100644
 +  # a read at an invalid index is dead, and reads 0 as a load at one does: the value inlined there would keep the stage's
 +  # ranges, which no index replaces and no kernel ends
 +  if any(v.op is Ops.CONST and v.val is Invalid for v in idx.src[1:]): return idx.const_like(0)
++  return inlined(src, buf, idx)
++
++def inlined(src:UOp, buf:UOp, idx:UOp) -> UOp:
 +  # NOTE: if buf src is a const, we don't replace it
 +  replaced = {k:v for k,v in zip(buf.src[1:], idx.src[1:]) if k.op is not Ops.CONST}
    return src.substitute(replaced, extra_pm=pm_gate_substitute)
  
++# a store writes its destination's storage. indexing stages a view that several stores write through, as it stages any
++# value its consumers index differently; kept, the stage would take the stores and the storage would hold what it held.
++# so a stage a store writes through is inlined whatever its copies cost. a user's materialisation is written as asked
++def destination(src:UOp, buf:UOp, idx:UOp, v:UOp) -> UOp|None:
++  if not buf.arg.removable or any(x.op is Ops.CONST and x.val is Invalid for x in idx.src[1:]): return None
++  return inlined(src, buf, idx).store(v)
++
  def remove_noop_bufferize(idx,b2):
-@@ -224,10 +366,19 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
+   if idx.src[1:] != b2.src[1:]: return None
+   return idx.src[0].shrink(tuple((0, s) for s in b2.shape)) if b2.shape else idx.src[0]
+@@ -126,6 +283,8 @@ pm_const_buffer_folding = pm_mops+PatternMatcher([
+ pm_remove_bufferize = PatternMatcher([
+   # remove reindexing with cost function
+   (UPat.var("src").f(Ops.STAGE, allow_any_len=True, name="buf").f(Ops.INDEX, allow_any_len=True, name="idx"), remove_bufferize),
++  (UPat.var("src").f(Ops.STAGE, allow_any_len=True, name="buf").f(Ops.INDEX, allow_any_len=True, name="idx").store(UPat.var("v")),
++   destination),
+   # STORE to self is NOOP
+   (UPat.var("x").store(UPat.var("x")), lambda x: UOp(Ops.NOOP)),
+   # END on NOOP is NOOP
+@@ -224,10 +383,19 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
      return buf.after(*ended_stores)
  
    if x.arg.addrspace == AddrSpace.GLOBAL:
@@ -4060,7 +4086,7 @@ index 8238ec207..dc9252d67 100644
  # collapse any BUFFERIZE to single input BUFFERIZE
  def flatten_bufferize(x:UOp):
    if len(x.src) == 2: return None
-@@ -255,6 +406,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -255,6 +423,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
    # this must run in the same rewrite that adds the cast, or the expander expands the whole casted buffer into one big VECTORIZE
    (UPat(Ops.INDEX, src=(UPat(Ops.CAST, dtype=dtypes.weaks, src=(UPat.var("buf"),)),), allow_any_len=True, name="u"),
     lambda u,buf: u.replace(src=(buf,)+u.src[1:]).cast(u.dtype)),
@@ -4070,7 +4096,7 @@ index 8238ec207..dc9252d67 100644
  
    # move RESHAPEs through MSELECT/MSTACK
    (UPat((Ops.MSELECT, Ops.MSTACK), src=UPat(Ops.RESHAPE), name="m"),
-@@ -275,33 +429,50 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -275,33 +446,50 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
  class LocalAddBufferContext:
    map:dict = field(default_factory=dict)
    ranges:dict = field(default_factory=dict)
@@ -4135,7 +4161,7 @@ index 8238ec207..dc9252d67 100644
    (UPat((Ops.BUFFER, Ops.ALLOC, Ops.MSTACK, Ops.MSELECT), name="buf"), add_buf),
    # Only storage parameters get kernel-local slots; scalar parameters retain their enclosing call's slots.
    (UPat(Ops.PARAM, name="buf"), lambda ctx, buf:
-@@ -329,23 +500,107 @@ def split_store(x:UOp) -> UOp|None:
+@@ -329,23 +517,107 @@ def split_store(x:UOp) -> UOp|None:
    ret = graph_rewrite(ret, pm_renumber_range, ctx={a:i for i,a in enumerate(lctx.ranges)}, walk=True)
  
    # create the Kernel. NOTE: buffers can be on different devices here now, they are compiled to SDMA copies later by schedule

@@ -1049,6 +1049,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   host pool counts them: a CPU quota on the process's own cgroup or an
   ancestor, such as a systemd slice, now bounds it, a quota of 1.5 CPUs
   counts 2, and on macOS it counts physical cores.
+- Stores of one state into many regions of its storage write the storage
+  (`Rangeify.get_kernel_graph`): past some dozens of regions, a view of the
+  storage that the stores share was kept as a copy, which the stores wrote
+  instead, leaving the storage as it was.
 - A host program splits a loop into blocks only when every store to memory,
   call and piece of custom code depends on it (`Postrange.misses`): code
   beside the loop ran once per block, an atomic counter counting 8 for 1.

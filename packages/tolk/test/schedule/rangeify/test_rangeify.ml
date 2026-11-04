@@ -1296,6 +1296,12 @@ let within c = budget / (c - 1) / 2 * 2
 let past c = within c + 2
 
 let at k i = [ Ops.O.(i + int k) ]
+
+(* The position at [s] of [positions], of [n] (default [256]) elements, loaded
+   from storage. *)
+let loaded_at ?(n = 256) s =
+  let positions = Shape.param ~device:cpu ~shape:[ Int n ] 2 Int32 in
+  Ops.cast (Ops.index positions [ s ]) Weak_int
 let once v i = [ Ops.index v (at 0 i) ]
 let twice v i = [ Ops.index v (at 0 i); Ops.index v (at 16 i) ]
 
@@ -1442,6 +1448,81 @@ let recomputation =
           let v = staged ~size:(Int 4) (chain 200) in
           let at i = Shape.valid i Ops.O.(i < int 4) in
           equal int 1 (kernels_reading (fun i -> [ Ops.index v [ at i ] ])));
+      (* 200 reads at distinct indices copy a reversal of [source] 199 times
+         past the first, past the budget: the load computes nothing storing
+         would save. *)
+      test "a view of storage read past the budget is inlined" (fun () ->
+          let s = loop 216 0 in
+          let flipped = Ops.index source [ Ops.O.(int 255 - s) ] in
+          let v = Ops.bufferize ~opts:removable flipped [ s ] in
+          equal int 1
+            (kernels_reading (fun i ->
+                 List.init 200 (fun k -> Ops.index v (at k i)))));
+      (* A position loaded from storage is computed: 200 reads copy the load
+         of [positions] and its conversion 199 times past the first. *)
+      test "a gather at loaded positions read past the budget is stored"
+        (fun () ->
+          let s = loop 216 0 in
+          let gathered = Ops.index source [ loaded_at s ] in
+          let v = Ops.bufferize ~opts:removable gathered [ s ] in
+          equal int 2
+            (kernels_reading (fun i ->
+                 List.init 200 (fun k -> Ops.index v (at k i)))));
+      (* Comparisons of positions are values where they are stored: 200
+         reads copy the stage's 4 nodes 199 times past the first. *)
+      test "a mask of positions read past the budget is stored" (fun () ->
+          let s = loop 216 0 in
+          let v =
+            Ops.bufferize ~opts:removable
+              Ops.O.((s < int 100) land (int 3 < s))
+              [ s ]
+          in
+          equal int 2
+            (kernels_reading (fun i ->
+                 List.init 200 (fun k ->
+                     Ops.cast (Ops.index v (at k i)) Float32))));
+      (* 120 stores write [out] at [positions (16 k + i)] through a stage of
+         its gather there, whose copies pass the budget: each position takes
+         the value stored there. *)
+      test "stores through a stage of their destination write the destination"
+        (fun () ->
+          let n = 2048 in
+          let o = Shape.param ~device:cpu ~shape:[ Int n ] 0 Float32 in
+          let s = loop n 0 and i = loop 16 9 in
+          let gathered = Ops.index o [ loaded_at ~n s ] in
+          let view = Ops.bufferize ~opts:removable gathered [ s ] in
+          let store k =
+            Ops.end_
+              (Ops.store
+                 (Ops.index view (at (16 * k) i))
+                 (Ops.index source [ i ]))
+              [ i ]
+          in
+          let graph =
+            Rangeify.get_kernel_graph
+              (Ops.sink [ Ops.after o (List.init 120 store) ])
+          in
+          (* A permutation of the [n] positions. *)
+          let position j = j * 7 mod n in
+          let buffers =
+            [
+              (0, Array.make n (`Float 0.));
+              (1, Array.init 256 (fun j -> `Float (float_of_int j)));
+              (2, Array.init n (fun j -> `Int (Bigint.of_int (position j))));
+            ]
+          in
+          let expected =
+            List.sort compare
+              (List.concat
+                 (List.init 120 (fun k ->
+                      List.init 16 (fun i ->
+                          let at = position ((16 * k) + i) in
+                          (0, at, `Float (float_of_int i))))))
+          in
+          equal (list write) expected
+            (List.filter
+               (fun (slot, _, _) -> slot = 0)
+               (Kernel_graphs.writes ~buffers graph)));
     ]
 
 (* The work bound
