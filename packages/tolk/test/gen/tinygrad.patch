@@ -4247,7 +4247,7 @@ index 8238ec207..dc9252d67 100644
  
    # bufferize -> store
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index f0a41c9b5..bb865dfe0 100644
+index f0a41c9b5..4186a996c 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -1,6 +1,7 @@
@@ -4579,7 +4579,7 @@ index f0a41c9b5..bb865dfe0 100644
    return truncate_fxn(alu) if (truncate_fxn:=truncate.get(dtype)) is not None else alu
  
  # ***** pattern matcher *****
-@@ -1887,3 +2045,34 @@ sint = int|UOp
+@@ -1887,3 +2045,38 @@ sint = int|UOp
  Variable = UOp
  
  ConstLike = ConstType|Variable|tuple[ConstType, ...]
@@ -4601,6 +4601,7 @@ index f0a41c9b5..bb865dfe0 100644
 +      if w is None or i in w: add(a)
 +  def entry(e:UOp):
 +    if e.op is Ops.CALL: inner(e)
++    elif e.op is Ops.STORE: add(e.src[0])
 +    elif e.op in {Ops.END, Ops.BACKEDGE}: entry(e.src[0])
 +    elif e.op is Ops.LINEAR:
 +      for x in e.src: entry(x)
@@ -4610,7 +4611,10 @@ index f0a41c9b5..bb865dfe0 100644
 +    for u in nodes:
 +      if u.op is Ops.STORE: add(u.src[0])
 +      elif u.op is Ops.CALL: inner(u)
-+  elif body.op is Ops.LINEAR: entry(body)
++  elif body.op is Ops.LINEAR:
++    # a schedule's calls, or a kernel's lines: a body lowered inside a kernel holds its stores and code
++    if any(u.op in {Ops.CUSTOM, Ops.CUSTOMI} for u in body.src): return None
++    entry(body)
 +  elif body.op is Ops.STORE: add(body.src[0])
 +  else: return None
 +  return sorted(out)

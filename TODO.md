@@ -133,9 +133,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   `r_32_3_2_4_3_400` runs 8.3-10.2 µs at twice the blocks against 15.2;
   rig exports no free-core count for tolk to size launches against on a
   loaded host
-- D340's `Shape.written_params` change (call bodies lowered inside a kernel
-  write their stores) is not mirrored in tinygrad.patch: the generator failed
-  on a schedule-level call body
 
 ## rune, kaun, vega
 
