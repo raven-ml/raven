@@ -176,7 +176,9 @@ and rune), raven / llama.cpp b12048 Vulkan:
   H2O 1e7 group-by geomean 2.4x at 673340f4e (q04 4.8-7.0x, q01
   2.8-4.0x before 5441600cd took it from 148 to 96 instructions a row);
   decision support SF1 at cfef1ad82 q19 ~16x, q12 ~18x, q07 ~15x, q02
-  ~40x. What is left: integer sums cast to int64 before
+  ~40x (7e16755a1's range gather then took q02 from 4.71 G to 1.61 G
+  instructions; list columns of text, list or record children still take
+  by positions, unmeasured). What is left: integer sums cast to int64 before
   summing, one pass per aggregate, Parquet text decoded per row
   (talon-dict-text.adjudication.md), sort-based joins. The 2026-11-03
   engine logs ran 2-4x slow; the H2O data was deleted on 2026-11-04
