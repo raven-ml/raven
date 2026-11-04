@@ -1726,6 +1726,61 @@ let bound_loops_linear () =
   equal (list int) ~msg:"each loop's call its value" [ 4; 7 ]
     (List.sort compare (List.map passed (Ops.src linear)))
 
+(* The values each kernel of [linear], at any depth, binds its named
+   variables to, by name, where a name is bound to two. *)
+let names_bound_twice linear =
+  List.concat_map
+    (fun c ->
+      if Ops.op c <> Call || Ops.op (Ops.body c) <> Sink then []
+      else
+        let binds =
+          List.sort_uniq compare
+            (List.filter_map
+               (fun u ->
+                 match (Ops.op u, Ops.arg u) with
+                 | Param, Param { name = Some n; bound = Some v; _ } ->
+                     Some (n, Dtype.Value.to_int v)
+                 | _ -> None)
+               (Ops.toposort ~calls:Skip (Ops.body c)))
+        in
+        let twice (n, _) =
+          List.length (List.filter (fun (m, _) -> m = n) binds) > 1
+        in
+        List.filter twice binds)
+    (Ops.toposort ~calls:Skip linear)
+
+(* A loop of two trips inside a loop's body of three, whose stores add a
+   variable [k] bound to 0 in one and 1 in the other, beside a store of the
+   outer body that binds it to 2. *)
+let nested_bound () =
+  let k = Ops.variable "k" (`Int Bigint.zero) (`Int (Bigint.of_int 2)) in
+  let at j = Ops.cast (Shape.bind k (`Int (Bigint.of_int j))) Float32 in
+  let q slot = Shape.param ~shape:[ Int 4 ] ~device:cpu slot Float32 in
+  let inner =
+    Ops.sink
+      [
+        Ops.store (q 0) Ops.O.((q 0 * float 2.) + at 0);
+        Ops.store (q 1) Ops.O.(Ops.exp2 (q 1) + at 1);
+      ]
+  in
+  let r' = Ops.range ~axis_type:Loop (Int 2) [ 101 ]
+  and r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let e' = Ops.end_ (Ops.call ~precompile:true inner [ q 0; q 1 ]) [ r' ] in
+  let outer =
+    Ops.sink
+      [
+        Ops.after (q 0) [ e' ];
+        Ops.after (q 1) [ e' ];
+        Ops.store (q 2) Ops.O.(q 2 + at 2);
+      ]
+  in
+  let bufs = List.init 3 (fun _ -> Ops.new_buffer cpu 4 Float32) in
+  let e = Ops.end_ (Ops.call ~precompile:true outer bufs) [ r ] in
+  let big = Ops.sink (List.map (fun b -> Ops.after b [ e ]) bufs) in
+  equal (list (pair string int)) ~msg:"names bound twice in one kernel" []
+    (names_bound_twice (unplanned big));
+  computes big
+
 (* The scan's body holds a loop of its own: each row of xs, of eight floats, is
    added to the carry in two halves, one inner trip each. *)
 let nested_linear () =
@@ -1856,6 +1911,10 @@ let loops =
         "loops whose calls read one name at two values each pass their own"
         bound_loops_linear;
       test "a loop inside a loop's body keeps its own end" nested_linear;
+      test
+        "a loop inside a loop's body passes the values of one name it binds \
+         apart"
+        nested_bound;
       test "a loop whose range has another number is the same body"
         renumbered_loop;
       test "a body whose loops trade numbers is the same body" renumbered_loops;
@@ -2370,6 +2429,82 @@ let loop_merges_keep_values prog =
     (List.exists (fun s -> s <> List.hd prog.sizes) prog.sizes);
   computes big
 
+(* A loop of three trips whose body stores into slots [0] to [n - 1], [n] the
+   steps, and reads slot [n]: step [j] stores [x * 2], [exp2 x] or
+   [max x 2] into slot [j], [x] its own slot or [exp2] of slot [n], which
+   steps share, plus, where it binds one, a variable [k] bound to its value
+   and cast to a float. *)
+type bound_step = { op : int; shared : bool; value : int option }
+
+let bound_gen =
+  let open Gen in
+  let step =
+    map
+      (fun ((op, shared), value) -> { op; shared; value })
+      (pair
+         (pair (int_range 0 2) bool)
+         (frequency
+            [ (1, constant None); (3, map Option.some (int_range 0 2)) ]))
+  in
+  list ~size:(int_range 2 4) step
+
+let bound_sink steps =
+  let n = List.length steps in
+  let p k = Shape.param ~shape:[ Int 4 ] ~device:cpu k Float32 in
+  let k = Ops.variable "k" (`Int Bigint.zero) (`Int (Bigint.of_int 2)) in
+  let stored j s =
+    let x = if s.shared then Ops.exp2 (p n) else p j in
+    let x =
+      match s.op with
+      | 0 -> Ops.O.(x * float 2.)
+      | 1 -> Ops.exp2 x
+      | _ -> Ops.maximum x (Ops.float 2.)
+    in
+    match s.value with
+    | None -> x
+    | Some v ->
+        Ops.O.(x + Ops.cast (Shape.bind k (`Int (Bigint.of_int v))) Float32)
+  in
+  let body =
+    Ops.sink (List.mapi (fun j s -> Ops.store (p j) (stored j s)) steps)
+  in
+  let bufs = List.init (n + 1) (fun _ -> Ops.new_buffer cpu 4 Float32) in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let e = Ops.end_ (Ops.call ~precompile:true body bufs) [ r ] in
+  Ops.sink (List.mapi (fun j _ -> Ops.after (List.nth bufs j) [ e ]) steps)
+
+let joins_keep_bindings steps =
+  let big = bound_sink steps in
+  let values =
+    List.sort_uniq compare (List.filter_map (fun s -> s.value) steps)
+  in
+  let calls = calls_in_loop big in
+  (* The values a call passes for the variables its body bound. *)
+  let passed c =
+    List.sort_uniq compare
+      (List.filter_map
+         (fun a ->
+           match Ops.arg a with
+           | Param { bound = Some v; _ } when Shape.is_bound_var a ->
+               Some (Dtype.Value.to_int v)
+           | _ -> None)
+         (Ops.src_without_body c))
+  in
+  cover "a call passes one name at two values"
+    (List.exists (fun c -> List.length (passed c) > 1) calls);
+  cover "a loop's kernels read a name of one value" (List.length values = 1);
+  cover "stores that share a computation bind one name to two values"
+    (List.length values > 1
+    && List.length
+         (List.sort_uniq compare
+            (List.filter_map
+               (fun s -> if s.shared then s.value else None)
+               steps))
+       > 1);
+  equal (list (pair string int)) ~msg:"names bound twice in one kernel" []
+    (names_bound_twice (unplanned big));
+  computes big
+
 let merged_calls =
   group "create_linear_with_vars › merged calls"
     [
@@ -2382,9 +2517,9 @@ let merged_calls =
               ]
           in
           equal int 1 (List.length (calls_in_loop big)));
-      test "calls that bind one variable to two values run apart" (fun () ->
-          (* Each adds [k], bound to 0 in one and 1 in the other: one call
-             would pass [k] one value. *)
+      test "calls that bind one name to two values run as one" (fun () ->
+          (* Each adds [k], bound to 0 in one and 1 in the other: the call
+             passes each value in a slot of its own. *)
           let k = Ops.variable "k" (`Int Bigint.zero) (`Int Bigint.one) in
           let plus j u =
             Ops.O.(u + Ops.cast (Shape.bind k (`Int (Bigint.of_int j))) Float32)
@@ -2396,8 +2531,26 @@ let merged_calls =
                 (1, [ 1 ], fun p -> plus j (Ops.exp2 (p 1)));
               ]
           in
-          equal ~msg:"bound apart" int 2 (List.length (calls_in_loop (big 1)));
-          equal ~msg:"bound alike" int 1 (List.length (calls_in_loop (big 0))));
+          equal ~msg:"bound apart" int 1 (List.length (calls_in_loop (big 1)));
+          equal ~msg:"bound alike" int 1 (List.length (calls_in_loop (big 0)));
+          computes (big 1));
+      test "loop bodies that differ in their bound values alone are one"
+        (fun () ->
+          let k = Ops.variable "k" (`Int Bigint.zero) (`Int Bigint.one) in
+          let body j =
+            let big =
+              looped
+                [
+                  ( 0,
+                    [ 0 ],
+                    fun p ->
+                      let v = Shape.bind k (`Int (Bigint.of_int j)) in
+                      Ops.O.(p 0 + Ops.cast v Float32) );
+                ]
+            in
+            List.map Ops.body (calls_in_loop big)
+          in
+          equal (list uop) (body 0) (body 1));
       test "calls of one element at the top level run as one" (fun () ->
           let x = element () and y = element () in
           let o = element () and o' = element () in
@@ -2531,6 +2684,10 @@ let merged_calls =
         outputs_gen merges_keep_values;
       prop "calls of a loop run as one write what their tensors compute"
         loop_gen loop_merges_keep_values;
+      prop
+        "calls and stores of a loop that bind one name to several values \
+         join, and no kernel binds a name to two"
+        bound_gen joins_keep_bindings;
       test
         "a call of one element moves up only where no storage of many \
          elements starts living earlier" (fun () ->

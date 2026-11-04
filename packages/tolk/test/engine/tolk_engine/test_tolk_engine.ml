@@ -1381,6 +1381,12 @@ let scans_with_a_carry () =
   equal values ~msg:"the carry" (floats carry) (Run.values Float32 c_buffer);
   equal values ~msg:"the rows" (floats y) (Run.values Float32 ys_buffer)
 
+(* The number of calls in the body of [linear]'s one loop. *)
+let calls_in_loop linear =
+  match Ops.src linear with
+  | [ l ] when Ops.op l = End -> List.length (Ops.src (Ops.nth l 0))
+  | entries -> failf "%d entries, not one loop" (List.length entries)
+
 (* Carries of a scan of five trips on [d], each of 64 floats updated in place by
    its function of [updates] from its initial values: the number of calls in the
    scan's body, and each carry's bits after the run. *)
@@ -1393,15 +1399,11 @@ let carried ?(devices = devices) d updates =
   in
   let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
   let e = Ops.end_ (Ops.call ~precompile:true body cs) [ r ] in
-  let linear, _ =
+  let linear, vars =
     Schedule.create_linear_with_vars
       (Ops.sink (List.map (fun c -> Ops.after c [ e ]) cs))
   in
-  let calls =
-    match Ops.src linear with
-    | [ l ] when Ops.op l = End -> List.length (Ops.src (Ops.nth l 0))
-    | entries -> failf "%d entries, not one loop" (List.length entries)
-  in
+  let calls = calls_in_loop linear in
   let bufs =
     List.map2
       (fun c (_, init) ->
@@ -1409,7 +1411,7 @@ let carried ?(devices = devices) d updates =
       cs updates
   in
   let s = Engine.link ~devices ~bound:bufs (compile ~devices linear) in
-  Engine.run s [||];
+  Engine.run ~vars s [||];
   let bits b =
     Array.map
       (function `Float x -> Int64.bits_of_float x | _ -> fail "a float")
@@ -1435,6 +1437,60 @@ let carries_merged ?(devices = devices) d () =
       [ scaled; decayed ]
   in
   equal (list (array int64)) ~msg:"bits" apart merged
+
+(* [plus j u] is [u] plus a variable [k] of [0, 1] bound to [j]. *)
+let plus j u =
+  let k = Ops.variable "k" (`Int Bigint.zero) (`Int Bigint.one) in
+  Ops.O.(u + Ops.cast (Shape.bind k (`Int (Bigint.of_int j))) Float32)
+
+(* Two carries of a scan whose updates read one name bound to 0 in one and 1
+   in the other run as one call each trip, and leave the bits each leaves run
+   as a scan of its own. *)
+let carries_bound_apart ?(devices = devices) d () =
+  let update j =
+    ( (fun c -> plus j Ops.O.(c * float 0.5)),
+      fun i -> Float.of_int (i - (8 * j)) )
+  in
+  let calls, merged = carried ~devices d [ update 0; update 1 ] in
+  equal int ~msg:"calls a trip" 1 calls;
+  let apart =
+    List.concat_map
+      (fun u -> snd (carried ~devices d [ u ]))
+      [ update 0; update 1 ]
+  in
+  equal (list (array int64)) ~msg:"bits" apart merged
+
+(* Two outputs of a scan of three trips on [d] that share the exponential of
+   an input, plus one name bound to 0 in one and 1 in the other, are one
+   kernel that stores each with its own value. *)
+let stores_bound_apart ?(devices = devices) d () =
+  let p slot = Shape.param ~shape:[ Int 4 ] ~device:d slot Float32 in
+  let shared = Ops.exp2 (p 2) in
+  let body =
+    Ops.sink
+      [ Ops.store (p 0) (plus 0 shared); Ops.store (p 1) (plus 1 shared) ]
+  in
+  let bufs = List.init 3 (fun _ -> Ops.new_buffer d 4 Float32) in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let e = Ops.end_ (Ops.call ~precompile:true body bufs) [ r ] in
+  let outs = [ List.nth bufs 0; List.nth bufs 1 ] in
+  let linear, vars =
+    Schedule.create_linear_with_vars
+      (Ops.sink (List.map (fun b -> Ops.after b [ e ]) outs))
+  in
+  equal int ~msg:"calls a trip" 1 (calls_in_loop linear);
+  let x = [| -1.; 0.; 2.; 3. |] in
+  let given =
+    List.map (fun _ -> Run.buffer (devices d) Float32 (floats x)) bufs
+  in
+  let s =
+    Engine.link ~devices ~bound:(List.combine bufs given)
+      (compile ~devices linear)
+  in
+  Engine.run ~vars s [||];
+  let stored j = floats (Array.map (fun v -> (2. ** v) +. Float.of_int j) x) in
+  equal (list values) [ stored 0; stored 1 ]
+    (List.map (Run.values Float32) [ List.nth given 0; List.nth given 1 ])
 
 (* A copy of 16 floats of the host stored into rows 2 and 3 of an 8 by 8 grid
    on a memory device writes those rows, and leaves the others as they were. *)
@@ -2731,6 +2787,10 @@ let schedules =
         scans_with_a_carry;
       test "a scan's merged calls carry in place as its calls apart do"
         (carries_merged "CPU");
+      test "a scan's calls that read one name at two values carry each its own"
+        (carries_bound_apart "CPU");
+      test "a scan's stores that read one name at two values store each its own"
+        (stores_bound_apart "CPU");
       test "a store into rows of a buffer of a value read through other \
             storage writes what it computes" stores_rows_read_elsewhere;
       test "a copy stored into rows of a buffer writes them alone"
@@ -4212,6 +4272,10 @@ let on_a_gpu (kind, _) =
       reads_trips_under_a_back_edge ~devices "CPU:1";
       test "a scan's merged calls carry in place as its calls apart do"
         (carries_merged ~devices "CPU:1");
+      test "a scan's calls that read one name at two values carry each its own"
+        (carries_bound_apart ~devices "CPU:1");
+      test "a scan's stores that read one name at two values store each its own"
+        (stores_bound_apart ~devices "CPU:1");
       test "a loop's move copies the rows its trips name"
         (copies_moving_rows ~devices "CPU:1" "CPU");
       test "a loop's move into storage made at link moves with its trips"

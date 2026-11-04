@@ -319,6 +319,8 @@ let rec run m params u =
     | Const, Const c -> { shape = []; cells = [| { value = c; at = None } |] }
     | Param, Param { slot; _ } when List.mem_assoc slot params ->
         { (List.assoc slot params) with shape = concrete u }
+    | Param, Param { bound = Some v; _ } ->
+        { shape = []; cells = [| { value = (v :> Dtype.const); at = None } |] }
     | (Param | Buffer | Alloc), _ -> storage m u
     | (Reshape | Expand | Pad | Shrink | Permute), _ ->
         movement u (value (List.hd src))

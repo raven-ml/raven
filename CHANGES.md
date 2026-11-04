@@ -1040,6 +1040,11 @@ word comes from its lock and from samples the dashboard saw arrive.
   argument it cannot take, a write off that boundary, a loop's column or
   rows off it, raises `Invalid_argument` naming the argument and why; with
   checks off, a precompiled call took such rows.
+- `Schedule.create_linear_with_vars` passes the variables a call's body
+  binds from the call, as it passes its own: stores and calls of a loop's
+  body that bind one name to several values run as one kernel, bodies that
+  differ in their bound values alone are one program, and a name of one value
+  read only in a loop no longer raises that the variable is unbound.
 - A kernel given as code (`Shape.custom_kernel`) or a precompiled call
   (`Ops.call ~precompile:true`) that writes an argument other than storage,
   a run of it from the first element or a row a loop moves along raises

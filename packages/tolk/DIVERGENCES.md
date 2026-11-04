@@ -3488,8 +3488,7 @@ driver signals its own (D146).
   (`merge_reduce_ends`, which already makes one loop of the reductions that
   close one range).
 - **tolk:** for stores, `Indexing.region`, `Indexing.views`,
-  `Indexing.waits_over`, `Indexing.binds_apart`, `Indexing.share_loops` (its
-  `crossed`),
+  `Indexing.waits_over`, `Indexing.share_loops` (its `crossed`),
   `Indexing.loops_of` and `Indexing.end_shared` (which
   `Indexing.bufferize_and_index` returns for each store of a group), with
   `Indexing.data_srcs`, `Indexing.create_bufferize_and_index_based_on_ranges`
@@ -3526,13 +3525,8 @@ driver signals its own (D146).
   all. A group whose every store is dropped, as a store of a value into itself
   is, leaves the empty stack, which waits on nothing and makes no kernel,
   where tinygrad, whose stores end apart, drops a noop and the end of one.
-  Two stores that bind a variable of one name to two values in what their
-  kernels compute (not past a state) stay apart, as rune's stores of alike
-  pieces of two assemblies, each region at [k step] for its own [k], do: one
-  kernel passes a name one value. No recorded graph
-  binds a name to two values, so the patch leaves this out. Outputs that
-  share only loads stay apart; finished calls of one domain may still share a
-  launch (D199).
+  Outputs that share only loads stay apart; finished calls of one domain may
+  still share a launch (D199).
 
   Reductions: a reduction whose output is indexed by the same ranges as an
   earlier one's in the walk, and that reduces axes of the same sizes, takes
@@ -3582,8 +3576,7 @@ driver signals its own (D146).
   runs each).
 - **Pinned by:** for stores, the Rangeify suite (`test/schedule/rangeify`):
   `get_kernel_graph › outputs that share a computation` (every test, `slices
-  of one product through two views run as two kernels`, `outputs that bind
-  one variable to two values run as two kernels`, `slices that also
+  of one product through two views run as two kernels`, `slices that also
   share a computation run as two kernels`, `outputs that read a product
   through one view run as one kernel` and `outputs that store their own
   storage back are no kernel` among them); its recorded
@@ -5458,8 +5451,13 @@ the walk of `Rangeify.fix_store_hazard`.
   which raises "bind mismatch" when a schedule's kernels read one variable
   name bound to two values, and `:100-112` (`resolve_linear_call`), which
   substitutes a bound variable into its kernels unbound, read by name from
-  the run's `var_vals`.
-- **tolk:** `Schedule.create_linear_with_vars` (`bound_several`),
+  the run's `var_vals`; `function.py:15-25` and `:80` (`is_implicit_storage`,
+  `pm_ctx`), where a function traced into a call captures each variable its
+  body reads as an argument, and `schedule/__init__.py:253`
+  (`pm_replace_buf`), which passes the schedule's own the same way.
+- **tolk:** `Schedule.create_linear_with_vars` (`bound_several`, and its
+  `used_vars`, which reads the kernels of loops),
+  `Schedule.canonicalize_call_body` and `Schedule.pm_pass_bound`,
   `Schedule.resolve_linear_call` and `Schedule.pass_values`;
   `Tolk_engine.var_word`, and the grid and split size of
   `Tolk_engine.launch`, which read a nameless scalar from its call's slot.
@@ -5473,24 +5471,49 @@ the walk of `Rangeify.fix_store_hazard`.
   differ in their values alone, or in the order the schedule met those
   values, are one program. A name bound to one value is read by name, as
   tinygrad reads it.
+
+  A call passes the variables its body binds, as the schedule passes its
+  own, by the same rule (`pm_pass_bound`), where the schedule gives each
+  call's call-local storage its slots: each becomes a nameless parameter of
+  the call in a slot past its arguments, one per value, and the call passes
+  the bound variable there. tinygrad's function does the same as it traces
+  a body into a call; tolk takes a call's body as built (`Ops.call`), so the
+  schedule does it, once, for every builder. No body the schedule splits
+  into kernels then binds a name: stores of one kernel (D137) and calls
+  merged into one (D199) read each value from a slot of their own. A name
+  of one value that a loop's kernels read is among the schedule's
+  variables, which tinygrad, without loops in a schedule, reads from its
+  top-level kernels alone.
 - **Reason:** (b): rune's compiled programs over several devices
   (`Pieces.split`, `Compile.moving`) bind each device's window start, of a
   move or of a loop's coordinates, to a variable named by its bound, so that
   every device's kernel is one program (D170) and the data-parallel step
-  takes as many programs over 2 to 16 memory devices.
+  takes as many programs over 2 to 16 memory devices. A body's variables,
+  (b): rune's loops (`Loop.cut`) keep the variables their steps bind in the
+  loop's body, such as the start of each piece of an assembly
+  (`Compile.region`), which binds one name to each piece's start; named in
+  the body, two stores or calls of a trip that one kernel joined passed the
+  name one value.
 - **Pinned by:** `Tolk.Schedule › create_linear_with_vars › rules › two
   variables of one name bound to two values are passed by the calls that read
-  them`, `› kernels that read two names bound to several values alike are
-  one program, whatever order the schedule met the values in` and `› loops
-  of calls › loops whose calls read one name at two values each pass their
-  own`; `Tolk_engine › link and run › one program launched
-  on several devices computes each device's window at its start` and `›
-  kernels whose sizes are one name of two values run each its own`, and the
-  same on each GPU; rune's `Rune.jit over
-  several devices › maps over a cut axis › per-device code takes as many
-  programs over 2 to 16`, `› programs › a data-parallel step takes as many
-  over 2, 4, 8 and 16`, `› loops › a step that reads its coordinates gives
-  eager's bits`.
+  them`, `› kernels that read two names bound to several values alike are one
+  program, whatever order the schedule met the values in` and `› loops of
+  calls › loops whose calls read one name at two values each pass their own`
+  and `› a loop inside a loop's body passes the values of one name it binds
+  apart`; `› merged calls › calls that bind one name to two values run as
+  one`, `› loop bodies that differ in their bound values alone are one` and
+  its law `calls and stores of a loop that bind one name to several values
+  join, and no kernel binds a name to two`; `Tolk_engine › link and run › a
+  scan's calls that read one name at two values carry each its own` and `› a
+  scan's stores that read one name at two values store each its own`, and the
+  same on each GPU; `Tolk_engine › link and run › one program launched on
+  several devices computes each device's window at its start` and `› kernels
+  whose sizes are one name of two values run each its own`, and the same on
+  each GPU; rune's `rune jit › jit › two assemblies of alike pieces compile`,
+  `Rune.jit over several devices › maps over a cut axis › per-device code
+  takes as many programs over 2 to 16`, `› programs › a data-parallel step
+  takes as many over 2, 4, 8 and 16`, `› loops › a step that reads its
+  coordinates gives eager's bits`.
 
 ## D178. A Windows host's code is compiled for Windows' calling convention
 
@@ -6372,8 +6395,7 @@ and an initial value is added after it (D260).
   `schedule/rangeify.py:321-336` (`split_store`, one kernel per store or
   end).
 - **tolk:** `Schedule.merge_calls`, `Schedule.merge_linear`,
-  `Schedule.shape`, `Schedule.member`, `Schedule.merged`, `Schedule.binds`,
-  `Schedule.agree` and
+  `Schedule.shape`, `Schedule.member`, `Schedule.merged` and
   `Schedule.storage_taken`, which
   `Schedule.create_linear_with_vars` runs after `pm_copy_from_store`, after
   the schedule cache.
@@ -6382,10 +6404,7 @@ and an initial value is added after it (D260).
   its ranges, all their storage lies on one device, their domains are the
   same ranges by position (constant sizes and kinds), neither reads or
   writes storage the other writes (storage compared by `Ops.storage_base`,
-  so two views of one buffer conflict), their bodies bind no variable of one
-  name to two values, since the merged call passes a name one value (rune's
-  stores of alike pieces bind one name to each piece's start), the later
-  moves up to the group's
+  so two views of one buffer conflict), the later moves up to the group's
   first call only past calls it does not conflict with, and the merged call
   passes at most `MAX_KERNEL_BUFFERS` buffers when that is set. A call moves
   earlier only where every storage whose life that starts earlier is storage
@@ -6427,8 +6446,7 @@ and an initial value is added after it (D260).
   by norn's `nuts/schools/4` on the host; a CUDA row of the hand-written
   density is pending.
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`):
-  `create_linear_with_vars › merged calls` (every test, `calls that bind one
-  variable to two values run apart` among them: independent calls in
+  `create_linear_with_vars › merged calls` (every test: independent calls in
   a loop and of one element at the top level run as one, calls of many
   elements at the top level, a reader of another's output, an overwriter of
   what another reads, two runs of one buffer, a reduction and two devices

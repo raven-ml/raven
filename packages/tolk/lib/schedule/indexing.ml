@@ -731,29 +731,6 @@ let waits_over sa sb =
          && Nodes.mem (base (nth w 0)) sb)
     sa false
 
-(* Whether the stores [a] and [b] bind a variable of one name to different
-   values in their values and where they store, short of a state, whose
-   stores another kernel runs; a realized value they read may count, which
-   keeps them apart only. One kernel of both passes a name one value: two
-   stores of an assembly's alike pieces into regions at [k step], [k] bound
-   to 0 in one and 1 in the other, would both store at one region. *)
-let binds_apart a b =
-  let binds s =
-    List.filter_map
-      (fun u ->
-        match (op u, arg u) with
-        | Op.Param, Param { name = Some n; bound = Some v; _ } -> Some (n, v)
-        | _ -> None)
-      (toposort ~calls:Skip ~gate:(fun u -> op u <> Op.After) s)
-  in
-  let bb = binds b in
-  List.exists
-    (fun (n, v) ->
-      List.exists
-        (fun (m, w) -> String.equal n m && not (Dtype.equal_const w v))
-        bb)
-    (binds a)
-
 (* The checks of a pair of stores, for tests. *)
 let checks = Atomic.make 0
 let store_checks () = Atomic.get checks
@@ -769,7 +746,6 @@ let joinable regions ~crossed slice a b =
   let apart () =
     let sa = slice a and sb = slice b in
     reads sa b || reads sb a || waits_over sa sb || waits_over sb sa
-    || binds_apart a b
   in
   List.equal Sint.equal (shape (nth a 1)) (shape (nth b 1))
   && Option.equal String.equal (device (nth a 0)) (device (nth b 0))

@@ -8,6 +8,7 @@
       [1] for a scalar, holds the elements [0] to [n - 1] of memory [s].
       Call-local storage ({!Tolk.Op.Alloc}) is memory of its own, apart from the
       numbering of the others, and holds [`Invalid] until it is written;
+    - a bound variable is the value it is bound to;
     - a movement rearranges its source's elements: a reshape keeps their order,
       an expand broadcasts, a pad adds zeros, a shrink keeps a box, a permute
       and a flip reorder;

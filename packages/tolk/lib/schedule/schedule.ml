@@ -1479,12 +1479,37 @@ let canonicalize_alloc ctx b =
          ~arg:(Param { p with slot = -1 - List.length ctx.allocs.keys }));
   Ordered.find_opt ctx.allocs b
 
+let replace_input_buffer ctx b =
+  ctx.replacements <- b :: ctx.replacements;
+  param_like b (List.length ctx.replacements - 1)
+
+(* Bound variables become parameters without their value, so that different
+   values hit the same cache entry, and a name bound to several values takes a
+   parameter for each. *)
+let pm_pass_bound =
+  Pattern_matcher.v (fun () -> [
+      rule_ctx (Upat.op Op.Param ~name:"b") (fun ctx m ->
+          let b = m "b" in
+          if is_bound_var b then Some (replace_input_buffer ctx b) else None);
+    ])
+
+(* A call passes the variables its body binds, as the schedule passes its own
+   ({!pm_replace_buf}): each takes a nameless parameter in a slot past the
+   call's arguments, and the call passes the bound variable there. A kernel
+   the body makes then reads each value from a slot of its own, and bodies
+   that differ in their values alone are one. *)
 let rec canonicalize_call_body c =
-  let body =
-    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(callify_ctx ()) (body c)
-      (Before_sources (Lazy.force pm_canonicalize_alloc))
+  let ctx = callify_ctx () in
+  ctx.replacements <- List.rev (List.tl (src c));
+  let rules =
+    if op (body c) = Op.Sink then pm_canonicalize_body
+    else pm_canonicalize_alloc
   in
-  replace c ~src:(body :: List.tl (src c))
+  let body =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx (body c)
+      (Before_sources (Lazy.force rules))
+  in
+  replace c ~src:(body :: List.rev ctx.replacements)
 
 and pm_canonicalize_alloc =
   lazy
@@ -1496,14 +1521,14 @@ and pm_canonicalize_alloc =
              canonicalize_alloc ctx (m "b"));
        ]))
 
+and pm_canonicalize_body =
+  lazy
+    (Pattern_matcher.concat [ Lazy.force pm_canonicalize_alloc; pm_pass_bound ])
+
 (* Forced as the module initialises, on one domain: the compilers' domains
    would race to force it first, and a lazy value that two domains force at
    once raises. *)
-let pm_canonicalize_alloc = Lazy.force pm_canonicalize_alloc
-
-let replace_input_buffer ctx b =
-  ctx.replacements <- b :: ctx.replacements;
-  param_like b (List.length ctx.replacements - 1)
+let pm_canonicalize_body = Lazy.force pm_canonicalize_body
 
 let pm_replace_buf =
   Pattern_matcher.v
@@ -1522,11 +1547,6 @@ let pm_replace_buf =
           let b = m "b" in
           if Tbl.mem ctx.views b then Some (replace_input_buffer ctx b)
           else None);
-      (* Bound variables become parameters without their value, so that
-         different values hit the same cache entry. *)
-      rule_ctx (Upat.op Op.Param ~name:"b") (fun ctx m ->
-          let b = m "b" in
-          if is_bound_var b then Some (replace_input_buffer ctx b) else None);
     ])
 
 let transform_to_call big_sink =
@@ -1546,7 +1566,8 @@ let transform_to_call big_sink =
   let ret =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx
       (sink (List.rev ctx.stores))
-      (Before_sources (Pattern_matcher.concat [ pm_canonicalize_alloc; pm_replace_buf ]))
+      (Before_sources
+         (Pattern_matcher.concat [ pm_canonicalize_body; pm_replace_buf ]))
   in
   call ~precompile:true ret (List.rev ctx.replacements)
 
@@ -1716,35 +1737,13 @@ let merged calls =
   call (sink ~kernel:(kernel_info ()) root) args
 
 (* A group of calls: the position of its first, its members, last first, the
-   storage they are passed, the variables they bind, and whether it still
-   takes calls. *)
+   storage they are passed, and whether it still takes calls. *)
 type group = {
   first : int;
   mutable members : (t * member) list;
   passed : unit Tbl.t;
-  mutable bound : (string * Dtype.value) list;
   mutable open_ : bool;
 }
-
-(* The variables the body of the call [si] binds, by name, with their
-   values. *)
-let binds si =
-  List.filter_map
-    (fun u ->
-      match (op u, arg u) with
-      | Op.Param, Param { name = Some n; bound = Some v; _ } -> Some (n, v)
-      | _ -> None)
-    (toposort ~calls:Skip (body si))
-
-(* Whether the binds [bs] give no name of [bound] another value: a merged
-   call passes a name one value. *)
-let agree bound bs =
-  List.for_all
-    (fun (n, v) ->
-      match List.assoc_opt n bound with
-      | Some w -> Dtype.equal_const v w
-      | None -> true)
-    bs
 
 (* The groups of one device and domain, in the order of their first calls, each
    with the next that may be open past it. *)
@@ -1810,9 +1809,8 @@ let rec merge_linear ~shapes ~held ~free linear =
     in
     Tbl.length g.passed + List.length fresh <= limit
   in
-  let join g si m bs =
+  let join g si m =
     g.members <- (si, m) :: g.members;
-    g.bound <- bs @ g.bound;
     List.iter
       (fun a -> if addrspace a <> Some Dtype.Alu then Tbl.replace g.passed a ())
       (List.tl (src si))
@@ -1858,16 +1856,12 @@ let rec merge_linear ~shapes ~held ~free linear =
                 Domain.replace groups key k;
                 k
           in
-          (* A group whose call would bind a name to two values is passed
-             over and stays open; one past the buffer limit closes. *)
-          let bs = binds e in
           let rec pick j =
             let j = open_from k j in
             if j >= Dynarray.length k.gs then None
             else
               let g = Dynarray.get k.gs j in
-              if not (agree g.bound bs) then pick (j + 1)
-              else if fits g e then Some g
+              if fits g e then Some g
               else begin
                 g.open_ <- false;
                 pick (j + 1)
@@ -1875,20 +1869,14 @@ let rec merge_linear ~shapes ~held ~free linear =
           in
           match pick (at_or_after k bound) with
           | Some g ->
-              join g e m bs;
+              join g e m;
               joined.(i) <- true;
               g.first
           | None ->
               let g =
-                {
-                  first = i;
-                  members = [];
-                  passed = Tbl.create 8;
-                  bound = [];
-                  open_ = true;
-                }
+                { first = i; members = []; passed = Tbl.create 8; open_ = true }
               in
-              join g e m bs;
+              join g e m;
               Dynarray.add_last k.gs g;
               Dynarray.add_last k.next (Dynarray.length k.gs);
               opened.(i) <- Some g;
@@ -1952,6 +1940,14 @@ let create_linear_with_vars ?(capturing = false) ?(by_storage = false) big_sink
       (List.tl (src linear_call))
   in
   let linear = merge_calls ~held:held_bufs linear in
+  (* The entries of [linear], those of its loops' bodies among them. *)
+  let rec entries linear =
+    List.concat_map
+      (fun e ->
+        if is_loop e && op (nth e 0) = Op.Linear then entries (nth e 0)
+        else [ e ])
+      (src linear)
+  in
   let used_vars =
     List.concat_map
       (fun si ->
@@ -1964,7 +1960,7 @@ let create_linear_with_vars ?(capturing = false) ?(by_storage = false) big_sink
         List.concat_map
           (fun b -> List.filter_map (fun v -> (param_of v).name) (variables b))
           bodies)
-      (src linear)
+      (entries linear)
   in
   let var_vals =
     List.fold_left
