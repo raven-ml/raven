@@ -1603,7 +1603,9 @@ let cpu =
         (strf "%s computes a map of hundreds of values held at once" b.name)
         (Gen.pair case (Gen.int_range 257 1000))
         (fun c -> b.around (fun () -> law_map_wide b c));
-      prop
+      (* A contiguous int32 3x4 reaches "a coordinate repeating along a
+         row" in every run; [case] draws it in about one run in a hundred. *)
+      prop ~examples:[ large_at D.Int32 3 4 0 1 ]
         (strf "%s computes a map of every operand with coordinates" b.name)
         case
         (fun c -> b.around (fun () -> law_map_full b c));
