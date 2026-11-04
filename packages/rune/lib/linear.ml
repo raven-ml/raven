@@ -1356,6 +1356,32 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
           in
           Array.iteri (fun k (V b) -> if lin b then give b (fresh r.(k))) sv.b
         end
+    | Do { c = Attention_linear a as c; base } ->
+        (* Attention's derivative transposes to itself, flipped, its data
+           constants. *)
+        let forms = Program.forms c in
+        let n = Array.length forms in
+        if reached base n then begin
+          let cts =
+            Array.mapi
+              (fun k f ->
+                match acc_at base k with
+                | Some c -> c
+                | None -> Loops.filled ~zero:true f)
+              forms
+          in
+          let r =
+            Program.perform
+              (Attention_linear
+                 {
+                   a with
+                   transposed = not a.transposed;
+                   data = Array.map (fun (V d) -> V (env.const d)) a.data;
+                   args = cts;
+                 })
+          in
+          Array.iteri (fun k (V x) -> if lin x then give x (fresh r.(k))) a.args
+        end
     | Do { c = Remat { body; args; _ }; base } ->
         let n = next.(e) - base in
         if reached base n then remat_rule env body args (cts_at base n)

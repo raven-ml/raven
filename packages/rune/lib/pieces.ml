@@ -480,46 +480,84 @@ let rec cut ~kind ~(home : Rig.t) ~name (p : Program.t) forms =
         at := !at + n;
         env.(p.params.(k)) <- Some (joined ri (F f) ps))
       forms;
+    (* [p]'s equations over [env], its slots' values. *)
+    let rec run (p : Program.t) env =
+      let lookup (type v s d) (x : (v, s, d) Nx.t) : (v, s, d) Nx.t =
+        match Nx.Prim.payload p.owner x with
+        | Some (Var n) -> like x (Option.get env.(n))
+        | _ -> x
+      in
+      let bind = ref 0 in
+      let store (type v s d) (y : (v, s, d) Nx.t) =
+        env.(!bind) <- Some (V y);
+        incr bind
+      in
+      Array.iter
+        (function
+          | Op { by; op = traced; base } ->
+              let op = Nx.Prim.map lookup traced in
+              let r =
+                match op with
+                | Check _ -> decline "a check over several devices"
+                | Place (q, x)
+                  when Option.is_some (Nx.Prim.owner x)
+                       && Option.is_none
+                            (Nx.Prim.coerce (Nx.dtype x)
+                               (Nx.Placement.devices q) x) ->
+                    decline
+                      "Nx.place onto another set of devices: a program over \
+                       several devices keeps what it derives from an \
+                       argument between calls"
+                | _ ->
+                    let e = engine ri ~gathered ~by moves in
+                    Nx.Prim.partition e ~by op
+              in
+              bind := base;
+              Nx.Prim.iter_results store op r
+          | Do { c = Detach x; base } -> env.(base) <- Some (V (lookup x))
+          | Do { c = (Scan _ | Iterate _) as c; base } ->
+              let c = Program.map_operands { f = lookup } c in
+              Array.iteri
+                (fun k v -> env.(base + k) <- Some v)
+                (looped ~home ~name ri moves c)
+          (* Attention's derivative is its default's operations, each
+             partitioned. *)
+          | Do { c = Attention_linear a as c; base } ->
+              let operands =
+                Array.of_list
+                  (Program.operands (Program.map_operands { f = lookup } c))
+              in
+              let nd = Array.length a.data in
+              let q, captures =
+                Trace.trace Staged ~name:"Nx.attention"
+                  (Array.map Program.form operands) (fun vs ->
+                    Program.attention_linear a.spec ~transposed:a.transposed
+                      (Array.sub vs 0 nd)
+                      (Array.sub vs nd (Array.length vs - nd)))
+              in
+              if Array.length captures > 0 then
+                decline "Nx.attention's derivative over several devices";
+              let sub = Array.make q.slots None in
+              Array.iteri (fun k v -> sub.(q.params.(k)) <- Some v) operands;
+              run q sub;
+              Array.iteri
+                (fun k (V y) ->
+                  let y =
+                    match Nx.Prim.payload q.owner y with
+                    | Some (Var n) -> Option.get sub.(n)
+                    | _ -> V y
+                  in
+                  env.(base + k) <- Some y)
+                q.outputs
+          | Do { c; _ } -> decline "%s over several devices" (construct_name c))
+        p.eqns
+    in
+    run p env;
     let lookup (type v s d) (x : (v, s, d) Nx.t) : (v, s, d) Nx.t =
       match Nx.Prim.payload p.owner x with
       | Some (Var n) -> like x (Option.get env.(n))
       | _ -> x
     in
-    let bind = ref 0 in
-    let store (type v s d) (y : (v, s, d) Nx.t) =
-      env.(!bind) <- Some (V y);
-      incr bind
-    in
-    Array.iter
-      (function
-        | Op { by; op = traced; base } ->
-            let op = Nx.Prim.map lookup traced in
-            let r =
-              match op with
-              | Check _ -> decline "a check over several devices"
-              | Place (q, x)
-                when Option.is_some (Nx.Prim.owner x)
-                     && Option.is_none
-                          (Nx.Prim.coerce (Nx.dtype x) (Nx.Placement.devices q)
-                             x) ->
-                  decline
-                    "Nx.place onto another set of devices: a program over \
-                     several devices keeps what it derives from an argument \
-                     between calls"
-              | _ ->
-                  let e = engine ri ~gathered ~by moves in
-                  Nx.Prim.partition e ~by op
-            in
-            bind := base;
-            Nx.Prim.iter_results store op r
-        | Do { c = Detach x; base } -> env.(base) <- Some (V (lookup x))
-        | Do { c = (Scan _ | Iterate _) as c; base } ->
-            let c = Program.map_operands { f = lookup } c in
-            Array.iteri
-              (fun k v -> env.(base + k) <- Some v)
-              (looped ~home ~name ri moves c)
-        | Do { c; _ } -> decline "%s over several devices" (construct_name c))
-      p.eqns;
     let pieces =
       Array.map
         (fun (V y) ->

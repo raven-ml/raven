@@ -1638,9 +1638,9 @@ val jit :
     results hold {!Nx.attention}'s bound with [ε] the bound of a compiled
     {!Nx.logsumexp} of [tk] terms above. On a tensor core, float16 and
     bfloat16 weights are rounded once to [v]'s dtype for the value product,
-    as {!Nx.attention} allows. It differentiates as two contractions, a map
-    of its mask and score, a log-sum-exp and a map of its weights, each
-    within its row above. A tile of keys that the mask hides from every row
+    as {!Nx.attention} allows. Its derivatives recompute each pair's weight
+    from [lse] and sum their products by contractions and maps of the whole
+    pair loop, each within its row above. A tile of keys that the mask hides from every row
     a workgroup computes is skipped, so a NaN or an infinity in a value at
     a key hidden from a row within its length may make that row's [o] a
     NaN, where nx.cpu's eager result is finite; the derivatives make it

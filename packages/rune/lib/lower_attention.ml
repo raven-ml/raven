@@ -197,42 +197,58 @@ let key_at a x ~inside ~b ~kh ~within key =
 
 let ln2e = Float.log2 (Float.exp 1.)
 
-(* The pair of [row] and [key], read where [ok], of raw score [raw] in the
-   accumulator: its score in base 2, or [-∞] where it is hidden. *)
-let pair a x ~inside ~b ~row ~key ~ok raw =
+(* The coordinates of the pair of [row] and [key], as the program reads
+   them. *)
+let pair_coord a ~b ~(row : row) ~key ax =
   let open Ops.O in
-  let acc = Arith.dtype a.acc in
   let lead = Array.length a.lead in
-  let coord ax =
-    if ax = lead then i64 row.h
-    else if ax = Stdlib.(lead + 1) then i64 row.t
-    else if ax = Stdlib.(lead + 2) then i64 key
-    else
-      let inner =
-        numel (Array.sub a.lead Stdlib.(ax + 1) Stdlib.(lead - ax - 1))
+  if ax = lead then i64 row.h
+  else if ax = Stdlib.(lead + 1) then i64 row.t
+  else if ax = Stdlib.(lead + 2) then i64 key
+  else
+    let inner =
+      numel (Array.sub a.lead Stdlib.(ax + 1) Stdlib.(lead - ax - 1))
+    in
+    i64 ((b // int inner) % int a.lead.(ax))
+
+(* Each load's parts at the pair of coordinates [coord], read from [bufs]
+   where [ok]. *)
+let caps_at (loads : load array) bufs ~inside ~coord ~ok =
+  let open Ops.O in
+  Array.mapi
+    (fun c (l : load) ->
+      let terms =
+        Array.mapi
+          (fun ax st -> if st = 0 then int 0 else weak (coord ax) * int st)
+          l.strides
       in
-      i64 ((b // int inner) % int a.lead.(ax))
-  in
-  let caps =
-    Array.mapi
-      (fun c (l : load) ->
-        let terms =
-          Array.mapi
-            (fun ax st -> if st = 0 then int 0 else weak (coord ax) * int st)
-            l.strides
-        in
-        let at = Array.fold_left ( + ) (int 0) terms in
-        Arith.parts l.dt (ld_gated (inside x.caps.(c)) at ok))
-      a.loads
-  in
-  let ins = Array.append [| [ raw * fl acc a.scale ] |] caps in
-  let outs = Arith.scalar a.prog ~coord ins in
+      let at = Array.fold_left ( + ) (int 0) terms in
+      Arith.parts l.dt (ld_gated (inside bufs.(c)) at ok))
+    loads
+
+(* Whether the pair at [coord], read where [ok], of captures' parts [caps]
+   and score [s], scaled, in the accumulator, is visible, and its score in
+   base 2, [-∞] where hidden. *)
+let pair_of a ~coord ~ok ~caps s =
+  let acc = Arith.dtype a.acc in
+  let outs = Arith.scalar a.prog ~coord (Array.append [| [ s ] |] caps) in
   let seen =
     match outs.(0) with
-    | [ v ] -> ok &&: Ops.ne v (Ops.const ~dtype:(Ops.dtype v) (`Int Bigint.zero))
+    | [ v ] ->
+        ok &&: Ops.ne v (Ops.const ~dtype:(Ops.dtype v) (`Int Bigint.zero))
     | _ -> invalid_arg "Lower_attention: a mask of parts"
   in
-  (seen, Ops.where seen (List.hd outs.(1) * fl acc ln2e) (fl acc Float.neg_infinity))
+  ( seen,
+    Ops.where seen
+      (Ops.mul (List.hd outs.(1)) (fl acc ln2e))
+      (fl acc Float.neg_infinity) )
+
+(* The pair of [row] and [key], read where [ok], of raw score [raw] in the
+   accumulator: whether it is visible, and its score in base 2. *)
+let pair a x ~inside ~b ~row ~key ~ok raw =
+  let coord = pair_coord a ~b ~row ~key in
+  let caps = caps_at a.loads x.caps ~inside ~coord ~ok in
+  pair_of a ~coord ~ok ~caps (Ops.mul raw (fl (Arith.dtype a.acc) a.scale))
 
 (* Whether the pair of [row] and [key], read where [ok], is visible. *)
 let seen a x ~inside ~b ~row ~key ~ok =
@@ -1333,3 +1349,4 @@ let lower ~device ~(renderer : Renderer.t)
         in
         [| o; Shape.reshape (List.nth outs 1) lse_shape |]
   | _ -> unlowered (Nx.Prim.name op)
+

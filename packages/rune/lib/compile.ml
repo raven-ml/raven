@@ -1502,6 +1502,17 @@ and construct st cs env c base =
       in
       bind (Array.append out tadds)
   | Root { solution; _ } -> bind (Array.map (operand st env) solution)
+  (* Attention's derivative is its default's operations ({!Attention}). *)
+  | Attention_linear { spec; transposed; data; args } ->
+      let operands = Array.append data args in
+      let nd = Array.length data in
+      let q, _ =
+        Trace.trace Staged ~name:"Nx.attention" (Array.map form operands)
+          (fun vs ->
+            Program.attention_linear spec ~transposed (Array.sub vs 0 nd)
+              (Array.sub vs nd (Array.length vs - nd)))
+      in
+      bind (inline st cs env q operands)
   | Solve { system; transposed; b; data; captures; _ } ->
       (* The linear solve's program, its operator applications calls of [J]
          or [Jᵀ], its additions dropped: the default's. *)

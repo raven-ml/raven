@@ -405,6 +405,24 @@ and construct =
           system's linear solve with its operator filled ({!fill}) by [J] or
           [Jᵀ], and is linear in [b]. Its default fills the operator and
           evaluates the linear solve. *)
+  | Attention_linear : {
+      spec : Attention.spec;
+      transposed : bool;
+      data : value array;
+          (** The call of {!Nx.attention} it differentiates: the query, keys
+              and values, the table and the lengths where [spec] has them,
+              the loads, then [o] and [lse]. *)
+      args : value array;
+          (** The tangents of the query, keys, values and each load
+              [spec.tangents] marks; where [transposed], cotangents of [o]
+              and [lse]. *)
+    }
+      -> construct
+      (** {!Nx.attention}'s derivative at [data] applied to [args]: their
+          [(ȯ, l̇se)], or where [transposed] the cotangents of the query,
+          keys, values and each marked load ({!Attention.linear}). It is
+          linear in [args], and its transpose flips [transposed]. Its default
+          is {!Attention.linear}. *)
 
 and system = {
   id : int;
@@ -699,6 +717,11 @@ type _ Effect.t +=
 exception Evaluate
 (** Discontinuing {!Construct} with [Evaluate] runs the construct's default. No
     handler outside sees the construct. *)
+
+val attention_linear :
+  Attention.spec -> transposed:bool -> value array -> value array -> value array
+(** [attention_linear spec ~transposed data args] is {!Attention_linear}'s
+    default. *)
 
 val perform : construct -> value array
 (** [perform c] performs {!Construct} [c] and returns its results. A default

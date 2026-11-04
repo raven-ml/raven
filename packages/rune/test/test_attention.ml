@@ -10,7 +10,10 @@
      float64 reference at every dtype (Attentions);
    - Rune.vmap against each lane eagerly, bit for bit: a vmapped axis is a
      lead axis of the one operation, and nx.cpu's rows are their own;
-   - Rune.jvp against central differences, and Rune.grad against them.
+   - Rune.jvp against central differences, and Rune.grad against them;
+   - Rune.grad compiled against eager, and forward mode against reverse
+     mode, through the derivative's construct and its transpose;
+   - Rune.jit over keys cut across two devices against one device.
    Each in float32 and in float64, accumulating in the query's dtype, and
    for a float32 query accumulating in float64.
    Values are finite: a NaN or an infinity at a hidden key gives the
@@ -222,8 +225,9 @@ let law_jit dt acc c =
 let bits a = Array.map Int64.bits_of_float (Nx.to_array a)
 
 (* Keys and values cut across two devices along their keys, Rune.jit
-   against the eager call on one device: each part's coordinates are the
-   whole's, so a causal or captured mask hides the same pairs. nx.mli's bound
+   against the eager call on one device, and the gradient of [Σ o] within
+   1e-3 relative of eager's: each part's coordinates are the whole's, so a
+   causal or captured mask hides the same pairs. nx.mli's bound
    over parts doubles [η] and takes [ε] three times the parts' plus a
    Logsumexp of two: within four times the one-device sum of bounds. *)
 module Two = (val Nx.devices [ Nx_support.memory 0; Nx_support.memory 1 ])
@@ -253,6 +257,23 @@ let law_cut dt acc c =
     Rune.jit T.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor)) f
       (Nx.place Two.on q) (split k) (split v)
   in
+  (* The gradient of [Σ o], compiled over the parts, against eager's. *)
+  let loss = function [ q; k; v ] -> Nx.sum (fst (f q k v)) | _ -> invalid_arg "loss" in
+  let g = Rune.grad T.(list tensor) loss [ q; k; v ] in
+  let g' =
+    Rune.jit T.(list tensor @-> returns (list tensor)) (Rune.grad T.(list tensor) loss)
+      [ Nx.place Two.on q; split k; split v ]
+  in
+  List.iter2
+    (fun g g' ->
+      let g' = Nx.to_array (Nx.place Nx.Host.on g') in
+      Array.iteri
+        (fun i x ->
+          at_most ~msg:"gradient" float_exact
+            ~than:(1e-3 *. (1. +. Float.abs x))
+            (Float.abs (x -. g'.(i))))
+        (Nx.to_array g))
+    g g';
   let host x = Nx.to_array (Nx.place Nx.Host.on x) in
   let o = Nx.to_array o and o' = host o' in
   let lse = Nx.to_array lse and lse' = host lse' in
@@ -389,6 +410,80 @@ let grads (type s) (dt : (float, s) Nx.dtype) ~eps ~tol () =
   equal ~msg:"gradient" (result unit string) (Ok ())
     (Rune.check_grads ~eps ~tol T.(list tensor) loss params)
 
+(* The gradient of a loss over [o] and [lse], [lse]'s cotangent non-zero, in
+   the query, keys, values and the slopes the score captures, by
+   [Attention_linear] transposed: compiled against eager, and reverse mode
+   against forward mode along a direction. Each computes the same sums of
+   products of the pair loop in another order: in float64 within 1e-9
+   relative, in float32 within 1e-3, set by hand. *)
+let law_grad (type a) (acc : (float, a) Nx.dtype) ~tol c =
+  cover "paged" (c.page <> None);
+  cover "lengths" (c.lengths <> None);
+  let c = { c with alibi = true } in
+  let lead = [| 2 |] in
+  let k, v = keys acc c lead in
+  let q = draw acc c 1. [| 2; hq c; c.tq; c.dk |] in
+  let slopes = Nx.abs (draw acc c 8. [| hq c; 1; 1 |]) in
+  let w = draw acc c 10. [| 2; hq c; c.tq; c.dv |] in
+  let w2 = draw acc c 11. [| 2; hq c; c.tq |] in
+  let n = numel lead in
+  let lengths =
+    Option.map
+      (fun l -> Nx.create Nx.int64 lead (Array.map Int64.of_int (Array.sub l 0 n)))
+      c.lengths
+  in
+  let mask =
+    match c.mask with
+    | Unmasked -> None
+    | Causal -> Some Nx.causal
+    | Captured ->
+        let m = Nx.greater_equal_s (draw acc c 7. [| hq c; c.tq; c.tk |]) (-0.5) in
+        Some (fun _ -> m)
+  in
+  let kv k v =
+    match c.page with
+    | None -> Nx.Dense { k; v }
+    | Some p ->
+        let pages = c.tk / p in
+        let table = Array.map Int64.of_int (Array.sub c.table 0 (n * pages)) in
+        Nx.Paged
+          { k; v; table = Nx.create Nx.int64 (Array.append lead [| pages |]) table }
+  in
+  let loss = function
+    | [ q; k; v; slopes ] ->
+        let score (p : Nx.host Nx.pair) s =
+          Nx.(Infix.(s - (cast acc (p.q - p.k) * slopes)))
+        in
+        let o, lse = Nx.attention ?lengths ?mask ~score ~acc ~kv:(kv k v) q in
+        let finite x = Nx.where (Nx.isfinite x) x (Nx.zeros_like x) in
+        Nx.add (Nx.sum (Nx.mul w o)) (Nx.sum (Nx.mul w2 (finite lse)))
+    | _ -> invalid_arg "loss"
+  in
+  let xs = [ q; k; v; slopes ] in
+  let g = Rune.grad T.(list tensor) loss xs in
+  let g' = Rune.jit T.(list tensor @-> returns (list tensor)) (Rune.grad T.(list tensor) loss) xs in
+  List.iter2
+    (fun g g' ->
+      let g = Nx.to_array g and g' = Nx.to_array g' in
+      Array.iteri
+        (fun i x ->
+          at_most ~msg:"compiled gradient" float_exact
+            ~than:(tol *. (1. +. Float.abs x))
+            (Float.abs (x -. g'.(i))))
+        g)
+    g g';
+  let ts = List.mapi (fun i x -> draw acc c (20. +. Float.of_int i) (Nx.shape x)) xs in
+  let _, d = Rune.jvp T.(list tensor) T.tensor loss xs ts in
+  let d = Nx.item [] d in
+  let dot =
+    List.fold_left2
+      (fun a g t -> a +. Nx.item [] (Nx.sum (Nx.mul g t)))
+      0. g ts
+  in
+  at_most ~msg:"forward against reverse" float_exact
+    ~than:(tol *. (1. +. Float.abs dot))
+    (Float.abs (d -. dot))
+
 let () =
   let case = Gen.with_pp pp_case case in
   (* Each law in float32, in float64, and for a float32 query in a float64
@@ -417,7 +512,7 @@ let () =
                 (Rune_support.Attentions.law (module Nx.Host));
             ]);
          group "jit over keys cut across two devices"
-           (three 12 (law_cut f32 f32) (law_cut f64 f64) (law_cut f32 f64));
+           (three 24 (law_cut f32 f32) (law_cut f64 f64) (law_cut f32 f64));
          group "vmap is each lane, bit for bit"
            (three 60 (law_vmap f32 f32) (law_vmap f64 f64) (law_vmap f32 f64));
          group "vmap over lanes' own pools is each lane, bit for bit"
@@ -428,6 +523,11 @@ let () =
               (law_jvp f32 f32 ~h:1e-2 ~tol:1e-2)
               (law_jvp f64 f64 ~h:1e-5 ~tol:1e-6)
               (law_jvp f32 f64 ~h:1e-2 ~tol:1e-2));
+         group "the gradient compiled and in forward mode"
+           [
+             prop ~count:24 "float32" case (law_grad f32 ~tol:1e-3);
+             prop ~count:24 "float64" case (law_grad f64 ~tol:1e-9);
+           ];
          group "gradients by central differences"
            [
              test "float32" (grads Nx.float32 ~eps:1e-2 ~tol:2e-3);

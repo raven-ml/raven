@@ -1648,6 +1648,9 @@ let rec answer ~name ~tape i (c : Program.construct) k =
   | Solve _ ->
       Effect.Deep.continue k
         (Program.silenced (fun () -> solve ~name ~tape i c))
+  (* The derivative's derivative is its default's: contractions and maps
+     this differentiation sees. *)
+  | Attention_linear _ -> Effect.Deep.discontinue k Program.Evaluate
   (* An index reads its operand's placement alone. *)
   | Lane_index (a, p, x) ->
       let x = Option.map (primal i) x in
@@ -2403,46 +2406,85 @@ and derive ?totals ~name ~tape i p xs =
           | _ -> (Program.V y, None))
         out)
 
-(* Attention as its composition ({!Attention}), differentiated by a
-   differentiation like [i] seeded from [i]'s tangents; any other operation
-   by [rule]. *)
-and attention : type r.
-    name:string ->
-    tape:Prim.interpretation option ->
-    Prim.interpretation ->
-    by:string ->
-    r Prim.t ->
-    r =
- fun ~name ~tape i ~by op ->
+(* Attention's derivative: the operation on the primals, and, where an
+   operand has a tangent, [Attention_linear] of their tangents, performed
+   outward so that reverse mode transposes it and a compiled call lowers it
+   whole ({!Attention}). The keys' and values' tangents are zeros where they
+   have none, and each float load's that has one is passed. *)
+and attention : type r. name:string -> Prim.interpretation -> by:string -> r Prim.t -> r
+    =
+ fun ~name i ~by op ->
   match op with
   | Attention a ->
-      run ~name ?tape (fun j ->
-          let seeded x =
-            match Prim.payload i x with
-            | Some (Dual d) -> seed j d.primal d.tangent
-            | _ -> x
-          in
-          let kv : _ Nx.kv =
-            match a.kv with
-            | Dense { k; v } -> Dense { k = seeded k; v = seeded v }
-            | Paged { k; v; table } ->
-                Paged { k = seeded k; v = seeded v; table = seeded table }
-          in
-          let loads =
-            Iarray.map (fun (Prim.Any x) -> Prim.Any (seeded x)) a.loads
-          in
-          let o, lse =
-            Attention.compose
-              { eval = (fun op -> Prim.eval ~by op) }
-              ~prog:a.prog ~scale:a.scale ~acc:a.acc ~out:a.out (seeded a.q) kv
-              (Option.map seeded a.lengths) loads
-          in
-          let back y =
-            match Prim.payload j y with
-            | Some (Dual d) -> dual i ~fresh:true d.primal d.tangent
-            | _ -> y
-          in
-          (back o, back lse))
+      let p x = primal i x in
+      let kv : _ Nx.kv =
+        match a.kv with
+        | Dense { k; v } -> Dense { k = p k; v = p v }
+        | Paged { k; v; table } -> Paged { k = p k; v = p v; table = p table }
+      in
+      let loads = Iarray.map (fun (Prim.Any x) -> Prim.Any (p x)) a.loads in
+      let o, lse =
+        Prim.eval ~by
+          (Attention
+             { a with q = p a.q; kv; lengths = Option.map p a.lengths; loads })
+      in
+      let k, v, table =
+        match a.kv with
+        | Dense { k; v } -> (k, v, None)
+        | Paged { k; v; table } -> (k, v, Some table)
+      in
+      let marked =
+        Array.map
+          (fun (Prim.Any x) -> D.is D.Float (Nx.dtype x) && has_tangent i x)
+          (Iarray.to_array a.loads)
+      in
+      if
+        not
+          (has_tangent i a.q || has_tangent i k || has_tangent i v
+          || Array.exists Fun.id marked)
+      then (o, lse)
+      else
+        let t x =
+          match Prim.payload i x with
+          | Some (Dual d) -> Program.V d.tangent
+          | _ -> Program.V (Nx.zeros_like (p x))
+        in
+        let pv x = Program.V (p x) in
+        let data =
+          Array.concat
+            [
+              [| pv a.q; pv k; pv v |];
+              Option.to_list (Option.map pv table) |> Array.of_list;
+              Option.to_list (Option.map pv a.lengths) |> Array.of_list;
+              Array.map (fun (Prim.Any x) -> pv x) (Iarray.to_array a.loads);
+              [| Program.V o; Program.V lse |];
+            ]
+        in
+        let args =
+          Array.concat
+            [
+              [| t a.q; t k; t v |];
+              Array.of_list
+                (List.filteri
+                   (fun j _ -> marked.(j))
+                   (List.map (fun (Prim.Any x) -> t x) (Iarray.to_list a.loads)));
+            ]
+        in
+        let spec : Attention.spec =
+          {
+            prog = a.prog;
+            scale = a.scale;
+            paged = Option.is_some table;
+            lengths = Option.is_some a.lengths;
+            tangents = marked;
+          }
+        in
+        let r =
+          Program.perform
+            (Attention_linear { spec; transposed = false; data; args })
+        in
+        ( dual i ~fresh:true o (Program.like o r.(0)),
+          dual i ~fresh:true lse (Program.like lse r.(1)) )
   | _ -> rule name i ~by op
 
 and run :
@@ -2480,7 +2522,7 @@ and run :
   Effect.Deep.match_with
     (fun () ->
       Prim.interpret ~name Values
-        (fun i ~by op -> attention ~name ~tape i ~by op)
+        (fun i ~by op -> attention ~name i ~by op)
         (fun i ->
           owner := Some i;
           f i))

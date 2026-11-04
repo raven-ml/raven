@@ -272,6 +272,13 @@ and construct =
       captures : value array;
     }
       -> construct
+  | Attention_linear : {
+      spec : Attention.spec;
+      transposed : bool;
+      data : value array;
+      args : value array;
+    }
+      -> construct
 
 and switch = {
   name : string;
@@ -355,7 +362,7 @@ and carried_by = function
   | Root { system; _ } | Solve { system; _ } ->
       [ system.residual; system.jacobian; system.solve ]
   | Detach _ | Lanes _ | Lane_index _ | Add _ | Accumulate _ | Emit _
-  | Callback _ | Operator _ ->
+  | Callback _ | Operator _ | Attention_linear _ ->
       []
 
 let operands = function
@@ -383,6 +390,7 @@ let operands = function
       Array.to_list (Array.concat [ solution; theta; captures ])
   | Solve { b; data; captures; _ } ->
       Array.to_list (Array.concat [ b; data; captures ])
+  | Attention_linear { data; args; _ } -> Array.to_list (Array.append data args)
   | Switch { index; captures; seeds; _ } ->
       index :: Array.to_list (Array.append captures seeds)
 
@@ -676,6 +684,9 @@ let map_operands m = function
           data = map_values m s.data;
           captures = map_values m s.captures;
         }
+  | Attention_linear a ->
+      Attention_linear
+        { a with data = map_values m a.data; args = map_values m a.args }
   | Switch s ->
       Switch
         {
@@ -697,6 +708,7 @@ let construct_name = function
   | Operator _ -> "Rune.root's operator"
   | Root { name; _ } -> name
   | Solve { name; _ } -> name ^ "'s linear solve"
+  | Attention_linear _ -> "Nx.attention's derivative"
   | Switch { name; _ } -> name
   | Add _ -> "an addition"
   | Accumulate _ -> "Rune.Total.add"
@@ -740,6 +752,7 @@ let rec map_programs f = function
   | Remat r -> Remat { r with body = f r.body }
   | Root r -> Root { r with system = map_system f r.system }
   | Solve s -> Solve { s with system = map_system f s.system }
+  | Attention_linear _ as c -> c
   | Switch s -> Switch { s with branches = Array.map f s.branches }
 
 (* A system's programs at its construct's level; the operator's, a lane's,
@@ -814,7 +827,7 @@ let feeds step =
    rule its tangent map's running totals out, chains from the identity. *)
 let additions = function
   | Detach _ | Lanes _ | Lane_index _ | Add _ | Accumulate _ | Emit _
-  | Callback _ | Operator _ | Root _ | Solve _ ->
+  | Callback _ | Operator _ | Root _ | Solve _ | Attention_linear _ ->
       [||]
   | Scan { step = p; _ } | Call { body = p; _ } | Remat { body = p; _ } ->
       let adds, _, _ = sums [ p ] in
@@ -918,6 +931,19 @@ let rec forms = function
   | Root { solution; _ } -> Array.map form solution
   | Solve { system; b; _ } ->
       Array.map form (slice system.solve.outputs 0 (Array.length b))
+  | Attention_linear { transposed = false; data; _ } ->
+      let n = Array.length data in
+      [| form data.(n - 2); form data.(n - 1) |]
+  | Attention_linear { spec; transposed = true; data; _ } ->
+      (* The loads follow the query, keys, values, table and lengths. *)
+      let first =
+        3 + Bool.to_int spec.paged + Bool.to_int spec.lengths
+      in
+      let loads = Array.sub data first (Array.length spec.tangents) in
+      Array.append
+        (Array.map form (Array.sub data 0 3))
+        (Array.of_list
+           (List.filteri (fun j _ -> spec.tangents.(j)) (Array.to_list (Array.map form loads))))
   | Switch { branches; _ } ->
       let _, sums, _ = sums (Array.to_list branches) in
       Array.append (switched branches) sums
@@ -1482,6 +1508,19 @@ and default = function
       in
       let p = fill system.solve ~id:system.id body in
       slice (eval p (Array.concat [ b; data; captures ])) 0 (Array.length b)
+  | Attention_linear { spec; transposed; data; args } ->
+      attention_linear spec ~transposed data args
+
+and attention_linear spec ~transposed data args =
+  let (V q) = data.(0) in
+  let set = Nx.Placement.devices (Nx.placement q) in
+  let any (V x) =
+    match Nx.Prim.coerce (Nx.dtype x) set x with
+    | Some y -> Nx.Prim.Any y
+    | None -> invalid_arg "Nx.attention's derivative: operands of two sets"
+  in
+  Attention.linear spec ~transposed (Array.map any data) (Array.map any args)
+  |> Array.map (fun (Nx.Prim.Any y) -> V y)
 
 (* [p] with the operator [id]'s applications calls of [body]'s programs. *)
 and fill (p : t) ~id body =
@@ -2555,6 +2594,10 @@ and pp_construct names ~indent (p : t) ppf c =
       Format.fprintf ppf "%s (%a) of (%a), captures (%a)@\n%s  residual%a" name
         values (Array.to_list solution) values (Array.to_list theta) values
         (Array.to_list captures) pad program system.residual
+  | Attention_linear { transposed; data; args; _ } ->
+      Format.fprintf ppf "Nx.attention's derivative%s (%a) at (%a)"
+        (if transposed then " transposed" else "")
+        values (Array.to_list args) values (Array.to_list data)
   | Solve { name; system; transposed; b; data; captures } ->
       Format.fprintf ppf "%s solve%s (%a) of (%a), captures (%a)@\n%s  solve%a"
         name

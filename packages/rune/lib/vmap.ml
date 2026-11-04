@@ -1356,6 +1356,8 @@ let rec answer ~name ?held i axis n (c : Program.construct) k =
       in
       Effect.Deep.continue k (Array.map (lane_v i) r)
   | Root _ | Solve _ -> Effect.Deep.continue k (root ~name ?held i axis n c)
+  (* Attention's derivative maps as its default's operations do. *)
+  | Attention_linear _ -> Effect.Deep.discontinue k Program.Evaluate
 
 (* A scan's map is the scan of its step's map, whose carry has lanes for each
    carry that has them at the call or gains them from the step: a fixpoint, as

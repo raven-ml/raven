@@ -373,6 +373,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx.attention` differentiates through one construct of its own, linear in
+  the tangents and transposed by flipping it, which recomputes each pair's
+  weight from `lse`: reverse mode keeps the call's operands, `o` and `lse`,
+  where it kept the composition's weights of `[lead…; hq; tq; tk]`. Under
+  `Rune.jit` over keys cut across devices the pair program reads the whole
+  call's coordinates.
 - `Rune.jit` computes `Nx.attention` in kernels of its own, folding each
   query row over its keys in tiles with an online softmax, where it composed
   contractions that stored the scores: nothing of the pair loop's shape is

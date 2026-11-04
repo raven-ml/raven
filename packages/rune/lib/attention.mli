@@ -3,33 +3,39 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Attention as other operations.
+(** {!Nx.attention}'s derivative, as its construct's default computes it.
 
-    Rune's differentiation gives {!Nx.Prim.Attention} this meaning: two
-    contractions, a map of the pair program, a log-sum-exp and a map for
-    the weights, each an operation it already differentiates. A compiled
-    call lowers the operation whole ({!Lower_attention}). It stores three arrays of [[lead…; hq; tq; tk]] in the
-    accumulator; with lengths it copies the values with the keys
-    past each row's length zeroed, and paged keys and values are gathered
-    into dense ones. A NaN or an infinity at a key hidden from a row within
-    its length makes the row's [o] NaN. *)
+    At a call's operands and its [o] and [lse], the derivative is linear in
+    the tangents of the query, keys, values and the pair program's float
+    loads, and its transpose maps cotangents of [o] and [lse] back to them.
+    A pair's weight is [p = exp (x - lse)], [0] where hidden; [ẋ] is the
+    pair program's tangent. Along tangents, [l̇se = Σ p ẋ] and
+    [ȯ = Σ p ẋ v - l̇se o + Σ p v̇]. Transposed, [δ = ō·o - l̄se] and each
+    pair's score receives [p (ō·v - δ)], which the program's transpose
+    reads back to the scaled score and each load. A row of no visible pair
+    has zero weights and zero cotangents. *)
 
-type eval = { eval : 'r. 'r Nx.Prim.t -> 'r } [@@unboxed]
-(** How the composition's operations are given their meaning: by
-    {!Nx.Prim.eval} where a differentiation's code runs. *)
+type spec = {
+  prog : Nx_kernel.Prog.t;  (** The call's pair program. *)
+  scale : float;
+  paged : bool;  (** Whether the keys and values are pools read by a table. *)
+  lengths : bool;  (** Whether the call has lengths. *)
+  tangents : bool array;
+      (** For each load, whether it has a tangent: a float load. *)
+}
+(** The type for what a derivative knows of its call beside its values. *)
 
-val compose :
-  eval ->
-  prog:Nx_kernel.Prog.t ->
-  scale:float ->
-  acc:(float, 'a) Nx.dtype ->
-  out:('w, 'r) Nx.dtype ->
-  ('v, 's, 'd) Nx.t ->
-  ('v, 's, 'd) Nx.kv ->
-  'd Nx.int64_t option ->
-  'd Nx.Prim.any iarray ->
-  ('w, 'r, 'd) Nx.t * (float, 'a, 'd) Nx.t
-(** [compose e ~prog ~scale ~acc ~out q kv lengths loads] is the attention
-    {!Nx.Prim.Attention} of these fields states, [(o, lse)], by contractions,
-    maps, a log-sum-exp, movements and, for paged keys, gathers, each given
-    its meaning by [e]. *)
+val linear :
+  spec -> transposed:bool -> 'd Nx.Prim.any array -> 'd Nx.Prim.any array ->
+  'd Nx.Prim.any array
+(** [linear spec ~transposed data args] is the derivative at [data] — the
+    query, keys and values, the table and the lengths where [spec] has
+    them, the loads, then [o] and [lse] — applied to [args]: the tangents
+    of the query, keys, values and each load [spec.tangents] marks, giving
+    [ȯ] and [l̇se]; where [transposed], cotangents of [o] and [lse], giving
+    the query's, keys', values' and each marked load's. Keys' and values'
+    are the pools' where paged. It computes as contractions and maps of the
+    whole pair loop, by {!Nx.Prim.eval}.
+
+    Raises [Invalid_argument] if [data] or [args] are not of these dtypes
+    and devices. *)
