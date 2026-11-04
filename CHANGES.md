@@ -3793,6 +3793,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- A list column whose elements are fixed-width takes each row's elements,
+  and their nulls, as one run in `Talon.take`, a join, a filter or a sort,
+  where it built a position for each element: a take of 2^18 rows of a
+  `list[int64]` of up to 8 elements a row runs half the instructions.
 - Gathering text (a join's output, a filter, a sort, `Talon.take`) copies
   each row's bytes once: decision-support query 2 at scale factor 1 runs
   1.6 billion instructions where it ran 4.7, and each bench row that

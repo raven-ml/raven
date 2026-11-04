@@ -1173,6 +1173,96 @@ let take_text (vs, len, is) =
     (Array.of_list (List.map at is))
     (Column.options Kind.string (take_column is c))
 
+(* List rows, some null, their elements some null, after [pre] elements no
+   row holds; and indices into the rows, some outside them. *)
+let list_picks =
+  let element =
+    Gen.frequency
+      [ (1, Gen.constant None); (4, Gen.map Option.some (Gen.int_range 0 99)) ]
+  in
+  let row =
+    Gen.frequency
+      [
+        (1, Gen.constant None);
+        (4, Gen.map Option.some (Gen.array ~size:(Gen.int_range 0 4) element));
+      ]
+  in
+  Gen.with_pp
+    (fun ppf (_, pre, is) ->
+      Format.fprintf ppf "after %d, at %a" pre
+        (Format.pp_print_list ~pp_sep:Format.pp_print_space
+           Format.pp_print_int)
+        is)
+    (Gen.bind (Gen.array ~size:(Gen.int_range 0 10) row) (fun rows ->
+         let n = Array.length rows in
+         Gen.triple (Gen.constant rows) (Gen.int_range 0 3)
+           (Gen.list ~size:(Gen.int_range 0 12) (Gen.int_range (-2) (n + 1)))))
+
+(* A list column's rows at indices are its rows there, elements' nulls
+   included, and null outside. *)
+let take_lists (rows, pre, is) =
+  let n = Array.length rows in
+  let elements =
+    Array.concat
+      (Array.make pre (Some (-1))
+      :: Array.to_list
+           (Array.map (function Some r -> r | None -> [||]) rows))
+  in
+  let offsets = Array.make (n + 1) (Int64.of_int pre) in
+  Array.iteri
+    (fun i r ->
+      let l = match r with Some r -> Array.length r | None -> 0 in
+      offsets.(i + 1) <- Int64.add offsets.(i) (Int64.of_int l))
+    rows;
+  let m = Array.length elements in
+  let child =
+    Column.of_tensor
+      ~validity:(valid_bits (Array.map Option.is_some elements))
+      (Nx.create Nx.int64 [| m |]
+         (Array.map (function Some v -> Int64.of_int v | None -> 0L) elements))
+  in
+  let c =
+    Result.get_ok
+      (Column.of_layout
+         (Any (Type.list Type.int64))
+         (Varsize
+            {
+              validity = Some (valid_bits (Array.map Option.is_some rows));
+              offsets = Nx.create Nx.int64 [| n + 1 |] offsets;
+              child;
+            }))
+  in
+  cover "a null element taken"
+    (List.exists
+       (fun i ->
+         i >= 0 && i < n
+         && match rows.(i) with Some r -> Array.mem None r | None -> false)
+       is);
+  cover "an index outside the rows" (List.exists (fun i -> i < 0 || i >= n) is);
+  cover "elements before the first row" (pre > 0);
+  let at i = if i >= 0 && i < n then rows.(i) else None in
+  let y = take_column is c in
+  let got =
+    match Column.layout y with
+    | Varsize { validity; offsets; child } ->
+        let o = Nx.to_array offsets and e = Column.options Kind.int child in
+        let valid k =
+          match validity with
+          | Some v -> Nx.item [ k ] (Nx.cast Nx.bool v)
+          | None -> true
+        in
+        Array.init (List.length is) (fun k ->
+            if not (valid k) then None
+            else
+              let lo = Int64.to_int o.(k) and hi = Int64.to_int o.(k + 1) in
+              Some (Array.sub e lo (hi - lo)))
+    | Fixed _ | Children _ -> fail "a list column's take is not a list"
+  in
+  equal
+    (array (option (array (option int))))
+    (Array.of_list (List.map at is))
+    got
+
 let nulls_cases =
   group "nulls"
     [
@@ -1181,6 +1271,10 @@ let nulls_cases =
         "null_count from two domains at once is the number of null rows" counts;
       prop "a text column's rows at indices are its rows there, null outside"
         text_picks take_text;
+      prop
+        "a list column's rows at indices are its rows there, null elements \
+         included, and null outside"
+        list_picks take_lists;
       test "a validity with every row set has no null" (fun () ->
           let c = column_of [| true; true; true |] in
           is_some (Column.validity c);

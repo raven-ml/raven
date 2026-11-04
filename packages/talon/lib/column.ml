@@ -750,6 +750,28 @@ let rec gather_data indices c =
   match c.data with
   | Fixed (P x) -> Fixed (P (Nx.take ~axis:0 indices x))
   | Bytes r -> Bytes (Nx_ragged.take ~indices r)
+  | List { offsets; child = { data = Fixed (P x); _ } as child } ->
+      (* A row's elements are one run of the child's values and bits: each
+         is taken whole, as a text's bytes are. *)
+      let rows y = Nx_ragged.take ~indices (Nx_ragged.v ~offsets y) in
+      let r = rows x in
+      let validity =
+        Option.map
+          (fun v -> unread (Nx_ragged.values (rows v.bits)))
+          child.validity
+      in
+      let values = Nx_ragged.values r in
+      List
+        {
+          offsets = Nx_ragged.offsets r;
+          child =
+            {
+              child with
+              length = Nx.dim 0 values;
+              validity;
+              data = Fixed (P values);
+            };
+        }
   | List { offsets; child } ->
       let elements = Nx.arange Nx.int64 0 child.length 1 in
       let at = Nx_ragged.take ~indices (Nx_ragged.v ~offsets elements) in
