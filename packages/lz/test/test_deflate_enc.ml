@@ -278,34 +278,47 @@ let quota =
               at_most int ~msg:"the rest is at most the quota" ~than:q last)
         formats)
 
-(* Two streams for one encoder: drawn, or half the time a stream of 64 bytes
-   to 1 KiB after a corpus of 2 to 64 KiB, whose positions fill the tables the
-   short stream then finds. *)
+(* Two streams for one encoder and the levels at which the law holds them.
+   Half the time, at every level, a stream of 64 bytes to 1 KiB after a
+   prefix of 2 to 8 KiB of the same corpus. The short stream empties only the
+   heads it hashes. The prefix, too long for that, empties every head, then
+   leaves a position in each head the short stream reads and in heads past its
+   reach. Otherwise two drawn recipes at one drawn level. *)
 let stream_pair =
   let kind = Gen.of_list Lz_support.[ Text; Columns; Random ] in
-  let corpus lo hi =
+  let short =
     Gen.map
-      (fun (k, n) -> Lz_support.Corpus (k, n))
-      (Gen.pair kind (Gen.int_range lo hi))
+      (fun ((k, na), nb) ->
+        (Lz_support.Corpus (k, na), Lz_support.Corpus (k, nb), levels))
+      (Gen.pair
+         (Gen.pair kind (Gen.int_range (2 * kib) (8 * kib)))
+         (Gen.int_range 64 kib))
+  in
+  let drawn =
+    Gen.map
+      (fun ((a, b), level) -> (a, b, [ level ]))
+      (Gen.pair (Gen.pair Lz_support.recipe Lz_support.recipe) level)
+  in
+  let pp_levels =
+    Format.pp_print_list
+      ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+      Format.pp_print_int
   in
   Gen.with_pp
-    (fun ppf (a, b) ->
-      Format.fprintf ppf "%a then %a" Lz_support.pp_recipe a
-        Lz_support.pp_recipe b)
-    (Gen.frequency
-       [
-         (1, Gen.pair (corpus (2 * kib) (64 * kib)) (corpus 64 kib));
-         (1, Gen.pair Lz_support.recipe Lz_support.recipe);
-       ])
+    (fun ppf (a, b, levels) ->
+      Format.fprintf ppf "%a then %a at levels %a" Lz_support.pp_recipe a
+        Lz_support.pp_recipe b pp_levels levels)
+    (Gen.frequency [ (1, short); (1, drawn) ])
 
 let streams =
-  prop "after Done, the next step begins a new stream, at every level"
+  prop "after Done, the next step begins a new stream"
     (Gen.pair stream_pair format)
-    (fun ((ra, rb), f) ->
+    (fun ((ra, rb, levels), f) ->
       let a = Lz_support.build ra and b = Lz_support.build rb in
       let nb = String.length b in
-      cover "a stream of 64 bytes to 1 KiB after a longer one"
-        (nb >= 64 && nb <= kib && String.length a > nb);
+      cover "a stream of 64 bytes to 1 KiB after a longer one, at every level"
+        (nb >= 64 && nb <= kib && String.length a > nb
+        && List.length levels = 9);
       List.iter
         (fun level ->
           let e = f.encoder ~level () in
