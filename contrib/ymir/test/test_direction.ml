@@ -63,6 +63,19 @@ let plain =
 let angles =
   Gen.pair (Gen.float_range 0. 6.28) (Gen.float_range (-.pi /. 2.) (pi /. 2.))
 
+(* Angles whose latitude lies within 0.07 rad of a pole on two draws of
+   five, where [angles] puts one in twenty there. *)
+let angles_near_poles =
+  let lat =
+    Gen.frequency
+      [
+        (3, Gen.float_range (-.pi /. 2.) (pi /. 2.));
+        (1, Gen.float_range 1.5 (pi /. 2.));
+        (1, Gen.float_range (-.pi /. 2.) (-1.5));
+      ]
+  in
+  Gen.pair (Gen.float_range 0. 6.28) lat
+
 (* [exact k (x, y, z)] is whether no component of [k] times the row rounds. *)
 let exact k (x, y, z) =
   let exact c = Float.is_finite (c *. k) && c *. k /. k = c in
@@ -171,7 +184,7 @@ let lon_lat d = (one (lon d), one (lat d))
 let round_trips =
   group "lon and lat invert lonlat"
     [
-      prop "round trip within 4 ulp" angles (fun (l, b) ->
+      prop "round trip within 4 ulp" angles_near_poles (fun (l, b) ->
           cover "near a pole" (Float.abs b > 1.5);
           let l', b' = lon_lat (lonlat l b) in
           equal (ulps 4) l l';
