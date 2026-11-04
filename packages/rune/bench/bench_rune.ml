@@ -489,8 +489,33 @@ let waves grid r =
       Nx.add acc (Nx.div (Nx.sub rk grid) (Nx.add_s (Nx.mul rk grid) 1.)))
     (Nx.zeros_like grid) (List.init 14 succ)
 
+let tri_fn () = Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+
+(* [hist] targets that [hist_k] updates land on: a histogram, or a small
+   table's gradient. *)
+let hist = 16
+let hist_k = 1 lsl 20
+let histogram p u into = Nx.scatter ~combine:Nx.Add ~axis:0 p u into
+
+(* A scan's step that adds [scan_k] updates into a fresh target of
+   [scan_n] zeros, then into its carry. *)
+let scan_n = 1024
+let scan_k = 4
+
+let scan_scatter xs c0 =
+  let step c r =
+    let idx = Nx.cast Nx.int64 (Nx.mul_s r (Float.of_int scan_n)) in
+    let y = Nx.scatter ~combine:Nx.Add ~axis:0 idx r (Nx.zeros_like c) in
+    (Nx.add c y, Nx.sum y)
+  in
+  fst (Rune.scan' step ~init:c0 xs)
+
 let jit_rows () =
   let x = x64 () and a = one () and b = one () in
+  let hist_positions = positions hist_k hist and hist_updates = floats hist_k in
+  let hist_into = floats hist in
+  let scan_rows = between f32 40 0. 1. [| 64; scan_k |] in
+  let scan_carry = host (Nx.zeros f32 [| scan_n |]) in
   let xs = floats n and ps = positions n n and g = floats n in
   let into = floats 1024 and us = floats 16 and qs = positions 16 1024 in
   let stacked =
@@ -587,6 +612,16 @@ let jit_rows () =
           Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
           (fun p u into -> Nx.scatter ~axis:0 p u into))
       (fun f -> synced (f qs us into));
+    (* A histogram: 2^20 updates added into 16 targets, which the threads
+       take in chunks. *)
+    warm "scatter-add-1048576-into-16"
+      (fun () -> Rune.jit (tri_fn ()) histogram)
+      (fun f -> synced (f hist_positions hist_updates hist_into));
+    (* A scan whose 64 steps each scatter 4 updates into a fresh target of
+       1024 zeros: a scatter is a kernel of its own and fills its storage. *)
+    warm "scan-scatter-64-trips"
+      (fun () -> Rune.jit (pair_fn ()) scan_scatter)
+      (fun f -> synced (f scan_rows scan_carry));
     donated_scatter 16;
     (* An embedding's gradient: 1024 tokens' rows added into a table of
        zeros. *)
@@ -1402,6 +1437,17 @@ let gpu_rows g =
                   shared_scalar
               in
               fun () -> ignore (synced2 (f p x y)));
+        };
+      (* A histogram: 2^20 updates added into 16 targets. *)
+      on_gpu g "scatter-add-1048576-into-16"
+        {
+          at =
+            (fun at ->
+              let put x = Nx.place at x in
+              let p = put (positions hist_k hist) in
+              let u = put (floats hist_k) and into = put (floats hist) in
+              let f = Rune.jit (tri_fn ()) histogram in
+              fun () -> ignore (synced (f p u into)));
         };
       (* Attention's scores of 8 heads of 64 at 2048 positions in float32,
          [h i d, h j d -> h i j]: its kernel keeps the heads apart from the

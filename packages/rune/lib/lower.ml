@@ -260,7 +260,7 @@ let draws (prog : Nx_kernel.Prog.t) =
     (function Nx_kernel.Prog.Op2 (Binary Threefry, _, _) -> true | _ -> false)
     prog.nodes
 
-let op ?dst ?renderer ~device ~host (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r)
+let op ?dst ~renderer ~device ~host (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r)
     (o : r P.t) =
   match o with
   | Map { layout; prog; loads; outs = _; at = _ } -> body node layout prog loads
@@ -308,7 +308,7 @@ let op ?dst ?renderer ~device ~host (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t
       [| Lower_index.gather (D.Any (Nx.dtype x)) ~axis (node idx) (node x) |]
   | Scatter { combine; unique = _; axis; idx; updates; into } ->
       [|
-        Lower_index.scatter ?dst ~host device
+        Lower_index.scatter ?dst ~host (Lazy.force renderer) device
           (D.Any (Nx.dtype into))
           combine ~axis ~idx:(node idx) ~updates:(node updates) (node into);
       |]
@@ -322,11 +322,10 @@ let op ?dst ?renderer ~device ~host (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t
         Lower_index.sort (D.Any (Nx.dtype x)) ~axis ~descending ~k (node x)
       in
       [| values; positions |]
-  | Unique { size; keys } -> Lower_index.unique ~host device ~size (node keys)
+  | Unique { size; keys } ->
+      Lower_index.unique ~host (Lazy.force renderer) device ~size (node keys)
   | Linalg l -> Lower_linalg.op ~device node l
   | Fft f -> [| fft node f |]
-  | Attention _ -> (
-      match renderer with
-      | Some r -> Lower_attention.lower ~device ~renderer:(Lazy.force r) node o
-      | None -> unlowered "an Attention without its target's renderer")
+  | Attention _ ->
+      Lower_attention.lower ~device ~renderer:(Lazy.force renderer) node o
   | Check _ -> unlowered (P.name o)

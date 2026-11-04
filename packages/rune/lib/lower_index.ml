@@ -114,28 +114,76 @@ let summed ca ~landed xs us =
    loop's carry, is updated so whatever the bound: a loop's trip then writes
    only the updates, where a comparison would rewrite every element each trip.
    [into] is [p·n·q] elements, an axis of [n] between [p] and [q], and the
-   updates [p·k·q]. The axis is cut into runs of
-   positions. For each index of the axes before the axis and each run, a thread
-   walks the [k] updates in C order and combines each that lands in its run
-   with the element it lands on: every element meets its updates in eager's
-   order, and no two threads write one element. Work is [runs·k + n] at each
-   index of the other axes. On the host, the axes after the axis are a serial
-   loop inside the walk, so that an update writes a contiguous row, and
-   positions an expansion repeats along them are read once a row. On a GPU they
-   are threads too, adjacent ones at adjacent addresses.
+   updates [p·k·q]. The axis is cut into runs of positions. For each index of
+   the axes before the axis and each run, a thread walks the [k] updates in C
+   order and combines each that lands in its run with the element it lands
+   on: every element meets its updates in eager's order, and no two threads
+   write one element. Work is [runs·k + n] at each index of the other axes. On
+   the host, the axes after the axis are a serial loop inside the walk, so
+   that an update writes a contiguous row, and positions an expansion repeats
+   along them are read once a row. On a GPU they are threads too, adjacent
+   ones at adjacent addresses.
 
    The host takes one run: at 1024 rows of 64 floats into 4096, one thread's
-   walk takes 6 µs, and 16 runs split among its threads take 37 µs. A GPU takes
-   up to [gpu_runs], which bounds the walks to [gpu_runs·k], and at most [k]:
-   updates land in at most [k] runs, and a thread of any other run only
-   compares. A decode step's one row into a [1; 8; 4096; 64] bfloat16 cache
-   takes 3.6 µs of an RTX 5000 Ada in one run, 7.6 µs in 16.
+   walk takes 6 µs, and 16 runs split among its threads take 37 µs. A GPU
+   takes as many runs as keep the renderer's [stream_threads] threads busy,
+   and at most [k]: updates land in at most [k] runs, and a thread of any
+   other run only compares. A run costs its thread a walk of every update, so
+   runs add parallelism, never shorten the walk. A GPU's threads fill
+   workgroups ({!lanes}), and one whose run is a single position carries its
+   element in registers and stores it once.
+
+   Where the targets are few, the walk is chunked. Its threads then take
+   [chunks] runs of consecutive updates in C order, each combining its own
+   into partial storage of [p·chunks·n·q] elements with a byte per element
+   that marks where an update of the chunk landed, the partial being the
+   chunk's first such update, then its combine with the next. A second
+   kernel, a thread per element, combines the marked partials into the
+   storage in chunk order: Set keeps the last chunk's, Max and Min take their
+   extreme, Add adds each chunk's sum. So Set, Max and Min keep eager's bits,
+   and Add's terms are summed in another association, within the same bound.
+   Chunks shorten each thread's walk from [k] updates to [k / chunks], at the
+   cost of the second kernel, its [chunks] steps and a fill of the marks,
+   which a GPU's threads that carry their element write instead, so
+   [chunks] is about [√k], and the partials are bounded to [stream_threads]
+   elements. At 16 targets and 2{^20} updates on an RTX 5000 Ada, a
+   comparison of every update with every target took 2.8 ms, the walk in one
+   run a target 64.5 ms, and the chunked walk 63 µs.
 
    A narrow float's Add sums in a [float32] copy and marks where updates land
    in a byte per element, so that elsewhere the result keeps [into]'s bits,
    which a trip through [float32] quiets. *)
 
-let gpu_runs = 16
+(* The walk's steps a launch costs: on fudge's Core Ultra 5 235 a launch takes
+   about 1.1 µs and a walk 1.4 ns an update (2{^20} updates into 2 targets in
+   1.44 ms); on an RTX 5000 Ada a launch about 1.8 µs and a chunk's walk
+   46 ns an update (1024 into 16 targets in 47 µs). *)
+let host_launch_steps = 790
+let gpu_launch_steps = 39
+
+let isqrt k =
+  let r = ref (Float.to_int (Float.sqrt (Float.of_int k))) in
+  while !r * !r > k do
+    decr r
+  done;
+  while (!r + 1) * (!r + 1) <= k do
+    incr r
+  done;
+  !r
+
+(* [plan ~host ~threads ~p ~n ~q ~k] is the runs of positions and the chunks
+   of updates a walk takes, for [threads] threads that keep the device busy:
+   chunks where they shorten the walk by more than the two launches they
+   add. *)
+let plan ~host ~threads ~p ~n ~q ~k =
+  let runs c =
+    if host then 1
+    else Int.min n (Int.min (ceil_div k c) (Int.max 1 (threads / (p * q * c))))
+  in
+  let c = Int.min (threads / (p * n * q)) (isqrt k) in
+  let launch = if host then host_launch_steps else gpu_launch_steps in
+  if c < 2 || k - (ceil_div k c + c) <= 2 * launch then (runs 1, 1)
+  else (runs c, c)
 
 (* [spread u] is the axes along which the view [u] broadcasts its source: those
    an expansion adds, moved by permutations. *)
@@ -156,20 +204,109 @@ let rec spread u =
       | _ -> [])
   | _ -> []
 
-(* [walk ~host ~rows ~w ~p ~n ~q ~k f args] is the kernel over [args] =
-   [y; i; u] or [y; i; u; hit] that combines by [f] each update of [u], at its
-   position in [i], into [y], [w] parts an element, and sets [hit] to [1] where
-   one lands. Where [rows], [i] holds one position per row of [q] updates. *)
-let walk ~host ~rows ~w ~p ~n ~q ~k f args =
-  let most = if host then 1 else Int.min n (Int.min k gpu_runs) in
-  let len = ceil_div n most in
-  let runs = ceil_div n len in
-  let range t e id = Ops.range ~axis_type:t (Ops.Int e) [ id ] in
-  let a = range Weak p 0 and g = range Weak runs 1 in
-  let j, b =
-    if host then (range Loop k 2, range Loop q 3)
-    else (range Loop k 3, range Weak q 2)
+let range t e id = Ops.range ~axis_type:t (Ops.Int e) [ id ]
+
+(* [workgroup ren total] is the threads of a workgroup of [total] threads on
+   [ren]'s target: the greatest power of two that leaves the renderer's
+   [local_workgroups], at most its [local_max]. *)
+let workgroup (ren : Renderer.t) total =
+  let most =
+    Int.min (List.hd ren.local_max) (Int.max 1 (total / ren.local_workgroups))
   in
+  let rec go w = if 2 * w <= most then go (2 * w) else w in
+  go 1
+
+(* [lanes ren ~id dims] numbers a thread for each index of [dims]: its index
+   along each, the ranges that number the threads, from axis [id], and
+   whether a thread is one of them, where some are not. Where [ren] launches
+   workgroups, the threads in C order of [dims] fill workgroups
+   ({!workgroup}), adjacent threads adjacent along the last of [dims], since
+   the launch makes no workgroups of a kernel whose optimisations are fixed,
+   and one thread a workgroup runs a warp's lane alone. Elsewhere each of
+   [dims] past one element is a loop, which the host's threads split. *)
+let lanes (ren : Renderer.t) ~id dims =
+  let zero = Ops.O.int 0 in
+  if not ren.has_local then
+    let one i d =
+      if d = 1 then (zero, [])
+      else
+        let r = range Weak d (id + i) in
+        (r, [ r ])
+    in
+    let idx, rs = List.split (List.mapi one dims) in
+    (idx, List.concat rs, None)
+  else
+    let total = numel dims in
+    let size = workgroup ren total in
+    let groups = ceil_div total size in
+    let g = range Global groups id and l = range Local size (id + 1) in
+    let t = Ops.O.((g * int size) + l) in
+    (* Each index is [t / inner mod d], [inner] the threads of the dims after
+       it: the first needs no [mod], below [total] the thread is one. *)
+    let rec along first = function
+      | [] -> []
+      | d :: rest ->
+          let inner = numel rest in
+          let i =
+            if d = 1 then zero
+            else if first then Ops.O.(t // int inner)
+            else Ops.O.(t // int inner % int d)
+          in
+          i :: along false rest
+    in
+    let live =
+      if groups * size = total then None else Some Ops.O.(t < int total)
+    in
+    (along true dims, [ g; l ], live)
+
+let both a b =
+  match (a, b) with
+  | None, c | c, None -> c
+  | Some a, Some b -> Some (Ops.bitwise_and a b)
+
+let gated ok o = match ok with None -> o | Some r -> Ops.where r o Ops.invalid
+
+(* Slots of the kernels' registers, after their arguments'. *)
+let slot_acc = 100
+let slot_seen = 101
+let ld buf i = Ops.load (Ops.index buf [ i ]) []
+let st buf i v = Ops.store (Ops.index buf [ i ]) v
+let zero8 = Ops.const ~dtype:Uint8 (`Int Bigint.zero)
+let one8 = Ops.const ~dtype:Uint8 (`Int Bigint.one)
+let marked v = Ops.ne v zero8
+
+(* [carried ~dt ~w ~at ~init] is registers of [w] elements of [dt] and a
+   byte, each thread's, set before the loop to [init] and [0]: an element a
+   thread combines into and whether anything did. *)
+let carried ~dt ~w ~at ~init =
+  let acc = Shape.placeholder ~slot:slot_acc ~addrspace:Reg [ w ] dt in
+  let seen = Shape.placeholder ~slot:slot_seen ~addrspace:Reg [ 1 ] Uint8 in
+  let a0 = Ops.after acc at and s0 = Ops.after seen at in
+  let inits =
+    st s0 (Ops.O.int 0) zero8
+    :: List.mapi (fun c v -> st a0 (Ops.O.int c) v) init
+  in
+  (acc, seen, Ops.group inits)
+
+(* [walk ren ~host ~rows ~dt ~w ~p ~n ~q ~k ~runs ~chunks f args] is the
+   kernel over [args] = [y; i; u] or [y; i; u; hit] that combines by [f] each
+   update of [u], at its position in [i], into [y], [w] parts of [dt] an
+   element, and sets [hit] to [1] where one lands. Where [rows], [i] holds one
+   position per row of [q] updates. Where [chunks > 1], [y] is the partials
+   and [hit] their marks: an update combines with the partial where it is
+   marked, and replaces it otherwise. On a GPU, a thread whose run is one
+   position carries its element in registers, stored once after its walk:
+   a store to memory in the walk would order each later load after it, at a
+   load's latency an update. *)
+let walk ren ~host ~rows ~dt ~w ~p ~n ~q ~k ~runs ~chunks f args =
+  let len = ceil_div n runs and span = ceil_div k chunks in
+  let whole = chunks * span = k in
+  let regs = (not host) && len = 1 in
+  let outer = [ p; chunks; runs ] @ if host then [] else [ q ] in
+  let idx, threads, live = lanes ren ~id:4 outer in
+  let a, h, g = (List.nth idx 0, List.nth idx 1, List.nth idx 2) in
+  let s = range Loop span 2 in
+  let b = if host then range Loop q 3 else List.nth idx 3 in
   let y, i, u, hit =
     match args with
     | [ y; i; u ] -> (y, i, u, None)
@@ -177,9 +314,12 @@ let walk ~host ~rows ~w ~p ~n ~q ~k f args =
     | _ -> assert false
   in
   let open Ops.O in
+  let j = (h * int span) + s in
   let row = (a * int k) + j in
   let update = (row * int q) + b in
-  let pos = Ops.load (Ops.index i [ (if rows then row else update) ]) [] in
+  (* The last chunk may hold fewer updates than [span]. *)
+  let ok = both live (if whole then None else Some (j < int k)) in
+  let pos = ld i (gated ok (if rows then row else update)) in
   let u64 v = Ops.const ~dtype:Uint64 (`Int (Bigint.of_int v)) in
   let first = Ops.cast (g * int len) Int64 in
   (* Unsigned, a negative position lies past every bound, and [pos - first]
@@ -187,33 +327,159 @@ let walk ~host ~rows ~w ~p ~n ~q ~k f args =
   let upos = Ops.bitcast pos Uint64 in
   let ufirst = Ops.cast (g * int len) Uint64 in
   let run = Ops.bitwise_and (upos < u64 n) (upos - ufirst < u64 len) in
+  let run = match ok with None -> run | Some r -> Ops.bitwise_and r run in
   (* In the run, [pos] is [first + pos mod len], an address that names the
      run's range. An update outside the run reads and stores nothing: its index
      is invalid. *)
-  let within = Ops.bitcast (upos % u64 len) Int64 in
-  let at = Ops.cast (first + within) Weak_int in
-  let e = (((a * int n) + at) * int q) + b in
-  let part m o c =
-    Ops.index m [ Ops.where run ((o * int w) + int c) Ops.invalid ]
+  let at =
+    if regs then g
+    else
+      let within = Ops.bitcast (upos % u64 len) Int64 in
+      Ops.cast (first + within) Weak_int
   in
-  let state = Ops.after y (if host then [ j; b ] else [ j ]) in
-  let olds = List.init w (fun c -> Ops.load (part state e c) []) in
-  let us = List.init w (fun c -> Ops.load (part u update c) []) in
-  let stores = List.mapi (fun c v -> Ops.store (part y e c) v) (f olds us) in
-  let marks =
-    match hit with
-    | None -> []
-    | Some h ->
-        let one = Ops.const ~dtype:Uint8 (`Int Bigint.one) in
-        [ Ops.store (part h e 0) one ]
-  in
-  let body = Ops.group (stores @ marks) in
-  let ends =
-    if host then Ops.end_ (Ops.end_ (Ops.end_ body [ b ]) [ j ]) [ a; g ]
-    else Ops.end_ (Ops.end_ body [ j ]) [ a; g; b ]
+  let e = (((((a * int chunks) + h) * int n) + at) * int q) + b in
+  let part o c = (o * int w) + int c in
+  let chunked = Stdlib.(chunks > 1) in
+  let us =
+    List.init w (fun c -> ld u (Ops.where run (part update c) Ops.invalid))
   in
   let kernel = Ops.kernel_info ~name:"scatter" ~opts_to_apply:[] () in
-  Ops.sink ~kernel [ ends ]
+  if regs then begin
+    (* The thread's element: [y]'s where it holds [into], else the partial
+       its first update starts. *)
+    let init =
+      List.init w (fun c ->
+          if chunked then Ops.cast (int 0) dt else ld y (gated live (part e c)))
+    in
+    let acc, seen, inits = carried ~dt ~w ~at:threads ~init in
+    let acc_s = Ops.after acc [ inits; s ]
+    and seen_s = Ops.after seen [ inits; s ] in
+    let olds = List.init w (fun c -> ld acc_s (int c)) in
+    let was = marked (ld seen_s (int 0)) in
+    let combined = f olds us in
+    let values =
+      if chunked then List.map2 (Ops.where was) combined us else combined
+    in
+    let steps =
+      st seen_s (int 0) (Ops.where run one8 (ld seen_s (int 0)))
+      :: List.mapi
+           (fun c v -> st acc_s (int c) (Ops.where run v (List.nth olds c)))
+           values
+    in
+    let loop = Ops.end_ (Ops.group steps) [ s ] in
+    let acc = Ops.after acc [ loop ] and seen = Ops.after seen [ loop ] in
+    let landed = marked (ld seen (int 0)) in
+    let landed =
+      match live with None -> landed | Some l -> Ops.bitwise_and l landed
+    in
+    let into o = Ops.where landed o Ops.invalid in
+    let stores =
+      List.init w (fun c ->
+          Ops.store (Ops.index y [ into (part e c) ]) (ld acc (int c)))
+    in
+    (* The thread owns its element's mark, unfilled before: it writes it. *)
+    let marks =
+      match hit with
+      | None -> []
+      | Some m -> [ Ops.store (Ops.index m [ gated live e ]) (ld seen (int 0)) ]
+    in
+    Ops.sink ~kernel [ Ops.end_ (Ops.group (stores @ marks)) threads ]
+  end
+  else begin
+    let at_part m o c = Ops.index m [ Ops.where run (part o c) Ops.invalid ] in
+    let at_mark m o = Ops.index m [ Ops.where run o Ops.invalid ] in
+    let order m = Ops.after m (if host then [ s; b ] else [ s ]) in
+    let state = order y in
+    let olds = List.init w (fun c -> Ops.load (at_part state e c) []) in
+    let values =
+      match hit with
+      | Some m when chunked ->
+          let seen = marked (Ops.load (at_mark (order m) e) []) in
+          List.map2 (Ops.where seen) (f olds us) us
+      | _ -> f olds us
+    in
+    let stores = List.mapi (fun c v -> Ops.store (at_part y e c) v) values in
+    let marks =
+      match hit with None -> [] | Some m -> [ Ops.store (at_mark m e) one8 ]
+    in
+    let body = Ops.group (stores @ marks) in
+    let ends =
+      if host then Ops.end_ (Ops.end_ (Ops.end_ body [ b ]) [ s ]) threads
+      else Ops.end_ (Ops.end_ body [ s ]) threads
+    in
+    Ops.sink ~kernel [ ends ]
+  end
+
+(* [merge ren ~host ~dt ~w ~p ~m ~chunks f args] is the kernel over [args] =
+   [y; parts; marks] or [y; parts; marks; hit] that combines by [f] into each
+   of the [p·m] elements of [y], [w] parts of [dt] an element, its [chunks]
+   partials where marked, in chunk order, and sets [hit] to [1] where one is.
+   On a GPU the element is carried in registers, as {!walk} does. *)
+let merge ren ~host ~dt ~w ~p ~m ~chunks f args =
+  let idx, threads, live = lanes ren ~id:0 [ p; m ] in
+  let a, t = (List.nth idx 0, List.nth idx 1) in
+  let c = range Loop chunks 2 in
+  let y, parts, marks, hit =
+    match args with
+    | [ y; v; k ] -> (y, v, k, None)
+    | [ y; v; k; h ] -> (y, v, k, Some h)
+    | _ -> assert false
+  in
+  let open Ops.O in
+  let e = (a * int m) + t in
+  let pe = (((a * int chunks) + c) * int m) + t in
+  let seen = marked (ld marks (gated live pe)) in
+  let seen =
+    match live with None -> seen | Some l -> Ops.bitwise_and l seen
+  in
+  let part o i = (o * int w) + int i in
+  let ps = List.init w (fun i -> ld parts (gated live (part pe i))) in
+  let kernel = Ops.kernel_info ~name:"scatter_merge" ~opts_to_apply:[] () in
+  if not host then begin
+    let init = List.init w (fun i -> ld y (gated live (part e i))) in
+    let acc, any, inits = carried ~dt ~w ~at:threads ~init in
+    let acc_c = Ops.after acc [ inits; c ]
+    and any_c = Ops.after any [ inits; c ] in
+    let olds = List.init w (fun i -> ld acc_c (int i)) in
+    let steps =
+      st any_c (int 0) (Ops.where seen one8 (ld any_c (int 0)))
+      :: List.mapi
+           (fun i v -> st acc_c (int i) (Ops.where seen v (List.nth olds i)))
+           (f olds ps)
+    in
+    let loop = Ops.end_ (Ops.group steps) [ c ] in
+    let acc = Ops.after acc [ loop ] and any = Ops.after any [ loop ] in
+    let landed = marked (ld any (int 0)) in
+    let landed =
+      match live with None -> landed | Some l -> Ops.bitwise_and l landed
+    in
+    let stores =
+      List.init w (fun i ->
+          Ops.store
+            (Ops.index y [ Ops.where landed (part e i) Ops.invalid ])
+            (ld acc (int i)))
+    in
+    let marks =
+      match hit with
+      | None -> []
+      | Some h -> [ Ops.store (Ops.index h [ gated live e ]) (ld any (int 0)) ]
+    in
+    Ops.sink ~kernel [ Ops.end_ (Ops.group (stores @ marks)) threads ]
+  end
+  else begin
+    let state = Ops.after y [ c ] in
+    let olds = List.init w (fun i -> ld state (gated live (part e i))) in
+    let gate o i = Ops.index y [ Ops.where seen (part o i) Ops.invalid ] in
+    let stores = List.mapi (fun i v -> Ops.store (gate e i) v) (f olds ps) in
+    let marks =
+      match hit with
+      | None -> []
+      | Some h ->
+          [ Ops.store (Ops.index h [ Ops.where seen e Ops.invalid ]) one8 ]
+    in
+    let ends = Ops.end_ (Ops.end_ (Ops.group (stores @ marks)) [ c ]) threads in
+    Ops.sink ~kernel [ ends ]
+  end
 
 (* [fresh device v] is a buffer of [device] once [v] is stored into it. *)
 let fresh device v =
@@ -222,8 +488,8 @@ let fresh device v =
 
 type dst = Filled of (Ops.t -> Ops.t) | Holding of Ops.t
 
-let looped ~dst ~host device (D.Any dt as d) (c : Nx_kernel.combine) ~axis
-    ~idx ~updates into =
+let looped ~dst ~host (ren : Renderer.t) device (D.Any dt as d)
+    (c : Nx_kernel.combine) ~axis ~idx ~updates into =
   let s = extents (List.hd (Arith.parts d into)) and t = extents idx in
   let r = List.length s in
   let p = numel (List.filteri (fun i _ -> i < axis) s) in
@@ -278,11 +544,40 @@ let looped ~dst ~host device (D.Any dt as d) (c : Nx_kernel.combine) ~axis
     | Filled f -> f (flat into)
     | Holding s -> s
   in
-  let hit = if not narrow then [] else [ fresh (zeros Uint8 [ numel s ]) ] in
+  let runs, chunks = plan ~host ~threads:ren.stream_threads ~p ~n ~q ~k in
+  (* A GPU's thread that carries its element in registers writes its mark
+     whether or not an update landed, as does a GPU's merge: their marks need
+     no fill. *)
+  let owns = (not host) && ceil_div n runs = 1 in
+  let marks_of m =
+    if owns then Ops.new_buffer device m Uint8 else fresh (zeros Uint8 [ m ])
+  in
+  let hit =
+    if not narrow then []
+    else if (not host) && chunks > 1 then
+      [ Ops.new_buffer device (numel s) Uint8 ]
+    else [ marks_of (numel s) ]
+  in
+  let flat_updates = flat updates in
+  let dt = Ops.dtype flat_updates in
+  let walk = walk ren ~host ~rows ~dt ~w ~p ~n ~q ~k ~runs ~chunks combined in
+  let i = arg i and u = arg flat_updates in
   let outs =
-    Shape.custom_kernel
-      ([ y; arg i; arg (flat updates) ] @ hit)
-      (walk ~host ~rows ~w ~p ~n ~q ~k combined)
+    if chunks = 1 then Shape.custom_kernel ([ y; i; u ] @ hit) walk
+    else
+      let m = p * n * q in
+      let parts =
+        Ops.new_buffer device (w * m * chunks) (Ops.dtype flat_updates)
+      in
+      let marks = marks_of (m * chunks) in
+      let parts, marks =
+        match Shape.custom_kernel [ parts; i; u; marks ] walk with
+        | [ parts; _; _; marks ] -> (parts, marks)
+        | _ -> assert false
+      in
+      Shape.custom_kernel
+        ([ y; parts; marks ] @ hit)
+        (merge ren ~host ~dt ~w ~p ~m:(n * q) ~chunks combined)
   in
   let y = Shape.reshape (List.hd outs) (Arith.dims ca (Array.of_list s)) in
   if not narrow then y
@@ -290,7 +585,7 @@ let looped ~dst ~host device (D.Any dt as d) (c : Nx_kernel.combine) ~axis
     let hit = Shape.reshape (List.nth outs 3) (dims s) in
     Ops.where (Ops.ne hit (int hit 0)) (Arith.cast ~src:ca d y) into
 
-let scatter ?dst ~host device (D.Any dt as d) (c : Nx_kernel.combine) ~axis
+let scatter ?dst ~host ren device (D.Any dt as d) (c : Nx_kernel.combine) ~axis
     ~idx ~updates into =
   let s = extents (List.hd (Arith.parts d into)) and t = extents idx in
   let r = List.length s in
@@ -302,7 +597,7 @@ let scatter ?dst ~host device (D.Any dt as d) (c : Nx_kernel.combine) ~axis
   if n = 0 || numel t = 0 then into
   else if holding || n * k > work_bound * (n + k) then
     let dst = Option.value dst ~default:(Filled (fresh device)) in
-    looped ~dst ~host device d c ~axis ~idx ~updates into
+    looped ~dst ~host ren device d c ~axis ~idx ~updates into
   else
     let wide = s @ [ k ] in
     (* A node of [idx]'s shape moved to [wide], its axis [axis] last. *)
@@ -738,7 +1033,7 @@ let sort d ~axis ~descending ~k x =
    their keys' first rows' ranks and of ones at their numbers gives each
    key's first row and count. *)
 
-let unique ~host device ~size keys =
+let unique ~host ren device ~size keys =
   let take = Bits.take in
   let n = Bits.extent keys 0 and w = Bits.extent keys 1 in
   let i64 = D.Any D.Int64 in
@@ -783,7 +1078,7 @@ let unique ~host device ~size keys =
       List.hd (Lower_reduce.scan (Monoid m) 0 ~carry:None ~src:i64 i64 x)
     in
     let scatter c ~idx ~updates into =
-      scatter ~host device i64 c ~axis:0 ~idx ~updates into
+      scatter ~host ren device i64 c ~axis:0 ~idx ~updates into
     in
     let start = scan Max (Ops.mul fresh i) in
     let flags = scatter Set ~idx:p ~updates:fresh (zeros Int64 [ n ]) in

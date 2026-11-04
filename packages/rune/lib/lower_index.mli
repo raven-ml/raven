@@ -55,6 +55,7 @@ type dst =
 val scatter :
   ?dst:dst ->
   host:bool ->
+  Renderer.t ->
   Ops.device ->
   Nx_array.Dtype.any ->
   Nx_kernel.combine ->
@@ -63,12 +64,13 @@ val scatter :
   updates:Ops.t ->
   Ops.t ->
   Ops.t
-(** [scatter ~dst ~host device d c ~axis ~idx ~updates into] is [into], a value
-    of [d], with [updates] combined by [c] at the positions [idx] holds along
-    [axis], as {!Nx_kernel.S.scatter} states, for a program on [device], whose
-    kernels compile for the host's processors where [host] holds
-    ({!Tolk_engine.target}). Under [Set], the last update in C order of
-    [updates] wins, whether or not the targets are promised distinct.
+(** [scatter ~dst ~host ren device d c ~axis ~idx ~updates into] is [into], a
+    value of [d], with [updates] combined by [c] at the positions [idx] holds
+    along [axis], as {!Nx_kernel.S.scatter} states, for a program on [device],
+    whose kernels compile for the host's processors where [host] holds
+    ({!Tolk_engine.target}) and are rendered by [ren]. Under [Set], the last
+    update in C order of [updates] wins, whether or not the targets are
+    promised distinct.
 
     For [n] positions and [k] updates along [axis], nx's kernel stores [n + k]
     elements. Where [n k <= 16 (n + k)], unless [dst] is [Holding] and the
@@ -77,9 +79,16 @@ val scatter :
     shares with its neighbours. Otherwise it combines the updates in a kernel of
     its own, into storage that holds [into], each element taking its updates in
     C order: [n + k] work at each index of the other axes where [host] holds,
-    and at most [n + 16 k] elsewhere, of which [n] fill the storage, none where
-    [dst] is [Holding]. There, a narrow float's [Add] sums in a [float32] copy
-    of [into] and marks where updates land in a byte per element of [into].
+    and at most [n + r k] elsewhere, for [r <= min n k] runs of positions,
+    as many as keep [ren]'s [stream_threads] busy; [n] of it fills the
+    storage, none where [dst] is [Holding]. Where the [m] elements of [into]
+    are fewer than [stream_threads], about [√k] chunks of consecutive updates,
+    [c] chunks with [c m <= stream_threads], each combine apart into storage
+    of their own, and the chunks combine in their order: [c m] more work, and
+    two more kernels, where the chunks shorten each thread's walk by more
+    than those kernels cost. There, a narrow float's [Add] sums in a
+    [float32] copy of [into] and marks where updates land in a byte per
+    element of [into].
 
     Every other combine of that form combines into [dst]'s storage, and the
     result is that storage once combined. The scatter writes over it, so no
@@ -138,12 +147,12 @@ val sort :
     Raises [Invalid_argument] for an axis of more than [2{^31}] elements. *)
 
 val unique :
-  host:bool -> Ops.device -> size:int -> Ops.t -> Ops.t array
-(** [unique ~host device ~size keys] is the numbering of the rows of the
+  host:bool -> Renderer.t -> Ops.device -> size:int -> Ops.t -> Ops.t array
+(** [unique ~host ~threads device ~size keys] is the numbering of the rows of the
     [int64] node [keys], of [[n; w]], as {!Nx_kernel.S.unique} states: [ids],
     [first] and [counts] of [size] entries, and [count], 0-d, for a program
     on [device] whose kernels compile for the host's processors where [host]
-    holds. It sorts the rows stably by {!sort}, a sort of [n] [uint64] words
+    holds, keeping it busy with [threads] threads. It sorts the rows stably by {!sort}, a sort of [n] [uint64] words
     for each column, then scatters by {!scatter}: [O(w n log² n)] work.
 
     Raises [Invalid_argument] for more than [2{^31}] rows. *)

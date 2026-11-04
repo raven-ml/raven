@@ -135,7 +135,8 @@ let rule ~direct bound i ~by (type r) (op : r Nx.Prim.t) : r =
     | Some _ -> invalid_arg "Lowered: a value of another payload"
     | None -> bind ~direct bound x
   in
-  let ys = Rune.Lower.op ~device:cpu ~host:true node op in
+  let renderer = lazy (Tolk_engine.renderer Rig.host) in
+  let ys = Rune.Lower.op ~renderer ~device:cpu ~host:true node op in
   Nx.Prim.results ~by (fun k f -> Nx.Prim.traced i f (Node ys.(k))) op
 
 (* [f ()]'s graph, the storage it binds and its result's elements. *)

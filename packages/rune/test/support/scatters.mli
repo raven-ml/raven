@@ -3,10 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Scatters past the work bound: 33 to 48 updates over 33 to 40 positions,
-    along the middle axis of three, which a mask would compute in more than 16
-    times eager's work, and scatters into a donated target, updated in place
-    whatever the bound, of 1 to 48 updates. *)
+(** Scatters along the middle axis of three: 33 to 48 updates over 33 to 40
+    positions, 1800 to 2400 updates over 17 to 20 positions, which
+    threads take in chunks, and scatters into a donated target, updated in place, of
+    1 to 48 updates. *)
 
 (** The type for how the positions reach the scatter: as drawn, or broadcast
     or transposed inside the traced function from fewer elements. *)
@@ -36,14 +36,17 @@ val pp : Format.formatter -> t -> unit
 val gen : t Windtrap.Gen.t
 (** [gen] draws every dtype of {!examples}, each combine it takes, positions
     that repeat and fall outside the axis, each kind of {!positions}, and
-    operands of {!Operand.draw}. An [Add] of floats draws halves of at most 8
-    in magnitude and zeros of both signs, which every order sums exactly. *)
+    operands of {!Operand.draw}, a quarter of them many updates into few
+    targets. An [Add] of floats draws halves of at most 8 in magnitude and
+    zeros of both signs, which every order sums exactly: into few targets,
+    zeros but for 15 updates. *)
 
 val examples : t list
 (** [examples] holds a case of each combine of each kind of dtype, of each
     kind of {!positions}, with its target donated, of one or a few updates
-    into a donated target, with its updates an offset view, and of each narrow
-    float's [Add] and each complex combine. *)
+    into a donated target, with its updates an offset view, of each narrow
+    float's [Add] and each complex combine, and of many updates into few
+    targets. *)
 
 val law : ?flushes:bool -> (module Nx.Devices) -> t -> unit
 (** [law ~flushes s c] checks that a compiled call on [s]'s first device gives
@@ -55,5 +58,5 @@ val law : ?flushes:bool -> (module Nx.Devices) -> t -> unit
     each such value as one. It covers each combine, each kind of dtype and of
     {!positions}, positions broadcast along the trailing axes and positions
     not, a donated target, one of a few updates, a position outside the axis,
-    a narrow float's [Add], an offset view of the updates, and each complex
-    combine. *)
+    a narrow float's [Add], an offset view of the updates, each complex
+    combine, and many updates into few targets. *)

@@ -124,17 +124,35 @@ let halved d (o : Operand.t) =
   let+ values = array ~size:(constant (Array.length o.values)) value in
   { o with values }
 
+(* [quiet d o] is [o] with its stored values past the first [exact_terms]
+   made zero, so that with its target's at most 16 halves of at most 8 sum at
+   an element: every partial sum, at most 128, is a half that a bfloat16
+   holds. *)
+let exact_terms = 15
+
+let quiet d (o : Operand.t) =
+  let zero = if is_complex d then C (0., 0.) else F 0. in
+  let value j v = if j >= exact_terms then zero else v in
+  { o with values = Array.mapi value o.values }
+
 let gen =
   let open Gen in
   let* d = of_list dtypes in
   let* combine = of_list (combines d) in
   let* p = int_range 1 2 in
   let* q = int_range 1 3 in
-  let* n = int_range 33 40 in
+  (* A quarter of the cases scatter many updates into few targets, which the
+     threads take in chunks. *)
+  let* few = frequency [ (3, constant false); (1, constant true) ] in
+  let* n = if few then int_range 17 20 else int_range 33 40 in
   (* A donated target is updated in place whatever the bound, so it also
      draws few updates. *)
   let* donated = bool in
-  let* k = if donated then int_range 1 48 else int_range 33 48 in
+  let* k =
+    if few then int_range 1800 2400
+    else if donated then int_range 1 48
+    else int_range 33 48
+  in
   let s = [| p; n; q |] and t = [| p; k; q |] in
   let* positions = of_list [ Full; Trailing; Leading; Transposed ] in
   let at =
@@ -150,6 +168,7 @@ let gen =
   let exact = exactly d combine in
   let* into = if exact then halved d into else constant into in
   let+ updates = if exact then halved d updates else constant updates in
+  let updates = if exact && few then quiet d updates else updates in
   {
     dtype = d;
     combine;
@@ -164,8 +183,8 @@ let gen =
 
 (* Examples *)
 
-let example i (d, (combine : Nx.combine), positions, offset, donated, k) =
-  let s = [| 2; 33; 3 |] and t = [| 2; k; 3 |] in
+let example i (d, (combine : Nx.combine), positions, offset, donated, n, k) =
+  let s = [| 2; n; 3 |] and t = [| 2; k; 3 |] in
   let ps = [| 0L; 0L; 2L; -1L; 33L; 1L; Int64.max_int; 32L; Int64.min_int |] in
   let operand view m : Operand.t =
     let value j =
@@ -178,6 +197,9 @@ let example i (d, (combine : Nx.combine), positions, offset, donated, k) =
   in
   let updates =
     if offset then operand (Offset 2) (numel t + 2) else operand Plain (numel t)
+  in
+  let updates =
+    if exactly d combine && n <= 20 then quiet d updates else updates
   in
   let m = numel (drawn positions t) in
   {
@@ -196,21 +218,27 @@ let examples =
   List.mapi example
     Nx.Dtype.
       [
-        (Any Nx.float32, Set, Full, false, true, 40);
-        (Any Nx.float64, Add, Trailing, false, false, 40);
-        (Any Nx.float16, Add, Leading, false, true, 40);
-        (Any Nx.bfloat16, Add, Transposed, true, false, 40);
-        (Any Nx.complex64, Add, Full, true, true, 40);
-        (Any Nx.complex64, Max, Trailing, false, false, 40);
-        (Any Nx.complex64, Min, Leading, false, true, 40);
-        (Any Nx.int8, Set, Transposed, false, false, 40);
-        (Any Nx.int32, Max, Full, true, false, 40);
-        (Any Nx.uint64, Min, Trailing, false, true, 40);
-        (Any Nx.bool, Set, Leading, false, false, 40);
-        (Any Nx.bool, Max, Transposed, false, true, 40);
-        (Any Nx.float32, Min, Trailing, true, true, 40);
-        (Any Nx.bfloat16, Set, Trailing, false, true, 1);
-        (Any Nx.int32, Add, Full, false, true, 3);
+        (Any Nx.float32, Set, Full, false, true, 33, 40);
+        (Any Nx.float64, Add, Trailing, false, false, 33, 40);
+        (Any Nx.float16, Add, Leading, false, true, 33, 40);
+        (Any Nx.bfloat16, Add, Transposed, true, false, 33, 40);
+        (Any Nx.complex64, Add, Full, true, true, 33, 40);
+        (Any Nx.complex64, Max, Trailing, false, false, 33, 40);
+        (Any Nx.complex64, Min, Leading, false, true, 33, 40);
+        (Any Nx.int8, Set, Transposed, false, false, 33, 40);
+        (Any Nx.int32, Max, Full, true, false, 33, 40);
+        (Any Nx.uint64, Min, Trailing, false, true, 33, 40);
+        (Any Nx.bool, Set, Leading, false, false, 33, 40);
+        (Any Nx.bool, Max, Transposed, false, true, 33, 40);
+        (Any Nx.float32, Min, Trailing, true, true, 33, 40);
+        (Any Nx.bfloat16, Set, Trailing, false, true, 33, 1);
+        (Any Nx.int32, Add, Full, false, true, 33, 3);
+        (Any Nx.float32, Add, Full, false, false, 17, 2000);
+        (Any Nx.float16, Add, Trailing, true, true, 20, 1999);
+        (Any Nx.complex64, Max, Leading, false, false, 18, 2001);
+        (Any Nx.int32, Set, Transposed, false, true, 17, 2000);
+        (Any Nx.uint64, Min, Full, false, false, 19, 1800);
+        (Any Nx.bool, Set, Trailing, false, false, 17, 1900);
       ]
 
 (* The law *)
@@ -266,6 +294,7 @@ let law ?(flushes = false) (module S : Nx.Devices) c =
   cover "positions not broadcast along the trailing axes"
     ((not trailing) && q > 1);
   let n = c.into_shape.(1) in
+  cover "many updates into few targets" (n <= 20 && c.updates_shape.(1) >= 1800);
   cover "a position outside the axis"
     (Array.exists (fun p -> p < 0L || p >= Int64.of_int n) c.pos);
   let t = c.updates_shape in

@@ -35,22 +35,21 @@ val draws : Nx_kernel.Prog.t -> bool
 
 val op :
   ?dst:Lower_index.dst ->
-  ?renderer:Renderer.t Lazy.t ->
+  renderer:Renderer.t Lazy.t ->
   device:Ops.device ->
   host:bool ->
   ('v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) ->
   'r Nx.Prim.t ->
   Ops.t array
-(** [op ~dst ~device ~host node o] is the node of each result of [o], in
-    position order, computed on [device], whose kernels compile for the host's
-    processors where [host] holds ({!Tolk_engine.target}) and are rendered by
-    [renderer]. It reads each operand [x] from [node x]. A [Scatter] takes
-    its storage from [dst] where
-    {!Lower_index.scatter} does; another operation ignores it.
+(** [op ~dst ~renderer ~device ~host node o] is the node of each result of
+    [o], in position order, computed on [device], whose kernels compile for
+    the host's processors where [host] holds ({!Tolk_engine.target}) and are
+    rendered by [renderer]. It reads each operand [x] from [node x]. A
+    [Scatter] takes its storage from [dst] where {!Lower_index.scatter} does;
+    another operation ignores it.
 
     Raises [Invalid_argument], naming the operation, for one it does not lower:
-    [Check], which its caller lowers itself, an [Attention] without
-    [renderer], a [Linalg] that {!Lower_linalg.op}
+    [Check], which its caller lowers itself, a [Linalg] that {!Lower_linalg.op}
     refuses, a boolean [Add] [Scatter] or [Fold], a [Sort] along an axis of
     more than [2{^31}] elements ({!Lower_index.sort}), a [Unique] of more
     than [2{^31}] rows, an [Fft] of a precision other than [float32] and

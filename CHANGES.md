@@ -373,6 +373,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A scatter under `Rune.jit` that combines in a kernel of its own takes many
+  updates into few targets in chunks, combined apart then in order, and on a
+  GPU fills workgroups, where one thread walked every update of a target.
 - A compiled `Nx.scatter` of a float16 on the host keeps a signalling NaN
   where no update lands. One of its forms selected the target's elements in
   float32, which quieted it.

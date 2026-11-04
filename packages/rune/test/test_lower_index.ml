@@ -649,19 +649,37 @@ let distinct n t axis pos =
   done;
   pos
 
+(* Many updates into few targets: 17 to 20 positions under 1800 to 2400
+   updates, enough that the host's threads take the updates in chunks
+   ({!Rune.Lower_index.scatter}). *)
+let few_targets = 20
+
 (* [scatter_case ~long dts combines] draws a scatter of [dts] by [combines].
    Where [long], its axis has 33 to 40 positions under 33 to 48 updates, past
-   16 times eager's work: [n k > 16 (n + k)] iff [(n - 16) (k - 16) > 256]. *)
+   16 times eager's work: [n k > 16 (n + k)] iff [(n - 16) (k - 16) > 256].
+   Otherwise a third of the cases scatter many updates into few targets. *)
 let scatter_case ?(long = false) dts combines =
   let open Gen in
   let* d = among dts in
   let* combine = among combines in
   let* unique = bool in
-  let* s = shape in
+  let* few =
+    if long then constant false
+    else frequency [ (2, constant false); (1, constant true) ]
+  in
+  let* s = if few then map (Array.map (min 2)) shape else shape in
   let* view = among views in
   let* axis = int_range 0 (Array.length s - 1) in
-  let* n = if long then int_range 33 40 else constant s.(axis) in
-  let* m = if long then int_range 33 48 else extent in
+  let* n =
+    if long then int_range 33 40
+    else if few then int_range 17 few_targets
+    else constant s.(axis)
+  in
+  let* m =
+    if long then int_range 33 48
+    else if few then int_range 1800 2400
+    else extent
+  in
   let s = Array.mapi (fun i e -> if i = axis then n else e) s in
   let t = Array.mapi (fun i n -> if i = axis then m else n) s in
   let n = s.(axis) in
@@ -745,6 +763,12 @@ let cover_scatter ?booleans ?(long = false) c =
   cover "two updates on one element" (collide c);
   cover "unique" c.s_unique;
   cover "no update" (numel c.s_idx = 0);
+  if not long then begin
+    let n = c.s_shape.(c.s_axis) and k = c.s_idx.(c.s_axis) in
+    cover "one target" (n = 1 && numel c.s_idx > 0);
+    cover "few targets under many updates"
+      (n >= 17 && n <= few_targets && k >= 1800 && numel c.s_idx > 0)
+  end;
   if long then
     cover "an axis between two others"
       (c.s_axis > 0 && c.s_axis < Array.length c.s_shape - 1)
