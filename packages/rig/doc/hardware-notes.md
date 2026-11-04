@@ -743,9 +743,15 @@ keeps instruction fetch coherent with stores.
 
 Windows grows a thread's stack through a guard page, so a function whose stack
 frame exceeds 4 KiB must touch each page in order, which Windows compilers do with a
-stack probe (`__chkstk`). Code compiled for an ELF target has no probes, so
-host code linked on Windows keeps its stack frames under 4 KiB. Not run: no Windows
-machine here.
+stack probe (`__chkstk`). Code compiled for an ELF target has no probes: rune's
+incomplete-beta derivatives, with frames of 18 to 52 KiB, faulted on their first
+store. So before a thread first runs linked code, the host commits the rest of
+its stack but for its last 64 KiB, which stay reserved so that an overflow still
+faults (`lib/rig_host_code.c`, `commit_stack`), and a frame of any size within
+it runs. Clang's stack clash protection would probe in the code instead, but it
+crashed Ubuntu's Clang 18 on some kernels and would have to be asked of every
+compiler that targets rig. The host fixture `deep.c`, a frame of 256 KiB written
+first at its far end, runs on the caller's thread and the pool's.
 
 ## Memory ordering
 
