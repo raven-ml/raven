@@ -1048,6 +1048,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 - Compiling float64 `Nx.betaincinv`'s gradient allocates 207 M words
   against 228 M and runs 12% fewer instructions, with unchanged output;
   rune's other compiles allocate 4-22% fewer words.
+- `Bigint.of_string` refuses a decimal of more than 4300 digits with
+  `Invalid_argument`, as `Bigint.to_string` does: reading one takes time
+  quadratic in its length.
 - An integer division by 0 gives 0 and its remainder the dividend, as
   `Ops.exec_alu` computes them (`Cstyle.clang`, `Cstyle.cuda`, `Cstyle.hip`,
   `Cstyle.metal`): C leaves it undefined, a host kernel died with SIGFPE, and

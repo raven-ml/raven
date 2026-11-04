@@ -421,6 +421,15 @@ let of_float x =
     in
     if x < 0. then neg a else a
 
+(* Reading a decimal multiplies once per digit, and writing one divides once
+   per nine digits, each step as long as the number: time quadratic in its
+   length, minutes for 9 million bits. *)
+let max_digits = 4300
+
+let too_long name =
+  invalid_arg
+    (Printf.sprintf "Bigint.%s: more than %d digits" name max_digits)
+
 let of_string s =
   let fail () =
     invalid_arg (Printf.sprintf "Bigint.of_string: %S is not an integer" s)
@@ -447,14 +456,36 @@ let of_string s =
     | _ -> base
   in
   if i >= n || s.[i] = '_' then fail ();
-  let acc = ref zero and b = of_small base in
+  let digits = ref 0 in
   for j = i to n - 1 do
     if s.[j] <> '_' then (
-      let d = digit s.[j] in
-      if d >= base then fail ();
-      acc := add (mul !acc b) (of_small d))
+      if digit s.[j] >= base then fail ();
+      incr digits)
   done;
-  if negative then neg !acc else !acc
+  let magnitude =
+    if base = 10 then (
+      if !digits > max_digits then too_long "of_string";
+      let acc = ref zero and b = of_small base in
+      for j = i to n - 1 do
+        if s.[j] <> '_' then acc := add (mul !acc b) (of_small (digit s.[j]))
+      done;
+      !acc)
+    else
+      (* A digit of a power of two is [k] bits of the limbs, placed from the
+         last digit up: time linear in the length. The limb past the top
+         keeps the sign bit clear. *)
+      let k = match base with 16 -> 4 | 8 -> 3 | _ -> 1 in
+      let l = Array.make ((!digits * k / bits) + 2) 0 and at = ref 0 in
+      for j = n - 1 downto i do
+        if s.[j] <> '_' then (
+          let d = digit s.[j] and w = !at / bits and o = !at mod bits in
+          l.(w) <- l.(w) lor ((d lsl o) land mask);
+          if o + k > bits then l.(w + 1) <- l.(w + 1) lor (d lsr (bits - o));
+          at := !at + k)
+      done;
+      normalize l
+  in
+  if negative then neg magnitude else magnitude
 
 let fits_int = is_small
 let int64_min = of_int64 Int64.min_int
@@ -486,20 +517,12 @@ let to_float n =
     let x = Float.ldexp (Int64.to_float (low_int64 q)) shift in
     if sign n < 0 then -.x else x
 
-(* Writing in decimal divides once per nine digits, each division as long as
-   the number: time quadratic in its length, minutes for 9 million bits. *)
-let max_digits = 4300
-
-let too_long () =
-  invalid_arg
-    (Printf.sprintf "Bigint.to_string: more than %d digits" max_digits)
-
 let to_string n =
   if is_small n then Int.to_string (to_small n)
   else
     (* [|n| >= 2^(numbits n - 1)], which is past [10^max_digits] here. *)
     if Float.of_int (numbits n - 1) > Float.of_int max_digits *. Float.log2 10.
-    then too_long ()
+    then too_long "to_string"
     else
       let rec chunks m acc =
         if sign m = 0 then acc
@@ -511,7 +534,7 @@ let to_string n =
       | first :: rest ->
           let first = Int.to_string first in
           if String.length first + (9 * List.length rest) > max_digits then
-            too_long ();
+            too_long "to_string";
           String.concat ""
             ((if sign n < 0 then "-" else "")
             :: first

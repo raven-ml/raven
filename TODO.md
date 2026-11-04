@@ -126,8 +126,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   its promise of module variables per load (D146)
 - HIP's unstaged tensor-core operands load 8 bytes again since D261's copy
   rule: unmeasured on nonnormal
-- `Bigint.of_string` is quadratic on long decimal strings (CPython limits
-  that conversion too)
 
 ## rune, kaun, vega
 

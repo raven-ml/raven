@@ -242,6 +242,44 @@ let conversions =
           List.iter
             (fun s -> raises_match Exn.invalid_arg (fun () -> B.of_string s))
             [ ""; "-"; "0x"; "_1"; "12a"; " 1"; "0b2" ]);
+      prop "of_string reads bases 2, 8 and 16 as their digits sum"
+        Gen.(
+          pair (of_list [ (2, "0b"); (8, "0o"); (16, "0x") ])
+            (pair bool (list ~size:(int_range 1 120) (int_range 0 15))))
+        (fun ((base, prefix), (negative, ds)) ->
+          let ds = List.map (fun d -> d mod base) ds in
+          let sum =
+            List.fold_left
+              (fun acc d -> B.add (B.mul acc (B.of_int base)) (B.of_int d))
+              B.zero ds
+          in
+          let text = String.concat "" (List.map (Printf.sprintf "%x") ds) in
+          let sign = if negative then "-" else "" in
+          equal bigint
+            (if negative then B.neg sum else sum)
+            (B.of_string (sign ^ prefix ^ text)));
+      test ~timeout:5. "of_string reads at most 4300 decimal digits" (fun () ->
+          let ten = B.pow (B.of_int 10) 4300 and nines = String.make 4300 '9' in
+          equal bigint (B.pred ten) (B.of_string nines);
+          equal bigint (B.neg (B.pred ten)) (B.of_string ("-" ^ nines));
+          equal bigint
+            (B.pow (B.of_int 10) 4299)
+            (B.of_string ("1_" ^ String.make 4299 '0'));
+          equal bigint
+            (B.pred (two_to 8_000_000))
+            (B.of_string ("0x" ^ String.make 2_000_000 'f'));
+          List.iter
+            (fun s ->
+              raises_match
+                (Exn.invalid_arg ~sub:"4300 digits")
+                (fun () -> B.of_string s))
+            [
+              "1" ^ nines;
+              "-1" ^ nines;
+              String.make 4301 '0';
+              "1_" ^ nines;
+              String.make 2_000_000 '9';
+            ]);
       test ~timeout:5. "to_string writes at most 4300 digits" (fun () ->
           let ten = B.pow (B.of_int 10) 4300 and nines = String.make 4300 '9' in
           equal string nines (B.to_string (B.pred ten));

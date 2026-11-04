@@ -57,7 +57,9 @@ val of_string : string -> t
     [0x], [0o] or [0b] for base 16, 8 or 2 (base 10 otherwise), then digits of
     the base, where underscores may follow the first digit.
 
-    Raises [Invalid_argument] if [s] is anything else. *)
+    Raises [Invalid_argument] if [s] is anything else, or if it writes more
+    than 4300 decimal digits: reading them takes time quadratic in their
+    number. *)
 
 val fits_int : t -> bool
 (** [fits_int n] is [true] iff [n] is in [int]'s range. *)
