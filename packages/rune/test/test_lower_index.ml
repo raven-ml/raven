@@ -1651,6 +1651,22 @@ let sorts =
         (Nx.to_array (snd (op ())))
         (Lowered.run (fun () -> snd (op ()))))
 
+(* Numbering *)
+
+(* A numbering of more than [2^31] rows is not lowered: keys of no columns,
+   which hold no element, show it without memory. *)
+let wide_unique =
+  test "a Unique of more than 2^31 rows is not lowered" (fun () ->
+      let keys = Nx.zeros D.Int64 [| (1 lsl 31) + 1; 0 |] in
+      let op () =
+        let ids, _, _, _ = P.eval ~by:"t" (P.Unique { size = 1; keys }) in
+        ids
+      in
+      raises
+        (Rune.Lower_arith.Unlowered
+           "Rune.Lower.op: a Unique of more than 2^31 rows is not lowered")
+        (fun () -> ignore (Lowered.kernels op)))
+
 (* Work bounds *)
 
 (* An assembly of [p] pieces of one element into 64. *)
@@ -1682,5 +1698,6 @@ let () =
            [ gathers; scatters_moved; scatter_adds; unreached ];
          group "folds and assemblies" [ folds; assemblies ];
          group "sorts" [ sorts ];
+         group "numbering" [ wide_unique ];
          group "work bounds" [ work_bounds ];
        ])

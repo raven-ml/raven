@@ -925,6 +925,7 @@ let sort d ~axis ~descending ~k x =
 let unique ~host ren device ~size keys =
   let take = Bits.take in
   let n = Bits.extent keys 0 and w = Bits.extent keys 1 in
+  if n > 1 lsl 31 then unlowered "a Unique of more than 2^31 rows";
   let i64 = D.Any D.Int64 in
   let fill v s =
     broadcast (Ops.const ~dtype:Int64 (`Int (Bigint.of_int v))) s
