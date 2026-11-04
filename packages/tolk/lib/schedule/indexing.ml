@@ -13,6 +13,16 @@ let ops l = Op.Set.of_list l
 let sint = sint_to_uop
 let zero = `Int Bigint.zero
 
+(* A shape as Python prints a tuple. *)
+let pp_shape ppf = function
+  | [ s ] -> Format.fprintf ppf "(%a,)" Sint.pp s
+  | s ->
+      Format.fprintf ppf "(%a)"
+        (Format.pp_print_list
+           ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+           Sint.pp)
+        s
+
 (* Indexing context *)
 
 type ctx = {
@@ -71,12 +81,89 @@ let realize_gathered ctx g =
   let x = nth g 0 in
   if is_gather g && not (Op.Set.mem (op x) storage) then realize ctx x
 
+(* Arguments of calls compiled on their own *)
+
+let loops s =
+  List.exists
+    (fun r -> Axis_type.equal (axis_type r) Axis_type.Loop)
+    (Nodes.to_list (ranges s))
+
+(* A shrink of storage that loops move along, a run of its elements on each
+   trip: its axes of one element come first, its one partial axis next, and
+   whole axes after. A kernel given as code takes it only on a 16-byte
+   boundary on every trip, which its parameter assumes; a precompiled call's
+   parameter states its own. *)
+let loop_row ~precompiled s =
+  let run extents fulls =
+    let rec go = function
+      | (e, _) :: rest when Sint.equal e (Int 1) -> go rest
+      | _ :: rest -> List.for_all (fun (e, f) -> Sint.equal e f) rest
+      | [] -> true
+    in
+    go (List.combine extents fulls)
+  in
+  let aligned () =
+    let align, phase = Shape.storage_phase s in
+    align >= 16 && phase mod 16 = 0
+  in
+  op s = Op.Shrink
+  && has_buffer_identity ~after_ok:true (nth s 0)
+  && loops s
+  && run (shape s) (shape (nth s 0))
+  && (precompiled || aligned ())
+
+(* A call compiled on its own, a kernel given as code or a precompiled call,
+   takes flat storage at each argument: storage or a state of it, a row loops
+   move along, a call's result or a load, and a scalar of a precompiled call
+   are passed as they are. Any other argument is stored whole first, so the
+   call reads a copy of it; one the call writes, or may write where its body
+   does not show its writes, is refused, since the write would land in the
+   copy: given [a[::2]], the call would write every other element of [a]
+   into storage of its own. A constant, which needs no storage, and another
+   value loops move along, which a store before the call cannot hold, are
+   refused. *)
 let realize_custom_kernel_srcs ctx c =
   let rec strip s = if op s = Op.Reshape then strip (nth s 0) else s in
-  List.iter
-    (fun s ->
-      let s = strip s in
-      if not (Op.Set.mem (op s) always_contiguous) then begin
+  let precompiled = match arg c with Call i -> i.precompile | _ -> false in
+  let written, verb =
+    match Shape.written_params (nth c 0) with
+    | Some w ->
+        let mem i = List.mem i w in
+        (mem, fun i -> if mem i then "writes" else "reads")
+    | None -> ((fun _ -> true), fun _ -> "may write")
+  in
+  let passed a =
+    has_buffer_identity ~after_ok:true a
+    || op a = Op.Load
+    || op a = Op.Call
+    || (precompiled && addrspace a = Some Dtype.Alu && shape a = [])
+    || loop_row ~precompiled a
+  in
+  let refuse i a why =
+    invalid_arg
+      (Format.asprintf "a call %s its argument %d, of shape %a, %s" (verb i) i
+         pp_shape (shape a) why)
+  in
+  let reads_storage u =
+    List.exists
+      (fun n -> Op.Set.mem (op n) storage)
+      (toposort ~calls:Skip u)
+  in
+  List.iteri
+    (fun i a ->
+      let s = strip a in
+      if passed s then ()
+      else if written i then
+        refuse i a
+          "which is neither storage, a run of its elements from the first, \
+           nor a row a loop moves along: the write would land in a copy"
+      else if not (reads_storage s) then
+        refuse i a "a constant: store it into storage first"
+      else if loops s then
+        refuse i a
+          "which moves with a loop and is no row of storage it can take: \
+           store it into storage first"
+      else begin
         realize ctx s;
         Tbl.replace ctx.non_removable s ()
       end)
@@ -91,7 +178,7 @@ let pm_generate_realize_map =
       [
         rule_ctx
           (Upat.op Op.Call ~name:"c" ~allow_any_len:true
-             ~src:[ Upat.v ~op:(ops [ Op.Sink; Op.Program ]) () ])
+             ~src:[ Upat.v ~op:(ops [ Op.Sink; Op.Program; Op.Linear ]) () ])
           (mark (fun ctx m -> realize_custom_kernel_srcs ctx (m "c")));
         rule_ctx
           (Upat.op Op.Store ~name:"tr")
@@ -524,13 +611,7 @@ let print_ranges rctx x ~consumers ~ending rngs out_rngs =
   in
   let pp_shape ppf = function
     | None -> Format.pp_print_string ppf "None"
-    | Some [ s ] -> Format.fprintf ppf "(%a,)" Sint.pp s
-    | Some s ->
-        Format.fprintf ppf "(%a)"
-          (Format.pp_print_list
-             ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
-             Sint.pp)
-          s
+    | Some s -> pp_shape ppf s
   in
   Format.printf "%s %2d %-20s %-35s %2d %s@."
     (if Tbl.mem rctx.realize_map x then "***" else "   ")

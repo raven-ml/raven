@@ -532,7 +532,10 @@ val custom_kernel : Ops.t list -> (Ops.t list -> Ops.t) -> Ops.t list
     [args], and is [args], each that the kernel writes ({!written_params})
     ordered after it: an argument it only reads is itself. The placeholder of the [i]th
     argument takes slot [i]: a variable's is the variable, unbound, and any
-    other's is a buffer of its shape ({!placeholder_like}). *)
+    other's is a buffer of its shape ({!placeholder_like}). An argument the
+    kernel writes is storage, a run of its elements from the first, or a
+    row a loop moves along: scheduling refuses any other, which the kernel
+    would write a copy of ({!Indexing.run_rangeify}). *)
 
 (** {1:launches Launches} *)
 

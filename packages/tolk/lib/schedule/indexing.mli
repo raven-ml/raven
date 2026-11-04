@@ -66,10 +66,16 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
 
     New ranges are numbered from [0] in the order the walk creates them, and
     are {!Ops.Axis_type.Weak}: a range is a reduction's when the reduction
-    closes it. A node is stored whole when it is a {!Op.Store}, a source
-    of a call to a kernel given as code that is not storage, or a gathered
-    source that is not storage. A value stored into a destination it reads
-    is not: within a kernel, {!Rangeify.get_kernel_graph} stages a value that
+    closes it. A node is stored whole when it is a {!Op.Store}, an argument
+    of a call compiled on its own (a kernel given as code, or a precompiled
+    call) that the call reads and that is neither storage, a state of it, a
+    call's result, a load, a scalar of a precompiled call, nor a row of
+    storage that loops ({!Ops.Axis_type.Loop}) move along (an {!Op.Shrink}
+    whose elements on each trip are a run, on a 16-byte boundary on every
+    trip for a kernel given as code), or a gathered source that is not
+    storage. A
+    value stored into a destination it reads is not: within a kernel,
+    {!Rangeify.get_kernel_graph} stages a value that
     reads its destination at other elements than it writes, and across
     kernels, {!Schedule.create_schedule} orders the reads before the write,
     or copies a state where no order does.
@@ -110,8 +116,13 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
     ({!Ops.gate_kernel_sink}). With [debug] (default [false]), each node's
     ranges are printed on standard output as they are assigned.
 
-    Raises [Invalid_argument] if a reduction of leading axes gets no ranges, or
-    if a gather has more than one index. *)
+    Raises [Invalid_argument] if a reduction of leading axes gets no ranges, if
+    a gather has more than one index, or if a call compiled on its own writes
+    an argument ({!Shape.written_params}; each argument, where its body does
+    not show its writes) that would be stored whole, since the call would
+    write the copy, or reads one that is a constant, which needs no storage,
+    or another value loops move along, which a store before the call cannot
+    hold. *)
 
 (**/**)
 

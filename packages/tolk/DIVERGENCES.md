@@ -8291,3 +8291,56 @@ and an initial value is added after it (D260).
   pool suite, which reads the count from trees of cgroup files (`a cgroup
   without cpu.max` and its neighbours). No suite sets a quota or an affinity
   on its own process, so none pins the default to the count.
+
+## D350. A call compiled on its own writes through storage or is refused
+
+- **tinygrad:** `schedule/indexing.py:24` (`ALWAYS_CONTIGUOUS`: the
+  defines, `AFTER`, `CONST`, `MSELECT`, `MSTACK`, `LOAD` and `CALL`) and
+  `:36-45`
+  (`realize_custom_kernel_srcs`, which stores whole each other argument of
+  a kernel's call after its reshapes, a written one included, and matches
+  no lowered precompiled body); `uop/ops.py:1262-1266`
+  (`UOp.custom_kernel`, whose results are each argument ordered after the
+  call); `uop/ops.py:1255` (`call_with_outputs`, which makes a precompiled
+  call's arguments contiguous).
+- **tolk:** `Prepare.prepare_rangeify` (`call_storage`, among its earliest
+  rewrites); `Indexing.realize_custom_kernel_srcs`, for a precompiled
+  call's lowered body too.
+- **Differs:** for a call compiled on its own, a kernel given as code or a
+  precompiled call, preparing a tensor graph passes an argument that is a
+  run of storage's elements, or of a state of it, from the first, of the
+  storage's type, as the storage or the state. Indexing then passes
+  storage, a state of it, a call's result, a load, a scalar of a
+  precompiled call and a shrink of storage that loops move along, whose
+  elements on each trip are a run (for a kernel given as code, on a 16-byte
+  boundary on every trip), as they are, and stores any other argument
+  whole. It
+  raises `Invalid_argument` where the call writes such an argument
+  (`Shape.written_params`, every argument where the body does not show its
+  writes), and where it reads a constant or another value that loops move
+  along. tinygrad stores any such argument whole and the kernel writes the
+  copy: at the pinned commit, a kernel copying four floats into `a[2:6]`,
+  `a[::2]`, the first four of `a`'s transpose or a broadcast of `a[0:1]`
+  leaves `a` and the call's result all zeros. It passes a constant as it
+  is, where the kernel expects storage. tinygrad's precompiled functions
+  copy every argument first (`call_with_outputs`), so they write a copy;
+  tolk's `Ops.call ~precompile:true` takes its arguments as a kernel's
+  call does, writing through storage, a run from the first element and a
+  loop's row, which rune's loops update in place. Its lowered body matched
+  no rule before, and a view at a constant offset was passed as its
+  storage: a call reading `a[4:8]` read `a[0:4]`.
+- **Reason:** (e): the write landed in a copy, or at other elements, with
+  no error, and a constant reached a kernel as no storage. A row a loop
+  moves along is what rune's loops pass, and its kernels write new
+  storage or a state of it, so no raven library makes a refused call.
+- **Pinned by:** the Prepare suite's `prepare_rangeify › calls compiled on
+  their own` (a run from the first element passed as the storage, a state
+  of one as the state, a run at another element as it is); the
+  Tolk_engine suite's `calls of views` (reads of a run at an offset, every
+  other element and a transpose by a kernel and a precompiled call, and of
+  a state of a view; their writes into those, a broadcast, a computed
+  value and a constant refused, at either argument; a read of a constant
+  refused; writes through a run from the first element, through a second
+  kernel's state of one, and through a loop's row on each trip, and a
+  loop's column refused; a kernel's read of a value of a loop's row
+  refused, and its write into rows off 16 bytes).

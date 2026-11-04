@@ -937,6 +937,69 @@ let broadcast_stores =
             (sorted (prepare sink) [ (1, iota 16) ]));
     ]
 
+(* Calls compiled on their own
+
+   A kernel given as code, or a precompiled call, takes flat storage at each
+   argument: a run of storage from its first element is passed as the
+   storage, which the call then writes through. Each call copies four floats
+   from its second argument into its first. *)
+
+let copy_kernel ps =
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+  let at k = Ops.index (List.nth ps k) [ i ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"copy4" ())
+    [ Ops.end_ (Ops.store (at 0) (at 1)) [ i ] ]
+
+let kernel_call args = Ops.sink (Shape.custom_kernel args copy_kernel)
+
+let precompiled_call args =
+  let p slot = Shape.param ~shape:[ Int 4 ] ~device:cpu slot Float32 in
+  let c = Ops.call ~precompile:true (Ops.sink [ Ops.store (p 0) (p 1) ]) args in
+  Ops.sink (List.map (fun a -> Ops.after a [ c ]) args)
+
+(* The first argument of each call of [u]. *)
+let first_args u =
+  List.filter_map
+    (fun n -> if Ops.op n = Call then Some (Ops.nth n 1) else None)
+    (Ops.toposort ~calls:Skip u)
+
+let calls_on_their_own =
+  let a = Shape.param ~device:cpu ~shape:[ Int 8 ] 0 Float32 in
+  let y = Shape.param ~device:cpu ~shape:[ Int 4 ] 1 Float32 in
+  let first_four = Shape.shrink a [ Some (Ops.Int 0, Ops.Int 4) ] in
+  let first_row =
+    Shape.shrink (Shape.reshape a (ints [ 2; 4 ])) [ Some (Int 0, Int 1); None ]
+  in
+  let calls =
+    [ ("a kernel", kernel_call); ("a precompiled call", precompiled_call) ]
+  in
+  let each f =
+    List.iter (fun (call, make) -> f ~msg:call make) calls
+  in
+  group "prepare_rangeify › calls compiled on their own"
+    [
+      test "a run of storage from its first element is passed as the storage"
+        (fun () ->
+          each (fun ~msg make ->
+              let passed v = first_args (prepare (make [ v; y ])) in
+              equal ~msg (list uop) [ a ] (passed first_four);
+              equal ~msg (list uop) [ a ] (passed first_row)));
+      test "a state of such a run is passed as the state of the storage"
+        (fun () ->
+          let k = Ops.store first_four y in
+          each (fun ~msg make ->
+              let arg = Ops.after first_four [ k ] in
+              match first_args (prepare (make [ arg; y ])) with
+              | [ u ] -> equal ~msg uop (Ops.after a [ k ]) u
+              | us -> failf "%s: %d calls" msg (List.length us)));
+      test "a run at another element is passed as it is" (fun () ->
+          let later = Shape.shrink a [ Some (Ops.Int 4, Ops.Int 8) ] in
+          each (fun ~msg make ->
+              equal ~msg (list uop) [ later ]
+                (first_args (prepare (make [ later; y ])))));
+    ]
+
 let earliest =
   group "prepare_rangeify › earliest rewrites"
     [
@@ -1136,6 +1199,7 @@ let () =
          outputs;
          calls_inline;
          broadcast_stores;
+         calls_on_their_own;
          earliest;
          cost;
        ])

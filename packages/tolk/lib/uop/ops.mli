@@ -958,7 +958,11 @@ val call : ?name:string -> ?precompile:bool -> t -> t list -> t
 (** [call body args] calls [body] on [args]. The call has the type and the
     shape of [body]. Given one state of storage at an argument [body] writes
     ({!Shape.written_params}) and at another, it reads that state at the other
-    as it was before the call, as [memmove] reads its source.
+    as it was before the call, as [memmove] reads its source. A call compiled
+    on its own takes storage, a run of its elements from the first, and a row
+    a loop moves along as they are, and reads a copy of most other arguments;
+    scheduling refuses one it would copy where the call writes it, and a
+    constant ({!Indexing.run_rangeify}).
 
     Raises [Invalid_argument] if [body] cannot be called ({!opaque_call_bodies})
     or a range leaks out of it. *)

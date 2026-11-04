@@ -61,6 +61,11 @@ val prepare_rangeify : Ops.t -> Ops.t
           elements as the output, and only to an axis the input is not broadcast
           along;
         - {!Op.Detach} and {!Op.Contiguous_backward} are their source;
+        - a call compiled on its own, a kernel given as code or a precompiled
+          call, takes as an argument that is a run of storage's elements, or
+          of a state of it, from the first, of the storage's type, the
+          storage or the state ({!contiguous_view}), which the call writes
+          through;
         - the sink's sources lose their movements;
         - a copy to the device the value is on is the value; a store of a copy
           into storage on the copy's device, or into a run of its elements

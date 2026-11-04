@@ -1028,6 +1028,14 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A kernel given as code (`Shape.custom_kernel`) or a precompiled call
+  (`Ops.call ~precompile:true`) that writes an argument other than storage,
+  a run of it from the first element or a row a loop moves along raises
+  `Invalid_argument` when scheduled: the write landed in a copy. So does one
+  whose body hides its writes and takes such an argument, one that reads a
+  constant, which reached a kernel as no storage, and one in a loop that
+  reads another value the loop moves along. A precompiled call reads a view
+  at its elements: one at an offset read the storage's first elements.
 - On the host, a product with a decoded operand, such as an MXFP4 or Q8_0
   matrix, decodes each value once for all its row tiles (`Stage.decodes`):
   64 float32 rows by an MXFP4 matrix of 1024 by 1024 took 13.2 ms and take

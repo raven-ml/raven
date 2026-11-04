@@ -501,6 +501,43 @@ let rec storage_run u =
       && (match contiguous_view u with Some (_, Int _) -> true | _ -> false)
   | _ -> false
 
+(* Arguments of calls compiled on their own *)
+
+let compiled_on_its_own = ops Op.[ Sink; Program; Linear ]
+
+let viewing = Op.Set.union Op.Set.movement (ops Op.[ Bitcast; After ])
+
+(* Whether [a] is movements, bitcasts and states of storage. *)
+let rec views_storage a =
+  has_buffer_identity ~after_ok:true a
+  || (Op.Set.mem (op a) viewing && views_storage (nth a 0))
+
+(* The storage whose elements, from the first, [a] is a run of, of [a]'s
+   type, if any: the call writes through it. *)
+let run_from_start a =
+  if has_buffer_identity ~after_ok:true a || not (views_storage a) then None
+  else
+    match contiguous_view a with
+    | Some (b, Int 0)
+      when has_buffer_identity ~after_ok:true b
+           && Dtype.equal (dtype b) (dtype a) ->
+        Some b
+    | _ -> None
+
+(* A call compiled on its own takes flat storage at each argument
+   ({!Indexing.run_rangeify}): a run of storage from its first element is
+   passed as the storage. *)
+let call_storage c =
+  if is_inline_call c || not (Op.Set.mem (op (body c)) compiled_on_its_own)
+  then None
+  else
+    let args = List.tl (src c) in
+    let args' =
+      List.map (fun a -> Option.value (run_from_start a) ~default:a) args
+    in
+    if List.for_all2 ( == ) args args' then None
+    else Some (replace c ~src:(nth c 0 :: args'))
+
 (* Copies always cross devices, and read a whole buffer: SDMA engines cannot
    copy from an offset. *)
 let copy_to_anon_store x copy =
@@ -576,6 +613,7 @@ let earliest_rewrites =
          rule
            (Upat.op Op.Store ~allow_any_len:true ~src:[ var "dest"; Upat.wild ])
            (fun m -> refuse_broadcast_store (m "dest"));
+         rule (Upat.op Op.Call ~name:"c") (fun m -> call_storage (m "c"));
          rule
            (Upat.op Op.Reduce ~name:"reduce" ~src:[ var "x" ])
            (fun m -> split_reduceop (m "reduce") (m "x"));

@@ -2307,6 +2307,247 @@ let valid_slot_store =
       raises_match (Exn.invalid_arg ~sub:"Invalid, which is no number")
         (fun () -> Schedule.create_linear_with_vars (store_at_valid_slot "CPU")))
 
+(* Calls of views
+
+   A call compiled on its own takes flat storage at each argument: a kernel
+   given as code, or a precompiled call. [a] holds 8 floats and [y] 1 to 4;
+   each call copies four floats from one argument into another, by default
+   from its second into its first. *)
+
+let a_values = Array.init 8 Float.of_int
+let y_values = [| 1.; 2.; 3.; 4. |]
+
+let copy_kernel ~dst ~src ps =
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+  let at k = Ops.index (List.nth ps k) [ i ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"copy4" ())
+    [ Ops.end_ (Ops.store (at dst) (at src)) [ i ] ]
+
+let precompiled_copy ?(dst = 0) ?(src = 1) args =
+  let p slot = Shape.param ~shape:[ Int 4 ] ~device:"CPU" slot Float32 in
+  let ps = List.mapi (fun i _ -> p i) args in
+  Ops.call ~precompile:true
+    (Ops.sink [ Ops.store (List.nth ps dst) (List.nth ps src) ])
+    args
+
+let kernel_copy ?(dst = 0) ?(src = 1) args =
+  let placeholders = List.mapi (fun i u -> Shape.placeholder_like u i) args in
+  Ops.call (copy_kernel ~dst ~src placeholders) args
+
+type copy = ?dst:int -> ?src:int -> Ops.t list -> Ops.t
+
+let copies : (string * copy) list =
+  [ ("a precompiled call", precompiled_copy); ("a kernel", kernel_copy) ]
+
+(* The values of [into] after a run of [sink], [into] holding [init] before
+   it and [from] holding [values]. *)
+let run_copy ~into ~init ~from values sink =
+  let linear, _ = Schedule.create_linear_with_vars sink in
+  let out = Run.buffer host Float32 (floats init) in
+  let bound =
+    [ (into, out); (from, Run.buffer host Float32 (floats values)) ]
+  in
+  Engine.run (Engine.link ~devices ~bound (compile linear)) [||];
+  Run.values Float32 out
+
+let at_offset a = Shape.shrink a [ Some (Ops.Int 4, Ops.Int 8) ]
+let first_four a = Shape.shrink a [ Some (Ops.Int 0, Ops.Int 4) ]
+let dims = List.map (fun n -> Ops.Int n)
+
+let every_other a =
+  let pairs = Shape.reshape a (dims [ 4; 2 ]) in
+  let firsts = Shape.shrink pairs [ None; Some (Ops.Int 0, Ops.Int 1) ] in
+  Shape.reshape firsts [ Int 4 ]
+
+let transposed a =
+  let t = Shape.permute (Shape.reshape a (dims [ 2; 4 ])) [ 1; 0 ] in
+  first_four (Shape.reshape t [ Int 8 ])
+
+let first_row a =
+  let m = Shape.reshape a (dims [ 2; 4 ]) in
+  Shape.shrink m [ Some (Ops.Int 0, Ops.Int 1); None ]
+
+(* [n] trips of [call] in a loop over rows of four of [ys] and [xs], each of
+   [size] floats (default [4 * n]), the call's arguments [args ys xs r] on
+   the trip [r]. *)
+let looped ?size ~n call args =
+  let size = Option.value size ~default:(4 * n) in
+  let ys = Ops.new_buffer "CPU" size Float32
+  and xs = Ops.new_buffer "CPU" size Float32 in
+  let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
+  let e = Ops.end_ (call (args ys xs r)) [ r ] in
+  (ys, xs, Ops.sink [ Ops.after ys [ e ] ])
+
+let row r b =
+  let at = Ops.O.(r * int 4) in
+  Shape.shrink b [ Some (Sym at, Sym Ops.O.(at + int 4)) ]
+
+(* [f ()] without the checks of the graphs between stages, which refuse some
+   arguments before scheduling does. *)
+let unchecked f = Setting.context [ B (Setting.spec, 0) ] f
+
+let calls_of_views =
+  let reads (call : copy) view expected () =
+    let a = Ops.new_buffer "CPU" 8 Float32
+    and d = Ops.new_buffer "CPU" 4 Float32 in
+    let sink = Ops.sink [ Ops.after d [ call [ d; view a ] ] ] in
+    run_copy ~into:d ~init:(Array.make 4 0.) ~from:a a_values sink
+    |> equal values (floats expected)
+  in
+  let writes ~msg (call : copy) view expected =
+    let a = Ops.new_buffer "CPU" 8 Float32
+    and y = Ops.new_buffer "CPU" 4 Float32 in
+    let sink = Ops.sink [ Ops.after a [ call [ view a; y ] ] ] in
+    run_copy ~into:a ~init:a_values ~from:y y_values sink
+    |> equal ~msg values (floats expected)
+  in
+  let refused ~msg sink =
+    raises_match ~msg
+      (Exn.invalid_arg ~sub:"a call writes its argument")
+      (fun () -> Schedule.create_linear_with_vars sink)
+  in
+  let unwritable =
+    [
+      ("a run at an offset", at_offset);
+      ("every other element", every_other);
+      ("a transpose", transposed);
+      ( "a broadcast",
+        fun a ->
+          let first = Shape.shrink a [ Some (Ops.Int 0, Ops.Int 1) ] in
+          Shape.expand (Shape.reshape first []) [ Int 4 ] );
+      ("a computed value", fun a -> Ops.exp2 (first_four a));
+      ( "a constant",
+        fun _ ->
+          Shape.expand (Ops.const ~dtype:Float32 (`Float 0.)) [ Int 4 ] );
+    ]
+  in
+  group "calls of views"
+    [
+      test "a call reads a view of storage at its elements" (fun () ->
+          List.iter
+            (fun (_, call) ->
+              reads call at_offset [| 4.; 5.; 6.; 7. |] ();
+              reads call every_other [| 0.; 2.; 4.; 6. |] ();
+              reads call transposed [| 0.; 4.; 1.; 5. |] ())
+            copies);
+      test "a call that reads a constant is refused" (fun () ->
+          List.iter
+            (fun (msg, (call : copy)) ->
+              let d = Ops.new_buffer "CPU" 4 Float32 in
+              let three =
+                Shape.expand (Ops.const ~dtype:Float32 (`Float 3.)) [ Int 4 ]
+              in
+              raises_match ~msg
+                (Exn.invalid_arg
+                   ~sub:"its argument 1, of shape (4,), a constant")
+                (fun () ->
+                  Schedule.create_linear_with_vars
+                    (Ops.sink [ Ops.after d [ call [ d; three ] ] ])))
+            copies);
+      test "a call reads a state of a view at its elements" (fun () ->
+          List.iter
+            (fun (msg, (call : copy)) ->
+              let a = Ops.new_buffer "CPU" 8 Float32
+              and d = Ops.new_buffer "CPU" 4 Float32 in
+              let stored = Ops.store (at_offset a) (first_four a) in
+              let state = Ops.after (at_offset a) [ stored ] in
+              let sink = Ops.sink [ Ops.after d [ call [ d; state ] ] ] in
+              run_copy ~into:d ~init:(Array.make 4 0.) ~from:a a_values sink
+              |> equal ~msg values (floats [| 0.; 1.; 2.; 3. |]))
+            copies);
+      test "a call that writes a view it would write a copy of is refused"
+        (fun () ->
+          List.iter
+            (fun (call, (make : copy)) ->
+              List.iter
+                (fun (view, v) ->
+                  let msg = call ^ ", " ^ view in
+                  let a = Ops.new_buffer "CPU" 8 Float32
+                  and y = Ops.new_buffer "CPU" 4 Float32 in
+                  refused ~msg (Ops.sink [ Ops.after a [ make [ v a; y ] ] ]);
+                  refused ~msg
+                    (Ops.sink
+                       [ Ops.after a [ make ~dst:1 ~src:0 [ y; v a ] ] ]))
+                unwritable)
+            copies);
+      test "a call writes through a run of storage from its first element"
+        (fun () ->
+          let written = [| 1.; 2.; 3.; 4.; 4.; 5.; 6.; 7. |] in
+          List.iter
+            (fun (call, make) ->
+              writes ~msg:(call ^ ", its first four") make first_four written;
+              writes ~msg:(call ^ ", its first row") make first_row written)
+            copies);
+      test "a second kernel writes through the first's state of a run"
+        (fun () ->
+          let a = Ops.new_buffer "CPU" 8 Float32
+          and y = Ops.new_buffer "CPU" 4 Float32 in
+          let copy = copy_kernel ~dst:0 ~src:1 in
+          let first = Shape.custom_kernel [ first_four a; y ] copy in
+          let second =
+            Shape.custom_kernel [ List.hd first; at_offset a ] copy
+          in
+          let sink = Ops.sink [ Ops.after a [ List.hd second ] ] in
+          run_copy ~into:a ~init:a_values ~from:y y_values sink
+          |> equal values (floats [| 4.; 5.; 6.; 7.; 4.; 5.; 6.; 7. |]));
+      test "a call in a loop writes through its row of storage on each trip"
+        (fun () ->
+          List.iter
+            (fun (msg, (call : copy)) ->
+              let xs_values = Array.init 12 Float.of_int in
+              let ys, xs, sink =
+                looped ~n:3 (fun args -> call args) (fun ys xs r ->
+                    [ row r ys; row r xs ])
+              in
+              run_copy ~into:ys ~init:(Array.make 12 0.) ~from:xs xs_values sink
+              |> equal ~msg values (floats xs_values))
+            copies);
+      test "a kernel in a loop that reads a value of its row is refused"
+        (fun () ->
+          let _, _, sink =
+            looped ~n:3 kernel_copy (fun ys xs r ->
+                [ row r ys; Ops.exp2 (row r xs) ])
+          in
+          raises_match
+            (Exn.invalid_arg ~sub:"moves with a loop and is no row")
+            (fun () -> Schedule.create_linear_with_vars sink));
+      test "a call in a loop that writes a column of storage is refused"
+        (fun () ->
+          List.iter
+            (fun (msg, (call : copy), sub) ->
+              let _, _, sink =
+                looped ~n:3 (fun args -> call args) (fun ys xs r ->
+                    let m = Shape.reshape ys (dims [ 4; 3 ]) in
+                    let column =
+                      Shape.shrink m
+                        [ None; Some (Sym r, Sym Ops.O.(r + int 1)) ]
+                    in
+                    [ column; row r xs ])
+              in
+              unchecked (fun () ->
+                  raises_match ~msg (Exn.invalid_arg ?sub) (fun () ->
+                      Schedule.create_linear_with_vars sink)))
+            [
+              (* Its argument is checked when its call is made. *)
+              ("a precompiled call", precompiled_copy, None);
+              ("a kernel", kernel_copy, Some "writes its argument 0");
+            ]);
+      test "a kernel in a loop that writes rows off 16 bytes is refused"
+        (fun () ->
+          let _, _, sink =
+            looped ~size:15 ~n:3 kernel_copy (fun ys xs r ->
+                let at = Ops.O.(r * int 5) in
+                let off b =
+                  Shape.shrink b [ Some (Sym at, Sym Ops.O.(at + int 4)) ]
+                in
+                [ off ys; row r xs ])
+          in
+          unchecked (fun () ->
+              raises_match (Exn.invalid_arg ~sub:"writes its argument 0")
+                (fun () -> Schedule.create_linear_with_vars sink)));
+    ]
+
 (* Aranges past 2^31 elements: [(n, start, step, dtype, first)] reads the
    elements [first] to [first + 2] of an arange of [n] elements from [start] by
    [step], about 2^31, 2^32 or at its end, where an index or a value computed
@@ -3910,6 +4151,7 @@ let () =
          schedules;
          gathered_stores;
          group "a store through a shrink" [ valid_slot_store ];
+         calls_of_views;
          group "aranges" [ arange_windows "CPU" ];
          refusals;
          runs;
