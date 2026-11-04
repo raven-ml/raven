@@ -1037,6 +1037,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Custom kernels (`Shape.custom_kernel`) that pass one variable two values
+  and run as one merged kernel read each its own value, where both read one.
 - On the host, consecutive `int8` and `uint8` loads and stores merge into
   vectors of up to one register (`Coalesce.memory_coalescing`): a 1-token MXFP4
   product, which read its codes a byte at a time, runs 1.5 times as fast.

@@ -1101,9 +1101,97 @@ let runs_beside_another_variable ?(devices = devices) () =
     (Array.map (fun x -> `Int (Bigint.of_int (x + 70))) xs)
     (contents (slot storage 4))
 
+(* Two custom kernels on CPU:1 that add a variable [k] to [a], of [n]
+   elements, into their own outputs, [k] bound to [k1] in one and [k2] in the
+   other. Independent, they run as one kernel when they compute one element,
+   and apart otherwise; either way each output takes its own [k]. *)
+let custom_kernels_of_one_name ?(devices = devices) ~n (k1, k2) () =
+  let k = Ops.variable "k" (Dtype.Value.of_int 0) (Dtype.Value.of_int 8) in
+  let add = function
+    | [ out; v; src ] ->
+        (* One element takes no range, as the schedule's own kernels. *)
+        let i, ends =
+          if n = 1 then (Ops.int 0, Fun.id)
+          else
+            let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+            (i, fun st -> Ops.end_ st [ i ])
+        in
+        let at b = Ops.index b [ i ] in
+        Ops.sink
+          ~kernel:(Ops.kernel_info ())
+          [ ends (Ops.store (at out) Ops.O.(at src + v)) ]
+    | _ -> invalid_arg "add takes three arguments"
+  in
+  let a = Ops.new_buffer "CPU:1" n Int32 in
+  let out v =
+    let o = Ops.new_buffer "CPU:1" n Int32 in
+    let bound = Shape.bind k (`Int (Bigint.of_int v)) in
+    (o, List.hd (Shape.custom_kernel [ o; bound; a ] add))
+  in
+  let (o1, s1), (o2, s2) = (out k1, out k2) in
+  let big = Ops.sink [ s1; s2 ] in
+  let calls = Ops.src (fst (Schedule.create_linear_with_vars big)) in
+  equal int ~msg:"kernels" (if n = 1 then 1 else 2) (List.length calls);
+  let s, vars, storage = linked ~devices big in
+  equal
+    (list (pair string int))
+    ~msg:"the run's variables"
+    (if k1 = k2 then [ ("k", k1) ] else [])
+    vars;
+  Engine.run ~vars s [||];
+  let of_node u = List.find (fun s -> s.node == u) storage in
+  let xs = Array.map Dtype.Value.to_int (of_node a).before in
+  let plus v = Array.map (fun x -> `Int (Bigint.of_int (x + v))) xs in
+  equal values ~msg:"k bound first" (plus k1) (contents (of_node o1));
+  equal values ~msg:"k bound second" (plus k2) (contents (of_node o2))
+
+(* A custom kernel on CPU:1 that adds [k], bound to 3, to [a], one element,
+   beside a kernel of the schedule's own that adds [k] to [a] too: they run as
+   one kernel, and both read [k]. *)
+let custom_kernel_beside_one_by_name ?(devices = devices) () =
+  let k = Ops.variable "k" (Dtype.Value.of_int 0) (Dtype.Value.of_int 8) in
+  let bound = Shape.bind k (`Int (Bigint.of_int 3)) in
+  let add = function
+    | [ out; v; src ] ->
+        let at b = Ops.index b [ Ops.int 0 ] in
+        Ops.sink
+          ~kernel:(Ops.kernel_info ())
+          [ Ops.store (at out) Ops.O.(at src + v) ]
+    | _ -> invalid_arg "add takes three arguments"
+  in
+  let a = Ops.new_buffer "CPU:1" 1 Int32 in
+  let o1 = Ops.new_buffer "CPU:1" 1 Int32
+  and o2 = Ops.new_buffer "CPU:1" 1 Int32 in
+  let s1 = List.hd (Shape.custom_kernel [ o1; bound; a ] add) in
+  let s2 =
+    Ops.after o2
+      [ Ops.store o2 Ops.O.(a + Shape.reshape (Ops.cast bound Int32) [ Int 1 ]) ]
+  in
+  let big = Ops.sink [ s1; s2 ] in
+  let calls = Ops.src (fst (Schedule.create_linear_with_vars big)) in
+  equal int ~msg:"kernels" 1 (List.length calls);
+  let s, vars, storage = linked ~devices big in
+  equal (list (pair string int)) ~msg:"the run's variables" [ ("k", 3) ] vars;
+  Engine.run ~vars s [||];
+  let of_node u = List.find (fun s -> s.node == u) storage in
+  let xs = Array.map Dtype.Value.to_int (of_node a).before in
+  let plus = Array.map (fun x -> `Int (Bigint.of_int (x + 3))) xs in
+  equal values ~msg:"the custom kernel's" plus (contents (of_node o1));
+  equal values ~msg:"the schedule's" plus (contents (of_node o2))
+
 (* The custom kernels whose variable sits among their buffers. *)
 let custom_kernel_scalars ?(devices = devices) () =
   [
+    test
+      "custom kernels run as one that read one name at two values read each \
+       its own" (custom_kernels_of_one_name ~devices ~n:1 (3, 5));
+    test "custom kernels run as one that read one name at one value read it"
+      (custom_kernels_of_one_name ~devices ~n:1 (3, 3));
+    test "a custom kernel runs as one with a kernel that reads its name"
+      (custom_kernel_beside_one_by_name ~devices);
+    test
+      "custom kernels run apart that read one name at two values read each \
+       its own" (custom_kernels_of_one_name ~devices ~n:4 (3, 5));
     test "a custom kernel takes a variable between its buffers"
       (runs_a_custom_kernel_scalar ~devices "custom_kernel_scalar");
     test "a custom kernel takes a variable before its buffers"

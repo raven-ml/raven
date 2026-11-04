@@ -164,8 +164,8 @@ val create_linear_with_vars :
     each schedule of more than one call prints its size and time on standard
     output.
 
-    The values are those of the bound variables the kernels read by name, each
-    name bound to one value.
+    The values are those of the bound variables the kernels read by name or
+    the calls pass, each name bound to one value.
 
     Raises [Invalid_argument] if a kernel that is not a copy accesses buffers on several devices,
     or as {!create_schedule} does. *)

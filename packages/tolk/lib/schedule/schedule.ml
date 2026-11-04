@@ -1616,7 +1616,8 @@ end)
    if it is a kernel of the default kind whose body ends its stores over ranges
    of constant sizes and reduces nothing. A size a call passes is a parameter
    whose slot the merge renumbers, so two such sizes cannot be compared before
-   it. *)
+   it. A custom kernel's variable, named in a slot of its own
+   ({!Shape.custom_kernel}), is filled by its argument too. *)
 let shape b =
   let plain = match arg b with Kernel k -> k = kernel_info () | _ -> false in
   match src b with
@@ -1633,7 +1634,8 @@ let shape b =
       let ranged u = op u = Op.Range && not (List.memq u ranges) in
       let filled v =
         match arg v with
-        | Param p -> op v = Op.Param && p.name = None && p.slot >= 0
+        | Param p ->
+            op v = Op.Param && p.slot >= 0 && (p.name = None || is_variable v)
         | _ -> false
       in
       if
@@ -1712,6 +1714,10 @@ let merged calls =
   List.iteri (fun i a -> Tbl.replace slots a i) args;
   let slot_of a = Tbl.find slots a in
   let first = snd (List.hd calls) in
+  (* A custom kernel's variable loses its name and reads the slot of its
+     argument: a kernel's named variable takes one value a name, the one its
+     call binds to that name or else the run's, where members may pass one
+     name two values, or another member read it by name. *)
   let rebuilt (si, m) =
     let own = Array.of_list (List.tl (src si)) in
     let params =
@@ -1719,10 +1725,8 @@ let merged calls =
         (fun v ->
           match arg v with
           | Param p when p.slot < Array.length own ->
-              Some
-                ( v,
-                  replace v ~arg:(Param { p with slot = slot_of own.(p.slot) })
-                )
+              let slot = slot_of own.(p.slot) in
+              Some (v, replace v ~arg:(Param { p with slot; name = None }))
           | _ -> None)
         m.params
     in
@@ -1951,15 +1955,17 @@ let create_linear_with_vars ?(capturing = false) ?(by_storage = false) big_sink
   let used_vars =
     List.concat_map
       (fun si ->
-        (* A launch's members read the variables of their bodies. *)
+        (* A launch's members read the variables of their bodies, and a call
+           passes a merged custom kernel's in its slots ({!merged}). *)
         let bodies =
           if op si = Op.Call && Shape.is_launch (nth si 0) then
             List.map body (src (nth si 0))
           else [ nth si 0 ]
         in
+        let args = if op si = Op.Call then src_without_body si else [] in
         List.concat_map
           (fun b -> List.filter_map (fun v -> (param_of v).name) (variables b))
-          bodies)
+          (bodies @ args))
       (entries linear)
   in
   let var_vals =

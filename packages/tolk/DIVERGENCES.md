@@ -6415,7 +6415,15 @@ and an initial value is added after it (D260).
   join, since the order of calls of many elements is the schedule's, chosen
   for the storage they make (RFC 0005's bound). Arguments that are one node
   are passed once, storage first, so loads and arithmetic the members share
-  are one node of the merged kernel. Each call is weighed once, in order,
+  are one node of the merged kernel. A custom kernel's variable, named in a
+  slot of its own (`Shape.custom_kernel`), becomes a nameless parameter in
+  the merged call's slot of its argument: a kernel's named variable takes
+  one value a name, the first its call binds to that name or else the run's
+  (`Realize.get_call_kernel_args`), where members may pass one name two
+  values or another member read it by name. A schedule's variables count
+  the names its calls pass as well as those its kernels read
+  (`Schedule.create_linear_with_vars`), so a name of one value stays one a
+  run binds. Each call is weighed once, in order,
   against the open groups of its device and domain, the earliest that
   starts past the last call it conflicts with and past the first use of any
   storage whose life may not start earlier: the merge is linear in the
@@ -6457,7 +6465,14 @@ and an initial value is added after it (D260).
   calls of a loop run as one, reading and overwriting one another's slots
   and the trip, write what their tensors compute); the Tolk_engine suite
   (`test/engine/tolk_engine`): `link and run › a scan's merged calls carry
-  in place as its calls apart do`, and the same on each GPU present.
+  in place as its calls apart do` and `› custom kernels with variables ›
+  custom kernels run as one that read one name at two values read each its
+  own`, `› custom kernels run as one that read one name at one value read
+  it` and `› a custom kernel runs as one with a kernel that reads its
+  name`, and the same on each GPU present; the Jit suite
+  (`test/engine/jit`): `jit_lower › variables › merged custom kernels of
+  one value read each run's` and `› merged custom kernels of two values
+  keep each its own`.
 
 ## D200. A tensor core's row upcast keeps a warp within a run of rows
 

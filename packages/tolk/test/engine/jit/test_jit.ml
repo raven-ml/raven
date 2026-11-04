@@ -695,6 +695,55 @@ let unbinds_capture_variables () =
         (Run.values Int32 dst))
     [ 1; 5; 7 ]
 
+(* Two custom kernels that add [k] to [src] into [out1] and [out2], one
+   element each, [k] bound to [k1] in one and [k2] in the other: the schedule
+   runs them as one kernel. A name of one value is a variable of the capture,
+   which each run binds; a name of two is none, and each keeps its binding. *)
+let merged_custom_kernels (k1, k2) () =
+  let one () = Ops.new_buffer "CPU" 1 Int32 in
+  let out1 = one () and out2 = one () and src = one () in
+  let add = function
+    | [ out; v; src ] ->
+        let at b = Ops.index b [ Ops.int 0 ] in
+        Ops.sink
+          ~kernel:(Ops.kernel_info ())
+          [ Ops.store (at out) Ops.O.(at src + v) ]
+    | _ -> invalid_arg "add takes three arguments"
+  in
+  let custom out x =
+    let bound = Shape.bind (variable "k") (`Int (Bigint.of_int x)) in
+    List.hd (Shape.custom_kernel [ out; bound; src ] add)
+  in
+  let linear, vars =
+    Schedule.create_linear_with_vars ~capturing:true
+      (Ops.sink [ custom out1 k1; custom out2 k2 ])
+  in
+  equal int ~msg:"kernels" 1 (List.length (Ops.src linear));
+  let lowered =
+    Jit.jit_lower
+      ~targets:(fun n -> Engine.target (devices n))
+      ~held_bufs:[ out1; out2; src ] ~inputs:[] ~input_vars:vars linear
+  in
+  let ints xs = Array.map (fun x -> `Int (Bigint.of_int x)) xs in
+  let dst1 = Run.buffer Rig.host Int32 (ints [| 0 |])
+  and dst2 = Run.buffer Rig.host Int32 (ints [| 0 |])
+  and input = Run.buffer Rig.host Int32 (ints [| 10 |]) in
+  let s =
+    Engine.link ~devices
+      ~bound:[ (out1, dst1); (out2, dst2); (src, input) ]
+      lowered
+  in
+  List.iter
+    (fun n ->
+      let k1, k2 = if k1 = k2 then (n, n) else (k1, k2) in
+      Engine.run ~vars:(List.map (fun (name, _) -> (name, n)) vars) s [||];
+      let msg = Printf.sprintf "k = %d" n in
+      equal ~msg (array Dtypes.value) (ints [| 10 + k1 |])
+        (Run.values Int32 dst1);
+      equal ~msg (array Dtypes.value) (ints [| 10 + k2 |])
+        (Run.values Int32 dst2))
+    [ 1; 5; 7 ]
+
 (* The intermediate [mid] of a capture is a view of an arena of bytes. *)
 let storage_of_lowered () =
   let linear, out, src = capture_with_variables () in
@@ -757,6 +806,10 @@ let captured_variables =
         "a run binds each variable of the capture, and any other keeps its \
          binding"
         unbinds_capture_variables;
+      test "merged custom kernels of one value read each run's"
+        (merged_custom_kernels (3, 3));
+      test "merged custom kernels of two values keep each its own"
+        (merged_custom_kernels (3, 5));
     ]
 
 let lower_drawn (linear, held, inputs) =
