@@ -742,11 +742,11 @@ scope, see README.
     running sum now replaces a zero accumulator: the sum's identity is the
     accumulator's initial value, set once before the loop, and the
     lowering adds `+0.` to the result, so a partial sum's zero sign, which
-    the rounded sum class leaves open, is all that differs. A nonzero
-    accumulator keeps tinygrad's rule, which regroups its sum as
-    `(c + acc) + P`: a tensor-core accumulation is part of a contraction,
-    whose rounded sum class permits any association of the terms, and no
-    exact class reaches it.
+    the rounded sum class leaves open, is all that differs. A core of
+    another accumulator, which only a core built by hand has, since the
+    optimiser builds every core from zero, keeps it, and the sum adds its
+    value as it adds any term: tinygrad's rule regrouped it as
+    `(c + acc) + P`.
 - **Reason:** (b). RFC 0012's Law 1: every constructor's compiled result, alone
   or fused, meets its class against eager nx, whose integer arithmetic is
   modular and whose floats follow IEEE. rune's `rune jit › classes › jit gives

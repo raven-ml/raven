@@ -14,7 +14,7 @@ index c19a95f13..b70de225a 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index f4535a4f7..20d176975 100644
+index f4535a4f7..77d16d16b 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,31 +2,31 @@ from dataclasses import replace, dataclass, field
@@ -54,7 +54,7 @@ index f4535a4f7..20d176975 100644
  from tinygrad.device import TinyELF
  from tinygrad.uop.ops import _broadcast_shape, identity_element
  from tinygrad.schedule.rangeify import BufferizeOpts
-@@ -98,44 +98,221 @@ def broadcast_and_devec_wmma(b:UOp):
+@@ -98,44 +98,222 @@ def broadcast_and_devec_wmma(b:UOp):
      src.append(b.replace(src=tuple([x.index(*idx) for x in src_expanded])))
    return UOp.stack(*src).reshape(b.shape)
  
@@ -69,15 +69,16 @@ index f4535a4f7..20d176975 100644
 -])
 -
 -pm_expand_broadcast = pm_wmma_add+PatternMatcher([
-+# a sum's identity is the zero accumulator a WMMA starts from: the running sum replaces it, so no addition of +0.0 stays in the loop
-+def wmma_accumulate(wmma:UOp, add:UOp) -> UOp:
++# a sum's identity is the zero accumulator a WMMA starts from: the running sum replaces it, so no addition of +0.0 stays in the loop.
++# a core of another accumulator, which only a hand-built core has, keeps it
++def wmma_accumulate(wmma:UOp, add:UOp) -> UOp|None:
 +  acc = wmma.src[2]
 +  lanes = [s.src[0] if s.op is Ops.CAST else s for s in acc.src] if acc.op is Ops.STACK else []
-+  zero = bool(lanes) and all(s.op is Ops.CONST and s.arg == 0 for s in lanes)
-+  return UOp(wmma.op, src=(wmma.src[0], wmma.src[1], add if zero else acc+add), arg=wmma.arg)
++  if not (lanes and all(s.op is Ops.CONST and s.arg == 0 for s in lanes)): return None
++  return UOp(wmma.op, src=(wmma.src[0], wmma.src[1], add), arg=wmma.arg)
 +
 +# a running sum add added to a core's value x, which the expander leaves behind reshapes and permutes of the core's lanes, enters
-+# the core as its accumulator: m(w) + add = m(w'), w' the core of accumulator c + m^-1(add)
++# the core as its accumulator: m(w) + add = m(w'), w' the core of accumulator m^-1(add). anything else stays an addition
 +def into_core(x:UOp, add:UOp) -> UOp|None:
 +  if x.op is Ops.WMMA: return wmma_accumulate(x, add)
 +  if x.op is Ops.RESHAPE: return None if (c:=into_core(x.src[0], add.reshape(x.src[0].shape))) is None else c.reshape(x.shape)
@@ -290,7 +291,7 @@ index f4535a4f7..20d176975 100644
    # INDEX without src is nothing (TODO: this should be in mop_cleanup)
    (UPat(Ops.INDEX, src=(UPat.var('x'),)), lambda x: x),
    # unpack WMMA
-@@ -172,28 +349,95 @@ def merge_reduce_ends(sink:UOp):
+@@ -172,28 +350,95 @@ def merge_reduce_ends(sink:UOp):
      if len(ends) <= 1: continue
      by_ctx: dict[frozenset[UOp], list[UOp]] = {}
      for e in ends: by_ctx.setdefault(frozenset(e.ranges), []).append(e)
@@ -394,7 +395,7 @@ index f4535a4f7..20d176975 100644
    # fix group for reduce
    (UPat(Ops.REDUCE, name="x"), fix_group_for_reduce),
    # remove reduces
-@@ -251,6 +495,155 @@ pm_implicit_barriers = PatternMatcher([
+@@ -251,6 +496,155 @@ pm_implicit_barriers = PatternMatcher([
    (UPat((Ops.END, Ops.BACKEDGE), name="end"), add_war_barrier),
  ])
  
@@ -550,7 +551,7 @@ index f4535a4f7..20d176975 100644
  def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    if DEBUG >= 5: print(render_uir(ast))
    if SPEC: type_verify(ast, spec_tensor)
-@@ -260,6 +653,8 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -260,6 +654,8 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # preprocess
    sink = graph_rewrite(sink, pm_mops, name="early movement ops", bottom_up=True)
@@ -559,7 +560,7 @@ index f4535a4f7..20d176975 100644
  
    # first we optimize
    if optimize:
-@@ -280,7 +675,9 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -280,7 +676,9 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # ** expander (expand_rewrite) **
    # reduce_unparented: a REDUCE whose src folded to a CONST (e.g. x*0) has no parented ranges, collapse it before the expander
@@ -570,7 +571,7 @@ index f4535a4f7..20d176975 100644
  
    # expand
    sink = graph_rewrite(sink, expander, ctx=build_range_map(sink), name="expander")
-@@ -288,7 +685,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -288,7 +686,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    slots = itertools.count(max([u.arg.slot+1 for u in sink.toposort() if u.op in {Ops.BUFFER, Ops.ALLOC}], default=0))
  
    # remove reduce
@@ -579,7 +580,7 @@ index f4535a4f7..20d176975 100644
  
    # add locals
    sink = graph_rewrite(sink, pm_add_local_buffers, ctx=slots, name="add local buffers")
-@@ -301,7 +698,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -301,7 +699,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic_simple+pm_expand_broadcast+pm_add_loads, name="*** expand broadcast / add loads")
  
    # devectorize
@@ -588,7 +589,7 @@ index f4535a4f7..20d176975 100644
  
    # some coalescing misses without this
    sink = graph_rewrite(sink, sym, name="early symbolic")
-@@ -326,11 +723,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -326,11 +724,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic, name="final symbolic")
  
    sink = graph_rewrite(sink, pm_cast_float_alu, name="cast float alu operands")
@@ -603,7 +604,7 @@ index f4535a4f7..20d176975 100644
    pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
    sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
  
-@@ -345,11 +744,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -345,11 +745,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # final rules for the renderer (without sym)
    extra_matcher = ren.extra_matcher if ren.extra_matcher is not None else PatternMatcher([])
@@ -617,7 +618,7 @@ index f4535a4f7..20d176975 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -443,9 +843,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+@@ -443,9 +844,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  
@@ -642,7 +643,7 @@ index f4535a4f7..20d176975 100644
  
  def do_assemble(ctx:Renderer, prg:UOp, lin:UOp) -> UOp|None:
    if getattr(type(ctx), "asm") is Renderer.asm: return None
-@@ -493,7 +907,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
+@@ -493,7 +908,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
      full_sink = full_rewrite_to_sink(ast, renderer, optimize=not ast.arg.optimized)
      prog_info = ProgramInfo.from_sink(full_sink, renderer.target)
      if (isinstance(renderer, ISARenderer) or renderer.packed_args) and full_sink.arg.estimates is None:

@@ -183,7 +183,8 @@ let broadcast_and_devec_wmma b =
     Some (reshape (stack (List.map lane lanes)) (shape b))
 
 (* A sum's identity is the zero accumulator a WMMA starts from: the running sum
-   replaces it, so no addition of +0. stays in the loop. *)
+   replaces it, so no addition of +0. stays in the loop. A core of another
+   accumulator, which only a hand-built core has, keeps it. *)
 let wmma_accumulate wmma add =
   let acc = nth wmma 2 in
   let lane s = if is Op.Cast s then nth s 0 else s in
@@ -194,19 +195,17 @@ let wmma_accumulate wmma add =
     | #Dtype.value as v -> Dtype.Value.(v = of_int 0)
     | `Invalid -> false
   in
-  let is_zero =
-    is Op.Stack acc && List.for_all (fun s -> zero (lane s)) (src acc)
-  in
-  let acc = if is_zero then add else O.(acc + add) in
-  v Op.Wmma ~arg:(arg wmma) ~src:[ nth wmma 0; nth wmma 1; acc ]
+  if not (is Op.Stack acc && List.for_all (fun s -> zero (lane s)) (src acc))
+  then None
+  else Some (v Op.Wmma ~arg:(arg wmma) ~src:[ nth wmma 0; nth wmma 1; add ])
 
 (* A running sum [add] added to a core's value [x], which the expander leaves
    behind reshapes and permutes of the core's lanes, enters the core as its
-   accumulator: [m w + add = m w'], [w'] the core of accumulator
-   [c + m^-1 add]. *)
+   accumulator: [m w + add = m w'], [w'] the core of accumulator [m^-1 add].
+   Anything else stays an addition. *)
 let rec into_core x add =
   match op x with
-  | Op.Wmma -> Some (wmma_accumulate x add)
+  | Op.Wmma -> wmma_accumulate x add
   | Op.Reshape ->
       let s = nth x 0 in
       into_core s (reshape add (shape s))
