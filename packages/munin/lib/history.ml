@@ -58,11 +58,11 @@ let stats_of run =
     | None -> None
     | Some s -> (
         match Hint.decode s with
-        | Some (length, keys) -> (
+        | `Hint (length, keys) -> (
             match File.stamp (Listing.log l.dir) with
             | Some (_, size, _) when size = length -> Some keys
             | _ -> None)
-        | None -> None)
+        | `Other_rules | `Malformed -> None)
   in
   match from_hint with
   | Some keys -> keys

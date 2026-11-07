@@ -369,11 +369,12 @@ let check s =
           | None -> ()
           | Some text -> (
               match Hint.decode text with
-              | None ->
+              | `Malformed ->
                   add hint
                     "a statistics hint that does not parse or is of another \
                      format"
-              | Some (length, keys) ->
+              | `Other_rules -> ()
+              | `Hint (length, keys) ->
                   if length = size && not (Hint.equal keys (Fold.hint_keys h))
                   then add hint "a statistics hint that disagrees with its log")
           | exception Sys_error _ -> add hint "unreadable"))

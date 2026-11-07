@@ -1112,6 +1112,25 @@ let hint_tests =
           equal (list string)
             [ hint_path run ]
             (List.map fst (Store.check store)));
+      test "a hint of other rules is ignored and passes check" (fun () ->
+          with_store @@ fun store ->
+          let s = start store in
+          Session.log (Session.metric s "a") ~step:0 1.;
+          Session.finish s;
+          let run = reread store s in
+          let good = History.stats_of run in
+          let other =
+            Printf.sprintf {|"rules":%d|} (Store_format.rules + 1)
+          in
+          write_file (hint_path run)
+            (replace_first
+               (replace_first
+                  (read_file (hint_path run))
+                  ~sub:(Printf.sprintf {|"rules":%d|} Store_format.rules)
+                  ~by:other)
+               ~sub:{|"count":1|} ~by:{|"count":2|});
+          equal (list (pair string key_stats)) good (History.stats_of run);
+          equal (list (pair string string)) [] (Store.check store));
       test "check reads a hint's floats bit for bit" (fun () ->
           with_store @@ fun store ->
           let s = start store in

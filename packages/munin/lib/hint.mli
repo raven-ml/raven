@@ -14,9 +14,12 @@ type key = {
 
 val encode : length:int -> (string * key) list -> string
 
-val decode : string -> (int * (string * key) list) option
-(** [decode s] is the log length and keys of the hint [s], if it parses, is of
-    this {!Store_format.version} and follows these {!Store_format.rules}. *)
+val decode :
+  string -> [ `Hint of int * (string * key) list | `Other_rules | `Malformed ]
+(** [decode s] is [`Hint (length, keys)], the log length and keys of the hint
+    [s], if it parses, is of this {!Store_format.version} and follows these
+    {!Store_format.rules}. It is [`Other_rules] if [s] is of this version with
+    other rules, which readers ignore, and [`Malformed] otherwise. *)
 
 val equal : (string * key) list -> (string * key) list -> bool
 (** [equal a b] is [true] iff [a] and [b] hold the same keys and values, floats

@@ -112,27 +112,38 @@ let key j =
   in
   Some { kind; goal; stats = { Metric.count; last; finite; non_finite } }
 
+let decode_keys j =
+  let* length = Json.field "length" Json.int j in
+  let* keys =
+    match Json.mem "keys" j with
+    | Some (Json.Object members) ->
+        List.fold_right
+          (fun (k, v) acc ->
+            let* acc in
+            let* v = key v in
+            Some ((k, v) :: acc))
+          members (Some [])
+    | _ -> None
+  in
+  Some (length, keys)
+
 let decode s =
+  let header j =
+    let* format = Json.field "format" Json.int j in
+    let* rules = Json.field "rules" Json.int j in
+    Some (format, rules)
+  in
   match Json.of_string s with
-  | Error _ -> None
-  | Ok j ->
-      let* format = Json.field "format" Json.int j in
-      let* rules = Json.field "rules" Json.int j in
-      if format <> Store_format.version || rules <> Store_format.rules then None
-      else
-        let* length = Json.field "length" Json.int j in
-        let* keys =
-          match Json.mem "keys" j with
-          | Some (Json.Object members) ->
-              List.fold_right
-                (fun (k, v) acc ->
-                  let* acc in
-                  let* v = key v in
-                  Some ((k, v) :: acc))
-                members (Some [])
-          | _ -> None
-        in
-        Some (length, keys)
+  | Error _ -> `Malformed
+  | Ok j -> (
+      match header j with
+      | Some (format, _) when format <> Store_format.version -> `Malformed
+      | Some (_, rules) when rules <> Store_format.rules -> `Other_rules
+      | None -> `Malformed
+      | Some _ -> (
+          match decode_keys j with
+          | Some h -> `Hint h
+          | None -> `Malformed))
 
 let float_eq a b = Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
 
