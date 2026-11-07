@@ -4,12 +4,11 @@
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
-# forced: blessed under load 42.0 on 14 cores
 
-budgets/100k-dots-to-PNG	alloc_words	exact	48081122
-budgets/10M-step-line-to-PNG	alloc_words	exact	1905914
-budgets/1M-step-line-over-unsorted-x-to-PNG	alloc_words	exact	159230206
-budgets/1M-step-line-with-gaps-to-PNG	alloc_words	exact	2656763
-budgets/attention-at-T-128-to-PNG	alloc_words	exact	228105766
-stages/layout-of-nested-grids	alloc_words	exact	1685604
-stages/live-curve-redraw	alloc_words	exact	405943
+budgets/100k-dots-to-PNG	alloc_words	exact	13869869
+budgets/10M-step-line-to-PNG	alloc_words	exact	1006641
+budgets/1M-step-line-over-unsorted-x-to-PNG	alloc_words	exact	99288425
+budgets/1M-step-line-with-gaps-to-PNG	alloc_words	exact	1489580
+budgets/attention-at-T-128-to-PNG	alloc_words	exact	201214359
+stages/layout-of-nested-grids	alloc_words	exact	1441714
+stages/live-curve-redraw	alloc_words	exact	362043
