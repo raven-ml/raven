@@ -1043,6 +1043,45 @@ let test_collected () =
   equal ~msg:"another file's bytes" octets "d" (read (of_file other));
   equal ~msg:"descriptors once collected" int 0 (on_file ())
 
+(* The minor words [f ()] allocates. *)
+let minor_words f =
+  let before = Gc.minor_words () in
+  f ();
+  int_of_float (Gc.minor_words () -. before)
+
+(* The ways a program uses a file before it drops it. *)
+let uses =
+  [
+    ("read", fun b -> ignore (read b));
+    ("borrowed by the host", fun b -> ignore (require_some (B.borrow host b)));
+  ]
+
+(* The disk call that closes a collected file's descriptor allocates as much as
+   one that closes none: a release adds no words to whatever call runs it. One
+   uncounted release first grows the disk's queues. *)
+let test_release_words (_, use) =
+  needs_dev_fd ();
+  let drain () = ignore (Sys.opaque_identity (B.create disk 0)) in
+  let[@inline never] dropped path = use (of_file path) in
+  let collect () =
+    for _ = 1 to rounds do
+      Gc.full_major ()
+    done
+  in
+  let warm = make_file "abc" and path = make_file "abc" in
+  removing [ warm; path ] @@ fun () ->
+  dropped warm;
+  collect ();
+  drain ();
+  let idle = minor_words drain in
+  let ino = (Unix.stat path).st_ino in
+  dropped path;
+  collect ();
+  equal ~msg:"descriptors before the call" int 1 (open_where (on_inode ino));
+  let release = minor_words drain in
+  equal ~msg:"descriptors after it" int 0 (open_where (on_inode ino));
+  equal ~msg:"a release's words over an idle call's" int 0 (release - idle)
+
 let test_too_many () =
   if Sys.win32 then skip ~reason:"no limit of open files" ();
   equal text "ninth: f8\nfirst: f0" (child [ "open-files" ])
@@ -1148,6 +1187,11 @@ let descriptors =
         "a file's descriptor closes once its buffers are collected, by the \
          disk's next call"
         test_collected;
+      cases
+        "the disk call that closes a collected file's descriptor allocates no \
+         more than one that closes none"
+        ~id:(fun (how, _) -> how)
+        uses test_release_words;
       test "a process the program starts inherits no descriptor of the disk"
         test_inherited;
       test

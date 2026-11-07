@@ -662,11 +662,11 @@ type given = Given | Later
    is still in the caller's hand, which puts it back where the drain after
    [d]'s stop finds it, ahead of what waits behind it, such as an image's
    code memory behind its unload. *)
-let give d scope f =
+let give d scope f x y =
   if orphaned d then Given
   else if stopped d then begin
     mask ();
-    match f () with
+    match f x y with
     | () ->
         unmask ();
         Given
@@ -681,7 +681,7 @@ let give d scope f =
   else if c_enter d.live.c <> 0 then Later
   else begin
     mask ();
-    match f () with
+    match f x y with
     | () ->
         c_exit d.live.c;
         unmask ();

@@ -266,13 +266,14 @@ val batch : ('a -> 'b -> 'b) -> 'a -> 'b -> stop:'b -> unit
     [d]'s stop. *)
 type given = Given | Later
 
-val give : device -> scope -> (unit -> unit) -> given
-(** [give d scope f] gives an object back to [d]'s driver through [f]. It is
-    [Later], without calling [f], if [d] is lost and not yet Stopped. On a
-    live device it is a counted call under [scope], as for {!counted}, but
-    a fault of [f] is not raised. On a Stopped device it is uncounted, and
-    drops a fault or a [Sys_error] of [f]. An Orphaned device's objects are
-    forgotten: [give] is [Given] without calling [f].
+val give : device -> scope -> ('a -> 'b -> unit) -> 'a -> 'b -> given
+(** [give d scope f x y] gives an object back to [d]'s driver through
+    [f x y]. It is [Later], without calling [f], if [d] is lost and not yet
+    Stopped. On a live device it is a counted call under [scope], as for
+    {!counted}, but a fault of [f] is not raised. On a Stopped device it is
+    uncounted, and drops a fault or a [Sys_error] of [f]. An Orphaned
+    device's objects are forgotten: [give] is [Given] without calling [f].
+    [give] allocates nothing.
 
     On [Later] the caller puts the object back where the drain after [d]'s
     stop finds it, ahead of what waits behind it. *)

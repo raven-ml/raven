@@ -386,14 +386,14 @@ let free_region d (Region { m; h; r; _ }) =
   | None -> Dev.Given
   | Some r ->
       let module D = (val m) in
-      Dev.give d Dev.Any (fun () -> D.free h r)
+      Dev.give d Dev.Any D.free h r
 
 let free_io d (Io_region { m; h; r }) =
   match r with
   | None -> Dev.Given
   | Some r ->
       let module I = (val m) in
-      Dev.give d Dev.Faults (fun () -> I.free h r)
+      Dev.give d Dev.Faults I.free h r
 
 (* The image the driver's calls returned into [l], if any. *)
 let image_of l =
@@ -407,7 +407,7 @@ let unload_now d = function
       match image_of l with
       | Some i ->
           let module D = (val l.m) in
-          Dev.give d Dev.Any (fun () -> D.unload l.h i)
+          Dev.give d Dev.Any D.unload l.h i
       | None -> Dev.Given)
   | Linked _ -> Dev.Given
 
