@@ -1,15 +1,28 @@
 (tests
- (names test_dtype test_move test_layout test_array test_door)
- (modules test_dtype test_move test_layout test_array test_door)
+ (names
+  test_dtype
+  test_float_text
+  test_move
+  test_layout
+  test_array
+  test_door)
+ (modules
+  test_dtype
+  test_float_text
+  test_move
+  test_layout
+  test_array
+  test_door)
  (libraries
   nx_array
   nx_array_support
   nx_array_gen
   nx_release_support
+  float_reader
   rig
   rig_support
   windtrap)
- (deps golden/float_text.txt))
+ (deps golden/float_text.txt golden/float_digits.txt))
 
 ; Opens this machine's first GPU, so it holds the lock GPU tests share.
 

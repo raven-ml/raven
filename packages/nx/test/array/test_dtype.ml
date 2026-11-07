@@ -908,6 +908,28 @@ let printed =
     Printed (D.Bit, true, "true");
   ]
 
+(* Floats that are not values of the dtype: what a store would round or
+   saturate. *)
+type misfit = Misfit : ('v, 's) D.t * 'v * string -> misfit
+
+let misfit_name (Misfit (dt, _, s)) = strf "%s %s" (D.name dt) s
+
+let test_misfit (Misfit (dt, v, s)) =
+  let message = strf "Dtype.pp_value: %s is not a %s value" s in
+  let name = match dt with D.Complex64 -> "float32" | _ -> D.name dt in
+  raises (Invalid_argument (message name)) (fun () ->
+      Format.asprintf "%a" (D.pp_value dt) v)
+
+let misfits =
+  [
+    Misfit (D.Float32, 0.1, "0x1.999999999999ap-4");
+    Misfit (D.Float8_e4m3fn, 0.3, "0x1.3333333333333p-2");
+    Misfit (D.Float8_e4m3fn, 464., "0x1.dp+8");
+    Misfit (D.Float16, 0x1p-25, "0x1p-25");
+    Misfit (D.Float4_e2m1fn, -7., "-0x1.cp+2");
+    Misfit (D.Complex64, { Complex.re = 1.; im = 0.1 }, "0x1.999999999999ap-4");
+  ]
+
 let law_text gen (text : 'v -> string) dt =
   prop (D.name dt) gen (fun v ->
       equal string (text v) (Format.asprintf "%a" (D.pp_value dt) v))
@@ -978,47 +1000,38 @@ let shorter s =
       let sign = if s.[0] = '-' then "-" else "" in
       [ strf "%s%de%d" sign q (e + 1); strf "%s%de%d" sign (q + 1) (e + 1) ]
 
-(* The order of two positive decimals as [significand] gives them. *)
-let compare_decimal (d, e) (d', e') =
-  let top = String.length d + e and top' = String.length d' + e' in
-  if top <> top' then Int.compare top top'
-  else
-    let n = max (String.length d) (String.length d') in
-    let pad s = s ^ String.make (n - String.length s) '0' in
-    String.compare (pad d) (pad d')
-
-(* Whether the decimal [t] reads back as [v] in [f]: [t] rounds to [v] at [f]'s
+(* Whether the decimal [t] reads back as [v] in [f]: it has [v]'s sign, and
+   Float_reader, which reads exactly, rounds its digits to [|v|] at [f]'s
    precision with the exponent unbounded, so a decimal that saturates to the
-   largest finite value does not read back as it. [t] is read through the
-   nearest double; where that double is a boundary between two values of [f],
-   [t]'s digits against the boundary's exact expansion say which side [t] lies
-   on. *)
+   largest finite value does not read back as it. *)
+let reader f = { Float_reader.precision = f.frac + 1; emin = 1 - f.bias }
+
 let reads_back f v t =
-  let x = float_of_string t in
-  let x =
-    if
-      f.frac >= 52 || x = 0.
-      || Testable.equal float_exact
-           (nearest f (Float.pred x))
-           (nearest f (Float.succ x))
-    then x
-    else
-      match (significand t, significand (strf "%.200e" x)) with
-      | Some a, Some b ->
-          let c = compare_decimal a b in
-          let up = if Float.sign_bit x then Float.pred x else Float.succ x in
-          let down = if Float.sign_bit x then Float.succ x else Float.pred x in
-          if c > 0 then up else if c < 0 then down else x
-      | _ -> x
+  let de = Option.value ~default:("0", 0) (significand t) in
+  Float.sign_bit v = (t.[0] = '-') && Float_reader.reads (reader f) v de
+
+(* Of the decimals of as many digits as [(d, e)] that read back as [v], the
+   nearest: the only others that can be nearer are its neighbours, [(d + 1)
+   10^e] above and below [(d - 1) 10^e], or [9 10^(e-1)] when [d] is 1. One is
+   nearer when [|v|] is past the midpoint toward it, [(10d + 5) 10^(e-1)] above
+   and [(10d - 5) 10^(e-1)] or [95 10^(e-2)] below, or on it with [d] odd.
+   [Some] neighbour that is nearer and reads back. *)
+let nearer f v (d, e) =
+  let m = int_of_string d in
+  let odd = Char.code d.[String.length d - 1] land 1 = 1 in
+  let up = ((string_of_int (m + 1), e), (string_of_int ((10 * m) + 5), e - 1))
+  and down =
+    if m = 1 then (("9", e - 1), ("95", e - 2))
+    else ((string_of_int (m - 1), e), (string_of_int ((10 * m) - 5), e - 1))
   in
-  Testable.equal float_exact v (nearest f x)
+  let beats (k, (n, mid)) =
+    let o = Float_reader.compare mid v in
+    Float_reader.reads (reader f) v n && (k * o < 0 || (o = 0 && odd))
+  in
+  List.find_opt beats [ (1, up); (-1, down) ]
+  |> Option.map (fun (_, (n, _)) -> n)
 
 let check_printed (F (dt, f)) v =
-  (* float_of_string and Printf call the C library, whose strtod under
-     mingw-w64 reads 3.839223843572815e-239 as 2^-792, and whose printf rounds
-     a tie away from zero. *)
-  if Sys.win32 then
-    skip ~reason:"this C library's strtod and printf are no oracle" ();
   let s = Format.asprintf "%a" (D.pp_value dt) v in
   let reads_back = reads_back f v in
   let special =
@@ -1033,19 +1046,12 @@ let check_printed (F (dt, f)) v =
   | None -> (
       match List.filter reads_back (shorter s) with
       | t :: _ -> Some (strf "%h printed %s, but %s reads back" v s t)
-      | [] ->
-          (* Of the decimals of as many digits that read back, the nearest:
-             printf rounds [v] to them correctly, ties to even. *)
-          let digits =
-            Option.fold ~none:1
-              ~some:(fun (d, _) -> String.length d)
-              (significand s)
-          in
-          let nearest = strf "%.*e" (digits - 1) v in
-          if reads_back nearest && significand nearest <> significand s then
-            Some
-              (strf "%h printed %s, but the nearer %s reads back" v s nearest)
-          else None)
+      | [] -> (
+          match Option.bind (significand s) (nearer f v) with
+          | Some (d, e) ->
+              Some
+                (strf "%h printed %s, but the nearer %se%d reads back" v s d e)
+          | None -> None))
 
 (* Every value of a format of 16 bits or less. *)
 let test_every_value_printed (F (dt, f)) =
@@ -1249,6 +1255,8 @@ let tests =
         cases "values print in their dtype's reading" ~id:printed_name printed
           test_printed;
         group "integers print in their dtype's reading" printing_integers;
+        cases "a float that is not a value of the dtype is refused"
+          ~id:misfit_name misfits test_misfit;
         cases
           "ties of the narrow formats and powers of two of the wide print as \
            numpy's shortest repr"

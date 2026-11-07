@@ -20,3 +20,9 @@
  (name nx_array_gen)
  (modules nx_array_gen)
  (libraries nx_array nx_array_support rig windtrap))
+
+; An exact reader of decimals, which the float text suites check digits with.
+
+(library
+ (name float_reader)
+ (modules float_reader))

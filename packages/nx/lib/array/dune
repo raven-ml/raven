@@ -4,7 +4,7 @@
  (name nx_array)
  (public_name nx.array)
  (libraries rig)
- (private_modules shape)
+ (private_modules shape float_text)
  (install_c_headers nx_array nx_dtype)
  (foreign_stubs
   (language c)

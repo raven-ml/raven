@@ -242,11 +242,16 @@ val pp_value : ('v, 's) t -> Format.formatter -> 'v -> unit
       [Float8_e4m3fn] [448.] prints as [450], never as a larger decimal a store
       would saturate to it. It is written positionally for magnitudes from
       10{^ -4} up to 10{^ 16}, as [0.01563], and as [d.ddde±XX] outside, as
-      [1.59e+29]. [nan], [inf] and [-inf] for the others;
+      [1.59e+29], with the same digits on every system. [nan], [inf] and
+      [-inf] for the others;
     - an integer in decimal, an unsigned one unsigned;
     - a complex number as its two components, so formatted, in the form
       [re+imi], or [re-imi] when the imaginary part is negative, as [0.5-2i];
-    - a boolean as [true] or [false]. *)
+    - a boolean as [true] or [false].
+
+    Raises [Invalid_argument] if a finite float, or a complex number's
+    component, is not a value of [dt]'s format, as [0.1] is not of [Float32]:
+    {!of_float} gives the value a store holds. *)
 
 (** {1:stores Stores}
 
@@ -321,3 +326,15 @@ external store : (int[@untagged]) -> (float[@unboxed]) -> (int64[@unboxed])
 (** [store c x] is the bits a store of [x] ({!section-stores}) writes into an
     element of the integer, boolean or narrow float dtype of code [c]
     ({!code}), sign-extended for a signed integer dtype. *)
+
+module Float_text : sig
+  type format = { precision : int; emin : int }
+
+  val binary64 : format
+  val binary32 : format
+  val shortest : format -> float -> string * int
+  val significant : int -> float -> string * int
+  val decimals : int -> float -> string * int
+end
+(** [Float_text] is the decimal digits of floats that {!pp_value} prints and
+    nx.io's text files hold. For tests and nx.io. *)

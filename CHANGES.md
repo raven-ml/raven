@@ -2303,6 +2303,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.Dtype.pp_value`, and so every float in a message, computes its
+  digits exactly in OCaml, so floats print the same on every system. Output
+  on glibc is unchanged.
+- `Nx.Dtype.pp_value` raises `Invalid_argument` on a float that is not a value
+  of the dtype, as `0.1` for `Float32`, where it printed digits of a nearby
+  value.
 - **Breaking:** `Nx_kernel.S` gains `gather_ranges`, which every kernel
   library implements, and `Nx.Prim.t` gains `Gather_ranges`: runs of an
   array packed along an axis. `Nx_ragged.take` copies each row's elements
