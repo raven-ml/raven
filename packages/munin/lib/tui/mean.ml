@@ -19,8 +19,8 @@ let rec add sums shifts k x =
     add sums shifts k x
   end
 
-(* The mean of finite values is finite, so clamping a rounding past the largest
-   float only brings it closer. *)
+(* The values added are finite, and so is their mean: clamping a rounding past
+   the largest float only brings it closer. *)
 let get sum shift n =
   let m = Float.ldexp (sum /. Float.of_int n) shift in
   Float.min Float.max_float (Float.max (-.Float.max_float) m)

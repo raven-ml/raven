@@ -58,13 +58,16 @@ let x_of axis h key s =
       in
       fun i -> at (Metric.time s i)
 
+(* Past the floats' 1, 2 or 5 times a power of ten, the bound is the largest
+   float. *)
 let bound x =
   if not (x > 0.) then 1.
   else
     let x = 1.1 *. x in
     let p = 10. ** Float.floor (Float.log10 x) in
-    let pick = List.find (fun m -> m *. p >= x) [ 1.; 2.; 5.; 10. ] in
-    pick *. p
+    match List.find_opt (fun m -> m *. p >= x) [ 1.; 2.; 5.; 10. ] with
+    | Some pick when Float.is_finite (pick *. p) -> pick *. p
+    | _ -> Float.max_float
 
 let series h key =
   match History.series h key with
@@ -149,6 +152,21 @@ let widen = function
       ( Float.max (-.Float.max_float) (v -. d),
         Float.min Float.max_float (v +. d) )
 
+(* The factor a linear y domain is drawn at, so that the scale's span and its
+   inverse are finite: a domain wider than the largest float is halved, and one
+   so narrow that its inverse passes it, which only subnormals are, is scaled up
+   by 2^64, exactly. Labels are the values'; any other domain is drawn as it
+   is. *)
+let y_factor ~log (lo, hi) =
+  let span = hi -. lo in
+  if log then 1.
+  else if not (Float.is_finite span) then 0.5
+  else if span > 0. && not (Float.is_finite (1. /. span)) then 0x1p64
+  else 1.
+
+let scaled k pts =
+  if k = 1. then pts else Array.map (fun (x, y) -> (x, k *. y)) pts
+
 let union a b =
   match (a, b) with
   | None, e | e, None -> e
@@ -176,7 +194,8 @@ let round_125 x =
 (* The difference rows' pairs, made in [prepare] ({!pair}). *)
 type paired = {
   points : (float * float) array;
-      (* per dot column: its middle, half the mean of its differences *)
+      (* per dot column: its middle, the mean in units of [q] *)
+  q : float; (* 1, or 1/2 once a difference passes the largest float *)
   last : (int * float * float) option; (* the latest pair: step, x, difference *)
 }
 
@@ -232,8 +251,12 @@ let y_label ~extreme v =
 (* The y ticks of a plot of [rows] over [(lo, hi)]: both extremes, so that the
    region the run is in is labelled, and between them multiples of a 1, 2 or 5
    step about a third of the plot apart, none closer than two rows to another;
-   on a log scale the powers of ten between the extremes. *)
-let y_ticks ~log (lo, hi) rows =
+   on a log scale the powers of ten between the extremes. The ticks are drawn
+   at [k] times the values, [k] at most 1, and the step is chosen on the
+   values' span, which the arithmetic keeps at [k] times so that it stays
+   finite. *)
+let y_ticks ~log ~k (lo, hi) rows =
+  let lo = k *. lo and hi = k *. hi in
   if rows < 2 || not (hi > lo) then [ lo ]
   else
     let pos v =
@@ -259,15 +282,15 @@ let y_ticks ~log (lo, hi) rows =
           (max 0 (Float.to_int (b -. a) + 1))
           (fun i -> snap (10. ** (a +. Float.of_int i)))
       else
-        let raw = (hi -. lo) /. Float.of_int (max 2 (rows / 3)) in
+        let raw = (hi -. lo) /. Float.of_int (max 2 (rows / 3)) /. k in
         let p = 10. ** Float.floor (Float.log10 raw) in
         let step =
-          List.find (fun k -> k *. p >= raw) [ 1.; 2.; 5.; 10. ] *. p
+          List.find (fun m -> m *. p >= raw) [ 1.; 2.; 5.; 10. ] *. (k *. p)
         in
         let a = Float.ceil (lo /. step) and b = Float.floor (hi /. step) in
         List.init
           (max 0 (Float.to_int (b -. a) + 1))
-          (fun i -> snap ((a +. Float.of_int i) *. step))
+          (fun i -> k *. snap ((a +. Float.of_int i) *. step /. k))
     in
     let far a b = Float.abs (pos a -. pos b) >= 2. in
     let inner =
@@ -286,6 +309,7 @@ let dash = function 'a' -> `Dotted | _ -> `Dashed
 
 let figure ~faint ~axis ~x_axis ~labels ~rows ~lo ~hi ~y ~log ~resumes ~cursor
     ~marked ~raw ~focus =
+  let k = y_factor ~log y in
   let resume_lines =
     List.map
       (fun x -> C.vline ~dash:`Dotted ~color:Ansi.Color.bright_black x)
@@ -299,7 +323,7 @@ let figure ~faint ~axis ~x_axis ~labels ~rows ~lo ~hi ~y ~log ~resumes ~cursor
       (fun (l, level) ->
         C.line ~dots:`Braille ~dash:(dash l)
           ~color:(C.const (Paint.mark_color l))
-          ~x:fst ~y:snd level)
+          ~x:fst ~y:snd (scaled k level))
       marked
   in
   let raw =
@@ -307,23 +331,31 @@ let figure ~faint ~axis ~x_axis ~labels ~rows ~lo ~hi ~y ~log ~resumes ~cursor
     | Some r ->
         [
           C.attrs Ansi.Attr.dim
-            (C.line ~color:(C.const Ansi.Color.default_fg) ~x:fst ~y:snd r);
+            (C.line ~color:(C.const Ansi.Color.default_fg) ~x:fst ~y:snd
+               (scaled k r));
         ]
     | None -> []
   in
   let focus =
     C.line ~dots:`Braille
       ~color:(C.const Ansi.Color.default_fg)
-      ~x:fst ~y:snd focus
+      ~x:fst ~y:snd (scaled k focus)
   in
   let focus = if faint then C.attrs Ansi.Attr.dim focus else focus in
   let ylo, yhi = y in
-  let ticks = y_ticks ~log y rows in
+  (* A scaled-up domain's ticks are the values', scaled after. *)
+  let tk = Float.min k 1. in
+  let ticks =
+    List.map (fun t -> t /. tk *. k) (y_ticks ~log ~k:tk (ylo, yhi) rows)
+  in
   let ys =
     if log then C.Scale.log ~domain:y ~ticks ()
-    else C.Scale.linear ~domain:y ~ticks ()
+    else C.Scale.linear ~domain:(k *. ylo, k *. yhi) ~ticks ()
   in
-  let y_format _ v = y_label ~extreme:(v = ylo || v = yhi) v in
+  let y_format _ v =
+    let v = v /. k in
+    y_label ~extreme:(v = ylo || v = yhi) v
+  in
   C.layer
     (resume_lines @ cursor @ marked @ raw
     @ [
@@ -366,9 +398,9 @@ let dots ~axis ~lo ~hi spec =
    one there, as on the step metric's axis. The differences are averaged per dot
    column of the focus's x, and the latest is kept with its step. Two runs that
    log at different cadences, or one that ends inside a column, are compared
-   only where both logged. The points are half the means, so that a difference
-   of two finite values never overflows ([Mean]); the row's scale is relative,
-   so it draws them as it would the means. *)
+   only where both logged. Once a difference passes the largest float, the row
+   sums halves of them, its sums so far halved too, so that its means stay
+   finite and in proportion ([Mean]); [q] is then 1/2. *)
 
 let pair axis plot focus key marked_h =
   match (series focus key, series marked_h key) with
@@ -381,7 +413,7 @@ let pair axis plot focus key marked_h =
       let sums = Array.make plot.Curve.dots 0.
       and shifts = Array.make plot.Curve.dots 0
       and counts = Array.make plot.Curve.dots 0 in
-      let last = ref None in
+      let last = ref None and q = ref 1. in
       for i = 0 to Metric.length fs - 1 do
         let step = Metric.step fs i and v = Metric.value fs i in
         match Hashtbl.find_opt at step with
@@ -390,7 +422,12 @@ let pair axis plot focus key marked_h =
             if not (Float.is_nan xi) then begin
               let k = Curve.column plot xi in
               if k >= 0 && k < plot.dots then begin
-                Mean.add sums shifts k ((v /. 2.) -. (o /. 2.));
+                if !q = 1. && not (Float.is_finite d) then begin
+                  q := 0.5;
+                  Array.iteri (fun j s -> sums.(j) <- s *. 0.5) sums
+                end;
+                Mean.add sums shifts k
+                  (if !q = 1. then d else (v *. 0.5) -. (o *. 0.5));
                 counts.(k) <- counts.(k) + 1
               end;
               match !last with
@@ -410,8 +447,8 @@ let pair axis plot focus key marked_h =
                       ( plot.lo +. ((Float.of_int k +. 0.5) *. width),
                         Mean.get sums.(k) shifts.(k) counts.(k) ))))
       in
-      { points; last = !last }
-  | _ -> { points = [||]; last = None }
+      { points; q = !q; last = !last }
+  | _ -> { points = [||]; q = 1.; last = None }
 
 let prepare ?prev view spec focus marked =
   let key = spec.key in
@@ -647,9 +684,10 @@ let draw ?cursor ?(inline = false) ?(faint = false) ~light p g ~x ~y =
     let l = C.layout ~theme:(theme light) ~width ~height:rows fig in
     let plot = C.Layout.plot l in
     C.draw l g ~x ~y:(y + 1);
+    let k = y_factor ~log:p.log p.y in
     let cell (px, py) =
       ( C.Layout.position l "x" (C.Layout.Num px),
-        C.Layout.position l "y" (C.Layout.Num py) )
+        C.Layout.position l "y" (C.Layout.Num (k *. py)) )
     in
     let in_region gx gy =
       gx >= x && gx < x + width && gy > y && gy <= y + rows && inside g gx gy
@@ -735,23 +773,24 @@ type versus = {
 let draw_versus ~light p c g ~(under : placed) ~y ~rows =
   match List.assoc_opt c p.differences with
   | None | Some { last = None; _ } | Some { points = [||]; _ } -> None
-  | Some { points = d; last = Some (step, at, last) } ->
-      (* [d] holds half the differences ({!pair}). *)
+  | Some { points = d; q; last = Some (step, at, last) } ->
       let big =
         Array.fold_left (fun a (_, v) -> Float.max a (Float.abs v)) 0. d
       in
-      let big = if big > 0. then big else 0.5 in
+      let big = if big > 0. then big else 1. in
+      let k = y_factor ~log:false (-.big, big) in
       let fig =
         C.layer
           [
             C.line ~dots:`Braille
               ~color:(C.const (Paint.mark_color c))
-              ~x:fst ~y:snd d;
+              ~x:fst ~y:snd (scaled k d);
             C.axis ~show:false "x";
             C.axis ~show:false "y";
           ]
         |> C.scale "x" (C.Scale.linear ~domain:(p.lo, p.hi) ())
-        |> C.scale "y" (C.Scale.linear ~domain:(-.big, big) ~nice:false ())
+        |> C.scale "y"
+             (C.Scale.linear ~domain:(-.k *. big, k *. big) ~nice:false ())
         |> C.margins ~left ~right
       in
       let l =
@@ -772,7 +811,7 @@ let draw_versus ~light p c g ~(under : placed) ~y ~rows =
             G.draw_text ~style:Paint.dim g ~x:cx ~y:zy ~text:"┄"
         end
       done;
-      Some { last; step; at; scale = 2. *. big; zero_row = zy }
+      Some { last; step; at; scale = big /. q; zero_row = zy }
 
 type trend = {
   t_axis : axis;
@@ -788,20 +827,22 @@ type trend = {
 let text t = t.text
 
 let render ~width ~lo ~hi ~domain (t : track) =
-  let d =
+  let ((dlo, dhi) as d) =
     match domain with Some d -> d | None -> widen (Curve.extent t.curve)
   in
+  let k = y_factor ~log:false d in
   let fig =
     C.layer
       [
         C.line ~dots:`Braille
           ~color:(C.const Ansi.Color.default_fg)
-          ~x:fst ~y:snd (Curve.points t.curve);
+          ~x:fst ~y:snd
+          (scaled k (Curve.points t.curve));
         C.axis ~show:false "x";
         C.axis ~show:false "y";
       ]
     |> C.scale "x" (C.Scale.linear ~domain:(lo, hi) ())
-    |> C.scale "y" (C.Scale.linear ~domain:d ())
+    |> C.scale "y" (C.Scale.linear ~domain:(k *. dlo, k *. dhi) ())
   in
   let g = G.create ~width ~height:1 () in
   C.draw (C.layout ~width ~height:1 fig) g ~x:0 ~y:0;

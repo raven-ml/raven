@@ -102,8 +102,9 @@ let m4_points m = Array.of_list (List.rev (close m))
 type ema = {
   tau : float;
   y1 : float; (* the first step's mean *)
-  num : float;
+  num : float; (* in units of [q] *)
   den : float;
+  q : float; (* 1, or 1/4 once a difference passes the largest float *)
   last_x : float; (* the last closed step, NaN before any *)
   closed : int; (* closed steps since the start *)
   pending : (float * float * int * int * int) option;
@@ -117,6 +118,7 @@ let ema_empty tau =
     y1 = Float.nan;
     num = 0.;
     den = 0.;
+    q = 1.;
     last_x = Float.nan;
     closed = 0;
     pending = None;
@@ -126,23 +128,27 @@ let ema_empty tau =
 let weight tau g = -.Float.expm1 (-.g /. tau)
 
 (* [close_step e (x, y)] is [e] with the step [x] of mean [y] closed, and the
-   step's smoothed value. [num] sums a quarter of each difference, which for
-   two finite values is at most half the largest float; the weights that [den]
-   sums add up to at most 1, so [num] stays below the largest float too.
-   Quartering is exact but for subnormals, so this is the formula's value,
-   clamped to the finite floats, as a weighted mean of finite values is. *)
-let close_step e x y =
+   step's smoothed value. Where a difference, or the value, would pass the
+   largest float, the sum goes on in quarters: a quarter of a difference of two
+   finite values is at most half the largest float, and the weights that [den]
+   sums add up to at most 1, so [num] stays below it too. The value is clamped
+   to the finite floats, as a weighted mean of finite values is. *)
+let rec close_step e x y =
   if e.closed = 0 then ({ e with y1 = y; last_x = x; closed = 1 }, y)
   else
+    let q = e.q in
     let g = x -. e.last_x in
     let decay = exp (-.g /. e.tau) and a = weight e.tau g in
     (* At the second step the first's weight is known: its gap is this one. *)
     let num, den = if e.closed = 1 then (0., a) else (e.num, e.den) in
-    let num = (num *. decay) +. (a *. ((y /. 4.) -. (e.y1 /. 4.))) in
+    let num = (num *. decay) +. (a *. ((q *. y) -. (q *. e.y1))) in
     let den = (den *. decay) +. a in
-    let s = 4. *. ((e.y1 /. 4.) +. (num /. den)) in
-    ( { e with num; den; last_x = x; closed = e.closed + 1 },
-      Float.min Float.max_float (Float.max (-.Float.max_float) s) )
+    let s = ((q *. e.y1) +. (num /. den)) /. q in
+    if q = 1. && not (Float.is_finite num && Float.is_finite s) then
+      close_step { e with q = 0.25; num = e.num *. 0.25 } x y
+    else
+      ( { e with num; den; last_x = x; closed = e.closed + 1 },
+        Float.min Float.max_float (Float.max (-.Float.max_float) s) )
 
 (* Curves *)
 

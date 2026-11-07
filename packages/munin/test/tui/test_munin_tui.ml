@@ -318,6 +318,36 @@ let orphans =
       in
       equal string "1" orphans_column)
 
+(* The braille dots of each line of [g]'s text: U+2801 to U+28FF, E2 A0..A3 xx
+   in UTF-8. *)
+let dots_per_line g =
+  let dots line =
+    let n = ref 0 in
+    for i = 0 to String.length line - 3 do
+      let b k = Char.code line.[i + k] in
+      if
+        b 0 = 0xE2
+        && b 1 >= 0xA0
+        && b 1 <= 0xA3
+        && (b 1, b 2) <> (0xA0, 0x80)
+      then incr n
+    done;
+    !n
+  in
+  List.map dots (String.split_on_char '\n' (Matrix_grid.to_text g))
+
+(* The y axis labels of [g], top to bottom. *)
+let tick_labels g =
+  let ticked l =
+    let rec at i =
+      if i + 3 > String.length l then None
+      else if String.sub l i 3 = "┤" then Some (String.trim (String.sub l 0 i))
+      else at (i + 1)
+    in
+    at 0
+  in
+  List.filter_map ticked (String.split_on_char '\n' (Matrix_grid.to_text g))
+
 (* A metric that stays at the largest float, or at its negation, spans no
    values: its y domain widens around the value and stays finite. *)
 let flat_extreme =
@@ -333,24 +363,43 @@ let flat_extreme =
       let g =
         Munin_tui.Chart.draw ~width:60 ~height:12 ~lo:0. ~hi:10. ~key:"m" h []
       in
-      (* The line's braille dots: U+2801 to U+28FF, E2 A0..A3 xx in UTF-8. *)
-      let dots line =
-        let n = ref 0 in
-        for i = 0 to String.length line - 3 do
-          let b k = Char.code line.[i + k] in
-          if
-            b 0 = 0xE2
-            && b 1 >= 0xA0
-            && b 1 <= 0xA3
-            && (b 1, b 2) <> (0xA0, 0x80)
-          then incr n
-        done;
-        !n
+      not_equal (list int) [] (List.filter (( < ) 0) (dots_per_line g)))
+
+(* A metric at the largest float, then at its negation, then at 0: its y domain
+   is wider than the largest float. The line runs from the top row to the
+   bottom one, and the y axis is labelled at multiples of a step of 5e307 on 27
+   rows, as on any other domain. *)
+let wide_extreme =
+  test "a chart wider than the largest float draws across its rows" (fun () ->
+      with_store ~name:"wide-extreme" [] @@ fun store ->
+      let v step =
+        match step with
+        | 0 -> Float.max_float
+        | 1 -> -.Float.max_float
+        | _ -> 0.
       in
-      not_equal (list int) []
-        (List.filter (( < ) 0)
-           (List.map dots
-              (String.split_on_char '\n' (Matrix_grid.to_text g)))))
+      let id, _ =
+        write_log store (List.init 9 (fun step -> sample_record (step, v step)))
+      in
+      let h = History.read (Option.get (Store.run store id)) in
+      let g =
+        Munin_tui.Chart.draw ~width:60 ~height:28 ~lo:0. ~hi:10. ~key:"m" h []
+      in
+      at_least int ~than:20
+        (List.length (List.filter (( < ) 0) (dots_per_line g)));
+      equal (list string)
+        [
+          "1.798e+308";
+          "1.5e+308";
+          "1e+308";
+          "5e+307";
+          "0";
+          "-5e+307";
+          "-1e+308";
+          "-1.5e+308";
+          "-1.798e+3…";
+        ]
+        (tick_labels g))
 
 (* The marks the medium carries *)
 
@@ -772,15 +821,19 @@ let level =
       let columns = List.filter (( <> ) []) (Array.to_list columns) in
       cover "a column's values sum past the largest float"
         (List.exists sum_passes columns);
-      let scale =
-        List.fold_left
-          (List.fold_left (fun m v -> Float.max m (Float.abs v)))
-          0. columns
-      in
-      equal
-        (list (float_rel ~rel:1e-9 ~abs:(Float.max 1e-12 (1e-12 *. scale))))
-        (List.map half_mean columns)
-        (Array.to_list (Array.map (fun (_, y) -> y /. 2.) (Curve.level c))))
+      let level = Array.to_list (Curve.level c) in
+      equal ~msg:"columns" int (List.length columns) (List.length level);
+      (* Each column within the rounding of its own values. *)
+      List.iteri
+        (fun k (vs, (_, y)) ->
+          let scale =
+            List.fold_left (fun m v -> Float.max m (Float.abs v)) 0. vs
+          in
+          equal
+            ~msg:(Printf.sprintf "column %d" k)
+            (float_rel ~rel:1e-9 ~abs:(Float.max 1e-12 (1e-12 *. scale)))
+            (half_mean vs) (y /. 2.))
+        (List.combine columns level))
 
 let extend =
   prop "extending a reduction equals reducing the longer series"
@@ -1139,13 +1192,118 @@ let paired_past =
       in
       let found s = T.Screen.find screen s <> [] in
       let rows s = List.map fst (T.Screen.find screen s) in
-      equal (list bool) [ true; true ] [ found "+0.9900"; found "worse at 990" ];
+      equal (list bool) [ true; true ]
+        [ found "+0.9900"; found "worse at 990" ];
       (* The scale's row of the difference row holds the line's dots. *)
       match rows "±1.798e+308" with
       | [ r ] ->
           equal (list int) [ r ]
             (List.sort_uniq compare (List.filter (( = ) r) (rows "⠉⠉⠉")))
       | l -> failf "the scale found %d times" (List.length l))
+
+(* The focus logs one value at every step and the marked run another: every
+   difference is the same, and the row draws it at its top. 1e308 against
+   -1e308 differs by more than the largest float, and 1e-323 against 5e-324 by
+   the least subnormal. *)
+let paired_wide =
+  cases "a difference row draws a constant difference at its top"
+    ~id:(fun (f, m) -> Printf.sprintf "%g against %g" f m)
+    [ (1e308, -1e308); (1e-323, 5e-324) ]
+    (fun (focus, marked) ->
+      with_store ~name:"paired-wide" [] @@ fun store ->
+      let flat v = List.init 100 (fun k -> sample_record (k * 10, v)) in
+      ignore (write_log store ~goal:"minimize" ~started:1 (flat marked));
+      ignore (write_log store ~goal:"minimize" ~started:2 (flat focus));
+      let screen =
+        show ~cols:120 ~rows:40 store Munin_tui.Runs
+          [ char 'j'; Text " "; char 'k'; Key Enter ]
+      in
+      (* The row's first line holds its top dots. *)
+      match T.Screen.find screen "focus minus each marked run" with
+      | [ (r, _) ] ->
+          equal (list int) [ r + 1 ]
+            (List.sort_uniq compare
+               (List.filter
+                  (( = ) (r + 1))
+                  (List.map fst (T.Screen.find screen "⠉⠉⠉"))))
+      | l -> failf "the caption found %d times" (List.length l))
+
+(* The focus logs 1e308 at every step and the marked run -1e308 over the first
+   half and -1e307 over the second: the mean differences 2e308 and 1.1e308 are
+   drawn in proportion under a scale of 2e308, which rounds to infinity. *)
+let paired_split =
+  test "a difference row past the largest float keeps its proportions"
+    (fun () ->
+      with_store ~name:"paired-split" [] @@ fun store ->
+      let records f = List.init 100 (fun k -> sample_record (k * 10, f k)) in
+      ignore
+        (write_log store ~goal:"minimize" ~started:1
+           (records (fun k -> if k < 50 then -1e308 else -1e307)));
+      ignore
+        (write_log store ~goal:"minimize" ~started:2
+           (records (fun _ -> 1e308)));
+      let screen =
+        show ~cols:120 ~rows:40 store Munin_tui.Runs
+          [ char 'j'; Text " "; char 'k'; Key Enter ]
+      in
+      let found s = T.Screen.find screen s <> [] in
+      equal (list bool) [ true; true ]
+        [ found "±inf"; found "+1.100e+308" ])
+
+(* A metric from 0 to 4.15526391128405e-310, subnormal, on 22 rows: the line
+   runs between its extremes, and the y axis is labelled at multiples of a step
+   of 1e-310, as on any other domain. *)
+let subnormal_ticks =
+  test "a chart of subnormal values ticks at round multiples" (fun () ->
+      with_store ~name:"subnormal-ticks" [] @@ fun store ->
+      let hi = 4.15526391128405e-310 in
+      let id, _ =
+        write_log store
+          (List.init 9 (fun step ->
+               sample_record (step, if step mod 2 = 0 then 0. else hi)))
+      in
+      let h = History.read (Option.get (Store.run store id)) in
+      let g =
+        Munin_tui.Chart.draw ~width:60 ~height:23 ~lo:0. ~hi:10. ~key:"m" h []
+      in
+      at_least int ~than:8
+        (List.length (List.filter (( < ) 0) (dots_per_line g)));
+      equal (list string)
+        [ "4.155e-310"; "3e-310"; "2e-310"; "1e-310"; "0" ]
+        (tick_labels g))
+
+(* A step metric that reaches 1.08e308: the x domain is bounded within the
+   finite floats and the chart draws. *)
+let step_metric_extreme =
+  test "a chart on a step metric near the largest float draws" (fun () ->
+      with_store ~name:"step-metric-extreme" [] @@ fun store ->
+      let record k =
+        let v = Float.of_int k in
+        values_record k [ ("m", v); ("e", v *. 1.2e307) ]
+      in
+      ignore
+        (write_log store
+           ~declare:[ metric_record "e"; metric_record ~step_metric:"e" "m" ]
+           (List.init 10 record));
+      let screen =
+        show ~cols:120 ~rows:40 store Munin_tui.Runs
+          [ Key Enter; char 'j'; char 'x' ]
+      in
+      let found s = T.Screen.find screen s <> [] in
+      (* The x axis, the row under the plot's corner, labels e's values. *)
+      let x_labels =
+        match T.Screen.find screen "└┬" with
+        | [ (r, _) ] -> T.Screen.row screen (r + 1)
+        | _ -> ""
+      in
+      let big w =
+        String.ends_with ~suffix:"e+307" w || String.ends_with ~suffix:"e+308" w
+      in
+      equal (list bool) [ false; true ]
+        [
+          found "cannot read";
+          List.exists big (String.split_on_char ' ' x_labels);
+        ])
 
 (* The marks change and the poll that prepares the new chart has not returned:
    no difference row draws the run a letter named before. The reads are held on
@@ -1611,11 +1769,23 @@ let () =
              log_y;
              orphans;
              flat_extreme;
+             subnormal_ticks;
+             wide_extreme;
              demonstration;
            ];
          group "runs" [ filter; stars; metric_filter ];
          group "run"
-           [ non_finite_count; all_orphans; short_of_steps; paired; paired_past; remarked ];
+           [
+             non_finite_count;
+             all_orphans;
+             short_of_steps;
+             paired;
+             paired_past;
+             paired_wide;
+             paired_split;
+             step_metric_extreme;
+             remarked;
+           ];
          group "held" [ held; kept_pane; ended_away; watch_test ];
          stack_test;
        ])

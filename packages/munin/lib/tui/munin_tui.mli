@@ -158,7 +158,8 @@
     [0] to the focus's [steps] on the step axis of a run that declared them and
     has no sample past them, and otherwise to the least of [1], [2] or [5] times
     a power of ten at or above 1.1 times the largest x, so that it changes a few
-    times over a run and holds every sample.
+    times over a run and holds every sample, or to the largest float where no
+    such float is.
 
     {b Reduction.} The samples of a {e dot column}, the samples whose x falls in
     that column of the plot, are reduced to the first, the least, the greatest
