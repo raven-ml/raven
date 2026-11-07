@@ -190,12 +190,16 @@ and rune), raven / llama.cpp b12048 Vulkan:
   1.0-2.7x at eaff601a6 (q03 7.83 -> 2.45 G); decision support SF1 at
   cfef1ad82 q19 ~16x, q12 ~18x, q07 ~15x, q02 ~40x, since cut in
   instructions by 7e16755a1 (q02 4.71 -> 1.61 G) and c8e1f9fa2 (q19 4.66
-  -> 3.68 G, q12 3.73 -> 3.14 G), ratios not re-measured. What is left:
+  -> 3.68 G, q12 3.73 -> 3.14 G), and by the join placing only matching
+  right rows (q05 4.13 -> 3.32 G, q03 3.62 -> 3.05 G; text gathered at 35
+  instructions a row, from 48), ratios not re-measured. What is left:
   integer sums cast to int64 before summing (accumulation-dtype design),
-  one pass per aggregate, Parquet text decoded per row
-  (talon-dict-text.adjudication.md step 3), gathering text at ~49
-  instructions a row in inner joins, `Nx.unique` numbering (q05 2.25 G),
-  list columns of text, list or record children taking by positions.
+  one pass per aggregate, Parquet decoding (q05 ~1.7 G of its 3.32: snappy,
+  hybrid runs, text decoded per row, talon-dict-text.adjudication.md step
+  3), `Nx.unique`'s hashed numbering of all keys (q05 ~540 M) and its
+  per-thread table merge, `Nx.positions` at ~2.1k words and ~10 passes a
+  call in the join's runs path, list columns of text, list or record
+  children taking by positions.
   Data: ~/wt/tmp/talon-data on fudge (decision SF0.1/SF1, H2O 1e6/1e7)
 - talon 1.0 plan (_plans/talon/product/plan.md, on the Mac): windows and
   ewm, as-of and interval joins, interval sets and folds, zoned time,
