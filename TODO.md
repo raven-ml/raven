@@ -171,10 +171,12 @@ and rune), raven / llama.cpp b12048 Vulkan:
   kernels read their `% 127` gathers as scalar loads (hand C 2.7x
   faster); float32 rounds take 2.3x float64's there. Compiled `Nx.svd`
   at k = 128 float64 replays in 53-114 ms (16-36 sweeps). A GPU runs
-  every sweep of both: a stop there needs an idle-GPU measurement of a
-  flag read every m sweeps after a lower bound (a read took 0.86 ms
-  while another process computed on fudge's GPU, and a read every sweep
-  took f32 k = 32 from 3.6 to 15.7 ms)
+  every sweep of both. On an idle RTX 5000 a flag read takes 5.8-6.7 us
+  and stopping eigh f32 every sweep runs 1.4-2.1x faster (k = 128 11.6
+  -> 6.1 ms, k = 32 1.46 -> 0.83 ms); while another process computed on
+  the GPU a read took 0.86 ms and k = 32 went 3.6 -> 15.7 ms, and a stop
+  makes the call synchronous: decide a GPU stop (a read after a lower
+  bound, or every m sweeps, or one kernel per matrix as batched syevj)
   (_plans/todo-campaign/design/eigh-compile.adjudication.md)
 
 ## nx
