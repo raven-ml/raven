@@ -395,7 +395,10 @@ let pp_specials ppf (sop, w, shape, _, _, _) =
 let kept =
   group "kept"
     [
-      prop ~count:400
+      (* "mean p along an axis of 1, 2 or 4" needs a float dtype and an axis
+         of that extent, about one case in a hundred: 4000 cases reach it about
+         40 times a run. *)
+      prop ~count:4000
         "a linear operation kept a sum, then closed, equals closing first"
         (Gen.with_pp pp_case (case_of linear))
         law_kept;
