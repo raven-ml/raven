@@ -381,6 +381,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx.eigh` and `Nx.eigvalsh` under `Rune.jit` on this process's host stop
+  each matrix's Jacobi sweeps once the next would rotate nothing, giving the
+  same values, where they ran a count fixed by the size: 1.3-3.9x faster at
+  k = 32 to 128.
 - `Nx.attention` under `Rune.jit` gives `+0`, as a sum of zeros, where a
   row's weights in earlier tiles of keys underflow to zero beside a later
   tile's: a negative value there left `-0` in `o`.

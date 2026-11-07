@@ -261,7 +261,8 @@ let draws (prog : Nx_kernel.Prog.t) =
     (function Nx_kernel.Prog.Op2 (Binary Threefry, _, _) -> true | _ -> false)
     prog.nodes
 
-let op ?dst ~renderer ~device ~host (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r)
+let op ?dst ~renderer ~device ~host ~local
+    (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r)
     (o : r P.t) =
   match o with
   | Map { layout; prog; loads; outs = _; at = _ } -> body node layout prog loads
@@ -325,7 +326,7 @@ let op ?dst ~renderer ~device ~host (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t
       [| values; positions |]
   | Unique { size; keys } ->
       Lower_index.unique ~host (Lazy.force renderer) device ~size (node keys)
-  | Linalg l -> Lower_linalg.op ~device node l
+  | Linalg l -> Lower_linalg.op ~device ~local node l
   | Fft f -> [| fft node f |]
   | Attention _ ->
       Lower_attention.lower ~device ~renderer:(Lazy.force renderer) node o

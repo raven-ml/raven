@@ -1365,7 +1365,8 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
         | _ -> (
             let ys =
               let renderer = lazy (Engine.renderer rig) in
-              match Lower.op ?dst ~renderer ~device ~host read op with
+              let local = Rig.runs_on_host rig in
+              match Lower.op ?dst ~renderer ~device ~host ~local read op with
               | ys -> ys
               | exception Arith.Unlowered why -> decline "%s" why
             in

@@ -251,8 +251,10 @@ let norm_roundoff l =
 (* Loops
 
    A routine repeats its step in a loop on the graph's device
-   ({!Loop.repeat}). A loop of no trip, or of values with no element, runs
-   nothing and needs none. *)
+   ({!Loop.repeat}), and on a local device [eigh] its sweeps until they settle
+   ({!Loop.until}).
+   A loop of no trip, or of values with no element, runs nothing and needs
+   none. *)
 
 let repeat device n init step =
   let empty u = Shape.max_numel u = 0 in
@@ -492,6 +494,17 @@ let rounds ?(extra = 0) n dt =
   let _, mantissa = Dtype.finfo dt in
   sweeps n (mantissa + 1) extra * sweep n
 
+(* Whether the matrices a loop of sweeps carries have all settled: its first
+   carry, a flag of each matrix. *)
+let all = function
+  | settled :: _ ->
+      let running = Ops.cast (Ops.logical_not settled) Int32 in
+      let count =
+        Shape.rop running Op.Add (List.init (Shape.ndim settled) Fun.id)
+      in
+      Ops.eq count (Ops.int 0)
+  | [] -> invalid_arg "Lower_linalg.all"
+
 (* Singular values by one-sided Jacobi rotations
 
    The columns of [u], [r]'s leading square, are made orthogonal by rotating
@@ -654,9 +667,43 @@ let svd device ~complete a =
    rotations zeroed with those they had not. Convergence then falls to a bit a
    sweep: a [float32] 5 x 5 matrix of eigenvalues -1, 1 and 2 took 13 sweeps
    to reach [4 n u], against its 8. The element left is within the roundoff
-   the sweeps reach. *)
+   the sweeps reach.
 
-let eigh device ~vectors a =
+   On a local device, whose work is this process's code, a loop runs one sweep
+   a trip, at most [sweeps] of them, until each matrix is settled: it holds
+   NaN or an infinity, or each element a sweep reads is within the floor. [x]
+   is symmetric only to its roundoff, so the test reads each pair's element
+   where the sweep reads it ([read]). A settled matrix's next sweep takes no
+   rotation, and it is kept as it is, since a sweep that rotates nothing still
+   changes the signs of zeros: its results are those of the sweeps it needed,
+   whatever its batch needs. Another device, a GPU or another machine's, runs
+   every sweep instead: the stop is read by this process, so each sweep would
+   wait for the device, and the sweeps past the settled ones change no value.
+   On a GPU another process computed on, that read took 0.9 ms a sweep. *)
+
+(* Whether a sweep of [n] positions reads the element at row [i] and column
+   [j] of each pair it meets, as against at row [j] and column [i]: the
+   positions hold their own index at a sweep's start, and round [r] meets
+   positions [k] and [n - 1 - k], reading the row of [k]. For an even [n],
+   position [0] holds index [0], and position [s > 0] index [(s - 1 - r) mod
+   (n - 1) + 1]: the pair of position [0] is read in its row, and the others
+   at [i] and [j] with [(j - i) mod (n - 1) = n - 1 - 2k], odd. For an odd [n],
+   position [s] holds index [(s - r) mod n], and [(j - i) mod n = n - 1 - 2k],
+   even. For four positions, the rounds read [(0, 3)], [(1, 2)], then [(0,
+   2)], [(3, 1)], then [(0, 1)], [(2, 3)]. *)
+let read n =
+  let i = row_index n and j = column_index n in
+  let modulo m = Ops.O.((j - i + int m) % int m) in
+  let off = Ops.ne i j and parity m = Ops.O.(modulo m % int 2) in
+  if n mod 2 = 1 then Ops.bitwise_and off (Ops.eq (parity n) (Ops.int 0))
+  else
+    let zero = Ops.int 0 in
+    Ops.bitwise_and off
+      (Ops.bitwise_or (Ops.eq i zero)
+         (Ops.bitwise_and (Ops.ne j zero)
+            (Ops.eq (parity (n - 1)) (Ops.int 1))))
+
+let eigh device ~local ~vectors a =
   let dt = dtype a in
   let batch, n, _ = matrix a in
   let r = Shape.ndim a in
@@ -670,14 +717,13 @@ let eigh device ~vectors a =
   let x = Ops.where lower a (transpose a) in
   let e = exponent x in
   let x = Lower_real.scale x (Shape.expand (negate e) (Shape.shape x)) in
-  let floor =
-    Shape.squeeze ~axis:(-1) (norm_roundoff (Ops.where lower x (zero x)))
-  in
+  let floor = norm_roundoff (Ops.where lower x (zero x)) in
   let rows u = Shape.unsqueeze u (-1) and columns u = Shape.unsqueeze u (-2) in
   let round _ = function
     | x :: v ->
         let d = diagonal x and first u = part u (r - 2) 0 (n / 2) in
         let gamma = first (diagonal (Shape.flip x [ r - 1 ])) in
+        let floor = Shape.squeeze ~axis:(-1) floor in
         let above =
           Ops.gt (abs gamma) (Shape.expand floor (Shape.shape gamma))
         in
@@ -696,12 +742,34 @@ let eigh device ~vectors a =
     if vectors then [ Shape.expand (eye dt n n) (ints (batch @ [ n; n ])) ]
     else []
   in
-  let rotated = repeat device (rounds n dt) (x :: v) round in
+  let read = read n and finite = finite x in
+  let settled x =
+    let largest = over_matrix Op.Max (Ops.where read (abs x) (zero x)) in
+    Ops.bitwise_or (Ops.logical_not finite) (Ops.le largest floor)
+  in
+  let trip _ = function
+    | settled_before :: xv ->
+        let rotated = repeat device (sweep n) xv round in
+        let held u u' =
+          Ops.where (Shape.expand settled_before (Shape.shape u)) u u'
+        in
+        let xv = List.map2 held xv rotated in
+        Ops.bitwise_or settled_before (settled (List.hd xv)) :: xv
+    | [] -> invalid_arg "Lower_linalg.eigh"
+  in
+  let cap = sweeps n (snd (Dtype.finfo dt) + 1) 0 in
+  let rotated =
+    if not local then repeat device (rounds n dt) (x :: v) round
+    else
+      match Loop.until device cap (settled x :: x :: v) ~stop:all trip with
+      | _ :: rotated -> rotated
+      | [] -> invalid_arg "Lower_linalg.eigh"
+  in
   (* A matrix fails if its read triangle holds NaN or an infinity, or if the
      sweeps leave it off the diagonal beyond the [n] units of roundoff of its
      norm they reach. *)
   let ok =
-    Ops.bitwise_and (finite x)
+    Ops.bitwise_and finite
       (diagonal_within (16. *. float_of_int n *. roundoff dt) (List.hd rotated))
   in
   let w = diagonal (List.hd rotated) in
@@ -863,8 +931,8 @@ let solve_triangular device ~upper ~adjoint ~unit_diagonal a b =
 let real (type v s) name (dt : (v, s) D.t) =
   if D.is D.Complex dt then unlowered ("a complex " ^ name)
 
-let op ~device:d (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type d r)
-    (l : (d, r) P.linalg) : Ops.t array =
+let op ~device:d ~local (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t)
+    (type d r) (l : (d, r) P.linalg) : Ops.t array =
   let operand name a =
     real name (Nx.dtype a);
     node a
@@ -880,8 +948,9 @@ let op ~device:d (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type d r)
       [| (svd d ~complete:false (operand "Svd_values" a)).(0) |]
   | Svd { factors; a; _ } ->
       svd d ~complete:(factors = Complete) (operand "Svd" a)
-  | Eigh_values { a; _ } -> eigh d ~vectors:false (operand "Eigh_values" a)
-  | Eigh { a; _ } -> eigh d ~vectors:true (operand "Eigh" a)
+  | Eigh_values { a; _ } ->
+      eigh d ~local ~vectors:false (operand "Eigh_values" a)
+  | Eigh { a; _ } -> eigh d ~local ~vectors:true (operand "Eigh" a)
   | Solve_triangular { triangle; adjoint; unit_diagonal; a; b } ->
       let a = operand "Solve_triangular" a in
       let b = operand "Solve_triangular" b in

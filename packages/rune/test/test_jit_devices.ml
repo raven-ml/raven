@@ -637,6 +637,50 @@ let grads set rows =
       within ~bound eager jit
   | r -> equal (outcome_t bits_t) (Value (bits eager)) (omap bits r)
 
+(* Eigenvalues
+
+   [Nx.eigvalsh] of a batch of 6 x 6 matrices cut along the batch: a diagonal
+   matrix, which takes no sweep, one with NaN in its lower triangle, and
+   uniform and graded ones, which take several, so that each device's sweeps
+   stop apart. The values lie where eager's do, each within the bound rune.mli
+   states, [γ(16 (R + n)) ‖a‖_F] with [R] at most 8 sweeps of 5 rounds, and
+   eager's own [γ(16 n) ‖a‖_F]; the failing matrix's alone are NaN. *)
+let eigh_batch set =
+  let n = 6 in
+  let entry k i j =
+    let i, j = (max i j, min i j) in
+    let s = sin (float_of_int ((k * 7919) + (i * n) + j + 1)) in
+    match k with
+    | 0 -> if i = j then s else 0.
+    | 1 -> if i = 2 && j = 1 then Float.nan else s
+    | 2 -> s
+    | _ -> if i = j then 10. ** float_of_int (-i) else 1e-3 *. s
+  in
+  let data =
+    Array.init (4 * n * n) (fun e ->
+        entry (e / (n * n)) (e / n mod n) (e mod n))
+  in
+  let x = Nx.place (at set (Split 0)) (Nx.create f32 [| 4; n; n |] data) in
+  let eager = Nx.eigvalsh f32 x in
+  let before = Rune.evaluations () in
+  let jit = Rune.jit T.(tensor @-> returns tensor) (Nx.eigvalsh f32) x in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  let norm k =
+    let s = ref 0. in
+    for i = 0 to n - 1 do
+      for j = 0 to n - 1 do
+        let v = entry k i j in
+        if not (Float.is_nan v) then s := !s +. (v *. v)
+      done
+    done;
+    Float.sqrt !s
+  in
+  let tol k = (gamma (16 * (40 + n)) +. gamma (16 * n)) *. norm k in
+  let bound =
+    Nx.create Nx.float64 [| 4; n |] (Array.init (4 * n) (fun e -> tol (e / n)))
+  in
+  within ~bound eager jit
+
 (* Loops
 
    A scan over a carry cut across the devices, reading rows of values cut along
@@ -1745,6 +1789,9 @@ let () =
              test "a scan over a batch of one cut across devices" (fun () ->
                  over 2 { law = scan_batch_of_one };
                  over 4 { law = scan_batch_of_one });
+             test "eigenvalues of matrices that stop apart" (fun () ->
+                 over 2 { law = eigh_batch };
+                 over 3 { law = eigh_batch });
            ];
          group "a batch of one"
            [

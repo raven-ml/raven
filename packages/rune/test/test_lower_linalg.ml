@@ -438,8 +438,8 @@ let first t k = init t.b t.m k (fun b i j -> get t b i j)
 (* [rows_of t k] is the first [k] rows of [t]. *)
 let rows_of t k = init t.b k t.n (fun b i j -> get t b i j)
 
-(* The rounds of Jacobi rotations Lower_linalg takes for [n] positions at a
-   roundoff of [u], [extra] [1] for the SVD's. *)
+(* The rounds of Jacobi rotations Lower_linalg takes at most for [n] positions
+   at a roundoff of [u], [extra] [1] for the SVD's. *)
 let rounds ?(extra = 0) n u =
   let p = -int_of_float (Float.log2 u) in
   let rec log2 k = if 1 lsl k >= n then k else log2 (k + 1) in
@@ -658,30 +658,11 @@ let eigh_near u n norm =
   +. (gamma u (16. *. nf) *. norm)
   +. (eta u *. 16. *. nf)
 
-let eigh_law (c, shape) =
-  let (R (_, dt, u)) = c.dt in
-  let n = List.hd shape in
-  cover_case c shape;
-  let st = state c in
-  let repeated = variant c in
-  cover "a repeated eigenvalue" (repeated && n > 1);
-  let junk = Array.init (2 * n * n) (fun _ -> garbage st) in
-  let low = Array.init (2 * n * n) (fun _ -> uniform st) in
-  (* A repeated eigenvalue: [I + q qᵀ] for a unit [q], [Q diag(1, …, 1, 2) Qᵀ],
-     which the rotations must turn to diagonal. *)
-  let q =
-    Array.init 2 (fun _ ->
-        let v = Array.init n (fun _ -> uniform st) in
-        let norm = Float.sqrt (Array.fold_left (fun s x -> s +. (x *. x)) 0. v) in
-        Array.map (fun x -> x /. norm) v)
-  in
-  let a =
-    operand dt c.layout c.batch n n (fun b i j ->
-        if i < j then junk.((((b * n) + i) * n) + j)
-        else if repeated then
-          (if i = j then 1. else 0.) +. (q.(b).(i) *. q.(b).(j))
-        else low.((((b * n) + i) * n) + j))
-  in
+(* [eigh_holds dt u n a] asserts the lowered [Eigh] and [Eigh_values] of the
+   matrices of [a], of [n] rows, read from their lower triangle, against the
+   bounds: ascending values within [eigh_near] of eager's, [vᵀ v = I] and [a =
+   v diag w vᵀ] within [g]. *)
+let eigh_holds (type s) (dt : (float, s) D.t) u n a =
   let am = of_nx a in
   let sym = init am.b n n (fun k i j -> get am k (max i j) (min i j)) in
   let w = Lowered.run (fun () -> fst (linalg (Eigh { dtype = dt; a }))) in
@@ -708,6 +689,193 @@ let eigh_law (c, shape) =
   frobenius_near ~msg:"a = v diag w vᵀ"
     ~tol:(fun b -> (g +. (check *. nf)) *. norm b)
     (diff sym vwv)
+
+let eigh_law (c, shape) =
+  let (R (_, dt, u)) = c.dt in
+  let n = List.hd shape in
+  cover_case c shape;
+  let st = state c in
+  let repeated = variant c in
+  cover "a repeated eigenvalue" (repeated && n > 1);
+  let junk = Array.init (2 * n * n) (fun _ -> garbage st) in
+  let low = Array.init (2 * n * n) (fun _ -> uniform st) in
+  (* A repeated eigenvalue: [I + q qᵀ] for a unit [q], [Q diag(1, …, 1, 2) Qᵀ],
+     which the rotations must turn to diagonal. *)
+  let q =
+    Array.init 2 (fun _ ->
+        let v = Array.init n (fun _ -> uniform st) in
+        let norm = Float.sqrt (Array.fold_left (fun s x -> s +. (x *. x)) 0. v) in
+        Array.map (fun x -> x /. norm) v)
+  in
+  let a =
+    operand dt c.layout c.batch n n (fun b i j ->
+        if i < j then junk.((((b * n) + i) * n) + j)
+        else if repeated then
+          (if i = j then 1. else 0.) +. (q.(b).(i) *. q.(b).(j))
+        else low.((((b * n) + i) * n) + j))
+  in
+  eigh_holds dt u n a
+
+(* Spectra
+
+   The matrices the rotations converge on slowest, and those they settle at
+   once: eigenvalues spread log-uniformly over 16 decades, half [-1] and half
+   within [1e-10] of [1], one of [1e6] beside values in [[-1, 1]], in a random
+   basis; a Gram matrix [g gᵀ] of [2n] columns whose scales fall over 6
+   decades; and a diagonal matrix of signed zeros and values in [[-1, 1]], whose
+   elements off the diagonal are zeros of either sign. *)
+
+type spectrum = Graded | Clustered | Dominant | Gram | Diagonal | Nan | Infinite
+
+let spectrum_name = function
+  | Graded -> "graded"
+  | Clustered -> "clustered"
+  | Dominant -> "dominant"
+  | Gram -> "gram"
+  | Diagonal -> "diagonal"
+  | Nan -> "NaN"
+  | Infinite -> "an infinity"
+
+(* The lower triangle of a symmetric matrix of [n] rows of [kind], in C order,
+   upper elements NaN, or of [Nan] and [Infinite] a uniform matrix with one
+   such element in its lower triangle. *)
+let symmetric st kind n =
+  let gauss () = uniform st +. uniform st +. uniform st in
+  let basis () =
+    let g =
+      Nx.create D.Float64 [| n; n |] (Array.init (n * n) (fun _ -> gauss ()))
+    in
+    Nx.to_array (fst (linalg (Qr { factors = Reduced; a = g })))
+  in
+  let in_basis ev =
+    let q = basis () in
+    Array.init (n * n) (fun e ->
+        let i = e / n and j = e mod n in
+        let s = ref 0. in
+        for l = 0 to n - 1 do
+          s := !s +. (q.((i * n) + l) *. ev.(l) *. q.((j * n) + l))
+        done;
+        !s)
+  in
+  let full =
+    match kind with
+    | Graded ->
+        in_basis
+          (Array.init n (fun _ -> 10. ** (-16. *. Random.State.float st 1.)))
+    | Clustered ->
+        in_basis
+          (Array.init n (fun i ->
+               if i < n / 2 then -1. else 1. +. (1e-10 *. uniform st)))
+    | Dominant ->
+        in_basis (Array.init n (fun i -> if i = 0 then 1e6 else uniform st))
+    | Gram ->
+        let m = 2 * n in
+        let g =
+          Array.init (n * m) (fun e ->
+              let j = float_of_int (e mod m) in
+              gauss () *. (10. ** (-6. *. j /. float_of_int m)))
+        in
+        Array.init (n * n) (fun e ->
+            let i = e / n and j = e mod n in
+            let s = ref 0. in
+            for l = 0 to m - 1 do
+              s := !s +. (g.((i * m) + l) *. g.((j * m) + l))
+            done;
+            !s)
+    | Diagonal ->
+        let zero () = if Random.State.bool st then 0. else -0. in
+        let d =
+          Array.init n (fun _ ->
+              if Random.State.bool st then zero () else uniform st)
+        in
+        Array.init (n * n) (fun e ->
+            let i = e / n and j = e mod n in
+            if i = j then d.(i) else zero ())
+    | Nan | Infinite ->
+        let x = Array.init (n * n) (fun _ -> uniform st) in
+        let i = Random.State.int st n in
+        let j = Random.State.int st (i + 1) in
+        x.((i * n) + j) <-
+          (if kind = Nan then Float.nan else Float.neg_infinity);
+        x
+  in
+  Array.mapi (fun e x -> if e mod n > e / n then Float.nan else x) full
+
+(* The slow spectra, at sizes even and odd, one and two: the values are
+   eager's, and the vectors orthonormal, within the bounds. *)
+let eigh_spectrum (R (name, dt, u), (kind, (n, seed))) =
+  cover name true;
+  cover (spectrum_name kind) true;
+  cover "an odd size" (n mod 2 = 1);
+  let st = Random.State.make [| seed |] in
+  let a = Nx.create dt [| n; n |] (symmetric st kind n) in
+  eigh_holds dt u n a
+
+let slow = [ Graded; Clustered; Dominant; Gram ]
+let sizes = [ 1; 2; 3; 7; 16 ]
+
+let eigh_spectra =
+  Gen.with_pp
+    (fun ppf (R (name, _, _), (kind, (n, seed))) ->
+      Format.fprintf ppf "(%s, %s, %d, %d)" name (spectrum_name kind) n seed)
+    (Gen.pair (Gen.of_list reals)
+       (Gen.pair (Gen.of_list slow)
+          (Gen.pair (Gen.of_list sizes) (Gen.int_range 0 1_000_000))))
+
+let eigh_spectrum_examples =
+  List.concat_map
+    (fun dt ->
+      List.mapi (fun i kind -> (dt, (kind, (16 - (i mod 2 * 9), i)))) slow)
+    reals
+
+(* A matrix's results are its own, bit for bit: beside a matrix that needs more
+   sweeps or fails, they are those it has beside itself, in a batch of the same
+   shape. *)
+let eigh_alone (R (name, dt, _), ((ka, kb), (n, seed))) =
+  cover name true;
+  cover "a settled matrix beside one that rotates"
+    (ka = Diagonal && kb <> Diagonal);
+  cover "beside a matrix that fails" (kb = Nan || kb = Infinite);
+  cover "a matrix that fails" (ka = Nan || ka = Infinite);
+  cover "an odd size" (n mod 2 = 1);
+  let st = Random.State.make [| seed |] in
+  let x = symmetric st ka n and y = symmetric st kb n in
+  let pair x y = Nx.create dt [| 2; n; n |] (Array.append x y) in
+  let first k f a = Array.sub (Lowered.run (fun () -> f (linalg a))) 0 k in
+  let results a =
+    ( first n fst (Eigh { dtype = dt; a }),
+      first (n * n) snd (Eigh { dtype = dt; a }),
+      first n Fun.id (Eigh_values { dtype = dt; a }) )
+  in
+  let w, v, values = results (pair x x) in
+  let w', v', values' = results (pair x y) in
+  equal ~msg:"w" (array int64) (bits w) (bits w');
+  equal ~msg:"v" (array int64) (bits v) (bits v');
+  equal ~msg:"values alone" (array int64) (bits values) (bits values')
+
+let kinds = [ Graded; Clustered; Dominant; Gram; Diagonal; Nan; Infinite ]
+
+let eigh_pairs =
+  Gen.with_pp
+    (fun ppf (R (name, _, _), ((ka, kb), (n, seed))) ->
+      Format.fprintf ppf "(%s, %s beside %s, %d, %d)" name (spectrum_name ka)
+        (spectrum_name kb) n seed)
+    (Gen.pair (Gen.of_list reals)
+       (Gen.pair
+          (Gen.pair (Gen.of_list kinds) (Gen.of_list kinds))
+          (Gen.pair
+             (Gen.of_list [ 2; 3; 4; 5; 8 ])
+             (Gen.int_range 0 1_000_000))))
+
+let eigh_pair_examples =
+  let f32 = List.nth reals 0 and f64 = List.nth reals 1 in
+  [
+    (f64, ((Diagonal, Graded), (4, 1)));
+    (f32, ((Diagonal, Clustered), (5, 2)));
+    (f64, ((Graded, Nan), (3, 3)));
+    (f32, ((Infinite, Gram), (8, 4)));
+    (f64, ((Diagonal, Infinite), (2, 5)));
+  ]
 
 (* NaN in the lower triangle makes its matrix NaN in both results. *)
 let eigh_fails () =
@@ -784,6 +952,52 @@ let eigh_32 () =
   values_near ~msg:"w against eager"
     ~tol:(fun _ -> eigh_near u64 n (frobenius sym 0))
     n (Nx.to_array w) (Nx.to_array eager)
+
+(* Stopping changes no value: on the host each matrix stops once its sweeps
+   settle, and its values, [-0] equal to [+0], are those of the full count of
+   sweeps a device whose work is not this process's code runs. Of a batch of
+   two matrices of {!symmetric}'s kinds. *)
+let stop_law (R (name, dt, _), ((ka, kb), (n, seed))) =
+  cover name true;
+  cover "a settled matrix beside one that rotates"
+    (ka = Diagonal && kb <> Diagonal);
+  cover "a matrix that fails" (ka = Nan || ka = Infinite);
+  cover "an odd size" (n mod 2 = 1);
+  let st = Random.State.make [| seed |] in
+  let x = symmetric st ka n and y = symmetric st kb n in
+  let a = Nx.create dt [| 2; n; n |] (Array.append x y) in
+  let value v =
+    Int64.bits_of_float (if Float.is_nan v then Float.nan else v +. 0.)
+  in
+  let same msg f =
+    let fixed = Lowered.run ~local:false f and stopped = Lowered.run f in
+    equal ~msg (array int64) (Array.map value fixed) (Array.map value stopped)
+  in
+  same "w" (fun () -> fst (linalg (Eigh { dtype = dt; a })));
+  same "v" (fun () -> snd (linalg (Eigh { dtype = dt; a })));
+  same "eigenvalues alone" (fun () -> linalg (Eigh_values { dtype = dt; a }))
+
+(* A compiled [Nx.eigvalsh] in a scan's step, its loop of sweeps inside the
+   scan's loop of steps: each step's values are eager's within the bound, for
+   matrices that need different numbers of sweeps. *)
+let eigh_in_scan () =
+  let n = 6 in
+  let st = Random.State.make [| n |] in
+  let kinds = [ Diagonal; Graded; Clustered; Gram ] in
+  let mats = List.map (fun kind -> symmetric st kind n) kinds in
+  let xs = Nx.create D.Float64 [| 4; n; n |] (Array.concat mats) in
+  let step c a =
+    let w = Nx.eigvalsh D.Float64 a in
+    (Nx.add c (Nx.sum w), w)
+  in
+  let scan xs = snd (Rune.scan' step ~init:(Nx.scalar D.Float64 0.) xs) in
+  let ours = Nx.to_array (Rune.jit' scan xs) in
+  let eager = Nx.to_array (Nx.eigvalsh D.Float64 xs) in
+  let am = of_nx xs in
+  let sym = init am.b n n (fun k i j -> get am k (max i j) (min i j)) in
+  values_near ~msg:"each step's values against eager"
+    ~tol:(fun b -> eigh_near u64 n (frobenius sym b))
+    n ours eager
 
 (* Through Nx: a compiled [Nx.svdvals] and [Nx.eigvalsh] are eager's within
    the bounds above, [eigvalsh] of either triangle. *)
@@ -894,10 +1108,18 @@ let () =
              law "v diag w vᵀ reconstructs a" ~count:4 square eigh_law;
              test "NaN in the lower triangle is NaN" eigh_fails;
              test "norms past the dtype's range, and subnormals" eigh_extremes;
+             prop "graded, clustered, dominant and Gram spectra converge"
+               ~count:4 ~examples:eigh_spectrum_examples eigh_spectra
+               eigh_spectrum;
+             prop "each matrix's results are its own, bit for bit" ~count:6
+               ~examples:eigh_pair_examples eigh_pairs eigh_alone;
+             test "compiled in a scan's step" eigh_in_scan;
              test ~timeout:60.
                "compiled for 32 rows of float64 gives eager's eigenvalues"
                eigh_32;
            ];
+         prop "stopping early gives the full count's values" ~count:6
+           ~examples:eigh_pair_examples eigh_pairs stop_law;
          law "Nx's values alone compiled are eager's" ~count:6
            (square @ general) values_law;
          test "complex operands and eig are refused" refused;

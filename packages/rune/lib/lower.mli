@@ -38,15 +38,18 @@ val op :
   renderer:Renderer.t Lazy.t ->
   device:Ops.device ->
   host:bool ->
+  local:bool ->
   ('v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) ->
   'r Nx.Prim.t ->
   Ops.t array
-(** [op ~dst ~renderer ~device ~host node o] is the node of each result of
-    [o], in position order, computed on [device], whose kernels compile for
+(** [op ~dst ~renderer ~device ~host ~local node o] is the node of each result
+    of [o], in position order, computed on [device], whose kernels compile for
     the host's processors where [host] holds ({!Tolk_engine.target}) and are
-    rendered by [renderer]. It reads each operand [x] from [node x]. A
-    [Scatter] takes its storage from [dst] where {!Lower_index.scatter} does;
-    another operation ignores it.
+    rendered by [renderer]. [local] holds where [device]'s work is this
+    process's code ({!Rig.runs_on_host}), so that reading a value between two
+    trips of a loop waits on no other device ({!Lower_linalg.op}). It reads
+    each operand [x] from [node x]. A [Scatter] takes its storage from [dst]
+    where {!Lower_index.scatter} does; another operation ignores it.
 
     Raises {!Lower_arith.Unlowered}, naming the operation, for one it does not
     lower: [Check], which its caller lowers itself, a [Linalg] that

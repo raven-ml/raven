@@ -1073,20 +1073,27 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 ### L8. Eigenvalues by two-sided Jacobi rotations
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml` (`eigh`, `tangents`, `rotations`, `rotate`,
-  `rounds`, `norm_roundoff`, `diagonal_within`, `order`).
+- **Raven:** `lower_linalg.ml` (`eigh`, `read`, `tangents`, `rotations`,
+  `rotate`, `sweeps`, `norm_roundoff`, `diagonal_within`, `order`),
+  `loop.ml` (`until`).
 - **No source:** the symmetric matrix the lower triangle names, the upper one
   never read, divided by the power of two of its largest magnitude, which
   the eigenvalues take back. A round rotates the pairs of a round-robin
   pairing, rows and columns, each by the angle that zeroes its off-diagonal
-  element; an element within `u ‖a‖_F` takes none. It runs `⌈p ⌈log₂ n⌉ /
-  10⌉` sweeps of `n - 1` rounds (`n` for an odd `n`), `p` the dtype's
-  precision, one round a step of a tolk loop, and `v` accumulates the
-  rotations. The eigenvalues are the diagonal in a stable ascending order,
-  `v`'s columns in the same order. A matrix whose read triangle holds NaN or
-  an infinity, or whose off-diagonal norm after the sweeps exceeds
-  `16 n u ‖a‖_F`, is NaN in every result. A complex matrix is refused, and
-  the program runs uncompiled.
+  element; an element within `u ‖a‖_F` takes none. It runs
+  `⌈p ⌈log₂ n⌉ / 10⌉` sweeps of `n - 1` rounds (`n` for an odd `n`), `p`
+  the dtype's precision, and `v` accumulates the rotations. On a device
+  whose work is this process's code (`Rig.runs_on_host`) the sweeps run one
+  a trip of a tolk loop that stops on a flag: a matrix stops before a sweep
+  where it holds NaN or an infinity, or where each element the sweep's
+  pairs read, in the orientation they read it, is within `u ‖a‖_F`, so that
+  the sweep would rotate nothing; it is then kept as it is, and the loop
+  stops once every matrix has. Elsewhere every sweep runs, as the flag
+  would make each wait for the device. The eigenvalues are the
+  diagonal in a stable ascending order, `v`'s columns in the same order. A
+  matrix whose read triangle holds NaN or an infinity, or whose off-diagonal
+  norm after the sweeps exceeds `16 n u ‖a‖_F`, is NaN in every result. A
+  complex matrix is refused, and the program runs uncompiled.
 - **nx:** `nx_kernel.mli`, `eigh`: ascending eigenvalues, orthonormal `v`,
   the lower triangle and the diagonal's real parts alone read, NaN as for
   `svd`.
@@ -1094,8 +1101,12 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reason:** (b). The refusal: none.
 - **Pinned by:** `Lower_linalg › eigh › v diag w vᵀ reconstructs a`, whose
   upper triangle is garbage, `› NaN in the lower triangle is NaN`, `› norms
-  past the dtype's range, and subnormals`; `Lower_linalg › Nx's values alone
-  compiled are eager's`.
+  past the dtype's range, and subnormals`, `› graded, clustered, dominant
+  and Gram spectra converge`, `› each matrix's results are its own, bit for
+  bit`, `› compiled in a scan's step`; `Lower_linalg › stopping early gives
+  the full count's values`, `› Nx's values alone compiled are eager's`;
+  `Rune.jit over several devices › loops › eigenvalues of matrices that
+  stop apart`.
 
 ### L9. Block scales multiply each element in the accumulator
 

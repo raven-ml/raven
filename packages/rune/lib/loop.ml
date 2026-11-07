@@ -148,14 +148,86 @@ let carry slot u =
   let view s = Shape.reshape s (Shape.shape u) in
   Carry { slot; init = u; numel = Shape.max_numel u; view }
 
+let empty u = Shape.max_numel u = 0
+
+let placed device u =
+  if Option.is_none (Ops.device u) then Ops.copy_to_device u device else u
+
+(* A loop's body as it is built: the call's next slot, from [0], the carries
+   and the parameters that stand for them in the step, the call's own
+   parameters, what the call binds to its slots, and the body's stores. *)
+type body = {
+  next : unit -> int;
+  carries : carry list;
+  params : Ops.t list;
+  own : unit Ops.Tbl.t;
+  args : (int * Ops.t) list ref;
+  stores : Ops.t list ref;
+}
+
+let body device init =
+  let count = ref 0 in
+  let next () =
+    let k = !count in
+    incr count;
+    k
+  in
+  let carries =
+    List.map (fun u -> if empty u then Empty u else carry (next ()) u) init
+  in
+  let own = Ops.Tbl.create 8 in
+  (* A value with no element stands in the step as zeros: reading it reads
+     nothing. *)
+  let params =
+    List.map
+      (function
+        | Empty u ->
+            Shape.expand
+              (Ops.const ~dtype:(Ops.dtype u) (`Int Bigint.zero))
+              (Shape.shape u)
+        | Carry { slot; init; numel; view } ->
+            let p =
+              Shape.param ~shape:[ Ops.Int numel ] ~device slot (Ops.dtype init)
+            in
+            Ops.Tbl.replace own p ();
+            view p)
+      carries
+  in
+  { next; carries; params; own; args = ref []; stores = ref [] }
+
+(* The trip's index, an [int32] scalar parameter the call binds to [index]. *)
+let index b index =
+  let slot = b.next () in
+  let p = Shape.param ~addrspace:Alu slot Int32 in
+  Ops.Tbl.replace b.own p ();
+  b.args := (slot, index) :: !(b.args);
+  p
+
+(* Each carry's buffer, holding its initial value, which the trip's value
+   [v] then replaces, and its value once the loop [e] is done. *)
+let carried device b finals =
+  List.map2
+    (fun (c, param) v ->
+      match c with
+      | Empty u -> fun _ -> u
+      | Carry { slot; init; numel; view } ->
+          let s = Ops.new_buffer device numel (Ops.dtype init) in
+          let first = Ops.after s [ Ops.store (view s) init ] in
+          b.args := (slot, first) :: !(b.args);
+          b.stores := Ops.store param v :: !(b.stores);
+          fun e -> view (Ops.after s [ e ]))
+    (List.combine b.carries b.params)
+    finals
+
+let call b =
+  let body = cut ~own:b.own b.next b.args (Ops.sink (List.rev !(b.stores))) in
+  let by_slot (a, _) (b, _) = Int.compare a b in
+  Ops.call ~precompile:true body (List.map snd (List.sort by_slot !(b.args)))
+
 let repeat device n init step =
-  let empty u = Shape.max_numel u = 0 in
   if n = 0 || List.for_all empty init then init
   else
-    let placed u =
-      if Option.is_none (Ops.device u) then Ops.copy_to_device u device else u
-    in
-    let init = List.map placed init in
+    let init = List.map (placed device) init in
     (* An odd count takes its first step before the loop. *)
     let init =
       if n mod 2 <> 1 then init
@@ -165,34 +237,7 @@ let repeat device n init step =
     in
     if n < 2 then init
     else
-      let count = ref 0 in
-      let next () =
-        let k = !count in
-        incr count;
-        k
-      in
-      let carries =
-        List.map (fun u -> if empty u then Empty u else carry (next ()) u) init
-      in
-      let own = Ops.Tbl.create 8 in
-      (* A value with no element stands in the step as zeros: reading it reads
-         nothing. *)
-      let params =
-        List.map
-          (function
-            | Empty u ->
-                Shape.expand
-                  (Ops.const ~dtype:(Ops.dtype u) (`Int Bigint.zero))
-                  (Shape.shape u)
-            | Carry { slot; init; numel; view } ->
-                let p =
-                  Shape.param ~shape:[ Ops.Int numel ] ~device slot
-                    (Ops.dtype init)
-                in
-                Ops.Tbl.replace own p ();
-                view p)
-          carries
-      in
+      let b = body device init in
       (* The loop runs [n / 2] trips of one call, whose body is the two steps
          traced once. A trip takes two steps: the first into storage of its own,
          the second from it into the carries' storage, which it then no longer
@@ -201,32 +246,35 @@ let repeat device n init step =
       let range =
         Ops.range ~axis_type:Loop (Ops.Int (n / 2)) [ Ops.unique_num () ]
       in
-      let slot = next () in
-      let index = Shape.param ~addrspace:Alu slot Int32 in
-      Ops.Tbl.replace own index ();
-      let index' = Ops.add index (Shape.const_like index (`Int Bigint.one)) in
-      let finals = step index' (List.map Ops.contiguous (step index params)) in
-      let args = ref [ (slot, Ops.O.((range * int 2) + int (n mod 2))) ]
-      and stores = ref [] in
-      let results =
-        List.map2
-          (fun (c, param) v ->
-            match c with
-            | Empty u -> fun _ -> u
-            | Carry { slot; init; numel; view } ->
-                let b = Ops.new_buffer device numel (Ops.dtype init) in
-                args := (slot, Ops.after b [ Ops.store (view b) init ]) :: !args;
-                stores := Ops.store param v :: !stores;
-                fun e -> view (Ops.after b [ e ]))
-          (List.combine carries params)
-          finals
-      in
-      let body = cut ~own next args (Ops.sink (List.rev !stores)) in
-      let by_slot (a, _) (b, _) = Int.compare a b in
-      let e =
-        Ops.end_
-          (Ops.call ~precompile:true body
-             (List.map snd (List.sort by_slot !args)))
-          [ range ]
-      in
+      let i = index b Ops.O.((range * int 2) + int (n mod 2)) in
+      let i' = Ops.add i (Shape.const_like i (`Int Bigint.one)) in
+      let finals = step i' (List.map Ops.contiguous (step i b.params)) in
+      let results = carried device b finals in
+      let e = Ops.end_ (call b) [ range ] in
       List.map (fun result -> result e) results
+
+let until device n init ~stop step =
+  if n <= 0 || List.for_all empty init then init
+  else
+    let init = List.map (placed device) init in
+    let b = body device init in
+    (* Each trip takes one step into storage of its own, from which it stores
+       the carries and the flag: whether the stop does not hold yet, which the
+       engine reads before the next trip. *)
+    let range = Ops.range ~axis_type:Loop (Ops.Int n) [ Ops.unique_num () ] in
+    let i = index b range in
+    let finals = List.map Ops.contiguous (step i b.params) in
+    let results = carried device b finals in
+    let running vs = Ops.logical_not (Shape.reshape (stop vs) [ Ops.Int 1 ]) in
+    let first = placed device (running init) in
+    let slot = b.next () in
+    let flag =
+      Shape.param ~shape:[ Ops.Int 1 ] ~device slot (Ops.dtype first)
+    in
+    Ops.Tbl.replace b.own flag ();
+    let s = Ops.new_buffer device 1 (Ops.dtype first) in
+    let first = Ops.after s [ Ops.store s first ] in
+    b.args := (slot, first) :: !(b.args);
+    b.stores := Ops.store flag (running finals) :: !(b.stores);
+    let e = Ops.backedge (call b) ~loop:range ~cond:first in
+    List.map (fun result -> result e) results

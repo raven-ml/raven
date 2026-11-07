@@ -15,17 +15,21 @@
     A routine repeats one step, a column of a factorisation or a round of
     rotations, in a tolk loop on the graph's device. Its graph holds the step at
     most three times whatever the matrix's size, so compiling it costs the same
-    at every size.
+    at every size. On a {e local} device, whose work is this process's code
+    ({!Rig.runs_on_host}), [Eigh]'s rounds run in a loop of sweeps that stops
+    once every matrix has stopped, a flag the engine reads before each sweep
+    once the work before it is done; elsewhere they run every sweep, and the
+    run does not wait.
 
     {b Numerics.} These bounds implement the matrix rows of
     {!Rune.section-numerics}. They hold to first order in the dtype's unit
     roundoff [u], barring overflow and underflow, with [γ(c) = c u / (1 - c u)]
     ({!Nx_kernel.section-bounds}), [|·|] taken elementwise and [‖·‖_F] the
-    Frobenius norm. [R] is the number of rounds of rotations of [k] columns. It
-    is [S] sweeps of [k - 1] rounds each, or of [k] rounds for an odd [k], and
-    [0] for [k < 2], where [S = ⌈b ⌈log₂ k⌉ / 10⌉] for [Eigh],
-    [S = ⌈b (⌈log₂ k⌉ + 1) / 10⌉] for [Svd], and [b] is the dtype's precision in
-    bits.
+    Frobenius norm. [R] is the number of rounds of rotations of [k] columns, in
+    sweeps of [k - 1] rounds each, or of [k] rounds for an odd [k], and [0] for
+    [k < 2]: [S] sweeps, at most [S] for [Eigh] on a local device, where
+    [S = ⌈b ⌈log₂ k⌉ / 10⌉] for [Eigh], [S = ⌈b (⌈log₂ k⌉ + 1) / 10⌉] for
+    [Svd], and [b] is the dtype's precision in bits.
     - [Cholesky]: [L Lᵀ = a + Δ] with [|Δ| <= γ(n + 1) |L| |Lᵀ|], where [a]
       stands for the symmetric matrix of its lower triangle. [Upper]'s factor is
       [Lower]'s transpose, bit for bit.
@@ -39,7 +43,12 @@
       [a_j] has [‖a_j - q r_j‖₂ <= g ‖a_j‖₂], and each element of [qᵀ q - I]
       is at most [g]. [r]'s diagonal has either sign.
     - [Eigh] and [Eigh_values]: by two-sided Jacobi rotations of the symmetric
-      matrix of [a]'s lower triangle, scaled by a power of two. Each
+      matrix of [a]'s lower triangle, scaled by a power of two. On a local
+      device a matrix stops before a sweep where it holds NaN or an infinity,
+      or where the element off the diagonal that each pair of the sweep would
+      read is at most [u ‖a‖_F] in magnitude, so that the sweep would rotate
+      nothing: its results are those of the sweeps it took, whatever the
+      other matrices take. Each
       eigenvalue is within [γ(16 (R + n)) ‖a‖_F] of the exact one and, with
       [g = γ(16 (R + n) (1 + √n))], [‖a - v diag w vᵀ‖_F <= g ‖a‖_F] and
       [‖vᵀ v - I‖_F <= g]. A matrix fails where its read triangle holds NaN or
@@ -64,11 +73,13 @@ open Tolk
 
 val op :
   device:Ops.device ->
+  local:bool ->
   ('v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) ->
   ('d, 'r) Nx.Prim.linalg ->
   Ops.t array
-(** [op ~device node l] is the node of each result of [l], in position order,
-    computed on [device]. It reads each operand [x] from [node x].
+(** [op ~device ~local node l] is the node of each result of [l], in position
+    order, computed on [device], which is local where [local] holds. It reads
+    each operand [x] from [node x].
 
     Raises {!Lower_arith.Unlowered} naming the routine for a complex operand and
     for [Eig] and [Eig_values]. *)

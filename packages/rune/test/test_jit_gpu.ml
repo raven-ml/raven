@@ -149,6 +149,85 @@ let test_stack () =
   equal ~msg:"compiled" Testable.int 0 (Rune.evaluations () - before);
   equal (Testable.array Testable.int32) (bits (doubled rows)) (bits y)
 
+(* A compiled [Nx.eigh] on the GPU, which runs every sweep, of a batch of 6 x 6
+   float32 matrices that converge apart: a diagonal matrix, which needs no
+   sweep, one with NaN in its lower triangle, and uniform and graded ones,
+   which need several. The values lie within the bound rune.mli states of the
+   host's eager ones, [γ(16 (R + n)) ‖a‖_F] with [R] 8 sweeps of 5 rounds, and
+   eager's own [γ(16 n) ‖a‖_F]; the
+   failing matrix's alone are NaN, and [‖vᵀ v - I‖_F] is within
+   [γ(16 (R + n) (1 + √n))], to the check's own float64 rounding. *)
+let test_eigh () =
+  let _, (module S) = on_gpu () in
+  let n = 6 in
+  let entry k i j =
+    let i, j = (max i j, min i j) in
+    let s = sin (float_of_int ((k * 7919) + (i * n) + j + 1)) in
+    match k with
+    | 0 -> if i = j then s else 0.
+    | 1 -> if i = 2 && j = 1 then Float.nan else s
+    | 2 -> s
+    | _ -> if i = j then 10. ** float_of_int (-i) else 1e-3 *. s
+  in
+  let a =
+    Nx.create Nx.float32 [| 4; n; n |]
+      (Array.init (4 * n * n) (fun e ->
+           entry (e / (n * n)) (e / n mod n) (e mod n)))
+  in
+  let f =
+    Rune.jit
+      Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+      (Nx.eigh Nx.float32)
+  in
+  let before = Rune.evaluations () in
+  let w, v = f (Nx.place S.on a) in
+  equal ~msg:"compiled" Testable.int 0 (Rune.evaluations () - before);
+  let host x = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)) in
+  let w = host w and v = host v in
+  let eager = Nx.to_array (Nx.cast Nx.float64 (Nx.eigvalsh Nx.float32 a)) in
+  let gamma_at u k = k *. u /. (1. -. (k *. u)) in
+  let gamma = gamma_at (ldexp 1. (-24))
+  and gamma64 = gamma_at (ldexp 1. (-53)) in
+  let rounds = 40. and nf = float_of_int n in
+  for k = 0 to 3 do
+    let norm = ref 0. in
+    for i = 0 to n - 1 do
+      for j = 0 to n - 1 do
+        let x = entry k i j in
+        if not (Float.is_nan x) then norm := !norm +. (x *. x)
+      done
+    done;
+    let tol =
+      (gamma (16. *. (rounds +. nf)) +. gamma (16. *. nf)) *. sqrt !norm
+    in
+    let g = gamma (16. *. (rounds +. nf) *. (1. +. sqrt nf)) in
+    let orthogonality = ref 0. in
+    for i = 0 to n - 1 do
+      for j = 0 to n - 1 do
+        let s = ref (if i = j then -1. else 0.) in
+        for l = 0 to n - 1 do
+          let at r c = v.((((k * n) + r) * n) + c) in
+          s := !s +. (at l i *. at l j)
+        done;
+        orthogonality := !orthogonality +. (!s *. !s)
+      done
+    done;
+    for i = 0 to n - 1 do
+      let e = (k * n) + i in
+      if k = 1 then equal ~msg:"NaN" Testable.bool true (Float.is_nan w.(e))
+      else
+        less
+          ~msg:(Printf.sprintf "matrix %d, value %d" k i)
+          Testable.float_exact ~than:(tol +. Float.min_float)
+          (Float.abs (w.(e) -. eager.(e)))
+    done;
+    if k <> 1 then
+      less
+        ~msg:(Printf.sprintf "matrix %d: vᵀ v = I" k)
+        Testable.float_exact ~than:(g +. gamma64 (nf +. 2.))
+        (sqrt !orthogonality)
+  done
+
 (* A range gather compiles on the GPU, as a gather at its runs' positions,
    to the host's eager bits, and so does its gradient: runs that straddle
    the source's ends, an empty run, overlapping runs, and a start near
@@ -1064,6 +1143,11 @@ let () =
                ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
                Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16; Any Nx.float16 ]
                (fun dt -> Attentions.zero_sums (snd (on_gpu ())) dt);
+           ];
+         group "linear algebra"
+           [
+             test "eigh of matrices that converge apart holds its bound"
+               test_eigh;
            ];
          group "checks"
            [

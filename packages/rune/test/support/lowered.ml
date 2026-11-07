@@ -127,7 +127,7 @@ let decode (type v s) (dt : (v, s) D.t) shape (bytes : Bytes.t) : v array =
 
 (* Lowering *)
 
-let rule ~direct bound i ~by (type r) (op : r Nx.Prim.t) : r =
+let rule ~direct ~local bound i ~by (type r) (op : r Nx.Prim.t) : r =
   let node : type v s d. (v, s, d) Nx.t -> Ops.t =
    fun x ->
     match Nx.Prim.payload i x with
@@ -136,15 +136,16 @@ let rule ~direct bound i ~by (type r) (op : r Nx.Prim.t) : r =
     | None -> bind ~direct bound x
   in
   let renderer = lazy (Tolk_engine.renderer Rig.host) in
-  let ys = Rune.Lower.op ~renderer ~device:cpu ~host:true node op in
+  let ys = Rune.Lower.op ~renderer ~device:cpu ~host:true ~local node op in
   Nx.Prim.results ~by (fun k f -> Nx.Prim.traced i f (Node ys.(k))) op
 
 (* [f ()]'s graph, the storage it binds and its result's elements. *)
-let lowered (type v s d) ?(direct = false) (f : unit -> (v, s, d) Nx.t) =
+let lowered (type v s d) ?(direct = false) ?(local = true)
+    (f : unit -> (v, s, d) Nx.t) =
   let bound = ref [] in
   let y, u =
     Nx.Prim.interpret ~name:"Lowered" Nx.Prim.Extent
-      (fun i ~by op -> rule ~direct bound i ~by op)
+      (fun i ~by op -> rule ~direct ~local bound i ~by op)
       (fun i ->
         let y = f () in
         match Nx.Prim.payload i y with
@@ -163,8 +164,8 @@ let compiled u o n =
   let targets _ = Tolk_engine.target Rig.host in
   (Realize.compile_linear ~targets linear, vars)
 
-let run (type v s d) (f : unit -> (v, s, d) Nx.t) : v array =
-  let bound, u, dt, shape, n = lowered f in
+let run (type v s d) ?local (f : unit -> (v, s, d) Nx.t) : v array =
+  let bound, u, dt, shape, n = lowered ?local f in
   let tdt = L.dtype (D.Any dt) in
   if n = 0 then [||]
   else

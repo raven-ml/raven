@@ -59,3 +59,21 @@ val repeat :
     application's index as a scalar argument, and the second's is one more.
     Where [n <= 0], the result is [init]. A value with no element stands in
     [step] as zeros, and is its initial value after the loop. *)
+
+val until :
+  Ops.device ->
+  int ->
+  Ops.t list ->
+  stop:(Ops.t list -> Ops.t) ->
+  (Ops.t -> Ops.t list -> Ops.t list) ->
+  Ops.t list
+(** [until d n init ~stop step] is the values that applications of [step] reach
+    from [init], computed on [d], applied while [stop] does not hold at the
+    values reached, at most [n] times: [init] itself where [stop init] holds.
+    [step] is as {!repeat}'s, and [stop vs] is a boolean of one element. [step]
+    is applied once while the loop is built, to trace the body, and [stop]
+    twice: to [init], before the loop, and to the body's values. The call
+    passes each trip its application's index as a scalar argument. Where
+    [n <= 0] or no value of [init] has an element, the result is [init]. A
+    value with no element stands in [step] as zeros, and is its initial value
+    after the loop. *)

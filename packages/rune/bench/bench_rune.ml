@@ -536,6 +536,11 @@ let jit_rows () =
     let a = between f32 40 (-1.) 1. [| 64; 8; 8 |] in
     host (Nx.add a (Nx.matrix_transpose a))
   in
+  let symmetric k seed =
+    let a = between f64 seed (-1.) 1. [| k; k |] in
+    host (Nx.add a (Nx.matrix_transpose a))
+  in
+  let sym64 = symmetric 64 60 and sym128 = symmetric 128 61 in
   let angles = between f32 41 (-30.) 30. [| 65536 |] in
   let bases = between f32 43 0.01 30. [| 65536 |] in
   let exponents = between f32 47 (-3.) 3. [| 65536 |] in
@@ -695,6 +700,14 @@ let jit_rows () =
     warm "eigh-float32-64x8x8"
       (fun () -> Rune.jit (split_fn ()) (fun a -> Nx.eigh f32 a))
       (fun f -> synced2 (f sym));
+    (* Sweeps of Jacobi rotations of a uniform symmetric matrix until the next
+       would rotate nothing, of at most 32 and 38. *)
+    warm "eigh-float64-64"
+      (fun () -> Rune.jit (split_fn ()) (fun a -> Nx.eigh f64 a))
+      (fun f -> synced2 (f sym64));
+    warm "eigh-float64-128"
+      (fun () -> Rune.jit (split_fn ()) (fun a -> Nx.eigh f64 a))
+      (fun f -> synced2 (f sym128));
     gaussian ();
     (* Sines of a buffer's angles in [[-30, 30]]; sines of angles a tanh
        bounds to [[-30, 30]], which need no long reduction, read net of the
