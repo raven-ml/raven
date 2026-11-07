@@ -1,0 +1,4 @@
+(tests
+ (names test_float_text test_float_print)
+ (package norn)
+ (libraries norn_float_text windtrap))

@@ -23,4 +23,4 @@ let compare p q =
   let c = Float.compare p.x q.x in
   if c <> 0 then c else Float.compare p.y q.y
 
-let pp ppf p = Format.fprintf ppf "(%a, %a)" Float_text.pp p.x Float_text.pp p.y
+let pp ppf p = Format.fprintf ppf "(%a, %a)" Float_print.pp p.x Float_print.pp p.y

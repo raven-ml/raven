@@ -124,7 +124,7 @@ let of_string s =
   in
   let number () =
     let start = !pos in
-    let stop = Munin_float_text.Float_text.number_end s start n in
+    let stop = Munin_float_text.Float_read.number_end s start n in
     if stop < 0 then fail start "invalid number";
     pos := stop;
     Number (String.sub s start (stop - start))
@@ -225,7 +225,7 @@ let add_float b x =
   else if x = Float.infinity then Buffer.add_string b {|{"float":"Infinity"}|}
   else if x = Float.neg_infinity then
     Buffer.add_string b {|{"float":"-Infinity"}|}
-  else Buffer.add_string b (Munin_float_text.Float_text.exact_float x)
+  else Buffer.add_string b (Munin_float_text.Float_print.exact_float x)
 
 let add_int b n =
   if n > exact_int_bound || n < -exact_int_bound then
@@ -255,7 +255,7 @@ let integral text =
   not (String.exists (fun c -> c = '.' || c = 'e' || c = 'E') text)
 
 let float = function
-  | Number t -> Munin_float_text.Float_text.of_string t
+  | Number t -> Munin_float_text.Float_read.of_string t
   | Object [ ("float", String "NaN") ] -> Some Float.nan
   | Object [ ("float", String "Infinity") ] -> Some Float.infinity
   | Object [ ("float", String "-Infinity") ] -> Some Float.neg_infinity

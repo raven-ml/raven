@@ -16,8 +16,8 @@ type t = [ `Bool of bool | `Int of int | `Float of float | `String of string ]
 val pp : Format.formatter -> t -> unit
 (** [pp ppf v] prints [v] for people and for tab-separated output: a
     boolean as [true] or [false], an integer in decimal, a float in the
-    fewest significant digits from 15 that read back to it, with a fraction
-    or an exponent when it is integral, or as [nan], [inf] or [-inf], and a
+    fewest significant digits that read back to it, with a fraction or an
+    exponent when it is integral, or as [nan], [inf] or [-inf], and a
     string with each backslash and control character escaped as a JSON
     string escapes it, so that a tab prints as a backslash and [t]. The
     text is the same on every system and holds no tab or line feed. *)

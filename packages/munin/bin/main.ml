@@ -58,11 +58,11 @@ let first_second = -62135596800.
 let end_second = 253402300800.
 
 (* [t] in RFC 3339, UTC, to the microsecond, rounded once from its exact value
-   as Float_text rounds. A time outside the years RFC 3339 writes prints as a
-   float. *)
+   as Float_print.f rounds. A time outside the years RFC 3339 writes prints as
+   a float. *)
 let time t =
   let s = Float.floor t in
-  let frac = Float_text.f 6 (t -. s) in
+  let frac = Float_print.f 6 (t -. s) in
   let s, micros =
     if frac.[0] = '1' then (s +. 1., "000000") else (s, String.sub frac 2 6)
   in

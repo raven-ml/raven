@@ -388,7 +388,7 @@ let columns s =
 
 (* Numbers to a count of decimals, as C's [%.*f] writes them where it rounds
    once, the same text on every system. *)
-let fixed = Float_text.f
+let fixed = Norn_float_text.Float_print.f
 
 let pp_finding ppf = function
   | Rhat_high { path; index; rhat } ->
@@ -439,7 +439,7 @@ let cell name x =
     match name with
     | "ess_bulk" | "ess_tail" | "ess" -> fixed 0 x
     | "rhat" -> fixed 2 x
-    | _ -> Float_text.g 3 x
+    | _ -> Norn_float_text.Float_print.g 3 x
 
 let pp ppf s =
   let names = List.map fst s.columns in

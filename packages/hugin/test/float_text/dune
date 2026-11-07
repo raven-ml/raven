@@ -1,0 +1,4 @@
+(tests
+ (names test_float_text test_float_print)
+ (package hugin)
+ (libraries hugin_float_text windtrap))

@@ -68,11 +68,11 @@ let add_fixed b d v =
       end
     end
   end
-  else Buffer.add_string b (trim_zeros (Float_text.f d v))
+  else Buffer.add_string b (trim_zeros (Float_print.f d v))
 
 let add_exact b v =
   if v = 0. then Buffer.add_char b '0'
-  else Buffer.add_string b (Float_text.exact v)
+  else Buffer.add_string b (Float_print.exact v)
 
 let rounded d v = Float.round (v *. pow10.(d)) /. pow10.(d)
 

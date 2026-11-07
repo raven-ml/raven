@@ -72,15 +72,15 @@ let max_sweep = 2000. *. Float.pi
    the circle by at most 0.027% of the radius. *)
 let arc c r ~start ~sweep p =
   if not (r >= 0. && Float.is_finite r) then
-    invalid_arg (Printf.sprintf "Path.arc: invalid radius %s" (Float_text.g r));
+    invalid_arg (Printf.sprintf "Path.arc: invalid radius %s" (Float_print.g r));
   if not (Float.is_finite start && Float.is_finite sweep) then
     invalid_arg
       (Printf.sprintf "Path.arc: angles not finite (%s, %s)"
-         (Float_text.g start) (Float_text.g sweep));
+         (Float_print.g start) (Float_print.g sweep));
   if Float.abs sweep > max_sweep then
     invalid_arg
       (Printf.sprintf "Path.arc: sweep %s exceeds 1000 turns"
-         (Float_text.g sweep));
+         (Float_print.g sweep));
   let cx = P2.x c and cy = P2.y c in
   let cos0 = Float.cos start and sin0 = Float.sin start in
   let x0 = cx +. (r *. cos0) and y0 = cy +. (r *. sin0) in
@@ -151,7 +151,7 @@ let rect b =
 let circle c r =
   if not (r >= 0. && Float.is_finite r) then
     invalid_arg
-      (Printf.sprintf "Path.circle: invalid radius %s" (Float_text.g r));
+      (Printf.sprintf "Path.circle: invalid radius %s" (Float_print.g r));
   close (arc c r ~start:0. ~sweep:(2. *. Float.pi) empty)
 
 let poly fn ~closed xs ys =
@@ -267,7 +267,7 @@ let flatten ?(tolerance = 0.1) m ~move ~line ~close acc p =
   if not (tolerance > 0.) then
     invalid_arg
       (Printf.sprintf "Path.flatten: tolerance %s not positive"
-         (Float_text.g tolerance));
+         (Float_print.g tolerance));
   (* The current point after [m]. *)
   let cur = Array.create_float 2 in
   let at acc x y f =
@@ -723,13 +723,13 @@ let pp ppf p =
   fold_built
     ~move:(fun () x y ->
       sep ();
-      Format.fprintf ppf "M %a %a" Float_text.pp x Float_text.pp y)
+      Format.fprintf ppf "M %a %a" Float_print.pp x Float_print.pp y)
     ~line:(fun () x y ->
       sep ();
-      Format.fprintf ppf "L %a %a" Float_text.pp x Float_text.pp y)
+      Format.fprintf ppf "L %a %a" Float_print.pp x Float_print.pp y)
     ~cubic:(fun () c1x c1y c2x c2y x y ->
       sep ();
-      let pp = Float_text.pp in
+      let pp = Float_print.pp in
       Format.fprintf ppf "C %a %a %a %a %a %a" pp c1x pp c1y pp c2x pp c2y pp x
         pp y)
     ~close:(fun () ->

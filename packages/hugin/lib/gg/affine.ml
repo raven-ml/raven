@@ -91,6 +91,6 @@ let compare m n =
           if c <> 0 then c else Float.compare m.y0 n.y0
 
 let pp ppf m =
-  let pp = Float_text.pp in
+  let pp = Float_print.pp in
   Format.fprintf ppf "@[<1>(%a %a %a %a %a %a)@]" pp m.xx pp m.yx pp m.xy pp
     m.yy pp m.x0 pp m.y0

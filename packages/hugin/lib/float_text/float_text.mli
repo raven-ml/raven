@@ -3,35 +3,62 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Floats as decimal text, the same on every system.
+(** Decimal digits of floats, the same on every system.
 
-    OCaml's [Printf] writes a float with the C library's printf, whose text
-    differs between systems: under mingw-w64, msvcrt writes three exponent
-    digits, keeps 17 digits and rounds from those, and rounds an exact tie
-    away from zero. These functions take a float's exact decimal value and
-    round it once, to nearest, ties to even, as C's printf does where it is
-    correctly rounded: [135.5625] to six digits is [135.562]. A NaN is [nan]
-    whatever its sign, and the infinities [inf] and [-inf]; a negative zero
-    keeps its sign. *)
+    {b Internal module.} A finite float's value is an exact decimal. These
+    functions compute with that decimal in integers. Each float operation they
+    perform is exact: [frexp], [ldexp], [fmod], and a subtraction and a
+    division whose results are integers below 2{^ 53}. So the digits are the
+    same on every system and under js_of_ocaml. Each returns a pair
+    [(d, e)] of the digits [d] of a decimal, without leading or trailing zeros,
+    and the exponent [e] of its last digit, so that the decimal is
+    [d] × 10{^ [e]}. [("15", -1)] is 1.5 and [("12", 3)] is 12000. Zero is
+    [("0", 0)].
 
-val g : ?precision:int -> float -> string
-(** [g ~precision x] is [x] as C's [%.*g] writes it, with [precision]
-    significant digits, [6] by default and at least [1]: positional for a
-    decimal exponent from [-4] to below [precision], otherwise with an
-    exponent of at least two digits, without trailing zeros, as [135.562],
-    [1e+16] and [1.5e-05]. *)
+    They read [|x|]. The caller writes the sign, NaN and the infinities as its
+    format wants, and takes the sign from [Float.sign_bit x] rather than from
+    [x < 0.], so that [-0.] keeps its sign. [decimals 2 (-0.001)] is
+    [("0", 0)], which C's [%.2f] writes [-0.00].
 
-val pp : Format.formatter -> float -> unit
-(** [pp ppf x] formats [g x]. *)
+    Every function raises [Invalid_argument] if [x] is NaN or infinite. *)
 
-val f : int -> float -> string
-(** [f decimals x] is [x] as C's [%.*f] writes it, with [decimals] digits
-    after the point, at least [0]: [0.12] for [0.125] at two. *)
+type format = { precision : int; emin : int }
+(** The type for binary floating-point formats. [precision] is the number of
+    significand bits, the leading one included, from 1 to 53, and [emin] the
+    exponent of the least normal value, 2{^ [emin]}. The exponent is unbounded
+    above: the reals that read as the largest finite value are those nearer to
+    it than to the next value the format would have. Where that value's
+    significand is odd, as in every IEEE 754 format, this is IEEE's overflow
+    threshold.
 
-val exact : float -> string
-(** [exact x] is the first of [g ~precision:15 x], [g ~precision:16 x] and
-    [g ~precision:17 x] that reads back as [x], to nearest, ties to even: the
-    fewest digits from 15 that name [x], as [0.1] and [0.30000000000000004]. *)
+    Binary16 is [{ precision = 11; emin = -14 }], bfloat16 [{ 8; -126 }],
+    float8 e5m2 [{ 3; -14 }], e4m3fn [{ 4; -6 }] and float4 e2m1fn
+    [{ 2; 0 }]. *)
 
-val pp_exact : Format.formatter -> float -> unit
-(** [pp_exact ppf x] formats [exact x]. *)
+val binary64 : format
+(** [binary64] is [{ precision = 53; emin = -1022 }]. *)
+
+val binary32 : format
+(** [binary32] is [{ precision = 24; emin = -126 }]. *)
+
+val shortest : format -> float -> string * int
+(** [shortest f x] is the decimal with the fewest digits that reads as [x] in
+    [f], reading to nearest, ties to even; of those, the nearest to [x]; and at
+    a tie between two, the one whose last digit is even.
+    [shortest binary64 0.1] is [("1", -1)], and so is [shortest binary32 x] for
+    the float32 nearest 0.1, held in a double.
+
+    Raises [Invalid_argument] if [f]'s precision is outside 1 to 53, or if [x]
+    is not a value of [f]. *)
+
+val significant : int -> float -> string * int
+(** [significant n x] is [|x|] rounded to [n] significant digits, to nearest,
+    ties to even. [significant 3 135.5625] is [("136", 0)] and
+    [significant 2 0.125] is [("12", -2)].
+
+    Raises [Invalid_argument] if [n < 1]. *)
+
+val decimals : int -> float -> string * int
+(** [decimals n x] is [|x|] rounded to a multiple of 10{^ -[n]}, to nearest,
+    ties to even. [decimals 2 0.125] is [("12", -2)] and [decimals 0 0.5] is
+    [("0", 0)]. [n] may be negative: [decimals (-2) 1250.] is [("12", 2)]. *)

@@ -6,7 +6,8 @@
 open Munin
 module C = Matrix_charts
 module G = Matrix_grid
-module Float_text = Munin_float_text.Float_text
+module Float_print = Munin_float_text.Float_print
+module Float_read = Munin_float_text.Float_read
 
 type axis = Step | Step_metric | Time
 
@@ -216,14 +217,14 @@ let x_label axis v =
   | Step | Step_metric ->
       if Float.is_integer v && Float.abs v < 1e15 then
         Text.count (Float.to_int v)
-      else Float_text.g ~precision:12 v
+      else Float_print.g ~precision:12 v
 
 let y_label ~extreme v =
   Text.cut label_cells
     (if extreme then Text.value v
      else if Float.is_integer v && Float.abs v < 1e15 then
        Text.count (Float.to_int v)
-     else Float_text.g ~precision:12 v)
+     else Float_print.g ~precision:12 v)
 
 (* The y ticks of a plot of [rows] over [(lo, hi)]: both extremes, so that the
    region the run is in is labelled, and between them multiples of a 1, 2 or 5
@@ -244,7 +245,7 @@ let y_ticks ~log (lo, hi) rows =
        float nearest its twelve significant digits, the same on every system. *)
     let snap v =
       Option.value
-        (Float_text.of_string (Float_text.g ~precision:12 v))
+        (Float_read.of_string (Float_print.g ~precision:12 v))
         ~default:v
     in
     let candidates =

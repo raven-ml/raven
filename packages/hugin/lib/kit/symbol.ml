@@ -147,7 +147,7 @@ let strokes k ss =
 let path paint a s =
   if not (a >= 0. && Float.is_finite a) then
     invalid_arg
-      (Printf.sprintf "Symbol.path: invalid size %s" (Float_text.g a));
+      (Printf.sprintf "Symbol.path: invalid size %s" (Float_print.g a));
   let k = Float.sqrt a in
   match s with
   | Circle -> Path.circle (P2.v 0. 0.) (Float.sqrt (a /. Float.pi))

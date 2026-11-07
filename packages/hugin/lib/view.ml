@@ -64,7 +64,7 @@ let pp_value : type a. a sort -> Format.formatter -> a -> unit =
     | None -> Format.pp_print_string ppf "none"
     | Some v -> pp ppf v
   in
-  let pp_float = Float_text.pp in
+  let pp_float = Float_print.pp in
   match s with
   | Number -> pp_float ppf v
   | Choice -> Format.fprintf ppf "%S" v
@@ -86,8 +86,8 @@ let check_interval fn = function
   | None -> ()
   | Some (lo, hi) ->
       if not (Float.is_finite lo && Float.is_finite hi && lo <= hi) then
-        err fn "the interval (%a, %a) is not finite or not ordered" Float_text.pp lo
-          Float_text.pp hi
+        err fn "the interval (%a, %a) is not finite or not ordered" Float_print.pp lo
+          Float_print.pp hi
 
 let number name ~init = { ident = User name; sort = Number; init }
 let choice name ~init = { ident = User name; sort = Choice; init }

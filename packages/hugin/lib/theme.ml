@@ -25,7 +25,7 @@ let v ?(ink = Color.gray 0.1) ?(paper = Color.white) ?accent ?(size = 10.)
     ?(fonts = [ Font.regular; Font.bold ]) ?(palette = Scheme.tableau10)
     ?(scheme = Scheme.viridis) ?(locale = Locale.default) () =
   if not (is_pos size) then
-    err "Theme.v" "size %a is not finite and positive" Float_text.pp size;
+    err "Theme.v" "size %a is not finite and positive" Float_print.pp size;
   (match fonts with [] -> err "Theme.v" "fonts is empty" | _ :: _ -> ());
   let accent =
     match accent with Some c -> c | None -> (Scheme.colors 1 palette).(0)
@@ -69,6 +69,6 @@ let pp ppf th =
   Format.fprintf ppf
     "@[<v 1>(theme@ ink %a@ paper %a@ accent %a@ size %a@ fonts %a@ palette \
      %a@ scheme %a@ locale %a)@]"
-    Color.pp th.ink Color.pp th.paper Color.pp th.accent Float_text.pp th.size
+    Color.pp th.ink Color.pp th.paper Color.pp th.accent Float_print.pp th.size
     (Format.pp_print_list ~pp_sep:Format.pp_print_space Font.pp)
     th.fonts Scheme.pp th.palette Scheme.pp th.scheme Locale.pp th.locale

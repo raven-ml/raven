@@ -359,14 +359,14 @@ let pop st =
 
 let int_arg st v =
   if Float.is_integer v && Float.abs v < 1e9 then Float.to_int v
-  else fail st "an integer argument is %s" (Float_text.g v)
+  else fail st "an integer argument is %s" (Float_print.g v)
 
 (* Arithmetic results are 16.16 numbers, as charstring numbers are; a result
    out of their range is an overflow, which Type 2 leaves undefined. *)
 let fixed st v =
   let r = Float.round (v *. 65536.) /. 65536. in
   if Float.is_nan r || r < -32768. || r >= 32768. then
-    fail st "an arithmetic result %s out of range" (Float_text.g v);
+    fail st "an arithmetic result %s out of range" (Float_print.g v);
   r
 
 (* The first stack-clearing operator of a CFF charstring takes the glyph's
@@ -706,7 +706,7 @@ and escape st b1 =
   | 24 -> binary (fun a b -> fx (a *. b))
   | 26 ->
       unary (fun a ->
-          if a < 0. then fail st "a square root of %s" (Float_text.g a)
+          if a < 0. then fail st "a square root of %s" (Float_print.g a)
           else fx (Float.sqrt a))
   | 27 ->
       let v = pop st in
@@ -950,7 +950,7 @@ let std_strings = 391 (* SIDs below this name standard strings. *)
 (* [real b v] writes [v] as a DICT real: the nibbles of its decimal text,
    ended by [0xf]. *)
 let real b v =
-  let text = Float_text.exact v in
+  let text = Float_print.exact v in
   let nibbles = ref [] in
   let add n = nibbles := n :: !nibbles in
   let i = ref 0 in

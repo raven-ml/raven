@@ -32,7 +32,7 @@ let coords name n = function
       Array.iteri
         (fun i c ->
           if not (Float.is_finite c) then
-            err "%s.(%d) = %s is not finite" name i (Float_text.g c))
+            err "%s.(%d) = %s is not finite" name i (Float_print.g c))
         a;
       if len >= 2 then begin
         let up = a.(1) > a.(0) in
@@ -694,8 +694,8 @@ let isoband ~lo ~hi f =
     invalid_arg "Field2.isoband: a bound is NaN";
   if lo > hi then
     invalid_arg
-      (Printf.sprintf "Field2.isoband: lo %s is above hi %s" (Float_text.g lo)
-         (Float_text.g hi));
+      (Printf.sprintf "Field2.isoband: lo %s is above hi %s" (Float_print.g lo)
+         (Float_print.g hi));
   if lo = hi || f.nx < 2 || f.ny < 2 then Pgon2.v []
   else begin
     let rings = ref [] in

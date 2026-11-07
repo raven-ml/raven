@@ -67,13 +67,15 @@ v}
     {1:values Numbers and values}
 
     Every number munin writes reads back exactly. A float is written in the
-    fewest significant digits from 15 that read back to it, with a fraction
-    or an exponent even when it is integral: [0.1], [1.0], [-0.0],
-    [1e+16]. JSON has no number for NaN or the infinities, which are
-    written [{"float":"NaN"}], [{"float":"Infinity"}] and
-    [{"float":"-Infinity"}] wherever a float may appear. A NaN's sign and
-    payload are not kept. An integer [n] with [-2{^53} <= n <= 2{^53}] is
-    written as its decimal, and a larger one as [{"int":"<decimal>"}]. A
+    fewest significant digits that read back to it, the nearest to it of
+    those, as C's [%g] lays them out at a precision of the larger of 15 and
+    their count, with a fraction or an exponent even when it is integral:
+    [0.1], [1.0], [-0.0], [1e+16], [5e-324]. JSON has no number for NaN or
+    the infinities, which are written [{"float":"NaN"}],
+    [{"float":"Infinity"}] and [{"float":"-Infinity"}] wherever a float may
+    appear. A NaN's sign and payload are not kept. An integer [n] with
+    [-2{^53} <= n <= 2{^53}] is written as its decimal, and a larger one as
+    [{"int":"<decimal>"}]. A
     reader takes a number written with a fraction or an exponent as a
     float, and one written without either as an integer.
 

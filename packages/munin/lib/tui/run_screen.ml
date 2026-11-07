@@ -133,7 +133,7 @@ let sentence v ~width =
     | Some x -> (
         [
           [
-            plain (Munin_float_text.Float_text.g ~precision:2 x);
+            plain (Munin_float_text.Float_print.g ~precision:2 x);
             dim (if wide then " steps/s" else "/s");
           ];
         ]
@@ -679,7 +679,7 @@ let use_parts v =
     | Some a, Some b -> Some (Text.gib a ^ " of " ^ Text.gib b ^ " GiB")
     | _ -> None
   in
-  let load l = Munin_float_text.Float_text.g ~precision:2 l in
+  let load l = Munin_float_text.Float_print.g ~precision:2 l in
   let somes = List.filter_map Fun.id in
   let cpu =
     somes
@@ -715,9 +715,9 @@ let use_parts v =
         [
           opt (fun p -> Text.percent p ^ " busy") (k "busy_pct");
           opt
-            (fun t -> Munin_float_text.Float_text.f 0 t ^ " °C")
+            (fun t -> Munin_float_text.Float_print.f 0 t ^ " °C")
             (k "temperature_c");
-          opt (fun t -> Munin_float_text.Float_text.f 0 t ^ " W") (k "power_w");
+          opt (fun t -> Munin_float_text.Float_print.f 0 t ^ " W") (k "power_w");
         ],
       somes
         [
@@ -794,7 +794,7 @@ let paint_use v g l ~width =
                 [
                   ( Paint.dim,
                     Printf.sprintf "read every %ss"
-                      (Munin_float_text.Float_text.g ~precision:3 s) );
+                      (Munin_float_text.Float_print.g ~precision:3 s) );
                 ]
             | None -> []))
       @ [ Paint.sep; (Paint.dim, "errors not logged") ]

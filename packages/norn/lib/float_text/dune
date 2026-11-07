@@ -1,0 +1,3 @@
+(library
+ (name norn_float_text)
+ (package norn))

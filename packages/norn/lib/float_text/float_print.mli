@@ -8,10 +8,11 @@
     OCaml's [Printf] writes a float with the C library's printf, whose text
     differs between systems: under mingw-w64, msvcrt writes three exponent
     digits, keeps 17 digits and rounds from those, and rounds an exact tie
-    away from zero. {!g} and {!f} take a float's exact decimal value and
-    round it once, to nearest, ties to even, as C's printf does where it is
-    correctly rounded. A NaN is [nan] whatever its sign, and the infinities [inf] and
-    [-inf]; a negative zero keeps its sign. *)
+    away from zero. {!g} and {!f} lay out the digits {!Float_text} computes
+    from a float's exact decimal value, rounded once, to nearest, ties to
+    even, as C's printf does where it is correctly rounded. A NaN is [nan]
+    whatever its sign, and the infinities [inf] and [-inf]; a negative zero
+    keeps its sign. *)
 
 val g : int -> float -> string
 (** [g p x] is [x] as C's [%.*g] writes it, with [p] significant digits, at

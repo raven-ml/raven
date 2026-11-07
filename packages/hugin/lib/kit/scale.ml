@@ -135,10 +135,10 @@ let is_constant tf a b =
 
 let check_floats fn tf (a, b) =
   if not (Float.is_finite a && Float.is_finite b && a <= b) then
-    err fn "domain (%a, %a) is not finite and ordered" Float_text.pp a
-      Float_text.pp b;
+    err fn "domain (%a, %a) is not finite and ordered" Float_print.pp a
+      Float_print.pp b;
   if missing tf a || missing tf b then
-    err fn "domain (%a, %a) has a missing end" Float_text.pp a Float_text.pp b
+    err fn "domain (%a, %a) has a missing end" Float_print.pp a Float_print.pp b
 
 let check_categories fn = function
   | Labels l ->
@@ -177,8 +177,8 @@ let check_tz fn tz =
 
 let check_areas fn (a0, a1) =
   if not (Float.is_finite a0 && Float.is_finite a1 && a0 >= 0. && a1 >= 0.) then
-    err fn "areas (%a, %a) are not finite and not negative" Float_text.pp a0
-      Float_text.pp a1
+    err fn "areas (%a, %a) are not finite and not negative" Float_print.pp a0
+      Float_print.pp a1
 
 (* Constructors *)
 
@@ -193,7 +193,7 @@ let make fn kind transform ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped
   Option.iter (check_tz fn) tz_offset_s;
   Option.iter
     (fun p ->
-      if not (p >= 0. && p <= 1.) then err fn "padding %a not in [0;1]" Float_text.pp p)
+      if not (p >= 0. && p <= 1.) then err fn "padding %a not in [0;1]" Float_print.pp p)
     padding;
   Option.iter (fun w -> if w < 1 then err fn "wrap %d below 1" w) wrap;
   let domain = Option.map (check_domain fn transform) domain in
@@ -229,14 +229,14 @@ let linear ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped ?ticks ?notation
 let log ?(base = 10.) ?name ?domain ?nice ?clamp ?reverse ?stepped ?ticks
     ?notation ?scheme ?areas ?unknown () =
   if not (Float.is_finite base && base > 1.) then
-    err "log" "base %a is not finite above 1" Float_text.pp base;
+    err "log" "base %a is not finite above 1" Float_print.pp base;
   make "log" Quantitative (Log base) ?name ?domain:(floats domain) ?nice ?clamp
     ?reverse ?stepped ?ticks ?notation ?scheme ?areas ?unknown ()
 
 let symlog ?(constant = 1.) ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped
     ?ticks ?notation ?scheme ?areas ?unknown () =
   if not (Float.is_finite constant && constant > 0.) then
-    err "symlog" "constant %a is not finite and positive" Float_text.pp
+    err "symlog" "constant %a is not finite and positive" Float_print.pp
       constant;
   make "symlog" Quantitative (Symlog constant) ?name ?domain:(floats domain)
     ?nice ?zero ?clamp ?reverse ?stepped ?ticks ?notation ?scheme ?areas
@@ -245,7 +245,7 @@ let symlog ?(constant = 1.) ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped
 let pow ~exponent ?name ?domain ?nice ?zero ?clamp ?reverse ?stepped ?ticks
     ?notation ?scheme ?areas ?unknown () =
   if not (Float.is_finite exponent && exponent > 0.) then
-    err "pow" "exponent %a is not finite and positive" Float_text.pp
+    err "pow" "exponent %a is not finite and positive" Float_print.pp
       exponent;
   make "pow" Quantitative (Pow exponent) ?name ?domain:(floats domain) ?nice
     ?zero ?clamp ?reverse ?stepped ?ticks ?notation ?scheme ?areas ?unknown ()
@@ -745,8 +745,8 @@ let property_name = function
 
 let pp_property ppf p = Format.pp_print_string ppf (property_name p)
 
-(* [pp_float] formats the fewest significant digits from 15 that read back. *)
-let pp_float = Float_text.pp_exact
+(* [pp_float] formats the fewest significant digits that read back. *)
+let pp_float = Float_print.pp_exact
 
 let pp_transform ppf = function
   | Linear -> Format.pp_print_string ppf "linear"

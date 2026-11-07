@@ -16,7 +16,7 @@ let v xs ys =
     if not (Float.is_finite xs.(i) && Float.is_finite ys.(i)) then
       invalid_arg
         (Printf.sprintf "Ring2.v: point %d (%s, %s) is not finite" i
-           (Float_text.g xs.(i)) (Float_text.g ys.(i)))
+           (Float_print.g xs.(i)) (Float_print.g ys.(i)))
   done;
   { xs = Array.copy xs; ys = Array.copy ys }
 
@@ -93,7 +93,7 @@ let pp ppf r =
     if i > 0 then Format.pp_print_space ppf ();
     Format.fprintf ppf "%s %a %a"
       (if i = 0 then "M" else "L")
-      Float_text.pp r.xs.(i) Float_text.pp r.ys.(i)
+      Float_print.pp r.xs.(i) Float_print.pp r.ys.(i)
   done;
   if n > 0 then Format.fprintf ppf "@ Z";
   Format.pp_close_box ppf ()

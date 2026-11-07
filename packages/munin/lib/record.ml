@@ -282,7 +282,7 @@ let has s i lit =
 let skip s i lit = if has s i lit then i + String.length lit else raise Other
 
 let number_end s i =
-  let j = Munin_float_text.Float_text.number_end s i (String.length s) in
+  let j = Munin_float_text.Float_read.number_end s i (String.length s) in
   if j < 0 then raise Other;
   j
 
@@ -308,7 +308,7 @@ let float_at s pos =
     Float.neg_infinity)
   else
     let j = number_end s i in
-    match Munin_float_text.Float_text.of_substring s i (j - i) with
+    match Munin_float_text.Float_read.of_substring s i (j - i) with
     | Some x ->
         pos := j;
         x

@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module Float_text = Munin_float_text.Float_text
+module Float_print = Munin_float_text.Float_print
 
 (* Widths are matrix's, the terminal's cells. *)
 let width_method = `Unicode
@@ -42,9 +42,9 @@ let value x =
   else
     let a = Float.abs x in
     if a < 1e-4 || a >= 1e6 then
-      (* [Float_text.g] drops trailing zeros: they are put back in the mantissa,
-         so that it has four digits. *)
-      let s = Float_text.g ~precision:4 x in
+      (* [Float_print.g] drops trailing zeros: they are put back in the
+         mantissa, so that it has four digits. *)
+      let s = Float_print.g ~precision:4 x in
       match String.index_opt s 'e' with
       | None -> s
       | Some i ->
@@ -59,7 +59,7 @@ let value x =
           m ^ String.make (max 0 (4 - digits)) '0' ^ rest
     else
       let e = Float.to_int (Float.floor (Float.log10 a)) in
-      Float_text.f (max 0 (3 - e)) x
+      Float_print.f (max 0 (3 - e)) x
 
 let signed x = if x > 0. then "+" ^ value x else value x
 
@@ -67,7 +67,7 @@ let percent_of s t =
   if t <= 0 then ""
   else Printf.sprintf "%d%%" (if s >= t then 100 else max 0 s * 100 / t)
 
-let given x = if Float.is_finite x then Float_text.exact x else non_finite x
+let given x = if Float.is_finite x then Float_print.exact x else non_finite x
 
 let count n =
   let s = string_of_int (abs n) in
@@ -125,9 +125,9 @@ let date t =
   Printf.sprintf "%s %d %02d:%02d:%02d" months.(tm.tm_mon) tm.tm_mday tm.tm_hour
     tm.tm_min tm.tm_sec
 
-let gib b = Float_text.f 1 (b /. 1073741824.)
+let gib b = Float_print.f 1 (b /. 1073741824.)
 
 let percent x =
-  if x >= 10. then Float_text.f 0 x ^ "%" else Float_text.f 1 x ^ "%"
+  if x >= 10. then Float_print.f 0 x ^ "%" else Float_print.f 1 x ^ "%"
 
-let mbs b = Float_text.g ~precision:2 (b /. 1e6)
+let mbs b = Float_print.g ~precision:2 (b /. 1e6)

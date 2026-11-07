@@ -10,7 +10,7 @@ type t = Figure of float * float | Panels of float * float
 
 let check fn w h =
   if not (is_pos w && is_pos h) then
-    err fn "%a × %a is not finite and positive" Float_text.pp w Float_text.pp h
+    err fn "%a × %a is not finite and positive" Float_print.pp w Float_print.pp h
 
 let figure w h =
   check "Size.figure" w h;
@@ -30,5 +30,5 @@ let equal s s' =
   | Figure _, Panels _ | Panels _, Figure _ -> false
 
 let pp ppf = function
-  | Figure (w, h) -> Format.fprintf ppf "figure %a × %a pt" Float_text.pp w Float_text.pp h
-  | Panels (w, h) -> Format.fprintf ppf "panels %a × %a pt" Float_text.pp w Float_text.pp h
+  | Figure (w, h) -> Format.fprintf ppf "figure %a × %a pt" Float_print.pp w Float_print.pp h
+  | Panels (w, h) -> Format.fprintf ppf "panels %a × %a pt" Float_print.pp w Float_print.pp h

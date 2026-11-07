@@ -9,7 +9,7 @@ let pp_float ppf x =
   if Float.is_nan x then Format.pp_print_string ppf "nan"
   else if x = Float.infinity then Format.pp_print_string ppf "inf"
   else if x = Float.neg_infinity then Format.pp_print_string ppf "-inf"
-  else Format.pp_print_string ppf (Munin_float_text.Float_text.exact_float x)
+  else Format.pp_print_string ppf (Munin_float_text.Float_print.exact_float x)
 
 (* As a JSON string escapes, without the quotes. *)
 let pp_string ppf s =

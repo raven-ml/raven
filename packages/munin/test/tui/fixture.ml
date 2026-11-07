@@ -41,7 +41,7 @@ let num x =
   if Float.is_nan x then {|{"float":"NaN"}|}
   else if x = Float.infinity then {|{"float":"Infinity"}|}
   else if x = Float.neg_infinity then {|{"float":"-Infinity"}|}
-  else Munin_float_text.Float_text.exact_float x
+  else Munin_float_text.Float_print.exact_float x
 
 (* A JSON string (RFC 8259, section 7): a quote, a backslash and a control
    character escaped, every other byte as it is, UTF-8 included. *)

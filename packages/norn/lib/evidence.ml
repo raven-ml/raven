@@ -224,7 +224,7 @@ let stop z =
 
 (* [f2 x] is [x] to two decimals, as C's [%.2f] writes it where it rounds
    once, the same text on every system. *)
-let f2 = Float_text.f 2
+let f2 = Norn_float_text.Float_print.f 2
 
 let pp ppf z =
   Format.fprintf ppf "ln Z = %s ± %s, H = %s nats"

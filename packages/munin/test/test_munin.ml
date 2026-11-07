@@ -427,7 +427,7 @@ let float_text_tests =
         [ ("3.839223843572815e-239", Float.of_string "0x1.fffffffffffffp-793") ]
         (fun (text, expected) ->
           equal float_exact expected
-            (require_some (Munin_float_text.Float_text.of_string text)));
+            (require_some (Munin_float_text.Float_read.of_string text)));
       cases ~timeout:10.
         "a decimal beyond the greatest float reads as an infinity" ~id:fst
         [
@@ -436,34 +436,34 @@ let float_text_tests =
         ]
         (fun (text, expected) ->
           equal ~msg:"read" (option float_exact) (Some expected)
-            (Munin_float_text.Float_text.read text);
+            (Munin_float_text.Float_read.read text);
           equal ~msg:"of_string" (option float_exact) (Some expected)
-            (Munin_float_text.Float_text.of_string text));
+            (Munin_float_text.Float_read.of_string text));
       prop "a float's shortest text reads back as it" Gen.float (fun x ->
           equal float_exact x
             (require_some
-               (Munin_float_text.Float_text.of_string
-                  (Munin_float_text.Float_text.exact x))));
+               (Munin_float_text.Float_read.of_string
+                  (Munin_float_text.Float_print.exact x))));
       prop "a decimal reads as the float nearest it" gen_decimal (fun text ->
           cover "beyond the fast path" (String.length text > 18);
           equal (option float_exact)
-            (Munin_float_text.Float_text.read text)
-            (Munin_float_text.Float_text.of_string text));
+            (Munin_float_text.Float_read.read text)
+            (Munin_float_text.Float_read.of_string text));
       prop "a decimal of at most 18 digits reads as the float nearest it"
         gen_short_decimal (fun text ->
           equal (option float_exact)
-            (Munin_float_text.Float_text.read text)
-            (Munin_float_text.Float_text.of_string text));
+            (Munin_float_text.Float_read.read text)
+            (Munin_float_text.Float_read.of_string text));
       prop "a midpoint reads as the even float, a unit off it as the nearer"
         gen_midpoint (fun (text, off, expected) ->
           cover "a midpoint" (off = 0);
           equal float_exact expected
-            (require_some (Munin_float_text.Float_text.of_string text)));
+            (require_some (Munin_float_text.Float_read.of_string text)));
       prop "a substring reads as its copy" gen_decimal (fun text ->
           let s = "[" ^ text ^ "]" in
           equal (option float_exact)
-            (Munin_float_text.Float_text.of_string text)
-            (Munin_float_text.Float_text.of_substring s 1 (String.length text)));
+            (Munin_float_text.Float_read.of_string text)
+            (Munin_float_text.Float_read.of_substring s 1 (String.length text)));
       test "a sample of a decimal strtod misreads reads back exactly" (fun () ->
           with_store @@ fun store ->
           let line =
@@ -513,7 +513,7 @@ let escaped_key k =
     ^ "\""
 
 let shortest x =
-  if Float.is_finite x then Munin_float_text.Float_text.exact_float x
+  if Float.is_finite x then Munin_float_text.Float_print.exact_float x
   else json_float x
 
 let canonical_line (reading, time, step, values) =

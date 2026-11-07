@@ -13,7 +13,7 @@ let v lengths =
       if not (Float.is_finite l && l >= 0.) then
         invalid_arg
           (Printf.sprintf "Dash.v: the length %s is negative or not finite"
-               (Float_text.g l)))
+               (Float_print.g l)))
     lengths;
   match lengths with
   | [] -> lengths
@@ -34,5 +34,5 @@ let pp ppf = function
   | [] -> Format.pp_print_string ppf "solid"
   | d ->
       Format.fprintf ppf "@[%a@]"
-        (Format.pp_print_list ~pp_sep:Format.pp_print_space Float_text.pp)
+        (Format.pp_print_list ~pp_sep:Format.pp_print_space Float_print.pp)
         d

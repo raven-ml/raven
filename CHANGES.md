@@ -165,6 +165,11 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- The SVG writer's exact numbers (data attributes, scale, size), the reals
+  of a PDF font's CFF data and `Scale.pp` take the fewest digits that read
+  back, where they took the first of 15, 16 and 17 that did: `5e-324` for
+  `4.94065645841247e-324`, and 2^-24 as `5.960464477539063e-08` for
+  `5.9604644775390625e-08`.
 - A malformed CFF charstring's message writes its number with two exponent
   digits under Windows too, as `9e+08`.
 - `Font.of_string` reads fonts with CFF and CFF2 outlines, running their
@@ -1013,7 +1018,9 @@ All notable changes to this project will be documented in this file.
 Local experiment tracking for Raven: runs, their metrics, readings of the
 machine and devices, files and versioned artifacts, kept as plain JSON and
 text files that `Munin.Store_format` specifies, so `jq`, `tail -f` and
-shell scripts read a store as the library does. No server.
+shell scripts read a store as the library does. No server. A float is
+written in the fewest digits that read back to it, the same on every
+system: `0.1`, `5e-324`.
 
 A run is one append-only log written by its one `Session`, under a lock
 the kernel releases when the writer dies, so a run reads running, crashed

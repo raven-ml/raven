@@ -814,9 +814,9 @@ let strides st names =
 let choose (type d) ?(locale = Locale.default) ?notation ?(spacing = 0.) ~length
     ~measure (s : d Scale.t) : t =
   if not (Float.is_finite length && length > 0.) then
-    err "choose" "length %a is not finite and positive" Float_text.pp length;
+    err "choose" "length %a is not finite and positive" Float_print.pp length;
   if not (Float.is_finite spacing && spacing >= 0.) then
-    err "choose" "spacing %a is not finite and non-negative" Float_text.pp
+    err "choose" "spacing %a is not finite and non-negative" Float_print.pp
       spacing;
   check_notation "choose" notation s;
   let notation = Option.map decimal_notation notation in
@@ -828,7 +828,7 @@ let choose (type d) ?(locale = Locale.default) ?notation ?(spacing = 0.) ~length
         let e = measure l in
         if not (Float.is_finite e && e > 0.) then
           err "choose" "the extent %a of %S is not finite and positive"
-            Float_text.pp e l;
+            Float_print.pp e l;
         Strings.add extents l e;
         e
   in
@@ -971,7 +971,7 @@ let pp_text ppf s = Format.fprintf ppf "\"%s\"" s
 
 let pp ppf t =
   let pp_tick ppf tk =
-    Format.fprintf ppf "@[<1>(%a %a%a)@]" Float_text.pp tk.position pp_text
+    Format.fprintf ppf "@[<1>(%a %a%a)@]" Float_print.pp tk.position pp_text
       tk.label
       (fun ppf -> Option.iter (Format.fprintf ppf "@ %a" pp_text))
       tk.context
@@ -980,7 +980,7 @@ let pp ppf t =
     | [] -> ()
     | m ->
         Format.fprintf ppf "@ @[<1>(minor%a)@]"
-          (fun ppf -> List.iter (Format.fprintf ppf "@ %a" Float_text.pp))
+          (fun ppf -> List.iter (Format.fprintf ppf "@ %a" Float_print.pp))
           m
   in
   Format.fprintf ppf "@[<1>(ticks%a%a%a)@]"

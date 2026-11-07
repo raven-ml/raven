@@ -16,11 +16,11 @@ let v x y w h =
   if not (finite4 x y maxx maxy) then
     invalid_arg
       (Printf.sprintf "Box2.v: corner not finite in %s %s %s %s"
-         (Float_text.g x) (Float_text.g y) (Float_text.g w) (Float_text.g h));
+         (Float_print.g x) (Float_print.g y) (Float_print.g w) (Float_print.g h));
   if w < 0. || h < 0. then
     invalid_arg
-      (Printf.sprintf "Box2.v: negative size %s x %s" (Float_text.g w)
-         (Float_text.g h));
+      (Printf.sprintf "Box2.v: negative size %s x %s" (Float_print.g w)
+         (Float_print.g h));
   { minx = x; miny = y; maxx; maxy }
 
 let of_pts p q =
@@ -28,7 +28,7 @@ let of_pts p q =
   if not (finite4 px py qx qy) then
     invalid_arg
       (Printf.sprintf "Box2.of_pts: corner not finite in (%s, %s) (%s, %s)"
-         (Float_text.g px) (Float_text.g py) (Float_text.g qx) (Float_text.g qy));
+         (Float_print.g px) (Float_print.g py) (Float_print.g qx) (Float_print.g qy));
   {
     minx = Float.min px qx;
     miny = Float.min py qy;
@@ -66,10 +66,10 @@ let grow d b =
   if not (finite4 minx miny maxx maxy) then
     invalid_arg
       (Printf.sprintf "Box2.grow: corner not finite growing by %s"
-         (Float_text.g d));
+         (Float_print.g d));
   if minx > maxx || miny > maxy then
     invalid_arg
-      (Printf.sprintf "Box2.grow: %s shrinks past a side" (Float_text.g d));
+      (Printf.sprintf "Box2.grow: %s shrinks past a side" (Float_print.g d));
   { minx; miny; maxx; maxy }
 
 let transform m b =
@@ -105,5 +105,5 @@ let compare a b =
       if c <> 0 then c else Float.compare a.maxy b.maxy
 
 let pp ppf b =
-  Format.fprintf ppf "@[<1>[(%a, %a)@ (%a, %a)]@]" Float_text.pp b.minx
-    Float_text.pp b.miny Float_text.pp b.maxx Float_text.pp b.maxy
+  Format.fprintf ppf "@[<1>[(%a, %a)@ (%a, %a)]@]" Float_print.pp b.minx
+    Float_print.pp b.miny Float_print.pp b.maxx Float_print.pp b.maxy
