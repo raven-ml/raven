@@ -64,7 +64,20 @@ type field =
   | `Weekday
   | `Yearday ]
 
-type ('a, 's) t = { id : int; node : 'a node; typing : 'a typing option }
+(* A bound expression that took the identity of a live equal one holds, in
+   [rep], the expression whose entry in the hash-consing table holds that
+   identity, which keeps the entry while it lives. Every other expression,
+   unbound or with an entry of its own, holds [null] there. *)
+type ('a, 's) t = {
+  id : int;
+  node : 'a node;
+  typing : 'a typing option;
+  rep : term;
+}
+
+(* [term] is unboxed, so a term in the table is the expression itself and the
+   table holds it weakly. *)
+and term = T : ('a, 's) t -> term [@@unboxed]
 and 's out = out_repr
 
 and out_repr =
@@ -382,22 +395,28 @@ let lit_hash : type a. a Kind.t -> a -> int =
   | Span -> Hashtbl.hash (Time.Span.to_ns v)
   | Binary | List _ | Record | Tensor _ | Ext -> 0
 
-(* A hash agrees with [node_equal]: it reads the identities of operands and only
-   leaves that [node_equal] compares by value, never the values it compares with
-   [Type.compare_value]. *)
+(* A hash agrees with [node_equal]: it reads the identities of operands, the
+   constructor, as its block's tag, and only the attributes that [node_equal]
+   compares by value, never the values it compares with [Type.compare_value].
+   The constructor and the operator keep [sum a], [mean a] and [a < b], [a > b]
+   apart, so binding one never compares it with the others. *)
 let node_hash : type a. a node -> int =
  fun n ->
-  let leaf =
+  let attribute =
     match n with
     | Handle (_, c) | Ext_handle (_, c) | Read (_, c) -> Hashtbl.hash c
     | Lit (k, v) -> lit_hash k v
+    | Int (o, _, _) | Float (o, _, _) -> Hashtbl.hash o
+    | Compare (o, _, _) -> Hashtbl.hash o
+    | Logic (o, _, _) -> Hashtbl.hash o
+    | Reduce (r, _) -> Hashtbl.hash r
+    | Shift (i, _) -> Hashtbl.hash i
     | _ -> 0
   in
-  Hashtbl.hash (leaf, List.map (fun (Packed e) -> e.id) (operands n))
-
-(* [term] is unboxed, so a term in the table is the expression itself and the
-   table holds it weakly. *)
-type term = T : ('a, 's) t -> term [@@unboxed]
+  Hashtbl.hash
+    ( Obj.tag (Obj.repr n),
+      attribute,
+      List.map (fun (Packed e) -> e.id) (operands n) )
 
 module Table = Weak.Make (struct
   type t = term
@@ -412,28 +431,33 @@ end)
 
 let table = Table.create 4096
 let lock = Mutex.create ()
-let null = { id = 0; node = Null; typing = None }
-let rows = { id = 1; node = Rows; typing = None }
+let rec null = { id = 0; node = Null; typing = None; rep = T null }
+let rows = { id = 1; node = Rows; typing = None; rep = T null }
 let next_id = Atomic.make 2
 
 (* Unbound expressions are trees: binding reads them and nothing compares them,
    so each has an identity of its own. *)
-let make node = { id = Atomic.fetch_and_add next_id 1; node; typing = None }
+let make node =
+  { id = Atomic.fetch_and_add next_id 1; node; typing = None; rep = T null }
 
 (* A structurally equal expression may be live at another type, so a new
-   expression takes its identity rather than being it. The new expression joins
-   the table too, so that the identity lives as long as one of them does. *)
+   expression takes its identity rather than being it, and holds the expression
+   whose entry keeps that identity, so that the identity lives as long as one of
+   them does. The table holds one entry per identity, so what binding allocates
+   does not grow with the number of equal expressions live, once one is. *)
 let typed typing node =
   Mutex.protect lock (fun () ->
-      let e = { id = -1; node; typing = Some typing } in
-      let id =
-        match Table.find_opt table (T e) with
-        | Some (T e) -> e.id
-        | None -> Atomic.fetch_and_add next_id 1
-      in
-      let e = { e with id } in
-      Table.add table (T e);
-      e)
+      let probe = { id = -1; node; typing = Some typing; rep = T null } in
+      match Table.find_opt table (T probe) with
+      | Some (T r as t) ->
+          (* Only an expression with an entry of its own joins the table. *)
+          let (T held) = r.rep in
+          assert (same_value held null);
+          { probe with id = r.id; rep = t }
+      | None ->
+          let e = { probe with id = Atomic.fetch_and_add next_id 1 } in
+          Table.add table (T e);
+          e)
 
 let node e = e.node
 

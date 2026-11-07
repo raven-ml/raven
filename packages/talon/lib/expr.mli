@@ -157,7 +157,9 @@ val pp_out : Format.formatter -> 's out -> unit
     {!Type.compare_value} when its operand has a column typing, and physically
     otherwise. Every other OCaml value inside a node (functions, {!const}
     values, extension declarations) compares physically. The table is weak and
-    safe to use from any domain. *)
+    safe to use from any domain. It holds one entry per identity, so what binding
+    an expression allocates does not grow with the number of equal expressions
+    live, once one is. *)
 
 (** The type for arithmetic: [Mod] applies to [int]s only, and [Pow] to [float]s
     only. *)

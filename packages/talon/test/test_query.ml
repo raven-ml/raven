@@ -938,6 +938,41 @@ let query_gen =
        (fun i -> (List.nth builders i) ())
        (Gen.int_range 0 (List.length builders - 1)))
 
+(* Binding *)
+
+(* [words f] is the words [f ()] allocates, and its result. *)
+let words f =
+  let total () =
+    let minor, promoted, major = Gc.counters () in
+    minor +. major -. promoted
+  in
+  let before = total () in
+  let x = f () in
+  (int_of_float (total () -. before), x)
+
+(* Every query built here stays live to the end of its test, so no collection
+   changes which expressions are live while it measures. *)
+let built_again () =
+  let live = ref [ late_by_carrier () ] in
+  let build () =
+    let w, q = words late_by_carrier in
+    live := q :: !live;
+    w
+  in
+  let first = build () in
+  let counts = List.init 64 (fun _ -> build ()) in
+  equal (list int) (List.init 64 (fun _ -> first)) counts;
+  ignore (Sys.opaque_identity !live)
+
+let bind_words =
+  group "binding"
+    [
+      test
+        "a query built again allocates the same words, however many equal \
+         queries are live"
+        built_again;
+    ]
+
 let equality =
   let filtered threshold =
     Query.(of_source flights |> filter Expr.(delay > float threshold))
@@ -1332,6 +1367,7 @@ let () =
          conditions;
          resolution;
          equality;
+         bind_words;
          printing;
          accepted;
          suggestions;
