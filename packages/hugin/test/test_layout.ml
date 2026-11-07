@@ -843,6 +843,14 @@ let no_overlap =
         titles = Some ("value", "value", "A figure");
         size = `Figure (300., 364.662);
       };
+      (* A scale title wider than the panels, which reaches past the data
+         areas. *)
+      {
+        base with
+        cols = 2;
+        titles = Some ("a very very long title for a scale here", "a", "a");
+        size = `Panels (20., 20.);
+      };
     ]
   in
   prop
