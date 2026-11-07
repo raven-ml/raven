@@ -131,6 +131,10 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - kernels the schedule splits read a one-value variable only from the run,
   so `Engine.run ~vars:[]` raises "unbound" for them where a call's bound
   value would serve (the `.mli` allows either; no caller reaches it)
+- AMD's comgr and Metal's compiler run LLVM's loop-idiom pass too; D167's
+  `-mllvm -disable-loop-idiom-all` covers host Clang only, and no CI job runs
+  LLVM 22+, where the pass's CRC recogniser walks a running select's paths
+  (fixed upstream after 23.1.5)
 
 ## rune, kaun, vega
 
@@ -157,6 +161,11 @@ and rune), raven / llama.cpp b12048 Vulkan:
   Its launch-cost constants live in rune keyed on host or GPU, and
   `stream_threads` is sm_89's default on every target, the host included:
   both belong in the renderer's facts
+- compiled `Nx.eigh` at k = 128 replays in 95 ms against eager's 3.5 ms
+  (27x): the Jacobi lowering's kernels; a balanced tree of maxima in
+  `exponent` replays 1.6-1.75x faster with no non-NaN result changed
+  (_plans/tolk-campaign/linalg-compile/adjudication.md)
+- rune's `test_scan` law timed out at 60 s under load
 
 ## nx
 
