@@ -3215,6 +3215,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `save_pretrained` and `save_model_files` write Unigram scores and BPE
+  dropouts as the shortest decimal that reads back, laid out as tokenizers
+  writes them (`0.1`, `0.0`, `1e+16`), the same on every system.
 - `from_file` reads a Unigram model's scores from their text as
   HuggingFace's tokenizers does, which puts some one unit in the last place
   off the double the text names, so T5 now cuts runs of `-` as tokenizers

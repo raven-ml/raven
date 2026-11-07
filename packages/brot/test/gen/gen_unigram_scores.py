@@ -22,29 +22,36 @@ Rows:
 
     READ <text> <value>     tokenizers reads <text> as <value> (hexadecimal)
     ERROR <text>            tokenizers refuses <text> as out of range
-    SAVED <x> <text> <value>  brot writes the double <x> as <text>, which
-                            tokenizers reads as <value>
+    SAVED <x> <text> <value>  brot writes the double <x> (hexadecimal) as
+                            <text>, which tokenizers reads as <value>
 
 The texts are drawn from a fixed seed to reach every branch of the reading and
 its neighbours: scores as SentencePiece stores them (single precision), doubles
 of every exponent, powers of two and their neighbours, 15-digit decimals below
 10^-7, whole numbers about 10^15 and 10^16, the largest double, values past
-10^300, subnormals, and each as Python prints it (the shortest decimal, as
-`tokenizers` writes too) and as brot writes it (`%.17g`); then the texts other
-writers make: integers past 2^64, exponents past 308 and past 2^31, fractions
-with leading zeros, and the neighbours of each bound the reading keeps. `SAVED`
-rows take brot's `%.17g`, which `test_unigram.ml` checks against the file brot
-writes.
+10^300, subnormals, and each as Python prints it (the shortest decimal) and
+with 17 significant digits (`%.17g`); then the texts other writers make:
+integers past 2^64, exponents past 308 and past 2^31, fractions with leading
+zeros, and the neighbours of each bound the reading keeps.
+
+`SAVED` rows give the text brot writes for a score, which `test_unigram.ml`
+checks against the file brot writes: the shortest decimal that reads back as
+the double, Python's `repr` digits, laid out as serde_json lays out an `f64`.
+Each is checked against the text `to_str` writes for a model built from the
+double itself, so the layout is tokenizers' own.
 """
 
 import json
 import math
 import random
+import re
 import struct
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 from tokenizers import Tokenizer
+from tokenizers.models import Unigram
 
 TEST = Path(__file__).resolve().parent.parent
 OUT = TEST / "support/parity/unigram_scores.txt"
@@ -121,6 +128,32 @@ def lexemes(rng: random.Random) -> list[str]:
     return out
 
 
+def written(x: float) -> str:
+    """The text brot writes for the score x, as tokenizers writes an f64."""
+    sign, ds, exp = Decimal(repr(abs(x))).as_tuple()
+    d = "".join(map(str, ds)).lstrip("0") or "0"
+    if d == "0":
+        exp = 0
+    while len(d) > 1 and d.endswith("0"):
+        d, exp = d[:-1], exp + 1
+    n, kk = len(d), len(d) + exp
+    if 0 <= exp and kk <= 16:
+        text = d + "0" * exp + ".0"
+    elif 0 < kk <= 16:
+        text = d[:kk] + "." + d[kk:]
+    elif -5 < kk <= 0:
+        text = "0." + "0" * -kk + d
+    else:
+        text = d[0] + ("." + d[1:] if n > 1 else "") + f"e{kk - 1:+d}"
+    return ("-" if math.copysign(1.0, x) < 0 else "") + text
+
+
+def to_str(x: float) -> str:
+    """The text tokenizers writes for the score x of a model it holds."""
+    tokenizer = Tokenizer(Unigram([("<unk>", 0.0), ("t0", x)], 0, False))
+    return re.search(r'\["t0",([^\]]*)\]', tokenizer.to_str()).group(1)
+
+
 def model(entries: list[str]) -> str:
     vocab = ",".join(f'["t{i}",{text}]' for i, text in enumerate(entries))
     head = '{"version":"1.0","model":{"type":"Unigram","unk_id":0,"vocab":'
@@ -151,10 +184,13 @@ def main() -> int:
         else:
             lines.append(f"READ {text} {value.hex()}")
     for x in xs:
-        text = "%.17g" % x
+        text = written(x)
+        if text != to_str(x):
+            print(f"{x!r}: modelled {text}, tokenizers writes {to_str(x)}")
+            return 1
         value = reads(text)
         if value is not None:
-            lines.append(f"SAVED {x!r} {text} {value.hex()}")
+            lines.append(f"SAVED {x.hex()} {text} {value.hex()}")
     out = "\n".join(lines) + "\n"
     if "--check" in sys.argv[1:]:
         if OUT.read_text() != out:

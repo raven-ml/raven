@@ -396,11 +396,6 @@ let encode_into model st ids ~opaque text ~pos ~len =
 let json_obj pairs =
   Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
 
-let json_to_string j =
-  match Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json j with
-  | Ok s -> s
-  | Error e -> failwith e
-
 let save model ~folder () =
   let json_vocab =
     get_vocab model
@@ -409,7 +404,7 @@ let save model ~folder () =
           [
             ("id", Jsont.Json.int id);
             ("token", Jsont.Json.string token);
-            ("prob", Jsont.Json.number prob);
+            ("prob", Json_text.f64 prob);
           ])
   in
   let json =
@@ -428,7 +423,7 @@ let save model ~folder () =
   let oc = open_out path in
   Fun.protect
     ~finally:(fun () -> close_out oc)
-    (fun () -> output_string oc (json_to_string json));
+    (fun () -> output_string oc (Json_text.to_string json));
   [ "unigram.json" ]
 
 (* Training *)

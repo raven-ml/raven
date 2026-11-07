@@ -2101,7 +2101,7 @@ let alg_to_json = function
       json_obj
         [
           ("type", Jsont.Json.string "BPE");
-          ("dropout", json_option_of Jsont.Json.number (Bpe.get_dropout bpe));
+          ("dropout", json_option_of Json_text.f32 (Bpe.get_dropout bpe));
           ("unk_token", json_option_of Jsont.Json.string (Bpe.get_unk_token bpe));
           ( "continuing_subword_prefix",
             json_option_of Jsont.Json.string
@@ -2135,7 +2135,7 @@ let alg_to_json = function
       let vocab_json =
         Unigram.get_vocab ug
         |> List.map (fun (token, score) ->
-            Jsont.Json.list [ Jsont.Json.string token; Jsont.Json.number score ])
+            Jsont.Json.list [ Jsont.Json.string token; Json_text.f64 score ])
         |> Jsont.Json.list
       in
       json_obj
@@ -2362,14 +2362,9 @@ let from_file path =
 
 let save_pretrained t ~path =
   (try Sys.mkdir path 0o755 with Sys_error _ -> ());
-  let json_str =
-    match
-      Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json (to_json t)
-    with
-    | Ok s -> s
-    | Error e -> failwith ("save_pretrained: failed to encode JSON: " ^ e)
-  in
-  write_string_to_file (Filename.concat path "tokenizer.json") json_str
+  write_string_to_file
+    (Filename.concat path "tokenizer.json")
+    (Json_text.to_string (to_json t))
 
 let export_tiktoken t ~merges_path ~vocab_path =
   match t.algorithm with
@@ -2428,3 +2423,5 @@ let run_chunks ?exec sizes work =
   run_chunks ?exec
     (Array.mapi (fun i bytes -> { first = i; stop = i + 1; bytes }) sizes)
     work
+
+module Float_text = Float_text

@@ -401,6 +401,25 @@ let test_saved_scores () =
         (List.map (fun (_, _, value) -> hex value) rows)
         (List.map hex (scores (load path))))
 
+(* A model file writes its scores as [tokenizer.json] does. *)
+let test_model_file_scores () =
+  let vocab = [ ("<unk>", 0.0); ("a", -0.1); ("b", -1e16); ("c", -1.5e-7) ] in
+  let folder = Filename.temp_dir "brot" "" in
+  let files = save_model_files (unigram ~vocab ~unk_id:0 ()) ~folder in
+  let text =
+    Fun.protect
+      ~finally:(fun () ->
+        List.iter (fun f -> Sys.remove (Filename.concat folder f)) files;
+        Sys.rmdir folder)
+      (fun () ->
+        In_channel.with_open_bin
+          (Filename.concat folder "unigram.json")
+          In_channel.input_all)
+  in
+  List.iter
+    (fun prob -> contains ~sub:(Printf.sprintf {|"prob":%s}|} prob) text)
+    [ "0.0"; "-0.1"; "-1e+16"; "-1.5e-7" ]
+
 (* [of_json] takes the numbers of a tree as given. *)
 let test_of_json_takes_numbers_as_given () =
   let text = unigram_file [ "-12.130167007446289" ] in
@@ -562,6 +581,7 @@ let () =
              test "scores out of range" test_scores_out_of_range;
              test "saved scores read back as HuggingFace reads them"
                test_saved_scores;
+             test "model file scores" test_model_file_scores;
              test "of_json takes numbers as given"
                test_of_json_takes_numbers_as_given;
              test "T5's runs of dashes" test_t5_dashes;

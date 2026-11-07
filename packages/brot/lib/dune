@@ -15,10 +15,12 @@
   chars
   decoder
   encoding
+  float_text
   grapheme
   grapheme_data
   hf_number
   ints
+  json_text
   kernel
   normalizer
   post_processor

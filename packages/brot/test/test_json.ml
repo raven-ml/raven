@@ -419,6 +419,42 @@ let with_saved_tokenizer t f =
       Sys.rmdir folder)
     (fun () -> f file)
 
+(* A BPE dropout is written as tokenizers writes its [f32]: the shortest
+   decimal that reads back in single precision. The texts are what tokenizers
+   0.23.1's [to_str] writes for [BPE(dropout=p)]. *)
+let test_saved_dropout () =
+  let written p =
+    with_saved_tokenizer
+      (bpe ~vocab:[ ("a", 0) ] ~merges:[] ~dropout:p ())
+      (fun file ->
+        let text = In_channel.with_open_bin file In_channel.input_all in
+        let key = {|"dropout":|} in
+        let rec find i =
+          if String.sub text i (String.length key) = key then
+            i + String.length key
+          else find (i + 1)
+        in
+        let first = find 0 in
+        String.sub text first (String.index_from text first ',' - first))
+  in
+  let rows =
+    [
+      (0.1, "0.1");
+      (0.3, "0.3");
+      (1. /. 3., "0.33333334");
+      (0.5, "0.5");
+      (1.0, "1.0");
+      (0.0, "0.0");
+      (2e-5, "0.00002");
+      (1e-6, "0.000001");
+      (1.5e-6, "0.0000015");
+      (1e-7, "1e-7");
+    ]
+  in
+  equal (list (pair string string))
+    (List.map (fun (p, text) -> (Printf.sprintf "%h" p, text)) rows)
+    (List.map (fun (p, _) -> (Printf.sprintf "%h" p, written p)) rows)
+
 (* GPT-2, end to end: what [save_pretrained] writes must load back into a
    tokenizer that encodes the same ids. The written file was also read by
    HuggingFace [Tokenizer.from_file], which encodes the same ids from it; brot
@@ -468,5 +504,6 @@ let () =
              test "bpe flags json" test_bpe_flags_json;
              test "llama" test_llama;
              test "gpt2 round trip" test_gpt2_round_trip;
+             test "saved dropout" test_saved_dropout;
            ];
        ])

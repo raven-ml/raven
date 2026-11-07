@@ -1748,11 +1748,19 @@ val of_json : Jsont.json -> (t, string) result
     documented in {!type-added_token}, not read from the file. *)
 
 val to_json : t -> Jsont.json
-(** [to_json t] is [t] serialized to HuggingFace JSON format. *)
+(** [to_json t] is [t] serialized to HuggingFace JSON format. Its numbers are
+    doubles. Encoding the tree with jsont writes them as jsont writes numbers,
+    and {!save_pretrained} writes them as tokenizers does. *)
 
 val save_pretrained : t -> path:string -> unit
 (** [save_pretrained t ~path] saves [t] to [path] in HuggingFace format. Creates
     [path/tokenizer.json].
+
+    Numbers are written as tokenizers writes them, the same on every system. A
+    Unigram score is the shortest decimal that reads back as the double, and a
+    BPE dropout the shortest that reads back in single precision, as in [0.1],
+    [0.0], [0.00001], [1.5e-7] and [1e+16]. Integers are written as their
+    digits.
 
     Raises [Sys_error] if [path] cannot be written. *)
 
@@ -1790,3 +1798,15 @@ val run_chunks : ?exec:exec -> int array -> (int -> unit) -> unit
 (** [run_chunks ?exec sizes work] is [work c] for every chunk [c] of the
     [sizes] in bytes, through [exec] as the batch encoders spread their work,
     raising what a chunk raised. For tests. *)
+
+module Float_text : sig
+  type format = { precision : int; emin : int }
+
+  val binary64 : format
+  val binary32 : format
+  val shortest : format -> float -> string * int
+  val significant : int -> float -> string * int
+  val decimals : int -> float -> string * int
+end
+(** [Float_text] is the decimal digits of floats that {!save_pretrained} writes
+    numbers with. For tests. *)
