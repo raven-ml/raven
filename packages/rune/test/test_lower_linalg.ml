@@ -953,10 +953,47 @@ let eigh_32 () =
     ~tol:(fun _ -> eigh_near u64 n (frobenius sym 0))
     n (Nx.to_array w) (Nx.to_array eager)
 
+(* An SVD's results of a matrix are its own, bit for bit: beside a matrix that
+   needs more sweeps or fails, they are those it has beside itself, in a batch
+   of the same shape. A matrix is the symmetric one of {!symmetric}'s kind,
+   both triangles stored, whose singular values are its eigenvalues'
+   magnitudes. *)
+let svd_alone (R (name, dt, _), ((ka, kb), (n, seed))) =
+  cover name true;
+  cover "a settled matrix beside one that rotates"
+    (ka = Diagonal && kb <> Diagonal);
+  cover "beside a matrix that fails" (kb = Nan || kb = Infinite);
+  cover "a matrix that fails" (ka = Nan || ka = Infinite);
+  cover "an odd size" (n mod 2 = 1);
+  let st = Random.State.make [| seed |] in
+  let full kind =
+    let l = symmetric st kind n in
+    Array.init (n * n) (fun e ->
+        let i = e / n and j = e mod n in
+        l.((max i j * n) + min i j))
+  in
+  let x = full ka and y = full kb in
+  let pair x y = Nx.create dt [| 2; n; n |] (Array.append x y) in
+  let first k f a = Array.sub (Lowered.run (fun () -> f (linalg a))) 0 k in
+  let results a =
+    let s (s, _, _) = s and u (_, u, _) = u and vh (_, _, vh) = vh in
+    let svd () = P.Svd { dtype = dt; factors = Reduced; a } in
+    ( first (n * n) u (svd ()),
+      first n s (svd ()),
+      first (n * n) vh (svd ()),
+      first n Fun.id (Svd_values { dtype = dt; a }) )
+  in
+  let u, s, vh, values = results (pair x x) in
+  let u', s', vh', values' = results (pair x y) in
+  equal ~msg:"u" (array int64) (bits u) (bits u');
+  equal ~msg:"s" (array int64) (bits s) (bits s');
+  equal ~msg:"vh" (array int64) (bits vh) (bits vh');
+  equal ~msg:"values alone" (array int64) (bits values) (bits values')
+
 (* Stopping changes no value: on the host each matrix stops once its sweeps
    settle, and its values, [-0] equal to [+0], are those of the full count of
    sweeps a device whose work is not this process's code runs. Of a batch of
-   two matrices of {!symmetric}'s kinds. *)
+   two matrices of {!symmetric}'s kinds, each read whole for the SVD. *)
 let stop_law (R (name, dt, _), ((ka, kb), (n, seed))) =
   cover name true;
   cover "a settled matrix beside one that rotates"
@@ -965,7 +1002,13 @@ let stop_law (R (name, dt, _), ((ka, kb), (n, seed))) =
   cover "an odd size" (n mod 2 = 1);
   let st = Random.State.make [| seed |] in
   let x = symmetric st ka n and y = symmetric st kb n in
+  let full l =
+    Array.init (n * n) (fun e ->
+        let i = e / n and j = e mod n in
+        l.((max i j * n) + min i j))
+  in
   let a = Nx.create dt [| 2; n; n |] (Array.append x y) in
+  let b = Nx.create dt [| 2; n; n |] (Array.append (full x) (full y)) in
   let value v =
     Int64.bits_of_float (if Float.is_nan v then Float.nan else v +. 0.)
   in
@@ -975,7 +1018,19 @@ let stop_law (R (name, dt, _), ((ka, kb), (n, seed))) =
   in
   same "w" (fun () -> fst (linalg (Eigh { dtype = dt; a })));
   same "v" (fun () -> snd (linalg (Eigh { dtype = dt; a })));
-  same "eigenvalues alone" (fun () -> linalg (Eigh_values { dtype = dt; a }))
+  same "eigenvalues alone" (fun () -> linalg (Eigh_values { dtype = dt; a }));
+  let svd () = linalg (Svd { dtype = dt; factors = Reduced; a = b }) in
+  same "s" (fun () ->
+      let s, _, _ = svd () in
+      s);
+  same "u" (fun () ->
+      let _, u, _ = svd () in
+      u);
+  same "vh" (fun () ->
+      let _, _, vh = svd () in
+      vh);
+  same "singular values alone" (fun () ->
+      linalg (Svd_values { dtype = dt; a = b }))
 
 (* A compiled [Nx.eigvalsh] in a scan's step, its loop of sweeps inside the
    scan's loop of steps: each step's values are eager's within the bound, for
@@ -1102,6 +1157,8 @@ let () =
                ~examples:spectrum_examples spectra spectrum_law;
              test "squares past the dtype's range" svd_extremes;
              test "a zero singular value is +0" svd_zero;
+             prop "each matrix's results are its own, bit for bit" ~count:6
+               ~examples:eigh_pair_examples eigh_pairs svd_alone;
            ];
          group "eigh"
            [

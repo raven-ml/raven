@@ -947,13 +947,18 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reference:** `mixin/op.py:1856` (`svd`: `4 num` rounds of one-sided Jacobi
   rotations over a round-robin pairing, the singular values sorted by
   `sort`, `U`'s columns divided by them).
-- **Raven:** `lower_linalg.ml` (`sweeps`, `rounds`, `converged`, `svd`).
+- **Raven:** `lower_linalg.ml` (`sweeps`, `rounds`, `converged`, `svd`),
+  `loop.ml` (`until`).
 - **Differs:**
   - the rotations act on the `r` of the operand's QR (L2), scaled by the
     power of two of its largest magnitude, which the values take back;
   - they run `⌈p (⌈log2 num⌉ + 1) / 10⌉` sweeps of `num - 1` rounds (`num` for
     an odd `num`), `p` the dtype's precision; tinygrad's `4 num` rounds are
-    about four sweeps, and the sweeps needed grow with `num`;
+    about four sweeps, and the sweeps needed grow with `num`. On a device
+    whose work is this process's code (`Rig.runs_on_host`) they stop, one
+    sweep a trip of a tolk loop that stops on a flag, once a sweep of each
+    matrix has changed none of its elements' values, the matrix then kept
+    as it is, or before the first where it holds NaN or an infinity;
   - a pair whose inner product is within the roundoff of the product of its
     norms takes no rotation;
   - `u`'s columns are the reflections that triangularize the sorted rotated
@@ -971,7 +976,9 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reason:** (b).
 - **Pinned by:** `Lower_linalg › svd › u diag s vh reconstructs a`, `› a
   matrix with an infinity is NaN`, `› graded and repeated spectra converge`,
-  `› squares past the dtype's range`, `› a zero singular value is +0`.
+  `› squares past the dtype's range`, `› a zero singular value is +0`,
+  `› each matrix's results are its own, bit for bit`; `Lower_linalg ›
+  stopping early gives the full count's values`.
 
 ### L4. Cholesky
 
@@ -1105,8 +1112,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   and Gram spectra converge`, `› each matrix's results are its own, bit for
   bit`, `› compiled in a scan's step`; `Lower_linalg › stopping early gives
   the full count's values`, `› Nx's values alone compiled are eager's`;
-  `Rune.jit over several devices › loops › eigenvalues of matrices that
-  stop apart`.
+  `Rune.jit over several devices › loops › eigenvalues and singular values
+  of matrices that stop apart`.
 
 ### L9. Block scales multiply each element in the accumulator
 

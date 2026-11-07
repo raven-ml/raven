@@ -1683,9 +1683,9 @@ val jit :
     its diagonal under [unit_diagonal]. [P] is {!Nx.lu}'s permutation, its
     rule applied to the computed columns. For [b]
     the dtype's bits of precision, [R] is the rounds of rotations: [S] sweeps of
-    [k - 1] rounds for an even [k] or [k] for an odd one, at most [S] for
-    {!Nx.eigh} on this process's host and its memory devices, and [0] for
-    [k < 2], where [S = ⌈b ⌈log₂ k⌉ / 10⌉] for {!Nx.eigh} and
+    [k - 1] rounds for an even [k] or [k] for an odd one, at most [S] on this
+    process's host and its memory devices, and [0] for [k < 2], where
+    [S = ⌈b ⌈log₂ k⌉ / 10⌉] for {!Nx.eigh} and
     [S = ⌈b (⌈log₂ k⌉ + 1) / 10⌉] for {!Nx.svd}:
 
     {v
@@ -1714,7 +1714,8 @@ val jit :
     diagonal of either sign. A matrix that holds NaN or an infinity, or whose
     iteration does not converge, makes only its own results NaN. On this
     process's host and its memory devices, {!Nx.eigh} and {!Nx.eigvalsh} stop
-    a matrix's sweeps once the next would rotate nothing; over several memory
+    a matrix's sweeps once the next would rotate nothing, and {!Nx.svd} and
+    {!Nx.svdvals} once a sweep has changed nothing; over several memory
     devices one device's sweeps then run after another's. On any other
     device, a GPU or another machine's, every sweep runs, giving the same
     values, and the call does not wait for them.

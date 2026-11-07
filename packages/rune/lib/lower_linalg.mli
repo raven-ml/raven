@@ -16,10 +16,10 @@
     rotations, in a tolk loop on the graph's device. Its graph holds the step at
     most three times whatever the matrix's size, so compiling it costs the same
     at every size. On a {e local} device, whose work is this process's code
-    ({!Rig.runs_on_host}), [Eigh]'s rounds run in a loop of sweeps that stops
-    once every matrix has stopped, a flag the engine reads before each sweep
-    once the work before it is done; elsewhere they run every sweep, and the
-    run does not wait.
+    ({!Rig.runs_on_host}), [Eigh]'s and [Svd]'s rounds run in a loop of sweeps
+    that stops once every matrix has stopped, a flag the engine reads before
+    each sweep once the work before it is done; elsewhere they run every
+    sweep, and the run does not wait.
 
     {b Numerics.} These bounds implement the matrix rows of
     {!Rune.section-numerics}. They hold to first order in the dtype's unit
@@ -27,7 +27,7 @@
     ({!Nx_kernel.section-bounds}), [|·|] taken elementwise and [‖·‖_F] the
     Frobenius norm. [R] is the number of rounds of rotations of [k] columns, in
     sweeps of [k - 1] rounds each, or of [k] rounds for an odd [k], and [0] for
-    [k < 2]: [S] sweeps, at most [S] for [Eigh] on a local device, where
+    [k < 2]: [S] sweeps, at most [S] on a local device, where
     [S = ⌈b ⌈log₂ k⌉ / 10⌉] for [Eigh], [S = ⌈b (⌈log₂ k⌉ + 1) / 10⌉] for
     [Svd], and [b] is the dtype's precision in bits.
     - [Cholesky]: [L Lᵀ = a + Δ] with [|Δ| <= γ(n + 1) |L| |Lᵀ|], where [a]
@@ -55,7 +55,11 @@
       an infinity, or where its rotated elements off the diagonal have a norm
       above [16 n u ‖a‖_F], which shows its rotations have not converged.
     - [Svd] and [Svd_values]: by one-sided Jacobi rotations of the [r] of [a]'s
-      QR, [aᵀ]'s for [m < n], scaled by a power of two. With [p = max m n] and
+      QR, [aᵀ]'s for [m < n], scaled by a power of two. On a local device a
+      matrix stops before its first sweep where it holds NaN or an infinity,
+      and after a sweep that changed none of its elements' values: its
+      results are those of the sweeps it took, whatever the other matrices
+      take. With [p = max m n] and
       [g = γ(8 k (p (p + 6) + 8 R))], [‖a - u diag s vh‖_F <= g ‖a‖_F] over
       [u]'s first [k] columns and [vh]'s first [k] rows, [‖uᵀ u - I‖_F <= g] and
       [‖vh vhᵀ - I‖_F <= g], and each singular value is within [3 g ‖a‖_F] of
@@ -63,7 +67,7 @@
       [float64], and at smaller [k] for [p > k], [8 k (p (p + 6) + 8 R) u] is at
       least [1/2], and the bound is vacuous. A matrix fails where it holds NaN
       or an infinity, or where two rotated columns [c_i] and [c_j] of norms
-      above [8 R (1 + √k) u ‖a‖_F] have [|c_iᵀ c_j|] above
+      above [8 R (1 + √k) u ‖a‖_F], [R] of [S] sweeps, have [|c_iᵀ c_j|] above
       [16 k u ‖c_i‖₂ ‖c_j‖₂], which shows its rotations have not converged.
       [Svd_values] computes as [Svd] does.
 

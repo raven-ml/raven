@@ -639,12 +639,13 @@ let grads set rows =
 
 (* Eigenvalues
 
-   [Nx.eigvalsh] of a batch of 6 x 6 matrices cut along the batch: a diagonal
-   matrix, which takes no sweep, one with NaN in its lower triangle, and
+   [Nx.eigvalsh] and [Nx.svdvals] of a batch of symmetric 6 x 6 matrices cut
+   along the batch: a diagonal matrix, which takes no sweep, one with NaN, and
    uniform and graded ones, which take several, so that each device's sweeps
    stop apart. The values lie where eager's do, each within the bound rune.mli
-   states, [γ(16 (R + n)) ‖a‖_F] with [R] at most 8 sweeps of 5 rounds, and
-   eager's own [γ(16 n) ‖a‖_F]; the failing matrix's alone are NaN. *)
+   states, the eigenvalues [γ(16 (R + n)) ‖a‖_F] with [R] at most 8 sweeps of
+   5 rounds, and eager's own [γ(16 n) ‖a‖_F]; the failing matrix's alone are
+   NaN. *)
 let eigh_batch set =
   let n = 6 in
   let entry k i j =
@@ -676,6 +677,19 @@ let eigh_batch set =
     Float.sqrt !s
   in
   let tol k = (gamma (16 * (40 + n)) +. gamma (16 * n)) *. norm k in
+  let bound =
+    Nx.create Nx.float64 [| 4; n |] (Array.init (4 * n) (fun e -> tol (e / n)))
+  in
+  within ~bound eager jit;
+  (* The singular values, of a symmetric matrix its eigenvalues' magnitudes,
+     within three [g = γ(8 k (p (p + 6) + 8 R))] of the norm, [R] at most 10
+     sweeps of 5 rounds, and eager's own [γ(16 p + 100)]. *)
+  let eager = Nx.svdvals f32 x in
+  let before = Rune.evaluations () in
+  let jit = Rune.jit T.(tensor @-> returns tensor) (Nx.svdvals f32) x in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  let g = gamma (8 * n * ((n * (n + 6)) + (8 * 50))) in
+  let tol k = ((3. *. g) +. gamma ((16 * n) + 100)) *. norm k in
   let bound =
     Nx.create Nx.float64 [| 4; n |] (Array.init (4 * n) (fun e -> tol (e / n)))
   in
@@ -1789,7 +1803,8 @@ let () =
              test "a scan over a batch of one cut across devices" (fun () ->
                  over 2 { law = scan_batch_of_one };
                  over 4 { law = scan_batch_of_one });
-             test "eigenvalues of matrices that stop apart" (fun () ->
+             test "eigenvalues and singular values of matrices that stop apart"
+               (fun () ->
                  over 2 { law = eigh_batch };
                  over 3 { law = eigh_batch });
            ];

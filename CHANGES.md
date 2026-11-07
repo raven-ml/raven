@@ -381,6 +381,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx.svd` and `Nx.svdvals` under `Rune.jit` on this process's host stop
+  each matrix's Jacobi sweeps once a sweep changes nothing, giving the same
+  values, where they ran a count fixed by the size: up to 3x faster at
+  k = 32 to 128.
 - `Nx.eigh` and `Nx.eigvalsh` under `Rune.jit` on this process's host stop
   each matrix's Jacobi sweeps once the next would rotate nothing, giving the
   same values, where they ran a count fixed by the size: 1.3-3.9x faster at

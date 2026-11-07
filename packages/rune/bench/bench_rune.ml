@@ -37,6 +37,7 @@ let synced y =
   y
 
 let synced2 (y, z) = (synced y, synced z)
+let synced3 (x, y, z) = (synced x, synced y, synced z)
 
 (* [y] once the work that computes each of its arrays is done. *)
 let synced_all s y =
@@ -283,6 +284,7 @@ let warm name make run =
 
 let pair_fn () = Nx.Ptree.(tensor @-> tensor @-> returns tensor)
 let split_fn () = Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+let svd_fn () = Nx.Ptree.(tensor @-> returns (triple tensor tensor tensor))
 
 (* Uniform host values of [dt] in [[lo, hi)]. *)
 let between dt k lo hi shape =
@@ -708,6 +710,14 @@ let jit_rows () =
     warm "eigh-float64-128"
       (fun () -> Rune.jit (split_fn ()) (fun a -> Nx.eigh f64 a))
       (fun f -> synced2 (f sym128));
+    (* One-sided sweeps of the same matrices until one changes nothing, of
+       at most 38 and 43. *)
+    warm "svd-float64-64"
+      (fun () -> Rune.jit (svd_fn ()) (fun a -> Nx.svd f64 a))
+      (fun f -> synced3 (f sym64));
+    warm "svd-float64-128"
+      (fun () -> Rune.jit (svd_fn ()) (fun a -> Nx.svd f64 a))
+      (fun f -> synced3 (f sym128));
     gaussian ();
     (* Sines of a buffer's angles in [[-30, 30]]; sines of angles a tanh
        bounds to [[-30, 30]], which need no long reduction, read net of the

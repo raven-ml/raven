@@ -251,8 +251,8 @@ let norm_roundoff l =
 (* Loops
 
    A routine repeats its step in a loop on the graph's device
-   ({!Loop.repeat}), and on a local device [eigh] its sweeps until they settle
-   ({!Loop.until}).
+   ({!Loop.repeat}), and on this process's host [eigh] and [svd] their sweeps
+   until they settle ({!Loop.until}).
    A loop of no trip, or of values with no element, runs nothing and needs
    none. *)
 
@@ -522,6 +522,17 @@ let all = function
    singular values [1] and [0.9], each repeated, took 13 sweeps to bring its
    values within [16 n u] of an eager [svd]'s without it, and 11 with it.
 
+   On a local device, as for [eigh], a loop runs one sweep a trip, at most
+   [sweeps] of them, until each matrix is settled: it holds NaN or an
+   infinity, or its last sweep left every element's value as it was, so that
+   the next would too. A pair's floor is relative to its columns, which other
+   pairs' rotations move, so no test before a sweep tells that it would rotate
+   nothing, and a flag of whether each round rotated would cost each round a
+   kernel of its own: a settled matrix takes one sweep more than it needed,
+   and is then kept as it is. Another device runs every sweep. The
+   convergence test that fails a matrix reads the cap's rounds, whatever the
+   sweeps taken.
+
    The interface's [g] sums three terms. The QRs of [a] and of the rotated
    columns give [q]s orthogonal to [k (2p + 10) u] an element. The rounds move
    the columns by at most [8 R u] of their norm, as each rotation of two columns
@@ -563,7 +574,7 @@ let converged ~tol ~noise u =
   let fails = Ops.cast (Ops.bitwise_not within) Int32 in
   Ops.eq (over_matrix Op.Add fails) (Ops.int 0)
 
-let svd device ~complete a =
+let svd device ~local ~complete a =
   let batch, m, n = matrix a in
   let num = Int.min m n and q_num = Int.max m n in
   let dt = dtype a in
@@ -603,11 +614,26 @@ let svd device ~complete a =
   let e = exponent r in
   let r = Lower_real.scale r (Shape.expand (negate e) (Shape.shape r)) in
   let rounds = rounds ~extra:1 num dt in
+  let y = Shape.cat ~axis:(rank - 2) r [ square num ] in
+  let trip _ = function
+    | [ settled; y ] ->
+        let y' = List.hd (repeat device (sweep num) [ y ] round) in
+        let moved = over_matrix Op.Max (Ops.cast (Ops.ne y y') Int32) in
+        let held = Shape.expand settled (Shape.shape y) in
+        [
+          Ops.bitwise_or settled (Ops.eq moved (Ops.int 0));
+          Ops.where held y y';
+        ]
+    | _ -> invalid_arg "Lower_linalg.svd"
+  in
   let y =
-    List.hd
-      (repeat device rounds
-         [ Shape.cat ~axis:(rank - 2) r [ square num ] ]
-         round)
+    if not local then List.hd (repeat device rounds [ y ] round)
+    else
+      let cap = sweeps num (snd (Dtype.finfo dt) + 1) 1 in
+      let settled = Ops.logical_not (finite a) in
+      match Loop.until device cap [ settled; y ] ~stop:all trip with
+      | [ _; y ] -> y
+      | _ -> invalid_arg "Lower_linalg.svd"
   in
   let u = part y (rank - 2) 0 num in
   (* A matrix fails if it holds NaN or an infinity, or if its rotated columns
@@ -945,9 +971,9 @@ let op ~device:d ~local (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t)
       let q, r = qr d ~complete:(factors = Complete) (operand "Qr" a) in
       [| q; r |]
   | Svd_values { a; _ } ->
-      [| (svd d ~complete:false (operand "Svd_values" a)).(0) |]
+      [| (svd d ~local ~complete:false (operand "Svd_values" a)).(0) |]
   | Svd { factors; a; _ } ->
-      svd d ~complete:(factors = Complete) (operand "Svd" a)
+      svd d ~local ~complete:(factors = Complete) (operand "Svd" a)
   | Eigh_values { a; _ } ->
       eigh d ~local ~vectors:false (operand "Eigh_values" a)
   | Eigh { a; _ } -> eigh d ~local ~vectors:true (operand "Eigh" a)

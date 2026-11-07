@@ -170,10 +170,11 @@ and rune), raven / llama.cpp b12048 Vulkan:
   (9-22 sweeps of 127 rounds) against eager's 3.5 ms: each round's two
   kernels read their `% 127` gathers as scalar loads (hand C 2.7x
   faster); float32 rounds take 2.3x float64's there. Compiled `Nx.svd`
-  still runs its fixed sweeps. A GPU runs every sweep: a stop there needs
-  an idle-GPU measurement of a flag read every m sweeps after a lower
-  bound (a read took 0.86 ms while another process computed on fudge's
-  GPU, and a read every sweep took f32 k = 32 from 3.6 to 15.7 ms)
+  at k = 128 float64 replays in 53-114 ms (16-36 sweeps). A GPU runs
+  every sweep of both: a stop there needs an idle-GPU measurement of a
+  flag read every m sweeps after a lower bound (a read took 0.86 ms
+  while another process computed on fudge's GPU, and a read every sweep
+  took f32 k = 32 from 3.6 to 15.7 ms)
   (_plans/todo-campaign/design/eigh-compile.adjudication.md)
 
 ## nx
