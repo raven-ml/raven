@@ -495,17 +495,13 @@ static __attribute__((noinline)) void lines_clipped(uint8_t *d,
   if (m > hi) memset(d + hi * r, 0, (m - hi) * r);
 }
 
-/* The rows [p, stop) of one lead index from run [j], its rows at [dst]
-   and the source's at [src], the runs' starts at [st] and ends at [en]
-   stepping [ss] and [se], where the source's rows lie one after the
-   other, of whole bytes: each run's span is one copy. It keeps few values
-   live, in locals, so that the compiler holds them in registers. Answers
-   the run it stops in. */
-static int64_t lead_lines(const ranges *g, uint8_t *dst, const uint8_t *src,
-                          const int64_t *st, int64_t ss, const int64_t *en,
-                          int64_t se, int64_t j, int64_t p, int64_t stop) {
-  const int64_t k = g->k, row = g->cells * (g->a[0].bits / 8);
-  const uint64_t n = (uint64_t)g->n;
+/* lead_lines' loop over the runs from [j], [row] bytes a row: inlined with
+   [row] a constant, it multiplies by none. It keeps few values live, in
+   locals, so that the compiler holds them in registers. */
+static inline __attribute__((always_inline)) int64_t lines_loop(
+    int64_t row, int64_t k, uint64_t n, uint8_t *dst, const uint8_t *src,
+    const int64_t *st, int64_t ss, const int64_t *en, int64_t se, int64_t j,
+    int64_t p, int64_t stop) {
   int64_t before = j > 0 ? en[(j - 1) * se] : 0;
   const int64_t *sp = st + j * ss, *ep = en + j * se;
   uint8_t *d = dst + p * row;
@@ -513,6 +509,22 @@ static int64_t lead_lines(const ranges *g, uint8_t *dst, const uint8_t *src,
      the unit's stop cuts is the next unit's first. */
   for (; j < k && p < stop; j++, ep += se, sp += ss) {
     int64_t e = *ep;
+    /* Past a run read whole, p is its end: while each run ends in (p,
+       stop] and lies inside the source, it is read from its start, as the
+       runs of a ragged take are. The ends' differences are unsigned, as
+       an end may be any int64. */
+    while (p == before &&
+           (uint64_t)e - (uint64_t)p - 1 < (uint64_t)(stop - p)) {
+      uint64_t m = (uint64_t)e - (uint64_t)p, w = (uint64_t)*sp;
+      if (w >= n || m > n - w) break;
+      copy_bytes(d, src + w * row, m * (uint64_t)row);
+      d += m * row;
+      p = before = e;
+      j++, ep += se, sp += ss;
+      if (j == k) goto done;
+      e = *ep;
+    }
+    if (p == stop) break;
     if (e > p) {
       int64_t q = e < stop ? e : stop;
       uint64_t m = (uint64_t)(q - p);
@@ -526,8 +538,26 @@ static int64_t lead_lines(const ranges *g, uint8_t *dst, const uint8_t *src,
     }
     before = e;
   }
+done:
   if (p < stop) memset(d, 0, (size_t)((stop - p) * row));
   return j;
+}
+
+/* The rows [p, stop) of one lead index from run [j], its rows at [dst]
+   and the source's at [src], the runs' starts at [st] and ends at [en]
+   stepping [ss] and [se], where the source's rows lie one after the
+   other, of whole bytes: each run's span is one copy. Rows of one byte,
+   as text's are, take a loop of their own. Out of line, the loop has the
+   registers to itself. Answers the run it stops in. */
+static __attribute__((noinline)) int64_t lead_lines(
+    const ranges *g, uint8_t *dst, const uint8_t *src, const int64_t *st,
+    int64_t ss, const int64_t *en, int64_t se, int64_t j, int64_t p,
+    int64_t stop) {
+  int64_t k = g->k, row = g->cells * (g->a[0].bits / 8);
+  uint64_t n = (uint64_t)g->n;
+  if (row == 1)
+    return lines_loop(1, k, n, dst, src, st, ss, en, se, j, p, stop);
+  return lines_loop(row, k, n, dst, src, st, ss, en, se, j, p, stop);
 }
 
 /* lead_lines for any source and dtype: each run's span through

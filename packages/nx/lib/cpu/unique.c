@@ -157,11 +157,12 @@ static inline uint64_t finish(uint64_t h, uint64_t end) {
   return h ^ (h >> 31);
 }
 
+/* The hash of the [w] words [row] under the hash's keys [key]. */
 static inline __attribute__((always_inline)) uint64_t hash_of(
-    const numbering *u, const uint64_t *row, int w) {
-  uint64_t h = u->key[0];
-  for (int j = 0; j < w; j++) h = mix(u->key, h, j, row[j]);
-  return finish(h, u->key[1]);
+    const uint64_t *key, const uint64_t *row, int w) {
+  uint64_t h = key[0];
+  for (int j = 0; j < w; j++) h = mix(key, h, j, row[j]);
+  return finish(h, key[1]);
 }
 
 /* Sets the seed: its keys are SplitMix64's next KEYS outputs from it. */
@@ -272,7 +273,10 @@ static __attribute__((noinline)) int64_t fresh(groups *g, uint64_t h,
     g->room = room;
   }
   int64_t q = g->k++;
-  memcpy(g->key + q * g->w, row, (size_t)g->w * sizeof *row);
+  /* A key of one word, as most are, is one store, where memcpy's call of a
+     size known only here costs several times it. */
+  if (g->w == 1) g->key[q] = row[0];
+  else memcpy(g->key + q * g->w, row, (size_t)g->w * sizeof *row);
   g->hash[q] = h;
   g->first[q] = first;
   g->count[q] = 0;
@@ -321,13 +325,16 @@ static void rows_of(const numbering *u, int64_t b, int64_t *lo, int64_t *hi) {
   *hi = u->n * (b + 1) / u->blocks;
 }
 
-/* Row [i]'s words: in place where they lie side by side, else copied into
-   [buf]. */
-static inline const uint64_t *row_at(const numbering *u, int64_t i,
-                                     uint64_t *buf) {
-  const uint64_t *r = u->x + i * u->s0;
-  if (u->s1 == 1 || u->w == 1) return r;
-  for (int64_t j = 0; j < u->w; j++) buf[j] = r[j * u->s1];
+/* Row [i]'s [w] words of the keys [x], rows [s0] and words [s1] apart: in
+   place where they lie side by side, else copied into [buf]. Its caller
+   passes them from locals: read through [u], they would be read again for
+   each row, as a store of ids could alias them. */
+static inline __attribute__((always_inline)) const uint64_t *row_at(
+    const uint64_t *x, int64_t s0, int64_t s1, int w, int64_t i,
+    uint64_t *buf) {
+  const uint64_t *r = x + i * s0;
+  if (s1 == 1 || w == 1) return r;
+  for (int j = 0; j < w; j++) buf[j] = r[j * s1];
   return buf;
 }
 
@@ -353,8 +360,8 @@ static inline __attribute__((always_inline)) int direct_rows(
     for (int j = 1; j < w; j++) at += (r[j * s1] - least[j]) * radix[j];
     int64_t q = direct[at];
     if (q < 0) {
-      const uint64_t *row = row_at(u, i, buf);
-      q = fresh(g, merged ? hash_of(u, row, w) : 0, row, i);
+      const uint64_t *row = row_at(x, s0, s1, w, i, buf);
+      q = fresh(g, merged ? hash_of(u->key, row, w) : 0, row, i);
       if (q < 0) return -1;
       direct[at] = (int32_t)q;
       count = g->count;
@@ -366,17 +373,22 @@ static inline __attribute__((always_inline)) int direct_rows(
 }
 
 /* Numbers rows [lo, hi) into [g] by its hash table, keys of [w] words, as
-   find does, its table in locals that a new group refreshes. */
+   find does, its table in locals that a new group refreshes. The hash's
+   keys and the rows' steps are locals too, which no store of ids or counts
+   can alias. */
 static inline __attribute__((always_inline)) int hashed_rows(
     const numbering *u, groups *g, int64_t lo, int64_t hi, int w,
     uint64_t *buf) {
-  int64_t *ids = u->ids, *count = g->count;
+  const uint64_t *x = u->x;
+  int64_t s0 = u->s0, s1 = u->s1, *ids = u->ids, *count = g->count;
+  uint64_t seed[KEYS];
+  memcpy(seed, u->key, sizeof seed);
   const uint64_t *slot = g->slot, *key = g->key;
   uint64_t mask = (1ull << g->log) - 1;
   int shift = 64 - g->log;
   for (int64_t i = lo; i < hi; i++) {
-    const uint64_t *row = row_at(u, i, buf);
-    uint64_t h = hash_of(u, row, w), tag = h << ID_BITS, at = h >> shift;
+    const uint64_t *row = row_at(x, s0, s1, w, i, buf);
+    uint64_t h = hash_of(seed, row, w), tag = h << ID_BITS, at = h >> shift;
     int64_t q = -1;
     for (;; at = (at + 1) & mask) {
       uint64_t e = slot[at];

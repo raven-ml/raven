@@ -2317,6 +2317,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_ragged.take` copies runs of one-byte rows, as text's bytes are, in a
+  loop of their own: a take of 1M short texts runs 70 instructions a row where
+  it ran 83. `Nx.unique` numbers keys by its hash table in about 10% fewer
+  instructions.
 - `Nx.Dtype.pp_value`, and so every float in a message, computes its
   digits exactly in OCaml, so floats print the same on every system. Output
   on glibc is unchanged.

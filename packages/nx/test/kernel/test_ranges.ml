@@ -82,9 +82,15 @@ let greatest es =
 let case_gen =
   let open Gen in
   let sub = List.filter (fun (D.Any dt) -> D.bits dt < 8) all_dtypes in
+  (* A quarter of the cases are rows of one byte, as text's are, over a
+     plain source, their runs mostly packed: the copies of nx.cpu's line
+     path. *)
+  let* line = frequency [ (3, constant false); (1, constant true) ] in
   let* d =
-    frequency
-      [ (3, of_list ~pp:pp_dtype all_dtypes); (1, of_list ~pp:pp_dtype sub) ]
+    if line then constant (D.Any D.Uint8)
+    else
+      frequency
+        [ (3, of_list ~pp:pp_dtype all_dtypes); (1, of_list ~pp:pp_dtype sub) ]
   in
   let* lead =
     frequency
@@ -101,11 +107,15 @@ let case_gen =
     frequency [ (1, constant 0); (6, int_range 1 9); (1, int_range 60 300) ]
   in
   let* cells =
-    of_list ~pp:pp_ints
-      [ [||]; [||]; [| 3 |]; [| 2; 0 |]; [| 2; 3 |]; [| 5 |] ]
+    if line then constant [||]
+    else
+      of_list ~pp:pp_ints
+        [ [||]; [||]; [| 3 |]; [| 2; 0 |]; [| 2; 3 |]; [| 5 |] ]
   in
   let* mode =
-    frequency [ (4, constant Packed); (2, constant Wild); (3, constant Wrap) ]
+    let packed = if line then 12 else 4 in
+    frequency
+      [ (packed, constant Packed); (2, constant Wild); (3, constant Wrap) ]
   in
   let* pick = int_range 0 4 in
   let a = Array.length lead in
@@ -119,7 +129,9 @@ let case_gen =
     List.filter (fun i -> b.(i)) (List.init (Array.length b) Fun.id)
   in
   let* bx = flags rx 5 in
-  let* xv = view_of ~broadcast:(marked bx) rx in
+  let* xv =
+    if line then constant (plain rx) else view_of ~broadcast:(marked bx) rx
+  in
   let* bs = flags a 3 in
   let* sv = view_of ~broadcast:(marked bs) (a + 1) in
   let+ seed = int in
@@ -344,6 +356,12 @@ let law_gather (b : Support.backend) c =
   cover "a sub-byte run into the middle of a byte" (sub (fun s -> s.d));
   cover "a sub-byte run from the middle of a byte"
     (sub (fun s -> Int64.to_int (Int64.add s.w (Int64.of_int s.lo))));
+  let line =
+    bits = 8 && Array.length (shape_of c.x) = a + 1 && not (views "x")
+  in
+  cover "one-byte rows on the line path" (line && k > 0 && c.size > 0);
+  cover "one-byte packed runs on the line path"
+    (line && packed && n > 0 && c.size > 0);
   cover "strided starts" (views "starts");
   cover "a strided or broadcast source" (views "x");
   match ranges_on b c with
