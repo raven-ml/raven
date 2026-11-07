@@ -234,9 +234,9 @@ module Two = (val Nx.devices [ Nx_support.memory 0; Nx_support.memory 1 ])
 
 let law_cut dt acc c =
   cover "lengths" (c.lengths <> None);
-  cover "causal" (c.mask = Causal);
   let c = { c with page = None; tk = 2 * c.tk; alibi = false } in
   let c = if c.mask = Captured then { c with mask = Causal } else c in
+  cover "causal" (c.mask = Causal);
   let lead = [| 2 |] in
   let k, v = keys dt c lead in
   let q = draw dt c 1. [| 2; hq c; c.tq; c.dk |] in
