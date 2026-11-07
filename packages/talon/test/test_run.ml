@@ -507,7 +507,8 @@ let step level p =
       (Gen.permutation (List.map fst s))
   in
   (* The right is at most four rows of [p] or of a table of its columns, those a
-     handle reads renamed, each stored at a type that contains its own. Keys the
+     handle reads renamed, each stored at a type that contains its own, and a
+     third of the time those rows twice, so that every key repeats. Keys the
      reference cannot write get no assertion. *)
   let join columns =
     let renamed (n, r, Type.Any ty) =
@@ -517,10 +518,13 @@ let step level p =
     in
     let right =
       Gen.bind
-        (Gen.triple Gen.bool (Gen.int_range (-6) 12) (Gen.int_range 0 4))
-        (fun (own, offset, length) ->
+        (Gen.quad Gen.bool (Gen.int_range (-4) 3) (Gen.int_range 0 4)
+           (Gen.int_range 0 2))
+        (fun (own, offset, length, twice) ->
           map2
-            (fun plan os -> R.Select (os, R.Slice { offset; length; plan }))
+            (fun plan os ->
+              let r = R.Select (os, R.Slice { offset; length; plan }) in
+              if twice = 0 then R.Append (r, r) else r)
             (if own then Gen.constant p
              else Gen.map (fun t -> R.Table t) (table s))
             (all (List.map renamed columns)))
@@ -886,6 +890,36 @@ let agreeing expected actual =
       occurs (Printf.sprintf ": row %d: %s." row why) (error e)
   | _ -> false
 
+(* [right_keys p] is, for each equality join of [p] whose right runs, its
+   right's rows and the number of distinct keys among them, by the reference's
+   grouping. *)
+let rec right_keys : R.plan -> (int * int) list = function
+  | Table _ | Source _ -> []
+  | Select (_, p)
+  | Derive (_, p)
+  | Filter (_, p)
+  | Slice { plan = p; _ }
+  | Aggregate (_, _, p)
+  | Sort (_, p) ->
+      right_keys p
+  | Append (p, p') -> right_keys p @ right_keys p'
+  | Join { on; left; right; _ } ->
+      let rows = function
+        | (_, R.Column (_, vs)) :: _ -> Array.length vs
+        | [] -> 0
+      in
+      let here =
+        match on with
+        | Keys ks -> (
+            match
+              (R.run right, R.run (R.Aggregate (List.map snd ks, [], right)))
+            with
+            | Ok cs, Ok gs -> [ (rows cs, rows gs) ]
+            | _ | (exception _) -> [])
+        | Position | All -> []
+      in
+      here @ right_keys left @ right_keys right
+
 let agrees p =
   let q = R.query p in
   let kept = Query.equal (Query.optimize q) q in
@@ -895,6 +929,11 @@ let agrees p =
   cover "the optimizer keeps the plan" kept;
   cover "an aggregate" (mentions "aggregate" p);
   cover "a join" (mentions "join" p);
+  let joins = right_keys p in
+  cover "a join to distinct right keys, two rows or more"
+    (List.exists (fun (m, d) -> m >= 2 && d = m) joins);
+  cover "a join to a repeated right key"
+    (List.exists (fun (m, d) -> d < m) joins);
   cover "an expression reads other rows" framed;
   cover "a sort" (mentions "sort" p);
   cover "a source" (mentions "source" p);
@@ -2050,6 +2089,98 @@ let join_order =
       equal ~msg:"columns" (list string) (List.map fst columns) (names t);
       List.iter (column_is t) columns)
 
+(* A right whose keys are distinct, as a table looked up by its key: left rows
+   0 and 2 match right row 1, left row 1 matches right row 0, and left row 3
+   and right row 2 match nothing. *)
+let distinct_right =
+  v [ ("k", i64 [| 1; 2; 4 |]); ("y", i64 [| 10; 11; 13 |]) ]
+
+(* The same lookup with a null key on each side, which match each other: left
+   row 4 matches right row 3. Its keys are int64 or text. *)
+let lookup_order =
+  let s x = Some x in
+  let ks = [| s 2; s 1; s 2; s 3; None |] and rks = [| s 1; s 2; s 4; None |] in
+  let read kind f t =
+    let ks = Column.options kind (column t "k") in
+    Array.to_list (Array.map (Option.map f) ks)
+  in
+  (* Each dtype writes the keys and reads the result's as ints. *)
+  let dtypes =
+    [
+      ( "int64",
+        Column.of_options Type.int64,
+        read Kind.int Fun.id );
+      ( "text",
+        (fun ks ->
+          Column.of_options Type.string
+            (Array.map (Option.map string_of_int) ks)),
+        read Kind.string int_of_string );
+    ]
+  in
+  let kinds =
+    [
+      ( "Inner",
+        Join.Inner,
+        [ s 2; s 1; s 2; None ],
+        [ ("x", [ s 0; s 1; s 2; s 4 ]); ("y", [ s 11; s 10; s 11; s 14 ]) ] );
+      ( "Left",
+        Left,
+        [ s 2; s 1; s 2; s 3; None ],
+        [
+          ("x", [ s 0; s 1; s 2; s 3; s 4 ]);
+          ("y", [ s 11; s 10; s 11; None; s 14 ]);
+        ] );
+      ( "Full",
+        Full,
+        [ s 2; s 1; s 2; s 3; None; s 4 ],
+        [
+          ("x", [ s 0; s 1; s 2; s 3; s 4; None ]);
+          ("y", [ s 11; s 10; s 11; None; s 14; s 13 ]);
+        ] );
+      ( "Semi",
+        Semi,
+        [ s 2; s 1; s 2; None ],
+        [ ("x", [ s 0; s 1; s 2; s 4 ]) ] );
+      ("Anti", Anti, [ s 3 ], [ ("x", [ s 3 ]) ]);
+    ]
+  in
+  cases "Row order over distinct right keys"
+    ~id:(fun ((dtype, _, _), (name, _, _, _)) ->
+      Printf.sprintf "%s over %s keys: each left row with its one match" name
+        dtype)
+    (List.concat_map (fun d -> List.map (fun k -> (d, k)) kinds) dtypes)
+    (fun ((_, key, keys), (_, kind, expected_keys, columns)) ->
+      let l = v [ ("k", key ks); ("x", i64 [| 0; 1; 2; 3; 4 |]) ]
+      and r = v [ ("k", key rks); ("y", i64 [| 10; 11; 13; 14 |]) ] in
+      let t = joined ~kind (Join.keys [ "k" ]) l r in
+      equal ~msg:"columns" (list string)
+        ("k" :: List.map fst columns)
+        (names t);
+      equal ~msg:"k" (list (option int)) expected_keys (keys t);
+      List.iter (column_is t) columns)
+
+(* Text keys without a null are grouped as their rows of bytes, which also
+   count each group's rows: a full join reads them for the right rows without
+   a match. *)
+let text_lookup =
+  test "a Full join to distinct text keys without a null" (fun () ->
+      let s x = Some x in
+      let text ks = Column.v Type.string ks in
+      let l =
+        v [ ("k", text [| "2"; "1"; "2"; "3" |]); ("x", i64 [| 0; 1; 2; 3 |]) ]
+      and r =
+        v [ ("k", text [| "1"; "2"; "4" |]); ("y", i64 [| 10; 11; 13 |]) ]
+      in
+      let t = joined ~kind:Full (Join.keys [ "k" ]) l r in
+      equal ~msg:"k" (list (option string))
+        [ s "2"; s "1"; s "2"; s "3"; s "4" ]
+        (Array.to_list (Column.options Kind.string (column t "k")));
+      List.iter (column_is t)
+        [
+          ("x", [ s 0; s 1; s 2; s 3; None ]);
+          ("y", [ s 11; s 10; s 11; None; s 13 ]);
+        ])
+
 (* [shapes] are a left of three rows and a right of two, and the other way. *)
 let shapes =
   let s x = Some x in
@@ -2143,6 +2274,8 @@ let joins =
   group "Joins"
     [
       join_order;
+      lookup_order;
+      text_lookup;
       shapes;
       test "a failing join under an empty slice of a slice from the end"
         (fun () ->
@@ -2262,6 +2395,9 @@ let joins =
                  ends ~each_right:One k l r;
                  ends ~each_right:At_least_one k l r;
                  ends ~each_left:One ~each_right:One k l r;
+                 ends ~each_left:One k l distinct_right;
+                 ends ~each_right:One k l distinct_right;
+                 ends ~each_right:At_least_one k l distinct_right;
                  ends ~each_left:One Join.position l (v [ ("y", i64 [| 1 |]) ]);
                  ends ~each_right:At_most_one Join.all l
                    (v [ ("y", i64 [| 1 |]) ]);
@@ -2282,6 +2418,9 @@ let joins =
             join ~on:(keys ["k"]) ~each_right:One: row 1: the right row whose "k" is 2 matches 2 rows, not one.
             join ~on:(keys ["k"]) ~each_right:At_least_one: row 3: the right row whose "k" is 4 matches 0 rows, not at least one.
             join ~on:(keys ["k"]) ~each_left:One ~each_right:One: row 0: the left row whose "k" is 2 matches 2 rows, not one.
+            join ~on:(keys ["k"]) ~each_left:One: row 3: the left row whose "k" is 3 matches 0 rows, not one.
+            join ~on:(keys ["k"]) ~each_right:One: row 1: the right row whose "k" is 2 matches 2 rows, not one.
+            join ~on:(keys ["k"]) ~each_right:At_least_one: row 2: the right row whose "k" is 4 matches 0 rows, not at least one.
             join ~on:position ~each_left:One: row 1: the left row matches 0 rows, not one.
             join ~on:all ~each_right:At_most_one: row 0: the right row matches 4 rows, not at most one.
             join ~on:(keys ["s"; "b"]) ~each_left:At_most_one: row 1: the left row whose "s" is ∅ and "b" is true matches 2 rows, not at most one.

@@ -7,7 +7,8 @@
 
     The programs of [Query.join] steps over batches; {!Run} streams them. A join
     pairs left row indices with right row indices, [-1] where a side has no row,
-    then takes every column at them ({!Column.take} makes the nulls).
+    then takes every column at them ({!Column.gather} makes the nulls). A join
+    that keeps every left row once, in order, keeps the left's columns.
 
     {b Assertions.} A join checks [each_left] on its left rows in order, then
     [each_right] on its right rows, and fails at the first row whose number of

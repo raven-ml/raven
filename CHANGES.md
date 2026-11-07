@@ -3806,6 +3806,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- A join to distinct right keys reads each left row's match with one gather,
+  and a left join whose rows match once at most keeps the left's columns
+  uncopied: H2O join question 3 at 10^7 rows runs 2.4 G instructions, not 7.8.
 - A list column whose elements are fixed-width takes each row's elements,
   and their nulls, as one run in `Talon.take`, a join, a filter or a sort,
   where it built a position for each element: a take of 2^18 rows of a

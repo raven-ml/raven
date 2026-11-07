@@ -17,6 +17,10 @@ let none n = Nx.full Nx.int64 [| n |] (-1L)
 (* [exclusive c] is the sum of the entries of [c] before each one. *)
 let exclusive c = Nx.sub (Nx.cumsum c) c
 
+(* The left rows a join keeps: [All] of them in order, whose columns it keeps
+   as they are, or those [At] indices. *)
+type rows = All | At of Nx.host Nx.int64_t
+
 (* [assemble q kind l li r ri keys] is [q]'s rows: each column is the one [keys]
    give it, or else [l]'s taken at [li], or else [r]'s taken at [ri]. The side a
    [kind] of join pads, the left of a full join and the right of a left or full
@@ -35,8 +39,6 @@ let assemble q (kind : Join.kind) l li r ri keys =
            in
            Column.mask (Nx.cast Nx.bit inside)))
   in
-  let found_l = found (kind = Full) li l
-  and found_r = found (kind = Left || kind = Full) ri r in
   let side found idx c =
     let g = Column.gather idx c in
     match found with
@@ -44,17 +46,22 @@ let assemble q (kind : Join.kind) l li r ri keys =
         Column.restrict (Lazy.force found) g
     | _ -> g
   in
+  let rows, left =
+    match li with
+    | All -> (Table.rows l, Fun.id)
+    | At li -> (Nx.dim 0 li, side (found (kind = Full) li l) li)
+  in
+  let found_r = found (kind = Left || kind = Full) ri r in
   let column n =
     match List.assoc_opt n keys with
     | Some c -> c
     | None -> (
         match Schema.find (Table.schema l) n with
-        | Some _ -> side found_l li (Table.column l n)
+        | Some _ -> left (Table.column l n)
         | None -> side found_r ri (Table.column r n))
   in
   let s = Query.schema q in
-  Table.batch s ~rows:(Nx.dim 0 li)
-    (Array.of_list (List.map column (Schema.names s)))
+  Table.batch s ~rows (Array.of_list (List.map column (Schema.names s)))
 
 (* Assertions *)
 
@@ -126,20 +133,33 @@ let named t ns = List.map (fun n -> (n, Table.column t n)) ns
 (* Equality joins
 
    The keys of both sides are coded at once: {!Key.groups} numbers the groups of
-   equal keys, and the right rows of each group, in order, are one row of
-   [runs]. A left row's matches are its group's row. *)
+   equal keys, and a left row's matches are the right rows of its group. When
+   no two right rows share a group, as in a lookup of a table by its key, a
+   scatter gives each group its right row. Otherwise the right rows of each
+   group, in order, are one row of [runs]. *)
+
+(* The matches of the left rows: [One ri], each left row's one match or [-1],
+   or [Runs matched], each left row's matches, one after the other. *)
+type matches =
+  | One of Nx.host Nx.int64_t
+  | Runs of Nx.host Nx.int64_t
 
 (* [left_pairs counts matched] pairs each left row with its matches, or with
-   [-1] if it has none. *)
+   [-1] if it has none. A left row of one match at most keeps every left row in
+   order: its match is a scatter of [matched] to the rows that have one. *)
 let left_pairs counts matched =
-  let one = Nx.maximum_s counts 1L in
-  let li = Nx.positions one and inner = Nx.positions counts in
-  let rank =
-    Nx.sub (arange (Nx.dim 0 inner)) (Nx.take inner (exclusive counts))
-  in
-  let at = Nx.add (Nx.take inner (exclusive one)) rank in
-  let ri = Nx.scatter ~axis:0 at matched (none (Nx.dim 0 li)) in
-  (li, ri)
+  let n = Nx.dim 0 counts in
+  if n = 0 || Nx.item [] (Nx.max counts) <= 1L then
+    (All, Nx.scatter ~axis:0 (Nx.positions counts) matched (none n))
+  else
+    let one = Nx.maximum_s counts 1L in
+    let li = Nx.positions one and inner = Nx.positions counts in
+    let rank =
+      Nx.sub (arange (Nx.dim 0 inner)) (Nx.take inner (exclusive counts))
+    in
+    let at = Nx.add (Nx.take inner (exclusive one)) rank in
+    let ri = Nx.scatter ~axis:0 at matched (none (Nx.dim 0 li)) in
+    (At li, ri)
 
 let equality q kind (each_left, each_right) left right eqs =
   let widen (ln, rn) =
@@ -158,31 +178,54 @@ let equality q kind (each_left, each_right) left right eqs =
         atoms
     in
     let g = Key.groups (List.map snd keys) in
-    let ids lo hi = Nx.slice [ Nx.R (lo, hi) ] g.ids in
-    let runs =
-      Nx_ragged.of_ids ~segments:(Nx.dim 0 g.first) (ids n (n + m)) (arange m)
+    let groups = Nx.dim 0 g.first in
+    let lids = Nx.slice [ Nx.R (0, n) ] g.ids
+    and rids = Nx.slice [ Nx.R (n, n + m) ] g.ids in
+    (* Each group's right rows, and so each left row's matches. *)
+    let ones = Nx.ones_like rids in
+    let per = Nx.reduce_segments Nx.Add ~segments:groups rids ones in
+    let counts = Nx.take lids per in
+    let matches =
+      if groups = 0 || Nx.item [] (Nx.max per) <= 1L then
+        One (Nx.take lids (Nx.scatter ~axis:0 rids (arange m) (none groups)))
+      else
+        let runs = Nx_ragged.of_ids ~segments:groups rids (arange m) in
+        Runs (Nx_ragged.values (Nx_ragged.take ~indices:lids runs))
     in
-    let hits = Nx_ragged.take ~indices:(ids 0 n) runs in
-    let counts = Nx_ragged.lengths hits and matched = Nx_ragged.values hits in
+    (* A right row's matches are the left rows of its group: the others of its
+       group when it is the group's one right row. *)
     let rcounts =
       lazy
-        (Nx.reduce_segments Nx.Add ~segments:m matched (Nx.ones_like matched))
+        (match matches with
+        | One _ -> Nx.sub_s (Nx.take rids g.counts) 1L
+        | Runs matched ->
+            Nx.reduce_segments Nx.Add ~segments:m matched
+              (Nx.ones_like matched))
     in
     let* () =
       check "left" each_left (named l (List.map fst eqs)) (lazy counts)
     in
     let* () = check "right" each_right (named r (List.map snd eqs)) rcounts in
-    let pairs li ri = Ok (assemble q kind l li r ri []) in
+    let left_pairs () =
+      match matches with
+      | One ri -> (All, ri)
+      | Runs matched -> left_pairs counts matched
+    in
+    let pairs (li, ri) = Ok (assemble q kind l li r ri []) in
+    let only keep = pairs (At (Nx.positions keep), arange 0) in
     match (kind : Join.kind) with
-    | Inner -> pairs (Nx.positions counts) matched
-    | Semi -> pairs (Nx.positions (Nx.greater_s counts 0L)) (arange 0)
-    | Anti -> pairs (Nx.positions (Nx.equal_s counts 0L)) (arange 0)
-    | Left ->
-        let li, ri = left_pairs counts matched in
-        pairs li ri
+    | Inner -> (
+        let li = Nx.positions counts in
+        match matches with
+        | One ri -> pairs (At li, Nx.take li ri)
+        | Runs matched -> pairs (At li, matched))
+    | Semi -> only (Nx.greater_s counts 0L)
+    | Anti -> only (Nx.equal_s counts 0L)
+    | Left -> pairs (left_pairs ())
     | Full ->
         (* A right row without a match follows, its keys in the left's. *)
-        let li, ri = left_pairs counts matched in
+        let li, ri = left_pairs () in
+        let li = match li with All -> arange n | At li -> li in
         let u = Nx.positions (Nx.equal_s (Lazy.force rcounts) 0L) in
         let at = Nx.concatenate ~axis:0 [ li; Nx.add_s u (Int64.of_int n) ] in
         let coalesced =
@@ -190,7 +233,7 @@ let equality q kind (each_left, each_right) left right eqs =
         in
         let li = Nx.concatenate ~axis:0 [ li; none (Nx.dim 0 u) ]
         and ri = Nx.concatenate ~axis:0 [ ri; u ] in
-        Ok (assemble q kind l li r ri coalesced)
+        Ok (assemble q kind l (At li) r ri coalesced)
 
 (* Position and all joins *)
 
@@ -205,7 +248,8 @@ let position q kind (each_left, each_right) l r =
     | Full -> arange (Int.max n m)
     | Anti -> Nx.arange Nx.int64 (Int.min n m) n 1
   in
-  Ok (assemble q kind l idx r idx [])
+  let li = if kind = Left then All else At idx in
+  Ok (assemble q kind l li r idx [])
 
 let cross q kind (each_left, each_right) =
   let batch r b =
@@ -222,13 +266,14 @@ let cross q kind (each_left, each_right) =
       | Semi -> (kept (m > 0), arange 0)
       | Anti -> (kept (m = 0), arange 0)
     in
-    Ok (assemble q kind b li r ri [])
+    Ok (assemble q kind b (At li) r ri [])
   in
   let last r e n =
     let m = Table.rows r in
     let* () = sized "right" each_right ~rows:m (0, 0) n in
-    if kind = Full && n = 0 then Ok (assemble q kind e (none m) r (arange m) [])
-    else Ok (assemble q kind e (arange 0) r (arange 0) [])
+    if kind = Full && n = 0 then
+      Ok (assemble q kind e (At (none m)) r (arange m) [])
+    else Ok (assemble q kind e (At (arange 0)) r (arange 0) [])
   in
   Streaming { batch; last }
 
