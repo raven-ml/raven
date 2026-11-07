@@ -140,12 +140,14 @@ let domain axis ~key hs =
 
 (* Domains of y *)
 
+(* A single value widens by 5% each way, within the finite floats. *)
 let widen = function
   | None -> (0., 1.)
   | Some (lo, hi) when lo < hi -> (lo, hi)
   | Some (v, _) ->
       let d = if v = 0. then 0.5 else Float.abs v *. 0.05 in
-      (v -. d, v +. d)
+      ( Float.max (-.Float.max_float) (v -. d),
+        Float.min Float.max_float (v +. d) )
 
 let union a b =
   match (a, b) with
@@ -173,7 +175,8 @@ let round_125 x =
 
 (* The difference rows' pairs, made in [prepare] ({!pair}). *)
 type paired = {
-  points : (float * float) array; (* per dot column: its middle, the mean *)
+  points : (float * float) array;
+      (* per dot column: its middle, half the mean of its differences *)
   last : (int * float * float) option; (* the latest pair: step, x, difference *)
 }
 
@@ -363,7 +366,9 @@ let dots ~axis ~lo ~hi spec =
    one there, as on the step metric's axis. The differences are averaged per dot
    column of the focus's x, and the latest is kept with its step. Two runs that
    log at different cadences, or one that ends inside a column, are compared
-   only where both logged. *)
+   only where both logged. The points are half the means, so that a difference
+   of two finite values never overflows ([Mean]); the row's scale is relative,
+   so it draws them as it would the means. *)
 
 let pair axis plot focus key marked_h =
   match (series focus key, series marked_h key) with
@@ -374,6 +379,7 @@ let pair axis plot focus key marked_h =
       done;
       let x = x_of axis focus key fs in
       let sums = Array.make plot.Curve.dots 0.
+      and shifts = Array.make plot.Curve.dots 0
       and counts = Array.make plot.Curve.dots 0 in
       let last = ref None in
       for i = 0 to Metric.length fs - 1 do
@@ -384,7 +390,7 @@ let pair axis plot focus key marked_h =
             if not (Float.is_nan xi) then begin
               let k = Curve.column plot xi in
               if k >= 0 && k < plot.dots then begin
-                sums.(k) <- sums.(k) +. d;
+                Mean.add sums shifts k ((v /. 2.) -. (o /. 2.));
                 counts.(k) <- counts.(k) + 1
               end;
               match !last with
@@ -402,7 +408,7 @@ let pair axis plot focus key marked_h =
                   else
                     Some
                       ( plot.lo +. ((Float.of_int k +. 0.5) *. width),
-                        sums.(k) /. Float.of_int counts.(k) ))))
+                        Mean.get sums.(k) shifts.(k) counts.(k) ))))
       in
       { points; last = !last }
   | _ -> { points = [||]; last = None }
@@ -730,10 +736,11 @@ let draw_versus ~light p c g ~(under : placed) ~y ~rows =
   match List.assoc_opt c p.differences with
   | None | Some { last = None; _ } | Some { points = [||]; _ } -> None
   | Some { points = d; last = Some (step, at, last) } ->
+      (* [d] holds half the differences ({!pair}). *)
       let big =
         Array.fold_left (fun a (_, v) -> Float.max a (Float.abs v)) 0. d
       in
-      let big = if big > 0. then big else 1. in
+      let big = if big > 0. then big else 0.5 in
       let fig =
         C.layer
           [
@@ -765,7 +772,7 @@ let draw_versus ~light p c g ~(under : placed) ~y ~rows =
             G.draw_text ~style:Paint.dim g ~x:cx ~y:zy ~text:"┄"
         end
       done;
-      Some { last; step; at; scale = big; zero_row = zy }
+      Some { last; step; at; scale = 2. *. big; zero_row = zy }
 
 type trend = {
   t_axis : axis;

@@ -106,8 +106,9 @@ type ema = {
   den : float;
   last_x : float; (* the last closed step, NaN before any *)
   closed : int; (* closed steps since the start *)
-  pending : (float * float * int * int) option;
-      (* step, sum, count, index of its last sample *)
+  pending : (float * float * int * int * int) option;
+      (* step, sum scaled by 2^-shift, shift, count, index of its last sample
+         ([Mean]) *)
 }
 
 let ema_empty tau =
@@ -125,7 +126,11 @@ let ema_empty tau =
 let weight tau g = -.Float.expm1 (-.g /. tau)
 
 (* [close_step e (x, y)] is [e] with the step [x] of mean [y] closed, and the
-   step's smoothed value. *)
+   step's smoothed value. [num] sums a quarter of each difference, which for
+   two finite values is at most half the largest float; the weights that [den]
+   sums add up to at most 1, so [num] stays below the largest float too.
+   Quartering is exact but for subnormals, so this is the formula's value,
+   clamped to the finite floats, as a weighted mean of finite values is. *)
 let close_step e x y =
   if e.closed = 0 then ({ e with y1 = y; last_x = x; closed = 1 }, y)
   else
@@ -133,10 +138,11 @@ let close_step e x y =
     let decay = exp (-.g /. e.tau) and a = weight e.tau g in
     (* At the second step the first's weight is known: its gap is this one. *)
     let num, den = if e.closed = 1 then (0., a) else (e.num, e.den) in
-    let num = (num *. decay) +. (a *. (y -. e.y1)) in
+    let num = (num *. decay) +. (a *. ((y /. 4.) -. (e.y1 /. 4.))) in
     let den = (den *. decay) +. a in
+    let s = 4. *. ((e.y1 /. 4.) +. (num /. den)) in
     ( { e with num; den; last_x = x; closed = e.closed + 1 },
-      e.y1 +. (num /. den) )
+      Float.min Float.max_float (Float.max (-.Float.max_float) s) )
 
 (* Curves *)
 
@@ -145,7 +151,9 @@ type t = {
   ema : ema option;
   n : int; (* samples read *)
   m4 : m4;
-  sums : float array; (* per dot column, the sum of finite values *)
+  sums : float array;
+      (* per dot column, the sum of finite values scaled by 2^-shift ([Mean]) *)
+  shifts : int array;
   counts : int array;
   events : event option array;
   extent : (float * float) option;
@@ -158,7 +166,7 @@ let add_value c p =
   let col = column c.plot p.x in
   let m4 = feed c.plot c.m4 p in
   if Float.is_finite p.y && in_plot c.plot col then begin
-    c.sums.(col) <- c.sums.(col) +. p.y;
+    Mean.add c.sums c.shifts col p.y;
     c.counts.(col) <- c.counts.(col) + 1;
     let extent =
       match c.extent with
@@ -190,22 +198,24 @@ let add c ~x s i =
         if not (Float.is_finite y) then c
         else
           match e.pending with
-          | Some (px, sum, n, _) when px = xi ->
-              let pending = Some (px, sum +. y, n + 1, i) in
+          | Some (px, sum, shift, n, _) when px = xi ->
+              let sum, shift = Mean.plus sum shift y in
+              let pending = Some (px, sum, shift, n + 1, i) in
               { c with ema = Some { e with pending } }
-          | Some (px, sum, n, pi) ->
-              let e, s = close_step e px (sum /. Float.of_int n) in
+          | Some (px, sum, shift, n, pi) ->
+              let e, s = close_step e px (Mean.get sum shift n) in
               let c = add_value c { x = px; y = s; i = pi } in
               let e = if xi < px then ema_empty e.tau else e in
-              { c with ema = Some { e with pending = Some (xi, y, 1, i) } }
+              { c with ema = Some { e with pending = Some (xi, y, 0, 1, i) } }
           | None ->
-              { c with ema = Some { e with pending = Some (xi, y, 1, i) } })
+              { c with ema = Some { e with pending = Some (xi, y, 0, 1, i) } })
   end
 
 let copy c =
   {
     c with
     sums = Array.copy c.sums;
+    shifts = Array.copy c.shifts;
     counts = Array.copy c.counts;
     events = Array.copy c.events;
   }
@@ -225,6 +235,7 @@ let reduce ?tau plot ~x s =
       n = 0;
       m4 = m4_empty;
       sums = Array.make plot.dots 0.;
+      shifts = Array.make plot.dots 0;
       counts = Array.make plot.dots 0;
       events = Array.make plot.dots None;
       extent = None;
@@ -235,9 +246,9 @@ let reduce ?tau plot ~x s =
 (* The pending step of a smoothed curve, closed as if a later step had come. *)
 let settled c =
   match c.ema with
-  | Some ({ pending = Some (px, sum, n, pi); _ } as e) ->
+  | Some ({ pending = Some (px, sum, shift, n, pi); _ } as e) ->
       let c = copy c in
-      let _, s = close_step e px (sum /. Float.of_int n) in
+      let _, s = close_step e px (Mean.get sum shift n) in
       add_value c { x = px; y = s; i = pi }
   | _ -> c
 
@@ -254,7 +265,7 @@ let level c =
         +. (Float.of_int k +. 0.5)
            /. Float.of_int c.plot.dots *. (c.plot.hi -. c.plot.lo)
       in
-      pts := (x, c.sums.(k) /. Float.of_int c.counts.(k)) :: !pts
+      pts := (x, Mean.get c.sums.(k) c.shifts.(k) c.counts.(k)) :: !pts
   done;
   Array.of_list !pts
 

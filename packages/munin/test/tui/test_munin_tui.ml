@@ -318,6 +318,40 @@ let orphans =
       in
       equal string "1" orphans_column)
 
+(* A metric that stays at the largest float, or at its negation, spans no
+   values: its y domain widens around the value and stays finite. *)
+let flat_extreme =
+  cases "a chart of a value at the largest float draws it"
+    ~id:(Printf.sprintf "%h")
+    [ Float.max_float; -.Float.max_float ]
+    (fun v ->
+      with_store ~name:"flat-extreme" [] @@ fun store ->
+      let id, _ =
+        write_log store (List.init 9 (fun step -> sample_record (step, v)))
+      in
+      let h = History.read (Option.get (Store.run store id)) in
+      let g =
+        Munin_tui.Chart.draw ~width:60 ~height:12 ~lo:0. ~hi:10. ~key:"m" h []
+      in
+      (* The line's braille dots: U+2801 to U+28FF, E2 A0..A3 xx in UTF-8. *)
+      let dots line =
+        let n = ref 0 in
+        for i = 0 to String.length line - 3 do
+          let b k = Char.code line.[i + k] in
+          if
+            b 0 = 0xE2
+            && b 1 >= 0xA0
+            && b 1 <= 0xA3
+            && (b 1, b 2) <> (0xA0, 0x80)
+          then incr n
+        done;
+        !n
+      in
+      not_equal (list int) []
+        (List.filter (( < ) 0)
+           (List.map dots
+              (String.split_on_char '\n' (Matrix_grid.to_text g)))))
+
 (* The marks the medium carries *)
 
 (* Three runs of one sweep against the focus, train/loss over steps 2,000 to
@@ -434,7 +468,16 @@ let gen_value =
       (1, Gen.constant (-0.));
     ]
 
-let gen_samples ?(decrease = true) () =
+(* Values whose sums and differences pass the largest float, among the rest. *)
+let gen_big_value =
+  Gen.frequency
+    [
+      (6, gen_value);
+      (1, Gen.constant Float.max_float);
+      (1, Gen.constant (-.Float.max_float));
+    ]
+
+let gen_samples ?(decrease = true) ?(value = gen_value) () =
   let open Gen in
   let* deltas =
     list ~size:(int_range 0 400)
@@ -442,7 +485,7 @@ let gen_samples ?(decrease = true) () =
          ([ (12, int_range 1 30); (3, constant 0) ]
          @ if decrease then [ (1, int_range (-200) (-1)) ] else []))
   in
-  let* values = list ~size:(constant (List.length deltas)) gen_value in
+  let* values = list ~size:(constant (List.length deltas)) value in
   let steps =
     List.rev
       (snd
@@ -540,20 +583,32 @@ let m4 =
         (draw ~cells ~lo ~hi ~ylo ~yhi (every_sample samples))
         (draw ~cells ~lo ~hi ~ylo ~yhi (Curve.points c)))
 
-(* The smoothed value at a distinct step [x_i], from the formula of the Charts
-   section: samples at one step count as their mean. *)
-let smoothed ~tau samples x =
+let column ~lo ~hi ~dots x =
+  min (dots - 1)
+    (Float.to_int ((x -. lo) *. (1. /. (hi -. lo)) *. Float.of_int dots))
+
+(* [half_mean l] is half the mean of [l], each value divided by the count and
+   by 2 first, so that no partial sum's rounding passes the largest float. *)
+let half_mean l =
+  let n = Float.of_int (List.length l) in
+  List.fold_left (fun a v -> a +. (v /. n /. 2.)) 0. l
+
+(* A quarter of the smoothed value at a distinct step [x_i], from the formula of
+   the Charts section: samples at one step count as their mean. Quartered, so
+   that no difference of values, nor their weighted sum, passes the largest
+   float. *)
+let quarter_smoothed ~tau samples x =
   let groups =
     List.fold_left
       (fun acc (st, v) ->
         if not (Float.is_finite v) then acc
         else
           match acc with
-          | (st', sum, n) :: rest when st' = st -> (st, sum +. v, n + 1) :: rest
-          | _ -> (st, v, 1) :: acc)
+          | (st', vs) :: rest when st' = st -> (st, v :: vs) :: rest
+          | _ -> (st, [ v ]) :: acc)
       [] samples
     |> List.rev
-    |> List.map (fun (st, sum, n) -> (Float.of_int st, sum /. Float.of_int n))
+    |> List.map (fun (st, vs) -> (Float.of_int st, half_mean vs /. 2.))
   in
   let xs = Array.of_list (List.map fst groups) in
   let ys = Array.of_list (List.map snd groups) in
@@ -573,13 +628,17 @@ let smoothed ~tau samples x =
     xs;
   ys.(0) +. (!num /. !den)
 
+(* A key's finite values whose sum, at some step, passes the largest float. *)
+let sum_passes vs =
+  not (Float.is_finite (List.fold_left ( +. ) 0. vs))
+
 let ema =
   prop "a smoothed point is the debiased mean of the samples before it"
     Gen.(
       with_pp
         (fun ppf (s, tau, cells) ->
           Format.fprintf ppf "@[%a@ tau %g, %d cells@]" pp_samples s tau cells)
-        (let* samples = gen_samples ~decrease:false () in
+        (let* samples = gen_samples ~decrease:false ~value:gen_big_value () in
          let* tau = float_range 0.5 500. in
          let+ cells = int_range 1 160 in
          (samples, tau, cells)))
@@ -591,19 +650,55 @@ let ema =
         (List.exists (fun ((a, _), (b, _)) -> a = b) (pairs samples));
       cover "the first two samples share a step"
         (match samples with (a, _) :: (b, _) :: _ -> a = b | _ -> false);
+      cover "the samples at a step sum past the largest float"
+        (List.exists
+           (fun (st, _) ->
+             sum_passes
+               (List.filter_map
+                  (fun (st', v) ->
+                    if st' = st && Float.is_finite v then Some v else None)
+                  samples))
+           samples);
+      let finite = List.filter (fun (_, v) -> Float.is_finite v) samples in
+      cover "a step's mean differs from the first's past the largest float"
+        (match finite with
+        | [] -> false
+        | (first, _) :: _ ->
+            let y1 =
+              half_mean
+                (List.filter_map
+                   (fun (st, v) -> if st = first then Some v else None)
+                   finite)
+            in
+            List.exists
+              (fun (_, v) -> Float.abs ((v /. 2.) -. y1) > Float.max_float /. 2.)
+              finite);
+      let scale =
+        List.fold_left (fun m (_, v) -> Float.max m (Float.abs v)) 0. finite
+      in
       let plot =
         { Curve.lo = 0.; hi = Float.of_int (last + 1); dots = 2 * cells }
       in
       let c = Curve.reduce ~tau plot ~x:(step_x s) s in
+      (* Every column with a finite sample holds a smoothed point. *)
+      let columns l =
+        List.sort_uniq compare
+          (List.map (column ~lo:plot.lo ~hi:plot.hi ~dots:plot.dots) l)
+      in
+      equal (list int)
+        (columns (List.map (fun (st, _) -> Float.of_int st) finite))
+        (columns
+           (List.filter
+              (fun x -> not (Float.is_nan x))
+              (Array.to_list (Array.map fst (Curve.points c)))));
       Array.iter
         (fun (x, y) ->
           if not (Float.is_nan x) then
-            equal (float_rel ~rel:1e-9 ~abs:1e-12) (smoothed ~tau samples x) y)
+            equal
+              (float_rel ~rel:1e-9 ~abs:(Float.max 1e-12 (1e-12 *. scale)))
+              (quarter_smoothed ~tau samples x)
+              (y /. 4.))
         (Curve.points c))
-
-let column ~lo ~hi ~dots x =
-  min (dots - 1)
-    (Float.to_int ((x -. lo) *. (1. /. (hi -. lo)) *. Float.of_int dots))
 
 let events =
   prop "each dot column with a sample that is not finite is marked"
@@ -652,6 +747,40 @@ let events =
         (list (pair int string))
         (sorted (List.of_seq (Hashtbl.to_seq expected)))
         (sorted (Array.to_list (Curve.events c))))
+
+let level =
+  prop "a level point is the mean of its column's finite values"
+    Gen.(
+      with_pp
+        (fun ppf (s, p) ->
+          Format.fprintf ppf "@[%a@ %a@]" pp_samples s pp_plot p)
+        (let* samples = gen_samples ~value:gen_big_value () in
+         let+ plot = gen_plot samples in
+         (samples, plot)))
+    (fun (samples, (cells, lo, hi)) ->
+      let s = series_of samples in
+      let dots = 2 * cells in
+      let c = Curve.reduce { lo; hi; dots } ~x:(step_x s) s in
+      let columns = Array.make dots [] in
+      List.iter
+        (fun (st, v) ->
+          let x = Float.of_int st in
+          if Float.is_finite v && x >= lo && x <= hi then
+            let k = column ~lo ~hi ~dots x in
+            columns.(k) <- v :: columns.(k))
+        samples;
+      let columns = List.filter (( <> ) []) (Array.to_list columns) in
+      cover "a column's values sum past the largest float"
+        (List.exists sum_passes columns);
+      let scale =
+        List.fold_left
+          (List.fold_left (fun m v -> Float.max m (Float.abs v)))
+          0. columns
+      in
+      equal
+        (list (float_rel ~rel:1e-9 ~abs:(Float.max 1e-12 (1e-12 *. scale))))
+        (List.map half_mean columns)
+        (Array.to_list (Array.map (fun (_, y) -> y /. 2.) (Curve.level c))))
 
 let extend =
   prop "extending a reduction equals reducing the longer series"
@@ -984,6 +1113,39 @@ let paired =
       in
       let found s = T.Screen.find screen s <> [] in
       equal (list bool) [ true; true ] [ found value; found verdict ])
+
+(* The focus logs the largest float at step 0 and the marked run its negation,
+   a difference past the largest float; later steps differ by [step / 1000].
+   The row draws with its scale, its latest value and its verdict. *)
+let paired_past =
+  test "a difference row draws where a difference passes the largest float"
+    (fun () ->
+      with_store ~name:"paired-past" [] @@ fun store ->
+      let values first =
+        List.init 100 (fun k ->
+            sample_record
+              (k * 10, if k = 0 then first else Float.of_int (k * 10) /. 1000.))
+      in
+      ignore
+        (write_log store ~goal:"minimize" ~started:1
+           (List.init 100 (fun k ->
+                sample_record
+                  (k * 10, if k = 0 then -.Float.max_float else 0.))));
+      ignore
+        (write_log store ~goal:"minimize" ~started:2 (values Float.max_float));
+      let screen =
+        show ~cols:120 ~rows:40 store Munin_tui.Runs
+          [ char 'j'; Text " "; char 'k'; Key Enter ]
+      in
+      let found s = T.Screen.find screen s <> [] in
+      let rows s = List.map fst (T.Screen.find screen s) in
+      equal (list bool) [ true; true ] [ found "+0.9900"; found "worse at 990" ];
+      (* The scale's row of the difference row holds the line's dots. *)
+      match rows "±1.798e+308" with
+      | [ r ] ->
+          equal (list int) [ r ]
+            (List.sort_uniq compare (List.filter (( = ) r) (rows "⠉⠉⠉")))
+      | l -> failf "the scale found %d times" (List.length l))
 
 (* The marks change and the poll that prepares the new chart has not returned:
    no difference row draws the run a letter named before. The reads are held on
@@ -1442,16 +1604,18 @@ let () =
              m4;
              ema;
              events;
+             level;
              extend;
              pairing;
              domain;
              log_y;
              orphans;
+             flat_extreme;
              demonstration;
            ];
          group "runs" [ filter; stars; metric_filter ];
          group "run"
-           [ non_finite_count; all_orphans; short_of_steps; paired; remarked ];
+           [ non_finite_count; all_orphans; short_of_steps; paired; paired_past; remarked ];
          group "held" [ held; kept_pane; ended_away; watch_test ];
          stack_test;
        ])
