@@ -88,6 +88,101 @@ let compiles_for_baseline =
   equal string "CPU" t.device;
   equal string "CLANG" t.renderer
 
+(* Half casts
+
+   The baseline processor of x86_64 converts no half in hardware, so a cast
+   to or from float16 tests code that converts by hand. *)
+
+let set () = Nx.devices [ host () ]
+
+(* The bits of half [x], every NaN as one. *)
+let half_bits x =
+  Array.map
+    (fun b -> if b land 0x7c00 = 0x7c00 && b land 0x3ff <> 0 then 0x7e00 else b)
+    (Nx.to_array (Nx.bitcast Nx.uint16 x))
+
+(* Every half, by its bits. *)
+let halves () = Nx.bitcast Nx.float16 (Nx.arange Nx.uint16 0 65536 1)
+
+(* Widening keeps every bit a NaN has, with its quiet bit set, as hardware
+   conversions do: the results' bits are compared, NaNs included. *)
+let widens_to_float32 () =
+  let module R = (val set ()) in
+  let x = halves () in
+  let far = Rune.jit' (Nx.cast Nx.float32) (Nx.place R.on x) in
+  let raw y = Nx.to_array (Nx.bitcast Nx.int32 y) in
+  equal (array int32)
+    (raw (Nx.cast Nx.float32 x))
+    (raw (Nx.place Nx.Host.on far))
+
+let widens_to_float64 () =
+  let module R = (val set ()) in
+  let x = halves () in
+  let far = Rune.jit' (Nx.cast Nx.float64) (Nx.place R.on x) in
+  let raw y = Nx.to_array (Nx.bitcast Nx.int64 y) in
+  equal (array int64)
+    (raw (Nx.cast Nx.float64 x))
+    (raw (Nx.place Nx.Host.on far))
+
+(* Around each power of two of the halves, from below the least subnormal
+   past the greatest finite half: the power, its neighbours a half's and a
+   quarter's step away, ties among them, and past 65504 the tie 65520 to an
+   infinity. *)
+let half_edges =
+  let around e =
+    let p = Float.ldexp 1. e in
+    let ulp = Float.ldexp 1. (Int.max (e - 10) (-24)) in
+    List.concat_map
+      (fun d -> [ p +. d; p -. d ])
+      [ 0.; ulp /. 4.; ulp /. 2.; 3. *. ulp /. 4.; ulp; 3. *. ulp /. 2. ]
+  in
+  let finite = List.concat_map around (List.init 42 (fun i -> i - 26)) in
+  let special =
+    [ 0.; -0.; nan; infinity; neg_infinity; 65504.; 65519.; 65520.; 65536.;
+      1e5; 1e-8; 1023. *. 0x1p-24; 1.5 *. 0x1p-24; 0x1p-25; 0x1.0000002p-25 ]
+  in
+  let all = finite @ special in
+  Array.of_list (all @ List.map Float.neg all)
+
+let narrows dt () =
+  let module R = (val set ()) in
+  let x = Nx.create dt [| Array.length half_edges |] half_edges in
+  let far = Rune.jit' (Nx.cast Nx.float16) (Nx.place R.on x) in
+  equal (array int)
+    (half_bits (Nx.cast Nx.float16 x))
+    (half_bits (Nx.place Nx.Host.on far))
+
+(* Doubles whose float32 rounding lands on a half's tie: a cast that rounds
+   twice rounds them the wrong way. *)
+let double_ties =
+  Array.of_list
+    (List.concat_map
+       (fun d -> [ 1. +. 0x1p-11 +. d; 1. +. 0x1p-11 -. d; 0x1p-25 +. d ])
+       [ 0x1p-40; 0x1p-50; 0x1p-60 ])
+
+let narrows_from_float64 () =
+  let module R = (val set ()) in
+  let x = Nx.create Nx.float64 [| Array.length double_ties |] double_ties in
+  let far = Rune.jit' (Nx.cast Nx.float16) (Nx.place R.on x) in
+  equal (array int)
+    (half_bits (Nx.cast Nx.float16 x))
+    (half_bits (Nx.place Nx.Host.on far))
+
+(* Floats from uniform bit patterns, every exponent equally likely. *)
+let float32s =
+  Gen.(array ~size:(constant 64) (map Int32.float_of_bits int32))
+
+let narrows_any =
+  prop "any float32 narrows as eager" float32s @@ fun xs ->
+  cover ~share:0.5 "a half subnormal or zero"
+    (Array.exists (fun v -> Float.abs v < 0x1p-14) xs);
+  let module R = (val set ()) in
+  let x = Nx.create Nx.float32 [| Array.length xs |] xs in
+  let far = Rune.jit' (Nx.cast Nx.float16) (Nx.place R.on x) in
+  equal (array int)
+    (half_bits (Nx.cast Nx.float16 x))
+    (half_bits (Nx.place Nx.Host.on far))
+
 let () =
   Watchdog.start ();
   exit
@@ -96,4 +191,13 @@ let () =
          compiles_for_baseline;
          group "gives eager's bits"
            [ agrees "neg" { f = Nx.neg }; agrees "floor" { f = Nx.floor } ];
+         group "half casts give eager's bits"
+           [
+             test "every half widens to float32" widens_to_float32;
+             test "every half widens to float64" widens_to_float64;
+             test "float32 edges narrow" (narrows Nx.float32);
+             test "float64 edges narrow" (narrows Nx.float64);
+             test "float64 near ties narrows once" narrows_from_float64;
+             narrows_any;
+           ];
        ])

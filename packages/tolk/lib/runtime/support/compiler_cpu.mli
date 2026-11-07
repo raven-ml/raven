@@ -8,8 +8,14 @@
 (** The compiler of C for processors.
 
     Clang compiles the source to a relocatable ELF object that is freestanding:
-    it calls no library, so a loader places it in memory and runs it as it is.
-    The Clang run is {!Setting.cc} when the compiler is made. *)
+    it links against nothing, so a loader places it in memory and runs it as
+    it is, taking each function it does not define from the process. Where the
+    processor lacks an instruction, Clang calls the C math library instead,
+    such as [truncf] for a truncation without SSE4.1 and [fmaf] for a fused
+    multiply-add without FMA, which the process holds; the half conversions it
+    would call from its own runtime, which no library of the process holds,
+    each object defines ({!clang}). The Clang run is {!Setting.cc} when the
+    compiler is made. *)
 
 val clang : string -> Renderer.Compiler.t
 (** [clang arch] is the compiler of C source to objects for [arch], written
@@ -31,13 +37,19 @@ val clang : string -> Renderer.Compiler.t
       extension that the processor model gains.
 
     Objects are ELF, optimized at [-O2] and position independent. Math functions
-    do not set [errno], so that a square root is one instruction. On [arm64] the
+    do not set [errno], so that a square root is one instruction. For an x86_64
+    processor without F16C, which converts no half in hardware, each object
+    defines the conversions between halves and floats that Clang calls
+    ([__extendhfsf2] and [__truncsfhf2]): IEEE's, rounding to nearest with
+    ties to even, with subnormals and infinities, and a NaN made quiet with
+    the high bits of its payload, as the processors' conversions make it. On
+    [arm64] the
     register [x18] is left alone, since macOS and Windows clobber it, and
     LLVM's interleaved load combine, which reads loads that shuffles put
     together as one interleaved load, is off: its time grows much faster than
     the lanes of a vector gathered from loads. Loop idiom recognition, which
-    replaces a loop by the library call or table it computes, is off:
-    freestanding code calls no library, and under LLVM 22 and 23 its time grows
+    replaces a loop by the library call or table it computes, is off: the
+    source makes no such call, and under LLVM 22 and 23 its time grows
     exponentially with a chain of selections that each read the last twice.
     Under a
     Clang of LLVM 18, 19 or 20, the straight-line vectorizer, which packs
@@ -66,11 +78,12 @@ val clang : string -> Renderer.Compiler.t
     is [arch] with its commas replaced by underscores, and [D] the digest of
     what that Clang states it runs for these options, which starts with its
     version and installation, of the commands of its compiler proper that
-    compile a source of at most and of more than 400 000 bytes, and of that
-    length: the commands name the processor and features they compile for and
-    every option, or are replaced by why Clang rejects them or does not run. An
-    object is read back only for its source, compiled by the same Clang with the
-    same options.
+    compile a source of at most and of more than 400 000 bytes, of that length,
+    and of the half conversions an object defines: the commands name the
+    processor and features they compile for and every option, or are replaced
+    by why Clang rejects them or does not run. An object is read back only for
+    its source, compiled by the same Clang with the same options and
+    conversions. A source's length counts without the conversions.
 
     The options depend on the release of LLVM that Clang states. Clang is asked
     once per process, when the table or a compile first needs it, for the

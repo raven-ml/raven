@@ -416,17 +416,22 @@ let compile_args selected ~llvm =
   ]
   @ fixed ~llvm selected @ slp @ ldn @ idioms @ [ "-"; "-o"; "-" ]
 
-(* The vector registers of what Clang compiles [arch] for. Its statement names
-   the processor alone, as [-target-cpu x86-64-v3], and the processor's features
-   only for [native]; the macros the preprocessor defines name them for every
-   processor. On x86_64: 16 registers, 32 with AVX-512, of 32 bytes with AVX and
-   16 without. AVX-512's registers hold 64 bytes, but a processor with them is
-   taken at 32 until one is measured: tolk renders its vectors, so Clang's
-   preference for 256 bits on such processors does not choose for it. On arm64,
-   NEON's 32 registers of 16 bytes. On riscv64, none known. A Clang that does
-   not run gives SSE's 16 of 16 bytes, which every x86_64 processor has. Each
-   Clang and [arch] is asked once per process. *)
-let registers =
+(* The macros Clang's preprocessor defines for an x86_64 [selected], which name
+   the processor's features for every processor, where Clang's statement names
+   them only for [native]; none where Clang does not run. *)
+let x86_macros cc selected =
+  let llvm = llvm_major (own_statement cc (compile_args selected)) in
+  let flags = fixed ~llvm selected in
+  let macros =
+    match run cc ([ "-dM"; "-E"; "-x"; "c" ] @ flags @ [ "-" ]) "" with
+    | Ok (WEXITED 0, out, _) -> String.split_on_char '\n' out
+    | Ok _ | Error _ -> []
+  in
+  fun m ->
+    List.exists (String.starts_with ~prefix:("#define " ^ m ^ " ")) macros
+
+(* [f cc arch] for each Clang and [arch], asked once per process. *)
+let per_clang f =
   let lock = Mutex.create () and known = Hashtbl.create 4 in
   fun arch ->
     let cc = Setting.value Setting.cc in
@@ -435,35 +440,81 @@ let registers =
     match Hashtbl.find_opt known (cc, arch) with
     | Some r -> r
     | None ->
-        let r : Renderer.registers option =
-          match fst selected with
-          | "x86_64" ->
-              let llvm =
-                llvm_major (own_statement cc (compile_args selected))
-              in
-              let flags = fixed ~llvm selected in
-              let macros =
-                match
-                  run cc ([ "-dM"; "-E"; "-x"; "c" ] @ flags @ [ "-" ]) ""
-                with
-                | Ok (WEXITED 0, out, _) -> String.split_on_char '\n' out
-                | Ok _ | Error _ -> []
-              in
-              let defines m =
-                List.exists
-                  (String.starts_with ~prefix:("#define " ^ m ^ " "))
-                  macros
-              in
-              Some
-                {
-                  count = (if defines "__AVX512F__" then 32 else 16);
-                  bytes = (if defines "__AVX__" then 32 else 16);
-                }
-          | "arm64" -> Some { count = 32; bytes = 16 }
-          | _ -> None
-        in
+        let r = f cc selected in
         Hashtbl.replace known (cc, arch) r;
         r
+
+(* The vector registers of what Clang compiles [arch] for. On x86_64: 16
+   registers, 32 with AVX-512, of 32 bytes with AVX and 16 without. AVX-512's
+   registers hold 64 bytes, but a processor with them is taken at 32 until one
+   is measured: tolk renders its vectors, so Clang's preference for 256 bits on
+   such processors does not choose for it. On arm64, NEON's 32 registers of 16
+   bytes. On riscv64, none known. A Clang that does not run gives SSE's 16 of
+   16 bytes, which every x86_64 processor has. *)
+let registers =
+  per_clang @@ fun cc selected : Renderer.registers option ->
+  match fst selected with
+  | "x86_64" ->
+      let defines = x86_macros cc selected in
+      Some
+        {
+          count = (if defines "__AVX512F__" then 32 else 16);
+          bytes = (if defines "__AVX__" then 32 else 16);
+        }
+  | "arm64" -> Some { count = 32; bytes = 16 }
+  | _ -> None
+
+(* The conversions between halves and floats that Clang calls where an x86_64
+   processor has no F16C, which compiler-rt defines and no library of the
+   process holds: rounded to nearest, ties to even, a subnormal half's value
+   exact in a float, and a NaN made quiet with its payload's high bits, as
+   F16C and arm64's conversions make it. Clang passes a half in a vector
+   register, as a [_Float16]. *)
+let half_conversions =
+  {|
+__attribute__((visibility("hidden"))) float __extendhfsf2(_Float16 x) {
+  unsigned short h;
+  __builtin_memcpy(&h, &x, 2);
+  unsigned int sign = (unsigned int)(h & 0x8000) << 16;
+  unsigned int e = (h >> 10) & 0x1f, m = h & 0x3ff, bits;
+  if (e == 0x1f) bits = sign | 0x7f800000 | (m << 13) | (m ? 0x400000u : 0);
+  else if (e != 0) bits = sign | ((e + 112) << 23) | (m << 13);
+  else {
+    float v = (float)m * 0x1p-24f;
+    __builtin_memcpy(&bits, &v, 4);
+    bits |= sign;
+  }
+  float f;
+  __builtin_memcpy(&f, &bits, 4);
+  return f;
+}
+__attribute__((visibility("hidden"))) _Float16 __truncsfhf2(float f) {
+  unsigned int x;
+  __builtin_memcpy(&x, &f, 4);
+  unsigned int sign = (x >> 16) & 0x8000, a = x & 0x7fffffff, h;
+  if (a > 0x7f800000) h = sign | 0x7e00 | ((a >> 13) & 0x3ff);
+  else if (a >= 0x477ff000) h = sign | 0x7c00;
+  else if (a >= 0x38800000)
+    h = sign | ((a + 0xfff + ((a >> 13) & 1) - 0x38000000) >> 13);
+  else if (a > 0x33000000) {
+    unsigned int shift = 126 - (a >> 23), m = (a & 0x7fffff) | 0x800000;
+    unsigned int q = m >> shift, rem = m & ((1u << shift) - 1);
+    unsigned int tie = 1u << (shift - 1);
+    if (rem > tie || (rem == tie && (q & 1))) q++;
+    h = sign | q;
+  } else h = sign;
+  unsigned short s = (unsigned short)h;
+  _Float16 r;
+  __builtin_memcpy(&r, &s, 2);
+  return r;
+}
+|}
+
+(* Whether an object for [arch] defines {!half_conversions}: an x86_64
+   processor without F16C, or a Clang that does not run. *)
+let converts_halves =
+  per_clang @@ fun cc selected ->
+  fst selected = "x86_64" && not (x86_macros cc selected "__F16C__")
 
 let clang arch =
   let cc = Setting.value Setting.cc in
@@ -474,10 +525,10 @@ let clang arch =
     let short = cc1 (stated ()) in
     if long then Result.map without_loop_vectorizer short else short
   in
-  (* An object is a function of its source, of the Clang and of the command its
-     length selects, so the table names what Clang states, its version and
-     installation among it, both commands, or why Clang states none, and the
-     length. *)
+  (* An object is a function of its source, of the Clang, of the command its
+     length selects and of the conversions it defines, so the table names what
+     Clang states, its version and installation among it, both commands, or why
+     Clang states none, the length and the conversions. *)
   let table () =
     let named = function
       | Ok (prog, args) -> String.concat "\n" (prog :: args)
@@ -490,6 +541,7 @@ let clang arch =
           named (command ~long:false);
           named (command ~long:true);
           string_of_int long_source;
+          (if converts_halves arch then half_conversions else "");
         ]
     in
     Printf.sprintf "compile_%s_obj_%s_%s" cc
@@ -500,12 +552,15 @@ let clang arch =
      arguments; their objects come back in the sources' order. *)
   let compile srcs =
     let long src = String.length src > long_source in
+    let whole src =
+      if converts_halves arch then src ^ half_conversions else src
+    in
     let run longer =
       match List.filter (fun src -> long src = longer) srcs with
       | [] -> []
       | some -> (
           match command ~long:longer with
-          | Ok command -> compile_files command some
+          | Ok command -> compile_files command (List.map whole some)
           | Error why -> raise (Renderer.Compiler.Compile_error why))
     in
     let longs = ref (run true) and shorts = ref (run false) in

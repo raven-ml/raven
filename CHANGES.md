@@ -1067,6 +1067,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A host program with a half cast links on an x86_64 processor without F16C,
+  as another machine's host compiles for: the object defines the conversions
+  Clang calls there (`Compiler_cpu.clang`), which no library of the process
+  defined.
 - A compiled program runs on another machine's host (`Rig.open_host`), where
   Clang rejected an x86_64 host's processor (`Tolk_engine.target`). It
   compiles for its instruction set's baseline, `x86-64` or arm64's

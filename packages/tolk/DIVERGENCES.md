@@ -8637,3 +8637,25 @@ and an initial value is added after it (D260).
   axes or an output axis that 16 divides) and its `readout` cases; the goldens generated from tinygrad with
   this rule; the rune bench rows above on fudge, their baselines pending the
   scheduled re-record.
+
+## D358. An object defines the half conversions Clang calls
+
+- **tinygrad:** `runtime/support/compiler_cpu.py:18-22`
+  (`ClangCompiler.compile`, which compiles the source alone).
+- **tolk:** `Compiler_cpu.clang` (`half_conversions`, `converts_halves`).
+- **Differs:** for an x86_64 processor without F16C, each object defines
+  `__extendhfsf2` and `__truncsfhf2`, the conversions between halves and
+  floats Clang calls there, rounding to nearest with ties to even. The
+  rendered source is unchanged; the conversions follow it at compile, and a
+  source's length class counts without them.
+- **Reason:** (c). rig takes a symbol the object does not define from the
+  process (`Rig.section-host_symbols`). The C math library's functions Clang
+  calls on such a processor, such as `truncf` without SSE4.1 and `fmaf`
+  without FMA (D178), are there, but compiler-rt's conversions are in no
+  library a raven process loads, so every program with a half cast failed to
+  link on such a processor: on another machine's x86_64 host, whose baseline
+  `x86-64` has no F16C (D95). A widened NaN is made quiet, as F16C's and
+  arm64's conversions make it.
+- **Pinned by:** `Rune.jit on another machine's host › half casts give
+  eager's bits` (every half widened to float32 and float64, float32 and
+  float64 edges and ties narrowed, and any float32 narrowed).
