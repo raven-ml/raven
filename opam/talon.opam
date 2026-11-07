@@ -18,10 +18,10 @@ depends: [
   "lz" {= version}
   "bytesrw"
   "rune" {with-test & = version}
-  "windtrap" {with-test & >= "0.2.0"}
-  "ppx_windtrap" {with-test & >= "0.2.0"}
+  "windtrap" {with-test & >= "0.3.1"}
+  "ppx_windtrap" {with-test & >= "0.3.1"}
   "mdx" {with-test}
-  "thumper" {with-test}
+  "thumper" {with-test & >= "0.1.0"}
   "odoc" {with-doc}
 ]
 build: [

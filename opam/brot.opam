@@ -21,9 +21,9 @@ depends: [
   "bytesrw"
   "uunf" {>= "15.1.0"}
   "uucp"
-  "windtrap" {with-test & >= "0.2.0"}
+  "windtrap" {with-test & >= "0.3.1"}
   "mdx" {with-test}
-  "thumper" {with-test}
+  "thumper" {with-test & >= "0.1.0"}
   "nx" {= version & with-dev-setup}
   "odoc" {with-doc}
 ]

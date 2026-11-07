@@ -66,12 +66,6 @@ jobs:
 
       - name: Install dependencies
         run: |
-          opam pin add thumper git+https://github.com/invariant-hq/thumper.git --no-action
-          opam pin add windtrap git+https://github.com/invariant-hq/windtrap.git#aeac8903769e756bf3a37304e3860073928d9736 --no-action
-          opam pin add ppx_windtrap git+https://github.com/invariant-hq/windtrap.git#aeac8903769e756bf3a37304e3860073928d9736 --no-action
-          opam pin add matrix git+https://github.com/tmattio/mosaic.git#6834ce001c7028cdb2a6be4f5a1f3fb84f68d758 --no-action
-          opam pin add toffee git+https://github.com/tmattio/mosaic.git#6834ce001c7028cdb2a6be4f5a1f3fb84f68d758 --no-action
-          opam pin add mosaic git+https://github.com/tmattio/mosaic.git#6834ce001c7028cdb2a6be4f5a1f3fb84f68d758 --no-action
           opam install . --deps-only --with-test
 
       # Every runtest runs under .github/memcap.sh, which caps its memory so

@@ -27,29 +27,6 @@
 
 (opam_file_location inside_opam_directory)
 
-(pin
- (url "git+https://github.com/invariant-hq/thumper.git")
- (package
-  (name thumper)))
-
-(pin
- (url
-  "git+https://github.com/tmattio/mosaic.git#6834ce001c7028cdb2a6be4f5a1f3fb84f68d758")
- (package
-  (name mosaic))
- (package
-  (name matrix))
- (package
-  (name toffee)))
-
-(pin
- (url
-  "git+https://github.com/invariant-hq/windtrap.git#aeac8903769e756bf3a37304e3860073928d9736")
- (package
-  (name windtrap))
- (package
-  (name ppx_windtrap)))
-
 (package
  (name lz)
  (dir packages/lz)
@@ -64,13 +41,16 @@
   (windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (ppx_windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (mdx :with-test)
-  (thumper :with-test))
+  (thumper
+   (and
+    :with-test
+    (>= 0.1.0))))
  (depopts bytesrw)
  (tags
   (compression deflate gzip zlib zstd lz4 snappy crc32)))
@@ -94,13 +74,16 @@
   (windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (ppx_windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (mdx :with-test)
-  (thumper :with-test))
+  (thumper
+   (and
+    :with-test
+    (>= 0.1.0))))
  (tags
   (numerical-computation tensor-library machine-learning)))
 
@@ -124,9 +107,12 @@
   (windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (mdx :with-test)
-  (thumper :with-test)
+  (thumper
+   (and
+    :with-test
+    (>= 0.1.0)))
   ; examples
   (nx
    (and
@@ -157,13 +143,16 @@
   (windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (ppx_windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (mdx :with-test)
-  (thumper :with-test))
+  (thumper
+   (and
+    :with-test
+    (>= 0.1.0))))
  (tags
   (dataframe data-manipulation data-science tabular-data)))
 
@@ -186,13 +175,16 @@
   (windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (ppx_windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (mdx :with-test)
-  (thumper :with-test))
+  (thumper
+   (and
+    :with-test
+    (>= 0.1.0))))
  (tags
   (automatic-differentiation machine-learning deep-learning optimization)))
 
@@ -227,7 +219,7 @@
   (windtrap
    (and
     :with-test
-    (>= 0.2.0))))
+    (>= 0.3.1))))
  (tags
   (ppx parameter-tree automatic-differentiation machine-learning)))
 
@@ -261,9 +253,12 @@
   (windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (mdx :with-test)
-  (thumper :with-test)
+  (thumper
+   (and
+    :with-test
+    (>= 0.1.0)))
   ; examples
   (brot
    (and
@@ -287,13 +282,16 @@
   (windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (ppx_windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (mdx :with-test)
-  (thumper :with-test))
+  (thumper
+   (and
+    :with-test
+    (>= 0.1.0))))
  (tags
   (compiler gpu tensor-computation)))
 
@@ -316,9 +314,12 @@
   (windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (mdx :with-test)
-  (thumper :with-test))
+  (thumper
+   (and
+    :with-test
+    (>= 0.1.0))))
  (tags
   (optimization machine-learning gradient-descent)))
 
@@ -336,9 +337,12 @@
   (windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (mdx :with-test)
-  (thumper :with-test))
+  (thumper
+   (and
+    :with-test
+    (>= 0.1.0))))
  (tags
   (numerical-methods linear-algebra optimization quadrature interpolation differential-equations)))
 
@@ -361,9 +365,12 @@
   (windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (mdx :with-test)
-  (thumper :with-test))
+  (thumper
+   (and
+    :with-test
+    (>= 0.1.0))))
  (tags
   (bayesian inference mcmc probabilistic-programming)))
 
@@ -380,14 +387,19 @@
   jsont
   bytesrw
   cmdliner
-  mosaic
-  matrix
+  (mosaic
+   (>= 0.2.0))
+  (matrix
+   (>= 0.2.0))
   (windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (mdx :with-test)
-  (thumper :with-test)
+  (thumper
+   (and
+    :with-test
+    (>= 0.1.0)))
   ; examples
   (nx
    (and
@@ -424,13 +436,16 @@
   (windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (ppx_windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (mdx :with-test)
-  (thumper :with-test))
+  (thumper
+   (and
+    :with-test
+    (>= 0.1.0))))
  (tags
   (visualization plotting charts data-science graphics)))
 
@@ -448,14 +463,17 @@
   cmdliner
   bytesrw
   jsont
-  mosaic
-  matrix
-  toffee
+  (mosaic
+   (>= 0.2.0))
+  (matrix
+   (>= 0.2.0))
+  (toffee
+   (>= 0.2.0))
   tree-sitter
   (windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (mdx :with-test))
  (tags
   (repl toplevel notebooks interactive-computing literate-programming)))
@@ -476,9 +494,12 @@
   (windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (mdx :with-test)
-  (thumper :with-test))
+  (thumper
+   (and
+    :with-test
+    (>= 0.1.0))))
  (tags
   (gpu device driver metal cuda amd nvidia)))
 

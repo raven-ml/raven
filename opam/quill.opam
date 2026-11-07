@@ -24,11 +24,11 @@ depends: [
   "cmdliner"
   "bytesrw"
   "jsont"
-  "mosaic"
-  "matrix"
-  "toffee"
+  "mosaic" {>= "0.2.0"}
+  "matrix" {>= "0.2.0"}
+  "toffee" {>= "0.2.0"}
   "tree-sitter"
-  "windtrap" {with-test & >= "0.2.0"}
+  "windtrap" {with-test & >= "0.3.1"}
   "mdx" {with-test}
   "odoc" {with-doc}
 ]

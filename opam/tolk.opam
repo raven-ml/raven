@@ -15,10 +15,10 @@ depends: [
   "ocaml" {>= "5.2"}
   "dune" {>= "3.21"}
   "rig" {= version}
-  "windtrap" {with-test & >= "0.2.0"}
-  "ppx_windtrap" {with-test & >= "0.2.0"}
+  "windtrap" {with-test & >= "0.3.1"}
+  "ppx_windtrap" {with-test & >= "0.3.1"}
   "mdx" {with-test}
-  "thumper" {with-test}
+  "thumper" {with-test & >= "0.1.0"}
   "odoc" {with-doc}
 ]
 build: [

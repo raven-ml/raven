@@ -21,9 +21,9 @@ depends: [
   "bytesrw"
   "rune" {= version & with-test}
   "vega" {= version & with-test}
-  "windtrap" {with-test & >= "0.2.0"}
+  "windtrap" {with-test & >= "0.3.1"}
   "mdx" {with-test}
-  "thumper" {with-test}
+  "thumper" {with-test & >= "0.1.0"}
   "brot" {= version & with-dev-setup}
   "odoc" {with-doc}
 ]

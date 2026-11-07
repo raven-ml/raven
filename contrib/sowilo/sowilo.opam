@@ -17,9 +17,9 @@ depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21"}
   "nx" {>= "1.0.0~alpha3"}
-  "windtrap" {with-test & >= "0.2.0"}
+  "windtrap" {with-test & >= "0.3.1"}
   "mdx" {with-test}
-  "thumper" {with-test}
+  "thumper" {with-test & >= "0.1.0"}
   "hugin" {>= "1.0.0~alpha3" & with-dev-setup}
   "odoc" {with-doc}
 ]

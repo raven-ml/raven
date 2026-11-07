@@ -17,11 +17,11 @@ depends: [
   "jsont"
   "bytesrw"
   "cmdliner"
-  "mosaic"
-  "matrix"
-  "windtrap" {with-test & >= "0.2.0"}
+  "mosaic" {>= "0.2.0"}
+  "matrix" {>= "0.2.0"}
+  "windtrap" {with-test & >= "0.3.1"}
   "mdx" {with-test}
-  "thumper" {with-test}
+  "thumper" {with-test & >= "0.1.0"}
   "nx" {= version & with-dev-setup}
   "rune" {= version & with-dev-setup}
   "vega" {= version & with-dev-setup}

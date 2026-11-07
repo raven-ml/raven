@@ -38,9 +38,12 @@
   (windtrap
    (and
     :with-test
-    (>= 0.2.0)))
+    (>= 0.3.1)))
   (mdx :with-test)
-  (thumper :with-test)
+  (thumper
+   (and
+    :with-test
+    (>= 0.1.0)))
   ; examples
   (kaun
    (and

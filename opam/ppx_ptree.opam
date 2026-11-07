@@ -19,7 +19,7 @@ depends: [
   "rune" {= version & with-test}
   "vega" {= version & with-test}
   "kaun" {= version & with-test}
-  "windtrap" {with-test & >= "0.2.0"}
+  "windtrap" {with-test & >= "0.3.1"}
   "odoc" {with-doc}
 ]
 build: [
