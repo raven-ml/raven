@@ -216,27 +216,30 @@ let test_minimal32 =
         (shorter (F.shortest F.binary32 x)))
 
 (* Of the shortest decimals, the nearest. [d 10^e] has [n] digits; the only
-   others of [n] digits that can be nearer to [x] are its neighbours
-   [(d -+ 1) 10^e] on the far side of [x], and one is nearer when [x] is past
-   the midpoint [(2d -+ 1) 5 10^(e-1)] toward it. At the midpoint itself the
-   two tie, and the even last digit wins. *)
+   others of [n] digits that can be nearer to [x] are its neighbours on the far
+   side of [x]: [(d + 1) 10^e] above, and below [(d - 1) 10^e], or [9 10^(e-1)]
+   when [d] is 1. One is nearer when [x] is past the midpoint toward it,
+   [(10d + 5) 10^(e-1)] above and [(10d - 5) 10^(e-1)] or [95 10^(e-2)] below.
+   At the midpoint the two tie, and the even last digit wins. *)
 let nearest_law f x =
   let d, e = F.shortest f x in
   let c, q, _ = decode f x in
   let m = int_of_string d in
   let even = Char.code d.[String.length d - 1] land 1 = 0 in
-  (* [toward k] compares the midpoint toward [(d + k) 10^e] with [x]. *)
-  let toward k = compare_dec (string_of_int (((2 * m) + k) * 5), e - 1) c q in
-  let up = reads f x (string_of_int (m + 1), e)
-  and down = m > 1 && reads f x (string_of_int (m - 1), e) in
-  cover "a neighbour reads back" (up || down);
-  cover "tie" (x <> 0. && (toward 1 = 0 || toward (-1) = 0));
-  if x <> 0. && up then
-    equal ~msg:(text (d, e)) bool true
-      (toward 1 > 0 || (toward 1 = 0 && even));
-  if x <> 0. && down then
-    equal ~msg:(text (d, e)) bool true
-      (toward (-1) < 0 || (toward (-1) = 0 && even))
+  let up = ((string_of_int (m + 1), e), (string_of_int ((10 * m) + 5), e - 1))
+  and down =
+    if m = 1 then (("9", e - 1), ("95", e - 2))
+    else ((string_of_int (m - 1), e), (string_of_int ((10 * m) - 5), e - 1))
+  in
+  (* [o n] compares the midpoint toward the neighbour [n] with [x]. *)
+  let o (_, mid) = compare_dec mid c q in
+  let reads_n (n, _) = x <> 0. && reads f x n in
+  cover "a neighbour reads back" (reads_n up || reads_n down);
+  cover "tie" (x <> 0. && (o up = 0 || o down = 0));
+  if reads_n up then
+    equal ~msg:(text (d, e)) bool true (o up > 0 || (o up = 0 && even));
+  if reads_n down then
+    equal ~msg:(text (d, e)) bool true (o down < 0 || (o down = 0 && even))
 
 let test_nearest64 =
   prop "binary64 nearest of the shortest" ~count:2000 double
