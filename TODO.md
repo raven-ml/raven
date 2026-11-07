@@ -171,18 +171,19 @@ and rune), raven / llama.cpp b12048 Vulkan:
   quiet fudge (`baseline.py` refuses loaded runs; H2O 1e8 needs more than
   a run's 16 GiB), and bless `Talon_csv/read-mixed` on the Mac
 - talon perf on fudge against the faster of DuckDB 1.5.6 and Polars
-  1.44.2, engines re-run beside talon under load 15-30 (2026-11-04):
-  H2O 1e7 group-by geomean 2.4x at 673340f4e (q04 4.8-7.0x, q01
-  2.8-4.0x before 5441600cd took it from 148 to 96 instructions a row);
-  decision support SF1 at cfef1ad82 q19 ~16x, q12 ~18x, q07 ~15x, q02
-  ~40x (7e16755a1's range gather then took q02 from 4.71 G to 1.61 G
-  instructions; list columns of text, list or record children still take
-  by positions, unmeasured). What is left: integer sums cast to int64 before
-  summing, one pass per aggregate, Parquet text decoded per row
-  (talon-dict-text.adjudication.md), sort-based joins. The 2026-11-03
-  engine logs ran 2-4x slow; the H2O data was deleted on 2026-11-04
-  (regenerate with queries/h2o_data.py); decision support SF1 and SF0.1
-  are in fudge's ~/wt/tmp/talon-data
+  1.44.2, engines re-run beside talon under load (2026-11-04 to 11-07):
+  H2O 1e7 group-by geomean 2.4x at 673340f4e, q10 1.3x at eaff601a6
+  (q01 then 148 -> 96 instructions a row with 5441600cd); H2O joins
+  1.0-2.7x at eaff601a6 (q03 7.83 -> 2.45 G); decision support SF1 at
+  cfef1ad82 q19 ~16x, q12 ~18x, q07 ~15x, q02 ~40x, since cut in
+  instructions by 7e16755a1 (q02 4.71 -> 1.61 G) and c8e1f9fa2 (q19 4.66
+  -> 3.68 G, q12 3.73 -> 3.14 G), ratios not re-measured. What is left:
+  integer sums cast to int64 before summing (accumulation-dtype design),
+  one pass per aggregate, Parquet text decoded per row
+  (talon-dict-text.adjudication.md step 3), gathering text at ~49
+  instructions a row in inner joins, `Nx.unique` numbering (q05 2.25 G),
+  list columns of text, list or record children taking by positions.
+  Data: ~/wt/tmp/talon-data on fudge (decision SF0.1/SF1, H2O 1e6/1e7)
 - talon 1.0 plan (_plans/talon/product/plan.md, on the Mac): windows and
   ewm, as-of and interval joins, interval sets and folds, zoned time,
   hash/sample/shuffle, Pivot and nesting, dense round trips, partial
