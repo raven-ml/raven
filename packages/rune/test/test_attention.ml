@@ -7,7 +7,7 @@
    keys, lengths, grouped heads, and masks and scores that capture arrays:
    - Rune.jit against the eager kernel, each within nx.mli's bound of the
      exact result, rune.mli's constants for the compiled one, and against a
-     float64 reference at every dtype (Attentions);
+     float64 reference at every dtype, a sum of zeros +0 (Attentions);
    - Rune.vmap against each lane eagerly, bit for bit: a vmapped axis is a
      lead axis of the one operation, and nx.cpu's rows are their own;
    - Rune.jvp against central differences, and Rune.grad against them;
@@ -552,6 +552,10 @@ let () =
                 ~count:6 "every dtype"
                 (Gen.with_pp Rune_support.Attentions.pp (Rune_support.Attentions.gen dts))
                 (Rune_support.Attentions.law (module Nx.Host));
+              Windtrap.cases "a sum of zeros is +0 at rows of one run of keys"
+                ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
+                Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16; Any Nx.float16 ]
+                (Rune_support.Attentions.zero_sums (module Nx.Host));
             ]);
          group "jit over keys cut across two devices"
            (three ~examples 12 (law_cut f32 f32) (law_cut f64 f64)

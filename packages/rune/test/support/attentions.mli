@@ -43,6 +43,10 @@ type t = {
   nans : bool;
       (** NaN in the values and keys past each row's length, which no row
           reads. *)
+  zeros : bool;
+      (** Scores 2000 lower at keys before 64 and values [-0] from key 64
+          on: where a row sees a key of each, every weighted value is zero
+          in the accumulator. Dense keys only. *)
   seed : int;
 }
 (** The type for cases. *)
@@ -54,16 +58,27 @@ val gen : Nx.Dtype.any list -> t Windtrap.Gen.t
     of [1/1], [8/8], [8/2] and [8/1], [tq] and [tk] around the tiles' edges
     ([0], [1], [15] to [17], [31] to [33], [63] to [65]), each mask, pages
     of 16 keys and of fewer with entries out of range, lengths of [0], [1]
-    and [tk], and the adversarial rows: positive values, rising scores. *)
+    and [tk], and the adversarial rows: positive values, rising scores,
+    sums of zeros. *)
 
 val examples : Nx.Dtype.any list -> t list
 (** [examples dts] is cases each draw may miss, of [dts] in turn: a decode
     step of 64 query heads over 8 key heads and 1000 keys, which splits its
-    keys, a prefill of 300 rows under each mask, and zero-size shapes. *)
+    keys, a prefill of 300 rows under each mask, zero-size shapes, and of
+    each dtype a prefill of 128 rows of sums of zeros. *)
 
 val law : (module Nx.Devices) -> t -> unit
 (** [law s c] checks [c] compiled on [s]'s devices, and that the call is
-    compiled, not evaluated. *)
+    compiled, not evaluated. Where an element of [o] is a sum of zeros,
+    every [p |v|] of the reference zero, it is [+0]. *)
+
+val zero_sums : (module Nx.Devices) -> Nx.Dtype.any -> unit
+(** [zero_sums s dt] checks that each of 32768 rows of [dt], float32 or
+    narrower, compiled on [s]'s devices in a float32 accumulator, is [+0]
+    where its keys [0] to [63] score 200 below its keys [64] to [127]: the
+    first keys' weights underflow to zero, their values are [-1] and the
+    others' [-0]. With so many rows, every target runs each row's keys in
+    one kernel, which no combine of key splits follows. *)
 
 val grad_law : (module Nx.Devices) -> vmap:bool -> t -> unit
 (** [grad_law s ~vmap c] checks the gradient in the query, keys and values of

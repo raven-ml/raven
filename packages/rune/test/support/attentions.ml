@@ -24,6 +24,7 @@ type t = {
   rising : bool;
   positive : bool;
   nans : bool;
+  zeros : bool;
   seed : int;
 }
 
@@ -39,14 +40,15 @@ let pp ppf c =
   let (Nx.Dtype.Any dt) = c.dtype in
   Format.fprintf ppf
     "%s lead %d hq %d hk %d tq %d tk %d dk %d dv %d page %s holes %b \
-     lengths %s mask %s alibi %b rising %b positive %b nans %b seed %d"
+     lengths %s mask %s alibi %b rising %b positive %b nans %b zeros %b \
+     seed %d"
     (Nx.Dtype.name dt) c.lead c.hq c.hk c.tq c.tk c.dk c.dv
     (match c.page with Some p -> string_of_int p | None -> "none")
     c.holes
     (match c.lengths with
     | Some l -> String.concat "," (Array.to_list (Array.map string_of_int l))
     | None -> "none")
-    (mask_name c.mask) c.alibi c.rising c.positive c.nans c.seed
+    (mask_name c.mask) c.alibi c.rising c.positive c.nans c.zeros c.seed
 
 let numel = Array.fold_left ( * ) 1
 let edges = [ 0; 1; 2; 15; 16; 17; 31; 32; 33; 63; 64; 65 ]
@@ -77,6 +79,7 @@ let gen dtypes =
   let* rising = frequency [ (3, constant false); (1, constant true) ] in
   let* positive = frequency [ (3, constant false); (1, constant true) ] in
   let* nans = bool in
+  let* zeros = frequency [ (3, constant false); (1, constant true) ] in
   let* dk = of_list [ 1; 8; 16; 24; 64 ] in
   let* dv = of_list [ 1; 8; 16; 64; 72 ] in
   let+ seed = int_range 0 1000 in
@@ -97,6 +100,7 @@ let gen dtypes =
     rising;
     positive;
     nans = nans && page = None;
+    zeros = zeros && page = None;
     seed;
   }
 
@@ -118,6 +122,7 @@ let base dtype =
     rising = false;
     positive = false;
     nans = false;
+    zeros = false;
     seed = 3;
   }
 
@@ -140,8 +145,15 @@ let examples dtypes =
   in
   let n = List.length dtypes in
   List.mapi (fun i c -> { c with dtype = List.nth dtypes (i mod n) }) cases
+  @ List.map (fun dt -> { (base dt) with zeros = true; tq = 128; tk = 128 }) dtypes
 
 (* Inputs *)
+
+(* A sum of zeros: scores [zeros_under] lower before key [zeros_from], whose
+   weights underflow to zero in float64 beside a score of the later keys,
+   and values [-0] from it on. *)
+let zeros_from = 64L
+let zeros_under = 2000.
 
 let draw c salt shape =
   let n = numel shape in
@@ -176,8 +188,8 @@ let call (type a s d) (acc : (float, a) Nx.dtype) c ~table ~lengths ~docs
             Nx.less_equal (f p.k) (f (Nx.add p.q (Nx.sub p.len (Nx.scalar_like p.len (Int64.of_int c.tq))))))
   in
   let score =
-    match (c.alibi, c.rising) with
-    | false, false -> None
+    match (c.alibi, c.rising, c.zeros) with
+    | false, false, false -> None
     | _ ->
         let slopes = place (Nx.cast acc slopes) in
         Some
@@ -186,7 +198,11 @@ let call (type a s d) (acc : (float, a) Nx.dtype) c ~table ~lengths ~docs
               if c.alibi then Nx.(Infix.(s - (cast acc (p.q - p.k) * slopes)))
               else s
             in
-            if c.rising then Nx.add s (Nx.mul_s (Nx.cast acc p.k) 0.25) else s)
+            let s = if c.rising then Nx.add s (Nx.mul_s (Nx.cast acc p.k) 0.25) else s in
+            if c.zeros then
+              let before = Nx.less p.k (Nx.scalar_like p.k zeros_from) in
+              Nx.where before (Nx.sub_s s zeros_under) s
+            else s)
   in
   let kv : (float, s, d) Nx.kv =
     match (c.page, table) with
@@ -244,6 +260,14 @@ let inputs c =
   let k = rounded (draw c 2 kshape) in
   let v = draw c 3 vshape in
   let v = rounded (if c.positive then Nx.add_s (Nx.abs v) 0.01 else v) in
+  let v =
+    if not c.zeros then v
+    else
+      let a = Nx.to_array v in
+      let key i = i / max 1 c.dv mod c.tk in
+      let late i = key i >= Int64.to_int zeros_from in
+      Nx.create Nx.float32 vshape (Array.mapi (fun i x -> if late i then -0. else x) a)
+  in
   let table =
     match c.page with
     | None -> None
@@ -333,7 +357,8 @@ let law (module S : Nx.Devices) c =
   let b =
     a
     +. (if c.alibi then Float.of_int (c.tq + c.tk) else 0.)
-    +. if c.rising then 0.25 *. Float.of_int c.tk else 0.
+    +. (if c.rising then 0.25 *. Float.of_int c.tk else 0.)
+    +. if c.zeros then zeros_under else 0.
   in
   let eta = (Float.of_int ((2 * c.dk) + 4) *. u *. a) +. (2. *. u *. b) in
   let ln = Float.log (Float.of_int (max 1 c.tk)) in
@@ -381,7 +406,49 @@ let law (module S : Nx.Devices) c =
             (Float.abs (o.(j) -. o_ref.(j)))
         done
       end)
-    lse_ref
+    lse_ref;
+  (* An element of [o] whose every [p |v|] is zero is a sum of zeros:
+     [+0] (nx.mli), at a row of no visible key too. *)
+  let zero j = m.(j) = 0. in
+  cover "a sum of zeros at a row that sees a key"
+    (Array.exists Fun.id
+       (Array.mapi (fun j _ -> zero j && Float.is_finite lse_ref.(j / c.dv)) m));
+  Array.iteri
+    (fun j o ->
+      if zero j then
+        equal
+          ~msg:
+            (Printf.sprintf "o's bits at row %d column %d, a sum of zeros"
+               (j / c.dv) (j mod c.dv))
+          Testable.int64 0L (Int64.bits_of_float o))
+    o
+
+let zero_sums (module S : Nx.Devices) dtype =
+  let (F dt) = float_dtype dtype in
+  let tq = 32768 and tk = 128 and first = 64 in
+  let of_keys f =
+    Nx.cast dt (Nx.create Nx.float32 [| 1; tk; 1 |] (Array.init tk f))
+  in
+  let q = Nx.cast dt (Nx.zeros Nx.float32 [| 1; tq; 1 |]) in
+  let k = of_keys (fun _ -> 0.) in
+  let v = of_keys (fun j -> if j < first then -1. else -0.) in
+  let f q k v =
+    let under (p : _ Nx.pair) s =
+      let before = Nx.less p.k (Nx.scalar_like p.k (Int64.of_int first)) in
+      Nx.where before (Nx.sub_s s 200.) s
+    in
+    fst (Nx.attention ~score:under ~acc:Nx.float32 ~kv:(Dense { k; v }) q)
+  in
+  let g = Rune.jit Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor) f in
+  let place x = Nx.place S.on x in
+  let before = Rune.evaluations () in
+  let o = g (place q) (place k) (place v) in
+  equal ~msg:"compiled, not evaluated" Testable.int 0 (Rune.evaluations () - before);
+  let o = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on o)) in
+  let bits =
+    List.sort_uniq Int64.compare (Array.to_list (Array.map Int64.bits_of_float o))
+  in
+  equal ~msg:"o's bits, each row's" (Testable.list Testable.int64) [ 0L ] bits
 
 (* Gradients
 
@@ -483,7 +550,8 @@ let grad_law (module S : Nx.Devices) ~vmap c =
   let b =
     a
     +. (if c.alibi then Float.of_int (c.tq + c.tk) else 0.)
-    +. if c.rising then 0.25 *. Float.of_int c.tk else 0.
+    +. (if c.rising then 0.25 *. Float.of_int c.tk else 0.)
+    +. if c.zeros then zeros_under else 0.
   in
   let eta = (Float.of_int ((2 * c.dk) + 4) *. u *. a) +. (2. *. u *. b) in
   let ln = Float.log (Float.of_int (max 1 c.tk)) in

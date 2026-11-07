@@ -24,10 +24,10 @@ module Arith = Lower_arith
      l   = α l + Σ p_j
      acc = α acc + Σ p_j v_j
 
-   and at the end [o = acc / l] and [lse = (m + log₂ l) ln 2], [o = +0] and
-   [lse = -∞] where [l = 0]. A row's rows of a workgroup are its query rows
-   and its group's heads, the heads fastest, so that a tile of keys serves
-   each head of a group ([grouped]).
+   and at the end [o = acc / l + 0] and [lse = (m + log₂ l) ln 2],
+   [o = +0] and [lse = -∞] where [l = 0]. A row's rows of a workgroup are
+   its query rows and its group's heads, the heads fastest, so that a tile
+   of keys serves each head of a group ([grouped]).
 
    A pair is visible where its key is before the row's length, its page's
    table entry is in range, and the program's output 0 holds. A tile whose
@@ -378,7 +378,11 @@ let softmax acc m x2 =
   let mu = Ops.where (Ops.eq m' ninf) (fl acc 0.) m' in
   (m', Ops.exp2 (Ops.sub m mu), Array.map (fun x -> Ops.exp2 (Ops.sub x mu)) x2)
 
-(* A row's [lse] and [o]'s element of accumulator [v] over its sum [l]. *)
+(* A row's [lse] and [o]'s element of accumulator [v] over its sum [l],
+   [v / l + 0]. The [+0] makes [+0] the [-0] that [α acc] leaves of a
+   negative [acc] where [α] underflows, which products of [-0] values keep:
+   a sum of zeros is [+0] (nx.mli). It leaves every other value, NaN
+   included, as it was, and tolk folds a float [x + 0] only for [-0]. *)
 let lse_of acc ~m ~l =
   let empty = Ops.eq l (fl acc 0.) in
   let ln2 = fl acc (Float.log 2.) in
@@ -386,7 +390,8 @@ let lse_of acc ~m ~l =
     (Ops.mul (Ops.add m (Ops.log2 l)) ln2)
 
 let o_of acc ~l v =
-  Ops.where (Ops.eq l (fl acc 0.)) (fl acc 0.) (Ops.alu v Op.Fdiv [ l ])
+  Ops.where (Ops.eq l (fl acc 0.)) (fl acc 0.)
+    (Ops.add (Ops.alu v Op.Fdiv [ l ]) (fl acc 0.))
 
 (* Key splits
 

@@ -12,10 +12,10 @@
    and a program over the GPU and a memory device, devices of two targets,
    compiles to eager's values with replicas equal bit for bit, a running
    operation of a prefix is the prefix of its result, attention holds its
-   bound against a float64 reference, exp holds its bound in ulps of the
-   correctly rounded result, and a range gather and its gradient compile to
-   eager's bits. It skips without a GPU, or without the compiler
-   the GPU's kernels need. *)
+   bound against a float64 reference and gives +0 for a sum of zeros, exp
+   holds its bound in ulps of the correctly rounded result, and a range
+   gather and its gradient compile to eager's bits. It skips without a GPU,
+   or without the compiler the GPU's kernels need. *)
 
 open Windtrap
 open Rune_support
@@ -1058,6 +1058,12 @@ let () =
                (Gen.with_pp Attentions.pp
                   (Gen.map mappable (Attentions.gen attention_dtypes)))
                (attention_grad ~vmap:true);
+             (* float32 on the SIMT kernel; the narrow floats on CUDA's tensor
+                core, elsewhere on the SIMT kernel. *)
+             Windtrap.cases "a sum of zeros is +0 at rows of one run of keys"
+               ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
+               Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16; Any Nx.float16 ]
+               (fun dt -> Attentions.zero_sums (snd (on_gpu ())) dt);
            ];
          group "checks"
            [

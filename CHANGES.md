@@ -373,6 +373,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx.attention` under `Rune.jit` gives `+0`, as a sum of zeros, where a
+  row's weights in earlier tiles of keys underflow to zero beside a later
+  tile's: a negative value there left `-0` in `o`.
 - `Rune.jit` on a GPU stores a stack along the last axis with that axis
   first, so that each piece writes neighbouring elements: 4 pieces of
   `[4096; 64]` stacked along a new last axis wrote one element every 4, and
