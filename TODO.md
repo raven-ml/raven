@@ -69,7 +69,12 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - AMD machine code without comgr (_plans/amd-isa/design-reviewed.md): an
   assembly renderer and assembler, gfx12 first, the default once its gate
   passes; HIP stays as a choice. First read the terms of AMD's ISA XML
-- compile speed: Metal builds run one at a time
+- compile speed: Metal builds run one at a time. On the host,
+  `Codegen.to_programs` starts one Clang per worker even for one small
+  kernel each, and `clang -cc1` starting costs ~17 ms: a jit of a few
+  small kernels spent 19.5 s CPU / 4.9 s wall cold at `PARALLEL=14`
+  against 10.0 s / 10.1 s at 1 (rune's law_carries, 728 kernels, fudge
+  Clang 19); batching small kernels per worker needs quiet timing
 - dune's watch server goes stale on files a rebase or checkout rewrites
   (reported missing, or the old version built): dune keys a directory's
   listing on the directory's stat and keeps it across server restarts, so
