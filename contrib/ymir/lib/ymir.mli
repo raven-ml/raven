@@ -246,8 +246,10 @@ module Time : sig
         that is whole seconds: each direction rounds at most once, a round
         trip is within 7.3e-12 s, and seconds that are multiples of 2⁻³⁶ s
         convert exactly. Before 1972 a round trip is within 4e-11 s, but
-        in the last 3.3e-9 s of a day that ends in a jump, whose instants come
-        back as the next day's first, within 3.3e-9 s of UTC.
+        the last instants of a day that a jump lengthens come back as the
+        next day's first, up to 3.3e-9 s later in UTC. A TAI just before
+        such a day's next 0h, as a round trip through TT or TDB can give,
+        reads as that day's last instants, up to 3.3e-9 s earlier.
       - TAI to TT adds 32.184 s, and TT to TAI subtracts it, each within
         7.3e-12 s.
       - TT to TDB adds TDB − TT at the TDB it gives, the fixed point of

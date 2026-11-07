@@ -314,13 +314,59 @@ let ends =
 
 let mjd_last = 70000
 
-(* UTC instants: in a leap second, before 1972, and from 1972, each drawn
-   often. They begin a day after UTC does: a round trip through TT may round
-   UTC's first instant to a TAI just before it, which has no UTC. *)
+(* The days before 1972 that end in a jump, and each day's length. *)
+let jump_ends =
+  List.filter
+    (fun ((_, length, _, _, _) as e) -> pre_1972 e && length <> day_s)
+    Reference.ends
+
+let day_length d =
+  match List.find_opt (fun (d', _, _, _, _) -> d' = d) Reference.ends with
+  | Some (_, length, _, _, _) -> length
+  | None -> day_s
+
+(* [utc_apart a b] is the UTC seconds from the instant [b] to the instant
+   [a], each day as long as it lasted. *)
+let utc_apart (d, s) (d', s') =
+  if d' = d - 1 then s +. (day_length d' -. s')
+  else if d' = d + 1 then -.(day_length d -. s +. s')
+  else apart (d, s) (d', s')
+
+(* [crossing ~next (d, s)] is the jump that [s] of day [d] lies within
+   3.3e-9 s of, where a round trip can cross it: a day's last instants, and
+   with [next] the next day's first, which only a TAI rounded below that
+   day's 0h, as through TT or TDB, brings back as the day's last. *)
+let crossing ~next (d, s) =
+  let end_of d = List.find_opt (fun (d', _, _, _, _) -> d' = d) jump_ends in
+  match end_of d with
+  | Some e when s > day_length d -. jump_tol -> Some e
+  | _ when next && s < jump_tol -> end_of (d - 1)
+  | _ -> None
+
+(* [utc_tol ~next ~from_1972 i] is a UTC round trip's bound at [i]: the
+   jump's overlap more next to a jump. *)
+let utc_tol ~next ~from_1972 (d, s) =
+  match crossing ~next (d, s) with
+  | Some e -> overlap e +. pre_1972_tol
+  | None when d < leap_seconds -> pre_1972_tol
+  | None -> from_1972
+
+let close_utc ~tol expected t =
+  at_most float_exact ~than:tol (Float.abs (utc_apart (instant t) expected))
+
+(* UTC instants: in a leap second, before 1972, next to a jump before 1972,
+   and from 1972, each drawn often. They begin a day after UTC does: a round
+   trip through TT may round UTC's first instant to a TAI just before it,
+   which has no UTC. *)
 let utc_instants =
   let open Gen in
   frequency
     [
+      ( 1,
+        let+ (d, length, _, _, _) = of_list jump_ends
+        and+ k = float_range 0. 2e-9
+        and+ after = bool in
+        if after then (d + 1, k) else (d, length -. k -. 1e-11) );
       ( 1,
         let+ d, _ = of_list leap_days and+ u = float_range 0. 1. in
         (d, Float.min (86400. +. u) (Float.pred 86401.)) );
@@ -350,6 +396,7 @@ let uniform_instants =
   (d, Float.min s (Float.pred 86400.))
 
 let cover_utc (d, s) =
+  cover ~share:0.1 "next to a jump" (crossing ~next:true (d, s) <> None);
   cover ~share:0.15 "in a leap second" (s >= 86400.);
   cover ~share:0.15 "before 1972" (d < leap_seconds);
   cover ~share:0.15 "from 1972" (d >= leap_seconds && s < 86400.)
@@ -358,11 +405,16 @@ let round_trips =
   group "Round trips"
     [
       prop "UTC to TAI and back is the instant within half an ulp, before \
-            1972 within 4e-11 s"
+            1972 within 4e-11 s, a jump's last instants within its overlap"
         utc_instants (fun (d, s) ->
           cover_utc (d, s);
-          let tol = if d < leap_seconds then pre_1972_tol else half_ulp in
-          close ~tol (d, s) (to_utc (to_tai (at Time.utc d s))));
+          let tol = utc_tol ~next:false ~from_1972:half_ulp (d, s) in
+          close_utc ~tol (d, s) (to_utc (to_tai (at Time.utc d s))));
+      cases "UTC to TAI and back keeps the 0h after a jump" ~id:end_id
+        jump_ends (fun (d, _, _, _, _) ->
+          let i = (d + 1, 0.) in
+          let tol = utc_tol ~next:false ~from_1972:half_ulp i in
+          close_utc ~tol i (to_utc (to_tai (at Time.utc (d + 1) 0.))));
       prop "TAI to UTC and back is the instant within half an ulp from 1972"
         uniform_instants (fun (d, s) ->
           let d = leap_seconds + 1 + (abs d mod (mjd_last - leap_seconds)) in
@@ -383,8 +435,9 @@ let round_trips =
             (to_tt (to_tdb (at Time.tt d s))));
       prop "UTC to TDB and back passes through TAI and TT" utc_instants
         (fun (d, s) ->
-          let tol = if d < leap_seconds then pre_1972_tol else 6. *. half_ulp in
-          close ~tol (d, s) (to_utc (to_tdb (at Time.utc d s))));
+          cover_utc (d, s);
+          let tol = utc_tol ~next:true ~from_1972:(6. *. half_ulp) (d, s) in
+          close_utc ~tol (d, s) (to_utc (to_tdb (at Time.utc d s))));
     ]
 
 (* Batches *)
