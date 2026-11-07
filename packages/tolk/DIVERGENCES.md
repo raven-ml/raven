@@ -4942,19 +4942,19 @@ fold wraps integers and holds its float bound`, hold.
   narrowing rounds; rune's `rune jit › classes › a selection of a minimum
   against its constant is exact`, at `float16` and `bfloat16` too.
 
-## D167. Clang's arguments: LLVM 18 or 19 without its straight-line vectorizer, a long source without its loop vectorizer, arm64 without the interleaved load combine, every kernel without loop idiom recognition
+## D167. Clang's arguments: LLVM 18, 19 or 20 without its straight-line vectorizer, a long source without its loop vectorizer, arm64 without the interleaved load combine, every kernel without loop idiom recognition
 
 - **tinygrad:** `runtime/support/compiler_cpu.py:21` (`ClangCompiler.compile`,
   Clang's arguments at `-O2`, which runs LLVM's SLP and loop vectorizers).
 - **tolk:** `Compiler_cpu.llvm_major` (the LLVM version a Clang's `-###`
   statement names), `Compiler_cpu.long_source`,
-  `Compiler_cpu.compile_args`, which adds `-fno-slp-vectorize` when it is 18
-  or 19, `-mllvm -disable-interleaved-load-combine` for arm64 and `-mllvm
-  -disable-loop-idiom-all` for every Clang,
+  `Compiler_cpu.compile_args`, which adds `-fno-slp-vectorize` when it is
+  18, 19 or 20, `-mllvm -disable-interleaved-load-combine` for arm64 and
+  `-mllvm -disable-loop-idiom-all` for every Clang,
   `Compiler_cpu.without_loop_vectorizer`, and `Compiler_cpu.clang`
   (its `table`, which names both commands and the length).
-- **Differs:** a Clang that states LLVM 18 or 19 compiles every kernel with
-  `-fno-slp-vectorize`, after `-O2`, which would turn the vectorizer back on.
+- **Differs:** a Clang that states LLVM 18, 19 or 20 compiles every kernel
+  with `-fno-slp-vectorize`, after `-O2`, which would turn the vectorizer back on.
   Every Clang compiles a source of more than 400 000 bytes without the loop
   vectorizer: its compiler proper runs without `-vectorize-loops`, as the
   driver runs it under `-fno-vectorize` (Clang 18.1.8 and 19.1.7 state the
@@ -5005,9 +5005,25 @@ fold wraps integers and holds its float bound`, hold.
   `-opt-bisect-limit` names `SLPVectorizerPass` as the pass that breaks the
   kernel. `llvm-reduce` brings it to 40 instructions of selects, truncations
   to i32, `or`, `lshr` and `zext`. Without the vectorizer the kernel gives
-  every row. The Clangs of LLVM 20 and later are not checked; Apple's state
-  no LLVM version and keep the vectorizer. With the IR verifier on (D275),
-  invalid IR from it is a compile error naming the kernel.
+  every row. Apple's Clangs state no LLVM version and keep the vectorizer.
+  With the IR verifier on (D275), invalid IR from it is a compile error
+  naming the kernel.
+
+  LLVM 19 and 20 also write valid IR of wrong values, which no verifier
+  sees: rune's attention test `jit within the bounds of eager › float32`
+  failed on the Windows runner, `lse` off by 4249261054.8, at tq 2, tk 3,
+  dk 1 under a captured mask and ALiBi, and so did its compiled gradient.
+  The host kernel converts two int64 differences of row and key, `q - 1`
+  and `q - 2`, to float32 from their 32-bit halves, `sitofp` of the high
+  half times 2^32 plus `uitofp` of the low half (`Lower_arith.odd64`).
+  For `x86-64-v3` (not `x86-64-v2`) the vectorizer packs the two low halves,
+  narrows them to 8 bits, since the high halves need only their sign, and
+  writes `uitofp <2 x i8>`: a low half of 2^32 - 1 converts to 255, and the
+  score is off by 2^32 times its slope (`-opt-bisect-limit` names
+  `SLPVectorizerPass`). Clang 18.1.3, 21.1.0 and 22.1.8 compile the kernel
+  with the vectorizer; 19.1.7 and 20.1.2 compile it wrong with it and right
+  without it. With the verifier on, 20.1.2, 21.1.0 and 22.1.8 compile
+  `E_16_2_4` for `x86-64-v3`, which 19.1.7 rejects.
 
   (d), the loop vectorizer: rune's test_special timed out at 60 s on Ubuntu
   CI compiling float64 `betainccinv`'s gradients. Each is one scalar loop
@@ -5092,7 +5108,10 @@ fold wraps integers and holds its float bound`, hold.
   the last axis of every other row and column, flipped, gives eager's
   codes`, under Clang 18 on an x86 host with AVX-512; rune's `Lower_reduce ›
   cases › rows of one group in a block at each batch index give eager's
-  values`, under Clang 19 on an x86 host with AVX2. The loop vectorizer:
+  values`, under Clang 19 on an x86 host with AVX2; rune's `rune attention
+  › jit within the bounds of eager › float32` and `› the gradient compiled
+  and in forward mode › float32`, whose first example fails under Clang 20
+  on an x86 host with AVX2. The loop vectorizer:
   `Tolk.Compiler_cpu › features › a loop over a count it takes is packed
   into vectors iff its source is at most 400000 bytes long:` (rows 400000 and
   400001 among them); rune's compile bench `special/betainccinv-grad-f32`, the float32
@@ -7563,9 +7582,10 @@ and an initial value is added after it (D260).
   ... to <4 x i32>` for rune's routed rows (D167), which compiled into
   garbage row numbers; LLVM 18's wrote `sext <4 x i32> to <4 x i16>` for
   `r_3_2`, which crashed instruction selection. D167 turns that vectorizer
-  off for those two releases only; Clangs of LLVM 20 and later and Apple's
-  are unchecked, and with the verifier on, a defect of their passes of that
-  kind is a compile error instead of wrong values. With the verifier,
+  off for those releases and LLVM 20, whose wrong values were valid IR;
+  other Clangs and Apple's are unchecked, and with the verifier on, a
+  defect of their passes of that kind is a compile error instead of wrong
+  values. With the verifier,
   Clang 18 rejects `r_3_2` naming it, and Clang 19 `E_16_2_4`. tinygrad's
   own LLVM compiler verifies its input and runs the verifier after every
   pass (`runtime/support/compiler_llvm.py:29,57`).

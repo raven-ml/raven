@@ -177,9 +177,28 @@ let tolerances dt acc c lse =
     w ~exp:5. kernel +. w ~exp:19. compiled +. (2. *. gamma) +. (2. *. uq) )
 
 (* A case that reaches every cover of each law on every run: paged, with
-   lengths and a captured mask, which [law_cut] makes causal. *)
+   lengths and a captured mask, which [law_cut] makes causal. And dense
+   keys of two query rows and three keys under a captured mask and ALiBi,
+   whose host kernel converts the differences [q - k], int64s of two
+   32-bit halves, to float32 side by side: LLVM 20's straight-line
+   vectorizer narrowed the unsigned low halves to 8 bits, giving scores
+   off by about [2^32] slopes. *)
 let examples =
   [
+    {
+      hk = 1;
+      groups = 1;
+      tq = 2;
+      tk = 3;
+      dk = 1;
+      dv = 2;
+      page = None;
+      table = [| 0; 0 |];
+      lengths = None;
+      mask = Captured;
+      alibi = true;
+      seed = 0.;
+    };
     {
       hk = 1;
       groups = 2;

@@ -362,9 +362,15 @@ let flags ~version arch = fixed ~llvm:(llvm_major version) (selection arch)
    crashed. For four lanes of a binary search on a processor with AVX2, LLVM 19
    wrote [trunc <4 x i8> to <4 x i32>], which a Clang without its IR verifier
    compiles into wrong values: rune's routed rows read garbage row numbers, and
-   with it ([cc1]) the compile fails. Under LLVM 18 and 19 only, that
-   vectorizer is off, so that other Clangs compile as before. The flags follow
-   -O2, which would turn the vectorizers back on.
+   with it ([cc1]) the compile fails. LLVM 19 and 20 also narrow lanes into
+   valid IR of wrong values: for rune's attention under ALiBi on a processor
+   with AVX2, they packed two int64 differences of rows and keys converted to
+   float, narrowed the unsigned low halves to 8 bits and wrote [uitofp <2 x
+   i8>], so that a low half of 2^32 - 1 converted to 255 and a score was off
+   by 2^32 times its slope. LLVM 18, 21 and 22 compile the kernel. Under LLVM
+   18, 19 and 20 only, that vectorizer is off, so that other Clangs compile
+   as before. The flags follow -O2, which would turn the vectorizers back
+   on.
 
    On arm64, LLVM's interleaved load combine looks for loads that shuffles put
    together into an interleaved vector, to read them with one ldN, and its time
@@ -387,7 +393,7 @@ let flags ~version arch = fixed ~llvm:(llvm_major version) (selection arch)
    compiles without it. *)
 let compile_args selected ~llvm =
   let slp =
-    match llvm with Some (18 | 19) -> [ "-fno-slp-vectorize" ] | _ -> []
+    match llvm with Some (18 | 19 | 20) -> [ "-fno-slp-vectorize" ] | _ -> []
   in
   let ldn =
     match selected with

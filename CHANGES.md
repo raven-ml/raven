@@ -1064,6 +1064,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Nx.attention` with an ALiBi score under `Rune.jit` gives float32 rows'
+  values on an AVX2 host with a Clang of LLVM 20, where `lse` was off by
+  about 2^32 slopes: `Compiler_cpu.clang` compiles without the straight-line
+  vectorizer under LLVM 20 as under 18 and 19, since it narrowed unsigned
+  lanes converted to float.
 - Host kernels compile without LLVM's loop idiom recognition
   (`Compiler_cpu.clang`): under Clang 22 and 23 its CRC recogniser took
   seconds to forever on a chain of float maxima, so `Rune.jit` of `Nx.eigh`

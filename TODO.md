@@ -119,9 +119,11 @@ and rune), raven / llama.cpp b12048 Vulkan:
   Metal hardware; check `rig_metal.mli`'s contract against them on a Mac
 - comgr may compile with LLVM's verifier off, as Clang did before D275:
   check `Compiler_amd`'s commands on a ROCm build and keep the verifier on
-- LLVM 20+ and Apple Clang keep the straight-line vectorizer that D167
-  turns off under LLVM 18 and 19: run the reduced kernel of 73455ffe7
-  through them (the Mac's Homebrew LLVM) and extend D167 if they miscompile
+- Apple Clang and LLVM 23 keep the straight-line vectorizer that D167
+  turns off under LLVM 18-20: run 73455ffe7's reduced kernel and rune's
+  ALiBi attention example (test_attention.ml, the dense tq 2 tk 3 case)
+  through them on the Mac and extend D167 if they miscompile (LLVM 21
+  and 22 compile both)
 - programs that share a kernel load its binary once each (D146): rig could
   share a binary with no module variables and keep its promise, but on
   fudge that saves at most 1-1.5 ms of a 70 ms gpt-oss first call on CUDA

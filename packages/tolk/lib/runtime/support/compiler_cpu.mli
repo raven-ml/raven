@@ -40,10 +40,10 @@ val clang : string -> Renderer.Compiler.t
     freestanding code calls no library, and under LLVM 22 and 23 its time grows
     exponentially with a chain of selections that each read the last twice.
     Under a
-    Clang of LLVM 18 or 19, the straight-line vectorizer, which packs
+    Clang of LLVM 18, 19 or 20, the straight-line vectorizer, which packs
     independent scalar operations into vectors, is off, since it writes
-    invalid code for some packed integer lanes; under LLVM 18 so are AVX10.1
-    and AVX-512's half arithmetic ({!flags}). On x86_64 Windows the stack is not probed, since
+    invalid code or wrong values for some packed integer lanes; under LLVM
+    18 so are AVX10.1 and AVX-512's half arithmetic ({!flags}). On x86_64 Windows the stack is not probed, since
     rig commits a thread's stack before it runs linked code, and nothing is
     kept below the stack pointer, which Windows may write. A source of more
     than 400 000 bytes compiles without the loop vectorizer, which packs a
