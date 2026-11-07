@@ -47,11 +47,13 @@ val identity : Column.t list -> Nx.host Nx.uint64_t
 
     Raises [Invalid_argument] if [cs] is empty. *)
 
-val groups : Column.t list -> Nx.host Nx.groups
-(** [groups cs] is [Nx.unique (identity cs)]: the rows of [cs] grouped by their
-    keys, numbered in order of first appearance. A single compound column
-    without a null is grouped as its rows of element words are, by
-    [Nx_ragged.unique], in one numbering.
+val groups : ?size:int -> Column.t list -> Nx.host Nx.groups
+(** [groups ?size cs] is [Nx.unique ?size (identity cs)]: the rows of [cs]
+    grouped by their keys, numbered in order of first appearance. A single
+    compound column without a null is grouped as its rows of element words
+    are, by [Nx_ragged.unique ?size], in one numbering. [size] bounds the
+    groups' first rows and counts as {!Nx.unique}'s does: with [~size:0] only
+    the ids and the number of groups are made.
 
     Raises [Invalid_argument] if [cs] is empty. *)
 

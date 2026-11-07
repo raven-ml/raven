@@ -890,10 +890,14 @@ let agreeing expected actual =
       occurs (Printf.sprintf ": row %d: %s." row why) (error e)
   | _ -> false
 
-(* [right_keys p] is, for each equality join of [p] whose right runs, its
-   right's rows and the number of distinct keys among them, by the reference's
-   grouping. *)
-let rec right_keys : R.plan -> (int * int) list = function
+(* A join's right rows by the left's keys: the rows and distinct keys of
+   those that a left row matches, and of those that none does, by the
+   reference's grouping. *)
+type right = { matched : int; matched_keys : int; rest : int; rest_keys : int }
+
+(* [right_keys p] is the [right] of each equality join of [p] whose sides
+   run. *)
+let rec right_keys : R.plan -> right list = function
   | Table _ | Source _ -> []
   | Select (_, p)
   | Derive (_, p)
@@ -911,11 +915,30 @@ let rec right_keys : R.plan -> (int * int) list = function
       let here =
         match on with
         | Keys ks -> (
-            match
-              (R.run right, R.run (R.Aggregate (List.map snd ks, [], right)))
-            with
-            | Ok cs, Ok gs -> [ (rows cs, rows gs) ]
-            | _ | (exception _) -> [])
+            (* The right's rows that the left matches, [Semi], or not. *)
+            let side kind =
+              R.Join
+                {
+                  kind;
+                  each_left = Any;
+                  each_right = Any;
+                  on = Keys (List.map (fun (l, r) -> (r, l)) ks);
+                  left = right;
+                  right = left;
+                }
+            in
+            let keys p = R.Aggregate (List.map snd ks, [], p) in
+            let count p = rows (Result.get_ok (R.run p)) in
+            try
+              [
+                {
+                  matched = count (side Semi);
+                  matched_keys = count (keys (side Semi));
+                  rest = count (side Anti);
+                  rest_keys = count (keys (side Anti));
+                };
+              ]
+            with _ -> [])
         | Position | All -> []
       in
       here @ right_keys left @ right_keys right
@@ -930,10 +953,13 @@ let agrees p =
   cover "an aggregate" (mentions "aggregate" p);
   cover "a join" (mentions "join" p);
   let joins = right_keys p in
+  let some f = List.exists f joins in
   cover "a join to distinct right keys, two rows or more"
-    (List.exists (fun (m, d) -> m >= 2 && d = m) joins);
+    (some (fun r ->
+         r.matched + r.rest >= 2
+         && r.matched_keys + r.rest_keys = r.matched + r.rest));
   cover "a join to a repeated right key"
-    (List.exists (fun (m, d) -> d < m) joins);
+    (some (fun r -> r.matched_keys < r.matched || r.rest_keys < r.rest));
   cover "an expression reads other rows" framed;
   cover "a sort" (mentions "sort" p);
   cover "a source" (mentions "source" p);
@@ -2089,6 +2115,121 @@ let join_order =
       equal ~msg:"columns" (list string) (List.map fst columns) (names t);
       List.iter (column_is t) columns)
 
+(* Right keys that no left key has: a left of key 1 and a right of keys 1, 2
+   and 2, whose repeated key 2 matches nothing; and an empty left, whose
+   right rows all match nothing. *)
+let unmatched_right =
+  let s x = Some x in
+  let one = v [ ("k", i64 [| 1 |]); ("x", i64 [| 0 |]) ]
+  and none = v [ ("k", i64 [||]); ("x", i64 [||]) ] in
+  let repeated = v [ ("k", i64 [| 1; 2; 2 |]); ("y", i64 [| 10; 11; 12 |]) ]
+  and twice = v [ ("k", i64 [| 1; 1 |]); ("y", i64 [| 10; 11 |]) ] in
+  let matched = [ ("k", [ s 1 ]); ("x", [ s 0 ]); ("y", [ s 10 ]) ] in
+  let empty = [ ("k", []); ("x", []); ("y", []) ] in
+  let kept = [ ("k", []); ("x", []) ] in
+  cases "Right keys past the left's"
+    ~id:(fun (name, _, _, _, _) -> name)
+    [
+      ( "Inner, a repeated key matching nothing",
+        one,
+        repeated,
+        Join.Inner,
+        matched );
+      ("Left, a repeated key matching nothing", one, repeated, Left, matched);
+      ( "Full, a repeated key matching nothing: both its rows follow",
+        one,
+        repeated,
+        Full,
+        [
+          ("k", [ s 1; s 2; s 2 ]);
+          ("x", [ s 0; None; None ]);
+          ("y", [ s 10; s 11; s 12 ]);
+        ] );
+      ( "Semi, a repeated key matching nothing",
+        one,
+        repeated,
+        Semi,
+        [ ("k", [ s 1 ]); ("x", [ s 0 ]) ] );
+      ("Anti, a repeated key matching nothing", one, repeated, Anti, kept);
+      ("Inner, an empty left", none, twice, Inner, empty);
+      ("Left, an empty left", none, twice, Left, empty);
+      ( "Full, an empty left: every right row follows",
+        none,
+        twice,
+        Full,
+        [ ("k", [ s 1; s 1 ]); ("x", [ None; None ]); ("y", [ s 10; s 11 ]) ] );
+      ("Semi, an empty left", none, twice, Semi, kept);
+      ("Anti, an empty left", none, twice, Anti, kept);
+    ]
+    (fun (_, l, r, kind, columns) ->
+      let t = joined ~kind (Join.keys [ "k" ]) l r in
+      equal ~msg:"columns" (list string) (List.map fst columns) (names t);
+      List.iter (column_is t) columns)
+
+(* An equality join of an int64 key [k] of 0 to 3 on the left, and [rk] of 0
+   to 6 on the right, so that right keys repeat, those past 3 matching
+   nothing, and of up to 5 left rows, so that a sixth of the lefts are
+   empty. Either side's key is null now and then. *)
+let keyed_join =
+  let open Gen in
+  let key hi = option (int_range 0 hi) in
+  let pp_keys ppf ks =
+    Format.fprintf ppf "[%s]"
+      (String.concat "; "
+         (Array.to_list
+            (Array.map (function None -> "-" | Some k -> string_of_int k) ks)))
+  in
+  let pp ppf (l, r, kind) =
+    let name =
+      match (kind : Join.kind) with
+      | Inner -> "Inner"
+      | Left -> "Left"
+      | Full -> "Full"
+      | Semi -> "Semi"
+      | Anti -> "Anti"
+    in
+    Format.fprintf ppf "%s join of %a to %a" name pp_keys l pp_keys r
+  in
+  with_pp pp
+    (triple
+       (array ~size:(int_range 0 5) (key 3))
+       (array ~size:(int_range 0 8) (key 6))
+       (of_list Join.[ Inner; Left; Full; Semi; Anti ]))
+
+let keyed_agrees (lk, rk, kind) =
+  let table k v ks =
+    let n = Array.length ks in
+    R.Table
+      (Talon.v
+         [
+           (k, Column.of_options Type.int64 ks);
+           (v, i64 (Array.init n Fun.id));
+         ])
+  in
+  let p =
+    R.Join
+      {
+        kind;
+        each_left = Any;
+        each_right = Any;
+        on = Keys [ ("k", "rk") ];
+        left = table "k" "x" lk;
+        right = table "rk" "y" rk;
+      }
+  in
+  let r = List.hd (right_keys p) in
+  (* Repeated matched keys place the matched right rows in runs, the others
+     left out; distinct ones scatter them, where the rows of a repeated key
+     that matches nothing write nothing. *)
+  cover "a repeated matched key, and right rows matching nothing"
+    (r.matched_keys < r.matched && r.rest > 0);
+  cover "distinct matched keys, and a repeated key matching nothing"
+    (r.matched_keys = r.matched && r.rest_keys < r.rest);
+  cover "an empty left and a right row" (lk = [||] && rk <> [||]);
+  match R.run p with
+  | Error (row, why) -> failf "the reference fails at row %d: %s" row why
+  | Ok cs -> List.iter (holds (run_ok (R.query p))) cs
+
 (* A right whose keys are distinct, as a table looked up by its key: left rows
    0 and 2 match right row 1, left row 1 matches right row 0, and left row 3
    and right row 2 match nothing. *)
@@ -2159,9 +2300,9 @@ let lookup_order =
       equal ~msg:"k" (list (option int)) expected_keys (keys t);
       List.iter (column_is t) columns)
 
-(* Text keys without a null are grouped as their rows of bytes, which also
-   count each group's rows: a full join reads them for the right rows without
-   a match. *)
+(* Text keys without a null are numbered as their rows of bytes, in one
+   numbering of both sides: a full join finds the right rows without a match
+   from the left rows matched to each. *)
 let text_lookup =
   test "a Full join to distinct text keys without a null" (fun () ->
       let s x = Some x in
@@ -2274,6 +2415,9 @@ let joins =
   group "Joins"
     [
       join_order;
+      unmatched_right;
+      prop "an equality join gives the reference's rows" keyed_join
+        keyed_agrees;
       lookup_order;
       text_lookup;
       shapes;

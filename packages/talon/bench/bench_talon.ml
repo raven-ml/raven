@@ -101,6 +101,19 @@ let joined_twice () =
          ~on:(Join.keys [ "customer_id" ])
          (append customers customers))
 
+(* An eighth of the customers to their transactions: a right whose keys repeat
+   and whose rows mostly match no left row, as a few orders find their lines
+   among all of them. *)
+let few_customers () =
+  let few = rows customers / 8 in
+  Query.(
+    of_table customers
+    |> slice ~offset:0 ~length:few
+    |> join
+         ~on:(Join.keys [ "customer_id" ])
+         (of_table transactions
+         |> Kit.rename [ ("region", "transaction_region") ]))
+
 let sorted () = Query.(of_table transactions |> sort [ Order.desc "amount" ])
 
 let first_amount q =
@@ -338,6 +351,8 @@ let () =
           Thumper.bench "Join/customer_lookup" (fun () -> total (joined ()));
           Thumper.bench "Join/repeated_keys" (fun () ->
               total (joined_twice ()));
+          Thumper.bench "Join/few_of_repeated_keys" (fun () ->
+              total (few_customers ()));
           Thumper.bench "Sort/amount_desc" (fun () -> first_amount (sorted ()));
           Thumper.bench "Nulls/filter-1pct" (fun () -> filter 10);
           Thumper.bench "Nulls/filter-50pct" (fun () -> filter 500);

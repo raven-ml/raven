@@ -93,16 +93,16 @@ let identity = function
 
 (* A single compound column without a null is grouped by its rows, which
    gives the groups with their numbering. *)
-let groups cs =
+let groups ?size cs =
   match cs with
   | [ c ] when Column.known_zero c -> (
       match Column.data c with
-      | Fixed (P x) when Nx.ndim x = 1 -> Nx.unique (identity cs)
-      | Fields [] -> Nx.unique (identity cs)
+      | Fixed (P x) when Nx.ndim x = 1 -> Nx.unique ?size (identity cs)
+      | Fields [] -> Nx.unique ?size (identity cs)
       | _ ->
           let (Rows r) = rows Identity c in
-          Nx_ragged.unique r)
-  | _ -> Nx.unique (identity cs)
+          Nx_ragged.unique ?size r)
+  | _ -> Nx.unique ?size (identity cs)
 
 let order = function
   | [] -> invalid_arg "Key.order: no key"

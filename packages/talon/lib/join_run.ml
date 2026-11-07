@@ -136,7 +136,10 @@ let named t ns = List.map (fun n -> (n, Table.column t n)) ns
    equal keys, and a left row's matches are the right rows of its group. When
    no two right rows share a group, as in a lookup of a table by its key, a
    scatter gives each group its right row. Otherwise the right rows of each
-   group, in order, are one row of [runs]. *)
+   group, in order, are one row of [runs]. The numbering follows first
+   appearance and the left rows come first, so the groups that hold a left row
+   are those up to the greatest left id: only the right rows of those are
+   counted and placed in runs, the others matching none. *)
 
 (* The matches of the left rows: [One ri], each left row's one match or [-1],
    or [Runs matched], each left row's matches, one after the other. *)
@@ -177,30 +180,38 @@ let equality q kind (each_left, each_right) left right eqs =
           (ln, Column.concat [ wl (Table.column l ln); wr (Table.column r rn) ]))
         atoms
     in
-    let g = Key.groups (List.map snd keys) in
-    let groups = Nx.dim 0 g.first in
+    (* Only the ids and their number: each group's first row and count would
+       be a pass over every row that nothing reads. *)
+    let g = Key.groups ~size:0 (List.map snd keys) in
+    let groups = Int64.to_int (Nx.item [] g.count) in
     let lids = Nx.slice [ Nx.R (0, n) ] g.ids
     and rids = Nx.slice [ Nx.R (n, n + m) ] g.ids in
-    (* Each group's right rows, and so each left row's matches. *)
+    (* The right rows of each of the [k] groups that hold a left row, and so
+       each left row's matches: the id of a right row of a later group is past
+       the segments, and counts nowhere. *)
+    let k = if n = 0 then 0 else Int64.to_int (Nx.item [] (Nx.max lids)) + 1 in
     let ones = Nx.ones_like rids in
-    let per = Nx.reduce_segments Nx.Add ~segments:groups rids ones in
+    let per = Nx.reduce_segments Nx.Add ~segments:k rids ones in
     let counts = Nx.take lids per in
     let matches =
-      if groups = 0 || Nx.item [] (Nx.max per) <= 1L then
-        One (Nx.take lids (Nx.scatter ~axis:0 rids (arange m) (none groups)))
+      if k = 0 || Nx.item [] (Nx.max per) <= 1L then
+        One (Nx.take lids (Nx.scatter ~axis:0 rids (arange m) (none k)))
       else
-        let runs = Nx_ragged.of_ids ~segments:groups rids (arange m) in
+        (* Only those groups' right rows, [hits], take a place in the runs:
+           every right row when every group holds a left row. *)
+        let runs =
+          if k = groups then Nx_ragged.of_ids ~segments:k rids (arange m)
+          else
+            let hits = Nx.positions (Nx.less_s rids (Int64.of_int k)) in
+            Nx_ragged.of_ids ~segments:k (Nx.take hits rids) hits
+        in
         Runs (Nx_ragged.values (Nx_ragged.take ~indices:lids runs))
     in
-    (* A right row's matches are the left rows of its group: the others of its
-       group when it is the group's one right row. *)
+    (* A right row's matches are the left rows matched to it. *)
     let rcounts =
       lazy
-        (match matches with
-        | One _ -> Nx.sub_s (Nx.take rids g.counts) 1L
-        | Runs matched ->
-            Nx.reduce_segments Nx.Add ~segments:m matched
-              (Nx.ones_like matched))
+        (let matched = match matches with One ri | Runs ri -> ri in
+         Nx.reduce_segments Nx.Add ~segments:m matched (Nx.ones_like matched))
     in
     let* () =
       check "left" each_left (named l (List.map fst eqs)) (lazy counts)
