@@ -9,9 +9,12 @@
    destination, the positions, and the source read with step 0 along the
    gathered axis, whose stride is kept apart. Each element reads its
    position p, then the source at its own index plus p strides, or zero
-   bits for a p outside the axis: one unsigned compare. Where the positions
-   step 0 along a block's row, as a row take's or an embedding's do, the
-   row is one copy from the source's row p.
+   bits for a p outside the axis: one unsigned compare. A row of positions
+   of unit step, as a take's from a table is, checks them a run at a time
+   and reads a run inside the axis with no compare. A sub-byte row gathers
+   its elements a byte each and packs them into whole bytes. Where the
+   positions step 0 along a block's row, as a row take's or an embedding's
+   do, the row is one copy from the source's row p.
 
    A scatter copies [into] to the destination, unless the two are one
    array, then applies the updates; a sorted scatter copies each bin's
@@ -113,10 +116,74 @@ typedef struct {
   int w;             /* bytes per element, 0 for a sub-byte dtype */
 } gather;
 
+/* Positions a take checks at once before it reads them. */
+#define TAKE_RUN 256
+
+/* Elements below which a row of a take compares each position: its call,
+   check and unrolled loop cost more than they save below it. In
+   instructions an element, compared against checked (fudge, 2026-11-07):
+   uint8 rows of 8, 21 against 23; float64 rows of 8, 21 against 23; uint8
+   rows of 16, 18 against 14. */
+#define TAKE_SHORT 16
+
+/* Whether every position of the [n] at [idx] lies in [0, dim): p does
+   where the top bits of both ~p and p - dim are set, dim being below
+   2^63, so the run's AND of them has its top bit set. */
+static inline int inside(const int64_t *idx, int64_t n, uint64_t dim) {
+  uint64_t all = ~(uint64_t)0;
+  for (int64_t i = 0; i < n; i++) {
+    uint64_t p = (uint64_t)idx[i];
+    all &= ~p & (p - dim);
+  }
+  return (int)(all >> 63);
+}
+
 /* A row of [n] elements of the type [T]: element i of [d], stepping [sd],
    is the source [x] at i·sx plus its position's [sa] strides, its
-   position at i·si of [idx]. */
+   position at i·si of [idx]. Where the destination and the positions step
+   one element and the source 0 or 1, as the rows of a take and of
+   take_along_axis do, the row checks its positions TAKE_RUN at a time,
+   and reads a run of positions inside the axis with no compare, four
+   elements a step: a bool take of 1M positions from a table of 4 entries
+   took 11 instructions a row with its steps read at run time and a
+   compare a row, and takes 6 (fudge, 2026-11-07). */
 #define GATHER_ROW(NAME, T)                                                  \
+  static inline __attribute__((always_inline)) void NAME##_steps(           \
+      T *d, const int64_t *idx, const T *x, int64_t n, int64_t sd,          \
+      int64_t si, int64_t sx, int64_t sa, uint64_t dim) {                   \
+    const T zero = {0};                                                      \
+    for (int64_t i = 0; i < n; i++) {                                        \
+      uint64_t p = (uint64_t)idx[i * si];                                    \
+      d[i * sd] = p < dim ? x[i * sx + (int64_t)p * sa] : zero;              \
+    }                                                                        \
+  }                                                                          \
+  static inline __attribute__((always_inline)) void NAME##_take(            \
+      T *d, const int64_t *idx, const T *x, int64_t n, int64_t sx,          \
+      int64_t sa, uint64_t dim) {                                            \
+    for (int64_t i = 0; i < n; i += TAKE_RUN) {                              \
+      int64_t m = n - i < TAKE_RUN ? n - i : TAKE_RUN;                       \
+      const T *r = x + i * sx;                                               \
+      if (!inside(idx + i, m, dim)) {                                        \
+        NAME##_steps(d + i, idx + i, r, m, 1, 1, sx, sa, dim);               \
+        continue;                                                            \
+      }                                                                      \
+      int64_t k = i;                                                         \
+      for (; k + 4 <= i + m; k += 4) {                                       \
+        d[k] = x[k * sx + idx[k] * sa];                                      \
+        d[k + 1] = x[(k + 1) * sx + idx[k + 1] * sa];                        \
+        d[k + 2] = x[(k + 2) * sx + idx[k + 2] * sa];                        \
+        d[k + 3] = x[(k + 3) * sx + idx[k + 3] * sa];                        \
+      }                                                                      \
+      for (; k < i + m; k++) d[k] = x[k * sx + idx[k] * sa];                 \
+    }                                                                        \
+  }                                                                          \
+  static __attribute__((noinline)) void NAME##_takes(                       \
+      T *d, const int64_t *idx, const T *x, int64_t n, int64_t sx,          \
+      int64_t sa, uint64_t dim) {                                            \
+    if (sx == 1) NAME##_take(d, idx, x, n, 1, sa, dim);                      \
+    else if (sa == 1) NAME##_take(d, idx, x, n, 0, 1, dim);                  \
+    else NAME##_take(d, idx, x, n, 0, sa, dim);                              \
+  }                                                                          \
   static void NAME(uint8_t *d_, const int64_t *idx, const uint8_t *x_,      \
                    int64_t n, int64_t sd, int64_t si, int64_t sx,           \
                    int64_t sa, uint64_t dim) {                              \
@@ -135,10 +202,9 @@ typedef struct {
         for (int64_t i = 0; i < n; i++) d[i * sd] = r[i * sx];               \
       return;                                                                \
     }                                                                        \
-    for (int64_t i = 0; i < n; i++) {                                        \
-      uint64_t p = (uint64_t)idx[i * si];                                    \
-      d[i * sd] = p < dim ? x[i * sx + (int64_t)p * sa] : zero;              \
-    }                                                                        \
+    if (n < TAKE_SHORT || sd != 1 || si != 1 || (sx != 0 && sx != 1))        \
+      NAME##_steps(d, idx, x, n, sd, si, sx, sa, dim);                       \
+    else NAME##_takes(d, idx, x, n, sx, sa, dim);                            \
   }
 
 GATHER_ROW(gather_1, uint8_t)
@@ -193,6 +259,96 @@ static void take_rows(const nx_cpu_block *b, const gather *g, int across) {
   }
 }
 
+/* Elements of a sub-byte row gathered at once, one per byte, before they
+   are packed into the destination. */
+#define SUB_RUN 1024
+
+/* Elements below which a sub-byte row moves them one by one: a run's
+   fixed cost, its loads' call and its edge bytes, outweighs the packing
+   below it. Bit rows of a row take, in instructions an element one by one
+   against packed (fudge, 2026-11-07): of 3, 59 against 105; of 11, 46
+   against 49; of 12, 46 against 43; of 16, 45 against 34. */
+#define SUB_SHORT 12
+
+/* The most entries of a sub-byte source a row reads from a copy of them
+   one per byte: a row of at least twice as many elements, along which the
+   source steps 0, as a take's from a table does, reads its entries once
+   and then takes a byte a row. */
+#define SUB_TABLE 1024
+
+/* [m] elements of [bits] bits one per byte at [buf], element j the
+   source's at element [px] plus j·sx plus its position's [sa] strides,
+   its position at j·si of [idx], or zero outside [dim]. */
+static inline __attribute__((always_inline)) void sub_load_run(
+    uint8_t *buf, const int64_t *idx, const uint8_t *x, int64_t px,
+    int64_t m, int64_t si, int64_t sx, int64_t sa, uint64_t dim, int bits) {
+  for (int64_t j = 0; j < m; j++) {
+    uint64_t p = (uint64_t)idx[j * si];
+    buf[j] = 0;
+    /* The element's offset only from a position inside the axis: from one
+       outside, p·sa can overflow. */
+    if (p < dim)
+      buf[j] = (uint8_t)nx_sub_load(x, bits, px + j * sx + (int64_t)p * sa);
+  }
+}
+
+/* sub_load_run with constant [bits], and steps as a take's, so that an
+   element's byte and shift are a few instructions; out of line, so that
+   its loops keep their operands in registers. */
+static __attribute__((noinline)) void sub_loads(
+    uint8_t *buf, const int64_t *idx, const uint8_t *x, int64_t px,
+    int64_t m, int64_t si, int64_t sx, int64_t sa, uint64_t dim, int bits) {
+  int take = si == 1 && sx == 0;
+  if (bits == 1 && take) sub_load_run(buf, idx, x, px, m, 1, 0, sa, dim, 1);
+  else if (bits == 1) sub_load_run(buf, idx, x, px, m, si, sx, sa, dim, 1);
+  else if (take) sub_load_run(buf, idx, x, px, m, 1, 0, sa, dim, 4);
+  else sub_load_run(buf, idx, x, px, m, si, sx, sa, dim, 4);
+}
+
+/* A row of [n] elements of a sub-byte dtype: element i of the destination
+   at element [pd], stepping one, is the source at element [px] plus i·sx
+   plus its position's strides, its position at i·si of [idx]: a row of at
+   least SUB_SHORT elements of a block of unit step. The row gathers runs
+   of SUB_RUN elements one per byte, as a uint8 take from a copy of the
+   source's entries where it takes few of them (SUB_TABLE), and packs each
+   run into whole bytes: a bit take of 1M positions took 41 instructions a
+   row element by element, and takes 7 from a table of 4 entries and 17
+   from one of 16M (fudge, 2026-11-07). */
+static void sub_row(const gather *g, int64_t pd, const int64_t *idx,
+                    int64_t px, int64_t n, int64_t si, int64_t sx) {
+  const nx_array *a = g->a;
+  const uint8_t *x = a[2].base;
+  int bits = a[0].bits;
+  int64_t sa = g->sa;
+  uint64_t dim = g->dim;
+  uint8_t t[SUB_TABLE], buf[SUB_RUN];
+  int table = sx == 0 && dim <= SUB_TABLE && 2 * (int64_t)dim <= n;
+  for (int64_t q = 0; table && q < (int64_t)dim; q++)
+    t[q] = (uint8_t)nx_sub_load(x, bits, px + q * sa);
+  for (int64_t i = 0; i < n; i += SUB_RUN) {
+    int64_t m = n - i < SUB_RUN ? n - i : SUB_RUN;
+    const int64_t *at = idx + i * si;
+    int64_t from = px + i * sx;
+    if (table && si == 1) gather_1_take(buf, at, t, m, 0, 1, dim);
+    else if (table) gather_1_steps(buf, at, t, m, 1, si, 0, 1, dim);
+    else sub_loads(buf, at, x, from, m, si, sx, sa, dim, bits);
+    if (bits == 1) nx_sub_pack_run(a[0].base, 1, pd + i, buf, m);
+    else nx_sub_pack_run(a[0].base, 4, pd + i, buf, m);
+  }
+}
+
+/* The rows of block [b] of a sub-byte gather through sub_row. */
+static void sub_rows(const nx_cpu_block *b, const gather *g) {
+  const int64_t *idx = (const int64_t *)g->a[1].base;
+  for (int64_t q = 0; q < b->n2; q++)
+    for (int64_t j = 0; j < b->n1; j++) {
+      int64_t pd = b->at[0] + q * b->s2[0] + j * b->s1[0];
+      int64_t pi = b->at[1] + q * b->s2[1] + j * b->s1[1];
+      int64_t px = b->at[2] + q * b->s2[2] + j * b->s1[2];
+      sub_row(g, pd, idx + pi, px, b->n0, b->s0[1], b->s0[2]);
+    }
+}
+
 static void gather_block(const nx_cpu_block *b, void *ctx) {
   const gather *g = ctx;
   const nx_array *a = g->a;
@@ -204,6 +360,10 @@ static void gather_block(const nx_cpu_block *b, void *ctx) {
   if (g->w > 0 && b->n1 > 1 && b->s1[1] == 0 && b->s1[0] == 1 &&
       b->s1[2] == 1) {
     take_rows(b, g, 1);
+    return;
+  }
+  if (g->w == 0 && b->s0[0] == 1 && b->n0 >= SUB_SHORT) {
+    sub_rows(b, g);
     return;
   }
   for (int64_t q = 0; q < b->n2; q++)

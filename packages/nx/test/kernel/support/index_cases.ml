@@ -39,15 +39,22 @@ let shape_gen =
   in
   frequency [ (6, small); (1, long) ]
 
-let gather_gen ?(dtypes = all_dtypes) ?(shapes = shape_gen) () =
+(* Gathers of [dtypes] from [shapes], along [axis] if given, of [ns]
+   positions drawn by [position], through drawn views, or plain ones where
+   [plain] (broadcast positions aside). *)
+let gather_gen ?(dtypes = all_dtypes) ?(shapes = shape_gen) ?axis
+    ?(ns = Gen.frequency [ (4, Gen.int_range 0 6); (1, Gen.int_range 7 40) ])
+    ?(position = position) ?(plain = false) () =
   let open Gen in
   let* d = of_list ~pp:pp_dtype dtypes in
   let* xs = shapes in
   let r = Array.length xs in
-  let* axis = int_range 0 (r - 1) in
-  let* n = frequency [ (4, int_range 0 6); (1, int_range 7 40) ] in
+  let* axis =
+    match axis with Some a -> constant a | None -> int_range 0 (r - 1)
+  in
+  let* n = ns in
   let is = Array.mapi (fun i e -> if i = axis then n else e) xs in
-  let* xv = view_of r in
+  let* xv = if plain then constant (Elements.plain r) else view_of r in
   let* bc =
     array ~size:(constant r)
       (frequency [ (3, constant false); (1, constant true) ])
@@ -55,7 +62,10 @@ let gather_gen ?(dtypes = all_dtypes) ?(shapes = shape_gen) () =
   let broadcast =
     List.filter (fun i -> bc.(i) && i <> axis) (List.init r Fun.id)
   in
-  let* iv = view_of ~broadcast r in
+  let* iv =
+    if plain then constant { (Elements.plain r) with broadcast }
+    else view_of ~broadcast r
+  in
   let+ seed = int in
   let rs = Random.State.make [| seed |] in
   let x = operand d xs xv (fun _ -> element d rs) in

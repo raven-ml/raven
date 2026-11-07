@@ -324,6 +324,12 @@ let gather_examples =
     gather_example (D.Any D.Float64) ~xs:[| 7; 2 |] ~axis:0 ~n:5
       ~broadcast:[ 1 ]
       [| 6L; 7L; 0L; -3L; 2L |];
+    (* Packed sub-byte rows of 16 and 12 positions, the extremes among them,
+       whose offsets in the source would overflow. *)
+    gather_example (D.Any D.Bit) ~xs:[| 4; 16 |] ~axis:0 ~n:2
+      [| Int64.max_int; 1L; Int64.min_int; 3L |];
+    gather_example (D.Any D.Int4) ~xs:[| 3; 16 |] ~axis:1 ~n:12
+      [| 5L; Int64.max_int; 15L; Int64.min_int; -1L |];
   ]
 
 let scatter_examples =
@@ -533,6 +539,126 @@ let large_gathers = Gen.with_pp pp_gather (gather_gen ~shapes:large_shapes ())
 let large_scatters =
   Gen.with_pp pp_scatter (scatter_gen ~shapes:large_shapes ())
 
+(* A position inside an axis of [d], any for an empty one. *)
+let inside rs d = if d = 0 then 0L else Int64.of_int (Random.State.int rs d)
+
+let sub_byte_dtypes = List.filter (fun (D.Any dt) -> D.bits dt < 8) all_dtypes
+
+let byte_dtypes = List.filter (fun (D.Any dt) -> D.bits dt >= 8) all_dtypes
+
+(* Gathers through plain views in three cases of four, their positions all
+   inside the axis in half the cases: the rows a take reads unchecked. *)
+let half_inside ?dtypes ?axis ~shapes ~ns () =
+  let gen = gather_gen ?dtypes ~shapes ?axis ~ns in
+  Gen.with_pp pp_gather
+    (Gen.frequency
+       [
+         (1, gen ());
+         (1, gen ~plain:true ());
+         (2, gen ~plain:true ~position:inside ());
+       ])
+
+let table_extent =
+  Gen.frequency [ (1, Gen.constant 0); (4, Gen.int_range 1 16) ]
+
+let table_positions =
+  Gen.frequency [ (1, Gen.constant 0); (4, Gen.int_range 1 5000) ]
+
+(* Takes from tables of a few entries, as a dictionary's codes read its
+   words: at every byte-wide dtype, rows of up to thousands of positions,
+   an empty table or no position one time in five. *)
+let table_shapes =
+  let open Gen in
+  let* k = table_extent in
+  let* rows = int_range 1 3 in
+  of_list ~pp:pp_ints [ [| k |]; [| rows; k |]; [| k; rows |] ]
+
+let table_gathers =
+  half_inside ~dtypes:byte_dtypes ~shapes:table_shapes ~ns:table_positions ()
+
+(* The same takes into sub-byte dtypes, which pack their elements. *)
+let sub_byte_table_gathers =
+  half_inside ~dtypes:sub_byte_dtypes ~shapes:table_shapes
+    ~ns:table_positions ()
+
+(* Rows of hundreds of elements along which the source steps, as
+   take_along_axis's off the innermost axis are. *)
+let along_gathers =
+  let shapes =
+    let open Gen in
+    let* k = int_range 1 16 in
+    let+ l = int_range 257 600 in
+    [| k; l |]
+  in
+  half_inside ~axis:0 ~shapes ~ns:(Gen.int_range 1 4) ()
+
+(* Hundreds of thousands of positions inside a table, which the job's
+   threads share and read unchecked: of [dtypes], byte-wide or sub-byte,
+   whose blocks share edge bytes. *)
+let large_table_gathers dtypes =
+  Gen.with_pp pp_gather
+    (gather_gen ~dtypes
+       ~shapes:(Gen.map (fun k -> [| k |]) (Gen.int_range 1 16))
+       ~ns:(Gen.int_range 200_000 300_000)
+       ~plain:true ~position:inside ())
+
+(* Whether [c] reads through plain views, its positions all inside the
+   axis, along rows of over 256: rows a take reads with no compare. *)
+let unchecked c =
+  let d = Int64.of_int (shape_of c.x).(c.axis) in
+  let is = shape_of c.idx in
+  is.(Array.length is - 1) > 256
+  && c.gviews = []
+  && Array.for_all (fun p -> p >= 0L && p < d) (positions c.idx)
+
+let law_table_gather (b : Support.backend) c =
+  let d = (shape_of c.x).(c.axis) and n = (shape_of c.idx).(c.axis) in
+  cover "an empty table" (d = 0);
+  cover "no position" (n = 0);
+  cover "long plain rows inside the table" (unchecked c);
+  law_gather_reference b c
+
+let law_along_gather (b : Support.backend) c =
+  cover "long plain rows inside the axis" (unchecked c);
+  law_gather_reference b c
+
+(* Rows of plain positions from tables of [m] rows of [k] entries: of
+   either length beside the shortest row a take checks a run at a time
+   (16 elements) or a sub-byte one packs (12), and of 300, two runs of a
+   take's check; tables of up to 5 entries or past the most a sub-byte row
+   copies (1024); every position inside half the time. *)
+let edge_gathers =
+  let shapes =
+    let open Gen in
+    let* m = int_range 1 3 in
+    let+ k = frequency [ (1, int_range 1 5); (1, int_range 1025 1200) ] in
+    [| m; k |]
+  in
+  let gens dtypes ns =
+    let gen = gather_gen ~dtypes ~shapes ~axis:1 ~ns:(Gen.of_list ns) in
+    [ (1, gen ~plain:true ()); (1, gen ~plain:true ~position:inside ()) ]
+  in
+  let byte = gens byte_dtypes [ 15; 16; 300 ] in
+  Gen.with_pp pp_gather
+    (Gen.frequency (byte @ gens sub_byte_dtypes [ 11; 12; 300 ]))
+
+let law_edge_gather (b : Support.backend) c =
+  let (A.Any x) = c.x in
+  let sub = D.bits (A.dtype x) < 8 in
+  let k = (shape_of c.x).(1) and l = (shape_of c.idx).(1) in
+  let d = Int64.of_int k in
+  let outside = Array.exists (fun p -> p < 0L || p >= d) (positions c.idx) in
+  cover "a byte-wide row of 15" ((not sub) && l = 15);
+  cover "a byte-wide row of 16" ((not sub) && l = 16);
+  cover "a sub-byte row of 11" (sub && l = 11);
+  cover "a sub-byte row of 12" (sub && l = 12);
+  cover "a sub-byte row of 12 or more read without a copy of the table"
+    (sub && l >= 12 && (l < 2 * k || k > 1024));
+  cover "a row of 300 holding a position outside the table"
+    (l = 300 && outside);
+  cover "a row of 300 inside the table" (l = 300 && not outside);
+  law_gather_reference b c
+
 (* Many updates along the axis of few slices: threads split the targets. *)
 let long_scatters =
   Gen.with_pp pp_scatter
@@ -662,8 +788,6 @@ let law_threads (b : Support.backend) c =
   | _ -> failf "%s declined a scatter" b.name
 
 (* Sub-byte scatters *)
-
-let sub_byte_dtypes = List.filter (fun (D.Any dt) -> D.bits dt < 8) all_dtypes
 
 (* Shapes whose neighbouring elements share bytes between threads: a short
    axis of many updates, rows of an odd count of slices, and slices along
@@ -814,6 +938,23 @@ let cpu (b : Support.backend) =
         nan_scatters
         (run (law_nan_extremes b));
       prop ~count:10 "large gathers on the job's threads" large_gathers
+        (run (gather_agrees b));
+      prop "a take from a table of few entries reads each position"
+        table_gathers
+        (run (law_table_gather b));
+      prop "a sub-byte take from a table of few entries reads each position"
+        sub_byte_table_gathers
+        (run (law_table_gather b));
+      prop "a take along a stepped source reads each position" along_gathers
+        (run (law_along_gather b));
+      prop ~count:200 "a take reads each position of rows beside its bounds"
+        edge_gathers
+        (run (law_edge_gather b));
+      prop ~count:5 "a take from a table on the job's threads"
+        (large_table_gathers byte_dtypes)
+        (run (gather_agrees b));
+      prop ~count:5 "a sub-byte take from a table on the job's threads"
+        (large_table_gathers sub_byte_dtypes)
         (run (gather_agrees b));
       prop ~count:10
         ~examples:

@@ -858,6 +858,22 @@ let windows_1m () =
   let bytes = on_host (Nx.zeros D.Uint8 [| n + 7 |]) in
   (on_host (Nx.cast D.Int64 at), Nx.sliding_window ~window:8 bytes)
 
+(* 1M positions in a table of 4 booleans, drawn once from a fixed key, as a
+   dictionary's codes read a result computed once for each of its words. *)
+let table_1m dt () =
+  let at = Nx.Rng.randint ~key:(Nx.Rng.key 16) ~high:4 [| 1 lsl 20 |] in
+  let table = A.of_array dt [| 4 |] [| true; false; false; true |] in
+  (on_host (Nx.cast D.Int64 at), Nx.Repr.of_array Nx.Host.v table)
+
+(* 512K rows of 2 bits taken from a table of 1024, positions drawn once from
+   a fixed key: rows too short to pack, moved element by element. *)
+let bit_rows_512k () =
+  let at = Nx.Rng.randint ~key:(Nx.Rng.key 17) ~high:1024 [| 1 lsl 19 |] in
+  let table =
+    A.of_array D.Bit [| 1024; 2 |] (Array.init 2048 (fun i -> i land 3 = 1))
+  in
+  (on_host (Nx.cast D.Int64 at), Nx.Repr.of_array Nx.Host.v table)
+
 (* A cache of 8 heads, 4096 positions and 64 features, 8 MiB, one
    position's row and the position. *)
 let set_8m () =
@@ -967,6 +983,13 @@ let index_rows =
           Nx.reduce_segments Max ~segments:100 ids x);
       Thumper.bench_with_setup "take-windows-8B-1M" ~setup:windows_1m
         (fun (at, w) -> Nx.take ~axis:0 at w);
+      Thumper.bench_with_setup "take-bool-1M-of-4" ~setup:(table_1m D.Bool)
+        (fun (at, t) -> Nx.take at t);
+      Thumper.bench_with_setup "take-bit-1M-of-4" ~setup:(table_1m D.Bit)
+        (fun (at, t) -> Nx.take at t);
+      Thumper.bench_with_setup "take-bit-rows-512Kx2-of-1K"
+        ~setup:bit_rows_512k
+        (fun (at, t) -> Nx.take ~axis:0 at t);
       Thumper.bench_with_setup "set-row-8M" ~setup:set_8m
         (fun (cache, row, pos) -> Nx.set Nx.[ A; A; D (pos, 1); A ] row cache);
       Thumper.bench_with_setup "set-held-3-axes-4K-of-32K" ~setup:set_held

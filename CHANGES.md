@@ -2341,6 +2341,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.take` and `Nx.take_along_axis` on nx.cpu cost about half the
+  instructions per position into byte-wide dtypes and a sixth into `bit` and
+  4-bit ones, from small tables.
 - `Nx_ragged.take` copies runs of one-byte rows, as text's bytes are, in a
   loop of their own: a take of 1M short texts runs 70 instructions a row where
   it ran 83. `Nx.unique` numbers keys by its hash table in about 10% fewer
