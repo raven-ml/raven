@@ -990,6 +990,9 @@ All notable changes to this project will be documented in this file.
 
 ### Ppx_ptree (new)
 
+- An attribute inside the type arguments of a tensor type, a key, an
+  `Nx.packed` or a structure, as `(('a [@ptree.walk f]), 'd) M.t`, is an error
+  at the type argument; it was dropped.
 - A derived `walk` has ghost locations, except in `[@ptree.walk f]`
   expressions. Merlin took the generated code for source: refactor-open
   proposed edits over the declaration (#246).

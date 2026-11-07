@@ -294,6 +294,48 @@ let set_error env ~loc part ty set =
          it"
         part (show ty) (show set)
 
+(* [bare ty] is [ty] without attributes, for messages. *)
+let bare =
+  object
+    inherit Ast_traverse.map as super
+    method! core_type ty = super#core_type { ty with ptyp_attributes = [] }
+  end
+
+let show_bare ty = show (bare#core_type ty)
+let show_expr e = Format.asprintf "%a" Pprintast.expression e
+
+(* [whole env part ty w ?payload args] reports each attribute inside [args],
+   type arguments of [ty] that its walk [w] walks whole, where no attribute
+   applies. [payload] is the argument at the positions of the structure [w]:
+   [(('a [@ptree.walk f]), 'd) M.t] is walked by [M.walk] alone, and the part
+   takes [Walk.under M.walk f] instead. *)
+let whole env part ty w ?payload args =
+  let check =
+    object
+      inherit Ast_traverse.iter as super
+
+      method! core_type arg =
+        let loc = arg.ptyp_loc in
+        (match annotation env ~loc core_attributes arg with
+        | None | Some Invalid -> ()
+        | Some (Walk f) when Option.fold ~none:false ~some:(( == ) arg) payload
+          ->
+            error env ~loc
+              "[@ptree.walk] on %s, the payload argument of %s in %s, which %s \
+               walks; walk its positions with (%s [@ptree.walk %s])"
+              (show_bare arg) (show_bare ty) part (show_expr w) (show_bare ty)
+              (show_expr (B.eapply ~loc (walk_fn ~loc "under") [ w; f ]))
+        | Some a ->
+            error env ~loc
+              "[@%s] on %s, an argument of %s in %s, which %s walks whole; \
+               remove it, or walk the whole part with (%s [@ptree.walk g])"
+              (attribute_label a) (show_bare arg) (show_bare ty) part
+              (show_expr w) (show_bare ty));
+        super#core_type arg
+    end
+  in
+  List.iter check#core_type args
+
 (* [walker env ~ints part ty] is an expression of type [('a, 'b, 'd, 'e)
    Nx.Ptree.Walk.cursor -> ty -> ty'] that walks a value of [ty], where [ty'] is
    [ty] with the payload parameter replaced by ['b] and the set parameter by
@@ -418,7 +460,9 @@ and constr env ~ints part ty lid args =
         refuse
           "a tensor's element types cannot mention a parameter; a position of \
            the payload is the payload parameter alone, walked as a leaf"
-      else on set (walk_fn ~loc "tensor")
+      else (
+        whole env part ty (walk_fn ~loc "tensor") args;
+        on set (walk_fn ~loc "tensor"))
   | Ldot (Lident "Nx", "t"), _ ->
       refuse
         "%s takes three type arguments: the element's OCaml type, its format \
@@ -426,16 +470,22 @@ and constr env ~ints part ty lid args =
         (Longident.name lid)
   | (Ldot (Lident "Nx", n) | Lident n), args when List.mem n nx_aliases -> (
       match args with
-      | [ set ] -> on set (walk_fn ~loc "tensor")
+      | [ set ] ->
+          whole env part ty (walk_fn ~loc "tensor") args;
+          on set (walk_fn ~loc "tensor")
       | _ -> refuse "%s takes one type argument, its set" (Longident.name lid))
   | (Ldot (Ldot (Lident "Nx", "Rng"), "key") | Ldot (Lident "Rng", "key")), args
     -> (
       match args with
-      | [ set ] -> on set (ident ~loc "Nx.Rng.walk")
+      | [ set ] ->
+          whole env part ty (ident ~loc "Nx.Rng.walk") args;
+          on set (ident ~loc "Nx.Rng.walk")
       | _ -> refuse "%s takes one type argument, its set" (Longident.name lid))
   | Ldot (Lident "Nx", "packed"), args -> (
       match args with
-      | [ set ] -> on set (packed ~loc)
+      | [ set ] ->
+          whole env part ty (walk_fn ~loc "tensor") args;
+          on set (packed ~loc)
       | _ -> refuse "Nx.packed takes one type argument, its set")
   | (Ldot (Lident "Nx", "dtype") | Ldot (Ldot (Lident "Nx", "Dtype"), "t")), _
     ->
@@ -515,16 +565,20 @@ and constr env ~ints part ty lid args =
    to [args], constrained to walk [ty]. A payload argument that mentions a
    parameter without being the payload parameter is a structure nested at the
    positions, walked by [Walk.under]: [(('a, 'd) V.t, 'd) U.t] is [under U.walk
-   V.walk]. *)
+   V.walk]. [w] walks the other arguments whole. *)
 and structure env ~ints part ty w args =
   let loc = ty.ptyp_loc in
-  let w =
-    match args with
-    | [ p; _ ] when mentions env p && not (is_payload env p) ->
-        B.eapply ~loc (walk_fn ~loc "under") [ w; walker env ~ints part p ]
-    | _ -> w
-  in
-  walk_of env ty w
+  match args with
+  | [ p; s ] when mentions env p && not (is_payload env p) ->
+      whole env part ty w [ s ];
+      walk_of env ty
+        (B.eapply ~loc (walk_fn ~loc "under") [ w; walker env ~ints part p ])
+  | [ p; _ ] ->
+      whole env part ty w ~payload:p args;
+      walk_of env ty w
+  | _ ->
+      whole env part ty w args;
+      walk_of env ty w
 
 (* [fun c (Nx.P x) -> Nx.P (Walk.tensor c x)]: a packed array is a fixed array
    of its own dtype. *)

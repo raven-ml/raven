@@ -56,6 +56,34 @@
    (diff golden/expansion_cases/variant.expected variant.actual)
    (diff golden/expansion_cases/group.expected group.actual))))
 
+; The fix each diagnostic of an attribute in an argument walked whole
+; suggests, which compiles without a word. Not on Windows, as below.
+
+(rule
+ (alias runtest)
+ (enabled_if
+  (and
+   (<> %{system} mingw64)
+   (<> %{system} win64)))
+ (targets argument_fixes.actual)
+ (deps
+  (:pp pp.exe))
+ (action
+  (progn
+   (with-stderr-to
+    argument_fixes.actual
+    (run
+     %{ocamlc}
+     -color
+     never
+     -c
+     -ppx
+     "./%{pp} --as-ppx"
+     %{dep:golden/compiler_cases/argument_fixes.ml}
+     -o
+     argument_fixes.cmo))
+   (diff golden/compiler_cases/argument_fixes.expected argument_fixes.actual))))
+
 ; Errors the compiler reports in generated code, at the source part. ocamlc
 ; hands -ppx to the platform shell, and cmd.exe cannot start a "./" program,
 ; so these cases do not run on Windows.

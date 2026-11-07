@@ -748,6 +748,44 @@ module Guide = struct
   end
 end
 
+(* A nested structure's payload argument is a part, so it takes an attribute. *)
+
+module Inner = struct
+  type ('a, 'd) t = {
+    w : 'a;
+    frozen :
+      (('d Nx.float32_t
+       [@ptree.walk
+         fun c x -> Nx.Ptree.Walk.field c "inner" Nx.Ptree.Walk.tensor x]),
+        'd)
+      Kaun.Linear.t;
+  }
+  [@@deriving ptree]
+end
+
+module Inner_hand = struct
+  type ('a, 'd) t = ('a, 'd) Inner.t
+
+  let walk c (x : _ t) : _ t =
+    let open P.Walk in
+    let w = field c "w" leaf x.w in
+    let frozen =
+      field c "frozen"
+        (under Kaun.Linear.walk (fun c x -> field c "inner" tensor x))
+        x.frozen
+    in
+    { w; frozen }
+end
+
+let test_inner () =
+  let x : (f32, host) Inner.t =
+    { w = f32 [| 1. |]; frozen = { w = f32 [| 2. |]; b = Some (f32 [| 3. |]) } }
+  in
+  agree ~msg:"inner"
+    (P.instantiate (module Inner_hand))
+    (P.instantiate (module Inner))
+    x
+
 let test_guide () =
   let block =
     {
@@ -778,6 +816,7 @@ let () =
              prop "a 3-tuple walks as Nx.Ptree.triple does" triples law_triple;
              test "a state nested over a model with Walk.under" test_train;
              test "the guide's block" test_guide;
+             test "an attribute on a nested structure's payload" test_inner;
            ];
          group "'d t and (_, 'd) t"
            [

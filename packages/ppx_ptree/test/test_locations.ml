@@ -285,6 +285,7 @@ let test_diagnostic_locations () =
       ("declaration_attribute.ml", [ 1; 1 ]);
       ("dtype.ml", [ 1 ]);
       ("duplicate_attribute.ml", [ 1 ]);
+      ("element_argument.ml", [ 1 ]);
       ("existential.ml", [ 1 ]);
       ("extensible.ml", [ 1 ]);
       ("extension.ml", [ 1 ]);
@@ -293,6 +294,7 @@ let test_diagnostic_locations () =
       ("host_tensor.ml", [ 1 ]);
       ("int.ml", [ 1 ]);
       ("int_on_string.ml", [ 1 ]);
+      ("key_argument.ml", [ 1 ]);
       ("lazy.ml", [ 1 ]);
       ("local_open.ml", [ 1 ]);
       ("metadata.ml", [ 1 ]);
@@ -301,6 +303,7 @@ let test_diagnostic_locations () =
       ("object.ml", [ 1 ]);
       ("one_parameter.ml", [ 1 ]);
       ("package.ml", [ 3 ]);
+      ("packed_argument.ml", [ 1 ]);
       ("payload_set.ml", [ 1 ]);
       ("placement.ml", [ 1 ]);
       ("polymorphic_field.ml", [ 1 ]);
@@ -313,9 +316,12 @@ let test_diagnostic_locations () =
       ("short_int.ml", [ 1 ]);
       ("short_walk.ml", [ 1 ]);
       ("skip_parameter.ml", [ 1 ]);
+      ("structure_argument.ml", [ 2; 3 ]);
+      ("tensor_argument.ml", [ 1 ]);
       ("tensor_parameter.ml", [ 1 ]);
       ("three_parameters.ml", [ 1 ]);
       ("type_variable.ml", [ 1 ]);
+      ("under_set_argument.ml", [ 1 ]);
       ("unnamed_set.ml", [ 1 ]);
       ("walk_payload.ml", [ 1 ]);
     ]

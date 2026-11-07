@@ -114,7 +114,13 @@ An attribute goes after a record field, after a constructor's single
 argument (`Frozen of Nx.host Nx.float32_t [@ptree.skip]`), or on a type to
 annotate a nested part: `(int [@ptree.int]) list`. A part takes at most one.
 On a constructor with no argument or several, or on the type declaration, it
-is an error.
+is an error. So is one inside the type arguments of a tensor type, a key, an
+`Nx.packed` or a structure, which their walks walk whole. In
+`(('a [@ptree.walk f]), 'd) M.t`, `M.walk` walks the positions: walk them with
+`f` by `(('a, 'd) M.t [@ptree.walk Nx.Ptree.Walk.under M.walk f])`. The
+exception is a structure's payload argument that mentions a parameter without
+being the payload parameter itself: a nested structure, a part walked with
+`Nx.Ptree.Walk.under`, which takes an attribute.
 
 - `[@ptree.int]` reports the part's integers and bools. A compiled program is
   cached per reported value: mark an integer that changes what a program

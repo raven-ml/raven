@@ -33,6 +33,8 @@ to write instead.
   ppx_ptree: field [dtype] has type (float, Nx.float32_elt) Nx.dtype; a dtype is data; leave it out with [@ptree.skip]
   == support/cases/duplicate_attribute.ml
   Duplicated attribute
+  == support/cases/element_argument.ml
+  ppx_ptree: [@ptree.int] on float, an argument of (float, Nx.float32_elt, 'd) Nx.t in field [x], which Nx.Ptree.Walk.tensor walks whole; remove it, or walk the whole part with ((float, Nx.float32_elt, 'd) Nx.t [@ptree.walk g])
   == support/cases/existential.ml
   ppx_ptree: constructor [Pack] has a GADT type, which a derived walk cannot rebuild at other parameters
   == support/cases/expansion.ml
@@ -50,6 +52,8 @@ to write instead.
   ppx_ptree: field [count] is an int; report it with [@ptree.int] if a compiled program depends on it, or leave it out with [@ptree.skip]
   == support/cases/int_on_string.ml
   ppx_ptree: [@ptree.int] on field [name], whose type string has no int or bool
+  == support/cases/key_argument.ml
+  ppx_ptree: [@ptree.walk] on 'd, an argument of 'd Nx.Rng.key in type [t], which Nx.Rng.walk walks whole; remove it, or walk the whole part with ('d Nx.Rng.key [@ptree.walk g])
   == support/cases/lazy.ml
   ppx_ptree: field [value] has type 'd Nx.float32_t lazy_t; lazy_t has no derived walk; walk it with [@ptree.walk f] or leave it out with [@ptree.skip]
   == support/cases/local_open.ml
@@ -66,6 +70,8 @@ to write instead.
   ppx_ptree: field [w] is the set parameter 'a, which holds no value; an array on the set has a tensor type, as 'd Nx.float32_t. A type of one parameter holds fixed arrays only; for positions of a payload write ('a, _) t
   == support/cases/package.ml
   ppx_ptree: field [value] is a first-class module, which has no derived walk; walk it with [@ptree.walk f] or leave it out with [@ptree.skip]
+  == support/cases/packed_argument.ml
+  ppx_ptree: [@ptree.skip] on 'd, an argument of 'd Nx.packed in field [p], which Nx.Ptree.Walk.tensor walks whole; remove it, or walk the whole part with ('d Nx.packed [@ptree.walk g])
   == support/cases/payload_set.ml
   ppx_ptree: field [w] has type 'a Nx.float32_t, whose set is the payload parameter 'a; a position of the payload is 'a alone, and a fixed array lies on the type's set parameter, as in (_, 'd) t and 'd Nx.float32_t
   == support/cases/placement.ml
@@ -90,12 +96,19 @@ to write instead.
   ppx_ptree: field [name] is a string, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
   == support/cases/skip_parameter.ml
   ppx_ptree: [@ptree.skip] copies field [w], whose type 'a mentions a parameter
+  == support/cases/structure_argument.ml
+  ppx_ptree: [@ptree.walk] on 'a, the payload argument of ('a, 'd) Foo.t in field [p], which Foo.walk walks; walk its positions with (('a, 'd) Foo.t [@ptree.walk Nx.Ptree.Walk.under Foo.walk f])
+  ppx_ptree: [@ptree.skip] on 'd, an argument of ('a, 'd) Foo.t in field [q], which Foo.walk walks whole; remove it, or walk the whole part with (('a, 'd) Foo.t [@ptree.walk g])
+  == support/cases/tensor_argument.ml
+  ppx_ptree: [@ptree.int] on 'd, an argument of 'd Nx.float32_t in field [x], which Nx.Ptree.Walk.tensor walks whole; remove it, or walk the whole part with ('d Nx.float32_t [@ptree.walk g])
   == support/cases/tensor_parameter.ml
   ppx_ptree: field [w] has type (float, 'a, 'd) Nx.t; a tensor's element types cannot mention a parameter; a position of the payload is the payload parameter alone, walked as a leaf
   == support/cases/three_parameters.ml
   ppx_ptree: [t] has 3 type parameters; a structure has at most two, its payload then its set, as ('a, 'd) t
   == support/cases/type_variable.ml
   ppx_ptree: type variable 'b at field [v] is not a parameter of the type
+  == support/cases/under_set_argument.ml
+  ppx_ptree: [@ptree.skip] on 'd, an argument of (('a, 'd) V.t, 'd) U.t in field [s], which U.walk walks whole; remove it, or walk the whole part with ((('a, 'd) V.t, 'd) U.t [@ptree.walk g])
   == support/cases/unnamed_set.ml
   ppx_ptree: field [steps] has type Nx.host Nx.int32_t, an array on Nx.host; a fixed array lies on the type's set parameter: name the set, as in (_, 'd) t and 'd Nx.float32_t, or leave the part out with [@ptree.skip] if no program on the set reads it
   == support/cases/walk_payload.ml
