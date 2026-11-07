@@ -89,6 +89,17 @@ let joined () =
          ~on:(Join.keys [ "customer_id" ])
          (of_table customers |> Kit.rename [ ("region", "customer_region") ]))
 
+(* The same join to every customer twice, a right whose keys repeat. *)
+let joined_twice () =
+  let customers =
+    Query.of_table customers |> Kit.rename [ ("region", "customer_region") ]
+  in
+  Query.(
+    of_table transactions
+    |> join ~kind:Left
+         ~on:(Join.keys [ "customer_id" ])
+         (append customers customers))
+
 let sorted () = Query.(of_table transactions |> sort [ Order.desc "amount" ])
 
 let first_amount q =
@@ -317,6 +328,8 @@ let () =
           Thumper.bench "Filter/high_value" (fun () -> total (filtered ()));
           Thumper.bench "Group/category_region" (fun () -> total (grouped ()));
           Thumper.bench "Join/customer_lookup" (fun () -> total (joined ()));
+          Thumper.bench "Join/repeated_keys" (fun () ->
+              total (joined_twice ()));
           Thumper.bench "Sort/amount_desc" (fun () -> first_amount (sorted ()));
           Thumper.bench "Nulls/filter-1pct" (fun () -> filter 10);
           Thumper.bench "Nulls/filter-50pct" (fun () -> filter 500);
