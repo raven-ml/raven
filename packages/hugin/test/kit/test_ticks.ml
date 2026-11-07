@@ -392,6 +392,13 @@ let quantity_labels =
           equal (list string)
             [ "-12\u{202F}345,5"; "0,0"; "12\u{202F}345,5" ]
             (labels t));
+      (* 2^50 + 0.75 reads back from 1125899906842624.7 and .8, which are
+         equally near it: the shortest decimal takes the even last digit. *)
+      test "a value between two shortest decimals reads as the even one"
+        (fun () ->
+          let x = 0x1.0000000000003p+50 in
+          let t = of_values ~notation:Plain (linear 0. 0x1p51) [| x |] in
+          equal (list string) [ "1,125,899,906,842,624.8" ] (labels t));
       prop "distinct values have distinct labels"
         (Gen.list ~size:(Gen.int_range 1 12) Gen.float)
         (fun vs ->

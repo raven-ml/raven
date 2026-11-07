@@ -137,43 +137,25 @@ let nat_pow5 k =
 let nat_of_digits s =
   String.fold_left (fun a c -> nat_mul_add a 10 (Char.code c - 48)) [||] s
 
-let billion = 1_000_000_000
-
-(* [nat_digits a] is the decimal digits of [a], with leading zeros, by repeated
-   division by [10^9]. A remainder is below [10^9 < 2^30], so each dividend is
-   below [2^60]. *)
-let nat_digits a =
-  let a = Array.copy a in
-  let len = ref (Array.length a) and chunks = ref [] in
-  while !len > 0 do
-    let r = ref 0 in
-    for i = !len - 1 downto 0 do
-      let v = (!r lsl limb_bits) lor a.(i) in
-      a.(i) <- v / billion;
-      r := v mod billion
-    done;
-    while !len > 0 && a.(!len - 1) = 0 do
-      decr len
-    done;
-    chunks := Printf.sprintf "%09d" !r :: !chunks
-  done;
-  String.concat "" !chunks
-
 (* Binary values *)
 
-let rec of_binary neg m e =
-  if m = 0 then zero
-  else if e < 0 && m land 1 = 0 then of_binary neg (m lsr 1) (e + 1)
-  else if e >= 0 then make neg (nat_digits (nat_shift (nat m) e)) 0
-  else
-    (* [m × 2^e] is [m × 5^-e × 10^e]. *)
-    make neg (nat_digits (nat_mul (nat m) (nat_pow5 (-e)))) e
+module Float_text = Hugin_float_text.Float_text
 
+(* [of_text neg (d, e)] is [±d × 10^e] for {!Float_text}'s digits, which have
+   no leading or trailing zero, ["0"] for zero. *)
+let of_text neg (d, e) = if d = "0" then zero else { neg; digits = d; exp = e }
+
+(* An integer below 2^53 is its [int]'s digits, without the exact expansion,
+   which costs most for such values: tick values are often integers. *)
+let exact_int = 0x1p53
+
+let of_integer x = make (x < 0.) (string_of_int (Int.abs (Float.to_int x))) 0
+let small_integer x = Float.is_integer x && Float.abs x < exact_int
+
+(* [max_int] significant digits keep every digit: the exact value. *)
 let of_float x =
-  if x = 0. then zero
-  else
-    let f, e = Float.frexp (Float.abs x) in
-    of_binary (x < 0.) (Float.to_int (Float.ldexp f 53)) (e - 53)
+  if small_integer x then of_integer x
+  else of_text (x < 0.) (Float_text.significant max_int x)
 
 (* Comparing *)
 
@@ -370,26 +352,11 @@ let nearest n k near =
     let y = fix (if Float.is_finite near then near else Float.max_float) in
     if n < 0 then -.y else y
 
-(* [shortest x] is the decimal with the fewest significant digits that rounds to
-   the finite [x], the nearer to [x] of two. *)
+(* Below 2^53 an integer's interval is at most 1 wide and holds no other
+   decimal of as few digits, so its shortest digits are its own. *)
 let shortest x =
-  let d = of_float x in
-  if is_zero d then d
-  else
-    let rec loop n =
-      let pos = mag d - n + 1 in
-      if pos <= d.exp then d
-      else
-        let down = round Toward_zero pos d
-        and up = round Away_from_zero pos d in
-        match (rounds_to binary64 down x, rounds_to binary64 up x) with
-        | true, true ->
-            if compare_mag (sub d down) (sub up d) <= 0 then down else up
-        | true, false -> down
-        | false, true -> up
-        | false, false -> loop (n + 1)
-    in
-    loop 1
+  if small_integer x then of_integer x
+  else of_text (x < 0.) (Float_text.shortest Float_text.binary64 x)
 
 (* Writing *)
 

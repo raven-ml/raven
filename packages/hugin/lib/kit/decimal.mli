@@ -72,7 +72,8 @@ val nearest : int -> int -> float -> float
 
 val shortest : float -> t
 (** [shortest x] is the decimal with the fewest significant digits that
-    rounds to the finite [x], the nearer to [x] of two. *)
+    rounds to the finite [x], ties to even; of those, the nearest to [x]; and
+    of two equally near, the one whose last digit is even. *)
 
 (* Writing *)
 

@@ -165,6 +165,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- A tick label of a value equally near two shortest decimals takes the one
+  whose last digit is even, as the SVG writer does: 2^50 + 0.75 reads
+  `1,125,899,906,842,624.8`, where it read `…624.7`.
 - The SVG writer's exact numbers (data attributes, scale, size), the reals
   of a PDF font's CFF data and `Scale.pp` take the fewest digits that read
   back, where they took the first of 15, 16 and 17 that did: `5e-324` for
