@@ -62,7 +62,9 @@ type finite = {
   greatest : sample;  (** The finite sample of greatest value. *)
   mean : float;
       (** The mean of the finite values, summed with compensation so that
-          its rounding error does not grow with the number of samples. *)
+          its rounding error does not grow with the number of samples. It
+          lies between [least]'s and [greatest]'s values, so it is finite
+          even when the values' sum is past the largest float. *)
 }
 (** The type for the statistics of a series' finite samples. *)
 

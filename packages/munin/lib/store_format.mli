@@ -487,5 +487,5 @@ val version : int
 
 val rules : int
 (** [rules] is the version of the statistics rules this library computes
-    and reads in a statistics hint ({!section-stats}), [1]. It changes
+    and reads in a statistics hint ({!section-stats}), [2]. It changes
     when a rule that picks a statistic changes, whatever {!version} is. *)

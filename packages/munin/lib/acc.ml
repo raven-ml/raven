@@ -4,9 +4,11 @@
   ---------------------------------------------------------------------------*)
 
 (* The finite values are summed with Neumaier's compensation, scaled by
-   2^-[shift]: when a sum would overflow, it and its compensation are scaled
-   down by 2^-[step] (exactly, being powers of two), so that a mean of values
-   near the largest float stays finite. *)
+   2^-[shift]: when the sum, or the sum with its compensation, would overflow,
+   both are scaled down by 2^-[step] (exactly, being powers of two), so that a
+   mean of values near the largest float stays finite. The compensation counts
+   too: [max_float] plus two 2^969 rounds to [max_float] each time, leaving
+   2^970 in the compensation, and the two together round to infinity. *)
 type finite = {
   least : Metric.sample;
   greatest : Metric.sample;
@@ -21,12 +23,11 @@ let step = 64
 let rec add_scaled f x =
   let x' = Float.ldexp x (-f.shift) in
   let t = f.sum +. x' in
-  if Float.is_finite t then
-    let comp =
-      if Float.abs f.sum >= Float.abs x' then f.comp +. (f.sum -. t +. x')
-      else f.comp +. (x' -. t +. f.sum)
-    in
-    { f with sum = t; comp }
+  let comp =
+    if Float.abs f.sum >= Float.abs x' then f.comp +. (f.sum -. t +. x')
+    else f.comp +. (x' -. t +. f.sum)
+  in
+  if Float.is_finite (t +. comp) then { f with sum = t; comp }
   else
     add_scaled
       {
@@ -77,6 +78,15 @@ let add a (s : Metric.sample) =
   in
   { count = a.count + 1; last = Some s; finite; non_finite }
 
+(* The exact mean lies between the least and greatest values, so clamping the
+   rounded one to them only brings it closer: the rounded mean of five copies
+   of [max_float] falls a ulp below it. *)
+let mean f =
+  let m = Float.ldexp ((f.sum +. f.comp) /. Float.of_int f.n) f.shift in
+  if m < f.least.value then f.least.value
+  else if m > f.greatest.value then f.greatest.value
+  else m
+
 let stats a =
   match a.last with
   | None -> None
@@ -91,8 +101,7 @@ let stats a =
                 {
                   Metric.least = f.least;
                   greatest = f.greatest;
-                  mean =
-                    Float.ldexp ((f.sum +. f.comp) /. Float.of_int f.n) f.shift;
+                  mean = mean f;
                 })
               a.finite;
           non_finite = a.non_finite;

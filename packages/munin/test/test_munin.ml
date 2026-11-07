@@ -216,15 +216,26 @@ let gen_ev =
           (fun ((k, s), v) -> Sample (k, s, v))
           Gen.(
             pair
-              (pair (of_list [ "a"; "b" ]) (int_range 0 20))
+              (* "b" draws few samples, which a resume orphans all of. *)
+              (pair
+                 (frequency [ (3, constant "a"); (1, constant "b") ])
+                 (int_range 0 20))
               (frequency
                  [
                    (6, float_range (-5.) 5.);
                    (1, gen_float);
                    (1, of_list [ 1.; -0.; 0. ]);
+                   (* Values whose sums pass the largest float, and one whose
+                      addition to it rounds away. *)
+                   (1, of_list [ Float.max_float; -.Float.max_float; 0x1p969 ]);
                  ])) );
       (1, Gen.map (fun v -> Reading ("r", v)) (Gen.float_range 0. 100.));
-      (1, Gen.map (fun s -> Resume s) (Gen.int_range 0 20));
+      (* A resume at step 0 orphans every earlier sample but those of step
+         0. *)
+      ( 1,
+        Gen.map
+          (fun s -> Resume s)
+          Gen.(frequency [ (1, constant 0); (2, int_range 0 20) ]) );
     ]
 
 let gen_evs = Gen.list ~size:(Gen.int_range 0 60) (Gen.with_pp pp_ev gen_ev)
@@ -256,12 +267,14 @@ let check_stats ~msg (expected : Metric.sample list) (got : Metric.stats option)
           in
           equal ~msg:(msg ^ " least") sample (pick ( < )) fs.least;
           equal ~msg:(msg ^ " greatest") sample (pick ( > )) fs.greatest;
-          (* The mean by its definition, each term divided first so that no sum
-             overflows; within the rounding of that naive sum. *)
+          (* The mean by its definition, compared at half scale: each term is
+             divided by n and by 2 first, so that no partial sum's rounding
+             takes it past the largest float, and the two agree within that
+             naive sum's rounding. *)
           let n = Float.of_int (List.length f) in
-          let mean =
+          let half_mean =
             List.fold_left
-              (fun a (s : Metric.sample) -> a +. (s.value /. n))
+              (fun a (s : Metric.sample) -> a +. (s.value /. n /. 2.))
               0. f
           in
           let scale =
@@ -271,7 +284,12 @@ let check_stats ~msg (expected : Metric.sample list) (got : Metric.stats option)
           in
           equal ~msg:(msg ^ " mean")
             (float_rel ~rel:1e-9 ~abs:(Float.max 1e-300 (1e-12 *. scale)))
-            mean fs.mean);
+            half_mean (fs.mean /. 2.);
+          (* Adding 0. reads -0. as 0. *)
+          at_least ~msg:(msg ^ " mean above least") float_exact
+            ~than:(fs.least.value +. 0.) (fs.mean +. 0.);
+          at_most ~msg:(msg ^ " mean below greatest") float_exact
+            ~than:(fs.greatest.value +. 0.) (fs.mean +. 0.));
       match (non_finite, st.non_finite) with
       | [], None -> ()
       | (s :: _ as l), Some (n, first) ->
@@ -534,7 +552,17 @@ let spaced_line (reading, time, step, values) =
 let fold_tests =
   group "fold"
     [
-      prop "a history follows the format's orphan rule and statistics" gen_evs
+      prop "a history follows the format's orphan rule and statistics"
+        ~examples:
+          [
+            (* The largest float with additions that each round away but
+               together pass it: the mean is 2^1022. *)
+            Sample ("a", 0, Float.max_float)
+            :: List.init 3 (fun _ -> Sample ("a", 0, 0x1p969));
+            (* Equal values whose rounded mean can fall a ulp below them. *)
+            List.init 5 (fun _ -> Sample ("a", 0, Float.max_float));
+          ]
+        gen_evs
         (fun evs ->
           cover "a resume orphans a sample"
             (List.exists (function Resume _ -> true | _ -> false) evs
@@ -548,6 +576,17 @@ let fold_tests =
                (function
                  | Sample (_, _, v) -> not (Float.is_finite v) | _ -> false)
                evs);
+          cover "a key's finite values sum past the largest float"
+            (List.exists
+               (fun k ->
+                 let sum =
+                   List.fold_left
+                     (fun a (s : Metric.sample) ->
+                       if Float.is_finite s.value then a +. s.value else a)
+                     0. (reference_samples evs k)
+                 in
+                 not (Float.is_finite sum))
+               [ "a"; "b" ]);
           cover "every sample of a key is an orphan"
             (List.exists
                (fun k ->
