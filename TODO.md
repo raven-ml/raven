@@ -48,6 +48,12 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - GPU memory between machines over RDMA (GPUDirect), as nx.rdma had: a
   copy between two machines' GPUs runs through rig.mlx5 or rig.bnxt, not
   TCP, over the memory `Rig.Buffer.dma` describes
+- another machine's processor: rig states only its instruction set, so
+  tolk compiles a remote host's programs for the baseline (x86-64: SSE2,
+  16-byte vectors, libm's `truncf` and `fmaf` for floor and fused
+  multiply-add, hand half conversions; arm64 `generic`). Stating the
+  remote CPU's features in rig's facts would let them compile for it
+  (a44da8f03, D95)
 
 ### tests and runs
 
