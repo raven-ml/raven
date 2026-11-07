@@ -215,11 +215,9 @@ let compare op a b =
        row takes either way: both are masked under the nulls, so that the bits
        there are the same whatever the batches. *)
     | Bytes r, Bytes one when Column.length b = 1 ->
-        let s = Strings.compare ~by:(text_name op) r one in
-        masked (Nx.cast Nx.bit (ordered op s (Nx.zeros_like s)))
+        masked (Strings.compare ~by:(text_name op) op r one)
     | Bytes one, Bytes r when Column.length a = 1 ->
-        let s = Strings.compare ~by:(text_name op) r one in
-        masked (Nx.cast Nx.bit (ordered op (Nx.zeros_like s) s))
+        masked (Strings.compare ~by:(text_name op) (Expr.mirror op) r one)
     | _ ->
         let use : Key.use =
           match op with `Eq | `Ne -> Identity | `Lt | `Le | `Gt | `Ge -> Order
@@ -305,8 +303,8 @@ let rec coalesce = function
       if Column.known_zero c then c
       else match held c with Some v -> choose v c (coalesce cs) | None -> c)
 
-(* Up to this many texts, [is_in] compares a column's rows with each, a read
-   of its bytes apiece, rather than coding the rows with them, which sorts the
+(* Up to this many texts, [is_in] compares a column's rows with them in one
+   read of its bytes, rather than coding the rows with them, which sorts the
    rows and passes over them tens of times. *)
 let compared_texts = 8
 
@@ -335,16 +333,9 @@ let is_in vs =
       let s, _ = Nx.sort (Key.value Order vs) in
       fun a -> found s (Key.value Order a) a
   | Bytes texts when m <= compared_texts && Column.known_zero vs -> (
-      let one i = Nx_ragged.sub texts ~offset:i ~length:1 in
       fun a ->
         match Column.data a with
-        | Bytes r ->
-            let equal i =
-              Nx.equal_s (Strings.compare ~by:"Expr.is_in" r (one i)) 0
-            in
-            let rest = List.init (m - 1) (fun i -> equal (i + 1)) in
-            let hit = List.fold_left Nx.logical_or (equal 0) rest in
-            held (Nx.cast Nx.bit hit) a
+        | Bytes r -> held (Strings.member ~by:"Expr.is_in" r texts) a
         | _ -> coded a)
   | _ -> coded
 

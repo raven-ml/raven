@@ -2746,6 +2746,180 @@ let splitting =
                [| None; Some "a" |]));
     ]
 
+(* Comparing text *)
+
+(* Texts as their scalar values: a row drawn from a literal shares a prefix of
+   its scalars, so it can be the literal, a prefix of it, an extension, a text
+   of its length with one other byte, or a text that differs past a common
+   prefix. Literals are often 8 or 16 bytes, or one byte off, where
+   comparisons change method; bytes past 0x7f order after ASCII, and U+0000
+   below every other byte. *)
+let scalar =
+  Gen.frequency
+    [
+      (6, Gen.constant "a");
+      (1, Gen.constant "b");
+      (1, Gen.constant "\xc3\xa9");
+      (1, Gen.constant "\000");
+      (1, Gen.constant "\xf0\x9d\x84\x9e");
+    ]
+
+(* [fill n] is scalars of [n] bytes in all, padded with ["a"]. *)
+let rec fill n =
+  let open Gen in
+  if n = 0 then constant []
+  else
+    let* s = scalar in
+    let s = if String.length s <= n then s else "a" in
+    let+ rest = fill (n - String.length s) in
+    s :: rest
+
+let scalars =
+  let open Gen in
+  bind
+    (frequency
+       [
+         (2, constant 8);
+         (2, constant 16);
+         (3, of_list [ 7; 9; 15; 17 ]);
+         (3, int_range 0 24);
+       ])
+    fill
+
+let rec take k = function
+  | x :: xs when k > 0 -> x :: take (k - 1) xs
+  | _ -> []
+
+(* [other s] is a scalar of [s]'s bytes, another where [s] is ASCII. *)
+let other = function "a" -> "b" | "b" -> "\000" | "\000" -> "a" | s -> s
+
+(* [near lit] is a text that shares a prefix of the scalars [lit]. *)
+let near lit =
+  let open Gen in
+  let n = List.length lit in
+  let shared =
+    let+ k = int_range 0 n and+ rest = list ~size:(int_range 0 3) scalar in
+    String.concat "" (take k lit @ rest)
+  in
+  let changed =
+    let+ k = int_range 0 (Int.max 0 (n - 1)) in
+    String.concat "" (List.mapi (fun i s -> if i = k then other s else s) lit)
+  in
+  frequency
+    [ (1, constant (String.concat "" lit)); (3, shared); (2, changed) ]
+
+(* [row lit] is [near lit] or null. *)
+let row lit =
+  Gen.frequency
+    [ (8, Gen.map Option.some (near lit)); (1, Gen.constant None) ]
+
+let holds op c =
+  match op with
+  | `Eq -> c = 0
+  | `Ne -> c <> 0
+  | `Lt -> c < 0
+  | `Le -> c <= 0
+  | `Gt -> c > 0
+  | `Ge -> c >= 0
+
+let compare_op op a b =
+  match op with
+  | `Eq -> Expr.(a = b)
+  | `Ne -> Expr.(a <> b)
+  | `Lt -> Expr.(a < b)
+  | `Le -> Expr.(a <= b)
+  | `Gt -> Expr.(a > b)
+  | `Ge -> Expr.(a >= b)
+
+let op_name = function
+  | `Eq -> "="
+  | `Ne -> "<>"
+  | `Lt -> "<"
+  | `Le -> "<="
+  | `Gt -> ">"
+  | `Ge -> ">="
+
+let ops = [ `Eq; `Ne; `Lt; `Le; `Gt; `Ge ]
+
+let pp_op ppf op = Format.pp_print_string ppf (op_name op)
+
+(* Mostly more than 8 rows, so that the result's bits pass their first byte. *)
+let rows_size =
+  Gen.frequency [ (1, Gen.int_range 0 8); (3, Gen.int_range 9 20) ]
+
+let literal_case =
+  let open Gen in
+  let* lit = scalars in
+  let+ rows = array ~size:rows_size (row lit)
+  and+ op = of_list ~pp:pp_op ops
+  and+ left = bool in
+  (String.concat "" lit, rows, op, left)
+
+(* Up to eight texts compare with the rows' bytes, more are coded with them. *)
+let in_case =
+  let open Gen in
+  let* lit = scalars in
+  let size = frequency [ (3, int_range 0 8); (1, int_range 9 10) ] in
+  let+ vs = list ~size (near lit)
+  and+ rows = array ~size:rows_size (row lit) in
+  (vs, rows)
+
+(* [some p rows] is [true] iff a row of [rows], not null, satisfies [p]. *)
+let some p rows = Array.exists (function Some s -> p s | None -> false) rows
+
+let is_prefix s ~of_ =
+  String.length s <= String.length of_
+  && String.equal s (String.sub of_ 0 (String.length s))
+
+let comparing =
+  group "Comparing text"
+    [
+      prop "a comparison with a literal orders bytes as String.compare"
+        literal_case (fun (lit, rows, op, left) ->
+          let len = String.length lit in
+          cover "a literal of under 8 bytes" (len < 8);
+          cover "a literal of 8 bytes" (len = 8);
+          cover "a literal of 9 to 16 bytes" (len > 8 && len <= 16);
+          cover "a literal past 16 bytes" (len > 16);
+          cover "a row equal to the literal" (some (String.equal lit) rows);
+          cover "a row of the literal's length and other bytes"
+            (some
+               (fun s -> String.length s = len && not (String.equal s lit))
+               rows);
+          cover "a row a proper prefix of the literal"
+            (some
+               (fun s -> String.length s < len && is_prefix s ~of_:lit)
+               rows);
+          cover "a null row" (Array.exists Option.is_none rows);
+          cover "more than 8 rows" (Array.length rows > 8);
+          cover "<> over more than 8 rows" (op = `Ne && Array.length rows > 8);
+          let s = Col.string "s" and l = Expr.string lit in
+          let e = if left then compare_op op l s else compare_op op s l in
+          let order s =
+            if left then String.compare lit s else String.compare s lit
+          in
+          equal
+            (array (option bool))
+            (Array.map (Option.map (fun s -> holds op (order s))) rows)
+            (over_text Kind.bool e rows));
+      prop "is_in is membership by bytes, false at a null" in_case
+        (fun (vs, rows) ->
+          let length s v = String.length v = String.length s in
+          cover "a row among the texts" (some (fun s -> List.mem s vs) rows);
+          cover "a row of a text's length but not among them"
+            (some
+               (fun s -> (not (List.mem s vs)) && List.exists (length s) vs)
+               rows);
+          cover "more than eight texts" (List.length vs > 8);
+          cover "a null row" (Array.exists Option.is_none rows);
+          cover "more than 8 rows" (Array.length rows > 8);
+          let member = function Some s -> List.mem s vs | None -> false in
+          equal
+            (array (option bool))
+            (Array.map (fun r -> Some (member r)) rows)
+            (over_text Kind.bool Expr.(is_in vs (Col.string "s")) rows));
+    ]
+
 (* Sorts and top-k *)
 
 let pp_key ppf (k : R.key) =
@@ -3293,5 +3467,6 @@ let () =
          utc_wall_clock;
          appending;
          splitting;
+         comparing;
          kit_runs;
        ])

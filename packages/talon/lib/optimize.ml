@@ -80,13 +80,6 @@ let compared : type a.
   | _, Extension _ -> value t1 v
   | _ -> None
 
-let mirror : Expr.compare -> Expr.compare = function
-  | `Lt -> `Gt
-  | `Le -> `Ge
-  | `Gt -> `Lt
-  | `Ge -> `Le
-  | (`Eq | `Ne) as op -> op
-
 (* [pred p] is the source predicate that the bound predicate [p] is, if it is
    one. *)
 let rec pred : type s. (bool, s) Expr.t -> Source.Pred.t option =
@@ -106,7 +99,7 @@ let rec pred : type s. (bool, s) Expr.t -> Source.Pred.t option =
       in
       match (column a, column b) with
       | Some c, None -> atom c o a b
-      | None, Some c -> atom c (mirror o) b a
+      | None, Some c -> atom c (Expr.mirror o) b a
       | _ -> None)
   | Is_in (vs, a) -> (
       let t = Expr.typing a in

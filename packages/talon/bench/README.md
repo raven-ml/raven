@@ -33,6 +33,16 @@ uv run packages/talon/bench/queries/nulls_data.py packages/talon/bench/data/null
 uv run packages/talon/bench/queries/nulls_data.py --check
 ```
 
+`data/text.parquet` holds 2^18 rows of a text column without nulls, words of 8
+to 27 bytes drawn from 100, dictionary-encoded, for the
+`Talon_parquet/read-text` row. pyarrow writes it too, with the SHA-256
+`0f6c1c95ce0ee1052c02a7fe1e0a154a5db877c9869a7c36b53e33deb023cadf`:
+
+```bash
+uv run packages/talon/bench/queries/text_data.py packages/talon/bench/data/text.parquet
+uv run packages/talon/bench/queries/text_data.py --check
+```
+
 The `Talon/Nulls/*` rows run over a table of 2^20 rows that the bench draws
 from a seeded key, with nulls in five of its seven columns.
 

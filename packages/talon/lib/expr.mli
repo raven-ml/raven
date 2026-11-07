@@ -168,6 +168,10 @@ type arith = Add | Sub | Mul | Div | Mod | Pow
 type compare = [ `Eq | `Ne | `Lt | `Le | `Gt | `Ge ]
 (** The type for comparisons: [`Lt] is [<], and so on. *)
 
+val mirror : compare -> compare
+(** [mirror op] holds of [b] and [a] where [op] holds of [a] and [b]: [`Gt] for
+    [`Lt], and so on. *)
+
 type logic = And | Or
 
 (** The type for reductions from values ['a] to a value ['b]. *)

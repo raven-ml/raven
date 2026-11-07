@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* UTF-8 validation and literal search over the bytes of text, for
-   strings.ml. Bytes are uint8 bigarrays and offsets int64 bigarrays, both
+/* UTF-8 validation, literal search and comparison over the bytes of text,
+   for strings.ml. Bytes are uint8 bigarrays and offsets int64 bigarrays, both
    in C layout. None allocates or raises, so all are [@@noalloc]. */
 
 #include <stdint.h>
@@ -132,27 +132,192 @@ value talon_find_byte(value b, value i, value stop, value s)
   return Val_long(talon_find(b, Long_val(i), Long_val(stop), s));
 }
 
-/* [talon_compare(b, o, n, s, out)] writes to [out] -1, 0 or 1 where each of
-   the [n] rows of [b], cut by [o], orders before, as or after [s]: bytes
-   compare as unsigned numbers, and a row orders before every row it is a
-   prefix of. */
-value talon_compare(value b, value o, intnat n, value s, value out)
+/* Comparison with texts
+
+   A row is compared with each text by its first eight bytes, read as one
+   little-endian word, and calls memcmp only past them: past 16 bytes for
+   equality, which reads no byte of a row of another length than the text's,
+   and past 8 for order. */
+
+/* [le(w)] is the word whose byte [i] in memory is its byte of weight [i]. */
+static inline uint64_t le(uint64_t w)
+{
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+  w = __builtin_bswap64(w);
+#endif
+  return w;
+}
+
+/* [head(p, n, end)] is the first [n] bytes from [p], at most 8, as a word that
+   is 0 above them. It reads past [p + n] only before [end]. */
+static inline uint64_t head(const uint8_t *p, size_t n, const uint8_t *end)
+{
+  uint64_t w = 0;
+  if (end - p < 8) {
+    memcpy(&w, p, n);
+    return le(w);
+  }
+  memcpy(&w, p, 8);
+  w = le(w);
+  return n >= 8 ? w : w & ((1ULL << (8 * n)) - 1);
+}
+
+/* [tail(p, n)] is the last 8 of the [n] bytes from [p], [n] at least 8. */
+static inline uint64_t tail(const uint8_t *p, size_t n)
+{
+  uint64_t w;
+  memcpy(&w, p + n - 8, 8);
+  return w;
+}
+
+typedef struct {
+  const uint8_t *s;
+  size_t len;
+  uint64_t head;
+} text;
+
+/* [same(p, m, h, t)] is true iff the [m] bytes from [p], whose head is [h],
+   are those of [t]. */
+static inline int same(const uint8_t *p, size_t m, uint64_t h, const text *t)
+{
+  if (m != t->len || h != t->head) return 0;
+  if (m <= 8) return 1;
+  if (m <= 16) return tail(p, m) == tail(t->s, m);
+  return memcmp(p + 8, t->s + 8, m - 8) == 0;
+}
+
+/* [order(p, m, h, t)] is -1, 0 or 1 where the [m] bytes from [p], whose head
+   is [h], order before, as or after [t]: bytes compare as unsigned numbers,
+   and a text orders before every text it is a prefix of. The first byte where
+   the heads differ, below both lengths, decides. */
+static inline int order(const uint8_t *p, size_t m, uint64_t h, const text *t)
+{
+  size_t k = m < t->len ? m : t->len;
+  uint64_t x = h ^ t->head;
+  if (k < 8) x &= (1ULL << (8 * k)) - 1;
+  int c = 0;
+  if (x != 0) {
+    int i = __builtin_ctzll(x) >> 3;
+    c = p[i] < t->s[i] ? -1 : 1;
+  }
+  else if (k > 8)
+    c = memcmp(p + 8, t->s + 8, k - 8);
+  if (c == 0) return (m > t->len) - (m < t->len);
+  return (c > 0) - (c < 0);
+}
+
+/* [texts(a, first, u, t)] puts in [t] the [u] strings of the array [a] from
+   [first], and is the mask of their lengths: bit [l] for a length [l] below
+   63, bit 63 for 63 and longer. */
+static uint64_t texts(value a, intnat first, int u, text *t)
+{
+  uint64_t lengths = 0;
+  for (int j = 0; j < u; j++) {
+    value s = Field(a, first + j);
+    t[j].s = (const uint8_t *)String_val(s);
+    t[j].len = caml_string_length(s);
+    t[j].head = head(t[j].s, t[j].len < 8 ? t[j].len : 8, t[j].s + t[j].len);
+    lengths |= 1ULL << (t[j].len < 63 ? t[j].len : 63);
+  }
+  return lengths;
+}
+
+/* At most this many texts are read per pass over the rows. */
+#define PASS 8
+
+/* [member(v, end, off, n, t, u, lengths, bits)] sets bit [r] of [bits] where
+   row [r] of the [n] rows of [v], cut by [off], is one of the [u] texts [t],
+   whose lengths are the mask [lengths]. A row of a length no text has is not
+   read. */
+static void member(const uint8_t *v, const uint8_t *end, const int64_t *off,
+                   intnat n, const text *t, int u, uint64_t lengths,
+                   uint8_t *bits)
+{
+  for (intnat base = 0; base < n; base += 8) {
+    int rows = n - base < 8 ? (int)(n - base) : 8;
+    unsigned byte = 0;
+    for (int q = 0; q < rows; q++) {
+      const uint8_t *p = v + off[base + q];
+      size_t m = (size_t)(off[base + q + 1] - off[base + q]);
+      if (((lengths >> (m < 63 ? m : 63)) & 1) == 0) continue;
+      uint64_t h = head(p, m < 8 ? m : 8, end);
+      unsigned hit = 0;
+      for (int j = 0; j < u; j++) hit |= (unsigned)same(p, m, h, &t[j]);
+      byte |= hit << q;
+    }
+    bits[base >> 3] |= (uint8_t)byte;
+  }
+}
+
+/* [talon_member(b, o, n, a, out)] sets bit [r] of the bit array [out], bit
+   [r mod 8] of byte [r / 8], iff row [r] of the [n] rows of [b], cut by [o],
+   is one of the strings of the array [a], and clears it otherwise. */
+value talon_member(value b, value o, intnat n, value a, value out)
 {
   const uint8_t *v = Bytes_ba(b);
-  const int64_t *off = Offsets_ba(o);
-  const uint8_t *str = (const uint8_t *)String_val(s);
-  size_t len = caml_string_length(s);
-  int8_t *signs = (int8_t *)Caml_ba_data_val(out);
-  for (intnat r = 0; r < n; r++) {
-    size_t m = (size_t)(off[r + 1] - off[r]);
-    int c = memcmp(v + off[r], str, m < len ? m : len);
-    if (c == 0) c = (m > len) - (m < len);
-    signs[r] = (int8_t)((c > 0) - (c < 0));
+  const uint8_t *end = v + Caml_ba_array_val(b)->dim[0];
+  uint8_t *bits = (uint8_t *)Caml_ba_data_val(out);
+  intnat k = Wosize_val(a);
+  memset(bits, 0, (size_t)((n + 7) / 8));
+  for (intnat first = 0; first < k; first += PASS) {
+    text t[PASS];
+    int u = k - first < PASS ? (int)(k - first) : PASS;
+    uint64_t lengths = texts(a, first, u, t);
+    member(v, end, Offsets_ba(o), n, t, u, lengths, bits);
   }
   return Val_unit;
 }
 
-value talon_compare_byte(value b, value o, value n, value s, value out)
+value talon_member_byte(value b, value o, value n, value a, value out)
 {
-  return talon_compare(b, o, Long_val(n), s, out);
+  return talon_member(b, o, Long_val(n), a, out);
+}
+
+/* The sets of orders [talon_compare] accepts: bit [1 + c] for order [c]. */
+enum { BEFORE = 1, SAME = 2, AFTER = 4 };
+
+/* [talon_compare(b, o, n, s, accept, out)] sets bit [r] of the bit array
+   [out], bit [r mod 8] of byte [r / 8], iff the order of row [r] of the [n]
+   rows of [b], cut by [o], against [s] is in the set [accept], and clears it
+   otherwise. Equality and inequality read no byte of a row of another
+   length. */
+value talon_compare(value b, value o, intnat n, value s, intnat accept,
+                    value out)
+{
+  const uint8_t *v = Bytes_ba(b);
+  const uint8_t *end = v + Caml_ba_array_val(b)->dim[0];
+  const int64_t *off = Offsets_ba(o);
+  uint8_t *bits = (uint8_t *)Caml_ba_data_val(out);
+  size_t bytes = (size_t)((n + 7) / 8);
+  text t;
+  t.s = (const uint8_t *)String_val(s);
+  t.len = caml_string_length(s);
+  t.head = head(t.s, t.len < 8 ? t.len : 8, t.s + t.len);
+  if (accept == SAME || accept == (BEFORE | AFTER)) {
+    memset(bits, 0, bytes);
+    member(v, end, off, n, &t, 1, 1ULL << (t.len < 63 ? t.len : 63), bits);
+    if (accept == SAME) return Val_unit;
+    for (size_t i = 0; i < bytes; i++) bits[i] = (uint8_t)~bits[i];
+    if (n % 8 != 0) bits[bytes - 1] &= (uint8_t)((1u << (n % 8)) - 1);
+    return Val_unit;
+  }
+  for (intnat base = 0; base < n; base += 8) {
+    int rows = n - base < 8 ? (int)(n - base) : 8;
+    unsigned byte = 0;
+    for (int q = 0; q < rows; q++) {
+      const uint8_t *p = v + off[base + q];
+      size_t m = (size_t)(off[base + q + 1] - off[base + q]);
+      int c = order(p, m, head(p, m < 8 ? m : 8, end), &t);
+      byte |= (unsigned)((accept >> (1 + c)) & 1) << q;
+    }
+    bits[base >> 3] = (uint8_t)byte;
+  }
+  return Val_unit;
+}
+
+value talon_compare_byte(value *argv, int argn)
+{
+  (void)argn;
+  return talon_compare(argv[0], argv[1], Long_val(argv[2]), argv[3],
+                       Long_val(argv[4]), argv[5]);
 }

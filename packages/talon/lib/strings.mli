@@ -9,7 +9,8 @@
     slicing and matching scalar values, splitting and replacing. Each kernel
     reads its operand's bytes on the host, once, as a read named by its caller's
     function [by], and loops over them row by row. Comparisons and grouping of
-    text compare codes elsewhere; {!compare}, against one text, needs none.
+    text compare codes elsewhere; {!compare} and {!member}, against a few
+    texts, need none.
 
     Rows are those of an [Nx_ragged.t]; a row outside [mask], a bit mask, where
     one is given, is not read. *)
@@ -126,7 +127,16 @@ val concat :
     every row. A row outside [mask] is empty. [parts] is not empty, and each
     part has one row or [length]. *)
 
-val compare : by:string -> bytes -> bytes -> Nx.host Nx.int8_t
-(** [compare ~by b one] is [-1], [0] or [1] where the row of [b] orders before,
-    as or after [one]'s row, [one] of one row: bytes compare as unsigned
-    numbers, and a row orders before every row it is a prefix of. *)
+val compare :
+  by:string ->
+  [ `Eq | `Ne | `Lt | `Le | `Gt | `Ge ] ->
+  bytes ->
+  bytes ->
+  Nx.host Nx.bit_t
+(** [compare ~by op b one] is [true] where the row of [b] compares by [op] with
+    [one]'s row, [one] of one row: bytes compare as unsigned numbers, and a row
+    orders before every row it is a prefix of. *)
+
+val member : by:string -> bytes -> bytes -> Nx.host Nx.bit_t
+(** [member ~by b texts] is [true] where the row of [b] has the bytes of a row
+    of [texts]. *)

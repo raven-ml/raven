@@ -79,6 +79,10 @@ external plain_byte_array :
   = "talon_parquet_plain_byte_array_byte" "talon_parquet_plain_byte_array"
 [@@noalloc]
 
+external gather_ends : int64s -> int64s -> int64s -> int
+  = "talon_parquet_gather_ends"
+[@@noalloc]
+
 external gather_byte_arrays :
   int64s -> bigbytes -> int64s -> int64s -> bigbytes -> int
   = "talon_parquet_gather_byte_arrays"
@@ -524,22 +528,8 @@ let gather s idx =
         reading i64 offsets @@ fun offsets ->
         let m = A1.dim idx in
         let out = fresh Nx.int64 (m + 1) in
-        (* The indices were checked against the dictionary as they decoded. *)
-        let total =
-          writing out @@ fun out ->
-          let sum = ref 0L in
-          A1.unsafe_set out 0 0L;
-          for i = 0 to m - 1 do
-            let j = Int64.to_int (A1.unsafe_get idx i) in
-            sum :=
-              Int64.add !sum
-                (Int64.sub
-                   (A1.unsafe_get offsets (j + 1))
-                   (A1.unsafe_get offsets j));
-            A1.unsafe_set out (i + 1) !sum
-          done;
-          Int64.to_int !sum
-        in
+        let total = writing out (gather_ends offsets idx) in
+        assert (total >= 0);
         let d = fresh Nx.uint8 total in
         reading u8 data (fun data ->
             peek out @@ fun o ->

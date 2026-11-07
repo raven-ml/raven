@@ -6,15 +6,15 @@
 /* Parquet's sequential decoders: the RLE and bit-packing hybrid, into bytes,
    int64s or bits, PLAIN booleans, delta binary packing, the assembly of
    delta-encoded byte arrays, and PLAIN byte arrays; the gather of
-   dictionary-encoded byte arrays; and the spread of a page's values onto its
-   rows.
+   dictionary-encoded byte arrays and of their ends; and the spread of a
+   page's values onto its rows.
 
    Each decoder reads the span [src + pos, src + pos + len), checks every read
    and write against the span and the arrays it is given, whatever its integer
    arguments, and returns the bytes of the span it consumed, or a negative
-   error code. The gather checks its reads and writes alike and returns 0 or
-   an error code. None allocates or raises, so all are [@@noalloc]. Parquet is
-   little-endian, as the hosts nx runs on are. */
+   error code. The gathers check their reads and writes alike and return 0 or
+   the last end, or an error code. None allocates or raises, so all are
+   [@@noalloc]. Parquet is little-endian, as the hosts nx runs on are. */
 
 #include <stdint.h>
 #include <string.h>
@@ -545,6 +545,67 @@ CAMLprim value talon_parquet_spread_offsets(value valid, value src,
   return Val_long(j);
 }
 
+/* [gather_ends offsets idx ends] writes to [ends] from index 1 the ends of
+   the byte arrays [idx.{0}] to [idx.{m - 1}], whose ends in their data are
+   [offsets] from index 1, laid one after the other from [ends.{0} = 0], [m]
+   being [idx]'s length. It is the last end, or an error code. */
+CAMLprim value talon_parquet_gather_ends(value offsets, value idx, value ends)
+{
+  const int64_t *off = (const int64_t *)Caml_ba_data_val(offsets);
+  const int64_t *ix = (const int64_t *)Caml_ba_data_val(idx);
+  int64_t *e = (int64_t *)Caml_ba_data_val(ends);
+  int64_t m = DIM(idx), n = DIM(offsets) > 0 ? DIM(offsets) - 1 : 0, sum = 0;
+  if (DIM(ends) != m + 1) return Val_long(ERR_CAPACITY);
+  e[0] = 0;
+  for (int64_t i = 0; i < m; i++) {
+    int64_t j = ix[i];
+    if ((uint64_t)j >= (uint64_t)n) return Val_long(ERR_BOUND);
+    int64_t l = off[j + 1] - off[j];
+    /* With [-fwrapv], a sum past [INT64_MAX] is negative. */
+    sum += l;
+    if ((l | sum) < 0) return Val_long(ERR_DATA);
+    e[i + 1] = sum;
+  }
+  return Val_long(sum);
+}
+
+/* [copy(o, d, l)] copies the [l] bytes from [d] to [o]. Up to 32 bytes, it
+   copies the first and last words of the row's width, which overlap, rather
+   than call [memcpy]: rows of text are mostly short. */
+static inline void copy(uint8_t *o, const uint8_t *d, int64_t l)
+{
+  if (l > 32) {
+    memcpy(o, d, (size_t)l);
+    return;
+  }
+  if (l >= 16) {
+    uint64_t a[2], b[2];
+    memcpy(a, d, 16);
+    memcpy(b, d + l - 16, 16);
+    memcpy(o, a, 16);
+    memcpy(o + l - 16, b, 16);
+  }
+  else if (l >= 8) {
+    uint64_t a, b;
+    memcpy(&a, d, 8);
+    memcpy(&b, d + l - 8, 8);
+    memcpy(o, &a, 8);
+    memcpy(o + l - 8, &b, 8);
+  }
+  else if (l >= 4) {
+    uint32_t a, b;
+    memcpy(&a, d, 4);
+    memcpy(&b, d + l - 4, 4);
+    memcpy(o, &a, 4);
+    memcpy(o + l - 4, &b, 4);
+  }
+  else if (l > 0) {
+    o[0] = d[0];
+    o[l / 2] = d[l / 2];
+    o[l - 1] = d[l - 1];
+  }
+}
+
 /* [gather_byte_arrays offsets data idx ends out] copies the byte arrays
    [idx.{0}] to [idx.{m - 1}] of [data], whose ends are [offsets] from index
    1, to [out], where their ends are [ends] from index 1, [m] being [idx]'s
@@ -558,16 +619,24 @@ CAMLprim value talon_parquet_gather_byte_arrays(value offsets, value data,
   const int64_t *e = (const int64_t *)Caml_ba_data_val(ends);
   const uint8_t *d = BYTES(data);
   uint8_t *o = BYTES(out);
-  int64_t m = DIM(idx), n = DIM(offsets) - 1;
-  if (DIM(ends) != m + 1 || e[0] != 0) return Val_long(ERR_CAPACITY);
+  int64_t m = DIM(idx), n = DIM(offsets) > 0 ? DIM(offsets) - 1 : 0;
+  if (DIM(ends) != m + 1 || e[0] != 0 || e[m] > DIM(out))
+    return Val_long(ERR_CAPACITY);
+  /* The offsets, checked once, cut the data into arrays that lie in it, of
+     lengths 0 or more. */
+  if (n > 0 && (off[0] < 0 || off[n] > DIM(data))) return Val_long(ERR_DATA);
+  for (int64_t k = 0; k < n; k++)
+    if (off[k + 1] < off[k]) return Val_long(ERR_DATA);
+  /* Each row starts where the one before ends, from 0, and has a length of
+     0 or more, so [at] is 0 or more, and [last] bounds its end. */
+  int64_t last = e[m], at = 0;
   for (int64_t i = 0; i < m; i++) {
     int64_t j = ix[i];
-    if (j < 0 || j >= n) return Val_long(ERR_BOUND);
-    int64_t lo = off[j], l = off[j + 1] - lo;
-    if (l < 0 || !span(data, lo, l)) return Val_long(ERR_DATA);
-    if (e[i + 1] - e[i] != l || !span(out, e[i], l))
-      return Val_long(ERR_CAPACITY);
-    memcpy(o + e[i], d + lo, (size_t)l);
+    if ((uint64_t)j >= (uint64_t)n) return Val_long(ERR_BOUND);
+    int64_t lo = off[j], l = off[j + 1] - lo, next = e[i + 1];
+    if (next - at != l || next > last) return Val_long(ERR_CAPACITY);
+    copy(o + at, d + lo, l);
+    at = next;
   }
   return Val_long(0);
 }

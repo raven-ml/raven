@@ -440,25 +440,50 @@ let replace ~by ?mask ~sub ~into r =
        go first));
   Nx_ragged.v ~offsets:(value offsets) (value bytes)
 
-(* [compare_rows v o n s signs] writes to [signs] -1, 0 or 1 where each of the
-   [n] rows of [v], cut by [o], orders before, as or after [s]. *)
+(* [compare_rows v o n s accept bits] sets bit [r] of [bits] iff the order of
+   row [r] of the [n] rows of [v], cut by [o], against [s] is in [accept]: bit
+   [1 + c] for order [c]. *)
 external compare_rows :
-  buf ->
-  int64s ->
-  (int[@untagged]) ->
-  string ->
-  (int, Bigarray.int8_signed_elt, Bigarray.c_layout) A.t ->
-  unit = "talon_compare_byte" "talon_compare"
+  buf -> int64s -> (int[@untagged]) -> string -> (int[@untagged]) -> buf -> unit
+  = "talon_compare_byte" "talon_compare"
 [@@noalloc]
 
-let compare ~by r one =
-  let s = ref "" in
-  rows ~by one (fun _ v first stop ->
-      s :=
+(* [member_rows v o n texts bits] sets bit [r] of [bits] iff row [r] of the [n]
+   rows of [v], cut by [o], is one of [texts]. *)
+external member_rows :
+  buf -> int64s -> (int[@untagged]) -> string array -> buf -> unit
+  = "talon_member_byte" "talon_member"
+[@@noalloc]
+
+let accept = function
+  | `Lt -> 0b001
+  | `Eq -> 0b010
+  | `Le -> 0b011
+  | `Gt -> 0b100
+  | `Ne -> 0b101
+  | `Ge -> 0b110
+
+(* [words ~by r] is the rows of [r] as strings. *)
+let words ~by r =
+  let words = Array.make (Nx_ragged.length r) "" in
+  rows ~by r (fun i v first stop ->
+      words.(i) <-
         String.init (stop - first) (fun k ->
             Char.unsafe_chr (A.unsafe_get v (first + k))));
+  words
+
+(* [bits ~by r f] is the bits [f] sets, one a row of [r], given the offsets
+   and bytes of [r]. *)
+let bits ~by r f =
   let n = Nx_ragged.length r in
-  let a = fresh Nx.int8 n in
-  (fill a @@ fun signs ->
-   host ~by r (fun o v _ -> compare_rows v o n !s signs));
-  value a
+  let a = fresh Nx.uint8 ((n + 7) / 8) in
+  (fill a @@ fun bits -> host ~by r (fun o v _ -> f v o n bits));
+  Nx.slice [ Nx.R (0, n) ] (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (value a)))
+
+let compare ~by op r one =
+  let s = (words ~by one).(0) in
+  bits ~by r (fun v o n b -> compare_rows v o n s (accept op) b)
+
+let member ~by r texts =
+  let texts = words ~by texts in
+  bits ~by r (fun v o n b -> member_rows v o n texts b)

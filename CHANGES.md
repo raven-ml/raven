@@ -3806,6 +3806,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- Filtering text by a literal or `Expr.is_in`, and reading dictionary-encoded
+  Parquet text, run faster: decision-support query 19 at scale factor 1 takes
+  3.7 billion instructions where it took 4.7, and query 12 3.1 where 3.7.
 - A join to distinct right keys reads each left row's match with one gather,
   and a left join whose rows match once at most keeps the left's columns
   uncopied: H2O join question 3 at 10^7 rows runs 2.4 G instructions, not 7.8.

@@ -146,6 +146,13 @@ and 'a calendar_op =
   | Parse_with : string * 'a Type.t * (string, 's) t -> 'a calendar_op
   | Format_with : string * ('a, 's) t -> string calendar_op
 
+let mirror : compare -> compare = function
+  | `Lt -> `Gt
+  | `Le -> `Ge
+  | `Gt -> `Lt
+  | `Ge -> `Le
+  | (`Eq | `Ne) as op -> op
+
 (* Operands *)
 
 (* [operands n] is [n]'s operands, in order. *)

@@ -6,7 +6,8 @@
 (* Filter, group, join and sort over the 40k-row fixture, the same work as
    bench_talon.py does in pandas; then the operations that read validities, over
    a generated table with nulls, a read of float texts, a read of a CSV text of
-   mixed columns, and a read of a Parquet file with nulls. *)
+   mixed columns, and reads of a Parquet file with nulls and of one of
+   dictionary-encoded text. *)
 
 open Talon
 
@@ -279,6 +280,13 @@ let parse_floats () = Result.get_ok (Column.parse float64 texts)
 let read_parquet () =
   run (Query.of_source (Error.get_ok (Talon_parquet.file parquet)))
 
+(* text.parquet's 2^18 dictionary-encoded words of 8 to 27 bytes: the read
+   gathers each row's bytes from the dictionary. *)
+let text_parquet = Filename.concat data_dir "text.parquet"
+
+let read_text () =
+  run (Query.of_source (Error.get_ok (Talon_parquet.file text_parquet)))
+
 (* CSV *)
 
 (* The text of 2^16 records, about 1.7 MB, so that a read crosses one of the
@@ -353,6 +361,16 @@ let () =
           Thumper.bench "Nulls/join-left" (fun () -> run joined_nulls);
           Thumper.bench "Group/text-100-1M" (fun () -> by "t");
           Thumper.bench "Group/int32-100-1M" (fun () -> by "k");
+          Thumper.bench "Nulls/filter-text-eq" (fun () ->
+              run
+                Query.(
+                  of_table nulls
+                  |> filter Expr.(Col.string "s" = string "s42")));
+          Thumper.bench "Nulls/filter-text-lt" (fun () ->
+              run
+                Query.(
+                  of_table nulls
+                  |> filter Expr.(Col.string "s" < string "s5")));
           Thumper.bench "Nulls/is_in-3-texts" (fun () ->
               let texts = [ "s1"; "s22"; "s333" ] in
               run
@@ -364,6 +382,9 @@ let () =
         [ Thumper.bench "parse-float64-17-digits" parse_floats ];
       Thumper.group "Talon_csv" [ Thumper.bench "read-mixed" read_csv ];
       Thumper.group "Talon_parquet"
-        [ Thumper.bench "read-nullable" read_parquet ];
+        [
+          Thumper.bench "read-nullable" read_parquet;
+          Thumper.bench "read-text" read_text;
+        ];
     ]
   |> exit

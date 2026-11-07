@@ -1152,6 +1152,92 @@ let hybrid_runs =
         equal ~msg:"a value at the bound" int (-2)
           (hybrid_int64 src pos len w n dst 0 (bound - 1)))
 
+(* Dictionary-encoded text: a dictionary page of PLAIN byte arrays, then a data
+   page of the indices, bit-packed at the width of the largest. The words run
+   from empty to past 32 bytes through 4, 8 and 16, where the gather changes
+   how it copies a row, in ASCII, two- and four-byte UTF-8 and U+0000. *)
+let word =
+  let open Gen in
+  let scalar = of_list [ "a"; "b"; "\xc3\xa9"; "\000"; "\xf0\x9d\x84\x9e" ] in
+  (* [fill n] is scalars of [n] bytes in all, padded with ["a"]. *)
+  let rec fill n =
+    if n = 0 then constant ""
+    else
+      let* s = scalar in
+      let s = if String.length s <= n then s else "a" in
+      let+ rest = fill (n - String.length s) in
+      s ^ rest
+  in
+  bind
+    (one_of
+       [
+         int_range 0 3; int_range 4 7; int_range 8 15; int_range 16 32;
+         int_range 33 40;
+       ])
+    fill
+
+let dictionary_case =
+  let open Gen in
+  let* words = array ~size:(int_range 1 12) word in
+  let+ indices =
+    list ~size:(int_range 0 40) (int_range 0 (Array.length words - 1))
+  in
+  (words, indices)
+
+let dictionary_file words indices =
+  let plain = Buffer.create 64 in
+  Array.iter
+    (fun w ->
+      Buffer.add_int32_le plain (Int32.of_int (String.length w));
+      Buffer.add_string plain w)
+    words;
+  let plain = Buffer.contents plain in
+  let dict =
+    thrift
+      (Struct
+         [
+           (1, I32 2);
+           (2, I32 (String.length plain));
+           (3, I32 (String.length plain));
+           (7, Struct [ (1, I32 (Array.length words)); (2, I32 0) ]);
+         ])
+    ^ plain
+  in
+  let rec width w =
+    if 1 lsl w >= Array.length words then w else width (w + 1)
+  in
+  let w = width 0 in
+  let rows = List.length indices in
+  let data =
+    page ~data_page:[ (2, I32 8) ] rows
+      (String.make 1 (Char.chr w) ^ encode w [ Packed indices ])
+  in
+  parquet ~rows
+    ~column:[ (1, I32 6); (6, I32 0) ]
+    ~chunk:[ (9, I64 (4 + String.length dict)); (11, I64 4) ]
+    (dict ^ data)
+
+let dictionary_text =
+  prop "dictionary-encoded text reads as its words at the indices"
+    dictionary_case (fun (words, indices) ->
+      let used lo hi =
+        List.exists
+          (fun i ->
+            let l = String.length words.(i) in
+            lo <= l && l <= hi)
+          indices
+      in
+      cover "a row of 1 to 3 bytes" (used 1 3);
+      cover "a row of 4 to 7 bytes" (used 4 7);
+      cover "a row of 8 to 15 bytes" (used 8 15);
+      cover "a row of 16 to 32 bytes" (used 16 32);
+      cover "a row past 32 bytes" (used 33 max_int);
+      let col = Error.get_ok (read_x (dictionary_file words indices)) in
+      equal
+        (array (option string))
+        (Array.of_list (List.map (fun i -> Some words.(i)) indices))
+        (Column.options Kind.string col))
+
 (* [first_batch name] is the first batch a query of the file [name]'s source
    folds over: its first row group, as decoded. *)
 let first_batch name =
@@ -1165,6 +1251,7 @@ let sources =
     [
       spread_tail;
       hybrid_runs;
+      dictionary_text;
       test
         "a decoded bool column of nulls in 731 rows is canonical, the bits \
          past its rows clear" (fun () ->
