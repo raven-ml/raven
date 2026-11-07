@@ -51,18 +51,13 @@ let run_bytes (type v s) (dt : (v, s) D.t) l =
   let first = start * D.bits dt / 8 in
   (first, D.bytes dt (start + n) - first)
 
-(* The bytes by which byte [first] of [b] lies past 16 bytes of memory. Memory
-   that has no address the host computes on starts its allocation on its
-   device's alignment, so the bytes before [b] in it place [b]. *)
+(* The bytes by which byte [first] of [b] lies past 16 bytes of memory. *)
 let phase b first =
   let rec find j =
     if j >= alignment || Rig.Buffer.aligned b ~at:(first - j) alignment then j
     else find (j + 1)
   in
-  match find 0 with
-  | j -> j
-  | exception Invalid_argument _ ->
-      (Rig.Buffer.offset b + first) land (alignment - 1)
+  find 0
 
 let parts (type v s) (dt : (v, s) D.t) = if D.is D.Complex dt then 2 else 1
 let packed (type v s) (dt : (v, s) D.t) = D.bits dt < 8

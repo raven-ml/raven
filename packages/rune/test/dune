@@ -50,10 +50,29 @@
   nx_quant
   nx_support
   rig
+  rig.disk
   rune
   rune_support
   threads.posix
   tolk
+  windtrap))
+
+; Programs on another machine's host, served by rig's test agent over the
+; loopback.
+
+(test
+ (name test_jit_remote)
+ (modules test_jit_remote)
+ (deps support/agent.exe)
+ (libraries
+  nx
+  nx_array
+  rig
+  rig_remote
+  rig_remote_job
+  rune
+  tolk
+  tolk.engine
   windtrap))
 
 ; Opens this machine's first GPU, so it holds the lock GPU tests share.

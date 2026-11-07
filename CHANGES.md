@@ -40,6 +40,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- `Rig.Buffer.aligned` answers for memory named by a handle alone, such as
+  another machine's, up to the alignment its allocation starts on, where it
+  raised; `Tolk_engine.run` raised on every such buffer.
 - Dropped buffers of memory the host addresses (a memory device's, Metal's,
   `Pinned`, `Mapped`) bring a major cycle only after half the host's
   last-level cache (4 MiB at least), as host buffers do, unless their device
@@ -1064,6 +1067,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A compiled program runs on another machine's host (`Rig.open_host`), where
+  Clang rejected an x86_64 host's processor (`Tolk_engine.target`). It
+  compiles for its instruction set's baseline, `x86-64` or arm64's
+  `generic`.
 - `Nx.attention` with an ALiBi score under `Rune.jit` gives float32 rows'
   values on an AVX2 host with a Clang of LLVM 20, where `lse` was off by
   about 2^32 slopes: `Compiler_cpu.clang` compiles without the straight-line

@@ -25,6 +25,11 @@ let vendor d =
 let of_kind ?(renderer = "") ?(arch = "") device =
   { Helpers.Target.device; renderer; arch; interface = ""; indices = "" }
 
+(* The processor that every machine of the instruction set [machine] has, as
+   Clang names it. rig states no processor of another machine, so its code
+   must run on any processor of its instruction set. *)
+let baseline machine = if machine = "x86_64" then "x86-64" else "generic"
+
 let target d =
   match vendor d with
   | Some kind -> of_kind ~arch:(Rig.arch d) kind
@@ -33,7 +38,7 @@ let target d =
     ->
       let host = Rig.host_of d in
       let here = Rig.equal host Rig.host in
-      let cpu = if here then "native" else "generic" in
+      let cpu = if here then "native" else baseline (Rig.arch host) in
       (* The functions of a Windows process's libraries follow a convention of
          their own, which the object is compiled for (rig's host code). *)
       let windows = here && Sys.win32 in

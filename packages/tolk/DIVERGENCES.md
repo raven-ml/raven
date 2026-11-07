@@ -2667,7 +2667,9 @@ gate read a set; merged into D93.
 
 - **tinygrad:** `helpers.py:222-237` (`_DEV`, the `DEV` setting, and
   `DEV.target`); `device.py:460-465` (`_select_renderer`, which renders for
-  `DEV.target` of the device's kind).
+  `DEV.target` of the device's kind); `runtime/ops_cpu.py:63-68`
+  (`CPUDevice`, whose arch, remote or not, is this machine's
+  `platform.machine()` and `native`).
 - **tolk:** `Tolk_engine.target`; `Device.renderer`; `Helpers.Target`.
 - **Differs:** there is no `DEV` setting. `Tolk_engine.target` is a function
   of the device: its vendor's kind, which its driver declares
@@ -2675,12 +2677,20 @@ gate read a set; merged into D93.
   `Device.renderer` takes the target and renders for it with the renderer
   of its kind. `Helpers.Target` keeps the
   record and its syntax, which tests and the goldens' generator write.
+  Another machine's host compiles for that machine's instruction set
+  (`Rig.arch` of the host) and the baseline processor every machine of it
+  has, `x86-64` or arm64's `generic`, where tinygrad's remote CPU compiles
+  for this machine's instruction set and processor, `native`.
 - **Reason:** (c). rig places values on devices, and the compiler
   compiles for the device the values live on. A target read from the
   environment applies to every device of the process, so it compiles for a
   device the values do not live on, and a malformed `DEV`, meant for another
-  program, failed every program linking tolk when it started.
+  program, failed every program linking tolk when it started. rig states no
+  processor of another machine, which may lack instructions this machine's
+  has.
 - **Pinned by:** `Tolk.Setting › startup › starts whatever DEV holds`;
+  `Rune.jit on another machine's host › another machine's host compiles for
+  its baseline` and `› gives eager's bits`;
   `Tolk.Device › renderer › picks a device's renderer as tinygrad does`
   (each row renders for the target tinygrad's `DEV` gives the device) and
   `renders for the target it is given`.

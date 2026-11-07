@@ -317,10 +317,21 @@ let address fn b =
     invalid_argf "Rig.%s: %s names this memory by handle only" fn b.mem.dev.name;
   b.mem.address + b.offset
 
+(* Memory named by a handle alone has no address here, but its allocation's
+   address is a multiple of its owner's alignment, which [b] starts [offset]
+   bytes past. *)
 let aligned b ~at n =
+  let fn = "Buffer.aligned" in
   if n <= 0 || n land (n - 1) <> 0 then
-    invalid_argf "Rig.Buffer.aligned: %d is not a positive power of two" n;
-  (address "Buffer.aligned" b + at) land (n - 1) = 0
+    invalid_argf "Rig.%s: %d is not a positive power of two" fn n;
+  check_live fn b;
+  let owner = b.mem.alloc.owner in
+  if Dev.is_io b.mem.dev || b.mem.address >= 0 then
+    (address fn b + at) land (n - 1) = 0
+  else if n > owner.alignment then
+    invalid_argf "Rig.%s: %s names this memory by handle only, on %d bytes" fn
+      owner.name owner.alignment
+  else (b.offset + at) land (n - 1) = 0
 
 (* The driver answers for the allocation's own region, whichever device's
    buffer [b] is. The memory leaves the claims before the driver is asked, so

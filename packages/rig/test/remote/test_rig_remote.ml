@@ -558,12 +558,60 @@ let device_errors () =
   raises_match ~msg:"a device" Exn.invalid_arg (fun () ->
       Rig_remote.devices (List.hd (mem h)) "MEM")
 
+(* Another machine's memory has no address here. Its allocation starts on
+   its owner's alignment, so a buffer of it [k] bytes into the allocation, a
+   view or a borrow on another device of the machine, is aligned to [n] at
+   [at] iff [k + at] is a multiple of [n], for [n] up to that alignment;
+   past it [aligned] raises. *)
+let handle_alignment () =
+  with_job @@ fun j _ ->
+  let h = List.hd (Rig_remote.hosts j) in
+  let ds = h :: mem h in
+  List.iter
+    (fun owner ->
+      let a = Rig.alignment owner in
+      let whole = B.create owner (4 * a) in
+      let borrows =
+        List.filter_map
+          (fun d -> if Rig.equal d owner then None else B.borrow d whole)
+          ds
+      in
+      List.iter
+        (fun b ->
+          let name = Rig.name (B.device b) in
+          List.iter
+            (fun k ->
+              let v = B.view b ~first:k ~length:a in
+              equal ~msg:"offset" int k (B.offset v);
+              let rec powers n =
+                if n <= a then begin
+                  List.iter
+                    (fun at ->
+                      equal
+                        ~msg:(Printf.sprintf "%s: %d into, at %d, on %d" name k
+                                at n)
+                        bool
+                        ((k + at) land (n - 1) = 0)
+                        (B.aligned v ~at n))
+                    [ -3; -1; 0; 1; 3; a - k ];
+                  powers (2 * n)
+                end
+              in
+              powers 1;
+              raises_match ~msg:(name ^ ": past the alignment") Exn.invalid_arg
+                (fun () -> B.aligned v ~at:(-k) (2 * a)))
+            [ 0; 1; 3; a / 2; a; a + 1 ])
+        (whole :: borrows);
+      equal ~msg:(Rig.name owner ^ " borrowed") bool true (borrows <> []))
+    ds
+
 let machines =
   group "machine"
     [
       test "a machine's host is the agent's, of this machine's arch" hosts;
       test "an io device of another machine aligns as the agent's does"
         io_alignment;
+      test "another machine's memory is aligned by its offset" handle_alignment;
       test "devices are the agent's, named after it, the same at each call"
         devices;
       cases "opening order"

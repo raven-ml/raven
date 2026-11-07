@@ -1728,6 +1728,57 @@ let examples =
     { n = 2; shape = [| 0; 3 |]; x = Split 0; y = On };
   ]
 
+(* Values on an io device
+
+   An io device computes nothing: a program with a value on it evaluates, and
+   a value on it is copied to where an operation computes, as eagerly. *)
+
+module Disk = (val Nx.devices [ Rig_disk.device ])
+module Io = (val Nx.devices [ m 3; Rig_disk.device ])
+
+(* [xs] in a file of the disk, on [set]. *)
+let on_disk (type d) (set : d Nx.devices) xs =
+  let n = Array.length xs in
+  let path = Filename.temp_file "rune-io-" ".bin" in
+  Sys.remove path;
+  let b =
+    match Rig_disk.create_file path (n * 4) with
+    | Ok b -> b
+    | Error why -> failf "create_file: %s" why
+  in
+  Sys.remove path;
+  let x = Nx.create f32 [| n |] xs in
+  if n > 0 then Rig.Buffer.copy ~src:(Nx.Repr.read x Nx_array.buffer) ~dst:b;
+  Nx.Repr.of_array set
+    (Nx_array.v f32 (Nx_array.Layout.contiguous (Iarray.of_list [ n ])) b)
+
+let io_xs = Array.init 8 (fun i -> Float.of_int (i * i))
+let io_ys = Array.init 8 (fun i -> Float.of_int i -. 2.5)
+
+(* A set with a device that computes nothing has no kernels, so the call
+   raises as eager computation does. *)
+let io_argument () =
+  let at = Nx.Placement.device Io.v (m 3) in
+  let f x y = Nx.add x (Nx.place at y) in
+  let x = Nx.place at (Nx.create f32 [| 8 |] io_xs) in
+  let y = on_disk Io.v io_ys in
+  let eager = outcome (fun () -> f x y) in
+  let jit =
+    outcome (fun () -> Rune.jit T.(tensor @-> tensor @-> returns tensor) f x y)
+  in
+  equal (outcome_t unit) (omap ignore eager) (omap ignore jit)
+
+let io_capture () =
+  let y = on_disk Disk.v io_ys in
+  let at = Two.split ~axis:0 in
+  let x = Nx.place at (Nx.create f32 [| 8 |] io_xs) in
+  let r = Rune.jit' (fun x -> Nx.add x (Nx.place at y)) x in
+  let expected =
+    Nx.add (Nx.create f32 [| 8 |] io_xs) (Nx.create f32 [| 8 |] io_ys)
+  in
+  equal (array float_exact) (Nx.to_array expected)
+    (Nx.to_array (Nx.place Nx.Host.on r))
+
 let () =
   exit
     (run "Rune.jit over several devices"
@@ -1781,6 +1832,12 @@ let () =
                test "crossed assemblies of computed pieces" (fun () ->
                    over 2 { law = crossed });
              ]);
+         group "values on an io device"
+           [
+             test "an argument on the disk raises as eagerly" io_argument;
+             test "a capture on the disk of a cut program gives eager's values"
+               io_capture;
+           ];
          group "other sets"
            [
              prop ~count:20 ~examples:elsewhere_examples

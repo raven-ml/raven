@@ -1412,10 +1412,17 @@ module Buffer : sig
   (** [aligned b ~at n] is [true] iff the address [at] bytes past [b]'s first
       byte, in the addresses of [b]'s device's work, is a multiple of [n], for
       [n] a power of two. It is arithmetic on the address, defined for every
-      [at], in [b]'s bytes or outside them.
+      [at], in [b]'s bytes or outside them. Handle-only memory has no address
+      here, and its allocation starts on the {!alignment} of the device whose
+      memory it is, so [aligned] answers for an [n] up to that alignment from
+      [b]'s {!offset} in it. A borrow of it answers as its memory does: a
+      device maps another's memory by pages, and no device's alignment
+      exceeds a page, so the mapping keeps the allocation's offsets modulo
+      that alignment.
 
-      Raises [Invalid_argument] if [b] is dead, an io device's memory or
-      handle-only, or if [n] is not a positive power of two. *)
+      Raises [Invalid_argument] if [b] is dead or an io device's memory, if
+      [n] is not a positive power of two, or if [b] is handle-only and [n]
+      exceeds that alignment. *)
 
   val offset : t -> int
   (** [offset b] is the number of bytes of [b]'s memory before [b]'s first
