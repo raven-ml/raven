@@ -165,7 +165,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   (27x): the Jacobi lowering's kernels; a balanced tree of maxima in
   `exponent` replays 1.6-1.75x faster with no non-NaN result changed
   (_plans/tolk-campaign/linalg-compile/adjudication.md)
-- rune's `test_scan` law timed out at 60 s under load
 
 ## nx
 

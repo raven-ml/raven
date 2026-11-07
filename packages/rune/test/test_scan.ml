@@ -1894,18 +1894,20 @@ type pair =
 let pair_gen =
   let open Gen in
   let* s = of_list [ [| 1 |]; [| 3 |]; [| 2; 3 |]; [| 0 |]; [| 5; 1 |] ] in
+  (* Weighted so that each cover of [law_carries] marks about a quarter of the
+     cases or more: see [carries_count]. *)
   let next =
-    of_list
+    frequency
       [
-        Partner;
-        Flipped;
-        Flipped_partner;
-        Scanned 0;
-        Scanned 2;
-        Iterated 0;
-        Iterated 2;
-        Branched;
-        Scattered;
+        (1, constant Partner);
+        (1, constant Flipped);
+        (1, constant Flipped_partner);
+        (1, constant (Scanned 0));
+        (2, constant (Scanned 2));
+        (1, constant (Iterated 0));
+        (2, constant (Iterated 2));
+        (4, constant Branched);
+        (3, constant Scattered);
       ]
   in
   (* A scatter whose carry is read nowhere else takes the carry's storage. *)
@@ -1935,11 +1937,17 @@ type carries = {
   ps : bool array;  (** Each step's boolean, a lane's after the other's. *)
 }
 
+(* Each case compiles kernels of its own, about 50 ms of Clang on a cold cache,
+   so the law checks 50 cases. Each cover marks about a quarter of them or
+   more, so a run misses one with a chance of about 10^-6. *)
+let carries_count = 50
+
 let carries_gen =
   let open Gen in
   (let* pairs = pair pair_gen pair_gen in
-   let* n = frequency [ (1, constant 0); (1, constant 1); (2, constant 3) ] in
-   let* iterate = bool and+ lanes = bool in
+   let* n = frequency [ (1, constant 0); (1, constant 1); (4, constant 3) ] in
+   let* iterate = bool
+   and+ lanes = frequency [ (1, constant false); (3, constant true) ] in
    let+ ps = array ~size:(constant (2 * n)) bool in
    { pairs; n; iterate; lanes; ps })
   |> with_pp (fun ppf c ->
@@ -2282,8 +2290,9 @@ let () =
              test "nested scans of one row or more" test_nested_compiled;
              test ~timeout:60. "scans in a chain each run once" test_chained;
              test "carries in a cycle" test_cycle;
-             prop "carries through nested loops, branches and scatters"
-               carries_gen law_carries;
+             prop ~count:carries_count
+               "carries through nested loops, branches and scatters" carries_gen
+               law_carries;
              test "a cycle through a nested result costs no copy"
                test_cycle_storage;
              test "a next key split from the carry is stored once"
