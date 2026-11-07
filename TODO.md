@@ -190,11 +190,16 @@ and rune), raven / llama.cpp b12048 Vulkan:
   columns, datasets and writer, talon.arrow, talon.jsont, complex and
   validity columns, HTML display
 - brot vs gigatoken cd5ee648c6 on fudge (bench README, "Against
-  gigatoken"): GPT-2 runs at 0.58 of its speed on one thread over 100 MB
-  (1.1x its instructions, 2.1x its mispredicts, 3.0x its last-level
-  misses); its pretoken table sits on 4 KB pages where gigatoken's takes
-  2 MB pages (an madvise from brot's C, which brot's C rule does not allow
-  yet)
+  gigatoken"): GPT-2 runs at 0.55-0.65 of its speed on one thread over
+  100 MB (abbeface7). About half the gap is pages: first-touch faults on
+  each batch's fresh 90 MB result (39 of a 44-49 ms copy-out; keeping
+  freed memory in malloc takes the warm pass from 0.19-0.24 to 0.17-0.18
+  s) and the pretoken table on 4 KB pages (gigatoken madvises both to
+  2 MB, which brot's C rule does not allow yet). The rest is 1.14x the
+  instructions: the walk and probe loop (~3 instr/B) and GC marking (~2
+  instr/B) of ~200k tokenizer blocks, mostly the two vocabulary Hashtbls.
+  Branch-free merges cut callgrind's mispredicts 35% but ran no faster on
+  fudge
 
 ## repo
 
