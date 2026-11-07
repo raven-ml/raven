@@ -1,0 +1,5 @@
+File "golden/compiler_cases/walk_body_mistyped.ml", line 19, characters 48-49:
+19 |   b : 'd Nx.float32_t; [@ptree.walk fun _c x -> x + 1]
+                                                     ^
+Error: The value x has type ptree_d Nx.float32_t
+       but an expression was expected of type int

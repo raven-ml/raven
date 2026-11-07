@@ -50,6 +50,7 @@ type env = {
   set : string option;
   set_only : bool; (* The declaration has one parameter, its set. *)
   mutable errors : Location.Error.t list;
+  mutable walks : expression list; (* The [[@ptree.walk f]] expressions. *)
 }
 
 let error env ~loc fmt =
@@ -78,7 +79,9 @@ let annotation env ~loc attrs node =
         (if flag attrs.int = Some true then [ Int ] else []);
         (if flag attrs.skip = Some true then [ Skip ] else []);
         (match catch (fun () -> Attribute.get attrs.walk node) with
-        | Some (PStr [ { pstr_desc = Pstr_eval (e, _); _ } ]) -> [ Walk e ]
+        | Some (PStr [ { pstr_desc = Pstr_eval (e, _); _ } ]) ->
+            env.walks <- e :: env.walks;
+            [ Walk e ]
         | Some _ ->
             error env ~loc
               "[@ptree.walk] takes the walk as an expression, as in \
@@ -735,7 +738,9 @@ let body env td =
    positions a walk turns from ['a] into ['b], then the set of its fixed arrays,
    which it turns from ['d] into ['e]. One parameter is the set. *)
 let parameters td =
-  let env = { payload = None; set = None; set_only = false; errors = [] } in
+  let env =
+    { payload = None; set = None; set_only = false; errors = []; walks = [] }
+  in
   let name (ty, _) =
     match ty.ptyp_desc with Ptyp_var v -> Some v | _ -> None
   in
@@ -800,6 +805,19 @@ let walk_binding ~loc td body =
       (B.ppat_constraint ~loc (B.pvar ~loc (walk_name td.ptype_name.txt)) poly)
     ~expr
 
+(* [ghost walks] gives every node a ghost location except in the expressions
+   [walks], which the user wrote. The generated code takes the locations of
+   the parts it walks, so the compiler reports a mistyped part there, but
+   tools such as merlin skip ghost nodes and so take none of it for source. *)
+let ghost walks =
+  object
+    inherit Ast_traverse.map as super
+    method! location loc = { loc with loc_ghost = true }
+
+    method! expression e =
+      if List.memq e walks then e else super#expression e
+  end
+
 let errors extension env =
   List.rev_map
     (fun e ->
@@ -837,7 +855,7 @@ let generate_impl ~ctxt (rec_flag, tds) =
               else B.ppat_any ~loc
             in
             let body = B.pexp_fun ~loc Nolabel None c body in
-            Ok (walk_binding ~loc td body)
+            Ok (env, walk_binding ~loc td body)
         | _ -> Error env)
       tds
   in
@@ -847,7 +865,14 @@ let generate_impl ~ctxt (rec_flag, tds) =
   | _ :: _ as failed -> List.concat_map (errors B.pstr_extension) failed
   | [] ->
       let walks =
-        List.filter_map (function Ok b -> Some b | Error _ -> None) bindings
+        List.filter_map
+          (function Ok (_, b) -> Some b | Error _ -> None)
+          bindings
+      in
+      let user =
+        List.concat_map
+          (function Ok (env, _) -> env.walks | Error _ -> [])
+          bindings
       in
       let recursive =
         List.exists
@@ -855,7 +880,10 @@ let generate_impl ~ctxt (rec_flag, tds) =
           walks
       in
       [
-        B.pstr_value ~loc (if recursive then Recursive else Nonrecursive) walks;
+        (ghost user)#structure_item
+          (B.pstr_value ~loc
+             (if recursive then Recursive else Nonrecursive)
+             walks);
       ]
 
 let generate_intf ~ctxt:_ (_, tds) =
@@ -869,11 +897,12 @@ let generate_intf ~ctxt:_ (_, tds) =
           let loc = td.ptype_loc in
           let v x = B.ptyp_var ~loc x in
           [
-            B.psig_value ~loc
-              (B.value_description ~loc
-                 ~name:{ loc; txt = walk_name td.ptype_name.txt }
-                 ~type_:(walk_type ~loc td (v "a") (v "b") (v "d") (v "e"))
-                 ~prim:[]);
+            (ghost [])#signature_item
+              (B.psig_value ~loc
+                 (B.value_description ~loc
+                    ~name:{ loc; txt = walk_name td.ptype_name.txt }
+                    ~type_:(walk_type ~loc td (v "a") (v "b") (v "d") (v "e"))
+                    ~prim:[]));
           ])
     tds
 

@@ -11,3 +11,5 @@ hand-written structure would have.
   constrained to its part's type, so OCaml reports a mismatch at the part.
 - `test/diagnostics.t` holds the errors a user sees; each points at the
   user's own type.
+- Every node the deriver builds has a ghost location, so merlin takes none of
+  the walk for source; a `[@ptree.walk f]` expression keeps its own.

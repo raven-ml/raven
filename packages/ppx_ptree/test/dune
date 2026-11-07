@@ -73,7 +73,8 @@
   closed_payload.actual
   walk_mistyped.actual
   walk_wrong_type.actual
-  walk_one_set.actual)
+  walk_one_set.actual
+  walk_body_mistyped.actual)
  (deps
   (:pp pp.exe))
  (action
@@ -176,6 +177,20 @@
       %{dep:golden/compiler_cases/walk_one_set.ml}
       -o
       walk_one_set.cmo)))
+   (with-stderr-to
+    walk_body_mistyped.actual
+    (with-accepted-exit-codes
+     2
+     (run
+      %{ocamlc}
+      -color
+      never
+      -c
+      -ppx
+      "./%{pp} --as-ppx"
+      %{dep:golden/compiler_cases/walk_body_mistyped.ml}
+      -o
+      walk_body_mistyped.cmo)))
    (diff golden/compiler_cases/missing_walk.expected missing_walk.actual)
    (diff
     golden/compiler_cases/missing_plain_walk.expected
@@ -188,4 +203,7 @@
    (diff
     golden/compiler_cases/walk_wrong_type.expected
     walk_wrong_type.actual)
-   (diff golden/compiler_cases/walk_one_set.expected walk_one_set.actual))))
+   (diff golden/compiler_cases/walk_one_set.expected walk_one_set.actual)
+   (diff
+    golden/compiler_cases/walk_body_mistyped.expected
+    walk_body_mistyped.actual))))

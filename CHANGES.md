@@ -990,6 +990,9 @@ All notable changes to this project will be documented in this file.
 
 ### Ppx_ptree (new)
 
+- A derived `walk` has ghost locations, except in `[@ptree.walk f]`
+  expressions. Merlin took the generated code for source: refactor-open
+  proposed edits over the declaration (#246).
 - Add the `ppx_ptree` deriver: `[@@deriving ptree]` writes the `walk` of an
   `('a, 'd) t`, `'d t` or `t` (payload, then set), one of `Nx.Ptree.S`, and no
   description: use `Nx.Ptree.instantiate (module M)` or `Nx.Ptree.v M.walk`.

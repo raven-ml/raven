@@ -102,6 +102,134 @@ let test_generated_locations () =
     [ ("weight", 6); ("optional", 7); ("nested", 8) ]
     locations#walks
 
+(* Ghost locations. A node the deriver builds has a ghost location, so tools
+   such as merlin do not take it for source; a [[@ptree.walk f]] expression
+   is the user's and keeps its own. *)
+
+let ghost_source =
+  {|module Nested = struct
+  type ('a, 'd) t = 'a
+end
+
+type ('a, 'd) t = {
+  weight : 'a;
+  pair : 'a * 'a option;
+  items : 'a array;
+  nested : (('a, 'd) Nested.t, 'd) Nested.t;
+  causal : bool; [@ptree.int]
+  name : string; [@ptree.skip]
+  custom : 'a; [@ptree.walk fun c x -> Nx.Ptree.Walk.leaf c x]
+  scale : 'd Nx.float32_t;
+}
+[@@deriving ptree]
+
+type ('a, 'd) u =
+  | Empty
+  | One of 'a [@ptree.walk Nx.Ptree.Walk.leaf]
+  | Two of 'a * ('a, 'd) t
+  | Named of { first : 'a; key : 'd Nx.Rng.key; packed : 'd Nx.packed }
+[@@deriving ptree]
+
+type 'd keys = 'd Nx.Rng.key list [@@deriving ptree]
+|}
+
+let ghost_interface =
+  {|type ('a, 'd) t = { weight : 'a } [@@deriving ptree]
+type 'd keys = 'd Nx.Rng.key list [@@deriving ptree]
+type flags = { causal : bool [@ptree.int] } [@@deriving ptree]
+|}
+
+(* The [[@ptree.walk]] payloads of the source. *)
+let payloads structure =
+  let found = ref [] in
+  (object
+     inherit Ast_traverse.iter as super
+
+     method! attribute a =
+       (match (a.attr_name.txt, a.attr_payload) with
+       | "ptree.walk", PStr [ { pstr_desc = Pstr_eval (e, _); _ } ] ->
+           found := e :: !found
+       | _ -> ());
+       super#attribute a
+  end)
+    #structure
+    structure;
+  List.rev !found
+
+(* [real] collects the non-ghost locations outside the user's payloads, and
+   [kept] the payloads found unchanged, locations included. *)
+class real_locations user =
+  object
+    inherit Ast_traverse.iter as super
+    val mutable real_rev = []
+    val mutable kept_rev = []
+    method real = List.rev real_rev
+    method kept = List.rev kept_rev
+    method! location loc = if not loc.loc_ghost then real_rev <- loc :: real_rev
+
+    method! expression e =
+      if List.mem e user then kept_rev <- e :: kept_rev
+      else super#expression e
+  end
+
+let show_loc loc =
+  Printf.sprintf "%d:%d-%d:%d" loc.loc_start.pos_lnum
+    (loc.loc_start.pos_cnum - loc.loc_start.pos_bol)
+    loc.loc_end.pos_lnum
+    (loc.loc_end.pos_cnum - loc.loc_end.pos_bol)
+
+(* A payload's text and its location, which [List.mem] in [real_locations]
+   compares with every location inside it. *)
+let show_payload e =
+  Format.asprintf "%a at %s" Pprintast.expression e (show_loc e.pexp_loc)
+
+let test_ghost_impl () =
+  let source = parse ~filename:"ghost.ml" ghost_source in
+  let user = payloads source in
+  equal ~msg:"the source's [@ptree.walk] payloads" (list string)
+    [
+      "fun c x -> Nx.Ptree.Walk.leaf c x at 12:28-12:61";
+      "Nx.Ptree.Walk.leaf at 19:27-19:45";
+    ]
+    (List.map show_payload user);
+  let expanded = Driver.map_structure source in
+  let locations = new real_locations user in
+  List.iter
+    (fun name -> locations#value_binding (find_binding name expanded))
+    [ "walk"; "walk_u"; "walk_keys" ];
+  equal ~msg:"non-ghost locations in the walks, outside the payloads"
+    (list string) []
+    (List.map show_loc locations#real);
+  equal ~msg:"each payload is in a walk once, with its own locations"
+    (list string)
+    (List.map show_payload user)
+    (List.map show_payload locations#kept)
+
+let test_ghost_intf () =
+  let lexbuf = Lexing.from_string ghost_interface in
+  lexbuf.lex_curr_p <-
+    { pos_fname = "ghost.mli"; pos_lnum = 1; pos_bol = 0; pos_cnum = 0 };
+  let expanded = Driver.map_signature (Parse.interface lexbuf) in
+  let rec values signature =
+    List.concat_map
+      (fun item ->
+        match item.psig_desc with
+        | Psig_value v -> [ v ]
+        | Psig_include { pincl_mod = { pmty_desc = Pmty_signature s; _ }; _ }
+          ->
+            values s
+        | _ -> [])
+      signature
+  in
+  let walks = values expanded in
+  equal ~msg:"the declared walks" (list string)
+    [ "walk"; "walk_keys"; "walk_flags" ]
+    (List.map (fun v -> v.pval_name.txt) walks);
+  let locations = new real_locations [] in
+  List.iter locations#value_description walks;
+  equal ~msg:"non-ghost locations in the declared walks" (list string) []
+    (List.map show_loc locations#real)
+
 class error_locations =
   object
     inherit Ast_traverse.iter as super
@@ -206,5 +334,7 @@ let () =
        [
          test "keeps source locations in generated code"
            test_generated_locations;
+         test "marks generated nodes ghost in a structure" test_ghost_impl;
+         test "marks generated nodes ghost in a signature" test_ghost_intf;
          test "reports rejected forms at their source" test_diagnostic_locations;
        ])
