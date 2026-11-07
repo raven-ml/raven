@@ -764,6 +764,27 @@ let eigh_extremes () =
   check "float64 subnormal" D.Float64 0x1p-53 [ small64 ];
   check "float64 both in one batch" D.Float64 0x1p-53 [ big64; small64 ]
 
+(* A compiled [Nx.eigh] of 32 rows of float64 gives eager's eigenvalues within
+   the bound above, and compiles within a minute: the largest magnitude of the
+   symmetric matrix folds 32 lanes into a chain of maxima in a loop of 32
+   trips, which LLVM 22's and 23's loop idiom recognition did not finish. *)
+let eigh_32 () =
+  let n = 32 in
+  let st = Random.State.make [| n |] in
+  let x = Array.init (n * n) (fun _ -> uniform st) in
+  let sym = init 1 n n (fun _ i j -> x.((max i j * n) + min i j)) in
+  let a = Nx.create D.Float64 [| n; n |] sym.x in
+  let eigh =
+    Rune.jit
+      Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+      (fun a -> Nx.eigh D.Float64 a)
+  in
+  let w, _ = eigh a in
+  let eager = fst (Nx.eigh D.Float64 a) in
+  values_near ~msg:"w against eager"
+    ~tol:(fun _ -> eigh_near u64 n (frobenius sym 0))
+    n (Nx.to_array w) (Nx.to_array eager)
+
 (* Through Nx: a compiled [Nx.svdvals] and [Nx.eigvalsh] are eager's within
    the bounds above, [eigvalsh] of either triangle. *)
 let values_law (c, shape) =
@@ -873,6 +894,9 @@ let () =
              law "v diag w vᵀ reconstructs a" ~count:4 square eigh_law;
              test "NaN in the lower triangle is NaN" eigh_fails;
              test "norms past the dtype's range, and subnormals" eigh_extremes;
+             test ~timeout:60.
+               "compiled for 32 rows of float64 gives eager's eigenvalues"
+               eigh_32;
            ];
          law "Nx's values alone compiled are eager's" ~count:6
            (square @ general) values_law;

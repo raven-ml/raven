@@ -1,0 +1,101 @@
+/* The kernel r_32_32 of rune's eigh of a 32 x 32 float64 matrix, its
+   exponent (the largest magnitude of where(lower, a, transpose a)),
+   rendered for x86_64: each of 32 trips folds 32 lanes into a chain of
+   float maxima, each reading the last twice. LLVM 22's and 23's loop idiom
+   recognition walks the chain's 2^31 paths. */
+typedef int int32 __attribute__((aligned(4),ext_vector_type(32)));
+typedef double double4 __attribute__((aligned(8),ext_vector_type(4)));
+typedef double double32 __attribute__((aligned(8),ext_vector_type(32)));
+typedef long long32 __attribute__((aligned(8),ext_vector_type(32)));
+typedef unsigned long unsigned_long32 __attribute__((aligned(8),ext_vector_type(32)));
+__attribute__((min_vector_width(512))) void r_32_32(unsigned char* restrict args_16) {
+  double buf0[1];
+  unsigned long val0 = (*(((unsigned long*)(args_16))+1));
+  *(buf0+0) = ((double)(-__builtin_inff()));
+  for (int Lidx0 = 0; Lidx0 < 32; Lidx0++) {
+    double val1 = (*(((double*)(val0))+(Lidx0+128)));
+    double val2 = (*(((double*)(val0))+(Lidx0+160)));
+    double val3 = (*(((double*)(val0))+(Lidx0+192)));
+    double val4 = (*(((double*)(val0))+(Lidx0+224)));
+    double val5 = (*(((double*)(val0))+(Lidx0+256)));
+    double val6 = (*(((double*)(val0))+(Lidx0+288)));
+    double val7 = (*(((double*)(val0))+(Lidx0+32)));
+    double val8 = (*(((double*)(val0))+(Lidx0+320)));
+    double val9 = (*(((double*)(val0))+(Lidx0+352)));
+    double val10 = (*(((double*)(val0))+(Lidx0+384)));
+    double val11 = (*(((double*)(val0))+(Lidx0+416)));
+    double val12 = (*(((double*)(val0))+(Lidx0+448)));
+    double val13 = (*(((double*)(val0))+(Lidx0+480)));
+    double val14 = (*(((double*)(val0))+(Lidx0+512)));
+    double val15 = (*(((double*)(val0))+(Lidx0+544)));
+    double val16 = (*(((double*)(val0))+(Lidx0+576)));
+    double val17 = (*(((double*)(val0))+(Lidx0+608)));
+    double val18 = (*(((double*)(val0))+(Lidx0+64)));
+    double val19 = (*(((double*)(val0))+(Lidx0+640)));
+    double val20 = (*(((double*)(val0))+(Lidx0+672)));
+    double val21 = (*(((double*)(val0))+(Lidx0+704)));
+    double val22 = (*(((double*)(val0))+(Lidx0+736)));
+    double val23 = (*(((double*)(val0))+(Lidx0+768)));
+    double val24 = (*(((double*)(val0))+(Lidx0+800)));
+    double val25 = (*(((double*)(val0))+(Lidx0+832)));
+    double val26 = (*(((double*)(val0))+(Lidx0+864)));
+    double val27 = (*(((double*)(val0))+(Lidx0+896)));
+    double val28 = (*(((double*)(val0))+(Lidx0+928)));
+    double val29 = (*(((double*)(val0))+(Lidx0+96)));
+    double val30 = (*(((double*)(val0))+(Lidx0+960)));
+    double val31 = (*(((double*)(val0))+(Lidx0+992)));
+    double val32 = (*(((double*)(val0))+Lidx0));
+    double val33 = (*(buf0+0));
+    int alu1 = (Lidx0<<5);
+    double4 val34 = (*((double4*)((((double*)(val0))+(alu1+12)))));
+    double4 val35 = (*((double4*)((((double*)(val0))+(alu1+16)))));
+    double4 val36 = (*((double4*)((((double*)(val0))+(alu1+20)))));
+    double4 val37 = (*((double4*)((((double*)(val0))+(alu1+24)))));
+    double4 val38 = (*((double4*)((((double*)(val0))+(alu1+28)))));
+    double4 val39 = (*((double4*)((((double*)(val0))+(alu1+4)))));
+    double4 val40 = (*((double4*)((((double*)(val0))+(alu1+8)))));
+    double4 val41 = (*((double4*)((((double*)(val0))+alu1))));
+    double32 alu2 = (__builtin_convertvector((Lidx0<(int32){0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31}), long32)?(double32){val32,val7,val18,val29,val1,val2,val3,val4,val5,val6,val8,val9,val10,val11,val12,val13,val14,val15,val16,val17,val19,val20,val21,val22,val23,val24,val25,val26,val27,val28,val30,val31}:(double32){val41[0],val41[1],val41[2],val41[3],val39[0],val39[1],val39[2],val39[3],val40[0],val40[1],val40[2],val40[3],val34[0],val34[1],val34[2],val34[3],val35[0],val35[1],val35[2],val35[3],val36[0],val36[1],val36[2],val36[3],val37[0],val37[1],val37[2],val37[3],val38[0],val38[1],val38[2],val38[3]});
+    double32 cast0 = ((double32)((unsigned_long32)((((unsigned_long32)((double32)(alu2)))&9223372036854775807ul))));
+    double alu3 = ((cast0[0]<cast0[1])?cast0[1]:cast0[0]);
+    double alu4 = ((alu3<cast0[2])?cast0[2]:alu3);
+    double alu5 = ((alu4<cast0[3])?cast0[3]:alu4);
+    double alu6 = ((alu5<cast0[4])?cast0[4]:alu5);
+    double alu7 = ((alu6<cast0[5])?cast0[5]:alu6);
+    double alu8 = ((alu7<cast0[6])?cast0[6]:alu7);
+    double alu9 = ((alu8<cast0[7])?cast0[7]:alu8);
+    double alu10 = ((alu9<cast0[8])?cast0[8]:alu9);
+    double alu11 = ((alu10<cast0[9])?cast0[9]:alu10);
+    double alu12 = ((alu11<cast0[10])?cast0[10]:alu11);
+    double alu13 = ((alu12<cast0[11])?cast0[11]:alu12);
+    double alu14 = ((alu13<cast0[12])?cast0[12]:alu13);
+    double alu15 = ((alu14<cast0[13])?cast0[13]:alu14);
+    double alu16 = ((alu15<cast0[14])?cast0[14]:alu15);
+    double alu17 = ((alu16<cast0[15])?cast0[15]:alu16);
+    double alu18 = ((alu17<cast0[16])?cast0[16]:alu17);
+    double alu19 = ((alu18<cast0[17])?cast0[17]:alu18);
+    double alu20 = ((alu19<cast0[18])?cast0[18]:alu19);
+    double alu21 = ((alu20<cast0[19])?cast0[19]:alu20);
+    double alu22 = ((alu21<cast0[20])?cast0[20]:alu21);
+    double alu23 = ((alu22<cast0[21])?cast0[21]:alu22);
+    double alu24 = ((alu23<cast0[22])?cast0[22]:alu23);
+    double alu25 = ((alu24<cast0[23])?cast0[23]:alu24);
+    double alu26 = ((alu25<cast0[24])?cast0[24]:alu25);
+    double alu27 = ((alu26<cast0[25])?cast0[25]:alu26);
+    double alu28 = ((alu27<cast0[26])?cast0[26]:alu27);
+    double alu29 = ((alu28<cast0[27])?cast0[27]:alu28);
+    double alu30 = ((alu29<cast0[28])?cast0[28]:alu29);
+    double alu31 = ((alu30<cast0[29])?cast0[29]:alu30);
+    double alu32 = ((alu31<cast0[30])?cast0[30]:alu31);
+    double alu33 = ((alu32<cast0[31])?cast0[31]:alu32);
+    double alu34 = ((val33<alu33)?alu33:val33);
+    *(buf0+0) = alu34;
+  }
+  unsigned long val42 = (*(((unsigned long*)(args_16))+0));
+  double val43 = (*(buf0+0));
+  double alu37 = (((0.0<val43)&(val43<((double)(__builtin_inff()))))?val43:1.0);
+  _Bool alu38 = (__builtin_bit_cast(unsigned long, (double)(alu37))<4503599627370496ul);
+  double alu39 = (alu38?(alu37*4503599627370496.0):alu37);
+  int alu40 = (alu38?52:0);
+  *(((int*)(val42))+0) = ((((int)((__builtin_bit_cast(unsigned long, (double)(alu39))>>52ul)))-alu40)+-1023);
+}

@@ -210,7 +210,10 @@ let diagonal_within tol x =
 
 (* The [int32] exponent of the largest magnitude of each matrix of [u], of two
    axes of one: [e] with that magnitude in [[2^e, 2^(e + 1))], and [0] for a
-   matrix of zeros or one that holds NaN or an infinity. *)
+   matrix of zeros or one that holds an infinity. For a matrix that holds NaN
+   it may be the exponent of a smaller magnitude, or [0], since the maximum
+   can pass over NaN and elements folded with it: its callers find NaN
+   themselves. *)
 let exponent u =
   let largest = over_matrix Op.Max (abs u) in
   let usable =

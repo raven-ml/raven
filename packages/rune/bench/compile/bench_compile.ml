@@ -86,6 +86,19 @@ let eigh () =
           (fun a -> Nx.eigh Nx.float32 a)
           a))
 
+(* The eigendecomposition of one symmetric float64 matrix of 32 x 32: its
+   largest magnitude folds 32 lanes into a chain of maxima in a loop of 32
+   trips, which LLVM 22's and 23's loop idiom recognition did not finish. *)
+let eigh_32 () =
+  let a = Nx.Rng.uniform f64 [| 32; 32 |] in
+  let a = Nx.place Nx.Host.on (Nx.add a (Nx.matrix_transpose a)) in
+  ignore
+    (Sys.opaque_identity
+       (Rune.jit
+          Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+          (fun a -> Nx.eigh f64 a)
+          a))
+
 (* A tridiagonal solve of 100 float64 equations by Thomas's elimination as
    three associative scans: of 2 x 2 matrices as four arrays, for the pivots,
    then of affine maps as pairs, for the eliminated and the substituted
@@ -485,6 +498,7 @@ let cases =
   [
     ("linalg/solve-32", solve);
     ("linalg/eigh-8x8", eigh);
+    ("linalg/eigh-f64-32x32", eigh_32);
     (* A float64 sine of an unbounded angle, reduced by the bits of 1/(2pi) at
        its exponent: its lowering's size. *)
     ("trig/sin", fun () -> compile Nx.sin (input (-10.) 10.));

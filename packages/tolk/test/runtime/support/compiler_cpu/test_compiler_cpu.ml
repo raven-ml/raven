@@ -33,6 +33,18 @@ let add_n_of n =
   let pad = n - String.length add_n - String.length "/**/" in
   add_n ^ "/*" ^ String.make pad ' ' ^ "*/"
 
+(* A loop that exits on its data, as the renderer writes a loop of no bound:
+   it counts a word's set bits by clearing the lowest until none is left, the
+   loop that loop idiom recognition replaces by a population count. *)
+let bit_count =
+  {|void count(unsigned char* restrict args) {
+  unsigned long x = *((unsigned long*)args);
+  int c = 0;
+  for (;;) { if (!(x != 0)) { break; } x &= x - 1; c++; }
+  *((int*)(args + 8)) = c;
+}
+|}
+
 (* A function that needs more registers than a processor has, so that the
    register allocator reaches for every register it may use. *)
 let pressure =
@@ -494,6 +506,11 @@ let features =
           let text = disassembly "x86_64,x86-64" src in
           equal (list string) adds
             (List.filter (fun w -> mentions w text) [ "addps"; "addss" ]));
+      test "a loop that exits on its data stays a loop: idioms are off"
+        (fun () ->
+          let text = disassembly "x86_64,x86-64-v3" bit_count in
+          equal (list string) []
+            (List.filter (fun w -> mentions w text) [ "popcnt" ]));
       test "arm64 leaves x18 alone" (fun () ->
           let text = disassembly "arm64,generic" pressure in
           is_false ~msg:"x18" (mentions "x18" text);
@@ -644,7 +661,9 @@ let invalid_ir =
 (* Compile time *)
 
 (* rune's host kernel of 1024 lanes gathered from 32 loaded rows: LLVM's
-   interleaved load combine took Clang 19 274 s of 293 on it for apple-m1. *)
+   interleaved load combine took Clang 19 274 s of 293 on it for apple-m1.
+   rune's maximum of 32 float64 lanes in a loop of 32 trips: LLVM 23's loop
+   idiom recognition did not finish it in 300 s. *)
 let compile_time =
   group "compile time"
     [
@@ -656,6 +675,17 @@ let compile_time =
           in
           let lib = ccache_off (fun () -> compile "arm64,apple-m1" src) in
           is_relocatable_elf64 ~machine:(elf_machine "arm64") lib);
+      cases ~timeout:60.
+        "a host maximum of 32 float64 lanes in a loop of 32 trips compiles \
+         within a minute for"
+        ~id:Fun.id [ "x86_64,x86-64-v3"; "arm64,apple-m1" ]
+        (fun arch ->
+          let src =
+            In_channel.with_open_bin "max_chain.c" In_channel.input_all
+          in
+          let machine = List.hd (String.split_on_char ',' arch) in
+          let lib = ccache_off (fun () -> compile arch src) in
+          is_relocatable_elf64 ~machine:(elf_machine machine) lib);
     ]
 
 (* Without Clang: CC is read once, when the first compile runs, so these tests

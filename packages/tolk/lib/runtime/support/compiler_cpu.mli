@@ -35,7 +35,11 @@ val clang : string -> Renderer.Compiler.t
     register [x18] is left alone, since macOS and Windows clobber it, and
     LLVM's interleaved load combine, which reads loads that shuffles put
     together as one interleaved load, is off: its time grows much faster than
-    the lanes of a vector gathered from loads. Under a
+    the lanes of a vector gathered from loads. Loop idiom recognition, which
+    replaces a loop by the library call or table it computes, is off:
+    freestanding code calls no library, and under LLVM 22 and 23 its time grows
+    exponentially with a chain of selections that each read the last twice.
+    Under a
     Clang of LLVM 18 or 19, the straight-line vectorizer, which packs
     independent scalar operations into vectors, is off, since it writes
     invalid code for some packed integer lanes; under LLVM 18 so are AVX10.1

@@ -4942,14 +4942,15 @@ fold wraps integers and holds its float bound`, hold.
   narrowing rounds; rune's `rune jit › classes › a selection of a minimum
   against its constant is exact`, at `float16` and `bfloat16` too.
 
-## D167. Clang of LLVM 18 or 19 compiles without its straight-line vectorizer, a long source without its loop vectorizer, and arm64 without the interleaved load combine
+## D167. Clang's arguments: LLVM 18 or 19 without its straight-line vectorizer, a long source without its loop vectorizer, arm64 without the interleaved load combine, every kernel without loop idiom recognition
 
 - **tinygrad:** `runtime/support/compiler_cpu.py:21` (`ClangCompiler.compile`,
   Clang's arguments at `-O2`, which runs LLVM's SLP and loop vectorizers).
 - **tolk:** `Compiler_cpu.llvm_major` (the LLVM version a Clang's `-###`
   statement names), `Compiler_cpu.long_source`,
   `Compiler_cpu.compile_args`, which adds `-fno-slp-vectorize` when it is 18
-  or 19 and `-mllvm -disable-interleaved-load-combine` for arm64,
+  or 19, `-mllvm -disable-interleaved-load-combine` for arm64 and `-mllvm
+  -disable-loop-idiom-all` for every Clang,
   `Compiler_cpu.without_loop_vectorizer`, and `Compiler_cpu.clang`
   (its `table`, which names both commands and the length).
 - **Differs:** a Clang that states LLVM 18 or 19 compiles every kernel with
@@ -4958,7 +4959,9 @@ fold wraps integers and holds its float bound`, hold.
   vectorizer: its compiler proper runs without `-vectorize-loops`, as the
   driver runs it under `-fno-vectorize` (Clang 18.1.8 and 19.1.7 state the
   same command but for that flag). Every Clang compiles for arm64 without
-  LLVM's interleaved load combine. Otherwise every Clang, Apple's included,
+  LLVM's interleaved load combine. Every Clang compiles without LLVM's loop
+  idiom recognition (`-mllvm -disable-loop-idiom-all`, which every LLVM
+  release from 12 defines). Otherwise every Clang, Apple's included,
   compiles with the arguments tinygrad passes. The table of objects names
   the command for either length, and the length (D113).
 - **Reason:** (b): rune's packed suite, `a compiled call computes eager's
@@ -5044,6 +5047,44 @@ fold wraps integers and holds its float bound`, hold.
   compiled for `apple-m1`, the objects are the same byte for byte without
   the pass, and their compiles take the same time (40.7 s and 40.8 s in
   all).
+
+  (b), loop idiom recognition: rune's `Nx.eigh` under `Rune.jit` of a
+  float64 matrix of 24 rows took 8.5 s to compile under Clang 23, and of 32
+  rows did not finish in minutes (SOFO's subspace solve, which runs it on
+  the host instead), against 0.3 s under Clang 19. The kernel is
+  `Lower_linalg.exponent`'s, the largest magnitude of `where(lower, a,
+  transpose a)`: a loop of 32 trips, each folding 32 lanes into a chain of
+  float maxima `(m < x) ? x : m`, each reading the last twice. From LLVM 22
+  the pass runs its CRC recogniser (`HashRecognize`) on every countable
+  loop; for an innermost loop of one block whose constant trip count is a
+  multiple of 8, it walks the operands of the loop's running selection
+  without marking those it has seen, 2^31 paths here. LLVM 23.1.5 spent
+  99.9% of 14 s in the pass at 24 lanes and did not finish at 32 in 300 s;
+  without it, 0.01 s. The 20-row kernel (20 trips) and those of 64 and 128
+  rows (chains of 4 lanes) compile in under 0.15 s. svd's exponent of its
+  triangle escapes only because its masked loads render as branches, which
+  give its loop 45 blocks: loaded unconditionally, its 24-row kernel took
+  LLVM 23.1.5 15.35 s. Upstream
+  fixed the walk on main (llvm/llvm-project#211711, #211887) after the 23
+  branch; `release/22.x` and `release/23.x` do not have it. The pass has
+  nothing to do in a kernel: under `-ffreestanding` Clang marks its
+  functions `"no-builtins"`, so LLVM offers it no `memset` or `memcpy` to
+  call, its other idioms need a loop that exits on its data, which no
+  kernel producer writes today, and no lowering renders a CRC. The objects
+  are the same byte for byte without it: of 8695 and 10 213 kernels of
+  rune's linear algebra and suites under Clang 19.1.7 for x86_64, of 8695
+  under Clang 18.1.3 and 8694 under LLVM 23.1.5, where it finishes, and of
+  1167 for arm64 and 389 for riscv64 under Clang 19.1.7. Every Clang
+  compiles without it, Apple's included, since Apple's states no LLVM
+  release and Swift's `main` builds on swiftlang's `stable/23.x`, which has
+  the walk, while the CRC recogniser's own option is an error before LLVM
+  22. A gate to LLVM 22 and 23 would differ only from LLVM 24, where a
+  future superlinear addition to the pass would show silently, as a
+  compile that never ends; the blanket option instead takes a rename of the hidden
+  option, which would fail every host compile with Clang's message at the
+  call that compiles. The item is revisited when a kernel loop exits on its
+  data (`Cstyle` renders a void range as `for (;;)`), and goes when tolk
+  supports no Clang of LLVM 22 or 23 and Apple's bases are past 23.
 - **Pinned by:** `Tolk.Compiler_cpu › features › four clamped gathers compile
   for AVX-512 on` (`x86_64,x86-64-v4`, `x86_64,skylake-avx512`,
   `x86_64,znver4`), which compiles the indices of `r_3_2` and fails under
@@ -5061,7 +5102,15 @@ fold wraps integers and holds its float bound`, hold.
   › compile time › an arm64 kernel of 1024 lanes gathered from 32 rows
   compiles within a minute`, over that kernel's source, which times out at
   60 s on fudge with the pass and compiles in 5.4 s without it; rune's
-  `Lower_reduce` test above, on macOS CI.
+  `Lower_reduce` test above, on macOS CI. Loop idiom recognition:
+  `Tolk.Compiler_cpu › features › a loop that exits on its data stays a
+  loop: idioms are off`, a population count by clearing bits, which Clang
+  19 turns into `popcnt` with the pass; `Tolk.Compiler_cpu › compile time › a host maximum of 32 float64 lanes in
+  a loop of 32 trips compiles within a minute for` (`x86_64,x86-64-v3`,
+  `arm64,apple-m1`), over `r_32_32`'s source; rune's `Lower_linalg › eigh ›
+  compiled for 32 rows of float64 gives eager's eigenvalues`; rune's
+  compile bench `linalg/eigh-f64-32x32`. These three fail without the fix
+  only under a Clang of LLVM 22 or 23.
 
 ## D168. The renderer finds a program's callees by a scan of its instructions
 

@@ -372,7 +372,19 @@ let flags ~version arch = fixed ~llvm:(llvm_major version) (selection arch)
    contraction of 8 groups of data-chosen rows that computes 1024 lanes
    gathered from 32 loaded rows took Clang 19 for apple-m1 293 s, 274 s of
    them in that pass, and 8 s without it. Every Clang compiles arm64 without
-   it. *)
+   it.
+
+   LLVM's loop idiom recognition replaces a loop by the library call it
+   computes, which a freestanding source has none of, by a bit-counting
+   instruction for a loop that exits on its data, which no kernel tolk
+   produces has, and from LLVM 22 a CRC's loop by a table. It changes no
+   object of 10 213 kernels of rune's linear algebra and suites under Clang
+   19, nor of 8694 of them under Clang 18 and LLVM 23. For a loop of a multiple
+   of 8 trips, LLVM 22's and 23's CRC recogniser walks every path through the
+   operands of the loop's running selection: the 32 maxima of rune's 32 x 32
+   eigh, each reading the last twice, are 2^31 paths, which LLVM 23 did not
+   walk in 300 s; without the pass the kernel compiles in 0.01 s. Every Clang
+   compiles without it. *)
 let compile_args selected ~llvm =
   let slp =
     match llvm with Some (18 | 19) -> [ "-fno-slp-vectorize" ] | _ -> []
@@ -382,6 +394,7 @@ let compile_args selected ~llvm =
     | "arm64", _ -> [ "-mllvm"; "-disable-interleaved-load-combine" ]
     | _ -> []
   in
+  let idioms = [ "-mllvm"; "-disable-loop-idiom-all" ] in
   [
     "-c";
     "-x";
@@ -395,7 +408,7 @@ let compile_args selected ~llvm =
     "-fno-ident";
     "-ffile-compilation-dir=.";
   ]
-  @ fixed ~llvm selected @ slp @ ldn @ [ "-"; "-o"; "-" ]
+  @ fixed ~llvm selected @ slp @ ldn @ idioms @ [ "-"; "-o"; "-" ]
 
 (* The vector registers of what Clang compiles [arch] for. Its statement names
    the processor alone, as [-target-cpu x86-64-v3], and the processor's features

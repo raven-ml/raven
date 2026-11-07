@@ -1046,6 +1046,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Host kernels compile without LLVM's loop idiom recognition
+  (`Compiler_cpu.clang`): under Clang 22 and 23 its CRC recogniser took
+  seconds to forever on a chain of float maxima, so `Rune.jit` of `Nx.eigh`
+  on a float64 matrix of 24 or 32 rows took 8.5 s or never finished.
 - A GPU kernel whose few outputs each sum by a workgroup's threads reads
   consecutive addresses across them (`Heuristic.hand_coded_optimizations`):
   a compiled row sum of 2048 rows of 8192 float32 runs 3.0x faster on an RTX
