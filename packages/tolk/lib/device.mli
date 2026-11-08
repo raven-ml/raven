@@ -33,6 +33,12 @@ module Tiny_elf : sig
       [signature] lies when their values are packed in order from byte [offset],
       each aligned to its size: its byte offset and its type, a scalar's own
       and a buffer's address's {!Dtype.Uint64}. [offset] defaults to [0]. *)
+
+  val layout : Ops.t list -> (int * Dtype.t) list
+  (** [layout params] is {!iter_sig} of the parameters [params], in their
+      order: how a kernel's arguments lie when packed, on every target.
+
+      Raises [Invalid_argument] if an element of [params] is no parameter. *)
 end
 
 (** {1:renderers Renderers} *)

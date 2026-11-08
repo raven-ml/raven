@@ -1851,17 +1851,6 @@ let with_estimates sink lin =
    buffer ({!Op.Refparam}). Its estimates are taken before, while its loads
    read its buffers. *)
 let pack_args sink params =
-  let signature =
-    List.map
-      (fun p ->
-        {
-          Device.Tiny_elf.name = None;
-          addrspace = (param_arg_of p).addrspace;
-          dtype = dtype p;
-          shape = [];
-        })
-      params
-  in
   let args =
     Shape.param ~shape:[ Int (8 * List.length params) ] ~name:"args" 0 Uint8
   in
@@ -1874,7 +1863,7 @@ let pack_args sink params =
     if addrspace p = Some Dtype.Alu then (p, v)
     else (p, Ops.v Op.Refparam ~src:[ nth p 0; v ] ~arg:(arg p))
   in
-  let loads = List.map load (Device.Tiny_elf.iter_sig signature) in
+  let loads = List.map load (Device.Tiny_elf.layout params) in
   substitute ~calls:Skip ~pass:Fixed_point sink (List.map2 read params loads)
 
 let do_render (ren : Renderer.t) prg lin =
@@ -1903,19 +1892,7 @@ let host_entry ~arch prg source =
     | None -> Printf.sprintf "%s_((unsigned char *)p);" name
     | Some s ->
         let params = kernel_params prg in
-        let signature =
-          List.map
-            (fun p ->
-              let a = param_arg_of p in
-              {
-                Device.Tiny_elf.name = None;
-                addrspace = a.addrspace;
-                dtype = dtype p;
-                shape = [];
-              })
-            params
-        in
-        let offsets = Device.Tiny_elf.iter_sig signature in
+        let offsets = Device.Tiny_elf.layout params in
         let size =
           List.fold_left
             (fun m (o, dt) -> max m (o + Dtype.itemsize dt))

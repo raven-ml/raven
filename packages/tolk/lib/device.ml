@@ -26,6 +26,13 @@ module Tiny_elf = struct
       (offset + size, (offset, dt))
     in
     snd (List.fold_left_map place offset signature)
+
+  let layout params =
+    let param u =
+      let addrspace = (Ops.param_arg_of u).addrspace in
+      { name = None; addrspace; dtype = Ops.dtype u; shape = [] }
+    in
+    iter_sig (List.map param params)
 end
 
 (* Renderers *)

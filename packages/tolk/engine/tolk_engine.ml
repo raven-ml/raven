@@ -720,21 +720,7 @@ let launch b call prg d =
       (List.combine (Shape.kernel_params prg)
          (Realize.get_call_kernel_args call prg))
   in
-  let signature =
-    List.map
-      (fun (p, _) ->
-        let addrspace =
-          match Ops.arg p with Ops.Param a -> a.addrspace | _ -> Dtype.Global
-        in
-        {
-          Device.Tiny_elf.name = None;
-          addrspace;
-          dtype = Ops.dtype p;
-          shape = [];
-        })
-      fields
-  in
-  let offsets = Device.Tiny_elf.iter_sig signature in
+  let offsets = Device.Tiny_elf.layout (List.map fst fields) in
   (* A structure's size is a multiple of its widest field's. *)
   let size, align =
     List.fold_left
