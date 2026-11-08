@@ -1077,6 +1077,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Compiler_amd.hip` runs LLVM's IR verifier, which a release comgr turns
+  off, from comgr 2.8 (ROCm 6.2): IR that an optimization makes invalid
+  raises `Compile_error` instead of compiling into wrong values. Compiles
+  take about 2% longer.
 - A compiled running sum of a widening `Nx.bitcast` of flipped bytes no longer
   reads the wrong byte on the host: a kernel's byte loads read one lane at a
   time are no longer merged into vectors, whose reversed bytes LLVM's load

@@ -13,9 +13,11 @@
 
    COMGR is comgr's library. REQUEST holds the ISA, the assemble flag ("0" or
    "1"), the count then the options of the compile, the count then the options
-   of code generation, each NUL-terminated, then the source to the end of the
-   file. REPLY holds the code object, as compiler_worker.h says. Diagnostics
-   (comgr's, LLVM's) go to standard output and error. */
+   of code generation, the major and minor version from which comgr is given
+   the next options in both steps, the count then those options, each
+   NUL-terminated, then the source to the end of the file. REPLY holds the code
+   object, as compiler_worker.h says. Diagnostics (comgr's, LLVM's) go to
+   standard output and error. */
 
 #include "compiler_worker.h"
 
@@ -89,6 +91,11 @@ static struct {
       assemble_source_to_relocatable;
 } enums;
 
+/* comgr's version, once loaded. */
+static struct {
+  uint64_t major, minor;
+} version;
+
 /* Loads comgr, or replies why it cannot. */
 static bool load(const char *path) {
   void *lib = open_library(path);
@@ -102,9 +109,8 @@ static bool load(const char *path) {
                   symbols[i].name);
       return false;
     }
-  uint64_t major, minor;
-  comgr.get_version(&major, &minor);
-  if (major >= 3)
+  comgr.get_version(&version.major, &version.minor);
+  if (version.major >= 3)
     enums.language_hip = 3, enums.compile_source_with_device_libs_to_bc = 12,
     enums.codegen_bc_to_relocatable = 4,
     enums.link_relocatable_to_executable = 7,
@@ -195,14 +201,24 @@ int main(int argc, char **argv) {
   size_t size;
   char *request = start(argc, argv, "COMGR", &size);
   const char *at = request, *end = request + size, *isa = field(&at, end),
-             *assemble = field(&at, end);
-  struct options compile, codegen;
+             *assemble = field(&at, end), *from_major, *from_minor;
+  struct options compile, codegen, later;
   if (isa == NULL || assemble == NULL || !option_list(&at, end, &compile) ||
-      !option_list(&at, end, &codegen)) {
+      !option_list(&at, end, &codegen) ||
+      (from_major = field(&at, end)) == NULL ||
+      (from_minor = field(&at, end)) == NULL ||
+      !option_list(&at, end, &later)) {
     reply_error("the request %s is malformed", argv[3]);
     return 1;
   }
   if (!load(argv[1])) return 1;
+  uint64_t m = strtoull(from_major, NULL, 10),
+           n = strtoull(from_minor, NULL, 10);
+  if ((version.major > m || (version.major == m && version.minor >= n)) &&
+      (!join(&compile, later) || !join(&codegen, later))) {
+    reply_error("out of memory");
+    return 1;
+  }
   compile_hip(at, end - at, isa, assemble[0] == '1', compile, codegen);
   return 0;
 }

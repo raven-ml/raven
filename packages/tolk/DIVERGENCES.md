@@ -8657,3 +8657,29 @@ as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
 - **Pinned by:** `Rune.jit on another machine's host › half casts give
   eager's bits` (every half widened to float32 and float64, float32 and
   float64 edges and ties narrowed, and any float32 narrowed).
+
+## D359. comgr compiles with LLVM's IR verifier on
+
+- **tinygrad:** `runtime/support/compiler_amd.py:60-70` (`compile_hip`, the
+  options of the compile and of code generation, which a release comgr's
+  Clang driver turns into compiler commands with `-disable-llvm-verifier`).
+- **tolk:** `Compiler_amd.verified`, given from comgr 2.8
+  (`Compiler_amd.verified_from`), and `Compiler_amd.hip`'s `table`, which
+  digests both.
+- **Differs:** from comgr 2.8 (ROCm 6.2, LLVM 18), both steps run with
+  `-fverify-intermediate-code`: LLVM's verifier checks the IR Clang makes of
+  the source, and again before instruction selection, and invalid IR ends
+  the compile's process with the verifier's finding, which
+  `Renderer.Compiler.Compile_error` carries. comgr 2.7 and earlier, whose
+  driver rejects the option, compile without it. comgr 3.0 (ROCm 7.0.0) on
+  nonnormal's i9-9900K, 192 kernels of gpt-oss-20b's first call and of a
+  beam search over a float32 product, each compiled 3 times both ways in
+  one process: the verifier costs 1.9% and 2.5% of the compile time in two
+  runs (0.1-4.7% per kernel), and every code object is unchanged.
+- **Reason:** (e), as D275: an optimization that writes invalid IR goes
+  unseen by a release comgr, and compiles into wrong values or crashes
+  instruction selection.
+- **Pinned by:** `Tolk.Compiler_amd › LLVM's verifier › invalid IR raises
+  Compile_error with the verifier's finding`, a call of an intrinsic with an
+  argument it does not take, which comgr 3.0 compiles without the
+  verifier.

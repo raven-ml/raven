@@ -141,18 +141,6 @@ static void compile(const char *src, bool ptx, struct options options) {
   free(log);
 }
 
-/* Appends [later] to [*o], whose list it replaces. */
-static bool join(struct options *o, struct options later) {
-  const char **list = calloc(o->length + later.length + 1, sizeof *list);
-  if (list == NULL) return false;
-  memcpy(list, o->list, o->length * sizeof *list);
-  memcpy(list + o->length, later.list, later.length * sizeof *list);
-  free(o->list);
-  o->list = list;
-  o->length += later.length;
-  return true;
-}
-
 /* Replies to the request [request], [size] bytes, of NVRTC [major].[minor]. */
 static void answer(const char *request, size_t size, int major, int minor) {
   const char *at = request, *end = request + size, *ptx = field(&at, end),

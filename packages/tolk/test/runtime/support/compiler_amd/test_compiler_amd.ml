@@ -212,6 +212,34 @@ let process =
                (with_signal Sys.sigchld Signal_ignore (fun () -> compile kernel)));
     ]
 
+(* LLVM's verifier *)
+
+(* A call of an intrinsic with an argument it does not take: IR that LLVM's
+   verifier rejects and that code generation compiles without it, as it would IR
+   that an optimization makes invalid. *)
+let invalid_ir =
+  {|extern "C" __attribute__((device)) int wid(int) __asm("llvm.amdgcn.workitem.id.x");
+extern "C" __attribute__((global)) void f(int *a) { a[0] = wid(a[1]); }|}
+
+let verifier =
+  group "LLVM's verifier"
+    [
+      slow
+      @@ test "invalid IR raises Compile_error with the verifier's finding"
+           (fun () ->
+             ignore (with_comgr (fun () -> compile kernel));
+             match compile invalid_ir with
+             | _ -> fail "comgr compiled IR that LLVM's verifier rejects"
+             | exception Compiler.Compile_error msg ->
+                 in_order
+                   ~subs:
+                     [
+                       "Intrinsic has incorrect argument type";
+                       "Broken module found";
+                     ]
+                   msg);
+    ]
+
 (* A process that cannot start: these tests run in a process of their own, where
    COMGR_PATH names a file, and forbid it to start any other for the rest of its
    life. *)
@@ -229,4 +257,6 @@ let no_spawn =
 let () =
   exit
     (run "Tolk.Compiler_amd"
-       [ cache; without_comgr; not_a_library; smoke; process; no_spawn ])
+       [
+         cache; without_comgr; not_a_library; smoke; process; verifier; no_spawn;
+       ])

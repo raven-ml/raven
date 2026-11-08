@@ -61,6 +61,9 @@ struct options {
 /* A count, then that many fields, in a list [o] owns. */
 bool option_list(const char **at, const char *end, struct options *o);
 
+/* Appends [later] to [*o], whose list it replaces: false if out of memory. */
+bool join(struct options *o, struct options later);
+
 /* One compile */
 
 /* Starts the worker whose library is called [library] in its usage: resets the

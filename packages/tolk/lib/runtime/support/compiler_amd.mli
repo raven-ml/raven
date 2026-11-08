@@ -28,7 +28,11 @@ val hip : string -> Renderer.Compiler.t
     HIP is compiled with the device libraries, at [-O3], in CU mode, as HIP 6.0
     without HIP's own headers, whose declarations rendered kernels carry. The
     kernels' symbols are internalized before code generation, so that only
-    kernels stay visible.
+    kernels stay visible. From comgr 2.8 (ROCm 6.2), LLVM's verifier checks
+    the IR before it is optimized and before code generation: IR that an
+    optimization makes invalid raises {!Renderer.Compiler.Compile_error}
+    naming the verifier's finding instead of compiling. Earlier comgr
+    compiles without it.
 
     With {!Setting.ccache}, code objects are cached in the table
     [compile_hip_A_D], where [A] is [arch] and [D] the digest of comgr's library

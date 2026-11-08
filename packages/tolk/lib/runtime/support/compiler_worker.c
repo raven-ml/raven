@@ -187,6 +187,17 @@ bool option_list(const char **at, const char *end, struct options *o) {
   return true;
 }
 
+bool join(struct options *o, struct options later) {
+  const char **list = calloc(o->length + later.length + 1, sizeof *list);
+  if (list == NULL) return false;
+  memcpy(list, o->list, o->length * sizeof *list);
+  memcpy(list + o->length, later.list, later.length * sizeof *list);
+  free(o->list);
+  o->list = list;
+  o->length += later.length;
+  return true;
+}
+
 /* One compile */
 
 #ifdef __linux__
