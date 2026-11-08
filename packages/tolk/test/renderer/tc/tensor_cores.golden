@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 core	repr	dtype_in	dtype_out	frag_a	frag_b	frag_c	dims	threads	axis_coords	base_upcast_axes	relabel_a	relabel_b
 cuda_sm75[0]	TensorCore(dtype_in=dtypes.f16, dtype_out=dtypes.f32, frag_a=(('k1', 'k2', 'm0', 'm1', 'm2'), ('k0', 'm3')), frag_b=(('k1', 'k2', 'n0', 'n1', 'n2'), ('k0',)), frag_c=(('n1', 'n2', 'm0', 'm1', 'm2'), ('n0', 'm3')))	dtypes.f16	dtypes.f32	k1 k2 m0 m1 m2/k0 m3	k1 k2 n0 n1 n2/k0	n1 n2 m0 m1 m2/n0 m3	8 16 8	32	n0 n1 n2 m0 m1 m2 m3 k0 k1 k2	m3 n0 k2 k1 k0	k1>n1 k2>n2 m0>m0 m1>m1 m2>m2 k0>n0 m3>m3	k1>n1 k2>n2 n0>m0 n1>m1 n2>m2 k0>m3
 cuda_sm75[1]	TensorCore(dtype_in=dtypes.f16, dtype_out=dtypes.f16, frag_a=(('k1', 'k2', 'm0', 'm1', 'm2'), ('k0', 'm3')), frag_b=(('k1', 'k2', 'n0', 'n1', 'n2'), ('k0',)), frag_c=(('n1', 'n2', 'm0', 'm1', 'm2'), ('n0', 'm3')))	dtypes.f16	dtypes.f16	k1 k2 m0 m1 m2/k0 m3	k1 k2 n0 n1 n2/k0	n1 n2 m0 m1 m2/n0 m3	8 16 8	32	n0 n1 n2 m0 m1 m2 m3 k0 k1 k2	m3 n0 k2 k1 k0	k1>n1 k2>n2 m0>m0 m1>m1 m2>m2 k0>n0 m3>m3	k1>n1 k2>n2 n0>m0 n1>m1 n2>m2 k0>m3

@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] 512
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 4
@@ -54,7 +54,7 @@
 52 Ops.STORE dtypes.void [19, 51]
 53 Ops.SINK dtypes.void [52] KernelInfo(name="r_4_16_8_2_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=3, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=1, arg=(8, AxisType.LOCAL))), optimized=True)
 54 Ops.SINK dtypes.void [52] KernelInfo(name="r_4_16_8_2_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=3, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=1, arg=(8, AxisType.LOCAL))), estimates=Estimates(ops=3072, lds=10240, mem=10240), optimized=True)
-55 Ops.LINEAR dtypes.void [0, 1, 20, 21, 2, 3, 4, 8, 9, 10, 15, 16, 17, 29, 30, 33, 34, 25, 26, 22, 23, 24, 27, 28, 31, 32, 43, 44, 45, 35, 36, 11, 12, 5, 6, 7, 13, 14, 18, 19, 37, 38, 46, 49, 39, 40, 41, 42, 47, 48, 50, 51, 52, 53]
+55 Ops.LINEAR dtypes.void [0, 1, 20, 21, 2, 3, 4, 8, 9, 10, 15, 16, 17, 29, 30, 33, 34, 25, 26, 22, 23, 24, 27, 28, 31, 32, 43, 44, 45, 35, 36, 11, 12, 5, 6, 7, 13, 14, 18, 19, 37, 38, 46, 49, 39, 40, 41, 42, 47, 48, 50, 51, 52, 54]
 56 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\ntypedef float float2 __attribute__((ext_vector_type(2)));\nstatic inline __attribute__((device)) float2 make_float2(float x, float y) { return { x, y }; }\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 128))) r_4_16_8_2_2(float* data0_512, float* data1_2048) {\n  int gidx0 = __ockl_get_group_id(0); /* 4 */\n  int lidx0 = __ockl_get_local_id(0); /* 16 */\n  int lidx1 = __ockl_get_local_id(1); /* 8 */\n  int alu0 = ((gidx0<<9)+(lidx0<<5)+(lidx1<<1));\n  float2 val0 = (*((float2*)((data1_2048+(alu0+16)))));\n  float2 val1 = (*((float2*)((data1_2048+alu0))));\n  float alu1 = ((val1.x<val1.y)?val1.y:val1.x);\n  float alu2 = ((alu1<val0.x)?val0.x:alu1);\n  float alu3 = ((alu2<val0.y)?val0.y:alu2);\n  *(data0_512+((gidx0<<7)+(lidx0<<3)+lidx1)) = alu3;\n}"
 57 Ops.PROGRAM dtypes.void [54, 55, 56] ProgramInfo(global_size=(4, 1, 1), local_size=(16, 8, 1), params=(%1, %21), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
 58 Ops.SINK dtypes.void [53, 57]

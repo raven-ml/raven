@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.bool [0] ParamArg(slot=0, dtype=dtypes.bool)
 2 Ops.CONST dtypes.weakint [] 0
@@ -23,7 +23,7 @@
 21 Ops.STORE dtypes.void [20, 6]
 22 Ops.SINK dtypes.void [7, 13, 17, 21] KernelInfo(name="E", optimized=True)
 23 Ops.SINK dtypes.void [7, 13, 17, 21] KernelInfo(name="E", estimates=Estimates(lds=4, mem=4), optimized=True)
-24 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 8, 9, 10, 14, 15, 16, 18, 19, 20, 5, 6, 11, 12, 7, 13, 17, 21, 22]
+24 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 8, 9, 10, 14, 15, 16, 18, 19, 20, 5, 6, 11, 12, 7, 13, 17, 21, 23]
 25 Ops.SOURCE dtypes.void [] "\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) E(bool* data0_4) {\n  *(data0_4+0) = 0;\n  *(data0_4+1) = 1;\n  *(data0_4+2) = 1;\n  *(data0_4+3) = 0;\n}"
 26 Ops.PROGRAM dtypes.void [23, 24, 25] ProgramInfo(params=(%1,), globals=(0,), outs=(0,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
 27 Ops.SINK dtypes.void [22, 26]

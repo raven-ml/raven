@@ -9,17 +9,8 @@ open Ops
 
 (* Linearizing *)
 
-(* A range counts at least one run. Counted as none, a range that may run no
-   time would place its body before the nodes around the loop, an
-   accumulator's first store among them, which would then be skipped when the
-   loop runs no time. *)
-let runs r = Bigint.max Bigint.one (Bigint.succ (Dtype.Value.to_z (vmax r)))
-
 let priority u =
   let rs = ranges u in
-  (* exact: a range bounded by a value loaded from memory runs up to its type's
-     count, and their product outgrows an [int] *)
-  let run_count = Nodes.fold (fun r n -> Bigint.mul n (runs r)) rs Bigint.one in
   (* Smaller numbers are placed closer to the top. *)
   let priority, extra =
     match (op u, arg u) with
@@ -33,15 +24,14 @@ let priority u =
     | _ -> (0, None)
   in
   (* A node in more loops is placed later. *)
-  (run_count, Nodes.cardinal rs, priority, extra)
+  (Nodes.cardinal rs, priority, extra)
 
-let pp_priority ppf (run_count, depth, priority, extra) =
+let pp_priority ppf (depth, priority, extra) =
   let pp_extra ppf = function
     | None -> Format.pp_print_string ppf "None"
     | Some slot -> Format.pp_print_int ppf slot
   in
-  Format.fprintf ppf "(%s, %d, %d, %a)" (Bigint.to_string run_count) depth
-    priority pp_extra extra
+  Format.fprintf ppf "(%d, %d, %a)" depth priority pp_extra extra
 
 (* A heap of distinct ints in [a.(0)] to [a.(n - 1)], the greatest at the
    root. *)
@@ -84,9 +74,8 @@ let linearize sink =
   (* Number the nodes in the ideal order. *)
   let tuple_order = Setting.value Setting.tuple_order in
   let ideal i0 i1 =
-    let r0, d0, p0, e0 = priorities.(i0) and r1, d1, p1, e1 = priorities.(i1) in
-    let c = Bigint.compare r0 r1 in
-    let c = if c <> 0 then c else Int.compare d0 d1 in
+    let d0, p0, e0 = priorities.(i0) and d1, p1, e1 = priorities.(i1) in
+    let c = Int.compare d0 d1 in
     let c = if c <> 0 then c else Int.compare p0 p1 in
     let c = if c <> 0 then c else Option.compare Int.compare e0 e1 in
     match c with

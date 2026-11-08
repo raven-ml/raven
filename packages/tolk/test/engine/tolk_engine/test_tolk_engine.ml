@@ -1332,6 +1332,15 @@ let custom_kernel_closes ?(devices = devices) closure () =
   equal values ~msg:"the custom kernel's" (plus 7) (contents (of_node o1))
 
 (* The custom kernels whose variable sits among their buffers. *)
+(* custom_kernel_stage and custom_kernel_stage_table: a function stages [r]
+   over [r < 4] and reads the stage at 2, the element read, 2, or the
+   element 2 of the table [10; 20; 30; 40] at that index, 30; slot 2 is that
+   plus 1. *)
+let reads_a_stage ?(devices = devices) name expected () =
+  let s, vars, storage = linked ~devices (program name) in
+  Engine.run ~vars s [||];
+  equal values [| `Int (Bigint.of_int expected) |] (contents (slot storage 2))
+
 let custom_kernel_scalars ?(devices = devices) () =
   [
     test "a custom kernel reads the run's binding of its variable"
@@ -3116,6 +3125,10 @@ let schedules =
       cases "a schedule runs on the buffers each run binds to its parameters"
         ~id:Fun.id [ "contiguous"; "copy_view" ] (fun name ->
           runs_on_its_slots name ());
+      test "a function reads its own stage at an index"
+        (reads_a_stage "custom_kernel_stage" 3);
+      test "a function reads a table at an index its own stage holds"
+        (reads_a_stage "custom_kernel_stage_table" 31);
       test "a range around a call runs it once per trip" runs_once_per_trip;
       test "a scan runs its body once per trip, carrying in place"
         scans_with_a_carry;

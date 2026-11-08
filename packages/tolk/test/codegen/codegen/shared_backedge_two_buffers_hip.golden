@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -35,9 +35,8 @@
 33 Ops.STORE dtypes.void [4, 32]
 34 Ops.BACKEDGE dtypes.void [33, 8, 21]
 35 Ops.SINK dtypes.void [34] KernelInfo(estimates=Estimates(lds=16, mem=8), optimized=True)
-36 Ops.SINK dtypes.void [34] KernelInfo(optimized=True)
-37 Ops.LINEAR dtypes.void [0, 11, 1, 20, 21, 25, 24, 2, 3, 12, 13, 7, 4, 8, 26, 27, 28, 29, 30, 31, 32, 33, 34, 36]
-38 Ops.SOURCE dtypes.void [] "\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) test(int* data0_1, int* data1_1, bool* data2_) {\n  __attribute__((shared, aligned(16)))int buf0[1];\n  __attribute__((shared, aligned(16)))int buf1[1];\n  int val0 = (*(data0_1+0));\n  for (;;) {\n    *(buf0+0) = val0;\n    __builtin_amdgcn_fence(__ATOMIC_RELEASE, \"workgroup\");__builtin_amdgcn_s_barrier();__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, \"workgroup\");\n    int val1 = (*(buf1+0));\n    *(data1_1+0) = val1;\n    if (!(data2_)) { break; }\n  }\n}"
-39 Ops.PROGRAM dtypes.void [35, 37, 38] ProgramInfo(params=(%11, %1, %21), globals=(0, 1, 2), outs=(1,), ins=(0,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
-40 Ops.SINK dtypes.void [23, 39]
+36 Ops.LINEAR dtypes.void [0, 11, 1, 20, 21, 25, 24, 2, 3, 12, 13, 7, 4, 8, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+37 Ops.SOURCE dtypes.void [] "\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) test(int* data0_1, int* data1_1, bool* data2_) {\n  __attribute__((shared, aligned(16)))int buf0[1];\n  __attribute__((shared, aligned(16)))int buf1[1];\n  int val0 = (*(data0_1+0));\n  for (;;) {\n    *(buf0+0) = val0;\n    __builtin_amdgcn_fence(__ATOMIC_RELEASE, \"workgroup\");__builtin_amdgcn_s_barrier();__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, \"workgroup\");\n    int val1 = (*(buf1+0));\n    *(data1_1+0) = val1;\n    if (!(data2_)) { break; }\n  }\n}"
+38 Ops.PROGRAM dtypes.void [35, 36, 37] ProgramInfo(params=(%11, %1, %21), globals=(0, 1, 2), outs=(1,), ins=(0,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+39 Ops.SINK dtypes.void [23, 38]
 

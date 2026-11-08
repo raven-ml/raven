@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] 8
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -57,9 +57,8 @@
 55 Ops.SINK dtypes.void [54] KernelInfo(name="uniform_gate_store", estimates=Estimates(ops=256, lds=1056, mem=1056), optimized=True)
 56 Ops.IF dtypes.void [16, 4]
 57 Ops.ENDIF dtypes.void [56]
-58 Ops.SINK dtypes.void [54] KernelInfo(name="uniform_gate_store", optimized=True)
-59 Ops.LINEAR dtypes.void [25, 26, 0, 1, 5, 40, 11, 12, 8, 9, 17, 18, 14, 15, 2, 3, 16, 19, 20, 41, 42, 27, 43, 21, 28, 29, 30, 44, 45, 46, 47, 48, 49, 50, 51, 52, 4, 56, 53, 57, 54, 58]
-60 Ops.SOURCE dtypes.void [] "\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) uniform_gate_store(float* data0_256, float* data1_8) {\n  float buf0[1];\n  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n    bool alu0 = (Lidx0<5);\n    int alu1 = (alu0?32:0);\n    *(buf0+0) = 0.0f;\n    for (int Lidx1 = 0; Lidx1 < alu1; Lidx1++) {\n      float val0 = (*(data0_256+((Lidx0<<5)+Lidx1)));\n      *(buf0+0) = ((*(buf0+0))+val0);\n    }\n    if (alu0) {\n      *(data1_8+Lidx0) = (*(buf0+0));\n    }\n  }\n}"
-61 Ops.PROGRAM dtypes.void [55, 59, 60] ProgramInfo(params=(%26, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
-62 Ops.SINK dtypes.void [39, 61]
+58 Ops.LINEAR dtypes.void [25, 26, 0, 1, 5, 40, 11, 12, 8, 9, 17, 18, 14, 15, 2, 3, 16, 19, 20, 41, 42, 27, 43, 21, 28, 29, 30, 44, 45, 46, 47, 48, 49, 50, 51, 52, 4, 56, 53, 57, 54, 55]
+59 Ops.SOURCE dtypes.void [] "\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) uniform_gate_store(float* data0_256, float* data1_8) {\n  float buf0[1];\n  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n    bool alu0 = (Lidx0<5);\n    int alu1 = (alu0?32:0);\n    *(buf0+0) = 0.0f;\n    for (int Lidx1 = 0; Lidx1 < alu1; Lidx1++) {\n      float val0 = (*(data0_256+((Lidx0<<5)+Lidx1)));\n      *(buf0+0) = ((*(buf0+0))+val0);\n    }\n    if (alu0) {\n      *(data1_8+Lidx0) = (*(buf0+0));\n    }\n  }\n}"
+60 Ops.PROGRAM dtypes.void [55, 58, 59] ProgramInfo(params=(%26, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+61 Ops.SINK dtypes.void [39, 60]
 

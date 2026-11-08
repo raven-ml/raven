@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] 256
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 16
@@ -34,7 +34,7 @@
 32 Ops.END dtypes.void [31, 16]
 33 Ops.SINK dtypes.void [32] KernelInfo(name="custom_gemm_16_16_16", optimized=True)
 34 Ops.SINK dtypes.void [32] KernelInfo(name="custom_gemm_16_16_16", estimates=Estimates(ops=8192, lds=66560, mem=4096), optimized=True)
-35 Ops.LINEAR dtypes.void [0, 1, 20, 24, 2, 3, 8, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 25, 26, 27, 28, 17, 18, 19, 29, 30, 31, 32, 33]
+35 Ops.LINEAR dtypes.void [0, 1, 20, 24, 2, 3, 8, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 25, 26, 27, 28, 17, 18, 19, 29, 30, 31, 32, 34]
 36 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) custom_gemm_16_16_16(float* data0_256, float* data1_256, float* data2_256) {\n  int gidx0 = blockIdx.x; /* 16 */\n  int gidx1 = blockIdx.y; /* 16 */\n  int alu0 = (gidx1<<4);\n  int alu1 = (alu0+gidx0);\n  *(data0_256+alu1) = 0.0f;\n  for (int Lidx2 = 0; Lidx2 < 16; Lidx2++) {\n    float val0 = (*(data1_256+(alu0+Lidx2)));\n    float val1 = (*(data2_256+((Lidx2<<4)+gidx0)));\n    float val2 = (*(data0_256+alu1));\n    *(data0_256+alu1) = (val2+(val0*val1));\n  }\n}"
 37 Ops.PROGRAM dtypes.void [34, 35, 36] ProgramInfo(global_size=(16, 16, 1), params=(%1, %20, %24), globals=(0, 1, 2), outs=(0,), ins=(0, 1, 2), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
 38 Ops.SINK dtypes.void [33, 37]

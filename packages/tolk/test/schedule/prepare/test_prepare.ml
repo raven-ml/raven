@@ -1126,7 +1126,8 @@ let earliest =
           equal uop
             (stores (Ops.bitcast v Float32))
             (prepare (Ops.sink [ Ops.store (Ops.bitcast out Int32) v ])));
-      test "a bitcast on a disk keeps its size" (fun () ->
+      test "a bitcast copied from a disk is computed after the copy"
+        (fun () ->
           let disk =
             Shape.param ~device:"DISK:/tmp/tolk" ~shape:[ Int 64 ] 1
               Uint8
@@ -1134,9 +1135,15 @@ let earliest =
           let u =
             prepare (stores (Ops.copy_to_device (Ops.bitcast disk Float32) cpu))
           in
-          is_true
-            (List.exists
-               (fun n -> Ops.op n = Bitcast && Ops.dtype (Ops.nth n 0) = Uint8)
+          let on_disk n = Ops.device n = Some "DISK:/tmp/tolk" in
+          equal
+            (list (pair Dtypes.dtype bool))
+            [ (Uint8, false) ]
+            (List.filter_map
+               (fun n ->
+                 if Ops.op n = Store && Ops.nth n 1 == disk then
+                   Some (Ops.dtype (Ops.nth n 0), on_disk (Ops.nth n 0))
+                 else None)
                (Ops.toposort ~calls:Enter u)));
       test "a value with an empty axis is zero" (fun () ->
           let none = Shape.param ~device:cpu ~shape:[ Int 0 ] 0 Float32 in

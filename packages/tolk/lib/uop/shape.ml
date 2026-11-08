@@ -2956,7 +2956,15 @@ let symbolic =
                let x = m "x" in
                let effects =
                  Op.Set.union Op.Set.effectful
-                   (ops [ Op.Range; Op.End; Op.Backedge; Op.Linear; Op.Stage ])
+                   (ops
+                      [
+                        Op.Range;
+                        Op.End;
+                        Op.Backedge;
+                        Op.Linear;
+                        Op.Stage;
+                        Op.Load;
+                      ])
                in
                let state y =
                  op y = Op.After && addrspace y = Some Dtype.Global

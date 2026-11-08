@@ -717,6 +717,33 @@ let shifts =
           keeps_writes (kernel "sum_rows_64") (K.get_optimized_ast k));
     ]
 
+(* Padding
+
+   A pad's steps are no-ops: an effect along its axis is guarded, and one that
+   cannot be is refused. *)
+
+(* [C = [r + 1]] over three [r], a store of the whole of [C] rather than
+   through an index. *)
+let whole_store () =
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 0 ] in
+  let c = Shape.param ~shape:[ Int 1 ] 0 Int32 in
+  let v =
+    Shape.reshape Ops.O.(Ops.cast r Int32 + Ops.int ~dtype:Int32 1) [ Int 1 ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ (Ops.store c v) [ r ] ]
+
+let padding =
+  group "padding"
+    [
+      test "apply_opt refuses a pad of an axis a whole store runs along"
+        (fun () ->
+          let k = K.v (whole_store ()) (renderer "cpu") in
+          equal
+            (result (list Uops.uop) string)
+            (Error "cannot gate STORE in a padded range")
+            (K.apply_opt k (Opt.Padto { axis = 0; amount = 4 })));
+    ]
+
 let split_targets =
   group "split_targets"
     [
@@ -1096,6 +1123,7 @@ let () =
          bounded_loops;
          range_types;
          called_axes;
+         padding;
          queries;
          shifts;
          split_targets;

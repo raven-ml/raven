@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.SINK dtypes.void []
 1 Ops.LINEAR dtypes.void [0]
 2 Ops.CONST dtypes.weakint [] 16
@@ -77,15 +77,15 @@
 75 Ops.CONST dtypes.weakint [] 8
 76 Ops.INDEX dtypes.f32 [3, 67]
 77 Ops.LOAD dtypes.f32 [76]
-78 Ops.MUL dtypes.weakint [67, 75]
-79 Ops.RANGE dtypes.weakint [75] (AxisType.LOOP, 1)
-80 Ops.INDEX dtypes.f32 [3, 79]
-81 Ops.LOAD dtypes.f32 [80]
-82 Ops.ADD dtypes.weakint [78, 79]
+78 Ops.RANGE dtypes.weakint [75] (AxisType.LOOP, 1)
+79 Ops.INDEX dtypes.f32 [3, 78]
+80 Ops.LOAD dtypes.f32 [79]
+81 Ops.MUL dtypes.weakint [67, 75]
+82 Ops.ADD dtypes.weakint [81, 78]
 83 Ops.INDEX dtypes.f32 [4, 82]
-84 Ops.ADD dtypes.f32 [77, 81]
+84 Ops.ADD dtypes.f32 [77, 80]
 85 Ops.STORE dtypes.void [83, 84]
-86 Ops.END dtypes.void [85, 67, 79]
+86 Ops.END dtypes.void [85, 67, 78]
 87 Ops.SINK dtypes.void [86]
 88 Ops.LINEAR dtypes.void [2, 3, 4, 32, 75, 67, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87]
 89 Ops.ADD dtypes.f32 [10, 42]

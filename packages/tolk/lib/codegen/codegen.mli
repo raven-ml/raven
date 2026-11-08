@@ -99,8 +99,8 @@ val to_program :
     and whose sources are:
     + the lowered sink ({!full_rewrite_to_sink}, optimised unless [ast]'s
       kernel information is [optimized]), whose kernel information holds the
-      program's cost estimates
-      ({!Renderer.Estimates.of_uops}, not counting index arithmetic);
+      program's cost estimates: {!Renderer.Estimates.of_uops} of the sink
+      linearized ({!Linearizer.linearize}), not counting index arithmetic;
     + an {!Op.Linear} of the instructions: the sink linearized
       ({!Linearizer.linearize}), gated stores made conditional
       ({!pm_linearize_cleanups}), and each {!Op.Alloc} made a {!Op.Buffer};

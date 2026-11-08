@@ -210,8 +210,10 @@ def binary_bounds():
     for op in (Ops.OR, Ops.AND, Ops.CMPNE, Ops.CMPLT, Ops.XOR):
         for a in [(False, False), (False, True), (True, True)]:
             for b in [(False, False), (False, True), (True, True)]: row(op, dtypes.bool, a, b)
-    for op in (Ops.MAX, Ops.CMPLT):
+    # runtime/test_dtype.py::TestFp8sConversions::test_nan_compare: bounds never prove a float comparison true, a NaN comparing false
+    for op in (Ops.MAX, Ops.CMPLT, Ops.CMPEQ):
         row(op, dtypes.float, (0.0, 1.0), (2.0, 3.0))
+    row(Ops.CMPEQ, dtypes.float, (1.0, 1.0), (1.0, 1.0))
     return ["op", "dtype", "a_lo", "a_hi", "b_lo", "b_hi", "vmin", "vmax"], rows
 
 

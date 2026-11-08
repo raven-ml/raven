@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 64
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
@@ -52,7 +52,7 @@
 50 Ops.AFTER dtypes.void [0, 13, 28, 39, 49]
 51 Ops.SINK dtypes.void [50] KernelInfo(name="E_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL))), optimized=True)
 52 Ops.SINK dtypes.void [50] KernelInfo(name="E_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL))), estimates=Estimates(ops=64, lds=704, mem=528), optimized=True)
-53 Ops.LINEAR dtypes.void [1, 2, 7, 18, 19, 3, 4, 5, 8, 9, 14, 16, 17, 29, 30, 31, 33, 34, 40, 41, 42, 44, 45, 22, 23, 46, 47, 20, 21, 24, 25, 0, 6, 15, 32, 43, 26, 35, 36, 37, 10, 11, 12, 27, 38, 48, 13, 28, 39, 49, 50, 51]
+53 Ops.LINEAR dtypes.void [1, 2, 7, 18, 19, 3, 4, 5, 8, 9, 14, 16, 17, 29, 30, 31, 33, 34, 40, 41, 42, 44, 45, 22, 23, 46, 47, 20, 21, 24, 25, 0, 6, 15, 32, 43, 26, 35, 36, 37, 10, 11, 12, 27, 38, 48, 13, 28, 39, 49, 50, 52]
 54 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(16) E_16_4(float* data0_64, float* data1_64, float* data2_4) {\n  int lidx0 = threadIdx.x; /* 16 */\n  float val0 = (*(data1_64+lidx0));\n  int alu0 = (lidx0+16);\n  float val1 = (*(data1_64+alu0));\n  int alu1 = (lidx0+32);\n  float val2 = (*(data1_64+alu1));\n  int alu2 = (lidx0+48);\n  float val3 = (*(data1_64+alu2));\n  float val4 = (*(data2_4+2));\n  float2 val5 = (*((float2*)((data2_4+0))));\n  *(data0_64+lidx0) = (val0+0.0f);\n  *(data0_64+alu0) = (val1+val5.x);\n  *(data0_64+alu1) = (val2+val5.y);\n  *(data0_64+alu2) = (val3+val4);\n}"
 55 Ops.PROGRAM dtypes.void [52, 53, 54] ProgramInfo(local_size=(16, 1, 1), params=(%2, %7, %19), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
 56 Ops.SINK dtypes.void [51, 55]

@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.STACK dtypes.void []
@@ -47,7 +47,7 @@
 45 Ops.AFTER dtypes.void [2, 44]
 46 Ops.SINK dtypes.void [1, 45] KernelInfo(name="E_2_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),), optimized=True)
 47 Ops.SINK dtypes.void [1, 45] KernelInfo(name="E_2_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),), estimates=Estimates(ops=8, lds=32, mem=32), optimized=True)
-48 Ops.LINEAR dtypes.void [0, 1, 10, 6, 16, 3, 4, 5, 22, 17, 13, 14, 18, 19, 20, 21, 32, 33, 28, 23, 24, 25, 26, 27, 29, 30, 34, 31, 35, 36, 37, 38, 7, 8, 11, 12, 2, 15, 41, 39, 40, 42, 43, 9, 44, 45, 46]
+48 Ops.LINEAR dtypes.void [0, 1, 10, 6, 16, 3, 4, 5, 22, 17, 13, 14, 18, 19, 20, 21, 32, 33, 28, 23, 24, 25, 26, 27, 29, 30, 34, 31, 35, 36, 37, 38, 7, 8, 11, 12, 2, 15, 41, 39, 40, 42, 43, 9, 44, 45, 47]
 49 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) E_2_2(float* data0_4, float* data1_4) {\n  int buf0[1];\n  int gidx0 = blockIdx.x; /* 2 */\n  *(buf0+0) = 0;\n  for (;;) {\n    int cast0 = ((int)((((uint)((*(buf0+0))))+1u)));\n    *(buf0+0) = cast0;\n    if (!((cast0<3))) { break; }\n  }\n  int alu3 = (gidx0<<1);\n  float2 val0 = (*((float2*)((data1_4+alu3))));\n  float cast1 = ((float)((*(buf0+0))));\n  *((float2*)((data0_4+alu3))) = make_float2((val0.x+cast1),(val0.y+cast1));\n}"
 50 Ops.PROGRAM dtypes.void [47, 48, 49] ProgramInfo(global_size=(2, 1, 1), params=(%1, %10), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
 51 Ops.SINK dtypes.void [46, 50]

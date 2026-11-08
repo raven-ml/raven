@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -95,9 +95,8 @@
 93 Ops.SINK dtypes.void [92] KernelInfo(name="r_16_256", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)),), estimates=Estimates(ops=4368, lds=17536, mem=16388), optimized=True)
 94 Ops.IF dtypes.void [55, 4]
 95 Ops.ENDIF dtypes.void [94]
-96 Ops.SINK dtypes.void [92] KernelInfo(name="r_16_256", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)),), optimized=True)
-97 Ops.LINEAR dtypes.void [0, 1, 23, 24, 61, 58, 10, 76, 11, 13, 62, 2, 3, 63, 7, 8, 17, 18, 25, 26, 64, 19, 27, 28, 29, 30, 65, 66, 67, 68, 69, 70, 78, 79, 80, 71, 77, 81, 82, 83, 59, 60, 72, 73, 74, 75, 84, 85, 86, 87, 88, 89, 90, 91, 4, 55, 94, 92, 95, 96]
-98 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) r_16_256(float* data0_1, float* data1_4096) {\n  float buf0[1];\n  float buf1[1];\n  __attribute__((shared, aligned(16)))float buf2[16];\n  int lidx0 = __ockl_get_local_id(0); /* 16 */\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data1_4096+((Lidx0<<4)+lidx0)));\n    *(buf0+0) = ((*(buf0+0))+val0);\n  }\n  *(buf2+lidx0) = (*(buf0+0));\n  __builtin_amdgcn_fence(__ATOMIC_RELEASE, \"workgroup\");__builtin_amdgcn_s_barrier();__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, \"workgroup\");\n  *(buf1+0) = 0.0f;\n  for (int Lidx101 = 0; Lidx101 < 16; Lidx101++) {\n    float val1 = (*(buf2+Lidx101));\n    *(buf1+0) = ((*(buf1+0))+val1);\n  }\n  if ((lidx0==0)) {\n    *(data0_1+0) = (*(buf1+0));\n  }\n}"
-99 Ops.PROGRAM dtypes.void [93, 97, 98] ProgramInfo(local_size=(16, 1, 1), params=(%1, %24), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
-100 Ops.SINK dtypes.void [57, 99]
+96 Ops.LINEAR dtypes.void [0, 1, 23, 24, 61, 58, 10, 76, 11, 13, 62, 2, 3, 63, 7, 8, 17, 18, 25, 26, 64, 19, 27, 28, 29, 30, 65, 66, 67, 68, 69, 70, 78, 79, 80, 71, 77, 81, 82, 83, 59, 60, 72, 73, 74, 75, 84, 85, 86, 87, 88, 89, 90, 91, 4, 55, 94, 92, 95, 93]
+97 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) r_16_256(float* data0_1, float* data1_4096) {\n  float buf0[1];\n  float buf1[1];\n  __attribute__((shared, aligned(16)))float buf2[16];\n  int lidx0 = __ockl_get_local_id(0); /* 16 */\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data1_4096+((Lidx0<<4)+lidx0)));\n    *(buf0+0) = ((*(buf0+0))+val0);\n  }\n  *(buf2+lidx0) = (*(buf0+0));\n  __builtin_amdgcn_fence(__ATOMIC_RELEASE, \"workgroup\");__builtin_amdgcn_s_barrier();__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, \"workgroup\");\n  *(buf1+0) = 0.0f;\n  for (int Lidx101 = 0; Lidx101 < 16; Lidx101++) {\n    float val1 = (*(buf2+Lidx101));\n    *(buf1+0) = ((*(buf1+0))+val1);\n  }\n  if ((lidx0==0)) {\n    *(data0_1+0) = (*(buf1+0));\n  }\n}"
+98 Ops.PROGRAM dtypes.void [93, 96, 97] ProgramInfo(local_size=(16, 1, 1), params=(%1, %24), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+99 Ops.SINK dtypes.void [57, 98]
 

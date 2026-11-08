@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] -8
 1 Ops.CONST dtypes.weakint [] 0
 2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)

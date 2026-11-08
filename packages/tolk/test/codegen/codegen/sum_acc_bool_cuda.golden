@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -44,9 +44,8 @@
 42 Ops.LOAD dtypes.i32 [41]
 43 Ops.STORE dtypes.void [4, 42]
 44 Ops.SINK dtypes.void [43] KernelInfo(name="r_3", estimates=Estimates(ops=3, lds=7, mem=7), optimized=True)
-45 Ops.SINK dtypes.void [43] KernelInfo(name="r_3", optimized=True)
-46 Ops.LINEAR dtypes.void [0, 1, 8, 15, 29, 2, 3, 30, 9, 31, 10, 16, 17, 32, 33, 34, 18, 35, 19, 36, 37, 38, 39, 40, 41, 42, 4, 43, 45]
-47 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) r_3(int* data0_1, bool* data1_3) {\n  int buf0[1];\n  *(buf0+0) = 0;\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    bool val0 = (*(data1_3+Lidx0));\n    *(buf0+0) = ((int)((((uint)((*(buf0+0))))+((uint)(((int)(val0)))))));\n  }\n  *(data0_1+0) = (*(buf0+0));\n}"
-48 Ops.PROGRAM dtypes.void [44, 46, 47] ProgramInfo(params=(%1, %15), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
-49 Ops.SINK dtypes.void [28, 48]
+45 Ops.LINEAR dtypes.void [0, 1, 8, 15, 29, 2, 3, 30, 9, 31, 10, 16, 17, 32, 33, 34, 18, 35, 19, 36, 37, 38, 39, 40, 41, 42, 4, 43, 44]
+46 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) r_3(int* data0_1, bool* data1_3) {\n  int buf0[1];\n  *(buf0+0) = 0;\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    bool val0 = (*(data1_3+Lidx0));\n    *(buf0+0) = ((int)((((uint)((*(buf0+0))))+((uint)(((int)(val0)))))));\n  }\n  *(data0_1+0) = (*(buf0+0));\n}"
+47 Ops.PROGRAM dtypes.void [44, 45, 46] ProgramInfo(params=(%1, %15), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+48 Ops.SINK dtypes.void [28, 47]
 

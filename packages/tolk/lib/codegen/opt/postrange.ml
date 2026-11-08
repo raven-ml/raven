@@ -804,20 +804,32 @@ module Scheduler = struct
             replace rng ~src:[ const_like (nth rng 0) (`Int new_sz) ]
           in
           let valid_ = O.(replaced_rng < z sz) in
-          (* Every access along the padded range is guarded, its offsets
-             aside: a counter [C[0]] ordered after the range would count the
-             padding. *)
-          let pad_buf b =
+          let gate b =
             let i = nth b 1 in
-            if mem_ranges rng b then
-              [
-                ( b,
-                  replace b
-                    ~src:
-                      [ nth b 0; valid (get_idx i) O.(valid_ land get_valid i) ]
-                );
-              ]
-            else []
+            replace b
+              ~src:[ nth b 0; valid (get_idx i) O.(valid_ land get_valid i) ]
+          in
+          let pad_buf b =
+            if mem_ranges rng (nth b 1) then [ (b, gate b) ] else []
+          in
+          (* The padded steps are no-ops: an indexed store's index and a
+             loop's back edge are gated; any other effect but a barrier cannot
+             be gated. *)
+          let pad_effect u =
+            if not (mem_ranges rng u) then []
+            else
+              match (op u, src u) with
+              | Op.Store, (i :: rest) when op i = Op.Index ->
+                  [ (u, replace u ~src:(gate i :: rest)) ]
+              | Op.Backedge, [ x; loop; cond ] ->
+                  [ (u, replace u ~src:[ x; loop; O.(valid_ land cond) ]) ]
+              | Op.Barrier, _ -> []
+              | o, _ ->
+                  if Op.Set.mem o Op.Set.effectful then
+                    raise_notrace
+                      (Refused
+                         (strf "cannot gate %s in a padded range" (Op.name o)))
+                  else []
           in
           let pad_reduce r =
             if List.memq rng (List.tl (src r)) then
@@ -837,6 +849,7 @@ module Scheduler = struct
           k.ast <-
             substitute ~calls:Skip ~pass:Fixed_point k.ast
               (((rng, replaced_rng) :: List.concat_map pad_buf (bufs k))
+              @ List.concat_map pad_effect (slice k)
               @ List.concat_map pad_reduce (reduceops k));
           [ replaced_rng ]
       | Swap { axis; with_axis } ->

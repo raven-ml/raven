@@ -20,7 +20,8 @@ from golden import graph, table
 from tinygrad import Tensor, Variable, dtypes, function
 from tinygrad.dtype import AddrSpace, Invalid
 from tinygrad.helpers import DEV
-from tinygrad.uop.ops import KernelInfo, Ops, UOp
+from tinygrad.uop.ops import AxisType, KernelInfo, Ops, UOp
+from tinygrad.schedule.rangeify import BufferizeOpts
 import tinygrad.schedule
 import tinygrad.tensor
 
@@ -108,6 +109,19 @@ def custom_kernel_variable_arg():
     (runtime/test_custom_kernel.py, test_variable_arg_is_not_copy)."""
     n = Tensor(Variable("n", 1, 8, dtype=dtypes.int32).bind(2))
     return Tensor.custom_kernel(empty(8, dtype=dtypes.int32), n, fxn=store_split_by_n)[0] + 1
+
+
+def read_stage(direct):
+    """A function, a sink without kernel information, that stages a range and
+    reads the stage at a constant, directly or as the index of a table
+    (runtime/test_custom_kernel.py, test_explicit_stage_scalar_index): the
+    stage is storage, read as it is."""
+    def kernel(out):
+        r = UOp.range(4, 0, AxisType.LOOP, dtype=dtypes.int32)
+        v = r.bufferize(r, arg=BufferizeOpts(out.device, removable=False)).index(2).load()
+        table = UOp.stack(*[UOp.const(x, dtypes.int32) for x in (10, 20, 30, 40)])
+        return out.index(0).store(v if direct else table.index(v)).sink()
+    return lambda: empty(1, dtype=dtypes.int32).custom_kernel(fxn=kernel)[0] + 1
 
 
 def assign_reads_behind_other_after():
@@ -337,6 +351,8 @@ PROGRAMS = {
     "custom_kernel_scalar_first": custom_kernel_scalar_first,
     "custom_kernel_scalar_with_other_variable": custom_kernel_scalar_with_other_variable,
     "custom_kernel_unused_then_variable": custom_kernel_unused_then_variable,
+    "custom_kernel_stage": read_stage(True),
+    "custom_kernel_stage_table": read_stage(False),
     "inline_function": inline_function,
     "precompiled_function": precompiled_function,
     "chained_functions": chained_functions,

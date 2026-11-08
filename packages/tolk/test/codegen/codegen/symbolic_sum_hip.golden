@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -49,9 +49,8 @@
 47 Ops.ADD dtypes.i32 [2, 46]
 48 Ops.ADD dtypes.i32 [47, 41]
 49 Ops.SINK dtypes.void [40] KernelInfo(name="r_n", estimates=Estimates(ops=%11, lds=%45, mem=%48), optimized=True)
-50 Ops.SINK dtypes.void [40] KernelInfo(name="r_n", optimized=True)
-51 Ops.LINEAR dtypes.void [0, 1, 16, 17, 10, 11, 28, 2, 3, 29, 7, 8, 30, 12, 18, 19, 31, 32, 33, 34, 35, 36, 37, 38, 39, 4, 40, 50]
-52 Ops.SOURCE dtypes.void [] "\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) r_n(float* data0_1, float* data1_64, const int n_) {\n  float buf0[1];\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < n_; Lidx0++) {\n    float val0 = (*(data1_64+Lidx0));\n    *(buf0+0) = ((*(buf0+0))+val0);\n  }\n  *(data0_1+0) = (*(buf0+0));\n}"
-53 Ops.PROGRAM dtypes.void [49, 51, 52] ProgramInfo(params=(%1, %17, %11), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
-54 Ops.SINK dtypes.void [27, 53]
+50 Ops.LINEAR dtypes.void [0, 1, 16, 17, 10, 11, 28, 2, 3, 29, 7, 8, 30, 12, 18, 19, 31, 32, 33, 34, 35, 36, 37, 38, 39, 4, 40, 49]
+51 Ops.SOURCE dtypes.void [] "\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) r_n(float* data0_1, float* data1_64, const int n_) {\n  float buf0[1];\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < n_; Lidx0++) {\n    float val0 = (*(data1_64+Lidx0));\n    *(buf0+0) = ((*(buf0+0))+val0);\n  }\n  *(data0_1+0) = (*(buf0+0));\n}"
+52 Ops.PROGRAM dtypes.void [49, 50, 51] ProgramInfo(params=(%1, %17, %11), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+53 Ops.SINK dtypes.void [27, 52]
 

@@ -863,7 +863,7 @@ let lower_reduce (slots, ren) r =
           if num_axes = 0 then add acc_initted ret
           else alu acc_initted op [ ret ]
     in
-    Some (after acc [ end_ (store acc_initted update) rngs ])
+    Some (load (after acc [ end_ (store acc_initted update) rngs ]) [])
 
 let pm_reduce_local =
   pm
@@ -1828,11 +1828,6 @@ let with_estimates sink lin =
     in
     Some (replace sink ~arg:(Kernel { k with estimates = Some estimates }))
 
-let do_estimates prg sink lin =
-  Option.map
-    (fun sink -> replace prg ~src:(sink :: srcs prg))
-    (with_estimates sink lin)
-
 (* A kernel that takes its arguments as bytes reads them from one parameter,
    [args], where each lies at its offset ({!Device.Tiny_elf.iter_sig}): a scalar
    is the value loaded there, and a buffer the address loaded there, read as the
@@ -1971,15 +1966,11 @@ let do_compile ((ren : Renderer.t), compile) prg source =
 let program_with srcs = Upat.op Op.Program ~src:srcs ~name:"prg"
 
 let pm_linearize =
-  let sink = Upat.op Op.Sink ~name:"sink"
-  and lin = Upat.op Op.Linear ~name:"lin" in
+  let sink = Upat.op Op.Sink ~name:"sink" in
   pm
     (fun () -> [
       rule (program_with [ sink ]) (fun m ->
           Some (do_linearize (m "prg") (m "sink")));
-      rule
-        (program_with [ sink; lin ])
-        (fun m -> do_estimates (m "prg") (m "sink") (m "lin"));
     ])
 
 (* Its context is the renderer and how a source is compiled. *)
@@ -2330,14 +2321,13 @@ let linearized ?beam ast (ren : Renderer.t) =
   let full_sink = full_rewrite_to_sink ~optimize ?beam ast ren in
   let info = program_info_of_sink ~target:ren.target full_sink in
   let full_sink =
-    if not ren.packed_args then full_sink
-    else
-      let lin = v Op.Linear ~src:(Linearizer.linearize full_sink) in
-      let full_sink =
-        Option.value (with_estimates full_sink lin) ~default:full_sink
-      in
-      if (kernel_info full_sink).kernel then pack_args full_sink info.params
-      else full_sink
+    let lin = v Op.Linear ~src:(Linearizer.linearize full_sink) in
+    Option.value (with_estimates full_sink lin) ~default:full_sink
+  in
+  let full_sink =
+    if ren.packed_args && (kernel_info full_sink).kernel then
+      pack_args full_sink info.params
+    else full_sink
   in
   graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
     (v Op.Program ~src:[ full_sink ] ~arg:(Program info))

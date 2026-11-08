@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 codegen/codegen/add_big_clang.golden
 codegen/codegen/add_big_cuda.golden
 codegen/codegen/add_big_hip.golden
@@ -3743,6 +3743,14 @@ schedule/schedule/custom_kernel_scalar_with_other_variable_kernels.golden
 schedule/schedule/custom_kernel_scalar_with_other_variable_linear.golden
 schedule/schedule/custom_kernel_scalar_with_other_variable_schedule.golden
 schedule/schedule/custom_kernel_schedule.golden
+schedule/schedule/custom_kernel_stage.golden
+schedule/schedule/custom_kernel_stage_kernels.golden
+schedule/schedule/custom_kernel_stage_linear.golden
+schedule/schedule/custom_kernel_stage_schedule.golden
+schedule/schedule/custom_kernel_stage_table.golden
+schedule/schedule/custom_kernel_stage_table_kernels.golden
+schedule/schedule/custom_kernel_stage_table_linear.golden
+schedule/schedule/custom_kernel_stage_table_schedule.golden
 schedule/schedule/custom_kernel_unused_then_variable.golden
 schedule/schedule/custom_kernel_unused_then_variable_kernels.golden
 schedule/schedule/custom_kernel_unused_then_variable_linear.golden

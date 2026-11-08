@@ -528,8 +528,9 @@ let reduces_in over u =
 
 (* [k]'s contraction: its first reduction that sums a product of two
    computations of accesses, neither reading a reduction that runs in a
-   range the sum closes, and the ranges it closes in the order of [k]'s axes. A
-   reduction an operand reads, such as a row's expert, comes before it. *)
+   range the sum closes, over at least one of [k]'s weak axes, and the ranges
+   it closes in the order of [k]'s axes. A reduction an operand reads, such as
+   a row's expert, comes before it. *)
 let contraction k =
   let sums_product r =
     (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
@@ -546,7 +547,9 @@ let contraction k =
             (ranges_of ~reduce:true k [ Weak ])
         in
         let operand o = accesses o <> [] && not (reduces_in over o) in
-        if operand (nth m 0) && operand (nth m 1) then Some (m, over) else None)
+        if over <> [] && operand (nth m 0) && operand (nth m 1) then
+          Some (m, over)
+        else None)
     (K.reduceops k)
 
 let contracted k =

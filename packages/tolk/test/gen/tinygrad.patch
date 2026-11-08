@@ -14,7 +14,7 @@ index c19a95f13..b70de225a 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index f4535a4f7..77d16d16b 100644
+index 9fb9a4c3f..7defa0df8 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,31 +2,31 @@ from dataclasses import replace, dataclass, field
@@ -388,7 +388,7 @@ index f4535a4f7..77d16d16b 100644
 +    update = acc_initted.alu(op, ret)
 +    if horizontal == 0 and fused: update = update.replace(arg="fusable")
 +  acc_out = acc_initted.store(update).end(*r.src[1:])
-   return acc.after(acc_out)
+   return acc.after(acc_out).load()
  
 -pm_reduce_local = pm_wmma_add+PatternMatcher([
 +pm_reduce_local = PatternMatcher([
@@ -618,7 +618,7 @@ index f4535a4f7..77d16d16b 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -443,9 +844,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+@@ -443,6 +844,19 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  
@@ -635,18 +635,13 @@ index f4535a4f7..77d16d16b 100644
 +    return x.substitute({lo: lo.const_like(0), hi: n}).ssimplify()
 +  return Estimates(fill(e.ops), fill(e.lds), fill(e.mem))
 +
- def do_estimates(prg:UOp, sink:UOp, lin:UOp) -> UOp|None:
-   if sink.arg.estimates is not None: return None
--  return prg.replace(src=(sink.replace(arg=replace(sink.arg, estimates=Estimates.from_uops(lin.src, ignore_indexing=True))),)+prg.src[1:])
-+  estimates = whole_loop(sink.arg, lin.src, Estimates.from_uops(lin.src, ignore_indexing=True))
-+  return prg.replace(src=(sink.replace(arg=replace(sink.arg, estimates=estimates)),)+prg.src[1:])
- 
  def do_assemble(ctx:Renderer, prg:UOp, lin:UOp) -> UOp|None:
    if getattr(type(ctx), "asm") is Renderer.asm: return None
-@@ -493,7 +908,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
+   src = "\n".join(str(u.arg[0]) for u in lin.src)
+@@ -488,7 +902,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
      full_sink = full_rewrite_to_sink(ast, renderer, optimize=not ast.arg.optimized)
      prog_info = ProgramInfo.from_sink(full_sink, renderer.target)
-     if (isinstance(renderer, ISARenderer) or renderer.packed_args) and full_sink.arg.estimates is None:
+     if full_sink.arg.estimates is None:
 -      full_sink = full_sink.replace(arg=replace(full_sink.arg, estimates=Estimates.from_uops(tuple(linearize(full_sink)), ignore_indexing=True)))
 +      lst = tuple(linearize(full_sink))
 +      full_sink = full_sink.replace(arg=replace(full_sink.arg, estimates=whole_loop(full_sink.arg, lst, Estimates.from_uops(lst, ignore_indexing=True))))
@@ -1362,20 +1357,6 @@ index 65fb29491..7bdb9b872 100644
      lengths.append(1)  # worst case, it's not folded
      # do the grouping
      for _,group in itertools.groupby(enumerate(sorted(offsets.keys())), lambda x: x[1]-x[0]):
-diff --git a/tinygrad/codegen/late/linearizer.py b/tinygrad/codegen/late/linearizer.py
-index 0838d70c9..dadd54ab5 100644
---- a/tinygrad/codegen/late/linearizer.py
-+++ b/tinygrad/codegen/late/linearizer.py
-@@ -17,7 +17,8 @@ def linearize(sink:UOp) -> list[UOp]:
-     for s in u.src_without_body: out_degree[s] += 1
- 
-     # we place UOps with higher run_counts later
--    run_count = prod([int(r.vmax)+1 for r in u.ranges])
-+    # a range counts at least one run, so that a range that may run no time is placed as one that runs once
-+    run_count = prod([max(1, int(r.vmax)+1) for r in u.ranges])
- 
-     # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
-     extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
 index ec97cac6f..9e238a9a7 100644
 --- a/tinygrad/codegen/opt/heuristic.py
@@ -2004,15 +1985,15 @@ index ec97cac6f..9e238a9a7 100644
        deleted_shape = 0
        for axis, local_sz in sorted(to_local[:3]):
 diff --git a/tinygrad/codegen/opt/postrange.py b/tinygrad/codegen/opt/postrange.py
-index d7f19cd30..ca5a6580d 100644
+index a54fbf3aa..f99b47107 100644
 --- a/tinygrad/codegen/opt/postrange.py
 +++ b/tinygrad/codegen/opt/postrange.py
 @@ -1,10 +1,10 @@
  from __future__ import annotations
  import itertools
  from typing import cast
--from tinygrad.uop.ops import Ops, UOp, KernelInfo, graph_rewrite, AxisType, ssimplify, identity_element
-+from tinygrad.uop.ops import Ops, UOp, KernelInfo, graph_rewrite, AxisType, ssimplify, identity_element, ParamArg
+-from tinygrad.uop.ops import Ops, GroupOp, UOp, KernelInfo, graph_rewrite, AxisType, ssimplify, identity_element
++from tinygrad.uop.ops import Ops, GroupOp, UOp, KernelInfo, graph_rewrite, AxisType, ssimplify, identity_element, ParamArg
  from tinygrad.uop.ops import axis_colors
  from tinygrad.device import Buffer
 -from tinygrad.dtype import dtypes
@@ -2141,7 +2122,7 @@ index d7f19cd30..ca5a6580d 100644
        # TODO: upcasted is only wrong for a range pinned in WMMA tc_upcast_axes
        check(rng.axis_type not in {AxisType.UPCAST, AxisType.WARP}, "cannot pad upcasted or warp")
        new_sz = round_up(int(rng.vmax+1), cast(int, opt.arg))
-@@ -154,6 +200,39 @@ class Scheduler:
+@@ -161,6 +207,39 @@ class Scheduler:
      if append_opt: self.applied_opts.append(opt)
      return ret
  
@@ -2181,7 +2162,7 @@ index d7f19cd30..ca5a6580d 100644
    def _apply_tc_opt(self, use_tensor_cores:int, axis:int, tc_select:int, opt_level:int) -> None|list[UOp]:
      if not (reduceops := self.reduceops): raise KernelOptError("no reduce ops for TensorCore")
      reduceop = reduceops[0]
-@@ -163,21 +242,28 @@ class Scheduler:
+@@ -170,21 +249,28 @@ class Scheduler:
        in0, in1 = mul.src
        for tc in self.ren.tensor_cores if tc_select == -1 else [self.ren.tensor_cores[tc_select]]:
          if self.ren.target.device in ("CUDA", "NV") and tc.dtype_in == dtypes.float and not ALLOW_TF32: continue
@@ -2222,7 +2203,7 @@ index d7f19cd30..ca5a6580d 100644
            check(not any(r in self.reduce_ranges for r in axes[:2]), "tensor core N and M can't be contracted")
  
            # do optimizations and save the ranges
-@@ -200,7 +286,11 @@ class Scheduler:
+@@ -207,7 +293,11 @@ class Scheduler:
              reduceop = get_single_element([x for x in self.reduceops if axes[2] in x.src[1:]])
              gate, mul = (r0.src[0], r0.src[1]) if (r0:=reduceop.src[0]).op is Ops.WHERE else (None, r0)
              if mul.op is Ops.CAST: mul = mul.src[0]
@@ -2235,7 +2216,7 @@ index d7f19cd30..ca5a6580d 100644
              srcs = [x.substitute({ne[a]: ne[b] for a,b in rl.items()}, walk=True) for x,rl in zip(ins, tc.relabel())]
  
              # get upcast axes for the tensor cores
-@@ -236,13 +326,18 @@ def args_from_ast(ast:UOp, dname:str) -> tuple[list[Buffer], dict[str, int]]:
+@@ -243,13 +333,18 @@ def args_from_ast(ast:UOp, dname:str) -> tuple[list[Buffer], dict[str, int]]:
    glbls = sorted([x for x in ast.backward_slice if x.op is Ops.PARAM and x.arg.slot >= 0], key=lambda x: x.arg.slot)
    return [Buffer(dname, x.max_numel() * x.dtype.itemsize) for x in glbls], {k.expr:int(k.vmax+k.vmin)//2 for k in ast.variables()}
  
@@ -2255,7 +2236,7 @@ index d7f19cd30..ca5a6580d 100644
      from tinygrad.codegen.opt.search import beam_search
      rawbufs, var_vals = args_from_ast(ast, ren.target.device)
      # beam search may open devices
-@@ -251,6 +346,6 @@ def apply_opts(ast:UOp, ren:Renderer, beam:int=0) -> UOp:
+@@ -258,6 +353,6 @@ def apply_opts(ast:UOp, ren:Renderer, beam:int=0) -> UOp:
    elif not NOOPT and (ast.arg is None or ast.arg.applied_opts == ()):
      from tinygrad.codegen.opt.heuristic import hand_coded_optimizations
      # NOTE: hand_coded_optimizations doesn't support multiblock opts yet
@@ -2280,7 +2261,7 @@ index af2199821..901f0054c 100644
      uops = prg.src[1].src
      if len(uops) >= (uops_max:=getenv("BEAM_UOPS_MAX", 3000)) > 0:
 diff --git a/tinygrad/codegen/simplify.py b/tinygrad/codegen/simplify.py
-index b68c1d948..3bff7a59e 100644
+index b17b303b2..170b1c593 100644
 --- a/tinygrad/codegen/simplify.py
 +++ b/tinygrad/codegen/simplify.py
 @@ -1,9 +1,9 @@
@@ -2422,7 +2403,7 @@ index b68c1d948..3bff7a59e 100644
  ])
  
 diff --git a/tinygrad/dtype.py b/tinygrad/dtype.py
-index 625b9e65f..e8ef83627 100644
+index f25149cd7..781d4bc82 100644
 --- a/tinygrad/dtype.py
 +++ b/tinygrad/dtype.py
 @@ -6,7 +6,7 @@ from tinygrad.helpers import getenv, DEFAULT_FLOAT, DEFAULT_INT
@@ -2653,7 +2634,7 @@ index 7fb5ccac2..7d16f2fd2 100644
    tensor_cores: list[TensorCore] = []
    extra_matcher: PatternMatcher|None = None
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
-index 6eec3e198..dc135ab13 100644
+index d5f2494e4..4c9bbeaf7 100644
 --- a/tinygrad/renderer/cstyle.py
 +++ b/tinygrad/renderer/cstyle.py
 @@ -5,9 +5,28 @@ from tinygrad.renderer import tc
@@ -3146,7 +3127,7 @@ index 6eec3e198..dc135ab13 100644
    def asm(self, prg:UOp, lin:UOp) -> bytes:
      from tinygrad.renderer.amd.elf import assemble_linear
 diff --git a/tinygrad/schedule/__init__.py b/tinygrad/schedule/__init__.py
-index 7ead5c9c6..9db88bbed 100644
+index 366485ae0..0b8681bfb 100644
 --- a/tinygrad/schedule/__init__.py
 +++ b/tinygrad/schedule/__init__.py
 @@ -2,7 +2,7 @@ import time, inspect
@@ -3386,16 +3367,16 @@ index 7ead5c9c6..9db88bbed 100644
  
  def contiguous_mops_to_view(ctx:CallifyCtx|None, c:UOp, src:UOp):
    """MOPS(BUFFER) → SHRINK when movement ops collapse to a contiguous range."""
-@@ -204,6 +314,9 @@ def contiguous_mops_to_view(ctx:CallifyCtx|None, c:UOp, src:UOp):
-     return None if view is None else view.unshard(unshard.arg, unshard.src[1:])
- 
-   if buf.op is not Ops.BUFFER or (cv := src.contiguous_view()) is None or cv[0].op is not Ops.BUFFER: return None
-+  # a copy or a stage of a buffer the call writes reads the state it was taken of, which a view, read when its reader runs,
-+  # would not hold
-+  if c.op is not Ops.STORE and ctx is not None and cv[0] in ctx.written: return None
-   buf, offset = cv
-   view = buf[offset:offset + src.max_numel() * src.element_size() // buf.element_size()].bitcast(src.dtype)
-   if ctx is not None: ctx.views.add(view)
+@@ -203,6 +313,9 @@ def contiguous_mops_to_view(ctx:CallifyCtx|None, c:UOp, src:UOp):
+     if (view := contiguous_mops_to_view(ctx, unshard.src[0], unshard.src[0])) is None: return None
+     view = view.unshard(unshard.arg, unshard.src[1:])
+   elif buf.op is Ops.BUFFER and (cv := src.contiguous_view()) is not None and cv[0].op is Ops.BUFFER:
++    # a copy or a stage of a buffer the call writes reads the state it was taken of, which a view, read when its reader runs,
++    # would not hold
++    if c.op is not Ops.STORE and ctx is not None and cv[0] in ctx.written: return None
+     buf, offset = cv
+     view = buf[offset:offset + src.max_numel() * src.element_size() // buf.element_size()].bitcast(src.dtype)
+     if ctx is not None: ctx.views.add(view)
 @@ -258,8 +371,15 @@ def transform_to_call(big_sink:UOp) -> UOp:
    if VIZ: graph_rewrite(big_sink, PatternMatcher([]), name="View Graph")
    if SPEC: type_verify(big_sink, spec_tensor)
@@ -3415,7 +3396,7 @@ index 7ead5c9c6..9db88bbed 100644
    ret = ret.call(*ctx.replacements, precompile=True)
    if VIZ: graph_rewrite(ret, PatternMatcher([]), name="View Call")
 diff --git a/tinygrad/schedule/indexing.py b/tinygrad/schedule/indexing.py
-index 3c92ff0b2..2ab47f54e 100644
+index 3c0116896..e209bbee9 100644
 --- a/tinygrad/schedule/indexing.py
 +++ b/tinygrad/schedule/indexing.py
 @@ -1,17 +1,35 @@
@@ -3509,7 +3490,7 @@ index 3c92ff0b2..2ab47f54e 100644
 +  return e
 +
 +def bufferize_and_index(ctx:IndexingContext, s:UOp, indexed:bool, src_rngs:tuple[UOp, ...]) -> UOp:
-+  if s.op in {Ops.PARAM, Ops.BUFFER, Ops.ALLOC, Ops.MSTACK, Ops.MSELECT, Ops.AFTER}: return s.index(*src_rngs) if indexed else s
++  if s.op in {Ops.PARAM, Ops.BUFFER, Ops.ALLOC, Ops.MSTACK, Ops.MSELECT, Ops.AFTER, Ops.STAGE}: return s.index(*src_rngs) if indexed else s
 +  if s in ctx.shares: return end_shared(ctx, ctx.shares[s])
 +  if s not in ctx.realize_map: return s
 +  assert isinstance(ctx.realize_map[s], list), "realize map must contain range list"
@@ -3530,7 +3511,7 @@ index 3c92ff0b2..2ab47f54e 100644
 -  for i, s in enumerate(x.src):
 -    new_src = s
 -    src_rngs = broadcast_rngs(x, s, ctx.range_map[x][0]) if x in ctx.range_map else ()
--    if s.op in GroupOp.Defines|{Ops.MSTACK, Ops.MSELECT, Ops.AFTER}:
+-    if s.op in GroupOp.Defines|{Ops.MSTACK, Ops.MSELECT, Ops.AFTER, Ops.STAGE}:
 -      if x in ctx.range_map and i < data_src_count: new_src = new_src.index(*src_rngs)
 -    elif s in ctx.realize_map:
 -      assert isinstance(ctx.realize_map[s], list), "realize map must contain range list"
@@ -3546,7 +3527,7 @@ index 3c92ff0b2..2ab47f54e 100644
 -        if x in ctx.range_map: new_src = new_src.index(*src_rngs)
 -    new_srcs.append(new_src)
 -  return new_srcs
-+  storage = GroupOp.Defines|{Ops.MSTACK, Ops.MSELECT, Ops.AFTER}
++  storage = GroupOp.Defines|{Ops.MSTACK, Ops.MSELECT, Ops.AFTER, Ops.STAGE}
 +  return [bufferize_and_index(ctx, s, x in ctx.range_map and (i < data_src_count or s.op not in storage),
 +                              broadcast_rngs(x, s, ctx.range_map[x][0]) if x in ctx.range_map else ())
 +          for i, s in enumerate(x.src)]
@@ -3763,7 +3744,7 @@ index c02f1b0c9..1dfc7c36f 100644
  
    offsets:dict[UOp, int] = {}
 diff --git a/tinygrad/schedule/prepare.py b/tinygrad/schedule/prepare.py
-index 9a24394a6..159972ddf 100644
+index 042666a13..bace2ec4a 100644
 --- a/tinygrad/schedule/prepare.py
 +++ b/tinygrad/schedule/prepare.py
 @@ -1,10 +1,10 @@
@@ -4294,7 +4275,7 @@ index 8238ec207..9164c859f 100644
  
    # bufferize -> store
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index f0a41c9b5..3dfe7d2e4 100644
+index 13ab05458..e66eebe06 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -1,6 +1,7 @@
@@ -4400,7 +4381,7 @@ index f0a41c9b5..3dfe7d2e4 100644
        if self.op is Ops.ADD: return wrapped(self.dtype, s0_vmin+s1_vmin, s0_vmax+s1_vmax)
        if self.op is Ops.SUB: return wrapped(self.dtype, s0_vmin-s1_vmax, s0_vmax-s1_vmin)
        if self.op is Ops.AND and dtypes.is_int(self.dtype) and s1_vmin == s1_vmax and (s0_vmin >= 0 or s1_vmax >= 0):
-@@ -1091,32 +1139,59 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1093,32 +1141,59 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
        if self.op is Ops.OR and self.dtype == dtypes.bool: return s0_vmin or s1_vmin, s0_vmax or s1_vmax
        if self.op is Ops.AND and self.dtype == dtypes.bool: return s0_vmin and s1_vmin, s0_vmax and s1_vmax
      if self.op is Ops.WHERE:
@@ -4432,6 +4413,15 @@ index f0a41c9b5..3dfe7d2e4 100644
      if self.op is Ops.CONST and self.val is not Invalid and not (isinstance(self.val, float) and math.isnan(self.val)): return self.val, self.val
 -    if self.op is Ops.PAD: return min(self.src[0].vmin, 0), max(self.src[0].vmax, 0)  # PAD adds zeros
 -    if self.op in GroupOp.Movement|{Ops.INDEX, Ops.STAGE, Ops.AFTER, Ops.DETACH, Ops.COPY, Ops.CONTIGUOUS_BACKWARD}: return self.src[0]._min_max
+-    # a cast rounds monotonically, except an int wraps past an int dtype and an inf a float dtype can't hold becomes nan
+-    if self.op is Ops.CAST and dtypes.is_float(self.dtype):
+-      smin, smax = (truncate.get(self.dtype, float)(v) for v in self.src[0]._min_max)
+-      if not math.isnan(smin) and not math.isnan(smax): return smin, smax
+-    if self.op is Ops.CAST and dtypes.is_int(self.dtype):
+-      smin, smax = (math.trunc(v) if math.isfinite(v) else v for v in self.src[0]._min_max)
+-      if self.dtype.min <= smin and smax <= self.dtype.max: return smin, smax
+-      # a float past a signed dtype is undefined
+-      if dtypes.is_float(self.src[0].dtype) and not dtypes.is_unsigned(self.dtype) and smin <= self.dtype.max and self.dtype.min <= smax:
 +    if self.op is Ops.PAD: return min(self._operand(self.src[0])[0], 0), max(self._operand(self.src[0])[1], 0)  # PAD adds zeros
 +    if self.op in GroupOp.Movement|{Ops.INDEX, Ops.STAGE, Ops.AFTER, Ops.DETACH, Ops.COPY, Ops.CONTIGUOUS_BACKWARD}: return self._operand(self.src[0])
 +    # truncation and negation are monotone
@@ -4440,16 +4430,11 @@ index f0a41c9b5..3dfe7d2e4 100644
 +    if self.op is Ops.NEG and dtypes.is_float(self.dtype):
 +      lo, hi = self._operand(self.src[0])
 +      return -hi, -lo
-     if self.op is Ops.CAST:
-       # rounding is monotone (truncation toward zero into an int, to-nearest onto the value grid into a float)
-       smin, smax = self.src[0]._min_max
--      trunc = truncate.get(self.dtype) if dtypes.is_float(self.dtype) else math.trunc if dtypes.is_int(self.dtype) else None
++    if self.op is Ops.CAST:
++      # rounding is monotone (truncation toward zero into an int, to-nearest onto the value grid into a float)
++      smin, smax = self.src[0]._min_max
 +      trunc = truncate.get(self.dtype, as_double) if dtypes.is_float(self.dtype) else math.trunc if dtypes.is_int(self.dtype) else None
-       if trunc is not None: smin, smax = (trunc(v) if math.isfinite(v) else v for v in (smin, smax))
--      if dtypes.is_int(self.dtype) and self.dtype.min <= smin and smax <= self.dtype.max: return smin, smax
--      if dtypes.is_int(self.src[0].dtype) and dtypes.is_int(self.dtype): return self.dtype.min, self.dtype.max
--      # a signed or float destination holds the part of the source that overlaps it: overflow is undefined, a nan bound overlaps nothing
--      if self.dtype in dtypes.floats+dtypes.sints+dtypes.weaks and smin <= self.dtype.max and self.dtype.min <= smax:
++      if trunc is not None: smin, smax = (trunc(v) if math.isfinite(v) else v for v in (smin, smax))
 +      # an integer keeps its value in an integer type, where _min_max wraps it
 +      if dtypes.is_int(self.dtype) and not dtypes.is_float(self.src[0].dtype): return smin, smax
 +      if dtypes.is_unsigned(self.dtype) and 0 <= smin and smax <= self.dtype.max: return smin, smax
@@ -4473,7 +4458,7 @@ index f0a41c9b5..3dfe7d2e4 100644
  
    @functools.cached_property
    def _sym_fxn(self):
-@@ -1150,9 +1225,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1152,9 +1227,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
  
    @staticmethod
    def alloc(shape:tuple[sint, ...], dtype:DType, slot:int|None=None, addrspace=AddrSpace.GLOBAL, device=None, axis:int|None=None,
@@ -4485,7 +4470,7 @@ index f0a41c9b5..3dfe7d2e4 100644
                             addrspace=addrspace, device=device, spec=spec, bind_on_realize=bind_on_realize, name=name))
      return ret.reshape(()) if not shape else ret.view_as(shape, axis)
    def alloc_like(self, slot:int|None=None, addrspace=AddrSpace.GLOBAL): return UOp.alloc(self.max_shard_shape, self.dtype, slot, addrspace)
-@@ -1263,7 +1338,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1265,7 +1340,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
      placeholders = [s.replace(arg=replace(s.arg, slot=i, val=None)) if s.is_variable else UOp.placeholder_like(s, slot=i)
                      for i,s in enumerate(srcs)]
      kernel = fxn(*placeholders).call(*srcs, grad_fxn=grad_fxn)
@@ -4496,7 +4481,7 @@ index f0a41c9b5..3dfe7d2e4 100644
  
    @functools.cached_property
    def kernel_params(self) -> tuple[UOp, ...]:
-@@ -1300,6 +1377,8 @@ class KernelInfo:
+@@ -1302,6 +1379,8 @@ class KernelInfo:
    beam: int = 0
    optimized: bool = False       # the AST has been through the optimizer, skip re-optimization
    kernel: bool = True           # launched by the runtime, not called from another kernel
@@ -4505,7 +4490,7 @@ index f0a41c9b5..3dfe7d2e4 100644
    @property
    def function_name(self): return to_function_name(self.name)
  
-@@ -1326,6 +1405,7 @@ class ProgramInfo:
+@@ -1328,6 +1407,7 @@ class ProgramInfo:
      ins: list[int] = []
      global_size: list[int] = [1, 1, 1]
      local_size: list[int] = [1, 1, 1]
@@ -4513,7 +4498,7 @@ index f0a41c9b5..3dfe7d2e4 100644
      for u in sink.toposort():
        if u.op is Ops.PARAM: _params.append(u)
        if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
-@@ -1363,22 +1443,99 @@ class CallInfo:
+@@ -1365,22 +1445,99 @@ class CallInfo:
  
  # ******** ops in python ********
  
@@ -4618,7 +4603,7 @@ index f0a41c9b5..3dfe7d2e4 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.TRUNCMOD: cmod, Ops.TRUNCDIV: cdiv, Ops.DIV: floordiv, Ops.MOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1389,6 +1546,10 @@ def exec_alu(op:Ops, dtype:DType, operands):
+@@ -1391,6 +1548,10 @@ def exec_alu(op:Ops, dtype:DType, operands):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)
@@ -4629,7 +4614,7 @@ index f0a41c9b5..3dfe7d2e4 100644
    return truncate_fxn(alu) if (truncate_fxn:=truncate.get(dtype)) is not None else alu
  
  # ***** pattern matcher *****
-@@ -1887,3 +2048,38 @@ sint = int|UOp
+@@ -1889,3 +2050,38 @@ sint = int|UOp
  Variable = UOp
  
  ConstLike = ConstType|Variable|tuple[ConstType, ...]
@@ -4741,7 +4726,7 @@ index c359a697f..1b9fad6d6 100644
    (UPat(Ops.CALL, src=(UPat(tuple(OPAQUE_CALL_BODIES)),), allow_any_len=True), lambda: True),
    # after on PARAM or AFTER
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
-index c99bf3c34..f43b91859 100644
+index 466a4f01d..cfce7fa64 100644
 --- a/tinygrad/uop/symbolic.py
 +++ b/tinygrad/uop/symbolic.py
 @@ -1,8 +1,8 @@
@@ -5010,7 +4995,7 @@ index c99bf3c34..f43b91859 100644
 +  # an AFTER waits only on effects and the ops listed here, a REDUCE dep keeps its body ended by its ranges, any other dep is replaced by its srcs.
 +  # an AFTER of global storage it waits on stays: read through a join, it holds a state whose writers its reader waits for
    (UPat(Ops.AFTER, name="x"), lambda x: x.replace(src=(x.src[0],)+
-     tuple(dedup(flatten([(y,) if y.op in GroupOp.Effect|{Ops.RANGE, Ops.END, Ops.BACKEDGE, Ops.LINEAR, Ops.STAGE}
+     tuple(dedup(flatten([(y,) if y.op in GroupOp.Effect|{Ops.RANGE, Ops.END, Ops.BACKEDGE, Ops.LINEAR, Ops.STAGE, Ops.LOAD}
 +                        or (y.op is Ops.AFTER and y.addrspace == AddrSpace.GLOBAL)
                          else (UOp(Ops.NOOP).after(y.src[0]).end(*y.src[1:]),) if y.op is Ops.REDUCE else y.src for y in x.src[1:]]))))),
    # after/end with 1 src is just src[0]

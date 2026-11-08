@@ -51,6 +51,8 @@ let programs =
     "copy_one";
     "copy_view";
     "custom_kernel";
+    "custom_kernel_stage";
+    "custom_kernel_stage_table";
     "custom_kernel_variable_arg";
     "disk_store";
     "disk_to";
@@ -114,6 +116,8 @@ let kernel_graphs =
     "copy_one_kernels";
     "copy_view_kernels";
     "custom_kernel_kernels";
+    "custom_kernel_stage_kernels";
+    "custom_kernel_stage_table_kernels";
     "custom_kernel_variable_arg_kernels";
     "disk_store_kernels";
     "disk_store_kernels_1";
@@ -253,13 +257,19 @@ let calls_only_kernels u =
    Interpreter does not run. The call of assign_bitcast passes a buffer and a
    bitcast of it as two arguments, one memory that storage, a memory per slot,
    cannot alias. The call of custom_kernel_variable_arg passes a variable,
-   which the kernel graph's writes hold no storage for. *)
+   which the kernel graph's writes hold no storage for. The functions of
+   custom_kernel_stage and custom_kernel_stage_table load, which the
+   Interpreter does not evaluate; the engine's suite runs them. *)
 let apart_from_values =
   [
     "custom_kernel_kernels";
     "custom_kernel";
     "custom_kernel_variable_arg_kernels";
     "custom_kernel_variable_arg";
+    "custom_kernel_stage_kernels";
+    "custom_kernel_stage";
+    "custom_kernel_stage_table_kernels";
+    "custom_kernel_stage_table";
     "assign_bitcast_kernels";
     "assign_bitcast";
   ]

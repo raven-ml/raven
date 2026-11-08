@@ -46,8 +46,8 @@ val prepare_rangeify : Ops.t -> Ops.t
         is replaced by its body, its parameters bound to its arguments viewed as
         flat storage and its local storage renamed; a value ordered after a
         call's stores into one of its outputs is that output's value
-        ({!Ops.resolve_returned_after}); and the movements of a copy from a disk
-        move to the copy's result;
+        ({!Ops.resolve_returned_after}); and the movements and bitcasts of a
+        copy from a disk move to the copy's result;
      }
      {- from the leaves up, with {!Shape.mop_cleanup} and {!pm_mops}, gathers
         left whole:

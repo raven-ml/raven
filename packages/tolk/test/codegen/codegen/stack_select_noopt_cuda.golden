@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] 60
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -23,7 +23,7 @@
 21 Ops.STORE dtypes.void [4, 20]
 22 Ops.SINK dtypes.void [21] KernelInfo(name="E_60", optimized=True)
 23 Ops.SINK dtypes.void [21] KernelInfo(name="E_60", estimates=Estimates(ops=180, lds=480, mem=352), optimized=True)
-24 Ops.LINEAR dtypes.void [0, 1, 5, 6, 2, 3, 7, 8, 9, 10, 11, 12, 16, 17, 13, 14, 15, 18, 19, 20, 4, 21, 22]
+24 Ops.LINEAR dtypes.void [0, 1, 5, 6, 2, 3, 7, 8, 9, 10, 11, 12, 16, 17, 13, 14, 15, 18, 19, 20, 4, 21, 23]
 25 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) E_60(float* data0_60, float* data1_28) {\n  int gidx0 = blockIdx.x; /* 60 */\n  float val0 = (((gidx0<40)&(11<gidx0))?*(data1_28+(gidx0+-12)):0.0f);\n  *(data0_60+gidx0) = val0;\n}"
 26 Ops.PROGRAM dtypes.void [23, 24, 25] ProgramInfo(global_size=(60, 1, 1), params=(%1, %6), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
 27 Ops.SINK dtypes.void [22, 26]

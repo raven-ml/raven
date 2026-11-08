@@ -42,8 +42,9 @@
     own ({!Ops.type-call_info}, as a launch's calls are): such a function is
     kept out of line ([__noinline__] in {!cuda}, the [noinline] attribute
     elsewhere), so that the compiler compiles it once however many calls it
-    has. Its parameters are the body's, by slot, and each argument is cast to
-    its parameter's type. The choices {!cuda} makes for a program, its
+    has. Its parameters are the body's, by slot, and each argument is passed
+    as written, converted to its parameter's type as the language converts an
+    argument. The choices {!cuda} makes for a program, its
     asynchronous copies and matrix loads, read the bodies it calls too.
 
     A sum, difference, product, negation, left shift or multiply-add of a

@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 2049
 2 Ops.PARAM dtypes.i64 [1] ParamArg(slot=0, dtype=dtypes.i64)
@@ -54,7 +54,7 @@
 52 Ops.AFTER dtypes.void [0, 22, 29, 51]
 53 Ops.SINK dtypes.void [52] KernelInfo(name="E_683_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.UPCAST)),), optimized=True)
 54 Ops.SINK dtypes.void [52] KernelInfo(name="E_683_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.UPCAST)),), estimates=Estimates(ops=6830, lds=19128, mem=16400), optimized=True)
-55 Ops.LINEAR dtypes.void [1, 2, 14, 15, 42, 16, 17, 18, 19, 3, 4, 5, 43, 45, 46, 44, 47, 48, 0, 23, 6, 7, 8, 24, 25, 30, 31, 32, 33, 9, 10, 11, 34, 35, 20, 49, 26, 27, 37, 38, 12, 13, 40, 28, 39, 21, 36, 41, 50, 29, 51, 22, 52, 53]
+55 Ops.LINEAR dtypes.void [1, 2, 14, 15, 42, 16, 17, 18, 19, 3, 4, 5, 43, 45, 46, 44, 47, 48, 0, 23, 6, 7, 8, 24, 25, 30, 31, 32, 33, 9, 10, 11, 34, 35, 20, 49, 26, 27, 37, 38, 12, 13, 40, 28, 39, 21, 36, 41, 50, 29, 51, 22, 52, 54]
 56 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) E_683_3(long* data0_2049, unsigned int* data1_1, unsigned int* data2_1) {\n  unsigned int val0 = (*(data1_1+0));\n  int gidx0 = __ockl_get_group_id(0); /* 683 */\n  unsigned int val1 = ((681<gidx0)?*(data2_1+0):0u);\n  int alu0 = (gidx0*3);\n  int alu1 = (alu0+1);\n  int alu2 = (alu0+2);\n  long cast0 = ((long)(val0));\n  long alu3 = ((gidx0<682)?(((long)((alu2&1023)))+cast0):0l);\n  *(data0_2049+alu1) = (((long)((alu1&1023)))+cast0);\n  *(data0_2049+alu2) = (alu3+((long)(val1)));\n  *(data0_2049+alu0) = (((long)((alu0&1023)))+cast0);\n}"
 57 Ops.PROGRAM dtypes.void [54, 55, 56] ProgramInfo(global_size=(683, 1, 1), params=(%2, %15, %42), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
 58 Ops.SINK dtypes.void [53, 57]

@@ -617,18 +617,23 @@ let pm_inline_calls =
     ])
 
 let pm_disk_copy =
-  let movement = Upat.v ~op:Op.Set.movement ~name:"x" () in
+  let movement =
+    Upat.v
+      ~op:(Op.Set.union Op.Set.movement (Op.Set.of_list [ Op.Bitcast ]))
+      ~name:"x" ()
+  in
   Pattern_matcher.v
     (fun () -> [
-      (* A disk copy reads its source without materialising its movements. *)
+      (* A disk copy reads its source without materialising its movements and
+         bitcasts. *)
       rule
         (Upat.f (Upat.f movement Op.Stage) Op.Copy ~name:"copy")
         (fun m ->
           let x = m "x" in
           if on_disk x then Some (replace (m "copy") ~src:[ x ]) else None);
-      (* The movements move to the copy's result: views exposed here are no
-         longer normalised into parameters, and a shrink or reshape left behind
-         would store a temporary on the disk. *)
+      (* The movements and bitcasts move to the copy's result: views exposed
+         here are no longer normalised into parameters, and a shrink or reshape
+         left behind would store a temporary on the disk. *)
       rule (Upat.f movement Op.Copy ~name:"copy") (fun m ->
           let x = m "x" in
           if not (on_disk x) then None

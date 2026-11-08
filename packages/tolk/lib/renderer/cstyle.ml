@@ -447,9 +447,7 @@ let base_rewrite =
               (src body)
           in
           let by_slot (s0, _) (s1, _) = Int.compare s0 s1 in
-          let arg (slot, p) =
-            strf "(%s)%s" (param_type ctx.lang p) ctx.%{nth x (slot + 1)}
-          in
+          let arg (slot, _) = ctx.%{nth x (slot + 1)} in
           Some
             (strf "%s(%s);" (body_name body)
                (String.concat ", "

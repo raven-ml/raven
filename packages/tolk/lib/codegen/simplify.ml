@@ -567,7 +567,15 @@ let pm_reduce_load_collapse =
         ]);
     ]
 
-let reduce_collapse ?(pm = pm_reduce_collapse) red u =
+(* A sum's ranges are flattened as it is computed: a range that a source of
+   the sum holds would leave it unresolved. *)
+let collapse_rewrite =
+  Pattern_matcher.append pm_flatten_range pm_reduce_collapse
+
+let load_collapse_rewrite =
+  Pattern_matcher.append pm_flatten_range pm_reduce_load_collapse
+
+let reduce_collapse ?(pm = collapse_rewrite) red u =
   let rec collapse u = function
     | [] -> Some u
     | r :: rest ->
@@ -642,7 +650,7 @@ let no_load u = not (op_in_backward_slice_with_self ~calls:Skip u [ Op.Index ])
 let load_collapse red =
   match (arg red, src red) with
   | Reduce { op = Op.Add; num_axes = 0 }, [ u; _ ] ->
-      reduce_collapse ~pm:pm_reduce_load_collapse red u
+      reduce_collapse ~pm:load_collapse_rewrite red u
   | _ -> None
 
 let pm_load_collapse =

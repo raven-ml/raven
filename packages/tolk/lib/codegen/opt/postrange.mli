@@ -16,8 +16,9 @@
     kernel: a split replaces an axis [r] of size [n] by [r'] of size [n / a] and
     a new axis [s] of size [a], and every use of [r] by [r' * a + s], or
     [s * (n / a) + r'] from the top; a pad grows an axis to a multiple and
-    guards every access along it, an access through storage ordered after the
-    axis included; a swap exchanges two global axes' identities; a tensor core
+    makes the steps it adds no-ops, guarding each access whose index reads the
+    axis and each store and loop back edge ({!Op.Backedge}) that runs along
+    it; a swap exchanges two global axes' identities; a tensor core
     replaces a reduction of products by a matrix multiply-accumulate
     ({!Op.Wmma}). *)
 
@@ -205,8 +206,10 @@ module Scheduler : sig
       opaque operation does not read ({!unread_by_opaque}), a local split of a
       reduce axis where a range's bound reads an axis or whose reduction runs
       inside an unrolled reduce axis, a pad's axis is not
-      of a constant size, would more than quadruple, or is read by an opaque
-      operation, or no tensor core fits, as none does a kernel where a range's
+      of a constant size, would more than quadruple, is read by an opaque
+      operation, or holds an effect a guard cannot make a no-op: a call, code
+      in the target's language, or a store not through an {!Op.Index}; or no
+      tensor core fits, as none does a kernel where a range's
       bound reads an axis, one with an opaque operation, or one where an
       expression in the target's language reads an axis. Raises
       [Invalid_argument] if the shared memory a split needs depends on a
@@ -273,11 +276,11 @@ val apply_opts :
     effect in each thread: a store to global memory that misses a thread axis
     runs where that axis is [0] ({!Gpudims.group_gpudims}), and an axis that a
     call or code misses takes no threads ({!Scheduler.unread_by_opaque}). A
-    pad runs the effects that depend on its axis on the padding, where a
-    store's index is guarded and a call or code cannot be, so an axis one reads
-    takes no pad. The blocks of a host program each run every effect, so a
-    loop splits into blocks ({!Ops.type-split}) only when no store to memory,
-    call or code misses it.
+    pad makes the steps it adds no-ops: a store and a loop's back edge that
+    run along its axis are guarded, and a call or code cannot be, so an axis
+    one runs along takes no pad. The blocks of a host program each run every
+    effect, so a loop splits into blocks ({!Ops.type-split}) only when no
+    store to memory, call or code misses it.
 
     Before any optimisation, it refuses a kernel whose store breaks a weak
     range's promise visibly ({!Ops.Axis_type.Weak}): a store to global or

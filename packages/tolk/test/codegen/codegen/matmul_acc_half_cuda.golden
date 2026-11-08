@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f16 [0] ParamArg(slot=0, dtype=dtypes.f16)
 2 Ops.CONST dtypes.weakint [] 8
@@ -56,9 +56,8 @@
 54 Ops.LOAD dtypes.f16 [53]
 55 Ops.STORE dtypes.void [10, 54]
 56 Ops.SINK dtypes.void [55] KernelInfo(name="r_8_8_8", estimates=Estimates(ops=1024, lds=2176, mem=384), optimized=True)
-57 Ops.SINK dtypes.void [55] KernelInfo(name="r_8_8_8", optimized=True)
-58 Ops.LINEAR dtypes.void [0, 1, 24, 28, 11, 42, 2, 3, 8, 4, 43, 14, 15, 44, 17, 18, 5, 6, 7, 45, 20, 25, 26, 27, 29, 30, 31, 32, 46, 47, 48, 33, 49, 50, 51, 52, 53, 54, 9, 10, 55, 57]
-59 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\n#include <cuda_fp16.h>\nextern \"C\" __global__ void __launch_bounds__(1) r_8_8_8(half* data0_64, half* data1_64, half* data2_64) {\n  half buf0[1];\n  int gidx0 = blockIdx.x; /* 8 */\n  int gidx1 = blockIdx.y; /* 8 */\n  int alu0 = (gidx1<<3);\n  *(buf0+0) = ((half)(0.0f));\n  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n    half val0 = (*(data1_64+(alu0+Lidx0)));\n    half val1 = (*(data2_64+((Lidx0<<3)+gidx0)));\n    *(buf0+0) = ((*(buf0+0))+(val0*val1));\n  }\n  *(data0_64+(alu0+gidx0)) = (*(buf0+0));\n}"
-60 Ops.PROGRAM dtypes.void [56, 58, 59] ProgramInfo(global_size=(8, 8, 1), params=(%1, %24, %28), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
-61 Ops.SINK dtypes.void [41, 60]
+57 Ops.LINEAR dtypes.void [0, 1, 24, 28, 11, 42, 2, 3, 8, 4, 43, 14, 15, 44, 17, 18, 5, 6, 7, 45, 20, 25, 26, 27, 29, 30, 31, 32, 46, 47, 48, 33, 49, 50, 51, 52, 53, 54, 9, 10, 55, 56]
+58 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\n#include <cuda_fp16.h>\nextern \"C\" __global__ void __launch_bounds__(1) r_8_8_8(half* data0_64, half* data1_64, half* data2_64) {\n  half buf0[1];\n  int gidx0 = blockIdx.x; /* 8 */\n  int gidx1 = blockIdx.y; /* 8 */\n  int alu0 = (gidx1<<3);\n  *(buf0+0) = ((half)(0.0f));\n  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n    half val0 = (*(data1_64+(alu0+Lidx0)));\n    half val1 = (*(data2_64+((Lidx0<<3)+gidx0)));\n    *(buf0+0) = ((*(buf0+0))+(val0*val1));\n  }\n  *(data0_64+(alu0+gidx0)) = (*(buf0+0));\n}"
+59 Ops.PROGRAM dtypes.void [56, 57, 58] ProgramInfo(global_size=(8, 8, 1), params=(%1, %24, %28), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+60 Ops.SINK dtypes.void [41, 59]
 

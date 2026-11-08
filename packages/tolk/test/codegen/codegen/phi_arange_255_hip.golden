@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] 255
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 85
@@ -13,7 +13,7 @@
 11 Ops.STORE dtypes.void [10, 9]
 12 Ops.SINK dtypes.void [11] KernelInfo(name="E_85_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.LOCAL)),), optimized=True)
 13 Ops.SINK dtypes.void [11] KernelInfo(name="E_85_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.LOCAL)),), estimates=Estimates(lds=1020, mem=1020), optimized=True)
-14 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 8, 7, 9, 10, 11, 12]
+14 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 8, 7, 9, 10, 11, 13]
 15 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 3))) E_85_3(int* data0_255) {\n  int gidx0 = __ockl_get_group_id(0); /* 85 */\n  int lidx0 = __ockl_get_local_id(0); /* 3 */\n  int alu0 = ((gidx0*3)+lidx0);\n  *(data0_255+alu0) = alu0;\n}"
 16 Ops.PROGRAM dtypes.void [13, 14, 15] ProgramInfo(global_size=(85, 1, 1), local_size=(3, 1, 1), params=(%1,), globals=(0,), outs=(0,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
 17 Ops.SINK dtypes.void [12, 16]

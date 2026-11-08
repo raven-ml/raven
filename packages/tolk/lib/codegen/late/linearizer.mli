@@ -26,14 +26,10 @@ val linearize : Ops.t -> Ops.t list
     Among the topological orders, it takes the one closest to the ideal order,
     which sorts nodes by, in turn:
 
-    - their run count, the product of the sizes of the ranges they run inside
-      ({!Ops.val-ranges}), a range's size being its {!Ops.vmax} plus one and
-      at least one: fewer runs come first, so that work leaves the loops it
-      does not need. The floor of one keeps a range whose greatest size is 0
-      from placing its body before the nodes around the loop;
-    - their depth, the number of ranges they run inside: a loop's body comes
-      after the nodes around the loop that run as often, so that they are
-      placed outside it;
+    - their depth, the number of ranges they run inside ({!Ops.val-ranges}):
+      a loop's body comes after the nodes around the loop, so that work
+      leaves the loops it does not need, and a node before a loop stays
+      before it when the loop runs no time;
     - their kind: parameters first, by slot; then buffers outside local memory,
       buffers in local memory, loop ends ({!Op.End} and {!Op.Backedge}), loads,
       the other nodes, stores, and ranges last;

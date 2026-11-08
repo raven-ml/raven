@@ -2104,6 +2104,9 @@ and binary_bounds u (s0_min, s0_max) (s1_min, s1_max) =
   let z = Value.to_z and zero = `Int Bigint.zero in
   let ints = List.for_all (function `Float _ -> false | _ -> true) in
   let c1 = equal s1_min s1_max in
+  let float_operands =
+    match u.src with s :: _ -> Dtype.is_float s.dtype | [] -> false
+  in
   let corners f =
     Some
       (extremes
@@ -2173,11 +2176,16 @@ and binary_bounds u (s0_min, s0_max) (s1_min, s1_max) =
       let n = Bigint.numbits (z (Value.max s0_max s1_max)) in
       Some (zero, `Int (Bigint.pred (Bigint.shift_left Bigint.one n)))
   | Op.Max -> Some (Value.max s0_min s1_min, Value.max s0_max s1_max)
-  | Op.Cmplt -> Some (`Bool (lt s0_max s1_min), `Bool (lt s0_min s1_max))
+  (* bounds never prove a float comparison true: a NaN compares false *)
+  | Op.Cmplt ->
+      Some
+        ( `Bool (lt s0_max s1_min && not float_operands),
+          `Bool (lt s0_min s1_max) )
   | Op.Cmpeq ->
       Some
         ( `Bool
-            (equal s0_min s0_max && equal s0_max s1_min && equal s1_min s1_max),
+            (equal s0_min s0_max && equal s0_max s1_min && equal s1_min s1_max
+           && not float_operands),
           `Bool (not (lt s0_max s1_min || lt s1_max s0_min)) )
   | Op.Or when Dtype.equal u.dtype Dtype.Bool ->
       Some

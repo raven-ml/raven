@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -93,9 +93,8 @@
 91 Ops.SINK dtypes.void [90] KernelInfo(name="r_16_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)),), estimates=Estimates(ops=528, lds=2176, mem=1028), optimized=True)
 92 Ops.IF dtypes.void [53, 4]
 93 Ops.ENDIF dtypes.void [92]
-94 Ops.SINK dtypes.void [90] KernelInfo(name="r_16_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)),), optimized=True)
-95 Ops.LINEAR dtypes.void [0, 1, 21, 22, 59, 56, 10, 74, 11, 13, 60, 2, 3, 61, 7, 8, 23, 24, 62, 17, 25, 26, 27, 28, 63, 64, 65, 66, 67, 68, 76, 77, 78, 69, 75, 79, 80, 81, 57, 58, 70, 71, 72, 73, 82, 83, 84, 85, 86, 87, 88, 89, 4, 53, 92, 90, 93, 94]
-96 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(16) r_16_16(float* data0_1, float* data1_256) {\n  float buf0[1];\n  float buf1[1];\n  __shared__ __align__(16) float buf2[16];\n  int lidx0 = threadIdx.x; /* 16 */\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    float val0 = (*(data1_256+((Lidx0<<4)+lidx0)));\n    *(buf0+0) = ((*(buf0+0))+val0);\n  }\n  *(buf2+lidx0) = (*(buf0+0));\n  __syncthreads();\n  *(buf1+0) = 0.0f;\n  for (int Lidx101 = 0; Lidx101 < 16; Lidx101++) {\n    float val1 = (*(buf2+Lidx101));\n    *(buf1+0) = ((*(buf1+0))+val1);\n  }\n  if ((lidx0==0)) {\n    *(data0_1+0) = (*(buf1+0));\n  }\n}"
-97 Ops.PROGRAM dtypes.void [91, 95, 96] ProgramInfo(local_size=(16, 1, 1), params=(%1, %22), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
-98 Ops.SINK dtypes.void [55, 97]
+94 Ops.LINEAR dtypes.void [0, 1, 21, 22, 59, 56, 10, 74, 11, 13, 60, 2, 3, 61, 7, 8, 23, 24, 62, 17, 25, 26, 27, 28, 63, 64, 65, 66, 67, 68, 76, 77, 78, 69, 75, 79, 80, 81, 57, 58, 70, 71, 72, 73, 82, 83, 84, 85, 86, 87, 88, 89, 4, 53, 92, 90, 93, 91]
+95 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(16) r_16_16(float* data0_1, float* data1_256) {\n  float buf0[1];\n  float buf1[1];\n  __shared__ __align__(16) float buf2[16];\n  int lidx0 = threadIdx.x; /* 16 */\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    float val0 = (*(data1_256+((Lidx0<<4)+lidx0)));\n    *(buf0+0) = ((*(buf0+0))+val0);\n  }\n  *(buf2+lidx0) = (*(buf0+0));\n  __syncthreads();\n  *(buf1+0) = 0.0f;\n  for (int Lidx101 = 0; Lidx101 < 16; Lidx101++) {\n    float val1 = (*(buf2+Lidx101));\n    *(buf1+0) = ((*(buf1+0))+val1);\n  }\n  if ((lidx0==0)) {\n    *(data0_1+0) = (*(buf1+0));\n  }\n}"
+96 Ops.PROGRAM dtypes.void [91, 94, 95] ProgramInfo(local_size=(16, 1, 1), params=(%1, %22), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+97 Ops.SINK dtypes.void [55, 96]
 

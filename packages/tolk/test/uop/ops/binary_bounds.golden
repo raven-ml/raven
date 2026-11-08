@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 op	dtype	a_lo	a_hi	b_lo	b_hi	vmin	vmax
 Ops.ADD	dtypes.weakint	0	0	0	0	0	0
 Ops.ADD	dtypes.weakint	0	0	3	3	3	3
@@ -2707,4 +2707,6 @@ Ops.XOR	dtypes.bool	True	True	False	False	False	True
 Ops.XOR	dtypes.bool	True	True	False	True	False	True
 Ops.XOR	dtypes.bool	True	True	True	True	False	True
 Ops.MAX	dtypes.f32	0.0	1.0	2.0	3.0	-inf	inf
-Ops.CMPLT	dtypes.f32	0.0	1.0	2.0	3.0	True	True
+Ops.CMPLT	dtypes.f32	0.0	1.0	2.0	3.0	False	True
+Ops.CMPEQ	dtypes.f32	0.0	1.0	2.0	3.0	False	False
+Ops.CMPEQ	dtypes.f32	1.0	1.0	1.0	1.0	False	True

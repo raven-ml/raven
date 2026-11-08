@@ -619,7 +619,8 @@ val vmax : t -> Dtype.value
     type. A committed integer wraps at
     its width, and so does a weak integer operand of an operation on one
     ({!operand_bounds}): an interval that leaves its type is one value wrapped,
-    or the type's bounds. A table holding a NaN has its type's bounds. *)
+    or the type's bounds. A table holding a NaN has its type's bounds. A
+    comparison of floats is never bounded to [true]: a NaN compares false. *)
 
 val operand_bounds : t -> t -> Dtype.value * Dtype.value
 (** [operand_bounds u s] is the bounds of [u]'s source [s] as [u] reads it: an

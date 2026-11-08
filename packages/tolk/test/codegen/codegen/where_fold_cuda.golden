@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] 16
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 4
@@ -27,9 +27,8 @@
 25 Ops.SINK dtypes.void [24] KernelInfo(name="E_4_4", estimates=Estimates(ops=80, lds=128, mem=128), optimized=True)
 26 Ops.IF dtypes.void [21, 6]
 27 Ops.ENDIF dtypes.void [26]
-28 Ops.SINK dtypes.void [24] KernelInfo(name="E_4_4", optimized=True)
-29 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 11, 5, 6, 17, 18, 9, 10, 13, 14, 15, 12, 16, 19, 7, 8, 20, 21, 26, 24, 27, 28]
-30 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) E_4_4(float* data0_16) {\n  int gidx0 = blockIdx.x; /* 4 */\n  int gidx1 = blockIdx.y; /* 4 */\n  bool alu0 = ((0<gidx1)&(gidx1<2));\n  float val0 = (alu0?*(data0_16+(gidx0+4)):0.0f);\n  if ((alu0&(val0!=0.0f))) {\n    *(data0_16+(gidx0+4)) = 2.0f;\n  }\n}"
-31 Ops.PROGRAM dtypes.void [25, 29, 30] ProgramInfo(global_size=(4, 4, 1), params=(%1,), globals=(0,), outs=(0,), ins=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
-32 Ops.SINK dtypes.void [23, 31]
+28 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 11, 5, 6, 17, 18, 9, 10, 13, 14, 15, 12, 16, 19, 7, 8, 20, 21, 26, 24, 27, 25]
+29 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) E_4_4(float* data0_16) {\n  int gidx0 = blockIdx.x; /* 4 */\n  int gidx1 = blockIdx.y; /* 4 */\n  bool alu0 = ((0<gidx1)&(gidx1<2));\n  float val0 = (alu0?*(data0_16+(gidx0+4)):0.0f);\n  if ((alu0&(val0!=0.0f))) {\n    *(data0_16+(gidx0+4)) = 2.0f;\n  }\n}"
+30 Ops.PROGRAM dtypes.void [25, 28, 29] ProgramInfo(global_size=(4, 4, 1), params=(%1,), globals=(0,), outs=(0,), ins=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+31 Ops.SINK dtypes.void [23, 30]
 

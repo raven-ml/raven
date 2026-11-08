@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.STACK dtypes.void []
@@ -29,7 +29,7 @@
 27 Ops.ADD dtypes.i32 [19, 26]
 28 Ops.ADD dtypes.i32 [27, 26]
 29 Ops.SINK dtypes.void [15] KernelInfo(name="E_n", estimates=Estimates(ops=%18, lds=%25, mem=%28), optimized=True)
-30 Ops.LINEAR dtypes.void [0, 1, 6, 2, 3, 4, 7, 8, 5, 12, 13, 9, 10, 11, 14, 15, 16]
+30 Ops.LINEAR dtypes.void [0, 1, 6, 2, 3, 4, 7, 8, 5, 12, 13, 9, 10, 11, 14, 15, 29]
 31 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) E_n(float* data0_64, float* data1_64, const int n_) {\n  int gidx0 = __ockl_get_group_id(0); /* n */\n  float val0 = (*(data1_64+gidx0));\n  *(data0_64+gidx0) = ((val0*2.0f)+1.0f);\n}"
 32 Ops.PARAM dtypes.i32 [2] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(1, 64), name="n", addrspace=AddrSpace.ALU)
 33 Ops.PROGRAM dtypes.void [29, 30, 31] ProgramInfo(global_size=(%32, 1, 1), params=(%1, %6, %3), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))

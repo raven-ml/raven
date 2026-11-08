@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.CONST dtypes.weakint [] 16
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -15,9 +15,8 @@
 13 Ops.SINK dtypes.void [12] KernelInfo(estimates=Estimates(ops=16, lds=64, mem=64), optimized=True)
 14 Ops.IF dtypes.void [7, 4]
 15 Ops.ENDIF dtypes.void [14]
-16 Ops.SINK dtypes.void [12] KernelInfo(optimized=True)
-17 Ops.LINEAR dtypes.void [0, 1, 2, 5, 6, 3, 4, 7, 14, 11, 15, 12, 16]
-18 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) test(int* data0_16) {\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    if ((Lidx0<8)) {\n      *(data0_16+Lidx0) = Lidx0;\n    }\n  }\n}"
-19 Ops.PROGRAM dtypes.void [13, 17, 18] ProgramInfo(params=(%1,), globals=(0,), outs=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
-20 Ops.SINK dtypes.void [10, 19]
+16 Ops.LINEAR dtypes.void [0, 1, 2, 5, 6, 3, 4, 7, 14, 11, 15, 12, 13]
+17 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) test(int* data0_16) {\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    if ((Lidx0<8)) {\n      *(data0_16+Lidx0) = Lidx0;\n    }\n  }\n}"
+18 Ops.PROGRAM dtypes.void [13, 16, 17] ProgramInfo(params=(%1,), globals=(0,), outs=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+19 Ops.SINK dtypes.void [10, 18]
 

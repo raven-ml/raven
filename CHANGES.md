@@ -1074,6 +1074,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Compiled kernels no longer fold a float comparison to `true` from its
+  operands' bounds (`Ops.vmin`), since a NaN compares false; a padded range
+  (`Opt.Padto`) stores nothing on its padding, its back edges included, and a
+  pad of a range an unguarded effect runs along is refused; a loop ordered
+  after a load stores after it; a sum read as an index compiles.
 - Compiling runs about 8% fewer instructions and allocates about 4% fewer
   words: `Pattern_matcher` compiles a rule's pattern on its first try into
   closures that test only the fields the pattern has.

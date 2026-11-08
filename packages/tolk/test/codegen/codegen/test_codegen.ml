@@ -7556,6 +7556,109 @@ let threads_of_workgroups =
       in
       equal (list int) [ 0; 1 ] (List.sort_uniq Int.compare steps))
 
+(* Hand-written kernels on the host
+
+   Kernels a builder writes whole, run on the host, each reading back what it
+   stores. *)
+
+(* Three steps of [r] padded to four, each padded step a no-op:
+   [C[0] = C[0] + r + 1], read before any store, stores 3 at the last step; and
+   a loop counting a register from 0 to 3 stores 3, its padded step leaving the
+   register as it was and leaving the loop. *)
+let padded_steps store () =
+  let r = effect_loop 3 0 in
+  let c = int_param ~name:"C" 0 1 in
+  let opts = [ Opt.Padto { axis = 0; amount = 4 } ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
+    [ Ops.end_ (store r c) [ r ] ]
+
+let padded_stores =
+  [
+    ( "read before it is stored",
+      fun r c ->
+        let cell = first c in
+        Ops.store cell Ops.O.(Ops.load cell [] + Ops.cast r Int32 + i32 1) );
+    ( "counted by a loop",
+      fun r c ->
+        let cnt = Shape.placeholder ~slot:1 ~addrspace:Reg [ 1 ] Int32 in
+        let l = Ops.loop 1 in
+        let cnt_r = Ops.after cnt [ r ] in
+        let cnt0 = Ops.after cnt_r [ Ops.store (first cnt_r) (i32 0) ] in
+        let next = Ops.O.(Ops.load (first (Ops.after cnt0 [ l ])) [] + i32 1) in
+        let step =
+          Ops.backedge (Ops.store (first cnt0) next) ~loop:l
+            ~cond:Ops.O.(next <> i32 3)
+        in
+        Ops.store (first c) (Ops.load (first (Ops.after cnt0 [ step ])) []) );
+  ]
+
+(* [C[0] = B[A[0] + A[1]]]: the sum over [k] is the index of a load. *)
+let sum_as_index () =
+  let k = effect_loop 2 0 in
+  let c = int_param ~name:"C" 0 1
+  and a = int_param ~name:"A" 1 2
+  and b = int_param ~name:"B" 2 4 in
+  let i = Ops.reduce (Ops.load (at a k) []) Op.Add [ k ] in
+  effect_kernel [ Ops.store (first c) (Ops.load (at b i) []) ]
+
+(* [C[0]] is the sum of [A[1]] over a range of one trip. *)
+let one_trip_sum () =
+  let c = int_param ~name:"C" 0 1 and a = int_param ~name:"A" 1 2 in
+  let sum = Ops.reduce (at a (Ops.int 1)) Op.Add [ effect_loop 1 0 ] in
+  effect_kernel [ Ops.store (first c) sum ]
+
+(* [old = A[0]], then a loop storing [A[0] = 9], then [A[1] = old]: the loop
+   waits on [old], so [A[1]] holds what [A[0]] held. The loop runs twice, or,
+   bounded by nothing but its wait on [old], until [A[0]] is 9. *)
+let snapshot ~counted () =
+  let a = int_param ~name:"A" 0 2 in
+  let old = Ops.load (first a) [] in
+  let stored =
+    if counted then
+      let r = effect_loop 2 0 in
+      Ops.end_ (Ops.store (first (Ops.after a [ old; r ])) (i32 9)) [ r ]
+    else
+      let l =
+        Ops.v Range
+          ~src:[ Ops.after (Ops.v Noop) [ old ] ]
+          ~arg:(Range { axis_type = Weak; axis_id = [ 0 ] })
+      in
+      let w = Ops.store (first (Ops.after a [ l ])) (i32 9) in
+      Ops.backedge w ~loop:l
+        ~cond:Ops.O.(Ops.load (first (Ops.after a [ w ])) [] <> i32 9)
+  in
+  effect_kernel [ Ops.store (at (Ops.after a [ stored ]) (Ops.int 1)) old ]
+
+(* [P[0] = 8], then [Q[0] = 64] in a loop of no trip ordered after it: the
+   loop runs no time, and the store before it runs. *)
+let before_empty_loop () =
+  let r = effect_loop 0 0 in
+  let p = int_param ~name:"P" 0 1 and q = int_param ~name:"Q" 1 1 in
+  let q_at = first (Ops.after q [ Ops.store (first p) (i32 8); r ]) in
+  effect_kernel [ Ops.end_ (Ops.store q_at (i32 64)) [ r ] ]
+
+let hand_written =
+  group "hand-written kernels on the host"
+    [
+      cases "a padded range's padding stores nothing" ~id:fst padded_stores
+        (fun (_, store) -> writes (padded_steps store) [] [ [ 3 ] ] ());
+      test "a sum is the index of a load"
+        (writes sum_as_index
+           [ (1, int_values [ 1; 2 ]); (2, int_values [ 10; 20; 30; 40 ]) ]
+           [ [ 40 ] ]);
+      test "a sum over a range of one trip is its source"
+        (writes one_trip_sum [ (1, int_values [ 2; 3 ]) ] [ [ 3 ] ]);
+      test "a loop waiting on a load stores after it"
+        (writes (snapshot ~counted:true) [ (0, int_values [ 5; 0 ]) ]
+           [ [ 9; 5 ] ]);
+      test "a loop whose bound waits on a load stores after it"
+        (writes (snapshot ~counted:false) [ (0, int_values [ 5; 0 ]) ]
+           [ [ 9; 5 ] ]);
+      test "a store before a loop of no trip runs"
+        (writes before_empty_loop [] [ [ 8 ]; [ 0 ] ]);
+    ]
+
 let () =
   Disk_cache.play (("breaking graph", lowers_a_breaking_graph) :: parts);
   exit
@@ -7612,6 +7715,7 @@ let () =
          int_powers;
          effects;
          folded_effects;
+         hand_written;
          reduces_under_gates;
          few_trips_tests;
        ])

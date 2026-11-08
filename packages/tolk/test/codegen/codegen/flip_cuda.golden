@@ -1,4 +1,4 @@
-# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 128
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
@@ -39,7 +39,7 @@
 37 Ops.AFTER dtypes.void [0, 36]
 38 Ops.SINK dtypes.void [37] KernelInfo(name="E_8_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), optimized=True)
 39 Ops.SINK dtypes.void [37] KernelInfo(name="E_8_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(lds=1024, mem=1024), optimized=True)
-40 Ops.LINEAR dtypes.void [1, 2, 15, 3, 4, 5, 6, 7, 9, 16, 17, 20, 21, 18, 8, 19, 22, 23, 24, 0, 32, 33, 34, 29, 30, 31, 10, 11, 28, 25, 26, 27, 35, 12, 13, 14, 36, 37, 38]
+40 Ops.LINEAR dtypes.void [1, 2, 15, 3, 4, 5, 6, 7, 9, 16, 17, 20, 21, 18, 8, 19, 22, 23, 24, 0, 32, 33, 34, 29, 30, 31, 10, 11, 28, 25, 26, 27, 35, 12, 13, 14, 36, 37, 39]
 41 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(32) E_8_4_4(float* data0_128, float* data1_128) {\n  int lidx0 = threadIdx.x; /* 8 */\n  int lidx1 = threadIdx.y; /* 4 */\n  int alu0 = (lidx0<<4);\n  float4 val0 = (*((float4*)((data1_128+(alu0+(lidx1*-4)+12)))));\n  *((float4*)((data0_128+(alu0+(lidx1<<2))))) = make_float4(val0.w,val0.z,val0.y,val0.x);\n}"
 42 Ops.PROGRAM dtypes.void [39, 40, 41] ProgramInfo(local_size=(8, 4, 1), params=(%2, %15), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
 43 Ops.SINK dtypes.void [38, 42]
