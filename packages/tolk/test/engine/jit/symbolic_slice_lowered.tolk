@@ -1,0 +1,60 @@
+# tolk D141 D151 golden=317d76f5aee52271da5ade532d00b0b8
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.CONST dtypes.weakint [] 24
+2 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+3 Ops.BITCAST dtypes.u64 [2] dtypes.u64
+4 Ops.CONST dtypes.weakint [] 0
+5 Ops.CAST dtypes.i32 [4] dtypes.i32
+6 Ops.INDEX dtypes.u64 [3, 5]
+7 Ops.LOAD dtypes.u64 [6]
+8 Ops.REFPARAM dtypes.f32 [0, 7] ParamArg(slot=0, dtype=dtypes.f32)
+9 Ops.CAST dtypes.i32 [0] dtypes.i32
+10 Ops.SHRINK dtypes.f32 [8, 5, 9]
+11 Ops.CONST dtypes.weakint [] 77
+12 Ops.CONST dtypes.weakint [] 1
+13 Ops.CAST dtypes.i32 [12] dtypes.i32
+14 Ops.INDEX dtypes.u64 [3, 13]
+15 Ops.LOAD dtypes.u64 [14]
+16 Ops.REFPARAM dtypes.f32 [11, 15] ParamArg(slot=1, dtype=dtypes.f32)
+17 Ops.BITCAST dtypes.i32 [2] dtypes.i32
+18 Ops.INDEX dtypes.i32 [17, 9]
+19 Ops.LOAD dtypes.i32 [18]
+20 Ops.CONST dtypes.weakint [] 33
+21 Ops.CAST dtypes.i32 [20] dtypes.i32
+22 Ops.ADD dtypes.i32 [19, 21]
+23 Ops.INDEX dtypes.f32 [16, 22]
+24 Ops.LOAD dtypes.f32 [23]
+25 Ops.CONST dtypes.weakint [] 34
+26 Ops.CAST dtypes.i32 [25] dtypes.i32
+27 Ops.ADD dtypes.i32 [19, 26]
+28 Ops.INDEX dtypes.f32 [16, 27]
+29 Ops.LOAD dtypes.f32 [28]
+30 Ops.CONST dtypes.weakint [] 44
+31 Ops.CAST dtypes.i32 [30] dtypes.i32
+32 Ops.ADD dtypes.i32 [19, 31]
+33 Ops.INDEX dtypes.f32 [16, 32]
+34 Ops.LOAD dtypes.f32 [33]
+35 Ops.CONST dtypes.weakint [] 45
+36 Ops.CAST dtypes.i32 [35] dtypes.i32
+37 Ops.ADD dtypes.i32 [19, 36]
+38 Ops.INDEX dtypes.f32 [16, 37]
+39 Ops.LOAD dtypes.f32 [38]
+40 Ops.STACK dtypes.f32 [24, 29, 34, 39]
+41 Ops.CONST dtypes.weakfloat [] 1.0
+42 Ops.CAST dtypes.f32 [41] dtypes.f32
+43 Ops.ADD dtypes.f32 [40, 42]
+44 Ops.STORE dtypes.void [10, 43]
+45 Ops.SINK dtypes.void [44, 44, 44, 44] KernelInfo(name="E_2_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))), estimates=Estimates(ops=4, lds=32, mem=32), optimized=True)
+46 Ops.LINEAR dtypes.void [1, 2, 0, 9, 17, 18, 19, 4, 5, 3, 6, 7, 12, 13, 14, 15, 11, 16, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 8, 40, 10, 41, 42, 43, 44, 45]
+47 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void E_2_2(unsigned char* restrict args_24) {\n  int val0 = (*(((int*)(args_24))+4));\n  unsigned long val1 = (*(((unsigned long*)(args_24))+0));\n  unsigned long val2 = (*(((unsigned long*)(args_24))+1));\n  float val3 = (*(((float*)(val2))+(val0+33)));\n  float val4 = (*(((float*)(val2))+(val0+34)));\n  float val5 = (*(((float*)(val2))+(val0+44)));\n  float val6 = (*(((float*)(val2))+(val0+45)));\n  *((float4*)((((float*)(val1))+0))) = ((float4){val3,val4,val5,val6}+1.0f);\n}\n"
+48 Ops.BINARY dtypes.u8 [] b"typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void E_2_2(unsigned char* restrict args_24) {\n  int val0 = (*(((int*)(args_24))+4));\n  unsigned long val1 = (*(((unsigned long*)(args_24))+0));\n  unsigned long val2 = (*(((unsigned long*)(args_24))+1));\n  float val3 = (*(((float*)(val2))+(val0+33)));\n  float val4 = (*(((float*)(val2))+(val0+34)));\n  float val5 = (*(((float*)(val2))+(val0+44)));\n  float val6 = (*(((float*)(val2))+(val0+45)));\n  *((float4*)((((float*)(val1))+0))) = ((float4){val3,val4,val5,val6}+1.0f);\n}\n"
+49 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+50 Ops.PARAM dtypes.f32 [11] ParamArg(slot=1, dtype=dtypes.f32)
+51 Ops.STACK dtypes.void []
+52 Ops.PARAM dtypes.i32 [51] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(1, 10), name="i", addrspace=AddrSpace.ALU)
+53 Ops.PROGRAM dtypes.void [45, 46, 47, 48] ProgramInfo(params=(%49, %50, %52), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
+54 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+55 Ops.PARAM dtypes.f32 [11] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+56 Ops.CALL dtypes.void [53, 54, 55] CallInfo()
+57 Ops.LINEAR dtypes.void [56]
+

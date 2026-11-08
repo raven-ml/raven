@@ -1,0 +1,411 @@
+# tolk D25 D80 D141 D151 golden=52bd40bb969e8c45fc56f6bc8321c6a6
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 96
+2 Ops.CONST dtypes.weakint [] 32
+3 Ops.PARAM dtypes.u8 [2] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+4 Ops.BITCAST dtypes.u64 [3] dtypes.u64
+5 Ops.CONST dtypes.weakint [] 0
+6 Ops.CAST dtypes.i32 [5] dtypes.i32
+7 Ops.INDEX dtypes.u64 [4, 6]
+8 Ops.LOAD dtypes.u64 [7]
+9 Ops.REFPARAM dtypes.f32 [1, 8] ParamArg(slot=0, dtype=dtypes.f32)
+10 Ops.CONST dtypes.weakint [] 2
+11 Ops.CAST dtypes.i32 [10] dtypes.i32
+12 Ops.RANGE dtypes.i32 [11] (AxisType.WEAK, 0)
+13 Ops.CONST dtypes.weakint [] 48
+14 Ops.CAST dtypes.i32 [13] dtypes.i32
+15 Ops.MUL dtypes.i32 [12, 14]
+16 Ops.BITCAST dtypes.i32 [3] dtypes.i32
+17 Ops.CONST dtypes.weakint [] 4
+18 Ops.CAST dtypes.i32 [17] dtypes.i32
+19 Ops.INDEX dtypes.i32 [16, 18]
+20 Ops.LOAD dtypes.i32 [19]
+21 Ops.CONST dtypes.weakint [] 5
+22 Ops.CAST dtypes.i32 [21] dtypes.i32
+23 Ops.INDEX dtypes.i32 [16, 22]
+24 Ops.LOAD dtypes.i32 [23]
+25 Ops.SUB dtypes.i32 [24, 20]
+26 Ops.AFTER dtypes.i32 [25, 12]
+27 Ops.RANGE dtypes.i32 [26] (AxisType.WEAK, 1)
+28 Ops.ADD dtypes.i32 [20, 27]
+29 Ops.SHL dtypes.i32 [28, 18]
+30 Ops.ADD dtypes.i32 [15, 29]
+31 Ops.SHRINK dtypes.f32 [9, 30, 18]
+32 Ops.CONST dtypes.weakint [] 1
+33 Ops.CAST dtypes.i32 [32] dtypes.i32
+34 Ops.INDEX dtypes.u64 [4, 33]
+35 Ops.LOAD dtypes.u64 [34]
+36 Ops.REFPARAM dtypes.f32 [1, 35] ParamArg(slot=1, dtype=dtypes.f32)
+37 Ops.ADD dtypes.i32 [15, 28]
+38 Ops.INDEX dtypes.f32 [36, 37]
+39 Ops.LOAD dtypes.f32 [38]
+40 Ops.CONST dtypes.weakint [] 3
+41 Ops.CAST dtypes.i32 [40] dtypes.i32
+42 Ops.ADD dtypes.i32 [37, 41]
+43 Ops.INDEX dtypes.f32 [36, 42]
+44 Ops.LOAD dtypes.f32 [43]
+45 Ops.CONST dtypes.weakint [] 6
+46 Ops.CAST dtypes.i32 [45] dtypes.i32
+47 Ops.ADD dtypes.i32 [37, 46]
+48 Ops.INDEX dtypes.f32 [36, 47]
+49 Ops.LOAD dtypes.f32 [48]
+50 Ops.CONST dtypes.weakint [] 9
+51 Ops.CAST dtypes.i32 [50] dtypes.i32
+52 Ops.ADD dtypes.i32 [37, 51]
+53 Ops.INDEX dtypes.f32 [36, 52]
+54 Ops.LOAD dtypes.f32 [53]
+55 Ops.STACK dtypes.f32 [39, 44, 49, 54]
+56 Ops.STORE dtypes.void [31, 55]
+57 Ops.ADD dtypes.i32 [30, 18]
+58 Ops.SHRINK dtypes.f32 [9, 57, 18]
+59 Ops.CONST dtypes.weakint [] 12
+60 Ops.CAST dtypes.i32 [59] dtypes.i32
+61 Ops.ADD dtypes.i32 [37, 60]
+62 Ops.INDEX dtypes.f32 [36, 61]
+63 Ops.LOAD dtypes.f32 [62]
+64 Ops.CONST dtypes.weakint [] 15
+65 Ops.CAST dtypes.i32 [64] dtypes.i32
+66 Ops.ADD dtypes.i32 [37, 65]
+67 Ops.INDEX dtypes.f32 [36, 66]
+68 Ops.LOAD dtypes.f32 [67]
+69 Ops.CONST dtypes.weakint [] 18
+70 Ops.CAST dtypes.i32 [69] dtypes.i32
+71 Ops.ADD dtypes.i32 [37, 70]
+72 Ops.INDEX dtypes.f32 [36, 71]
+73 Ops.LOAD dtypes.f32 [72]
+74 Ops.CONST dtypes.weakint [] 21
+75 Ops.CAST dtypes.i32 [74] dtypes.i32
+76 Ops.ADD dtypes.i32 [37, 75]
+77 Ops.INDEX dtypes.f32 [36, 76]
+78 Ops.LOAD dtypes.f32 [77]
+79 Ops.STACK dtypes.f32 [63, 68, 73, 78]
+80 Ops.STORE dtypes.void [58, 79]
+81 Ops.CONST dtypes.weakint [] 8
+82 Ops.CAST dtypes.i32 [81] dtypes.i32
+83 Ops.ADD dtypes.i32 [30, 82]
+84 Ops.SHRINK dtypes.f32 [9, 83, 18]
+85 Ops.CONST dtypes.weakint [] 24
+86 Ops.CAST dtypes.i32 [85] dtypes.i32
+87 Ops.ADD dtypes.i32 [37, 86]
+88 Ops.INDEX dtypes.f32 [36, 87]
+89 Ops.LOAD dtypes.f32 [88]
+90 Ops.CONST dtypes.weakint [] 27
+91 Ops.CAST dtypes.i32 [90] dtypes.i32
+92 Ops.ADD dtypes.i32 [37, 91]
+93 Ops.INDEX dtypes.f32 [36, 92]
+94 Ops.LOAD dtypes.f32 [93]
+95 Ops.CONST dtypes.weakint [] 30
+96 Ops.CAST dtypes.i32 [95] dtypes.i32
+97 Ops.ADD dtypes.i32 [37, 96]
+98 Ops.INDEX dtypes.f32 [36, 97]
+99 Ops.LOAD dtypes.f32 [98]
+100 Ops.CONST dtypes.weakint [] 33
+101 Ops.CAST dtypes.i32 [100] dtypes.i32
+102 Ops.ADD dtypes.i32 [37, 101]
+103 Ops.INDEX dtypes.f32 [36, 102]
+104 Ops.LOAD dtypes.f32 [103]
+105 Ops.STACK dtypes.f32 [89, 94, 99, 104]
+106 Ops.STORE dtypes.void [84, 105]
+107 Ops.ADD dtypes.i32 [30, 60]
+108 Ops.SHRINK dtypes.f32 [9, 107, 18]
+109 Ops.CONST dtypes.weakint [] 36
+110 Ops.CAST dtypes.i32 [109] dtypes.i32
+111 Ops.ADD dtypes.i32 [37, 110]
+112 Ops.INDEX dtypes.f32 [36, 111]
+113 Ops.LOAD dtypes.f32 [112]
+114 Ops.CONST dtypes.weakint [] 39
+115 Ops.CAST dtypes.i32 [114] dtypes.i32
+116 Ops.ADD dtypes.i32 [37, 115]
+117 Ops.INDEX dtypes.f32 [36, 116]
+118 Ops.LOAD dtypes.f32 [117]
+119 Ops.CONST dtypes.weakint [] 42
+120 Ops.CAST dtypes.i32 [119] dtypes.i32
+121 Ops.ADD dtypes.i32 [37, 120]
+122 Ops.INDEX dtypes.f32 [36, 121]
+123 Ops.LOAD dtypes.f32 [122]
+124 Ops.CONST dtypes.weakint [] 45
+125 Ops.CAST dtypes.i32 [124] dtypes.i32
+126 Ops.ADD dtypes.i32 [37, 125]
+127 Ops.INDEX dtypes.f32 [36, 126]
+128 Ops.LOAD dtypes.f32 [127]
+129 Ops.STACK dtypes.f32 [113, 118, 123, 128]
+130 Ops.STORE dtypes.void [108, 129]
+131 Ops.AFTER dtypes.void [0, 56, 80, 106, 130]
+132 Ops.END dtypes.void [131, 27]
+133 Ops.END dtypes.void [132, 12]
+134 Ops.SINK dtypes.void [133] KernelInfo(name="E_2_3_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(16, AxisType.UPCAST)),), estimates=Estimates(lds=768, mem=768), optimized=True, split=(3, 2, 3))
+135 Ops.LINEAR dtypes.void [2, 3, 17, 18, 16, 19, 20, 21, 22, 23, 24, 5, 6, 4, 7, 8, 32, 33, 34, 35, 1, 9, 36, 0, 59, 60, 64, 65, 69, 70, 10, 11, 74, 75, 85, 86, 90, 91, 40, 41, 95, 96, 100, 101, 109, 110, 114, 115, 119, 120, 124, 125, 13, 14, 45, 46, 81, 82, 50, 51, 25, 12, 26, 15, 27, 28, 37, 61, 62, 63, 66, 67, 68, 71, 72, 73, 76, 77, 78, 87, 88, 89, 92, 93, 94, 42, 43, 44, 97, 98, 99, 102, 103, 104, 111, 112, 113, 116, 117, 118, 121, 122, 123, 126, 127, 128, 47, 48, 49, 52, 53, 54, 38, 39, 79, 105, 129, 55, 29, 30, 107, 108, 57, 58, 83, 84, 31, 130, 80, 106, 56, 131, 132, 133, 134]
+136 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void E_2_3_16(unsigned char* restrict args_32) {\n  int val0 = (*(((int*)(args_32))+4));\n  int val1 = (*(((int*)(args_32))+5));\n  unsigned long val2 = (*(((unsigned long*)(args_32))+0));\n  unsigned long val3 = (*(((unsigned long*)(args_32))+1));\n  for (int Lidx0 = 0; Lidx0 < 2; Lidx0++) {\n    int alu0 = (Lidx0*48);\n    for (int Lidx1 = 0; Lidx1 < (val1-val0); Lidx1++) {\n      int alu1 = (val0+Lidx1);\n      int alu2 = (alu0+alu1);\n      float val4 = (*(((float*)(val3))+(alu2+12)));\n      float val5 = (*(((float*)(val3))+(alu2+15)));\n      float val6 = (*(((float*)(val3))+(alu2+18)));\n      float val7 = (*(((float*)(val3))+(alu2+21)));\n      float val8 = (*(((float*)(val3))+(alu2+24)));\n      float val9 = (*(((float*)(val3))+(alu2+27)));\n      float val10 = (*(((float*)(val3))+(alu2+3)));\n      float val11 = (*(((float*)(val3))+(alu2+30)));\n      float val12 = (*(((float*)(val3))+(alu2+33)));\n      float val13 = (*(((float*)(val3))+(alu2+36)));\n      float val14 = (*(((float*)(val3))+(alu2+39)));\n      float val15 = (*(((float*)(val3))+(alu2+42)));\n      float val16 = (*(((float*)(val3))+(alu2+45)));\n      float val17 = (*(((float*)(val3))+(alu2+6)));\n      float val18 = (*(((float*)(val3))+(alu2+9)));\n      float val19 = (*(((float*)(val3))+alu2));\n      int alu3 = (alu0+(alu1<<4));\n      *((float4*)((((float*)(val2))+(alu3+12)))) = (float4){val13,val14,val15,val16};\n      *((float4*)((((float*)(val2))+(alu3+4)))) = (float4){val4,val5,val6,val7};\n      *((float4*)((((float*)(val2))+(alu3+8)))) = (float4){val8,val9,val11,val12};\n      *((float4*)((((float*)(val2))+alu3))) = (float4){val19,val10,val17,val18};\n    }\n  }\n}\n"
+137 Ops.BINARY dtypes.u8 [] b"typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void E_2_3_16(unsigned char* restrict args_32) {\n  int val0 = (*(((int*)(args_32))+4));\n  int val1 = (*(((int*)(args_32))+5));\n  unsigned long val2 = (*(((unsigned long*)(args_32))+0));\n  unsigned long val3 = (*(((unsigned long*)(args_32))+1));\n  for (int Lidx0 = 0; Lidx0 < 2; Lidx0++) {\n    int alu0 = (Lidx0*48);\n    for (int Lidx1 = 0; Lidx1 < (val1-val0); Lidx1++) {\n      int alu1 = (val0+Lidx1);\n      int alu2 = (alu0+alu1);\n      float val4 = (*(((float*)(val3))+(alu2+12)));\n      float val5 = (*(((float*)(val3))+(alu2+15)));\n      float val6 = (*(((float*)(val3))+(alu2+18)));\n      float val7 = (*(((float*)(val3))+(alu2+21)));\n      float val8 = (*(((float*)(val3))+(alu2+24)));\n      float val9 = (*(((float*)(val3))+(alu2+27)));\n      float val10 = (*(((float*)(val3))+(alu2+3)));\n      float val11 = (*(((float*)(val3))+(alu2+30)));\n      float val12 = (*(((float*)(val3))+(alu2+33)));\n      float val13 = (*(((float*)(val3))+(alu2+36)));\n      float val14 = (*(((float*)(val3))+(alu2+39)));\n      float val15 = (*(((float*)(val3))+(alu2+42)));\n      float val16 = (*(((float*)(val3))+(alu2+45)));\n      float val17 = (*(((float*)(val3))+(alu2+6)));\n      float val18 = (*(((float*)(val3))+(alu2+9)));\n      float val19 = (*(((float*)(val3))+alu2));\n      int alu3 = (alu0+(alu1<<4));\n      *((float4*)((((float*)(val2))+(alu3+12)))) = (float4){val13,val14,val15,val16};\n      *((float4*)((((float*)(val2))+(alu3+4)))) = (float4){val4,val5,val6,val7};\n      *((float4*)((((float*)(val2))+(alu3+8)))) = (float4){val8,val9,val11,val12};\n      *((float4*)((((float*)(val2))+alu3))) = (float4){val19,val10,val17,val18};\n    }\n  }\n}\n"
+138 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
+139 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32)
+140 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(0, 3), name="block_lo", addrspace=AddrSpace.ALU)
+141 Ops.PARAM dtypes.i32 [0] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 3), name="block_hi", addrspace=AddrSpace.ALU)
+142 Ops.PROGRAM dtypes.void [134, 135, 136, 137] ProgramInfo(global_size=(3, 1, 1), params=(%138, %139, %140, %141), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
+143 Ops.CONST dtypes.weakint [] 512
+144 Ops.ALLOC dtypes.i8 [143] ParamArg(slot=25, dtype=dtypes.i8, device="CPU")
+145 Ops.CONST dtypes.weakint [] 384
+146 Ops.SHRINK dtypes.i8 [144, 5, 145]
+147 Ops.BITCAST dtypes.f32 [146] dtypes.f32
+148 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+149 Ops.CALL dtypes.void [142, 147, 148] CallInfo()
+150 Ops.CONST dtypes.weakint [] 40
+151 Ops.PARAM dtypes.u8 [150] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+152 Ops.BITCAST dtypes.u64 [151] dtypes.u64
+153 Ops.INDEX dtypes.u64 [152, 6]
+154 Ops.LOAD dtypes.u64 [153]
+155 Ops.REFPARAM dtypes.f32 [32, 154] ParamArg(slot=0, dtype=dtypes.f32)
+156 Ops.INDEX dtypes.f32 [155, 6]
+157 Ops.BUFFER dtypes.f32 [10] ParamArg(slot=1, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+158 Ops.INDEX dtypes.f32 [157, 6]
+159 Ops.CONST dtypes.weakfloat [] 0.0
+160 Ops.CAST dtypes.f32 [159] dtypes.f32
+161 Ops.STORE dtypes.void [158, 160]
+162 Ops.INDEX dtypes.f32 [157, 33]
+163 Ops.STORE dtypes.void [162, 160]
+164 Ops.RANGE dtypes.i32 [18] (AxisType.WEAK, 3, 0, 0)
+165 Ops.AFTER dtypes.i32 [18, 164]
+166 Ops.RANGE dtypes.i32 [165] (AxisType.WEAK, 3, 0, 1)
+167 Ops.AFTER dtypes.f32 [157, 161, 163, 164, 166]
+168 Ops.INDEX dtypes.f32 [167, 6]
+169 Ops.LOAD dtypes.f32 [168]
+170 Ops.BUFFER dtypes.f32 [81] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+171 Ops.AFTER dtypes.f32 [170, 166, 164]
+172 Ops.INDEX dtypes.f32 [171, 6]
+173 Ops.STORE dtypes.void [172, 160]
+174 Ops.INDEX dtypes.f32 [171, 33]
+175 Ops.STORE dtypes.void [174, 160]
+176 Ops.INDEX dtypes.f32 [171, 11]
+177 Ops.STORE dtypes.void [176, 160]
+178 Ops.INDEX dtypes.f32 [171, 41]
+179 Ops.STORE dtypes.void [178, 160]
+180 Ops.INDEX dtypes.f32 [171, 18]
+181 Ops.STORE dtypes.void [180, 160]
+182 Ops.INDEX dtypes.f32 [171, 22]
+183 Ops.STORE dtypes.void [182, 160]
+184 Ops.INDEX dtypes.f32 [171, 46]
+185 Ops.STORE dtypes.void [184, 160]
+186 Ops.CONST dtypes.weakint [] 7
+187 Ops.CAST dtypes.i32 [186] dtypes.i32
+188 Ops.INDEX dtypes.f32 [171, 187]
+189 Ops.STORE dtypes.void [188, 160]
+190 Ops.AFTER dtypes.i32 [41, 166]
+191 Ops.RANGE dtypes.i32 [190] (AxisType.WEAK, 0)
+192 Ops.AFTER dtypes.i32 [41, 191]
+193 Ops.RANGE dtypes.i32 [192] (AxisType.WEAK, 1)
+194 Ops.AFTER dtypes.i32 [41, 193]
+195 Ops.RANGE dtypes.i32 [194] (AxisType.WEAK, 2)
+196 Ops.AFTER dtypes.f32 [170, 173, 175, 177, 179, 181, 183, 185, 189, 191, 193, 195]
+197 Ops.INDEX dtypes.f32 [196, 6]
+198 Ops.INDEX dtypes.u64 [152, 33]
+199 Ops.LOAD dtypes.u64 [198]
+200 Ops.REFPARAM dtypes.f32 [1, 199] ParamArg(slot=1, dtype=dtypes.f32)
+201 Ops.SHL dtypes.i32 [193, 11]
+202 Ops.SHL dtypes.i32 [166, 11]
+203 Ops.ADD dtypes.i32 [201, 202]
+204 Ops.ADD dtypes.i32 [203, 195]
+205 Ops.SHL dtypes.i32 [191, 18]
+206 Ops.ADD dtypes.i32 [204, 205]
+207 Ops.CONST dtypes.weakint [] -5
+208 Ops.CAST dtypes.i32 [207] dtypes.i32
+209 Ops.ADD dtypes.i32 [206, 208]
+210 Ops.INDEX dtypes.f32 [200, 209]
+211 Ops.CMPLT dtypes.bool [6, 195]
+212 Ops.ADD dtypes.i32 [193, 166]
+213 Ops.CMPLT dtypes.bool [6, 212]
+214 Ops.CMPLT dtypes.bool [212, 22]
+215 Ops.AND dtypes.bool [213, 214]
+216 Ops.AND dtypes.bool [211, 215]
+217 Ops.LOAD dtypes.f32 [210, 160, 216]
+218 Ops.CONST dtypes.weakint [] 108
+219 Ops.INDEX dtypes.u64 [152, 11]
+220 Ops.LOAD dtypes.u64 [219]
+221 Ops.REFPARAM dtypes.f32 [218, 220] ParamArg(slot=2, dtype=dtypes.f32)
+222 Ops.MUL dtypes.i32 [193, 41]
+223 Ops.ADD dtypes.i32 [222, 195]
+224 Ops.MUL dtypes.i32 [191, 51]
+225 Ops.ADD dtypes.i32 [223, 224]
+226 Ops.MUL dtypes.i32 [164, 91]
+227 Ops.ADD dtypes.i32 [225, 226]
+228 Ops.INDEX dtypes.f32 [221, 227]
+229 Ops.LOAD dtypes.f32 [228]
+230 Ops.LOAD dtypes.f32 [197]
+231 Ops.MULACC dtypes.f32 [217, 229, 230]
+232 Ops.STORE dtypes.void [197, 231]
+233 Ops.INDEX dtypes.f32 [196, 33]
+234 Ops.CONST dtypes.weakint [] 43
+235 Ops.CAST dtypes.i32 [234] dtypes.i32
+236 Ops.ADD dtypes.i32 [206, 235]
+237 Ops.INDEX dtypes.f32 [200, 236]
+238 Ops.LOAD dtypes.f32 [237, 160, 216]
+239 Ops.LOAD dtypes.f32 [233]
+240 Ops.MULACC dtypes.f32 [238, 229, 239]
+241 Ops.STORE dtypes.void [233, 240]
+242 Ops.INDEX dtypes.f32 [196, 11]
+243 Ops.CONST dtypes.weakint [] -4
+244 Ops.CAST dtypes.i32 [243] dtypes.i32
+245 Ops.ADD dtypes.i32 [206, 244]
+246 Ops.INDEX dtypes.f32 [200, 245]
+247 Ops.LOAD dtypes.f32 [246, 160, 215]
+248 Ops.LOAD dtypes.f32 [242]
+249 Ops.MULACC dtypes.f32 [247, 229, 248]
+250 Ops.STORE dtypes.void [242, 249]
+251 Ops.INDEX dtypes.f32 [196, 41]
+252 Ops.CONST dtypes.weakint [] 44
+253 Ops.CAST dtypes.i32 [252] dtypes.i32
+254 Ops.ADD dtypes.i32 [206, 253]
+255 Ops.INDEX dtypes.f32 [200, 254]
+256 Ops.LOAD dtypes.f32 [255, 160, 215]
+257 Ops.LOAD dtypes.f32 [251]
+258 Ops.MULACC dtypes.f32 [256, 229, 257]
+259 Ops.STORE dtypes.void [251, 258]
+260 Ops.INDEX dtypes.f32 [196, 18]
+261 Ops.CONST dtypes.weakint [] -3
+262 Ops.CAST dtypes.i32 [261] dtypes.i32
+263 Ops.ADD dtypes.i32 [206, 262]
+264 Ops.INDEX dtypes.f32 [200, 263]
+265 Ops.LOAD dtypes.f32 [264, 160, 215]
+266 Ops.LOAD dtypes.f32 [260]
+267 Ops.MULACC dtypes.f32 [265, 229, 266]
+268 Ops.STORE dtypes.void [260, 267]
+269 Ops.INDEX dtypes.f32 [196, 22]
+270 Ops.ADD dtypes.i32 [206, 125]
+271 Ops.INDEX dtypes.f32 [200, 270]
+272 Ops.LOAD dtypes.f32 [271, 160, 215]
+273 Ops.LOAD dtypes.f32 [269]
+274 Ops.MULACC dtypes.f32 [272, 229, 273]
+275 Ops.STORE dtypes.void [269, 274]
+276 Ops.INDEX dtypes.f32 [196, 46]
+277 Ops.CONST dtypes.weakint [] -2
+278 Ops.CAST dtypes.i32 [277] dtypes.i32
+279 Ops.ADD dtypes.i32 [206, 278]
+280 Ops.INDEX dtypes.f32 [200, 279]
+281 Ops.CMPLT dtypes.bool [195, 11]
+282 Ops.AND dtypes.bool [281, 215]
+283 Ops.LOAD dtypes.f32 [280, 160, 282]
+284 Ops.LOAD dtypes.f32 [276]
+285 Ops.MULACC dtypes.f32 [283, 229, 284]
+286 Ops.STORE dtypes.void [276, 285]
+287 Ops.INDEX dtypes.f32 [196, 187]
+288 Ops.CONST dtypes.weakint [] 46
+289 Ops.CAST dtypes.i32 [288] dtypes.i32
+290 Ops.ADD dtypes.i32 [206, 289]
+291 Ops.INDEX dtypes.f32 [200, 290]
+292 Ops.LOAD dtypes.f32 [291, 160, 282]
+293 Ops.LOAD dtypes.f32 [287]
+294 Ops.MULACC dtypes.f32 [292, 229, 293]
+295 Ops.STORE dtypes.void [287, 294]
+296 Ops.AFTER dtypes.void [0, 232, 241, 250, 259, 268, 275, 286, 295]
+297 Ops.END dtypes.void [296, 195]
+298 Ops.END dtypes.void [297, 193]
+299 Ops.END dtypes.void [298, 191]
+300 Ops.AFTER dtypes.f32 [170, 299]
+301 Ops.INDEX dtypes.f32 [300, 46]
+302 Ops.LOAD dtypes.f32 [301]
+303 Ops.INDEX dtypes.u64 [152, 41]
+304 Ops.LOAD dtypes.u64 [303]
+305 Ops.REFPARAM dtypes.f32 [17, 304] ParamArg(slot=3, dtype=dtypes.f32)
+306 Ops.INDEX dtypes.f32 [305, 164]
+307 Ops.LOAD dtypes.f32 [306]
+308 Ops.ADD dtypes.f32 [302, 307]
+309 Ops.CMPLT dtypes.bool [160, 308]
+310 Ops.WHERE dtypes.f32 [309, 308, 160]
+311 Ops.CONST dtypes.weakint [] 128
+312 Ops.INDEX dtypes.u64 [152, 18]
+313 Ops.LOAD dtypes.u64 [312]
+314 Ops.REFPARAM dtypes.f32 [311, 313] ParamArg(slot=4, dtype=dtypes.f32)
+315 Ops.SHL dtypes.i32 [164, 18]
+316 Ops.ADD dtypes.i32 [315, 202]
+317 Ops.SHRINK dtypes.f32 [314, 316, 18]
+318 Ops.LOAD dtypes.f32 [317]
+319 Ops.INDEX dtypes.f32 [318, 41]
+320 Ops.INDEX dtypes.f32 [300, 18]
+321 Ops.LOAD dtypes.f32 [320]
+322 Ops.ADD dtypes.f32 [321, 307]
+323 Ops.CMPLT dtypes.bool [160, 322]
+324 Ops.WHERE dtypes.f32 [323, 322, 160]
+325 Ops.INDEX dtypes.f32 [318, 11]
+326 Ops.INDEX dtypes.f32 [300, 11]
+327 Ops.LOAD dtypes.f32 [326]
+328 Ops.ADD dtypes.f32 [327, 307]
+329 Ops.CMPLT dtypes.bool [160, 328]
+330 Ops.WHERE dtypes.f32 [329, 328, 160]
+331 Ops.INDEX dtypes.f32 [318, 33]
+332 Ops.INDEX dtypes.f32 [300, 6]
+333 Ops.LOAD dtypes.f32 [332]
+334 Ops.ADD dtypes.f32 [333, 307]
+335 Ops.CMPLT dtypes.bool [160, 334]
+336 Ops.WHERE dtypes.f32 [335, 334, 160]
+337 Ops.INDEX dtypes.f32 [318, 6]
+338 Ops.MUL dtypes.f32 [336, 337]
+339 Ops.MULACC dtypes.f32 [330, 331, 338]
+340 Ops.MULACC dtypes.f32 [324, 325, 339]
+341 Ops.MULACC dtypes.f32 [310, 319, 340]
+342 Ops.ADD dtypes.f32 [169, 341]
+343 Ops.STORE dtypes.void [168, 342]
+344 Ops.INDEX dtypes.f32 [167, 33]
+345 Ops.LOAD dtypes.f32 [344]
+346 Ops.INDEX dtypes.f32 [300, 187]
+347 Ops.LOAD dtypes.f32 [346]
+348 Ops.ADD dtypes.f32 [347, 307]
+349 Ops.CMPLT dtypes.bool [160, 348]
+350 Ops.WHERE dtypes.f32 [349, 348, 160]
+351 Ops.CONST dtypes.weakint [] 64
+352 Ops.CAST dtypes.i32 [351] dtypes.i32
+353 Ops.ADD dtypes.i32 [316, 352]
+354 Ops.SHRINK dtypes.f32 [314, 353, 18]
+355 Ops.LOAD dtypes.f32 [354]
+356 Ops.INDEX dtypes.f32 [355, 41]
+357 Ops.INDEX dtypes.f32 [300, 22]
+358 Ops.LOAD dtypes.f32 [357]
+359 Ops.ADD dtypes.f32 [358, 307]
+360 Ops.CMPLT dtypes.bool [160, 359]
+361 Ops.WHERE dtypes.f32 [360, 359, 160]
+362 Ops.INDEX dtypes.f32 [355, 11]
+363 Ops.INDEX dtypes.f32 [300, 41]
+364 Ops.LOAD dtypes.f32 [363]
+365 Ops.ADD dtypes.f32 [364, 307]
+366 Ops.CMPLT dtypes.bool [160, 365]
+367 Ops.WHERE dtypes.f32 [366, 365, 160]
+368 Ops.INDEX dtypes.f32 [355, 33]
+369 Ops.INDEX dtypes.f32 [300, 33]
+370 Ops.LOAD dtypes.f32 [369]
+371 Ops.ADD dtypes.f32 [370, 307]
+372 Ops.CMPLT dtypes.bool [160, 371]
+373 Ops.WHERE dtypes.f32 [372, 371, 160]
+374 Ops.INDEX dtypes.f32 [355, 6]
+375 Ops.MUL dtypes.f32 [373, 374]
+376 Ops.MULACC dtypes.f32 [367, 368, 375]
+377 Ops.MULACC dtypes.f32 [361, 362, 376]
+378 Ops.MULACC dtypes.f32 [350, 356, 377]
+379 Ops.ADD dtypes.f32 [345, 378]
+380 Ops.STORE dtypes.void [344, 379]
+381 Ops.AFTER dtypes.void [0, 343, 380]
+382 Ops.END dtypes.void [381, 166]
+383 Ops.END dtypes.void [382, 164]
+384 Ops.AFTER dtypes.f32 [157, 383]
+385 Ops.INDEX dtypes.f32 [384, 6]
+386 Ops.LOAD dtypes.f32 [385]
+387 Ops.INDEX dtypes.f32 [384, 33]
+388 Ops.LOAD dtypes.f32 [387]
+389 Ops.ADD dtypes.f32 [386, 388]
+390 Ops.CONST dtypes.weakfloat [] 0.5
+391 Ops.CAST dtypes.f32 [390] dtypes.f32
+392 Ops.MUL dtypes.f32 [389, 391]
+393 Ops.STORE dtypes.void [156, 392]
+394 Ops.SINK dtypes.void [393] KernelInfo(name="r_3_3_3_4_4_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=6, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=5, arg=(4, AxisType.UPCAST))), estimates=Estimates(ops=9858, lds=16084, mem=1348), optimized=True)
+395 Ops.LINEAR dtypes.void [150, 151, 81, 170, 10, 157, 32, 33, 152, 198, 199, 11, 219, 220, 40, 41, 303, 304, 17, 18, 312, 313, 1, 200, 218, 221, 305, 311, 314, 0, 5, 6, 158, 162, 159, 160, 277, 278, 261, 262, 243, 244, 207, 208, 90, 91, 234, 235, 252, 253, 124, 125, 288, 289, 21, 22, 45, 46, 351, 352, 186, 187, 50, 51, 161, 163, 164, 306, 307, 165, 226, 315, 166, 190, 171, 172, 174, 176, 178, 180, 182, 184, 188, 202, 173, 175, 177, 179, 181, 183, 185, 189, 191, 192, 224, 205, 193, 194, 201, 203, 212, 222, 213, 214, 215, 195, 204, 206, 279, 280, 281, 282, 283, 263, 264, 265, 245, 246, 247, 209, 210, 211, 216, 217, 236, 237, 238, 254, 255, 256, 270, 271, 272, 290, 291, 292, 223, 225, 227, 228, 229, 196, 197, 230, 233, 239, 242, 248, 251, 257, 260, 266, 269, 273, 276, 284, 287, 293, 285, 267, 249, 231, 240, 258, 274, 294, 232, 241, 250, 259, 268, 275, 286, 295, 296, 297, 298, 299, 300, 332, 333, 369, 370, 326, 327, 363, 364, 320, 321, 357, 358, 301, 302, 346, 347, 167, 168, 169, 344, 345, 316, 353, 354, 355, 317, 318, 374, 368, 362, 356, 337, 331, 325, 319, 334, 371, 328, 365, 322, 359, 308, 348, 335, 336, 338, 329, 323, 309, 330, 324, 310, 339, 340, 341, 342, 372, 373, 375, 366, 360, 349, 367, 361, 350, 376, 377, 378, 379, 343, 380, 381, 382, 383, 153, 154, 384, 385, 386, 387, 388, 155, 156, 390, 391, 389, 392, 393, 394]
+396 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void r_3_3_3_4_4_2_4(unsigned char* restrict args_40) {\n  float buf0[8];\n  float buf1[2];\n  unsigned long val0 = (*(((unsigned long*)(args_40))+1));\n  unsigned long val1 = (*(((unsigned long*)(args_40))+2));\n  unsigned long val2 = (*(((unsigned long*)(args_40))+3));\n  unsigned long val3 = (*(((unsigned long*)(args_40))+4));\n  *(buf1+0) = 0.0f;\n  *(buf1+1) = 0.0f;\n  for (int Lidx3_0_0 = 0; Lidx3_0_0 < 4; Lidx3_0_0++) {\n    float val4 = (*(((float*)(val2))+Lidx3_0_0));\n    for (int Lidx3_0_1 = 0; Lidx3_0_1 < 4; Lidx3_0_1++) {\n      int alu2 = (Lidx3_0_1<<2);\n      *(buf0+0) = 0.0f;\n      *(buf0+1) = 0.0f;\n      *(buf0+2) = 0.0f;\n      *(buf0+3) = 0.0f;\n      *(buf0+4) = 0.0f;\n      *(buf0+5) = 0.0f;\n      *(buf0+6) = 0.0f;\n      *(buf0+7) = 0.0f;\n      for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n        for (int Lidx1 = 0; Lidx1 < 3; Lidx1++) {\n          int alu11 = (Lidx1+Lidx3_0_1);\n          _Bool alu12 = ((0<alu11)&(alu11<5));\n          for (int Lidx2 = 0; Lidx2 < 3; Lidx2++) {\n            int alu13 = ((Lidx1<<2)+alu2+Lidx2+(Lidx0<<4));\n            _Bool alu14 = ((Lidx2<2)&alu12);\n            float val5 = (alu14?*(((float*)(val0))+(alu13+-2)):0.0f);\n            float val6 = (alu12?*(((float*)(val0))+(alu13+-3)):0.0f);\n            float val7 = (alu12?*(((float*)(val0))+(alu13+-4)):0.0f);\n            _Bool alu15 = ((0<Lidx2)&alu12);\n            float val8 = (alu15?*(((float*)(val0))+(alu13+-5)):0.0f);\n            float val9 = (alu15?*(((float*)(val0))+(alu13+43)):0.0f);\n            float val10 = (alu12?*(((float*)(val0))+(alu13+44)):0.0f);\n            float val11 = (alu12?*(((float*)(val0))+(alu13+45)):0.0f);\n            float val12 = (alu14?*(((float*)(val0))+(alu13+46)):0.0f);\n            float val13 = (*(((float*)(val1))+((Lidx1*3)+Lidx2+(Lidx0*9)+(Lidx3_0_0*27))));\n            *(buf0+0) = __builtin_fmaf(val8,val13,(*(buf0+0)));\n            *(buf0+1) = __builtin_fmaf(val9,val13,(*(buf0+1)));\n            *(buf0+2) = __builtin_fmaf(val7,val13,(*(buf0+2)));\n            *(buf0+3) = __builtin_fmaf(val10,val13,(*(buf0+3)));\n            *(buf0+4) = __builtin_fmaf(val6,val13,(*(buf0+4)));\n            *(buf0+5) = __builtin_fmaf(val11,val13,(*(buf0+5)));\n            *(buf0+6) = __builtin_fmaf(val5,val13,(*(buf0+6)));\n            *(buf0+7) = __builtin_fmaf(val12,val13,(*(buf0+7)));\n          }\n        }\n      }\n      int alu27 = ((Lidx3_0_0<<4)+alu2);\n      float4 val14 = (*((float4*)((((float*)(val3))+(alu27+64)))));\n      float4 val15 = (*((float4*)((((float*)(val3))+alu27))));\n      float alu28 = ((*(buf0+0))+val4);\n      float alu29 = ((*(buf0+1))+val4);\n      float alu30 = ((*(buf0+2))+val4);\n      float alu31 = ((*(buf0+3))+val4);\n      float alu32 = ((*(buf0+4))+val4);\n      float alu33 = ((*(buf0+5))+val4);\n      float alu34 = ((*(buf0+6))+val4);\n      float alu35 = ((*(buf0+7))+val4);\n      float alu36 = ((0.0f<alu28)?alu28:0.0f);\n      float alu37 = ((0.0f<alu30)?alu30:0.0f);\n      float alu38 = ((0.0f<alu32)?alu32:0.0f);\n      float alu39 = ((0.0f<alu34)?alu34:0.0f);\n      float alu40 = ((0.0f<alu29)?alu29:0.0f);\n      float alu41 = ((0.0f<alu31)?alu31:0.0f);\n      float alu42 = ((0.0f<alu33)?alu33:0.0f);\n      float alu43 = ((0.0f<alu35)?alu35:0.0f);\n      *(buf1+0) = ((*(buf1+0))+__builtin_fmaf(alu39,val15[3],__builtin_fmaf(alu38,val15[2],__builtin_fmaf(alu37,val15[1],(alu36*val15[0])))));\n      *(buf1+1) = ((*(buf1+1))+__builtin_fmaf(alu43,val14[3],__builtin_fmaf(alu42,val14[2],__builtin_fmaf(alu41,val14[1],(alu40*val14[0])))));\n    }\n  }\n  unsigned long val16 = (*(((unsigned long*)(args_40))+0));\n  *(((float*)(val16))+0) = (((*(buf1+0))+(*(buf1+1)))*0.5f);\n}\n"
+397 Ops.BINARY dtypes.u8 [] b"typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void r_3_3_3_4_4_2_4(unsigned char* restrict args_40) {\n  float buf0[8];\n  float buf1[2];\n  unsigned long val0 = (*(((unsigned long*)(args_40))+1));\n  unsigned long val1 = (*(((unsigned long*)(args_40))+2));\n  unsigned long val2 = (*(((unsigned long*)(args_40))+3));\n  unsigned long val3 = (*(((unsigned long*)(args_40))+4));\n  *(buf1+0) = 0.0f;\n  *(buf1+1) = 0.0f;\n  for (int Lidx3_0_0 = 0; Lidx3_0_0 < 4; Lidx3_0_0++) {\n    float val4 = (*(((float*)(val2))+Lidx3_0_0));\n    for (int Lidx3_0_1 = 0; Lidx3_0_1 < 4; Lidx3_0_1++) {\n      int alu2 = (Lidx3_0_1<<2);\n      *(buf0+0) = 0.0f;\n      *(buf0+1) = 0.0f;\n      *(buf0+2) = 0.0f;\n      *(buf0+3) = 0.0f;\n      *(buf0+4) = 0.0f;\n      *(buf0+5) = 0.0f;\n      *(buf0+6) = 0.0f;\n      *(buf0+7) = 0.0f;\n      for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n        for (int Lidx1 = 0; Lidx1 < 3; Lidx1++) {\n          int alu11 = (Lidx1+Lidx3_0_1);\n          _Bool alu12 = ((0<alu11)&(alu11<5));\n          for (int Lidx2 = 0; Lidx2 < 3; Lidx2++) {\n            int alu13 = ((Lidx1<<2)+alu2+Lidx2+(Lidx0<<4));\n            _Bool alu14 = ((Lidx2<2)&alu12);\n            float val5 = (alu14?*(((float*)(val0))+(alu13+-2)):0.0f);\n            float val6 = (alu12?*(((float*)(val0))+(alu13+-3)):0.0f);\n            float val7 = (alu12?*(((float*)(val0))+(alu13+-4)):0.0f);\n            _Bool alu15 = ((0<Lidx2)&alu12);\n            float val8 = (alu15?*(((float*)(val0))+(alu13+-5)):0.0f);\n            float val9 = (alu15?*(((float*)(val0))+(alu13+43)):0.0f);\n            float val10 = (alu12?*(((float*)(val0))+(alu13+44)):0.0f);\n            float val11 = (alu12?*(((float*)(val0))+(alu13+45)):0.0f);\n            float val12 = (alu14?*(((float*)(val0))+(alu13+46)):0.0f);\n            float val13 = (*(((float*)(val1))+((Lidx1*3)+Lidx2+(Lidx0*9)+(Lidx3_0_0*27))));\n            *(buf0+0) = __builtin_fmaf(val8,val13,(*(buf0+0)));\n            *(buf0+1) = __builtin_fmaf(val9,val13,(*(buf0+1)));\n            *(buf0+2) = __builtin_fmaf(val7,val13,(*(buf0+2)));\n            *(buf0+3) = __builtin_fmaf(val10,val13,(*(buf0+3)));\n            *(buf0+4) = __builtin_fmaf(val6,val13,(*(buf0+4)));\n            *(buf0+5) = __builtin_fmaf(val11,val13,(*(buf0+5)));\n            *(buf0+6) = __builtin_fmaf(val5,val13,(*(buf0+6)));\n            *(buf0+7) = __builtin_fmaf(val12,val13,(*(buf0+7)));\n          }\n        }\n      }\n      int alu27 = ((Lidx3_0_0<<4)+alu2);\n      float4 val14 = (*((float4*)((((float*)(val3))+(alu27+64)))));\n      float4 val15 = (*((float4*)((((float*)(val3))+alu27))));\n      float alu28 = ((*(buf0+0))+val4);\n      float alu29 = ((*(buf0+1))+val4);\n      float alu30 = ((*(buf0+2))+val4);\n      float alu31 = ((*(buf0+3))+val4);\n      float alu32 = ((*(buf0+4))+val4);\n      float alu33 = ((*(buf0+5))+val4);\n      float alu34 = ((*(buf0+6))+val4);\n      float alu35 = ((*(buf0+7))+val4);\n      float alu36 = ((0.0f<alu28)?alu28:0.0f);\n      float alu37 = ((0.0f<alu30)?alu30:0.0f);\n      float alu38 = ((0.0f<alu32)?alu32:0.0f);\n      float alu39 = ((0.0f<alu34)?alu34:0.0f);\n      float alu40 = ((0.0f<alu29)?alu29:0.0f);\n      float alu41 = ((0.0f<alu31)?alu31:0.0f);\n      float alu42 = ((0.0f<alu33)?alu33:0.0f);\n      float alu43 = ((0.0f<alu35)?alu35:0.0f);\n      *(buf1+0) = ((*(buf1+0))+__builtin_fmaf(alu39,val15[3],__builtin_fmaf(alu38,val15[2],__builtin_fmaf(alu37,val15[1],(alu36*val15[0])))));\n      *(buf1+1) = ((*(buf1+1))+__builtin_fmaf(alu43,val14[3],__builtin_fmaf(alu42,val14[2],__builtin_fmaf(alu41,val14[1],(alu40*val14[0])))));\n    }\n  }\n  unsigned long val16 = (*(((unsigned long*)(args_40))+0));\n  *(((float*)(val16))+0) = (((*(buf1+0))+(*(buf1+1)))*0.5f);\n}\n"
+398 Ops.PARAM dtypes.f32 [32] ParamArg(slot=0, dtype=dtypes.f32)
+399 Ops.PARAM dtypes.f32 [218] ParamArg(slot=2, dtype=dtypes.f32)
+400 Ops.PARAM dtypes.f32 [17] ParamArg(slot=3, dtype=dtypes.f32)
+401 Ops.PARAM dtypes.f32 [311] ParamArg(slot=4, dtype=dtypes.f32)
+402 Ops.PROGRAM dtypes.void [394, 395, 396, 397] ProgramInfo(params=(%398, %139, %399, %400, %401), globals=(0, 1, 2, 3, 4), outs=(0,), ins=(1, 2, 3, 4), target=Target(device="CPU", arch="x86_64,x86-64"))
+403 Ops.BUFFER dtypes.f32 [32] ParamArg(slot=21, dtype=dtypes.f32, device="CPU")
+404 Ops.BUFFER dtypes.f32 [218] ParamArg(slot=6, dtype=dtypes.f32, device="CPU")
+405 Ops.BUFFER dtypes.f32 [17] ParamArg(slot=8, dtype=dtypes.f32, device="CPU")
+406 Ops.PARAM dtypes.f32 [311] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+407 Ops.CALL dtypes.void [402, 403, 147, 404, 405, 406] CallInfo()
+408 Ops.LINEAR dtypes.void [149, 407]
+

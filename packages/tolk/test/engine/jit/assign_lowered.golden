@@ -15,8 +15,8 @@
 14 Ops.STORE dtypes.void [9, 13]
 15 Ops.SINK dtypes.void [14] KernelInfo(name="E", estimates=Estimates(ops=1, lds=8, mem=8), optimized=True)
 16 Ops.LINEAR dtypes.void [1, 2, 4, 5, 3, 6, 7, 0, 8, 9, 10, 11, 12, 13, 14, 15]
-17 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E(unsigned char* restrict args_8) {\n  unsigned long val0 = (*(((unsigned long*)(args_8))+0));\n  float val1 = (*(((float*)(val0))+0));\n  *(((float*)(val0))+0) = (val1+1.0f);\n}\n"
-18 Ops.BINARY dtypes.u8 [] b"\n__attribute__((min_vector_width(512))) void E(unsigned char* restrict args_8) {\n  unsigned long val0 = (*(((unsigned long*)(args_8))+0));\n  float val1 = (*(((float*)(val0))+0));\n  *(((float*)(val0))+0) = (val1+1.0f);\n}\n"
+17 Ops.SOURCE dtypes.void [] "\nvoid E(unsigned char* restrict args_8) {\n  unsigned long val0 = (*(((unsigned long*)(args_8))+0));\n  float val1 = (*(((float*)(val0))+0));\n  *(((float*)(val0))+0) = (val1+1.0f);\n}\n"
+18 Ops.BINARY dtypes.u8 [] b"\nvoid E(unsigned char* restrict args_8) {\n  unsigned long val0 = (*(((unsigned long*)(args_8))+0));\n  float val1 = (*(((float*)(val0))+0));\n  *(((float*)(val0))+0) = (val1+1.0f);\n}\n"
 19 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 20 Ops.PROGRAM dtypes.void [15, 16, 17, 18] ProgramInfo(params=(%19,), globals=(0,), outs=(0,), ins=(0,), target=Target(device="CPU", arch="x86_64,x86-64"))
 21 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")

@@ -1,0 +1,35 @@
+# tolk D141 D151 golden=bc261100584bd0691e78795f3baced79
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+3 Ops.BITCAST dtypes.u64 [2] dtypes.u64
+4 Ops.CONST dtypes.weakint [] 0
+5 Ops.CAST dtypes.i32 [4] dtypes.i32
+6 Ops.INDEX dtypes.u64 [3, 5]
+7 Ops.LOAD dtypes.u64 [6]
+8 Ops.REFPARAM dtypes.f32 [0, 7] ParamArg(slot=0, dtype=dtypes.f32)
+9 Ops.INDEX dtypes.f32 [8, 5]
+10 Ops.CONST dtypes.weakint [] 2
+11 Ops.CAST dtypes.i32 [0] dtypes.i32
+12 Ops.INDEX dtypes.u64 [3, 11]
+13 Ops.LOAD dtypes.u64 [12]
+14 Ops.REFPARAM dtypes.f32 [10, 13] ParamArg(slot=1, dtype=dtypes.f32)
+15 Ops.CAST dtypes.i32 [10] dtypes.i32
+16 Ops.SHRINK dtypes.f32 [14, 5, 15]
+17 Ops.LOAD dtypes.f32 [16]
+18 Ops.INDEX dtypes.f32 [17, 5]
+19 Ops.INDEX dtypes.f32 [17, 11]
+20 Ops.ADD dtypes.f32 [18, 19]
+21 Ops.STORE dtypes.void [9, 20]
+22 Ops.SINK dtypes.void [21] KernelInfo(name="r_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=1, lds=12, mem=12), optimized=True)
+23 Ops.LINEAR dtypes.void [1, 2, 4, 5, 3, 6, 7, 0, 11, 12, 13, 10, 14, 15, 16, 17, 8, 9, 18, 19, 20, 21, 22]
+24 Ops.SOURCE dtypes.void [] "typedef float float2 __attribute__((aligned(4),ext_vector_type(2)));\n__attribute__((min_vector_width(512))) void r_2(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_16))+1));\n  float2 val2 = (*((float2*)((((float*)(val1))+0))));\n  *(((float*)(val0))+0) = (val2[0]+val2[1]);\n}\n"
+25 Ops.BINARY dtypes.u8 [] b"typedef float float2 __attribute__((aligned(4),ext_vector_type(2)));\n__attribute__((min_vector_width(512))) void r_2(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_16))+1));\n  float2 val2 = (*((float2*)((((float*)(val1))+0))));\n  *(((float*)(val0))+0) = (val2[0]+val2[1]);\n}\n"
+26 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+27 Ops.PARAM dtypes.f32 [10] ParamArg(slot=1, dtype=dtypes.f32)
+28 Ops.PROGRAM dtypes.void [22, 23, 24, 25] ProgramInfo(params=(%26, %27), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
+29 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+30 Ops.PARAM dtypes.f32 [10] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+31 Ops.CALL dtypes.void [28, 29, 30] CallInfo()
+32 Ops.LINEAR dtypes.void [31]
+

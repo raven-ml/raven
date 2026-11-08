@@ -1,0 +1,113 @@
+# tolk D80 D141 D151 golden=949b33d34792f3e96be6c05425f45abc
+0 Ops.CONST dtypes.weakint [] 60
+1 Ops.CONST dtypes.weakint [] 56
+2 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+3 Ops.BITCAST dtypes.u64 [2] dtypes.u64
+4 Ops.CONST dtypes.weakint [] 0
+5 Ops.CAST dtypes.i32 [4] dtypes.i32
+6 Ops.INDEX dtypes.u64 [3, 5]
+7 Ops.LOAD dtypes.u64 [6]
+8 Ops.REFPARAM dtypes.f32 [0, 7] ParamArg(slot=0, dtype=dtypes.f32)
+9 Ops.BITCAST dtypes.i32 [2] dtypes.i32
+10 Ops.CONST dtypes.weakint [] 6
+11 Ops.CAST dtypes.i32 [10] dtypes.i32
+12 Ops.INDEX dtypes.i32 [9, 11]
+13 Ops.LOAD dtypes.i32 [12]
+14 Ops.CONST dtypes.weakint [] 7
+15 Ops.CAST dtypes.i32 [14] dtypes.i32
+16 Ops.INDEX dtypes.i32 [9, 15]
+17 Ops.LOAD dtypes.i32 [16]
+18 Ops.SUB dtypes.i32 [17, 13]
+19 Ops.RANGE dtypes.i32 [18] (AxisType.WEAK, 0)
+20 Ops.ADD dtypes.i32 [13, 19]
+21 Ops.CONST dtypes.weakint [] 3
+22 Ops.CAST dtypes.i32 [21] dtypes.i32
+23 Ops.MUL dtypes.i32 [20, 22]
+24 Ops.AFTER dtypes.i32 [22, 19]
+25 Ops.RANGE dtypes.i32 [24] (AxisType.WEAK, 1)
+26 Ops.ADD dtypes.i32 [23, 25]
+27 Ops.INDEX dtypes.f32 [8, 26]
+28 Ops.CONST dtypes.weakint [] 30
+29 Ops.CONST dtypes.weakint [] 1
+30 Ops.CAST dtypes.i32 [29] dtypes.i32
+31 Ops.INDEX dtypes.u64 [3, 30]
+32 Ops.LOAD dtypes.u64 [31]
+33 Ops.REFPARAM dtypes.f32 [28, 32] ParamArg(slot=1, dtype=dtypes.f32)
+34 Ops.INDEX dtypes.f32 [33, 26]
+35 Ops.CONST dtypes.weakfloat [] 0.0
+36 Ops.CAST dtypes.f32 [35] dtypes.f32
+37 Ops.CONST dtypes.weakint [] 8
+38 Ops.CAST dtypes.i32 [37] dtypes.i32
+39 Ops.INDEX dtypes.i32 [9, 38]
+40 Ops.LOAD dtypes.i32 [39]
+41 Ops.CMPLT dtypes.bool [20, 40]
+42 Ops.LOAD dtypes.f32 [34, 36, 41]
+43 Ops.CONST dtypes.weakint [] 2
+44 Ops.CAST dtypes.i32 [43] dtypes.i32
+45 Ops.INDEX dtypes.u64 [3, 44]
+46 Ops.LOAD dtypes.u64 [45]
+47 Ops.REFPARAM dtypes.f32 [28, 46] ParamArg(slot=2, dtype=dtypes.f32)
+48 Ops.CONST dtypes.weakint [] -3
+49 Ops.CAST dtypes.i32 [48] dtypes.i32
+50 Ops.MUL dtypes.i32 [40, 49]
+51 Ops.ADD dtypes.i32 [50, 23]
+52 Ops.ADD dtypes.i32 [51, 25]
+53 Ops.CAST dtypes.i32 [28] dtypes.i32
+54 Ops.TRUNCMOD dtypes.i32 [52, 53]
+55 Ops.CMPNE dtypes.bool [54, 5]
+56 Ops.CMPLT dtypes.bool [52, 5]
+57 Ops.AND dtypes.bool [55, 56]
+58 Ops.WHERE dtypes.i32 [57, 53, 5]
+59 Ops.ADD dtypes.i32 [54, 58]
+60 Ops.INDEX dtypes.f32 [47, 59]
+61 Ops.CONST dtypes.bool [] False
+62 Ops.CAST dtypes.bool [61] dtypes.bool
+63 Ops.CMPEQ dtypes.bool [41, 62]
+64 Ops.CONST dtypes.weakint [] 9
+65 Ops.CAST dtypes.i32 [64] dtypes.i32
+66 Ops.INDEX dtypes.i32 [9, 65]
+67 Ops.LOAD dtypes.i32 [66]
+68 Ops.ADD dtypes.i32 [40, 67]
+69 Ops.CMPLT dtypes.bool [20, 68]
+70 Ops.AND dtypes.bool [63, 69]
+71 Ops.LOAD dtypes.f32 [60, 36, 70]
+72 Ops.ADD dtypes.f32 [42, 71]
+73 Ops.STORE dtypes.void [27, 72]
+74 Ops.END dtypes.void [73, 25]
+75 Ops.END dtypes.void [74, 19]
+76 Ops.STACK dtypes.void []
+77 Ops.PARAM dtypes.i32 [76] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(1, 10), name="i", addrspace=AddrSpace.ALU)
+78 Ops.PARAM dtypes.i32 [76] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(1, 10), name="j", addrspace=AddrSpace.ALU)
+79 Ops.ADD dtypes.i32 [77, 78]
+80 Ops.SUB dtypes.i32 [79, 4]
+81 Ops.MUL dtypes.i32 [80, 14]
+82 Ops.ADD dtypes.i32 [29, 81]
+83 Ops.CONST dtypes.weakint [] 36
+84 Ops.MUL dtypes.i32 [80, 83]
+85 Ops.CONST dtypes.weakint [] 12
+86 Ops.MUL dtypes.i32 [80, 85]
+87 Ops.CONST dtypes.weakint [] -1
+88 Ops.XOR dtypes.i32 [86, 87]
+89 Ops.CONST dtypes.weakint [] -121
+90 Ops.MAX dtypes.i32 [88, 89]
+91 Ops.XOR dtypes.i32 [90, 87]
+92 Ops.MUL dtypes.i32 [91, 43]
+93 Ops.ADD dtypes.i32 [92, 86]
+94 Ops.SINK dtypes.void [75] KernelInfo(name="E_(i+j)_3", estimates=Estimates(ops=%82, lds=%84, mem=%93), optimized=True, split=(%79, 3, 4))
+95 Ops.LINEAR dtypes.void [1, 2, 10, 11, 9, 12, 13, 14, 15, 16, 17, 37, 38, 39, 40, 64, 65, 66, 67, 4, 5, 3, 6, 7, 29, 30, 31, 32, 43, 44, 45, 46, 0, 8, 28, 33, 47, 61, 62, 35, 36, 48, 49, 21, 22, 53, 68, 50, 18, 19, 24, 20, 23, 51, 41, 69, 63, 70, 25, 26, 34, 42, 52, 54, 56, 55, 57, 58, 59, 60, 71, 27, 72, 73, 74, 75, 94]
+96 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E_28i2Bj29_3(unsigned char* restrict args_56) {\n  int val0 = (*(((int*)(args_56))+6));\n  int val1 = (*(((int*)(args_56))+7));\n  int val2 = (*(((int*)(args_56))+8));\n  int val3 = (*(((int*)(args_56))+9));\n  unsigned long val4 = (*(((unsigned long*)(args_56))+0));\n  unsigned long val5 = (*(((unsigned long*)(args_56))+1));\n  unsigned long val6 = (*(((unsigned long*)(args_56))+2));\n  for (int Lidx0 = 0; Lidx0 < (val1-val0); Lidx0++) {\n    int alu0 = (val0+Lidx0);\n    int alu1 = (alu0*3);\n    _Bool alu2 = (alu0<val2);\n    for (int Lidx1 = 0; Lidx1 < 3; Lidx1++) {\n      int alu3 = (alu1+Lidx1);\n      float val7 = (alu2?*(((float*)(val5))+alu3):0.0f);\n      int alu4 = ((val2*-3)+alu1+Lidx1);\n      int alu5 = (alu4%30);\n      int alu6 = (((alu5!=0)&(alu4<0))?30:0);\n      float val8 = (((alu2==0)&(alu0<(val2+val3)))?*(((float*)(val6))+(alu5+alu6)):0.0f);\n      *(((float*)(val4))+alu3) = (val7+val8);\n    }\n  }\n}\n"
+97 Ops.BINARY dtypes.u8 [] b"\n__attribute__((min_vector_width(512))) void E_28i2Bj29_3(unsigned char* restrict args_56) {\n  int val0 = (*(((int*)(args_56))+6));\n  int val1 = (*(((int*)(args_56))+7));\n  int val2 = (*(((int*)(args_56))+8));\n  int val3 = (*(((int*)(args_56))+9));\n  unsigned long val4 = (*(((unsigned long*)(args_56))+0));\n  unsigned long val5 = (*(((unsigned long*)(args_56))+1));\n  unsigned long val6 = (*(((unsigned long*)(args_56))+2));\n  for (int Lidx0 = 0; Lidx0 < (val1-val0); Lidx0++) {\n    int alu0 = (val0+Lidx0);\n    int alu1 = (alu0*3);\n    _Bool alu2 = (alu0<val2);\n    for (int Lidx1 = 0; Lidx1 < 3; Lidx1++) {\n      int alu3 = (alu1+Lidx1);\n      float val7 = (alu2?*(((float*)(val5))+alu3):0.0f);\n      int alu4 = ((val2*-3)+alu1+Lidx1);\n      int alu5 = (alu4%30);\n      int alu6 = (((alu5!=0)&(alu4<0))?30:0);\n      float val8 = (((alu2==0)&(alu0<(val2+val3)))?*(((float*)(val6))+(alu5+alu6)):0.0f);\n      *(((float*)(val4))+alu3) = (val7+val8);\n    }\n  }\n}\n"
+98 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+99 Ops.PARAM dtypes.f32 [28] ParamArg(slot=1, dtype=dtypes.f32)
+100 Ops.PARAM dtypes.f32 [28] ParamArg(slot=2, dtype=dtypes.f32)
+101 Ops.PARAM dtypes.i32 [76] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 20), name="block_lo", addrspace=AddrSpace.ALU)
+102 Ops.PARAM dtypes.i32 [76] ParamArg(slot=4, dtype=dtypes.i32, vmin_vmax=(0, 20), name="block_hi", addrspace=AddrSpace.ALU)
+103 Ops.PARAM dtypes.i32 [76] ParamArg(slot=5, dtype=dtypes.i32, vmin_vmax=(1, 10), name="i", addrspace=AddrSpace.ALU)
+104 Ops.PARAM dtypes.i32 [76] ParamArg(slot=6, dtype=dtypes.i32, vmin_vmax=(1, 10), name="j", addrspace=AddrSpace.ALU)
+105 Ops.PROGRAM dtypes.void [94, 95, 96, 97] ProgramInfo(global_size=(%79, 1, 1), params=(%98, %99, %100, %101, %102, %103, %104), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", arch="x86_64,x86-64"))
+106 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+107 Ops.PARAM dtypes.f32 [28] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+108 Ops.PARAM dtypes.f32 [28] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+109 Ops.CALL dtypes.void [105, 106, 107, 108] CallInfo()
+110 Ops.LINEAR dtypes.void [109]
+

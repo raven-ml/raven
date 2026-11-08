@@ -1,0 +1,25 @@
+# tolk D141 D151 golden=3fd254cfc048b34110f9739721faed24
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.CONST dtypes.weakint [] 8
+2 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+3 Ops.BITCAST dtypes.u64 [2] dtypes.u64
+4 Ops.CONST dtypes.weakint [] 0
+5 Ops.CAST dtypes.i32 [4] dtypes.i32
+6 Ops.INDEX dtypes.u64 [3, 5]
+7 Ops.LOAD dtypes.u64 [6]
+8 Ops.REFPARAM dtypes.i8 [0, 7] ParamArg(slot=0, dtype=dtypes.i8)
+9 Ops.INDEX dtypes.i8 [8, 5]
+10 Ops.LOAD dtypes.i8 [9]
+11 Ops.CAST dtypes.i8 [0] dtypes.i8
+12 Ops.ADD dtypes.i8 [10, 11]
+13 Ops.STORE dtypes.void [9, 12]
+14 Ops.SINK dtypes.void [13] KernelInfo(name="E", estimates=Estimates(ops=1, lds=2, mem=2), optimized=True)
+15 Ops.LINEAR dtypes.void [1, 2, 4, 5, 3, 6, 7, 0, 8, 9, 10, 11, 12, 13, 14]
+16 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E(unsigned char* restrict args_8) {\n  unsigned long val0 = (*(((unsigned long*)(args_8))+0));\n  signed char val1 = (*(((signed char*)(val0))+0));\n  *(((signed char*)(val0))+0) = (val1+((signed char)(1)));\n}\n"
+17 Ops.BINARY dtypes.u8 [] b"\n__attribute__((min_vector_width(512))) void E(unsigned char* restrict args_8) {\n  unsigned long val0 = (*(((unsigned long*)(args_8))+0));\n  signed char val1 = (*(((signed char*)(val0))+0));\n  *(((signed char*)(val0))+0) = (val1+((signed char)(1)));\n}\n"
+18 Ops.PARAM dtypes.i8 [0] ParamArg(slot=0, dtype=dtypes.i8)
+19 Ops.PROGRAM dtypes.void [14, 15, 16, 17] ProgramInfo(params=(%18,), globals=(0,), outs=(0,), ins=(0,), target=Target(device="CPU", arch="x86_64,x86-64"))
+20 Ops.PARAM dtypes.i8 [0] ParamArg(slot=0, dtype=dtypes.i8, device="CPU")
+21 Ops.CALL dtypes.void [19, 20] CallInfo()
+22 Ops.LINEAR dtypes.void [21]
+

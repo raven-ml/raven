@@ -86,24 +86,23 @@
 85 Ops.PARAM dtypes.f32 [2] ParamArg(slot=3, dtype=dtypes.f32)
 86 Ops.INDEX dtypes.f32 [85, 78]
 87 Ops.ADD dtypes.f32 [84, 86]
-88 Ops.CMPLT dtypes.bool [36, 87]
-89 Ops.WHERE dtypes.f32 [88, 87, 36]
-90 Ops.CONST dtypes.weakint [] 128
-91 Ops.PARAM dtypes.f32 [90] ParamArg(slot=4, dtype=dtypes.f32)
-92 Ops.MUL dtypes.weakint [62, 37]
-93 Ops.ADD dtypes.weakint [92, 38]
-94 Ops.INDEX dtypes.f32 [91, 93]
-95 Ops.MUL dtypes.f32 [89, 94]
-96 Ops.REDUCE dtypes.f32 [95, 38] (Ops.ADD, 0)
-97 Ops.REDUCE dtypes.f32 [96, 62] (Ops.ADD, 0)
-98 Ops.CONST dtypes.weakfloat [] 0.5
-99 Ops.MUL dtypes.f32 [97, 98]
-100 Ops.STORE dtypes.void [35, 99]
-101 Ops.SINK dtypes.void [100] KernelInfo()
-102 Ops.BUFFER dtypes.f32 [32] ParamArg(slot=21, dtype=dtypes.f32, device="CPU")
-103 Ops.BUFFER dtypes.f32 [71] ParamArg(slot=6, dtype=dtypes.f32, device="CPU")
-104 Ops.BUFFER dtypes.f32 [2] ParamArg(slot=8, dtype=dtypes.f32, device="CPU")
-105 Ops.BUFFER dtypes.f32 [90] ParamArg(slot=12, dtype=dtypes.f32, device="CPU")
-106 Ops.CALL dtypes.void [101, 102, 29, 103, 104, 105] CallInfo()
-107 Ops.LINEAR dtypes.void [31, 106]
+88 Ops.MAX dtypes.f32 [36, 87]
+89 Ops.CONST dtypes.weakint [] 128
+90 Ops.PARAM dtypes.f32 [89] ParamArg(slot=4, dtype=dtypes.f32)
+91 Ops.MUL dtypes.weakint [62, 37]
+92 Ops.ADD dtypes.weakint [91, 38]
+93 Ops.INDEX dtypes.f32 [90, 92]
+94 Ops.MUL dtypes.f32 [88, 93]
+95 Ops.REDUCE dtypes.f32 [94, 38] (Ops.ADD, 0)
+96 Ops.REDUCE dtypes.f32 [95, 62] (Ops.ADD, 0)
+97 Ops.CONST dtypes.weakfloat [] 0.5
+98 Ops.MUL dtypes.f32 [96, 97]
+99 Ops.STORE dtypes.void [35, 98]
+100 Ops.SINK dtypes.void [99] KernelInfo()
+101 Ops.BUFFER dtypes.f32 [32] ParamArg(slot=21, dtype=dtypes.f32, device="CPU")
+102 Ops.BUFFER dtypes.f32 [71] ParamArg(slot=6, dtype=dtypes.f32, device="CPU")
+103 Ops.BUFFER dtypes.f32 [2] ParamArg(slot=8, dtype=dtypes.f32, device="CPU")
+104 Ops.BUFFER dtypes.f32 [89] ParamArg(slot=12, dtype=dtypes.f32, device="CPU")
+105 Ops.CALL dtypes.void [100, 101, 29, 102, 103, 104] CallInfo()
+106 Ops.LINEAR dtypes.void [31, 105]
 

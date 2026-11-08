@@ -1,0 +1,26 @@
+# tolk D141 D151 golden=fb5c77ee9cb2ea0d58076aa89eca5704
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.CONST dtypes.weakint [] 8
+2 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+3 Ops.BITCAST dtypes.u64 [2] dtypes.u64
+4 Ops.CONST dtypes.weakint [] 0
+5 Ops.CAST dtypes.i32 [4] dtypes.i32
+6 Ops.INDEX dtypes.u64 [3, 5]
+7 Ops.LOAD dtypes.u64 [6]
+8 Ops.REFPARAM dtypes.f32 [0, 7] ParamArg(slot=0, dtype=dtypes.f32)
+9 Ops.INDEX dtypes.f32 [8, 5]
+10 Ops.LOAD dtypes.f32 [9]
+11 Ops.CONST dtypes.weakfloat [] 1.0
+12 Ops.CAST dtypes.f32 [11] dtypes.f32
+13 Ops.ADD dtypes.f32 [10, 12]
+14 Ops.STORE dtypes.void [9, 13]
+15 Ops.SINK dtypes.void [14] KernelInfo(name="E", estimates=Estimates(ops=1, lds=8, mem=8), optimized=True)
+16 Ops.LINEAR dtypes.void [1, 2, 4, 5, 3, 6, 7, 0, 8, 9, 10, 11, 12, 13, 14, 15]
+17 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E(unsigned char* restrict args_8) {\n  unsigned long val0 = (*(((unsigned long*)(args_8))+0));\n  float val1 = (*(((float*)(val0))+0));\n  *(((float*)(val0))+0) = (val1+1.0f);\n}\n"
+18 Ops.BINARY dtypes.u8 [] b"\n__attribute__((min_vector_width(512))) void E(unsigned char* restrict args_8) {\n  unsigned long val0 = (*(((unsigned long*)(args_8))+0));\n  float val1 = (*(((float*)(val0))+0));\n  *(((float*)(val0))+0) = (val1+1.0f);\n}\n"
+19 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+20 Ops.PROGRAM dtypes.void [15, 16, 17, 18] ProgramInfo(params=(%19,), globals=(0,), outs=(0,), ins=(0,), target=Target(device="CPU", arch="x86_64,x86-64"))
+21 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+22 Ops.CALL dtypes.void [20, 21] CallInfo()
+23 Ops.LINEAR dtypes.void [22]
+
