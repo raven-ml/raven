@@ -19,55 +19,60 @@
 # forced: blessed Talon/List/per-list-sum-64k-32 under load 48.1 on 14 cores
 # forced: blessed Talon_csv/read-mixed under load 44.6 on 14 cores
 # forced: blessed under load 38.6 on 14 cores
+# forced: blessed under load 46.2 on 14 cores
 
-Talon/Filter/high_value	alloc_words	exact	12433
-Talon/Group/category_region	alloc_words	exact	6440
-Talon/Group/int32-100-1M	alloc_words	exact	4467
+Talon/Filter/high_value	alloc_words	exact	12436
+Talon/Group/category_region	alloc_words	exact	6512
+Talon/Group/int32-100-1M	alloc_words	exact	4503
 Talon/Group/int32-100-1M	wall_time	batch=1	n=20	1.052e-02	5.293e-03 6.531e-03 7.049e-03 7.669e-03 8.039e-03 8.779e-03 9.180e-03 9.524e-03 9.948e-03 1.047e-02 1.058e-02 1.084e-02 1.113e-02 1.125e-02 1.256e-02 1.413e-02 1.475e-02 1.483e-02 1.539e-02 1.677e-02
-Talon/Group/mean-std-int32-100-1M	alloc_words	exact	5631
-Talon/Group/minmax-int32-100-1M	alloc_words	exact	5150
-Talon/Group/text-100-1M	alloc_words	exact	8815
+Talon/Group/mean-std-int32-100-1M	alloc_words	exact	6157
+Talon/Group/minmax-int32-100-1M	alloc_words	exact	5175
+Talon/Group/streamed-few-groups	alloc_words	exact	454285
+Talon/Group/streamed-many-groups	alloc_words	exact	211436
+Talon/Group/text-100-1M	alloc_words	exact	8831
 Talon/Group/text-100-1M	wall_time	batch=1	n=20	1.844e-02	1.383e-02 1.477e-02 1.543e-02 1.613e-02 1.677e-02 1.717e-02 1.759e-02 1.766e-02 1.794e-02 1.837e-02 1.852e-02 1.912e-02 2.092e-02 2.102e-02 2.133e-02 2.346e-02 2.386e-02 2.447e-02 2.939e-02 3.148e-02
-Talon/Hash/int-1M	alloc_words	exact	1886
-Talon/Hash/text-1M	alloc_words	exact	2387
-Talon/Join/asof-1M-64k	alloc_words	exact	118594
-Talon/Join/asof-as-range-1M-64k	alloc_words	exact	100287
-Talon/Join/customer_lookup	alloc_words	exact	12933
+Talon/Hash/int-1M	alloc_words	exact	1890
+Talon/Hash/text-1M	alloc_words	exact	2391
+Talon/Join/asof-1M-64k	alloc_words	exact	118519
+Talon/Join/asof-as-range-1M-64k	alloc_words	exact	100084
+Talon/Join/customer_lookup	alloc_words	exact	12964
 Talon/Join/customer_lookup	wall_time	batch=1	n=20	7.039e-03	4.747e-03 4.775e-03 4.824e-03 4.975e-03 6.219e-03 6.254e-03 6.267e-03 6.546e-03 6.876e-03 7.024e-03 7.054e-03 7.297e-03 8.402e-03 8.715e-03 8.988e-03 9.073e-03 1.082e-02 1.091e-02 1.399e-02 2.261e-02
-Talon/Join/few_of_repeated_keys	alloc_words	exact	20020
-Talon/Join/keyed_inequality	alloc_words	exact	44964
-Talon/Join/repeated_keys	alloc_words	exact	26381
-Talon/Join/spikes_in_trials	alloc_words	exact	49370
+Talon/Join/few_of_repeated_keys	alloc_words	exact	20004
+Talon/Join/keyed_inequality	alloc_words	exact	44874
+Talon/Join/repeated_keys	alloc_words	exact	26339
+Talon/Join/spikes_in_trials	alloc_words	exact	49278
 Talon/Layout/text-1M	alloc_words	exact	1249
-Talon/List/per-list-sum-64k-32	alloc_words	exact	8271
-Talon/List/unnest-keep-64k-32	alloc_words	exact	6727
+Talon/List/per-list-sum-64k-32	alloc_words	exact	8260
+Talon/List/unnest-keep-64k-32	alloc_words	exact	6724
 Talon/Nulls/concat-3	alloc_words	exact	1065
-Talon/Nulls/filter-1pct	alloc_words	exact	8628
-Talon/Nulls/filter-50pct	alloc_words	exact	8628
-Talon/Nulls/filter-90pct	alloc_words	exact	8628
-Talon/Nulls/filter-text-eq	alloc_words	exact	10424
-Talon/Nulls/filter-text-lt	alloc_words	exact	10512
-Talon/Nulls/group-sum	alloc_words	exact	5317
+Talon/Nulls/filter-1pct	alloc_words	exact	8589
+Talon/Nulls/filter-50pct	alloc_words	exact	8589
+Talon/Nulls/filter-90pct	alloc_words	exact	8589
+Talon/Nulls/filter-text-eq	alloc_words	exact	10385
+Talon/Nulls/filter-text-lt	alloc_words	exact	10473
+Talon/Nulls/group-sum	alloc_words	exact	5351
 Talon/Nulls/group-sum	wall_time	batch=1	n=20	1.651e-02	1.325e-02 1.327e-02 1.353e-02 1.381e-02 1.404e-02 1.438e-02 1.472e-02 1.527e-02 1.648e-02 1.651e-02 1.651e-02 1.683e-02 1.735e-02 1.845e-02 1.867e-02 1.932e-02 2.000e-02 2.059e-02 2.403e-02 2.637e-02
-Talon/Nulls/is_in-3-texts	alloc_words	exact	9794
-Talon/Nulls/join-left	alloc_words	exact	6870
+Talon/Nulls/is_in-3-texts	alloc_words	exact	9755
+Talon/Nulls/join-left	alloc_words	exact	6857
 Talon/Nulls/join-left	wall_time	batch=1	n=20	1.341e-01	7.929e-02 8.519e-02 9.782e-02 1.074e-01 1.111e-01 1.169e-01 1.227e-01 1.255e-01 1.260e-01 1.337e-01 1.345e-01 1.377e-01 1.407e-01 1.470e-01 1.473e-01 1.512e-01 1.556e-01 1.602e-01 1.656e-01 1.686e-01
-Talon/Nulls/kleene-and	alloc_words	exact	4447
-Talon/Nulls/kleene-or	alloc_words	exact	3917
-Talon/Nulls/sort	alloc_words	exact	6734
-Talon/Nulls/take-random	alloc_words	exact	613
-Talon/Nulls/take-random-nested	alloc_words	exact	6132
-Talon/Nulls/take-random-text	alloc_words	exact	2114
-Talon/Sort/amount_desc	alloc_words	exact	244956
-Talon/Window/rolling-mean-28-1M	alloc_words	exact	102183
-Talon/Window/rolling-sum-on-1M	alloc_words	exact	95627
-Talon/Window/running-max-1M	alloc_words	exact	68269
-Talon/Window/running-std-1M	alloc_words	exact	151948
-Talon/Window/running-sum-1M	alloc_words	exact	65103
+Talon/Nulls/kleene-and	alloc_words	exact	4451
+Talon/Nulls/kleene-or	alloc_words	exact	3921
+Talon/Nulls/sort	alloc_words	exact	6692
+Talon/Nulls/take-random	alloc_words	exact	609
+Talon/Nulls/take-random-nested	alloc_words	exact	6102
+Talon/Nulls/take-random-text	alloc_words	exact	2092
+Talon/Sort/amount_desc	alloc_words	exact	244922
+Talon/Window/rolling-mean-28-1M	alloc_words	exact	101998
+Talon/Window/rolling-std-28-64k	alloc_words	exact	163029
+Talon/Window/rolling-std-365-64k	alloc_words	exact	163029
+Talon/Window/rolling-sum-on-1M	alloc_words	exact	95427
+Talon/Window/running-max-1M	alloc_words	exact	68240
+Talon/Window/running-std-1M	alloc_words	exact	153416
+Talon/Window/running-sum-1M	alloc_words	exact	65084
 Talon_csv/read-mixed	alloc_words	exact	507688
 Talon_parquet/filter-text	alloc_words	exact	21373
-Talon_parquet/read-keys	alloc_words	exact	9860
-Talon_parquet/read-nullable	alloc_words	exact	34265
+Talon_parquet/read-keys	alloc_words	exact	9858
+Talon_parquet/read-nullable	alloc_words	exact	34263
 Talon_parquet/read-text	alloc_words	exact	9669
 Talon_text/parse-float64-17-digits	alloc_words	exact	322
 
