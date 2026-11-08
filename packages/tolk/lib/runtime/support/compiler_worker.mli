@@ -30,22 +30,24 @@ val v : name:string -> string -> t
 val call : t -> string -> string -> (string, string) result
 (** [call w library request] has a worker of [w] serving [library] answer
     [request]: one that is idle, or else one it starts, as
-    [PROGRAM LIBRARY TEMP]. A serving worker reads requests, each [N\n] then
-    [N] bytes, on its standard input, replies to each on its standard output
-    once it has read it whole, and ends when its input does, which this
-    process's end closes when this process exits, killed or not: a worker in
-    a compile that does not return ends then too, at once, or within a second
-    on Windows. A process forked from this one starts workers of its own:
-    those it inherits are its parent's, and it closes its copies of their
-    descriptors.
+    [PROGRAM LIBRARY TEMP PARENT], [PARENT] this process's pid. A serving
+    worker reads requests, each [N\n] then [N] bytes, on its standard input,
+    replies to each on its standard output once it has read it whole, and
+    ends when its input does or when this process ends, killed or not: a
+    worker in a compile that does not return ends then too, within a
+    second. A process
+    forked from this one starts workers of its own: those it inherits are its
+    parent's, and it closes its copies of their descriptors when it first
+    calls with [w].
 
     [TEMP] is a directory of the worker's own in
     {!Filename.get_temp_dir_name}, made its temporary directory. The worker
-    removes it, with all in it, when it ends as above; this process removes
-    it when it finds the worker ended, so that what a crashed compile leaves
-    goes with it. The directory of a worker killed while idle stays until a
-    call of this process for its library finds it ended, or for good if this
-    process exits first.
+    removes it, with all in it, when it ends as above, but for what a compile
+    creates while the directory is being removed, when this process ends
+    during that compile; this process removes it when it finds the worker
+    ended, so that what a crashed compile leaves goes with it. The directory
+    of a worker killed while idle stays until a call of this process for its
+    library finds it ended, or for good if this process exits first.
 
     A worker is idle between calls, from any domain; there is no limit to
     their number. On Windows a worker inherits only its own three handles.

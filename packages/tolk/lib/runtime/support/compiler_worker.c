@@ -264,11 +264,17 @@ static bool read_all(char *bytes, size_t size) {
 
 /* A worker never dies with the thread that spawned it: that thread may end
    long before the process. It ends when its input does, which the parent's
-   end closes, with the parent. Between requests it reads its input, which
-   ends; during a compile, which may never return, a thread of its own waits
-   for the parent's end to close and ends the process. Elsewhere than
-   Windows that is the hang-up poll reports; on Windows, whose pipes poll
-   cannot wait on, a peek every second that finds the pipe broken. */
+   end closes, with the parent, or when the parent ends. Between requests it
+   reads its input, which ends; during a compile, which may never return, a
+   thread of its own ends the process. Elsewhere than Windows that thread
+   waits for the hang-up poll reports, and every second asks whether the
+   worker's parent is still the process that started it: a process forked
+   from the parent holds a copy of its end, which keeps the input open after
+   the parent's death, but the worker then has another parent. On Windows,
+   whose pipes poll cannot wait on and where no process inherits the
+   parent's end, the thread peeks every second for a broken pipe. */
+#define WATCH_MS 1000
+
 #ifdef _WIN32
 static DWORD WINAPI watch(LPVOID unused) {
   (void)unused;
@@ -280,21 +286,25 @@ static DWORD WINAPI watch(LPVOID unused) {
       remove_temp();
       _exit(1);
     }
-    Sleep(1000);
+    Sleep(WATCH_MS);
   }
 }
 #else
+static pid_t parent;
+
 static void *watch(void *unused) {
   (void)unused;
   /* XNU registers no event for a descriptor polled for none: the hang-up is
      asked for, as Linux reports it unasked. */
   struct pollfd requests = {request_fd, POLLHUP, 0};
-  for (;;)
-    if (poll(&requests, 1, -1) > 0 &&
-        (requests.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0) {
+  for (;;) {
+    bool hung_up = poll(&requests, 1, WATCH_MS) > 0 &&
+                   (requests.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0;
+    if (hung_up || getppid() != parent) {
       remove_temp();
       _exit(1);
     }
+  }
 }
 #endif
 
@@ -313,13 +323,19 @@ static bool start_watch(void) {
 }
 
 void serve(int argc, char **argv, const char *library) {
-  if (argc != 3) {
-    fprintf(stderr, "usage: %s %s TEMP\n", argv[0], library);
+  char *end = NULL;
+  long started_by = argc == 4 ? strtol(argv[3], &end, 10) : 0;
+  if (argc != 4 || end == argv[3] || *end != '\0' || started_by <= 0) {
+    fprintf(stderr, "usage: %s %s TEMP PARENT\n", argv[0], library);
     exit(2);
   }
+#ifndef _WIN32
+  parent = (pid_t)started_by;
+#endif
   reset();
-  /* The library's temporary files go to TEMP, which the parent removes when
-     the worker ends: a compile that aborts leaves its files there. */
+  /* The library's temporary files go to TEMP, which the worker removes when
+     it ends and the parent after a crash: a compile that aborts leaves its
+     files there. */
 #ifdef _WIN32
   _putenv_s("TMP", argv[2]);
   _putenv_s("TEMP", argv[2]);

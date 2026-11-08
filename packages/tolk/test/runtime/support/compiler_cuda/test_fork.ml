@@ -155,6 +155,25 @@ let temp_of pid =
       | _ -> None)
   | exception Sys_error _ -> None
 
+(* In a forked process: forks a process that sleeps until killed, holding what
+   this one holds, and writes its pid to [out]. *)
+let fork_sleeper out =
+  match Unix.fork () with
+  | 0 ->
+      Unix.sleepf 60.;
+      Unix._exit 0
+  | pid ->
+      let s = string_of_int pid in
+      ignore (Unix.write_substring out s 0 (String.length s));
+      Unix.close out
+
+(* The pid that [fork_sleeper] writes to [input], if any. *)
+let read_sleeper input =
+  let buf = Bytes.create 16 in
+  let n = try Unix.read input buf 0 16 with Unix.Unix_error _ -> 0 in
+  Unix.close input;
+  int_of_string_opt (Bytes.sub_string buf 0 n)
+
 (* Whether process [pid] waits in the open of a FIFO for a writer, as Linux's
    /proc/PID/wchan names it. *)
 let waits_for_writer pid =
@@ -173,7 +192,9 @@ let release fifo =
 let parent_death =
   group "a parent that dies"
     [
-      test "during a compile ends its worker" (fun () ->
+      test
+        "during a compile ends its worker, though a process forked from it \
+         lives" (fun () ->
           if not (String.starts_with ~prefix:"binary" (first_compile ())) then
             skip ~reason:"NVRTC does not compile here" ();
           let dir = Filename.temp_dir "tolk-test-fork" "" in
@@ -185,11 +206,15 @@ let parent_death =
               Unix.rmdir dir)
           @@ fun () ->
           flush_all ();
+          let input, out = Unix.pipe ~cloexec:true () in
           let parent =
             match Unix.fork () with
             | exception Invalid_argument _ -> skip ~reason:"no fork here" ()
             | 0 ->
+                Unix.close input;
                 (try
+                   ignore (compile ());
+                   fork_sleeper out;
                    ignore
                      (Compiler.compile
                         (Compiler_cuda.nvrtc ~ptx:false "sm_89")
@@ -198,17 +223,26 @@ let parent_death =
                 Unix._exit 0
             | pid -> pid
           in
-          let waits () = List.exists waits_for_writer (children_of parent) in
+          Unix.close out;
+          let sleeper = read_sleeper input in
+          Fun.protect ~finally:(fun () ->
+              Option.iter (fun pid -> Unix.kill pid Sys.sigkill) sleeper)
+          @@ fun () ->
+          let workers () =
+            List.filter (fun pid -> Some pid <> sleeper) (children_of parent)
+          in
+          let waits () = List.exists waits_for_writer (workers ()) in
           let reached = until ~seconds:20. waits in
-          let workers = children_of parent in
+          let workers = workers () in
           let temps = List.filter_map temp_of workers in
           Unix.kill parent Sys.sigkill;
           ignore (Unix.waitpid [] parent);
+          is_some ~msg:"the forked process" sleeper;
           equal bool ~msg:"the compile waits on the FIFO" true reached;
           not_equal (list int) [] workers;
           let alive =
             List.filter
-              (fun pid -> not (until ~seconds:10. (fun () -> ended pid)))
+              (fun pid -> not (until ~seconds:3. (fun () -> ended pid)))
               workers
           in
           equal (list int) ~msg:"workers alive" [] alive;

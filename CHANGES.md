@@ -1082,8 +1082,9 @@ word comes from its lock and from samples the dashboard saw arrive.
   removes after a crash: a HIP compile that LLVM aborts, or a program killed
   during a compile, no longer leaves a `comgr-XXXXXX` directory in `/tmp`.
 - A comgr or NVRTC worker process whose compile does not return now ends
-  when the process that started it ends, killed or not, also on macOS,
-  where it lived on holding its memory.
+  when the process that started it ends, killed or not, also on macOS and
+  while a process forked from it lives, where it lived on holding its
+  memory.
 - `Compiler_amd.hip`'s `Compile_error` for a source that code generation or
   linking rejects carries comgr's log, as it did for a rejected compile,
   where it said only `comgr fail 1, ERROR`.

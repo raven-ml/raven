@@ -7,14 +7,16 @@
 /* What every worker shares: a program that runs compiles in a process of its
    own, embedded in tolk and spawned by Compiler_worker. A worker serves
    compiles until its input ends, and ends during a compile if the parent's
-   end of its input closes.
+   end of its input closes or, elsewhere than Windows, within a second of
+   the parent's death.
 
-     worker LIBRARY TEMP
+     worker LIBRARY TEMP PARENT
 
    LIBRARY is the vendor's library, TEMP a directory of the worker's own for
    the library's temporary files (TMPDIR, or TMP and TEMP on Windows), which
-   it removes with all in it when it ends, its input ended or its parent's end
-   closed; the parent removes it when it finds the worker crashed. A
+   it removes with all in it when it ends; the parent removes it when it
+   finds the worker crashed. PARENT is the pid of the process that starts
+   the worker, its parent. A
    request, on standard input, is N\n then
    N bytes: the worker's fields, each NUL-terminated, then the source. The
    reply goes to standard output, once per request:

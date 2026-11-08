@@ -210,13 +210,13 @@ let channel () =
     guarded [ mine; theirs ] (fun () -> no_sigpipe mine);
     ((mine, mine), (theirs, theirs))
 
-(* Starts [program] on [library] and [temp], its standard input, output and
-   error the descriptors [input], [output] and [errors]. On Windows the child
-   inherits these alone ([caml_tolk_worker_spawn]): Unix.create_process would
-   let it inherit any handle another start makes inheritable meanwhile, such
-   as another worker's pipe. *)
+(* Starts [program] on [library], [temp] and this process's pid, its standard
+   input, output and error the descriptors [input], [output] and [errors]. On
+   Windows the child inherits these alone ([caml_tolk_worker_spawn]):
+   Unix.create_process would let it inherit any handle another start makes
+   inheritable meanwhile, such as another worker's pipe. *)
 let spawn_worker program library temp input output errors =
-  let args = [ program; library; temp ] in
+  let args = [ program; library; temp; string_of_int (Unix.getpid ()) ] in
   if Sys.win32 then
     let cmdline = String.concat " " (List.map Filename.quote args) in
     spawn program cmdline input output errors

@@ -290,6 +290,25 @@ let temp_of pid =
       | _ -> None)
   | exception Sys_error _ -> None
 
+(* In a forked process: forks a process that sleeps until killed, holding what
+   this one holds, and writes its pid to [out]. *)
+let fork_sleeper out =
+  match Unix.fork () with
+  | 0 ->
+      Unix.sleepf 60.;
+      Unix._exit 0
+  | pid ->
+      let s = string_of_int pid in
+      ignore (Unix.write_substring out s 0 (String.length s));
+      Unix.close out
+
+(* The pid that [fork_sleeper] writes to [input], if any. *)
+let read_sleeper input =
+  let buf = Bytes.create 16 in
+  let n = try Unix.read input buf 0 16 with Unix.Unix_error _ -> 0 in
+  Unix.close input;
+  int_of_string_opt (Bytes.sub_string buf 0 n)
+
 (* [kernel] including the FIFO [fifo]: its compile waits in the preprocessor for
    a writer to open [fifo], then for the writer to close it. *)
 let waiting fifo = Printf.sprintf "#include \"%s\"\n%s" fifo kernel
@@ -409,46 +428,63 @@ let process =
              is_some (rejection (fun () -> compile unselectable));
              equal (list string) [] (comgr_files scratch));
       slow
-      @@ test "a worker whose parent is killed during a compile ends" (fun () ->
-          ignore (with_comgr (fun () -> compile kernel));
-          let fifo = Filename.concat scratch "include.fifo" in
-          Unix.mkfifo fifo 0o600;
-          Fun.protect ~finally:(fun () -> Sys.remove fifo) @@ fun () ->
-          let parent =
-            match Unix.fork () with
-            | 0 ->
-                (try ignore (compile (waiting fifo)) with _ -> ());
-                Unix._exit 0
-            | pid -> pid
-          in
-          (* The FIFO opens for writing once the compile has opened it to read,
-             which then waits until the writer closes it. *)
-          let writer = ref None in
-          let opened () =
-            match Unix.openfile fifo [ O_WRONLY; O_NONBLOCK; O_CLOEXEC ] 0 with
-            | fd ->
-                writer := Some fd;
-                true
-            | exception Unix.Unix_error (ENXIO, _, _) -> false
-          in
-          Fun.protect ~finally:(fun () -> Option.iter Unix.close !writer)
-          @@ fun () ->
-          let reached = until ~seconds:60. opened in
-          let workers = children_of parent in
-          let temps = List.filter_map temp_of workers in
-          Unix.kill parent Sys.sigkill;
-          ignore (Unix.waitpid [] parent);
-          equal bool ~msg:"the compile opened the FIFO" true reached;
-          not_equal (list int) [] workers;
-          let alive =
-            List.filter
-              (fun pid -> not (until ~seconds:10. (fun () -> ended pid)))
-              workers
-          in
-          equal (list int) ~msg:"workers alive" [] alive;
-          not_equal (list string) [] temps;
-          equal (list string) ~msg:"their temporary directories" []
-            (List.filter Sys.file_exists temps));
+      @@ test
+           "a worker whose parent is killed during a compile ends, though a \
+            process forked from the parent lives" (fun () ->
+             ignore (with_comgr (fun () -> compile kernel));
+             let fifo = Filename.concat scratch "include.fifo" in
+             Unix.mkfifo fifo 0o600;
+             Fun.protect ~finally:(fun () -> Sys.remove fifo) @@ fun () ->
+             let input, out = Unix.pipe ~cloexec:true () in
+             let parent =
+               match Unix.fork () with
+               | 0 ->
+                   Unix.close input;
+                   (try
+                      ignore (compile kernel);
+                      fork_sleeper out;
+                      ignore (compile (waiting fifo))
+                    with _ -> ());
+                   Unix._exit 0
+               | pid -> pid
+             in
+             Unix.close out;
+             let sleeper = read_sleeper input in
+             Fun.protect ~finally:(fun () ->
+                 Option.iter (fun pid -> Unix.kill pid Sys.sigkill) sleeper)
+             @@ fun () ->
+             (* The FIFO opens for writing once the compile has opened it to
+                read, which then waits until the writer closes it. *)
+             let writer = ref None in
+             let opened () =
+               let flags = Unix.[ O_WRONLY; O_NONBLOCK; O_CLOEXEC ] in
+               match Unix.openfile fifo flags 0 with
+               | fd ->
+                   writer := Some fd;
+                   true
+               | exception Unix.Unix_error (ENXIO, _, _) -> false
+             in
+             Fun.protect ~finally:(fun () -> Option.iter Unix.close !writer)
+             @@ fun () ->
+             let reached = until ~seconds:60. opened in
+             let workers =
+               List.filter (fun pid -> Some pid <> sleeper) (children_of parent)
+             in
+             let temps = List.filter_map temp_of workers in
+             Unix.kill parent Sys.sigkill;
+             ignore (Unix.waitpid [] parent);
+             is_some ~msg:"the forked process" sleeper;
+             equal bool ~msg:"the compile opened the FIFO" true reached;
+             not_equal (list int) [] workers;
+             let alive =
+               List.filter
+                 (fun pid -> not (until ~seconds:3. (fun () -> ended pid)))
+                 workers
+             in
+             equal (list int) ~msg:"workers alive" [] alive;
+             not_equal (list string) [] temps;
+             equal (list string) ~msg:"their temporary directories" []
+               (List.filter Sys.file_exists temps));
       slow
       @@ test "a worker started with SIGCHLD ignored returns its code object"
            (fun () ->
