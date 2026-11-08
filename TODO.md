@@ -107,7 +107,7 @@ and rune), raven / llama.cpp b12048 Vulkan:
   case) through it and extend D167 if it miscompiles (LLVM 21 and 22
   compile both)
 - HIP's unstaged tensor-core operands load 8 bytes again since D261's copy
-  rule: unmeasured on nonnormal
+  rule: unmeasured on RDNA3 (16 contiguous halves a lane) and CDNA
 - AMD's comgr and Metal's compiler run LLVM's loop-idiom pass too; D167's
   `-mllvm -disable-loop-idiom-all` covers host Clang only, and no CI job runs
   LLVM 22+, where the pass's CRC recogniser walks a running select's paths

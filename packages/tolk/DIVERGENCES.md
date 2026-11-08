@@ -7397,6 +7397,14 @@ as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
   737-773 us and the 8-byte form 709-870: more loads in flight pay where the
   probabilities' addresses spread over the memory's channels, as they do in
   the prefill.
+
+  On RDNA4 the rule leaves unstaged operands alone. A lane's operand of the
+  16-by-16-by-16 core is two runs of four 16-bit values, eight elements
+  apart, so 8 bytes is the widest contiguous load. On nonnormal's R9700
+  (gfx1201), float16 and bfloat16 products of 2048 cubed, weights in either
+  layout, staged and unstaged, compile to the same HIP source and the same
+  comgr instructions with every access merged to 16 bytes. RDNA3 and CDNA
+  are unmeasured.
 - **Pinned by:** the Coalesce suite's `vectors of eight 16-bit floats` group
   (`the runs of eight 16-bit floats' loads and stores`, of `float16` and
   `bfloat16`; `half_cuda`, `half8_cuda` and `accesses_cuda`, generated from
