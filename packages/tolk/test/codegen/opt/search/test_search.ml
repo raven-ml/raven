@@ -1,5 +1,5 @@
 (* Tests of Tolk.Search: the actions and the candidates of real kernels are
-   tinygrad's, a search chooses what tinygrad's chooses under the same
+   tinygrad's, a search chooses what was recorded under the same
    measurement, it chooses the fastest program it measured, and every kernel it
    can choose writes what the kernel it started from writes. *)
 
@@ -192,7 +192,7 @@ let searches =
          [ "kernel"; "target"; "amt"; "failing"; "allow_test_size" ])
   in
   let quick cell = cell "target" = "clang" in
-  group "a search chooses what tinygrad's chooses"
+  group "a search chooses what was recorded"
     [
       cases "on the host" ~id:name (List.filter quick rows) searched;
       slow

@@ -196,15 +196,15 @@ let refuses_as_tinygrad row =
 let stages =
   group "stages"
     [
-      group "full_rewrite_to_sink lowers each kernel as tinygrad does"
+      group "full_rewrite_to_sink lowers each kernel as recorded"
         (per_row
            ~only:(fun row -> compiles row && not (d9 row))
            lowers_as_tinygrad);
-      group "to_program makes each program as tinygrad does"
+      group "to_program makes each program as recorded"
         (per_row
            ~only:(fun row -> compiles row && not (d9 row))
            programs_as_tinygrad);
-      group "each program is rendered as tinygrad renders it" sources;
+      group "each program is rendered as recorded" sources;
       group "an emulated float8 program launches as tinygrad's"
         (per_row ~only:d9 launches_as_tinygrad);
       group "an optimisation that does not apply raises tinygrad's error"

@@ -736,7 +736,7 @@ let recorded_writes name pass =
       keeps_writes ~count:2 ~name u (pass u))
 
 let kernels =
-  group "tinygrad's kernels"
+  group "recorded kernels"
     [
       recorded "gather" "collapsed" load_collapse;
       recorded "embedding" "collapsed" load_collapse;
@@ -780,7 +780,7 @@ let range_shrink =
        ])
 
 let cases =
-  group "tinygrad's rewrites"
+  group "recorded rewrites"
     [
       parity "flatten_range" flatten;
       parity "split_ranges" split;

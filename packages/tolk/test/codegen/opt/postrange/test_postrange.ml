@@ -1,5 +1,5 @@
 (* Tests of Tolk.Postrange: a kernel optimised by a sequence of optimisations is
-   the kernel tinygrad makes, a refused optimisation leaves the scheduler as it
+   the kernel recorded for it, a refused optimisation leaves the scheduler as it
    was, and optimising keeps what the kernel writes. *)
 
 open Windtrap
@@ -136,7 +136,7 @@ let escaped s = String.concat "\\e" (String.split_on_char '\027' s)
 (* Optimising *)
 
 let optimised =
-  group "apply_opts optimises a kernel as tinygrad does"
+  group "apply_opts optimises a kernel as recorded"
     (List.map
        (fun c ->
          match c.refused with
@@ -168,7 +168,7 @@ let refusals =
     (fun (c, n) -> leaves_as_it_was c n)
 
 let axes =
-  group "the scheduler's axes after optimising are tinygrad's"
+  group "the scheduler's axes after optimising are as recorded"
     [
       Golden.cases "axes.golden" (fun cell ->
           let c = case (cell "case") in

@@ -834,7 +834,7 @@ lists them) and recorded at the pass each test applies: `<kernel>.golden` at
 ## Simplify
 
 The suite is `Tolk.Simplify` (`codegen/simplify/`), written `SI` below.
-`SI › tinygrad's kernels` holds kernels tinygrad compiles, recorded where a
+`SI › recorded kernels` holds kernels tinygrad compiles, recorded where a
 pass running one of the matchers receives them, with what the matcher alone
 makes of each: `pm_load_collapse`, `pm_split_ranges` and `pm_simplify_ranges`
 at their codegen passes on the CPU renderer, and `pm_reduce_simplify` where
@@ -847,20 +847,20 @@ sums; and that every range rewrite keeps what a kernel writes
 (`Interpreter.writes`), on the cases, the recorded kernels and generated
 kernels. `pm_simplify_ranges`' law starts from the symbolic pass the pipeline
 runs before it: a guard that holds everywhere would grow a range to it
-(`SI › tinygrad's rewrites › simplify_ranges.golden › case=guard_beyond_size`).
+(`SI › recorded rewrites › simplify_ranges.golden › case=guard_beyond_size`).
 
 ### tinygrad
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: null/test_uop_symbolic.py::TestRangeSplitting::test_range_split_on_mod | a range taken modulo 2 splits, and the enclosing end closes the parts | `SI › tinygrad's rewrites › split_ranges.golden › case=nested_sink`; `SI › laws › split_ranges keeps the writes › split_ranges.golden › case=nested_sink` |
-| tinygrad: null/test_uop_graph.py::TestReduceCollapse::test_multi_range_reduce_add | a sum of a sum over two ranges is the sum of two sums | `SI › tinygrad's rewrites › reduce_collapse.golden › case=sum_of_a_sum_over_two_ranges` |
+| tinygrad: null/test_uop_symbolic.py::TestRangeSplitting::test_range_split_on_mod | a range taken modulo 2 splits, and the enclosing end closes the parts | `SI › recorded rewrites › split_ranges.golden › case=nested_sink`; `SI › laws › split_ranges keeps the writes › split_ranges.golden › case=nested_sink` |
+| tinygrad: null/test_uop_graph.py::TestReduceCollapse::test_multi_range_reduce_add | a sum of a sum over two ranges is the sum of two sums | `SI › recorded rewrites › reduce_collapse.golden › case=sum_of_a_sum_over_two_ranges` |
 | tinygrad: null/test_uop_graph.py::TestReduceCollapse::test_lt_lift_skips_unsigned | `x + y < c` and `x * y < c` are solved for `x` at int32, not at uint32, whose sum and product wrap | `SI › pm_reduce_collapse › a comparison of an unsigned sum or product is left, as it wraps` |
-| tinygrad: runtime/test_symbolic_ops.py::TestSymbolicOps::test_expand_reduce | a sum, product or maximum of a float with an infinity, or of a bool, over a broadcast of a variable size from 0 is the reduction of the same concrete size, its identity at 0 | `SI › pm_reduce_unparented › a reduction keeps its value over a range that may run no time`; `Tolk.Codegen › reductions over a variable size`; `SI › tinygrad's rewrites › reduce_unparented.golden › case=bool_sum_over_an_unused_range`, `bool_product_over_an_unused_range`, `maximum_over_a_range_that_may_be_empty` |
-| tinygrad: null/test_uop_graph.py::TestReduceCollapse::test_reduce_shapeless_const_unroll | a sum of a constant over an unroll range is the constant times its size | `SI › tinygrad's rewrites › reduce_unparented.golden › case=sum_over_an_unroll_range`; that no reduction survives `full_rewrite` is Codegen's section (L4) |
+| tinygrad: runtime/test_symbolic_ops.py::TestSymbolicOps::test_expand_reduce | a sum, product or maximum of a float with an infinity, or of a bool, over a broadcast of a variable size from 0 is the reduction of the same concrete size, its identity at 0 | `SI › pm_reduce_unparented › a reduction keeps its value over a range that may run no time`; `Tolk.Codegen › reductions over a variable size`; `SI › recorded rewrites › reduce_unparented.golden › case=bool_sum_over_an_unused_range`, `bool_product_over_an_unused_range`, `maximum_over_a_range_that_may_be_empty` |
+| tinygrad: null/test_uop_graph.py::TestReduceCollapse::test_reduce_shapeless_const_unroll | a sum of a constant over an unroll range is the constant times its size | `SI › recorded rewrites › reduce_unparented.golden › case=sum_over_an_unroll_range`; that no reduction survives `full_rewrite` is Codegen's section (L4) |
 | tinygrad: null/test_simplify_valid_idx.py::TestRangeShrink (8 tests) | guarded ranges shrink to their greatest guard, unless read unguarded or reduced | `SI › TestRangeShrink › shrink_<case>_simplified.golden` (each case recorded where it reaches `simplify ranges`); the ranges left after `full_rewrite` are Codegen's section (L4) |
-| tinygrad: null/test_arange.py::TestArange::test_cat_complexity, test_tri_complexity | an arange or a mask compiles to few operations | the collapse: `SI › tinygrad's kernels › arange_collapsed.golden`, `triu_collapsed.golden`; the estimates after `compile_linear` are Codegen's and Renderer's sections (L4) |
-| tinygrad: null/test_schedule.py::TestSchedule::test_arange_sum, test_arange_sum_alt, test_permute_arange, test_arange_transposed, test_arange_index | aranges fuse and collapse | the collapse: `SI › tinygrad's kernels › arange_sum_collapsed.golden`, `arange_transposed_collapsed.golden`, `arange_index_collapsed.golden`; the kernel counts are the scheduler's section (L6) |
+| tinygrad: null/test_arange.py::TestArange::test_cat_complexity, test_tri_complexity | an arange or a mask compiles to few operations | the collapse: `SI › recorded kernels › arange_collapsed.golden`, `triu_collapsed.golden`; the estimates after `compile_linear` are Codegen's and Renderer's sections (L4) |
+| tinygrad: null/test_schedule.py::TestSchedule::test_arange_sum, test_arange_sum_alt, test_permute_arange, test_arange_transposed, test_arange_index | aranges fuse and collapse | the collapse: `SI › recorded kernels › arange_sum_collapsed.golden`, `arange_transposed_collapsed.golden`, `arange_index_collapsed.golden`; the kernel counts are the scheduler's section (L6) |
 | tinygrad: null/test_linearizer_rewrite.py::TestLinearizerRewrite::test_arange | an arange kernel's code | dropped here: rendered code, Codegen's section (L4) |
 
 ## Coalesce
@@ -909,7 +909,7 @@ below. A kernel golden is the sink that compiling a real kernel hands to
 (`renderers.golden`: CPU, Metal, CUDA sm_89 and AMD gfx1100, the last three
 with their tensor cores), the optimisations asked for, the settings, and
 tinygrad's outcome. An accepted case's graph golden is what `apply_opts`
-returns (`PR › apply_opts optimises a kernel as tinygrad does`). A refused
+returns (`PR › apply_opts optimises a kernel as recorded`). A refused
 case also checks that the refused optimisation leaves the scheduler as it
 was (`PR › a refused optimisation leaves the scheduler as it was`), and
 `axes.golden` is the scheduler's view after the optimisations: every axis
@@ -1030,8 +1030,8 @@ BEAM_PADTO=1 TC=2 ...`, the suite's dune).
 The suite (`test/codegen/codegen`, `CG` below) compiles the kernels of
 `kernels.golden` for Clang, Metal, CUDA and HIP, each as a row of
 `cases.golden` named `<case>_<target>`, and compares each stage with tinygrad's
-(patched as D24 says): `stages › full_rewrite_to_sink lowers each kernel as tinygrad does`, `stages ›
-to_program makes each program as tinygrad does` (the lowered sink with its
+(patched as D24 says): `stages › full_rewrite_to_sink lowers each kernel as recorded`, `stages ›
+to_program makes each program as recorded` (the lowered sink with its
 estimates, the instructions, the program information), `stages › each program
 is rendered as tinygrad renders it` and `stages › an optimisation that does not
 apply raises tinygrad's error`. A row `CG › stages › <case>` below stands for

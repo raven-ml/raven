@@ -5331,7 +5331,7 @@ instructions: it did not pay for the scan.
   had taken 12% longer.
 - **Pinned by:** `Tolk.Postrange › a scheduler's axes answer as a fresh
   copy's, whatever came before`, which interleaves optimisations, copies and
-  queries; `› the scheduler's axes after optimising are tinygrad's`;
+  queries; `› the scheduler's axes after optimising are as recorded`;
   `› Scheduler ›` `v's kernel has the ranges its reductions and ends
   close flattened`, `v's kernel of a recorded kernel is it flattened` and `a
   copy's kernel after optimising is the kernel flattened`; the tolk bench's
