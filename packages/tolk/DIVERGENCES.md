@@ -929,7 +929,12 @@ scope, see README.
   apart › *` (every renderer), `› Clang compiles and runs a difference with a
   negated operand` and `› … with a negative constant`.
 
-## D27. Constants keep a NaN's bits
+## D27. A constant or a move keeps a NaN's bits
+
+Each part is one layer of the head's NaN rule: a float constant is its bits
+(D27), and a move or a negation keeps them.
+
+### Constants keep a NaN's bits
 
 - **tinygrad:** `dtype.py:79-86` (`DType.const` makes every NaN `math.nan`),
   `dtype.py:16-19` (`ConstFloat` compares every NaN equal to every other), and
@@ -969,6 +974,147 @@ scope, see README.
   with the reference interpreter before and after `simplify`;
   `Tolk.Dtype › const › const keeps the bits of every 8- and 16-bit float
   word but an 8-bit float's NaN codes`.
+
+### A move of an emulated float keeps its bits (D62)
+
+- **tinygrad:** `codegen/decomp/dtype.py:167-191` (`pm_float_decomp`, which
+  widens every load of an emulated float to the emulating float and narrows
+  every store back).
+- **tolk:** `Decomp_dtype.moved` and the store rule of
+  `Decomp_dtype.pm_float_decomp` that stores it, and
+  `test/gen/tinygrad.patch`, which gives tinygrad the same rule.
+- **Differs:** a store of a value that moves stored bits without arithmetic
+  (a load, a constant the float holds exactly, a selection between such
+  values, and stacks and lanes of them) stores those bits, as the storage's
+  unsigned integers. tinygrad widens and narrows each such value, which keeps
+  its value but makes every NaN its format's quiet one: a copy of e5m2's
+  `0x7d`, half's `0x7c01` or bfloat16's `0x7f81` stores `0x7f`, `0x7e00` or
+  `0x7fc0`. Arithmetic still converts, and gives a NaN as the NaN rule allows
+  (D9).
+- **Reason:** (b). Under the NaN rule a move keeps a NaN's bits, and nx's do:
+  an eager copy, movement or `where` keeps a signalling NaN, so a compiled
+  function computes what it computes eagerly only if the emulated moves keep
+  the bits too. rune converts `float16` and `bfloat16` by tolk's casts, and
+  stores the 8-bit floats and `float4_e2m1fn` as `uint8`, which it decodes
+  and encodes by integer formulas on their bits (`Lower_arith.of_byte`,
+  `Lower_arith.to_byte`), so tolk no longer emulates an 8-bit float for
+  it. What remains is a move of `bfloat16` or `float16` storage on a target
+  that emulates it: `bfloat16` on a riscv64 host, on an Apple GPU before
+  family 6 and on CUDA before sm_80.
+  rune stores both in their own types (`Lower_arith.dtype`), so a compiled
+  copy of one is such a move.
+- **Pinned by:** the `Decomp_dtype` suite (`test/codegen/decomp/decomp_dtype`): `NaNs › an
+  emulated copy keeps every NaN code, a signalling one's included`
+  and `› an emulated selection keeps every NaN code, a signalling one's
+  included`, on every emulated float, and the goldens of the
+  `where`, `flip`, `gather` and `pad` kernels, from the patched tinygrad.
+  On rune: missing (the old rune's `Compiled › host › 8-bit floats › a copy
+  of every 8-bit float code keeps its bits` and `› a selection of every
+  8-bit float code keeps its bits` went with its rewrite).
+
+### A NaN constant is written from its bits (D156)
+
+- **tinygrad:** `renderer/cstyle.py:25-26` (`base_rewrite` writes every NaN
+  constant as the language's `nan` cast to its type), `:151` (`NAN`), `:296`
+  (Clang's `__builtin_nanf("")`), `:463` (CUDA's
+  `#define NAN (__int_as_float(0x7fffffff))`) and `:525-527` (HIP's 8-bit
+  floats, `f32_to_fp8(NAN, …)`).
+- **tolk:** `Cstyle.nan_const`, the `bitcast` of each language
+  (`Cstyle.cstyle`, `Cstyle.metal_lang`, `Cstyle.cuda_lang`) and
+  `Cstyle.cdna_rewrite`;
+  `test/gen/tinygrad.patch`, which renders tinygrad's NaN constants the same
+  way before the goldens are generated.
+- **Differs:** a NaN constant (D27) is written as the language's bitcast of
+  its bits, an unsigned literal of its width:
+  `__builtin_bit_cast(float, (unsigned int)(0xffc00005u))` in C and HIP,
+  `as_type<float>(…)` in Metal, `tg_bitcast<float>(…)` in CUDA. So a program
+  stores the constant's sign and payload, a signalling NaN staying one, where
+  tinygrad's stores the conversion of one NaN of the language: a float64 NaN
+  with bits `0x7ff0000020000000` is stored as `0x7ff8000000000000` by Clang,
+  and every float32 NaN as `0x7fffffff` by CUDA. An infinity is written as
+  before.
+- **Reason:** (b). Under the NaN rule a move keeps a NaN's bits. rune lowers
+  every float constant from the bits nx stores for it (rune's `Lower.padded`
+  fills a padded load with its fill's bits through `Shape.pad`), and padding
+  moves those bits into the result, so a compiled kernel must store the bits
+  eager nx stores, as it must store the bits of a constant folded from a
+  bitcast (D27).
+- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `a NaN constant
+  is stored with its sign and payload › *`, which runs a store of NaNs of both
+  signs, quiet and signalling, of half, float and double on the host; and the
+  `*_inf_nan_*` goldens of the `Cstyle` suite, for every renderer.
+
+### A folded selection or negation keeps a NaN's bits (D176)
+
+- **tinygrad:** `uop/ops.py:1392-1398` (`exec_alu`), which truncates every
+  result to its type through `dtype.py:296-300` (`truncate`), whose
+  conversions to `float`, `half` and `bfloat16` quiet a signalling NaN; the
+  patch's `exec_alu` (`test/gen/tinygrad.patch`) applies tolk's rule before
+  the goldens are generated.
+- **tolk:** `Ops.exec_alu`, whose `Where` and `Neg` give a NaN as
+  `Dtype.const` holds it, and `Shape.fold_const_alu`, which reads a float
+  constant operand as `Dtype.const` holds it, its bits (D27).
+- **Differs:** a folded selection is the NaN it picks, and a folded negation
+  that NaN with its sign flipped, a signalling NaN staying one, in a float of
+  16 bits or more; tinygrad's quiets a signalling one. Every other operation
+  still truncates its result. tolk has no absolute value or sign copy among
+  its operations: rune computes both on a float's bits (`Lower_bits`).
+- **Reason:** (b). Under the NaN rule a selection and a negation keep a NaN's
+  bits, as LLVM's LangRef states ("Behavior of Floating-Point NaN values"):
+  "if there is no floating-point operation being performed, NaN signs, quiet
+  bits, and payloads are preserved", and `fneg`, `llvm.fabs` and
+  `llvm.copysign` "act directly on the underlying bit representation and
+  never change anything except possibly for the sign bit". nx's `where` keeps
+  a signalling NaN (D62), and rune lowers it to `Ops.where`
+  (`Lower_arith`), so a selection tolk folds must give the bits the kernel's
+  selection gives. The `Neg` half has no rune call site: rune negates a float
+  on its bits (`Lower_bits.negated`), and `Op.Neg` reaches the folder only
+  from `Decomp_op`'s rewrite of `x * -1`. It rests on D27's rule that a
+  rewrite keeps a graph's value: a `Neg` the folder leaves renders as C's
+  `-x`, which flips the sign bit alone, so a folded one must too.
+- **Pinned by:** `Tolk.Ops › exec_alu › a selection keeps a NaN's bits and a
+  negation flips only its sign, a signalling NaN's included`, over NaNs of
+  every sign and payload of `half`, `bfloat16`, `float` and `double`; and
+  `Tolk.Symbolic › symbolic_simple › constants › a folded selection keeps a
+  signalling NaN's bits, and a negation flips only its sign`. On rune:
+  `Lower_arith › a folded selection keeps a NaN's bits, and a negation or an
+  absolute value sets only its sign`, compiled selections by a constant and by
+  a folded comparison between a NaN constant and 1, and its negations and
+  absolute values, over signalling and quiet NaNs of both signs of `float16`,
+  `bfloat16`, `float32` and `float64`.
+
+### Clang selects a 16-bit float by its bits (D325)
+
+- **tinygrad:** `renderer/cstyle.py:160` (`CStyleLanguage.code_for_op`'s
+  `Ops.WHERE`, `(c?a:b)`) and `:59-60` (`base_rewrite`'s gated `Ops.LOAD`,
+  `(gate?*p:alt)`), under `ClangRenderer`'s `type_map` of `:301`, which
+  renders a half as `__fp16`; a bfloat16 is a `__bf16` off x86.
+- **tolk:** `Cstyle.bit_where`, Clang's `code_for_op` of `Op.Where`, and
+  `Cstyle.bit_loads`, in its rewrite, for `Float16`, and for `Bfloat16` where
+  it is a `__bf16`; `test/gen/tinygrad.patch`, which gives
+  `ClangRenderer.__init__` the same `code_for_op` and rule (`bit_loads`)
+  before the goldens are recorded.
+- **Differs:** a scalar selection of such a value, and a gated load's merge
+  with its alternative, choose between the arms' bits:
+  `__builtin_bit_cast(__fp16, (unsigned short)((c?A:B)))`, each arm read as
+  an `unsigned short`. Clang computes `c?a:b` of two `__fp16`s in float, a
+  storage format's promotion, and narrows the result back; on x86 the
+  conversions are `vcvtph2ps` and `vcvtps2ph`, which quiet a signalling
+  NaN, wherever LLVM's folds leave the round trip. A `__bf16` is not
+  promoted, but riscv64's backend, in clang 19, moves a selected one
+  through float32 and narrows it with `__truncsfbf2`; arm64's keeps its
+  bits, and takes the rule for one form across targets. Vector selections
+  are not promoted and are unchanged. Clang's `code_for_op` writes the
+  scalar selection, as `written.golden`'s row of a half `Ops.WHERE` shows.
+- **Reason:** (e): a move keeps a NaN's bits. rune's scatter selects an
+  element no update reaches from its target, and for a half `Add` on the
+  host, in the kernel its comparison form makes, `0x7c01` came back
+  `0x7e01`.
+- **Pinned by:** the Cstyle suite's `selections of 16-bit floats` (the
+  source of each Clang target); the goldens `clang_selected_half` and
+  `written`; rune's `Lower_index › gathers and scatters › a scatter keeps the
+  bits of each element no update lands on` and `Rune.jit`'s `a scatter keeps
+  the bits of each element no update lands on`, on the host and on a GPU.
 
 ## D28. A host program has rig's entry
 
@@ -1322,7 +1468,12 @@ its dispatch packets (D146).
 An NV launch read its local memory size from a word of the device. rig's NV
 driver sizes local memory as it loads a function (D146).
 
-## D52. A selection of -0. stays off a gated load
+## D52. A -0. fill or alternative is not +0.
+
+A selection or a pad by `-0.` keeps `-0.`: tinygrad's tests for 0 take
+`-0. == 0` as true.
+
+### A selection of -0. stays off a gated load
 
 - **tinygrad:** `uop/symbolic.py:448-452` (`pm_move_where_on_load`), whose
   pattern constant `0` matches `-0.` since `-0. == 0`.
@@ -1336,6 +1487,21 @@ driver sizes local memory as it loads a function (D146).
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `signed zeros › a pad with -0. fill renders and computes -0.` and `› a pad and a
   selection of signed zeros keep the interpreter's bits`; in rune, `Lower ›
   padded loads give eager's bits`, whose examples fill with `-0.`.
+
+### A pad by -0. fills its padding with -0. (D155)
+
+- **tinygrad:** `mixin/op.py:312` (`_pad_constant`) and `:318` (`pad_to`),
+  which return the plain pad when `value == 0`, true of `-0.`.
+- **tolk:** `Shape.is_zero`, used by `Shape.pad` and `Shape.pad_to`.
+- **Differs:** a fill is left to the pad's own zeros only when its bits are
+  all zero. A `-0.` fill takes the selection off the padded mask, so the
+  padding holds `-0.` where tinygrad's holds `+0.`.
+- **Reason:** (b). nx's `pad` fills with the value given, `-0.` included, and
+  rune lowers a padded load (rune's `Lower.padded`) through
+  `Shape.pad` with that fill, so its compiled pad must compute eager nx's
+  bits.
+- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `signed zeros ›
+  Shape.pad by -0. computes -0. on the padding`.
 
 ## D54. Storage says what it knows of where it starts within 16 bytes
 
@@ -1555,43 +1721,10 @@ kernel at NVRTC, Metal and the host compute it. `Spec.program` is
 A stack took the per-shard sub-view of a whole source beside sharded ones.
 Withdrawn: multi-device is out of scope, see README.
 
-## D62. A move of an emulated float keeps its bits
+## D62. Withdrawn
 
-- **tinygrad:** `codegen/decomp/dtype.py:167-191` (`pm_float_decomp`, which
-  widens every load of an emulated float to the emulating float and narrows
-  every store back).
-- **tolk:** `Decomp_dtype.moved` and the store rule of
-  `Decomp_dtype.pm_float_decomp` that stores it, and
-  `test/gen/tinygrad.patch`, which gives tinygrad the same rule.
-- **Differs:** a store of a value that moves stored bits without arithmetic
-  (a load, a constant the float holds exactly, a selection between such
-  values, and stacks and lanes of them) stores those bits, as the storage's
-  unsigned integers. tinygrad widens and narrows each such value, which keeps
-  its value but makes every NaN its format's quiet one: a copy of e5m2's
-  `0x7d`, half's `0x7c01` or bfloat16's `0x7f81` stores `0x7f`, `0x7e00` or
-  `0x7fc0`. Arithmetic still converts, and gives a NaN as the NaN rule allows
-  (D9).
-- **Reason:** (b). Under the NaN rule a move keeps a NaN's bits, and nx's do:
-  an eager copy, movement or `where` keeps a signalling NaN, so a compiled
-  function computes what it computes eagerly only if the emulated moves keep
-  the bits too. rune converts `float16` and `bfloat16` by tolk's casts, and
-  stores the 8-bit floats and `float4_e2m1fn` as `uint8`, which it decodes
-  and encodes by integer formulas on their bits (`Lower_arith.of_byte`,
-  `Lower_arith.to_byte`), so tolk no longer emulates an 8-bit float for
-  it. What remains is a move of `bfloat16` or `float16` storage on a target
-  that emulates it: `bfloat16` on a riscv64 host, on an Apple GPU before
-  family 6 and on CUDA before sm_80.
-  rune stores both in their own types (`Lower_arith.dtype`), so a compiled
-  copy of one is such a move.
-- **Pinned by:** the `Decomp_dtype` suite (`test/codegen/decomp/decomp_dtype`): `NaNs › an
-  emulated copy keeps every NaN code, a signalling one's included`
-  and `› an emulated selection keeps every NaN code, a signalling one's
-  included`, on every emulated float, and the goldens of the
-  `where`, `flip`, `gather` and `pad` kernels, from the patched tinygrad.
-  On rune: missing (the old rune's `Compiled › host › 8-bit floats › a copy
-  of every 8-bit float code keeps its bits` and `› a selection of every
-  8-bit float code keeps its bits` went with its rewrite).
-
+A move of an emulated float kept its bits; merged into D27, which holds its
+rule, its reason and its pins.
 
 ## D63. Programs and schedules are kept on disk
 
@@ -4242,52 +4375,15 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   sums and maxima over sizes of at most 1 and 3 on the host at every size,
   and an int32 maximum of `2 k` among them.
 
-## D155. A pad by -0. fills its padding with -0.
+## D155. Withdrawn
 
-- **tinygrad:** `mixin/op.py:312` (`_pad_constant`) and `:318` (`pad_to`),
-  which return the plain pad when `value == 0`, true of `-0.`.
-- **tolk:** `Shape.is_zero`, used by `Shape.pad` and `Shape.pad_to`.
-- **Differs:** a fill is left to the pad's own zeros only when its bits are
-  all zero. A `-0.` fill takes the selection off the padded mask, so the
-  padding holds `-0.` where tinygrad's holds `+0.`.
-- **Reason:** (b). nx's `pad` fills with the value given, `-0.` included, and
-  rune lowers a padded load (rune's `Lower.padded`) through
-  `Shape.pad` with that fill, so its compiled pad must compute eager nx's
-  bits.
-- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `signed zeros ›
-  Shape.pad by -0. computes -0. on the padding`.
+A pad by `-0.` filled its padding with `-0.`; merged into D52, which holds its
+rule, its reason and its pins.
 
-## D156. A NaN constant is written from its bits
+## D156. Withdrawn
 
-- **tinygrad:** `renderer/cstyle.py:25-26` (`base_rewrite` writes every NaN
-  constant as the language's `nan` cast to its type), `:151` (`NAN`), `:296`
-  (Clang's `__builtin_nanf("")`), `:463` (CUDA's
-  `#define NAN (__int_as_float(0x7fffffff))`) and `:525-527` (HIP's 8-bit
-  floats, `f32_to_fp8(NAN, …)`).
-- **tolk:** `Cstyle.nan_const`, the `bitcast` of each language
-  (`Cstyle.cstyle`, `Cstyle.metal_lang`, `Cstyle.cuda_lang`) and
-  `Cstyle.cdna_rewrite`;
-  `test/gen/tinygrad.patch`, which renders tinygrad's NaN constants the same
-  way before the goldens are generated.
-- **Differs:** a NaN constant (D27) is written as the language's bitcast of
-  its bits, an unsigned literal of its width:
-  `__builtin_bit_cast(float, (unsigned int)(0xffc00005u))` in C and HIP,
-  `as_type<float>(…)` in Metal, `tg_bitcast<float>(…)` in CUDA. So a program
-  stores the constant's sign and payload, a signalling NaN staying one, where
-  tinygrad's stores the conversion of one NaN of the language: a float64 NaN
-  with bits `0x7ff0000020000000` is stored as `0x7ff8000000000000` by Clang,
-  and every float32 NaN as `0x7fffffff` by CUDA. An infinity is written as
-  before.
-- **Reason:** (b). Under the NaN rule a move keeps a NaN's bits. rune lowers
-  every float constant from the bits nx stores for it (rune's `Lower.padded`
-  fills a padded load with its fill's bits through `Shape.pad`), and padding
-  moves those bits into the result, so a compiled kernel must store the bits
-  eager nx stores, as it must store the bits of a constant folded from a
-  bitcast (D27).
-- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `a NaN constant
-  is stored with its sign and payload › *`, which runs a store of NaNs of both
-  signs, quiet and signalling, of half, float and double on the host; and the
-  `*_inf_nan_*` goldens of the `Cstyle` suite, for every renderer.
+A NaN constant was written from its bits; merged into D27, which holds its
+rule, its reason and its pins.
 
 ## D157. A C-style expression nests at most 64 brackets
 
@@ -5514,44 +5610,10 @@ the walk of `Rangeify.fix_store_hazard`.
   D200 on CUDA and Metal, whose local split by 2 the floor of 256 admits; the tolk bench's `stream/decode-keys`, `stream/dense-bf16-64`
   and `stream/key-projection` rows on fudge.
 
-## D176. A folded selection or negation keeps a NaN's bits
+## D176. Withdrawn
 
-- **tinygrad:** `uop/ops.py:1392-1398` (`exec_alu`), which truncates every
-  result to its type through `dtype.py:296-300` (`truncate`), whose
-  conversions to `float`, `half` and `bfloat16` quiet a signalling NaN; the
-  patch's `exec_alu` (`test/gen/tinygrad.patch`) applies tolk's rule before
-  the goldens are generated.
-- **tolk:** `Ops.exec_alu`, whose `Where` and `Neg` give a NaN as
-  `Dtype.const` holds it, and `Shape.fold_const_alu`, which reads a float
-  constant operand as `Dtype.const` holds it, its bits (D27).
-- **Differs:** a folded selection is the NaN it picks, and a folded negation
-  that NaN with its sign flipped, a signalling NaN staying one, in a float of
-  16 bits or more; tinygrad's quiets a signalling one. Every other operation
-  still truncates its result. tolk has no absolute value or sign copy among
-  its operations: rune computes both on a float's bits (`Lower_bits`).
-- **Reason:** (b). Under the NaN rule a selection and a negation keep a NaN's
-  bits, as LLVM's LangRef states ("Behavior of Floating-Point NaN values"):
-  "if there is no floating-point operation being performed, NaN signs, quiet
-  bits, and payloads are preserved", and `fneg`, `llvm.fabs` and
-  `llvm.copysign` "act directly on the underlying bit representation and
-  never change anything except possibly for the sign bit". nx's `where` keeps
-  a signalling NaN (D62), and rune lowers it to `Ops.where`
-  (`Lower_arith`), so a selection tolk folds must give the bits the kernel's
-  selection gives. The `Neg` half has no rune call site: rune negates a float
-  on its bits (`Lower_bits.negated`), and `Op.Neg` reaches the folder only
-  from `Decomp_op`'s rewrite of `x * -1`. It rests on D27's rule that a
-  rewrite keeps a graph's value: a `Neg` the folder leaves renders as C's
-  `-x`, which flips the sign bit alone, so a folded one must too.
-- **Pinned by:** `Tolk.Ops › exec_alu › a selection keeps a NaN's bits and a
-  negation flips only its sign, a signalling NaN's included`, over NaNs of
-  every sign and payload of `half`, `bfloat16`, `float` and `double`; and
-  `Tolk.Symbolic › symbolic_simple › constants › a folded selection keeps a
-  signalling NaN's bits, and a negation flips only its sign`. On rune:
-  `Lower_arith › a folded selection keeps a NaN's bits, and a negation or an
-  absolute value sets only its sign`, compiled selections by a constant and by
-  a folded comparison between a NaN constant and 1, and its negations and
-  absolute values, over signalling and quiet NaNs of both signs of `float16`,
-  `bfloat16`, `float32` and `float64`.
+A folded selection or negation kept a NaN's bits; merged into D27, which holds
+its rule, its reason and its pins.
 
 ## D177. A name bound to several values is passed by each call that reads it
 
@@ -5735,7 +5797,9 @@ permute, where a one-step core's sum plus its scalar initial value raised. No
 rule moves an addend: tolk folds a core's running sum where it builds the sum,
 and an initial value is added after it (D260).
 
-## D182. A copy stored into a run of storage lands in place
+## D182. A copy or a store into a run of storage lands in it
+
+### A copy stored into a run of storage lands in place
 
 - **tinygrad:** `schedule/prepare.py:211-213` (a copy stored into storage on
   its device is the store, only where the destination has buffer identity)
@@ -5773,7 +5837,78 @@ and an initial value is added after it (D260).
   into filled storage copies into it`; the Engine suite's `link and run › a
   copy stored into rows of a buffer writes them alone`.
 
-## D183. In a schedule made per run, ready kernels run by their number, and one that frees storage first
+### A store into a run of a buffer stores into a view of it (D184)
+
+- **tinygrad:** `schedule/__init__.py:232-233` (`pm_callify_ctx_collect`):
+  `contiguous_mops_to_view` makes a view of a buffer for a copy or a stage
+  of movements of it, and for a store only into a bitcast of it. A store into
+  a shrink of a buffer indexes the buffer at the shrink's offset in its
+  kernel, so each offset is a program of its own.
+- **tolk:** `Schedule.view_of`, through `Schedule.pm_callify_ctx_collect`.
+- **Differs:** a store into movements or a bitcast of a buffer that select a
+  contiguous run of its elements stores into a view of that run: the kernel
+  takes the run as its buffer, and a copy stored there is a copy into it
+  (`Prepare`'s rule for a copy stored into storage on its device). Stores of
+  one shape into runs of one buffer at other offsets are one program. A store
+  into a buffer's state after earlier stores keeps indexing it, since a view
+  of the buffer would not be ordered after them, and so does a store whose
+  value reads the buffer in its own kernel, short of the stored states of
+  other storage, which the kernel split stages by the buffer's identity. A copy or a stage of a run of a buffer that a
+  store of the call writes keeps reading the run itself, which the kernel
+  split stages: a view, a parameter of its own in the call's body that
+  nothing writes, would be read when its reader runs, in whatever state the
+  buffer then holds, and not in the state it was taken of. A run may start
+  at bound variables, whose values its call knows
+  (`Prepare.contiguous_view` checks the run at those values): a store into
+  it stores into a view at that start, whose kernel knows the start modulo
+  what the variables move it by (D54), so stores of one shape at starts of
+  other alignments are one program too. A copy or a stage of a view still
+  needs a constant start.
+- **Reason:** (b): rune's compiled programs over several devices
+  (`Compile.assembled`) hold an assembly as a buffer filled by a store per
+  piece, each device's own piece at its device's offset. Indexed at the
+  offset, a data-parallel step over 2, 4, 8 and 16 memory devices made 19,
+  31, 55 and 103 programs; through views, 11 each, and 11, 13, 13 and 13
+  once rune reads a closing's own slot from storage of its own, against
+  rune's promise that they do not grow with the devices (D170). A view at a
+  constant start keeps that start's alignment, and a closing's parts lie
+  at starts of several: a sum over an axis cut across 2, 4, 8 and 16 memory
+  devices, its 2 + n wide result's parts stored at their starts, made 4, 7, 9
+  and 9 programs, and 4, 7, 7 and 7 with each device's own part stored at a
+  bound start. Indexing the whole buffer at that start instead held 3.02 MB
+  per device in fully sharded training over two devices, against the 2.29 MB
+  its bound allows and views keep. The refusal of a view of a buffer the
+  call writes is (e): `x[0:2].contiguous()` read after `x.assign(...)` in
+  one realize read the assigned `x` (tinygrad's
+  `test/runtime/test_assign.py::test_swap_slices`, an expected failure, is
+  that bug), at the cost of a stage kernel per such view.
+  The program `after_part_of_older_write`, whose two stores go into one
+  element each of one buffer, is recorded as a kernel graph alone: its linear
+  here is one launch (D338) over two one-element views of the buffer, where
+  tinygrad's indexes the whole buffer in a kernel per store.
+- **Pinned by:** `Tolk.Schedule › contiguous_mops_to_view › stores into runs
+  of a buffer at a bound start store into views of one alignment, whatever
+  the start`, `› stores of one shape into two runs of a buffer share a
+  kernel`, `› a store into contiguous rows of a buffer stores into a view of
+  them`, `› a store into rows of a buffer after a store has no view`, `› a
+  store into rows of a buffer of a value that reads it has no view`, `› a
+  store into rows of a buffer of a value that reads it through other storage
+  stores into a view` and `› a store into columns of storage has no view`;
+  `Tolk_engine › link and run › a store into rows of a buffer of a value
+  read through other storage writes what it computes`; `Tolk.Schedule ›
+  create_linear_with_vars › merged calls › the work on a schedule of many
+  outputs is linear in their number` and `› views of written buffers › a
+  stage of a run of a buffer the call overwrites reads it as it was` and
+  `› halves of a buffer swapped through stages swap`, and the programs
+  `stage_of_overwritten` and `copy_of_overwritten`; rune's `Rune.jit over
+  several devices › programs` and `› maps over a cut axis › partials give
+  eager's bits, their programs do not grow`, and `rune jit › fully sharded`.
+
+## D183. In a schedule made per run, ready kernels run by their number, those that free storage first
+
+`Schedule.storage_order` keeps both parts.
+
+### In a schedule made per run, ready kernels run by their number, and one that frees storage first
 
 - **tinygrad:** `schedule/__init__.py:72-85` (`create_schedule`'s linearize:
   Kahn's algorithm over a FIFO `deque`, so ready kernels run in the order
@@ -5817,79 +5952,7 @@ and an initial value is added after it (D260).
   become ready`; rune's `fully sharded` tests. Any other schedule keeps
   tinygrad's order, as every recorded schedule does.
 
-## D184. A store into a run of a buffer stores into a view of it
-
-- **tinygrad:** `schedule/__init__.py:232-233` (`pm_callify_ctx_collect`):
-  `contiguous_mops_to_view` makes a view of a buffer for a copy or a stage
-  of movements of it, and for a store only into a bitcast of it. A store into
-  a shrink of a buffer indexes the buffer at the shrink's offset in its
-  kernel, so each offset is a program of its own.
-- **tolk:** `Schedule.view_of`, through `Schedule.pm_callify_ctx_collect`.
-- **Differs:** a store into movements or a bitcast of a buffer that select a
-  contiguous run of its elements stores into a view of that run: the kernel
-  takes the run as its buffer, and a copy stored there is a copy into it
-  (`Prepare`'s rule for a copy stored into storage on its device). Stores of
-  one shape into runs of one buffer at other offsets are one program. A store
-  into a buffer's state after earlier stores keeps indexing it, since a view
-  of the buffer would not be ordered after them, and so does a store whose
-  value reads the buffer in its own kernel, short of the stored states of
-  other storage, which the kernel split stages by the buffer's identity. A
-  copy or a stage of a run of a buffer that a store of the call
-  writes keeps reading the run itself, which the kernel split stages: a view,
-  a parameter of its own in the call's body that nothing writes, would be
-  read when its reader runs, in whatever state the buffer then holds, and
-  not in the state it was taken of. A run may start at bound variables, whose values its call knows
-  (`Prepare.contiguous_view` checks the run at those values): a store into
-  it stores into a view at that start, whose kernel knows the start modulo
-  what the variables move it by (D54), so stores of one shape at starts of
-  other alignments are one program too. A copy or a stage of a view still
-  needs a constant start.
-- **Reason:** (b): rune's compiled programs over several devices
-  (`Compile.assembled`) hold an assembly as a buffer filled by a store per
-  piece, each device's own piece at its device's offset. Indexed at the
-  offset, a data-parallel step over 2, 4, 8 and 16 memory devices made 19,
-  31, 55 and 103 programs; through views, 11 each, and 11, 13, 13 and 13
-  once rune reads a closing's own slot from storage of its own, against
-  rune's promise that they do not grow with the devices (D170). A view at a
-  constant start keeps that start's alignment, and a closing's parts lie
-  at starts of several: a sum over an axis cut across 2, 4, 8 and 16 memory
-  devices, its 2 + n wide result's parts stored at their starts, made 4, 7, 9
-  and 9 programs, and 4, 7, 7 and 7 with each device's own part stored at a
-  bound start. Indexing the whole buffer at that start instead held 3.02 MB
-  per device in fully sharded training over two devices, against the 2.29 MB
-  its bound allows and views keep. The refusal of a view of a buffer the
-  call writes is (e): `x[0:2].contiguous()` read after `x.assign(...)` in
-  one realize read the assigned `x` (tinygrad's
-  `test/runtime/test_assign.py::test_swap_slices`, an expected failure, is
-  that bug), at the cost of a stage kernel per such view.
-  The program `after_part_of_older_write`, whose two stores go into one
-  element each of one buffer, is recorded as a kernel graph alone: its linear
-  here is one launch (D338) over two one-element views of the buffer, where
-  tinygrad's indexes the whole buffer in a kernel per store.
-- **Pinned by:** `Tolk.Schedule › contiguous_mops_to_view › stores into runs
-  of a buffer at a bound start store into views of one alignment, whatever
-  the start`, `› stores of one shape into two runs of a buffer share a
-  kernel`, `› a store into contiguous rows of a buffer stores into a view of
-  them`, `› a store into rows of a buffer after a store has no view`, `› a
-  store into rows of a buffer of a value that reads it has no view`, `› a
-  store into rows of a buffer of a value that reads it through other storage
-  stores into a view` and `› a store into columns of storage has no view`;
-  `Tolk_engine › link and run › a store into rows of a buffer of a value
-  read through other storage writes what it computes`; `Tolk.Schedule ›
-  create_linear_with_vars › merged calls › the work on a schedule of many
-  outputs is linear in their number`; rune's `Rune.jit over several devices ›
-  programs` and `› maps over a cut axis › partials give eager's
-
-  store into rows of a buffer of a value that reads it has no view` and `› a
-  store into columns of storage has no view`, `create_linear_with_vars ›
-  views of written buffers › a stage of a run of a buffer the call
-  overwrites reads it as it was` and `› halves of a buffer swapped through
-  stages swap`, and the programs `stage_of_overwritten` and
-  `copy_of_overwritten`; rune's `Rune.jit over several
-  devices › programs` and `› maps over a cut axis › partials give eager's
-  bits, their programs do not grow`, and `rune jit › fully sharded`.
-
-## D185. A ready kernel that only frees runs before one that also makes storage
+### A ready kernel that only frees runs before one that also makes storage (D185)
 
 - **tinygrad:** `schedule/__init__.py:72-85` (`create_schedule`'s linearize,
   Kahn's algorithm over a FIFO `deque`).
@@ -5912,6 +5975,16 @@ and an initial value is added after it (D260).
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`):
   `create_schedule › order by storage › a kernel that only frees runs before
   one that also makes storage`.
+
+## D184. Withdrawn
+
+A store into a run of a buffer stored into a view of it; merged into D182,
+which holds its rule, its reason and its pins.
+
+## D185. Withdrawn
+
+A ready kernel that only frees ran before one that also makes storage; merged
+into D183, which holds its rule, its reason and its pins.
 
 ## D186. The host's accumulators take half its vector registers
 
@@ -7876,38 +7949,10 @@ as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
   runs there` (they skip without a GPU). The Gpudims suite:
   `group_gpudims_masks_a_store_by_its_missing_global.golden`.
 
-## D325. Clang selects a 16-bit float by its bits
+## D325. Withdrawn
 
-- **tinygrad:** `renderer/cstyle.py:160` (`CStyleLanguage.code_for_op`'s
-  `Ops.WHERE`, `(c?a:b)`) and `:59-60` (`base_rewrite`'s gated `Ops.LOAD`,
-  `(gate?*p:alt)`), under `ClangRenderer`'s `type_map` of `:301`, which
-  renders a half as `__fp16`; a bfloat16 is a `__bf16` off x86.
-- **tolk:** `Cstyle.bit_where`, Clang's `code_for_op` of `Op.Where`, and
-  `Cstyle.bit_loads`, in its rewrite, for `Float16`, and for `Bfloat16` where
-  it is a `__bf16`; `test/gen/tinygrad.patch`, which gives
-  `ClangRenderer.__init__` the same `code_for_op` and rule (`bit_loads`)
-  before the goldens are recorded.
-- **Differs:** a scalar selection of such a value, and a gated load's merge
-  with its alternative, choose between the arms' bits:
-  `__builtin_bit_cast(__fp16, (unsigned short)((c?A:B)))`, each arm read as
-  an `unsigned short`. Clang computes `c?a:b` of two `__fp16`s in float, a
-  storage format's promotion, and narrows the result back; on x86 the
-  conversions are `vcvtph2ps` and `vcvtps2ph`, which quiet a signalling
-  NaN, wherever LLVM's folds leave the round trip. A `__bf16` is not
-  promoted, but riscv64's backend, in clang 19, moves a selected one
-  through float32 and narrows it with `__truncsfbf2`; arm64's keeps its
-  bits, and takes the rule for one form across targets. Vector selections
-  are not promoted and are unchanged. Clang's `code_for_op` writes the
-  scalar selection, as `written.golden`'s row of a half `Ops.WHERE` shows.
-- **Reason:** (e): a move keeps a NaN's bits. rune's scatter selects an
-  element no update reaches from its target, and for a half `Add` on the
-  host, in the kernel its comparison form makes, `0x7c01` came back
-  `0x7e01`.
-- **Pinned by:** the Cstyle suite's `selections of 16-bit floats` (the
-  source of each Clang target); the goldens `clang_selected_half` and
-  `written`; rune's `Lower_index › gathers and scatters › a scatter keeps the
-  bits of each element no update lands on` and `Rune.jit`'s `a scatter keeps
-  the bits of each element no update lands on`, on the host and on a GPU.
+Clang selected a 16-bit float by its bits; merged into D27, which holds its
+rule, its reason and its pins.
 
 ## D330. The kernels of one write are unordered whichever Afters list them
 
@@ -8258,7 +8303,14 @@ as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
 - **Pinned by:** the type of `Ops.range`: a call without `~axis_type` does
   not compile.
 
-## D342. A signed operation that may overflow computes in its unsigned type
+## D342. An integer operation is defined where C leaves it undefined
+
+Three parts of one rule, `Cstyle.pm_wrap_signed` and
+`Cstyle.pm_defined_div_shift`: tolk's integers wrap at their width,
+`Ops.exec_alu` states every value, and none of these operations is left to
+C's undefined behaviour.
+
+### A signed operation that may overflow computes in its unsigned type
 
 - **tinygrad:** `renderer/cstyle.py:152-159` (`code_for_op`, which writes
   `+`, `-`, `*`, a unary `-` and `<<` whatever the integer type);
@@ -8301,6 +8353,129 @@ as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
   them overflow; rune's `jit › integer arithmetic at its type's edges gives
   eager's values`, shifts included, and its GPU suite's `integers ›` the
   same law.
+
+### A division that may overflow and a shift past the width are defined (D346)
+
+- **tinygrad:** `renderer/cstyle.py:158-159` (`code_for_op`, which writes
+  `/`, `%`, `<<` and `>>` whatever their operands).
+- **tolk:** `Cstyle.pm_defined_div_shift`, in the extra matchers of
+  `Cstyle.clang`, `Cstyle.cuda`, `Cstyle.hip` and `Cstyle.metal`.
+- **Differs:** C leaves undefined a signed division of the least value by
+  -1, its quotient's and its remainder's, and a shift by a count at or past
+  the width of the promoted operand; CUDA, HIP and Metal follow C++, which
+  does the same, and a vector lane of a narrow type, which C does not
+  promote, is undefined from its own width. x86 traps on that division,
+  scalar or in a lane. tolk's integers wrap at their width
+  (`Ops.exec_alu`), as nx states its values: the quotient is the least
+  value, the remainder 0, a left shift and an unsigned right shift past the
+  width 0, and a signed right shift 0 or -1. A `Truncdiv` or `Truncmod` of
+  a signed type whose operands' bounds (`Ops.operand_bounds`) reach the
+  least value and -1 divides the magnitudes in the unsigned type of its
+  width and takes the quotient's sign from the operands' or the
+  remainder's from the dividend's. A `Shl` or `Shr` whose count's bounds,
+  in the count's own type (a `Uint32` count of a narrow value included),
+  leave 0 to the width less one shifts by the count's low bits and selects
+  0 past the width, or for a signed right shift shifts by the count capped
+  at the width less one. D342's shift reads its count so too. An index's division by a positive constant and a
+  shift by a constant count keep tinygrad's source. A zero divisor is
+  D355's. tinygrad's sources move with the rule, through
+  `test/gen/tinygrad.patch`.
+  A shift's count is a number of bits, read at no width.
+  `Ops.operand_bounds` keeps a count's own bounds, and `Ops.exec_alu` takes
+  a count of any size: a left shift's value is 0 at or past the width of a
+  committed type, a right shift the floor at any size. A left shift nothing
+  truncates, by more than `Ops.max_exact_shift` bits, has no value, where
+  tinygrad's Python integer would exhaust memory. A count at or past the
+  width keeps the `(x & mask) >> k` rule, which tinygrad applies, from
+  dropping a mask that clears the sign.
+  tinygrad's fold of a constant and a bare count (`uop/symbolic.py`) commits
+  the count at the operand's type, which wraps it; `Symbolic`'s fold reads it
+  as it is.
+  tinygrad's `uop/weak.py` `commit_srcs_at` commits a weak count at the
+  operand's type too: a uint8 shifted left by 256 is itself. tolk's
+  `Uop_weak.commit_srcs_at` saturates a literal count at or past the width
+  at the width, which every integer type holds, as it does a weak expression
+  count always past it, and a weak expression count the operand's type does
+  not hold at its own committed type, then converts it to the operand's. A
+  weak count does not widen the type its shift computes at.
+- **Reason:** (e): at the pinned commit, the host's kernel of an int32
+  division of the least value by -1 dies with SIGFPE, on the host's vector
+  lanes a uint8 shifted right by 8 is itself, where it is 0, a masked
+  negative int32 shifted right by 32 is -1, where it is 0, a uint16
+  constant 1 shifted left by 65536 folds to 1, where it is 0, and a uint8
+  shifted left by a weak count of 256 is itself, where it is 0.
+- **Pinned by:** the Tolk_engine suite's `divisions and shifts at the
+  extremes compute as the interpreter`, on the host (`kernels on the
+  host`) and on each GPU (`GPUs ›`, run on fudge's CUDA and NV): every
+  integer type's quotient, remainder and shifts of operands drawn at its
+  extremes, -1 to 2, counts either side of its width, 32 and 64, and a
+  constant count of its width, in scalars and in vectors of 4 lanes,
+  against `Ops.exec_alu`; `a narrow
+  type shifted by a uint32 count computes as the interpreter`, by constant
+  counts of 8 to 65537; `a shift by a literal or weak count of any size
+  computes the shift`, compiled and through the interpreter, on the host
+  and each GPU, against the shift's meaning written in the test, for
+  literal and weak expression counts around the width and at and past
+  2^8, 2^16, 2^32 and 2^63; and the Symbolic suite's `a shift of constants
+  folds by its count, of any size` and `a masked right shift past the
+  width keeps its mask's sign`.
+
+### A division by zero is defined (D355)
+
+- **tinygrad:** `renderer/cstyle.py:158` (`code_for_op`, which writes `/` and
+  `%` whatever the divisor); `uop/symbolic.py:136` (`x//x -> 1`);
+  `codegen/decomp/op.py:54-57` (`floordiv_to_idiv`, which corrects a
+  negative dividend's quotient whatever the divisor);
+  `codegen/decomp/dtype.py:55-73` (an emulated 64-bit quotient, each bit of
+  which a divisor of 0 sets); `helpers.py:74,77` (`cdiv` and `floordiv`,
+  whose quotient by 0 is 0, which `python_alu` computes, `uop/ops.py:1544`);
+  `uop/ops.py:1105-1107` (`_min_max`, which bounds a load of a constant table
+  by the table's values, whatever its gate).
+- **tolk:** `Cstyle.pm_defined_div_shift`, in the extra matchers of
+  `Cstyle.clang`, `Cstyle.cuda`, `Cstyle.hip` and `Cstyle.metal`;
+  `Shape.symbolic_simple` (`x // x`); `Decomp_op.floordiv_to_idiv`;
+  `Decomp_dtype`'s `long_division`; `Ops.vmin` and `Ops.vmax` of a gated
+  load of a constant table.
+- **Differs:** C leaves an integer division by zero undefined, its
+  quotient's and its remainder's; CUDA, HIP and Metal follow C++, which does
+  the same. x86 traps on it, scalar or in a lane. tolk's integer quotient by
+  0 is 0 and its remainder the dividend (`Ops.exec_alu`), as nx states its
+  values and as tinygrad's interpreter computes them. A `Truncdiv` or
+  `Truncmod` of an integer type whose divisor's bounds
+  (`Ops.operand_bounds`) reach 0 divides by `where (d <> 0) d 1` and
+  selects 0, or the dividend, where the divisor is 0; where D346 divides
+  magnitudes, it divides by the divisor's magnitude made so. The rule reads
+  such a divisor as nonzero, which its bounds cannot show. `x // x` folds
+  to 1 only where `x`'s bounds hold no 0; a floored division's correction
+  of a negative dividend skips a divisor of 0; an emulated 64-bit quotient
+  selects 0 where both words of the divisor are 0. A division whose
+  divisor's bounds hold no 0, as an index's by a positive constant, keeps
+  tinygrad's source. rune divides as it lowers any divisor
+  (`Lower_arith.int_div`). A gated load of a constant table is bounded by
+  its alternative too, which it reads where its gate fails: a pad's padding
+  reads 0 there, which the table's values alone left out, so a division by
+  such a load went unguarded. tinygrad's sources move with the rules, through
+  `test/gen/tinygrad.patch`.
+- **Reason:** (e): at the pinned commit, the host's kernel of an integer
+  division by a loaded 0 dies with SIGFPE, and CUDA's uint8 quotient of 0
+  by 0 is 255, where tinygrad's interpreter gives 0.
+- **Pinned by:** the Tolk_engine suite's `divisions and shifts at the
+  extremes compute as the interpreter`, on the host (`kernels on the host`)
+  and on each GPU (`GPUs ›`, run on fudge's CUDA and NV): every integer
+  type's truncated and floored quotients and remainders of operands drawn
+  at its extremes, -1 to 2 and 0 included as divisors, `a // a`, and a
+  quotient and remainder by a constant 0, in scalars and in vectors of 4
+  lanes, against `Ops.exec_alu`; the Symbolic suite's `identities › x // x
+  is 1 where x's bounds hold no 0`; the Decomp_dtype suite's `emulated
+  64-bit integers › i64 quotient by 0, which is 0` and its neighbours, for
+  both types and the remainder; rune's `jit › integer arithmetic at its
+  type's edges gives eager's values`, its GPU suite's `integers ›` the same
+  law, and `Lower_arith › divisions by constants give eager's bits`; the
+  Symbolic suite's `bounds › a gated load of a constant table may read its
+  alternative`; the Tolk_engine suite's `a pad of integer divisions writes
+  what its tensors compute`, `a pad of a quotient by a constant table writes
+  what it computes` on the host and on each GPU, and the Codegen suite's
+  `padto_idiv_upcast`, whose padding loads the zeros they divide by.
 
 ## D348. On the host, a decoded operand is decoded once for every row tile
 
@@ -8398,71 +8573,10 @@ as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
   adds axes of one and through a transpose, against the values they write;
   and an expand that empties an axis, not refused.
 
-## D346. A division that may overflow and a shift past the width are defined
+## D346. Withdrawn
 
-- **tinygrad:** `renderer/cstyle.py:158-159` (`code_for_op`, which writes
-  `/`, `%`, `<<` and `>>` whatever their operands).
-- **tolk:** `Cstyle.pm_defined_div_shift`, in the extra matchers of
-  `Cstyle.clang`, `Cstyle.cuda`, `Cstyle.hip` and `Cstyle.metal`.
-- **Differs:** C leaves undefined a signed division of the least value by
-  -1, its quotient's and its remainder's, and a shift by a count at or past
-  the width of the promoted operand; CUDA, HIP and Metal follow C++, which
-  does the same, and a vector lane of a narrow type, which C does not
-  promote, is undefined from its own width. x86 traps on that division,
-  scalar or in a lane. tolk's integers wrap at their width
-  (`Ops.exec_alu`), as nx states its values: the quotient is the least
-  value, the remainder 0, a left shift and an unsigned right shift past the
-  width 0, and a signed right shift 0 or -1. A `Truncdiv` or `Truncmod` of
-  a signed type whose operands' bounds (`Ops.operand_bounds`) reach the
-  least value and -1 divides the magnitudes in the unsigned type of its
-  width and takes the quotient's sign from the operands' or the
-  remainder's from the dividend's. A `Shl` or `Shr` whose count's bounds,
-  in the count's own type (a `Uint32` count of a narrow value included),
-  leave 0 to the width less one shifts by the count's low bits and selects
-  0 past the width, or for a signed right shift shifts by the count capped
-  at the width less one. D342's shift reads its count so too. An index's division by a positive constant and a
-  shift by a constant count keep tinygrad's source. A zero divisor is
-  D355's. tinygrad's sources move with the rule, through
-  `test/gen/tinygrad.patch`.
-  A shift's count is a number of bits, read at no width.
-  `Ops.operand_bounds` keeps a count's own bounds, and `Ops.exec_alu` takes
-  a count of any size: a left shift's value is 0 at or past the width of a
-  committed type, a right shift the floor at any size. A left shift nothing
-  truncates, by more than `Ops.max_exact_shift` bits, has no value, where
-  tinygrad's Python integer would exhaust memory. A count at or past the
-  width keeps the `(x & mask) >> k` rule, which tinygrad applies, from
-  dropping a mask that clears the sign.
-  tinygrad's fold of a constant and a bare count (`uop/symbolic.py`) commits
-  the count at the operand's type, which wraps it; `Symbolic`'s fold reads it
-  as it is.
-  tinygrad's `uop/weak.py` `commit_srcs_at` commits a weak count at the
-  operand's type too: a uint8 shifted left by 256 is itself. tolk's
-  `Uop_weak.commit_srcs_at` saturates a literal count at or past the width
-  at the width, which every integer type holds, as it does a weak expression
-  count always past it, and a weak expression count the operand's type does
-  not hold at its own committed type, then converts it to the operand's. A
-  weak count does not widen the type its shift computes at.
-- **Reason:** (e): at the pinned commit, the host's kernel of an int32
-  division of the least value by -1 dies with SIGFPE, on the host's vector
-  lanes a uint8 shifted right by 8 is itself, where it is 0, a masked
-  negative int32 shifted right by 32 is -1, where it is 0, a uint16
-  constant 1 shifted left by 65536 folds to 1, where it is 0, and a uint8
-  shifted left by a weak count of 256 is itself, where it is 0.
-- **Pinned by:** the Tolk_engine suite's `divisions and shifts at the
-  extremes compute as the interpreter`, on the host (`kernels on the
-  host`) and on each GPU (`GPUs ›`, run on fudge's CUDA and NV): every
-  integer type's quotient, remainder and shifts of operands drawn at its
-  extremes, -1 to 2, counts either side of its width, 32 and 64, and a
-  constant count of its width, in scalars and in vectors of 4 lanes,
-  against `Ops.exec_alu`; `a narrow
-  type shifted by a uint32 count computes as the interpreter`, by constant
-  counts of 8 to 65537; `a shift by a literal or weak count of any size
-  computes the shift`, compiled and through the interpreter, on the host
-  and each GPU, against the shift's meaning written in the test, for
-  literal and weak expression counts around the width and at and past
-  2^8, 2^16, 2^32 and 2^63; and the Symbolic suite's `a shift of constants
-  folds by its count, of any size` and `a masked right shift past the
-  width keeps its mask's sign`.
+A division that may overflow and a shift past the width were defined; merged
+into D342, which holds its rule, its reason and its pins.
 
 ## D347. Compiles run on as many domains as the cores the process may occupy
 
@@ -8593,62 +8707,10 @@ as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
   variable itself, at no slot, where the call leaves it free` and `› is the
   call's argument in the slot of a scalar parameter`.
 
-## D355. A division by zero is defined
+## D355. Withdrawn
 
-- **tinygrad:** `renderer/cstyle.py:158` (`code_for_op`, which writes `/` and
-  `%` whatever the divisor); `uop/symbolic.py:136` (`x//x -> 1`);
-  `codegen/decomp/op.py:54-57` (`floordiv_to_idiv`, which corrects a
-  negative dividend's quotient whatever the divisor);
-  `codegen/decomp/dtype.py:55-73` (an emulated 64-bit quotient, each bit of
-  which a divisor of 0 sets); `helpers.py:74,77` (`cdiv` and `floordiv`,
-  whose quotient by 0 is 0, which `python_alu` computes, `uop/ops.py:1544`);
-  `uop/ops.py:1105-1107` (`_min_max`, which bounds a load of a constant table
-  by the table's values, whatever its gate).
-- **tolk:** `Cstyle.pm_defined_div_shift`, in the extra matchers of
-  `Cstyle.clang`, `Cstyle.cuda`, `Cstyle.hip` and `Cstyle.metal`;
-  `Shape.symbolic_simple` (`x // x`); `Decomp_op.floordiv_to_idiv`;
-  `Decomp_dtype`'s `long_division`; `Ops.vmin` and `Ops.vmax` of a gated
-  load of a constant table.
-- **Differs:** C leaves an integer division by zero undefined, its
-  quotient's and its remainder's; CUDA, HIP and Metal follow C++, which does
-  the same. x86 traps on it, scalar or in a lane. tolk's integer quotient by
-  0 is 0 and its remainder the dividend (`Ops.exec_alu`), as nx states its
-  values and as tinygrad's interpreter computes them. A `Truncdiv` or
-  `Truncmod` of an integer type whose divisor's bounds
-  (`Ops.operand_bounds`) reach 0 divides by `where (d <> 0) d 1` and
-  selects 0, or the dividend, where the divisor is 0; where D346 divides
-  magnitudes, it divides by the divisor's magnitude made so. The rule reads
-  such a divisor as nonzero, which its bounds cannot show. `x // x` folds
-  to 1 only where `x`'s bounds hold no 0; a floored division's correction
-  of a negative dividend skips a divisor of 0; an emulated 64-bit quotient
-  selects 0 where both words of the divisor are 0. A division whose
-  divisor's bounds hold no 0, as an index's by a positive constant, keeps
-  tinygrad's source. rune divides as it lowers any divisor
-  (`Lower_arith.int_div`). A gated load of a constant table is bounded by
-  its alternative too, which it reads where its gate fails: a pad's padding
-  reads 0 there, which the table's values alone left out, so a division by
-  such a load went unguarded. tinygrad's sources move with the rules, through
-  `test/gen/tinygrad.patch`.
-- **Reason:** (e): at the pinned commit, the host's kernel of an integer
-  division by a loaded 0 dies with SIGFPE, and CUDA's uint8 quotient of 0
-  by 0 is 255, where tinygrad's interpreter gives 0.
-- **Pinned by:** the Tolk_engine suite's `divisions and shifts at the
-  extremes compute as the interpreter`, on the host (`kernels on the host`)
-  and on each GPU (`GPUs ›`, run on fudge's CUDA and NV): every integer
-  type's truncated and floored quotients and remainders of operands drawn
-  at its extremes, -1 to 2 and 0 included as divisors, `a // a`, and a
-  quotient and remainder by a constant 0, in scalars and in vectors of 4
-  lanes, against `Ops.exec_alu`; the Symbolic suite's `identities › x // x
-  is 1 where x's bounds hold no 0`; the Decomp_dtype suite's `emulated
-  64-bit integers › i64 quotient by 0, which is 0` and its neighbours, for
-  both types and the remainder; rune's `jit › integer arithmetic at its
-  type's edges gives eager's values`, its GPU suite's `integers ›` the same
-  law, and `Lower_arith › divisions by constants give eager's bits`; the
-  Symbolic suite's `bounds › a gated load of a constant table may read its
-  alternative`; the Tolk_engine suite's `a pad of integer divisions writes
-  what its tensors compute`, `a pad of a quotient by a constant table writes
-  what it computes` on the host and on each GPU, and the Codegen suite's
-  `padto_idiv_upcast`, whose padding loads the zeros they divide by.
+A division by zero was defined; merged into D342, which holds its rule, its
+reason and its pins.
 
 ## D357. A group's threads read consecutive addresses
 
