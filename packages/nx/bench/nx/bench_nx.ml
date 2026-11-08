@@ -1320,7 +1320,10 @@ let scan_rows =
 
 (* Order and counted lengths, each against its NumPy counterpart at the same
    size: 1M uniform draws, rows of 1024, a 64K-key table, 1000 groups, and
-   keys as wide as the bits of 1M float64 draws, which unique sorts. *)
+   keys as wide as the bits of 1M float64 draws, which unique sorts. Runs of
+   4 rows of a key, ascending 64 apart, have no NumPy counterpart: they are
+   a join's keys from a table sorted by them, too sparse for a direct
+   table, each thread's keys its own. *)
 let u1m () = on_host (Nx.Rng.uniform ~key:(Nx.Rng.key 7) D.Float32 [| n1m |])
 let u1m64 () = on_host (Nx.cast D.Float64 (u1m ()))
 
@@ -1331,6 +1334,10 @@ let sorted_64k () =
 
 let groups1m () =
   on_host (Nx.Rng.randint ~key:(Nx.Rng.key 9) ~high:1000 [| n1m |])
+
+let runs1m () =
+  on_host (Nx.init D.Int64 [| n1m |] (fun i -> Int64.of_int (i.(0) / 4 * 64)))
+
 let quartiles = [| 0.25; 0.5; 0.75 |]
 
 (* 1M counts of 0 to 3 drawn once from a fixed key, as a join's matches of
@@ -1357,6 +1364,8 @@ let order_rows =
       Thumper.bench_with_setup "unique-i64-1M-wide"
         ~setup:(fun () -> on_host (Nx.bitcast D.Int64 (u1m64 ())))
         Nx.unique;
+      Thumper.bench_with_setup "unique-i64-1M-runs-of-4" ~setup:runs1m
+        (Nx.unique ~size:0);
       Thumper.bench_with_setup "positions-bool-1M" ~setup:b1m Nx.positions;
       Thumper.bench_with_setup "positions-i64-1M-counts" ~setup:counts1m
         Nx.positions;

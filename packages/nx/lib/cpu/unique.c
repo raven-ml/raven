@@ -13,16 +13,19 @@
    Keys find their group in a hash table of linear probing, a slot a word:
    the group's number plus one below ID_BITS, 0 for an empty slot, and above
    it TAG bits of the key's hash, which turn most probes away before they
-   read the group's words. The table doubles past half full. Keys of at
-   most DIRECT_WORDS words whose columns' spans multiply to a small range
-   find their group in a direct table instead, at the key's place in that
-   range, as a mixed-radix number of the columns' offsets from their least.
+   read the group's words. The table doubles past half full. A row of the
+   previous row's key, as in keys sorted or in runs, takes its group with
+   neither. Keys of at most DIRECT_WORDS words whose columns' spans multiply
+   to a small range find their group in a direct table instead, at the
+   key's place in that range, as a mixed-radix number of the columns'
+   offsets from their least.
 
    On several threads, each takes a block of consecutive rows and numbers
    its keys on its own, provisionally. The blocks' groups then merge into
-   tables by the top bits of their hashes, a partition a thread: each
-   partition takes its groups block by block, in each block's order, so the
-   first block to hold a key gives its first row and its order among the
+   tables by the top bits of their hashes, a partition a thread, each with
+   room for its blocks' groups, so that it never grows: each partition
+   takes its groups block by block, in each block's order, so the first
+   block to hold a key gives its first row and its order among the
    partition's. A key's number is its first row's rank among every key's
    first rows, read from a bit per row set at each first row, and a pass
    over the ids maps the provisional numbers to the final ones. One thread
@@ -206,14 +209,16 @@ static void drop(groups *g) {
   free(g->direct);
 }
 
-/* A table of [w]-word keys, partitioned by [pre] bits; [values] slots of a
-   direct table where above 0. Answers -1 where memory runs out. */
-static int start(groups *g, int w, int pre, int64_t values) {
+/* A table of [w]-word keys, partitioned by [pre] bits, with room for
+   [keys] keys before it grows; [values] slots of a direct table where above
+   0. Answers -1 where memory runs out. */
+static int start(groups *g, int w, int pre, int64_t values, int64_t keys) {
   memset(g, 0, sizeof *g);
   g->w = w;
   g->pre = pre;
   g->log = FIRST_LOG;
-  g->room = FIRST_ROOM;
+  g->room = keys > FIRST_ROOM ? keys : FIRST_ROOM;
+  while (2 * g->room > ((int64_t)1 << g->log) - 1) g->log++;
   g->key = malloc((size_t)(g->room * w) * sizeof *g->key);
   g->hash = malloc((size_t)g->room * sizeof *g->hash);
   g->first = malloc((size_t)g->room * sizeof *g->first);
@@ -295,28 +300,6 @@ static __attribute__((noinline)) int64_t added(groups *g, uint64_t at,
   return q;
 }
 
-/* The number of [row]'s group, [h] its hash, made first at [first] where
-   [g] has none; -1 where memory runs out. */
-static inline __attribute__((always_inline)) int64_t find(groups *g,
-                                                          uint64_t h,
-                                                          const uint64_t *row,
-                                                          int w,
-                                                          int64_t first) {
-  uint64_t mask = (1ull << g->log) - 1, tag = h << ID_BITS;
-  uint64_t at = place_of(g, h);
-  for (;; at = (at + 1) & mask) {
-    uint64_t s = g->slot[at];
-    if (s == 0) break;
-    if ((s & ~ID_MASK) != tag) continue;
-    int64_t q = (int64_t)(s & ID_MASK) - 1;
-    const uint64_t *k = g->key + q * w;
-    int j = 0;
-    while (j < w && k[j] == row[j]) j++;
-    if (j == w) return q;
-  }
-  return added(g, at, h, row, first);
-}
-
 /* Blocks */
 
 /* The rows of block [b], of [u]'s blocks. */
@@ -372,10 +355,10 @@ static inline __attribute__((always_inline)) int direct_rows(
   return 0;
 }
 
-/* Numbers rows [lo, hi) into [g] by its hash table, keys of [w] words, as
-   find does, its table in locals that a new group refreshes. The hash's
-   keys and the rows' steps are locals too, which no store of ids or counts
-   can alias. */
+/* Numbers rows [lo, hi) into [g] by its hash table, keys of [w] words,
+   writing each row's number at ids, its table in locals that a new group
+   refreshes. The hash's keys and the rows' steps are locals too, which no
+   store of ids or counts can alias. */
 static inline __attribute__((always_inline)) int hashed_rows(
     const numbering *u, groups *g, int64_t lo, int64_t hi, int w,
     uint64_t *buf) {
@@ -386,8 +369,22 @@ static inline __attribute__((always_inline)) int hashed_rows(
   const uint64_t *slot = g->slot, *key = g->key;
   uint64_t mask = (1ull << g->log) - 1;
   int shift = 64 - g->log;
+  /* The previous row's group and first word: a row of its key, as in keys
+     sorted or in runs, takes its number without a hash or a probe. */
+  int64_t last = -1;
+  uint64_t lead = 0;
   for (int64_t i = lo; i < hi; i++) {
     const uint64_t *row = row_at(x, s0, s1, w, i, buf);
+    if (row[0] == lead && last >= 0) {
+      const uint64_t *k = key + last * w;
+      int j = 1;
+      while (j < w && k[j] == row[j]) j++;
+      if (j == w) {
+        ids[i] = last;
+        count[last]++;
+        continue;
+      }
+    }
     uint64_t h = hash_of(seed, row, w), tag = h << ID_BITS, at = h >> shift;
     int64_t q = -1;
     for (;; at = (at + 1) & mask) {
@@ -413,6 +410,8 @@ static inline __attribute__((always_inline)) int hashed_rows(
     }
     ids[i] = q;
     count[q]++;
+    last = q;
+    lead = row[0];
   }
   return 0;
 }
@@ -465,7 +464,7 @@ static void block_units(int64_t lo, int64_t hi, int worker, void *ctx) {
     int64_t r0, r1;
     rows_of(u, b, &r0, &r1);
     groups *g = &u->g[b];
-    int e = start(g, (int)u->w, 0, u->direct ? u->values : 0);
+    int e = start(g, (int)u->w, 0, u->direct ? u->values : 0, 0);
     if (!e) e = number_rows(u, g, r0, r1);
     if (!e && u->blocks > 1) e = bucketed(u, b);
     if (e) __atomic_store_n(&u->failed, 1, __ATOMIC_RELAXED);
@@ -526,34 +525,68 @@ static int directly(numbering *u, int64_t limit) {
 
 /* Merging */
 
-/* Partition [p]'s groups, every block's in block order, into u->g's
-   partition table, each block's numbers there at prov; and a bit at each
+/* Partition [p]'s groups, every block's in block order, into its table [t],
+   keys of [w] words, each block's numbers there at prov. The table has
+   room for them all (merge_units), so it never grows: the loop keeps it in
+   locals, which no store of counts or prov can alias. */
+static inline __attribute__((always_inline)) void merge_part(numbering *u,
+                                                             groups *t,
+                                                             int64_t p, int w) {
+  uint64_t *slot = t->slot, *key = t->key, *hash = t->hash;
+  int64_t *first = t->first, *count = t->count, k = 0;
+  uint64_t mask = (1ull << t->log) - 1;
+  int pre = t->pre, shift = 64 - t->log;
+  for (int b = 0; b < u->blocks; b++) {
+    const groups *g = &u->g[b];
+    const int64_t *order = u->order[b], *from = u->bucket[b];
+    int64_t *prov = u->prov[b];
+    for (int64_t j = from[p]; j < from[p + 1]; j++) {
+      int64_t l = order[j];
+      uint64_t h = g->hash[l], tag = h << ID_BITS, at = (h << pre) >> shift;
+      const uint64_t *row = g->key + l * w;
+      int64_t q;
+      for (;; at = (at + 1) & mask) {
+        uint64_t e = slot[at];
+        if (e == 0) {
+          q = k++;
+          for (int i = 0; i < w; i++) key[q * w + i] = row[i];
+          hash[q] = h;
+          first[q] = g->first[l];
+          count[q] = 0;
+          slot[at] = tag | (uint64_t)(q + 1);
+          break;
+        }
+        if ((e & ~ID_MASK) != tag) continue;
+        q = (int64_t)(e & ID_MASK) - 1;
+        int i = 0;
+        while (i < w && key[q * w + i] == row[i]) i++;
+        if (i == w) break;
+      }
+      count[q] += g->count[l];
+      prov[l] = q;
+    }
+  }
+  t->k = k;
+}
+
+/* Partition [p]'s groups into u->g's partition table, and a bit at each
    first row. */
 static void merge_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   numbering *u = ctx;
   int w = (int)u->w;
   for (int64_t p = lo; p < hi; p++) {
+    int64_t keys = 0;
+    for (int b = 0; b < u->blocks; b++)
+      keys += u->bucket[b][p + 1] - u->bucket[b][p];
     groups *t = &u->g[u->blocks + p];
-    int e = start(t, w, u->pb, 0);
-    for (int b = 0; !e && b < u->blocks; b++) {
-      const groups *g = &u->g[b];
-      const int64_t *order = u->order[b], *from = u->bucket[b];
-      for (int64_t j = from[p]; j < from[p + 1]; j++) {
-        int64_t l = order[j];
-        int64_t q = find(t, g->hash[l], g->key + l * w, w, g->first[l]);
-        if (q < 0) {
-          e = -1;
-          break;
-        }
-        t->count[q] += g->count[l];
-        u->prov[b][l] = q;
-      }
-    }
-    if (e) {
+    if (start(t, w, u->pb, 0, keys)) {
       __atomic_store_n(&u->failed, 1, __ATOMIC_RELAXED);
       continue;
     }
+    if (w == 1) merge_part(u, t, p, 1);
+    else if (w == 2) merge_part(u, t, p, 2);
+    else merge_part(u, t, p, w);
     for (int64_t q = 0; q < t->k; q++) {
       int64_t f = t->first[q];
       __atomic_fetch_or(&u->bits[f >> 6], 1ull << (f & 63), __ATOMIC_RELAXED);
@@ -628,10 +661,11 @@ static int64_t merged(numbering *u, int64_t bytes, double cost) {
 /* Frees what [u] holds. */
 static void freed(numbering *u, int tables) {
   for (int i = 0; i < tables; i++) drop(&u->g[i]);
-  for (int b = 0; u->order != NULL && b < u->blocks; b++) {
-    free(u->order[b]);
-    free(u->bucket[b]);
-    free(u->prov[b]);
+  /* Each of the three may have failed alone. */
+  for (int b = 0; b < u->blocks; b++) {
+    if (u->order != NULL) free(u->order[b]);
+    if (u->bucket != NULL) free(u->bucket[b]);
+    if (u->prov != NULL) free(u->prov[b]);
   }
   free(u->g);
   free(u->order);

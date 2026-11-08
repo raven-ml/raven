@@ -21,8 +21,10 @@ let () = Nx_cpu.unique_seed suite_seed
 (* How keys are drawn: from a few values, so that keys repeat; each word at
    random; rows of two words [[|a; c lxor state a|]] that all hash alike,
    their [a] among 64 values, so that their tags agree and a probe passes
-   every key before it; or within 8 of a base, a small span. *)
-type draw = Tied | Spread | Collide | Narrow
+   every key before it; within 8 of a base, a small span; or within [d] of a
+   base, [d] the [w]-th root of the rows, so that keys repeat across the
+   pool's blocks and their span is too wide for a block's direct table. *)
+type draw = Tied | Spread | Collide | Narrow | Dense
 
 type case = { keys : A.any; m : int; draw : draw; views : string list }
 
@@ -33,11 +35,13 @@ let pp_case ppf c =
     | Tied -> "tied"
     | Spread -> "spread"
     | Collide -> "one hash"
-    | Narrow -> "narrow")
+    | Narrow -> "narrow"
+    | Dense -> "dense")
     (String.concat ", " c.views)
 
-(* A word drawn from [rs] as [draw] says, of [pool]. *)
-let word rs pool draw =
+(* A word drawn from [rs] as [draw] says, of [pool], [d] a dense draw's
+   span. *)
+let word rs pool d draw =
   let pick () = pool.(Random.State.int rs (Array.length pool)) in
   match draw with
   | Spread -> Random.State.bits64 rs
@@ -45,6 +49,7 @@ let word rs pool draw =
       if Random.State.int rs 4 = 0 then Random.State.bits64 rs else pick ()
   | Collide -> Int64.add pool.(0) (Int64.of_int (Random.State.int rs 64))
   | Narrow -> Int64.add pool.(0) (Int64.of_int (Random.State.int rs 8))
+  | Dense -> Int64.add pool.(0) (Int64.of_int (Random.State.int rs d))
 
 (* The second word of a colliding row led by [a]. *)
 let collide = 0x0123_4567_89AB_CDEFL
@@ -53,17 +58,24 @@ let partner a = Int64.logxor collide (Nx_cpu.unique_state [| a |])
 let drawn draw s v seed =
   let rs = Random.State.make [| seed |] in
   let pool = Array.init 3 (fun _ -> Random.State.bits64 rs) in
+  let d =
+    if s.(1) = 0 then 2
+    else
+      Int.max 2
+        (truncate (Float.of_int s.(0) ** (1. /. Float.of_int s.(1))))
+  in
   match draw with
   | Collide ->
       (* Plain rows of two words, drawn in order: each leader, then its
          partner. *)
       let last = ref 0L and lead = ref true in
       int64s s v (fun () ->
-          let w = if !lead then word rs pool draw else partner !last in
+          let w = if !lead then word rs pool d draw else partner !last in
           last := w;
           lead := not !lead;
           w)
-  | Tied | Spread | Narrow -> int64s s v (fun () -> word rs pool draw)
+  | Tied | Spread | Narrow | Dense ->
+      int64s s v (fun () -> word rs pool d draw)
 
 let shape_gen =
   let open Gen in
@@ -85,6 +97,7 @@ let case_gen ?(shapes = shape_gen) () =
         (1, constant Spread);
         (1, constant Collide);
         (1, constant Narrow);
+        (1, constant Dense);
       ]
   in
   let* s = shapes in
@@ -117,6 +130,7 @@ let examples =
     example Tied [| 0; 0 |] ~m:2;
     example Tied [| 5; 0 |] ~m:3;
     example Tied [| 7; 2 |] ~view:{ (plain 2) with broadcast = [ 0 ] };
+    example Tied [| 40; 2 |] ~view:{ (plain 2) with perm = [| 1; 0 |] };
     example Spread [| 9; 1 |] ~m:4;
     example Spread [| 9; 3 |] ~m:12 ~view:{ (plain 2) with perm = [| 1; 0 |] };
     example Collide [| 30; 2 |];
@@ -180,6 +194,19 @@ let agrees (b : Support.backend) c =
         (at (fun (_, r) -> Int64.of_int !r) 0L)
         counts
 
+(* Whether some row and the row before it satisfy [f]. *)
+let follows f c =
+  let s = shape_of c.keys in
+  let n = s.(0) and w = s.(1) in
+  let words = positions c.keys in
+  let row i = Array.sub words (i * w) w in
+  let rec from i = i < n && (f (row (i - 1)) (row i) || from (i + 1)) in
+  from 1
+
+(* A row of the previous row's key, and one of its first word alone. *)
+let repeats = follows ( = )
+let leads = follows (fun a b -> Array.length a > 1 && a.(0) = b.(0) && a <> b)
+
 let law_reference (b : Support.backend) c =
   let s = shape_of c.keys in
   let _, keys = expected c in
@@ -191,6 +218,10 @@ let law_reference (b : Support.backend) c =
   cover "first and counts cut" (c.m < k);
   cover "first and counts past the keys" (c.m > k);
   cover "keys of one hash" (c.draw = Collide && k > 1);
+  cover "a row of the previous row's key" (repeats c);
+  cover "a row of the previous row's key, its words copied"
+    ((shape_of c.keys).(1) > 1 && List.mem "permuted" c.views && repeats c);
+  cover "a row of the previous row's first word alone" (leads c);
   if c.draw = Collide then begin
     (* The rows leave the hash one state: they collide. *)
     let w = positions c.keys in
@@ -259,7 +290,8 @@ let threaded =
   Gen.with_pp pp_case (case_gen ~shapes ())
 
 (* Many rows: a hash table of a few keys and of about a key a row, keys of
-   five words, and a direct table, through a view. *)
+   five words, and a direct table, through a view, and keys that repeat
+   across blocks, of one and two words. *)
 let large =
   [
     example Tied [| 60_000; 2 |] ~m:5;
@@ -267,6 +299,8 @@ let large =
     example Spread [| 50_000; 5 |] ~m:100;
     example Collide [| 50_000; 2 |] ~m:2;
     example Narrow [| 70_000; 3 |] ~view:{ (plain 2) with perm = [| 1; 0 |] };
+    example Dense [| 60_000; 1 |];
+    example Dense [| 80_000; 2 |] ~m:7;
   ]
 
 (* Keys of at most 4 words whose columns' spans multiply to at most twice
@@ -365,9 +399,12 @@ let law_large (b : Support.backend) c =
   agrees b c
 
 (* On the pool a block has from 16,384 rows to all of them: the cases a
-   direct table numbers whatever the blocks, and those it numbers on none. *)
+   direct table numbers whatever the blocks, those it numbers on one thread
+   alone, and those it numbers on none. *)
 let law_threads (b : Support.backend) c =
   cover "direct table on any blocks" (direct ~rows:16_384 c);
+  cover "direct table on one thread, hash table on the pool"
+    (direct c && not (direct ~rows:16_384 c));
   cover "hash table on any blocks" (not (direct c));
   cover "keys of one hash" (c.draw = Collide);
   match (Nx_cpu.one_thread (fun () -> unique_on b c), unique_on b c) with

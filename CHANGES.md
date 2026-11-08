@@ -2352,6 +2352,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.unique` on nx.cpu skips the hash for a row of the previous row's key
+  and merges its threads' tables without growing them: talon's joins in
+  decision-support query 5 number keys in 31% fewer instructions on 14
+  threads and 28% fewer on one.
 - `Nx.positions`, and so `Nx.argwhere`, `Nx.extract` and masks, runs in five
   passes where it ran ten, 0.35 to 0.6 of its instructions. With `~size`,
   counts summing past int64's range now give the first positions.

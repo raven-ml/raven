@@ -290,7 +290,8 @@
     shapes do not fit, and declines keys of [2{^40} - 1] rows or more. Its
     [k] keys of [w] words each find their number in a hash table of linear
     probing, by a hash that folds each word in by the high and low halves of
-    a 128-bit product xored, wyhash's, keyed by secrets. Keys of at
+    a 128-bit product xored, wyhash's, keyed by secrets. A row of the
+    previous row's key takes that key's number without a probe. Keys of at
     most 4 words whose columns' spans, from each column's least word to its
     greatest, multiply to at most [2{^20}] values, and to at most twice a
     thread's rows and 1024 more, find it at their place among those values
@@ -302,10 +303,10 @@
     On one thread keys are numbered as their first rows are met. On several,
     each thread numbers the keys of a block of consecutive rows. The blocks'
     keys then merge into tables by their hashes, which take as much again
-    as the blocks' tables, and each key is numbered by its first row's rank
-    among the keys' first rows, from a bit a row. A last pass maps each
-    row's number in its block to its key's, one more read and write of 8
-    bytes a row.
+    as the blocks' tables from the start, room for every block's keys, and
+    each key is numbered by its first row's rank among the keys' first
+    rows, from a bit a row. A last pass maps each row's number in its block
+    to its key's, one more read and write of 8 bytes a row.
 
     The hash is keyed by a seed drawn from the system's random source when
     the library initialises, so that keys chosen in advance cannot share

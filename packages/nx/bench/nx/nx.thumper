@@ -23,6 +23,7 @@
 # forced: blessed index/segment-max-f64-1M-into-100 under load 12.5 on 14 cores
 # forced: blessed index/take-bool-1M-of-4 index/take-bit-1M-of-4 under load 19.0 on 14 cores
 # forced: blessed order/positions-bool-1M order/positions-i64-1M-counts under load 30.6 on 14 cores
+# forced: blessed order/unique-i64-1M-runs-of-4 under load 13.1 on 14 cores
 
 attention/decode-f32-64x8x4096x64	alloc_words	exact	899
 attention/decode-f32-64x8x4096x64	wall_time	batch=1	n=20	1.364e-03	9.401e-04 9.802e-04 9.986e-04 9.990e-04 1.039e-03 1.198e-03 1.219e-03 1.260e-03 1.295e-03 1.346e-03 1.383e-03 1.600e-03 1.727e-03 2.126e-03 2.527e-03 3.246e-03 3.993e-03 3.993e-03 5.491e-03 1.163e-02
@@ -233,6 +234,8 @@ order/sort-f32-1M	alloc_words	exact	139
 order/top_k-8-f32-64x16384	alloc_words	exact	147
 order/unique-i32-1M-1000	alloc_words	exact	893
 order/unique-i32-1M-1000	wall_time	batch=1	n=20	5.187e-03	2.606e-03 3.030e-03 3.220e-03 3.221e-03 3.513e-03 3.803e-03 3.832e-03 4.088e-03 4.243e-03 5.138e-03 5.235e-03 5.530e-03 5.743e-03 6.272e-03 6.480e-03 7.730e-03 8.132e-03 9.024e-03 9.334e-03 1.098e-02
+order/unique-i64-1M-runs-of-4	alloc_words	exact	297
+order/unique-i64-1M-runs-of-4	wall_time	batch=1	n=20	6.431e-03	4.327e-03 4.479e-03 4.796e-03 5.139e-03 5.211e-03 5.564e-03 5.585e-03 5.585e-03 5.725e-03 6.173e-03 6.688e-03 6.988e-03 7.284e-03 7.381e-03 7.763e-03 8.233e-03 8.264e-03 9.124e-03 1.051e-02 1.873e-02
 order/unique-i64-1M-wide	alloc_words	exact	1244
 order/unique-i64-1M-wide	wall_time	batch=1	n=20	8.472e-02	7.020e-02 7.262e-02 7.601e-02 7.930e-02 8.156e-02 8.202e-02 8.242e-02 8.432e-02 8.457e-02 8.458e-02 8.487e-02 8.565e-02 8.754e-02 8.823e-02 8.853e-02 9.420e-02 9.899e-02 1.029e-01 1.055e-01 1.113e-01
 place/borrow-memory-device-16	alloc_words	exact	35
