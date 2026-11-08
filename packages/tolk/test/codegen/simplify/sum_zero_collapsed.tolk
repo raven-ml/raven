@@ -1,0 +1,20 @@
+# tolk D24 golden=4860a1b1d9ce4c0cefb1d831edd41464
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+3 Ops.INDEX dtypes.f32 [1, 2]
+4 Ops.CONST dtypes.weakint [] 32
+5 Ops.PARAM dtypes.f32 [4] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+6 Ops.CONST dtypes.weakint [] 8
+7 Ops.MUL dtypes.weakint [2, 6]
+8 Ops.RANGE dtypes.weakint [6] (AxisType.WEAK, 1)
+9 Ops.ADD dtypes.weakint [7, 8]
+10 Ops.INDEX dtypes.f32 [5, 9]
+11 Ops.CONST dtypes.weakfloat [] 0.0
+12 Ops.MUL dtypes.f32 [10, 11]
+13 Ops.REDUCE dtypes.f32 [12, 8] (Ops.ADD, 0)
+14 Ops.STORE dtypes.void [3, 13]
+15 Ops.END dtypes.void [14, 2]
+16 Ops.AFTER dtypes.f32 [1, 15]
+17 Ops.SINK dtypes.void [16]
+

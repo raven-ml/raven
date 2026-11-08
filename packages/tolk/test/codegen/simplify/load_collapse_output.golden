@@ -38,57 +38,54 @@
 37 Ops.WHERE dtypes.f32 [35, 20, 36]
 38 Ops.REDUCE dtypes.f32 [37, 33] (Ops.ADD, 0)
 39 Ops.CMPEQ dtypes.bool [5, 33]
-40 Ops.CAST dtypes.f32 [39] dtypes.f32
-41 Ops.MUL dtypes.f32 [36, 40]
-42 Ops.REDUCE dtypes.f32 [41, 33] (Ops.ADD, 0)
-43 Ops.CMPEQ dtypes.bool [39, 13]
-44 Ops.WHERE dtypes.f32 [43, 20, 36]
-45 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
-46 Ops.REDUCE dtypes.f32 [44, 33, 45] (Ops.ADD, 0)
-47 Ops.REDUCE dtypes.f32 [44, 33] (Ops.MAX, 0)
-48 Ops.PARAM dtypes.i32 [4] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 20), name="x", addrspace=AddrSpace.ALU)
-49 Ops.ADD dtypes.i32 [48, 23]
-50 Ops.CAST dtypes.weakint [49] dtypes.weakint
-51 Ops.CMPLT dtypes.bool [50, 0]
-52 Ops.WHERE dtypes.weakint [51, 50, 17]
-53 Ops.INDEX dtypes.f32 [1, 52]
-54 Ops.WHERE dtypes.f32 [51, 53, 20]
-55 Ops.CMPLT dtypes.bool [5, 22]
-56 Ops.CMPEQ dtypes.bool [55, 13]
-57 Ops.CONST dtypes.weakint [] -2
-58 Ops.ADD dtypes.weakint [5, 57]
-59 Ops.WHERE dtypes.weakint [56, 58, 17]
-60 Ops.INDEX dtypes.f32 [1, 59]
-61 Ops.WHERE dtypes.f32 [55, 20, 60]
-62 Ops.CAST dtypes.i32 [5] dtypes.i32
-63 Ops.ADD dtypes.i32 [62, 57]
-64 Ops.CAST dtypes.weakint [63] dtypes.weakint
-65 Ops.CMPLT dtypes.bool [64, 9]
-66 Ops.CMPEQ dtypes.bool [65, 13]
-67 Ops.WHERE dtypes.weakint [66, 64, 17]
-68 Ops.INDEX dtypes.f32 [1, 67]
-69 Ops.WHERE dtypes.f32 [65, 20, 68]
-70 Ops.CMPEQ dtypes.bool [50, 33]
-71 Ops.CMPEQ dtypes.bool [70, 13]
-72 Ops.CONST dtypes.weakint [] 20
-73 Ops.CONST dtypes.weakint [] 5
-74 Ops.CONST dtypes.weakint [] -1
-75 Ops.MUL dtypes.weakint [73, 74]
-76 Ops.ADD dtypes.weakint [72, 75]
-77 Ops.CMPLT dtypes.bool [11, 76]
-78 Ops.PARAM dtypes.weakint [4] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 30), name="c", addrspace=AddrSpace.ALU)
-79 Ops.PARAM dtypes.weakint [4] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 5), name="y", addrspace=AddrSpace.ALU)
-80 Ops.MUL dtypes.weakint [79, 74]
-81 Ops.ADD dtypes.weakint [78, 80]
-82 Ops.CMPLT dtypes.bool [11, 81]
-83 Ops.CAST dtypes.i32 [73] dtypes.i32
-84 Ops.ADD dtypes.i32 [10, 83]
-85 Ops.CAST dtypes.i32 [72] dtypes.i32
-86 Ops.CMPLT dtypes.bool [84, 85]
-87 Ops.ADD dtypes.weakint [11, 11]
-88 Ops.CMPLT dtypes.bool [87, 72]
-89 Ops.PARAM dtypes.weakint [4] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 9), name="v", addrspace=AddrSpace.ALU)
-90 Ops.ADD dtypes.weakint [89, 73]
-91 Ops.CMPLT dtypes.bool [90, 72]
-92 Ops.SINK dtypes.void [3, 6, 21, 21, 32, 38, 42, 46, 6, 47, 54, 61, 69, 71, 77, 82, 86, 88, 91]
+40 Ops.CMPEQ dtypes.bool [39, 13]
+41 Ops.WHERE dtypes.f32 [40, 20, 36]
+42 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
+43 Ops.REDUCE dtypes.f32 [41, 33, 42] (Ops.ADD, 0)
+44 Ops.REDUCE dtypes.f32 [41, 33] (Ops.MAX, 0)
+45 Ops.PARAM dtypes.i32 [4] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 20), name="x", addrspace=AddrSpace.ALU)
+46 Ops.ADD dtypes.i32 [45, 23]
+47 Ops.CAST dtypes.weakint [46] dtypes.weakint
+48 Ops.CMPLT dtypes.bool [47, 0]
+49 Ops.WHERE dtypes.weakint [48, 47, 17]
+50 Ops.INDEX dtypes.f32 [1, 49]
+51 Ops.WHERE dtypes.f32 [48, 50, 20]
+52 Ops.CMPLT dtypes.bool [5, 22]
+53 Ops.CMPEQ dtypes.bool [52, 13]
+54 Ops.CONST dtypes.weakint [] -2
+55 Ops.ADD dtypes.weakint [5, 54]
+56 Ops.WHERE dtypes.weakint [53, 55, 17]
+57 Ops.INDEX dtypes.f32 [1, 56]
+58 Ops.WHERE dtypes.f32 [52, 20, 57]
+59 Ops.CAST dtypes.i32 [5] dtypes.i32
+60 Ops.ADD dtypes.i32 [59, 54]
+61 Ops.CAST dtypes.weakint [60] dtypes.weakint
+62 Ops.CMPLT dtypes.bool [61, 9]
+63 Ops.CMPEQ dtypes.bool [62, 13]
+64 Ops.WHERE dtypes.weakint [63, 61, 17]
+65 Ops.INDEX dtypes.f32 [1, 64]
+66 Ops.WHERE dtypes.f32 [62, 20, 65]
+67 Ops.CMPEQ dtypes.bool [47, 33]
+68 Ops.CMPEQ dtypes.bool [67, 13]
+69 Ops.CONST dtypes.weakint [] 20
+70 Ops.CONST dtypes.weakint [] 5
+71 Ops.CONST dtypes.weakint [] -1
+72 Ops.MUL dtypes.weakint [70, 71]
+73 Ops.ADD dtypes.weakint [69, 72]
+74 Ops.CMPLT dtypes.bool [11, 73]
+75 Ops.PARAM dtypes.weakint [4] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 30), name="c", addrspace=AddrSpace.ALU)
+76 Ops.PARAM dtypes.weakint [4] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 5), name="y", addrspace=AddrSpace.ALU)
+77 Ops.MUL dtypes.weakint [76, 71]
+78 Ops.ADD dtypes.weakint [75, 77]
+79 Ops.CMPLT dtypes.bool [11, 78]
+80 Ops.CAST dtypes.i32 [70] dtypes.i32
+81 Ops.ADD dtypes.i32 [10, 80]
+82 Ops.CAST dtypes.i32 [69] dtypes.i32
+83 Ops.CMPLT dtypes.bool [81, 82]
+84 Ops.ADD dtypes.weakint [11, 11]
+85 Ops.CMPLT dtypes.bool [84, 69]
+86 Ops.PARAM dtypes.weakint [4] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 9), name="v", addrspace=AddrSpace.ALU)
+87 Ops.ADD dtypes.weakint [86, 70]
+88 Ops.CMPLT dtypes.bool [87, 69]
+89 Ops.SINK dtypes.void [3, 6, 21, 21, 32, 38, 6, 43, 6, 44, 51, 58, 66, 68, 74, 79, 83, 85, 88]
 

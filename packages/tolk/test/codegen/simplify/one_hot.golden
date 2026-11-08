@@ -23,7 +23,7 @@
 22 Ops.CONST dtypes.weakint [] 0
 23 Ops.WHERE dtypes.i32 [19, 21, 22]
 24 Ops.REDUCE dtypes.i32 [23, 13] (Ops.ADD, 0)
-25 Ops.STAGE dtypes.i32 [24, 12] BufferizeOpts(device="CPU", broadcast=True)
+25 Ops.STAGE dtypes.i32 [24, 12] BufferizeOpts(device="CPU")
 26 Ops.INDEX dtypes.i32 [25, 6]
 27 Ops.CONST dtypes.weakint [] -1
 28 Ops.ADD dtypes.i32 [26, 27]
