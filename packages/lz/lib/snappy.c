@@ -65,6 +65,17 @@ static inline void store32(uint8_t *p, uint32_t v) {
   memcpy(p, &v, 4);
 }
 
+static inline void store64(uint8_t *p, uint64_t v) {
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+  v = __builtin_bswap64(v);
+#endif
+  memcpy(p, &v, 8);
+}
+
+static inline void copy8(uint8_t *dst, const uint8_t *src) {
+  memcpy(dst, src, 8);
+}
+
 static inline void copy16(uint8_t *dst, const uint8_t *src) {
   uint8_t t[16];
   memcpy(t, src, 16);
@@ -114,19 +125,45 @@ static inline void copy64(uint8_t *dst, const uint8_t *src, size_t len) {
   copy16(dst + 48, src + 48);
 }
 
-/* [period[d]] is the smallest multiple of [d] that is at least 16. */
+/* [period[d]] is the smallest multiple of [d] that is at least 16, and
+   [period8[d]], for [d] under 8, the smallest that is at least 8. */
 static const uint8_t period[16] = {0,  16, 16, 18, 16, 20, 18, 21,
                                    16, 18, 20, 22, 24, 26, 28, 30};
+static const uint8_t period8[8] = {0, 8, 8, 9, 8, 10, 12, 14};
+
+/* For an offset [d] under 8, a 1 in every byte whose index is a multiple
+   of [d]. */
+static const uint64_t spread[8] = {
+    0,
+    UINT64_C(0x0101010101010101),
+    UINT64_C(0x0001000100010001),
+    UINT64_C(0x0001000001000001),
+    UINT64_C(0x0000000100000001),
+    UINT64_C(0x0000010000000001),
+    UINT64_C(0x0001000000000001),
+    UINT64_C(0x0100000000000001),
+};
 
 /* Writes the [len] (1 to 64) bytes of a copy from [off] (1 to 15) back,
    where the copy overlaps its own output: the first 16 bytes repeat the
    [off]-byte pattern, and each further 16 bytes copy from a whole number
    of patterns back, at least 16, so that each load reads finished
-   output. Writes up to 64 bytes. Against a byte-by-byte copy it gains
-   4 % on Silesia and is noise on text, which has almost no such copy. */
+   output. Writes up to 64 bytes. The first 16 bytes are two 8-byte
+   copies from [off] back or, under 8, the pattern repeated by a
+   multiplication whose factor has a 1 every [off] bytes, then 8 bytes
+   from a whole number of patterns back. Columns of 8-byte values make
+   such copies common: copied byte by byte, they took a fifth of the
+   decode of Parquet's integer and float pages. */
 static inline void expand(uint8_t *op, size_t off, size_t len) {
   const uint8_t *from = op - off;
-  for (int k = 0; k < 16; k++) op[k] = from[k];
+  if (off >= 8) {
+    copy8(op, from);
+    copy8(op + 8, from + 8);
+  } else {
+    uint64_t pattern = le64(from) & ((UINT64_C(1) << (8 * off)) - 1);
+    store64(op, pattern * spread[off]);
+    copy8(op + 8, op + 8 - period8[off]);
+  }
   if (len <= 16) return;
   size_t p = period[off];
   copy16(op + 16, op + 16 - p);
@@ -160,13 +197,18 @@ enum lz_status lz_snappy_decode(struct lz_io *io, struct lz_error *err) {
 
   /* The input and output when work was last reported (lz.h). The fast
      loop stops LZ_WORK_SPAN of output past it, before [span], to report
-     again. */
+     again. It runs while [ip] is before [ip_fast] and [op] before
+     [op_fast], which leave it IN_SLACK bytes of input and OUT_SLACK of
+     output. */
   const uint8_t *in_told = src;
-  uint8_t *out_told = dst, *span;
+  const uint8_t *ip_fast =
+      io->src_len >= IN_SLACK ? ip_end - IN_SLACK + 1 : src;
+  uint8_t *out_told = dst, *span, *op_fast;
 #define SPAN()                                                               \
   (span = (size_t)(op_end - out_told) > LZ_WORK_SPAN + OUT_SLACK             \
               ? out_told + LZ_WORK_SPAN + OUT_SLACK                          \
-              : op_end)
+              : op_end,                                                      \
+   op_fast = span - dst >= OUT_SLACK ? span - OUT_SLACK + 1 : dst)
 #define TELL(ip_, op_)                                                       \
   do {                                                                       \
     lz_did(io->work, (size_t)((ip_) - in_told) + (size_t)((op_) - out_told)); \
@@ -178,7 +220,7 @@ enum lz_status lz_snappy_decode(struct lz_io *io, struct lz_error *err) {
   SPAN();
   for (;;) {
     /* Elements with the slack around them, bounds unchecked. */
-    while (ip_end - ip >= IN_SLACK && span - op >= OUT_SLACK) {
+    while (ip < ip_fast && op < op_fast) {
       uint32_t tag = ip[0], e = tags[tag];
       size_t len = e & 0xff;
       if (tag % 4 == LITERAL) {

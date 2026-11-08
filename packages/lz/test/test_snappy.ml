@@ -224,7 +224,12 @@ let law_blocks =
               cover "copy with 4-byte offset" (kind = 4);
               cover "copy over its own output" (offset < length);
               cover "offset under 16, length over 16"
-                (offset < 16 && length > 16))
+                (offset < 16 && length > 16);
+              (* Each offset under 16 repeats its pattern its own way. *)
+              for d = 1 to 15 do
+                cover (Printf.sprintf "copy over its own output, %d back" d)
+                  (offset = d && length > d)
+              done)
         es;
       let raw = meaning es in
       let offset = String.length raw mod 16 in
