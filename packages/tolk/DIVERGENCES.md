@@ -4003,7 +4003,11 @@ each GPU) and the Codegen suite's `padto_idiv_upcast` keep the values.
   process: two programs that run one kernel load its binary twice, since
   `Rig.Image.load` loads each call's binary again, so that each image's
   module variables are its own, and a program shares an image among its
-  own launches alone (`Tolk_engine.link`).
+  own launches alone (`Tolk_engine.link`). Sharing a binary without module
+  variables across programs would save 1-1.5 ms of a 70 ms gpt-oss-20b
+  first call on CUDA, 2.5 ms of 60 ms on NV, and 3.3-4.2 ms (1-4%) of its
+  prefill and first step on an R9700, against a driver function and an
+  image table (about 80 lines).
 - **Reason:** (c). rig owns each GPU's queues: two runtimes cannot share a
   GPU, and memory belongs to the runtime that made it.
 - **Pinned by:** the Tolk_engine suite: `link and run › recorded`, `GPUs`
