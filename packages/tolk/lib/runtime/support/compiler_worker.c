@@ -286,7 +286,9 @@ static DWORD WINAPI watch(LPVOID unused) {
 #else
 static void *watch(void *unused) {
   (void)unused;
-  struct pollfd requests = {request_fd, 0, 0};
+  /* XNU registers no event for a descriptor polled for none: the hang-up is
+     asked for, as Linux reports it unasked. */
+  struct pollfd requests = {request_fd, POLLHUP, 0};
   for (;;)
     if (poll(&requests, 1, -1) > 0 &&
         (requests.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0) {
