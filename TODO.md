@@ -218,12 +218,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   loop puts ~4.8k words in the major heap) and it passes at rig's 4 MiB
   floor on fudge; on failure the law now prints each collector's counts
   (0247fa6d8)
-- brot's dump_kernels comparison failed once on macOS arm64 CI (run
-  42423619955, f8b600809): shard 2's native encode raised `519254,519240
-  is not a span of the 524288 normalized bytes`, shard 5's bytecode dump
-  had ':' as 0x18; not reproduced on x86 under GC stress, ASan, the debug
-  runtime or checked accesses; run the 8 shards in a loop under --release
-  with 3 domains on an arm64 host
 
 ## repo
 
