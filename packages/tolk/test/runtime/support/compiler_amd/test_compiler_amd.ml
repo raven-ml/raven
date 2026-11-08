@@ -69,9 +69,43 @@ let without_comgr =
               in_order ~subs:[ "comgr"; "COMGR_PATH" ] msg);
     ]
 
+(* Workers *)
+
+(* [with_signal s behavior f] is [f ()] run with [behavior] for [s]. *)
+let with_signal s behavior f =
+  let previous = Sys.signal s behavior in
+  Fun.protect ~finally:(fun () -> Sys.set_signal s previous) f
+
+(* [f ()] with SIGPIPE's default action, which ends the process: a process may
+   start with it ignored. *)
+let sigpipe_kills f = with_signal Sys.sigpipe Signal_default f
+
+(* The pids of this process's children, which pgrep lists, in order; the test
+   skips where pgrep does not run. *)
+let children () =
+  let pid = string_of_int (Unix.getpid ()) in
+  match Unix.open_process_args_in "pgrep" [| "pgrep"; "-P"; pid |] with
+  | exception Unix.Unix_error _ -> skip ~reason:"pgrep does not run" ()
+  | ic -> (
+      let listed = In_channel.input_all ic in
+      match Unix.close_process_in ic with
+      | WEXITED (0 | 1) ->
+          List.sort compare
+            (List.filter_map int_of_string_opt
+               (String.split_on_char '\n' listed))
+      | _ -> skip ~reason:"pgrep failed" ())
+
+(* Kills this process's children, idle workers, and waits for each to end. *)
+let kill_children () =
+  List.iter
+    (fun pid ->
+      Unix.kill pid Sys.sigkill;
+      ignore (Unix.waitpid [] pid))
+    (children ())
+
 (* A library that does not load: these tests run in a process of their own,
    where COMGR_PATH names a file that is no library, which the compiler finds
-   and each compile's process fails to load. *)
+   and each worker fails to load. *)
 
 let load_failure () =
   rejection (fun () -> Compiler.compile (Compiler_amd.hip "gfx1100") kernel)
@@ -93,6 +127,19 @@ let not_a_library =
              let msgs = List.map Domain.join domains in
              is_some (List.hd msgs);
              List.iter (equal (option string) (List.hd msgs)) msgs);
+         test "a compile in turn is served by an idle worker" (fun () ->
+             ignore (load_failure ());
+             let workers = children () in
+             not_equal (list int) [] workers;
+             ignore (load_failure ());
+             equal (list int) workers (children ()));
+         test
+           "a compile after its idle workers are killed raises the same error"
+           (fun () ->
+             let first = load_failure () in
+             kill_children ();
+             equal (list int) [] (children ());
+             equal (option string) first (sigpipe_kills load_failure));
        ]
 
 (* comgr *)
@@ -151,7 +198,7 @@ let smoke =
           contains ~sub:"s_endpgm" (output ()));
     ]
 
-(* A compile in a process of its own *)
+(* Compiles in processes of their own *)
 
 (* An intrinsic of CDNA's matrix cores, which code generation for RDNA cannot
    select: LLVM ends the process that compiles it. *)
@@ -160,15 +207,11 @@ let unselectable =
   __asm("llvm.amdgcn.mfma.f32.32x32x1f32");
 extern "C" __attribute__((global)) void f(float *a) { a[0] = mfma(a[1], a[2], a[3]); }|}
 
-let compile src = Compiler.compile (Compiler_amd.hip "gfx1100") src
-
-(* [with_signal s behavior f] is [f ()] run with [behavior] for [s]. *)
-let with_signal s behavior f =
-  let previous = Sys.signal s behavior in
-  Fun.protect ~finally:(fun () -> Sys.set_signal s previous) f
+let compile ?(arch = "gfx1100") src =
+  Compiler.compile (Compiler_amd.hip arch) src
 
 let process =
-  group "a compile in a process of its own"
+  group "compiles in processes of their own"
     [
       slow
       @@ test
@@ -205,9 +248,45 @@ let process =
              | exception Compiler.Compile_error msg ->
                  in_order ~subs:[ "without a reply"; "LLVM ERROR" ] msg);
       slow
-      @@ test "a compile with SIGCHLD ignored returns its code object"
+      @@ test "a compile in turn is served by an idle worker" (fun () ->
+          ignore (with_comgr (fun () -> compile kernel));
+          let workers = children () in
+          not_equal (list int) [] workers;
+          ignore (compile kernel);
+          equal (list int) workers (children ()));
+      slow
+      @@ test "compiles in turn for other architectures are each one's"
            (fun () ->
              let lib = with_comgr (fun () -> compile kernel) in
+             let other = compile ~arch:"gfx1201" kernel in
+             not_equal string lib other;
+             equal string lib (compile kernel);
+             equal string other (compile ~arch:"gfx1201" kernel));
+      slow
+      @@ test "a compile after a rejected source returns its code object"
+           (fun () ->
+             let lib = with_comgr (fun () -> compile kernel) in
+             is_some (rejection (fun () -> compile "}{"));
+             equal string lib (compile kernel));
+      slow
+      @@ test
+           "a compile after a source that ends its process returns its code \
+            object" (fun () ->
+             let lib = with_comgr (fun () -> compile kernel) in
+             is_some (rejection (fun () -> compile unselectable));
+             equal string lib (compile kernel));
+      slow
+      @@ test
+           "a compile after its idle workers are killed returns its code object"
+           (fun () ->
+             let lib = with_comgr (fun () -> compile kernel) in
+             kill_children ();
+             equal string lib (sigpipe_kills (fun () -> compile kernel)));
+      slow
+      @@ test "a worker started with SIGCHLD ignored returns its code object"
+           (fun () ->
+             let lib = with_comgr (fun () -> compile kernel) in
+             kill_children ();
              equal string lib
                (with_signal Sys.sigchld Signal_ignore (fun () -> compile kernel)));
     ]

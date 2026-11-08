@@ -11,9 +11,9 @@ let library () =
   let rocm = Setting.value Setting.rocm_path in
   C.findlib "comgr" [ rocm ^ "/lib/libamd_comgr.so"; "amd_comgr" ]
 
-(* comgr serialises the compiles of a process on a mutex of its own, so each
-   compile runs in a process of its own: the worker, a C program embedded in the
-   library ([compiler_amd_worker.c]). *)
+(* comgr serialises the compiles of a process on a mutex of its own, so
+   compiles run in processes of their own: workers, a C program embedded in the
+   library ([compiler_amd_worker.c]), each serving compiles in turn. *)
 let worker = Compiler_worker.v ~name:"comgr" Comgr_worker.program
 
 (* The options comgr compiles HIP with, and links it with. *)
@@ -66,7 +66,7 @@ let request src ~arch ~asm =
   String.concat "" (List.map (fun f -> f ^ "\000") fields) ^ src
 
 let compile_hip comgr src ~arch ~asm =
-  Compiler_worker.run worker comgr (request src ~arch ~asm)
+  Compiler_worker.call worker comgr (request src ~arch ~asm)
 
 (* HIP *)
 

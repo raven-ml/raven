@@ -47,9 +47,6 @@ const char *library_error(const char *path) {
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
-#ifdef __linux__
-#include <sys/prctl.h>
-#endif
 void *open_library(const char *path) {
   return dlopen(path, RTLD_NOW | RTLD_LOCAL);
 }
@@ -63,9 +60,7 @@ const char *library_error(const char *path) {
 
 /* The reply */
 
-/* The file of a worker that runs one compile, or else the descriptor of a
-   serving worker's replies. */
-static const char *reply_path;
+/* The descriptor of the replies. */
 static int reply_fd = -1;
 
 /* Writes the [size] bytes of [data] to [fd]; a failure ends the process, whose
@@ -85,18 +80,10 @@ static void write_all(int fd, const char *data, size_t size) {
 }
 
 void reply_with(const char *kind, const char *data, size_t size) {
-  if (reply_path == NULL) {
-    char header[64];
-    int n = snprintf(header, sizeof header, "%s %zu\n", kind, size);
-    write_all(reply_fd, header, n);
-    write_all(reply_fd, data, size);
-    return;
-  }
-  FILE *f = fopen(reply_path, "wb");
-  if (f == NULL) return;
-  fprintf(f, "%s %zu\n", kind, size);
-  fwrite(data, 1, size, f);
-  fclose(f);
+  char header[64];
+  int n = snprintf(header, sizeof header, "%s %zu\n", kind, size);
+  write_all(reply_fd, header, n);
+  write_all(reply_fd, data, size);
 }
 
 void reply_error(const char *fmt, ...) {
@@ -198,52 +185,6 @@ bool join(struct options *o, struct options later) {
   return true;
 }
 
-/* One compile */
-
-#ifdef __linux__
-/* The compile dies with the thread that spawned it, or exits if that thread
-   died before it asked. */
-static void die_with(long parent) {
-  prctl(PR_SET_PDEATHSIG, SIGKILL);
-  if (getppid() != parent) _exit(1);
-}
-#endif
-
-/* The whole file at [path], NUL-terminated past its [*size] bytes, or NULL. */
-static char *read_file(const char *path, size_t *size) {
-  FILE *f = fopen(path, "rb");
-  if (f == NULL) return NULL;
-  size_t capacity = 1 << 16;
-  char *bytes = malloc(capacity);
-  *size = 0;
-  for (size_t n; bytes != NULL &&
-                 (n = fread(bytes + *size, 1, capacity - *size, f)) > 0;) {
-    *size += n;
-    if (*size == capacity) bytes = realloc(bytes, capacity *= 2);
-  }
-  fclose(f);
-  if (bytes != NULL) bytes[*size] = '\0';
-  return bytes;
-}
-
-char *start(int argc, char **argv, const char *library, size_t *size) {
-  if (argc != 5) {
-    fprintf(stderr, "usage: %s %s PARENT REQUEST REPLY\n", argv[0], library);
-    exit(2);
-  }
-  reset();
-#ifdef __linux__
-  die_with(strtol(argv[2], NULL, 10));
-#endif
-  reply_path = argv[4];
-  char *request = read_file(argv[3], size);
-  if (request == NULL) {
-    reply_error("the request %s does not read", argv[3]);
-    exit(1);
-  }
-  return request;
-}
-
 /* Serving */
 
 static int request_fd = -1;
@@ -264,9 +205,9 @@ static bool read_all(char *bytes, size_t size) {
   return true;
 }
 
-/* A serving worker never dies with the thread that spawned it, as a compile
-   does: that thread may end long before the process. It ends when its input
-   does, which the parent's end closes, with the parent. */
+/* A worker never dies with the thread that spawned it: that thread may end
+   long before the process. It ends when its input does, which the parent's
+   end closes, with the parent. */
 void serve(int argc, char **argv, const char *library) {
   if (argc != 2) {
     fprintf(stderr, "usage: %s %s\n", argv[0], library);

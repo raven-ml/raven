@@ -111,19 +111,6 @@ let program_path w =
 
 (* Running *)
 
-(* [reply s] is the reply [s] holds if it is complete. *)
-let reply s =
-  match
-    Scanf.sscanf_opt s "%s %u\n%n" (fun kind n start -> (kind, n, start))
-  with
-  | Some (kind, n, start) when start + n = String.length s -> (
-      let data = String.sub s start n in
-      match kind with
-      | "ok" -> Some (Ok data)
-      | "error" -> Some (Error data)
-      | _ -> None)
-  | _ -> None
-
 let signal_name s =
   let names =
     Sys.
@@ -142,48 +129,12 @@ let signal_name s =
   | Some name -> name
   | None -> "signal " ^ string_of_int s
 
-(* The request, the reply and the diagnostics are files, so that neither
-   process ever waits for the other to read. *)
+(* How a worker ended, as its status says. *)
 let ending = function
   | Some (Unix.WSIGNALED s) -> "was killed by " ^ signal_name s
   | Some (WEXITED n) -> "exited with " ^ string_of_int n
   | Some (WSTOPPED s) -> "was stopped by " ^ signal_name s
   | None -> "ended"
-
-let run w library request =
-  let program = program_path w in
-  let temp_file suffix contents =
-    let path = Filename.temp_file ("tolk-" ^ w.name) suffix in
-    Out_channel.with_open_bin path (fun oc -> output_string oc contents);
-    path
-  in
-  let request_file = temp_file ".request" request
-  and reply_file = temp_file ".reply" ""
-  and diagnostics_file = temp_file ".log" "" in
-  Fun.protect ~finally:(fun () ->
-      List.iter Sys.remove [ request_file; reply_file; diagnostics_file ])
-  @@ fun () ->
-  let args =
-    [ library; string_of_int (Unix.getpid ()); request_file; reply_file ]
-  in
-  let status =
-    match
-      Helpers.run_program ~stdin:Filename.null ~stdout:diagnostics_file
-        ~stderr:diagnostics_file program args
-    with
-    | Ok status -> status
-    | Error why -> failwith (w.name ^ " worker " ^ why)
-  in
-  let read path = In_channel.with_open_bin path In_channel.input_all in
-  let diagnostics = read diagnostics_file in
-  match reply (read reply_file) with
-  | Some r ->
-      prerr_string diagnostics;
-      r
-  | None ->
-      Error
-        (Printf.sprintf "%s worker %s without a reply\n%s" w.name
-           (ending status) diagnostics)
 
 (* Serving *)
 

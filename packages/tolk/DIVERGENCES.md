@@ -190,7 +190,7 @@ for every pattern. A repeat that names nodes matches no sources as
   process is started with, and `to_program_cache`, which the parent fills).
 - **tolk:** `Worker.spawned` and `Worker.map`; `Setting.t` and
   `Setting.context`; `Codegen.to_program_cache` (`to_program`'s cache);
-  `Compiler_metal.build`; `Compiler_worker.run`, and the C files
+  `Compiler_metal.build`; `Compiler_worker.call`, and the C files
   `lib/runtime/support/compiler_worker.h`, `compiler_amd_worker.c` and
   `compiler_cuda_worker.c`.
 - **Differs:** compilation runs on domains, not processes. `Worker.map`
@@ -231,11 +231,13 @@ for every pattern. A repeat that names nodes matches no sources as
   no library raises `Compile_error` at each compile, where it fails making
   tinygrad's compiler. Each process is a small C program per
   library that tolk carries, which runs from memory on Linux and from a file
-  in `Helpers.cache_dir` elsewhere. A comgr process runs one compile,
-  through files. An NVRTC process serves compiles in turn over a socket (two
-  pipes on Windows), idle between them in a list every domain takes from,
-  since a process's first compile costs about 100 ms, most of it NVRTC
-  starting CUDA's driver; a compile that finds none idle starts another. A compile whose process ends
+  in `Helpers.cache_dir` elsewhere. A process serves compiles in turn over a
+  socket (two pipes on Windows), idle between them in a list every domain
+  takes from, since a process's first compile pays the library's setup:
+  about 100 ms for NVRTC, most of it starting CUDA's driver, and about 9 ms
+  for comgr, of which loading it is 4 ms (nonnormal: a small kernel's
+  compile takes 23-28 ms in a new process, 15 ms in a serving one); a
+  compile that finds none idle starts another. A compile whose process ends
   without a reply raises `Compile_error` naming the signal or exit status,
   where it would end tinygrad's worker, and that process serves no other.
   The NVRTC process disables NVRTC's own cache of binaries
@@ -251,8 +253,8 @@ for every pattern. A repeat that names nodes matches no sources as
   compiled once`; `Tolk.Decomp_dtype, compiled in parallel › targets lowered
   on several domains at once get their own rules`; `Tolk.Compiler_metal ›
   MTLCompiler › compiles
-  from several domains at once`; `Tolk.Compiler_amd › a compile in a process
-  of its own` (every test) and `› a process that cannot start`;
+  from several domains at once`; `Tolk.Compiler_amd › compiles in processes
+  of their own` (every test) and `› a process that cannot start`;
   `Tolk.Compiler_cuda › compiles in processes of their own` (every test),
   `› a library that does not load` (every test), and `› a process that cannot
   start`; `Tolk.Compiler_amd › a library that does not load` (every test); `Tolk.Compiler_cuda (fork) ›

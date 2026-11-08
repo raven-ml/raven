@@ -17,33 +17,15 @@
     A request is the worker's own fields and source. A reply is [ok N\n] then
     [N] bytes of binary, or [error N\n] then [N] bytes of message, whole if
     and only if it is [N] bytes past its header. What a worker prints goes to
-    its diagnostics, a file. A worker either runs one compile ({!run}) or
-    serves compiles in turn ({!call}). [compiler_worker.h] holds the worker's
-    side. *)
+    its diagnostics, a file. A worker serves compiles in turn ({!call}).
+    [compiler_worker.h] holds the worker's side. *)
 
 type t
 (** The type for workers. *)
 
 val v : name:string -> string -> t
 (** [v ~name program] is the worker whose executable is [program], named
-    [name] in its files and its errors. Nothing is written until {!run}. *)
-
-val run : t -> string -> string -> (string, string) result
-(** [run w library request] runs [w] once, as
-    [PROGRAM LIBRARY PARENT REQUEST REPLY], and waits for it to end: [PARENT]
-    is the pid of this process, which on Linux the worker dies with, [REQUEST]
-    a file holding [request] and [REPLY] the file it writes its reply to. [w]'s
-    program is written out by the first run or call of the process.
-
-    It is [Ok binary] or [Error message] as the worker replies, whatever its
-    exit status says, which is lost when [SIGCHLD] is ignored; a worker that
-    replies has its diagnostics printed on standard error. A worker that ends
-    without a whole reply is [Error] saying how it ended, as in
-    ["nvrtc worker was killed by SIGSEGV without a reply"], then its
-    diagnostics.
-
-    Raises [Failure] naming the worker if its program cannot be written out or
-    started. *)
+    [name] in its files and its errors. Nothing is written until {!call}. *)
 
 val call : t -> string -> string -> (string, string) result
 (** [call w library request] has a worker of [w] serving [library] answer

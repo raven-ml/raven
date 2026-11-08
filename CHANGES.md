@@ -1077,6 +1077,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Compiler_amd.hip` compiles in comgr processes that serve compiles in
+  turn, as `Compiler_cuda.nvrtc`'s do, where each compile started a process
+  and loaded comgr: a beam search over a float32 product on an R9700
+  finishes 22% sooner, and gpt-oss-20b's first prefill and step 9% and 20%
+  sooner over an empty cache. Each idle process holds about 15 MB.
 - `Compiler_amd.hip` runs LLVM's IR verifier, which a release comgr turns
   off, from comgr 2.8 (ROCm 6.2): IR that an optimization makes invalid
   raises `Compile_error` instead of compiling into wrong values. Compiles

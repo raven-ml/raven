@@ -5,22 +5,20 @@
   ---------------------------------------------------------------------------*/
 
 /* What every worker shares: a program that runs compiles in a process of its
-   own, embedded in tolk and spawned by Compiler_worker. A worker runs one
-   compile, or serves compiles until its input ends.
+   own, embedded in tolk and spawned by Compiler_worker. A worker serves
+   compiles until its input ends.
 
-     worker LIBRARY PARENT REQUEST REPLY      one compile
-     worker LIBRARY                           compiles until the input ends
+     worker LIBRARY
 
-   LIBRARY is the vendor's library, PARENT the spawning process's pid. A request
-   holds the worker's fields, each NUL-terminated, then the source to its end:
-   the file REQUEST, or on standard input N\n then the N bytes. The reply goes
-   to the file REPLY, or to standard output, once per request:
+   LIBRARY is the vendor's library. A request, on standard input, is N\n then
+   N bytes: the worker's fields, each NUL-terminated, then the source. The
+   reply goes to standard output, once per request:
 
      ok N\n<N bytes of binary>     or     error N\n<N bytes of message>
 
-   so that a reply is complete iff it is N bytes past its header. A serving
-   worker reads a whole request before it replies. Diagnostics (the library's)
-   go to standard error, and to standard output but in a serving worker.
+   so that a reply is complete iff it is N bytes past its header. A worker
+   reads a whole request before it replies. Diagnostics (the library's) go to
+   standard error.
 
    Each worker's program is compiled with compiler_worker.c. */
 
@@ -63,13 +61,6 @@ bool option_list(const char **at, const char *end, struct options *o);
 
 /* Appends [later] to [*o], whose list it replaces: false if out of memory. */
 bool join(struct options *o, struct options later);
-
-/* One compile */
-
-/* Starts the worker whose library is called [library] in its usage: resets the
-   process and returns the request, [*size] bytes long. Exits with 2 on a usage
-   error, and with 1 having replied if the request does not read. */
-char *start(int argc, char **argv, const char *library, size_t *size);
 
 /* Serving */
 

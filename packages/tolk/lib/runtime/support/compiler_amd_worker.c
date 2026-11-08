@@ -5,19 +5,21 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*/
 
-/* The program that runs one comgr compile in a process of its own, embedded in
+/* The program that runs comgr compiles in a process of its own, embedded in
    tolk and spawned by Compiler_amd. comgr serialises every compile in a process
-   on a mutex of its own: a process per compile lets compiles run at once.
+   on a mutex of its own: a process per worker lets compiles run at once. It
+   serves compiles until its input ends, so that loading comgr, about 10 ms of a
+   process's first compile, is paid once per process.
 
-     worker COMGR PARENT REQUEST REPLY
+     worker COMGR
 
-   COMGR is comgr's library. REQUEST holds the ISA, the assemble flag ("0" or
+   COMGR is comgr's library. A request holds the ISA, the assemble flag ("0" or
    "1"), the count then the options of the compile, the count then the options
    of code generation, the major and minor version from which comgr is given
    the next options in both steps, the count then those options, each
-   NUL-terminated, then the source to the end of the file. REPLY holds the code
-   object, as compiler_worker.h says. Diagnostics (comgr's, LLVM's) go to
-   standard output and error. */
+   NUL-terminated, then the source. A reply holds the code object, as
+   compiler_worker.h says. Diagnostics (comgr's, LLVM's) go to standard
+   error. */
 
 #include "compiler_worker.h"
 
@@ -96,17 +98,22 @@ static struct {
   uint64_t major, minor;
 } version;
 
-/* Loads comgr, or replies why it cannot. */
+/* Why comgr did not load, or "" once it has. */
+static char load_error[4096];
+
+/* Loads comgr, or says why it cannot in [load_error]. */
 static bool load(const char *path) {
   void *lib = open_library(path);
   if (lib == NULL) {
-    reply_error("comgr not available: %s", library_error(path));
+    snprintf(load_error, sizeof load_error, "comgr not available: %s",
+             library_error(path));
     return false;
   }
   for (size_t i = 0; i < sizeof symbols / sizeof *symbols; i++)
     if ((*symbols[i].fn = find_symbol(lib, symbols[i].name)) == NULL) {
-      reply_error("comgr not available: %s: undefined symbol %s", path,
-                  symbols[i].name);
+      snprintf(load_error, sizeof load_error,
+               "comgr not available: %s: undefined symbol %s", path,
+               symbols[i].name);
       return false;
     }
   comgr.get_version(&version.major, &version.minor);
@@ -139,33 +146,37 @@ static char *get_data(data_set_t set, uint32_t kind, size_t *size) {
 }
 
 /* Compiles, or assembles, [src] and replies with the code object or why
-   comgr failed. */
+   comgr failed. A step that fails leaves the steps after it undone. comgr's
+   objects are released before it returns: the process serves other compiles. */
 static void compile_hip(const char *src, size_t src_size, const char *isa,
                         bool assemble, struct options compile,
                         struct options codegen) {
   action_info_t info;
   data_set_t sets[4]; /* source, bitcode, relocatable, executable */
   data_t data_src;
+  bool has_info = false, has_src = false;
+  int made = 0;
   status_t status;
-  char *log = NULL, *lib;
+  char *log = NULL, *lib = NULL;
   size_t log_size = 0, size;
   /* Options stay set from one action to the next: linking clears them. */
   const char *no_option = "";
-  /* The process ends after the reply: comgr's objects are never released. */
 #define CHECK(call)                                                            \
   if ((status = (call)) != 0) goto fail
 #define ACTION(action, from, to, message)                                      \
   if ((status = comgr.do_action(action, info, from, to)) != 0) {               \
     log = get_data(to, DATA_KIND_LOG, &log_size);                              \
     reply_error("%s\n%.*s", message, (int)log_size, log != NULL ? log : "");   \
-    return;                                                                    \
+    goto done;                                                                 \
   }
   CHECK(comgr.create_action_info(&info));
+  has_info = true;
   CHECK(comgr.action_info_set_language(info, enums.language_hip));
   CHECK(comgr.action_info_set_isa_name(info, isa));
   CHECK(comgr.action_info_set_logging(info, true));
-  for (int i = 0; i < 4; i++) CHECK(comgr.create_data_set(&sets[i]));
+  for (; made < 4; made++) CHECK(comgr.create_data_set(&sets[made]));
   CHECK(comgr.create_data(DATA_KIND_SOURCE, &data_src));
+  has_src = true;
   CHECK(comgr.set_data(data_src, src_size, src));
   CHECK(comgr.set_data_name(data_src, assemble ? "<null>.s" : "<null>"));
   CHECK(comgr.data_set_add(sets[0], data_src));
@@ -187,7 +198,7 @@ static void compile_hip(const char *src, size_t src_size, const char *isa,
 #undef CHECK
   if ((lib = get_data(sets[3], DATA_KIND_EXECUTABLE, &size)) != NULL) {
     reply_with("ok", lib, size);
-    return;
+    goto done;
   }
   status = 1; /* AMD_COMGR_STATUS_ERROR */
 fail:;
@@ -195,30 +206,49 @@ fail:;
   if (comgr.status_string(status, &reason) != 0 || reason == NULL)
     reason = "unknown status";
   reply_error("comgr fail %u, %s", (unsigned)status, reason);
+done:
+  free(lib);
+  free(log);
+  if (has_src) comgr.release_data(data_src);
+  while (made > 0) comgr.destroy_data_set(sets[--made]);
+  if (has_info) comgr.destroy_action_info(info);
 }
 
-int main(int argc, char **argv) {
-  size_t size;
-  char *request = start(argc, argv, "COMGR", &size);
+/* Replies to the request [request], [size] bytes. */
+static void answer(const char *request, size_t size) {
   const char *at = request, *end = request + size, *isa = field(&at, end),
              *assemble = field(&at, end), *from_major, *from_minor;
-  struct options compile, codegen, later;
+  struct options compile = {NULL, 0}, codegen = {NULL, 0}, later = {NULL, 0};
   if (isa == NULL || assemble == NULL || !option_list(&at, end, &compile) ||
       !option_list(&at, end, &codegen) ||
       (from_major = field(&at, end)) == NULL ||
       (from_minor = field(&at, end)) == NULL ||
-      !option_list(&at, end, &later)) {
-    reply_error("the request %s is malformed", argv[3]);
-    return 1;
+      !option_list(&at, end, &later))
+    reply_error("the request is malformed");
+  else {
+    uint64_t m = strtoull(from_major, NULL, 10),
+             n = strtoull(from_minor, NULL, 10);
+    if ((version.major > m || (version.major == m && version.minor >= n)) &&
+        (!join(&compile, later) || !join(&codegen, later)))
+      reply_error("out of memory");
+    else
+      compile_hip(at, end - at, isa, assemble[0] == '1', compile, codegen);
   }
-  if (!load(argv[1])) return 1;
-  uint64_t m = strtoull(from_major, NULL, 10),
-           n = strtoull(from_minor, NULL, 10);
-  if ((version.major > m || (version.major == m && version.minor >= n)) &&
-      (!join(&compile, later) || !join(&codegen, later))) {
-    reply_error("out of memory");
-    return 1;
+  free(compile.list);
+  free(codegen.list);
+  free(later.list);
+}
+
+int main(int argc, char **argv) {
+  serve(argc, argv, "COMGR");
+  bool loaded = load(argv[1]);
+  size_t size;
+  for (char *request; (request = next_request(&size)) != NULL;) {
+    if (loaded)
+      answer(request, size);
+    else
+      reply_error("%s", load_error);
+    free(request);
   }
-  compile_hip(at, end - at, isa, assemble[0] == '1', compile, codegen);
   return 0;
 }

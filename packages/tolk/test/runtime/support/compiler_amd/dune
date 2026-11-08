@@ -6,7 +6,7 @@
 (test
  (name test_compiler_amd)
  (package tolk)
- (libraries windtrap tolk tolk_spawn)
+ (libraries windtrap tolk tolk_spawn unix)
  (deps
   (sandbox always)
   not_a_library)
