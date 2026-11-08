@@ -1334,10 +1334,12 @@ module Expr : sig
 
   val std : ('a, row) t -> (float, agg) t
   (** [std a] is the sample standard deviation of [a]'s values, dividing by n -
-      1, and null for fewer than two values. *)
+      1, and null for fewer than two values. It is infinite only where the
+      standard deviation exceeds [max_float]. *)
 
   val var : ('a, row) t -> (float, agg) t
-  (** [var a] is the sample variance of [a]'s values, like {!std}. *)
+  (** [var a] is the sample variance of [a]'s values, like {!std}. It is
+      infinite only where the variance exceeds [max_float]. *)
 
   val median : ('a, row) t -> (float, agg) t
   (** [median a] is [quantile 0.5 a]. *)

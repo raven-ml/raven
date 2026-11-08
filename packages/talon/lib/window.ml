@@ -325,32 +325,67 @@ let fold : type v e.
   else fold x
 
 (* [variance w held c] is each running window's sample variance of [c]'s
-   values at the sorted positions where [held],
-   from their count, mean and sum of squared deviations, combined by Chan,
-   Golub and LeVeque's update of partial moments. An infinite or NaN value
-   makes the mean so, and the variance NaN, as the deviations from the mean
-   are then. *)
+   values at the sorted positions where [held], from their count, mean and
+   sum of squared deviations, combined by Chan, Golub and LeVeque's update of
+   partial moments. A part without values leaves the other as it is: its
+   mean, [0], is no value of the window, and no deviation is taken from it.
+   An infinite or NaN value makes the mean so, and the variance NaN, as the
+   deviations from the mean are then.
+
+   A window of finite values whose moments overflow takes them again of the
+   values scaled by its segment's [Reduce.scales]. The scale comes from
+   values the window may not hold, so it serves those windows alone: their
+   sums of squared deviations reach about max_float / 2 or more, so that a
+   value the scale takes below 2^-1022 rounds by less than their ulp. *)
 let variance w held c =
   let x = Nx.take w.sorted (tensor Nx.float64 c) in
+  let len = Nx.dim 0 x in
   let held =
-    match held with Some h -> h | None -> Nx.ones Nx.bool [| Nx.dim 0 x |]
+    match held with Some h -> h | None -> Nx.ones Nx.bool [| len |]
   in
   let zero = Nx.zeros_like x in
-  let x = (Nx.cast Nx.float64 held, Nx.where held x zero, zero) in
   let chan (n1, m1, q1) (n2, m2, q2) =
     let n = Nx.add n1 n2 in
-    let r = Nx.where (Nx.greater_s n 0.) (Nx.div n2 n) (Nx.zeros_like n) in
+    let r = Nx.div n2 n in
     let d = Nx.sub m2 m1 in
     let q = Nx.add (Nx.add q1 q2) (Nx.mul (Nx.mul d d) (Nx.mul n1 r)) in
-    (n, Nx.add m1 (Nx.mul d r), q)
+    let m = Nx.add m1 (Nx.mul d r) in
+    let keep_a = Nx.equal_s n2 0. and keep_b = Nx.equal_s n1 0. in
+    let pick a b c = Nx.where keep_a a (Nx.where keep_b b c) in
+    (n, pick m1 m2 m, pick q1 q2 q)
   in
   let s = Nx.Ptree.(triple tensor tensor tensor) in
-  let n, m, q = scan w s chan x in
-  let at y = last w (Nx.zeros Nx.float64 [| 1 |]) y in
-  let n = at n in
-  let v = Nx.div (at q) (Nx.sub_s n 1.) in
-  let v = Nx.where (Nx.isfinite (at m)) v (Nx.full_like v Float.nan) in
-  (v, Nx.cast Nx.int64 n)
+  let at empty y = last w (Nx.full Nx.float64 [| 1 |] empty) y in
+  let moments x =
+    let x = (Nx.cast Nx.float64 held, Nx.where held x zero, zero) in
+    let n, m, q = scan w s chan x in
+    let n = at 0. n in
+    let v = Nx.div (at 0. q) (Nx.sub_s n 1.) in
+    (Nx.where (Nx.isfinite (at 0. m)) v (Nx.full_like v Float.nan), n)
+  in
+  let var, n = moments x in
+  let n = Nx.cast Nx.int64 n in
+  (* The windows of two values or more, all finite, whose variance is not. *)
+  let overflowed () =
+    let some b = if Nx.item [] (Nx.any b) then Some b else None in
+    let infinite = Nx.logical_not (Nx.isfinite var) in
+    let odd = Nx.logical_and (Nx.greater_equal_s n 2L) infinite in
+    if not (Reduce.overflows c && Nx.item [] (Nx.any odd)) then None
+    else
+      let bad = Nx.cast Nx.int64 (Nx.logical_not (Nx.isfinite x)) in
+      let clean = Nx.equal_s (fold w Add ~held:(Some held) bad) 0L in
+      some (Nx.logical_and odd clean)
+  in
+  match overflowed () with
+  | None -> { Reduce.var; up = None; n }
+  | Some redo ->
+      let ids = Nx.sub_s (Nx.cumsum (Nx.cast Nx.int64 w.starts)) 1L in
+      let segments = Int64.to_int (Nx.item [ -1 ] ids) + 1 in
+      let max y = Nx.reduce_segments Max ~segments ids (Nx.where held y zero) in
+      let up, down = Reduce.scales max x in
+      let scaled, _ = moments (Nx.mul x (Nx.take ids down)) in
+      let up = Nx.where redo (at 1. (Nx.take ids up)) (Nx.ones_like var) in
+      { var = Nx.where redo scaled var; up = Some up; n }
 
 (* Gathers
 

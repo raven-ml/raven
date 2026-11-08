@@ -471,6 +471,187 @@ let exclusion_law f =
   equal (array (option int)) (values (counted f))
     (values Expr.(counted excluded + counted own))
 
+(* Moments at large magnitudes *)
+
+(* [two_pass xs] is [(v, k)]: the sample variance [v] of [xs *. 2^-k] by
+   two passes, 2^k the least power of two above every finite magnitude of
+   [xs], so that no intermediate overflows; NaN over a NaN or an infinity,
+   [None] under two values. The variance of [xs] is [v] times 4^k, their
+   standard deviation its root times 2^k. *)
+let two_pass xs =
+  let n = List.length xs in
+  if n < 2 then None
+  else if List.exists (fun x -> not (Float.is_finite x)) xs then Some (nan, 0)
+  else
+    let k = List.fold_left (fun k x -> Int.max k (snd (Float.frexp x))) 0 xs in
+    let xs = List.map (fun x -> Float.ldexp x (-k)) xs in
+    let m = List.fold_left ( +. ) 0. xs /. Float.of_int n in
+    let q = List.fold_left (fun q x -> q +. ((x -. m) *. (x -. m))) 0. xs in
+    Some (q /. Float.of_int (n - 1), k)
+
+(* Frames whose values are [x *. 2^s], [x] within 1 of a centre and [s] 0
+   or 512, of one [s], or mixed with 1018: at 512 their squares and the sums
+   of their squared deviations pass max_float, while most of their variances
+   stay below it, and values of [s = 0] come before and after values near
+   max_float. *)
+let large =
+  let open Gen in
+  let gen =
+    let* f = frame_of (List.map (fun (_, k, _) -> k) kinds) in
+    let* running = bool in
+    let f =
+      if running then { f with before = Absent; exclude = false } else f
+    in
+    let* s =
+      frequency
+        [
+          (1, constant (constant 0)); (2, constant (constant 512));
+          ( 3,
+            constant
+              (frequency
+                 [ (3, constant 0); (1, constant 512); (1, constant 1018) ]) );
+        ]
+    in
+    let* c = of_list [ 0.; 1.5; -6. ] in
+    let near = map (fun d -> c +. d) (float_range (-1.) 1.) in
+    let value = frequency [ (1, of_list specials); (8, near) ] in
+    let value =
+      let* v = value in
+      map (Float.ldexp v) s
+    in
+    let size = constant (Array.length f.o) in
+    let held = map Option.some value in
+    let+ x = array ~size (frequency [ (1, constant None); (4, held) ]) in
+    { f with x }
+  in
+  let pp ppf f =
+    Format.fprintf ppf "%s before %a after %a exclude=%b by=%b@.%a"
+      (kind_name f.kind) pp_bound f.before pp_bound f.after f.exclude
+      f.partitioned Talon.pp (table f)
+  in
+  with_pp pp gen
+
+let large_law f =
+  let t = table f and x = Col.float "x" and w = window f in
+  let values e =
+    Error.get_ok (Query.values (Expr.option (w.w e)) (Query.of_table t))
+  in
+  let windows = List.init (Array.length f.o) (members f) in
+  let held rows = List.filter_map (Array.get f.x) rows in
+  let moments =
+    List.map (fun r -> Option.bind r (fun r -> two_pass (held r))) windows
+  in
+  let beyond k x = Float.is_finite x && Float.abs x >= Float.ldexp 1. k in
+  let has p = List.exists (function Some r -> p r | None -> false) windows in
+  let running = f.before = Absent && ((not f.exclude) || f.after = Absent) in
+  let nulls r = List.exists (fun j -> f.x.(j) = None) r in
+  (* The sum of squared deviations passes max_float, the variance not. *)
+  let overflows r =
+    match two_pass (held r) with
+    | Some (v, k) when Float.is_finite v ->
+        let q = v *. Float.of_int (List.length (held r) - 1) in
+        Float.ldexp q (2 * k) = infinity && Float.ldexp v (2 * k) < infinity
+    | _ -> false
+  in
+  (* A window of values below 2^480 whose partition holds one past 2^1000. *)
+  let beside i = function
+    | Some r ->
+        let mine j = (not f.partitioned) || f.g.(j) = f.g.(i) in
+        let part = List.filter mine (List.init (Array.length f.x) Fun.id) in
+        List.length (held r) >= 2
+        && List.for_all (fun x -> Float.abs x < Float.ldexp 1. 480) (held r)
+        && List.exists (beyond 1000) (held part)
+    | None -> false
+  in
+  let some_big r = List.exists (beyond 480) (held r) in
+  cover "a running window holding a null and values past 2^480"
+    (running
+    && has (fun r -> nulls r && List.length (held r) >= 2 && some_big r));
+  cover "a running window of values below 2^480 beside one past 2^1000"
+    (running && List.exists Fun.id (List.mapi beside windows));
+  cover "a finite variance whose squared deviations sum past max_float"
+    (has overflows);
+  cover "an empty window" (has (( = ) []));
+  let scaled op = function
+    | Some (v, k) -> Some (op v k)
+    | None -> None
+  in
+  let var = List.map (scaled (fun v k -> Float.ldexp v (2 * k))) moments in
+  let std = List.map (scaled (fun v k -> Float.ldexp (sqrt v) k)) moments in
+  let past v d = v = Some infinity && Option.is_some d && d <> Some infinity in
+  cover "a finite standard deviation of a variance past max_float"
+    (List.exists2 past var std);
+  (* Both sides err by a few rounding errors of the squares, at most about
+     n eps 4^k over a window's 2^k with n <= 24: within [1e-12 4^k] and 1e-9
+     of the variance, and within the root of that of the deviation. *)
+  let close abs =
+    let equal a b =
+      let scale = Float.max (Float.abs a) (Float.abs b) in
+      (Float.is_nan a && Float.is_nan b)
+      || a = b
+      || Float.abs (a -. b) <= abs +. (1e-9 *. scale)
+    in
+    Testable.make ~pp:(fun ppf -> Format.fprintf ppf "%h") ~equal
+  in
+  let powers = Array.of_list moments in
+  let check msg tol want got =
+    List.iteri
+      (fun i (want, got) ->
+        let abs = match powers.(i) with Some (_, k) -> tol k | None -> 0. in
+        let msg = Printf.sprintf "%s at row %d" msg i in
+        equal ~msg (option (close abs)) want got)
+      (List.combine want (Array.to_list got))
+  in
+  check "var" (fun k -> Float.ldexp 1e-12 (2 * k)) var (values (Expr.var x));
+  check "std" (fun k -> Float.ldexp 1e-6 k) std (values (Expr.std x))
+
+(* The variances and standard deviations of values whose squares or sums
+   pass max_float, within 1e-9: the decimal values round. *)
+let large_cases =
+  let near =
+    [| Some 2e155; Some 2.0001e155; None; Some 2.0002e155; Some 2.0003e155 |]
+  in
+  let apart = [| Some 1e154; Some (-1e154); Some 0. |] in
+  let top = [| Some 1e308; Some 1e308; Some 1e308 |] in
+  let var = Expr.var and std = Expr.std in
+  [
+    ( "a null among values near 2e155", var, None, near,
+      [| None; Some 5e301; Some 5e301; Some 1e302; Some (1e302 *. 5. /. 3.) |]
+    );
+    ( "a null among values near 2e155, two at a time", var, Some 2, near,
+      [| None; Some 5e301; None; None; Some 5e301 |] );
+    ( "a null before values near 2e155", var, None,
+      [| None; Some 2e155; Some 2.0001e155 |], [| None; None; Some 5e301 |] );
+    ( "squared deviations past max_float", var, None, apart,
+      [| None; Some infinity; Some 1e308 |] );
+    ( "squared deviations past max_float, three at a time", var, Some 3,
+      apart,
+      [| None; Some infinity; Some 1e308 |] );
+    ("a sum past max_float", var, None, top, [| None; Some 0.; Some 0. |]);
+    ( "a sum past max_float, three at a time", var, Some 3, top,
+      [| None; Some 0.; Some 0. |] );
+    ( "small values before one near max_float", var, None,
+      [| Some 1.; Some 2.; Some 3.; Some 1e308 |],
+      [| None; Some 0.5; Some 1.; Some infinity |] );
+    ( "the deviation of small values before one near max_float", std, None,
+      [| Some 1.; Some 2.; Some 3.; Some 1e308 |],
+      [| None; Some (sqrt 0.5); Some 1.; Some 5e307 |] );
+    ( "the deviation of a variance past max_float", std, None,
+      [| Some 1e200; Some (-1e200) |], [| None; Some (sqrt 2. *. 1e200) |] );
+    ( "the deviation of a variance past max_float, two at a time", std,
+      Some 2, [| Some 1e200; Some (-1e200) |],
+      [| None; Some (sqrt 2. *. 1e200) |] );
+  ]
+
+let large_case (_, r, before, x, want) =
+  let t = Talon.v [ ("x", Column.of_options Type.float64 x) ] in
+  let before = Option.map Expr.int before in
+  let e = Expr.window ?before (r (Col.float "x")) in
+  equal
+    (array (option (float_rel ~rel:1e-9 ~abs:0.)))
+    want
+    (Error.get_ok (Query.values (Expr.option e) (Query.of_table t)))
+
 (* Fills *)
 
 let series =
@@ -717,7 +898,13 @@ let () =
              prop "a partition's windows are its frame's" frames partition_law;
              prop "excluding the key leaves out its rows" exclusion
                exclusion_law;
+             prop ~count:300
+               "var and std at large magnitudes, against two passes" large
+               large_law;
            ];
+         cases "var at large magnitudes"
+           ~id:(fun (n, _, _, _, _) -> n)
+           large_cases large_case;
          group "kit"
            [
              prop "fills and interpolation, against their reference" series

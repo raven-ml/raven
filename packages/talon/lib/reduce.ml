@@ -92,6 +92,16 @@ let tensor dt c =
 
 let segment_sum s ids x = Nx.reduce_segments Nx.Add ~segments:s.count ids x
 
+(* Whether sums of [c]'s values or of their squares can pass max_float, as
+   float64's alone do: a 32-bit float squares below 2^256, an int64 below
+   2^128. *)
+let overflows c =
+  match Column.data c with
+  | Fixed (P x) ->
+      let dt = Nx.dtype x in
+      Nx.Dtype.is Float dt && Nx.Dtype.bits dt = 64
+  | _ -> false
+
 (* Whether [c]'s values are integers whose int64 sum is exact. *)
 let exact_sums c =
   match Column.data c with
@@ -185,13 +195,19 @@ and values = {
     'v 'e. Nx.combine -> ('v, 'e, Nx.host) Nx.t -> ('v, 'e, Nx.host) Nx.t;
   pick : Nx.combine -> Nx.host Nx.int64_t;
   extreme : desc:bool -> Nx.host Nx.uint64_t -> Nx.host Nx.int64_t;
-  variance : (parts -> Nx.host Nx.float64_t * Nx.host Nx.int64_t) option;
+  variance : (parts -> moments) option;
   holistic :
     'a 'b.
     ('a, 'b) Expr.reduction ->
     Type.any ->
     parts ->
     Column.t * (int * string) option;
+}
+
+and moments = {
+  var : Nx.host Nx.float64_t;
+  up : Nx.host Nx.float64_t option;
+  n : Nx.host Nx.int64_t;
 }
 
 and parts = {
@@ -203,7 +219,7 @@ and parts = {
   mutable sum : Nx.host Nx.int64_t option;
   mutable fsum : Nx.host Nx.float64_t option;
   mutable mean : Nx.host Nx.float64_t option;
-  mutable var : (Nx.host Nx.float64_t * Nx.host Nx.int64_t) option;
+  mutable moments : moments option;
   mutable words : Nx.host Nx.uint64_t option;
   mutable least : Nx.host Nx.int64_t option;
   mutable greatest : Nx.host Nx.int64_t option;
@@ -220,7 +236,7 @@ let parts frame c =
     sum = None;
     fsum = None;
     mean = None;
-    var = None;
+    moments = None;
     words = None;
     least = None;
     greatest = None;
@@ -261,7 +277,25 @@ let mean =
       in
       Nx.div sum (Nx.cast Nx.float64 (counts p)))
 
-let var variance = memo (fun p -> p.var) (fun p x -> p.var <- x) variance
+let moments variance =
+  memo (fun p -> p.moments) (fun p x -> p.moments <- x) variance
+
+(* Scales
+
+   A frame whose greatest finite magnitude lies in [\[2^t, 2^(t + 1))] takes
+   [down = 2^-e], [e] the exponent [t] past [below - 1], or [0]: its values
+   times [down] are below [2^below]. *)
+
+let below = 480
+let bias = 1023L
+
+let scales max x =
+  let a = Nx.where (Nx.isfinite x) (Nx.abs x) (Nx.zeros_like x) in
+  let top = Nx.maximum_s (max a) 0. in
+  let t = Nx.sub_s (Nx.rshift (Nx.bitcast Nx.int64 top) 52) bias in
+  let e = Nx.maximum_s (Nx.sub_s t (Int64.of_int (below - 1))) 0L in
+  let power k = Nx.bitcast Nx.float64 (Nx.lshift (Nx.add_s k bias) 52) in
+  (power e, power (Nx.neg e))
 
 let words =
   memo (fun p -> p.words) (fun p x -> p.words <- x) (fun p ->
@@ -318,8 +352,14 @@ let reduce : type a b.
       match v.variance with
       | None -> v.holistic r ty p
       | Some variance ->
-          let x, n = var variance p in
-          let x = match r with Std -> Nx.sqrt x | _ -> x in
+          let { var = x; up; n } = moments variance p in
+          let x =
+            match (r, up) with
+            | Std, None -> Nx.sqrt x
+            | Std, Some up -> Nx.mul (Nx.sqrt x) up
+            | _, None -> x
+            | _, Some up -> Nx.mul (Nx.mul x up) up
+          in
           ok (fixed ty ~valid:(Nx.greater_equal_s n 2L) x))
   | Median | Quantile _ | N_unique -> v.holistic r ty p
   | Min -> ok (value_at false)
@@ -335,7 +375,10 @@ let reduce : type a b.
       (value (extreme false), first_where several "only finds several values")
 
 (* [frame s] reads the segments [s]: a row without a value leaves its
-   segment, and var and std take the deviations from each segment's mean. *)
+   segment, and var and std take the deviations from each segment's mean. A
+   variance that overflows is taken again of the values scaled ({!scales}),
+   since a sum of the values or of their squared deviations can pass
+   max_float where the variance does not. *)
 let frame s =
   let n = Nx.dim 0 s.ids in
   let values held =
@@ -350,9 +393,23 @@ let frame s =
       pick s Nx.Min (Some hit)
     in
     let variance p =
-      let d = Nx.sub (tensor Nx.float64 p.c) (Nx.take s.ids (mean p)) in
-      let k = Nx.cast Nx.float64 (Nx.sub_s (counts p) 1L) in
-      (Nx.div (fold Add (Nx.mul d d)) k, counts p)
+      let n = counts p and x = tensor Nx.float64 p.c in
+      let k = Nx.cast Nx.float64 (Nx.sub_s n 1L) in
+      let deviations x m =
+        let d = Nx.sub x (Nx.take s.ids m) in
+        Nx.div (fold Add (Nx.mul d d)) k
+      in
+      let var = deviations x (mean p) in
+      if not (overflows p.c) then { var; up = None; n }
+      else
+        let over = Nx.equal_s var Float.infinity in
+        if not (Nx.item [] (Nx.any over)) then { var; up = None; n }
+        else
+          let up, down = scales (fold Max) x in
+          let x = Nx.mul x (Nx.take s.ids down) in
+          let m = Nx.div (fold Add x) (Nx.cast Nx.float64 n) in
+          let var = Nx.where over (deviations x m) var in
+          { var; up = Some (Nx.where over up (Nx.ones_like up)); n }
     in
     let holistic : type a b.
         (a, b) Expr.reduction ->

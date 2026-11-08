@@ -3923,6 +3923,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Expr.var` and `Expr.std` are infinite only where the result passes
+  `max_float`. A sum of the values or of their squared deviations that
+  overflowed made them infinite, and a running `Expr.window` of them over a
+  null among values past 1.3e154 gave NaN.
 - Add `Expr.window`, a reduction over each row's window: the rows of its frame
   whose key, `~on`'s value or the row's place, lies within `~before` and
   `~after` of the row's, the row's key left out with `~exclude_key:true`.

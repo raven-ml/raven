@@ -2093,6 +2093,27 @@ let reductions =
           equal
             (array (option (float 1e-12)))
             [| None; Some 1.; None |] (floats t "s"));
+      test "var and std where sums of values or of squares overflow"
+        (fun () ->
+          (* Each group's variance from its definition, within 1e-9: the
+             decimal values round. *)
+          let g = Column.v Type.int64 [| 0; 0; 0; 1; 1; 1; 2; 2; 3; 3; 3 |] in
+          let x' =
+            Column.v Type.float64
+              [| 1e154; -1e154; 0.; 1e308; 1e308; 1e308; 1e200; -1e200; 1.;
+                 2.; 3. |]
+          in
+          let t =
+            require_ok ~pp:Error.pp
+              (aggregate [ "g" ]
+                 Expr.[ "v" := var x; "s" := std x ]
+                 (v [ ("g", g); ("x", x') ]))
+          in
+          let w = array (option (float_rel ~rel:1e-9 ~abs:0.)) in
+          equal w [| Some 1e308; Some 0.; Some infinity; Some 1. |]
+            (floats t "v");
+          equal w [| Some 1e154; Some 0.; Some (sqrt 2. *. 1e200); Some 1. |]
+            (floats t "s"));
       test "an int32 mean is of the exact sum" (fun () ->
           (* 2^23 values of 2^31 - 1: a float64 sum of them passes 2^53,
              where it rounds. *)
