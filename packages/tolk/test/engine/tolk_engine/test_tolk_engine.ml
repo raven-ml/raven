@@ -612,6 +612,185 @@ let wide_count_cases name d =
     Dtype.[ Int8; Uint8; Int16; Uint16 ]
     (fun dt -> shifts_by_wide_counts (d ()) dt)
 
+(* Shifts by counts of any size
+
+   A count is a number of bits, not a value of its operand's type: a weak
+   literal or a weak expression past the type's range, or past the width, must
+   not wrap there. Written against what a count means: past the width of [dt]
+   a left shift is 0 and a right shift the sign fill; below it, [x 2^k] modulo
+   [2^w] and the floor of [x / 2^k]. [shifted] computes it on the type's bits. *)
+
+let shifted dt op x k : Dtype.value =
+  let past = Bigint.geq k (Bigint.of_int (Dtype.bitsize dt)) in
+  match (op : Op.t) with
+  | Shl when past -> `Int Bigint.zero
+  | Shl -> Dtype.truncate dt (`Int (Bigint.shift_left x (Bigint.to_int k)))
+  | _ when past ->
+      `Int (if Bigint.sign x < 0 then Bigint.minus_one else Bigint.zero)
+  | _ -> `Int (Bigint.shift_right x (Bigint.to_int k))
+
+(* A power of two and its neighbours. *)
+let around p = Bigint.[ pred p; p; succ p ]
+
+let power n = Bigint.shift_left Bigint.one n
+
+(* Counts either side of the width and of 2^8, 2^16, 2^32, 2^63 and 2^64. *)
+let count_literals dt =
+  let w = Bigint.of_int (Dtype.bitsize dt) in
+  List.sort_uniq Bigint.compare
+    (List.concat_map around
+       (w :: List.map power [ 8; 16; 32; 63; 64 ]))
+
+(* A weak expression [v + c - 2], at [v] = 2. *)
+let count_expressions dt =
+  let two = Bigint.of_int 2 in
+  List.filter (fun c -> Bigint.geq c two) (count_literals dt)
+
+let shift_lanes = 8
+let wide_bound = max_int - 1
+let v_name = "shift_v" and wide_name = "shift_wide"
+
+(* The kernel's shifts: literal counts, weak expressions [v + c - 2] of a
+   variable bound at 2, and [wide + 1] of a variable whose bounds exceed every
+   type's width but a 64-bit one's. Its slot 0 holds the shifted values. *)
+let shift_counts_kernel dt =
+  let open Ops.O in
+  let i = Ops.range ~axis_type:Weak (Int shift_lanes) [ 0 ] in
+  let at slot = Ops.index (Shape.placeholder ~slot [ shift_lanes ] dt) [ i ] in
+  let x = at 0 in
+  let lit c = Ops.const (`Int c) in
+  let v = Ops.variable v_name (`Int Bigint.zero) (`Int (Bigint.of_int 3)) in
+  let wide =
+    Ops.variable wide_name (`Int Bigint.zero) (`Int (Bigint.of_int wide_bound))
+  in
+  let expr c = v + lit (Bigint.sub c (Bigint.of_int 2)) in
+  let wide_count = wide + Ops.int 1 in
+  let ops = Op.[ Shl; Shr ] in
+  let shifts k = List.map (fun o -> Ops.alu x o [ k ]) ops in
+  let values =
+    List.concat_map (fun c -> shifts (lit c)) (count_literals dt)
+    @ List.concat_map (fun c -> shifts (expr c)) (count_expressions dt)
+    @ shifts wide_count
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"shift_counts" ~opts_to_apply:[] ())
+    [
+      Ops.end_
+        (Ops.group (List.mapi (fun j v -> Ops.store (at (succ j)) v) values))
+        [ i ];
+    ]
+
+(* Each store's reference, in slot order, as [shift_counts_kernel dt] writes
+   them. *)
+let shift_counts_references dt ~wide =
+  let ops = Op.[ Shl; Shr ] in
+  let each c = List.map (fun o -> (o, c)) ops in
+  List.concat_map each (count_literals dt)
+  @ List.concat_map each (count_expressions dt)
+  @ each (Bigint.of_int (wide + 1))
+
+let shift_counts_program =
+  let compiled = Hashtbl.create 16 in
+  fun d dt ->
+    let key = (Engine.target d, dt) in
+    match Hashtbl.find_opt compiled key with
+    | Some prg -> prg
+    | None ->
+        let prg =
+          Codegen.to_program (shift_counts_kernel dt) (Engine.renderer d)
+        in
+        Hashtbl.replace compiled key prg;
+        prg
+
+let shift_counts_compute d (dt, xs, wide) =
+  let w = Dtype.bitsize dt in
+  let shifted_by o c x =
+    shifted dt o (Dtype.Value.to_z x) c
+  in
+  let references = shift_counts_references dt ~wide in
+  let count_past =
+    List.exists (fun (_, c) -> Bigint.geq c (Bigint.of_int w)) references
+  in
+  cover "a count at or past the width" count_past;
+  cover "a signed type" (List.mem dt Dtype.sints);
+  cover "an unsigned type" (Dtype.is_unsigned dt);
+  cover "a variable count past the width" (wide + 1 >= w);
+  let vars = [ (v_name, 2); (wide_name, wide) ] in
+  let zeros = Array.make shift_lanes (of_int dt 0) in
+  let in_buffers =
+    (0, xs) :: List.mapi (fun j _ -> (j + 1, zeros)) references
+  in
+  let out = Run.on d ~vars (shift_counts_program d dt) in_buffers in
+  let expected (o, c) = Array.map (shifted_by o c) xs in
+  List.iteri
+    (fun j r ->
+      let o, c = r in
+      let msg =
+        Format.asprintf "%a %a by %s" Dtype.pp dt Op.pp o (Bigint.to_string c)
+      in
+      equal ~msg values (expected r) (List.assoc (j + 1) out))
+    references;
+  (* The same kernel through the interpreter. *)
+  let bound =
+    [ (v_name, `Int (Bigint.of_int 2)); (wide_name, `Int (Bigint.of_int wide)) ]
+  in
+  let writes =
+    Interpreter.writes ~vars:bound ~buffers:[ (0, xs) ]
+      (shift_counts_kernel dt)
+  in
+  let want =
+    List.concat
+      (List.mapi
+         (fun j r ->
+           Array.to_list
+             (Array.mapi (fun i v -> (j + 1, i, v)) (expected r)))
+         references)
+  in
+  let pp_write ppf (s, i, v) =
+    Format.fprintf ppf "(%d,%d,%a)" s i Dtype.pp_const (v :> Dtype.const)
+  in
+  equal
+    ~msg:(Format.asprintf "%a through the interpreter" Dtype.pp dt)
+    (Testable.list (Testable.make ~pp:pp_write ~equal:( = )))
+    want writes
+
+let shift_counts_gen =
+  let open Gen in
+  let* dt = of_list ~pp:Dtype.pp Dtype.ints in
+  let e = edges dt in
+  let any = map (of_int dt) int in
+  let+ xs = array ~size:(constant shift_lanes) (frequency [ (3, of_list e); (1, any) ])
+  and+ wide =
+    frequency
+      [
+        ( 3,
+          of_list
+            (List.map
+               (fun c -> c - 1)
+               [
+                 Dtype.bitsize dt - 1;
+                 Dtype.bitsize dt;
+                 Dtype.bitsize dt + 1;
+                 256;
+                 65536;
+                 1 lsl 32;
+                 1 lsl 40;
+               ]) );
+        (1, int_range 0 wide_bound);
+      ]
+  in
+  (dt, xs, wide)
+
+let shift_counts_prop name d =
+  prop name ~count:40
+    (Gen.with_pp
+       (fun ppf (dt, xs, wide) ->
+         Format.fprintf ppf "%a, wide %d: %a" Dtype.pp dt wide
+           (Testable.pp (array Dtypes.value))
+           xs)
+       shift_counts_gen)
+    (fun c -> shift_counts_compute (d ()) c)
+
 let on_the_host =
   group "kernels on the host"
     [
@@ -624,6 +803,9 @@ let on_the_host =
          interpreter" (fun () -> host);
       wide_count_cases "a narrow type shifted by a uint32 count computes as \
          the interpreter" (fun () -> host);
+      shift_counts_prop
+        "a shift by a literal or weak count of any size computes the shift"
+        (fun () -> host);
       group "loops"
         (List.map counts_in_a_loop
            [
@@ -4653,6 +4835,9 @@ let on_a_gpu (kind, _) =
         (divides_by_a_table ~devices "CPU:1");
       wide_count_cases
         "a narrow type shifted by a uint32 count computes as the interpreter"
+        (fun () -> devices "CPU:1");
+      shift_counts_prop
+        "a shift by a literal or weak count of any size computes the shift"
         (fun () -> devices "CPU:1");
       group "loops bounded by a loaded value"
         (loaded_bounds ~devices ~d:"CPU:1" ());

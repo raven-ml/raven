@@ -57,7 +57,8 @@ val eval :
     gives [s] (all default [[]]). A reduction binds the ranges it reduces over,
     whatever [vars] binds them to. A weak integer operand of an operation on a
     committed integer type takes that type and wraps, as compiled code commits
-    it. A cast converts as {!Dtype.const} then wraps to the target type
+    it; the count of a {!Tolk.Op.Shl} or {!Tolk.Op.Shr} is a number of bits and
+    reads at no width. A cast converts as {!Dtype.const} then wraps to the target type
     ({!Dtype.truncate}), and a cast to its operand's own type is the operand; a
     bit reinterpretation is {!Dtype.bitcast}. A selection of committed operands
     is the operand it selects, bits included. A NaN that an operation or a cast

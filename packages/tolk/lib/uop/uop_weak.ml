@@ -33,16 +33,40 @@ let derived_dtypes u src =
       let result = dtype_of (op u) src (arg u) in
       if is_weak result then None else Some (meet, result)
 
+(* Whether source [i] of [u] is a shift's count, a number of bits. *)
+let is_count u i = i = 1 && (op u = Op.Shl || op u = Op.Shr)
+
+(* [count_at s dt] is the weak shift count [s] made to fit [dt], its shift's
+   type, with the value it has as a number of bits. A count at or past [dt]'s
+   width shifts every bit out, whatever its value: a literal one, or an
+   expression that is always one, saturates at the width, which [dt] holds, and
+   a weak expression that [dt] cannot hold saturates at its own committed
+   type. *)
+let count_at s dt =
+  let width = Bigint.of_int (Dtype.bitsize dt) in
+  if is_const s then
+    match value s with
+    | `Int z when Bigint.geq z width -> const (`Int width)
+    | _ -> s
+  else if not (overflows s dt) then s
+  else if Dtype.Value.(vmin s >= `Int width) then const (`Int width)
+  else
+    let n = cast s (committed s) in
+    let cap = const_like n (`Int width) in
+    where O.(n < cap) n cap
+
 let commit_srcs_at u dt =
   (* The root re-derives: a shift's type is its left operand's, so committing
      that operand commits the node too. *)
   let bare = Option.is_some (derived_dtypes u (src u)) in
-  let commit s =
+  let commit i s =
     if not (weak s) then s
-    else if bare && is_const s then const (Dtype.const dt (value s))
-    else ccast s dt
+    else
+      let s = if is_count u i then count_at s dt else s in
+      if bare && is_const s then const (Dtype.const dt (value s))
+      else ccast s dt
   in
-  let ret = replace ~src:(List.map commit (src u)) u in
+  let ret = replace ~src:(List.mapi commit (src u)) u in
   if ret == u then None else Some ret
 
 let commit_weak_srcs u =
@@ -59,11 +83,11 @@ let cast_weak_srcs c u =
   if weak c || not (Dtype.equal (Dtype.weak (dtype c)) (dtype u)) then None
   else
     (* Every weak source commits at the one width: the node's own bounds and
-       each source's, none of them narrowed. *)
+       each source's, none of them narrowed. A shift's count is no value at
+       that width. *)
     let srcs =
-      List.filter_map
-        (fun s -> if weak s then Some (committed s) else None)
-        (src u)
+      List.map committed
+        (List.filteri (fun i s -> weak s && not (is_count u i)) (src u))
     in
     let widths = committed u :: srcs in
     let dt = Dtype.least_upper (dtype c :: widths) in

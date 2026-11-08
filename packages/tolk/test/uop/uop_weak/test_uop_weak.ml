@@ -76,6 +76,13 @@ let pm_commit_weak =
         Ops.O.(small Int8 + (weak + int 1));
       commit "weak_sources_stay_weak_without_a_committed_peer"
         (Ops.v Op.Add ~src:[ int 1; float 1.0 ]);
+      test "a cast of a weak shift by a huge count computes the shift"
+        (fun () ->
+          let huge = Ops.const (`Int Bigint.(shift_left one 64)) in
+          let u = Ops.cast Ops.O.(weak lsl huge) Int32 in
+          equal Dtypes.const (i 0)
+            (Interpreter.eval ~vars:[ ("w", i 3) ]
+               (rewrite Uop_weak.pm_commit_weak u)));
       commit "where_keeps_a_weak_arm_bare"
         (Ops.v Op.Where
            ~src:[ Ops.bool true; Ops.cast (float 2.0) Float16; float 1.0 ]);

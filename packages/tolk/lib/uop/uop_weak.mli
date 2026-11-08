@@ -40,11 +40,18 @@ val pm_commit_weak : (unit, Ops.t) Ops.Pattern_matcher.t
       sources' least upper type [dt] is committed, converts its weak sources to
       [dt]. A weak constant stays a weak literal, its value converted to [dt]
       ({!Dtype.val-const}), when the node's type does not depend on it: the
-      other sources already derive a committed type for the node;
+      other sources already derive a committed type for the node. A shift's
+      count is a number of bits, so it never wraps at [dt]: a count of
+      {!Dtype.bitsize}[ dt] or more shifts every bit out, so a weak count saturates
+      at that width. An expression whose bounds [dt] does not hold saturates at
+      its own committed type ({!Ops.commit_dtype}) and then converts to [dt]; one
+      whose bounds no 64-bit integer holds wraps there as any weak expression
+      does, unless its bounds are all past the width, where it is the width;
     - a {!Op.Store} of a weak value converts it to the destination's type;
     - a cast to a committed type [dt] over a weak arithmetic node [u] of [dt]'s
       kind commits [u]'s weak sources at the least upper type of [dt], [u]'s
-      committed type and each weak source's committed type, and casts the result
+      committed type and each weak source's committed type, a shift's count
+      apart, and casts the result
       to [dt]. Where that type is a float, as it is for a 64-bit unsigned [dt]
       over a signed width, they commit at {!Dtype.Int64} instead, or at
       {!Dtype.Uint64} where one of the committed types is: an integer cast
