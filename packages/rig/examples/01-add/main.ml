@@ -114,7 +114,7 @@ let () =
   let add = Option.get (Image.resolve image "add") in
   let refs = Submission.[| read 0 ~at:0; read 1 ~at:8; write 2 ~at:16 |] in
   let s = Submission.(make d [| launch ~refs add ~params:32 |]) in
-  let run = Submission.Run.make s and k = Submission.block s 0 in
+  let run = Submission.take s and k = Submission.block s 0 in
   Submission.Run.(
     groups run k (n / group) 1 1;
     threads run k group 1 1;

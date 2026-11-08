@@ -55,7 +55,7 @@ let by_hand d image x y =
         launch "twice" twice_params [| Sub.write 1 ~at:0; Sub.read 0 ~at:8 |];
       |]
   in
-  let run = Sub.Run.make s in
+  let run = Sub.take s in
   let store i params ~groups ~threads =
     let b = Sub.block s i in
     Sub.Run.groups run b groups 1 1;

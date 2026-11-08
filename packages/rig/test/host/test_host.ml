@@ -37,7 +37,7 @@ let launch ?(refs = [||]) ?(params = 0) ?(shared = 0) ?(set = fun _ _ -> ())
     ?(grid = one) image f buffers =
   let fn = require_some (Rig.Image.resolve image f) in
   let s = Sub.make Rig.host [| Sub.launch ~refs fn ~params |] in
-  let run = Run.make s and k = Sub.block s 0 in
+  let run = Sub.take s and k = Sub.block s 0 in
   let gx, gy, gz = grid.groups and tx, ty, tz = grid.threads in
   Run.groups run k gx gy gz;
   Run.threads run k tx ty tz;
@@ -130,7 +130,7 @@ let test_follows () =
   let main = require_some (Rig.Image.resolve functions "main") in
   let refs = Sub.[| write 0 ~at:0 |] in
   let s = Sub.make d [| Sub.launch ~refs main ~params:8 |] in
-  let run = Run.make s and k = Sub.block s 0 in
+  let run = Sub.take s and k = Sub.block s 0 in
   Run.groups run k 1 1 1;
   Run.threads run k 1 1 1;
   let written =
@@ -416,7 +416,7 @@ let during_host_read m f =
 
 (* The point of work on [d] that reads [m] and does nothing. *)
 let device_reading d m =
-  Rig.submit (Run.make (Sub.make d [| Rig_support.touching [| Sub.read |] |]))
+  Rig.submit (Sub.take (Sub.make d [| Rig_support.touching [| Sub.read |] |]))
     ~buffers:[| require_some (B.borrow d m) |]
 
 (* A device reads memory while a host launch reads it: a wait for a write
@@ -507,7 +507,7 @@ let test_waits_beside_launch () =
         Rig.Point.wait first;
         let after =
           Rig.submit ~waits:[| first |]
-            (Run.make (Sub.make d [||]))
+            (Sub.take (Sub.make d [||]))
             ~buffers:[||]
         in
         Rig.Point.wait after;
@@ -590,7 +590,7 @@ let test_running () =
           Sub.make Rig.host
             [| Sub.launch ~refs:Sub.[| write 0 ~at:0 |] waiting ~params:16 |]
         in
-        let run = Run.make s and k = Sub.block s 0 in
+        let run = Sub.take s and k = Sub.block s 0 in
         Run.groups run k 1 1 1;
         Run.threads run k 1 1 1;
         Run.int64 run k 8 20_000_000_000L;
@@ -625,7 +625,7 @@ let test_keeps_callee () =
     (S.executable !address);
   let d =
     Domain.spawn (fun () ->
-        let run = Run.make s and k = Sub.block s 0 in
+        let run = Sub.take s and k = Sub.block s 0 in
         Run.groups run k 1 1 1;
         Run.threads run k 1 1 1;
         Run.int64 run k 16 20_000_000_000L;

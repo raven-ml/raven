@@ -185,7 +185,7 @@ let run_add d binary ~n a b =
   let refs = Sub.[| read 0 ~at:0; read 1 ~at:8; write 2 ~at:16 |] in
   let fn = require_some (Rig.Image.resolve image "add") in
   let s = Sub.make d [| Sub.launch ~refs fn ~params:32 |] in
-  let run = Sub.Run.make s and blk = Sub.block s 0 in
+  let run = Sub.take s and blk = Sub.block s 0 in
   Sub.Run.groups run blk ((n + 63) / 64) 1 1;
   Sub.Run.threads run blk 64 1 1;
   Sub.Run.int64 run blk 24 (Int64.of_int n);

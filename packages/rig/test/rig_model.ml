@@ -698,7 +698,7 @@ let take_device kind =
 let drain d =
   if not (Rig.equal d Rig.host || Rig.equal d Rig_disk.device) then
     Rig.Point.wait
-      (Rig.submit (Sub.Run.make (Sub.make d [||])) ~buffers:[||])
+      (Rig.submit (Sub.take (Sub.make d [||])) ~buffers:[||])
 
 let give_device s =
   match s.skind with
@@ -1796,7 +1796,7 @@ let submit_sys last rc wc sc =
     if Rig.equal (B.device b) sub.sd then b
     else Option.value (B.borrow sub.sd b) ~default:b
   in
-  let run = Sub.Run.make sub.s in
+  let run = Sub.take sub.s in
   (match sub.work with
   | Copy -> ()
   | Fill | Launch ->

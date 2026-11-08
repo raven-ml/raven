@@ -11,7 +11,7 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits (Sub.Run.make s) ~buffers
+  Rig.submit ?waits (Sub.take s) ~buffers
 
 let timeout = 60.
 
@@ -149,7 +149,7 @@ let bump = Sub.fill ~refs:[| Sub.write 0 ~at:0 |] Support.bump ~params:8
 let submit_parts ?(buffers = [||]) d parts =
   let buffers = Array.map (fun b -> require_some (B.borrow d b)) buffers in
   let s = Sub.make d parts in
-  let run = Sub.Run.make s in
+  let run = Sub.take s in
   (* Parameters a fresh run holds read 0; a fill's grid is never read. *)
   Array.iteri
     (fun i _ ->

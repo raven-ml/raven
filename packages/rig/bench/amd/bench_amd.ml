@@ -57,7 +57,7 @@ let dev () =
 
 (* A run of the prepared submission of [parts] on [t]. *)
 let prepare ?keep ?fixed t parts =
-  Rig.Submission.(Run.make (make ?keep ?fixed t.d parts))
+  Rig.Submission.(take (make ?keep ?fixed t.d parts))
 
 let submit t r =
   let p = Rig.submit r ~buffers:[||] in

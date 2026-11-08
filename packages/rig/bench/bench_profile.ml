@@ -20,7 +20,7 @@ let submits n =
       (let d = Result.get_ok (Rig.memory_device "bench:profile") in
        let src = Rig.Buffer.create d 64 and dst = Rig.Buffer.create d 64 in
        Rig.Submission.(
-         Run.make (make d [| copy ~src:(Buffer src) ~dst:(Buffer dst) |])))
+         take (make d [| copy ~src:(Buffer src) ~dst:(Buffer dst) |])))
   in
   fun () ->
     let run = Lazy.force copy in

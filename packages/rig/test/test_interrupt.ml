@@ -262,9 +262,9 @@ let waiting =
     (fun d _ ->
       let producer, pp = P.open_ (fresh "producer") in
       producers := (producer, pp) :: !producers;
-      let v = once (Sub.Run.make (Sub.make producer [||])) in
+      let v = once (Sub.take (Sub.make producer [||])) in
       let s = Sub.make d [||] in
-      let run = Sub.Run.make s in
+      let run = Sub.take s in
       Rig.Point.wait (Rig.submit run ~buffers:[||] ~waits:[| v |]))
 
 (* Each device's run that [kept_run] submits with: of a copy, and of a fill
@@ -273,7 +273,7 @@ let kept =
   Rig.Local.new_key (fun d ->
       let fill = Sub.fill Rig_support.noop ~params:0 in
       let copy = Sub.copy ~src:(Slot 0) ~dst:(Slot 1) in
-      let run = Sub.Run.make (Sub.make d [| copy; fill |]) in
+      let run = Sub.take (Sub.make d [| copy; fill |]) in
       Sub.Run.release run;
       run)
 
@@ -297,7 +297,7 @@ let interrupt_timed n =
       let d, _ = P.open_ (fresh "timed") in
       let s = Sub.make d [| Sub.copy ~src:(Slot 0) ~dst:(Slot 1) |] in
       let buffers = [| B.create d 8; B.create d 8 |] in
-      let run = Sub.Run.make s in
+      let run = Sub.take s in
       let wait () = Rig.Point.wait (once ~buffers run) in
       let submit () = ignore (Rig.Profile.take wait) in
       submit ();
@@ -306,7 +306,7 @@ let interrupt_timed n =
       let got = outcome (fun () -> interrupting (Nth n) (ref None) submit) in
       mem ~msg:"outcome" string got [ "done"; "raised Injected" ];
       equal ~msg:"lost" (option string) None (Rig.lost d);
-      Rig.Point.wait (once (Sub.Run.make (Sub.make d [||])));
+      Rig.Point.wait (once (Sub.take (Sub.make d [||])));
       submit ();
       equal ~msg:"breaches" (list string) [] (List.drop seen (P.violations ()));
       got = "raised Injected")
@@ -381,7 +381,7 @@ let[@inline never] submit_kept d runs =
   for _ = 1 to kept_values do
     let v = ref () in
     Gc.finalise (fun _ -> Atomic.incr runs) v;
-    ignore (once (Sub.Run.make (Sub.make ~keep:v d [||])))
+    ignore (once (Sub.take (Sub.make ~keep:v d [||])))
   done
 
 (* Interrupts a drain that finds collected submissions keeping values, from
@@ -580,11 +580,11 @@ let probes () =
   let fill = Option.get (Rig.Image.resolve image "fill") in
   (* Lost by a wait's fault, which leaves its stop owed. *)
   let own, own_p = P.open_ ~transport:true (fresh "reenter:own-word") in
-  let own_pt = Rig.submit (Sub.Run.make (Sub.make own [||])) ~buffers:[||] in
+  let own_pt = Rig.submit (Sub.take (Sub.make own [||])) ~buffers:[||] in
   P.fault own_p "the engine hung";
   (try Rig.Point.wait own_pt with Rig.Lost _ -> ());
   let b = B.create d 64 and b' = B.create d 64 and h = B.create Rig.host 64 in
-  let run = Sub.Run.make (Sub.make d [||]) in
+  let run = Sub.take (Sub.make d [||]) in
   let pt = Rig.submit run ~buffers:[||] in
   let set = Rig.Local.new_key (fun _ -> 0) in
   let unset = Rig.Local.new_key (fun _ -> 0) in
@@ -655,10 +655,8 @@ let probes () =
       free "Image.threads" (fun () -> ignore (Rig.Image.threads fill));
       free "Image.entry" (fun () -> ignore (Rig.Image.entry fill));
       free "Submission.read" (fun () -> ignore (Sub.read 0 ~at:0));
-      free "Submission.Run.make" (fun () ->
-          ignore (Sub.Run.make (Sub.Run.submission run)));
-      free "Submission.Run.take" (fun () ->
-          if Sub.Run.take run then Sub.Run.release run);
+      free "Submission.take" (fun () ->
+          Sub.Run.release (Sub.take (Sub.Run.submission run)));
       free "Profile.enabled" (fun () -> ignore (Rig.Profile.enabled ()));
       free "Local.new_key" (fun () -> ignore (Rig.Local.new_key ignore));
       free ~what:"Local.get of a set value" "Local.get" (fun () ->
@@ -919,8 +917,8 @@ let held ?(but_maps = false) p =
 (* A submit on [d] whose queue waits on a new producer's value. *)
 let waits_on_producer d =
   let producer, pp = P.open_ (fresh "making:producer") in
-  let v = once (Sub.Run.make (Sub.make producer [||])) in
-  let run = Sub.Run.make (Sub.make d [||]) in
+  let v = once (Sub.take (Sub.make producer [||])) in
+  let run = Sub.take (Sub.make d [||]) in
   ( [ (producer, pp) ],
     fun () -> Rig.Point.wait (Rig.submit run ~buffers:[||] ~waits:[| v |]) )
 
@@ -959,7 +957,7 @@ let makings =
         let d, p = P.open_ (fresh "making:code") in
         ( [ (d, p) ],
           fun () ->
-            let after = Sub.Run.make (Sub.make d [||]) in
+            let after = Sub.take (Sub.make d [||]) in
             ignore (Result.get_ok (Rig.Image.load d "code:64"));
             Rig.Point.wait (once after) ));
     making ~words:true "a submit that maps rig's array to wait on a producer"

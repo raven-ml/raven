@@ -1506,11 +1506,11 @@ end
     {- It loads an image ({!Image.load}), resolves its functions
        ({!Image.resolve}), and makes a submission of parts that launch them
        ({!Submission.make}).}
-    {- It makes a run of the submission ({!Submission.Run.make}), which
-       holds the launches' grids and parameters, and stores them.}
-    {- It calls {!submit} with the run and this submit's buffers. For each
-       later submit it takes the run ({!Submission.Run.take}), stores new
-       parameters and submits again.}
+    {- It takes a run of the submission ({!Submission.take}), which holds
+       the launches' grids and parameters, and stores them.}
+    {- It calls {!submit} with the run and this submit's buffers, which
+       frees the run. Each later submit takes a run again, stores its
+       parameters and submits it.}
     {- Once the submission is unreachable, its memory returns after the
        work of its last submit is done.}}
     {!section-host_objects} has an example. *)
@@ -1666,7 +1666,7 @@ end
     let add = Option.get (Rig.Image.resolve image "add") in
     let refs = Submission.[| read 0 ~at:0; read 1 ~at:8; write 2 ~at:16 |] in
     let s = Submission.(make host [| launch ~refs add ~params:32 |]) in
-    let run = Submission.Run.make s and k = Submission.block s 0 in
+    let run = Submission.take s and k = Submission.block s 0 in
     Submission.Run.groups run k 64 1 1;
     Submission.Run.threads run k ((n + 63) / 64) 1 1;
     Submission.Run.int64 run k 24 (Int64.of_int n);
@@ -1797,9 +1797,9 @@ end
     and launches. It is made once and run many times. The buffers and the
     points to wait for change from one run to the next, so they are
     arguments of {!submit}, and so are the launch parameters, which a
-    {!Submission.Run} holds. A submission holds nothing of a run, so any
-    number of domains or threads submit it concurrently, each with its own
-    run.
+    {!Submission.Run} holds. Any number of domains or threads submit one
+    submission concurrently, each through a run that it alone has taken
+    while it stores and submits ({!Submission.take}).
 
     A submission's {e fixed memory} is the buffers that every run uses and
     that neither a part nor a submit names, such as an argument buffer and
@@ -2001,38 +2001,16 @@ module Submission : sig
 
     type t
     (** The type for runs: the storage of one submission's launch and fill
-        blocks, for one submit at a time. A library that submits from
-        several domains keeps a few runs beside each submission it caches: a
-        call takes the first run whose {!take} is [true], and otherwise makes
-        one and adds it, and releases the run ({!release}) if the call
-        raises before its submit. *)
-
-    val make : submission -> t
-    (** [make s] is a run of [s] holding every block of [s], outside the
-        OCaml heap, taken by the calling thread ({!take}). Its bytes read [0]
-        until stored, and keep their last store across submits.
-
-        Raises [Stdlib.Out_of_memory] if the host has no memory for it. *)
+        blocks, outside the OCaml heap, for one submit at a time.
+        {!Submission.take} hands them out. *)
 
     val submission : t -> submission
     (** [submission r] is the submission whose blocks [r] holds. *)
 
-    val take : t -> bool
-    (** [take r] reserves [r] for the calling thread's stores and its next
-        submit of [r], and is [true]; or is [false], reserving nothing, if
-        [r] is reserved or a submit of it is under way. It is one atomic step
-        and allocates nothing. A run of a submission with no launch or fill
-        holds no bytes: [take] is [true] and reserves nothing, and any number
-        of submits of it run concurrently.
-
-        A run stays taken until the thread that took it releases or submits
-        it. A run taken by a thread that ends without doing either stays
-        taken, as does, in a child of [fork], one that another thread of the
-        parent had taken. *)
-
     val release : t -> unit
-    (** [release r] ends the calling thread's reservation of [r], keeping
-        its bytes. It does nothing if the thread does not hold [r]. *)
+    (** [release r] frees [r], which the calling thread has taken, keeping
+        its bytes, so that a take may return it. It does nothing if the
+        thread has not taken [r]. *)
 
     (** {1:blocks Blocks}
 
@@ -2106,6 +2084,28 @@ module Submission : sig
       t -> block -> (int[@untagged]) -> (float[@unboxed]) -> unit
       = "caml_rig_run_float64_byte" "caml_rig_run_float64"
   end
+
+  val take : t -> Run.t
+  (** [take s] is a run of [s] that the calling thread has taken for its
+      stores and its next submit: the first of [s]'s runs that is free, or
+      else a new one, whose bytes read [0]. A take makes a run only when
+      every run it tried was taken. [s] keeps its runs for its life, and
+      [take] allocates nothing when it finds a free one. A caller that is
+      [s]'s only taker and takes one run at a time gets the same run every
+      time, which keeps its stores.
+
+      A run holds what its last taker stored, so any other caller must store
+      every byte its submit reads, or its work runs with another caller's
+      grid or parameters. {!submit} frees the run, and a caller that raises
+      before its submit must release it ({!Run.release}). A run stays taken
+      until its thread releases or submits it: one taken by a thread that
+      has ended stays taken, as does, in a child of [fork], one that another
+      thread of the parent had taken. A submission with no launch or fill
+      has one run, holding no bytes, which every take returns and any number
+      of submits use concurrently.
+
+      Raises [Stdlib.Out_of_memory] if the host has no memory for a new
+      run. *)
 end
 
 (** {3:valid Valid submissions}
@@ -2156,7 +2156,7 @@ val submit :
 
     [submit] uses [r] until it returns or raises, and frees it then, a
     submit made inside a lock ({!section-domains}) included: a run the
-    calling thread has taken ({!Submission.Run.take}), or a free one, which
+    calling thread has taken ({!Submission.take}), or a free one, which
     [submit] takes itself. A run that holds no bytes it uses without taking
     it.
 

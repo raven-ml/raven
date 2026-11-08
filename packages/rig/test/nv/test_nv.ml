@@ -600,7 +600,7 @@ let high_word () =
   let word = require_some (P.locate (P.facts p).word).host in
   at_least int ~msg:"the word's host address" ~than:(1 lsl 40) word;
   let empty = Rig.Submission.make pd [||] in
-  let run = Rig.Submission.Run.make empty in
+  let run = Rig.Submission.take empty in
   let point = Rig.submit run ~buffers:[||] in
   let b = alloc t.g Pinned 16 in
   H.set64 (host b) 0;
@@ -608,7 +608,7 @@ let high_word () =
   let s = Rig.Submission.make t.d [| S.words (release l (address b) 9) |] in
   S.watchdog "a wait on a high host word" (fun () ->
       let v =
-        Rig.submit (Rig.Submission.Run.make s) ~waits:[| point |] ~buffers:[||]
+        Rig.submit (Rig.Submission.take s) ~waits:[| point |] ~buffers:[||]
       in
       still ~msg:"the word" int
         (Rig.Point.value v - 1)
@@ -630,14 +630,14 @@ let many_waits () =
   let close () = List.iter (fun (d, _) -> Rig.close d) producers in
   Fun.protect ~finally:close @@ fun () ->
   let point (d, _) =
-    let run = Rig.Submission.Run.make (Rig.Submission.make d [||]) in
+    let run = Rig.Submission.take (Rig.Submission.make d [||]) in
     Rig.submit run ~buffers:[||]
   in
   let points = Array.of_list (List.map point producers) in
   let s = Rig.Submission.make t.d [||] in
   S.watchdog "a submission of 300 waits" (fun () ->
       let v =
-        Rig.submit (Rig.Submission.Run.make s) ~waits:points ~buffers:[||]
+        Rig.submit (Rig.Submission.take s) ~waits:points ~buffers:[||]
       in
       let reached = List.filter (fun (_, p) -> P.queued p = 0) producers in
       equal int ~msg:"producers reached on the host" 0 (List.length reached);
@@ -713,7 +713,7 @@ let launching ?(kernel = "ids") ?(params = 24) d ~groups:(gx, gy, gz)
   let s =
     Sub.make d [| launch_part image kernel ~params [| refer 0 0 |] |]
   in
-  let run = Run.make s in
+  let run = Sub.take s in
   let b = Sub.block s 0 in
   Run.groups run b gx gy gz;
   Run.threads run b tx ty tz;
@@ -807,7 +807,7 @@ let static_shared () =
         Sub.make d
           [| turn 0; turn 1 |]
       in
-      let run = Run.make s in
+      let run = Sub.take s in
       Array.iteri
         (fun i k ->
           let blk = Sub.block s i in
@@ -879,7 +879,7 @@ let jump_table () =
               [| refer 0 1; refer ~use:Sub.read 8 0 |];
           |]
       in
-      let run = Run.make s in
+      let run = Sub.take s in
       let b = Sub.block s 0 in
       Run.groups run b 1 1 1;
       Run.threads run b n 1 1;
@@ -901,7 +901,8 @@ let no_allocation () =
   let buffers = [| B.create d 4096 |] in
   let b = Sub.block (Run.submission run) 0 in
   let once i =
-    if not (Run.take run) then fail "the run is taken";
+    if Sub.take (Sub.Run.submission run) != run then
+      fail "the run is taken";
     Run.groups run b 1 1 1;
     Run.threads run b 32 1 1;
     Run.shared run b 0;
@@ -942,7 +943,7 @@ let launch_copy_launch () =
           [| refer 0 2; refer ~use:Sub.read 8 1 |];
       |]
   in
-  let run = Run.make s in
+  let run = Sub.take s in
   let b0 = Sub.block s 0 and b2 = Sub.block s 2 in
   Run.groups run b0 (n / 256) 1 1;
   Run.threads run b0 256 1 1;
@@ -968,7 +969,8 @@ let launches_wrap () =
   let b = Sub.block (Run.submission run) 0 in
   let last = ref None in
   for i = 0 to n - 1 do
-    if not (Run.take run) then fail "the run is taken";
+    if Sub.take (Sub.Run.submission run) != run then
+      fail "the run is taken";
     ids_params run b ~offset:(4 * i) ~a:i ~b:0;
     last := Some (submitted run ~buffers:[| out |])
   done;
@@ -984,7 +986,7 @@ let numbered d n =
       (Array.init n (fun _ ->
            launch_part image "ids" ~params:24 [| refer 0 0 |]))
   in
-  let run = Run.make s in
+  let run = Sub.take s in
   for i = 0 to n - 1 do
     let b = Sub.block s i in
     Run.groups run b 1 1 1;
@@ -1097,7 +1099,7 @@ let local_launch () =
     Sub.make d
       [| launch_part (kernel_image d) "stack" ~params:12 [| refer 0 0 |] |]
   in
-  let run = Run.make s in
+  let run = Sub.take s in
   let b = Sub.block s 0 in
   Run.groups run b (n / 256) 1 1;
   Run.threads run b 256 1 1;
@@ -1121,12 +1123,13 @@ let grid_parameters (groups, threads) =
       (Array.init 2 (fun i ->
            launch_part image "grid_params" ~params:24 [| refer 0 i |]))
   in
-  let run = Run.make s in
+  let run = Sub.take s in
   Run.release run;
   let values = [| 0; 0x7fff_ffff; 0x8000_0000; 0xffff_ffff |] in
   let value round part i = values.(i mod 4) lxor ((round * 7) + part) in
   for round = 0 to 2 do
-    if not (Run.take run) then fail "the run is taken";
+    if Sub.take (Sub.Run.submission run) != run then
+      fail "the run is taken";
     Array.iteri
       (fun part _ ->
         let b = Sub.block s part in
@@ -1296,7 +1299,7 @@ let join_alternation () =
            whole image at every value. *)
         let parts = if i > n - 16 then large else small in
         let s = Sub.make ~fixed t.d parts.(i land 1) in
-        Rig.Point.wait (Rig.submit (Run.make s) ~buffers:[||])
+        Rig.Point.wait (Rig.submit (Sub.take s) ~buffers:[||])
       done);
   equal int ~msg:"the compute part's release" 1 (H.get64 (host scratch));
   equal int ~msg:"the copied bytes" (-1) (S.mismatch ha bytes 7);
@@ -1414,7 +1417,7 @@ let joined_parts () =
     else copy_part ~dst:(B.view out ~first:(4 * (i / 2)) ~length:4) cell
   in
   let s = Sub.make t.d (Array.init (2 * n) part) in
-  let run = Run.make s in
+  let run = Sub.take s in
   for j = 0 to n - 1 do
     let b = Sub.block s (2 * j) in
     Run.groups run b 1 1 1;
@@ -1725,7 +1728,7 @@ let no_local_memory () =
   let s =
     Sub.make d [| launch_part image "shallow" ~params:12 [| refer 0 0 |] |]
   in
-  let run = Run.make s in
+  let run = Sub.take s in
   let b = Sub.block s 0 in
   Run.groups run b (n / 256) 1 1;
   Run.threads run b 256 1 1;

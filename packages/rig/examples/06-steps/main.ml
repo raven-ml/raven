@@ -50,7 +50,7 @@ let step d =
   let refs = Submission.[| write 1 ~at:0; read 0 ~at:8 |] in
   let part = Submission.fill (scale ()) ~params:32 ~refs in
   let s = Submission.make ~keep:held ~fixed:[ (k, Read) ] d [| part |] in
-  let run = Submission.Run.make s in
+  let run = Submission.take s in
   let block = Submission.block s 0 in
   Submission.Run.int64 run block 16 (Int64.of_int (Submission.address s k));
   Submission.Run.int64 run block 24 (Int64.of_int n);

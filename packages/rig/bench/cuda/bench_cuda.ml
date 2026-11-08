@@ -24,7 +24,7 @@ let get = function Ok x -> x | Error why -> failwith why
 (* The point of an empty submission on [d]: the last point a row waits for
    until it submits. *)
 let first_point d =
-  Rig.submit (Rig.Submission.Run.make (Rig.Submission.make d [||]))
+  Rig.submit (Rig.Submission.take (Rig.Submission.make d [||]))
     ~buffers:[||]
 
 (* GPU 0, opened through rig. *)
@@ -33,7 +33,7 @@ let dev () =
   { d; g; v = 0; last = first_point d }
 
 (* A run of the prepared submission of [parts] on [t]. *)
-let prepare t parts = Rig.Submission.(Run.make (make t.d parts))
+let prepare t parts = Rig.Submission.(take (make t.d parts))
 
 let prepare_fill t f =
   let run, buffers = Rig_gpu_support.prepare t.d [ S.part t.d f ] in

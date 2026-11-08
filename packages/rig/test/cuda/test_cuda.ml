@@ -490,7 +490,7 @@ let launching ?(kernel = "ids") ?(params = 24) d ~groups:(gx, gy, gz)
   let refs = [| Sub.write 0 ~at:0 |] in
   let fn = require_some (Rig.Image.resolve (launch_image d) kernel) in
   let s = Sub.make d [| Sub.launch ~refs fn ~params |] in
-  let run = Run.make s in
+  let run = Sub.take s in
   let b = Sub.block s 0 in
   Run.groups run b gx gy gz;
   Run.threads run b tx ty tz;
@@ -569,7 +569,8 @@ let no_allocation () =
   let b = Sub.block (Run.submission run) 0 in
   (* [float64] stores first, where [int64] then stores [a]. *)
   let once i =
-    if not (Run.take run) then fail "the run is taken";
+    if Sub.take (Sub.Run.submission run) != run then
+      fail "the run is taken";
     Run.groups run b 1 1 1;
     Run.threads run b 32 1 1;
     Run.shared run b 0;

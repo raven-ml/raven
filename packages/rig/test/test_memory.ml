@@ -13,7 +13,7 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits (Sub.Run.make s) ~buffers
+  Rig.submit ?waits (Sub.take s) ~buffers
 
 let timeout = Rig_support.time 60.
 let kib = 1024
@@ -38,7 +38,7 @@ let collect d =
    waits for that work. *)
 let[@inline never] dropped_written ?memory s d n =
   let b = B.create ?memory d n in
-  ignore (Rig.submit (Sub.Run.make s) ~buffers:[| b |]);
+  ignore (Rig.submit (Sub.take s) ~buffers:[| b |]);
   Support.at b
 
 let last n l = List.filteri (fun i _ -> i >= List.length l - n) l

@@ -17,7 +17,7 @@ same calls, as in [01-add](../01-add/).
 
 - Memory devices: `Rig.memory_device`
 - Submissions made once and submitted many times, each submit with a run:
-  `Submission.make`, `Submission.Run.make`, `submit`
+  `Submission.make`, `Submission.take`, `submit`
 - Parts ordered by the memory they share
 - Points and values: `Point.pp`, `Point.reached`, `submitted`, `signaled`
 - An empty submission, whose point is reached once all earlier work has
@@ -29,7 +29,7 @@ same calls, as in [01-add](../01-add/).
 | ------------------------- | ----------------------------------------------- |
 | `memory_device name`      | A device with a timeline, in host memory        |
 | `Submission.make d parts` | Work for `d`, made once                         |
-| `Submission.Run.make s`   | Storage of `s`'s parameters, a submit at a time |
+| `Submission.take s`       | Storage of `s`'s parameters, a submit at a time |
 | `submit r ~buffers`       | Run `r`'s submission once and return its point  |
 | `Point.reached p`         | Whether `p`'s device has reached it             |
 

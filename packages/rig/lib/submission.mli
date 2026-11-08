@@ -21,9 +21,9 @@
 
     A submit's state, what it collects and answers, is a {e call}
     ([struct rig_call] in [rig_stubs.h]): C memory that one submit at a time
-    takes from every call made, and that is never freed, so their number is
-    the most submits that ever ran at once, and a warm submit allocates no
-    call. A submit goes like this:
+    takes from every call made, and that is never freed. A submit makes a
+    call only when every call it tried was taken, and a warm submit
+    allocates no call. A submit goes like this:
     + In one C call, it moves the caller's run to submitting, from the
       calling thread's taking or from free, unless the run holds no bytes,
       and takes a free call, fitted to the submission unless it served it
@@ -137,13 +137,21 @@ module Run : sig
   (** {!Rig.Submission.Run.t}. *)
 
   val make : submission -> t
-  (** [make s] is {!Rig.Submission.Run.make}[ s]. *)
+  (** [make s] is a run of [s] holding every block of [s], each byte [0],
+      taken by the calling thread ({!take}) unless it holds no bytes. It
+      makes the new runs a submission's [take] hands out, and the runs of
+      {!run_copy}, {!run_set} and {!mark}.
+
+      Raises [Stdlib.Out_of_memory] if the host has no memory for it. *)
 
   val submission : t -> submission
   (** [submission r] is {!Rig.Submission.Run.submission}[ r]. *)
 
   external take : t -> bool = "caml_rig_run_take" [@@noalloc]
-  (** {!Rig.Submission.Run.take}. *)
+  (** [take r] takes [r] for the calling thread, and is [true]; or is
+      [false], taking nothing, if [r] is taken or a submit of it is under
+      way. It is one atomic step. A run that holds no bytes is never taken:
+      [take] is [true]. *)
 
   external release : t -> unit = "caml_rig_run_release" [@@noalloc]
   (** {!Rig.Submission.Run.release}. *)
@@ -187,6 +195,11 @@ module Run : sig
     = "caml_rig_run_float64_byte" "caml_rig_run_float64"
   (** {!Rig.Submission.Run.float64}. *)
 end
+
+val take : t -> Run.t
+(** [take s] is {!Rig.Submission.take}[ s]. [s] keeps its runs in a list
+    that grows by compare-and-set and never shrinks. A take walks the list
+    it read, so two takes that overlap may each make a run. *)
 
 val submit : ?waits:int array -> Run.t -> buffers:buffer array -> int
 (** [submit ~waits r ~buffers] is {!Rig.submit}[ ~waits r ~buffers]. *)

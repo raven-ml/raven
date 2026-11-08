@@ -10,7 +10,7 @@ devices, and host code. `14-machines` uses another machine's devices.
 | [`01-add`](./01-add/) | A kernel on the first GPU here, or on the host's cores | `Rig_gpus.paths`, `Image.load`, `Submission.launch`, `submit` |
 | [`02-buffers`](./02-buffers/) | Bytes of a device's memory, on the host | `Buffer.create`, `of_bigarray`, `read`, `write`, `view`, `copy` |
 | [`03-files`](./03-files/) | Files as the disk's memory, copied or borrowed | `Rig_disk.create_file`, `of_file`, `barrier`, `Buffer.borrow` |
-| [`04-timelines`](./04-timelines/) | Submissions, values and points | `memory_device`, `Submission.make`, `Submission.Run.make`, `submit` |
+| [`04-timelines`](./04-timelines/) | Submissions, values and points | `memory_device`, `Submission.make`, `Submission.take`, `submit` |
 | [`05-stamps`](./05-stamps/) | Work across devices, ordered by the memory it touches | `reaches`, `Buffer.borrow`, `Buffer.read`, `Buffer.write` |
 | [`06-steps`](./06-steps/) | A step made once and run many times | `Submission.fill`, `Submission.make ~keep ~fixed`, `Submission.address` |
 | [`07-reclamation`](./07-reclamation/) | Memory that returns without a free | `budget`, `set_budget`, `allocated`, `Out_of_memory` |

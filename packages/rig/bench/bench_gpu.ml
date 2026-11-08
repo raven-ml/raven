@@ -170,7 +170,7 @@ let work part keep =
 let gpu_rows ?graph v ~opened ~kernel =
   let rig () =
     let g, _ = opened () in
-    (g, Sub.Run.make (Sub.make g [||]), ref 0)
+    (g, Sub.take (Sub.make g [||]), ref 0)
   in
   (* A device whose last value is reached. *)
   let reached () =

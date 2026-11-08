@@ -53,7 +53,8 @@ let submit run = Rig.submit run ~buffers:[||]
 let submit_read run bs = ignore (Rig.submit run ~buffers:bs)
 
 (* Takes [run] for the row's stores, which no other call holds. *)
-let take run = if not (Sub.Run.take run) then failwith "the run is taken"
+let take run =
+  if Sub.take (Sub.Run.submission run) != run then failwith "the run is taken"
 
 (* Submits *)
 
@@ -61,27 +62,27 @@ let take run = if not (Sub.Run.take run) then failwith "the run is taken"
 
 let empty () =
   let t = dev () in
-  (t, Sub.Run.make (Sub.make t.d [||]))
+  (t, Sub.take (Sub.make t.d [||]))
 
 let costing () =
   let t = dev () in
-  (t, Sub.Run.make (costing_sub t.d))
+  (t, Sub.take (costing_sub t.d))
 
 let reading () =
   let t = dev () in
   let s = costing_sub ~uses:(Array.make slots Sub.read) t.d in
-  (t, Sub.Run.make s, words t.d slots)
+  (t, Sub.take s, words t.d slots)
 
 (* Buffers of another device, its last write reached, borrowed on [t]'s. *)
 let foreign () =
   let t = dev () and o = dev () in
   let bs = words o.d slots in
   let w = costing_sub ~uses:(Array.make slots Sub.write) o.d in
-  let p = Rig.submit (Sub.Run.make w) ~buffers:bs in
+  let p = Rig.submit (Sub.take w) ~buffers:bs in
   ignore (P.run o.p);
   Rig.Point.wait p;
   let s = costing_sub ~uses:(Array.make slots Sub.read) t.d in
-  (t, Sub.Run.make s, Array.map (fun b -> Option.get (B.borrow t.d b)) bs)
+  (t, Sub.take s, Array.map (fun b -> Option.get (B.borrow t.d b)) bs)
 
 (* A submission whose queue waits for a pending point of each of [waiters]
    other devices: each submit checks every wait under the device's mutex and
@@ -109,13 +110,13 @@ let waiting ~transport () =
   let d, p = P.open_ ~waits_on:[ `Host ] (strf "bench:%d" !opened) in
   let producer _ =
     let o = dev ~transport () in
-    (o, Sub.Run.make (Sub.make o.d [||]))
+    (o, Sub.take (Sub.make o.d [||]))
   in
   let producers = Array.init waiters producer in
   {
     t = { d; p; n = 0 };
     producers;
-    run = Sub.Run.make (costing_sub d);
+    run = Sub.take (costing_sub d);
     points = Array.map (fun (_, run) -> submit run) producers;
   }
 
@@ -138,7 +139,7 @@ let contended () =
   let other = { t with n = 0 } and s' = costing_sub t.d in
   let rival =
     Domain.spawn (fun () ->
-        let run' = Sub.Run.make s' in
+        let run' = Sub.take s' in
         while not (Atomic.get stop) do
           ignore (submit run');
           drained other
@@ -155,7 +156,7 @@ let fixing () =
   let fixed =
     List.map (fun b -> (b, Rig.Read)) (Array.to_list (words t.d fixed))
   in
-  (t, Sub.Run.make (Sub.make ~fixed t.d [||]))
+  (t, Sub.take (Sub.make ~fixed t.d [||]))
 
 (* A launch whose 8 refs name a run of 4 reads and 4 writes: each submit stores
    the refs' offsets, as a caller does for each call. *)
@@ -170,7 +171,7 @@ let launching () =
   in
   let fn = Option.get (Rig.Image.resolve image "main") in
   let s = Sub.make t.d [| Sub.launch ~refs:rs fn ~params:(8 * refs) |] in
-  let run = Sub.Run.make s and b = Sub.block s 0 in
+  let run = Sub.take s and b = Sub.block s 0 in
   Sub.Run.groups run b 1 1 1;
   Sub.Run.threads run b 1 1 1;
   Sub.Run.release run;
@@ -185,32 +186,18 @@ let storing () =
   let image = Result.get_ok (Rig.Image.load t.d "functions") in
   let fn = Option.get (Rig.Image.resolve image "main") in
   let s = Sub.make t.d [| Sub.launch fn ~params:(4 * stores) |] in
-  let run = Sub.Run.make s and b = Sub.block s 0 in
+  let run = Sub.take s and b = Sub.block s 0 in
   Sub.Run.groups run b 1 1 1;
   Sub.Run.threads run b 1 1 1;
   Sub.Run.release run;
   (t, run, b)
 
-(* A library's runs of one submission of two launches, as Rig.Submission.Run
-   says to keep them: a call takes the first run whose take is true, and
-   otherwise makes one and adds it. Once warm, a call allocates nothing. *)
-type pool = { sub : Sub.t; runs : Sub.Run.t list Atomic.t }
-
-let rec add_run p r =
-  let l = Atomic.get p.runs in
-  if not (Atomic.compare_and_set p.runs l (r :: l)) then add_run p r
-
-let rec first_run p = function
-  | r :: rest -> if Sub.Run.take r then r else first_run p rest
-  | [] ->
-      let r = Sub.Run.make p.sub in
-      add_run p r;
-      r
-
-(* A call: its two launches' parameters stored, then a submit, the run
-   released if a store raises. *)
+(* A library's call on a submission of two launches, through a run the
+   submission hands out: its two launches' parameters stored, then a submit,
+   the run released if a store raises. Once warm, a call allocates
+   nothing. *)
 let pooled p blocks buffers =
-  let run = first_run p (Atomic.get p.runs) in
+  let run = Sub.take p in
   match
     Sub.Run.int64 run (Array.unsafe_get blocks 0) 0 0L;
     Sub.Run.int64 run (Array.unsafe_get blocks 1) 0 0L
@@ -227,8 +214,8 @@ let pool_contended () =
   let image = Result.get_ok (Rig.Image.load t.d "functions") in
   let fn = Option.get (Rig.Image.resolve image "main") in
   let main = Sub.launch ~refs:[| Sub.write 0 ~at:0 |] fn ~params:8 in
-  let p = { sub = Sub.make t.d [| main; main |]; runs = Atomic.make [] } in
-  let blocks = [| Sub.block p.sub 0; Sub.block p.sub 1 |] in
+  let p = Sub.make t.d [| main; main |] in
+  let blocks = [| Sub.block p 0; Sub.block p 1 |] in
   let geometry r =
     Array.iter
       (fun b ->
@@ -238,9 +225,8 @@ let pool_contended () =
     Sub.Run.release r
   in
   (* Two runs, so that neither domain's warm call makes one. *)
-  let runs = [ Sub.Run.make p.sub; Sub.Run.make p.sub ] in
+  let runs = [ Sub.take p; Sub.take p ] in
   List.iter geometry runs;
-  List.iter (add_run p) runs;
   let stop = Atomic.make false and other = { t with n = 0 } in
   let rival =
     Domain.spawn (fun () ->
@@ -371,7 +357,7 @@ let replaying () =
     in
     let part = Sub.fill ~refs Support.poke ~params:(16 + (8 * slots)) in
     let s = Sub.make t.d [| part |] in
-    let run = Sub.Run.make s in
+    let run = Sub.take s in
     Sub.Run.release run;
     let buffers = Array.append params [| B.create t.d 8 |] in
     { run; block = Sub.block s 0; buffers }
@@ -440,7 +426,7 @@ let written_chars n =
 let written d n =
   let bs = Array.init n (fun _ -> B.create d 8) in
   let w = costing_sub ~uses:(Array.make n Sub.write) d in
-  let p = Rig.submit (Sub.Run.make w) ~buffers:bs in
+  let p = Rig.submit (Sub.take w) ~buffers:bs in
   Rig.Point.wait p;
   bs
 
@@ -451,7 +437,7 @@ let written_twice () =
   let write d =
     let w = costing_sub ~uses:[| Sub.write |] d in
     let bd = Option.get (B.borrow d b) in
-    Rig.Point.wait (Rig.submit (Sub.Run.make w) ~buffers:[| bd |])
+    Rig.Point.wait (Rig.submit (Sub.take w) ~buffers:[| bd |])
   in
   write (memory ());
   write (memory ());
@@ -607,19 +593,19 @@ let[@inline never] warm_allocations d =
 
 let[@inline never] pending_buffers d n =
   let buffers = Array.init n (fun _ -> B.create d 64) in
-  let run = Sub.Run.make (Sub.make d [| Support.touching [| Sub.write |] |]) in
+  let run = Sub.take (Sub.make d [| Support.touching [| Sub.write |] |]) in
   Array.iter (fun b -> submit_read run [| b |]) buffers
 
 let[@inline never] pending_kept d n =
   for _ = 1 to n do
-    ignore (submit (Sub.Run.make (Sub.make ~keep:(Bytes.create 64) d [||])))
+    ignore (submit (Sub.take (Sub.make ~keep:(Bytes.create 64) d [||])))
   done
 
 let[@inline never] pending_images d n =
   let images =
     Array.init n (fun _ -> Result.get_ok (Rig.Image.load d "functions"))
   in
-  ignore (submit (Sub.Run.make (Sub.make d [||])));
+  ignore (submit (Sub.take (Sub.make d [||])));
   ignore (Sys.opaque_identity images)
 
 (* Every measured create faces the same pending population. Setup warms reusable
@@ -701,7 +687,7 @@ let device_rows =
     [
       Thumper.bench "open-close-memory" (fun () ->
           let d = Result.get_ok (Rig.memory_device "bench:open-close") in
-          ignore (submit (Sub.Run.make (Sub.make d [||])));
+          ignore (submit (Sub.take (Sub.make d [||])));
           Rig.close d);
     ]
 
@@ -710,7 +696,7 @@ let wait_rows =
     [
       row "reached"
         (fun () ->
-          submit (Sub.Run.make (Sub.make (memory ()) [||])))
+          submit (Sub.take (Sub.make (memory ()) [||])))
         Rig.Point.wait;
     ]
 

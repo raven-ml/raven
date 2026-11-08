@@ -743,7 +743,7 @@ let sums_in ?seed ~blocks m k =
             (sums_fn m k) ~params:32;
         |])
   in
-  let run = Rig.Submission.Run.make s in
+  let run = Rig.Submission.take s in
   let block = Rig.Submission.block s 0 in
   Rig.Submission.Run.groups run block blocks 1 1;
   Rig.Submission.Run.threads run block ((m + blocks - 1) / blocks) 1 1;

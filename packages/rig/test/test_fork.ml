@@ -13,7 +13,7 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits (Sub.Run.make s) ~buffers
+  Rig.submit ?waits (Sub.take s) ~buffers
 
 let timeout = 60.
 let empty d = Sub.make d [||]
@@ -318,7 +318,7 @@ let one_part d =
   s
 
 let submit_part s =
-  let run = Sub.Run.make s in
+  let run = Sub.take s in
   Sub.Run.groups run (Sub.block s 0) 0 0 0;
   Rig.submit run ~buffers:[||]
 

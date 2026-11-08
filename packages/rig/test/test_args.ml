@@ -16,8 +16,10 @@ let fill ?(params = 16) ?(refs = [| Sub.write 0 ~at:0 |]) fn =
 let submit run buffers = Rig.submit run ~buffers
 let word b at = Support.load (Support.Reader.host b + at)
 
-(* Takes [run] for the stores that follow, as no other call holds it. *)
-let take run = if not (Run.take run) then fail "the run is taken"
+(* Takes [run] for the stores that follow: its submission's one run, which
+   [Sub.take] returns while no other call holds it. *)
+let take run =
+  if Sub.take (Run.submission run) != run then fail "the run is taken"
 
 let store run block ~offset value =
   Run.int64 run block 0 (Int64.of_int offset);
@@ -29,7 +31,7 @@ let store run block ~offset value =
 let test_reuse () =
   let d, p = P.open_ "args:reuse" in
   let s = Sub.make d [| fill Support.poke |] in
-  let run = Run.make s and block = Sub.block s 0 in
+  let run = Sub.take s and block = Sub.block s 0 in
   let a = B.create d 24 and b = B.create d 24 in
   store run block ~offset:8 31;
   ignore (submit run [| a |]);
@@ -56,7 +58,7 @@ let test_reuse () =
 let test_synchronous () =
   let d = Result.get_ok (Rig.memory_device "args:sync") in
   let s = Sub.make d [| fill Support.poke |] in
-  let run = Run.make s and block = Sub.block s 0 in
+  let run = Sub.take s and block = Sub.block s 0 in
   let out = B.create d 16 in
   store run block ~offset:8 41;
   ignore (submit run [| out |]);
@@ -84,7 +86,7 @@ let test_mixed () =
         fill Support.poke;
       |]
   in
-  let run = Run.make s in
+  let run = Sub.take s in
   store run (Sub.block s 0) ~offset:0 17;
   Run.int64 run (Sub.block s 0) 4088 127L;
   let block = Sub.block s 1 in
@@ -106,7 +108,7 @@ let test_wide_fill () =
       Sub.make d
         [| fill ~params:8192 ~refs:[| Sub.write 0 ~at:8184 |] Support.far |]
     in
-    let run = Run.make s and block = Sub.block s 0 in
+    let run = Sub.take s and block = Sub.block s 0 in
     Run.int64 run block 4096 59L;
     Run.int64 run block 8184 8L;
     let out = B.create d 16 in
@@ -124,7 +126,7 @@ let test_refs () =
   let refs = [| Sub.write 0 ~at:0; Sub.read 1 ~at:8 |] in
   let s = Sub.make d [| fill ~params:24 ~refs Support.carry |] in
   refs.(0) <- Sub.read 1 ~at:16;
-  let run = Run.make s and block = Sub.block s 0 in
+  let run = Sub.take s and block = Sub.block s 0 in
   let src = B.create d 24 and dst = B.create d 24 in
   Support.store (Support.Reader.host src + 8) 101;
   Run.int64 run block 0 16L;
@@ -162,12 +164,12 @@ let test_refusals () =
   let other = make 16 [| at 0 0 |] in
   let out = B.create d 8 in
   raises_match ~msg:"too few buffers" Exn.invalid_arg (fun () ->
-      submit (Run.make s) [||]);
+      submit (Sub.take s) [||]);
   raises_match ~msg:"too many buffers" Exn.invalid_arg (fun () ->
-      submit (Run.make s) [| out; out |]);
+      submit (Sub.take s) [| out; out |]);
   equal ~msg:"a fresh run holds the blocks" int (base + 1)
-    (Rig.Point.value (submit (Run.make s) [| out |]));
-  let run = Run.make s in
+    (Rig.Point.value (submit (Sub.take s) [| out |]));
+  let run = Sub.take s in
   raises_match ~msg:"another submission's block" Exn.invalid_arg (fun () ->
       store run (Sub.block other 0) ~offset:0 1)
 
@@ -182,7 +184,7 @@ let test_handle_only () =
       [| fill Support.poke |]
   in
   raises_match Exn.invalid_arg (fun () -> Sub.address s out);
-  let run = Run.make s in
+  let run = Sub.take s in
   store run (Sub.block s 0) ~offset:0 1;
   raises_match Exn.invalid_arg (fun () -> submit run [| out |]);
   equal int base (Rig.submitted d)

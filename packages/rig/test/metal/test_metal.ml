@@ -1117,7 +1117,7 @@ let shared_law grid =
     Sub.make t.d
       [| launch image "neighbours" ~params:16 [ Sub.write 0 ~at:0 ] |]
   in
-  let run = Run.make s in
+  let run = Sub.take s in
   let k = Sub.block s 0 in
   set_grid run k grid;
   Run.shared run k (4 * per);
@@ -1181,7 +1181,7 @@ let no_params () =
   let t = dev () in
   let image = launch_image t.d in
   let s = Sub.make t.d [| launch image "empty" ~params:0 [] |] in
-  let run = Run.make s in
+  let run = Sub.take s in
   set_grid run (Sub.block s 0) one;
   let p = Rig.submit run ~buffers:[||] in
   wait t p;
@@ -1197,7 +1197,7 @@ let widest () =
     Sub.make t.d
       [| launch image "last" ~params:4096 [ Sub.write 0 ~at:4088 ] |]
   in
-  let run = Run.make s in
+  let run = Sub.take s in
   let k = Sub.block s 0 in
   set_grid run k one;
   for w = 0 to 1021 do
@@ -1217,7 +1217,7 @@ let past_set_bytes () =
     Sub.make t.d
       [| launch image "last" ~params:4097 [ Sub.write 0 ~at:4088 ] |]
   in
-  let run = Run.make s in
+  let run = Sub.take s in
   let k = Sub.block s 0 in
   set_grid run k one;
   for w = 0 to 1021 do
@@ -1262,7 +1262,7 @@ let arena_aligned () =
   let out = zeroed t.d (8 * n) in
   let where params = launch image "where" ~params [ Sub.write 0 ~at:0 ] in
   let s = Sub.make t.d (Array.map where sizes) in
-  let run = Run.make s in
+  let run = Sub.take s in
   for i = 0 to n - 1 do
     let k = Sub.block s i in
     set_grid run k one;
@@ -1292,15 +1292,16 @@ let arena () =
   in
   let wide = launch image "wide" ~params:8192 [ Sub.write 0 ~at:0 ] in
   let s = Sub.make t.d [| wide |] in
-  let run = Run.make s in
+  let run = Sub.take s in
   Run.release run;
   for i = 0 to values - 1 do
-    if not (Run.take run) then fail "the run is taken";
+    if Sub.take (Sub.Run.submission run) != run then
+      fail "the run is taken";
     set run (Sub.block s 0) i;
     ignore (Rig.submit run ~buffers:[| out |])
   done;
   let s = Sub.make t.d (Array.make together wide) in
-  let run = Run.make s in
+  let run = Sub.take s in
   for j = 0 to together - 1 do
     set run (Sub.block s j) (values + j)
   done;
@@ -1366,7 +1367,7 @@ let refused_geometry () =
       [| launch image "neighbours" ~params:16 [ Sub.write 0 ~at:0 ] |]
   in
   let refused ?(shared = 4) groups threads =
-    let run = Run.make s in
+    let run = Sub.take s in
     let k = Sub.block s 0 in
     raises_match Exn.invalid_arg (fun () ->
         set_grid run k { groups; threads };
@@ -1399,7 +1400,7 @@ let spans_in_order n =
         launch image "step" ~params:8 [ Sub.write 0 ~at:0 ];
       |]
   in
-  let run = Run.make s in
+  let run = Sub.take s in
   for i = 0 to 1 do
     let k = Sub.block s i in
     set_grid run k one;
@@ -1444,11 +1445,12 @@ let no_allocation () =
     Sub.make t.d
       [| launch image "step" ~params:8 [ Sub.write 0 ~at:0 ] |]
   in
-  let run = Run.make s and buffers = [| out |] in
+  let run = Sub.take s and buffers = [| out |] in
   Run.release run;
   let k = Sub.block s 0 in
   let go () =
-    if not (Run.take run) then fail "the run is taken";
+    if Sub.take (Sub.Run.submission run) != run then
+      fail "the run is taken";
     set_grid run k one;
     Run.int64 run k 0 0L;
     ignore (Rig.submit run ~buffers)

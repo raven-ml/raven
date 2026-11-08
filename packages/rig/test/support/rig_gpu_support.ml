@@ -187,7 +187,7 @@ let prepare ?(fixed = []) d ws =
   let buffers = Array.concat (List.map (fun w -> w.buffers) ws) in
   let fixed = fixed @ List.concat_map (fun w -> w.fixed) ws in
   let s = Sub.make ~keep:ws ~fixed d parts in
-  let run = Sub.Run.make s in
+  let run = Sub.take s in
   List.iteri (fun i w -> w.init s run i) ws;
   (run, buffers)
 
@@ -413,7 +413,7 @@ module Make (G : Gpu) = struct
 
   let submit t ps =
     let s = Rig.Submission.make t.d ps in
-    let run = Rig.Submission.Run.make s in
+    let run = Rig.Submission.take s in
     Rig.submit run ~buffers:[||]
 
   let submit_work t ws =

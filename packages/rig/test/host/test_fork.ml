@@ -55,7 +55,7 @@ let affine image ~n ~a ~c =
   let refs = Sub.[| write 0 ~at:0; read 1 ~at:8 |] in
   let fn = require_some (Rig.Image.resolve image "affine") in
   let s = Sub.make Rig.host [| Sub.launch ~refs fn ~params:40 |] in
-  let run = Run.make s and k = Sub.block s 0 in
+  let run = Sub.take s and k = Sub.block s 0 in
   Run.groups run k ((n + 63) / 64) 1 1;
   Run.threads run k 64 1 1;
   Run.int64 run k 16 (Int64.of_int n);

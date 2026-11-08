@@ -82,7 +82,7 @@ let submit ?waits d ws ~uses =
   Rig.submit ?waits run ~buffers
 
 let empty_point d =
-  Rig.submit (Sub.Run.make (Sub.make d [||])) ~buffers:[||]
+  Rig.submit (Sub.take (Sub.make d [||])) ~buffers:[||]
 
 let copy_part ~dst src =
   Rig_gpu_support.work Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
@@ -1409,7 +1409,7 @@ let entry_facts (module G : Gpu) =
              group; the block sets %dx1x1"
             most (most + 1)))
       (fun () ->
-        Sub.Run.threads (Sub.Run.make s) (Sub.block s 0) (most + 1) 1 1);
+        Sub.Run.threads (Sub.take s) (Sub.block s 0) (most + 1) 1 1);
     equal int ~msg:"values assigned" before (Rig.submitted t.d);
     let out = filled t.d (String.make (4 * most) '\000') in
     Rig.Point.wait

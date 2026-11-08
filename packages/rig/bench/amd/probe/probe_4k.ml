@@ -485,7 +485,7 @@ let probe what { Rig_amd_support.d; g } =
   (* A prepared submission of one copy, waited by spinning on the word. *)
   let run =
     Rig.Submission.(
-      Run.make (make d [| copy ~src:(Buffer src) ~dst:(Buffer dst) |]))
+      take (make d [| copy ~src:(Buffer src) ~dst:(Buffer dst) |]))
   in
   let raw_spin () =
     let p = Rig.submit run ~buffers:[||] in
@@ -500,7 +500,7 @@ let probe what { Rig_amd_support.d; g } =
   (* The run Buffer.copy submits: one copy from slot 0 into slot 1. *)
   let slots =
     Rig.Submission.(
-      Run.make (make d [| copy ~src:(Slot 0) ~dst:(Slot 1) |]))
+      take (make d [| copy ~src:(Slot 0) ~dst:(Slot 1) |]))
   in
   let spin_point p =
     spin_until (fun () -> Rig.Point.reached p) (fun () -> Rig.Point.wait p)
@@ -561,7 +561,7 @@ let probe what { Rig_amd_support.d; g } =
     in
     let none = B.view src ~first:0 ~length:0
     and into = B.view dst ~first:0 ~length:0 in
-    let empty = Rig.Submission.(Run.make (make d [||])) in
+    let empty = Rig.Submission.(take (make d [||])) in
     let s = ref 0 in
     let empty_pre () =
       let a = now () in

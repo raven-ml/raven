@@ -42,7 +42,7 @@ let () =
 
   (* A's work writes [x], so [x]'s last write is A's point. *)
   let s = Submission.(make a [| copy ~src:(Buffer src) ~dst:(Buffer x) |]) in
-  let run = Submission.Run.make s in
+  let run = Submission.take s in
   Format.printf "A wrote x at %a@." Point.pp (submit run ~buffers:[||]);
 
   (* B's work addresses its own memory. [x] is A's, so a part of B that names
@@ -55,7 +55,7 @@ let () =
 
   (* B's copy reads [x], so it follows A's write by [x]'s stamps alone. *)
   let s = Submission.(make b [| copy ~src:(Buffer x_on_b) ~dst:(Buffer y) |]) in
-  let run = Submission.Run.make s in
+  let run = Submission.take s in
   Format.printf "B read x at %a@." Point.pp (submit run ~buffers:[||]);
   show "y" y;
 

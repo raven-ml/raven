@@ -57,7 +57,7 @@ let load d =
 (* The point of an empty submission on [d]: the last point a row waits for
    until it submits. *)
 let first_point d =
-  Rig.submit (Rig.Submission.Run.make (Rig.Submission.make d [||]))
+  Rig.submit (Rig.Submission.take (Rig.Submission.make d [||]))
     ~buffers:[||]
 
 (* A device opened through rig, whose argument buffer points [step] at a word of
@@ -84,7 +84,7 @@ let dev () =
   t
 
 (* A run of the prepared submission of [parts] on [t], and its buffers. *)
-let prepare t parts = (Rig.Submission.(Run.make (make t.d parts)), [||])
+let prepare t parts = (Rig.Submission.(take (make t.d parts)), [||])
 
 let prepare_fill t f = Rig_gpu_support.prepare t.d [ S.part f ]
 
@@ -100,7 +100,7 @@ let launches t n =
   let fn = Option.get (Rig.Image.resolve t.image "step") in
   let step = Sub.launch ~refs:[| Sub.write 0 ~at:0 |] fn ~params:16 in
   let s = Sub.make t.d (Array.make n step) in
-  let run = Sub.Run.make s in
+  let run = Sub.take s in
   for i = 0 to n - 1 do
     let b = Sub.block s i in
     Sub.Run.groups run b 1 1 1;
@@ -116,7 +116,7 @@ let wide t n =
   let fn = Option.get (Rig.Image.resolve image "wide") in
   let w = Sub.launch ~refs:[| Sub.write 0 ~at:0 |] fn ~params:n in
   let s = Sub.make t.d [| w |] in
-  let run = Sub.Run.make s in
+  let run = Sub.take s in
   let b = Sub.block s 0 in
   Sub.Run.groups run b 1 1 1;
   Sub.Run.threads run b 1 1 1;

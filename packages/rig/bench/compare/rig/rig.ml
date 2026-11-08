@@ -69,7 +69,7 @@ let adder device driver image a b out =
               params.{i} <- Int64.of_int (Submission.address submission buffer))
             [ a; b; out ];
           params.{3} <- Int64.of_int count);
-      let run = Submission.Run.make submission in
+      let run = Submission.take submission in
       let block = Submission.block submission 0 in
       Submission.Run.int64 run block 0 (Int64.of_nativeint icb.handle);
       Submission.Run.int64 run block 8 1L;
@@ -80,7 +80,7 @@ let adder device driver image a b out =
       let refs = Submission.[| read 0 ~at:0; read 1 ~at:8; write 2 ~at:16 |] in
       let part = Submission.(launch ~refs add ~params:32) in
       let submission = Submission.make device [| part |] in
-      let run = Submission.Run.make submission in
+      let run = Submission.take submission in
       let block = Submission.block submission 0 in
       Submission.Run.groups run block 1 1 1;
       Submission.Run.threads run block count 1 1;

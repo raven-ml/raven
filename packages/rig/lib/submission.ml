@@ -243,6 +243,10 @@ type block = int * int * int * int * string
    carries its bytes. *)
 type naming = Refs | Copies | Both
 
+(* A run's blocks and its state, C memory a custom block holds and frees once
+   collected ([struct rig_run] in [rig_stubs.h]). *)
+type run_c
+
 type t = {
   dev : device;
   c : c;
@@ -270,7 +274,13 @@ type t = {
           part's kind. [None] for no parts. *)
   copies : copy array;
       (** The copy parts that read memory, in order. *)
+  runs : run list Atomic.t;
+      (** The runs [take] made, the newest first. A run joins once and never
+          leaves. *)
 }
+
+and run = { r : run_c; sub : t }
+(* C reads the custom block from field 0. *)
 
 let no_block = (0, -1, 0, 0, "")
 
@@ -991,6 +1001,7 @@ let build keep ~fixed ~named:(named, named_uses) ~held d parts =
     blocks;
     span;
     copies;
+    runs = Atomic.make [];
   }
 
 (* The memory is held first, so that no free returns it while [build] reads
@@ -1032,17 +1043,12 @@ let address s b =
 
 (* Runs *)
 
-(* A run's blocks and its state, C memory a custom block holds and frees once
-   collected ([struct rig_run] in [rig_stubs.h]). *)
-type run_c
-
 external run_new : c -> run_c = "caml_rig_run_new"
 
 (* Each setter is an external that takes the block as it is, untagged ints
    and unboxed floats, so no argument is boxed at a call, inlined or not. *)
 module Run = struct
-  type nonrec t = { r : run_c; sub : t }
-  (* C reads the custom block from field 0. *)
+  type t = run
 
   external take : t -> bool = "caml_rig_run_take" [@@noalloc]
   external release : t -> unit = "caml_rig_run_release" [@@noalloc]
@@ -1082,6 +1088,23 @@ module Run = struct
   external float64 : t -> block -> (int[@untagged]) -> (float[@unboxed]) -> unit
     = "caml_rig_run_float64_byte" "caml_rig_run_float64"
 end
+
+(* Adds [r] at the head of [s]'s runs. *)
+let rec join s r =
+  let rs = Atomic.get s.runs in
+  if not (Atomic.compare_and_set s.runs rs (r :: rs)) then join s r
+
+(* The first run of [rs] the calling thread takes, else a new run of [s],
+   taken, which joins [s]'s runs. Top-level, so a take that finds a free
+   run allocates no closure. *)
+let rec take_from s = function
+  | r :: rs -> if Run.take r then r else take_from s rs
+  | [] ->
+      let r = Run.make s in
+      join s r;
+      r
+
+let take s = take_from s (Atomic.get s.runs)
 
 external call_collect : c -> call -> Run.t -> int array -> int
   = "caml_rig_call_collect"

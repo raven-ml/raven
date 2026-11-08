@@ -753,7 +753,7 @@ let launch t p name ~params ~refs ~groups:(gx, gy, gz) ~threads:(tx, ty, tz)
   let refs = Array.of_list (List.map ref_ refs) in
   let fn = Option.get (Rig.Image.resolve p name) in
   let s = Sub.make t.d [| Sub.launch ~refs fn ~params |] in
-  let run = Sub.Run.make s and b = Sub.block s 0 in
+  let run = Sub.take s and b = Sub.block s 0 in
   Sub.Run.groups run b gx gy gz;
   Sub.Run.threads run b tx ty tz;
   Sub.Run.shared run b shared;
@@ -861,7 +861,7 @@ let launch_segments_hw () =
           ~params:sizes.(i mod Array.length sizes))
   in
   let s = Sub.make t.d ps in
-  let run = Sub.Run.make s in
+  let run = Sub.take s in
   let blocks = Array.init count (Sub.block s) in
   Array.iter
     (fun b ->
@@ -871,7 +871,8 @@ let launch_segments_hw () =
   Sub.Run.release run;
   let last = ref None in
   for round = 0 to rounds - 1 do
-    if not (Sub.Run.take run) then fail "the run is taken";
+    if Sub.take (Sub.Run.submission run) != run then
+      fail "the run is taken";
     Array.iteri
       (fun i b ->
         let at = 4 * lanes * ((round * count) + i) in
@@ -902,7 +903,7 @@ let stores_wide t p n =
       (Array.init n (fun _ ->
            Sub.launch ~refs:[| Sub.write 0 ~at:0 |] fn ~params:16))
   in
-  let run = Sub.Run.make s in
+  let run = Sub.take s in
   for i = 0 to n - 1 do
     let b = Sub.block s i in
     Sub.Run.groups run b 1 1 1;
@@ -1956,12 +1957,12 @@ let many_waits () =
   let close () = List.iter (fun (p, _) -> Rig.close p) producers in
   Fun.protect ~finally:close @@ fun () ->
   let point (p, _) =
-    let run = Rig.Submission.Run.make (Rig.Submission.make p [||]) in
+    let run = Rig.Submission.take (Rig.Submission.make p [||]) in
     Rig.submit run ~buffers:[||]
   in
   let points = Array.of_list (List.map point producers) in
   let s = Rig.Submission.make d [||] in
-  let v = Rig.submit (Rig.Submission.Run.make s) ~waits:points ~buffers:[||] in
+  let v = Rig.submit (Rig.Submission.take s) ~waits:points ~buffers:[||] in
   let reached = List.filter (fun (_, p) -> P.queued p = 0) producers in
   equal int ~msg:"producers reached on the host" 0 (List.length reached);
   List.iter (fun (_, p) -> ignore (P.run p)) producers;
@@ -2522,7 +2523,7 @@ let two_in_array () =
     let run, buffers = Rig_gpu_support.prepare d ws in
     let q =
       Rig.submit
-        (Rig.Submission.Run.make (Rig.Submission.make gate [||]))
+        (Rig.Submission.take (Rig.Submission.make gate [||]))
         ~buffers:[||]
     in
     (q, Rig.submit ~waits:[| q |] run ~buffers)

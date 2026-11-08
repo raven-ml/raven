@@ -54,7 +54,7 @@
           launch ~refs:[| read 0 ~at:0; write 1 ~at:8 |] add ~params:16)
       in
       let s = Rig.Submission.make d [| add |] in
-      let run = Rig.Submission.Run.make s in
+      let run = Rig.Submission.take s in
       let b = Rig.Submission.block s 0 in
       Rig.Submission.Run.groups run b (n / 256) 1 1;
       Rig.Submission.Run.threads run b 256 1 1;

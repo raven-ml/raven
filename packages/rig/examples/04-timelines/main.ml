@@ -47,7 +47,7 @@ let () =
      run of it, which holds its launches' parameters; a copy has none. A
      submit returns the point of the value it assigns. *)
   let s = Submission.(make d [| copy ~src:(Buffer src) ~dst:(Buffer mid) |]) in
-  let run = Submission.Run.make s in
+  let run = Submission.take s in
   Format.printf "first submit: %a@." Point.pp (submit run ~buffers:[||]);
   Format.printf "again:        %a@." Point.pp (submit run ~buffers:[||]);
   timeline d;
@@ -62,12 +62,12 @@ let () =
           copy ~src:(Buffer mid) ~dst:(Buffer dst);
         |])
   in
-  let p = submit (Submission.Run.make chain) ~buffers:[||] in
+  let p = submit (Submission.take chain) ~buffers:[||] in
   Format.printf "chain:        %a, reached: %b@." Point.pp p (Point.reached p);
   show "dst" dst;
 
   (* An empty submission takes a value too, which is reached once all earlier
      work has completed. *)
-  let empty = Submission.(Run.make (make d [||])) in
+  let empty = Submission.(take (make d [||])) in
   Format.printf "empty:        %a@." Point.pp (submit empty ~buffers:[||]);
   timeline d

@@ -43,7 +43,7 @@
       Rig.Submission.(launch ~refs:[| write 0 ~at:0 |] twice ~params:8)
     in
     let s = Rig.Submission.make g [| twice |] in
-    let run = Rig.Submission.Run.make s in
+    let run = Rig.Submission.take s in
     let b = Rig.Submission.block s 0 in
     Rig.Submission.Run.groups run b (n / 256) 1 1;
     Rig.Submission.Run.threads run b 256 1 1;

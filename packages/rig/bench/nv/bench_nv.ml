@@ -31,7 +31,7 @@ let dev = S.open_
 let alloc t kind n = Option.get (N.alloc t.g kind n)
 
 (* A run of a submission of parts on [t], which its row submits. *)
-let submission t ps = Sub.Run.make (Sub.make t.d ps)
+let submission t ps = Sub.take (Sub.make t.d ps)
 let submit run = Rig.submit run ~buffers:[||]
 let run s = Rig.Point.wait (submit s)
 

@@ -48,7 +48,7 @@ let heaps () =
 
 let lose name =
   let d, h = P.open_ name in
-  let p = Rig.submit (Sub.Run.make (Sub.make d [||])) ~buffers:[||] in
+  let p = Rig.submit (Sub.take (Sub.make d [||])) ~buffers:[||] in
   P.fault h "lost";
   (match Rig.Buffer.create d 8 with
   | _ -> fail "an allocation of a faulted device returned"
@@ -58,7 +58,7 @@ let lose name =
 
 let close_one () =
   let d = Result.get_ok (Rig.memory_device "limit:cycle") in
-  let p = Rig.submit (Sub.Run.make (Sub.make d [||])) ~buffers:[||] in
+  let p = Rig.submit (Sub.take (Sub.make d [||])) ~buffers:[||] in
   Rig.close d;
   (d, p)
 

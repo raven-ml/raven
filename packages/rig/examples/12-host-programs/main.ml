@@ -26,7 +26,7 @@ let object_file () =
 let affine fn ~groups:g ~threads:t ~n ~a ~c out inp =
   let refs = Submission.[| write 0 ~at:0; read 1 ~at:8 |] in
   let s = Submission.(make host [| launch ~refs fn ~params:40 |]) in
-  let run = Submission.Run.make s and k = Submission.block s 0 in
+  let run = Submission.take s and k = Submission.block s 0 in
   Submission.Run.(
     groups run k g 1 1;
     threads run k t 1 1;

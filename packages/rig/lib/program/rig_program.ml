@@ -1537,7 +1537,7 @@ let prepared p k (s : submit) =
         | Memory v -> buffers.(j) <- view p k d v
         | Ints -> buffers.(j) <- view p k d (ints_view p.t))
     s.slots;
-  let srun = Sub.Run.make sub in
+  let srun = Sub.take sub in
   let value = function Known n -> n | Word _ -> 0 in
   let block i = function
     | Words _ | Copy _ -> None
@@ -1688,7 +1688,7 @@ let reached () =
   | Some p -> p
   | None ->
       let p =
-        Rig.submit (Sub.Run.make (Sub.make Rig.host [||])) ~buffers:[||]
+        Rig.submit (Sub.take (Sub.make Rig.host [||])) ~buffers:[||]
       in
       ignore (Atomic.compare_and_set first_reached None (Some p));
       Option.get (Atomic.get first_reached)
@@ -1928,14 +1928,15 @@ let set_last (p : here) d point =
   p.last.(d) <- point;
   p.ran.(d) <- true
 
-(* The program's lock admits one run at a time, so the step's run is free:
-   a submit frees it as it returns or raises, and a run that raises frees
-   every step's run ([release_runs]). *)
+(* The program's lock admits one run at a time, so the step's run is free
+   and is its submission's one run, which a take returns: a submit frees it
+   as it returns or raises, and a run that raises frees every step's run
+   ([release_runs]). *)
 let submit_step p k waits (spec : submit) copies index =
   let q = copies.(if Array.length copies = 2 then k else 0) in
   let d = spec.device in
   (match
-     if not (Sub.Run.take q.srun) then assert false;
+     if Sub.take (Sub.Run.submission q.srun) != q.srun then assert false;
      prepare_step p k q d
    with
   | () -> ()
@@ -2210,7 +2211,7 @@ let load_there t devices =
                  limits;
                  watch;
                  entry;
-                 srun = Sub.Run.make sub;
+                 srun = Sub.take sub;
                  words = B.export buffer Bigarray.char;
                  lock = Mutex.create ();
                })))

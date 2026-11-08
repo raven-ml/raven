@@ -130,7 +130,7 @@ let borrowed d b =
     let h = B.create host (B.length p) in
     let dst = Option.get (B.borrow d h) in
     let s = Sub.make d [| Sub.copy ~src:(Buffer p) ~dst:(Buffer dst) |] in
-    Rig.Point.wait (Rig.submit (Sub.Run.make s) ~buffers:[||]);
+    Rig.Point.wait (Rig.submit (Sub.take s) ~buffers:[||]);
     string_of_host h
   in
   Option.map
@@ -1245,7 +1245,7 @@ let test_barrier_lost () =
   let s =
     Rig.Submission.make d [| Rig_support.touching [| Rig.Submission.write |] |]
   in
-  ignore (Rig.submit (Rig.Submission.Run.make s) ~buffers:[| on_d |]);
+  ignore (Rig.submit (Rig.Submission.take s) ~buffers:[| on_d |]);
   Rig_support.Polled.fault p "the device fell off the bus";
   let lost = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false in
   raises_match ~msg:"an allocation" lost (fun () -> B.create d 8);

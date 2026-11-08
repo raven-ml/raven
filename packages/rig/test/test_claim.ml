@@ -29,7 +29,7 @@ let claim_wait b a =
       raise e
 
 let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits (Rig.Submission.Run.make s) ~buffers
+  Rig.submit ?waits (Rig.Submission.take s) ~buffers
 
 let timeout = 60.
 
@@ -475,7 +475,7 @@ let test_dead_claims () =
 let test_closed_slot_claim () =
   let d, _ = P.open_ "claim:closed" in
   let p =
-    Rig.submit (Rig.Submission.Run.make (Rig.Submission.make d [||]))
+    Rig.submit (Rig.Submission.take (Rig.Submission.make d [||]))
       ~buffers:[||]
   in
   Rig.Point.wait p;
@@ -1332,7 +1332,7 @@ let test_submit_donation (name, kind) () =
   let run, buffers =
     match kind with
     | `Copy ->
-        ( Sub.Run.make
+        ( Sub.take
             (Sub.make d [| part Sub.(copy ~src:(Slot 0) ~dst:(Slot 1)) |]),
           [| src; dst |] )
     | `Fixed ->
@@ -1345,7 +1345,7 @@ let test_submit_donation (name, kind) () =
             d
             [| part fill |]
         in
-        let run = Sub.Run.make s and block = Sub.block s 0 in
+        let run = Sub.take s and block = Sub.block s 0 in
         Sub.Run.int64 run block 0 (Int64.of_int (Sub.address s dst));
         Sub.Run.int64 run block 8 (Int64.of_int (Sub.address s src));
         Sub.Run.int64 run block 16 8L;
@@ -1430,7 +1430,7 @@ let test_run_wait_raises () =
   let a = B.create d 8 and b = B.create d 8 in
   let s = Sub.make d [| Rig_support.touching (Array.make 3 Sub.read) |] in
   let buffers = [| a; b; a |] in
-  let run = Sub.Run.make s in
+  let run = Sub.take s in
   let point = submit (Sub.make producer [||]) in
   P.interrupt pp;
   let before =
@@ -1718,7 +1718,7 @@ let test_donor_submits () =
           Sub.make ~fixed:[ (b', Rig.Read_write) ] d
             [| Sub.fill Rig_support.poke ~params:16 |]
         in
-        let run = Sub.Run.make s in
+        let run = Sub.take s in
         Sub.Run.int64 run (Sub.block s 0) 0 (Int64.of_int (Sub.address s b'));
         Sub.Run.int64 run (Sub.block s 0) 8 42L;
         Rig.Point.wait (Rig.submit run ~buffers:[||]);

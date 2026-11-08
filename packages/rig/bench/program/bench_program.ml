@@ -109,7 +109,7 @@ let by_hand steps () =
       Sub.make ds.(d)
         [| Sub.launch ~refs:[| Sub.write 0 ~at:0 |] fills.(d) ~params:16 |]
     in
-    let run = Sub.Run.make s and b = Sub.block s 0 in
+    let run = Sub.take s and b = Sub.block s 0 in
     Sub.Run.groups run b 1 1 1;
     Sub.Run.threads run b 1 1 1;
     Sub.Run.int64 run b 8 7L;
@@ -184,7 +184,7 @@ let copy_by_hand () =
   let d, p = polled () in
   let src = B.view (B.create d 16) ~first:0 ~length:8 in
   let s = Sub.make d [| Sub.copy ~src:(Buffer src) ~dst:(Slot 0) |] in
-  let run = Sub.Run.make s and buffers = [| B.create d 8 |] in
+  let run = Sub.take s and buffers = [| B.create d 8 |] in
   { ps = [| p |]; go = (fun () -> ignore (Rig.submit run ~buffers)); n = 0 }
 
 let polled_rows =
@@ -264,7 +264,7 @@ let host_submit () =
   let refs = Sub.[| write 0 ~at:0; read 1 ~at:8 |] in
   let fn = Option.get (Rig.Image.resolve image "empty") in
   let s = Sub.make Rig.host [| Sub.launch ~refs fn ~params:16 |] in
-  let run = Sub.Run.make s and k = Sub.block s 0 in
+  let run = Sub.take s and k = Sub.block s 0 in
   Sub.Run.groups run k 1 1 1;
   Sub.Run.threads run k 1 1 1;
   (run, host_buffers ())
@@ -363,7 +363,7 @@ let stepping () =
       let fill =
         Sub.fill ~refs:[| Sub.write 0 ~at:0 |] Rig_support.bump ~params:8
       in
-      let sub () = (Sub.Run.make (Sub.make d [| fill |]), buffers) in
+      let sub () = (Sub.take (Sub.make d [| fill |]), buffers) in
       {
         job;
         pid;

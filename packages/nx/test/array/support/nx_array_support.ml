@@ -253,7 +253,7 @@ let write b s =
       ~params:(4 * ((16 + n + 3) / 4))
   in
   let s = Rig.Submission.make (Rig.Buffer.device b) [| work |] in
-  let run = Rig.Submission.Run.make s in
+  let run = Rig.Submission.take s in
   let block = Rig.Submission.block s 0 in
   for i = 0 to ((Bytes.length arg + 3) / 4) - 1 do
     let at = 4 * i in

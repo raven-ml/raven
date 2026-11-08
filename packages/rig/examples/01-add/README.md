@@ -42,7 +42,7 @@ order, steps, the lives of buffers and devices, and host code.
 | `Image.resolve image f`                   | `image`'s function `f`, if it has one       |
 | `Submission.launch ~refs fn ~params`      | A part that runs `fn` over a grid           |
 | `Submission.Run.groups r b x y z`         | The grid of the launch whose block is `b`   |
-| `Submission.Run.make s`                   | Storage of `s`'s grid and parameters        |
+| `Submission.take s`                       | A run of `s`, the storage of its parameters |
 | `submit r ~buffers`                       | Run `r`'s submission once, return its point |
 
 ## The kernel

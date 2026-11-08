@@ -51,7 +51,7 @@ runs on any machine.
     let work =
       Submission.(make device [| copy ~src:(Buffer src) ~dst:(Buffer dst) |])
     in
-    let run = Submission.Run.make work in
+    let run = Submission.take work in
     let done_ = submit run ~buffers:[||] in
     Point.wait done_;
     Buffer.read dst Bigarray.int32 (fun a ->
@@ -77,9 +77,10 @@ Each call, in order:
   `copy_engine` fact ([`Submission.make`](../lib/rig.mli)).
 - `Submission.make device [| ... |]` prepares the parts once, as a
   *submission* that any number of submits run.
-- `Submission.Run.make work` makes a *run* of the submission: the storage
-  that its submits' work reads its parameters from, such as a launch's grid
-  ([On a GPU](#on-a-gpu)). A copy has none, but every submit takes a run.
+- `Submission.take work` takes a *run* of the submission: the storage
+  that a submit's work reads its parameters from, such as a launch's grid
+  ([On a GPU](#on-a-gpu)). A copy has none, but every submit takes a run,
+  and the submit frees it for the next.
 - `submit run ~buffers:[||]` runs the run's submission once. `buffers`
   holds the buffers that change from one submit to the next, which a
   launch's parameters and a copy's `Slot` ends name by index. This copy
@@ -107,7 +108,7 @@ let double d binary x n =
     Rig.Submission.(launch ~refs:[| write 0 ~at:0 |] twice ~params:8)
   in
   let s = Rig.Submission.make d [| twice |] in
-  let run = Rig.Submission.Run.make s in
+  let run = Rig.Submission.take s in
   let b = Rig.Submission.block s 0 in
   Rig.Submission.Run.groups run b (n / 256) 1 1;
   Rig.Submission.Run.threads run b 256 1 1;

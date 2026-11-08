@@ -16,7 +16,7 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(buffers = [||]) ?waits s =
-  Rig.submit ?waits (Sub.Run.make s) ~buffers
+  Rig.submit ?waits (Sub.take s) ~buffers
 
 let timeout = 120.
 
@@ -73,7 +73,7 @@ let open_system () =
   let base =
     Array.map
       (fun (d, _) ->
-        let p = Rig.submit (Sub.Run.make (Sub.make d [||])) ~buffers:[||] in
+        let p = Rig.submit (Sub.take (Sub.make d [||])) ~buffers:[||] in
         Rig.Point.wait p;
         Rig.Point.value p)
       devices
@@ -279,7 +279,7 @@ let open_replay () =
   in
   let d, p = P.open_ name in
   let runs_storage =
-    Array.init 2 (fun _ -> Sub.Run.make (Sub.make d [| poke |]))
+    Array.init 2 (fun _ -> Sub.take (Sub.make d [| poke |]))
   in
   Array.iter Sub.Run.release runs_storage;
   {
@@ -300,7 +300,8 @@ let run_replay t =
   B.wait out Rig.Read_write;
   Support.store (Support.Reader.host out) (-1);
   let block = Sub.block (Sub.Run.submission run) 0 in
-  if not (Sub.Run.take run) then fail "the run is taken";
+  if Sub.take (Sub.Run.submission run) != run then
+    fail "the run is taken";
   Sub.Run.int64 run block 0 0L;
   Sub.Run.int64 run block 8 (Int64.of_int n);
   let v = Rig.Point.value (Rig.submit run ~buffers:[| out |]) in
