@@ -1,0 +1,39 @@
+# tolk D280 golden=7f8cf0b070da399eb9e1ec0ee0a8c5e2
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 17
+2 Ops.PARAM dtypes.i32 [1] ParamArg(slot=0, dtype=dtypes.i32)
+3 Ops.CONST dtypes.weakint [] 32
+4 Ops.RANGE dtypes.weakint [3] (AxisType.WEAK, 1)
+5 Ops.AFTER dtypes.i32 [2, 4]
+6 Ops.CMPLT dtypes.bool [4, 1]
+7 Ops.CONST dtypes.bool [] True
+8 Ops.AND dtypes.bool [6, 7]
+9 Ops.CONST dtypes.bool [] Invalid
+10 Ops.WHERE dtypes.weakint [8, 4, 9]
+11 Ops.INDEX dtypes.i32 [5, 10]
+12 Ops.CONST dtypes.weakfloat [] 1.0
+13 Ops.CONST dtypes.weakint [] 289
+14 Ops.PARAM dtypes.f32 [13] ParamArg(slot=1, dtype=dtypes.f32)
+15 Ops.RANGE dtypes.weakint [1] (AxisType.WEAK, 0)
+16 Ops.MUL dtypes.weakint [15, 1]
+17 Ops.ADD dtypes.weakint [16, 4]
+18 Ops.WHERE dtypes.weakint [8, 17, 9]
+19 Ops.INDEX dtypes.f32 [14, 18]
+20 Ops.REDUCE dtypes.f32 [19, 15] (Ops.MAX, 0)
+21 Ops.CMPLT dtypes.bool [12, 20]
+22 Ops.CONST dtypes.weakint [] 1
+23 Ops.CONST dtypes.weakint [] 0
+24 Ops.WHERE dtypes.weakint [21, 22, 23]
+25 Ops.CAST dtypes.i32 [24] dtypes.i32
+26 Ops.STORE dtypes.void [11, 25]
+27 Ops.PARAM dtypes.i32 [1] ParamArg(slot=2, dtype=dtypes.i32)
+28 Ops.AFTER dtypes.i32 [27, 4]
+29 Ops.INDEX dtypes.i32 [28, 10]
+30 Ops.CONST dtypes.weakint [] 2
+31 Ops.WHERE dtypes.weakint [21, 30, 23]
+32 Ops.CAST dtypes.i32 [31] dtypes.i32
+33 Ops.STORE dtypes.void [29, 32]
+34 Ops.AFTER dtypes.void [0, 26, 33]
+35 Ops.END dtypes.void [34, 4]
+36 Ops.SINK dtypes.void [35] KernelInfo(name="r_32_17", applied_opts=(Opt(op=OptOps.PADTO, axis=0, arg=32),), optimized=True)
+

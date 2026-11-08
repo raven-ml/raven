@@ -1,0 +1,21 @@
+# tolk D24 golden=6c18706eeafa301412e7e100b1ddfa86
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.INDEX dtypes.f32 [1, 2]
+4 Ops.CONST dtypes.weakint [] 6
+5 Ops.PARAM dtypes.f32 [4] ParamArg(slot=1, dtype=dtypes.f32)
+6 Ops.CONST dtypes.weakint [] 2
+7 Ops.RANGE dtypes.weakint [6] (AxisType.WEAK, 1)
+8 Ops.CONST dtypes.weakint [] 3
+9 Ops.MUL dtypes.weakint [7, 8]
+10 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 0)
+11 Ops.ADD dtypes.weakint [9, 10]
+12 Ops.INDEX dtypes.f32 [5, 11]
+13 Ops.CONST dtypes.weakfloat [] -1.0
+14 Ops.MUL dtypes.f32 [12, 13]
+15 Ops.REDUCE dtypes.f32 [14, 10] (Ops.ADD, 0)
+16 Ops.REDUCE dtypes.f32 [15, 7] (Ops.MAX, 0)
+17 Ops.STORE dtypes.void [3, 16]
+18 Ops.SINK dtypes.void [17] KernelInfo()
+

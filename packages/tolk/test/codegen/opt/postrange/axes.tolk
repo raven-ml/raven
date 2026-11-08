@@ -1,0 +1,258 @@
+# tolk D29 D101 D220 D270 golden=279275d390f0f1ac58d319cb71d3f984
+case	shape_len	full_shape	axis_types	reduce_axes	upcastable_dims	upcastable_reduce_dims	upcast_size	group_for_reduces	reduceops	bufs	colored_shape	made
+local_and_grouped_reduce_0	3	[1024, 2, 128]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	1024    2  128	1:1024:GLOBAL 2:2:LOCAL
+local_and_grouped_reduce_1	3	[128, 16, 128]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	 128   16  128	1:128:GLOBAL 2:16:LOCAL
+local_and_grouped_reduce_2	3	[2048, 2, 64]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK]	[1, 2]	[0]	[1, 2]	1	1	1	3	2048    2   64	0:64:WEAK 2:2:LOCAL
+local_and_grouped_reduce_3	3	[2048, 64, 2]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK]	[1, 2]	[0]	[1, 2]	1	1	1	3	2048   64    2	0:2:WEAK 2:64:LOCAL
+local_and_grouped_reduce_4	4	[1024, 2, 2, 64]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK]	[2, 3]	[0, 1]	[2, 3]	1	1	1	3	1024    2    2   64	0:64:WEAK 3:2:LOCAL
+local_and_grouped_reduce_5	4	[64, 32, 2, 64]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK]	[2, 3]	[0, 1]	[2, 3]	1	1	1	3	  64   32    2   64	0:64:WEAK 3:2:LOCAL
+local_and_grouped_reduce_6	4	[1024, 2, 64, 2]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK]	[2, 3]	[0, 1]	[2, 3]	1	1	1	3	1024    2   64    2	0:2:WEAK 3:64:LOCAL
+local_and_grouped_reduce_7	6	[128, 2, 2, 8, 16, 4]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[2, 4, 5]	[0, 1]	[2, 4]	32	1	1	3	 128    2    2    8   16    4	0:16:WEAK 5:4:UPCAST
+local_and_grouped_reduce_8	6	[2048, 2, 2, 2, 2, 8]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK]	[1, 2, 3, 4, 5]	[0]	[1, 2, 3, 4, 5]	1	4	1	3	2048    2    2    2    2    8	0:8:WEAK 5:2:LOCAL
+local_and_grouped_reduce_9	6	[128, 2, 2, 2, 2, 128]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK]	[5]	[0, 1, 2, 3, 4]	[5]	1	0	1	3	 128    2    2    2    2  128	1:128:GLOBAL 5:2:LOCAL
+local_and_grouped_reduce_10	10	[128, 2, 2, 2, 2, 2, 2, 2, 2, 8]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK]	[2, 4, 6, 8, 9]	[0, 1, 3, 5, 7]	[2, 4, 6, 8, 9]	1	4	1	3	 128    2    2    2    2    2    2    2    2    8	0:8:WEAK 9:2:LOCAL
+sum_and_max_grouped	3	[7, 32, 11]	[AxisType.LOCAL, AxisType.LOCAL, AxisType.UPCAST]	[1, 2]	[0]	[1]	11	1	2	2	   7   32   11	5:32:LOCAL
+flip_pad_sum_grouped	3	[22, 2, 12]	[AxisType.LOCAL, AxisType.LOCAL, AxisType.UPCAST]	[0]	[1]	[0]	12	1	1	2	  22    2   12	1:1:GLOBAL 4:2:LOCAL
+strided_conv_grouped	6	[4, 8, 3, 8, 3, 3]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK]	[2, 4, 5]	[0, 1, 3]	[2, 4, 5]	1	1	1	3	   4    8    3    8    3    3	4:1:GLOBAL 7:8:LOCAL
+cumsum_unrolled_padded	3	[16, 13, 15]	[AxisType.WEAK, AxisType.UPCAST, AxisType.UPCAST]	[2]	[0]	[]	195	0	1	2	  16   13   15	2:16:WEAK
+elementwise_upcast_2	2	[128, 2]	[AxisType.WEAK, AxisType.UPCAST]	[]	[0]	[]	2	0	0	3	 128    2	0:128:WEAK 1:2:UPCAST
+elementwise_upcast_4	2	[64, 4]	[AxisType.WEAK, AxisType.UPCAST]	[]	[0]	[]	4	0	0	3	  64    4	0:64:WEAK 1:4:UPCAST
+elementwise_upcast_8	2	[32, 8]	[AxisType.WEAK, AxisType.UPCAST]	[]	[0]	[]	8	0	0	3	  32    8	0:32:WEAK 1:8:UPCAST
+elementwise_full_upcast	1	[4]	[AxisType.UPCAST]	[]	[]	[]	4	0	0	3	   4	0:1:WEAK 1:4:UPCAST
+matmul_0	4	[128, 4, 32, 128]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK]	[3]	[0, 1, 2]	[3]	1	0	1	3	 128    4   32  128	2:4:GLOBAL 3:32:LOCAL
+matmul_1	5	[32, 32, 4, 4, 128]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK]	[4]	[0, 1, 2, 3]	[4]	1	0	1	3	  32   32    4    4  128	2:32:GLOBAL 4:4:LOCAL
+matmul_2	5	[8, 16, 16, 8, 128]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK]	[4]	[0, 1, 2, 3]	[4]	1	0	1	3	   8   16   16    8  128	2:16:GLOBAL 4:8:LOCAL
+matmul_3	4	[128, 128, 32, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK]	[2, 3]	[0, 1]	[2, 3]	1	1	1	3	 128  128   32    4	0:4:WEAK 3:32:LOCAL
+matmul_4	5	[128, 128, 8, 4, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK, AxisType.UPCAST]	[2, 3, 4]	[0, 1]	[2, 3]	4	1	1	3	 128  128    8    4    4	3:8:LOCAL 4:4:UPCAST
+matmul_5	6	[64, 64, 2, 2, 32, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK]	[4, 5]	[0, 1, 2, 3]	[4, 5]	1	1	1	3	  64   64    2    2   32    4	0:4:WEAK 5:32:LOCAL
+matmul_6	6	[4, 128, 4, 8, 4, 32]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK]	[4, 5]	[0, 1, 2, 3]	[4, 5]	1	1	1	3	   4  128    4    8    4   32	0:32:WEAK 5:4:LOCAL
+matmul_7	9	[2, 64, 4, 4, 2, 4, 2, 16, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[4, 7, 8]	[0, 1, 2, 3]	[4, 7]	32	1	1	3	   2   64    4    4    2    4    2   16    4	2:64:GLOBAL 8:2:UPCAST
+matmul_8	7	[128, 4, 4, 2, 8, 16, 4]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[3, 5, 6]	[0, 1, 2]	[3, 5]	32	1	1	3	 128    4    4    2    8   16    4	1:1:GLOBAL 7:8:UPCAST
+matmul_upcast_group	5	[128, 128, 8, 4, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK, AxisType.UPCAST]	[2, 3, 4]	[0, 1]	[2, 3]	4	1	1	3	 128  128    8    4    4	3:8:LOCAL 4:4:UPCAST
+double_reduce_0	5	[8, 8, 2, 64, 128]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK]	[2, 3, 4]	[0, 1]	[2, 3, 4]	1	1	1	2	   8    8    2   64  128	0:64:WEAK 4:2:LOCAL
+double_reduce_1	5	[8, 8, 32, 4, 128]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK]	[2, 3, 4]	[0, 1]	[2, 3, 4]	1	1	1	2	   8    8   32    4  128	0:4:WEAK 4:32:LOCAL
+double_reduce_2	5	[8, 8, 2, 128, 64]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK]	[2, 3, 4]	[0, 1]	[2, 3, 4]	1	1	1	2	   8    8    2  128   64	1:64:WEAK 4:2:LOCAL
+double_reduce_3	5	[8, 8, 32, 128, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK]	[2, 3, 4]	[0, 1]	[2, 3, 4]	1	1	1	2	   8    8   32  128    4	1:4:WEAK 4:32:LOCAL
+double_reduce_4	6	[8, 8, 2, 2, 64, 64]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK]	[2, 3, 4, 5]	[0, 1]	[2, 3, 4, 5]	1	2	1	2	   8    8    2    2   64   64	1:64:WEAK 5:2:LOCAL
+double_reduce_5	6	[8, 8, 16, 2, 8, 64]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK]	[2, 3, 4, 5]	[0, 1]	[2, 3, 4, 5]	1	2	1	2	   8    8   16    2    8   64	1:64:WEAK 5:2:LOCAL
+double_reduce_6	6	[8, 8, 4, 64, 32, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK]	[2, 3, 4, 5]	[0, 1]	[2, 3, 4, 5]	1	2	1	2	   8    8    4   64   32    2	1:2:WEAK 5:64:LOCAL
+double_reduce_7	7	[8, 8, 4, 2, 8, 64, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK, AxisType.UPCAST]	[2, 3, 4, 5, 6]	[0, 1]	[2, 3, 4, 5]	4	2	1	2	   8    8    4    2    8   64    4	4:4:LOCAL 6:4:UPCAST
+double_reduce_8	7	[8, 8, 2, 32, 16, 4, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK, AxisType.UPCAST]	[2, 3, 4, 5, 6]	[0, 1]	[2, 3, 4, 5]	4	2	1	2	   8    8    2   32   16    4    4	0:16:WEAK 6:4:UPCAST
+double_reduce_9	8	[2, 2, 4, 4, 4, 4, 32, 32]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK]	[4, 5, 6, 7]	[0, 1, 2, 3]	[4, 5, 6, 7]	1	2	1	2	   2    2    4    4    4    4   32   32	1:32:WEAK 7:4:LOCAL
+double_reduce_10	9	[2, 2, 4, 4, 2, 8, 64, 4, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK, AxisType.UPCAST]	[4, 5, 6, 7, 8]	[0, 1, 2, 3]	[4, 5, 6, 7]	4	2	1	2	   2    2    4    4    2    8   64    4    4	7:8:LOCAL 8:4:UPCAST
+double_reduce_11	9	[2, 4, 2, 2, 8, 4, 2, 16, 32]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.UPCAST, AxisType.WEAK, AxisType.WEAK]	[4, 5, 7, 8]	[0, 1, 2, 3]	[4, 5, 7, 8]	2	2	1	2	   2    4    2    2    8    4    2   16   32	2:2:GLOBAL 8:2:UPCAST
+double_reduce_12	10	[2, 4, 2, 2, 2, 2, 16, 32, 4, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.UPCAST, AxisType.WEAK, AxisType.WEAK, AxisType.UPCAST, AxisType.UPCAST]	[4, 6, 7, 8, 9]	[0, 1, 2, 3]	[4, 6, 7]	32	1	1	2	   2    4    2    2    2    2   16   32    4    4	7:1:LOCAL 10:4:UPCAST
+double_reduce_13	8	[4, 4, 4, 4, 2, 2, 32, 32]	[AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.WEAK]	[2, 3, 6, 7]	[0, 1]	[2, 3, 6, 7]	4	2	1	2	   4    4    4    4    2    2   32   32	3:1:GLOBAL 9:2:UPCAST
+padto_matmul_0	3	[32, 17, 17]	[AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	  32   17   17	1:32:WEAK
+padto_matmul_1	3	[17, 32, 17]	[AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	  17   32   17	2:32:WEAK
+padto_matmul_2	3	[17, 17, 32]	[AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	  17   17   32	0:32:WEAK
+padto_matmul_3	3	[32, 32, 17]	[AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	  32   32   17	2:32:WEAK
+padto_matmul_4	3	[32, 32, 32]	[AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	  32   32   32	0:32:WEAK
+padto_matmul_5	5	[16, 16, 2, 2, 17]	[AxisType.WEAK, AxisType.WEAK, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[4]	[0, 1]	[4]	4	0	1	3	  16   16    2    2   17	2:16:WEAK 4:2:UPCAST
+padto_upcasted_0	3	[4, 4, 4]	[AxisType.WEAK, AxisType.UPCAST, AxisType.WEAK]	[2]	[0]	[2]	4	0	1	3	   4    4    4	1:1:WEAK 3:4:UPCAST
+padto_upcasted_1	3	[4, 4, 4]	[AxisType.WEAK, AxisType.UPCAST, AxisType.WEAK]	[2]	[0]	[2]	4	0	1	3	   4    4    4	2:1:WEAK 3:4:UPCAST
+padto_upcasted_2	3	[4, 4, 4]	[AxisType.WEAK, AxisType.WEAK, AxisType.UPCAST]	[2]	[0, 1]	[]	4	0	1	3	   4    4    4	0:1:WEAK 3:4:UPCAST
+padto_upcasted_3	3	[8, 4, 4]	[AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	   8    4    4	1:8:WEAK
+padto_upcasted_4	3	[4, 8, 4]	[AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	   4    8    4	2:8:WEAK
+padto_upcasted_5	3	[4, 4, 8]	[AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	   4    4    8	0:8:WEAK
+padto_shrunk_sum_0	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  32   17	1:32:WEAK
+padto_shrunk_sum_0_upcast	3	[4, 8, 17]	[AxisType.WEAK, AxisType.UPCAST, AxisType.WEAK]	[2]	[0]	[2]	8	0	1	2	   4    8   17	1:4:WEAK 2:8:UPCAST
+padto_shrunk_sum_1	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  32   17	1:32:WEAK
+padto_shrunk_sum_1_upcast	3	[4, 8, 17]	[AxisType.WEAK, AxisType.UPCAST, AxisType.WEAK]	[2]	[0]	[2]	8	0	1	2	   4    8   17	1:4:WEAK 2:8:UPCAST
+padto_shrunk_sum_axis_0	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[0, 1]	[]	[0, 1]	1	0	1	2	  32   17	0:32:WEAK
+padto_shrunk_sum_0_axis_0	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  32   17	1:32:WEAK
+padto_shrunk_bool_sum_axis_0	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[0, 1]	[]	[0, 1]	1	0	1	2	  32   17	0:32:WEAK
+padto_shrunk_bool_sum_0_axis_0	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  32   17	1:32:WEAK
+padto_shrunk_bool_any_axis_0	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[0, 1]	[]	[0, 1]	1	0	1	2	  32   17	0:32:WEAK
+padto_shrunk_bool_any_0_axis_0	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  32   17	1:32:WEAK
+padto_shrunk_bool_any_1_axis_0	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  32   17	1:32:WEAK
+padto_shrunk_sum_axis_1	2	[17, 32]	[AxisType.WEAK, AxisType.WEAK]	[0, 1]	[]	[0, 1]	1	0	1	2	  17   32	1:32:WEAK
+padto_shrunk_sum_0_axis_1	2	[17, 32]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  17   32	0:32:WEAK
+padto_shrunk_bool_sum_axis_1	2	[17, 32]	[AxisType.WEAK, AxisType.WEAK]	[0, 1]	[]	[0, 1]	1	0	1	2	  17   32	1:32:WEAK
+padto_shrunk_bool_sum_0_axis_1	2	[17, 32]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  17   32	0:32:WEAK
+padto_shrunk_bool_any_axis_1	2	[17, 32]	[AxisType.WEAK, AxisType.WEAK]	[0, 1]	[]	[0, 1]	1	0	1	2	  17   32	1:32:WEAK
+padto_shrunk_bool_any_0_axis_1	2	[17, 32]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  17   32	0:32:WEAK
+padto_shrunk_bool_any_1_axis_1	2	[17, 32]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  17   32	0:32:WEAK
+padto_shrunk_sum_exp	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[0, 1]	[]	[0, 1]	1	0	1	2	  32   17	0:32:WEAK
+padto_shrunk_sum_0_exp	2	[17, 32]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  17   32	0:32:WEAK
+padto_group_full_unroll_sum	5	[4, 256, 7, 2, 32]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[1, 3, 4]	[0]	[1, 3]	224	1	1	2	   4  256    7    2   32	2:4:GLOBAL 5:7:UPCAST
+padto_unrolled_sum_4	3	[4, 8, 4]	[AxisType.WEAK, AxisType.WEAK, AxisType.UPCAST]	[1, 2]	[0]	[1]	4	0	1	2	   4    8    4	0:8:WEAK 2:4:UPCAST
+padto_unrolled_max_4	3	[4, 8, 4]	[AxisType.WEAK, AxisType.WEAK, AxisType.UPCAST]	[1, 2]	[0]	[1]	4	0	1	2	   4    8    4	0:8:WEAK 2:4:UPCAST
+padto_unrolled_sum_0	2	[4, 32]	[AxisType.WEAK, AxisType.UPCAST]	[1]	[0]	[]	32	0	1	2	   4   32	0:1:WEAK 2:32:UPCAST
+padto_unrolled_max_0	2	[4, 32]	[AxisType.WEAK, AxisType.UPCAST]	[1]	[0]	[]	32	0	1	2	   4   32	0:1:WEAK 2:32:UPCAST
+padto_unrolled_upcast	3	[2, 2, 32]	[AxisType.WEAK, AxisType.UPCAST, AxisType.UPCAST]	[2]	[0]	[]	64	0	1	2	   2    2   32	1:2:WEAK 3:2:UPCAST
+padto_nested_max_then_sum	2	[3, 4]	[AxisType.WEAK, AxisType.WEAK]	[0, 1]	[]	[0, 1]	1	0	2	2	   3    4	1:4:WEAK
+padto_nested_neg_sum_then_max	2	[3, 4]	[AxisType.WEAK, AxisType.WEAK]	[0, 1]	[]	[0, 1]	1	0	2	2	   3    4	1:4:WEAK
+padto_nested_prod_then_sum	2	[3, 4]	[AxisType.WEAK, AxisType.WEAK]	[0, 1]	[]	[0, 1]	1	0	2	2	   3    4	1:4:WEAK
+padto_nested_both	2	[4, 4]	[AxisType.WEAK, AxisType.WEAK]	[0, 1]	[]	[0, 1]	1	0	2	2	   4    4	1:4:WEAK
+padto_unindexed_repeat	4	[3, 7, 32, 5]	[AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[2, 3]	[0, 1]	[2, 3]	1	0	1	2	   3    7   32    5	0_0:32:WEAK
+padto_unindexed_unrolled	4	[7, 6, 5, 4]	[AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.UPCAST]	[1, 2, 3]	[0]	[1, 2]	4	0	1	2	   7    6    5    4	0_0:6:WEAK
+padto_unindexed_cat	3	[7, 4, 5]	[AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[1, 2]	[0]	[1, 2]	1	0	1	2	   7    4    5	0_0:4:WEAK
+padto_unindexed_prod	3	[7, 6, 5]	[AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[1, 2]	[0]	[1, 2]	1	0	1	2	   7    6    5	0_0:6:WEAK
+padto_twice	2	[7, 16]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	   7   16	0:16:WEAK
+padto_all	2	[7, 8]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	   7    8	0:8:WEAK
+padto_masked_sum_8	2	[7, 24]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	   7   24	0:24:WEAK
+padto_masked_sum_32	2	[7, 32]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	   7   32	0:32:WEAK
+padto_prefix_masked_sum	2	[7, 24]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	   7   24	0:24:WEAK
+padto_masked_prod	2	[7, 16]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	   7   16	0:16:WEAK
+padto_unrolled_prod	3	[2, 2, 32]	[AxisType.WEAK, AxisType.UPCAST, AxisType.UPCAST]	[2]	[0]	[]	64	0	1	2	   2    2   32	1:2:WEAK 3:2:UPCAST
+padto_exp_sum	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[0, 1]	[]	[0, 1]	1	0	1	2	  32   17	0:32:WEAK
+padto_exp_sum_0	2	[17, 32]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  17   32	0:32:WEAK
+padto_compare_sum	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[0, 1]	[]	[0, 1]	1	0	1	2	  32   17	0:32:WEAK
+padto_compare_sum_0	2	[17, 32]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  17   32	0:32:WEAK
+padto_max_0	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  32   17	1:32:WEAK
+padto_max_0_upcast	3	[4, 8, 17]	[AxisType.WEAK, AxisType.UPCAST, AxisType.WEAK]	[2]	[0]	[2]	8	0	1	2	   4    8   17	1:4:WEAK 2:8:UPCAST
+padto_max_1	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  32   17	1:32:WEAK
+padto_max_1_upcast	3	[4, 8, 17]	[AxisType.WEAK, AxisType.UPCAST, AxisType.WEAK]	[2]	[0]	[2]	8	0	1	2	   4    8   17	1:4:WEAK 2:8:UPCAST
+padto_max_all	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[0, 1]	[]	[0, 1]	1	0	1	2	  32   17	0:32:WEAK
+padto_max_0_axis_1	2	[17, 32]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  17   32	0:32:WEAK
+padto_where	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	  32   17	1:32:WEAK
+padto_where_upcast	3	[4, 8, 17]	[AxisType.WEAK, AxisType.UPCAST, AxisType.WEAK]	[2]	[0]	[2]	8	0	1	2	   4    8   17	1:4:WEAK 2:8:UPCAST
+padto_where_multioutput	2	[32, 17]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	3	  32   17	1:32:WEAK
+padto_where_multioutput_upcast	3	[4, 8, 17]	[AxisType.WEAK, AxisType.UPCAST, AxisType.WEAK]	[2]	[0]	[2]	8	0	1	3	   4    8   17	1:4:WEAK 2:8:UPCAST
+color_shapes_0	4	[16, 32, 2, 32]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK]	[3]	[0, 1, 2]	[3]	1	0	1	3	  16   32    2   32	1:16:GLOBAL 3:2:LOCAL
+color_shapes_1	5	[16, 32, 2, 2, 16]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK]	[3, 4]	[0, 1, 2]	[3, 4]	1	1	1	3	  16   32    2    2   16	0:16:WEAK 4:2:LOCAL
+color_shapes_2	4	[16, 32, 2, 32]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.UPCAST]	[3]	[0, 1, 2]	[]	32	0	1	3	  16   32    2   32	0:1:WEAK 4:32:UPCAST
+color_shapes_3	5	[16, 32, 2, 16, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.UPCAST]	[3, 4]	[0, 1, 2]	[3]	2	1	1	3	  16   32    2   16    2	4:16:LOCAL 5:2:UPCAST
+color_shapes_4	4	[32, 32, 16, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WEAK, AxisType.UPCAST]	[2, 3]	[0, 1]	[2]	2	0	1	3	  32   32   16    2	3:1:LOCAL 4:2:UPCAST
+arange_local	2	[16, 8]	[AxisType.GLOBAL, AxisType.LOCAL]	[]	[0, 1]	[]	1	0	0	1	  16    8	0:16:GLOBAL 1:8:LOCAL
+arange_local_upcast	2	[8, 16]	[AxisType.LOCAL, AxisType.UPCAST]	[]	[0]	[]	16	0	0	1	   8   16	0:1:GLOBAL 2:16:UPCAST
+top_split_upcast	3	[4, 16, 64]	[AxisType.WEAK, AxisType.UPCAST, AxisType.WEAK]	[2]	[0]	[2]	16	0	1	2	   4   16   64	1:4:WEAK 2:16:UPCAST
+double_sum_group	2	[16, 4]	[AxisType.LOCAL, AxisType.WEAK]	[0, 1]	[]	[0, 1]	1	1	2	2	  16    4	0:1:WEAK 3:16:LOCAL
+double_sum_group_twice	2	[4, 16]	[AxisType.LOCAL, AxisType.LOCAL]	[0, 1]	[]	[0, 1]	1	2	2	2	   4   16	0:1:WEAK 4:16:LOCAL
+sibling_sums_group	4	[16, 4, 8, 40]	[AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[0, 1, 2, 3]	[]	[0, 1, 2, 3]	1	1	3	4	  16    4    8   40	0:4:WEAK 3:16:LOCAL
+ten_sums_group	10	[1024, 2, 3, 4, 5, 6, 7, 8, 9216, 10240]	[AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]	[]	[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]	1	1	10	11	1024    2    3    4    5    6    7    8 9216 10240	0:1:WEAK 10:1024:LOCAL
+ten_shared_sums_group	2	[256, 4]	[AxisType.LOCAL, AxisType.WEAK]	[0, 1]	[]	[0, 1]	1	1	10	11	 256    4	0:4:WEAK 1:256:LOCAL
+single_kernel_softmax_group	5	[32, 32, 4, 8, 32]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK]	[2, 3, 4]	[0, 1]	[2, 3, 4]	1	1	3	4	  32   32    4    8   32	0:8:WEAK 4:4:LOCAL
+split_last_axis	3	[32, 16, 2]	[AxisType.WEAK, AxisType.WEAK, AxisType.UPCAST]	[1, 2]	[0]	[1]	2	0	1	2	  32   16    2	0:16:WEAK 2:2:UPCAST
+unroll_32	3	[64, 2, 32]	[AxisType.WEAK, AxisType.WEAK, AxisType.UPCAST]	[1, 2]	[0]	[1]	32	0	1	2	  64    2   32	0:2:WEAK 2:32:UPCAST
+upcast_16	3	[4, 16, 64]	[AxisType.WEAK, AxisType.UPCAST, AxisType.WEAK]	[2]	[0]	[2]	16	0	1	2	   4   16   64	1:4:WEAK 2:16:UPCAST
+upcast_reduce	3	[32, 16, 2]	[AxisType.WEAK, AxisType.WEAK, AxisType.UPCAST]	[1, 2]	[0]	[1]	2	0	1	2	  32   16    2	0:16:WEAK 2:2:UPCAST
+unroll_global	3	[16, 2, 32]	[AxisType.WEAK, AxisType.UPCAST, AxisType.WEAK]	[2]	[0]	[2]	2	0	1	2	  16    2   32	1:16:WEAK 2:2:UPCAST
+group_at_shared_memory	6	[128, 16, 16, 4, 8, 2]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.UPCAST, AxisType.WEAK]	[1, 3, 5]	[0, 2]	[1, 3, 5]	8	2	1	3	 128   16   16    4    8    2	0:2:WEAK 6:4:LOCAL
+unroll_without_reduce	2	[512, 2]	[AxisType.WEAK, AxisType.UPCAST]	[]	[0]	[]	2	0	0	2	 512    2	0:512:WEAK 1:2:UPCAST
+padto_under_quadruple	2	[4, 64]	[AxisType.WEAK, AxisType.WEAK]	[1]	[0]	[1]	1	0	1	2	   4   64	0:64:WEAK
+swap_globals	3	[128, 128, 128]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	 128  128  128	
+swap_then_split	5	[32, 32, 4, 4, 128]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.UPCAST, AxisType.WEAK]	[4]	[0, 1, 2]	[4]	4	0	1	3	  32   32    4    4  128	2:32:GLOBAL 4:4:UPCAST
+swap_with_itself	3	[128, 128, 128]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	 128  128  128	
+local_ignores_shared_memory	4	[4, 128, 32, 128]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK]	[3]	[0, 1, 2]	[3]	1	0	1	3	   4  128   32  128	1:4:GLOBAL 3:32:LOCAL
+tc_operands_swapped	5	[16, 16, 32, 2, 16]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK]	[4]	[0, 1]	[4]	2	0	1	3	  16   16   32    2   16	1:16:GLOBAL 2:16:GLOBAL 0:16:WEAK
+stage_then_reduce_globals	3	[4, 8, 8]	[AxisType.GLOBAL, AxisType.LOOP, AxisType.LOOP]	[2]	[0]	[]	1	0	1	3	   4    8    8	
+stage_outside_an_output_globals	4	[4, 2, 8, 8]	[AxisType.GLOBAL, AxisType.WEAK, AxisType.LOOP, AxisType.LOOP]	[3]	[0, 1]	[]	1	0	1	3	   4    2    8    8	
+loop_counter_upcast	2	[2, 2]	[AxisType.WEAK, AxisType.UPCAST]	[]	[0]	[]	2	0	0	5	   2    2	0:2:WEAK 2:2:UPCAST
+local_sum_axes	2	[4, 8]	[AxisType.GLOBAL, AxisType.LOCAL]	[1]	[0]	[1]	1	1	1	2	   4    8	
+warp_sum_axes	2	[4, 8]	[AxisType.GLOBAL, AxisType.WARP]	[1]	[0]	[]	1	1	1	2	   4    8	
+group_within_symbolic_shared_memory	3	[n, 2, 4]	[AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK]	[1, 2]	[]	[1, 2]	1	1	1	2	   n    2    4	1:4:WEAK 2:2:LOCAL
+padto_beyond_host_integers	1	[4611686018427387904]	[AxisType.GLOBAL]	[]	[0]	[]	1	0	0	1	4611686018427387904	0:4611686018427387904:GLOBAL
+local_whole_axis_beyond_host_integers	1	[4611686018427387904]	[AxisType.LOCAL]	[]	[0]	[]	1	0	0	1	4611686018427387904	0:1:GLOBAL 1:4611686018427387904:LOCAL
+upcasts_beyond_host_integers	1	[18446744073709551616]	[AxisType.UPCAST]	[]	[]	[]	18446744073709551616	0	0	1	18446744073709551616	
+nested_end_globals	2	[8, 4]	[AxisType.GLOBAL, AxisType.WEAK]	[]	[0, 1]	[]	1	0	0	1	   8    4	
+launched_upcast	2	[4, 2]	[AxisType.GLOBAL, AxisType.UPCAST]	[]	[0]	[]	2	0	0	1	   4    2	0:4:GLOBAL 1:2:UPCAST
+split_int32_axis	2	[4, 2]	[AxisType.GLOBAL, AxisType.UPCAST]	[]	[0]	[]	2	0	0	1	   4    2	0:4:GLOBAL 1:2:UPCAST
+padto_reduction_bound	2	[8, (r0+1)]	[AxisType.GLOBAL, AxisType.WEAK]	[1]	[]	[]	1	0	1	2	   8 (r0+1)	0:8:GLOBAL
+upcast_both_roles	4	[32, 2, 16, 4]	[AxisType.WEAK, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[2, 3]	[0]	[2]	8	0	1	2	  32    2   16    4	1:32:WEAK 3:2:UPCAST
+group_beside_unrolled_reduce	4	[32, 2, 2, 32]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.UPCAST, AxisType.UPCAST]	[1, 3]	[0]	[1]	64	1	1	2	  32    2    2   32	0:1:WEAK 4:2:LOCAL
+tc_metal_0_basic	2	[32, 2]	[AxisType.WARP, AxisType.UPCAST]	[]	[]	[]	2	0	1	3	  32    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_metal_0_padded_2	5	[2, 2, 32, 2, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK]	[4]	[0, 1]	[4]	2	0	1	3	   2    2   32    2    2	2:2:GLOBAL 1:2:GLOBAL 0:2:WEAK
+tc_metal_1_basic	2	[32, 2]	[AxisType.WARP, AxisType.UPCAST]	[]	[]	[]	2	0	1	3	  32    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_metal_2_basic	2	[32, 2]	[AxisType.WARP, AxisType.UPCAST]	[]	[]	[]	2	0	1	3	  32    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_metal_3_basic	2	[32, 2]	[AxisType.WARP, AxisType.UPCAST]	[]	[]	[]	2	0	1	3	  32    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_metal_4_basic	2	[32, 2]	[AxisType.WARP, AxisType.UPCAST]	[]	[]	[]	2	0	1	3	  32    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_metal_tiled_extra_locals	6	[8, 2, 2, 2, 32, 2]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WARP, AxisType.UPCAST]	[]	[0, 1, 2, 3]	[]	2	0	1	3	   8    2    2    2   32    2	1:1:GLOBAL 9:2:LOCAL
+tc_metal_tiled_use_tc_2	7	[8, 8, 32, 2, 2, 2, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[4, 5, 6]	[0, 1]	[]	16	0	1	3	   8    8   32    2    2    2    2	2:8:GLOBAL 1:8:GLOBAL 0:1:WEAK
+tc_metal_batched_upcast	6	[2, 2, 32, 2, 3, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[5]	[0, 1]	[5]	6	0	1	3	   2    2   32    2    3    2	1:1:GLOBAL 8:3:UPCAST
+tc_metal_group_2	4	[2, 32, 2, 2]	[AxisType.LOCAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK]	[0, 3]	[]	[0, 3]	2	1	1	3	   2   32    2    2	0:2:WEAK 7:2:LOCAL
+tc_metal_group_2_top	4	[2, 32, 2, 2]	[AxisType.LOCAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK]	[0, 3]	[]	[0, 3]	2	1	1	3	   2   32    2    2	0:2:WEAK 7:2:LOCAL
+tc_metal_group_4	3	[4, 32, 2]	[AxisType.LOCAL, AxisType.WARP, AxisType.UPCAST]	[0]	[]	[0]	2	1	1	3	   4   32    2	0:1:WEAK 7:4:LOCAL
+tc_metal_group_4_top	3	[4, 32, 2]	[AxisType.LOCAL, AxisType.WARP, AxisType.UPCAST]	[0]	[]	[0]	2	1	1	3	   4   32    2	0:1:WEAK 7:4:LOCAL
+tc_metal_unroll	4	[32, 2, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[2, 3]	[]	[2]	4	0	1	3	  32    2    2    2	0:2:WEAK 7:2:UPCAST
+tc_metal_padto_unroll	6	[3, 3, 32, 2, 2, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[4, 5]	[0, 1]	[]	8	0	1	3	   3    3   32    2    2    2	0:1:WEAK 8:2:UPCAST
+tc_metal_padto_shifted_operand	5	[3, 3, 32, 2, 3]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK]	[4]	[0, 1]	[4]	2	0	1	3	   3    3   32    2    3	2:3:GLOBAL 1:3:GLOBAL 0:3:WEAK
+tc_metal_padto_masked_operand	5	[3, 3, 32, 2, 3]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK]	[4]	[0, 1]	[4]	2	0	1	5	   3    3   32    2    3	2:3:GLOBAL 1:3:GLOBAL 0:3:WEAK
+tc_metal_shape_padded	8	[3, 4, 32, 2, 3, 2, 2, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[4, 5, 6, 7]	[0, 1]	[4]	16	0	1	3	   3    4   32    2    3    2    2    2	2:4:GLOBAL 1:3:GLOBAL 0:3:WEAK
+tc_metal_padto_full_upcast	5	[4, 32, 2, 4, 3]	[AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[4]	[0]	[4]	8	0	1	3	   4   32    2    4    3	1:1:GLOBAL 7:4:UPCAST
+tc_metal_unroll_relu	6	[2, 2, 32, 2, 4, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[4, 5]	[0, 1]	[4]	4	0	1	3	   2    2   32    2    4    2	0:4:WEAK 7:2:UPCAST
+tc_metal_half_128_0	5	[16, 16, 32, 2, 16]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK]	[4]	[0, 1]	[4]	2	0	1	3	  16   16   32    2   16	2:16:GLOBAL 1:16:GLOBAL 0:16:WEAK
+tc_metal_half_128_1	6	[4, 16, 32, 2, 4, 16]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[5]	[0, 1]	[5]	8	0	1	3	   4   16   32    2    4   16	1:4:GLOBAL 7:4:UPCAST
+tc_metal_half_128_2	6	[16, 4, 32, 2, 4, 16]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[5]	[0, 1]	[5]	8	0	1	3	  16    4   32    2    4   16	2:4:GLOBAL 7:4:UPCAST
+tc_metal_half_128_3	7	[4, 4, 32, 2, 4, 4, 16]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[6]	[0, 1]	[6]	32	0	1	3	   4    4   32    2    4    4   16	2:4:GLOBAL 8:4:UPCAST
+tc_metal_half_128_4	6	[16, 16, 32, 2, 8, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[4, 5]	[0, 1]	[4]	4	0	1	3	  16   16   32    2    8    2	0:8:WEAK 7:2:UPCAST
+tc_metal_half_128_5	7	[4, 16, 32, 2, 4, 8, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[5, 6]	[0, 1]	[5]	16	0	1	3	   4   16   32    2    4    8    2	0:8:WEAK 8:2:UPCAST
+tc_metal_half_128_6	8	[4, 4, 32, 2, 4, 4, 8, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[6, 7]	[0, 1]	[6]	64	0	1	3	   4    4   32    2    4    4    8    2	0:8:WEAK 9:2:UPCAST
+tc_metal_half_128_7	8	[4, 4, 32, 2, 4, 4, 4, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[6, 7]	[0, 1]	[6]	128	0	1	3	   4    4   32    2    4    4    4    4	0:4:WEAK 9:4:UPCAST
+tc_cuda_0_basic	4	[32, 2, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[]	[]	[]	8	0	1	3	  32    2    2    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_cuda_0_padded_2	7	[2, 2, 32, 2, 2, 2, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[6]	[0, 1]	[6]	8	0	1	3	   2    2   32    2    2    2    2	2:2:GLOBAL 1:2:GLOBAL 0:2:WEAK
+tc_cuda_1_basic	4	[32, 2, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[]	[]	[]	8	0	1	3	  32    2    2    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_cuda_2_basic	4	[32, 2, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[]	[]	[]	8	0	1	3	  32    2    2    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_cuda_3_basic	3	[32, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST]	[]	[]	[]	4	0	1	3	  32    2    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_cuda_4_basic	3	[32, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST]	[]	[]	[]	4	0	1	3	  32    2    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_cuda_5_basic	3	[32, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST]	[]	[]	[]	4	0	1	3	  32    2    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_cuda_6_basic	5	[32, 2, 2, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[]	[]	[]	16	0	1	3	  32    2    2    2    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_cuda_7_basic	5	[32, 2, 2, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[]	[]	[]	16	0	1	3	  32    2    2    2    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_cuda_tiled_extra_locals	8	[8, 2, 2, 2, 32, 2, 2, 2]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[]	[0, 1, 2, 3]	[]	8	0	1	3	   8    2    2    2   32    2    2    2	1:1:GLOBAL 11:2:LOCAL
+tc_cuda_tiled_use_tc_2	9	[8, 8, 32, 2, 2, 2, 2, 2, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[5, 6, 7, 8]	[0, 1]	[]	64	0	1	3	   8    8   32    2    2    2    2    2    2	2:8:GLOBAL 1:8:GLOBAL 0:1:WEAK
+tc_cuda_batched_upcast	8	[2, 2, 32, 2, 2, 2, 3, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[7]	[0, 1]	[7]	24	0	1	3	   2    2   32    2    2    2    3    2	1:1:GLOBAL 10:3:UPCAST
+tc_cuda_group_2	6	[2, 32, 2, 2, 2, 2]	[AxisType.LOCAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[0, 5]	[]	[0, 5]	8	1	1	3	   2   32    2    2    2    2	0:2:WEAK 9:2:LOCAL
+tc_cuda_group_2_top	6	[2, 32, 2, 2, 2, 2]	[AxisType.LOCAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[0, 5]	[]	[0, 5]	8	1	1	3	   2   32    2    2    2    2	0:2:WEAK 9:2:LOCAL
+tc_cuda_group_4	5	[4, 32, 2, 2, 2]	[AxisType.LOCAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[0]	[]	[0]	8	1	1	3	   4   32    2    2    2	0:1:WEAK 9:4:LOCAL
+tc_cuda_group_4_top	5	[4, 32, 2, 2, 2]	[AxisType.LOCAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[0]	[]	[0]	8	1	1	3	   4   32    2    2    2	0:1:WEAK 9:4:LOCAL
+tc_cuda_unroll	6	[32, 2, 2, 2, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[4, 5]	[]	[4]	16	0	1	3	  32    2    2    2    2    2	0:2:WEAK 9:2:UPCAST
+tc_cuda_padto_unroll	8	[3, 3, 32, 2, 2, 2, 2, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[6, 7]	[0, 1]	[]	32	0	1	3	   3    3   32    2    2    2    2    2	0:1:WEAK 10:2:UPCAST
+tc_cuda_padto_shifted_operand	7	[3, 3, 32, 2, 2, 2, 3]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[6]	[0, 1]	[6]	8	0	1	3	   3    3   32    2    2    2    3	2:3:GLOBAL 1:3:GLOBAL 0:3:WEAK
+tc_cuda_padto_masked_operand	7	[3, 3, 32, 2, 2, 2, 3]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[6]	[0, 1]	[6]	8	0	1	5	   3    3   32    2    2    2    3	2:3:GLOBAL 1:3:GLOBAL 0:3:WEAK
+tc_cuda_shape_padded	10	[2, 4, 32, 2, 2, 2, 2, 2, 2, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[5, 6, 7, 8, 9]	[0, 1]	[5]	64	0	1	3	   2    4   32    2    2    2    2    2    2    2	2:4:GLOBAL 1:2:GLOBAL 0:2:WEAK
+tc_cuda_padto_full_upcast	7	[4, 32, 2, 2, 2, 4, 2]	[AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[6]	[0]	[6]	32	0	1	3	   4   32    2    2    2    4    2	1:1:GLOBAL 9:4:UPCAST
+tc_cuda_unroll_relu	7	[2, 32, 2, 2, 2, 2, 2]	[AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[5, 6]	[0]	[5]	16	0	1	3	   2   32    2    2    2    2    2	0:2:WEAK 9:2:UPCAST
+tc_cuda_half_128_0	7	[8, 16, 32, 2, 2, 2, 8]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[6]	[0, 1]	[6]	8	0	1	3	   8   16   32    2    2    2    8	2:16:GLOBAL 1:8:GLOBAL 0:8:WEAK
+tc_cuda_half_128_1	8	[2, 16, 32, 2, 2, 2, 4, 8]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[7]	[0, 1]	[7]	32	0	1	3	   2   16   32    2    2    2    4    8	1:2:GLOBAL 9:4:UPCAST
+tc_cuda_half_128_2	8	[8, 4, 32, 2, 2, 2, 4, 8]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[7]	[0, 1]	[7]	32	0	1	3	   8    4   32    2    2    2    4    8	2:4:GLOBAL 9:4:UPCAST
+tc_cuda_half_128_3	9	[2, 4, 32, 2, 2, 2, 4, 4, 8]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[8]	[0, 1]	[8]	128	0	1	3	   2    4   32    2    2    2    4    4    8	2:4:GLOBAL 10:4:UPCAST
+tc_cuda_half_128_4	8	[8, 16, 32, 2, 2, 2, 4, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[6, 7]	[0, 1]	[6]	16	0	1	3	   8   16   32    2    2    2    4    2	0:4:WEAK 9:2:UPCAST
+tc_cuda_half_128_5	9	[2, 16, 32, 2, 2, 2, 4, 4, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[7, 8]	[0, 1]	[7]	64	0	1	3	   2   16   32    2    2    2    4    4    2	0:4:WEAK 10:2:UPCAST
+tc_cuda_half_128_6	10	[2, 4, 32, 2, 2, 2, 4, 4, 4, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[8, 9]	[0, 1]	[8]	256	0	1	3	   2    4   32    2    2    2    4    4    4    2	0:4:WEAK 11:2:UPCAST
+tc_cuda_half_128_7	10	[2, 4, 32, 2, 2, 2, 4, 4, 2, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[8, 9]	[0, 1]	[8]	512	0	1	3	   2    4   32    2    2    2    4    4    2    4	0:2:WEAK 11:4:UPCAST
+tc_amd_0_basic	5	[32, 2, 2, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[]	[]	[]	16	0	1	3	  32    2    2    2    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_amd_0_padded_2	8	[2, 2, 32, 2, 2, 2, 2, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[7]	[0, 1]	[7]	16	0	1	3	   2    2   32    2    2    2    2    2	2:2:GLOBAL 1:2:GLOBAL 0:2:WEAK
+tc_amd_1_basic	5	[32, 2, 2, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[]	[]	[]	16	0	1	3	  32    2    2    2    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_amd_2_basic	5	[32, 2, 2, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[]	[]	[]	16	0	1	3	  32    2    2    2    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_amd_3_basic	5	[32, 2, 2, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[]	[]	[]	16	0	1	3	  32    2    2    2    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_amd_tiled_extra_locals	9	[8, 2, 2, 2, 32, 2, 2, 2, 2]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[]	[0, 1, 2, 3]	[]	16	0	1	3	   8    2    2    2   32    2    2    2    2	1:1:GLOBAL 12:2:LOCAL
+tc_amd_tiled_use_tc_2	10	[8, 8, 32, 2, 2, 2, 2, 2, 2, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[6, 7, 8, 9]	[0, 1]	[]	128	0	1	3	   8    8   32    2    2    2    2    2    2    2	2:8:GLOBAL 1:8:GLOBAL 0:1:WEAK
+tc_amd_batched_upcast	9	[2, 2, 32, 2, 2, 2, 2, 3, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[8]	[0, 1]	[8]	48	0	1	3	   2    2   32    2    2    2    2    3    2	1:1:GLOBAL 11:3:UPCAST
+tc_amd_group_2	7	[2, 32, 2, 2, 2, 2, 2]	[AxisType.LOCAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[0, 6]	[]	[0, 6]	16	1	1	3	   2   32    2    2    2    2    2	0:2:WEAK 10:2:LOCAL
+tc_amd_group_2_top	7	[2, 32, 2, 2, 2, 2, 2]	[AxisType.LOCAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[0, 6]	[]	[0, 6]	16	1	1	3	   2   32    2    2    2    2    2	0:2:WEAK 10:2:LOCAL
+tc_amd_group_4	6	[4, 32, 2, 2, 2, 2]	[AxisType.LOCAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[0]	[]	[0]	16	1	1	3	   4   32    2    2    2    2	0:1:WEAK 10:4:LOCAL
+tc_amd_group_4_top	6	[4, 32, 2, 2, 2, 2]	[AxisType.LOCAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[0]	[]	[0]	16	1	1	3	   4   32    2    2    2    2	0:1:WEAK 10:4:LOCAL
+tc_amd_unroll	7	[32, 2, 2, 2, 2, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[5, 6]	[]	[5]	32	0	1	3	  32    2    2    2    2    2    2	0:2:WEAK 10:2:UPCAST
+tc_amd_padto_unroll	9	[3, 3, 32, 2, 2, 2, 2, 2, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[7, 8]	[0, 1]	[]	64	0	1	3	   3    3   32    2    2    2    2    2    2	0:1:WEAK 11:2:UPCAST
+tc_amd_padto_shifted_operand	8	[3, 3, 32, 2, 2, 2, 2, 3]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[7]	[0, 1]	[7]	16	0	1	3	   3    3   32    2    2    2    2    3	2:3:GLOBAL 1:3:GLOBAL 0:3:WEAK
+tc_amd_padto_masked_operand	8	[3, 3, 32, 2, 2, 2, 2, 3]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[7]	[0, 1]	[7]	16	0	1	5	   3    3   32    2    2    2    2    3	2:3:GLOBAL 1:3:GLOBAL 0:3:WEAK
+tc_amd_shape_padded	11	[2, 2, 32, 2, 2, 2, 2, 2, 2, 2, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[6, 7, 8, 9, 10]	[0, 1]	[6]	128	0	1	3	   2    2   32    2    2    2    2    2    2    2    2	2:2:GLOBAL 1:2:GLOBAL 0:2:WEAK
+tc_amd_padto_full_upcast	8	[2, 32, 2, 2, 2, 2, 4, 2]	[AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[7]	[0]	[7]	64	0	1	3	   2   32    2    2    2    2    4    2	1:1:GLOBAL 10:4:UPCAST
+tc_amd_unroll_relu	7	[32, 2, 2, 2, 2, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[5, 6]	[]	[5]	32	0	1	3	  32    2    2    2    2    2    2	0:2:WEAK 10:2:UPCAST
+tc_amd_half_128_0	8	[8, 8, 32, 2, 2, 2, 2, 8]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[7]	[0, 1]	[7]	16	0	1	3	   8    8   32    2    2    2    2    8	2:8:GLOBAL 1:8:GLOBAL 0:8:WEAK
+tc_amd_half_128_1	9	[2, 8, 32, 2, 2, 2, 2, 4, 8]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[8]	[0, 1]	[8]	64	0	1	3	   2    8   32    2    2    2    2    4    8	1:2:GLOBAL 10:4:UPCAST
+tc_amd_half_128_2	9	[8, 2, 32, 2, 2, 2, 2, 4, 8]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[8]	[0, 1]	[8]	64	0	1	3	   8    2   32    2    2    2    2    4    8	2:2:GLOBAL 10:4:UPCAST
+tc_amd_half_128_3	10	[2, 2, 32, 2, 2, 2, 2, 4, 4, 8]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[9]	[0, 1]	[9]	256	0	1	3	   2    2   32    2    2    2    2    4    4    8	2:2:GLOBAL 11:4:UPCAST
+tc_amd_half_128_4	9	[8, 8, 32, 2, 2, 2, 2, 4, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[7, 8]	[0, 1]	[7]	32	0	1	3	   8    8   32    2    2    2    2    4    2	0:4:WEAK 10:2:UPCAST
+tc_amd_half_128_5	10	[2, 8, 32, 2, 2, 2, 2, 4, 4, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[8, 9]	[0, 1]	[8]	128	0	1	3	   2    8   32    2    2    2    2    4    4    2	0:4:WEAK 11:2:UPCAST
+tc_amd_half_128_6	11	[2, 2, 32, 2, 2, 2, 2, 4, 4, 4, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[9, 10]	[0, 1]	[9]	512	0	1	3	   2    2   32    2    2    2    2    4    4    4    2	0:4:WEAK 12:2:UPCAST
+tc_amd_half_128_7	11	[2, 2, 32, 2, 2, 2, 2, 4, 4, 2, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK, AxisType.UPCAST]	[9, 10]	[0, 1]	[9]	1024	0	1	3	   2    2   32    2    2    2    2    4    4    2    4	0:2:WEAK 12:4:UPCAST
+tc_metal_conv_0	9	[16, 4, 16, 2, 32, 2, 16, 16, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[6, 7, 8]	[0, 1, 2, 3]	[6, 7, 8]	2	0	1	3	  16    4   16    2   32    2   16   16    2	4:4:GLOBAL 6:2:GLOBAL 2:2:WEAK
+tc_metal_conv_1	9	[16, 4, 16, 2, 32, 2, 16, 2, 16]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[6, 7, 8]	[0, 1, 2, 3]	[6, 7, 8]	2	0	1	3	  16    4   16    2   32    2   16    2   16	4:4:GLOBAL 6:2:GLOBAL 1:2:WEAK
+tc_metal_conv_2	9	[16, 4, 16, 2, 32, 2, 2, 16, 16]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[6, 7, 8]	[0, 1, 2, 3]	[6, 7, 8]	2	0	1	3	  16    4   16    2   32    2    2   16   16	4:4:GLOBAL 6:2:GLOBAL 0:2:WEAK
+tc_metal_conv_3	9	[16, 4, 2, 16, 32, 2, 16, 16, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[6, 7, 8]	[0, 1, 2, 3]	[6, 7, 8]	2	0	1	3	  16    4    2   16   32    2   16   16    2	4:4:GLOBAL 5:2:GLOBAL 2:2:WEAK
+tc_metal_conv_4	9	[16, 4, 2, 16, 32, 2, 16, 2, 16]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[6, 7, 8]	[0, 1, 2, 3]	[6, 7, 8]	2	0	1	3	  16    4    2   16   32    2   16    2   16	4:4:GLOBAL 5:2:GLOBAL 1:2:WEAK
+tc_metal_conv_5	9	[16, 4, 2, 16, 32, 2, 2, 16, 16]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[6, 7, 8]	[0, 1, 2, 3]	[6, 7, 8]	2	0	1	3	  16    4    2   16   32    2    2   16   16	4:4:GLOBAL 5:2:GLOBAL 0:2:WEAK
+tc_metal_conv_6	9	[2, 4, 16, 16, 32, 2, 16, 16, 2]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[6, 7, 8]	[0, 1, 2, 3]	[6, 7, 8]	2	0	1	3	   2    4   16   16   32    2   16   16    2	4:4:GLOBAL 3:2:GLOBAL 2:2:WEAK
+tc_metal_conv_7	9	[2, 4, 16, 16, 32, 2, 16, 2, 16]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[6, 7, 8]	[0, 1, 2, 3]	[6, 7, 8]	2	0	1	3	   2    4   16   16   32    2   16    2   16	4:4:GLOBAL 3:2:GLOBAL 1:2:WEAK
+tc_metal_conv_8	9	[2, 4, 16, 16, 32, 2, 2, 16, 16]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK, AxisType.WEAK, AxisType.WEAK]	[6, 7, 8]	[0, 1, 2, 3]	[6, 7, 8]	2	0	1	3	   2    4   16   16   32    2    2   16   16	4:4:GLOBAL 3:2:GLOBAL 0:2:WEAK
+tc_cuda_widened_half	7	[4, 8, 32, 2, 2, 2, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[6]	[0, 1]	[6]	8	0	1	3	   4    8   32    2    2    2    4	2:8:GLOBAL 1:4:GLOBAL 0:4:WEAK
+tc_cuda_widened_half_shaped	8	[2, 32, 2, 2, 2, 2, 2, 2]	[AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[4, 5, 6, 7]	[0]	[]	64	0	1	3	   2   32    2    2    2    2    2    2	2:2:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_cuda_widened_bfloat	7	[4, 8, 32, 2, 2, 2, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[6]	[0, 1]	[6]	8	0	1	3	   4    8   32    2    2    2    4	2:8:GLOBAL 1:4:GLOBAL 0:4:WEAK
+tc_cuda_widened_bfloat_shaped	8	[2, 32, 2, 2, 2, 2, 2, 2]	[AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[4, 5, 6, 7]	[0]	[]	64	0	1	3	   2   32    2    2    2    2    2    2	2:2:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_amd_widened_half	8	[4, 4, 32, 2, 2, 2, 2, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[7]	[0, 1]	[7]	16	0	1	3	   4    4   32    2    2    2    2    4	2:4:GLOBAL 1:4:GLOBAL 0:4:WEAK
+tc_amd_widened_half_shaped	8	[32, 2, 2, 2, 2, 2, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[4, 5, 6, 7]	[]	[]	128	0	1	3	  32    2    2    2    2    2    2    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_amd_widened_bfloat	8	[4, 4, 32, 2, 2, 2, 2, 4]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.WEAK]	[7]	[0, 1]	[7]	16	0	1	3	   4    4   32    2    2    2    2    4	2:4:GLOBAL 1:4:GLOBAL 0:4:WEAK
+tc_amd_widened_bfloat_shaped	8	[32, 2, 2, 2, 2, 2, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST, AxisType.UPCAST]	[4, 5, 6, 7]	[]	[]	128	0	1	3	  32    2    2    2    2    2    2    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK
+tc_nv_float	3	[32, 2, 2]	[AxisType.WARP, AxisType.UPCAST, AxisType.UPCAST]	[]	[]	[]	4	0	1	3	  32    2    2	2:1:GLOBAL 1:1:GLOBAL 0:1:WEAK

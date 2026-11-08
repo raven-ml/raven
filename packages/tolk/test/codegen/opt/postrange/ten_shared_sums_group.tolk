@@ -1,0 +1,54 @@
+# tolk D101 golden=8d8db871cd3716d1e3b5091ef1e717b9
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.INDEX dtypes.f32 [1, 2]
+4 Ops.CONST dtypes.weakint [] 1024
+5 Ops.PARAM dtypes.f32 [4] ParamArg(slot=1, dtype=dtypes.f32)
+6 Ops.CONST dtypes.weakint [] 256
+7 Ops.RANGE dtypes.weakint [6] (AxisType.LOCAL, 1)
+8 Ops.CONST dtypes.weakint [] 4
+9 Ops.MUL dtypes.weakint [7, 8]
+10 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 0)
+11 Ops.ADD dtypes.weakint [9, 10]
+12 Ops.INDEX dtypes.f32 [5, 11]
+13 Ops.REDUCE dtypes.f32 [12, 7, 10] (Ops.ADD, 0)
+14 Ops.PARAM dtypes.f32 [4] ParamArg(slot=2, dtype=dtypes.f32)
+15 Ops.INDEX dtypes.f32 [14, 11]
+16 Ops.REDUCE dtypes.f32 [15, 7, 10] (Ops.ADD, 0)
+17 Ops.ADD dtypes.f32 [13, 16]
+18 Ops.PARAM dtypes.f32 [4] ParamArg(slot=3, dtype=dtypes.f32)
+19 Ops.INDEX dtypes.f32 [18, 11]
+20 Ops.REDUCE dtypes.f32 [19, 7, 10] (Ops.ADD, 0)
+21 Ops.ADD dtypes.f32 [17, 20]
+22 Ops.PARAM dtypes.f32 [4] ParamArg(slot=4, dtype=dtypes.f32)
+23 Ops.INDEX dtypes.f32 [22, 11]
+24 Ops.REDUCE dtypes.f32 [23, 7, 10] (Ops.ADD, 0)
+25 Ops.ADD dtypes.f32 [21, 24]
+26 Ops.PARAM dtypes.f32 [4] ParamArg(slot=5, dtype=dtypes.f32)
+27 Ops.INDEX dtypes.f32 [26, 11]
+28 Ops.REDUCE dtypes.f32 [27, 7, 10] (Ops.ADD, 0)
+29 Ops.ADD dtypes.f32 [25, 28]
+30 Ops.PARAM dtypes.f32 [4] ParamArg(slot=6, dtype=dtypes.f32)
+31 Ops.INDEX dtypes.f32 [30, 11]
+32 Ops.REDUCE dtypes.f32 [31, 7, 10] (Ops.ADD, 0)
+33 Ops.ADD dtypes.f32 [29, 32]
+34 Ops.PARAM dtypes.f32 [4] ParamArg(slot=7, dtype=dtypes.f32)
+35 Ops.INDEX dtypes.f32 [34, 11]
+36 Ops.REDUCE dtypes.f32 [35, 7, 10] (Ops.ADD, 0)
+37 Ops.ADD dtypes.f32 [33, 36]
+38 Ops.PARAM dtypes.f32 [4] ParamArg(slot=8, dtype=dtypes.f32)
+39 Ops.INDEX dtypes.f32 [38, 11]
+40 Ops.REDUCE dtypes.f32 [39, 7, 10] (Ops.ADD, 0)
+41 Ops.ADD dtypes.f32 [37, 40]
+42 Ops.PARAM dtypes.f32 [4] ParamArg(slot=9, dtype=dtypes.f32)
+43 Ops.INDEX dtypes.f32 [42, 11]
+44 Ops.REDUCE dtypes.f32 [43, 7, 10] (Ops.ADD, 0)
+45 Ops.ADD dtypes.f32 [41, 44]
+46 Ops.PARAM dtypes.f32 [4] ParamArg(slot=10, dtype=dtypes.f32)
+47 Ops.INDEX dtypes.f32 [46, 11]
+48 Ops.REDUCE dtypes.f32 [47, 7, 10] (Ops.ADD, 0)
+49 Ops.ADD dtypes.f32 [45, 48]
+50 Ops.STORE dtypes.void [3, 49]
+51 Ops.SINK dtypes.void [50] KernelInfo(name="r_256_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(256, AxisType.LOCAL, True)),), optimized=True)
+

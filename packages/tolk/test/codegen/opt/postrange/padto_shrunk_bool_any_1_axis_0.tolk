@@ -1,0 +1,25 @@
+# tolk D280 golden=50f5aa90b51f1a41d803b288e62119c6
+0 Ops.CONST dtypes.weakint [] 17
+1 Ops.PARAM dtypes.bool [0] ParamArg(slot=0, dtype=dtypes.bool)
+2 Ops.CONST dtypes.weakint [] 32
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
+4 Ops.AFTER dtypes.bool [1, 3]
+5 Ops.CMPLT dtypes.bool [3, 0]
+6 Ops.CONST dtypes.bool [] True
+7 Ops.AND dtypes.bool [5, 6]
+8 Ops.CONST dtypes.bool [] Invalid
+9 Ops.WHERE dtypes.weakint [7, 3, 8]
+10 Ops.INDEX dtypes.bool [4, 9]
+11 Ops.CONST dtypes.weakint [] 324
+12 Ops.PARAM dtypes.bool [11] ParamArg(slot=1, dtype=dtypes.bool)
+13 Ops.CONST dtypes.weakint [] 18
+14 Ops.MUL dtypes.weakint [3, 13]
+15 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+16 Ops.ADD dtypes.weakint [14, 15]
+17 Ops.WHERE dtypes.weakint [7, 16, 8]
+18 Ops.INDEX dtypes.bool [12, 17]
+19 Ops.REDUCE dtypes.bool [18, 15] (Ops.ADD, 0)
+20 Ops.STORE dtypes.void [10, 19]
+21 Ops.END dtypes.void [20, 3]
+22 Ops.SINK dtypes.void [21] KernelInfo(name="r_32_17", applied_opts=(Opt(op=OptOps.PADTO, axis=0, arg=32),), optimized=True)
+

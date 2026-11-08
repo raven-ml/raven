@@ -1,0 +1,16 @@
+# tolk D280 golden=94cfb11ded23924887855af17f8bf257
+0 Ops.CONST dtypes.weakint [] 128
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
+2 Ops.CONST dtypes.weakint [] 16
+3 Ops.RANGE dtypes.weakint [2] (AxisType.GLOBAL, 0)
+4 Ops.CONST dtypes.weakint [] 8
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.RANGE dtypes.weakint [4] (AxisType.LOCAL, 1)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.AFTER dtypes.i32 [1, 7]
+9 Ops.INDEX dtypes.i32 [8, 7]
+10 Ops.CAST dtypes.i32 [7] dtypes.i32
+11 Ops.STORE dtypes.void [9, 10]
+12 Ops.END dtypes.void [11, 3, 6]
+13 Ops.SINK dtypes.void [12] KernelInfo(name="E_16_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL)),), optimized=True)
+

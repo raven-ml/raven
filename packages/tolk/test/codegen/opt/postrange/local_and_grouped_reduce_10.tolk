@@ -1,0 +1,53 @@
+# tolk D280 golden=347cdadad7e2e35d30875676ec5f1e31
+0 Ops.CONST dtypes.weakint [] 2048
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 128
+3 Ops.RANGE dtypes.weakint [2] (AxisType.GLOBAL, 1)
+4 Ops.CONST dtypes.weakint [] 2
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.RANGE dtypes.weakint [4] (AxisType.LOCAL, 8)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.MUL dtypes.weakint [7, 4]
+9 Ops.RANGE dtypes.weakint [4] (AxisType.LOCAL, 6)
+10 Ops.ADD dtypes.weakint [8, 9]
+11 Ops.MUL dtypes.weakint [10, 4]
+12 Ops.RANGE dtypes.weakint [4] (AxisType.LOCAL, 4)
+13 Ops.ADD dtypes.weakint [11, 12]
+14 Ops.MUL dtypes.weakint [13, 4]
+15 Ops.RANGE dtypes.weakint [4] (AxisType.LOCAL, 2)
+16 Ops.ADD dtypes.weakint [14, 15]
+17 Ops.AFTER dtypes.f32 [1, 16]
+18 Ops.INDEX dtypes.f32 [17, 16]
+19 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+20 Ops.INDEX dtypes.f32 [19, 16]
+21 Ops.SQRT dtypes.f32 [20]
+22 Ops.CONST dtypes.weakint [] 262144
+23 Ops.PARAM dtypes.f32 [22] ParamArg(slot=2, dtype=dtypes.f32)
+24 Ops.MUL dtypes.weakint [16, 2]
+25 Ops.CONST dtypes.weakint [] 8
+26 Ops.RANGE dtypes.weakint [25] (AxisType.WEAK, 0)
+27 Ops.MUL dtypes.weakint [26, 4]
+28 Ops.RANGE dtypes.weakint [4] (AxisType.LOCAL, 9)
+29 Ops.ADD dtypes.weakint [27, 28]
+30 Ops.MUL dtypes.weakint [29, 4]
+31 Ops.RANGE dtypes.weakint [4] (AxisType.LOCAL, 7)
+32 Ops.ADD dtypes.weakint [30, 31]
+33 Ops.MUL dtypes.weakint [32, 4]
+34 Ops.RANGE dtypes.weakint [4] (AxisType.LOCAL, 5)
+35 Ops.ADD dtypes.weakint [33, 34]
+36 Ops.MUL dtypes.weakint [35, 4]
+37 Ops.RANGE dtypes.weakint [4] (AxisType.LOCAL, 3)
+38 Ops.ADD dtypes.weakint [36, 37]
+39 Ops.ADD dtypes.weakint [24, 38]
+40 Ops.INDEX dtypes.f32 [23, 39]
+41 Ops.CONST dtypes.weakfloat [] 1.0
+42 Ops.ADD dtypes.f32 [40, 41]
+43 Ops.REDUCE dtypes.f32 [42, 26, 28, 31, 34, 37] (Ops.ADD, 0)
+44 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
+45 Ops.MUL dtypes.f32 [43, 44]
+46 Ops.EXP2 dtypes.f32 [45]
+47 Ops.ADD dtypes.f32 [21, 46]
+48 Ops.STORE dtypes.void [18, 47]
+49 Ops.END dtypes.void [48, 3, 6, 9, 12, 15]
+50 Ops.SINK dtypes.void [49] KernelInfo(name="r_128_2_2_2_2_2_2_2_2_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=4, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=6, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=8, arg=(2, AxisType.LOCAL))), optimized=True)
+

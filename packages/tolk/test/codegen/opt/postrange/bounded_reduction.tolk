@@ -1,0 +1,19 @@
+# tolk D280 golden=f16ab3cde51830ea8d7c8fd29343c4b1
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+3 Ops.AFTER dtypes.f32 [1, 2]
+4 Ops.INDEX dtypes.f32 [3, 2]
+5 Ops.CONST dtypes.weakint [] 16
+6 Ops.PARAM dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32)
+7 Ops.MUL dtypes.weakint [2, 0]
+8 Ops.CONST dtypes.weakint [] 1
+9 Ops.ADD dtypes.weakint [2, 8]
+10 Ops.RANGE dtypes.weakint [9] (AxisType.WEAK, 1)
+11 Ops.ADD dtypes.weakint [7, 10]
+12 Ops.INDEX dtypes.f32 [6, 11]
+13 Ops.REDUCE dtypes.f32 [12, 10] (Ops.ADD, 0)
+14 Ops.STORE dtypes.void [4, 13]
+15 Ops.END dtypes.void [14, 2]
+16 Ops.SINK dtypes.void [15] KernelInfo()
+

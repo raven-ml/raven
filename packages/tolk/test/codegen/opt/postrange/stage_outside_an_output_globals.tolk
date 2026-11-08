@@ -1,0 +1,27 @@
+# tolk D280 golden=a60330f8ad766903d153cfedf93cf67e
+0 Ops.CONST dtypes.weakint [] 8
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.RANGE dtypes.weakint [2] (AxisType.GLOBAL, 0)
+4 Ops.CONST dtypes.weakint [] 2
+5 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 3)
+6 Ops.AFTER dtypes.f32 [1, 3, 5]
+7 Ops.MUL dtypes.weakint [3, 4]
+8 Ops.ADD dtypes.weakint [7, 5]
+9 Ops.INDEX dtypes.f32 [6, 8]
+10 Ops.CONST dtypes.weakint [] 32
+11 Ops.PARAM dtypes.f32 [10] ParamArg(slot=1, dtype=dtypes.f32)
+12 Ops.MUL dtypes.weakint [3, 0]
+13 Ops.RANGE dtypes.weakint [0] (AxisType.LOOP, 1)
+14 Ops.ADD dtypes.weakint [12, 13]
+15 Ops.INDEX dtypes.f32 [11, 14]
+16 Ops.CONST dtypes.weakfloat [] 2.0
+17 Ops.MUL dtypes.f32 [15, 16]
+18 Ops.STAGE dtypes.f32 [17, 13] BufferizeOpts(device=None, addrspace=AddrSpace.LOCAL)
+19 Ops.RANGE dtypes.weakint [0] (AxisType.LOOP, 2)
+20 Ops.INDEX dtypes.f32 [18, 19]
+21 Ops.REDUCE dtypes.f32 [20, 19] (Ops.ADD, 0)
+22 Ops.STORE dtypes.void [9, 21]
+23 Ops.END dtypes.void [22, 3, 5]
+24 Ops.SINK dtypes.void [23] KernelInfo(name="r_4_2_8_8", optimized=True)
+

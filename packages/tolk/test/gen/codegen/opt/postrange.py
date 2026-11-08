@@ -58,9 +58,8 @@ RENDERERS = {
 
 @table
 def renderers():
-    return ["renderer", "device", "arch", "has_local", "has_shared", "shared_max", "tensor_cores", "registers"], [
-        (name, r.target.device, r.target.arch, r.has_local, r.has_shared, r.shared_max, len(r.tensor_cores),
-         "" if r.registers is None else f"{r.registers[0]}x{r.registers[1]}")
+    return ["renderer", "device", "arch", "has_local", "has_shared", "shared_max", "tensor_cores"], [
+        (name, r.target.device, r.target.arch, r.has_local, r.has_shared, r.shared_max, len(r.tensor_cores))
         for name, r in RENDERERS.items()]
 
 

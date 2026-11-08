@@ -17,9 +17,9 @@
 16 Ops.CONST dtypes.bool [] Invalid
 17 Ops.WHERE dtypes.weakint [11, 15, 16]
 18 Ops.INDEX dtypes.f32 [9, 17]
-19 Ops.CONST dtypes.weakfloat [] -1.0
-20 Ops.MUL dtypes.f32 [18, 19]
-21 Ops.REDUCE dtypes.f32 [20, 14] (Ops.ADD, 0)
+19 Ops.REDUCE dtypes.f32 [18, 14] (Ops.ADD, 0)
+20 Ops.CONST dtypes.weakfloat [] -1.0
+21 Ops.MUL dtypes.f32 [19, 20]
 22 Ops.CONST dtypes.weakfloat [] -inf
 23 Ops.CAST dtypes.f32 [22] dtypes.f32
 24 Ops.WHERE dtypes.f32 [7, 21, 23]

@@ -125,13 +125,13 @@ color_shapes_4	matmul_32x32	metal	(Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType
 arange_local	arange	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL)),)		ok	
 arange_local_upcast	arange	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)))		ok	
 top_split_upcast	sum_rows_64	cpu	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST, True)),)		ok	
-double_sum_group	double_sum	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),)		ok	
+double_sum_group	double_sum	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),)		KernelOptError	0
 double_sum_unroll_group	double_sum	metal	(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)))		KernelOptError	1
-double_sum_group_twice	double_sum	metal	(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)))		ok	
+double_sum_group_twice	double_sum	metal	(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)))		KernelOptError	1
 sibling_sums_group	sibling_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),)		ok	
 ten_sums_group	ten_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(1024, AxisType.LOCAL, True)),)		ok	
 ten_shared_sums_group	ten_shared_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(256, AxisType.LOCAL, True)),)		ok	
-ten_shared_sums_group_unfit	ten_shared_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(1024, AxisType.LOCAL, True)),)		KernelOptError	0
+ten_shared_sums_group_unfit	ten_shared_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(1024, AxisType.LOCAL, True)),)		ok	
 single_kernel_softmax_group	single_kernel_softmax	metal	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.LOCAL)),)		ok	
 split_axis_negative	sum_rows	cpu	(Opt(op=OptOps.SPLIT, axis=-1, arg=(2, AxisType.UPCAST)),)		KernelOptError	0
 split_axis_past_end	sum_rows	cpu	(Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType.UPCAST)),)		KernelOptError	0
@@ -175,7 +175,7 @@ tc_use_tc_zero	matmul	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 0)),)		Kernel
 tc_use_tc_out_of_range	matmul	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 3)),)		KernelOptError	0
 tc_without_reduce	add_one	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		KernelOptError	0
 tc_on_max	row_max	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		KernelOptError	0
-tc_operands_swapped	matmul	metal	(Opt(op=OptOps.TC, axis=1, arg=(-1, 0, 1)),)		ok	
+tc_operands_swapped	matmul	metal	(Opt(op=OptOps.TC, axis=1, arg=(-1, 0, 1)),)		KernelOptError	0
 tc_axis_out_of_choices	matmul	metal	(Opt(op=OptOps.TC, axis=2, arg=(-1, 0, 1)),)		KernelOptError	0
 custom_gemm_group	custom_gemm	amd	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.LOCAL)),)		KernelOptError	0
 custom_gemm_unroll	custom_gemm	cpu	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UPCAST)),)		KernelOptError	0
@@ -193,7 +193,7 @@ upcasts_beyond_host_integers	huge_upcasts	metal	()		ok
 flatten_keeps_a_closed_extent	closed_extent	cpu	()		ok	
 nested_end_globals	nested_end	metal	()		ok	
 launched_upcast	launched	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),)		ok	
-split_int32_axis	int32_axis	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),)		ok	
+split_int32_axis	int32_axis	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),)		KernelOptError	0
 padto_reduction_bound	bounded_reduction	amd	(Opt(op=OptOps.PADTO, axis=0, arg=8),)		ok	
 upcast_both_roles	sum_rows_64	cpu	(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)))		ok	
 group_beside_unrolled_reduce	sum_rows_64	tiny_shared	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=2, arg=(32, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType.LOCAL)))		ok	
@@ -320,14 +320,14 @@ tc_metal_conv_5	tc_metal_conv	metal	(Opt(op=OptOps.TC, axis=5, arg=(-1, 2, 1)),)
 tc_metal_conv_6	tc_metal_conv	metal	(Opt(op=OptOps.TC, axis=6, arg=(-1, 2, 1)),)		ok	
 tc_metal_conv_7	tc_metal_conv	metal	(Opt(op=OptOps.TC, axis=7, arg=(-1, 2, 1)),)		ok	
 tc_metal_conv_8	tc_metal_conv	metal	(Opt(op=OptOps.TC, axis=8, arg=(-1, 2, 1)),)		ok	
-tc_cuda_widened_half	tc_widened_half	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		ok	
-tc_cuda_widened_half_shaped	tc_widened_half_16	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 2)),)		ok	
-tc_cuda_widened_bfloat	tc_widened_bfloat	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		ok	
-tc_cuda_widened_bfloat_shaped	tc_widened_bfloat_16	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 2)),)		ok	
-tc_amd_widened_half	tc_widened_half	amd	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		ok	
-tc_amd_widened_half_shaped	tc_widened_half_16	amd	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 2)),)		ok	
-tc_amd_widened_bfloat	tc_widened_bfloat	amd	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		ok	
-tc_amd_widened_bfloat_shaped	tc_widened_bfloat_16	amd	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 2)),)		ok	
+tc_cuda_widened_half	tc_widened_half	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		KernelOptError	0
+tc_cuda_widened_half_shaped	tc_widened_half_16	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 2)),)		KernelOptError	0
+tc_cuda_widened_bfloat	tc_widened_bfloat	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		KernelOptError	0
+tc_cuda_widened_bfloat_shaped	tc_widened_bfloat_16	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 2)),)		KernelOptError	0
+tc_amd_widened_half	tc_widened_half	amd	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		KernelOptError	0
+tc_amd_widened_half_shaped	tc_widened_half_16	amd	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 2)),)		KernelOptError	0
+tc_amd_widened_bfloat	tc_widened_bfloat	amd	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		KernelOptError	0
+tc_amd_widened_bfloat_shaped	tc_widened_bfloat_16	amd	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 2)),)		KernelOptError	0
 tc_amd_loop_acc_tc	tc_amd_loop_acc	amd	(Opt(op=OptOps.TC, axis=0, arg=(0, 0, 1)),)		KernelOptError	0
 tc_cuda_float_without_tf32	tc_cuda_5	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		KernelOptError	0
 tc_nv_float_without_tf32	tc_cuda_5	nv	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		KernelOptError	0

@@ -2,35 +2,34 @@
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 17
 3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
-4 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 2)
-5 Ops.AFTER dtypes.f32 [1, 3, 4]
-6 Ops.MUL dtypes.weakint [3, 2]
-7 Ops.ADD dtypes.weakint [6, 4]
-8 Ops.INDEX dtypes.f32 [5, 7]
-9 Ops.CONST dtypes.weakfloat [] 0.5
-10 Ops.PARAM dtypes.f32 [2] ParamArg(slot=1, dtype=dtypes.f32)
-11 Ops.INDEX dtypes.f32 [10, 3]
-12 Ops.CMPLT dtypes.bool [9, 11]
-13 Ops.CONST dtypes.weakint [] 391
-14 Ops.PARAM dtypes.f32 [13] ParamArg(slot=2, dtype=dtypes.f32)
-15 Ops.CONST dtypes.weakint [] 23
-16 Ops.MUL dtypes.weakint [3, 15]
-17 Ops.RANGE dtypes.weakint [15] (AxisType.WEAK, 0)
-18 Ops.ADD dtypes.weakint [16, 17]
-19 Ops.INDEX dtypes.f32 [14, 18]
-20 Ops.CONST dtypes.weakfloat [] 1.0
-21 Ops.WHERE dtypes.f32 [12, 19, 20]
-22 Ops.PARAM dtypes.f32 [2] ParamArg(slot=3, dtype=dtypes.f32)
-23 Ops.INDEX dtypes.f32 [22, 4]
-24 Ops.CMPLT dtypes.bool [9, 23]
-25 Ops.PARAM dtypes.f32 [13] ParamArg(slot=4, dtype=dtypes.f32)
-26 Ops.MUL dtypes.weakint [17, 2]
-27 Ops.ADD dtypes.weakint [26, 4]
-28 Ops.INDEX dtypes.f32 [25, 27]
-29 Ops.WHERE dtypes.f32 [24, 28, 20]
-30 Ops.MUL dtypes.f32 [21, 29]
-31 Ops.REDUCE dtypes.f32 [30, 17] (Ops.ADD, 0)
-32 Ops.STORE dtypes.void [8, 31]
-33 Ops.END dtypes.void [32, 3, 4]
-34 Ops.SINK dtypes.void [33] KernelInfo()
+4 Ops.MUL dtypes.weakint [3, 2]
+5 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 2)
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.INDEX dtypes.f32 [1, 6]
+8 Ops.CONST dtypes.weakfloat [] 0.5
+9 Ops.PARAM dtypes.f32 [2] ParamArg(slot=1, dtype=dtypes.f32)
+10 Ops.INDEX dtypes.f32 [9, 3]
+11 Ops.CMPLT dtypes.bool [8, 10]
+12 Ops.CONST dtypes.weakint [] 391
+13 Ops.PARAM dtypes.f32 [12] ParamArg(slot=2, dtype=dtypes.f32)
+14 Ops.CONST dtypes.weakint [] 23
+15 Ops.MUL dtypes.weakint [3, 14]
+16 Ops.RANGE dtypes.weakint [14] (AxisType.WEAK, 0)
+17 Ops.ADD dtypes.weakint [15, 16]
+18 Ops.INDEX dtypes.f32 [13, 17]
+19 Ops.CONST dtypes.weakfloat [] 1.0
+20 Ops.WHERE dtypes.f32 [11, 18, 19]
+21 Ops.PARAM dtypes.f32 [2] ParamArg(slot=3, dtype=dtypes.f32)
+22 Ops.INDEX dtypes.f32 [21, 5]
+23 Ops.CMPLT dtypes.bool [8, 22]
+24 Ops.PARAM dtypes.f32 [12] ParamArg(slot=4, dtype=dtypes.f32)
+25 Ops.MUL dtypes.weakint [16, 2]
+26 Ops.ADD dtypes.weakint [25, 5]
+27 Ops.INDEX dtypes.f32 [24, 26]
+28 Ops.WHERE dtypes.f32 [23, 27, 19]
+29 Ops.MUL dtypes.f32 [20, 28]
+30 Ops.REDUCE dtypes.f32 [29, 16] (Ops.ADD, 0)
+31 Ops.STORE dtypes.void [7, 30]
+32 Ops.END dtypes.void [31, 3, 5]
+33 Ops.SINK dtypes.void [32] KernelInfo()
 
