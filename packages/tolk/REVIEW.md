@@ -42,9 +42,11 @@ served from a cache whose key misses an input.
 
 ## Do not report
 
-A golden diff as a test to update. Goldens are tinygrad's output.
+A golden diff as a test to update. Goldens are tinygrad's output. A `.tolk`
+whose body changed is the compiler's output changing: judge the change, its
+D-numbers and its test, not the file.
 
 ## Skip
 
-`test/**/*.golden`, `bench/*.graph`, `bench/tolk.thumper`,
+`test/**/*.golden`, `test/**/*.tolk`, `bench/*.graph`, `bench/tolk.thumper`,
 `LICENSE-tinygrad`.

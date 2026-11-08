@@ -39,7 +39,16 @@ runs that data on rig.
 ## Tests
 
 - Goldens come from `uv run packages/tolk/test/gen/generate.py`, never by
-  hand. A failing golden stays failing until the compiler is fixed.
+  hand: each is the output of unmodified tinygrad at the pin. A failing golden
+  stays failing until the compiler is fixed.
+- Where tolk differs from tinygrad on purpose, `x.tolk` sits beside
+  `x.golden`: tolk's output, headed `# tolk D81 D96 golden=<hash>` by the
+  `DIVERGENCES.md` entries it belongs to and the hash of the golden's body.
+  `Golden` prefers it and fails if the golden moved, if the two agree, or if it
+  names no entry. `-u` writes it, keeping its numbers. A `.tolk` with no
+  `.golden` is an output tinygrad cannot produce, and carries no hash. A
+  table's `Golden.cases ~differs` states exactly which rows of its `.tolk`
+  differ from the golden.
 - `test/REGRESSIONS.md` maps each tinygrad test to the test that keeps its
   behaviour, or to why it is dropped.
 - A suite run by hand needs `CACHEDB=cache`. Without it, a suite walks the

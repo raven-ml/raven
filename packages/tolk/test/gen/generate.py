@@ -7,18 +7,13 @@
     uv run packages/tolk/test/gen/generate.py [--check] [MODULE...]
 
 Each generator file `gen/<path>.py` runs in a fresh interpreter against
-the tinygrad checkout, which must be clean and at TINYGRAD, with
-`gen/tinygrad.patch` applied to a copy of it: the patch makes tinygrad's
-rewrites keep IEEE and modular values, and its constants a NaN's bits, as
-tolk's do, and its constant arithmetic compute what the README's CPython rows
-say, with sin, log2, exp2 and pow correctly rounded by mpmath, so that the
-goldens are the same on every host's C library. A float NaN's payload is
-placed by C's conversion to and from a double, which keeps a quiet NaN's sign
-and payload on x86 and Arm (not on RISC-V, which makes every converted NaN
-canonical). It also removes `spec_hcq` from `uop/spec.py`, which tolk does
-not port (see the README).
-Moving TINYGRAD means re-applying it. MODULE, such as `dtype` or `uop/op`,
-limits the run to those generators; by default all run.
+the tinygrad checkout, which must be clean and at TINYGRAD: a golden is the
+output of unmodified tinygrad, with stand-ins only for what a GPU renderer's
+compiler needs from the machine. tinygrad folds a sine, a logarithm and the
+powers with the host's C library, so goldens are recorded on Linux with glibc.
+Moving TINYGRAD means regenerating them all.
+MODULE, such as `dtype` or `uop/op`, limits the run to those generators; by
+default all run.
 
 The script pins CPython 3.12, whose `struct` packs a float beyond float32's
 range as an infinity, which tinygrad's `bitcast` inherits; 3.13.16 raises
@@ -45,55 +40,9 @@ import tempfile
 
 TINYGRAD = "c22edff14c79310a9b2df62a78819cf77c8289fa"
 
-# The generators recorded from unmodified tinygrad: the others run against a
-# copy of the checkout with PATCH applied, until each part has moved here.
-UNMODIFIED = {
-    "codegen/opt/opt",
-    "dtype",
-    "helpers",
-    "renderer/tc",
-    "runtime/support/c",
-    "runtime/support/support_memory",
-    "setting",
-    "support",
-    "support/programs",
-    "uop/divandmod",
-    "uop/movement",
-    "uop/op",
-    "uop/render",
-    "uop/uop_weak",
-    "codegen/gpudims",
-    "uop/spec",
-    "runtime/support/compiler_cpu",
-    "uop/symbolic",
-    "renderer/renderer",
-    "schedule/prepare",
-    "device",
-    "uop/ops",
-    "codegen/late/gater",
-    "codegen/decomp/decomp_op",
-    "engine/realize",
-    "schedule/memory",
-    "codegen/opt/search",
-    "schedule/indexing",
-    "codegen/decomp/transcendental",
-    "codegen/simplify",
-    "codegen/decomp/decomp_dtype",
-    "codegen/late/coalesce",
-    "codegen/late/linearizer",
-    "schedule/rangeify",
-    "engine/jit",
-    "schedule/schedule",
-    "renderer/cstyle",
-    "codegen/opt/postrange",
-    "codegen/opt/heuristic",
-    "codegen/codegen",
-}
-
 HERE = Path(__file__).resolve().parent
 TEST = HERE.parent
 MANIFEST = HERE / "manifest"
-PATCH = HERE / "tinygrad.patch"
 # The manifest's first line, naming the commit its goldens come from.
 HEADER = f"# tinygrad {TINYGRAD}\n"
 
@@ -184,17 +133,6 @@ def check_checkout(tinygrad):
         sys.exit(f"{tinygrad} has local changes")
 
 
-def patched(tinygrad, scratch):
-    """A copy of the checkout's HEAD in `scratch`, with PATCH applied."""
-    tree = Path(scratch) / "tinygrad"
-    tree.mkdir()
-    archive = subprocess.run(["git", "-C", str(tinygrad), "archive", "HEAD"], capture_output=True, check=True)
-    subprocess.run(["tar", "-x", "-C", str(tree)], input=archive.stdout, check=True)
-    subprocess.run(["git", "init", "-q", str(tree)], check=True)
-    subprocess.run(["git", "-C", str(tree), "apply", str(PATCH)], check=True)
-    return tree
-
-
 def generators(modules):
     found = {path.relative_to(HERE).with_suffix("").as_posix(): path
              for path in sorted(HERE.rglob("*.py"))
@@ -266,14 +204,12 @@ def main():
     if args.modules and not manifest.startswith(HEADER):
         sys.exit("the goldens are from another tinygrad commit: regenerate them all")
     goldens = {}
-    with tempfile.TemporaryDirectory(prefix="tolk-tinygrad-") as scratch:
-        tree = patched(tinygrad, scratch)
-        self_test(tree)
-        for module, generator in selected.items():
-            files, refused = run(module, generator, tinygrad if module in UNMODIFIED else tree)
-            goldens.update(files)
-            for name, reason in refused:
-                print(f"refused {module} {name}: {reason}")
+    self_test(tinygrad)
+    for module, generator in selected.items():
+        files, refused = run(module, generator, tinygrad)
+        goldens.update(files)
+        for name, reason in refused:
+            print(f"refused {module} {name}: {reason}")
     # A golden belongs to the generator of its directory. A full run owns every
     # golden, including those of a generator that no longer exists.
     recorded = set(manifest.splitlines()[1:])

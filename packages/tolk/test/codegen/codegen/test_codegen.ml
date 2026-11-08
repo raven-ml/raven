@@ -3663,7 +3663,7 @@ let lanes =
     [
       test
         "a reduce whose lanes all read an Invalid index is rendered as \
-         tinygrad renders it" (fun () ->
+         recorded" (fun () ->
           writes_as_tinygrad (row_named "invalid_lanes_metal"));
       test "a reduce whose lanes all read an Invalid index sums to zero"
         (sums_zeros "invalid_lanes" [| `Float 1.; `Float 2. |] (`Float 0.));

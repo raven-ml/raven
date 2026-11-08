@@ -97,9 +97,8 @@ verdicts. Rerun each with `--arm <site>`, which starts with an empty cache.
 
 ## Goldens
 
-A golden is output recorded from tinygrad, in a file `<name>.golden`. Its
-first line is `# tinygrad <commit>`, the commit it was recorded from, and the
-rest is its body. A golden check is one line:
+A golden is output recorded from tinygrad, in a file `<name>.golden` holding
+its body and a final newline. A golden check is one line:
 
 - **Text**, such as a listing of UOps or a rendered source: `Golden.text` is
   the test, named after the golden, that a text equals its body. Its failure
@@ -317,22 +316,13 @@ records on its first line.
 environment, and makes each golden in a process forked from it, so that no
 golden sees the state another left in tinygrad, such as its buffer numbering.
 It runs against the tinygrad checkout `_tinygrad_next` of the main
-working tree, which must be clean and at the commit the script pins, through
-a copy of it with `gen/tinygrad.patch` applied: the patch gives tinygrad's
-rewrites the restrictions that keep IEEE and modular values, its constants
-a NaN's bits (DIVERGENCES D13, D24 and D27), a selection of `-0.` beside
-a load, which stays a selection (D52), its tensor-core matcher the
-widened operands of D29, and its constant arithmetic the corrections of the
-README's CPython rows, so that the goldens hold the graphs and values
-tolk makes. Its sine, logarithm, exponential and power are mpmath's,
-correctly rounded (D150), so a fold is the same on every host. A float NaN
-held in a double, and a bfloat16 one as a float's upper half, takes its
-payload from C's conversions, which keep a quiet NaN's sign and payload on
-x86 and Arm, the generator's hosts; a half's moves by hand, since the
-generator has no conversion of a half that keeps one. No golden needs a GPU
-or its toolchain: the compilers of Metal and CUDA renderers are stand-ins
-with the real ones' cache keys that compile nothing, so the goldens are the
-same on every machine. No Python runs at test time. To regenerate:
+working tree, which must be clean and at the commit the script pins: a golden
+is the output of unmodified tinygrad. No golden needs a GPU or its toolchain:
+the compilers of Metal and CUDA renderers are stand-ins with the real ones'
+cache keys that compile nothing. tinygrad folds a sine, a logarithm and the
+powers with the host's C library, so goldens are recorded on Linux with glibc:
+another C library moves the few that fold one in its last bits. No Python runs
+at test time. To regenerate:
 
 1. `uv run packages/tolk/test/gen/generate.py --check` writes nothing,
    prints the diff of every golden that would change, and fails if one would.
@@ -344,6 +334,21 @@ same on every machine. No Python runs at test time. To regenerate:
    explain each change from tinygrad's source.
 
 To move to another tinygrad commit, check it out in `_tinygrad_next`, change
-`TINYGRAD` in `gen/generate.py`, re-apply `gen/tinygrad.patch` to the new
-commit and save it again (`git diff` in a patched copy), and regenerate: the
-diff shows what moved.
+`TINYGRAD` in `gen/generate.py`, and regenerate: the diff shows what moved. A
+golden tolk no longer matches is a port bug or a divergence to record.
+
+### Tolk's own output
+
+Where tolk differs from tinygrad on purpose, `x.tolk` sits beside `x.golden`:
+tolk's output, in the golden's body format, headed
+
+    # tolk D81 D96 golden=<hash>
+
+by the entries of `../DIVERGENCES.md` it belongs to and the hash of the body
+of `x.golden`. `Golden` reads `x.tolk` instead of `x.golden`, and fails if the
+golden has moved beneath it, if its body equals the golden's, or if it names
+no entry; `-u` writes it for a text or graph golden and keeps its numbers. A
+`.tolk` with no `.golden` is an output unmodified tinygrad cannot produce, such
+as a gather tinygrad refuses, and carries no hash. A table's `.tolk` holds the
+whole table; `Golden.cases ~differs` lists which rows differ from the golden,
+and the test fails if the list is not exact.

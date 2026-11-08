@@ -316,7 +316,7 @@ to that module's section; each is listed here once, with its owner.
 | tinygrad: null/test_uops.py::TestBitcastBufferView, TestLocalAccess, TestAssembly (every test but the two below) | renderer output | the renderers' sections |
 | tinygrad: null/test_uops.py::TestAssembly::test_int_compare_without_negation | a negated comparison of an int32 or uint32 with a constant is one comparison, and a comparison between two neighbours an equality | `DO › late_patterns › late_comparison_cmplt.golden`, `late_extremes_cmplt.golden`; `DO › late_patterns › a negated unsigned comparison keeps its value at the type's bounds` |
 | tinygrad: null/test_uops.py::TestAssembly::test_use_cmpne | an inequality of a uint32 load and 7 renders as one CMPNE, without CMPEQ | `DO › late_patterns › late_comparison_cmpne.golden` (`x != y`, `u != 7`), whose renderer lists CMPNE |
-| tinygrad: null/test_uops.py::TestAssembly::test_signed_compare_moves_negation | `-x < 7` and `-x < -y` of int32 loads lose their negations | D24: only where no negation wraps, `S › integers wrap › a negation crosses a comparison only where it does not wrap`; tinygrad.patch keeps the loads' negations, as their bounds reach the type's least value |
+| tinygrad: null/test_uops.py::TestAssembly::test_signed_compare_moves_negation | `-x < 7` and `-x < -y` of int32 loads lose their negations | D24: only where no negation wraps, `S › integers wrap › a negation crosses a comparison only where it does not wrap`; tolk keeps the loads' negations, as their bounds reach the type's least value |
 | tinygrad: null/test_uops_stats.py (all) | kernel cost estimates | Renderer's section (`Estimates.from_uops`) and the engine's (`estimate_uop`) |
 | tinygrad: runtime/test_uops.py::TestFloatUOps, TestNonFloatUOps, TestBoolUOps | a device computes each operation as Python does | the Python side is `O › exec_alu › exec_alu_values.golden`; the device side is an Exec test of the renderer layers |
 | tinygrad: runtime/test_uops.py::TestBitcastBufferView, TestLocalAccess, TestZeroRange, TestUOpPrograms | kernels run on a device | Exec tests of the renderer layers |
@@ -914,7 +914,7 @@ case also checks that the refused optimisation leaves the scheduler as it
 was (`PR › a refused optimisation leaves the scheduler as it was`), and
 `axes.golden` is the scheduler's view after the optimisations: every axis
 query, the coloured shape, and the axes the last one made (`PR › the
-scheduler's axes after optimising are tinygrad's`). tinygrad's runtime tests
+scheduler's axes after optimising are as recorded`). tinygrad's runtime tests
 compare the outputs of a kernel run with and without the optimisations. Here
 the interpreter compares the writes, before and after, of every accepted
 case up to 2^18 iterations that it can evaluate (`PR › optimising keeps a
@@ -1030,10 +1030,10 @@ BEAM_PADTO=1 TC=2 ...`, the suite's dune).
 The suite (`test/codegen/codegen`, `CG` below) compiles the kernels of
 `kernels.golden` for Clang, Metal, CUDA and HIP, each as a row of
 `cases.golden` named `<case>_<target>`, and compares each stage with tinygrad's
-(patched as D24 says): `stages › full_rewrite_to_sink lowers each kernel as recorded`, `stages ›
+(a `.tolk` where a divergence applies): `stages › full_rewrite_to_sink lowers each kernel as recorded`, `stages ›
 to_program makes each program as recorded` (the lowered sink with its
 estimates, the instructions, the program information), `stages › each program
-is rendered as tinygrad renders it` and `stages › an optimisation that does not
+is rendered as recorded` and `stages › an optimisation that does not
 apply raises tinygrad's error`. A row `CG › stages › <case>` below stands for
 those tests on every target of the case. The default run compiles each case for
 one target, in turn; the slow run compiles every row.
@@ -1431,9 +1431,9 @@ stay.
 | tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_simple_buffer_offset, test_buffer_offset, test_buffer_offset2, test_all_offsets_of_one | buffers passed again by later calls (their `base=` aliases the same buffer) | `ME › memory_plan_rewrite › recorded › reused_planned.golden`; the laws (generated calls pass a buffer again) |
 | tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_very_small_buffers | buffers under a block | `ME › memory_plan_rewrite › recorded › very_small_planned.golden` |
 | tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_very_big_buffers | buffers of 2^64 and 2^128 bytes | `ME › memory_plan_rewrite › recorded › big_planned.golden` (up to 2^50 elements); sizes past OCaml's `int` are dropped: storage sizes are `int` |
-| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_copy_bufs_separate_from_compute, test_copy_bufs_reuse_among_copies, test_compute_bufs_reuse_among_compute, test_copy_and_compute_no_cross_reuse | copies and other calls use arenas of their own, each shared within its kind | replaced by one arena per device, copies' and kernels' alike (D41): `ME › memory_plan_rewrite › recorded › copy_apart_from_compute_planned.golden`, `copies_share_planned.golden`, `computes_share_planned.golden`, recorded from the patched tinygrad; `ME › memory_plan_rewrite › rules › a copy's buffer and a call's of one device share bytes once their lives are apart`; the laws |
+| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_copy_bufs_separate_from_compute, test_copy_bufs_reuse_among_copies, test_compute_bufs_reuse_among_compute, test_copy_and_compute_no_cross_reuse | copies and other calls use arenas of their own, each shared within its kind | replaced by one arena per device, copies' and kernels' alike (D41): `ME › memory_plan_rewrite › recorded › copy_apart_from_compute_planned.golden`, `copies_share_planned.golden`, `computes_share_planned.golden`, kept as a `.tolk` (D41); `ME › memory_plan_rewrite › rules › a copy's buffer and a call's of one device share bytes once their lives are apart`; the laws |
 | tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_multiple_copy_bufs_with_offsets, test_copy_bufs_pinned_mixed | | `ME › memory_plan_rewrite › recorded › copies_held_mixed_planned.golden`; the laws |
-| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_deferred_copy_frees_chain | a copy's buffer lives on after its last call | replaced by a copy's buffer free from the call after its last (D41): `ME › memory_plan_rewrite › recorded › copy_chain_planned.golden`, recorded from the patched tinygrad; `ME › memory_plan_rewrite › rules › a copy's buffer is free from the call after its last`; the laws |
+| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_deferred_copy_frees_chain | a copy's buffer lives on after its last call | replaced by a copy's buffer free from the call after its last (D41): `ME › memory_plan_rewrite › recorded › copy_chain_planned.golden`, kept as a `.tolk` (D41); `ME › memory_plan_rewrite › rules › a copy's buffer is free from the call after its last`; the laws |
 | tinygrad: schedule/memory.py `_collect_bufs` (no test) | a call takes the buffers among its sources, so one only views reach is not planned | replaced (D41): a call takes the buffers its sources view too; `ME › memory_plan_rewrite › the buffers a call takes ›` "a buffer a call views is planned", "a buffer viewed after another's life is not placed over it"; the laws; `SC › create_linear_with_vars › recorded › copy_view_linear.golden`, whose call is given a view |
 | tinygrad: schedule/memory.py `_can_plan` on CL and WEBGPU devices | no plan on devices without views | dropped: those devices are excluded (README Exclusions); a disk is `ME › memory_plan_rewrite › recorded › disk_planned.golden` and `ME › memory_plan_rewrite › rules › a schedule on a disk is itself` |
 
