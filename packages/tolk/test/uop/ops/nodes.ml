@@ -1455,8 +1455,124 @@ let ranges =
                (Ops.multirange_str ~color:true ~pad:10 [ r0; r1 ])));
     ]
 
+(* Integer literals *)
+
+(* The literals that tell whether one holds its type's value: -1, the type's
+   bounds and past them, the width's power and its neighbours, its negation, and
+   one no integer type holds. *)
+let width_literals dt =
+  let lo, hi = Dtypes.int_bounds dt in
+  let wide = Bigint.shift_left Bigint.one (Dtype.bitsize dt) in
+  Bigint.
+    [
+      minus_one; zero; one; lo; pred lo; hi; succ hi; pred wide; wide; succ wide;
+      neg wide; shift_left one 80;
+    ]
+
+let literal z = Ops.const (`Int z)
+let literal_value u i = Ops.value (Ops.nth u i)
+
+let at_type dt z = (Dtype.truncate dt (`Int z) :> Dtype.const)
+
+let integer_literals =
+  let reading_ops =
+    Op.[ Add; Sub; Mul; And; Or; Xor; Max; Div; Mod; Truncdiv; Truncmod; Cmplt;
+         Cmpne; Cmpeq ]
+  in
+  let on_ints f = List.iter f Dtype.ints in
+  let variable dt =
+    let lo, hi = Dtypes.int_bounds dt in
+    Ops.variable ~dtype:dt "x" (`Int lo) (`Int hi)
+  in
+  group "integer literals"
+    [
+      test "a literal holds its value at the operation's integer type"
+        (fun () ->
+          on_ints (fun dt ->
+              let x = variable dt in
+              List.iter
+                (fun z ->
+                  let want = at_type dt z in
+                  let holds name u i =
+                    equal
+                      ~msg:(Format.asprintf "%s %a %s" name Dtype.pp dt
+                             (Bigint.to_string z))
+                      const want (literal_value u i)
+                  in
+                  List.iter
+                    (fun op ->
+                      let name = Format.asprintf "%a" Op.pp op in
+                      holds name (Ops.v op ~src:[ x; literal z ]) 1;
+                      holds name (Ops.v op ~src:[ literal z; x ]) 0)
+                    reading_ops;
+                  let cond = Ops.variable ~dtype:Bool "c" (`Bool false) (`Bool true) in
+                  holds "a selection" (Ops.v Op.Where ~src:[ cond; literal z; x ]) 1;
+                  holds "a multiply-add" (Ops.v Op.Mulacc ~src:[ x; x; literal z ]) 2;
+                  holds "a cast"
+                    (Ops.v Op.Cast ~src:[ literal z ] ~arg:(Dtype dt))
+                    0)
+                (width_literals dt)));
+      test "a 64-bit key of a random bits operation holds its value" (fun () ->
+          let k = variable Uint64 in
+          equal const
+            (`Int (Bigint.of_int 1))
+            (literal_value
+               (Ops.v Op.Threefry
+                  ~src:[ k; literal (Bigint.shift_left Bigint.one 64 |> Bigint.succ) ])
+               1));
+      test "a shift's count and an exponent keep their value" (fun () ->
+          on_ints (fun dt ->
+              let x = variable dt in
+              List.iter
+                (fun z ->
+                  if Bigint.sign z >= 0 then
+                    List.iter
+                      (fun op ->
+                        equal const
+                          (`Int z)
+                          (literal_value (Ops.v op ~src:[ x; literal z ]) 1))
+                      Op.[ Shl; Shr; Pow ])
+                (width_literals dt)));
+      test "a literal base of a power is read at the power's type" (fun () ->
+          let y = variable Uint8 in
+          equal const
+            (`Int (Bigint.of_int 44))
+            (literal_value (Ops.v Op.Pow ~src:[ literal (Bigint.of_int 300); y ]) 0));
+      test "fits_no_int is true only of known bounds no 64-bit integer holds"
+        (fun () ->
+          let bounded lo hi = Ops.variable "b" (`Int lo) (`Int hi) in
+          let two n = Bigint.shift_left Bigint.one n in
+          let held lo hi = equal bool false (Ops.fits_no_int (bounded lo hi)) in
+          held Bigint.zero (Bigint.pred (two 64));
+          held (Bigint.neg (two 63)) (Bigint.pred (two 63));
+          equal bool true
+            (Ops.fits_no_int (bounded Bigint.minus_one (two 63)));
+          equal bool true (Ops.fits_no_int (bounded Bigint.zero (two 64)));
+          let r = Ops.range ~axis_type:Weak (Ops.Int 4) [ 0 ] in
+          let unknown = Ops.reduce (bounded Bigint.zero (two 3)) Op.Add [ r ] in
+          equal bool false (Ops.fits_no_int unknown);
+          equal bool false (Ops.fits_no_int Ops.O.(unknown + int 1)));
+      test "a weak expression, a float operation and no peer keep their values"
+        (fun () ->
+          let x = variable Uint8 in
+          let w = Ops.variable "w" (`Int Bigint.zero) (`Int (Bigint.of_int 1000)) in
+          let expr = Ops.O.(w + Ops.int 300) in
+          equal uop expr (Ops.nth (Ops.v Op.Add ~src:[ x; expr ]) 1);
+          let f = Ops.variable ~dtype:Float32 "f" (`Float 0.) (`Float 1.) in
+          equal const
+            (`Int (Bigint.of_int 300))
+            (literal_value (Ops.v Op.Add ~src:[ f; literal (Bigint.of_int 300) ]) 1);
+          equal const
+            (`Int (Bigint.of_int 300))
+            (literal_value
+               (Ops.v Op.Add
+                  ~src:[ literal (Bigint.of_int 300); literal (Bigint.of_int 7) ])
+               0));
+    ]
+
 let groups =
   [
+    integer_literals;
     axis_type_group;
     devices;
     arguments;

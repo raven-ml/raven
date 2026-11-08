@@ -550,6 +550,32 @@ let int_powers =
           (fun dt ->
             equal bool true
               (Option.is_none (T.xpow_int (Ops.int 2) (Ops.int 3) dt)));
+        (let wide = Bigint.shift_left Bigint.one 40 in
+         let base =
+           Ops.variable ~dtype:Dtype.Uint8 "b" (`Int Bigint.zero)
+             (`Int (Bigint.of_int 255))
+         in
+         let w = Ops.variable "w" (`Int Bigint.zero) (`Int wide) in
+         group "an exponent's bounds"
+           [
+             test "a weak expression no 64-bit integer holds is refused"
+               (fun () ->
+                 raises_match
+                   (Exn.invalid_arg ~sub:"exponent past 64 bits")
+                   (fun () ->
+                     T.xpow_int base Ops.O.(w * w) Dtype.Uint8));
+             test "a weak expression a 64-bit integer holds is computed"
+               (fun () ->
+                 equal bool false
+                   (Option.is_none
+                      (T.xpow_int base Ops.O.(w + int 3) Dtype.Uint8)));
+             test "a literal exponent is computed at any size" (fun () ->
+                 equal bool false
+                   (Option.is_none
+                      (T.xpow_int base
+                         (Ops.const (`Int (Bigint.shift_left Bigint.one 70)))
+                         Dtype.Uint8)));
+           ]);
       ])
 
 (* Types *)

@@ -44,9 +44,11 @@ val pm_commit_weak : (unit, Ops.t) Ops.Pattern_matcher.t
       count is a number of bits, so it never wraps at [dt]: a count of
       {!Dtype.bitsize}[ dt] or more shifts every bit out, so a weak count saturates
       at that width. An expression whose bounds [dt] does not hold saturates at
-      its own committed type ({!Ops.commit_dtype}) and then converts to [dt]; one
-      whose bounds no 64-bit integer holds wraps there as any weak expression
-      does, unless its bounds are all past the width, where it is the width. An
+      its own committed type ({!Ops.commit_dtype}) and then converts to [dt]. An
+      expression whose bounds no 64-bit integer holds ({!Ops.fits_no_int}) is
+      the width if its bounds are all past the width, and otherwise raises
+      [Invalid_argument] when the rule runs: wrapped, it would shift by the
+      wrong number. An
       integer power's exponent is a number too: it stays weak, its value whole;
     - a {!Op.Store} of a weak value converts it to the destination's type;
     - a cast to a committed type [dt] over a weak arithmetic node [u] of [dt]'s

@@ -1091,6 +1091,15 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- An integer literal under an operation on a committed integer, or a cast to
+  one, holds that type's value from construction (`Ops.v`): rules read the
+  machine's value without knowing to wrap, and `x:i32 * 2^32` and `x & 2^32` no
+  longer fail to compile. Shift counts and exponents keep their value.
+- `Ops.shl`, `Ops.shr` and `O.lsl`, `O.lsr` no longer wrap a weak count
+  expression at their operand's type. Compiling a shift or power of a committed
+  integer by a weak expression whose known bounds no 64-bit integer type holds
+  now raises `Invalid_argument`, unless every count is past the width: no kernel
+  can compute it.
 - AMD GPU kernels compile without LLVM's loop idiom recognition
   (`Compiler_amd.hip`), as host kernels do: a comgr built on LLVM 22 or 23
   would take seconds to forever on a chain of float maxima.

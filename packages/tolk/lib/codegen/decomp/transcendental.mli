@@ -114,7 +114,12 @@ val xpow_int : Ops.t -> Ops.t -> Dtype.t -> Ops.t option
     integer type [dt], wrapping at its width as repeated products do. A negative
     [exponent] gives [0], but [1] for a [base] of [1], and [-1] or [1] by the
     exponent's parity for [-1] in a signed [dt]. It is [None] if [dt] is not in
-    {!Dtype.ints}. *)
+    {!Dtype.ints}.
+
+    Raises [Invalid_argument] if [exponent] is a weak expression whose bounds no
+    64-bit integer type holds ({!Ops.fits_no_int}): compiled code would compute it wrapped, and a
+    power reads every bit of its exponent, so a wrong exponent is a wrong
+    value. A literal exponent is exact at any size. *)
 
 (** {1:patterns Rewriting} *)
 

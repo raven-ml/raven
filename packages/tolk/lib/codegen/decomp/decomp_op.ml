@@ -98,39 +98,10 @@ let same_sign a b =
 
 let sign_differs a b = O.(a < int 0 <> (b < int 0))
 
-(* The value of the integer constant [c] as an operation on [x] reads it: at
-   [x]'s width, as a product does, [`Product], or as a quotient or remainder
-   does, [`Quotient]. A product reads it modulo 2^bits, so on int32 2^31 is
-   2^31 and 2^32 is 0, and a quotient in [x]'s type, where 2^31 is the least
-   int32. A weak [x] reads it whole. *)
-let at_width reading x c =
-  let dt = dtype x in
-  match value c with
-  | `Int z when Dtype.mem dt Dtype.weaks -> Some z
-  | `Int z -> (
-      match (Dtype.truncate dt (`Int z), reading) with
-      | `Int w, `Product when Bigint.sign w < 0 ->
-          Some Bigint.(w + shift_left one (Dtype.bitsize dt))
-      | `Int w, _ -> Some w
-      | _ -> None)
-  | _ -> None
-
-(* [d] as a division of [a] reads it ({!at_width}): a weak constant past
-   [a]'s width wrapped to [a]'s type, as on int8 200 is -56 and on uint8 259
-   is 3, so that the rules read the sign and value of the divisor compiled
-   code divides by. Any other [d] is itself. *)
-let divisor a d =
-  if op d <> Op.Const || not (Dtype.mem (dtype d) Dtype.weaks) then d
-  else
-    match (at_width `Quotient a d, value d) with
-    | Some w, `Int z when not (Bigint.equal w z) -> const_like d (`Int w)
-    | _ -> d
-
 (* A quotient by 0 is 0 and the remainder the dividend, whose sign differs
    from 0's when it is negative: the correction skips a divisor of 0 where
    the divisor's bounds reach it. *)
 let floordiv_to_idiv a b =
-  let b = divisor a b in
   if same_sign a b then alu a Truncdiv [ b ]
   else
     let differs = sign_differs a b in
@@ -142,7 +113,6 @@ let floordiv_to_idiv a b =
     O.(alu a Truncdiv [ b ] - ((alu a Truncmod [ b ] <> int 0) land differs))
 
 let floormod_to_mod a b =
-  let b = divisor a b in
   if same_sign a b then alu a Truncmod [ b ]
   else
     let r = alu a Truncmod [ b ] in
@@ -155,14 +125,23 @@ let floormod_to_mod a b =
           b
           (const_like b (`Int Bigint.zero)))
 
-(* The exponent of a constant that is 2^i, 0 <= i < 64, as an operation on [x]
-   reads it ({!at_width}): below [x]'s width, so that no shift by the width or
-   more, which C leaves undefined, computes it. *)
+(* The exponent of a constant that is 2^i, 0 <= i < 64: a constant under an
+   operation on [x] holds the value it has there, so no shift by [x]'s width or
+   more, which C leaves undefined, computes it. A product reads it modulo
+   2^bits, so that the least int32 is 2^31, and a quotient in [x]'s type, where
+   it is no power of two. *)
 let power_of_two reading x c =
-  match at_width reading x c with
-  | Some z
-    when Bigint.sign z > 0 && Bigint.popcount z = 1 && Bigint.numbits z <= 64 ->
-      Some (Bigint.numbits z - 1)
+  match value c with
+  | `Int z -> (
+      let z =
+        match reading with
+        | `Product when Bigint.sign z < 0 && Dtype.mem (dtype x) Dtype.ints ->
+            Bigint.(z + shift_left one (Dtype.bitsize (dtype x)))
+        | _ -> z
+      in
+      if Bigint.sign z > 0 && Bigint.popcount z = 1 && Bigint.numbits z <= 64
+      then Some (Bigint.numbits z - 1)
+      else None)
   | _ -> None
 
 (* As {!power_of_two}, 1 <= i: a shift by 0 is left as it is. *)
@@ -364,7 +343,7 @@ let late_patterns ~disable_fast_idiv ops =
   and cmod x d = Upat.op Truncmod ~src:[ x; d ] in
   let int_value u = match value u with `Int z -> Some z | _ -> None in
   let fast ctx m =
-    Option.bind (int_value (divisor (m "x") (m "d"))) (fast_idiv ctx (m "x"))
+    Option.bind (int_value (m "d")) (fast_idiv ctx (m "x"))
   in
   Pattern_matcher.v
     (fun () -> List.concat
@@ -426,7 +405,7 @@ let late_patterns ~disable_fast_idiv ops =
                        (fun ctx m ->
                          Option.map
                            (fun q ->
-                             O.(m "x" - (divisor (m "x") (m "d") * q)))
+                             O.(m "x" - (m "d" * q)))
                            (fast ctx m));
                    ]);
               ]);

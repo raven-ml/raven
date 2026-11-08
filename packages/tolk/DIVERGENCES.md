@@ -444,37 +444,24 @@ sign is unspecified, and rune hands tolk no 8-bit float, so
 
 - **tinygrad:** `uop/symbolic.py:30` (`fold_const_alu`), which writes a
   folded integer result at its type's width; `:167-169` (the collapse of
-  committed const conversions), and `fold_const_alu` and `:177-180` (two
-  stage ALU folding), which read a weak operand of an operation on a
-  committed integer as written;
-  `uop/ops.py:1054-1122` (`_min_max`), which bounds such an operand by its
-  written value; `uop/weak.py:90-95` (`uncast_const`), which leaves the
-  literal bare. tinygrad's own `TestModularWraparound` expects the wrapped
-  results and is marked `xfail_broken_const_wraparound`: its cases fold to
-  them at this commit, but for the signed one of `test_div`, whose `//`
-  floors where the test truncates.
-- **tolk:** `Shape.fold_const_alu`; the two stage fold of a maximum in
-  `Shape.symbolic_simple`; `Ops.at_width` and
-  `Ops.operand_bounds`; `Shape.uncast_const`.
-- **Differs:** a fold reads a cast of a literal to a type of known width wrapped to that width,
-  and so does a cast of it that collapses; it reads a weak integer operand of
-  an operation on a committed integer at that operation's width, as compiled
-  code commits it; and it writes a committed integer result wrapped. The
-  bounds read operands the same way. So `uncast_const` only ever drops a cast
-  whose literal fits. tinygrad reads a weak operand of an operation as
-  written, which a sum, a product and a bitwise operation fold the same
-  before or after wrapping, but an order and a division do not: on uint8,
-  `max(-3, a)` becomes `a` where the machine computes `max(253, a)`, and on
-  uint32, `max(1, b) // -2` folds to `-1`, which is `4294967295`, where the
-  machine divides by `4294967294` and gives `0`. A maximum orders the
-  wrapped values, so the two stage fold reads a maximum's weak constants at
-  its width: on uint8, `max(max(w, 1), -3)` would become `max(w, 1)` where
-  the machine computes `max(w, 253)`. A maximum by bounds that keeps a weak
-  operand commits it to the maximum's type, so the operations that read it
-  do not lose their width. Reading at the width also keeps
-  `c0 + x < c1 → x < c1 - c0`, which both apply to signed `x` only, from a
-  wrong answer where the offset wraps; D24 keeps that rule to offsets that
-  do not wrap.
+  committed const conversions); `uop/ops.py:1054-1122` (`_min_max`), which
+  bounds an operand by its written value; `uop/weak.py:90-95` (`uncast_const`),
+  which leaves the literal bare. tinygrad's own `TestModularWraparound`
+  expects the wrapped results and is marked `xfail_broken_const_wraparound`:
+  its cases fold to them at this commit, but for the signed one of `test_div`,
+  whose `//` floors where the test truncates.
+- **tolk:** `Shape.fold_const_alu`; `Ops.at_width` and `Ops.operand_bounds`;
+  `Shape.uncast_const`.
+- **Differs:** a fold reads a cast of a literal to a type of known width wrapped
+  to that width, and so does a cast of it that collapses, and it writes a
+  committed integer result wrapped. The bounds read a weak operand at the width
+  of an operation on a committed integer, as compiled code commits it (a literal
+  operand already holds that value, D413). So `uncast_const` only ever drops a
+  cast whose literal fits, and a maximum by bounds that keeps a weak operand
+  commits it to the maximum's type, so the operations that read it do not lose
+  their width. Reading at the width also keeps `c0 + x < c1 → x < c1 - c0`,
+  which both apply to signed `x` only, from a wrong answer where the offset
+  wraps; D24 keeps that rule to offsets that do not wrap.
 - **Reason:** (b): RFC 0012's Law 1: every integer expression's compiled
   value is eager nx's modular one, signed included. rune's `rune jit ›
   classes › integer constants keep their bits and wrap` and `› a square of a
@@ -4553,88 +4540,19 @@ rule, its reason and its pins.
   differ by D184; and the `Tolk.Rangeify` suite's `get_kernel_graph ›
   buffer states`.
 
-## D161. A folded weak constant wraps, and a power of two is read at its width
+## D161. Withdrawn
 
-- **tinygrad:** `uop/symbolic.py:177-180` (two stage ALU folding), which folds
-  `c1 op c2` as weak constants, unbounded, under an operation on a committed
-  integer, unless a signed result does not fit (`fits`, `:32`);
-  `codegen/decomp/op.py:64-96` (`powers_of_two`), which turns a product,
-  quotient or remainder by `2^i`, `i < 64`, into a shift or a mask by the
-  constant's exact value, where the operation reads a weak constant at its
-  operand's width. On int32, `(y * 65536) * (y * 65536)` becomes `(y * y) <<
-  32`, a shift by the full width, which C leaves undefined: clang gives
-  poison. Repro: `y = Tensor.arange(8,
-  dtype=dtypes.int32).contiguous().realize(); p = y * c; (p * p).tolist()`
-  renders `<< 32` and `<< 36` on the CPU for `c = 65536`, and for `c = -2**31`
-  renders `<< 62` and the literal `73786976294838206464`, which clang refuses.
-  A quotient's rule computes a value its own folder does not: on int8 the
-  folder gives `1 // 128` as -1 and `1 % 128` as -127, reading 128 as -128,
-  while the rules lower `x // 128` to `x >> 7` and `x % 128` to `x & 127`, 0
-  and 1 at `x = 1`; on int32 `x // 2**31` becomes `x >> 31`, 0 where the
-  folder gives -1. Repro: `x = UOp.variable("x", -128, 127, dtypes.int8);
-  graph_rewrite(x.alu(Ops.DIV, UOp.const(128)),
-  get_simplifying_rewrite_patterns((Ops.SHR, Ops.AND, Ops.CMPLT,
-  Ops.CMPNE)))` against `UOp.const(1, dtypes.int8).alu(Ops.DIV,
-  UOp.const(128)).simplify()`.
-- **tolk:** `Shape.wrap_folded` and its use in `Shape.symbolic_simple`
-  (the two stage fold); `Decomp_op.at_width`, `Decomp_op.power_of_two` and
-  `Decomp_op.shift_of`; `test/gen/tinygrad.patch`, which makes
-  tinygrad's rules the same before the goldens are generated.
-- **Differs:** a weak result of folding two weak constants under an
-  operation on an unsigned integer, past its width, is wrapped to it, as the
-  operation reads it: `(x * 65536) * 65536` on uint32 is `x * 0`; on a signed
-  integer the fold is refused, as tinygrad refuses it. A product by
-  a power of two reads the constant modulo `2^bits`, and a quotient or
-  remainder reads it in the operand's type, before it becomes a shift or a
-  mask: no shift reaches the width, and on int32 a division by `2^31`, the
-  least int32, is no shift.
-- **Reason:** the fold and the product: (b). rune's compiled `Nx.square
-  (Nx.mul c y)` at int32 and uint32, with `c` 65536 or the least int32, gave
-  values that varied by run where eager gives 0: rune's `jit gives eager's
-  bits for exact functions at every dtype` left such functions out. The
-  quotient and remainder: (e). Without the reading, an int8 `x // 128` gives
-  0 where -1 is due for a positive `x`, and `x % 128` gives `x` where `x -
-  128` is, with no error; no raven call site is known to reach it. D162 reads
-  every other divisor past the width so, and its `Decomp_op` pin fails without
-  this rule.
-- **Pinned by:** the fold and the product: the `Symbolic` suite: `integers
-  wrap › a square of a product keeps its value, its constants folded at an
-  unsigned width`; the `Decomp_op` suite: `late_patterns › a product by a
-  power of two shifts by less than its width`; the `Codegen` suite:
-  `constants past the width › a square of a product whose constant squares to
-  0 is 0`. The quotient and remainder: the `Decomp_op` suite: `late_patterns
-  › a quotient by a power of two reads it in its operand's type`, whose
-  values at the width's power, int8 `1 // 128` among them, fail without it.
+A folded weak constant wrapped at its operation's width, and a power of two was
+read at the width of the operation that reads it (`Shape.wrap_folded`,
+`Decomp_op.at_width`). An integer literal now holds the value of the type that
+reads it at construction (D413), so the fold and the power of two read it as
+written; the pins move there.
 
-## D162. A divisor past its operand's width is read in its operand's type
+## D162. Withdrawn
 
-- **tinygrad:** `codegen/decomp/op.py:54-62` (`floordiv_to_idiv`,
-  `floormod_to_mod`) and `97-103` (the `fast_idiv` rules), which read a weak
-  constant divisor's exact value where the division reads it in its operand's
-  type: the sign test skips the correction and `fast_idiv` divides by the
-  wrong number. On int8 the rules lower `x // 200` to a truncating
-  division whose sign test reads 200 as positive: 0 at `x = 1`, where the folder
-  gives `1 // 200` as -1 (a power of two, as 128, is D161's). Repro: `x =
-  UOp.variable("x", -128, 127, dtypes.int8); graph_rewrite(x.alu(Ops.DIV,
-  UOp.const(200)), get_simplifying_rewrite_patterns((Ops.SHR, Ops.AND,
-  Ops.CMPLT, Ops.CMPNE)))`. On the CPU, `x = Tensor([0, 1, 7, 100, 127],
-  dtype=dtypes.uint8).contiguous().realize()` gives `x // 259` as `[0, 0, 0,
-  0, 0]` where `x % 259` gives `[0, 1, 1, 1, 1]`.
-- **tolk:** `Decomp_op.divisor` and its
-  uses in `floordiv_to_idiv`, `floormod_to_mod` and the `fast_idiv` rules;
-  `test/gen/tinygrad.patch`, which makes tinygrad's rules the same before the
-  goldens are generated.
-- **Differs:** a weak integer divisor past a committed integer operand's
-  width is wrapped to the operand's type before a division or remainder
-  lowers: on int8, 128 is -128 and 200 is -56, and on uint8 259 is 3.
-- **Reason:** (e). Without the wrap, an int8 `x // 200` gives 0 where -1 is
-  due for a positive `x`, with no error. No raven call site is known to reach
-  it.
-- **Pinned by:** the `Codegen` suite: `constants past the width › a weak
-  divisor past the width divides as its value there`, which compiles and runs
-  the divisors past each width; the `Decomp_op` suite:
-  `late_patterns › a quotient by a weak divisor past its width reads it in its
-  type`.
+A divisor past its operand's width was read in its operand's type
+(`Decomp_op.divisor`). An integer literal now holds that value at construction
+(D413); the pins move there.
 
 ## D163. An inlined value computes at most 360 nodes again
 
@@ -8419,8 +8337,12 @@ C's undefined behaviour.
   `Uop_weak.commit_srcs_at` saturates a literal count at or past the width
   at the width, which every integer type holds, as it does a weak expression
   count always past it, and a weak expression count the operand's type does
-  not hold at its own committed type, then converts it to the operand's. A
-  weak count does not widen the type its shift computes at.
+  not hold at its own committed type, then converts it to the operand's; one
+  whose known bounds no 64-bit integer type holds (`Ops.fits_no_int`), and that
+  is not always past the width, is refused, since wrapped it would shift by the
+  wrong number. A shift of a weak operand has no such type and commits as any
+  weak expression does. A weak count does not widen the type its shift computes
+  at.
   tinygrad's `codegen/decomp/dtype.py` `l2i` emulates a 64-bit shift from
   the count's low word: a count of 2^32 shifts by 0, a count of 64 or more
   by its low 6 bits, and a `Uint32` count fails. tolk's reads both words of
@@ -8817,7 +8739,12 @@ reason and its pins.
   an unsigned base has none. A power at no width whose exact value would not
   fit in memory has no value: `Ops.exec_alu` refuses it and the fold leaves it,
   where tinygrad's Python integer would exhaust memory; a base of 0, 1 or -1
-  folds at any exponent.
+  folds at any exponent. A weak exponent expression of a committed integer
+  base, whose known bounds no 64-bit integer type holds (`Ops.fits_no_int`), is
+  refused at lowering
+  (`Transcendental.xpow_int`): its
+  value cannot reach the kernel, where tinygrad computes it wrapped and takes a
+  power by the wrong number.
 - **Reason:** (e): at the pinned commit, `Cast(uint16, 0) ** 65536` folds to 1,
   where it is 0, and a uint8 to a weak exponent of 256 is 1.
 - **Pinned by:** the Tolk_engine suite's `a power by an exponent of any size
@@ -8829,7 +8756,50 @@ reason and its pins.
   width truncates stays a power past what it can hold` and `a power no width
   truncates folds for a base of 0, 1 or -1 at any size`; and the Uop_weak
   suite's `a weak exponent keeps its value past its base's type` and `a cast of
-  a weak power computes it and leaves its exponent weak`.
+  a weak power computes it and leaves its exponent weak`; the Transcendental
+  suite's `xpow_int › an exponent's bounds`.
+
+## D413. An integer literal holds its operation's value from construction
+
+- **tinygrad:** `mixin/elementwise.py:30` (`_broadcasted`, which keeps a weak
+  constant weak under a committed operation), `uop/weak.py:17-21`
+  (`commit_srcs_at`, which commits it late), and so every rule between the two
+  reads the literal as written: `uop/symbolic.py:167-169`, `:177-180` (two stage
+  folding), `codegen/decomp/op.py:54-62,64-96,97-103` (`floordiv_to_idiv`,
+  `floormod_to_mod`, `powers_of_two`, the `fast_idiv` rules).
+- **tolk:** `Ops.v`, which every constructor and `Ops.replace` goes through; its
+  readers were deleted (`Shape.fold_const_alu`'s read of a weak operand,
+  `Shape.wrap_folded`, the two stage maximum's reading, `Decomp_op.at_width`,
+  `Decomp_op.divisor`, and the negation rule's reading of its constant).
+- **Differs:** a bare integer literal under an operation on a committed integer,
+  or a cast to one, holds the value that type gives it, wrapped to its width,
+  and stays a bare weak literal, so patterns still match it. A comparison reads
+  it at the operands' meet, another binary or ternary operation at its own type,
+  a cast at its target. A shift's count and a power's exponent are numbers
+  (D346, D403), and floats are untouched (D128). So `-1` under a `uint32`
+  operation is `4294967295` in the graph, `2^64` under a `uint64` division is
+  `0`, and a golden whose literal was written past its width differs from
+  tinygrad's in that spelling.
+- **Reason:** (e): each rule that read a literal as written computed a wrong
+  value or crashed: on int8, `x // 200` gave 0 where -1 is due; on uint8,
+  `max(max(w, 1), -3)` became `max(w, 1)` where the machine computes
+  `max(w, 253)`; on int32, `(x * 65536) * 65536` made a shift by 32, which C
+  leaves undefined; `x:i32 * 2^32` failed to compile. Six readers repaired
+  these one rule at a time, and a new rule had to know to read so; the literal
+  now has the value before any rule sees it.
+- **Pinned by:** the Ops suite's `integer literals`, at every integer type, at
+  -1, at the bounds, past the width and at the width's power; the Codegen
+  suite's `constants past the width` (`a literal computes as its value at the
+  operation's type`, every operation and type, `a product or conjunction by a
+  literal that is 0 at its type is 0`, `a square of a product whose constant
+  squares to 0 is 0`, `a weak divisor past the width divides as its value
+  there`, `a shift by a weak expression count keeps the count whole`); the
+  Symbolic suite's `committed constants hold their type's value` and `integers
+  wrap › a square of a product keeps its value, its constants folded at an
+  unsigned width`; the Decomp_op suite's `late_patterns › a product by a power of
+  two shifts by less than its width`, `a quotient by a power of two reads it in
+  its operand's type` and `a quotient by a weak divisor past its width reads it
+  in its type`.
 
 ## D358. An object defines the half conversions Clang calls
 

@@ -33,8 +33,9 @@ let derived_dtypes u src =
    type, with the value it has as a number of bits. A count at or past [dt]'s
    width shifts every bit out, whatever its value: a literal one, or an
    expression that is always one, saturates at the width, which [dt] holds, and
-   a weak expression that [dt] cannot hold saturates at its own committed
-   type. *)
+   a weak expression that [dt] cannot hold saturates at its own committed type.
+   One no machine integer holds, and that may be below the width, is refused:
+   wrapped, it would shift by the wrong number. *)
 let count_at s dt =
   let width = Bigint.of_int (Dtype.bitsize dt) in
   if is_const s then
@@ -43,6 +44,8 @@ let count_at s dt =
     | _ -> s
   else if not (overflows s dt) then s
   else if Dtype.Value.(vmin s >= `Int width) then const (`Int width)
+  else if fits_no_int s then
+    invalid_arg "a weak shift count past 64 bits has no machine value"
   else
     let n = cast s (committed s) in
     let cap = const_like n (`Int width) in

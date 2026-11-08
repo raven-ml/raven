@@ -1877,27 +1877,14 @@ let fold_bitcast root c =
     in
     Some (const_v root (Dtype.bitcast dt (dtype root) v))
 
-let fold_args a read srcs =
-  match srcs with
-  | [ x; c ]
-    when is_number a 1 && op c = Op.Const && Dtype.equal (dtype c) Dtype.Weak_int
-    ->
-      (* a bare count or exponent is a number, whatever its operand's width *)
-      [ read x; value c ]
-  | _ -> List.map read srcs
-
 (* A committed integer holds its type's value, so a fold reads a committed
-   operand, and a weak integer operand the operation commits, at the width of
-   the operation's operands, and writes a committed integer result at its width;
+   operand at its width and writes a committed integer result at its width;
    floats re-round in the mint. A stack folds lane by lane. A shift by a
    negative count has no value, and does not fold; nor does a left shift at no
    width by a count no integer holds, or a power at no width whose exact value
    is too large to compute. *)
 let fold_const_alu a =
   let alu args = exec_alu (op a) (dtype a) args in
-  let operands =
-    if Op.Set.mem (op a) Op.Set.comparison then promo_dtype (src a) else dtype a
-  in
   let read s =
     match (op s, value s) with
     (* a float constant is its bits: a NaN operand keeps them for a selection
@@ -1905,10 +1892,6 @@ let fold_const_alu a =
     | Op.Cast, (#Dtype.value as v) when Dtype.is_float (dtype s) ->
         Dtype.const (dtype s) v
     | Op.Cast, (#Dtype.value as v) -> (at (dtype s) v :> Dtype.const)
-    | Op.Const, (`Int _ as v)
-      when Dtype.equal (dtype s) Dtype.Weak_int && Dtype.mem operands Dtype.ints
-      ->
-        (at operands v :> Dtype.const)
     | _, c -> c
   in
   let defined args =
@@ -1925,37 +1908,17 @@ let fold_const_alu a =
   let stack s = op s = Op.Stack in
   match List.filter stack (src a) with
   | [] ->
-      let args = fold_args a read (src a) in
+      let args = List.map read (src a) in
       if defined args then Some (const_like a (alu args)) else None
   | stacks ->
       let count =
         List.fold_left (fun n s -> max n (List.length (src s))) 0 stacks
       in
-      let lane l s = if stack s then nth s l else s in
-      let lanes =
-        List.init count (fun l -> fold_args a read (List.map (lane l) (src a)))
-      in
+      let lane l s = read (if stack s then nth s l else s) in
+      let lanes = List.init count (fun l -> List.map (lane l) (src a)) in
       if List.for_all defined lanes then
         Some (consts ~dtype:(dtype a) (List.map alu lanes))
       else None
-
-(* [c1 op c2] for the operation [f] of a committed integer type, which reads
-   a weak constant at its width: a weak result past that width is wrapped to
-   it, as on int32 (x * 65536) * 65536 is x * 0, not x * 2^32. *)
-let wrap_folded f c1 c2 =
-  let dt = dtype f and c = alu c1 (op f) [ c2 ] in
-  let weak u = op u = Op.Const && Dtype.mem (dtype u) Dtype.weaks in
-  if not (Dtype.mem dt Dtype.ints && weak c1 && weak c2) then c
-  else
-    match (value c1, value c2) with
-    | (`Int _ as v1), (`Int _ as v2) -> (
-        match exec_alu (op f) Dtype.Weak_int [ v1; v2 ] with
-        | `Int _ as v ->
-            let w = Dtype.truncate dt v in
-            if Dtype.equal_const w v then c
-            else const_like c1 (w :> Dtype.const)
-        | _ -> c)
-    | _ -> c
 
 (* A fold makes a signed constant only where it fits [x]'s type: wrapping it
    at the width would keep the value, but tinygrad, which takes signed
@@ -2412,15 +2375,6 @@ let symbolic_simple =
                 (fun m ->
                   let f = m "f" in
                   let o = op f in
-                  (* a sum, a product and a bitwise operation fold the same
-                     before or after wrapping; a maximum orders wrapped values:
-                     on uint8, max(1, -3) is 253, so its weak constants fold at
-                     its width *)
-                  let at_width c =
-                    if o = Op.Max && Dtype.mem (Ops.dtype c) Dtype.weaks then
-                      ccast c (Ops.dtype f)
-                    else c
-                  in
                   let const c = (vmin (m c) :> Dtype.const) in
                   let folded = [ const "c1"; const "c2" ] in
                   let fit =
@@ -2428,8 +2382,7 @@ let symbolic_simple =
                     | #Dtype.value as v -> fits (m "x") v
                     | _ -> true
                   in
-                  let c1 = at_width (m "c1") and c2 = at_width (m "c2") in
-                  if fit then Some (alu (m "x") o [ wrap_folded f c1 c2 ])
+                  if fit then Some (alu (m "x") o [ alu (m "c1") o [ m "c2" ] ])
                   else None))
             (Op.Set.to_list Op.Set.associative)
         @ [
@@ -2936,11 +2889,7 @@ let symbolic =
              (fun m ->
                let x = m "x" and c = m "c" in
                let dt = promo_dtype (src (m "cmp")) in
-               let c_at_width =
-                 if Dtype.mem dt Dtype.ints then Dtype.truncate dt (num c)
-                 else num c
-               in
-               if V.(c_at_width <> Dtype.min dt) && exact dt V.[ -vmin x ] then
+               if V.(num c <> Dtype.min dt) && exact dt V.[ -vmin x ] then
                  Some O.(neg c < x)
                else None);
            (* canonicalize a simplex with positive coefficients > 0. NOTE: not

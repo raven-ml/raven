@@ -661,7 +661,48 @@ let rec intern sh hash op src arg i =
         u
     | _ -> intern sh hash op src arg next
 
-let v ?(src = []) ?(arg = No_arg) op =
+(* Whether source [i] of [op] over [src] is a number, read at no type's width: a
+   shift's count, or the weak integer exponent of an integer base. *)
+let number_at op src i =
+  i = 1
+  &&
+  match (op, src) with
+  | (Op.Shl | Op.Shr), _ -> true
+  | Op.Pow, [ b; e ] ->
+      Dtype.is_int b.dtype && Dtype.equal e.dtype Dtype.Weak_int
+  | _ -> false
+
+(* Written by hand, with no call: this test runs on every node's sources. *)
+let rec has_weak_int_literal = function
+  | [] -> false
+  | { op = Op.Const; dtype = Dtype.Weak_int; _ } :: _ -> true
+  | _ :: rest -> has_weak_int_literal rest
+
+(* The type [op] reads its integer literal operands at: a comparison at the
+   operands' meet, another binary or ternary operation at its own type, a cast
+   at its target, and any other operation at none, [Void]. *)
+let literal_dtype op src arg =
+  if Op.Set.mem op Op.Set.broadcastable then
+    if Op.Set.mem op Op.Set.comparison then promo_dtype src
+    else dtype_of op src arg
+  else match (op, arg) with Op.Cast, Dtype dt -> dt | _ -> Dtype.Void
+
+(* Whether [z] is its own value at the integer type [dt]; the least signed
+   value counts as not fitting, and wraps to itself. *)
+let fits_at dt z =
+  let bits = Dtype.bitsize dt in
+  if Dtype.is_unsigned dt then Bigint.sign z >= 0 && Bigint.numbits z <= bits
+  else Bigint.numbits z < bits
+
+let rec literals_fit dt op src i = function
+  | [] -> true
+  | { op = Op.Const; dtype = Dtype.Weak_int; arg = Const (`Int z); _ } :: rest
+    when not (number_at op src i) ->
+      fits_at dt z && literals_fit dt op src (i + 1) rest
+  | _ :: rest -> literals_fit dt op src (i + 1) rest
+
+let rec v ?(src = []) ?(arg = No_arg) op =
+  let src = if has_weak_int_literal src then literals_at op src arg else src in
   let hash = node_hash op src arg in
   let sh = shards.(hash lsr (Sys.int_size - 1 - shard_bits)) in
   (* Written as [Mutex.protect] is, without its closure: nothing runs between
@@ -677,6 +718,26 @@ let v ?(src = []) ?(arg = No_arg) op =
   | exception e ->
       Mutex.unlock sh.lock;
       reraise e
+
+(* The sources of [op] with each integer literal at the value the operation
+   reads, the literal staying bare so that rules match it: a value is its
+   machine value from the moment an operation fixes its type, so that no rule
+   needs to know to wrap it. Literals that already fit keep [src] and allocate
+   nothing. A count and an exponent are numbers, and wrap at nothing. *)
+and literals_at op src arg =
+  let dt = literal_dtype op src arg in
+  if Dtype.equal dt Dtype.Weak_int || (not (Dtype.is_int dt))
+     || literals_fit dt op src 0 src
+  then src
+  else
+    List.mapi
+      (fun i s ->
+        match s with
+        | { op = Op.Const; dtype = Dtype.Weak_int; arg = Const (`Int _ as c); _ }
+          when not (number_at op src i) ->
+            v Op.Const ~arg:(Const (Dtype.const dt c))
+        | _ -> s)
+      src
 
 let op u = u.op
 let dtype u = u.dtype
@@ -1596,6 +1657,13 @@ module Make_elementwise (B : Elementwise_base) = struct
     let a, b = broadcasted x y in
     alu a op [ b ]
 
+  (* The source [y] of a count or an exponent: a weak integer is a number,
+     whatever its peer's integer type holds, so it stays as written; [promoted]
+     is [y] as {!broadcasted} leaves it otherwise. *)
+  let number_operand peer y promoted =
+    if Dtype.equal (dtype y) Dtype.Weak_int && Dtype.is_int (dtype peer) then y
+    else promoted
+
   let int n = literal (`Int (Bigint.of_int n))
   let bool b = literal (`Bool b)
   let add x y = binop Op.Add x y
@@ -1662,11 +1730,7 @@ module Make_elementwise (B : Elementwise_base) = struct
 
   let pow x y =
     let base, exponent = broadcasted x y in
-    (* An exponent is a number, whatever its base's type holds. *)
-    let exponent =
-      if Dtype.equal (dtype y) Dtype.Weak_int && Dtype.is_int (dtype base) then y
-      else exponent
-    in
+    let exponent = number_operand base y exponent in
     let negative_int =
       match literal_value y with
       | Some (`Int z) -> Bigint.lt z Bigint.zero
@@ -1681,8 +1745,12 @@ module Make_elementwise (B : Elementwise_base) = struct
   let bitwise_and x y = binop Op.And x y
   let bitwise_or x y = binop Op.Or x y
   let bitwise_xor x y = binop Op.Xor x y
-  let shl x y = binop Op.Shl x y
-  let shr x y = binop Op.Shr x y
+  let shift op x y =
+    let a, b = broadcasted x y in
+    alu a op [ number_operand a y b ]
+
+  let shl x y = shift Op.Shl x y
+  let shr x y = shift Op.Shr x y
 
   let bitwise_not x =
     let dt = dtype x in
@@ -2217,6 +2285,16 @@ let vmax u = snd (min_max u)
 
 let overflows u dt =
   Value.( < ) (vmin u) (Dtype.min dt) || Value.( < ) (Dtype.max dt) (vmax u)
+
+(* A node with no derived bounds reads as a weak integer's whole range, and
+   arithmetic on it stays near that: a bound so far out is no knowledge of the
+   value. *)
+let fits_no_int u =
+  let known (b : Dtype.value) =
+    Bigint.numbits (Value.to_z b) <= Dtype.bitsize Dtype.Weak_int / 2
+  in
+  overflows u Dtype.Int64 && overflows u Dtype.Uint64
+  && known (vmin u) && known (vmax u)
 
 (* Bounds of one value would make the storage's parameter that constant, in
    place of the storage. *)
@@ -2913,14 +2991,7 @@ let float_pow fx fy =
               let z_err = Bigint.(shift_right (abs a * l_err) tb + of_int 2) in
               exp2_fixed z z_err wl)
 
-let is_number u i =
-  i = 1
-  &&
-  match (u.op, u.src) with
-  | (Op.Shl | Op.Shr), _ -> true
-  | Op.Pow, [ b; e ] ->
-      Dtype.is_int b.dtype && Dtype.equal e.dtype Dtype.Weak_int
-  | _ -> false
+let is_number u i = number_at u.op u.src i
 
 (* Whether [b ** e] can be computed exactly: a base of 0, 1 or -1 stays small at
    any exponent, and otherwise each step of a power adds its base's bits. *)

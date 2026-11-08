@@ -152,8 +152,14 @@ let commits =
       test "a weak integer operand takes its committed peer's type" (fun () ->
           equal const (int 255) (at 0 (Ops.maximum (Ops.int (-1)) x8));
           equal const (`Bool true) (at 100 Ops.O.(x8 < int (-1))));
-      test "a weak operand that leaves its peer's type overflows" (fun () ->
+      test "a weak expression that leaves its peer's type overflows" (fun () ->
+          let w = Ops.variable "w" (int 0) (int 1000) in
           is_true
+            (Interpreter.overflows
+               ~vars:[ ("x", int 0); ("w", int 1000) ]
+               (Ops.maximum Ops.O.(w * int 1) x8)));
+      test "a literal holds its peer's value and does not overflow" (fun () ->
+          is_false
             (Interpreter.overflows
                ~vars:[ ("x", int 0) ]
                (Ops.maximum (Ops.int (-1)) x8)));

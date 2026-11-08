@@ -4765,6 +4765,161 @@ let divisors_wrap () =
           ])
     Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]
 
+(* The kernel that stores into slot [k] the [k]th of [cases], an operation and a
+   literal, of [x] at element [i], slot [Array.length cases], [left] putting the
+   literal first. A comparison stores a bool. *)
+let literal_kernel dtype ~left cases =
+  let n = Ops.Int 12 in
+  let x = Shape.param ~shape:[ n ] (Array.length cases) dtype in
+  let i = Ops.range ~axis_type:Weak n [ 0 ] in
+  let store k (op, c) =
+    let dt =
+      if List.mem op Op.[ Cmplt; Cmpne; Cmpeq ] then Dtype.Bool else dtype
+    in
+    let out = Shape.param ~shape:[ n ] k dt in
+    let lit = Ops.const (`Int c) and xv = Ops.index x [ i ] in
+    Ops.store (Ops.index out [ i ])
+      (if left then Ops.v op ~src:[ lit; xv ] else Ops.v op ~src:[ xv; lit ])
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.group (List.mapi store (Array.to_list cases))) [ i ] ]
+
+let int_samples dtype =
+  let lo, hi = Dtypes.int_bounds dtype in
+  let picks =
+    Bigint.
+      [ lo; succ lo; minus_one; zero; one; of_int 2; of_int 7; of_int 100; pred hi; hi ]
+  in
+  let held = List.filter (fun z -> Bigint.geq z lo && Bigint.leq z hi) picks in
+  let held = List.sort_uniq Bigint.compare held in
+  Array.init 12 (fun i -> `Int (List.nth held (min i (List.length held - 1))))
+
+(* A literal holds its value at the type of the operation that reads it, so a
+   program computes the same as with that value written: every operation that
+   reads a literal, at -1, at the bounds and past them. *)
+let literals_compute () =
+  let ops =
+    Op.[ Add; Sub; Mul; And; Or; Xor; Max; Div; Mod; Truncdiv; Truncmod; Cmplt;
+         Cmpne; Cmpeq ]
+  in
+  List.iter
+    (fun dtype ->
+      let lo, hi = Dtypes.int_bounds dtype in
+      let wide = Bigint.shift_left Bigint.one (Dtype.bitsize dtype) in
+      let literals =
+        Bigint.
+          [ minus_one; lo; pred lo; hi; succ hi; pred wide; wide; succ wide;
+            neg wide ]
+      in
+      let xs = int_samples dtype in
+      let result = function
+        | Op.Cmplt | Op.Cmpne | Op.Cmpeq -> Dtype.Bool
+        | _ -> dtype
+      in
+      List.iter
+        (fun left ->
+          let cases =
+            Array.of_list
+              (List.concat_map (fun c -> List.map (fun op -> (op, c)) ops) literals)
+          in
+          let prg =
+            Codegen.to_program (literal_kernel dtype ~left cases) (Lazy.force host)
+          in
+          let outs = Run.on_host prg [ (Array.length cases, xs) ] in
+          Array.iteri
+            (fun slot (op, c) ->
+              let w = (Dtype.truncate dtype (`Int c) :> Dtype.const) in
+              let got = List.assoc slot outs in
+              Array.iteri
+                (fun j x ->
+                  let args =
+                    if left then [ w; (x :> Dtype.const) ]
+                    else [ (x :> Dtype.const); w ]
+                  in
+                  match Ops.exec_alu op (result op) args with
+                  | #Dtype.value as want ->
+                      equal
+                        ~msg:
+                          (Format.asprintf "%a %s %a %s" Dtype.pp dtype
+                             (Bigint.to_string (Dtype.Value.to_z x))
+                             Op.pp op (Bigint.to_string c))
+                        Dtypes.value want got.(j)
+                  | _ -> ())
+                xs)
+            cases)
+        [ false; true ])
+    Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]
+
+(* A literal at 0 modulo a 32-bit type: the product and conjunction fold to 0
+   before the kernel is vectorized, as a 0 written directly does. *)
+let zero_at_the_width () =
+  List.iter
+    (fun dtype ->
+      let c = Bigint.shift_left Bigint.one 32 in
+      let cases = [| (Op.Mul, c); (Op.And, c) |] in
+      let prg =
+        Codegen.to_program (literal_kernel dtype ~left:false cases) (Lazy.force host)
+      in
+      let xs = int_samples dtype in
+      let outs = Run.on_host prg [ (Array.length cases, xs) ] in
+      Array.iteri
+        (fun slot _ ->
+          equal
+            ~msg:(Format.asprintf "%a slot %d" Dtype.pp dtype slot)
+            (array Dtypes.value)
+            (Array.make 12 (`Int Bigint.zero))
+            (List.assoc slot outs))
+        cases)
+    Dtype.[ Int32; Uint32 ]
+
+(* A shift built by [Ops.shl] keeps a weak expression's count weak, a number
+   its operand's type cannot wrap: [w + 3] at [w = 253] counts 256, and shifts a
+   uint8 to 0, not by 0. *)
+let shift_count_kernel shifted =
+  let n = Ops.Int 12 in
+  let x = Shape.param ~shape:[ n ] 1 Dtype.Uint8 in
+  let i = Ops.range ~axis_type:Weak n [ 0 ] in
+  let out = Shape.param ~shape:[ n ] 0 Dtype.Uint8 in
+  let w = Ops.variable "w" (`Int Bigint.zero) (`Int (Bigint.of_int 1000)) in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [
+      Ops.end_
+        (Ops.store (Ops.index out [ i ])
+           (shifted (Ops.index x [ i ]) Ops.O.(w + int 3)))
+        [ i ];
+    ]
+
+let shift_counts_stay_numbers () =
+  let xs = Array.make 12 (`Int (Bigint.of_int 5)) in
+  let run shifted =
+    let prg =
+      Codegen.to_program (shift_count_kernel shifted) (Lazy.force host)
+    in
+    (List.assoc 0 (Run.on_host ~vars:[ ("w", 253) ] prg [ (1, xs) ])).(0)
+  in
+  let zero = `Int Bigint.zero in
+  equal ~msg:"Ops.shl" Dtypes.value zero (run Ops.shl);
+  equal ~msg:"Ops.shr" Dtypes.value zero (run Ops.shr);
+  equal ~msg:"O.lsl" Dtypes.value zero (run Ops.O.( lsl ));
+  equal ~msg:"O.lsr" Dtypes.value zero (run Ops.O.( lsr ))
+
+(* A count [w * w] reaches 2^64 at [w = 2^32], which no machine integer holds:
+   the program is refused. All past the width, it is the width, and is 0. *)
+let shift_counts_past_64_bits () =
+  let big = Ops.variable "b" (`Int Bigint.zero) (`Int (Bigint.shift_left Bigint.one 40)) in
+  let count w = Ops.O.(w * w) in
+  let kernel c =
+    shift_count_kernel (fun x _ -> Ops.shl x c)
+  in
+  raises_match
+    (Exn.invalid_arg ~sub:"shift count past 64 bits")
+    (fun () -> Codegen.to_program (kernel (count big)) (Lazy.force host));
+  let past = Ops.O.(count big + Ops.const (`Int (Bigint.shift_left Bigint.one 70))) in
+  let prg = Codegen.to_program (kernel past) (Lazy.force host) in
+  let xs = Array.make 12 (`Int (Bigint.of_int 5)) in
+  equal ~msg:"all past the width" Dtypes.value (`Int Bigint.zero)
+    (List.assoc 0 (Run.on_host ~vars:[ ("b", 1) ] prg [ (1, xs) ])).(0)
+
 let square_wrapping =
   group "constants past the width"
     [
@@ -4773,6 +4928,14 @@ let square_wrapping =
       test "like terms whose factors sum past the width wrap" like_terms_wrap;
       test "a weak divisor past the width divides as its value there"
         divisors_wrap;
+      test "a literal computes as its value at the operation's type"
+        literals_compute;
+      test "a product or conjunction by a literal that is 0 at its type is 0"
+        zero_at_the_width;
+      test "a shift by a weak expression count keeps the count whole"
+        shift_counts_stay_numbers;
+      test "a shift by a weak count past 64 bits is refused or past the width"
+        shift_counts_past_64_bits;
     ]
 
 (* An accumulator no lane adds to *)

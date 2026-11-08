@@ -1,0 +1,17 @@
+# tolk D413 golden=5e4b3726675d713f76b0d288c598f5da
+0 Ops.STACK dtypes.void []
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), name="a", addrspace=AddrSpace.ALU)
+2 Ops.CONST dtypes.weakint [] -1
+3 Ops.MUL dtypes.i32 [1, 2]
+4 Ops.PARAM dtypes.f32 [0] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), name="x", addrspace=AddrSpace.ALU)
+5 Ops.CONST dtypes.weakfloat [] -1.0
+6 Ops.MUL dtypes.f32 [4, 5]
+7 Ops.PARAM dtypes.bool [0] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), name="p", addrspace=AddrSpace.ALU)
+8 Ops.CONST dtypes.bool [] False
+9 Ops.CMPEQ dtypes.bool [7, 8]
+10 Ops.CONST dtypes.weakint [] 1
+11 Ops.CAST dtypes.u8 [10] dtypes.u8
+12 Ops.CONST dtypes.weakint [] 255
+13 Ops.MUL dtypes.u8 [11, 12]
+14 Ops.SINK dtypes.void [3, 6, 9, 13]
+

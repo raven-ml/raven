@@ -616,6 +616,10 @@ let xpow_int base exponent dt =
     let mask = const_like b (Dtype.max udt :> Dtype.const) in
     let wrap u = O.(u land mask) in
     let edt = dtype exponent in
+    if
+      Dtype.equal edt Dtype.Weak_int
+      && op exponent <> Op.Const && fits_no_int exponent
+    then invalid_arg "a weak exponent past 64 bits has no machine value";
     let lo, hi =
       if Dtype.mem edt Dtype.ints && overflows exponent edt then
         (Dtype.min edt, Dtype.max edt)

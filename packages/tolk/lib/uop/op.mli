@@ -124,7 +124,9 @@ type t =
   | Backedge
       (** Runs its body, then repeats its unbounded {!Range} while its condition
           holds. *)
-  | Const  (** A constant. *)
+  | Const
+      (** A constant. An integer literal an operation reads holds the value that
+          operation's integer type gives it ({!Ops.v}). *)
   | Ins
       (** An instruction named by its argument: a machine instruction, or a
           command of a device queue such as a wait, a barrier or a timestamp. *)

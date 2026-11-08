@@ -370,6 +370,15 @@ val v : ?src:t list -> ?arg:arg -> Op.t -> t
     a [Const], {!Op.Cast} and {!Op.Bitcast} a [Dtype], {!Op.Param}, {!Op.Buffer}
     and {!Op.Alloc} a [Param], and {!Op.Ins} a [Code].
 
+    An integer literal among [src] holds its value at the integer type the
+    operation fixes for it, wrapped to that type's width, so every rule and fold
+    reads the machine value of a literal without knowing to wrap it: a
+    comparison at its operands' {!Dtype.least_upper}, another binary or ternary
+    operation at its own type, a cast at its target. On a {!Dtype.Uint8}, [300]
+    is [44] and [-1] is [255]. The node stays a bare weak literal. A
+    shift's count and a power's exponent ({!is_number}) are numbers and keep
+    their value. A float type leaves a literal alone.
+
     Raises [Invalid_argument] if no type can be derived, as for a {!Op.Where}
     whose condition is not boolean.
 
@@ -641,6 +650,12 @@ val operand_bounds : t -> t -> Dtype.value * Dtype.value
 
 val overflows : t -> Dtype.t -> bool
 (** [overflows u dt] is [true] iff [u]'s bounds reach outside [dt]'s. *)
+
+val fits_no_int : t -> bool
+(** [fits_no_int u] is [true] iff [u]'s bounds are known and neither
+    {!Dtype.Int64} nor {!Dtype.Uint64} holds them: no machine integer can carry
+    every value of [u]. Bounds at a weak integer's own range, as of a node
+    nothing bounds, are not known. *)
 
 val stored_bounds : t -> Dtype.t -> (Dtype.value * Dtype.value) option
 (** [stored_bounds u dt] is [Some (vmin u, vmax u)] iff [u]'s bounds hold more
