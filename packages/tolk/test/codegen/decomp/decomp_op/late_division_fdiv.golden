@@ -10,7 +10,7 @@
 9 Ops.MUL dtypes.f32 [3, 2]
 10 Ops.SINK dtypes.void [2, 7, 8, 9]
 11 Ops.FDIV dtypes.f32 [4, 1]
-12 Ops.MUL dtypes.f32 [3, 11]
+12 Ops.FDIV dtypes.f32 [3, 1]
 13 Ops.SINK dtypes.void [11, 7, 8, 12]
 14 Ops.SINK dtypes.void [10, 13]
 

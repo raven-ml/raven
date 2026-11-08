@@ -100,7 +100,7 @@
 99 Ops.ADD dtypes.i32 [89, 98]
 100 Ops.TRUNCDIV dtypes.u64 [18, 20]
 101 Ops.TRUNCDIV dtypes.u64 [18, 19]
-102 Ops.TRUNCDIV dtypes.u64 [18, 34]
+102 Ops.TRUNCDIV dtypes.u64 [18, 23]
 103 Ops.TRUNCDIV dtypes.weakint [25, 12]
 104 Ops.TRUNCMOD dtypes.weakint [25, 12]
 105 Ops.CMPEQ dtypes.bool [104, 34]

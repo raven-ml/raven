@@ -91,7 +91,7 @@
 90 Ops.TRUNCDIV dtypes.u64 [18, 20]
 91 Ops.CONST dtypes.weakint [] 63
 92 Ops.SHR dtypes.u64 [18, 91]
-93 Ops.TRUNCDIV dtypes.u64 [18, 34]
+93 Ops.TRUNCDIV dtypes.u64 [18, 23]
 94 Ops.TRUNCDIV dtypes.weakint [25, 12]
 95 Ops.TRUNCMOD dtypes.weakint [25, 12]
 96 Ops.CMPEQ dtypes.bool [95, 34]

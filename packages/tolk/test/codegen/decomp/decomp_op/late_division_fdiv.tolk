@@ -1,0 +1,17 @@
+# tolk D50 golden=a22627a75d2e40942726497be88091b2
+0 Ops.STACK dtypes.void []
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+2 Ops.RECIP dtypes.f32 [1]
+3 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+4 Ops.CONST dtypes.weakfloat [] 1.0
+5 Ops.CAST dtypes.f32 [4] dtypes.f32
+6 Ops.FDIV dtypes.f32 [5, 1]
+7 Ops.MUL dtypes.f32 [3, 6]
+8 Ops.MUL dtypes.f32 [6, 3]
+9 Ops.MUL dtypes.f32 [3, 2]
+10 Ops.SINK dtypes.void [2, 7, 8, 9]
+11 Ops.FDIV dtypes.f32 [4, 1]
+12 Ops.MUL dtypes.f32 [3, 11]
+13 Ops.SINK dtypes.void [11, 7, 8, 12]
+14 Ops.SINK dtypes.void [10, 13]
+

@@ -89,7 +89,7 @@
 88 Ops.ADD dtypes.i32 [79, 87]
 89 Ops.TRUNCMOD dtypes.u64 [17, 19]
 90 Ops.TRUNCMOD dtypes.u64 [17, 18]
-91 Ops.TRUNCMOD dtypes.u64 [17, 37]
+91 Ops.TRUNCMOD dtypes.u64 [17, 22]
 92 Ops.TRUNCMOD dtypes.weakint [24, 25]
 93 Ops.CMPEQ dtypes.bool [92, 37]
 94 Ops.CMPEQ dtypes.bool [93, 39]

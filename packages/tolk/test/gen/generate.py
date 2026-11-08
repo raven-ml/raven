@@ -71,6 +71,7 @@ UNMODIFIED = {
     "device",
     "uop/ops",
     "codegen/late/gater",
+    "codegen/decomp/decomp_op",
 }
 
 HERE = Path(__file__).resolve().parent

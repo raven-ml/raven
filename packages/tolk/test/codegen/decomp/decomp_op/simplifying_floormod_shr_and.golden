@@ -72,7 +72,7 @@
 71 Ops.TRUNCMOD dtypes.u64 [17, 19]
 72 Ops.CONST dtypes.weakint [] 9223372036854775807
 73 Ops.AND dtypes.u64 [17, 72]
-74 Ops.TRUNCMOD dtypes.u64 [17, 37]
+74 Ops.TRUNCMOD dtypes.u64 [17, 22]
 75 Ops.TRUNCMOD dtypes.weakint [24, 25]
 76 Ops.CMPEQ dtypes.bool [75, 37]
 77 Ops.CMPEQ dtypes.bool [76, 39]
