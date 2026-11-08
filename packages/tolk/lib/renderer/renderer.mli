@@ -244,7 +244,8 @@ type t = private {
   packed_args : bool;
       (** A kernel takes its arguments as bytes: one parameter, which holds
           each argument at its offset ({!Device.Tiny_elf.iter_sig}), a buffer
-          by its address. *)
+          by its address. The kernel loads each argument as its type, so the
+          bytes must start on 8 bytes, the largest an argument takes. *)
   code_for_op : (Op.t * (string list -> Dtype.t -> string)) list;
       (** The operations the target has natively, each with how it is written:
           [f operands dtype] is the expression of the operation on the
