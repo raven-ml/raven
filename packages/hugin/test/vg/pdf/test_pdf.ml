@@ -1020,6 +1020,19 @@ let bounded_instances_drawn (p : Picture.t) =
 let stamps =
   group "stamps"
     [
+      test "a scaled instance whose pen alone meets a clip is painted"
+        (fun () ->
+          (* The stroke misses the clip at scale 1, and meets it at 0.5 with the
+             pen the instance keeps. *)
+          let p =
+            Picture.clip (rect 0. 0. 1. 1.)
+              (Picture.stroke
+                 (Stroke.v ~cap:`Butt 2.)
+                 red
+                 (Path.close (Path.polyline [| 0.; 0. |] [| 2.5; 3.5 |])))
+          in
+          let s = Picture.stamp ~scales:[| 0.5 |] [| 0. |] [| 0. |] p in
+          equal int 1 (count (content (pdf s)) " Do\n"));
       prop "the SVG and PDF renderers draw the same instances" gen_margin_stamp
         same_instances;
       prop "an instance whose bounds meet the margin is drawn" gen_margin_stamp

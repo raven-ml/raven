@@ -168,6 +168,12 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Picture.stamp` draws the group of its instances in the raster, SVG and PDF
+  renderers where it dropped or redrew them: a clip within it, a scale that
+  rounds its path's points, a position rounded onto the page.
+- The raster renderer paints nothing for a stroke whose pen reaches beyond the
+  range of floats, where it could flood the page, and takes an image pixel at a
+  boundary however the image's map was composed.
 - `Affine.stretch` of a map whose linear part is zero is `0.`, where it was
   NaN.
 - A stamp whose picture holds a stroke under transforms that compose to a

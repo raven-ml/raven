@@ -568,7 +568,9 @@ let page r =
   }
 
 let box ctx p =
-  match Instances.bounds (Picture.transform ctx.m p) with
+  (* A pen wider than the picture's may meet a clip its own misses. *)
+  let measured = if ctx.pen > 1. then Instances.uncut p else p in
+  match Instances.bounds (Picture.transform ctx.m measured) with
   | None -> None
   | Some b ->
       Box2.inter (grown b (Instances.reach ctx.m ctx.pen p +. 1.)) ctx.cut
@@ -722,7 +724,11 @@ let rec walk t ctx b (p : Picture.t) =
 
 and stamp t ctx b ~rows p xs ys scales fills strokes =
   let lin = Affine.linear ctx.m in
-  match Instances.bounds (Picture.transform lin p) with
+  (* The picture's clips cut every instance alike only where instances differ
+     by a translation and keep the picture's pens. *)
+  let alike = Option.is_none scales && ctx.pen <= 1. in
+  let measured = if alike then p else Instances.uncut p in
+  match Instances.bounds (Picture.transform lin measured) with
   | None -> ()
   | Some extent ->
       let n = Array.length xs in

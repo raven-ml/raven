@@ -20,17 +20,20 @@
       glyphs are drawn from their outlines, without hinting.
     - A clipped primitive takes in each pixel the product of its coverage and
       the clip's. One whose box, as {!Hugin_vg.Picture.val-bounds} takes it,
-      does not meet the boxes of the paths of the clips above it paints
-      nothing.
+      does not meet the boxes of the paths of the clips above it, or only
+      touches them, to within rounding, paints nothing.
     - A stroke's outline is covered as the union of the pieces it is made of,
       one per segment, join and cap, with round ones flattened likewise. A pixel
       that the edges of two overlapping pieces cross takes the sum of their
       coverages, up to the whole pixel. A point of a subpath within a twentieth
       of a pixel, along both axes, of the point kept before it is dropped, so an
-      open subpath or a dash shorter than that is drawn as its caps alone. A
-      closed subpath that would keep fewer than three points keeps all of them
-      but exact repeats instead, so that it has the extent of its pen at any
-      size. A dash pattern whose period is below a thousandth of a pixel is
+      open subpath or a dash shorter than that is drawn as its caps alone.
+      Dashes are cut from the points a subpath keeps, so their lengths leave out
+      the arc through dropped points, a loss of second order on a smooth curve,
+      and a dash's end within that distance of a kept point moves to it. A
+      solid closed subpath that would keep fewer than three points keeps all of
+      them but exact repeats instead, so that it has the extent of its pen at
+      any size. A dash pattern whose period is below a thousandth of a pixel is
       drawn solid.
     - Primitives are composited one after another, each against what the
       previous left. Two shapes that abut along an edge thus each cover part of
@@ -42,7 +45,8 @@
       drawn over one another reach the colour they composite to: up to a
       thousand fills at any opacity from [0.02] land within a level of it.
     - An image paints a pixel with the image pixel under the pixel's centre, so
-      its edges are not antialiased. Where an image is shown smaller than its
+      its edges are not antialiased; a centre on the edge of the image, to
+      within rounding, is under it. Where an image is shown smaller than its
       pixels, a pixel averages the image pixels under [k] by [k] points spread
       evenly over its square, [k] being the ratio of image pixels to device
       pixels rounded up, at most {!image_samples}.

@@ -1057,6 +1057,19 @@ let marker =
 let stamps =
   group "stamps"
     [
+      test "a scaled instance whose pen alone meets a clip is written"
+        (fun () ->
+          (* The stroke misses the clip at scale 1, and meets it at 0.5 with the
+             pen the instance keeps. *)
+          let p =
+            Picture.clip (rect 0. 0. 1. 1.)
+              (Picture.stroke
+                 (Stroke.v ~cap:`Butt 2.)
+                 red
+                 (Path.close (Path.polyline [| 0.; 0. |] [| 2.5; 3.5 |])))
+          in
+          let s = Picture.stamp ~scales:[| 0.5 |] [| 0. |] [| 0. |] p in
+          equal int 1 (count (svg s) "stroke="));
       test "a stamp writes its picture once and uses it per instance" (fun () ->
           let s =
             svg (Picture.stamp [| 10.; 20.; 30. |] [| 5.; 6.; 7. |] marker)

@@ -78,6 +78,23 @@ let glyph_map m at run i =
 
 let image_samples = 4
 
+(* How far past an edge of an image, or of one of its pixels, in device pixels,
+   a sample counts as on that edge: rounding in a composed map moves a centre on
+   an edge by much less, and must not decide which pixel paints it. *)
+let edge_slack = 1e-9
+
+(* [slack shown] is [edge_slack] as a fraction of a side [shown] device pixels
+   long, or [0.] if the side is too short or too long to have one. *)
+let slack shown =
+  let d = edge_slack /. shown in
+  if Float.is_finite d then d else 0.
+
+(* [cell v n] is the index in [n] cells of the fraction [v], at least [0.]: the
+   last cell for a [v] past them, as a large slack on a thin image gives. *)
+let[@inline] cell v n =
+  let c = v *. float n in
+  if c >= float n then n - 1 else int_of_float c
+
 (* [samples clip m box pixels] is the window [(x0, y0, w, h)] of the device
    pixels within [clip] that the image [pixels] over [box], mapped through [m],
    reaches, and the premultiplied colour of each, four floats in \[0;255\] per
@@ -134,6 +151,7 @@ let samples (clip : Surface.clip) m box pixels =
         Int.max 1 (Int.min image_samples (int_of_float (Float.ceil ratio)))
       in
       let n = float (k * k) in
+      let du = slack shown_w and dv = slack shown_h in
       let buf = Array.make (w * h * 4) 0. in
       let get i = float (Bigarray.Array1.unsafe_get data i) in
       for py = y0 to y1 - 1 do
@@ -147,9 +165,10 @@ let samples (clip : Surface.clip) m box pixels =
               let uy = (inv.yx *. dx) +. (inv.yy *. dy) +. inv.y0 in
               let u = (ux -. Box2.minx box) /. bw
               and v = (uy -. Box2.miny box) /. bh in
-              if u >= 0. && u <= 1. && v >= 0. && v <= 1. then begin
-                let col = Int.min (cols - 1) (int_of_float (u *. float cols)) in
-                let row = Int.min (rows - 1) (int_of_float (v *. float rows)) in
+              if
+                u >= -.du && u <= 1. +. du && v >= -.dv && v <= 1. +. dv
+              then begin
+                let col = cell (u +. du) cols and row = cell (v +. dv) rows in
                 let at = ((row * cols) + col) * chans in
                 match chans with
                 | 1 ->
@@ -223,7 +242,7 @@ let device m b =
 let clip_by ctx ~w ~h (clip : Surface.clip) m rule path : Surface.clip =
   let box =
     match (device m (fun () -> Path.bounds path), clip.box) with
-    | Some b, Some c -> Box2.inter b c
+    | Some b, Some c -> Instances.meets b c
     | (Some _ as b), None | None, b -> b
   in
   (* A clip whose box misses that of the clips above lets nothing through. *)
@@ -254,14 +273,17 @@ let clip_by ctx ~w ~h (clip : Surface.clip) m rule path : Surface.clip =
         end
         else begin
           let mask = Array.make ((x1 - x0) * (y1 - y0)) 0. in
-          Cover.take ctx.cover clip rule mask ~ox:x0 ~oy:y0 ~dw:(x1 - x0);
+          Cover.take ctx.cover clip rule mask ~ox:x0 ~oy:y0 ~dw:(x1 - x0)
+            ~least:0.;
           { x0; y0; x1; y1; mask = Some mask; box }
         end
 
 (* [extent clip m ~pen p] is the device box of [p] under [m] within [clip], with
    a pixel of margin, its pens' widths multiplied by [pen]. *)
 let extent (clip : Surface.clip) m ~pen p =
-  match Instances.bounds (Picture.transform m p) with
+  (* A pen wider than the picture's may meet a clip its own misses. *)
+  let measured = if pen > 1. then Instances.uncut p else p in
+  match Instances.bounds (Picture.transform m measured) with
   | None -> None
   | Some b ->
       let within lo hi v =
@@ -301,7 +323,9 @@ let misses (clip : Surface.clip) m pen (p : Picture.t) =
           ->
             None
       in
-      match box with Some b -> Option.is_none (Box2.inter b c) | None -> false)
+      match box with
+      | Some b -> Option.is_none (Instances.meets b c)
+      | None -> false)
 
 (* Planes
 
@@ -315,7 +339,12 @@ type paint = Fills | Strokes | Fixed of (float * float * float * float)
 type plane =
   | Coverage of { paint : paint; cov : float array }
   | Pixels of float array  (** Premultiplied, four floats per pixel. *)
-  | Layer of { alpha : float; planes : plane list; scratch : Surface.t }
+  | Layer of {
+      alpha : float;
+      planes : plane list;
+      clip : Surface.clip;  (** On the tile: cuts the layer as one primitive. *)
+      scratch : Surface.t;
+    }
 
 (* [planar p] is [true] iff [p] holds no stamp, which planes cannot hold. *)
 let rec planar (p : Picture.t) =
@@ -329,6 +358,18 @@ let rec planar (p : Picture.t) =
       planar picture
   | Empty | Fill _ | Stroke _ | Glyphs _ | Image _ -> true
 
+(* [nesting p] is how many stamps deep [p] goes. *)
+let rec nesting (p : Picture.t) =
+  match p with
+  | Stamp { picture; _ } -> 1 + nesting picture
+  | Group ps -> List.fold_left (fun n p -> Int.max n (nesting p)) 0 ps
+  | Clip { picture; _ }
+  | Transform { picture; _ }
+  | Opacity { picture; _ }
+  | Tag { picture; _ } ->
+      nesting picture
+  | Empty | Fill _ | Stroke _ | Glyphs _ | Image _ -> 0
+
 (* [planes ctx ~w ~h clip m ~fills ~strokes style p acc] adds to [acc], in
    reverse order, the planes of [p] on a tile of [w] by [h] pixels. Fills and
    strokes take the instance's colours if [fills] and [strokes]. *)
@@ -337,7 +378,7 @@ let rec planes ctx ~w ~h clip m ~fills ~strokes style p acc =
     Cover.start ctx.cover ~w ~h clip;
     deposit ();
     let cov = Array.make (w * h) 0. in
-    Cover.take ctx.cover clip rule cov ~ox:0 ~oy:0 ~dw:w;
+    Cover.take ctx.cover clip rule cov ~ox:0 ~oy:0 ~dw:w ~least:Cover.faint;
     Coverage { paint; cov } :: acc
   in
   let fill_paint color =
@@ -396,11 +437,16 @@ let rec planes ctx ~w ~h clip m ~fills ~strokes style p acc =
         | Some _ -> planes ctx ~w ~h clip m ~fills ~strokes style picture acc)
     | Opacity { opacity = 0.; _ } -> acc
     | Opacity { opacity; picture } ->
-        let inner = planes ctx ~w ~h clip m ~fills ~strokes style picture [] in
+        (* As [draw]: what the layer holds is clipped once, as a whole. *)
+        let open_clip = { clip with mask = None } in
+        let inner =
+          planes ctx ~w ~h open_clip m ~fills ~strokes style picture []
+        in
         Layer
           {
             alpha = opacity;
             planes = List.rev inner;
+            clip;
             scratch = Surface.create w h;
           }
         :: acc
@@ -424,7 +470,7 @@ let rec composite (t : Surface.t) (clip : Surface.clip) ox oy ~tw ~th planes
           let row = (y - oy) * tw in
           for x = x0 to x1 - 1 do
             let k = Array.unsafe_get cov (row + x - ox) in
-            if k > 0.0005 then
+            if k > 0. then
               let k = k *. Surface.mask_at clip x y in
               if k > 0. then
                 Surface.blend t.px (((y * t.w) + x) * 4) sr sg sb sa k
@@ -446,14 +492,18 @@ let rec composite (t : Surface.t) (clip : Surface.clip) ox oy ~tw ~th planes
                   sa k
           done
         done
-    | Layer { alpha; planes; scratch } ->
+    | Layer { alpha; planes; clip = cut; scratch } ->
         Surface.clear scratch;
         composite scratch (Surface.whole scratch) 0 0 ~tw ~th planes fill stroke;
+        Surface.fade scratch cut;
         Surface.composite t clip scratch ox oy alpha
   in
   if x0 < x1 && y0 < y1 then List.iter plane planes
 
 (* Drawing *)
+
+(* How far, in pixels, rounding a position to a quarter of a pixel moves it. *)
+let rounding = 0.125
 
 (* Tiles larger than this are not worth drawing in sixteen phases. *)
 let max_tile = 1 lsl 16
@@ -524,7 +574,12 @@ and paint ctx t clip rule color =
 
 and stamp ctx t clip m style picture xs ys scales fills strokes =
   let lin = Affine.linear m in
-  match Instances.bounds (Picture.transform lin picture) with
+  (* Instances that a tile can hold differ by a translation, under which the
+     picture's clips cut each alike. The others may differ in scale or pen, so
+     culling them must not rely on those cuts. *)
+  let tiles = Option.is_none scales && style.pen <= 1. && planar picture in
+  let measured = if tiles then picture else Instances.uncut picture in
+  match Instances.bounds (Picture.transform lin measured) with
   | None -> ()
   | Some extent -> (
       let instance i s =
@@ -552,8 +607,12 @@ and stamp ctx t clip m style picture xs ys scales fills strokes =
           (float (clip.y1 - clip.y0))
       in
       (* Instances keep the pens of the picture, which reach this far around
-         them. *)
-      let kept = Instances.reach lin style.pen picture in
+         them, and a stamp within the picture rounds its positions, which the
+         extent does not, by up to an eighth of a pixel. *)
+      let kept =
+        Instances.reach lin style.pen picture
+        +. (rounding *. float (nesting picture))
+      in
       let at qx qy = P2.v (float qx /. 4.) (float qy /. 4.) in
       (* [full i qx qy s] draws instance [i] at [(qx, qy)] quarters, of scale
          [s]. *)
@@ -581,19 +640,16 @@ and stamp ctx t clip m style picture xs ys scales fills strokes =
          pixels wider and higher than the extent, which is tested in floats
          first, since the extent's size may overflow an [int]. *)
       let tile =
-        match scales with
-        | Some _ -> None
-        | None when style.pen > 1. || not (planar picture) -> None
-        | None
-          when (Box2.w extent +. 3.) *. (Box2.h extent +. 3.) > float max_tile
-          ->
-            None
-        | None ->
-            let bx0 = int_of_float (Float.floor (Box2.minx extent)) - 1 in
-            let by0 = int_of_float (Float.floor (Box2.miny extent)) - 1 in
-            let tw = int_of_float (Float.ceil (Box2.maxx extent)) + 2 - bx0 in
-            let th = int_of_float (Float.ceil (Box2.maxy extent)) + 2 - by0 in
-            if tw * th <= max_tile then Some (bx0, by0, tw, th) else None
+        if
+          (not tiles)
+          || (Box2.w extent +. 3.) *. (Box2.h extent +. 3.) > float max_tile
+        then None
+        else
+          let bx0 = int_of_float (Float.floor (Box2.minx extent)) - 1 in
+          let by0 = int_of_float (Float.floor (Box2.miny extent)) - 1 in
+          let tw = int_of_float (Float.ceil (Box2.maxx extent)) + 2 - bx0 in
+          let th = int_of_float (Float.ceil (Box2.maxy extent)) + 2 - by0 in
+          if tw * th <= max_tile then Some (bx0, by0, tw, th) else None
       in
       match tile with
       | None -> in_full ()
@@ -666,7 +722,7 @@ and stamp ctx t clip m style picture xs ys scales fills strokes =
                         (Affine.translate (float qx /. 4.) (float qy /. 4.))
                         extent
                     in
-                    match Box2.inter b c with
+                    match Instances.meets b c with
                     | None -> ()
                     | Some within when Box2.equal within b -> tiled i qx qy
                     | Some _ -> full i qx qy 1.))

@@ -33,6 +33,11 @@ val line : t -> float -> float -> float -> float -> unit
     device pixels. Coordinates are clamped to [±1e15], and NaN is taken as
     [1e15]. *)
 
+val faint : float
+(** [faint] is a two-thousandth, the coverage at or below which a primitive
+    paints nothing in a pixel. It is compared before the coverage is
+    multiplied by what a clip lets through. *)
+
 val paint :
   t ->
   Surface.t ->
@@ -46,7 +51,7 @@ val paint :
 (** [paint c s clip rule sr sg sb sa] composites the premultiplied colour
     [(sr, sg, sb, sa)] over the pixels of [s] that the deposited edges cover
     under [rule], through [clip], and empties [c]. A coverage of at most
-    a two-thousandth is none. *)
+    {!faint} is none. *)
 
 val take :
   t ->
@@ -56,11 +61,13 @@ val take :
   ox:int ->
   oy:int ->
   dw:int ->
+  least:float ->
   unit
-(** [take c clip rule dst ~ox ~oy ~dw] writes into [dst], a window of rows of
-    [dw] pixels from [(ox, oy)], the coverage under [rule] of each pixel of
-    {!touched}'s rectangle times what [clip] lets through, and empties [c].
-    The other pixels of [dst] are left as they are. *)
+(** [take c clip rule dst ~ox ~oy ~dw ~least] writes into [dst], a window of
+    rows of [dw] pixels from [(ox, oy)], the coverage under [rule] of each
+    pixel of {!touched}'s rectangle times what [clip] lets through, and
+    empties [c]. A coverage of at most [least] is none. The pixels it does
+    not write, and the other pixels of [dst], are left as they are. *)
 
 val clear : t -> unit
 (** [clear c] empties [c] without reading it. *)

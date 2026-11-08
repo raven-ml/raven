@@ -9,6 +9,17 @@ open Hugin_vg
 let everywhere = Box2.v (-1e15) (-1e15) 2e15 2e15
 let bounds p = try Picture.bounds p with Invalid_argument _ -> Some everywhere
 
+let rec uncut (p : Picture.t) =
+  match p with
+  | Empty | Fill _ | Stroke _ | Glyphs _ | Image _ -> p
+  | Group ps -> Picture.group (List.map uncut ps)
+  | Clip { picture; _ } -> uncut picture
+  | Transform { m; picture } -> Picture.transform m (uncut picture)
+  | Opacity { opacity; picture } -> Picture.opacity opacity (uncut picture)
+  | Tag { picture; _ } -> uncut picture
+  | Stamp { picture; xs; ys; scales; fills; strokes } ->
+      Picture.stamp ?fills ?strokes ?scales xs ys (uncut picture)
+
 let rec exists f (p : Picture.t) =
   f p
   ||
@@ -43,8 +54,28 @@ let reach m k p =
     (fun m s r -> Float.max r (Stroke.reach s *. (k *. Affine.stretch m)))
     (Affine.linear m) p 0.
 
-(* Boxes that touch meet on a line, where nothing paints, so the comparisons may
-   be strict or not. *)
+(* How far across, in pixels, rounding can make an overlap of two boxes that
+   touch. *)
+let least_overlap = 1e-9
+
+(* [touch a0 a1 b0 b1] is [true] iff the intervals overlap by at most
+   [least_overlap] with each extending past the other. An interval within the
+   other overlaps it by its own length, which is no touch however short. *)
+let touch a0 a1 b0 b1 =
+  Float.min a1 b1 -. Float.max a0 b0 <= least_overlap
+  && ((a0 < b0 && a1 < b1) || (b0 < a0 && b1 < a1))
+
+let meets a b =
+  match Box2.inter a b with
+  | Some i
+    when not
+           (touch (Box2.minx a) (Box2.maxx a) (Box2.minx b) (Box2.maxx b)
+           || touch (Box2.miny a) (Box2.maxy a) (Box2.miny b) (Box2.maxy b)) ->
+      Some i
+  | _ -> None
+
+(* Boxes that touch paint nothing ([meets]), so the comparisons may be strict or
+   not. *)
 let shows cut ~reach at s b =
   let x = P2.x at and y = P2.y at in
   x +. (s *. Box2.minx b) -. reach <= Box2.maxx cut

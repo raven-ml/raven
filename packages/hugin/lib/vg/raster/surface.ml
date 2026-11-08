@@ -79,6 +79,19 @@ let composite dst clip src ox oy alpha =
     done
   done
 
+let fade s clip =
+  match clip.mask with
+  | None -> ()
+  | Some _ ->
+      for y = clip.y0 to clip.y1 - 1 do
+        for x = clip.x0 to clip.x1 - 1 do
+          let k = mask_at clip x y and i = ((y * s.w) + x) * 4 in
+          for c = i to i + 3 do
+            Array1.unsafe_set s.px c (Array1.unsafe_get s.px c *. k)
+          done
+        done
+      done
+
 (* [level v] is the nearest level to [v], within \[0;255\]. Compositing in
    floats can leave a component a hair outside its range. *)
 let[@inline] level v =

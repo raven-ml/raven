@@ -22,6 +22,20 @@ val bounds : Picture.t -> Box2.t option
     the range of floats, so that a picture that far is taken to show everywhere.
 *)
 
+val uncut : Picture.t -> Picture.t
+(** [uncut p] is [p] without its clips and tags. Unlike the bounds of [p], which
+    a clip cuts at the scale and pens [p] has, its bounds, scaled by an
+    instance's scale and grown by the {!reach} of the pens the instance keeps,
+    hold what that instance paints: a stroke that misses a clip at scale [1.]
+    may meet it at another, with the pen an instance keeps. *)
+
+val meets : Box2.t -> Box2.t -> Box2.t option
+(** [meets a b] is the box of the points in both [a] and [b], or [None] if they
+    have none or only touch, to within rounding, each extending past the other
+    along an axis: what a leaf whose box touches a clip's box paints is nothing,
+    however rounding has placed the two. A box within the other meets it,
+    however thin. *)
+
 val exists : (Picture.t -> bool) -> Picture.t -> bool
 (** [exists f p] is [true] iff [f] holds of [p] or of a picture within it. *)
 

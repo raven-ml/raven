@@ -219,9 +219,12 @@ let[@inline] coverage rule sum =
       let c = Float.rem c 2. in
       if c > 1. then 2. -. c else c
 
+(* A coverage of at most this is none. *)
+let faint = 0.0005
+
 (* [paint c s clip rule (sr, sg, sb, sa)] composites the premultiplied colour
    over the pixels of [s] that the deposited edges cover, through [clip], and
-   clears the accumulator. A coverage below a two-thousandth is none. *)
+   clears the accumulator. *)
 let paint c (s : Surface.t) (clip : Surface.clip) rule sr sg sb sa =
   if not (is_untouched c) then begin
     let acc = c.acc and stride = c.stride and px = s.px in
@@ -236,7 +239,7 @@ let paint c (s : Surface.t) (clip : Surface.clip) rule sr sg sb sa =
         (* The winding past the window's last column is zero. *)
         if x < c.x1 then begin
           let k = coverage rule !sum in
-          if k > 0.0005 then
+          if k > faint then
             let k = k *. Surface.mask_at clip x y in
             if k > 0. then Surface.blend px (((y * s.w) + x) * 4) sr sg sb sa k
         end
@@ -246,10 +249,11 @@ let paint c (s : Surface.t) (clip : Surface.clip) rule sr sg sb sa =
     c.dx1 <- min_int
   end
 
-(* [take c clip rule dst ~ox ~oy ~dw] writes into [dst], a window of rows of
-   [dw] pixels from [(ox, oy)], the coverage of each pixel the deposited edges
-   touch times what [clip] lets through, and clears the accumulator. *)
-let take c (clip : Surface.clip) rule dst ~ox ~oy ~dw =
+(* [take c clip rule dst ~ox ~oy ~dw ~least] writes into [dst], a window of rows
+   of [dw] pixels from [(ox, oy)], the coverage above [least] of each pixel the
+   deposited edges touch times what [clip] lets through, and clears the
+   accumulator. *)
+let take c (clip : Surface.clip) rule dst ~ox ~oy ~dw ~least =
   if not (is_untouched c) then begin
     let acc = c.acc and stride = c.stride in
     for y = c.dy0 to c.dy1 do
@@ -259,9 +263,11 @@ let take c (clip : Surface.clip) rule dst ~ox ~oy ~dw =
         let i = row + x in
         sum := !sum +. Array.unsafe_get acc i;
         Array.unsafe_set acc i 0.;
-        if x < c.x1 then
-          dst.(((y - oy) * dw) + (x - ox)) <-
-            coverage rule !sum *. Surface.mask_at clip x y
+        if x < c.x1 then begin
+          let k = coverage rule !sum in
+          if k > least then
+            dst.(((y - oy) * dw) + (x - ox)) <- k *. Surface.mask_at clip x y
+        end
       done
     done;
     c.dx0 <- max_int;

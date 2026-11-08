@@ -21,6 +21,6 @@ val stroke :
   unit
 (** [stroke cover clip m ~pen s path] deposits in [cover] the outline of
     [path] stroked with [s], its lengths multiplied by [pen], in the
-    coordinates that [m] maps to the device. A pen that [m] maps beyond the
-    range of floats deposits nothing. [cover] must have been started on
-    [clip] ({!Cover.start}). *)
+    coordinates that [m] maps to the device. A pen whose lengths, or whose
+    reach under [m], lie beyond the range of floats deposits nothing. [cover]
+    must have been started on [clip] ({!Cover.start}). *)

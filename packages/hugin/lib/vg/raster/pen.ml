@@ -36,11 +36,11 @@ type t = {
   cur : float array;  (** The outline's first and last device points. *)
 }
 
-let create cover (clip : Surface.clip) m s =
-  let hw = 0.5 *. Stroke.width s in
+let create cover (clip : Surface.clip) m k s =
+  let hw = 0.5 *. Stroke.width s *. k in
   let scale = Affine.stretch m in
-  let reach = (Stroke.reach s *. scale) +. 1. in
-  let r = hw *. scale in
+  let reach = (Stroke.reach s *. (k *. scale)) +. 1. in
+  let r = 0.5 *. Stroke.width s *. (k *. scale) in
   {
     cover;
     m;
@@ -225,13 +225,13 @@ let[@inline] far (m : Affine.t) dx dy =
   Float.abs ((m.xx *. dx) +. (m.xy *. dy)) > 0.05
   || Float.abs ((m.yx *. dx) +. (m.yy *. dy)) > 0.05
 
-(* [strip p src kept ~closed] sets [kept] to the points of [src] without those
-   within a twentieth of a pixel of the point kept before them, and, for a
-   closed subpath, of its first point. A closed subpath that would keep fewer
-   than three points keeps all of them but exact repeats instead, since its
-   outline has no caps to stand for it. It is the direction of the first segment
-   of [src] of positive length, or [(0., 0.)] if there is none. *)
-let strip p src kept ~closed =
+(* [strip p src kept ~closed ~ends] sets [kept] to the points of [src] without
+   those within a twentieth of a pixel of the point kept before them, and, for a
+   closed subpath, of its first point. With [ends], [src] is a dash, whose first
+   point gives way to a point of the subpath within that distance. It is the
+   direction of the first segment of [src] of positive length, or [(0., 0.)] if
+   there is none. *)
+let strip p src kept ~closed ~ends =
   let m = p.m in
   kept.n <- 0;
   let ux = ref 0. and uy = ref 0. in
@@ -246,6 +246,10 @@ let strip p src kept ~closed =
         uy := dy /. d
       end;
       if far m dx dy then push kept x y
+      else if ends && kept.n = 1 && i < src.n - 1 then begin
+        kept.xs.(0) <- x;
+        kept.ys.(0) <- y
+      end
     end
   done;
   if closed && kept.n > 1 then begin
@@ -253,18 +257,21 @@ let strip p src kept ~closed =
     if not (far m (kept.xs.(l) -. kept.xs.(0)) (kept.ys.(l) -. kept.ys.(0)))
     then kept.n <- l
   end;
-  if closed && kept.n < 3 then begin
-    kept.n <- 0;
-    for i = 0 to src.n - 1 do
-      let x = Array.unsafe_get src.xs i and y = Array.unsafe_get src.ys i in
-      if kept.n = 0 || x <> kept.xs.(kept.n - 1) || y <> kept.ys.(kept.n - 1)
-      then push kept x y
-    done;
-    let l = kept.n - 1 in
-    if l > 0 && kept.xs.(l) = kept.xs.(0) && kept.ys.(l) = kept.ys.(0) then
-      kept.n <- l
-  end;
   (!ux, !uy)
+
+(* [unstripped src kept] sets [kept] to the points of the closed subpath [src]
+   but exact repeats. A closed subpath that would keep fewer than three points
+   strokes these instead, since its outline has no caps to stand for it. *)
+let unstripped src kept =
+  kept.n <- 0;
+  for i = 0 to src.n - 1 do
+    let x = Array.unsafe_get src.xs i and y = Array.unsafe_get src.ys i in
+    if kept.n = 0 || x <> kept.xs.(kept.n - 1) || y <> kept.ys.(kept.n - 1) then
+      push kept x y
+  done;
+  let l = kept.n - 1 in
+  if l > 0 && kept.xs.(l) = kept.xs.(0) && kept.ys.(l) = kept.ys.(0) then
+    kept.n <- l
 
 (* Dashes *)
 
@@ -276,15 +283,15 @@ type dashes = {
   mutable rest : float;  (** What remains of it. *)
 }
 
-(* [dashes p s] is the dashes of [s] stroked by [p], or [None] for a solid
-   stroke. A pattern whose period is below a hundredth of [p]'s tolerance, a
-   thousandth of a pixel, is solid: pixels show nothing of its dashes, and
-   walking them would take a step for each. *)
-let dashes p s =
+(* [dashes p k s] is the dashes of [s], their lengths multiplied by [k], stroked
+   by [p], or [None] for a solid stroke. A pattern whose period is below a
+   hundredth of [p]'s tolerance, a thousandth of a pixel, is solid: pixels show
+   nothing of its dashes, and walking them would take a step for each. *)
+let dashes p k s =
   match Stroke.dash s with
   | [] -> None
   | d ->
-      let d = Array.of_list d in
+      let d = Array.of_list (List.map (fun l -> l *. k) d) in
       let pattern = if Array.length d mod 2 = 1 then Array.append d d else d in
       let period = Array.fold_left ( +. ) 0. pattern in
       if period < 0.01 *. p.tol then None
@@ -293,7 +300,7 @@ let dashes p s =
           {
             pattern;
             period;
-            offset = Stroke.dash_offset s;
+            offset = Stroke.dash_offset s *. k;
             index = 0;
             rest = 0.;
           }
@@ -332,13 +339,17 @@ type subpaths = {
   dashes : dashes option;
   raw : points;  (** The subpath being flattened. *)
   piece : points;  (** The dash being cut. *)
+  spine : points;
+      (** The points of the subpath that stripping it keeps: dashes are cut from
+          the polyline of these alone. *)
   kept : points;
   last : float array;  (** The direction of the last segment dashed. *)
 }
 
-let stroke_points s pts ~closed ~dx ~dy =
+let stroke_points s pts ~closed ~ends ~dx ~dy =
   let p = s.pen in
-  let ddx, ddy = strip p pts s.kept ~closed in
+  let ddx, ddy = strip p pts s.kept ~closed ~ends in
+  if closed && s.kept.n < 3 then unstripped pts s.kept;
   let dx, dy = if ddx = 0. && ddy = 0. then (dx, dy) else (ddx, ddy) in
   polyline p s.kept.xs s.kept.ys s.kept.n
     ~closed:(closed && s.kept.n > 1)
@@ -346,7 +357,7 @@ let stroke_points s pts ~closed ~dx ~dy =
 
 let flush_piece s ~dx ~dy =
   if s.piece.n > 0 then begin
-    stroke_points s s.piece ~closed:false ~dx ~dy;
+    stroke_points s s.piece ~closed:false ~ends:true ~dx ~dy;
     s.piece.n <- 0
   end
 
@@ -422,42 +433,57 @@ let subpath s ~closed =
     match s.dashes with
     | Some d when !moves ->
         restart d;
-        for i = 0 to raw.n - 2 do
-          dash_segment s d raw.xs.(i) raw.ys.(i) raw.xs.(i + 1) raw.ys.(i + 1)
+        let spine = s.spine in
+        let ux, uy = strip s.pen raw spine ~closed ~ends:false in
+        s.last.(0) <- ux;
+        s.last.(1) <- uy;
+        if spine.n = 1 && is_dash d then push s.piece spine.xs.(0) spine.ys.(0);
+        for i = 0 to spine.n - 2 do
+          dash_segment s d spine.xs.(i) spine.ys.(i) spine.xs.(i + 1)
+            spine.ys.(i + 1)
         done;
-        let l = raw.n - 1 in
-        if closed then
-          dash_segment s d raw.xs.(l) raw.ys.(l) raw.xs.(0) raw.ys.(0);
+        let l = spine.n - 1 in
+        if closed && l > 0 then
+          dash_segment s d spine.xs.(l) spine.ys.(l) spine.xs.(0) spine.ys.(0);
         flush_piece s ~dx:s.last.(0) ~dy:s.last.(1)
-    | _ -> stroke_points s raw ~closed:(closed && !moves) ~dx:0. ~dy:0.
+    | _ ->
+        stroke_points s raw ~closed:(closed && !moves) ~ends:false ~dx:0. ~dy:0.
   end;
   raw.n <- 0
 
+(* [in_range p k s] is [true] iff [p], the pen of [s] with its lengths
+   multiplied by [k], stays within the range of floats, in the stroke's
+   coordinates and, with its reach, on the device. Transforms within a stamp that magnify as much
+   as its scale shrinks take it beyond, where it draws nothing. *)
+let in_range p k s =
+  let fits l = Float.is_finite (l *. k) in
+  Float.is_finite p.tol && p.tol > 0. && Float.is_finite p.hw
+  && Float.is_finite p.wx0
+  && fits (Stroke.dash_offset s)
+  && List.for_all fits (Stroke.dash s)
+
 (* [stroke cover clip m ~pen s path] deposits in [cover] the outline of [path]
    stroked with [s], its lengths multiplied by [pen], in the coordinates that
-   [m] maps to the device. The path is stroked in coordinates divided by [pen],
-   where [s] is the pen as given, so that a pen a stamp's tiny scale makes huge
-   stays finite. *)
+   [m] maps to the device. The points of [path] are used as they are: as an
+   instance of a stamp is the picture with its pens divided by its scale, only
+   its pen's lengths change, so a stamp strokes what the instance strokes. *)
 let stroke cover clip m ~pen:k s path =
-  let m, shrink =
-    if k = 1. then (m, Affine.id)
-    else (Affine.(m * scale k k), Affine.scale (1. /. k) (1. /. k))
-  in
-  let pen = create cover clip m s in
-  (* Transforms within a stamp that magnify as much as its scale shrinks map the
-     pen beyond the range of floats, where it draws nothing. *)
-  if Float.is_finite pen.tol && pen.tol > 0. then begin
+  let pen = create cover clip m k s in
+  if in_range pen k s then begin
+    let dashes = dashes pen k s and kept = points () in
     let s =
       {
         pen;
-        dashes = dashes pen s;
+        dashes;
         raw = points ();
         piece = points ();
-        kept = points ();
+        (* A solid stroke reads no spine. *)
+        spine = (if Option.is_none dashes then kept else points ());
+        kept;
         last = [| 0.; 0. |];
       }
     in
-    Path.flatten ~tolerance:pen.tol shrink
+    Path.flatten ~tolerance:pen.tol Affine.id
       ~move:(fun () x y ->
         subpath s ~closed:false;
         push s.raw x y)

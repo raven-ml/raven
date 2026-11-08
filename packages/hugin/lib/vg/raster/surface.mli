@@ -68,6 +68,10 @@ val composite : t -> clip -> t -> int -> int -> float -> unit
 (** [composite dst clip src ox oy alpha] composites [src], its top left
     pixel at [(ox, oy)] of [dst], faded by [alpha], through [clip]. *)
 
+val fade : t -> clip -> unit
+(** [fade s clip] multiplies each pixel of [s] in the window of [clip] by what
+    [clip] lets through. *)
+
 val to_straight : t -> Nx.host Nx.uint8_t
 (** [to_straight s] is the pixels of [s] as a [[|h; w; 4|]] tensor of levels
     with straight alpha, each component the level nearest its exact value.

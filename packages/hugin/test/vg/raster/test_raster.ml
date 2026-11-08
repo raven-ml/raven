@@ -891,7 +891,7 @@ let rec restyle ?fill ?stroke k (p : Picture.t) =
   | Clip { rule; path; picture } -> Picture.clip ~rule path (go picture)
   | Transform { m; picture } -> Picture.transform m (go picture)
   | Opacity { opacity; picture } -> Picture.opacity opacity (go picture)
-  | Tag { tag; picture } -> Picture.tag tag (go picture)
+  | Tag { picture; _ } -> go picture
   | Stamp { picture; xs; ys; scales; fills; strokes } ->
       Picture.stamp ?fills ?strokes ?scales xs ys (go picture)
 
@@ -911,7 +911,8 @@ let instances (s : Picture.t) =
   | p -> failf "not a stamp: %a" Picture.pp p
 
 (* Stamps of up to four instances of a generated picture on the quarter-pixel
-   grid, where stamps place instances exactly. *)
+   grid, where [instances] places them as the stamp does. A stamp nested in the
+   picture stays one in [instances], and rounds its positions alike. *)
 let gen_stamp =
   let open Gen in
   let quarter = map (fun k -> Float.of_int k /. 4.) (int_range 0 240) in
@@ -958,11 +959,116 @@ let ring w = Picture.stroke (Stroke.v w) red (Path.circle (P2.v 0. 0.) 5.)
    without one, under which a picture paints nothing. *)
 let lost_maps = [ ("an underflow to zero", 1e-200); ("an overflow", 1e200) ]
 
+(* Instances of a fill whose whole-pixel coverage a clip cuts to a sliver: a
+   product of coverage and clip below a two-thousandth, which adds up to a
+   level over the instances. *)
+let sliver =
+  let n = 8 in
+  let origin = Array.make n 0. in
+  Picture.stamp origin origin
+    (Picture.clip (rect 1.98 9.98 1. 1.) (solid 3. 12.))
+
+(* A stroked circle of the smallest normal radius, at a scale that rounds the
+   coordinates of its path: its stroke is that of the group's instance. *)
+let tiny_circle =
+  Picture.stamp ~scales:[| 0.5 |] [| 0. |] [| 0. |]
+    (Picture.stroke
+       (Stroke.v ~cap:`Butt ~join:`Miter 1.)
+       red
+       (Path.circle (P2.v 0. 0.) Float.min_float))
+
+(* An image turned half a turn whose edge lies on a row of pixel centres:
+   rounding in the composed maps must not decide whether that row is painted. *)
+let image_on_centres =
+  let pixels =
+    Nx.init Nx.uint8 [| 2; 3; 4 |] (fun i ->
+        (40 * i.(1)) + (90 * i.(0)) + (20 * i.(2)))
+  in
+  Picture.stamp [| 13.75 |] [| 19.5 |]
+    (Picture.transform
+       Affine.(translate 0. (-5.) * rotate Float.pi)
+       (Picture.image (Box2.v (-9.) (-5.) 14. 16.) pixels))
+
+(* Fills that overlap within an opacity within a clip whose edge crosses pixels:
+   the layer is clipped once, as one primitive. *)
+let clipped_opacity =
+  Picture.stamp [| 0. |] [| 0. |]
+    (Picture.clip
+       (Path.circle (P2.v 2. 2.) 1.5)
+       (Picture.opacity 0.5 (Picture.group [ solid 4. 4.; solid 4. 4. ])))
+
+(* A clip whose box a stroke meets at the instance's scale, with the pen the
+   stamp keeps, and misses at scale 1. *)
+let pen_meets_clip =
+  Picture.stamp ~scales:[| 0.5 |] [| 0. |] [| 0. |]
+    (Picture.clip (rect 0. 0. 1. 1.)
+       (Picture.stroke
+          (Stroke.v ~cap:`Butt 2.)
+          red
+          (Path.close (segment 0. 2.5 0. 3.5))))
+
+(* A dash whose run of points closer than a twentieth of a pixel starts inside
+   the pen's reach of the page, and which ends with a short turn: the page cuts
+   the dash where a tile does not, and which points survive must not depend on
+   the cut. *)
+let dash_points_survive =
+  let n = 701 in
+  let x i = -10.96 +. (0.04 *. Float.of_int i) in
+  let xs =
+    Array.concat [ [| -30. |]; Array.init n x; [| x (n - 1) +. 0.02 |] ]
+  in
+  let ys = Array.make (n + 2) 30. in
+  ys.(n + 1) <- 30.04;
+  Picture.stamp [| 0. |] [| 0. |]
+    (Picture.stroke
+       (Stroke.v ~cap:`Butt ~join:`Round ~dash:[ 1000.; 1. ] 20.)
+       red
+       (Path.polyline xs ys))
+
+(* An image narrower than a pixel, turned half a turn. *)
+let thin_image =
+  let pixels =
+    Nx.init Nx.uint8 [| 2; 3; 4 |] (fun i ->
+        (40 * i.(1)) + (90 * i.(0)) + (20 * i.(2)))
+  in
+  Picture.stamp ~scales:[| 0.5 |] [| 2.5 |] [| 8.25 |]
+    (Picture.transform (Affine.rotate Float.pi)
+       (Picture.stamp [| 0. |] [| 0. |]
+          (Picture.image (Box2.v 0. 0. 1.90735e-06 16.) pixels)))
+
+(* An opacity over a clip whose box a turned fill's box touches along a side. *)
+let touching_clip =
+  Picture.stamp ~scales:[| 0.5; 0.5; 0.5 |] [| 0.; 2.25; 0. |] [| 0.; 0.; 0. |]
+    (Picture.opacity 0.5
+       (Picture.clip (rect 0. 0. 1. 1.)
+          (Picture.transform
+             Affine.(translate 0. 2.78947 * rotate Float.pi)
+             (Picture.fill red (rect 0. 1.9443 1. 1.)))))
+
+(* The same stroke under an opacity, whose layer must hold what it paints. *)
+let opacity_pen_meets_clip =
+  match pen_meets_clip with
+  | Stamp { picture; xs; ys; scales; _ } ->
+      Picture.stamp ?scales xs ys (Picture.opacity 0.5 picture)
+  | p -> p
+
+(* A nested stamp whose fill ends above the page at its position, and reaches
+   the first row of pixels at that position rounded to a quarter pixel. *)
+let rounded_onto_page =
+  Picture.stamp [| 0. |] [| 0. |]
+    (Picture.stamp [| 0. |] [| -0.1 |]
+       (Picture.fill red (rect 0. (-1.) 5. 1.05)))
+
 let stamps =
   group "stamps"
     [
       prop "a stamp draws the group of its instances"
-        ~examples:(Picture.stamp [| 0. |] [| 0. |] apart :: shrunk_opacities)
+        ~examples:
+          (Picture.stamp [| 0. |] [| 0. |] apart
+          :: sliver :: tiny_circle :: image_on_centres :: pen_meets_clip
+          :: rounded_onto_page :: clipped_opacity :: opacity_pen_meets_clip
+          :: dash_points_survive :: thin_image :: touching_clip
+          :: shrunk_opacities)
         gen_stamp (fun s ->
           same_image ~within:1 (render 60. 60. (instances s)) (render 60. 60. s));
       test "a stamp under a clip draws the group of its instances under it"
@@ -1091,6 +1197,32 @@ let image ?(box = Box2.v 0. 0. 1. 1.) shape values =
 let images =
   group "images"
     [
+      test "an image of no width paints nothing" (fun () ->
+          let flat =
+            image ~box:(Box2.v 10.5 0. 0. 20.) [| 1; 1; 3 |] [| 255; 0; 0 |]
+          in
+          equal float_exact 0. (coverage (render 20. 20. flat)));
+      test "a clip around a thin image leaves it as it is" (fun () ->
+          (* The image is 5e-10 wide, on the centres of column 10, and lies
+             inside the clip's box. *)
+          let thin =
+            image ~box:(Box2.v 10.5 0. 5e-10 20.) [| 1; 1; 3 |] [| 255; 0; 0 |]
+          in
+          same_image (render 20. 20. thin)
+            (render 20. 20. (Picture.clip (rect 0. 0. 20. 20.) thin)));
+      cases "an image shown huge turns colour at its pixels' boundary"
+        ~id:Float.to_string [ 1e3; 2e9; 1e10 ] (fun w ->
+          (* The boundary between the two columns lands on x = 10. *)
+          let p = image ~box:(Box2.v 0. 0. 1. 1.) [| 1; 2; 1 |] [| 10; 200 |] in
+          let img =
+            render 20. 20.
+              (Picture.transform
+                 Affine.(translate (10. -. (w /. 2.)) 0. * scale w 20.)
+                 p)
+          in
+          equal (array int)
+            (Array.init 20 (fun x -> if x < 10 then 10 else 200))
+            (Array.init 20 (fun x -> Nx.item [ 10; x; 0 ] img)));
       test "each cell takes its pixel, without interpolation" (fun () ->
           let p =
             image ~box:(Box2.v 0. 0. 4. 4.) [| 2; 2; 3 |]
@@ -1245,6 +1377,21 @@ let limits =
             (coverage
                (render 20. 20.
                   (twice (Picture.fill red (rect 0. 0. 1e300 1e300))))));
+      test "pictures beyond the range of floats paint nothing" (fun () ->
+          List.iter
+            (fun p -> equal float_exact 0. (coverage (render 20. 20. p)))
+            Vg_corpus.extremes);
+      cases "a pen beyond the range of floats paints nothing" ~id:fst
+        (let disc = Path.circle (P2.v 0. 0.) 2. in
+         [
+           ( "a width magnified past the range",
+             Picture.transform (Affine.scale 1e300 1e300)
+               (Picture.stroke (Stroke.v 1e300) red disc) );
+           ( "dashes an instance's scale lengthens past the range",
+             Picture.stamp ~scales:[| 1e-307 |] [| 10. |] [| 10. |]
+               (Picture.stroke (Stroke.v ~dash:[ 1e3; 1. ] 1.) red disc) );
+         ])
+        (fun (_, p) -> equal float_exact 0. (coverage (render 20. 20. p)));
       slow
       @@ prop ~examples:Vg_corpus.extremes "any scale draws without failing"
            Vg_corpus.gen_extreme (fun p ->
