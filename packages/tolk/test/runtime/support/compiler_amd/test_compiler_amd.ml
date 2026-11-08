@@ -280,6 +280,23 @@ let process =
              | exception Compiler.Compile_error msg ->
                  in_order ~subs:[ "without a reply"; "LLVM ERROR" ] msg);
       slow
+      @@ test
+           "a source that code generation rejects raises Compile_error with \
+            comgr's log" (fun () ->
+             let src =
+               {|extern "C" __attribute__((global)) void f(int *a) {
+  asm volatile("v_not_an_instruction v0");
+  a[0] = 1;
+}|}
+             in
+             ignore (with_comgr (fun () -> compile kernel));
+             match compile src with
+             | _ -> fail "code generation assembled an unknown instruction"
+             | exception Compiler.Compile_error msg ->
+                 in_order
+                   ~subs:[ "code generation failed"; "cannot compile inline asm" ]
+                   msg);
+      slow
       @@ test "a compile in turn is served by an idle worker" (fun () ->
           ignore (with_comgr (fun () -> compile kernel));
           let workers = children () in

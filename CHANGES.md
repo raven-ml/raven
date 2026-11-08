@@ -1077,6 +1077,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Compiler_amd.hip`'s `Compile_error` for a source that code generation or
+  linking rejects carries comgr's log, as it did for a rejected compile,
+  where it said only `comgr fail 1, ERROR`.
 - `Compiler_amd.hip` turns off comgr's own cache of generated code, which
   ROCm 7.0's comgr keeps by default under `~/.cache/comgr` up to 5 GB:
   tolk's cache table is the one kept, and comgr's saved no measurable time.

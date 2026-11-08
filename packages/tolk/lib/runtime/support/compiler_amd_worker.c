@@ -202,12 +202,12 @@ static void compile_hip(const char *src, size_t src_size, const char *isa,
     ACTION(enums.compile_source_with_device_libs_to_bc, sets[0], sets[1],
            "compile failed");
     CHECK(comgr.action_info_set_option_list(info, codegen.list, codegen.length));
-    CHECK(comgr.do_action(enums.codegen_bc_to_relocatable, info, sets[1],
-                          sets[2]));
+    ACTION(enums.codegen_bc_to_relocatable, sets[1], sets[2],
+           "code generation failed");
   }
   CHECK(comgr.action_info_set_option_list(info, &no_option, 1));
-  CHECK(comgr.do_action(enums.link_relocatable_to_executable, info, sets[2],
-                        sets[3]));
+  ACTION(enums.link_relocatable_to_executable, sets[2], sets[3],
+         "link failed");
 #undef ACTION
 #undef CHECK
   if ((lib = get_data(sets[3], DATA_KIND_EXECUTABLE, &size)) != NULL) {
