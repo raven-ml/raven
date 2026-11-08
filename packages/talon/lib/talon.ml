@@ -27,6 +27,8 @@ let rows = Table.rows
 let column t name = Column.canonical (Table.column t name)
 let take = Table.take
 let to_tensor = Table.to_tensor
+let to_dense = Table.to_dense
+let of_dense = Table.of_dense
 let equal = Table.equal
 
 type limits = Display.limits = {
@@ -482,6 +484,97 @@ module Kit = struct
               run (o :: outputs) rest)
     in
     run [] queries
+
+  (* Randomness *)
+
+  (* [seed_of s] is [s], or a seed drawn when the plan is built, so that a plan
+     always returns the same rows. *)
+  let seed_of = function
+    | Some s -> s
+    | None ->
+        let w = Nx.Rng.bits [| 2 |] in
+        (Int32.to_int (Nx.item [ 0 ] w) lsl 31)
+        lxor (Int32.to_int (Nx.item [ 1 ] w) land 0x7fff_ffff)
+
+  let place_hash ~seed = Expr.(hash ~seed (window rows))
+
+  let shuffle ?seed q =
+    let seed = seed_of seed in
+    let key = fresh (column_names q) "key" in
+    Query.derive Expr.[ key := place_hash ~seed ] q
+    |> Query.sort [ Order.asc key ]
+    |> drop (Sel.names [ key ])
+
+  (* The hash is below 2^62, so a share of that range keeps that share of
+     rows. *)
+  let hash_range = 4611686018427387904.
+
+  let sample ?seed size q =
+    let seed = seed_of seed in
+    match size with
+    | `Rows n ->
+        if n < 0 then err "Kit.sample: %d rows, below 0" n;
+        let key = fresh (column_names q) "key" in
+        Query.derive Expr.[ key := place_hash ~seed ] q
+        |> top_k n [ Order.asc key ]
+        |> drop (Sel.names [ key ])
+    | `Fraction f ->
+        if not (f >= 0. && f <= 1.) then
+          err "Kit.sample: the fraction %g is not in [0, 1]" f;
+        if f >= 1. then q
+        else
+          let cutoff = Int.of_float (f *. hash_range) in
+          Query.filter Expr.(place_hash ~seed < int cutoff) q
+
+  let folds ?seed ~by k q =
+    if by = [] then err "Kit.folds: no key";
+    if k < 1 then err "Kit.folds: %d folds, below 1" k;
+    Option.iter
+      (err "Kit.folds: %a is named twice" Type.pp_quoted)
+      (repeated by);
+    if List.mem "fold" (column_names q) then
+      err "Kit.folds: the query already has a column %a" Type.pp_quoted "fold";
+    let seed = seed_of seed in
+    let taken = by @ column_names q in
+    let h = fresh taken "h" and g = fresh taken "g" in
+    let groups = Query.select Expr.[ keep (Sel.names by) ] q |> distinct in
+    let enough n =
+      if n < k then
+        err "Kit.folds: %d folds need at least as many groups, not %d" k n;
+      n
+    in
+    let count =
+      Query.aggregate ~by:[]
+        Expr.[ g := store Type.int64 (const enough $ rows) ]
+        groups
+    in
+    let key = Expr.(record [ keep (Sel.names by) ]) in
+    let folded =
+      groups
+      |> Query.join ~on:Join.all count
+      |> Query.derive Expr.[ h := hash ~seed key ]
+      |> Query.sort [ Order.asc h ]
+      |> Query.derive
+           Expr.[ "fold" := (window rows - int 1) * int k / Col.int g ]
+      |> drop (Sel.names [ h; g ])
+    in
+    q |> Query.join ~on:(Join.keys by) folded
+
+  (* Time ranges *)
+
+  let time_range (type a) (ty : a Type.t) ~start ~stop step name =
+    (match step with
+    | (Time.Months n | Time.Weeks n | Time.Days n) when n > 0 -> ()
+    | Time.Exact d when Time.Span.to_ns d > 0L -> ()
+    | step -> err "Kit.time_range: %a is not positive" Time.pp_step step);
+    let c = Column.v ty [| start; stop |] in
+    (* Binding a move by [step] reports a type or step it does not take. *)
+    let x = Expr.make (Expr.Read (ty, name)) in
+    ignore
+      (Query.derive Expr.[ name := Temporal.offset step x ]
+         (Query.of_table (v [ (name, c) ])));
+    let one i = Column.sub c ~offset:i ~length:1 in
+    v [ (name, Kernels.range (Any ty) ~start:(one 0) ~stop:(one 1) step) ]
 end
 
 let duration_sum xs ~copies =

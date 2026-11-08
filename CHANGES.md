@@ -3936,6 +3936,13 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- Add `Expr.hash ?seed`: a frozen, per-kind xxHash64 of each row's value,
+  defined for every width, float, date, time, text, null and record.
+- Add `Kit.shuffle`, `Kit.sample` and `Kit.folds` from `Expr.hash`, each with
+  a pinnable seed. `folds` balances groups by the quantile of their hash rank.
+- Add `Kit.time_range`, half-open and counted from `start` with no drift;
+  `Talon.to_dense` and `Talon.of_dense`, zeros under absent cells; and
+  `Expr.Temporal.div`, the float ratio of two durations.
 - `Talon_csv` sizes its scanner's arrays once per batch instead of doubling
   them, from the batch's line feeds and first record's width: decoding a 147 KB
   column of 2^14 rows allocates 69k words instead of 224k, and a decode of two

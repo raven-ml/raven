@@ -57,6 +57,7 @@ val is_null : ('a, 's) t -> (bool, 's) t
 val coalesce : ('a, 's) t list -> ('a, 's) t
 val is_in : 'a list -> ('a, 's) t -> (bool, 's) t
 val cut : 'a array -> ('a, 's) t -> (int, 's) t
+val hash : ?seed:int -> ('a, 's) t -> (int, 's) t
 val cast : 'b Type.t -> ('a, 's) t -> ('b, 's) t
 
 type fn = { f : 'a 'b. ('a, 'b, Nx.host) Nx.t -> ('a, 'b, Nx.host) Nx.t }
@@ -129,6 +130,7 @@ end
 module Temporal : sig
   val add : ('a, 's) t -> (Time.span, 's) t -> ('a, 's) t
   val diff : ('a, 's) t -> ('a, 's) t -> (Time.span, 's) t
+  val div : (Time.span, 's) t -> (Time.span, 's) t -> (float, 's) t
 
   type field =
     [ `Year
@@ -266,6 +268,7 @@ type 'a node =
   | Is_in : 'a list * ('a, 's) t -> bool node
   | Cut : 'a array * ('a, 's) t -> int node
       (** Edges as given, copied when built and never mutated. *)
+  | Hash : int * ('a, 's) t -> int node  (** The seed and the operand. *)
   | Cast : 'a Type.t * ('b, 's) t -> 'a node
   | Lift : fn * ('a, 's) t -> 'a node
   | Lift2 : fn2 * ('a, 's0) t * ('a, 's1) t -> 'a node
@@ -321,6 +324,7 @@ and 'a text_op =
 and 'a calendar_op =
   | Add_span : ('a, 's0) t * (Time.span, 's1) t -> 'a calendar_op
   | Diff : ('a, 's0) t * ('a, 's1) t -> Time.span calendar_op
+  | Div : (Time.span, 's0) t * (Time.span, 's1) t -> float calendar_op
   | Part : Temporal.field * ('a, 's) t -> int calendar_op
   | Floor : Time.step * ('a, 's) t -> 'a calendar_op
   | Offset : Time.step * ('a, 's) t -> 'a calendar_op

@@ -179,3 +179,17 @@
  (modules test_nesting)
  (package talon)
  (libraries windtrap talon talon_gen nx))
+
+(test
+ (name test_hash)
+ (modules test_hash)
+ (package talon)
+ (libraries windtrap talon talon_gen nx)
+ (deps
+  (file golden/hash.txt)))
+
+(test
+ (name test_grids)
+ (modules test_grids)
+ (package talon)
+ (libraries windtrap talon nx))

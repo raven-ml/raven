@@ -20,6 +20,20 @@ val rows : t -> int
 val column : t -> string -> Column.t
 val take : Nx.host Nx.int64_t -> t -> t
 val to_tensor : ('a, 'b) Nx.dtype -> string list -> t -> ('a, 'b, Nx.host) Nx.t
+
+val to_dense :
+  ('a, 'b) Nx.dtype ->
+  axes:(string * int) list ->
+  string ->
+  t ->
+  ('a, 'b, Nx.host) Nx.t * Nx.host Nx.bit_t option
+
+val of_dense :
+  ?validity:Nx.host Nx.bit_t ->
+  axes:string list ->
+  string ->
+  ('a, 'b, Nx.host) Nx.t ->
+  t
 val equal : t -> t -> bool
 
 (** {1:batches Batches} *)

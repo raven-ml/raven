@@ -738,6 +738,23 @@ let add (Type.Any ta as t) (Type.Any td) =
         in
         checked t [ a; d ] ~ok r range
 
+(* [div (Any ta) (Any tb)] divides durations, each cast to float64 and the
+   coarser scaled to the finer: the units multiply into a value a tick of the
+   finer holds, exactly, before the one rounding of the quotient. *)
+let div (Type.Any ta) (Type.Any tb) =
+  let na = Option.get (ns_per_tick ta) and nb = Option.get (ns_per_tick tb) in
+  let f c = Nx.cast Nx.float64 (int64s c) in
+  let scale x n =
+    if Int64.equal n 1L then x else Nx.mul_s x (Int64.to_float n)
+  in
+  fun a b ->
+    let fa, fb =
+      if Int64.compare na nb >= 0 then
+        (scale (f a) (Int64.div na nb), f b)
+      else (f a, scale (f b) (Int64.div nb na))
+    in
+    make (Type.Any Type.float64) (valid [ a; b ]) (Nx.div fa fb)
+
 let diff (Type.Any ty) =
   let u = match ty with Date -> Type.S | _ -> Option.get (unit_of ty) in
   let t = Type.Any (Type.duration u) in
@@ -805,15 +822,22 @@ let floor (step : Time.step) t =
         let days, _, _ = split t x in
         moved t c (floor_days days) (Nx.zeros_like x) (why c)
 
-let offset (step : Time.step) t =
+(* [offset ?times step t] moves by [step], or for each row by [times] of a
+   calendar [step]. *)
+let offset ?times (step : Time.step) t =
+  let by n x =
+    match times with
+    | None -> Nx.add_s x (Int64.of_int n)
+    | Some k -> Nx.add x (Nx.mul_s k (Int64.of_int n))
+  in
   let move_days days =
     match step with
-    | Days n -> Nx.add_s days (Int64.of_int n)
-    | Weeks n -> Nx.add_s days (Int64.of_int (7 * n))
+    | Days n -> by n days
+    | Weeks n -> by (7 * n) days
     | Months n ->
         let y, m, d, _ = civil days in
         let months = Nx.add (Nx.mul_s y 12L) (Nx.sub_s m 1L) in
-        let months = Nx.add_s months (Int64.of_int n) in
+        let months = by n months in
         let y = floor_div months 12L
         and m = Nx.add_s (floor_mod months 12L) 1L in
         days_of_civil y m (Nx.minimum d (days_in_month y m))
@@ -833,3 +857,59 @@ let offset (step : Time.step) t =
         let x = int64s c in
         let days, tod, _ = split t x in
         moved t c (move_days days) tod (why c)
+
+(* The shortest step's length in [ty]'s ticks, as a count of [each] ticks
+   repeated [n] times: dividing by each in turn cannot overflow, as their
+   product could. A month is at least 28 days, wherever it is counted from,
+   a clamped day included. *)
+let least_step (type a) (ty : a Type.t) (step : Time.step) =
+  let tick = Option.get (ns_per_tick ty) in
+  let days = Int64.div ns_per_day tick in
+  match step with
+  | Exact s -> (Int64.div (Time.Span.to_ns s) tick, 1L)
+  | Days n -> (days, Int64.of_int n)
+  | Weeks n -> (Int64.mul 7L days, Int64.of_int n)
+  | Months n -> (Int64.mul 28L days, Int64.of_int n)
+
+(* The rows of an exact step: [(last - first - 1) / each + 1] of them,
+   counted unsigned, with no value past [last] to compute, or to overflow
+   when [last - first] passes [int64]. Calendar steps go through days, where
+   the rows past [stop] are in range or found to be out of it. *)
+let exact_range t ~first ~last each =
+  let quotient = Int64.unsigned_div (Int64.sub (Int64.pred last) first) each in
+  if Int64.unsigned_compare quotient (Int64.of_int (max_int - 1)) > 0 then
+    invalid_arg "Kit.time_range: 2^62 steps or more";
+  let n = Int64.to_int quotient + 1 in
+  let x = Nx.add_s (Nx.mul_s (Nx.arange Nx.int64 0 n 1) each) first in
+  make t None x
+
+(* Ticks past the range hold rows that are computed and dropped; the last
+   row is always at or past [stop], or out of range. *)
+let range (Type.Any ty as t) ~start ~stop step =
+  let tick c = Nx.item [ 0 ] (int64s c) in
+  let first = tick start and last = tick stop in
+  match step with
+  | _ when Int64.compare first last >= 0 ->
+      Column.sub start ~offset:0 ~length:0
+  | Time.Exact _ ->
+      let each, _ = least_step ty step in
+      exact_range t ~first ~last each
+  | _ ->
+      let each, n = least_step ty step in
+      let quotient =
+        Int64.unsigned_div (Int64.unsigned_div (Int64.sub last first) each) n
+      in
+      if Int64.unsigned_compare quotient (Int64.of_int (max_int - 2)) > 0 then
+        invalid_arg "Kit.time_range: 2^62 steps or more";
+      let count = Int64.to_int quotient + 2 in
+      let at = Column.gather (Nx.zeros Nx.int64 [| count |]) start in
+      let times = Nx.arange Nx.int64 0 count 1 in
+      let r, _ = offset ~times step t at in
+      let keep = Nx.less_s (int64s r) last in
+      let keep =
+        match holding r with None -> keep | Some v -> Nx.logical_and keep v
+      in
+      let length =
+        Int64.to_int (Nx.item [] (Nx.argmax (Nx.logical_not keep)))
+      in
+      Column.canonical (Column.sub r ~offset:0 ~length)

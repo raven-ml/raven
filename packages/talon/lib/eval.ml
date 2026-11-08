@@ -812,6 +812,7 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
   | Cut (edges, a), _ ->
       let edges = column (Expr.typing a) (Array.map Option.some edges) in
       unary a (cut edges)
+  | Hash (seed, a), _ -> unary a (Hash.column ~seed)
   | Store (ty, a), _ -> unary a (widen (type_of (Expr.typing a)) (Any ty))
   | (App _ | Of_option _), _ ->
       let vs = ocaml st e in
@@ -972,6 +973,7 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
           let wa = widen (t a) m and wb = widen (t b) m in
           let diff = Kernels.diff m in
           binary_checked a b (fun a b -> diff (wa a) (wb b))
+      | Div (a, b) -> binary a b (Kernels.div (t a) (t b))
       | Part (f, a) -> unary a (Kernels.field f (t a))
       | Floor (step, a) -> unary_checked a (Kernels.floor step (t a))
       | Offset (step, a) -> unary_checked a (Kernels.offset step (t a))

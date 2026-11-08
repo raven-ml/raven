@@ -38,6 +38,13 @@ val diff : Type.any -> Column.t -> Column.t -> checked
 (** [diff t a b] is [Temporal.diff a b], [a] and [b] of [t]. A result out of
     range fails. *)
 
+val div : Type.any -> Type.any -> Column.t -> Column.t -> Column.t
+(** [div ta tb a b] is [Temporal.div a b], durations of [ta] and [tb]. *)
+
+val ns_per_tick : 'a Type.t -> int64 option
+(** [ns_per_tick ty] is the nanoseconds of one tick of the temporal type [ty],
+    a day for a date, and [None] for other types. *)
+
 val field : Expr.Temporal.field -> Type.any -> Column.t -> Column.t
 (** [field f t c] is the field [f] of [c], a [date], a clock or a wall clock,
     of [t]. *)
@@ -46,9 +53,20 @@ val floor : Time.step -> Type.any -> Column.t -> checked
 (** [floor step t c] is [Temporal.floor step c], [c] a [date] or a datetime of
     [t]. A period that starts out of range fails. *)
 
-val offset : Time.step -> Type.any -> Column.t -> checked
-(** [offset step t c] is [Temporal.offset step c], [c] a [date] or a datetime
-    of [t]. A result out of range fails. *)
+val offset :
+  ?times:Nx.host Nx.int64_t -> Time.step -> Type.any -> Column.t -> checked
+(** [offset ?times step t c] is [Temporal.offset step c], [c] a [date] or a
+    datetime of [t], moved by [times] calendar steps at each row when given;
+    an exact step ignores [times]. A result out of range fails. *)
+
+val range :
+  Type.any -> start:Column.t -> stop:Column.t -> Time.step -> Column.t
+(** [range t ~start ~stop step] is [Kit.time_range]'s column: the values
+    [offset (k * step) start] below [stop], for [k] from [0], [start] and
+    [stop] each one row of [t], which binding checked [step] moves.
+
+    Raises [Invalid_argument] if the range holds more steps than a column can.
+*)
 
 val wall : Tz.zone -> Type.any -> Column.t -> checked
 (** [wall z t c] is [Temporal.wall z] of [c], an instant column of [t]. A

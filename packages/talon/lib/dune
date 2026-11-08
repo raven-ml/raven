@@ -17,6 +17,7 @@
   expr
   window
   key
+  hash
   table
   source
   join
@@ -29,7 +30,7 @@
   run)
  (foreign_stubs
   (language c)
-  (names talon_stubs talon_strings)
+  (names talon_stubs talon_strings talon_hash)
   (flags
    (:standard -std=c11 -O3 -Wall -Wextra -Wpedantic)))
  (instrumentation

@@ -799,6 +799,43 @@ val to_tensor : ('a, 'b) Nx.dtype -> string list -> t -> ('a, 'b, Nx.host) Nx.t
     validity ({!Query.section-compiled}), the null raises when the call
     returns. *)
 
+val to_dense :
+  ('a, 'b) Nx.dtype ->
+  axes:(string * int) list ->
+  string ->
+  t ->
+  ('a, 'b, Nx.host) Nx.t * Nx.host Nx.bit_t option
+(** [to_dense dt ~axes value t] is [t]'s column [value] scattered into a
+    tensor, and its validity. [axes] lists each axis as its key column and
+    extent, outermost first, and cells lie in row-major order. A key is a
+    categorical code, whose dictionary has the extent's size, or an integer in
+    \[[0];[extent - 1]\]. A cell no row names holds zero, and so does a null
+    value; the validity clears each such cell and is [None] when every cell
+    holds a value. The value column is numeric or boolean, converted as
+    {!Nx.cast} converts it.
+
+    Raises [Invalid_argument] if [axes] is empty or names a column twice, if an
+    extent is negative or a categorical's differs from its dictionary's size,
+    if a key column is neither categorical nor an integer or holds a null or a
+    key outside its extent, if two rows name one cell, if [value] is neither
+    numeric nor boolean, or if the cells exceed OCaml's [int]. *)
+
+val of_dense :
+  ?validity:Nx.host Nx.bit_t ->
+  axes:string list ->
+  string ->
+  ('a, 'b, Nx.host) Nx.t ->
+  t
+(** [of_dense ~validity ~axes value x] is the table of one row per element of
+    [x], in row-major order: an [int64] key column per name of [axes], then the
+    elements in column [value], null where [validity] is clear. The column
+    shares [x]'s memory where {!Nx.flatten} returns a view. {!to_dense} with
+    the same axes and extents returns [x], with zeros where [validity] is
+    clear.
+
+    Raises [Invalid_argument] if [axes] is empty or has not [x]'s dimensions,
+    if [validity]'s shape is not [x]'s, or as {!v} does. *)
+
 val equal : t -> t -> bool
 (** [equal t0 t1] is [true] iff [t0] and [t1] have equal schemas and the same
     keys row by row, by key identity ({!Type.compare_value}, null being one more
@@ -1770,6 +1807,15 @@ module Expr : sig
         for datetimes, durations and clocks, which meet as {!Type.common} says,
         and [duration[s]] for dates. *)
 
+    val div : (Time.span, 's) t -> (Time.span, 's) t -> (float, 's) t
+    (** [div a b] is how many of [b] fit in [a], as [float64], for example
+        [div (diff ts signup) (span (Time.Span.days 1))]. Both operands are
+        durations, each converted to [float64] and the coarser scaled to the
+        finer's unit, so a quotient of values that [float64] holds exactly
+        rounds once. A zero [b] gives an infinity or NaN as IEEE 754 divides
+        them. A clock is a problem; cast it to a duration first. It is null
+        where an operand is. *)
+
     type field =
       [ `Year
       | `Month
@@ -1875,6 +1921,42 @@ module Expr : sig
 
         Raises [Invalid_argument] as {!parse} does. *)
   end
+
+  (** {1:hashing Hashing}
+
+      {!hash} is the xxHash64 of each row's value, in the xxHash
+      specification's sense, with a seed. Its result is the 64-bit hash
+      shifted right by two bits, so it lies in \[[0];[max_int]\] and [mod]
+      keeps it non-negative. From 1.0 the definition below is a frozen
+      format, so a split made with one release holds in every later one.
+
+      A value's input to the hash is decided by what its kind reads, whatever
+      its storage:
+      - a boolean is the integer [0] or [1], and an integer its value as a
+        64-bit two's complement word, so every width of one number hashes
+        alike and a [uint64] beyond [int64] hashes as the word it stores;
+      - a float is its [float64] value's bits, [-0.] as [0.] and every NaN as
+        the word [0x7FF8000000000000];
+      - a date is its [int64] days from 1970-01-01, and a clock, a duration
+        or a datetime its nanoseconds, wrapped to 64 bits;
+      - a word above is hashed as eight little-endian bytes; a string, a
+        categorical's text and a [binary] as its bytes;
+      - a null at any depth hashes the eight bytes of the word
+        [0x9E3779B185EBCA87];
+      - a record hashes, as one input, its fields' 64-bit hashes, before the
+        shift, as eight little-endian bytes each, in field order, with field
+        names left out.
+
+      The seed is the OCaml [int] sign-extended to 64 bits, [0] by default, the
+      same at every depth of a record. {!hash} over a list, a tensor or an
+      extension is a problem. Exact casts within a kind keep the hash, so
+      [hash (cast ty a) = hash a] for them. *)
+
+  val hash : ?seed:int -> ('a, 's) t -> (int, 's) t
+  (** [hash ~seed a] is the hash of each row of [a] ({!section-hashing}), as
+      [int64], and is never null. A column whose bytes nx cannot read, a traced
+      one other than a categorical, raises [Invalid_argument] naming
+      [Expr.hash] ({!Query.section-compiled}). *)
 
   (** {1:fmt Formatting} *)
 
@@ -2787,7 +2869,8 @@ module Kit : sig
       with [Kit] prints as the verbs that make it, and its problems are those of
       its verbs, which report them as they report any other plan's. A function
       raises [Invalid_argument] itself only for an argument that is wrong
-      whatever the schema, or for a requirement that no verb states. *)
+      whatever the schema, or for a requirement that no verb states.
+      {!time_range} scales a step by a position, which no verb computes. *)
 
   (** {1:queries Queries} *)
 
@@ -3212,6 +3295,77 @@ module Kit : sig
       [q |> Kit.subtract_intervals (s, e) rest], in normal form
       ({!section-normal_form}). It is the sweep ({!section-sweep}) with
       [holds a b = a > 0 && b = 0]. *)
+
+  (** {1:random Randomness}
+
+      These derive their rows from {!Expr.hash} with a seed, so a plan returns
+      the same rows on every run, whatever its batches and the number of
+      cores. Without [~seed] one is drawn from {!Nx.Rng}'s scope when the plan
+      is built, so a plan value keeps it and a rebuilt plan draws another. A
+      split that must repeat across programs gives a [~seed].
+
+      {!folds} balances the number of groups, and rows follow group sizes. It
+      depends on the set of groups, so a changed set moves some groups between
+      folds. A split that must hold as the table grows filters on a group's
+      hash alone, as in
+      [hash ~seed (record [ keep (Sel.names by) ]) mod int m < int j]. *)
+
+  val shuffle : ?seed:int -> Query.t -> Query.t
+  (** [shuffle ~seed q] is [q]'s rows in the order of the hash of each row's
+      place in [q], counted across its batches:
+      {[
+      Query.derive Expr.[ key := hash ~seed (window rows) ] q
+      |> Query.sort [ Order.asc key ]
+      |> drop (Sel.names [ key ])
+      ]}
+      It reads no value, so equal rows take independent places, and it blocks.
+  *)
+
+  val sample :
+    ?seed:int -> [ `Rows of int | `Fraction of float ] -> Query.t -> Query.t
+  (** [sample ~seed size q] draws rows of [q] without replacement. [`Rows n]
+      is the first [n] rows of {!shuffle}'s order, or all of them where [q] has
+      fewer. [`Fraction f] keeps, in [q]'s order, the rows whose place hashes
+      below [f * 2{^ 62}], so at one seed a smaller fraction keeps a subset of
+      a larger one:
+      {[
+      Query.filter Expr.(hash ~seed (window rows) < int cutoff) q
+      ]}
+      It blocks. Bootstrapping with replacement is {!Talon.take} of
+      {!Nx.Rng.randint} indices.
+
+      Raises [Invalid_argument] if [n] is negative or [f] is not in
+      \[[0];[1]\]. *)
+
+  val folds : ?seed:int -> by:string list -> int -> Query.t -> Query.t
+  (** [folds ~seed ~by k q] is [q] with a last column ["fold"], an [int64] in
+      \[[0];[k - 1]\], that gives every row of a group of [by] one fold, by
+      key identity (null is one group and NaN one). Groups rank by the hash of
+      the record of [by]'s columns, in that order, and the [r]th of [g] groups
+      takes fold [⌊k (r - 1) / g⌋], so fold sizes in groups differ by at most
+      one. It blocks, and reads every key before the first fold is known.
+
+      Raises [Invalid_argument] if [by] is empty or names a column twice, if
+      [k] is below [1] or if [q] already has a column ["fold"]; a run raises it
+      if [q] has fewer than [k] groups. *)
+
+  (** {1:ranges Time ranges} *)
+
+  val time_range :
+    'a Type.t -> start:'a -> stop:'a -> Time.step -> string -> t
+  (** [time_range ty ~start ~stop step name] is the table of one column [name]
+      of [ty], the values [offset (k * step) start] below [stop], in order, for
+      [k] from [0], so that adjacent ranges meet at [stop]. A day past a month's
+      end becomes that month's last day, and each step counts from [start], so
+      2024-01-31 by one month gives 2024-02-29, then 2024-03-31. It is empty
+      when [start >= stop].
+
+      It is a table where the rest of [Kit] is a plan, since the [k]th value
+      scales a step by [k], which no verb computes.
+
+      Raises [Invalid_argument] if [step] is not positive, if
+      {!Expr.Temporal.offset} does not move [ty] by [step], or if the range
+      holds [2{^ 62}] steps or more. *)
 
   (** {1:runs Runs} *)
 

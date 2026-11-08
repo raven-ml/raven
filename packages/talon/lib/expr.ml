@@ -115,6 +115,7 @@ and 'a node =
   | Coalesce : ('a, 's) t list -> 'a node
   | Is_in : 'a list * ('a, 's) t -> bool node
   | Cut : 'a array * ('a, 's) t -> int node
+  | Hash : int * ('a, 's) t -> int node
   | Cast : 'a Type.t * ('b, 's) t -> 'a node
   | Lift : fn * ('a, 's) t -> 'a node
   | Lift2 : fn2 * ('a, 's0) t * ('a, 's1) t -> 'a node
@@ -156,6 +157,7 @@ and 'a text_op =
 and 'a calendar_op =
   | Add_span : ('a, 's0) t * (Time.span, 's1) t -> 'a calendar_op
   | Diff : ('a, 's0) t * ('a, 's1) t -> Time.span calendar_op
+  | Div : (Time.span, 's0) t * (Time.span, 's1) t -> float calendar_op
   | Part : field * ('a, 's) t -> int calendar_op
   | Floor : Time.step * ('a, 's) t -> 'a calendar_op
   | Offset : Time.step * ('a, 's) t -> 'a calendar_op
@@ -205,6 +207,7 @@ let operands : type a. a node -> packed list = function
   | Of_option a -> [ Packed a ]
   | Is_in (_, a) -> [ Packed a ]
   | Cut (_, a) -> [ Packed a ]
+  | Hash (_, a) -> [ Packed a ]
   | Lift (_, a) -> [ Packed a ]
   | Shift (_, a) -> [ Packed a ]
   | Cast (_, a) -> [ Packed a ]
@@ -221,6 +224,7 @@ let operands : type a. a node -> packed list = function
       match op with
       | Add_span (a, d) -> [ Packed a; Packed d ]
       | Diff (a, b) -> [ Packed a; Packed b ]
+      | Div (a, b) -> [ Packed a; Packed b ]
       | Part (_, a) -> [ Packed a ]
       | Floor (_, a) -> [ Packed a ]
       | Offset (_, a) -> [ Packed a ]
@@ -268,6 +272,7 @@ let policy_name : policy -> string = function
 let calendar_op_name : type a. a calendar_op -> string = function
   | Add_span _ -> "Temporal.add"
   | Diff _ -> "Temporal.diff"
+  | Div _ -> "Temporal.div"
   | Part _ -> "Temporal.field"
   | Floor _ -> "Temporal.floor"
   | Offset _ -> "Temporal.offset"
@@ -366,7 +371,7 @@ let text_op_equal : type a b. a text_op -> b text_op -> bool =
 let calendar_equal : type a b. a calendar_op -> b calendar_op -> bool =
  fun op0 op1 ->
   match (op0, op1) with
-  | Add_span _, Add_span _ | Diff _, Diff _ -> true
+  | Add_span _, Add_span _ | Diff _, Diff _ | Div _, Div _ -> true
   | Part (f0, _), Part (f1, _) -> f0 = f1
   | Floor (s0, _), Floor (s1, _) | Offset (s0, _), Offset (s1, _) ->
       step_equal s0 s1
@@ -377,7 +382,7 @@ let calendar_equal : type a b. a calendar_op -> b calendar_op -> bool =
   | Localize (z0, a0, g0, _), Localize (z1, a1, g1, _)
   | Localize_ordered (z0, a0, g0, _), Localize_ordered (z1, a1, g1, _) ->
       Tz.equal z0 z1 && a0 = a1 && g0 = g1
-  | ( ( Add_span _ | Diff _ | Part _ | Floor _ | Offset _ | Parse_with _
+  | ( ( Add_span _ | Diff _ | Div _ | Part _ | Floor _ | Offset _ | Parse_with _
       | Format_with _ | Wall _ | Localize _ | Localize_ordered _ ),
       _ ) ->
       false
@@ -411,6 +416,7 @@ let node_equal : type a b. a node -> b node -> bool =
   | Cut (es0, a0), Cut (es1, a1) ->
       same_value es0 es1
       || values_equal a0 (Array.to_list es0) a1 (Array.to_list es1)
+  | Hash (s0, _), Hash (s1, _) -> Int.equal s0 s1
   | Cast (ty0, _), Cast (ty1, _) | Store (ty0, _), Store (ty1, _) ->
       Type.equal ty0 ty1
   | Lift (f0, _), Lift (f1, _) -> same_value f0.f f1.f
@@ -446,7 +452,7 @@ let node_equal : type a b. a node -> b node -> bool =
       true
   | ( ( Handle _ | Ext_handle _ | Read _ | Lit _ | Null | Rows | Int _ | Float _
       | Compare _ | Logic _ | Not _ | If _ | Is_null _ | Coalesce _ | Is_in _
-      | Cut _ | Cast _ | Lift _ | Lift2 _ | Nx_map _ | Reduce _ | Over _
+      | Cut _ | Hash _ | Cast _ | Lift _ | Lift2 _ | Nx_map _ | Reduce _ | Over _
       | Shift _ | Rank _ | Window _ | Per_list _ | Record_of _ | Field _
       | Spread _ | Const _ | App _ | Option _ | Of_option _ | Store _ | Text _
       | Concat _ | Calendar _ ),
@@ -481,6 +487,7 @@ let node_hash : type a. a node -> int =
     | Logic (o, _, _) -> Hashtbl.hash o
     | Reduce (r, _) -> Hashtbl.hash r
     | Shift (i, _) -> Hashtbl.hash i
+    | Hash (s, _) -> Hashtbl.hash s
     | Window w ->
         Hashtbl.hash (w.exclude, Option.is_some w.on, Option.is_some w.before)
     | Per_list (os, _) | Record_of os ->
@@ -745,6 +752,8 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
   | Coalesce es -> app "coalesce" [ (fun ppf -> Type.pp_list (pp_at 0) ppf es) ]
   | Is_in (vs, a) -> app "is_in" [ pp_values a vs; arg a ]
   | Cut (edges, a) -> app "cut" [ pp_values a (Array.to_list edges); arg a ]
+  | Hash (0, a) -> app "hash" [ arg a ]
+  | Hash (seed, a) -> app "hash" [ strf "~seed:%d" seed |> str; arg a ]
   | Cast (ty, a) -> app "cast" [ (fun ppf -> Type.pp ppf ty); arg a ]
   | Lift (_, a) -> app "nx" [ str "<fn>"; arg a ]
   | Lift2 (_, a, b) -> app "nx2" [ str "<fn>"; arg a; arg b ]
@@ -837,6 +846,7 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
         (match op with
         | Add_span (a, d) -> [ arg a; arg d ]
         | Diff (a, b) -> [ arg a; arg b ]
+        | Div (a, b) -> [ arg a; arg b ]
         | Part (f, a) -> [ str (field_name f); arg a ]
         | Floor (s, a) -> [ step s; arg a ]
         | Offset (s, a) -> [ step s; arg a ]
@@ -1062,6 +1072,18 @@ let expect : type a s.
       report env "%a is %a, where %a is expected%s." pp e pp_typing t' pp_typing
         t remedy;
       None
+
+(* [unhashable t] is the part of [t], if any, that {!hash} does not define: a
+   list, a tensor or an extension, at any depth. Each type is named, so a new
+   type must decide its hash here. *)
+let rec unhashable : type a. a Type.t -> Type.any option = function
+  | Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
+  | Float16 | Float32 | Float64 | String | Binary | Categorical _ | Date
+  | Clock _ | Duration _ | Datetime _ ->
+      None
+  | Record fields ->
+      List.find_map (fun (_, Type.Any t) -> unhashable t) fields
+  | (List _ | Tensor _ | Ext _) as t -> Some (Type.Any t)
 
 let ordered : type a. env -> string -> a typing -> unit =
  fun env what -> function
@@ -1803,6 +1825,20 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
             all_hold env "edge" t (Array.to_list edges) && ascending env t edges
           then known int64 (Cut (edges, a))
           else Broken)
+  | Hash (seed, a) ->
+      on_operand env a (fun t a ->
+          let refuse pp = report env "hash does not take %a." pp t; Broken in
+          match t with
+          | Column ty -> (
+              match unhashable ty with
+              | None -> known int64 (Hash (seed, a))
+              | Some _ ->
+                  report env
+                    "hash takes booleans, numbers, text, binary, dates, times \
+                     and records of these, and %a is not one."
+                    Type.pp ty;
+                  Broken)
+          | Extension _ | Value -> refuse pp_typing)
   | Cast (ty, a) ->
       on_operand env a (fun t a ->
           match t with
@@ -2271,6 +2307,21 @@ and calendar : type a. env -> a calendar_op -> a elab =
           report env "%s does not take %a." what pp_typing t;
           Broken
       | None -> Broken)
+  | Div (a, b) -> (
+      let duration a =
+        match column a with
+        | Some (Duration _, a') -> Some a'
+        | Some (Clock _, _) ->
+            report env "%s divides durations; cast a clock to one first." what;
+            None
+        | Some (t, _) ->
+            report env "%s divides durations, not %a." what Type.pp t;
+            None
+        | None -> None
+      in
+      match (duration a, duration b) with
+      | Some a', Some b' -> known (Column Type.float64) (Div (a', b'))
+      | _ -> Broken)
   | Part (f, a) -> (
       match column a with
       | None -> Broken
@@ -2481,6 +2532,7 @@ let map_node : type a. mapper -> a node -> a node =
   | Coalesce es -> Coalesce (List.map map es)
   | Is_in (vs, a) -> Is_in (vs, map a)
   | Cut (edges, a) -> Cut (edges, map a)
+  | Hash (s, a) -> Hash (s, map a)
   | Cast (ty, a) -> Cast (ty, map a)
   | Lift (fn, a) -> Lift (fn, map a)
   | Lift2 (fn, a, b) -> Lift2 (fn, map a, map b)
@@ -2518,6 +2570,7 @@ let map_node : type a. mapper -> a node -> a node =
         (match op with
         | Add_span (a, d) -> Add_span (map a, map d)
         | Diff (a, b) -> Diff (map a, map b)
+        | Div (a, b) -> Div (map a, map b)
         | Part (f, a) -> Part (f, map a)
         | Floor (s, a) -> Floor (s, map a)
         | Offset (s, a) -> Offset (s, map a)
@@ -2759,6 +2812,7 @@ module Temporal = struct
   type nonrec field = field
 
   let calendar op = make (Calendar op)
+  let div a b = calendar (Div (a, b))
 
   let check_step fn = function
     | (Time.Months n | Time.Weeks n | Time.Days n) when n > 0 -> ()
@@ -2888,6 +2942,8 @@ let if_ c a b = make (If (c, a, b))
 let is_null a = make (Is_null a)
 let coalesce es = make (Coalesce es)
 let is_in vs a = make (Is_in (vs, a))
+
+let hash ?(seed = 0) a = make (Hash (seed, a))
 
 let cut edges a =
   let n = Array.length edges in
