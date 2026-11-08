@@ -4759,12 +4759,15 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   the cleanups make is not counted, and a read through a stack is not one:
   every stage has a device by then, so no cleanup turns it into a read of
   the stage.
-- **Reason:** (d). rune's compiled `Nx.associative_scan`, whose prefix
-  circuit reads each level's pairs and results at two or three positions:
-  jera's tridiagonal solve of 100 equations, three scans one of them over
-  4-tuples, compiled cold in 62 s and compiles in 2.4 s (fudge, under load),
-  as a scan of 1000 4-tuples does; a scan of 4 is 0.05 s either way.
-  tinygrad compiles the same graph as slowly, 3.4 s at 32 elements. norn's
+- **Reason:** (e), `Rangeify.destination`: kept, a stage a store writes
+  through takes the stores, and the storage holds what it held. (d) the rest.
+  rune's compiled `Nx.associative_scan`, whose prefix circuit reads each
+  level's pairs and results at two or three positions: jera's tridiagonal
+  solve of 100 equations (`scan/tridiagonal-100`), three scans one of them
+  over 4-tuples, compiles cold in 1.25 CPU-s and 34.4 M words against 2.08 s
+  and 100.3 M with no budget, and at 1000 equations in 5.3 s and 45 M words
+  against 33.6 s and 780 M, 94.5 s and 1.09 G with the across-kernels store
+  off too (fudge, 2026-11-08, load 25 to 60). norn's
   nested sampling, whose error is a running sum over 100 × 1213 negated logs
   of uniform draws: inlined, the draw and its log ran once per window
   element, and the kernel took 0.87 s a call against 0.18 s with the draws
@@ -6263,7 +6266,10 @@ as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
   `log₁₆ n` stages. Values are a reassociation of the same terms: integers,
   booleans and extremes are unchanged, and a float sum or product of `n`
   terms keeps rune's bound of `γ(n - 1)`.
-- **Reason:** (d): compiled running sums, `Nx.cumsum` under `Rune.jit`, as
+- **Reason:** (e), the chunks aligned from element 0: a running operation's
+  prefix is the prefix of the axis's, bit for bit, as `Nx.cumsum` promises;
+  padded before, a float sum of a prefix rounds otherwise. (d), the chunks of
+  16 at every level: compiled running sums, `Nx.cumsum` under `Rune.jit`, as
   norn's nested sampling's error estimate takes, and rune's lowering of an
   extreme's position and of segments' starts (`Lower_reduce`). The aligned
   chunks against chunks padded before, with one window up to 32 elements
