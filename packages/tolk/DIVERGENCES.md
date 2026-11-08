@@ -6362,13 +6362,20 @@ D199 fused independent calls of one domain into one kernel. A launch of bodies (
   3.21-3.24 ms. At `c = 16` no candidate keeps a warp of 16-row tiles within
   a block, so tinygrad's candidate stands: there its upcasts of 2 and 4 over
   two to four blocks were 1.2 to 1.4 times faster than none; an upcast of 5
-  over blocks of 16 is not measured. rune lowers no routed product in blocks past 16 rows yet; its
-  blocked lowering of 64 rows is the consumer, and its rows the pins.
+  over blocks of 16 is not measured. rune's routed product (`Lower_reduce`)
+  now takes blocks of 64 rows, so the rule fires where the block count is a
+  multiple of 5 and leaves no other first candidate. gpt-oss-20b's experts at
+  a prefill of 536 tokens, 65 blocks and 4160 rows on the unstaged path, kaun's
+  `GptOss/experts-at-prefill-536`, take 3.02 ms a layer against 6.96 ms
+  without the rule (upcast 4 against 5), and the prefill 117 ms against 207 ms;
+  minima of four interleaved rounds with D211 and D122 withdrawn. 512 tokens, 63 blocks, already take 4 and
+  do not reach it.
 - **Pinned by:** the Heuristic suite: the `routed_run_16`, `routed_run_32`,
   `routed_run_64` and `routed_run_128` cases on each renderer, and `a core's
   warp holds rows of one run where an upcast of the core's rows keeps it in
-  one`; on fudge, once rune lowers routed products in blocks of 64,
-  gpt-oss-20b's experts rows at 128, 512 and 2048 tokens.
+  one`; on fudge, kaun's
+  `GptOss/experts-at-prefill-536` row, its baseline pending the scheduled
+  re-record.
 
 ## D201. A search's samples start from a clean, cold cache
 

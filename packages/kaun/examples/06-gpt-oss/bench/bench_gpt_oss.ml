@@ -8,9 +8,10 @@
    prefills of 512 and 12 tokens, over random weights at bfloat16 with the
    experts packed as MXFP4, a decode step with the attention projections and
    the head packed as Q8_0 too, quantised in its case's setup, and one layer's
-   experts at the 512-token prefill. 12 tokens route 48 positions over 32
-   experts, each a block of its own, whose experts' products stream their
-   matrices as a decode step's do.
+   experts at prefills of 512 and 536 tokens. 12 tokens route 48 positions over
+   32 experts, each a block of its own, whose experts' products stream their
+   matrices as a decode step's do. 536 tokens fill 65 blocks of 64 rows, a
+   count 5 divides, where a warp of 5 tiles of rows would cross two blocks.
 
    Each case's setup builds the 13.8 GB of weights on the host, in the worker
    thumper forks for it, and places them on the GPU; a GPU's driver must not be
@@ -48,6 +49,7 @@ let config =
 let context = 1024
 let prompt = 512
 let short_prompt = 12
+let blocked_prompt = 536
 
 (* Bytes drawn per array before they repeat. With all 10 GB of expert bytes
    drawn, building the weights took 75 s on nonnormal's i9-9900K, in every
@@ -246,7 +248,7 @@ let step weights kind =
    prefill of [prompt] tokens: random bfloat16 activations, routed by the
    router of random logits from a fixed key, as the tensor cores multiply
    the MXFP4 weights. *)
-let experts (weights : _ Gpt_oss.params) =
+let experts prompt (weights : _ Gpt_oss.params) =
   let module G = (val Nx.devices [ gpu () ]) in
   let moe = Nx.Ptree.place (module Moe) G.on (List.hd weights.blocks).moe in
   let logits =
@@ -269,11 +271,18 @@ let experts (weights : _ Gpt_oss.params) =
   call
 
 let kinds =
-  [ `Decode; `Decode_q8_0; `Prefill prompt; `Prefill short_prompt; `Experts ]
+  [
+    `Decode;
+    `Decode_q8_0;
+    `Prefill prompt;
+    `Prefill short_prompt;
+    `Experts prompt;
+    `Experts blocked_prompt;
+  ]
 
 let setup weights = function
   | (`Decode | `Decode_q8_0 | `Prefill _) as kind -> step weights kind
-  | `Experts -> experts weights
+  | `Experts n -> experts n weights
 
 let case kind =
   let name =
@@ -281,7 +290,7 @@ let case kind =
     | `Decode -> Printf.sprintf "decode step, cache %d" context
     | `Decode_q8_0 -> Printf.sprintf "decode step, Q8_0, cache %d" context
     | `Prefill n -> Printf.sprintf "prefill %d" n
-    | `Experts -> Printf.sprintf "experts at prefill %d" prompt
+    | `Experts n -> Printf.sprintf "experts at prefill %d" n
   in
   Thumper.bench_with_setup
     ~setup:(fun () -> setup (weights ()) kind)
