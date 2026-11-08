@@ -15,6 +15,7 @@ let library () =
    compiles run in processes of their own: workers, a C program embedded in the
    library ([compiler_amd_worker.c]), each serving compiles in turn. *)
 let worker = Compiler_worker.v ~name:"comgr" Comgr_worker.program
+let worker_digest = Digest.to_hex (Digest.string Comgr_worker.program)
 
 (* The options comgr compiles HIP with, and links it with. *)
 let compile_options arch =
@@ -82,11 +83,14 @@ let hip arch =
     | Ok lib -> lib
     | Error e -> raise (Renderer.Compiler.Compile_error e)
   in
+  (* comgr's library, the worker that runs it, and the options name a code
+     object with its source. *)
   let table () =
     let identity =
       String.concat "\n"
         [
           C.identity (Some comgr);
+          worker_digest;
           compile_options arch;
           link_options;
           fst verified_from ^ "." ^ snd verified_from ^ " " ^ verified;

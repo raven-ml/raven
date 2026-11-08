@@ -41,9 +41,9 @@ val hip : string -> Renderer.Compiler.t
 
     With {!Setting.ccache}, code objects are cached in the table
     [compile_hip_A_D], where [A] is [arch] and [D] the digest of comgr's library
-    ({!C.identity}) and the options it compiles and links with: a code object is
-    read back only for its source, compiled by the same comgr with the same
-    options. Raises [Failure] naming [COMGR_PATH] if no comgr is found.
+    ({!C.identity}), the program that runs it, and the options it compiles and
+    links with: a code object is read back only for its source, compiled by the
+    same comgr with the same options. Raises [Failure] naming [COMGR_PATH] if no comgr is found.
     {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
     comgr's status and log if comgr rejects the source, with the reason if
     comgr cannot be loaded, and with how

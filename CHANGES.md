@@ -1077,6 +1077,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Compiler_amd.hip`'s cache table is named by the program that runs comgr
+  too, as `Compiler_cuda.nvrtc`'s is: a code object compiled by an earlier
+  tolk, whose program asked comgr for other steps, is compiled again.
 - `Compiler_amd.hip` compiles in comgr processes that serve compiles in
   turn, as `Compiler_cuda.nvrtc`'s do, where each compile started a process
   and loaded comgr: a beam search over a float32 product on an R9700
