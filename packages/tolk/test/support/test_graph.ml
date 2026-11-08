@@ -301,11 +301,11 @@ let damaged d s =
       place (runs (function '0' .. '9' -> true | _ -> false) s) at by
   | Huge_slot (at, by) -> place (slots s) at by
 
-let classify_damage = function
-  | Flip _ -> cover "a byte flipped" true
-  | Cut _ -> cover "cut short" true
-  | Huge_number _ -> cover "a huge number" true
-  | Huge_slot _ -> cover "a huge slot" true
+let classify_damage d =
+  cover "a byte flipped" (match d with Flip _ -> true | _ -> false);
+  cover "cut short" (match d with Cut _ -> true | _ -> false);
+  cover "a huge number" (match d with Huge_number _ -> true | _ -> false);
+  cover "a huge slot" (match d with Huge_slot _ -> true | _ -> false)
 
 (* The graphs damaged: every kind but the long chain, and a buffer indexed
    by a range, whose slot and axis are numbers the reading takes. *)

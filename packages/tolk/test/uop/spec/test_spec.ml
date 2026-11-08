@@ -112,6 +112,7 @@ let bounds =
             (verdict_of_cell (cell "checked"))
             (checking_bounds (fun () -> judge Spec.shared u)));
       prop "an access passes iff the bounds of its index lie within the storage"
+        ~examples:[ (0, 3, 4); (0, 4, 4); (-1, 2, 4) ]
         index_bounds (fun b ->
           let lo, hi, n = b in
           cover "the last element" (hi = n - 1);

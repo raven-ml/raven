@@ -205,15 +205,22 @@ let simplified =
           equal string (cell "render") (Render.render ~simplify:false u);
           equal string (cell "simplified") (Render.render u));
       Golden.cases "trees_rendered.golden" simplified_tree;
+      (* The example divides by zero, which simplifying folds into an
+         exception: a random tree does so in about 3% of cases, a rate 100
+         cases miss once in 20 runs. *)
       prop "writes the simplified node, or raises as simplifying it does"
+        ~examples:[ Ops.v Op.Mod ~src:[ Ops.int 1; Ops.int 0 ] ]
         expression (fun u ->
-          match Render.render ~simplify:false (Shape.simplify u) with
-          | s ->
-              cover "renders" true;
-              equal string s (Render.render u)
-          | exception e ->
-              cover "raises" true;
-              raises e (fun () -> Render.render u));
+          let simplified =
+            match Render.render ~simplify:false (Shape.simplify u) with
+            | s -> Ok s
+            | exception e -> Error e
+          in
+          cover "renders" (Result.is_ok simplified);
+          cover "raises" (Result.is_error simplified);
+          match simplified with
+          | Ok s -> equal string s (Render.render u)
+          | Error e -> raises e (fun () -> Render.render u));
       cases ~timeout:5. "an integer past 4300 digits is refused"
         ~id:(Render.render ~simplify:false)
         [ huge_shift ]

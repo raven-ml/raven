@@ -6507,6 +6507,7 @@ let folded_effects =
         [ 0; 4 ]
         (fun n -> writes ~vars:[ ("n", n) ] folded_code [] [ [ n ] ] ());
       prop ~count:40
+        ~examples:[ ([ `Var 0 ], [ Sum_quotient ]); ([ `Const 2 ], [ Mod_one ]) ]
         "a store at an index that folds runs once per step of its loops" nests
         counts_each_step;
     ]

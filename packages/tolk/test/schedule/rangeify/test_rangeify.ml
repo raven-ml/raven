@@ -1622,6 +1622,7 @@ let work_bound =
   group "get_kernel_graph › work bound"
     [
       prop "a stage is stored when its copies beyond the first pass the budget"
+        ~examples:[ (Routed (2, 2), 200); (Routed (2, 2), 0) ]
         reading_gen (fun (reading, k) ->
           let work = copied reading k * (repeats reading - 1) in
           let stored = work > budget in

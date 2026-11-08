@@ -85,7 +85,8 @@ let constants =
       prop "equal_const is equality of kinds and payloads, floats by their bits"
         (Gen.pair any_const any_const) (fun (c0, c1) ->
           equal bool (same_const c0 c1) (Dtype.equal_const c0 c1));
-      prop "equal constants hash alike" any_const (fun c ->
+      prop "equal constants hash alike" ~examples:[ `Float Float.nan ] any_const
+        (fun c ->
           cover "a NaN" (match c with `Float f -> Float.is_nan f | _ -> false);
           cover "an integer built anew"
             (match c with `Int _ -> true | _ -> false);
