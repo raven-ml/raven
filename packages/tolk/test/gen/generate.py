@@ -72,6 +72,7 @@ UNMODIFIED = {
     "uop/ops",
     "codegen/late/gater",
     "codegen/decomp/decomp_op",
+    "engine/realize",
 }
 
 HERE = Path(__file__).resolve().parent

@@ -1,0 +1,25 @@
+# tolk D141 golden=5630c46c79d50ebd8124a1cdab7f75d0
+program	call	var_vals	bufs	args	outs	ins	name	ops	lds	mem
+add	0	-	%1 %2 %3	%1 %2 %3	0	1 2	E_16	16	192	192
+sum	0	-	%1 %2	%1 %2	0	1	r_4_8	28	144	144
+two_outputs	0	-	%1 %2	%1 %2	0	1	E_16	16	128	128
+two_outputs	1	-	%1 %2	%1 %2	0	1	E_16	16	128	128
+assign	0	-	%1	%1	0	0	E_16	16	128	128
+custom_kernel	0	-	%1 %2	%1 %2	0	1	E_16	16	128	128
+custom_kernel	1	-	%1 %2	%1 %2	0	1	add_one_16	16	128	128
+custom_kernel	2	-	%1 %2	%1 %2	0	1	E_16	16	128	128
+custom_kernel_scalar	0	n=5	%1 %3	%1 5 %3	0	2	add_n	4	32	32
+custom_kernel_scalar	1	n=5	%1 %2	%1 %2	0	1	E_4	4	32	32
+precompiled_scalar	0	v=3	%1 %2	%1 %2 0 3 v	0	1	E_3	3	24	24
+copy	0	-	%1 %2	-	0	1	[33mcopy       64 B,   CPU:1 <- CPU    [0m	0	64	64
+copy	1	-	%1 %2	%1 %2	0	1	E_16	16	128	128
+copy_view	0	-	%1 %2	-	0	1	[33mcopy      128 B,   CPU:1 <- CPU    [0m	0	128	128
+copy_view	1	-	%1 %2	%1 %2 0 2	0	1	E_2_16	32	256	256
+copy_big	0	-	%1 %2	-	0	1	[33mcopy    1.00 MB,   CPU:1 <- CPU    [0m	0	1048576	1048576
+copy_big	1	-	%1 %2	%1 %2 0 16384	0	1	E_16384_16_4	1048576	2097152	2097152
+copy_variable	0	v=3	%1 %2	%1 %2 0 5 v	0	1	E_5_2	10	80	80
+copy_variable	1	v=3	%1 %2	-	0	1	[33mcopy       40 B,   CPU:1 <- CPU    [0m	0	40	40
+copy_variable	2	v=3	%1 %2	%1 %2 0 v	0	1	E_v	3	24	24
+variable_shrink	0	v=3	%1 %2	%1 %2 0 v	0	1	E_v	3	24	24
+variable_two	0	v=4 w=7	%1 %2	%1 %2 0 v	0	1	E_v	4	32	32
+variable_two	1	v=4 w=7	%1 %2	%1 %2 0 w	0	1	E_w	7	56	56
