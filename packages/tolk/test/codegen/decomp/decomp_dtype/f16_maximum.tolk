@@ -1,0 +1,116 @@
+# tolk D27 golden=ca769eccc1aa096525bd4a39cfd53c8a
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 8
+2 Ops.PARAM dtypes.f16 [1] ParamArg(slot=0, dtype=dtypes.f16)
+3 Ops.CONST dtypes.weakint [] 2
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
+6 Ops.SHL dtypes.i32 [5, 3]
+7 Ops.CONST dtypes.weakint [] 4
+8 Ops.CAST dtypes.i32 [7] dtypes.i32
+9 Ops.SHRINK dtypes.f16 [2, 6, 8]
+10 Ops.PARAM dtypes.f16 [1] ParamArg(slot=1, dtype=dtypes.f16)
+11 Ops.SHRINK dtypes.f16 [10, 6, 8]
+12 Ops.LOAD dtypes.f16 [11]
+13 Ops.CONST dtypes.weakint [] 0
+14 Ops.CAST dtypes.i32 [13] dtypes.i32
+15 Ops.INDEX dtypes.f16 [12, 14]
+16 Ops.PARAM dtypes.f16 [1] ParamArg(slot=2, dtype=dtypes.f16)
+17 Ops.SHRINK dtypes.f16 [16, 6, 8]
+18 Ops.LOAD dtypes.f16 [17]
+19 Ops.INDEX dtypes.f16 [18, 14]
+20 Ops.CMPLT dtypes.bool [15, 19]
+21 Ops.WHERE dtypes.f16 [20, 19, 15]
+22 Ops.CONST dtypes.weakint [] 1
+23 Ops.CAST dtypes.i32 [22] dtypes.i32
+24 Ops.INDEX dtypes.f16 [12, 23]
+25 Ops.INDEX dtypes.f16 [18, 23]
+26 Ops.CMPLT dtypes.bool [24, 25]
+27 Ops.WHERE dtypes.f16 [26, 25, 24]
+28 Ops.INDEX dtypes.f16 [12, 4]
+29 Ops.INDEX dtypes.f16 [18, 4]
+30 Ops.CMPLT dtypes.bool [28, 29]
+31 Ops.WHERE dtypes.f16 [30, 29, 28]
+32 Ops.CONST dtypes.weakint [] 3
+33 Ops.CAST dtypes.i32 [32] dtypes.i32
+34 Ops.INDEX dtypes.f16 [12, 33]
+35 Ops.INDEX dtypes.f16 [18, 33]
+36 Ops.CMPLT dtypes.bool [34, 35]
+37 Ops.WHERE dtypes.f16 [36, 35, 34]
+38 Ops.STACK dtypes.f16 [21, 27, 31, 37]
+39 Ops.STORE dtypes.void [9, 38]
+40 Ops.AFTER dtypes.void [0, 39]
+41 Ops.END dtypes.void [40, 5]
+42 Ops.SINK dtypes.void [41] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+43 Ops.PARAM dtypes.u16 [1] ParamArg(slot=0, dtype=dtypes.u16)
+44 Ops.SHRINK dtypes.u16 [43, 6, 8]
+45 Ops.CUSTOM_FUNCTION dtypes.f32 [0] CustomFunction(name="f2f f16 f32 True", dtype=dtypes.f32, fmt=True)
+46 Ops.PARAM dtypes.u16 [1] ParamArg(slot=1, dtype=dtypes.u16)
+47 Ops.ADD dtypes.i32 [6, 13]
+48 Ops.INDEX dtypes.u16 [46, 47]
+49 Ops.LOAD dtypes.u16 [48]
+50 Ops.CALL dtypes.f32 [45, 49] CallInfo()
+51 Ops.ADD dtypes.i32 [6, 22]
+52 Ops.INDEX dtypes.u16 [46, 51]
+53 Ops.LOAD dtypes.u16 [52]
+54 Ops.CALL dtypes.f32 [45, 53] CallInfo()
+55 Ops.ADD dtypes.i32 [6, 3]
+56 Ops.INDEX dtypes.u16 [46, 55]
+57 Ops.LOAD dtypes.u16 [56]
+58 Ops.CALL dtypes.f32 [45, 57] CallInfo()
+59 Ops.ADD dtypes.i32 [6, 32]
+60 Ops.INDEX dtypes.u16 [46, 59]
+61 Ops.LOAD dtypes.u16 [60]
+62 Ops.CALL dtypes.f32 [45, 61] CallInfo()
+63 Ops.STACK dtypes.f32 [50, 54, 58, 62]
+64 Ops.CAST dtypes.f32 [63] dtypes.f32
+65 Ops.INDEX dtypes.f32 [64, 14]
+66 Ops.PARAM dtypes.u16 [1] ParamArg(slot=2, dtype=dtypes.u16)
+67 Ops.INDEX dtypes.u16 [66, 47]
+68 Ops.LOAD dtypes.u16 [67]
+69 Ops.CALL dtypes.f32 [45, 68] CallInfo()
+70 Ops.INDEX dtypes.u16 [66, 51]
+71 Ops.LOAD dtypes.u16 [70]
+72 Ops.CALL dtypes.f32 [45, 71] CallInfo()
+73 Ops.INDEX dtypes.u16 [66, 55]
+74 Ops.LOAD dtypes.u16 [73]
+75 Ops.CALL dtypes.f32 [45, 74] CallInfo()
+76 Ops.INDEX dtypes.u16 [66, 59]
+77 Ops.LOAD dtypes.u16 [76]
+78 Ops.CALL dtypes.f32 [45, 77] CallInfo()
+79 Ops.STACK dtypes.f32 [69, 72, 75, 78]
+80 Ops.CAST dtypes.f32 [79] dtypes.f32
+81 Ops.INDEX dtypes.f32 [80, 14]
+82 Ops.CMPLT dtypes.bool [65, 81]
+83 Ops.SHRINK dtypes.u16 [66, 6, 8]
+84 Ops.LOAD dtypes.u16 [83]
+85 Ops.INDEX dtypes.u16 [84, 14]
+86 Ops.SHRINK dtypes.u16 [46, 6, 8]
+87 Ops.LOAD dtypes.u16 [86]
+88 Ops.INDEX dtypes.u16 [87, 14]
+89 Ops.WHERE dtypes.u16 [82, 85, 88]
+90 Ops.INDEX dtypes.f32 [64, 23]
+91 Ops.INDEX dtypes.f32 [80, 23]
+92 Ops.CMPLT dtypes.bool [90, 91]
+93 Ops.INDEX dtypes.u16 [84, 23]
+94 Ops.INDEX dtypes.u16 [87, 23]
+95 Ops.WHERE dtypes.u16 [92, 93, 94]
+96 Ops.INDEX dtypes.f32 [64, 4]
+97 Ops.INDEX dtypes.f32 [80, 4]
+98 Ops.CMPLT dtypes.bool [96, 97]
+99 Ops.INDEX dtypes.u16 [84, 4]
+100 Ops.INDEX dtypes.u16 [87, 4]
+101 Ops.WHERE dtypes.u16 [98, 99, 100]
+102 Ops.INDEX dtypes.f32 [64, 33]
+103 Ops.INDEX dtypes.f32 [80, 33]
+104 Ops.CMPLT dtypes.bool [102, 103]
+105 Ops.INDEX dtypes.u16 [84, 33]
+106 Ops.INDEX dtypes.u16 [87, 33]
+107 Ops.WHERE dtypes.u16 [104, 105, 106]
+108 Ops.STACK dtypes.u16 [89, 95, 101, 107]
+109 Ops.STORE dtypes.void [44, 108]
+110 Ops.AFTER dtypes.void [0, 109]
+111 Ops.END dtypes.void [110, 5]
+112 Ops.SINK dtypes.void [111] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+113 Ops.SINK dtypes.void [42, 112]
+

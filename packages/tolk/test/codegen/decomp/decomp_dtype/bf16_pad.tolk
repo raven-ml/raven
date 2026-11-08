@@ -1,0 +1,82 @@
+# tolk D27 golden=9739bb8b25b128e68dc0596ab71ac219
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 12
+2 Ops.PARAM dtypes.bf16 [1] ParamArg(slot=0, dtype=dtypes.bf16)
+3 Ops.CONST dtypes.weakint [] 3
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
+6 Ops.CONST dtypes.weakint [] 2
+7 Ops.SHL dtypes.i32 [5, 6]
+8 Ops.INDEX dtypes.bf16 [2, 7]
+9 Ops.CONST dtypes.weakint [] 1
+10 Ops.CMPLT dtypes.bool [5, 9]
+11 Ops.CONST dtypes.weakfloat [] 1.5
+12 Ops.CONST dtypes.weakint [] 8
+13 Ops.PARAM dtypes.bf16 [12] ParamArg(slot=1, dtype=dtypes.bf16)
+14 Ops.CONST dtypes.weakint [] 0
+15 Ops.CAST dtypes.i32 [14] dtypes.i32
+16 Ops.CMPLT dtypes.bool [15, 5]
+17 Ops.CONST dtypes.weakint [] -2
+18 Ops.ADD dtypes.i32 [7, 17]
+19 Ops.CONST dtypes.bool [] Invalid
+20 Ops.WHERE dtypes.i32 [16, 18, 19]
+21 Ops.INDEX dtypes.bf16 [13, 20]
+22 Ops.LOAD dtypes.bf16 [21]
+23 Ops.WHERE dtypes.bf16 [10, 11, 22]
+24 Ops.STORE dtypes.void [8, 23]
+25 Ops.ADD dtypes.i32 [7, 9]
+26 Ops.INDEX dtypes.bf16 [2, 25]
+27 Ops.CONST dtypes.weakint [] -1
+28 Ops.ADD dtypes.i32 [7, 27]
+29 Ops.WHERE dtypes.i32 [16, 28, 19]
+30 Ops.INDEX dtypes.bf16 [13, 29]
+31 Ops.LOAD dtypes.bf16 [30]
+32 Ops.WHERE dtypes.bf16 [10, 11, 31]
+33 Ops.STORE dtypes.void [26, 32]
+34 Ops.ADD dtypes.i32 [7, 6]
+35 Ops.INDEX dtypes.bf16 [2, 34]
+36 Ops.CMPLT dtypes.bool [5, 6]
+37 Ops.WHERE dtypes.i32 [36, 7, 19]
+38 Ops.INDEX dtypes.bf16 [13, 37]
+39 Ops.LOAD dtypes.bf16 [38]
+40 Ops.WHERE dtypes.bf16 [36, 39, 11]
+41 Ops.STORE dtypes.void [35, 40]
+42 Ops.ADD dtypes.i32 [7, 3]
+43 Ops.INDEX dtypes.bf16 [2, 42]
+44 Ops.WHERE dtypes.i32 [36, 25, 19]
+45 Ops.INDEX dtypes.bf16 [13, 44]
+46 Ops.LOAD dtypes.bf16 [45]
+47 Ops.WHERE dtypes.bf16 [36, 46, 11]
+48 Ops.STORE dtypes.void [43, 47]
+49 Ops.AFTER dtypes.void [0, 24, 33, 41, 48]
+50 Ops.END dtypes.void [49, 5]
+51 Ops.SINK dtypes.void [50] KernelInfo(name="E_3_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+52 Ops.PARAM dtypes.u16 [1] ParamArg(slot=0, dtype=dtypes.u16)
+53 Ops.INDEX dtypes.u16 [52, 7]
+54 Ops.CONST dtypes.weakint [] 16320
+55 Ops.CAST dtypes.u16 [54] dtypes.u16
+56 Ops.PARAM dtypes.u16 [12] ParamArg(slot=1, dtype=dtypes.u16)
+57 Ops.INDEX dtypes.u16 [56, 20]
+58 Ops.LOAD dtypes.u16 [57]
+59 Ops.WHERE dtypes.u16 [10, 55, 58]
+60 Ops.STORE dtypes.void [53, 59]
+61 Ops.INDEX dtypes.u16 [52, 25]
+62 Ops.INDEX dtypes.u16 [56, 29]
+63 Ops.LOAD dtypes.u16 [62]
+64 Ops.WHERE dtypes.u16 [10, 55, 63]
+65 Ops.STORE dtypes.void [61, 64]
+66 Ops.INDEX dtypes.u16 [52, 34]
+67 Ops.INDEX dtypes.u16 [56, 37]
+68 Ops.LOAD dtypes.u16 [67]
+69 Ops.WHERE dtypes.u16 [36, 68, 55]
+70 Ops.STORE dtypes.void [66, 69]
+71 Ops.INDEX dtypes.u16 [52, 42]
+72 Ops.INDEX dtypes.u16 [56, 44]
+73 Ops.LOAD dtypes.u16 [72]
+74 Ops.WHERE dtypes.u16 [36, 73, 55]
+75 Ops.STORE dtypes.void [71, 74]
+76 Ops.AFTER dtypes.void [0, 60, 65, 70, 75]
+77 Ops.END dtypes.void [76, 5]
+78 Ops.SINK dtypes.void [77] KernelInfo(name="E_3_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+79 Ops.SINK dtypes.void [51, 78]
+

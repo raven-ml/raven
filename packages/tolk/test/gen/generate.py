@@ -78,6 +78,7 @@ UNMODIFIED = {
     "schedule/indexing",
     "codegen/decomp/transcendental",
     "codegen/simplify",
+    "codegen/decomp/decomp_dtype",
 }
 
 HERE = Path(__file__).resolve().parent

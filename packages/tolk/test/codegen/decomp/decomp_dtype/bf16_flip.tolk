@@ -1,0 +1,67 @@
+# tolk D27 golden=fcb752dbe7dc3e7069cd69c2ea7e2e5d
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.PARAM dtypes.bf16 [1] ParamArg(slot=0, dtype=dtypes.bf16)
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
+6 Ops.CONST dtypes.weakint [] 2
+7 Ops.SHL dtypes.i32 [5, 6]
+8 Ops.INDEX dtypes.bf16 [2, 7]
+9 Ops.PARAM dtypes.bf16 [1] ParamArg(slot=1, dtype=dtypes.bf16)
+10 Ops.CONST dtypes.weakint [] -4
+11 Ops.MUL dtypes.i32 [5, 10]
+12 Ops.CONST dtypes.weakint [] 15
+13 Ops.ADD dtypes.i32 [11, 12]
+14 Ops.INDEX dtypes.bf16 [9, 13]
+15 Ops.LOAD dtypes.bf16 [14]
+16 Ops.STORE dtypes.void [8, 15]
+17 Ops.CONST dtypes.weakint [] 1
+18 Ops.ADD dtypes.i32 [7, 17]
+19 Ops.INDEX dtypes.bf16 [2, 18]
+20 Ops.CONST dtypes.weakint [] 14
+21 Ops.ADD dtypes.i32 [11, 20]
+22 Ops.INDEX dtypes.bf16 [9, 21]
+23 Ops.LOAD dtypes.bf16 [22]
+24 Ops.STORE dtypes.void [19, 23]
+25 Ops.ADD dtypes.i32 [7, 6]
+26 Ops.INDEX dtypes.bf16 [2, 25]
+27 Ops.CONST dtypes.weakint [] 13
+28 Ops.ADD dtypes.i32 [11, 27]
+29 Ops.INDEX dtypes.bf16 [9, 28]
+30 Ops.LOAD dtypes.bf16 [29]
+31 Ops.STORE dtypes.void [26, 30]
+32 Ops.CONST dtypes.weakint [] 3
+33 Ops.ADD dtypes.i32 [7, 32]
+34 Ops.INDEX dtypes.bf16 [2, 33]
+35 Ops.CONST dtypes.weakint [] 12
+36 Ops.ADD dtypes.i32 [11, 35]
+37 Ops.INDEX dtypes.bf16 [9, 36]
+38 Ops.LOAD dtypes.bf16 [37]
+39 Ops.STORE dtypes.void [34, 38]
+40 Ops.AFTER dtypes.void [0, 16, 24, 31, 39]
+41 Ops.END dtypes.void [40, 5]
+42 Ops.SINK dtypes.void [41] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+43 Ops.PARAM dtypes.u16 [1] ParamArg(slot=0, dtype=dtypes.u16)
+44 Ops.INDEX dtypes.u16 [43, 7]
+45 Ops.PARAM dtypes.u16 [1] ParamArg(slot=1, dtype=dtypes.u16)
+46 Ops.INDEX dtypes.u16 [45, 13]
+47 Ops.LOAD dtypes.u16 [46]
+48 Ops.STORE dtypes.void [44, 47]
+49 Ops.INDEX dtypes.u16 [43, 18]
+50 Ops.INDEX dtypes.u16 [45, 21]
+51 Ops.LOAD dtypes.u16 [50]
+52 Ops.STORE dtypes.void [49, 51]
+53 Ops.INDEX dtypes.u16 [43, 25]
+54 Ops.INDEX dtypes.u16 [45, 28]
+55 Ops.LOAD dtypes.u16 [54]
+56 Ops.STORE dtypes.void [53, 55]
+57 Ops.INDEX dtypes.u16 [43, 33]
+58 Ops.INDEX dtypes.u16 [45, 36]
+59 Ops.LOAD dtypes.u16 [58]
+60 Ops.STORE dtypes.void [57, 59]
+61 Ops.AFTER dtypes.void [0, 48, 52, 56, 60]
+62 Ops.END dtypes.void [61, 5]
+63 Ops.SINK dtypes.void [62] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+64 Ops.SINK dtypes.void [42, 63]
+

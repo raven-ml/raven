@@ -50,29 +50,82 @@
 49 Ops.END dtypes.void [48, 5]
 50 Ops.SINK dtypes.void [49] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
 51 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8)
-52 Ops.SHRINK dtypes.u8 [51, 6, 8]
-53 Ops.PARAM dtypes.u8 [1] ParamArg(slot=2, dtype=dtypes.u8)
-54 Ops.SHRINK dtypes.u8 [53, 6, 8]
-55 Ops.LOAD dtypes.u8 [54]
-56 Ops.INDEX dtypes.u8 [55, 17]
-57 Ops.PARAM dtypes.u8 [1] ParamArg(slot=3, dtype=dtypes.u8)
-58 Ops.SHRINK dtypes.u8 [57, 6, 8]
-59 Ops.LOAD dtypes.u8 [58]
-60 Ops.INDEX dtypes.u8 [59, 17]
-61 Ops.WHERE dtypes.u8 [12, 56, 60]
-62 Ops.INDEX dtypes.u8 [55, 28]
-63 Ops.INDEX dtypes.u8 [59, 28]
-64 Ops.WHERE dtypes.u8 [27, 62, 63]
-65 Ops.INDEX dtypes.u8 [55, 4]
-66 Ops.INDEX dtypes.u8 [59, 4]
-67 Ops.WHERE dtypes.u8 [34, 65, 66]
-68 Ops.INDEX dtypes.u8 [55, 42]
-69 Ops.INDEX dtypes.u8 [59, 42]
-70 Ops.WHERE dtypes.u8 [41, 68, 69]
-71 Ops.STACK dtypes.u8 [61, 64, 67, 70]
-72 Ops.STORE dtypes.void [52, 71]
-73 Ops.AFTER dtypes.void [0, 72]
-74 Ops.END dtypes.void [73, 5]
-75 Ops.SINK dtypes.void [74] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
-76 Ops.SINK dtypes.void [50, 75]
+52 Ops.ADD dtypes.i32 [6, 16]
+53 Ops.INDEX dtypes.u8 [51, 52]
+54 Ops.CUSTOM_FUNCTION dtypes.u8 [0] CustomFunction(name="f2f f32 fp8e4m3 True", dtype=dtypes.u8, fmt=True)
+55 Ops.CUSTOM_FUNCTION dtypes.f32 [0] CustomFunction(name="f2f fp8e4m3 f32 True", dtype=dtypes.f32, fmt=True)
+56 Ops.PARAM dtypes.u8 [1] ParamArg(slot=2, dtype=dtypes.u8)
+57 Ops.INDEX dtypes.u8 [56, 52]
+58 Ops.LOAD dtypes.u8 [57]
+59 Ops.CALL dtypes.f32 [55, 58] CallInfo()
+60 Ops.INDEX dtypes.u8 [56, 25]
+61 Ops.LOAD dtypes.u8 [60]
+62 Ops.CALL dtypes.f32 [55, 61] CallInfo()
+63 Ops.INDEX dtypes.u8 [56, 32]
+64 Ops.LOAD dtypes.u8 [63]
+65 Ops.CALL dtypes.f32 [55, 64] CallInfo()
+66 Ops.INDEX dtypes.u8 [56, 39]
+67 Ops.LOAD dtypes.u8 [66]
+68 Ops.CALL dtypes.f32 [55, 67] CallInfo()
+69 Ops.STACK dtypes.f32 [59, 62, 65, 68]
+70 Ops.CAST dtypes.f32 [69] dtypes.f32
+71 Ops.INDEX dtypes.f32 [70, 17]
+72 Ops.CAST dtypes.f32 [71] dtypes.f32
+73 Ops.PARAM dtypes.u8 [1] ParamArg(slot=3, dtype=dtypes.u8)
+74 Ops.INDEX dtypes.u8 [73, 52]
+75 Ops.LOAD dtypes.u8 [74]
+76 Ops.CALL dtypes.f32 [55, 75] CallInfo()
+77 Ops.INDEX dtypes.u8 [73, 25]
+78 Ops.LOAD dtypes.u8 [77]
+79 Ops.CALL dtypes.f32 [55, 78] CallInfo()
+80 Ops.INDEX dtypes.u8 [73, 32]
+81 Ops.LOAD dtypes.u8 [80]
+82 Ops.CALL dtypes.f32 [55, 81] CallInfo()
+83 Ops.INDEX dtypes.u8 [73, 39]
+84 Ops.LOAD dtypes.u8 [83]
+85 Ops.CALL dtypes.f32 [55, 84] CallInfo()
+86 Ops.STACK dtypes.f32 [76, 79, 82, 85]
+87 Ops.CAST dtypes.f32 [86] dtypes.f32
+88 Ops.INDEX dtypes.f32 [87, 17]
+89 Ops.CAST dtypes.f32 [88] dtypes.f32
+90 Ops.WHERE dtypes.f32 [12, 72, 89]
+91 Ops.CAST dtypes.f32 [90] dtypes.f32
+92 Ops.BITCAST dtypes.u32 [91] dtypes.u32
+93 Ops.CALL dtypes.u8 [54, 92] CallInfo()
+94 Ops.STORE dtypes.void [53, 93]
+95 Ops.INDEX dtypes.u8 [51, 25]
+96 Ops.INDEX dtypes.f32 [70, 28]
+97 Ops.CAST dtypes.f32 [96] dtypes.f32
+98 Ops.INDEX dtypes.f32 [87, 28]
+99 Ops.CAST dtypes.f32 [98] dtypes.f32
+100 Ops.WHERE dtypes.f32 [27, 97, 99]
+101 Ops.CAST dtypes.f32 [100] dtypes.f32
+102 Ops.BITCAST dtypes.u32 [101] dtypes.u32
+103 Ops.CALL dtypes.u8 [54, 102] CallInfo()
+104 Ops.STORE dtypes.void [95, 103]
+105 Ops.INDEX dtypes.u8 [51, 32]
+106 Ops.INDEX dtypes.f32 [70, 4]
+107 Ops.CAST dtypes.f32 [106] dtypes.f32
+108 Ops.INDEX dtypes.f32 [87, 4]
+109 Ops.CAST dtypes.f32 [108] dtypes.f32
+110 Ops.WHERE dtypes.f32 [34, 107, 109]
+111 Ops.CAST dtypes.f32 [110] dtypes.f32
+112 Ops.BITCAST dtypes.u32 [111] dtypes.u32
+113 Ops.CALL dtypes.u8 [54, 112] CallInfo()
+114 Ops.STORE dtypes.void [105, 113]
+115 Ops.INDEX dtypes.u8 [51, 39]
+116 Ops.INDEX dtypes.f32 [70, 42]
+117 Ops.CAST dtypes.f32 [116] dtypes.f32
+118 Ops.INDEX dtypes.f32 [87, 42]
+119 Ops.CAST dtypes.f32 [118] dtypes.f32
+120 Ops.WHERE dtypes.f32 [41, 117, 119]
+121 Ops.CAST dtypes.f32 [120] dtypes.f32
+122 Ops.BITCAST dtypes.u32 [121] dtypes.u32
+123 Ops.CALL dtypes.u8 [54, 122] CallInfo()
+124 Ops.STORE dtypes.void [115, 123]
+125 Ops.AFTER dtypes.void [0, 94, 104, 114, 124]
+126 Ops.AFTER dtypes.void [0, 125]
+127 Ops.END dtypes.void [126, 5]
+128 Ops.SINK dtypes.void [127] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+129 Ops.SINK dtypes.void [50, 128]
 
