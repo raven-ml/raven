@@ -1,0 +1,24 @@
+# tolk D280 golden=8bb06628cf21452c252840d4fc92219a
+0 Ops.CONST dtypes.weakint [] 4096
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 64
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+4 Ops.CONST dtypes.weakint [] 4
+5 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 1)
+6 Ops.CONST dtypes.weakint [] 16
+7 Ops.MUL dtypes.weakint [5, 6]
+8 Ops.RANGE dtypes.weakint [6] (AxisType.UPCAST, 2)
+9 Ops.ADD dtypes.weakint [7, 8]
+10 Ops.AFTER dtypes.f32 [1, 3, 9]
+11 Ops.MUL dtypes.weakint [3, 2]
+12 Ops.ADD dtypes.weakint [11, 9]
+13 Ops.INDEX dtypes.f32 [10, 12]
+14 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+15 Ops.INDEX dtypes.f32 [14, 12]
+16 Ops.PARAM dtypes.f32 [2] ParamArg(slot=2, dtype=dtypes.f32)
+17 Ops.INDEX dtypes.f32 [16, 3]
+18 Ops.ADD dtypes.f32 [15, 17]
+19 Ops.STORE dtypes.void [13, 18]
+20 Ops.END dtypes.void [19, 3, 5, 8]
+21 Ops.SINK dtypes.void [20] KernelInfo(name="E_64_4_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.UPCAST)),), optimized=True)
+

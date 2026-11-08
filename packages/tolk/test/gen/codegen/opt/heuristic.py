@@ -43,9 +43,8 @@ RENDERERS = {
 
 @table
 def renderers():
-    return ["renderer", "device", "arch", "has_local", "has_shared", "shared_max", "tensor_cores", "registers", "per_byte_first"], [
-        (name, r.target.device, r.target.arch, r.has_local, r.has_shared, r.shared_max, len(r.tensor_cores),
-         "" if r.registers is None else f"{r.registers[0]}x{r.registers[1]}", r.per_byte_first)
+    return ["renderer", "device", "arch", "has_local", "has_shared", "shared_max", "tensor_cores"], [
+        (name, r.target.device, r.target.arch, r.has_local, r.has_shared, r.shared_max, len(r.tensor_cores))
         for name, r in RENDERERS.items()]
 
 
@@ -61,51 +60,6 @@ def readout():
 
 
 def empty(*shape, dtype=dtypes.float): return Tensor.empty(*shape, dtype=dtype)
-
-
-def decoded(n, k):
-    """An [n, k] matrix decoded by a table: each code byte is a row of two
-    values, scaled by its group of 32."""
-    table, codes, scales = empty(256, 2), empty(n, k // 2, dtype=dtypes.uint8), empty(n, k // 32)
-    rows = codes.cast(dtypes.int32).maximum(0).minimum(255).cast(dtypes.weakint)
-    values = Tensor(table.uop.index(rows.uop))
-    return (values.reshape(n, k // 32, 32) * scales.reshape(n, k // 32, 1)).reshape(n, k)
-
-
-def routed(blocks, rows, n, k, experts):
-    """Blocks of `rows` rows, each block's rows multiplied by the [n, k] matrix of its expert among `experts`, decoded from 4-bit
-    codes, two a byte, and a scale per 32: a product of positions sorted by expert, the expert of row r its block's, at r // rows."""
-    owner = empty(blocks, dtype=dtypes.int).maximum(0).minimum(experts - 1).cast(dtypes.weakint)
-    owner = owner.reshape(blocks, 1).expand(blocks, rows).reshape(blocks * rows)
-    def gather(t, m): return Tensor(t.reshape(experts, m).uop.index(owner.uop))
-    codes = gather(empty(experts * n * k // 2, dtype=dtypes.uint8), n * k // 2)
-    scales = gather(empty(experts * n * k // 32), n * k // 32)
-    values = Tensor.stack(codes & 15, codes >> 4, dim=-1).cast(dtypes.float).reshape(blocks * rows, n, k // 32, 32)
-    w = (values * scales.reshape(blocks * rows, n, k // 32, 1)).reshape(blocks * rows, n, k)
-    return empty(blocks * rows, 1, k) @ w.transpose(1, 2)
-
-
-def routed_bfloat16(blocks, rows, n, k, experts):
-    """`routed` at bfloat16, as a prompt's experts multiply: bfloat16 rows, and codes decoded to bfloat16 values, which hold them
-    exactly, each operand widened to float32 for the product."""
-    owner = empty(blocks, dtype=dtypes.int).maximum(0).minimum(experts - 1).cast(dtypes.weakint)
-    owner = owner.reshape(blocks, 1).expand(blocks, rows).reshape(blocks * rows)
-    def gather(t, m): return Tensor(t.reshape(experts, m).uop.index(owner.uop))
-    codes = gather(empty(experts * n * k // 2, dtype=dtypes.uint8), n * k // 2)
-    scales = gather(empty(experts * n * k // 32, dtype=dtypes.bfloat16), n * k // 32)
-    values = Tensor.stack(codes & 15, codes >> 4, dim=-1).cast(dtypes.bfloat16).reshape(blocks * rows, n, k // 32, 32)
-    w = (values * scales.reshape(blocks * rows, n, k // 32, 1)).reshape(blocks * rows, n, k)
-    return empty(blocks * rows, 1, k, dtype=dtypes.bfloat16).float() @ w.float().transpose(1, 2)
-
-
-def routed_by_argmax(rows, n, k, experts):
-    """Each of `rows` rows multiplied by the [n, k] matrix of its expert, which the kernel finds as the argmax over the experts of a
-    score of the row's position and the expert's: a reduction an operand reads that runs in none of the contraction's ranges."""
-    position = Tensor.arange(rows, dtype=dtypes.int).reshape(rows, 1)
-    scores = (position * 7 + Tensor.arange(experts, dtype=dtypes.int).reshape(1, experts) * 3) % 11
-    owner = scores.argmax(1).maximum(0).minimum(experts - 1).cast(dtypes.weakint)
-    w = Tensor(empty(experts, n * k).uop.index(owner.uop)).reshape(rows, n, k)
-    return empty(rows, 1, k) @ w.transpose(1, 2)
 
 
 def q8_0(n, k):
@@ -188,18 +142,13 @@ KERNELS = {
     "vecmat_1000": lambda: last(empty(1, 4096) @ empty(4096, 1000)),
     "matvec": lambda: last(empty(1024, 4096) @ empty(4096, 1)),
     "vecmat_of_cast": lambda: last(empty(1, 4096, dtype=dtypes.bfloat16).float() @ empty(4096, 1024)),
-    "vecmat_decoded": lambda: last(empty(1, 4096) @ decoded(1024, 4096).T),
     "vecmat_normed": lambda: last((empty(1, 4096) / empty(1, 1) * empty(4096)) @ empty(4096, 1024)),
     "vecmat_wide": lambda: last(empty(1, 256) @ empty(256, 65536)),
     # gpt-oss-20b's decode products, the experts already selected: a projection of a normalised activation by a bfloat16
-    # matrix, and four experts' MXFP4 products, gate and up of the normalised activation, then down of each expert's own
-    # activation, scaled and summed over the experts
+    # matrix
     "gpt_oss_qkv": lambda: last(normed(2880) @ empty(2880, 4096, dtype=dtypes.bfloat16).float()),
     "gpt_oss_kv": lambda: last(normed(2880) @ empty(2880, 512, dtype=dtypes.bfloat16).float()),
     "gpt_oss_router": lambda: last(normed(2880) @ empty(2880, 32, dtype=dtypes.bfloat16).float()),
-    "gpt_oss_gate_up": lambda: last(normed(2880) @ decoded(4 * 5760, 2880).T),
-    "gpt_oss_down": lambda: last(((empty(4, 1, 2880) @ decoded(4 * 2880, 2880).reshape(4, 2880, 2880).transpose(1, 2)).relu()
-                                  * empty(4, 1, 1)).sum(0)),
     # a contraction's operand of least reuse is streamed: a prompt's rows share each element of the matrix, 4, 12 and 32 times
     "rows_m4": lambda: last(rows(4)),
     "rows_m12": lambda: last(rows(12)),
@@ -207,26 +156,9 @@ KERNELS = {
     # 16 rows summing 64 values each: a sum short enough that a tensor core takes it first
     "rows_short": lambda: last(empty(16, 64, dtype=dtypes.bfloat16).float() @ empty(32, 64, dtype=dtypes.bfloat16).float().T),
     # quantised matrices whose codes run along a range other than the first of the reduce: Q8_0's 32 values of a block of 34
-    # bytes, and GGUF's MXFP4 blocks of 17 bytes, 16 bytes of codes each, at one token; MXFP4 decoded by a table at 12 tokens
+    # bytes, and GGUF's MXFP4 blocks of 17 bytes, 16 bytes of codes each, at one token
     "q8_0_blocks": lambda: last(empty(1, 256) @ q8_0(64, 256).T),
     "gguf_mxfp4": lambda: last(empty(1, 256) @ gguf_mxfp4(64, 256).T),
-    "mxfp4_m12": lambda: last(empty(12, 256) @ decoded(64, 256).T),
-    # a prompt's routed product, its positions sorted by expert into blocks of 2 rows that share their expert's matrix
-    "routed_blocks": lambda: last(routed(8, 2, 64, 64, 4)),
-    # the same at bfloat16 in blocks of 64 rows, tiles of a tensor core: the rows are the core's M, each block's matrix its B
-    "routed_tiles": lambda: last(routed_bfloat16(4, 64, 64, 64, 4)),
-    # blocks of 16 rows over 256 values, as a prompt's routed products: 16 blocks sharing 2 experts' matrices do 227 multiply-adds
-    # per byte of them and take a tensor core, 4 blocks each of its own expert do 28 and stream
-    "routed_shared": lambda: last(routed_bfloat16(16, 16, 64, 256, 2)),
-    "routed_own": lambda: last(routed_bfloat16(4, 16, 64, 256, 4)),
-    # either side of the bound: 9 blocks over 4 experts do 63.9 multiply-adds a byte and stream, 10 blocks do 71.0 and take a core
-    "routed_at_bound": lambda: last(routed_bfloat16(9, 16, 64, 256, 4)),
-    "routed_past_bound": lambda: last(routed_bfloat16(10, 16, 64, 256, 4)),
-    # routed rows whose experts the kernel finds by an argmax over the experts, as a router computed in the same program would
-    "routed_by_argmax": lambda: last(routed_by_argmax(16, 64, 256, 8)),
-    # 1280 rows in blocks of 16 to 128 over 4 experts, on a core: the core's M upcast keeps a warp's rows in one block where one of
-    # its candidates does, 2 rows of tiles at 32 and 4 at 64 and 128 where 5 divides the tiles, and takes 5 at 16
-    **{f"routed_run_{c}": (lambda c=c: last(routed_bfloat16(1280 // c, c, 64, 256, 4))) for c in [16, 32, 64, 128]},
     # a bfloat16 product of a value another kernel stores: attention's heads, merged, then projected
     "projection_of_stored": lambda: last((empty(4, 64, 16, dtype=dtypes.bfloat16).float() @ empty(4, 16, 16, dtype=dtypes.bfloat16).float())
                                          .cast(dtypes.bfloat16).permute(1, 0, 2).reshape(64, 64).float()

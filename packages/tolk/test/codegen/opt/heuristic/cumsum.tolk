@@ -1,0 +1,29 @@
+# tolk D280 golden=ffbd8120af553dede3958482f766e3b2
+0 Ops.CONST dtypes.weakint [] 256
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 16
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+4 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
+5 Ops.AFTER dtypes.f32 [1, 3, 4]
+6 Ops.MUL dtypes.weakint [3, 2]
+7 Ops.ADD dtypes.weakint [6, 4]
+8 Ops.INDEX dtypes.f32 [5, 7]
+9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+10 Ops.INDEX dtypes.f32 [9, 7]
+11 Ops.CONST dtypes.weakint [] 1
+12 Ops.CMPLT dtypes.bool [3, 11]
+13 Ops.CONST dtypes.weakfloat [] 0.0
+14 Ops.PARAM dtypes.f32 [2] ParamArg(slot=2, dtype=dtypes.f32)
+15 Ops.CONST dtypes.bool [] False
+16 Ops.CMPEQ dtypes.bool [12, 15]
+17 Ops.CONST dtypes.weakint [] -1
+18 Ops.ADD dtypes.weakint [3, 17]
+19 Ops.CONST dtypes.bool [] Invalid
+20 Ops.WHERE dtypes.weakint [16, 18, 19]
+21 Ops.INDEX dtypes.f32 [14, 20]
+22 Ops.WHERE dtypes.f32 [12, 13, 21]
+23 Ops.ADD dtypes.f32 [10, 22]
+24 Ops.STORE dtypes.void [8, 23]
+25 Ops.END dtypes.void [24, 3, 4]
+26 Ops.SINK dtypes.void [25] KernelInfo()
+

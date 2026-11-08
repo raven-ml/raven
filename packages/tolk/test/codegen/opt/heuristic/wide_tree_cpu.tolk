@@ -1,0 +1,329 @@
+# tolk D141 D280 golden=956ebf6ba52f255d457d27cdb652016e
+0 Ops.CONST dtypes.weakint [] 4096
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+3 Ops.AFTER dtypes.f32 [1, 2]
+4 Ops.INDEX dtypes.f32 [3, 2]
+5 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+6 Ops.INDEX dtypes.f32 [5, 2]
+7 Ops.CONST dtypes.weakfloat [] 1.5
+8 Ops.MUL dtypes.f32 [6, 7]
+9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32)
+10 Ops.INDEX dtypes.f32 [9, 2]
+11 Ops.CONST dtypes.weakfloat [] 2.5
+12 Ops.MUL dtypes.f32 [10, 11]
+13 Ops.ADD dtypes.f32 [8, 12]
+14 Ops.PARAM dtypes.f32 [0] ParamArg(slot=3, dtype=dtypes.f32)
+15 Ops.INDEX dtypes.f32 [14, 2]
+16 Ops.CONST dtypes.weakfloat [] 3.5
+17 Ops.MUL dtypes.f32 [15, 16]
+18 Ops.PARAM dtypes.f32 [0] ParamArg(slot=4, dtype=dtypes.f32)
+19 Ops.INDEX dtypes.f32 [18, 2]
+20 Ops.CONST dtypes.weakfloat [] 4.5
+21 Ops.MUL dtypes.f32 [19, 20]
+22 Ops.ADD dtypes.f32 [17, 21]
+23 Ops.ADD dtypes.f32 [13, 22]
+24 Ops.PARAM dtypes.f32 [0] ParamArg(slot=5, dtype=dtypes.f32)
+25 Ops.INDEX dtypes.f32 [24, 2]
+26 Ops.CONST dtypes.weakfloat [] 5.5
+27 Ops.MUL dtypes.f32 [25, 26]
+28 Ops.PARAM dtypes.f32 [0] ParamArg(slot=6, dtype=dtypes.f32)
+29 Ops.INDEX dtypes.f32 [28, 2]
+30 Ops.CONST dtypes.weakfloat [] 6.5
+31 Ops.MUL dtypes.f32 [29, 30]
+32 Ops.ADD dtypes.f32 [27, 31]
+33 Ops.PARAM dtypes.f32 [0] ParamArg(slot=7, dtype=dtypes.f32)
+34 Ops.INDEX dtypes.f32 [33, 2]
+35 Ops.CONST dtypes.weakfloat [] 7.5
+36 Ops.MUL dtypes.f32 [34, 35]
+37 Ops.PARAM dtypes.f32 [0] ParamArg(slot=8, dtype=dtypes.f32)
+38 Ops.INDEX dtypes.f32 [37, 2]
+39 Ops.CONST dtypes.weakfloat [] 8.5
+40 Ops.MUL dtypes.f32 [38, 39]
+41 Ops.ADD dtypes.f32 [36, 40]
+42 Ops.ADD dtypes.f32 [32, 41]
+43 Ops.ADD dtypes.f32 [23, 42]
+44 Ops.PARAM dtypes.f32 [0] ParamArg(slot=9, dtype=dtypes.f32)
+45 Ops.INDEX dtypes.f32 [44, 2]
+46 Ops.CONST dtypes.weakfloat [] 9.5
+47 Ops.MUL dtypes.f32 [45, 46]
+48 Ops.PARAM dtypes.f32 [0] ParamArg(slot=10, dtype=dtypes.f32)
+49 Ops.INDEX dtypes.f32 [48, 2]
+50 Ops.CONST dtypes.weakfloat [] 10.5
+51 Ops.MUL dtypes.f32 [49, 50]
+52 Ops.ADD dtypes.f32 [47, 51]
+53 Ops.PARAM dtypes.f32 [0] ParamArg(slot=11, dtype=dtypes.f32)
+54 Ops.INDEX dtypes.f32 [53, 2]
+55 Ops.CONST dtypes.weakfloat [] 11.5
+56 Ops.MUL dtypes.f32 [54, 55]
+57 Ops.PARAM dtypes.f32 [0] ParamArg(slot=12, dtype=dtypes.f32)
+58 Ops.INDEX dtypes.f32 [57, 2]
+59 Ops.CONST dtypes.weakfloat [] 12.5
+60 Ops.MUL dtypes.f32 [58, 59]
+61 Ops.ADD dtypes.f32 [56, 60]
+62 Ops.ADD dtypes.f32 [52, 61]
+63 Ops.PARAM dtypes.f32 [0] ParamArg(slot=13, dtype=dtypes.f32)
+64 Ops.INDEX dtypes.f32 [63, 2]
+65 Ops.CONST dtypes.weakfloat [] 13.5
+66 Ops.MUL dtypes.f32 [64, 65]
+67 Ops.PARAM dtypes.f32 [0] ParamArg(slot=14, dtype=dtypes.f32)
+68 Ops.INDEX dtypes.f32 [67, 2]
+69 Ops.CONST dtypes.weakfloat [] 14.5
+70 Ops.MUL dtypes.f32 [68, 69]
+71 Ops.ADD dtypes.f32 [66, 70]
+72 Ops.PARAM dtypes.f32 [0] ParamArg(slot=15, dtype=dtypes.f32)
+73 Ops.INDEX dtypes.f32 [72, 2]
+74 Ops.CONST dtypes.weakfloat [] 15.5
+75 Ops.MUL dtypes.f32 [73, 74]
+76 Ops.PARAM dtypes.f32 [0] ParamArg(slot=16, dtype=dtypes.f32)
+77 Ops.INDEX dtypes.f32 [76, 2]
+78 Ops.CONST dtypes.weakfloat [] 16.5
+79 Ops.MUL dtypes.f32 [77, 78]
+80 Ops.ADD dtypes.f32 [75, 79]
+81 Ops.ADD dtypes.f32 [71, 80]
+82 Ops.ADD dtypes.f32 [62, 81]
+83 Ops.ADD dtypes.f32 [43, 82]
+84 Ops.PARAM dtypes.f32 [0] ParamArg(slot=17, dtype=dtypes.f32)
+85 Ops.INDEX dtypes.f32 [84, 2]
+86 Ops.CONST dtypes.weakfloat [] 17.5
+87 Ops.MUL dtypes.f32 [85, 86]
+88 Ops.PARAM dtypes.f32 [0] ParamArg(slot=18, dtype=dtypes.f32)
+89 Ops.INDEX dtypes.f32 [88, 2]
+90 Ops.CONST dtypes.weakfloat [] 18.5
+91 Ops.MUL dtypes.f32 [89, 90]
+92 Ops.ADD dtypes.f32 [87, 91]
+93 Ops.PARAM dtypes.f32 [0] ParamArg(slot=19, dtype=dtypes.f32)
+94 Ops.INDEX dtypes.f32 [93, 2]
+95 Ops.CONST dtypes.weakfloat [] 19.5
+96 Ops.MUL dtypes.f32 [94, 95]
+97 Ops.PARAM dtypes.f32 [0] ParamArg(slot=20, dtype=dtypes.f32)
+98 Ops.INDEX dtypes.f32 [97, 2]
+99 Ops.CONST dtypes.weakfloat [] 20.5
+100 Ops.MUL dtypes.f32 [98, 99]
+101 Ops.ADD dtypes.f32 [96, 100]
+102 Ops.ADD dtypes.f32 [92, 101]
+103 Ops.PARAM dtypes.f32 [0] ParamArg(slot=21, dtype=dtypes.f32)
+104 Ops.INDEX dtypes.f32 [103, 2]
+105 Ops.CONST dtypes.weakfloat [] 21.5
+106 Ops.MUL dtypes.f32 [104, 105]
+107 Ops.PARAM dtypes.f32 [0] ParamArg(slot=22, dtype=dtypes.f32)
+108 Ops.INDEX dtypes.f32 [107, 2]
+109 Ops.CONST dtypes.weakfloat [] 22.5
+110 Ops.MUL dtypes.f32 [108, 109]
+111 Ops.ADD dtypes.f32 [106, 110]
+112 Ops.PARAM dtypes.f32 [0] ParamArg(slot=23, dtype=dtypes.f32)
+113 Ops.INDEX dtypes.f32 [112, 2]
+114 Ops.CONST dtypes.weakfloat [] 23.5
+115 Ops.MUL dtypes.f32 [113, 114]
+116 Ops.PARAM dtypes.f32 [0] ParamArg(slot=24, dtype=dtypes.f32)
+117 Ops.INDEX dtypes.f32 [116, 2]
+118 Ops.CONST dtypes.weakfloat [] 24.5
+119 Ops.MUL dtypes.f32 [117, 118]
+120 Ops.ADD dtypes.f32 [115, 119]
+121 Ops.ADD dtypes.f32 [111, 120]
+122 Ops.ADD dtypes.f32 [102, 121]
+123 Ops.PARAM dtypes.f32 [0] ParamArg(slot=25, dtype=dtypes.f32)
+124 Ops.INDEX dtypes.f32 [123, 2]
+125 Ops.CONST dtypes.weakfloat [] 25.5
+126 Ops.MUL dtypes.f32 [124, 125]
+127 Ops.PARAM dtypes.f32 [0] ParamArg(slot=26, dtype=dtypes.f32)
+128 Ops.INDEX dtypes.f32 [127, 2]
+129 Ops.CONST dtypes.weakfloat [] 26.5
+130 Ops.MUL dtypes.f32 [128, 129]
+131 Ops.ADD dtypes.f32 [126, 130]
+132 Ops.PARAM dtypes.f32 [0] ParamArg(slot=27, dtype=dtypes.f32)
+133 Ops.INDEX dtypes.f32 [132, 2]
+134 Ops.CONST dtypes.weakfloat [] 27.5
+135 Ops.MUL dtypes.f32 [133, 134]
+136 Ops.PARAM dtypes.f32 [0] ParamArg(slot=28, dtype=dtypes.f32)
+137 Ops.INDEX dtypes.f32 [136, 2]
+138 Ops.CONST dtypes.weakfloat [] 28.5
+139 Ops.MUL dtypes.f32 [137, 138]
+140 Ops.ADD dtypes.f32 [135, 139]
+141 Ops.ADD dtypes.f32 [131, 140]
+142 Ops.PARAM dtypes.f32 [0] ParamArg(slot=29, dtype=dtypes.f32)
+143 Ops.INDEX dtypes.f32 [142, 2]
+144 Ops.CONST dtypes.weakfloat [] 29.5
+145 Ops.MUL dtypes.f32 [143, 144]
+146 Ops.PARAM dtypes.f32 [0] ParamArg(slot=30, dtype=dtypes.f32)
+147 Ops.INDEX dtypes.f32 [146, 2]
+148 Ops.CONST dtypes.weakfloat [] 30.5
+149 Ops.MUL dtypes.f32 [147, 148]
+150 Ops.ADD dtypes.f32 [145, 149]
+151 Ops.PARAM dtypes.f32 [0] ParamArg(slot=31, dtype=dtypes.f32)
+152 Ops.INDEX dtypes.f32 [151, 2]
+153 Ops.CONST dtypes.weakfloat [] 31.5
+154 Ops.MUL dtypes.f32 [152, 153]
+155 Ops.PARAM dtypes.f32 [0] ParamArg(slot=32, dtype=dtypes.f32)
+156 Ops.INDEX dtypes.f32 [155, 2]
+157 Ops.CONST dtypes.weakfloat [] 32.5
+158 Ops.MUL dtypes.f32 [156, 157]
+159 Ops.ADD dtypes.f32 [154, 158]
+160 Ops.ADD dtypes.f32 [150, 159]
+161 Ops.ADD dtypes.f32 [141, 160]
+162 Ops.ADD dtypes.f32 [122, 161]
+163 Ops.ADD dtypes.f32 [83, 162]
+164 Ops.PARAM dtypes.f32 [0] ParamArg(slot=33, dtype=dtypes.f32)
+165 Ops.INDEX dtypes.f32 [164, 2]
+166 Ops.CONST dtypes.weakfloat [] 33.5
+167 Ops.MUL dtypes.f32 [165, 166]
+168 Ops.PARAM dtypes.f32 [0] ParamArg(slot=34, dtype=dtypes.f32)
+169 Ops.INDEX dtypes.f32 [168, 2]
+170 Ops.CONST dtypes.weakfloat [] 34.5
+171 Ops.MUL dtypes.f32 [169, 170]
+172 Ops.ADD dtypes.f32 [167, 171]
+173 Ops.PARAM dtypes.f32 [0] ParamArg(slot=35, dtype=dtypes.f32)
+174 Ops.INDEX dtypes.f32 [173, 2]
+175 Ops.CONST dtypes.weakfloat [] 35.5
+176 Ops.MUL dtypes.f32 [174, 175]
+177 Ops.PARAM dtypes.f32 [0] ParamArg(slot=36, dtype=dtypes.f32)
+178 Ops.INDEX dtypes.f32 [177, 2]
+179 Ops.CONST dtypes.weakfloat [] 36.5
+180 Ops.MUL dtypes.f32 [178, 179]
+181 Ops.ADD dtypes.f32 [176, 180]
+182 Ops.ADD dtypes.f32 [172, 181]
+183 Ops.PARAM dtypes.f32 [0] ParamArg(slot=37, dtype=dtypes.f32)
+184 Ops.INDEX dtypes.f32 [183, 2]
+185 Ops.CONST dtypes.weakfloat [] 37.5
+186 Ops.MUL dtypes.f32 [184, 185]
+187 Ops.PARAM dtypes.f32 [0] ParamArg(slot=38, dtype=dtypes.f32)
+188 Ops.INDEX dtypes.f32 [187, 2]
+189 Ops.CONST dtypes.weakfloat [] 38.5
+190 Ops.MUL dtypes.f32 [188, 189]
+191 Ops.ADD dtypes.f32 [186, 190]
+192 Ops.PARAM dtypes.f32 [0] ParamArg(slot=39, dtype=dtypes.f32)
+193 Ops.INDEX dtypes.f32 [192, 2]
+194 Ops.CONST dtypes.weakfloat [] 39.5
+195 Ops.MUL dtypes.f32 [193, 194]
+196 Ops.PARAM dtypes.f32 [0] ParamArg(slot=40, dtype=dtypes.f32)
+197 Ops.INDEX dtypes.f32 [196, 2]
+198 Ops.CONST dtypes.weakfloat [] 40.5
+199 Ops.MUL dtypes.f32 [197, 198]
+200 Ops.ADD dtypes.f32 [195, 199]
+201 Ops.ADD dtypes.f32 [191, 200]
+202 Ops.ADD dtypes.f32 [182, 201]
+203 Ops.PARAM dtypes.f32 [0] ParamArg(slot=41, dtype=dtypes.f32)
+204 Ops.INDEX dtypes.f32 [203, 2]
+205 Ops.CONST dtypes.weakfloat [] 41.5
+206 Ops.MUL dtypes.f32 [204, 205]
+207 Ops.PARAM dtypes.f32 [0] ParamArg(slot=42, dtype=dtypes.f32)
+208 Ops.INDEX dtypes.f32 [207, 2]
+209 Ops.CONST dtypes.weakfloat [] 42.5
+210 Ops.MUL dtypes.f32 [208, 209]
+211 Ops.ADD dtypes.f32 [206, 210]
+212 Ops.PARAM dtypes.f32 [0] ParamArg(slot=43, dtype=dtypes.f32)
+213 Ops.INDEX dtypes.f32 [212, 2]
+214 Ops.CONST dtypes.weakfloat [] 43.5
+215 Ops.MUL dtypes.f32 [213, 214]
+216 Ops.PARAM dtypes.f32 [0] ParamArg(slot=44, dtype=dtypes.f32)
+217 Ops.INDEX dtypes.f32 [216, 2]
+218 Ops.CONST dtypes.weakfloat [] 44.5
+219 Ops.MUL dtypes.f32 [217, 218]
+220 Ops.ADD dtypes.f32 [215, 219]
+221 Ops.ADD dtypes.f32 [211, 220]
+222 Ops.PARAM dtypes.f32 [0] ParamArg(slot=45, dtype=dtypes.f32)
+223 Ops.INDEX dtypes.f32 [222, 2]
+224 Ops.CONST dtypes.weakfloat [] 45.5
+225 Ops.MUL dtypes.f32 [223, 224]
+226 Ops.PARAM dtypes.f32 [0] ParamArg(slot=46, dtype=dtypes.f32)
+227 Ops.INDEX dtypes.f32 [226, 2]
+228 Ops.CONST dtypes.weakfloat [] 46.5
+229 Ops.MUL dtypes.f32 [227, 228]
+230 Ops.ADD dtypes.f32 [225, 229]
+231 Ops.PARAM dtypes.f32 [0] ParamArg(slot=47, dtype=dtypes.f32)
+232 Ops.INDEX dtypes.f32 [231, 2]
+233 Ops.CONST dtypes.weakfloat [] 47.5
+234 Ops.MUL dtypes.f32 [232, 233]
+235 Ops.PARAM dtypes.f32 [0] ParamArg(slot=48, dtype=dtypes.f32)
+236 Ops.INDEX dtypes.f32 [235, 2]
+237 Ops.CONST dtypes.weakfloat [] 48.5
+238 Ops.MUL dtypes.f32 [236, 237]
+239 Ops.ADD dtypes.f32 [234, 238]
+240 Ops.ADD dtypes.f32 [230, 239]
+241 Ops.ADD dtypes.f32 [221, 240]
+242 Ops.ADD dtypes.f32 [202, 241]
+243 Ops.PARAM dtypes.f32 [0] ParamArg(slot=49, dtype=dtypes.f32)
+244 Ops.INDEX dtypes.f32 [243, 2]
+245 Ops.CONST dtypes.weakfloat [] 49.5
+246 Ops.MUL dtypes.f32 [244, 245]
+247 Ops.PARAM dtypes.f32 [0] ParamArg(slot=50, dtype=dtypes.f32)
+248 Ops.INDEX dtypes.f32 [247, 2]
+249 Ops.CONST dtypes.weakfloat [] 50.5
+250 Ops.MUL dtypes.f32 [248, 249]
+251 Ops.ADD dtypes.f32 [246, 250]
+252 Ops.PARAM dtypes.f32 [0] ParamArg(slot=51, dtype=dtypes.f32)
+253 Ops.INDEX dtypes.f32 [252, 2]
+254 Ops.CONST dtypes.weakfloat [] 51.5
+255 Ops.MUL dtypes.f32 [253, 254]
+256 Ops.PARAM dtypes.f32 [0] ParamArg(slot=52, dtype=dtypes.f32)
+257 Ops.INDEX dtypes.f32 [256, 2]
+258 Ops.CONST dtypes.weakfloat [] 52.5
+259 Ops.MUL dtypes.f32 [257, 258]
+260 Ops.ADD dtypes.f32 [255, 259]
+261 Ops.ADD dtypes.f32 [251, 260]
+262 Ops.PARAM dtypes.f32 [0] ParamArg(slot=53, dtype=dtypes.f32)
+263 Ops.INDEX dtypes.f32 [262, 2]
+264 Ops.CONST dtypes.weakfloat [] 53.5
+265 Ops.MUL dtypes.f32 [263, 264]
+266 Ops.PARAM dtypes.f32 [0] ParamArg(slot=54, dtype=dtypes.f32)
+267 Ops.INDEX dtypes.f32 [266, 2]
+268 Ops.CONST dtypes.weakfloat [] 54.5
+269 Ops.MUL dtypes.f32 [267, 268]
+270 Ops.ADD dtypes.f32 [265, 269]
+271 Ops.PARAM dtypes.f32 [0] ParamArg(slot=55, dtype=dtypes.f32)
+272 Ops.INDEX dtypes.f32 [271, 2]
+273 Ops.CONST dtypes.weakfloat [] 55.5
+274 Ops.MUL dtypes.f32 [272, 273]
+275 Ops.PARAM dtypes.f32 [0] ParamArg(slot=56, dtype=dtypes.f32)
+276 Ops.INDEX dtypes.f32 [275, 2]
+277 Ops.CONST dtypes.weakfloat [] 56.5
+278 Ops.MUL dtypes.f32 [276, 277]
+279 Ops.ADD dtypes.f32 [274, 278]
+280 Ops.ADD dtypes.f32 [270, 279]
+281 Ops.ADD dtypes.f32 [261, 280]
+282 Ops.PARAM dtypes.f32 [0] ParamArg(slot=57, dtype=dtypes.f32)
+283 Ops.INDEX dtypes.f32 [282, 2]
+284 Ops.CONST dtypes.weakfloat [] 57.5
+285 Ops.MUL dtypes.f32 [283, 284]
+286 Ops.PARAM dtypes.f32 [0] ParamArg(slot=58, dtype=dtypes.f32)
+287 Ops.INDEX dtypes.f32 [286, 2]
+288 Ops.CONST dtypes.weakfloat [] 58.5
+289 Ops.MUL dtypes.f32 [287, 288]
+290 Ops.ADD dtypes.f32 [285, 289]
+291 Ops.PARAM dtypes.f32 [0] ParamArg(slot=59, dtype=dtypes.f32)
+292 Ops.INDEX dtypes.f32 [291, 2]
+293 Ops.CONST dtypes.weakfloat [] 59.5
+294 Ops.MUL dtypes.f32 [292, 293]
+295 Ops.PARAM dtypes.f32 [0] ParamArg(slot=60, dtype=dtypes.f32)
+296 Ops.INDEX dtypes.f32 [295, 2]
+297 Ops.CONST dtypes.weakfloat [] 60.5
+298 Ops.MUL dtypes.f32 [296, 297]
+299 Ops.ADD dtypes.f32 [294, 298]
+300 Ops.ADD dtypes.f32 [290, 299]
+301 Ops.PARAM dtypes.f32 [0] ParamArg(slot=61, dtype=dtypes.f32)
+302 Ops.INDEX dtypes.f32 [301, 2]
+303 Ops.CONST dtypes.weakfloat [] 61.5
+304 Ops.MUL dtypes.f32 [302, 303]
+305 Ops.PARAM dtypes.f32 [0] ParamArg(slot=62, dtype=dtypes.f32)
+306 Ops.INDEX dtypes.f32 [305, 2]
+307 Ops.CONST dtypes.weakfloat [] 62.5
+308 Ops.MUL dtypes.f32 [306, 307]
+309 Ops.ADD dtypes.f32 [304, 308]
+310 Ops.PARAM dtypes.f32 [0] ParamArg(slot=63, dtype=dtypes.f32)
+311 Ops.INDEX dtypes.f32 [310, 2]
+312 Ops.CONST dtypes.weakfloat [] 63.5
+313 Ops.MUL dtypes.f32 [311, 312]
+314 Ops.PARAM dtypes.f32 [0] ParamArg(slot=64, dtype=dtypes.f32)
+315 Ops.INDEX dtypes.f32 [314, 2]
+316 Ops.CONST dtypes.weakfloat [] 64.5
+317 Ops.MUL dtypes.f32 [315, 316]
+318 Ops.ADD dtypes.f32 [313, 317]
+319 Ops.ADD dtypes.f32 [309, 318]
+320 Ops.ADD dtypes.f32 [300, 319]
+321 Ops.ADD dtypes.f32 [281, 320]
+322 Ops.ADD dtypes.f32 [242, 321]
+323 Ops.ADD dtypes.f32 [163, 322]
+324 Ops.STORE dtypes.void [4, 323]
+325 Ops.END dtypes.void [324, 2]
+326 Ops.SINK dtypes.void [325] KernelInfo(name="E_4096", optimized=True)
+

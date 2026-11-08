@@ -1,0 +1,71 @@
+# tolk D73
+0 Ops.CONST dtypes.weakint [] 10240
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 160
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
+4 Ops.CONST dtypes.weakint [] 64
+5 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 2)
+6 Ops.AFTER dtypes.f32 [1, 3, 5]
+7 Ops.MUL dtypes.weakint [3, 4]
+8 Ops.ADD dtypes.weakint [7, 5]
+9 Ops.INDEX dtypes.f32 [6, 8]
+10 Ops.CONST dtypes.weakint [] 40960
+11 Ops.PARAM dtypes.bf16 [10] ParamArg(slot=1, dtype=dtypes.bf16)
+12 Ops.CONST dtypes.weakint [] 128
+13 Ops.RANGE dtypes.weakint [12] (AxisType.WEAK, 0, 0)
+14 Ops.CONST dtypes.weakint [] 2
+15 Ops.MUL dtypes.weakint [13, 14]
+16 Ops.RANGE dtypes.weakint [14] (AxisType.WEAK, 0, 1)
+17 Ops.ADD dtypes.weakint [15, 16]
+18 Ops.CONST dtypes.weakint [] 256
+19 Ops.MUL dtypes.weakint [3, 18]
+20 Ops.ADD dtypes.weakint [17, 19]
+21 Ops.INDEX dtypes.bf16 [11, 20]
+22 Ops.CAST dtypes.f32 [21] dtypes.f32
+23 Ops.CONST dtypes.weakint [] 1
+24 Ops.CMPLT dtypes.bool [16, 23]
+25 Ops.CONST dtypes.weakint [] 32768
+26 Ops.PARAM dtypes.u8 [25] ParamArg(slot=2, dtype=dtypes.u8)
+27 Ops.MUL dtypes.weakint [5, 12]
+28 Ops.ADD dtypes.weakint [27, 13]
+29 Ops.CONST dtypes.weakint [] 10
+30 Ops.PARAM dtypes.i32 [29] ParamArg(slot=3, dtype=dtypes.i32)
+31 Ops.CONST dtypes.weakint [] 16
+32 Ops.DIV dtypes.weakint [3, 31]
+33 Ops.INDEX dtypes.i32 [30, 32]
+34 Ops.CONST dtypes.weakint [] 0
+35 Ops.MAX dtypes.i32 [33, 34]
+36 Ops.CONST dtypes.weakint [] -1
+37 Ops.XOR dtypes.i32 [35, 36]
+38 Ops.CONST dtypes.weakint [] -4
+39 Ops.MAX dtypes.i32 [37, 38]
+40 Ops.XOR dtypes.i32 [39, 36]
+41 Ops.CAST dtypes.weakint [40] dtypes.weakint
+42 Ops.CONST dtypes.weakint [] 8192
+43 Ops.MUL dtypes.weakint [41, 42]
+44 Ops.ADD dtypes.weakint [28, 43]
+45 Ops.INDEX dtypes.u8 [26, 44]
+46 Ops.CONST dtypes.weakint [] 15
+47 Ops.AND dtypes.u8 [45, 46]
+48 Ops.CONST dtypes.weakint [] 4
+49 Ops.SHR dtypes.u8 [45, 48]
+50 Ops.WHERE dtypes.u8 [24, 47, 49]
+51 Ops.CAST dtypes.bf16 [50] dtypes.bf16
+52 Ops.CONST dtypes.weakint [] 2048
+53 Ops.PARAM dtypes.bf16 [52] ParamArg(slot=4, dtype=dtypes.bf16)
+54 Ops.CONST dtypes.weakint [] 8
+55 Ops.MUL dtypes.weakint [5, 54]
+56 Ops.DIV dtypes.weakint [13, 31]
+57 Ops.ADD dtypes.weakint [55, 56]
+58 Ops.CONST dtypes.weakint [] 512
+59 Ops.MUL dtypes.weakint [41, 58]
+60 Ops.ADD dtypes.weakint [57, 59]
+61 Ops.INDEX dtypes.bf16 [53, 60]
+62 Ops.MUL dtypes.bf16 [51, 61]
+63 Ops.CAST dtypes.f32 [62] dtypes.f32
+64 Ops.MUL dtypes.f32 [22, 63]
+65 Ops.REDUCE dtypes.f32 [64, 13, 16] (Ops.ADD, 0)
+66 Ops.STORE dtypes.void [9, 65]
+67 Ops.END dtypes.void [66, 3, 5]
+68 Ops.SINK dtypes.void [67] KernelInfo()
+

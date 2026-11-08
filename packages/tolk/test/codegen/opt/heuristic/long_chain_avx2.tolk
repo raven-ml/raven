@@ -1,0 +1,209 @@
+# tolk D280 golden=af12250dd3c37dd712aa597a743c2ac7
+0 Ops.CONST dtypes.weakint [] 4096
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 256
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+4 Ops.CONST dtypes.weakint [] 16
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.RANGE dtypes.weakint [4] (AxisType.UPCAST, 1)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.AFTER dtypes.f32 [1, 7]
+9 Ops.INDEX dtypes.f32 [8, 7]
+10 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+11 Ops.INDEX dtypes.f32 [10, 7]
+12 Ops.CONST dtypes.weakfloat [] 1.5
+13 Ops.MUL dtypes.f32 [11, 12]
+14 Ops.EXP2 dtypes.f32 [13]
+15 Ops.CONST dtypes.weakfloat [] 2.5
+16 Ops.MUL dtypes.f32 [14, 15]
+17 Ops.EXP2 dtypes.f32 [16]
+18 Ops.CONST dtypes.weakfloat [] 3.5
+19 Ops.MUL dtypes.f32 [17, 18]
+20 Ops.EXP2 dtypes.f32 [19]
+21 Ops.CONST dtypes.weakfloat [] 4.5
+22 Ops.MUL dtypes.f32 [20, 21]
+23 Ops.EXP2 dtypes.f32 [22]
+24 Ops.CONST dtypes.weakfloat [] 5.5
+25 Ops.MUL dtypes.f32 [23, 24]
+26 Ops.EXP2 dtypes.f32 [25]
+27 Ops.CONST dtypes.weakfloat [] 6.5
+28 Ops.MUL dtypes.f32 [26, 27]
+29 Ops.EXP2 dtypes.f32 [28]
+30 Ops.CONST dtypes.weakfloat [] 7.5
+31 Ops.MUL dtypes.f32 [29, 30]
+32 Ops.EXP2 dtypes.f32 [31]
+33 Ops.CONST dtypes.weakfloat [] 8.5
+34 Ops.MUL dtypes.f32 [32, 33]
+35 Ops.EXP2 dtypes.f32 [34]
+36 Ops.CONST dtypes.weakfloat [] 9.5
+37 Ops.MUL dtypes.f32 [35, 36]
+38 Ops.EXP2 dtypes.f32 [37]
+39 Ops.CONST dtypes.weakfloat [] 10.5
+40 Ops.MUL dtypes.f32 [38, 39]
+41 Ops.EXP2 dtypes.f32 [40]
+42 Ops.CONST dtypes.weakfloat [] 11.5
+43 Ops.MUL dtypes.f32 [41, 42]
+44 Ops.EXP2 dtypes.f32 [43]
+45 Ops.CONST dtypes.weakfloat [] 12.5
+46 Ops.MUL dtypes.f32 [44, 45]
+47 Ops.EXP2 dtypes.f32 [46]
+48 Ops.CONST dtypes.weakfloat [] 13.5
+49 Ops.MUL dtypes.f32 [47, 48]
+50 Ops.EXP2 dtypes.f32 [49]
+51 Ops.CONST dtypes.weakfloat [] 14.5
+52 Ops.MUL dtypes.f32 [50, 51]
+53 Ops.EXP2 dtypes.f32 [52]
+54 Ops.CONST dtypes.weakfloat [] 15.5
+55 Ops.MUL dtypes.f32 [53, 54]
+56 Ops.EXP2 dtypes.f32 [55]
+57 Ops.CONST dtypes.weakfloat [] 16.5
+58 Ops.MUL dtypes.f32 [56, 57]
+59 Ops.EXP2 dtypes.f32 [58]
+60 Ops.CONST dtypes.weakfloat [] 17.5
+61 Ops.MUL dtypes.f32 [59, 60]
+62 Ops.EXP2 dtypes.f32 [61]
+63 Ops.CONST dtypes.weakfloat [] 18.5
+64 Ops.MUL dtypes.f32 [62, 63]
+65 Ops.EXP2 dtypes.f32 [64]
+66 Ops.CONST dtypes.weakfloat [] 19.5
+67 Ops.MUL dtypes.f32 [65, 66]
+68 Ops.EXP2 dtypes.f32 [67]
+69 Ops.CONST dtypes.weakfloat [] 20.5
+70 Ops.MUL dtypes.f32 [68, 69]
+71 Ops.EXP2 dtypes.f32 [70]
+72 Ops.CONST dtypes.weakfloat [] 21.5
+73 Ops.MUL dtypes.f32 [71, 72]
+74 Ops.EXP2 dtypes.f32 [73]
+75 Ops.CONST dtypes.weakfloat [] 22.5
+76 Ops.MUL dtypes.f32 [74, 75]
+77 Ops.EXP2 dtypes.f32 [76]
+78 Ops.CONST dtypes.weakfloat [] 23.5
+79 Ops.MUL dtypes.f32 [77, 78]
+80 Ops.EXP2 dtypes.f32 [79]
+81 Ops.CONST dtypes.weakfloat [] 24.5
+82 Ops.MUL dtypes.f32 [80, 81]
+83 Ops.EXP2 dtypes.f32 [82]
+84 Ops.CONST dtypes.weakfloat [] 25.5
+85 Ops.MUL dtypes.f32 [83, 84]
+86 Ops.EXP2 dtypes.f32 [85]
+87 Ops.CONST dtypes.weakfloat [] 26.5
+88 Ops.MUL dtypes.f32 [86, 87]
+89 Ops.EXP2 dtypes.f32 [88]
+90 Ops.CONST dtypes.weakfloat [] 27.5
+91 Ops.MUL dtypes.f32 [89, 90]
+92 Ops.EXP2 dtypes.f32 [91]
+93 Ops.CONST dtypes.weakfloat [] 28.5
+94 Ops.MUL dtypes.f32 [92, 93]
+95 Ops.EXP2 dtypes.f32 [94]
+96 Ops.CONST dtypes.weakfloat [] 29.5
+97 Ops.MUL dtypes.f32 [95, 96]
+98 Ops.EXP2 dtypes.f32 [97]
+99 Ops.CONST dtypes.weakfloat [] 30.5
+100 Ops.MUL dtypes.f32 [98, 99]
+101 Ops.EXP2 dtypes.f32 [100]
+102 Ops.CONST dtypes.weakfloat [] 31.5
+103 Ops.MUL dtypes.f32 [101, 102]
+104 Ops.EXP2 dtypes.f32 [103]
+105 Ops.CONST dtypes.weakfloat [] 32.5
+106 Ops.MUL dtypes.f32 [104, 105]
+107 Ops.EXP2 dtypes.f32 [106]
+108 Ops.CONST dtypes.weakfloat [] 33.5
+109 Ops.MUL dtypes.f32 [107, 108]
+110 Ops.EXP2 dtypes.f32 [109]
+111 Ops.CONST dtypes.weakfloat [] 34.5
+112 Ops.MUL dtypes.f32 [110, 111]
+113 Ops.EXP2 dtypes.f32 [112]
+114 Ops.CONST dtypes.weakfloat [] 35.5
+115 Ops.MUL dtypes.f32 [113, 114]
+116 Ops.EXP2 dtypes.f32 [115]
+117 Ops.CONST dtypes.weakfloat [] 36.5
+118 Ops.MUL dtypes.f32 [116, 117]
+119 Ops.EXP2 dtypes.f32 [118]
+120 Ops.CONST dtypes.weakfloat [] 37.5
+121 Ops.MUL dtypes.f32 [119, 120]
+122 Ops.EXP2 dtypes.f32 [121]
+123 Ops.CONST dtypes.weakfloat [] 38.5
+124 Ops.MUL dtypes.f32 [122, 123]
+125 Ops.EXP2 dtypes.f32 [124]
+126 Ops.CONST dtypes.weakfloat [] 39.5
+127 Ops.MUL dtypes.f32 [125, 126]
+128 Ops.EXP2 dtypes.f32 [127]
+129 Ops.CONST dtypes.weakfloat [] 40.5
+130 Ops.MUL dtypes.f32 [128, 129]
+131 Ops.EXP2 dtypes.f32 [130]
+132 Ops.CONST dtypes.weakfloat [] 41.5
+133 Ops.MUL dtypes.f32 [131, 132]
+134 Ops.EXP2 dtypes.f32 [133]
+135 Ops.CONST dtypes.weakfloat [] 42.5
+136 Ops.MUL dtypes.f32 [134, 135]
+137 Ops.EXP2 dtypes.f32 [136]
+138 Ops.CONST dtypes.weakfloat [] 43.5
+139 Ops.MUL dtypes.f32 [137, 138]
+140 Ops.EXP2 dtypes.f32 [139]
+141 Ops.CONST dtypes.weakfloat [] 44.5
+142 Ops.MUL dtypes.f32 [140, 141]
+143 Ops.EXP2 dtypes.f32 [142]
+144 Ops.CONST dtypes.weakfloat [] 45.5
+145 Ops.MUL dtypes.f32 [143, 144]
+146 Ops.EXP2 dtypes.f32 [145]
+147 Ops.CONST dtypes.weakfloat [] 46.5
+148 Ops.MUL dtypes.f32 [146, 147]
+149 Ops.EXP2 dtypes.f32 [148]
+150 Ops.CONST dtypes.weakfloat [] 47.5
+151 Ops.MUL dtypes.f32 [149, 150]
+152 Ops.EXP2 dtypes.f32 [151]
+153 Ops.CONST dtypes.weakfloat [] 48.5
+154 Ops.MUL dtypes.f32 [152, 153]
+155 Ops.EXP2 dtypes.f32 [154]
+156 Ops.CONST dtypes.weakfloat [] 49.5
+157 Ops.MUL dtypes.f32 [155, 156]
+158 Ops.EXP2 dtypes.f32 [157]
+159 Ops.CONST dtypes.weakfloat [] 50.5
+160 Ops.MUL dtypes.f32 [158, 159]
+161 Ops.EXP2 dtypes.f32 [160]
+162 Ops.CONST dtypes.weakfloat [] 51.5
+163 Ops.MUL dtypes.f32 [161, 162]
+164 Ops.EXP2 dtypes.f32 [163]
+165 Ops.CONST dtypes.weakfloat [] 52.5
+166 Ops.MUL dtypes.f32 [164, 165]
+167 Ops.EXP2 dtypes.f32 [166]
+168 Ops.CONST dtypes.weakfloat [] 53.5
+169 Ops.MUL dtypes.f32 [167, 168]
+170 Ops.EXP2 dtypes.f32 [169]
+171 Ops.CONST dtypes.weakfloat [] 54.5
+172 Ops.MUL dtypes.f32 [170, 171]
+173 Ops.EXP2 dtypes.f32 [172]
+174 Ops.CONST dtypes.weakfloat [] 55.5
+175 Ops.MUL dtypes.f32 [173, 174]
+176 Ops.EXP2 dtypes.f32 [175]
+177 Ops.CONST dtypes.weakfloat [] 56.5
+178 Ops.MUL dtypes.f32 [176, 177]
+179 Ops.EXP2 dtypes.f32 [178]
+180 Ops.CONST dtypes.weakfloat [] 57.5
+181 Ops.MUL dtypes.f32 [179, 180]
+182 Ops.EXP2 dtypes.f32 [181]
+183 Ops.CONST dtypes.weakfloat [] 58.5
+184 Ops.MUL dtypes.f32 [182, 183]
+185 Ops.EXP2 dtypes.f32 [184]
+186 Ops.CONST dtypes.weakfloat [] 59.5
+187 Ops.MUL dtypes.f32 [185, 186]
+188 Ops.EXP2 dtypes.f32 [187]
+189 Ops.CONST dtypes.weakfloat [] 60.5
+190 Ops.MUL dtypes.f32 [188, 189]
+191 Ops.EXP2 dtypes.f32 [190]
+192 Ops.CONST dtypes.weakfloat [] 61.5
+193 Ops.MUL dtypes.f32 [191, 192]
+194 Ops.EXP2 dtypes.f32 [193]
+195 Ops.CONST dtypes.weakfloat [] 62.5
+196 Ops.MUL dtypes.f32 [194, 195]
+197 Ops.EXP2 dtypes.f32 [196]
+198 Ops.CONST dtypes.weakfloat [] 63.5
+199 Ops.MUL dtypes.f32 [197, 198]
+200 Ops.EXP2 dtypes.f32 [199]
+201 Ops.CONST dtypes.weakfloat [] 64.5
+202 Ops.MUL dtypes.f32 [200, 201]
+203 Ops.EXP2 dtypes.f32 [202]
+204 Ops.STORE dtypes.void [9, 203]
+205 Ops.END dtypes.void [204, 3, 6]
+206 Ops.SINK dtypes.void [205] KernelInfo(name="E_256_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),), optimized=True)
+

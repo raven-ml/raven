@@ -1,0 +1,36 @@
+# tolk D280 golden=f1ef1e5aaa21254ba6cc9298bb995487
+0 Ops.CONST dtypes.weakint [] 16
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 2)
+3 Ops.AFTER dtypes.f32 [1, 2]
+4 Ops.INDEX dtypes.f32 [3, 2]
+5 Ops.CONST dtypes.weakfloat [] 0.0
+6 Ops.CONST dtypes.weakint [] 64
+7 Ops.PARAM dtypes.f32 [6] ParamArg(slot=1, dtype=dtypes.f32)
+8 Ops.CONST dtypes.weakint [] 2
+9 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 1)
+10 Ops.CONST dtypes.weakint [] 32
+11 Ops.MUL dtypes.weakint [9, 10]
+12 Ops.RANGE dtypes.weakint [10] (AxisType.WEAK, 0)
+13 Ops.ADD dtypes.weakint [11, 12]
+14 Ops.INDEX dtypes.f32 [7, 13]
+15 Ops.CONST dtypes.weakint [] 1024
+16 Ops.PARAM dtypes.f32 [15] ParamArg(slot=2, dtype=dtypes.f32)
+17 Ops.MUL dtypes.weakint [2, 10]
+18 Ops.ADD dtypes.weakint [17, 12]
+19 Ops.CONST dtypes.weakint [] 512
+20 Ops.MUL dtypes.weakint [9, 19]
+21 Ops.ADD dtypes.weakint [18, 20]
+22 Ops.INDEX dtypes.f32 [16, 21]
+23 Ops.MUL dtypes.f32 [14, 22]
+24 Ops.REDUCE dtypes.f32 [23, 12] (Ops.ADD, 0)
+25 Ops.CMPLT dtypes.bool [5, 24]
+26 Ops.WHERE dtypes.f32 [25, 24, 5]
+27 Ops.PARAM dtypes.f32 [8] ParamArg(slot=3, dtype=dtypes.f32)
+28 Ops.INDEX dtypes.f32 [27, 9]
+29 Ops.MUL dtypes.f32 [26, 28]
+30 Ops.REDUCE dtypes.f32 [29, 9] (Ops.ADD, 0)
+31 Ops.STORE dtypes.void [4, 30]
+32 Ops.END dtypes.void [31, 2]
+33 Ops.SINK dtypes.void [32] KernelInfo()
+

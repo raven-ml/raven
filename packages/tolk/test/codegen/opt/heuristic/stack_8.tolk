@@ -1,0 +1,50 @@
+# tolk D280 golden=692ec8b272eebb507eb340d9aac24e9d
+0 Ops.CONST dtypes.weakint [] 8192
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 2
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0, 0, 0)
+4 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0, 0, 1)
+5 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0, 1)
+6 Ops.CONST dtypes.weakint [] 1024
+7 Ops.RANGE dtypes.weakint [6] (AxisType.WEAK, 1)
+8 Ops.AFTER dtypes.f32 [1, 3, 4, 5, 7]
+9 Ops.CONST dtypes.weakint [] 4096
+10 Ops.MUL dtypes.weakint [3, 9]
+11 Ops.CONST dtypes.weakint [] 2048
+12 Ops.MUL dtypes.weakint [4, 11]
+13 Ops.ADD dtypes.weakint [10, 12]
+14 Ops.MUL dtypes.weakint [5, 6]
+15 Ops.ADD dtypes.weakint [13, 14]
+16 Ops.ADD dtypes.weakint [15, 7]
+17 Ops.INDEX dtypes.f32 [8, 16]
+18 Ops.CONST dtypes.weakint [] 1
+19 Ops.CMPLT dtypes.bool [3, 18]
+20 Ops.CMPLT dtypes.bool [4, 18]
+21 Ops.CMPLT dtypes.bool [5, 18]
+22 Ops.PARAM dtypes.f32 [6] ParamArg(slot=1, dtype=dtypes.f32)
+23 Ops.INDEX dtypes.f32 [22, 7]
+24 Ops.PARAM dtypes.f32 [6] ParamArg(slot=2, dtype=dtypes.f32)
+25 Ops.INDEX dtypes.f32 [24, 7]
+26 Ops.WHERE dtypes.f32 [21, 23, 25]
+27 Ops.PARAM dtypes.f32 [6] ParamArg(slot=3, dtype=dtypes.f32)
+28 Ops.INDEX dtypes.f32 [27, 7]
+29 Ops.PARAM dtypes.f32 [6] ParamArg(slot=4, dtype=dtypes.f32)
+30 Ops.INDEX dtypes.f32 [29, 7]
+31 Ops.WHERE dtypes.f32 [21, 28, 30]
+32 Ops.WHERE dtypes.f32 [20, 26, 31]
+33 Ops.PARAM dtypes.f32 [6] ParamArg(slot=5, dtype=dtypes.f32)
+34 Ops.INDEX dtypes.f32 [33, 7]
+35 Ops.PARAM dtypes.f32 [6] ParamArg(slot=6, dtype=dtypes.f32)
+36 Ops.INDEX dtypes.f32 [35, 7]
+37 Ops.WHERE dtypes.f32 [21, 34, 36]
+38 Ops.PARAM dtypes.f32 [6] ParamArg(slot=7, dtype=dtypes.f32)
+39 Ops.INDEX dtypes.f32 [38, 7]
+40 Ops.PARAM dtypes.f32 [6] ParamArg(slot=8, dtype=dtypes.f32)
+41 Ops.INDEX dtypes.f32 [40, 7]
+42 Ops.WHERE dtypes.f32 [21, 39, 41]
+43 Ops.WHERE dtypes.f32 [20, 37, 42]
+44 Ops.WHERE dtypes.f32 [19, 32, 43]
+45 Ops.STORE dtypes.void [17, 44]
+46 Ops.END dtypes.void [45, 3, 4, 5, 7]
+47 Ops.SINK dtypes.void [46] KernelInfo()
+
