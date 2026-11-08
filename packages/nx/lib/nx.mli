@@ -4697,7 +4697,10 @@ val associative_scan :
     elements at its index alone, whatever their slices' extents. For a float [f]
     these are not the left fold's bits. [f] is called at most [2⌈log₂ n⌉] times
     for [n] elements, each time over slices of every array, and combines fewer
-    than [2n] pairs of elements in all; [f] needs no identity.
+    than [2n] pairs of elements in all; [f] needs no identity. The circuit
+    also combines elements past [i] in runs that element [i] does not read,
+    so a derivative of element [i], as rune takes one, can be NaN where [f]'s
+    partial derivatives at such a run are not finite.
 
     Other scans are lifts of [f]: an exclusive scan is the inclusive one shifted
     by one along [axis], [f]'s identity first; a reversed scan is the scan of
