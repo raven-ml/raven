@@ -68,7 +68,7 @@ a sum of float16 and float32	False	False	False	False	None
 a sum of float32 and a weak float	True	True	False	True	None
 a sum of int32 and a weak integer	True	True	False	True	None
 a sum of float32 and the invalid constant	True	True	False	True	None
-a sum of weak integers	True	True	False	True	False
+a sum of weak integers	True	True	False	True	None
 a product of float64	True	True	True	True	None
 a maximum of uint8 and int8	False	False	False	False	None
 a subtraction of bfloat16	True	True	True	True	None
@@ -98,7 +98,7 @@ a cast of two sources	None	None	None	None	None
 a range	True	True	False	True	False
 a range with a nested axis	True	True	False	True	False
 a global int32 range	True	True	True	True	False
-a range with extra sources	None	None	False	False	True
+a range with extra sources	None	None	False	False	False
 a loop header	True	True	True	True	False
 an index by a weak integer	True	True	False	True	None
 an index by int32	True	True	True	True	None
@@ -108,14 +108,14 @@ an index by a boolean	None	None	None	None	None
 an index by the invalid constant	True	True	False	True	None
 an index by a guarded range	True	True	True	True	None
 an index of a stack	True	True	False	True	None
-an end of a store over a range	True	True	True	True	False
-an end of a store over two ranges	True	True	True	True	False
-an end of a store over an int32 range	True	True	True	True	False
-an end of a store over a constant	False	False	False	True	False
-an end of a store over a launch dimension	False	False	False	True	False
-an end of a store over a loop header	False	False	False	False	False
-an end of a value over a range	None	None	None	None	False
-an end of a store alone	True	True	True	True	False
+an end of a store over a range	True	True	True	True	None
+an end of a store over two ranges	True	True	True	True	None
+an end of a store over an int32 range	True	True	True	True	None
+an end of a store over a constant	False	False	False	True	None
+an end of a store over a launch dimension	False	False	False	True	None
+an end of a store over a loop header	False	False	False	False	None
+an end of a value over a range	None	None	None	None	None
+an end of a store alone	True	True	True	True	None
 a backedge on a boolean	True	True	True	True	None
 a backedge on the invalid constant	False	False	False	False	None
 a backedge on a vector of booleans	False	False	False	False	None
@@ -123,10 +123,10 @@ a backedge of a bounded range	None	None	None	None	None
 a backedge of a value	True	True	True	True	None
 a parameter	True	True	True	True	True
 a scalar parameter	True	True	True	True	True
-a named parameter on a device	True	True	False	True	True
+a named parameter on a device	True	True	True	True	True
 a variable	True	True	False	True	True
 an int32 variable	True	True	True	True	True
-a variable on a device	True	False	False	False	True
+a variable on a device	True	False	True	False	True
 a bound variable	True	True	True	True	True
 a local buffer	True	True	True	True	True
 a register buffer	True	True	True	True	True
@@ -154,9 +154,9 @@ a staged value after a store	True	True	True	True	None
 an instruction after a store	True	True	True	True	None
 an after after a store	True	True	True	True	True
 a constant after a store	True	True	False	True	None
-a load after a store	True	True	False	True	None
+a load after a store	True	True	True	True	None
 an int32 load after a range	True	True	True	True	None
-a range bounded by a load after a range	True	True	True	True	True
+a range bounded by a load after a range	True	True	True	True	False
 custom code	True	True	True	True	True
 inline custom code	True	True	True	True	True
 a void custom statement	True	True	True	True	True
@@ -204,7 +204,7 @@ a reshape by a float shape	None	None	False	False	None
 an expand	None	True	False	True	None
 a pad	None	True	False	True	None
 a pad by a shorter end	None	False	False	False	None
-a shrink	None	True	False	True	False
+a shrink	None	True	False	True	None
 a permute	None	True	False	True	None
 a flip	None	True	False	True	None
 a reduce	None	True	None	True	None
@@ -225,14 +225,14 @@ a program of a sink and a linear	None	True	None	True	None
 a program of a sink, a linear and a source	None	True	None	True	None
 a compiled program	None	True	None	True	None
 a program of a linear	None	None	None	None	None
-a program of a parameter	None	None	None	None	None
-a program of a global buffer after a store	None	None	None	None	None
+a program of a parameter	None	None	None	True	None
+a program of a global buffer after a store	None	None	None	True	None
 a sum under a constant	True	True	False	True	None
 an int32 constant	True	True	True	True	True
-a shrink of a parameter by cast constants	None	True	True	True	False
-a shrink of a bitcast parameter by cast constants	None	True	True	True	False
-a shrink of a parameter by a variable	None	True	False	True	False
-a shrink of a load by cast constants	None	True	False	True	False
+a shrink of a parameter by cast constants	None	True	True	True	None
+a shrink of a bitcast parameter by cast constants	None	True	True	True	None
+a shrink of a parameter by a variable	None	True	False	True	None
+a shrink of a load by cast constants	None	True	False	True	None
 an if on an index	None	None	True	True	None
 an if on a cast	None	None	True	True	None
 an if on a shrink	None	None	True	True	None
