@@ -324,6 +324,13 @@ Datapoints (implementations without a written design) are not listed.
   Ahrens & Nguyen, UCB/EECS-2016-121), with ReproBLAS. Authoritative on
   results that are bitwise identical across any number of processors and
   any partition, at about 7n additions per sum.
+- **Shardy**, sharding representation, "Axis splitting and sub-axes"
+  (<https://openxla.org/shardy/sharding_representation>). Authoritative on
+  a reshape whose result is sharded so that each device keeps its data.
+  Excellent because it states the goal, to "avoid communication (i.e. keep
+  the data where it is)". Scope: sub-axes split mesh axes and should divide
+  their size, and a dimension its axes do not divide is padded, which leaves
+  a balanced cut at block granularity without a reference.
 
 ### Scans and summation
 
@@ -370,6 +377,283 @@ Datapoints (implementations without a written design) are not listed.
   (<https://oneapi-src.github.io/level-zero-spec/level-zero/latest/core/INTRO.html>)
   keeps mutable kernel arguments on purpose and says why; scope: it is no
   evidence that every API moved to values.
+
+### Windows, frames and ranges
+
+- **Leis, Kundhikanjana, Kemper & Neumann**, "Efficient Processing of
+  Window Functions in Analytical SQL Queries" (PVLDB 8(10) 2015,
+  <https://www.vldb.org/pvldb/vol8/p1058-leis.pdf>). Authoritative on SQL
+  frames. A frame applies to navigation functions and non-distinct
+  aggregates (§2.3), bounds may depend on the row, range mode takes exactly
+  one numeric order key (fn. 1), and with an order the default frame runs
+  through the row's peers. Excellent because §4.3.4 evaluates any frame in
+  O(log n) with a segment tree. Scope: §2.1 calls partitioning, ordering and
+  framing "three simple and orthogonal concepts", which does not support a
+  two-construct split. §4.3.5's "safe choice" rests on partitioning and sorting
+  dominating the query, so it transfers only to windows that sort.
+- **Substrait**, window functions
+  (<https://substrait.io/expressions/window_functions/>). Authoritative on
+  one written definition of frames with their edge cases. A null ordering
+  value makes an offset bound the current row, a bound defaults to
+  unbounded, and a negative offset is invalid. Excellent because these
+  cases are rules of the format. Scope: its rule against window functions
+  in offsets covers bounds and says nothing about a reduction's operand.
+- **Eckner**, "Algorithms for Unevenly Spaced Time Series: Moving Averages
+  and Other Rolling Operators" (rev. 2019,
+  <http://www.eckner.com/papers/Algorithms%20for%20Unevenly%20Spaced%20Time%20Series.pdf>).
+  Authoritative on rolling operators over irregular times and the
+  half-open window (t − τ, t] (§1.1, §5). Excellent because §4.1 shows the
+  usual EMA implicitly applies next-point interpolation. Scope: §1.1 assumes
+  strictly increasing times, so it gives no rule for ties. §7's warning
+  concerns add-and-subtract updates and §6.2 uses the moment formula, so
+  refusing that formula rests on Chan alone.
+- **Tangwongsan, Hirzel, Schneider & Wu**, "General Incremental
+  Sliding-Window Aggregation" (PVLDB 8(7) 2015,
+  <https://www.vldb.org/pvldb/vol8/p702-tangwongsan.pdf>). Authoritative on
+  sliding aggregation that requires only associativity (§2.3, §3.2).
+  Excellent because it covers non-invertible functions such as Min and Max.
+  Scope: a stream's sliding window.
+- **DABA** (Tangwongsan, Hirzel & Schneider, extended 2020,
+  <https://arxiv.org/pdf/2009.13768>) and **FiBA** (PVLDB 12(10) 2019,
+  <https://www.vldb.org/pvldb/vol12/p1167-tangwongsan.pdf>). Authoritative
+  on streaming sliding aggregation. Excellent because FiBA states its bound,
+  amortized O(log d). Scope: both are streaming, and DABA's family works "only
+  ... for FIFO windows".
+- **Wesley & Xu**, "Incremental Computation of Common Windowed Holistic
+  Aggregates" (PVLDB 9(12) 2016,
+  <https://www.vldb.org/pvldb/vol9/p1221-wesley.pdf>). Authoritative on
+  incremental holistic aggregates. Excellent because it measures the gain,
+  "about 10×" over naive recomputation. Scope: speed only.
+- **Alon & Schieber**, "Optimal Preprocessing for Answering On-Line Product
+  Queries" (TR 71/87, 1987, <https://arxiv.org/pdf/2406.06321>).
+  Authoritative on answering a range with one combine of two precomputed
+  products (§2.1) after O(n log n) preprocessing. Excellent because §2.2
+  proves that preprocessing optimal. Scope: the bound is for two steps per
+  range, one combine, over arbitrary online queries. Four steps need O(n log*
+  n) preprocessing (§1), and the lower bound assumes no inverse, since a group
+  answers from prefix computations (§2.2).
+- **Pébay, Terriberry, Kolla & Bennett**, "Numerically stable, scalable
+  formulas for parallel and online computation of higher-order multivariate
+  central moments with arbitrary weights" (Comput. Stat. 31, 2016,
+  <https://people.xiph.org/~tterribe/pubs/P%C3%A9bayTerriberryKolla+16-_Numerically_Stable,_Scalable_Formulas_for_parallel_and_Online_Computation_of_Higher-Order_Multivariate_Central_Moments_with_Arbitrary_Weights.pdf>).
+  Authoritative on combining central moments of two parts. Excellent
+  because (2.10) and (3.21) state the combine in closed form. Scope: it carries
+  no shift of the data, and §3 (3.4) of Chan gives only the principle of
+  shifting by a data point. A combine that shifts at each step has a measured
+  bound.
+
+### Joins and intervals
+
+- **Kulkarni & Michels**, "Temporal features in SQL:2011" (SIGMOD Record
+  41(3) 2012,
+  <https://sigmodrecord.org/publications/sigmodRecord/1209/pdfs/07.industry.kulkarni.pdf>).
+  Authoritative on SQL:2011 periods. A period is closed-open, a declared
+  constraint keeps its start before its end (§2.1), and OVERLAPS holds when
+  two periods share a time point (§2.2.3). Excellent because the
+  definition stands beside the constraint that makes the bare conjunction
+  correct. Scope: it says nothing about a reversed pair or about predicates
+  over undeclared pairs.
+- **Allen**, "Maintaining Knowledge about Temporal Intervals" (CACM 26(11)
+  1983, <https://cse.unl.edu/~choueiry/Documents/Allen-CACM1983.pdf>).
+  Authoritative on half-open intervals as an artificial device for
+  reasoning about time (§3). Excellent because it says what the convention
+  buys, that intervals "could then meet as required". Scope: §3's ordered
+  pair of points is the model he describes and sets aside for intervals as
+  primitive, so it supports no precondition that a start precede its end.
+- **Dignös, Böhlen, Gamper, Jensen & Moser**, "Leveraging range joins for
+  the computation of overlap joins" (VLDB J. 31, 2022,
+  <https://web.archive.org/web/20220528041618id_/https://link.springer.com/content/pdf/10.1007/s00778-021-00692-3.pdf>).
+  Authoritative on overlap as two disjoint range joins. Excellent because
+  the two ranges produce no duplicates, and §7.2.2 measures runtimes
+  comparable to a forward scan. Scope: it assumes B < E, so it gives no meaning
+  to an empty half-open period.
+- **Bouros & Mamoulis**, "A Forward Scan based Plane Sweep Algorithm for
+  Parallel Interval Joins" (PVLDB 10(11) 2017,
+  <https://www.vldb.org/pvldb/vol10/p1346-bouros.pdf>). Authoritative on
+  forward-scan interval joins. Excellent because the cost excluding
+  sorting is O(|R| + |S| + K). Scope: its intervals
+  are closed with start ≤ end, so a zero-length interval is a point.
+- **Khayyat et al.**, "Lightning Fast and Space Efficient Inequality Joins"
+  (PVLDB 8(13) 2015, <https://www.vldb.org/pvldb/vol8/p2074-khayyat.pdf>).
+  Authoritative on inequality joins over two columns. Excellent because it
+  publishes its bound, O(m log m + n log n + m·n) (§3.1), and says its
+  runtime follows the output (§9). Scope: the quadratic bound is IEJoin's own
+  (§3.1), and one-column ranges are output-sensitive. DuckDB's 9× and 500×
+  against IEJoin
+  (<https://duckdb.org/2023/09/15/asof-joins-fuzzy-temporal-lookups.html>)
+  time a rewritten as-of.
+- **Böhlen, Snodgrass & Soo**, "Coalescing in Temporal Databases" (VLDB
+  1996, <https://www.vldb.org/conf/1996/P180.PDF>). Authoritative on
+  merging tuples of equal value over adjacent or overlapping periods.
+  Excellent because §1 states that "prior coalescing is necessary to ensure
+  the semantics of some operators". Scope: only the abstract and §1 were
+  checked.
+
+### Lists and nesting
+
+- **Dremel** (Melnik et al., PVLDB 3(1) 2010,
+  <https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/36632.pdf>).
+  Authoritative on naming nested fields by path, with an expression's
+  nesting level following from the most repeated field it reads (§5).
+  Excellent because `WITHIN` scopes a reduction by a path and a field
+  reference means the same field everywhere. Scope: "Defining the language
+  formally is out of scope of this paper". Protocol-buffer repeated fields
+  cannot be null, so it gives no evidence on null against empty lists.
+- **Arrow columnar format**
+  (<https://arrow.apache.org/docs/format/Columnar.html>). Authoritative on
+  list and struct layouts. Offsets reference the child array and stay
+  monotonic even for null slots, a null entry may cover a non-empty
+  segment, and a struct's validity is independent of its children's.
+  Excellent because these corner cases are rules of the layout. Scope: a
+  layout, so the result of a reduction over a null list is decided
+  elsewhere.
+
+### Host memory and registration
+
+- **CUDA host memory**: driver API memory management
+  (<https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html>),
+  API synchronization behaviour
+  (<https://docs.nvidia.com/cuda/cuda-driver-api/api-sync-behavior.html>),
+  programming guide §2.6.3
+  (<https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/understanding-memory.html>)
+  and best practices §10.1.1
+  (<https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html>).
+  Authoritative on page-locked memory and on copies of pageable memory.
+  Excellent because it states the cost (`cuMemHostRegister` is "best used
+  sparingly") and the rule that asynchronous copies need page-locked host
+  memory. Scope: registration's tracking speeds later copies of the plain
+  pointer, which is CUDA's mechanism. Where pageable access uses the host
+  page tables, `cuMemHostRegister` might not page-lock. The sentence
+  "returns only once the copy has completed" covers pinned memory too, and
+  the asynchronous section is the evidence for staging. Unified Addressing
+  §6.45.6
+  (<https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__UNIFIED.html>)
+  is about pointer values.
+- **Vulkan `VK_EXT_external_memory_host`**, issues
+  (<https://raw.githubusercontent.com/KhronosGroup/Vulkan-Docs/main/appendices/VK_EXT_external_memory_host.adoc>)
+  and host-pointer import
+  (<https://docs.vulkan.org/refpages/latest/refpages/source/VkImportMemoryHostPointerInfoEXT.html>),
+  **ROCr's `hsa_amd_memory_lock`**
+  (<https://raw.githubusercontent.com/ROCm/ROCR-Runtime/amd-staging/runtime/hsa-runtime/inc/hsa_ext_amd.h>)
+  and **`ibv_reg_mr(3)`**
+  (<https://man7.org/linux/man-pages/man3/ibv_reg_mr.3.html>). Authoritative
+  on registration as an explicit call that names its consumers or all of
+  them and lasts until it is undone. Excellent because, with CUDA, three
+  lineages (NVIDIA, AMD and its Vulkan extension, OFA) converged on it and none
+  pins as a side effect of a copy. Scope: HSA returns one code,
+  OUT_OF_RESOURCES, when a valid pin fails, so it does not support a split
+  between never and no room. OpenCL 3.0 §5.2
+  (<https://registry.khronos.org/OpenCL/specs/3.0-unified/html/OpenCL_API.html>)
+  lets an implementation use the pointer in place, which leaves it neutral.
+- **Linux `pin_user_pages`**
+  (<https://raw.githubusercontent.com/torvalds/linux/master/Documentation/core-api/pin_user_pages.rst>)
+  and **`unevictable-lru`**, "Migrating MLOCKED Pages"
+  (<https://raw.githubusercontent.com/torvalds/linux/master/Documentation/mm/unevictable-lru.rst>).
+  Authoritative on the kinds of page pin. Excellent because it separates
+  long-lived DMA pins (CASE 2) from pins with notifiers (CASE 3), and says
+  mlocked pages can migrate. Scope: it describes the mechanism under CUDA's
+  kernel driver. CASE 1 covers short pins for direct I/O,
+  and it says nothing about device copies of pageable memory.
+
+### Processor levels
+
+- **x86-64 psABI**, "Micro-Architecture Levels"
+  (<https://gitlab.com/x86-psABIs/x86-64-ABI>, low-level-sys-info.tex).
+  Authoritative on x86-64-v2, v3 and v4 as cumulative sets of CPUID
+  features, with v3 and v4 available only when fully enabled, XCR0 included.
+  Excellent because GCC, glibc's `ld.so` and Go's `GOAMD64` select code by
+  these levels. Scope: it requires run-time detection of features outside
+  the levels, even those every current CPU has.
+- **Go**, `GOAMD64` (<https://go.dev/wiki/MinimumRequirements>, proposal
+  <https://github.com/golang/go/issues/45453>). Authoritative on a binary's required level. Excellent because the binary checks its level at startup.
+  Scope: "More granular means more complication" answers a request for
+  levels between v1 and v2. That reply supports fewer configurations to
+  test and cache and says nothing about a machine stating its features to a
+  compiler.
+- **Linux kernel**, x86 feature flags
+  (<https://docs.kernel.org/arch/x86/cpuinfo.html>), arm64 hwcaps
+  (<https://docs.kernel.org/arch/arm64/elf_hwcaps.html>) and CPU feature
+  registers (<https://docs.kernel.org/arch/arm64/cpu-feature-registers.html>).
+  Authoritative on what a kernel reports as usable. Excellent because a
+  flag reflects what the kernel enabled, XSAVE included, and an exported
+  value is safe across every CPU. Scope: hwcaps' "cannot be probed
+  reliably through other means" concerns features without architected
+  EL0 discovery. The x86 page sends userspace to probing a feature, which
+  backs an XCR0 check.
+- **LLVM AMDGPU**, processors and target features
+  (<https://llvm.org/docs/AMDGPUUsage.html>). Authoritative on a processor
+  name as a code target. Excellent because "Generic processors allow
+  execution of a single code object on any of the processors that it supports".
+  Scope: AMD GPU targets, and a mismatch of features "may result in incorrect
+  execution, or a reduction in performance".
+
+### Precision in training
+
+- **Micikevicius et al.**, "Mixed Precision Training" (ICLR 2018,
+  <https://arxiv.org/abs/1710.03740>). Authoritative on a float32 master
+  copy of weights updated in float32. Excellent because §3.1 names the
+  failure it prevents, updates that vanish against a large weight. Scope: it
+  says nothing on optimizer-state precision, and §3.1 finds activations
+  dominate training memory. "Using a single-precision copy" follows the
+  sentence on small gradients.
+- **Zamirai, Zhang, Aberger & De Sa**, "Revisiting BFloat16 Training"
+  (<https://arxiv.org/abs/2010.06192>). Authoritative on stochastic rounding
+  of the weight update in 16-bit-FPU training (§3.2). Excellent because
+  Table 4 measures it within 0.1% of 32-bit on five of seven tasks. Scope:
+  rounding applies to the subtraction output only, "not a silver bullet" in
+  its own words, and it does not cover float16 or seeding.
+- **Croci, Fasi, Higham, Mary & Mikaitis**, "Stochastic rounding:
+  implementation, error analysis and applications" (R. Soc. Open Sci.
+  9:211631, 2022, <https://pmc.ncbi.nlm.nih.gov/articles/PMC8905452/>).
+  Authoritative on stochastic rounding's zero-mean errors and freedom from
+  stagnation (§6.1). Excellent because it states the cost, worst-case bounds a
+  factor 2 larger than round-to-nearest. Scope: §8.5's PDE bounds rest on
+  errors "independent in space and mean-independent in time", so reusing one
+  draw at every step breaks the assumption.
+- **OCP Microscaling Formats (MX) v1.0**, §5.4.1 and §6
+  (<https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf>).
+  Authoritative on block-scaled formats and the dot over them. Excellent
+  because the format's designers specify it, and §6.1 leaves internal
+  precision and order implementation-defined. Scope: §6 covers MX formats
+  only, so NVFP4 and FP8 with float32 blocks fall outside it.
+
+### Attention and block-sparse products
+
+- **FlashAttention-2** (Dao 2023, <https://arxiv.org/abs/2307.08691>).
+  Authoritative on tiled attention that keeps only the logsumexp between
+  the passes (§3.1.1, §3.1.2). Excellent because the backward pass recomputes
+  from that one statistic per row. Scope: its 1.7-1.8× causal gain compares
+  the kernel against itself without a mask.
+- **Rabe & Staats**, "Self-attention Does Not Need O(n²) Memory" (2021,
+  <https://arxiv.org/abs/2112.05682>). Authoritative on attention by chunks
+  with recomputation, in memory below O(n²). Excellent because §5.1 and
+  §5.2 measure the price, 8-13% forward and 30-35% forward and backward. The
+  second figure is "expected due to the use of checkpointing". Scope: JAX on
+  TPUv3, so the slowdown does not transfer to a host.
+- **vLLM** (Kwon et al., SOSP 2023, <https://arxiv.org/abs/2309.06180>).
+  Authoritative on a block table with reads that stop at each sequence's
+  length. Excellent because a query's read is bounded by its own blocks
+  (§4.1, Eq. 4) and a batch mixes lengths (§5.1). Scope: a read that runs
+  to the table's width keeps vLLM's table and loses that per-sequence
+  bound.
+- **MegaBlocks** (Gale, Narayanan, Young & Zaharia,
+  <https://arxiv.org/abs/2211.15841>). Authoritative on mixture-of-experts
+  computation as block-sparse operations. Excellent because its abstract
+  names the failure it prevents, dropping tokens or padding to capacity.
+  Scope: §5.2 pads each group of tokens to a multiple of 128, and the
+  block-sparse products index the weights by block, so it does not support
+  grouping without padding.
+
+### Iterative solvers
+
+- **Kelley**, *Solving Nonlinear Equations with Iterative Methods* (SIAM
+  2022), Ch. 1 §1.5, notebook text
+  (<https://github.com/ctkelley/NotebookSIAMFANL/blob/master/SIAMFANLCh1.ipynb>).
+  Authoritative on which stopping rules have theory. Excellent because it
+  separates a step test, which has theory only for superlinear methods, from
+  practice such as a safety factor, and ends at x_{n+1}. Scope: the residual
+  as a rate indicator holds "in most cases", and the stagnation passage is
+  §1.2.1.
 
 ### Designing for simplicity
 
