@@ -1085,6 +1085,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Rune's routed rows (`Nx.matmul_segments`, `Nx_quant.apply_experts`)
+  compile for an x86-64 host of AVX2 or AVX-512 under Apple's Clang 17,
+  which raised `Compile_error` on invalid IR: `Compiler_cpu.clang` compiles
+  x86_64 without the straight-line vectorizer under it, as under LLVM 19.
 - comgr and NVRTC workers keep their temporary files in a directory of their
   own, which the worker removes when it ends and the process that started it
   removes after a crash: a HIP compile that LLVM aborts, or a program killed

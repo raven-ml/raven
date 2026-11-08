@@ -628,6 +628,18 @@ let features =
         (fun arch ->
           is_relocatable_elf64 ~machine:(elf_machine "x86_64")
             (compile arch clamped_gathers));
+      (* The straight-line vectorizer of LLVM 19 and of Apple's Clang 17
+         narrowed four lanes of rune's binary search into invalid IR for these
+         processors, which the verifier rejects. *)
+      cases "a binary search of four lanes compiles for AVX2 and AVX-512 on"
+        ~id:Fun.id
+        [ "x86_64,x86-64-v3"; "x86_64,x86-64-v4"; "x86_64,znver4" ]
+        (fun arch ->
+          let src =
+            In_channel.with_open_bin "vectorized_search.c" In_channel.input_all
+          in
+          is_relocatable_elf64 ~machine:(elf_machine "x86_64")
+            (ccache_off (fun () -> compile arch src)));
       (* Clang 18 crashed on this loop for these processors, which have
          AVX-512's half arithmetic. *)
       cases "a loop of half casts compiles with AVX-512's half arithmetic on"

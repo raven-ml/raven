@@ -104,11 +104,11 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - a Metal kernel loads 8-byte arguments from the bytes setBytes copies,
   whose alignment Apple does not document and `rig_metal.mli` does not
   promise; it holds on Apple GPUs at 32 bytes as observed
-- Apple Clang and LLVM 23 keep the straight-line vectorizer that D167
-  turns off under LLVM 18-20: run 73455ffe7's reduced kernel and rune's
-  ALiBi attention example (test_attention.ml, the dense tq 2 tk 3 case)
-  through them on the Mac and extend D167 if they miscompile (LLVM 21
-  and 22 compile both)
+- LLVM 23 keeps the straight-line vectorizer that D167 turns off under
+  LLVM 18-20 and Apple clang 17: run 73455ffe7's reduced kernel and
+  rune's ALiBi attention example (test_attention.ml, the dense tq 2 tk 3
+  case) through it and extend D167 if it miscompiles (LLVM 21 and 22
+  compile both)
 - HIP's unstaged tensor-core operands load 8 bytes again since D261's copy
   rule: unmeasured on nonnormal
 - AMD's comgr and Metal's compiler run LLVM's loop-idiom pass too; D167's

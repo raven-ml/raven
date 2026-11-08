@@ -4996,19 +4996,21 @@ fold wraps integers and holds its float bound`, hold.
   narrowing rounds; rune's `rune jit › classes › a selection of a minimum
   against its constant is exact`, at `float16` and `bfloat16` too.
 
-## D167. Clang's arguments: LLVM 18, 19 or 20 without its straight-line vectorizer, a long source without its loop vectorizer, arm64 without the interleaved load combine, every kernel without loop idiom recognition
+## D167. Clang's arguments: LLVM 18, 19 or 20 and Apple's Clang 17 for x86_64 without its straight-line vectorizer, a long source without its loop vectorizer, arm64 without the interleaved load combine, every kernel without loop idiom recognition
 
 - **tinygrad:** `runtime/support/compiler_cpu.py:21` (`ClangCompiler.compile`,
   Clang's arguments at `-O2`, which runs LLVM's SLP and loop vectorizers).
-- **tolk:** `Compiler_cpu.llvm_major` (the LLVM version a Clang's `-###`
-  statement names), `Compiler_cpu.long_source`,
+- **tolk:** `Compiler_cpu.stated_release` (the release a Clang's `-###`
+  statement names, LLVM's or Apple's), `Compiler_cpu.long_source`,
   `Compiler_cpu.compile_args`, which adds `-fno-slp-vectorize` when it is
-  18, 19 or 20, `-mllvm -disable-interleaved-load-combine` for arm64 and
+  LLVM 18, 19 or 20, or Apple's 17 for x86_64,
+  `-mllvm -disable-interleaved-load-combine` for arm64 and
   `-mllvm -disable-loop-idiom-all` for every Clang,
   `Compiler_cpu.without_loop_vectorizer`, and `Compiler_cpu.clang`
   (its `table`, which names both commands and the length).
 - **Differs:** a Clang that states LLVM 18, 19 or 20 compiles every kernel
-  with `-fno-slp-vectorize`, after `-O2`, which would turn the vectorizer back on.
+  with `-fno-slp-vectorize`, after `-O2`, which would turn the vectorizer
+  back on, and so does Apple's Clang 17 for x86_64.
   Every Clang compiles a source of more than 400 000 bytes without the loop
   vectorizer: its compiler proper runs without `-vectorize-loops`, as the
   driver runs it under `-fno-vectorize` (Clang 18.1.8 and 19.1.7 state the
@@ -5059,9 +5061,23 @@ fold wraps integers and holds its float bound`, hold.
   `-opt-bisect-limit` names `SLPVectorizerPass` as the pass that breaks the
   kernel. `llvm-reduce` brings it to 40 instructions of selects, truncations
   to i32, `or`, `lshr` and `zext`. Without the vectorizer the kernel gives
-  every row. Apple's Clangs state no LLVM version and keep the vectorizer.
-  With the IR verifier on (D275), invalid IR from it is a compile error
-  naming the kernel.
+  every row. With the IR verifier on (D275), invalid IR from it is a compile
+  error naming the kernel.
+
+  Apple's Clangs state their own release, not LLVM's. Apple clang 17.0.0
+  (clang-1700.6.4.2, macOS 26.3) writes the same invalid IR for `E_16_2_4`
+  for `x86-64-v3`, `x86-64-v4` and `znver4` (`trunc nsw <4 x i8> ... to <4 x
+  i32>` for the kernel rune renders, `<2 x i8>` for the reduced one), and
+  compiles it without the vectorizer: it compiles for x86_64 on an Intel
+  Mac and for another machine's x86-64 host. For arm64 it compiles both
+  kernels, rune's `Lower_reduce` and attention cases above pass on an M1
+  Max, and of the 195 kernels of those attention cases none converts a
+  vector of 8 or 16-bit lanes to float, where Homebrew's Clang 19.1.7
+  writes `uitofp <2 x i8>` in one of them for arm64 and another for
+  `x86-64-v3`. For arm64 the vectorizer stays on: of 466 kernels of tolk's
+  heuristic suite and those rune cases, Apple Clang 17 changes 269 objects
+  without it and adds 9.5% instructions (247 691 to 271 190), up to 5
+  times in one kernel.
 
   LLVM 19 and 20 also write valid IR of wrong values, which no verifier
   sees: rune's attention test `jit within the bounds of eager › float32`
@@ -5145,9 +5161,10 @@ fold wraps integers and holds its float bound`, hold.
   rune's linear algebra and suites under Clang 19.1.7 for x86_64, of 8695
   under Clang 18.1.3 and 8694 under LLVM 23.1.5, where it finishes, and of
   1167 for arm64 and 389 for riscv64 under Clang 19.1.7. Every Clang
-  compiles without it, Apple's included, since Apple's states no LLVM
-  release and Swift's `main` builds on swiftlang's `stable/23.x`, which has
-  the walk, while the CRC recogniser's own option is an error before LLVM
+  compiles without it, Apple's included, since Apple's release is not
+  LLVM's: Apple clang 17 is based mainly on LLVM 19 and Apple clang 21
+  (Xcode 26.4) on LLVM 21, with no Apple 18 to 20, and Swift's `main` builds
+  on swiftlang's `stable/23.x`, which has the walk, while the CRC recogniser's own option is an error before LLVM
   22. A gate to LLVM 22 and 23 would differ only from LLVM 24, where a
   future superlinear addition to the pass would show silently, as a
   compile that never ends; the blanket option instead takes a rename of the hidden
@@ -5158,7 +5175,11 @@ fold wraps integers and holds its float bound`, hold.
 - **Pinned by:** `Tolk.Compiler_cpu › features › four clamped gathers compile
   for AVX-512 on` (`x86_64,x86-64-v4`, `x86_64,skylake-avx512`,
   `x86_64,znver4`), which compiles the indices of `r_3_2` and fails under
-  Clang 18 without the flag; rune's `rune jit › classes › a uint4 sort along
+  Clang 18 without the flag; `Tolk.Compiler_cpu › features › a binary
+  search of four lanes compiles for AVX2 and AVX-512 on` (`x86_64,x86-64-v3`,
+  `x86_64,x86-64-v4`, `x86_64,znver4`), over `E_16_2_4` reduced, which fails
+  under Clang 19 and Apple's Clang 17 without the flag; rune's `rune jit ›
+  classes › a uint4 sort along
   the last axis of every other row and column, flipped, gives eager's
   codes`, under Clang 18 on an x86 host with AVX-512; rune's `Lower_reduce ›
   cases › rows of one group in a block at each batch index give eager's
@@ -6156,8 +6177,8 @@ and an initial value is added after it (D260).
   x86_64 arguments, `-march=<cpu>` and its features); `runtime/ops_cpu.py:68`
   (the CPU's arch, its machine and `native`).
 - **tolk:** `Compiler_cpu.flags` (`fixed` and `llvm18_x86_off`), which
-  `Compiler_cpu.clang` and `Compiler_cpu.registers` take, with the LLVM
-  version `Compiler_cpu.llvm_major` reads from the statement
+  `Compiler_cpu.clang` and `Compiler_cpu.registers` take, with the
+  release `Compiler_cpu.stated_release` reads from the statement
   `Compiler_cpu.version` asks for.
 - **Differs:** under a Clang that states LLVM 18, an x86_64 arch's arguments
   end with `-mno-avx10.1-512 -mno-avx10.1-256 -mno-avx512fp16`, after

@@ -56,7 +56,8 @@ val clang : string -> Renderer.Compiler.t
     source makes no such call, and under LLVM 22 and 23 its time grows
     exponentially with a chain of selections that each read the last twice.
     Under a
-    Clang of LLVM 18, 19 or 20, the straight-line vectorizer, which packs
+    Clang of LLVM 18, 19 or 20, and under Apple's Clang 17 for [x86_64], the
+    straight-line vectorizer, which packs
     independent scalar operations into vectors, is off, since it writes
     invalid code or wrong values for some packed integer lanes; under LLVM
     18 so are AVX10.1 and AVX-512's half arithmetic ({!flags}). On x86_64 Windows the stack is not probed, since

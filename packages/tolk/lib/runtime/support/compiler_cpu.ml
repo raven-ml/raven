@@ -178,10 +178,12 @@ let compile_files (prog, args) srcs =
   | Ok None -> fail (prog ^ ": its exit status is lost")
   | Error why -> fail why
 
-(* The major version of LLVM that a statement names, as in "Ubuntu clang
-   version 18.1.3". Apple's Clang numbers its own releases, so its statement
-   names none. *)
-let llvm_major stated =
+(* A Clang's major release: LLVM's, or Apple's, which numbers its own. *)
+type release = Llvm of int | Apple of int
+
+(* The major release that a statement names, as in "Ubuntu clang version
+   18.1.3" or "Apple clang version 17.0.0 (clang-1700.6.4.2)". *)
+let stated_release stated =
   let key = "clang version " in
   let n = String.length key and len = String.length stated in
   let rec find i =
@@ -189,18 +191,35 @@ let llvm_major stated =
     else if String.sub stated i n = key then Some i
     else find (i + 1)
   in
+  let major first =
+    let rec last j =
+      if j < len && stated.[j] >= '0' && stated.[j] <= '9' then last (j + 1)
+      else j
+    in
+    int_of_string_opt (String.sub stated first (last first - first))
+  in
   match find 0 with
   | None -> None
-  | Some i when i >= 6 && String.sub stated (i - 6) 6 = "Apple " -> None
-  | Some i ->
-      let first = i + n in
-      let rec last j =
-        if j < len && stated.[j] >= '0' && stated.[j] <= '9' then last (j + 1)
-        else j
-      in
-      int_of_string_opt (String.sub stated first (last first - first))
+  | Some i when i >= 6 && String.sub stated (i - 6) 6 = "Apple " ->
+      Option.map (fun r -> Apple r) (major (i + n))
+  | Some i -> Option.map (fun r -> Llvm r) (major (i + n))
 
-(* The LLVM release of each Clang, as the last process that asked it found it:
+(* A release as the hint table keeps it: LLVM's as its number, Apple's after
+   "apple". *)
+let release_to_string = function
+  | Llvm r -> string_of_int r
+  | Apple r -> "apple" ^ string_of_int r
+
+let release_of_string l =
+  let apple = "apple" in
+  let n = String.length apple in
+  if String.starts_with ~prefix:apple l then
+    Option.map
+      (fun r -> Apple r)
+      (int_of_string_opt (String.sub l n (String.length l - n)))
+  else Option.map (fun r -> Llvm r) (int_of_string_opt l)
+
+(* The release of each Clang, as the last process that asked it found it:
    a hint, kept on disk while {!Setting.ccache} holds, from which a process
    picks the arguments it asks Clang to state, so that a Clang of the hinted
    release is run once. *)
@@ -210,16 +229,16 @@ let hinted cc =
   if not (Setting.value Setting.ccache) then None
   else
     match Helpers.Diskcache.get ~table:hint_table cc with
-    | Some l -> int_of_string_opt l
+    | Some l -> release_of_string l
     | None | (exception (Failure _ | Sys_error _)) -> None
 
-let hint cc llvm =
-  let l = Option.fold ~none:"" ~some:string_of_int llvm in
+let hint cc release =
+  let l = Option.fold ~none:"" ~some:release_to_string release in
   if Setting.value Setting.ccache then
     try Helpers.Diskcache.put ~table:hint_table cc l with Sys_error _ -> ()
 
-(* What [cc] states it runs for [args ~llvm], where [llvm] is the release of
-   LLVM it names in that statement: Clang states its version and installation
+(* What [cc] states it runs for [args ~release], where [release] is the release
+   it names in that statement: Clang states its version and installation
    before its commands. [args] is first asked for the hinted release; a
    statement that names another, as after an upgrade, is asked again for the
    one it names, which is then hinted. Clang is asked at most three times: a
@@ -230,16 +249,16 @@ let own_statement =
   let lock = Mutex.create () and stated = Hashtbl.create 4 in
   fun cc args ->
     Mutex.protect lock @@ fun () ->
-    let key = (cc, args ~llvm:None) in
+    let key = (cc, args ~release:None) in
     match Hashtbl.find_opt stated key with
     | Some s -> s
     | None ->
         let hinted = hinted cc in
-        let rec settle llvm tries =
-          let s = statement cc (args ~llvm) in
-          let named = llvm_major s in
-          if named = llvm then (
-            if llvm <> hinted then hint cc llvm;
+        let rec settle release tries =
+          let s = statement cc (args ~release) in
+          let named = stated_release s in
+          if named = release then (
+            if release <> hinted then hint cc release;
             s)
           else if tries = 0 then s
           else settle named (tries - 1)
@@ -351,12 +370,13 @@ let selection arch =
   in
   (machine, triple @ target_args @ tune)
 
-(* The flags of a [selection] for a Clang of LLVM [llvm]. *)
-let fixed ~llvm (machine, flags) =
-  if machine = "x86_64" && llvm = Some 18 then flags @ llvm18_x86_off
+(* The flags of a [selection] for a Clang of release [release]. *)
+let fixed ~release (machine, flags) =
+  if machine = "x86_64" && release = Some (Llvm 18) then flags @ llvm18_x86_off
   else flags
 
-let flags ~version arch = fixed ~llvm:(llvm_major version) (selection arch)
+let flags ~version arch =
+  fixed ~release:(stated_release version) (selection arch)
 
 (* -fno-math-errno is required for __builtin_sqrt to become an instruction
    instead of a function call. -ffp-contract=off keeps each product and sum its
@@ -375,10 +395,13 @@ let flags ~version arch = fixed ~llvm:(llvm_major version) (selection arch)
    with AVX2, they packed two int64 differences of rows and keys converted to
    float, narrowed the unsigned low halves to 8 bits and wrote [uitofp <2 x
    i8>], so that a low half of 2^32 - 1 converted to 255 and a score was off
-   by 2^32 times its slope. LLVM 18, 21 and 22 compile the kernel. Under LLVM
-   18, 19 and 20 only, that vectorizer is off, so that other Clangs compile
-   as before. The flags follow -O2, which would turn the vectorizers back
-   on.
+   by 2^32 times its slope. LLVM 18, 21 and 22 compile the kernel. Apple's
+   Clang 17 writes the binary search's invalid IR for x86_64 too, and neither
+   kernel's defect for arm64, where without the vectorizer its objects of 466
+   kernels of tolk's and rune's tests hold 9.5% more instructions.
+   Under LLVM 18, 19 and 20, and under Apple's Clang 17 for x86_64, that
+   vectorizer is off, so that other Clangs compile as before. The flags
+   follow -O2, which would turn the vectorizers back on.
 
    On arm64, LLVM's interleaved load combine looks for loads that shuffles put
    together into an interleaved vector, to read them with one ldN, and its time
@@ -399,9 +422,12 @@ let flags ~version arch = fixed ~llvm:(llvm_major version) (selection arch)
    eigh, each reading the last twice, are 2^31 paths, which LLVM 23 did not
    walk in 300 s; without the pass the kernel compiles in 0.01 s. Every Clang
    compiles without it. *)
-let compile_args selected ~llvm =
+let compile_args selected ~release =
   let slp =
-    match llvm with Some (18 | 19 | 20) -> [ "-fno-slp-vectorize" ] | _ -> []
+    match (release, fst selected) with
+    | Some (Llvm (18 | 19 | 20)), _ | Some (Apple 17), "x86_64" ->
+        [ "-fno-slp-vectorize" ]
+    | _ -> []
   in
   let ldn =
     match selected with
@@ -422,14 +448,14 @@ let compile_args selected ~llvm =
     "-fno-ident";
     "-ffile-compilation-dir=.";
   ]
-  @ fixed ~llvm selected @ slp @ ldn @ idioms @ [ "-"; "-o"; "-" ]
+  @ fixed ~release selected @ slp @ ldn @ idioms @ [ "-"; "-o"; "-" ]
 
 (* The macros Clang's preprocessor defines for an x86_64 [selected], which name
    the processor's features for every processor, where Clang's statement names
    them only for [native]; none where Clang does not run. *)
 let x86_macros cc selected =
-  let llvm = llvm_major (own_statement cc (compile_args selected)) in
-  let flags = fixed ~llvm selected in
+  let release = stated_release (own_statement cc (compile_args selected)) in
+  let flags = fixed ~release selected in
   let macros =
     match run cc ([ "-dM"; "-E"; "-x"; "c" ] @ flags @ [ "-" ]) "" with
     | Ok (WEXITED 0, out, _) -> String.split_on_char '\n' out
