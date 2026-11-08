@@ -181,6 +181,9 @@ and rune), raven / llama.cpp b12048 Vulkan:
 
 ## nx
 
+- with a large live OCaml heap, the host buffers of each talon take drove
+  the major GC to ~150 M instructions a take, ~8x the take's own (probe of
+  6281f607b): custom-block pressure from nx and rig host buffers
 - nx.cpu's thread splits follow the call prices (179ea5cc5, 82e42b78d) and
   the kind tables of f6876a0ad, measured under load 1.3-4.7: time them
   quiet on fudge, with a row of a costly kind where its threads change
@@ -200,29 +203,48 @@ and rune), raven / llama.cpp b12048 Vulkan:
   instructions by 7e16755a1 (q02 4.71 -> 1.61 G) and c8e1f9fa2 (q19 4.66
   -> 3.68 G, q12 3.73 -> 3.14 G), and by the join placing only matching
   right rows (q05 4.13 -> 3.32 G, q03 3.62 -> 3.05 G; text gathered at 35
-  instructions a row, from 48), ratios not re-measured. What is left:
-  integer sums cast to int64 before summing (accumulation-dtype design),
-  one pass per aggregate, Parquet decoding (q05 ~1.7 G of its 3.32: snappy,
-  hybrid runs, text decoded per row, talon-dict-text.adjudication.md step
-  3).
+  instructions a row, from 48), then by Parquet decoding (e090d2d2b: q19
+  3.51 -> 1.92 G, q12 2.97 -> 2.08 G, q05 3.18 -> 2.74 G), `Nx.unique`
+  (fd09c766a, q05's keys 1.55 -> 1.07 G on 14 threads) and shared
+  aggregate parts (b1fb8d4b4, H2O q07 -26%, q09 -10%); ratios not
+  re-measured. What is left: q05's Snappy at 744 M (~32 instructions an
+  element) and ~0.46 G of memcpy, part a version-1 PLAIN page copied into
+  its column; `Nx.unique` on the pool still makes each key again in the
+  merge and hashes keys a direct table numbers (partitioning by hash or
+  splitting the table needs wall time to judge); a group-by's aggregates
+  fold in one walk only if nx's reduce kernel takes segment ids
+  (_plans/todo-campaign/design/talon-one-pass.md §4.5, a model of q04 and
+  q05 -34%, a kernel contract change for the maintainer). The int64 cast
+  before an integer sum is at most 3.8% of a query and stays.
   Data: ~/wt/tmp/talon-data on fudge (decision SF0.1/SF1, H2O 1e6/1e7)
-- talon 1.0 plan (_plans/talon/product/plan.md, on the Mac): windows and
-  ewm, as-of and interval joins, interval sets and folds, zoned time,
+- talon 1.0 plan (_plans/talon/product/plan.md; designs adjudicated in
+  _plans/talon/design/): range joins landed (6f37e59c7), windows and Kit
+  fills under way; as-of joins and interval sets follow windows as Kit
+  compositions; list frames need a design pass (paths or expressions);
+  ewm waits for the maintainer's scope call; then folds, zoned time,
   hash/sample/shuffle, Pivot and nesting, dense round trips, partial
   aggregation, regex, compressed and fixed-width CSV, Parquet nested
   columns, datasets and writer, talon.arrow, talon.jsont, complex and
   validity columns, HTML display
 - brot vs gigatoken cd5ee648c6 on fudge (bench README, "Against
   gigatoken"): GPT-2 runs at 0.55-0.65 of its speed on one thread over
-  100 MB (abbeface7). About half the gap is pages: first-touch faults on
-  each batch's fresh 90 MB result (39 of a 44-49 ms copy-out; keeping
-  freed memory in malloc takes the warm pass from 0.19-0.24 to 0.17-0.18
-  s) and the pretoken table on 4 KB pages (gigatoken madvises both to
-  2 MB, which brot's C rule does not allow yet). The rest is 1.14x the
-  instructions: the walk and probe loop (~3 instr/B) and GC marking (~2
-  instr/B) of ~200k tokenizer blocks, mostly the two vocabulary Hashtbls.
+  100 MB (abbeface7). Pages: a warm pass faults 11.5k-29k times, mostly
+  each batch's fresh 90 MB result; glibc's tunables remove them with no
+  brot code (`mmap_max=0` and a large `trim_threshold`: 0 after the first
+  pass; `glibc.malloc.hugetlb=1`: 0.8k-3k), and the README states which
+  the comparison ran under. Instructions: GC marking of the vocabulary's
+  blocks is ~0.6 instr/B at 100 MB (2 only at 5 MB), so a flat vocabulary
+  (~0.8%) does not pay; the walk and probe loop (~3 instr/B) remains.
   Branch-free merges cut callgrind's mispredicts 35% but ran no faster on
-  fudge
+  fudge. brot.mli:985 does not say that a token given twice maps to its
+  last binding
+- talon.csv's decode of a 147 KB file allocates ~1.7 MB of words in the
+  major heap per decode (14.2 M over the pacing law's 64 decodes)
+- talon.parquet's pacing law failed once on macOS (run 42473531097: 35
+  major cycles against 34); the runtime's own pace cannot explain it (the
+  loop puts ~4.8k words in the major heap) and it passes at rig's 4 MiB
+  floor on fudge; on failure the law now prints each collector's counts
+  (0247fa6d8)
 - brot's dump_kernels comparison failed once on macOS arm64 CI (run
   42423619955, f8b600809): shard 2's native encode raised `519254,519240
   is not a span of the 524288 normalized bytes`, shard 5's bytecode dump
