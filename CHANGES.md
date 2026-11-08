@@ -1074,6 +1074,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A kernel that shifts vectors of integers left, or unsigned ones right, by
+  a constant count at or past their width compiles, storing 0: the guard of
+  `Cstyle.pm_defined_div_shift` selected a scalar 0 that a vector store
+  cannot take.
 - A host program with a half cast links on an x86_64 processor without F16C,
   as another machine's host compiles for: the object defines the conversions
   Clang calls there (`Compiler_cpu.clang`), which no library of the process

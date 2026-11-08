@@ -8397,8 +8397,9 @@ and an initial value is added after it (D260).
   extremes compute as the interpreter`, on the host (`kernels on the
   host`) and on each GPU (`GPUs ›`, run on fudge's CUDA and NV): every
   integer type's quotient, remainder and shifts of operands drawn at its
-  extremes, -1 to 2, and counts either side of its width, 32 and 64, in
-  scalars and in vectors of 4 lanes, against `Ops.exec_alu`; and `a narrow
+  extremes, -1 to 2, counts either side of its width, 32 and 64, and a
+  constant count of its width, in scalars and in vectors of 4 lanes,
+  against `Ops.exec_alu`; and `a narrow
   type shifted by a uint32 count computes as the interpreter`, by constant
   counts of 8 to 65537.
 

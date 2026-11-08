@@ -394,8 +394,9 @@ let wraps_signed d () =
    give 0, a signed right shift 0 or -1 by the sign. C leaves each undefined,
    and x86 traps on both divisions. A kernel of one integer type writes the
    truncated and floored quotients and remainders of [a] by [b], [a // a],
-   [a << k], [a >> k], and [a]'s quotient and remainder by a constant 0, of
-   [lanes] loaded operands, drawn at the type's extremes, which the
+   [a << k], [a >> k], [a]'s quotient and remainder by a constant 0, and [a]
+   shifted either way by a constant count of the type's width, of [lanes]
+   loaded operands, drawn at the type's extremes, which the
    interpreter's values must match. It runs in scalars, and in vectors of 4
    lanes, which C does not promote to [int]. *)
 
@@ -409,6 +410,7 @@ let extreme_kernel ~opts dt =
   let at slot = Ops.index (Shape.placeholder ~slot [ lanes ] dt) [ i ] in
   let a = at 9 and b = at 10 and k = at 11 in
   let zero = Ops.int ~dtype:dt 0 in
+  let width = Ops.int ~dtype:dt (Dtype.bitsize dt) in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"extremes" ~opts_to_apply:opts ())
     [
@@ -424,6 +426,8 @@ let extreme_kernel ~opts dt =
              Ops.store (at 6) (a lsr k);
              Ops.store (at 7) (Ops.alu a Truncdiv [ zero ]);
              Ops.store (at 8) (Ops.alu a Truncmod [ zero ]);
+             Ops.store (at 12) (a lsl width);
+             Ops.store (at 13) (a lsr width);
            ])
         [ i ];
     ]
@@ -525,7 +529,7 @@ let extremes_compute d { dt; a; b; k } =
         Run.on d
           (extreme_program d ~opts dt)
           (List.init 9 (fun slot -> (slot, zeros))
-          @ [ (9, a); (10, b); (11, k) ])
+          @ [ (9, a); (10, b); (11, k); (12, zeros); (13, zeros) ])
       in
       let msg = Format.asprintf "%a in %s" Dtype.pp dt how in
       let expect slot what v =
@@ -539,7 +543,10 @@ let extremes_compute d { dt; a; b; k } =
       expect 5 ": a << k" (each Shl a k);
       expect 6 ": a >> k" (each Shr a k);
       expect 7 ": a / 0" (each Truncdiv a zeros);
-      expect 8 ": a mod 0" (each Truncmod a zeros))
+      expect 8 ": a mod 0" (each Truncmod a zeros);
+      let widths = Array.make lanes (of_int dt w) in
+      expect 12 ": a << width" (each Shl a widths);
+      expect 13 ": a >> width" (each Shr a widths))
     [ ("scalars", []); ("vectors", in_vectors) ]
 
 let extremes_prop name d =

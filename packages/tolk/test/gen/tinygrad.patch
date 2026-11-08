@@ -2771,7 +2771,7 @@ index 6eec3e198..dc135ab13 100644
 +  if 0 <= lo and hi < w: return None
 +  inside = k < w
 +  if x.op is Ops.SHR and x.dtype in dtypes.sints: return x.replace(src=(a, inside.where(k, w-1) & (w-1)))
-+  return inside.where(x.replace(src=(a, k & (w-1))), 0)
++  return inside.where(x.replace(src=(a, k & (w-1))), x.vconst_like(0))
 +pm_defined_div_shift = PatternMatcher([(UPat((Ops.TRUNCDIV, Ops.TRUNCMOD), dtypes.ints, name="x"), defined_div),
 +  (UPat((Ops.SHL, Ops.SHR), dtypes.ints, name="x"), defined_shift)])
 +

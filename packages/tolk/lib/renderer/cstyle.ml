@@ -566,10 +566,11 @@ let unsigned_of (dt : Dtype.t) =
 let pm_defined_div_shift =
   let zero = Dtype.Value.of_int 0 in
   let reaches v (lo, hi) = Dtype.Value.(lo <= v && v <= hi) in
-  (* The division's constants are stacks of its lanes: a quotient by a
-     constant 0 folds to its value at 0, which a store then reads whole, and a
-     store, unlike an elementwise operation or an index, does not read a scalar
-     expanded to its lanes as the scalar. *)
+  (* The constants a guard selects are stacks of the operation's lanes: a
+     quotient by a constant 0, or a shift by a constant count at or past the
+     width, folds to its value there, which a store then reads whole, and a
+     store, unlike an elementwise operation or an index, does not read a
+     scalar expanded to its lanes as the scalar. *)
   let not_zero d = alu d Op.Cmpne [ vconst_like d (`Int Bigint.zero) ] in
   let nonzero d = where (not_zero d) d (vconst_like d (`Int Bigint.one)) in
   (* [nonzero d], which bounds cannot tell from 0 *)
@@ -630,7 +631,11 @@ let pm_defined_div_shift =
       let inside = O.(k < int w) and low n = O.(n land last) in
       if Op.equal (op x) Op.Shr && List.mem dt Dtype.sints then
         Some (replace x ~src:[ a; low (where inside k last) ])
-      else Some (where inside (replace x ~src:[ a; low k ]) (O.int 0))
+      else
+        Some
+          (where inside
+             (replace x ~src:[ a; low k ])
+             (vconst_like x (`Int Bigint.zero)))
   in
   Pattern_matcher.v
     (fun () -> [
