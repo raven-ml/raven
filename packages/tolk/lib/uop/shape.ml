@@ -1865,6 +1865,14 @@ let fold_bitcast root c =
     in
     Some (const_v root (Dtype.bitcast dt (dtype root) v))
 
+let fold_args a read srcs =
+  match (op a, srcs) with
+  | (Op.Shl | Op.Shr), [ x; c ]
+    when op c = Op.Const && Dtype.equal (dtype c) Dtype.Weak_int ->
+      (* a bare count is a number, whatever its operand's width *)
+      [ read x; value c ]
+  | _ -> List.map read srcs
+
 (* A committed integer holds its type's value, so a fold reads a committed
    operand, and a weak integer operand the operation commits, at the width of
    the operation's operands, and writes a committed integer result at its width;
@@ -1876,9 +1884,7 @@ let fold_const_alu a =
   let operands =
     if Op.Set.mem (op a) Op.Set.comparison then promo_dtype (src a) else dtype a
   in
-  (* A shift's count is a number, whatever its operand's width. *)
-  let count i = i = 1 && (op a = Op.Shl || op a = Op.Shr) in
-  let read i s =
+  let read s =
     match (op s, value s) with
     (* a float constant is its bits: a NaN operand keeps them for a selection
        or a negation to move *)
@@ -1886,9 +1892,8 @@ let fold_const_alu a =
         Dtype.const (dtype s) v
     | Op.Cast, (#Dtype.value as v) -> (at (dtype s) v :> Dtype.const)
     | Op.Const, (`Int _ as v)
-      when Dtype.equal (dtype s) Dtype.Weak_int
-           && Dtype.mem operands Dtype.ints
-           && not (count i) ->
+      when Dtype.equal (dtype s) Dtype.Weak_int && Dtype.mem operands Dtype.ints
+      ->
         (at operands v :> Dtype.const)
     | _, c -> c
   in
@@ -1903,14 +1908,16 @@ let fold_const_alu a =
   let stack s = op s = Op.Stack in
   match List.filter stack (src a) with
   | [] ->
-      let args = List.mapi read (src a) in
+      let args = fold_args a read (src a) in
       if defined args then Some (const_like a (alu args)) else None
   | stacks ->
       let count =
         List.fold_left (fun n s -> max n (List.length (src s))) 0 stacks
       in
-      let lane l i s = read i (if stack s then nth s l else s) in
-      let lanes = List.init count (fun l -> List.mapi (lane l) (src a)) in
+      let lane l s = if stack s then nth s l else s in
+      let lanes =
+        List.init count (fun l -> fold_args a read (List.map (lane l) (src a)))
+      in
       if List.for_all defined lanes then
         Some (consts ~dtype:(dtype a) (List.map alu lanes))
       else None

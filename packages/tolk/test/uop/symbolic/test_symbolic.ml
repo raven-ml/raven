@@ -473,6 +473,15 @@ let constants =
             Ops.O.(
               raw Stack [ int32 1; int32 2 ] + raw Stack [ int32 3; int32 4 ])
             (raw Stack [ int32 4; int32 6 ]));
+      test "a shift of stacks of constants reads each lane's bare count whole"
+        (fun () ->
+          let u16 x = Ops.const ~dtype:Uint16 (`Int (Bigint.of_int x)) in
+          folds_to
+            (Ops.alu
+               (raw Stack [ u16 3; u16 3 ])
+               Shl
+               [ raw Stack [ Ops.int 65536; Ops.int 1 ] ])
+            (raw Stack [ u16 0; u16 6 ]));
       test "a unary operation of a weak float constant stays weak" (fun () ->
           folds_to (Ops.sqrt (Ops.float 4.)) (Ops.float 2.);
           folds_to (Ops.exp2 (Ops.float 3.)) (Ops.float 8.));
