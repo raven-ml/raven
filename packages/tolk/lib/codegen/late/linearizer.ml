@@ -6,7 +6,6 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
-module Ready = Set.Make (Int)
 
 (* Linearizing *)
 
@@ -44,58 +43,96 @@ let pp_priority ppf (run_count, depth, priority, extra) =
   Format.fprintf ppf "(%s, %d, %d, %a)" (Bigint.to_string run_count) depth
     priority pp_extra extra
 
+(* A heap of distinct ints in [a.(0)] to [a.(n - 1)], the greatest at the
+   root. *)
+let rec sift_up (a : int array) i =
+  let parent = (i - 1) / 2 in
+  if i > 0 && a.(parent) < a.(i) then begin
+    let x = a.(i) in
+    a.(i) <- a.(parent);
+    a.(parent) <- x;
+    sift_up a parent
+  end
+
+let rec sift_down (a : int array) n i =
+  let l = (2 * i) + 1 in
+  if l < n then begin
+    let c = if l + 1 < n && a.(l + 1) > a.(l) then l + 1 else l in
+    if a.(c) > a.(i) then begin
+      let x = a.(i) in
+      a.(i) <- a.(c);
+      a.(c) <- x;
+      sift_down a n c
+    end
+  end
+
 let linearize sink =
-  let lst = toposort ~calls:Skip sink in
-  let out_degree = Tbl.create 256 and priorities = Tbl.create 256 in
-  let degree u = Option.value ~default:0 (Tbl.find_opt out_degree u) in
-  List.iter
-    (fun u ->
-      List.iter
-        (fun s -> Tbl.replace out_degree s (degree s + 1))
-        (src_without_body u);
-      Tbl.replace priorities u (priority u))
-    lst;
+  let lst = Array.of_list (toposort ~calls:Skip sink) in
+  let n = Array.length lst in
+  let index = Tbl.create n in
+  Array.iteri (fun i u -> Tbl.replace index u i) lst;
+  let out_degree = Array.make n 0 in
+  let rec count = function
+    | [] -> ()
+    | s :: rest ->
+        let i = Tbl.find index s in
+        out_degree.(i) <- out_degree.(i) + 1;
+        count rest
+  in
+  Array.iter (fun u -> count (src_without_body u)) lst;
+  let priorities = Array.map priority lst in
   (* Number the nodes in the ideal order. *)
   let tuple_order = Setting.value Setting.tuple_order in
-  let ideal ((r0, d0, p0, e0), u0) ((r1, d1, p1, e1), u1) =
+  let ideal i0 i1 =
+    let r0, d0, p0, e0 = priorities.(i0) and r1, d1, p1, e1 = priorities.(i1) in
     let c = Bigint.compare r0 r1 in
     let c = if c <> 0 then c else Int.compare d0 d1 in
     let c = if c <> 0 then c else Int.compare p0 p1 in
     let c = if c <> 0 then c else Option.compare Int.compare e0 e1 in
     match c with
-    | 0 when tuple_order -> compare_structure u0 u1
+    | 0 when tuple_order -> compare_structure lst.(i0) lst.(i1)
     | c -> c
   in
-  (* Each node is sorted with its priority, looked up once. *)
-  let keyed = List.map (fun u -> (Tbl.find priorities u, u)) lst in
-  let by_nkey = Array.of_list (List.map snd (List.stable_sort ideal keyed)) in
-  let nkey = Tbl.create (Array.length by_nkey) in
-  Array.iteri (fun i u -> Tbl.replace nkey u i) by_nkey;
-  (* Then place them in the topological order closest to it, from the end. *)
-  let rec place ready placed =
-    match Ready.max_elt_opt ready with
-    | None -> placed
-    | Some k ->
-        let u = by_nkey.(k) in
-        let release ready v =
-          let d = degree v - 1 in
-          Tbl.replace out_degree v d;
-          if d = 0 then Ready.add (Tbl.find nkey v) ready else ready
-        in
-        place
-          (List.fold_left release (Ready.remove k ready) (src_without_body u))
-          (u :: placed)
+  let by_nkey = Array.init n Fun.id in
+  Array.stable_sort ideal by_nkey;
+  let nkey = Array.make n 0 in
+  Array.iteri (fun k i -> nkey.(i) <- k) by_nkey;
+  (* Then place them in the topological order closest to it, from the end:
+     [ready] is a heap of the numbers of the nodes whose consumers are all
+     placed. *)
+  let ready = Array.make n 0 and len = ref 1 and placed = ref [] in
+  let rec release = function
+    | [] -> ()
+    | v :: rest ->
+        let i = Tbl.find index v in
+        out_degree.(i) <- out_degree.(i) - 1;
+        if out_degree.(i) = 0 then begin
+          ready.(!len) <- nkey.(i);
+          incr len;
+          sift_up ready (!len - 1)
+        end;
+        release rest
   in
-  let lst = place (Ready.singleton (Tbl.find nkey sink)) [] in
+  ready.(0) <- nkey.(n - 1);
+  while !len > 0 do
+    let u = lst.(by_nkey.(ready.(0))) in
+    decr len;
+    ready.(0) <- ready.(!len);
+    sift_down ready !len 0;
+    placed := u :: !placed;
+    release (src_without_body u)
+  done;
+  let order = !placed in
   if Setting.value Setting.debug_linearize then
     List.iteri
       (fun i u ->
         Format.printf "%4d %-20s %s %a@." i
           (Format.asprintf "%a" Op.pp (op u))
           (multirange_str ~color:true ~pad:10 (Nodes.to_list (ranges u)))
-          pp_priority (Tbl.find priorities u))
-      lst;
-  lst
+          pp_priority
+          priorities.(Tbl.find index u))
+      order;
+  order
 
 (* Chaining loops *)
 

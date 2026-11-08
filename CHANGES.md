@@ -1078,6 +1078,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   a constant count at or past their width compiles, storing 0: the guard of
   `Cstyle.pm_defined_div_shift` selected a scalar 0 that a vector store
   cannot take.
+- `Linearizer.linearize` allocates half as much as it did, keeping the nodes
+  ready to place in a heap of ints and their counts in arrays: compiling
+  float64 `Nx.betaincinv`'s gradient allocates 199 M words against 210 M and
+  runs 2% fewer instructions. Outputs are unchanged.
 - A host program with a half cast links on an x86_64 processor without F16C,
   as another machine's host compiles for: the object defines the conversions
   Clang calls there (`Compiler_cpu.clang`), which no library of the process
