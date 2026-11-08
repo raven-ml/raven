@@ -238,9 +238,6 @@ extern "C" __attribute__((global)) void f(float *a) { a[0] = mfma(a[1], a[2], a[
 let compile ?(arch = "gfx1100") src =
   Compiler.compile (Compiler_amd.hip arch) src
 
-(* [kernel]'s code object from a worker that has compiled nothing else: idle
-   workers are killed first, so that a compile in turn is compared with one
-   that no earlier compile can have touched. *)
 (* [until ~seconds p] waits until [p ()] holds, asking every 10 ms: false if
    [seconds] pass first. *)
 let until ~seconds p =
@@ -286,6 +283,9 @@ let rec comgr_files dir =
    a writer to open [fifo], then for the writer to close it. *)
 let waiting fifo = Printf.sprintf "#include \"%s\"\n%s" fifo kernel
 
+(* [kernel]'s code object from a worker that has compiled nothing else: idle
+   workers are killed first, so that a compile in turn is compared with one
+   that no earlier compile can have touched. *)
 let fresh_reference () =
   with_comgr (fun () ->
       kill_children ();
