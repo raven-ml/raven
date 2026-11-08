@@ -32,14 +32,13 @@ def empty(*shape, dtype=dtypes.float):
 
 def kernel(*tensors, renderer=CPU, opts=None):
     """The one kernel that realizing `tensors` compiles, linearized by
-    `renderer`, with `opts` in place of the heuristic's if given, and the
-    iterations of the loop its launch splits into blocks, or None."""
+    `renderer`, with `opts` in place of the heuristic's if given."""
     linear, _ = Tensor.linear_with_vars(*tensors)
     (ast,) = [c.src[0] for c in linear.src if c.op is Ops.CALL and c.src[0].op is Ops.SINK]
     if opts is not None: ast = ast.replace(arg=replace(ast.arg, opts_to_apply=tuple(opts)))
     sink = full_rewrite_to_sink(ast, renderer, optimize=ast.arg is None or not ast.arg.optimized)
     lin = UOp(Ops.LINEAR, src=tuple(line_rewrite(linearize(sink), pm_linearize_cleanups + pm_alloc_to_buf)))
-    return lin, sink.arg.split[0] if sink.arg.split is not None else None
+    return lin
 
 
 def gemm(dtype=dtypes.float):
@@ -88,18 +87,10 @@ SYMBOLIC_KERNELS = [
 ]
 
 
-def built(kernels): return [(name, *make()) for name, make in kernels]
+def built(kernels): return [(name, make()) for name, make in kernels]
 
 
-def linears(kernels): return UOp.sink(*[lin for _, lin, _ in built(kernels)])
-
-
-# A split kernel's counts are those of one block; the tables count the block
-# that runs the whole loop.
-def whole(split, var_vals):
-    if split is None: return var_vals, "-"
-    extent = sym_infer(split, var_vals) if isinstance(split, UOp) else split
-    return {**var_vals, "block_lo": 0, "block_hi": extent}, str(extent)
+def linears(kernels): return UOp.sink(*[lin for _, lin in built(kernels)])
 
 
 def count(x, var_vals): return sym_infer(x, var_vals) if isinstance(x, UOp) else x
@@ -112,12 +103,12 @@ def kernels(): return linears(KERNELS)
 @table
 def estimates():
     rows = []
-    for i, (name, lin, split) in enumerate(built(KERNELS)):
+    for i, (name, lin) in enumerate(built(KERNELS)):
         e, ignoring = Estimates.from_uops(lin.src), Estimates.from_uops(lin.src, ignore_indexing=True)
-        var_vals, blocks = whole(split, {})
-        rows.append((name, str(i), blocks, count(e.ops, var_vals), count(ignoring.ops, var_vals),
+        var_vals = {}
+        rows.append((name, str(i), count(e.ops, var_vals), count(ignoring.ops, var_vals),
                      count(e.lds, var_vals), count(e.mem, var_vals)))
-    return ["case", "src", "split", "ops", "ops_ignoring_indexing", "lds", "mem"], rows
+    return ["case", "src", "ops", "ops_ignoring_indexing", "lds", "mem"], rows
 
 
 @graph
@@ -127,13 +118,13 @@ def symbolic_kernels(): return linears(SYMBOLIC_KERNELS)
 @table
 def symbolic_estimates():
     rows = []
-    for i, (name, lin, split) in enumerate(built(SYMBOLIC_KERNELS)):
+    for i, (name, lin) in enumerate(built(SYMBOLIC_KERNELS)):
         e, ignoring = Estimates.from_uops(lin.src), Estimates.from_uops(lin.src, ignore_indexing=True)
         for value in (1, 10, 64):
-            var_vals, blocks = whole(split, {"n": value})
-            rows.append((name, str(i), str(value), blocks, count(e.ops, var_vals), count(ignoring.ops, var_vals),
+            var_vals = {"n": value}
+            rows.append((name, str(i), str(value), count(e.ops, var_vals), count(ignoring.ops, var_vals),
                          count(e.lds, var_vals), count(e.mem, var_vals)))
-    return ["case", "src", "n", "split", "ops", "ops_ignoring_indexing", "lds", "mem"], rows
+    return ["case", "src", "n", "ops", "ops_ignoring_indexing", "lds", "mem"], rows
 
 
 # Accesses restated at another data type, as renderers restate a bool access as

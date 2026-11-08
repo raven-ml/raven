@@ -1,0 +1,11 @@
+# tolk D80 golden=0ba71a0cf55d24631f693dca160a9799
+case	src	n	split	ops	ops_ignoring_indexing	lds	mem
+shrunk_add	0	1	4	9	4	32	32
+shrunk_add	0	10	40	81	40	320	320
+shrunk_add	0	64	256	513	256	2048	2048
+shrunk_sum	1	1	4	17	4	32	32
+shrunk_sum	1	10	4	125	40	176	176
+shrunk_sum	1	64	4	773	256	1040	1040
+shrunk_sum_on_threads	2	1	-	576	256	2048	2048
+shrunk_sum_on_threads	2	10	-	4032	2560	11264	11264
+shrunk_sum_on_threads	2	64	-	24768	16384	66560	66560

@@ -64,6 +64,7 @@ UNMODIFIED = {
     "uop/uop_weak",
     "codegen/gpudims",
     "uop/spec runtime/support/compiler_cpu uop/symbolic",
+    "renderer/renderer",
 }
 
 HERE = Path(__file__).resolve().parent
