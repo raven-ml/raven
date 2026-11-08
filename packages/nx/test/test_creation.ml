@@ -195,21 +195,29 @@ let fills =
 type ranged = Ranged : ('v, 's) D.t * int * int * int -> ranged
 
 (* Bounds a dtype holds, small enough for every integer dtype: start and stop
-   in [0, 7], steps from -3 to 3 but 0. A quarter of the cases are booleans,
-   one dtype among many, so that every run reaches a range a boolean can't
-   hold. *)
+   in [0, 7], steps from -3 to 3 but 0. A quarter of these are booleans, one
+   dtype among many. Beside them, one case in five descends a boolean from
+   above 1, a range it can't hold, so that every run reaches one. *)
 let ranged =
   Gen.with_pp
     (fun ppf (Ranged (dt, a, b, c)) ->
       Format.fprintf ppf "%a %d %d %d" D.pp dt a b c)
     (let open Gen in
-     let* (D.Any dt) =
-       frequency [ (3, dtype); (1, constant (D.Any D.Bool)) ]
+     let held =
+       let* (D.Any dt) =
+         frequency [ (3, dtype); (1, constant (D.Any D.Bool)) ]
+       in
+       let* start = int_range 0 7 in
+       let* stop = int_range 0 7 in
+       let+ step = one_of [ int_range 1 3; int_range (-3) (-1) ] in
+       Ranged (dt, start, stop, step)
      in
-     let* start = int_range 0 7 in
-     let* stop = int_range 0 7 in
-     let+ step = one_of [ int_range 1 3; int_range (-3) (-1) ] in
-     Ranged (dt, start, stop, step))
+     let past_bool =
+       let* start = int_range 2 7 in
+       let+ stop = int_range 0 1 and+ step = int_range (-3) (-1) in
+       Ranged (D.Bool, start, stop, step)
+     in
+     frequency [ (4, held); (1, past_bool) ])
 
 let rec values start stop step =
   if (step > 0 && start >= stop) || (step < 0 && start <= stop) then []
