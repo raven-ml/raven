@@ -724,9 +724,8 @@ let sums_fn =
     | Some fn -> fn
     | None ->
         let prg = Codegen.to_program (sums ~opts:[] m k) (Lazy.force clang) in
-        let elf = Device.Tiny_elf.of_program prg in
-        let image = Result.get_ok (Rig.Image.load host elf.lib) in
-        let fn = require_some (Rig.Image.resolve image elf.name) in
+        let image = Result.get_ok (Rig.Image.load host (Uops.binary_of prg)) in
+        let fn = require_some (Rig.Image.resolve image (Uops.entry_of prg)) in
         Hashtbl.replace loaded (m, k) fn;
         fn
 
@@ -1466,7 +1465,7 @@ let one_program_per_start () =
     List.filter_map
       (fun u ->
         if Ops.op u <> Program then None
-        else Some (Device.Tiny_elf.of_program u).lib)
+        else Some (Uops.binary_of u))
       (Ops.toposort ~calls:Enter compiled)
   in
   equal int ~msg:"programs" 1 (List.length (List.sort_uniq String.compare libs));
@@ -2276,7 +2275,7 @@ let one_program_for_any_loop () =
     List.filter_map
       (fun u ->
         if Ops.op u <> Program then None
-        else Some (Device.Tiny_elf.of_program u).lib)
+        else Some (Uops.binary_of u))
       (Ops.toposort ~calls:Enter compiled)
   in
   equal int 1

@@ -24,3 +24,13 @@ val binaries_as_sources : Ops.t -> Ops.t
     generators record programs compiled that way, so that a golden holds no
     machine code; this compares a compiled graph with such a golden. *)
 
+(** {1:programs Compiled programs} *)
+
+val binary_of : Ops.t -> string
+(** [binary_of prg] is the binary of the compiled program [prg], its last
+    source.
+
+    Raises [Invalid_argument] if [prg] holds no binary. *)
+
+val entry_of : Ops.t -> string
+(** [entry_of prg] is the name of [prg]'s kernel as its binary exports it. *)

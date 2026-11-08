@@ -1,5 +1,5 @@
 """Goldens of tinygrad/device.py: the renderer a device picks for a DEV
-setting, and the compiled programs of `UOp.to_elf`.
+setting, and the layout of the programs compiled for it.
 
 The table `renderers` gives, for each DEV setting, device and architecture
 the device reports, the target `Compiled._select_renderer` renders for and its
@@ -10,12 +10,9 @@ A device lists the renderers of its `Compiled.__init__` (`runtime/ops_*.py`)
 that tolk ports.
 
 Each graph golden `<case>_program` is a program that `to_program` compiles for
-a C-family renderer. For each, the table `elfs` gives what `to_elf` makes of
-it, `signatures` each parameter of its signature, and `layouts` where
-`TinyELF.iter_sig` packs them. The renderer's compiler is the empty `Compiler`,
-which takes the source as the binary, so that the goldens depend on no
-toolchain. The table `reprs` holds the repr of compiled programs of chosen
-fields.
+a C-family renderer, and the table `layouts` where `TinyELF.iter_sig` packs
+its signature. The renderer's compiler is the empty `Compiler`, which takes the
+source as the binary, so that the goldens depend on no toolchain.
 """
 
 import tinygrad.runtime.support.compiler_amd as compiler_amd
@@ -29,7 +26,6 @@ from dataclasses import replace
 from golden import graph, table
 from graph import kernels
 from tinygrad import Tensor, dtypes
-from tinygrad.dtype import AddrSpace
 from tinygrad.codegen import to_program
 from tinygrad.device import Compiled, Compiler, TinyELF
 from tinygrad.helpers import DEV, Context, Target
@@ -154,25 +150,6 @@ def program(case):
 
 
 @table
-def elfs():
-    rows = []
-    for case in PROGRAMS:
-        elf = program(case).to_elf()
-        rows.append((case, elf.name, repr(elf.target), len(elf.signature), len(elf.lib)))
-    return ["program", "name", "target", "params", "lib_bytes"], rows
-
-
-@table
-def signatures():
-    """Each parameter of each program's signature."""
-    rows = []
-    for case in PROGRAMS:
-        for position, (name, addrspace, dt, shape) in enumerate(program(case).to_elf().signature):
-            rows.append((case, position, repr(name), addrspace, dt, repr(shape)))
-    return ["program", "position", "name", "addrspace", "dtype", "shape"], rows
-
-
-@table
 def layouts():
     """Where `iter_sig` packs each program's signature from three offsets."""
     rows = []
@@ -182,18 +159,6 @@ def layouts():
             for position, (at, dt) in enumerate(TinyELF.iter_sig(sig, offset)):
                 rows.append((case, offset, position, at, dt))
     return ["program", "offset", "position", "at", "dtype"], rows
-
-
-@table
-def reprs():
-    """The repr of compiled programs of chosen fields."""
-    sig = ((None, AddrSpace.GLOBAL, dtypes.float, (16,)), ("n", AddrSpace.ALU, dtypes.int, ()))
-    elfs = {
-        "some": TinyELF(b"\x7fELF\x00'\"", "k", CLANG, sig, b"key\n"),
-        "none": TinyELF(b"", "E_4", Target("AMD", "HIP", "gfx1100", "PCI", "1"), sig[:1], None),
-        "empty": TinyELF(b"lib", "k", Target(), (), None),
-    }
-    return ["case", "repr"], [(case, repr(elf)) for case, elf in elfs.items()]
 
 
 def declare(case):

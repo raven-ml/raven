@@ -1199,11 +1199,6 @@ let counts_its_instructions row =
 
 let lowers_the_same_twice row = same_graph (lowered row) (lowered row)
 
-let binary_of p =
-  match Ops.arg (Ops.nth p 3) with
-  | Bytes b -> b
-  | _ -> invalid_arg "a program's fourth source is its binary"
-
 (* A kernel that stores the sum of ten int variables: on arm64, the ones past
    the eighth argument register go on the stack at 4 bytes each. *)
 let ten_scalars () =
@@ -1220,8 +1215,7 @@ let ten_scalars () =
       [ Ops.store (Ops.index out [ Ops.int ~dtype:Int32 0 ]) sum ]
   in
   let p = Codegen.to_program k (Lazy.force host) in
-  let elf = Device.Tiny_elf.of_program p in
-  equal ~msg:"the entry" string "ten" elf.name;
+  equal ~msg:"the entry" string "ten" (Uops.entry_of p);
   let value v =
     List.assoc (Ops.expr v) (List.mapi (fun i v -> (Ops.expr v, i + 1)) vars)
   in
@@ -1232,9 +1226,9 @@ let ten_scalars () =
   let result = Bigarray.(Array1.create int32 c_layout 1) in
   (* The parameters are the pointer to [out], then each variable, a 32-bit
      integer. *)
-  (match Rig.Image.load Rig.host elf.lib with
+  (match Rig.Image.load Rig.host (Uops.binary_of p) with
   | Ok image ->
-      let fn = require_some (Rig.Image.resolve image elf.name) in
+      let fn = require_some (Rig.Image.resolve image (Uops.entry_of p)) in
       let s =
         Rig.Submission.(
           make Rig.host
@@ -1284,8 +1278,7 @@ let sum_of n =
    convention other than the object's (rig's host Symbols), so the object must
    call none. *)
 let undefined_calls p =
-  let lib = (Device.Tiny_elf.of_program p).lib in
-  match Rig_elf.of_string lib with
+  match Rig_elf.of_string (Uops.binary_of p) with
   | Error why -> fail why
   | Ok o ->
       List.sort_uniq String.compare
@@ -1330,7 +1323,7 @@ let programs =
         "a device program's binary is its source compiled by the renderer's \
          compiler" (fun () ->
           let p = Codegen.to_program (Lazy.force add_kernel) (metal ()) in
-          equal string (source p) (binary_of p));
+          equal string (source p) (Uops.binary_of p));
       test "a host program's binary holds rig's host entry after the kernel"
         (fun () ->
           let p = Codegen.to_program (Lazy.force add_kernel) clang in
@@ -1349,7 +1342,7 @@ let programs =
                   __builtin_memcpy_inline(a + 28, &hi, sizeof hi); \
                   E_16_16_(a); } }";
                ])
-            (binary_of p));
+            (Uops.binary_of p));
       test
         "a host program runs as a launch of rig's host, with ten scalars past \
          the argument registers"

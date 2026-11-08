@@ -588,9 +588,7 @@ let kernel_of prg =
   | Ops.Kernel k -> k
   | _ -> invalid_arg "Tolk_engine: a program of no kernel"
 
-(* The binary of a compiled program, its last source. A launch reads the binary
-   and the kernel's name alone, so a program read back from disk is not digested
-   for the profile key {!Device.Tiny_elf.of_program} gives. *)
+(* The binary of a compiled program, its last source. *)
 let binary prg =
   match Ops.src prg with
   | [ _; _; _; b ] -> (

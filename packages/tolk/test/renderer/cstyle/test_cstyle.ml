@@ -1103,7 +1103,7 @@ let undefined_in obj =
              | _ -> None)
            o.relocations)
 
-let undefined p = undefined_in (Device.Tiny_elf.of_program p).lib
+let undefined p = undefined_in (Uops.binary_of p)
 
 (* [alone] skips a kernel whose object calls a function of the process. *)
 let agrees_with_the_interpreter ?(on = host) ?(alone = false) row =

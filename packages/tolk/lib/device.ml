@@ -7,7 +7,7 @@
 
 let strf = Printf.sprintf
 
-(* Compiled programs *)
+(* A compiled program's parameters *)
 
 module Tiny_elf = struct
   type param = {
@@ -16,77 +16,6 @@ module Tiny_elf = struct
     dtype : Dtype.t;
     shape : int list;
   }
-
-  type t = {
-    lib : string;
-    name : string;
-    target : Helpers.Target.t;
-    signature : param list;
-    profile_key : string option;
-  }
-
-  let of_program prg =
-    let invalid () =
-      invalid_arg
-        (Format.asprintf "%a of %d sources is not a compiled program" Op.pp
-           (Ops.op prg)
-           (List.length (Ops.src prg)))
-    in
-    let param u =
-      match (Ops.op u, Ops.arg u) with
-      | Op.Param, Ops.Param p ->
-          {
-            name = p.name;
-            addrspace = p.addrspace;
-            dtype = Ops.dtype u;
-            shape = Shape.max_shape u;
-          }
-      | _ -> invalid ()
-    in
-    match (Ops.op prg, Ops.arg prg, Ops.src prg) with
-    | Op.Program, Ops.Program info, [ kernel; _; _; binary ] ->
-        let lib =
-          match Ops.arg binary with Ops.Bytes b -> b | _ -> invalid ()
-        in
-        let name =
-          match Ops.arg kernel with
-          | Ops.Kernel k -> Ops.function_name k
-          | _ -> invalid ()
-        in
-        {
-          lib;
-          name;
-          target = info.target;
-          signature = List.map param (Shape.kernel_params prg);
-          profile_key = Some (Ops.key prg);
-        }
-    | _ -> invalid ()
-
-  (* Python's tuples: one element keeps its trailing comma. *)
-  let pp_tuple pp_x ppf = function
-    | [ x ] -> Format.fprintf ppf "(%a,)" pp_x x
-    | xs ->
-        let sep ppf () = Format.pp_print_string ppf ", " in
-        Format.fprintf ppf "(%a)" (Format.pp_print_list ~pp_sep:sep pp_x) xs
-
-  (* Arguments print as Python literals, and No_arg as None. *)
-  let pp_literal f ppf x =
-    Ops.pp_arg ppf (Option.fold ~none:Ops.No_arg ~some:f x)
-
-  let string s = Ops.String s
-  let bytes b = Ops.Bytes b
-
-  let pp_param ppf (p : param) =
-    Format.fprintf ppf "(%a, %a, %a, %a)" (pp_literal string) p.name
-      Dtype.pp_addr_space p.addrspace Dtype.pp p.dtype
-      (pp_tuple Format.pp_print_int)
-      p.shape
-
-  let pp ppf e =
-    Format.fprintf ppf
-      "TinyELF(lib=%a, name=%a, target=%a, signature=%a, profile_key=%a)"
-      Ops.pp_arg (bytes e.lib) Ops.pp_arg (string e.name) Helpers.Target.pp
-      e.target (pp_tuple pp_param) e.signature (pp_literal bytes) e.profile_key
 
   let iter_sig ?(offset = 0) signature =
     let place offset p =

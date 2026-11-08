@@ -228,72 +228,38 @@ let memoisation =
 (* Compiled programs *)
 
 let program_of case = Golden.sink (case ^ "_program.golden")
-let elf_of case = Elf.of_program (program_of case)
 
-let binary_of prg =
-  match List.rev (Ops.src prg) with
-  | binary :: _ -> (
-      match Ops.arg binary with
-      | Bytes lib -> lib
-      | _ -> failf "the program's last source is no binary")
-  | [] -> failf "the program has no source"
+(* The signature a runtime packs: the program's parameters, buffers and
+   scalars, in slot order. *)
+let signature_of prg : Elf.param list =
+  List.map
+    (fun u ->
+      match Ops.arg u with
+      | Param p ->
+          ({
+             name = p.name;
+             addrspace = p.addrspace;
+             dtype = Ops.dtype u;
+             shape = Shape.max_shape u;
+           }
+            : Elf.param)
+      | _ -> failf "not a parameter")
+    (Shape.kernel_params prg)
 
 let int_of_cell = int_of_string
 
-(* tinygrad writes a name as [None] or as a quoted string. *)
-let name_of_cell = function
-  | "None" -> None
-  | cell -> Some (String.sub cell 1 (String.length cell - 2))
-
-(* tinygrad writes a shape as a tuple: [()] or [(16,)]. *)
-let shape_of_cell cell =
-  String.sub cell 1 (String.length cell - 2)
-  |> String.split_on_char ','
-  |> List.filter_map (fun s ->
-      match String.trim s with "" -> None | n -> Some (int_of_string n))
-
-let compiled_like_tinygrad cell =
-  let elf = elf_of (cell "program") in
-  equal string (cell "name") elf.name;
-  equal string (cell "target")
-    (Format.asprintf "%a" Helpers.Target.pp elf.target);
-  equal int (int_of_cell (cell "params")) (List.length elf.signature);
-  equal int (int_of_cell (cell "lib_bytes")) (String.length elf.lib)
-
-let param_like_tinygrad cell =
-  let elf = elf_of (cell "program") in
-  let p = List.nth elf.signature (int_of_cell (cell "position")) in
-  equal (option string) (name_of_cell (cell "name")) p.name;
-  equal string (cell "addrspace")
-    (Format.asprintf "%a" Dtype.pp_addr_space p.addrspace);
-  equal Dtypes.dtype (Dtypes.dtype_of_cell (cell "dtype")) p.dtype;
-  equal (list int) (shape_of_cell (cell "shape")) p.shape
-
 let packed_like_tinygrad cell =
-  let signature = (elf_of (cell "program")).signature in
+  let signature = signature_of (program_of (cell "program")) in
   let offset = int_of_cell (cell "offset") in
   equal (pair int Dtypes.dtype)
     (int_of_cell (cell "at"), Dtypes.dtype_of_cell (cell "dtype"))
     (List.nth (Elf.iter_sig ~offset signature) (int_of_cell (cell "position")))
 
-let cases =
-  [
-    "elementwise";
-    "elementwise_metal";
-    "sparse";
-    "scalars";
-    "interleaved";
-    "interleaved_metal";
-    "fill";
-  ]
-
 (* Hand-made programs *)
-
-let hip = target_of_string "PCI:1+AMD:HIP:gfx1100"
 
 (* A compiled program whose parameters are [params], in slot order, and whose
    linear order holds [linear]. *)
-let program ?(name = "k") ?(params = []) linear =
+let program ~params linear =
   let slot u = match Ops.arg u with Param p -> p.slot | _ -> -1 in
   let globals =
     List.filter_map
@@ -308,13 +274,13 @@ let program ?(name = "k") ?(params = []) linear =
       globals;
       outs = globals;
       ins = globals;
-      target = hip;
+      target = target_of_string "PCI:1+AMD:HIP:gfx1100";
     }
   in
   Ops.v Program ~arg:(Program info)
     ~src:
       [
-        Ops.sink ~kernel:(Ops.kernel_info ~name ()) [];
+        Ops.sink ~kernel:(Ops.kernel_info ()) [];
         Ops.v Linear ~src:linear;
         Ops.v Source ~arg:(String "source");
         Ops.v Binary ~arg:(Bytes "\x7fELF\x00lib");
@@ -424,97 +390,11 @@ let signature_of_layout l =
           })
       all
   in
-  equal (list param_w) expected (Elf.of_program (program_of_layout l)).signature
+  equal (list param_w) expected (signature_of (program_of_layout l))
 
-let refuses_incomplete () =
-  let sink = Ops.sink ~kernel:(Ops.kernel_info ()) [] in
-  let info = Shape.program_info_of_sink ~target:hip sink in
-  refuses (fun () -> Elf.of_program sink);
-  refuses (fun () ->
-      Elf.of_program (Ops.v Program ~arg:(Program info) ~src:[ sink ]))
-
-(* [prg] with its source [i] replaced by [u]. *)
-let with_source i u prg =
-  Ops.replace
-    ~src:(List.mapi (fun j s -> if i = j then u else s) (Ops.src prg))
-    prg
-
-let refuses_nameless () =
-  let prg = program [] in
-  refuses (fun () -> Elf.of_program (with_source 0 (Ops.sink []) prg))
-
-let refuses_textual_binary () =
-  let prg = program [] in
-  refuses (fun () ->
-      Elf.of_program (with_source 3 (Ops.v Binary ~arg:(String "lib")) prg))
-
-(* Every program of a source and a binary from a few texts, each with the pair
-   it was made of. *)
-let compiled =
-  let texts = [ ""; "a"; "\x7fELF'\x00" ] in
-  List.concat_map
-    (fun source ->
-      List.map
-        (fun binary ->
-          let prg =
-            with_source 3
-              (Ops.v Binary ~arg:(Bytes binary))
-              (with_source 2 (Ops.v Source ~arg:(String source)) (program []))
-          in
-          ((source, binary), prg))
-        texts)
-    texts
-
-let keys_programs_apart () =
-  List.iter
-    (fun (t0, p0) ->
-      List.iter
-        (fun (t1, p1) ->
-          let k0 = (Elf.of_program p0).profile_key
-          and k1 = (Elf.of_program p1).profile_key in
-          if t0 = t1 then equal (option string) k0 k1
-          else not_equal (option string) k0 k1)
-        compiled)
-    compiled
-
-let of_program =
-  group "Tiny_elf.of_program"
+let params_in_order =
+  group "Shape.kernel_params"
     [
-      group "compiles as tinygrad's to_elf does"
-        [ Golden.cases "elfs.golden" compiled_like_tinygrad ];
-      group "lays out the signature as tinygrad's to_elf does"
-        [
-          Golden.cases ~key:[ "program"; "position" ] "signatures.golden"
-            param_like_tinygrad;
-        ];
-      test "takes the program's binary as its lib" (fun () ->
-          List.iter
-            (fun case ->
-              let prg = program_of case in
-              equal ~msg:case string (binary_of prg) (Elf.of_program prg).lib)
-            cases);
-      test "keys the program's profile with its key" (fun () ->
-          List.iter
-            (fun case ->
-              let prg = program_of case in
-              equal ~msg:case (option string)
-                (Some (Ops.key prg))
-                (Elf.of_program prg).profile_key)
-            cases);
-      test "keys equal programs alike and programs that differ apart"
-        keys_programs_apart;
-      test "names the program after its kernel, as an identifier" (fun () ->
-          equal string "r3Ascalars202" (elf_of "scalars").name;
-          equal string "a_b2E"
-            (Elf.of_program (program ~name:"a_b." [])).name);
-      test "takes the target of the program, whatever rendered it" (fun () ->
-          equal string "PCI:1+AMD:HIP:gfx1100"
-            (Format.asprintf "%a" Helpers.Target.pp
-               (Elf.of_program (program ~params:[ buffer 0 ] [ buffer 0 ]))
-                 .target));
-      test "compiles a program of no parameter to an empty signature" (fun () ->
-          equal (list param_w) []
-            (Elf.of_program (program [])).signature);
       prop "takes every parameter in slot order, buffers and scalars"
         ~examples:
           [
@@ -522,64 +402,6 @@ let of_program =
             { linear = [ (0, true); (3, true) ]; dropped = [ (1, false) ] };
           ]
         gen_layout signature_of_layout;
-      test "refuses a node that is no program, and a program not compiled"
-        refuses_incomplete;
-      test "refuses a program whose kernel has no name" refuses_nameless;
-      test "refuses a program whose binary holds no bytes"
-        refuses_textual_binary;
-      test "refuses a program whose parameter is no parameter" (fun () ->
-          refuses (fun () ->
-              Elf.of_program (program ~params:[ Ops.int 3 ] [])));
-    ]
-
-(* Printing *)
-
-let elfs_to_print =
-  let sixteen_floats : Elf.param =
-    { name = None; addrspace = Global; dtype = Dtype.Float32; shape = [ 16 ] }
-  and n : Elf.param =
-    { name = Some "n"; addrspace = Alu; dtype = Dtype.Int32; shape = [] }
-  in
-  let no_target = target_of_string "" in
-  [
-    ( "some",
-      Elf.
-        {
-          lib = "\x7fELF\x00'\"";
-          name = "k";
-          target = target_of_string "CPU:CLANG:x86_64,x86-64";
-          signature = [ sixteen_floats; n ];
-          profile_key = Some "key\n";
-        } );
-    ( "none",
-      Elf.
-        {
-          lib = "";
-          name = "E_4";
-          target = hip;
-          signature = [ sixteen_floats ];
-          profile_key = None;
-        } );
-    ( "empty",
-      Elf.
-        {
-          lib = "lib";
-          name = "k";
-          target = no_target;
-          signature = [];
-          profile_key = None;
-        } );
-  ]
-
-let printed_like_tinygrad cell =
-  equal string (cell "repr")
-    (Format.asprintf "%a" Elf.pp (List.assoc (cell "case") elfs_to_print))
-
-let printing =
-  group "Tiny_elf printers"
-    [
-      group "pp prints a program as tinygrad does"
-        [ Golden.cases "reprs.golden" printed_like_tinygrad ];
     ]
 
 (* Packing *)
@@ -628,7 +450,7 @@ let iter_sig =
         (Gen.pair gen_offset gen_signature)
         packed;
       test "starts at byte 0 by default" (fun () ->
-          let signature = (elf_of "scalars").signature in
+          let signature = signature_of (program_of "scalars") in
           equal
             (list (pair int Dtypes.dtype))
             (Elf.iter_sig ~offset:0 signature)
@@ -653,7 +475,6 @@ let () =
          selection;
          named_never_parsed;
          memoisation;
-         of_program;
-         printing;
+         params_in_order;
          iter_sig;
        ])

@@ -1420,18 +1420,10 @@ let compare_structure u0 u1 =
 
 (* An argument as [key] reads it. A NaN constant enters with its bits, since
    NaNs of different bits are different nodes and a repr writes every NaN [nan].
-   A string or bytes argument, which can be a program's source or binary of
-   megabytes, enters as its digest: its repr would be several times its size.
    Any other enters as its repr, which [repr] gives. *)
-let nan_key x = strf "ConstFloat(nan 0x%Lx)" (Int64.bits_of_float x)
-
-let text_key kind s =
-  kind ^ "(" ^ Digest.BLAKE256.to_hex (Digest.BLAKE256.string s) ^ ")"
-
 let key_of_arg repr = function
-  | Const (`Float x) when Float.is_nan x -> nan_key x
-  | String s -> text_key "String" s
-  | Bytes b -> text_key "Bytes" b
+  | Const (`Float x) when Float.is_nan x ->
+      strf "ConstFloat(nan 0x%Lx)" (Int64.bits_of_float x)
   | _ -> repr ()
 
 let arg_key n = key_of_arg (fun () -> arg_repr n) n.arg

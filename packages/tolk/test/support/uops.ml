@@ -43,3 +43,14 @@ let binaries_as_sources u =
   Ops.substitute ~calls:Enter ~pass:Fixed_point u
     (List.filter_map recorded programs)
 
+let binary_of prg =
+  match Ops.arg (List.nth (Ops.src prg) (List.length (Ops.src prg) - 1)) with
+  | Bytes lib -> lib
+  | _ -> invalid_arg "a program of no binary"
+  | exception (Failure _ | Invalid_argument _) ->
+      invalid_arg "a program of no binary"
+
+let entry_of prg =
+  match Ops.arg (Ops.nth prg 0) with
+  | Kernel k -> Ops.function_name k
+  | _ -> invalid_arg "a program of no kernel"

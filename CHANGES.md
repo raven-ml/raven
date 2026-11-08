@@ -1579,10 +1579,6 @@ word comes from its lock and from samples the dashboard saw arrive.
   fudge under load, gpt-oss-20b's 12-token prefill's first call on CUDA took
   0.37-0.39 s against 0.79-0.88 s, and rune's eight-schools sampler's 0.09-0.12
   s of CPU against 0.20-0.23 s.
-- `Ops.key` digests a string or bytes argument without writing its literal,
-  so keying a compiled program, as `Device.Tiny_elf.of_program` does, no longer
-  quotes its source and binary: rune's cold compiles allocate up to 23% fewer
-  words, 6% for a special function's gradient.
 - `Heuristic.hand_coded_optimizations` tries the tensor cores first for a
   contraction past 64 multiply-adds per byte of its streamed operand, as routed
   blocks sharing experts are: gpt-oss-20b's 512-token prefill 0.19 s from 0.45.
