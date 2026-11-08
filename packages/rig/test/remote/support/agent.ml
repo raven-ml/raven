@@ -145,8 +145,8 @@ let kinds =
         Ok [] );
   ]
 
-let serve a =
-  match Rig_remote.serve a kinds with
+(* Prints how a served job ended. *)
+let report = function
   | Ok () ->
       print_endline "closed";
       List.iter
@@ -158,6 +158,8 @@ let serve a =
   | Error why ->
       Printf.printf "failed: %s\n%!" why;
       exit 2
+
+let serve a = report (Rig_remote.serve a kinds)
 
 let listen key port =
   match Rig_remote.listen ~key "127.0.0.1" port with
@@ -296,17 +298,19 @@ let () =
              Unix.stderr)
     in
     if mode = "together" then begin
-      (* Two domains serve [a] at once: one raises, the other serves. *)
-      let other =
-        Domain.spawn (fun () ->
-            match serve a with
-            | () -> ()
-            | exception Invalid_argument _ -> print_endline "serve raised")
+      (* Two domains serve [a] at once: one raises, the other serves. Reported
+         once both ended, the raise first: the domain that raises may start
+         after the job closed. *)
+      let attempt () =
+        match Rig_remote.serve a kinds with
+        | r -> Some r
+        | exception Invalid_argument _ -> None
       in
-      (match serve a with
-      | () -> ()
-      | exception Invalid_argument _ -> print_endline "serve raised");
-      Domain.join other
+      let other = Domain.spawn attempt in
+      let here = attempt () in
+      let results = [ here; Domain.join other ] in
+      if List.mem None results then print_endline "serve raised";
+      List.iter (Option.iter report) results
     end
     else serve a;
     relays_end ();
