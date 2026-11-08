@@ -1,0 +1,53 @@
+# tolk D160 golden=3fa7bc6e22564298670abdeb6e3bffe0
+0 Ops.CONST dtypes.weakint [] 2
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+3 Ops.INDEX dtypes.f32 [1, 2]
+4 Ops.CONST dtypes.weakint [] 4
+5 Ops.PARAM dtypes.f32 [4] ParamArg(slot=1, dtype=dtypes.f32)
+6 Ops.INDEX dtypes.f32 [5, 2]
+7 Ops.STORE dtypes.void [3, 6]
+8 Ops.END dtypes.void [7, 2]
+9 Ops.SINK dtypes.void [8] KernelInfo()
+10 Ops.CONST dtypes.weakint [] 512
+11 Ops.BUFFER dtypes.i8 [10] ParamArg(slot=7, dtype=dtypes.i8, device="CPU")
+12 Ops.CONST dtypes.weakint [] 0
+13 Ops.CONST dtypes.weakint [] 8
+14 Ops.SHRINK dtypes.i8 [11, 12, 13]
+15 Ops.BITCAST dtypes.f32 [14] dtypes.f32
+16 Ops.BUFFER dtypes.f32 [4] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+17 Ops.CALL dtypes.void [9, 15, 16] CallInfo()
+18 Ops.PARAM dtypes.f32 [4] ParamArg(slot=0, dtype=dtypes.f32)
+19 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 0)
+20 Ops.INDEX dtypes.f32 [18, 19]
+21 Ops.CONST dtypes.weakfloat [] 2.0
+22 Ops.MUL dtypes.f32 [20, 21]
+23 Ops.CONST dtypes.weakfloat [] 7.0
+24 Ops.ADD dtypes.f32 [22, 23]
+25 Ops.STORE dtypes.void [20, 24]
+26 Ops.END dtypes.void [25, 19]
+27 Ops.SINK dtypes.void [26] KernelInfo()
+28 Ops.CALL dtypes.void [27, 16] CallInfo()
+29 Ops.INDEX dtypes.f32 [5, 19]
+30 Ops.CONST dtypes.weakfloat [] 3.0
+31 Ops.MUL dtypes.f32 [29, 30]
+32 Ops.STORE dtypes.void [20, 31]
+33 Ops.END dtypes.void [32, 19]
+34 Ops.SINK dtypes.void [33] KernelInfo()
+35 Ops.CONST dtypes.weakint [] 256
+36 Ops.CONST dtypes.weakint [] 16
+37 Ops.SHRINK dtypes.i8 [11, 35, 36]
+38 Ops.BITCAST dtypes.f32 [37] dtypes.f32
+39 Ops.CALL dtypes.void [34, 38, 16] CallInfo()
+40 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+41 Ops.INDEX dtypes.f32 [40, 2]
+42 Ops.PARAM dtypes.f32 [4] ParamArg(slot=2, dtype=dtypes.f32)
+43 Ops.INDEX dtypes.f32 [42, 2]
+44 Ops.ADD dtypes.f32 [41, 43]
+45 Ops.STORE dtypes.void [3, 44]
+46 Ops.END dtypes.void [45, 2]
+47 Ops.SINK dtypes.void [46] KernelInfo()
+48 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+49 Ops.CALL dtypes.void [47, 48, 15, 38] CallInfo()
+50 Ops.LINEAR dtypes.void [17, 28, 39, 49]
+

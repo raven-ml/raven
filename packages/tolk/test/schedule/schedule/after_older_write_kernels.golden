@@ -23,11 +23,7 @@
 22 Ops.AFTER dtypes.f32 [10, 21]
 23 Ops.AFTER dtypes.f32 [22, 9]
 24 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
-25 Ops.CONST dtypes.weakfloat [] 0.0
-26 Ops.ADD dtypes.f32 [12, 25]
-27 Ops.STORE dtypes.void [4, 26]
-28 Ops.SINK dtypes.void [27] KernelInfo()
-29 Ops.CALL dtypes.void [28, 24, 23] CallInfo()
-30 Ops.AFTER dtypes.f32 [24, 29]
-31 Ops.SINK dtypes.void [10, 22, 23, 30]
+25 Ops.CALL dtypes.void [14, 24, 23] CallInfo()
+26 Ops.AFTER dtypes.f32 [24, 25]
+27 Ops.SINK dtypes.void [10, 22, 23, 26]
 

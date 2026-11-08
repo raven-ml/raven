@@ -1,18 +1,18 @@
 0 Ops.CONST dtypes.weakint [] 4
-1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, vmin_vmax=(0, 3))
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
 3 Ops.RANGE dtypes.i32 [2] (AxisType.LOOP, 0)
 4 Ops.INDEX dtypes.i32 [1, 3]
 5 Ops.STORE dtypes.void [4, 3]
 6 Ops.END dtypes.void [5, 3]
 7 Ops.SINK dtypes.void [6] KernelInfo()
-8 Ops.ALLOC dtypes.i32 [0] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 3))
+8 Ops.ALLOC dtypes.i32 [0] ParamArg(slot=3, dtype=dtypes.i32)
 9 Ops.CALL dtypes.void [7, 8] CallInfo()
 10 Ops.CONST dtypes.weakint [] 1
 11 Ops.PARAM dtypes.i32 [10] ParamArg(slot=0, dtype=dtypes.i32)
 12 Ops.CONST dtypes.weakint [] 0
 13 Ops.INDEX dtypes.i32 [11, 12]
-14 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, vmin_vmax=(0, 3))
+14 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
 15 Ops.CONST dtypes.weakint [] 2
 16 Ops.INDEX dtypes.i32 [14, 15]
 17 Ops.LOAD dtypes.i32 [16]

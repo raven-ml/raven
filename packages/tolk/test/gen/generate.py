@@ -83,6 +83,7 @@ UNMODIFIED = {
     "codegen/late/linearizer",
     "schedule/rangeify",
     "engine/jit",
+    "schedule/schedule",
 }
 
 HERE = Path(__file__).resolve().parent

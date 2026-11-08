@@ -1,0 +1,15 @@
+# tolk D160
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+2 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+3 Ops.CONST dtypes.weakfloat [] 2.0
+4 Ops.MUL dtypes.f32 [2, 3]
+5 Ops.CONST dtypes.weakfloat [] 1.0
+6 Ops.ADD dtypes.f32 [2, 5]
+7 Ops.STORE dtypes.void [2, 6]
+8 Ops.AFTER dtypes.f32 [2, 7]
+9 Ops.ADD dtypes.f32 [4, 8]
+10 Ops.STORE dtypes.void [1, 9]
+11 Ops.AFTER dtypes.f32 [1, 10]
+12 Ops.SINK dtypes.void [11, 8]
+

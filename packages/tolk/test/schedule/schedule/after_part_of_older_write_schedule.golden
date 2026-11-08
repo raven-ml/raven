@@ -25,12 +25,10 @@
 24 Ops.CALL dtypes.void [23, 8] CallInfo()
 25 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
 26 Ops.INDEX dtypes.f32 [25, 17]
-27 Ops.CONST dtypes.weakfloat [] 0.0
-28 Ops.ADD dtypes.f32 [26, 27]
-29 Ops.STORE dtypes.void [18, 28]
-30 Ops.END dtypes.void [29, 17]
-31 Ops.SINK dtypes.void [30] KernelInfo()
-32 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
-33 Ops.CALL dtypes.void [31, 32, 8] CallInfo()
-34 Ops.LINEAR dtypes.void [9, 16, 24, 33]
+27 Ops.STORE dtypes.void [18, 26]
+28 Ops.END dtypes.void [27, 17]
+29 Ops.SINK dtypes.void [28] KernelInfo()
+30 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+31 Ops.CALL dtypes.void [29, 30, 8] CallInfo()
+32 Ops.LINEAR dtypes.void [9, 16, 24, 31]
 

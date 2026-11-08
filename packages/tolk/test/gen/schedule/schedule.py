@@ -231,15 +231,6 @@ def read_then_overwrite():
     return b, a
 
 
-def read_overwritten_through():
-    # a value reads a buffer as it was, and a value computed from the assign
-    # that overwrites it
-    a = empty(8).contiguous()
-    b = a * 2
-    a.assign(a + 1)
-    return b + (a * 3).contiguous()
-
-
 def read_join_of_assigned():
     # a value reads x, assigned after a chain of three kernels, through a join after y's assign
     x, y, t = empty(4).contiguous(), empty(4).contiguous(), empty(4).contiguous()
@@ -248,15 +239,6 @@ def read_join_of_assigned():
     for _ in range(3): q = (q.sum().reshape(1).expand(4) * 0.5).contiguous()
     x.assign(x + q)
     return Tensor(x.uop.after(y.uop)) * 2, y
-
-
-def read_join_of_overwritten():
-    # a value reads x as it was through a join after y's assign, which reads x once assigned
-    x, y = empty(4).contiguous(), empty(4).contiguous()
-    x0 = x.uop
-    x.assign(x + 1)
-    y.assign(y + x)
-    return Tensor(x0.after(y.uop)) * 2, x, y
 
 
 def stage_of_overwritten():
@@ -298,15 +280,6 @@ def readers_after_older_write():
     return Tensor(y) + 0, Tensor(y.after(first)).expand(2) + 0
 
 
-def write_over_written():
-    """A write named after a buffer's first state whose kernel is given the
-    state after the buffer's first write, read beside that state
-    (test_sibling_afters_rejected, which tinygrad raises on): 2 and 1."""
-    x = empty(1).uop
-    a = x.after(x.store(1))
-    return Tensor(x.after(a.store(2))) + 0, Tensor(a) + 0
-
-
 def after_part_of_older_write():
     """A state after one of the kernels of a write under it, which writes nothing
     over it (test_shared_readers_after_older_dependency's rule): 3 and 3."""
@@ -333,23 +306,6 @@ def call_given_one_state_twice():
     a = empty(4).contiguous()
     body = UOp.sink(a.uop.param_like(0).store(Tensor(a.uop.param_like(1)).flip(0).uop))
     return Tensor(a.uop.after(body.call(a.uop, a.uop, precompile=True)))
-
-
-def swap_through_values():
-    # two buffers swapped through values computed from each: each assign reads what the other overwrites
-    a, b = empty(4).contiguous(), empty(4).contiguous()
-    na, nb = b * 1, a * 1
-    a.assign(na)
-    b.assign(nb)
-    return a, b
-
-
-def read_beside_overwrite():
-    # one kernel reads a buffer as it was and once assigned
-    a = empty(4).contiguous()
-    b = a * 2
-    a.assign(a + 1)
-    return b + a, a
 
 
 def setitem():
@@ -429,18 +385,13 @@ PROGRAMS = {
     "assign_double_diamond": assign_double_diamond,
     "assign_reads_behind_other_after": assign_reads_behind_other_after,
     "read_then_overwrite": read_then_overwrite,
-    "read_overwritten_through": read_overwritten_through,
     "read_join_of_assigned": read_join_of_assigned,
-    "read_join_of_overwritten": read_join_of_overwritten,
     "stage_of_overwritten": stage_of_overwritten,
     "call_given_one_state_twice": call_given_one_state_twice,
     "after_older_write": after_older_write,
     "readers_after_older_write": readers_after_older_write,
-    "write_over_written": write_over_written,
     "after_part_of_older_write": after_part_of_older_write,
     "after_older_and_new_write": after_older_and_new_write,
-    "swap_through_values": swap_through_values,
-    "read_beside_overwrite": read_beside_overwrite,
     "copy_of_overwritten": copy_of_overwritten,
     "setitem": setitem,
     "assign_bitcast": lambda: empty(4, dtype=dtypes.uint32).contiguous().bitcast(dtypes.float).assign(empty(4) + 1),

@@ -1,0 +1,51 @@
+# tolk D122 golden=2e15e1e633dda7aae69a662039f8b399
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, vmin_vmax=(0, 3))
+2 Ops.CAST dtypes.i32 [0] dtypes.i32
+3 Ops.RANGE dtypes.i32 [2] (AxisType.LOOP, 0)
+4 Ops.INDEX dtypes.i32 [1, 3]
+5 Ops.STORE dtypes.void [4, 3]
+6 Ops.END dtypes.void [5, 3]
+7 Ops.SINK dtypes.void [6] KernelInfo()
+8 Ops.CONST dtypes.weakint [] 256
+9 Ops.BUFFER dtypes.i8 [8] ParamArg(slot=5, dtype=dtypes.i8, device="CPU")
+10 Ops.CONST dtypes.weakint [] 0
+11 Ops.CONST dtypes.weakint [] 16
+12 Ops.SHRINK dtypes.i8 [9, 10, 11]
+13 Ops.BITCAST dtypes.i32 [12] dtypes.i32
+14 Ops.CALL dtypes.void [7, 13] CallInfo()
+15 Ops.CONST dtypes.weakint [] 1
+16 Ops.PARAM dtypes.i32 [15] ParamArg(slot=0, dtype=dtypes.i32)
+17 Ops.INDEX dtypes.i32 [16, 10]
+18 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, vmin_vmax=(0, 3))
+19 Ops.CONST dtypes.weakint [] 2
+20 Ops.INDEX dtypes.i32 [18, 19]
+21 Ops.LOAD dtypes.i32 [20]
+22 Ops.MOD dtypes.i32 [21, 0]
+23 Ops.CMPLT dtypes.bool [22, 19]
+24 Ops.MOD dtypes.i32 [21, 19]
+25 Ops.CMPLT dtypes.bool [24, 15]
+26 Ops.CONST dtypes.weakint [] 10
+27 Ops.CAST dtypes.i32 [26] dtypes.i32
+28 Ops.CONST dtypes.weakint [] 20
+29 Ops.CAST dtypes.i32 [28] dtypes.i32
+30 Ops.WHERE dtypes.i32 [25, 27, 29]
+31 Ops.CONST dtypes.weakint [] 30
+32 Ops.CAST dtypes.i32 [31] dtypes.i32
+33 Ops.CONST dtypes.weakint [] 40
+34 Ops.CAST dtypes.i32 [33] dtypes.i32
+35 Ops.WHERE dtypes.i32 [25, 32, 34]
+36 Ops.WHERE dtypes.i32 [23, 30, 35]
+37 Ops.STORE dtypes.void [17, 36]
+38 Ops.SINK dtypes.void [37] KernelInfo()
+39 Ops.BUFFER dtypes.i32 [15] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+40 Ops.CALL dtypes.void [38, 39, 13] CallInfo()
+41 Ops.PARAM dtypes.i32 [15] ParamArg(slot=1, dtype=dtypes.i32)
+42 Ops.INDEX dtypes.i32 [41, 10]
+43 Ops.ADD dtypes.i32 [42, 15]
+44 Ops.STORE dtypes.void [17, 43]
+45 Ops.SINK dtypes.void [44] KernelInfo()
+46 Ops.BUFFER dtypes.i32 [15] ParamArg(slot=2, dtype=dtypes.i32, device="CPU")
+47 Ops.CALL dtypes.void [45, 46, 39] CallInfo()
+48 Ops.LINEAR dtypes.void [14, 40, 47]
+
