@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 %0 = param () : "n" dtype=weakint slot=-1 bounds=[1,64] addrspace=ALU
 %1 = add %0, 1
 %2 = mul %1, 2

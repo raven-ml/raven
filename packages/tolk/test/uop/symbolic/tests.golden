@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 file	class	test
 null/test_uop_symbolic.py	TestSymbolic	test_add_1
 null/test_uop_symbolic.py	TestSymbolic	test_add_div

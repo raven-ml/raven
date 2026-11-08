@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 
 extern void sqrt();
 __attribute__((min_vector_width(512))) void call_ret(int* restrict data0_1) {

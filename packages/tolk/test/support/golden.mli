@@ -1,8 +1,7 @@
 (** Goldens: outputs of tinygrad, recorded by [test/gen/generate.py].
 
-    A golden is a file [<name>.golden] beside the suite that reads it. Its first
-    line names the tinygrad commit it was recorded from, as
-    [# tinygrad <commit>], and the rest is its body. A suite lists its goldens
+    A golden is a file [<name>.golden] beside the suite that reads it: its
+    body and a final newline. A suite lists its goldens
     and their {{!tolk}[.tolk]} files in its stanza's [deps], which copies them
     beside its executable, and names
     them by file name. A relative file name is read from there, whatever the

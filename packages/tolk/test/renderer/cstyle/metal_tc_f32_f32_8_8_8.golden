@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 #include <metal_stdlib>
 using namespace metal;
 float2 __WMMA_8_8_8_f32_f32(float2 a, float2 b, float2 c){

@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 #define half _Float16
 extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) fdiv(half* data0_16, half* data1_16, half* data2_16) {
   for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {

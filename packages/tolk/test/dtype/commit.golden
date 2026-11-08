@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 lo	hi	default_int	dtype
 0	0	None	dtypes.i32
 0	0	dtypes.i8	dtypes.i8

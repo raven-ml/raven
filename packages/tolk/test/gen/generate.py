@@ -49,6 +49,7 @@ HERE = Path(__file__).resolve().parent
 TEST = HERE.parent
 MANIFEST = HERE / "manifest"
 PATCH = HERE / "tinygrad.patch"
+# The manifest's first line, naming the commit its goldens come from.
 HEADER = f"# tinygrad {TINYGRAD}\n"
 
 # The child runs the generator, then makes each golden in a process of its own,
@@ -192,7 +193,7 @@ def run(module, generator, tinygrad):
         path = f"{module}/{name}.golden"
         if path in files:
             sys.exit(f"gen/{module}.py declares {name} twice")
-        files[path] = HEADER + body + "\n"
+        files[path] = body + "\n"
     if not files:
         sys.exit(f"gen/{module}.py declares no golden")
     return files, declared["refused"]

@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 typedef unsigned char unsigned_char4 __attribute__((aligned(1),ext_vector_type(4)));
 typedef unsigned int unsigned_int4 __attribute__((aligned(4),ext_vector_type(4)));
 __attribute__((min_vector_width(512))) void r_256_4(unsigned char* restrict data0_1, unsigned char* restrict data1_1024, unsigned char* restrict data2_1024) {

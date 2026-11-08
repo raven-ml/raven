@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 case	kernel	device	renderer	arch	setting	narrowed
 clang_add	0	CPU	CLANG	x86_64,x86-64	-	-
 clang_sum	1	CPU	CLANG	x86_64,x86-64	-	-

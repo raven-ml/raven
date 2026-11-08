@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.CONST dtypes.weakint [] 16
 2 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, name="args")

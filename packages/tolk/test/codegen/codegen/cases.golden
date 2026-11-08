@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 name	case	kernel	target	device	renderer	arch	setting	outcome	narrowed
 add_clang	add	0	clang	CPU	CLANG	x86_64,x86-64		ok	False
 add_metal	add	0	metal	METAL	METAL	Apple9		ok	False

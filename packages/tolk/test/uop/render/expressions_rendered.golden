@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 case	src	render	simplified
 variable	0	a	a
 bound_variable	1	a	a

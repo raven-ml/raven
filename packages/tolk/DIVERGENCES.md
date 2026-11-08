@@ -1,6 +1,6 @@
 # Divergences from tinygrad
 
-tolk follows tinygrad `c22edff14c79310a9b2df62a78819cf77c8289fa`. This
+tolk follows the tinygrad commit `TINYGRAD` in `test/gen/generate.py` pins. This
 ledger lists every place where it does something else. An entry is admitted
 for one of five reasons only:
 

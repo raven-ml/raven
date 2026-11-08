@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 case	kernel	renderer	opts	context	outcome	refused
 swap_invalid_arg_0	add_one	metal	(Opt(op=OptOps.SWAP, axis=0, arg=99),)		KernelOptError	0
 swap_invalid_arg_1	add_one	metal	(Opt(op=OptOps.SWAP, axis=0, arg=-1),)		KernelOptError	0

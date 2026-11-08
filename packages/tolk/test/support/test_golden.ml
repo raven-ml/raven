@@ -5,7 +5,6 @@ let golden contents =
   Out_channel.with_open_bin file (fun oc -> output_string oc contents);
   file
 
-let header = "# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141\n"
 let cells column file = List.map (fun cell -> cell column) (Golden.rows file)
 
 let rejects substring contents =
@@ -34,15 +33,12 @@ let tables =
             (Golden.columns "lattice.golden"));
       test "an empty cell is kept" (fun () ->
           equal (list string) [ "" ]
-            (cells "b" (golden (header ^ "a\tb\nx\t\n"))));
-      test "a file without the header is not a golden" (fun () ->
-          rejects "not a golden" "a\tb\nx\ty\n");
+            (cells "b" (golden "a\tb\nx\t\n")));
       test "a file without a final newline is not a golden" (fun () ->
-          rejects "not a golden" (header ^ "a\tb\nx\ty"));
-      test "a table needs a row" (fun () ->
-          rejects "no row" (header ^ "a\tb\n"));
+          rejects "not a golden" "a\tb\nx\ty");
+      test "a table needs a row" (fun () -> rejects "no row" "a\tb\n");
       test "a row needs a cell per column" (fun () ->
-          rejects "line 3: 1 cells for 2 columns" (header ^ "a\tb\nx\n"));
+          rejects "line 2: 1 cells for 2 columns" "a\tb\nx\n");
       test "cell rejects an unknown column" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"no column \"c\"") (fun () ->
               cells "c" "lattice.golden"));
@@ -103,7 +99,7 @@ let hash body = Digest.(to_hex (string body))
 let write path text =
   Out_channel.with_open_bin path (fun oc -> output_string oc text)
 
-let golden_contents body = header ^ body ^ "\n"
+let golden_contents body = body ^ "\n"
 let tolk_contents ~line body = line ^ "\n" ^ body ^ "\n"
 
 (* [pair ?golden ?tolk ()] is the name of a golden, with its files in a fresh

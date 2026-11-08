@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 from	lo	hi	to	vmin	vmax
 dtypes.weakint	5	10	dtypes.bool	False	True
 dtypes.weakint	5	10	dtypes.i8	5	10

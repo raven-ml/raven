@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 typedef long unsigned int size_t;
 #define half _Float16
 extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);

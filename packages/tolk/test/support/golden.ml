@@ -8,20 +8,13 @@ let path file =
 let read file = In_channel.with_open_bin (path file) In_channel.input_all
 let exists file = Sys.file_exists (path file)
 
-(* The first line of a golden or tolk file, which starts with [prefix], and its
-   body: the rest, without the final newline. *)
-let split file prefix contents =
+(* A golden's file is its body and a final newline. *)
+let golden_body file =
+  let contents = read file in
   let last = String.length contents - 1 in
-  match String.index_opt contents '\n' with
-  | Some eol
-    when String.starts_with ~prefix contents
-         && last > eol
-         && contents.[last] = '\n' ->
-      let n = last - eol - 1 in
-      (String.sub contents 0 eol, String.sub contents (eol + 1) n)
-  | _ -> failwith (file ^ ": not a golden")
-
-let golden_body file = snd (split file "# tinygrad " (read file))
+  if last < 0 || contents.[last] <> '\n' then
+    failwith (file ^ ": not a golden");
+  String.sub contents 0 last
 
 (* Tolk's output
 
@@ -83,9 +76,19 @@ let render_header { entries; hash } =
   in
   String.concat " " ([ "#"; "tolk" ] @ entries @ hash)
 
+(* The first line of a tolk file, which starts with [# tolk], and its body: the
+   rest, without the final newline. *)
 let tolk_parts tolk =
-  let line, body = split tolk "# tolk" (read tolk) in
-  (header tolk line, body)
+  let contents = read tolk in
+  let last = String.length contents - 1 in
+  match String.index_opt contents '\n' with
+  | Some eol
+    when String.starts_with ~prefix:"# tolk" contents
+         && last > eol
+         && contents.[last] = '\n' ->
+      let line = String.sub contents 0 eol in
+      (header tolk line, String.sub contents (eol + 1) (last - eol - 1))
+  | _ -> failwith (tolk ^ ": not a golden")
 
 (* The checks of [tolk] against [file]'s golden, on its [header] and [body]. *)
 let check_tolk file tolk { entries; hash } body =
@@ -202,7 +205,7 @@ let table file =
         let cells = String.split_on_char '\t' line in
         if List.compare_lengths cells columns <> 0 then
           failwith
-            (Printf.sprintf "%s, line %d: %d cells for %d columns" file (i + 3)
+            (Printf.sprintf "%s, line %d: %d cells for %d columns" file (i + 2)
                (List.length cells) (List.length columns));
         List.combine columns cells
       in

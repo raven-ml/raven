@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 trial	step	call	result
 0	0	create 140955 0 64 8	
 0	1	alloc 257 4096	0

@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 dtype	storage	value
 dtypes.fp8e4m3	0	0.0
 dtypes.fp8e4m3	1	0.001953125

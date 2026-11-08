@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 color	background	colored
 black	False	"\x1b[30mx\x1b[0m"
 black	True	"\x1b[40mx\x1b[0m"

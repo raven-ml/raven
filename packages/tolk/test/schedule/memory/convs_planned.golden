@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 0 Ops.CONST dtypes.weakint [] 144
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, vmin_vmax=(0.0, inf))
 2 Ops.CONST dtypes.weakint [] 6

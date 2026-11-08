@@ -6,8 +6,8 @@ runs that data on rig.
 
 ## The reference
 
-- `_tinygrad_next` at the repository root, at the commit `DIVERGENCES.md`
-  pins. Never a released tinygrad package, and no internet sources unless
+- `_tinygrad_next` at the repository root, at the commit `TINYGRAD` in
+  `test/gen/generate.py` pins. Never a released tinygrad package, and no internet sources unless
   asked.
 - tinygrad decides structure: which module owns a pass, the pass boundaries
   and their order, where logic lives. Keep emitted source diffable against

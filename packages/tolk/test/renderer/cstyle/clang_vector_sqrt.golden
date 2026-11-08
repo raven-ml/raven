@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
 __attribute__((min_vector_width(512))) void sqrt(float* restrict data0_4, float* restrict data1_4) {
   float4 val0 = (*((float4*)((data1_4+0))));

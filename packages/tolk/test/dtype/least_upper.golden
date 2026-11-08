@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 a	b	least_upper
 dtypes.bool	dtypes.bool	dtypes.bool
 dtypes.bool	dtypes.weakint	dtypes.weakint

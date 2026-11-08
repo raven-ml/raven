@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 dtype	vmin	vmax	d	renderer	result
 i8	0	1	-3	all	None
 i8	0	1	-3	none	None

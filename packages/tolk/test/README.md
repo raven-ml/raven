@@ -309,6 +309,10 @@ A codegen pass's input is recorded where the pipeline hands it over:
 `"apply_opts"` (the kernel that kernel optimization receives) or
 `"linearize"`.
 
+A golden's file is its body and a final newline. The tinygrad commit the
+goldens come from is `TINYGRAD` in `gen/generate.py`, which `gen/manifest`
+records on its first line.
+
 `gen/generate.py` runs each generator in a fresh interpreter, with a scrubbed
 environment, and makes each golden in a process forked from it, so that no
 golden sees the state another left in tinygrad, such as its buffer numbering.
@@ -341,5 +345,5 @@ same on every machine. No Python runs at test time. To regenerate:
 
 To move to another tinygrad commit, check it out in `_tinygrad_next`, change
 `TINYGRAD` in `gen/generate.py`, re-apply `gen/tinygrad.patch` to the new
-commit and save it again (`git diff` in a patched copy), and regenerate: every
-golden changes its header, and the diff shows what else moved.
+commit and save it again (`git diff` in a patched copy), and regenerate: the
+diff shows what moved.

@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 case	src	dtype
 index_of_param	0	dtypes.u8
 gated_index_of_param	1	dtypes.u8

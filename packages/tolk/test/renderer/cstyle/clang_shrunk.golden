@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 
 __attribute__((min_vector_width(512))) void E_28n2A429(float* restrict data0_256, float* restrict data1_256, const int block_lo_, const int block_hi_) {
   for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {

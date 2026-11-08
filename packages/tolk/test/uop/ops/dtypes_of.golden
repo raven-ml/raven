@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 op	a	b	dtype
 Ops.ADD	dtypes.bool	dtypes.bool	dtypes.bool
 Ops.ADD	dtypes.bool	dtypes.weakint	dtypes.weakint

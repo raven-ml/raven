@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 UOp(Ops.SQRT, arg=None, src=(
   UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.f32, vmin_vmax=(-1.0, 1.0), name='x', addrspace=AddrSpace.ALU), src=(
     UOp(Ops.STACK, arg=None, src=()),)),))

@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))

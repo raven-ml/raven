@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 0 Ops.SINK dtypes.void []
 1 Ops.LINEAR dtypes.void [0]
 2 Ops.CONST dtypes.weakint [] 16

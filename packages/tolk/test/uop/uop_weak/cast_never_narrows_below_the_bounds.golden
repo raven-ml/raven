@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 0 Ops.CONST dtypes.weakint [] 4294967296
 1 Ops.CONST dtypes.weakint [] 1
 2 Ops.ADD dtypes.weakint [0, 1]

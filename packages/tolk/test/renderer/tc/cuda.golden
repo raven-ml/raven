@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 arch	cores
 "sm_"	raises ValueError
 "sm_x"	raises ValueError

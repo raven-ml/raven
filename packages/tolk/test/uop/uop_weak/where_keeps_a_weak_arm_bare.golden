@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 0 Ops.CONST dtypes.bool [] True
 1 Ops.CONST dtypes.weakfloat [] 2.0
 2 Ops.CAST dtypes.f16 [1] dtypes.f16

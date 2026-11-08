@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 0 Ops.CONST dtypes.weakfloat [] 2.0
 1 Ops.EXP2 dtypes.weakfloat [0]
 2 Ops.SINK dtypes.void [1]

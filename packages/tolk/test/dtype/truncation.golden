@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 dtype	value	truncated	storage
 dtypes.fp8e4m3	True	1.0	56
 dtypes.fp8e4m3	False	0.0	0

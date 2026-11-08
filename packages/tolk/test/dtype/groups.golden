@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 group	members
 fp8_ocp	dtypes.fp8e4m3 dtypes.fp8e5m2
 fp8_fnuz	dtypes.fp8e4m3fnuz dtypes.fp8e5m2fnuz

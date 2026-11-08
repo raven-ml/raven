@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 
 __attribute__((min_vector_width(512))) void test(int* restrict data0_1, int* restrict data1_1) {
   int val0 = (*(data1_1+0));

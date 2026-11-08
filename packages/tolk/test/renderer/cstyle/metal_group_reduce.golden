@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 #include <metal_stdlib>
 using namespace metal;
 kernel void r_64_64_4_16(device float* data0_4096, device float* data1_4096, device float* data2_4096, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {

@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 renderer	device	arch	has_local	has_shared	shared_max	tensor_cores	registers	per_byte_first
 cpu	CPU	x86_64,x86-64	False	True	32768	0	16x16	64
 avx2	CPU	x86_64,x86-64-v3	False	True	32768	0	16x32	64

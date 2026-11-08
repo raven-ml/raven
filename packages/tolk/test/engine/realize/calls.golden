@@ -1,4 +1,3 @@
-# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 program	call	var_vals	bufs	args	outs	ins	name	ops	lds	mem
 add	0	-	%1 %2 %3	%1 %2 %3	0	1 2	E_16	16	192	192
 sum	0	-	%1 %2	%1 %2	0	1	r_4_8	28	144	144
