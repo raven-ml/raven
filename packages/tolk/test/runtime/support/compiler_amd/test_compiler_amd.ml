@@ -366,6 +366,12 @@ let verifier =
       @@ test "invalid IR raises Compile_error with the verifier's finding"
            (fun () ->
              ignore (with_comgr (fun () -> compile kernel));
+             (match Compiler_amd.comgr_version () with
+             | None -> fail "comgr compiled but reports no version"
+             | Some v when v < (2, 8) ->
+                 skip ~reason:"comgr before 2.8 compiles without the verifier"
+                   ()
+             | Some _ -> ());
              match compile invalid_ir with
              | _ -> fail "comgr compiled IR that LLVM's verifier rejects"
              | exception Compiler.Compile_error msg ->

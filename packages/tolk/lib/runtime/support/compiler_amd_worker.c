@@ -17,7 +17,8 @@
    "1"), the count then the options of the compile, the count then the options
    of code generation, the major and minor version from which comgr is given
    the next options in both steps, the count then those options, each
-   NUL-terminated, then the source. A reply holds the code object, as
+   NUL-terminated, then the source. A request whose ISA is empty asks comgr's
+   version instead, replied as MAJOR.MINOR. A reply holds the code object, as
    compiler_worker.h says. Diagnostics (comgr's, LLVM's) go to standard
    error. */
 
@@ -233,6 +234,14 @@ static void answer(const char *request, size_t size) {
   const char *at = request, *end = request + size, *isa = field(&at, end),
              *assemble = field(&at, end), *from_major, *from_minor;
   struct options compile = {NULL, 0}, codegen = {NULL, 0}, later = {NULL, 0};
+  if (isa != NULL && isa[0] == '\0') {
+    char v[48];
+    int n = snprintf(v, sizeof v, "%llu.%llu",
+                     (unsigned long long)version.major,
+                     (unsigned long long)version.minor);
+    reply_with("ok", v, n);
+    return;
+  }
   if (isa == NULL || assemble == NULL || !option_list(&at, end, &compile) ||
       !option_list(&at, end, &codegen) ||
       (from_major = field(&at, end)) == NULL ||

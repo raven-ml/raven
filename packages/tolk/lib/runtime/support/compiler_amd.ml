@@ -71,6 +71,14 @@ let compile_hip comgr src ~arch ~asm =
 
 (* HIP *)
 
+let comgr_version () =
+  match library () with
+  | None -> None
+  | Some comgr -> (
+      match Compiler_worker.call worker comgr "\000" with
+      | Ok v -> Scanf.sscanf_opt v "%u.%u%!" (fun major minor -> (major, minor))
+      | Error _ -> None)
+
 let hip arch =
   let comgr =
     match library () with

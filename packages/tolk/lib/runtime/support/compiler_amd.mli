@@ -52,3 +52,10 @@ val hip : string -> Renderer.Compiler.t
     the process ended and what it printed if it ends without answering, and
     [Failure] if the process cannot be started. {!Renderer.Compiler.disassemble}
     prints what [llvm-objdump -d] prints ({!Helpers.amdgpu_disassemble}). *)
+
+(**/**)
+
+val comgr_version : unit -> (int * int) option
+(** [comgr_version ()] is the major and minor version of the comgr {!hip}
+    finds, as comgr reports it, or [None] if none is found or it does not
+    load. *)
