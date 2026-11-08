@@ -38,10 +38,6 @@ let starts_month days =
   let _, _, d = Time.Date.to_civil date in
   d = 1
 
-(* [year_near days] is within two years of the year of the day [days] since
-   1970: a Gregorian year averages 146_097 / 400 days. *)
-let year_near days = 1970 + (days * 400 / cycle_days)
-
 (* Rules, the POSIX TZ strings of TZif footers *)
 
 (* The dates of a rule: [Jn], day 1 to 365 with February 29 never counted; [n],
@@ -56,8 +52,13 @@ type date =
 type change = { date : date; time : int }
 type daylight = { dst : int; start : change; stop : change }
 
+(* The offsets of a rule over the 400-year cycle that starts at the epoch:
+   the changes [(t, o)] with [t] in [\[0; cycle_s)], ascending, and the offset in
+   effect at second 0. *)
+type table = { times : int array; offsets : int array; start : int }
+
 (* Offsets of standard and daylight saving time, in seconds east of UTC. *)
-type rule = { std : int; daylight : daylight option }
+type rule = { std : int; daylight : daylight option; cycle : table }
 
 let day_of_date year = function
   | Julian n ->
@@ -77,62 +78,91 @@ let day_of_date year = function
 
 let cycle_s = cycle_days * day_s
 
-(* [reduce u] is [u] less whole cycles, in (-cycle_s, cycle_s), and a year near
-   it. *)
-let reduce u =
-  let r = Int64.to_int (Int64.rem u (Int64.of_int cycle_s)) in
-  (r, year_near (r / day_s))
-
-(* The changes of [d] from three years before [year] to three years after, as
-   [(time, offset)] in time order. [year] is within two years of the instant's,
-   and rule hours reach 167, so a year's changes can fall in the next year: the
-   seven years surround the instant with changes. At equal times a stop precedes
-   a start, so that daylight saving time all year never shows a standard time of
-   no length. *)
-let changes std d year =
+(* Rule hours reach 167, so a change can fall in the year next to its own: the
+   events of the three years either side surround the cycle. At equal times a
+   stop precedes a start, so that daylight saving time all year never shows a
+   standard time of no length; only the last offset of a time counts. *)
+let table std d =
   let at y c offset = (day_of_date y c.date * day_s) + c.time - offset in
   let events = ref [] in
-  for y = year - 3 to year + 3 do
+  for y = 1970 - 3 to 1970 + 400 + 3 do
     events :=
       (at y d.stop d.dst, 0, std) :: (at y d.start std, 1, d.dst) :: !events
   done;
   let by_time (t, o, _) (t', o', _) =
     match Int.compare t t' with 0 -> Int.compare o o' | c -> c
   in
-  List.map (fun (t, _, offset) -> (t, offset)) (List.sort by_time !events)
+  let events = List.sort by_time !events in
+  let start = ref std and rows = ref [] in
+  List.iter
+    (fun (t, _, o) ->
+      if t <= 0 then start := o
+      else if t < cycle_s then
+        match !rows with
+        | (t', _) :: rest when t' = t -> rows := (t, o) :: rest
+        | _ -> rows := (t, o) :: !rows)
+    events;
+  let times = ref [] and offsets = ref [] and current = ref !start in
+  List.iter
+    (fun (t, o) ->
+      if o <> !current then (
+        times := t :: !times;
+        offsets := o :: !offsets;
+        current := o))
+    (List.rev !rows);
+  {
+    times = Array.of_list (List.rev !times);
+    offsets = Array.of_list (List.rev !offsets);
+    start = !start;
+  }
+
+let make_rule std daylight =
+  let cycle =
+    match daylight with
+    | None -> { times = [||]; offsets = [||]; start = std }
+    | Some d -> table std d
+  in
+  { std; daylight; cycle }
+
+let reduce u =
+  let r = Int64.rem u (Int64.of_int cycle_s) in
+  Int64.to_int
+    (if Int64.compare r 0L < 0 then Int64.add r (Int64.of_int cycle_s) else r)
+
+(* [count_le t r] is the number of elements of the ascending [t] at or below
+   [r]. *)
+let count_le t r =
+  let rec search lo hi =
+    if lo >= hi then lo
+    else
+      let mid = (lo + hi) / 2 in
+      if t.(mid) <= r then search (mid + 1) hi else search lo mid
+  in
+  search 0 (Array.length t)
 
 let rule_offset rule u =
   match rule.daylight with
   | None -> rule.std
-  | Some d ->
-      let r, year = reduce u in
-      List.fold_left
-        (fun o (t, o') -> if t <= r then o' else o)
-        rule.std (changes rule.std d year)
+  | Some _ -> (
+      match count_le rule.cycle.times (reduce u) with
+      | 0 -> rule.cycle.start
+      | k -> rule.cycle.offsets.(k - 1))
 
 (* [rule_next rule u] is the first instant after [u] where [rule] changes the
-   offset, and the offset from there. Each event is checked against the rule's
-   offset at its instant: under daylight saving time all year, the last stop of
-   the window has no start to cancel it, yet changes nothing. *)
+   offset, and the offset from there. Past the cycle's last change, the first
+   change of the next cycle, at the same reading as the first of this one. *)
 let rule_next rule u =
-  match rule.daylight with
-  | None -> None
-  | Some d ->
-      let r, year = reduce u in
-      let current = rule_offset rule u in
-      let rec find = function
-        | [] -> None
-        | (t, _) :: rest
-          when (t <= r) [@mutate off "an event at r already sets current"] ->
-            find rest
-        | (t, _) :: rest -> (
-            match shift u (t - r) with
-            | None -> None
-            | Some v ->
-                let o = rule_offset rule v in
-                if o = current then find rest else Some (v, o))
+  let t = rule.cycle.times in
+  match Array.length t with
+  | 0 -> None
+  | n -> (
+      let r = reduce u in
+      let k = count_le t r in
+      let d, o =
+        if k < n then (t.(k) - r, rule.cycle.offsets.(k))
+        else (t.(0) + cycle_s - r, rule.cycle.offsets.(0))
       in
-      find (changes rule.std d year)
+      match shift u d with None -> None | Some v -> Some (v, o))
 
 (* Zones *)
 
@@ -156,6 +186,21 @@ let utc =
     lowest = 0;
     highest = 0;
   }
+
+let fixed_name o =
+  let a = abs o in
+  let hm = Printf.sprintf "%c%02d:%02d" (if o < 0 then '-' else '+') (a / 3600)
+             (a / 60 mod 60) in
+  if a mod 60 = 0 then hm else Printf.sprintf "%s:%02d" hm (a mod 60)
+
+let fixed o =
+  if o < -0x8000_0000 || o > 0x7FFF_FFFF then
+    invalid_arg (Printf.sprintf "Tz.fixed: %d is not a 32-bit offset" o);
+  { utc with name = fixed_name o; first = o; lowest = o; highest = o }
+
+let equal z0 z1 =
+  z0.first = z1.first && z0.times = z1.times && z0.offsets = z1.offsets
+  && z0.rule = z1.rule
 
 let name z = z.name
 
@@ -428,7 +473,7 @@ let footer_rule ~version ~at tz =
       ignore (designation ());
       offset ()
     in
-    if !i = len then Some { std; daylight = None }
+    if !i = len then Some (make_rule std None)
     else
       let name = designation () in
       let dst =
@@ -440,7 +485,7 @@ let footer_rule ~version ~at tz =
       expect ',';
       let stop = change () in
       if !i <> len then fail "unexpected %C" tz.[!i];
-      Some { std; daylight = Some { dst; start; stop } }
+      Some (make_rule std (Some { dst; start; stop }))
 
 let decode ~name s =
   let d = { s; pos = 0 } in
@@ -653,8 +698,8 @@ let decode ~name s =
     @
     match rule with
     | None -> []
-    | Some { std; daylight = None } -> [ std ]
-    | Some { std; daylight = Some d } -> [ std; d.dst ]
+    | Some { std; daylight = None; _ } -> [ std ]
+    | Some { std; daylight = Some d; _ } -> [ std; d.dst ]
   in
   {
     name;

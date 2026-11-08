@@ -33,7 +33,7 @@ let reads ty xs expected =
     (Column.options (Type.kind ty) (parsed ty (List.map Option.some xs)))
 
 let rows ty xs = Column.options (Type.kind ty) (parsed ty xs)
-let instant f n = Option.get (f n)
+let tick f n = Option.get (f n)
 let day n = Option.get (Time.Date.of_days n)
 
 (* Values *)
@@ -116,21 +116,21 @@ let values =
             (fun ymd -> Option.get (Time.Date.of_civil ymd))
             [ (-44, 3, 15); (12345, 1, 1); (-1, 12, 31); (2024, 2, 29) ] );
       Case
-        ( datetime Us,
+        ( wall Us,
           [
             "1970-01-01T00:00:01";
             "1970-01-01 00:00:00.5";
             "1969-12-31T23:59:59.999999";
           ],
-          List.map (instant Time.of_us) [ 1_000_000L; 500_000L; -1L ] );
+          List.map (tick Time.of_us) [ 1_000_000L; 500_000L; -1L ] );
       Case
-        ( datetime Ms,
+        ( wall Ms,
           [ "1970-01-01T00:00:00.001"; "1970-01-01T00:00:00.100000" ],
-          List.map (instant Time.of_ms) [ 1L; 100L ] );
+          List.map (tick Time.of_ms) [ 1L; 100L ] );
       Case
-        (datetime S, [ "1970-01-02T00:00:00.000" ], [ instant Time.of_s 86400L ]);
+        (wall S, [ "1970-01-02T00:00:00.000" ], [ tick Time.of_s 86400L ]);
       Case
-        ( datetime ~zone:"Europe/Paris" Ns,
+        ( instant Ns,
           [
             "1970-01-01T01:00:00+01:00";
             "1970-01-01T00:00:00Z";
@@ -138,7 +138,7 @@ let values =
           ],
           List.init 3 (fun _ -> Time.of_ns 0L) );
       Case
-        ( datetime ~zone:"UTC" Ns,
+        ( instant Ns,
           [ "2262-04-11T23:47:16.854775807Z"; "1677-09-21T00:12:43.145224192Z" ],
           [ Time.of_ns Int64.max_int; Time.of_ns Int64.min_int ] );
       Case
@@ -186,7 +186,7 @@ let storage =
       test "a datetime reads the extremes of its ticks" (fun () ->
           equal (array int64)
             [| Int64.max_int; Int64.min_int; 185542587187199L |]
-            (stored (Type.datetime S)
+            (stored (Type.wall S)
                [
                  "+292277026596-12-04T15:30:07";
                  "-292277022657-01-27T08:29:52";
@@ -195,7 +195,7 @@ let storage =
       test "a datetime reads a signed year, past nanoseconds' range" (fun () ->
           equal (array int64)
             [| 253402300800L; -62167219201L; -62135596800L |]
-            (stored (Type.datetime S)
+            (stored (Type.wall S)
                [
                  "+10000-01-01T00:00:00";
                  "-0001-12-31 23:59:59";
@@ -242,52 +242,52 @@ let refusals =
       (Any date, "-12345-02-30", "not a day of the calendar");
       (Any date, "+5881581-01-01", "out of range");
       (Any date, "-99999999999999999999-01-01", "out of range");
-      ( Any (datetime Us),
+      ( Any (wall Us),
         "2024-01-01T00:00:00.1234567",
         "not a whole number of microseconds" );
-      ( Any (datetime Us),
+      ( Any (wall Us),
         "2024-01-01T00:00:00Z",
         "not YYYY-MM-DDThh:mm:ss without an offset" );
-      (Any (datetime Us), "2024-01-01T24:00:00", "not a time of day");
-      (Any (datetime Us), "2024-01-01T00:00:60", "not a time of day");
-      ( Any (datetime Us),
+      (Any (wall Us), "2024-01-01T24:00:00", "not a time of day");
+      (Any (wall Us), "2024-01-01T00:00:60", "not a time of day");
+      ( Any (wall Us),
         "2024-01-01T00:00:00.",
         "not YYYY-MM-DDThh:mm:ss without an offset" );
-      ( Any (datetime Us),
+      ( Any (wall Us),
         "2024-01-01T00:00:00.1234567890",
         "not YYYY-MM-DDThh:mm:ss without an offset" );
-      ( Any (datetime Us),
+      ( Any (wall Us),
         "2024-01-01t00:00:00",
         "not YYYY-MM-DDThh:mm:ss without an offset" );
-      ( Any (datetime S),
+      ( Any (wall S),
         "2024-01-01T00:00:00.5",
         "not a whole number of seconds" );
-      (Any (datetime S), "+999-01-01T00:00:00", "not YYYY-MM-DD");
-      (Any (datetime S), "+292277026596-12-04T15:30:08", "out of range");
-      (Any (datetime S), "-292277022657-01-27T08:29:51", "out of range");
-      (Any (datetime Ms), "+300000000-01-01T00:00:00", "out of range");
-      ( Any (datetime S),
+      (Any (wall S), "+999-01-01T00:00:00", "not YYYY-MM-DD");
+      (Any (wall S), "+292277026596-12-04T15:30:08", "out of range");
+      (Any (wall S), "-292277022657-01-27T08:29:51", "out of range");
+      (Any (wall Ms), "+300000000-01-01T00:00:00", "out of range");
+      ( Any (wall S),
         "+10000-01-01",
         "not YYYY-MM-DDThh:mm:ss without an offset" );
-      ( Any (datetime Ms),
+      ( Any (wall Ms),
         "2024-01-01T00:00:00.0015",
         "not a whole number of milliseconds" );
-      ( Any (datetime ~zone:"UTC" Us),
+      ( Any (instant Us),
         "2024-01-01T00:00:00",
         "not YYYY-MM-DDThh:mm:ss with an offset" );
-      ( Any (datetime ~zone:"UTC" Us),
+      ( Any (instant Us),
         "2024-01-01T00:00:00+0100",
         "not YYYY-MM-DDThh:mm:ss with an offset" );
-      ( Any (datetime ~zone:"UTC" Us),
+      ( Any (instant Us),
         "2024-01-01T00:00:00+24:00",
         "not an offset" );
-      ( Any (datetime ~zone:"UTC" Us),
+      ( Any (instant Us),
         "2024-01-01T00:00:00+01:60",
         "not an offset" );
-      ( Any (datetime ~zone:"UTC" Ns),
+      ( Any (instant Ns),
         "2262-04-11T23:47:16.854775808Z",
         "out of range" );
-      ( Any (datetime ~zone:"UTC" Ns),
+      ( Any (instant Ns),
         "1677-09-21T00:12:43.145224191Z",
         "out of range" );
       (Any string, "\xff", "invalid UTF-8 at byte 0");
@@ -636,7 +636,7 @@ let laws =
       prop "datetime reads an instant written by Time.pp as itself"
         Gen.(map Time.of_ns int64)
         (fun t ->
-          let utc = Type.datetime ~zone:"UTC" Ns in
+          let utc = Type.instant Ns in
           Law.round_trip (G.witness utc) string
             (Format.asprintf "%aZ" Time.pp)
             (read_one utc) t);
@@ -844,7 +844,7 @@ let floats ~p ~emin of_bits =
 (* [of_ticks ty xs] is the column of [ty] whose values are the int64 [xs]. *)
 let of_ticks ty xs =
   let values = Nx.P (Nx.create Nx.int64 [| Array.length xs |] xs) in
-  match Column.of_layout (Any ty) (Fixed { validity = None; values }) with
+  match Column.of_layout ty (Fixed { validity = None; values }) with
   | Ok c -> c
   | Error (row, why) -> failf "row %d: %s" row why
 
@@ -859,7 +859,7 @@ let extreme_ticks =
   in
   let open Gen in
   let* u = of_list Type.[ S; Ms; Us; Ns ] in
-  let* zone = of_list [ None; Some "UTC" ] in
+  let* utc = bool in
   let scaled secs =
     let t = Int64.mul secs (per u) in
     if Int64.div t (per u) = secs then [ t ] else []
@@ -873,7 +873,7 @@ let extreme_ticks =
   let+ xs =
     array ~size:(int_range 1 8) (frequency [ (1, of_list edges); (1, int64) ])
   in
-  (Type.datetime ?zone u, xs)
+  ((if utc then Type.Any (Type.instant u) else Type.Any (Type.wall u)), xs)
 
 let readable (G.Sample (ty, _)) =
   match ty with
@@ -964,7 +964,7 @@ let printing =
           equal
             (array (option string))
             [| Some "-9223372036854775808"; Some "9223372036854775807" |]
-            (texts (of_ticks Type.int64 [| Int64.min_int; Int64.max_int |]));
+            (texts (of_ticks (Any Type.int64) [| Int64.min_int; Int64.max_int |]));
           equal
             (array (option string))
             [| Some "18446744073709551615"; Some "0" |]
@@ -977,12 +977,12 @@ let printing =
             [ day 0; day (-719529) ]
             [ "1970-01-01"; "-0001-12-31" ];
           printed
-            (Type.datetime ~zone:"UTC" Ms)
-            [ instant Time.of_ms 1500L; instant Time.of_ms (-1L) ]
+            (Type.instant Ms)
+            [ tick Time.of_ms 1500L; tick Time.of_ms (-1L) ]
             [ "1970-01-01T00:00:01.5Z"; "1969-12-31T23:59:59.999Z" ]);
       test "a datetime is written from its ticks, past Time's range" (fun () ->
-          let ty = Type.datetime S in
-          let c = of_ticks ty [| 253402300800L; -62167219201L |] in
+          let ty = Type.wall S in
+          let c = of_ticks (Any ty) [| 253402300800L; -62167219201L |] in
           equal
             (array (option string))
             [| Some "+10000-01-01T00:00:00"; Some "-0001-12-31T23:59:59" |]

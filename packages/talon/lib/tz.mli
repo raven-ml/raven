@@ -33,9 +33,24 @@ val utc : zone
 (** [utc] is Coordinated Universal Time: the zone named ["UTC"], whose offset is
     [0] at every instant. *)
 
+val fixed : int -> zone
+(** [fixed o] is the zone whose offset is [o] seconds east of UTC at every
+    instant, as in FLUXNET's local standard time. Its name is [+hh:mm] or
+    [-hh:mm], with [:ss] when [o] is not whole minutes.
+
+    Raises [Invalid_argument] if [o] does not fit in a signed 32-bit integer,
+    the bound RFC 9636 puts on an offset. *)
+
+val equal : zone -> zone -> bool
+(** [equal z0 z1] is [true] iff [z0] and [z1] have the same offset at every
+    instant by construction: the same transitions and the same rule. Names do
+    not count, so a zone and its alias are equal, and two versions of a zone
+    from different databases are not. *)
+
 val name : zone -> string
 (** [name z] is the name of [z]: the name its database holds it under ({!find}),
-    such as ["Europe/Paris"], and ["UTC"] for {!utc}. *)
+    such as ["Europe/Paris"], ["UTC"] for {!utc}, and ["+05:30"] for
+    {!fixed}. *)
 
 val offset_s : zone -> int64 -> int
 (** [offset_s z t] is the UTC offset of [z] at the POSIX second [t], in seconds.

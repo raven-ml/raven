@@ -639,21 +639,21 @@ let values =
       ( any Type.date,
         "1970-01-01\n2000-02-29\n0000-01-01\n9999-12-31\n1969-12-31\n",
         "int32 [0; 11016; -719528; 2932896; -1]" );
-      ( any (Type.datetime Us),
+      ( any (Type.wall Us),
         "1970-01-01T00:00:01\n\
          1970-01-01 00:00:00.5\n\
          1969-12-31T23:59:59.999999\n",
         "int64 [1000000; 500000; -1]" );
-      ( any (Type.datetime Ms),
+      ( any (Type.wall Ms),
         "1970-01-01T00:00:00.001\n1970-01-01T00:00:00.100000\n",
         "int64 [1; 100]" );
-      (any (Type.datetime S), "1970-01-02T00:00:00.000\n", "int64 [86400]");
-      ( any (Type.datetime ~zone:"Europe/Paris" Ns),
+      (any (Type.wall S), "1970-01-02T00:00:00.000\n", "int64 [86400]");
+      ( any (Type.instant Ns),
         "1970-01-01T01:00:00+01:00\n\
          1970-01-01T00:00:00Z\n\
          1969-12-31T19:00:00-05:00\n",
         "int64 [0; 0; 0]" );
-      ( any (Type.datetime ~zone:"UTC" Ns),
+      ( any (Type.instant Ns),
         "2262-04-11T23:47:16.854775807Z\n1677-09-21T00:12:43.145224192Z\n",
         "int64 [9223372036854775807; -9223372036854775808]" );
       ( any Type.string,
@@ -1031,7 +1031,7 @@ let writing =
                   Column.v (Type.categorical [| ""; "u,v" |]) [| ""; "u,v" |] );
                 ( "t",
                   Column.v
-                    (Type.datetime ~zone:"UTC" Ms)
+                    (Type.instant Ms)
                     [|
                       Option.get (Time.of_ms 1500L); Option.get (Time.of_ms 0L);
                     |] );

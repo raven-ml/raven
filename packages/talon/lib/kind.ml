@@ -12,7 +12,7 @@ type _ t =
   | String : string t
   | Binary : Binary.t t
   | Date : Time.date t
-  | Instant : Time.instant t
+  | Stamp : 'c Time.clock -> 'c Time.stamp t
   | Span : Time.span t
   | List : 'a t -> 'a array t
   | Record : record t
@@ -31,7 +31,8 @@ let float = Float
 let string = String
 let binary = Binary
 let date = Date
-let instant = Instant
+let instant = Stamp Utc
+let wall = Stamp Local
 let span = Span
 let list k = List k
 let tensor dt = Tensor dt
@@ -45,7 +46,8 @@ let rec equal_witness : type a b. a t -> b t -> (a, b) Stdlib.Type.eq option =
   | String, String -> Some Equal
   | Binary, Binary -> Some Equal
   | Date, Date -> Some Equal
-  | Instant, Instant -> Some Equal
+  | Stamp Utc, Stamp Utc -> Some Equal
+  | Stamp Local, Stamp Local -> Some Equal
   | Span, Span -> Some Equal
   | Record, Record -> Some Equal
   | Ext, Ext -> Some Equal
@@ -72,7 +74,8 @@ let rec pp : type a. Format.formatter -> a t -> unit =
   | String -> Format.pp_print_string ppf "string"
   | Binary -> Format.pp_print_string ppf "binary"
   | Date -> Format.pp_print_string ppf "date"
-  | Instant -> Format.pp_print_string ppf "instant"
+  | Stamp Utc -> Format.pp_print_string ppf "instant"
+  | Stamp Local -> Format.pp_print_string ppf "wall"
   | Span -> Format.pp_print_string ppf "span"
   | Record -> Format.pp_print_string ppf "record"
   | Ext -> Format.pp_print_string ppf "ext"

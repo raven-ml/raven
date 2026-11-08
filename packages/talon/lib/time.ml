@@ -90,22 +90,30 @@ module Date = struct
     else Format.fprintf ppf "%+05d-%02d-%02d" y m d
 end
 
-(* Instants *)
+(* Stamps *)
 
-type instant = int64
+(* The clock index is a phantom; a one-constructor unboxed type makes it
+   injective, so that a [Datetime] arm refines it. *)
+type +!'c stamp = Stamp of int64 [@@unboxed]
+type utc
+type local
+type instant = utc stamp
+type wall = local stamp
+type _ clock = Utc : utc clock | Local : local clock
 
-let of_ns n = n
-let of_us = scale ns_per_us
-let of_ms = scale ns_per_ms
-let of_s = scale ns_per_s
-let to_ns t = t
-let to_us t = floor_div t ns_per_us
-let to_ms t = floor_div t ns_per_ms
-let to_s t = floor_div t ns_per_s
-let equal = Int64.equal
-let compare = Int64.compare
+let of_ns n = Stamp n
+let of_unit u n = Option.map (fun n -> Stamp n) (scale u n)
+let of_us n = of_unit ns_per_us n
+let of_ms n = of_unit ns_per_ms n
+let of_s n = of_unit ns_per_s n
+let to_ns (Stamp t) = t
+let to_us (Stamp t) = floor_div t ns_per_us
+let to_ms (Stamp t) = floor_div t ns_per_ms
+let to_s (Stamp t) = floor_div t ns_per_s
+let equal (Stamp t0) (Stamp t1) = Int64.equal t0 t1
+let compare (Stamp t0) (Stamp t1) = Int64.compare t0 t1
 
-let pp ppf t =
+let pp ppf (Stamp t) =
   let days = floor_div t ns_per_day in
   let ns = Int64.to_int (Int64.sub t (Int64.mul days ns_per_day)) in
   let s = ns / 1_000_000_000 and frac = ns mod 1_000_000_000 in

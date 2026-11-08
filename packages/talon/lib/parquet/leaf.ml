@@ -145,7 +145,7 @@ let default l : Type.any option =
   | Some Date, _ -> Some (Any Type.date)
   | Some (Time { unit_; _ }), _ -> Some (Any (Type.clock unit_))
   | Some (Timestamp { unit_; utc }), _ ->
-      Some (Any (Type.datetime ?zone:(if utc then Some "UTC" else None) unit_))
+      Some (if utc then Any (Type.instant unit_) else Any (Type.wall unit_))
   | Some (Integer { bits; signed }), _ -> (
       match (bits, signed) with
       | 8, true -> Some (Any Type.int8)
@@ -160,7 +160,7 @@ let default l : Type.any option =
   | _, Boolean -> Some (Any Type.bool)
   | _, Int32 -> Some (Any Type.int32)
   | _, Int64 -> Some (Any Type.int64)
-  | _, Int96 -> Some (Any (Type.datetime Ns))
+  | _, Int96 -> Some (Any (Type.wall Ns))
   | _, Float -> Some (Any Type.float32)
   | _, Double -> Some (Any Type.float64)
   | _, (Byte_array | Fixed_len_byte_array) -> Some (Any Type.binary)
@@ -175,7 +175,7 @@ let reads_as l (Type.Any t) =
       || (holds_bytes l
          && match t with String | Binary | Categorical _ -> true | _ -> false)
       || l.physical = Int96
-         && match t with Datetime { zone = None; _ } -> true | _ -> false)
+         && match t with Datetime { clock = Local; _ } -> true | _ -> false)
 
 (* Formatting *)
 
@@ -227,5 +227,5 @@ let pp_reads ppf l =
   | None, _ -> str "float64"
   | Some _, _ when holds_bytes l -> str "string, binary or a categorical"
   | Some _, _ when l.physical = Int96 ->
-      str "datetime of any unit, without a zone"
+      str "wall-clock datetime of any unit"
   | Some (Any t), _ -> Type.pp ppf t

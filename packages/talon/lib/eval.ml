@@ -917,7 +917,17 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
       | Floor (step, a) -> unary_checked a (Kernels.floor step (t a))
       | Offset (step, a) -> unary_checked a (Kernels.offset step (t a))
       | Parse_with (fmt, ty, a) -> textual a (Kernels.parse_with fmt (Any ty))
-      | Format_with (fmt, a) -> unary a (Form.format_with fmt))
+      | Format_with (fmt, a) -> unary a (Form.format_with fmt)
+      | Wall (z, a) -> unary_checked a (Kernels.wall z (t a))
+      | Localize (z, ambiguous, gap, a) ->
+          unary_checked a (Kernels.localize z ~ambiguous ~gap (t a))
+      | Localize_ordered (z, ambiguous, gap, a) ->
+          let ty = t a and a = compile st a in
+          fun env ->
+            let order = Reduce.view env.frame.segments in
+            checked env
+              (Kernels.localize_ordered z ~ambiguous ~gap ty ~order
+                 (fill env (get env a))))
   (* Binding traces lifts away, an option stands only where [ocaml] reads it,
      and arithmetic and nx operations have a column type. *)
   | (Lift _ | Lift2 _ | Option _), _

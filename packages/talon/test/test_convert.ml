@@ -73,9 +73,9 @@ let casts =
         (some [| Time.Span.s 3 |])
         (Type.duration Ms)
         (some [| Time.Span.s 3 |]);
-      casts_of "a coarser unit divides" (Type.datetime Ms)
+      casts_of "a coarser unit divides" (Type.wall Ms)
         (some [| Time.of_ns (-2_000_000_000L) |])
-        (Type.datetime S)
+        (Type.wall S)
         (some [| Time.of_ns (-2_000_000_000L) |]);
       casts_of "lists cast element by element" (Type.list Type.int64)
         [| Some [| 1; 2 |]; None; Some [||] |]
@@ -159,8 +159,8 @@ let pairs =
     all [ int8; int16; int32; int64; uint8; uint16; uint32; uint64 ]
     @ all (List.map duration units)
     @ all (List.map clock units)
-    @ all (List.map (fun u -> datetime u) units)
-    @ all [ datetime ~zone:"UTC" S; datetime ~zone:"Europe/Paris" Ns ]
+    @ all (List.map (fun u -> wall u) units)
+    @ all [ instant S; instant Ns ]
     @ all [ string; categorical [| "a"; "é"; "" |]; categorical [||] ])
 
 let pp_case ppf (Case (a, b, vs)) =
@@ -372,9 +372,9 @@ let time =
           equal (array (option int)) (some [| 1; 366; 75 |]) (f `Yearday));
       test "fields of datetimes before 1970" (fun () ->
           let t =
-            one "t" (Column.v (Type.datetime Ns) [| Time.of_ns (-1L) |])
+            one "t" (Column.v (Type.wall Ns) [| Time.of_ns (-1L) |])
           in
-          let f field = ints (Expr.Temporal.field field (Col.instant "t")) t in
+          let f field = ints (Expr.Temporal.field field (Col.wall "t")) t in
           equal (array (option int)) (some [| 1969 |]) (f `Year);
           equal (array (option int)) (some [| 23 |]) (f `Hour);
           equal (array (option int)) (some [| 59 |]) (f `Second);
@@ -382,10 +382,10 @@ let time =
       test "fields of datetimes at the ends of their ticks" (fun () ->
           let t =
             one "t"
-              (Column.v (Type.datetime Ns)
+              (Column.v (Type.wall Ns)
                  [| Time.of_ns Int64.min_int; Time.of_ns Int64.max_int |])
           in
-          let f field = ints (Expr.Temporal.field field (Col.instant "t")) t in
+          let f field = ints (Expr.Temporal.field field (Col.wall "t")) t in
           equal (array (option int)) (some [| 1677; 2262 |]) (f `Year);
           equal (array (option int)) (some [| 9; 4 |]) (f `Month);
           equal (array (option int)) (some [| 21; 11 |]) (f `Day);
@@ -394,9 +394,9 @@ let time =
         "a datetime's day whose midnight is below the least tick has no floor"
         (fun () ->
           let t =
-            one "t" (Column.v (Type.datetime Ns) [| Time.of_ns Int64.min_int |])
+            one "t" (Column.v (Type.wall Ns) [| Time.of_ns Int64.min_int |])
           in
-          expect (error (Expr.Temporal.floor (Days 1) (Col.instant "t")) t)
+          expect (error (Expr.Temporal.floor (Days 1) (Col.wall "t")) t)
           @@ __POS_OF__
                {| select ["out" := Temporal.floor 1d t]: row 0: the 1d period of 1677-09-21T00:12:43.145224192 is out of range. |});
       test "add and diff" (fun () ->
@@ -452,7 +452,7 @@ let time =
       test "an offset reads as UTC, and a zoned datetime writes in UTC"
         (fun () ->
           let fmt = "%Y-%m-%dT%H:%M:%S%z"
-          and ty = Type.datetime ~zone:"UTC" S in
+          and ty = Type.instant S in
           let t = texts [| Some "2024-03-15T10:00:00+02:00" |] in
           let r = Expr.Temporal.(format fmt (parse fmt ty s)) in
           equal
@@ -460,8 +460,8 @@ let time =
             [| Some "2024-03-15T08:00:00Z" |]
             (Column.options Kind.string (result r t)));
       test "an exact step is whole ticks of the datetime's unit" (fun () ->
-          let at u ns = one "t" (Column.v (Type.datetime u) [| Time.of_ns ns |])
-          and t = Col.instant "t"
+          let at u ns = one "t" (Column.v (Type.wall u) [| Time.of_ns ns |])
+          and t = Col.wall "t"
           and ms n = Time.Exact (Time.Span.ms n) in
           let problem e u =
             match compute e (at u 0L) with
@@ -489,7 +489,7 @@ let time =
             no problem
             |};
           let instants c =
-            Array.map (Option.map Time.to_ns) (Column.options Kind.instant c)
+            Array.map (Option.map Time.to_ns) (Column.options Kind.wall c)
           in
           equal
             (array (option int64))
@@ -662,7 +662,7 @@ let adds_ticks =
       let x = Array.map fst rows and k = Array.map snd rows in
       let a =
         match op with
-        | Datetime -> column (Any (Type.datetime ~zone:"UTC" u)) Nx.int64 x
+        | Datetime -> column (Any (Type.instant u)) Nx.int64 x
         | Duration -> column (Any (Type.duration u)) Nx.int64 x
         | Clock -> column (Any (Type.clock u)) Nx.int64 x
         | Date -> column (Any Type.date) Nx.int32 (Array.map Int64.to_int32 x)
@@ -704,18 +704,22 @@ let adds_ticks =
 let formats_round_trip =
   prop "parse reads back what format writes, at every tick" extreme_ticks
     (fun (u, zoned, xs) ->
-      let ty, fmt =
-        if zoned then (Type.datetime ~zone:"UTC" u, "%Y-%m-%d %H:%M:%S.%f%z")
-        else (Type.datetime u, "%Y-%m-%d %H:%M:%S.%f")
-      in
       let values = Nx.P (Nx.create Nx.int64 [| Array.length xs |] xs) in
-      let c =
-        match Column.of_layout (Any ty) (Fixed { validity = None; values }) with
-        | Ok c -> c
-        | Error (row, why) -> failf "row %d: %s" row why
+      let round_trip ty fmt =
+        let c =
+          match
+            Column.of_layout (Any ty) (Fixed { validity = None; values })
+          with
+          | Ok c -> c
+          | Error (row, why) -> failf "row %d: %s" row why
+        in
+        let text = Expr.Temporal.format fmt (Col.v (Type.kind ty) "t") in
+        result (Expr.Temporal.parse fmt ty text) (one "t" c)
       in
-      let text = Expr.Temporal.format fmt (Col.instant "t") in
-      let back = result (Expr.Temporal.parse fmt ty text) (one "t" c) in
+      let back =
+        if zoned then round_trip (Type.instant u) "%Y-%m-%d %H:%M:%S.%f%z"
+        else round_trip (Type.wall u) "%Y-%m-%d %H:%M:%S.%f"
+      in
       equal (array int64) xs (Nx.to_array (Column.to_tensor Nx.int64 back)))
 
 (* Cuts *)
@@ -744,8 +748,8 @@ let orderable =
       Any date;
       Any (clock Ns);
       Any (duration Ms);
-      Any (datetime Us);
-      Any (datetime ~zone:"UTC" S);
+      Any (wall Us);
+      Any (instant S);
       Any string;
       Any binary;
       Any (categorical [| "b"; "a"; "é"; "" |]);
@@ -1132,7 +1136,7 @@ let dates_to_datetimes =
       cover "a date before 1970" (before_1970 ds);
       cover "a null" (Array.exists Option.is_none ds);
       agrees ~expected ds
-        (cast_ticks (Any Type.date) (Any (Type.datetime u)) ds))
+        (cast_ticks (Any Type.date) (Any (Type.wall u)) ds))
 
 (* [reach u] is the days either side of 1970 within which a datetime of the unit
    [u] holds every tick of the day, up to a million. *)
@@ -1187,7 +1191,7 @@ let datetimes_to_dates =
       cover "a day out of the date's range" (fails ts expected);
       cover "a null" (Array.exists Option.is_none ts);
       agrees ~expected ts
-        (cast_ticks (Any (Type.datetime u)) (Any Type.date) ts))
+        (cast_ticks (Any (Type.wall u)) (Any Type.date) ts))
 
 let dates_round_trip =
   let gen =
@@ -1207,7 +1211,7 @@ let dates_round_trip =
   prop "a date cast to a datetime and back is the date" gen (fun (u, ds) ->
       cover "a date before 1970" (before_1970 ds);
       let w = array (option int64) in
-      let datetime = Type.Any (Type.datetime u) in
+      let datetime = Type.Any (Type.wall u) in
       Law.round_trip w w
         (fun ds ->
           int64_options
@@ -1244,8 +1248,8 @@ let days_floor =
       let expected = Array.map (fun t -> Option.bind t midnight) ts in
       cover "a time of day before 1970" (before_1970 ts);
       cover "a midnight below the least tick" (fails ts expected);
-      let ty = Type.datetime u in
-      let x = Col.instant "x" in
+      let ty = Type.wall u in
+      let x = Col.wall "x" in
       let floor = Expr.Temporal.floor (Days 1) x in
       agrees ~failure:"the 1d period of " ~expected ts
         (compute floor (one "x" (ticks_column (Any ty) ts)));
@@ -1341,7 +1345,7 @@ let temporal_casts =
   let days_of u ts =
     int64_options
       (require_ok ~pp:Error.pp
-         (cast_ticks (Any (Type.datetime u)) (Any Type.date) (some ts)))
+         (cast_ticks (Any (Type.wall u)) (Any Type.date) (some ts)))
   in
   let problem e t =
     match compute e t with
@@ -1376,22 +1380,22 @@ let temporal_casts =
             (int64_options
                (require_ok ~pp:Error.pp
                   (cast_ticks (Any Type.date)
-                     (Any (Type.datetime Ns))
+                     (Any (Type.wall Ns))
                      (days [| date 2262 4 11 |]))));
           expect
             (Format.asprintf "%a" Error.pp
                (require_error
                   (cast_ticks (Any Type.date)
-                     (Any (Type.datetime Ns))
+                     (Any (Type.wall Ns))
                      (days [| date 1677 9 22; date 1677 9 21 |]))))
           @@ __POS_OF__
                {| select ["out" := cast datetime[ns] x]: row 1: cannot cast 1677-09-21 to datetime[ns]. |});
-      test "a datetime with a zone holds instants, which do not cast to dates"
+      test "an instant falls on a day only in a zone, so it does not cast to dates"
         (fun () ->
           let t =
             v
               [
-                ("z", Column.v (Type.datetime ~zone:"UTC" S) [| Time.of_ns 0L |]);
+                ("z", Column.v (Type.instant S) [| Time.of_ns 0L |]);
                 ("d", Column.v Type.date [| Option.get (Time.Date.of_days 0) |]);
               ]
           in
@@ -1400,18 +1404,18 @@ let temporal_casts =
                [
                  problem (Expr.cast Type.date (Col.instant "z")) t;
                  problem
-                   (Expr.cast (Type.datetime ~zone:"UTC" S) (Col.date "d"))
+                   (Expr.cast (Type.instant S) (Col.date "d"))
                    t;
                ])
           @@ __POS_OF__
                {|
             select: 1 problem
               "out" := cast date z
-                cast does not convert datetime[s, UTC] to date.
+                cast does not convert datetime[s, UTC] to date: use Temporal.wall.
               input (2 columns): z datetime[s, UTC], d date
             select: 1 problem
               "out" := cast datetime[s, UTC] d
-                cast does not convert date to datetime[s, UTC].
+                cast does not convert date to datetime[s, UTC]: use Temporal.localize.
               input (2 columns): z datetime[s, UTC], d date
             |});
     ]

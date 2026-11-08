@@ -86,7 +86,7 @@ let codec =
 
 type edge = Edge : string * 'a Type.t * 'a option array -> edge
 
-let instant ns = Time.of_ns ns
+let ticks ns = Time.of_ns ns
 let span ns = Time.Span.of_ns ns
 let day n = Option.get (Time.Date.of_days n)
 let i32 = Int32.(to_int min_int, to_int max_int)
@@ -131,14 +131,14 @@ let edges =
           [| Some (span 0L); Some (span 86_399_000_000_000L) |] );
       Edge
         ( "instant bounds in ns",
-          datetime Ns,
-          [| Some (instant Int64.min_int); Some (instant Int64.max_int) |] );
+          wall Ns,
+          [| Some (ticks Int64.min_int); Some (ticks Int64.max_int) |] );
       Edge
         ( "instant bounds in s",
-          datetime S,
+          wall S,
           [|
-            Some (instant (-9_223_372_036_000_000_000L));
-            Some (instant 9_223_372_036_000_000_000L);
+            Some (ticks (-9_223_372_036_000_000_000L));
+            Some (ticks 9_223_372_036_000_000_000L);
           |] );
       Edge ("empty text and NUL", string, [| Some ""; Some "\000" |]);
       Edge
@@ -208,8 +208,8 @@ let storage =
           equal (array int32) [| -1l; 2l |]
             (tensor Nx.int32 Type.date [| day (-1); day 2 |]);
           equal (array int64) [| -1L; 3L |]
-            (tensor Nx.int64 (Type.datetime Type.Ms)
-               [| instant (-1_000_000L); instant 3_000_000L |]);
+            (tensor Nx.int64 (Type.wall Type.Ms)
+               [| ticks (-1_000_000L); ticks 3_000_000L |]);
           equal (array int32) [| 1l; 0l |]
             (tensor Nx.int32 (Type.categorical [| "x"; "y" |]) [| "y"; "x" |]);
           equal (array bool) [| true; false |]

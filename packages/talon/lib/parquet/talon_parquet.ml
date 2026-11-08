@@ -92,7 +92,7 @@ let pp_format ppf f =
 
 (* Statistics *)
 
-let instant (u : Type.unit_) t =
+let stamp (u : Type.unit_) t =
   match u with
   | S -> Time.of_s t
   | Ms -> Time.of_ms t
@@ -133,7 +133,7 @@ let decoder : type a. a Type.t -> Leaf.t -> (string -> a option) option =
           Some (Int32.float_of_bits (String.get_int32_le s 0)))
   | Float64 -> fixed Double 8 (fun s -> Some (Int64.float_of_bits (i64 s)))
   | Date -> fixed Int32 4 (fun s -> Time.Date.of_days (i32 s))
-  | Datetime { unit_; _ } -> fixed Int64 8 (fun s -> instant unit_ (i64 s))
+  | Datetime { unit_; _ } -> fixed Int64 8 (fun s -> stamp unit_ (i64 s))
   | String -> bytes Fun.id
   | Categorical _ -> bytes Fun.id
   | Binary -> bytes Binary.of_string

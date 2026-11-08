@@ -39,16 +39,44 @@ val diff : Type.any -> Column.t -> Column.t -> checked
     range fails. *)
 
 val field : Expr.Temporal.field -> Type.any -> Column.t -> Column.t
-(** [field f t c] is the field [f] of [c], a [date], a clock or a datetime
-    without a zone, of [t]. *)
+(** [field f t c] is the field [f] of [c], a [date], a clock or a wall clock,
+    of [t]. *)
 
 val floor : Time.step -> Type.any -> Column.t -> checked
-(** [floor step t c] is [Temporal.floor step c], [c] a [date] or a datetime
-    without a zone, of [t]. A period that starts out of range fails. *)
+(** [floor step t c] is [Temporal.floor step c], [c] a [date] or a datetime of
+    [t]. A period that starts out of range fails. *)
 
 val offset : Time.step -> Type.any -> Column.t -> checked
 (** [offset step t c] is [Temporal.offset step c], [c] a [date] or a datetime
-    without a zone, of [t]. A result out of range fails. *)
+    of [t]. A result out of range fails. *)
+
+val wall : Tz.zone -> Type.any -> Column.t -> checked
+(** [wall z t c] is [Temporal.wall z] of [c], an instant column of [t]. A
+    result out of range fails. *)
+
+val localize :
+  Tz.zone ->
+  ambiguous:Expr.Temporal.policy ->
+  gap:Expr.Temporal.policy ->
+  Type.any ->
+  Column.t ->
+  checked
+(** [localize z ~ambiguous ~gap t c] is [Temporal.localize z ~ambiguous ~gap]
+    of [c], a wall-clock column of [t]. A policy of [`Fail] fails at a row it
+    meets, and an instant out of range fails. *)
+
+val localize_ordered :
+  Tz.zone ->
+  ambiguous:Expr.Temporal.policy ->
+  gap:Expr.Temporal.policy ->
+  Type.any ->
+  order:(int64, Nx.int64_elt, Nx.host) Nx_ragged.t ->
+  Column.t ->
+  checked
+(** [localize_ordered z ~ambiguous ~gap t ~order c] is
+    [Temporal.localize_ordered z ~ambiguous ~gap] of [c], the rows of each
+    element of [order] forming a frame in order. A row whose instant goes
+    backwards fails, as [`Fail] and an out-of-range instant do. *)
 
 val parse_with : string -> Type.any -> Column.t -> checked
 (** [parse_with fmt ty c] is [Temporal.parse fmt ty c] of the [string] column

@@ -355,6 +355,219 @@ let concat sep cs =
   in
   Column.make (Any Type.string) ?validity ~length (Bytes r)
 
+(* Zones
+
+   Offsets change at whole seconds, so a tick reads a second by rounding down
+   and keeps its fraction across the conversion. These kernels loop over the
+   rows: [Tz] answers a row in O(log n), and an ordered resolution reads its
+   frames' rows in order anyway. *)
+
+module A1 = Bigarray.Array1
+
+let per_second u = Int64.div (ticks_per_day u) 86_400L
+
+let floor_s t per =
+  let q = Int64.div t per in
+  if Int64.compare (Int64.rem t per) 0L < 0 then Int64.pred q else q
+
+(* A row's outcome: its value, null, or why it fails. *)
+let row_ok = 0
+let row_null = 1
+let out_of_range = 2
+let repeats = 3
+let skipped = 4
+let backward = 5
+
+(* [resolved ty z c x codes] is the column of the ticks [x] whose rows [codes]
+   rule on. *)
+let resolved ty z c x codes =
+  let name = Tz.name z in
+  let why row =
+    let t = cell c row in
+    match Nx.item [ row ] codes with
+    | code when code = out_of_range -> error "%t in %s is out of range" t name
+    | code when code = repeats -> error "%t repeats in %s" t name
+    | code when code = skipped -> error "%t is skipped in %s" t name
+    | _ -> error "%t goes backwards from the row before it" t
+  in
+  let keep = Nx.cast Nx.bit (Nx.not_equal_s codes row_null) in
+  let validity = both keep (Column.validity c) in
+  let length = Column.length c in
+  let held = Column.make (Column.type_ c) ~validity ~length (Column.data c) in
+  checked ty [ held ] ~ok:(Nx.less_s codes out_of_range) x why
+
+(* [writes n f] is the [n] ticks and codes that [f] writes through [set i t off
+   per], which stores [t], ticks of [per] a second, moved [off] seconds back,
+   and [k], the codes. *)
+let writes n f =
+  let out = Strings.fresh Nx.int64 n and codes = Strings.fresh Nx.uint8 n in
+  Strings.fill out (fun o ->
+      Strings.fill codes (fun k ->
+          A1.fill o 0L;
+          A1.fill k row_ok;
+          let set i t off per =
+            let d = Int64.mul (Int64.of_int off) per in
+            let r = Int64.sub t d in
+            if Bool.equal (Int64.compare d 0L >= 0) (Int64.compare r t <= 0)
+            then A1.unsafe_set o i r
+            else A1.unsafe_set k i out_of_range
+          in
+          f set o k));
+  (Strings.value out, Strings.value codes)
+
+let unit_of_any (Type.Any ty) = Option.get (unit_of ty)
+
+let wall z t =
+  let u = unit_of_any t in
+  let per = per_second u and ty = Type.Any (Type.wall u) in
+  fun c ->
+    let n = Column.length c in
+    let x, codes =
+      Strings.reading ~by:"Temporal.wall" (int64s c) Bigarray.int64
+      @@ fun v ->
+      writes n @@ fun set _ _ ->
+      for i = 0 to n - 1 do
+        let t = A1.unsafe_get v i in
+        set i t (-Tz.offset_s z (floor_s t per)) per
+      done
+    in
+    resolved ty z c x codes
+
+(* [fold_run z per v ~live rows q last ~before ~after s] is the rows of a frame
+   from position [q] (exclusive bound [last]) that repeat the readings of the
+   fold holding the wall second [s], of offsets [before] and [after], that is
+   consecutive live rows; and the position after them. A wall second falls in a
+   given fold only within the fold's length of another. *)
+let fold_run z per v ~live rows q last ~before ~after s =
+  let span = Int64.of_int (before - after) in
+  let rec go acc q =
+    if q >= last then (List.rev acc, q)
+    else
+      let j = Int64.to_int rows.(q) in
+      if not (live j) then go acc (q + 1)
+      else
+        let w = floor_s (A1.unsafe_get v j) per in
+        let near = Int64.compare (Int64.abs (Int64.sub w s)) span < 0 in
+        match Tz.local z w with
+        | Ambiguous { before = b; after = a }
+          when b = before && a = after && near ->
+            go (j :: acc) (q + 1)
+        | _ -> (List.rev acc, q)
+  in
+  go [] q
+
+(* [second_pass ticks] is the position in the rows of a fold of the first one
+   that reads the second pass: the first one strictly below its predecessor,
+   and a tie only when the tied rows are the fold's only ones, an hourly
+   logger's repeated reading. [None] when the rows show no such step, so they
+   say nothing about their pass. *)
+let second_pass ticks =
+  let rec strict i = function
+    | a :: (b :: _ as rest) ->
+        if Int64.compare b a < 0 then Some (i + 1) else strict (i + 1) rest
+    | _ -> None
+  in
+  match (strict 0 ticks, ticks) with
+  | (Some _ as pass), _ -> pass
+  | None, [ a; b ] when Int64.equal a b -> Some 1
+  | None, _ -> None
+
+let localize_with ~order z ~ambiguous ~gap t =
+  let u = unit_of_any t in
+  let per = per_second u and ty = Type.Any (Type.instant u) in
+  fun c ->
+    let n = Column.length c in
+    let live =
+      match Column.validity c with
+      | None -> fun _ -> true
+      | Some m ->
+          let m = Nx.to_array m in
+          fun i -> m.(i)
+    in
+    let x, codes =
+      Strings.reading ~by:"Temporal.localize" (int64s c) Bigarray.int64
+      @@ fun v ->
+      writes n @@ fun set o k ->
+      let decide (p : Expr.Temporal.policy) i t ~first ~second code =
+        match p with
+        | `Earlier -> set i t first per
+        | `Later -> set i t second per
+        | `Null -> A1.unsafe_set k i row_null
+        | `Fail -> A1.unsafe_set k i code
+      in
+      let row i =
+        let t = A1.unsafe_get v i in
+        match Tz.local z (floor_s t per) with
+        | Unique off -> set i t off per
+        | Ambiguous { before; after } ->
+            decide ambiguous i t ~first:before ~second:after repeats
+        | Gap { before; after } ->
+            decide gap i t ~first:after ~second:before skipped
+      in
+      match order with
+      | None ->
+          for i = 0 to n - 1 do
+            row i
+          done
+      | Some order ->
+          let rows = Nx.to_array (Nx_ragged.values order) in
+          let offsets = Nx.to_array (Nx_ragged.offsets order) in
+          (* [settle prev i] checks the row [i] against its frame's previous
+             instant, and moves the state to it: a null or a failed row has no
+             instant and leaves it. *)
+          let settle prev i =
+            if A1.unsafe_get k i = row_ok then
+              let r = A1.unsafe_get o i in
+              match !prev with
+              | Some p when Int64.compare r p < 0 ->
+                  A1.unsafe_set k i backward
+              | _ -> prev := Some r
+          in
+          for f = 0 to Array.length offsets - 2 do
+            let last = Int64.to_int offsets.(f + 1) in
+            let prev = ref None and q = ref (Int64.to_int offsets.(f)) in
+            while !q < last do
+              let i = Int64.to_int rows.(!q) in
+              if not (live i) then incr q
+              else
+                let s = floor_s (A1.unsafe_get v i) per in
+                match Tz.local z s with
+                | Ambiguous { before; after } ->
+                    let members, next =
+                      fold_run z per v ~live rows !q last ~before ~after s
+                    in
+                    let pass =
+                      second_pass (List.map (A1.unsafe_get v) members)
+                    in
+                    let resolve pos j =
+                      let t = A1.unsafe_get v j in
+                      (match pass with
+                      | Some p -> set j t (if pos < p then before else after) per
+                      | None ->
+                          decide ambiguous j t ~first:before ~second:after
+                            repeats);
+                      settle prev j
+                    in
+                    List.iteri resolve members;
+                    q := next
+                | Unique _ ->
+                    row i;
+                    settle prev i;
+                    incr q
+                | Gap _ ->
+                    (* A row moved by [gap] leaves the state. *)
+                    row i;
+                    incr q
+            done
+          done
+    in
+    resolved ty z c x codes
+
+let localize z ~ambiguous ~gap t = localize_with ~order:None z ~ambiguous ~gap t
+
+let localize_ordered z ~ambiguous ~gap t ~order c =
+  localize_with ~order:(Some order) z ~ambiguous ~gap t c
+
 let parse_with fmt ty c = read_text c (Form.parse_with fmt ty)
 
 (* Calendar

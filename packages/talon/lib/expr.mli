@@ -29,6 +29,7 @@ val float : float -> (float, 's) t
 val bool : bool -> (bool, 's) t
 val string : string -> (string, 's) t
 val instant : Time.instant -> (Time.instant, 's) t
+val wall : Time.wall -> (Time.wall, 's) t
 val span : Time.span -> (Time.span, 's) t
 val date : Time.date -> (Time.date, 's) t
 val null : ('a, 's) t
@@ -136,11 +137,28 @@ module Temporal : sig
     | `Weekday
     | `Yearday ]
 
+  type policy = [ `Earlier | `Later | `Null | `Fail ]
+
   val field : field -> ('a, 's) t -> (int, 's) t
   val floor : Time.step -> ('a, 's) t -> ('a, 's) t
   val offset : Time.step -> ('a, 's) t -> ('a, 's) t
   val parse : string -> 'a Type.t -> (string, 's) t -> ('a, 's) t
   val format : string -> ('a, 's) t -> (string, 's) t
+  val wall : Tz.zone -> (Time.instant, 's) t -> (Time.wall, 's) t
+
+  val localize :
+    Tz.zone ->
+    ambiguous:policy ->
+    gap:policy ->
+    (Time.wall, 's) t ->
+    (Time.instant, 's) t
+
+  val localize_ordered :
+    Tz.zone ->
+    ambiguous:policy ->
+    gap:policy ->
+    (Time.wall, row) t ->
+    (Time.instant, row) t
 end
 
 val pp : Format.formatter -> ('a, 's) t -> unit
@@ -296,6 +314,13 @@ and 'a calendar_op =
   | Offset : Time.step * ('a, 's) t -> 'a calendar_op
   | Parse_with : string * 'a Type.t * (string, 's) t -> 'a calendar_op
   | Format_with : string * ('a, 's) t -> string calendar_op
+  | Wall : Tz.zone * (Time.instant, 's) t -> Time.wall calendar_op
+  | Localize :
+      Tz.zone * Temporal.policy * Temporal.policy * (Time.wall, 's) t
+      -> Time.instant calendar_op
+  | Localize_ordered :
+      Tz.zone * Temporal.policy * Temporal.policy * (Time.wall, 's) t
+      -> Time.instant calendar_op
 
 val list_outs : row out list -> (string * packed) list
 (** [list_outs os] is the named outputs of a bound {!Per_list}. *)

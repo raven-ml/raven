@@ -44,7 +44,7 @@ val default : t -> Talon.Type.any option
 val reads_as : t -> Talon.Type.any -> bool
 (** [reads_as l t] is [true] iff [l] reads as [t]: [t] is [default l], or
     [string], [binary] or a categorical when [l] holds byte strings, or a
-    datetime of any unit without a zone when [l] is an [int96], or, for a
+    wall-clock datetime of any unit when [l] is an [int96], or, for a
     decimal, [float64], and [int64] up to 18 digits. *)
 
 (** {1:fmt Formatting} *)
@@ -58,4 +58,4 @@ val pp : Format.formatter -> t -> unit
 val pp_reads : Format.formatter -> t -> unit
 (** [pp_reads ppf l] formats the types [l] reads as, for [with_type]'s errors:
     [float64], [string, binary or a categorical],
-    [datetime of any unit, without a zone], [float64 or int64]. *)
+    [wall-clock datetime of any unit], [float64 or int64]. *)

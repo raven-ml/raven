@@ -44,7 +44,7 @@ let flights_columns =
       ("distance", Any float64);
       ("hour", Any int8);
       ("minute", Any int8);
-      ("time_hour", Any (datetime ~zone:"UTC" Us));
+      ("time_hour", Any (instant Us));
     ]
 
 let flights = source {|csv "flights.csv"|} flights_columns
@@ -72,7 +72,7 @@ let kinds =
         ("g", Any string);
         ("d", Any date);
         ("b", Any bool);
-        ("ts", Any (datetime ~zone:"UTC" Ns));
+        ("ts", Any (instant Ns));
         ("t", Any epoch_t);
         ("l", Any (list int64));
         ("r", Any (record [ ("e", Any epoch_t) ]));
@@ -482,7 +482,7 @@ let joins () =
              ("g2", Any string);
              ("t2", Any epoch_t);
              ("d2", Any date);
-             ("ts2", Any (datetime ~zone:"UTC" Ns));
+             ("ts2", Any (instant Ns));
              ("f2", Any float64);
              ("t3", Any (ext ~name:"ymir.epoch" ~metadata:"v2" float64));
              ("r2", Any (record [ ("e", Any epoch_t) ]));
@@ -946,7 +946,7 @@ let expression_variants =
              ("b", Any bool);
              ("s", Any string);
              ("d", Any date);
-             ("ts", Any (datetime ~zone:"UTC" Ns));
+             ("ts", Any (instant Ns));
              ("l", Any (list int64));
            ])
   in
@@ -1105,14 +1105,14 @@ let steps () =
              ("f", Any float64);
              ("n", Any int64);
              ("g", Any string);
-             ("ts", Any (datetime ~zone:"UTC" Ns));
+             ("ts", Any (instant Ns));
              ("l", Any (list int64));
            ])
   in
   let other =
     Query.of_source
       (source ~rows:1 "other"
-         Type.[ ("y", Any float64); ("ys", Any (datetime ~zone:"UTC" Ns)) ])
+         Type.[ ("y", Any float64); ("ys", Any (instant Ns)) ])
   in
   expect
     (String.concat "\n"
@@ -1301,28 +1301,26 @@ let accepted =
             x string
             x string
             |});
-      test "a calendar reads the wall clock of UTC, not of another zone"
+      test "a calendar reads wall clocks, and an instant names a zone"
         (fun () ->
           let q =
             Query.of_source
-              (source "zoned"
-                 Type.
-                   [
-                     ("u", Any (datetime ~zone:"UTC" Ns));
-                     ("p", Any (datetime ~zone:"Europe/Paris" Ns));
-                   ])
+              (source "times"
+                 Type.[ ("w", Any (wall Ns)); ("t", Any (instant Ns)) ])
           in
-          let hour c = Expr.Temporal.field `Hour (Col.instant c) in
+          let hour c = Expr.Temporal.field `Hour c in
           equal schema_w
             (Schema.v Type.[ ("h", Any int64) ])
-            (Query.schema (Query.select Expr.[ "h" := hour "u" ] q));
-          expect (message (fun () -> Query.select Expr.[ "h" := hour "p" ] q))
+            (Query.schema (Query.select Expr.[ "h" := hour (Col.wall "w") ] q));
+          expect
+            (message (fun () ->
+                 Query.select Expr.[ "h" := hour (Col.instant "t") ] q))
           @@ __POS_OF__
                {|
             select: 1 problem
-              "h" := Temporal.field `Hour p
-                Temporal.field reads the wall clock of the zone "Europe/Paris", and talon reads UTC's only.
-              input (2 columns): u datetime[ns, UTC], p datetime[ns, Europe/Paris]
+              "h" := Temporal.field `Hour t
+                Temporal.field reads wall clocks, and datetime[ns, UTC] is instants: name a zone with Temporal.wall.
+              input (2 columns): w datetime[ns], t datetime[ns, UTC]
             |});
       test "an output name must be UTF-8" (fun () ->
           raises (Invalid_argument {|Expr.( := ): "\255" is not valid UTF-8|})

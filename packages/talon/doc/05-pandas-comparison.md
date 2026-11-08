@@ -203,8 +203,8 @@ problem: talon adds no suffixes, so rename one side first.
 | `s.str.split("_")` | `Expr.Str.split "_" s` |
 | `s.str.replace("a", "b", regex=False)` | `Expr.Str.replace "a" ~by:"b" s` |
 | `pd.to_datetime(s, format="%d/%m/%Y")` | `Expr.Temporal.parse "%d/%m/%Y" Type.date s` |
-| `t.dt.year` | ``Expr.Temporal.field `Year t`` |
-| `t.dt.floor("D")` | `Expr.Temporal.floor (Time.Days 1) t` |
+| `t.dt.year` | ``Expr.Temporal.field `Year (Expr.Temporal.wall zone t)`` |
+| `t.dt.floor("D")` | `Expr.Temporal.floor (Time.Days 1) (Expr.Temporal.wall zone t)` |
 | `t + pd.Timedelta(minutes=90)` | `Expr.(Temporal.add t (span (Time.Span.minutes 90)))` |
 
 ## To Arrays

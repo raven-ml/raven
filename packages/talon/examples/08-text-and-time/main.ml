@@ -12,7 +12,7 @@ let sessions =
           [| "sub-01_ses-01.nwb"; "sub-01_ses-02.nwb"; "sub-02_ses-01.nwb" |] );
       ( "start",
         Column.v
-          (Type.datetime ~zone:"UTC" Type.Ms)
+          (Type.instant Type.Ms)
           [| at 1710495000; at 1710581523; at 1711010000 |] );
       ( "logged",
         Column.v Type.string [| "15/03/2024"; "16/03/2024"; "21/03/2024" |] );
@@ -43,8 +43,8 @@ let () =
       |> select
            Expr.
              [
-               "weekday" := Temporal.field `Weekday start;
-               "day" := Temporal.floor (Time.Days 1) start;
+               "weekday" := Temporal.(field `Weekday (wall Tz.utc start));
+               "day" := Temporal.(floor (Time.Days 1) (wall Tz.utc start));
                "end" := Temporal.add start (span (Time.Span.minutes 90));
                "since" := Temporal.diff start (over (min start));
              ]);

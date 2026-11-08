@@ -21,8 +21,8 @@
     - [int32] and [int64] as [int32] and [int64], or as the type their [INTEGER]
       annotation names, [int8] to [uint64];
     - [DATE] as [date], [TIME] as [clock] of its unit, and [TIMESTAMP] as
-      [datetime] of its unit, in the zone [UTC] when the timestamp is adjusted
-      to UTC and in no zone otherwise;
+      [datetime] of its unit, an instant ([datetime[u, UTC]]) when the
+      timestamp is adjusted to UTC and a wall clock ([datetime[u]]) otherwise;
     - [int96], the legacy timestamps, as [datetime[ns]];
     - [fixed_len_byte_array(2)] annotated [FLOAT16] as [float16];
     - [binary] annotated [STRING], [ENUM] or [JSON] as [string], and every other
@@ -78,7 +78,7 @@ val with_type : string -> Talon.Type.any -> format -> format
       [binary] or [fixed_len_byte_array] column without a numeric annotation. As
       a [string], its values must be valid UTF-8, and as a categorical, in the
       categorical's dictionary;
-    - a [datetime] of any unit without a zone, for an [int96] column. Its values
+    - a wall-clock [datetime] of any unit, for an [int96] column. Its values
       must be whole numbers of the unit;
     - [float64], for a [DECIMAL] column, and [int64] for one of at most 18
       digits.

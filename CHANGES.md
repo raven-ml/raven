@@ -3932,6 +3932,22 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- Breaking: time zones leave column types. A datetime column holds instants
+  (`Type.instant`, printed `datetime[us, UTC]`) or wall clocks (`Type.wall`,
+  `datetime[us]`); `Type.datetime ?zone` is gone, `Time.stamp` and
+  `Type.Datetime` are indexed by a phantom clock, and `Kind`, `Col` and `Expr`
+  gain `wall`. An instant compared with a wall-clock literal no longer
+  compiles, and `Kind.instant` reads UTC columns only: a wall-clock column read
+  as `Col.instant`, or the reverse, is now a problem at binding.
+- Breaking: `Temporal.field`, and `Temporal.floor` and `Temporal.offset` by a
+  calendar step, read wall clocks only; an instant is a problem naming
+  `Temporal.wall`. An exact step still moves an instant.
+- Add `Temporal.wall`, an instant's reading on a zone's clock; `Temporal.localize
+  ~ambiguous ~gap`, a wall clock's instant, both policies required; and
+  `Temporal.localize_ordered`, which reads a repeated hour from a frame's row
+  order at a cadence at or below the fold's length.
+- Add `Tz.fixed`, a zone of one offset, and `Tz.equal`. Past a zone's last
+  transition, `Tz.offset_s` and `Tz.local` no longer rebuild its rule per call.
 - Add `Expr.per_list ls r`, the reduction `r` over the elements of each row's
   lists, read in lockstep and beside the row's columns: `per_list [ "t" := ts ]
   (mean (t -. shift 1 t))`. A null list gives null. It streams.

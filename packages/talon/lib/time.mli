@@ -3,11 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Civil time values: instants, spans and dates.
+(** Civil time values: stamps, spans and dates.
 
     These are the OCaml values that temporal cells read as: a datetime cell
-    reads as an {!instant}, a duration or a time of day as a {!span}, and a date
-    as a {!date}. All three are exact integers. Time here is civil (POSIX) time:
+    reads as a {!stamp}, a duration or a time of day as a {!span}, and a date as
+    a {!date}. All three are exact integers. Time here is civil (POSIX) time:
     every day lasts 86,400 seconds and there are no leap seconds. Timescales
     such as TAI are extension types.
 
@@ -17,67 +17,96 @@
     [None], and the {!Span} constructors raise [Invalid_argument].
 
     {b Composing with ptime.} An instant becomes a [Ptime.t] over {!to_s} and
-    {!to_ns}:
+    {!to_ns}; a wall clock, read as UTC, the same way:
     {[
     let to_ptime t =
       let s = Time.to_s t in
       let ps = Int64.(mul 1000L (sub (Time.to_ns t) (mul s 1_000_000_000L))) in
       Ptime.of_span Ptime.Span.(add (of_int_s (Int64.to_int s)) (v (0, ps)))
-    ]}
-    A zone-less datetime's instant comes out as its wall-clock time read as UTC.
-*)
+    ]} *)
 
-(** {1:instants Instants} *)
+(** {1:stamps Instants and wall clocks}
 
-type instant
-(** The type for instants: a signed count of nanoseconds since 1970-01-01
-    00:00:00 on a civil clock. For a datetime with a zone that clock is UTC, and
-    for a zone-less datetime it is the wall clock (see {!Type.datetime}).
-    Instants range from -2{^ 63} to 2{^ 63} - 1 nanoseconds, about 1677-09-21 to
-    2262-04-11. *)
+    A {e stamp} is a signed count of nanoseconds since 1970-01-01 00:00:00 on a
+    clock, from -2{^ 63} to 2{^ 63} - 1, about 1677-09-21 to 2262-04-11. A
+    stamp's type states which of two clocks it counts. An {e instant} counts
+    UTC: it is a point on the global timeline, the same reading for everyone. A
+    {e wall clock} counts a local calendar and clock face in no particular zone:
+    a reading a person saw, such as a logger's [02:30]. A wall clock has no
+    instant until a zone says where the clock hung, and two sites' wall clocks
+    are not comparable as moments.
 
-val of_ns : int64 -> instant
-(** [of_ns n] is the instant [n] nanoseconds after 1970-01-01 00:00:00. *)
+    The two meet only through a zone, in [Talon.Expr.Temporal]: [wall] reads an
+    instant on a zone's clock, and [localize] finds a wall clock's instant under
+    stated policies, because a zone's clock can skip or repeat a reading. A
+    stamp of the wrong clock is a type error, so a literal, a column handle or a
+    function cannot mix the two. *)
 
-val of_us : int64 -> instant option
-(** [of_us n] is the instant [n] microseconds after 1970-01-01 00:00:00, or
-    [None] if it is out of range. *)
+type +!'c stamp
+(** The type for stamps of the clock ['c]. *)
 
-val of_ms : int64 -> instant option
+type utc
+(** The index of the UTC clock. *)
+
+type local
+(** The index of a wall clock. *)
+
+type instant = utc stamp
+(** The type for instants. *)
+
+type wall = local stamp
+(** The type for wall clocks. *)
+
+(** The type for the witness of a stamp's clock, which a column type holds. *)
+type _ clock =
+  | Utc : utc clock  (** The UTC clock of an instant. *)
+  | Local : local clock  (** The clock of a wall clock. *)
+
+val of_ns : int64 -> 'c stamp
+(** [of_ns n] is the stamp [n] nanoseconds after 1970-01-01 00:00:00 of its
+    clock. *)
+
+val of_us : int64 -> 'c stamp option
+(** [of_us n] is the stamp [n] microseconds after 1970-01-01 00:00:00 of its
+    clock, or [None] if it is out of range. *)
+
+val of_ms : int64 -> 'c stamp option
 (** [of_ms n] is like {!of_us} in milliseconds. *)
 
-val of_s : int64 -> instant option
+val of_s : int64 -> 'c stamp option
 (** [of_s n] is like {!of_us} in seconds. *)
 
-val to_ns : instant -> int64
-(** [to_ns t] is the number of nanoseconds from 1970-01-01 00:00:00 to [t]. *)
+val to_ns : 'c stamp -> int64
+(** [to_ns t] is the number of nanoseconds from 1970-01-01 00:00:00 of [t]'s
+    clock to [t]. *)
 
-val to_us : instant -> int64
-(** [to_us t] is the number of whole microseconds from 1970-01-01 00:00:00 to
-    [t], rounded toward negative infinity: the instant one nanosecond before the
-    epoch gives [-1L]. [of_us (to_us t)] is [t] whenever [t] is a whole
-    microsecond. *)
+val to_us : 'c stamp -> int64
+(** [to_us t] is the number of whole microseconds from 1970-01-01 00:00:00 of
+    [t]'s clock to [t], rounded toward negative infinity: the stamp one
+    nanosecond before the epoch gives [-1L]. [of_us (to_us t)] is [t] whenever
+    [t] is a whole microsecond. *)
 
-val to_ms : instant -> int64
+val to_ms : 'c stamp -> int64
 (** [to_ms t] is like {!to_us} in milliseconds. *)
 
-val to_s : instant -> int64
+val to_s : 'c stamp -> int64
 (** [to_s t] is like {!to_us} in seconds. *)
 
-val equal : instant -> instant -> bool
-(** [equal t0 t1] is [true] iff [t0] and [t1] are the same instant. *)
+val equal : 'c stamp -> 'c stamp -> bool
+(** [equal t0 t1] is [true] iff [t0] and [t1] are the same reading of one clock.
+*)
 
-val compare : instant -> instant -> int
-(** [compare t0 t1] orders instants chronologically. It is compatible with
-    {!equal}. *)
+val compare : 'c stamp -> 'c stamp -> int
+(** [compare t0 t1] orders stamps of one clock chronologically. It is compatible
+    with {!equal}. *)
 
-val pp : Format.formatter -> instant -> unit
+val pp : Format.formatter -> 'c stamp -> unit
 (** [pp ppf t] formats [t] as its civil date and time of day in ISO 8601's
     extended format, [YYYY-MM-DDThh:mm:ss], followed by a point and 3, 6 or 9
     digits, the fewest that are exact, when [t] is not a whole second:
     [2024-03-15T09:30:00], [1969-12-31T23:59:59.999999999]. It has no zone
-    designator, since an instant does not know whether its clock is UTC or a
-    wall clock. *)
+    designator: a stamp holds no zone and the clock index is not known at run
+    time. *)
 
 (** {1:spans Spans} *)
 
@@ -205,9 +234,9 @@ end
 (** {1:steps Calendar steps} *)
 
 (** The type for steps: the units in which temporal expressions floor and offset
-    instants. A step of [n] calendar units has no fixed length, since months
-    have 28 to 31 days and, in a zone with daylight saving time, a day lasts 23,
-    24 or 25 hours. *)
+    stamps and dates. A step of [n] calendar units has no fixed length, since
+    months have 28 to 31 days and, in a zone with daylight saving time, a day
+    lasts 23, 24 or 25 hours. *)
 type step =
   | Months of int  (** [Months n] is [n] calendar months. *)
   | Weeks of int  (** [Weeks n] is [n] calendar weeks. Weeks begin on Monday. *)

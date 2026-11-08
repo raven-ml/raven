@@ -199,7 +199,7 @@ let agree ?(retype = fun f _ _ -> f) lines file =
 
 let override f column = function
   | "string" -> P.with_type column (Type.Any Type.string) f
-  | "datetime[us]" -> P.with_type column (Type.Any (Type.datetime Us)) f
+  | "datetime[us]" -> P.with_type column (Type.Any (Type.wall Us)) f
   | "int64" -> P.with_type column (Type.Any Type.int64) f
   | ty -> failf "no override for %s" ty
 
@@ -226,6 +226,47 @@ let cut_footer s k =
   String.sub s 0 (first + len) ^ Bytes.to_string b ^ "PAR1"
 
 (* Sniffing *)
+
+(* Parquet stores a timestamp's clock in one bit, isAdjustedToUTC: pyarrow's
+   zoned timestamps read as instants and its plain ones as wall clocks, and an
+   Arrow zone name is not kept. *)
+let clocks =
+  group "clocks"
+    [
+      test "each clock binds its handle and round-trips through a zone"
+        (fun () ->
+          let name = "types.parquet" in
+          let q = Query.of_source (P.source (declared name) (buffer name)) in
+          let out e =
+            Talon.column
+              (Error.get_ok (Query.run (Query.select Expr.[ "out" := e ] q)))
+              "out"
+          in
+          let u = Col.instant "ts_us_utc" and w = Col.wall "ts_ms" in
+          let localize a =
+            Expr.Temporal.localize Tz.utc ~ambiguous:`Fail ~gap:`Fail a
+          in
+          let opts k c = Column.options k c in
+          let t_us = option int64 in
+          let ticks a = Array.map (Option.map Time.to_us) a in
+          equal (array t_us)
+            (ticks (opts Kind.instant (out u)))
+            (ticks
+               (opts Kind.instant
+                  (out (localize (Expr.Temporal.wall Tz.utc u)))));
+          equal (array t_us)
+            (ticks (opts Kind.wall (out w)))
+            (ticks
+               (opts Kind.wall (out (Expr.Temporal.wall Tz.utc (localize w)))));
+          let problem e =
+            match Query.select Expr.[ "out" := e ] q with
+            | exception Invalid_argument _ -> ()
+            | _ -> Windtrap.fail "expected a problem at binding"
+          in
+          problem (Col.wall "ts_us_utc");
+          problem (Col.instant "ts_ms");
+          problem (Expr.Temporal.field `Hour (Col.instant "ts_us_paris")));
+    ]
 
 let sniffing =
   group "sniff"
@@ -382,11 +423,9 @@ let formats =
               retype types "string" (any Type.int64);
               retype types "d9" (any Type.binary);
               retype plain "timestamp_col" (any Type.date);
-              retype plain "timestamp_col" (any (Type.datetime ~zone:"UTC" Us));
-              retype types "ts_us_utc" (any (Type.datetime Us));
-              retype types "ts_us_utc"
-                (any (Type.datetime ~zone:"Europe/Paris" Us));
-              retype types "ts_ms" (any (Type.datetime ~zone:"UTC" Ms));
+              retype plain "timestamp_col" (any (Type.instant Us));
+              retype types "ts_us_utc" (any (Type.wall Us));
+              retype types "ts_ms" (any (Type.instant Ms));
             ];
           expect (output ())
           @@ __POS_OF__
@@ -396,10 +435,9 @@ let formats =
             Talon_parquet.with_type: column "f64" (optional double) reads as float64, not float32. Cast it once read (Expr.cast).
             Talon_parquet.with_type: column "string" (optional binary (STRING)) reads as string, binary or a categorical, not int64. Cast it once read (Expr.cast).
             Talon_parquet.with_type: column "d9" (optional fixed_len_byte_array(4) (DECIMAL(9,2))) reads as float64 or int64, not binary. Cast it once read (Expr.cast).
-            Talon_parquet.with_type: column "timestamp_col" (optional int96) reads as datetime of any unit, without a zone, not date. Cast it once read (Expr.cast).
-            Talon_parquet.with_type: column "timestamp_col" (optional int96) reads as datetime of any unit, without a zone, not datetime[us, UTC]. Cast it once read (Expr.cast).
+            Talon_parquet.with_type: column "timestamp_col" (optional int96) reads as wall-clock datetime of any unit, not date. Cast it once read (Expr.cast).
+            Talon_parquet.with_type: column "timestamp_col" (optional int96) reads as wall-clock datetime of any unit, not datetime[us, UTC]. Cast it once read (Expr.cast).
             Talon_parquet.with_type: column "ts_us_utc" (optional int64 (TIMESTAMP(MICROS,true))) reads as datetime[us, UTC], not datetime[us]. Cast it once read (Expr.cast).
-            Talon_parquet.with_type: column "ts_us_utc" (optional int64 (TIMESTAMP(MICROS,true))) reads as datetime[us, UTC], not datetime[us, Europe/Paris]. Cast it once read (Expr.cast).
             Talon_parquet.with_type: column "ts_ms" (optional int64 (TIMESTAMP(MILLIS,false))) reads as datetime[ms], not datetime[ms, UTC]. Cast it once read (Expr.cast).
             |});
       test "with_type of a column's own type is the identity" (fun () ->
@@ -410,7 +448,7 @@ let formats =
           same "i8" (any Type.int8);
           same "u64" (any Type.uint64);
           same "clock_ms" (any (Type.clock Ms));
-          same "ts_us_utc" (any (Type.datetime ~zone:"UTC" Us));
+          same "ts_us_utc" (any (Type.instant Us));
           same "string" (any Type.string);
           same "fsb" (any Type.binary));
       test "with_type accepts what the bytes allow" (fun () ->
@@ -422,7 +460,7 @@ let formats =
               retype f "binary" (any Type.string);
               retype f "fsb" (any (Type.categorical [| "a" |]));
               retype f "uuid" (any Type.string);
-              retype plain "timestamp_col" (any (Type.datetime S));
+              retype plain "timestamp_col" (any (Type.wall S));
             ];
           expect (output ())
           @@ __POS_OF__
@@ -1778,11 +1816,11 @@ let decoding =
       show "int96_from_spark.parquet" "a"
         ~f:
           (P.with_type "a"
-             (any (Type.datetime Us))
+             (any (Type.wall Us))
              (sniff "int96_from_spark.parquet"));
       show "int96.parquet" "ts_ns"
         ~f:
-          (P.with_type "ts_ns" (any (Type.datetime Us)) (sniff "int96.parquet"));
+          (P.with_type "ts_ns" (any (Type.wall Us)) (sniff "int96.parquet"));
       show "bad_encoding.parquet" "i32";
       show "types.parquet" "a b" ~f:(sniff "names.parquet");
       expect (output ())
@@ -1919,4 +1957,7 @@ let memory =
 let () =
   exit
     (run "talon.parquet"
-       [ agreement; sniffing; formats; synthesized; sources; decoding; memory ])
+       [
+         agreement; clocks; sniffing; formats; synthesized; sources; decoding;
+         memory;
+       ])

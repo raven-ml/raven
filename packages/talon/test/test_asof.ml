@@ -84,7 +84,7 @@ let column kind cs =
   | Float -> v Type.float64 (function F x -> x | _ -> assert false)
   | Date -> v Type.date (fun c -> Option.get (Time.Date.of_days (int c)))
   | Datetime ->
-      v (Type.datetime ~zone:"UTC" Type.Ns) (fun c -> Time.of_ns (Int64.of_int (int c)))
+      v (Type.instant Type.Ns) (fun c -> Time.of_ns (Int64.of_int (int c)))
   | Duration -> v (Type.duration Type.Ns) span
   | Clock -> v (Type.clock Type.Ns) span
   | String -> v Type.string (function S s -> s | _ -> assert false)
@@ -228,7 +228,7 @@ let exact () =
       (nearest (bits Nx.uint64 [| l |]) (bits Nx.uint64 [| 0L; -1L |])) in
   uint64 Int64.min_int 1; uint64 Int64.max_int 0;
   (* A lone pick needs no distance, however far. *)
-  let ns = Type.datetime ~zone:"UTC" Type.Ns in
+  let ns = Type.instant Type.Ns in
   one ~msg:"a far datetime" ns (Time.of_ns Int64.(sub max_int 10L)) [| Time.of_ns Int64.(add min_int 10L) |] 0;
   (* With both picks, a span past duration[ns]'s range fails the run. *)
   let far = Talon.v [ ("j", places 2); ("rt", Column.v ns Time.[| of_ns Int64.(add min_int 10L); of_ns Int64.(sub max_int 10L) |]) ] in

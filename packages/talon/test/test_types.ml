@@ -492,9 +492,6 @@ let type_constructors =
           equal any_w (Any (Type.categorical [| "a"; "b" |])) (Any t));
       test "categorical accepts an empty dictionary" (fun () ->
           equal string "categorical[]" (str Type.pp (Type.categorical [||])));
-      test "datetime refuses an empty or non-UTF-8 zone" (fun () ->
-          rejects (fun () -> Type.datetime ~zone:"" Type.S);
-          rejects (fun () -> Type.datetime ~zone:"\xff" Type.S));
       test "record refuses a duplicate or non-UTF-8 name" (fun () ->
           rejects (fun () ->
               Type.record [ ("a", Any Type.bool); ("a", Any Type.int8) ]);
@@ -549,7 +546,7 @@ let type_kind =
       (Any Type.date, "date");
       (Any (Type.clock Type.Ms), "span");
       (Any (Type.duration Type.Ns), "span");
-      (Any (Type.datetime ~zone:"UTC" Type.Us), "instant");
+      (Any (Type.instant Type.Us), "instant");
       (Any (Type.list (Type.list Type.int16)), "list[list[int]]");
       (Any (Type.record [ ("a", Any Type.bool) ]), "record");
       (Any (Type.tensor Nx.int32 [| 2 |]), "tensor[int32]");
@@ -617,11 +614,11 @@ let holds_scalars =
           is_true (Type.holds Type.binary (Binary.of_string "\xff"));
           is_true (Type.holds Type.date (date min_days)));
       test "datetimes hold whole units" (fun () ->
-          let t = Type.datetime ~zone:"UTC" Type.S in
+          let t = Type.instant Type.S in
           is_true (Type.holds t (Option.get (Time.of_s (-5L))));
           is_false (Type.holds t (Time.of_ns 5_000_000_001L));
           is_true
-            (Type.holds (Type.datetime Type.Ns) (Time.of_ns Int64.max_int)));
+            (Type.holds (Type.wall Type.Ns) (Time.of_ns Int64.max_int)));
       test "durations hold whole units of either sign" (fun () ->
           is_true (Type.holds (Type.duration Type.Us) (Time.Span.us (-3)));
           is_false (Type.holds (Type.duration Type.Ms) (Time.Span.us 1500)));
@@ -875,7 +872,7 @@ let compare_values =
                 (Type.compare_value t (Time.Span.ns (-1)) (Time.Span.ns 0)))
             [ Type.clock Type.Ns; Type.duration Type.Ns ];
           less int ~than:0
-            (Type.compare_value (Type.datetime Type.Ns) (Time.of_ns (-1L))
+            (Type.compare_value (Type.wall Type.Ns) (Time.of_ns (-1L))
                (Time.of_ns 0L)));
       cases "tensor dtypes"
         ~id:(fun (n, _) -> Printf.sprintf "tensors of %s order by value" n)
@@ -1016,9 +1013,7 @@ let common_cases =
           equal (option any_w) none
             (common [ Type.duration Type.S; Type.duration Type.Ns ]);
           equal (option any_w) none
-            (common [ Type.datetime Type.S; Type.datetime Type.Ms ]);
-          equal (option any_w) none
-            (common [ Type.datetime ~zone:"UTC" Type.S; Type.datetime Type.S ]));
+            (common [ Type.wall Type.S; Type.wall Type.Ms ]));
       test "lists meet element by element" (fun () ->
           equal (option any_w)
             (some (Type.list Type.int32))
@@ -1092,8 +1087,8 @@ let type_gen =
       Any (Type.categorical [| "a"; "b" |]);
       Any (Type.categorical [| "a"; "b" |]);
       Any (Type.categorical [| "b"; "a" |]);
-      Any (Type.datetime Type.Us);
-      Any (Type.datetime ~zone:"UTC" Type.Us);
+      Any (Type.wall Type.Us);
+      Any (Type.instant Type.Us);
       Any (Type.clock Type.Us);
       Any (Type.duration Type.Us);
       Any (Type.list Type.int8);
@@ -1112,15 +1107,12 @@ let type_equal =
       prop "is an equivalence"
         (Gen.pair type_gen type_gen)
         (Law.equivalence any_w);
-      test "compares dictionaries, zones and fields in order" (fun () ->
+      test "compares dictionaries, clocks and fields in order" (fun () ->
           is_false
             (Type.equal
                (Type.categorical [| "a"; "b" |])
                (Type.categorical [| "b"; "a" |]));
-          is_false
-            (Type.equal
-               (Type.datetime ~zone:"UTC" Type.S)
-               (Type.datetime ~zone:"utc" Type.S));
+          is_false (Type.equal (Type.instant Type.S) (Type.wall Type.S));
           is_false
             (Type.equal
                (Type.record [ ("a", Any Type.int8); ("b", Any Type.int8) ])
@@ -1158,10 +1150,9 @@ let type_pp =
         {|categorical["say \"hi\"", "a\\b\x0a"]|} );
       (Any (Type.clock Type.Ns), "clock[ns]");
       (Any (Type.duration Type.Ms), "duration[ms]");
-      (Any (Type.datetime Type.Us), "datetime[us]");
-      (Any (Type.datetime Type.S), "datetime[s]");
-      (Any (Type.datetime ~zone:"UTC" Type.Us), "datetime[us, UTC]");
-      (Any (Type.datetime ~zone:"a]b" Type.Us), {|datetime[us, "a]b"]|});
+      (Any (Type.wall Type.Us), "datetime[us]");
+      (Any (Type.wall Type.S), "datetime[s]");
+      (Any (Type.instant Type.Us), "datetime[us, UTC]");
       (Any (Type.list Type.float64), "list[float64]");
       ( Any
           (Type.record
@@ -1276,8 +1267,6 @@ let errors =
               [
                 (fun () -> ignore (Type.categorical [| "a"; "a" |]));
                 (fun () -> ignore (Type.categorical [| "\xc3" |]));
-                (fun () -> ignore (Type.datetime ~zone:"" Type.S));
-                (fun () -> ignore (Type.datetime ~zone:"\xff" Type.S));
                 (fun () ->
                   ignore
                     (Type.record [ ("a", Any Type.bool); ("a", Any Type.int8) ]));
@@ -1331,8 +1320,6 @@ let errors =
                {|
             Type.categorical: "a" appears twice
             Type.categorical: "\195" is not UTF-8
-            Type.datetime: empty zone
-            Type.datetime: zone "\255" is not UTF-8
             Type.record: duplicate field "a"
             Type.record: field name "\255" is not UTF-8
             Type.tensor: empty shape

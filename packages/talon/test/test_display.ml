@@ -77,7 +77,7 @@ let temporal =
         Column.of_options (Type.duration Ns)
           [| span (-250_000L); span 5_400_000_000_000L; span 0L; None |] );
       ( "datetime",
-        Column.of_options (Type.datetime Ns)
+        Column.of_options (Type.wall Ns)
           [|
             Some (Time.of_ns 1_500_000_000L);
             Some (Time.of_ns (-1L));
@@ -86,7 +86,7 @@ let temporal =
           |] );
       ( "zoned",
         Column.of_options
-          (Type.datetime ~zone:"UTC" Ms)
+          (Type.instant Ms)
           [|
             Some (Time.of_ns 1_710_495_000_500_000_000L);
             Some (Time.of_ns 0L);
@@ -428,10 +428,10 @@ let forms =
       Form (binary, Gen.map Binary.of_string readable);
       drawn (categorical [| "a"; "é"; ""; " x " |]);
       drawn date;
-      drawn (datetime Ns);
-      drawn (datetime Us);
-      drawn (datetime ~zone:"UTC" S);
-      drawn (datetime ~zone:"Europe/Paris" Ms);
+      drawn (wall Ns);
+      drawn (wall Us);
+      drawn (instant S);
+      drawn (instant Ms);
     ]
 
 let shown =

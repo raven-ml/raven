@@ -55,6 +55,7 @@ module Col = struct
   let binary name = v Kind.binary name
   let date name = v Kind.date name
   let instant name = v Kind.instant name
+  let wall name = v Kind.wall name
   let span name = v Kind.span name
 end
 
@@ -309,7 +310,7 @@ module Kit = struct
             || b <> l
                && ((not (finite b && finite l))
                   || (finite a && (sa < sb || (sa = sb && ea <= eb)))))
-    | None, None when Stdlib.(is Kind.date || is Kind.instant || is Kind.span)
+    | None, None when Stdlib.(is Kind.date || is Kind.instant || is Kind.wall || is Kind.span)
       ->
         Some (fun l a b -> Temporal.diff l a <= Temporal.diff b l)
     | None, None -> None

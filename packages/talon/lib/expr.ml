@@ -64,6 +64,8 @@ type field =
   | `Weekday
   | `Yearday ]
 
+type policy = [ `Earlier | `Later | `Null | `Fail ]
+
 (* A bound expression that took the identity of a live equal one holds, in
    [rep], the expression whose entry in the hash-consing table holds that
    identity, which keeps the entry while it lives. Every other expression,
@@ -154,6 +156,13 @@ and 'a calendar_op =
   | Offset : Time.step * ('a, 's) t -> 'a calendar_op
   | Parse_with : string * 'a Type.t * (string, 's) t -> 'a calendar_op
   | Format_with : string * ('a, 's) t -> string calendar_op
+  | Wall : Tz.zone * (Time.instant, 's) t -> Time.wall calendar_op
+  | Localize :
+      Tz.zone * policy * policy * (Time.wall, 's) t
+      -> Time.instant calendar_op
+  | Localize_ordered :
+      Tz.zone * policy * policy * (Time.wall, 's) t
+      -> Time.instant calendar_op
 
 let mirror : compare -> compare = function
   | `Lt -> `Gt
@@ -208,7 +217,10 @@ let operands : type a. a node -> packed list = function
       | Floor (_, a) -> [ Packed a ]
       | Offset (_, a) -> [ Packed a ]
       | Parse_with (_, _, a) -> [ Packed a ]
-      | Format_with (_, a) -> [ Packed a ])
+      | Format_with (_, a) -> [ Packed a ]
+      | Wall (_, a) -> [ Packed a ]
+      | Localize (_, _, _, a) -> [ Packed a ]
+      | Localize_ordered (_, _, _, a) -> [ Packed a ])
 
 (* Names *)
 
@@ -238,6 +250,12 @@ let text_op_name : type a. a text_op -> string = function
   | Replace _ -> "Str.replace"
   | Parse _ -> "Str.parse"
 
+let policy_name : policy -> string = function
+  | `Earlier -> "`Earlier"
+  | `Later -> "`Later"
+  | `Null -> "`Null"
+  | `Fail -> "`Fail"
+
 let calendar_op_name : type a. a calendar_op -> string = function
   | Add_span _ -> "Temporal.add"
   | Diff _ -> "Temporal.diff"
@@ -246,6 +264,9 @@ let calendar_op_name : type a. a calendar_op -> string = function
   | Offset _ -> "Temporal.offset"
   | Parse_with _ -> "Temporal.parse"
   | Format_with _ -> "Temporal.format"
+  | Wall _ -> "Temporal.wall"
+  | Localize _ -> "Temporal.localize"
+  | Localize_ordered _ -> "Temporal.localize_ordered"
 
 (* Hash-consing *)
 
@@ -263,7 +284,7 @@ let rec lit_equal : type a. a Kind.t -> a -> a -> bool =
   | String -> String.equal v0 v1
   | Binary -> String.equal (v0 :> string) (v1 :> string)
   | Date -> Time.Date.equal v0 v1
-  | Instant -> Time.equal v0 v1
+  | Stamp _ -> Time.equal v0 v1
   | Span -> Time.Span.equal v0 v1
   | List k ->
       Array.length v0 = Array.length v1 && Array.for_all2 (lit_equal k) v0 v1
@@ -343,8 +364,12 @@ let calendar_equal : type a b. a calendar_op -> b calendar_op -> bool =
   | Parse_with (f0, ty0, _), Parse_with (f1, ty1, _) ->
       String.equal f0 f1 && Type.equal ty0 ty1
   | Format_with (f0, _), Format_with (f1, _) -> String.equal f0 f1
+  | Wall (z0, _), Wall (z1, _) -> Tz.equal z0 z1
+  | Localize (z0, a0, g0, _), Localize (z1, a1, g1, _)
+  | Localize_ordered (z0, a0, g0, _), Localize_ordered (z1, a1, g1, _) ->
+      Tz.equal z0 z1 && a0 = a1 && g0 = g1
   | ( ( Add_span _ | Diff _ | Part _ | Floor _ | Offset _ | Parse_with _
-      | Format_with _ ),
+      | Format_with _ | Wall _ | Localize _ | Localize_ordered _ ),
       _ ) ->
       false
 
@@ -423,7 +448,7 @@ let lit_hash : type a. a Kind.t -> a -> int =
   | Bool -> Hashtbl.hash v
   | String -> Hashtbl.hash v
   | Date -> Hashtbl.hash (Time.Date.to_days v)
-  | Instant -> Hashtbl.hash (Time.to_ns v)
+  | Stamp _ -> Hashtbl.hash (Time.to_ns v)
   | Span -> Hashtbl.hash (Time.Span.to_ns v)
   | Binary | List _ | Record | Tensor _ | Ext -> 0
 
@@ -772,6 +797,15 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
           (fun ppf -> Type.pp_list (pp_at 0) ppf es);
         ]
   | Calendar op ->
+      let quoted x ppf = Type.pp_quoted ppf x in
+      let localize_args z am g a =
+        [
+          quoted (Tz.name z);
+          str ("~ambiguous:" ^ policy_name am);
+          str ("~gap:" ^ policy_name g);
+          a;
+        ]
+      in
       let step s ppf =
         let printed = strf "%a" Time.pp_step s in
         if String.starts_with ~prefix:"-" printed then
@@ -791,7 +825,10 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
               (fun ppf -> Type.pp ppf ty);
               arg a;
             ]
-        | Format_with (fmt, a) -> [ (fun ppf -> Type.pp_quoted ppf fmt); arg a ])
+        | Format_with (fmt, a) -> [ (fun ppf -> Type.pp_quoted ppf fmt); arg a ]
+        | Wall (z, a) -> [ quoted (Tz.name z); arg a ]
+        | Localize (z, am, g, a) -> localize_args z am g (arg a)
+        | Localize_ordered (z, am, g, a) -> localize_args z am g (arg a))
 
 and pp_out ppf = function
   | Named (n, Packed e) ->
@@ -862,7 +899,8 @@ let default_type : type a. a Kind.t -> a Type.t option = function
   | String -> Some Type.string
   | Binary -> Some Type.binary
   | Date -> Some Type.date
-  | Instant -> Some (Type.datetime ~zone:"UTC" Type.Ns)
+  | Stamp Utc -> Some (Type.instant Type.Ns)
+  | Stamp Local -> Some (Type.wall Type.Ns)
   | Span -> Some (Type.duration Type.Ns)
   | List _ | Record | Tensor _ | Ext -> None
 
@@ -871,14 +909,15 @@ let kind_types : type a. a Kind.t -> string = function
   | Int -> "int8 to int64 and uint8 to uint64"
   | Float -> "float16, float32 or float64"
   | String -> "string or categorical"
-  | Instant -> "datetime"
+  | Stamp Utc -> "datetime with a UTC clock"
+  | Stamp Local -> "datetime with a wall clock"
   | Span -> "duration or clock"
   | k -> strf "%a" Kind.pp k
 
 let handle_name : type a. a Kind.t -> string =
  fun k ->
   match k with
-  | Bool | Int | Float | String | Binary | Date | Instant | Span ->
+  | Bool | Int | Float | String | Binary | Date | Stamp _ | Span ->
       strf "Col.%a" Kind.pp k
   | List _ | Record | Tensor _ | Ext -> strf "Col.v %a" Kind.pp k
 
@@ -1110,6 +1149,7 @@ let order_name : type a. a node -> string option = function
   | Shift _ -> Some "shift"
   | Rank _ -> Some "rank"
   | Window _ -> Some "window"
+  | Calendar (Localize_ordered _) -> Some "localize_ordered"
   | _ -> None
 
 (* [order_operation e] names an operation of [e] that orders rows of [e]'s
@@ -1242,11 +1282,17 @@ let rec castable : type a b.
   match (ty0, ty1) with
   | _ when numeric ty0 && numeric ty1 -> Ok ()
   | _ when text ty0 && text ty1 -> Ok ()
-  | Datetime d0, Datetime d1 ->
-      if Bool.equal (Option.is_some d0.zone) (Option.is_some d1.zone) then Ok ()
-      else Error None
-  | Date, Datetime { zone = None; _ } | Datetime { zone = None; _ }, Date ->
+  | Datetime { clock = Utc; _ }, Datetime { clock = Utc; _ }
+  | Datetime { clock = Local; _ }, Datetime { clock = Local; _ } ->
       Ok ()
+  | Datetime { clock = Utc; _ }, Datetime { clock = Local; _ } ->
+      Error (Some "Temporal.wall")
+  | Datetime { clock = Local; _ }, Datetime { clock = Utc; _ } ->
+      Error (Some "Temporal.localize")
+  | Date, Datetime { clock = Local; _ } | Datetime { clock = Local; _ }, Date ->
+      Ok ()
+  | Date, Datetime { clock = Utc; _ } -> Error (Some "Temporal.localize")
+  | Datetime { clock = Utc; _ }, Date -> Error (Some "Temporal.wall")
   | (Duration _ | Clock _), (Duration _ | Clock _) | Date, Date | Binary, Binary
     ->
       Ok ()
@@ -1284,14 +1330,11 @@ let has_zone_directive fmt =
   in
   loop 0
 
-(* A datetime with a zone holds instants, whose wall clock in UTC is the instant
-   itself; another zone's wall clock needs that zone's rules. *)
-let wall_clock env what = function
-  | Some z when not (String.equal z "UTC") ->
-      report env
-        "%s reads the wall clock of the zone %a, and talon reads UTC's only."
-        what Type.pp_quoted z
-  | Some _ | None -> ()
+(* An instant falls on a calendar only in a zone. *)
+let wall_only env what ty =
+  report env "%s reads wall clocks, and %a is instants: name a zone with \
+     Temporal.wall."
+    what Type.pp ty
 
 let not_temporal : type a b. env -> string -> a Type.t -> b elab =
  fun env what ty ->
@@ -1310,6 +1353,8 @@ let calendar_step : type a. env -> string -> a Type.t -> Time.step -> unit =
   match (ty, step) with
   | Date, Time.Exact _ ->
       report env "%s moves a date by calendar steps only." what
+  | Datetime { clock = Utc; _ }, (Time.Months _ | Time.Weeks _ | Time.Days _) ->
+      wall_only env what ty
   | Datetime { unit_; _ }, Time.Exact s ->
       let tick = Type.ns_per_unit unit_ in
       if not (Int64.equal (Int64.rem (Time.Span.to_ns s) tick) 0L) then
@@ -2141,10 +2186,10 @@ and calendar : type a. env -> a calendar_op -> a elab =
           | Clock _ when not time_field ->
               report env "a clock has no %s." (field_name f);
               Broken
-          | Date | Clock _ -> ok ()
-          | Datetime { zone; _ } ->
-              wall_clock env what zone;
-              ok ()
+          | Date | Clock _ | Datetime { clock = Local; _ } -> ok ()
+          | Datetime { clock = Utc; _ } ->
+              wall_only env what ta;
+              Broken
           | _ -> not_temporal env what ta))
   | Floor (step, a) -> (
       match dated env what a with
@@ -2164,15 +2209,15 @@ and calendar : type a. env -> a calendar_op -> a elab =
           | Column (String | Categorical _) -> (
               let z = has_zone_directive fmt in
               match ty with
-              | Datetime { zone = Some _; _ } when not z ->
+              | Datetime { clock = Utc; _ } when not z ->
                   report env
-                    "%s reads %a, which has a zone, so its format needs %%z."
+                    "%s reads %a, an instant, so its format needs %%z."
                     what Type.pp ty;
                   Broken
-              | (Date | Clock _ | Datetime { zone = None; _ }) when z ->
+              | (Date | Clock _ | Datetime { clock = Local; _ }) when z ->
                   report env
-                    "%s reads %a, which has no zone, so its format takes no \
-                     %%z."
+                    "%s reads %a, which holds no offset, so its format takes \
+                     no %%z."
                     what Type.pp ty;
                   Broken
               | Date | Clock _ | Datetime _ ->
@@ -2181,15 +2226,34 @@ and calendar : type a. env -> a calendar_op -> a elab =
           | t ->
               report env "%s takes text, not %a." what pp_typing t;
               Broken)
+  | Wall (z, a) -> (
+      match column a with
+      | Some (Datetime { unit_; clock = Utc }, a') ->
+          known (Column (Type.wall unit_)) (Wall (z, a'))
+      | Some (ta, _) -> not_temporal env what ta
+      | None -> Broken)
+  | Localize (z, am, g, a) -> (
+      match column a with
+      | Some (Datetime { unit_; clock = Local }, a') ->
+          known (Column (Type.instant unit_)) (Localize (z, am, g, a'))
+      | Some (ta, _) -> not_temporal env what ta
+      | None -> Broken)
+  | Localize_ordered (z, am, g, a) -> (
+      match column a with
+      | Some (Datetime { unit_; clock = Local }, a') ->
+          known (Column (Type.instant unit_)) (Localize_ordered (z, am, g, a'))
+      | Some (ta, _) -> not_temporal env what ta
+      | None -> Broken)
   | Format_with (fmt, a) -> (
       match column a with
       | None -> Broken
       | Some (ta, a') -> (
           let ok () = known (Column Type.string) (Format_with (fmt, a')) in
           match ta with
-          | Datetime { zone = Some _; _ } -> ok ()
-          | (Date | Clock _ | Datetime _) when has_zone_directive fmt ->
-              report env "%s writes %%z of a datetime with a zone, not of %a."
+          | Datetime { clock = Utc; _ } -> ok ()
+          | (Date | Clock _ | Datetime { clock = Local; _ })
+            when has_zone_directive fmt ->
+              report env "%s writes %%z of an instant, not of %a."
                 what Type.pp ta;
               Broken
           | Date | Clock _ | Datetime _ -> ok ()
@@ -2202,9 +2266,7 @@ and dated : type a s.
  fun env what a ->
   match resolve env a (elab env a) with
   | Some (Column (Date as ta), a') -> Some (ta, a')
-  | Some (Column (Datetime { zone; _ } as ta), a') ->
-      wall_clock env what zone;
-      Some (ta, a')
+  | Some (Column (Datetime _ as ta), a') -> Some (ta, a')
   | Some (t, _) ->
       report env "%s takes a date or a datetime, not %a." what pp_typing t;
       None
@@ -2250,7 +2312,8 @@ let row_local e =
   let rec local : type a s. (a, s) t -> bool =
    fun e ->
     match e.node with
-    | Over _ | Shift _ | Rank _ | Window _ -> false
+    | Over _ | Shift _ | Rank _ | Window _ | Calendar (Localize_ordered _) ->
+        false
     | Per_list (os, _) ->
         List.for_all (fun (_, Packed e) -> local e) (list_outs os)
     | n -> List.for_all (fun (Packed e) -> local e) (operands n)
@@ -2291,7 +2354,9 @@ let can_fail e =
     match e.node with
     | Cast (ty, a) when not (widens a ty) -> true
     | Text (Parse _, _)
-    | Calendar (Add_span _ | Diff _ | Floor _ | Offset _ | Parse_with _)
+    | Calendar
+        ( Add_span _ | Diff _ | Floor _ | Offset _ | Parse_with _ | Wall _
+        | Localize _ | Localize_ordered _ )
     | Of_option _ | App _ | Reduce (Only, _) ->
         true
     | Reduce (Sum, { typing = Some (Column (Duration _)); _ }) -> true
@@ -2354,7 +2419,10 @@ let map_node : type a. mapper -> a node -> a node =
         | Floor (s, a) -> Floor (s, map a)
         | Offset (s, a) -> Offset (s, map a)
         | Parse_with (fmt, ty, a) -> Parse_with (fmt, ty, map a)
-        | Format_with (fmt, a) -> Format_with (fmt, map a))
+        | Format_with (fmt, a) -> Format_with (fmt, map a)
+        | Wall (z, a) -> Wall (z, map a)
+        | Localize (z, am, g, a) -> Localize (z, am, g, map a)
+        | Localize_ordered (z, am, g, a) -> Localize_ordered (z, am, g, map a))
 
 (* [scoped f os] is [f] inside a list frame of the outputs [os], whose names
    stay. *)
@@ -2522,6 +2590,7 @@ let string s =
   make (Lit (Kind.string, s))
 
 let instant t = make (Lit (Kind.instant, t))
+let wall t = make (Lit (Kind.wall, t))
 let span d = make (Lit (Kind.span, d))
 let date d = make (Lit (Kind.date, d))
 
@@ -2627,6 +2696,14 @@ module Temporal = struct
   let format fmt a =
     check_format "format" fmt;
     calendar (Format_with (fmt, a))
+
+  type nonrec policy = policy
+
+  let wall z a = calendar (Wall (z, a))
+  let localize z ~ambiguous ~gap a = calendar (Localize (z, ambiguous, gap, a))
+
+  let localize_ordered z ~ambiguous ~gap a =
+    calendar (Localize_ordered (z, ambiguous, gap, a))
 end
 
 (* Reductions *)

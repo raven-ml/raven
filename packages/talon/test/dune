@@ -56,6 +56,14 @@
    (run %{test} --corrected)
    (diff? test_tz.ml test_tz.ml.corrected))))
 
+(test
+ (name test_zoned)
+ (modules test_zoned)
+ (package talon)
+ (libraries windtrap talon)
+ (deps
+  (source_tree golden/tz)))
+
 ; shape.t compiles against the installed talon and nx. It depends on the
 ; workspace's install alias: a dependency on the package nx would name a
 ; package that dune build -p talon does not define, and dune refuses it there,

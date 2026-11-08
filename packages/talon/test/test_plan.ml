@@ -87,7 +87,7 @@ let flights =
         ("distance", Any float64);
         ("hour", Any int8);
         ("minute", Any int8);
-        ("time_hour", Any (datetime ~zone:"UTC" Us));
+        ("time_hour", Any (instant Us));
       ]
 
 let carriers =
@@ -583,12 +583,12 @@ let s_typed =
     (columns
     @ Type.
         [
-          ("t", Any (datetime Ns));
+          ("t", Any (wall Ns));
           ("dl", Any (list (duration Ns)));
           ("x", Any (tensor Nx.float32 [| 2 |]));
         ])
 
-let t = Col.instant "t"
+let t = Col.wall "t"
 
 let can_fail =
   Expr.

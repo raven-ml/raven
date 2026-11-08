@@ -25,7 +25,7 @@ type 'a t =
   | Date : Time.date t
   | Clock : unit_ -> Time.span t
   | Duration : unit_ -> Time.span t
-  | Datetime : { unit_ : unit_; zone : string option } -> Time.instant t
+  | Datetime : { unit_ : unit_; clock : 'c Time.clock } -> 'c Time.stamp t
   | List : 'a t -> 'a array t
   | Record : (string * any) list -> Record.t t
   | Tensor : ('a, 'b) Nx.dtype * int iarray -> ('a, 'b, Nx.host) Nx.t t
@@ -71,13 +71,8 @@ let date = Date
 let clock u = Clock u
 let duration u = Duration u
 
-let datetime ?zone unit_ =
-  (match zone with
-  | Some "" -> err "Type.datetime: empty zone"
-  | Some z when not (String.is_valid_utf_8 z) ->
-      err "Type.datetime: zone %S is not UTF-8" z
-  | _ -> ());
-  Datetime { unit_; zone }
+let instant unit_ = Datetime { unit_; clock = Time.Utc }
+let wall unit_ = Datetime { unit_; clock = Time.Local }
 
 let list t = List t
 
@@ -128,7 +123,7 @@ let rec kind : type a. a t -> a Kind.t = function
   | Date -> Kind.Date
   | Clock _ -> Kind.Span
   | Duration _ -> Kind.Span
-  | Datetime _ -> Kind.Instant
+  | Datetime { clock; _ } -> Kind.Stamp clock
   | List e -> Kind.List (kind e)
   | Record _ -> Kind.Record
   | Tensor (dt, _) -> Kind.Tensor dt
@@ -237,7 +232,7 @@ let rec pp_lit : type a. a Kind.t -> Format.formatter -> a -> unit =
   | String -> pp_quoted ppf v
   | Binary -> Binary.pp ppf v
   | Date -> Time.Date.pp ppf v
-  | Instant -> Time.pp ppf v
+  | Stamp _ -> Time.pp ppf v
   | Span -> Time.Span.pp ppf v
   | List k -> pp_list (pp_lit k) ppf (Array.to_list v)
   | Record -> Format.pp_print_string ppf "<record>"
@@ -544,7 +539,11 @@ let rec equal : type a b. a t -> b t -> bool =
   | Clock u0, Clock u1 -> u0 = u1
   | Duration u0, Duration u1 -> u0 = u1
   | Datetime d0, Datetime d1 ->
-      d0.unit_ = d1.unit_ && Option.equal String.equal d0.zone d1.zone
+      d0.unit_ = d1.unit_
+      &&
+      (match (d0.clock, d1.clock) with
+      | Time.Utc, Time.Utc | Time.Local, Time.Local -> true
+      | _ -> false)
   | List e0, List e1 -> equal e0 e1
   | Record f0, Record f1 ->
       let field (n0, Any t0) (n1, Any t1) = String.equal n0 n1 && equal t0 t1 in
@@ -665,10 +664,10 @@ let rec pp : type a. Format.formatter -> a t -> unit =
       str "]"
   | Clock u -> Format.fprintf ppf "clock[%s]" (unit_name u)
   | Duration u -> Format.fprintf ppf "duration[%s]" (unit_name u)
-  | Datetime { unit_; zone = None } ->
+  | Datetime { unit_; clock = Local } ->
       Format.fprintf ppf "datetime[%s]" (unit_name unit_)
-  | Datetime { unit_; zone = Some z } ->
-      Format.fprintf ppf "datetime[%s, %a]" (unit_name unit_) pp_name z
+  | Datetime { unit_; clock = Utc } ->
+      Format.fprintf ppf "datetime[%s, UTC]" (unit_name unit_)
   | List e -> Format.fprintf ppf "list[%a]" pp e
   | Record fields ->
       let field ppf (n, Any t) = Format.fprintf ppf "%a %a" pp_name n pp t in

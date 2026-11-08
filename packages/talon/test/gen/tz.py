@@ -60,6 +60,7 @@ SOURCE = Path(tzdata.__file__).parent / "zoneinfo"
 TZDATA_VERSION = "2026c"
 ZONES = [
     "Europe/Paris",
+    "America/Ojinaga",
     "America/New_York",
     "Australia/Lord_Howe",
     "America/Nuuk",

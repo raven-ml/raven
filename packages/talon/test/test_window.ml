@@ -142,7 +142,7 @@ let column kind ~bound cs =
   | Date ->
       v Type.date (fun c -> Option.get (Time.Date.of_days (to_int c / 86_400)))
   | (Datetime | Coarse) when not bound ->
-      v (Type.datetime ~zone:"UTC" Type.Ns) (fun c ->
+      v (Type.instant Type.Ns) (fun c ->
           Time.of_ns (Int64.of_int (to_int c)))
   | Datetime | Coarse | Duration | Clock ->
       v (Type.duration Type.Ns) (fun c -> span (to_int c))
@@ -747,7 +747,7 @@ let oracle (name, rows) =
   let k, w =
     if name = "datetime" then
       let at us = Time.of_ns (Int64.mul 1000L (Int64.of_int us)) in
-      ( Column.v (Type.datetime ~zone:"UTC" Type.Us) (Array.map at keys),
+      ( Column.v (Type.instant Type.Us) (Array.map at keys),
         fun ?exclude_key r ->
           let before = Expr.span (Time.Span.days 7) in
           Expr.window ~on:(Col.instant "k") ~before ?exclude_key r )
@@ -801,7 +801,7 @@ let problems () =
          [
            ("x", Column.v Type.float64 [| 1.; 1.; 2. |]);
            ("s", Column.v Type.string [| "a"; "b"; "c" |]);
-           ("ts", Column.v (Type.datetime Type.S) ts);
+           ("ts", Column.v (Type.wall Type.S) ts);
            ( "d",
              Column.v (Type.duration Type.Ns)
                (Array.map Time.Span.ns [| 1; 2; 3 |]) );
@@ -821,7 +821,7 @@ let problems () =
            derive (window ~on:(Col.string "s") (count x));
            derive (window ~on:x ~before:(int 1) (count x));
            derive
-             (window ~on:(Col.instant "ts") ~before:(Col.span "d") (count x));
+             (window ~on:(Col.wall "ts") ~before:(Col.span "d") (count x));
            derive (window ~before:(float 1.) (count x));
            derive (window ~before:null (count x));
            derive (window (sum (shift 1 x)));

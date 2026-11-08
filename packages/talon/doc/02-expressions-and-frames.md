@@ -324,8 +324,10 @@ and `replace` on literals, and `parse`, which reads text as a typed value.
 
 ## Time
 
-Dates read as `Time.date`, datetimes as `Time.instant` and durations and
-times of day as `Time.span`. `Expr.Temporal` computes with them:
+Dates read as `Time.date`, durations and times of day as `Time.span`, and
+datetimes as one of two clocks: `Time.instant`, a point on the global timeline
+counted in UTC, and `Time.wall`, a local reading on no particular zone. The two
+never mix in a column or in an expression. `Expr.Temporal` computes with them:
 
 ```ocaml
 let at s = Option.get (Time.of_s (Int64.of_int s))
@@ -335,7 +337,7 @@ let sessions =
     [
       ("file", Column.v Type.string
          [| "sub-01_ses-01.nwb"; "sub-01_ses-02.nwb"; "sub-02_ses-01.nwb" |]);
-      ("start", Column.v (Type.datetime ~zone:"UTC" Type.Ms)
+      ("start", Column.v (Type.instant Type.Ms)
          [| at 1710495000; at 1710581523; at 1711010000 |]);
     ]
 
@@ -348,7 +350,7 @@ let described =
     |> select
          Expr.[
            "parts" := Str.split "_" (Str.replace ".nwb" ~by:"" file);
-           "weekday" := Temporal.field `Weekday start;
+           "weekday" := Temporal.(field `Weekday (wall Tz.utc start));
            "end" := Temporal.add start (span (Time.Span.minutes 90));
            "since" := Temporal.diff start (over (min start));
          ])
@@ -363,11 +365,37 @@ table 3 rows × 4 columns
  ["sub-02"; "ses-01"]        4  2024-03-21T10:03:20Z  143h3m20s
 ```
 
-`Temporal.floor` and `Temporal.offset` move dates and datetimes by
-`Time.step`s: calendar months, weeks and days, or exact spans. `parse` and
-`format` read and write text in a `%Y-%m-%d`-style format. The calendar of a
-datetime with a zone is read in UTC; asking for it in another zone is a
-problem.
+`Temporal.floor` and `Temporal.offset` move wall clocks by `Time.step`s:
+calendar months, weeks and days, or exact spans, which also move an instant.
+`parse` and `format` read and write text in a `%Y-%m-%d`-style format.
+
+A calendar needs a zone. `Temporal.field`, and a `floor` or `offset` by a
+calendar step, read wall clocks, so an instant reaches them through
+`Temporal.wall`, with the zone named: above, a session's weekday is the day in
+UTC. `Temporal.localize` goes the other way, from a logger's wall clock to its
+instant. A zone can repeat a reading (the hour set back each autumn) or skip
+one (each spring), so `localize` takes `~ambiguous` and `~gap` policies:
+`` `Earlier``, `` `Later``, `` `Null`` or `` `Fail``. When rows come in time
+order, `Temporal.localize_ordered` reads the repeated hour from the order of
+the rows, and the policies decide only what the order leaves open.
+
+```ocaml
+let readings =
+  Talon.v
+    [ ("logged", Column.v (Type.wall Type.S)
+         [| at 1710495000; at 1710581523 |]) ]
+
+let site_time =
+  (* Local standard time, a fixed offset of a site, in seconds east of UTC. *)
+  Query.(
+    of_table readings
+    |> select
+         Expr.[
+           "instant" :=
+             Temporal.localize (Tz.fixed (-25_200)) ~ambiguous:`Fail
+               ~gap:`Fail (Col.wall "logged");
+         ])
+```
 
 ## How a Query Runs
 

@@ -282,10 +282,10 @@ let candidates =
       Any int64;
       Any float64;
       Any date;
-      Any (datetime Us);
-      Any (datetime Ns);
-      Any (datetime ~zone:"UTC" Us);
-      Any (datetime ~zone:"UTC" Ns);
+      Any (wall Us);
+      Any (wall Ns);
+      Any (instant Us);
+      Any (instant Ns);
     ]
 
 let is_digit c = '0' <= c && c <= '9'

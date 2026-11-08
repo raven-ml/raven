@@ -65,7 +65,7 @@ let palette =
       Any (clock Us);
       Any (clock Ns);
       Any (duration Ns);
-      Any (datetime ~zone:"UTC" Ms);
+      Any (instant Ms);
       Any (tensor Nx.float32 [| 2 |]);
       Any (list int64);
       Any (record [ ("x", Any int8); ("s", Any string) ]);
@@ -3522,7 +3522,7 @@ let constructors =
         ("b", Column.v Type.bool [| true |]);
         ("s", Column.v Type.string [| "2024-03-15" |]);
         ("d", Column.v Type.date [| day15 |]);
-        ("t", Column.v (Type.datetime ~zone:"UTC" Us) [| ten |]);
+        ("t", Column.v (Type.instant Us) [| ten |]);
         ( "e",
           Result.get_ok
             (Column.of_layout
@@ -3567,7 +3567,7 @@ let constructors =
         Row ("is_in", is_in [ 3 ] i);
         Row ("cut", cut [| 1; 5 |] i);
         Row ("cast", cast Type.int8 i);
-        Row ("cast between dates and datetimes", cast (Type.datetime S) d);
+        Row ("cast between dates and datetimes", cast (Type.wall S) d);
         Row
           ( "cast between clocks and durations",
             cast (Type.clock S) (span (Time.Span.s 1)) );
@@ -3606,8 +3606,10 @@ let constructors =
         Row ("Str.concat", Str.concat "/" [ s; s ]);
         Row ("Temporal.add", Temporal.add d (span day));
         Row ("Temporal.diff", Temporal.diff ts ts);
-        Row ("Temporal.field", Temporal.field `Hour ts);
-        Row ("Temporal.floor", Temporal.floor (Time.Days 1) ts);
+        Row ("Temporal.field", Temporal.field `Hour (Temporal.wall Tz.utc ts));
+        Row
+          ( "Temporal.floor",
+            Temporal.floor (Time.Days 1) (Temporal.wall Tz.utc ts) );
         Row ("Temporal.offset", Temporal.offset (Time.Months 1) d);
         Row ("Temporal.parse", Temporal.parse "%Y-%m-%d" Type.date s);
         Row ("Temporal.format", Temporal.format "%Y" ts);
@@ -3616,19 +3618,19 @@ let constructors =
     run
 
 let utc_wall_clock =
-  test "a datetime in UTC reads its calendar on UTC's wall clock" (fun () ->
+  test "an instant reads its calendar through Temporal.wall in UTC" (fun () ->
       let t =
         v
           [
             ( "t",
               Column.v
-                (Type.datetime ~zone:"UTC" Us)
+                (Type.instant Us)
                 [| Time.of_ns 1_710_496_800_000_000_000L |] );
           ]
       in
       let field f =
         Query.values
-          Expr.(Temporal.field f (Col.instant "t"))
+          Expr.(Temporal.field f (Temporal.wall Tz.utc (Col.instant "t")))
           (Query.of_table t)
       in
       equal (array int) [| 10 |] (require_ok ~pp:Error.pp (field `Hour));

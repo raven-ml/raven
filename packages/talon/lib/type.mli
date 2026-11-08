@@ -31,7 +31,7 @@ type 'a t = private
   | Date : Time.date t
   | Clock : unit_ -> Time.span t
   | Duration : unit_ -> Time.span t
-  | Datetime : { unit_ : unit_; zone : string option } -> Time.instant t
+  | Datetime : { unit_ : unit_; clock : 'c Time.clock } -> 'c Time.stamp t
   | List : 'a t -> 'a array t
   | Record : (string * any) list -> Record.t t
   | Tensor : ('a, 'b) Nx.dtype * int iarray -> ('a, 'b, Nx.host) Nx.t t
@@ -57,7 +57,8 @@ val categorical : string array -> string t
 val date : Time.date t
 val clock : unit_ -> Time.span t
 val duration : unit_ -> Time.span t
-val datetime : ?zone:string -> unit_ -> Time.instant t
+val instant : unit_ -> Time.instant t
+val wall : unit_ -> Time.wall t
 val list : 'a t -> 'a array t
 val record : (string * any) list -> Record.t t
 val tensor : ('a, 'b) Nx.dtype -> int array -> ('a, 'b, Nx.host) Nx.t t

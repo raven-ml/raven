@@ -65,8 +65,8 @@ let parsed =
     [
       Any bool; Any int8; Any int16; Any int32; Any int64; Any uint8;
       Any uint16; Any uint32; Any uint64; Any float16; Any float32;
-      Any float64; Any string; Any binary; Any date; Any (datetime S);
-      Any (datetime Ns); Any (datetime ~zone:"UTC" Us);
+      Any float64; Any string; Any binary; Any date; Any (wall S);
+      Any (wall Ns); Any (instant Us);
       Any (categorical [| "a"; "b"; "é" |]);
     ]
 

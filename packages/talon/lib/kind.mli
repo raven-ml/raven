@@ -25,7 +25,7 @@ type _ t =
   | String : string t
   | Binary : Binary.t t
   | Date : Time.date t
-  | Instant : Time.instant t
+  | Stamp : 'c Time.clock -> 'c Time.stamp t
   | Span : Time.span t
   | List : 'a t -> 'a array t
   | Record : record t
@@ -55,6 +55,7 @@ val string : string t
 val binary : Binary.t t
 val date : Time.date t
 val instant : Time.instant t
+val wall : Time.wall t
 val span : Time.span t
 val list : 'a t -> 'a array t
 val tensor : ('a, 'b) Nx.dtype -> ('a, 'b, Nx.host) Nx.t t

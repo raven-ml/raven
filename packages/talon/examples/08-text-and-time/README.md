@@ -11,15 +11,16 @@ dune exec ./main.exe
   `list[string]` column.
 - `Expr.Temporal.field` reads calendar fields, `floor` truncates to a period,
   `add` moves an instant by a span, and `diff` is the span between two
-  instants.
+  instants. Calendars read wall clocks, so a session's `start` goes through
+  `Temporal.wall Tz.utc`.
 - `Temporal.parse` and `Temporal.format` read and write text in a
   `%Y-%m-%d`-style format.
 
 ```
 table 3 rows × 4 columns
- weekday  day                   end                   since
- int64    datetime[ms, UTC]     datetime[ms, UTC]     duration[ms]
-       5  2024-03-15T00:00:00Z  2024-03-15T11:00:00Z  0s
-       6  2024-03-16T00:00:00Z  2024-03-16T11:02:03Z  24h2m3s
-       4  2024-03-21T00:00:00Z  2024-03-21T10:03:20Z  143h3m20s
+ weekday  day                  end                   since
+ int64    datetime[ms]         datetime[ms, UTC]     duration[ms]
+       5  2024-03-15T00:00:00  2024-03-15T11:00:00Z  0s
+       6  2024-03-16T00:00:00  2024-03-16T11:02:03Z  24h2m3s
+       4  2024-03-21T00:00:00  2024-03-21T10:03:20Z  143h3m20s
 ```

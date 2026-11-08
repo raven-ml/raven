@@ -66,8 +66,12 @@ module Kind : sig
   (** [date] reads [date] columns. *)
 
   val instant : Time.instant t
-  (** [instant] reads [datetime] columns of every unit and zone. A value outside
-      the range of {!Time.instant} fails when it is read. *)
+  (** [instant] reads [datetime] columns of every unit whose clock is UTC. A
+      value outside the range of {!Time.instant} fails when it is read. *)
+
+  val wall : Time.wall t
+  (** [wall] reads [datetime] columns of every unit whose clock is a wall clock.
+      A value outside the range of {!Time.wall} fails when it is read. *)
 
   val span : Time.span t
   (** [span] reads [duration] and [clock] columns of every unit. A time of day
@@ -90,9 +94,9 @@ module Kind : sig
 
   val pp : Format.formatter -> 'a t -> unit
   (** [pp ppf k] formats [k] by the name of the value that builds it: [bool],
-      [int], [float], [string], [binary], [date], [instant] and [span]. The
-      record kind formats as [record] and the extension kind as [ext]. A list
-      kind formats its element kind in brackets, as in [list[float]], and a
+      [int], [float], [string], [binary], [date], [instant], [wall] and [span].
+      The record kind formats as [record] and the extension kind as [ext]. A
+      list kind formats its element kind in brackets, as in [list[float]], and a
       tensor kind its dtype, as in [tensor[float32]]. *)
 end
 
@@ -199,13 +203,11 @@ module Type : sig
             time of day reads as its span from midnight. *)
     | Duration : unit_ -> Time.span t
         (** Signed durations, stored as int64 ticks of the unit. *)
-    | Datetime : { unit_ : unit_; zone : string option } -> Time.instant t
-        (** Instants, stored as int64 ticks of [unit_] since 1970-01-01
-            00:00:00. With [zone = Some z], the ticks count UTC and [z] names
-            the zone the data belongs to, as in Arrow's timestamp with a time
-            zone. With [zone = None], the ticks count a wall clock in no
-            particular zone, as in Arrow's timestamp without one. A tick outside
-            the range of {!Time.instant} fails when it is read. *)
+    | Datetime : { unit_ : unit_; clock : 'c Time.clock } -> 'c Time.stamp t
+        (** Stamps ({!Time.section-stamps}), stored as int64 ticks of [unit_]
+            since 1970-01-01 00:00:00 of [clock]: instants when [clock] is
+            [Time.Utc] and wall clocks when it is [Time.Local]. A tick outside
+            the range of {!Time.stamp} fails when it is read. *)
     | List : 'a t -> 'a array t
         (** Lists of values of the element type, read as arrays. *)
     | Record : (string * any) list -> Record.t t
@@ -282,11 +284,11 @@ module Type : sig
   val duration : unit_ -> Time.span t
   (** [duration u] is {!Duration} in the unit [u]. *)
 
-  val datetime : ?zone:string -> unit_ -> Time.instant t
-  (** [datetime ?zone u] is {!Datetime} in the unit [u], with the zone [zone],
-      or without a zone when [zone] is absent. The zone is not looked up.
+  val instant : unit_ -> Time.instant t
+  (** [instant u] is {!Datetime} of instants in the unit [u]. *)
 
-      Raises [Invalid_argument] if [zone] is empty or not valid UTF-8. *)
+  val wall : unit_ -> Time.wall t
+  (** [wall u] is {!Datetime} of wall clocks in the unit [u]. *)
 
   val list : 'a t -> 'a array t
   (** [list t] is {!List} of [t]. *)
@@ -318,7 +320,8 @@ module Type : sig
   (** [kind t] is the kind that [t]'s cells read as: {!Kind.bool}, {!Kind.int}
       for the integer types, {!Kind.float} for the float types, {!Kind.string}
       for [String] and [Categorical], {!Kind.binary}, {!Kind.date}, {!Kind.span}
-      for [Clock] and [Duration], {!Kind.instant} for [Datetime],
+      for [Clock] and [Duration], {!Kind.instant} and {!Kind.wall} for
+      [Datetime] by its clock,
       [Kind.list (kind e)] for [List e], {!Record.kind} for every [Record], and
       [Kind.tensor dt] for [Tensor (dt, _)]. For [Ext] it is the extension kind,
       which reads nothing (see {!Kind.provably_equal}). *)
@@ -409,15 +412,15 @@ module Type : sig
       at [int16]. [uint64] does not meet [int64], although every [uint64] that
       OCaml reads is an [int64]. [Clock] and [Duration] never meet, and neither
       do datetimes or durations that differ in unit, since a coarser unit stores
-      ticks a finer one cannot, or in zone: cast first. *)
+      ticks a finer one cannot: cast first. A wall clock and an instant never
+      meet. *)
 
   (** {1:predicates Equality and formatting} *)
 
   val equal : 'a t -> 'b t -> bool
   (** [equal t0 t1] is [true] iff [t0] and [t1] are the same type: the same
       constructor with equal arguments. Dictionaries are equal when they hold
-      the same strings in the same order, zones when they are the same string,
-      and record types when they have the same field names with equal types in
+      the same strings in the same order, and record types when they have the same field names with equal types in
       the same order. *)
 
   val pp : Format.formatter -> 'a t -> unit
@@ -427,14 +430,15 @@ module Type : sig
       - [categorical["AA", "B6"]], with at most the first eight strings of the
         dictionary, followed by an ellipsis and the dictionary's size when it
         holds more: [categorical["a", "b", "c", "d", "e", "f", "g", "h", … 26]];
-      - [clock[ns]], [duration[ms]], [datetime[us]] and [datetime[us, UTC]],
-        with the units [s], [ms], [us] and [ns];
+      - [clock[ns]], [duration[ms]], [datetime[us]] for a wall clock and
+        [datetime[us, UTC]] for an instant, with the units [s], [ms], [us] and
+        [ns];
       - [list[float64]], [record[carrier string, delay float64]] and
         [tensor[float32, 3×4]];
       - [ext[ymir.epoch, float64]], and [ext[units.mass "kg", float64]] when the
         metadata is not empty.
 
-      A field name, an extension name or a zone formats as is when it is
+      A field name or an extension name formats as is when it is
       non-empty and holds no ASCII space, comma, bracket, double quote,
       backslash or ASCII control byte. Otherwise it is quoted, as categories and
       metadata always are: between double quotes, with double quotes and
@@ -583,8 +587,8 @@ module Column : sig
       Raises [Invalid_argument] if [k] does not read [c]'s type (see
       {!Kind.provably_equal}: no kind reads an extension column), if a row of
       [c] is null, or, naming the row, if a value is outside what [k] reads: an
-      integer outside OCaml's [int], an instant or a span outside {!Time}'s
-      range, a list with a null element. *)
+      integer outside OCaml's [int], a stamp or a span outside {!Time}'s range,
+      a list with a null element. *)
 
   val options : 'a Kind.t -> t -> 'a option array
   (** [options k c] is like {!values}, with [None] for each null. *)
@@ -713,10 +717,10 @@ module Column : sig
       - a categorical: one of the dictionary's strings;
       - [date]: [YYYY-MM-DD], a year outside [0000] to [9999] signed and of at
         least four digits, as {!Time.Date.pp} writes it: [-0044-03-15];
-      - [datetime[u]] and [datetime[u, z]]: a date of any year, [T] or a space,
-        [hh:mm:ss] and an optional fraction of one to nine digits, then, with a
-        zone only, [Z] or [±hh:mm]; a whole number of [u] in [u]'s range, the
-        int64 ticks, which bound the year.
+      - [datetime[u]] (a wall clock) and [datetime[u, UTC]] (an instant): a date
+        of any year, [T] or a space, [hh:mm:ss] and an optional fraction of one
+        to nine digits, then, for an instant only, [Z] or [±hh:mm]; a whole
+        number of [u] in [u]'s range, the int64 ticks, which bound the year.
 
       Raises [Invalid_argument] if [c] is neither [string] nor [binary], or [ty]
       is another type. *)
@@ -730,9 +734,8 @@ module Column : sig
       - a float in the fewest significant digits that read back to it at its
         type's width, without an exponent from [1e-7] up to [1e21] ([150],
         [0.0015], [-0], [1e+21]), or [nan], [inf] or [-inf];
-      - a datetime with the fewest fraction digits that are exact, and [Z] when
-        its type has a zone, every tick of its unit included, past
-        {!Time.Date}'s years;
+      - a datetime with the fewest fraction digits that are exact, and [Z] for
+        an instant, every tick of its unit included, past {!Time.Date}'s years;
       - an integer in full, past OCaml's [int] included.
 
       Raises [Invalid_argument] if [c]'s type is not one {!parse} reads. *)
@@ -844,7 +847,7 @@ val pp_with : limits -> Format.formatter -> t -> unit
     show with one number of decimals, the fewest, up to six, that give each
     shown value six significant digits, or in scientific notation when a shown
     value needs it. Other values show in the text that {!Column.parse} reads,
-    such as [2024-03-15T09:30:00.5Z] for a zoned datetime; durations and clocks
+    such as [2024-03-15T09:30:00.5Z] for an instant; durations and clocks
     as {!Time.Span.pp} formats them, lists as OCaml lists, and records and
     tensors as [<record>] and [<tensor>].
 
@@ -1125,6 +1128,9 @@ module Expr : sig
   val instant : Time.instant -> (Time.instant, 's) t
   (** [instant t] is the instant [t]. *)
 
+  val wall : Time.wall -> (Time.wall, 's) t
+  (** [wall t] is the wall clock [t]. *)
+
   val span : Time.span -> (Time.span, 's) t
   (** [span d] is the span [d]. *)
 
@@ -1247,14 +1253,14 @@ module Expr : sig
         and gives [0] and [1];
       - between [string] and categorical types: the text is kept, and a
         categorical takes only the strings of its dictionary;
-      - between datetimes that both have a zone, or both have none, between
-        durations, and between clocks: values are kept, and a value that is not
-        a whole number of the new unit is a data error;
+      - between datetimes of one clock, between durations, and between clocks:
+        values are kept, and a value that is not a whole number of the new unit
+        is a data error;
       - between clocks and durations: a time of day is its span from midnight,
         converted as between durations, and a duration outside \[[0], 1 day) is
         a data error for a clock;
-      - between dates and datetimes without a zone: a date becomes the datetime
-        of its midnight, and a datetime becomes the day it falls on, so
+      - between dates and wall-clock datetimes: a date becomes the datetime of
+        its midnight, and a datetime becomes the day it falls on, so
         [1969-12-31T23:59:59] becomes [1969-12-31]. A value out of the new
         type's range is a data error;
       - lists element by element, records with the same field names field by
@@ -1263,9 +1269,10 @@ module Expr : sig
 
       Any other pair is a problem that names the function that converts it, if
       one does: {!Str.parse} and {!Temporal.parse} for text to values, and
-      {!Temporal.format} for dates, clocks and datetimes to text. A datetime
-      with a zone holds instants, which fall on a day only in a zone, so it
-      casts neither to nor from a date. [a] needs a column type. *)
+      {!Temporal.format} for dates, clocks and datetimes to text, and
+      {!Temporal.wall} or {!Temporal.localize} between the clocks. An instant
+      falls on a day only in a zone, so it casts neither to nor from a date.
+      [a] needs a column type. *)
 
   type fn = { f : 'a 'b. ('a, 'b, Nx.host) Nx.t -> ('a, 'b, Nx.host) Nx.t }
   (** The type for elementwise nx functions of one argument that preserve its
@@ -1667,21 +1674,37 @@ module Expr : sig
     (** [parse ty a] is the value of type [ty] that the text [a] writes, in the
         forms that [talon.csv] reads: [true] and [false]; decimal integers with
         an optional sign; decimal or scientific floats, [inf], [-inf] and [nan];
-        ISO 8601 dates; and ISO 8601 datetimes, with an offset or [Z] exactly
-        when [ty] has a zone. Any other text, and a value that [ty] does not
-        hold, is a data error. [ty] is a [bool], integer, float, [date] or
-        [datetime] type, or a categorical, which takes only the strings of its
-        dictionary. *)
+        ISO 8601 dates; and ISO 8601 datetimes, with an offset or [Z] for an
+        instant and without one for a wall clock. Any other text, and a value
+        that [ty] does not hold, is a data error. [ty] is a [bool], integer,
+        float, [date] or [datetime] type, or a categorical, which takes only the
+        strings of its dictionary. *)
   end
 
   (** {1:time Time} *)
 
   (** Temporal values.
 
-      Dates, clocks and datetimes without a zone are wall-clock values: their
-      calendar is read as it is. A datetime with a zone holds instants, whose
-      calendar talon reads on the wall clock of the zone [UTC] only: the
-      calendar of another zone is a problem. *)
+      A datetime column holds instants or wall clocks ({!Time.section-stamps}),
+      and a zone appears only as the argument of the operations that convert
+      between them: {!wall} and {!localize}. Calendar operations read wall
+      clocks as they are, with no zone: {!field}, {!floor} and {!offset} take
+      wall clocks, dates and clocks, and an instant is a problem that names
+      {!wall}, except that {!floor} and {!offset} also move an instant by an
+      exact step, which reads no calendar.
+
+      A zone's clock can repeat or skip a reading. Where it is set back, the
+      readings of a {e fold} occur twice, on the offset before the change and
+      then on the one after. Where it is set forward, the readings of a
+      {e gap} never occur, and a reading there is read on either offset. A
+      {e policy} says what {!localize} does with such a reading:
+      - [`Earlier] is the earlier of the two instants: a fold's first
+        occurrence, and a gap's reading on the offset after the gap, the
+        reading moved back by the gap's length;
+      - [`Later] is the later instant: a fold's second occurrence, and a gap's
+        reading on the offset before the gap, the reading moved forward by the
+        gap's length;
+      - [`Null] is null, and [`Fail] a data error naming the reading. *)
   module Temporal : sig
     val add : ('a, 's) t -> (Time.span, 's) t -> ('a, 's) t
     (** [add a d] is [a] advanced by [d], of [a]'s type: a datetime, a duration
@@ -1715,25 +1738,75 @@ module Expr : sig
 
     val field : field -> ('a, 's) t -> (int, 's) t
     (** [field f a] is the field [f] of [a], as [int64]:
-        [field `Year orderdate]. [a] is a date, a clock or a datetime. A date
+        [field `Year orderdate]. [a] is a date, a clock or a wall clock. A date
         has no time-of-day field and a clock no calendar field: asking for one
         is a problem. *)
 
     val floor : Time.step -> ('a, 's) t -> ('a, 's) t
-    (** [floor step a] is the first instant of the period of [step] that holds
+    (** [floor step a] is the first value of the period of [step] that holds
         [a], a date or a datetime. Periods are counted from 1970-01-01 00:00,
         and weeks from Monday 1970-01-05. A date floors by calendar steps only,
-        and a datetime by exact steps of whole ticks of its unit. Its type is
-        [a]'s.
+        and a datetime by exact steps of whole ticks of its unit; a calendar
+        step floors a wall clock only. Its type is [a]'s.
 
         Raises [Invalid_argument] if [step] is not positive. *)
 
     val offset : Time.step -> ('a, 's) t -> ('a, 's) t
     (** [offset step a] is [a], a date or a datetime, moved by [step]: an exact
-        step moves the instant, and a calendar step moves the wall clock; a day
-        of the month past the month's end becomes its last day. A date moves by
-        calendar steps only, and a datetime by exact steps of whole ticks of its
-        unit. Its type is [a]'s. *)
+        step adds ticks, and a calendar step moves the calendar date of a wall
+        clock; a day of the month past the month's end becomes its last day. A
+        date moves by calendar steps only, a wall clock by either, and an
+        instant by exact steps of whole ticks of its unit. Its type is [a]'s. *)
+
+    val wall : Tz.zone -> (Time.instant, 's) t -> (Time.wall, 's) t
+    (** [wall z a] is the reading of [z]'s wall clock at the instant [a], in
+        [a]'s unit: [t + offset] for the offset of [z] at [t] ({!Tz.offset_s}).
+        A result out of range is a data error. *)
+
+    (** The type for what {!localize} and {!localize_ordered} do with a reading
+        that a zone repeats or skips, as the section's preamble describes. *)
+    type policy = [ `Earlier | `Later | `Null | `Fail ]
+
+    val localize :
+      Tz.zone ->
+      ambiguous:policy ->
+      gap:policy ->
+      (Time.wall, 's) t ->
+      (Time.instant, 's) t
+    (** [localize z ~ambiguous ~gap a] is the instant at which [z]'s wall clock
+        reads [a], in [a]'s unit: [t - o] for the offset [o] of the reading,
+        {!Tz.local}'s [Unique o]. A reading that [z] repeats follows
+        [ambiguous], and one that it skips [gap], as the section's preamble
+        defines. [`Later] on a gap is the time before the gap shifted forward,
+        [t - before] in {!Tz.local}'s terms. [localize z ~ambiguous ~gap
+        (wall z a)] is [a] where [z] repeats no reading. An instant out of range
+        is a data error. *)
+
+    val localize_ordered :
+      Tz.zone ->
+      ambiguous:policy ->
+      gap:policy ->
+      (Time.wall, row) t ->
+      (Time.instant, row) t
+    (** [localize_ordered z ~ambiguous ~gap a] is {!localize}, with the rows of
+        each frame ({!section-frames}) deciding which reading of a fold they
+        are, as a logger's rows do: its frame's order must be time order.
+
+        Rows that are consecutive in the frame and that repeat one fold are
+        read together: the rows before the first row that is strictly below its
+        predecessor read as the fold's first pass, and that row and the later
+        ones as the second. When two rows are a fold's only rows and are
+        equal, the first reads as the first pass and the second as the second
+        pass, a logger writing the repeated hour once each. A fold whose rows
+        show no such step says nothing about the pass, and each of its rows
+        follows [ambiguous], including a duplicate reading with no second pass.
+
+        Order finds the right pass only when the data's cadence is at most the
+        fold's length: a cadence above it never shows the clock stepping back,
+        so the rows follow [ambiguous]. A row moved by [gap] and a null leave
+        the previous instant of the frame unchanged, an equal instant is
+        allowed, and a row whose instant is before the frame's previous instant
+        is a data error. *)
 
     val parse : string -> 'a Type.t -> (string, 's) t -> ('a, 's) t
     (** [parse fmt ty a] reads the text [a] in the format [fmt] as a value of
@@ -1743,17 +1816,17 @@ module Expr : sig
         offset) and [%%]; other characters match themselves. A year is four
         digits, or a sign and at least four digits, as {!Time.Date.pp} writes
         it. A field that [fmt] leaves out is that of 1970-01-01 00:00:00; a date
-        reads the day alone, and a clock the time of day. A datetime with [%z]
-        needs a zone in [ty], and one without needs none. Text that does not
+        reads the day alone, and a clock the time of day. An instant needs
+        [%z] in [fmt], and a wall clock takes none. Text that does not
         match, and a value that [ty] does not hold, are data errors.
 
         Raises [Invalid_argument] if [fmt] holds another directive. *)
 
     val format : string -> ('a, 's) t -> (string, 's) t
     (** [format fmt a] writes [a], a date, datetime or clock, in the format
-        [fmt], as {!parse} reads it: a datetime in UTC, a clock on 1970-01-01;
-        [%f] writes nine digits and [%z] writes [Z]. [%z] needs a datetime with
-        a zone.
+        [fmt], as {!parse} reads it: a datetime as its clock reads, a clock on
+        1970-01-01; [%f] writes nine digits and [%z] writes [Z]. [%z] needs an
+        instant.
 
         Raises [Invalid_argument] as {!parse} does. *)
   end
@@ -1809,8 +1882,12 @@ module Col : sig
   (** [date name] is [v Kind.date name]. *)
 
   val instant : string -> (Time.instant, Expr.row) Expr.t
-  (** [instant name] is [v Kind.instant name], which binds every datetime type.
-  *)
+  (** [instant name] is [v Kind.instant name], which binds every datetime type
+      of instants. *)
+
+  val wall : string -> (Time.wall, Expr.row) Expr.t
+  (** [wall name] is [v Kind.wall name], which binds every datetime type of wall
+      clocks. *)
 
   val span : string -> (Time.span, Expr.row) Expr.t
   (** [span name] is [v Kind.span name], which binds every duration and clock

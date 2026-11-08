@@ -38,8 +38,8 @@ let scalars =
       Any (clock S);
       Any (clock Ns);
       Any (duration Ms);
-      Any (datetime Ns);
-      Any (datetime ~zone:"UTC" S);
+      Any (wall Ns);
+      Any (instant S);
       Any (tensor Nx.float32 [| 2 |]);
       Any (tensor Nx.int8 [| 2; 0 |]);
       Any (tensor Nx.bool [| 1; 2 |]);

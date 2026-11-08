@@ -48,6 +48,30 @@ An integer where a float belongs:
          but an expression was expected of type (float, 'b) Talon.Expr.t
          Type int is not compatible with type float
 
+A wall clock and an instant do not mix: a literal of the other clock does not
+compile against a column, and each conversion takes one clock:
+
+  $ compile wall_literal.ml
+  Error: This expression has type (Talon.Time.instant, 'a) Talon.Expr.t
+         but an expression was expected of type
+           (Talon.Time.wall, Talon.Expr.row) Talon.Expr.t
+         Type Talon.Time.instant = Talon.Time.utc Talon.Time.stamp
+  $ compile instant_literal.ml
+  Error: This expression has type (Talon.Time.wall, 'a) Talon.Expr.t
+         but an expression was expected of type
+           (Talon.Time.instant, Talon.Expr.row) Talon.Expr.t
+         Type Talon.Time.wall = Talon.Time.local Talon.Time.stamp
+  $ compile localize_instant.ml
+  Error: This expression has type
+           (Talon.Time.instant, Talon.Expr.row) Talon.Expr.t
+         but an expression was expected of type
+           (Talon.Time.wall, 'a) Talon.Expr.t
+  $ compile wall_wall.ml
+  Error: This expression has type
+           (Talon.Time.wall, Talon.Expr.row) Talon.Expr.t
+         but an expression was expected of type
+           (Talon.Time.instant, 'a) Talon.Expr.t
+
 Literals generalize over shapes, a datetime has an hour and a date a year, and
 [each] takes a function of every type:
 

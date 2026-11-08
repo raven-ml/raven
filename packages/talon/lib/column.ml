@@ -131,7 +131,7 @@ let span_ticks ty : Type.unit_ -> Time.span scalar option = function
   | Us -> ticks ty Time.Span.of_us Time.Span.to_us
   | Ns -> cell Nx.int64 Time.Span.to_ns Time.Span.of_ns
 
-let instant_ticks ty : Type.unit_ -> Time.instant scalar option = function
+let stamp_ticks ty : Type.unit_ -> 'c Time.stamp scalar option = function
   | S -> ticks ty Time.of_s Time.to_s
   | Ms -> ticks ty Time.of_ms Time.to_ms
   | Us -> ticks ty Time.of_us Time.to_us
@@ -175,7 +175,7 @@ let scalar : type a. a Type.t -> a scalar option = function
           Option.get (Time.Date.of_days (Int32.to_int x)))
   | Clock u as ty -> span_ticks ty u
   | Duration u as ty -> span_ticks ty u
-  | Datetime { unit_; _ } as ty -> instant_ticks ty unit_
+  | Datetime { unit_; _ } as ty -> stamp_ticks ty unit_
   | String | Binary | List _ | Record _ | Tensor _ | Ext _ -> None
 
 (* Making columns *)

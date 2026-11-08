@@ -650,6 +650,11 @@ let offset b i stop =
       Some (if s = '-' then -o else o)
     end
 
+(* An instant's text has an offset or [Z]; a wall clock's has neither. *)
+let is_utc : type c. c Time.clock -> bool = function
+  | Utc -> true
+  | Local -> false
+
 let form ~zoned =
   invalid
     (if zoned then "not YYYY-MM-DDThh:mm:ss with an offset"
@@ -844,8 +849,8 @@ let parse (Type.Any ty as any) c =
   | Float32 -> Result.map (cast Nx.float32) (floats (narrow single))
   | Float64 -> Result.map keep (floats float)
   | Date -> Result.map (cast Nx.int32) (of_int date)
-  | Datetime { unit_; zone } ->
-      Result.map keep (ints (datetime unit_ ~zoned:(zone <> None)))
+  | Datetime { unit_; clock } ->
+      Result.map keep (ints (datetime unit_ ~zoned:(is_utc clock)))
   | Categorical d ->
       let codes = Hashtbl.create (Iarray.length d) in
       Iarray.iteri (fun i s -> Hashtbl.add codes s i) d;
@@ -984,7 +989,7 @@ let add_datetime u ~zoned b ticks =
   end;
   if zoned then Buffer.add_char b 'Z'
 
-let pp_instant ~zoned ppf t =
+let pp_stamp ~zoned ppf t =
   let b = Buffer.create 32 in
   add_datetime Ns ~zoned b (Time.to_ns t);
   pp_text ppf (Buffer.contents b)
@@ -993,7 +998,7 @@ let pp : type a. a Type.t -> Format.formatter -> a -> unit =
  fun ty ppf v ->
   match (ty, Type.kind ty) with
   | Binary, _ -> pp_text ppf (v :> string)
-  | Datetime { zone; _ }, _ -> pp_instant ~zoned:(zone <> None) ppf v
+  | Datetime { clock; _ }, _ -> pp_stamp ~zoned:(is_utc clock) ppf v
   | (Clock _ | Duration _ | List _ | Record _ | Tensor _ | Ext _), k ->
       Type.pp_lit k ppf v
   | _, Bool -> Format.pp_print_bool ppf v
@@ -1029,8 +1034,8 @@ let fixed_writer : type a b c.
   | Date ->
       let v = ints () in
       fun b i -> add_date b (Int64.to_int v.(i))
-  | Datetime { unit_; zone } ->
-      let v = ints () and zoned = Option.is_some zone in
+  | Datetime { unit_; clock } ->
+      let v = ints () and zoned = is_utc clock in
       fun b i -> add_datetime unit_ ~zoned b v.(i)
   | _ -> err "Column.print: %a is not a type that Column.parse reads" Type.pp ty
 
@@ -1080,7 +1085,7 @@ let span_of_ticks : Type.unit_ -> int64 -> Time.span option = function
   | Us -> Time.Span.of_us
   | Ns -> fun n -> Some (Time.Span.of_ns n)
 
-let instant_of_ticks : Type.unit_ -> int64 -> Time.instant option = function
+let stamp_of_ticks : Type.unit_ -> int64 -> 'c Time.stamp option = function
   | S -> Time.of_s
   | Ms -> Time.of_ms
   | Us -> Time.of_us
@@ -1122,9 +1127,9 @@ and pp_row : type a. a Type.t -> Column.t -> int -> Format.formatter -> unit =
           pp_ticks ty Time.Date.pp of_days ppf (row_int64 x i)
       | (Clock u | Duration u), _ ->
           pp_ticks ty Time.Span.pp (span_of_ticks u) ppf (row_int64 x i)
-      | Datetime { unit_; zone }, _ ->
-          let pp_value = pp_instant ~zoned:(zone <> None) in
-          pp_ticks ty pp_value (instant_of_ticks unit_) ppf (row_int64 x i)
+      | Datetime { unit_; clock }, _ ->
+          let pp_value = pp_stamp ~zoned:(is_utc clock) in
+          pp_ticks ty pp_value (stamp_of_ticks unit_) ppf (row_int64 x i)
       | _, Bool -> pp ty ppf (row_int64 x i <> 0L)
       | _, Int -> pp ty ppf (Int64.to_int (row_int64 x i))
       | _, Float -> pp ty ppf (row_float x i)
