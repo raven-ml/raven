@@ -566,6 +566,10 @@ let unsigned_of (dt : Dtype.t) =
 let pm_defined_div_shift =
   let zero = Dtype.Value.of_int 0 in
   let reaches v (lo, hi) = Dtype.Value.(lo <= v && v <= hi) in
+  (* The division's constants are stacks of its lanes: a quotient by a
+     constant 0 folds to its value at 0, which a store then reads whole, and a
+     store, unlike an elementwise operation or an index, does not read a scalar
+     expanded to its lanes as the scalar. *)
   let not_zero d = alu d Op.Cmpne [ vconst_like d (`Int Bigint.zero) ] in
   let nonzero d = where (not_zero d) d (vconst_like d (`Int Bigint.one)) in
   (* [nonzero d], which bounds cannot tell from 0 *)
