@@ -91,7 +91,10 @@ let histogram (type a b d) ?bins (v : (a, b, d) Nx.t) =
       Nx.broadcast_to [| groups; len |]
         (Nx.reshape [| groups; 1 |] (range v groups))
     in
-    let count = Nx.histogram [ (range v (groups + 1), group); (e, v) ] in
+    let count =
+      Nx.cast Nx.float64
+        (Nx.histogram [ (range v (groups + 1), group); (e, v) ])
+    in
     let total = Nx.sum ~axes:[ 1 ] ~keepdims:true count in
     let density = Nx.div (Nx.div count total) (Nx.sub x2 x) in
     { x; x2; count = Nx.reshape out count; density = Nx.reshape out density }

@@ -4490,19 +4490,16 @@ let quantile (type s d) ?axis qs (x : (float, s, d) t) : (float, s, d) t =
     (Array.init r (fun i -> if i = 0 then a else if i <= a then i - 1 else i))
     y
 
-(* Each coordinate's bin, by a search among its edges, the last edge folded into
-   the last bin and any other point outside sent to [-1]; the cells' flat
-   positions; one adding scatter. *)
-let histogram (type s d) ?weights
-    (dims : ((float, s, d) t * (float, s, d) t) list) : (float, s, d) t =
-  let by = "Nx.histogram" in
+(* The coordinates [dims], checked, lent to the cells' computation, and
+   their shape. [others] are the operands besides them, checked alive with
+   them. *)
+let binned (type s d) ~by others
+    (dims : ((float, s, d) t * (float, s, d) t) list) =
   let operands =
-    List.concat_map (fun (e, x) -> [ Value.Any e; Value.Any x ]) dims
-    @ List.map (fun w -> Value.Any w) (Option.to_list weights)
+    List.concat_map (fun (e, x) -> [ Value.Any e; Value.Any x ]) dims @ others
   in
   alive_all ~by operands;
   let dims = List.map (fun (e, x) -> (Donate.lent e, Donate.lent x)) dims in
-  let weights = Option.map Donate.lent weights in
   let points =
     match dims with
     | [] -> invalid_argf "%s: no dimension" by
@@ -4516,12 +4513,13 @@ let histogram (type s d) ?weights
         invalid_argf "%s: coordinates %a and %a differ in shape" by pp_value x
           pp_shape points)
     dims;
-  Option.iter
-    (fun w ->
-      if shape w <> points then
-        invalid_argf "%s: weights %a for coordinates %a" by pp_value w pp_shape
-          points)
-    weights;
+  (dims, points)
+
+(* Each point's cell, as its flat position among the cells, [-1] for a point
+   outside them, and the number of bins along each dimension. A coordinate's
+   bin is found by a search among its edges, the last edge folded into the
+   last bin and any other point outside sent to [-1]. *)
+let cells ~by dims =
   let bin (e, x) =
     let m = Prim.dim e 0 in
     let last =
@@ -4550,22 +4548,32 @@ let histogram (type s d) ?weights
     | [] -> assert false
   in
   let bins = Array.of_list (List.map (fun (e, _) -> Prim.dim e 0 - 1) dims) in
+  (Eval.reshape ~by [| numel flat |] flat, bins)
+
+(* The cells' sums of [updates], one per point, by one adding scatter. *)
+let tally (type w r d) ~by flat bins (updates : (w, r, d) t) : (w, r, d) t =
+  let dt = dtype updates in
   let cells = Array.fold_left ( * ) 1 bins in
-  let flat = Eval.reshape ~by [| numel flat |] flat in
-  let dt = dtype (snd (List.hd dims)) in
-  let h =
-    match weights with
-    | None ->
-        cast_by ~by dt
-          (scattered ~by Add flat
-             (fill ~by (placement flat) D.Int64 [| numel flat |] 1L)
-             (fill ~by (beside flat) D.Int64 [| cells |] 0L))
-    | Some w ->
-        scattered ~by Add flat
-          (Eval.reshape ~by [| numel w |] w)
-          (fill ~by (beside flat) dt [| cells |] 0.)
-  in
-  Eval.reshape ~by bins h
+  let zeros = fill ~by (beside flat) dt [| cells |] (D.zero dt) in
+  let updates = Eval.reshape ~by [| numel flat |] updates in
+  Eval.reshape ~by bins (scattered ~by Add flat updates zeros)
+
+let histogram dims =
+  let by = "Nx.histogram" in
+  let dims, _ = binned ~by [] dims in
+  let flat, bins = cells ~by dims in
+  tally ~by flat bins (fill ~by (placement flat) D.Int64 [| numel flat |] 1L)
+
+let weighted_histogram ~weights dims =
+  let by = "Nx.weighted_histogram" in
+  let dims, points = binned ~by [ Value.Any weights ] dims in
+  if D.is D.Boolean (dtype weights) then
+    invalid_argf "%s: boolean weights %a have no sum" by pp_value weights;
+  if shape weights <> points then
+    invalid_argf "%s: weights %a for coordinates %a" by pp_value weights
+      pp_shape points;
+  let flat, bins = cells ~by dims in
+  tally ~by flat bins (Donate.lent weights)
 
 (* Whole values and maps on the host *)
 

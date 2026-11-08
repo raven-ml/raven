@@ -3690,29 +3690,37 @@ val quantile :
     Raises [Invalid_argument] if a probability is outside [[0, 1]] or NaN, if
     [axis] is not an axis of [x], or if there is no element along it. *)
 
-val histogram :
-  ?weights:(float, 's, 'd) t ->
-  ((float, 's, 'd) t * (float, 's, 'd) t) list ->
-  (float, 's, 'd) t
+val histogram : ((float, 's, 'd) t * (float, 's, 'd) t) list -> 'd int64_t
 (** [histogram [ (e1, x1); …; (ed, xd) ]] counts points into the cells of the
     edges [e1] to [ed]: point [i] is [(x1.{i}, …, xd.{i})], one per element of
     the coordinates, which share one shape. The result has one axis per
     dimension, of [dim 0 ek - 1] bins; cell [(j1, …, jd)] counts the points
-    whose coordinate [xk] is in bin [jk] of [ek] for every [k].
+    whose coordinate [xk] is in bin [jk] of [ek] for every [k], exactly, as
+    {!count} does.
     - Bin [j] holds the coordinates from [ek.{j}] included to [ek.{j+1}]
       excluded; the last bin includes its right edge too. Coordinates compare as
       {!less} does, so [-0.] is [+0.].
     - A point outside the edges along a dimension, NaN included, is in no cell.
-    - Counts accumulate in [int64] and convert once to the dtype. With
-      [weights], of the coordinates' shape, a cell holds the sum of its points'
-      weights, as {!scatter}'s [Add] sums them.
 
     Edges must ascend; along edges that do not, a point lands in some cell or in
     none.
 
     Raises [Invalid_argument] if no dimension is given, if an edge vector is not
-    1-d of two or more edges, if the coordinates' shapes differ, or if [weights]
-    has another shape. *)
+    1-d of two or more edges, or if the coordinates' shapes differ. *)
+
+val weighted_histogram :
+  weights:('w, 'r, 'd) t ->
+  ((float, 's, 'd) t * (float, 's, 'd) t) list ->
+  ('w, 'r, 'd) t
+(** [weighted_histogram ~weights dims] is {!histogram}[ dims]'s cells, each
+    holding the sum of its points' weights in [weights]' dtype. [weights]
+    has the coordinates' shape, one weight a point. Each cell sums its
+    points' weights in C order into [0], as {!scatter}'s [Add] does, so a
+    narrow float sums in float32 and rounds once. A cell no point lands in
+    is [+0].
+
+    Raises [Invalid_argument] as {!histogram} does, if [weights] has another
+    shape than the coordinates, or if it is boolean. *)
 
 (** {1:windows Windows and segments}
 

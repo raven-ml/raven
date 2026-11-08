@@ -317,7 +317,9 @@ let law_batch c =
   let count = groups n (host h.count) in
   Array.iteri
     (fun g group ->
-      let row = Nx.histogram [ (e, f64 [| c.len |] group) ] in
+      let row =
+        Nx.cast Nx.float64 (Nx.histogram [ (e, f64 [| c.len |] group) ])
+      in
       equal floats ~msg:(Printf.sprintf "group %d" g) (host row) count.(g))
     (groups c.len values)
 

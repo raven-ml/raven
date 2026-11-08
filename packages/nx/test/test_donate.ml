@@ -2178,10 +2178,10 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
       c "histogram" 2 (fun d ->
           let edges = d 0 (Nx.add (x [| 3 |]) (Nx.arange_f dt 0. 3. 1.)) in
           show (Nx.histogram [ (edges, d 1 (x [| 6 |])) ]));
-      c "histogram" 3 (fun d ->
+      c "weighted_histogram" 3 (fun d ->
           let edges = d 0 (Nx.add (x [| 3 |]) (Nx.arange_f dt 0. 3. 1.)) in
           show
-            (Nx.histogram
+            (Nx.weighted_histogram
                ~weights:(d 2 (x [| 6 |]))
                [ (edges, d 1 (x [| 6 |])) ]));
       c ~consumes:true "rfft" 1 (fun d ->

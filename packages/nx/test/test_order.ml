@@ -1005,17 +1005,18 @@ let law_histogram (es, (xs, ys), ws) =
     xs;
   let dims = [ (f64 e1, f64 xs); (f64 e2, f64 ys) ] in
   equal ~msg:"weighted" (array float_exact) want
-    (Nx.to_array (Nx.histogram ~weights:(f64 ws) dims));
-  let counts = Array.make (n1 * n2) 0. in
+    (Nx.to_array (Nx.weighted_histogram ~weights:(f64 ws) dims));
+  let counts = Array.make (n1 * n2) 0L in
   Array.iteri
     (fun i x ->
       match (bin e1 x, bin e2 ys.(i)) with
-      | Some a, Some b -> counts.((a * n2) + b) <- counts.((a * n2) + b) +. 1.
+      | Some a, Some b ->
+          counts.((a * n2) + b) <- Int64.succ counts.((a * n2) + b)
       | _ -> ())
     xs;
   let h = Nx.histogram dims in
   equal ~msg:"shape" (array int) [| n1; n2 |] (Nx.shape h);
-  equal ~msg:"counts" (array float_exact) counts (Nx.to_array h)
+  equal ~msg:"counts" (array int64) counts (Nx.to_array h)
 
 let histogram_case =
   let open Gen in
@@ -1030,18 +1031,72 @@ let histogram_case =
 let test_histogram_cases () =
   let e = Nx.create Nx.float64 [| 4 |] [| 0.; 1.; 2.; 3. |] in
   let x = Nx.create Nx.float64 [| 7 |] [| 0.; 0.5; 1.; 3.; 3.5; nan; -0. |] in
-  equal (array float_exact) [| 3.; 1.; 1. |]
-    (Nx.to_array (Nx.histogram [ (e, x) ]));
+  equal (array int64) [| 3L; 1L; 1L |] (Nx.to_array (Nx.histogram [ (e, x) ]));
   let e16 = Nx.cast Nx.float16 e and x16 = Nx.cast Nx.float16 x in
-  equal (array float_exact) [| 3.; 1.; 1. |]
+  equal (array int64) [| 3L; 1L; 1L |]
     (Nx.to_array (Nx.histogram [ (e16, x16) ]));
+  (* Weights in their own dtype: integers, and float64 over float16
+     coordinates, whose sum float16 would round. *)
+  let w = Nx.create Nx.int32 [| 7 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l |] in
+  equal (array int32) [| 10l; 3l; 4l |]
+    (Nx.to_array (Nx.weighted_histogram ~weights:w [ (e16, x16) ]));
+  let w = Nx.create Nx.float64 [| 7 |] [| 1e-4; 0.; 1.; 0.; 1.; 0.; 1. |] in
+  equal (array float_exact) [| 1. +. 1e-4; 1.; 0. |]
+    (Nx.to_array (Nx.weighted_histogram ~weights:w [ (e16, x16) ]));
+  (* float16 weights sum in float32 and round once: 1 and 2^-11 twice make
+     1 + 2^-10, where each float16 addition would round to 1. *)
+  let h = Float.ldexp 1. (-11) in
+  let w = Nx.create Nx.float16 [| 7 |] [| 1.; h; 0.; 0.; 0.; 0.; h |] in
+  equal (array float_exact)
+    [| 1. +. Float.ldexp 1. (-10); 0.; 0. |]
+    (Nx.to_array (Nx.weighted_histogram ~weights:w [ (e16, x16) ]));
+  let c re im = { Complex.re; im } in
+  let w =
+    Nx.create Nx.complex64 [| 7 |]
+      [| c 1. 2.; c 3. (-1.); c 0. 5.; c 0. 0.; c 9. 9.; c 9. 9.; c 0. 0. |]
+  in
+  let z = Nx.to_array (Nx.weighted_histogram ~weights:w [ (e, x) ]) in
+  equal ~msg:"real parts" (array float_exact) [| 4.; 0.; 0. |]
+    (Array.map (fun z -> z.Complex.re) z);
+  equal ~msg:"imaginary parts" (array float_exact) [| 1.; 5.; 0. |]
+    (Array.map (fun z -> z.Complex.im) z);
+  (* int4 weights wrap: 7 + 7 is -2. *)
+  let w = Nx.create Nx.int4 [| 7 |] [| 7; 7; 1; -8; 3; 3; 0 |] in
+  equal (array int) [| -2; 1; -8 |]
+    (Nx.to_array (Nx.weighted_histogram ~weights:w [ (e, x) ]));
+  let empty = Nx.zeros Nx.float64 [| 0 |] in
+  equal (array int64) [| 0L; 0L; 0L |]
+    (Nx.to_array (Nx.histogram [ (e, empty) ]));
+  equal (array float_exact) [| 0.; 0.; 0. |]
+    (Nx.to_array (Nx.weighted_histogram ~weights:empty [ (e, empty) ]));
   invalid ~by:"Nx.histogram" (fun () ->
       Nx.histogram ([] : ((float, D.float64_elt, Nx.host) Nx.t * _) list));
   invalid ~by:"Nx.histogram" (fun () ->
       Nx.histogram [ (Nx.zeros Nx.float64 [| 1 |], x) ]);
   invalid ~by:"Nx.histogram" (fun () ->
       Nx.histogram [ (e, x); (e, Nx.zeros Nx.float64 [| 2 |]) ]);
-  invalid ~by:"Nx.histogram" (fun () -> Nx.histogram ~weights:e [ (e, x) ])
+  invalid ~by:"Nx.weighted_histogram" (fun () ->
+      Nx.weighted_histogram ~weights:e [ (e, x) ]);
+  invalid ~by:"Nx.weighted_histogram" (fun () ->
+      Nx.weighted_histogram ~weights:(Nx.zeros Nx.bool [| 7 |]) [ (e, x) ]);
+  invalid ~by:"Nx.weighted_histogram" (fun () ->
+      Nx.weighted_histogram ~weights:x
+        ([] : ((float, D.float64_elt, Nx.host) Nx.t * _) list))
+
+(* A count is exact whatever the coordinates' dtype: float16 holds every
+   integer only up to 2048, bfloat16 up to 256 and float8_e4m3fn up to 16,
+   so one more point in one bin tells a count rounded into the coordinates'
+   dtype. *)
+let test_histogram_narrow_counts () =
+  let count (type s) (dt : (float, s) Nx.dtype) n =
+    let e = Nx.cast dt (Nx.create Nx.float64 [| 2 |] [| 0.; 1. |]) in
+    let x = Nx.zeros dt [| n |] in
+    equal ~msg:(D.name dt) (array int64) [| Int64.of_int n |]
+      (Nx.to_array (Nx.cast Nx.int64 (Nx.histogram [ (e, x) ])))
+  in
+  count Nx.float16 2049;
+  count Nx.bfloat16 257;
+  count Nx.float8_e4m3fn 17
 
 let () =
   exit
@@ -1099,5 +1154,7 @@ let () =
            [
              prop "points counted into their cells" histogram_case law_histogram;
              test "cases" test_histogram_cases;
+             test "counts are exact in narrow coordinates"
+               test_histogram_narrow_counts;
            ];
        ])
