@@ -1730,6 +1730,34 @@ let at_where (type v s a) w (f : (v, s, a) over) (x : (v, s, Nx.Host.d) Nx.t) : 
       f.over (Nx.place (Nx.Placement.mesh mesh4 cuts) x)
   | Minor a -> f.over (Nx.place (Nx.Placement.mesh mesh4 [ (a, [ "b" ]) ]) x)
 
+(* Counts split or cut over devices, of [n] in [[-1, 3]], and a [size]. *)
+let counted_case =
+  let open Gen in
+  with_pp
+    (fun ppf (vs, w, size) ->
+      Format.fprintf ppf "[%s] at %a size %s"
+        (String.concat "; " (Array.to_list (Array.map Int32.to_string vs)))
+        pp_where w
+        (match size with None -> "-" | Some l -> string_of_int l))
+    (let* n = int_range 0 9 in
+     let* vs = array ~size:(constant n) (int32_range (-1l) 3l) in
+     let* w = where_of 1 in
+     let+ size = option (int_range 0 12) in
+     (vs, w, size))
+
+(* The positions of counts at any placement are their positions on one
+   device: the counts' scan, its last element and the scatter of the runs'
+   ends span the devices. *)
+let law_counted (vs, w, size) =
+  let n = Array.length vs in
+  let t = snd (List.hd (tiles w)) in
+  cover "a device of no count" (n > 0 && n < t);
+  cover "sized" (Option.is_some size);
+  let c = Nx.create D.Int32 [| n |] vs in
+  let expected = Nx.to_array (Nx.positions ?size c) in
+  let positions y = Nx.to_array (Nx.place Nx.Host.on (Nx.positions ?size y)) in
+  equal (array int64) expected (at_where w { over = positions } c)
+
 (* Balanced windows along an axis of [e] over [t], each its start and
    count: the first [e mod t] hold one more. *)
 let windows e t =
@@ -3773,6 +3801,9 @@ let placed =
         summed_case law_summed;
       test "a Set of cut updates keeps each target's last; cut positions move"
         test_scatter_cut_updates;
+      prop ~count:300
+        "the positions of counts at any placement are those on one device"
+        counted_case law_counted;
     ]
 
 let reductions =

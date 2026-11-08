@@ -591,33 +591,33 @@ let test_unique_many () =
 
 (* positions *)
 
-type count_case =
-  | Count_case : ('v, 's) D.t * 'v array * int option -> count_case
+(* How the counts lie: in order, reversed, every second element of a longer
+   array, or one element broadcast. *)
+type view = Contiguous | Reversed | Stepped | Broadcast
 
-let count_case =
-  let open Gen in
-  with_pp
-    (fun ppf (Count_case (dt, vs, size)) ->
-      Format.fprintf ppf "%s [%d] size %s" (D.name dt) (Array.length vs)
-        (match size with None -> "-" | Some l -> string_of_int l))
-    (let* size = option (int_range 0 12) in
-     let* n = int_range 0 8 in
-     one_of
-       [
-         (let+ vs = array ~size:(constant n) bool in
-          Count_case (D.Bool, vs, size));
-         (let+ vs = array ~size:(constant n) (int_range (-2) 3) in
-          Count_case (D.Int8, vs, size));
-         (let+ vs = array ~size:(constant n) (int_range 0 3) in
-          Count_case (D.Uint4, vs, size));
-         (let+ vs = array ~size:(constant n) (int32_range (-2l) 3l) in
-          Count_case (D.Int32, vs, size));
-         (let+ vs =
-            array ~size:(constant n)
-              (one_of [ int64_range 0L 3L; constant Int64.min_int ])
-          in
-          Count_case (D.Uint64, vs, size));
-       ])
+type count_case =
+  | Count_case : ('v, 's) D.t * 'v array * int option * view -> count_case
+
+let view_name = function
+  | Contiguous -> "contiguous"
+  | Reversed -> "reversed"
+  | Stepped -> "stepped"
+  | Broadcast -> "broadcast"
+
+(* [vs] as [view] lays them out. *)
+let counts_of (type v s) (dt : (v, s) D.t) (vs : v array) view =
+  let n = Array.length vs in
+  match view with
+  | Contiguous -> Nx.create dt [| n |] vs
+  | Reversed ->
+      let r = Array.init n (fun i -> vs.(n - 1 - i)) in
+      Nx.flip (Nx.create dt [| n |] r)
+  | Stepped ->
+      (* Each count beside another, read past by the step. *)
+      let at i = if i mod 2 = 0 then i / 2 else n - 1 - (i / 2) in
+      let w = Array.init (2 * n) (fun i -> vs.(at i)) in
+      Nx.slice Nx.[ Rs (0, 2 * n, 2) ] (Nx.create dt [| 2 * n |] w)
+  | Broadcast -> Nx.broadcast_to [| n |] (Nx.create dt [| 1 |] [| vs.(0) |])
 
 let count_of (type v s) (dt : (v, s) D.t) (v : v) =
   match dt with
@@ -628,14 +628,63 @@ let count_of (type v s) (dt : (v, s) D.t) (v : v) =
   | D.Uint64 -> if Int64.compare v 0L < 0 then 0 else Int64.to_int v
   | _ -> assert false
 
-let law_positions (Count_case (dt, vs, size)) =
-  let c = Nx.create dt [| Array.length vs |] vs in
+let count_case =
+  let open Gen in
+  let case (type v s) (dt : (v, s) D.t) (elt : v Gen.t) n =
+    let* view =
+      if n = 0 then of_list [ Contiguous; Reversed; Stepped ]
+      else of_list [ Contiguous; Reversed; Stepped; Broadcast ]
+    in
+    let* vs =
+      match view with
+      | Broadcast -> map (Array.make n) elt
+      | Contiguous | Reversed | Stepped -> array ~size:(constant n) elt
+    in
+    (* A size near the total, where the last end lands at or past it. *)
+    let total = Array.fold_left (fun t v -> t + count_of dt v) 0 vs in
+    let+ size =
+      frequency
+        [
+          (1, constant None);
+          (1, map Option.some (int_range 0 12));
+          (2, map (fun d -> Some (Stdlib.max 0 (total + d))) (int_range (-1) 1));
+        ]
+    in
+    Count_case (dt, vs, size, view)
+  in
+  with_pp
+    (fun ppf (Count_case (dt, vs, size, view)) ->
+      Format.fprintf ppf "%s [%d] %s size %s" (D.name dt) (Array.length vs)
+        (view_name view)
+        (match size with None -> "-" | Some l -> string_of_int l))
+    (let* n = int_range 0 8 in
+     one_of
+       [
+         case D.Bool bool n;
+         case D.Int8 (int_range (-2) 3) n;
+         case D.Uint4 (int_range 0 3) n;
+         case D.Int32 (int32_range (-2l) 3l) n;
+         case D.Uint64
+           (one_of [ int64_range 0L 3L; constant Int64.min_int ])
+           n;
+       ])
+
+let law_positions (Count_case (dt, vs, size, view)) =
   let n = Array.length vs in
+  let counts = Array.map (count_of dt) vs in
+  let total = Array.fold_left ( + ) 0 counts in
+  cover "empty" (n = 0);
+  cover "no index counted" (n > 0 && total = 0);
+  cover "every index counted"
+    (n > 0 && Array.for_all (fun k -> k > 0) counts);
+  cover "padded" (match size with Some l -> l > total | None -> false);
+  cover "cut short" (match size with Some l -> l < total | None -> false);
+  cover "sized to the total" (size = Some total && total > 0);
+  cover (view_name view) true;
   let want =
     List.concat
-      (List.mapi
-         (fun i v -> List.init (count_of dt v) (fun _ -> Int64.of_int i))
-         (Array.to_list vs))
+      (List.mapi (fun i k -> List.init k (fun _ -> Int64.of_int i))
+         (Array.to_list counts))
   in
   let want =
     match size with
@@ -644,9 +693,30 @@ let law_positions (Count_case (dt, vs, size)) =
         List.init l (fun j ->
             if j < List.length want then List.nth want j else Int64.of_int n)
   in
+  let c = counts_of dt vs view in
   equal (list int64) want (Array.to_list (Nx.to_array (Nx.positions ?size c)))
 
 let test_positions_cases () =
+  let bools vs = Nx.create Nx.bool [| Array.length vs |] vs in
+  equal ~msg:"empty" (array int64) [||]
+    (Nx.to_array (Nx.positions (bools [||])));
+  equal ~msg:"empty, sized" (array int64) [| 0L; 0L |]
+    (Nx.to_array (Nx.positions ~size:2 (bools [||])));
+  equal ~msg:"none holds" (array int64) [||]
+    (Nx.to_array (Nx.positions (bools [| false; false; false |])));
+  equal ~msg:"none holds, sized" (array int64) [| 3L; 3L |]
+    (Nx.to_array (Nx.positions ~size:2 (bools [| false; false; false |])));
+  equal ~msg:"all hold" (array int64) [| 0L; 1L; 2L |]
+    (Nx.to_array (Nx.positions (bools [| true; true; true |])));
+  equal ~msg:"all hold, sized 0" (array int64) [||]
+    (Nx.to_array (Nx.positions ~size:0 (bools [| true; true; true |])));
+  (* Counts whose sum passes int64's range, sized: the first positions. *)
+  let big = Nx.create Nx.int64 [| 3 |] [| Int64.max_int; Int64.max_int; 3L |] in
+  equal ~msg:"past int64, sized" (array int64) [| 0L; 0L; 0L; 0L; 0L |]
+    (Nx.to_array (Nx.positions ~size:5 big));
+  equal ~msg:"to int64's end, sized" (array int64) [| 0L; 0L; 0L |]
+    (Nx.to_array
+       (Nx.positions ~size:3 (Nx.create Nx.int64 [| 2 |] [| Int64.max_int; 1L |])));
   equal (array int64) [| 1L; 3L |]
     (Nx.to_array
        (Nx.positions (Nx.create Nx.bool [| 4 |] [| false; true; false; true |])));

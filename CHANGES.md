@@ -2352,6 +2352,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.positions`, and so `Nx.argwhere`, `Nx.extract` and masks, runs in five
+  passes where it ran ten, 0.35 to 0.6 of its instructions. With `~size`,
+  counts summing past int64's range now give the first positions.
 - **Breaking:** `Nx.histogram` returns exact `int64` counts; it rounded them
   into the coordinates' dtype, float16 past 2048 and bfloat16 past 256.
   Weighted sums are `Nx.weighted_histogram ~weights`, in the weights' dtype.

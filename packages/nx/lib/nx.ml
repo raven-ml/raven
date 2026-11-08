@@ -4204,37 +4204,42 @@ let unique ?size keys =
         in
         { g with first = cut g.first; counts = cut g.counts }
 
-(* Each index's run starts at the sum of the counts before it; a scatter of the
-   indices at their starts, a cumulative maximum along the result, and [n] past
-   the total. A negative count counts zero. *)
+(* Entry [j] is the number of indices whose run ends at or before [j]. The
+   inclusive sum of the counts is each index's end, a scatter adds one at
+   each end, and a sum along the result counts them. Past the total every
+   run has ended, which gives [n]; an end at [l] or past adds nothing. A
+   negative count counts zero.
+
+     counts 2 0 1, size 4:  ends 2 2 3,  added 0 0 2 1,  result 0 0 2 3 *)
 let positions_by ~by ?size c =
   if ndim c <> 1 then invalid_argf "%s: %a is not 1-d" by pp_value c;
   integer_or_boolean ~by (dtype c);
   sized ~by size;
   let n = Prim.dim c 0 in
-  let counts =
-    elementwise ~by D.Int64 [ Any c ] E.(maximum (cast D.Int64 (operand 0 c)) (i64 0))
+  let ends =
+    (* With [size], a count past it reads as [size], which keeps the first
+       [size] positions and the sum inside int64. *)
+    let count = E.(maximum (cast D.Int64 (operand 0 c)) (i64 0)) in
+    let count =
+      match size with Some l -> E.(minimum count (i64 l)) | None -> count
+    in
+    scan_along ~by Sum 0 (elementwise ~by D.Int64 [ Any c ] count)
   in
-  let total = reduce ~by Sum [| 0 |] counts in
-  let l = match size with Some l -> l | None -> length ~by total in
   let at = beside c in
-  let i = arange_by ~by at D.Int64 0 n 1 in
-  (* An index of no count goes to its own position below zero, which writes
-     nothing, so the targets are distinct. *)
-  let starts =
-    let ends = scan_along ~by Sum 0 counts in
-    let count = operand 1 counts in
-    let below = E.(i64 (-1) - operand 2 i) in
-    elementwise ~by D.Int64 [ Any ends; Any counts; Any i ]
-      E.(where (i64 0 < count) (operand 0 ends - count) below)
+  let l =
+    match size with
+    | Some l -> l
+    | None ->
+        (* The total, the last end, gathered, since a slice would read a cut
+           [ends] whole. With no index, position [-1] reads zero. *)
+        let last = fill ~by at D.Int64 [||] (Int64.of_int (n - 1)) in
+        length ~by (take_axis ~by 0 last ends)
   in
-  let runs =
-    scattered ~by ~unique:true Set starts i (fill ~by at D.Int64 [| l |] (-1L))
-  in
-  let starts = scan_along ~by Max 0 runs
-  and j = arange_by ~by at D.Int64 0 l 1 in
-  elementwise ~by D.Int64 [ Any starts; Any j; Any total ]
-    E.(where (operand 1 j < operand 2 total) (operand 0 starts) (i64 n))
+  (* The scatter adds into the zeros in place: writing them costs less than
+     copying a broadcast 0. *)
+  let ones = Eval.broadcast ~by [| n |] (fill ~by at D.Int64 [||] 1L)
+  and zeros = Donate.donate ~by (fill ~by at D.Int64 [| l |] 0L) in
+  scan_along ~by Sum 0 (scattered ~by Add ends ones zeros)
 
 let positions ?size c = positions_by ~by:"Nx.positions" ?size c
 

@@ -1333,6 +1333,12 @@ let groups1m () =
   on_host (Nx.Rng.randint ~key:(Nx.Rng.key 9) ~high:1000 [| n1m |])
 let quartiles = [| 0.25; 0.5; 0.75 |]
 
+(* 1M counts of 0 to 3 drawn once from a fixed key, as a join's matches of
+   each row: runs of positions longer than one. *)
+let counts1m () =
+  let c = Nx.Rng.randint ~key:(Nx.Rng.key 18) ~high:4 [| n1m |] in
+  on_host (Nx.cast D.Int64 c)
+
 let order_rows =
   Thumper.group "order"
     [
@@ -1352,6 +1358,8 @@ let order_rows =
         ~setup:(fun () -> on_host (Nx.bitcast D.Int64 (u1m64 ())))
         Nx.unique;
       Thumper.bench_with_setup "positions-bool-1M" ~setup:b1m Nx.positions;
+      Thumper.bench_with_setup "positions-i64-1M-counts" ~setup:counts1m
+        Nx.positions;
       Thumper.bench_with_setup "quantile-f64-1M-3" ~setup:u1m64
         (Nx.quantile quartiles);
       Thumper.bench_with_setup "histogram-f64-1M-100"
