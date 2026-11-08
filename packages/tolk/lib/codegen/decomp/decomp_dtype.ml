@@ -405,15 +405,25 @@ let rne v s =
 
 (* [x] as a float32 rounded to odd: towards zero, with the last bit set if bits
    were dropped. A narrow float rounded to nearest from it is [x] rounded to
-   nearest once. Only a source more precise than a float32 needs it; an integer
-   that rounds to the power of two past its type's range cannot be cast back,
-   and rounded up. *)
+   nearest once. Only a source more precise than a float32 needs it, and an
+   integer whose bounds lie within 2^24 is exact in one. The conversion to
+   float32 need only land on one of the two float32s around [x], as C11
+   6.3.1.4p2 and 6.3.1.5p1 and MSL 8.6, which allows rounding toward zero,
+   promise: its exact conversion back says which. An integer that lands on
+   the power of two past its type's range cannot be cast back, and rounded
+   up. *)
 let narrow x to_ =
   let src = dtype x in
+  let exact () =
+    let limit = Bigint.shift_left Bigint.one 24 in
+    Dtype.is_int src
+    && Dtype.Value.(`Int (Bigint.neg limit) <= vmin x && vmax x <= `Int limit)
+  in
   if
-    not
-      (Dtype.equal to_ Float32
-      && Dtype.mem src Dtype.[ Float64; Int32; Uint32; Int64; Uint64 ])
+    (not
+       (Dtype.equal to_ Float32
+       && Dtype.mem src Dtype.[ Float64; Int32; Uint32; Int64; Uint64 ]))
+    || exact ()
   then cast x to_
   else
     let y = cast x Float32 in

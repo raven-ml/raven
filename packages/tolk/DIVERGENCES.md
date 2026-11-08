@@ -1704,8 +1704,8 @@ Withdrawn: multi-device is out of scope, see README.
 - **Reason:** (e). A cast is IEEE's conversion, one rounding, in the IR's own
   types; the second rounding gives the wrong neighbour where the float32 lands
   on a tie of the narrow float. rune hands tolk only a float32 to cast to a
-  narrow float, rounding a more precise source to odd itself
-  (`Lower_arith.store_real`, `Lower_arith.float_odd`), so no raven call site
+  narrow float, rounding a more precise source to odd first with
+  `Decomp_dtype.narrow` (`Lower_arith.store_real`), so no raven call site
   reaches the rule.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `casts to
   bfloat16 › an integer or a double rounds once on the host`, for int64,

@@ -53,10 +53,16 @@ val f2f : ?sat:bool -> Ops.t -> Dtype.t -> Dtype.t -> Ops.t
 
 val narrow : Ops.t -> Dtype.t -> Ops.t
 (** [narrow x dt] is [x] cast to [dt], but for a {!Dtype.Float32} from a
-    {!Dtype.Float64} or an integer of 32 or 64 bits, more precise than a
+    {!Dtype.Float64} or an integer of 32 or 64 bits whose bounds
+    ({!Ops.vmin}, {!Ops.vmax}) do not lie within [2{^24}], more precise than a
     float32: then it is [x] rounded to odd, towards zero with the last bit set
     if bits were dropped, so that a narrow float rounded to nearest from it is
-    [x] rounded to nearest once. *)
+    [x] rounded to nearest once.
+
+    It needs only that the target's conversion to {!Dtype.Float32} lands on
+    one of the two float32 values around [x], as C11 6.3.1.4p2 and 6.3.1.5p1
+    and MSL 8.6, which allows rounding toward zero, promise; not that it
+    rounds to nearest. *)
 
 (** {1:passes Passes} *)
 
