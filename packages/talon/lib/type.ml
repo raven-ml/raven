@@ -169,27 +169,39 @@ let is_bare_byte c =
     || Char.code c = 0x7f
     || c = ',' || c = '[' || c = ']' || c = '"' || c = '\\')
 
+(* The bytes that need no escape go to the formatter as one string per run: a
+   source quotes its path each time it opens, and a string per code point cost
+   about 15 words a byte. *)
 let pp_quoted ppf s =
   let hex c = Format.fprintf ppf "\\x%02x" (Char.code c) in
-  let rec loop i =
-    if i < String.length s then
+  let flush start stop =
+    if stop > start then
+      Format.pp_print_string ppf (String.sub s start (stop - start))
+  in
+  let rec loop start i =
+    if i >= String.length s then flush start i
+    else
       let d = String.get_utf_8_uchar s i in
       if not (Uchar.utf_decode_is_valid d) then begin
+        flush start i;
         hex s.[i];
-        loop (i + 1)
+        loop (i + 1) (i + 1)
       end
-      else begin
-        (match s.[i] with
-        | ('"' | '\\') as c -> Format.fprintf ppf "\\%c" c
-        | c when Char.code c < 0x20 || Char.code c = 0x7f -> hex c
-        | _ ->
-            Format.pp_print_string ppf
-              (String.sub s i (Uchar.utf_decode_length d)));
-        loop (i + Uchar.utf_decode_length d)
-      end
+      else
+        let next = i + Uchar.utf_decode_length d in
+        match s.[i] with
+        | ('"' | '\\') as c ->
+            flush start i;
+            Format.fprintf ppf "\\%c" c;
+            loop next next
+        | c when Char.code c < 0x20 || Char.code c = 0x7f ->
+            flush start i;
+            hex c;
+            loop next next
+        | _ -> loop start next
   in
   Format.pp_print_char ppf '"';
-  loop 0;
+  loop 0 0;
   Format.pp_print_char ppf '"'
 
 let pp_name ppf n =

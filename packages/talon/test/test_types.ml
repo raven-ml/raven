@@ -1344,6 +1344,84 @@ let errors =
             |});
     ]
 
+(* Quoted strings *)
+
+(* [by_code_point ppf s] is the quoting written one code point at a time: a
+   double quote and a backslash take a backslash, a control byte and an invalid
+   byte print as [\xhh], and any other code point prints as itself. *)
+let by_code_point ppf s =
+  let hex c = Format.fprintf ppf "\\x%02x" (Char.code c) in
+  let rec loop i =
+    if i < String.length s then
+      let d = String.get_utf_8_uchar s i in
+      if not (Uchar.utf_decode_is_valid d) then (
+        hex s.[i];
+        loop (i + 1))
+      else
+        let n = Uchar.utf_decode_length d in
+        (match s.[i] with
+        | ('"' | '\\') as c -> Format.fprintf ppf "\\%c" c
+        | c when Char.code c < 0x20 || Char.code c = 0x7f -> hex c
+        | _ -> Format.pp_print_string ppf (String.sub s i n));
+        loop (i + n)
+  in
+  Format.pp_print_char ppf '"';
+  loop 0;
+  Format.pp_print_char ppf '"'
+
+(* [boxed pp s] is [pp] of [s] between break hints, at a margin narrower than
+   most strings, as a plan prints a name. *)
+let boxed pp s =
+  let b = Buffer.create 64 in
+  let ppf = Format.formatter_of_buffer b in
+  Format.pp_set_margin ppf 12;
+  Format.fprintf ppf "@[<hov 2>head@ %a@ tail@]@?" pp s;
+  Buffer.contents b
+
+let quotable =
+  let byte low high = Gen.map (String.make 1) (Gen.char_range low high) in
+  let piece =
+    Gen.frequency
+      [
+        (8, byte 'a' 'z');
+        (1, Gen.constant "\"");
+        (1, Gen.constant "\\");
+        (1, byte '\000' '\031');
+        (1, Gen.constant "\127");
+        (2, Gen.constant "\xc3\xa9");
+        (2, Gen.constant "\xe2\x82\xac");
+        (2, Gen.constant "\xf0\x9f\x98\x80");
+        (2, byte '\128' '\255');
+      ]
+  in
+  Gen.map (String.concat "") (Gen.list ~size:(Gen.int_range 0 40) piece)
+
+let law_quoted s =
+  let special c = c = '"' || c = '\\' || Char.code c < 0x20 || c = '\127' in
+  let decoded p =
+    let rec go i =
+      i < String.length s && (p (String.get_utf_8_uchar s i) || go (i + 1))
+    in
+    go 0
+  in
+  let valid = Uchar.utf_decode_is_valid in
+  cover "a byte to escape" (String.exists special s);
+  cover "an invalid byte" (decoded (fun d -> not (valid d)));
+  cover "a valid multi-byte scalar"
+    (decoded (fun d -> valid d && Uchar.utf_decode_length d > 1));
+  cover "no byte to escape" (s <> "" && not (String.exists special s));
+  equal string (boxed by_code_point s) (boxed Type.pp_quoted s)
+
+let quoted =
+  group "Type.pp_quoted"
+    [
+      test "escapes quotes, controls and invalid bytes" (fun () ->
+          equal string {|"a\"b\\c\x01é\xff\x7f"|}
+            (str Type.pp_quoted "a\"b\\c\001\xc3\xa9\xff\127"));
+      prop ~count:500 "prints as its code points do, one at a time" quotable
+        law_quoted;
+    ]
+
 let () =
   exit
     (run "types"
@@ -1365,6 +1443,7 @@ let () =
          common_cases;
          type_equal;
          type_pp;
+         quoted;
          schemas;
          errors;
        ])
