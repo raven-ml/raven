@@ -1281,19 +1281,30 @@ let pp_order_case ppf c =
          Format.fprintf ppf "%a%s" pp_view v (if a = Rig.Read then "r" else "w")))
     c.fixed
 
-let overlap v v' =
+(* Whether two views share a byte. *)
+let share_byte v v' =
   v.alloc = v'.alloc && v.length > 0 && v'.length > 0
   && v.first < v'.first + v'.length
   && v'.first < v.first + v.length
+
+(* Whether two views share memory, as rig orders it: a word, the [Rig.word]
+   bytes at a multiple of it from the allocation's first byte. *)
+let overlap v v' =
+  let lo v = v.first / Rig.word * Rig.word
+  and hi v = (v.first + v.length + Rig.word - 1) / Rig.word * Rig.word in
+  v.alloc = v'.alloc && v.length > 0 && v'.length > 0
+  && lo v < hi v'
+  && lo v' < hi v
 
 let nallocs = 3
 let alloc_bytes = 64
 
 let gen_order_case =
   let open Gen in
-  (* Views start and end on 8-byte steps, so that views often share or abut
-     their bounds; empty views overlap nothing. *)
-  let step = 8 in
+  (* Views start and end on 2-byte steps, so that views often share or abut
+     their bounds, or share a word and no byte; empty views overlap
+     nothing. *)
+  let step = 2 in
   let view length =
     let+ alloc = int_range 0 (nallocs - 1)
     and+ first =
@@ -1342,7 +1353,7 @@ let gen_order_case =
          | None, Some k -> Copy (View src, Slot k)
          | None, None ->
              let dst =
-               if overlap src dst then
+               if share_byte src dst then
                  { dst with alloc = (dst.alloc + 1) mod nallocs }
                else dst
              in
@@ -1566,15 +1577,23 @@ let order_law c =
   in
   cover "two views that share some bytes and differ"
     (List.exists
-       (fun v -> List.exists (fun v' -> v <> v' && overlap v v') views)
+       (fun v -> List.exists (fun v' -> v <> v' && share_byte v v') views)
+       views);
+  cover "two views that share a word and no byte"
+    (List.exists
+       (fun v ->
+         List.exists (fun v' -> overlap v v' && not (share_byte v v')) views)
        views);
   (* Unaddressed, each of the device's allocations is a space of its own, cut
-     at the bounds of the views of it: [m] ranges between them. *)
+     at the bounds of the views of it rounded out to words: [m] ranges between
+     them. *)
   let ranges a =
+    let w = Rig.word in
     let bounds =
       List.concat_map
         (fun v ->
-          if v.alloc = a && v.length > 0 then [ v.first; v.first + v.length ]
+          if v.alloc = a && v.length > 0 then
+            [ v.first / w * w; (v.first + v.length + w - 1) / w * w ]
           else [])
         views
     in

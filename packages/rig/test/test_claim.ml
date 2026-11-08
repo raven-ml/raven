@@ -120,26 +120,58 @@ let case =
                       (1, pair bool outside) ])
          bool)
   in
+  (* A donation and a read view that abut inside a word, which only their
+     word shares: [any] reaches a refusal that the word alone decides in few
+     cases. *)
+  let abut n =
+    bind (int_range 1 (n - 1)) (fun m ->
+        let m = if m mod Rig.word = 0 then m - 1 else m in
+        map
+          (fun ((l, raises), claimed) ->
+            {
+              n;
+              views = [ (0, m, Donate); (m, l, Read) ];
+              claimed;
+              outside = Inside;
+              raises;
+            })
+          (pair (pair (int_range 1 (n - m)) bool) bool))
+  in
   with_pp pp_case
     (bind (int_range 1 32) (fun n ->
-         bind (int_range 0 3) (fun k ->
-             if k = 0 then alone n else if k = 1 then many n else any n)))
+         bind (int_range 0 4) (fun k ->
+             if k = 0 then alone n
+             else if k = 1 then many n
+             else if k = 4 && n >= 2 then abut n
+             else any n)))
 
-let overlap (o, l, _) (o', l', _) = l > 0 && l' > 0 && o < o' + l' && o' < o + l
+(* Whether two views share memory: bytes of one word, the [Rig.word] bytes at
+   a multiple of it from the memory's first byte, which starts on one. *)
+let overlap (o, l, _) (o', l', _) =
+  let w = Rig.word in
+  let lo o = o / w * w and hi o l = (o + l + w - 1) / w * w in
+  l > 0 && l' > 0 && lo o < hi o' l' && lo o' < hi o l
+
+let share_byte (o, l, _) (o', l', _) =
+  l > 0 && l' > 0 && o < o' + l' && o' < o + l
 
 (* What [with_] must do: refuse when a donated view overlaps another claimed
    one; otherwise hold a donated view exclusive iff it spans the memory, nothing
    else claims it and it is not outside the claims. *)
+let refused ?(meet = overlap) c =
+  let claimed = List.filter (fun (_, _, r) -> r <> Skip) c.views in
+  let indexed = List.mapi (fun i v -> (i, v)) claimed in
+  let others i = List.filter (fun (j, _) -> j <> i) indexed in
+  List.exists
+    (fun (i, ((_, _, r) as v)) ->
+      r = Donate && List.exists (fun (_, w) -> meet v w) (others i))
+    indexed
+
 let expected c =
   let claimed = List.filter (fun (_, _, r) -> r <> Skip) c.views in
   let indexed = List.mapi (fun i v -> (i, v)) claimed in
   let others i = List.filter (fun (j, _) -> j <> i) indexed in
-  let refused =
-    List.exists
-      (fun (i, ((_, _, r) as v)) ->
-        r = Donate && List.exists (fun (_, w) -> overlap v w) (others i))
-      indexed
-  in
+  let refused = refused c in
   if refused then None
   else
     Some
@@ -185,6 +217,8 @@ let law c =
   in
   let e = expected c in
   cover "a donation refused" (e = None);
+  cover "a donation refused for a word it shares and no byte"
+    (refused c && not (refused ~meet:share_byte c));
   cover "a donation held exclusive"
     (Option.fold ~none:false ~some:(List.mem true) e);
   cover "a donation of all the memory held for reading"
@@ -208,13 +242,15 @@ let law c =
 
 (* Cases *)
 
-(* Donations that overlap each other are refused, with nothing else
-   claimed. *)
+(* Donations that share a word are refused, with nothing else claimed: views
+   that share a byte, or only a word. *)
 let test_donations_overlap () =
   let b = B.create Rig.host 16 in
   let view first length = B.view b ~first ~length in
   raises_match Exn.invalid_arg (fun () ->
       Claim.with_ ~read:[] ~donate:[ view 0 8; view 4 8 ] ignore);
+  raises_match Exn.invalid_arg (fun () ->
+      Claim.with_ ~read:[] ~donate:[ view 0 5; view 5 3 ] ignore);
   Claim.with_ ~read:[] ~donate:[ view 0 8; view 8 8 ] (fun c ->
       equal ~msg:"apart, neither spans" (pair bool bool) (false, false)
         (Claim.exclusive c (view 0 8), Claim.exclusive c (view 8 8)))

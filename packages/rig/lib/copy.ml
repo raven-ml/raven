@@ -887,7 +887,8 @@ let route fn ~waits src dst boxes =
    in the system for good: a file's write from its own mapping on macOS's
    APFS. *)
 let check fn src dst =
-  if Buffer.overlaps src dst then invalid_argf "Rig.%s: the buffers overlap" fn;
+  if Buffer.share_byte src dst then
+    invalid_argf "Rig.%s: the buffers overlap" fn;
   if
     Dev.is_io src.mem.dev <> Dev.is_io dst.mem.dev
     && src.mem.alloc == dst.mem.alloc

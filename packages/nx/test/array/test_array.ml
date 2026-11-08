@@ -815,6 +815,45 @@ let test_transfer_writes () =
   equal ~msg:"itself" (values D.Int4) [| 1; -1; -2; -3; 5; 6 |]
     (A.to_array base)
 
+(* Two windows of one uint8 array that share no byte, [(first, first', n)]:
+   the source from [first] and the destination from [first'], [n] bytes each,
+   in a 16-byte array, the destination up to 2 bytes after or before the
+   source, so often inside one of rig's words with it. *)
+let windows =
+  let open Gen in
+  let* n = int_range 1 5 in
+  let* first = int_range 0 (16 - n) in
+  let+ after = bool and+ gap = int_range 0 2 in
+  let fits f = f >= 0 && f + n <= 16 in
+  let later = first + n + gap and earlier = first - n - gap in
+  let first' =
+    if after && fits later then later
+    else if fits earlier then earlier
+    else first + n
+  in
+  (first, first', n)
+
+(* [transfer] between two windows of one array that share no byte stores the
+   source's elements into the destination, and leaves every other element:
+   windows that share a word of their memory and no byte included, on the
+   host and on an io device, whose memory the host does not address. *)
+let law_transfer_windows ((first, first', n), on_io) =
+  let bytes = Array.init 16 (fun i -> i + 1) in
+  let base = A.of_array D.Uint8 [| 16 |] bytes in
+  let base = if on_io then A.to_device (S.io_device ()) base else base in
+  let on_host x = if on_io then A.to_device Rig.host x else x in
+  let window first =
+    Option.get
+      (A.move (M.Slice [| { start = first; count = n; step = 1 } |]) base)
+  in
+  let w = Rig.word in
+  cover "windows that share a word and no byte"
+    ((first + n - 1) / w = first' / w || (first' + n - 1) / w = first / w);
+  A.transfer ~src:(window first) ~dst:(window first');
+  let expected = Array.copy bytes in
+  Array.blit bytes first expected first' n;
+  equal (values D.Uint8) expected (A.to_array (on_host base))
+
 (* Arrays of the byte-wide dtypes [dts] over drawn bytes, NaN payloads, non-0/1
    bools and every other pattern included, and a movement of them. *)
 let raw_of dts =
@@ -1976,6 +2015,10 @@ let tests =
           law_transfer_layouts;
         test "transfer writes its destination's elements alone"
           test_transfer_writes;
+        prop
+          "transfer between windows of one array that share no byte stores \
+           the source"
+          (Gen.pair windows Gen.bool) law_transfer_windows;
         prop "a bool reads true iff its byte is not zero"
           (raw_of [ D.Any D.Bool ]) law_bool_bytes;
         prop ~count:300

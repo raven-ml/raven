@@ -312,7 +312,10 @@ struct rig_side {
    process iff [local], all but its [device_memory]. */
 void rig_buffer_side(value b, int local, struct rig_side *s);
 
-/* Whether the bytes of [a] and [b] share one, as Rig.Buffer.overlaps
+/* The bytes of rig's word, by which it orders memory: Rig.word. */
+#define RIG_WORD_BYTES 4
+
+/* Whether the bytes of [a] and [b] share one, as rig_buffers_overlap
    answers. */
 int rig_sides_overlap(const struct rig_side *a, const struct rig_side *b);
 

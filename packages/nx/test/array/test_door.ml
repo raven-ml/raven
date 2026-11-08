@@ -495,7 +495,7 @@ let test_door_io_pages () =
   equal ~msg:"beside" answer A.Done (S.add (borrow_at 0) x (over 2));
   equal ~msg:"identical" answer A.Done (S.add (borrow_at 2) x (over 2))
 
-(* The door's overlap is Rig.Buffer.overlaps of the arrays' bytes, and its
+(* The door's overlap is Rig.Buffer.share_byte of the arrays' bytes, and its
    identity is one width and one first bit, wherever the bytes lie: views of
    an io memory, of its borrow, of a bigarray over its pages and of plain
    host memory, of uint16, uint8 and int4. *)
@@ -563,12 +563,12 @@ let law_door_overlaps =
     bytes o lo ((((o.offset + o.count) * o.bits) + 7) / 8 - lo)
   in
   fun (a, b) ->
-    let meet = B.overlaps (span a) (span b) in
+    let meet = B.share_byte (span a) (span b) in
     let first o = o.offset * o.bits in
     let identical =
       a.bits = b.bits && a.count = b.count
       && first a mod 8 = first b mod 8
-      && B.overlaps (bytes a (first a / 8) 1) (bytes b (first b / 8) 1)
+      && B.share_byte (bytes a (first a / 8) 1) (bytes b (first b / 8) 1)
     in
     cover "a pair the host does not address both of"
       (a.side = Io || b.side = Io);
@@ -808,7 +808,7 @@ let tests =
         test "an io memory overlaps its borrow and its pages' bigarrays"
           test_ocaml_door_io_pages;
         prop ~count:500
-          "overlap is Rig.Buffer.overlaps of the arrays' bytes, identity one \
+          "overlap is Rig.Buffer.share_byte of the arrays' bytes, identity one \
            width and one first bit"
           operands_gen law_door_overlaps;
         test "releases its claims when its function raises"

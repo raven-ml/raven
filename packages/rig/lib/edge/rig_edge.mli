@@ -490,7 +490,8 @@ module type Driver = sig
 
   val alloc : t -> memory -> int -> region option
   (** [alloc d m n] is [n] bytes of [d]'s memory [m], or [None] if [d] has
-      none. [n] is positive. Counted. *)
+      none. [n] is positive and a multiple of 4, [Rig.word], so the region
+      holds a buffer's bytes past its length up to a whole word. Counted. *)
 
   val free : t -> region -> unit
   (** [free d r] gives back [r], which is a region {!val-alloc} made, a
@@ -516,8 +517,10 @@ module type Driver = sig
   (** [map_host d p n] is a region of [d] over the [n] bytes of host memory at
       [p], or [None] if [d] does not map these pages, such as read-only ones.
       [p] starts a page and [n] is positive. rig calls it only where [d]
-      declares [maps_host]. The memory must stay mapped until the region is
-      freed ({!val-free}). Counted. *)
+      declares [maps_host]. The region must map the whole pages that hold
+      the [n] bytes, so that work reaches through it each word of the
+      allocation's last bytes ([Rig]'s Words section), and they must stay
+      mapped until the region is freed ({!val-free}). Counted. *)
 
   val dma : t -> region -> fn:string -> (dma, string) result
   (** [dma d r ~fn] is how the PCI function at the bus address [fn] of [d]'s
@@ -679,7 +682,7 @@ module type Io = sig
 
   val alloc : t -> int -> region option
   (** [alloc d n] is [n] new bytes of [d]'s memory, or [None] if [d] has no
-      room. [n] is positive.
+      room. [n] is positive and a multiple of 4, [Rig.word].
 
       Raises [Invalid_argument] if [d]'s memory is only what its library
       opens and hands to [Rig.Buffer.of_io], such as a disk's files.

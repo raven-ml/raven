@@ -109,7 +109,15 @@ val spans : t -> bool
 (** [spans b] is {!Rig.Buffer.spans}[ b]. *)
 
 val overlaps : t -> t -> bool
-(** [overlaps b b'] is {!Rig.Buffer.overlaps}[ b b']. *)
+(** [overlaps b b'] is {!Rig.Buffer.overlaps}[ b b']: whether they share a
+    word. *)
+
+val share_byte : t -> t -> bool
+(** [share_byte b b'] is {!Rig.Buffer.share_byte}[ b b']. *)
+
+val words : int -> int -> int * int
+(** [words a n] is [(lo, hi)], the [n] bytes from [a] rounded out to whole
+    words: [lo] the first word's start and [hi] the last word's end. *)
 
 val places : t -> (int * int) list
 (** [places b] is where [b]'s bytes lie, as [(space, first)]: the space and
@@ -117,8 +125,8 @@ val places : t -> (int * int) list
     outside the host's space whose pages the host maps, the host's space [0]
     and their host address. It is [[]] if [b] has no bytes. [overlaps b b']
     holds iff a place of [b] and one of [b'] share a space and their bytes,
-    [length b] and [length b'] of them, meet there. Pages mapped later add
-    a place and move none. *)
+    [length b] and [length b'] of them, rounded out to whole words of that
+    space, meet there. Pages mapped later add a place and move none. *)
 
 val space : t -> int
 (** [space b] is the space of [b]'s first place ({!places}). It allocates

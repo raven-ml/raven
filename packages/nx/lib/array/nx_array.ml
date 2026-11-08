@@ -719,9 +719,11 @@ let transfer_by fn ~src ~dst =
     in
     (* The door refuses a destination that shares a byte with the source
        unless the two are identical, as the host's blit does, and then the
-       transfer stores each element onto itself. *)
+       transfer stores each element onto itself. Bytes decide: two that share
+       only a word share memory, and are moved. *)
     let moved () =
-      if not (Buffer.overlaps (span_bytes src) (span_bytes dst)) then move ()
+      if not (Buffer.share_byte (span_bytes src) (span_bytes dst)) then
+        move ()
     in
     match door ~written:[| Any dst |] ~read:[| Any src |] moved () with
     | Done -> ()

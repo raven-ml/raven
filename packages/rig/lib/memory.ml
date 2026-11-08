@@ -436,6 +436,14 @@ let account (a : alloc) =
   | Host_budget -> Dev.host
   | Device_budget | No_budget -> a.owner
 
+(* The bytes of rig's word, by which it orders memory (rig.mli's Order). *)
+let word = 4
+
+(* [n] rounded up to whole words: the bytes rig asks a driver for, so that
+   the memory of a buffer of [n] bytes runs on to whole words, and that its
+   budget counts. [alloc_entry] refuses an [n] within a word of [max_int]. *)
+let whole n = (n + word - 1) land -word
+
 let take_device_room (d, n) =
   let l = d.live in
   l.used + n <= d.budget
@@ -446,12 +454,14 @@ let take_device_room (d, n) =
 
 (* Takes [n] bytes of the room of [budget] on [d], if it has them. *)
 let take_room d budget n =
+  let n = whole n in
   match budget with
   | Device_budget -> Dev.protect d take_device_room (d, n)
   | Host_budget -> heap_reserve n Dev.host.budget
   | No_budget -> true
 
 let give_room d budget n =
+  let n = whole n in
   match budget with
   | Device_budget ->
       let l = d.live in
@@ -464,7 +474,7 @@ let give_room d budget n =
 (* Gives back the room taken for memory that was never made. *)
 let refuse_room d budget n =
   match budget with
-  | Host_budget -> heap_refuse n
+  | Host_budget -> heap_refuse (whole n)
   | Device_budget | No_budget -> give_room d budget n
 
 (* Releases *)
@@ -573,7 +583,7 @@ let make_region (e : entry) =
   match e.backing with
   | Driver_memory ({ memory; region = Region c; _ } as b) -> (
       let module D = (val c.m) in
-      c.r <- D.alloc c.h memory e.bytes;
+      c.r <- D.alloc c.h memory (whole e.bytes);
       match c.r with
       | None -> ()
       | Some r -> (
@@ -586,7 +596,7 @@ let make_region (e : entry) =
               raise (D.Fault why)))
   | Io_memory { region = Io_region c; _ } ->
       let module I = (val c.m) in
-      c.r <- I.alloc c.h e.bytes
+      c.r <- I.alloc c.h (whole e.bytes)
   | Kept _ -> ()
 
 (* Makes the memory of [d]'s new entry [e] in a counted call, so an exception
@@ -880,7 +890,7 @@ let cache (e : entry) =
   end;
   c.entries.(n) <- e;
   c.n <- n + 1;
-  l.cached <- l.cached + e.bytes
+  l.cached <- l.cached + whole e.bytes
 
 (* Under the owner's lock: the latest entry of [c], which holds one, taken
    out of the cache. Its key stays bound. *)
@@ -889,7 +899,7 @@ let uncache l (c : cached) =
   let e = c.entries.(n) in
   c.entries.(n) <- no_entry;
   c.n <- n;
-  l.cached <- l.cached - e.bytes;
+  l.cached <- l.cached - whole e.bytes;
   e
 
 (* Puts [e] among its owner's retiring memory. The owner's lock is held. *)
@@ -1240,7 +1250,7 @@ let release_cache ?upto ~wait d =
       release_cache_if ~wait d (fun e ->
           owns e && !held > upto
           && begin
-            held := !held - e.bytes;
+            held := !held - whole e.bytes;
             true
           end)
 
@@ -1802,7 +1812,7 @@ let new_counted d kind n ((r, _) as s) =
     | e -> (
         match
           make_memory d e;
-          if budget = Host_budget && made_memory e then heap_made n
+          if budget = Host_budget && made_memory e then heap_made (whole n)
         with
         | () ->
             if made_memory e then e
@@ -1813,7 +1823,7 @@ let new_counted d kind n ((r, _) as s) =
         | exception x ->
             let bt = Printexc.get_raw_backtrace () in
             if not (made_memory e) then refuse_room d budget n
-            else if budget = Host_budget then heap_made n;
+            else if budget = Host_budget then heap_made (whole n);
             let_go_try s;
             Printexc.raise_with_backtrace x bt)
 
@@ -1845,14 +1855,15 @@ let laddered d kind n home =
       reclaiming d ~pool n (try_entry d kind n home)
 
 let alloc_entry d kind n home =
-  let kind = if kind = Mapped && n > d.budget then Pinned else kind in
+  let kind = if kind = Mapped && whole n > d.budget then Pinned else kind in
   let limit =
     match budget_of d kind with
     | Device_budget -> d.budget
     | Host_budget -> Dev.host.budget
     | No_budget -> max_int
   in
-  if n > limit then raise (Dev.Out_of_memory (d, n));
+  if n > max_int - word || whole n > limit then
+    raise (Dev.Out_of_memory (d, n));
   drain d;
   if kind <> Mapped then laddered d kind n home
   else
@@ -1927,6 +1938,9 @@ let host_buffer n =
   drain Dev.host;
   if n = 0 then host_records empty_keep (ba_address empty) 0
   else begin
+    (* What the C library is asked for, up to a page more ([heap_size] in
+       rig_heap.c), must fit an [int]. *)
+    if n > max_int - page then raise (Dev.Out_of_memory (Dev.host, n));
     heap_reserved n;
     let ba = host_bytes n in
     let addr = ba_address ba in

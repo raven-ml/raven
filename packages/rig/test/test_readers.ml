@@ -111,11 +111,15 @@ let views =
     (list ~size:(int_range 2 6)
        (triple (int_range 0 7) (int_range 0 32) (int_range 0 32)))
 
+(* Whether two spans' ranges, rounded out to whole words of their space,
+   meet. *)
 let shares (s, f, n) (s', f', n') =
-  n > 0 && n' > 0 && s = s' && f < f' + n' && f' < f + n
+  let w = Rig.word in
+  let lo f = f / w * w and hi f n = (f + n + w - 1) / w * w in
+  n > 0 && n' > 0 && s = s' && lo f < hi f' n' && lo f' < hi f n
 
-(* Two buffers share a byte iff their spans are in one space and their ranges
-   meet, as Buffer.overlaps says. *)
+(* Two buffers share memory iff their spans are in one space and their ranges
+   meet there once rounded out to words, as Buffer.overlaps says. *)
 let law_spans vs =
   let w = world () in
   let bs =
@@ -136,8 +140,8 @@ let law_spans vs =
         (fun j (i', b') ->
           if j > k then begin
             let o = B.overlaps b b' in
-            cover "views that share a byte" o;
-            cover "views of two buffers over one byte" (o && i <> i');
+            cover "views that share a word" o;
+            cover "views of two buffers over one word" (o && i <> i');
             equal ~msg:"overlaps" bool o (shares (place b) (place b'))
           end)
         bs)
@@ -157,7 +161,7 @@ let tests =
         test "host memory lies at host addresses" test_span_host;
         test "other memory lies in a space of its own, at offsets"
           test_span_device;
-        prop "spans share a byte as Buffer.overlaps says" views law_spans;
+        prop "spans share a word as Buffer.overlaps says" views law_spans;
       ];
   ]
 

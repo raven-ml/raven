@@ -146,11 +146,12 @@ let test_overlaps () =
   Rig.Claim.with_ ~read:[ wrapped ] ~donate:[ disjoint ] (fun _ -> ());
   equal ~msg:"inspection reuses the mapping" int 1 (count "pages" t)
 
-(* rig_buffers_overlap of two byte ranges answers as Buffer.overlaps of the
-   views over them, over buffers of every kind of place: host memory, a view
-   of it and a device's borrow of it; io memory, its views, a device's borrow,
-   the host borrow that maps its pages and a bigarray over those pages; memory
-   a free killed and memory made after it; an empty view. Besides any two
+(* rig_buffers_overlap of two byte ranges answers whether they share a byte,
+   and then Buffer.overlaps of the views over them holds, over buffers of
+   every kind of place: host memory, a view of it and a device's borrow of
+   it; io memory, its views, a device's borrow, the host borrow that maps its
+   pages and a bigarray over those pages; memory a free killed and memory
+   made after it; an empty view. Besides any two
    buffers, pairs put two ranges in one buffer, a borrow beside its memory,
    the dead buffer beside any, or the bigarray beside a buffer of the io
    memory, whose overlap only the cached host address shows. *)
@@ -204,12 +205,28 @@ let spans_overlap a (af, an) b (bf, bn) =
   && fa + af < fb + bf + bn
   && fb + bf < fa + af + an
 
-(* Whether two ranges share bytes, by Buffer.overlaps of their views where
-   both buffers are live. *)
-let reference a ra b rb =
-  let view b (first, bytes) = B.view b ~first ~length:bytes in
-  if B.dead a <> None || B.dead b <> None then spans_overlap a ra b rb
-  else B.overlaps (view a ra) (view b rb)
+(* Whether two ranges share bytes: by their spans in one space, and across
+   spaces by the host addresses of their bytes. A buffer outside the host's
+   space has one where it lies in the io memory whose pages [mapped], the host
+   borrow, maps: the address of [mapped]'s first byte, moved by the distance
+   between the two spans. *)
+let reference mapped a ra b rb =
+  let sa, _ = Support.Reader.span a and sb, _ = Support.Reader.span b in
+  if sa = sb || B.dead a <> None || B.dead b <> None then
+    spans_overlap a ra b rb
+  else
+    let address b =
+      let s, f = Support.Reader.span b in
+      let sm, fm = Support.Reader.span mapped in
+      if s = 0 then f
+      else if s = sm then Support.Reader.host mapped + (f - fm)
+      else 0
+    in
+    let x = address a and y = address b in
+    let (af, an), (bf, bn) = (ra, rb) in
+    x <> 0 && y <> 0 && an > 0 && bn > 0
+    && x + af < y + bf + bn
+    && y + bf < x + af + an
 
 let range_gen = Gen.pair (Gen.int_range 0 32) (Gen.int_range 0 32)
 
@@ -259,7 +276,7 @@ let overlap_law ((i, j), (ri, rj)) =
   let all = Lazy.force universe in
   let a = all.(i) and b = all.(j) in
   let ((af, an) as ra) = range a ri and ((bf, bn) as rb) = range b rj in
-  let expected = reference a ra b rb in
+  let expected = reference all.(2) a ra b rb in
   cover "overlapping" expected;
   cover "disjoint" (not expected);
   cover "disjoint slices of one buffer"
@@ -272,8 +289,18 @@ let overlap_law ((i, j), (ri, rj)) =
   cover "a part of a dead buffer"
     (i = freed_at && B.dead a <> None && an < B.length a);
   cover "an empty range" (an = 0 || bn = 0);
-  equal ~msg:"rig_buffers_overlap" bool expected
-    (Support.Reader.overlap a af an b bf bn)
+  let got = Support.Reader.overlap a af an b bf bn in
+  let msg =
+    Printf.sprintf "rig_buffers_overlap of %d [%d,+%d] and %d [%d,+%d]" i af an
+      j bf bn
+  in
+  equal ~msg bool expected got;
+  (* Bytes in common are a word in common. *)
+  if got && B.dead a = None && B.dead b = None then
+    equal ~msg:"Buffer.overlaps of the views" bool true
+      (B.overlaps
+         (B.view a ~first:af ~length:an)
+         (B.view b ~first:bf ~length:bn))
 
 (* Ranges at a buffer's bounds lie within it: an empty range at its end
    overlaps nothing, its last byte overlaps itself, and two halves of it share
@@ -880,7 +907,7 @@ let tests =
         test "an io span stays stable when its pages are published"
           test_span_stable;
         prop ~count:300
-          "rig_buffers_overlap of two ranges is Buffer.overlaps of their views"
+          "rig_buffers_overlap of two ranges is whether they share a byte"
           overlap_case overlap_law;
         test "rig_buffers_overlap of ranges at a buffer's bounds"
           test_overlap_bounds;

@@ -853,15 +853,19 @@ static size_t heap_page;
 #define MALLOC_ALIGN 16
 
 /* The bytes allocated for a buffer of [n] bytes starting on a multiple of
-   [align]: [align - MALLOC_ALIGN] more, to start on one, unless the C
-   library aligns it, as [malloc] does to MALLOC_ALIGN and [posix_memalign]
-   to a page (heap_malloc). Windows aligns nothing that [free] releases. */
+   [align]: [n] rounded up to whole words, which the buffer's memory runs on
+   to (rig.mli's Order), and [align - MALLOC_ALIGN] more, to start on one,
+   unless the C library aligns it, as [malloc] does to MALLOC_ALIGN and
+   [posix_memalign] to a page (heap_malloc). Windows aligns nothing that
+   [free] releases. The caller keeps [n] a page below the largest [intnat]
+   (Memory.host_buffer). */
 static size_t heap_size(size_t n, size_t align) {
-  if (align <= MALLOC_ALIGN) return n;
+  size_t whole = (n + RIG_WORD_BYTES - 1) & ~(size_t)(RIG_WORD_BYTES - 1);
+  if (align <= MALLOC_ALIGN) return whole;
 #ifndef _WIN32
-  if (align >= heap_page) return n;
+  if (align >= heap_page) return whole;
 #endif
-  return n + align - MALLOC_ALIGN;
+  return whole + align - MALLOC_ALIGN;
 }
 
 /* The alignment of a buffer of [n] bytes: a page from [heap_kept_from], so
@@ -978,20 +982,21 @@ static value heap_bigarray(void *base, void *data, size_t n) {
   return ba;
 }
 
-/* [n] bytes of the C library starting on a multiple of [align], or NULL;
-   [*base] is what [free] takes. A page comes from [posix_memalign] where
-   the host has one, a smaller [align] from an allocation [align -
-   MALLOC_ALIGN] bytes larger ([heap_size]): on fudge (Core Ultra 5 235,
-   glibc) [posix_memalign] of 8 bytes on 128 took 33 ns, [malloc] 5.5. */
+/* The [heap_size] bytes of the C library for [n] bytes starting on a
+   multiple of [align], or NULL; [*base] is what [free] takes. A page comes
+   from [posix_memalign] where the host has one, a smaller [align] from an
+   allocation [align - MALLOC_ALIGN] bytes larger: on fudge (Core Ultra 5
+   235, glibc) [posix_memalign] of 8 bytes on 128 took 33 ns, [malloc] 5.5. */
 static void *heap_malloc(size_t n, size_t align, void **base) {
-  if (align <= MALLOC_ALIGN) return *base = malloc(n);
+  size_t size = heap_size(n, align);
+  if (align <= MALLOC_ALIGN) return *base = malloc(size);
 #ifndef _WIN32
   if (align >= heap_page) {
-    if (posix_memalign(base, align, n) != 0) return *base = NULL;
+    if (posix_memalign(base, align, size) != 0) return *base = NULL;
     return *base;
   }
 #endif
-  char *p = malloc(heap_size(n, align));
+  char *p = malloc(size);
   *base = p;
   if (p == NULL) return NULL;
   return p + (align - (uintptr_t)p % align) % align;

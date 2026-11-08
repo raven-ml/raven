@@ -181,6 +181,13 @@ val size : alloc -> int
 (** [size a] is the number of [a]'s bytes: its bigarray's for host memory,
     its entry's otherwise. *)
 
+val word : int
+(** [word] is {!Rig.word}, the bytes of the unit rig orders memory by. *)
+
+val whole : int -> int
+(** [whole n] is [n] rounded up to a multiple of {!word}: the bytes rig asks
+    a driver for, and counts in a budget, for [n] bytes. *)
+
 val locate : region -> Rig_edge.location
 (** [locate r] is where [r] lies, as its driver states it. Raises
     [Invalid_argument] if [r]'s driver did not make it. *)

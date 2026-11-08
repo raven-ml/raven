@@ -1256,6 +1256,72 @@ let launches_conform (module G : Gpu) =
       (Array.map (fun x -> u32 ((2 * x) + g.c)) expected)
       (words (get dst) ~at:g.offset n)
 
+(* A launch through a view at an offset off a word stores every word that holds
+   a byte of the view, from the word that holds its first byte to the buffer's
+   memory's last whole word, which hold no other buffer's bytes: each buffer
+   keeps what its own launch stored. Each launch is a submit of its own, in
+   either order, so device order puts a later buffer's stores after an earlier
+   one's whichever lies first. Where the device maps host memory, a launch
+   through a borrow stores the last word of a host buffer that ends inside
+   it. *)
+let tails (module G : Gpu) =
+  let launcher = launcher (module G) in
+  fun () ->
+    G.with_shared @@ fun t ->
+    let l = launches_on launcher t in
+    let w = Rig.word in
+    let whole n = (n + w - 1) / w in
+    let made =
+      Array.of_list
+        (List.concat_map
+           (fun memory ->
+             List.map
+               (fun n -> filled ~memory t.d (String.make n '\000'))
+               [ 1; 3; 4; 5; 6; 7; 9; 255; 257 ])
+           [ B.Device; Pinned ])
+    in
+    let store i =
+      let b = made.(i) in
+      let k = i mod w mod B.length b in
+      let out = B.view b ~first:k ~length:(B.length b - k) in
+      let work =
+        ids l ~out
+          ~groups:(whole (B.length b), 1, 1)
+          ~threads:(1, 1, 1) ~offset:(-k) ~a:(i lsl 20) ~b:1 ~f:0.
+      in
+      submit t.d [ work ] ~uses:[ (out, Rig.Read_write) ]
+    in
+    let check order =
+      List.iter (fun i -> Rig.Point.wait (store i)) order;
+      Array.iteri
+        (fun i b ->
+          let n = B.length b in
+          let stored = le32s (whole n) (fun k -> (i lsl 20) + k) in
+          equal octets
+            ~msg:(strf "buffer %d of %d bytes" i n)
+            (String.sub stored 0 n) (get b))
+        made
+    in
+    let order = List.init (Array.length made) Fun.id in
+    check order;
+    check (List.rev order);
+    if (G.D.facts t.g).maps_host then begin
+      let n = 65537 in
+      let h = B.create Rig.host n in
+      B.blit_from_string (String.make n '\000') 0 h 0 n;
+      let out = require_some (B.borrow t.d h) in
+      let work =
+        ids l ~out ~groups:(1, 1, 1) ~threads:(1, 1, 1) ~offset:(n - 1)
+          ~a:0x5a ~b:0 ~f:0.
+      in
+      Rig.Point.wait (submit t.d [ work ] ~uses:[ (out, Rig.Read_write) ]);
+      let s = Bytes.create n in
+      B.blit_to_bytes h 0 s 0 n;
+      equal octets ~msg:"a borrowed host buffer's last byte"
+        (String.make (n - 1) '\000' ^ "\x5a")
+        (Bytes.to_string s)
+    end
+
 (* A launch whose grid or group has no size along an axis is refused before any
    value, and the device stays live. *)
 let empty_launches (module G : Gpu) =
@@ -2196,6 +2262,10 @@ let laws (module G : Gpu) =
         "a launch writes what its grid and parameters say, and a launch after \
          it reads that"
         geometry (launches_conform g);
+      test
+        "a launch stores each word that holds a byte of its buffer, into no \
+         other buffer"
+        (tails g);
       test "a launch of no size along an axis is refused" (empty_launches g);
       test "a device runs 1024 launches of 4 KiB of parameters at once"
         (largest_launches g);

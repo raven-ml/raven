@@ -467,12 +467,39 @@ val signaled : t -> int
     themselves. If two domains concurrently submit work on two devices that
     uses one allocation, and either work writes it, nothing makes either
     follow the other. Work and host access that start after both submits
-    have returned follow both. Bytes that both works write hold either
-    work's values or a mix of them. A program that needs one work to follow
-    the other orders the two, such as by starting the second submit after
-    the first has returned. In the same way, a wait orders the host after
-    the work submitted before it returns, and after nothing that another
-    domain submits later. On one device, device order orders all work. *)
+    have returned follow both. Where neither work writes a whole word
+    ({!section-words}) that holds bytes the other writes, bytes that both
+    works write hold either work's values or a mix of them; otherwise the
+    values of such a word are unspecified. A program that needs one work to
+    follow the other orders the two, such as by starting the second submit
+    after the first has returned. In the same way, a wait orders the host
+    after the work submitted before it returns, and after nothing that
+    another domain submits later. On one device, device order orders all
+    work. *)
+
+(** {2:words Words}
+
+    rig orders memory in {e words}. A word is the {!word} bytes that start
+    at a multiple of {!word} from the first byte of an allocation, or of the
+    host's address space for host memory. Two buffers {e share memory}
+    where they hold bytes of one word ({!Buffer.overlaps}), and rule 2 and
+    the claims ({!section-claims}) order them as one. A copy refuses only
+    buffers that share a byte ({!Buffer.share_byte}), since a copy writes
+    bytes.
+
+    A non-empty allocation that {!Buffer.create} makes holds whole words:
+    its bytes past its length, up to the next multiple of {!word}, hold
+    unspecified values. Work and host code that access a buffer of such
+    memory may read and write each whole word that holds a byte of the
+    buffer, as an atomic on a word of elements narrower than a byte does.
+    The bytes outside the buffer that such an access reaches are its own
+    allocation's, in words the buffer shares, so rig orders them with it.
+    On a device whose {!alignment} is a word or more, as every GPU's and
+    the host's is, the allocation starts on a word, so its words lie at
+    addresses that are multiples of {!word}. *)
+
+val word : int
+(** [word] is [4], the bytes of a word. *)
 
 (** {1:domains Domains}
 
@@ -812,11 +839,12 @@ val failure : unit -> string option
 
     A device's {e budget} is the most bytes it holds at one time of the
     memory that counts in it: its live buffers, its loaded images' code and
-    its cache ({!budget}). [Pinned] memory counts in the host's budget,
-    except on a device whose memory the host addresses, such as Metal's,
-    where it counts in the device's. A host buffer counts the bytes it
-    takes of the C library's memory: its own, and up to 112 more where it
-    starts on 128 bytes ({!Buffer.create}). On Windows, where [free] releases
+    its cache ({!budget}), each allocation by its whole words
+    ({!section-words}). [Pinned] memory counts in the host's budget, except
+    on a device whose memory the host addresses, such as Metal's, where it
+    counts in the device's. A host buffer counts the bytes it takes of the C
+    library's memory: its whole words, and up to 112 more where it starts on
+    128 bytes ({!Buffer.create}). On Windows, where [free] releases
     no allocation aligned to a page, one that starts on a page counts a
     page less 16 bytes more. An allocation's bytes also pace the
     OCaml collector, so a device nearing its budget collects unreachable
@@ -972,13 +1000,14 @@ module Buffer : sig
   val create : ?memory:kind -> device -> int -> t
   (** [create d n] is a buffer of [n] new bytes of [d]'s memory of kind
       [memory] (defaults to [Device]), with unspecified contents. An empty
-      buffer allocates nothing. A non-empty one starts on [d]'s {!alignment}.
-      A host buffer of at least 64 KiB and at least four pages starts on a
-      page, so devices can {!borrow} it; a smaller one of at least 128 bytes
-      starts on 128 bytes, so threads that write it in pieces of whole
-      128-byte blocks share no cache line, on Apple silicon's 128-byte lines
-      or x86's 64-byte ones. On an io device the memory is what
-      {!Rig_edge.Io.alloc} makes, whatever [memory].
+      buffer allocates nothing. A non-empty one starts on [d]'s {!alignment},
+      and its memory runs on to whole words ({!Rig.section-words}). A host
+      buffer of at least 64 KiB and at least four pages starts on a page, so
+      devices can {!borrow} it; a smaller one of at least 128 bytes starts on
+      128 bytes, so threads that write it in pieces of whole 128-byte blocks
+      share no cache line, on Apple silicon's 128-byte lines or x86's 64-byte
+      ones. On an io device the memory is what {!Rig_edge.Io.alloc} makes,
+      whatever [memory].
 
       Raises [Invalid_argument] if [n < 0], or if [n > 0], [d] is an io
       device and its {!Rig_edge.Io.alloc} raises it, and {!Lost} if [d] is
@@ -1076,11 +1105,17 @@ module Buffer : sig
       borrow of one, or a view of all of one. *)
 
   val overlaps : t -> t -> bool
-  (** [overlaps b b'] is [true] iff [b] and [b'] share a byte of memory,
-      through views of one allocation, a borrow and the memory it maps, or two
-      bigarrays over the same bytes. An empty buffer overlaps nothing. A
+  (** [overlaps b b'] is [true] iff [b] and [b'] share memory: they hold
+      bytes of one word ({!Rig.section-words}), through views of one
+      allocation, a borrow and the memory it maps, or two bigarrays over
+      bytes of one word. An empty buffer overlaps nothing. A
       buffer {!free} killed keeps its place, which memory made since may
       take. *)
+
+  val share_byte : t -> t -> bool
+  (** [share_byte b b'] is [true] iff [b] and [b'] share a byte of memory,
+      seen as {!overlaps} sees it, where {!overlaps} holds too. A copy
+      refuses two buffers that share a byte. *)
 
   val access : t -> access
   (** [access b] is the access [b] admits, which its views and borrows
@@ -1344,8 +1379,8 @@ module Buffer : sig
       its point is reached, so a program orders its own access through such
       an array after the point.
 
-      Raises [Invalid_argument] if [src] or [dst] is dead, they overlap
-      ({!overlaps}), a box does not fit them, [dst] admits only [Read], one
+      Raises [Invalid_argument] if [src] or [dst] is dead, they share a byte
+      of memory, a box does not fit them, [dst] admits only [Read], one
       side is an io device's memory and the other a borrow of it, a side's
       memory is held exclusive, the copy has bytes and no device can copy
       between the two sides, or one row of a box fits in no submission of
@@ -1811,8 +1846,8 @@ end
     they use. A copy reads its [src] and writes its [dst], words read their
     buffer, a buffer ref uses its slot as its kind says, and every part uses
     the fixed memory with its access. Two uses may share memory where their
-    buffers overlap ({!Buffer.overlaps}), or where either is a slot, whose
-    buffer only a run gives. A {!Submission.unordered} ref orders nothing.
+    buffers share a word ({!Buffer.overlaps}), or where either is a slot,
+    whose buffer only a run gives. A {!Submission.unordered} ref orders nothing.
 
     A launch or a fill runs on the first of the device's queues that runs
     its kind ({!Rig_edge.type-facts}). Words run on the first queue that
@@ -1849,9 +1884,10 @@ module Submission : sig
       Its 8 bytes hold a byte offset into the slot's buffer, and when the
       work runs they hold that offset plus the address of the buffer's first
       byte, as the device's work addresses it. Through a buffer ref the work
-      may address only that buffer's bytes, and write them only through a
-      {!write} or an {!unordered} ref. rig orders the work by its buffer refs
-      and checks neither rule.
+      may address only the words that hold that buffer's bytes
+      ({!Rig.section-words}), and write them only through a {!write} or an
+      {!unordered} ref. rig orders the work by its buffer refs and checks
+      neither rule.
 
       {!read}, {!write} and {!unordered} raise [Invalid_argument] if [slot]
       or [at] is negative or [at] is no multiple of 8, and {!entry} if [at]
@@ -1890,7 +1926,7 @@ module Submission : sig
 
   val copy : src:side -> dst:side -> part
   (** [copy ~src ~dst] copies [src]'s bytes into [dst]. The two buffers must
-      have one length and share no byte ({!Buffer.overlaps}), and [dst] must
+      have one length and share no byte of memory, and [dst] must
       admit writes. Each buffer must be on the device
       ({!Buffer.borrow} puts another device's memory there). On a driver's
       device of another machine, one of the two may instead be memory this

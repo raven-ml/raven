@@ -134,7 +134,8 @@ let copy ~src ~dst =
       if Buffer.length a <> Buffer.length b then
         invalid_argf "Rig.%s: buffers of %d and %d bytes" fn (Buffer.length a)
           (Buffer.length b);
-      if Buffer.overlaps a b then invalid_argf "Rig.%s: the buffers overlap" fn
+      if Buffer.share_byte a b then
+        invalid_argf "Rig.%s: the buffers overlap" fn
   | _ -> ());
   (match dst with
   | Buffer b when Buffer.access b = Def.Read ->
@@ -567,7 +568,8 @@ let cuts_of a =
    [first.(j + 1) - 1], and the fixed memory's [first.(n)] to
    [first.(n + 1) - 1], for [n] parts. Reach [r] is [how.(r)], and one that
    names a buffer reaches its places [place.(r)] to [place.(r + 1) - 1]
-   ({!Buffer.places}). Place [p] spans cuts [lo.(p)] to [hi.(p)] of the space
+   ({!Buffer.places}), rounded out to whole words, the unit rig orders
+   memory by. Place [p] spans cuts [lo.(p)] to [hi.(p)] of the space
    [spaces.(space.(p))]. *)
 type reaches = {
   first : int array;
@@ -611,9 +613,10 @@ let reaches_of queues parts fixed =
           Hashtbl.add index s i;
           i
     in
+    let a, b = Buffer.words a length in
     space.(!p) <- i;
     lo.(!p) <- a;
-    hi.(!p) <- a + length;
+    hi.(!p) <- b;
     incr p
   in
   let add_slot w =

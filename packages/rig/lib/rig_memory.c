@@ -305,7 +305,10 @@ static void side_span(value b, struct rig_side *s) {
   s->bytes = rig_buffer_bytes(b);
 }
 
-int rig_sides_overlap(const struct rig_side *a, const struct rig_side *b) {
+/* Whether [a] and [b] share a byte, or with [words] a word: each range
+   rounded out to whole words of its space, by address or by offset. */
+static int sides_meet(const struct rig_side *a, const struct rig_side *b,
+                      int words) {
   if (a->bytes == 0 || b->bytes == 0) return 0;
   intptr_t x = a->first, y = b->first;
   if (a->space != b->space) {
@@ -313,7 +316,19 @@ int rig_sides_overlap(const struct rig_side *a, const struct rig_side *b) {
     if (b->space != 0) y = b->alias;
     if (x == 0 || y == 0) return 0;
   }
-  return x < y + (intptr_t)b->bytes && y < x + (intptr_t)a->bytes;
+  intptr_t x_end = x + (intptr_t)a->bytes, y_end = y + (intptr_t)b->bytes;
+  if (words) {
+    intptr_t w = RIG_WORD_BYTES;
+    x &= -w;
+    y &= -w;
+    x_end = (x_end + w - 1) & -w;
+    y_end = (y_end + w - 1) & -w;
+  }
+  return x < y_end && y < x_end;
+}
+
+int rig_sides_overlap(const struct rig_side *a, const struct rig_side *b) {
+  return sides_meet(a, b, 0);
 }
 
 void rig_buffer_side(value b, int local, struct rig_side *s) {
@@ -351,13 +366,13 @@ int rig_buffers_overlap(value a, intnat a_first, intnat a_bytes, value b,
   return rig_sides_overlap(&x, &y);
 }
 
-/* rig_buffers_overlap of the two whole buffers, whose ranges need no
-   check. */
-value caml_rig_buffer_overlaps(value b, value other) {
+/* Whether the two whole buffers share a word, as Rig.Buffer.overlaps
+   answers, or with [v_bytes] a byte; their ranges need no check. */
+value caml_rig_buffer_meet(value b, value other, value v_bytes) {
   struct rig_side x, y;
   side_span(b, &x);
   side_span(other, &y);
-  return Val_bool(rig_sides_overlap(&x, &y));
+  return Val_bool(sides_meet(&x, &y, !Bool_val(v_bytes)));
 }
 
 intnat caml_rig_cached_host(value b) { return cached_host(b); }

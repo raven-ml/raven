@@ -152,10 +152,15 @@ let rec clear_pairs read = function
 let by_place ((s, a, _), _) ((s', a', _), _) =
   if s <> s' then Int.compare s s' else Int.compare a a'
 
-(* Each buffer's spans are its places ({!Buffer.places}). *)
+(* Each buffer's spans are its places ({!Buffer.places}), rounded out to
+   whole words. *)
 let sort_overlaps read donate =
   let tag d b =
-    List.map (fun (s, a) -> ((s, a, b.length), d)) (Buffer.places b)
+    List.map
+      (fun (s, a) ->
+        let lo, hi = Buffer.words a b.length in
+        ((s, lo, hi - lo), d))
+      (Buffer.places b)
   in
   let all =
     List.concat_map (tag false) read

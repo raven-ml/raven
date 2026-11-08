@@ -879,6 +879,25 @@ let test_mapped_budget () =
   equal ~msg:"the device's allocated bytes" int before (Rig.allocated d);
   ignore (Sys.opaque_identity b)
 
+(* A budget counts each buffer by its whole words: a 5-byte buffer holds 8
+   bytes, 5 bytes do not fit in 7, and 9 bytes of Mapped memory under a
+   budget of 10, whose words do not fit, are pinned. *)
+let test_budget_words () =
+  let d, p = P.open_ ~host_visible:false "memory:budget-words" in
+  let before = Rig.allocated d in
+  let b = B.create d 5 in
+  equal ~msg:"a 5-byte buffer" int (before + 8) (Rig.allocated d);
+  equal allocs [ (B.Device, 8, true) ] (P.allocs p);
+  ignore (Sys.opaque_identity b);
+  let d', _ = P.open_ ~host_visible:false "memory:budget-words-7" in
+  Rig.set_budget d' 7;
+  raises_match (out_of_memory d' 5) (fun () -> B.create d' 5);
+  let d'', p'' = P.open_ ~host_visible:false "memory:budget-words-10" in
+  Rig.set_budget d'' 10;
+  let m = B.create ~memory:Mapped d'' 9 in
+  equal allocs [ (B.Pinned, 12, true) ] (P.allocs p'');
+  ignore (Sys.opaque_identity m)
+
 let test_mapped () =
   let d, p = P.open_ "memory:mapped" in
   let b = B.create ~memory:Mapped d (4 * kib) in
@@ -1602,6 +1621,8 @@ let tests =
           test_mapped_window;
         test "mapped memory the budget cannot hold is pinned" test_mapped_budget;
         test "mapped memory is the device's" test_mapped;
+        test "a budget counts each buffer by its whole words"
+          test_budget_words;
         test "pinned memory another device keeps returns to a refused one"
           test_pinned_reclaims;
         test "a growth short of memory reclaims the host's budget"

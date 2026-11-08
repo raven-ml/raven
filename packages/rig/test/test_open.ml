@@ -343,6 +343,88 @@ let test_alignment () =
            Rig.Buffer.[ Device; Pinned; Mapped ])
        [ Rig.host; d; p ])
 
+(* A non-empty buffer's memory runs on to whole words, through bytes that
+   belong to no other memory: a write of every word that holds a byte of a
+   view, at the end or at an offset, or of a borrow changes no byte outside
+   those words, and a driver is asked for whole words. Sizes lie on either
+   side of the host's line and page placements. *)
+let test_tail () =
+  let d = memory "open:tail" in
+  let p, polled = P.open_ ~alignment:256 "open:tail-polled" in
+  let w = Rig.word in
+  let sizes = [ 1; 3; 15; 17; 63; 65; 127; 129; 255; 257; 65537; 262145 ] in
+  let pattern n seed =
+    String.init n (fun i -> Char.chr ((seed + i) land 255))
+  in
+  let made =
+    List.concat_map
+      (fun d ->
+        List.concat_map
+          (fun memory ->
+            List.map (fun n -> Rig.Buffer.create ~memory d n) sizes)
+          Rig.Buffer.[ Device; Pinned; Mapped ])
+      [ Rig.host; d; p ]
+  in
+  (* The bytes of [b] whose words are written, as [(first, length, borrow)]:
+     its last byte, a view from an offset off a word to before its end, and
+     on the host, its first bytes through a borrow by [d] where [b] starts on
+     a page. *)
+  let ranges b =
+    let n = Rig.Buffer.length b in
+    let last = [ (n - 1, 1, false) ] in
+    let inner = if n < 7 then [] else [ (1, n - 6, false) ] in
+    let first =
+      if Rig.Buffer.device b == Rig.host && n >= 65536 then [ (0, 5, true) ]
+      else []
+    in
+    last @ inner @ first
+  in
+  List.iteri
+    (fun i b ->
+      let n = Rig.Buffer.length b in
+      Rig.Buffer.blit_from_string (pattern n i) 0 b 0 n)
+    made;
+  let marks = Rig.Buffer.of_string (String.make 8 '\xee') in
+  (* Writes every word that holds a byte of [v], through its host address. *)
+  let mark v =
+    let a = Support.Reader.host v and n = Rig.Buffer.length v in
+    let rec go at =
+      if at < (a + n + w - 1) / w * w then begin
+        Support.move ~dst:at ~src:(Support.Reader.host marks) w;
+        go (at + w)
+      end
+    in
+    go (a / w * w)
+  in
+  List.iter
+    (fun b ->
+      List.iter
+        (fun (first, length, borrow) ->
+          let v = Rig.Buffer.view b ~first ~length in
+          mark (if borrow then require_some (Rig.Buffer.borrow d v) else v))
+        (ranges b))
+    made;
+  List.iteri
+    (fun i b ->
+      let n = Rig.Buffer.length b in
+      let expected = Bytes.of_string (pattern n i) in
+      List.iter
+        (fun (first, length, _) ->
+          let lo = first / w * w and hi = (first + length + w - 1) / w * w in
+          Bytes.fill expected lo (Int.min hi n - lo) '\xee')
+        (ranges b);
+      let s = Bytes.create n in
+      Rig.Buffer.blit_to_bytes b 0 s 0 n;
+      equal
+        ~msg:(Printf.sprintf "%s, %d bytes" (Rig.name (Rig.Buffer.device b)) n)
+        string (Bytes.to_string expected) (Bytes.to_string s))
+    made;
+  List.iter
+    (fun (_, n, _) ->
+      equal ~msg:(Printf.sprintf "%d bytes asked" n) int 0 (n mod w))
+    (P.allocs polled);
+  Gc.full_major ()
+
 (* An alignment that is not a power of two refuses the open, and the driver's
    device is stopped. *)
 let test_alignment_refused () =
@@ -1502,6 +1584,8 @@ let tests =
         test_overstated;
       test "a hang bound below 1 ms refuses the open" test_hang_refused;
       test "a buffer starts on its device's alignment" test_alignment;
+      test "a buffer's memory runs on to whole words, no other memory's"
+        test_tail;
       test "an alignment not a power of two refuses the open"
         test_alignment_refused;
       test "a region off its device's alignment faults the device"

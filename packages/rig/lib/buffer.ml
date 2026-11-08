@@ -104,7 +104,10 @@ let view b ~first ~length =
 
 let spans b = b.offset = 0 && b.length = Memory.size b.mem.alloc
 
-external overlaps : t -> t -> bool = "caml_rig_buffer_overlaps" [@@noalloc]
+external meet : t -> t -> bool -> bool = "caml_rig_buffer_meet" [@@noalloc]
+
+let overlaps b b' = meet b b' false
+let share_byte b b' = meet b b' true
 
 external space : t -> (int[@untagged])
   = "caml_rig_span_space_byte" "caml_rig_span_space"
@@ -119,6 +122,10 @@ external cached_host : t -> (int[@untagged])
 [@@noalloc]
 
 let alias b = if space b = 0 then 0 else cached_host b
+
+(* The [n] bytes from [a] rounded out to whole words: the first word's start
+   and the last word's end. *)
+let words a n = (a land -Memory.word, Memory.whole (a + n))
 
 let places b =
   if b.length = 0 then []

@@ -53,8 +53,9 @@ RIG_EXTERN void rig_buffer_span(value b, intnat *space, intnat *first);
 
 /* Answers 1 if the [a_bytes] bytes of [a] from its byte [a_first] and the
    [b_bytes] bytes of [b] from its byte [b_first] share a byte of memory, and
-   0 otherwise. It is 1 exactly where Rig.Buffer.overlaps of the views
-   Rig.Buffer.view a ~first:a_first ~length:a_bytes and b's is true. Each
+   0 otherwise. It compares bytes where Rig.Buffer.overlaps compares whole
+   words: of the views Rig.Buffer.view a ~first:a_first ~length:a_bytes and
+   b's, it is 1 only where Rig.Buffer.overlaps is true. Each
    range must lie within its buffer, with no bound negative or past
    rig_buffer_bytes. A range that does not aborts the process, as
    rig_buffer_release does for a claim the caller does not hold. A dead

@@ -833,6 +833,48 @@ let test_overlaps () =
   equal bool true (B.overlaps whole part);
   equal bool false (B.overlaps whole (B.view whole ~first:4 ~length:0))
 
+(* Buffers share memory where they hold bytes of one word, the [Rig.word]
+   bytes at a multiple of it: views of one allocation, a host buffer and a
+   memory device's, a borrow and the memory it maps, and bigarrays over one
+   word. A copy is refused only between buffers that share a byte. *)
+let test_overlaps_words () =
+  let d = Result.get_ok (Rig.memory_device "buffer:words") in
+  let check b =
+    let view first length = B.view b ~first ~length in
+    let pairs =
+      [
+        ((0, 5), (5, 3), true);
+        ((0, 4), (4, 4), false);
+        ((1, 2), (3, 1), true);
+        ((0, 3), (8, 8), false);
+        ((6, 0), (4, 4), false);
+        ((7, 2), (9, 7), true);
+      ]
+    in
+    List.iter
+      (fun ((f, l), (f', l'), shares) ->
+        let msg =
+          Printf.sprintf "%s [%d,+%d] and [%d,+%d]" (Rig.name (B.device b)) f l
+            f' l'
+        in
+        equal ~msg bool shares (B.overlaps (view f l) (view f' l')))
+      pairs;
+    let src = view 0 3 and dst = view 3 3 in
+    ignore (Rig.Submission.copy ~src:(Buffer src) ~dst:(Buffer dst))
+  in
+  List.iter check [ B.create Rig.host 16; B.create d 16 ];
+  let h = B.create Rig.host 65536 in
+  let back = require_some (B.borrow d (B.view h ~first:0 ~length:5)) in
+  equal ~msg:"a borrow and the next bytes of its word" bool true
+    (B.overlaps back (B.view h ~first:5 ~length:3));
+  equal ~msg:"a borrow and the next word" bool false
+    (B.overlaps back (B.view h ~first:8 ~length:4));
+  let ba = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 16 in
+  equal ~msg:"bigarrays over one word" bool true
+    (B.overlaps
+       (B.of_bigarray (Bigarray.Array1.sub ba 0 5))
+       (B.of_bigarray (Bigarray.Array1.sub ba 5 3)))
+
 (* Routes of copies *)
 
 let roundtrip ~src ~dst =
@@ -2057,6 +2099,8 @@ let tests =
           test_borrow_spans;
         test "bigarrays over the same bytes overlap, no bytes overlap nothing"
           test_overlaps;
+        test "buffers that hold bytes of one word overlap, of two words do not"
+          test_overlaps_words;
       ];
     group ~timeout "copy routes"
       [

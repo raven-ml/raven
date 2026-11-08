@@ -69,6 +69,7 @@ end
 
 let submitted = Dev.submitted
 let signaled = Dev.signaled
+let word = Memory.word
 
 exception Lost = Dev.Lost
 

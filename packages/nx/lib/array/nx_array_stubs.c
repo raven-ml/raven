@@ -118,11 +118,11 @@ typedef struct {
 } span;
 
 /* Whether the operands [a] and [b], both with elements, share a byte. Two
-   the host addresses compare host addresses; others ask rig, as
-   Rig.Buffer.overlaps of the views of their bytes would answer, which sees
-   a borrow and the memory it maps, and an io memory and a bigarray over
-   its pages. A layout lies within its buffer (Nx_array.v), so rig's bounds
-   hold; were one past it, the pair would count as sharing. */
+   the host addresses compare host addresses; others ask rig, whose
+   rig_buffers_overlap compares bytes and sees a borrow and the memory it
+   maps, and an io memory and a bigarray over its pages. A layout lies
+   within its buffer (Nx_array.v), so rig's bounds hold; were one past it,
+   the pair would count as sharing. */
 static int meet(const nx_array *a, const where *wa, const nx_array *b,
                 const where *wb) {
   if (a->base != NULL && b->base != NULL) {
