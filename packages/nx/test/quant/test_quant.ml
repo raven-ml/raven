@@ -1434,6 +1434,13 @@ let draw_experts ?(format = Gen.frequency [ (3, mxfp4); (1, format) ]) () =
   in
   let count = Array.fold_left ( * ) 1 shape in
   let rows one = Array.mapi (fun i d -> if i > 0 || one then 1 else d) shape in
+  (* Ids drawn apart are rarely all distinct: a run of consecutive experts
+     from a drawn one names each once where the experts outnumber the
+     positions. *)
+  let distinct start =
+    Array.init count (fun i ->
+        Int64.of_int ((Int64.to_int start + i) mod max e 1))
+  in
   let+ ids =
     frequency
       [
@@ -1441,6 +1448,7 @@ let draw_experts ?(format = Gen.frequency [ (3, mxfp4); (1, format) ]) () =
           array ~size:(constant count) (frequency [ (8, in_range); (1, past) ])
         );
         (1, map (Array.make count) in_range);
+        (1, map distinct in_range);
       ]
   and+ one = frequency [ (4, constant false); (1, constant true) ]
   and+ at = fdt
