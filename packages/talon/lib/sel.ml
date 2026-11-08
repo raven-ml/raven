@@ -38,7 +38,7 @@ let dedup names =
        true))
     names
 
-let check sel schema =
+let check ?what sel schema =
   let columns = Schema.columns schema in
   let problems = ref [] in
   let filter p =
@@ -50,7 +50,7 @@ let check sel schema =
         let present n =
           Option.is_some (Schema.find schema n)
           ||
-          (problems := Problem.missing n schema :: !problems;
+          (problems := Problem.missing ?what n schema :: !problems;
            false)
         in
         dedup (List.filter present ns)

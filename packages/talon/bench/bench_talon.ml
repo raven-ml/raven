@@ -517,6 +517,11 @@ let per_list_sum () =
       of_table lists
       |> select Expr.[ "s" := per_list [ "x" := xs ] (sum (x *. w)) ])
 
+let unnest_keep () =
+  run
+    Query.(
+      of_table lists |> unnest Expr.[ keep (Sel.names [ "xs" ]) ])
+
 let () =
   Thumper.run "talon"
     [
@@ -555,6 +560,7 @@ let () =
           Thumper.bench "Join/spikes_in_trials" spikes_in_trials;
           Thumper.bench "Join/keyed_inequality" below;
           Thumper.bench "List/per-list-sum-64k-32" per_list_sum;
+          Thumper.bench "List/unnest-keep-64k-32" unnest_keep;
           Thumper.bench "Join/asof-1M-64k" asof_window;
           Thumper.bench "Join/asof-as-range-1M-64k" asof_range;
           Thumper.bench "Group/text-100-1M" (fun () -> by "t");

@@ -3932,6 +3932,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- Add `Query.unnest`, which turns list columns into rows, zipping several.
+  A null or empty list gives no row unless `~keep_empty:true`; lists of unequal
+  lengths are a data error.
+- Add `Expr.record`, `Expr.field` and `Expr.within`, which build, read and
+  spread record columns, and `Expr.collect`, which gathers a frame's values
+  into a list.
 - Breaking: time zones leave column types. A datetime column holds instants
   (`Type.instant`, printed `datetime[us, UTC]`) or wall clocks (`Type.wall`,
   `datetime[us]`); `Type.datetime ?zone` is gone, `Time.stamp` and

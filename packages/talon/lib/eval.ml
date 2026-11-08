@@ -577,6 +577,25 @@ let store : type a. env -> a Expr.typing -> a option array -> Column.t =
       Column.with_data (Any d.type_) (Column.data c) c
   | Value -> assert false (* An OCaml value is no column. *)
 
+(* Records *)
+
+(* [field_names t] is the names of the record typing [t]'s fields. *)
+let field_names : type a. a Expr.typing -> string list = function
+  | Column (Record fields) -> List.map fst fields
+  | _ -> invalid_arg "Eval: a field of an expression that is not a record"
+
+(* [under r] is the fields of the record column [r], each null where [r] is. *)
+let under r =
+  let fields = match Column.data r with Fields cs -> cs | _ -> assert false in
+  match Column.validity r with
+  | None -> fields
+  | Some _ ->
+      List.map
+        (fun c ->
+          Column.make (Column.type_ c) ?validity:(valid [ r; c ])
+            ~length:(Column.length c) (Column.data c))
+        fields
+
 (* A list frame
 
    [list_frame] lays out the frame of [per_list]'s lists: one row per position
@@ -594,10 +613,10 @@ let lengths n offsets =
     (Nx.slice [ Nx.R (1, n + 1) ] offsets)
     (Nx.slice [ Nx.R (0, n) ] offsets)
 
-(* [lockstep env names ls valid] is [valid] without the rows whose lists [ls]
-   differ in length, compared where all are valid. The first such row fails,
-   and the others are past it. *)
-let lockstep env names ls valid =
+(* [lockstep env ls valid why] is [valid] without the rows whose lists [ls]
+   differ in length, compared where [valid] holds. The first such row fails with
+   the message [why i], and the others are past it. *)
+let lockstep env ls valid why =
   match ls with
   | [] -> valid
   | l0 :: rest ->
@@ -610,20 +629,41 @@ let lockstep env names ls valid =
       if Nx.dim 0 bad = 0 then valid
       else begin
         let i = Int64.to_int (Nx.item [ 0 ] bad) in
-        let pp ppf (n, l) =
-          Format.fprintf ppf "%a has %Ld" Type.pp_quoted n (Nx.item [ i ] l)
-        in
-        let why =
-          Format.asprintf
-            "per_list reads its lists in lockstep, and their lengths differ: %a"
-            (Format.pp_print_list
-               ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
-               pp)
-            (List.combine names ls)
-        in
-        fail env i (data why);
+        fail env i (data (why i));
         Nx.logical_and valid (Nx.logical_not differ)
       end
+
+(* [differ_why verb pp_list names cs ls i] says why the lists [cs] of row [i]
+   differ, [pp_list] describing each by its column and lengths [ls]. *)
+let differ_why verb pp_list names cs ls i =
+  let pp ppf (n, c, l) =
+    Format.fprintf ppf "%a %t" Type.pp_quoted n (pp_list c l i)
+  in
+  Format.asprintf "%s reads its lists in lockstep, and their lengths differ: %a"
+    verb
+    (Format.pp_print_list
+       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+       pp)
+    (List.map2 (fun (n, c) l -> (n, c, l)) (List.combine names cs) ls)
+
+(* [repeat_rows rows sizes] is, for the rows [rows] of [sizes] positions each,
+   each position's segment [ids], the number [e] of positions, its row [outer],
+   and the child rows of a list at the offsets given. *)
+let repeat_rows rows sizes =
+  let ids = Nx.positions sizes in
+  let e = Nx.dim 0 ids in
+  let outer = Nx.take ids rows in
+  let start = Nx.sub (Nx.cumsum sizes) sizes in
+  let place = lazy (Nx.sub (Nx.arange Nx.int64 0 e 1) (Nx.take ids start)) in
+  (ids, e, outer, fun o -> Nx.add (Nx.take outer o) (Lazy.force place))
+
+(* [elements e child_rows (offsets, child)] is a list's elements at [e]
+   positions: [child] itself when they are all of its rows, each in turn. A
+   list's offsets ascend and end within [child], so [e] positions reach all of
+   its rows only if [e] is its length. *)
+let elements e child_rows (offsets, child) =
+  if e = Column.length child then child
+  else Column.gather (child_rows offsets) child
 
 (* [list_frame env names cs reads] is the frame of the lists [cs] at the rows
    of [env] that have a value, and [slot], the place of each row's frame among
@@ -642,31 +682,21 @@ let list_frame env names cs reads =
       (Nx.ones Nx.bool [| n |])
       cs
   in
-  let live = lockstep env names ls valid in
+  let why =
+    differ_why "per_list"
+      (fun _ l i ppf -> Format.fprintf ppf "has %Ld" (Nx.item [ i ] l))
+      names cs ls
+  in
+  let live = lockstep env ls valid why in
   let rows = Nx.positions live in
   let m = Nx.dim 0 rows in
   let sizes = Nx.take rows (List.hd ls) in
-  let ids = Nx.positions sizes in
-  let e = Nx.dim 0 ids in
-  let outer = Nx.take ids rows in
-  let start = Nx.sub (Nx.cumsum sizes) sizes in
-  let place = lazy (Nx.sub (Nx.arange Nx.int64 0 e 1) (Nx.take ids start)) in
-  (* A child read whole needs no gather: every row live, offsets from 0 and
-     the child no longer than the lists. *)
-  let element (offsets, child) =
-    if
-      m = n
-      && Int64.equal (Nx.item [ 0 ] offsets) 0L
-      && Int64.equal (Nx.item [ n ] offsets)
-           (Int64.of_int (Column.length child))
-    then child
-    else
-      let first = Nx.take outer offsets in
-      Column.gather (Nx.add first (Lazy.force place)) child
+  let ids, e, outer, child_rows = repeat_rows rows sizes in
+  let elements_of =
+    lazy (Array.of_list (List.map (elements e child_rows) data))
   in
-  let elements = lazy (Array.of_list (List.map element data)) in
   let column = function
-    | `Element k -> (Lazy.force elements).(k)
+    | `Element k -> (Lazy.force elements_of).(k)
     | `Outer i -> Column.gather outer env.frame.columns.(i)
   in
   let row_of a = lazy (Nx.to_array a) in
@@ -889,6 +919,35 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
         let env = { env with frame; extent = m; origin } in
         let c = fill env (get env body) in
         Option.fold ~none:c ~some:(fun slot -> Reduce.rows_at slot c) slot
+  | Record_of os, _ ->
+      let ty = type_of typing in
+      let outs =
+        List.map (fun (_, Expr.Packed e) -> compile st e) (Expr.list_outs os)
+      in
+      fun env ->
+        Column.make ty ~length:env.extent
+          (Fields (List.map (fun n -> fill env (get env n)) outs))
+  | Field (_, n, r), _ ->
+      let i =
+        Option.get
+          (List.find_index (String.equal n) (field_names (Expr.typing r)))
+      in
+      unary r (fun r -> List.nth (under r) i)
+  | Spread (r, a), _ ->
+      (* [a]'s nodes read the fields, so they share no slot with the nodes
+         outside. *)
+      let names = field_names (Expr.typing r) in
+      let r = compile st r in
+      let scope = st.nodes and outer_names = st.names in
+      st.nodes <- [];
+      st.names <- names;
+      let body = compile st a in
+      st.nodes <- scope;
+      st.names <- outer_names;
+      fun env ->
+        let rows = per_row env in
+        let columns = Array.of_list (under (fill rows (get rows r))) in
+        get { env with frame = { env.frame with columns } } body
   | Shift (n, a), _ ->
       let a = compile st a in
       fun env -> Reduce.shift env.frame.segments n (fill env (get env a))
@@ -995,3 +1054,50 @@ let values s e =
     let env = env st frame in
     let vs = vs env in
     (vs, !(env.failure))
+
+let unnest s os ~keep_empty =
+  let st = state s in
+  let nodes = List.map (fun (_, Expr.Packed e) -> compile st e) os in
+  let names = List.map fst os in
+  fun frame ->
+    let env = env st frame in
+    let cs = List.map (fun n -> fill env (get env n)) nodes in
+    let n = env.extent in
+    let data = List.map list_data cs in
+    (* A null list has length 0, whatever its offsets span. *)
+    let masked c (offsets, _) =
+      let l = lengths n offsets in
+      match held c with
+      | Some v -> Nx.where v l (Nx.zeros_like l)
+      | None -> l
+    in
+    let ls = List.map2 masked cs data in
+    let pp_list c l i ppf =
+      match held c with
+      | Some v when not (Nx.item [ i ] v) ->
+          Format.fprintf ppf "is null, so has no element"
+      | _ -> Format.fprintf ppf "has %Ld" (Nx.item [ i ] l)
+    in
+    let why = differ_why "unnest" pp_list names cs ls in
+    ignore (lockstep env ls (Nx.ones Nx.bool [| n |]) why);
+    (* Rows from the earliest failure on give no position. *)
+    let rows = match !(env.failure) with Some f -> f.row | None -> n in
+    let counts = Nx.slice [ Nx.R (0, rows) ] (List.hd ls) in
+    let some = Nx.greater_s counts 0L in
+    let kept =
+      if keep_empty then Nx.arange Nx.int64 0 rows 1 else Nx.positions some
+    in
+    let sizes =
+      Nx.take kept (if keep_empty then Nx.maximum_s counts 1L else counts)
+    in
+    let _, e, outer, child_rows = repeat_rows kept sizes in
+    let padded = keep_empty && not (Nx.item [] (Nx.all some)) in
+    let element ((offsets, child) as list) =
+      if not padded then elements e child_rows list
+      else
+        Reduce.rows_at
+          (Nx.where (Nx.take outer some) (child_rows offsets)
+             (Nx.full_like outer (-1L)))
+          child
+    in
+    (outer, List.map element data, !(env.failure))

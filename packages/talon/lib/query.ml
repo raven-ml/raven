@@ -33,6 +33,12 @@ type node =
       right : t;
     }
   | Append of { input : t; rest : t }
+  | Unnest of {
+      outputs : (string * Expr.packed) list;
+      keep_empty : bool;
+      repeated : string list;
+      input : t;
+    }
 
 and t = { node : node; schema : Schema.t }
 
@@ -61,6 +67,27 @@ let derived s outputs =
   in
   List.map replaced (Schema.columns s) @ columns added
 
+(* [element e] is the type of the elements of the list output [e]. *)
+let element (Expr.Packed e) =
+  match Expr.typing e with
+  | Column (List ty) -> Type.Any ty
+  | _ -> assert false (* [unnest] takes list outputs. *)
+
+(* [unnested s repeated outputs] is the columns of [s] that [repeated] names
+   and those [outputs] replace, each at its element type, in place, then the
+   other outputs. *)
+let unnested s repeated outputs =
+  let column (n, t) =
+    match List.assoc_opt n outputs with
+    | Some e -> Some (n, element e)
+    | None -> if List.mem n repeated then Some (n, t) else None
+  in
+  let added =
+    List.filter (fun (n, _) -> Option.is_none (Schema.find s n)) outputs
+  in
+  List.filter_map column (Schema.columns s)
+  @ List.map (fun (n, e) -> (n, element e)) added
+
 let make node =
   let schema =
     match node with
@@ -72,6 +99,8 @@ let make node =
              (Schema.columns source.schema))
     | Select { outputs; _ } -> Schema.v (columns outputs)
     | Derive { outputs; input } -> Schema.v (derived input.schema outputs)
+    | Unnest { outputs; repeated; input; _ } ->
+        Schema.v (unnested input.schema repeated outputs)
     | Filter { input; _ } | Sort { input; _ } | Slice { input; _ } ->
         input.schema
     | Append { input; rest } ->
@@ -194,6 +223,18 @@ let pp_step ppf q =
         pf "@ ~each_right:%s" (count_name each_right);
       pf "@]"
   | Append _ -> pf "append"
+  | Unnest { outputs; keep_empty; repeated; input } ->
+      pf "@[<hov 2>unnest%s %a"
+        (if keep_empty then " ~keep_empty:true" else "")
+        pp_outputs outputs;
+      let all =
+        List.filter
+          (fun n -> not (List.mem_assoc n outputs))
+          (Schema.names input.schema)
+      in
+      if not (List.equal String.equal repeated all) then
+        pf "@ ~repeat:%a" (Type.pp_list pp_name) repeated;
+      pf "@]"
 
 let inputs q =
   match q.node with
@@ -203,6 +244,7 @@ let inputs q =
   | Filter { input; _ }
   | Sort { input; _ }
   | Slice { input; _ }
+  | Unnest { input; _ }
   | Aggregate { input; _ } ->
       [ input ]
   | Join { left; right; _ } -> [ left; right ]
@@ -215,6 +257,7 @@ let map_inputs f = function
   | Filter r -> Filter { r with input = f r.input }
   | Sort r -> Sort { r with input = f r.input }
   | Slice r -> Slice { r with input = f r.input }
+  | Unnest r -> Unnest { r with input = f r.input }
   | Aggregate r -> Aggregate { r with input = f r.input }
   | Join r -> Join { r with left = f r.left; right = f r.right }
   | Append { input; rest } -> Append { input = f input; rest = f rest }
@@ -339,6 +382,22 @@ let check verb inputs entries =
 
 let arg fmt = Format.kasprintf (fun s -> Arg (Problem.v "%s" s)) fmt
 
+(* [spread_clashes s outputs] is a problem for each output of an [Expr.within]
+   named as a column of [s]: a field's name is seldom written at the call, so
+   replacing the column would go unseen. *)
+let spread_clashes s outputs =
+  List.filter_map
+    (fun (n, Expr.Packed e) ->
+      match Expr.node e with
+      | Spread _ when Option.is_some (Schema.find s n) ->
+          Some
+            (arg
+               "the output %a of within has the name of a column of the input: \
+                give it another name, or select the column away first."
+               pp_name n)
+      | _ -> None)
+    outputs
+
 (* [bind_outs s os] is the bound outputs of [os] over [s], the names of the
    outputs, and the entries of their problems, then of two outputs of one name.
    An output [n := e] that fails to bind still has the name [n], so that its
@@ -383,7 +442,7 @@ let select os q =
 
 let derive os q =
   let outputs, _, entries = bind_outs q.schema os in
-  check "derive" (input q) entries;
+  check "derive" (input q) (entries @ spread_clashes q.schema outputs);
   make (Derive { outputs; input = q })
 
 let filter p q =
@@ -401,6 +460,32 @@ let slice ~offset ~length q =
   if length < 0 then
     fail "slice" (input q) [ arg "the length %d is negative." length ];
   make (Slice { offset; length; input = q })
+
+let unnest ?(keep_empty = false) os q =
+  let outputs, _, entries = bind_outs q.schema os in
+  let none =
+    if List.is_empty outputs && not (List.exists has_problem entries) then
+      [ arg "unnest takes at least one output." ]
+    else []
+  in
+  let not_lists =
+    List.filter_map
+      (fun (n, (Expr.Packed e as p)) ->
+        match (Expr.typing e, column_type p) with
+        | Column (List _), _ -> None
+        | _, Any ty ->
+            Some
+              (arg "the output %a is %a, which is not a list." pp_name n Type.pp
+                 ty))
+      outputs
+  in
+  check "unnest" (input q)
+    (entries @ none @ not_lists @ spread_clashes q.schema outputs);
+  let outs = List.map fst outputs in
+  let repeated =
+    List.filter (fun n -> not (List.mem n outs)) (Schema.names q.schema)
+  in
+  make (Unnest { outputs; keep_empty; repeated; input = q })
 
 let aggregate ~by os q =
   let keys =
@@ -487,8 +572,12 @@ let step_equal ~input ~table q0 q1 =
         && j0.each_right = j1.each_right
         && Join.equal j0.on j1.on
     | Append _, Append _ -> true
+    | Unnest u0, Unnest u1 ->
+        outputs_equal u0.outputs u1.outputs
+        && Bool.equal u0.keep_empty u1.keep_empty
+        && List.equal String.equal u0.repeated u1.repeated
     | ( ( Of_table _ | Of_source _ | Select _ | Derive _ | Filter _ | Sort _
-        | Slice _ | Aggregate _ | Join _ | Append _ ),
+        | Slice _ | Aggregate _ | Join _ | Append _ | Unnest _ ),
         _ ) ->
         false)
   && List.equal input (inputs q0) (inputs q1)

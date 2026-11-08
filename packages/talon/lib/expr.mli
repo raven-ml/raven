@@ -86,6 +86,7 @@ val quantile : float -> ('a, row) t -> (float, agg) t
 val n_unique : ('a, row) t -> (int, agg) t
 val arg_min : ('a, row) t -> (int, agg) t
 val arg_max : ('a, row) t -> (int, agg) t
+val collect : ('a, row) t -> ('a array, agg) t
 val over : ?by:string list -> ?order:Order.t list -> ('a, 's) t -> ('a, row) t
 val shift : int -> ('a, row) t -> ('a, row) t
 val rank : ('a, row) t -> (int, row) t
@@ -99,6 +100,9 @@ val window :
   ('a, row) t
 
 val per_list : row out list -> ('a, agg) t -> ('a, row) t
+val record : 's out list -> (Record.t, 's) t
+val field : 'a Kind.t -> string -> (Record.t, 's) t -> ('a, 's) t
+val within : (Record.t, row) t -> 's out -> 's out
 val const : 'a -> ('a, 's) t
 val ( $ ) : ('a -> 'b, 's) t -> ('a, 's) t -> ('b, 's) t
 val option : ('a, 's) t -> ('a option, 's) t
@@ -219,6 +223,7 @@ type (_, _) reduction =
   | N_unique : ('a, int) reduction
   | Arg_min : ('a, int) reduction
   | Arg_max : ('a, int) reduction
+  | Collect : ('a, 'a array) reduction
 
 type ('e, 's) ext = {
   type_ : Type.ext Type.t;  (** The extension type, an [Ext] type. *)
@@ -285,6 +290,13 @@ type 'a node =
   | Per_list : row out list * ('a, 's) t -> 'a node
       (** {!per_list}: its outputs, named once bound ({!list_outs}), and its
           reduction, over the elements. *)
+  | Record_of : row out list -> Record.t node
+      (** {!record}: its outputs, named once bound ({!list_outs}). *)
+  | Field : 'a Kind.t * string * (Record.t, 's) t -> 'a node
+      (** {!field}: the field read as the kind. *)
+  | Spread : (Record.t, 's0) t * ('a, 's1) t -> 'a node
+      (** {!within}, once bound: an output's expression, whose names read the
+          fields of the record, the first operand. *)
   | Const : 'a -> 'a node
   | App : ('a -> 'b, 's0) t * ('a, 's1) t -> 'b node
   | Option : ('a, 's) t -> 'a option node
@@ -323,7 +335,8 @@ and 'a calendar_op =
       -> Time.instant calendar_op
 
 val list_outs : row out list -> (string * packed) list
-(** [list_outs os] is the named outputs of a bound {!Per_list}. *)
+(** [list_outs os] is the named outputs of a bound {!Per_list} or {!Record_of}.
+*)
 
 val node : ('a, 's) t -> 'a node
 (** [node e] is [e]'s node. *)

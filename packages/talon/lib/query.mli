@@ -31,6 +31,7 @@ val join :
   t
 
 val append : t -> t -> t
+val unnest : ?keep_empty:bool -> Expr.row Expr.out list -> t -> t
 val equal : t -> t -> bool
 val pp : Format.formatter -> t -> unit
 
@@ -82,6 +83,13 @@ type node =
       right : t;
     }
   | Append of { input : t; rest : t }
+  | Unnest of {
+      outputs : (string * Expr.packed) list;
+      keep_empty : bool;
+      repeated : string list;
+          (** The input's columns repeated by each position, in input order. *)
+      input : t;
+    }
 
 val node : t -> node
 (** [node q] is [q]'s last step. *)

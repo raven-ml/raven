@@ -36,6 +36,7 @@ Talon/Join/repeated_keys	alloc_words	exact	26431
 Talon/Join/spikes_in_trials	alloc_words	exact	49406
 Talon/Layout/text-1M	alloc_words	exact	1249
 Talon/List/per-list-sum-64k-32	alloc_words	exact	8396
+Talon/List/unnest-keep-64k-32	alloc_words	exact	6727
 Talon/Nulls/concat-3	alloc_words	exact	1065
 Talon/Nulls/filter-1pct	alloc_words	exact	8629
 Talon/Nulls/filter-50pct	alloc_words	exact	8629

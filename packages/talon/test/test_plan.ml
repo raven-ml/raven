@@ -1847,5 +1847,78 @@ let kit_errors () =
 let kit_mistakes =
   test "Kit's mistakes raise or are their verbs' reports" kit_errors
 
+(* Records and unnest *)
+
+let unnest_schema =
+  [
+    ("id", Type.Any Type.int64);
+    ("xs", Type.Any (Type.list Type.int64));
+    ("lc", Type.Any (Type.list Type.float64));
+  ]
+
+let xs = Col.v Kind.(list int) "xs"
+
+let unnest_plans () =
+  let s = source "data" unnest_schema in
+  let band = Expr.record Expr.[ "x" := Col.int "id"; "l" := xs ] in
+  let printed =
+    Query.of_source s
+    |> Query.derive
+         Expr.[ "b" := band; "f" := field Kind.int "x" band ]
+    |> Query.unnest ~keep_empty:true Expr.[ "e" := xs ]
+    |> Query.select
+         Expr.[ within (Col.v Record.kind "b") (keep (Sel.names [ "x" ])) ]
+  in
+  expect (str Query.pp printed)
+  @@ __POS_OF__ {|
+    query → x int64
+    select ["x" := within b x]
+    └ unnest ~keep_empty:true ["e" := xs]
+      └ derive ["b" := record ["x" := id; "l" := xs];
+                "f" := field int "x" (record ["x" := id; "l" := xs])]
+        └ data (3 columns)
+    |};
+  let narrowed =
+    Query.of_source s
+    |> Query.unnest Expr.[ "e" := xs ]
+    |> Query.select Expr.[ keep (Sel.names [ "e"; "id" ]) ]
+  in
+  expect (str Query.pp (Query.optimize narrowed))
+  @@ __POS_OF__ {|
+    query → e int64, id int64
+    select [keep (names ["e"; "id"])]
+    └ unnest ["e" := xs] ~repeat:["id"]
+      └ data (3 columns) ~columns:["id"; "xs"]
+    |};
+  let collected =
+    Query.of_source s
+    |> Query.aggregate ~by:[ "id" ]
+         Expr.[ "c" := collect (Col.v Kind.(list int) "xs") ]
+  in
+  expect (str Query.pp collected)
+  @@ __POS_OF__ {|
+    query → id int64, c list[list[int64]]
+    aggregate ~by:["id"] ["c" := collect xs]
+    └ data (3 columns)
+    |};
+  (* A filter on the repeated column stops at unnest. *)
+  let filtered =
+    Query.of_source s
+    |> Query.unnest Expr.[ "e" := xs ]
+    |> Query.filter Expr.(Col.int "id" = int 1)
+  in
+  expect (str Query.pp (Query.optimize filtered))
+  @@ __POS_OF__ {|
+    query → id int64, xs list[int64], lc list[float64], e int64
+    filter (id = 1)
+    └ unnest ["e" := xs]
+      └ data (3 columns)
+    |}
+
 let () =
-  exit (run "plan" [ printed; laws; comparing; kit_queries; kit_mistakes ])
+  exit
+    (run "plan"
+       [
+         printed; laws; comparing; kit_queries; kit_mistakes;
+         test "records and unnest print and narrow" unnest_plans;
+       ])

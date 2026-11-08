@@ -1304,8 +1304,8 @@ module Expr : sig
   (** {1:reductions Reductions}
 
       A reduction takes a [row] expression to one value per frame. Over no
-      values, {!sum}, {!count} and {!n_unique} are [0], and every other
-      reduction is null. *)
+      values, {!sum}, {!count} and {!n_unique} are [0], {!collect} is the empty
+      list, and every other reduction is null. *)
 
   val rows : (int, agg) t
   (** [rows] is the number of rows of the frame, as [int64]. *)
@@ -1372,6 +1372,20 @@ module Expr : sig
   val arg_max : ('a, row) t -> (int, agg) t
   (** [arg_max a] is the position of [a]'s first greatest value, like
       {!arg_min}. *)
+
+  val collect : ('a, row) t -> ('a array, agg) t
+  (** [collect a] is [a]'s values in frame order as a list of [a]'s type, with
+      one element per row of the frame and a null element for a null value. It
+      is never null, and is the empty list over no rows. [a] must have a column
+      type, and an extension column is read with {!each}.
+
+      {b Cost.} O(n). Under {!over} each row holds its partition's list, and
+      the lists together hold the sum of the partitions' squared sizes. Under
+      {!window} every row holds its window's list, and memory holds them all
+      together.
+
+      Raises [Invalid_argument] under [Rune.jit]
+      ({!Query.section-compiled}). *)
 
   (** {1:frames Frames}
 
@@ -1496,17 +1510,16 @@ module Expr : sig
 
   (** {2:lists Lists}
 
-      The elements of a row's lists are a frame, with one row per position, in
-      list order. An output's column holds the list's element at the position,
-      and every other column of the enclosing frame the row's value. Several
-      outputs are read in lockstep, so position [j] holds element [j] of each,
-      and lists of one row whose lengths differ are a data error at that row,
-      unless one of them is null. Frames nest, so a [per_list] of an element
-      that is itself a list reads that inner list. {!rows} is a list's length.
-      {!over}, {!shift}, {!rank} and {!window} run within the list, and each
-      must read an output of its list. One that reads only the row's values,
-      which do not change along the list, would look like the enclosing
-      frame's. *)
+      A list has one {e position} per element, and a null list none, so its
+      length is 0. A row's lists are read over a frame with one row per
+      position, in list order. An output's column holds the list's element at
+      the position, and every other column of the enclosing frame the row's
+      value. Several outputs are read in lockstep, so position [j] holds
+      element [j] of each, and lists of one row must have one length. Frames
+      nest, so a [per_list] of an element that is itself a list reads that
+      inner list. {!rows} over a list's frame is the list's length. {!over},
+      {!shift}, {!rank} and {!window} run within the list, and each must read
+      an output of its list. *)
 
   val per_list : row out list -> ('a, agg) t -> ('a, row) t
   (** [per_list ls r] is, at each row, [r] over the frame of the elements of
@@ -1538,12 +1551,18 @@ module Expr : sig
       An output must not hide a column of the enclosing frame other than a
       list it outputs unchanged, since [r] could not read the hidden column.
       [keep] therefore outputs a list under its own name, and [r] reads its
-      element there. *)
+      element there.
+
+      An {!over}, {!shift}, {!rank} or {!window} that reads only the row's
+      values, which do not change along the list, would look like the
+      enclosing frame's, so it is a problem. *)
 
   (** {3:list_values Nulls and floats}
 
-      A row where an output is null has no frame, so [r] does not run there,
-      and the value is null, that of {!count} and {!rows} included. An empty
+      A row where an output is null has no frame, whatever the lengths of its
+      other lists, so [r] does not run there, and the value is null, that of
+      {!count} and {!rows} included. Lists of one row whose lengths differ are
+      a data error at that row when none of them is null. An empty
       list's frame has no rows, so reductions give their value over no values
       ({!section-reductions}). A null element is a null value of the frame,
       which a reduction reads as it reads any null.
@@ -1560,6 +1579,44 @@ module Expr : sig
       [over ~order] in [r] sort, and a column of the enclosing frame that [r]
       reads is copied once per element.
   *)
+
+  (** {1:records Records}
+
+      A record expression computes a value of a {!Type.constructor-Record}
+      type from named expressions of the record's shape. A record and its
+      fields have separate nulls, and {!is_null} of a record tests the record
+      alone. *)
+
+  val record : 's out list -> (Record.t, 's) t
+  (** [record os] is the record of the outputs [os], its fields named as they
+      are, in order: [record [ "x" := x; keep (Sel.names [ "flux" ]) ]]. It is
+      never null, even where every field is. [if_ c (record os) null] is null
+      where [c] is not [true].
+
+      Its problems are those of binding [os], and two outputs of one name. *)
+
+  val field : 'a Kind.t -> string -> (Record.t, 's) t -> ('a, 's) t
+  (** [field k n r] is the field [n] of [r] read as [k], null where [r] is
+      null or the field is: [field Kind.float "flux" band]. [k] binds the field
+      as a {!Col} handle binds a column, so [field] reads fields of types
+      without an extension, and {!within} reads any.
+
+      Its problems are a field that [r] lacks and one that [k] does not read.
+  *)
+
+  val within : (Record.t, row) t -> 's out -> 's out
+  (** [within r o] is the outputs [o] bound over [r]'s fields, so that inside
+      [o] a name reads the field of that name and no column of the frame, null
+      where [r] is null or the field is. [within r (keep Sel.all)] spreads a
+      record, [within r (each Sel.all { column = (fun n x -> "b_" ^ n := x) })]
+      renames, and [within r ("snr" := Col.float "flux" /. Col.float "err")]
+      computes. To combine a field with a column of the frame, read the field
+      with {!field} outside [within].
+
+      Its problems are those of binding [o] against [r]'s fields, a name that
+      [r] lacks included, an [r] that is not a record, and, under
+      {!Query.derive} and {!Query.unnest}, an output named as a column of the
+      input, which would replace that column. *)
 
   (** {1:ocaml OCaml values}
 
@@ -2366,7 +2423,8 @@ module Query : sig
       {!Expr.window} over the input's rows need the whole input: the verb then
       blocks.
 
-      Its problems are those of binding [os], and two outputs of one name. *)
+      Its problems are those of binding [os], two outputs of one name, and an
+      output of {!Expr.within} named as a column of [q]. *)
 
   val filter : (bool, Expr.row) Expr.t -> t -> t
   (** [filter p q] is the rows of [q] on which [p] is [true], in order, so a row
@@ -2455,6 +2513,31 @@ module Query : sig
 
       Its problems are a column that only [q] has, one that only [rest] has, and
       each column whose two types do not meet, such as [int8] and [uint8]. *)
+
+  val unnest : ?keep_empty:bool -> Expr.row Expr.out list -> t -> t
+  (** [unnest ?keep_empty os q] is the rows of the frames of the lists that the
+      outputs [os] compute ({!Expr.section-lists}), concatenated in [q]'s row
+      order, each row's positions in list order. Its columns are [q]'s with
+      [os], placed as {!derive} places them, an output holding its list's
+      element and every other column repeating the row's value.
+
+      A row without positions gives no row. With [~keep_empty:true] (default
+      [false]) it gives one row with every output null, so a null list and an
+      empty one merge, a padded null reads as a null element, and {!Expr.rows}
+      counts that row as one. Lengths that differ, a null beside a non-empty
+      list included, are a data error at the row.
+
+      It streams, and blocks where {!derive} would, in O(n + m) for m
+      positions, plus the size of each repeated list or text column once per
+      position of its row. {!optimize} narrows the repeated columns.
+
+      Its problems are those of binding [os], no output, two outputs of one
+      name, an output that is not a list, and an output of {!Expr.within}
+      named as a column of [q].
+
+      Raises [Invalid_argument] over traced columns under [Rune.jit], and
+      under [Rune.vmap] where the lists' offsets or validity are traced
+      ({!section-compiled}). *)
 
   (** {1:running Running} *)
 
@@ -2568,8 +2651,9 @@ module Query : sig
         into the right input when it reads only right columns and the join is
         [Inner].
 
-      It stops at a [slice], at a [Full] join, at a join with an assertion, at a
-      step with an output or predicate that is not row-local, and at a table.
+      It stops at a [slice], at an [unnest], at a [Full] join, at a join with an
+      assertion, at a step with an output or predicate that is not row-local,
+      and at a table.
       Pushdown never crosses a join with an assertion: a conjunct entering one
       input changes the matches of the other input's rows, and so could make
       that side's assertion fail on rows the plan shows it. A conjunct that can
@@ -2604,9 +2688,11 @@ module Query : sig
       [offset + length]th row's: [sort] then [slice] is a top-k.
 
       {b Projections.} Each source reads only the columns that a step reads or
-      that the result has, and each [select], [derive] and [aggregate] drops the
-      outputs that nothing reads. A [select] that keeps its input's columns
-      unchanged, in order, goes, and so does a [derive] left without outputs,
+      that the result has, each [select], [derive] and [aggregate] drops the
+      outputs that nothing reads, and an [unnest] repeats only the columns read
+      above it, though it keeps every output, which sets its rows. A [select]
+      that keeps its input's columns unchanged, in order, goes, and so does a
+      [derive] left without outputs,
       and a [select] that only keeps columns below a [select] or an [aggregate],
       which read their input by name. Where an input of an [append] has columns
       that the [append] does not take, [select [keep (names …)]] keeps those it

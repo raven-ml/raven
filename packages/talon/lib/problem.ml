@@ -33,19 +33,19 @@ let pp_names conj ppf names =
   in
   loop ppf names
 
-let missing name schema =
+let missing ?(what = "column") name schema =
   let names = Schema.names schema in
   let nearest (d, ns) n =
     let dn = distance name n in
     if dn < d then (dn, [ n ]) else if dn = d then (d, n :: ns) else (d, ns)
   in
   match (names, List.fold_left nearest (2, []) names) with
-  | [], _ -> v "no column %a. There are no columns." Type.pp_quoted name
+  | [], _ -> v "no %s %a. There are no %ss." what Type.pp_quoted name what
   | _, (_, []) ->
-      v "no column %a. The columns are %a." Type.pp_quoted name (pp_names "and")
-        names
+      v "no %s %a. The %ss are %a." what Type.pp_quoted name what
+        (pp_names "and") names
   | _, (_, near) ->
-      v "no column %a. Did you mean %a?" Type.pp_quoted name (pp_names "or")
+      v "no %s %a. Did you mean %a?" what Type.pp_quoted name (pp_names "or")
         (List.rev near)
 
 let repeated ns =

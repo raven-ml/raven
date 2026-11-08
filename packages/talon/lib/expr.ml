@@ -38,6 +38,7 @@ type (_, _) reduction =
   | N_unique : ('a, int) reduction
   | Arg_min : ('a, int) reduction
   | Arg_max : ('a, int) reduction
+  | Collect : ('a, 'a array) reduction
 
 type ('e, 's) ext = {
   type_ : Type.ext Type.t;
@@ -87,6 +88,7 @@ and out_repr =
   | Keep of Sel.t
   | Across : 'a Kind.t * Sel.t * (string -> ('a, row) t -> out_repr) -> out_repr
   | Each : Sel.t * 's column -> out_repr
+  | Within : (Record.t, row) t * out_repr -> out_repr
 
 and 's column = { column : 'a. string -> ('a, row) t -> 's out }
 and packed = Packed : ('a, 's) t -> packed
@@ -130,6 +132,9 @@ and 'a node =
     }
       -> 'a node
   | Per_list : out_repr list * ('a, 's) t -> 'a node
+  | Record_of : out_repr list -> Record.t node
+  | Field : 'a Kind.t * string * (Record.t, 's) t -> 'a node
+  | Spread : (Record.t, 's0) t * ('a, 's1) t -> 'a node
   | Const : 'a -> 'a node
   | App : ('a -> 'b, 's0) t * ('a, 's1) t -> 'b node
   | Option : ('a, 's) t -> 'a option node
@@ -193,6 +198,9 @@ let operands : type a. a node -> packed list = function
   | Not a -> [ Packed a ]
   | Is_null a -> [ Packed a ]
   | Rank a -> [ Packed a ]
+  | Field (_, _, r) -> [ Packed r ]
+  | Spread (r, a) -> [ Packed r; Packed a ]
+  | Record_of os -> List.map snd (list_outs os)
   | Option a -> [ Packed a ]
   | Of_option a -> [ Packed a ]
   | Is_in (_, a) -> [ Packed a ]
@@ -240,6 +248,7 @@ let reduction_name : type a b. (a, b) reduction -> string = function
   | N_unique -> "n_unique"
   | Arg_min -> "arg_min"
   | Arg_max -> "arg_max"
+  | Collect -> "collect"
 
 let text_op_name : type a. a text_op -> string = function
   | Length -> "Str.length"
@@ -414,15 +423,18 @@ let node_equal : type a b. a node -> b node -> bool =
       Bool.equal w0.exclude w1.exclude
       && Bool.equal (Option.is_some w0.on) (Option.is_some w1.on)
       && Bool.equal (Option.is_some w0.before) (Option.is_some w1.before)
-  | Per_list (os0, _), Per_list (os1, _) ->
+  | Per_list (os0, _), Per_list (os1, _) | Record_of os0, Record_of os1 ->
       List.equal String.equal (List.map fst (list_outs os0))
         (List.map fst (list_outs os1))
+  | Field (k0, n0, _), Field (k1, n1, _) ->
+      String.equal n0 n1 && Option.is_some (Kind.equal_witness k0 k1)
   | Const v0, Const v1 -> same_value v0 v1
   | Text (op0, _), Text (op1, _) -> text_op_equal op0 op1
   | Concat (sep0, _), Concat (sep1, _) -> String.equal sep0 sep1
   | Calendar op0, Calendar op1 -> calendar_equal op0 op1
   | Null, Null
   | Rows, Rows
+  | Spread _, Spread _
   | Not _, Not _
   | If _, If _
   | Is_null _, Is_null _
@@ -435,8 +447,9 @@ let node_equal : type a b. a node -> b node -> bool =
   | ( ( Handle _ | Ext_handle _ | Read _ | Lit _ | Null | Rows | Int _ | Float _
       | Compare _ | Logic _ | Not _ | If _ | Is_null _ | Coalesce _ | Is_in _
       | Cut _ | Cast _ | Lift _ | Lift2 _ | Nx_map _ | Reduce _ | Over _
-      | Shift _ | Rank _ | Window _ | Per_list _ | Const _ | App _ | Option _
-      | Of_option _ | Store _ | Text _ | Concat _ | Calendar _ ),
+      | Shift _ | Rank _ | Window _ | Per_list _ | Record_of _ | Field _
+      | Spread _ | Const _ | App _ | Option _ | Of_option _ | Store _ | Text _
+      | Concat _ | Calendar _ ),
       _ ) ->
       false
 
@@ -470,7 +483,9 @@ let node_hash : type a. a node -> int =
     | Shift (i, _) -> Hashtbl.hash i
     | Window w ->
         Hashtbl.hash (w.exclude, Option.is_some w.on, Option.is_some w.before)
-    | Per_list (os, _) -> Hashtbl.hash (List.map fst (list_outs os))
+    | Per_list (os, _) | Record_of os ->
+        Hashtbl.hash (List.map fst (list_outs os))
+    | Field (_, n, _) -> Hashtbl.hash n
     | _ -> 0
   in
   Hashtbl.hash
@@ -537,7 +552,8 @@ let values =
     "across agg arg_max arg_min bool cast coalesce const count cut date each \
      first float if_ instant int is_in is_null keep last max mean median min \
      n_unique not null nx nx2 of_option only option over per_list pp pp_out \
-     quantile rank rows shift span std store string sum var window"
+     quantile rank record rows shift span std store string sum var window \
+     within collect field"
 
 let is_lowercase_ident n =
   String.length n > 0
@@ -767,6 +783,11 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
        @ exclude @ [ arg r ])
   | Per_list (os, r) ->
       app "per_list" [ (fun ppf -> Type.pp_list pp_out ppf os); arg r ]
+  | Record_of os -> app "record" [ (fun ppf -> Type.pp_list pp_out ppf os) ]
+  | Field (k, n, r) ->
+      app "field"
+        [ (fun ppf -> Kind.pp ppf k); (fun ppf -> Type.pp_quoted ppf n); arg r ]
+  | Spread (r, a) -> app "within" [ arg r; arg a ]
   | Const _ -> Format.pp_print_string ppf "<const>"
   | Option a -> app "option" [ arg a ]
   | Of_option a -> app "of_option" [ arg a ]
@@ -839,6 +860,8 @@ and pp_out ppf = function
         sel
   | Each (sel, _) ->
       Format.fprintf ppf "@[<hov 2>each@ %a@ <fn>@]" Sel.pp_arg sel
+  | Within (r, o) ->
+      Format.fprintf ppf "@[<hov 2>within@ %a@ (%a)@]" (pp_at 8) r pp_out o
 
 let pp ppf e = pp_at 0 ppf e
 let pp_arg ppf e = pp_at 8 ppf e
@@ -860,6 +883,7 @@ type 'a elab =
 
 type env = {
   schema : Schema.t;
+  entity : string;  (** What the schema's names name: column or field. *)
   problems : Problem.t list ref;  (** In reverse order. *)
   seen : (string, unit) Hashtbl.t;  (** The messages of [problems]. *)
 }
@@ -886,7 +910,8 @@ let pp_typing : type a. Format.formatter -> a typing -> unit =
   | Extension d -> Type.pp ppf d.type_
   | Value -> Format.pp_print_string ppf "an OCaml value"
 
-let missing env name = problem env (Problem.missing name env.schema)
+let missing env name =
+  problem env (Problem.missing ~what:env.entity name env.schema)
 
 let untyped env e =
   report env "%a has no type: give it one with store." pp e;
@@ -1186,6 +1211,8 @@ let free_names e =
           List.fold_left (fun acc (_, Packed e) -> walk bound acc e) acc outs
         in
         walk (List.map fst outs @ bound) acc r
+    (* Inside [within], every name reads the record's fields. *)
+    | Spread (r, _) -> walk bound acc r
     | n ->
         List.fold_left (fun acc (Packed e) -> walk bound acc e) acc (operands n)
   in
@@ -1207,6 +1234,11 @@ let rec body_orders : type a s. env -> string list -> (a, s) t -> unit =
   match e.node with
   | Per_list (os, _) ->
       List.iter (fun (_, Packed e) -> body_orders env names e) (list_outs os)
+  | Spread (r, a) ->
+      body_orders env names r;
+      (* [a] reads [r]'s fields: an element's when [r] reads an output. *)
+      if not (List.exists (fun n -> List.mem n names) (free_names r)) then
+        body_orders env [] a
   | n -> List.iter (fun (Packed e) -> body_orders env names e) (operands n)
 
 let is_int_or_float : type a. a Type.t -> bool = function
@@ -1248,6 +1280,10 @@ let reduction_typing : type a b.
   | Max -> Some t
   | Arg_min -> Some int64
   | Arg_max -> Some int64
+  | Collect -> (
+      match t with
+      | Column ty -> Some (Column (Type.list ty))
+      | Extension _ | Value -> no_type ())
   | Sum -> (
       match t with
       | Column ty -> (
@@ -1635,13 +1671,23 @@ let trace2 env (fn : fn2) ty a b =
       lift env "nx2" ty [ a.id; b.id ] (fun i ->
           fn.f2 (input i dt ty a) (input i dt ty b))
 
+let typing e =
+  match e.typing with
+  | Some t -> t
+  | None -> invalid_arg "Expr.typing: the expression is not bound"
+
+let record_fields : type a. a typing -> (string * Type.any) list option =
+  function
+  | Column (Record fields) -> Some fields
+  | _ -> None
+
 (* Expressions *)
 
 let rec elab : type a s. env -> (a, s) t -> a elab =
  fun env e ->
   match e.node with
   | _ when Option.is_some e.typing -> err "Expr: %a is bound" pp e
-  | Nx_map _ -> err "Expr: %a is bound" pp e
+  | Nx_map _ | Spread _ -> err "Expr: %a is bound" pp e
   | Handle (k, n) -> (
       match Schema.find env.schema n with
       | None ->
@@ -1936,6 +1982,46 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
       | Some (t, r) when problems () = before ->
           known t (Per_list (List.map (fun (n, p) -> Named (n, p)) bound, r))
       | _ -> Broken)
+  | Record_of os -> (
+      let problems () = List.length !(env.problems) in
+      let before = problems () in
+      let bound = List.concat_map (outs env) os in
+      List.iter
+        (report env "record: %a is named twice." Type.pp_quoted)
+        (Problem.repeated (List.map fst bound));
+      match problems () = before with
+      | false -> Broken
+      | true ->
+          let field (n, Packed e) =
+            match typing e with
+            | Column ty -> (n, Type.Any ty)
+            | Extension d -> (n, Type.Any d.type_)
+            | Value -> assert false (* Bound outputs have a column type. *)
+          in
+          let ty = Type.record (List.map field bound) in
+          known (Column ty)
+            (Record_of (List.map (fun (n, p) -> Named (n, p)) bound)))
+  | Field (k, n, r) ->
+      on_operand env r (fun t r : a elab ->
+          match record_fields t with
+          | None ->
+              report env "field reads a record column, not %a." pp_typing t;
+              Broken
+          | Some fields -> (
+              match List.assoc_opt n fields with
+              | None ->
+                  problem env
+                    (Problem.missing ~what:"field" n (Schema.v fields));
+                  Broken
+              | Some (Any ty) -> (
+                  match Kind.provably_equal k (Type.kind ty) with
+                  | Some Equal -> known (Column ty) (Field (k, n, r))
+                  | None ->
+                      report env
+                        "field: %a is %a, which %a does not read: spread it \
+                         with within."
+                        Type.pp_quoted n Type.pp ty Kind.pp k;
+                      Broken)))
   | App (f, a) -> (
       let f =
         match elab env f with
@@ -2048,7 +2134,7 @@ and on_operand : type a s r.
 and outs : env -> out_repr -> (string * packed) list =
  fun env o ->
   let select sel =
-    let names, ps = Sel.check sel env.schema in
+    let names, ps = Sel.check ~what:env.entity sel env.schema in
     List.iter (problem env) ps;
     List.filter_map
       (fun n -> Option.map (fun ty -> (n, ty)) (Schema.find env.schema n))
@@ -2077,6 +2163,22 @@ and outs : env -> out_repr -> (string * packed) list =
       List.concat_map
         (fun (n, Type.Any ty) -> outs env (column n (make (Read (ty, n)))))
         (select sel)
+  | Within (r, o) -> (
+      match resolve env r (elab env r) with
+      | None -> []
+      | Some (t, b) -> (
+          match record_fields t with
+          | None ->
+              report env "within spreads a record column, not %a." pp_typing t;
+              []
+          | Some fields ->
+              let inner =
+                { env with schema = Schema.v fields; entity = "field" }
+              in
+              List.map
+                (fun (n, Packed e) ->
+                  (n, Packed (typed (typing e) (Spread (b, e)))))
+                (outs inner o)))
 
 and text : type a s. env -> a text_op -> (string, s) t -> a elab =
  fun env op a ->
@@ -2272,7 +2374,8 @@ and dated : type a s.
       None
   | None -> None
 
-let env schema = { schema; problems = ref []; seen = Hashtbl.create 8 }
+let env schema =
+  { schema; entity = "column"; problems = ref []; seen = Hashtbl.create 8 }
 
 let finish env v =
   match !(env.problems) with [] -> Ok v | ps -> Error (List.rev ps)
@@ -2282,11 +2385,6 @@ let bind_predicate schema p =
   match expect env p bool_typing (elab env p) with
   | Some b -> finish env (b :> (_, _) t)
   | None -> Error (List.rev !(env.problems))
-
-let typing e =
-  match e.typing with
-  | Some t -> t
-  | None -> invalid_arg "Expr.typing: the expression is not bound"
 
 let bind_value schema e =
   let env = env schema in
@@ -2404,6 +2502,11 @@ let map_node : type a. mapper -> a node -> a node =
   | Per_list (os, r) ->
       let out (n, Packed e) = Named (n, Packed (map e)) in
       Per_list (List.map out (list_outs os), map r)
+  | Record_of os ->
+      let out (n, Packed e) = Named (n, Packed (map e)) in
+      Record_of (List.map out (list_outs os))
+  | Field (k, n, r) -> Field (k, n, map r)
+  | Spread (r, a) -> Spread (map r, map a)
   | App (f, a) -> App (map f, map a)
   | Option a -> Option (map a)
   | Of_option a -> Of_option (map a)
@@ -2448,6 +2551,7 @@ let rename f e =
       | Per_list (os, r) ->
           let out (n, Packed e) = Named (n, Packed (go f e)) in
           Per_list (List.map out (list_outs os), go (scoped f os) r)
+      | Spread (r, a) -> Spread (go f r, a)
       | n -> map_node { map = (fun e -> go f e) } n)
   in
   go f e
@@ -2466,6 +2570,7 @@ let captures f e =
              (fun n -> (not (List.mem n names)) && List.mem (f n) names)
              (free_names r)
         || capt inner r
+    | Spread (r, _) -> capt f r
     | n -> List.exists (fun (Packed e) -> capt f e) (operands n)
   in
   capt f e
@@ -2728,11 +2833,19 @@ let quantile p a =
 let n_unique a = reduce N_unique a
 let arg_min a = reduce Arg_min a
 let arg_max a = reduce Arg_max a
+let collect a = reduce Collect a
 
 (* Frames *)
 
 let over ?(by = []) ?(order = []) e = make (Over { by; order; e })
 let per_list ls r = make (Per_list (ls, r))
+let record os = make (Record_of os)
+
+let field k n r =
+  check_utf_8 "Expr.field" n;
+  make (Field (k, n, r))
+
+let within r o = Within (r, o)
 let shift n a = make (Shift (n, a))
 let rank a = make (Rank a)
 

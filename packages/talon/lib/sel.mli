@@ -23,12 +23,12 @@ val inter : t -> t -> t
 
 (** {1:resolving Resolving} *)
 
-val check : t -> Schema.t -> string list * Problem.t list
-(** [check sel s] is [(ns, ps)]: [ns] the names that [sel] selects in [s],
-    distinct and in the order the constructors state, and [ps] one
-    {!Problem.missing} per name of a {!names} that [s] lacks, in the order they
-    appear in [sel]. A selector that matches nothing selects [[]], which is no
-    problem. *)
+val check : ?what:string -> t -> Schema.t -> string list * Problem.t list
+(** [check ~what sel s] is [(ns, ps)]: [ns] the names that [sel] selects in
+    [s], distinct and in the order the constructors state, and [ps] one
+    {!Problem.missing} of [what] per name of a {!names} that [s] lacks, in the
+    order they appear in [sel]. A selector that matches nothing selects [[]],
+    which is no problem. *)
 
 (** {1:fmt Formatting} *)
 

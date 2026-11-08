@@ -177,6 +177,29 @@ let derive q outputs input =
     let column = function Output i -> cs.(i) | Input j -> ins.(j) in
     (cut q b f (List.map column sources), f)
 
+(* [unnest q outputs keep_empty input] repeats [q]'s input columns once per
+   position of its outputs. *)
+let unnest q outputs keep_empty input =
+  let eval = Eval.unnest (Query.schema input) outputs ~keep_empty in
+  let index n ns = List.find_index (String.equal n) ns in
+  let outs = List.map fst outputs and ins = Schema.names (Query.schema input) in
+  let source n =
+    match index n outs with
+    | Some i -> Output i
+    | None -> Input (Option.get (index n ins))
+  in
+  let sources = List.map source (Schema.names (Query.schema q)) in
+  fun b ->
+    let outer, cs, f = eval (Eval.frame b) in
+    let cs = Array.of_list cs and ins = Table.columns b in
+    let column = function
+      | Output i -> cs.(i)
+      | Input j -> Column.gather outer ins.(j)
+    in
+    ( Table.batch (Query.schema q) ~rows:(Nx.dim 0 outer)
+        (Array.of_list (List.map column sources)),
+      f )
+
 let filter q predicate input =
   let eval = Eval.predicate (Query.schema input) predicate in
   fun b ->
@@ -455,6 +478,8 @@ let compile q =
         step input (local outputs) (select q outputs input)
     | Derive { outputs; input } ->
         step input (local outputs) (derive q outputs input)
+    | Unnest { outputs; keep_empty; input; _ } ->
+        step input (local outputs) (unnest q outputs keep_empty input)
     | Filter { predicate; input } ->
         step input (Expr.row_local predicate) (filter q predicate input)
     | Aggregate { by; outputs; input } ->

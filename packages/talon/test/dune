@@ -173,3 +173,9 @@
  (modules test_per_list)
  (package talon)
  (libraries windtrap talon talon_gen nx))
+
+(test
+ (name test_nesting)
+ (modules test_nesting)
+ (package talon)
+ (libraries windtrap talon talon_gen nx))

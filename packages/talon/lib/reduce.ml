@@ -377,7 +377,7 @@ let reduce : type a b.
             | _, Some up -> Nx.mul (Nx.mul x up) up
           in
           ok (fixed ty ~valid:(Nx.greater_equal_s n 2L) x))
-  | Median | Quantile _ | N_unique -> v.holistic r ty p
+  | Median | Quantile _ | N_unique | Collect -> v.holistic r ty p
   | Min -> ok (value_at false)
   | Max -> ok (value_at true)
   | Arg_min -> ok (place (extreme false))
@@ -432,7 +432,7 @@ let frame s =
         Type.any ->
         parts ->
         Column.t * (int * string) option =
-     fun r _ p ->
+     fun r ty p ->
       let c = p.c in
       let quantile q =
         let r = Nx_ragged.of_ids ~segments:s.count ids (tensor Nx.float64 c) in
@@ -442,6 +442,15 @@ let frame s =
       match r with
       | Median -> quantile 0.5
       | Quantile q -> quantile q
+      | Collect ->
+          let r = view s in
+          ( Column.make ty ~length:s.count
+              (List
+                 {
+                   offsets = Nx_ragged.offsets r;
+                   child = Column.gather (Nx_ragged.values r) c;
+                 }),
+            None )
       | N_unique ->
           (* [n] groups at most, so that no count of them is read: a group
              past the last has no key, and counts [0] in segment [0]. *)

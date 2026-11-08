@@ -84,6 +84,19 @@ val values :
     values decoded with its declaration. A value outside the OCaml type is a
     failure at its row ({!Column.decoder}). *)
 
+val unnest :
+  Schema.t ->
+  (string * Expr.packed) list ->
+  keep_empty:bool ->
+  frame ->
+  Nx.host Nx.int64_t * Column.t list * failure option
+(** [unnest s os ~keep_empty] compiles the outputs [os], list columns bound to
+    the columns [s]. On a frame it is, for its positions up to the earliest
+    failure: each position's row, each output's elements, and the failure, if
+    any. A null list has length 0, the lengths of a row's lists must agree, and
+    a row without positions gives none, or with [keep_empty] one position of
+    null elements. *)
+
 val widen : Type.any -> Type.any -> Column.t -> Column.t
 (** [widen from t] converts a column of type [from] to the type [t] that
     contains it ({!Type.common}), exactly. *)

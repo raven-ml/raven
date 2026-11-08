@@ -224,6 +224,12 @@ let static =
       (verb [ "c"; "e" ]
          (Query.derive
             [ "c" := if_ (a > float 1.) a b; "e" := coalesce [ a; b ] ]));
+    agrees "record and field"
+      (verb [ "c" ]
+         (Query.select [ "c" := field Kind.float "a" (record [ "a" := a ]) ]));
+    agrees "within"
+      (verb [ "a" ]
+         (Query.select [ within (record [ "a" := a ]) (keep Sel.all) ]));
     agrees "sort on floats"
       (verb all (Query.sort [ Order.asc "a"; Order.desc "b" ]));
     agrees "sort on ints, booleans and dates"
@@ -330,6 +336,60 @@ let dynamic =
     refuses "inner join on a comparison" (verb [ "a" ] (ranged Join.Inner));
     refuses "semi join on a comparison" (verb [ "a" ] (ranged Join.Semi));
     refuses "distinct" (verb [ "k" ] (fun q -> Kit.distinct (keys q)));
+    (let f =
+       verb [ "s" ] (fun q ->
+           Query.aggregate ~by:[] [ "c" := collect a ] q
+           |> Query.derive
+                [
+                  "s"
+                  := per_list
+                       [ "e" := Col.v Kind.(list float) "c" ]
+                       (sum (Col.float "e"));
+                ])
+     in
+     test "collect raises under jit and maps each lane under vmap" (fun () ->
+         raises_match
+           (Exn.invalid_arg ~sub:"the value is traced by Rune.jit")
+           (fun () ->
+             Rune.jit (signature ())
+               (fun x ->
+                 ignore
+                   (run_ok
+                      (Query.aggregate ~by:[] [ "c" := collect a ]
+                         (Query.of_table (table x))));
+                 Nx.zeros f64 [| 1; 1 |])
+               fixed);
+         let lane = Nx.to_array (f fixed) in
+         equal (array float_exact)
+           (Array.append lane lane)
+           (Nx.to_array (Rune.vmap (signature ()) f (stack [ fixed; fixed ])))));
+    test "unnest raises over traced columns" (fun () ->
+        let table offsets x =
+          let xs =
+            Result.get_ok
+              (Column.of_layout
+                 (Any (Type.list Type.float64))
+                 (Varsize { validity = None; offsets; child = Column.of_tensor x }))
+          in
+          let q =
+            Query.unnest
+              [ "e" := Col.v Kind.(list float) "xs" ]
+              (Query.of_table (Talon.v [ ("xs", xs) ]))
+          in
+          Talon.to_tensor f64 [ "e" ] (Result.get_ok (Query.run q))
+        in
+        let offsets = Nx.create Nx.int64 [| 3 |] [| 0L; 1L; 3L |] in
+        let x = Nx.ones f64 [| 3 |] in
+        let traced by = Exn.invalid_arg ~sub:("the value is traced by " ^ by) in
+        let sign () = Nx.Ptree.(tensor @-> returns tensor) in
+        raises_match (traced "Rune.jit") (fun () ->
+            Rune.jit (sign ()) (fun o -> table o x) offsets);
+        raises_match (traced "Rune.jit") (fun () ->
+            Rune.jit (sign ()) (fun x -> table offsets x) x);
+        raises_match (traced "Rune.vmap") (fun () ->
+            Rune.vmap (sign ())
+              (fun o -> table o x)
+              (Nx.stack [ offsets; offsets ])));
     test "per_list raises over traced columns" (fun () ->
         let table offsets x =
           let child = Column.of_tensor x in

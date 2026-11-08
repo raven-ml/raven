@@ -161,6 +161,7 @@ let rec fold q =
         | Select r -> Select { r with outputs = fold_outputs r.outputs }
         | Derive r -> Derive { r with outputs = fold_outputs r.outputs }
         | Aggregate r -> Aggregate { r with outputs = fold_outputs r.outputs }
+        | Unnest r -> Unnest { r with outputs = fold_outputs r.outputs }
         | n -> n
       in
       Query.make (Query.map_inputs fold folded)
@@ -442,6 +443,21 @@ let rec prune ~ordered need q =
           let input = prune ~ordered (union kept (reads_of outputs)) input in
           if List.is_empty outputs then input
           else Query.make (Derive { outputs; input })
+      | Unnest { outputs; keep_empty; repeated; input } ->
+          (* Every output stays, since it sets the row count. A column read
+             above that an output replaces keeps its place only when the
+             order of columns is observed. A column an output reads and
+             nothing above it is read, so it is not repeated. *)
+          let repeated = List.filter (fun n -> List.mem n need) repeated in
+          let kept =
+            List.filter
+              (fun n ->
+                Option.is_some (Schema.find (Query.schema input) n)
+                && (ordered || not (List.mem_assoc n outputs)))
+              need
+          in
+          let input = prune ~ordered (union kept (reads_of outputs)) input in
+          Query.make (Unnest { outputs; keep_empty; repeated; input })
       | Aggregate { by; outputs; input } ->
           let outputs = List.filter (fun (n, _) -> List.mem n need) outputs in
           let input =

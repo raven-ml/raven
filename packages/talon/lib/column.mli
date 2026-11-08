@@ -157,9 +157,11 @@ val sub : t -> offset:int -> length:int -> t
 
 val gather : Nx.host Nx.int64_t -> t -> t
 (** [gather indices c] is the rows of [c] at the 1-D [indices], in order, with
-    no range check: an index outside \[[0];[length c - 1]\] reads zero values, a
-    clear validity bit, and an empty row of variable size. Its count is not yet
-    read. *)
+    no range check: an index outside \[[0];[length c - 1]\] reads zero values
+    and an empty row of variable size, and a clear validity bit where [c] has a
+    validity. A column without a validity holds a value at such a row, and
+    {!restrict} over the gather reads a null there. Its count is not yet read.
+*)
 
 val permute : Nx.host Nx.int64_t -> t -> t
 (** [permute p c] is [gather p c] for a permutation [p] of [c]'s rows. Its null
