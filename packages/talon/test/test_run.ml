@@ -2472,6 +2472,72 @@ let cover_groups vs g =
 let of_groups ty vs g =
   v [ ("g", Column.v Type.int64 g); ("x", Column.of_options ty vs) ]
 
+(* Far from zero: each group's values are [centre + j h], with [h = 2^-20], a
+   power of two, and [j] integers of 20 bits: every value and the group's mean
+   numerator are exact. The exact sample variance is the rational [h^2 S / (n -
+   1)], [S] the integers' [\u{03A3} j^2 - (\u{03A3} j)^2 / n] by the division
+   with remainder of [\u{03A3} j] by [n], whose terms fit an [int]. *)
+let exact_variance js =
+  let n = Array.length js in
+  let total = Array.fold_left ( + ) 0 js in
+  let q = total / n and r = total mod n in
+  let squares = Array.fold_left (fun a j -> a + (j * j)) 0 js in
+  let s = squares - (q * q * n) - (2 * q * r) in
+  let s = float_of_int s -. (float_of_int (r * r) /. float_of_int n) in
+  Float.ldexp s (-40) /. float_of_int (n - 1)
+
+let far_from_zero =
+  Gen.(
+    let+ n = int_range 2 100_000
+    and+ groups = int_range 1 4
+    and+ seed = nat
+    and+ centre = int_range 0 1000 in
+    (n, groups, seed, 1e9 +. float_of_int centre))
+
+let law_exact_variance (n, groups, seed, centre) =
+  let r = Random.State.make [| seed |] in
+  let id = Array.init n (fun _ -> Random.State.int r groups) in
+  let js = Array.init n (fun _ -> Random.State.int r 0x10_0000 - 0x8_0000) in
+  let t =
+    v
+      [
+        ("g", Column.v Type.int64 id);
+        ( "x",
+          Column.v Type.float64
+            (Array.map (fun j -> centre +. Float.ldexp (float_of_int j) (-20)) js)
+        );
+      ]
+  in
+  let t =
+    require_ok ~pp:Error.pp
+      (aggregate [ "g" ]
+         Expr.[ "v" := var (Col.float "x"); "s" := std (Col.float "x") ]
+         t)
+  in
+  let of_group k =
+    let idx = List.filter (fun i -> id.(i) = k) (List.init n Fun.id) in
+    Array.of_list (List.map (fun i -> js.(i)) idx)
+  in
+  let keys = Column.options Kind.int (column t "g") in
+  let vs = floats t "v" and ss = floats t "s" in
+  (* Chan, Golub and LeVeque's bound for the corrected two-pass, N u +
+     N^3 k^2 u^3, is below a few N u at this condition. *)
+  let bound count = 16. *. float_of_int count *. 0x1p-53 in
+  Array.iteri
+    (fun i key ->
+      match key with
+      | None -> ()
+      | Some k ->
+          let js = of_group k in
+          let count = Array.length js in
+          if count >= 2 then begin
+            let exact = exact_variance js in
+            let tol = float_rel ~rel:(bound count) ~abs:0. in
+            equal ~msg:"var" (option tol) (Some exact) vs.(i);
+            equal ~msg:"std" (option tol) (Some (sqrt exact)) ss.(i)
+          end)
+    keys
+
 (* Each output of an aggregate of [count], [min], [max] and, over numbers,
    [sum], [mean], [var] and [std] of one column is the bytes of its own
    aggregate. *)
@@ -2582,6 +2648,8 @@ let one_column =
   group "One column's reductions"
     [
       prop "each output is its own aggregate's" (grouped reduced) law_shared;
+      prop ~count:20 "var and std follow the exact variance far from zero"
+        far_from_zero law_exact_variance;
       prop "an integer's or a boolean's min and max are its extremes"
         (grouped
            (List.filter

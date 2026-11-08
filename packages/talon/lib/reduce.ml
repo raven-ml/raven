@@ -425,21 +425,32 @@ let frame s =
     in
     let variance p =
       let n = counts p and x = tensor Nx.float64 p.c in
+      let values = Nx.cast Nx.float64 n in
       let k = Nx.cast Nx.float64 (Nx.sub_s n 1L) in
-      let deviations x m =
+      (* [Σ d²] and the term that takes the rounding of [m] out of it, [(Σ d)
+         (Σ d / n)]: the corrected two-pass of Chan, Golub and LeVeque, as
+         [Nx.var] computes it. *)
+      let terms x m =
         let d = Nx.sub x (Nx.take s.ids m) in
-        Nx.div (fold Add (Nx.mul d d)) k
+        let e = fold Add d in
+        (fold Add (Nx.mul d d), Nx.mul e (Nx.div e values))
       in
-      let var = deviations x (mean p) in
+      let spread (sq, c) = Nx.div (Nx.maximum_s (Nx.sub sq c) 0.) k in
+      let t = terms x (mean p) in
+      let var = spread t in
       if not (overflows p.c) then { var; up = None; n }
       else
+        (* The larger of the two terms over [k] says where a term left the
+           range, at either end, the correction included: their difference
+           can be a NaN there, or cancel to 0. *)
+        let bound = Nx.div (Nx.maximum (fst t) (snd t)) k in
         let odd =
-          Nx.logical_or (Nx.equal_s var Float.infinity) (Nx.less_s var tiny)
+          Nx.logical_or (Nx.equal_s bound Float.infinity) (Nx.less_s bound tiny)
         in
         if not (Nx.item [] (Nx.any odd)) then { var; up = None; n }
         else
           let up, down = scales (fold Max) x in
-          let redo = helped var down in
+          let redo = helped bound down in
           if not (Nx.item [] (Nx.any redo)) then { var; up = None; n }
           else
             (* Equal values have variance 0: a rounded mean's one deviation,
@@ -448,8 +459,8 @@ let frame s =
             let same = Nx.logical_and redo equal in
             let redo = Nx.logical_and redo (Nx.logical_not same) in
             let x = Nx.mul x (Nx.take s.ids down) in
-            let m = Nx.div (fold Add x) (Nx.cast Nx.float64 n) in
-            let var = Nx.where redo (deviations x m) var in
+            let m = Nx.div (fold Add x) values in
+            let var = Nx.where redo (spread (terms x m)) var in
             let var = Nx.where same (Nx.zeros_like var) var in
             { var; up = Some (Nx.where redo up (Nx.ones_like up)); n }
     in
