@@ -1483,10 +1483,10 @@ let contraction ?(extras = Plain_contraction) dts accs =
     let* n = int_range lo hi in
     extents n
   in
-  (* [Long_rows] draws a batch axis of two in half the draws, so that each
-     run holds blocks at each of two batch indices. *)
+  (* [Long_rows] draws a batch axis of two in two draws of three, so that
+     each run holds blocks at each of two batch indices. *)
   let* eb =
-    if long_rows then frequency [ (1, count 0 1); (1, constant [| 2 |]) ]
+    if long_rows then frequency [ (1, count 0 1); (2, constant [| 2 |]) ]
     else count 0 1
   in
   let* ek =
@@ -1503,7 +1503,16 @@ let contraction ?(extras = Plain_contraction) dts accs =
     let+ rest = count 0 1 in
     Array.append [| n |] rest
   in
-  let* fa = if long_rows then leading 48 140 else count lo hi in
+  (* [Long_rows] crowds its rows into group 0 in three draws of four, over
+     at least 72 rows, so that each run holds a group past a block's rows. *)
+  let* crowded =
+    if long_rows then frequency [ (1, constant false); (3, constant true) ]
+    else constant false
+  in
+  let* fa =
+    if long_rows then leading (if crowded then 72 else 48) 140
+    else count lo hi
+  in
   let* fb = if long_rows then leading 1 2 else count lo hi in
   let* ra = map ordered (permutation (roles (Array.length fa) eb ek)) in
   let* rb = map ordered (permutation (roles (Array.length fb) eb ek)) in
@@ -1548,6 +1557,9 @@ let contraction ?(extras = Plain_contraction) dts accs =
             (1, among [ Int64.min_int; Int64.max_int ]);
           ])
     in
+    let entry =
+      if crowded then frequency [ (19, constant 0L); (1, entry) ] else entry
+    in
     array ~size:(constant (numel eb * n)) entry
   in
   let* seg =
@@ -1556,11 +1568,8 @@ let contraction ?(extras = Plain_contraction) dts accs =
       let first n = if long_rows then constant 0 else int_range 0 (n - 1) in
       let* i = first (Array.length fa) in
       let* j = first (Array.length fb) in
-      (* Long rows leave their last group empty in a quarter of the draws. *)
-      let* empty =
-        if long_rows then frequency [ (3, constant false); (1, constant true) ]
-        else constant false
-      in
+      (* Long rows leave their last group empty in half the draws. *)
+      let* empty = if long_rows then bool else constant false in
       let last = Int64.of_int (fb.(j) - 1) in
       let drop o =
         if empty then Array.map (fun x -> if x = last then -1L else x) o else o
