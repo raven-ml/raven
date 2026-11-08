@@ -440,6 +440,10 @@ let read_csv () =
   Error.get_ok
     (Talon_csv.decode csv_format (Bytesrw.Bytes.Reader.of_string csv_text))
 
+(* [window e] is [e] over [nulls]'s 2^20 rows: [f] has 10% nulls and [i] ties
+   over a million values, in no order. *)
+let window e = run Query.(of_table nulls |> select Expr.[ "w" := e ])
+
 let () =
   Thumper.run "talon"
     [
@@ -501,6 +505,19 @@ let () =
                 Query.(
                   of_table nulls
                   |> filter Expr.(is_in texts (Col.string "s"))));
+          Thumper.bench "Window/rolling-mean-28-1M" (fun () ->
+              window Expr.(window ~before:(int 28) (mean (Col.float "f"))));
+          Thumper.bench "Window/rolling-sum-on-1M" (fun () ->
+              window
+                Expr.(
+                  window ~on:(Col.int "i") ~before:(int 1000)
+                    (sum (Col.float "f"))));
+          Thumper.bench "Window/running-std-1M" (fun () ->
+              window Expr.(window (std (Col.float "f"))));
+          Thumper.bench "Window/running-sum-1M" (fun () ->
+              window Expr.(window (sum (Col.float "f"))));
+          Thumper.bench "Window/running-max-1M" (fun () ->
+              window Expr.(window (max (Col.float "f"))));
         ];
       Thumper.group "Talon_text"
         [ Thumper.bench "parse-float64-17-digits" parse_floats ];
