@@ -38,7 +38,7 @@ val pp : 'a Type.t -> Format.formatter -> 'a -> unit
     a float in the fewest significant digits that round to it at [ty]'s width,
     without an exponent from [1e-7] up to [1e21] ([150], [0.0015], [1e+21]), or
     [nan], [inf] or [-inf]; a datetime with the fewest fraction digits that are
-    exact, and [Z] when [ty] has a zone. Text and byte strings are written as
+    exact, and [Z] for an instant. Text and byte strings are written as
     they are. Types that {!parse} does not read write as {!Type.pp_lit} writes
     their values. *)
 

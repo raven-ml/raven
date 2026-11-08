@@ -60,7 +60,7 @@
  (name test_zoned)
  (modules test_zoned)
  (package talon)
- (libraries windtrap talon)
+ (libraries windtrap talon nx)
  (deps
   (source_tree golden/tz)))
 

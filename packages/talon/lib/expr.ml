@@ -1291,7 +1291,7 @@ let rec castable : type a b.
       Error (Some "Temporal.localize")
   | Date, Datetime { clock = Local; _ } | Datetime { clock = Local; _ }, Date ->
       Ok ()
-  | Date, Datetime { clock = Utc; _ } -> Error (Some "Temporal.localize")
+  | Date, Datetime { clock = Utc; _ } -> Error None
   | Datetime { clock = Utc; _ }, Date -> Error (Some "Temporal.wall")
   | (Duration _ | Clock _), (Duration _ | Clock _) | Date, Date | Binary, Binary
     ->

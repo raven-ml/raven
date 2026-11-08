@@ -36,7 +36,7 @@ Both glibc and zoneinfo apply a footer that disagrees with the last
 transition from that transition on. tzcode's localtime.c, and Tz.offset_s,
 hold the last transition's offset until the rule's next transition.
 StdDisagrees, Disagrees and PermDisagrees therefore get no rows here: test_tz.ml
-states theirs from Tz's contract.
+states theirs from Tz's contract, as it does for Seam and FooterOnly.
 """
 
 import argparse
@@ -348,6 +348,12 @@ HAND = {
     ),
     # A footer of daylight saving time all year that disagrees with the last
     # transition: its rule never changes the offset, so the last one holds.
+    # A rule that changes the offset on 1970-01-01 00:00 UTC, the start of its
+    # 400-year cycle, so at every cycle's seam.
+    "Seam": (tzif([], [(0, 0, "XXX")], b"XXX0YYY,0/0,J182/0"), (), []),
+    # A file without transitions whose footer's one offset is not its first
+    # type's: the footer states every offset.
+    "FooterOnly": (tzif([], [(0, 0, "UTC")], b"BBB-3"), (), []),
     "PermDisagrees": (
         tzif([(1000, 1)], [(0, 0, "AAA"), (-10800, 0, "XXX")], b"XXX3EDT4,0/0,J365/23", version=b"3"),
         (),

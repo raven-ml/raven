@@ -66,12 +66,14 @@ module Kind : sig
   (** [date] reads [date] columns. *)
 
   val instant : Time.instant t
-  (** [instant] reads [datetime] columns of every unit whose clock is UTC. A
-      value outside the range of {!Time.instant} fails when it is read. *)
+  (** [instant] reads [datetime] columns of every unit whose clock is UTC
+      ({!Time.section-stamps}). A value outside the range of {!Time.instant}
+      fails when it is read. *)
 
   val wall : Time.wall t
-  (** [wall] reads [datetime] columns of every unit whose clock is a wall clock.
-      A value outside the range of {!Time.wall} fails when it is read. *)
+  (** [wall] reads [datetime] columns of every unit whose clock is a wall clock
+      ({!Time.section-stamps}). A value outside the range of {!Time.wall} fails
+      when it is read. *)
 
   val span : Time.span t
   (** [span] reads [duration] and [clock] columns of every unit. A time of day
@@ -420,8 +422,8 @@ module Type : sig
   val equal : 'a t -> 'b t -> bool
   (** [equal t0 t1] is [true] iff [t0] and [t1] are the same type: the same
       constructor with equal arguments. Dictionaries are equal when they hold
-      the same strings in the same order, and record types when they have the same field names with equal types in
-      the same order. *)
+      the same strings in the same order, and record types when they have the
+      same field names with equal types in the same order. *)
 
   val pp : Format.formatter -> 'a t -> unit
   (** [pp ppf t] formats [t] as schemas and plans show it:
@@ -1686,24 +1688,17 @@ module Expr : sig
   (** Temporal values.
 
       A datetime column holds instants or wall clocks ({!Time.section-stamps}),
-      and a zone appears only as the argument of the operations that convert
-      between them: {!wall} and {!localize}. Calendar operations read wall
-      clocks as they are, with no zone: {!field}, {!floor} and {!offset} take
-      wall clocks, dates and clocks, and an instant is a problem that names
-      {!wall}, except that {!floor} and {!offset} also move an instant by an
-      exact step, which reads no calendar.
+      and a zone is an argument only of the conversions {!wall} and {!localize}.
+      {!field}, and {!floor} or {!offset} by a calendar step, read a wall clock
+      as it is; on an instant they are a problem that names {!wall}.
 
-      A zone's clock can repeat or skip a reading. Where it is set back, the
-      readings of a {e fold} occur twice, on the offset before the change and
-      then on the one after. Where it is set forward, the readings of a
-      {e gap} never occur, and a reading there is read on either offset. A
-      {e policy} says what {!localize} does with such a reading:
-      - [`Earlier] is the earlier of the two instants: a fold's first
-        occurrence, and a gap's reading on the offset after the gap, the
+      A zone's clock can repeat or skip a reading. The readings of a {e fold}
+      occur twice, on the offset before the change and then on the one after,
+      and those of a {e gap} never occur. A {e policy} resolves such a reading:
+      - [`Earlier] is the earlier instant, a fold's first occurrence or a gap's
         reading moved back by the gap's length;
-      - [`Later] is the later instant: a fold's second occurrence, and a gap's
-        reading on the offset before the gap, the reading moved forward by the
-        gap's length;
+      - [`Later] is the later instant, a fold's second occurrence or a gap's
+        reading moved forward by the gap's length;
       - [`Null] is null, and [`Fail] a data error naming the reading. *)
   module Temporal : sig
     val add : ('a, 's) t -> (Time.span, 's) t -> ('a, 's) t
@@ -1746,8 +1741,8 @@ module Expr : sig
     (** [floor step a] is the first value of the period of [step] that holds
         [a], a date or a datetime. Periods are counted from 1970-01-01 00:00,
         and weeks from Monday 1970-01-05. A date floors by calendar steps only,
-        and a datetime by exact steps of whole ticks of its unit; a calendar
-        step floors a wall clock only. Its type is [a]'s.
+        a wall clock by either, and an instant by exact steps; an exact step is
+        whole ticks of the datetime's unit. Its type is [a]'s.
 
         Raises [Invalid_argument] if [step] is not positive. *)
 
@@ -1760,8 +1755,8 @@ module Expr : sig
 
     val wall : Tz.zone -> (Time.instant, 's) t -> (Time.wall, 's) t
     (** [wall z a] is the reading of [z]'s wall clock at the instant [a], in
-        [a]'s unit: [t + offset] for the offset of [z] at [t] ({!Tz.offset_s}).
-        A result out of range is a data error. *)
+        [a]'s unit: [a] plus the offset of [z] at [a] ({!Tz.offset_s}). A result
+        out of range is a data error. *)
 
     (** The type for what {!localize} and {!localize_ordered} do with a reading
         that a zone repeats or skips, as the section's preamble describes. *)
@@ -1774,11 +1769,10 @@ module Expr : sig
       (Time.wall, 's) t ->
       (Time.instant, 's) t
     (** [localize z ~ambiguous ~gap a] is the instant at which [z]'s wall clock
-        reads [a], in [a]'s unit: [t - o] for the offset [o] of the reading,
-        {!Tz.local}'s [Unique o]. A reading that [z] repeats follows
-        [ambiguous], and one that it skips [gap], as the section's preamble
-        defines. [`Later] on a gap is the time before the gap shifted forward,
-        [t - before] in {!Tz.local}'s terms. [localize z ~ambiguous ~gap
+        reads [a], in [a]'s unit: [a - o] for the offset [o] of {!Tz.local}'s
+        [Unique o]. A reading that [z] repeats follows [ambiguous], and one it
+        skips [gap]. On a gap, [`Later] is [a - before] and [`Earlier] is
+        [a - after] in {!Tz.local}'s terms. [localize z ~ambiguous ~gap
         (wall z a)] is [a] where [z] repeats no reading. An instant out of range
         is a data error. *)
 
@@ -1788,25 +1782,19 @@ module Expr : sig
       gap:policy ->
       (Time.wall, row) t ->
       (Time.instant, row) t
-    (** [localize_ordered z ~ambiguous ~gap a] is {!localize}, with the rows of
-        each frame ({!section-frames}) deciding which reading of a fold they
-        are, as a logger's rows do: its frame's order must be time order.
-
-        Rows that are consecutive in the frame and that repeat one fold are
-        read together: the rows before the first row that is strictly below its
-        predecessor read as the fold's first pass, and that row and the later
-        ones as the second. When two rows are a fold's only rows and are
-        equal, the first reads as the first pass and the second as the second
-        pass, a logger writing the repeated hour once each. A fold whose rows
-        show no such step says nothing about the pass, and each of its rows
-        follows [ambiguous], including a duplicate reading with no second pass.
-
-        Order finds the right pass only when the data's cadence is at most the
-        fold's length: a cadence above it never shows the clock stepping back,
-        so the rows follow [ambiguous]. A row moved by [gap] and a null leave
-        the previous instant of the frame unchanged, an equal instant is
-        allowed, and a row whose instant is before the frame's previous instant
-        is a data error. *)
+    (** [localize_ordered z ~ambiguous ~gap a] is {!localize} where the order of
+        each frame's rows ({!section-frames}), which must be time order, decides
+        the pass of a reading that [z] repeats. The rows of one fold,
+        consecutive apart from nulls, read as the fold's first pass up to the
+        first row strictly below its predecessor, and as the second from it. Two
+        equal rows that are a fold's only rows read one per pass when the row
+        on each side lies the fold's length from them, as a logger of that
+        cadence writes them. Other rows of a fold follow [ambiguous]. Order
+        finds the pass only at a cadence at or below the fold's length, and at
+        that cadence a duplicate whose other pass is lost reads as the two
+        passes. Nulls and rows moved by [gap] are not a previous row. An equal
+        instant is allowed. A row not moved by [gap] whose instant is before
+        the previous row's is a data error, as is an instant out of range. *)
 
     val parse : string -> 'a Type.t -> (string, 's) t -> ('a, 's) t
     (** [parse fmt ty a] reads the text [a] in the format [fmt] as a value of

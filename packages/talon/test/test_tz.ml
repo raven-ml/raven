@@ -231,6 +231,18 @@ let offset_s =
                         "hand/Fixed";
                       ]))
                zones));
+      test "a footer's one offset is every offset of a file without transitions"
+        (fun () ->
+          let z = zone "hand/FooterOnly" in
+          equal int 10_800 (Tz.offset_s z 0L);
+          equal local (Unique 10_800) (Tz.local z 0L));
+      test "a rule's change at its 400-year seam is a change" (fun () ->
+          let z = zone "hand/Seam" in
+          equal local
+            (Gap { before = 0; after = 3600 })
+            (Tz.local z (posix 2370 1 1 0 30));
+          equal int 0 (Tz.offset_s z (Int64.pred (posix 2370 1 1 0 0)));
+          equal int 3600 (Tz.offset_s z (posix 2370 1 1 0 0)));
       test "follows the footer before and after a file without transitions"
         (fun () ->
           let z = zone "hand/Rules" in

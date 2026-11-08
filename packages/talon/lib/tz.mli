@@ -35,17 +35,17 @@ val utc : zone
 
 val fixed : int -> zone
 (** [fixed o] is the zone whose offset is [o] seconds east of UTC at every
-    instant, as in FLUXNET's local standard time. Its name is [+hh:mm] or
-    [-hh:mm], with [:ss] when [o] is not whole minutes.
+    instant. Its name is [+hh:mm] or [-hh:mm], with [:ss] when [o] is not whole
+    minutes.
 
-    Raises [Invalid_argument] if [o] does not fit in a signed 32-bit integer,
-    the bound RFC 9636 puts on an offset. *)
+    Raises [Invalid_argument] unless -2{^ 31} < [o] < 2{^ 31}, the bound RFC
+    9636 puts on an offset. *)
 
 val equal : zone -> zone -> bool
-(** [equal z0 z1] is [true] iff [z0] and [z1] have the same offset at every
-    instant by construction: the same transitions and the same rule. Names do
-    not count, so a zone and its alias are equal, and two versions of a zone
-    from different databases are not. *)
+(** [equal z0 z1] is [true] iff [z0] and [z1] have the same transitions and the
+    same rule. Their names do not count. Equal zones have the same offset at
+    every instant. Two zones with the same offsets are not equal when their
+    files state them differently, as a slim and a fat build of one zone do. *)
 
 val name : zone -> string
 (** [name z] is the name of [z]: the name its database holds it under ({!find}),

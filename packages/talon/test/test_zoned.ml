@@ -205,6 +205,60 @@ let wall_laws =
           (Array.map (Option.map Time.to_us) (r (floor_day w) Kind.wall)));
   ]
 
+let units_laws =
+  let case =
+    let open Gen in
+    let+ name, ts = instant_case
+    and+ unit_ = of_list Type.[ S; Ms; Ns ] in
+    (name, Array.map floor_s ts, unit_)
+  in
+  prop "wall and localize read whole seconds alike in every unit" case
+    (fun (name, secs, unit_) ->
+      let z = zone name in
+      let stamps = Array.map (fun s -> Option.get (Time.of_s s)) secs in
+      let run ty k e c =
+        Array.map
+          (Option.map Time.to_s)
+          (Column.options k
+             (require_ok ~pp:Error.pp (compute e (one "t" (Column.v ty c)))))
+      in
+      let walled =
+        run (Type.instant unit_) Kind.wall
+          (Expr.Temporal.wall z (Col.instant "t"))
+          stamps
+      in
+      let offset s = Int64.add s (Int64.of_int (Tz.offset_s z s)) in
+      equal (array (option int64)) (Array.map (fun s -> Some (offset s)) secs) walled;
+      let back =
+        run (Type.wall unit_) Kind.instant
+          (Expr.Temporal.localize z ~ambiguous:`Null ~gap:`Null (Col.wall "t"))
+          (Array.map (fun w -> Option.get (Time.of_s (Option.get w))) walled)
+      in
+      let unique s =
+        match Tz.local z (offset s) with Unique _ -> Some s | _ -> None
+      in
+      equal (array (option int64)) (Array.map unique secs) back)
+
+let wall_of_localize =
+  prop "wall of localize reads back every reading that occurs" localize_case
+    (fun (name, _, _, ws) ->
+      let z = zone name in
+      List.iter
+        (fun am ->
+          let col = walls_col (Array.map (fun w -> Some (stamp w)) ws) in
+          let e =
+            Expr.Temporal.(
+              wall z (localize z ~ambiguous:am ~gap:`Null (Col.wall "w")))
+          in
+          let out =
+            wall_ticks_of (require_ok ~pp:Error.pp (compute e (one "w" col)))
+          in
+          let expected w =
+            match Tz.local z (floor_s w) with Gap _ -> None | _ -> Some w
+          in
+          equal (array (option int64)) (Array.map expected ws) out)
+        [ `Earlier; `Later ])
+
 let wall_errors =
   [
     test "an instant has no calendar: floor and field name Temporal.wall"
@@ -234,6 +288,22 @@ let wall_errors =
         in
         ignore
           (require_error (compute (Expr.Temporal.wall z (Col.instant "t")) t)));
+    test "a null row does not fail, whatever its ticks" (fun () ->
+        let z = zone "Europe/Paris" in
+        let values = Nx.P (Nx.create Nx.int64 [| 1 |] [| Int64.max_int |]) in
+        let validity = Some (Nx.create Nx.bit [| 1 |] [| false |]) in
+        let c =
+          match
+            Column.of_layout (Any (Type.instant Ns)) (Fixed { validity; values })
+          with
+          | Ok c -> c
+          | Error (row, why) -> failf "row %d: %s" row why
+        in
+        let out =
+          require_ok ~pp:Error.pp
+            (compute (Expr.Temporal.wall z (Col.instant "t")) (one "t" c))
+        in
+        equal (array (option int64)) [| None |] (wall_ticks_of out));
     test "a policy of Fail names the reading" (fun () ->
         let z = zone "Europe/Paris" in
         let w = walls_col [| Some (stamp 1_729_996_200_000_000L) |] in
@@ -264,7 +334,7 @@ let log_zones =
   ]
 
 (* A scenario drops rows from a log's series of UTC truths. *)
-type scenario = Complete | Iid of float | Outage of int
+type scenario = Complete | Iid of float | Outage of int | Dup of float
 
 (* [log name fold cadence scenario seed] is the truths and the wall clocks a
    logger writes around [fold]: a series of the given cadence, in seconds,
@@ -283,91 +353,22 @@ let log z (t0, _, _) cadence scenario rand =
     | Complete -> true
     | Iid p -> Float.of_int (rand 1_000_000) /. 1e6 >= p
     | Outage len -> s < cut || s >= cut + len
+    | Dup _ -> true
   in
   let n = 86_400 / cadence in
-  List.filter_map
+  List.concat_map
     (fun i ->
       let s = aligned + (i * cadence) in
-      if kept s then
-        let t = Int64.mul (Int64.of_int s) per_s in
-        Some (t, wall_of z t)
-      else None)
+      let t = Int64.mul (Int64.of_int s) per_s in
+      let row = (t, wall_of z t) in
+      if not (kept s) then []
+      else
+        match scenario with
+        | Dup p when Float.of_int (rand 1_000_000) /. 1e6 < p -> [ row; row ]
+        | _ -> [ row ])
     (List.init n Fun.id)
 
 let fold_length (_, before, after) = before - after
-
-(* [model z am gap ws] reads the wall ticks [ws] of one frame by the contract of
-   [Temporal.localize_ordered], a simple list scan. *)
-let model z am gap ws =
-  let local w = Tz.local z (floor_s w) in
-  let n = Array.length ws and out = Array.make (Array.length ws) `Null in
-  let at w o = `Value (Int64.sub w (Int64.mul (Int64.of_int o) per_s)) in
-  let i = ref 0 in
-  let prev = ref None in
-  let keep v =
-    (match (v, !prev) with
-    | `Value r, Some p when Int64.compare r p < 0 -> `Fail
-    | v, _ -> v)
-    |> fun v ->
-    (match v with `Value r -> prev := Some r | _ -> ());
-    v
-  in
-  let by_policy (p : Expr.Temporal.policy) earlier later =
-    match p with
-    | `Earlier -> earlier
-    | `Later -> later
-    | `Null -> `Null
-    | `Fail -> `Fail
-  in
-  while !i < n do
-    let w = ws.(!i) in
-    match local w with
-    | Unique o ->
-        out.(!i) <- keep (at w o);
-        incr i
-    | Gap { before; after } ->
-        out.(!i) <- by_policy gap (at w after) (at w before);
-        incr i
-    | Ambiguous { before; after } ->
-        let span = Int64.of_int (before - after) in
-        let j = ref !i in
-        while
-          !j < n
-          &&
-          match local ws.(!j) with
-          | Ambiguous { before = b; after = a } ->
-              b = before && a = after
-              && Int64.abs (Int64.sub (floor_s ws.(!j)) (floor_s w)) < span
-          | _ -> false
-        do
-          incr j
-        done;
-        let run = Array.sub ws !i (!j - !i) in
-        let step =
-          let down = ref None in
-          Array.iteri
-            (fun k x ->
-              if k > 0 && !down = None && Int64.compare x run.(k - 1) < 0 then
-                down := Some k)
-            run;
-          match !down with
-          | Some _ as s -> s
-          | None ->
-              if Array.length run = 2 && Int64.equal run.(0) run.(1) then Some 1
-              else None
-        in
-        Array.iteri
-          (fun k x ->
-            let v =
-              match step with
-              | Some s -> if k < s then at x before else at x after
-              | None -> by_policy am (at x before) (at x after)
-            in
-            out.(!i + k) <- keep v)
-          run;
-        i := !j
-  done;
-  out
 
 let run_ordered z am gap ws =
   let w = walls_col (Array.map (fun t -> Some (stamp t)) ws) in
@@ -382,7 +383,10 @@ let log_case =
   let+ cadence = of_list [ 60; 300; 600; 900; 1800; 3600; 7200; 10_800 ]
   and+ scenario =
     of_list
-      [ Complete; Iid 0.05; Iid 0.3; Outage 600; Outage 3600; Outage 10_800 ]
+      [
+        Complete; Iid 0.05; Iid 0.3; Outage 600; Outage 3600; Outage 10_800;
+        Dup 0.2;
+      ]
   and+ seed = int_range 0 1_000_000 in
   (name, f, cadence, scenario, seed)
 
@@ -397,10 +401,24 @@ let scan (name, f, cadence, scenario, seed) =
 
 let log_gen = Gen.with_pp pp_log log_case
 
+(* A gap of a zone, and the policy that moves a reading inside it. *)
+let gap_case =
+  let open Gen in
+  let* name = of_list log_zones in
+  let gaps =
+    List.filter
+      (fun (u, before, after) ->
+        before < after && Int64.compare u 946_684_800L > 0
+        && Int64.compare u 1_893_456_000L < 0)
+      (transitions name)
+  in
+  let+ g = of_list gaps and+ am = of_list [ `Earlier; `Later ] in
+  (name, g, am)
+
 let ordered_laws =
   [
-    (* The skeptic's scenarios: the rule is correct or fails, with no silently
-       wrong row, at every cadence and loss. *)
+    (* Every row is correct or the column is refused, at every cadence, with
+       rows lost, or duplicated in a complete series. *)
     prop ~count:400 "with Fail a logged series is exact or refused" log_gen
       (fun c ->
         let z, truth, ws = scan c in
@@ -417,20 +435,65 @@ let ordered_laws =
               (array (option int64))
               (Array.map Option.some truth)
               (ticks_of out));
-    prop ~count:300 "with a resolving policy it agrees with its model" log_gen
-      (fun c ->
-        let z, _, ws = scan c in
-        List.iter
-          (fun am ->
-            let rows = model z am `Earlier ws in
-            let out = run_ordered z am `Earlier ws in
-            if Array.mem `Fail rows then ignore (require_error out)
-            else
-              equal
-                (array (option int64))
-                (Array.map value rows)
-                (ticks_of (require_ok ~pp:Error.pp out)))
-          [ `Earlier; `Later; `Null ]);
+    prop ~count:300 "a policy decides exactly the rows that order leaves open"
+      log_gen (fun c ->
+        let z, truth, ws = scan c in
+        let refused = Result.is_error (run_ordered z `Fail `Fail ws) in
+        cover "a policy decides a row" refused;
+        let with_policy p =
+          ticks_of (require_ok ~pp:Error.pp (run_ordered z p `Fail ws))
+        in
+        let settled = with_policy `Null in
+        let guess later w =
+          match Tz.local z (floor_s w) with
+          | Ambiguous { before; after } ->
+              let o = if later then after else before in
+              Int64.sub w (Int64.mul (Int64.of_int o) per_s)
+          | Unique _ | Gap _ -> Windtrap.fail "a null row of no fold"
+        in
+        let check later out =
+          Array.iteri
+            (fun i s ->
+              match (s, out.(i)) with
+              | Some v, r -> equal (option int64) (Some v) r
+              | None, r -> equal (option int64) (Some (guess later ws.(i))) r)
+            settled
+        in
+        Array.iteri
+          (fun i s -> Option.iter (equal int64 truth.(i)) s)
+          settled;
+        check false (with_policy `Earlier);
+        check true (with_policy `Later));
+    prop "a row moved by a gap leaves the other rows' instants" gap_case
+      (fun (name, gap_at, am) ->
+        let z = zone name in
+        let (t0, before, after) = gap_at in
+        let at i = Int64.mul (Int64.add t0 (Int64.of_int (i * 900))) per_s in
+        let rows = List.init 16 (fun i -> at (i - 8)) in
+        let inside =
+          Int64.mul
+            (Int64.add t0 (Int64.of_int (before + ((after - before) / 2))))
+            per_s
+        in
+        let walls =
+          List.concat_map
+            (fun t -> if t = at 0 then [ inside; wall_of z t ] else [ wall_of z t ])
+            rows
+        in
+        let moved =
+          match am with
+          | `Earlier -> Int64.sub inside (Int64.mul (Int64.of_int after) per_s)
+          | `Later -> Int64.sub inside (Int64.mul (Int64.of_int before) per_s)
+        in
+        let expected =
+          List.concat_map
+            (fun t -> if t = at 0 then [ moved; t ] else [ t ])
+            rows
+        in
+        let out = run_ordered z `Fail (am :> Expr.Temporal.policy) (Array.of_list walls) in
+        equal (array (option int64))
+          (Array.of_list (List.map Option.some expected))
+          (ticks_of (require_ok ~pp:Error.pp out)));
     prop "a complete series at a cadence at or below the fold is exact" log_gen
       (fun (name, f, cadence, _, _) ->
         let z = zone name in
@@ -506,6 +569,55 @@ let paris_cases =
           (some [ u 23 50; d 0 20; d 0 20; d 0 30; d 2 5 ])
           (run ~am:`Earlier rows);
         ignore (require_error (run_ordered z `Fail `Fail (Array.of_list rows))));
+    test "two equal rows at a finer cadence are a duplicate" (fun () ->
+        let rows = [ d 1 45; d 2 20; d 2 20; d 3 5 ] in
+        ignore (require_error (run_ordered z `Fail `Fail (Array.of_list rows)));
+        equal
+          (list (option int64))
+          (some [ u 23 45; d 0 20; d 0 20; d 2 5 ])
+          (run ~am:`Earlier rows));
+    test "two equal rows at a frame's edge say nothing of their pass" (fun () ->
+        List.iter
+          (fun ws -> ignore (require_error (run_ordered z `Fail `Fail ws)))
+          [
+            [| d 2 0; d 2 0 |];
+            [| d 2 0; d 2 0; d 3 0 |];
+            [| d 1 0; d 2 0; d 2 0 |];
+          ]);
+    test "three equal rows are not two passes" (fun () ->
+        ignore
+          (require_error
+             (run_ordered z `Fail `Fail [| d 1 0; d 2 0; d 2 0; d 2 0; d 3 0 |])));
+    test "a duplicate after the step stays in the second pass" (fun () ->
+        equal
+          (list (option int64))
+          (some [ d 0 0; d 0 30; d 1 0; d 1 0; d 1 30 ])
+          (run [ d 2 0; d 2 30; d 2 0; d 2 0; d 2 30 ]));
+    test "frames follow over's order, whatever the row order" (fun () ->
+        let walls = [| d 2 30; d 1 30; d 2 0; d 2 0; d 2 30 |] in
+        let tbl =
+          v
+            [
+              ("i", Column.v Type.int64 [| 2; 0; 1; 3; 4 |]);
+              ("w", Column.v (Type.wall Us) (Array.map stamp walls));
+            ]
+        in
+        let e =
+          Expr.(
+            over ~order:[ Order.asc "i" ]
+              (Temporal.localize_ordered z ~ambiguous:`Fail ~gap:`Fail
+                 (Col.wall "w")))
+        in
+        equal
+          (array (option int64))
+          [|
+            Some (d 0 30);
+            Some (u 23 30);
+            Some (d 0 0);
+            Some (d 1 0);
+            Some (d 1 30);
+          |]
+          (ticks_of (require_ok ~pp:Error.pp (compute e tbl))));
     test "a row moved by the gap policy leaves the state" (fun () ->
         let w' y mo d' h mi =
           let day =
@@ -561,7 +673,7 @@ let paris_cases =
         let out = require_ok ~pp:Error.pp (compute e tbl) in
         equal
           (array (option int64))
-          [| Some (u 23 30); Some (d 0 0); Some (d 0 30); Some (d 1 0) |]
+          [| Some (u 23 30); Some (d 0 0); Some (d 0 30); Some (d 0 0) |]
           (ticks_of out));
   ]
 
@@ -579,11 +691,15 @@ let fixed =
         equal bool true (Tz.equal Tz.utc (Tz.fixed 0)));
     test "offsets past 32 bits are refused" (fun () ->
         raises (Invalid_argument "Tz.fixed: 2147483648 is not a 32-bit offset")
-          (fun () -> ignore (Tz.fixed 2_147_483_648)));
-    test "a zone is equal to another of the same rules, not of another name"
-      (fun () ->
+          (fun () -> ignore (Tz.fixed 2_147_483_648));
+        raises (Invalid_argument "Tz.fixed: -2147483648 is not a 32-bit offset")
+          (fun () -> ignore (Tz.fixed (-2_147_483_648))));
+    test "a zone equals another of the same rules, whatever its name" (fun () ->
         equal bool true (Tz.equal (zone "Europe/Paris") (zone "Europe/Paris"));
-        equal bool false (Tz.equal (zone "Europe/Paris") (zone "America/New_York")));
+        equal bool false
+          (Tz.equal (zone "Europe/Paris") (zone "America/New_York"));
+        equal bool true (Tz.equal Tz.utc (zone "UTC"));
+        equal bool true (Tz.equal (Tz.fixed (-18_000)) (zone "Etc/GMT+5")));
   ]
 
 let () =
@@ -591,7 +707,7 @@ let () =
     (run "talon.zoned"
        [
          group "localize" [ localize_law ];
-         group "wall and localize" wall_laws;
+         group "wall and localize" (units_laws :: wall_of_localize :: wall_laws);
          group "errors" wall_errors;
          group "ordered" ordered_laws;
          group "ordered cases" paris_cases;

@@ -655,14 +655,14 @@ let is_utc : type c. c Time.clock -> bool = function
   | Utc -> true
   | Local -> false
 
-let form ~zoned =
+let form ~utc =
   invalid
-    (if zoned then "not YYYY-MM-DDThh:mm:ss with an offset"
+    (if utc then "not YYYY-MM-DDThh:mm:ss with an offset"
      else "not YYYY-MM-DDThh:mm:ss without an offset")
 
-(* [datetime u ~zoned] reads a datetime, with an offset iff [zoned], as ticks of
+(* [datetime u ~utc] reads a datetime, with an offset iff [utc], as ticks of
    [u] since 1970-01-01 00:00:00, in UTC when it has an offset. *)
-let datetime u ~zoned b pos len (a : int64s) k =
+let datetime u ~utc b pos len (a : int64s) k =
   let stop = pos + len in
   (* A signed year makes the date longer than ten bytes. *)
   let rec date_end i =
@@ -673,7 +673,7 @@ let datetime u ~zoned b pos len (a : int64s) k =
       date_end (pos + 1) - pos
     else 10
   in
-  if len < dlen + 9 then form ~zoned;
+  if len < dlen + 9 then form ~utc;
   let days = civil_days b pos dlen in
   let p = pos + dlen in
   let t = get b p in
@@ -684,19 +684,19 @@ let datetime u ~zoned b pos len (a : int64s) k =
     || hh < 0 || mm < 0 || ss < 0
     || get b (p + 3) <> ':'
     || get b (p + 6) <> ':'
-  then form ~zoned;
+  then form ~utc;
   if hh > 23 || mm > 59 || ss > 59 then invalid "not a time of day";
   let i = ref (p + 9) and ns = ref 0 in
   if !i < stop && get b !i = '.' then begin
     incr i;
     ns := fraction b i stop;
-    if !ns < 0 then form ~zoned
+    if !ns < 0 then form ~utc
   end;
   let offset =
-    if not zoned then 0
-    else match offset b i stop with Some o -> o | None -> form ~zoned
+    if not utc then 0
+    else match offset b i stop with Some o -> o | None -> form ~utc
   in
-  if !i <> stop then form ~zoned;
+  if !i <> stop then form ~utc;
   let secs = seconds days ((3600 * hh) + (60 * mm) + ss - offset) in
   A1.unsafe_set a k (ticks u secs !ns)
 
@@ -850,7 +850,7 @@ let parse (Type.Any ty as any) c =
   | Float64 -> Result.map keep (floats float)
   | Date -> Result.map (cast Nx.int32) (of_int date)
   | Datetime { unit_; clock } ->
-      Result.map keep (ints (datetime unit_ ~zoned:(is_utc clock)))
+      Result.map keep (ints (datetime unit_ ~utc:(is_utc clock)))
   | Categorical d ->
       let codes = Hashtbl.create (Iarray.length d) in
       Iarray.iteri (fun i s -> Hashtbl.add codes s i) d;
@@ -965,10 +965,10 @@ let add_date b days =
   if y >= 0 && y <= 9999 then Printf.bprintf b "%04d-%02d-%02d" y m d
   else Printf.bprintf b "%+05d-%02d-%02d" y m d
 
-(* [add_datetime u ~zoned b ticks] writes the ticks [ticks] of [u] as
+(* [add_datetime u ~utc b ticks] writes the ticks [ticks] of [u] as
    [YYYY-MM-DDThh:mm:ss], the fewest fraction digits that are exact, and [Z]
-   when [zoned]. *)
-let add_datetime u ~zoned b ticks =
+   when [utc]. *)
+let add_datetime u ~utc b ticks =
   let per = Int64.of_int (per_second u) in
   let secs = floor_div ticks per in
   let frac = Int64.to_int (Int64.sub ticks (Int64.mul secs per)) in
@@ -987,18 +987,18 @@ let add_datetime u ~zoned b ticks =
     Buffer.add_char b '.';
     Buffer.add_substring b digits 0 !n
   end;
-  if zoned then Buffer.add_char b 'Z'
+  if utc then Buffer.add_char b 'Z'
 
-let pp_stamp ~zoned ppf t =
+let pp_stamp ~utc ppf t =
   let b = Buffer.create 32 in
-  add_datetime Ns ~zoned b (Time.to_ns t);
+  add_datetime Ns ~utc b (Time.to_ns t);
   pp_text ppf (Buffer.contents b)
 
 let pp : type a. a Type.t -> Format.formatter -> a -> unit =
  fun ty ppf v ->
   match (ty, Type.kind ty) with
   | Binary, _ -> pp_text ppf (v :> string)
-  | Datetime { clock; _ }, _ -> pp_stamp ~zoned:(is_utc clock) ppf v
+  | Datetime { clock; _ }, _ -> pp_stamp ~utc:(is_utc clock) ppf v
   | (Clock _ | Duration _ | List _ | Record _ | Tensor _ | Ext _), k ->
       Type.pp_lit k ppf v
   | _, Bool -> Format.pp_print_bool ppf v
@@ -1035,8 +1035,8 @@ let fixed_writer : type a b c.
       let v = ints () in
       fun b i -> add_date b (Int64.to_int v.(i))
   | Datetime { unit_; clock } ->
-      let v = ints () and zoned = is_utc clock in
-      fun b i -> add_datetime unit_ ~zoned b v.(i)
+      let v = ints () and utc = is_utc clock in
+      fun b i -> add_datetime unit_ ~utc b v.(i)
   | _ -> err "Column.print: %a is not a type that Column.parse reads" Type.pp ty
 
 let print c =
@@ -1128,7 +1128,7 @@ and pp_row : type a. a Type.t -> Column.t -> int -> Format.formatter -> unit =
       | (Clock u | Duration u), _ ->
           pp_ticks ty Time.Span.pp (span_of_ticks u) ppf (row_int64 x i)
       | Datetime { unit_; clock }, _ ->
-          let pp_value = pp_stamp ~zoned:(is_utc clock) in
+          let pp_value = pp_stamp ~utc:(is_utc clock) in
           pp_ticks ty pp_value (stamp_of_ticks unit_) ppf (row_int64 x i)
       | _, Bool -> pp ty ppf (row_int64 x i <> 0L)
       | _, Int -> pp ty ppf (Int64.to_int (row_int64 x i))

@@ -1415,7 +1415,7 @@ let temporal_casts =
               input (2 columns): z datetime[s, UTC], d date
             select: 1 problem
               "out" := cast datetime[s, UTC] d
-                cast does not convert date to datetime[s, UTC]: use Temporal.localize.
+                cast does not convert date to datetime[s, UTC].
               input (2 columns): z datetime[s, UTC], d date
             |});
     ]

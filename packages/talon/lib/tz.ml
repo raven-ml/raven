@@ -53,7 +53,7 @@ type change = { date : date; time : int }
 type daylight = { dst : int; start : change; stop : change }
 
 (* The offsets of a rule over the 400-year cycle that starts at the epoch:
-   the changes [(t, o)] with [t] in [\[0; cycle_s)], ascending, and the offset in
+   the changes [(t, o)] with [t] in [(0; cycle_s)], ascending, and the offset in
    effect at second 0. *)
 type table = { times : int array; offsets : int array; start : int }
 
@@ -149,8 +149,9 @@ let rule_offset rule u =
       | k -> rule.cycle.offsets.(k - 1))
 
 (* [rule_next rule u] is the first instant after [u] where [rule] changes the
-   offset, and the offset from there. Past the cycle's last change, the first
-   change of the next cycle, at the same reading as the first of this one. *)
+   offset, and the offset from there. Past the cycle's last change, that is the
+   seam, where the rule returns to the cycle's [start] if its last offset
+   differs, and otherwise the first change of the next cycle. *)
 let rule_next rule u =
   let t = rule.cycle.times in
   match Array.length t with
@@ -160,6 +161,8 @@ let rule_next rule u =
       let k = count_le t r in
       let d, o =
         if k < n then (t.(k) - r, rule.cycle.offsets.(k))
+        else if rule.cycle.offsets.(n - 1) <> rule.cycle.start then
+          (cycle_s - r, rule.cycle.start)
         else (t.(0) + cycle_s - r, rule.cycle.offsets.(0))
       in
       match shift u d with None -> None | Some v -> Some (v, o))
@@ -194,7 +197,7 @@ let fixed_name o =
   if a mod 60 = 0 then hm else Printf.sprintf "%s:%02d" hm (a mod 60)
 
 let fixed o =
-  if o < -0x8000_0000 || o > 0x7FFF_FFFF then
+  if o <= -0x8000_0000 || o > 0x7FFF_FFFF then
     invalid_arg (Printf.sprintf "Tz.fixed: %d is not a 32-bit offset" o);
   { utc with name = fixed_name o; first = o; lowest = o; highest = o }
 
@@ -693,8 +696,17 @@ let decode ~name s =
         | None -> (times, offsets, None))
     | _ -> (times, offsets, rule)
   in
+  (* Without transitions, a rule states every offset, so the file's first type
+     is not one; a rule with no daylight saving time is then one offset, as a
+     file without a rule states it. *)
+  let first, rule =
+    match rule with
+    | Some { std; daylight; _ } when Array.length times = 0 ->
+        (std, if Option.is_none daylight then None else rule)
+    | _ -> (type_offsets.(0), rule)
+  in
   let all =
-    Array.to_list type_offsets
+    first :: Array.to_list type_offsets
     @
     match rule with
     | None -> []
@@ -703,7 +715,7 @@ let decode ~name s =
   in
   {
     name;
-    first = type_offsets.(0);
+    first;
     times;
     offsets;
     rule;

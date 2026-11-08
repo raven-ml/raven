@@ -456,12 +456,12 @@ let fold_run z per v ~live rows q last ~before ~after s =
   in
   go [] q
 
-(* [second_pass ticks] is the position in the rows of a fold of the first one
-   that reads the second pass: the first one strictly below its predecessor,
-   and a tie only when the tied rows are the fold's only ones, an hourly
-   logger's repeated reading. [None] when the rows show no such step, so they
-   say nothing about their pass. *)
-let second_pass ticks =
+(* [second_pass ~tie_repeats ticks] is the position in the rows of a fold of the
+   first one read in the second pass: the first strictly below its predecessor,
+   or the second of two equal rows that are the fold's only rows, when
+   [tie_repeats] of their reading holds. [None] when the rows show neither, so
+   they say nothing about their pass. *)
+let second_pass ~tie_repeats ticks =
   let rec strict i = function
     | a :: (b :: _ as rest) ->
         if Int64.compare b a < 0 then Some (i + 1) else strict (i + 1) rest
@@ -469,8 +469,17 @@ let second_pass ticks =
   in
   match (strict 0 ticks, ticks) with
   | (Some _ as pass), _ -> pass
-  | None, [ a; b ] when Int64.equal a b -> Some 1
+  | None, [ a; b ] when Int64.equal a b && tie_repeats a -> Some 1
   | None, _ -> None
+
+(* Two equal rows are the two passes of a logger whose cadence is the fold's
+   length [span]: the rows on both sides lie [span] away. A row at another
+   distance, or a frame cut beside them, leaves them a possible duplicate. *)
+let at_fold_cadence ~span ~left ~right a =
+  let away t = Int64.equal (Int64.abs (Int64.sub t a)) span in
+  match (left, right) with
+  | Some l, Some r -> away l && away r
+  | _ -> false
 
 let localize_with ~order z ~ambiguous ~gap t =
   let u = unit_of_any t in
@@ -526,6 +535,17 @@ let localize_with ~order z ~ambiguous ~gap t =
           for f = 0 to Array.length offsets - 2 do
             let last = Int64.to_int offsets.(f + 1) in
             let prev = ref None and q = ref (Int64.to_int offsets.(f)) in
+            (* The ticks of the live row before [!q]. *)
+            let left = ref None in
+            let next_live from =
+              let rec go q =
+                if q >= last then None
+                else
+                  let j = Int64.to_int rows.(q) in
+                  if live j then Some (A1.unsafe_get v j) else go (q + 1)
+              in
+              go from
+            in
             while !q < last do
               let i = Int64.to_int rows.(!q) in
               if not (live i) then incr q
@@ -536,9 +556,13 @@ let localize_with ~order z ~ambiguous ~gap t =
                     let members, next =
                       fold_run z per v ~live rows !q last ~before ~after s
                     in
-                    let pass =
-                      second_pass (List.map (A1.unsafe_get v) members)
+                    let ticks = List.map (A1.unsafe_get v) members in
+                    let tie_repeats =
+                      at_fold_cadence
+                        ~span:(Int64.mul (Int64.of_int (before - after)) per)
+                        ~left:!left ~right:(next_live next)
                     in
+                    let pass = second_pass ~tie_repeats ticks in
                     let resolve pos j =
                       let t = A1.unsafe_get v j in
                       (match pass with
@@ -549,14 +573,17 @@ let localize_with ~order z ~ambiguous ~gap t =
                       settle prev j
                     in
                     List.iteri resolve members;
+                    left := Some (List.hd (List.rev ticks));
                     q := next
                 | Unique _ ->
                     row i;
                     settle prev i;
+                    left := Some (A1.unsafe_get v i);
                     incr q
                 | Gap _ ->
                     (* A row moved by [gap] leaves the state. *)
                     row i;
+                    left := Some (A1.unsafe_get v i);
                     incr q
             done
           done

@@ -14,7 +14,24 @@
     Conversions name their unit, as in [to_ms] and [Span.of_us]. Converting to a
     coarser unit is total and rounds toward negative infinity. Converting from a
     unit coarser than nanoseconds can overflow: the [of_*] functions then return
-    [None], and the {!Span} constructors raise [Invalid_argument].
+    [None], and the {!Span} constructors raise [Invalid_argument]. *)
+
+(** {1:stamps Instants and wall clocks}
+
+    A {e stamp} is a signed count of nanoseconds since 1970-01-01 00:00:00 on a
+    clock, from -2{^ 63} to 2{^ 63} - 1, about 1677-09-21 to 2262-04-11. A
+    stamp's type states which of two clocks it counts. An {e instant} counts
+    UTC. It is a point on the global timeline, the same reading for everyone. A
+    {e wall clock} counts a local calendar and clock face, a reading a person
+    saw, such as a logger's [02:30]. A wall clock takes an instant only once a
+    zone says where the clock hung, and two sites' wall clocks do not compare
+    as moments.
+
+    The two meet only through a zone, in [Talon.Expr.Temporal]: [wall] reads an
+    instant on a zone's clock, and [localize] finds a wall clock's instant under
+    stated policies, because a zone's clock can skip or repeat a reading. A
+    stamp of the wrong clock is a type error, so a literal, a column handle or a
+    function cannot mix the two.
 
     {b Composing with ptime.} An instant becomes a [Ptime.t] over {!to_s} and
     {!to_ns}; a wall clock, read as UTC, the same way:
@@ -24,23 +41,6 @@
       let ps = Int64.(mul 1000L (sub (Time.to_ns t) (mul s 1_000_000_000L))) in
       Ptime.of_span Ptime.Span.(add (of_int_s (Int64.to_int s)) (v (0, ps)))
     ]} *)
-
-(** {1:stamps Instants and wall clocks}
-
-    A {e stamp} is a signed count of nanoseconds since 1970-01-01 00:00:00 on a
-    clock, from -2{^ 63} to 2{^ 63} - 1, about 1677-09-21 to 2262-04-11. A
-    stamp's type states which of two clocks it counts. An {e instant} counts
-    UTC: it is a point on the global timeline, the same reading for everyone. A
-    {e wall clock} counts a local calendar and clock face in no particular zone:
-    a reading a person saw, such as a logger's [02:30]. A wall clock has no
-    instant until a zone says where the clock hung, and two sites' wall clocks
-    are not comparable as moments.
-
-    The two meet only through a zone, in [Talon.Expr.Temporal]: [wall] reads an
-    instant on a zone's clock, and [localize] finds a wall clock's instant under
-    stated policies, because a zone's clock can skip or repeat a reading. A
-    stamp of the wrong clock is a type error, so a literal, a column handle or a
-    function cannot mix the two. *)
 
 type +!'c stamp
 (** The type for stamps of the clock ['c]. *)
@@ -104,9 +104,8 @@ val pp : Format.formatter -> 'c stamp -> unit
 (** [pp ppf t] formats [t] as its civil date and time of day in ISO 8601's
     extended format, [YYYY-MM-DDThh:mm:ss], followed by a point and 3, 6 or 9
     digits, the fewest that are exact, when [t] is not a whole second:
-    [2024-03-15T09:30:00], [1969-12-31T23:59:59.999999999]. It has no zone
-    designator: a stamp holds no zone and the clock index is not known at run
-    time. *)
+    [2024-03-15T09:30:00], [1969-12-31T23:59:59.999999999]. It writes no zone
+    designator, since a stamp does not hold its clock at run time. *)
 
 (** {1:spans Spans} *)
 
