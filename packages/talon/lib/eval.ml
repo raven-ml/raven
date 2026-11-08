@@ -3,13 +3,27 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* [reduced] holds where the outputs reduce over the segments. *)
+(* [reduced] holds where the outputs reduce over the segments. Reductions run
+   over [frames]: the segments, made when a reduction first reads them, or
+   inside a window's reduction each row's window, where [frames] is not the
+   frame of [segments]. A frame whose segments change takes [with_segments]. *)
 type frame = {
   columns : Column.t array;
   rows : int;
   segments : Reduce.segments;
+  mutable frames : Reduce.frame option;
   reduced : bool;
 }
+
+let with_segments f segments = { f with segments; frames = None }
+
+let frames f =
+  match f.frames with
+  | Some r -> r
+  | None ->
+      let r = Reduce.frame f.segments in
+      f.frames <- Some r;
+      r
 
 let frame b =
   let rows = Table.rows b in
@@ -17,6 +31,7 @@ let frame b =
     columns = Table.columns b;
     rows;
     segments = Reduce.one rows;
+    frames = None;
     reduced = false;
   }
 
@@ -428,14 +443,18 @@ type env = {
 
 let per_row env = { env with extent = env.frame.rows; origin = Fun.id }
 
-let per_segment env segments =
-  let first = lazy (Nx.to_array (Reduce.first segments)) in
+(* [over_segments env frame] evaluates one value per segment of [frame]. *)
+let over_segments env frame =
+  let first = lazy (Nx.to_array (Reduce.first frame.segments)) in
   {
     env with
-    frame = { env.frame with segments };
-    extent = Reduce.count segments;
+    frame;
+    extent = Reduce.count frame.segments;
     origin = (fun i -> Int64.to_int (Lazy.force first).(i));
   }
+
+let per_segment env segments =
+  over_segments env (with_segments env.frame segments)
 
 (* A node that a reduction reads gets a [part], which holds, for a frame, the
    parts its reductions share. *)
@@ -641,7 +660,9 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
       fun env ->
         let cs = List.map (get env) es in
         map ty p cs
-  | Rows, _ -> fun env -> Reduce.rows env.frame.segments
+  | Rows, _ ->
+      fun env ->
+        Reduce.fixed (Any Type.int64) ((frames env.frame).sizes ())
   | Reduce (r, a), _ ->
       let a = compile st a and ty = type_of typing in
       if a.part < 0 then begin
@@ -655,7 +676,7 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
           | None ->
               let rows = per_row env in
               let c = fill rows (get rows a) in
-              let p = Reduce.parts env.frame.segments c in
+              let p = Reduce.parts (frames env.frame) c in
               env.parts.(a.part) <- Some p;
               p
         in
@@ -680,7 +701,30 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
             ~order:(List.map (fun (i, k) -> (cs.(i), k)) order)
         in
         if reduces then Reduce.broadcast s (get (per_segment env s) body)
-        else get { env with frame = { env.frame with segments = s } } body
+        else get { env with frame = with_segments env.frame s } body
+  | Window { on; before; after; exclude; r }, _ ->
+      (* [r]'s nodes evaluate over the windows, so they share no slot with the
+         nodes outside. Only rows with a window have one, and a window fails
+         at its row. *)
+      let operand : type b s. (b, s) Expr.t option -> node option =
+       fun e -> Option.map (compile st) e
+      in
+      let on = operand on and before = operand before in
+      let after = operand after in
+      let scope = st.nodes in
+      st.nodes <- [];
+      let body = compile st r in
+      st.nodes <- scope;
+      fun env ->
+        let column = Option.map (fun n -> fill env (get env n)) in
+        let w =
+          Window.v env.frame.segments ~on:(column on) ~before:(column before)
+            ~after:(column after) ~exclude
+        in
+        let frame = { env.frame with frames = Some (Window.frame w) } in
+        let extent = Window.windows w and origin = Window.row w in
+        let env = { env with frame; extent; origin } in
+        Window.to_rows w (fill env (get env body))
   | Shift (n, a), _ ->
       let a = compile st a in
       fun env -> Reduce.shift env.frame.segments n (fill env (get env a))
@@ -752,7 +796,7 @@ let env st frame =
       failure = ref None;
     }
   in
-  if frame.reduced then per_segment env frame.segments else env
+  if frame.reduced then over_segments env frame else env
 
 let outputs s os =
   let st = state s in

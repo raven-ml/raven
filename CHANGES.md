@@ -3896,6 +3896,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- Add `Expr.window`, a reduction over each row's window: the rows of its frame
+  whose key, `~on`'s value or the row's place, lies within `~before` and
+  `~after` of the row's, the row's key left out with `~exclude_key:true`.
+  `Kit.cumulative`, `Kit.fill_forward`, `Kit.fill_backward` and
+  `Kit.interpolate` compose it.
 - `Expr.min` and `Expr.max` of an integer or `bool` column fold its values in
   one pass, and `mean`, `var`, `std`, `sum` and `count` of one column in one
   `aggregate` share its count, sums and mean. H2O group-by q07 takes 26% fewer

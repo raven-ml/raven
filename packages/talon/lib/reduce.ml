@@ -38,8 +38,14 @@ let of_groups (g : Nx.host Nx.groups) order =
   }
 
 let group cs = of_groups (Key.groups cs) None
+
+let of_ids ~segments ~sizes ids =
+  let first = Nx.sub (Nx.cumsum sizes) sizes in
+  { ids; count = segments; first; sizes = Some sizes; order = None }
+
 let count s = s.count
 let first s = s.first
+let ids s = s.ids
 
 (* [keyed s ws] is the [[n; w]] words [ws] after each row's segment. *)
 let keyed s ws =
@@ -102,8 +108,6 @@ let sizes s =
   | Some c -> c
   | None -> Nx.full Nx.int64 [| 1 |] (Int64.of_int (Nx.dim 0 s.ids))
 
-let rows s = fixed int64 (sizes s)
-
 (* [at s] is each row's place in the order of the rows, which keeps each
    segment's rows in its order. *)
 let at s =
@@ -143,14 +147,14 @@ let first_where m why =
   let gs = Nx.positions m in
   if Nx.dim 0 gs = 0 then None else Some (Int64.to_int (Nx.item [ 0 ] gs), why)
 
-(* [exact_sum ty s ids x] sums the [int64] values [x] exactly, as high and low
-   32 bits apart, and is null where a sum leaves [int64]. *)
-let exact_sum ty s ids x =
+(* [exact_sum ty sum x] sums by [sum] the [int64] values [x] exactly, as high
+   and low 32 bits apart, and is null where a sum leaves [int64]. *)
+let exact_sum ty sum x =
   let hi = Nx.rshift x 32 in
   let lo = Nx.sub x (Nx.lshift hi 32) in
-  let lo = segment_sum s ids lo in
+  let lo = sum lo in
   let carry = Nx.rshift lo 32 in
-  let hi = Nx.add (segment_sum s ids hi) carry in
+  let hi = Nx.add (sum hi) carry in
   let fits =
     Nx.logical_and
       (Nx.greater_equal_s hi (-0x8000_0000L))
@@ -160,42 +164,69 @@ let exact_sum ty s ids x =
   let why = Format.asprintf "the sum overflows %a" Type.pp ty in
   (fixed (Any ty) ~valid:fits sum, first_where (Nx.logical_not fits) why)
 
-(* A column's parts that its reductions over one frame share, each computed
-   when a reduction first reads it: the segments of its non-null rows, their
-   counts, its int64 and float64 sums, its mean and variance, and its order
-   words. Fields, where lazy values would allocate a closure each. *)
-type parts = {
-  s : segments;
+(* Frames and parts
+
+   A reduction reads its frames through a [frame], so that one table states
+   each reduction for segments and for windows alike, and a column's
+   reductions over one frame share its [parts]: the frame's primitives over
+   the rows that hold values, the values' counts, int64 and float64 sums, mean
+   and variance, order words and their extremes' holders, each computed when
+   a reduction first reads it. Parts are fields, where lazy values would
+   allocate a closure each. *)
+
+type frame = {
+  sizes : unit -> Nx.host Nx.int64_t;
+  values : Nx.host Nx.bool_t option -> values;
+  place : Nx.host Nx.int64_t -> Nx.host Nx.int64_t;
+}
+
+and values = {
+  fold :
+    'v 'e. Nx.combine -> ('v, 'e, Nx.host) Nx.t -> ('v, 'e, Nx.host) Nx.t;
+  pick : Nx.combine -> Nx.host Nx.int64_t;
+  extreme : desc:bool -> Nx.host Nx.uint64_t -> Nx.host Nx.int64_t;
+  variance : (parts -> Nx.host Nx.float64_t * Nx.host Nx.int64_t) option;
+  holistic :
+    'a 'b.
+    ('a, 'b) Expr.reduction ->
+    Type.any ->
+    parts ->
+    Column.t * (int * string) option;
+}
+
+and parts = {
+  frame : frame;
   c : Column.t;
   held : Nx.host Nx.bool_t option;
-  value_ids : Nx.host Nx.int64_t;
+  v : values;
   mutable counts : Nx.host Nx.int64_t option;
   mutable sum : Nx.host Nx.int64_t option;
   mutable fsum : Nx.host Nx.float64_t option;
   mutable mean : Nx.host Nx.float64_t option;
-  mutable var : Nx.host Nx.float64_t option;
+  mutable var : (Nx.host Nx.float64_t * Nx.host Nx.int64_t) option;
   mutable words : Nx.host Nx.uint64_t option;
+  mutable least : Nx.host Nx.int64_t option;
+  mutable greatest : Nx.host Nx.int64_t option;
 }
 
-let parts s c =
+let parts frame c =
   let held = Option.map (Nx.cast Nx.bool) (Column.validity c) in
-  let value_ids =
-    match held with
-    | Some v -> Nx.where v s.ids (none (Column.length c))
-    | None -> s.ids
-  in
   {
-    s;
+    frame;
     c;
     held;
-    value_ids;
+    v = frame.values held;
     counts = None;
     sum = None;
     fsum = None;
     mean = None;
     var = None;
     words = None;
+    least = None;
+    greatest = None;
   }
+
+let column p = p.c
 
 (* [memo get set f p] is [f p], computed once and kept in [p]'s field. *)
 let memo get set f p =
@@ -209,18 +240,16 @@ let memo get set f p =
 let counts =
   memo (fun p -> p.counts) (fun p x -> p.counts <- x) (fun p ->
       match p.held with
-      | None -> sizes p.s
-      | Some _ ->
-          let ones = Nx.ones Nx.int64 [| Column.length p.c |] in
-          segment_sum p.s p.value_ids ones)
+      | None -> p.frame.sizes ()
+      | Some _ -> p.v.fold Add (Nx.ones Nx.int64 [| Column.length p.c |]))
 
 let sum =
   memo (fun p -> p.sum) (fun p x -> p.sum <- x) (fun p ->
-      segment_sum p.s p.value_ids (tensor Nx.int64 p.c))
+      p.v.fold Add (tensor Nx.int64 p.c))
 
 let fsum =
   memo (fun p -> p.fsum) (fun p x -> p.fsum <- x) (fun p ->
-      segment_sum p.s p.value_ids (tensor Nx.float64 p.c))
+      p.v.fold Add (tensor Nx.float64 p.c))
 
 (* Integers of at most 32 bits sum exactly in int64 over fewer than 2^31 rows,
    then round once to float64, as a float64 sum does wherever its partial sums
@@ -232,15 +261,20 @@ let mean =
       in
       Nx.div sum (Nx.cast Nx.float64 (counts p)))
 
-let var =
-  memo (fun p -> p.var) (fun p x -> p.var <- x) (fun p ->
-      let d = Nx.sub (tensor Nx.float64 p.c) (Nx.take p.s.ids (mean p)) in
-      let k = Nx.cast Nx.float64 (Nx.sub_s (counts p) 1L) in
-      Nx.div (segment_sum p.s p.value_ids (Nx.mul d d)) k)
+let var variance = memo (fun p -> p.var) (fun p x -> p.var <- x) variance
 
 let words =
   memo (fun p -> p.words) (fun p x -> p.words <- x) (fun p ->
       Key.value Order p.c)
+
+(* The holders of each frame's first least and greatest words. *)
+let least =
+  memo (fun p -> p.least) (fun p x -> p.least <- x) (fun p ->
+      p.v.extreme ~desc:false (words p))
+
+let greatest =
+  memo (fun p -> p.greatest) (fun p x -> p.greatest <- x) (fun p ->
+      p.v.extreme ~desc:true (words p))
 
 (* Whether [c]'s extremes are its values': an integer's or a boolean's, one
    value to an order word, ordered as its storage. *)
@@ -254,30 +288,18 @@ let reduce : type a b.
     parts ->
     Column.t * (int * string) option =
  fun r (Any rty as ty) p ->
-  let { s; c; held; value_ids = ids; _ } = p in
-  let n = Column.length c in
-  let valid m = match held with Some v -> Nx.logical_and v m | None -> m in
+  let { frame; c; v; _ } = p in
   let at_least k = Nx.greater_equal_s (counts p) (Int64.of_int k) in
-  let quantile q =
-    let r = Nx_ragged.of_ids ~segments:s.count ids (tensor Nx.float64 c) in
-    let q = Nx.reshape [| s.count |] (Nx_ragged.quantile [| q |] r) in
-    fixed float64 ~valid:(at_least 1) q
-  in
-  let extreme op = Nx.reduce_segments op ~segments:s.count ids (words p) in
-  let first_at e =
-    let hit = Nx.equal (words p) (Nx.take s.ids e) in
-    pick s Nx.Min (Some (valid hit))
-  in
+  let extreme desc = if desc then greatest p else least p in
   (* One fold of the values, where it is an extreme's value. *)
-  let value_at op =
+  let value_at desc =
     match Column.data c with
     | Fixed (P x) when direct c ->
-        fixed ty ~valid:(at_least 1)
-          (Nx.reduce_segments op ~segments:s.count ids x)
-    | _ -> rows_at (first_at (extreme op)) c
+        fixed ty ~valid:(at_least 1) (v.fold (if desc then Max else Min) x)
+    | _ -> rows_at (extreme desc) c
   in
   let place row =
-    let p = place s row in
+    let p = frame.place row in
     fixed int64 ~valid:(Nx.greater_equal_s p 0L) p
   in
   let value row = rows_at row c in
@@ -286,34 +308,84 @@ let reduce : type a b.
   | Count -> ok (fixed int64 (counts p))
   | Sum -> (
       match (rty, Column.data c) with
-      | Duration _, _ -> exact_sum rty s ids (tensor Nx.int64 c)
+      | Duration _, _ -> exact_sum rty (v.fold Add) (tensor Nx.int64 c)
       | Int64, _ -> ok (fixed ty (sum p))
       | Float64, _ -> ok (fixed ty (fsum p))
-      | _, Fixed (P x) -> ok (fixed ty (segment_sum s ids x))
+      | _, Fixed (P x) -> ok (fixed ty (v.fold Add x))
       | _ -> invalid_arg "Reduce.reduce: no sum")
   | Mean -> ok (fixed ty ~valid:(at_least 1) (mean p))
-  | Var -> ok (fixed ty ~valid:(at_least 2) (var p))
-  | Std -> ok (fixed ty ~valid:(at_least 2) (Nx.sqrt (var p)))
-  | Median -> ok (quantile 0.5)
-  | Quantile q -> ok (quantile q)
-  | Min -> ok (value_at Nx.Min)
-  | Max -> ok (value_at Nx.Max)
-  | Arg_min -> ok (place (first_at (extreme Nx.Min)))
-  | Arg_max -> ok (place (first_at (extreme Nx.Max)))
-  | First -> ok (value (pick s Nx.Min held))
-  | Last -> ok (value (pick s Nx.Max held))
+  | Var | Std -> (
+      match v.variance with
+      | None -> v.holistic r ty p
+      | Some variance ->
+          let x, n = var variance p in
+          let x = match r with Std -> Nx.sqrt x | _ -> x in
+          ok (fixed ty ~valid:(Nx.greater_equal_s n 2L) x))
+  | Median | Quantile _ | N_unique -> v.holistic r ty p
+  | Min -> ok (value_at false)
+  | Max -> ok (value_at true)
+  | Arg_min -> ok (place (extreme false))
+  | Arg_max -> ok (place (extreme true))
+  | First -> ok (value (v.pick Min))
+  | Last -> ok (value (v.pick Max))
   | Only ->
-      let lo = extreme Nx.Min in
-      let several =
-        Nx.logical_and (at_least 1) (Nx.not_equal lo (extreme Nx.Max))
+      let w = words p in
+      let differ = Nx.not_equal (v.fold Min w) (v.fold Max w) in
+      let several = Nx.logical_and (at_least 1) differ in
+      (value (extreme false), first_where several "only finds several values")
+
+(* [frame s] reads the segments [s]: a row without a value leaves its
+   segment, and var and std take the deviations from each segment's mean. *)
+let frame s =
+  let n = Nx.dim 0 s.ids in
+  let values held =
+    let ids =
+      match held with Some v -> Nx.where v s.ids (none n) | None -> s.ids
+    in
+    let fold op x = Nx.reduce_segments op ~segments:s.count ids x in
+    let extreme ~desc words =
+      let e = fold (if desc then Max else Min) words in
+      let hit = Nx.equal words (Nx.take s.ids e) in
+      let hit = match held with Some v -> Nx.logical_and v hit | None -> hit in
+      pick s Nx.Min (Some hit)
+    in
+    let variance p =
+      let d = Nx.sub (tensor Nx.float64 p.c) (Nx.take s.ids (mean p)) in
+      let k = Nx.cast Nx.float64 (Nx.sub_s (counts p) 1L) in
+      (Nx.div (fold Add (Nx.mul d d)) k, counts p)
+    in
+    let holistic : type a b.
+        (a, b) Expr.reduction ->
+        Type.any ->
+        parts ->
+        Column.t * (int * string) option =
+     fun r _ p ->
+      let c = p.c in
+      let quantile q =
+        let r = Nx_ragged.of_ids ~segments:s.count ids (tensor Nx.float64 c) in
+        let q = Nx.reshape [| s.count |] (Nx_ragged.quantile [| q |] r) in
+        (fixed float64 ~valid:(Nx.greater_equal_s (counts p) 1L) q, None)
       in
-      (value (first_at lo), first_where several "only finds several values")
-  | N_unique ->
-      (* [n] groups at most, so that no count of them is read: a group past
-         the last has no key, and counts [0] in segment [0]. *)
-      let g = Nx.unique ~size:n (keyed s (Key.identity [ c ])) in
-      let real = Nx.cast Nx.int64 (Nx.greater_s g.counts 0L) in
-      ok (fixed int64 (segment_sum s (Nx.take g.first s.ids) real))
+      match r with
+      | Median -> quantile 0.5
+      | Quantile q -> quantile q
+      | N_unique ->
+          (* [n] groups at most, so that no count of them is read: a group
+             past the last has no key, and counts [0] in segment [0]. *)
+          let g = Nx.unique ~size:n (keyed s (Key.identity [ c ])) in
+          let real = Nx.cast Nx.int64 (Nx.greater_s g.counts 0L) in
+          (fixed int64 (segment_sum s (Nx.take g.first s.ids) real), None)
+      | _ -> invalid_arg "Reduce: not a holistic reduction"
+    in
+    {
+      fold;
+      pick = (fun op -> pick s op held);
+      extreme;
+      variance = Some variance;
+      holistic;
+    }
+  in
+  { sizes = (fun () -> sizes s); values; place = place s }
 
 let shift s k c =
   let r = view s and n = Column.length c in

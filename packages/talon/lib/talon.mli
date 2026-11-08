@@ -1041,7 +1041,9 @@ module Expr : sig
       - [select], [derive] and [filter]: the input's rows;
       - [aggregate ~by]: one group's rows, in input order;
       - {!over}[ ~by ~order e]: the enclosing frame, partitioned by [by], each
-        partition in [order]; results return to their rows.
+        partition in [order]; results return to their rows;
+      - {!window}[ r]: at each row, the rows of the enclosing frame around it
+        ({!section-windows}).
 
       A frame's order is its input order, and no expression reorders values
       without returning them to their rows.
@@ -1382,6 +1384,75 @@ module Expr : sig
       values in talon's total order, ties taking the lowest rank (SQL's [RANK]),
       as [int64], and null where [a] is null. An extension type needs an ordered
       declaration. *)
+
+  (** {2:windows Windows}
+
+      A {e window} is, at each row of a frame, a frame of the rows around it,
+      and a reduction over it gives the row's value. Each row has a {e key},
+      the value of an expression [on] or, without [on], the row's place in the
+      frame from [0]. Row [i]'s window holds the rows of its frame whose key
+      [k] has [ki - before < k <= ki + after] in talon's total order, where
+      [ki] is row [i]'s key and the {e bounds} [before] and [after] are
+      expressions of the frame, so they may differ by row. Without [before]
+      the window starts at the frame's first row, and [after] defaults to [0].
+      With [~exclude_key:true] the window leaves out the rows whose key is
+      [ki], which without [on] is the row itself. A window holds its rows in
+      key order, the rows of one key in the frame's order, which
+      {!over}[ ~order] sets.
+
+      [ki - before] and [ki + after] compute in the type where [on] and its
+      bounds meet. They are exact for integers, and for temporal keys, which
+      compute in ticks of [on]'s unit (seconds for a date). An exact result
+      past the type's range lies below or above every key. Float bounds follow
+      IEEE 754 and round once, and NaN is the greatest key, so that:
+      - an infinite or NaN key's window is empty under finite bounds, and
+        without [before] holds every key up to its own;
+      - at a finite key, [~before:(float infinity)] reaches every key above
+        [neg_infinity] and [~after:(float infinity)] every key up to
+        [infinity];
+      - a NaN [before] holds no key, and a NaN [after] every key from the
+        lower end.
+
+      A row whose key or bound is null has no window, and its value is null. A
+      row whose key is null is in no window. *)
+
+  val window :
+    ?on:('k, row) t ->
+    ?before:('d, row) t ->
+    ?after:('d, row) t ->
+    ?exclude_key:bool ->
+    ('a, agg) t ->
+    ('a, row) t
+  (** [window ~on ~before ~after ~exclude_key r] is, at each row, [r] over the
+      row's window ({!section-windows}), of [r]'s type. [window (sum x)] is the
+      running sum, and [window ~on:ts ~before:(span (Time.Span.days 7))
+      ~exclude_key:true (sum x)] sums the seven days before [ts]. A window of
+      places reads an order, as in [over ~order:[ Order.asc "day" ]
+      (window ~before:(int 28) (mean x))], the mean of a day and the 27 before
+      it. A window to reuse is a function, [let week r = window ~on:ts
+      ~before:(span week) r]. It needs the whole frame, as {!over} does.
+
+      [on] is an integer, a float, a date, a datetime, a duration or a clock. A
+      bound is a number of [on]'s kind, a duration of [on]'s unit or a coarser
+      one for a temporal [on], and an integer without [on].
+
+      {b Cost.} Along [on] the rows are sorted, and {!min}, {!max}, {!only} and
+      the [arg_] reductions sort their values. Without [before], {!count},
+      {!sum}, {!mean}, {!first}, {!last}, {!var} and {!std} then take one scan,
+      O(n) for n rows, and with [before] O(n log n), except [var] and [std].
+      These with [before], and {!median}, {!quantile} and {!n_unique} always,
+      reduce every window's rows, in time their total number, O(n{^ 2}) without
+      [before], holding at most 2{^ 20} of them or one window's at once. A
+      window that excludes its key and has [after] costs as one with [before].
+
+      {b Bits.} A float sum's bits depend on the window's rows, their places
+      among the rows of the enclosing frame, all partitions included, and
+      whether the window has [before]. They may differ from
+      {!Query.aggregate}'s over the same rows, and [var] and [std] differ
+      between windows with and without [before].
+
+      An [on] of another type, a bound of another kind, type or unit, and
+      {!over}, {!shift}, {!rank} or [window] inside [r] are problems. *)
 
   (** {1:ocaml OCaml values}
 
@@ -2085,9 +2156,9 @@ module Query : sig
         Expr.[ keep Sel.(names [ "carrier" ]); "late" := delay > float 15. ]
       ]}
       It keeps [q]'s row count and order. Each output reads [q]'s columns, never
-      another output. It streams in O(n), except that {!Expr.over} and
-      {!Expr.rank} over the input's rows need the whole input: the verb then
-      blocks.
+      another output. It streams in O(n), except that {!Expr.over},
+      {!Expr.rank} and {!Expr.window} over the input's rows need the whole
+      input: the verb then blocks.
 
       Its problems are those of binding [os], and two outputs of one name. *)
 
@@ -2096,8 +2167,9 @@ module Query : sig
       [os]: an output replaces the column of its name in place, with the
       output's type, and the others follow [q]'s columns, in order. It keeps
       [q]'s row count and order. Each output reads [q]'s columns, never another
-      output. It streams in O(n), except that {!Expr.over} and {!Expr.rank} over
-      the input's rows need the whole input: the verb then blocks.
+      output. It streams in O(n), except that {!Expr.over}, {!Expr.rank} and
+      {!Expr.window} over the input's rows need the whole input: the verb then
+      blocks.
 
       Its problems are those of binding [os], and two outputs of one name. *)
 
@@ -2105,8 +2177,8 @@ module Query : sig
   (** [filter p q] is the rows of [q] on which [p] is [true], in order, so a row
       on which [p] is null is dropped. Its schema is [q]'s. [p] is a [bool]
       column: an OCaml value, as [const f $ x] is, takes that type. It streams
-      in O(n), except that {!Expr.over} and {!Expr.rank} over the input's rows
-      need the whole input: the verb then blocks.
+      in O(n), except that {!Expr.over}, {!Expr.rank} and {!Expr.window} over
+      the input's rows need the whole input: the verb then blocks.
 
       Over traced columns ({!section-compiled}) it raises when [p] reads one.
 
@@ -2295,8 +2367,8 @@ module Query : sig
       {b Predicates.} A filter's predicate splits into its {e conjuncts}, the
       operands of its [&&]s. A conjunct moves toward the sources when it is
       {e row-local}, its value at a row depending on that row alone: it has no
-      {!Expr.over}, {!Expr.shift} or {!Expr.rank}. It moves past each step that
-      keeps the rows it sees and the values it reads:
+      {!Expr.over}, {!Expr.shift}, {!Expr.rank} or {!Expr.window}. It moves past
+      each step that keeps the rows it sees and the values it reads:
       - a [sort];
       - a [filter] whose predicate is row-local, with which it merges;
       - a [select] or a [derive] whose outputs are row-local, when each column
@@ -2625,6 +2697,68 @@ module Kit : sig
       ]}
       A column that both have, of two types, takes the type where they meet, and
       one whose types do not meet is a problem of the [append]. *)
+
+  (** {1:windows Windows}
+
+      These compose {!Expr.window}, so they hold its rule on operands: an [x]
+      or [r] holding {!Expr.over}, {!Expr.shift}, {!Expr.rank} or
+      {!Expr.window} is a problem that names a window. *)
+
+  val cumulative : ('a, Expr.agg) Expr.t -> ('a, Expr.row) Expr.t
+  (** [cumulative r] is [r] over the frame's rows up to and including each:
+      {[
+      Expr.window r
+      ]} *)
+
+  val fill_forward : ('a, Expr.row) Expr.t -> ('a, Expr.row) Expr.t
+  (** [fill_forward x] is [x], or where [x] is null its last earlier value in
+      the frame:
+      {[
+      Expr.(window (last x))
+      ]} *)
+
+  val fill_backward : ('a, Expr.row) Expr.t -> ('a, Expr.row) Expr.t
+  (** [fill_backward x] is [x], or where [x] is null its next value in the
+      frame:
+      {[
+      Expr.(window ~before:(int 1) ~after:(int max_int) (first x))
+      ]} *)
+
+  val interpolate :
+    ?on:('k, Expr.row) Expr.t -> (float, Expr.row) Expr.t ->
+    (float, Expr.row) Expr.t
+  (** [interpolate ~on x] is [x] where it holds a value, and elsewhere the
+      value at the row's key on the line through the last value at or before
+      that key and the first value after it, in [float64]. Keys are [on]'s
+      values cast to [float64], an integer or a float, or without [on] the rows'
+      places. It is null before the first value and after the last, and the
+      value of a row of the same key where one has a value:
+      {[
+      let line ~at ~x0 ~k0 ~x1 ~k1 =
+        coalesce
+          [ x; if_ (at = k0) x0 (x0 +. (x1 -. x0) *. (at -. k0) /. (k1 -. k0)) ]
+      in
+      match on with
+      | Some on ->
+          let k = cast Type.float64 on in
+          let held v = if_ (is_null x) null v in
+          let upto r = window ~on:k r in
+          let past r =
+            window ~on:k ~before:(float 0.) ~after:(float infinity) r
+          in
+          line ~at:k ~x0:(upto (last x)) ~k0:(upto (last (held k)))
+            ~x1:(past (first x)) ~k1:(past (first (held k)))
+      | None ->
+          (* [c] values reach the row; the [c]th starts the run of rows of
+             count [c], which ends before the next value. *)
+          let place r = cast Type.float64 r in
+          let c = window (count x) in
+          let k0 = place (window ~on:c ~exclude_key:true rows + int 1) in
+          let k1 = k0 +. place (window ~on:c ~before:(int 1) rows) in
+          line ~at:(place (window rows)) ~x0:(window (last x)) ~k0
+            ~x1:(window ~before:(int 0) ~after:(int max_int) (first x)) ~k1
+      ]}
+      inside [Expr.( … )]. *)
 
   (** {1:runs Runs} *)
 

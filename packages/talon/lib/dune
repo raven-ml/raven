@@ -15,6 +15,7 @@
   sel
   order
   expr
+  window
   key
   table
   source

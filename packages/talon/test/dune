@@ -135,3 +135,14 @@
  (modules test_memory)
  (package talon)
  (libraries windtrap talon talon_gen talon_held))
+
+(test
+ (name test_window)
+ (modules test_window)
+ (package talon)
+ (libraries windtrap talon nx)
+ (deps golden/window.txt)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_window.ml test_window.ml.corrected))))

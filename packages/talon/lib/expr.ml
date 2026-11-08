@@ -119,6 +119,14 @@ and 'a node =
   | Over : { by : string list; order : Order.t list; e : ('a, 's) t } -> 'a node
   | Shift : int * ('a, 's) t -> 'a node
   | Rank : ('a, 's) t -> int node
+  | Window : {
+      on : ('k, 's0) t option;
+      before : ('d, 's1) t option;
+      after : ('d, 's2) t option;
+      exclude : bool;
+      r : ('a, 's3) t;
+    }
+      -> 'a node
   | Const : 'a -> 'a node
   | App : ('a -> 'b, 's0) t * ('a, 's1) t -> 'b node
   | Option : ('a, 's) t -> 'a option node
@@ -182,6 +190,10 @@ let operands : type a. a node -> packed list = function
   | Store (_, a) -> [ Packed a ]
   | Text (_, a) -> [ Packed a ]
   | Over { e; _ } -> [ Packed e ]
+  | Window { on; before; after; r; _ } ->
+      let some e = Option.map (fun e -> Packed e) e in
+      List.filter_map Fun.id
+        [ some on; some before; some after; Some (Packed r) ]
   | Calendar op -> (
       match op with
       | Add_span (a, d) -> [ Packed a; Packed d ]
@@ -367,6 +379,10 @@ let node_equal : type a b. a node -> b node -> bool =
   | Over o0, Over o1 ->
       List.equal String.equal o0.by o1.by
       && List.equal Order.equal o0.order o1.order
+  | Window w0, Window w1 ->
+      Bool.equal w0.exclude w1.exclude
+      && Bool.equal (Option.is_some w0.on) (Option.is_some w1.on)
+      && Bool.equal (Option.is_some w0.before) (Option.is_some w1.before)
   | Const v0, Const v1 -> same_value v0 v1
   | Text (op0, _), Text (op1, _) -> text_op_equal op0 op1
   | Concat (sep0, _), Concat (sep1, _) -> String.equal sep0 sep1
@@ -385,8 +401,8 @@ let node_equal : type a b. a node -> b node -> bool =
   | ( ( Handle _ | Ext_handle _ | Read _ | Lit _ | Null | Rows | Int _ | Float _
       | Compare _ | Logic _ | Not _ | If _ | Is_null _ | Coalesce _ | Is_in _
       | Cut _ | Cast _ | Lift _ | Lift2 _ | Nx_map _ | Reduce _ | Over _
-      | Shift _ | Rank _ | Const _ | App _ | Option _ | Of_option _ | Store _
-      | Text _ | Concat _ | Calendar _ ),
+      | Shift _ | Rank _ | Window _ | Const _ | App _ | Option _ | Of_option _
+      | Store _ | Text _ | Concat _ | Calendar _ ),
       _ ) ->
       false
 
@@ -418,6 +434,8 @@ let node_hash : type a. a node -> int =
     | Logic (o, _, _) -> Hashtbl.hash o
     | Reduce (r, _) -> Hashtbl.hash r
     | Shift (i, _) -> Hashtbl.hash i
+    | Window w ->
+        Hashtbl.hash (w.exclude, Option.is_some w.on, Option.is_some w.before)
     | _ -> 0
   in
   Hashtbl.hash
@@ -702,6 +720,16 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
         @ [ arg e ])
   | Shift (n, a) -> app "shift" [ str (signed n); arg a ]
   | Rank a -> app "rank" [ arg a ]
+  | Window { on; before; after; exclude; r } ->
+      let labelled label = function
+        | None -> []
+        | Some e ->
+            [ (fun ppf -> Format.fprintf ppf "~%s:%a" label (pp_at 8) e) ]
+      in
+      let exclude = if exclude then [ str "~exclude_key:true" ] else [] in
+      app "window"
+        (labelled "on" on @ labelled "before" before @ labelled "after" after
+       @ exclude @ [ arg r ])
   | Const _ -> Format.pp_print_string ppf "<const>"
   | Option a -> app "option" [ arg a ]
   | Of_option a -> app "of_option" [ arg a ]
@@ -1056,6 +1084,23 @@ let rec constant : type s. (int, s) t -> int option =
           | Div | Mod | Pow -> None)
       | _ -> None)
   | _ -> None
+
+(* [window_key ty] is [true] iff a window orders rows along values of [ty]. *)
+let window_key : type a. a Type.t -> bool = function
+  | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64 -> true
+  | Float16 | Float32 | Float64 | Date | Datetime _ | Duration _ | Clock _ ->
+      true
+  | _ -> false
+
+(* [order_operation e] names an operation of [e] that orders rows. *)
+let rec order_operation : type a s. (a, s) t -> string option =
+ fun e ->
+  match e.node with
+  | Over _ -> Some "over"
+  | Shift _ -> Some "shift"
+  | Rank _ -> Some "rank"
+  | Window _ -> Some "window"
+  | n -> List.find_map (fun (Packed e) -> order_operation e) (operands n)
 
 let is_int_or_float : type a. a Type.t -> bool = function
   | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64 -> true
@@ -1682,6 +1727,44 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
       on_operand env x (fun t x ->
           ordered env "rank" t;
           known int64 (Rank x))
+  | Window { on; before; after; exclude; r } -> (
+      let key =
+        match on with
+        | None -> Ok None
+        | Some k -> (
+            match resolve env k (elab env k) with
+            | Some (Column ty, k) when window_key ty -> Ok (Some (ty, k))
+            | Some (t, _) ->
+                report env
+                  "window ~on takes integers, floats, dates, datetimes, \
+                   durations or clocks, not %a."
+                  pp_typing t;
+                Error ()
+            | None -> Error ())
+      in
+      match key with
+      | Error () -> Broken
+      | Ok key -> (
+          let bound = function
+            | None -> Ok None
+            | Some b -> (
+                match window_bound env (Option.map fst key) b with
+                | Some b -> Ok (Some b)
+                | None -> Error ())
+          in
+          let before = bound before in
+          let after = bound after in
+          let body = resolve env r (elab env r) in
+          Option.iter
+            (report env
+               "the reduction of a window holds %s: compute it outside the \
+                window.")
+            (order_operation r);
+          match (before, after, body) with
+          | Ok before, Ok after, Some (t, r) ->
+              let on = Option.map snd key in
+              known t (Window { on; before; after; exclude; r })
+          | _ -> Broken))
   | App (f, a) -> (
       let f =
         match elab env f with
@@ -1722,6 +1805,66 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
         known (Column Type.string) (Concat (sep, List.map Option.get bs))
       else Broken
   | Calendar op -> calendar env op
+
+(* [window_bound env key b] is the bound [b] of a window along a key of type
+   [key], or of places for [None]: an integer, a number that meets the key, or
+   a duration of the key's unit or a coarser one. *)
+and window_bound : type d s k.
+    env -> k Type.t option -> (d, s) t -> (d, erased) t option =
+ fun env key b ->
+  let el = elab env b in
+  let typing =
+    match el with
+    | Known (t, _) -> Some t
+    | Flexible { default; _ } -> default
+    | Broken -> None
+  in
+  let wanted what ty =
+    report env "window %s, not %a." what pp_typing ty;
+    None
+  in
+  match (el, typing) with
+  | Broken, _ -> None
+  | _, None -> untyped env b
+  | _, Some ((Value | Extension _) as t) ->
+      wanted "takes bounds of a column type" t
+  | _, Some (Column ty as t) -> (
+      match key with
+      | None -> (
+          match Kind.equal_witness (Type.kind ty) Kind.int with
+          | Some Equal -> expect env b int64 el
+          | None -> wanted "of places takes integer bounds" t)
+      | Some ((Date | Datetime _ | Duration _ | Clock _) as k) -> (
+          let u =
+            match k with
+            | Datetime { unit_; _ } | Duration unit_ | Clock unit_ -> unit_
+            | _ -> Type.S
+          in
+          match (Kind.equal_witness (Type.kind ty) Kind.span, el, ty) with
+          | Some Equal, Flexible { at; _ }, _ ->
+              Some (at (Column (Type.duration u)))
+          | Some Equal, Known (_, b), Duration du
+            when unit_rank du <= unit_rank u ->
+              Some b
+          | _ ->
+              wanted
+                (strf
+                   "along %a takes bounds of durations of its unit or a \
+                    coarser one"
+                   Type.pp k)
+                t)
+      | Some k -> (
+          match (Kind.equal_witness (Type.kind ty) (Type.kind k), el) with
+          | None, _ ->
+              wanted (strf "along %a takes bounds of its kind" Type.pp k) t
+          | Some Equal, Flexible { at; _ } -> Some (at (Column k))
+          | Some Equal, Known (_, b) when Option.is_some (Type.common [ ty; k ])
+            ->
+              Some b
+          | Some Equal, _ ->
+              report env "%a and %a do not meet: cast first." Type.pp ty Type.pp
+                k;
+              None))
 
 (* [on_operand env a k] is [k t b], [b] the operand [a] bound where it needs a
    column type and [t] its typing, or [Broken]. *)
@@ -1993,7 +2136,7 @@ let row_local e =
   let rec local : type a s. (a, s) t -> bool =
    fun e ->
     match e.node with
-    | Over _ | Shift _ | Rank _ -> false
+    | Over _ | Shift _ | Rank _ | Window _ -> false
     | n -> List.for_all (fun (Packed e) -> local e) (operands n)
   in
   local e
@@ -2004,7 +2147,7 @@ let reduces e =
    fun e ->
     match e.node with
     | Rows | Reduce _ -> true
-    | Over _ -> false
+    | Over _ | Window _ -> false
     | n -> List.exists (fun (Packed e) -> per_frame e) (operands n)
   in
   per_frame e
@@ -2063,6 +2206,16 @@ let map_node : type a. mapper -> a node -> a node =
   | Over { by; order; e } -> Over { by; order; e = map e }
   | Shift (k, a) -> Shift (k, map a)
   | Rank a -> Rank (map a)
+  | Window w ->
+      let map_opt e = Option.map map e in
+      Window
+        {
+          w with
+          on = map_opt w.on;
+          before = map_opt w.before;
+          after = map_opt w.after;
+          r = map w.r;
+        }
   | App (f, a) -> App (map f, map a)
   | Option a -> Option (map a)
   | Of_option a -> Of_option (map a)
@@ -2354,6 +2507,9 @@ let arg_max a = reduce Arg_max a
 let over ?(by = []) ?(order = []) e = make (Over { by; order; e })
 let shift n a = make (Shift (n, a))
 let rank a = make (Rank a)
+
+let window ?on ?before ?after ?(exclude_key = false) r =
+  make (Window { on; before; after; exclude = exclude_key; r })
 
 (* OCaml values *)
 

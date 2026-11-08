@@ -216,6 +216,41 @@ module Kit = struct
   (* A dictionary's codes are int32. *)
   let max_categories = 0x7fff_ffff
 
+  (* Windows *)
+
+  let cumulative r = Expr.window r
+  let fill_forward x = Expr.(window (last x))
+
+  let fill_backward x =
+    Expr.(window ~before:(int 1) ~after:(int max_int) (first x))
+
+  let interpolate ?on x =
+    let open Expr in
+    let line ~at ~x0 ~k0 ~x1 ~k1 =
+      coalesce
+        [ x; if_ (at = k0) x0 (x0 +. ((x1 -. x0) *. (at -. k0) /. (k1 -. k0))) ]
+    in
+    match on with
+    | Some on ->
+        let k = cast Type.float64 on in
+        let held v = if_ (is_null x) null v in
+        let upto r = window ~on:k r in
+        let past r =
+          window ~on:k ~before:(float 0.) ~after:(float infinity) r
+        in
+        line ~at:k ~x0:(upto (last x)) ~k0:(upto (last (held k)))
+          ~x1:(past (first x)) ~k1:(past (first (held k)))
+    | None ->
+        (* [c] values reach the row; the [c]th starts the run of rows of count
+           [c], which ends before the next value. *)
+        let place r = cast Type.float64 r in
+        let c = window (count x) in
+        let k0 = place (window ~on:c ~exclude_key:true rows + int 1) in
+        let k1 = k0 +. place (window ~on:c ~before:(int 1) rows) in
+        line ~at:(place (window rows)) ~x0:(window (last x)) ~k0
+          ~x1:(window ~before:(int 0) ~after:(int max_int) (first x))
+          ~k1
+
   let categorize cs q =
     Option.iter
       (err "Kit.categorize: %a is named twice" Type.pp_quoted)

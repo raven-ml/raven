@@ -88,6 +88,14 @@ val arg_max : ('a, row) t -> (int, agg) t
 val over : ?by:string list -> ?order:Order.t list -> ('a, 's) t -> ('a, row) t
 val shift : int -> ('a, row) t -> ('a, row) t
 val rank : ('a, row) t -> (int, row) t
+
+val window :
+  ?on:('k, row) t ->
+  ?before:('d, row) t ->
+  ?after:('d, row) t ->
+  ?exclude_key:bool ->
+  ('a, agg) t ->
+  ('a, row) t
 val const : 'a -> ('a, 's) t
 val ( $ ) : ('a -> 'b, 's) t -> ('a, 's) t -> ('b, 's) t
 val option : ('a, 's) t -> ('a option, 's) t
@@ -245,6 +253,15 @@ type 'a node =
   | Over : { by : string list; order : Order.t list; e : ('a, 's) t } -> 'a node
   | Shift : int * ('a, 's) t -> 'a node
   | Rank : ('a, 's) t -> int node
+  | Window : {
+      on : ('k, 's0) t option;
+      before : ('d, 's1) t option;
+      after : ('d, 's2) t option;
+      exclude : bool;  (** Whether the rows of the row's key are taken out. *)
+      r : ('a, 's3) t;
+    }
+      -> 'a node
+      (** {!window}: its key, its bounds and its reduction. *)
   | Const : 'a -> 'a node
   | App : ('a -> 'b, 's0) t * ('a, 's1) t -> 'b node
   | Option : ('a, 's) t -> 'a option node
@@ -376,13 +393,13 @@ val reads : ('a, 's) t -> string list
 
 val row_local : ('a, 's) t -> bool
 (** [row_local b] is [true] iff [b]'s value at a row depends on that row alone:
-    [b] has no {!over}, {!shift} or {!rank}. A filter, a slice or a reordering
-    of the frame therefore does not change the values of a row-local expression
-    on the rows it keeps. *)
+    [b] has no {!over}, {!shift}, {!rank} or {!window}. A filter, a slice or a
+    reordering of the frame therefore does not change the values of a row-local
+    expression on the rows it keeps. *)
 
 val reduces : ('a, 's) t -> bool
 (** [reduces b] is [true] iff [b] has one value per frame: it holds {!rows} or a
-    reduction outside every {!over}. *)
+    reduction outside every {!over} and {!window}. *)
 
 val can_fail : ('a, 's) t -> bool
 (** [can_fail b] is [true] iff evaluating the {{!row_local}row-local} [b] can
