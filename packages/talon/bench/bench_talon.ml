@@ -17,6 +17,17 @@ open Talon
    exe path is the one stable anchor in both. *)
 let data_dir = Filename.concat (Filename.dirname Sys.executable_name) "data"
 
+let start_dir = Sys.getcwd ()
+
+(* [in_data f] is [f ()] run from [data_dir], so that a row names a file by its
+   bare name. A source's name holds the path it reads, and the words a row
+   allocates must not depend on how deep the checkout lies. *)
+let in_data f =
+  Sys.chdir data_dir;
+  let r = f () in
+  Sys.chdir start_dir;
+  r
+
 let customers_csv, transactions_csv = Fixtures.generate ()
 
 (* [load text columns categories] reads the CSV [text] as [columns], its text
@@ -392,7 +403,7 @@ let below =
         of_table left
         |> join ~on:Join.(keys [ "g" ] && ge "x" "y") (of_table right))
 
-let parquet = Filename.concat data_dir "nulls.parquet"
+let parquet = "nulls.parquet"
 
 (* Texts *)
 
@@ -406,31 +417,31 @@ let texts =
 
 let parse_floats () = Result.get_ok (Column.parse float64 texts)
 
-let read_parquet () =
-  run (Query.of_source (Error.get_ok (Talon_parquet.file parquet)))
+let read_file file =
+  in_data (fun () ->
+      run (Query.of_source (Error.get_ok (Talon_parquet.file file))))
+
+let read_parquet () = read_file parquet
 
 (* text.parquet's 2^18 dictionary-encoded words of 8 to 27 bytes: the read
    gathers each row's bytes from the dictionary. *)
-let text_parquet = Filename.concat data_dir "text.parquet"
-
-let read_text () =
-  run (Query.of_source (Error.get_ok (Talon_parquet.file text_parquet)))
+let text_parquet = "text.parquet"
+let read_text () = read_file text_parquet
 
 (* The same words, filtered by one of them as the file is read: the source
    compares each word of a dictionary once. *)
 let filter_text () =
-  run
-    Query.(
-      of_source (Error.get_ok (Talon_parquet.file text_parquet))
-      |> filter Expr.(Col.string "s" = string "word 42 --"))
+  in_data (fun () ->
+      run
+        Query.(
+          of_source (Error.get_ok (Talon_parquet.file text_parquet))
+          |> filter Expr.(Col.string "s" = string "word 42 --")))
 
 (* keys.parquet's 2^17 ascending int64 keys, each repeated 1 to 7 times, in
    a dictionary-encoded column and a PLAIN one: snappy pages whose copies
    repeat a key's high bytes from 8 bytes back, and bit-packed indices. *)
-let keys_parquet = Filename.concat data_dir "keys.parquet"
-
-let read_keys () =
-  run (Query.of_source (Error.get_ok (Talon_parquet.file keys_parquet)))
+let keys_parquet = "keys.parquet"
+let read_keys () = read_file keys_parquet
 
 (* CSV *)
 
