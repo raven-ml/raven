@@ -159,6 +159,40 @@ let test_vocab_save_load () =
             (Option.is_some (token_to_id reloaded token)))
         original_vocab
 
+(* A token given twice is the last of its pairs, on every path that reads the
+   vocabulary, whichever kernel a model encodes with. *)
+let check_last_pair t ~unused ~tokens =
+  equal ~msg:"token_to_id" (option int) (Some 2) (token_to_id t "a");
+  equal ~msg:"the earlier id" (option string) None (id_to_token t unused);
+  equal ~msg:"the last id" (option string) (Some "a") (id_to_token t 2);
+  equal ~msg:"encode a" (array int) [| 2 |] (Encoding.ids (encode t "a"));
+  equal ~msg:"vocab_size" int (List.length tokens) (vocab_size t);
+  equal ~msg:"vocab"
+    (list (pair string int))
+    tokens
+    (List.sort compare (vocab t))
+
+let pairs = [ ("a", 0); ("b", 1); ("a", 2); ("ab", 3) ]
+let last_pairs = [ ("a", 2); ("ab", 3); ("b", 1) ]
+
+let test_bpe_given_twice () =
+  let t = bpe ~vocab:pairs ~merges:[ ("a", "b") ] () in
+  check_last_pair t ~unused:0 ~tokens:last_pairs;
+  equal ~msg:"merges" (array int) [| 3 |] (Encoding.ids (encode t "ab"))
+
+let test_byte_level_given_twice () =
+  let t =
+    bpe ~vocab:pairs ~merges:[ ("a", "b") ]
+      ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
+      ()
+  in
+  check_last_pair t ~unused:0 ~tokens:last_pairs;
+  equal ~msg:"merges" (array int) [| 3 |] (Encoding.ids (encode t "ab"))
+
+let test_wordpiece_given_twice () =
+  let t = wordpiece ~vocab:[ ("a", 0); ("a", 2); ("[UNK]", 1) ] () in
+  check_last_pair t ~unused:0 ~tokens:[ ("[UNK]", 1); ("a", 2) ]
+
 let suite =
   [
     test "create empty" test_vocab_create_empty;
@@ -173,6 +207,9 @@ let suite =
     test "batch encode" test_vocab_batch_encode;
     test "special tokens" test_vocab_special_tokens;
     test "save load" test_vocab_save_load;
+    test "a BPE token given twice" test_bpe_given_twice;
+    test "a byte-level token given twice" test_byte_level_given_twice;
+    test "a WordPiece token given twice" test_wordpiece_given_twice;
   ]
 
 let () = exit (run "Vocabulary tests" [ group "vocab" suite ])

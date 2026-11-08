@@ -233,7 +233,7 @@ let alg_name = function
 
 let vocab_to_hashtbl vocab =
   let tbl = Hashtbl.create (List.length vocab) in
-  List.iter (fun (token, id) -> Hashtbl.add tbl token id) vocab;
+  List.iter (fun (token, id) -> Hashtbl.replace tbl token id) vocab;
   tbl
 
 (* Special tokens *)

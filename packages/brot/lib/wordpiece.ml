@@ -199,7 +199,7 @@ let read_file ~vocab_file =
            let line = input_line ic in
            let token = String.trim line in
            if token <> "" then (
-             Hashtbl.add vocab token !index;
+             Hashtbl.replace vocab token !index;
              incr index)
          done
        with End_of_file -> ());
@@ -303,9 +303,12 @@ let len_table model = model.len_table
 let token_to_id model token = Hashtbl.find_opt model.vocab token
 
 let id_to_token model id =
-  if id >= 0 && id < Array.length model.vocab_r then
-    Some (Array.unsafe_get model.vocab_r id)
-  else None
+  if id < 0 || id >= Array.length model.vocab_r then None
+  else
+    let token = Array.unsafe_get model.vocab_r id in
+    (* An id that no pair holds is [""] in the table. *)
+    if token = "" && Hashtbl.find_opt model.vocab "" <> Some id then None
+    else Some token
 
 let get_vocab model = Hashtbl.fold (fun k v acc -> (k, v) :: acc) model.vocab []
 let get_vocab_size model = Hashtbl.length model.vocab

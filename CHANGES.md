@@ -3338,6 +3338,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- A token given twice in a BPE or WordPiece `vocab` keeps only its last pair,
+  on every path: byte-level models and `wordpiece` encoded it by another id
+  than `token_to_id` gave. `id_to_token` is `None` at an id no token holds,
+  where it was `Some ""`, and `vocab` and `vocab_size` count the token once.
 - `save_pretrained` and `save_model_files` write Unigram scores and BPE
   dropouts as the shortest decimal that reads back, laid out as tokenizers
   writes them (`0.1`, `0.0`, `1e+16`), the same on every system.

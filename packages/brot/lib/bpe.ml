@@ -1350,9 +1350,12 @@ let get_cache_capacity model = model.cache_slots
 let token_to_id model token = Hashtbl.find_opt model.vocab token
 
 let id_to_token model id =
-  if id >= 0 && id < Array.length model.vocab_r then
-    Some (Array.unsafe_get model.vocab_r id)
-  else None
+  if id < 0 || id >= Array.length model.vocab_r then None
+  else
+    let token = Array.unsafe_get model.vocab_r id in
+    (* An id that no pair holds is [""] in the table. *)
+    if token = "" && Hashtbl.find_opt model.vocab "" <> Some id then None
+    else Some token
 
 let get_vocab model = Hashtbl.fold (fun k v acc -> (k, v) :: acc) model.vocab []
 let get_vocab_size model = Hashtbl.length model.vocab
@@ -1699,7 +1702,7 @@ let read_files ~vocab_file ~merges_file =
       List.iter
         (fun ((k, _), v) ->
           match v with
-          | Jsont.Number (f, _) -> Hashtbl.add vocab k (int_of_float f)
+          | Jsont.Number (f, _) -> Hashtbl.replace vocab k (int_of_float f)
           | _ -> failwith "Invalid vocab format")
         mems
   | _ -> failwith "Invalid vocab.json format");
