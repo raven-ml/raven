@@ -2080,22 +2080,7 @@ and compute_min_max u : Dtype.value * Dtype.value =
           match cast_bounds x.dtype dt (min_max x) with
           | Some b -> b
           | None -> unbounded dt)
-      | Op.Bitcast, _ -> bitcast_bounds (src0 ()) dt
       | _ -> unbounded dt)
-
-(* A bitcast between integer types of one width keeps the bits, so a value both
-   types hold, from 0 to the lesser of their greatest values, is unchanged:
-   reading an index of [0, n) as unsigned, as a bounds check does. *)
-and bitcast_bounds x dt =
-  let lo, hi = min_max x in
-  let integer t = Dtype.mem t Dtype.ints in
-  if
-    integer x.dtype && integer dt
-    && Dtype.itemsize x.dtype = Dtype.itemsize dt
-    && Value.(
-         `Int Bigint.zero <= lo && hi <= min (Dtype.max x.dtype) (Dtype.max dt))
-  then (lo, hi)
-  else unbounded dt
 
 (* Where a float comparison [a < b] holds, neither operand is NaN, [a] is below
    [b]'s greatest value and [b] above [a]'s least: [selected c (lo, hi) t] is
@@ -2305,14 +2290,6 @@ let fits_no_int u =
   in
   overflows u Dtype.Int64 && overflows u Dtype.Uint64
   && known (vmin u) && known (vmax u)
-
-(* Bounds of one value would make the storage's parameter that constant, in
-   place of the storage. *)
-let stored_bounds u dt =
-  let lo = vmin u and hi = vmax u in
-  if Value.(lo < hi && (Dtype.min dt < lo || hi < Dtype.max dt)) then
-    Some (lo, hi)
-  else None
 
 let exact dt vs =
   (not (Dtype.mem dt Dtype.ints))

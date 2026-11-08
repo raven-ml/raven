@@ -863,8 +863,7 @@ let bufferize_to_store ctx x idx =
         in
         let slot = !ctx in
         incr ctx;
-        let vmin_vmax = stored_bounds value dtype in
-        let buf = alloc ~slot ?vmin_vmax ?device [ Int (max_numel x) ] dtype in
+        let buf = alloc ~slot ?device [ Int (max_numel x) ] dtype in
         let do_store =
           end_ (store (index buf [ idx ]) (cast value dtype)) rngs
         in
@@ -1009,15 +1008,9 @@ let add_buf ctx buf =
 
 let debuf slot buf =
   let align, phase = storage_phase buf in
-  (* The kernel reads the storage's values within their bounds: an index
-     clamped where it is stored is in range where a gather reads it. *)
-  let vmin_vmax =
-    match arg buf with Param p -> p.vmin_vmax | _ -> None
-  in
   let param =
-    Shape.param ~shape:[ Int (max_numel buf) ] ?vmin_vmax
-      ?addrspace:(addrspace buf) ~phase ~align slot
-      (dtype buf)
+    Shape.param ~shape:[ Int (max_numel buf) ] ?addrspace:(addrspace buf)
+      ~phase ~align slot (dtype buf)
   in
   let ret = reshape param (List.map (fun n -> Int n) (max_shape buf)) in
   (* A buffer of symbolic shape is its greatest view, shrunk. *)

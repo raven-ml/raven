@@ -375,12 +375,11 @@ val alloc :
   ?slot:int ->
   ?addrspace:Dtype.addr_space ->
   ?device:Ops.device ->
-  ?vmin_vmax:Dtype.value * Dtype.value ->
   Ops.sint list ->
   Dtype.t ->
   Ops.t
 (** [alloc ~slot shape dt] is call-local storage of [shape], in [slot] (default
-    {!Ops.unique_num}), whose values lie within [vmin_vmax] if given. A given
+    {!Ops.unique_num}). A given
     [slot] is taken ({!Ops.take_unique}), so {!Ops.unique_num} returns a greater
     number afterwards. [slot] must not be a number {!Ops.unique_num} returned for
     other storage: allocs equal in slot, size, type and device are one node and

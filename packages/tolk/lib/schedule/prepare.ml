@@ -553,9 +553,7 @@ let copy_off_start c i a =
          && (not (fits_start ~param (storage_phase a)))
          && fits_start ~param allocated_start ->
       let buf =
-        alloc
-          ?vmin_vmax:(stored_bounds a (dtype a))
-          ?device:(device a) (shape a) (dtype a)
+        alloc ?device:(device a) (shape a) (dtype a)
       in
       after buf [ store buf a ]
   | _ -> a
@@ -583,11 +581,7 @@ let call_storage c =
 let copy_to_anon_store x copy =
   let x = pad_to x (List.map (fun s -> Some (Int s)) (max_shape x)) in
   let buf =
-    alloc
-      ?vmin_vmax:(stored_bounds x (dtype copy))
-      ?device:(device copy)
-      [ Int (max_numel x) ]
-      (dtype copy)
+    alloc ?device:(device copy) [ Int (max_numel x) ] (dtype copy)
   in
   let buf = reshape buf (ints (max_shape x)) in
   shrink_to (after buf [ store buf x ]) (List.map Option.some (shape copy))
@@ -600,11 +594,7 @@ let stage_to_anon_store x stg =
   | Bufferize { addrspace; _ } when addrspace <> Dtype.Global -> None
   | _ ->
       let buf =
-        alloc
-          ?vmin_vmax:(stored_bounds x (dtype stg))
-          ?device:(device x)
-          (ints (max_shape stg))
-          (dtype stg)
+        alloc ?device:(device x) (ints (max_shape stg)) (dtype stg)
       in
       let view = shrink_to buf (List.map Option.some (shape stg)) in
       let rngs = List.tl (src stg) in

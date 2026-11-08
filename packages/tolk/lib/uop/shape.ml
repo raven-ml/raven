@@ -3078,15 +3078,14 @@ let take_slot = function
       take_unique s;
       s
 
-let alloc ?slot ?(addrspace = Dtype.Global) ?device ?vmin_vmax new_shape dt =
+let alloc ?slot ?(addrspace = Dtype.Global) ?device new_shape dt =
   let slot = take_slot slot in
   let ret =
     v Op.Alloc
       ~src:[ size_src (Some (size_of (to_max_shape new_shape))) ]
       ~arg:
         (Param
-           (param_arg ~slot ~addrspace ?device ?vmin_vmax
-              (Dtype.strong dt)))
+           (param_arg ~slot ~addrspace ?device (Dtype.strong dt)))
   in
   if List.is_empty new_shape then reshape ret []
   else view_as ret new_shape

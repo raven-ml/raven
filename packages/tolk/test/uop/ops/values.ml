@@ -596,36 +596,6 @@ let bounds_group =
             && compare_value hi (Dtype.max src) <= 0
             && compare_value hi (Dtype.max dst) <= 0);
           bounds_hold (Ops.bitcast (variable src lo hi "x") dst) v);
-      test
-        "a bitcast between integers of one width keeps the bounds of a value \
-         both types hold, from 0 to the lesser greatest value" (fun () ->
-          let bitcast dt lo hi to_ = Ops.bitcast (variable dt lo hi "x") to_ in
-          let full dt = (Dtype.min dt, Dtype.max dt) in
-          let p31 = `Int (Bigint.shift_left Bigint.one 31) in
-          let below_p31 = `Int (Bigint.pred (Bigint.shift_left Bigint.one 31)) in
-          check_bounds (bitcast Int32 (i 0) (i 31) Uint32) (int_bounds 0 31);
-          check_bounds (bitcast Uint32 (i 0) below_p31 Int32) (i 0, below_p31);
-          check_bounds (bitcast Uint32 (i 0) p31 Int32) (full Int32);
-          check_bounds (bitcast Int32 (i (-1)) (i 31) Uint32) (full Uint32);
-          check_bounds (bitcast Int8 (i 0) (i 127) Uint8) (int_bounds 0 127);
-          check_bounds (bitcast Uint8 (i 0) (i 128) Int8) (full Int8);
-          let floats = (f Float.neg_infinity, f Float.infinity) in
-          check_bounds (bitcast Int32 (i 0) (i 31) Float32) floats;
-          check_bounds (bitcast Int64 (i 0) (i 31) Float64) floats);
-      test
-        "storage keeps the bounds of its values where they are narrower than \
-         its type's and hold more than one value" (fun () ->
-          let stored lo hi = Ops.stored_bounds (variable Int64 lo hi "x") in
-          let bounds = option (pair value value) in
-          equal bounds (Some (i 0, i 31)) (stored (i 0) (i 31) Int64);
-          equal bounds (Some (i 0, i 31)) (stored (i 0) (i 31) Int32);
-          equal bounds None
-            (stored (Dtype.min Int32) (Dtype.max Int32) Int32);
-          equal bounds None (stored (i 3) (i 3) Int64);
-          let x = variable Float32 (f 0.) (f Float.infinity) "x" in
-          equal bounds
-            (Some (f 0., f Float.infinity))
-            (Ops.stored_bounds x Float32));
       prop "bounds hold every value the expression takes"
         (Gen.pair Nodes.gen_recipe gen_point) (fun (r, (x0, x1)) ->
           let u = Nodes.build (Nodes.leaves ()) r in

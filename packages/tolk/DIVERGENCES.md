@@ -3292,46 +3292,18 @@ reads code objects (D146).
 
 AMD's packet layouts were nx.amd.packet's. tolk encodes no packet (D146).
 
-## D122. A stored value keeps its bounds
+## D122. Withdrawn
 
-- **tinygrad:** `schedule/rangeify.py` (`bufferize_to_store`'s `ALLOC`),
-  `debuf` and `schedule/prepare.py` (`copy_to_anon_store`,
-  `stage_to_anon_store`), whose storage carries no bounds, so a read of it
-  has its type's; `uop/ops.py` (`_min_max`, which bounds a `BITCAST` by
-  its type).
-- **tolk:** `Ops.stored_bounds` and `Ops.bitcast_bounds`;
-  `Rangeify.bufferize_to_store` (a stage's storage) and `Rangeify.debuf`;
-  `Prepare.copy_to_anon_store` and `Prepare.stage_to_anon_store`.
-- **Differs:** storage that a stage or a copy fills carries the bounds of the
-  value stored when they are narrower than its type's, and the parameter a
-  kernel reads it through keeps them, so each read has them. Bounds of one
-  value are not kept: a parameter whose bounds are one value folds to that
-  constant, in place of the storage. A bitcast between integer types of one
-  width keeps the bounds of a value that both types hold, from 0 to the
-  lesser of their greatest values.
-- **Reason:** (d): rune lowers `Nx.take` to a gather at the clamped index
-  and a check of the index, one unsigned comparison, `bitcast i < n`. A
-  gather by indices that other kernels compute, clamp and store read them
-  at their type's bounds, so the check stayed, and `pm_move_where_on_load`
-  moved it onto each load the gather feeds. With the stored range known, the
-  gather keeps no per-load check. A routed MXFP4 product whose experts are
-  sorted and clamped in kernels of their own masked its 40 code and scale
-  byte loads: gpt-oss-20b's gate and up product of 512 tokens on an M1
-  Max's Metal took 42.6 ms and takes 36.4 ms, as fast as a gather of the
-  decoded matrices. Within one kernel, the bitcast hid the clamp's bounds
-  from the check. On fudge's RTX 5000 Ada, gpt-oss's bench row
-  `GptOss/experts-at-prefill-512`, one layer's routed MXFP4 experts at 512
-  tokens, takes 4.55 and 4.60 ms against 5.61 ms in both runs without the
-  stored bounds, and `GptOss/prefill-512` 185 ms against 198 and 199 ms
-  (medians of 11, two interleaved runs each).
-- **Pinned by:** the Rangeify suite's `index_stored_zero_fill` gather, whose
-  `_kernels` golden reads the stored indices with bounds `(0, 7)` and keeps
-  no check; the Ops suite's `› bounds › bounds hold every value a bitcast
-  between integers takes` and `› storage
-  keeps the bounds of its values where they are narrower than its type's
-  and hold more than one value`; the memory goldens `convs` and
-  `matmul_chain`, whose stored activations after a ReLU carry
-  `(0.0, inf)`.
+Storage that a stage or a copy fills carried the bounds of its value, and the
+parameter a kernel read it through kept them, so a gather read its clamped,
+stored indices within their bounds; a bitcast between integers of one width
+kept the bounds of a value both types hold. rune's check of a gather's index
+then folded away where the index is clamped and stored. On fudge's RTX 5000
+Ada, with D211 withdrawn, the bounds change nothing end to end: minima of four
+interleaved rounds, one layer's experts 2.77 ms with the bounds and 2.80 ms
+without, the 512-token prefill 121.8 ms and 121.7 ms. Its measured gain on an
+M1 Max (a routed MXFP4 product 42.6 to 36.4 ms) is not re-measured, and speed
+held only on another machine is no reason.
 
 ## D123. The engine runs a loop of calls while a flag holds
 

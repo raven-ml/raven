@@ -1,6 +1,6 @@
-# tolk D122 golden=afceb66932de14a00969607162acbcef
+# tolk D170 golden=afceb66932de14a00969607162acbcef
 0 Ops.CONST dtypes.weakint [] 8
-1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, vmin_vmax=(0, 1))
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 2
 3 Ops.RANGE dtypes.weakint [2] (AxisType.LOOP, 1)
 4 Ops.CONST dtypes.weakint [] 4
@@ -27,28 +27,26 @@
 25 Ops.SHRINK dtypes.i8 [23, 16, 24]
 26 Ops.BITCAST dtypes.i32 [25] dtypes.i32
 27 Ops.CALL dtypes.void [21, 26] CallInfo()
-28 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
-29 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
-30 Ops.INDEX dtypes.i32 [28, 29]
-31 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, vmin_vmax=(0, 1))
-32 Ops.INDEX dtypes.i32 [31, 29]
-33 Ops.STORE dtypes.void [30, 32]
-34 Ops.END dtypes.void [33, 29]
-35 Ops.SINK dtypes.void [34] KernelInfo()
-36 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
-37 Ops.CALL dtypes.void [35, 36, 26] CallInfo()
-38 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
-39 Ops.MUL dtypes.weakint [38, 4]
-40 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 1)
-41 Ops.ADD dtypes.weakint [39, 40]
-42 Ops.INDEX dtypes.i32 [28, 41]
-43 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
-44 Ops.INDEX dtypes.i32 [43, 41]
-45 Ops.ADD dtypes.i32 [44, 9]
-46 Ops.STORE dtypes.void [42, 45]
-47 Ops.END dtypes.void [46, 38, 40]
-48 Ops.SINK dtypes.void [47] KernelInfo()
-49 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32, device="CPU")
-50 Ops.CALL dtypes.void [48, 49, 36] CallInfo()
-51 Ops.LINEAR dtypes.void [27, 37, 50]
+28 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+29 Ops.INDEX dtypes.i32 [1, 28]
+30 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
+31 Ops.INDEX dtypes.i32 [30, 28]
+32 Ops.STORE dtypes.void [29, 31]
+33 Ops.END dtypes.void [32, 28]
+34 Ops.SINK dtypes.void [33] KernelInfo()
+35 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+36 Ops.CALL dtypes.void [34, 35, 26] CallInfo()
+37 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+38 Ops.MUL dtypes.weakint [37, 4]
+39 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 1)
+40 Ops.ADD dtypes.weakint [38, 39]
+41 Ops.INDEX dtypes.i32 [1, 40]
+42 Ops.INDEX dtypes.i32 [30, 40]
+43 Ops.ADD dtypes.i32 [42, 9]
+44 Ops.STORE dtypes.void [41, 43]
+45 Ops.END dtypes.void [44, 37, 39]
+46 Ops.SINK dtypes.void [45] KernelInfo()
+47 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32, device="CPU")
+48 Ops.CALL dtypes.void [46, 47, 35] CallInfo()
+49 Ops.LINEAR dtypes.void [27, 36, 48]
 
