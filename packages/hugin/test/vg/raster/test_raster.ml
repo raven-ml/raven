@@ -954,6 +954,10 @@ let marker =
 let quarter v = Float.round (v *. 4.) /. 4.
 let ring w = Picture.stroke (Stroke.v w) red (Path.circle (P2.v 0. 0.) 5.)
 
+(* Factors of scales each with an inverse, two of which compose to a map
+   without one, under which a picture paints nothing. *)
+let lost_maps = [ ("an underflow to zero", 1e-200); ("an overflow", 1e200) ]
+
 let stamps =
   group "stamps"
     [
@@ -1030,14 +1034,12 @@ let stamps =
               (Picture.stroke (Stroke.v 1.) red (Path.circle (P2.v 0. 0.) 2.5))
           in
           greater (float 1e-9) ~than:0. (coverage (render 20. 20. p)));
-      test "an instance holding a stroke shrunk to nothing is drawn"
-        (fun () ->
-          (* Two scales of 1e-200 compose to the zero map, under which the
-             ring paints nothing. *)
-          let shrunk = Picture.transform (Affine.scale 1e-200 1e-200) in
+      cases "an instance holding a stroke that paints nothing is drawn"
+        ~id:fst lost_maps (fun (_, k) ->
+          let lost = Picture.transform (Affine.scale k k) in
           let s =
             Picture.stamp ~scales:[| 1.; 2. |] [| 5.; 12. |] [| 5.; 12. |]
-              (Picture.group [ solid 2. 2.; shrunk (shrunk (ring 1.)) ])
+              (Picture.group [ solid 2. 2.; lost (lost (ring 1.)) ])
           in
           same_image ~within:1
             (render 20. 20. (instances s))

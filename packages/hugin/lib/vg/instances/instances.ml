@@ -27,7 +27,11 @@ let rec fold_strokes f m (p : Picture.t) acc =
   | Stroke { stroke; _ } -> f m stroke acc
   | Empty | Fill _ | Glyphs _ | Image _ -> acc
   | Group ps -> List.fold_left (fun acc p -> fold_strokes f m p acc) acc ps
-  | Transform { m = m'; picture } -> fold_strokes f Affine.(m * m') picture acc
+  | Transform { m = m'; picture } ->
+      (* A composition with no inverse, such as one beyond the range of floats,
+         paints nothing in every renderer. *)
+      let m = Affine.(m * m') in
+      if Affine.invert m = None then acc else fold_strokes f m picture acc
   | Clip { picture; _ }
   | Opacity { picture; _ }
   | Tag { picture; _ }

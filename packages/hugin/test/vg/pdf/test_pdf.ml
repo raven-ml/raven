@@ -224,6 +224,10 @@ let red = Color.red
 let rect x y w h = Path.rect (Box2.v x y w h)
 let square = rect 10. 20. 30. 40.
 let disc = Path.circle (P2.v 0. 0.) 2.
+
+(* Factors of scales each with an inverse, two of which compose to a map
+   without one, under which a picture paints nothing. *)
+let lost_maps = [ ("an underflow to zero", 1e-200); ("an overflow", 1e200) ]
 let glyph c = Font.glyph Font.regular (Uchar.of_char c)
 
 (* [one text g] is a run of the one glyph [g] rendering [text]. *)
@@ -1034,16 +1038,14 @@ let stamps =
               [ 1.; 0.; 0.; 1.; 30.; 7. ];
             ]
             (List.tl (operands "cm" (content doc))));
-      test "an instance holding a stroke shrunk to nothing is painted"
-        (fun () ->
-          (* Two scales of 1e-200 compose to the zero map, under which the
-             stroke paints nothing. *)
-          let shrunk = Picture.transform (Affine.scale 1e-200 1e-200) in
+      cases "an instance holding a stroke that paints nothing is painted"
+        ~id:fst lost_maps (fun (_, k) ->
+          let lost = Picture.transform (Affine.scale k k) in
           let p =
             Picture.group
               [
                 Picture.fill red disc;
-                shrunk (shrunk (Picture.stroke (Stroke.v 1.) red disc));
+                lost (lost (Picture.stroke (Stroke.v 1.) red disc));
               ]
           in
           let doc = pdf (Picture.stamp [| 10.; 20. |] [| 5.; 5. |] p) in

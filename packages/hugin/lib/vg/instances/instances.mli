@@ -28,7 +28,9 @@ val exists : (Picture.t -> bool) -> Picture.t -> bool
 val fold_strokes :
   (Affine.t -> Stroke.t -> 'a -> 'a) -> Affine.t -> Picture.t -> 'a -> 'a
 (** [fold_strokes f m p acc] folds [f] over the strokes of [p], in order, each
-    with [m] composed with the transforms above it within [p]. *)
+    with [m] composed with the transforms above it within [p]. It skips the
+    strokes under a composition that {!Hugin_gg.Affine.invert} gives no
+    inverse, which paint nothing. *)
 
 val reach : Affine.t -> float -> Picture.t -> float
 (** [reach m k p] is how far the strokes of [p] under [m] reach beyond their
