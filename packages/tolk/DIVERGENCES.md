@@ -86,7 +86,7 @@ for every pattern. A repeat that names nodes matches no sources as
   a `BUFFER` prints and interns by its slot alone; for the engine: the
   Engine suite (`test/engine/tolk_engine`): `refusals › link refuses a
   device the map does not hold`, which a registry would resolve, and
-  `refusals › run refuses a parameter it binds no buffers`, which a `BUFFER`
+  `refusals › run refuses a parameter it binds no buffer`, which a `BUFFER`
   holding its buffer would run.
 
 ## D4. Import cycles are broken
@@ -2474,7 +2474,8 @@ Withdrawn: multi-device is out of scope, see README.
     outputs took the key and value projections from 9.05 to 7.8 us and the
     router from 6.7 to 3.7 us.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are
-  tinygrad's › applied_opts`, cases `matvec_*`, `vecmat_*`, `gpt_oss_*`,
+  tinygrad's › <environment> › the optimised kernel`, cases
+  `matvec_*`, `vecmat_*`, `gpt_oss_*`,
   `experts_down_*`, `routed_blocks_*`, `routed_own_*`, `routed_shared_*`
   (blocks sharing their experts' matrices, on a core),
   `routed_at_bound_*` and `routed_past_bound_*` (63.9 a byte streamed, 71.0
@@ -2586,7 +2587,8 @@ host's accumulators in its vector registers.
   `Nx.map_segments` over `Nx_quant.apply` on a prompt took 195-226 ms with
   blocks of 16 rows upcast by 4 against 6.0-6.9 s without.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are
-  tinygrad's › applied_opts`, cases `routed_*_cpu` and `routed_*_avx2`,
+  tinygrad's › in the default environment › the optimised kernel`, cases
+  `routed_*_cpu` and `routed_*_avx2`,
   recorded from the equally patched tinygrad; `the host's decodes`: the
   decodes of products of 1 to 512 rows on four register files and on a host
   without registers, blocks of 16 to 128 rows on four files, and a larger
@@ -5290,8 +5292,8 @@ the walk of `Rangeify.fix_store_hazard`.
   return.
 - **Pinned by:** `Tolk.Indexing › run_rangeify › recorded graphs ›
   select_no_lane_rangeified.golden` and `select_no_lane_rows_rangeified.golden`;
-  `Tolk.Schedule › create_schedule › recorded › select_no_lane_kernels.golden`,
-  `select_one_lane_kernels.golden`, `select_no_lane_rows_kernels.golden`; and
+  `Tolk.Schedule › create_schedule › recorded › select_no_lane_schedule.golden`,
+  `select_one_lane_schedule.golden`, `select_no_lane_rows_schedule.golden`; and
   `Tolk_engine › link and run › recorded › select_no_lane writes what its
   tensors compute` and its `select_one_lane` and `select_no_lane_rows`
   versions, which run the kernels on the host.
@@ -5643,9 +5645,9 @@ the walk of `Rangeify.fix_store_hazard`.
   on an x86_64 host, every Clang case compiled for Windows loads and every
   interpreted one that calls nothing of the process runs through rig's host
   and writes what the interpreter computes, which a System V entry's
-  absence breaks. `Tolk_engine › target › the host compiles C for Clang on
-  its own processor, naming its system under Windows, whose functions
-  follow a convention of their own`. On windows-2025 CI, `CG › calls in a
+  absence breaks. `Tolk_engine › target › the host compiles C for Clang at
+  its arch, tuned for its own processor, naming its system under Windows,
+  whose functions follow a convention of their own`. On windows-2025 CI, `CG › calls in a
   kernel`.
 
 ## D179. An index of a reshape's added leading axes is its source
