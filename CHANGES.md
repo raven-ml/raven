@@ -391,6 +391,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx.cast` under `Rune.jit` on Metal compiles an integer or boolean cast to
+  `float16`, `bfloat16` or an 8- or 4-bit float, and an `int64` or `uint64`
+  cast to `float32` or `complex64`, where its lowering computed in `float64`,
+  which Metal lacks, and raised `Tolk.Renderer.Compiler.Compile_error`.
 - `Rune.jit` compiles a program that places a value onto another set with
   `Nx.place`. It evaluated, and raised on a set without kernels. A place
   onto another machine's set now raises at the call, as any program over

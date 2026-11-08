@@ -428,22 +428,29 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reason:** (b).
 - **Pinned by:** `Lower_arith › casts give eager's values`.
 
-### A23. A double narrows through float32 rounded to odd
+### A23. A double or a wide integer narrows through float32 rounded to odd
 
 - **Reference:** `mixin/dtype.py:19` (`cast`).
-- **Raven:** `lower_arith.ml` (`float_odd`, `odd64`, `store_real`).
+- **Raven:** `lower_arith.ml` (`store_real`), through tolk's
+  `Decomp_dtype.narrow`.
 - **Differs:** a `float64` converted to a narrow float is first narrowed to
   `float32` rounded to odd (truncated, its last bit set when a discarded bit
-  was), so that the conversion rounds once; a 64-bit integer goes through its
-  `float64` rounded to odd, from its two exact halves. tinygrad's host
-  conversion goes through `float32` rounded to nearest and rounds twice near a
-  tie: `bfloat16 (1 + 2^-8 + 2^-30)` comes out 1.
+  was), so that the conversion rounds once; an integer beyond 2^24 goes
+  through its `float32` rounded to odd, from its conversion to `float32` and
+  that conversion's exact conversion back, in `float32` and its own type, which
+  every target computes. The conversion need only land on one of the two
+  `float32` values around the integer, as C11 6.3.1.4p2 and MSL 8.6 promise. tinygrad's host conversion goes through `float32`
+  rounded to nearest and rounds twice near a tie: `bfloat16 (1 + 2^-8 +
+  2^-30)` comes out 1.
 - **nx:** `prog.mli`, `Cast`: an integer's exact value, or a float, rounded
   once.
 - **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `Lower_arith › casts give eager's values`, whose `float64`
-  operands lie one ulp around each narrow format's ties.
+  operands lie one ulp around each narrow format's ties; `Jit › jit › an
+  integer cast to a float gives eager's bits` on the host and `Jit_gpu ›
+  integers › an integer cast to a float gives eager's bits` on a GPU, whose
+  integers lie one around each format's ties at every exponent.
 
 ### A24. Logarithm by fdlibm, NaN below zero
 

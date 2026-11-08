@@ -977,16 +977,16 @@ let casts16 =
           Rune_support.Casts16.law (module Nx.Host) Nx.bfloat16);
     ]
 
-(* A 64-bit integer's low 53 bits, which its bounds hold within 2^53, cast into
-   float32 and the narrow floats: float64 holds them exactly, so the cast rounds
-   once, as eager's does. Its low 54 bits, past 2^53, round to odd first:
-   2^53 + 2^29 + 1, whose float32 is 2^53 + 2^30, would round twice through
-   float64 to 2^53. *)
+(* A 64-bit integer's low bits cast into float32 and the narrow floats, rounded
+   once as eager's cast rounds. Its low 24 bits, whose bounds lie within 2^24,
+   convert to float32 exactly; its low 25, 53 and 54 bits convert through
+   float32 rounded to odd. 2^53 + 2^29 + 1, whose float32 is 2^53 + 2^30,
+   rounds twice to 2^53 through float64 rounded to nearest. *)
 let bounded_casts =
   let wide = [ D.Any D.Int64; D.Any D.Uint64 ] in
   let floats = D.[ Any Float32; Any Float16; Any Bfloat16; Any Float8_e5m2 ] in
   let past = Int64.(add (shift_left 1L 53) (add (shift_left 1L 29) 1L)) in
-  prop "casts of 64-bit integers within 2^53 give eager's values" ~count:2
+  prop "casts of bounded 64-bit integers give eager's values" ~count:2
     ~examples:(List.map (fun d -> (d, 17)) wide)
     (by_dtype wide)
     (fun (d, seed) ->
@@ -1008,7 +1008,7 @@ let bounded_casts =
                       raw64 add t (add (K.Op1 (Cast, t, b))));
                 })
               floats)
-          [ 53; 54 ]
+          [ 24; 25; 53; 54 ]
       in
       no_difference
         (run_rows (D.Any D.Uint64) ~ins:[| d |] rows (values d [ x ]) [ x ]))

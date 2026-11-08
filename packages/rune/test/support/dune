@@ -23,6 +23,7 @@
   prefixes
   attentions
   wraps
+  int_casts
   assemblies
   unreached)
  (libraries nx nx_array nx_kernel nx_quant nx_support rig rune windtrap))

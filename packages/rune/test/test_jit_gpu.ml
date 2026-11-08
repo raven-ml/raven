@@ -6,7 +6,8 @@
 (* Rune.jit on this machine's first GPU: a scatter and an assembly of any
    pieces give the host's eager values, a scatter keeps the bits of each
    element no update lands on, a cast between float32 and a 16-bit float gives
-   eager's bits at every code and tie, a product of narrow floats or of MXFP4
+   eager's bits at every code and tie, as does a cast of an integer to a float
+   at the ties of every exponent, a product of narrow floats or of MXFP4
    weights holds its bound, a call's check raises at the next wait, so the
    call returns while its work runs, a key split there has the host's words,
    and a program over the GPU and a memory device, devices of two targets,
@@ -85,6 +86,13 @@ let law c =
   let (Nx.Dtype.Any dt) = c.Scatters.dtype in
   if Nx.Dtype.equal dt Nx.float64 then assume (has_float64 d);
   Scatters.law ~flushes:(flushes d) s c
+
+(* The integer cast law on the GPU, a case into float64 or complex128
+   discarded where its kernels lack float64. *)
+let int_casts c =
+  let d, s = on_gpu () in
+  if Int_casts.dst64 c then assume (has_float64 d);
+  Int_casts.law s c
 
 let unreached c = Unreached.law (snd (on_gpu ())) c
 let casts16 dt () = Casts16.law (snd (on_gpu ())) dt
@@ -1077,6 +1085,10 @@ let () =
                "integer arithmetic at its type's edges gives eager's values"
                (Gen.with_pp Wraps.pp Wraps.gen)
                (fun c -> Wraps.law (snd (on_gpu ())) c);
+             prop ~count:20 ~examples:Int_casts.examples
+               "an integer cast to a float gives eager's bits"
+               (Gen.with_pp Int_casts.pp Int_casts.gen)
+               int_casts;
            ];
          group "running operations"
            [

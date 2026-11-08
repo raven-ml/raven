@@ -192,37 +192,6 @@ let encode (D.Any dt as d) f =
   | D.Bfloat16 -> Ops.cast f Bfloat16
   | _ -> Ops.cast (to_byte d f) Uint8
 
-(* [x], a float64, as the float32 rounded to odd: truncated, with its last bit
-   set where a discarded bit was. float32's grid is at least four times finer
-   than a narrow format's, so a narrow float rounded from it rounds once, as
-   from [x]. *)
-let float_odd x =
-  let f = Ops.cast x Float32 in
-  let back = Ops.cast f Float64 in
-  let i = bits f in
-  let away = one_if (magnitude x < magnitude back) i in
-  let inexact = one_if (back <> x && x = x) i in
-  f32 ((i - away) lor inexact)
-
-(* [hi + lo], [|hi| >= |lo|] or [hi = 0], rounded to odd: the sum's error, exact
-   by Fast2Sum, says whether it rounded and which way. *)
-let sum_odd hi lo =
-  let s = hi + lo in
-  let e = lo - (s - hi) in
-  let zero = Shape.const_like e (`Float 0.) in
-  let inexact = e <> zero in
-  let away = inexact && e < zero <> (s < zero) in
-  of_bits Float64 ((bits s - one_if away (bits s)) lor one_if inexact (bits s))
-
-(* A 64-bit integer as a float64 rounded to odd from its exact value, from its
-   two 32-bit halves, each exact. *)
-let odd64 ~signed x =
-  let w = bits x in
-  let hi = Ops.cast (w lsr 32) Uint32 in
-  let hi = if signed then Ops.bitcast hi Int32 else hi in
-  let scale = Shape.const_like ~dtype:Float64 w (`Float 0x1p32) in
-  sum_odd (Ops.cast hi Float64 * scale) (Ops.cast (Ops.cast w Uint32) Float64)
-
 (* Integers
 
    An integer dtype narrower than 32 bits computes in the 32-bit integer of its
@@ -411,21 +380,6 @@ let source (D.Any dt as d) xs =
 
 let node_of = function Single x | Double x | Integer (_, x) -> x
 
-(* An integer's float64, rounded to odd past 2^53, exact below: a conversion
-   alone where the bounds of [x] hold no integer past 2^53. *)
-let int_double (D.Any dt) x =
-  let exact =
-    let limit = Bigint.shift_left Bigint.one 53 in
-    let within = Dtype.Value.( <= ) in
-    Stdlib.(
-      within (`Int (Bigint.neg limit)) (Ops.vmin x)
-      && within (Ops.vmax x) (`Int limit))
-  in
-  match dt with
-  | D.Int64 when not exact -> odd64 ~signed:true x
-  | D.Uint64 when not exact -> odd64 ~signed:false x
-  | _ -> Ops.cast x Float64
-
 (* The bounds of an integer dtype, from its width: its least value and the
    power of two past its greatest. A sub-byte dtype's are its own, not those of
    the byte that holds it. *)
@@ -453,10 +407,7 @@ let truncate d x =
 
 let to_float32 = function
   | Single x -> x
-  | Double x -> Ops.cast x Float32
-  | Integer ((D.Any dt as d), x) when Stdlib.( = ) (D.bits dt) 64 ->
-      Ops.cast (int_double d x) Float32
-  | Integer (_, x) -> Ops.cast x Float32
+  | Double x | Integer (_, x) -> Ops.cast x Float32
 
 let to_float64 = function
   | Single x | Integer (_, x) -> Ops.cast x Float64
@@ -470,8 +421,7 @@ let store_real (D.Any dt as d) s =
   | _ when narrow d -> (
       match s with
       | Single x -> encode d x
-      | Double x -> encode d (float_odd x)
-      | Integer (si, x) -> encode d (float_odd (int_double si x)))
+      | Double x | Integer (_, x) -> encode d (Decomp_dtype.narrow x Float32))
   | _ -> (
       match s with
       | Single x | Double x -> truncate d x

@@ -5570,6 +5570,10 @@ let () =
                "integer arithmetic at its type's edges gives eager's values"
                (Gen.with_pp Wraps.pp Wraps.gen)
                (Wraps.law (module Nx.Host));
+             prop ~count:20 ~examples:Int_casts.examples
+               "an integer cast to a float gives eager's bits"
+               (Gen.with_pp Int_casts.pp Int_casts.gen)
+               (Int_casts.law (module Nx.Host));
              test "results are fresh" test_fresh;
              test "an evaluated program lets each value go"
                test_evaluated_memory;
