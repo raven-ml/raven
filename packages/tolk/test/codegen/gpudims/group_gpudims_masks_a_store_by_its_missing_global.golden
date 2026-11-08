@@ -13,17 +13,13 @@
 12 Ops.STORE dtypes.void [3, 11]
 13 Ops.END dtypes.void [12, 7, 2]
 14 Ops.SINK dtypes.void [13] KernelInfo()
-15 Ops.CONST dtypes.weakint [] 0
-16 Ops.CMPEQ dtypes.bool [7, 15]
-17 Ops.RANGE dtypes.weakint [0] (AxisType.LOCAL, 0)
-18 Ops.CONST dtypes.bool [] Invalid
-19 Ops.WHERE dtypes.weakint [16, 17, 18]
-20 Ops.INDEX dtypes.f32 [1, 19]
-21 Ops.ADD dtypes.weakint [8, 17]
-22 Ops.INDEX dtypes.f32 [5, 21]
-23 Ops.LOAD dtypes.f32 [22]
-24 Ops.STORE dtypes.void [20, 23]
-25 Ops.END dtypes.void [24, 7, 17]
-26 Ops.SINK dtypes.void [25] KernelInfo()
-27 Ops.SINK dtypes.void [14, 26]
+15 Ops.RANGE dtypes.weakint [0] (AxisType.LOCAL, 0)
+16 Ops.INDEX dtypes.f32 [1, 15]
+17 Ops.ADD dtypes.weakint [8, 15]
+18 Ops.INDEX dtypes.f32 [5, 17]
+19 Ops.LOAD dtypes.f32 [18]
+20 Ops.STORE dtypes.void [16, 19]
+21 Ops.END dtypes.void [20, 7, 15]
+22 Ops.SINK dtypes.void [21] KernelInfo()
+23 Ops.SINK dtypes.void [14, 22]
 
