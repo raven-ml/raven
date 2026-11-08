@@ -398,6 +398,43 @@ let large_fills =
   D.[ Any Int4; Any Bit; Any Float4_e2m1fn ]
   |> List.map (fun d -> (d, [| 1_000_001 |], (3, 5), 7))
 
+(* A map the loops' rule refuses by its dtypes or coordinates, whatever the
+   program computes: a destination of another dtype than its output, a
+   load of another than its operand, and a coordinate past the loop's
+   rank, an empty loop's included. *)
+let map_refusals (b : Support.backend) =
+  let make dt s = A.Any (A.create b.device dt s) in
+  let f32 = D.Any D.Float32 in
+  let double =
+    P.v ~ins:[| f32 |] [| P.In 0; Op2 (Binary Add, 0, 0) |] ~outs:[| 1 |]
+  in
+  let coord = P.v ~ins:[||] [| P.Coord 1 |] ~outs:[| 0 |] in
+  let cast = P.v ~ins:[||] [| P.Coord 1; Op1 (Cast, f32, 0) |] ~outs:[| 1 |] in
+  let load dt = Nx_kernel.Plain (A.create b.device dt [| 3 |]) in
+  [
+    ( "a destination of another dtype",
+      A.Wrong_dtype,
+      fun () -> (double, [| make D.Float64 [| 3 |] |], [| load D.Float32 |]) );
+    ( "a load of another dtype",
+      A.Wrong_dtype,
+      fun () -> (double, [| make D.Float32 [| 3 |] |], [| load D.Float64 |]) );
+    ( "a coordinate past the loop's rank",
+      A.Shape_mismatch,
+      fun () -> (coord, [| make D.Int64 [| 3 |] |], [||]) );
+    ( "a coordinate past the rank of a loop of no element",
+      A.Shape_mismatch,
+      fun () -> (coord, [| make D.Int64 [| 0 |] |], [||]) );
+    ( "a cast coordinate past the rank of a loop of no element",
+      A.Shape_mismatch,
+      fun () -> (cast, [| make D.Float32 [| 0 |] |], [||]) );
+  ]
+
+let check_map_refusal (b : Support.backend) (msg, want, call) =
+  let module K = (val b.kernels) in
+  b.around (fun () ->
+      let p, dsts, loads = call () in
+      equal ~msg answer want (K.map p ~dsts loads))
+
 (* A map given other destinations or loads than its program's outputs and
    operands is refused with [Shape_mismatch] and writes nothing. *)
 let test_map_arity (b : Support.backend) () =
@@ -1209,6 +1246,9 @@ let laws (b : Support.backend) =
         (run (law_map0_inside b));
       test "a map of other destinations or loads than its program's is refused"
         (unit (test_map_arity b));
+      cases ~id:(fun (msg, _, _) -> msg)
+        "a map the loops' rule refuses by dtype or coordinate is refused"
+        (map_refusals b) (check_map_refusal b);
       test "a map reads a load identical to a destination before writing it"
         (unit (test_map_identical_view b));
       test "a map of a padded load reads its coordinates"

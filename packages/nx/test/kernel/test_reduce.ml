@@ -824,6 +824,84 @@ let test_carry_refusals (b : Support.backend) () =
   refuses "a float32 carry of float16 terms" A.Done
     (scan D.Float16 ~carry (Monoid Sum) [| make D.Float16 [| 2; 3 |] |])
 
+(* Reductions and scans the loops' rule refuses, whatever the program
+   computes: [Shape_mismatch] for other numbers of loads, destinations or
+   reductions, an output past the program's or a coordinate past the
+   loop's rank, an empty loop's included; [Wrong_dtype] for a load of
+   another dtype than its operand, a reduction of a dtype it does not take
+   or an Arg's position other than int64. *)
+let loop_refusals (b : Support.backend) =
+  let (module K : Nx_kernel.S) = b.kernels in
+  let make dt s = A.Any (A.create b.device dt s) in
+  let f32 = D.Any D.Float32 in
+  let id = identity f32 in
+  let coord = P.v ~ins:[||] [| P.Coord 2 |] ~outs:[| 0 |] in
+  let x s = Nx_kernel.Plain (A.create b.device D.Float32 s) in
+  let reduce ?(shape = [| 2; 3 |]) p rs dsts loads =
+    K.reduce p ~shape ~axes:[| 1 |] rs ~dsts loads
+  in
+  let scan p rk dsts loads = K.scan p ~axis:1 rk ~dsts loads in
+  let row = make D.Float32 [| 2 |] in
+  let rows =
+    [
+      ( "a reduction of an output past the program's",
+        A.Shape_mismatch,
+        fun () -> reduce id [| (Monoid Sum, 1) |] [| row |] [| x [| 2; 3 |] |] );
+      ("no reduction", A.Shape_mismatch, fun () -> reduce id [||] [||] [| x [| 2; 3 |] |]);
+      ( "one destination for an Arg",
+        A.Shape_mismatch,
+        fun () -> reduce id [| (Arg Max, 0) |] [| row |] [| x [| 2; 3 |] |] );
+      ( "a load past the program's operands",
+        A.Shape_mismatch,
+        fun () ->
+          reduce id [| (Monoid Sum, 0) |] [| row |]
+            [| x [| 2; 3 |]; x [| 2; 3 |] |] );
+      ( "a coordinate past the loop's rank",
+        A.Shape_mismatch,
+        fun () ->
+          reduce coord [| (Monoid Sum, 0) |] [| make D.Int64 [| 2 |] |] [||] );
+      ( "a coordinate past the rank of a loop of no element",
+        A.Shape_mismatch,
+        fun () ->
+          reduce ~shape:[| 2; 0 |] coord [| (Monoid Sum, 0) |]
+            [| make D.Int64 [| 2 |] |] [||] );
+      ( "a load of another dtype than its operand",
+        A.Wrong_dtype,
+        fun () ->
+          reduce id [| (Monoid Sum, 0) |] [| row |]
+            [| Plain (A.create b.device D.Float64 [| 2; 3 |]) |] );
+      ( "a Logsumexp of int32",
+        A.Wrong_dtype,
+        fun () ->
+          reduce (identity (D.Any D.Int32)) [| (Logsumexp, 0) |]
+            [| make D.Int32 [| 2 |] |]
+            [| Plain (A.create b.device D.Int32 [| 2; 3 |]) |] );
+      ( "an Arg's position of int32",
+        A.Wrong_dtype,
+        fun () ->
+          reduce id [| (Arg Max, 0) |] [| row; make D.Int32 [| 2 |] |]
+            [| x [| 2; 3 |] |] );
+      ( "a scan of an output past the program's",
+        A.Shape_mismatch,
+        fun () -> scan id (Monoid Sum, 1) [| make D.Float32 [| 2; 3 |] |] [| x [| 2; 3 |] |] );
+      ( "two destinations for a scan's Sum",
+        A.Shape_mismatch,
+        fun () ->
+          scan id (Monoid Sum, 0)
+            [| make D.Float32 [| 2; 3 |]; make D.Float32 [| 2; 3 |] |]
+            [| x [| 2; 3 |] |] );
+      ( "a scan's coordinate past the rank of a loop of no element",
+        A.Shape_mismatch,
+        fun () -> scan coord (Monoid Sum, 0) [| make D.Int64 [| 2; 0 |] |] [||] );
+    ]
+  in
+  rows
+
+let check_refusal (b : Support.backend) (msg, want, call) =
+  match b.around call with
+  | got -> equal ~msg Elements.answer want got
+  | exception e -> failf "%s raised %s" msg (Printexc.to_string e)
+
 (* A Max's NaN carry that is its destination, a slice of one term, a
    number, makes the result a NaN, though the scan writes the carry's
    bytes. *)
@@ -1201,6 +1279,9 @@ let laws (b : Support.backend) =
         special_case (run (law_special b));
       test "a carry the scan cannot take is refused" (fun () ->
           b.around (test_carry_refusals b));
+      cases ~id:(fun (msg, _, _) -> msg)
+        "a reduction or scan the loops' rule refuses is refused"
+        (loop_refusals b) (check_refusal b);
       test "an extreme's carry its destination aliases" (fun () ->
           b.around (test_aliased_carry b));
     ]

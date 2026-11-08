@@ -122,6 +122,21 @@ type load =
       (** [x] padded with [fill] as [pad] says. The loop's shape is the padded
           one. *)
 
+val map_refusal :
+  Prog.t ->
+  rank:int ->
+  dsts:'d dtypes ->
+  'd ->
+  loads:'l dtypes ->
+  'l ->
+  (Nx_array.answer * string) option
+(** [map_refusal p ~rank ~dsts:dv dsts ~loads:lv loads] is
+    [Some (r, why)], [r] the refusal {!S.map} answers for its program [p]
+    over [loads] into [dsts], read by [lv] and [dv], on a loop of rank
+    [rank], and [why] what does not fit, in words; [None] where all fit.
+    It reads no shape but the rank: {!Shape.padded} gives a padded
+    load's. *)
+
 (** {1:reductions Reductions and scans}
 
     A reduction's terms are the values of one program output along the
@@ -191,6 +206,46 @@ val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
 (** [accepts r dt] is [true] iff [r] reduces terms of [dt]: [Sum] and [Prod]
     every dtype but booleans, [Max], [Min] and [Arg] every dtype, [Logsumexp]
     and [Moments] floats. *)
+
+(** The type for reading a collection ['c] of reductions in place, as
+    {!type-dtypes} reads arrays: [reductions c] reductions, the [i]th
+    [kind c i] of the program's output [output c i]. *)
+type 'c reductions = {
+  reductions : 'c -> int;
+  kind : 'c -> int -> reduction;
+  output : 'c -> int -> int;
+}
+
+val reduce_refusal :
+  Prog.t ->
+  rank:int ->
+  reductions:'r reductions ->
+  'r ->
+  dsts:'d dtypes ->
+  'd ->
+  loads:'l dtypes ->
+  'l ->
+  (Nx_array.answer * string) option
+(** [reduce_refusal p ~rank ~reductions:rv rs ~dsts:dv dsts ~loads:lv loads]
+    is as {!map_refusal} for {!S.reduce}'s reductions [rs] of [p], read by
+    [rv]. It reads no shape but the rank: {!Shape.reduce} gives the
+    destinations'. *)
+
+val scan_refusal :
+  Prog.t ->
+  rank:int ->
+  reduction ->
+  output:int ->
+  dsts:'d dtypes ->
+  'd ->
+  ?carry:Nx_array.Dtype.any ->
+  loads:'l dtypes ->
+  'l ->
+  (Nx_array.answer * string) option
+(** [scan_refusal p ~rank r ~output:k ~dsts:dv dsts ?carry ~loads:lv loads]
+    is as {!map_refusal} for {!S.scan}'s scan [r] of output [k] of [p]
+    from a carry of dtype [carry]. It reads no shape but the rank:
+    {!Shape.carry} gives the carry's. *)
 
 (** {2:bounds Error bounds}
 
@@ -447,6 +502,11 @@ module Shape : sig
   (** [scan ~axis y] is the shape of a scan's destinations along [axis] of a
       loop of shape [y]: [y]. *)
 
+  val carry : axis:int -> t -> t result
+  (** [carry ~axis y] is the shape of a carry of a scan along [axis] of a
+      loop of shape [y]: [y] with extent [1] along [axis], with [axis] as
+      {!scan} takes it. *)
+
   (** {1:index Gathers, scatters and sorts} *)
 
   val gather : axis:int -> t -> t -> t result
@@ -601,7 +661,10 @@ module type S = sig
       Its destinations are of any dtype but an [Arg]'s position, an
       [int64], and each result rounds once into its own, as {!Prog.Cast}
       stores it. It answers [Wrong_dtype] where {!accepts} is [false] of
-      its reduction and that output's dtype.
+      its reduction and that output's dtype, and [Shape_mismatch] unless
+      each reduction is of an output of the program and a [reduce] has at
+      least one. {!map_refusal}, {!reduce_refusal} and {!scan_refusal}
+      decide each of these refusals; {!Shape} gives the shapes.
 
       A library declines a loop for its number of loads, program outputs or
       reductions only past a bound its device imposes, which its doc states,
@@ -644,8 +707,8 @@ module type S = sig
       that index's, inclusive ({!section-scans}). Its destinations are as
       {!reduce}'s, each of the loop's shape ({!Shape.scan}).
 
-      With [carry], an array of the destinations' shape with extent [1]
-      along [axis], of the output's carrier, a [Monoid] scan of each slice
+      With [carry], an array of the shape {!Shape.carry} gives, of the
+      output's carrier, a [Monoid] scan of each slice
       continues from the slice's element of [carry]. Each result is that
       element combined with the terms up to it, and a float or complex one
       is within the bound of a reduction of the element and those terms

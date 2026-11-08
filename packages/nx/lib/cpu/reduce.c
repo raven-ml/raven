@@ -2150,8 +2150,10 @@ static double call_cost(const call *c, const nx_array *x, const int64_t *s,
 }
 
 /* Whether the carries [cy], where not NULL, fit [c], a monoid's scan into
-   [y]: NX_OK, or NX_SHAPE for another call's or unless they have [y]'s
-   shape but one along the scan's axis. */
+   [y]: NX_OK, or NX_SHAPE for another call's or unless they have the
+   shape Nx_kernel.Shape.carry gives, [y]'s but one along the scan's axis.
+   Nx_kernel.scan_refusal refuses a carry of another reduction first; this
+   check stays because it bounds the carry's reads. */
 static int carried(const call *c, const nx_array *cy, const nx_array *y) {
   if (cy == NULL) return NX_OK;
   if (c->op != SCAN || c->r > NX_MONOID_MIN) return NX_SHAPE;
@@ -2297,6 +2299,10 @@ static value run(const call *c, value vp, value vrs, int single, int rank,
   CAMLlocal1(owner);
   int nl = (int)Wosize_val(Field(vp, NX_PROG_INS));
   int nouts = (int)Wosize_val(Field(vp, NX_PROG_OUTS));
+  /* Nx_kernel.reduce_refusal and scan_refusal refuse other numbers of
+     loads, reductions and destinations, outputs past the program's and
+     other dtypes before this runs (nx_cpu.ml); the checks here stay
+     because the tables and the door's slots are sized by them. */
   if ((int)Wosize_val(vloads) != nl) CAMLreturn(Val_int(NX_SHAPE));
   int nd = (int)Wosize_val(vdsts), e = NX_OK;
   int nc = Is_block(vcarry), dt = identity_of(vp);

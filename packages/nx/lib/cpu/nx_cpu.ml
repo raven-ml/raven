@@ -194,57 +194,72 @@ external map_c :
   Nx_kernel.load array ->
   Nx_array.answer = "nx_cpu_map"
 
-(* Whether loads [i] on of [loads] are plain, one per operand from [i] on,
-   each of the dtype [ins] names. *)
-let rec plain_of ins (loads : Nx_kernel.load array) i =
-  if i = Array.length loads then i = Iarray.length ins
-  else
-    i < Iarray.length ins
-    && (match loads.(i) with
-       | Plain x ->
-           let (D.Any dt) = Iarray.get ins i in
-           D.equal (Nx_array.dtype x) dt
-       | Padded _ -> false)
-    && plain_of ins loads (i + 1)
-
 (* [n], the one node of [p], into [dst] over plain loads of [p]'s operands'
    dtypes, by its kind's kernel, allocating nothing. The program has
    checked the kind against its operands' dtypes, so each kind's table
    has its row. A node no kernel matches runs through map.c. *)
-let single (p : Nx_kernel.Prog.t) n (Nx_array.Any dst) loads =
-  let (D.Any out) = Nx_kernel.Prog.dtype p (Iarray.length p.nodes - 1) in
-  if not (D.equal (Nx_array.dtype dst) out) then Nx_array.Wrong_dtype
-  else
-    match ((n : Nx_kernel.Prog.node), loads) with
-    | Const (_, b), _ -> fill b dst
-    | Coord axis, _ -> iota axis dst
-    | Op1 (Copy, _, _), [| Nx_kernel.Plain x |] -> copy ~dst x
-    | Op1 (Cast, _, _), [| Plain x |] -> cast ~dst x
-    | Op1 (Bitcast, _, _), [| Plain x |] -> bitcast ~dst x
-    | Op1 (Unary u, _, _), [| Plain x |] -> apply1_c u dst x
-    | Op2 (k, _, _), [| Plain x; Plain y |] -> apply2_c k dst x y
-    | Op3 (k, _, _, _), [| Plain c; Plain x; Plain y |] ->
-        apply3_c k dst c x y
-    | (In _ | Op1 _ | Op2 _ | Op3 _), _ -> map_c p [| Any dst |] loads
+let single p n (Nx_array.Any dst) loads =
+  match ((n : Nx_kernel.Prog.node), loads) with
+  | Const (_, b), _ -> fill b dst
+  | Coord axis, _ -> iota axis dst
+  | Op1 (Copy, _, _), [| Nx_kernel.Plain x |] -> copy ~dst x
+  | Op1 (Cast, _, _), [| Plain x |] -> cast ~dst x
+  | Op1 (Bitcast, _, _), [| Plain x |] -> bitcast ~dst x
+  | Op1 (Unary u, _, _), [| Plain x |] -> apply1_c u dst x
+  | Op2 (k, _, _), [| Plain x; Plain y |] -> apply2_c k dst x y
+  | Op3 (k, _, _, _), [| Plain c; Plain x; Plain y |] -> apply3_c k dst c x y
+  | (In _ | Op1 _ | Op2 _ | Op3 _), _ -> map_c p [| Any dst |] loads
 
 (* A program of one node over plain loads, into one destination, runs by
    its kind's kernel, which reads its operands' layouts directly; any
    other through map.c. *)
 let map_plain p ~dsts loads =
-  if
-    Array.length dsts = 1
-    && Nx_kernel.Prog.is_single p
-    && plain_of p.ins loads 0
-  then
-    let last = Iarray.get p.nodes (Iarray.length p.nodes - 1) in
-    single p last dsts.(0) loads
+  if Array.length dsts = 1 && Nx_kernel.Prog.is_single p then
+    single p (Iarray.get p.nodes (Iarray.length p.nodes - 1)) dsts.(0) loads
   else map_c p dsts loads
 
+(* A loop's destinations and loads as Nx_kernel's rules read them, which
+   refuse first, so that map.c and reduce.c meet only calls that fit. *)
+let any_dtype (Nx_array.Any a) = D.Any (Nx_array.dtype a)
+
+let arrays =
+  { Nx_kernel.arrays = Array.length; dtype = (fun a i -> any_dtype a.(i)) }
+
+let reductions =
+  {
+    Nx_kernel.reductions = Array.length;
+    kind = (fun (rs : (Nx_kernel.reduction * int) array) i -> fst rs.(i));
+    output = (fun (rs : (Nx_kernel.reduction * int) array) i -> snd rs.(i));
+  }
+
+let loads_of =
+  {
+    Nx_kernel.arrays = Array.length;
+    dtype =
+      (fun (a : Nx_kernel.load array) i ->
+        match a.(i) with
+        | Plain x -> D.Any (Nx_array.dtype x)
+        | Padded { x; _ } -> D.Any (Nx_array.dtype x));
+  }
+
+(* The rank of a loop over the shape of [dsts]' first, [0] for none. *)
+let rank_of dsts =
+  if Array.length dsts = 0 then 0
+  else
+    let (Nx_array.Any d) = dsts.(0) in
+    Nx_array.Layout.rank (Nx_array.layout d)
+
 let map p ~dsts loads =
-  if not (any_padded loads 0) then map_plain p ~dsts loads
-  else if Array.length dsts = 0 || not (padded_fit (loop_of dsts.(0)) loads 0)
-  then Nx_array.Shape_mismatch
-  else realised loads (map_plain p ~dsts)
+  match
+    Nx_kernel.map_refusal p ~rank:(rank_of dsts) ~dsts:arrays dsts
+      ~loads:loads_of loads
+  with
+  | Some (r, _) -> r
+  | None ->
+      if not (any_padded loads 0) then map_plain p ~dsts loads
+      else if not (padded_fit (loop_of dsts.(0)) loads 0) then
+        Nx_array.Shape_mismatch
+      else realised loads (map_plain p ~dsts)
 
 (* Reductions and scans (reduce.c), of a program's outputs through it, over
    plain loads: an external each, which reads the terms of a program that
@@ -271,43 +286,40 @@ external scan_c :
   Nx_array.any option ->
   Nx_array.answer = "nx_cpu_scan_byte" "nx_cpu_scan"
 
-(* Whether reduction [r] accepts the dtype of [p]'s output [k]. *)
-let accepted (p : Nx_kernel.Prog.t) (r, k) =
-  let (D.Any dt) = Nx_kernel.Prog.dtype p (Iarray.get p.outs k) in
-  Nx_kernel.accepts r dt
-
-let rec all_accepted p rs i =
-  i = Array.length rs || (accepted p rs.(i) && all_accepted p rs (i + 1))
-
-(* Whether [dsts] are the destinations of the reductions [rs] along [axes]
-   of a loop of [shape]: one each, two for an Arg or a Moments, of the
-   shape {!Nx_kernel.Shape.reduce} gives. A reduction's loop is given as a
-   shape alone, which bounds no padded copy: C checks its destinations
-   after the copy, so a padded reduction checks them first. *)
+(* Whether [dsts], as many as the reductions [rs] store, have the shape
+   {!Nx_kernel.Shape.reduce} gives along [axes] of a loop of [shape]. A
+   reduction's loop is given as a shape alone, which bounds no padded
+   copy: C checks its destinations after the copy, so a padded reduction
+   checks them first. *)
 let reduces_into ~shape ~axes rs dsts =
-  let count n ((r : Nx_kernel.reduction), _) =
-    n + match r with Arg _ | Moments -> 2 | Monoid _ | Logsumexp -> 1
-  in
   match Nx_kernel.Shape.reduce ~axes (Array.map fst rs) shape with
   | Error _ -> false
-  | Ok want ->
-      Array.length dsts = Array.fold_left count 0 rs
-      && Array.for_all (fun d -> loop_of d = want) dsts
+  | Ok want -> Array.for_all (fun d -> loop_of d = want) dsts
 
 let reduce p ~shape ~axes rs ~dsts loads =
-  if not (all_accepted p rs 0) then Nx_array.Wrong_dtype
-  else if not (any_padded loads 0) then reduce_c p rs shape axes dsts loads
-  else if
-    not (padded_fit shape loads 0 && reduces_into ~shape ~axes rs dsts)
-  then Nx_array.Shape_mismatch
-  else realised loads (reduce_c p rs shape axes dsts)
+  match
+    Nx_kernel.reduce_refusal p ~rank:(Array.length shape) ~reductions rs
+      ~dsts:arrays dsts ~loads:loads_of loads
+  with
+  | Some (r, _) -> r
+  | None ->
+      if not (any_padded loads 0) then reduce_c p rs shape axes dsts loads
+      else if
+        not (padded_fit shape loads 0 && reduces_into ~shape ~axes rs dsts)
+      then Nx_array.Shape_mismatch
+      else realised loads (reduce_c p rs shape axes dsts)
 
-let scan ?carry p ~axis rk ~dsts loads =
-  if not (accepted p rk) then Nx_array.Wrong_dtype
-  else if not (any_padded loads 0) then scan_c p rk axis dsts loads carry
-  else if Array.length dsts = 0 || not (padded_fit (loop_of dsts.(0)) loads 0)
-  then Nx_array.Shape_mismatch
-  else realised loads (fun loads -> scan_c p rk axis dsts loads carry)
+let scan ?carry p ~axis ((r, k) as rk) ~dsts loads =
+  match
+    Nx_kernel.scan_refusal p ~rank:(rank_of dsts) r ~output:k ~dsts:arrays
+      dsts ?carry:(Option.map any_dtype carry) ~loads:loads_of loads
+  with
+  | Some (r, _) -> r
+  | None ->
+      if not (any_padded loads 0) then scan_c p rk axis dsts loads carry
+      else if not (padded_fit (loop_of dsts.(0)) loads 0) then
+        Nx_array.Shape_mismatch
+      else realised loads (fun loads -> scan_c p rk axis dsts loads carry)
 
 (* Gathers and scatters (index.c) *)
 
@@ -585,12 +597,6 @@ let mask_ranges (p : Nx_kernel.Prog.t) ~rank =
   match Iarray.get p.nodes (Iarray.get p.outs 0) with
   | Const _ -> None
   | _ -> Some (Nx_kernel.Prog.ranges ~axes:rank ~outs:[| 0 |] p)
-
-(* Arrays as Nx_kernel's rules read them. *)
-let any_dtype (Nx_array.Any a) = D.Any (Nx_array.dtype a)
-
-let arrays : _ Nx_kernel.dtypes =
-  { arrays = Array.length; dtype = (fun a i -> any_dtype a.(i)) }
 
 (* attention.c computes what Nx_kernel.attention_refusal lets through. *)
 let attention p ~scale ~o ~lse ?lengths q kv loads =

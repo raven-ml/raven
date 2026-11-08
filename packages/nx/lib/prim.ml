@@ -341,10 +341,6 @@ let name : type r. r prim -> string = function
 let load_any (type d) (l : d load) : d any =
   match l with Plain x -> Any x | Padded { x; _ } -> Any x
 
-let load_dtype (type d) (l : d load) =
-  let (Any x) = load_any l in
-  D.Any (dtype x)
-
 let is_padded (type d) (l : d load) =
   match l with Plain _ -> false | Padded _ -> true
 
@@ -1073,8 +1069,6 @@ let pp : type r. Format.formatter -> r prim -> unit =
 
 (* Rules *)
 
-let same_dtype a b = D.code a = D.code b
-
 (* [r]'s value, or its error raised naming [by]. *)
 let shaped ~by = function Ok s -> s | Error e -> invalid_argf "%s: %s" by e
 
@@ -1098,34 +1092,92 @@ let has_layout_shape x l =
   done;
   !i = r
 
-(* A loop's rule on its loads and coordinates: a load per operand of [prog],
-   of its dtype and of [layout]'s shape, which is C-contiguous, and a
-   coordinate along an axis of that shape. [what] names the loop. It
-   allocates nothing where the rule holds: an interpreter checks it on every
-   map it evaluates. *)
-let check_loads (type d) ~by ~what layout (prog : P.t) (loads : d load iarray)
+(* A loop's arrays as Nx_kernel's rules read them: its loads in place, a
+   map's results and a reduction's as arrays of their dtypes, and its
+   reductions as the kernels take them. *)
+let loads_view =
+  {
+    Nx_kernel.arrays = Iarray.length;
+    dtype =
+      (fun a i ->
+        match Iarray.get a i with
+        | Plain x -> D.Any (dtype x)
+        | Padded { x; _ } -> D.Any (dtype x));
+  }
+
+let dtype_array = { Nx_kernel.arrays = Array.length; dtype = Array.get }
+
+let reductions_view =
+  {
+    Nx_kernel.reductions = Array.length;
+    kind = (fun (rs : (Nx_kernel.reduction * int) array) i -> fst rs.(i));
+    output = (fun (rs : (Nx_kernel.reduction * int) array) i -> snd rs.(i));
+  }
+
+let rec outs_count : type d r. (d, r) outs -> int = function
+  | [] -> 0
+  | _ :: rest -> 1 + outs_count rest
+
+let rec fill_outs : type d r. D.any array -> int -> (d, r) outs -> unit =
+ fun a i -> function
+  | [] -> ()
+  | dt :: rest ->
+      a.(i) <- D.Any dt;
+      fill_outs a (i + 1) rest
+
+(* The dtypes of [outs], in order. *)
+let outs_dtypes outs =
+  let a = Array.make (outs_count outs) (D.Any D.Bool) in
+  fill_outs a 0 outs;
+  a
+
+(* The dtype of result [i] of [r]: an Arg's position, its second, is an
+   int64. *)
+let result_dtype : type d a. (d, a) reduction -> int -> D.any =
+ fun r i ->
+  match r with
+  | Monoid (_, _, dt) -> D.Any dt
+  | Logsumexp (_, dt) -> D.Any dt
+  | Moments (_, dt) -> D.Any dt
+  | Arg (_, _, dt) -> if i = 0 then D.Any dt else D.Any D.Int64
+
+let width : type d a. (d, a) reduction -> int = function
+  | Monoid _ | Logsumexp _ -> 1
+  | Moments _ | Arg _ -> 2
+
+let reduction_view = { Nx_kernel.arrays = width; dtype = result_dtype }
+
+let rec results_count : type d r. (d, r) reductions -> int = function
+  | [] -> 0
+  | r :: rest -> width r + results_count rest
+
+let rec fill_results : type d r. D.any array -> int -> (d, r) reductions -> unit
     =
-  let ins = prog.ins in
-  let n = Iarray.length loads in
-  if n <> Iarray.length ins then
-    invalid_argf "%s: a program of %d operands over %d loads" by
-      (Iarray.length ins) n;
-  for i = 0 to n - 1 do
-    let (D.Any want) = Iarray.get ins i in
-    let l = Iarray.get loads i in
-    let same =
-      match l with
-      | Plain x -> same_dtype want (dtype x)
-      | Padded { x; _ } -> same_dtype want (dtype x)
-    in
-    if not same then
-      let (D.Any have) = load_dtype l in
-      invalid_argf "%s: load %d is %s where the program reads %s" by i
-        (D.name have) (D.name want)
-  done;
+ fun a i -> function
+  | [] -> ()
+  | r :: rest ->
+      for j = 0 to width r - 1 do
+        a.(i + j) <- result_dtype r j
+      done;
+      fill_results a (i + width r) rest
+
+(* The dtypes of [rs]' results, in order. *)
+let results_dtypes rs =
+  let a = Array.make (results_count rs) (D.Any D.Bool) in
+  fill_results a 0 rs;
+  a
+
+(* Raises naming [by] for a refusal of a rule of Nx_kernel. *)
+let refused_by ~by = function
+  | Some (_, why) -> invalid_argf "%s: %s" by why
+  | None -> ()
+
+(* A loop's rule on its layout and its loads' shapes: [layout] is
+   C-contiguous, and each load has its shape. [what] names the loop. *)
+let check_loads (type d) ~by ~what layout (loads : d load iarray) =
   if not (L.is_contiguous layout && L.offset layout = 0) then
     invalid_argf "%s: a %s's layout %a is not C-contiguous" by what L.pp layout;
-  for i = 0 to n - 1 do
+  for i = 0 to Iarray.length loads - 1 do
     let l = Iarray.get loads i in
     let fits =
       match l with
@@ -1135,42 +1187,17 @@ let check_loads (type d) ~by ~what layout (prog : P.t) (loads : d load iarray)
     if not fits then
       invalid_argf "%s: load %d has shape %a, the %s %a" by i pp_shape
         (load_shape ~by l) what pp_ints (L.shape layout)
-  done;
-  for i = 0 to Iarray.length prog.nodes - 1 do
-    match Iarray.get prog.nodes i with
-    | P.Coord a when a >= L.rank layout ->
-        invalid_argf "%s: a coordinate along axis %d of a %s of rank %d" by a
-          what (L.rank layout)
-    | _ -> ()
   done
-
-(* The results [outs] from [k] on against [prog]'s outputs from [k] on: one
-   each, of its dtype. *)
-let rec check_outs : type d q. by:string -> P.t -> int -> (d, q) outs -> unit
-    =
- fun ~by prog k outs ->
-  let produced = Iarray.length prog.outs in
-  match outs with
-  | [] ->
-      if k <> produced then
-        invalid_argf "%s: %d results for a program of %d outputs" by k produced
-  | dt :: rest ->
-      if k >= produced then
-        invalid_argf "%s: more results than the program's %d outputs" by
-          produced;
-      let (D.Any want) = P.dtype prog (Iarray.get prog.outs k) in
-      if not (same_dtype want dt) then
-        invalid_argf "%s: result %d is %s where the program gives %s" by k
-          (D.name dt) (D.name want);
-      check_outs ~by prog (k + 1) rest
 
 (* A map's rule; its result's layout, C-contiguous of [shape]. A map of no
    loads names where it lies, a placement that cuts no axis its shape lacks,
    and a map with loads lies where they do. *)
 let check_map (type d r) ~by layout (prog : P.t) (outs : (d, r) outs)
     (loads : d load iarray) (at : d Devices.placement option) =
-  check_loads ~by ~what:"map" layout prog loads;
-  check_outs ~by prog 0 outs;
+  refused_by ~by
+    (Nx_kernel.map_refusal prog ~rank:(L.rank layout) ~dsts:dtype_array
+       (outs_dtypes outs) ~loads:loads_view loads);
+  check_loads ~by ~what:"map" layout loads;
   match at with
   | None when Iarray.length loads = 0 ->
       invalid_argf "%s: a map of no loads names no placement" by
@@ -1181,72 +1208,38 @@ let check_map (type d r) ~by layout (prog : P.t) (outs : (d, r) outs)
       ignore (Devices.window ~by p (Iarray.to_array (L.shape layout)) 0)
   | None -> ()
 
-(* A reduction's rule over [prog]'s outputs: its output exists and is of a
-   dtype it takes. *)
-let check_reduction (type d a) ~by (prog : P.t) (red : (d, a) reduction) =
-  let r = reduction_kind red and k = output red in
-  let produced = prog.outs in
-  if k < 0 || k >= Iarray.length produced then
-    invalid_argf "%s: a reduction of output %d of a program of %d" by k
-      (Iarray.length produced);
-  let (D.Any have) = P.dtype prog (Iarray.get produced k) in
-  if not (Nx_kernel.accepts r have) then
-    invalid_argf "%s: %s does not take %s" by (reduction_name r) (D.name have)
-
-let reduction_width : type d a. (d, a) reduction -> int = function
-  | Monoid _ | Logsumexp _ -> 1
-  | Moments _ | Arg _ -> 2
-
 (* The shape of the results of [rs] along [axes] of a loop of [layout]: its
    rule. *)
 let reduced_shape ~by layout axes rs =
   shaped ~by (Shape.reduce ~axes (kinds rs) (Iarray.to_array (L.shape layout)))
 
-let rec check_reductions : type d r.
-    by:string -> P.t -> (d, r) reductions -> unit =
- fun ~by prog rs ->
-  match rs with
-  | [] -> ()
-  | r :: rest ->
-      check_reduction ~by prog r;
-      check_reductions ~by prog rest
-
 (* A reduction's rule; its results' shape. *)
 let check_reduce (type d r) ~by layout axes prog (rs : (d, r) reductions)
     (loads : d load iarray) =
-  check_loads ~by ~what:"reduction" layout prog loads;
-  (match rs with
-  | [] -> invalid_argf "%s: a reduction of no output" by
-  | _ :: _ -> check_reductions ~by prog rs);
+  refused_by ~by
+    (Nx_kernel.reduce_refusal prog ~rank:(L.rank layout)
+       ~reductions:reductions_view (kernel_reductions rs) ~dsts:dtype_array
+       (results_dtypes rs) ~loads:loads_view loads);
+  check_loads ~by ~what:"reduction" layout loads;
   reduced_shape ~by layout axes rs
 
-let any_shape (Any x) = shape x
-
+(* A scan's rule, {!Nx_kernel.scan_refusal}'s, then its loads' shapes and
+   its carry's, which {!Nx_kernel.Shape.carry} gives. *)
 let check_scan (type d r) ~by layout axis prog (r : (d, r) reduction)
     (loads : d load iarray) (carry : d any option) =
-  check_loads ~by ~what:"scan" layout prog loads;
-  let shape =
-    shaped ~by (Shape.scan ~axis (Iarray.to_array (L.shape layout)))
-  in
-  check_reduction ~by prog r;
-  match (carry, r) with
-  | None, _ -> ()
-  | Some (Any c), Monoid ((Sum | Prod | Max | Min), k, _) ->
-      let want = Array.copy shape in
-      want.(axis) <- 1;
-      let have = any_shape (Any c) in
-      if have <> want then
+  refused_by ~by
+    (Nx_kernel.scan_refusal prog ~rank:(L.rank layout) (reduction_kind r)
+       ~output:(output r) ~dsts:reduction_view r
+       ?carry:(Option.map (fun (Any c) -> D.Any (dtype c)) carry)
+       ~loads:loads_view loads);
+  check_loads ~by ~what:"scan" layout loads;
+  let y = shaped ~by (Shape.scan ~axis (Iarray.to_array (L.shape layout))) in
+  match carry with
+  | None -> ()
+  | Some (Any c) ->
+      if shape c <> shaped ~by (Shape.carry ~axis y) then
         invalid_argf "%s: a carry of shape %a for a scan of shape %a" by
-          pp_shape have pp_shape shape;
-      let (D.Any want) =
-        Nx_kernel.carrier (P.dtype prog (Iarray.get prog.outs k))
-      in
-      if not (same_dtype want (dtype c)) then
-        invalid_argf "%s: a carry of %s where the terms carry in %s" by
-          (D.name (dtype c)) (D.name want)
-  | Some _, (Logsumexp _ | Moments _ | Arg _) ->
-      let kind, _, _ = reduction r in
-      invalid_argf "%s: a carry for %s" by (reduction_name kind)
+          pp_shape (shape c) pp_shape y
 
 (* [shape] without [axes]. *)
 let reduced shape axes =
@@ -1892,7 +1885,7 @@ let rec make_reductions : type d r.
   | [] -> ()
   | r :: rest ->
       let v = make_reduction m k layout placement r in
-      (v, make_reductions m (k + reduction_width r) layout placement rest)
+      (v, make_reductions m (k + width r) layout placement rest)
 
 (* [x]'s shape moved by [mv]. Raises naming [by] where [mv] does not apply: as
    {!check_shape} does for a target shape no layout has, and otherwise naming
@@ -2240,9 +2233,9 @@ let linalg_results : type d r.
    for a check.
    Raises naming [by] where [op]'s operands break the rule. *)
 (* Values as Nx_kernel's rules read them. *)
-let values : _ Nx_kernel.dtypes =
+let values =
   {
-    arrays = Iarray.length;
+    Nx_kernel.arrays = Iarray.length;
     dtype =
       (fun a i ->
         let (Any x) = Iarray.get a i in
@@ -2706,7 +2699,7 @@ let rec zip_reductions : type d q.
   | [] -> ()
   | r :: rest ->
       let a = zip_reduction z k r (fsts vs) in
-      (a, zip_reductions z (k + reduction_width r) rest (snds vs))
+      (a, zip_reductions z (k + width r) rest (snds vs))
 
 let zip_linalg : type d r. zipper -> (d, r) linalg -> r option array -> r =
  fun z l rs ->

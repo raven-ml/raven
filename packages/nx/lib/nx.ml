@@ -6239,8 +6239,7 @@ let reads_length st cells =
   List.exists reads cells
 
 (* Dtypes as Nx_kernel's rules read them. *)
-let dtype_array : _ Nx_kernel.dtypes =
-  { arrays = Array.length; dtype = Array.get }
+let dtype_array = { Nx_kernel.arrays = Array.length; dtype = Array.get }
 
 let attention (type v s a d) ?scale ?lengths ?mask ?score
     ~(acc : (float, a) D.t) ~(kv : (v, s, d) kv) (q : (v, s, d) t) :

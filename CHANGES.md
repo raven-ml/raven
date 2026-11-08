@@ -2399,6 +2399,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_kernel.map_refusal`, `reduce_refusal` and `scan_refusal` give the
+  refusal a kernel library's loops answer, and why, reading the arrays in
+  place through `Nx_kernel.dtypes` and `reductions`; nx and nx.cpu refuse
+  through them, and `Nx_kernel.Shape.carry` gives a scan's carry's shape.
+  nx.cpu's `reduce` and `scan` answer `Shape_mismatch` for an output the
+  program lacks, where they raised `Invalid_argument`.
 - `Nx_kernel.attention_refusal` gives the refusal a kernel library's
   `attention` answers for its program and dtypes, and why, reading the
   loads in place through an `Nx_kernel.dtypes`; nx and nx.cpu both refuse

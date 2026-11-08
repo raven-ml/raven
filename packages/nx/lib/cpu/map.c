@@ -819,6 +819,8 @@ static int decode(step *s, int nn, int nouts, const int32_t *outs, int rank,
     switch (t->tag) {
       case NX_NODE_IN: t->k = nouts + a; break;
       case NX_NODE_COORD:
+        /* Unreachable through nx_cpu.ml, whose rules refuse first; the
+           index's axes are read by this bound. */
         if (a >= rank) return NX_SHAPE;
         *index = 1;
         break;
@@ -1486,6 +1488,9 @@ value nx_cpu_map(value vp, value vdsts, value vloads) {
   int nouts = (int)Wosize_val(Field(vp, NX_PROG_OUTS));
   int nins = (int)Wosize_val(Field(vp, NX_PROG_INS));
   int nn = (int)Wosize_val(Field(vp, NX_PROG_NODES)), n = nouts + nins, e;
+  /* Nx_kernel.map_refusal refuses other numbers, and the door other
+     dtypes, before this runs (nx_cpu.ml); these checks stay because the
+     tables below are sized by them. */
   if ((int)Wosize_val(vdsts) != nouts || (int)Wosize_val(vloads) != nins)
     CAMLreturn(Val_int(NX_SHAPE));
   step local[STEPS], *s = local;

@@ -98,7 +98,8 @@ type ('a, 'i) kv =
   | Dense of { k : 'a; v : 'a }
   | Paged of { k : 'a; v : 'a; table : 'i }
 
-(* Attention's refusals *)
+(* Refusals: each rule answers the refusal and why, formatting the reason
+   only when it refuses. *)
 
 let attended : D.any -> bool = function
   | Any (Float16 | Bfloat16 | Float32 | Float64) -> true
@@ -117,6 +118,12 @@ let wrong fmt = refuse Nx_array.Wrong_dtype fmt
 let misfits fmt = refuse Nx_array.Shape_mismatch fmt
 
 type 'c dtypes = { arrays : 'c -> int; dtype : 'c -> int -> D.any }
+
+type 'c reductions = {
+  reductions : 'c -> int;
+  kind : 'c -> int -> reduction;
+  output : 'c -> int -> int;
+}
 
 (* The first load of [loads] from [i] on, read by [v], whose dtype is not
    that of [p]'s operand [first] places after it, or [-1]. *)
@@ -197,6 +204,146 @@ let attention_refusal (type v s w r c) (p : Prog.t) ~(q : (v, s) D.t) ~rank
   else if outs <> 2 then
     misfits "a pair's program of %d outputs, not 2" outs
   else program_refusal p ~rank ~acc v loads
+
+(* Loops *)
+
+let reduction_name : reduction -> string = function
+  | Monoid Sum -> "Sum"
+  | Monoid Prod -> "Prod"
+  | Monoid Max -> "Max"
+  | Monoid Min -> "Min"
+  | Logsumexp -> "Logsumexp"
+  | Moments -> "Moments"
+  | Arg Max -> "Arg Max"
+  | Arg Min -> "Arg Min"
+
+(* The destinations reduction [r] stores. *)
+let width : reduction -> int = function
+  | Arg _ | Moments -> 2
+  | Monoid _ | Logsumexp -> 1
+
+let takes r (D.Any dt) = accepts r dt
+let is_int64 : D.any -> bool = function Any Int64 -> true | Any _ -> false
+
+let operands_refusal (p : Prog.t) v loads =
+  let ins = Iarray.length p.ins and n = v.arrays loads in
+  if n <> ins then misfits "a program of %d operands over %d loads" ins n
+  else None
+
+(* Why a loop of [p] of rank [rank] refuses its loads' dtypes, read by
+   [v], or its coordinates, once their numbers fit. *)
+let loop_refusal (p : Prog.t) ~rank v loads =
+  let bad = misfit p ~first:0 v loads 0 and axis = past p rank 0 in
+  if bad >= 0 then
+    wrong "load %d is %s where the program reads %s" bad
+      (name (v.dtype loads bad))
+      (name (Iarray.get p.ins bad))
+  else if axis >= 0 then
+    misfits "a coordinate along axis %d of a loop of rank %d" axis rank
+  else None
+
+(* The first destination of [dsts] from [i] on, read by [v], whose dtype is
+   not its output's in [p], or [-1]. *)
+let rec misgiven (p : Prog.t) v dsts i =
+  if i = v.arrays dsts then -1
+  else
+    let (D.Any want) = output p i in
+    if is_of want (v.dtype dsts i) then misgiven p v dsts (i + 1) else i
+
+let map_refusal (p : Prog.t) ~rank ~dsts:dv dsts ~loads:lv loads =
+  let outs = Iarray.length p.outs and nd = dv.arrays dsts in
+  match operands_refusal p lv loads with
+  | Some _ as e -> e
+  | None ->
+      if nd <> outs then
+        misfits "%d destinations for a program of %d outputs" nd outs
+      else
+        let bad = misgiven p dv dsts 0 in
+        if bad >= 0 then
+          wrong "destination %d is %s where the program gives %s" bad
+            (name (dv.dtype dsts bad))
+            (name (output p bad))
+        else loop_refusal p ~rank lv loads
+
+(* Why reduction [r] of output [k] of [p], into the destinations of [dsts]
+   from [at] on, read by [v], refuses its dtypes. *)
+let reduction_refusal (p : Prog.t) r k v dsts at =
+  let out = output p k in
+  if not (takes r out) then
+    wrong "%s does not take %s" (reduction_name r) (name out)
+  else
+    match r with
+    | Arg _ when not (is_int64 (v.dtype dsts (at + 1))) ->
+        wrong "an Arg's position of %s, not int64"
+          (name (v.dtype dsts (at + 1)))
+    | Arg _ | Monoid _ | Logsumexp | Moments -> None
+
+(* The first of [rs] from [i] on, read by [v], of an output [p] does not
+   have, or [-1]. *)
+let rec unproduced (p : Prog.t) v rs i =
+  if i = v.reductions rs then -1
+  else
+    let k = v.output rs i in
+    if k < 0 || k >= Iarray.length p.outs then i
+    else unproduced p v rs (i + 1)
+
+let rec widths v rs i n =
+  if i = v.reductions rs then n
+  else widths v rs (i + 1) (n + width (v.kind rs i))
+
+(* Why [rs] from [i] on, into the destinations from [at] on, refuse their
+   dtypes. *)
+let rec reductions_refusal p rv rs dv dsts i at =
+  if i = rv.reductions rs then None
+  else
+    let r = rv.kind rs i in
+    match reduction_refusal p r (rv.output rs i) dv dsts at with
+    | Some _ as e -> e
+    | None -> reductions_refusal p rv rs dv dsts (i + 1) (at + width r)
+
+let reduce_refusal (p : Prog.t) ~rank ~reductions:rv rs ~dsts:dv dsts
+    ~loads:lv loads =
+  let bad = unproduced p rv rs 0 and nd = dv.arrays dsts in
+  match operands_refusal p lv loads with
+  | Some _ as e -> e
+  | None -> (
+      if rv.reductions rs = 0 then misfits "a reduction of no output"
+      else if bad >= 0 then
+        misfits "a reduction of output %d of a program of %d"
+          (rv.output rs bad) (Iarray.length p.outs)
+      else if nd <> widths rv rs 0 0 then
+        misfits "%d destinations for reductions that store %d" nd
+          (widths rv rs 0 0)
+      else
+        match reductions_refusal p rv rs dv dsts 0 0 with
+        | Some _ as e -> e
+        | None -> loop_refusal p ~rank lv loads)
+
+let scan_refusal (p : Prog.t) ~rank r ~output:k ~dsts:dv dsts ?carry
+    ~loads:lv loads =
+  let nd = dv.arrays dsts in
+  match operands_refusal p lv loads with
+  | Some _ as e -> e
+  | None -> (
+      if k < 0 || k >= Iarray.length p.outs then
+        misfits "a scan of output %d of a program of %d" k
+          (Iarray.length p.outs)
+      else if nd <> width r then
+        misfits "%d destinations for a scan that stores %d" nd (width r)
+      else
+        match (carry, r) with
+        | Some _, (Logsumexp | Moments | Arg _) ->
+            misfits "a carry for %s" (reduction_name r)
+        | _ -> (
+            match reduction_refusal p r k dv dsts 0 with
+            | Some _ as e -> e
+            | None -> (
+                let (D.Any want) = carrier (output p k) in
+                match carry with
+                | Some c when not (is_of want c) ->
+                    wrong "a carry of %s where the terms carry in %s" (name c)
+                      (D.name want)
+                | Some _ | None -> loop_refusal p ~rank lv loads)))
 
 module Shape = struct
   type t = int array
@@ -319,6 +466,12 @@ module Shape = struct
       errorf "axes %a are not strictly increasing axes of a rank %d" pp
         [| axis |] r
     else Ok y
+
+  let carry ~axis y =
+    let* y = scan ~axis y in
+    let c = Array.copy y in
+    c.(axis) <- 1;
+    Ok c
 
   let rec same_off axis x y i =
     i = Array.length x
