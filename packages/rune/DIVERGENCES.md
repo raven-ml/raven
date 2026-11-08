@@ -117,7 +117,7 @@ An entry is admitted for one of five reasons only:
 A part of an entry whose reason is missing says "Reason: none" until it is
 measured, withdrawn or redesigned.
 
-Each entry also gives the reference (tinygrad `f1d8f0f0def4`, the commit
+Each entry also gives the reference (tinygrad `7984f41ab5af`, the commit
 tolk follows, its files under `tinygrad/`; or none), nx's meaning, the
 agreement class (exact, bit for bit as `rune.mli` defines it; an ulp bound; a
 rounded sum; a stated bound) and its reason. An ulp bound is the
@@ -183,7 +183,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reference:** `mixin/elementwise.py:459` (`reciprocal`).
 - **Raven:** `lower_arith.ml` (`int_unary`, its `Recip` case).
 - **Differs:** on integers, `x` at 1 and -1, 0 elsewhere and at 0. tinygrad's
-  reciprocal is a float operation (`uop/ops.py:148`).
+  reciprocal is a float operation (`uop/ops.py:145`).
 - **nx:** `prog.mli`, `Recip`.
 - **Class:** exact.
 - **Reason:** (b).
@@ -889,7 +889,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### I7. A window longer than its axis gives none
 
-- **Reference:** `mixin/movement.py:614,619` (`_pool`).
+- **Reference:** `mixin/movement.py:613,618` (`_pool`).
 - **Raven:** `lower.ml` (`window`).
 - **Differs:** a window whose span exceeds its axis gives an axis of no
   windows; tinygrad's pool refuses it.
