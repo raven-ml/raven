@@ -1,4 +1,4 @@
-# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
+# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
 #include <metal_stdlib>
 using namespace metal;
 kernel void vector_cast(device signed char* data0_4, device int* data1_4, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {

@@ -740,7 +740,10 @@ let rec schedule ~launches ~by_storage ~copies sched_sink =
      a state by a kernel, last first. *)
   let writes = Tbl.create 64 and reads = ref [] and seen = Tbl.create 16 in
   (* The kernels a reader of [x] waits for: the writers of the state it reads,
-     and what each join on the way to it waits for. *)
+     what each join on the way to it waits for, and what the state under it
+     waits for. A writer given that state waits for it already; one given
+     another, as [first] in [x.after(second).after(first)] is given [x], does
+     not, and the reader would read before [second]. *)
   let waited = Tbl.create 16 in
   let rec waits x =
     match Tbl.find_opt waited x with
@@ -748,7 +751,18 @@ let rec schedule ~launches ~by_storage ~copies sched_sink =
     | None ->
         let st, deps = value_state x in
         let own = if op st = Op.After then fst (split_after st) else [] in
-        let w = dedup_nodes (own @ List.concat_map waits deps) in
+        let under =
+          if op st <> Op.After then []
+          else
+            let prior = state_of (nth st 0) in
+            let given k =
+              List.exists (fun c -> positions c prior <> []) (calls_of k)
+            in
+            if op prior = Op.After && (own = [] || not (List.for_all given own))
+            then waits (nth st 0)
+            else []
+        in
+        let w = dedup_nodes (own @ under @ List.concat_map waits deps) in
         Tbl.replace waited x w;
         w
   in

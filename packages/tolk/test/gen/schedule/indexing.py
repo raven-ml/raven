@@ -6,20 +6,16 @@ when the tensors of a `Tensor` program are scheduled on the CPU, and
 `<program>_rangeified.golden` what it returns. A program that schedules several
 graphs, such as a function compiled on its own, records the later ones as
 `<program>_<n>.golden` and `<program>_<n>_rangeified.golden`.
-`<program>_debug.golden` is what `run_rangeify` prints of the first graph with
-`debug`.
 
 Movements: `movement_<case>.golden` is the sink of the indices that
 `apply_movement_op` gives for one movement of a source, from indices into the
 result that are ranges, or expressions of them.
 """
 
-from golden import graph, text
+from golden import graph
 from tinygrad import Tensor, Variable, dtypes
 from tinygrad.helpers import DEV
 from tinygrad.uop.ops import AxisType, KernelInfo, Ops, UOp
-import contextlib
-import io
 import os
 import tinygrad.schedule.indexing
 import tinygrad.schedule.rangeify
@@ -32,8 +28,8 @@ def scheduled(program):
     tensors of `program()` runs, in order."""
     seen, run = [], tinygrad.schedule.rangeify.run_rangeify
 
-    def capture(tsink, debug=False):
-        out = run(tsink, debug)
+    def capture(tsink):
+        out = run(tsink)
         seen.append((tsink, out))
         return out
 
@@ -188,11 +184,6 @@ PROGRAMS = {
     "bitcast_copy": lambda: empty(4, 4).bitcast(dtypes.int32).to("CPU:1") + 1,
 }
 
-# Programs whose DEBUG_RANGEIFY printout is recorded: a pad that a reduction
-# realizes, and a node whose consumers index it differently.
-DEBUG = ["pad_reduce", "two_consumers", "shared_view", "softmax"]
-
-
 def forked(fn):
     """`fn()`, computed in a child process, so that the generator's state stays
     the one each golden starts from."""
@@ -217,21 +208,8 @@ def declare(name, program):
         graph(made)
 
 
-def declare_debug(name, program):
-    def printed():
-        tsink = scheduled(program)[0][0]
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            tinygrad.schedule.indexing.run_rangeify(tsink, True)
-        return out.getvalue().rstrip("\n")
-    printed.__name__ = f"{name}_debug"
-    text(printed)
-
-
 for name, program in PROGRAMS.items():
     declare(name, program)
-for name in DEBUG:
-    declare_debug(name, PROGRAMS[name])
 
 
 # Hand-built graphs: `<graph>.golden` and `<graph>_rangeified.golden`, as for

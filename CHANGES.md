@@ -1077,6 +1077,16 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A value ordered after effects keeps them through folds: `x * 0` of a value
+  after a store, a gate after a store, and a stack's lane read at an index
+  after a store run the store (`Shape.symbolic_simple`, `Codegen`).
+- A stack read at a runtime index, at two indices, or at an index then
+  another compiles, and so does a bitcast of a value to a type of another
+  size in a hand-written kernel (`Codegen.full_rewrite_to_sink`).
+- A reader of a state ordered after a kernel the state under it already
+  follows reads after every write under it (`Schedule.create_schedule`).
+- `Indexing.run_rangeify` takes no `~debug`, and `Setting.debug_rangeify`
+  (`DEBUG_RANGEIFY`) is gone.
 - Lowering a kernel allocates 1.5-17% fewer words and runs 1.6-6% fewer
   instructions: the decomposition patterns are made once per target, and
   `Ops.Pattern_matcher.with_ctx` shares its matcher's rules.

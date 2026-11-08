@@ -1350,9 +1350,7 @@ let store_shared ctx tsink =
 
 let get_kernel_graph tsink =
   let setting = Setting.value in
-  let tsink =
-    Indexing.run_rangeify ~debug:(setting Setting.debug_rangeify) tsink
-  in
+  let tsink = Indexing.run_rangeify tsink in
   (* An argument of a call that another kernel reads is indexed by that
      kernel's ranges, which would reach every value that reads the call's
      results: a stage of such a value would index its storage by them. *)

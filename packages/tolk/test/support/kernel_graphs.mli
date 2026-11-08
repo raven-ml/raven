@@ -3,7 +3,9 @@
     A kernel graph holds storage and calls ({!Tolk.Op.Call}) of kernels, each a
     {!Tolk.Op.Sink} whose storage is its parameters. A call's argument names
     storage in a state: the storage as it is given, or, through an
-    {!Tolk.Op.After}, as the calls it lists leave it. A kernel's storage
+    {!Tolk.Op.After}, as the calls it lists leave it, each call once: an
+    after of a call the state under it already follows is that state. A
+    kernel's storage
     parameter of slot [k] stands for the storage of the call's [k]th argument in
     the state that argument names, and a scalar parameter of slot [k] for the
     value a variable passed as that argument is bound to. A graph that is the

@@ -635,12 +635,16 @@ let devectorizer2 =
              match (marg x, shape (nth x 0)) with
              | Reshape [], [ Int 1 ] -> Some (index_ints (nth x 0) [ 0 ])
              | _ -> None);
-         (* a scalar index into a one-lane STACK is its lane, 0 is the only
-            in-bounds index *)
+         (* a scalar index into a STACK selects its lanes after the STACK and
+            the index, renderers only extract lanes at const indices *)
          rule
            (Upat.op Op.Index
-              ~src:[ Upat.op Op.Stack ~src:[ Upat.var "x" ]; Upat.var "i" ])
-           (fun m -> if shape (m "i") = [] then Some (m "x") else None);
+              ~src:[ Upat.op Op.Stack ~name:"a"; Upat.var "i" ])
+           (fun m ->
+             let a = m "a" and i = m "i" in
+             if shape i = [] && ndim a = 1 then
+               Some (after (Indexing.stack_select i (src a)) [ a; i ])
+             else None);
        ])
 
 (* Reductions *)
@@ -881,10 +885,12 @@ let pm_reduce_local =
 
 (* Loads and local buffers *)
 
-let maybe_load u =
+let in_memory u =
   match addrspace u with
-  | Some (Dtype.Global | Dtype.Local | Dtype.Reg) -> load u []
-  | _ -> u
+  | Some (Dtype.Global | Dtype.Local | Dtype.Reg) -> true
+  | _ -> false
+
+let maybe_load u = if in_memory u then load u [] else u
 
 let pm_add_loads =
   pm
@@ -904,6 +910,16 @@ let pm_add_loads =
           | p :: x :: rest ->
               Some (replace (m "x") ~src:(p :: maybe_load x :: rest))
           | _ -> None);
+    ])
+
+(* A bitcast of memory that changes the shape reinterprets the pointer; of a
+   value, it is expanded here, since a hand-written kernel reaches codegen
+   without the scheduler's expansion. *)
+let pm_expand_value_bitcast =
+  pm (fun () -> [
+      rule (Upat.op Op.Bitcast ~name:"bc") (fun m ->
+          let bc = m "bc" in
+          if in_memory bc then None else Prepare.expand_bitcast bc);
     ])
 
 (* A local buffer is shared by the threads of a group: each of the hardware
@@ -1404,7 +1420,8 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   (* preprocess *)
   let sink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() ast
-      (Before_sources Prepare.pm_mops)
+      (Before_sources
+         (Pattern_matcher.append Prepare.pm_mops pm_expand_value_bitcast))
   in
   (* effects keep their ranges until the expander *)
   let sink = Simplify.pin_effects sink in

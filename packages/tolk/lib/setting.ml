@@ -305,7 +305,6 @@ let cpu_count = min (cores ()) (Domain.recommended_domain_count ())
 let parallel = int ~reach:Process "PARALLEL" cpu_count
 let spec = int ~reach:Process "SPEC" 1
 let check_oob = bool ~reach:Process "CHECK_OOB" false
-let debug_rangeify = bool ~reach:Process "DEBUG_RANGEIFY" false
 let tuple_order = bool ~reach:Output "TUPLE_ORDER" true
 let ccache = bool ~reach:Process "CCACHE" true
 let allow_tf32 = bool ~reach:Output "ALLOW_TF32" false

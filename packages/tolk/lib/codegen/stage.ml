@@ -291,21 +291,37 @@ let lower_ldmatrix x =
       let rec log2 n = if n <= 1 then 0 else 1 + log2 (n / 2) in
       let nbits = log2 (List.length lanes) in
       let lane, bits = ldmatrix_rows ~trans ~nbits w in
+      (* The ordering sources of each [After] stand aside as holes while the
+         lane moves: the value an [After] orders reads the lane, as an
+         address ordered whole after the copies does. *)
+      let deps =
+        dedup_nodes
+          (List.concat_map
+             (fun u -> if Op.equal (op u) Op.After then List.tl (src u) else [])
+             (toposort ~calls:Skip (nth ix 1)))
+      in
       let holes =
         List.mapi
-          (fun i a ->
-            let name = Printf.sprintf "ldm%d" i in
-            (a, variable ~dtype:(dtype a) name (vmin a) (vmax a)))
-          (List.filter
-             (fun u -> Op.equal (op u) Op.After)
-             (toposort ~calls:Skip (nth ix 1)))
+          (fun i d -> (d, range ~axis_type:Placeholder (Int 1) [ -2; i ]))
+          deps
       in
       let sub l subs = substitute ~calls:Skip ~pass:Once l subs in
       let at_lane l =
         let back = List.map (fun (a, h) -> (h, a)) holes in
         sub (sub (sub l holes) [ (w, lane) ]) back
       in
-      let lanes = List.map at_lane lanes in
+      (* A lane ordered whole after the copies is the address it orders: the
+         order goes on the address the lanes select, so that their shared
+         terms still come out of the selection. *)
+      let rec outer l =
+        if Op.equal (op l) Op.After then
+          let v, ds = outer (nth l 0) in
+          (v, List.tl (src l) @ ds)
+        else (l, [])
+      in
+      let outers = List.map (fun l -> outer (at_lane l)) lanes in
+      let lanes = List.map fst outers in
+      let order = dedup_nodes (List.concat_map snd outers) in
       let rec pick ls = function
         | [] -> List.hd ls
         | b :: bs ->
@@ -330,6 +346,7 @@ let lower_ldmatrix x =
         sum (List.filter (fun t -> not (List.exists (same t) common)) (terms l))
       in
       let addr = O.(sum common + pick (List.map rest lanes) bits) in
+      let addr = if order = [] then addr else after addr order in
       let n = int (List.length lanes) in
       let window = Ops.v Op.Shrink ~src:[ nth ix 0; addr; n ] in
       Some (replace x ~src:[ window ])

@@ -276,6 +276,38 @@ def copy_of_overwritten():
     return lo + (x * 3).contiguous()[0:2].to("CPU:1"), x
 
 
+def after_older_write():
+    """A state after a write, then after a kernel the state under it already
+    follows (runtime/test_after.py, test_older_dependency_preserves_selected_state):
+    its reader reads the write, 2."""
+    x = empty(1).uop
+    first = x.store(1)
+    a = x.after(first)
+    second = a.store((Tensor(a) + 1).contiguous().uop)
+    return Tensor(a.after(second).after(first)) + 0
+
+
+def readers_after_older_write():
+    """Two readers of a written state, one through an after of a kernel that
+    state already follows (test_shared_readers_after_older_dependency): both
+    read 2. The second reads it twice: tolk runs two calls of one element
+    each as one call, which tinygrad does not."""
+    x = empty(1).uop
+    first = x.store(1)
+    a = x.after(first)
+    y = a.after(a.store(2))
+    return Tensor(y) + 0, Tensor(y.after(first)).expand(2) + 0
+
+
+def write_over_written():
+    """A write named after a buffer's first state whose kernel is given the
+    state after the buffer's first write, read beside that state
+    (test_sibling_afters_rejected, which tinygrad raises on): 2 and 1."""
+    x = empty(1).uop
+    a = x.after(x.store(1))
+    return Tensor(x.after(a.store(2))) + 0, Tensor(a) + 0
+
+
 def call_given_one_state_twice():
     # a precompiled call storing the reverse of its parameter 1 into its parameter 0, given one buffer at both
     a = empty(4).contiguous()
@@ -382,6 +414,9 @@ PROGRAMS = {
     "read_join_of_overwritten": read_join_of_overwritten,
     "stage_of_overwritten": stage_of_overwritten,
     "call_given_one_state_twice": call_given_one_state_twice,
+    "after_older_write": after_older_write,
+    "readers_after_older_write": readers_after_older_write,
+    "write_over_written": write_over_written,
     "swap_through_values": swap_through_values,
     "read_beside_overwrite": read_beside_overwrite,
     "copy_of_overwritten": copy_of_overwritten,

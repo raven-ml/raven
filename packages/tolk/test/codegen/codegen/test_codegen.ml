@@ -7400,10 +7400,42 @@ let register_kernels =
     ("R[0] = A[8i] then a sum, i upcast", then_reduce, iota 32, upcast 0 2);
   ]
 
+(* [T[t] = t] over local threads [t < 8], ended, then [C[t] = T[7 - t]]
+   from the threads' stores: the second end reads what the first stored. With
+   [split], [t] is [2 t0 + t1] over [t0 < 4] and [t1 < 2], and [C[t] =
+   T[2 t0 + 1 - t1]]. *)
+let dependent_local_ends ~split () =
+  let c = int_param ~name:"C" 0 8 in
+  let tmp = Shape.placeholder ~slot:10 ~addrspace:Local [ 8 ] Int32 in
+  let ranges, t, back =
+    if not split then
+      let t = Ops.range ~axis_type:Local (Int 8) [ 0 ] in
+      ([ t ], t, Ops.O.(Ops.int 7 - t))
+    else
+      let t0 = Ops.range ~axis_type:Local (Int 4) [ 0 ]
+      and t1 = Ops.range ~axis_type:Local (Int 2) [ 1 ] in
+      ( [ t0; t1 ],
+        Ops.O.((t0 * Ops.int 2) + t1),
+        Ops.O.((t0 * Ops.int 2) + Ops.int 1 - t1) )
+  in
+  let st = Ops.end_ (Ops.store (at tmp t) (Ops.cast t Int32)) ranges in
+  let read = at (Ops.after tmp [ st ]) back in
+  effect_kernel [ Ops.end_ (Ops.store (at c t) read) ranges ]
+
 let lanes_and_threads =
   let name (n, _, _, _) = n in
   group "lanes and threads"
     [
+      cases "an end reading the stores of an end of its threads runs after it \
+             on CUDA"
+        ~id:fst
+        [
+          ("8 threads", (false, List.init 8 (fun i -> 7 - i)));
+          ("4 by 2 threads", (true, List.init 8 (fun i -> i lxor 1)));
+        ]
+        (fun (_, (split, expected)) ->
+          equal (array Dtypes.value) (int_values expected)
+            (on_cuda_out (dependent_local_ends ~split) []));
       cases "a register kernel under a split computes what it does serially"
         ~id:name register_kernels (fun (_, k, inputs, opt) ->
           let serial = effects_of (k []) inputs [ 0 ] in
@@ -7667,9 +7699,201 @@ let reversed_by_code () =
   in
   effect_kernel [ Ops.store x (Ops.call shuffle [ lanes ]) ]
 
+(* [x = 1] after [A[0] += 1] and [y = 2] after [A[1] = 8], then [B[0] =
+   (x * x * y as a bool ? x : y) % 1]: the value folds to 0, and each store
+   runs once. *)
+let fold_of_ordered () =
+  let a = int_param ~name:"A" 0 2 and b = int_param ~name:"B" 1 1 in
+  let incr = Ops.store (first a) Ops.O.(Ops.load (first a) [] + Ops.int 1) in
+  let x = Ops.after (i32 1) [ incr ]
+  and y = Ops.after (i32 2) [ Ops.store (at a (Ops.int 1)) (i32 8) ] in
+  let v = Ops.where (Ops.cast Ops.O.(x * x * y) Bool) x y in
+  effect_kernel [ Ops.store (first b) Ops.O.(v % Ops.int 1) ]
+
+(* [B[0] = (A[0] + 1 after A[1] = 7) * 0]: the product folds to 0, and the
+   store runs. *)
+let fold_of_unloaded () =
+  let a = int_param ~name:"A" 0 2 and b = int_param ~name:"B" 1 1 in
+  let st = Ops.store (at a (Ops.int 1)) (i32 7) in
+  let v = Ops.after Ops.O.(first a + Ops.int 1) [ st ] in
+  effect_kernel [ Ops.store (first b) Ops.O.(v * Ops.int 0) ]
+
+(* [B[0] = A[0] * 2], [A[0]] read after [A[0] = 7], simplified as it is
+   built. *)
+let simplified_read () =
+  let a = int_param ~name:"A" 0 1 and b = int_param ~name:"B" 1 1 in
+  let read = Ops.after (first a) [ Ops.store (first a) (i32 7) ] in
+  effect_kernel [ Ops.store (first b) (Shape.simplify Ops.O.(read * Ops.int 2)) ]
+
+(* [B[i] = A[0 valid where g] + 1] over [i < 2], [g] a false after [A[0] =
+   7]: the load reads 0 where the gate fails, and the store runs. *)
+let gate_after_store () =
+  let a = int_param ~name:"A" 0 1 and b = int_param ~name:"B" 1 2 in
+  let i = effect_loop 2 0 in
+  let g = Ops.after (Ops.bool false) [ Ops.store (first a) (i32 7) ] in
+  let v = Ops.O.(at a (Shape.valid (Ops.int 0) g) + Ops.int 1) in
+  effect_kernel [ Ops.end_ (Ops.store (at b i) v) [ i ] ]
+
+(* [B[0] = [2][i]], [i] a 0 after [A[0] += 1]: the lane is read after the
+   store. *)
+let stack_at_ordered () =
+  let a = int_param ~name:"A" 0 1 and b = int_param ~name:"B" 1 1 in
+  let incr = Ops.store (first a) Ops.O.(Ops.load (first a) [] + Ops.int 1) in
+  let i = Ops.after (i32 0) [ incr ] in
+  let lanes = Ops.v Op.Stack ~src:[ i32 2 ] in
+  effect_kernel [ Ops.store (first b) (Ops.index lanes [ i ]) ]
+
+(* The table [[1; 2]; [3; 4]]. *)
+let table22 () =
+  let row l = Shape.stack (List.map i32 l) in
+  Shape.stack [ row [ 1; 2 ]; row [ 3; 4 ] ]
+
+(* [A[2i + j] = T[i][j]] over [i, j < 2]. *)
+let table_two_axes () =
+  let a = int_param ~name:"A" 0 4 in
+  let i = effect_loop 2 0 and j = effect_loop 2 1 in
+  let st = Ops.store (at a Ops.O.((i * Ops.int 2) + j)) (Ops.index (table22 ()) [ i; j ]) in
+  effect_kernel [ Ops.end_ st [ j; i ] ]
+
+(* [B[0] = T[A[1]][j]], [j] a 1 after [A[0] += 1]. *)
+let table_ordered_axis () =
+  let a = int_param ~name:"A" 0 2 and b = int_param ~name:"B" 1 1 in
+  let incr = Ops.store (first a) Ops.O.(Ops.load (first a) [] + Ops.int 1) in
+  let j = Ops.after (i32 1) [ incr ] in
+  let row = Ops.load (at a (Ops.int 1)) [] in
+  effect_kernel [ Ops.store (first b) (Ops.index (table22 ()) [ row; j ]) ]
+
+(* [B[0] = T[A[0]][A[1]]], one index after the other. *)
+let table_row_then_lane () =
+  let a = int_param ~name:"A" 0 2 and b = int_param ~name:"B" 1 1 in
+  let load k = Ops.load (at a (Ops.int k)) [] in
+  let row = Ops.index (table22 ()) [ load 0 ] in
+  effect_kernel [ Ops.store (first b) (Ops.index row [ load 1 ]) ]
+
+(* Lane [j] of [n] is [A[j]] read after [A[j] = 7 + 2j]. *)
+let stored_lanes a n =
+  Shape.stack
+    (List.init n (fun j ->
+         let st = Ops.store (at a (Ops.int j)) (Ops.int (7 + (2 * j))) in
+         Ops.load (at (Ops.after a [ st ]) (Ops.int j)) []))
+
+(* [A[2] = L[0]], [L] two stored lanes: both stores run. *)
+let lane_of_stored () =
+  let a = int_param ~name:"A" 0 3 in
+  let l = stored_lanes a 2 in
+  effect_kernel [ Ops.store (at a (Ops.int 2)) (Ops.index l [ i32 0 ]) ]
+
+(* [A[4 + i] = L[i]] over [i < 2], [L] four stored lanes: every store runs. *)
+let lanes_of_stored () =
+  let a = int_param ~name:"A" 0 6 in
+  let i = effect_loop 2 0 in
+  let l = stored_lanes a 4 in
+  let st = Ops.store (at a Ops.O.(Ops.int 4 + i)) (Ops.index l [ i ]) in
+  effect_kernel [ Ops.end_ st [ i ] ]
+
+(* [A[r] = B[r + o] + 1] over an upcast [r < 4], [o] a 0 after [C[0] = 5]:
+   each lane reads at its own address, after the store. *)
+let upcast_offset_after_store () =
+  let a = int_param ~name:"A" 0 4
+  and b = int_param ~name:"B" 1 4
+  and c = int_param ~name:"C" 2 1 in
+  let r = Ops.range ~axis_type:Upcast (Int 4) [ 0 ] in
+  let o = Ops.after (Ops.int 0) [ Ops.store (first c) (i32 5) ] in
+  let v = Ops.O.(at b (r + o) + Ops.int 1) in
+  effect_kernel [ Ops.end_ (Ops.store (at a r) v) [ r ] ]
+
+(* [B[0] = (int32 bits of A)[1]], [A] four int16 loaded whole: lane 1 holds
+   [A[2]] in its low half and [A[3]] in its high half. *)
+let bitcast_widened () =
+  let a = Shape.param ~shape:[ Int 4 ] ~name:"A" 0 Int16
+  and b = int_param ~name:"B" 1 1 in
+  let v = Ops.bitcast (Ops.load (Ops.index a []) []) Int32 in
+  effect_kernel [ Ops.store (first b) (Ops.index v [ Ops.int 1 ]) ]
+
+(* [B[0] = (uint16 bits of A + 1)[3]], [A] two uint32: lane 3 is the high
+   half of [A[1] + 1]. *)
+let bitcast_narrowed () =
+  let a = Shape.param ~shape:[ Int 2 ] ~name:"A" 0 Uint32
+  and b = Shape.param ~shape:[ Int 1 ] ~name:"B" 1 Uint16 in
+  let v = Ops.bitcast Ops.O.(Ops.index a [] + Ops.int 1) Uint16 in
+  effect_kernel [ Ops.store (first b) (Ops.index v [ Ops.int 3 ]) ]
+
+(* [B[0] = max over r < 3 of ([2.0] reciprocal after r)[0 after r]]. *)
+let shaped_after_range () =
+  let b = Shape.param ~shape:[ Int 1 ] ~name:"B" 0 Float32 in
+  let r = effect_loop 3 0 in
+  let lanes = Ops.v Op.Stack ~src:[ Ops.float ~dtype:Float32 2. ] in
+  let value = Ops.after (Ops.alu lanes Op.Recip []) [ r ] in
+  let read = Ops.index value [ Ops.after (i32 0) [ r ] ] in
+  effect_kernel [ Ops.store (first b) (Ops.reduce read Op.Max [ r ]) ]
+
+(* [s = sum over i < 3 of A * (i + 1)], each term after [C[0] += 1], and
+   [B[0] = s[0] + s[1]]: the store runs once a trip. *)
+let shaped_after_counted () =
+  let a = int_param ~name:"A" 0 2
+  and b = int_param ~name:"B" 1 1
+  and c = int_param ~name:"C" 2 1 in
+  let i = effect_loop 3 0 in
+  let incr =
+    Ops.store (first c)
+      Ops.O.(Ops.load (first (Ops.after c [ i ])) [] + Ops.int 1)
+  in
+  let term = Ops.O.(Ops.load (Ops.index a []) [] * (i + Ops.int 1)) in
+  let s = Ops.reduce (Ops.after term [ incr ]) Op.Add [ i ] in
+  let lane k = Ops.index s [ Ops.int k ] in
+  effect_kernel [ Ops.store (first b) Ops.O.(lane 0 + lane 1) ]
+
 let hand_written =
   group "hand-written kernels on the host"
     [
+      test "a bitcast of a loaded value to a wider type reads its lanes' bits"
+        (writes bitcast_widened
+           [ (0, int_values [ 1; 2; -3; 4 ]) ]
+           [ [ 1; 2; -3; 4 ]; [ (-3 land 0xFFFF) + (4 lsl 16) ] ]);
+      test "a bitcast of a value to a narrower type reads its lanes' bits"
+        (writes bitcast_narrowed
+           [ (0, int_values [ 1; 5 lsl 16 ]) ]
+           [ [ 1; 5 lsl 16 ]; [ 5 ] ]);
+      test "a value with a shape ordered after a range is read at its lane"
+        (fun () ->
+          equal
+            (list (array Dtypes.value))
+            [ [| `Float 0.5 |] ]
+            (effects_of shaped_after_range [] [ 0 ]));
+      test "a sum of a value with a shape after a store stores once a trip"
+        (writes shaped_after_counted
+           [ (0, int_values [ 1; 10 ]) ]
+           [ [ 1; 10 ]; [ 66 ]; [ 3 ] ]);
+      test "upcast lanes whose offset waits on a store read each lane after it"
+        (writes upcast_offset_after_store
+           [ (1, int_values [ 1; 2; 3; 4 ]) ]
+           [ [ 2; 3; 4; 5 ]; [ 1; 2; 3; 4 ]; [ 5 ] ]);
+      test "folds keep each operand's store, once"
+        (writes fold_of_ordered [ (1, int_values [ 1 ]) ] [ [ 1; 8 ]; [ 0 ] ]);
+      test "a fold keeps the store a value is ordered after"
+        (writes fold_of_unloaded
+           [ (0, int_values [ 3; 0 ]); (1, int_values [ 1 ]) ]
+           [ [ 3; 7 ]; [ 0 ] ]);
+      test "a simplified read after a store reads the store"
+        (writes simplified_read [ (0, int_values [ 3 ]) ] [ [ 7 ]; [ 14 ] ]);
+      test "a gate ordered after a store keeps it"
+        (writes gate_after_store [ (0, int_values [ 3 ]) ] [ [ 7 ]; [ 1; 1 ] ]);
+      test "a stack's lane read at an index after a store reads after it"
+        (writes stack_at_ordered [ (1, int_values [ 9 ]) ] [ [ 1 ]; [ 2 ] ]);
+      test "a table read at two ranges reads each element"
+        (writes table_two_axes [] [ [ 1; 2; 3; 4 ] ]);
+      test "a table's trailing index after a store keeps the store"
+        (writes table_ordered_axis
+           [ (0, int_values [ 0; 1 ]) ]
+           [ [ 1; 1 ]; [ 4 ] ]);
+      test "a table read at a row, then a lane, reads the element"
+        (writes table_row_then_lane
+           [ (0, int_values [ 1; 0 ]) ]
+           [ [ 1; 0 ]; [ 3 ] ]);
+      test "a lane of stored lanes keeps every lane's store"
+        (writes lane_of_stored [] [ [ 7; 9; 7 ] ]);
+      test "lanes read at a range keep every lane's store"
+        (writes lanes_of_stored [] [ [ 7; 9; 11; 13; 7; 9 ] ]);
       test "code whose value is a vector stores each of its lanes"
         (writes reversed_by_code [ (0, int_values [ 0; 1; 2; 3 ]) ]
            [ [ 3; 2; 1; 0 ] ]);

@@ -161,7 +161,8 @@ let mops index =
         (fun m ->
           let idx = valid (m "idx") (m "cond") in
           Some (store (Ops.index (m "buf") [ idx ]) (m "val")));
-      (* Movements and indices move after the effects they are ordered after. *)
+      (* Movements and indices of storage move after the effects they are
+         ordered after. *)
       rule
         (Upat.after ~name:"a" ~allow_any_len:true
            (Upat.v
@@ -170,8 +171,19 @@ let mops index =
            [])
         (fun m ->
           let r = m "r" and a = m "a" in
-          let a = replace a ~src:(nth r 0 :: List.tl (src a)) in
-          Some (v (op r) ~src:(a :: List.tl (src r)) ~arg:(arg r)));
+          if addrspace r = Some Dtype.Alu then None
+          else
+            let a = replace a ~src:(nth r 0 :: List.tl (src a)) in
+            Some (v (op r) ~src:(a :: List.tl (src r)) ~arg:(arg r)));
+      (* An index of a value keeps the value's after outside it. *)
+      rule
+        (Upat.op Op.Index ~allow_any_len:true ~name:"x"
+           ~src:[ Upat.op Op.After ~allow_any_len:true ~name:"a" ])
+        (fun m ->
+          let a = m "a" and x = m "x" in
+          if addrspace a <> Some Dtype.Alu then None
+          else
+            Some (after (Ops.index (nth a 0) (List.tl (src x))) (List.tl (src a))));
       rule (Upat.end_ ~name:"a" ~allow_any_len:true movement []) (fun m ->
           let a = m "a" in
           Some (replace a ~src:(nth (m "r") 0 :: List.tl (src a))));

@@ -1,4 +1,4 @@
-# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
+# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
 function	dtype	x	result
 exp2	half	-0x1.66c0000000000p-1	0x1.3b00000000000p-1
 exp2	half	0x1.fdc0000000000p+2	0x1.f3c0000000000p+7

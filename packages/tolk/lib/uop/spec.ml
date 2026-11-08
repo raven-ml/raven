@@ -268,19 +268,16 @@ let shared : t =
                            ]))
                  ();
              ]);
-      (* An after of a scalar computation orders a range's computed bound after
-         effects, and a staged operand's read after the next stage's copies
-         through its slot, which a loop of two trips makes its range. *)
+      (* An after of a scalar or a computed value orders it after effects: a
+         range's computed bound, and a staged operand's read after the next
+         stage's copies through its slot, which a loop of two trips makes its
+         range. *)
       check
-        (pat [ Op.After ] ~allow_any_len:true
-           ~src:
-             [
-               Upat.v
-                 ~op:(Op.Set.union Op.Set.alu (Op.Set.of_list [ Op.Range ]))
-                 ~name:"x" ();
-             ])
+        (pat [ Op.After ] ~allow_any_len:true ~src:[ Upat.var "x" ])
         "x"
-        (fun x -> shape_opt x = Some []);
+        (fun x ->
+          (shape_opt x = Some [] || addrspace x = Some Dtype.Alu)
+          && not (Dtype.equal (dtype x) Dtype.Void));
       check (pat [ Op.Custom_function ] ~allow_any_len:true ~name:"x") "x"
         (fun x -> match arg x with Custom_function _ -> true | _ -> false);
       check
@@ -505,8 +502,9 @@ let program : t =
            (fun s -> match arg s with String _ -> true | _ -> false);
          (* The linearizer orders a loop bounded by a scalar load after the
             range or loop end before it by an after of the load. It orders no
-            load: one that must read after a store reads through an after of
-            its buffer. *)
+            load after an effect: one that must read after a store reads
+            through an after of its buffer. A load after loads, as a lane
+            selected from loaded lanes is, needs no order. *)
          check
            (pat [ Op.After ] ~allow_any_len:true
               ~src:[ Upat.v ~op:(ops [ Op.Load ]) () ]
@@ -515,7 +513,8 @@ let program : t =
            (fun a ->
              shape_opt (nth a 0) = Some []
              && List.for_all
-                  (fun d -> List.mem (op d) [ Op.Range; Op.End; Op.Backedge ])
+                  (fun d ->
+                    List.mem (op d) [ Op.Range; Op.End; Op.Backedge; Op.Load ])
                   (List.tl (src a)));
        ]))
     shared

@@ -378,66 +378,6 @@ let recorded =
              Indexing.run_rangeify (program name)))
        programs)
 
-let chomp s =
-  if String.ends_with ~suffix:"\n" s then String.sub s 0 (String.length s - 1)
-  else s
-
-(* [plain line] is [line] without its colours, and [yellow line] the line of a
-   stored node with each of its axes in yellow. *)
-let plain line =
-  let b = Buffer.create (String.length line) in
-  let rec go k =
-    if k < String.length line then
-      if line.[k] = '\027' then go (String.index_from line k 'm' + 1)
-      else (
-        Buffer.add_char b line.[k];
-        go (k + 1))
-  in
-  go 0;
-  Buffer.contents b
-
-let yellow line =
-  if not (String.starts_with ~prefix:"***" line) then line
-  else
-    match String.split_on_char '[' line with
-    | [] -> line
-    | head :: axes ->
-        let axis part =
-          match String.index_opt part ']' with
-          | Some j ->
-              Helpers.colored Yellow (String.sub part 0 j)
-              ^ String.sub part j (String.length part - j)
-          | None -> part
-        in
-        String.concat "[" (head :: List.map axis axes)
-
-let printout name =
-  Golden.text (name ^ "_debug.golden") (fun () ->
-      Setting.context
-        [ Setting.B (Setting.no_color, true) ]
-        (fun () -> ignore (Indexing.run_rangeify ~debug:true (program name)));
-      chomp (output ()))
-
-let debug =
-  group "run_rangeify › debug"
-    [
-      printout "pad_reduce";
-      printout "two_consumers";
-      printout "shared_view";
-      printout "softmax";
-      test "in colour, the axes a node is stored over are yellow" (fun () ->
-          Setting.context
-            [ Setting.B (Setting.no_color, false) ]
-            (fun () ->
-              ignore
-                (Indexing.run_rangeify ~debug:true (program "two_consumers")));
-          let lines = String.split_on_char '\n' (chomp (output ())) in
-          equal (list text) (List.map (fun l -> yellow (plain l)) lines) lines);
-      test "without debug, nothing is printed" (fun () ->
-          ignore (Indexing.run_rangeify (program "softmax"));
-          equal string "" (output ()));
-    ]
-
 (* What programs write
 
    The law that ranges keep what a program writes: where the rangeified graph is
@@ -802,12 +742,6 @@ let rewrites =
                (List.filter
                   (fun n -> List.mem (Ops.op n) movements)
                   (Ops.toposort ~calls:Enter u))));
-      test "calls and afters get no ranges" (fun () ->
-          ignore (Indexing.run_rangeify ~debug:true (program "custom_kernel"));
-          let printed = output () in
-          List.iter
-            (fun op -> not_contains ~sub:op printed)
-            [ "Ops.CALL"; "Ops.AFTER" ]);
       test "a pad that gets no ranges stays a pad" (fun () ->
           let u = Ops.sink [ Shape.pad (p 1 [ 4 ]) [ Some (Int 1, Int 2) ] ] in
           equal int 1 (count Pad (Indexing.run_rangeify u)));
@@ -836,7 +770,6 @@ let () =
          movements;
          movement_laws;
          recorded;
-         debug;
          writes;
          new_ranges;
          below_broadcasts;

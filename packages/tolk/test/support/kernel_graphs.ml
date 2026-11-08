@@ -19,8 +19,14 @@ let untouched dtype : Dtype.value =
   else if Dtype.equal dtype Bool then `Bool false
   else Dtype.min dtype
 
-(* A state of storage: its elements, and the indices written to reach it. *)
-type state = { values : Dtype.value array; written : int list }
+(* A state of storage: its elements, the indices written to reach it, and the
+   kernels that wrote them, each once: a state after a kernel the state under
+   it already follows is that state. *)
+type state = {
+  values : Dtype.value array;
+  written : int list;
+  applied : Ops.t list;
+}
 
 let is_kernel_call u = Ops.op u = Call && Ops.op (Ops.nth u 0) = Sink
 
@@ -61,7 +67,7 @@ let sorted_writes written =
   |> List.sort (fun (s0, i0, _) (s1, i1, _) -> compare (s0, i0) (s1, i1))
 
 let writes ?(vars = []) ?(params = []) ?(buffers = []) sink =
-  let initial st = { values = initial buffers st; written = [] } in
+  let initial st = { values = initial buffers st; written = []; applied = [] } in
   let states = Ops.Tbl.create 16 and results = Ops.Tbl.create 16 in
   let rec state u =
     match Ops.Tbl.find_opt states u with
@@ -84,7 +90,7 @@ let writes ?(vars = []) ?(params = []) ?(buffers = []) sink =
         s
   (* [apply st s dep] is the state [dep] leaves storage [st] in, from [s]. *)
   and apply st s dep =
-    if not (is_kernel_call dep) then s
+    if not (is_kernel_call dep) || List.memq dep s.applied then s
     else
       let args = List.tl (Ops.src dep) in
       let values = Array.copy s.values and written = ref s.written in
@@ -96,7 +102,7 @@ let writes ?(vars = []) ?(params = []) ?(buffers = []) sink =
               written := i :: !written
           | _ -> ())
         (run dep);
-      { values; written = !written }
+      { values; written = !written; applied = dep :: s.applied }
   and run call =
     match Ops.Tbl.find_opt results call with
     | Some w -> w

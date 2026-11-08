@@ -425,7 +425,6 @@ let settings =
     number Setting.parallel;
     number Setting.spec;
     switch Setting.check_oob;
-    switch Setting.debug_rangeify;
     switch Setting.tuple_order;
     switch Setting.ccache;
     switch Setting.allow_tf32;

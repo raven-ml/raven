@@ -1,4 +1,4 @@
-# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
+# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
 0 Ops.STACK dtypes.void []
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakfloat [] 0.6366197723675814

@@ -25,9 +25,19 @@ val pm_mops : (unit, Ops.t) Ops.Pattern_matcher.t
       makes, stores through the index made valid ({!Shape.valid}) only where
       the selection's conditions hold: a selection of such a selection and of
       [`Invalid] gates on both conditions;
-    - a movement or an index ordered after effects ({!Op.After}) is the movement
-      or index of its source ordered after them;
+    - a movement or an index of storage ordered after effects ({!Op.After})
+      is the movement or index of its source ordered after them, and an index
+      of a value ordered after effects is the index of the value ordered after
+      them;
     - an {!Op.End} of a movement is the end of the movement's source. *)
+
+val expand_bitcast : Ops.t -> Ops.t option
+(** [expand_bitcast bc] is the {!Op.Bitcast} [bc] of a value to a type of
+    another size as shifts and casts of unsigned integers, lane by lane along
+    its last axis: to a wider type, each group of narrow lanes is shifted into
+    place and summed; to a narrower one, each wide lane is shifted and cast
+    into each of its narrow lanes, the least significant first. [None] where
+    the sizes are equal or the value is on a disk. *)
 
 val prepare_rangeify : Ops.t -> Ops.t
 (** [prepare_rangeify sink] is the tensor graph of the function [sink] in the

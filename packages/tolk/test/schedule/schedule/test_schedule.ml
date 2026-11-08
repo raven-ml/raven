@@ -32,6 +32,7 @@ let programs =
   [
     "add";
     "add_row_from_self";
+    "after_older_write";
     "after_sum";
     "assign";
     "assign_bitcast";
@@ -71,6 +72,7 @@ let programs =
     "read_join_of_overwritten";
     "read_overwritten_through";
     "read_then_overwrite";
+    "readers_after_older_write";
     "reduce_axis_and_range";
     "reduce_multiple_paths";
     "reduce_singleton_axis_and_range";
@@ -95,12 +97,14 @@ let programs =
     "variable_shrink";
     "variable_two";
     "variable_unused";
+    "write_over_written";
   ]
 
 let kernel_graphs =
   [
     "add_kernels";
     "add_row_from_self_kernels";
+    "after_older_write_kernels";
     "after_sum_kernels";
     "assign_bitcast_kernels";
     "assign_double_diamond_kernels";
@@ -145,6 +149,7 @@ let kernel_graphs =
     "read_join_of_overwritten_kernels";
     "read_overwritten_through_kernels";
     "read_then_overwrite_kernels";
+    "readers_after_older_write_kernels";
     "reduce_axis_and_range_kernels";
     "reduce_multiple_paths_kernels";
     "reduce_singleton_axis_and_range_kernels";
@@ -169,6 +174,7 @@ let kernel_graphs =
     "variable_shrink_kernels";
     "variable_two_kernels";
     "variable_unused_kernels";
+    "write_over_written_kernels";
   ]
 
 (* The kernel graph [<p>_kernels<n>] of the program [<p>] is recorded with the

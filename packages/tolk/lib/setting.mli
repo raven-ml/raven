@@ -242,10 +242,6 @@ val check_oob : bool t
 (** [check_oob] makes specification checks prove that memory accesses stay
     within their buffers, from [CHECK_OOB]. Defaults to [false]. *)
 
-val debug_rangeify : bool t
-(** [debug_rangeify] prints the steps of range assignment, from
-    [DEBUG_RANGEIFY]. Defaults to [false]. *)
-
 val tuple_order : bool t
 (** [tuple_order] makes linearization order nodes of equal priority by their
     structure, from [TUPLE_ORDER]. Otherwise they keep their topological order.

@@ -1,4 +1,4 @@
-# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
+# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
 case	src	n	split	ops	ops_ignoring_indexing	lds	mem
 shrunk_add	0	1	4	9	4	32	32
 shrunk_add	0	10	40	81	40	320	320

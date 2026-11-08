@@ -7,17 +7,13 @@ schedules several graphs, such as a function compiled on its own, records the la
 `<program>_<n>_kernels.golden`.
 
 `kernel_counts.golden` is the number of kernels of each recorded graph.
-`<program>_debug.golden` is what `get_kernel_graph` prints of the first graph
-with DEBUG_RANGEIFY.
 """
 
-import contextlib
-import io
 import os
 
-from golden import graph, table, text
+from golden import graph, table
 from tinygrad import Tensor, Variable, dtypes, function
-from tinygrad.helpers import DEBUG_RANGEIFY, DEV, MAX_KERNEL_BUFFERS, SPLIT_REDUCEOP
+from tinygrad.helpers import DEV, MAX_KERNEL_BUFFERS, SPLIT_REDUCEOP
 from tinygrad.dtype import Invalid
 from tinygrad.uop.ops import KernelInfo, Ops, UOp
 import tinygrad.schedule
@@ -472,10 +468,6 @@ PROGRAMS = {
     "copy": lambda: empty(4, 4).to("CPU:1") * 2,
 }
 
-# Programs whose DEBUG_RANGEIFY printout is recorded.
-DEBUG = ["softmax"]
-
-
 def forked(fn):
     """`fn()`, computed in a child process, so that the generator's state stays
     the one each golden starts from."""
@@ -512,22 +504,6 @@ COUNTS = [row for name, program in PROGRAMS.items() for row in declare(name, pro
 @table
 def kernel_counts():
     return ["program", "kernels"], COUNTS
-
-
-def declare_debug(name, program):
-    def printed():
-        tsink = scheduled(program)[0][0]
-        out = io.StringIO()
-        DEBUG_RANGEIFY.value = 1
-        with contextlib.redirect_stdout(out):
-            tinygrad.schedule.rangeify.get_kernel_graph(tsink)
-        return out.getvalue().rstrip("\n")
-    printed.__name__ = f"{name}_debug"
-    text(printed)
-
-
-for name in DEBUG:
-    declare_debug(name, PROGRAMS[name])
 
 
 # Gathers: tensor graphs built of UOps, since a Tensor program gathers with a

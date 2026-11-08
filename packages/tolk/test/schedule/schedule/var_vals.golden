@@ -1,4 +1,4 @@
-# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
+# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
 program	var_vals
 add	-
 sum	-
@@ -35,6 +35,9 @@ read_join_of_assigned	-
 read_join_of_overwritten	-
 stage_of_overwritten	-
 call_given_one_state_twice	-
+after_older_write	-
+readers_after_older_write	-
+write_over_written	-
 swap_through_values	-
 read_beside_overwrite	-
 copy_of_overwritten	-

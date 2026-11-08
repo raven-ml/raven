@@ -26,8 +26,7 @@ let pp_shape ppf = function
 (* Indexing context *)
 
 type ctx = {
-  realize_map : int list option Tbl.t;
-      (* The nodes stored whole: marked, then the axes given new ranges. *)
+  realize_map : unit Tbl.t;  (* The nodes stored whole. *)
   non_removable : unit Tbl.t;
   broadcast : unit Tbl.t;
       (* The values stored because a broadcast reads them. *)
@@ -67,7 +66,7 @@ let new_ranges ctx shape =
 let always_contiguous =
   Op.Set.union Op.Set.defines (ops Op.[ After; Const; Load; Call ])
 
-let realize ctx u = Tbl.replace ctx.realize_map u None
+let realize ctx u = Tbl.replace ctx.realize_map u ()
 let storage = Op.Set.union Op.Set.defines (ops [ Op.After ])
 
 (* A gather is an index by an integer value with axes: its source is read at
@@ -273,27 +272,25 @@ let bufferize_and_index ctx ~indexed s src_rngs =
   if Op.Set.mem (op s) read_as_storage then
     if indexed then index s src_rngs else s
   else if Tbl.mem ctx.shares s then end_shared ctx (Tbl.find ctx.shares s)
+  else if not (Tbl.mem ctx.realize_map s) then s
+  else if op s = Op.Store then begin
+    let closed = snd (Tbl.find ctx.range_map s) in
+    Tbl.remove ctx.realize_map s;
+    end_ s (List.filter (fun r -> op r = Op.Range) closed)
+  end
   else
-    match Tbl.find_opt ctx.realize_map s with
-    | None -> s
-    | Some None -> invalid_arg "the realize map holds no ranges"
-    | Some (Some _) when op s = Op.Store ->
-        let closed = snd (Tbl.find ctx.range_map s) in
-        Tbl.remove ctx.realize_map s;
-        end_ s (List.filter (fun r -> op r = Op.Range) closed)
-    | Some (Some _) ->
-        let closed = snd (Tbl.find ctx.range_map s) in
-        let keep =
-          if Op.Set.mem (op s) always_contiguous || Tbl.mem ctx.non_removable s
-          then Whole
-          else if Tbl.mem ctx.broadcast s then Broadcast
-          else Removable
-        in
-        let opts : bufferize_opts =
-          { device = device s; addrspace = Dtype.Global; keep }
-        in
-        let staged = bufferize ~opts s closed in
-        if indexed then index staged src_rngs else staged
+    let closed = snd (Tbl.find ctx.range_map s) in
+    let keep =
+      if Op.Set.mem (op s) always_contiguous || Tbl.mem ctx.non_removable s
+      then Whole
+      else if Tbl.mem ctx.broadcast s then Broadcast
+      else Removable
+    in
+    let opts : bufferize_opts =
+      { device = device s; addrspace = Dtype.Global; keep }
+    in
+    let staged = bufferize ~opts s closed in
+    if indexed then index staged src_rngs else staged
 
 let create_bufferize_and_index_srcs ctx x =
   let data_src_count = List.length (data_srcs x) in
@@ -371,6 +368,7 @@ let convert_reduce_to_reduce_with_ranges ctx x =
 (* A tree of selections on the bits of [r0], the most significant first. *)
 let rec stack_select r0 srcs =
   match srcs with
+  | [] -> invalid_arg "stack_select: no lanes"
   | [ x ] -> x
   | _ ->
       let n = List.length srcs in
@@ -578,42 +576,6 @@ let rec transpose = function
   | ls when List.exists List.is_empty ls -> []
   | ls -> List.map List.hd ls :: transpose (List.map List.tl ls)
 
-let render_ranges ~realized rngs_list =
-  List.mapi
-    (fun i rs ->
-      let rng =
-        if Helpers.all_same String.equal rs then List.hd rs
-        else String.concat " -> " rs
-      in
-      let rng =
-        match realized with
-        | Some axes when List.mem i axes -> Helpers.colored Yellow rng
-        | _ -> rng
-      in
-      "[" ^ rng ^ "]")
-    (transpose (List.map (List.map Render.render) rngs_list))
-  |> String.concat ""
-
-let print_ranges rctx x ~consumers ~ending rngs out_rngs =
-  let realized = Option.join (Tbl.find_opt rctx.realize_map x) in
-  let disp =
-    if op x = Op.Reshape || List.length rngs <> List.length out_rngs then
-      render_ranges ~realized [ rngs ]
-      ^ " -> "
-      ^ render_ranges ~realized [ out_rngs ]
-    else render_ranges ~realized [ rngs; out_rngs ]
-  in
-  let pp_shape ppf = function
-    | None -> Format.pp_print_string ppf "None"
-    | Some s -> pp_shape ppf s
-  in
-  Format.printf "%s %2d %-20s %-35s %2d %s@."
-    (if Tbl.mem rctx.realize_map x then "***" else "   ")
-    consumers
-    (Format.asprintf "%a" Op.pp (op x))
-    (Format.asprintf "%a" pp_shape (shape_opt x))
-    ending disp
-
 (* A node that consumers index differently gets new ranges on every axis;
    otherwise it takes theirs, valid where any of theirs is. *)
 let merge_consumer_rngs rctx x consumer_rngs =
@@ -628,7 +590,7 @@ let merge_consumer_rngs rctx x consumer_rngs =
           (After_sources Shape.symbolic))
       locals axes
   else begin
-    Tbl.replace rctx.realize_map x (Some (List.init (List.length axes) Fun.id));
+    Tbl.replace rctx.realize_map x ();
     new_ranges rctx (List.take (List.length axes) (shape x))
   end
 
@@ -920,12 +882,12 @@ let reduce_loops rctx x sizes outer =
 (* Kernels are internal, and an after carries no ranges, as a sink does not. *)
 let no_ranges = ops Op.[ Call; After ]
 
-let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
+let assign_ranges rctx ~consumer_map ~ending_ranges x =
   let consumers = List.rev (Tbl.find consumer_map x) in
   let ending =
     ref
-      (List.concat_map
-         (fun u -> Option.value (Tbl.find_opt ending_ranges u) ~default:[])
+      (List.exists
+         (fun u -> Option.value (Tbl.find_opt ending_ranges u) ~default:false)
          consumers)
   in
   (* The ranges the consumers iterate that this node is broadcast over. *)
@@ -938,9 +900,9 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
         | _ -> [])
       consumers
   in
-  let broadcast_ending_ranges = Nodes.to_list (ranges (Ops.sink ended)) in
+  let broadcast_ending_ranges = Nodes.cardinal (ranges (Ops.sink ended)) > 0 in
   (* The fusion decision: a reduction is stored before it is broadcast. *)
-  if op x = Op.Reduce then ending := !ending @ broadcast_ending_ranges;
+  if op x = Op.Reduce then ending := !ending || broadcast_ending_ranges;
   (* A gather's source sees all its ranges, and its index the leading ones,
      which the index shapes. *)
   let consumer_rngs =
@@ -961,8 +923,7 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
   in
   let out_rngs =
     if Tbl.mem rctx.realize_map x then begin
-      ending := [];
-      Tbl.replace rctx.realize_map x (Some (List.init (ndim x) Fun.id));
+      ending := false;
       Some (loops_of rctx x)
     end
     else
@@ -973,18 +934,15 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
           let rngs = merge_consumer_rngs rctx x consumer_rngs in
           (* Stored for consumers that read it at different indices, a value
              they broadcast is read where it is broadcast. *)
-          if Tbl.mem rctx.realize_map x && broadcast_ending_ranges <> [] then
+          if Tbl.mem rctx.realize_map x && broadcast_ending_ranges then
             Tbl.replace rctx.broadcast x ();
           Some rngs
   in
   Option.iter
     (fun out_rngs ->
       let out_rngs =
-        if
-          (not (List.is_empty !ending))
-          && computed x
-        then begin
-          ending := [];
+        if !ending && computed x then begin
+          ending := false;
           (* A value of no axes that computes a reduction is stored too, as one
              element: inlined where it is broadcast, each element of the
              consumer would compute the reduction whole. Without a reduction it
@@ -994,15 +952,14 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
             && not (op_in_backward_slice_with_self ~calls:Skip x [ Op.Reduce ])
           then out_rngs
           else begin
-            Tbl.replace rctx.realize_map x
-              (Some (List.init (List.length out_rngs) Fun.id));
+            Tbl.replace rctx.realize_map x ();
             Tbl.replace rctx.broadcast x ();
             new_ranges rctx (List.take (List.length out_rngs) (shape x))
           end
         end
         else out_rngs
       in
-      ending := !ending @ broadcast_ending_ranges;
+      ending := !ending || broadcast_ending_ranges;
       let rngs =
         if Op.Set.mem (op x) Op.Set.movement then
           apply_movement_op (shape (nth x 0)) (marg x) out_rngs
@@ -1024,7 +981,8 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
                   (function Int _ -> true | Sym s -> op s <> Op.Range)
                   (shape x) ->
              let injected = List.take (List.length added) out_rngs in
-             ending := !ending @ Nodes.to_list (ranges (Ops.sink injected))
+             ending :=
+               !ending || Nodes.cardinal (ranges (Ops.sink injected)) > 0
          | _ -> ());
       let rngs =
         match arg x with
@@ -1033,15 +991,11 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
             @ out_rngs
         | _ -> rngs
       in
-      if debug then
-        print_ranges rctx x ~consumers:(List.length consumers)
-          ~ending:(List.length !ending) rngs out_rngs;
       Tbl.replace rctx.range_map x (rngs, out_rngs))
     out_rngs;
   Tbl.replace ending_ranges x !ending
 
-let run_rangeify ?(debug = false) tsink =
-  if debug then print_endline "**************************";
+let run_rangeify tsink =
   let tsink_toposort = toposort ~calls:Skip ~gate:gate_kernel_sink tsink in
   let rctx =
     {
@@ -1076,7 +1030,7 @@ let run_rangeify ?(debug = false) tsink =
   List.iter
     (fun x ->
       if not (Op.Set.mem (op x) no_ranges) then
-        assign_ranges rctx ~debug ~consumer_map ~ending_ranges x)
+        assign_ranges rctx ~consumer_map ~ending_ranges x)
     (List.rev tsink_toposort);
   let tsink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:rctx tsink

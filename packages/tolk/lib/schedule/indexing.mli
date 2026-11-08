@@ -42,8 +42,15 @@ val apply_movement_op :
     element. A caller that reads through the index masks the padded values
     itself, as {!run_rangeify} turns each [Pad] into a selection. *)
 
-val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
-(** [run_rangeify ~debug sink] is the tensor graph [sink] with its elements
+val stack_select : Ops.t -> Ops.t list -> Ops.t
+(** [stack_select i lanes] is the lane of [lanes] at the index [i], a tree of
+    selections on the bits of [i], the most significant first: of two lanes,
+    [where (i mod 2 < 1) l0 l1]. An [i] outside the lanes selects one of them.
+
+    Raises [Invalid_argument] if [lanes] is empty. *)
+
+val run_rangeify : Ops.t -> Ops.t
+(** [run_rangeify sink] is the tensor graph [sink] with its elements
     indexed by ranges. Walking from [sink] to its leaves, each node gets the
     ranges that index its output:
 
@@ -93,11 +100,9 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
       those of one element left out, and its own;
     - a {!Op.Pad} becomes a selection of its source where its index is valid,
       and of [0] elsewhere;
-    - a {!Op.Stack} becomes a selection of its sources by its leading range: a
-      chain of comparisons with each index for at most [8] sources, and above
-      that a comparison with the middle index choosing between the selections of
-      each half, the whole guarded so that a negative index selects the last
-      source. Its depth is logarithmic in the number of sources;
+    - a {!Op.Stack} becomes a selection of its sources by its leading range:
+      {!stack_select}, a tree of selections on the bits of the range, whose
+      depth is logarithmic in the number of sources;
     - movements are removed;
     - a stage without a device gets the device of the nearest node above it
       that has one, where the kernel that reads it computes: read on several
@@ -105,8 +110,7 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
       only a store to a disk reads, gets [sink]'s.
 
     Calls and {!Op.After}s get no ranges, and the walk does not enter kernels
-    ({!Ops.gate_kernel_sink}). With [debug] (default [false]), each node's
-    ranges are printed on standard output as they are assigned.
+    ({!Ops.gate_kernel_sink}).
 
     Raises [Invalid_argument] if a reduction of leading axes gets no ranges, if
     a gather has more than one index, or if a call compiled on its own writes

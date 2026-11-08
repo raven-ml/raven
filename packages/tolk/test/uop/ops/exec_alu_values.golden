@@ -1,4 +1,4 @@
-# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
+# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
 op	dtype	operands	result
 Ops.ADD	dtypes.i8	[0, 0]	0
 Ops.ADD	dtypes.i8	[7, 3]	10

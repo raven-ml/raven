@@ -17,8 +17,7 @@ val get_kernel_graph : Ops.t -> Ops.t
     [sink] ({!Prepare.prepare_rangeify}). In turn:
 
     {ol
-     {- ranges index the graph ({!Indexing.run_rangeify}), which prints them
-        when the setting {!Setting.debug_rangeify} is on;
+     {- ranges index the graph ({!Indexing.run_rangeify});
      }
      {- the graph is simplified ({!Shape.val-symbolic},
         {!Simplify.pm_reduce_simplify}), and storage that need not exist is

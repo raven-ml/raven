@@ -1748,6 +1748,18 @@ let mop_cleanup =
             match List.drop 2 (src (m "idx")) with
             | [] -> Some x
             | rest -> Some (index x rest));
+        (* An index into a stack past its first axis indexes each lane, then
+           selects. *)
+        rule
+          (Upat.op Op.Index ~name:"idx" ~allow_any_len:true
+             ~src:[ Upat.op Op.Stack ~name:"a"; Upat.var "i" ])
+          (fun m ->
+            let a = m "a" in
+            match List.drop 2 (src (m "idx")) with
+            | [] -> None
+            | rest ->
+                let lane x = index x rest in
+                Some (index (replace a ~src:(List.map lane (src a))) [ m "i" ]));
         (* An index of an index is one index. *)
         rule
           (Upat.op Op.Index ~name:"idx2" ~allow_any_len:true
@@ -2151,6 +2163,22 @@ let fold_const_where gate c0 c1 w =
   let weak u = Dtype.mem (dtype u) Dtype.weaks in
   if is_const ret && weak ret && not (weak w) then ccast ret (dtype w) else ret
 
+(* A scalar computed from values ordered after effects is computed from the
+   values, after the effects: a fold of the computation, such as [x * 0] to
+   [0], would drop them. A selection of an invalid value stays. *)
+let lift_value_after x =
+  let afters = List.filter (fun s -> op s = Op.After) (src x) in
+  let value a =
+    Op.Set.mem (op (nth a 0)) Op.Set.alu || addrspace (nth a 0) = Some Dtype.Alu
+  in
+  if shape x <> [] || is_invalid (List.nth (src x) (List.length (src x) - 1))
+  then None
+  else if not (List.for_all value afters) then None
+  else
+    let unwrap s = if op s = Op.After then nth s 0 else s in
+    let deps = dedup_nodes (List.concat_map (fun a -> List.tl (src a)) afters) in
+    Some (after (replace x ~src:(List.map unwrap (src x))) deps)
+
 let boolean = [ Dtype.Bool ]
 let int_like = Dtype.Weak_int :: Dtype.ints
 let int_or_bool = Dtype.Bool :: int_like
@@ -2161,6 +2189,11 @@ let symbolic_simple =
       pm_data_invalid;
       pm
         (fun () -> [
+          rule
+            (Upat.v
+               ~op:(Op.Set.union Op.Set.alu (ops [ Op.Cast ]))
+               ~early_reject:[ Op.After ] ~name:"x" ())
+            (fun m -> lift_value_after (m "x"));
           (* Self folding *)
           (* a float x + 0 is x only for -0., since -0. + +0. is +0. *)
           rule

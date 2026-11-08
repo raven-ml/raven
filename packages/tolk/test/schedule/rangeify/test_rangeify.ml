@@ -422,26 +422,6 @@ let structure =
          ])
        programs)
 
-let chomp s =
-  if String.ends_with ~suffix:"\n" s then String.sub s 0 (String.length s - 1)
-  else s
-
-let debug =
-  group "get_kernel_graph › debug"
-    [
-      Golden.text "softmax_debug.golden" (fun () ->
-          Setting.context
-            [
-              Setting.B (Setting.debug_rangeify, true);
-              Setting.B (Setting.no_color, true);
-            ]
-            (fun () -> ignore (kernel_graph "softmax"));
-          chomp (output ()));
-      test "without debug_rangeify, nothing is printed" (fun () ->
-          ignore (kernel_graph "softmax");
-          equal string "" (output ()));
-    ]
-
 let spec =
   group "get_kernel_graph › spec"
     [
@@ -2164,7 +2144,6 @@ let () =
          values;
          structure;
          laws;
-         debug;
          spec;
          rules;
          shared;

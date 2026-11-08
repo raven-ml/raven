@@ -1,4 +1,4 @@
-# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
+# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
 action	opt
 0	Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))
 1	Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST))
