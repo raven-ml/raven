@@ -253,7 +253,5 @@ and rune), raven / llama.cpp b12048 Vulkan:
   caught, handled only at OCaml poll points) spun at 100% for 2 h while its
   parent waited on it (tolk's "hand-written kernels on the host", run
   without a fix, 2026-11-08)
-- thumper: nx.thumper's fudge section was recorded under
-  OCaml 5.5.1, so it compares nothing under 5.5.2: re-record it on a quiet
-  fudge. talon.thumper's Mac rows predate the Nx.Rng
+- thumper: talon.thumper's Mac rows predate the Nx.Rng
   fixture (76105a215): the maintainer re-records them
