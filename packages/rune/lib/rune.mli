@@ -1616,11 +1616,12 @@ val jit :
     [2u] of a non-zero multiple of [π/2].
 
     {b Reductions.} A float reduction, scan, contraction or scatter by [Add]
-    computes in its {e accumulator}, [float32] for a narrower float, the dtype
-    otherwise, or a contraction's [acc] ({!Nx.contract}), and [u] is the
-    accumulator's. It combines terms in an order the compiler chooses and rounds
-    once into its dtype, which adds its own error. Barring overflow and
-    underflow, a result of [n] terms is within this bound of the exact one:
+    computes in its {e accumulator}, the one its [Nx] function states:
+    [float32] for a narrower float and the dtype otherwise, as
+    {!Nx.contract}'s, and [u] is the accumulator's. It combines terms in an
+    order the compiler chooses and rounds once into its dtype, which adds its
+    own error. Barring overflow and underflow, a result of [n] terms is
+    within this bound of the exact one:
 
     {v
       function             bound

@@ -2059,13 +2059,11 @@ let logcumsumexp ?axis x =
 
 (* Contraction *)
 
-let contract ?sizes ?acc ?init ?sum dt p a b =
-  let acc = Option.map (fun dt -> D.Any dt) acc in
-  Contraction.contract ~by:"Nx.contract" ?sum ?sizes ?acc ?init dt p a b
+let contract ?sizes ?init ?sum dt p a b =
+  Contraction.contract ~by:"Nx.contract" ?sum ?sizes ?init dt p a b
 
-let einsum ?sizes ?acc ?sum p xs =
-  let acc = Option.map (fun dt -> D.Any dt) acc in
-  Contraction.einsum ~by:"Nx.einsum" ?sum ?sizes ?acc p xs
+let einsum ?sizes ?sum p xs =
+  Contraction.einsum ~by:"Nx.einsum" ?sum ?sizes p xs
 
 let matmul ?sum a b = Contraction.matmul ~by:"Nx.matmul" ?sum a b
 let matmul_by ~by a b = Contraction.matmul ~by a b
@@ -4604,15 +4602,6 @@ let one_hot ~num_classes x =
   elementwise ~by D.Uint8 [ Any x ]
     (indicator D.Uint8 E.(cast D.Int64 (operand 0 x) = coord r))
 
-(* The dtype a window's sum adds in: a float's compute dtype
-   ({!Nx_kernel.float_carrier}), the dtype itself otherwise. *)
-let summed (type v s) (dt : (v, s) D.t) =
-  match D.kind dt with
-  | D.Float ->
-      let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
-      D.Any w
-  | D.Complex | D.Signed | D.Unsigned | D.Boolean -> D.Any dt
-
 let no_sum (type v s) ~by (dt : (v, s) D.t) =
   if D.is D.Boolean dt then invalid_argf "%s: %s has no sum" by (D.name dt)
 
@@ -4749,7 +4738,7 @@ let combine_patches_by ~by ~output_size ~kernel_size ~stride ~dilation ~padding
     }
   in
   let shape = Iarray.of_array (Array.append lead output_size) in
-  let (D.Any w) = summed dt in
+  let (D.Any w) = Nx_kernel.carrier (D.Any dt) in
   let y = cast_by ~by w y in
   cast_by ~by dt (Eval.eval ~by (Value.Fold { shape; pad; x = y }))
 
@@ -4807,7 +4796,7 @@ let windows_of ~by ~stride ~lo ~hi ~interior ~dilation x w =
             dilation = dilation.(i);
           })
     in
-    let (D.Any acc) = summed dt in
+    let (D.Any acc) = Nx_kernel.carrier (D.Any dt) in
     if ic <> 1 then
       let grouped = Array.concat [ [| n |]; spatial; [| g; ic |] ] in
       let x' = Eval.reshape ~by grouped x in
@@ -5111,7 +5100,7 @@ let ranges_of ~by c ~lo ~hi x =
   | Add ->
       (* Narrow floats sum at float32; [+0] then makes a sum of [-0.] terms
          [+0.], as {!sum}'s is. *)
-      let (D.Any w) = summed dt in
+      let (D.Any w) = Nx_kernel.carrier (D.Any dt) in
       let zero = D.zero w in
       let s = ranges ~by Add ~l ~r (cast_by ~by w x) (empty w zero) in
       cast_by ~by dt (literal ~by ~swapped:false (Binary Add) w s zero)

@@ -650,7 +650,7 @@ let split_rows =
 
 let rows_by_columns = Nx.Pattern.v "m k, k n -> m n | k"
 let weight_by_vector = Nx.Pattern.v "n k, k -> n | k"
-let widened p (a, b) = Nx.Repr.array (Nx.contract ~acc:D.Int32 D.Int32 p a b)
+let widened p (a, b) = Nx.Repr.array (Nx.contract D.Int32 p a b)
 
 (* int8 operands into an int32 accumulator, as quantized weights are: squares,
    a decode step and a prefill of 128 rows against a weight stored [n × k],

@@ -274,7 +274,7 @@ let contract (type a v s w r d) (acc : (float, a) D.t) ~lead spec
         Hashtbl.add tbl (lead, spec) p;
         p
   in
-  Nx.contract ~acc acc pattern a b
+  Nx.contract acc pattern a b
 
 (* [x], [[lead…; hq; tq; d]], as [[lead…; hk; g; tq; d]]. *)
 let grouped e pc ~hk x =

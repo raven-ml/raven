@@ -1168,6 +1168,56 @@ let test_kindless () =
   equal ~msg:"Int" (option string) None (name Bigarray.Int);
   equal ~msg:"Nativeint" (option string) None (name Bigarray.Nativeint)
 
+(* Exact conversions *)
+
+(* Pairs and whether every value of the first is one of the second, from
+   the formats' definitions: a boolean is 0 or 1; an integer needs its range
+   and, in a float, its magnitude's bits in the significand; a float needs
+   precision, range, least magnitude, infinities and NaN. *)
+let exacts =
+  D.
+    [
+      (Any Bool, Any Float4_e2m1fn, true);
+      (Any Bit, Any Int4, true);
+      (Any Int8, Any Bool, false);
+      (Any Bit, Any Bool, true);
+      (Any Int8, Any Bfloat16, true);
+      (Any Uint8, Any Bfloat16, true);
+      (Any Uint8, Any Float8_e4m3fn, false);
+      (Any Int16, Any Float32, true);
+      (Any Int16, Any Float16, false);
+      (Any Int32, Any Float64, true);
+      (Any Int32, Any Float32, false);
+      (Any Int64, Any Float64, false);
+      (Any Int64, Any Complex128, false);
+      (Any Uint8, Any Int8, false);
+      (Any Uint8, Any Int16, true);
+      (Any Int8, Any Uint16, false);
+      (Any Uint32, Any Uint64, true);
+      (Any Int4, Any Float8_e5m2, true);
+      (Any Uint4, Any Float8_e5m2, false);
+      (Any Uint4, Any Float8_e4m3fn, true);
+      (Any Int4, Any Float4_e2m1fn, false);
+      (Any Float16, Any Float32, true);
+      (Any Bfloat16, Any Float32, true);
+      (Any Float16, Any Bfloat16, false);
+      (Any Bfloat16, Any Float16, false);
+      (Any Float8_e4m3fn, Any Float16, true);
+      (Any Float8_e5m2, Any Float16, true);
+      (Any Float8_e4m3fn, Any Float8_e5m2, false);
+      (Any Float8_e5m2, Any Float8_e4m3fn, false);
+      (Any Float4_e2m1fn, Any Float8_e4m3fn, true);
+      (Any Float32, Any Float8_e4m3fn, false);
+      (Any Float32, Any Complex64, true);
+      (Any Float64, Any Complex64, false);
+      (Any Complex64, Any Complex128, true);
+      (Any Complex64, Any Float64, false);
+      (Any Float64, Any Int64, false);
+    ]
+
+let exact_name (D.Any a, D.Any b, _) = strf "%s into %s" (D.name a) (D.name b)
+let test_exact (D.Any a, D.Any b, want) = equal bool want (D.exact a b)
+
 let tests =
   [
     group "bigarray kinds"
@@ -1184,6 +1234,13 @@ let tests =
           test_row;
         test "is k holds of the dtypes of kind k" test_is;
         cases "nx_dtype.h states each row" ~id:row_name table test_header;
+        cases "exact holds where every value is the other's" ~id:exact_name
+          exacts test_exact;
+        test "every dtype is exact into itself" (fun () ->
+            List.iter
+              (fun (D.Any dt) ->
+                equal ~msg:(D.name dt) bool true (D.exact dt dt))
+              D.all);
         test "nx_dtype.h has no row past the last code"
           test_no_row_past_the_last;
         test "equal and equal_witness hold of a dtype and itself only"

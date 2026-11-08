@@ -233,6 +233,20 @@ val holds : ('v, 's) t -> 'v -> bool
     above {!max_value}[ dt]: the only values a store into [dt] refuses. It
     allocates nothing. *)
 
+val exact : ('v, 's) t -> ('w, 'r) t -> bool
+(** [exact a b] is [true] iff every value of [a] is a value of [b], so that a
+    store of one into [b] ({!section-stores}) gives the same number, the
+    same infinity or a NaN. A boolean is [0] or [1], which every
+    dtype holds, and only a boolean holds a boolean. An integer is exact
+    into an integer that holds its range, and into a float whose
+    significand, {!type-float_format}'s [fraction_bits] and one, holds its
+    magnitude: int8 into bfloat16, int16 into float32, int32 into float64,
+    int64 into none. A float is exact into a float of at least its
+    precision, range and least magnitude that has an infinity and a NaN
+    where it does: float16 and bfloat16 into float32, the 8-bit floats into
+    float16. A complex number is exact only into a complex dtype, and a
+    real into a complex one whose component it is exact into. *)
+
 val pp_value : ('v, 's) t -> Format.formatter -> 'v -> unit
 (** [pp_value dt] formats a value of [dt]:
     - a finite float as the shortest decimal that rounds to the same value in

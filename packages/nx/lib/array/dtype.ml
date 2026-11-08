@@ -414,6 +414,52 @@ let holds : type v s. (v, s) t -> v -> bool =
   | Bool | Bit ->
       true
 
+(* The reals a dtype holds: the integers from [-2^m] or [0] to below [2^m],
+   or the multiples of [2^tiny] of at most [p] significant bits up to
+   [max] in magnitude, with or without infinities and NaN. *)
+type reals =
+  | Truth
+  | Integers of { signed : bool; m : int }
+  | Floats of { p : int; tiny : int; max : float; inf : bool; nan : bool }
+
+let reals (type v s) (dt : (v, s) t) =
+  let float (type s) (dt : (float, s) t) =
+    let f = float_format dt in
+    let p = f.fraction_bits + 1 in
+    let emin = snd (Float.frexp f.min_normal) - 1 in
+    Floats
+      {
+        p;
+        tiny = emin - f.fraction_bits;
+        max = f.max_finite;
+        inf = f.infinities;
+        nan = f.nans;
+      }
+  in
+  match dt with
+  | Complex128 -> float Float64
+  | Complex64 -> float Float32
+  | Bool | Bit -> Truth
+  | _ -> (
+      match kind dt with
+      | Float -> float dt
+      | Signed -> Integers { signed = true; m = bits dt - 1 }
+      | Unsigned -> Integers { signed = false; m = bits dt }
+      | Complex | Boolean -> assert false)
+
+let exact (type v s w r) (a : (v, s) t) (b : (w, r) t) =
+  ((not (is Complex a)) || is Complex b)
+  &&
+  match (reals a, reals b) with
+  | Truth, _ -> true
+  | _, Truth | Floats _, Integers _ -> false
+  | Integers i, Integers j -> (j.signed || not i.signed) && i.m <= j.m
+  | Integers i, Floats f -> i.m <= f.p && Float.ldexp 1. i.m <= f.max
+  | Floats f, Floats g ->
+      f.p <= g.p && f.tiny >= g.tiny && f.max <= g.max
+      && (g.inf || not f.inf)
+      && (g.nan || not f.nan)
+
 (* Conversions. Both stores go through nx_dtype.h, the one source of the rule:
    [round] is a float's value once stored in a float dtype, [store] the bits a
    store writes into an integer dtype, sign-extended for signed ones. *)

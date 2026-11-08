@@ -15,7 +15,6 @@ val contract :
   by:string ->
   ?sum:bool ->
   ?sizes:(string * int) list ->
-  ?acc:Nx_array.Dtype.any ->
   ?init:('v, 's, 'd) Value.t ->
   ('v, 's) Nx_array.Dtype.t ->
   Pattern.t ->
@@ -67,7 +66,6 @@ val einsum :
   by:string ->
   ?sum:bool ->
   ?sizes:(string * int) list ->
-  ?acc:Nx_array.Dtype.any ->
   Pattern.t ->
   ('v, 's, 'd) Value.t list ->
   ('v, 's, 'd) Value.t

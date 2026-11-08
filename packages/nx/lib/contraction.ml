@@ -99,50 +99,20 @@ let plan ~by ~sizes (p : Pattern.t) a b =
       invalid_argf "%s: %a has %d operands; use Nx.einsum" by Pattern.pp p
         (List.length operands)
 
-(* Accumulators *)
+(* Result dtypes *)
 
-type kind = Floats | Complexes | Integers
-
-let kind_of (type v s) (dt : (v, s) D.t) =
-  match D.kind dt with
-  | Float -> Floats
-  | Complex -> Complexes
-  | Signed | Unsigned | Boolean -> Integers
-
-(* The width of [dt]'s real numbers: a complex dtype's parts. *)
-let width (type v s) (dt : (v, s) D.t) =
-  match D.kind dt with Complex -> D.bits dt / 2 | _ -> D.bits dt
-
-let accumulator (type v s) ~by ?acc (dt : (v, s) D.t) (D.Any a) (D.Any b) =
-  let ka = kind_of a and kb = kind_of b in
-  (* The widest float or complex operand's width, and whether one is
-     complex. *)
-  let float_width k w = match k with Integers -> 0 | Floats | Complexes -> w in
-  let wide = Int.max (float_width ka (width a)) (float_width kb (width b)) in
-  let complex = ka = Complexes || kb = Complexes in
-  let (D.Any acc) =
-    match acc with
-    | Some acc -> acc
-    | None -> (
-        match (ka, kb) with
-        | Integers, Integers -> D.Any dt
-        | Integers, _ | _, Integers ->
-            invalid_argf "%s: %s and %s operands need ~acc" by (D.name a)
-              (D.name b)
-        | _ when complex ->
-            if wide <= 32 then D.Any D.Complex64 else D.Any D.Complex128
-        | _ -> if wide <= 32 then D.Any D.Float32 else D.Any D.Float64)
-  in
-  let name = D.name acc in
-  if not (Nx_kernel.accumulates acc) then
+(* Refuses an operand, named [label], that is not exact into [dt]. *)
+let exact_into (type v s w r d) ~by label (dt : (v, s) D.t)
+    (x : (w, r, d) Value.t) =
+  let dx = Prim.dtype x in
+  if not (D.exact dx dt) then
     invalid_argf
-      "%s: ~acc %s cannot accumulate (no bool, no float narrower than float32)"
-      by name;
-  if kind_of acc <> Integers && width acc < wide then
-    invalid_argf "%s: ~acc %s is narrower than an operand" by name;
-  if kind_of acc <> kind_of dt then
-    invalid_argf "%s: ~acc %s is of another kind than %s" by name (D.name dt);
-  D.Any acc
+      "%s: %s %s is not exact into %s (Nx.Dtype.exact); write Nx.cast Nx.%s \
+       %s, or cast the result of a contraction into a wider dtype"
+      by (D.name dx) label (D.name dt) (D.name dt) label
+
+(* The accumulator of a result of [dt]. *)
+let carried dt = Nx_kernel.carrier (D.Any dt)
 
 (* Evaluation *)
 
@@ -161,12 +131,9 @@ let operand x = (D.name (Prim.dtype x), Prim.shape x)
 
 (* [pl] applied to [a] and [b]: each reshaped to its names, contracted, and
    moved into the result's layout. *)
-let run (type v s a b c e d) ~by ?sum ?acc ?init (dt : (v, s) D.t) pl
+let run (type v s a b c e d) ~by ?sum ~acc ?init (dt : (v, s) D.t) pl
     (a : (a, b, d) Value.t) (b : (c, e, d) Value.t) : (v, s, d) Value.t =
   if D.is D.Boolean dt then invalid_argf "%s: the result's dtype is bool" by;
-  let acc =
-    accumulator ~by ?acc dt (D.Any (Prim.dtype a)) (D.Any (Prim.dtype b))
-  in
   let init =
     Option.map
       (fun i ->
@@ -185,8 +152,12 @@ let run (type v s a b c e d) ~by ?sum ?acc ?init (dt : (v, s) D.t) pl
   let y = if identity pl.order then y else permute ~by pl.order y in
   Eval.reshape ~by pl.shape y
 
-let contract ~by ?sum ?(sizes = []) ?acc ?init dt p a b =
-  run ~by ?sum ?acc ?init dt (plan ~by ~sizes p (operand a) (operand b)) a b
+let contract ~by ?sum ?(sizes = []) ?init dt p a b =
+  if D.is D.Boolean dt then invalid_argf "%s: the result's dtype is bool" by;
+  exact_into ~by "a" dt a;
+  exact_into ~by "b" dt b;
+  let pl = plan ~by ~sizes p (operand a) (operand b) in
+  run ~by ?sum ~acc:(carried dt) ?init dt pl a b
 
 (* [a] and [b], of shapes [sa] and [sb], for a message. *)
 let both a b sa sb =
@@ -292,7 +263,8 @@ let matmul ~by ?sum a b =
       shape;
     }
   in
-  run ~by ?sum (Prim.dtype a) pl a b
+  let dt = Prim.dtype a in
+  run ~by ?sum ~acc:(carried dt) dt pl a b
 
 (* [a]'s rows, [[| p; k |]], each by the matrix of [b], [[| e; k; n |]], its
    id in [ids], [[| p |]], names: one [Rows] contraction, accumulated as
@@ -300,7 +272,7 @@ let matmul ~by ?sum a b =
 let rows ~by ?(sum = false) ids a b =
   let dt = Prim.dtype a in
   if D.is D.Boolean dt then invalid_argf "%s: the result's dtype is bool" by;
-  let acc = accumulator ~by dt (D.Any dt) (D.Any (Prim.dtype b)) in
+  let acc = carried dt in
   Eval.eval ~by
     (Value.Contract
        {
@@ -350,7 +322,8 @@ let along ~by ?sum ~batch ~contracting a b =
       shape;
     }
   in
-  run ~by ?sum (Prim.dtype a) pl a b
+  let dt = Prim.dtype a in
+  run ~by ?sum ~acc:(carried dt) dt pl a b
 
 (* [a]'s last axis against [b]'s only axis or its second to last. *)
 let dot ~by ?sum a b =
@@ -574,7 +547,7 @@ let arranged ~by na nr shape x =
   let x = if identity order then x else permute ~by order x in
   Eval.reshape ~by shape x
 
-let einsum (type v s d) ~by ?sum ?(sizes = []) ?acc (p : Pattern.t)
+let einsum (type v s d) ~by ?sum ?(sizes = []) (p : Pattern.t)
     (xs : (v, s, d) Value.t list) : (v, s, d) Value.t =
   let k = List.length p.operands and n = List.length xs in
   if k > max_operands then
@@ -598,7 +571,7 @@ let einsum (type v s d) ~by ?sum ?(sizes = []) ?acc (p : Pattern.t)
   Array.iter (Prim.alive ~by) xs;
   let ns = Array.of_list (List.map Array.to_list operands) in
   let nr = Array.to_list result in
-  let (D.Any w) = accumulator ~by ?acc dt (D.Any dt) (D.Any dt) in
+  let (D.Any w) = carried dt in
   (* The summed names each operand alone holds, summed in it first. *)
   let alone i =
     let rec elsewhere nm j =
@@ -699,7 +672,7 @@ let chain (type v s d) ~by (xs : (v, s, d) Value.t list) : (v, s, d) Value.t
   done;
   let outer i j = List.filter present [ i; j + 1 ] in
   let shape ns = Array.of_list (List.map (Array.get ext) ns) in
-  let (D.Any w) = accumulator ~by dt (D.Any dt) (D.Any dt) in
+  let (D.Any w) = carried dt in
   let rec value i j =
     if i = j then (names i, Value.Any xs.(i))
     else

@@ -197,36 +197,190 @@ let complex_within_bound =
             (Complex.norm (Complex.sub y.(o) exact)))
         (terms c.meaning))
 
-(* A result of another dtype than its accumulator is the contraction into the
-   accumulator, cast once: bit for bit, from operands whose products round. *)
-let widened =
-  prop "a narrower result is the cast of the contraction into acc"
+(* Result dtypes *)
+
+(* [x] and [y] are the same value of [dt]: a float by its bits, NaNs as one
+   class, a complex part by part. *)
+let same (type v s) (dt : (v, s) D.t) (x : v) (y : v) =
+  let float a b =
+    Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
+    || (Float.is_nan a && Float.is_nan b)
+  in
+  match D.kind dt with
+  | Float -> float x y
+  | Complex -> float x.Complex.re y.Complex.re && float x.im y.im
+  | Signed | Unsigned | Boolean -> x = y
+
+(* [x] printed exactly: a float in hexadecimal, any NaN as [nan]. *)
+let shown (type v s) (dt : (v, s) D.t) (x : v) =
+  let float a = if Float.is_nan a then "nan" else Printf.sprintf "%h" a in
+  match D.kind dt with
+  | Float -> float x
+  | Complex -> float x.Complex.re ^ " " ^ float x.im
+  | Signed | Unsigned | Boolean -> Format.asprintf "%a" (D.pp_value dt) x
+
+let values x = A.to_array (Option.get (Nx.Repr.array x))
+
+(* The elements of [dt] whose little-endian bytes are [bytes]. *)
+let of_bytes (type v s) (dt : (v, s) D.t) bytes : (v, s, Nx.host) Nx.t =
+  let n = Array.length bytes in
+  let u = host D.Uint8 [| n |] bytes in
+  let bits = D.bits dt in
+  if bits < 8 then Nx.reshape [| n * 8 / bits |] (Nx.bitcast dt u)
+  else if bits = 8 then Nx.bitcast dt u
+  else Nx.bitcast dt (Nx.reshape [| n * 8 / bits; bits / 8 |] u)
+
+(* Bit patterns that break a conversion that is not exact: the integer
+   bounds and neighbours of each narrower dtype, the integers past each
+   float's significand, and a half, the significand's last bit, the largest
+   finite value, an infinity and a NaN of float32 and float64. *)
+let patterns32 =
+  [ 0L; 1L; 0xFFFFFFFFL; 0x80000000L; 0x7FFFFFFFL; 0x1000001L; 0x8000L;
+    0x10000L; 0x3F000000L; 0x3F800001L; 0x7F7FFFFFL; 0x7F800000L;
+    0x7FC00000L ]
+
+let patterns64 =
+  [ 0L; 1L; -1L; Int64.min_int; Int64.max_int; 0x20000000000001L;
+    0x80000000L; 0x100000000L; 0x3FE0000000000000L; 0x3FF0000000000001L;
+    0x7FEFFFFFFFFFFFFFL; 0x7FF0000000000000L; 0x7FF8000000000000L ]
+
+let bytes_of k p = List.init k (fun i ->
+  Int64.(to_int (logand (shift_right_logical p (8 * i)) 0xFFL)))
+
+(* Every value of a dtype of at most 16 bits, each bit pattern; for a wider
+   one, the patterns above, a complex128's parts two neighbouring ones. *)
+let probes (type v s) (dt : (v, s) D.t) : (v, s, Nx.host) Nx.t =
+  let bytes ps k = Array.of_list (List.concat_map (bytes_of k) ps) in
+  match D.bits dt with
+  | _ when D.equal dt D.Bool -> of_bytes dt [| 0; 1 |]
+  | 16 -> of_bytes dt (Array.init 131072 (fun i ->
+      if i land 1 = 0 then (i lsr 1) land 0xFF else i lsr 9))
+  | b when b < 16 -> of_bytes dt (Array.init 256 Fun.id)
+  | 32 -> of_bytes dt (bytes patterns32 4)
+  | 64 -> of_bytes dt (bytes patterns64 8)
+  | _ ->
+      let next = List.tl patterns64 @ [ List.hd patterns64 ] in
+      let parts = List.map2 (fun a b -> [ a; b ]) patterns64 next in
+      of_bytes dt (bytes (List.concat parts) 8)
+
+(* [x]'s number, a real and an imaginary part, each in a form that only the
+   same number has: an integer in decimal, another float in hexadecimal. *)
+let number (type v s) (dt : (v, s) D.t) (x : v) =
+  let float a =
+    if Float.is_integer a then Printf.sprintf "%.0f" a
+    else if Float.is_nan a then "nan"
+    else Printf.sprintf "%h" a
+  in
+  match D.kind dt with
+  | Float -> (float x, "0")
+  | Complex -> (float x.Complex.re, float x.im)
+  | Boolean -> ((if x then "1" else "0"), "0")
+  | Signed | Unsigned -> (Format.asprintf "%a" (D.pp_value dt) x, "0")
+
+(* Whether every probe [x] is the same number in [dt]: the reference for
+   which conversions are exact, read off {!Nx.cast}. A conversion whose
+   round trip changes a probe is not, which spares most of the printing. *)
+let kept (type v s w r) (x : (v, s, Nx.host) Nx.t) (dt : (w, r) D.t) =
+  let src = Nx.dtype x in
+  let y = Nx.cast dt x in
+  Array.for_all2 (same src) (values x) (values (Nx.cast src y))
+  && Array.for_all2
+       (fun a b -> number src a = number dt b)
+       (values x) (values y)
+
+(* For each pair of dtypes, {!Nx.Dtype.exact} holds iff a cast keeps every
+   probe. Into a result dtype, [contract dt] of an operand that is exact is
+   the contraction of its cast, bit for bit, over all its probes, one and
+   none; of one that is not, it raises naming the cast. *)
+let result_dtypes =
+  test "operands exact into the result, as casts keep them, or a raise"
+    (fun () ->
+      let pairs = ref 0 and accepted = ref 0 in
+      List.iter
+        (fun (D.Any src) ->
+          let a = probes src in
+          let n = Nx.numel a in
+          List.iter
+            (fun (D.Any dt) ->
+              incr pairs;
+              let pair = D.name src ^ " into " ^ D.name dt in
+              let exact = kept a dt in
+              equal ~msg:pair bool exact (D.exact src dt);
+              let b = Nx.cast dt (Nx.flip a) in
+              if D.is D.Boolean dt then ()
+              else if exact then begin
+                incr accepted;
+                let check p a b =
+                  let p = Nx.Pattern.v p in
+                  equal ~msg:pair (array string)
+                    (Array.map (shown dt)
+                       (values (Nx.contract dt p (Nx.cast dt a) b)))
+                    (Array.map (shown dt) (values (Nx.contract dt p a b)))
+                in
+                let first k = Nx.slice [ Nx.R (0, k) ] in
+                check "k, k -> | k" a b;
+                check "k, k -> | k" (first 1 a) (first 1 b);
+                check "k, k -> | k" (first 0 a) (first 0 b);
+                check "i, j -> i j" (first (min n 4) a) (first (min n 4) b)
+              end
+              else
+                equal ~msg:pair string
+                  (Printf.sprintf
+                     "Nx.contract: %s a is not exact into %s \
+                      (Nx.Dtype.exact); write Nx.cast Nx.%s a, or cast \
+                      the result of a contraction into a wider dtype"
+                     (D.name src) (D.name dt) (D.name dt))
+                  (message (fun () ->
+                       Nx.contract dt (Nx.Pattern.v "k, k -> | k") a b)))
+            D.all)
+        D.all;
+      (* Every pair of the 21 dtypes; of the 19 results but booleans, at
+         least each one's identity and the two boolean dtypes' operands are
+         accepted. *)
+      equal int (21 * 21) !pairs;
+      at_most int ~than:!accepted (19 * 3))
+
+(* Stated values: a wider result sums in its own carrier, reals enter a
+   complex result, and integers enter a float one exactly. *)
+let result_values =
+  group "result dtypes"
+    [
+      test "float32 operands into float64 sum in float64" (fun () ->
+          (* 1 + 2^-25 is no float32. *)
+          let a = host D.Float32 [| 2 |] [| 1.; Float.ldexp 1. (-25) |] in
+          let b = host D.Float32 [| 2 |] [| 1.; 1. |] in
+          equal (array float_exact)
+            [| 1. +. Float.ldexp 1. (-25) |]
+            (read (Nx.contract Nx.float64 (Nx.Pattern.v "k, k -> | k") a b)));
+      test "float32 operands into complex64" (fun () ->
+          let a = host D.Float32 [| 2 |] [| 1.; 2. |] in
+          let b = host D.Float32 [| 2 |] [| 3.; 4. |] in
+          let z =
+            read (Nx.contract Nx.complex64 (Nx.Pattern.v "k, k -> | k") a b)
+          in
+          equal (array float_exact) [| 11.; 0. |] [| z.(0).re; z.(0).im |]);
+      test "int8 operands into float32 and int16 into int32" (fun () ->
+          let a = host D.Int8 [| 2 |] [| -128; 127 |] in
+          equal (array float_exact) [| 32513. |]
+            (read (Nx.contract Nx.float32 (Nx.Pattern.v "k, k -> | k") a a));
+          let a = host D.Int16 [| 2 |] [| 30000; 30000 |] in
+          equal (array int32) [| 1_800_000_000l |]
+            (read (Nx.contract Nx.int32 (Nx.Pattern.v "k, k -> | k") a a)));
+    ]
+
+(* A narrow float result sums in float32 and rounds once: from float16
+   operands it is the contraction of their float32 casts, rounded. *)
+let narrow_result =
+  prop "a float16 result is its float32 contraction, rounded once"
     cases_of_sizes (fun c ->
       let p = Nx.Pattern.v c.pattern in
-      let draw n =
-        Array.init n (fun _ ->
-            { Complex.re = Random.float 2. -. 1.; im = Random.float 2. -. 1. })
-      in
-      let a = host D.Complex64 c.sa (draw (numel c.sa)) in
-      let b = host D.Complex64 c.sb (draw (numel c.sb)) in
-      let bits y =
-        Array.concat
-          (List.map
-             (fun z ->
-               [| Int64.bits_of_float z.Complex.re; Int64.bits_of_float z.im |])
-             (Array.to_list (read y)))
-      in
-      equal (array int64)
-        (bits
-           (Nx.cast Nx.complex64
-              (Nx.contract ~acc:D.Complex128 Nx.complex128 p a b)))
-        (bits (Nx.contract ~acc:D.Complex128 Nx.complex64 p a b));
-      let int8 n = Array.init n (fun _ -> Random.int 256 - 128) in
-      let a = host D.Int8 c.sa (int8 (numel c.sa)) in
-      let b = host D.Int8 c.sb (int8 (numel c.sb)) in
-      equal (array int)
-        (read (Nx.cast Nx.int8 (Nx.contract Nx.int32 p a b)))
-        (read (Nx.contract ~acc:D.Int32 Nx.int8 p a b)))
+      let draw n = Array.init n (fun _ -> Random.float 2. -. 1.) in
+      let a = host D.Float16 c.sa (draw (numel c.sa)) in
+      let b = host D.Float16 c.sb (draw (numel c.sb)) in
+      let wide = Nx.contract Nx.float32 p a b in
+      equal (array float_exact)
+        (read (Nx.cast Nx.float16 wide))
+        (read (Nx.contract Nx.float16 p a b)))
 
 let einsum_is_contract =
   prop "einsum p [a; b] is contract (dtype a) p a b" cases_of_sizes (fun c ->
@@ -597,7 +751,10 @@ let einsum_order =
           in
           equal (array float_exact)
             (read
-               (Nx.contract Nx.bfloat16 (Nx.Pattern.v "i j, j -> i | j") a bv))
+               (Nx.cast Nx.bfloat16
+                  (Nx.contract Nx.float32
+                     (Nx.Pattern.v "i j, j -> i | j")
+                     a bv)))
             (read
                (Nx.einsum (Nx.Pattern.v "i j, j k, k -> i | j k") [ a; b; v ])));
       test "sizes give a group's inner extent" (fun () ->
@@ -730,11 +887,6 @@ let einsum_errors =
               (A.of_array D.Bool [| 2; 2 |] [| true; false; true; true |])
           in
           Nx.einsum (Nx.Pattern.v "i j, j k -> i k | j") [ t; t ]);
-      refuses "a narrow accumulator"
-        "Nx.einsum: ~acc float16 cannot accumulate (no bool, no float narrower \
-         than float32)" (fun () ->
-          Nx.einsum ~acc:Nx.float16 chain
-            [ x [| 2; 3 |]; x [| 3; 4 |]; x [| 4 |] ]);
       refuses "more operands than einsum plans"
         {|Nx.einsum: "a, a, a, a, a, a, a, a, a, a, a, a -> a" has 12 operands; einsum plans at most 11: contract parts in separate einsums|}
         (fun () ->
@@ -1355,41 +1507,22 @@ let errors =
             (Nx.Pattern.v "i k, k j -> i j | k")
             (x [| 2; 3 |])
             (x [| 3; 2 |]));
-      refuses "a narrow accumulator"
-        "Nx.contract: ~acc float16 cannot accumulate (no bool, no float \
-         narrower than float32)" (fun () ->
-          Nx.contract Nx.float32 ~acc:Nx.float16
-            (Nx.Pattern.v "i k, k j -> i j | k")
-            (x [| 2; 3 |])
-            (x [| 3; 2 |]));
-      refuses "a boolean accumulator"
-        "Nx.contract: ~acc bool cannot accumulate (no bool, no float narrower \
-         than float32)" (fun () ->
-          let i s =
-            Nx.Repr.of_array Nx.Host.v
-              (A.of_array D.Int32 (Iarray.of_array s)
-                 (Array.make (numel s) 1l))
-          in
-          Nx.contract Nx.int32 ~acc:Nx.bool
-            (Nx.Pattern.v "i k, k j -> i j | k")
-            (i [| 2; 3 |])
-            (i [| 3; 2 |]));
-      refuses "an accumulator of another kind"
-        "Nx.contract: ~acc int32 is of another kind than float32" (fun () ->
-          Nx.contract Nx.float32 ~acc:Nx.int32
-            (Nx.Pattern.v "i k, k j -> i j | k")
-            (x [| 2; 3 |])
-            (x [| 3; 2 |]));
-      refuses "an integer and a float operand without acc"
-        "Nx.contract: int8 and float32 operands need ~acc" (fun () ->
+      refuses "an operand that is not exact into the result"
+        "Nx.contract: int32 b is not exact into float32 (Nx.Dtype.exact); \
+         write Nx.cast Nx.float32 b, or cast the result of a contraction \
+         into a wider dtype" (fun () ->
           let i =
             Nx.Repr.of_array Nx.Host.v
-              (A.of_array D.Int8 [| 2; 3 |] (Array.make 6 1))
+              (A.of_array D.Int32 [| 3; 2 |] (Array.make 6 1l))
           in
-          Nx.contract Nx.float32
-            (Nx.Pattern.v "i k, k j -> i j | k")
-            i
-            (x [| 3; 2 |]));
+          Nx.contract Nx.float32 (Nx.Pattern.v "i k, k j -> i j | k")
+            (x [| 2; 3 |]) i);
+      refuses "float operands into an integer result"
+        "Nx.contract: float32 a is not exact into int32 (Nx.Dtype.exact); \
+         write Nx.cast Nx.int32 a, or cast the result of a contraction \
+         into a wider dtype" (fun () ->
+          Nx.contract Nx.int32 (Nx.Pattern.v "i k, k j -> i j | k")
+            (x [| 2; 3 |]) (x [| 3; 2 |]));
       refuses "a boolean result" "Nx.contract: the result's dtype is bool"
         (fun () ->
           Nx.contract Nx.bool
@@ -3034,7 +3167,9 @@ let () =
        [
          within_bound;
          complex_within_bound;
-         widened;
+         result_dtypes;
+         result_values;
+         narrow_result;
          einsum_is_contract;
          einsum_within_bound;
          einsum_deterministic;

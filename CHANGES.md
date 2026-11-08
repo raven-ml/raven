@@ -2355,6 +2355,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 - **Breaking:** `Nx.histogram` returns exact `int64` counts; it rounded them
   into the coordinates' dtype, float16 past 2048 and bfloat16 past 256.
   Weighted sums are `Nx.weighted_histogram ~weights`, in the weights' dtype.
+- **Breaking:** `Nx.contract` and `Nx.einsum` lose `?acc` and sum in the result
+  dtype's carrier. `contract dt` raises for an operand not `Nx.Dtype.exact`
+  into `dt`, such as floats into an integer result, which `~acc` truncated.
 - `Nx.take` and `Nx.take_along_axis` on nx.cpu cost about half the
   instructions per position into byte-wide dtypes and a sixth into `bit` and
   4-bit ones, from small tables.

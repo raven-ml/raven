@@ -2493,7 +2493,6 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
 
 val contract :
   ?sizes:(string * int) list ->
-  ?acc:('w, 'q) dtype ->
   ?init:('v, 's, 'd) t ->
   ?sum:bool ->
   ('v, 's) dtype ->
@@ -2502,55 +2501,60 @@ val contract :
   ('c, 'e, 'd) t ->
   ('v, 's, 'd) t
 (** [contract dt p a b] is [round_dt (init + Σ a · b)] over [p]'s summed names,
-    summed in [acc], for each index of [p]'s result. [sizes] gives the extents
-    of names inside groups that neither operand's shape gives alone.
+    for each index of [p]'s result. [sizes] gives the extents of names inside
+    groups that neither operand's shape gives alone.
 
-    [acc] defaults to [float32] for float operands of 32 bits or fewer,
-    [float64], [complex64] or [complex128] at the operands' width otherwise, and
-    [dt] for integers, which wrap. An integer operand with a float one has no
-    default: [acc] is required. The sum starts from [init], or [+0] without it,
-    and associates in an order each kernel library states, never a function
-    of the order a pattern lists its names. Barring overflow and underflow,
-    before rounding it is within [γ(K + 1, 2u) (|init| + Σ|a||b|)] of the
-    exact sum of its [K] products, wherever its operands lie, where
-    [γ(n, v) = n v / (1 - n v)] and [u] is [acc]'s unit roundoff. With
-    [~sum:true] (default [false]) over cut summed names, it is the devices'
-    terms, which close within the bound {!section-contraction} adds.
+    Each operand's dtype must be exact into [dt] ({!Dtype.exact}), so
+    [contract dt p a b] is [contract dt p (cast dt a) (cast dt b)]. A real
+    operand of a complex result is a complex number of imaginary part [+0],
+    whose products follow complex multiplication: an infinity times it
+    gives a NaN imaginary part. A result narrower than an operand is a
+    {!cast} of a wider contraction's.
+
+    The sum's accumulator is [dt]'s carrier ({!Nx_kernel.carrier}):
+    [float32] for a float narrower than it, [int8] and [uint8] for [int4]
+    and [uint4], else [dt]. Integers wrap. It starts from [init], or [+0]
+    without it, and associates in an order each kernel library states,
+    never a function of the order a pattern lists its names. Barring
+    overflow and underflow, before rounding it is within
+    [γ(K + 1, 2u) (|init| + Σ|a||b|)] of the exact sum of its [K] products,
+    wherever its operands lie, where [γ(n, v) = n v / (1 - n v)] and [u] is
+    the accumulator's unit roundoff.
+    With [~sum:true] (default [false]) over cut summed names, it is the
+    devices' terms, which close within the bound {!section-contraction}
+    adds.
 
     A donated [init] receives the result in its memory where {!donate} lets
     the consumer write there and the result's names are the batch names, then
     [a]'s others, then [b]'s, each in its operand's order, as in
     ["n i, n o -> i o | n"]; otherwise the result is fresh.
 
-    Raises [Invalid_argument] if [dt] is a boolean; [p] has other than two
-    operands; an operand repeats a name, or a summed name is in one operand
-    alone; an operand's rank is not the number of axes [p] gives it, or
-    fewer with [...]; [...] covers different numbers of axes in the two
-    operands; paired extents
-    differ; a group's extents do not multiply to its axis, or it leaves
-    two extents unknown; a unit axis's extent is not [1]; a name in [sizes] is
-    not in [p] or is there twice, or its size is negative; [acc] is omitted for
-    an integer and a float operand, or is a boolean, a float narrower than
-    [float32] or than a float operand, or of another kind than [dt]; or
+    Raises [Invalid_argument] if [dt] is a boolean; an operand's dtype is not
+    exact into [dt]; [p] has other than two operands; an
+    operand repeats a name, or a summed name is in one operand alone; an
+    operand's rank is not the number of axes [p] gives it, or fewer with
+    [...]; [...] covers different numbers of axes in the two operands;
+    paired extents differ; a group's extents do not multiply to its axis, or
+    it leaves two extents unknown; a unit axis's extent is not [1]; a name
+    in [sizes] is not in [p] or is there twice, or its size is negative; or
     [init]'s shape is not the result's. *)
 
 val einsum :
   ?sizes:(string * int) list ->
-  ?acc:('w, 'q) dtype ->
   ?sum:bool ->
   Pattern.t ->
   ('v, 's, 'd) t list ->
   ('v, 's, 'd) t
-(** [einsum ~sizes ~acc p [x1; …; xn]] is [round (Σ x1 ⋯ xn)] over [p]'s
-    summed names, for each index of [p]'s result, at the operands' dtype, each
-    [xi] read where its names take their indices, so that one that repeats a
-    name reads its diagonal. It is a tree of {!contract}s of two operands, each
-    summing in [acc] and leaving its value in [acc], so that the result rounds
-    once. [acc] defaults as {!contract}'s for two operands of that dtype, and
-    [sizes] is as {!contract}'s.
+(** [einsum ~sizes p [x1; …; xn]] is [round (Σ x1 ⋯ xn)] over [p]'s summed
+    names, for each index of [p]'s result, at the operands' dtype, each [xi]
+    read where its names take their indices, so that one that repeats a name
+    reads its diagonal. It is a tree of {!contract}s of two operands, each
+    summing in the dtype's carrier, as {!contract} does, and leaving its value
+    there, so that the result rounds once. [sizes] is as {!contract}'s. A sum
+    in a wider dtype is the einsum of the operands cast into it.
 
-    The summed names one operand alone holds are summed in it first, in
-    [acc]. One operand that sums nothing gives a copy, as ["i j -> j i"]
+    The summed names one operand alone holds are summed in it first, in the
+    carrier. One operand that sums nothing gives a copy, as ["i j -> j i"]
     gives the transpose.
 
     Of the trees whose values have at most {!Nx_array.Layout.max_rank} axes,
@@ -2584,13 +2588,12 @@ val einsum :
     axes in two operands; a name's extents differ; every tree
     holds a value of more than {!Nx_array.Layout.max_rank} axes; a group's
     extents do not multiply to its axis, or it leaves two extents unknown; a
-    unit axis's extent is not [1]; a name in [sizes] is not in [p] or is there
-    twice, or its size is negative; or [acc] is a boolean, a float narrower
-    than [float32] or than the operands, or of another kind than theirs. *)
+    unit axis's extent is not [1]; or a name in [sizes] is not in [p] or is
+    there twice, or its size is negative. *)
 
 val matmul : ?sum:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [matmul a b] is the matrix product over the last two axes, leading axes
-    broadcast, at [a]'s dtype and accumulated as {!contract} does by default. A
+    broadcast, at [a]'s dtype and accumulated as {!contract} does. A
     1-d [a] is a row and a 1-d [b] a column, and their unit axis is dropped from
     the result: two 1-d operands give their 0-d inner product.
 
@@ -2650,7 +2653,7 @@ val conv :
     alone.
 
     Each output sums its [K] products, one per tap and channel of its group,
-    from [+0], in the accumulator {!contract} takes by default, and rounds
+    from [+0], in the dtype's carrier, as {!contract} does, and rounds
     once: the float formats narrower than 32 bits sum at [float32]. Integers
     wrap. Before rounding it is within [γ(K + 1, 2u) Σ|x||w|] of the exact
     sum, [γ] and [u] as {!contract} states. On one device it gives the same
@@ -2757,9 +2760,9 @@ val multi_dot : ('v, 's, 'd) t list -> ('v, 's, 'd) t
     the order of fewest multiply-adds, an [m × k] by a [k × p] doing
     [m k p]; of orders doing as many, the one that splits the chain earliest,
     within each part too, so the order is a function of the shapes alone.
-    Each product sums in {!contract}'s default accumulator and leaves its
-    value there, so the result rounds once, within the bound {!einsum}
-    states for its tree.
+    Each product sums in the dtype's carrier, as {!contract} does, and
+    leaves its value there, so the result rounds once, within the bound
+    {!einsum} states for its tree.
 
     Raises [Invalid_argument] if [n < 2], an operand has another rank, or
     adjacent inner extents differ. *)
