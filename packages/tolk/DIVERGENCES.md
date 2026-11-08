@@ -244,7 +244,12 @@ for every pattern. A repeat that names nodes matches no sources as
   (`CUDA_CACHE_DISABLE=1`), whose key misses the math options
   (`--use_fast_math`, `--prec-sqrt`, `--prec-div`, `--ftz`), `-I`, `-D` and
   `--std`, so it could serve tolk a binary built under other options or
-  against other headers.
+  against other headers. The comgr process disables comgr's own cache of
+  generated code (`AMD_COMGR_CACHE=0`), on by default from ROCm 7.0 under
+  `~/.cache/comgr` (2 GB on nonnormal), which tinygrad leaves on: tolk's
+  table is the one cache it keeps, and comgr's served no measurable time
+  over a cold table (nonnormal, gpt-oss-20b's first prefill and step: 0.886
+  and 0.587 s from a filled comgr cache, 0.892 and 0.546 s with it off).
 - **Reason:** (a).
 - **Pinned by:** `Tolk.Setting › context › is not seen by the other
   domains` and `Tolk.Setting › context › binds for the domains spawned

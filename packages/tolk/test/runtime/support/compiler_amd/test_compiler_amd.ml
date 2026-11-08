@@ -52,8 +52,8 @@ let scratch =
   Unix.putenv "TMPDIR" dir;
   dir
 
-let () =
-  Unix.putenv "AMD_COMGR_CACHE_DIR" (Filename.concat scratch "comgr-cache")
+let comgr_cache = Filename.concat scratch "comgr-cache"
+let () = Unix.putenv "AMD_COMGR_CACHE_DIR" comgr_cache
 
 (* The cache *)
 
@@ -306,6 +306,16 @@ let process =
              let lib = with_comgr (fun () -> compile kernel) in
              kill_children ();
              equal string lib (sigpipe_kills (fun () -> compile kernel)));
+      slow
+      @@ test "a compile writes nothing to comgr's own cache" (fun () ->
+          ignore (with_comgr (fun () -> compile kernel));
+          ignore (compile ~arch:"gfx1201" kernel);
+          let entries =
+            if Sys.file_exists comgr_cache then
+              Array.to_list (Sys.readdir comgr_cache)
+            else []
+          in
+          equal (list string) [] entries);
       slow
       @@ test "a worker started with SIGCHLD ignored returns its code object"
            (fun () ->

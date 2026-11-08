@@ -1077,6 +1077,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Compiler_amd.hip` turns off comgr's own cache of generated code, which
+  ROCm 7.0's comgr keeps by default under `~/.cache/comgr` up to 5 GB:
+  tolk's cache table is the one kept, and comgr's saved no measurable time.
 - `Compiler_amd.hip`'s cache table is named by the program that runs comgr
   too, as `Compiler_cuda.nvrtc`'s is: a code object compiled by an earlier
   tolk, whose program asked comgr for other steps, is compiled again.

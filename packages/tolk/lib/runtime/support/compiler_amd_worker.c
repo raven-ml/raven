@@ -98,6 +98,20 @@ static struct {
   uint64_t major, minor;
 } version;
 
+/* comgr keeps the code it generates in a cache of its own, under
+   ~/.cache/comgr up to 5 GB unless AMD_COMGR_CACHE_DIR says otherwise: from
+   ROCm 7.0 unless AMD_COMGR_CACHE is 0, in ROCm 6.4 when it is set to another
+   value. That is work and disk the caller did not place, beside tolk's own
+   cache of code objects. It is disabled before the library loads, which reads
+   the variable once. */
+static void disable_cache(void) {
+#ifdef _WIN32
+  _putenv_s("AMD_COMGR_CACHE", "0");
+#else
+  setenv("AMD_COMGR_CACHE", "0", 1);
+#endif
+}
+
 /* Why comgr did not load, or "" once it has. */
 static char load_error[4096];
 
@@ -241,6 +255,7 @@ static void answer(const char *request, size_t size) {
 
 int main(int argc, char **argv) {
   serve(argc, argv, "COMGR");
+  disable_cache();
   bool loaded = load(argv[1]);
   size_t size;
   for (char *request; (request = next_request(&size)) != NULL;) {

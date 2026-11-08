@@ -23,7 +23,9 @@
     [lib/libamd_comgr.so] in the directory {!Setting.rocm_path} names, then
     the system's library directories. Each process loads it. Its major
     version picks its numbering of languages and actions, which version 3
-    changed. *)
+    changed. comgr's own cache of the code it generates, which it keeps under
+    [~/.cache/comgr] or [AMD_COMGR_CACHE_DIR], is disabled in those processes
+    alone: code objects are cached in one place, {!Setting.ccache}'s table. *)
 
 val hip : string -> Renderer.Compiler.t
 (** [hip arch] is the compiler of HIP source to executable code objects for the
