@@ -25,6 +25,7 @@
 # forced: blessed order/positions-bool-1M order/positions-i64-1M-counts under load 30.6 on 14 cores
 # forced: blessed order/unique-i64-1M-runs-of-4 under load 13.1 on 14 cores
 # forced: blessed order/positions-bool-1M order/positions-i64-1M-counts under load 14.3 on 14 cores
+# forced: blessed statistics/var-f32-1M statistics/std-f32-1024x1024-rows statistics/var-f32-8192x4096-rows statistics/var-bf16-8192x4096-rows statistics/var-f32-1024x1024-cols statistics/var-bf16-1M statistics/var-f64-1M-top statistics/std-f64-1M-tiny statistics/std-f32-1024x1024-rows-constant under load 37.5 on 14 cores
 
 attention/decode-f32-64x8x4096x64	alloc_words	exact	902
 attention/decode-f32-64x8x4096x64	wall_time	batch=1	n=20	1.364e-03	9.401e-04 9.802e-04 9.986e-04 9.990e-04 1.039e-03 1.198e-03 1.219e-03 1.260e-03 1.295e-03 1.346e-03 1.383e-03 1.600e-03 1.727e-03 2.126e-03 2.527e-03 3.246e-03 3.993e-03 3.993e-03 5.491e-03 1.163e-02
@@ -338,14 +339,17 @@ statistics/softmax-f32-32x32000	alloc_words	exact	1466
 statistics/softmax-f32-64x128256	alloc_words	exact	1466
 statistics/softmax-f32-8x64	alloc_words	exact	1466
 statistics/softplus-f32-1M	alloc_words	exact	342
-statistics/std-f32-1024x1024-rows	alloc_words	exact	475
+statistics/std-f32-1024x1024-rows	alloc_words	exact	863
+statistics/std-f32-1024x1024-rows-constant	alloc_words	exact	1503
+statistics/std-f64-1M-tiny	alloc_words	exact	2472
 statistics/sum-bf16-1M	alloc_words	exact	130
 statistics/sum-c64-1M	alloc_words	exact	130
-statistics/var-bf16-1M	alloc_words	exact	268
-statistics/var-bf16-8192x4096-rows	alloc_words	exact	318
-statistics/var-f32-1024x1024-cols	alloc_words	exact	265
-statistics/var-f32-1M	alloc_words	exact	217
-statistics/var-f32-8192x4096-rows	alloc_words	exact	265
+statistics/var-bf16-1M	alloc_words	exact	610
+statistics/var-bf16-8192x4096-rows	alloc_words	exact	672
+statistics/var-f32-1024x1024-cols	alloc_words	exact	619
+statistics/var-f32-1M	alloc_words	exact	559
+statistics/var-f32-8192x4096-rows	alloc_words	exact	619
+statistics/var-f64-1M-top	alloc_words	exact	2117
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos

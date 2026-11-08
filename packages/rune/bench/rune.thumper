@@ -6,6 +6,7 @@
 # ocaml: 5.5.2 · 64-bit · release
 # forced: blessed WarmStart/donated-step-4096 WarmStart/transposed-matmul-64 under load 42.0 on 14 cores
 # forced: blessed Cuda/kv-append-4096 Cuda/kv-append-4096-copied under load 27.0 on 14 cores
+# forced: blessed Jit/var-float64-1M Jit/std-float64-1M under load 37.5 on 14 cores
 
 Bodies/grad-scan-in-a-rule-in-a-total-scope-eager	alloc_words	exact	52718
 Bodies/grad-scan-in-a-rule-in-a-total-scope-eager	wall_time	batch=32	n=20	2.070e-04	2.020e-04 2.025e-04 2.025e-04 2.028e-04 2.033e-04 2.034e-04 2.037e-04 2.057e-04 2.057e-04 2.061e-04 2.079e-04 2.088e-04 2.093e-04 2.095e-04 2.101e-04 2.105e-04 2.108e-04 2.108e-04 2.109e-04 2.116e-04
@@ -91,10 +92,12 @@ Jit/solve-float64-32	alloc_words	exact	820
 Jit/solve-float64-32	wall_time	batch=256	n=20	3.043e-05	3.011e-05 3.022e-05 3.025e-05 3.027e-05 3.029e-05 3.030e-05 3.031e-05 3.041e-05 3.042e-05 3.043e-05 3.043e-05 3.046e-05 3.047e-05 3.052e-05 3.059e-05 3.062e-05 3.066e-05 3.070e-05 3.080e-05 3.124e-05
 Jit/sort-with-positions-4096	alloc_words	exact	858
 Jit/sort-with-positions-4096	wall_time	batch=64	n=20	1.019e-04	9.273e-05 9.799e-05 9.807e-05 9.816e-05 9.817e-05 9.821e-05 9.825e-05 9.837e-05 9.850e-05 9.915e-05 1.046e-04 1.059e-04 1.062e-04 1.064e-04 1.064e-04 1.067e-04 1.067e-04 1.068e-04 1.074e-04 1.091e-04
+Jit/std-float64-1M	alloc_words	exact	697
 Jit/take-grad-1024-of-4096x64	alloc_words	exact	820
 Jit/take-grad-1024-of-4096x64	wall_time	batch=128	n=20	7.117e-05	6.834e-05 6.953e-05 6.982e-05 7.004e-05 7.021e-05 7.026e-05 7.037e-05 7.060e-05 7.098e-05 7.111e-05 7.122e-05 7.134e-05 7.187e-05 7.226e-05 7.228e-05 7.248e-05 7.281e-05 7.357e-05 7.682e-05 7.707e-05
 Jit/tanh-float32-64K	alloc_words	exact	697
 Jit/tanh-float32-64K	wall_time	batch=256	n=20	3.554e-05	3.435e-05 3.458e-05 3.478e-05 3.484e-05 3.485e-05 3.486e-05 3.487e-05 3.503e-05 3.550e-05 3.550e-05 3.559e-05 3.566e-05 3.576e-05 3.616e-05 3.628e-05 3.631e-05 3.641e-05 3.650e-05 3.676e-05 3.704e-05
+Jit/var-float64-1M	alloc_words	exact	697
 Jit/wide-sum-1e6	alloc_words	exact	858
 Jit/wide-sum-1e6	wall_time	batch=16	n=20	6.033e-04	5.491e-04 5.500e-04 5.562e-04 5.582e-04 5.677e-04 5.678e-04 5.705e-04 5.857e-04 5.941e-04 6.014e-04 6.051e-04 6.624e-04 6.827e-04 6.916e-04 7.022e-04 7.679e-04 8.673e-04 9.329e-04 9.473e-04 1.019e-03
 JitFootprint/lorenz-n10-replay	alloc_words	exact	930
