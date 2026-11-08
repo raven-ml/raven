@@ -249,7 +249,9 @@ for every pattern. A repeat that names nodes matches no sources as
   `~/.cache/comgr` (2 GB on nonnormal), which tinygrad leaves on: tolk's
   table is the one cache it keeps, and comgr's served no measurable time
   over a cold table (nonnormal, gpt-oss-20b's first prefill and step: 0.886
-  and 0.587 s from a filled comgr cache, 0.892 and 0.546 s with it off).
+  and 0.587 s from a filled comgr cache, 0.892 and 0.546 s with it off;
+  rune's `amd/mlp-step` first call before serving: 1.04 and 1.01 s with it
+  off, 1.03 and 1.02 s on, against 0.91 s served with the verifier).
 - **Reason:** (a).
 - **Pinned by:** `Tolk.Setting › context › is not seen by the other
   domains` and `Tolk.Setting › context › binds for the domains spawned
