@@ -1,0 +1,16 @@
+# tolk D29 D105 D141 golden=2f11643e2f1bf8b1ef3a4705bb360968
+kernel	target	amt	failing	allow_test_size	opts	measurements
+add_small	clang	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),)	9
+add_small	clang	2	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)))	13
+add_small	clang	2	True	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)))	7
+sum_rows	clang	2	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)))	48
+variable	clang	1	False	True	()	0
+variable_rows	clang	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)))	11
+variable_rows	metal	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)))	59
+add	metal	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)))	83
+add_large	metal	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)))	82
+add_large	metal	1	False	False	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)))	82
+sum_rows	metal	2	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)))	144
+matmul_half	metal	1	False	True	(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=3, arg=(2, AxisType.LOCAL)))	200
+matmul_half	cuda	1	True	True	(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)))	134
+pad_7x7	hip	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.SWAP, axis=1, arg=2))	102

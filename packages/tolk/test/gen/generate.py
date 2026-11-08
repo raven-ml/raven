@@ -74,6 +74,7 @@ UNMODIFIED = {
     "codegen/decomp/decomp_op",
     "engine/realize",
     "schedule/memory",
+    "codegen/opt/search",
 }
 
 HERE = Path(__file__).resolve().parent
