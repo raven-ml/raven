@@ -48,10 +48,20 @@ let gpus =
     ("AMD", opened (Rig_amd_amdgpu.gpu 0));
   ]
 
+(* A GPU opened but whose compiler's library is absent (NVRTC's where
+   NVRTC_PATH is unset, comgr's where COMGR_PATH is) renders nothing, as its
+   compiler's own tests expect: the tests on it skip. *)
+let lacks_compiler why =
+  String.starts_with ~prefix:"failed to load library" why
+  || String.starts_with ~prefix:"comgr not available" why
+
 let gpu kind =
   match Lazy.force (List.assoc kind gpus) with
-  | Ok d -> d
   | Error why -> skip ~reason:why ()
+  | Ok d -> (
+      match Engine.renderer d with
+      | _ -> d
+      | exception Failure why when lacks_compiler why -> skip ~reason:why ())
 
 let clang = lazy (Cstyle.clang (Engine.target host))
 
