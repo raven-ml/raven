@@ -3877,6 +3877,16 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- A Parquet source applies a filter on one `string` or `binary` column as it
+  reads, once per value of a dictionary-encoded column chunk, and answers
+  `Source.Exact` for it, so the filter leaves the plan. Reads also decode
+  dictionary indices, definition levels and Snappy pages faster.
+  Decision-support query 19 at scale factor 1 takes 1.9 billion instructions
+  where it took 3.5, query 12 2.1 where 3.0, query 5 2.7 where 3.2 and query 1
+  5.0 where 5.4.
+- Add `Source.Pred.filter`, a source's predicate as the filter it means, so
+  that a source can apply a conjunct it answers `Exact` with talon's own
+  evaluator.
 - A list column takes each row's elements, and their nulls, as one run at
   every depth in `Talon.take`, a join, a filter or a sort, where it built a
   position for each element, and reads none of the rows it does not take: a

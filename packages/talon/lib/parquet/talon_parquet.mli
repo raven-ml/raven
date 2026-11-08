@@ -111,13 +111,22 @@ val source : format -> Rig.Buffer.t -> Talon.Source.t
     Each read of the source reads [b]'s footer again.
 
     Its parts are the file's row groups, each one batch of the request's
-    columns, with its number of rows. Only the request's columns are decoded.
-    The source answers {!Talon.Source.Inexact} for a conjunct that row group
-    statistics can decide, and skips a row group whose statistics show that no
-    row of it passes a conjunct: a column of nulls passes no comparison, and a
-    minimum and a maximum bound a comparison or [In] for integers but [uint64],
-    dates, datetimes, byte strings, and floats in a row group that the file
-    states holds no NaN.
+    columns. Only the request's columns, and those of the conjuncts it applies,
+    are decoded.
+
+    The source answers {!Talon.Source.Exact} for a conjunct that reads one
+    column of [string] or [binary], and applies it as it reads: on a chunk with
+    a dictionary page, once per value of the dictionary and of the chunk's
+    [PLAIN] pages, each row taking its value's result, and on another chunk,
+    on its rows. A part of a request with such a conjunct does not state its
+    number of rows.
+
+    The source answers {!Talon.Source.Inexact} for another conjunct that row
+    group statistics can decide, and skips a row group whose statistics show
+    that no row of it passes a conjunct: a column of nulls passes no
+    comparison, and a minimum and a maximum bound a comparison or [In] for
+    integers but [uint64], dates, datetimes, byte strings, and floats in a row
+    group that the file states holds no NaN.
 
     A read fails with [Error e] as {!sniff} does, if the file has no column of
     the request or one that does not read as [f]'s type, or if a column chunk

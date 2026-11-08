@@ -155,12 +155,13 @@ codecs it does not read when it sniffs the footer.
 A Parquet source uses filters to skip row groups. A comparison of a column
 with a literal goes to the source, which skips each row group whose minimum
 and maximum show that no row passes; the filter stays in the plan for the
-rows of the groups it reads. `Query.optimize` shows it:
+rows of the groups it reads. A filter on one text column leaves the plan: the
+source applies it as it reads, once per value of a dictionary-encoded column
+chunk. `Query.optimize` shows it:
 
 ```text
 query → carrier string, name string
-filter (carrier >= "F")
-└ parquet (2 columns) ~filters:[carrier >= "F"]
+parquet (2 columns) ~filters:[carrier >= "F"]
 ```
 
 ## Errors

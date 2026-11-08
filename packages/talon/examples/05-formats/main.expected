@@ -23,8 +23,7 @@ parquet (2 columns)
   name string    ← optional binary (STRING)
 
 query → carrier string, name string
-filter (carrier >= "F")
-└ parquet (2 columns) ~filters:[carrier >= "F"]
+parquet (2 columns) ~filters:[carrier >= "F"]
 
 table 5 rows × 2 columns
  carrier  name

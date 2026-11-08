@@ -16,6 +16,12 @@ type t =
       offsets : Nx.host Nx.int64_t;
       data : Nx.host Nx.uint8_t;
     }
+  | Coded of {
+      valid : Nx.host Nx.bit_t option;
+      codes : Nx.host Nx.int64_t;
+      offsets : Nx.host Nx.int64_t;
+      data : Nx.host Nx.uint8_t;
+    }
 
 external hybrid :
   bigbytes ->
@@ -594,7 +600,7 @@ let spread ~row_group s ~valid ~rows ~present =
 let narrow (type a) ~row_group (ty : a Type.t) c =
   let into dt lo hi =
     match c with
-    | Varsize _ -> assert false
+    | Varsize _ | Coded _ -> assert false
     | Fixed { valid; values = P v } ->
         let v = Nx.cast Nx.int32 v in
         let bad = Nx.logical_or (Nx.less_s v lo) (Nx.greater_s v hi) in
@@ -612,6 +618,31 @@ let narrow (type a) ~row_group (ty : a Type.t) c =
   | Uint8 -> into Nx.uint8 0l 255l
   | Uint16 -> into Nx.uint16 0l 65535l
   | _ -> c
+
+(* [coded ~row_group idx ~valid ~rows ~offsets ~data] is the rows of a
+   dictionary-encoded chunk of byte strings, whose words are those [offsets]
+   and [data] hold, and whose present rows, those the bit array [valid] marks,
+   read the words [idx]. The words gain an empty one, which the null rows
+   read. *)
+let coded ~row_group idx ~valid ~rows ~offsets ~data =
+  let n = Nx.dim 0 offsets - 1 in
+  let words = fresh Nx.int64 (n + 2) in
+  writing words (fun w ->
+      reading i64 offsets (fun o ->
+          A1.blit o (A1.sub w 0 (n + 1));
+          w.{n + 1} <- o.{n}));
+  let offsets = value words in
+  if Nx.dim 0 idx = rows then Coded { valid = None; codes = idx; offsets; data }
+  else
+    let valid = Option.get valid in
+    let codes, taken = spread_values idx ~valid ~rows in
+    if taken < 0 then
+      Meta.fail ~row_group "the spread: %s" (kernel_error taken);
+    assert (taken = Nx.dim 0 idx);
+    let valid = bits valid rows in
+    let empty = Nx.scalar Nx.int64 (Int64.of_int n) in
+    let codes = Nx.where (Nx.cast Nx.bool valid) codes empty in
+    Coded { valid = Some valid; codes; offsets; data }
 
 (* Reading *)
 
@@ -967,7 +998,18 @@ let read ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
   if !row <> rows then
     fail "the pages hold %d rows, and the row group %d" !row rows;
   let s = convert ~row_group l ty (chunk_table ~dictionary:0) in
-  let s =
-    match !idx with None -> s | Some idx -> gather s (leading !present idx)
-  in
-  narrow ~row_group ty (spread ~row_group s ~valid ~rows ~present:!present)
+  match (!idx, s) with
+  | Some idx, Strings { offsets; data } ->
+      coded ~row_group (leading !present idx) ~valid ~rows ~offsets ~data
+  | Some idx, Values _ ->
+      let s = gather s (leading !present idx) in
+      narrow ~row_group ty (spread ~row_group s ~valid ~rows ~present:!present)
+  | None, _ ->
+      narrow ~row_group ty (spread ~row_group s ~valid ~rows ~present:!present)
+
+let flat = function
+  | Coded { valid; codes; offsets; data } -> (
+      match gather (Strings { offsets; data }) codes with
+      | Strings { offsets; data } -> Varsize { valid; offsets; data }
+      | Values _ -> assert false)
+  | (Fixed _ | Varsize _) as c -> c

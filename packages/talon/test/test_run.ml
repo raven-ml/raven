@@ -653,6 +653,92 @@ let answer (r : Source.request) b =
   in
   run_ok (Query.select keep (Query.of_table b))
 
+(* [pred s] is a predicate on the columns of [s] that a handle reads, each
+   value at a type that contains its column's, as a filter offers it. *)
+let pred s =
+  let open Gen in
+  let columns = expressible s in
+  let at (type a) (ty : a Type.t) =
+    let* (t : a Type.t) = of_list (wider ty) in
+    map (fun v -> Source.Pred.Value (t, v)) (value t)
+  in
+  let atom =
+    let* n, Type.Any ty = of_list columns in
+    let op = of_list [ `Eq; `Ne; `Lt; `Le; `Gt; `Ge ] in
+    frequency
+      [
+        (3, map2 (fun op v -> Source.Pred.Cmp (n, op, v)) op (at ty));
+        ( 2,
+          let* (t : _ Type.t) = of_list (wider ty) in
+          map
+            (fun vs ->
+              Source.Pred.In (n, List.map (fun v -> Source.Pred.Value (t, v)) vs))
+            (list ~size:(int_range 0 3) (value t)) );
+        (1, constant (Source.Pred.Null n));
+        (1, constant (Source.Pred.Valid n));
+      ]
+  in
+  let rec go d =
+    if d = 0 then atom
+    else
+      let sub = go (d - 1) in
+      frequency
+        [
+          (3, atom);
+          (1, map (fun p -> Source.Pred.Not p) sub);
+          (1, map (fun ps -> Source.Pred.And ps) (list ~size:(int_range 0 3) sub));
+          (1, map (fun ps -> Source.Pred.Or ps) (list ~size:(int_range 0 3) sub));
+        ]
+  in
+  go 2
+
+let rec pp_pred ppf (p : Source.Pred.t) =
+  let value ppf (Source.Pred.Value (t, v)) =
+    let text = Column.values Kind.string (Column.print (Column.v t [| v |])) in
+    Format.fprintf ppf "%s : %a" text.(0) Type.pp t
+  in
+  let list ppf ps =
+    Format.pp_print_list ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ") ppf ps
+  in
+  let op = function
+    | `Eq -> "=" | `Ne -> "<>" | `Lt -> "<" | `Le -> "<=" | `Gt -> ">"
+    | `Ge -> ">="
+  in
+  match p with
+  | Cmp (n, o, v) -> Format.fprintf ppf "%s %s %a" n (op o) value v
+  | In (n, vs) -> Format.fprintf ppf "%s in [%a]" n (list value) vs
+  | Null n -> Format.fprintf ppf "%s is null" n
+  | Valid n -> Format.fprintf ppf "%s is valid" n
+  | Not p -> Format.fprintf ppf "not (%a)" pp_pred p
+  | And ps -> Format.fprintf ppf "and [%a]" (list pp_pred) ps
+  | Or ps -> Format.fprintf ppf "or [%a]" (list pp_pred) ps
+
+let pred_filter =
+  let case =
+    Gen.bind schemas (fun s -> Gen.pair (table s) (pred s))
+  in
+  prop "a predicate made a filter keeps the rows where it holds"
+    (Gen.with_pp
+       (fun ppf (t, p) -> Format.fprintf ppf "%a@.%a" pp_pred p Talon.pp t)
+       case)
+    (fun (t, p) ->
+      let held = holds t p in
+      cover "a row passes" (Array.exists (( = ) (Some true)) held);
+      cover "a row is null" (Array.exists Option.is_none held);
+      cover "a row fails" (Array.exists (( = ) (Some false)) held);
+      let idx =
+        List.filter (fun i -> held.(i) = Some true) (List.init (rows t) Fun.id)
+      in
+      let idx = Array.of_list (List.map Int64.of_int idx) in
+      let expected = take (Nx.create Nx.int64 [| Array.length idx |] idx) t in
+      match Source.Pred.filter (schema t) p with
+      | None -> fail "no filter for a predicate on handled columns"
+      | Some f ->
+          equal
+            (Testable.make ~pp:Talon.pp ~equal:Talon.equal)
+            expected
+            (run_ok (Query.filter f (Query.of_table t))))
+
 (* How a plan reads its tables. Two runs of one plan read alike, since the
    answers and the stated rows change the optimized plan, and so its
    failures. *)
@@ -3230,9 +3316,44 @@ let three = parts [ [ [| 0; 1 |]; [| 2 |] ]; [ [| 3; 4; 5 |] ]; [ [| 6 |] ] ]
 let xs t = Column.values Kind.int (column t "x")
 let every n log = equal (array int) (Array.make (Array.length log) n) log
 
+(* A float column against values of float64, the type that contains it,
+   each the float64 nearest a decimal: [0.1] is no float32's or float16's key,
+   since neither holds it, while their own [0.1], widened, is one. *)
+let pred_widened =
+  cases "a predicate compares a column at its values' wider type"
+    ~id:(fun (Type.Any t) -> Format.asprintf "%a" Type.pp t)
+    Type.[ Any float32; Any float16 ]
+    (fun (Type.Any t) ->
+      match Kind.provably_equal (Type.kind t) Kind.float with
+      | None -> fail "a float type"
+      | Some Equal ->
+          let c = Column.v t [| 0.1; 1.0 |] in
+          let own = (Column.values Kind.float c).(0) in
+          let tab = v [ ("x", c) ] in
+          let kept p =
+            match Source.Pred.filter (schema tab) p with
+            | None -> -1
+            | Some f -> rows (run_ok (Query.filter f (Query.of_table tab)))
+          in
+          let at x = Source.Pred.Value (Type.float64, x) in
+          List.iter
+            (fun (name, x) ->
+              Printf.printf "%s: = %d, in %d\n" name
+                (kept (Cmp ("x", `Eq, at x)))
+                (kept (In ("x", [ at x; at 2.0 ]))))
+            [ ("0.1", 0.1); ("its own 0.1", own) ];
+          expect (Windtrap.output ())
+          @@ __POS_OF__
+               {|
+            0.1: = 0, in 0
+            its own 0.1: = 1, in 1
+            |})
+
 let sources =
   group "Sources"
     [
+      pred_filter;
+      pred_widened;
       test "a run opens each part once and closes each reader once" (fun () ->
           let s, log = counting (ints [||]) three in
           let t = run_ok (Query.of_source s) in

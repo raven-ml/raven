@@ -21,6 +21,8 @@ module Pred : sig
     | And of t list
     | Or of t list
     | Not of t
+
+  val filter : Schema.t -> t -> (bool, Expr.row) Expr.t option
 end
 
 type request = {

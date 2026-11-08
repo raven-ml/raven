@@ -13,7 +13,9 @@
     dictionary page's values. The buffer is then converted once into the storage
     of the column's talon type, the values of dictionary-encoded pages are
     gathered from it, and the values are spread onto the rows once, zero under
-    the nulls. Integers narrower than [int32] are checked and narrowed last, so
+    the nulls. Byte strings of dictionary-encoded pages keep the buffer as their
+    words and the rows' indices as codes, so that a filter can read each word
+    once. Integers narrower than [int32] are checked and narrowed last, so
     that a value that does not fit is found at its row. Levels and booleans,
     bit-packed in the file, decode straight into bits: the validity and the
     values of a [bool] column.
@@ -52,6 +54,17 @@ type t =
           [offsets.{i}] to [offsets.{i + 1}], and [offsets.{0}] is [0]. Text is
           not validated as UTF-8 here: columns validate it when they are built.
       *)
+  | Coded of {
+      valid : Nx.host Nx.bit_t option;
+      codes : Nx.host Nx.int64_t;
+      offsets : Nx.host Nx.int64_t;
+      data : Nx.host Nx.uint8_t;
+    }
+      (** Dictionary-encoded byte strings, for [string] and [binary]: row [i]
+          is the word [codes.{i}], word [w] being [data] from [offsets.{w}] to
+          [offsets.{w + 1}]. The words are the dictionary page's, then the
+          values of the chunk's [PLAIN] pages, then an empty word, which every
+          null row reads. *)
 
 val check : Meta.file -> row_group:int -> int -> Leaf.t -> unit
 (** [check m ~row_group i l] checks that the chunk [i] of the row group
@@ -97,3 +110,7 @@ val read :
     categorical's dictionary), a dictionary index is out of the dictionary, the
     pages' rows do not add up to the row group's, or the chunk's values would
     take more bytes than an [int] counts. *)
+
+val flat : t -> t
+(** [flat c] is [c] with the words of a {!Coded} chunk gathered at its codes,
+    as {!Varsize}, and [c] itself otherwise. *)

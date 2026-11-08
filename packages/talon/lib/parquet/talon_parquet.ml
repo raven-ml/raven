@@ -197,19 +197,131 @@ let rec usable f (p : Source.Pred.t) =
   | Or ps -> List.for_all (usable f) ps
   | Not _ -> false
 
+(* In-scan filters
+
+   The source applies a conjunct over one column of byte strings itself: on a
+   dictionary-encoded chunk ({!Chunk.Coded}) once per word, the words' results
+   then taken at the rows' codes, and on any other chunk on its rows. The
+   conjunct is evaluated by talon, as the filter it is
+   ({!Talon.Source.Pred.filter}); a row passes where it is [true]. *)
+
+(* [truth e] is the output [true] where the filter [e] is, [false] where it
+   is [false] or null. *)
+let truth e = Expr.("keep" := if_ e (bool true) (bool false))
+
+(* [in_scan schema p] is the column that [p] reads and the filter it is, when
+   the source applies [p]: a predicate on one column of [schema] that reads as
+   [string] or [binary]. *)
+let in_scan schema (p : Source.Pred.t) =
+  let rec columns acc : Source.Pred.t -> string list = function
+    | Cmp (c, _, _) | In (c, _) | Null c | Valid c ->
+        if List.mem c acc then acc else c :: acc
+    | And ps | Or ps -> List.fold_left columns acc ps
+    | Not p -> columns acc p
+  in
+  match columns [] p with
+  | [ c ] -> (
+      match Schema.find schema c with
+      | Some (Type.Any (String | Binary)) ->
+          Option.map (fun e -> (c, e)) (Source.Pred.filter schema p)
+      | _ -> None)
+  | _ -> None
+
+(* [passing keep c rows] is where [keep] is [true] on the rows of the column
+   [c], of [rows] rows, [keep] being a {!truth}. *)
+let passing keep c rows =
+  Query.of_table (Talon.v ~rows [ c ])
+  |> Query.select [ keep ]
+  |> Query.run |> Error.get_ok
+  |> Fun.flip Talon.column "keep"
+  |> Column.to_tensor Nx.bit
+
 (* Sources *)
 
-let decode ~scratch bytes m g i leaf name ty =
+(* [column ~row_group name ty c] is the column [name] of type [ty] that the
+   decoded chunk [c] lays out. *)
+let column ~row_group name ty (c : Chunk.t) =
   let layout : Column.layout =
-    match Chunk.read ~scratch bytes m ~row_group:g i leaf ty with
+    match Chunk.flat c with
     | Fixed { valid; values } -> Fixed { validity = valid; values }
     | Varsize { valid; offsets; data } ->
         Varsize { validity = valid; offsets; child = Column.of_tensor data }
+    | Coded _ -> assert false
   in
   match Column.of_layout ty layout with
   | Ok c -> c
   | Error (row, why) ->
-      Meta.fail ~row_group:g "column %S: row %d: %s" name row why
+      Meta.fail ~row_group "column %S: row %d: %s" name row why
+
+(* A decoded chunk: the column [name] of type [ty] decoded as [chunk], its
+   words as a column, with a null word after them that the null rows read,
+   when it is coded and they are all values of [ty], and its column. Words
+   that are not are read as the rows that read them, so that only a row
+   fails, and an unused one fails nothing. *)
+type decoded = {
+  name : string;
+  ty : Type.any;
+  chunk : Chunk.t;
+  words : Column.t option Lazy.t;
+  column : Column.t Lazy.t;
+}
+
+let decoded ~row_group name ty (chunk : Chunk.t) =
+  let words =
+    lazy
+      (match chunk with
+      | Fixed _ | Varsize _ -> None
+      | Coded { offsets; data; _ } -> (
+          let n = Nx.dim 0 offsets - 1 in
+          let last = Int64.of_int (n - 1) in
+          let valid = Nx.less_s (Nx.arange Nx.int64 0 n 1) last in
+          let words : Column.layout =
+            Varsize
+              {
+                validity = Some (Nx.cast Nx.bit valid);
+                offsets;
+                child = Column.of_tensor data;
+              }
+          in
+          match Column.of_layout ty words with
+          | Ok words -> Some words
+          | Error _ -> None))
+  in
+  { name; ty; chunk; words; column = lazy (column ~row_group name ty chunk) }
+
+(* [filtered d rows e] is where [e], a {!truth}, is [true] on the [rows] rows
+   of [d]: on its words, taken at its codes, or on its column. *)
+let filtered d rows e =
+  match (d.chunk, Lazy.force d.words) with
+  | Coded { codes; _ }, Some words ->
+      Nx.take codes (passing e (d.name, words) (Column.length words))
+  | _ -> passing e (d.name, Lazy.force d.column) rows
+
+(* [taken ~row_group ~rows at ds] is the batch of the rows [at] of the
+   decoded chunks [ds], of [rows] rows. A coded chunk's codes are taken before its
+   words are gathered; another chunk's rows once its column is built. *)
+let taken ~row_group ~rows at ds =
+  let coded d =
+    match (d.chunk, Lazy.force d.words) with
+    | Coded _, Some _ -> true
+    | _ -> false
+  in
+  let flat =
+    List.filter_map
+      (fun d -> if coded d then None else Some (d.name, Lazy.force d.column))
+      ds
+  in
+  let rest = Talon.take at (Talon.v ~rows flat) in
+  let one d =
+    match d.chunk with
+    | Coded k when coded d ->
+        let valid = Option.map (Nx.take at) k.valid in
+        let codes = Nx.take at k.codes in
+        let k = Chunk.Coded { k with valid; codes } in
+        (d.name, column ~row_group d.name d.ty k)
+    | _ -> (d.name, Talon.column rest d.name)
+  in
+  Talon.v ~rows:(Nx.dim 0 at) (List.map one ds)
 
 (* [with_scratch shared f] is [f s] for [s] the scratch that the reads of one
    source share ({!Chunk.type-scratch}), taken from [shared], or one of its
@@ -229,10 +341,16 @@ let with_scratch shared f =
       Atomic.set shared (Some s);
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
-(* [part ?file shared b m leaves g columns] is the row group [g] of [b] as one
-   batch of [columns], each a name, the index of its leaf and its type, decoded
-   with the scratch [shared]. *)
-let part ?file shared b m leaves g columns : Source.part =
+(* [whole rows ds] is the batch of the decoded chunks [ds], of [rows] rows. *)
+let whole rows ds =
+  Talon.v ~rows (List.map (fun d -> (d.name, Lazy.force d.column)) ds)
+
+(* [part ?file shared b m leaves g columns filters] is the row group [g] of [b]
+   as one batch of [columns], each a name, the index of its leaf and its type,
+   decoded with the scratch [shared], of the rows that pass [filters], each a
+   column, as [columns] give one, and the filter on it. *)
+let part ?file shared b m leaves g columns filters : Source.part =
+  let rows = m.Meta.row_groups.(g).rows in
   let open_ () =
     let read = ref false in
     let next () =
@@ -241,16 +359,37 @@ let part ?file shared b m leaves g columns : Source.part =
         read := true;
         with_bytes ?file b @@ fun bytes ->
         with_scratch shared @@ fun scratch ->
-        let column (name, i, ty) =
-          (name, decode ~scratch bytes m g i leaves.(i) name ty)
+        (* Each column is decoded and built once, a filter's column being
+           the request's or one of its own. *)
+        let decode (name, i, ty) =
+          let k = Chunk.read ~scratch bytes m ~row_group:g i leaves.(i) ty in
+          decoded ~row_group:g name ty k
         in
-        Some
-          (Talon.v ~rows:m.Meta.row_groups.(g).rows (List.map column columns))
+        let ds = List.map decode columns in
+        let pass (((name, _, _) as c), e) =
+          let d =
+            match List.find_opt (fun d -> d.name = name) ds with
+            | Some d -> d
+            | None -> decode c
+          in
+          filtered d rows e
+        in
+        match filters with
+        | [] -> Some (whole rows ds)
+        | f :: fs ->
+            let keep =
+              List.fold_left
+                (fun acc f -> Nx.logical_and acc (pass f))
+                (pass f) fs
+            in
+            let at = Nx.positions keep in
+            if Nx.dim 0 at = rows then Some (whole rows ds)
+            else Some (taken ~row_group:g ~rows at ds)
       end
     in
     Ok { Source.next; close = ignore }
   in
-  { rows = Some m.Meta.row_groups.(g).rows; open_ }
+  { rows = (if filters = [] then Some rows else None); open_ }
 
 (* [parts ?file shared types b r] are the parts of [b] for the request [r],
    whose columns read as [types] say, decoded with the scratch [shared]. *)
@@ -272,6 +411,19 @@ let parts ?file shared types b (r : Source.request) =
     | Some i -> (name, i, ty)
   in
   let columns = List.map requested r.columns in
+  (* A column's conjuncts are one filter, evaluated once. *)
+  let add acc (c, e) =
+    match List.assoc_opt c acc with
+    | Some _ ->
+        let join (c', e') = (c', if c' = c then Expr.( && ) e' e else e') in
+        List.map join acc
+    | None -> acc @ [ (c, e) ]
+  in
+  let filters =
+    let schema = Schema.v types in
+    List.fold_left add [] (List.filter_map (in_scan schema) r.filters)
+    |> List.map (fun (c, e) -> (requested c, truth e))
+  in
   let stats g name =
     match (leaf name, ty name) with
     | Some i, Some ty ->
@@ -282,14 +434,14 @@ let parts ?file shared types b (r : Source.request) =
   in
   let kept g (rg : Meta.row_group) =
     if List.for_all (passes (stats g) rg.rows) r.filters then
-      Some (part ?file shared b m leaves g columns)
+      Some (part ?file shared b m leaves g columns filters)
     else None
   in
   List.filter_map Fun.id (Array.to_list (Array.mapi kept m.row_groups))
 
 (* [declared fn c] is [c]'s name and type, which a decimal must have been
    given. *)
-let declared fn c =
+let declared fn (c : column) =
   match c.ty with
   | Some ty -> (c.leaf.name, ty)
   | None ->
@@ -307,9 +459,14 @@ let make fn ?file ?rows f b =
     | Some p -> Format.asprintf "parquet %a" Type.pp_quoted p
   in
   let types = Array.to_list (Array.map (declared fn) f) in
-  let pushdown p = if usable f p then Source.Inexact else Unsupported in
+  let schema = Schema.v types in
+  let pushdown p =
+    if Option.is_some (in_scan schema p) then Source.Exact
+    else if usable f p then Inexact
+    else Unsupported
+  in
   let shared = Atomic.make None in
-  Source.v ~name ~schema:(Schema.v types) ?rows ~pushdown
+  Source.v ~name ~schema ?rows ~pushdown
     (parts ?file shared types b)
 
 let source f b = make "source" f b

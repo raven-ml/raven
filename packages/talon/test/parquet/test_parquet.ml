@@ -1257,14 +1257,20 @@ let dictionary_case =
   in
   (words, indices)
 
-let dictionary_file words indices =
-  let plain = Buffer.create 64 in
-  Array.iter
+(* [plain_values ws] is the PLAIN encoding of the byte arrays [ws]. *)
+let plain_values ws =
+  let b = Buffer.create 64 in
+  List.iter
     (fun w ->
-      Buffer.add_int32_le plain (Int32.of_int (String.length w));
-      Buffer.add_string plain w)
-    words;
-  let plain = Buffer.contents plain in
+      Buffer.add_int32_le b (Int32.of_int (String.length w));
+      Buffer.add_string b w)
+    ws;
+  Buffer.contents b
+
+(* [dictionary_pages words indices] is a dictionary page of [words], then a
+   data page of [indices], and the dictionary page's length. *)
+let dictionary_pages words indices =
+  let plain = plain_values (Array.to_list words) in
   let dict =
     thrift
       (Struct
@@ -1280,15 +1286,65 @@ let dictionary_file words indices =
     if 1 lsl w >= Array.length words then w else width (w + 1)
   in
   let w = width 0 in
-  let rows = List.length indices in
   let data =
-    page ~data_page:[ (2, I32 8) ] rows
+    page ~data_page:[ (2, I32 8) ] (List.length indices)
       (String.make 1 (Char.chr w) ^ encode w [ Packed indices ])
   in
-  parquet ~rows
+  (dict ^ data, String.length dict)
+
+let dictionary_file words indices =
+  let pages, dict = dictionary_pages words indices in
+  parquet ~rows:(List.length indices)
     ~column:[ (1, I32 6); (6, I32 0) ]
-    ~chunk:[ (9, I64 (4 + String.length dict)); (11, I64 4) ]
-    (dict ^ data)
+    ~chunk:[ (9, I64 (4 + dict)); (11, I64 4) ]
+    pages
+
+(* [text_file rows columns] is a file of one row group of [rows] rows of
+   required byte-array columns [(name, chunk)], each chunk [`Dict (words,
+   indices)] or [`Plain values]. *)
+let text_file rows columns =
+  let chunk (pos, acc) (name, c) =
+    let pages, offsets =
+      match c with
+      | `Dict (words, indices) ->
+          let pages, dict = dictionary_pages words indices in
+          (pages, [ (9, I64 (pos + dict)); (11, I64 pos) ])
+      | `Plain vs ->
+          (page (List.length vs) (plain_values vs), [ (9, I64 pos) ])
+    in
+    let size = I64 (String.length pages) in
+    let meta =
+      [ (1, I32 6); (3, List [ Bin name ]); (4, I32 0); (5, I64 rows) ]
+      @ [ (6, size); (7, size) ] @ offsets
+    in
+    let element = Struct [ (1, I32 6); (3, I32 0); (4, Bin name) ] in
+    let c = (pages, Struct [ (3, Struct meta) ], element) in
+    (pos + String.length pages, c :: acc)
+  in
+  let _, cs = List.fold_left chunk (4, []) columns in
+  let cs = List.rev cs in
+  let root = Struct [ (4, Bin "schema"); (5, I32 (List.length cs)) ] in
+  let meta =
+    thrift
+      (Struct
+         [
+           (2, List (root :: List.map (fun (_, _, e) -> e) cs));
+           (3, I64 rows);
+           ( 4,
+             List
+               [
+                 Struct
+                   [
+                     (1, List (List.map (fun (_, m, _) -> m) cs));
+                     (3, I64 rows);
+                   ];
+               ] );
+         ])
+  in
+  let len = Bytes.create 4 in
+  Bytes.set_int32_le len 0 (Int32.of_int (String.length meta));
+  let pages = String.concat "" (List.map (fun (p, _, _) -> p) cs) in
+  Rig.Buffer.of_string ("PAR1" ^ pages ^ meta ^ Bytes.to_string len ^ "PAR1")
 
 let dictionary_text =
   prop "dictionary-encoded text reads as its words at the indices"
@@ -1311,6 +1367,236 @@ let dictionary_text =
         (Array.of_list (List.map (fun i -> Some words.(i)) indices))
         (Column.options Kind.string col))
 
+(* In-scan filters: predicates on one text column, drawn over its values and
+   texts it does not hold. *)
+
+type op = [ `Eq | `Ne | `Lt | `Le | `Gt | `Ge ]
+
+type pred =
+  | Cmp of op * string
+  | In of string list
+  | Null
+  | Not of pred
+  | And of pred * pred
+  | Or of pred * pred
+
+let op_name : op -> string = function
+  | `Eq -> "="
+  | `Ne -> "<>"
+  | `Lt -> "<"
+  | `Le -> "<="
+  | `Gt -> ">"
+  | `Ge -> ">="
+
+let rec pp_pred ppf = function
+  | Cmp (op, v) -> Format.fprintf ppf "x %s %S" (op_name op) v
+  | In vs ->
+      Format.fprintf ppf "x in [%a]"
+        (Format.pp_print_list
+           ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+           (fun ppf -> Format.fprintf ppf "%S"))
+        vs
+  | Null -> Format.pp_print_string ppf "x is null"
+  | Not p -> Format.fprintf ppf "not (%a)" pp_pred p
+  | And (p, q) -> Format.fprintf ppf "(%a && %a)" pp_pred p pp_pred q
+  | Or (p, q) -> Format.fprintf ppf "(%a || %a)" pp_pred p pp_pred q
+
+(* [filter_of x v p] is [p] on the column [x], whose values [v] makes of
+   texts. *)
+let rec filter_of x v = function
+  | Cmp (op, s) -> (
+      let s = Expr.const (v s) in
+      match op with
+      | `Eq -> Expr.(x = s)
+      | `Ne -> Expr.(x <> s)
+      | `Lt -> Expr.(x < s)
+      | `Le -> Expr.(x <= s)
+      | `Gt -> Expr.(x > s)
+      | `Ge -> Expr.(x >= s))
+  | In ss -> Expr.is_in (List.map v ss) x
+  | Null -> Expr.is_null x
+  | Not p -> Expr.not (filter_of x v p)
+  | And (p, q) -> Expr.(filter_of x v p && filter_of x v q)
+  | Or (p, q) -> Expr.(filter_of x v p || filter_of x v q)
+
+(* The files whose text columns the source filters in its scan: dictionary
+   pages, dictionary pages that fall back to PLAIN ones, PLAIN pages only,
+   and no rows; each column with nulls but [req_string]; [fsb] of fixed
+   length. *)
+let scanned =
+  [
+    ("types.parquet", [ "string"; "binary"; "req_string"; "fsb" ]);
+    ("fallback.parquet", [ "string"; "binary" ]);
+    ("types_plain.parquet", [ "string"; "binary"; "req_string"; "fsb" ]);
+    ("empty.parquet", [ "string"; "binary" ]);
+  ]
+
+let is_binary c = c = "binary" || c = "fsb"
+
+(* [scan_format file] is [file]'s format, its decimals read as floats. *)
+let scan_format file =
+  let float f c =
+    match P.with_type c (Type.Any Type.float64) f with
+    | f -> f
+    | exception Invalid_argument _ -> f
+  in
+  List.fold_left float (sniff file) [ "d9"; "d18" ]
+
+let scan_source file = P.source (scan_format file) (buffer file)
+
+(* [texts file c] is the texts of the column [c] of [file], as read. *)
+let texts =
+  let memo = Hashtbl.create 8 in
+  fun file c ->
+    match Hashtbl.find_opt memo (file, c) with
+    | Some ts -> ts
+    | None ->
+        let col = Error.get_ok (read (scan_format file) file c) in
+        let ts =
+          if is_binary c then
+            Array.map (Option.map (fun b -> (b : Binary.t :> string)))
+              (Column.options Kind.binary col)
+          else Column.options Kind.string col
+        in
+        let ts = Array.of_list (List.filter_map Fun.id (Array.to_list ts)) in
+        Hashtbl.replace memo (file, c) ts;
+        ts
+
+let in_scan_case =
+  let open Gen in
+  let* file, columns = of_list scanned in
+  let* c = of_list columns in
+  let have = texts file c in
+  let absent = [ ""; "v"; "zz"; "\x00"; "v1\xc3\xa9" ] in
+  let text =
+    if Array.length have = 0 then of_list absent
+    else frequency [ (3, of_list (Array.to_list have)); (1, of_list absent) ]
+  in
+  let op = of_list [ `Eq; `Ne; `Lt; `Le; `Gt; `Ge ] in
+  let atom =
+    frequency
+      [
+        (4, map (fun (o, t) -> Cmp (o, t)) (pair op text));
+        (2, map (fun ts -> In ts) (list ~size:(int_range 0 9) text));
+        (3, constant Null);
+      ]
+  in
+  let rec pred depth =
+    if depth = 0 then atom
+    else
+      let sub = pred (depth - 1) in
+      frequency
+        [
+          (3, atom);
+          (1, map (fun p -> Not p) sub);
+          (1, map (fun (p, q) -> And (p, q)) (pair sub sub));
+          (1, map (fun (p, q) -> Or (p, q)) (pair sub sub));
+        ]
+  in
+  let+ p = pred 2 and+ positive = bool and+ shown = bool in
+  (file, c, p, positive, shown)
+
+(* [kept ~shown c f q] is the rows that [q] keeps, filtered by [f], read back
+   as the floats of [f64] and, if [shown], the texts of [c]. *)
+let kept ~shown c f q =
+  let names = if shown then [ c; "f64" ] else [ "f64" ] in
+  let t =
+    Query.filter f q
+    |> Query.select Expr.[ keep (Sel.names names) ]
+    |> Query.run |> Error.get_ok
+  in
+  let text =
+    if not shown then Array.make (Talon.rows t) "-"
+    else if is_binary c then
+      Array.map
+        (Option.fold ~none:"null" ~some:(fun b ->
+             quote (b : Binary.t :> string)))
+        (Column.options Kind.binary (Talon.column t c))
+    else
+      Array.map
+        (Option.fold ~none:"null" ~some:quote)
+        (Column.options Kind.string (Talon.column t c))
+  in
+  let floats = Column.options Kind.float (Talon.column t "f64") in
+  Array.map2
+    (fun s x ->
+      s ^ " " ^ Option.fold ~none:"null" ~some:(Printf.sprintf "%h") x)
+    text floats
+
+let in_scan_filters =
+  let pp ppf (file, c, p, positive, shown) =
+    Format.fprintf ppf "%s, %s: %a%s%s" file c pp_pred p
+      (if positive then " && f64 > 0" else "")
+      (if shown then "" else ", f64 alone")
+  in
+  prop "a source keeps the rows a filter on one text column keeps"
+    (Gen.with_pp pp in_scan_case) (fun (file, c, p, positive, shown) ->
+      let f =
+        if is_binary c then filter_of (Col.binary c) Binary.of_string p
+        else filter_of (Col.string c) Fun.id p
+      in
+      let f = if positive then Expr.(f && Col.float "f64" > float 0.) else f in
+      let src = scan_source file in
+      let whole = Error.get_ok (Query.run (Query.of_source src)) in
+      let expected = kept ~shown:true c f (Query.of_table whole) in
+      let rows = Talon.rows whole in
+      cover "dictionary pages" (file = "types.parquet");
+      cover "dictionary pages falling back to PLAIN"
+        (file = "fallback.parquet");
+      cover "PLAIN pages" (file = "types_plain.parquet");
+      cover "no rows" (rows = 0);
+      cover "some rows pass, others not"
+        (Array.length expected > 0 && Array.length expected < rows);
+      cover "a null row passes"
+        (Array.exists (String.starts_with ~prefix:"null ") expected);
+      cover "the filtered column not read back" (not shown);
+      let expected = kept ~shown c f (Query.of_table whole) in
+      equal (array string) expected (kept ~shown c f (Query.of_source src)))
+
+(* Columns of a valid and an invalid UTF-8 word, read as text: a filter in
+   the scan fails where a read fails, at the row, and not on a word no row
+   reads, on the column it filters or another, dictionary-encoded or PLAIN. *)
+let invalid_words =
+  test "a filtered read fails only at a row of invalid UTF-8" (fun () ->
+      let rows q =
+        match Query.run q with
+        | Ok t -> string_of_int (Talon.rows t) ^ " rows"
+        | Error e -> error_text e
+      in
+      let as_text b names =
+        let f = Error.get_ok (P.sniff b) in
+        List.fold_left (fun f c -> P.with_type c (any Type.string) f) f names
+      in
+      List.iter
+        (fun indices ->
+          let b = dictionary_file [| "ok"; "\xff" |] indices in
+          let q = Query.of_source (P.source (as_text b [ "x" ]) b) in
+          Printf.printf "x at %s: read %s, x = \"ok\" %s\n"
+            (String.concat " " (List.map string_of_int indices))
+            (rows q)
+            (rows (Query.filter Expr.(Col.string "x" = string "ok") q)))
+        [ [ 0; 0; 0 ]; [ 0; 1; 0 ] ];
+      let s = `Dict ([| "a"; "b" |], [ 0; 0; 1; 0 ]) in
+      List.iter
+        (fun (name, y) ->
+          let b = text_file 4 [ ("s", s); ("y", y) ] in
+          let q = Query.of_source (P.source (as_text b [ "s"; "y" ]) b) in
+          let s_is v = Query.filter Expr.(Col.string "s" = string v) q in
+          Printf.printf "%s y: read %s, s = \"a\" %s, s = \"b\" %s\n"
+            name (rows q) (rows (s_is "a")) (rows (s_is "b")))
+        [
+          ("dictionary", `Dict ([| "ok"; "\xff" |], [ 0; 0; 1; 0 ]));
+          ("PLAIN", `Plain [ "ok"; "ok"; "\xff"; "ok" ]);
+        ];
+      expect (output ())
+      @@ __POS_OF__
+           {|
+        x at 0 0 0: read 3 rows, x = "ok" 3 rows
+        x at 0 1 0: read row group 0: column "x": row 1: invalid UTF-8 at byte 0, x = "ok" row group 0: column "x": row 1: invalid UTF-8 at byte 0
+        dictionary y: read row group 0: column "y": row 2: invalid UTF-8 at byte 0, s = "a" row group 0: column "y": row 2: invalid UTF-8 at byte 0, s = "b" row group 0: column "y": row 2: invalid UTF-8 at byte 0
+        PLAIN y: read row group 0: column "y": row 2: invalid UTF-8 at byte 0, s = "a" row group 0: column "y": row 2: invalid UTF-8 at byte 0, s = "b" row group 0: column "y": row 2: invalid UTF-8 at byte 0
+        |})
+
 (* [first_batch name] is the first batch a query of the file [name]'s source
    folds over: its first row group, as decoded. *)
 let first_batch name =
@@ -1326,6 +1612,8 @@ let sources =
       hybrid_runs;
       hybrid_bit_runs;
       dictionary_text;
+      in_scan_filters;
+      invalid_words;
       test
         "a decoded bool column of nulls in 731 rows is canonical, the bits \
          past its rows clear" (fun () ->

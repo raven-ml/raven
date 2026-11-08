@@ -1776,6 +1776,15 @@ module Source : sig
           (** [Or ps] is [true] if one of [ps] is, else null if one is null,
               else [false]. [Or []] is [false]. *)
       | Not of t  (** [Not p] is the negation of [p], null where [p] is. *)
+
+    val filter : Schema.t -> t -> (bool, Expr.row) Expr.t option
+    (** [filter s p] is the filter that [p] is over a table of the columns [s]
+        describes: it is [true], [false] or null where [p] is, so
+        [Query.filter] of it keeps the rows that pass [p]. A source that
+        answers {!Exact} can apply a conjunct with it, on each batch it reads.
+        It is [None] if [p] names a column that [s] lacks, or one whose type is
+        or contains an extension type, which a filter reads only with its
+        declaration ({!Ext.col}). *)
   end
 
   (** {1:reading Reading} *)

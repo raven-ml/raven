@@ -16,6 +16,72 @@ module Pred = struct
     | And of t list
     | Or of t list
     | Not of t
+
+  (* A column of the schema, read through a handle of its kind. *)
+  type column = Column : 'a Kind.t * ('a, Expr.row) Expr.t -> column
+
+  let column schema c =
+    match Schema.find schema c with
+    | Some (Type.Any ty) when not (Type.has_ext ty) ->
+        let k = Type.kind ty in
+        Some (Column (k, Expr.make (Handle (k, c))))
+    | Some _ | None -> None
+
+  (* [raw k v] is the value of [v] read as [k], and [lit k v] its literal,
+     typed at [v]'s type, where the comparison is made. *)
+  let raw (type a) (k : a Kind.t) (Value (t, v)) : a option =
+    match Kind.provably_equal (Type.kind t) k with
+    | Some Equal -> Some v
+    | None -> None
+
+  let lit (type a) (k : a Kind.t) (Value (t, v)) :
+      (a, Expr.row) Expr.t option =
+    match Kind.provably_equal (Type.kind t) k with
+    | Some Equal -> Some (Expr.store t (Expr.make (Lit (k, v))))
+    | None -> None
+
+  let all f init ps =
+    List.fold_left
+      (fun acc p ->
+        match (acc, p) with Some a, Some b -> Some (f a b) | _ -> None)
+      (Some init) ps
+
+  let rec filter schema p : (bool, Expr.row) Expr.t option =
+    let on c f = Option.bind (column schema c) f in
+    match p with
+    | Cmp (c, op, v) ->
+        on c @@ fun (Column (k, x)) ->
+        Option.map
+          (fun v ->
+            match op with
+            | `Eq -> Expr.(x = v)
+            | `Ne -> Expr.(x <> v)
+            | `Lt -> Expr.(x < v)
+            | `Le -> Expr.(x <= v)
+            | `Gt -> Expr.(x > v)
+            | `Ge -> Expr.(x >= v))
+          (lit k v)
+    | In (c, []) -> on c @@ fun _ -> Some (Expr.bool false)
+    | In (c, (Value (t, _) :: _ as vs)) ->
+        (* The column is compared at its values' type, which contains its
+           own: a float64 value is no float32 row's key unless it is one
+           exactly. *)
+        on c @@ fun (Column (k, x)) ->
+        let at (Value (t', _) as v) =
+          if Type.equal t' t then raw k v else None
+        in
+        let ws = List.filter_map at vs in
+        if List.compare_lengths ws vs <> 0 then None
+        else begin
+          match Kind.provably_equal (Type.kind t) k with
+          | Some Equal -> Some (Expr.is_in ws (Expr.store t x))
+          | None -> None
+        end
+    | Null c -> on c @@ fun (Column (_, x)) -> Some (Expr.is_null x)
+    | Valid c -> on c @@ fun (Column (_, x)) -> Some Expr.(not (is_null x))
+    | And ps -> all Expr.( && ) (Expr.bool true) (List.map (filter schema) ps)
+    | Or ps -> all Expr.( || ) (Expr.bool false) (List.map (filter schema) ps)
+    | Not p -> Option.map Expr.not (filter schema p)
 end
 
 type request = {

@@ -43,7 +43,8 @@ let read_parquet () =
   let* f = Talon_parquet.sniff b in
   Format.printf "%a@.@." Talon_parquet.pp_format f;
 
-  (* The source skips the row groups whose statistics rule a filter out. *)
+  (* The source applies a filter on one text column itself, and skips the
+     row groups whose statistics rule it out. *)
   let q =
     Query.(
       of_source (Talon_parquet.source f b)
