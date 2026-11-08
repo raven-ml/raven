@@ -4218,12 +4218,23 @@ let positions_by ~by ?size c =
   let n = Prim.dim c 0 in
   let ends =
     (* With [size], a count past it reads as [size], which keeps the first
-       [size] positions and the sum inside int64. *)
+       [size] positions. *)
     let count = E.(maximum (cast D.Int64 (operand 0 c)) (i64 0)) in
     let count =
       match size with Some l -> E.(minimum count (i64 l)) | None -> count
     in
-    scan_along ~by Sum 0 (elementwise ~by D.Int64 [ Any c ] count)
+    let ends = scan_along ~by Sum 0 (elementwise ~by D.Int64 [ Any c ] count) in
+    match size with
+    | Some l when l > 0 && Int64.(div max_int (of_int l)) < Int64.of_int n ->
+        (* [n] counts of at most [l] can sum past int64's range and wrap
+           back into the first [l]. The first end past it is below
+           [2^63 + l], exact unsigned; a running unsigned maximum holds
+           every later end there, which reads negative and lands nowhere.
+           No input a test can hold reaches this: it takes [n * l] past
+           [2^63]. *)
+        let top = scan_along ~by Max 0 (Eval.bitcast ~by D.Uint64 ends) in
+        Eval.bitcast ~by D.Int64 top
+    | _ -> ends
   in
   let at = beside c in
   let l =
