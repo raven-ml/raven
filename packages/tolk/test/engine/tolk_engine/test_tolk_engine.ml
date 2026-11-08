@@ -2378,6 +2378,46 @@ let reads_mixed_scalars ?(devices = devices) d () =
   let expected = List.mapi (fun i (_, _, v) -> int (v + (1000 * i))) scalars in
   equal values (Array.of_list expected) (Run.values Int64 ys)
 
+(* A call on [d] of one kernel of [y] and 520 buffers of one element, whose
+   addresses take 4,168 bytes of arguments, more than a Metal launch copies
+   inline: it stores into [y] the sum of each buffer's element times its
+   rank, which a buffer read in another's place changes. *)
+let reads_many_buffers ?(devices = devices) d () =
+  let n = 520 in
+  let int i = `Int (Bigint.of_int i) in
+  let param slot = Shape.param ~shape:[ Int 1 ] ~device:d slot Int64 in
+  let term i =
+    let x = param (i + 1)
+    and rank = Shape.stack [ Ops.const ~dtype:Int64 (int (i + 1)) ] in
+    Ops.O.(x * rank)
+  in
+  let sum =
+    List.fold_left
+      (fun acc i -> Ops.O.(acc + term i))
+      (term 0)
+      (List.init (n - 1) succ)
+  in
+  let body = Ops.sink [ Ops.store (param 0) sum ] in
+  let y = Ops.new_buffer d 1 Int64 in
+  let xs = List.init n (fun _ -> Ops.new_buffer d 1 Int64) in
+  let call = Ops.call ~precompile:true body (y :: xs) in
+  let linear, _ =
+    Schedule.create_linear_with_vars (Ops.sink [ Ops.after y [ call ] ])
+  in
+  let compiled = compile ~devices linear in
+  let on = devices d in
+  let element i = (i * i) + 1 in
+  let ys = Run.buffer on Int64 [| int 0 |] in
+  let bound =
+    List.mapi (fun i x -> (x, Run.buffer on Int64 [| int (element i) |])) xs
+  in
+  let s = Engine.link ~devices ~bound:((y, ys) :: bound) compiled in
+  Engine.run s [||];
+  let expected = List.init n (fun i -> (i + 1) * element i) in
+  equal values
+    [| int (List.fold_left ( + ) 0 expected) |]
+    (Run.values Int64 ys)
+
 (* A scan of three trips, linked once and run on rows of [xs] and [ys], which
    each run binds to its parameters, and of [zs], linked with the carry [c].
    Each trip stores [c * 2] into its row of [ys] and adds its row of [xs] to
@@ -3191,6 +3231,8 @@ let schedules =
       reads_trips_under_a_back_edge "CPU";
       test "a call's scalar arguments of mixed widths reach its kernel"
         (reads_mixed_scalars "CPU");
+      test "a call of 520 buffers reads each from its own address"
+        (reads_many_buffers "CPU");
       test "a loop of one trip passes its call the trip as a scalar argument"
         (fun () -> reads_its_trip "CPU" 1 (List.nth (trip_arguments 1) 1));
       test "loops of any range and trips around one call compile one program"
@@ -4660,6 +4702,8 @@ let on_a_gpu (kind, _) =
       reads_trips_on ~devices "CPU:1";
       test "a call's scalar arguments of mixed widths reach its kernel"
         (reads_mixed_scalars ~devices "CPU:1");
+      test "a call of 520 buffers reads each from its own address"
+        (reads_many_buffers ~devices "CPU:1");
       reads_trips_under_a_back_edge ~devices "CPU:1";
       test "a scan's merged calls carry in place as its calls apart do"
         (carries_merged ~devices "CPU:1");
