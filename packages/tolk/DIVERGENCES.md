@@ -282,7 +282,7 @@ for every pattern. A repeat that names nodes matches no sources as
   device, and a name gives no renderer or architecture) and `Tolk.Device ›
   renderer › picks a device's renderer as tinygrad does` (the architecture
   comes from the target); for the disk, `Tolk.Ops › several
-  devices › on_disk holds for one disk device`, `Tolk.Ops › several
+  devices › on_disk holds for a disk device`, `Tolk.Ops › several
   devices › copy_to_device rejects a disk and a weak type` and `Tolk.Ops ›
   storage › clone rejects a disk`.
 
