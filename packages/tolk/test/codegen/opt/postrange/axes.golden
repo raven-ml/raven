@@ -1,4 +1,4 @@
-# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
+# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 case	shape_len	full_shape	axis_types	reduce_axes	upcastable_dims	upcastable_reduce_dims	upcast_size	group_for_reduces	reduceops	bufs	colored_shape	made
 local_and_grouped_reduce_0	3	[1024, 2, 128]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	1024    2  128	1:1024:GLOBAL 2:2:LOCAL
 local_and_grouped_reduce_1	3	[128, 16, 128]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	 128   16  128	1:128:GLOBAL 2:16:LOCAL

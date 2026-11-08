@@ -1,4 +1,4 @@
-# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
+# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 file	class	test
 null/test_uop_symbolic.py	TestSymbolic	test_add_1
 null/test_uop_symbolic.py	TestSymbolic	test_add_div
@@ -9,6 +9,7 @@ null/test_uop_symbolic.py	TestSymbolic	test_and_remove
 null/test_uop_symbolic.py	TestSymbolic	test_big_mod
 null/test_uop_symbolic.py	TestSymbolic	test_bitcast_chain
 null/test_uop_symbolic.py	TestSymbolic	test_bool_and_not_contradiction
+null/test_uop_symbolic.py	TestSymbolic	test_bool_and_not_or_absorption
 null/test_uop_symbolic.py	TestSymbolic	test_bool_ne_false
 null/test_uop_symbolic.py	TestSymbolic	test_bool_or_not_tautology
 null/test_uop_symbolic.py	TestSymbolic	test_cast_bool

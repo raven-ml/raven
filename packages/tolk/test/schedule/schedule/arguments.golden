@@ -1,4 +1,4 @@
-# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
+# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 graph	arguments
 add_kernels	-
 sum_kernels	-
@@ -39,6 +39,8 @@ call_given_one_state_twice_kernels_1	-
 after_older_write_kernels	-
 readers_after_older_write_kernels	-
 write_over_written_kernels	-
+after_part_of_older_write_kernels	-
+after_older_and_new_write_kernels	-
 swap_through_values_kernels	-
 read_beside_overwrite_kernels	-
 copy_of_overwritten_kernels	-

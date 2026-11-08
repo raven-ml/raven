@@ -1,4 +1,4 @@
-# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
+# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 
 extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) packed(signed char* data0_4) {
   unsigned int val0 = (*((unsigned int*)(((unsigned int*)((data0_4+0))))));

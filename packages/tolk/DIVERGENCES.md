@@ -1,6 +1,6 @@
 # Divergences from tinygrad
 
-tolk follows tinygrad `eb985a8e7730befe910e8301d33ea76c9d8e9e9f`. This
+tolk follows tinygrad `c22edff14c79310a9b2df62a78819cf77c8289fa`. This
 ledger lists every place where it does something else. An entry is admitted
 for one of five reasons only:
 
@@ -79,7 +79,7 @@ for every pattern. A repeat that names nodes matches no sources as
   `_base_buffer_is_realized`, `from_buffer` and `_frompy`
   (`uop/ops.py:814-954`) are the engine's. Whether storage is bound is the
   operation itself, `BUFFER` or `ALLOC`, so the specification's checks of
-  `ParamArg.buffer` (`uop/spec.py:148,152,264,266`) hold by construction.
+  `ParamArg.buffer` (`uop/spec.py:148,152,265,267`) hold by construction.
 - **Reason:** (c).
 - **Pinned by:** for `Ops`: `Tolk.Ops › storage › new_buffer takes the
   next slot without one` and `Tolk.Ops › arguments › reprs.golden`, where
@@ -647,11 +647,11 @@ scope, see README.
     `false`, which is `true` at 40, and so `y * 4 < 0` and `y << 2 < 0`,
     `true` at 40 too, and `cast (cast (y + 100) uint8) int32` to one cast,
     `-116` where the machine gives `140`.
-  - **Wrapping rules.** tinygrad: `uop/symbolic.py:305-307` (`(x // c1) //
-    c2`), `:309-311` (`c0 + x < c1`), `codegen/simplify.py:99-104` (`x + y <
+  - **Wrapping rules.** tinygrad: `uop/symbolic.py:307-309` (`(x // c1) //
+    c2`), `:311-313` (`c0 + x < c1`), `codegen/simplify.py:99-104` (`x + y <
     c`, `x * y < c`) and `:124-126` (`x + y = c` under a cast),
-    `uop/symbolic.py:413-423` (`reduce_mul_chain`, a factor out of a maximum),
-    `uop/symbolic.py:322-323` (`-x < -y`, `-x < c`). tolk:
+    `uop/symbolic.py:415-425` (`reduce_mul_chain`, a factor out of a maximum),
+    `uop/symbolic.py:324-325` (`-x < -y`, `-x < c`). tolk:
     `Shape.symbolic_simple`, `Shape.symbolic`, `Simplify.solves_sum`,
     `Simplify.pm_reduce_collapse`, `Simplify.pm_reduce_load_collapse`,
     `Symbolic.reduce_mul_chain`. tinygrad keeps `c0 + x < c1`, the comparisons
@@ -665,7 +665,7 @@ scope, see README.
     moving a float term rounds, and `x + y = c` only under a cast that does not
     narrow, where tinygrad takes any cast whose operand's bounds fit its type
     (7e36b6735). `where (a < b) c (a + (c - b))` is a maximum for a signed `a`
-    only where `a + (c - b)` does not wrap (`uop/symbolic.py:299-301`), where
+    only where `a + (c - b)` does not wrap (`uop/symbolic.py:301-303`), where
     tinygrad takes signed overflow to be undefined. tinygrad folds the int8 maximum of `r * p * q` over `r < 2` to `p *
     q`, `-112` at `12, 12` where the machine gives `0`, and int8 `-x < 3` to
     `-3 < x`, `false` at `x = -128` where the machine gives `true`.
@@ -675,13 +675,13 @@ scope, see README.
     booleans only (a float product by zero is NaN at an infinity or a NaN
     and `-0.` at a negative `x`); `x / x` is gone, since true division is
     always a float, and `x / x` is NaN at 0.
-  - **Signed zeros.** tinygrad: `uop/symbolic.py:291-292` (complementary
+  - **Signed zeros.** tinygrad: `uop/symbolic.py:293-294` (complementary
     selections). tolk: `Shape.symbolic`. For integers and booleans only:
     `where c t 0 + where c 0 f` at `t = -0.` is `+0.`, where `where c t f` is
     `-0.`.
   - **Reassociation.** tinygrad: `uop/symbolic.py:177-180` (two constants
-    of an associative operation), `:258-271` (like terms), `:288-290` (a sum
-    of two selections), `:315-318` (constants to the end), `:413-423,493`
+    of an associative operation), `:260-273` (like terms), `:290-292` (a sum
+    of two selections), `:317-320` (constants to the end), `:415-425,495`
     (`reduce_mul_chain`). tolk: `Shape.fold_where_closure`,
     `Shape.symbolic_simple`, `Shape.symbolic`, `Symbolic.reduce_mul_chain`.
     Sums, products and maxima regroup for integers and booleans only, and a
@@ -701,7 +701,7 @@ scope, see README.
     (`no_overflow`, `uop/symbolic.py:34`), which holds wherever tolk would
     check it, since the bounds of a committed integer wrap (`Ops.at_width`),
     so tolk makes none.
-  - **Maxima.** tinygrad: `uop/symbolic.py:297-302`. tolk:
+  - **Maxima.** tinygrad: `uop/symbolic.py:299-304`. tolk:
     `Shape.symbolic`. A maximum by bounds applies to integers
     only, since a float's bounds leave out NaN and the order of zeros:
     `max (x, inf)` at NaN is NaN, where the fold gives `inf`. A selection that
@@ -710,7 +710,7 @@ scope, see README.
     into a maximum that renders as the target's own, and it took `-0.` and
     `+0.` for one constant: `where (x < -0.) 0. x` at `-1e-45` is `+0.`,
     where `max (x, -0.)` is `-0.`. A float ReLU stays a selection.
-  - **Sigmoid forms.** tinygrad: `uop/symbolic.py:489-491`. tolk: the rules
+  - **Sigmoid forms.** tinygrad: `uop/symbolic.py:491-493`. tolk: the rules
     are left out of `sym`. `x * (1 / (1 + x))` at `1e-8` is `1e-8`, where
     `1 - 1 / (1 + x)` is `0.`, and at `inf` is NaN, where it is `1.`.
   - **Pow.** tinygrad: `uop/symbolic.py:16-22` (`simplify_pow`), `:206-208`
@@ -1146,7 +1146,7 @@ encodes its own releases (D146).
   entry's buffers from its sources after the first, through `_collect_bufs`,
   which passes buffers, `MSELECT` and `MSTACK` only) and `:36-43`
   (`buf_hold`: a copy's buffer lives `last - first + 1` calls past its last);
-  `schedule/__init__.py:300` (`create_linear_with_vars` holds the buffers
+  `schedule/__init__.py:305` (`create_linear_with_vars` holds the buffers
   among its call's sources).
 - **tolk:** `Memory.viewed`, `Memory.uses` and
   `Memory.memory_plan_rewrite`'s lifetimes (`call_bufs`, the events) and
@@ -1315,7 +1315,7 @@ driver sizes local memory as it loads a function (D146).
 
 ## D52. A selection of -0. stays off a gated load
 
-- **tinygrad:** `uop/symbolic.py:446-450` (`pm_move_where_on_load`), whose
+- **tinygrad:** `uop/symbolic.py:448-452` (`pm_move_where_on_load`), whose
   pattern constant `0` matches `-0.` since `-0. == 0`.
 - **tolk:** `Symbolic.pm_move_where_on_load`.
 - **Differs:** a selection between a load and `-0.` stays a selection.
@@ -1335,7 +1335,7 @@ driver sizes local memory as it loads a function (D146).
   elements where `l` divides its element offset, taking every buffer to start
   on a 16-byte boundary). tinygrad folds a view's offset into a kernel's
   index, except for a contiguous slice that it stages without a copy
-  (`schedule/__init__.py:200`, `contiguous_mops_to_view`): a later kernel
+  (`schedule/__init__.py:205`, `contiguous_mops_to_view`): a later kernel
   reads that view with vector loads that take it to start aligned, as
   `x[1:].contiguous() + 1` loads `float4`s from 4 bytes past a boundary on
   Metal.
@@ -1487,15 +1487,15 @@ driver sizes local memory as it loads a function (D146).
 specification), so that a vector left after devectorize failed at lowering.
 No consumer got a wrong value or a failure without it: CUDA rejects such a
 kernel at NVRTC, Metal and the host compute it. `Spec.program` is
-`spec_program` (`uop/spec.py:202`) on every renderer.
+`spec_program` (`uop/spec.py:203`) on every renderer.
 
 ## D60. A loop of a call stays in the schedule
 
 - **tinygrad:** `schedule/rangeify.py:160-163` (`pm_no_views`, which strips
   every view of storage), `:323-325` (`split_store`, which makes a kernel of
   an end of a call), `:321` (`pm_renumber_range`, which renumbers the ranges
-  of that kernel), `schedule/__init__.py:76-79` (`create_schedule`, which
-  schedules the call of an end and drops the end), and `uop/spec.py:251-278`
+  of that kernel), `schedule/__init__.py:78-81` (`create_schedule`, which
+  schedules the call of an end and drops the end), and `uop/spec.py:252-279`
   (`spec_kernel_graph`, which admits device ranges only, and no end).
 - **tolk:** `Rangeify.loop_range`, `Rangeify.pm_no_views` (which keeps a view
   that moves with a loop's range) and `Rangeify.split_store`;
@@ -1588,7 +1588,7 @@ Withdrawn: multi-device is out of scope, see README.
 
 - **tinygrad:** `codegen/__init__.py:520-528` (`to_program_config`,
   `to_program_key` and `to_program_cache`, a dictionary of the process),
-  `schedule/__init__.py:129-139` (`lower_sink_to_linear`'s schedule cache,
+  `schedule/__init__.py:131-141` (`lower_sink_to_linear`'s schedule cache,
   on disk only from `SCACHE=2`), `helpers.py:287` (`SCACHE`, `1` by
   default), and `codegen/opt/postrange.py:48-49` (a kernel's name, coloured).
 - **tolk:** `Codegen.program_key`, `Codegen.kept` and
@@ -3515,7 +3515,7 @@ gain beyond their ranges (medians of 11, two interleaved runs each, with the
 rule then without): `Quant/host/mxfp4-product-1-token` 0.91 and 0.84 ms
 against 0.68 and 0.88 ms, `Quant/host/routed-product-1-tokens` 5.01 and
 4.07 ms against 3.85 and 5.28 ms, `Quant/host/routed-product-64-tokens` 130
-and 122 ms against 114 and 145 ms. As tinygrad's `uop/symbolic.py:329-332`,
+and 122 ms against 114 and 145 ms. As tinygrad's `uop/symbolic.py:331-334`,
 `Shape.symbolic` keeps such a cast where it is.
 
 ## D135. Withdrawn
@@ -3659,7 +3659,7 @@ driver signals its own (D146).
 ## D138. A load's index is simplified without the loads in it assuming its gate
 
 - **tinygrad:** `codegen/late/coalesce.py:41-43` (`simplify_valid_load`),
-  which simplifies a gated index with `uop/symbolic.py:365`
+  which simplifies a gated index with `uop/symbolic.py:367`
   (`uop_given_valid`) down into the loads the index reads.
 - **tolk:** `Coalesce.simplify_valid_load`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
@@ -3671,7 +3671,7 @@ driver signals its own (D146).
   as a pad's, loses that gate, and the load, which runs whatever the outer
   gate, reads outside its buffer: the index of a gather through a pad is read
   before the pad's first element. tinygrad's own `gated_given_valid`
-  (`uop/symbolic.py:452`) refuses an index that loads for the same reason.
+  (`uop/symbolic.py:454`) refuses an index that loads for the same reason.
 - **Reason:** (b): `Nx.concatenate` of a buffer and an `Nx.take` under
   `Rune.jit`, as nested sampling's evidence concatenates its dead points and
   its live points in likelihood order: the compiled kernel read up to the
@@ -3703,7 +3703,7 @@ driver signals its own (D146).
 
 ## D140. A call of a loop takes its trip as a scalar argument
 
-- **tinygrad:** `schedule/__init__.py:105-117` (`resolve_linear_call`, which
+- **tinygrad:** `schedule/__init__.py:107-119` (`resolve_linear_call`, which
   binds a nameless scalar parameter only to a variable, and substitutes it into
   each kernel that reads it), `engine/realize.py:16-22` (`get_call_arg_uops`,
   which leaves out every variable, and `get_call_kernel_args`, which reads each
@@ -4214,7 +4214,7 @@ does. A Windows host's code is compiled for Windows' convention by D178.
 
 ## D154. A maximum over a range whose size may be 0 is its identity
 
-- **tinygrad:** `uop/symbolic.py:413-423` (`reduce_mul_chain`, an integer
+- **tinygrad:** `uop/symbolic.py:415-425` (`reduce_mul_chain`, an integer
   maximum of a product times the factor that ignores its ranges).
 - **tolk:** `Symbolic.reduce_mul_chain`; `gen/tinygrad.patch` makes the
   change in tinygrad, so the goldens state tolk's rewrite.
@@ -4359,9 +4359,9 @@ does. A Windows host's code is compiled for Windows' convention by D178.
 
 ## D160. A read no order keeps reads a copy of its state
 
-- **tinygrad:** `schedule/__init__.py:31-83` (`create_schedule`), which adds
+- **tinygrad:** `schedule/__init__.py:31-85` (`create_schedule`), which adds
   a write-after-read edge from a kernel to every other kernel writing over a
-  state it reads, and raises "cycle detected in assign graph" (`:83`) where
+  state it reads, and raises "cycle detected in assign graph" (`:85`) where
   those edges and the reads after writes form a cycle; `schedule/rangeify.py:
   297-301` (`check_buf_states`), which raises "cycle detected while
   indexing" where one kernel reads a storage in two states. Repro: `a =
@@ -4371,7 +4371,9 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   TestAssignOrdering::test_war_reader_already_depends_on_write` states the
   raise, with the values `[2, 4, 15]` "once that read is staged" as its
   TODO. A call given one buffer at two arguments, writing one, is ordered
-  against no other kernel and races with itself.
+  against no other kernel and races with itself. Two AFTERs over the state
+  each names first raise "sibling AFTERs detected in assign graph" (`:43`,
+  c00c9ada9).
 - **tolk:** `Schedule.schedule`, `Schedule.cuts`, `Schedule.copy_call`,
   `Schedule.copy_before_overwrites` and `Schedule.aliases`;
   `Schedule.written_over`; `Rangeify.stand_in`; `Shape.written_params` and
@@ -4382,7 +4384,9 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   kernel, of a copy, of a precompiled body or a custom kernel, and a loop of
   a call. A kernel reads the states its arguments name, a join being the
   state under it (D202), and writes the states the Afters that list it are
-  over. It runs after the kernels that write the states it reads, and what
+  over, but for a kernel already on an earlier state of that storage, which
+  orders the state and writes nothing over it, as tinygrad's (`:44`,
+  3bdafaedf). It runs after the kernels that write the states it reads, and what
   the states under them wait for, as tinygrad orders a state after the state
   under it (413ecebe6): a kernel listed after a state its own arguments do
   not reach, as `first` in `x.after(second).after(first)`, would otherwise
@@ -4411,7 +4415,9 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   arguments its body writes. A write's prior state is the latest state of the
   After's storage its calls are given, else the state the After is after:
   rune's loops name their carry's storage after the loop and pass the carry's
-  first state. Two writes over one state, which no
+  first state: beside `a = x.after(x.store(1))`, `x.after(a.store(2))` writes
+  over `a`, where tinygrad raises on two AFTERs named after `x`. Two writes
+  over one state, which no
   storage holds, raise `Invalid_argument` naming the storage, and so does a call
   whose body does not show its writes given one state twice. A partial
   overwrite of elements a kernel does not read copies too, at a kernel and
@@ -4421,7 +4427,9 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   Measured in exact words on fudge, `matmul/schedule` allocates 780 words
   where it allocated 613, and `gpt_oss_decode/schedule` about a third more
   (15.4 thousand against 11.6); the `*/kernel_graph` rows are unchanged
-  within 1%. Cheaper shapes were tried and kept: the order runs first and
+  within 1%. Waiting on the state under a state and listing each kernel per
+  storage (413ecebe6, 3bdafaedf) add 3-7% to these rows: `matmul/schedule`
+  707 words against 684. Cheaper shapes were tried and kept: the order runs first and
   the cut's parent tables are built only where it finds a cycle, and a
   state is resolved without allocating; with parent and child tables built
   for every graph, `matmul/schedule` allocated 909 words.
@@ -4443,10 +4451,12 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   rebuilt kernel writes and the copy's phase; the programs
   `read_overwritten_through`, `read_beside_overwrite`,
   `swap_through_values`, `call_given_one_state_twice`, `after_older_write`,
-  `readers_after_older_write` and `write_over_written`, whose recorded
-  schedules and linears and whose values (`create_linear_with_vars ›
-  values`) are tinygrad's, patched; and the `Tolk.Rangeify` suite's
-  `get_kernel_graph › buffer states`.
+  `readers_after_older_write`, `after_older_and_new_write` and
+  `write_over_written`, whose recorded schedules and linears and whose
+  values (`create_linear_with_vars › values`) are tinygrad's, patched; the
+  kernel graph of `after_part_of_older_write`, whose schedule and linear
+  differ by D184; and the `Tolk.Rangeify` suite's `get_kernel_graph ›
+  buffer states`.
 
 ## D161. A folded weak constant wraps, and a power of two is read at its width
 
@@ -4890,8 +4900,8 @@ does. A Windows host's code is compiled for Windows' convention by D178.
 The read of an accumulator after its loop waited on the initial store as well
 as the loop's end, since `sym` folded a store of a loaded accumulator to a bare
 `NOOP` and the loop could end holding no store, so nothing ordered the read
-after the initial store. At `uop/symbolic.py:478` a folded store of a load
-of its own index is `NOOP.after(index)`, and at `:485` one of an invalid value
+after the initial store. At `uop/symbolic.py:480` a folded store of a load
+of its own index is `NOOP.after(index)`, and at `:487` one of an invalid value
 `NOOP.after(*x.src)`: each keeps the accumulator's index, ordered after the
 initial store, before the read, and `codegen/__init__.py:192-204` (`lower_reduce`) orders the read
 after the end alone, as `Codegen.lower_reduce` does. The
@@ -5234,7 +5244,7 @@ fold wraps integers and holds its float bound`, hold.
   parameter its buffer's device, and `codegen/__init__.py:523`
   (`to_program_key`) keys a program by `ast.key`, so each device makes its
   own program of one kernel. Copy detection and the check that a kernel spans
-  one device read the kernel's parameters (`schedule/__init__.py:158-173`),
+  one device read the kernel's parameters (`schedule/__init__.py:160-176`),
   the renderer is picked from the call's device, which a call takes from its
   body (`engine/realize.py:236`), and the search names its parameters'
   device itself (`codegen/opt/search.py:62-63`).
@@ -5528,13 +5538,13 @@ the walk of `Rangeify.fix_store_hazard`.
 
 ## D177. A name bound to several values is passed by each call that reads it
 
-- **tinygrad:** `schedule/__init__.py:287-293` (`create_linear_with_vars`),
+- **tinygrad:** `schedule/__init__.py:292-298` (`create_linear_with_vars`),
   which raises "bind mismatch" when a schedule's kernels read one variable
-  name bound to two values, and `:105-117` (`resolve_linear_call`), which
+  name bound to two values, and `:107-119` (`resolve_linear_call`), which
   substitutes a bound variable into its kernels unbound, read by name from
   the run's `var_vals`; `function.py:15-25` and `:80` (`is_implicit_storage`,
   `pm_ctx`), where a function traced into a call captures each variable its
-  body reads as an argument, and `schedule/__init__.py:258`
+  body reads as an argument, and `schedule/__init__.py:263`
   (`pm_replace_buf`), which passes the schedule's own the same way.
 - **tolk:** `Schedule.create_linear_with_vars` (`bound_several`, and its
   `used_vars`, which reads the kernels of loops),
@@ -5712,7 +5722,7 @@ and an initial value is added after it (D260).
 - **tinygrad:** `schedule/prepare.py:211-213` (a copy stored into storage on
   its device is the store, only where the destination has buffer identity)
   and `:216` (`copy_to_anon_store`, any other copy lands in storage of its
-  own); `schedule/__init__.py:175-185` (`pm_copy_from_store`, which lowers a
+  own); `schedule/__init__.py:178-186` (`pm_copy_kernel`, which lowers a
   copy kernel that reads and writes both buffers at its range alone).
 - **tolk:** `Prepare.storage_run` and its use in `Prepare.earliest_rewrites`;
   `Schedule.run_start` and `Schedule.copy_runs` in
@@ -5747,7 +5757,7 @@ and an initial value is added after it (D260).
 
 ## D183. In a schedule made per run, ready kernels run by their number, and one that frees storage first
 
-- **tinygrad:** `schedule/__init__.py:70-83` (`create_schedule`'s linearize:
+- **tinygrad:** `schedule/__init__.py:72-85` (`create_schedule`'s linearize:
   Kahn's algorithm over a FIFO `deque`, so ready kernels run in the order
   they became ready).
 - **tolk:** `Schedule.storage_order`, chosen by `create_schedule
@@ -5791,7 +5801,7 @@ and an initial value is added after it (D260).
 
 ## D184. A store into a run of a buffer stores into a view of it
 
-- **tinygrad:** `schedule/__init__.py:227-228` (`pm_callify_ctx_collect`):
+- **tinygrad:** `schedule/__init__.py:232-233` (`pm_callify_ctx_collect`):
   `contiguous_mops_to_view` makes a view of a buffer for a copy or a stage
   of movements of it, and for a store only into a bitcast of it. A store into
   a shrink of a buffer indexes the buffer at the shrink's offset in its
@@ -5806,10 +5816,7 @@ and an initial value is added after it (D260).
   of the buffer would not be ordered after them, and so does a store whose
   value reads the buffer in its own kernel, short of the stored states of
   other storage, which the kernel split stages by the buffer's identity. A
-  run may start at bound variables, whose values its call knows
-
-  value reads the buffer, which the kernel split stages by the buffer's
-  identity. A copy or a stage of a run of a buffer that a store of the call
+  copy or a stage of a run of a buffer that a store of the call
   writes keeps reading the run itself, which the kernel split stages: a view,
   a parameter of its own in the call's body that nothing writes, would be
   read when its reader runs, in whatever state the buffer then holds, and
@@ -5837,6 +5844,10 @@ and an initial value is added after it (D260).
   one realize read the assigned `x` (tinygrad's
   `test/runtime/test_assign.py::test_swap_slices`, an expected failure, is
   that bug), at the cost of a stage kernel per such view.
+  The program `after_part_of_older_write`, whose two stores go into one
+  element each of one buffer, is recorded as a kernel graph alone: its linear
+  here is one launch (D338) over two one-element views of the buffer, where
+  tinygrad's indexes the whole buffer in a kernel per store.
 - **Pinned by:** `Tolk.Schedule › contiguous_mops_to_view › stores into runs
   of a buffer at a bound start store into views of one alignment, whatever
   the start`, `› stores of one shape into two runs of a buffer share a
@@ -5862,7 +5873,7 @@ and an initial value is added after it (D260).
 
 ## D185. A ready kernel that only frees runs before one that also makes storage
 
-- **tinygrad:** `schedule/__init__.py:70-83` (`create_schedule`'s linearize,
+- **tinygrad:** `schedule/__init__.py:72-85` (`create_schedule`'s linearize,
   Kahn's algorithm over a FIFO `deque`).
 - **tolk:** `Schedule.storage_order`'s `pick`, for a schedule made per run
   (D183).
@@ -6480,7 +6491,7 @@ and an initial value is added after it (D260).
 
 ## D199. Independent calls of one domain run as one call where no lifetime grows past one element
 
-- **tinygrad:** `schedule/__init__.py:76-79` (`create_schedule`, one call
+- **tinygrad:** `schedule/__init__.py:78-81` (`create_schedule`, one call
   per kernel of the kernel graph, in the linear as scheduled) and
   `schedule/rangeify.py:323-338` (`split_store`, one kernel per store or
   end).
@@ -6840,12 +6851,12 @@ and an initial value is added after it (D260).
 
 ## D202. A join keeps its dependencies, and holds the state under it
 
-- **tinygrad:** `uop/symbolic.py:340-343` (`symbolic`'s ordering rule):
+- **tinygrad:** `uop/symbolic.py:342-345` (`symbolic`'s ordering rule):
   an `AFTER` keeps among its dependencies only effects, ranges, ends, back
   edges, linears and stages, and replaces any other by its sources, an
   `AFTER` included. `x.after(y')`, where `y'` is `y` once assigned, becomes
   `x` after `y`'s kernel, which `create_schedule` (`schedule/__init__.py:
-  31-83`) reads as a state of `x` that `y`'s kernel writes. The rule came
+  31-85`) reads as a state of `x` that `y`'s kernel writes. The rule came
   with `AFTER` itself, for a kernel's register initialisation (`b8a9cce78`,
   `d1e2c393f`), and no commit states a reason for the graph of kernels.
 - **tolk:** `Shape.symbolic`'s ordering rule; `Ops.is_join`;
@@ -6890,7 +6901,7 @@ and an initial value is added after it (D260).
   (tinygrad renders no loop of a call, and runs none). Without the rule, the
   loop runs after the second store and before the overwrite of the first, a
   cycle, which tinygrad refuses ("cycle detected in assign graph",
-  `schedule/__init__.py:83`). `test/gen/tinygrad.patch` removes the rule.
+  `schedule/__init__.py:85`). `test/gen/tinygrad.patch` removes the rule.
 - **tolk:** `Prepare.earliest_rewrites`, which has no such rule.
 - **Differs:** a store of the value the store before it stored into its
   storage runs, and the state it makes is a state of its own, after the one
@@ -7329,7 +7340,7 @@ and an initial value is added after it (D260).
   (`spec_shared`: an AFTER of a scalar or a computed value only).
 - **tolk:** `Stage.operands`, which `Codegen.full_rewrite_to_sink` runs after
   the opts; `Stage.depth` and `Stage.layout`; `Heuristic.staged_tile`;
-  `Renderer.t.async_copy`; `Setting.stage`; `Spec`'s AFTER of a range.
+  `Renderer.t.async_copy`; `Setting.stage`.
 - **Differs:** after the opts, each core operand that reads global memory
   through an index whose terms reading the workgroup's threads and lanes form
   a dense box of strided dimensions is copied by every thread of the
@@ -7466,7 +7477,7 @@ and an initial value is added after it (D260).
   `87-162` (`apply_opt`), which upcast an axis that a call's argument
   reads, of a body or of code in the target's language (a `CUSTOM_FUNCTION`
   with `fmt`); `codegen/opt/heuristic.py:62`, whose matrix-vector layout
-  upcasts output axes; `test/runtime/test_custom_kernel.py:924-928`
+  upcasts output axes; `test/runtime/test_custom_kernel.py:940-944`
   (`test_call_loop_mini_opts`, `test_call_loop_split`, expected failures).
 - **tolk:** `Postrange.Scheduler.read_by_opaque`, `upcastable_dims` and
   `apply_opt`; `Heuristic.streams`; `test/gen/tinygrad.patch`, which gives
@@ -7632,7 +7643,7 @@ and an initial value is added after it (D260).
 
 - **tinygrad:** `codegen/__init__.py:269-277` (`full_rewrite_to_sink`,
   which simplifies a kernel's indices and ranges with nothing holding an
-  effect's ranges), `uop/symbolic.py:293-296` (a value whose bounds meet
+  effect's ranges), `uop/symbolic.py:295-298` (a value whose bounds meet
   folds to a constant) and `uop/ops.py:455-471` (a node depends on the
   ranges its sources depend on).
 - **tolk:** `Simplify.pin_effects`, called by
@@ -7891,11 +7902,11 @@ and an initial value is added after it (D260).
 
 ## D330. The kernels of one write are unordered whichever Afters list them
 
-- **tinygrad:** `schedule/__init__.py:60-68` (`create_schedule`'s
+- **tinygrad:** `schedule/__init__.py:62-70` (`create_schedule`'s
   write-after-read edges), which orders a kernel reading a state before the
   other kernels of every `AFTER` over that state but the `AFTER` the read
   was listed under (`if a is u: continue`), and raises "cycle detected in
-  assign graph" (`:83`) where those edges form a cycle. One kernel per store
+  assign graph" (`:85`) where those edges form a cycle. One kernel per store
   (`schedule/rangeify.py:323-338`, `split_store`) lists each kernel under
   one `AFTER`, so its stores never meet the case.
 - **tolk:** `Schedule.schedule`; `test/gen/tinygrad.patch`, which gives
@@ -7922,7 +7933,7 @@ and an initial value is added after it (D260).
 
 - **tinygrad:** `codegen/simplify.py:84` (`reduce_unparented`), which
   asserts that every source of a reduce past its value is a range, where
-  `uop/symbolic.py:296` folds a range of one trip to its one value, a
+  `uop/symbolic.py:298` folds a range of one trip to its one value, a
   constant; `codegen/simplify.py:34-38` (`merge_ranges`), which merges a
   range of size 0 into a range of the size it has, the same node, and
   substitutes its quotient for it; `codegen/opt/heuristic.py:8`
@@ -8072,7 +8083,7 @@ and an initial value is added after it (D260).
 ## D338. The stores of one state run as one launch of their kernels
 
 - **tinygrad:** `schedule/rangeify.py:323-338` (`split_store`, a kernel per
-  store or end) and `schedule/__init__.py:76-79` (`create_schedule`, a call
+  store or end) and `schedule/__init__.py:78-81` (`create_schedule`, a call
   per kernel of the kernel graph). Upstream shipped kernels of several
   outputs from 2024-06 and deleted them in `1fce864a6` (2025-01-30) without
   a written reason; its tests of them skip ("multi output not supported

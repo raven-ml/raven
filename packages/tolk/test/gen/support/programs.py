@@ -52,8 +52,9 @@ def gpt_oss_block(tokens, start_pos):
     for t in nn.state.get_state_dict(block).values(): t.replace(empty(*t.shape, dtype=t.dtype))
     block.cache_kv = empty(2, 1, config.n_kv_heads, config.max_context, config.head_dim, dtype=dtypes.half)
     block.freqs_cis = empty(config.max_context, config.rope_dim)
-    # the block returns its output and the index mask a later block reuses, none here
-    return block(empty(1, tokens, config.dim), start_pos)[0]
+    # the block takes a start position per row of the batch, and returns its output and the index mask a later block
+    # reuses, none here
+    return block(empty(1, tokens, config.dim), (start_pos,))[0]
 
 
 def adam_mlp():

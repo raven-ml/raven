@@ -50,17 +50,25 @@ let parse_valid v =
    inside one's bound would make another loop of the same identity, which runs
    apart. A substitution assuming a valid leaves each range it does not
    replace whole. *)
-let pm_keep_range =
-  pm (fun () ->
-      [
-        Pattern_matcher.rule_ctx (Upat.op Op.Range ~name:"r") (fun subs m ->
-            if Tbl.mem subs (m "r") then None else raise Bottom_up_gate);
-      ])
+let keep_ranges =
+  Pattern_matcher.append
+    (pm (fun () ->
+         [
+           Pattern_matcher.rule_ctx (Upat.op Op.Range ~name:"r") (fun subs m ->
+               if Tbl.mem subs (m "r") then None else raise Bottom_up_gate);
+         ]))
+    pm_substitute
 
-let assuming u subs =
-  substitute ~extra_pm:pm_keep_range ~calls:Skip ~pass:Fixed_point u subs
+let rewrite_substitution matcher u subs =
+  let tbl = Tbl.create 8 in
+  List.iter (fun (k, x) -> if k != x then Tbl.replace tbl k x) subs;
+  if Tbl.length tbl = 0 then u
+  else
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:tbl u
+      (Before_sources matcher)
 
-let substituted u subs = substitute ~calls:Skip ~pass:Fixed_point u subs
+let assuming = rewrite_substitution keep_ranges
+let substituted = rewrite_substitution pm_substitute
 
 let uop_given_valid ?(try_simplex = true) valid u =
   (* first, parse valid into [expr, (lower bound, upper bound)] *)

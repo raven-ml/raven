@@ -308,6 +308,27 @@ def write_over_written():
     return Tensor(x.after(a.store(2))) + 0, Tensor(a) + 0
 
 
+def after_part_of_older_write():
+    """A state after one of the kernels of a write under it, which writes nothing
+    over it (test_shared_readers_after_older_dependency's rule): 3 and 3."""
+    x = empty(2).uop
+    k1, k2 = x[:1].store(1), x[1:].store(2)
+    a = x.after(k1, k2)
+    y = a.after(a.store(3))
+    return Tensor(y.after(k1)) + 0
+
+
+def after_older_and_new_write():
+    """A state after a kernel under it and a new write: the new write alone is
+    over the state, which its reader reads first. 3 and 4."""
+    x = empty(1).uop
+    k1 = x.store(1)
+    a = x.after(k1)
+    y = a.after(a.store(3))
+    k4 = y.store(4)
+    return Tensor(y) + 0, Tensor(y.after(k1, k4)) + 0
+
+
 def call_given_one_state_twice():
     # a precompiled call storing the reverse of its parameter 1 into its parameter 0, given one buffer at both
     a = empty(4).contiguous()
@@ -417,6 +438,8 @@ PROGRAMS = {
     "after_older_write": after_older_write,
     "readers_after_older_write": readers_after_older_write,
     "write_over_written": write_over_written,
+    "after_part_of_older_write": after_part_of_older_write,
+    "after_older_and_new_write": after_older_and_new_write,
     "swap_through_values": swap_through_values,
     "read_beside_overwrite": read_beside_overwrite,
     "copy_of_overwritten": copy_of_overwritten,

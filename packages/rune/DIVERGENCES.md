@@ -117,7 +117,7 @@ An entry is admitted for one of five reasons only:
 A part of an entry whose reason is missing says "Reason: none" until it is
 measured, withdrawn or redesigned.
 
-Each entry also gives the reference (tinygrad `eb985a8e7730`, the commit
+Each entry also gives the reference (tinygrad `c22edff14c79`, the commit
 tolk follows, its files under `tinygrad/`; or none), nx's meaning, the
 agreement class (exact, bit for bit as `rune.mli` defines it; an ulp bound; a
 rounded sum; a stated bound) and its reason. An ulp bound is the

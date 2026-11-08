@@ -1,4 +1,4 @@
-# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
+# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 renderer	device	arch	has_local	has_shared	shared_max	tensor_cores	registers
 cpu	CPU	x86_64,x86-64	False	True	32768	0	16x16
 metal	METAL	Apple9	True	True	32768	5	

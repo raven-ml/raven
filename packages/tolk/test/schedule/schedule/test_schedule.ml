@@ -28,10 +28,15 @@ let () =
 
 (* Recorded graphs *)
 
+(* after_part_of_older_write is recorded as a kernel graph alone. Its two
+   stores go into one element each of one buffer: here each is a call of a
+   one-element view of the buffer, and the two run as one launch, where the
+   recorded linear indexes the whole buffer in a kernel per store. *)
 let programs =
   [
     "add";
     "add_row_from_self";
+    "after_older_and_new_write";
     "after_older_write";
     "after_sum";
     "assign";
@@ -104,7 +109,9 @@ let kernel_graphs =
   [
     "add_kernels";
     "add_row_from_self_kernels";
+    "after_older_and_new_write_kernels";
     "after_older_write_kernels";
+    "after_part_of_older_write_kernels";
     "after_sum_kernels";
     "assign_bitcast_kernels";
     "assign_double_diamond_kernels";

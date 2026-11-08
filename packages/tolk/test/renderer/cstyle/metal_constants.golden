@@ -1,4 +1,4 @@
-# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
+# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 #include <metal_stdlib>
 using namespace metal;
 kernel void constants(device bool* data0_1, device bool* data1_1, device signed char* data2_1, device unsigned char* data3_1, device short* data4_1, device unsigned short* data5_1, device int* data6_1, device uint* data7_1, device uint* data8_1, device long* data9_1, device unsigned long* data10_1, device unsigned long* data11_1, device half* data12_1, device bfloat* data13_1, device float* data14_1, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {

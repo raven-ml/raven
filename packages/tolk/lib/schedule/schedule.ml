@@ -725,6 +725,21 @@ let contract ~writes ~children ~in_degree edges =
     Some (launches, children', in_degree')
   end
 
+(* Whether the kernel [k] is given the state [s] at an argument. *)
+let given_state s k =
+  List.exists
+    (fun c ->
+      List.exists
+        (fun a -> (not (scalar_argument c a)) && state_of a == s)
+        (List.tl (src c)))
+    (calls_of k)
+
+(* Whether a reader of the state [st], which the kernels [own] write, waits
+   for the state under it beyond [own]: not where each is given it. *)
+let waits_under st own =
+  let prior = state_of (nth st 0) in
+  op prior = Op.After && not (own <> [] && List.for_all (given_state prior) own)
+
 let rec schedule ~launches ~by_storage ~copies sched_sink =
   (* The graph of kernels: edges go from a kernel to those that must run after
      it, each through the read it orders, if any. *)
@@ -752,15 +767,8 @@ let rec schedule ~launches ~by_storage ~copies sched_sink =
         let st, deps = value_state x in
         let own = if op st = Op.After then fst (split_after st) else [] in
         let under =
-          if op st <> Op.After then []
-          else
-            let prior = state_of (nth st 0) in
-            let given k =
-              List.exists (fun c -> positions c prior <> []) (calls_of k)
-            in
-            if op prior = Op.After && (own = [] || not (List.for_all given own))
-            then waits (nth st 0)
-            else []
+          if op st = Op.After && waits_under st own then waits (nth st 0)
+          else []
         in
         let w = dedup_nodes (own @ under @ List.concat_map waits deps) in
         Tbl.replace waited x w;
@@ -770,15 +778,25 @@ let rec schedule ~launches ~by_storage ~copies sched_sink =
     (fun u ->
       if op u = Op.After && not (is_join u) then begin
         let kernels, after_deps = split_after u in
-        if kernels <> [] then begin
-          let prev = written_over u kernels in
+        (* A kernel already on an earlier state of this storage orders the
+           state, and writes nothing over it. *)
+        let storage = storage_base u in
+        let listed k = Option.value (Tbl.find_opt seen k) ~default:[] in
+        let older k = List.memq storage (listed k) in
+        let fresh =
+          if List.exists older kernels then
+            List.filter (fun k -> not (older k)) kernels
+          else kernels
+        in
+        if fresh <> [] then begin
+          let prev = written_over u fresh in
           (* No storage holds two successors of one state. *)
           match Tbl.find_opt writes prev with
-          | Some ks when not (List.equal ( == ) ks kernels) ->
+          | Some ks when not (List.equal ( == ) ks fresh) ->
               invalid_arg
                 (Format.asprintf "two writes over one state of %a" pp
                    (buf_uop prev))
-          | _ -> Tbl.replace writes prev kernels
+          | _ -> Tbl.replace writes prev fresh
         end;
         List.iter
           (fun k ->
@@ -794,7 +812,7 @@ let rec schedule ~launches ~by_storage ~copies sched_sink =
             in
             (* A kernel that several Afters list reads its arguments once. *)
             let read_deps = if Tbl.mem seen k then [] else kernel_deps in
-            Tbl.replace seen k ();
+            Tbl.replace seen k (storage :: listed k);
             reads :=
               List.rev_append
                 (List.map (fun s -> (k, state_of s)) read_deps)
@@ -1302,23 +1320,9 @@ let copy_runs call dst src ~n ~d ~s =
 
 (* The copy kernels are code for copy engines. *)
 (* A kernel of a variable is no copy, though the variable has no device. *)
-let simplify_copy_kernel call ast dst src =
-  if is_virtual dst || is_virtual src || not (is_copy dst src) then None
-  else
-    let sink =
-      graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Tbl.create 8) ast
-        (After_sources
-           (Pattern_matcher.concat
-              [
-                with_ctx Symbolic.sym;
-                with_ctx Prepare.pm_mops;
-                with_ctx Simplify.pm_flatten_range;
-                Simplify.pm_simplify_ranges;
-              ]))
-    in
-    Some (replace call ~src:(sink :: List.tl (Ops.src call)))
-
-let pm_copy_from_store =
+(* Copy kernels become bulk stores. A copy of one element indexes each side at
+   its element. *)
+let pm_copy_kernel =
   let const name = Upat.op Op.Const ~name in
   let param name = Upat.op Op.Param ~name in
   let copy_call body =
@@ -1326,12 +1330,6 @@ let pm_copy_from_store =
   in
   Pattern_matcher.v
     (fun () -> [
-      rule
-        (Upat.op Op.Call ~name:"call"
-           ~src:[ Upat.op Op.Sink ~name:"ast"; var "dst"; var "src" ])
-        (fun m -> simplify_copy_kernel (m "call") (m "ast") (m "dst") (m "src"));
-      (* Copy kernels become bulk stores. A copy of one element indexes each
-         side at its element. *)
       rule
         (copy_call
            (Upat.store
@@ -1359,14 +1357,48 @@ let pm_copy_from_store =
               copy_runs (m "call") (m "dst") (m "src") ~n:(Bigint.to_int n) ~d
                 ~s
           | _ -> None);
-      (* Any other kernel stays on one device. *)
-      rule
-        (Upat.op Op.Call ~name:"call" ~allow_any_len:true
-           ~src:[ Upat.op Op.Sink ])
-        (fun m ->
-          assert_all_same_devices (m "call");
-          None);
     ])
+
+(* A kernel between devices or onto a disk is a copy when its simplified body
+   is one; any other kernel goes to codegen as it is. *)
+let simplify_copy_kernel call ast dst src =
+  if is_virtual dst || is_virtual src || not (is_copy dst src) then None
+  else
+    let sink =
+      graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Tbl.create 8) ast
+        (After_sources
+           (Pattern_matcher.concat
+              [
+                with_ctx Symbolic.sym;
+                with_ctx Prepare.pm_mops;
+                with_ctx Simplify.pm_flatten_range;
+                Simplify.pm_simplify_ranges;
+              ]))
+    in
+    Pattern_matcher.rewrite pm_copy_kernel ()
+      (replace call ~src:(sink :: List.tl (Ops.src call)))
+
+let pm_copy_from_store =
+  Pattern_matcher.concat
+    [
+      Pattern_matcher.v (fun () -> [
+          rule
+            (Upat.op Op.Call ~name:"call"
+               ~src:[ Upat.op Op.Sink ~name:"ast"; var "dst"; var "src" ])
+            (fun m ->
+              simplify_copy_kernel (m "call") (m "ast") (m "dst") (m "src"));
+        ]);
+      pm_copy_kernel;
+      Pattern_matcher.v (fun () -> [
+          (* Any other kernel stays on one device. *)
+          rule
+            (Upat.op Op.Call ~name:"call" ~allow_any_len:true
+               ~src:[ Upat.op Op.Sink ])
+            (fun m ->
+              assert_all_same_devices (m "call");
+              None);
+        ]);
+    ]
 
 (* Callify: the tensor graph becomes a call, with its state scoped *)
 

@@ -1,4 +1,4 @@
-# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
+# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
 __attribute__((min_vector_width(512))) void r_4_4_4_4_16(float* restrict data0_256, float* restrict data1_256, float* restrict data2_256, const int block_lo_, const int block_hi_) {
   float buf0[16];

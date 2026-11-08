@@ -1,4 +1,4 @@
-# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
+# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 case	repr
 some	TinyELF(lib=b'\x7fELF\x00\'"', name='k', target=CPU:CLANG:x86_64,x86-64, signature=((None, AddrSpace.GLOBAL, dtypes.f32, (16,)), ('n', AddrSpace.ALU, dtypes.i32, ())), profile_key=b'key\n')
 none	TinyELF(lib=b'', name='E_4', target=PCI:1+AMD:HIP:gfx1100, signature=((None, AddrSpace.GLOBAL, dtypes.f32, (16,)),), profile_key=None)

@@ -1,4 +1,4 @@
-# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
+# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 0 Ops.CUSTOM_FUNCTION dtypes.void [] CustomFunction(name="simplify")
 1 Ops.CONST dtypes.bool [] False
 2 Ops.CONST dtypes.weakfloat [] 1.0

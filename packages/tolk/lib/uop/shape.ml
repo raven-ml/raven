@@ -2628,6 +2628,11 @@ let symbolic =
       pm
         (fun () -> [
            (* Boolean algebra *)
+           (* (!x|y)&x -> y&x *)
+           rule
+             Upat.(
+               (logical_not (var ~dtype:boolean "x") lor var "y") land var "x")
+             (fun m -> Some O.(m "y" land m "x"));
            rule
              Upat.(
                var ~dtype:boolean "x" lor logical_not (var ~dtype:boolean "x"))

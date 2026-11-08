@@ -1,4 +1,4 @@
-# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
+# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 a	b	lt	le	eq	ne	min	max	add	sub	mul	floordiv	mod
 True	True	False	True	True	False	True	True	2	0	1	1	0
 True	False	False	False	False	True	False	True	1	1	0	raises ZeroDivisionError	raises ZeroDivisionError

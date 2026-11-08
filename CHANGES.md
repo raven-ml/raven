@@ -1077,6 +1077,7 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `(!x | y) & x` of booleans simplifies to `y & x` (`Shape.symbolic`).
 - A value ordered after effects keeps them through folds: `x * 0` of a value
   after a store, a gate after a store, and a stack's lane read at an index
   after a store run the store (`Shape.symbolic_simple`, `Codegen`).

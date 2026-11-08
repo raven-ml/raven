@@ -1,4 +1,4 @@
-# tinygrad eb985a8e7730befe910e8301d33ea76c9d8e9e9f
+# tinygrad c22edff14c79310a9b2df62a78819cf77c8289fa
 codegen/codegen/add_big_clang.golden
 codegen/codegen/add_big_cuda.golden
 codegen/codegen/add_big_hip.golden
@@ -3645,10 +3645,18 @@ schedule/schedule/add_row_from_self_kernels.golden
 schedule/schedule/add_row_from_self_linear.golden
 schedule/schedule/add_row_from_self_schedule.golden
 schedule/schedule/add_schedule.golden
+schedule/schedule/after_older_and_new_write.golden
+schedule/schedule/after_older_and_new_write_kernels.golden
+schedule/schedule/after_older_and_new_write_linear.golden
+schedule/schedule/after_older_and_new_write_schedule.golden
 schedule/schedule/after_older_write.golden
 schedule/schedule/after_older_write_kernels.golden
 schedule/schedule/after_older_write_linear.golden
 schedule/schedule/after_older_write_schedule.golden
+schedule/schedule/after_part_of_older_write.golden
+schedule/schedule/after_part_of_older_write_kernels.golden
+schedule/schedule/after_part_of_older_write_linear.golden
+schedule/schedule/after_part_of_older_write_schedule.golden
 schedule/schedule/after_sum.golden
 schedule/schedule/after_sum_kernels.golden
 schedule/schedule/after_sum_linear.golden
@@ -4285,6 +4293,7 @@ uop/symbolic/TestSymbolic.test_and_remove.golden
 uop/symbolic/TestSymbolic.test_big_mod.golden
 uop/symbolic/TestSymbolic.test_bitcast_chain.golden
 uop/symbolic/TestSymbolic.test_bool_and_not_contradiction.golden
+uop/symbolic/TestSymbolic.test_bool_and_not_or_absorption.golden
 uop/symbolic/TestSymbolic.test_bool_ne_false.golden
 uop/symbolic/TestSymbolic.test_bool_or_not_tautology.golden
 uop/symbolic/TestSymbolic.test_cast_bool.golden
