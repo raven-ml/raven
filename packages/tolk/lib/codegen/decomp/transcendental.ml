@@ -643,7 +643,27 @@ let xpow_int base exponent dt =
       in
       Some (where O.(exponent < int_like exponent 0) neg ret)
 
+(* The matchers made, each with its key, so that a target's rules compile once
+   in the process rather than for each kernel. Domains share the matchers, whose
+   lazy state is atomic ({!Ops.Pattern_matcher.v}). The list is replaced whole:
+   a domain that loses the race to add a key looks again in the list that won.
+   Making a matcher compiles none of its rules, so a lost race costs little. *)
+let made = Atomic.make []
+
+let rec cached key make =
+  let l = Atomic.get made in
+  let same (force, ops) (force', ops') =
+    Bool.equal force force' && Op.Set.equal ops ops'
+  in
+  match List.find_opt (fun (k, _) -> same k key) l with
+  | Some (_, m) -> m
+  | None ->
+      let m = make () in
+      if Atomic.compare_and_set made l ((key, m) :: l) then m
+      else cached key make
+
 let patterns ~force ops =
+  cached (force, ops) @@ fun () ->
   let other_floats =
     List.filter
       (fun dt -> not (Dtype.mem dt transcendental_dtypes))

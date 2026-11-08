@@ -3895,6 +3895,8 @@ module Upat = struct
 end
 
 module Pattern_matcher = struct
+  type node = t
+
   (* A rule's operations, and its pattern compiled with its function: the result
      of the function on the first naming of a node it gives one for. *)
   type ('ctx, 'r) rule = {
@@ -3984,12 +3986,20 @@ module Pattern_matcher = struct
 
   let rule pattern f = rule_ctx pattern (fun _ m -> f m)
 
-  (* A matcher is a list of parts, each with its rules indexed by operation and
-     its own way of declining, so that appending shares the parts. *)
-  type ('ctx, 'r) part = {
-    by_op : ('ctx, 'r) rule list array;
-    declines : 'r -> t -> bool;
-  }
+  (* The context a part's rules read: the matcher's, or none. *)
+  type ('ctx, 'c) reads = Ctx : ('ctx, 'ctx) reads | No_ctx : ('ctx, unit) reads
+
+  (* A matcher is a list of parts, each with its rules indexed by operation, its
+     own way of declining and the context its rules read, so that appending and
+     {!with_ctx} share the parts: a matcher composed for one rewrite copies no
+     rules. *)
+  type ('ctx, 'r) part =
+    | Part : {
+        by_op : ('c, 'r) rule list array;
+        declines : 'r -> t -> bool;
+        reads : ('ctx, 'c) reads;
+      }
+        -> ('ctx, 'r) part
 
   (* A matcher builds its parts on its first rewrite, so that a program that
      never rewrites keeps no rules in the heap, which every major collection
@@ -4023,7 +4033,7 @@ module Pattern_matcher = struct
               (fun o -> by_op.(Op.to_int o) <- r :: by_op.(Op.to_int o))
               (Op.Set.to_list ops))
       rules;
-    { by_op = Array.map List.rev by_op; declines }
+    Part { by_op = Array.map List.rev by_op; declines; reads = Ctx }
 
   let v rules = make (fun () -> [ part ~declines:( == ) (rules ()) ])
 
@@ -4033,30 +4043,39 @@ module Pattern_matcher = struct
   let append m0 m1 = make (fun () -> parts m0 @ parts m1)
   let concat ms = make (fun () -> List.concat_map parts ms)
 
-  let with_ctx m =
-    let ignore_ctx r =
-      { r with apply = Atomic.make (fun _ u -> (Atomic.get r.apply) () u) }
-    in
-    make (fun () ->
-        List.map
-          (fun p -> { p with by_op = Array.map (List.map ignore_ctx) p.by_op })
-          (parts m))
+  (* A part of a matcher without context reads none, whatever the context. *)
+  let ignore_ctx : type ctx r. (unit, r) part -> (ctx, r) part =
+   fun (Part p) ->
+    match p.reads with
+    | Ctx -> Part { by_op = p.by_op; declines = p.declines; reads = No_ctx }
+    | No_ctx -> Part { by_op = p.by_op; declines = p.declines; reads = No_ctx }
 
-  let rec first_rule p ctx u = function
+  let with_ctx m = make (fun () -> List.map ignore_ctx (parts m))
+
+  let rec first_rule declines ctx u = function
     | [] -> None
     | r :: rest -> (
         match (Atomic.get r.apply) ctx u with
-        | Some x when not (p.declines x u) -> Some x
-        | _ -> first_rule p ctx u rest)
+        | Some x when not (declines x u) -> Some x
+        | _ -> first_rule declines ctx u rest)
 
-  let rec first_part ctx u = function
+  (* The first result of the parts' rules for [u], whose operation is [o]. *)
+  let rec first_part : type ctx r.
+      ctx -> node -> int -> (ctx, r) part list -> r option =
+   fun ctx u o -> function
     | [] -> None
-    | p :: parts -> (
-        match first_rule p ctx u p.by_op.(Op.to_int u.op) with
-        | Some _ as r -> r
-        | None -> first_part ctx u parts)
+    | Part p :: parts -> (
+        match p.by_op.(o) with
+        | [] -> first_part ctx u o parts
+        | rules -> (
+            let r =
+              match p.reads with
+              | Ctx -> first_rule p.declines ctx u rules
+              | No_ctx -> first_rule p.declines () u rules
+            in
+            match r with Some _ -> r | None -> first_part ctx u o parts))
 
-  let rewrite m ctx u = first_part ctx u (parts m)
+  let rewrite m ctx u = first_part ctx u (Op.to_int u.op) (parts m)
 end
 
 (* Rewriting *)

@@ -123,4 +123,6 @@ val patterns : force:bool -> Op.Set.t -> (unit, Ops.t) Ops.Pattern_matcher.t
     {!xlog2} and {!xsin}. On the other floats, {!Dtype.Float16},
     {!Dtype.Bfloat16} and the 8-bit ones, the operation is computed in
     {!Dtype.Float32} and cast back. An {!Op.Sqrt} under the same condition
-    becomes [xpow d 0.5]. *)
+    becomes [xpow d 0.5].
+
+    Arguments equal to those of an earlier call give that call's matcher. *)

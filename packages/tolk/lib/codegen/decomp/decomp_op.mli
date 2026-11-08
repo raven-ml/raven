@@ -51,7 +51,9 @@ val simplifying_patterns : Op.Set.t -> (unit, Ops.t) Ops.Pattern_matcher.t
 
     A division or remainder of a committed integer reads a weak constant
     divisor in the integer's type, here and in {!late_patterns}: on int8, a
-    divisor of 128 is [-128]. *)
+    divisor of 128 is [-128].
+
+    A set equal to an earlier call's gives that call's matcher. *)
 
 val late_patterns :
   disable_fast_idiv:bool ->
@@ -85,4 +87,6 @@ val late_patterns :
       integer between;
     - negated {!Op.Cmpeq} to {!Op.Cmpne} if [ops] has it;
     - [a * b + c], and [(x << n) + c], to {!Op.Mulacc} if [ops] has it;
-    - if [ops] has {!Op.Fdiv}, reciprocals to a division of [1.0]. *)
+    - if [ops] has {!Op.Fdiv}, reciprocals to a division of [1.0].
+
+    Arguments equal to those of an earlier call give that call's matcher. *)

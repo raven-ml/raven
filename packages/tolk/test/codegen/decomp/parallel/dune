@@ -1,5 +1,6 @@
-; The compilers' domains force the emulation's rules on their first rewrite, so
-; the kernels compile in a process of their own, with nothing compiled before.
+; The compilers' domains force the emulation's rules, and make each target's
+; decompositions, on their first rewrite, so the kernels compile in a process of
+; their own, with nothing compiled before.
 
 (test
  (name test_decomp_parallel)

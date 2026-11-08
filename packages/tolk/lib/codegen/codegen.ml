@@ -1388,6 +1388,15 @@ let lift_uniform_gates sink =
     ~ctx:(lazy (Uniform.varying sink), lazy (consumers sink))
     sink (After_sources pm_lift_uniform_gates)
 
+(* a load ldmatrix delivers reads from the address its lane supplies, which the
+   renderer prints as the instruction *)
+let pm_lower_ldmatrix =
+  pm (fun () ->
+      [
+        rule (Upat.op Op.Load ~name:"x" ~allow_any_len:true) (fun m ->
+            Stage.lower_ldmatrix (m "x"));
+      ])
+
 let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   if setting Setting.debug >= 5 then
     print_endline (Render.render_uir (toposort ~calls:Enter ast));
@@ -1563,17 +1572,8 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
          (Decomp_dtype.pm_dtype_decomps ++ lift Uop_weak.pm_commit_weak))
   in
   let sink = rewrite Gater.pm_move_gates_from_index sink in
-  (* a load ldmatrix delivers reads from the address its lane supplies, which
-     the renderer prints as the instruction *)
   let sink =
-    if not ren.load_matrix then sink
-    else
-      rewrite
-        (pm (fun () -> [
-             rule (Upat.op Op.Load ~name:"x" ~allow_any_len:true) (fun m ->
-                 Stage.lower_ldmatrix (m "x"));
-           ]))
-        sink
+    if not ren.load_matrix then sink else rewrite pm_lower_ldmatrix sink
   in
   (* final rules for the renderer (without sym) *)
   let pm_final_rewrite =

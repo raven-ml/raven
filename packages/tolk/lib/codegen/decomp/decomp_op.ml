@@ -173,7 +173,26 @@ let rule = Pattern_matcher.rule
 let rule_ctx = Pattern_matcher.rule_ctx
 let when_ ops op rules = if Op.Set.mem op ops then rules else []
 
+(* The matcher of [key] in [made], made on the key's first call, so that a
+   target's rules compile once in the process rather than for each kernel.
+   Domains share the matchers, whose lazy state is atomic
+   ({!Ops.Pattern_matcher.v}). The list is replaced whole: a domain that loses
+   the race to add a key looks again in the list that won. Making a matcher
+   builds none of its rules, so a lost race costs nothing. A rule that domains
+   first try at once compiles on each of them. *)
+let rec cached made equal key make =
+  let l = Atomic.get made in
+  match List.find_opt (fun (k, _) -> equal k key) l with
+  | Some (_, m) -> m
+  | None ->
+      let m = make () in
+      if Atomic.compare_and_set made l ((key, m) :: l) then m
+      else cached made equal key make
+
+let simplifying_made = Atomic.make []
+
 let simplifying_patterns ops =
+  cached simplifying_made Op.Set.equal ops @@ fun () ->
   let x_int = Upat.var ~dtype:Dtype.ints "x" and c = Upat.cvar "c" in
   let a = Upat.var "a" and b = Upat.var "b" in
   Pattern_matcher.v
@@ -334,7 +353,11 @@ let nested_extreme o =
         (src cond)
   | _ -> None
 
+let late_made = Atomic.make []
+
 let late_patterns ~disable_fast_idiv ops =
+  let equal (d, o) (d', o') = Bool.equal d d' && Op.Set.equal o o' in
+  cached late_made equal (disable_fast_idiv, ops) @@ fun () ->
   let var = Upat.var and cvar = Upat.cvar in
   let x_int = var ~dtype:Dtype.ints "x" in
   let c = cvar "c" in

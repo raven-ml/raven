@@ -1216,7 +1216,46 @@ let non_integers =
             Ops.O.(Ops.alu Ops.invalid Cmplt [ x ] land (x < int 5)));
     ]
 
+(* Matchers by argument *)
+
+(* A matcher is made once for each argument: a call whose arguments equal an
+   earlier one's gets its rules, and one whose arguments differ gets its own,
+   whichever was made first. *)
+let by_argument =
+  let has op u =
+    List.exists (fun n -> Ops.op n = op) (Ops.toposort ~calls:Enter u)
+  in
+  let shifted set =
+    has Shr
+      (simplify_with set (Ops.alu (v "x" (-100) 100) Div [ Ops.const (i 8) ]))
+  in
+  let divided disable_fast_idiv =
+    has Truncdiv
+      (late_with ~disable_fast_idiv (ops [ Shr ])
+         (Ops.alu (v "x" 0 100) Truncdiv [ Ops.const (i 7) ]))
+  in
+  group "matchers by argument"
+    [
+      test "equal arguments give one matcher" (fun () ->
+          equal bool true
+            (Decomp_op.simplifying_patterns (ops [ Shr; And ])
+            == Decomp_op.simplifying_patterns (ops [ And; Shr ]));
+          equal bool true
+            (Decomp_op.late_patterns ~disable_fast_idiv:false
+               (ops [ Shr; Cmplt ])
+            == Decomp_op.late_patterns ~disable_fast_idiv:false
+                 (ops [ Cmplt; Shr ])));
+      test "a set gets its own rules after another's" (fun () ->
+          List.iter
+            (fun (set, shifts) -> equal bool shifts (shifted set))
+            [ (ops [ Shr ], true); (ops [], false); (ops [ Shr ], true) ]);
+      test "the flag gets its own rules after the other's" (fun () ->
+          List.iter
+            (fun disabled -> equal bool disabled (divided disabled))
+            [ false; true; false ]);
+    ]
+
 let () =
   exit
     (run "Tolk.Decomp_op"
-       [ fast_idiv; threefry; simplifying; late; non_integers ])
+       [ fast_idiv; threefry; simplifying; late; non_integers; by_argument ])

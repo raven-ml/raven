@@ -1077,6 +1077,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Lowering a kernel allocates 1.5-17% fewer words and runs 1.6-6% fewer
+  instructions: the decomposition patterns are made once per target, and
+  `Ops.Pattern_matcher.with_ctx` shares its matcher's rules.
 - Another machine's x86-64 host compiles for its psABI level (`Rig.arch`)
   where it compiled for the baseline: 1.3x to 5x fewer instructions, 13.6x
   on a half convolution. This machine's compiles at its level, on arm64

@@ -652,12 +652,38 @@ let accuracy =
   group "accuracy"
     [ Golden.cases ~key:[ "function"; "dtype"; "x" ] "accuracy.golden" row ]
 
+(* A matcher is made once for each argument: a call whose arguments equal an
+   earlier one's gets its rules, and one whose arguments differ gets its own,
+   whichever was made first. *)
+let by_argument =
+  let kept ~force ops =
+    List.exists
+      (fun n -> Ops.op n = Exp2)
+      (Ops.toposort ~calls:Enter (rewrite ~force ops Dtype.Float32))
+  in
+  group "patterns by argument"
+    [
+      test "equal arguments give one matcher" (fun () ->
+          equal bool true
+            (T.patterns ~force:false (Op.Set.of_list Op.[ Exp2; Sqrt ])
+            == T.patterns ~force:false (Op.Set.of_list Op.[ Sqrt; Exp2 ])));
+      test "a set gets its own rules after another's" (fun () ->
+          List.iter
+            (fun (ops, keeps) -> equal bool keeps (kept ~force:false ops))
+            Op.[ ([ Exp2 ], true); ([], false); ([ Exp2 ], true) ]);
+      test "force gets its own rules after the other's" (fun () ->
+          List.iter
+            (fun force -> equal bool (not force) (kept ~force Op.[ Exp2 ]))
+            [ false; true; false ]);
+    ]
+
 let () =
   exit
     (run "Tolk.Transcendental"
        [
          graphs;
          patterns;
+         by_argument;
          recorded;
          bits;
          reductions;

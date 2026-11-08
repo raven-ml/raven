@@ -214,7 +214,12 @@ for every pattern. A repeat that names nodes matches no sources as
   schedules, in a table that every domain reads and fills under a lock
   (`Helpers.Memo`), and a domain that asks for one another is making waits
   for it, so each program is compiled once, as tinygrad's parent compiles
-  each key once, and each body is scheduled once. MTLCompiler, which a tinygrad worker loads
+  each key once, and each body is scheduled once. The matchers that a
+  tinygrad worker keeps per process (`codegen/decomp/op.py:65-81` and
+  `codegen/decomp/transcendental.py:284`, `functools.cache`) are made once
+  and shared by every domain (`Decomp_op.simplifying_patterns`,
+  `Decomp_op.late_patterns`, `Transcendental.patterns`), and a rule compiles
+  on the domain that tries it first, or on each that tries it at once. MTLCompiler, which a tinygrad worker loads
   in its own process, is loaded once for every domain, and it re-parses its
   options into LLVM's global option registry on every build, which is not
   thread-safe: its builds run one at a time. comgr serialises the compiles
@@ -243,7 +248,9 @@ for every pattern. A repeat that names nodes matches no sources as
   domains` and `Tolk.Setting › context › binds for the domains spawned
   while it runs`; `Tolk.Worker` (every test); `Tolk.Codegen ›
   programs are kept › calls from several domains at once make one program,
-  compiled once`; `Tolk.Compiler_metal › MTLCompiler › compiles
+  compiled once`; `Tolk.Decomp_dtype, compiled in parallel › targets lowered
+  on several domains at once get their own rules`; `Tolk.Compiler_metal ›
+  MTLCompiler › compiles
   from several domains at once`; `Tolk.Compiler_amd › a compile in a process
   of its own` (every test) and `› a process that cannot start`;
   `Tolk.Compiler_cuda › compiles in processes of their own` (every test),
