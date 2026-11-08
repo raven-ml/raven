@@ -1,0 +1,55 @@
+# tolk D187 D261 golden=16b3880df8f8e8f5a50c1db9442290da
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 32
+2 Ops.PARAM dtypes.f16 [1] ParamArg(slot=0, dtype=dtypes.f16)
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.RANGE dtypes.weakint [3] (AxisType.WEAK, 0)
+5 Ops.CONST dtypes.weakint [] 8
+6 Ops.MUL dtypes.weakint [4, 5]
+7 Ops.SHRINK dtypes.f16 [2, 6, 5]
+8 Ops.PARAM dtypes.f16 [1] ParamArg(slot=1, dtype=dtypes.f16)
+9 Ops.SHRINK dtypes.f16 [8, 6, 5]
+10 Ops.LOAD dtypes.f16 [9]
+11 Ops.CONST dtypes.weakint [] 0
+12 Ops.INDEX dtypes.f16 [10, 11]
+13 Ops.CONST dtypes.weakint [] 1
+14 Ops.INDEX dtypes.f16 [10, 13]
+15 Ops.CONST dtypes.weakint [] 2
+16 Ops.INDEX dtypes.f16 [10, 15]
+17 Ops.CONST dtypes.weakint [] 3
+18 Ops.INDEX dtypes.f16 [10, 17]
+19 Ops.INDEX dtypes.f16 [10, 3]
+20 Ops.CONST dtypes.weakint [] 5
+21 Ops.INDEX dtypes.f16 [10, 20]
+22 Ops.CONST dtypes.weakint [] 6
+23 Ops.INDEX dtypes.f16 [10, 22]
+24 Ops.CONST dtypes.weakint [] 7
+25 Ops.INDEX dtypes.f16 [10, 24]
+26 Ops.STACK dtypes.f16 [12, 14, 16, 18, 19, 21, 23, 25]
+27 Ops.PARAM dtypes.f16 [1] ParamArg(slot=2, dtype=dtypes.f16)
+28 Ops.SHRINK dtypes.f16 [27, 6, 5]
+29 Ops.LOAD dtypes.f16 [28]
+30 Ops.INDEX dtypes.f16 [29, 11]
+31 Ops.INDEX dtypes.f16 [29, 13]
+32 Ops.INDEX dtypes.f16 [29, 15]
+33 Ops.INDEX dtypes.f16 [29, 17]
+34 Ops.INDEX dtypes.f16 [29, 3]
+35 Ops.INDEX dtypes.f16 [29, 20]
+36 Ops.INDEX dtypes.f16 [29, 22]
+37 Ops.INDEX dtypes.f16 [29, 24]
+38 Ops.STACK dtypes.f16 [30, 31, 32, 33, 34, 35, 36, 37]
+39 Ops.ADD dtypes.f16 [26, 38]
+40 Ops.INDEX dtypes.f16 [39, 11]
+41 Ops.INDEX dtypes.f16 [39, 13]
+42 Ops.INDEX dtypes.f16 [39, 15]
+43 Ops.INDEX dtypes.f16 [39, 17]
+44 Ops.INDEX dtypes.f16 [39, 3]
+45 Ops.INDEX dtypes.f16 [39, 20]
+46 Ops.INDEX dtypes.f16 [39, 22]
+47 Ops.INDEX dtypes.f16 [39, 24]
+48 Ops.STACK dtypes.f16 [40, 41, 42, 43, 44, 45, 46, 47]
+49 Ops.STORE dtypes.void [7, 48]
+50 Ops.AFTER dtypes.void [0, 49, 49, 49, 49, 49, 49, 49, 49]
+51 Ops.END dtypes.void [50, 4]
+52 Ops.SINK dtypes.void [51] KernelInfo(name="E_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UPCAST)),), optimized=True)
+

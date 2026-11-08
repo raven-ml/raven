@@ -20,24 +20,22 @@
 19 Ops.LOAD dtypes.f32 [18]
 20 Ops.CONST dtypes.weakint [] 0
 21 Ops.INDEX dtypes.f32 [19, 20]
-22 Ops.INDEX dtypes.f32 [19, 9]
-23 Ops.CONST dtypes.weakint [] 3
-24 Ops.CMPLT dtypes.bool [4, 23]
-25 Ops.WHERE dtypes.weakint [24, 5, 15]
-26 Ops.SHRINK dtypes.f32 [8, 25, 17]
-27 Ops.LOAD dtypes.f32 [26]
-28 Ops.INDEX dtypes.f32 [27, 20]
-29 Ops.INDEX dtypes.f32 [27, 9]
-30 Ops.STACK dtypes.f32 [21, 22, 28, 29]
-31 Ops.CONST dtypes.weakfloat [] 1.0
-32 Ops.ADD dtypes.f32 [30, 31]
-33 Ops.INDEX dtypes.f32 [32, 20]
-34 Ops.INDEX dtypes.f32 [32, 9]
-35 Ops.INDEX dtypes.f32 [32, 17]
-36 Ops.INDEX dtypes.f32 [32, 23]
-37 Ops.STACK dtypes.f32 [33, 34, 35, 36]
-38 Ops.STORE dtypes.void [6, 37]
-39 Ops.AFTER dtypes.void [0, 38, 38, 38, 38]
-40 Ops.END dtypes.void [39, 4]
-41 Ops.SINK dtypes.void [40] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+22 Ops.CONST dtypes.weakfloat [] 1.0
+23 Ops.ADD dtypes.f32 [21, 22]
+24 Ops.INDEX dtypes.f32 [19, 9]
+25 Ops.ADD dtypes.f32 [24, 22]
+26 Ops.CONST dtypes.weakint [] 3
+27 Ops.CMPLT dtypes.bool [4, 26]
+28 Ops.WHERE dtypes.weakint [27, 5, 15]
+29 Ops.SHRINK dtypes.f32 [8, 28, 17]
+30 Ops.LOAD dtypes.f32 [29]
+31 Ops.INDEX dtypes.f32 [30, 20]
+32 Ops.ADD dtypes.f32 [31, 22]
+33 Ops.INDEX dtypes.f32 [30, 9]
+34 Ops.ADD dtypes.f32 [33, 22]
+35 Ops.STACK dtypes.f32 [23, 25, 32, 34]
+36 Ops.STORE dtypes.void [6, 35]
+37 Ops.AFTER dtypes.void [0, 36, 36, 36, 36]
+38 Ops.END dtypes.void [37, 4]
+39 Ops.SINK dtypes.void [38] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
 

@@ -1,0 +1,63 @@
+# tolk D187 golden=699b9ef5d0f8393a578523fb96f78b4c
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
+3 Ops.CONST dtypes.weakint [] 2
+4 Ops.RANGE dtypes.weakint [3] (AxisType.WEAK, 0)
+5 Ops.CONST dtypes.weakint [] 8
+6 Ops.MUL dtypes.weakint [4, 5]
+7 Ops.CONST dtypes.weakint [] 4
+8 Ops.SHRINK dtypes.f32 [2, 6, 7]
+9 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32)
+10 Ops.SHRINK dtypes.f32 [9, 6, 7]
+11 Ops.LOAD dtypes.f32 [10]
+12 Ops.CONST dtypes.weakint [] 0
+13 Ops.INDEX dtypes.f32 [11, 12]
+14 Ops.CONST dtypes.weakint [] 1
+15 Ops.INDEX dtypes.f32 [11, 14]
+16 Ops.INDEX dtypes.f32 [11, 3]
+17 Ops.CONST dtypes.weakint [] 3
+18 Ops.INDEX dtypes.f32 [11, 17]
+19 Ops.ADD dtypes.weakint [6, 7]
+20 Ops.SHRINK dtypes.f32 [9, 19, 7]
+21 Ops.LOAD dtypes.f32 [20]
+22 Ops.INDEX dtypes.f32 [21, 12]
+23 Ops.INDEX dtypes.f32 [21, 14]
+24 Ops.INDEX dtypes.f32 [21, 3]
+25 Ops.INDEX dtypes.f32 [21, 17]
+26 Ops.STACK dtypes.f32 [13, 15, 16, 18, 22, 23, 24, 25]
+27 Ops.PARAM dtypes.f32 [1] ParamArg(slot=2, dtype=dtypes.f32)
+28 Ops.SHRINK dtypes.f32 [27, 6, 7]
+29 Ops.LOAD dtypes.f32 [28]
+30 Ops.INDEX dtypes.f32 [29, 12]
+31 Ops.INDEX dtypes.f32 [29, 14]
+32 Ops.INDEX dtypes.f32 [29, 3]
+33 Ops.INDEX dtypes.f32 [29, 17]
+34 Ops.SHRINK dtypes.f32 [27, 19, 7]
+35 Ops.LOAD dtypes.f32 [34]
+36 Ops.INDEX dtypes.f32 [35, 12]
+37 Ops.INDEX dtypes.f32 [35, 14]
+38 Ops.INDEX dtypes.f32 [35, 3]
+39 Ops.INDEX dtypes.f32 [35, 17]
+40 Ops.STACK dtypes.f32 [30, 31, 32, 33, 36, 37, 38, 39]
+41 Ops.ADD dtypes.f32 [26, 40]
+42 Ops.INDEX dtypes.f32 [41, 12]
+43 Ops.INDEX dtypes.f32 [41, 14]
+44 Ops.INDEX dtypes.f32 [41, 3]
+45 Ops.INDEX dtypes.f32 [41, 17]
+46 Ops.STACK dtypes.f32 [42, 43, 44, 45]
+47 Ops.STORE dtypes.void [8, 46]
+48 Ops.SHRINK dtypes.f32 [2, 19, 7]
+49 Ops.INDEX dtypes.f32 [41, 7]
+50 Ops.CONST dtypes.weakint [] 5
+51 Ops.INDEX dtypes.f32 [41, 50]
+52 Ops.CONST dtypes.weakint [] 6
+53 Ops.INDEX dtypes.f32 [41, 52]
+54 Ops.CONST dtypes.weakint [] 7
+55 Ops.INDEX dtypes.f32 [41, 54]
+56 Ops.STACK dtypes.f32 [49, 51, 53, 55]
+57 Ops.STORE dtypes.void [48, 56]
+58 Ops.AFTER dtypes.void [0, 47, 47, 47, 47, 57, 57, 57, 57]
+59 Ops.END dtypes.void [58, 4]
+60 Ops.SINK dtypes.void [59] KernelInfo(name="E_2_4_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))), optimized=True)
+

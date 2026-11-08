@@ -1,0 +1,39 @@
+# tolk D187 golden=f9297b6f41a4e62e7663af5b833d5870
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.RANGE dtypes.weakint [3] (AxisType.WEAK, 0)
+5 Ops.MUL dtypes.weakint [4, 3]
+6 Ops.SHRINK dtypes.f32 [2, 5, 3]
+7 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32)
+8 Ops.SHRINK dtypes.f32 [7, 5, 3]
+9 Ops.LOAD dtypes.f32 [8]
+10 Ops.CONST dtypes.weakint [] 0
+11 Ops.INDEX dtypes.f32 [9, 10]
+12 Ops.CONST dtypes.weakint [] 1
+13 Ops.INDEX dtypes.f32 [9, 12]
+14 Ops.CONST dtypes.weakint [] 2
+15 Ops.INDEX dtypes.f32 [9, 14]
+16 Ops.CONST dtypes.weakint [] 3
+17 Ops.INDEX dtypes.f32 [9, 16]
+18 Ops.STACK dtypes.f32 [11, 13, 15, 17]
+19 Ops.PARAM dtypes.f32 [1] ParamArg(slot=2, dtype=dtypes.f32)
+20 Ops.SHRINK dtypes.f32 [19, 5, 3]
+21 Ops.LOAD dtypes.f32 [20]
+22 Ops.INDEX dtypes.f32 [21, 10]
+23 Ops.INDEX dtypes.f32 [21, 12]
+24 Ops.INDEX dtypes.f32 [21, 14]
+25 Ops.INDEX dtypes.f32 [21, 16]
+26 Ops.STACK dtypes.f32 [22, 23, 24, 25]
+27 Ops.ADD dtypes.f32 [18, 26]
+28 Ops.INDEX dtypes.f32 [27, 10]
+29 Ops.INDEX dtypes.f32 [27, 12]
+30 Ops.INDEX dtypes.f32 [27, 14]
+31 Ops.INDEX dtypes.f32 [27, 16]
+32 Ops.STACK dtypes.f32 [28, 29, 30, 31]
+33 Ops.STORE dtypes.void [6, 32]
+34 Ops.AFTER dtypes.void [0, 33, 33, 33, 33]
+35 Ops.END dtypes.void [34, 4]
+36 Ops.SINK dtypes.void [35] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+

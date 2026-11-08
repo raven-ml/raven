@@ -6,77 +6,66 @@
 5 Ops.PARAM dtypes.f32 [4] ParamArg(slot=1, dtype=dtypes.f32)
 6 Ops.INDEX dtypes.f32 [5, 2]
 7 Ops.LOAD dtypes.f32 [6]
-8 Ops.CONST dtypes.weakint [] 1
-9 Ops.INDEX dtypes.f32 [5, 8]
-10 Ops.LOAD dtypes.f32 [9]
-11 Ops.CONST dtypes.weakint [] 2
-12 Ops.INDEX dtypes.f32 [5, 11]
-13 Ops.LOAD dtypes.f32 [12]
-14 Ops.CONST dtypes.weakint [] 3
-15 Ops.INDEX dtypes.f32 [5, 14]
-16 Ops.LOAD dtypes.f32 [15]
-17 Ops.INDEX dtypes.f32 [5, 0]
+8 Ops.CONST dtypes.weakint [] 5
+9 Ops.PARAM dtypes.f32 [8] ParamArg(slot=2, dtype=dtypes.f32)
+10 Ops.CONST dtypes.weakint [] 1
+11 Ops.INDEX dtypes.f32 [9, 10]
+12 Ops.LOAD dtypes.f32 [11]
+13 Ops.MUL dtypes.f32 [7, 12]
+14 Ops.INDEX dtypes.f32 [5, 10]
+15 Ops.LOAD dtypes.f32 [14]
+16 Ops.CONST dtypes.weakint [] 2
+17 Ops.INDEX dtypes.f32 [9, 16]
 18 Ops.LOAD dtypes.f32 [17]
-19 Ops.CONST dtypes.weakint [] 5
-20 Ops.INDEX dtypes.f32 [5, 19]
-21 Ops.LOAD dtypes.f32 [20]
-22 Ops.CONST dtypes.weakint [] 6
-23 Ops.INDEX dtypes.f32 [5, 22]
-24 Ops.LOAD dtypes.f32 [23]
-25 Ops.STACK dtypes.f32 [7, 10, 13, 16, 10, 13, 16, 18, 13, 16, 18, 21, 16, 18, 21, 24]
-26 Ops.PARAM dtypes.f32 [19] ParamArg(slot=2, dtype=dtypes.f32)
-27 Ops.INDEX dtypes.f32 [26, 8]
-28 Ops.LOAD dtypes.f32 [27]
-29 Ops.INDEX dtypes.f32 [26, 11]
-30 Ops.LOAD dtypes.f32 [29]
-31 Ops.INDEX dtypes.f32 [26, 14]
-32 Ops.LOAD dtypes.f32 [31]
-33 Ops.INDEX dtypes.f32 [26, 0]
-34 Ops.LOAD dtypes.f32 [33]
-35 Ops.STACK dtypes.f32 [28, 30, 32, 34, 28, 30, 32, 34, 28, 30, 32, 34, 28, 30, 32, 34]
-36 Ops.MUL dtypes.f32 [25, 35]
-37 Ops.INDEX dtypes.f32 [36, 2]
-38 Ops.INDEX dtypes.f32 [36, 8]
-39 Ops.ADD dtypes.f32 [37, 38] "fusable"
-40 Ops.INDEX dtypes.f32 [36, 11]
-41 Ops.ADD dtypes.f32 [39, 40] "fusable"
-42 Ops.INDEX dtypes.f32 [36, 14]
-43 Ops.ADD dtypes.f32 [41, 42] "fusable"
-44 Ops.STORE dtypes.void [3, 43]
-45 Ops.INDEX dtypes.f32 [1, 8]
-46 Ops.INDEX dtypes.f32 [36, 0]
-47 Ops.INDEX dtypes.f32 [36, 19]
-48 Ops.ADD dtypes.f32 [46, 47] "fusable"
-49 Ops.INDEX dtypes.f32 [36, 22]
-50 Ops.ADD dtypes.f32 [48, 49] "fusable"
-51 Ops.INDEX dtypes.f32 [36, 4]
-52 Ops.ADD dtypes.f32 [50, 51] "fusable"
-53 Ops.STORE dtypes.void [45, 52]
-54 Ops.INDEX dtypes.f32 [1, 11]
-55 Ops.CONST dtypes.weakint [] 8
-56 Ops.INDEX dtypes.f32 [36, 55]
-57 Ops.CONST dtypes.weakint [] 9
-58 Ops.INDEX dtypes.f32 [36, 57]
-59 Ops.ADD dtypes.f32 [56, 58] "fusable"
-60 Ops.CONST dtypes.weakint [] 10
-61 Ops.INDEX dtypes.f32 [36, 60]
-62 Ops.ADD dtypes.f32 [59, 61] "fusable"
-63 Ops.CONST dtypes.weakint [] 11
-64 Ops.INDEX dtypes.f32 [36, 63]
-65 Ops.ADD dtypes.f32 [62, 64] "fusable"
-66 Ops.STORE dtypes.void [54, 65]
-67 Ops.INDEX dtypes.f32 [1, 14]
-68 Ops.CONST dtypes.weakint [] 12
-69 Ops.INDEX dtypes.f32 [36, 68]
-70 Ops.CONST dtypes.weakint [] 13
-71 Ops.INDEX dtypes.f32 [36, 70]
-72 Ops.ADD dtypes.f32 [69, 71] "fusable"
-73 Ops.CONST dtypes.weakint [] 14
-74 Ops.INDEX dtypes.f32 [36, 73]
-75 Ops.ADD dtypes.f32 [72, 74] "fusable"
-76 Ops.CONST dtypes.weakint [] 15
-77 Ops.INDEX dtypes.f32 [36, 76]
-78 Ops.ADD dtypes.f32 [75, 77] "fusable"
-79 Ops.STORE dtypes.void [67, 78]
-80 Ops.SINK dtypes.void [44, 53, 66, 79] KernelInfo(name="r_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST))), optimized=True)
+19 Ops.MUL dtypes.f32 [15, 18]
+20 Ops.ADD dtypes.f32 [13, 19]
+21 Ops.INDEX dtypes.f32 [5, 16]
+22 Ops.LOAD dtypes.f32 [21]
+23 Ops.CONST dtypes.weakint [] 3
+24 Ops.INDEX dtypes.f32 [9, 23]
+25 Ops.LOAD dtypes.f32 [24]
+26 Ops.MUL dtypes.f32 [22, 25]
+27 Ops.ADD dtypes.f32 [20, 26]
+28 Ops.INDEX dtypes.f32 [5, 23]
+29 Ops.LOAD dtypes.f32 [28]
+30 Ops.INDEX dtypes.f32 [9, 0]
+31 Ops.LOAD dtypes.f32 [30]
+32 Ops.MUL dtypes.f32 [29, 31]
+33 Ops.ADD dtypes.f32 [27, 32]
+34 Ops.STORE dtypes.void [3, 33]
+35 Ops.INDEX dtypes.f32 [1, 10]
+36 Ops.MUL dtypes.f32 [15, 12]
+37 Ops.MUL dtypes.f32 [22, 18]
+38 Ops.ADD dtypes.f32 [36, 37]
+39 Ops.MUL dtypes.f32 [29, 25]
+40 Ops.ADD dtypes.f32 [38, 39]
+41 Ops.INDEX dtypes.f32 [5, 0]
+42 Ops.LOAD dtypes.f32 [41]
+43 Ops.MUL dtypes.f32 [42, 31]
+44 Ops.ADD dtypes.f32 [40, 43]
+45 Ops.STORE dtypes.void [35, 44]
+46 Ops.INDEX dtypes.f32 [1, 16]
+47 Ops.MUL dtypes.f32 [22, 12]
+48 Ops.MUL dtypes.f32 [29, 18]
+49 Ops.ADD dtypes.f32 [47, 48]
+50 Ops.MUL dtypes.f32 [42, 25]
+51 Ops.ADD dtypes.f32 [49, 50]
+52 Ops.INDEX dtypes.f32 [5, 8]
+53 Ops.LOAD dtypes.f32 [52]
+54 Ops.MUL dtypes.f32 [53, 31]
+55 Ops.ADD dtypes.f32 [51, 54]
+56 Ops.STORE dtypes.void [46, 55]
+57 Ops.INDEX dtypes.f32 [1, 23]
+58 Ops.MUL dtypes.f32 [29, 12]
+59 Ops.MUL dtypes.f32 [42, 18]
+60 Ops.ADD dtypes.f32 [58, 59]
+61 Ops.MUL dtypes.f32 [53, 25]
+62 Ops.ADD dtypes.f32 [60, 61]
+63 Ops.CONST dtypes.weakint [] 6
+64 Ops.INDEX dtypes.f32 [5, 63]
+65 Ops.LOAD dtypes.f32 [64]
+66 Ops.MUL dtypes.f32 [65, 31]
+67 Ops.ADD dtypes.f32 [62, 66]
+68 Ops.STORE dtypes.void [57, 67]
+69 Ops.SINK dtypes.void [34, 45, 56, 68] KernelInfo(name="r_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST))), optimized=True)
 

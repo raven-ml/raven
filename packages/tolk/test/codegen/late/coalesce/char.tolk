@@ -1,0 +1,51 @@
+# tolk D187 golden=1000486212173ffea17ad8221697659c
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.PARAM dtypes.i8 [1] ParamArg(slot=0, dtype=dtypes.i8)
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.RANGE dtypes.weakint [3] (AxisType.WEAK, 0)
+5 Ops.MUL dtypes.weakint [4, 3]
+6 Ops.INDEX dtypes.i8 [2, 5]
+7 Ops.PARAM dtypes.i8 [1] ParamArg(slot=1, dtype=dtypes.i8)
+8 Ops.INDEX dtypes.i8 [7, 5]
+9 Ops.LOAD dtypes.i8 [8]
+10 Ops.CONST dtypes.weakint [] 1
+11 Ops.ADD dtypes.weakint [5, 10]
+12 Ops.INDEX dtypes.i8 [7, 11]
+13 Ops.LOAD dtypes.i8 [12]
+14 Ops.CONST dtypes.weakint [] 2
+15 Ops.ADD dtypes.weakint [5, 14]
+16 Ops.INDEX dtypes.i8 [7, 15]
+17 Ops.LOAD dtypes.i8 [16]
+18 Ops.CONST dtypes.weakint [] 3
+19 Ops.ADD dtypes.weakint [5, 18]
+20 Ops.INDEX dtypes.i8 [7, 19]
+21 Ops.LOAD dtypes.i8 [20]
+22 Ops.STACK dtypes.i8 [9, 13, 17, 21]
+23 Ops.PARAM dtypes.i8 [1] ParamArg(slot=2, dtype=dtypes.i8)
+24 Ops.INDEX dtypes.i8 [23, 5]
+25 Ops.LOAD dtypes.i8 [24]
+26 Ops.INDEX dtypes.i8 [23, 11]
+27 Ops.LOAD dtypes.i8 [26]
+28 Ops.INDEX dtypes.i8 [23, 15]
+29 Ops.LOAD dtypes.i8 [28]
+30 Ops.INDEX dtypes.i8 [23, 19]
+31 Ops.LOAD dtypes.i8 [30]
+32 Ops.STACK dtypes.i8 [25, 27, 29, 31]
+33 Ops.ADD dtypes.i8 [22, 32]
+34 Ops.CONST dtypes.weakint [] 0
+35 Ops.INDEX dtypes.i8 [33, 34]
+36 Ops.STORE dtypes.void [6, 35]
+37 Ops.INDEX dtypes.i8 [2, 11]
+38 Ops.INDEX dtypes.i8 [33, 10]
+39 Ops.STORE dtypes.void [37, 38]
+40 Ops.INDEX dtypes.i8 [2, 15]
+41 Ops.INDEX dtypes.i8 [33, 14]
+42 Ops.STORE dtypes.void [40, 41]
+43 Ops.INDEX dtypes.i8 [2, 19]
+44 Ops.INDEX dtypes.i8 [33, 18]
+45 Ops.STORE dtypes.void [43, 44]
+46 Ops.AFTER dtypes.void [0, 36, 39, 42, 45]
+47 Ops.END dtypes.void [46, 4]
+48 Ops.SINK dtypes.void [47] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+
