@@ -169,7 +169,7 @@ let gpus =
                gpus)
        (Rig_gpus.paths ()))
 
-let host_add = lazy (add ("add_" ^ Rig.arch Rig.host ^ ".o"))
+let host_add = lazy (add ("add_" ^ Rig.instruction_set Rig.host ^ ".o"))
 
 (* The bytes [out] holds after [binary]'s [add] over the [n] floats of [a]
    and [b] on [d], in groups of 64 threads. *)

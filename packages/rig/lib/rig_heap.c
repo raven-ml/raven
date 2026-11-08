@@ -35,6 +35,10 @@
 #include <stdio.h>
 #endif
 
+#if defined(__x86_64__)
+#include <cpuid.h>
+#endif
+
 #include "rig_pool.h"
 #include "rig_stubs.h"
 
@@ -53,8 +57,8 @@ value caml_rig_page_size(value unit) {
   return Val_long((intnat)rig_page_bytes());
 }
 
-/* The host's instruction set, as its devices name architectures. */
-value caml_rig_arch(value unit) {
+/* The host's instruction set: the one this code is compiled for. */
+value caml_rig_instruction_set(value unit) {
   (void)unit;
 #if defined(__x86_64__) || defined(_M_X64)
   return caml_copy_string("x86_64");
@@ -63,6 +67,31 @@ value caml_rig_arch(value unit) {
 #else
   return caml_copy_string("");
 #endif
+}
+
+/* The words that the x86-64 psABI's levels read ([cpu.ml]): CPUID.01H:ECX,
+   CPUID.07H.00H:EBX, CPUID.80000001H:ECX and the low half of XCR0, each 0
+   where the processor has no such leaf. XGETBV runs only where
+   CPUID.01H:ECX.OSXSAVE[27] is 1, which enables it (Intel SDM vol. 1, §14.3),
+   and XCR0 is 0 otherwise. All four are 0 off x86-64. */
+value caml_rig_x86_words(value unit) {
+  (void)unit;
+  uint32_t w[4] = {0, 0, 0, 0};
+#if defined(__x86_64__)
+  unsigned a, b, c, d;
+  if (__get_cpuid(1, &a, &b, &c, &d)) w[0] = c;
+  if (__get_cpuid_count(7, 0, &a, &b, &c, &d)) w[1] = b;
+  if (__get_cpuid(0x80000001, &a, &b, &c, &d)) w[2] = c;
+  if ((w[0] >> 27) & 1) {
+    unsigned lo, hi;
+    __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+    (void)hi;
+    w[3] = lo;
+  }
+#endif
+  value words = caml_alloc_tuple(4);
+  for (int i = 0; i < 4; i++) Store_field(words, i, Val_long((intnat)w[i]));
+  return words;
 }
 
 /* Release lists

@@ -25,11 +25,10 @@ let vendor d =
 let of_kind ?(renderer = "") ?(arch = "") device =
   { Helpers.Target.device; renderer; arch; interface = ""; indices = "" }
 
-(* The processor that every machine of the instruction set [machine] has, as
-   Clang names it. rig states no processor of another machine, so its code
-   must run on any processor of its instruction set. *)
-let baseline machine = if machine = "x86_64" then "x86-64" else "generic"
-
+(* A host compiles for its arch: on x86-64 its level, which Clang takes as its
+   processor, and on arm64 its base architecture, Clang's [generic]. This
+   machine's host tunes for its own processor, which allows no instruction its
+   level lacks. *)
 let target d =
   match vendor d with
   | Some kind -> of_kind ~arch:(Rig.arch d) kind
@@ -38,12 +37,14 @@ let target d =
     ->
       let host = Rig.host_of d in
       let here = Rig.equal host Rig.host in
-      let cpu = if here then "native" else baseline (Rig.arch host) in
+      let machine = Rig.instruction_set host in
+      let cpu = if machine = "x86_64" then Rig.arch host else "generic" in
+      let tune = if here then ",tune=native" else "" in
       (* The functions of a Windows process's libraries follow a convention of
          their own, which the object is compiled for (rig's host code). *)
-      let windows = here && Sys.win32 in
-      let system = if windows then "-windows" else "" in
-      of_kind ~renderer:"CLANG" ~arch:(Rig.arch host ^ system ^ "," ^ cpu) "CPU"
+      let system = if here && Sys.win32 then "-windows" else "" in
+      let arch = machine ^ system ^ "," ^ cpu ^ tune in
+      of_kind ~renderer:"CLANG" ~arch "CPU"
   | None ->
       invalid_arg (strf "Tolk_engine.target: %s runs no program" (Rig.name d))
 

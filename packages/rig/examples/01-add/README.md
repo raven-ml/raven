@@ -21,7 +21,8 @@ order, steps, the lives of buffers and devices, and host code.
 ## What You'll Learn
 
 - Opening the first GPU that rig sees here: `Rig_gpus.paths`
-- Choosing a binary by the device's architecture: `Rig.arch`
+- Choosing a binary by the device's architecture: `Rig.arch`, and the
+  host's by its instruction set: `Rig.instruction_set`
 - Loading code and finding its function: `Image.load`, on a GPU or on
   `Rig.host`, and `Image.resolve`
 - Moving arrays to a device and back: `Buffer.create`, `Buffer.of_bigarray`,

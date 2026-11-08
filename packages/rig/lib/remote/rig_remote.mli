@@ -152,10 +152,11 @@ val connect : key:key -> (string * int) list -> (t, string) result
 val hosts : t -> Rig.t list
 (** [hosts j] is the host of each of [j]'s machines, in the order of their
     agents in {!connect}'s list or in [RIG_REMOTE_AGENTS]
-    ({!section-launchers}). A host's {!Rig.arch} is the agent's instruction
-    set. It runs copies between its machine's memory and this process's, and
-    loads rig.program programs for devices of its machine: {!Rig.Image.load}
-    on it is the agent's {!Rig_program.load_received}, and a
+    ({!section-launchers}). A host's {!Rig.arch} is the agent's host's,
+    the level of its instruction set that its processor has. It runs copies
+    between its machine's memory and this process's, and loads rig.program
+    programs for devices of its machine: {!Rig.Image.load} on it is the
+    agent's {!Rig_program.load_received}, and a
     {!Rig.Submission.words} part on it is a run ({!Rig_program.run_received}).
     Its capability record (under {!Rig_remote_abi.key}) is a
     {!Rig_remote_abi.Host}, which holds the function that makes rails. *)

@@ -17,7 +17,7 @@ dune exec ./main.exe
   int64_t end)`, with the buffers' host addresses in the parameters
 - Launches over many groups, which the host's cores run in parallel, each
   call of the function given a range of whole groups
-- Choosing the object for the host: `Rig.arch Rig.host`
+- Choosing the object for the host: `Rig.instruction_set Rig.host`
 
 ## Key Functions
 

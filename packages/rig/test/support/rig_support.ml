@@ -187,6 +187,7 @@ module Driver = struct
 
   type t = {
     c : polled;
+    arch : string;
     mutable word_at : int;  (** The word's host address. *)
     copies : bool;
     host_visible : bool;
@@ -282,7 +283,7 @@ module Driver = struct
     in
     let has c = List.mem c d.waits in
     {
-      Rig_edge.arch = "polled";
+      Rig_edge.arch = d.arch;
       budget = d.budget;
       queues =
         (if d.copies then [ compute; { name = "COPY:0"; runs } ]
@@ -603,7 +604,8 @@ module Polled = struct
       ?(budget = 1 lsl 30) ?(memory = max_int) ?(window = max_int)
       ?(may_block = false) ?(completion = `Host) ?(waits_on = [])
       ?(answer = `Stopped) ?(runs = `When_slept) ?(lag = 1) ?hang_ms
-      ?(capability = Rig_edge.Capability (capability_key, ())) ?bus () =
+      ?(capability = Rig_edge.Capability (capability_key, ())) ?bus
+      ?(arch = "polled") () =
     if lag < 1 then invalid_arg "Polled.make: lag is below 1";
     let limits = function
       | Rig_edge.Device -> memory
@@ -614,6 +616,7 @@ module Polled = struct
     let d =
       {
         c;
+        arch;
         word_at = polled_word_at c;
         copies;
         host_visible;
@@ -678,12 +681,12 @@ module Polled = struct
   let open_ ?capacity ?grows ?copies ?host_visible ?addresses
       ?transport ?peers ?maps_host ?alignment ?cache_bytes ?budget ?memory
       ?window ?may_block ?completion ?waits_on ?answer ?runs ?lag ?hang_ms ?bus
-      name =
+      ?arch name =
     let p =
       make ?capacity ?grows ?copies ?host_visible ?addresses
         ?transport ?peers ?maps_host ?alignment ?cache_bytes ?budget ?memory
         ?window ?may_block ?completion ?waits_on ?answer ?runs ?lag ?hang_ms
-        ?bus ()
+        ?bus ?arch ()
     in
     match Rig.open_ (opener name p) with
     | Ok d -> (d, p)

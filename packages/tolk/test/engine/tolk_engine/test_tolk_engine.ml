@@ -70,12 +70,14 @@ let targets =
   group "target"
     [
       test
-        "the host compiles C for Clang on its own processor, naming its \
-         system under Windows, whose functions follow a convention of their \
-         own" (fun () ->
+        "the host compiles C for Clang at its arch, tuned for its own \
+         processor, naming its system under Windows, whose functions follow \
+         a convention of their own" (fun () ->
           let system = if Sys.win32 then "-windows" else "" in
+          let isa = Rig.instruction_set host in
+          let cpu = if isa = "x86_64" then Rig.arch host else "generic" in
           equal target
-            (host_target (Rig.arch host ^ system) "native")
+            (host_target (isa ^ system) (cpu ^ ",tune=native"))
             (Engine.target host));
       test "a memory device compiles as the host" (fun () ->
           equal target (Engine.target host) (Engine.target (device "CPU:1")));

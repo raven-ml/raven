@@ -213,9 +213,25 @@ val pp : Format.formatter -> t -> unit
 (** [pp] formats a device's {!val-name}. *)
 
 val arch : t -> string
-(** [arch d] is the architecture of [d]'s processor as its driver names it,
-    such as ["gfx1100"], ["sm_89"] or ["Apple7"]; the machine's instruction
-    set for a host, ["arm64"] or ["x86_64"]; and [""] for an io device. *)
+(** [arch d] names the code [d]'s processor runs. For a driver's device it is
+    the processor as its driver names it, such as ["gfx1100"], ["sm_89"] or
+    ["Apple7"]. For a host it is a level of its instruction set: on x86-64 the
+    highest level of the x86-64 psABI whose features the processor has and
+    whose registers the system enables (XCR0), ["x86-64"], ["x86-64-v2"],
+    ["x86-64-v3"] or ["x86-64-v4"], each level running the code of those
+    below it; on arm64 ["arm64"], the base architecture with floating point
+    and Advanced SIMD. It is ["memory"] for a {!memory_device}, [""] for an io
+    device, and for a device of another machine that machine's.
+
+    The x86-64 psABI,
+    {{:https://gitlab.com/x86-psABIs/x86-64-ABI}System V Application Binary
+    Interface, AMD64 Architecture Processor Supplement}, §3.1.1, table
+    "Micro-Architecture Levels". *)
+
+val instruction_set : t -> string
+(** [instruction_set d] is the instruction set of [d]'s {!arch}: ["x86_64"]
+    for a level of x86-64 and the arch itself for any other, such as
+    ["arm64"], which names its instruction set. *)
 
 val bus : t -> string option
 (** [bus d] is the bus address of [d]'s PCI function on its machine, such as
@@ -2524,3 +2540,14 @@ module Profile : sig
       microseconds from the earliest event. [oc] is neither flushed nor
       closed. *)
 end
+
+(**/**)
+
+val x86_levels : string list
+(** [x86_levels] is the x86-64 psABI's levels, in order, as {!arch} names
+    them. *)
+
+val x86_level : ecx1:int -> ebx7:int -> ecx81:int -> xcr0:int -> string
+(** [x86_level ~ecx1 ~ebx7 ~ecx81 ~xcr0] is the {!arch} of an x86-64 host
+    whose CPUID.01H:ECX, CPUID.07H.00H:EBX and CPUID.80000001H:ECX are
+    [ecx1], [ebx7] and [ecx81], and whose XCR0 is [xcr0]. *)

@@ -7,7 +7,6 @@ let strf = Printf.sprintf
 
 (* The host *)
 
-external arch : unit -> string = "caml_rig_arch"
 external error_message : int -> string = "caml_rig_host_error_message"
 
 let em_x86_64 = 62
@@ -15,7 +14,10 @@ let em_aarch64 = 183
 
 (* The host's ELF machine, 0 for an instruction set rig links no code for. *)
 let host =
-  match arch () with "x86_64" -> em_x86_64 | "arm64" -> em_aarch64 | _ -> 0
+  match Cpu.instruction_set Cpu.host_arch with
+  | "x86_64" -> em_x86_64
+  | "arm64" -> em_aarch64
+  | _ -> 0
 
 let machine_name m = if m = em_x86_64 then "x86_64" else "arm64"
 

@@ -465,6 +465,15 @@ let check_memory t sizes =
   in
   Iarray.iter step t.steps
 
+(* Whether a device of arch [device] runs code compiled for [arch]: its own,
+   and on x86-64 that of a level at most its own, since "the levels are
+   cumulative" (x86-64 psABI, §3.1.1). *)
+let runs ~device arch =
+  let level a = List.find_index (String.equal a) Rig.x86_levels in
+  match (level device, level arch) with
+  | Some d, Some a -> a <= d
+  | _ -> device = arch
+
 (* [sizes] gives known extents. Only the agent knows a remote rail's extent;
    it checks the bounds and whole-memory claims again before loading. *)
 let check t sizes devices =
@@ -474,8 +483,9 @@ let check t sizes devices =
   Iarray.iteri
     (fun i arch ->
       let a = Rig.arch devices.(i) in
-      if a <> arch then
-        broken "device %d: %s is %S, not %S" i (Rig.name devices.(i)) a arch)
+      if not (runs ~device:a arch) then
+        broken "device %d: %s is %S, which does not run %S" i
+          (Rig.name devices.(i)) a arch)
     t.devices;
   if t.ints < 0 || t.ints > max_int / 8 then broken "%d ints" t.ints;
   let ndev = Iarray.length t.devices in

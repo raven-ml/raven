@@ -285,12 +285,20 @@ let llvm18_x86_off =
   [ "-mno-avx10.1-512"; "-mno-avx10.1-256"; "-mno-avx512fp16" ]
 
 (* The machine of [arch] and the flags that make Clang compile for it: its
-   triple, processor and features. *)
+   triple, processor and features, and the processor it tunes for. *)
 let selection arch =
-  let machine, cpu, feats =
+  let machine, cpu, feats, tune =
     match String.split_on_char ',' arch with
-    | machine :: cpu :: feats ->
-        (List.hd (String.split_on_char '-' machine), cpu, feats)
+    | machine :: cpu :: fields ->
+        let tune, feats =
+          List.partition_map
+            (fun f ->
+              match String.split_on_char '=' f with
+              | [ "tune"; t ] -> Left ("-mtune=" ^ t)
+              | _ -> Right f)
+            fields
+        in
+        (List.hd (String.split_on_char '-' machine), cpu, feats, tune)
     | _ ->
         invalid_arg
           (Printf.sprintf
@@ -341,7 +349,7 @@ let selection arch =
       ]
     else [ "--target=" ^ machine ^ "-none-unknown-elf" ]
   in
-  (machine, triple @ target_args)
+  (machine, triple @ target_args @ tune)
 
 (* The flags of a [selection] for a Clang of LLVM [llvm]. *)
 let fixed ~llvm (machine, flags) =

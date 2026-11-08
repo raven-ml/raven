@@ -74,24 +74,22 @@ let agrees name { f } =
   let far = Rune.jit' f (placed (module R) h k xs) in
   equal (array int32) (bits (f x)) (bits (Nx.place Nx.Host.on far))
 
-(* The processor another machine's host compiles for, by its instruction
-   set. *)
-let baselines = [ ("x86_64", "x86-64"); ("arm64", "generic") ]
-
-let compiles_for_baseline =
-  cases ~id:fst "another machine's host compiles for its baseline" baselines
-  @@ fun (machine, cpu) ->
+(* Another machine's host compiles for its arch: on x86-64 its level, which
+   Clang takes as its processor, on arm64 the base architecture, untuned. *)
+let compiles_for_its_arch () =
   let h = host () in
-  if Rig.arch h <> machine then skip ~reason:"another instruction set" ();
   let t = Tolk_engine.target h in
-  equal string (machine ^ "," ^ cpu) t.arch;
+  let cpu =
+    match Rig.instruction_set h with
+    | "x86_64" -> Rig.arch h
+    | "arm64" -> "generic"
+    | isa -> fail ("another instruction set: " ^ isa)
+  in
+  equal string (Rig.instruction_set h ^ "," ^ cpu) t.arch;
   equal string "CPU" t.device;
   equal string "CLANG" t.renderer
 
-(* Half casts
-
-   The baseline processor of x86_64 converts no half in hardware, so a cast
-   to or from float16 tests code that converts by hand. *)
+(* Half casts *)
 
 let set () = Nx.devices [ host () ]
 
@@ -188,7 +186,8 @@ let () =
   exit
     (run "Rune.jit on another machine's host"
        [
-         compiles_for_baseline;
+         test "another machine's host compiles for its arch"
+           compiles_for_its_arch;
          group "gives eager's bits"
            [ agrees "neg" { f = Nx.neg }; agrees "floor" { f = Nx.floor } ];
          group "half casts give eager's bits"

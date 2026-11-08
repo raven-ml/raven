@@ -16,7 +16,7 @@ open Rig
 
 (* The object for this host's machine: [affine.c] compiled for each. *)
 let object_file () =
-  match arch host with
+  match instruction_set host with
   | "arm64" -> "affine_aarch64.o"
   | "x86_64" -> "affine_x86_64.o"
   | a -> failwith ("no object for " ^ a)

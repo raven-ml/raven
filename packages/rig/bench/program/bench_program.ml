@@ -206,7 +206,9 @@ let polled_rows =
 
 (* A host step's orchestration around the same empty host launch. *)
 let empty_object () =
-  let machine = match Rig.arch Rig.host with "arm64" -> "aarch64" | m -> m in
+  let machine =
+    match Rig.instruction_set Rig.host with "arm64" -> "aarch64" | m -> m
+  in
   let file =
     Filename.concat
       (Filename.dirname Sys.executable_name)
@@ -470,7 +472,9 @@ let load_rows =
 (* test/program's fixture [spin]: a fill that counts to the word its argument
    points at. *)
 let spin_object () =
-  let machine = match Rig.arch Rig.host with "arm64" -> "aarch64" | m -> m in
+  let machine =
+    match Rig.instruction_set Rig.host with "arm64" -> "aarch64" | m -> m
+  in
   let file =
     Filename.concat
       (Filename.dirname Sys.executable_name)

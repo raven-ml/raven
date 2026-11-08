@@ -9,6 +9,7 @@
   buffer
   claim
   copy
+  cpu
   def
   dev
   host_code

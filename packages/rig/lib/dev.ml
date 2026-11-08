@@ -79,7 +79,6 @@ external c_producers : c -> int array = "caml_rig_producers"
 external c_waits_in_queue : c -> bool = "caml_rig_waits_in_queue"
 external release_list : unit -> int = "caml_rig_release_list"
 external c_release : c -> int = "caml_rig_device_release" [@@noalloc]
-external host_arch : unit -> string = "caml_rig_arch"
 external c_host_cache : unit -> int = "caml_rig_host_cache_bytes"
 
 (* The bytes of the host's largest cache, as the system states it
@@ -222,7 +221,7 @@ let host =
   let queues = [| { Rig_edge.name = "COMPUTE:0"; runs = [ Launch ] } |] in
   let d =
     make_device ~index:0 ~name:"CPU" ~machine:Here ~kind:Host
-      ~c:(c_host_new "CPU") ~arch:(host_arch ()) ~bus:None ~queues
+      ~c:(c_host_new "CPU") ~arch:Cpu.host_arch ~bus:None ~queues
       ~copy_engine:None ~completion:Rig_edge.Host ~waits:no_waits ~hang_ms:None
       ~maps_host:false ~alignment:malloc_alignment
       ~cache_bytes:(host_cache_bytes ()) ~host_addresses:false

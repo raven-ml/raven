@@ -25,9 +25,11 @@ let contents f = In_channel.with_open_bin f In_channel.input_all
 
 (* The file of [add] that [d] loads, by its arch. Metal and CUDA compile a
    portable form for the GPU they load it on. AMD's and NVIDIA's kernel
-   drivers and the host take one binary per architecture. *)
+   drivers take one binary per architecture, and the host one per
+   instruction set, compiled for its base level, which every host of it
+   runs. *)
 let binary d =
-  match arch d with
+  match instruction_set d with
   | ("arm64" | "x86_64") as a -> Some ("add_" ^ a ^ ".o")
   | "gfx1201" -> Some "add_gfx1201.hsaco"
   | "sm_89" -> Some "add_sm_89.cubin"

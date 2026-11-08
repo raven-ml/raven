@@ -34,7 +34,11 @@ val clang : string -> Renderer.Compiler.t
       misses on a virtual Mac;
     - each [FEATURE] is an instruction set extension to enable, or to disable if
       it starts with [-]. On [riscv64] features cannot be disabled: each is an
-      extension that the processor model gains.
+      extension that the processor model gains;
+    - a [FEATURE] [tune=MODEL] instead tunes the code for the processor model
+      [MODEL], [native] for the host's, as in ["x86_64,x86-64-v3,tune=native"]:
+      it chooses among the instructions [CPU] and the features allow, and never
+      allows another.
 
     Objects are ELF, optimized at [-O2] and position independent. Math functions
     do not set [errno], so that a square root is one instruction. For an x86_64
@@ -101,11 +105,12 @@ val clang : string -> Renderer.Compiler.t
 val flags : version:string -> string -> string list
 (** [flags ~version arch] is the arguments that make a Clang whose [--version]
     states [version], such as ["Ubuntu clang version 18.1.3 (1ubuntu1)"],
-    compile for [arch] as {!clang} reads it: its target, processor and
-    features, in that order. Under LLVM 18 an x86_64 [arch]'s arguments end
-    by disabling AVX10.1 and AVX-512's half arithmetic, [avx512fp16], which
-    AVX10.1 implies, whatever [arch] or [native] enables: LLVM 18 crashes
-    compiling some loops over halves with them. Without them halves convert
+    compile for [arch] as {!clang} reads it: its target, processor, features
+    and the processor it tunes for, in that order. Under LLVM 18 an x86_64
+    [arch]'s arguments end by disabling AVX10.1 and AVX-512's half
+    arithmetic, [avx512fp16], which AVX10.1 implies, whatever [arch] or
+    [native] enables: LLVM 18 crashes compiling some loops over halves with
+    them. Without them halves convert
     to and from [float] by other instructions, to the same values. Any other
     [version], including one that names no
     LLVM release, such as Apple's, and any other machine take [arch]'s

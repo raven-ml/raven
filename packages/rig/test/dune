@@ -25,7 +25,7 @@
   test_copy_parts
   test_copy)
  (modules :standard \ test_profile test_readers test_model test_model_fork
-  rig_model)
+  rig_model test_arch)
  (libraries rig rig_edge rig_support rig_gpu_support threads.posix unix
   windtrap)
  ; The C library scribbles over the memory it frees (MallocScribble on macOS,
@@ -39,6 +39,16 @@
     MALLOC_PERTURB_
     85
     (run %{test})))))
+
+; test_arch's stub runs the x86-64 levels' instructions in a forked child.
+
+(test
+ (name test_arch)
+ (modules test_arch)
+ (libraries rig windtrap)
+ (foreign_stubs
+  (language c)
+  (names test_arch_stubs)))
 
 (test
  (name test_profile)

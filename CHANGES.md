@@ -1074,6 +1074,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Another machine's x86-64 host compiles for its psABI level (`Rig.arch`)
+  where it compiled for the baseline: 1.3x to 5x fewer instructions, 13.6x
+  on a half convolution. This machine's compiles at its level, on arm64
+  `generic`, with `tune=native` (a new `Compiler_cpu.clang` field) instead
+  of `native`.
 - Code in the target's language is a call of a custom function
   (`Ops.custom_function ~fmt:true`, `Ops.call ~inline`), an effect like any
   call: `Op.Custom` and `Op.Customi` are gone.

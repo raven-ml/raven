@@ -2687,20 +2687,26 @@ gate read a set; merged into D93.
   `Device.renderer` takes the target and renders for it with the renderer
   of its kind. `Helpers.Target` keeps the
   record and its syntax, which tests and the goldens' generator write.
-  Another machine's host compiles for that machine's instruction set
-  (`Rig.arch` of the host) and the baseline processor every machine of it
-  has, `x86-64` or arm64's `generic`, where tinygrad's remote CPU compiles
-  for this machine's instruction set and processor, `native`.
+  A host compiles for its `Rig.arch`: on x86-64 its psABI level, such as
+  `x86_64,x86-64-v3`, and on arm64 `generic`, the base architecture; this
+  machine's host also tunes for its processor, as in
+  `x86_64,x86-64-v3,tune=native`, where tinygrad's CPU, remote or not,
+  compiles for this machine's instruction set and processor, `native`.
 - **Reason:** (c). rig places values on devices, and the compiler
   compiles for the device the values live on. A target read from the
   environment applies to every device of the process, so it compiles for a
   device the values do not live on, and a malformed `DEV`, meant for another
-  program, failed every program linking tolk when it started. rig states no
-  processor of another machine, which may lack instructions this machine's
-  has.
+  program, failed every program linking tolk when it started. Another
+  machine's processor may lack instructions this machine's has, and a
+  program records the arch it was compiled for, which `Rig_program.load`
+  checks against the device's: `native` would use instructions beyond the
+  level it records. Tuning chooses among the level's instructions and adds
+  none.
 - **Pinned by:** `Tolk.Setting › startup › starts whatever DEV holds`;
   `Rune.jit on another machine's host › another machine's host compiles for
-  its baseline` and `› gives eager's bits`;
+  its arch` and `› gives eager's bits`; `Tolk_engine › target › the host
+  compiles C for Clang at its arch, tuned for its own processor, …`;
+  `Tolk.Compiler_cpu › a program for x86-64's baseline runs here`;
   `Tolk.Device › renderer › picks a device's renderer as tinygrad does`
   (each row renders for the target tinygrad's `DEV` gives the device) and
   `renders for the target it is given`.
@@ -5589,7 +5595,9 @@ the walk of `Rangeify.fix_store_hazard`.
   (`CStyleLanguage.abi`, `""`, which `ClangRenderer` at `:287` keeps) and
   `:144-147` (`CStyleLanguage.type_map`, where an `int64` is a `long`).
 - **tolk:** `Tolk_engine.target`, whose host arch on this machine under Windows
-  is `x86_64-windows,native` (or `arm64-windows,native`);
+  names the system after its machine, as in
+  `x86_64-windows,x86-64-v3,tune=native` (or
+  `arm64-windows,generic,tune=native`);
   `Compiler_cpu.clang` and `Compiler_cpu.win64`; `Cstyle.clang`, whose
   language under `x86_64-windows` names a 64-bit integer `long long`, writes
   its literals with `ll`, and declares the kernel `sysv_abi`;

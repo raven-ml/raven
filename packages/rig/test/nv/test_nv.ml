@@ -336,7 +336,7 @@ let kernel () =
   In_channel.with_open_text "/proc/sys/kernel/osrelease" input_line
 
 let pins_refused () =
-  Rig.arch Rig.host = "x86_64"
+  Rig.instruction_set Rig.host = "x86_64"
   && Scanf.sscanf (kernel ()) "%d.%d" (fun major minor ->
          major > 6 || (major = 6 && minor >= 5))
 

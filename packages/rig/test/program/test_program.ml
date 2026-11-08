@@ -1375,6 +1375,38 @@ let test_break (_, t, ds) =
   raises_match ~msg:"load raises" broken (fun () ->
       G.load (t d) (Iarray.of_list (ds d)))
 
+(* A device runs code of its own arch, and a device of an x86-64 level the
+   code of each level below it: "the levels are cumulative" (x86-64 psABI,
+   §3.1.1). Code of another arch, of a level above, or of another family is
+   refused. *)
+let x86_levels = [ "x86-64"; "x86-64-v2"; "x86-64-v3"; "x86-64-v4" ]
+let archs = x86_levels @ [ "arm64"; "gfx1201"; "polled" ]
+
+let runs ~device code =
+  let level a = List.find_index (String.equal a) x86_levels in
+  match (level device, level code) with
+  | Some d, Some c -> c <= d
+  | _ -> String.equal device code
+
+let of_arch =
+  let opened = Hashtbl.create 8 in
+  fun arch ->
+    match Hashtbl.find_opt opened arch with
+    | Some d -> d
+    | None ->
+        let d = fst (P.open_ ~arch (strf "program:arch-%s" arch)) in
+        Hashtbl.replace opened arch d;
+        d
+
+let test_arch_order (code, device) =
+  let d = of_arch device in
+  let t = { (base d) with devices = [| code |] } in
+  if runs ~device code then
+    match G.load t [| d |] with
+    | Ok _ -> ()
+    | Error why -> fail why
+  else raises_match ~msg:"load raises" broken (fun () -> G.load t [| d |])
+
 let test_unborrowable () =
   let a, _ = polled ~peers:false "lone-a"
   and b, _ = polled ~peers:false "lone-b" in
@@ -3858,6 +3890,12 @@ let tests =
         cases "load raises for a description that breaks a rule"
           ~id:(fun (n, _, _) -> n)
           (breaks @ host_breaks) test_break;
+        cases "a device loads code of its arch or of a level below it:"
+          ~id:(fun (code, device) -> strf "%s on %s" code device)
+          (List.concat_map
+             (fun code -> List.map (fun device -> (code, device)) archs)
+             archs)
+          test_arch_order;
         cases "load answers Error for"
           ~id:(fun (n, _, _) -> n)
           (refusals @ host_refusals) test_refusal;

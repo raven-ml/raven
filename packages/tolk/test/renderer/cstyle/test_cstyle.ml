@@ -1617,7 +1617,7 @@ __attribute__((sysv_abi)) void k(volatile char *p) {
 
 (* On a host of another machine than x86_64 the objects do not run. *)
 let on_x86_64 name f =
-  if Rig.arch Rig.host = "x86_64" then f ()
+  if Rig.instruction_set Rig.host = "x86_64" then f ()
   else test name (fun () -> skip ~reason:"the host is not x86_64" ())
 
 let windows_group =

@@ -396,7 +396,7 @@ let tinygrad =
           equal ~msg:text bool vmov (has_infix ~affix:"vmov" text));
       test "a half addition on an Apple processor converts nothing" (fun () ->
           on_macos_arm64 ();
-          let arch = host_target.arch in
+          let arch = "arm64,native" in
           not_contains ~sub:"fcvt" (disassembly arch (rendered arch "half_add")));
     ]
 
@@ -434,6 +434,154 @@ let execution =
               ]
           in
           equal values (floats (Array.make 16 0.)) (List.assoc 0 out));
+    ]
+
+(* The baseline
+
+   x86-64's baseline processor has neither F16C nor FMA (x86-64 psABI,
+   §3.1.1), so a host program compiled for it converts halves by the
+   conversions each object defines and calls the process's [fmaf]. Every
+   x86-64 host runs such a program. *)
+
+let x86_host () =
+  if Rig.instruction_set Rig.host <> "x86_64" then
+    skip ~reason:"not an x86-64 host" ()
+
+(* Under Windows the object calls the process's functions by Windows'
+   convention ([Compiler_cpu.win64]). *)
+let baseline =
+  target ((if Sys.win32 then "x86_64-windows" else "x86_64") ^ ",x86-64")
+
+(* The program of out[i] = f in[i], over [n] elements of [src] into [dst]. *)
+let elementwise ~name ~n src dst f =
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let at slot dt = Ops.index (Shape.placeholder ~slot [ n ] dt) [ i ] in
+  let sink =
+    Ops.sink ~kernel:(Ops.kernel_info ~name ())
+      [ Ops.end_ (Ops.store (at 0 dst) (f (at 1 src))) [ i ] ]
+  in
+  Codegen.to_program sink (Cstyle.clang baseline)
+
+let ints xs = Array.map (fun x -> `Int (Bigint.of_int x)) xs
+
+let to_ints vs =
+  Array.map (function `Int b -> Bigint.to_int b | _ -> fail "not an integer") vs
+
+(* [prg] run once on [xs], its output read back as integers. *)
+let run_ints prg xs =
+  to_ints (List.assoc 0 (Run.on_host prg [ (1, ints xs) ]))
+
+(* IEEE 754's binary16, by its bits: a finite half's value, exact in a
+   double. *)
+let half_value h =
+  let e = (h lsr 10) land 0x1f and m = h land 0x3ff in
+  let v =
+    if e = 0 then Float.ldexp (Float.of_int m) (-24)
+    else Float.ldexp (Float.of_int (m lor 0x400)) (e - 25)
+  in
+  if h land 0x8000 <> 0 then -.v else v
+
+let f32_bits v = Int32.to_int (Int32.bits_of_float v) land 0xffff_ffff
+
+(* The float32 bits of half [h]: its value, exact, and a NaN made quiet with
+   its payload, as compiler_cpu.mli states. *)
+let widened h =
+  let sign = (h land 0x8000) lsl 16 and m = h land 0x3ff in
+  if (h lsr 10) land 0x1f <> 0x1f then f32_bits (half_value h)
+  else sign lor 0x7f800000 lor (m lsl 13) lor if m <> 0 then 0x400000 else 0
+
+(* The half bits of the float32 bits [x], rounded to nearest with ties to
+   even (IEEE 754 §4.3.1): the nearer of the two finite halves around it, the
+   one of even bits at a tie, and an infinity at or past 65520, halfway
+   between the greatest half and the next power of two. *)
+let narrowed x =
+  let sign = (x lsr 16) land 0x8000 and a = x land 0x7fff_ffff in
+  if a > 0x7f800000 then sign lor 0x7e00 lor ((a lsr 13) land 0x3ff)
+  else
+    let v = Int32.float_of_bits (Int32.of_int a) in
+    if v >= 65520. then sign lor 0x7c00
+    else
+      (* The greatest finite half at most [v], by bisection over their bits,
+         which order them. *)
+      let rec below lo hi =
+        if hi - lo <= 1 then lo
+        else
+          let mid = (lo + hi) / 2 in
+          if half_value mid <= v then below mid hi else below lo mid
+      in
+      let lo = below 0 0x7c00 in
+      let hi = lo + 1 in
+      let dlo = v -. half_value lo and dhi = half_value hi -. v in
+      let h = if dlo < dhi || (dlo = dhi && lo land 1 = 0) then lo else hi in
+      sign lor h
+
+let every_half = Array.init 65536 Fun.id
+
+(* Every half widened, the midpoints between finite halves and their float32
+   neighbours, the edges of overflow, and the negatives of all. *)
+let narrowing_inputs =
+  let positive =
+    List.init 0x7c00 (fun h ->
+        let mid = f32_bits ((half_value h +. half_value (h + 1)) /. 2.) in
+        [ widened h; mid; mid - 1; mid + 1 ])
+    |> List.concat
+  in
+  let edges = [ 0x7f800000; 0x7fc00000; 0x7f800001; 0x7fbfffff ] in
+  let all = edges @ positive in
+  Array.of_list (all @ List.map (fun x -> x lor 0x8000_0000) all)
+
+let half_casts_baseline =
+  group "a program for x86-64's baseline runs here"
+    [
+      test "every half widens to its float32" (fun () ->
+          x86_host ();
+          let prg =
+            elementwise ~name:"widen" ~n:65536 Dtype.Uint16 Dtype.Uint32
+              (fun x ->
+                Ops.bitcast
+                  (Ops.cast (Ops.bitcast x Dtype.Float16) Dtype.Float32)
+                  Dtype.Uint32)
+          in
+          equal (array int) (Array.map widened every_half)
+            (run_ints prg every_half));
+      test "float32s narrow to the nearest half, ties to even" (fun () ->
+          x86_host ();
+          let xs = narrowing_inputs in
+          let prg =
+            elementwise ~name:"narrow" ~n:(Array.length xs) Dtype.Uint32
+              Dtype.Uint16 (fun x ->
+                Ops.bitcast
+                  (Ops.cast (Ops.bitcast x Dtype.Float32) Dtype.Float16)
+                  Dtype.Uint16)
+          in
+          equal (array int) (Array.map narrowed xs) (run_ints prg xs));
+      test "a fused multiply-add rounds once" (fun () ->
+          x86_host ();
+          (* (1 + 2^-12)^2 - (1 + 2^-11) is 2^-24, exact in a float; each
+             product and sum rounding on its own gives 0. *)
+          let x = 1. +. 0x1p-12 in
+          let n = 4 in
+          let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+          let at slot = Ops.index (Shape.placeholder ~slot [ n ] Float32) [ i ] in
+          let sink =
+            Ops.sink
+              ~kernel:(Ops.kernel_info ~name:"fused" ())
+              [
+                Ops.end_
+                  (Ops.store (at 0) (Ops.alu (at 1) Op.Mulacc [ at 2; at 3 ]))
+                  [ i ];
+              ]
+          in
+          let prg = Codegen.to_program sink (Cstyle.clang baseline) in
+          let out =
+            Run.on_host prg
+              [
+                (1, floats (Array.make n x));
+                (2, floats (Array.make n x));
+                (3, floats (Array.make n (-.(1. +. 0x1p-11))));
+              ]
+          in
+          equal values (floats (Array.make n 0x1p-24)) (List.assoc 0 out));
     ]
 
 (* Features *)
@@ -581,6 +729,33 @@ let flags =
         (fun (arch, expected) ->
           equal (list string) expected
             (Compiler_cpu.flags ~version:llvm18 arch));
+      cases "a tune field tunes, after the processor and its features:"
+        ~id:fst
+        [
+          ( "x86_64,x86-64-v3,tune=native",
+            [ x86_64_elf; "-march=x86-64-v3"; "-mtune=native" ] );
+          ( "x86_64,x86-64,avx,tune=znver4",
+            [ x86_64_elf; "-march=x86-64"; "-mavx"; "-mtune=znver4" ] );
+          ( "arm64,generic,tune=native",
+            [
+              "--target=arm64-none-unknown-elf";
+              "-ffixed-x18";
+              "-mcpu=generic";
+              "-mtune=native";
+            ] );
+        ]
+        (fun (arch, expected) ->
+          equal (list string) expected
+            (Compiler_cpu.flags ~version:"clang version 19.1.7" arch));
+      test "tuning for this processor adds none of its instructions"
+        (fun () ->
+          x86_host ();
+          let src =
+            "float f(float a, float b, float c) { return __builtin_fmaf(a, \
+             b, c); }"
+          in
+          let text = disassembly "x86_64,x86-64,tune=native" src in
+          is_false ~msg:text (has_infix ~affix:"vfmadd" text));
       test "a malformed architecture is refused" (fun () ->
           raises_match
             (Exn.invalid_arg ~sub:"'x86_64'")
@@ -868,6 +1043,7 @@ let () =
          abandoned;
          tinygrad;
          execution;
+         half_casts_baseline;
          features;
          flags;
          registers;

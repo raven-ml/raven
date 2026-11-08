@@ -13,6 +13,7 @@ let host = Dev.host
 let name (d : t) = d.name
 let host_of = Dev.host_of
 let arch d = d.arch
+let instruction_set d = Cpu.instruction_set d.arch
 let bus d = d.bus
 let computes d =
   match d.kind with Host | Driver _ -> true | Io _ -> false
@@ -127,3 +128,8 @@ let open_io ?machine (o : 'a Rig_edge.io_opener) =
   Dev.open_io o.io ~machine:(Dev.machine_of machine) ~name:o.name o.make
 
 let memory_device = Memory_device.open_
+
+let x86_levels = Cpu.x86_levels
+
+let x86_level ~ecx1 ~ebx7 ~ecx81 ~xcr0 =
+  Cpu.x86_level { ecx1; ebx7; ecx81; xcr0 }

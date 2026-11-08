@@ -22,8 +22,8 @@
     job's key over both ends' nonces, the dialing end first:
 
     {v
-     accepting: "rig-job\n", version 10 (u32), 0, its nonce (32 bytes)
-                or "rig-job\n", version 10 (u32), 1 and why
+     accepting: "rig-job\n", version 11 (u32), 0, its nonce (32 bytes)
+                or "rig-job\n", version 11 (u32), 1 and why
      dialing:   its nonce (32 bytes), its process, the accepting end's
                 process, its proof (32 bytes)
      accepting: 0 and its proof (32 bytes)
@@ -100,8 +100,11 @@
 (** {1:handshakes Handshakes} *)
 
 val version : int
-(** [version] is the protocol's version, the handshake's: 10. Ends at other
-    versions refuse each other. *)
+(** [version] is the protocol's version, the handshake's: 11. Ends at other
+    versions refuse each other. Adding or removing a level of a host's
+    [Rig.arch], which an account carries and [Rig_program.load] orders,
+    changes the version, so that no end reads a level its rig does not know.
+*)
 
 val min_key : int
 (** [min_key] is the fewest bytes of a job's key: 16. *)

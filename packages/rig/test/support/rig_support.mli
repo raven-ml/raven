@@ -53,6 +53,7 @@ module Polled : sig
     ?hang_ms:int ->
     ?capability:Rig_edge.capability ->
     ?bus:string ->
+    ?arch:string ->
     unit ->
     t
   (** [make ()] is a device whose queue holds [capacity] parts (defaults to
@@ -97,7 +98,8 @@ module Polled : sig
       a wait for work nobody committed would hang. With [hang_ms] its facts
       bound hangs to that many milliseconds (defaults to no bound). Its facts
       declare [capability] (defaults to [()] under {!capability_key}), and
-      [bus] (defaults to none). Its [dma] describes a region as [Bus] of the
+      [bus] (defaults to none), and its arch is [arch] (defaults to
+      ["polled"]). Its [dma] describes a region as [Bus] of the
       region's own address and bytes, and answers [Error] where it refuses
       ({!fail_at}).
 
@@ -137,6 +139,7 @@ module Polled : sig
     ?lag:int ->
     ?hang_ms:int ->
     ?bus:string ->
+    ?arch:string ->
     string ->
     Rig.t * t
   (** [open_ name] opens a fresh device named [name]. *)
