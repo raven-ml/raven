@@ -21,7 +21,8 @@
   test_sums
   test_attention
   test_ranges
-  test_range_folds)
+  test_range_folds
+  test_spread)
  (modules
   compose
   test_jit
@@ -43,7 +44,8 @@
   test_sums
   test_attention
   test_ranges
-  test_range_folds)
+  test_range_folds
+  test_spread)
  (libraries
   nx
   nx_array

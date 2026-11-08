@@ -289,10 +289,11 @@ let test_moments_cases () =
   equal same_bits [| nan |] (Nx.to_array (Nx.reshape [| 1 |] (Nx.std (f64 [| 1.; nan |]))));
   let m = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 3.; 2.; 2. |] in
   equal same_bits [| 1.; 0. |] (Nx.to_array (Nx.var ~axes:[ 1 ] m));
-  (* Squared deviations that overflow, with the square of their sum. *)
+  (* Variances past the greatest value, and a constant lane whose sum
+     overflows but whose variance is 0. *)
   let var dt xs = Nx.to_array (Nx.var ~keepdims:true (Nx.create dt [| Array.length xs |] xs)) in
   equal same_bits [| infinity |] (var Nx.float32 [| 8.25e37; -8.25e37; 8.25e37 |]);
-  equal same_bits [| infinity |] (var Nx.float32 [| 3.3e38; 3.3e38 |]);
+  equal same_bits [| 0. |] (var Nx.float32 [| 3.3e38; 3.3e38 |]);
   equal same_bits [| infinity |] (var Nx.float64 [| 4.25e307; -4.25e307; 4.25e307 |]);
   equal same_bits [| infinity |] (var Nx.bfloat16 [| 8.25e37; -8.25e37; 8.25e37 |]);
   equal (array int) [| 1; 2 |] (Nx.shape (Nx.std ~axes:[ 0 ] ~keepdims:true m));

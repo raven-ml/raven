@@ -2616,8 +2616,78 @@ let mean (type v s d) ?axes ?(keepdims = false) (x : (v, s, d) t) :
   in
   kept ~by ~keepdims s axes y
 
-(* The variance by the kernels' moments in [x]'s compute dtype, scaled by
-   [n / (n - ddof)] and rooted where [root], then rounded once. *)
+(* [x]'s bits read as unsigned integers of its width and back: [x] itself,
+   which no differentiation tracks, since integers carry no derivative. Only
+   a traced [x] can be tracked; any other is returned as it is. *)
+let untracked (type s d) ~by (x : (float, s, d) t) : (float, s, d) t =
+  match x with
+  | Value.Array _ | Value.Shards _ | Value.Handle _ -> x
+  | Value.Traced _ -> (
+      let through u = Eval.bitcast ~by (dtype x) (Eval.bitcast ~by u x) in
+      match dtype x with
+      | Float64 -> through D.Uint64
+      | Float32 -> through D.Uint32
+      | Float16 | Bfloat16 -> through D.Uint16
+      | Float8_e4m3fn | Float8_e5m2 -> through D.Uint8
+      | Float4_e2m1fn -> through D.Uint4)
+
+(* Whether the boolean [out] over [y]'s elements holds anywhere, in one
+   reduction. *)
+let holds (type v s d) ~by (y : (v, s, d) t) out =
+  numel y > 0
+  &&
+  let r, () =
+    reduce_by ~by (shape y)
+      (reduced_axes ~by y None)
+      [ Value.Any y ]
+      Value.[ Monoid (Max, 0, D.Bool) ]
+      out
+  in
+  item [] r
+
+(* The power of two of [m]'s exponent, by masking its significand: [0.] for a
+   subnormal or a zero, [+∞] for a NaN or an infinity. *)
+let exponent_power (type w) (w : (float, w) D.t) (m : (float, w) E.t) :
+    (float, w) E.t =
+  match w with
+  | D.Float32 ->
+      E.(bitcast D.Float32 (bitcast D.Int32 m land const D.Int32 0x7F800000l))
+  | D.Float64 ->
+      E.(
+        bitcast D.Float64
+          (bitcast D.Int64 m land const D.Int64 0x7FF0000000000000L))
+  | _ -> assert false
+
+(* The band of a lane's greatest magnitude where no scale is needed, the
+   variance below which a square's underflow can show, and each scale's
+   cap, per carrier. Below [hi] a square is below [hi²] and a sum of as many
+   as can be counted stays in range; above [lo] a nonzero deviation is at
+   least an ulp of [lo], so its square is at least [tiny], whose rounding is
+   far below the carrier's precision. *)
+let spread_band (type w) (w : (float, w) D.t) =
+  match w with
+  | D.Float32 -> (0x1p-28, 0x1p28, 0x1p-102, 0x1p60, 0x1p126)
+  | _ -> (0x1p-432, 0x1p432, 0x1p-969, 0x1p500, 0x1p1022)
+
+(* The variance from the kernels' moments in [x]'s compute dtype, scaled by
+   [n / (n - ddof)] and rooted where [root], then rounded once.
+
+   Squares and sums leave the carrier's range long before the result does.
+   Where a lane needs it, the moments are taken of its elements scaled by a
+   power of two, [down], which rounds nothing, and the result is scaled
+   back: as [√(Σ (x d)² / n) / d] for a root, or [Σ (x d)² / n / d²] for a
+   variance. A variance scales down alone (2^-500 at most, so that [1 / d²]
+   stays finite), because a lane whose variance fits has deviations small
+   enough at that scale, and a root scales at both ends, since [√v / d] never
+   leaves the range the root itself is in.
+
+   Eager, the moments run first as they are and the lanes are rescued only
+   when a result, then a magnitude, says so, since a scale costs a [Max] pass
+   and a second reduction. A lane inside the band keeps [down = 1], so its
+   value is the unscaled one. A traced call scales every lane, since it
+   cannot branch on the values; a concrete operand under a compiled caller
+   has traced moments, so those are tested too. With no term there is
+   nothing to scale, and [Max] refuses one. *)
 let spread (type s d) ~by ~root ?axes ?(keepdims = false) ?(ddof = 0)
     (x : (float, s, d) t) : (float, s, d) t =
   let s = shape x and dt = dtype x in
@@ -2626,17 +2696,89 @@ let spread (type s d) ~by ~root ?axes ?(keepdims = false) ?(ddof = 0)
   if ddof < 0 || (n > 0 && ddof >= n) then
     invalid_argf "%s: ddof %d for %d elements" by ddof n;
   let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
-  let _, v = reduce_by_one ~by (Moments (0, w)) axes x in
-  let y =
+  let lit = E.const w in
+  let ratio = Float.of_int n /. Float.of_int (n - ddof) in
+  let corrected e = if ddof = 0 then e else E.(e * lit ratio) in
+  let plain v =
     if ddof = 0 && not root then cast_by ~by dt v
     else
-      let e = operand 0 v in
-      let scale = Float.of_int n /. Float.of_int (n - ddof) in
-      let e = if ddof = 0 then e else E.(e * const w scale) in
+      let e = corrected (operand 0 v) in
       let e = if root then E.sqrt e else e in
       elementwise ~by dt [ Any v ] (E.cast dt e)
   in
-  kept ~by ~keepdims s axes y
+  let moments () = snd (reduce_by_one ~by (Moments (0, w)) axes x) in
+  if n = 0 then kept ~by ~keepdims s axes (plain (moments ()))
+  else
+    let lo, hi, tiny, var_cap, std_cap = spread_band w in
+    let max_abs () =
+      let m, () =
+        reduce_by ~by s axes
+          [ Value.Any (untracked ~by x) ]
+          Value.[ Monoid (Max, 0, w) ]
+          E.(abs (at w (operand 0 x)))
+      in
+      m
+    in
+    (* Whether a lane's greatest magnitude [t] lies outside the band; for a
+       variance, above it. *)
+    let extreme t =
+      if root then E.((lit 0. < t && t < lit lo) || lit hi < t)
+      else E.(lit hi < t)
+    in
+    (* The scale of each lane: [2^-e] of its greatest exponent, or [1]. A
+       root's stays within [std_cap] so that it and its reciprocal are
+       normal, a subnormal lane taking the greatest. A variance's only scales
+       down, capped so that [1 / d²] stays finite. *)
+    let lane_scale m =
+      let t = operand 0 m in
+      let p = exponent_power w t in
+      let down =
+        if root then
+          E.(
+            let q = minimum p (lit std_cap) in
+            where (extreme t)
+              (where (lit 0. < q) (lit 1. / q) (lit std_cap))
+              (lit 1.))
+        else E.(where (extreme t) (lit 1. / minimum p (lit var_cap)) (lit 1.))
+      in
+      elementwise ~by w [ Any m ] down
+    in
+    let scaled m =
+      let down = lane_scale m in
+      let wide = Eval.broadcast ~by s (kept ~by ~keepdims:true s axes down) in
+      let (_, v), () =
+        reduce_by ~by s axes
+          [ Value.Any x; Any wide ]
+          Value.[ Moments (0, w) ]
+          E.(at w (operand 0 x) * operand 1 wide)
+      in
+      let e = corrected (operand 0 v) and d = operand 1 down in
+      let e = if root then E.(sqrt e / d) else E.(e / d / d) in
+      elementwise ~by dt [ Any v; Any down ] (E.cast dt e)
+    in
+    (* Eager: a lane's result, then its magnitude, decide whether a scale can
+       change anything. *)
+    let rescue v =
+      let t = operand 0 v in
+      let suspect =
+        if root then E.(t = lit Float.infinity || t < lit tiny || t <> t)
+        else E.(t = lit Float.infinity || t <> t)
+      in
+      if not (holds ~by v suspect) then plain v
+      else
+        let m = max_abs () in
+        if holds ~by m (extreme (operand 0 m)) then scaled m else plain v
+    in
+    let y =
+      match x with
+      | Value.Traced _ -> scaled (max_abs ())
+      | _ -> (
+          let v = moments () in
+          match v with
+          | Value.Traced _ -> scaled (max_abs ())
+          | _ -> rescue v)
+    in
+    kept ~by ~keepdims s axes y
 
 let var ?axes ?keepdims ?ddof x =
   spread ~by:"Nx.var" ~root:false ?axes ?keepdims ?ddof x
@@ -2728,21 +2870,6 @@ let softplus x =
       let x = ins.(0) and zero = E.const w 0. in
       let below = E.(x < zero) in
       E.(log1p (exp (where below x (-x))) + where below zero x))
-
-(* [x]'s bits read as unsigned integers of its width and back: [x] itself,
-   which no differentiation tracks, since integers carry no derivative. Only
-   a traced [x] can be tracked; any other is returned as it is. *)
-let untracked (type s d) ~by (x : (float, s, d) t) : (float, s, d) t =
-  match x with
-  | Value.Array _ | Value.Shards _ | Value.Handle _ -> x
-  | Value.Traced _ -> (
-      let through u = Eval.bitcast ~by (dtype x) (Eval.bitcast ~by u x) in
-      match dtype x with
-      | Float64 -> through D.Uint64
-      | Float32 -> through D.Uint32
-      | Float16 | Bfloat16 -> through D.Uint16
-      | Float8_e4m3fn | Float8_e5m2 -> through D.Uint8
-      | Float4_e2m1fn -> through D.Uint4)
 
 (* The operands [xs] and, after them, the mask [c] where there is one. *)
 let masked c xs = match c with None -> xs | Some c -> xs @ [ Value.Any c ]

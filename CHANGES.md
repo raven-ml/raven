@@ -2388,6 +2388,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.var` is `+∞` only where the variance passes the dtype's greatest value,
+  and `Nx.std` keeps its precision at both ends of the range: `var [1e154;
+  -1e154; 0.]` was `+∞` and is `6.67e307`, `var [1e308; 1e308]` was `+∞` and is
+  `0`, `std [1e200; -1e200]` was `+∞`, and `std [1e-170; -1e-170]` was `0`.
+
 - Add `Nx.moments_ranges`: the mean and variance of many ranges of rows in
   O((n + m) log n), each range shifted by its first row so a level far from
   zero keeps its digits, infinite only past the dtype's greatest value.

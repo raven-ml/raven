@@ -2241,18 +2241,24 @@ val var :
   (float, 's, 'd) t
 (** [var ~axes ~ddof x] is the variance [Σ (x - m)² / (n - ddof)] of the [n]
     elements, [m] their mean; [ddof] defaults to [0], the population
-    variance, and [1] gives the sample variance. NaN of no element.
+    variance, and [1] gives the sample variance. NaN of no element, or where
+    an element is NaN or infinite. It is [+∞] only where the variance passes
+    the dtype's greatest value.
 
     On one device, the population variance is the kernels' moments, within
     the bound their library states. Over axes cut across devices, it is the
-    mean, then the deviations [d] from it and their squares, each summed
-    as {!sum} sums, and [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is
-    negative and [+∞] where [Σ d²] overflows: on nx.cpu's kernels, within
-    nx.cpu's bound for its moments ({!Nx_cpu.section-states}) with
-    [L + D + L{_t} + D{_t}] in place of its [L + D], [L{_t}] and [D{_t}]
-    nx.cpu's [L] and [D] for [t] terms, [t] the windows holding terms.
-    A [ddof] scales it by a relative [2u] more, then one rounding to the
-    dtype.
+    mean, then the deviations [d] from it and their squares, each summed as
+    {!sum} sums, and [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is negative:
+    on nx.cpu's kernels, within nx.cpu's bound for its moments
+    ({!Nx_cpu.section-states}) with [L + D + L{_t} + D{_t}] in place of its
+    [L + D], [L{_t}] and [D{_t}] nx.cpu's [L] and [D] for [t] terms, [t] the
+    windows holding terms. A [ddof] scales it by a relative [2u] more, then
+    one rounding to the dtype. A variance the dtype holds as a subnormal,
+    where the squares underflow before the sum, can err by
+    [n / (n - ddof) + 1] of the least subnormal more, [0] included.
+
+    Its derivative, as rune takes one, is the variance's wherever the variance
+    is finite, and unspecified where it is [+∞].
 
     Raises [Invalid_argument] naming itself for a negative [ddof], or one of
     at least [n] where [n > 0]. *)
@@ -2263,8 +2269,16 @@ val std :
   ?ddof:int ->
   (float, 's, 'd) t ->
   (float, 's, 'd) t
-(** [std ~axes ~ddof x] is the standard deviation, the square root of
-    {!var}, taken before the one rounding to the dtype. As {!var} otherwise. *)
+(** [std ~axes ~ddof x] is the standard deviation [σ]: the square root of
+    the variance {!var} states, rounded once to the dtype. It is finite
+    wherever [σ] is at most the dtype's greatest value, even where {!var} is
+    [+∞] or rounds to [0], and its error bound is the root of {!var}'s, the
+    subnormal clause aside: a [σ] below the least normal rounds as a
+    subnormal does. As {!var} otherwise.
+
+    Its derivative, as rune takes one, is [σ]'s where [M² / σ] is at most the
+    dtype's greatest value, [M] the elements' greatest magnitude, and
+    unspecified elsewhere: at near-constant lanes near the top. *)
 
 val logsumexp :
   ?axes:int list -> ?keepdims:bool -> (float, 's, 'd) t -> (float, 's, 'd) t
@@ -5593,9 +5607,11 @@ module Prim : sig
         -> 'r t
         (** The reduction of [prog]'s output over the indices along [axis] up to
             each index's, inclusive, as {!Nx_kernel.S.scan} says: a running
-            [Moments] is the running mean and variance. Its results have
-            [layout]'s shape and are C-contiguous. On one device, or along
-            an axis no device cuts, the scan of a prefix of the axis is the
+            [Moments] is the running mean and variance, a running variance
+            being [+∞] or NaN where the squared deviations of the terms up to
+            it overflow, barring which {!Nx_kernel.section-scans}' bounds
+            hold. Its results have [layout]'s shape and are C-contiguous. On
+            one device, or along an axis no device cuts, the scan of a prefix of the axis is the
             prefix of the scan, bit for bit. [prog] reads
             coordinates as a map's. With [Some c], of a [Sum], [Prod], [Max]
             or [Min], each slice continues from its element of [c], [S.scan]'s

@@ -562,6 +562,7 @@ let jit_rows () =
   let experts_x = between f32 52 (-1.) 1. [| 16; 1; 256 |] in
   let prompt_ids = positions 2048 32 |> Nx.reshape [| 512; 4 |] in
   let prompt_x = between f32 53 (-1.) 1. [| 512; 1; 256 |] in
+  let x1m = between f64 13 (-1.) 1. [| 1_000_000 |] in
   [
     warm "add-1-hit"
       (fun () -> Rune.jit (pair_fn ()) Nx.add)
@@ -654,6 +655,13 @@ let jit_rows () =
     warm "sort-with-positions-4096"
       (fun () -> Rune.jit (split_fn ()) (fun x -> Nx.sort x))
       (fun f -> synced2 (f xs));
+    (* A compiled variance and root, which scale every lane. *)
+    warm "var-float64-1M"
+      (fun () -> Rune.jit' Nx.var)
+      (fun f -> synced (f x1m));
+    warm "std-float64-1M"
+      (fun () -> Rune.jit' Nx.std)
+      (fun f -> synced (f x1m));
     warm "fft-4096"
       (fun () -> Rune.jit' (fun x -> Nx.fft x))
       (fun f -> synced (f zs));

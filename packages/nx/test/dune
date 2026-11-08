@@ -35,6 +35,7 @@
   test_patches
   test_segments
   test_moments
+  test_spread
   test_composite
   test_ptree
   test_check
@@ -78,6 +79,7 @@
   test_patches
   test_segments
   test_moments
+  test_spread
   test_composite
   test_ptree
   test_check
@@ -104,7 +106,8 @@
   windtrap)
  (deps
   (glob_files golden/special/*.golden)
-  golden/moments_ranges.golden))
+  golden/moments_ranges.golden
+  golden/spread.golden))
 
 ; Checks on a device of another machine, served by rig's test agent over the
 ; loopback.

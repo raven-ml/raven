@@ -1290,6 +1290,17 @@ let statistics_rows =
       Thumper.bench_with_setup "argmax-bool-1M" ~setup:b1m Nx.argmax;
       Thumper.bench_with_setup "logsumexp-bf16-1M" ~setup:h1m Nx.logsumexp;
       Thumper.bench_with_setup "var-bf16-1M" ~setup:h1m Nx.var;
+      (* Where the moments are taken again of scaled elements, at both ends
+         of the range, and where a constant lane pays for its [Max]. *)
+      Thumper.bench_with_setup "var-f64-1M-top"
+        ~setup:(fun () -> Nx.mul_s (Nx.cast D.Float64 (f1m ())) 1e300)
+        Nx.var;
+      Thumper.bench_with_setup "std-f64-1M-tiny"
+        ~setup:(fun () -> Nx.mul_s (Nx.cast D.Float64 (f1m ())) 1e-170)
+        Nx.std;
+      Thumper.bench_with_setup "std-f32-1024x1024-rows-constant"
+        ~setup:(fun () -> Nx.ones_like (m1024 ()))
+        (Nx.std ~axes:[ 1 ]);
       Thumper.bench_with_setup "sigmoid-f32-1M" ~setup:f1m Nx.sigmoid;
       Thumper.bench_with_setup "softplus-f32-1M" ~setup:f1m Nx.softplus;
       Thumper.bench_with_setup "softmax-f32-1024x1024" ~setup:m1024 Nx.softmax;

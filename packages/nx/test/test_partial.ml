@@ -2164,6 +2164,41 @@ let test_closing_peaks () =
     (fun () -> Nx.scatter ~combine:Add ~axis:0 idx updates into);
   ignore (Sys.opaque_identity (x, short, a, b, into, idx, updates))
 
+(* Lanes at both ends of float64's range, cut across devices along the
+   reduced axis and across it: the results' finiteness and values are the
+   ones on one device, within the cut formula's bound. *)
+let test_spread_range () =
+  let lanes =
+    [|
+      1e200; -1e200; 1e200; -1e200; 1e308; 1e308; 1e308; 1e308; 1e-170;
+      -1e-170; 1e-170; -1e-170; 1.; 2.; 3.; 4.;
+    |]
+  in
+  let x = Nx.create D.Float64 [| 4; 4 |] lanes in
+  let close ~msg a b =
+    let same =
+      (a = 0. && b = 0.) || a = b
+      || Float.abs (a -. b) <= 1e-13 *. Float.abs a
+    in
+    equal ~msg bool true same
+  in
+  let along = Nx.place (Set4.split ~axis:1) x in
+  let across = Nx.place (Set4.split ~axis:0) x in
+  let check { over } =
+    let one = over x in
+    List.iter
+      (fun cut ->
+        Array.iteri (fun i a -> close ~msg:(string_of_int i) a cut.(i)) one)
+      [ over along; over across ]
+  in
+  check { over = (fun y -> elements (Nx.var ~axes:[ 1 ] y)) };
+  check { over = (fun y -> elements (Nx.std ~axes:[ 1 ] y)) };
+  check { over = (fun y -> elements (Nx.std ~axes:[ 1 ] ~ddof:1 y)) };
+  let z = elements (Nx.var ~axes:[ 1 ] along) in
+  equal ~msg:"a constant lane at the top" float_exact 0. z.(1);
+  let root = elements (Nx.std ~axes:[ 1 ] along) in
+  close ~msg:"the root at the bottom" 1e-170 root.(2)
+
 (* An extreme's position over two axes of a value cut along the second
    over three devices: the first tile, columns 0 and 1, holds an extreme at
    position 4, the second at position 2. The position is the smaller,
@@ -3817,7 +3852,8 @@ let reductions =
         "a reduction over cut axes gives an exact one's bits on one device, \
          a float one the reduction of its tiles' stacked partials"
         reduced_case law_reduced;
-      test "a position over cut axes is the smallest of a tie across tiles"
+      test "var and std at both ends of the range, cut" test_spread_range;
+        test "a position over cut axes is the smallest of a tie across tiles"
         test_arg_ties;
       test
         "a sum over an axis cut across devices allocates with the devices, \
