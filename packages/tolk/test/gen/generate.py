@@ -47,7 +47,22 @@ TINYGRAD = "c22edff14c79310a9b2df62a78819cf77c8289fa"
 
 # The generators recorded from unmodified tinygrad: the others run against a
 # copy of the checkout with PATCH applied, until each part has moved here.
-UNMODIFIED = set()
+UNMODIFIED = {
+    "codegen/opt/opt",
+    "dtype",
+    "helpers",
+    "renderer/tc",
+    "runtime/support/c",
+    "runtime/support/support_memory",
+    "setting",
+    "support",
+    "support/programs",
+    "uop/divandmod",
+    "uop/movement",
+    "uop/op",
+    "uop/render",
+    "uop/uop_weak",
+}
 
 HERE = Path(__file__).resolve().parent
 TEST = HERE.parent
