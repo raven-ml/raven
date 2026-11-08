@@ -23,27 +23,28 @@
 22 Ops.RANGE dtypes.i32 [21] (AxisType.WEAK, 0)
 23 Ops.AFTER dtypes.f32 [12, 19, 22]
 24 Ops.INDEX dtypes.f32 [23, 15]
-25 Ops.CONST dtypes.weakint [] 32
-26 Ops.PARAM dtypes.f32 [25] ParamArg(slot=1, dtype=dtypes.f32)
-27 Ops.SHL dtypes.i32 [4, 5]
-28 Ops.ADD dtypes.i32 [27, 22]
-29 Ops.INDEX dtypes.f32 [26, 28]
-30 Ops.LOAD dtypes.f32 [29]
-31 Ops.CONST dtypes.weakint [] 24
-32 Ops.PARAM dtypes.f32 [31] ParamArg(slot=2, dtype=dtypes.f32)
-33 Ops.MUL dtypes.i32 [22, 5]
-34 Ops.ADD dtypes.i32 [33, 8]
-35 Ops.INDEX dtypes.f32 [32, 34]
-36 Ops.LOAD dtypes.f32 [35]
-37 Ops.LOAD dtypes.f32 [24]
-38 Ops.MULACC dtypes.f32 [30, 36, 37]
-39 Ops.STORE dtypes.void [24, 38]
-40 Ops.END dtypes.void [39, 22]
-41 Ops.AFTER dtypes.f32 [12, 40]
-42 Ops.INDEX dtypes.f32 [41, 15]
-43 Ops.LOAD dtypes.f32 [42]
-44 Ops.STORE dtypes.void [10, 43]
-45 Ops.END dtypes.void [44, 8]
-46 Ops.END dtypes.void [45, 4]
-47 Ops.SINK dtypes.void [46] KernelInfo(name="r_4_3_8", optimized=True)
+25 Ops.LOAD dtypes.f32 [24]
+26 Ops.CONST dtypes.weakint [] 32
+27 Ops.PARAM dtypes.f32 [26] ParamArg(slot=1, dtype=dtypes.f32)
+28 Ops.SHL dtypes.i32 [4, 5]
+29 Ops.ADD dtypes.i32 [28, 22]
+30 Ops.INDEX dtypes.f32 [27, 29]
+31 Ops.LOAD dtypes.f32 [30]
+32 Ops.CONST dtypes.weakint [] 24
+33 Ops.PARAM dtypes.f32 [32] ParamArg(slot=2, dtype=dtypes.f32)
+34 Ops.MUL dtypes.i32 [22, 5]
+35 Ops.ADD dtypes.i32 [34, 8]
+36 Ops.INDEX dtypes.f32 [33, 35]
+37 Ops.LOAD dtypes.f32 [36]
+38 Ops.MUL dtypes.f32 [31, 37]
+39 Ops.ADD dtypes.f32 [25, 38]
+40 Ops.STORE dtypes.void [24, 39]
+41 Ops.END dtypes.void [40, 22]
+42 Ops.AFTER dtypes.f32 [12, 41]
+43 Ops.INDEX dtypes.f32 [42, 15]
+44 Ops.LOAD dtypes.f32 [43]
+45 Ops.STORE dtypes.void [10, 44]
+46 Ops.END dtypes.void [45, 8]
+47 Ops.END dtypes.void [46, 4]
+48 Ops.SINK dtypes.void [47] KernelInfo(name="r_4_3_8", optimized=True)
 

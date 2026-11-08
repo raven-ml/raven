@@ -29,51 +29,52 @@
 28 Ops.RANGE dtypes.i32 [9] (AxisType.WEAK, 2)
 29 Ops.AFTER dtypes.f32 [16, 23, 26, 27, 28]
 30 Ops.INDEX dtypes.f32 [29, 19]
-31 Ops.CONST dtypes.weakint [] 72
-32 Ops.PARAM dtypes.f32 [31] ParamArg(slot=1, dtype=dtypes.f32)
-33 Ops.MUL dtypes.i32 [27, 2]
-34 Ops.ADD dtypes.i32 [33, 5]
-35 Ops.ADD dtypes.i32 [28, 6]
-36 Ops.ADD dtypes.i32 [34, 35]
-37 Ops.MUL dtypes.i32 [26, 11]
-38 Ops.ADD dtypes.i32 [36, 37]
-39 Ops.CONST dtypes.weakint [] -7
-40 Ops.ADD dtypes.i32 [38, 39]
-41 Ops.INDEX dtypes.f32 [32, 40]
-42 Ops.CMPLT dtypes.bool [19, 35]
-43 Ops.CONST dtypes.weakint [] 7
-44 Ops.CMPLT dtypes.bool [35, 43]
-45 Ops.AND dtypes.bool [42, 44]
-46 Ops.ADD dtypes.i32 [27, 4]
-47 Ops.CMPLT dtypes.bool [19, 46]
-48 Ops.CMPLT dtypes.bool [46, 43]
-49 Ops.AND dtypes.bool [47, 48]
-50 Ops.AND dtypes.bool [45, 49]
-51 Ops.LOAD dtypes.f32 [41, 22, 50]
-52 Ops.CONST dtypes.weakint [] 54
-53 Ops.PARAM dtypes.f32 [52] ParamArg(slot=2, dtype=dtypes.f32)
-54 Ops.MUL dtypes.i32 [27, 8]
-55 Ops.ADD dtypes.i32 [54, 28]
-56 Ops.CONST dtypes.weakint [] 9
-57 Ops.MUL dtypes.i32 [26, 56]
-58 Ops.ADD dtypes.i32 [55, 57]
-59 Ops.CONST dtypes.weakint [] 18
-60 Ops.MUL dtypes.i32 [10, 59]
-61 Ops.ADD dtypes.i32 [58, 60]
-62 Ops.INDEX dtypes.f32 [53, 61]
-63 Ops.LOAD dtypes.f32 [62]
-64 Ops.LOAD dtypes.f32 [30]
-65 Ops.MULACC dtypes.f32 [51, 63, 64]
-66 Ops.STORE dtypes.void [30, 65]
-67 Ops.END dtypes.void [66, 28]
-68 Ops.END dtypes.void [67, 27]
-69 Ops.END dtypes.void [68, 26]
-70 Ops.AFTER dtypes.f32 [16, 69]
-71 Ops.INDEX dtypes.f32 [70, 19]
-72 Ops.LOAD dtypes.f32 [71]
-73 Ops.STORE dtypes.void [14, 72]
-74 Ops.END dtypes.void [73, 6]
-75 Ops.END dtypes.void [74, 4]
-76 Ops.END dtypes.void [75, 10]
-77 Ops.SINK dtypes.void [76] KernelInfo(name="r_3_6_6_2_3_3", optimized=True)
+31 Ops.LOAD dtypes.f32 [30]
+32 Ops.CONST dtypes.weakint [] 72
+33 Ops.PARAM dtypes.f32 [32] ParamArg(slot=1, dtype=dtypes.f32)
+34 Ops.MUL dtypes.i32 [27, 2]
+35 Ops.ADD dtypes.i32 [34, 5]
+36 Ops.ADD dtypes.i32 [28, 6]
+37 Ops.ADD dtypes.i32 [35, 36]
+38 Ops.MUL dtypes.i32 [26, 11]
+39 Ops.ADD dtypes.i32 [37, 38]
+40 Ops.CONST dtypes.weakint [] -7
+41 Ops.ADD dtypes.i32 [39, 40]
+42 Ops.INDEX dtypes.f32 [33, 41]
+43 Ops.CMPLT dtypes.bool [19, 36]
+44 Ops.CONST dtypes.weakint [] 7
+45 Ops.CMPLT dtypes.bool [36, 44]
+46 Ops.AND dtypes.bool [43, 45]
+47 Ops.ADD dtypes.i32 [27, 4]
+48 Ops.CMPLT dtypes.bool [19, 47]
+49 Ops.CMPLT dtypes.bool [47, 44]
+50 Ops.AND dtypes.bool [48, 49]
+51 Ops.AND dtypes.bool [46, 50]
+52 Ops.LOAD dtypes.f32 [42, 22, 51]
+53 Ops.CONST dtypes.weakint [] 54
+54 Ops.PARAM dtypes.f32 [53] ParamArg(slot=2, dtype=dtypes.f32)
+55 Ops.MUL dtypes.i32 [27, 8]
+56 Ops.ADD dtypes.i32 [55, 28]
+57 Ops.CONST dtypes.weakint [] 9
+58 Ops.MUL dtypes.i32 [26, 57]
+59 Ops.ADD dtypes.i32 [56, 58]
+60 Ops.CONST dtypes.weakint [] 18
+61 Ops.MUL dtypes.i32 [10, 60]
+62 Ops.ADD dtypes.i32 [59, 61]
+63 Ops.INDEX dtypes.f32 [54, 62]
+64 Ops.LOAD dtypes.f32 [63]
+65 Ops.MUL dtypes.f32 [52, 64]
+66 Ops.ADD dtypes.f32 [31, 65]
+67 Ops.STORE dtypes.void [30, 66]
+68 Ops.END dtypes.void [67, 28]
+69 Ops.END dtypes.void [68, 27]
+70 Ops.END dtypes.void [69, 26]
+71 Ops.AFTER dtypes.f32 [16, 70]
+72 Ops.INDEX dtypes.f32 [71, 19]
+73 Ops.LOAD dtypes.f32 [72]
+74 Ops.STORE dtypes.void [14, 73]
+75 Ops.END dtypes.void [74, 6]
+76 Ops.END dtypes.void [75, 4]
+77 Ops.END dtypes.void [76, 10]
+78 Ops.SINK dtypes.void [77] KernelInfo(name="r_3_6_6_2_3_3", optimized=True)
 

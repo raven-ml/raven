@@ -6,85 +6,82 @@
 5 Ops.PARAM dtypes.f32 [4] ParamArg(slot=2, dtype=dtypes.f32)
 6 Ops.CONST dtypes.weakint [] 16
 7 Ops.PARAM dtypes.f32 [6] ParamArg(slot=3, dtype=dtypes.f32)
-8 Ops.STACK dtypes.void []
-9 Ops.PARAM dtypes.i32 [8] ParamArg(slot=4, dtype=dtypes.i32, vmin_vmax=(0, 16), name="block_lo", addrspace=AddrSpace.ALU)
-10 Ops.PARAM dtypes.i32 [8] ParamArg(slot=5, dtype=dtypes.i32, vmin_vmax=(0, 16), name="block_hi", addrspace=AddrSpace.ALU)
-11 Ops.CONST dtypes.weakint [] 1
-12 Ops.ALLOC dtypes.f32 [11] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
-13 Ops.CONST dtypes.weakfloat [] 0.0
-14 Ops.CAST dtypes.f32 [13] dtypes.f32
-15 Ops.CONST dtypes.weakint [] 0
-16 Ops.CAST dtypes.i32 [15] dtypes.i32
-17 Ops.CONST dtypes.weakint [] 14
+8 Ops.CONST dtypes.weakint [] 1
+9 Ops.ALLOC dtypes.f32 [8] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+10 Ops.CONST dtypes.weakfloat [] 0.0
+11 Ops.CAST dtypes.f32 [10] dtypes.f32
+12 Ops.CONST dtypes.weakint [] 0
+13 Ops.CAST dtypes.i32 [12] dtypes.i32
+14 Ops.CONST dtypes.weakint [] 14
+15 Ops.CAST dtypes.i32 [14] dtypes.i32
+16 Ops.CAST dtypes.i32 [6] dtypes.i32
+17 Ops.CONST dtypes.weakint [] 196
 18 Ops.CAST dtypes.i32 [17] dtypes.i32
-19 Ops.CONST dtypes.weakint [] 196
+19 Ops.CONST dtypes.weakint [] 27
 20 Ops.CAST dtypes.i32 [19] dtypes.i32
-21 Ops.CONST dtypes.weakint [] 27
+21 Ops.CONST dtypes.weakint [] 3
 22 Ops.CAST dtypes.i32 [21] dtypes.i32
-23 Ops.CONST dtypes.weakint [] 3
+23 Ops.CONST dtypes.weakint [] 4
 24 Ops.CAST dtypes.i32 [23] dtypes.i32
-25 Ops.CONST dtypes.weakint [] 4
+25 Ops.CONST dtypes.weakint [] 8
 26 Ops.CAST dtypes.i32 [25] dtypes.i32
-27 Ops.CONST dtypes.weakint [] 8
+27 Ops.CONST dtypes.weakint [] 9
 28 Ops.CAST dtypes.i32 [27] dtypes.i32
-29 Ops.CONST dtypes.weakint [] 9
-30 Ops.CAST dtypes.i32 [29] dtypes.i32
-31 Ops.SUB dtypes.i32 [10, 9]
-32 Ops.RANGE dtypes.i32 [31] (AxisType.WEAK, 3)
-33 Ops.ADD dtypes.i32 [9, 32]
-34 Ops.INDEX dtypes.f32 [7, 33]
-35 Ops.LOAD dtypes.f32 [34]
-36 Ops.AFTER dtypes.i32 [18, 32]
-37 Ops.MUL dtypes.i32 [33, 20]
-38 Ops.MUL dtypes.i32 [33, 22]
-39 Ops.RANGE dtypes.i32 [36] (AxisType.WEAK, 4)
-40 Ops.AFTER dtypes.i32 [18, 39]
-41 Ops.MUL dtypes.i32 [39, 18]
-42 Ops.SHL dtypes.i32 [39, 26]
-43 Ops.RANGE dtypes.i32 [40] (AxisType.WEAK, 5)
-44 Ops.AFTER dtypes.i32 [24, 43]
-45 Ops.AFTER dtypes.f32 [12, 39, 43, 33]
-46 Ops.INDEX dtypes.f32 [45, 16]
-47 Ops.STORE dtypes.void [46, 14]
-48 Ops.RANGE dtypes.i32 [44] (AxisType.WEAK, 0)
-49 Ops.AFTER dtypes.i32 [24, 48]
-50 Ops.MUL dtypes.i32 [48, 30]
-51 Ops.SHL dtypes.i32 [48, 28]
-52 Ops.RANGE dtypes.i32 [49] (AxisType.WEAK, 1)
-53 Ops.AFTER dtypes.i32 [24, 52]
-54 Ops.SHL dtypes.i32 [52, 26]
-55 Ops.ADD dtypes.i32 [54, 42]
-56 Ops.MUL dtypes.i32 [52, 24]
-57 Ops.RANGE dtypes.i32 [53] (AxisType.WEAK, 2)
-58 Ops.ADD dtypes.i32 [57, 43]
-59 Ops.ADD dtypes.i32 [55, 58]
-60 Ops.ADD dtypes.i32 [59, 51]
-61 Ops.INDEX dtypes.f32 [3, 60]
-62 Ops.LOAD dtypes.f32 [61]
-63 Ops.ADD dtypes.i32 [56, 57]
-64 Ops.ADD dtypes.i32 [63, 50]
-65 Ops.ADD dtypes.i32 [64, 38]
-66 Ops.INDEX dtypes.f32 [5, 65]
-67 Ops.LOAD dtypes.f32 [66]
-68 Ops.AFTER dtypes.f32 [12, 47, 48, 52, 57]
-69 Ops.INDEX dtypes.f32 [68, 16]
-70 Ops.LOAD dtypes.f32 [69]
-71 Ops.MULACC dtypes.f32 [62, 67, 70]
-72 Ops.STORE dtypes.void [69, 71]
-73 Ops.END dtypes.void [72, 57]
-74 Ops.END dtypes.void [73, 52]
-75 Ops.END dtypes.void [74, 48]
-76 Ops.AFTER dtypes.f32 [12, 75]
-77 Ops.INDEX dtypes.f32 [76, 16]
-78 Ops.LOAD dtypes.f32 [77]
-79 Ops.ADD dtypes.i32 [41, 43]
-80 Ops.ADD dtypes.i32 [79, 37]
-81 Ops.INDEX dtypes.f32 [1, 80]
-82 Ops.ADD dtypes.f32 [78, 35]
-83 Ops.STORE dtypes.void [81, 82]
-84 Ops.END dtypes.void [83, 43]
-85 Ops.END dtypes.void [84, 39]
-86 Ops.END dtypes.void [85, 32]
-87 Ops.SINK dtypes.void [86] KernelInfo(name="r_16_14_14_3_3_3", optimized=True, split=(16, 4, 5))
-88 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87]
+29 Ops.RANGE dtypes.i32 [16] (AxisType.WEAK, 3)
+30 Ops.INDEX dtypes.f32 [7, 29]
+31 Ops.LOAD dtypes.f32 [30]
+32 Ops.AFTER dtypes.i32 [15, 29]
+33 Ops.MUL dtypes.i32 [29, 18]
+34 Ops.MUL dtypes.i32 [29, 20]
+35 Ops.RANGE dtypes.i32 [32] (AxisType.WEAK, 4)
+36 Ops.AFTER dtypes.i32 [15, 35]
+37 Ops.MUL dtypes.i32 [35, 15]
+38 Ops.SHL dtypes.i32 [35, 24]
+39 Ops.RANGE dtypes.i32 [36] (AxisType.WEAK, 5)
+40 Ops.AFTER dtypes.i32 [22, 39]
+41 Ops.AFTER dtypes.f32 [9, 35, 39, 29]
+42 Ops.INDEX dtypes.f32 [41, 13]
+43 Ops.STORE dtypes.void [42, 11]
+44 Ops.RANGE dtypes.i32 [40] (AxisType.WEAK, 0)
+45 Ops.AFTER dtypes.i32 [22, 44]
+46 Ops.MUL dtypes.i32 [44, 28]
+47 Ops.SHL dtypes.i32 [44, 26]
+48 Ops.RANGE dtypes.i32 [45] (AxisType.WEAK, 1)
+49 Ops.AFTER dtypes.i32 [22, 48]
+50 Ops.SHL dtypes.i32 [48, 24]
+51 Ops.ADD dtypes.i32 [50, 38]
+52 Ops.MUL dtypes.i32 [48, 22]
+53 Ops.RANGE dtypes.i32 [49] (AxisType.WEAK, 2)
+54 Ops.ADD dtypes.i32 [53, 39]
+55 Ops.ADD dtypes.i32 [51, 54]
+56 Ops.ADD dtypes.i32 [55, 47]
+57 Ops.INDEX dtypes.f32 [3, 56]
+58 Ops.LOAD dtypes.f32 [57]
+59 Ops.ADD dtypes.i32 [52, 53]
+60 Ops.ADD dtypes.i32 [59, 46]
+61 Ops.ADD dtypes.i32 [60, 34]
+62 Ops.INDEX dtypes.f32 [5, 61]
+63 Ops.LOAD dtypes.f32 [62]
+64 Ops.AFTER dtypes.f32 [9, 43, 44, 48, 53]
+65 Ops.INDEX dtypes.f32 [64, 13]
+66 Ops.LOAD dtypes.f32 [65]
+67 Ops.MUL dtypes.f32 [58, 63]
+68 Ops.ADD dtypes.f32 [66, 67]
+69 Ops.STORE dtypes.void [65, 68]
+70 Ops.END dtypes.void [69, 53]
+71 Ops.END dtypes.void [70, 48]
+72 Ops.END dtypes.void [71, 44]
+73 Ops.AFTER dtypes.f32 [9, 72]
+74 Ops.INDEX dtypes.f32 [73, 13]
+75 Ops.LOAD dtypes.f32 [74]
+76 Ops.ADD dtypes.i32 [37, 39]
+77 Ops.ADD dtypes.i32 [76, 33]
+78 Ops.INDEX dtypes.f32 [1, 77]
+79 Ops.ADD dtypes.f32 [75, 31]
+80 Ops.STORE dtypes.void [78, 79]
+81 Ops.END dtypes.void [80, 39]
+82 Ops.END dtypes.void [81, 35]
+83 Ops.END dtypes.void [82, 29]
+84 Ops.SINK dtypes.void [83] KernelInfo(name="r_16_14_14_3_3_3", optimized=True)
+85 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84]
 

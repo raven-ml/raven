@@ -80,6 +80,7 @@ UNMODIFIED = {
     "codegen/simplify",
     "codegen/decomp/decomp_dtype",
     "codegen/late/coalesce",
+    "codegen/late/linearizer",
 }
 
 HERE = Path(__file__).resolve().parent

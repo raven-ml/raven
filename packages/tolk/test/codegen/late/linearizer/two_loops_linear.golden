@@ -8,39 +8,35 @@
 7 Ops.STORE dtypes.void [6, 5]
 8 Ops.AFTER dtypes.i32 [2, 7]
 9 Ops.INDEX dtypes.i32 [8, 5]
-10 Ops.CONST dtypes.weakint [] 10
-11 Ops.CAST dtypes.i32 [10] dtypes.i32
-12 Ops.CAST dtypes.u32 [0] dtypes.u32
+10 Ops.CAST dtypes.i32 [0] dtypes.i32
+11 Ops.CONST dtypes.weakint [] 9
+12 Ops.CAST dtypes.i32 [11] dtypes.i32
 13 Ops.RANGE dtypes.void [3] (AxisType.WEAK, 0)
 14 Ops.AFTER dtypes.i32 [8, 13]
 15 Ops.INDEX dtypes.i32 [14, 5]
 16 Ops.LOAD dtypes.i32 [15]
-17 Ops.CAST dtypes.u32 [16] dtypes.u32
-18 Ops.ADD dtypes.u32 [17, 12]
-19 Ops.CAST dtypes.i32 [18] dtypes.i32
-20 Ops.CMPLT dtypes.bool [19, 11]
-21 Ops.STORE dtypes.void [9, 19]
-22 Ops.BACKEDGE dtypes.void [21, 13, 20]
-23 Ops.AFTER dtypes.void [3, 22]
-24 Ops.AFTER dtypes.i32 [8, 22]
-25 Ops.INDEX dtypes.i32 [24, 5]
-26 Ops.CONST dtypes.weakint [] 25
-27 Ops.CAST dtypes.i32 [26] dtypes.i32
-28 Ops.RANGE dtypes.void [23] (AxisType.WEAK, 1)
-29 Ops.AFTER dtypes.i32 [24, 28]
-30 Ops.INDEX dtypes.i32 [29, 5]
-31 Ops.LOAD dtypes.i32 [30]
-32 Ops.CAST dtypes.u32 [31] dtypes.u32
-33 Ops.ADD dtypes.u32 [32, 12]
-34 Ops.CAST dtypes.i32 [33] dtypes.i32
-35 Ops.CMPLT dtypes.bool [34, 27]
-36 Ops.STORE dtypes.void [25, 34]
-37 Ops.BACKEDGE dtypes.void [36, 28, 35]
-38 Ops.AFTER dtypes.i32 [24, 37]
-39 Ops.INDEX dtypes.i32 [38, 5]
-40 Ops.LOAD dtypes.i32 [39]
-41 Ops.INDEX dtypes.i32 [1, 5]
-42 Ops.STORE dtypes.void [41, 40]
-43 Ops.SINK dtypes.void [42] KernelInfo(name="two_loops", optimized=True)
-44 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43]
+17 Ops.ADD dtypes.i32 [16, 10]
+18 Ops.CMPLT dtypes.bool [16, 12]
+19 Ops.STORE dtypes.void [9, 17]
+20 Ops.BACKEDGE dtypes.void [19, 13, 18]
+21 Ops.AFTER dtypes.void [3, 20]
+22 Ops.AFTER dtypes.i32 [8, 20]
+23 Ops.INDEX dtypes.i32 [22, 5]
+24 Ops.CONST dtypes.weakint [] 24
+25 Ops.CAST dtypes.i32 [24] dtypes.i32
+26 Ops.RANGE dtypes.void [21] (AxisType.WEAK, 1)
+27 Ops.AFTER dtypes.i32 [22, 26]
+28 Ops.INDEX dtypes.i32 [27, 5]
+29 Ops.LOAD dtypes.i32 [28]
+30 Ops.ADD dtypes.i32 [29, 10]
+31 Ops.CMPLT dtypes.bool [29, 25]
+32 Ops.STORE dtypes.void [23, 30]
+33 Ops.BACKEDGE dtypes.void [32, 26, 31]
+34 Ops.AFTER dtypes.i32 [22, 33]
+35 Ops.INDEX dtypes.i32 [34, 5]
+36 Ops.LOAD dtypes.i32 [35]
+37 Ops.INDEX dtypes.i32 [1, 5]
+38 Ops.STORE dtypes.void [37, 36]
+39 Ops.SINK dtypes.void [38] KernelInfo(name="two_loops", optimized=True)
+40 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
 

@@ -13,32 +13,28 @@
 12 Ops.AFTER dtypes.i32 [8, 11]
 13 Ops.INDEX dtypes.i32 [12, 3]
 14 Ops.LOAD dtypes.i32 [13]
-15 Ops.CAST dtypes.u32 [14] dtypes.u32
-16 Ops.CAST dtypes.u32 [0] dtypes.u32
-17 Ops.ADD dtypes.u32 [15, 16]
-18 Ops.CAST dtypes.i32 [17] dtypes.i32
-19 Ops.STORE dtypes.void [9, 18]
-20 Ops.CONST dtypes.weakint [] 10
-21 Ops.CAST dtypes.i32 [20] dtypes.i32
-22 Ops.CMPLT dtypes.bool [18, 21]
-23 Ops.BACKEDGE dtypes.void [19, 11, 22]
-24 Ops.AFTER dtypes.i32 [8, 23]
-25 Ops.INDEX dtypes.i32 [24, 3]
-26 Ops.RANGE dtypes.void [10] (AxisType.WEAK, 1)
-27 Ops.AFTER dtypes.i32 [24, 26]
-28 Ops.INDEX dtypes.i32 [27, 3]
-29 Ops.LOAD dtypes.i32 [28]
-30 Ops.CAST dtypes.u32 [29] dtypes.u32
-31 Ops.ADD dtypes.u32 [30, 16]
-32 Ops.CAST dtypes.i32 [31] dtypes.i32
-33 Ops.STORE dtypes.void [25, 32]
-34 Ops.CONST dtypes.weakint [] 25
-35 Ops.CAST dtypes.i32 [34] dtypes.i32
-36 Ops.CMPLT dtypes.bool [32, 35]
-37 Ops.BACKEDGE dtypes.void [33, 26, 36]
-38 Ops.AFTER dtypes.i32 [24, 37]
-39 Ops.INDEX dtypes.i32 [38, 3]
-40 Ops.LOAD dtypes.i32 [39]
-41 Ops.STORE dtypes.void [4, 40]
-42 Ops.SINK dtypes.void [41] KernelInfo(name="two_loops", optimized=True)
+15 Ops.CAST dtypes.i32 [0] dtypes.i32
+16 Ops.ADD dtypes.i32 [14, 15]
+17 Ops.STORE dtypes.void [9, 16]
+18 Ops.CONST dtypes.weakint [] 9
+19 Ops.CAST dtypes.i32 [18] dtypes.i32
+20 Ops.CMPLT dtypes.bool [14, 19]
+21 Ops.BACKEDGE dtypes.void [17, 11, 20]
+22 Ops.AFTER dtypes.i32 [8, 21]
+23 Ops.INDEX dtypes.i32 [22, 3]
+24 Ops.RANGE dtypes.void [10] (AxisType.WEAK, 1)
+25 Ops.AFTER dtypes.i32 [22, 24]
+26 Ops.INDEX dtypes.i32 [25, 3]
+27 Ops.LOAD dtypes.i32 [26]
+28 Ops.ADD dtypes.i32 [27, 15]
+29 Ops.STORE dtypes.void [23, 28]
+30 Ops.CONST dtypes.weakint [] 24
+31 Ops.CAST dtypes.i32 [30] dtypes.i32
+32 Ops.CMPLT dtypes.bool [27, 31]
+33 Ops.BACKEDGE dtypes.void [29, 24, 32]
+34 Ops.AFTER dtypes.i32 [22, 33]
+35 Ops.INDEX dtypes.i32 [34, 3]
+36 Ops.LOAD dtypes.i32 [35]
+37 Ops.STORE dtypes.void [4, 36]
+38 Ops.SINK dtypes.void [37] KernelInfo(name="two_loops", optimized=True)
 
