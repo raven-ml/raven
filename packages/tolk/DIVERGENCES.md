@@ -8763,6 +8763,40 @@ reason and its pins.
   this rule; the rune bench rows above on fudge, their baselines pending the
   scheduled re-record.
 
+## D403. A power's exponent is a number, read at no width
+
+- **tinygrad:** `uop/symbolic.py:167-168` (a casted constant and a bare one
+  commit at the promotion), `uop/weak.py:17-20` (`commit_srcs_at`),
+  `mixin/elementwise.py:547` `pow` (`_broadcasted`),
+  `codegen/decomp/transcendental.py:281`
+  (`xpow_int`'s `sb.eq(-1)`).
+- **tolk:** `Ops.is_number`, which `Shape.fold_const_alu`, the fold of a casted
+  constant and a bare one, `Uop_weak.commit_srcs_at` and `Uop_weak`'s cast rule
+  read; `Ops.pow`; `Ops.exec_alu`, `Ops.exact_power` and `Shape.simplify_pow`;
+  `Transcendental.xpow_int`.
+- **Differs:** a weak integer exponent of an integer base keeps its value: it
+  is not committed at or read through its base's type, and `Ops.pow` does not
+  promote it; a float base reads its exponent in the float as tinygrad does. tinygrad
+  commits it there, so `0 ** 65536` at uint16 is 1, where it is 0: the exponent
+  wraps to 0. With the exponent whole, a negative one on an unsigned base is
+  reachable, and `xpow_int` gives its greatest value no special meaning of -1:
+  an unsigned base has none. A power at no width whose exact value would not
+  fit in memory has no value: `Ops.exec_alu` refuses it and the fold leaves it,
+  where tinygrad's Python integer would exhaust memory; a base of 0, 1 or -1
+  folds at any exponent.
+- **Reason:** (e): at the pinned commit, `Cast(uint16, 0) ** 65536` folds to 1,
+  where it is 0, and a uint8 to a weak exponent of 256 is 1.
+- **Pinned by:** the Tolk_engine suite's `a power by an exponent of any size
+  computes the power`, compiled and through the interpreter, for each integer
+  type, literal and weak exponents around the width, -1, 2^8, 2^16 and 2^32 and
+  exponents of the base's type, against the power written in the test; the
+  Symbolic suite's `a power of constants folds by its exponent, of any size`,
+  `a float power of a constant reads its exponent in the float`, `a power no
+  width truncates stays a power past what it can hold` and `a power no width
+  truncates folds for a base of 0, 1 or -1 at any size`; and the Uop_weak
+  suite's `a weak exponent keeps its value past its base's type` and `a cast of
+  a weak power computes it and leaves its exponent weak`.
+
 ## D358. An object defines the half conversions Clang calls
 
 - **tinygrad:** `runtime/support/compiler_cpu.py:18-22`

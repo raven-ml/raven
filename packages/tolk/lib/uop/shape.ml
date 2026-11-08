@@ -1833,7 +1833,19 @@ let at dt v =
 let simplify_pow x c =
   let c = num c and pow x v = pow x (lit v) in
   let h = V.(c - `Float 0.5) in
+  (* A power of weak constants past what can be computed exactly stays one, for
+     a commitment to give it a width: its squares would compute it anyway. *)
+  let too_large =
+    op x = Op.Const
+    && Dtype.mem (dtype x) Dtype.weaks
+    &&
+    match (value x, c) with
+    | ((`Int _ | `Bool _) as b), ((`Int _ | `Bool _) as e) ->
+        not (exact_power b e)
+    | _ -> false
+  in
   match c with
+  | _ when too_large -> None
   | `Float f when not (Float.is_finite f) -> None
   | _ when V.(c < zero) && Dtype.is_int (dtype x) -> None
   | _ when V.(c <= `Float (-1.)) -> Some (pow (reciprocal x) V.(-c))
@@ -1866,10 +1878,11 @@ let fold_bitcast root c =
     Some (const_v root (Dtype.bitcast dt (dtype root) v))
 
 let fold_args a read srcs =
-  match (op a, srcs) with
-  | (Op.Shl | Op.Shr), [ x; c ]
-    when op c = Op.Const && Dtype.equal (dtype c) Dtype.Weak_int ->
-      (* a bare count is a number, whatever its operand's width *)
+  match srcs with
+  | [ x; c ]
+    when is_number a 1 && op c = Op.Const && Dtype.equal (dtype c) Dtype.Weak_int
+    ->
+      (* a bare count or exponent is a number, whatever its operand's width *)
       [ read x; value c ]
   | _ -> List.map read srcs
 
@@ -1878,7 +1891,8 @@ let fold_args a read srcs =
    the operation's operands, and writes a committed integer result at its width;
    floats re-round in the mint. A stack folds lane by lane. A shift by a
    negative count has no value, and does not fold; nor does a left shift at no
-   width by a count no integer holds. *)
+   width by a count no integer holds, or a power at no width whose exact value
+   is too large to compute. *)
 let fold_const_alu a =
   let alu args = exec_alu (op a) (dtype a) args in
   let operands =
@@ -1899,6 +1913,9 @@ let fold_const_alu a =
   in
   let defined args =
     match (op a, args) with
+    | Op.Pow, [ ((`Int _ | `Bool _) as b); ((`Int _ | `Bool _) as e) ]
+      when not (Dtype.mem (dtype a) Dtype.ints) ->
+        exact_power b e
     | Op.Shl, [ _; (#Dtype.value as n) ] when not (Dtype.mem (dtype a) Dtype.ints)
       ->
         V.(n >= zero && n <= of_int max_exact_shift)
@@ -2373,11 +2390,10 @@ let symbolic_simple =
               let commit s =
                 if Dtype.mem (dtype s) Dtype.weaks then ccast s dt else s
               in
-              let bare_count =
-                (op a = Op.Shl || op a = Op.Shr)
-                && Dtype.mem (dtype (nth a 1)) Dtype.weaks
+              let bare_number =
+                is_number a 1 && Dtype.mem (dtype (nth a 1)) Dtype.weaks
               in
-              if bare_count then fold_const_alu a
+              if bare_number then fold_const_alu a
               else if Dtype.mem dt Dtype.weaks then None
               else Some (replace a ~src:(List.map commit (src a))));
         ]

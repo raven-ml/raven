@@ -161,7 +161,8 @@ let leaf_slot p u =
 (* The type each operand of [u] commits to as compiled code reads it: a weak
    integer operand of an operation on a committed integer type is committed to
    that type, as Uop_weak commits it, and wraps. A selection's condition is no
-   operand, and a shift's count is a number of bits, read at no width. *)
+   operand, and a shift's count and a power's exponent are numbers, read at no
+   width. *)
 let commits u =
   let src = Ops.src u in
   let operands =
@@ -174,12 +175,11 @@ let commits u =
         if Dtype.is_int dt && not (weak s) then Some dt else None)
       operands
   in
-  let count i = i = 1 && (Ops.op u = Op.Shl || Ops.op u = Op.Shr) in
   Array.of_list
     (List.mapi
        (fun i s ->
          match peer with
-         | Some dt when weak s && List.memq s operands && not (count i) ->
+         | Some dt when weak s && List.memq s operands && not (Ops.is_number u i) ->
              Some dt
          | _ -> None)
        src)
@@ -345,6 +345,16 @@ let node ~check p i operands =
     when Dtype.mem (Ops.dtype u) Dtype.ints
          && Bigint.geq n (Bigint.of_int (Dtype.bitsize (Ops.dtype u))) ->
       Ops.exec_alu op (Ops.dtype u) src
+  (* A power at a committed type past a width's worth of products is computed
+     in the type's bits. Its exact value, which may not fit in memory, is past
+     the type for any base but 0, 1 and -1. *)
+  | Pow, _, ([ (`Int _ | `Bool _) as b; `Int n ] as src)
+    when Dtype.mem (Ops.dtype u) Dtype.ints
+         && Bigint.geq n (Bigint.of_int (Dtype.bitsize (Ops.dtype u))) ->
+      let dt = Ops.dtype u in
+      if Bigint.gt (Bigint.abs (Dtype.Value.to_z (b :> Dtype.value))) Bigint.one
+      then check dt (`Int (Bigint.shift_left Bigint.one (Dtype.bitsize dt)));
+      Ops.exec_alu Pow dt src
   | op, _, src when Op.Set.mem op Op.Set.alu -> (
       let dt = Ops.dtype u in
       match Ops.exec_alu ~truncate_output:false op dt src with

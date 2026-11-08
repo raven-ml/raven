@@ -113,7 +113,8 @@ val xpow_int : Ops.t -> Ops.t -> Dtype.t -> Ops.t option
 (** [xpow_int base exponent dt] is [base] to the power [exponent] in the
     integer type [dt], wrapping at its width as repeated products do. A negative
     [exponent] gives [0], but [1] for a [base] of [1], and [-1] or [1] by the
-    exponent's parity for [-1]. It is [None] if [dt] is not in {!Dtype.ints}. *)
+    exponent's parity for [-1] in a signed [dt]. It is [None] if [dt] is not in
+    {!Dtype.ints}. *)
 
 (** {1:patterns Rewriting} *)
 

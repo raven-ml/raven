@@ -791,6 +791,175 @@ let shift_counts_prop name d =
        shift_counts_gen)
     (fun c -> shift_counts_compute (d ()) c)
 
+(* Powers by exponents of any size
+
+   An exponent is a number, not a value of its base's type: a weak literal or a
+   weak expression past the base's type must not wrap there. [powered dt b e] is
+   the power on [dt]'s bits, by squares and products at the type's width: an
+   integer to a negative power truncates towards 0, so it is 0 but for 1 and,
+   in a signed type, -1. *)
+
+let powered dt b e : Dtype.value =
+  let two = Bigint.of_int 2 in
+  if Bigint.sign e >= 0 then begin
+    let m = Bigint.shift_left Bigint.one (Dtype.bitsize dt) in
+    let rec go acc b e =
+      if Bigint.sign e = 0 then acc
+      else
+        let acc = if Bigint.divisible e two then acc else Bigint.(rem (mul acc b) m) in
+        go acc Bigint.(rem (mul b b) m) (Bigint.shift_right e 1)
+    in
+    Dtype.truncate dt (`Int (go Bigint.one (Bigint.rem b m) e))
+  end
+  else if Bigint.equal b Bigint.one then `Int Bigint.one
+  else if Dtype.mem dt Dtype.sints && Bigint.equal b Bigint.minus_one then
+    `Int (if Bigint.divisible e two then Bigint.one else Bigint.minus_one)
+  else `Int Bigint.zero
+
+(* Exponents around 0, 1, -1, the width, and 2^8, 2^16 and 2^32. *)
+let pow_exponents dt =
+  let width = Bigint.of_int (Dtype.bitsize dt) in
+  List.sort_uniq Bigint.compare
+    (List.concat_map around
+       (Bigint.of_int (-1) :: Bigint.zero :: Bigint.one :: width
+       :: List.map power [ 8; 16; 32 ]))
+
+let pow_lanes = 8
+let pow_v = "pow_v"
+
+(* The kernel's powers: of the base in slot 0, by the exponents in slot 1, by
+   each literal exponent, and by each as a weak expression [v + e - 2] of a
+   variable bound at 2. Each power is stored to its own slot from 2. *)
+let pow_kernel dt =
+  let i = Ops.range ~axis_type:Weak (Int pow_lanes) [ 0 ] in
+  let at slot = Ops.index (Shape.placeholder ~slot [ pow_lanes ] dt) [ i ] in
+  let x = at 0 and loaded = at 1 in
+  let v = Ops.variable pow_v (`Int Bigint.zero) (`Int (Bigint.of_int 3)) in
+  let lit c = Ops.const (`Int c) in
+  let pow e = Ops.alu x Op.Pow [ e ] in
+  let es = pow_exponents dt in
+  let values =
+    pow loaded
+    :: List.map (fun e -> pow (lit e)) es
+    @ List.map
+        (fun e -> Ops.pow x Ops.O.(v + lit (Bigint.sub e (Bigint.of_int 2))))
+        es
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"powers" ~opts_to_apply:[] ())
+    [
+      Ops.end_
+        (Ops.group
+           (List.mapi (fun j p -> Ops.store (at (j + 2)) p) values))
+        [ i ];
+    ]
+
+let pow_program =
+  let compiled = Hashtbl.create 16 in
+  fun d dt ->
+    let key = (Engine.target d, dt) in
+    match Hashtbl.find_opt compiled key with
+    | Some prg -> prg
+    | None ->
+        let prg = Codegen.to_program (pow_kernel dt) (Engine.renderer d) in
+        Hashtbl.replace compiled key prg;
+        prg
+
+let pow_compute d (dt, xs, es) =
+  let literals = pow_exponents dt in
+  let two = Bigint.of_int 2 in
+  let n_stores = 1 + (2 * List.length literals) in
+  cover "an exponent past the width"
+    (List.exists
+       (fun e -> Bigint.gt e (Bigint.of_int (Dtype.bitsize dt)))
+       literals);
+  cover "a signed type" (List.mem dt Dtype.sints);
+  cover "an unsigned type" (Dtype.is_unsigned dt);
+  cover "a base of 0, 1 or -1"
+    (Array.exists
+       (fun x -> Bigint.leq (Bigint.abs (Dtype.Value.to_z x)) Bigint.one)
+       xs);
+  let zeros = Array.make pow_lanes (of_int dt 0) in
+  let out =
+    Run.on ~vars:[ (pow_v, 2) ] d (pow_program d dt)
+      ((0, xs) :: (1, es) :: List.init n_stores (fun j -> (j + 2, zeros)))
+  in
+  let by e x = powered dt (Dtype.Value.to_z x) e in
+  let expected =
+    Array.map2 (fun x e -> by (Dtype.Value.to_z e) x) xs es
+    :: List.map (fun e -> Array.map (by e) xs) literals
+    @ List.map (fun e -> Array.map (by e) xs) literals
+  in
+  let exponent_name j =
+    if j = 0 then "the loaded exponents"
+    else if j <= List.length literals then
+      Bigint.to_string (List.nth literals (j - 1))
+    else
+      Printf.sprintf "v + %s - 2"
+        (Bigint.to_string (List.nth literals (j - 1 - List.length literals)))
+  in
+  List.iteri
+    (fun j want ->
+      let msg =
+        Format.asprintf "%a ** %s" Dtype.pp dt (exponent_name j)
+      in
+      equal ~msg values want (List.assoc (j + 2) out))
+    expected;
+  (* The same kernel through the interpreter. *)
+  let bound = [ (pow_v, `Int two) ] in
+  let writes =
+    Interpreter.writes ~vars:bound ~buffers:[ (0, xs); (1, es) ] (pow_kernel dt)
+  in
+  let want =
+    List.concat
+      (List.mapi
+         (fun j vs -> Array.to_list (Array.mapi (fun i v -> (j + 2, i, v)) vs))
+         expected)
+  in
+  let pp_write ppf (s, i, v) =
+    Format.fprintf ppf "(%d,%d,%a)" s i Dtype.pp_const (v :> Dtype.const)
+  in
+  equal
+    ~msg:(Format.asprintf "%a through the interpreter" Dtype.pp dt)
+    (Testable.list (Testable.make ~pp:pp_write ~equal:( = )))
+    want writes
+
+let pow_gen =
+  let open Gen in
+  let* dt = of_list ~pp:Dtype.pp Dtype.ints in
+  let bases =
+    edges dt
+    @ List.map (of_int dt) [ 3; 5; -2 ]
+  in
+  let any = map (of_int dt) int in
+  let exponents =
+    (* Exponents of the base's type: 0, 1, -1, 2, the width and the type's
+       greatest value, those its type holds. *)
+    List.filter_map
+      (fun n ->
+        let e = Dtype.Value.of_int n in
+        if Dtype.Value.(e >= Dtype.min dt && e <= Dtype.max dt) then Some e
+        else None)
+      [ 0; 1; -1; 2; Dtype.bitsize dt; 127; 255 ]
+    @ [ Dtype.max dt ]
+  in
+  let+ xs =
+    array ~size:(constant pow_lanes) (frequency [ (3, of_list bases); (1, any) ])
+  and+ es =
+    array ~size:(constant pow_lanes) (of_list exponents)
+  in
+  (dt, xs, es)
+
+let pow_prop =
+  prop "a power by an exponent of any size computes the power" ~count:40
+    (Gen.with_pp
+       (fun ppf (dt, xs, es) ->
+         Format.fprintf ppf "%a: %a ** %a" Dtype.pp dt
+           (Testable.pp (array Dtypes.value)) xs
+           (Testable.pp (array Dtypes.value)) es)
+       pow_gen)
+    (fun c -> pow_compute host c)
+
 (* Shifts of 64-bit integers on a target that emulates them
 
    A target without 64-bit integers computes them on two 32-bit words, low first
@@ -960,6 +1129,7 @@ let on_the_host =
         "a shift by a literal or weak count of any size computes the shift"
         (fun () -> host);
       long_shifts_prop;
+      pow_prop;
       group "loops"
         (List.map counts_in_a_loop
            [

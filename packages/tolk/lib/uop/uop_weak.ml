@@ -18,8 +18,16 @@ let commit_weak_consts u = function
       let commit s = if is_const s && weak s then ccast s dt else s in
       replace ~src:(List.map commit (src u)) u
 
-(* Whether source [i] of [u] is a shift's count, a number of bits. *)
-let is_count u i = i = 1 && (op u = Op.Shl || op u = Op.Shr)
+(* The committed types [u] commits its sources at: the operands' meet and [u]'s
+   own derived type, [None] if either is weak. *)
+let derived_dtypes u src =
+  if not (Op.Set.mem (op u) Op.Set.broadcastable) then None
+  else
+    let meet = promo_dtype src in
+    if is_weak meet then None
+    else
+      let result = dtype_of (op u) src (arg u) in
+      if is_weak result then None else Some (meet, result)
 
 (* [count_at s dt] is the weak shift count [s] made to fit [dt], its shift's
    type, with the value it has as a number of bits. A count at or past [dt]'s
@@ -45,9 +53,10 @@ let commit_srcs_at u dt =
      that operand commits the node too. *)
   let bare = Option.is_some (derived_dtypes u (src u)) in
   let commit i s =
-    if not (weak s) then s
+    (* An exponent has no width to saturate at: it stays weak, whole. *)
+    if (not (weak s)) || (op u = Op.Pow && is_number u i) then s
     else
-      let s = if is_count u i then count_at s dt else s in
+      let s = if is_number u i then count_at s dt else s in
       if bare && is_const s then const (Dtype.const dt (value s))
       else ccast s dt
   in
@@ -68,11 +77,11 @@ let cast_weak_srcs c u =
   if weak c || not (Dtype.equal (Dtype.weak (dtype c)) (dtype u)) then None
   else
     (* Every weak source commits at the one width: the node's own bounds and
-       each source's, none of them narrowed. A shift's count is no value at
-       that width. *)
+       each source's, none of them narrowed. A shift's count and a power's
+       exponent are no values at that width. *)
     let srcs =
       List.map committed
-        (List.filteri (fun i s -> weak s && not (is_count u i)) (src u))
+        (List.filteri (fun i s -> weak s && not (is_number u i)) (src u))
     in
     let widths = committed u :: srcs in
     let dt = Dtype.least_upper (dtype c :: widths) in

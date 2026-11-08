@@ -83,6 +83,20 @@ let pm_commit_weak =
           equal Dtypes.const (i 0)
             (Interpreter.eval ~vars:[ ("w", i 3) ]
                (rewrite Uop_weak.pm_commit_weak u)));
+      test "a weak exponent keeps its value past its base's type" (fun () ->
+          let x = Shape.param 0 Dtype.Uint16 in
+          let e = Ops.O.(weak + int 65535) in
+          let u = rewrite Uop_weak.pm_commit_weak (Ops.alu x Op.Pow [ e ]) in
+          equal Dtypes.const (i 0)
+            (Interpreter.eval ~vars:[ ("w", i 1) ] ~params:[ (0, i 0) ] u));
+      test "a cast of a weak power computes it and leaves its exponent weak"
+        (fun () ->
+          let e = Ops.const (`Int Bigint.(shift_left one 40)) in
+          let u = Ops.cast (Ops.alu weak Op.Pow [ e ]) Int32 in
+          let c = rewrite Uop_weak.pm_commit_weak u in
+          equal Dtypes.dtype Weak_int (Ops.dtype (Ops.nth (Ops.nth c 0) 1));
+          equal Dtypes.const (i 1)
+            (Interpreter.eval ~vars:[ ("w", i 1) ] c));
       commit "where_keeps_a_weak_arm_bare"
         (Ops.v Op.Where
            ~src:[ Ops.bool true; Ops.cast (float 2.0) Float16; float 1.0 ]);

@@ -1662,6 +1662,11 @@ module Make_elementwise (B : Elementwise_base) = struct
 
   let pow x y =
     let base, exponent = broadcasted x y in
+    (* An exponent is a number, whatever its base's type holds. *)
+    let exponent =
+      if Dtype.equal (dtype y) Dtype.Weak_int && Dtype.is_int (dtype base) then y
+      else exponent
+    in
     let negative_int =
       match literal_value y with
       | Some (`Int z) -> Bigint.lt z Bigint.zero
@@ -2908,11 +2913,40 @@ let float_pow fx fy =
               let z_err = Bigint.(shift_right (abs a * l_err) tb + of_int 2) in
               exp2_fixed z z_err wl)
 
+let is_number u i =
+  i = 1
+  &&
+  match (u.op, u.src) with
+  | (Op.Shl | Op.Shr), _ -> true
+  | Op.Pow, [ b; e ] ->
+      Dtype.is_int b.dtype && Dtype.equal e.dtype Dtype.Weak_int
+  | _ -> false
+
+(* Whether [b ** e] can be computed exactly: a base of 0, 1 or -1 stays small at
+   any exponent, and otherwise each step of a power adds its base's bits. *)
+let exact_power b e =
+  let b = Bigint.abs (Value.to_z b) and e = Value.to_z e in
+  Bigint.leq b Bigint.one || Bigint.sign e < 0
+  || Bigint.leq
+       (Bigint.mul e (Bigint.of_int (Bigint.numbits b)))
+       (Bigint.of_int max_exact_shift)
+
 let py_pow (x : Dtype.value) (y : Dtype.value) : Dtype.value =
   match (x, y) with
   | (`Bool _ | `Int _), (`Bool _ | `Int _) ->
       let b = Value.to_z x and e = Value.to_z y in
-      if Bigint.geq e Bigint.zero then `Int (Bigint.pow b (Value.to_int y))
+      if Bigint.geq e Bigint.zero && not (Bigint.leq (Bigint.abs b) Bigint.one) then (
+        if not (exact_power x y) then
+          invalid_argf "a power %s ** %s, of no width, has no value"
+            (Bigint.to_string b) (Bigint.to_string e);
+        `Int (Bigint.pow b (Bigint.to_int e)))
+      else if Bigint.geq e Bigint.zero then
+        (* 0, 1 and -1 stay small at any exponent *)
+        `Int
+          (if Bigint.sign b = 0 then
+             if Bigint.sign e = 0 then Bigint.one else Bigint.zero
+           else if Bigint.divisible e (Bigint.of_int 2) then Bigint.one
+           else b)
       else if Bigint.equal (Bigint.abs b) Bigint.one then
         (* a negative power truncates toward 0, which only 1 and -1 escape *)
         `Int (if Bigint.divisible e (Bigint.of_int 2) then Bigint.one else b)

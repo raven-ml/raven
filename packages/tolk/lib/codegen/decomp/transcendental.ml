@@ -635,11 +635,15 @@ let xpow_int base exponent dt =
       (* a negative exponent truncates to 0, but for 1 and -1 *)
       let one = int_like ret 1 and sb = bitcast b dt in
       let odd = O.(exponent land int_like exponent 1 <> int_like exponent 0) in
+      (* An unsigned base has no -1: its greatest value is itself. *)
+      let at_one = where (eq sb one) one (int_like ret 0) in
       let neg =
-        where
-          (eq sb (int_like sb (-1)))
-          (where odd (int_like ret (-1)) one)
-          (where (eq sb one) one (int_like ret 0))
+        if Dtype.is_unsigned dt then at_one
+        else
+          where
+            (eq sb (int_like sb (-1)))
+            (where odd (int_like ret (-1)) one)
+            at_one
       in
       Some (where O.(exponent < int_like exponent 0) neg ret)
 

@@ -46,12 +46,13 @@ val pm_commit_weak : (unit, Ops.t) Ops.Pattern_matcher.t
       at that width. An expression whose bounds [dt] does not hold saturates at
       its own committed type ({!Ops.commit_dtype}) and then converts to [dt]; one
       whose bounds no 64-bit integer holds wraps there as any weak expression
-      does, unless its bounds are all past the width, where it is the width;
+      does, unless its bounds are all past the width, where it is the width. An
+      integer power's exponent is a number too: it stays weak, its value whole;
     - a {!Op.Store} of a weak value converts it to the destination's type;
     - a cast to a committed type [dt] over a weak arithmetic node [u] of [dt]'s
       kind commits [u]'s weak sources at the least upper type of [dt], [u]'s
       committed type and each weak source's committed type, a shift's count
-      apart, and casts the result
+      and an integer power's exponent apart, and casts the result
       to [dt]. Where that type is a float, as it is for a 64-bit unsigned [dt]
       over a signed width, they commit at {!Dtype.Int64} instead, or at
       {!Dtype.Uint64} where one of the committed types is: an integer cast

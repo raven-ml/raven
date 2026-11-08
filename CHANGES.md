@@ -1118,6 +1118,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 - A 64-bit shift on a target that emulates 64-bit integers (`EMULATED_DTYPES`)
   reads its whole count: a count of `2^32` no longer shifts by 0, and a count
   at or past 64 is past the width. A `Uint32` count compiles.
+- A weak integer exponent of a `Pow` keeps its value past its base's type:
+  `Symbolic.sym` folds `0 ** 65536` at `Uint16` to `0`, where it folded to `1`,
+  and a compiled kernel computes it with its whole exponent.
 - A shift by a weak literal or expression count at or past its operand's
   width computes the shift, where the count wrapped at the operand's type:
   `x:u8 << 256` is `0`, where it was `x`.

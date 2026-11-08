@@ -677,8 +677,9 @@ val symbolic_simple : (unit, Ops.t) Ops.Pattern_matcher.t
       ({!Ops.exec_alu}), except {!Op.Threefry}; weak constants keep their
       mathematical value, a committed integer holds its type's value (a weak
       operand of an operation on one is read, and the result written, at its
-      width), and an operation mixing weak and committed constants commits the
-      weak ones to the promoted type; a cast of a constant is the constant of
+      width, but a shift's count and a power's exponent, numbers, are read as
+      they are), and an operation mixing weak and committed constants commits
+      the weak ones to the promoted type; a cast of a constant is the constant of
       the cast's type; [0 / 0] is NaN;
     - {b booleans}: a boolean [*] is [land], and a boolean [+] or maximum is
       [lor];

@@ -18,6 +18,47 @@ let shift_reference dt o x k : Dtype.value =
       `Int (if Bigint.sign x < 0 then Bigint.minus_one else Bigint.zero)
   | _ -> `Int (Bigint.shift_right x (Bigint.to_int k))
 
+(* The power of constants by an exponent of any size: squares and products at
+   the type's width, a negative exponent truncating towards 0. *)
+let pow_reference dt b e : Dtype.value =
+  let two = Bigint.of_int 2 in
+  if Bigint.sign e >= 0 then begin
+    let m = Bigint.shift_left Bigint.one (Dtype.bitsize dt) in
+    let rec go acc b e =
+      if Bigint.sign e = 0 then acc
+      else
+        let acc = if Bigint.divisible e two then acc else Bigint.(rem (mul acc b) m) in
+        go acc Bigint.(rem (mul b b) m) (Bigint.shift_right e 1)
+    in
+    Dtype.truncate dt (`Int (go Bigint.one (Bigint.rem b m) e))
+  end
+  else if Bigint.equal b Bigint.one then `Int Bigint.one
+  else if Dtype.mem dt Dtype.sints && Bigint.equal b Bigint.minus_one then
+    `Int (if Bigint.divisible e two then Bigint.one else Bigint.minus_one)
+  else `Int Bigint.zero
+
+(* A base at a type's extremes, 0, 1, -1 and 2, and exponents around 0, -1, the
+   width and the larger powers of two. *)
+let gen_constant_pow =
+  let open Gen in
+  let* dt = of_list ~pp:Dtype.pp Dtype.ints in
+  let in_type v d =
+    Dtype.Value.to_z (Dtype.truncate dt Dtype.Value.(v + of_int d))
+  in
+  let bases =
+    [ in_type (Dtype.min dt) 0; in_type (Dtype.max dt) 0 ]
+    @ List.map (fun n -> in_type (Dtype.Value.of_int n) 0) [ -1; 0; 1; 2; 3 ]
+  in
+  let exponents =
+    List.concat_map
+      (fun c -> Bigint.[ pred c; c; succ c ])
+      (Bigint.zero :: Bigint.minus_one
+      :: Bigint.of_int (Dtype.bitsize dt)
+      :: List.map (fun n -> Bigint.shift_left Bigint.one n) [ 8; 16; 32; 40 ])
+  in
+  let+ b = of_list bases and+ e = of_list exponents in
+  (dt, b, e)
+
 (* Constant operands at a type's extremes, counts either side of its width and
    of the larger powers of two. *)
 let gen_constant_shift =
@@ -404,6 +445,46 @@ let constants =
             ~msg:(Format.asprintf "%a" Ops.pp u)
             Dtypes.const (shift_reference dt o x k :> Dtype.const)
             (Ops.value folded));
+      prop "a power of constants folds by its exponent, of any size"
+        gen_constant_pow
+        (fun (dt, b, e) ->
+          let u =
+            Ops.alu (Ops.const ~dtype:dt (`Int b)) Op.Pow [ Ops.const (`Int e) ]
+          in
+          cover "an exponent past the width"
+            (Bigint.gt e (Bigint.of_int (Dtype.bitsize dt)));
+          cover "a negative exponent" (Bigint.sign e < 0);
+          let folded = sym u in
+          (match Ops.op folded with
+          | Const | Cast -> ()
+          | _ -> failf "%a does not fold" Ops.pp u);
+          equal
+            ~msg:(Format.asprintf "%a" Ops.pp u)
+            Dtypes.const (pow_reference dt b e :> Dtype.const)
+            (Ops.value folded));
+      test "a float power of a constant reads its exponent in the float"
+        (fun () ->
+          (* 16777217 rounds to the even 16777216 in a float32. *)
+          let u =
+            Ops.alu
+              (Ops.const ~dtype:Float32 (`Float (-1.)))
+              Op.Pow
+              [ Ops.const (`Int (Bigint.of_int 16777217)) ]
+          in
+          equal Dtypes.const (`Float 1.) (Ops.value (sym u)));
+      test "a power no width truncates stays a power past what it can hold"
+        (fun () ->
+          let e = Bigint.(succ (shift_left one 23)) in
+          let u = Ops.alu (Ops.const (`Int (Bigint.of_int 2))) Op.Pow [ Ops.const (`Int e) ] in
+          equal string "POW" (Op.name (Ops.op (sym u))));
+      cases "a power no width truncates folds for a base of 0, 1 or -1 at any size"
+        ~id:string_of_int [ 0; 1; -1 ]
+        (fun b ->
+          let e = Bigint.(succ (shift_left one 70)) in
+          let u =
+            Ops.alu (Ops.const (`Int (Bigint.of_int b))) Op.Pow [ Ops.const (`Int e) ]
+          in
+          equal Dtypes.const (`Int (Bigint.of_int b)) (Ops.value (sym u)));
       test "a masked right shift past the width keeps its mask's sign" (fun () ->
           (* The rule that drops a mask reads the bits below the count, and past
              the width that is every bit, the sign included. *)

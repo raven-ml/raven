@@ -660,9 +660,11 @@ val exec_alu :
     truncates the result to [dt] ({!Dtype.truncate}) if [truncate_output]
     (default [true]). Integers are unbounded before truncation, and an integer
     to a negative integer power truncates toward [0]: it is [0] but for [1] and
-    [-1]. A shift's count is a number: truncated to a committed integer type a
-    left shift by a count of its width or more is [0], and a right shift is
-    the floor of its division by 2{^count}, whatever the count. Out-of-domain values follow IEEE: [log2 0.] is [-inf], [sqrt] of a
+    [-1]. A shift's count and a power's exponent are numbers, read at no width:
+    truncated to a committed integer type a left shift by a count of its width
+    or more is [0], a right shift is the floor of its division by 2{^count},
+    whatever the count, and a power is computed in the type's bits, whatever the
+    exponent. Out-of-domain values follow IEEE: [log2 0.] is [-inf], [sqrt] of a
     negative is NaN, [1. /. 0.] is an infinity of the operand's sign, [sin] of
     an infinity is NaN, and an overflowing [exp2] or [pow] is the infinity IEEE
     gives. A float [log2], [exp2] and [pow] are correctly rounded to a double,
@@ -683,9 +685,20 @@ val exec_alu :
 
     Raises [Invalid_argument] if [op] is not an arithmetic operation or the
     arguments do not fit it, as for a shift by a negative count, which has no
-    value, or a left shift of a non-zero integer by more than
-    {!max_exact_shift} bits that nothing truncates: at a weak [dt], or without
-    [truncate_output]. *)
+    value, a left shift of a non-zero integer by more than {!max_exact_shift}
+    bits that nothing truncates, or a power that nothing truncates and
+    {!exact_power} leaves out: at a weak [dt], or without [truncate_output]. *)
+
+val is_number : t -> int -> bool
+(** [is_number u i] is [true] iff source [i] of [u] is a number and no value of
+    its peer's type, so that it never wraps at that type's width: the count of
+    a {!Op.Shl} or {!Op.Shr}, or the weak integer exponent of an {!Op.Pow} of an
+    integer base. *)
+
+val exact_power : Dtype.value -> Dtype.value -> bool
+(** [exact_power b e] is [true] iff [b ** e], for integers [b] and [e], can be
+    computed exactly in {!exec_alu} when nothing truncates: a base of [0], [1]
+    or [-1], a negative [e], or a power of at most {!max_exact_shift} bits. *)
 
 val max_exact_shift : int
 (** [max_exact_shift] is the most bits a left shift that nothing truncates
@@ -1064,7 +1077,9 @@ module type Elementwise = sig
   (** [floor x] is [trunc x], less one where that is above [x]. *)
 
   val pow : t -> t -> t
-  (** [pow x y] is {!Op.Pow} of [x] and [y].
+  (** [pow x y] is {!Op.Pow} of [x] and [y]: promoted to a common type, but for
+      an integer [x] and a weak integer [y], which keeps its value at no width
+      ({!Op.Pow}'s exponent is a number).
 
       Raises [Invalid_argument] if the promoted type is not a float and [y] is a
       negative integer constant. *)
