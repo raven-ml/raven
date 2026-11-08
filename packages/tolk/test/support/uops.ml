@@ -25,7 +25,9 @@ let numbered_like like u =
       (fun op -> List.map2 renumbered (made op u) (made op like))
       Op.[ Alloc; Buffer ]
   with
-  | subs -> Ops.substitute ~calls:Enter ~pass:Fixed_point u subs
+  (* Once: a slot in one graph can be another's in the other, as a chain or a
+     cycle, and each node takes its pair's slot at most once. *)
+  | subs -> Ops.substitute ~calls:Enter ~pass:Once u subs
   | exception Invalid_argument _ -> u
 
 let binaries_as_sources u =

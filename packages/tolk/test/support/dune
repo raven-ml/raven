@@ -25,8 +25,18 @@
   (names spawn_stubs)))
 
 (tests
- (names test_golden test_interpreter test_kernel_graphs test_tensors)
- (modules test_golden test_interpreter test_kernel_graphs test_tensors)
+ (names
+  test_golden
+  test_interpreter
+  test_kernel_graphs
+  test_tensors
+  test_uops)
+ (modules
+  test_golden
+  test_interpreter
+  test_kernel_graphs
+  test_tensors
+  test_uops)
  (package tolk)
  (libraries windtrap tolk tolk_test)
  (deps
