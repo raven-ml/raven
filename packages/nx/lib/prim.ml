@@ -2239,80 +2239,27 @@ let linalg_results : type d r.
    or a numbering, one that every result of another operation shares, none
    for a check.
    Raises naming [by] where [op]'s operands break the rule. *)
-(* Attention's rule: [q], [k] and [v] of one float dtype it takes, an
-   accumulator [acc] of float32 or float64 not narrower than theirs, the
-   program's operands the score in [acc] then the loads' dtypes, its
-   outputs a bool then [acc] and its coordinates along the loop's axes;
-   its results' shapes. *)
-let attention_shapes (type v s a d) ~by (prog : P.t) (acc : (float, a) D.t)
-    (q : (v, s, d) t) (kv : (v, s, d) kv) (lengths : d index option)
-    (loads : d any iarray) =
-  (match dtype q with
-  | D.Float16 | D.Bfloat16 | D.Float32 | D.Float64 -> ()
-  | dt ->
-      invalid_argf
-        "%s: attention of %s, not float16, bfloat16, float32 or float64" by
-        (D.name dt));
-  (match acc with
-  | D.Float32 | D.Float64 when D.bits acc >= D.bits (dtype q) -> ()
-  | _ ->
-      invalid_argf
-        "%s: attention's accumulator is float32 or float64, no narrower \
-         than the query: %s for a query of %s"
-        by (D.name acc) (D.name (dtype q)));
-  let n = Iarray.length loads in
-  if Iarray.length prog.ins <> n + 1 then
-    invalid_argf "%s: a pair's program of %d operands over a score and %d loads"
-      by (Iarray.length prog.ins) n;
-  let (D.Any score) = Iarray.get prog.ins 0 in
-  if not (same_dtype score acc) then
-    invalid_argf "%s: a pair's program reads its score as %s, not %s" by
-      (D.name score) (D.name acc);
-  Iarray.iteri
-    (fun i (Any x) ->
-      let (D.Any want) = Iarray.get prog.ins (i + 1) in
-      if not (same_dtype want (dtype x)) then
-        invalid_argf "%s: load %d is %s where the program reads %s" by i
-          (D.name (dtype x)) (D.name want))
-    loads;
-  let outs = Iarray.length prog.outs in
-  let out k = P.dtype prog (Iarray.get prog.outs k) in
-  (match if outs = 2 then Some (out 0, out 1) else None with
-  | Some (D.Any D.Bool, D.Any s) when same_dtype s acc -> ()
-  | _ ->
-      invalid_argf
-        "%s: a pair's program gives a bool and a %s, not %d outputs of %s" by
-        (D.name acc) outs
-        (String.concat ", "
-           (List.init outs (fun k ->
-                let (D.Any dt) = out k in
-                D.name dt))));
-  (* Output 0, visibility, is decided before the scores exist. *)
-  let seen = Array.make (Iarray.length prog.nodes) false in
-  seen.(Iarray.get prog.outs 0) <- true;
-  for i = Iarray.length prog.nodes - 1 downto 0 do
-    if seen.(i) then
-      match Iarray.get prog.nodes i with
-      | P.In 0 ->
-          invalid_argf "%s: a pair's visibility reads its score" by
-      | P.Op1 (_, _, a) -> seen.(a) <- true
-      | P.Op2 (_, a, b) ->
-          seen.(a) <- true;
-          seen.(b) <- true
-      | P.Op3 (_, a, b, c) ->
-          seen.(a) <- true;
-          seen.(b) <- true;
-          seen.(c) <- true
-      | P.In _ | P.Coord _ | P.Const _ -> ()
-  done;
-  let r = rank q in
-  Iarray.iter
-    (function
-      | P.Coord a when a >= r ->
-          invalid_argf "%s: a coordinate along axis %d of pairs of rank %d" by
-            a r
-      | _ -> ())
-    prog.nodes;
+(* Values as Nx_kernel's rules read them. *)
+let values : _ Nx_kernel.dtypes =
+  {
+    arrays = Iarray.length;
+    dtype =
+      (fun a i ->
+        let (Any x) = Iarray.get a i in
+        D.Any (dtype x));
+  }
+
+(* Attention's rule, {!Nx_kernel.attention_refusal}'s over the dtypes, the
+   program and [q]'s rank, then its results' shapes. *)
+let attention_shapes (type v s w r a d) ~by (prog : P.t)
+    (acc : (float, a) D.t) (out : (w, r) D.t) (q : (v, s, d) t)
+    (kv : (v, s, d) kv) (lengths : d index option) (loads : d any iarray) =
+  (match
+     Nx_kernel.attention_refusal prog ~q:(dtype q) ~rank:(rank q) ~o:out ~acc
+       ~loads:values loads
+   with
+  | Some (_, why) -> invalid_argf "%s: %s" by why
+  | None -> ());
   let kv : (Shape.t, Shape.t) Nx_kernel.kv =
     match kv with
     | Dense { k; v } -> Dense { k = shape k; v = shape v }
@@ -2384,10 +2331,7 @@ let layouts : type r. by:string -> r prim -> L.t array =
         (data_any data);
       [||]
   | Attention { prog; acc; out; q; kv; lengths; loads; _ } ->
-      if not (same_dtype out acc || same_dtype out (dtype q)) then
-        invalid_argf "%s: attention's o of %s, not %s or %s" by (D.name out)
-          (D.name acc) (D.name (dtype q));
-      let o, lse = attention_shapes ~by prog acc q kv lengths loads in
+      let o, lse = attention_shapes ~by prog acc out q kv lengths loads in
       [| contiguous o; contiguous lse |]
 
 type routed = { route : unit Route.t option; layouts : L.t array }

@@ -89,6 +89,16 @@ module Prog = Prog
 type ('v, 's) a := ('v, 's) Nx_array.t
 type index := (int64, Nx_array.Dtype.int64_elt) Nx_array.t
 
+(** The type for reading the dtypes of a collection of arrays of type ['c]
+    in place: [arrays c] arrays, [dtype c i] the dtype of the [i]th. A
+    rule that decides a kernel's refusals, as {!attention_refusal}, reads
+    its caller's arrays through one, which the caller defines once per
+    collection type, so that checking a call copies nothing. *)
+type 'c dtypes = {
+  arrays : 'c -> int;
+  dtype : 'c -> int -> Nx_array.Dtype.any;
+}
+
 (** {1:loops Loops} *)
 
 type pad = {
@@ -382,6 +392,22 @@ val full_precision : ('v, 's) Nx_array.Dtype.t -> bool
 type ('a, 'i) kv =
   | Dense of { k : 'a; v : 'a }
   | Paged of { k : 'a; v : 'a; table : 'i }
+
+val attention_refusal :
+  Prog.t ->
+  q:('v, 's) Nx_array.Dtype.t ->
+  rank:int ->
+  o:('w, 'r) Nx_array.Dtype.t ->
+  acc:(float, 'c) Nx_array.Dtype.t ->
+  loads:'l dtypes ->
+  'l ->
+  (Nx_array.answer * string) option
+(** [attention_refusal p ~q ~rank ~o ~acc ~loads:v loads] is
+    [Some (r, why)], [r] the refusal {!S.attention} answers for its
+    program [p] over [loads], read by [v], a query of dtype [q] and rank
+    [rank], [o] of dtype [o] and [lse] of dtype [acc], and [why] what does
+    not fit, in words; [None] where all fit. It reads no shape but the
+    rank: {!Shape.attention} gives the shapes. *)
 
 (** {1:shapes Shapes} *)
 
@@ -909,15 +935,20 @@ module type S = sig
     answer
   (** [attention p ~scale ~o ~lse ?lengths q kv loads] stores the attention
       of [q]'s rows over [kv] ({!section-attention}), [p] the pair's
-      program over its loads [loads], into [o], of [lse]'s dtype or [q]'s,
-      and [lse], whose dtype, [float32] or [float64], is the accumulator.
-      [lengths], [[lead…]], bounds each lead index's keys. The scores, their
-      maxima and sums, the weights and [lse] compute in the accumulator,
-      and each element of [o] rounds once into [o]'s dtype. [q], [k] and
-      [v] are of one dtype, [float16], [bfloat16], [float32] or [float64],
-      no wider than the accumulator, [p]'s operand [0] and output [1] are
-      in the accumulator and its output [0] [bool]: it answers
-      [Wrong_dtype] otherwise, and [Shape_mismatch] for an output [0] that
-      reads operand [0]. Each library states its association and its
-      bounds. *)
+      program over its loads [loads], into [o] and [lse], whose dtype is
+      the accumulator. [lengths], [[lead…]], bounds each lead index's
+      keys. The scores, their maxima and sums, the weights and [lse]
+      compute in the accumulator, and each element of [o] rounds once into
+      [o]'s dtype.
+
+      It answers [Wrong_dtype] unless [q], [k] and [v] are of one dtype,
+      [float16], [bfloat16], [float32] or [float64], no wider than the
+      accumulator, [o] is of the accumulator or of [q]'s dtype, [p]'s
+      operand [0] and output [1] are in the accumulator, its output [0] is
+      a [bool] and each load is of its operand's dtype.
+      It answers [Shape_mismatch] unless [p] has one operand more than
+      [loads] and two outputs, its [Coord] nodes read axes below [q]'s
+      rank, and its output [0] does not read operand [0].
+      {!attention_refusal} decides both. Each library states its
+      association and its bounds. *)
 end

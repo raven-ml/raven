@@ -6238,22 +6238,14 @@ let reads_length st cells =
   in
   List.exists reads cells
 
+(* Dtypes as Nx_kernel's rules read them. *)
+let dtype_array : _ Nx_kernel.dtypes =
+  { arrays = Array.length; dtype = Array.get }
+
 let attention (type v s a d) ?scale ?lengths ?mask ?score
     ~(acc : (float, a) D.t) ~(kv : (v, s, d) kv) (q : (v, s, d) t) :
     (v, s, d) t * (float, a, d) t =
   let by = "Nx.attention" in
-  (match dtype q with
-  | D.Float16 | D.Bfloat16 | D.Float32 | D.Float64 -> ()
-  | dt ->
-      invalid_argf "%s: %s is not float16, bfloat16, float32 or float64" by
-        (D.name dt));
-  (match acc with
-  | D.Float32 | D.Float64 when D.bits acc >= D.bits (dtype q) -> ()
-  | _ ->
-      invalid_argf
-        "%s: an accumulator is float32 or float64, no narrower than the \
-         query: %s for a query of %s"
-        by (D.name acc) (D.name (dtype q)));
   let r = ndim q in
   if r < 3 then
     invalid_argf "%s: the query %a has fewer than three axes" by pp_value q;
@@ -6336,6 +6328,18 @@ let attention (type v s a d) ?scale ?lengths ?mask ?score
       st ~mask:(Option.map cell mask) ~score:(Option.map cell score)
       (List.map (fun (Captured (c, x)) -> (c, D.Any (dtype x))) captures)
   in
+  (* The program's and the arrays' dtypes are refused before any operation
+     runs on the lengths. *)
+  (let loads =
+     List.map (fun (Captured (_, x)) -> D.Any (dtype x)) captures
+     @ Option.to_list (Option.map (fun _ -> D.Any D.Int64) length)
+   in
+   match
+     Nx_kernel.attention_refusal prog ~q:(dtype q) ~rank:r ~o:(dtype q) ~acc
+       ~loads:dtype_array (Array.of_list loads)
+   with
+   | Some (_, why) -> invalid_argf "%s: %s" by why
+   | None -> ());
   (* Operands in the call's order: the query, the keys, the values and the
      page table, the lengths, then the arrays [mask] and [score] capture. *)
   let operands =

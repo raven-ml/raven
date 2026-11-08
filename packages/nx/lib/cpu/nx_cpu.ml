@@ -578,27 +578,26 @@ external attention_c :
   Nx_array.any array ->
   Nx_array.answer = "nx_cpu_attention_byte" "nx_cpu_attention"
 
-(* The ranges of the mask, output 0, over a box of pairs of [q]'s loop, by
-   which the kernel skips the blocks it hides (attention.c, Classes): none
-   for a constant mask, nor for a program the kernel refuses, of an output
-   0 of another dtype or a coordinate past the loop. *)
-let rec reads_past (p : Nx_kernel.Prog.t) rank i =
-  i < Iarray.length p.nodes
-  && ((match Iarray.get p.nodes i with Coord a -> a >= rank | _ -> false)
-     || reads_past p rank (i + 1))
-
-let mask_ranges (p : Nx_kernel.Prog.t) q =
-  let o = Iarray.get p.outs 0 in
-  match Iarray.get p.nodes o with
+(* The ranges of the mask, output 0, over a box of pairs of a loop of
+   [rank] axes, by which the kernel skips the blocks it hides (attention.c,
+   Classes): none for a constant mask. *)
+let mask_ranges (p : Nx_kernel.Prog.t) ~rank =
+  match Iarray.get p.nodes (Iarray.get p.outs 0) with
   | Const _ -> None
-  | _ ->
-      let rank = Nx_array.Layout.rank (Nx_array.layout q) in
-      if
-        Iarray.length p.outs <> 2
-        || reads_past p rank 0
-        || Nx_kernel.Prog.dtype p o <> Nx_array.Dtype.Any Bool
-      then None
-      else Some (Nx_kernel.Prog.ranges ~axes:rank ~outs:[| 0 |] p)
+  | _ -> Some (Nx_kernel.Prog.ranges ~axes:rank ~outs:[| 0 |] p)
 
+(* Arrays as Nx_kernel's rules read them. *)
+let any_dtype (Nx_array.Any a) = D.Any (Nx_array.dtype a)
+
+let arrays : _ Nx_kernel.dtypes =
+  { arrays = Array.length; dtype = (fun a i -> any_dtype a.(i)) }
+
+(* attention.c computes what Nx_kernel.attention_refusal lets through. *)
 let attention p ~scale ~o ~lse ?lengths q kv loads =
-  attention_c p (mask_ranges p q) scale o lse lengths q kv loads
+  let rank = Nx_array.Layout.rank (Nx_array.layout q) in
+  match
+    Nx_kernel.attention_refusal p ~q:(Nx_array.dtype q) ~rank
+      ~o:(Nx_array.dtype o) ~acc:(Nx_array.dtype lse) ~loads:arrays loads
+  with
+  | Some (r, _) -> r
+  | None -> attention_c p (mask_ranges p ~rank) scale o lse lengths q kv loads

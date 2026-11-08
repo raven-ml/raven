@@ -739,6 +739,9 @@ static int operand(void *ctx, int k, nx_operand *in) {
   else if (o->lengths && k == at)
     *in = (nx_operand){Field(*o->vlengths, 0), NX_INT64, 0};
   else {
+    /* With a program, each load is claimed at its operand's dtype, which
+       sizes its slot (map.c), so the door refuses another dtype.
+       Nx_kernel.attention_refusal refuses it first, in nx_cpu.ml. */
     int i = k - at - o->lengths;
     int dt = o->g ? nx_cpu_prog_in(o->g, 1 + i)
                   : nx_array_dtype(Field(*o->vloads, i));
@@ -823,29 +826,21 @@ value nx_cpu_attention(value vp, value vranges, value vscale, value vo,
   CAMLparam5(vp, vranges, vscale, vo, vlse);
   CAMLxparam4(vlengths, vq, vkv, vloads);
   CAMLlocal2(owner, vr);
-  /* q is float16, bfloat16, float32 or float64, the accumulator, lse's
-     dtype, float32 or float64 and not narrower. */
+  /* The dtypes and the program are ones Nx_kernel.attention_refusal lets
+     through (nx_cpu.ml): q float16 to float64, the accumulator, lse's
+     dtype, float32 or float64 and not narrower, o of either, and the
+     program over the score and the loads, its output 0 a bool reading no
+     score and its output 1 in the accumulator. */
   int dt = nx_array_dtype(vq), acc = nx_array_dtype(vlse);
-  if (dt != NX_FLOAT16 && dt != NX_BFLOAT16 && dt != NX_FLOAT32 &&
-      dt != NX_FLOAT64)
-    CAMLreturn(Val_int(NX_DTYPE));
-  if ((acc != NX_FLOAT32 && acc != NX_FLOAT64) ||
-      (dt == NX_FLOAT64 && acc != NX_FLOAT64))
-    CAMLreturn(Val_int(NX_DTYPE));
   int nl = (int)Wosize_val(vloads);
   int paged = Tag_val(vkv) == 1, lengths = Is_block(vlengths);
-  int nins = (int)Wosize_val(Field(vp, NX_PROG_INS));
-  if (nins != nl + 1 || Wosize_val(Field(vp, NX_PROG_OUTS)) != 2)
-    CAMLreturn(Val_int(NX_SHAPE));
   att c = {0};
   c.mask = !is_default(vp, 0);
   c.score = !is_default(vp, 1);
   c.scale = Double_val(vscale);
   c.dt = dt;
   c.acc = acc;
-  /* o is the accumulator's dtype or q's. */
   c.odt = nx_array_dtype(vo);
-  if (c.odt != acc && c.odt != dt) CAMLreturn(Val_int(NX_DTYPE));
   c.w = nx_cpu_width(c.odt);
   /* What the call holds, owned by a custom block: the program's copy, the
      descriptors of more operands than the stack's table holds, the
@@ -859,27 +854,6 @@ value nx_cpu_attention(value vp, value vranges, value vscale, value vo,
     g = nx_cpu_prog_copy(&vp);
     if (g == NULL) caml_raise_out_of_memory();
     h->g = g;
-    if (nx_cpu_prog_in(g, 0) != acc || nx_cpu_prog_out(g, 0) != NX_BOOL ||
-        nx_cpu_prog_out(g, 1) != acc) {
-      release(owner);
-      CAMLreturn(Val_int(NX_DTYPE));
-    }
-    /* Visibility is decided before the scores exist: output 0 reads no
-       score. */
-    uint8_t axes[NX_MAX_RANK] = {0};
-    uint8_t local[64], *reads = nins <= 64 ? local : calloc((size_t)nins, 1);
-    if (reads == NULL) {
-      release(owner);
-      caml_raise_out_of_memory();
-    }
-    memset(reads, 0, (size_t)nins);
-    nx_cpu_prog_reads(g, 0, reads, axes);
-    int scored = reads[0];
-    if (reads != local) free(reads);
-    if (scored) {
-      release(owner);
-      CAMLreturn(Val_int(NX_SHAPE));
-    }
   }
   /* The mask's ranges, where it has them. */
   nx_cpu_prog *rg = NULL;

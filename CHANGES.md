@@ -2399,6 +2399,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_kernel.attention_refusal` gives the refusal a kernel library's
+  `attention` answers for its program and dtypes, and why, reading the
+  loads in place through an `Nx_kernel.dtypes`; nx and nx.cpu both refuse
+  through it. nx.cpu now refuses a plain program over a score
+  or loads of other dtypes, and a coordinate past a query of no rows,
+  where it computed.
 - `Nx.var` is `+∞` only where the variance passes the dtype's greatest value,
   and `Nx.std` keeps its precision at both ends of the range: `var [1e154;
   -1e154; 0.]` was `+∞` and is `6.67e307`, `var [1e308; 1e308]` was `+∞` and is

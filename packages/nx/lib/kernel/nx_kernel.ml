@@ -98,6 +98,106 @@ type ('a, 'i) kv =
   | Dense of { k : 'a; v : 'a }
   | Paged of { k : 'a; v : 'a; table : 'i }
 
+(* Attention's refusals *)
+
+let attended : D.any -> bool = function
+  | Any (Float16 | Bfloat16 | Float32 | Float64) -> true
+  | Any _ -> false
+
+let accumulator : D.any -> bool = function
+  | Any (Float32 | Float64) -> true
+  | Any _ -> false
+
+let is_bool : D.any -> bool = function Any Bool -> true | Any _ -> false
+let is_of dt (D.Any x) = D.equal x dt
+let output (p : Prog.t) k = Prog.dtype p (Iarray.get p.outs k)
+let name (D.Any dt) = D.name dt
+let refuse r fmt = Format.kasprintf (fun why -> Some (r, why)) fmt
+let wrong fmt = refuse Nx_array.Wrong_dtype fmt
+let misfits fmt = refuse Nx_array.Shape_mismatch fmt
+
+type 'c dtypes = { arrays : 'c -> int; dtype : 'c -> int -> D.any }
+
+(* The first load of [loads] from [i] on, read by [v], whose dtype is not
+   that of [p]'s operand [first] places after it, or [-1]. *)
+let rec misfit (p : Prog.t) ~first v loads i =
+  if i = v.arrays loads then -1
+  else
+    let (D.Any want) = Iarray.get p.ins (first + i) in
+    if is_of want (v.dtype loads i) then misfit p ~first v loads (i + 1)
+    else i
+
+(* The first axis at or past [rank] that a [Coord] node of [p] from [i] on
+   reads, or [-1]. *)
+let rec past (p : Prog.t) rank i =
+  if i = Iarray.length p.nodes then -1
+  else
+    match Iarray.get p.nodes i with
+    | Coord a when a >= rank -> a
+    | _ -> past p rank (i + 1)
+
+(* Whether node [o] of [p] reads the score: the nodes it reaches, marked
+   from [o] down, since a node refers only to earlier ones. *)
+let reads_score (p : Prog.t) o =
+  let seen = Bytes.make (o + 1) '\000' and found = ref false in
+  Bytes.set seen o '\001';
+  for i = o downto 0 do
+    if Bytes.get seen i = '\001' then
+      match Iarray.get p.nodes i with
+      | In k -> if k = 0 then found := true
+      | Coord _ | Const _ -> ()
+      | Op1 (_, _, a) -> Bytes.set seen a '\001'
+      | Op2 (_, a, b) ->
+          Bytes.set seen a '\001';
+          Bytes.set seen b '\001'
+      | Op3 (_, a, b, c) ->
+          Bytes.set seen a '\001';
+          Bytes.set seen b '\001';
+          Bytes.set seen c '\001'
+  done;
+  !found
+
+(* The program's refusals once its numbers of operands and outputs fit. *)
+let program_refusal (type c) (p : Prog.t) ~rank ~(acc : (float, c) D.t) v
+    loads =
+  let bad = misfit p ~first:1 v loads 0 and axis = past p rank 0 in
+  if not (is_of acc (Iarray.get p.ins 0)) then
+    wrong "a pair's program reads its score as %s, not %s"
+      (name (Iarray.get p.ins 0)) (D.name acc)
+  else if bad >= 0 then
+    wrong "load %d is %s where the program reads %s" bad
+      (name (v.dtype loads bad))
+      (name (Iarray.get p.ins (bad + 1)))
+  else if not (is_bool (output p 0) && is_of acc (output p 1)) then
+    wrong "a pair's program gives %s and %s, not bool and %s"
+      (name (output p 0)) (name (output p 1)) (D.name acc)
+  else if axis >= 0 then
+    misfits "a coordinate along axis %d of pairs of rank %d" axis rank
+  else if reads_score p (Iarray.get p.outs 0) then
+    misfits "a pair's visibility reads its score"
+  else None
+
+let attention_refusal (type v s w r c) (p : Prog.t) ~(q : (v, s) D.t) ~rank
+    ~(o : (w, r) D.t) ~(acc : (float, c) D.t) ~loads:v loads =
+  let ins = Iarray.length p.ins and outs = Iarray.length p.outs in
+  let n = v.arrays loads in
+  if not (attended (Any q)) then
+    wrong "attention of %s, not float16, bfloat16, float32 or float64"
+      (D.name q)
+  else if not (accumulator (Any acc)) || D.bits q > D.bits acc then
+    wrong
+      "attention's accumulator is float32 or float64, no narrower than the \
+       query: %s for a query of %s"
+      (D.name acc) (D.name q)
+  else if not (D.equal o acc || D.equal o q) then
+    wrong "attention's o of %s, not %s or %s" (D.name o)
+      (D.name acc) (D.name q)
+  else if ins <> n + 1 then
+    misfits "a pair's program of %d operands over a score and %d loads" ins n
+  else if outs <> 2 then
+    misfits "a pair's program of %d outputs, not 2" outs
+  else program_refusal p ~rank ~acc v loads
+
 module Shape = struct
   type t = int array
 
