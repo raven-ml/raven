@@ -15,10 +15,11 @@ module P = Talon_parquet
 (* Corpus *)
 
 (* One file per page version, codec and encoding, with the columns each file
-   holds as decimals, which reading needs declared, and two whose levels and
-   booleans run over every length around a byte and a word. The uncompressed
-   files reach the page decoders with every changed byte; the compressed ones
-   reach the decompressors. *)
+   holds as decimals, which reading needs declared, two whose levels and
+   booleans run over every length around a byte and a word, and the nested
+   files, whose levels hold every nesting. The uncompressed files reach the
+   page decoders with every changed byte; the compressed ones reach the
+   decompressors. *)
 let corpus =
   [
     ("types_plain.parquet", [ "d9"; "d18" ]);
@@ -38,6 +39,10 @@ let corpus =
     ("types_lz4.parquet", [ "d18" ]);
     ("bits_v1.parquet", []);
     ("bits_v2_rle.parquet", []);
+    ("nested_v1_plain.parquet", []);
+    ("nested_v1_dict.parquet", []);
+    ("nested_v2_plain.parquet", []);
+    ("nested_maps.snappy.parquet", []);
   ]
 
 let file_bytes =
@@ -244,6 +249,18 @@ let mutated =
       prop "with another file's footer"
         Gen.(pair pick pick)
         (fun (a, b) -> decode_mutated a (fun s -> splice s (file_bytes b)));
+      test "with any one bit of a nested file's pages flipped" (fun () ->
+          let s = Bytes.of_string (file_bytes "nested_v1_plain.parquet") in
+          for at = 4 to footer (Bytes.to_string s) - 1 do
+            let byte = Bytes.get_uint8 s at in
+            for bit = 0 to 7 do
+              Bytes.set_uint8 s at (byte lxor (1 lsl bit));
+              let b = Rig.Buffer.of_string (Bytes.to_string s) in
+              let f = Error.get_ok (P.sniff b) in
+              ignore (Query.run (Query.of_source (P.source f b)))
+            done;
+            Bytes.set_uint8 s at byte
+          done);
       prop "with an oversized length"
         Gen.(quad pick region nat (pair form oversized))
         (fun (name, r, k, (form, n)) ->

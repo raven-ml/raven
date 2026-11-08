@@ -37,14 +37,39 @@
     {!with_type} declares it as [float64], the float nearest each value, or, up
     to 18 digits, as [int64], each value's [unscaled] integer.
 
+    {1:nested Nested columns}
+
+    A field of a group reads as the column its shape says, a list or a record
+    of columns that each read by these same rules, and a null at any level of
+    a file reads as a null of that level's column:
+    - a group annotated [LIST] as a list, its element chosen by the
+      backward-compatibility rules of Parquet's
+      {{:https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists}
+       logical types}, so that a list of two levels and one of three read alike;
+    - a group annotated [MAP] or [MAP_KEY_VALUE] as a list of records, the
+      fields of its repeated group: a map's [key] and [value], or its [key]
+      alone when the file holds no values. A map is its pairs, in the file's
+      order, and two equal keys stay two elements;
+    - any other group as a record of its fields, in order, and null where the
+      file says the group is absent;
+    - a [repeated] field that no such group holds as a list of its values, null
+      nowhere.
+
+    The columns are the Arrow layouts of list offsets, a validity for each
+    level that can be null, and flat values over nx buffers, read with no copy
+    where nothing need be filled under a null. A value below a null is
+    unspecified, in a record's field as in a list's offsets.
+
     {1:refusals Refusals}
 
     {!sniff} refuses a file that talon cannot read in full:
     - a file whose footer or columns are encrypted;
     - a file whose column chunks are stored in other files;
-    - a nested column: a group, such as a list or a record, or a repeated field.
-      Talon reads flat files only;
-    - a map, an interval or a variant;
+    - an interval or a variant, at any level of a column;
+    - a [repeated] group annotated [LIST] or [MAP] that is not the element of a
+      list, a group annotated so that does not hold one [repeated] field, and a
+      map whose [repeated] field is not a group;
+    - a group of no fields, and a group with two fields of the same name;
     - a column chunk compressed with LZO, Brotli, Hadoop's LZ4 framing (the
       codec [LZ4]; [LZ4_RAW] is read) or a codec Parquet does not define. Talon
       reads uncompressed, Snappy, gzip, Zstandard and [LZ4_RAW] chunks. *)
@@ -81,7 +106,11 @@ val with_type : string -> Talon.Type.any -> format -> format
     - a wall-clock [datetime] of any unit, for an [int96] column. Its values
       must be whole numbers of the unit;
     - [float64], for a [DECIMAL] column, and [int64] for one of at most 18
-      digits.
+      digits;
+    - a list or a record of these, for a {{!nested}nested column}: a list of
+      what its element reads as, or a record of the same field names in order,
+      each reading as its field does. A decimal inside a nested column leaves
+      the whole column undeclared until [with_type] gives it a type.
 
     Values that break these rules fail when the column is read. Any other type
     is a computation on the column once read, such as [Expr.cast].
@@ -94,13 +123,15 @@ val pp_format : Format.formatter -> format -> unit
     then one line per column, with its name and the type it reads as, as
     {!Talon.Schema.pp} formats a column, and its Parquet type, as Parquet's
     schema language writes it, aligned after an arrow. A decimal that no
-    {!with_type} declared reads as [undeclared]:
+    {!with_type} declared reads as [undeclared], as does a nested column that
+    holds one:
     {v
-    parquet (4 columns)
+    parquet (5 columns)
       id int32                       ← required int32
       name string                    ← optional binary (STRING)
       "departs at" datetime[us, UTC] ← optional int64 (TIMESTAMP(MICROS,true))
       price undeclared               ← optional int64 (DECIMAL(12,2))
+      tags list[string]              ← optional group (LIST) { repeated group list { optional binary element (STRING); } }
     v} *)
 
 (** {1:reading Reading} *)
@@ -112,7 +143,7 @@ val source : format -> Rig.Buffer.t -> Talon.Source.t
 
     Its parts are the file's row groups, each one batch of the request's
     columns. Only the request's columns, and those of the conjuncts it applies,
-    are decoded.
+    are decoded: a nested column's every leaf, when it is requested.
 
     The source answers {!Talon.Source.Exact} for a conjunct that reads one
     column of [string] or [binary], and applies it as it reads: on a chunk with
@@ -128,11 +159,16 @@ val source : format -> Rig.Buffer.t -> Talon.Source.t
     integers but [uint64], dates, datetimes, byte strings, and floats in a row
     group that the file states holds no NaN.
 
+    A nested column's statistics are its leaves', which say nothing of its
+    rows, so no conjunct over a nested column prunes a row group.
+
     A read fails with [Error e] as {!sniff} does, if the file has no column of
     the request or one that does not read as [f]'s type, or if a column chunk
     fails to decode: [e] names the row group and the bytes of the page, or the
     column and the row of the row group where the value is not one its type
-    holds.
+    holds. A failure in a nested column names the column or, for a leaf, its
+    dotted path such as [tags.list.element], and a value's position among the
+    leaf's values stands for its row.
 
     Raises [Invalid_argument] if [f] leaves a decimal undeclared; the message
     names the column and the types it reads as. *)

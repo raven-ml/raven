@@ -436,7 +436,12 @@ let footer b =
 (* Pages *)
 
 type page =
-  | Data of { values : int; encoding : encoding; levels : encoding }
+  | Data of {
+      values : int;
+      encoding : encoding;
+      levels : encoding;
+      repetition : encoding option;
+    }
   | Data_v2 of {
       values : int;
       nulls : int;
@@ -468,17 +473,19 @@ let page_header b ~pos ~limit =
   let data_page r ty =
     let start = Thrift.pos r in
     let values = ref None and enc = ref None and levels = ref None in
+    let repetition = ref None in
     Thrift.structure r ty (fun id ty ->
         match id with
         | 1 -> values := Some (count Thrift.i32 r ty)
         | 2 -> enc := Some (encoding r ty)
         | 3 -> levels := Some (encoding r ty)
+        | 4 -> repetition := Some (encoding r ty)
         | _ -> Thrift.skip r ty);
     let get field v = required start "DataPageHeader" field v in
     let values = get "1 (num_values)" !values in
     let encoding = get "2 (encoding)" !enc in
     let levels = get "3 (definition_level_encoding)" !levels in
-    Data { values; encoding; levels }
+    Data { values; encoding; levels; repetition = !repetition }
   in
   let data_page_v2 r ty =
     let start = Thrift.pos r in

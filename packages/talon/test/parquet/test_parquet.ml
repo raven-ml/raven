@@ -289,12 +289,6 @@ let sniffing =
               "non_hadoop_lz4_compressed.parquet";
               "brotli.parquet";
               "large_string_map.brotli.parquet";
-              "map_no_value.parquet";
-              "incorrect_map_schema.parquet";
-              "datapage_v2.snappy.parquet";
-              "list_columns.parquet";
-              "nulls.snappy.parquet";
-              "repeated_primitive_no_list.parquet";
               "uniform_encryption.parquet.encrypted";
               "encrypt_columns_plaintext_footer.parquet.encrypted";
               "bad_data/PARQUET-1481.parquet";
@@ -311,13 +305,7 @@ let sniffing =
             hadoop_lz4_compressed.parquet: row group 0: column "c0" is compressed with LZ4 in Hadoop's framing, which talon does not read; LZ4_RAW is read
             non_hadoop_lz4_compressed.parquet: row group 0: column "c0" is compressed with LZ4 in Hadoop's framing, which talon does not read; LZ4_RAW is read
             brotli.parquet: row group 0: column "i32" is compressed with Brotli, which talon does not read
-            large_string_map.brotli.parquet: column "arr" is a map: talon reads flat Parquet files only
-            map_no_value.parquet: column "my_map" is a map: talon reads flat Parquet files only
-            incorrect_map_schema.parquet: column "my_map" is a map: talon reads flat Parquet files only
-            datapage_v2.snappy.parquet: column "e" is a list: talon reads flat Parquet files only
-            list_columns.parquet: column "int64_list" is a list: talon reads flat Parquet files only
-            nulls.snappy.parquet: column "b_struct" is a record: talon reads flat Parquet files only
-            repeated_primitive_no_list.parquet: column "Int32_list" is a repeated field: talon reads flat Parquet files only
+            large_string_map.brotli.parquet: row group 0: column "arr.key_value.key" is compressed with Brotli, which talon does not read
             uniform_encryption.parquet.encrypted: the file is encrypted, which talon does not read
             encrypt_columns_plaintext_footer.parquet.encrypted: the file is encrypted, which talon does not read
             bad_data/PARQUET-1481.parquet: byte 307: the footer is malformed: an undefined physical type, -7
@@ -808,6 +796,88 @@ let read_x b =
 
 let i32_max = 0x7FFF_FFFF
 
+(* Nested files: leaves under a schema's [elements], and pages of levels
+   written by hand. *)
+
+let required = 0
+let optional = 1
+let repeated = 2
+
+let schema_group ?converted repetition name children =
+  Struct
+    ((3, I32 repetition) :: (4, Bin name) :: (5, I32 children)
+    :: Option.fold ~none:[] ~some:(fun c -> [ (6, I32 c) ]) converted)
+
+let int32_field repetition name =
+  Struct [ (1, I32 1); (3, I32 repetition); (4, Bin name) ]
+
+let list_group = schema_group ~converted:3
+
+(* [nested_parquet ?rows ~elements chunks] is a file of one row group of [rows]
+   rows, with the schema [elements] and a chunk [(path, values, pages)] per
+   leaf. *)
+let nested_parquet ?(rows = 2) ?(stats = []) ~elements chunks =
+  let chunk (pos, acc) (path, values, pages) =
+    let size = I64 (String.length pages) in
+    let meta =
+      Struct
+        [
+          (1, I32 1);
+          (3, List (List.map (fun s -> Bin s) path));
+          (4, I32 0);
+          (5, I64 values);
+          (6, size);
+          (7, size);
+          (9, I64 pos);
+        ]
+    in
+    let meta = match meta with Struct f -> Struct (f @ stats) | m -> m in
+    (pos + String.length pages, Struct [ (3, meta) ] :: acc)
+  in
+  let _, cs = List.fold_left chunk (4, []) chunks in
+  let root = Struct [ (4, Bin "schema"); (5, I32 1) ] in
+  let footer =
+    thrift
+      (Struct
+         [
+           (2, List (root :: elements));
+           (3, I64 rows);
+           (4, List [ Struct [ (1, List (List.rev cs)); (3, I64 rows) ] ]);
+         ])
+  in
+  let pages = String.concat "" (List.map (fun (_, _, p) -> p) chunks) in
+  Rig.Buffer.of_string
+    ("PAR1" ^ pages ^ footer ^ int32s [ String.length footer ] ^ "PAR1")
+
+(* [runs rs] is the RLE runs [rs], each [(count, value)] of a byte. *)
+let runs rs =
+  String.concat ""
+    (List.map
+       (fun (n, v) -> Printf.sprintf "%c%c" (Char.chr (n lsl 1)) (Char.chr v))
+       rs)
+
+let prefixed s = int32s [ String.length s ] ^ s
+
+let level_page ?(data_page = [ (4, I32 3) ]) ~rep ~def values data =
+  page ~data_page values (prefixed (runs rep) ^ prefixed (runs def) ^ data)
+
+let nested_text b =
+  match P.sniff b with
+  | Error e -> error_text e
+  | Ok f -> (
+      match Query.run (Query.of_source (P.source f b)) with
+      | Ok t -> Format.asprintf "%a" Talon.pp t
+      | Error e -> error_text e)
+
+let x_elements =
+  [
+    list_group optional "x" 1;
+    schema_group repeated "list" 1;
+    int32_field optional "element";
+  ]
+
+let x_path = [ "x"; "list"; "element" ]
+
 let synthesized =
   group "Synthesized files"
     [
@@ -972,6 +1042,295 @@ let synthesized =
             snappy followed by a byte (35 bytes): row group 0: bytes 4-53: the page does not decompress: malformed at byte 34: output longer than the preamble
             lz4_raw followed by a byte (35 bytes): row group 0: bytes 4-53: the page does not decompress: truncated at byte 35
             |});
+    ]
+
+(* Nested columns *)
+
+let scalars (Nx.P x) =
+  let map f a = Array.map f (Nx.to_array a) in
+  match Format.asprintf "%a" Nx.pp_dtype (Nx.dtype x) with
+  | "bit" ->
+      map (fun b -> if b = 1 then "true" else "false") (Nx.cast Nx.uint8 x)
+  | "float64" -> map (Printf.sprintf "0x%016Lx") (Nx.bitcast Nx.int64 x)
+  | _ -> map Int64.to_string (Nx.cast Nx.int64 x)
+
+let is_bytes c =
+  match Column.type_ c with Type.Any (String | Binary) -> true | _ -> false
+
+(* [nested_cells c] is the rows of [c], as gen/nested.py renders pyarrow's. *)
+let rec nested_cells c =
+  let masked validity cs =
+    match validity with
+    | None -> cs
+    | Some v ->
+        Array.map2 (fun ok s -> if ok then s else "null") (Nx.to_array v) cs
+  in
+  match Column.layout c with
+  | Fixed { validity; values } -> masked validity (scalars values)
+  | Varsize { validity; offsets; child } when is_bytes c ->
+      let o = Nx.to_array offsets in
+      let d = Nx.to_array (Column.to_tensor Nx.uint8 child) in
+      let cell i =
+        let first = Int64.to_int o.(i) and last = Int64.to_int o.(i + 1) in
+        quote (String.init (last - first) (fun k -> Char.chr d.(first + k)))
+      in
+      masked validity (Array.init (Array.length o - 1) cell)
+  | Varsize { validity; offsets; child } ->
+      let o = Array.map Int64.to_int (Nx.to_array offsets) in
+      let items = nested_cells child in
+      let row i =
+        let its = Array.sub items o.(i) (o.(i + 1) - o.(i)) in
+        "[" ^ String.concat ", " (Array.to_list its) ^ "]"
+      in
+      masked validity (Array.init (Array.length o - 1) row)
+  | Children { validity; length; fields } ->
+      let fs = List.map (fun (n, c) -> (n, nested_cells c)) fields in
+      let row i =
+        let field (n, cs) = n ^ ": " ^ cs.(i) in
+        "{" ^ String.concat ", " (List.map field fs) ^ "}"
+      in
+      masked validity (Array.init length row)
+
+let read_nested file c =
+  match read (sniff file) file c with
+  | Ok c -> c
+  | Error e -> failf "%s %s: %s" file c (error_text e)
+
+let split l = Scanf.sscanf l "%s %S %[^\n]" (fun f c rest -> (f, c, rest))
+
+(* The law: rows of nullable lists of nullable lists of nullable integers,
+   flattened by hand to Dremel's stripes, read back as themselves. Definition
+   levels: 0 null row, 1 empty, 2 null inner list, 3 empty, 4 null, 5 a value. *)
+
+let stripe_elements =
+  [
+    list_group optional "x" 1;
+    schema_group repeated "list" 1;
+    list_group optional "element" 1;
+    schema_group repeated "list" 1;
+    int32_field optional "element";
+  ]
+
+let shred rows =
+  let entries = ref [] and values = ref [] in
+  let entry r d = entries := (r, d) :: !entries in
+  let inner r = function
+    | None -> entry r 2
+    | Some [||] -> entry r 3
+    | Some xs ->
+        Array.iteri
+          (fun i x ->
+            let r = if i = 0 then r else 2 in
+            match x with
+            | None -> entry r 4
+            | Some v ->
+                entry r 5;
+                values := v :: !values)
+          xs
+  in
+  let row = function
+    | None -> entry 0 0
+    | Some [||] -> entry 0 1
+    | Some ls -> Array.iteri (fun i l -> inner (min i 1) l) ls
+  in
+  Array.iter row rows;
+  (List.rev !entries, List.rev !values)
+
+let rendered rows =
+  let bracket f xs =
+    "[" ^ String.concat ", " (Array.to_list (Array.map f xs)) ^ "]"
+  in
+  let opt f = function None -> "null" | Some x -> f x in
+  Array.map (opt (bracket (opt (bracket (opt string_of_int))))) rows
+
+let stripes =
+  let open Gen in
+  let small g = array ~size:(int_range 0 3) g in
+  array ~size:(int_range 1 12)
+    (option (small (option (small (option (int_range (-9) 9))))))
+
+(* [striped rows k] is the file of [rows], its pages cut at the entry [k]. *)
+let striped rows k =
+  let entries, values = shred rows in
+  let n = List.length entries in
+  let k = k mod (n + 1) in
+  let sub l a b = List.filteri (fun i _ -> a <= i && i < b) l in
+  let present a b =
+    List.length (List.filter (fun (_, d) -> d = 5) (sub entries a b))
+  in
+  let page a b =
+    if a = b then ""
+    else
+      let es = sub entries a b in
+      level_page
+        ~rep:(List.map (fun (r, _) -> (1, r)) es)
+        ~def:(List.map (fun (_, d) -> (1, d)) es)
+        (b - a)
+        (int32s (sub values (present 0 a) (present 0 b)))
+  in
+  nested_parquet ~rows:(Array.length rows) ~elements:stripe_elements
+    [ ([ "x"; "list"; "element"; "list"; "element" ], n, page 0 k ^ page k n) ]
+
+let nested_files =
+  group "Nested files"
+    [
+      prop "a table read from its stripes equals the table they flatten"
+        Gen.(pair stripes nat)
+        (fun (rows, k) ->
+          let has f = Array.exists f rows in
+          let inner f = has (function Some ls -> Array.exists f ls | _ -> false) in
+          cover "a null row" (has Option.is_none);
+          cover "an empty row" (has (( = ) (Some [||])));
+          cover "a null inner list" (inner Option.is_none);
+          cover "an empty inner list" (inner (( = ) (Some [||])));
+          cover "a null integer"
+            (inner (function Some xs -> Array.mem None xs | _ -> false));
+          let b = striped rows k in
+          match read_from (Error.get_ok (P.sniff b)) b "x" with
+          | Error e -> failf "%s" (error_text e)
+          | Ok c -> equal (array string) (rendered rows) (nested_cells c));
+      cases "columns read as pyarrow reads them"
+        ~id:(fun l -> let f, c, _ = split l in f ^ " " ^ c)
+        (In_channel.with_open_text "golden/nested.txt" In_channel.input_lines)
+        (fun l ->
+          let f, c, want = split l in
+          equal string want
+            (String.concat " " (Array.to_list (nested_cells (read_nested f c)))));
+      test "with_type retypes a nested column's leaves, not its shape" (fun () ->
+          let name = "nested_v1_plain.parquet" in
+          let f =
+            P.with_type "texts" (Type.Any (Type.list Type.binary)) (sniff name)
+          in
+          (match read f name "texts" with
+          | Ok c ->
+              let (Type.Any t) = Column.type_ c in
+              equal string "list[binary]" (Format.asprintf "%a" Type.pp t)
+          | Error e -> failf "%s" (error_text e));
+          raises_match
+            (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> P.with_type "lists" (Type.Any Type.int64) (sniff name)));
+      test "a conjunct on a nested column prunes no row group" (fun () ->
+          (* The leaf's statistics say no null, and the first row is null. *)
+          let b =
+            nested_parquet
+              ~stats:[ (12, Struct [ (3, I64 0) ]) ]
+              ~elements:x_elements
+              [ ( x_path,
+                  2,
+                  level_page ~rep:[ (2, 0) ] ~def:[ (1, 0); (1, 3) ] 2
+                    (int32s [ 7 ]) ) ]
+          in
+          Query.of_source (P.source (Error.get_ok (P.sniff b)) b)
+          |> Query.filter Expr.(is_null (Col.v (Kind.list Kind.int) "x"))
+          |> Query.run |> Error.get_ok |> Talon.rows |> equal int 1);
+      test "a filter on a flat column takes the rows of a nested one" (fun () ->
+          let name = "nested_v1_dict.parquet" in
+          let t =
+            Query.of_source (P.source (sniff name) (buffer name))
+            |> Query.filter Expr.(Col.string "tag" = string "t1")
+            |> Query.select Expr.[ keep (Sel.names [ "people" ]) ]
+            |> Query.run |> Error.get_ok
+          in
+          let all = nested_cells (read_nested name "people") in
+          equal (list string)
+            (List.filteri (fun i _ -> i mod 3 = 1) (Array.to_list all))
+            (Array.to_list (nested_cells (Talon.column t "people"))));
+      test "levels written by hand" (fun () ->
+          let leaf ?rows ?claim ~rep ~def values data =
+            let claim = Option.value claim ~default:values in
+            nested_parquet ?rows ~elements:x_elements
+              [ (x_path, claim, level_page ~rep ~def values data) ]
+          in
+          let show name b = Printf.printf "%s: %s\n" name (nested_text b) in
+          show "a level past the maximum"
+            (leaf ~rep:[ (2, 2) ] ~def:[ (2, 3) ] 2 (int32s [ 1; 2 ]));
+          show "a first entry that does not start a row"
+            (leaf ~rep:[ (2, 1) ] ~def:[ (2, 3) ] 2 (int32s [ 1; 2 ]));
+          show "an entry repeating an undefined list"
+            (leaf ~rep:[ (1, 0); (1, 1) ] ~def:[ (1, 3); (1, 1) ] 2
+               (int32s [ 1 ]));
+          show "pages that do not add up to the chunk"
+            (leaf ~claim:5 ~rep:[ (2, 0) ] ~def:[ (2, 3) ] 2 (int32s [ 1; 2 ]));
+          show "fewer rows than the row group"
+            (leaf ~rows:3 ~rep:[ (1, 0); (2, 1) ] ~def:[ (3, 3) ] 3
+               (int32s [ 1; 2; 3 ]));
+          show "two fields of a record that disagree"
+            (let field name rep =
+               ( [ "x"; name ],
+                 2,
+                 level_page ~rep ~def:[ (2, 1) ] 2 (int32s [ 1; 2 ]) )
+             in
+             let f = int32_field repeated in
+             nested_parquet
+               ~elements:[ schema_group required "x" 2; f "a"; f "b" ]
+               [ field "a" [ (2, 0) ]; field "b" [ (1, 0); (1, 1) ] ]);
+          expect (output ()) @@ __POS_OF__ {|
+            a level past the maximum: row group 0: bytes 4-40: column "x.list.element": the repetition levels: a value is out of its bounds
+            a first entry that does not start a row: row group 0: column "x.list.element": the levels: the first entry does not start a row
+            an entry repeating an undefined list: row group 0: column "x": the levels: an entry repeats a field that is not defined
+            pages that do not add up to the chunk: row group 0: bytes 4-40: column "x.list.element": the pages hold 2 values, and the column chunk 5
+            fewer rows than the row group: row group 0: column "x" holds 1 rows in a row group of 3
+            two fields of a record that disagree: row group 0: column "x": field "b" holds 1 values for the record's 2
+            |});
+      test "the shapes the list rules read" (fun () ->
+          let shape want elements paths def =
+            let chunk path =
+              let p = level_page ~rep:[ (2, 0) ] ~def:[ (2, def) ] 2 "" in
+              (path, 2, p)
+            in
+            let b = nested_parquet ~elements (List.map chunk paths) in
+            let text = format_text (Error.get_ok (P.sniff b)) in
+            let line = List.nth (String.split_on_char '\n' text) 1 in
+            equal string want (List.hd (String.split_on_char '\xe2' line))
+          in
+          let l = list_group optional "x" 1 in
+          let a = int32_field required "a" and b = int32_field required "b" in
+          shape "  x list[record[a int32, b int32]] "
+            [ l; schema_group repeated "pair" 2; a; b ]
+            [ [ "x"; "pair"; "a" ]; [ "x"; "pair"; "b" ] ]
+            2;
+          shape "  x list[record[a int32]] "
+            [ l; schema_group repeated "array" 1; a ]
+            [ [ "x"; "array"; "a" ] ] 2;
+          shape "  x list[record[a int32, b int32]] "
+            [ schema_group repeated "x" 2; a; b ]
+            [ [ "x"; "a" ]; [ "x"; "b" ] ] 1);
+      test "a schema talon refuses names the column" (fun () ->
+          let refused name elements =
+            Printf.printf "%s: %s\n" name
+              (nested_text (nested_parquet ~elements [ (x_path, 2, "") ]))
+          in
+          let a = int32_field repeated "a" and r = int32_field required "a" in
+          refused "a LIST of two fields" [ list_group optional "x" 2; a; a ];
+          refused "a repeated LIST outside a list"
+            [ list_group repeated "x" 1; a ];
+          refused "a MAP whose entries are not a group"
+            [ schema_group ~converted:1 optional "x" 1; a ];
+          refused "a group of no fields" [ schema_group optional "x" 0 ];
+          refused "two fields of one name"
+            [ schema_group optional "x" 2; r; r ];
+          expect (output ()) @@ __POS_OF__ {|
+            a LIST of two fields: column "x" is a list of 2 fields, not of one repeated field
+            a repeated LIST outside a list: column "x" is a repeated list or map, which Parquet allows only as the element of another list
+            a MAP whose entries are not a group: column "x" is a map whose entries are not a group
+            a group of no fields: the schema is malformed: column "x" is a group of no fields
+            two fields of one name: column "x" has two fields named "a"
+            |});
+      test "a level past 255 reads" (fun () ->
+          (* Definition levels 300 and 0, as RLE runs of 2-byte values. *)
+          let depth = 300 in
+          let elements =
+            List.init depth (fun i ->
+                schema_group optional (if i = 0 then "x" else "g") 1)
+            @ [ int32_field required "v" ]
+          in
+          let path = "x" :: List.init (depth - 1) (fun _ -> "g") @ [ "v" ] in
+          let def = "\x02\x2c\x01\x02\x00\x00" in
+          let p = page ~data_page:[] 2 (prefixed def ^ int32s [ 42 ]) in
+          let b = nested_parquet ~elements [ (path, 2, p) ] in
+          match read_from (Error.get_ok (P.sniff b)) b "x" with
+          | Error e -> failf "%s" (error_text e)
+          | Ok c -> equal int 1 (Column.null_count c));
     ]
 
 (* Sources *)
@@ -1790,12 +2149,11 @@ let sources =
       test "file refuses what sniff refuses, naming the file" (fun () ->
           List.iter
             (fun name -> print_endline (outcome (P.file (path name))))
-            [ "brotli.parquet"; "map_no_value.parquet"; "missing.parquet" ];
+            [ "brotli.parquet"; "missing.parquet" ];
           expect (output ())
           @@ __POS_OF__
                {|
             support/brotli.parquet: row group 0: column "i32" is compressed with Brotli, which talon does not read
-            support/map_no_value.parquet: column "my_map" is a map: talon reads flat Parquet files only
             support/missing.parquet: No such file or directory
             |});
     ]
@@ -1958,6 +2316,6 @@ let () =
   exit
     (run "talon.parquet"
        [
-         agreement; clocks; sniffing; formats; synthesized; sources; decoding;
-         memory;
+         agreement; clocks; sniffing; formats; synthesized; nested_files;
+         sources; decoding; memory;
        ])

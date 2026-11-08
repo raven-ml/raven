@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*/
 
 /* Parquet's sequential decoders: the RLE and bit-packing hybrid, into bytes,
-   int64s or bits, PLAIN booleans, delta binary packing, the assembly of
+   int64s or bits, the walk of a nested leaf's levels, PLAIN booleans, delta binary packing, the assembly of
    delta-encoded byte arrays, and PLAIN byte arrays; the gather of
    dictionary-encoded byte arrays and of their ends; and the spread of a
    page's values onto its rows.
@@ -30,6 +30,8 @@ enum {
   ERR_COUNT = -5,     /* a delta header's count is not the expected one */
   ERR_DATA = -6,      /* the byte strings' data array is too small */
   ERR_CAPACITY = -7,  /* another output array is too small */
+  ERR_ROW = -8,       /* a chunk's first entry does not start a row */
+  ERR_REPEAT = -9,    /* an entry repeats a field that is not defined */
 };
 
 #define BYTES(v) ((uint8_t *)Caml_ba_data_val(v))
@@ -310,6 +312,113 @@ CAMLprim value talon_parquet_hybrid_bits_byte(value *argv, int argc)
   (void)argc;
   return talon_parquet_hybrid_bits(argv[0], argv[1], argv[2], argv[3],
                                    argv[4], argv[5], argv[6]);
+}
+
+/* Levels
+
+   A nested leaf's definition and repetition levels, an entry each, as uint8s
+   or, past 255, int64s. [walk] reads the slots of one node of the column
+   out of them: entry [i] opens a slot iff its repetition level is at most [r]
+   and its definition level at least [d], the slot holds a value iff the
+   definition level is at least [nonnull], and it adds an element to the
+   slot's list iff its repetition level is at most [er] and its definition
+   level at least [ed]. A leaf without one of the levels passes no array for
+   it, and every level reads as zero.
+
+   A valid file's first entry starts a row, and an entry that repeats the list
+   defines it and follows a slot: [ERR_ROW] and [ERR_REPEAT] are a level stream
+   no writer produces. */
+
+#define LEVEL_KERNELS(T)                                                     \
+  static int64_t count_##T(const T *a, int64_t n, int64_t v)                 \
+  {                                                                          \
+    int64_t c = 0;                                                           \
+    for (int64_t i = 0; i < n; i++) c += (int64_t)a[i] == v;                 \
+    return c;                                                                \
+  }                                                                          \
+                                                                             \
+  static int64_t walk_##T(const T *def, const T *rep, int64_t n, int64_t r,  \
+                          int64_t d, int64_t nonnull, int64_t er,            \
+                          int64_t ed, uint8_t *valid, int64_t valid_bits,    \
+                          int64_t *offsets, int64_t offsets_len)             \
+  {                                                                          \
+    int64_t slots = 0, elems = 0;                                            \
+    if (n > 0 && rep && rep[0] != 0) return ERR_ROW;                         \
+    for (int64_t i = 0; i < n; i++) {                                        \
+      int64_t dl = def ? (int64_t)def[i] : 0;                                \
+      int64_t rl = rep ? (int64_t)rep[i] : 0;                                \
+      if (rl <= r && dl >= d) {                                              \
+        if (offsets) {                                                       \
+          if (slots >= offsets_len) return ERR_CAPACITY;                     \
+          offsets[slots] = elems;                                            \
+        }                                                                    \
+        if (valid && dl >= nonnull) {                                        \
+          if (slots >= valid_bits) return ERR_CAPACITY;                      \
+          valid[slots >> 3] |= (uint8_t)(1u << (slots & 7));                 \
+        }                                                                    \
+        slots++;                                                             \
+      }                                                                      \
+      if (rl <= er) {                                                        \
+        if (dl >= ed) {                                                      \
+          if (slots == 0) return ERR_REPEAT;                                 \
+          elems++;                                                           \
+        } else if (rl == er)                                                 \
+          return ERR_REPEAT;                                                 \
+      }                                                                      \
+    }                                                                        \
+    if (offsets) {                                                           \
+      if (slots >= offsets_len) return ERR_CAPACITY;                         \
+      offsets[slots] = elems;                                                \
+    }                                                                        \
+    return slots;                                                            \
+  }
+
+LEVEL_KERNELS(uint8_t)
+LEVEL_KERNELS(int64_t)
+
+#define IS_WIDE(v) \
+  ((Caml_ba_array_val(v)->flags & CAML_BA_KIND_MASK) == CAML_BA_INT64)
+
+/* [level_count a at n v] is how many of the [n] levels from index [at] are
+   [v]. */
+CAMLprim value talon_parquet_level_count(value a, value at, value n, value v)
+{
+  int64_t f = Long_val(at), c = Long_val(n), x = Long_val(v);
+  if (!room(f, c, DIM(a))) return Val_long(ERR_CAPACITY);
+  return Val_long(IS_WIDE(a) ? count_int64_t((int64_t *)Caml_ba_data_val(a) + f, c, x)
+                             : count_uint8_t(BYTES(a) + f, c, x));
+}
+
+/* [level_walk def rep n r d nonnull er ed valid offsets] is the number of slots
+   of a node among the [n] entries, writing their bits to [valid] and their
+   element counts so far to [offsets] when those are not empty. An empty [def]
+   or [rep] is all zeros. */
+CAMLprim value talon_parquet_level_walk(value def, value rep, value n, value r,
+                                        value d, value nonnull, value er,
+                                        value ed, value valid, value offsets)
+{
+  int64_t c = Long_val(n);
+  if (c < 0 || (DIM(def) > 0 && c > DIM(def)) || (DIM(rep) > 0 && c > DIM(rep))
+      || IS_WIDE(def) != IS_WIDE(rep))
+    return Val_long(ERR_CAPACITY);
+  void *ds = DIM(def) > 0 ? Caml_ba_data_val(def) : NULL;
+  void *rs = DIM(rep) > 0 ? Caml_ba_data_val(rep) : NULL;
+  uint8_t *v = DIM(valid) > 0 ? BYTES(valid) : NULL;
+  int64_t *o = DIM(offsets) > 0 ? (int64_t *)Caml_ba_data_val(offsets) : NULL;
+  if (IS_WIDE(def))
+    return Val_long(walk_int64_t(ds, rs, c, Long_val(r), Long_val(d),
+                                 Long_val(nonnull), Long_val(er), Long_val(ed),
+                                 v, 8 * DIM(valid), o, DIM(offsets)));
+  return Val_long(walk_uint8_t(ds, rs, c, Long_val(r), Long_val(d),
+                               Long_val(nonnull), Long_val(er), Long_val(ed),
+                               v, 8 * DIM(valid), o, DIM(offsets)));
+}
+
+CAMLprim value talon_parquet_level_walk_byte(value *argv, int argc)
+{
+  (void)argc;
+  return talon_parquet_level_walk(argv[0], argv[1], argv[2], argv[3], argv[4],
+                                  argv[5], argv[6], argv[7], argv[8], argv[9]);
 }
 
 /* [plain_bits src pos len n dst at] copies the [n] PLAIN booleans of the span,

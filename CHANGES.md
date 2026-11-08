@@ -3964,6 +3964,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `talon.parquet` reads nested columns: `sniff` and `source` read a list, a
+  record and a map, null at any level, as `Type.list`, `Type.record` and a list
+  of key and value records. Repeated fields, the legacy list shapes of the
+  Parquet format, data page v1 and v2 and dictionary pages all follow one
+  decoding of a leaf's repetition and definition levels.
 - `Expr.window`'s `var` and `std` without `before` keep their digits far from
   zero, as those of other frames do: a running window's scan takes each value
   less its partition's first. Their bits change.

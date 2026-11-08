@@ -58,6 +58,10 @@ Files of [apache/parquet-testing](https://github.com/apache/parquet-testing) at 
 - `list_columns.parquet`
 - `nulls.snappy.parquet`
 - `repeated_primitive_no_list.parquet`
+- `old_list_structure.parquet`
+- `nested_lists.snappy.parquet`
+- `nested_maps.snappy.parquet`
+- `nullable.impala.parquet`
 - `uniform_encryption.parquet.encrypted`
 - `encrypt_columns_plaintext_footer.parquet.encrypted`
 - `bad_data/ARROW-GH-43605.parquet`

@@ -207,12 +207,11 @@ and rune), raven / llama.cpp b12048 Vulkan:
   Data: ~/wt/tmp/talon-data on fudge (decision SF0.1/SF1, H2O 1e6/1e7)
 - talon 1.0 plan (_plans/talon/product/plan.md; designs adjudicated in
   _plans/talon/design/): range joins (6f37e59c7), windows, Kit fills,
-  as-of joins, interval sets and nesting landed; ewm waits for the
-  maintainer's scope call; then folds, zoned time,
-  hash/sample/shuffle, Pivot, dense round trips, partial
-  aggregation, regex, compressed and fixed-width CSV, Parquet nested
-  columns, datasets and writer, talon.arrow, talon.jsont, complex and
-  validity columns, HTML display
+  as-of joins, interval sets, nesting and nested Parquet reads landed;
+  ewm waits for the maintainer's scope call; then folds, zoned time,
+  hash/sample/shuffle, Pivot, dense round trips, partial aggregation,
+  regex, compressed and fixed-width CSV, Parquet datasets and writer,
+  talon.arrow, talon.jsont, complex and validity columns, HTML display
 - brot vs gigatoken cd5ee648c6 on fudge (bench README, "Against
   gigatoken"): GPT-2 runs at 0.55-0.65 of its speed on one thread over
   100 MB (abbeface7). Pages: a warm pass faults 11.5k-29k times, mostly

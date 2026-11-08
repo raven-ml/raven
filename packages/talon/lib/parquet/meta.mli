@@ -187,9 +187,15 @@ type encoding =
 
 (** The type for the pages of a column chunk, [PageType] with its header. *)
 type page =
-  | Data of { values : int; encoding : encoding; levels : encoding }
+  | Data of {
+      values : int;
+      encoding : encoding;
+      levels : encoding;
+      repetition : encoding option;
+    }
       (** [DATA_PAGE]: [num_values] values, nulls included, in [encoding];
-          [levels] is the [definition_level_encoding]. *)
+          [levels] is the [definition_level_encoding] and [repetition] the
+          [repetition_level_encoding], when present. *)
   | Data_v2 of {
       values : int;
       nulls : int;

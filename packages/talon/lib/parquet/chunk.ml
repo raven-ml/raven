@@ -85,6 +85,25 @@ external plain_byte_array :
   = "talon_parquet_plain_byte_array_byte" "talon_parquet_plain_byte_array"
 [@@noalloc]
 
+external level_count :
+  ('a, 'b, Bigarray.c_layout) A1.t -> int -> int -> int -> int
+  = "talon_parquet_level_count"
+[@@noalloc]
+
+external level_walk :
+  ('a, 'b, Bigarray.c_layout) A1.t ->
+  ('a, 'b, Bigarray.c_layout) A1.t ->
+  int ->
+  int ->
+  int ->
+  int ->
+  int ->
+  int ->
+  bigbytes ->
+  int64s ->
+  int = "talon_parquet_level_walk_byte" "talon_parquet_level_walk"
+[@@noalloc]
+
 external gather_ends : int64s -> int64s -> int64s -> int
   = "talon_parquet_gather_ends"
 [@@noalloc]
@@ -108,6 +127,7 @@ let i64 = Bigarray.int64
 let bytes n = A1.create u8 Bigarray.c_layout n
 let int64s n = A1.create i64 Bigarray.c_layout n
 let no_bytes = bytes 0
+let no_ints = int64s 0
 
 (* [fresh dt n] is a host array of [n] elements of [dt]. *)
 let fresh dt n = Nx_array.host dt [| n |]
@@ -180,23 +200,29 @@ let check (m : Meta.file) ~row_group i (l : Leaf.t) =
   let c = m.row_groups.(row_group).chunks.(i) in
   let fail ?bytes fmt = Meta.fail ~row_group ?bytes fmt in
   if c.encrypted then
-    fail "column %S is encrypted, which talon does not read" l.name;
-  Option.iter
-    (fail "column %S is stored in %S, which talon does not read" l.name)
-    c.file_path;
+    fail "column %S is encrypted, which talon does not read" (Leaf.name l);
+  (match c.file_path with
+  | Some f ->
+      fail "column %S is stored in %S, which talon does not read"
+        (Leaf.name l) f
+  | None -> ());
   let cm =
     match c.meta with
     | Some cm -> cm
-    | None -> fail "column %S has no metadata" l.name
+    | None -> fail "column %S has no metadata" (Leaf.name l)
   in
-  if cm.path <> [ l.name ] then
-    fail "column %S: its chunk is of the column %S" l.name
+  if not (List.equal String.equal (List.rev cm.path) l.rev_path) then
+    fail "column %S: its chunk is of the column %S" (Leaf.name l)
       (String.concat "." cm.path);
   if cm.physical <> l.physical then
-    fail "column %S: its chunk's physical type is not its schema's" l.name;
+    fail "column %S: its chunk's physical type is not its schema's"
+      (Leaf.name l);
   let rows = m.row_groups.(row_group).rows in
-  if cm.values <> rows then
-    fail "column %S holds %d values for %d rows" l.name cm.values rows;
+  (* Only a repeated column holds more entries than rows. *)
+  if (if l.rep = 0 then cm.values <> rows else cm.values < rows) then
+    fail "column %S holds %d values for %d rows" (Leaf.name l) cm.values rows;
+  if l.rep > 0 && rows = 0 && cm.values <> 0 then
+    fail "column %S holds %d values for no rows" (Leaf.name l) cm.values;
   let first = first_page cm in
   let size = min cm.compressed_size (max_int - first) in
   (* A chunk of no values has no pages to read, and writers leave its offsets at
@@ -205,23 +231,24 @@ let check (m : Meta.file) ~row_group i (l : Leaf.t) =
     fail
       ~bytes:(first, first + max 0 (size - 1))
       "column %S: its pages overrun the file, whose footer starts at byte %d"
-      l.name m.footer;
+      (Leaf.name l) m.footer;
   match cm.codec with
   | Uncompressed | Snappy | Gzip | Zstd | Lz4_raw -> ()
   | Lzo ->
-      fail "column %S is compressed with LZO, which talon does not read" l.name
+      fail "column %S is compressed with LZO, which talon does not read"
+        (Leaf.name l)
   | Brotli ->
       fail "column %S is compressed with Brotli, which talon does not read"
-        l.name
+        (Leaf.name l)
   | Lz4 ->
       fail
         "column %S is compressed with LZ4 in Hadoop's framing, which talon \
          does not read; LZ4_RAW is read"
-        l.name
+        (Leaf.name l)
   | Unknown_codec n ->
       fail
         "column %S is compressed with codec %d, which Parquet does not define"
-        l.name n
+        (Leaf.name l) n
 
 (* Parquet values
 
@@ -552,6 +579,8 @@ let kernel_error = function
   | -3 -> "a bit width is wider than its values"
   | -4 -> "a header is malformed"
   | -5 -> "a header counts other values than the page holds"
+  | -8 -> "the first entry does not start a row"
+  | -9 -> "an entry repeats a field that is not defined"
   | _ -> "an output is too small"
 
 (* [spread_values v ~valid ~rows] is the values [v] at the rows the bit array
@@ -644,6 +673,76 @@ let coded ~row_group idx ~valid ~rows ~offsets ~data =
     let codes = Nx.where (Nx.cast Nx.bool valid) codes empty in
     Coded { valid = Some valid; codes; offsets; data }
 
+(* Levels
+
+   A nested leaf's level entries, its definition and repetition levels one per
+   entry, as bytes when its levels fit them, as most do, and int64s otherwise:
+   no schema depth is refused. Only the kernels read them. *)
+
+type levels =
+  | Levels : {
+      def : ('a, 'b, Bigarray.c_layout) A1.t;
+      rep : ('a, 'b, Bigarray.c_layout) A1.t;
+      n : int;
+    }
+      -> levels
+
+let byte_levels = 255
+
+(* [level_arrays l n] is room for [n] entries of the leaf [l]. A level the leaf
+   does not have takes no array: the walk reads it as zero. *)
+let level_arrays (l : Leaf.t) n =
+  let make kind =
+    let a present =
+      A1.create kind Bigarray.c_layout (if present then n else 0)
+    in
+    Levels { def = a (l.def > 0); rep = a (l.rep > 0); n = 0 }
+  in
+  if max l.def l.rep <= byte_levels then make u8 else make i64
+
+let with_n (Levels lv) n = Levels { lv with n }
+
+(* [bit_width max] is the bits a level of at most [max] takes. *)
+let bit_width max =
+  let rec go w = if max lsr w = 0 then w else go (w + 1) in
+  go 0
+
+(* [walk ~row_group lv s ~elem] is the validity bytes of the node [s] selects
+   among the entries of [lv], its offsets when [elem] names a list's elements,
+   and its slots. The validity is [None] when the node is never null. *)
+let walk ~row_group (Levels lv) (s : Leaf.slots) ~elem =
+  let er, ed = Option.value elem ~default:(-1, 0) in
+  let run valid offsets =
+    let r =
+      level_walk lv.def lv.rep lv.n s.rep s.def s.nonnull er ed valid offsets
+    in
+    if r < 0 then Meta.fail ~row_group "the levels: %s" (kernel_error r);
+    r
+  in
+  let slots = run no_bytes no_ints in
+  let mask = if s.nonnull > s.def then Some (zeros_for_bits slots) else None in
+  let offsets = Option.map (fun _ -> fresh Nx.int64 (slots + 1)) elem in
+  let with_mask f =
+    match mask with Some m -> writing m f | None -> f no_bytes
+  in
+  let with_offsets f =
+    match offsets with Some o -> writing o f | None -> f no_ints
+  in
+  ignore (with_mask (fun v -> with_offsets (run v)));
+  (mask, offsets, slots)
+
+(* [named name f] is [f ()], whose errors name the column [name]. *)
+let named name f =
+  try f ()
+  with Meta.Error r ->
+    let msg = Printf.sprintf "column %S: %s" name r.msg in
+    raise (Meta.Error { r with msg })
+
+let structure ~row_group ~name lv s ~elem =
+  named name @@ fun () ->
+  let mask, offsets, slots = walk ~row_group lv s ~elem in
+  (Option.map (fun m -> bits m slots) mask, Option.map value offsets, slots)
+
 (* Reading *)
 
 let encoding_name : Meta.encoding -> string = function
@@ -660,9 +759,13 @@ let encoding_name : Meta.encoding -> string = function
 
 let u32 b pos = Int64.to_int (le b pos 4)
 
-let read ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
+let read_chunk ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t)
+    (Type.Any ty) =
   let rows = m.row_groups.(row_group).rows in
   let cm = Option.get m.row_groups.(row_group).chunks.(i).meta in
+  (* A flat column has one entry per row; a repeated one, [cm.values] entries,
+     which the pages must add up to. *)
+  let entries = cm.values in
   let here = ref None in
   let fail fmt = Meta.fail ~row_group ?bytes:!here fmt in
   let exactly what used len =
@@ -674,7 +777,10 @@ let read ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
   (* [consumes what len r] checks that a kernel that returned [r] decoded [what]
      from exactly [len] bytes. *)
   let consumes what len r = exactly what (kernel what r) len in
-  let valid = if l.optional then Some (zeros_for_bits rows) else None in
+  let valid =
+    if l.optional && not l.nested then Some (zeros_for_bits rows) else None
+  in
+  let lv = ref None in
   (* The bigarrays of the validity, of the table's bytes when its values are
      fixed-width, and of the dictionary indices, under write claims held from
      the second page to the last, so that a page takes no claim of its own. *)
@@ -737,6 +843,30 @@ let read ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
     consumes "the definition levels" len
       (hybrid_bits src pos len 1 values valid !row);
     kernel "the definition levels" (count_bits valid !row values)
+  in
+  (* [nested_levels src rp rl dp dl values] decodes the levels of [values]
+     entries of a nested leaf into [lv], and is how many hold a value. *)
+  let nested_levels src rp rl dp dl values =
+    let (Levels lv) = Option.get !lv in
+    if l.rep > 0 then
+      consumes "the repetition levels" rl
+        (hybrid src rp rl (bit_width l.rep) values lv.rep !row (l.rep + 1));
+    if l.def = 0 then values
+    else begin
+      consumes "the definition levels" dl
+        (hybrid src dp dl (bit_width l.def) values lv.def !row (l.def + 1));
+      kernel "the definition levels" (level_count lv.def !row values l.def)
+    end
+  in
+  (* [prefixed what enc src p len] is the span of the levels [what] that a
+     length prefixes at [p], and the bytes of the page after them. *)
+  let prefixed what (enc : Meta.encoding) src p len =
+    if enc <> Rle then
+      fail "%s in %s are not read" what (encoding_name enc);
+    if len < 4 then fail "the %s' length overruns the page" what;
+    let n = u32 src p in
+    if n > len - 4 then fail "the %s overrun the page" what;
+    (p + 4, n, p + 4 + n, len - 4 - n)
   in
   let plain t b src pos len n =
     match l.physical with
@@ -856,11 +986,12 @@ let read ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
     present := !present + n
   in
   let rows_left values =
-    if values > rows - !row then
+    if values > entries - !row then
       fail "the page holds %d rows, past the row group's %d" values rows
   in
-  (* [page pos stop] decodes the page at [pos], and is where it ends. *)
-  let page pos stop =
+  (* [header pos stop] is the page header at [pos] and where its bytes start,
+     which it checks lie before [stop]. *)
+  let header pos stop =
     here := Some (pos, stop - 1);
     let h, data =
       try Meta.page_header b ~pos ~limit:stop
@@ -870,6 +1001,11 @@ let read ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
     in
     if h.compressed_size > stop - data then
       fail "the page overruns its column chunk";
+    (h, data)
+  in
+  (* [page pos stop] decodes the page at [pos], and is where it ends. *)
+  let page pos stop =
+    let h, data = header pos stop in
     let page_end = data + h.compressed_size in
     here := Some (pos, page_end - 1);
     Option.iter
@@ -893,24 +1029,33 @@ let read ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
         with_bytes t (fun b -> plain t b src p len values);
         t.n <- values;
         dict := values;
-        idx := Some (fresh Nx.int64 rows)
-    | Data { values; encoding; levels = encoding_levels } ->
+        idx := Some (fresh Nx.int64 entries)
+    | Data { values; encoding; levels = def_encoding; repetition } ->
         rows_left values;
         let src, p, len =
           decompress b data h.compressed_size h.uncompressed_size
         in
         let p, len, n =
-          if not l.optional then (p, len, values)
-          else begin
-            if encoding_levels <> Rle then
-              fail "definition levels in %s are not read"
-                (encoding_name encoding_levels);
-            if len < 4 then
-              fail "the definition levels' length overruns the page";
-            let n = u32 src p in
-            if n > len - 4 then fail "the definition levels overrun the page";
-            (p + 4 + n, len - 4 - n, levels src (p + 4) n values)
+          if l.nested then begin
+            let rp, rl, p, len =
+              if l.rep = 0 then (p, 0, p, len)
+              else
+                match repetition with
+                | None -> fail "the page names no repetition level encoding"
+                | Some enc -> prefixed "repetition levels" enc src p len
+            in
+            let dp, dl, p, len =
+              if l.def = 0 then (p, 0, p, len)
+              else prefixed "definition levels" def_encoding src p len
+            in
+            (p, len, nested_levels src rp rl dp dl values)
           end
+          else if not l.optional then (p, len, values)
+          else
+            let dp, dl, p, len =
+              prefixed "definition levels" def_encoding src p len
+            in
+            (p, len, levels src dp dl values)
         in
         data_page encoding src p len ~rows:values n
     | Data_v2
@@ -924,7 +1069,7 @@ let read ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
           compressed;
         } ->
         rows_left values;
-        if page_rows <> values then
+        if (not l.nested) && page_rows <> values then
           fail "the page holds %d values in %d rows" values page_rows;
         let size = min h.compressed_size h.uncompressed_size in
         if
@@ -932,18 +1077,25 @@ let read ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
           || definition_bytes > size - repetition_bytes
         then fail "the levels overrun the page";
         let levels_bytes = repetition_bytes + definition_bytes in
-        if (not l.optional) && definition_bytes <> 0 then
+        if
+          (if l.nested then l.def = 0 else not l.optional)
+          && definition_bytes <> 0
+        then
           fail
             "the page holds definition levels, which a required column has \
              none of";
+        let dp = data + repetition_bytes in
         (* A flat column's repetition levels are all zero: some writers write
            them, and they are skipped. *)
         let n =
-          if l.optional then
-            levels b (data + repetition_bytes) definition_bytes values
+          if l.nested then
+            nested_levels b data repetition_bytes dp definition_bytes values
+          else if l.optional then levels b dp definition_bytes values
           else values
         in
-        if nulls <> values - n then
+        (* Writers count a nested leaf's nulls in their own ways, so the
+           levels alone decide its values. *)
+        if (not l.nested) && nulls <> values - n then
           fail "the page counts %d nulls, and its levels %d" nulls (values - n);
         let pos = data + levels_bytes in
         let len = h.compressed_size - levels_bytes in
@@ -985,8 +1137,31 @@ let read ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
       held_idx := None
     end
   in
+  (* [claimed pos stop] is the entries the pages' headers add up to, without
+     reading their data: nothing else bounds what a nested leaf's chunk says
+     it holds, and its levels are allocated from it. *)
+  let rec claimed pos stop acc =
+    if pos >= stop then acc
+    else
+      let h, data = header pos stop in
+      let acc =
+        match h.page with
+        | Data { values; _ } | Data_v2 { values; _ } -> acc + values
+        | Dictionary _ | Other -> acc
+      in
+      claimed (data + h.compressed_size) stop acc
+  in
   let first = first_page cm in
-  let decode () = if rows > 0 then pages first (first + cm.compressed_size) in
+  let stop = first + cm.compressed_size in
+  let decode () =
+    if l.nested && rows > 0 then begin
+      let n = claimed first stop 0 in
+      if n <> entries then
+        fail "the pages hold %d values, and the column chunk %d" n entries
+    end;
+    if l.nested then lv := Some (level_arrays l entries);
+    if rows > 0 then pages first stop
+  in
   (match valid with
   | Some v ->
       writing v (fun x ->
@@ -995,17 +1170,39 @@ let read ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
   | None -> decode ());
   held_valid := None;
   here := None;
-  if !row <> rows then
+  if !row <> entries then
     fail "the pages hold %d rows, and the row group %d" !row rows;
+  (* A nested leaf's values spread onto its own slots, which its levels give. *)
+  let lv = Option.map (fun lv -> with_n lv !row) !lv in
+  let valid, rows =
+    match lv with
+    | None -> (valid, rows)
+    | Some lv ->
+        let slots : Leaf.slots =
+          { rep = l.rep; def = l.slot_def; nonnull = l.def }
+        in
+        let mask, _, n = walk ~row_group lv slots ~elem:None in
+        (mask, n)
+  in
   let s = convert ~row_group l ty (chunk_table ~dictionary:0) in
-  match (!idx, s) with
-  | Some idx, Strings { offsets; data } ->
-      coded ~row_group (leading !present idx) ~valid ~rows ~offsets ~data
-  | Some idx, Values _ ->
-      let s = gather s (leading !present idx) in
-      narrow ~row_group ty (spread ~row_group s ~valid ~rows ~present:!present)
-  | None, _ ->
-      narrow ~row_group ty (spread ~row_group s ~valid ~rows ~present:!present)
+  let c =
+    match (!idx, s) with
+    | Some idx, Strings { offsets; data } ->
+        coded ~row_group (leading !present idx) ~valid ~rows ~offsets ~data
+    | Some idx, Values _ ->
+        let s = gather s (leading !present idx) in
+        narrow ~row_group ty
+          (spread ~row_group s ~valid ~rows ~present:!present)
+    | None, _ ->
+        narrow ~row_group ty
+          (spread ~row_group s ~valid ~rows ~present:!present)
+  in
+  (c, lv)
+
+let read ~scratch b m ~row_group i (l : Leaf.t) ty =
+  if l.nested then
+    named (Leaf.name l) (fun () -> read_chunk ~scratch b m ~row_group i l ty)
+  else read_chunk ~scratch b m ~row_group i l ty
 
 let flat = function
   | Coded { valid; codes; offsets; data } -> (

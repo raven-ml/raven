@@ -149,8 +149,8 @@ parquet (2 columns)
 
 A `DECIMAL` column has no talon type of its own: declare it with
 `Talon_parquet.with_type` as `float64`, or, up to 18 digits, as `int64` for
-its unscaled integer. Talon refuses encrypted files, nested columns and the
-codecs it does not read when it sniffs the footer.
+its unscaled integer. Talon refuses encrypted files and the codecs it does not
+read when it sniffs the footer.
 
 A Parquet source uses filters to skip row groups. A comparison of a column
 with a literal goes to the source, which skips each row group whose minimum

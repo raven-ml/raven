@@ -98,6 +98,10 @@ CORPUS = [
     ("data/list_columns.parquet", "5988ab91b6cb7efa7bf6a77f789b40929212280519be6c9daad56e01d5ceb218"),
     ("data/nulls.snappy.parquet", "40192e879fe7905d1341b495d06f8470e2fd02608bf8f9e6a71b2b774acc5252"),
     ("data/repeated_primitive_no_list.parquet", "fcd6152058b8b8259a516105da5919b23cb8ccfc42258de0fe20e3107f8ef809"),
+    ("data/old_list_structure.parquet", "065b336c65885ab9dfd97cf85ce39a45488ed12d0183917db0a11621b0711e3b"),
+    ("data/nested_lists.snappy.parquet", "2cb2cc0564486a28550429a8b6d0907bbb41e138546797bc91a4ebd850edd5a5"),
+    ("data/nested_maps.snappy.parquet", "db1a493003a7dcd2011bf89e460fed007903fcdeb58f53df29387b4e908e2a6d"),
+    ("data/nullable.impala.parquet", "de9102a599d852be3af1d2af5d3498d8e019c329096a6f2d260f55ae2d6ed0ae"),
     ("data/uniform_encryption.parquet.encrypted", "b61382c4e9515b970f9aad8136b0e4c17b7803f8ab5e0f368a33b8d0d5ea04bf"),
     ("data/encrypt_columns_plaintext_footer.parquet.encrypted", "81c55445badc672251616ce3b57663b65a6fa45990c029a72fef3d247f0e0eeb"),
     ("bad_data/ARROW-GH-43605.parquet", "9f81fe00d9b9732ecb17375c6997c85f8ad52a90709ef3cd72dfcdb458fd7248"),
@@ -506,13 +510,16 @@ READ = [p.removeprefix("data/") for p, _ in CORPUS if not p.endswith(".encrypted
     "bits_v1.parquet", "bits_v2_rle.parquet", "bits_dict.parquet",
 ]
 # Refused by talon when sniffed; read with errors by talon where pyarrow guesses
-# (nation.dict-malformed's chunks are longer than their metadata say); or not
-# opened by pyarrow and computed by hand.
+# (nation.dict-malformed's chunks are longer than their metadata say); not
+# opened by pyarrow and computed by hand; or nested, whose goldens nested.py
+# writes.
 SKIP = {
     "bad_data/ARROW-RS-GH-6229-DICTHEADER.parquet", "nation.dict-malformed.parquet",
     "hadoop_lz4_compressed.parquet", "non_hadoop_lz4_compressed.parquet", "large_string_map.brotli.parquet",
     "map_no_value.parquet", "incorrect_map_schema.parquet", "datapage_v2.snappy.parquet",
     "list_columns.parquet", "nulls.snappy.parquet", "repeated_primitive_no_list.parquet",
+    "old_list_structure.parquet", "nested_lists.snappy.parquet",
+    "nested_maps.snappy.parquet", "nullable.impala.parquet",
     "bad_data/PARQUET-1481.parquet", "int32_with_uuid_logical_type.parquet", "flba12_timestamp.parquet",
 }
 

@@ -8,9 +8,15 @@
     A column chunk is one column's pages in one row group: at most one
     dictionary page, then data pages, version 1 or 2. Reading one decodes each
     data page's definition levels into one validity mask of the row group's
-    rows, and its values, compacted, into one buffer of the column's Parquet
+    rows, or a nested leaf's definition and repetition levels into one array
+    each, and its values, compacted, into one buffer of the column's Parquet
     values, each page at the position the previous one ended, after the
-    dictionary page's values. The buffer is then converted once into the storage
+    dictionary page's values.
+
+    A nested leaf is one level-decoding path for every nesting: {!structure}
+    reads the validity and offsets of a list, a record or a leaf out of the
+    levels of a leaf below it, by the slots {!Leaf.slots} says it fills, one
+    walk for each node of the column. The buffer is then converted once into the storage
     of the column's talon type, the values of dictionary-encoded pages are
     gathered from it, and the values are spread onto the rows once, zero under
     the nulls. Byte strings of dictionary-encoded pages keep the buffer as their
@@ -78,6 +84,10 @@ val check : Meta.file -> row_group:int -> int -> Leaf.t -> unit
     and its footer, or if its codec is refused: LZO, Brotli, Hadoop's LZ4, or a
     value Parquet does not define. *)
 
+type levels
+(** The type for a nested leaf's levels: a definition and a repetition level per
+    entry, the slots of each of its fields being found by walking them. *)
+
 type scratch
 (** The type for the buffers a read reuses across chunks: the page it
     decompresses and the lengths of delta-encoded byte strings. One chunk
@@ -94,22 +104,42 @@ val read :
   int ->
   Leaf.t ->
   Talon.Type.any ->
-  t
+  t * levels option
 (** [read ~scratch b m ~row_group i l t] decodes the chunk [i] of the row group
     [row_group] of the file [b], whose metadata are [m], as the leaf [l] read as
     [t], with the buffers [scratch]. The chunk has passed {!check}, and
-    [Leaf.reads_as l t] holds.
+    [Leaf.reads_as l t] holds. It is the leaf's column over its slots ({!structure})
+    and, for a [nested] leaf, its levels.
 
     Raises {!Meta.Error}, with the row group and the bytes of the page that
     failed, if a page header does not decode or overruns the chunk, a page fails
     its CRC or its decompression, a page or its levels hold more or fewer values
-    than their header says, an encoding is not one talon reads on [l]'s physical
-    type, a value does not decode or does not fit [t] (an integer outside a
-    narrower type, named with its row, an [int96] outside the unit's range or
-    not a whole number of it, a decimal outside [int64], a byte string outside a
-    categorical's dictionary), a dictionary index is out of the dictionary, the
-    pages' rows do not add up to the row group's, or the chunk's values would
-    take more bytes than an [int] counts. *)
+    than their header says, a level is above the leaf's maximum or in another
+    encoding than [RLE], the entries of
+    the pages of a repeated leaf do not add up to its chunk's, an encoding is
+    not one talon reads on [l]'s physical type, a value does not decode or does
+    not fit [t] (an integer outside a narrower type, named with its row, an
+    [int96] outside the unit's range or not a whole number of it, a decimal
+    outside [int64], a byte string outside a categorical's dictionary), a
+    dictionary index is out of the dictionary, the pages' rows do not add up to
+    the row group's, or the chunk's values would take more bytes than an [int]
+    counts. The message names a [nested] leaf's path. *)
+
+val structure :
+  row_group:int ->
+  name:string ->
+  levels ->
+  Leaf.slots ->
+  elem:(int * int) option ->
+  Nx.host Nx.bit_t option * Nx.host Nx.int64_t option * int
+(** [structure ~row_group ~name lv s ~elem] walks the entries of [lv] for the node of
+    slots [s]: its validity ([None] when it is never null), its offsets when
+    [elem], its element [(repetition, definition)] levels, is given, and its
+    number of slots.
+
+    Raises {!Meta.Error}, naming the column [name], if the levels are ones no
+    writer produces: the first entry does not start a row, or an entry repeats
+    a list it does not define or precedes every slot. *)
 
 val flat : t -> t
 (** [flat c] is [c] with the words of a {!Coded} chunk gathered at its codes,

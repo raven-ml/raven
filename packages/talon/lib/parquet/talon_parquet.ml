@@ -6,7 +6,7 @@
 open Talon
 
 (* [ty] is [None] for a decimal that no [with_type] declared. *)
-type column = { leaf : Leaf.t; ty : Type.any option }
+type column = { field : Leaf.column; ty : Type.any option }
 type format = column array
 
 (* [with_bytes ?file b f] is [f] applied to the bytes of [b], mapped on the
@@ -23,7 +23,8 @@ let with_bytes ?file b f =
 
 let open_ bytes =
   let m = Meta.footer bytes in
-  let leaves = Leaf.of_schema m.schema in
+  let schema = Leaf.of_schema m.schema in
+  let leaves = schema.leaves in
   Array.iteri
     (fun g (rg : Meta.row_group) ->
       if Array.length rg.chunks <> Array.length leaves then
@@ -32,16 +33,24 @@ let open_ bytes =
           (Array.length rg.chunks) (Array.length leaves);
       Array.iteri (fun i l -> Chunk.check m ~row_group:g i l) leaves)
     m.row_groups;
-  (m, leaves)
+  (m, schema)
 
-let sniffed leaves =
-  Array.map (fun leaf -> { leaf; ty = Leaf.default leaf }) leaves
+let sniffed (schema : Leaf.schema) =
+  Array.map
+    (fun (field : Leaf.column) ->
+      { field; ty = Leaf.default_node field.node })
+    schema.columns
 
 let sniff b = with_bytes b @@ fun bytes -> sniffed (snd (open_ bytes))
-let find f name = Array.find_opt (fun c -> String.equal c.leaf.name name) f
+
+let is_flat (c : Leaf.column) =
+  match c.node with Leaf.Prim l -> not l.nested | _ -> false
+
+let find f name =
+  Array.find_opt (fun c -> String.equal c.field.name name) f
 
 let index f name =
-  match Array.find_index (fun c -> String.equal c.leaf.name name) f with
+  match Array.find_index (fun c -> String.equal c.field.name name) f with
   | Some i -> i
   | None ->
       invalid_arg
@@ -52,15 +61,15 @@ let type_name (Type.Any t) = Format.asprintf "%a" Type.pp t
 
 let with_type name t f =
   let i = index f name in
-  let leaf = f.(i).leaf in
-  if not (Leaf.reads_as leaf t) then
+  let field = f.(i).field in
+  if not (Leaf.node_reads_as field.node t) then
     invalid_arg
       (Format.asprintf
-         "Talon_parquet.with_type: column %S (%a) reads as %a, not %s. Cast it \
+         "Talon_parquet.with_type: column %S (%s) reads as %a, not %s. Cast it \
           once read (Expr.cast)."
-         name Leaf.pp leaf Leaf.pp_reads leaf (type_name t));
+         name field.text Leaf.pp_node_reads field.node (type_name t));
   let f = Array.copy f in
-  f.(i) <- { leaf; ty = Some t };
+  f.(i) <- { field; ty = Some t };
   f
 
 (* [scalars s] is the number of Unicode scalar values of the UTF-8 [s]. *)
@@ -75,8 +84,8 @@ let pp_format ppf f =
       (fun c ->
         match c.ty with
         | Some ty ->
-            Format.asprintf "%a" Schema.pp (Schema.v [ (c.leaf.name, ty) ])
-        | None -> Format.asprintf "%a undeclared" Type.pp_name c.leaf.name)
+            Format.asprintf "%a" Schema.pp (Schema.v [ (c.field.name, ty) ])
+        | None -> Format.asprintf "%a undeclared" Type.pp_name c.field.name)
       f
   in
   let width = Array.fold_left (fun w s -> max w (scalars s)) 0 left in
@@ -84,9 +93,9 @@ let pp_format ppf f =
   Format.fprintf ppf "@[<v>parquet (%d column%s)" n (if n = 1 then "" else "s");
   Array.iteri
     (fun i c ->
-      Format.fprintf ppf "@,  %s%s ← %a" left.(i)
+      Format.fprintf ppf "@,  %s%s ← %s" left.(i)
         (String.make (width - scalars left.(i)) ' ')
-        Leaf.pp c.leaf)
+        c.field.text)
     f;
   Format.fprintf ppf "@]"
 
@@ -189,10 +198,12 @@ let rec passes stats rows (p : Source.Pred.t) =
   | Or ps -> List.exists (passes stats rows) ps
   | Not _ -> true
 
-(* [usable f p] is [true] iff statistics can show that no row passes [p]. *)
+(* [usable f p] is [true] iff statistics can show that no row passes [p]. A
+   nested column's statistics are its leaves', which say nothing of its rows. *)
 let rec usable f (p : Source.Pred.t) =
   match p with
-  | Cmp (c, _, _) | In (c, _) | Null c | Valid c -> Option.is_some (find f c)
+  | Cmp (c, _, _) | In (c, _) | Null c | Valid c -> (
+      match find f c with Some c -> is_flat c.field | None -> false)
   | And ps -> List.exists (usable f) ps
   | Or ps -> List.for_all (usable f) ps
   | Not _ -> false
@@ -253,15 +264,15 @@ let column ~row_group name ty (c : Chunk.t) =
   | Error (row, why) ->
       Meta.fail ~row_group "column %S: row %d: %s" name row why
 
-(* A decoded chunk: the column [name] of type [ty] decoded as [chunk], its
-   words as a column, with a null word after them that the null rows read,
+(* A decoded column: of a flat column its [name], type [ty] and [chunk] decoded,
+   its words as a column, with a null word after them that the null rows read,
    when it is coded and they are all values of [ty], and its column. Words
    that are not are read as the rows that read them, so that only a row
    fails, and an unused one fails nothing. *)
 type decoded = {
   name : string;
   ty : Type.any;
-  chunk : Chunk.t;
+  chunk : Chunk.t option;
   words : Column.t option Lazy.t;
   column : Column.t Lazy.t;
 }
@@ -270,7 +281,7 @@ let decoded ~row_group name ty (chunk : Chunk.t) =
   let words =
     lazy
       (match chunk with
-      | Fixed _ | Varsize _ -> None
+      | Chunk.Fixed _ | Varsize _ -> None
       | Coded { offsets; data; _ } -> (
           let n = Nx.dim 0 offsets - 1 in
           let last = Int64.of_int (n - 1) in
@@ -287,13 +298,82 @@ let decoded ~row_group name ty (chunk : Chunk.t) =
           | Ok words -> Some words
           | Error _ -> None))
   in
-  { name; ty; chunk; words; column = lazy (column ~row_group name ty chunk) }
+  {
+    name;
+    ty;
+    chunk = Some chunk;
+    words;
+    column = lazy (column ~row_group name ty chunk);
+  }
 
+(* Nested columns *)
+
+(* [assemble ~row_group ~rows read name node ty] is the column [name] of type
+   [ty] that the leaves under [node] lay out, [read] decoding a leaf. A list or
+   a record takes its validity and offsets from the levels of its first leaf.
+   Its fields each count their slots from their own levels, so a file can make
+   them disagree. A list's elements are its first leaf's own slots. *)
+let assemble ~row_group ~rows read name node any =
+  let layout any l =
+    match Column.of_layout any l with
+    | Ok c -> c
+    | Error (row, why) ->
+        Meta.fail ~row_group "column %S: row %d: %s" name row why
+  in
+  let rec go node (Type.Any ty as any) =
+    match (node, ty) with
+    | Leaf.Prim l, _ ->
+        let c, lv = read l any in
+        (column ~row_group (Leaf.name l) any (Chunk.flat c), Option.get lv)
+    | Leaf.Struct { slots; fields }, Type.Record ts ->
+        let cs =
+          List.map2
+            (fun (n, node) (_, t) ->
+              let c, lv = go node t in
+              ((n, c), lv))
+            fields ts
+        in
+        let lv = snd (List.hd cs) and fields = List.map fst cs in
+        let validity, _, length =
+          Chunk.structure ~row_group ~name lv slots ~elem:None
+        in
+        List.iter
+          (fun (n, c) ->
+            if Column.length c <> length then
+              Meta.fail ~row_group
+                "column %S: field %S holds %d values for the record's %d" name n
+                (Column.length c) length)
+          fields;
+        (layout any (Children { validity; length; fields }), lv)
+    | Leaf.List { slots; elem_rep; elem_def; element }, Type.List e ->
+        let child, lv = go element (Type.Any e) in
+        let validity, offsets, _ =
+          Chunk.structure ~row_group ~name lv slots
+            ~elem:(Some (elem_rep, elem_def))
+        in
+        let offsets = Option.get offsets in
+        (layout any (Varsize { validity; offsets; child }), lv)
+    | _ -> assert false
+  in
+  let c, _ = go node any in
+  if Column.length c <> rows then
+    Meta.fail ~row_group "column %S holds %d rows in a row group of %d" name
+      (Column.length c) rows;
+  c
+
+let decoded_nested ~row_group ~rows read name ty node =
+  {
+    name;
+    ty;
+    chunk = None;
+    words = lazy None;
+    column = lazy (assemble ~row_group ~rows read name node ty);
+  }
 (* [filtered d rows e] is where [e], a {!truth}, is [true] on the [rows] rows
    of [d]: on its words, taken at its codes, or on its column. *)
 let filtered d rows e =
   match (d.chunk, Lazy.force d.words) with
-  | Coded { codes; _ }, Some words ->
+  | Some (Coded { codes; _ }), Some words ->
       Nx.take codes (passing e (d.name, words) (Column.length words))
   | _ -> passing e (d.name, Lazy.force d.column) rows
 
@@ -303,7 +383,7 @@ let filtered d rows e =
 let taken ~row_group ~rows at ds =
   let coded d =
     match (d.chunk, Lazy.force d.words) with
-    | Coded _, Some _ -> true
+    | Some (Coded _), Some _ -> true
     | _ -> false
   in
   let flat =
@@ -314,7 +394,7 @@ let taken ~row_group ~rows at ds =
   let rest = Talon.take at (Talon.v ~rows flat) in
   let one d =
     match d.chunk with
-    | Coded k when coded d ->
+    | Some (Coded k) when coded d ->
         let valid = Option.map (Nx.take at) k.valid in
         let codes = Nx.take at k.codes in
         let k = Chunk.Coded { k with valid; codes } in
@@ -345,11 +425,11 @@ let with_scratch shared f =
 let whole rows ds =
   Talon.v ~rows (List.map (fun d -> (d.name, Lazy.force d.column)) ds)
 
-(* [part ?file shared b m leaves g columns filters] is the row group [g] of [b]
-   as one batch of [columns], each a name, the index of its leaf and its type,
-   decoded with the scratch [shared], of the rows that pass [filters], each a
-   column, as [columns] give one, and the filter on it. *)
-let part ?file shared b m leaves g columns filters : Source.part =
+(* [part ?file shared b m g columns filters] is the row group [g] of [b] as one
+   batch of [columns], each a name, its node and its type, decoded with the
+   scratch [shared], of the rows that pass [filters], each a column, as
+   [columns] give one, and the filter on it. *)
+let part ?file shared b m g columns filters : Source.part =
   let rows = m.Meta.row_groups.(g).rows in
   let open_ () =
     let read = ref false in
@@ -361,9 +441,14 @@ let part ?file shared b m leaves g columns filters : Source.part =
         with_scratch shared @@ fun scratch ->
         (* Each column is decoded and built once, a filter's column being
            the request's or one of its own. *)
-        let decode (name, i, ty) =
-          let k = Chunk.read ~scratch bytes m ~row_group:g i leaves.(i) ty in
-          decoded ~row_group:g name ty k
+        let read_leaf (l : Leaf.t) ty =
+          Chunk.read ~scratch bytes m ~row_group:g l.index l ty
+        in
+        let decode (name, node, ty) =
+          match node with
+          | Leaf.Prim l when not l.nested ->
+              decoded ~row_group:g name ty (fst (read_leaf l ty))
+          | _ -> decoded_nested ~row_group:g ~rows read_leaf name ty node
         in
         let ds = List.map decode columns in
         let pass (((name, _, _) as c), e) =
@@ -395,20 +480,22 @@ let part ?file shared b m leaves g columns filters : Source.part =
    whose columns read as [types] say, decoded with the scratch [shared]. *)
 let parts ?file shared types b (r : Source.request) =
   with_bytes ?file b @@ fun bytes ->
-  let m, leaves = open_ bytes in
-  let leaf name =
-    Array.find_index (fun (l : Leaf.t) -> String.equal l.name name) leaves
+  let m, schema = open_ bytes in
+  let column_of name =
+    Array.find_opt
+      (fun (c : Leaf.column) -> String.equal c.name name)
+      schema.columns
   in
   let ty name = List.assoc_opt name types in
   let requested name =
     let ty = Option.get (ty name) in
-    match leaf name with
+    match column_of name with
     | None -> Meta.fail "the file has no column %S" name
-    | Some i when not (Leaf.reads_as leaves.(i) ty) ->
+    | Some c when not (Leaf.node_reads_as c.node ty) ->
         Meta.fail "column %S reads as %s, not as the format's %s" name
-          (Format.asprintf "%a" Leaf.pp_reads leaves.(i))
+          (Format.asprintf "%a" Leaf.pp_node_reads c.node)
           (type_name ty)
-    | Some i -> (name, i, ty)
+    | Some c -> (name, c.node, ty)
   in
   let columns = List.map requested r.columns in
   (* A column's conjuncts are one filter, evaluated once. *)
@@ -425,16 +512,16 @@ let parts ?file shared types b (r : Source.request) =
     |> List.map (fun (c, e) -> (requested c, truth e))
   in
   let stats g name =
-    match (leaf name, ty name) with
-    | Some i, Some ty ->
+    match (column_of name, ty name) with
+    | Some { node = Leaf.Prim l; _ }, Some ty when not l.nested ->
         Option.map
-          (fun (cm : Meta.column_meta) -> (leaves.(i), ty, cm.stats))
-          m.row_groups.(g).chunks.(i).meta
+          (fun (cm : Meta.column_meta) -> (l, ty, cm.stats))
+          m.row_groups.(g).chunks.(l.index).meta
     | _ -> None
   in
   let kept g (rg : Meta.row_group) =
     if List.for_all (passes (stats g) rg.rows) r.filters then
-      Some (part ?file shared b m leaves g columns filters)
+      Some (part ?file shared b m g columns filters)
     else None
   in
   List.filter_map Fun.id (Array.to_list (Array.mapi kept m.row_groups))
@@ -443,14 +530,15 @@ let parts ?file shared types b (r : Source.request) =
    given. *)
 let declared fn (c : column) =
   match c.ty with
-  | Some ty -> (c.leaf.name, ty)
+  | Some ty -> (c.field.name, ty)
   | None ->
       invalid_arg
-        (Format.asprintf
-           "Talon_parquet.%s: column %S (%a) is a decimal, which reads as \
+        (Printf.sprintf
+           "Talon_parquet.%s: column %S (%s) %s a decimal, which reads as \
             float64, or as its unscaled int64 integers up to 18 digits. \
             Declare one with with_type."
-           fn c.leaf.name Leaf.pp c.leaf)
+           fn c.field.name c.field.text
+           (if is_flat c.field then "is" else "holds"))
 
 let make fn ?file ?rows f b =
   let name =
@@ -476,6 +564,6 @@ let file ?format path =
   | Error why -> Error (Error.v why)
   | Ok b ->
       with_bytes ~file:path b (fun bytes ->
-          let m, leaves = open_ bytes in
-          let f = match format with Some f -> f | None -> sniffed leaves in
+          let m, schema = open_ bytes in
+          let f = match format with Some f -> f | None -> sniffed schema in
           make "file" ~file:path ~rows:m.rows f b)
