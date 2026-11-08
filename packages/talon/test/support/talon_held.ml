@@ -58,3 +58,28 @@ let check ?inputs make =
   ignore (Sys.opaque_identity (make, inputs));
   at_least ~msg:"bytes held while the column is live" int ~than:bytes live;
   equal ~msg:"bytes held once it is collected" int 0 after
+
+type cycles = {
+  majors : int;
+  minors : int;
+  promoted : float;
+  major_words : float;
+}
+
+let cycles f =
+  Gc.full_major ();
+  let s0 = Gc.quick_stat () in
+  f ();
+  let s1 = Gc.quick_stat () in
+  {
+    majors = s1.major_collections - s0.major_collections;
+    minors = s1.minor_collections - s0.minor_collections;
+    promoted = s1.promoted_words -. s0.promoted_words;
+    major_words = s1.major_words -. s0.major_words;
+  }
+
+let pp_cycles c =
+  Printf.sprintf
+    "%d major cycles, %d minor collections, %.0f words promoted, %.0f words \
+     allocated in the major heap"
+    c.majors c.minors c.promoted c.major_words

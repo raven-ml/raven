@@ -1275,6 +1275,34 @@ let no_reads =
 
 (* Memory *)
 
+(* [counted f] is what [f ()] gives the collector, counted from a full major
+   collection: the major cycles a pacing law bounds, and what else drives
+   them, for its failure to print. *)
+type counted = {
+  majors : int;
+  minors : int;
+  promoted : float;
+  major_words : float;
+}
+
+let counted f =
+  Gc.full_major ();
+  let s0 = Gc.quick_stat () in
+  f ();
+  let s1 = Gc.quick_stat () in
+  {
+    majors = s1.major_collections - s0.major_collections;
+    minors = s1.minor_collections - s0.minor_collections;
+    promoted = s1.promoted_words -. s0.promoted_words;
+    major_words = s1.major_words -. s0.major_words;
+  }
+
+let pp_counted c =
+  Printf.sprintf
+    "%d major cycles, %d minor collections, %.0f words promoted, %.0f words \
+     allocated in the major heap"
+    c.majors c.minors c.promoted c.major_words
+
 (* [with_ratio r f] is [f ()] with the collector's [custom_major_ratio] at
    [r]. *)
 let with_ratio r f =
@@ -1297,18 +1325,21 @@ let memory =
       let cycles r =
         with_ratio r @@ fun () ->
         ignore (Nx_ragged.of_strings ss);
-        Gc.full_major ();
-        let before = (Gc.quick_stat ()).major_collections in
-        for _ = 1 to calls do
-          ignore (Sys.opaque_identity (Nx_ragged.of_strings ss))
-        done;
-        (Gc.quick_stat ()).major_collections - before
+        counted (fun () ->
+            for _ = 1 to calls do
+              ignore (Sys.opaque_identity (Nx_ragged.of_strings ss))
+            done)
       in
       let usual = cycles (Gc.get ()).custom_major_ratio in
+      let at_1 = cycles 1 in
       let made = calls * ((8 * n) + (8 * (n + 1))) in
-      at_most ~msg:"major cycles at a ratio of 1" int
-        ~than:(usual + (made / (4 lsl 20)) + 2)
-        (cycles 1))
+      at_most
+        ~msg:
+          (Printf.sprintf "major cycles at a ratio of 1: %s; at the default: %s"
+             (pp_counted at_1) (pp_counted usual))
+        int
+        ~than:(usual.majors + (made / (4 lsl 20)) + 2)
+        at_1.majors)
 
 let () =
   exit

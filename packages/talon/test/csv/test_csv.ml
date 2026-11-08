@@ -1395,18 +1395,22 @@ let memory =
           let cycles r =
             with_ratio r @@ fun () ->
             ignore (texts ());
-            Gc.full_major ();
-            let before = (Gc.quick_stat ()).major_collections in
-            for _ = 1 to decodes do
-              ignore (Sys.opaque_identity (texts ()))
-            done;
-            (Gc.quick_stat ()).major_collections - before
+            Talon_held.cycles (fun () ->
+                for _ = 1 to decodes do
+                  ignore (Sys.opaque_identity (texts ()))
+                done)
           in
           let usual = cycles (Gc.get ()).custom_major_ratio in
+          let at_1 = cycles 1 in
           let made = decodes * texts_bytes in
-          at_most ~msg:"major cycles at a ratio of 1" int
-            ~than:(usual + (made / (4 lsl 20)) + 2)
-            (cycles 1));
+          at_most
+            ~msg:
+              (Printf.sprintf
+                 "major cycles at a ratio of 1: %s; at the default: %s"
+                 (Talon_held.pp_cycles at_1) (Talon_held.pp_cycles usual))
+            int
+            ~than:(usual.majors + (made / (4 lsl 20)) + 2)
+            at_1.majors);
     ]
 
 let () =

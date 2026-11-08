@@ -1900,20 +1900,20 @@ let memory =
       test "dropped columns pace the collector by the program's memory"
         (fun () ->
           let reads = 64 in
-          let cycles =
+          let c =
             with_ratio 1 @@ fun () ->
             ignore (read_nulls ());
-            Gc.full_major ();
-            let before = (Gc.quick_stat ()).major_collections in
-            for _ = 1 to reads do
-              ignore (Sys.opaque_identity (read_nulls ()))
-            done;
-            (Gc.quick_stat ()).major_collections - before
+            Talon_held.cycles (fun () ->
+                for _ = 1 to reads do
+                  ignore (Sys.opaque_identity (read_nulls ()))
+                done)
           in
           let made = reads * 4 * 8 * nulls_rows in
-          at_most ~msg:"major cycles at a ratio of 1" int
+          at_most
+            ~msg:("major cycles at a ratio of 1: " ^ Talon_held.pp_cycles c)
+            int
             ~than:((made / (4 lsl 20)) + 2)
-            cycles);
+            c.majors);
     ]
 
 let () =

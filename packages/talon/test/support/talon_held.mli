@@ -3,7 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The host memory that talon's columns hold, for talon's suites. *)
+(** The host memory that talon's columns hold, and the collector's work that
+    dropping it brings, for talon's suites. *)
 
 open Talon
 
@@ -21,3 +22,22 @@ val check : ?inputs:Column.t list -> (unit -> Column.t) -> unit
     {!settled} bytes grow by at least its {!made} bytes while it is live, and
     return to what they were once it is collected. [make] runs once
     uncounted first. *)
+
+(** {1:cycles Major cycles} *)
+
+type cycles = {
+  majors : int;  (** Major cycles completed. *)
+  minors : int;  (** Minor collections. *)
+  promoted : float;  (** Words promoted to the major heap. *)
+  major_words : float;  (** Words allocated in the major heap, promoted ones
+      included. *)
+}
+(** The type for what a run gave the collector. *)
+
+val cycles : (unit -> unit) -> cycles
+(** [cycles f] is what [f ()] gives the collector, counted from a full major
+    collection: the cycles a pacing law bounds, and what else drives them, for
+    its failure to print. *)
+
+val pp_cycles : cycles -> string
+(** [pp_cycles c] is [c] as one line of text. *)
