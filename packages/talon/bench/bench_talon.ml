@@ -440,6 +440,43 @@ let read_csv () =
   Error.get_ok
     (Talon_csv.decode csv_format (Bytesrw.Bytes.Reader.of_string csv_text))
 
+(* As-of: 2^20 left rows [x] and 2^16 right rows [y] in 100 groups, in no
+   order, each left row with the right row of its group at or before it. The
+   same picks as a range join, each right row holding up to its group's next
+   [y], show the cost of the range mechanism beside the window's. *)
+let asof =
+  let keys = Nx.Rng.split ~n:4 (Nx.Rng.key 29) in
+  let side k rows x =
+    Query.of_table
+      (Talon.v
+         [
+           ( "g",
+             nullable
+               (Nx.cast Nx.int64
+                  (Nx.Rng.randint ~key:keys.(k) ~high:100 [| rows |])) );
+           (x, nullable (Nx.Rng.uniform ~key:keys.(k + 1) Nx.float64 [| rows |]));
+         ])
+  in
+  (side 0 (1 lsl 20) "x", side 2 (1 lsl 16) "y")
+
+let asof_window () =
+  let left, right = asof in
+  run (Kit.join_asof ~by:[ "g" ] ~on:("x", "y") right left)
+
+let asof_range () =
+  let left, right = asof in
+  let y = Col.float "y" in
+  let next = Expr.(over ~by:[ "g" ] ~order:[ Order.asc "y" ] (shift (-1) y)) in
+  let right =
+    Query.derive Expr.[ "y_next" := coalesce [ next; float infinity ] ] right
+  in
+  run
+    Query.(
+      left
+      |> join ~kind:Left
+           ~on:Join.(keys [ "g" ] && ge "x" "y" && lt "x" "y_next")
+           right)
+
 (* [window e] is [e] over [nulls]'s 2^20 rows: [f] has 10% nulls and [i] ties
    over a million values, in no order. *)
 let window e = run Query.(of_table nulls |> select Expr.[ "w" := e ])
@@ -481,6 +518,8 @@ let () =
           Thumper.bench "Nulls/join-left" (fun () -> run joined_nulls);
           Thumper.bench "Join/spikes_in_trials" spikes_in_trials;
           Thumper.bench "Join/keyed_inequality" below;
+          Thumper.bench "Join/asof-1M-64k" asof_window;
+          Thumper.bench "Join/asof-as-range-1M-64k" asof_range;
           Thumper.bench "Group/text-100-1M" (fun () -> by "t");
           Thumper.bench "Group/int32-100-1M" (fun () -> by "k");
           Thumper.bench "Group/minmax-int32-100-1M" (fun () ->

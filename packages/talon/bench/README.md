@@ -63,6 +63,10 @@ from a seeded key, with nulls in five of its seven columns.
 2^20 spike times in order over an hour, the trials on the left; a recording
 holds about 10^7 spikes. `Talon/Join/keyed_inequality` joins 2^16 rows with
 2^10 on a key of 100 values and `ge`, neither side in order.
+`Talon/Join/asof-1M-64k` takes, for each of 2^20 rows, the last of 2^16 rows
+at or before it within a key of 100 values, neither side in order, with
+`Kit.join_asof`. `Talon/Join/asof-as-range-1M-64k` finds the same rows with a
+range join, each right row holding up to the next one of its key.
 
 `Talon_csv/read-mixed` reads a CSV text of 2^16 records from memory, drawn from
 a seeded key: an int64 column, a float64 column with nulls, and a string column

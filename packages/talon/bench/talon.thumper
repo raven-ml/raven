@@ -15,6 +15,7 @@
 # forced: blessed Talon/Join/repeated_keys Talon/Join/few_of_repeated_keys Talon/Join/spikes_in_trials Talon/Join/keyed_inequality under load 10.5 on 14 cores
 # forced: blessed Talon/Join/spikes_in_trials Talon/Join/keyed_inequality under load 13.8 on 14 cores
 # forced: blessed Talon/Window/rolling-mean-28-1M Talon/Window/rolling-sum-on-1M Talon/Window/running-std-1M Talon/Window/running-sum-1M Talon/Window/running-max-1M under load 9.5 on 14 cores
+# forced: blessed Talon/Join/asof-1M-64k Talon/Join/asof-as-range-1M-64k under load 13.6 on 14 cores
 
 Talon/Filter/high_value	alloc_words	exact	12395
 Talon/Group/category_region	alloc_words	exact	6446
@@ -24,6 +25,8 @@ Talon/Group/mean-std-int32-100-1M	alloc_words	exact	5620
 Talon/Group/minmax-int32-100-1M	alloc_words	exact	5137
 Talon/Group/text-100-1M	alloc_words	exact	8820
 Talon/Group/text-100-1M	wall_time	batch=1	n=20	1.844e-02	1.383e-02 1.477e-02 1.543e-02 1.613e-02 1.677e-02 1.717e-02 1.759e-02 1.766e-02 1.794e-02 1.837e-02 1.852e-02 1.912e-02 2.092e-02 2.102e-02 2.133e-02 2.346e-02 2.386e-02 2.447e-02 2.939e-02 3.148e-02
+Talon/Join/asof-1M-64k	alloc_words	exact	118039
+Talon/Join/asof-as-range-1M-64k	alloc_words	exact	100343
 Talon/Join/customer_lookup	alloc_words	exact	12951
 Talon/Join/customer_lookup	wall_time	batch=1	n=20	7.039e-03	4.747e-03 4.775e-03 4.824e-03 4.975e-03 6.219e-03 6.254e-03 6.267e-03 6.546e-03 6.876e-03 7.024e-03 7.054e-03 7.297e-03 8.402e-03 8.715e-03 8.988e-03 9.073e-03 1.082e-02 1.091e-02 1.399e-02 2.261e-02
 Talon/Join/few_of_repeated_keys	alloc_words	exact	20058
