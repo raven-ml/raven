@@ -37,15 +37,15 @@ extern "C" __global__ void twice(u32 *dst, const u32 *src, u32 c) {
 }
 
 /* Stores k + 3i + 7g, i the thread's index in the grid, into the 32-bit word
-   t of the group's dynamic shared memory, of at least 4T bytes, then the word
-   t + 1 of it, the next thread's (thread 0's for the last), into the 32-bit
-   word i at [out]. */
-extern "C" __global__ void rotate(u32 *out, u32 k) {
+   first + t of the group's dynamic shared memory, of at least 4(first + T)
+   bytes, then the word first + t + 1 of it, the next thread's (thread 0's for
+   the last), into the 32-bit word i at [out]. */
+extern "C" __global__ void rotate(u32 *out, u32 k, u32 first) {
   extern __shared__ u32 dyn[];
   u32 g = group(), t = thread(), n = threads(), i = g * n + t;
-  dyn[t] = k + 3 * i + 7 * g;
+  dyn[first + t] = k + 3 * i + 7 * g;
   __syncthreads();
-  out[i] = dyn[(t + 1) % n];
+  out[i] = dyn[first + (t + 1) % n];
 }
 
 /* As rotate, through 8 KiB of static shared memory. */

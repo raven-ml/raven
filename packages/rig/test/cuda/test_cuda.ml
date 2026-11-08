@@ -530,7 +530,7 @@ let refused_launches () =
   refuses "no groups along x" ~groups:(0, 1, 1) ();
   refuses "no threads along z" ~threads:(1, 1, 0) ();
   refuses "65536 groups along z" ~groups:(1, 1, 65536) ();
-  refuses "a byte of shared memory past the largest" ~kernel:"rotate" ~params:12
+  refuses "a byte of shared memory past the largest" ~kernel:"rotate" ~params:16
     ~shared:(S.attribute largest_shared + 1)
     ();
   equal int ~msg:"values assigned" opened (Rig.submitted d);
@@ -542,22 +542,31 @@ let refused_launches () =
   let big = B.create d (4 * n) in
   Rig.Point.wait (submitted run [| big |])
 
-(* A launch takes as much dynamic shared memory as the GPU gives a group, beyond
-   the 48 KiB CUDA allows by default. [rotate] stores into each word the value
-   of the next thread of its group, through shared memory. *)
+(* A launch takes as much dynamic shared memory as the GPU gives a group, past
+   the 48 KiB CUDA allows by default: one word past it, 64 KiB and the largest,
+   99 KiB on sm_89. [rotate] stores into each word the value of the next thread
+   of its group, through the last 1 KiB of its shared memory, and at the
+   largest through the first 1 KiB too. *)
 let largest_shared_memory () =
   S.with_ @@ fun { d; _ } ->
-  let shared = S.attribute largest_shared in
-  let run =
-    launching ~kernel:"rotate" ~params:12 d ~groups:(1, 1, 1)
-      ~threads:(256, 1, 1) ~shared
-  in
-  Run.int32 run (Sub.block (Run.submission run) 0) 8 5;
-  let out = B.create ~memory:Pinned d (4 * 256) in
-  Rig.Point.wait (submitted run [| out |]);
-  equal (array int) ~msg:"the words"
-    (Array.init 256 (fun t -> 5 + (3 * ((t + 1) mod 256))))
-    (words out 256)
+  let largest = S.attribute largest_shared in
+  let last shared = (shared, (shared / 4) - 256) in
+  List.iter
+    (fun (shared, first) ->
+      let run =
+        launching ~kernel:"rotate" ~params:16 d ~groups:(1, 1, 1)
+          ~threads:(256, 1, 1) ~shared
+      in
+      let b = Sub.block (Run.submission run) 0 in
+      Run.int32 run b 8 5;
+      Run.int32 run b 12 first;
+      let out = B.create ~memory:Pinned d (4 * 256) in
+      Rig.Point.wait (submitted run [| out |]);
+      equal (array int)
+        ~msg:(Printf.sprintf "the words of %d bytes from word %d" shared first)
+        (Array.init 256 (fun t -> 5 + (3 * ((t + 1) mod 256))))
+        (words out 256))
+    [ last ((48 * 1024) + 4); last (64 * 1024); last largest; (largest, 0) ]
 
 (* A cached launch submitted with a warm run, its block stored anew each time
    through every setter, allocates nothing. *)
@@ -596,7 +605,8 @@ let launches =
   group ~timeout:120. "launches"
     [
       test "launches the GPU cannot run are refused" refused_launches;
-      test "a launch takes the largest shared memory" largest_shared_memory;
+      test "a launch takes shared memory past 48 KiB, up to the largest"
+        largest_shared_memory;
       test "a cached launch allocates nothing" no_allocation;
     ]
 

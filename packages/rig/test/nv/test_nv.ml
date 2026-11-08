@@ -754,7 +754,7 @@ let refused_launches () =
   refuses "2^31 groups along x" ~groups:(1 lsl 31, 1, 1) ();
   refuses "65 threads along z" ~threads:(1, 1, 65) ();
   refuses "a byte of shared memory past the most, rounded to 128"
-    ~kernel:"rotate" ~params:12
+    ~kernel:"rotate" ~params:16
     ~shared:(dynamic_shared g + 1)
     ();
   equal int ~msg:"values assigned" loaded (Rig.submitted d);
@@ -767,25 +767,37 @@ let refused_launches () =
   Rig.Point.wait (submitted run ~buffers:[| out |])
 
 (* A launch takes as much dynamic shared memory as a block may beside its
-   own. *)
+   own: one word past 48 KiB, 64 KiB and the most, 99 KiB on sm_89. [rotate]
+   goes through the last 1 KiB of its shared memory, and at the most through
+   the first 1 KiB too. *)
 let most_shared_memory () =
   S.with_ @@ fun { d; g } ->
-  let shared = dynamic_shared g in
-  let run =
-    launching ~kernel:"rotate" ~params:12 d ~groups:(2, 1, 1)
-      ~threads:(256, 1, 1) ~shared
-  in
-  let b = Sub.block (Run.submission run) 0 in
-  Run.int64 run b 0 0L;
-  Run.int32 run b 8 5;
-  let out = B.create d (4 * 512) in
-  Rig.Point.wait (submitted run ~buffers:[| out |]);
   let value i g = (5 + (3 * i) + (7 * g)) land 0xffff_ffff in
-  equal (array int) ~msg:"the words"
-    (Array.init 512 (fun i ->
-         let g = i / 256 in
-         value ((g * 256) + ((i + 1) mod 256)) g))
-    (words out ~at:0 512)
+  let last shared = (shared, (shared / 4) - 256) in
+  List.iter
+    (fun (shared, first) ->
+      let run =
+        launching ~kernel:"rotate" ~params:16 d ~groups:(2, 1, 1)
+          ~threads:(256, 1, 1) ~shared
+      in
+      let b = Sub.block (Run.submission run) 0 in
+      Run.int64 run b 0 0L;
+      Run.int32 run b 8 5;
+      Run.int32 run b 12 first;
+      let out = B.create d (4 * 512) in
+      Rig.Point.wait (submitted run ~buffers:[| out |]);
+      equal (array int)
+        ~msg:(strf "the words of %d bytes from word %d" shared first)
+        (Array.init 512 (fun i ->
+             let g = i / 256 in
+             value ((g * 256) + ((i + 1) mod 256)) g))
+        (words out ~at:0 512))
+    [
+      last ((48 * 1024) + 4);
+      last (64 * 1024);
+      last (dynamic_shared g);
+      (dynamic_shared g, 0);
+    ]
 
 (* Functions with static shared memory run with no dynamic shared memory, alone
    and chained, over one group and over several. *)
@@ -1197,7 +1209,8 @@ let launches =
     [
       test "a chain's last release follows the chain's launches" chain_release;
       test "launches past NV's limits are refused" refused_launches;
-      test "a launch takes the most dynamic shared memory" most_shared_memory;
+      test "a launch takes dynamic shared memory past 48 KiB, up to the most"
+        most_shared_memory;
       test "functions with static shared memory run alone and chained"
         static_shared;
       test "a function reads the jump table in its constant bank 2" jump_table;
