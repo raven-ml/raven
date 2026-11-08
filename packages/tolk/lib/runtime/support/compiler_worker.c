@@ -13,6 +13,7 @@
 #include <stdarg.h>
 
 #ifdef _WIN32
+#include <direct.h>
 #include <fcntl.h>
 #include <io.h>
 #include <windows.h>
@@ -191,6 +192,19 @@ bool join(struct options *o, struct options later) {
 
 static int request_fd = -1;
 
+/* The directory of the library's temporary files. The worker removes it when
+   it ends, if it is empty, as it is between compiles: a parent that ends
+   without collecting the worker (killed, or a forked child's _exit) cannot. */
+static const char *temp_dir;
+
+static void remove_temp(void) {
+#ifdef _WIN32
+  _rmdir(temp_dir);
+#else
+  rmdir(temp_dir);
+#endif
+}
+
 /* Reads [size] bytes into [bytes]: false if the input ends first. */
 static bool read_all(char *bytes, size_t size) {
   while (size > 0) {
@@ -221,8 +235,10 @@ static DWORD WINAPI watch(LPVOID unused) {
   for (;;) {
     DWORD available;
     if (!PeekNamedPipe(requests, NULL, 0, NULL, &available, NULL) &&
-        GetLastError() == ERROR_BROKEN_PIPE)
+        GetLastError() == ERROR_BROKEN_PIPE) {
+      remove_temp();
       _exit(1);
+    }
     Sleep(1000);
   }
 }
@@ -232,8 +248,10 @@ static void *watch(void *unused) {
   struct pollfd requests = {request_fd, 0, 0};
   for (;;)
     if (poll(&requests, 1, -1) > 0 &&
-        (requests.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0)
+        (requests.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0) {
+      remove_temp();
       _exit(1);
+    }
 }
 #endif
 
@@ -265,6 +283,8 @@ void serve(int argc, char **argv, const char *library) {
 #else
   setenv("TMPDIR", argv[2], 1);
 #endif
+  temp_dir = argv[2];
+  atexit(remove_temp);
 #ifdef _WIN32
   _setmode(0, _O_BINARY);
   _setmode(1, _O_BINARY);

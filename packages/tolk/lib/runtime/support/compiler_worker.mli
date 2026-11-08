@@ -34,7 +34,9 @@ val call : t -> string -> string -> (string, string) result
     {!Filename.get_temp_dir_name}, made its temporary directory, which this
     process removes when it finds the worker ended, crashed or not, or else
     when this process exits, so that the files a crashed compile leaves go
-    with it.
+    with it. A worker that ends removes the directory itself if it is empty,
+    as it is between compiles, which covers a process that ends without
+    exiting, as a forked child's [Unix._exit].
     A serving worker reads requests, each [N\n] then [N] bytes, on its
     standard input, replies to each on its standard output once it has read
     it whole, and ends when its input does, which this process's end closes

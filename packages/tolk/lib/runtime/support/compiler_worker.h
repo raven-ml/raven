@@ -12,8 +12,10 @@
      worker LIBRARY TEMP
 
    LIBRARY is the vendor's library, TEMP a directory of the worker's own for
-   the library's temporary files (TMPDIR, or TMP and TEMP on Windows), which
-   the parent removes when the worker ends. A request, on standard input, is N\n then
+   the library's temporary files (TMPDIR, or TMP and TEMP on Windows). The
+   worker removes it when it ends if it is empty, and the parent removes it,
+   with what a crashed compile left there, when it finds the worker ended. A
+   request, on standard input, is N\n then
    N bytes: the worker's fields, each NUL-terminated, then the source. The
    reply goes to standard output, once per request:
 
