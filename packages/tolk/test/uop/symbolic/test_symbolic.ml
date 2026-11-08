@@ -349,6 +349,26 @@ let constants =
           folds_to (tdiv 7 (-3)) (Ops.int (-2));
           folds_to (tdiv (-50) 6) (Ops.int (-8));
           folds_to (tmod 5 (-3)) (Ops.int 2));
+      test "a masked right shift past the width keeps its mask's sign" (fun () ->
+          (* The rule that drops a mask reads the bits below the count, and past
+             the width that is every bit, the sign included. *)
+          let x = var ~dtype:Int32 "x" (-5) 5 in
+          let high = Ops.O.(x land int32 0x7FFFFFFF) in
+          let shifted k = Ops.O.(high lsr Ops.const (`Int k)) in
+          let keeps k =
+            let e = shifted k in
+            let at x = [ ("x", `Int (Bigint.of_int x)) ] in
+            equal Dtypes.const
+              (Interpreter.eval ~vars:(at (-1)) e)
+              (Interpreter.eval ~vars:(at (-1)) (sym e))
+          in
+          keeps (Bigint.of_int 32);
+          keeps (Bigint.shift_left Bigint.one 63));
+      test "a left shift of constants at no width by a huge count stays"
+        (fun () ->
+          let huge = Bigint.shift_left Bigint.one 80 in
+          let e = Ops.alu (Ops.int 3) Shl [ Ops.const (`Int huge) ] in
+          equal uop e (sym e));
       test "a shift of constants by a negative count stays" (fun () ->
           let stays e =
             folds_to e e;

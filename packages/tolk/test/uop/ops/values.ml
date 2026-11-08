@@ -45,6 +45,42 @@ let binary_ops =
       Shr;
     ]
 
+(* The value of a shift, by what a count means in a type of [w] bits: past
+   the width, a left shift is 0 and a right shift the sign fill; below it,
+   [x 2^k] modulo [2^w] or the floor of [x / 2^k]. *)
+let shift_reference dt o x k : Dtype.value =
+  let width = Bigint.of_int (Dtype.bitsize dt) in
+  let past = Bigint.geq k width in
+  match (o : Op.t) with
+  | Shl when past -> `Int Bigint.zero
+  | Shl -> Dtype.truncate dt (`Int (Bigint.shift_left x (Bigint.to_int k)))
+  | _ when past ->
+      `Int (if Bigint.sign x < 0 then Bigint.minus_one else Bigint.zero)
+  | _ -> `Int (Bigint.shift_right x (Bigint.to_int k))
+
+(* A type's every operand at its extremes, -1 to 2, and counts either side of
+   the width and of 2^8, 2^16, 2^32, 2^63 and 2^64. *)
+let gen_shift =
+  let open Gen in
+  let* dt = of_list ~pp:Dtype.pp Dtype.ints in
+  let in_type v d = Dtype.Value.to_z (Dtype.truncate dt Dtype.Value.(v + of_int d)) in
+  let mn = Dtype.min dt and mx = Dtype.max dt in
+  let xs =
+    [ in_type mn 0; in_type mn 1; in_type mx (-1); in_type mx 0 ]
+    @ List.map (fun n -> in_type (Dtype.Value.of_int n) 0) [ -1; 0; 1; 2 ]
+  in
+  let powers =
+    List.map (fun n -> Bigint.shift_left Bigint.one n) [ 8; 16; 32; 62; 63; 64 ]
+  in
+  let around c = Bigint.[ pred c; c; succ c ] in
+  let width = Bigint.of_int (Dtype.bitsize dt) in
+  let counts = List.concat_map around (width :: powers) in
+  let z = Testable.pp Dtypes.z in
+  let+ o = of_list ~pp:Op.pp Op.[ Shl; Shr ]
+  and+ x = of_list ~pp:z xs
+  and+ k = of_list ~pp:z counts in
+  (dt, o, x, k)
+
 let exec_alu =
   group "exec_alu"
     [
@@ -147,6 +183,27 @@ let exec_alu =
                 (Exn.invalid_arg ~sub:"a shift by a negative count, -1")
                 (fun () -> ignore (alu Int32 o [ i 8; i (-1) ])))
             Op.[ Shl; Shr ]);
+      prop "a shift by a count of any size is the count's shift, in the type"
+        gen_shift
+        (fun (dt, o, x, k) ->
+          cover "a count at or past the width"
+            (Bigint.geq k (Bigint.of_int (Dtype.bitsize dt)));
+          cover "a count past an OCaml int" (not (Bigint.fits_int k));
+          equal
+            ~msg:(Format.asprintf "%a %a by %s" Dtype.pp dt Op.pp o (Bigint.to_string k))
+            const
+            (shift_reference dt o x k :> Dtype.const)
+            (alu dt o [ `Int x; `Int k ]));
+      test "a right shift at no width is the floor, for a count of any size"
+        (fun () ->
+          let huge = `Int Bigint.(shift_left one 70) in
+          equal const (i 0) (alu Weak_int Shr [ i 3; huge ]);
+          equal const (i (-1)) (alu Weak_int Shr [ i (-3); huge ]));
+      test "a left shift at no width by a huge count has no value" (fun () ->
+          let huge = `Int Bigint.(shift_left one 70) in
+          equal const (i 0) (alu Weak_int Shl [ i 0; huge ]);
+          raises_match (Exn.invalid_arg ~sub:"has no value") (fun () ->
+              ignore (alu Weak_int Shl [ i 1; huge ])));
       test
         "an integer power wraps at its type, and a negative power truncates \
          toward 0" (fun () ->
@@ -502,6 +559,13 @@ let bounds_group =
       Golden.cases "cast_bounds.golden"
         ~key:[ "from"; "lo"; "hi"; "to" ]
         cast_bounds;
+      prop "a shift's bounds hold its value, for a count of any size" gen_shift
+        (fun (dt, o, x, k) ->
+          let v = `Int x in
+          let u = Ops.alu (Ops.variable ~dtype:dt "x" v v) o [ Ops.const (`Int k) ] in
+          let w = shift_reference dt o x k in
+          at_most by_magnitude ~than:w (Ops.vmin u);
+          at_least by_magnitude ~than:w (Ops.vmax u));
       prop "bounds hold every value a cast takes" gen_cast
         (fun (src, dst, (lo, v, hi)) ->
           let u = Ops.cast (variable src lo hi "x") dst in

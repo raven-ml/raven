@@ -636,7 +636,8 @@ val operand_bounds : t -> t -> Dtype.value * Dtype.value
     operation on a committed integer commits a weak integer operand to its type,
     which wraps it, so bounds that leave the type are one value wrapped, or the
     type's; an operation on a committed float commits a weak float operand to
-    its type, which rounds it, and its bounds round with it. *)
+    its type, which rounds it, and its bounds round with it. A shift's count
+    is a number of bits and keeps its own bounds. *)
 
 val overflows : t -> Dtype.t -> bool
 (** [overflows u dt] is [true] iff [u]'s bounds reach outside [dt]'s. *)
@@ -659,7 +660,9 @@ val exec_alu :
     truncates the result to [dt] ({!Dtype.truncate}) if [truncate_output]
     (default [true]). Integers are unbounded before truncation, and an integer
     to a negative integer power truncates toward [0]: it is [0] but for [1] and
-    [-1]. Out-of-domain values follow IEEE: [log2 0.] is [-inf], [sqrt] of a
+    [-1]. A shift's count is a number: truncated to a committed integer type a
+    left shift by a count of its width or more is [0], and a right shift is
+    the floor of its division by 2{^count}, whatever the count. Out-of-domain values follow IEEE: [log2 0.] is [-inf], [sqrt] of a
     negative is NaN, [1. /. 0.] is an infinity of the operand's sign, [sin] of
     an infinity is NaN, and an overflowing [exp2] or [pow] is the infinity IEEE
     gives. A float [log2], [exp2] and [pow] are correctly rounded to a double,
@@ -680,7 +683,14 @@ val exec_alu :
 
     Raises [Invalid_argument] if [op] is not an arithmetic operation or the
     arguments do not fit it, as for a shift by a negative count, which has no
-    value. *)
+    value, or a left shift of a non-zero integer by more than
+    {!max_exact_shift} bits that nothing truncates: at a weak [dt], or without
+    [truncate_output]. *)
+
+val max_exact_shift : int
+(** [max_exact_shift] is the most bits a left shift that nothing truncates
+    computes exactly in {!exec_alu}. Past every committed integer's width, it
+    bounds what one constant in a program may make the compiler allocate. *)
 
 (** {1:syntax Construction} *)
 

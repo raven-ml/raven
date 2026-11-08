@@ -8422,18 +8422,28 @@ as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
   shift by a constant count keep tinygrad's source. A zero divisor is
   D355's. tinygrad's sources move with the rule, through
   `test/gen/tinygrad.patch`.
+  A shift's count is a number of bits, read at no width.
+  `Ops.operand_bounds` keeps a count's own bounds, and `Ops.exec_alu` takes
+  a count of any size: a left shift's value is 0 at or past the width of a
+  committed type, a right shift the floor at any size. A left shift nothing
+  truncates, by more than `Ops.max_exact_shift` bits, has no value, where
+  tinygrad's Python integer would exhaust memory. A count at or past the
+  width keeps the `(x & mask) >> k` rule, which tinygrad applies, from
+  dropping a mask that clears the sign.
 - **Reason:** (e): at the pinned commit, the host's kernel of an int32
-  division of the least value by -1 dies with SIGFPE, and on the host's
-  vector lanes a uint8 shifted right by 8 is itself, where it is 0.
+  division of the least value by -1 dies with SIGFPE, on the host's vector
+  lanes a uint8 shifted right by 8 is itself, where it is 0, and a masked
+  negative int32 shifted right by 32 is -1, where it is 0.
 - **Pinned by:** the Tolk_engine suite's `divisions and shifts at the
   extremes compute as the interpreter`, on the host (`kernels on the
   host`) and on each GPU (`GPUs ›`, run on fudge's CUDA and NV): every
   integer type's quotient, remainder and shifts of operands drawn at its
   extremes, -1 to 2, counts either side of its width, 32 and 64, and a
   constant count of its width, in scalars and in vectors of 4 lanes,
-  against `Ops.exec_alu`; and `a narrow
+  against `Ops.exec_alu`; `a narrow
   type shifted by a uint32 count computes as the interpreter`, by constant
-  counts of 8 to 65537.
+  counts of 8 to 65537; and the Symbolic suite's `a masked right shift past
+  the width keeps its mask's sign`.
 
 ## D347. Compiles run on as many domains as the cores the process may occupy
 

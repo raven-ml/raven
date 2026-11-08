@@ -1858,7 +1858,8 @@ let fold_bitcast root c =
    operand, and a weak integer operand the operation commits, at the width of
    the operation's operands, and writes a committed integer result at its width;
    floats re-round in the mint. A stack folds lane by lane. A shift by a
-   negative count has no value, and does not fold. *)
+   negative count has no value, and does not fold; nor does a left shift at no
+   width by a count no integer holds. *)
 let fold_const_alu a =
   let alu args = exec_alu (op a) (dtype a) args in
   let operands =
@@ -1872,13 +1873,16 @@ let fold_const_alu a =
         Dtype.const (dtype s) v
     | Op.Cast, (#Dtype.value as v) -> (at (dtype s) v :> Dtype.const)
     | Op.Const, (`Int _ as v)
-      when Dtype.equal (dtype s) Dtype.Weak_int && Dtype.mem operands Dtype.ints
-      ->
+      when Dtype.equal (dtype s) Dtype.Weak_int
+           && Dtype.mem operands Dtype.ints ->
         (at operands v :> Dtype.const)
     | _, c -> c
   in
   let defined args =
     match (op a, args) with
+    | Op.Shl, [ _; (#Dtype.value as n) ] when not (Dtype.mem (dtype a) Dtype.ints)
+      ->
+        V.(n >= zero && n <= of_int max_exact_shift)
     | (Op.Shl | Op.Shr), [ _; (#Dtype.value as n) ] -> V.(n >= zero)
     | _ -> true
   in
@@ -2296,14 +2300,16 @@ let symbolic_simple =
           rule
             Upat.((var "x" land cvar "mask") lsr cvar "k")
             (fun m ->
-              let mask = V.to_z (num (m "mask"))
-              and k = V.to_int (num (m "k")) in
-              if
-                (k >= 0)
-                [@mutate off "a shift by 0 is the x >> 0 rule's, tried first"]
-                && all_ones (m "x") Bigint.(logor mask (pred (shift_left one k)))
-              then Some (shr (m "x") (lit (`Int (Bigint.of_int k))))
-              else None);
+              let mask = V.to_z (num (m "mask")) in
+              let k = V.to_z (num (m "k")) in
+              let width = Dtype.bitsize (dtype (m "x")) in
+              (* past the width the fill reads the sign the mask may clear *)
+              if Bigint.sign k < 0 || Bigint.geq k (Bigint.of_int width) then None
+              else
+                let k = Bigint.to_int k in
+                if all_ones (m "x") Bigint.(logor mask (pred (shift_left one k)))
+                then Some (shr (m "x") (lit (`Int (Bigint.of_int k))))
+                else None);
           (* x == x -> True (only ints) *)
           rule
             Upat.(eq (var ~dtype:int_or_bool "x") (var "x"))

@@ -1115,6 +1115,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   off, from comgr 2.8 (ROCm 6.2): IR that an optimization makes invalid
   raises `Compile_error` instead of compiling into wrong values. Compiles
   take about 2% longer.
+- Compiling a shift by a count an `int` cannot hold, such as `2^63-1`, no longer
+  raises `Bigint.Overflow`, and a huge count no longer allocates its exact
+  value: `Ops.exec_alu` takes a count of any size, and a left shift at no
+  width past `Ops.max_exact_shift` bits has no value.
 - A compiled running sum of a widening `Nx.bitcast` of flipped bytes no longer
   reads the wrong byte on the host: a kernel's byte loads read one lane at a
   time are no longer merged into vectors, whose reversed bytes LLVM's load

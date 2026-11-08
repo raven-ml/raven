@@ -1894,6 +1894,14 @@ let rounded dt ((lo, hi) as b : Dtype.value * Dtype.value) =
 (* Bounds read only the sources their rule needs, so they recurse rather than
    fill the whole graph below. A node's bounds, and those of an operand an
    operation commits to its type, are at their width. *)
+(* A count no [int] holds is past the bits of every value, which
+   [Bigint.shift_right] reads from any [int]. *)
+let shift_count z = if Bigint.fits_int z then Bigint.to_int z else Int.max_int
+
+(* The most bits a left shift of no width computes exactly: past them it has no
+   value, which keeps a count from allocating more than memory holds. *)
+let max_exact_shift = 0x100_0000
+
 let rec min_max u =
   let b = u.memos.min_max_memo in
   if b != unset_bounds then b
@@ -1906,9 +1914,13 @@ and operand_bounds u s =
   let operands =
     if Op.Set.mem u.op Op.Set.comparison then promo_dtype u.src else u.dtype
   in
-  if Dtype.equal s.dtype Dtype.Weak_float && Dtype.mem operands Dtype.floats
-  then rounded operands (min_max s)
-  else at_width operands (min_max s)
+  match (u.op, u.src) with
+  (* a count is a number of bits, read at no width but its own *)
+  | (Op.Shl | Op.Shr), [ _; c ] when c == s -> min_max s
+  | _ ->
+      if Dtype.equal s.dtype Dtype.Weak_float && Dtype.mem operands Dtype.floats
+      then rounded operands (min_max s)
+      else at_width operands (min_max s)
 
 and compute_min_max u : Dtype.value * Dtype.value =
   let dt = u.dtype in
@@ -2118,10 +2130,14 @@ and binary_bounds u (s0_min, s0_max) (s1_min, s1_max) =
   | Op.Mul -> corners mul
   (* A shift by a negative count is undefined: its bounds are the type's. *)
   | Op.Shl when c1 && ints [ s0_min; s0_max; s1_min ] && le zero s1_min ->
-      let k = Bigint.to_int (z s1_min) in
-      Some (`Int (Bigint.shift_left (z s0_min) k), `Int (Bigint.shift_left (z s0_max) k))
+      let k = shift_count (z s1_min) in
+      if Dtype.mem u.dtype Dtype.ints && k >= Dtype.bitsize u.dtype then
+        Some (zero, zero)
+      else if k > max_exact_shift then None
+      else
+        Some (`Int (Bigint.shift_left (z s0_min) k), `Int (Bigint.shift_left (z s0_max) k))
   | Op.Shr when c1 && ints [ s0_min; s0_max; s1_min ] && le zero s1_min ->
-      let k = Bigint.to_int (z s1_min) in
+      let k = shift_count (z s1_min) in
       Some (`Int (Bigint.shift_right (z s0_min) k), `Int (Bigint.shift_right (z s0_max) k))
   | Op.Truncmod when c1 && lt zero s1_max ->
       let c = s1_min in
@@ -2987,7 +3003,7 @@ let shift_operands op x y =
   let a, b = int_operands op x y in
   if Bigint.sign b < 0 then
     invalid_argf "a shift by a negative count, %s, has no value" (Bigint.to_string b);
-  (a, Bigint.to_int b)
+  (a, shift_count b)
 
 let bitwise op fb fz (x : Dtype.value) (y : Dtype.value) : Dtype.value =
   match (x, y) with
@@ -3052,6 +3068,9 @@ let python_alu op (args : Dtype.value list) : Dtype.value =
   | Op.Shl ->
       binary (fun x y ->
           let a, k = shift_operands op x y in
+          if Bigint.sign a <> 0 && k > max_exact_shift then
+            invalid_argf "a left shift by %s, of no width, has no value"
+              (Bigint.to_string (Value.to_z y));
           `Int (Bigint.shift_left a k))
   | Op.Max -> binary Value.max
   | Op.Truncmod -> binary (divide `Remainder ~toward_zero:true)
@@ -3145,6 +3164,13 @@ let exec_alu ?(truncate_output = true) op dt (args : Dtype.const list) :
               `Int
                 (pow_wrapped (Value.to_z b) (Value.to_z e)
                    (8 * Dtype.itemsize dt))
+          (* a left shift's value is 0 once its count passes the width, and
+             a huge count leaves the exact shift out of memory *)
+          | Op.Shl, [ (`Int _ | `Bool _); ((`Int _ | `Bool _) as k) ]
+            when truncate_output
+                 && Dtype.mem dt Dtype.ints
+                 && Bigint.geq (Value.to_z k) (Bigint.of_int (Dtype.bitsize dt)) ->
+              `Int Bigint.zero
           | _ -> python_alu op args
         in
         let v =
