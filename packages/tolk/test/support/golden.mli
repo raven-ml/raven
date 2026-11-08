@@ -67,12 +67,27 @@ val sink : string -> Tolk.Ops.t
 *)
 
 val cases :
-  ?key:string list -> string -> ((string -> string) -> unit) -> Windtrap.test
+  ?key:string list ->
+  ?differs:(string * string list) list ->
+  string ->
+  ((string -> string) -> unit) ->
+  Windtrap.test
 (** [cases file check] is the table, named [file], that runs [check cell] on
     each row of the table golden [file]. A row is identified by its cells in
     [key], as [a=dtypes.half b=dtypes.char]; [key] defaults to the first column.
     A table that cannot be read as a golden is one failing test named [file],
-    so a stale [.tolk] does not stop the suite. *)
+    so a stale [.tolk] does not stop the suite.
+
+    [differs] states which rows of [file]'s {{!tolk}[.tolk]} differ from the
+    golden, as [("D81", ["op=Ops.ADD dtype=dtypes.f32"])]. A pattern is pairs
+    [column=value] separated by spaces, all of which a row must hold; a word
+    without [=] extends the value before it, as in [name=kernel with opts]. The
+    [fst] is an entry of the [.tolk]'s header. [check] runs on the rows of the
+    [.tolk] as usual, so a listed row is held to tolk's value. The list must be
+    exact: the table is one failing test if a row that differs is not listed,
+    if a listed row equals the golden, if a pattern holds on no row, if an
+    entry is not in the header, if the two tables have different numbers of
+    rows, or if the [.tolk] or the golden is missing. *)
 
 val columns : string -> string list
 (** [columns file] is the column names of the table golden [file], in order. *)

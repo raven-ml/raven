@@ -50,6 +50,35 @@ let cases =
     [
       Golden.cases "lattice.golden" (fun _ ->
           equal (list string) [ "cases"; "lattice.golden" ] (current_test ()));
+      group "differs is checked against the golden and the .tolk"
+        (let listing name differs =
+           group name [ Golden.cases "differs.golden" ~differs ignore ]
+         in
+         let row_b = [ "a=y"; "a=z" ] in
+         [
+           group "a listed row is held to the .tolk"
+             [
+               Golden.cases "differs.golden"
+                 ~differs:[ ("D1", row_b) ]
+                 (fun cell ->
+                   if cell "a" = "y" then equal string "9" (cell "b"));
+             ];
+           xfail ~reason:"a row that differs is not listed"
+             (listing "unlisted" [ ("D1", [ "a=y" ]) ]);
+           xfail ~reason:"a listed row equals the golden"
+             (listing "stale" [ ("D1", "a=x" :: row_b) ]);
+           xfail ~reason:"a pattern names no row"
+             (listing "no row" [ ("D1", "a=w" :: row_b) ]);
+           xfail ~reason:"the entry is not in the header"
+             (listing "no entry" [ ("D2", row_b) ]);
+           xfail ~reason:"no .tolk"
+             (group "no tolk"
+                [
+                  Golden.cases "lattice.golden"
+                    ~differs:[ ("D1", [ "a=int" ]) ]
+                    ignore;
+                ]);
+         ]);
       group "keyed"
         [
           Golden.cases ~key:[ "b"; "a" ] "lattice.golden" (fun _ ->

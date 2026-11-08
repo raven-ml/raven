@@ -45,6 +45,10 @@ import tempfile
 
 TINYGRAD = "c22edff14c79310a9b2df62a78819cf77c8289fa"
 
+# The generators recorded from unmodified tinygrad: the others run against a
+# copy of the checkout with PATCH applied, until each part has moved here.
+UNMODIFIED = set()
+
 HERE = Path(__file__).resolve().parent
 TEST = HERE.parent
 MANIFEST = HERE / "manifest"
@@ -225,7 +229,7 @@ def main():
         tree = patched(tinygrad, scratch)
         self_test(tree)
         for module, generator in selected.items():
-            files, refused = run(module, generator, tree)
+            files, refused = run(module, generator, tinygrad if module in UNMODIFIED else tree)
             goldens.update(files)
             for name, reason in refused:
                 print(f"refused {module} {name}: {reason}")

@@ -196,8 +196,9 @@ let sink file =
 
 (* Tables *)
 
-let table file =
-  match String.split_on_char '\n' (body file) with
+(* The table in [text], whose first row is on line [first] of its file. *)
+let parse file ~first text =
+  match String.split_on_char '\n' text with
   | [] | [ _ ] -> failwith (file ^ ": the table has no row")
   | header :: lines ->
       let columns = String.split_on_char '\t' header in
@@ -205,11 +206,15 @@ let table file =
         let cells = String.split_on_char '\t' line in
         if List.compare_lengths cells columns <> 0 then
           failwith
-            (Printf.sprintf "%s, line %d: %d cells for %d columns" file (i + 2)
-               (List.length cells) (List.length columns));
+            (Printf.sprintf "%s, line %d: %d cells for %d columns" file
+               (i + first) (List.length cells) (List.length columns));
         List.combine columns cells
       in
       (columns, List.mapi row lines)
+
+let table file =
+  let first = if exists (tolk_name file) then 3 else 2 in
+  parse file ~first (body file)
 
 let cell file columns row column =
   match List.assoc_opt column row with
@@ -225,13 +230,85 @@ let rows file =
   let columns, rows = table file in
   List.map (cell file columns) rows
 
+(* Whether [row] holds every [column=value] pair of [pattern]. A value may hold
+   spaces: a word without [=] extends the value before it. A column the table
+   lacks holds on no row. *)
+let matches row pattern =
+  let pairs =
+    List.fold_left
+      (fun pairs word ->
+        match (String.index_opt word '=', pairs) with
+        | Some i, _ ->
+            let n = String.length word - i - 1 in
+            (String.sub word 0 i, String.sub word (i + 1) n) :: pairs
+        | None, (column, value) :: rest ->
+            (column, value ^ " " ^ word) :: rest
+        | None, [] -> [ ("", word) ])
+      []
+      (String.split_on_char ' ' pattern)
+  in
+  List.for_all
+    (fun (column, value) ->
+      match List.assoc_opt column row with
+      | Some cell -> String.equal cell value
+      | None -> false)
+    pairs
+
+(* What is wrong with [differs], the rows of [file]'s [.tolk] it lists as
+   differing from the golden, or [None]. The list must be exact: it names every
+   row that differs and no other, so a reader can trust it. *)
+let differs_problem file name rows differs =
+  let tolk = tolk_name file in
+  if not (exists file && exists tolk) then
+    Some (file ^ ": differs needs both the golden and its .tolk")
+  else begin
+    let listed row =
+      List.exists (fun (_, ps) -> List.exists (matches row) ps) differs
+    in
+    let _, upstream = parse file ~first:2 (golden_body file) in
+    let differing row = not (List.mem row upstream) in
+    let entries = (fst (tolk_parts tolk)).entries in
+    let problems =
+      [
+        ( "the golden has another number of rows",
+          if List.compare_lengths rows upstream <> 0 then [ file ] else [] );
+        ( "differs from the golden but is not listed",
+          List.map name
+            (List.filter (fun r -> differing r && not (listed r)) rows) );
+        ( "is listed but equals the golden",
+          List.map name
+            (List.filter (fun r -> listed r && not (differing r)) rows) );
+        ( "names no row",
+          List.concat_map
+            (fun (_, ps) ->
+              List.filter
+                (fun p -> not (List.exists (fun r -> matches r p) rows))
+                ps)
+            differs );
+        ( "is no entry of the .tolk's header",
+          List.filter
+            (fun e -> not (List.mem e entries))
+            (List.map fst differs) );
+      ]
+    in
+    match List.filter (fun (_, found) -> found <> []) problems with
+    | [] -> None
+    | found ->
+        Some
+          (file ^ ": differs: "
+          ^ String.concat "; "
+              (List.map
+                 (fun (what, l) -> what ^ ": " ^ String.concat ", " l)
+                 found))
+  end
+
 (* A table is read when the suite is declared: a stale [.tolk] fails one test,
    and the rest of the suite runs. *)
-let cases ?key file check =
+let cases ?key ?(differs = []) file check =
   match table file with
   | exception Failure message ->
       Windtrap.test file (fun () -> Windtrap.fail message)
-  | columns, rows ->
+  | columns, rows -> (
       let key = Option.value key ~default:[ List.hd columns ] in
       let name row =
         String.concat " "
@@ -239,5 +316,14 @@ let cases ?key file check =
              (fun column -> column ^ "=" ^ cell file columns row column)
              key)
       in
-      Windtrap.cases file ~id:name rows (fun row ->
-          check (cell file columns row))
+      let problem =
+        if differs = [] then None
+        else
+          try differs_problem file name rows differs
+          with Failure message -> Some message
+      in
+      match problem with
+      | Some message -> Windtrap.test file (fun () -> Windtrap.fail message)
+      | None ->
+          Windtrap.cases file ~id:name rows (fun row ->
+              check (cell file columns row)))

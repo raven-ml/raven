@@ -22,7 +22,8 @@
  (target programs.ml)
  (deps
   (:goldens
-   (glob_files ../test/support/programs/*.golden)))
+   (glob_files ../test/support/programs/*.golden)
+   (glob_files ../test/support/programs/*.tolk)))
  (action
   (with-stdout-to
    %{target}
@@ -59,18 +60,27 @@
  (deps
   (:graphs
    ../test/codegen/opt/heuristic/matmul.golden
+   (glob_files ../test/codegen/opt/heuristic/matmul.tolk)
    matmul_f64.graph
    ../test/codegen/opt/heuristic/conv.golden
+   (glob_files ../test/codegen/opt/heuristic/conv.tolk)
    ../test/codegen/opt/heuristic/conv_half.golden
+   (glob_files ../test/codegen/opt/heuristic/conv_half.tolk)
    ../test/codegen/opt/heuristic/tangent_products.golden
+   (glob_files ../test/codegen/opt/heuristic/tangent_products.tolk)
    ../test/codegen/opt/heuristic/paired_products.golden
+   (glob_files ../test/codegen/opt/heuristic/paired_products.tolk)
    ../test/codegen/opt/heuristic/max_rows.golden
+   (glob_files ../test/codegen/opt/heuristic/max_rows.tolk)
    sin_nested_8.graph
    select_zero.graph
    normal_f64.graph
    ../test/codegen/opt/heuristic/gpt_oss_kv.golden
+   (glob_files ../test/codegen/opt/heuristic/gpt_oss_kv.tolk)
    ../test/codegen/opt/heuristic/vecmat_1000.golden
-   ../test/codegen/opt/heuristic/matvec_tall.golden))
+   (glob_files ../test/codegen/opt/heuristic/vecmat_1000.tolk)
+   ../test/codegen/opt/heuristic/matvec_tall.golden
+   (glob_files ../test/codegen/opt/heuristic/matvec_tall.tolk)))
  (action
   (with-stdout-to
    %{target}
