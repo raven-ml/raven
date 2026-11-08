@@ -226,12 +226,5 @@ and rune), raven / llama.cpp b12048 Vulkan:
 
 ## repo
 
-- windtrap: once a run takes a signal, the supervisor stops enforcing a
-  test's limit (lib/supervisor.ml, the `Option.is_some !signal` guards) and
-  waits for the worker, which handles the signal only at OCaml poll points.
-  A test spinning in C then hangs its run until the worker is killed by
-  hand: `timeout 2` on a C spin under `~timeout:2.` ran until its CPU cap,
-  where the limit alone kills it at 6 s. The fix belongs in windtrap: a
-  bounded wait after the signal, then the kill
 - thumper: talon.thumper's Mac rows predate the Nx.Rng
   fixture (76105a215): the maintainer re-records them
