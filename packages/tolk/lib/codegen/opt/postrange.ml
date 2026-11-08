@@ -36,14 +36,6 @@ let size r = Bigint.succ (V.to_z (vmax r))
 let z n = const (`Int n)
 let sint_of_z n = if Bigint.fits_int n then Int (Bigint.to_int n) else Sym (z n)
 
-(* A size is known when it is an integer, which a constant beyond an int also
-   is. *)
-let known_size = function
-  | Int n -> Some (Bigint.of_int n)
-  | Sym u when is_literal u -> (
-      match value u with `Int n -> Some n | _ -> None)
-  | Sym _ -> None
-
 let mem_ranges r u = Nodes.mem r (ranges u)
 let special_name u = match arg u with String s -> s | _ -> ""
 

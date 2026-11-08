@@ -491,6 +491,10 @@ val variables : Ops.t -> Ops.t list
 (** [variables u] is the unbound scalar variables [u] reads, sorted by name and
     slot. *)
 
+val known_size : Ops.sint -> Bigint.t option
+(** [known_size s] is [s]'s value when it is an integer: an {!Ops.Int} or a
+    literal constant, which may lie past an [int]. *)
+
 (** {1:symbolic Divisibility} *)
 
 val divides : Ops.t -> Bigint.t -> Ops.t option
@@ -829,6 +833,33 @@ val rule :
 (** [rule p f] is [Ops.Pattern_matcher.rule p f], which declines where [f]
     raises {!Not_a_number}. *)
 
+val equals : Ops.t -> Dtype.value -> bool
+(** [equals u v] is [true] iff the constant [u] holds the number [v].
+
+    Raises [Invalid_argument] if [u] is neither a constant nor a cast of one. *)
+
+val const_v : Ops.t -> Dtype.value -> Ops.t
+(** [const_v u v] is [v] as a constant of [u]'s type ({!Ops.const_like}). *)
+
+val conj : Ops.t list -> Ops.t
+(** [conj us] is the conjunction of [us].
+
+    Raises [Invalid_argument] on the empty list. *)
+
+val invalid_pat : Ops.Upat.t
+(** [invalid_pat] matches the constant [`Invalid], named ["i"]. *)
+
+val rule_ctx :
+  Ops.Upat.t ->
+  ('ctx -> (string -> Ops.t) -> 'r option) ->
+  ('ctx, 'r) Ops.Pattern_matcher.rule
+(** [rule_ctx p f] is [Ops.Pattern_matcher.rule_ctx p f]. Unlike {!rule}, it
+    lets {!Not_a_number} through. *)
+
+val with_ctx :
+  (unit, 'r) Ops.Pattern_matcher.t -> ('ctx, 'r) Ops.Pattern_matcher.t
+(** [with_ctx m] is [Ops.Pattern_matcher.with_ctx m]. *)
+
 (** {2:movements Movements} *)
 
 val mop_cleanup : (unit, Ops.t) Ops.Pattern_matcher.t
@@ -849,6 +880,22 @@ val mop_cleanup : (unit, Ops.t) Ops.Pattern_matcher.t
       axes is indexing [b] by the element of [i] they select. *)
 
 (** {2:weak Weak constants} *)
+
+val is_weak : Dtype.t -> bool
+(** [is_weak dt] is [true] iff [dt] is one of {!Dtype.weaks}. *)
+
+val weak : Ops.t -> bool
+(** [weak u] is [is_weak (Ops.dtype u)]. *)
+
+val is_const : Ops.t -> bool
+(** [is_const u] is [true] iff [u] is a constant node. *)
+
+val unchanged : Ops.t list -> Ops.t -> bool
+(** [unchanged src u] is [true] iff [src] is [u]'s sources, node for node. *)
+
+val derived_dtypes : Ops.t -> Ops.t list -> (Dtype.t * Dtype.t) option
+(** [derived_dtypes u src] is the operands' meet and [u]'s own type when
+    [u] is broadcastable and sources [src] commit both to a width. *)
 
 val pm_uncast_const : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_uncast_const] removes the cast from each committed constant source of a

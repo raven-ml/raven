@@ -8,11 +8,7 @@
 open Ops
 open Shape
 
-let is_weak dt = Dtype.mem dt Dtype.weaks
-let weak u = is_weak (dtype u)
-let is_const u = op u = Op.Const
 let committed u = commit_dtype ~default_int:Dtype.Int32 u
-let unchanged src u = List.equal ( == ) src (Ops.src u)
 
 (* The decompositions and float emulation commit bare constants at a type
    another source already states. *)
@@ -21,17 +17,6 @@ let commit_weak_consts u = function
   | Some dt ->
       let commit s = if is_const s && weak s then ccast s dt else s in
       replace ~src:(List.map commit (src u)) u
-
-(* The committed types [u] commits its sources at: the operands' meet and [u]'s
-   own derived type, [None] if either is weak. *)
-let derived_dtypes u src =
-  if not (Op.Set.mem (op u) Op.Set.broadcastable) then None
-  else
-    let meet = promo_dtype src in
-    if is_weak meet then None
-    else
-      let result = dtype_of (op u) src (arg u) in
-      if is_weak result then None else Some (meet, result)
 
 (* Whether source [i] of [u] is a shift's count, a number of bits. *)
 let is_count u i = i = 1 && (op u = Op.Shl || op u = Op.Shr)

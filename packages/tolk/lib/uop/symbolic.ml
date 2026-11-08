@@ -9,21 +9,10 @@ open Ops
 open Shape
 module V = Dtype.Value
 
-let equals u v =
-  match value u with #Dtype.value as x -> V.(x = v) | _ -> false
-
 let pm = Pattern_matcher.v
 let ops = Op.Set.of_list
 let zero = V.of_int 0
 let one = V.of_int 1
-let const_v u (v : V.t) = const_like u (v :> Dtype.const)
-let is_const u = op u = Op.Const
-
-let conj = function
-  | u :: us -> uprod u us
-  | [] -> invalid_arg "empty conjunction"
-
-let invalid_pat = Upat.op Op.Const ~arg:(Const `Invalid) ~name:"i"
 let boolean = [ Dtype.Bool ]
 
 (* Valids *)

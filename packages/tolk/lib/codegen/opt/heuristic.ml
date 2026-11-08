@@ -22,14 +22,6 @@ let split ?(top = false) k axis amount target =
 let try_split ?(top = false) k axis amount target =
   Result.is_ok (K.apply_opt k (Opt.Split { axis; amount; target; top }))
 
-(* A size is known when it is an integer, which a constant beyond an int also
-   is. *)
-let known_size = function
-  | Int n -> Some (Bigint.of_int n)
-  | Sym u when is_literal u -> (
-      match value u with `Int n -> Some n | _ -> None)
-  | Sym _ -> None
-
 let divisible s n =
   match known_size s with
   | Some s -> Bigint.(equal (rem s (of_int n)) zero)

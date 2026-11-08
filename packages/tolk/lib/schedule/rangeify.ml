@@ -9,8 +9,6 @@ open Ops
 open Shape
 
 let rule = Pattern_matcher.rule
-let rule_ctx = Pattern_matcher.rule_ctx
-let with_ctx = Pattern_matcher.with_ctx
 let ops = Op.Set.of_list
 let var = Upat.var
 let is_range_of_size u = op u = Op.Range && op (nth u 0) <> Op.Const

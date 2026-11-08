@@ -9,7 +9,6 @@ open Ops
 open Shape
 module V = Dtype.Value
 
-let rule_ctx = Pattern_matcher.rule_ctx
 
 let flatten_range r =
   let off = Option.get (range_start (op r)) in

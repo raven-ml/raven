@@ -2361,12 +2361,10 @@ let as_index (c : Dtype.const) : Dtype.value =
   | `Invalid -> invalid_arg "Invalid is not an index"
   | #Dtype.value as x -> x
 
-let is_param_arg = function Param p -> Some p | _ -> None
-
 let param_arg_of u =
-  match is_param_arg u.arg with
-  | Some p -> p
-  | None -> invalid_argf "%s has no ParamArg" (Op.name u.op)
+  match u.arg with
+  | Param p -> p
+  | _ -> invalid_argf "%s has no ParamArg" (Op.name u.op)
 
 let sink ?kernel us =
   v Op.Sink ~src:us

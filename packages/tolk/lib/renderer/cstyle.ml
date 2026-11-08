@@ -192,7 +192,6 @@ let wmma_name u =
 (* Base rewrite *)
 
 let rule = Pattern_matcher.rule
-let rule_ctx = Pattern_matcher.rule_ctx
 let cast_of ?dtype ?name p = Upat.op ?dtype ?name ~src:[ p ] Op.Cast
 let c = Upat.cvar "c"
 

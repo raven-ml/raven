@@ -9,7 +9,6 @@ open Ops
 open Shape
 
 let rule = Pattern_matcher.rule
-let rule_ctx = Pattern_matcher.rule_ctx
 let pm = Pattern_matcher.v
 let ( ++ ) = Pattern_matcher.append
 let lift = Pattern_matcher.with_ctx

@@ -1348,6 +1348,14 @@ module V = Dtype.Value
 
 (* Weak constants *)
 
+(* A size is known when it is an integer, which a constant beyond an int also
+   is. *)
+let known_size = function
+  | Int n -> Some (Bigint.of_int n)
+  | Sym u when is_literal u -> (
+      match value u with `Int n -> Some n | _ -> None)
+  | Sym _ -> None
+
 let is_weak dt = Dtype.mem dt Dtype.weaks
 let weak u = is_weak (dtype u)
 let is_const u = op u = Op.Const
@@ -1414,6 +1422,9 @@ let number : Dtype.const -> V.t = function
 
 let rule p f =
   Pattern_matcher.rule p (fun m -> try f m with Not_a_number -> None)
+
+let rule_ctx = Pattern_matcher.rule_ctx
+let with_ctx = Pattern_matcher.with_ctx
 
 let zero = V.of_int 0
 let num u = number (value u)

@@ -317,11 +317,6 @@ let resolve_function c =
     (* Input and output parameters both bind to explicit arguments by slot;
        unused arguments are allowed. *)
     let args = Array.of_list (List.tl (src c)) in
-    let param_of p =
-      match arg p with
-      | Param p -> p
-      | _ -> invalid_arg "a parameter needs its argument"
-    in
     (* A parameter holds flat storage of its greatest size, and its logical
        shape is a view on top: it binds to its argument viewed as such flat
        storage, so the views on the parameter stay valid. *)
@@ -346,7 +341,7 @@ let resolve_function c =
       )
     in
     let bind p =
-      let pa = param_of p in
+      let pa = param_arg_of p in
       let a = args.(pa.slot) in
       let bound =
         match shape p with
@@ -373,13 +368,13 @@ let resolve_function c =
     (* Inlining removes the call's scope, so its local storage needs fresh
        identities. *)
     let rename b =
-      (b, replace b ~arg:(Param { (param_of b) with slot = unique_num () }))
+      (b, replace b ~arg:(Param { (param_arg_of b) with slot = unique_num () }))
     in
     let subs =
       List.filter_map
         (fun p ->
           match op p with
-          | Op.Param when (param_of p).slot >= 0 -> Some (bind p)
+          | Op.Param when (param_arg_of p).slot >= 0 -> Some (bind p)
           | Op.Alloc -> Some (rename p)
           | _ -> None)
         nodes

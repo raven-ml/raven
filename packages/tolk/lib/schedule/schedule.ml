@@ -9,8 +9,6 @@ open Ops
 open Shape
 
 let rule = Pattern_matcher.rule
-let rule_ctx = Pattern_matcher.rule_ctx
-let with_ctx = Pattern_matcher.with_ctx
 let ops = Op.Set.of_list
 let var = Upat.var
 let setting = Setting.value
@@ -893,11 +891,6 @@ let pm_flatten_linear = Pattern_matcher.v (fun () -> [ flatten_linear () ])
 
 (* Parameters and call-local storage *)
 
-let param_of u =
-  match arg u with
-  | Param p -> p
-  | _ -> invalid_arg "storage needs its argument"
-
 let create_new_buffer args b =
   let device =
     match device b with
@@ -915,7 +908,7 @@ let pm_post_sched_cache =
       (* Positional arguments are resolved outside kernel bodies; free variables
          have slot -1. *)
       rule_ctx (Upat.op Op.Param ~name:"x") (fun args m ->
-          let slot = (param_of (m "x")).slot in
+          let slot = (param_arg_of (m "x")).slot in
           if slot >= 0 then Some (List.nth args slot) else None);
       (* Call-local storage is bound to new buffers for this invocation. *)
       rule_ctx (Upat.op Op.Alloc ~name:"b") (fun ctx m ->
@@ -936,18 +929,18 @@ let pass_values values call =
         op v = Op.Param
         && addrspace v = Some Dtype.Alu
         &&
-        let p = param_of v in
+        let p = param_arg_of v in
         p.name = None && List.mem_assoc p.slot values)
       (toposort ~calls:Skip (body call))
   in
   let n = List.length args in
-  let slot j v = replace v ~arg:(Param { (param_of v) with slot = n + j }) in
+  let slot j v = replace v ~arg:(Param { (param_arg_of v) with slot = n + j }) in
   let slotted = List.mapi (fun j v -> (v, slot j v)) held in
   replace call
     ~src:
       (substitute ~calls:Skip ~pass:Once (body call) slotted
       :: args
-      @ List.map (fun v -> List.assoc (param_of v).slot values) held)
+      @ List.map (fun v -> List.assoc (param_arg_of v).slot values) held)
 
 (* Nested linear calls are lexical scopes: their positional parameters shadow
    the enclosing scope, while calls without scalar arguments inherit it. A
@@ -994,7 +987,7 @@ let rec resolve_linear_call ~several ?(outer_binds = []) linear_call =
             (fun s ->
               List.filter_map
                 (fun v ->
-                  let p = param_of v in
+                  let p = param_arg_of v in
                   if p.name <> None then None
                   else
                     Option.map (fun x -> (v, x)) (List.assoc_opt p.slot params))
@@ -1030,7 +1023,7 @@ let bound_several u =
   List.iter
     (fun v ->
       if is_bound_var v then
-        let x = Dtype.Value.to_int (Option.get (param_of v).bound) in
+        let x = Dtype.Value.to_int (Option.get (param_arg_of v).bound) in
         let name = expr v in
         let seen = Option.value (Hashtbl.find_opt values name) ~default:[] in
         if not (List.mem x seen) then Hashtbl.replace values name (x :: seen))
@@ -1175,7 +1168,7 @@ let in_order fn =
     ranges
   @ List.mapi
       (fun k u ->
-        let p = param_of u in
+        let p = param_arg_of u in
         (u, replace u ~arg:(Param { p with slot = lowest - 1 - k })))
       storage
 
@@ -1300,9 +1293,9 @@ let run_start r i =
    storage is ({!Prepare}). *)
 let copy_runs call dst src ~n ~d ~s =
   let args = Array.of_list (List.tl (Ops.src call)) in
-  let flat p = ndim args.((param_of p).slot) = 1 in
+  let flat p = ndim args.((param_arg_of p).slot) = 1 in
   let whole p start = start = 0 && max_numel p = n in
-  let arg p = args.((param_of p).slot) in
+  let arg p = args.((param_arg_of p).slot) in
   if not (is_copy (arg dst) (arg src)) then None
   else if not ((whole dst d || flat dst) && (whole src s || flat src)) then
     None
@@ -1310,7 +1303,7 @@ let copy_runs call dst src ~n ~d ~s =
     let run p start =
       if whole p start then p
       else begin
-        let k = (param_of p).slot in
+        let k = (param_arg_of p).slot in
         args.(k) <- shrink args.(k) [ Some (Int start, Int (start + n)) ];
         replace p ~src:[ Ops.const ~dtype:(dtype (nth p 0)) (`Int (Bigint.of_int n)) ]
       end
@@ -1518,7 +1511,7 @@ let pm_callify_ctx_collect =
    alike for the schedule cache. Fresh slots count up from 0; negative slots are
    already the scope's own. *)
 let canonicalize_alloc ctx b =
-  let p = param_of b in
+  let p = param_arg_of b in
   if p.slot >= 0 && Ordered.find_opt ctx.allocs b = None then
     Ordered.replace ctx.allocs b
       (replace b
@@ -2036,7 +2029,7 @@ let create_linear_with_vars ?(capturing = false) ?(by_storage = false) big_sink
         in
         let args = if op si = Op.Call then src_without_body si else [] in
         List.concat_map
-          (fun b -> List.filter_map (fun v -> (param_of v).name) (variables b))
+          (fun b -> List.filter_map (fun v -> (param_arg_of v).name) (variables b))
           (bodies @ args))
       (entries linear)
   in
@@ -2046,7 +2039,7 @@ let create_linear_with_vars ?(capturing = false) ?(by_storage = false) big_sink
         if not (is_bound_var b) then acc
         else
           let nm = expr b in
-          let value = Dtype.Value.to_int (Option.get (param_of b).bound) in
+          let value = Dtype.Value.to_int (Option.get (param_arg_of b).bound) in
           (* A name of several values is no run's: its calls pass them. *)
           if
             List.mem nm several

@@ -82,9 +82,6 @@ let is_weak_of dt x = Dtype.equal (dtype x) (Dtype.weak dt)
 let all_same eq = function [] -> true | x :: r -> List.for_all (eq x) r
 let shape_equal s0 s1 = List.equal Sint.equal s0 s1
 
-let param_of u =
-  match arg u with Param p -> p | _ -> invalid_arg "not a parameter"
-
 (* Storage has one source, its size. *)
 let size_only u = List.compare_length_with (src u) 1 = 0
 
@@ -351,13 +348,13 @@ let tensor : t =
            "buf"
            (fun buf ->
              if addrspace buf = Some Dtype.Global then
-               Some (is_device (param_of buf).device && size_only buf)
+               Some (is_device (param_arg_of buf).device && size_only buf)
              else None);
          check
            (pat [ Op.Alloc ] ~src:[ p_size ] ~allow_any_len:true ~name:"buf")
            "buf"
            (fun buf ->
-             let p = param_of buf in
+             let p = param_arg_of buf in
              List.mem (addrspace buf)
                Dtype.[ Some Global; Some Local; Some Reg ]
              && (Option.is_none p.device
@@ -367,7 +364,7 @@ let tensor : t =
            (pat [ Op.Param ] ~src:[ pat [ Op.Stack ] ~src:[] ] ~name:"buf")
            "buf"
            (fun buf ->
-             if is_variable buf then Some (Option.is_none (param_of buf).device)
+             if is_variable buf then Some (Option.is_none (param_arg_of buf).device)
              else None);
          check
            (pat [ Op.Special ]
@@ -454,7 +451,7 @@ let program : t =
        (fun () -> [
          (* A program's parameters name no device: its call's arguments do. *)
          decide (pat [ Op.Param ] ~name:"x") "x" (fun x ->
-             if Option.is_some (param_of x).device then Some false else None);
+             if Option.is_some (param_arg_of x).device then Some false else None);
          (* A bare constant appears only under the cast stating its width, or
             as a define's size. *)
          decide

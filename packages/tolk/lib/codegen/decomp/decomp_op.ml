@@ -170,7 +170,6 @@ let shift_of reading x c =
   match power_of_two reading x c with Some v when v > 0 -> Some v | _ -> None
 
 let rule = Pattern_matcher.rule
-let rule_ctx = Pattern_matcher.rule_ctx
 let when_ ops op rules = if Op.Set.mem op ops then rules else []
 
 (* The matcher of [key] in [made], made on the key's first call, so that a

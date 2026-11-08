@@ -11,7 +11,6 @@ open Shape
 let shl = Transcendental.shl
 let shr = Transcendental.shr
 let rule = Pattern_matcher.rule
-let rule_ctx = Pattern_matcher.rule_ctx
 let ops l = Op.Set.of_list l
 let uint = Dtype.Uint32
 
