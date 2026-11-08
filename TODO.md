@@ -231,8 +231,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   Branch-free merges cut callgrind's mispredicts 35% but ran no faster on
   fudge. brot.mli:985 does not say that a token given twice maps to its
   last binding
-- talon.csv's decode of a 147 KB file allocates ~1.7 MB of words in the
-  major heap per decode (14.2 M over the pacing law's 64 decodes)
 - talon.parquet's pacing law failed once on macOS (run 42473531097: 35
   major cycles against 34); the runtime's own pace cannot explain it (the
   loop puts ~4.8k words in the major heap) and it passes at rig's 4 MiB

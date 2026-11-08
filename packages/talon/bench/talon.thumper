@@ -17,6 +17,7 @@
 # forced: blessed Talon/Window/rolling-mean-28-1M Talon/Window/rolling-sum-on-1M Talon/Window/running-std-1M Talon/Window/running-sum-1M Talon/Window/running-max-1M under load 9.5 on 14 cores
 # forced: blessed Talon/Join/asof-1M-64k Talon/Join/asof-as-range-1M-64k under load 13.6 on 14 cores
 # forced: blessed Talon/List/per-list-sum-64k-32 under load 48.1 on 14 cores
+# forced: blessed Talon_csv/read-mixed under load 44.6 on 14 cores
 
 Talon/Filter/high_value	alloc_words	exact	12395
 Talon/Group/category_region	alloc_words	exact	6446
@@ -60,7 +61,7 @@ Talon/Window/rolling-sum-on-1M	alloc_words	exact	91284
 Talon/Window/running-max-1M	alloc_words	exact	67826
 Talon/Window/running-std-1M	alloc_words	exact	147260
 Talon/Window/running-sum-1M	alloc_words	exact	64640
-Talon_csv/read-mixed	alloc_words	exact	888124
+Talon_csv/read-mixed	alloc_words	exact	507687
 Talon_parquet/filter-text	alloc_words	exact	22588
 Talon_parquet/read-keys	alloc_words	exact	10808
 Talon_parquet/read-nullable	alloc_words	exact	35230

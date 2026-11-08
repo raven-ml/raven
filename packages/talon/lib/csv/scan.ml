@@ -20,7 +20,8 @@ type t = {
   mutable start : int; (* The batch's first byte. *)
   mutable stop : int; (* The byte after the batch. *)
   mutable line : int; (* The line of [start], [0] before the first batch. *)
-  mutable lines : int; (* The line feeds of the batch. *)
+  mutable lines : int; (* The line feeds of the batch, from the first pass. *)
+  mutable ends : int; (* Those outside quotes: every record's but the last. *)
   mutable scanned : int; (* Where the first pass is. *)
   mutable in_quotes : bool; (* The first pass's parity at [scanned]. *)
   mutable bounds : int array; (* Each field's [start] and [stop]. *)
@@ -34,17 +35,18 @@ let make ~sep ~quote reader =
     reader;
     sep;
     quote;
-    buf = Bytes.create 65536;
+    buf = Bytes.empty;
     len = 0;
     eod = false;
     start = 0;
     stop = 0;
     line = 0;
     lines = 0;
+    ends = 0;
     scanned = 0;
     in_quotes = false;
-    bounds = Array.make 1024 0;
-    records = Array.make 64 0;
+    bounds = Array.make 64 0;
+    records = [||];
     rows = 0;
     pending = None;
   }
@@ -89,7 +91,13 @@ let rec batch_end s =
   while !found < 0 && !i < s.len do
     let c = Bytes.unsafe_get b !i in
     if c = q then in_quotes := not !in_quotes
-    else if c = '\n' && (not !in_quotes) && !i >= last then found := !i + 1;
+    else if c = '\n' then begin
+      s.lines <- s.lines + 1;
+      if not !in_quotes then begin
+        s.ends <- s.ends + 1;
+        if !i >= last then found := !i + 1
+      end
+    end;
     incr i
   done;
   s.scanned <- !i;
@@ -113,42 +121,42 @@ let locate s i =
 
 exception Syntax of int * string
 
+(* [grow_bounds s n ~keep] makes [bounds] [n] long, keeping its first [keep]. *)
+let grow_bounds s n ~keep =
+  let a = Array.make n 0 in
+  Array.blit s.bounds 0 a 0 keep;
+  s.bounds <- a
+
 let push_field s nf first stop =
-  if (2 * nf) + 2 > Array.length s.bounds then begin
-    let a = Array.make (2 * Array.length s.bounds) 0 in
-    Array.blit s.bounds 0 a 0 (2 * nf);
-    s.bounds <- a
-  end;
+  if (2 * nf) + 2 > Array.length s.bounds then
+    grow_bounds s (2 * Array.length s.bounds) ~keep:(2 * nf);
   Array.unsafe_set s.bounds (2 * nf) first;
   Array.unsafe_set s.bounds ((2 * nf) + 1) stop
 
-let push_record s rows nf =
-  if rows + 2 > Array.length s.records then begin
-    let a = Array.make (2 * Array.length s.records) 0 in
-    Array.blit s.records 0 a 0 (rows + 1);
-    s.records <- a
-  end;
-  Array.unsafe_set s.records (rows + 1) nf
+(* The first record's width sizes [bounds] for the batch, since a table's
+   records match: a file of a batch or less then costs one allocation instead of
+   the doublings up to twice its size. A record wider than the first grows
+   [bounds] as it goes. A batch of [n] bytes holds at most [n + 1] fields. *)
+let reserve_bounds s nf bytes =
+  let n = 2 * min (nf * (s.ends + 1)) (bytes + 1) in
+  if n > Array.length s.bounds then grow_bounds s n ~keep:(2 * nf)
 
 (* [split s stop] splits the batch's input, up to [stop], into records, skipping
    empty lines. On a syntax error the batch keeps the records before the one
    that holds it. *)
 let split s stop =
   let b = s.buf and sep = s.sep and q = s.quote in
-  let nf = ref 0 and rows = ref 0 and lines = ref 0 and i = ref s.start in
+  let nf = ref 0 and rows = ref 0 and i = ref s.start in
+  (* Up to the first syntax error, the two passes agree on what is quoted. *)
+  if s.ends + 2 > Array.length s.records then
+    s.records <- Array.make (s.ends + 2) 0;
   s.records.(0) <- 0;
   (try
      while !i < stop do
        let c = Bytes.unsafe_get b !i in
-       if c = '\n' then begin
-         incr lines;
-         incr i
-       end
+       if c = '\n' then incr i
        else if c = '\r' && !i + 1 < stop && Bytes.unsafe_get b (!i + 1) = '\n'
-       then begin
-         incr lines;
-         i := !i + 2
-       end
+       then i := !i + 2
        else begin
          let record_ends = ref false in
          while not !record_ends do
@@ -161,10 +169,7 @@ let split s stop =
                if !j >= stop then
                  raise (Syntax (first, "a quoted field does not end"));
                let c = Bytes.unsafe_get b !j in
-               if c <> q then begin
-                 if c = '\n' then incr lines;
-                 incr j
-               end
+               if c <> q then incr j
                else if !j + 1 < stop && Bytes.unsafe_get b (!j + 1) = q then
                  j := !j + 2
                else begin
@@ -197,14 +202,12 @@ let split s stop =
              let c = Bytes.unsafe_get b j in
              if c = sep then i := j + 1
              else if c = '\n' then begin
-               incr lines;
                i := j + 1;
                record_ends := true
              end
              else if
                c = '\r' && j + 1 < stop && Bytes.unsafe_get b (j + 1) = '\n'
              then begin
-               incr lines;
                i := j + 2;
                record_ends := true
              end
@@ -217,15 +220,15 @@ let split s stop =
                       "a quoted field's closing quote is followed by a byte \
                        other than a separator or a line break" ))
          done;
-         push_record s !rows !nf;
-         incr rows
+         s.records.(!rows + 1) <- !nf;
+         incr rows;
+         if !rows = 1 then reserve_bounds s !nf (stop - s.start)
        end
      done
    with Syntax (at, msg) ->
      let line, column = locate s at in
      s.pending <- Some (Error { line; column; msg }));
-  s.rows <- !rows;
-  s.lines <- !lines
+  s.rows <- !rows
 
 let rec next s =
   Option.iter raise s.pending;
@@ -238,6 +241,8 @@ let rec next s =
     s.start <- s.stop;
     compact s
   end;
+  s.lines <- 0;
+  s.ends <- 0;
   let stop = batch_end s in
   s.stop <- stop;
   if stop = s.start then false

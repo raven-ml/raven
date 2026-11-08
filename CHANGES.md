@@ -3932,6 +3932,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Talon_csv` sizes its scanner's arrays once per batch instead of doubling
+  them, from the batch's line feeds and first record's width: decoding a 147 KB
+  column of 2^14 rows allocates 69k words instead of 224k, and a decode of two
+  rows none in the major heap.
 - Add `Query.unnest`, which turns list columns into rows, zipping several.
   A null or empty list gives no row unless `~keep_empty:true`; lists of unequal
   lengths are a data error.

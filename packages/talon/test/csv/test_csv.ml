@@ -763,6 +763,11 @@ let big =
   done;
   Buffer.contents b
 
+let rows_of_two =
+  String.concat "" (List.init 1000 (fun i -> Printf.sprintf "a,%d\n" i))
+
+let wide_record = String.concat "," (List.init 5000 (fun _ -> "y"))
+
 let batches =
   let f = columns [ any Type.string; any Type.int64 ] in
   let decoded ?slice_length s = Error.get_ok (read ?slice_length f s) in
@@ -800,6 +805,37 @@ let batches =
           expect (failure f (big ^ "x,y\n"))
           @@ __POS_OF__
                {| line 400001, column 3: "y": column "c2": cannot read as int64: not an integer. Declare the null token (~nulls) or another type (with_type). |});
+      test "count empty lines and line breaks of two bytes across batches"
+        (fun () ->
+          let records = 200_000 in
+          let s =
+            String.concat "" (List.init records (fun _ -> "a,1\r\n\r\n"))
+            ^ "x,y\n"
+          in
+          greater int ~than:(1 lsl 20) (String.length s);
+          equal string
+            (Printf.sprintf
+               "line %d, column 3: \"y\": column \"c2\": cannot read as \
+                int64: not an integer. Declare the null token (~nulls) or \
+                another type (with_type)."
+               ((2 * records) + 1))
+            (failure f s));
+      test "read a last record that no line feed ends" (fun () ->
+          let t = decoded ("a,0\n" ^ rows_of_two ^ "b,2") in
+          equal int 1002 (Talon.rows t);
+          equal (option string) (Some "b")
+            (List.nth (strings (column t "c1")) 1001));
+      test "report a record wider than the first at its field" (fun () ->
+          equal string
+            "line 2, column 3: the record has 5000 fields, and the format 1 \
+             column"
+            (failure (texts 1) ("a\n" ^ wide_record ^ "\n")));
+      test "read the records before a wider one" (fun () ->
+          equal string
+            "line 1, column 1: \"x\": column \"c1\": cannot read as int64: not \
+             an integer. Declare the null token (~nulls) or another type \
+             (with_type)."
+            (failure (columns [ any Type.int64 ]) ("x\n" ^ wide_record ^ "\n")));
     ]
 
 (* Hand-encoded tables *)
