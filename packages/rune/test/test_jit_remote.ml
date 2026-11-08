@@ -181,6 +181,33 @@ let narrows_any =
     (half_bits (Nx.cast Nx.float16 x))
     (half_bits (Nx.place Nx.Host.on far))
 
+(* Machines
+
+   A compiled program runs on one machine: a set of this machine's host and
+   another's raises at the call, naming the set. *)
+
+let spanning () =
+  let h = host () in
+  let module R = (val Nx.devices [ Rig.host; h ]) in
+  let x = Nx.place R.on (Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |]) in
+  raises_match
+    (Exn.invalid_arg
+       ~sub:("Rune.jit: values on the set [CPU; " ^ Rig.name h ^ "]"))
+    (fun () -> Rune.jit' Nx.neg x)
+
+(* Values on one machine's device of such a set compile. *)
+let on_one_machine () =
+  let h = host () in
+  let module R = (val Nx.devices [ Rig.host; h ]) in
+  let xs = [| 1.; -2.; 3.; -4. |] in
+  let x =
+    Nx.place (Nx.Placement.device R.v h) (Nx.create Nx.float32 [| 4 |] xs)
+  in
+  let y = Rune.jit' Nx.neg x in
+  equal (array int32)
+    (bits (Nx.neg (Nx.create Nx.float32 [| 4 |] xs)))
+    (bits (Nx.place Nx.Host.on y))
+
 let () =
   Watchdog.start ();
   exit
@@ -188,6 +215,10 @@ let () =
        [
          test "another machine's host compiles for its arch"
            compiles_for_its_arch;
+         test "a set spanning machines raises at the call, naming it"
+           spanning;
+         test "values on one machine of a set spanning machines compile"
+           on_one_machine;
          group "gives eager's bits"
            [ agrees "neg" { f = Nx.neg }; agrees "floor" { f = Nx.floor } ];
          group "half casts give eager's bits"

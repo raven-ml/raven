@@ -1340,10 +1340,12 @@ val jit :
     placement eager computation gives them ({!section-compiled}), except a
     result that takes a donated argument's memory ({!section-donation}).
 
-    Raises [Invalid_argument] when applied to [s] if [s] has no argument, and at
+    Raises [Invalid_argument] when applied to [s] if [s] has no argument; at
     a trace if [f] captures a value that another transformation tracks
     (["Rune.jit: the function captures a value another transformation traces;
-      pass it as an argument"]). *)
+      pass it as an argument"]); and at a call whose program would compute on
+    devices of several machines ({!Rig.host_of}), naming its arguments' set:
+    a compiled program runs on one machine. *)
 
 (** {2:keys Keys}
 

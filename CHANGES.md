@@ -391,6 +391,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` over values whose devices span machines raises
+  `Invalid_argument` at the call, naming their set, where it raised from
+  `Rig_program.load` while linking.
 - `Nx.svd` and `Nx.svdvals` under `Rune.jit` on this process's host stop
   each matrix's Jacobi sweeps once a sweep changes nothing, giving the same
   values, where they ran a count fixed by the size: up to 3x faster at
