@@ -1012,8 +1012,9 @@ let linked ?(devices = devices) big =
 
 let slot_values = list (pair int values)
 
-(* One program of each kind of call runs by default: a kernel, a copy between
-   devices, a bound scalar and the disk; compiling the others takes seconds. Variables run by default in `a schedule runs with
+(* The programs kept from the [slow] tag, one of each kind of call: a kernel, a
+   copy between devices, a bound scalar and the disk. The others take seconds
+   to compile and are tagged. Variables are reached by `a schedule runs with
    each binding of its variables`. *)
 let by_default =
   [ "add"; "copy"; "precompiled_scalar"; "disk_store" ]

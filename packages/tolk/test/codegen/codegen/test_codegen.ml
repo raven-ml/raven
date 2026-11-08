@@ -79,10 +79,12 @@ let recorded_lowering row = Ops.nth (recorded row) 0
 let recorded_program row = Ops.nth (recorded row) 1
 let compiles row = row "outcome" = "ok"
 
-(* The default run compiles each case for one of its targets, taken in turn, so
-   that it compiles for every target; the slow run compiles each case for each
-   target. Kernels that take long to compile run with the slow tests only, and a
-   refused optimisation, which costs nothing, runs by default. *)
+(* Every row runs, but for `compile completes linearize`, which draws from the
+   rows [by_default] picks. A row it leaves out is tagged [slow], which keeps it
+   from windtrap's slow report: all but one of a case's targets, the one taken
+   in turn so that every target stays reported, and every target of the kernels
+   that take long to compile. A refused optimisation costs nothing and stays
+   reported. *)
 let heavy =
   [
     "add_big";
@@ -130,7 +132,7 @@ let per_row ?(only = fun _ -> true) ?(default = by_default) check =
         Some (mark @@ test (row "name") (fun () -> check row)))
     rows
 
-(* A law that lowers a kernel again runs by default on a few kernels only: an
+(* A law that lowers a kernel again stays reported on a few kernels only: an
    elementwise one, a reduction, a gated store, a symbolic shape and an
    unroll. *)
 let sample row =
@@ -419,8 +421,8 @@ let runs_as_interpreted name () =
   equal (list Kernel_opts.write) expected
     (written_by_run k ~expected (read_back ~kernel ~program outputs))
 
-(* Each kernel is compiled by the host's C compiler, so the default run runs a
-   few of them. *)
+(* Each kernel is compiled by the host's C compiler: a few of them stay
+   reported, the others are tagged [slow]. *)
 let run_by_default = [ "add"; "gated_store"; "fp8"; "padto_idiv_upcast" ]
 
 let run_on_host =
