@@ -48,11 +48,18 @@ memory it uses, and tolk encodes no queue (D146).
 
 ## D2. Withdrawn
 
-tinygrad matches patterns without generating code when `UPAT_COMPILE` is 0
-(`uop/ops.py:1524`, `upat_interpret`), and `UPat`, `PatternMatcher` and
-`graph_rewrite` live in `uop/ops.py`. tolk ports that path in
-`Ops`, so leaving out `uop/upat.py`, the pattern compiler, is scope: see
-the Exclusions of `README.md`.
+tinygrad compiles a rule's pattern on its first try (`uop/ops.py:1537-1555`,
+`upat_deferred_compile`; `uop/upat.py:173`, `upat_compile`) into one test per
+field the pattern has and one call of the rule's function per alternative, as
+Python source. tolk compiles it the same way into closures
+(`Ops.Upat.compile`, `Ops.Pattern_matcher.rule_ctx`), so leaving out the
+source generation and `UPAT_COMPILE` is scope: see the Exclusions of
+`README.md`. A pattern that `upat_compile` refuses, a repeat over a pattern
+with several namings or too many alternatives, has the namings
+`UPat.match` gives (`uop/ops.py:1496`) in tolk, which `Upat.match_` promises
+for every pattern. A repeat that names nodes matches no sources as
+`UPat.match` does, its names unbound, where `upat_compile` requires a source
+(`uop/upat.py:55`).
 
 ## D3. device.py and the ops_*.py files are split
 

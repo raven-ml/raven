@@ -3360,15 +3360,6 @@ module Upat = struct
   (* The nodes a match names, the latest first. *)
   type store = Empty | Bound of string * node * store
 
-  (* Whether [u] itself fits [p], sources aside. *)
-  let fits p u =
-    (match p.dtypes with Some dts -> Dtype.mem u.dtype dts | None -> true)
-    && (match p.p_arg with Some a -> arg_matches a u.arg | None -> true)
-    && ((p.required_len = 0 && not p.strict_length)
-       ||
-       let c = List.compare_length_with u.src p.required_len in
-       if p.strict_length then c = 0 else c >= 0)
-
   exception No_match
 
   (* [store] extended with what [p] names in [u]. Raises [No_match] if the name
@@ -3380,74 +3371,11 @@ module Upat = struct
         else if b == u then store
         else raise_notrace No_match
 
-  let named_in p u store =
-    match p.p_name with None -> store | Some n -> bound_in n u store store
-
-  (* Whether [p] matches [u], names aside. With no names, the sources match
-     independently: [p] matches if each source has a pattern that matches it.
-     A pattern that names nodes may still fail to bind its names. *)
-  let rec test p (u : node) =
-    if p.is_any then
-      match p.p_src with
-      | Some (Tuples [ choices ]) -> test_any choices u
-      | _ -> false
-    else
-      (match p.ops with Some ops -> Op.Set.mem u.op ops | None -> true)
-      && fits p u
-      &&
-      match p.p_src with
-      | None -> true
-      | Some (Tuples tuples) -> test_tuples tuples u.src
-      | Some (Repeat q) -> test_each q u.src
-
-  and test_any choices u =
-    match choices with [] -> false | p :: rest -> test p u || test_any rest u
-
-  and test_tuples tuples srcs =
-    match tuples with
-    | [] -> false
-    | tuple :: rest -> test_sources tuple srcs || test_tuples rest srcs
-
-  and test_sources pats srcs =
-    match (pats, srcs) with
-    | p :: pats, u :: srcs -> test p u && test_sources pats srcs
-    | _ -> true
-
-  and test_each q srcs =
-    match srcs with [] -> true | u :: srcs -> test q u && test_each q srcs
-
-  (* A unique pattern names a node in at most one way, which [bind] finds
-     without continuations: a match costs only the names it binds. A nameless
-     pattern, unique or not, is a test there. *)
-  let rec bind p (u : node) store =
-    if p.nameless then if test p u then store else raise_notrace No_match
-    else
-      match p.ops with
-      | Some ops when not (Op.Set.mem u.op ops) -> raise_notrace No_match
-      | _ when not (fits p u) -> raise_notrace No_match
-      | _ -> (
-          let store = named_in p u store in
-          match p.p_src with
-          | None -> store
-          | Some (Tuples [ tuple ]) -> bind_sources tuple u.src store
-          | Some (Repeat q) -> bind_each q u.src store
-          | Some (Tuples _) -> assert false)
-
-  and bind_sources pats srcs store =
-    match (pats, srcs) with
-    | p :: pats, u :: srcs -> bind_sources pats srcs (bind p u store)
-    | _ -> store
-
-  and bind_each q srcs store =
-    match srcs with
-    | [] -> store
-    | u :: srcs -> bind_each q srcs (bind q u store)
-
   (* Patterns that each name a node in at most one way, whose namings, in order,
-     are [p]'s namings in the order {!first} enumerates them, at most [limit]
+     are [p]'s namings in the order {!match_} enumerates them, at most [limit]
      patterns; [None] past it, or when a pattern that repeats over every source
      has several namings, whose number is the number of sources. A nameless
-     pattern is one test, as in {!first}. *)
+     pattern is one test. *)
   let alternatives ~limit p =
     let exception Too_many in
     let check l = if List.length l > limit then raise_notrace Too_many else l in
@@ -3487,39 +3415,353 @@ module Upat = struct
     in
     match alts p with l -> Some l | exception Too_many -> None
 
-  (* Matching enumerates each naming of [u] by [p] in order, each extending
-     [store], and is the first result [k] gives one: alternatives and orderings
-     in turn, and each source's namings before the next source's. A pattern
-     that names nothing gives one naming however many ways it matches. *)
-  let rec first p (u : node) store k =
-    if p.unique || p.nameless then
-      match bind p u store with store -> k store | exception No_match -> None
-    else if p.is_any then
-      match p.p_src with
-      | Some (Tuples [ alternatives ]) -> first_of alternatives u store k
-      | _ -> None
-    else
-      match p.ops with
-      | Some ops when not (Op.Set.mem u.op ops) -> None
-      | _ when not (fits p u) -> None
-      | _ -> (
-          match named_in p u store with
-          | exception No_match -> None
-          | store -> (
-              match p.p_src with
-              | None -> k store
-              | Some (Tuples tuples) -> first_tuple tuples u.src store k
-              | Some (Repeat q) -> each q u.src store k))
+  (* Compiling
 
-  and first_of alternatives u store k =
+     A pattern is compiled on its rule's first try into closures that test only
+     the fields it has: an operation, a type, an argument, a fixed tuple of
+     sources or their orderings, a pattern every source matches. Matching a
+     node runs them and never inspects the pattern again. A test is [None] when
+     every node passes it, so that a source matched by any node is not visited.
+     A rule's own operation is not tested: the matcher only tries the rules of
+     the node's operation. *)
+
+  type test = (node -> bool) option
+
+  let holds (t : test) u = match t with None -> true | Some t -> t u
+
+  (* An operation among several is a bit of two words, by its position. *)
+  type op_test = Any_op | One_op of Op.t | Among of int * int
+
+  let op_width = Sys.int_size - 1
+
+  let among low high (o : Op.t) =
+    let i = Op.to_int o in
+    if i < op_width then (low lsr i) land 1 = 1
+    else (high lsr (i - op_width)) land 1 = 1
+
+  let op_test ~root p =
+    match p.ops with
+    | _ when root -> Any_op
+    | None -> Any_op
+    | Some ops -> (
+        match Op.Set.to_list ops with
+        | [ o ] -> One_op o
+        | os ->
+            let bit (low, high) o =
+              let i = Op.to_int o in
+              if i < op_width then (low lor (1 lsl i), high)
+              else (low, high lor (1 lsl (i - op_width)))
+            in
+            let low, high = List.fold_left bit (0, 0) os in
+            Among (low, high))
+
+  let rec dtype_mem (dt : Dtype.t) = function
+    | [] -> false
+    | d :: ds -> dt = d || dtype_mem dt ds
+
+  (* The test of a node's type and argument. *)
+  let fields_test p : test =
+    let dtype =
+      match p.dtypes with
+      | None -> None
+      | Some [ (d : Dtype.t) ] -> Some (fun u -> u.dtype = d)
+      | Some ds -> Some (fun u -> dtype_mem u.dtype ds)
+    in
+    match (dtype, p.p_arg) with
+    | dtype, None -> dtype
+    | None, Some a -> Some (fun u -> arg_matches a u.arg)
+    | Some d, Some a -> Some (fun u -> d u && arg_matches a u.arg)
+
+  (* The test of a node, from the tests of its operation, of its type and
+     argument, and of its sources. *)
+  let node_test op (fields : test) (srcs : (node list -> bool) option) : test =
+    match (op, fields, srcs) with
+    | Any_op, f, None -> f
+    | Any_op, None, Some s -> Some (fun u -> s u.src)
+    | Any_op, Some f, Some s -> Some (fun u -> f u && s u.src)
+    | One_op o, None, None -> Some (fun u -> u.op = o)
+    | One_op o, Some f, None -> Some (fun u -> u.op = o && f u)
+    | One_op o, None, Some s -> Some (fun u -> u.op = o && s u.src)
+    | One_op o, Some f, Some s -> Some (fun u -> u.op = o && f u && s u.src)
+    | Among (l, h), None, None -> Some (fun u -> among l h u.op)
+    | Among (l, h), Some f, None -> Some (fun u -> among l h u.op && f u)
+    | Among (l, h), None, Some s -> Some (fun u -> among l h u.op && s u.src)
+    | Among (l, h), Some f, Some s ->
+        Some (fun u -> among l h u.op && f u && s u.src)
+
+  let rec exactly ts us =
+    match (ts, us) with
+    | [], [] -> true
+    | t :: ts, u :: us -> holds t u && exactly ts us
+    | _ -> false
+
+  let rec at_least ts us =
+    match (ts, us) with
+    | [], _ -> true
+    | t :: ts, u :: us -> holds t u && at_least ts us
+    | _ :: _, [] -> false
+
+  (* The test of sources matched in order by [ts], exactly as many if
+     [strict]. *)
+  let tuple_test ~strict ts =
+    match (strict, ts) with
+    | false, [] -> None
+    | true, [] -> Some (function [] -> true | _ :: _ -> false)
+    | true, [ None ] -> Some (function [ _ ] -> true | _ -> false)
+    | true, [ Some t ] -> Some (function [ a ] -> t a | _ -> false)
+    | false, [ None ] -> Some (function _ :: _ -> true | [] -> false)
+    | false, [ Some t ] -> Some (function a :: _ -> t a | [] -> false)
+    | true, [ None; None ] -> Some (function [ _; _ ] -> true | _ -> false)
+    | true, [ Some t; None ] -> Some (function [ a; _ ] -> t a | _ -> false)
+    | true, [ None; Some t ] -> Some (function [ _; b ] -> t b | _ -> false)
+    | true, [ Some t; Some t' ] ->
+        Some (function [ a; b ] -> t a && t' b | _ -> false)
+    | true, ts -> Some (exactly ts)
+    | false, ts -> Some (at_least ts)
+
+  let rec any_holds ts us =
+    match ts with [] -> false | t :: ts -> t us || any_holds ts us
+
+  let any_test = function
+    | [] -> Some (fun _ -> false)
+    | ts when List.exists Option.is_none ts -> None
+    | [ Some t; Some t' ] -> Some (fun u -> t u || t' u)
+    | ts -> Some (any_holds (List.filter_map Fun.id ts))
+
+  (* The test of the sources of [p]'s nodes: each tuple in turn, or each source
+     by one pattern. *)
+  let rec sources_test p =
+    let strict = p.strict_length in
+    match p.p_src with
+    | None -> None
+    | Some (Tuples [ tuple ]) ->
+        tuple_test ~strict (List.map (test ~root:false) tuple)
+    | Some (Tuples tuples) ->
+        let tuple t = tuple_test ~strict (List.map (test ~root:false) t) in
+        any_test (List.map tuple tuples)
+    | Some (Repeat q) -> Option.map List.for_all (test ~root:false q)
+
+  (* Whether a node matches [p], names aside. *)
+  and test ~root p : test =
+    if p.is_any then
+      match p.p_src with
+      | Some (Tuples [ choices ]) ->
+          any_test (List.map (test ~root:false) choices)
+      | _ -> Some (fun _ -> false)
+    else node_test (op_test ~root p) (fields_test p) (sources_test p)
+
+  (* Names
+
+     A pattern that names a node in at most one way names it at a path of
+     sources from the node it matches. A path through a pattern repeated over
+     every source goes through the first source that has the rest of the path: a
+     node whose sources a repeat matches has its names only if it has one. *)
+
+  type step = Src of int | First_with
+
+  let rec nth_src i = function
+    | [] -> raise_notrace No_match
+    | u :: us -> if i = 0 then u else nth_src (i - 1) us
+
+  let rec first_with at = function
+    | [] -> raise_notrace No_match
+    | u :: us -> (
+        match at u with v -> v | exception No_match -> first_with at us)
+
+  (* The node at [path] from a node. Raises [No_match] if it has none. *)
+  let rec at = function
+    | [] -> Fun.id
+    | [ Src i ] -> fun u -> nth_src i u.src
+    | Src i :: path ->
+        let at = at path in
+        fun u -> at (nth_src i u.src)
+    | First_with :: path ->
+        let at = at path in
+        fun u -> first_with at u.src
+
+  let fallible path = List.mem First_with path
+
+  let rec first_at ats u =
+    match ats with
+    | [] -> raise_notrace No_match
+    | at :: ats -> (
+        match at u with v -> v | exception No_match -> first_at ats u)
+
+  (* The node at the first of [paths] a node has. *)
+  let at_any = function
+    | [ path ] -> at path
+    | paths ->
+        let ats = List.map at paths in
+        fun u -> first_at ats u
+
+  (* Whether the nodes at [ats] from [u] that exist are one node. *)
+  let rec agree_from v u = function
+    | [] -> true
+    | at :: ats -> (
+        match at u with
+        | w -> w == v && agree_from v u ats
+        | exception No_match -> agree_from v u ats)
+
+  let rec agree u = function
+    | [] -> true
+    | at :: ats -> (
+        match at u with
+        | v -> agree_from v u ats
+        | exception No_match -> agree u ats)
+
+  (* Whether the nodes at [at] from the sources [us] that exist are one node. *)
+  let rec agree_over_from v at = function
+    | [] -> true
+    | u :: us -> (
+        match at u with
+        | w -> w == v && agree_over_from v at us
+        | exception No_match -> agree_over_from v at us)
+
+  let rec agree_over at = function
+    | [] -> true
+    | u :: us -> (
+        match at u with
+        | v -> agree_over_from v at us
+        | exception No_match -> agree_over at us)
+
+  (* [occurrences]' names, each with its paths in order, in the order of their
+     first occurrences. *)
+  let by_name occurrences =
+    List.fold_left
+      (fun groups (n, path) ->
+        if List.mem_assoc n groups then
+          List.map
+            (fun (m, paths) ->
+              if String.equal m n then (m, paths @ [ path ]) else (m, paths))
+            groups
+        else groups @ [ (n, [ path ]) ])
+      [] occurrences
+
+  (* [t] and the test that a name used more than once in [occurrences] names one
+     node. *)
+  let with_agreement (t : test) occurrences : test =
+    let agreement (_, paths) =
+      match paths with
+      | [ _ ] -> None
+      | [ p; p' ] when not (fallible p || fallible p') ->
+          let a = at p and a' = at p' in
+          Some (fun u -> a u == a' u)
+      | paths ->
+          let ats = List.map at paths in
+          Some (fun u -> agree u ats)
+    in
+    match (t, List.filter_map agreement (by_name occurrences)) with
+    | t, [] -> t
+    | None, [ c ] -> Some c
+    | Some t, [ c ] -> Some (fun u -> t u && c u)
+    | t, cs -> Some (fun u -> holds t u && List.for_all (fun c -> c u) cs)
+
+  (* The test of [p], which names nodes in at most one way, and the paths of its
+     names in the order a match binds them, a node's before its sources'. The
+     test checks that a repeated pattern names one node on every source; that a
+     name used twice elsewhere names one node is left to the caller
+     ({!with_agreement}). *)
+  let rec unique_parts ~root p =
+    if p.nameless then (test ~root p, [])
+    else
+      let own = match p.p_name with None -> [] | Some n -> [ (n, []) ] in
+      let node srcs = node_test (op_test ~root p) (fields_test p) srcs in
+      match p.p_src with
+      | None -> (node None, own)
+      | Some (Tuples [ tuple ]) ->
+          let parts = List.map (unique_parts ~root:false) tuple in
+          let srcs = tuple_test ~strict:p.strict_length (List.map fst parts) in
+          let under i (_, occurrences) =
+            List.map (fun (n, path) -> (n, Src i :: path)) occurrences
+          in
+          (node srcs, own @ List.concat (List.mapi under parts))
+      | Some (Repeat q) ->
+          let t, occurrences = unique_parts ~root:false q in
+          let each = with_agreement t occurrences in
+          let ats =
+            List.map (fun (_, paths) -> at_any paths) (by_name occurrences)
+          in
+          let srcs us =
+            (match each with None -> true | Some t -> List.for_all t us)
+            && List.for_all (fun at -> agree_over at us) ats
+          in
+          ( node (Some srcs),
+            own
+            @ List.map (fun (n, path) -> (n, First_with :: path)) occurrences )
+      | Some (Tuples _) -> assert false
+
+  (* The node [occurrences] names [name] in [u]. *)
+  let rec find_name occurrences u name =
+    match occurrences with
+    | [] -> invalid_argf "the pattern names no %s" name
+    | (n, at) :: rest -> (
+        if not (String.equal n name) then find_name rest u name
+        else
+          match at u with v -> v | exception No_match -> find_name rest u name)
+
+  let no_names name = invalid_argf "the pattern names no %s" name
+
+  (* [p], which names nodes in at most one way, as a test of a node and the
+     function of a node that passes it to the nodes it names. *)
+  let compile ~root p =
+    let t, occurrences = unique_parts ~root p in
+    let names =
+      match occurrences with
+      | [] -> fun _ -> no_names
+      | occurrences ->
+          let occurrences =
+            List.map (fun (n, path) -> (n, at path)) occurrences
+          in
+          fun u name -> find_name occurrences u name
+    in
+    (with_agreement t occurrences, names)
+
+  (* [store] extended with what [occurrences] names in [u]. Raises [No_match] if
+     a name is bound to another node. *)
+  let rec bind_all occurrences u store =
+    match occurrences with
+    | [] -> store
+    | (n, at) :: rest -> (
+        match at u with
+        | v -> bind_all rest u (bound_in n v store store)
+        | exception No_match -> bind_all rest u store)
+
+  (* Matching in general
+
+     A pattern that names nodes in several ways enumerates its namings, each
+     extending a store, and is the first result a continuation gives one:
+     alternatives and orderings in turn, and each source's namings before the
+     next source's. *)
+
+  type first = {
+    first : 'a. node -> store -> (store -> 'a option) -> 'a option;
+  }
+
+  let rec first_of :
+      'a. first list -> node -> store -> (store -> 'a option) -> 'a option =
+   fun alternatives u store k ->
     match alternatives with
     | [] -> None
     | p :: rest -> (
-        match first p u store k with
+        match p.first u store k with
         | Some _ as r -> r
         | None -> first_of rest u store k)
 
-  and first_tuple tuples srcs store k =
+  let rec sources :
+      'a. first list -> node list -> store -> (store -> 'a option) -> 'a option
+      =
+   fun pats srcs store k ->
+    match (pats, srcs) with
+    | [ p ], u :: _ -> p.first u store k
+    | p :: pats, u :: srcs ->
+        p.first u store (fun store -> sources pats srcs store k)
+    | _ -> k store
+
+  let rec first_tuple :
+      'a.
+      first list list -> node list -> store -> (store -> 'a option) -> 'a option
+      =
+   fun tuples srcs store k ->
     match tuples with
     | [] -> None
     | tuple :: rest -> (
@@ -3527,22 +3769,66 @@ module Upat = struct
         | Some _ as r -> r
         | None -> first_tuple rest srcs store k)
 
-  and sources pats srcs store k =
-    match (pats, srcs) with
-    | [ p ], u :: _ -> first p u store k
-    | p :: pats, u :: srcs when p.unique -> (
-        match bind p u store with
-        | store -> sources pats srcs store k
-        | exception No_match -> None)
-    | p :: pats, u :: srcs ->
-        first p u store (fun store -> sources pats srcs store k)
-    | _ -> k store
-
-  and each q srcs store k =
+  let rec each :
+      'a. first -> node list -> store -> (store -> 'a option) -> 'a option =
+   fun q srcs store k ->
     match srcs with
     | [] -> k store
-    | [ u ] -> first q u store k
-    | u :: srcs -> first q u store (fun store -> each q srcs store k)
+    | [ u ] -> q.first u store k
+    | u :: srcs -> q.first u store (fun store -> each q srcs store k)
+
+  let length_test p =
+    let n = p.required_len in
+    if p.strict_length then Some (fun us -> List.compare_length_with us n = 0)
+    else if n > 0 then Some (fun us -> List.compare_length_with us n >= 0)
+    else None
+
+  let rec general ~root p =
+    if p.unique || p.nameless then
+      let t, occurrences = unique_parts ~root p in
+      let t = with_agreement t occurrences in
+      let occurrences = List.map (fun (n, path) -> (n, at path)) occurrences in
+      let bind u store k =
+        match bind_all occurrences u store with
+        | store -> k store
+        | exception No_match -> None
+      in
+      match t with
+      | None -> { first = (fun u store k -> bind u store k) }
+      | Some t ->
+          { first = (fun u store k -> if t u then bind u store k else None) }
+    else if p.is_any then
+      match p.p_src with
+      | Some (Tuples [ choices ]) ->
+          let choices = List.map (general ~root:false) choices in
+          { first = (fun u store k -> first_of choices u store k) }
+      | _ -> { first = (fun _ _ _ -> None) }
+    else
+      let t = node_test (op_test ~root p) (fields_test p) (length_test p) in
+      let srcs =
+        match p.p_src with
+        | Some (Tuples tuples) ->
+            let tuples = List.map (List.map (general ~root:false)) tuples in
+            { first = (fun u store k -> first_tuple tuples u.src store k) }
+        | Some (Repeat q) ->
+            let q = general ~root:false q in
+            { first = (fun u store k -> each q u.src store k) }
+        | None -> assert false
+      in
+      let name =
+        match p.p_name with
+        | None -> fun store _ -> store
+        | Some n -> fun store u -> bound_in n u store store
+      in
+      {
+        first =
+          (fun u store k ->
+            if not (holds t u) then None
+            else
+              match name store u with
+              | exception No_match -> None
+              | store -> srcs.first u store k);
+      }
 
   let rec naming acc = function
     | Empty -> acc
@@ -3551,7 +3837,7 @@ module Upat = struct
   let match_ p u =
     let namings = ref [] in
     ignore
-      (first p u Empty (fun store ->
+      ((general ~root:false p).first u Empty (fun store ->
            namings := naming [] store :: !namings;
            None));
     List.rev !namings
@@ -3560,16 +3846,92 @@ module Upat = struct
 end
 
 module Pattern_matcher = struct
-  (* A rule's pattern, and the unique patterns it enumerates when they are few,
-     each matched without continuations. *)
+  (* A rule's operations, and its pattern compiled with its function: the result
+     of the function on the first naming of a node it gives one for. *)
   type ('ctx, 'r) rule = {
-    pattern : Upat.t;
-    alternatives : Upat.t list option;
-    fn : 'ctx -> (string -> t) -> 'r option;
+    ops : Op.Set.t option;
+    apply : ('ctx -> t -> 'r option) Atomic.t;
   }
 
+  let rec has_op o = function
+    | [] -> false
+    | s :: srcs -> s.op = o || has_op o srcs
+
+  (* Whether [u] has a source of each operation in [ops]. *)
+  let rec has_sources ops u =
+    match ops with
+    | [] -> true
+    | o :: ops -> has_op o u.src && has_sources ops u
+
+  (* The test that a node has a source of each operation in [ops], which a node
+     must pass for a rule to be tried. *)
+  let early_test = function
+    | [] -> None
+    | [ o ] -> Some (fun u -> has_op o u.src)
+    | [ o; o' ] -> Some (fun u -> has_op o u.src && has_op o' u.src)
+    | ops -> Some (has_sources ops)
+
+  let rec lookup store name =
+    match store with
+    | Upat.Empty -> invalid_argf "the pattern names no %s" name
+    | Bound (n, u, rest) -> if String.equal n name then u else lookup rest name
+
+  (* The first of [fn]'s results on the namings of [u] by [alternatives], in
+     order. *)
+  let rec first_alternative fn ctx u = function
+    | [] -> None
+    | (t, names) :: rest -> (
+        if not (t u) then first_alternative fn ctx u rest
+        else
+          match fn ctx (names u) with
+          | Some _ as x -> x
+          | None -> first_alternative fn ctx u rest)
+
+  let always _ = true
+
+  (* A pattern that names nodes in a few ways is compiled as the patterns that
+     each name them in one, which match without continuations and allocate
+     nothing unless they match. *)
+  let compiled pattern fn =
+    let early = early_test pattern.Upat.early_reject in
+    match (early, Upat.alternatives ~limit:16 pattern) with
+    | None, Some [ p ] -> (
+        match Upat.compile ~root:true p with
+        | None, names -> fun ctx u -> fn ctx (names u)
+        | Some t, names -> fun ctx u -> if t u then fn ctx (names u) else None)
+    | Some e, Some [ p ] -> (
+        match Upat.compile ~root:true p with
+        | None, names -> fun ctx u -> if e u then fn ctx (names u) else None
+        | Some t, names ->
+            fun ctx u -> if e u && t u then fn ctx (names u) else None)
+    | early, Some alternatives ->
+        let compiled p =
+          let t, names = Upat.compile ~root:true p in
+          (Option.value t ~default:always, names)
+        in
+        let alternatives = List.map compiled alternatives in
+        let e = Option.value early ~default:always in
+        fun ctx u ->
+          if e u then first_alternative fn ctx u alternatives else None
+    | early, None ->
+        let p = Upat.general ~root:true pattern in
+        let e = Option.value early ~default:always in
+        fun ctx u ->
+          if e u then p.first u Empty (fun store -> fn ctx (lookup store))
+          else None
+
+  (* A rule compiles its pattern on its first try, so that a matcher built for
+     one rewrite compiles only the rules that rewrite tries. Domains that race
+     to the first try each compile it. *)
   let rule_ctx pattern fn =
-    { pattern; alternatives = Upat.alternatives ~limit:16 pattern; fn }
+    let apply = Atomic.make (fun _ _ -> None) in
+    let first ctx u =
+      let compiled = compiled pattern fn in
+      Atomic.set apply compiled;
+      compiled ctx u
+    in
+    Atomic.set apply first;
+    { ops = pattern.ops; apply }
 
   let rule pattern f = rule_ctx pattern (fun _ m -> f m)
 
@@ -3582,8 +3944,8 @@ module Pattern_matcher = struct
 
   (* A matcher builds its parts on its first rewrite, so that a program that
      never rewrites keeps no rules in the heap, which every major collection
-     marks. Domains that race to the first rewrite each build the parts, and
-     all keep the first built. *)
+     marks. Domains that race to the first rewrite each build the parts, and all
+     keep the first built. *)
   type ('ctx, 'r) t = {
     build : unit -> ('ctx, 'r) part list;
     parts : ('ctx, 'r) part list option Atomic.t;
@@ -3605,7 +3967,7 @@ module Pattern_matcher = struct
     let by_op = Array.make op_count [] in
     List.iter
       (fun r ->
-        match r.pattern.ops with
+        match r.ops with
         | None -> invalid_arg "a rule's pattern needs an operation"
         | Some ops ->
             List.iter
@@ -3615,66 +3977,28 @@ module Pattern_matcher = struct
     { by_op = Array.map List.rev by_op; declines }
 
   let v rules = make (fun () -> [ part ~declines:( == ) (rules ()) ])
-  let fold rules = make (fun () -> [ part ~declines:(fun _ _ -> false) (rules ()) ])
+
+  let fold rules =
+    make (fun () -> [ part ~declines:(fun _ _ -> false) (rules ()) ])
+
   let append m0 m1 = make (fun () -> parts m0 @ parts m1)
   let concat ms = make (fun () -> List.concat_map parts ms)
 
   let with_ctx m =
-    let ignore_ctx r = { r with fn = (fun _ m -> r.fn () m) } in
+    let ignore_ctx r =
+      { r with apply = Atomic.make (fun _ u -> (Atomic.get r.apply) () u) }
+    in
     make (fun () ->
         List.map
           (fun p -> { p with by_op = Array.map (List.map ignore_ctx) p.by_op })
           (parts m))
 
-  let rec lookup store name =
-    match store with
-    | Upat.Empty -> invalid_argf "the pattern names no %s" name
-    | Bound (n, u, rest) -> if String.equal n name then u else lookup rest name
-
-  let no_names = lookup Upat.Empty
-
-  let rec has_op o = function
-    | [] -> false
-    | s :: srcs -> s.op = o || has_op o srcs
-
-  (* Whether [u] has a source of each operation in [ops]. *)
-  let rec has_sources ops u =
-    match ops with
-    | [] -> true
-    | o :: ops -> has_op o u.src && has_sources ops u
-
-  (* The first of [r.fn]'s results on the namings of [u], in order. A unique
-     pattern names [u] only once it matches, names aside, so a failed match
-     allocates nothing, nor does a nameless one. *)
-  let rec first_alternative r ctx u = function
-    | [] -> None
-    | p :: rest -> (
-        if not (Upat.test p u) then first_alternative r ctx u rest
-        else
-          match
-            if p.Upat.nameless then no_names else lookup (Upat.bind p u Empty)
-          with
-          | exception Upat.No_match -> first_alternative r ctx u rest
-          | names -> (
-              match r.fn ctx names with
-              | Some _ as x -> x
-              | None -> first_alternative r ctx u rest))
-
-  let applied r ctx u =
-    match r.alternatives with
-    | Some alternatives -> first_alternative r ctx u alternatives
-    | None ->
-        Upat.first r.pattern u Empty (fun store -> r.fn ctx (lookup store))
-
   let rec first_rule p ctx u = function
     | [] -> None
     | r :: rest -> (
-        if not (has_sources r.pattern.early_reject u) then
-          first_rule p ctx u rest
-        else
-          match applied r ctx u with
-          | Some x when not (p.declines x u) -> Some x
-          | _ -> first_rule p ctx u rest)
+        match (Atomic.get r.apply) ctx u with
+        | Some x when not (p.declines x u) -> Some x
+        | _ -> first_rule p ctx u rest)
 
   let rec first_part ctx u = function
     | [] -> None

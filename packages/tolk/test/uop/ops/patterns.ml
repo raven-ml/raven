@@ -607,6 +607,438 @@ let matchers =
           equal int 1 !fired);
     ]
 
+(* A reference matcher
+
+   Patterns drawn as data, built with Upat's constructors, and matched by a
+   matcher that tries every way in turn: each alternative of an [any], each
+   ordering of a permutation, each naming of a source before the next. A part
+   that names nothing gives one naming. *)
+
+type pat = Node of node_pat | Any of pat list
+
+and node_pat = {
+  ops : Op.t list option;
+  dtypes : Dtype.t list option;
+  arg : int option;
+  name : string option;
+  srcs : srcs;
+  any_len : bool;
+}
+
+and srcs = Leaf | Fixed of pat list | Perm of pat list | Each of pat
+
+let const_arg n = Ops.Const (i n)
+
+let rec built = function
+  | Any ps -> P.any (List.map built ps)
+  | Node n ->
+      let src, perm, each =
+        match n.srcs with
+        | Leaf -> (None, None, None)
+        | Fixed ps -> (Some (List.map built ps), None, None)
+        | Perm ps -> (None, Some (List.map built ps), None)
+        | Each p -> (None, None, Some (built p))
+      in
+      P.v
+        ?op:(Option.map Op.Set.of_list n.ops)
+        ?dtype:n.dtypes ?src ?perm ?each ~allow_any_len:n.any_len
+        ?arg:(Option.map const_arg n.arg)
+        ?name:n.name ()
+
+let rec pp_pat ppf = function
+  | Any ps -> Format.fprintf ppf "any [%a]" pp_pats ps
+  | Node n -> (
+      let pp_opt pp ppf = function
+        | None -> Format.pp_print_string ppf "_"
+        | Some x -> pp ppf x
+      in
+      let pp_list pp ppf l =
+        Format.pp_print_list
+          ~pp_sep:(fun ppf () -> Format.fprintf ppf "|")
+          pp ppf l
+      in
+      Format.fprintf ppf "%a:%a:%a:%a%s"
+        (pp_opt (pp_list Op.pp))
+        n.ops
+        (pp_opt (pp_list Dtype.pp))
+        n.dtypes
+        (pp_opt Format.pp_print_int)
+        n.arg
+        (pp_opt Format.pp_print_string)
+        n.name
+        (if n.any_len then "..." else "");
+      match n.srcs with
+      | Leaf -> ()
+      | Fixed ps -> Format.fprintf ppf " (%a)" pp_pats ps
+      | Perm ps -> Format.fprintf ppf " {%a}" pp_pats ps
+      | Each p -> Format.fprintf ppf " each (%a)" pp_pat p)
+
+and pp_pats ppf ps =
+  Format.pp_print_list
+    ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ")
+    pp_pat ppf ps
+
+let rec names = function
+  | Any ps -> List.concat_map names ps
+  | Node n -> (
+      Option.to_list n.name
+      @
+      match n.srcs with
+      | Leaf -> []
+      | Fixed ps | Perm ps -> List.concat_map names ps
+      | Each p -> names p)
+
+let distinct_names p = List.sort_uniq String.compare (names p)
+
+let rec permutations = function
+  | [] -> [ [] ]
+  | l ->
+      List.concat
+        (List.mapi
+           (fun k x ->
+             List.map
+               (fun rest -> x :: rest)
+               (permutations (List.filteri (fun j _ -> j <> k) l)))
+           l)
+
+let fits n u =
+  (match n.ops with None -> true | Some os -> List.mem (Ops.op u) os)
+  && (match n.dtypes with
+    | None -> true
+    | Some dts -> List.exists (Dtype.equal (Ops.dtype u)) dts)
+  && (match n.arg with
+    | None -> true
+    | Some c -> Ops.equal_arg (const_arg c) (Ops.arg u))
+  &&
+  let len = List.length (Ops.src u) in
+  match n.srcs with
+  | Leaf | Each _ -> true
+  | Fixed ps | Perm ps ->
+      if n.any_len then len >= List.length ps else len = List.length ps
+
+(* [store], in the order of binding, with [u] named [name]. *)
+let bind name u store =
+  match name with
+  | None -> Some store
+  | Some n -> (
+      match List.assoc_opt n store with
+      | Some v -> if v == u then Some store else None
+      | None -> Some (store @ [ (n, u) ]))
+
+let rec namings p u store =
+  if names p = [] then if ways p u store = [] then [] else [ store ]
+  else ways p u store
+
+and ways p u store =
+  match p with
+  | Any ps -> List.concat_map (fun p -> namings p u store) ps
+  | Node n -> (
+      if not (fits n u) then []
+      else
+        match bind n.name u store with
+        | None -> []
+        | Some store -> (
+            let srcs = Ops.src u in
+            match n.srcs with
+            | Leaf -> [ store ]
+            | Fixed ps -> in_order ps srcs [ store ]
+            | Perm ps ->
+                List.concat_map
+                  (fun ps -> in_order ps srcs [ store ])
+                  (permutations ps)
+            | Each p ->
+                List.fold_left
+                  (fun stores s ->
+                    List.concat_map (fun st -> namings p s st) stores)
+                  [ store ] srcs))
+
+and in_order ps srcs stores =
+  match (ps, srcs) with
+  | p :: ps, s :: srcs ->
+      in_order ps srcs (List.concat_map (fun st -> namings p s st) stores)
+  | _ -> stores
+
+(* Whether a rule of [p] is tried on [u]: [u] is of an operation of [p], and has
+   a source of each operation a source pattern requires alone. *)
+let tried p u =
+  match p with
+  | Any _ -> false
+  | Node n ->
+      let required = function
+        | Node { ops = Some [ o ]; _ } -> [ o ]
+        | Node _ | Any _ -> []
+      in
+      let firsts =
+        match n.srcs with
+        | Leaf -> []
+        | Fixed ps | Perm ps -> ps
+        | Each p -> [ p ]
+      in
+      (match n.ops with Some os -> List.mem (Ops.op u) os | None -> false)
+      && List.for_all
+           (fun o -> List.exists (fun s -> Ops.op s = o) (Ops.src u))
+           (List.concat_map required firsts)
+
+(* Generators *)
+
+let leaves =
+  let a = var "a" 0 10 and b = var "b" 0 10 in
+  [ a; b; Ops.int ~dtype:Int32 0; Ops.int ~dtype:Int32 1 ]
+
+let rec node_gen depth =
+  let open Gen in
+  let leaf = of_list ~pp:Ops.pp leaves in
+  if depth = 0 then leaf
+  else
+    let sub = node_gen (depth - 1) in
+    let binary o =
+      let+ x = sub and+ y = sub in
+      Ops.v ~src:[ x; y ] o
+    in
+    frequency
+      [
+        (2, leaf);
+        (2, binary Op.Add);
+        (2, binary Op.Mul);
+        ( 1,
+          let+ x = sub in
+          Ops.v ~src:[ x ] ~arg:(Dtype Float32) Op.Cast );
+        ( 1,
+          let+ xs = list ~size:(int_range 1 3) sub in
+          Ops.v ~src:xs Op.Stack );
+      ]
+
+let ops_gen ~root =
+  let var_op = Ops.op (List.hd leaves) in
+  Gen.of_list
+    ((if root then [] else [ None; None ])
+    @ [
+        Some [ Op.Add ];
+        Some [ Op.Mul ];
+        Some [ Op.Add; Op.Mul ];
+        Some [ Op.Const ];
+        Some [ Op.Cast; Op.Stack ];
+        Some [ var_op ];
+      ])
+
+let rec pat_gen ~root depth =
+  let open Gen in
+  let node srcs =
+    let+ ops = ops_gen ~root
+    and+ dtypes =
+      of_list
+        [ None; None; None; Some [ Dtype.Int32 ]; Some [ Float32; Int32 ] ]
+    and+ arg = of_list [ None; None; None; None; Some 0; Some 1 ]
+    and+ name = of_list [ None; None; Some "x"; Some "y" ]
+    and+ srcs = srcs
+    and+ any_len = of_list [ false; false; true ] in
+    Node { ops; dtypes; arg; name; srcs; any_len }
+  in
+  if depth = 0 then node (constant Leaf)
+  else
+    let sub = pat_gen ~root:false (depth - 1) in
+    let srcs =
+      frequency
+        [
+          (1, constant Leaf);
+          (2, map (fun ps -> Fixed ps) (list ~size:(int_range 0 3) sub));
+          (2, map (fun ps -> Perm ps) (list ~size:(int_range 2 3) sub));
+          (1, map (fun p -> Each p) sub);
+        ]
+    in
+    let any =
+      let+ ps = list ~size:(int_range 1 3) sub in
+      Any ps
+    in
+    if root then node srcs else frequency [ (4, node srcs); (1, any) ]
+
+let rec all = function
+  | [] -> Gen.constant []
+  | g :: gs ->
+      let open Gen in
+      let+ x = g and+ xs = all gs in
+      x :: xs
+
+(* A pattern drawn from [u]'s structure, which matches [u] unless one of its
+   names is given two nodes, or it ends in a part drawn regardless of [u]. *)
+let rec derived ~root depth u =
+  let open Gen in
+  let srcs = Ops.src u in
+  let n = List.length srcs in
+  let derived_srcs = all (List.map (derived ~root:false (depth - 1)) srcs) in
+  let fixed =
+    let+ ps = derived_srcs and+ dropped = int_range 0 (min n 1) in
+    (Fixed (List.filteri (fun k _ -> k < n - dropped) ps), dropped > 0)
+  in
+  let srcs =
+    if depth = 0 then constant (Leaf, false)
+    else
+      frequency
+        ([ (1, constant (Leaf, false)); (2, fixed) ]
+        @ (if n >= 2 then [ (3, map (fun ps -> (Perm ps, false)) derived_srcs) ]
+           else [])
+        @
+        match srcs with
+        | s :: _ ->
+            [
+              ( 2,
+                map
+                  (fun p -> (Each p, false))
+                  (derived ~root:false (depth - 1) s) );
+            ]
+        | [] -> [])
+  in
+  let consts =
+    List.filter (fun k -> Ops.equal_arg (const_arg k) (Ops.arg u)) [ 0; 1 ]
+  in
+  let node =
+    let+ ops =
+      of_list
+        ((if root then [] else [ None; None ])
+        @ [ Some [ Ops.op u ]; Some [ Op.Mul; Ops.op u ] ])
+    and+ dtypes =
+      of_list [ None; Some [ Ops.dtype u ]; Some [ Float32; Ops.dtype u ] ]
+    and+ arg = of_list (None :: List.map Option.some consts)
+    and+ name = of_list [ None; None; None; Some "x"; Some "y"; Some "z" ]
+    and+ srcs, any_len = srcs in
+    Node { ops; dtypes; arg; name; srcs; any_len }
+  in
+  if root then node
+  else
+    frequency
+      [
+        (6, node);
+        ( 1,
+          let+ p = node and+ q = pat_gen ~root:false 1 in
+          Any [ q; p ] );
+        (1, pat_gen ~root:false 1);
+      ]
+
+let case_gen =
+  let open Gen in
+  let random =
+    let* depth = int_range 0 2 in
+    pair (pat_gen ~root:true depth) (node_gen 2)
+  in
+  let matching =
+    let* u = node_gen 2 and+ depth = int_range 1 3 in
+    let+ p = derived ~root:true depth u in
+    (p, u)
+  in
+  with_pp
+    (fun ppf (p, u) -> Format.fprintf ppf "%a@ on@ %a" pp_pat p Ops.pp u)
+    (frequency [ (1, random); (3, matching) ])
+
+let rec repeats_names_in_ways = function
+  | Any ps -> List.exists repeats_names_in_ways ps
+  | Node n -> (
+      match n.srcs with
+      | Leaf -> false
+      | Fixed ps | Perm ps -> List.exists repeats_names_in_ways ps
+      | Each q -> (names q <> [] && several_ways q) || repeats_names_in_ways q)
+
+and several_ways = function
+  | Any _ -> true
+  | Node n -> (
+      match n.srcs with
+      | Perm (_ :: _ :: _) -> true
+      | Leaf | Perm _ -> false
+      | Fixed ps -> List.exists several_ways ps
+      | Each q -> several_ways q)
+
+let cover_case p expected =
+  cover "no naming" (expected = []);
+  cover "several namings" (List.length expected > 1);
+  cover "a name used twice"
+    (expected <> [] && List.length (names p) > List.length (distinct_names p));
+  cover "a repeated pattern that names in several ways"
+    (expected <> [] && repeats_names_in_ways p)
+
+(* A naming as the node it gives each name of [p], or none. *)
+let viewed p m =
+  List.map
+    (fun n -> (n, try Some (m n) with Invalid_argument _ -> None))
+    (distinct_names p)
+
+let view p store =
+  List.map (fun n -> (n, List.assoc_opt n store)) (distinct_names p)
+
+let naming = list (pair string (option uop))
+
+(* Cases the generators reach rarely: a name a repeat binds on each source
+   that a nested repeat over no sources leaves to a later path, a repeat over
+   no sources, a name used inside and outside a repeat, and more orderings
+   than a rule enumerates as alternatives. *)
+let reference_examples =
+  let n ?ops ?name ?(srcs = Leaf) () =
+    Node { ops; dtypes = None; arg = None; name; srcs; any_len = false }
+  in
+  let x = n ~name:"x" () and y = n ~name:"y" () and z = n ~name:"z" () in
+  let a = List.nth leaves 0
+  and b = List.nth leaves 1
+  and c0 = List.nth leaves 2
+  and c1 = List.nth leaves 3 in
+  let stack srcs = Ops.v ~src:srcs Op.Stack in
+  let add u v = Ops.v ~src:[ u; v ] Op.Add in
+  (* A variable's one source is a stack of no sources. *)
+  let empty = Ops.nth a 0 in
+  let var_of_empty_each =
+    n ~ops:[ Ops.op a ]
+      ~srcs:(Fixed [ n ~ops:[ Op.Stack ] ~srcs:(Each x) () ])
+      ()
+  in
+  let first_later =
+    n ~ops:[ Op.Stack ]
+      ~srcs:(Each (n ~ops:[ Op.Add ] ~srcs:(Fixed [ var_of_empty_each; x ]) ()))
+      ()
+  in
+  let inside_outside =
+    n ~ops:[ Op.Add ]
+      ~srcs:(Fixed [ n ~ops:[ Op.Stack ] ~srcs:(Each x) (); x ])
+      ()
+  in
+  let orderings =
+    n ~ops:[ Op.Stack ] ~srcs:(Perm [ Any [ x; y ]; Any [ y; z ]; z ]) ()
+  in
+  [
+    (first_later, stack [ add a c0; add b c1 ]);
+    (first_later, stack [ add a c0; add b c0 ]);
+    (n ~ops:[ Op.Stack ] ~srcs:(Each x) (), empty);
+    (inside_outside, add (stack [ a; a ]) a);
+    (inside_outside, add (stack [ a; a ]) b);
+    (orderings, stack [ a; b; c0 ]);
+    (orderings, stack [ a; a; a ]);
+  ]
+
+let by_reference =
+  group "matching by a reference"
+    [
+      prop "a rule is given the namings of a node in the reference's order"
+        ~count:2000 ~examples:reference_examples case_gen (fun (p, u) ->
+          let expected = if tried p u then namings p u [] else [] in
+          cover_case p expected;
+          let seen = ref [] in
+          let m =
+            Pm.fold (fun () ->
+                [
+                  Pm.rule (built p) (fun m ->
+                      seen := viewed p m :: !seen;
+                      None);
+                ])
+          in
+          equal (option unit) None (Pm.rewrite m () u);
+          equal (list naming) (List.map (view p) expected) (List.rev !seen));
+      prop "match_ is the namings of a node in the reference's order"
+        ~count:2000 ~examples:reference_examples case_gen (fun (p, u) ->
+          let expected = namings p u [] in
+          cover_case p expected;
+          let sorted = List.sort (fun (n, _) (n', _) -> String.compare n n') in
+          equal
+            (list (list (pair string uop)))
+            (List.map sorted expected)
+            (List.map sorted (P.match_ (built p) u)));
+    ]
+
 (* Rewriting *)
 
 let value_of u =
@@ -1236,6 +1668,7 @@ let groups =
     upat;
     elementwise_patterns;
     matchers;
+    by_reference;
     rewriting;
     substituting;
     walks;
