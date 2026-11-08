@@ -28,6 +28,31 @@ let with_nvrtc f =
   | v -> v
   | exception Failure msg when absent msg -> skip ~reason:msg ()
 
+(* Workers' files *)
+
+(* [remove path] removes the file or the directory tree at [path], following no
+   symbolic link. *)
+let rec remove path =
+  match (Unix.lstat path).st_kind with
+  | S_DIR ->
+      Array.iter (fun n -> remove (Filename.concat path n)) (Sys.readdir path);
+      Unix.rmdir path
+  | _ -> Unix.unlink path
+
+(* This process's temporary directory, where workers' temporary directories are
+   made: a directory of its own, removed when it exits. *)
+let scratch =
+  let dir = Filename.temp_dir "tolk-test-nvrtc" "" in
+  at_exit (fun () -> remove dir);
+  Filename.set_temp_dir_name dir;
+  dir
+
+(* The workers' temporary directories. *)
+let worker_dirs () =
+  List.filter
+    (String.starts_with ~prefix:"tolk-nvrtc-")
+    (Array.to_list (Sys.readdir scratch))
+
 (* The cache *)
 
 let ccache_off f = Setting.context [ B (Setting.ccache, false) ] f
@@ -311,6 +336,14 @@ let process =
              kill_children ();
              equal string lib
                (with_signal Sys.sigchld Signal_ignore (fun () -> cubin kernel)));
+      slow
+      @@ test "the temporary directories of workers that ended are removed"
+           (fun () ->
+             ignore (with_nvrtc (fun () -> cubin kernel));
+             kill_children ();
+             ignore (cubin kernel);
+             equal int ~msg:"one worker's directory" 1
+               (List.length (worker_dirs ())));
       slow
       @@ test "compiles leave NVRTC's cache of binaries empty" (fun () ->
           ignore (with_nvrtc (fun () -> cubin kernel));
