@@ -13,7 +13,7 @@ heuristic.
 import functools
 import os
 
-from golden import graph, table
+from golden import attempt, graph, table
 from graph import kernels, stage
 from tinygrad import Tensor, UOp, dtypes
 from tinygrad.codegen.opt.heuristic import hand_coded_optimizations
@@ -366,14 +366,15 @@ def optimize(kernel, renderer, context):
 def context_cell(context): return " ".join(f"{k}={v}" for k, v in context.items())
 
 
-OUTCOMES = {name: optimize(kernel, renderer, context) for name, kernel, renderer, context in CASES}
+OUTCOMES = {name: outcome for name, kernel, renderer, context in CASES
+            if (outcome := attempt(name, lambda: optimize(kernel, renderer, context))) is not None}
 
 
 @table
 def cases():
     return ["case", "kernel", "renderer", "context", "opts"], [
         (name, kernel, renderer, context_cell(context), repr(OUTCOMES[name].arg.applied_opts))
-        for name, kernel, renderer, context in CASES]
+        for name, kernel, renderer, context in CASES if name in OUTCOMES]
 
 
 def declare(name, fn):

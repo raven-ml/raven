@@ -32,7 +32,7 @@ import tinygrad.runtime.support.compiler_amd as compiler_amd
 # comgr is absent where the goldens are generated, and no case compiles.
 compiler_amd.c.DLL._loaded_[compiler_amd.comgr.dll.nm] = compiler_amd.comgr.dll
 
-from golden import graph, table, text
+from golden import REFUSED, attempt, graph, table, text
 from graph import kernels as scheduled
 from tinygrad import Tensor, Variable, dtypes, nn
 from tinygrad.codegen import do_to_program, full_rewrite_to_sink
@@ -244,7 +244,7 @@ def llama_kernels():
     for k in scheduled(logits):
         name = LLAMA.get(full_rewrite_to_sink(k, renderer("clang")).arg.name)
         if name is not None and name not in found: found[name] = k
-    if missing := set(LLAMA.values()) - set(found): raise RuntimeError(f"LLaMA kernels not found: {missing}")
+    for name in set(LLAMA.values()) - set(found): REFUSED.append((name, "tinygrad names no kernel so"))
     return found
 
 
@@ -773,11 +773,11 @@ ON_GPUS = {"gated_threads", "varying_gate_reduce", "group_reduce_split_range", "
 
 def build():
     """Every case, and the kernels they compile, in order."""
-    made = {name: make() for name, make in {**PROGRAMS, **HAND}.items()}
-    made.update(llama_kernels())
+    made = {name: kernel for name, make in {**PROGRAMS, **HAND}.items() if (kernel := attempt(name, make)) is not None}
+    made.update(attempt("llama", llama_kernels, {}))
     cases = [(name, name, "") for name in made]
-    cases += [(name, base, "") for name, base in [(c, b) for c, (b, _) in OPTS.items()]]
-    cases += [(name, base, setting) for name, (base, setting) in SETTINGS.items()]
+    cases += [(name, base, "") for name, base in [(c, b) for c, (b, _) in OPTS.items()] if base in made]
+    cases += [(name, base, setting) for name, (base, setting) in SETTINGS.items() if base in made]
     kernel_of = {name: made[base] if name not in OPTS else with_opts(made[base], OPTS[name][1])
                  for name, base, _ in cases}
     order = list(dict.fromkeys(kernel_of.values()))

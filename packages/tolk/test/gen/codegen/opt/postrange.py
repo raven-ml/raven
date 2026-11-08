@@ -18,7 +18,7 @@ data, which schedules the same kernels.
 
 import dataclasses
 
-from golden import graph, table
+from golden import attempt, graph, table
 from graph import kernels, stage
 from tinygrad import Tensor, UOp, dtypes
 from tinygrad.codegen.opt import KernelOptError, Opt, OptOps
@@ -682,7 +682,7 @@ def cases():
     return ["case", "kernel", "renderer", "opts", "context", "outcome", "refused"], [
         (name, kernel, renderer, repr(tuple(opts)), context_cell(context), result, "" if result == "ok" else value)
         for name, kernel, renderer, opts, context in CASES
-        for result, value in [OUTCOMES[name]]]
+        for result, value in [OUTCOMES[name]] if name in OUTCOMES]
 
 
 def sint(x): return x.render() if isinstance(x, UOp) else str(x)
@@ -702,7 +702,7 @@ def made(ret):
 def axes():
     rows = []
     for name, kernel, renderer, opts, context in CASES:
-        if OUTCOMES[name][0] != "ok": continue
+        if name not in OUTCOMES or OUTCOMES[name][0] != "ok": continue
         with Context(**context):
             k = Scheduler(kernel_input(kernel), RENDERERS[renderer])
             k.convert_loop_to_global()
@@ -747,7 +747,8 @@ def declare(name, fn):
     graph(fn)
 
 
-OUTCOMES = {name: outcome(kernel, renderer, opts, context) for name, kernel, renderer, opts, context in CASES}
+OUTCOMES = {name: result for name, kernel, renderer, opts, context in CASES
+            if (result := attempt(name, lambda: outcome(kernel, renderer, opts, context)))}
 for kernel in list(KERNELS):
     declare(kernel, lambda kernel=kernel: kernel_input(kernel))
 for name, (result, optimized) in OUTCOMES.items():

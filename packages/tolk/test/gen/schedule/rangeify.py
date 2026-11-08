@@ -9,9 +9,7 @@ schedules several graphs, such as a function compiled on its own, records the la
 `kernel_counts.golden` is the number of kernels of each recorded graph.
 """
 
-import os
-
-from golden import graph, table
+from golden import attempt, forked, graph, table
 from tinygrad import Tensor, Variable, dtypes, function
 from tinygrad.helpers import DEV, MAX_KERNEL_BUFFERS, SPLIT_REDUCEOP
 from tinygrad.dtype import Invalid
@@ -468,19 +466,6 @@ PROGRAMS = {
     "copy": lambda: empty(4, 4).to("CPU:1") * 2,
 }
 
-def forked(fn):
-    """`fn()`, computed in a child process, so that the generator's state stays
-    the one each golden starts from."""
-    read, write = os.pipe()
-    if (pid := os.fork()) == 0:
-        os.close(read)
-        with os.fdopen(write, "w") as out: out.write(repr(fn()))
-        os._exit(0)
-    os.close(write)
-    with os.fdopen(read) as out: text = out.read()
-    if os.waitpid(pid, 0)[1] != 0: raise RuntimeError("the child failed")
-    return eval(text)
-
 
 def kernel_count(sink):
     return sum(1 for u in sink.toposort(enter_calls=False) if u.op is Ops.CALL and u.src[0].op is Ops.SINK)
@@ -498,7 +483,7 @@ def declare(name, program):
     return [(name if n == 0 else f"{name}_{n}", c) for n, c in enumerate(counts)]
 
 
-COUNTS = [row for name, program in PROGRAMS.items() for row in declare(name, program)]
+COUNTS = [row for name, program in PROGRAMS.items() for row in attempt(name, lambda: declare(name, program), [])]
 
 
 @table
@@ -581,7 +566,7 @@ def declare_gather(name, program):
     return (name, forked(lambda: kernel_count(made())))
 
 
-GATHER_COUNTS = [declare_gather(name, program) for name, program in GATHERS.items()]
+GATHER_COUNTS = [row for name, program in GATHERS.items() if (row := attempt(name, lambda: declare_gather(name, program)))]
 
 
 @table

@@ -13,10 +13,9 @@ parameters of their slots: `arguments.golden` is the value of each, by slot,
 for each kernel graph.
 """
 
-import os
 import sys
 
-from golden import graph, table
+from golden import attempt, forked, graph, table
 from tinygrad import Tensor, Variable, dtypes, function
 from tinygrad.dtype import AddrSpace, Invalid
 from tinygrad.helpers import DEV
@@ -486,20 +485,6 @@ PROGRAMS = {
 }
 
 
-def forked(fn):
-    """`fn()`, computed in a child process, so that the generator's state stays
-    the one each golden starts from."""
-    read, write = os.pipe()
-    if (pid := os.fork()) == 0:
-        os.close(read)
-        with os.fdopen(write, "w") as out: out.write(repr(fn()))
-        os._exit(0)
-    os.close(write)
-    with os.fdopen(read) as out: text = out.read()
-    if os.waitpid(pid, 0)[1] != 0: raise RuntimeError("the child failed")
-    return eval(text)
-
-
 def words(pairs): return " ".join(f"{k}={v}" for k, v in pairs) or "-"
 
 
@@ -525,7 +510,7 @@ def declare(name, program):
     return (name, words(var_vals)), graphs
 
 
-DECLARED = [declare(name, program) for name, program in PROGRAMS.items()]
+DECLARED = [row for name, program in PROGRAMS.items() if (row := attempt(name, lambda: declare(name, program)))]
 
 
 @table

@@ -12,11 +12,10 @@ Movements: `movement_<case>.golden` is the sink of the indices that
 result that are ranges, or expressions of them.
 """
 
-from golden import graph
+from golden import attempt, forked, graph
 from tinygrad import Tensor, Variable, dtypes
 from tinygrad.helpers import DEV
 from tinygrad.uop.ops import AxisType, KernelInfo, Ops, UOp
-import os
 import tinygrad.schedule.indexing
 import tinygrad.schedule.rangeify
 
@@ -184,19 +183,6 @@ PROGRAMS = {
     "bitcast_copy": lambda: empty(4, 4).bitcast(dtypes.int32).to("CPU:1") + 1,
 }
 
-def forked(fn):
-    """`fn()`, computed in a child process, so that the generator's state stays
-    the one each golden starts from."""
-    read, write = os.pipe()
-    if (pid := os.fork()) == 0:
-        os.close(read)
-        with os.fdopen(write, "w") as out: out.write(repr(fn()))
-        os._exit(0)
-    os.close(write)
-    with os.fdopen(read) as out: text = out.read()
-    if os.waitpid(pid, 0)[1] != 0: raise RuntimeError("the child failed")
-    return eval(text)
-
 
 def declare(name, program):
     for n in range(forked(lambda: len(scheduled(program)))):
@@ -209,7 +195,7 @@ def declare(name, program):
 
 
 for name, program in PROGRAMS.items():
-    declare(name, program)
+    attempt(name, lambda: declare(name, program))
 
 
 # Hand-built graphs: `<graph>.golden` and `<graph>_rangeified.golden`, as for

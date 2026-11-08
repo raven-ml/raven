@@ -24,6 +24,10 @@ The script pins CPython 3.12, whose `struct` packs a float beyond float32's
 range as an infinity, which tinygrad's `bitcast` inherits; 3.13.16 raises
 `OverflowError` there, so the goldens would depend on the interpreter.
 
+A program tinygrad refuses, by raising while one is built or scheduled, loses
+its goldens and no others: the run lists it with the error, and its goldens,
+gone from the output, read as removed (a refused program fails --check).
+
 Without --check, the goldens and the manifest are written, goldens that a
 generator no longer declares are removed, and each change is listed: review
 them with `git diff` before committing. With --check nothing is written: each
@@ -68,7 +72,7 @@ HEADER = f"# tinygrad {TINYGRAD}\n"
 #   generator and hold its output open. The child replaces its `__init__`, and
 #   `Compiler.server`, which other compilers call on macOS, starts no server.
 CHILD = """
-import importlib.abc, importlib.machinery, json, os, runpy, sys, golden
+import importlib.abc, importlib.machinery, json, runpy, sys, golden
 
 class MetalCompilerModule(importlib.abc.Loader):
     def create_module(self, spec): return None
@@ -109,17 +113,10 @@ sys.meta_path.insert(0, Stubs())
 runpy.run_path(sys.argv[1])
 goldens = []
 for name, body in golden.GOLDENS:
-    read, write = os.pipe()
-    if (pid := os.fork()) == 0:
-        os.close(read)
-        with os.fdopen(write, "w") as out: out.write(body())
-        os._exit(0)
-    os.close(write)
-    with os.fdopen(read) as out: text = out.read()
-    if os.waitpid(pid, 0)[1] != 0: sys.exit(f"golden {name} failed")
-    goldens.append((name, text))
+    text = golden.attempt(name, lambda: golden.forked(body))
+    if text is not None: goldens.append((name, text))
 with open(sys.argv[2], "w") as out:
-    json.dump(goldens, out)
+    json.dump({"goldens": goldens, "refused": golden.REFUSED}, out)
 """
 
 
@@ -163,7 +160,8 @@ def generators(modules):
 
 
 def run(module, generator, tinygrad):
-    """The files of the goldens `generator` declares, by path under test/."""
+    """The files of the goldens `generator` declares, by path under test/, and
+    the programs tinygrad refused, as (name, reason)."""
     env = {key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR", "LANG") if key in os.environ}
     # Scrub everything tinygrad reads (DEBUG, DEV, BEAM, ...) and fix string
     # hashing, so that a golden depends on tinygrad alone.
@@ -177,14 +175,14 @@ def run(module, generator, tinygrad):
             sys.exit(f"gen/{module}.py failed:\n{result.stdout}{result.stderr}")
         declared = json.loads(out.read_text())
     files = {}
-    for name, body in declared:
+    for name, body in declared["goldens"]:
         path = f"{module}/{name}.golden"
         if path in files:
             sys.exit(f"gen/{module}.py declares {name} twice")
         files[path] = HEADER + body + "\n"
     if not files:
         sys.exit(f"gen/{module}.py declares no golden")
-    return files
+    return files, declared["refused"]
 
 
 def read(path):
@@ -212,7 +210,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix="tolk-tinygrad-") as scratch:
         tree = patched(tinygrad, scratch)
         for module, generator in selected.items():
-            goldens.update(run(module, generator, tree))
+            files, refused = run(module, generator, tree)
+            goldens.update(files)
+            for name, reason in refused:
+                print(f"refused {module} {name}: {reason}")
     # A golden belongs to the generator of its directory. A full run owns every
     # golden, including those of a generator that no longer exists.
     recorded = set(manifest.splitlines()[1:])
