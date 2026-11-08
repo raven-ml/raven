@@ -5092,7 +5092,9 @@ fold wraps integers and holds its float bound`, hold.
   `-mllvm -disable-interleaved-load-combine` for arm64 and
   `-mllvm -disable-loop-idiom-all` for every Clang,
   `Compiler_cpu.without_loop_vectorizer`, and `Compiler_cpu.clang`
-  (its `table`, which names both commands and the length).
+  (its `table`, which names both commands and the length);
+  `Compiler_amd.hip`, whose code generation's options end with
+  `-mllvm -disable-loop-idiom-all`.
 - **Differs:** a Clang that states LLVM 18, 19 or 20 compiles every kernel
   with `-fno-slp-vectorize`, after `-O2`, which would turn the vectorizer
   back on, and so does Apple's Clang 17 for x86_64.
@@ -5102,7 +5104,8 @@ fold wraps integers and holds its float bound`, hold.
   same command but for that flag). Every Clang compiles for arm64 without
   LLVM's interleaved load combine. Every Clang compiles without LLVM's loop
   idiom recognition (`-mllvm -disable-loop-idiom-all`, which every LLVM
-  release from 12 defines). Otherwise every Clang, Apple's included,
+  release from 12 defines), and so does comgr's code generation for AMD
+  GPUs. Otherwise every Clang, Apple's included,
   compiles with the arguments tinygrad passes. The table of objects names
   the command for either length, and the length (D113).
 - **Reason:** (b): rune's packed suite, `a compiled call computes eager's
@@ -5257,6 +5260,16 @@ fold wraps integers and holds its float bound`, hold.
   call that compiles. The item is revisited when a kernel loop exits on its
   data (`Cstyle` renders a void range as `for (;;)`), and goes when tolk
   supports no Clang of LLVM 22 or 23 and Apple's bases are past 23.
+
+  comgr runs the pass too, when it generates code, under the same
+  reasoning. ROCm 7.0.0's comgr, AMD's LLVM 20.0.0git, has no CRC
+  recogniser. Its pass turns a loop counting a word's bits into `s_bcnt1`,
+  and no kernel producer writes such a loop today: on nonnormal's R9700,
+  with tolk's and comgr's caches off, the 1384 code objects that rune's GPU
+  suite (three runs) and `Rune.jit` of `Nx.eigh` on float64 matrices of 8,
+  24 and 32 rows compile for gfx1201 are the same byte for byte without
+  it. A ROCm built on LLVM 22 or 23 would carry the walk, so comgr compiles
+  without the pass, from every release.
 - **Pinned by:** `Tolk.Compiler_cpu › features › four clamped gathers compile
   for AVX-512 on` (`x86_64,x86-64-v4`, `x86_64,skylake-avx512`,
   `x86_64,znver4`), which compiles the indices of `r_3_2` and fails under
@@ -5289,7 +5302,9 @@ fold wraps integers and holds its float bound`, hold.
   `arm64,apple-m1`), over `r_32_32`'s source; rune's `Lower_linalg › eigh ›
   compiled for 32 rows of float64 gives eager's eigenvalues`; rune's
   compile bench `linalg/eigh-f64-32x32`. These three fail without the fix
-  only under a Clang of LLVM 22 or 23.
+  only under a Clang of LLVM 22 or 23. comgr: `Tolk.Compiler_amd › comgr ›
+  a loop that exits on its data stays a loop: idioms are off`, which ROCm
+  7.0.0's comgr turns into `s_bcnt1` without the option.
 
 ## D168. Withdrawn
 

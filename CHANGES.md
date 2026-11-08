@@ -1091,6 +1091,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- AMD GPU kernels compile without LLVM's loop idiom recognition
+  (`Compiler_amd.hip`), as host kernels do: a comgr built on LLVM 22 or 23
+  would take seconds to forever on a chain of float maxima.
 - A kernel whose reduce and whose loads one condition gates compiles: folding
   the condition inside a selection's arms rewrote the bound of the loop it
   gates, forking a second loop of one identity, which Clang refused.

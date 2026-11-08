@@ -7,6 +7,36 @@ let kernel =
   a[0] += b[0];
 }|}
 
+(* A loop that exits on its data, written as the renderer writes a loop of no
+   bound, its test at the end: it counts a nonzero word's set bits by clearing
+   the lowest until none is left, which loop idiom recognition replaces by a
+   population count. *)
+let bit_count =
+  {|extern "C" __attribute__((global)) void count(unsigned long *a, int *c) {
+  unsigned long x = a[0];
+  int n = 0;
+  if (x != 0) {
+    for (;;) {
+      x &= x - 1;
+      n++;
+      if (!(x != 0)) { break; }
+    }
+  }
+  c[0] = n;
+}|}
+
+(* The branches of [text], a disassembly, that jump backward: an
+   [s_cbranch_*] whose 16-bit word offset, printed unsigned, is negative. *)
+let backward_branches text =
+  String.split_on_char '\n' text
+  |> List.filter_map (fun line ->
+      match String.split_on_char ' ' (String.trim line) with
+      | op :: offset :: _ when String.starts_with ~prefix:"s_cbranch" op -> (
+          match int_of_string_opt offset with
+          | Some o when o >= 0x8000 -> Some op
+          | _ -> None)
+      | _ -> None)
+
 (* Instructions, which HIP would reject. *)
 let assembly = ".text\n.globl f\n.type f,@function\nf:\n  s_endpgm\n"
 
@@ -224,6 +254,21 @@ let smoke =
           Compiler.disassemble hip lib;
           flush stdout;
           contains ~sub:"s_endpgm" (output ()));
+      slow
+      @@ test "a loop that exits on its data stays a loop: idioms are off"
+           (fun () ->
+             let hip = with_comgr (fun () -> Compiler_amd.hip "gfx1201") in
+             let lib = Compiler.compile hip bit_count in
+             ignore (output ());
+             Compiler.disassemble hip lib;
+             flush stdout;
+             let text = output () in
+             equal (list string) ~msg:"bit counts" []
+               (List.filter
+                  (fun w -> has_infix ~affix:w text)
+                  [ "s_bcnt1"; "v_bcnt" ]);
+             not_equal (list string) ~msg:"backward branches" []
+               (backward_branches text));
     ]
 
 (* Compiles in processes of their own *)

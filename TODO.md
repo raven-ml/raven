@@ -108,10 +108,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   compile both)
 - HIP's unstaged tensor-core operands load 8 bytes again since D261's copy
   rule: unmeasured on RDNA3 (16 contiguous halves a lane) and CDNA
-- AMD's comgr and Metal's compiler run LLVM's loop-idiom pass too; D167's
-  `-mllvm -disable-loop-idiom-all` covers host Clang only, and no CI job runs
-  LLVM 22+, where the pass's CRC recogniser walks a running select's paths
-  (fixed upstream after 23.1.5)
 - a Cast from an integer to float32 on Metal relies on the conversion
   rounding to nearest, which MSL 8.6 does not promise (it allows round
   toward zero); Apple's GPUs round to nearest when tested. Make

@@ -35,7 +35,10 @@ val hip : string -> Renderer.Compiler.t
     HIP is compiled with the device libraries, at [-O3], in CU mode, as HIP 6.0
     without HIP's own headers, whose declarations rendered kernels carry. The
     kernels' symbols are internalized before code generation, so that only
-    kernels stay visible. From comgr 2.8 (ROCm 6.2), LLVM's verifier checks
+    kernels stay visible. Code generation runs without LLVM's loop idiom
+    recognition, whose time from LLVM 22 grows exponentially with a chain of
+    selections that each read the last twice: a loop it would replace is
+    computed as written. From comgr 2.8 (ROCm 6.2), LLVM's verifier checks
     the IR before it is optimized and before code generation: IR that an
     optimization makes invalid raises {!Renderer.Compiler.Compile_error}
     naming the verifier's finding instead of compiling. Earlier comgr

@@ -40,7 +40,16 @@ let compile_options arch =
       "-Xclang x86_64-unknown-linux-gnu";
     ]
 
-let link_options = "-O3 -mllvm -amdgpu-internalize-symbols"
+(* The compile runs none of LLVM's passes; code generation runs them at -O3,
+   without loop idiom recognition, so that a loop the pass would replace by
+   the library call or bit-counting instruction it computes is computed as
+   written. Without the pass, the 1384 code objects of rune's GPU suite and
+   eigh up to 32 rows for gfx1201 under comgr's LLVM 20 are the same byte
+   for byte. From LLVM 22 its CRC recogniser walks every path through a
+   loop's running selection, 2^31 for a chain of 32 maxima each reading the
+   last twice. *)
+let link_options =
+  "-O3 -mllvm -amdgpu-internalize-symbols -mllvm -disable-loop-idiom-all"
 
 (* comgr runs Clang's driver, which in a release build has the compiler proper
    skip LLVM's verifier. From comgr 2.8 (ROCm 6.2, LLVM 18), the driver takes
