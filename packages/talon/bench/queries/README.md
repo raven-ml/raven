@@ -23,6 +23,7 @@ committed DuckDB answers.
 | `h2o_data.py`, `decision_data.py` | Generate the data |
 | `nulls_data.py` | Write `../data/nulls.parquet`, the nullable Parquet file of `bench_talon.ml` |
 | `text_data.py` | Write `../data/text.parquet`, the dictionary-encoded text Parquet file of `bench_talon.ml` |
+| `keys_data.py` | Write `../data/keys.parquet`, the sorted-keys Parquet file of `bench_talon.ml` |
 | `baseline.py` | Time DuckDB and Polars into a thumper file |
 | `answers.py` | Check both engines against the committed answers, or record them |
 | `h2o.py`, `decision.py` | The questions, in DuckDB SQL and as Polars queries |

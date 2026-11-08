@@ -11,6 +11,7 @@
 # forced: blessed Talon/Join/customer_lookup Talon/Nulls/join-left under load 12.8 on 14 cores
 # forced: blessed Talon/Join/customer_lookup Talon/Join/repeated_keys Talon/Nulls/join-left under load 19.3 on 14 cores
 # forced: blessed Talon/Nulls/take-random-nested under load 29.2 on 14 cores
+# forced: blessed Talon_parquet/read-nullable Talon_parquet/read-text Talon_parquet/filter-text Talon_parquet/read-keys under load 31.5 on 14 cores
 
 Talon/Filter/high_value	alloc_words	exact	13132
 Talon/Group/category_region	alloc_words	exact	6380
@@ -42,8 +43,10 @@ Talon/Nulls/take-random-nested	alloc_words	exact	6132
 Talon/Nulls/take-random-text	alloc_words	exact	2114
 Talon/Sort/amount_desc	alloc_words	exact	244960
 Talon_csv/read-mixed	alloc_words	exact	888124
-Talon_parquet/read-nullable	alloc_words	exact	35478
-Talon_parquet/read-text	alloc_words	exact	10725
+Talon_parquet/filter-text	alloc_words	exact	23366
+Talon_parquet/read-keys	alloc_words	exact	11161
+Talon_parquet/read-nullable	alloc_words	exact	35581
+Talon_parquet/read-text	alloc_words	exact	10970
 Talon_text/parse-float64-17-digits	alloc_words	exact	322
 
 # machine: 943935ae6b4f79ac

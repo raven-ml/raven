@@ -6,8 +6,9 @@
 (* Filter, group, join and sort over the 40k-row fixture, the same work as
    bench_talon.py does in pandas; then the operations that read validities, over
    a generated table with nulls, a read of float texts, a read of a CSV text of
-   mixed columns, and reads of a Parquet file with nulls and of one of
-   dictionary-encoded text. *)
+   mixed columns, and reads of a Parquet file with nulls, of one of
+   dictionary-encoded text, unfiltered and filtered, and of one of sorted
+   keys. *)
 
 open Talon
 
@@ -331,6 +332,22 @@ let text_parquet = Filename.concat data_dir "text.parquet"
 let read_text () =
   run (Query.of_source (Error.get_ok (Talon_parquet.file text_parquet)))
 
+(* The same words, filtered by one of them as the file is read: the source
+   compares each word of a dictionary once. *)
+let filter_text () =
+  run
+    Query.(
+      of_source (Error.get_ok (Talon_parquet.file text_parquet))
+      |> filter Expr.(Col.string "s" = string "word 42 --"))
+
+(* keys.parquet's 2^17 ascending int64 keys, each repeated 1 to 7 times, in
+   a dictionary-encoded column and a PLAIN one: snappy pages whose copies
+   repeat a key's high bytes from 8 bytes back, and bit-packed indices. *)
+let keys_parquet = Filename.concat data_dir "keys.parquet"
+
+let read_keys () =
+  run (Query.of_source (Error.get_ok (Talon_parquet.file keys_parquet)))
+
 (* CSV *)
 
 (* The text of 2^16 records, about 1.7 MB, so that a read crosses one of the
@@ -433,6 +450,8 @@ let () =
         [
           Thumper.bench "read-nullable" read_parquet;
           Thumper.bench "read-text" read_text;
+          Thumper.bench "filter-text" filter_text;
+          Thumper.bench "read-keys" read_keys;
         ];
     ]
   |> exit

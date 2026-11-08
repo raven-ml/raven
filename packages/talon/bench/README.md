@@ -43,6 +43,19 @@ uv run packages/talon/bench/queries/text_data.py packages/talon/bench/data/text.
 uv run packages/talon/bench/queries/text_data.py --check
 ```
 
+`data/keys.parquet` holds 2^17 rows of two int64 columns without nulls, the
+same ascending keys each repeated 1 to 7 times, one dictionary-encoded and
+one PLAIN, for the `Talon_parquet/read-keys` row. pyarrow writes it too, with
+the SHA-256 `afab11e078f1bf5142c689d176785baec0fbb85fcb074f7a794b9f7a8bade385`:
+
+```bash
+uv run packages/talon/bench/queries/keys_data.py packages/talon/bench/data/keys.parquet
+uv run packages/talon/bench/queries/keys_data.py --check
+```
+
+`Talon_parquet/filter-text` reads `data/text.parquet` filtered by one of its
+words.
+
 The `Talon/Nulls/*` rows run over a table of 2^20 rows that the bench draws
 from a seeded key, with nulls in five of its seven columns.
 
