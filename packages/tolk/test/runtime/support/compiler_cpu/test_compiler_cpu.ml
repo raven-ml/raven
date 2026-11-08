@@ -823,16 +823,20 @@ let invalid_ir =
   @@ group "invalid IR"
        [
          test
-           "a source that LLVM 19's straight-line vectorizer makes invalid \
-            raises Compile_error naming its function" (fun () ->
+           "a source that the straight-line vectorizer of LLVM 19 or Apple's \
+            Clang 17 makes invalid raises Compile_error naming its function"
+           (fun () ->
              if Sys.win32 then skip ~reason:"CC is a shell script" ();
              let stated =
                Helpers.system (Setting.value Setting.cc ^ " --version")
              in
-             if
-               has_infix ~affix:"Apple" stated
-               || not (has_infix ~affix:"clang version 19." stated)
-             then skip ~reason:"not a Clang of LLVM 19" ();
+             let apple = has_infix ~affix:"Apple" stated in
+             let llvm_19 =
+               (not apple) && has_infix ~affix:"clang version 19." stated
+             in
+             let apple_17 = has_infix ~affix:"Apple clang version 17." stated in
+             if not (llvm_19 || apple_17) then
+               skip ~reason:"not a Clang of LLVM 19 or Apple's 17" ();
              let src =
                In_channel.with_open_bin "vectorized_search.c"
                  In_channel.input_all
