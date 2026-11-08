@@ -2762,6 +2762,174 @@ module Kit : sig
       ]}
       inside [Expr.( … )]. *)
 
+  (** {1:asof As-of joins}
+
+      An {e as-of join} pairs each row of a query [left] with at most one row
+      of a query [right]. The {e matches} of a left row are the right rows of
+      its keys in the columns [by] with [r <= l] going backward and [r >= l]
+      going forward, where [l] is a left column and [r] a right one, less
+      those whose [r] equals [l] under [~strict:true]. Its {e pick} is the
+      match nearest [l] in a {!type-direction}. [l] and [r] compare as
+      {!Expr.( < )} does, so a null key matches nothing and NaN is the
+      greatest value, and [by] matches by key identity, as {!Join.keys} does.
+      Among matches of equal [r], a backward pick is the last in [right]'s
+      order and a forward pick the first, as {!Expr.last} and {!Expr.first}
+      take them in a frame sorted stably by [r]. *)
+
+  (** The type for the directions of an as-of join. *)
+  type direction =
+    | Backward  (** The match of the greatest [r], at or before [l]. *)
+    | Forward  (** The match of the least [r], at or after [l]. *)
+    | Nearest
+        (** Of the backward and the forward pick, the one nearer [l], and the
+            backward pick on a tie. It takes keys that meet at an integer, a
+            float, a date, a datetime, a duration or a clock type. The
+            distance between two values is [0] where they are equal, infinite
+            where one is infinite or NaN, and else the exact absolute value of
+            their difference. Between datetimes or durations the difference is
+            a span ({!Expr.Temporal.diff}), and where a left row has both
+            picks, a span past a duration's range is a data error. *)
+
+  val join_asof :
+    ?by:string list ->
+    ?direction:direction ->
+    ?strict:bool ->
+    on:string * string ->
+    Query.t ->
+    Query.t ->
+    Query.t
+  (** [join_asof ~by ~direction ~strict ~on:(l, r) right left] is each row of
+      [left], in order, with its pick in [right] ({!section-asof}), written
+      [left |> Kit.join_asof ~on right]. [direction] defaults to {!Backward}
+      and [strict] to [false]. Its columns are [left]'s, then [right]'s but
+      [by], null where a row has no pick. A name on both sides, [r] included
+      when it is [l], is a problem of the join: rename one side first.
+
+      A tolerance is a comparison [within] on the pick's key, such as
+      [Expr.(Col.int r >= Col.int l - int 5)]. [Query.filter within] keeps
+      the rows picked within it and drops the others. To keep every left row
+      and null the picks beyond it, derive
+      [each sel { column = (fun n x -> n := if_ within x null) }], where [sel]
+      selects [right]'s columns but [by].
+
+      It sorts both sides' keys within [by], takes each left row's pick with
+      a window, and gathers the picks:
+      {[
+      let tagged q c s number =
+        Query.select [ keep (Sel.names by); key := c; side := int s; number ] q
+      in
+      let pick ~forward x =
+        let ahead = if forward = strict then Order.asc else Order.desc in
+        let along = over ~by ~order:[ Order.asc key; ahead side ] in
+        if forward then
+          along (window ~before:(int 1) ~after:(int max_int) (first x))
+        else along (window (last x))
+      in
+      let picks =
+        tagged left l 1 (j := store Type.int64 null)
+        |> Query.append
+             (tagged right r 0 (j := if_ (is_null r) null (window rows)))
+        |> Query.derive [ row := if_ (is_null key) null picked ]
+        |> Query.filter (side = int 1)
+        |> Query.select [ keep (Sel.names [ row ]) ]
+      in
+      left
+      |> Query.join ~on:Join.position picks
+      |> Query.join ~kind:Left ~on:(Join.keys [ row ])
+           (drop (Sel.names by) right |> Query.derive [ row := window rows ])
+      |> drop (Sel.names [ row ])
+      ]}
+      inside [Expr.( … )], where [key], [side], [j] and [row] are names that
+      neither side has and a name in an expression reads its column. [picked]
+      is [pick ~forward:false j] for {!Backward}, [pick ~forward:true j] for
+      {!Forward}, and for {!Nearest}
+      [if_ (is_null jb) ja (if_ (is_null ja) jb (if_ (nearer ka kb) ja jb))],
+      where [ja] and [jb] are the backward and forward picks of [j], [ka] and
+      [kb] those of [if_ (is_null j) null key] where both picks exist, and
+      [nearer] compares the distances to [key]. It sorts the n + m keys once,
+      twice for {!Nearest}, and reads each side twice.
+
+      Raises [Invalid_argument] if [by] names a column twice, or if
+      [direction] is {!Nearest} and the keys meet at another type. *)
+
+  (** {1:intervals Interval sets}
+
+      These read each row of a query as a {e period} of its columns [(s, e)]:
+      its start is the lesser of its two values and its stop the greater, in
+      talon's total order, as {!Join.overlaps} reads them. A period holds the
+      values from its start, included, to its stop, excluded, and a period
+      whose stop equals its start holds its start alone, a point whose length
+      is zero. The rows of one key in the columns [by] (key identity, null
+      being one key) form a {e set}, the values that its periods of positive
+      length hold, so a zero-length period adds nothing to a set. A normal
+      form of half-open periods holds no point, though {!Join.overlaps}
+      matches a zero-length period as its point. A period with a null value holds none. Events
+      of zero duration, {e impulses}, are matched against a set by a join on
+      {!Join.overlaps},
+      [events |> Query.join ~on:Join.(keys by && overlaps (t, t) (s, e)) set],
+      or by its {!Join.Anti} join for the impulses outside the set.
+
+      Each function returns a set in {e normal form}: its keys in ascending
+      order, nulls last, and for each key the fewest periods that hold the
+      set's values, sorted by start, each starting before it stops and
+      stopping before the next one starts. Its columns are [by], then [s] and
+      [e], at the type where the inputs' columns meet. Each is one sweep over
+      the starts and stops of the periods of [q] and [rest], which counts the
+      periods of each that hold a value, [a] and [b], and keeps the values
+      where [holds a b] is [true]:
+      {[
+      let events q (wa, wb) =
+        let start = if_ (s <= e) s e and stop = if_ (s <= e) e s in
+        let edge x (wa, wb) =
+          Query.select
+            [ keep (Sel.names by); at := x; a := int wa; b := int wb ]
+            (Query.filter (start < stop) q)
+        in
+        edge start (wa, wb) |> Query.append (edge stop (-wa, -wb))
+      in
+      let running c = over ~by (window (sum c)) in
+      events q (1, 0)
+      |> Query.append (events rest (0, 1))
+      |> Query.sort (List.map Order.asc (by @ [ at ]))
+      |> Query.aggregate ~by:(by @ [ at ]) [ a := sum a; b := sum b ]
+      |> Query.derive [ held := holds (running a) (running b) ]
+      |> Query.filter (held <> coalesce [ over ~by (shift 1 held); bool false ])
+      |> Query.derive [ e := over ~by (shift (-1) at) ]
+      |> Query.filter held
+      |> Query.select [ keep (Sel.names by); s := at; keep (Sel.names [ e ]) ]
+      ]}
+      inside [Expr.( … )], where [at], [a], [b] and [held] are names that
+      neither [by] nor the period has, and a name in an expression reads its
+      column. It sorts the starts and stops once. Each raises
+      [Invalid_argument] if [by] names a column twice. *)
+
+  val merge_intervals : ?by:string list -> string * string -> Query.t -> Query.t
+  (** [merge_intervals ~by (s, e) q] is [q]'s sets in normal form, so periods
+      that overlap or touch merge. A zero-length period adds nothing, since a
+      half-open normal form holds no point, so impulses are matched with
+      {!Join.overlaps} ({!section-intervals}). It is the sweep without [rest]
+      and with [holds a _ = a > 0]. The union of two sets is the merge of
+      their [Query.append]. *)
+
+  val intersect_intervals :
+    ?by:string list -> string * string -> Query.t -> Query.t -> Query.t
+  (** [intersect_intervals ~by (s, e) rest q] is the values that both [q]'s
+      and [rest]'s set of a key hold, written
+      [q |> Kit.intersect_intervals (s, e) rest]. A zero-length period of
+      either adds nothing, since a half-open normal form holds no point, so
+      impulses are matched with {!Join.overlaps} ({!section-intervals}). It is
+      the sweep with [holds a b = a > 0 && b > 0]. *)
+
+  val subtract_intervals :
+    ?by:string list -> string * string -> Query.t -> Query.t -> Query.t
+  (** [subtract_intervals ~by (s, e) rest q] is the values that [q]'s set of a
+      key holds and [rest]'s does not, written
+      [q |> Kit.subtract_intervals (s, e) rest]. A zero-length period of
+      either adds or removes nothing, since a half-open normal form holds no
+      point, so impulses outside [rest] are kept with a {!Join.Anti} join on
+      {!Join.overlaps} ({!section-intervals}). It is the sweep with
+      [holds a b = a > 0 && b = 0]. *)
+
   (** {1:runs Runs} *)
 
   val categorize : string list -> Query.t -> (Query.t, Error.t) result

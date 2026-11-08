@@ -166,8 +166,14 @@ Sorting is stable and puts nulls last in both directions, unless
 | `df.merge(c, left_on="carrier", right_on="code", how="left")` | `Query.join ~kind:Left ~on:(Join.eq "carrier" "code") c` |
 | `df.merge(carriers, on="carrier", validate="many_to_one")` | `Query.join ~each_right:At_most_one ~on:(Join.keys [ "carrier" ]) carriers` |
 | `df[df.carrier.isin(carriers.carrier)]` | `Query.join ~kind:Semi ~on:(Join.keys [ "carrier" ]) carriers` |
+| `pd.merge_asof(trades, quotes, left_on="ts", right_on="quote_ts", by="ticker")` | `Kit.join_asof ~by:[ "ticker" ] ~on:("ts", "quote_ts") quotes` |
+| `pd.merge_asof(…, direction="nearest", allow_exact_matches=False)` | `Kit.join_asof ~direction:Nearest ~strict:true …` |
 | `pd.concat([df1, df2])` | `Query.append df2 df1` |
 | `pd.concat([df1, df2])` with different columns | `Kit.union df2 df1` |
+
+`Kit.join_asof` needs no sorted input. A key named alike on both sides is
+renamed on one side first, since a joined name appears once (the `join_asof`
+doc in [`talon.mli`](../lib/talon.mli)).
 
 ```ocaml
 let named =
@@ -217,5 +223,4 @@ into a matrix requires.
 ## Not in Talon
 
 Talon has no row index and no in-place mutation. It has no `pivot` or
-`melt`, no rolling or expanding windows, no as-of joins, and reads no JSON or
-Arrow files.
+`melt`, and reads no JSON or Arrow files.

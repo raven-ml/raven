@@ -3923,6 +3923,13 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- Add `Kit.join_asof`, which pairs each left row with the last right row at or
+  before its key, the first at or after it, or the nearer of the two by exact
+  distance, within equal `~by` keys. Ties follow the right side's order.
+- Add `Kit.merge_intervals`, `Kit.intersect_intervals` and
+  `Kit.subtract_intervals`, set operations on periods that return them sorted,
+  disjoint and not touching, each period starting at its lesser value, as
+  `Join.overlaps` reads it. A zero-length period adds nothing to a set.
 - `Expr.var` and `Expr.std` are infinite only where the result passes
   `max_float`. A sum of the values or of their squared deviations that
   overflowed made them infinite, and a running `Expr.window` of them over a

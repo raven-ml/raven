@@ -251,6 +251,204 @@ module Kit = struct
           ~x1:(window ~before:(int 0) ~after:(int max_int) (first x))
           ~k1
 
+  (* As-of joins *)
+
+  (* [type_of q c] is the type of [q]'s column [c]; a missing [c] is the
+     select's problem. *)
+  let type_of q c =
+    let q = Query.select Expr.[ keep Sel.(names [ c ]) ] q in
+    match Schema.columns (Query.schema q) with
+    | [ (_, t) ] -> t
+    | _ -> assert false
+
+  (* [fresh taken base] is [base], primed until [taken] lacks it. *)
+  let rec fresh taken base =
+    if List.mem base taken then fresh taken (base ^ "'") else base
+
+  (* [named n c] outputs the column [c] as [n], at any type. *)
+  let named n c =
+    Expr.each (Sel.names [ c ]) { column = (fun _ x -> Expr.(n := x)) }
+
+  type direction = Backward | Forward | Nearest
+
+  (* [nearer k] is, for a kind [k] with a distance, whether [a] is at most as
+     far from [l] as [b] is, where [a <= l <= b]. *)
+  let nearer (type a) (k : a Kind.t) :
+      ((a, Expr.row) Expr.t ->
+      (a, Expr.row) Expr.t ->
+      (a, Expr.row) Expr.t ->
+      (bool, Expr.row) Expr.t)
+      option =
+    let is k' = Option.is_some (Kind.provably_equal k k') in
+    let ints = Kind.provably_equal k Kind.int in
+    let floats = Kind.provably_equal k Kind.float in
+    let open Expr in
+    match (ints, floats) with
+    | Some Stdlib.Type.Equal, _ ->
+        (* The distances wrap at the type's width and compare unsigned. *)
+        Some
+          (fun l a b ->
+            let da = l - a and db = b - l in
+            if_ ((da < int 0) = (db < int 0)) (da <= db) (da >= int 0))
+    | _, Some Stdlib.Type.Equal ->
+        (* Rounding is monotone, so the rounded distances decide unless they
+           are equal; TwoSum's residuals, exact while the sums are finite, then
+           decide. A distance is infinite where a value is infinite or NaN. *)
+        Some
+          (fun l a b ->
+            let l = cast Type.float64 l and a = cast Type.float64 a in
+            let b = cast Type.float64 b in
+            let finite x = x > float neg_infinity && x < float infinity in
+            let two_sum x y =
+              let s = x -. y in
+              let r = s -. x in
+              (s, x -. (s -. r) -. (y +. r))
+            in
+            let sa, ea = two_sum l a and sb, eb = two_sum b l in
+            a = l
+            || b <> l
+               && ((not (finite b && finite l))
+                  || (finite a && (sa < sb || (sa = sb && ea <= eb)))))
+    | None, None when Stdlib.(is Kind.date || is Kind.instant || is Kind.span)
+      ->
+        Some (fun l a b -> Temporal.diff l a <= Temporal.diff b l)
+    | None, None -> None
+
+  let join_asof ?(by = []) ?(direction = Backward) ?(strict = false) ~on:(l, r)
+      right left =
+    Option.iter
+      (err "Kit.join_asof: %a is named twice" Type.pp_quoted)
+      (repeated by);
+    let taken = by @ column_names left @ column_names right in
+    let key = fresh taken "key" and side = fresh taken "side" in
+    let j = fresh taken "j" and row = fresh taken "row" in
+    let tagged q c s number =
+      Query.select
+        Expr.(keep (Sel.names by) :: named key c :: [ side := int s; number ])
+        q
+    in
+    (* The right rows count from 1, and a null key numbers none. *)
+    let number =
+      let column _ x = Expr.(j := if_ (is_null x) null (window rows)) in
+      Expr.each (Sel.names [ r ]) { column }
+    in
+    let frame =
+      tagged left l 1 Expr.(j := store Type.int64 null)
+      |> Query.append (tagged right r 0 number)
+    in
+    (* Along the key, a key's right rows come before its left rows where a
+       backward pick takes them or a forward pick skips them. *)
+    let pick ~forward x =
+      let ahead = if forward = strict then Order.asc else Order.desc in
+      let open Expr in
+      let along = over ~by ~order:[ Order.asc key; ahead side ] in
+      if forward then
+        along (window ~before:(int 1) ~after:(int max_int) (first x))
+      else along (window (last x))
+    in
+    let jx = Col.int j in
+    let picked =
+      match direction with
+      | Backward -> pick ~forward:false jx
+      | Forward -> pick ~forward:true jx
+      | Nearest -> (
+          let (Type.Any t) = type_of frame key in
+          match nearer (Type.kind t) with
+          | None ->
+              err
+                "Kit.join_asof: Nearest takes numbers, dates, datetimes, \
+                 durations or clocks, not %a"
+                Type.pp t
+          | Some nearer ->
+              let open Expr in
+              let k = Col.v (Type.kind t) key in
+              let held = if_ (is_null jx) null k in
+              let ja = pick ~forward:false jx and jb = pick ~forward:true jx in
+              (* A row with one pick compares no distance. *)
+              let both x = if_ (is_null ja || is_null jb) null x in
+              let ka = both (pick ~forward:false held) in
+              let kb = both (pick ~forward:true held) in
+              let nearest = if_ (nearer k ka kb) ja jb in
+              if_ (is_null jb) ja (if_ (is_null ja) jb nearest))
+    in
+    (* A null left key matches nothing. *)
+    let picked =
+      let column _ x = Expr.(row := if_ (is_null x) null picked) in
+      Expr.each (Sel.names [ key ]) { column }
+    in
+    let picks =
+      frame
+      |> Query.derive [ picked ]
+      |> Query.filter Expr.(Col.int side = int 1)
+      |> Query.select Expr.[ keep (Sel.names [ row ]) ]
+    in
+    let right = drop (Sel.names by) right in
+    left
+    |> Query.join ~on:Join.position picks
+    |> Query.join ~kind:Left ~on:(Join.keys [ row ])
+         (Query.derive Expr.[ row := window rows ] right)
+    |> drop (Sel.names [ row ])
+
+  (* Interval sets *)
+
+  (* [sweep name ~by (s, e) holds q rest] is the normal form of the values at
+     which [holds a b] is true, [a] and [b] counting the periods of [q] and of
+     [rest] that hold them. *)
+  let sweep name ~by (s, e) holds q rest =
+    Option.iter
+      (err "Kit.%s: %a is named twice" name Type.pp_quoted)
+      (repeated by);
+    let taken = by @ [ s; e ] in
+    let at = fresh taken "at" and a = fresh taken "a" in
+    let b = fresh taken "b" and held = fresh taken "held" in
+    let events (q, (wa, wb)) =
+      let (Type.Any t) = type_of q s in
+      let s = Col.v (Type.kind t) s and e = Col.v (Type.kind t) e in
+      let start = Expr.(if_ (s <= e) s e) in
+      let stop = Expr.(if_ (s <= e) e s) in
+      let q = Query.filter Expr.(start < stop) q in
+      let edge x (wa, wb) =
+        Query.select
+          Expr.[ keep (Sel.names by); at := x; a := int wa; b := int wb ]
+          q
+      in
+      edge start (wa, wb) |> Query.append (edge stop (-wa, -wb))
+    in
+    let keys = by @ [ at ] in
+    let running c = Expr.(over ~by (window (sum (Col.int c)))) in
+    let held' = Col.bool held in
+    let stop =
+      let column _ x = Expr.(e := over ~by (shift (-1) x)) in
+      Expr.each (Sel.names [ at ]) { column }
+    in
+    let events =
+      match rest with
+      | None -> events (q, (1, 0))
+      | Some rest -> Query.append (events (rest, (0, 1))) (events (q, (1, 0)))
+    in
+    events
+    |> Query.sort (List.map Order.asc keys)
+    |> Query.aggregate ~by:keys
+         Expr.[ a := sum (Col.int a); b := sum (Col.int b) ]
+    |> Query.derive Expr.[ held := holds (running a) (running b) ]
+    |> Query.filter
+         Expr.(held' <> coalesce [ over ~by (shift 1 held'); bool false ])
+    |> Query.derive [ stop ]
+    |> Query.filter held'
+    |> Query.select
+         Expr.(keep (Sel.names by) :: named s at :: [ keep (Sel.names [ e ]) ])
+
+  let merge_intervals ?(by = []) period q =
+    sweep "merge_intervals" ~by period Expr.(fun a _ -> a > int 0) q None
+
+  let intersect_intervals ?(by = []) period rest q =
+    let holds a b = Expr.(a > int 0 && b > int 0) in
+    sweep "intersect_intervals" ~by period holds q (Some rest)
+
+  let subtract_intervals ?(by = []) period rest q =
+    let holds a b = Expr.(a > int 0 && b = int 0) in
+    sweep "subtract_intervals" ~by period holds q (Some rest)
+
   let categorize cs q =
     Option.iter
       (err "Kit.categorize: %a is named twice" Type.pp_quoted)

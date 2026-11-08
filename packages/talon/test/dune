@@ -146,3 +146,16 @@
   (progn
    (run %{test} --corrected)
    (diff? test_window.ml test_window.ml.corrected))))
+
+(test
+ (name test_asof)
+ (modules test_asof)
+ (package talon)
+ (libraries windtrap talon nx)
+ (deps golden/asof.txt))
+
+(test
+ (name test_intervals)
+ (modules test_intervals)
+ (package talon)
+ (libraries windtrap talon))
