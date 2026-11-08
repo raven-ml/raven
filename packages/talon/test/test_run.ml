@@ -2166,6 +2166,220 @@ let reductions =
           equal ~msg:"rows folded" int 0 !seen);
     ]
 
+(* One column's reductions
+
+   An aggregate's reductions of one column share their count, sums and mean,
+   and an integer's or a boolean's extreme is its value's. Rows of every
+   integer, float and boolean type, at most forty, some null, cut into at most
+   four groups by [g]. *)
+
+let reduced =
+  Type.
+    [
+      Any int8;
+      Any int16;
+      Any int32;
+      Any int64;
+      Any uint8;
+      Any uint16;
+      Any uint32;
+      Any uint64;
+      Any float16;
+      Any float32;
+      Any float64;
+      Any bool;
+    ]
+
+let grouped types =
+  Gen.with_pp
+    (fun ppf (G.Sample (ty, vs), g) ->
+      Format.fprintf ppf "%a, groups [%s]: %d rows" Type.pp ty
+        (String.concat " " (Array.to_list (Array.map string_of_int g)))
+        (Array.length vs))
+    (Gen.bind (Gen.of_list types) (fun (Type.Any ty) ->
+         Gen.bind (G.options ty) (fun vs ->
+             let size = Gen.constant (Array.length vs) in
+             (* A third of the time group [0]'s values are all null. *)
+             let nulled g =
+               let vs =
+                 Array.mapi (fun i v -> if g.(i) = 0 then None else v) vs
+               in
+               (G.Sample (ty, vs), g)
+             in
+             Gen.bind (Gen.array ~size (Gen.int_range 0 3)) (fun g ->
+                 Gen.frequency
+                   [
+                     (2, Gen.constant (G.Sample (ty, vs), g));
+                     (1, Gen.constant (nulled g));
+                   ]))))
+
+(* The rows of group [k]. *)
+let group_rows vs g k =
+  List.filter (fun i -> g.(i) = k) (List.init (Array.length vs) Fun.id)
+
+(* Nulls, a group whose every value is null, and a group of one row. *)
+let cover_groups vs g =
+  let groups = List.sort_uniq compare (Array.to_list g) in
+  let rows k = group_rows vs g k in
+  cover "a null" (Array.exists Option.is_none vs);
+  cover "a group of nulls alone"
+    (List.exists
+       (fun k -> List.for_all (fun i -> vs.(i) = None) (rows k))
+       groups);
+  cover "a group of one row"
+    (List.exists (fun k -> List.length (rows k) = 1) groups)
+
+let of_groups ty vs g =
+  v [ ("g", Column.v Type.int64 g); ("x", Column.of_options ty vs) ]
+
+(* Each output of an aggregate of [count], [min], [max] and, over numbers,
+   [sum], [mean], [var] and [std] of one column is the bytes of its own
+   aggregate. *)
+let law_shared (G.Sample (ty, vs), g) =
+  cover_groups vs g;
+  let x = Col.v (Type.kind ty) "x" in
+  let out n e = (n, Expr.(n := e)) in
+  let numbers =
+    match Kind.provably_equal (Type.kind ty) Kind.bool with
+    | Some _ -> []
+    | None ->
+        Expr.
+          [
+            out "s" (sum x); out "m" (mean x); out "v" (var x); out "d" (std x);
+          ]
+  in
+  let os =
+    Expr.[ out "n" (count x); out "lo" (min x); out "hi" (max x) ] @ numbers
+  in
+  let t = of_groups ty vs g in
+  let run os = require_ok ~pp:Error.pp (aggregate [ "g" ] os t) in
+  let together = run (List.map snd os) in
+  List.iter
+    (fun (n, o) ->
+      equal ~msg:n (list string)
+        (buffers (column (run [ o ]) n))
+        (buffers (column together n)))
+    os
+
+(* [min] and [max] of integers and booleans are each group's least and
+   greatest value, null over none. *)
+let law_extremes (G.Sample (ty, vs), g) =
+  cover_groups vs g;
+  let x = Col.v (Type.kind ty) "x" in
+  let t =
+    require_ok ~pp:Error.pp
+      (aggregate [ "g" ]
+         Expr.[ "lo" := min x; "hi" := max x ]
+         (of_groups ty vs g))
+  in
+  let keys = Column.options Kind.int (column t "g") in
+  let fold pick =
+    Array.map
+      (fun k ->
+         let values =
+           List.filter_map (fun i -> vs.(i)) (group_rows vs g (Option.get k))
+         in
+         match values with
+         | [] -> None
+         | v :: rest ->
+             Some
+               (List.fold_left
+                  (fun a b -> if pick (Type.compare_value ty b a) then b else a)
+                  v rest))
+      keys
+  in
+  let k = Type.kind ty in
+  rows_are ty (fold (fun c -> c < 0)) (Column.options k (column t "lo"));
+  rows_are ty (fold (fun c -> c > 0)) (Column.options k (column t "hi"))
+
+(* A bool column at bit offsets: its min and max are each group's least and
+   greatest value, [false] before [true], null over none. *)
+let law_bit_extremes (c, g) =
+  let n = Array.length c.values in
+  let held i = match c.valid with Some v -> v.(i) | None -> true in
+  cover "a value at a bit offset" (n > 0 && fst c.at mod 8 <> 0);
+  let t = v [ ("g", Column.v Type.int64 g); ("x", of_bits c) ] in
+  let x = Col.bool "x" in
+  let t =
+    require_ok ~pp:Error.pp
+      (aggregate [ "g" ] Expr.[ "lo" := min x; "hi" := max x ] t)
+  in
+  let fold pick =
+    Array.map
+      (fun k ->
+        let rows = List.filter held (group_rows c.values g (Option.get k)) in
+        match List.map (fun i -> c.values.(i)) rows with
+        | [] -> None
+        | vs -> Some (List.fold_left pick (List.hd vs) vs))
+      (Column.options Kind.int (column t "g"))
+  in
+  let bools n = Column.options Kind.bool (column t n) in
+  rows_are Type.bool (fold ( && )) (bools "lo");
+  rows_are Type.bool (fold ( || )) (bools "hi")
+
+let bit_groups =
+  Gen.with_pp
+    (fun ppf (c, g) ->
+      Format.fprintf ppf "%a, groups [%s]" pp_bits c
+        (String.concat " " (Array.to_list (Array.map string_of_int g))))
+    (Gen.bind lengths (fun n ->
+         Gen.pair (bits_column n)
+           (Gen.array ~size:(Gen.constant n) (Gen.int_range 0 3))))
+
+(* [words t n] is the 64-bit words of [t]'s column [n]. *)
+let words t n =
+  match Column.layout (column t n) with
+  | Fixed { values = P x; _ } -> Nx.to_array (Nx.bitcast Nx.int64 x)
+  | _ -> assert false
+
+let one_column =
+  let x = Col.float "x" in
+  let first vs =
+    let t = v [ ("x", Column.v Type.float64 vs) ] in
+    require_ok ~pp:Error.pp
+      (aggregate [] Expr.[ "lo" := min x; "hi" := max x ] t)
+  in
+  group "One column's reductions"
+    [
+      prop "each output is its own aggregate's" (grouped reduced) law_shared;
+      prop "an integer's or a boolean's min and max are its extremes"
+        (grouped
+           (List.filter
+              (fun (Type.Any ty) ->
+                Option.is_none (Kind.provably_equal (Type.kind ty) Kind.float))
+              reduced))
+        law_extremes;
+      test "a float's -0. and 0. are one value, its first row's" (fun () ->
+          List.iter
+            (fun vs ->
+              let t = first vs in
+              rows_are Type.float64 [| Some vs.(0) |] (floats t "lo");
+              rows_are Type.float64 [| Some vs.(0) |] (floats t "hi"))
+            [ [| -0.; 0. |]; [| 0.; -0. |] ]);
+      prop "a bool's min and max over bit views are its extremes" bit_groups
+        law_bit_extremes;
+      test "uint64 extremes order unsigned, int64 ones signed" (fun () ->
+          let g = Column.v Type.int64 [| 0; 0; 0; 1; 1 |] in
+          let extremes x =
+            let t = v [ ("g", g); ("x", Column.of_tensor x) ] in
+            let x = Col.int "x" in
+            let t =
+              require_ok ~pp:Error.pp
+                (aggregate [ "g" ] Expr.[ "lo" := min x; "hi" := max x ] t)
+            in
+            (words t "lo", words t "hi")
+          in
+          let top = 0x8000_0000_0000_0000L in
+          let u = [| -1L; 1L; top; top; 0L |] in
+          let lo, hi = extremes (Nx.create Nx.uint64 [| 5 |] u) in
+          equal ~msg:"uint64 min" (array int64) [| 1L; 0L |] lo;
+          equal ~msg:"uint64 max" (array int64) [| -1L; top |] hi;
+          let i = [| Int64.min_int; Int64.max_int; 0L; -1L; 0L |] in
+          let lo, hi = extremes (Nx.create Nx.int64 [| 5 |] i) in
+          equal ~msg:"int64 min" (array int64) [| Int64.min_int; -1L |] lo;
+          equal ~msg:"int64 max" (array int64) [| Int64.max_int; 0L |] hi);
+    ]
+
 (* Joins *)
 
 let join ?kind ?each_left ?each_right on l r =
@@ -4171,6 +4385,7 @@ let () =
          ocaml;
          failure_order;
          reductions;
+         one_column;
          joins;
          under_nulls_cases;
          lifts;

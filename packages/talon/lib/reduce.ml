@@ -160,55 +160,121 @@ let exact_sum ty s ids x =
   let why = Format.asprintf "the sum overflows %a" Type.pp ty in
   (fixed (Any ty) ~valid:fits sum, first_where (Nx.logical_not fits) why)
 
+(* A column's parts that its reductions over one frame share, each computed
+   when a reduction first reads it: the segments of its non-null rows, their
+   counts, its int64 and float64 sums, its mean and variance, and its order
+   words. Fields, where lazy values would allocate a closure each. *)
+type parts = {
+  s : segments;
+  c : Column.t;
+  held : Nx.host Nx.bool_t option;
+  value_ids : Nx.host Nx.int64_t;
+  mutable counts : Nx.host Nx.int64_t option;
+  mutable sum : Nx.host Nx.int64_t option;
+  mutable fsum : Nx.host Nx.float64_t option;
+  mutable mean : Nx.host Nx.float64_t option;
+  mutable var : Nx.host Nx.float64_t option;
+  mutable words : Nx.host Nx.uint64_t option;
+}
+
+let parts s c =
+  let held = Option.map (Nx.cast Nx.bool) (Column.validity c) in
+  let value_ids =
+    match held with
+    | Some v -> Nx.where v s.ids (none (Column.length c))
+    | None -> s.ids
+  in
+  {
+    s;
+    c;
+    held;
+    value_ids;
+    counts = None;
+    sum = None;
+    fsum = None;
+    mean = None;
+    var = None;
+    words = None;
+  }
+
+(* [memo get set f p] is [f p], computed once and kept in [p]'s field. *)
+let memo get set f p =
+  match get p with
+  | Some x -> x
+  | None ->
+      let x = f p in
+      set p (Some x);
+      x
+
+let counts =
+  memo (fun p -> p.counts) (fun p x -> p.counts <- x) (fun p ->
+      match p.held with
+      | None -> sizes p.s
+      | Some _ ->
+          let ones = Nx.ones Nx.int64 [| Column.length p.c |] in
+          segment_sum p.s p.value_ids ones)
+
+let sum =
+  memo (fun p -> p.sum) (fun p x -> p.sum <- x) (fun p ->
+      segment_sum p.s p.value_ids (tensor Nx.int64 p.c))
+
+let fsum =
+  memo (fun p -> p.fsum) (fun p x -> p.fsum <- x) (fun p ->
+      segment_sum p.s p.value_ids (tensor Nx.float64 p.c))
+
+(* Integers of at most 32 bits sum exactly in int64 over fewer than 2^31 rows,
+   then round once to float64, as a float64 sum does wherever its partial sums
+   are exact. *)
+let mean =
+  memo (fun p -> p.mean) (fun p x -> p.mean <- x) (fun p ->
+      let sum =
+        if exact_sums p.c then Nx.cast Nx.float64 (sum p) else fsum p
+      in
+      Nx.div sum (Nx.cast Nx.float64 (counts p)))
+
+let var =
+  memo (fun p -> p.var) (fun p x -> p.var <- x) (fun p ->
+      let d = Nx.sub (tensor Nx.float64 p.c) (Nx.take p.s.ids (mean p)) in
+      let k = Nx.cast Nx.float64 (Nx.sub_s (counts p) 1L) in
+      Nx.div (segment_sum p.s p.value_ids (Nx.mul d d)) k)
+
+let words =
+  memo (fun p -> p.words) (fun p x -> p.words <- x) (fun p ->
+      Key.value Order p.c)
+
+(* Whether [c]'s extremes are its values': an integer's or a boolean's, one
+   value to an order word, ordered as its storage. *)
+let direct c =
+  let (Type.Any ty) = Column.type_ c in
+  match Type.kind ty with Kind.Int | Kind.Bool -> true | _ -> false
+
 let reduce : type a b.
     (a, b) Expr.reduction ->
     Type.any ->
-    segments ->
-    Column.t ->
+    parts ->
     Column.t * (int * string) option =
- fun r (Any rty as ty) s c ->
+ fun r (Any rty as ty) p ->
+  let { s; c; held; value_ids = ids; _ } = p in
   let n = Column.length c in
-  let held = Option.map (Nx.cast Nx.bool) (Column.validity c) in
-  let ids =
-    match held with Some v -> Nx.where v s.ids (none n) | None -> s.ids
-  in
   let valid m = match held with Some v -> Nx.logical_and v m | None -> m in
-  (* Each segment's number of values, counted where a reduction reads it. *)
-  let count =
-    lazy
-      (match held with
-      | None -> sizes s
-      | Some _ -> segment_sum s ids (Nx.ones Nx.int64 [| n |]))
-  in
-  let at_least k = Nx.greater_equal_s (Lazy.force count) (Int64.of_int k) in
-  let sum dt = segment_sum s ids (tensor dt c) in
-  (* Integers of at most 32 bits sum exactly in int64 over fewer than 2^31
-     rows, then round once to float64, as a float64 sum does wherever its
-     partial sums are exact. *)
-  let mean () =
-    let sum =
-      if exact_sums c then Nx.cast Nx.float64 (sum Nx.int64)
-      else sum Nx.float64
-    in
-    Nx.div sum (Nx.cast Nx.float64 (Lazy.force count))
-  in
-  let var () =
-    let d = Nx.sub (tensor Nx.float64 c) (Nx.take s.ids (mean ())) in
-    let k = Nx.cast Nx.float64 (Nx.sub_s (Lazy.force count) 1L) in
-    Nx.div (segment_sum s ids (Nx.mul d d)) k
-  in
-  let quantile p =
+  let at_least k = Nx.greater_equal_s (counts p) (Int64.of_int k) in
+  let quantile q =
     let r = Nx_ragged.of_ids ~segments:s.count ids (tensor Nx.float64 c) in
-    let q = Nx.reshape [| s.count |] (Nx_ragged.quantile [| p |] r) in
+    let q = Nx.reshape [| s.count |] (Nx_ragged.quantile [| q |] r) in
     fixed float64 ~valid:(at_least 1) q
   in
-  let words = lazy (Key.value Order c) in
-  let extreme op =
-    Nx.reduce_segments op ~segments:s.count ids (Lazy.force words)
-  in
+  let extreme op = Nx.reduce_segments op ~segments:s.count ids (words p) in
   let first_at e =
-    let hit = Nx.equal (Lazy.force words) (Nx.take s.ids e) in
+    let hit = Nx.equal (words p) (Nx.take s.ids e) in
     pick s Nx.Min (Some (valid hit))
+  in
+  (* One fold of the values, where it is an extreme's value. *)
+  let value_at op =
+    match Column.data c with
+    | Fixed (P x) when direct c ->
+        fixed ty ~valid:(at_least 1)
+          (Nx.reduce_segments op ~segments:s.count ids x)
+    | _ -> rows_at (first_at (extreme op)) c
   in
   let place row =
     let p = place s row in
@@ -217,20 +283,21 @@ let reduce : type a b.
   let value row = rows_at row c in
   let ok c = (c, None) in
   match r with
-  | Count -> ok (fixed int64 (Lazy.force count))
+  | Count -> ok (fixed int64 (counts p))
   | Sum -> (
       match (rty, Column.data c) with
       | Duration _, _ -> exact_sum rty s ids (tensor Nx.int64 c)
-      | Int64, _ -> ok (fixed ty (sum Nx.int64))
+      | Int64, _ -> ok (fixed ty (sum p))
+      | Float64, _ -> ok (fixed ty (fsum p))
       | _, Fixed (P x) -> ok (fixed ty (segment_sum s ids x))
       | _ -> invalid_arg "Reduce.reduce: no sum")
-  | Mean -> ok (fixed ty ~valid:(at_least 1) (mean ()))
-  | Var -> ok (fixed ty ~valid:(at_least 2) (var ()))
-  | Std -> ok (fixed ty ~valid:(at_least 2) (Nx.sqrt (var ())))
+  | Mean -> ok (fixed ty ~valid:(at_least 1) (mean p))
+  | Var -> ok (fixed ty ~valid:(at_least 2) (var p))
+  | Std -> ok (fixed ty ~valid:(at_least 2) (Nx.sqrt (var p)))
   | Median -> ok (quantile 0.5)
-  | Quantile p -> ok (quantile p)
-  | Min -> ok (value (first_at (extreme Nx.Min)))
-  | Max -> ok (value (first_at (extreme Nx.Max)))
+  | Quantile q -> ok (quantile q)
+  | Min -> ok (value_at Nx.Min)
+  | Max -> ok (value_at Nx.Max)
   | Arg_min -> ok (place (first_at (extreme Nx.Min)))
   | Arg_max -> ok (place (first_at (extreme Nx.Max)))
   | First -> ok (value (pick s Nx.Min held))

@@ -43,17 +43,24 @@ val broadcast : segments -> Column.t -> Column.t
 val rows : segments -> Column.t
 (** [rows s] is the number of rows of each segment of [s], as [int64]. *)
 
+type parts
+(** The type for a column's operands over segments that its reductions share:
+    the segments of its values, their counts, sums, mean and variance, and its
+    order words, each computed once, when a reduction first reads it. *)
+
+val parts : segments -> Column.t -> parts
+(** [parts s c] is the parts of [c] over [s]. *)
+
 val reduce :
   ('a, 'b) Expr.reduction ->
   Type.any ->
-  segments ->
-  Column.t ->
+  parts ->
   Column.t * (int * string) option
-(** [reduce r ty s c] is [r] of the values of [c] in each segment of [s], of
-    type [ty], with the first segment where [r] fails and the reason: [only]
-    over two values, a [duration] sum that overflows. [sum] takes integers at
-    [int64], and floats and durations at [ty]. Over no values [count], [sum] and
-    [n_unique] are [0], and the others null. *)
+(** [reduce r ty (parts s c)] is [r] of the values of [c] in each segment of
+    [s], of type [ty], with the first segment where [r] fails and the reason:
+    [only] over two values, a [duration] sum that overflows. [sum] takes
+    integers at [int64], and floats and durations at [ty]. Over no values
+    [count], [sum] and [n_unique] are [0], and the others null. *)
 
 val shift : segments -> int -> Column.t -> Column.t
 (** [shift s n c] is, on each row, [c] at the row [n] places earlier in its

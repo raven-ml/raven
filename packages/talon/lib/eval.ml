@@ -422,6 +422,7 @@ type env = {
   extent : int;
   origin : int -> int;
   slots : Column.t option array;
+  parts : Reduce.parts option array;
   failure : failure option ref;
 }
 
@@ -436,15 +437,18 @@ let per_segment env segments =
     origin = (fun i -> Int64.to_int (Lazy.force first).(i));
   }
 
-type node = { eval : env -> Column.t; mutable slot : int }
+(* A node that a reduction reads gets a [part], which holds, for a frame, the
+   parts its reductions share. *)
+type node = { eval : env -> Column.t; mutable slot : int; mutable part : int }
 
 type state = {
   names : string list;
   mutable nodes : (Expr.packed * node) list;
   mutable slots : int;
+  mutable parts : int;
 }
 
-let state s = { names = Schema.names s; nodes = []; slots = 0 }
+let state s = { names = Schema.names s; nodes = []; slots = 0; parts = 0 }
 
 let get env n =
   if n.slot < 0 then n.eval env
@@ -547,7 +551,7 @@ let rec compile : type a s. state -> (a, s) Expr.t -> node =
       end;
       n
   | None ->
-      let n = { eval = lower st e; slot = -1 } in
+      let n = { eval = lower st e; slot = -1; part = -1 } in
       st.nodes <- (Expr.Packed e, n) :: st.nodes;
       n
 
@@ -640,11 +644,22 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
   | Rows, _ -> fun env -> Reduce.rows env.frame.segments
   | Reduce (r, a), _ ->
       let a = compile st a and ty = type_of typing in
+      if a.part < 0 then begin
+        a.part <- st.parts;
+        st.parts <- st.parts + 1
+      end;
       fun env ->
-        let rows = per_row env in
-        let c, f =
-          Reduce.reduce r ty env.frame.segments (fill rows (get rows a))
+        let p =
+          match env.parts.(a.part) with
+          | Some p -> p
+          | None ->
+              let rows = per_row env in
+              let c = fill rows (get rows a) in
+              let p = Reduce.parts env.frame.segments c in
+              env.parts.(a.part) <- Some p;
+              p
         in
+        let c, f = Reduce.reduce r ty p in
         Option.iter (fun (i, why) -> fail env i (data why)) f;
         c
   | Over { by; order; e = x }, _ ->
@@ -733,6 +748,7 @@ let env st frame =
       extent = frame.rows;
       origin = Fun.id;
       slots = Array.make st.slots None;
+      parts = Array.make st.parts None;
       failure = ref None;
     }
   in

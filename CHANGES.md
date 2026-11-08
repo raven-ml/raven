@@ -3891,6 +3891,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Expr.min` and `Expr.max` of an integer or `bool` column fold its values in
+  one pass, and `mean`, `var`, `std`, `sum` and `count` of one column in one
+  `aggregate` share its count, sums and mean. H2O group-by q07 takes 26% fewer
+  instructions, q09 10%.
 - `Join.lt`, `Join.le`, `Join.gt`, `Join.ge`, `Join.inside` and
   `Join.overlaps` join on order and time: a join keeps the pairs its
   condition holds on, comparing as `Expr` does and reading `overlaps` as

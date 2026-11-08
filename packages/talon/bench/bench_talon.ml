@@ -205,6 +205,9 @@ let by key =
       |> aggregate ~by:[ key ]
            Expr.[ "s" := sum (Col.int "v"); "m" := mean (Col.int "v") ])
 
+(* [over_k os] is [os] in each group of [k]. *)
+let over_k os = run Query.(of_table groups |> aggregate ~by:[ "k" ] os)
+
 (* [filter th] keeps the rows whose [key] is below [th]: [th / 10] percent of
    them. *)
 let filter th =
@@ -476,6 +479,12 @@ let () =
           Thumper.bench "Join/keyed_inequality" below;
           Thumper.bench "Group/text-100-1M" (fun () -> by "t");
           Thumper.bench "Group/int32-100-1M" (fun () -> by "k");
+          Thumper.bench "Group/minmax-int32-100-1M" (fun () ->
+              let v = Col.int "v" in
+              over_k Expr.[ "r" := max v - min v ]);
+          Thumper.bench "Group/mean-std-int32-100-1M" (fun () ->
+              let v = Col.int "v" in
+              over_k Expr.[ "m" := mean v; "d" := std v ]);
           Thumper.bench "Nulls/filter-text-eq" (fun () ->
               run
                 Query.(
