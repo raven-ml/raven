@@ -1,0 +1,111 @@
+# tolk D25 D89 golden=298c0991299b6998caa11f65e4a70fce
+0 Ops.CONST dtypes.weakint [] 64
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CAST dtypes.i32 [0] dtypes.i32
+3 Ops.SPECIAL dtypes.i32 [2] "gidx0"
+4 Ops.INDEX dtypes.f32 [1, 3]
+5 Ops.CONST dtypes.weakint [] 1
+6 Ops.ALLOC dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+7 Ops.AFTER dtypes.f32 [6, 3]
+8 Ops.CONST dtypes.weakint [] 0
+9 Ops.CAST dtypes.i32 [8] dtypes.i32
+10 Ops.INDEX dtypes.f32 [7, 9]
+11 Ops.CONST dtypes.weakfloat [] 0.0
+12 Ops.CAST dtypes.f32 [11] dtypes.f32
+13 Ops.STORE dtypes.void [10, 12]
+14 Ops.CONST dtypes.weakint [] 16
+15 Ops.CAST dtypes.i32 [14] dtypes.i32
+16 Ops.ALLOC dtypes.f32 [5] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+17 Ops.SPECIAL dtypes.i32 [15] "lidx0"
+18 Ops.AFTER dtypes.f32 [16, 17, 3]
+19 Ops.INDEX dtypes.f32 [18, 9]
+20 Ops.STORE dtypes.void [19, 12]
+21 Ops.CONST dtypes.weakint [] 4
+22 Ops.CAST dtypes.i32 [21] dtypes.i32
+23 Ops.RANGE dtypes.i32 [22] (AxisType.WEAK, 0)
+24 Ops.AFTER dtypes.f32 [16, 20, 23]
+25 Ops.INDEX dtypes.f32 [24, 9]
+26 Ops.CONST dtypes.weakint [] 4096
+27 Ops.PARAM dtypes.f32 [26] ParamArg(slot=1, dtype=dtypes.f32)
+28 Ops.SHL dtypes.i32 [23, 22]
+29 Ops.ADD dtypes.i32 [28, 17]
+30 Ops.CONST dtypes.weakint [] 6
+31 Ops.CAST dtypes.i32 [30] dtypes.i32
+32 Ops.SHL dtypes.i32 [3, 31]
+33 Ops.ADD dtypes.i32 [29, 32]
+34 Ops.INDEX dtypes.f32 [27, 33]
+35 Ops.LOAD dtypes.f32 [34]
+36 Ops.CONST dtypes.weakfloat [] 2.0
+37 Ops.CAST dtypes.f32 [36] dtypes.f32
+38 Ops.LOAD dtypes.f32 [25]
+39 Ops.MULACC dtypes.f32 [35, 37, 38]
+40 Ops.STORE dtypes.void [25, 39]
+41 Ops.END dtypes.void [40, 23]
+42 Ops.AFTER dtypes.i32 [15, 41]
+43 Ops.RANGE dtypes.i32 [42] (AxisType.WEAK, 102)
+44 Ops.AFTER dtypes.f32 [6, 13, 43]
+45 Ops.INDEX dtypes.f32 [44, 9]
+46 Ops.LOAD dtypes.f32 [45]
+47 Ops.ALLOC dtypes.f32 [14] ParamArg(slot=2, dtype=dtypes.f32, addrspace=AddrSpace.LOCAL)
+48 Ops.INDEX dtypes.f32 [47, 17]
+49 Ops.AFTER dtypes.f32 [16, 41]
+50 Ops.INDEX dtypes.f32 [49, 9]
+51 Ops.LOAD dtypes.f32 [50]
+52 Ops.STORE dtypes.void [48, 51]
+53 Ops.BARRIER dtypes.void [52]
+54 Ops.AFTER dtypes.f32 [47, 53]
+55 Ops.INDEX dtypes.f32 [54, 43]
+56 Ops.LOAD dtypes.f32 [55]
+57 Ops.ADD dtypes.f32 [46, 56]
+58 Ops.STORE dtypes.void [45, 57]
+59 Ops.END dtypes.void [58, 43]
+60 Ops.AFTER dtypes.f32 [6, 59]
+61 Ops.INDEX dtypes.f32 [60, 9]
+62 Ops.LOAD dtypes.f32 [61]
+63 Ops.CMPEQ dtypes.bool [17, 9]
+64 Ops.STORE dtypes.void [4, 62, 63]
+65 Ops.SINK dtypes.void [64] KernelInfo(name="r_64_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)),), optimized=True)
+66 Ops.BUFFER dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+67 Ops.AFTER dtypes.f32 [66, 3]
+68 Ops.INDEX dtypes.f32 [67, 9]
+69 Ops.STORE dtypes.void [68, 12]
+70 Ops.BUFFER dtypes.f32 [5] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+71 Ops.AFTER dtypes.f32 [70, 17, 3]
+72 Ops.INDEX dtypes.f32 [71, 9]
+73 Ops.STORE dtypes.void [72, 12]
+74 Ops.AFTER dtypes.f32 [70, 73, 23]
+75 Ops.INDEX dtypes.f32 [74, 9]
+76 Ops.LOAD dtypes.f32 [75]
+77 Ops.MULACC dtypes.f32 [35, 37, 76]
+78 Ops.STORE dtypes.void [75, 77]
+79 Ops.END dtypes.void [78, 23]
+80 Ops.AFTER dtypes.i32 [15, 79]
+81 Ops.RANGE dtypes.i32 [80] (AxisType.WEAK, 102)
+82 Ops.AFTER dtypes.f32 [66, 69, 81]
+83 Ops.INDEX dtypes.f32 [82, 9]
+84 Ops.LOAD dtypes.f32 [83]
+85 Ops.BUFFER dtypes.f32 [14] ParamArg(slot=2, dtype=dtypes.f32, addrspace=AddrSpace.LOCAL)
+86 Ops.INDEX dtypes.f32 [85, 17]
+87 Ops.AFTER dtypes.f32 [70, 79]
+88 Ops.INDEX dtypes.f32 [87, 9]
+89 Ops.LOAD dtypes.f32 [88]
+90 Ops.STORE dtypes.void [86, 89]
+91 Ops.BARRIER dtypes.void [90]
+92 Ops.AFTER dtypes.f32 [85, 91]
+93 Ops.INDEX dtypes.f32 [92, 81]
+94 Ops.LOAD dtypes.f32 [93]
+95 Ops.ADD dtypes.f32 [84, 94]
+96 Ops.STORE dtypes.void [83, 95]
+97 Ops.END dtypes.void [96, 81]
+98 Ops.AFTER dtypes.f32 [66, 97]
+99 Ops.INDEX dtypes.f32 [98, 9]
+100 Ops.LOAD dtypes.f32 [99]
+101 Ops.STORE dtypes.void [4, 100]
+102 Ops.SINK dtypes.void [101] KernelInfo(name="r_64_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)),), estimates=Estimates(ops=25600, lds=90112, mem=16640), optimized=True)
+103 Ops.IF dtypes.void [63, 4]
+104 Ops.ENDIF dtypes.void [103]
+105 Ops.LINEAR dtypes.void [0, 1, 26, 27, 5, 70, 66, 14, 85, 2, 3, 15, 17, 71, 8, 9, 72, 11, 12, 36, 37, 21, 22, 30, 31, 32, 73, 23, 28, 29, 33, 34, 35, 74, 75, 76, 77, 78, 79, 87, 88, 89, 80, 67, 86, 90, 91, 92, 68, 69, 81, 82, 83, 84, 93, 94, 95, 96, 97, 98, 99, 100, 4, 63, 103, 101, 104, 102]
+106 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) r_64_16_4(float* data0_64, float* data1_4096) {\n  float buf0[1];\n  float buf1[1];\n  __attribute__((shared, aligned(16)))float buf2[16];\n  int gidx0 = __ockl_get_group_id(0); /* 64 */\n  int lidx0 = __ockl_get_local_id(0); /* 16 */\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {\n    float val0 = (*(data1_4096+((Lidx0<<4)+lidx0+(gidx0<<6))));\n    *(buf0+0) = __builtin_fmaf(val0,2.0f,(*(buf0+0)));\n  }\n  *(buf2+lidx0) = (*(buf0+0));\n  __builtin_amdgcn_fence(__ATOMIC_RELEASE, \"workgroup\");__builtin_amdgcn_s_barrier();__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, \"workgroup\");\n  *(buf1+0) = 0.0f;\n  for (int Lidx102 = 0; Lidx102 < 16; Lidx102++) {\n    float val1 = (*(buf2+Lidx102));\n    *(buf1+0) = ((*(buf1+0))+val1);\n  }\n  if ((lidx0==0)) {\n    *(data0_64+gidx0) = (*(buf1+0));\n  }\n}"
+107 Ops.PROGRAM dtypes.void [102, 105, 106] ProgramInfo(global_size=(64, 1, 1), local_size=(16, 1, 1), params=(%1, %27), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+108 Ops.SINK dtypes.void [65, 107]
+

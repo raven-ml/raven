@@ -1,0 +1,33 @@
+# tolk D151 golden=46ce7a1e2b2679e26ab88c63c4ca9f82
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CAST dtypes.i32 [2] dtypes.i32
+4 Ops.INDEX dtypes.f32 [1, 3]
+5 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+6 Ops.INDEX dtypes.f32 [5, 3]
+7 Ops.LOAD dtypes.f32 [6]
+8 Ops.NEG dtypes.f32 [7]
+9 Ops.STORE dtypes.void [4, 8]
+10 Ops.SINK dtypes.void [9] KernelInfo(optimized=True)
+11 Ops.CONST dtypes.weakint [] 16
+12 Ops.PARAM dtypes.u8 [11] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+13 Ops.BITCAST dtypes.u64 [12] dtypes.u64
+14 Ops.CAST dtypes.i32 [0] dtypes.i32
+15 Ops.INDEX dtypes.u64 [13, 14]
+16 Ops.LOAD dtypes.u64 [15]
+17 Ops.REFPARAM dtypes.f32 [0, 16] ParamArg(slot=1, dtype=dtypes.f32)
+18 Ops.INDEX dtypes.f32 [17, 3]
+19 Ops.INDEX dtypes.u64 [13, 3]
+20 Ops.LOAD dtypes.u64 [19]
+21 Ops.REFPARAM dtypes.f32 [0, 20] ParamArg(slot=0, dtype=dtypes.f32)
+22 Ops.INDEX dtypes.f32 [21, 3]
+23 Ops.LOAD dtypes.f32 [22]
+24 Ops.NEG dtypes.f32 [23]
+25 Ops.STORE dtypes.void [18, 24]
+26 Ops.SINK dtypes.void [25] KernelInfo(estimates=Estimates(ops=1, lds=8, mem=8), optimized=True)
+27 Ops.LINEAR dtypes.void [11, 12, 2, 3, 13, 19, 20, 0, 14, 15, 16, 21, 22, 23, 17, 18, 24, 25, 26]
+28 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void test(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_16))+1));\n  float val2 = (*(((float*)(val0))+0));\n  *(((float*)(val1))+0) = -val2;\n}\n"
+29 Ops.PROGRAM dtypes.void [26, 27, 28] ProgramInfo(params=(%5, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+30 Ops.SINK dtypes.void [10, 29]
+

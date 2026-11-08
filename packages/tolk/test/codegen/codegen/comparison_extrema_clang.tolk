@@ -1,0 +1,44 @@
+# tolk D151 golden=e7fe11a1aaad7c6b5ba40f128f2f2f15
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.PARAM dtypes.bool [0] ParamArg(slot=0, dtype=dtypes.bool)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CAST dtypes.i32 [2] dtypes.i32
+4 Ops.INDEX dtypes.bool [1, 3]
+5 Ops.CONST dtypes.bool [] False
+6 Ops.CAST dtypes.bool [5] dtypes.bool
+7 Ops.STORE dtypes.void [4, 6]
+8 Ops.CONST dtypes.weakint [] 1
+9 Ops.CAST dtypes.i32 [8] dtypes.i32
+10 Ops.INDEX dtypes.bool [1, 9]
+11 Ops.CONST dtypes.bool [] True
+12 Ops.CAST dtypes.bool [11] dtypes.bool
+13 Ops.STORE dtypes.void [10, 12]
+14 Ops.CONST dtypes.weakint [] 2
+15 Ops.CAST dtypes.i32 [14] dtypes.i32
+16 Ops.INDEX dtypes.bool [1, 15]
+17 Ops.STORE dtypes.void [16, 12]
+18 Ops.CONST dtypes.weakint [] 3
+19 Ops.CAST dtypes.i32 [18] dtypes.i32
+20 Ops.INDEX dtypes.bool [1, 19]
+21 Ops.STORE dtypes.void [20, 6]
+22 Ops.SINK dtypes.void [7, 13, 17, 21] KernelInfo(name="E", optimized=True)
+23 Ops.CONST dtypes.weakint [] 8
+24 Ops.PARAM dtypes.u8 [23] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+25 Ops.BITCAST dtypes.u64 [24] dtypes.u64
+26 Ops.INDEX dtypes.u64 [25, 3]
+27 Ops.LOAD dtypes.u64 [26]
+28 Ops.REFPARAM dtypes.bool [0, 27] ParamArg(slot=0, dtype=dtypes.bool)
+29 Ops.INDEX dtypes.bool [28, 3]
+30 Ops.STORE dtypes.void [29, 6]
+31 Ops.INDEX dtypes.bool [28, 9]
+32 Ops.STORE dtypes.void [31, 12]
+33 Ops.INDEX dtypes.bool [28, 15]
+34 Ops.STORE dtypes.void [33, 12]
+35 Ops.INDEX dtypes.bool [28, 19]
+36 Ops.STORE dtypes.void [35, 6]
+37 Ops.SINK dtypes.void [30, 32, 34, 36] KernelInfo(name="E", estimates=Estimates(lds=4, mem=4), optimized=True)
+38 Ops.LINEAR dtypes.void [23, 24, 2, 3, 25, 26, 27, 0, 28, 29, 8, 9, 31, 14, 15, 33, 18, 19, 35, 5, 6, 11, 12, 30, 32, 34, 36, 37]
+39 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E(unsigned char* restrict args_8) {\n  unsigned long val0 = (*(((unsigned long*)(args_8))+0));\n  *(((_Bool*)(val0))+0) = 0;\n  *(((_Bool*)(val0))+1) = 1;\n  *(((_Bool*)(val0))+2) = 1;\n  *(((_Bool*)(val0))+3) = 0;\n}\n"
+40 Ops.PROGRAM dtypes.void [37, 38, 39] ProgramInfo(params=(%1,), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+41 Ops.SINK dtypes.void [22, 40]
+

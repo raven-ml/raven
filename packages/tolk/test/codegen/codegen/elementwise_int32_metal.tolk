@@ -1,0 +1,54 @@
+# tolk D89 D342 golden=292eee4eabb762fcc5993a92a9ffc73b
+0 Ops.CONST dtypes.weakint [] 256
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32)
+2 Ops.CAST dtypes.i32 [0] dtypes.i32
+3 Ops.RANGE dtypes.i32 [2] (AxisType.LOOP, 0)
+4 Ops.INDEX dtypes.i32 [1, 3]
+5 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
+6 Ops.INDEX dtypes.i32 [5, 3]
+7 Ops.LOAD dtypes.i32 [6]
+8 Ops.CAST dtypes.u32 [7] dtypes.u32
+9 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
+10 Ops.INDEX dtypes.i32 [9, 3]
+11 Ops.LOAD dtypes.i32 [10]
+12 Ops.CAST dtypes.u32 [11] dtypes.u32
+13 Ops.ADD dtypes.u32 [8, 12]
+14 Ops.CAST dtypes.i32 [13] dtypes.i32
+15 Ops.STORE dtypes.void [4, 14]
+16 Ops.END dtypes.void [15, 3]
+17 Ops.SINK dtypes.void [16] KernelInfo(name="elementwise_int32", optimized=True)
+18 Ops.CONST dtypes.weakint [] 24
+19 Ops.PARAM dtypes.u8 [18] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+20 Ops.BITCAST dtypes.u64 [19] dtypes.u64
+21 Ops.CONST dtypes.weakint [] 2
+22 Ops.CAST dtypes.i32 [21] dtypes.i32
+23 Ops.INDEX dtypes.u64 [20, 22]
+24 Ops.LOAD dtypes.u64 [23]
+25 Ops.REFPARAM dtypes.i32 [0, 24] ParamArg(slot=2, dtype=dtypes.i32)
+26 Ops.INDEX dtypes.i32 [25, 3]
+27 Ops.CONST dtypes.weakint [] 0
+28 Ops.CAST dtypes.i32 [27] dtypes.i32
+29 Ops.INDEX dtypes.u64 [20, 28]
+30 Ops.LOAD dtypes.u64 [29]
+31 Ops.REFPARAM dtypes.i32 [0, 30] ParamArg(slot=0, dtype=dtypes.i32)
+32 Ops.INDEX dtypes.i32 [31, 3]
+33 Ops.LOAD dtypes.i32 [32]
+34 Ops.CAST dtypes.u32 [33] dtypes.u32
+35 Ops.CONST dtypes.weakint [] 1
+36 Ops.CAST dtypes.i32 [35] dtypes.i32
+37 Ops.INDEX dtypes.u64 [20, 36]
+38 Ops.LOAD dtypes.u64 [37]
+39 Ops.REFPARAM dtypes.i32 [0, 38] ParamArg(slot=1, dtype=dtypes.i32)
+40 Ops.INDEX dtypes.i32 [39, 3]
+41 Ops.LOAD dtypes.i32 [40]
+42 Ops.CAST dtypes.u32 [41] dtypes.u32
+43 Ops.ADD dtypes.u32 [34, 42]
+44 Ops.CAST dtypes.i32 [43] dtypes.i32
+45 Ops.STORE dtypes.void [26, 44]
+46 Ops.END dtypes.void [45, 3]
+47 Ops.SINK dtypes.void [46] KernelInfo(name="elementwise_int32", estimates=Estimates(ops=256, lds=3072, mem=3072), optimized=True)
+48 Ops.LINEAR dtypes.void [18, 19, 27, 28, 20, 29, 30, 35, 36, 37, 38, 21, 22, 23, 24, 0, 31, 39, 25, 2, 3, 32, 33, 40, 41, 26, 34, 42, 43, 44, 45, 46, 47]
+49 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void elementwise_int32(device unsigned char* args_24, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  unsigned long val0 = (*(((device unsigned long*)(args_24))+0));\n  unsigned long val1 = (*(((device unsigned long*)(args_24))+1));\n  unsigned long val2 = (*(((device unsigned long*)(args_24))+2));\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    int val3 = (*(((device int*)(val0))+Lidx0));\n    int val4 = (*(((device int*)(val1))+Lidx0));\n    *(((device int*)(val2))+Lidx0) = ((int)((((uint)(val3))+((uint)(val4)))));\n  }\n}"
+50 Ops.PROGRAM dtypes.void [47, 48, 49] ProgramInfo(params=(%5, %9, %1), globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+51 Ops.SINK dtypes.void [17, 50]
+

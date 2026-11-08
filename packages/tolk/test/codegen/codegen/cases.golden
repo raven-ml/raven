@@ -35,11 +35,11 @@ matmul_big_clang	matmul_big	8	clang	CPU	CLANG	x86_64,x86-64		ok	False
 matmul_big_metal	matmul_big	8	metal	METAL	METAL	Apple9		ok	False
 matmul_big_cuda	matmul_big	8	cuda	CUDA	CUDA	sm_89		ok	False
 matmul_big_hip	matmul_big	8	hip	AMD	HIP	gfx1100		ok	False
-matmul_half_clang	matmul_half	9	clang	CPU	CLANG	x86_64,x86-64		ok	False
+matmul_half_clang	matmul_half	9	clang	CPU	CLANG	x86_64,x86-64		ok	True
 matmul_half_metal	matmul_half	9	metal	METAL	METAL	Apple9		ok	False
 matmul_half_cuda	matmul_half	9	cuda	CUDA	CUDA	sm_89		ok	False
 matmul_half_hip	matmul_half	9	hip	AMD	HIP	gfx1100		ok	False
-matmul_half_big_clang	matmul_half_big	10	clang	CPU	CLANG	x86_64,x86-64		ok	False
+matmul_half_big_clang	matmul_half_big	10	clang	CPU	CLANG	x86_64,x86-64		ok	True
 matmul_half_big_metal	matmul_half_big	10	metal	METAL	METAL	Apple9		ok	False
 matmul_half_big_cuda	matmul_half_big	10	cuda	CUDA	CUDA	sm_89		ok	False
 matmul_half_big_hip	matmul_half_big	10	hip	AMD	HIP	gfx1100		ok	False
@@ -71,11 +71,11 @@ pad_clang	pad	17	clang	CPU	CLANG	x86_64,x86-64		ok	False
 pad_metal	pad	17	metal	METAL	METAL	Apple9		ok	False
 pad_cuda	pad	17	cuda	CUDA	CUDA	sm_89		ok	False
 pad_hip	pad	17	hip	AMD	HIP	gfx1100		ok	False
-cast_half_clang	cast_half	18	clang	CPU	CLANG	x86_64,x86-64		ok	False
+cast_half_clang	cast_half	18	clang	CPU	CLANG	x86_64,x86-64		ok	True
 cast_half_metal	cast_half	18	metal	METAL	METAL	Apple9		ok	False
 cast_half_cuda	cast_half	18	cuda	CUDA	CUDA	sm_89		ok	False
 cast_half_hip	cast_half	18	hip	AMD	HIP	gfx1100		ok	False
-half_math_clang	half_math	19	clang	CPU	CLANG	x86_64,x86-64		ok	False
+half_math_clang	half_math	19	clang	CPU	CLANG	x86_64,x86-64		ok	True
 half_math_metal	half_math	19	metal	METAL	METAL	Apple9		ok	False
 half_math_cuda	half_math	19	cuda	CUDA	CUDA	sm_89		ok	False
 half_math_hip	half_math	19	hip	AMD	HIP	gfx1100		ok	False
@@ -91,7 +91,7 @@ idiv_clang	idiv	22	clang	CPU	CLANG	x86_64,x86-64		ok	False
 idiv_metal	idiv	22	metal	METAL	METAL	Apple9		ok	False
 idiv_cuda	idiv	22	cuda	CUDA	CUDA	sm_89		ok	False
 idiv_hip	idiv	22	hip	AMD	HIP	gfx1100		ok	False
-int8_clang	int8	23	clang	CPU	CLANG	x86_64,x86-64		ok	False
+int8_clang	int8	23	clang	CPU	CLANG	x86_64,x86-64		ok	True
 int8_metal	int8	23	metal	METAL	METAL	Apple9		ok	True
 int8_cuda	int8	23	cuda	CUDA	CUDA	sm_89		ok	True
 int8_hip	int8	23	hip	AMD	HIP	gfx1100		ok	True
@@ -511,87 +511,75 @@ padto_idiv_upcast_clang	padto_idiv_upcast	132	clang	CPU	CLANG	x86_64,x86-64		ok	
 padto_idiv_upcast_metal	padto_idiv_upcast	132	metal	METAL	METAL	Apple9		ok	False
 padto_idiv_upcast_cuda	padto_idiv_upcast	132	cuda	CUDA	CUDA	sm_89		ok	False
 padto_idiv_upcast_hip	padto_idiv_upcast	132	hip	AMD	HIP	gfx1100		ok	False
-llama_vector_scale_clang	llama_vector_scale	133	clang	CPU	CLANG	x86_64,x86-64		ok	False
-llama_vector_scale_metal	llama_vector_scale	133	metal	METAL	METAL	Apple9		ok	False
-llama_vector_scale_cuda	llama_vector_scale	133	cuda	CUDA	CUDA	sm_89		ok	False
-llama_vector_scale_hip	llama_vector_scale	133	hip	AMD	HIP	gfx1100		ok	False
+llama_embedding_clang	llama_embedding	133	clang	CPU	CLANG	x86_64,x86-64		ok	False
+llama_embedding_metal	llama_embedding	133	metal	METAL	METAL	Apple9		ok	False
+llama_embedding_cuda	llama_embedding	133	cuda	CUDA	CUDA	sm_89		ok	False
+llama_embedding_hip	llama_embedding	133	hip	AMD	HIP	gfx1100		ok	False
 llama_rmsnorm_clang	llama_rmsnorm	134	clang	CPU	CLANG	x86_64,x86-64		ok	False
 llama_rmsnorm_metal	llama_rmsnorm	134	metal	METAL	METAL	Apple9		ok	False
 llama_rmsnorm_cuda	llama_rmsnorm	134	cuda	CUDA	CUDA	sm_89		ok	False
 llama_rmsnorm_hip	llama_rmsnorm	134	hip	AMD	HIP	gfx1100		ok	False
-llama_ffn_gate_clang	llama_ffn_gate	135	clang	CPU	CLANG	x86_64,x86-64		ok	False
-llama_ffn_gate_metal	llama_ffn_gate	135	metal	METAL	METAL	Apple9		ok	False
-llama_ffn_gate_cuda	llama_ffn_gate	135	cuda	CUDA	CUDA	sm_89		ok	False
-llama_ffn_gate_hip	llama_ffn_gate	135	hip	AMD	HIP	gfx1100		ok	False
-llama_embedding_clang	llama_embedding	136	clang	CPU	CLANG	x86_64,x86-64		ok	False
-llama_embedding_metal	llama_embedding	136	metal	METAL	METAL	Apple9		ok	False
-llama_embedding_cuda	llama_embedding	136	cuda	CUDA	CUDA	sm_89		ok	False
-llama_embedding_hip	llama_embedding	136	hip	AMD	HIP	gfx1100		ok	False
-llama_output_projection_clang	llama_output_projection	137	clang	CPU	CLANG	x86_64,x86-64		ok	False
-llama_output_projection_metal	llama_output_projection	137	metal	METAL	METAL	Apple9		ok	False
-llama_output_projection_cuda	llama_output_projection	137	cuda	CUDA	CUDA	sm_89		ok	False
-llama_output_projection_hip	llama_output_projection	137	hip	AMD	HIP	gfx1100		ok	False
-sum_group_clang	sum_group	138	clang	CPU	CLANG	x86_64,x86-64		KernelOptError: locals needed for opt	False
-sum_group_metal	sum_group	138	metal	METAL	METAL	Apple9		ok	False
-sum_group_cuda	sum_group	138	cuda	CUDA	CUDA	sm_89		ok	False
-sum_group_hip	sum_group	138	hip	AMD	HIP	gfx1100		ok	False
-sum_unroll_clang	sum_unroll	139	clang	CPU	CLANG	x86_64,x86-64		ok	False
-sum_unroll_metal	sum_unroll	139	metal	METAL	METAL	Apple9		ok	False
-sum_unroll_cuda	sum_unroll	139	cuda	CUDA	CUDA	sm_89		ok	False
-sum_unroll_hip	sum_unroll	139	hip	AMD	HIP	gfx1100		ok	False
-max_group_clang	max_group	140	clang	CPU	CLANG	x86_64,x86-64		KernelOptError: locals needed for opt	False
-max_group_metal	max_group	140	metal	METAL	METAL	Apple9		ok	False
-max_group_cuda	max_group	140	cuda	CUDA	CUDA	sm_89		ok	False
-max_group_hip	max_group	140	hip	AMD	HIP	gfx1100		ok	False
-matmul_opts_clang	matmul_opts	141	clang	CPU	CLANG	x86_64,x86-64		ok	False
-matmul_opts_metal	matmul_opts	141	metal	METAL	METAL	Apple9		ok	False
-matmul_opts_cuda	matmul_opts	141	cuda	CUDA	CUDA	sm_89		ok	False
-matmul_opts_hip	matmul_opts	141	hip	AMD	HIP	gfx1100		ok	False
-matmul_local_clang	matmul_local	142	clang	CPU	CLANG	x86_64,x86-64		KernelOptError: locals needed for opt	False
-matmul_local_metal	matmul_local	142	metal	METAL	METAL	Apple9		ok	False
-matmul_local_cuda	matmul_local	142	cuda	CUDA	CUDA	sm_89		ok	False
-matmul_local_hip	matmul_local	142	hip	AMD	HIP	gfx1100		ok	False
-matmul_tc_clang	matmul_tc	143	clang	CPU	CLANG	x86_64,x86-64		KernelOptError: no tensor core available	False
-matmul_tc_metal	matmul_tc	143	metal	METAL	METAL	Apple9		ok	False
-matmul_tc_cuda	matmul_tc	143	cuda	CUDA	CUDA	sm_89		ok	False
-matmul_tc_hip	matmul_tc	143	hip	AMD	HIP	gfx1100		ok	False
-matmul_noopt_clang	matmul_noopt	144	clang	CPU	CLANG	x86_64,x86-64		ok	False
-matmul_noopt_metal	matmul_noopt	144	metal	METAL	METAL	Apple9		ok	False
-matmul_noopt_cuda	matmul_noopt	144	cuda	CUDA	CUDA	sm_89		ok	False
-matmul_noopt_hip	matmul_noopt	144	hip	AMD	HIP	gfx1100		ok	False
-add_up_clang	add_up	145	clang	CPU	CLANG	x86_64,x86-64		KernelOptError: locals needed for opt	False
-add_up_metal	add_up	145	metal	METAL	METAL	Apple9		ok	False
-add_up_cuda	add_up	145	cuda	CUDA	CUDA	sm_89		ok	False
-add_up_hip	add_up	145	hip	AMD	HIP	gfx1100		ok	False
-load_dedup_upcast_clang	load_dedup_upcast	146	clang	CPU	CLANG	x86_64,x86-64		ok	False
-load_dedup_upcast_metal	load_dedup_upcast	146	metal	METAL	METAL	Apple9		ok	False
-load_dedup_upcast_cuda	load_dedup_upcast	146	cuda	CUDA	CUDA	sm_89		ok	False
-load_dedup_upcast_hip	load_dedup_upcast	146	hip	AMD	HIP	gfx1100		ok	False
-reduce_upcast_unroll_clang	reduce_upcast_unroll	147	clang	CPU	CLANG	x86_64,x86-64		ok	False
-reduce_upcast_unroll_metal	reduce_upcast_unroll	147	metal	METAL	METAL	Apple9		ok	False
-reduce_upcast_unroll_cuda	reduce_upcast_unroll	147	cuda	CUDA	CUDA	sm_89		ok	False
-reduce_upcast_unroll_hip	reduce_upcast_unroll	147	hip	AMD	HIP	gfx1100		ok	False
-zero_fold_upcast_clang	zero_fold_upcast	148	clang	CPU	CLANG	x86_64,x86-64		ok	False
-zero_fold_upcast_metal	zero_fold_upcast	148	metal	METAL	METAL	Apple9		ok	False
-zero_fold_upcast_cuda	zero_fold_upcast	148	cuda	CUDA	CUDA	sm_89		ok	False
-zero_fold_upcast_hip	zero_fold_upcast	148	hip	AMD	HIP	gfx1100		ok	False
-stack_select_noopt_clang	stack_select_noopt	149	clang	CPU	CLANG	x86_64,x86-64		ok	False
-stack_select_noopt_metal	stack_select_noopt	149	metal	METAL	METAL	Apple9		ok	False
-stack_select_noopt_cuda	stack_select_noopt	149	cuda	CUDA	CUDA	sm_89		ok	False
-stack_select_noopt_hip	stack_select_noopt	149	hip	AMD	HIP	gfx1100		ok	False
-upcast_with_locals_opts_clang	upcast_with_locals_opts	150	clang	CPU	CLANG	x86_64,x86-64		KernelOptError: locals needed for opt	False
-upcast_with_locals_opts_metal	upcast_with_locals_opts	150	metal	METAL	METAL	Apple9		ok	False
-upcast_with_locals_opts_cuda	upcast_with_locals_opts	150	cuda	CUDA	CUDA	sm_89		ok	False
-upcast_with_locals_opts_hip	upcast_with_locals_opts	150	hip	AMD	HIP	gfx1100		ok	False
-rewrite_reduction_opts_clang	rewrite_reduction_opts	151	clang	CPU	CLANG	x86_64,x86-64		ok	False
-rewrite_reduction_opts_metal	rewrite_reduction_opts	151	metal	METAL	METAL	Apple9		ok	False
-rewrite_reduction_opts_cuda	rewrite_reduction_opts	151	cuda	CUDA	CUDA	sm_89		ok	False
-rewrite_reduction_opts_hip	rewrite_reduction_opts	151	hip	AMD	HIP	gfx1100		ok	False
-arange_upcast_clang	arange_upcast	152	clang	CPU	CLANG	x86_64,x86-64		ok	False
-arange_upcast_metal	arange_upcast	152	metal	METAL	METAL	Apple9		ok	False
-arange_upcast_cuda	arange_upcast	152	cuda	CUDA	CUDA	sm_89		ok	False
-arange_upcast_hip	arange_upcast	152	hip	AMD	HIP	gfx1100		ok	False
-matmul_tc_unroll_metal	matmul_tc_unroll	153	metal	METAL	METAL	Apple9		ok	False
+sum_group_clang	sum_group	135	clang	CPU	CLANG	x86_64,x86-64		KernelOptError: locals needed for opt	False
+sum_group_metal	sum_group	135	metal	METAL	METAL	Apple9		ok	False
+sum_group_cuda	sum_group	135	cuda	CUDA	CUDA	sm_89		ok	False
+sum_group_hip	sum_group	135	hip	AMD	HIP	gfx1100		ok	False
+sum_unroll_clang	sum_unroll	136	clang	CPU	CLANG	x86_64,x86-64		ok	False
+sum_unroll_metal	sum_unroll	136	metal	METAL	METAL	Apple9		ok	False
+sum_unroll_cuda	sum_unroll	136	cuda	CUDA	CUDA	sm_89		ok	False
+sum_unroll_hip	sum_unroll	136	hip	AMD	HIP	gfx1100		ok	False
+max_group_clang	max_group	137	clang	CPU	CLANG	x86_64,x86-64		KernelOptError: locals needed for opt	False
+max_group_metal	max_group	137	metal	METAL	METAL	Apple9		ok	False
+max_group_cuda	max_group	137	cuda	CUDA	CUDA	sm_89		ok	False
+max_group_hip	max_group	137	hip	AMD	HIP	gfx1100		ok	False
+matmul_opts_clang	matmul_opts	138	clang	CPU	CLANG	x86_64,x86-64		ok	False
+matmul_opts_metal	matmul_opts	138	metal	METAL	METAL	Apple9		ok	False
+matmul_opts_cuda	matmul_opts	138	cuda	CUDA	CUDA	sm_89		ok	False
+matmul_opts_hip	matmul_opts	138	hip	AMD	HIP	gfx1100		ok	False
+matmul_local_clang	matmul_local	139	clang	CPU	CLANG	x86_64,x86-64		KernelOptError: locals needed for opt	False
+matmul_local_metal	matmul_local	139	metal	METAL	METAL	Apple9		ok	False
+matmul_local_cuda	matmul_local	139	cuda	CUDA	CUDA	sm_89		ok	False
+matmul_local_hip	matmul_local	139	hip	AMD	HIP	gfx1100		ok	False
+matmul_tc_clang	matmul_tc	140	clang	CPU	CLANG	x86_64,x86-64		KernelOptError: no tensor core available	False
+matmul_tc_metal	matmul_tc	140	metal	METAL	METAL	Apple9		ok	False
+matmul_tc_cuda	matmul_tc	140	cuda	CUDA	CUDA	sm_89		ok	False
+matmul_tc_hip	matmul_tc	140	hip	AMD	HIP	gfx1100		ok	False
+matmul_noopt_clang	matmul_noopt	141	clang	CPU	CLANG	x86_64,x86-64		ok	False
+matmul_noopt_metal	matmul_noopt	141	metal	METAL	METAL	Apple9		ok	False
+matmul_noopt_cuda	matmul_noopt	141	cuda	CUDA	CUDA	sm_89		ok	False
+matmul_noopt_hip	matmul_noopt	141	hip	AMD	HIP	gfx1100		ok	False
+add_up_clang	add_up	142	clang	CPU	CLANG	x86_64,x86-64		KernelOptError: locals needed for opt	False
+add_up_metal	add_up	142	metal	METAL	METAL	Apple9		ok	False
+add_up_cuda	add_up	142	cuda	CUDA	CUDA	sm_89		ok	False
+add_up_hip	add_up	142	hip	AMD	HIP	gfx1100		ok	False
+load_dedup_upcast_clang	load_dedup_upcast	143	clang	CPU	CLANG	x86_64,x86-64		ok	False
+load_dedup_upcast_metal	load_dedup_upcast	143	metal	METAL	METAL	Apple9		ok	False
+load_dedup_upcast_cuda	load_dedup_upcast	143	cuda	CUDA	CUDA	sm_89		ok	False
+load_dedup_upcast_hip	load_dedup_upcast	143	hip	AMD	HIP	gfx1100		ok	False
+reduce_upcast_unroll_clang	reduce_upcast_unroll	144	clang	CPU	CLANG	x86_64,x86-64		ok	False
+reduce_upcast_unroll_metal	reduce_upcast_unroll	144	metal	METAL	METAL	Apple9		ok	False
+reduce_upcast_unroll_cuda	reduce_upcast_unroll	144	cuda	CUDA	CUDA	sm_89		ok	False
+reduce_upcast_unroll_hip	reduce_upcast_unroll	144	hip	AMD	HIP	gfx1100		ok	False
+zero_fold_upcast_clang	zero_fold_upcast	145	clang	CPU	CLANG	x86_64,x86-64		ok	False
+zero_fold_upcast_metal	zero_fold_upcast	145	metal	METAL	METAL	Apple9		ok	False
+zero_fold_upcast_cuda	zero_fold_upcast	145	cuda	CUDA	CUDA	sm_89		ok	False
+zero_fold_upcast_hip	zero_fold_upcast	145	hip	AMD	HIP	gfx1100		ok	False
+stack_select_noopt_clang	stack_select_noopt	146	clang	CPU	CLANG	x86_64,x86-64		ok	False
+stack_select_noopt_metal	stack_select_noopt	146	metal	METAL	METAL	Apple9		ok	False
+stack_select_noopt_cuda	stack_select_noopt	146	cuda	CUDA	CUDA	sm_89		ok	False
+stack_select_noopt_hip	stack_select_noopt	146	hip	AMD	HIP	gfx1100		ok	False
+upcast_with_locals_opts_clang	upcast_with_locals_opts	147	clang	CPU	CLANG	x86_64,x86-64		KernelOptError: locals needed for opt	False
+upcast_with_locals_opts_metal	upcast_with_locals_opts	147	metal	METAL	METAL	Apple9		ok	False
+upcast_with_locals_opts_cuda	upcast_with_locals_opts	147	cuda	CUDA	CUDA	sm_89		ok	False
+upcast_with_locals_opts_hip	upcast_with_locals_opts	147	hip	AMD	HIP	gfx1100		ok	False
+rewrite_reduction_opts_clang	rewrite_reduction_opts	148	clang	CPU	CLANG	x86_64,x86-64		ok	False
+rewrite_reduction_opts_metal	rewrite_reduction_opts	148	metal	METAL	METAL	Apple9		ok	False
+rewrite_reduction_opts_cuda	rewrite_reduction_opts	148	cuda	CUDA	CUDA	sm_89		ok	False
+rewrite_reduction_opts_hip	rewrite_reduction_opts	148	hip	AMD	HIP	gfx1100		ok	False
+arange_upcast_clang	arange_upcast	149	clang	CPU	CLANG	x86_64,x86-64		ok	False
+arange_upcast_metal	arange_upcast	149	metal	METAL	METAL	Apple9		ok	False
+arange_upcast_cuda	arange_upcast	149	cuda	CUDA	CUDA	sm_89		ok	False
+arange_upcast_hip	arange_upcast	149	hip	AMD	HIP	gfx1100		ok	False
+matmul_tc_unroll_metal	matmul_tc_unroll	150	metal	METAL	METAL	Apple9		ok	False
 matmul_noopt_setting_clang	matmul_noopt_setting	7	clang	CPU	CLANG	x86_64,x86-64	NOOPT=1	ok	False
 matmul_noopt_setting_metal	matmul_noopt_setting	7	metal	METAL	METAL	Apple9	NOOPT=1	ok	False
 matmul_noopt_setting_cuda	matmul_noopt_setting	7	cuda	CUDA	CUDA	sm_89	NOOPT=1	ok	False
@@ -608,11 +596,11 @@ long_emulated_clang	long_emulated	24	clang	CPU	CLANG	x86_64,x86-64	EMULATED_DTYP
 long_emulated_metal	long_emulated	24	metal	METAL	METAL	Apple9	EMULATED_DTYPES=long	ok	False
 long_emulated_cuda	long_emulated	24	cuda	CUDA	CUDA	sm_89	EMULATED_DTYPES=long	ok	False
 long_emulated_hip	long_emulated	24	hip	AMD	HIP	gfx1100	EMULATED_DTYPES=long	ok	False
-matmul_half_tc_shaped_clang	matmul_half_tc_shaped	9	clang	CPU	CLANG	x86_64,x86-64	TC=2	ok	False
+matmul_half_tc_shaped_clang	matmul_half_tc_shaped	9	clang	CPU	CLANG	x86_64,x86-64	TC=2	ok	True
 matmul_half_tc_shaped_metal	matmul_half_tc_shaped	9	metal	METAL	METAL	Apple9	TC=2	ok	False
 matmul_half_tc_shaped_cuda	matmul_half_tc_shaped	9	cuda	CUDA	CUDA	sm_89	TC=2	ok	False
 matmul_half_tc_shaped_hip	matmul_half_tc_shaped	9	hip	AMD	HIP	gfx1100	TC=2	ok	False
-matmul_half_no_tc_clang	matmul_half_no_tc	9	clang	CPU	CLANG	x86_64,x86-64	TC=0	ok	False
+matmul_half_no_tc_clang	matmul_half_no_tc	9	clang	CPU	CLANG	x86_64,x86-64	TC=0	ok	True
 matmul_half_no_tc_metal	matmul_half_no_tc	9	metal	METAL	METAL	Apple9	TC=0	ok	False
 matmul_half_no_tc_cuda	matmul_half_no_tc	9	cuda	CUDA	CUDA	sm_89	TC=0	ok	False
 matmul_half_no_tc_hip	matmul_half_no_tc	9	hip	AMD	HIP	gfx1100	TC=0	ok	False

@@ -1,0 +1,116 @@
+# tolk D89 golden=a0c679453bdf5495ed21af54c75e934d
+0 Ops.CONST dtypes.weakint [] 8
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+2 Ops.CAST dtypes.i32 [0] dtypes.i32
+3 Ops.RANGE dtypes.i32 [2] (AxisType.LOOP, 0)
+4 Ops.INDEX dtypes.f32 [1, 3]
+5 Ops.CONST dtypes.weakint [] 1
+6 Ops.ALLOC dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+7 Ops.AFTER dtypes.f32 [6, 3]
+8 Ops.CONST dtypes.weakint [] 0
+9 Ops.CAST dtypes.i32 [8] dtypes.i32
+10 Ops.INDEX dtypes.f32 [7, 9]
+11 Ops.CONST dtypes.weakfloat [] 0.0
+12 Ops.CAST dtypes.f32 [11] dtypes.f32
+13 Ops.STORE dtypes.void [10, 12]
+14 Ops.CONST dtypes.weakint [] 16
+15 Ops.CAST dtypes.i32 [14] dtypes.i32
+16 Ops.ALLOC dtypes.f32 [5] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+17 Ops.SPECIAL dtypes.i32 [15] "lidx0"
+18 Ops.AFTER dtypes.f32 [16, 17, 3]
+19 Ops.INDEX dtypes.f32 [18, 9]
+20 Ops.STORE dtypes.void [19, 12]
+21 Ops.CONST dtypes.weakint [] 2
+22 Ops.CAST dtypes.i32 [21] dtypes.i32
+23 Ops.AFTER dtypes.i32 [22, 3]
+24 Ops.RANGE dtypes.i32 [23] (AxisType.WEAK, 1)
+25 Ops.AFTER dtypes.f32 [16, 20, 24]
+26 Ops.INDEX dtypes.f32 [25, 9]
+27 Ops.LOAD dtypes.f32 [26]
+28 Ops.CONST dtypes.weakint [] 256
+29 Ops.PARAM dtypes.f32 [28] ParamArg(slot=0, dtype=dtypes.f32)
+30 Ops.CONST dtypes.weakint [] 4
+31 Ops.CAST dtypes.i32 [30] dtypes.i32
+32 Ops.SHL dtypes.i32 [24, 31]
+33 Ops.ADD dtypes.i32 [32, 17]
+34 Ops.CONST dtypes.weakint [] 5
+35 Ops.CAST dtypes.i32 [34] dtypes.i32
+36 Ops.SHL dtypes.i32 [3, 35]
+37 Ops.ADD dtypes.i32 [33, 36]
+38 Ops.INDEX dtypes.f32 [29, 37]
+39 Ops.LOAD dtypes.f32 [38]
+40 Ops.ADD dtypes.f32 [27, 39]
+41 Ops.STORE dtypes.void [26, 40]
+42 Ops.END dtypes.void [41, 24]
+43 Ops.AFTER dtypes.i32 [15, 42]
+44 Ops.RANGE dtypes.i32 [43] (AxisType.WEAK, 102)
+45 Ops.AFTER dtypes.f32 [6, 13, 44]
+46 Ops.INDEX dtypes.f32 [45, 9]
+47 Ops.LOAD dtypes.f32 [46]
+48 Ops.ALLOC dtypes.f32 [14] ParamArg(slot=2, dtype=dtypes.f32, addrspace=AddrSpace.LOCAL)
+49 Ops.INDEX dtypes.f32 [48, 17]
+50 Ops.AFTER dtypes.f32 [16, 42]
+51 Ops.INDEX dtypes.f32 [50, 9]
+52 Ops.LOAD dtypes.f32 [51]
+53 Ops.STORE dtypes.void [49, 52]
+54 Ops.BARRIER dtypes.void [53]
+55 Ops.AFTER dtypes.f32 [48, 54]
+56 Ops.INDEX dtypes.f32 [55, 44]
+57 Ops.LOAD dtypes.f32 [56]
+58 Ops.ADD dtypes.f32 [47, 57]
+59 Ops.STORE dtypes.void [46, 58]
+60 Ops.END dtypes.void [59, 44]
+61 Ops.AFTER dtypes.f32 [6, 60]
+62 Ops.INDEX dtypes.f32 [61, 9]
+63 Ops.LOAD dtypes.f32 [62]
+64 Ops.CMPEQ dtypes.bool [17, 9]
+65 Ops.STORE dtypes.void [4, 63, 64]
+66 Ops.BARRIER dtypes.void [65]
+67 Ops.END dtypes.void [66, 3]
+68 Ops.SINK dtypes.void [67] KernelInfo(name="reduce_rows", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)),), optimized=True)
+69 Ops.BUFFER dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+70 Ops.AFTER dtypes.f32 [69, 3]
+71 Ops.INDEX dtypes.f32 [70, 9]
+72 Ops.STORE dtypes.void [71, 12]
+73 Ops.BUFFER dtypes.f32 [5] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+74 Ops.AFTER dtypes.f32 [73, 17, 3]
+75 Ops.INDEX dtypes.f32 [74, 9]
+76 Ops.STORE dtypes.void [75, 12]
+77 Ops.AFTER dtypes.f32 [73, 76, 24]
+78 Ops.INDEX dtypes.f32 [77, 9]
+79 Ops.LOAD dtypes.f32 [78]
+80 Ops.ADD dtypes.f32 [79, 39]
+81 Ops.STORE dtypes.void [78, 80]
+82 Ops.END dtypes.void [81, 24]
+83 Ops.AFTER dtypes.i32 [15, 82]
+84 Ops.RANGE dtypes.i32 [83] (AxisType.WEAK, 102)
+85 Ops.AFTER dtypes.f32 [69, 72, 84]
+86 Ops.INDEX dtypes.f32 [85, 9]
+87 Ops.LOAD dtypes.f32 [86]
+88 Ops.BUFFER dtypes.f32 [14] ParamArg(slot=2, dtype=dtypes.f32, addrspace=AddrSpace.LOCAL)
+89 Ops.INDEX dtypes.f32 [88, 17]
+90 Ops.AFTER dtypes.f32 [73, 82]
+91 Ops.INDEX dtypes.f32 [90, 9]
+92 Ops.LOAD dtypes.f32 [91]
+93 Ops.STORE dtypes.void [89, 92]
+94 Ops.BARRIER dtypes.void [93]
+95 Ops.AFTER dtypes.f32 [88, 94]
+96 Ops.INDEX dtypes.f32 [95, 84]
+97 Ops.LOAD dtypes.f32 [96]
+98 Ops.ADD dtypes.f32 [87, 97]
+99 Ops.STORE dtypes.void [86, 98]
+100 Ops.END dtypes.void [99, 84]
+101 Ops.AFTER dtypes.f32 [69, 100]
+102 Ops.INDEX dtypes.f32 [101, 9]
+103 Ops.LOAD dtypes.f32 [102]
+104 Ops.STORE dtypes.void [4, 103]
+105 Ops.BARRIER dtypes.void [104]
+106 Ops.END dtypes.void [105, 3]
+107 Ops.SINK dtypes.void [106] KernelInfo(name="reduce_rows", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)),), estimates=Estimates(ops=2320, lds=10240, mem=1056), optimized=True)
+108 Ops.IF dtypes.void [64, 4]
+109 Ops.ENDIF dtypes.void [108]
+110 Ops.LINEAR dtypes.void [28, 29, 0, 1, 5, 73, 69, 14, 88, 15, 17, 89, 11, 12, 8, 9, 21, 22, 30, 31, 34, 35, 2, 64, 3, 23, 74, 75, 36, 76, 24, 32, 33, 37, 38, 39, 77, 78, 79, 80, 81, 82, 90, 91, 92, 83, 70, 93, 94, 95, 71, 72, 84, 85, 86, 87, 96, 97, 98, 99, 100, 101, 102, 103, 4, 108, 104, 109, 105, 106, 107]
+111 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) reduce_rows(float* data0_256, float* data1_8) {\n  float buf0[1];\n  float buf1[1];\n  __attribute__((shared, aligned(16)))float buf2[16];\n  int lidx0 = __ockl_get_local_id(0); /* 16 */\n  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n    *(buf0+0) = 0.0f;\n    for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {\n      float val0 = (*(data0_256+((Lidx1<<4)+lidx0+(Lidx0<<5))));\n      *(buf0+0) = ((*(buf0+0))+val0);\n    }\n    *(buf2+lidx0) = (*(buf0+0));\n    __builtin_amdgcn_fence(__ATOMIC_RELEASE, \"workgroup\");__builtin_amdgcn_s_barrier();__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, \"workgroup\");\n    *(buf1+0) = 0.0f;\n    for (int Lidx102 = 0; Lidx102 < 16; Lidx102++) {\n      float val1 = (*(buf2+Lidx102));\n      *(buf1+0) = ((*(buf1+0))+val1);\n    }\n    if ((lidx0==0)) {\n      *(data1_8+Lidx0) = (*(buf1+0));\n    }\n    __builtin_amdgcn_fence(__ATOMIC_RELEASE, \"workgroup\");__builtin_amdgcn_s_barrier();__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, \"workgroup\");\n  }\n}"
+112 Ops.PROGRAM dtypes.void [107, 110, 111] ProgramInfo(local_size=(16, 1, 1), params=(%29, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+113 Ops.SINK dtypes.void [68, 112]
+

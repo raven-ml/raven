@@ -1,0 +1,53 @@
+# tolk D151 golden=0147347140756b3b12748586f76918ab
+0 Ops.CONST dtypes.weakint [] 256
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32)
+2 Ops.CAST dtypes.i32 [0] dtypes.i32
+3 Ops.RANGE dtypes.i32 [2] (AxisType.LOOP, 0)
+4 Ops.INDEX dtypes.f32 [1, 3]
+5 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+6 Ops.INDEX dtypes.f32 [5, 3]
+7 Ops.LOAD dtypes.f32 [6]
+8 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+9 Ops.INDEX dtypes.f32 [8, 3]
+10 Ops.LOAD dtypes.f32 [9]
+11 Ops.ADD dtypes.f32 [7, 10]
+12 Ops.CONST dtypes.weakint [] 200
+13 Ops.CAST dtypes.i32 [12] dtypes.i32
+14 Ops.CMPLT dtypes.bool [3, 13]
+15 Ops.STORE dtypes.void [4, 11, 14]
+16 Ops.END dtypes.void [15, 3]
+17 Ops.SINK dtypes.void [16] KernelInfo(name="gated_store", optimized=True)
+18 Ops.CONST dtypes.weakint [] 24
+19 Ops.PARAM dtypes.u8 [18] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+20 Ops.BITCAST dtypes.u64 [19] dtypes.u64
+21 Ops.CONST dtypes.weakint [] 2
+22 Ops.CAST dtypes.i32 [21] dtypes.i32
+23 Ops.INDEX dtypes.u64 [20, 22]
+24 Ops.LOAD dtypes.u64 [23]
+25 Ops.REFPARAM dtypes.f32 [0, 24] ParamArg(slot=2, dtype=dtypes.f32)
+26 Ops.INDEX dtypes.f32 [25, 3]
+27 Ops.CONST dtypes.weakint [] 0
+28 Ops.CAST dtypes.i32 [27] dtypes.i32
+29 Ops.INDEX dtypes.u64 [20, 28]
+30 Ops.LOAD dtypes.u64 [29]
+31 Ops.REFPARAM dtypes.f32 [0, 30] ParamArg(slot=0, dtype=dtypes.f32)
+32 Ops.INDEX dtypes.f32 [31, 3]
+33 Ops.LOAD dtypes.f32 [32]
+34 Ops.CONST dtypes.weakint [] 1
+35 Ops.CAST dtypes.i32 [34] dtypes.i32
+36 Ops.INDEX dtypes.u64 [20, 35]
+37 Ops.LOAD dtypes.u64 [36]
+38 Ops.REFPARAM dtypes.f32 [0, 37] ParamArg(slot=1, dtype=dtypes.f32)
+39 Ops.INDEX dtypes.f32 [38, 3]
+40 Ops.LOAD dtypes.f32 [39]
+41 Ops.ADD dtypes.f32 [33, 40]
+42 Ops.STORE dtypes.void [26, 41]
+43 Ops.END dtypes.void [42, 3]
+44 Ops.SINK dtypes.void [43] KernelInfo(name="gated_store", estimates=Estimates(ops=512, lds=3072, mem=3072), optimized=True)
+45 Ops.IF dtypes.void [14, 26]
+46 Ops.ENDIF dtypes.void [45]
+47 Ops.LINEAR dtypes.void [18, 19, 27, 28, 20, 29, 30, 34, 35, 36, 37, 21, 22, 23, 24, 0, 31, 38, 25, 12, 13, 2, 3, 32, 33, 39, 40, 26, 41, 14, 45, 42, 46, 43, 44]
+48 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void gated_store(unsigned char* restrict args_24) {\n  unsigned long val0 = (*(((unsigned long*)(args_24))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_24))+1));\n  unsigned long val2 = (*(((unsigned long*)(args_24))+2));\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val3 = (*(((float*)(val0))+Lidx0));\n    float val4 = (*(((float*)(val1))+Lidx0));\n    if ((Lidx0<200)) {\n      *(((float*)(val2))+Lidx0) = (val3+val4);\n    }\n  }\n}\n"
+49 Ops.PROGRAM dtypes.void [44, 47, 48] ProgramInfo(params=(%5, %8, %1), globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+50 Ops.SINK dtypes.void [17, 49]
+

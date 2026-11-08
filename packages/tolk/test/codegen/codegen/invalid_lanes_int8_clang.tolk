@@ -1,0 +1,23 @@
+# tolk D151 golden=d50c8f7fefcd2257ac71285f20309df6
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.PARAM dtypes.i8 [0] ParamArg(slot=0, dtype=dtypes.i8)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CAST dtypes.i32 [2] dtypes.i32
+4 Ops.INDEX dtypes.i8 [1, 3]
+5 Ops.CAST dtypes.i8 [2] dtypes.i8
+6 Ops.STORE dtypes.void [4, 5]
+7 Ops.SINK dtypes.void [6] KernelInfo(name="r_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), optimized=True)
+8 Ops.CONST dtypes.weakint [] 8
+9 Ops.PARAM dtypes.u8 [8] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+10 Ops.BITCAST dtypes.u64 [9] dtypes.u64
+11 Ops.INDEX dtypes.u64 [10, 3]
+12 Ops.LOAD dtypes.u64 [11]
+13 Ops.REFPARAM dtypes.i8 [0, 12] ParamArg(slot=0, dtype=dtypes.i8)
+14 Ops.INDEX dtypes.i8 [13, 3]
+15 Ops.STORE dtypes.void [14, 5]
+16 Ops.SINK dtypes.void [15] KernelInfo(name="r_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), estimates=Estimates(lds=1, mem=1), optimized=True)
+17 Ops.LINEAR dtypes.void [8, 9, 2, 3, 10, 11, 12, 0, 13, 14, 5, 15, 16]
+18 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void r_4(unsigned char* restrict args_8) {\n  unsigned long val0 = (*(((unsigned long*)(args_8))+0));\n  *(((signed char*)(val0))+0) = ((signed char)(0));\n}\n"
+19 Ops.PROGRAM dtypes.void [16, 17, 18] ProgramInfo(params=(%1,), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+20 Ops.SINK dtypes.void [7, 19]
+

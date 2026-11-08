@@ -1,0 +1,69 @@
+# tolk D80 D151 golden=6f11a13253394da181fd6e249519c50b
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 32
+2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
+3 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(0, 8), name="block_lo", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.i32 [0] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 8), name="block_hi", addrspace=AddrSpace.ALU)
+5 Ops.SUB dtypes.i32 [4, 3]
+6 Ops.RANGE dtypes.i32 [5] (AxisType.WEAK, 0)
+7 Ops.ADD dtypes.i32 [3, 6]
+8 Ops.CONST dtypes.weakint [] 2
+9 Ops.CAST dtypes.i32 [8] dtypes.i32
+10 Ops.SHL dtypes.i32 [7, 9]
+11 Ops.CONST dtypes.weakint [] 4
+12 Ops.CAST dtypes.i32 [11] dtypes.i32
+13 Ops.SHRINK dtypes.f32 [2, 10, 12]
+14 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32)
+15 Ops.SHRINK dtypes.f32 [14, 10, 12]
+16 Ops.LOAD dtypes.f32 [15]
+17 Ops.CONST dtypes.weakint [] 3
+18 Ops.CAST dtypes.i32 [17] dtypes.i32
+19 Ops.INDEX dtypes.f32 [16, 18]
+20 Ops.INDEX dtypes.f32 [16, 9]
+21 Ops.CONST dtypes.weakint [] 1
+22 Ops.CAST dtypes.i32 [21] dtypes.i32
+23 Ops.INDEX dtypes.f32 [16, 22]
+24 Ops.CONST dtypes.weakint [] 0
+25 Ops.CAST dtypes.i32 [24] dtypes.i32
+26 Ops.INDEX dtypes.f32 [16, 25]
+27 Ops.STACK dtypes.f32 [19, 20, 23, 26]
+28 Ops.STORE dtypes.void [13, 27]
+29 Ops.AFTER dtypes.void [0, 28]
+30 Ops.END dtypes.void [29, 6]
+31 Ops.SINK dtypes.void [30] KernelInfo(name="flip_contract_32", optimized=True, split=(8, 2, 3))
+32 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+33 Ops.BITCAST dtypes.u64 [32] dtypes.u64
+34 Ops.INDEX dtypes.u64 [33, 25]
+35 Ops.LOAD dtypes.u64 [34]
+36 Ops.REFPARAM dtypes.f32 [1, 35] ParamArg(slot=0, dtype=dtypes.f32)
+37 Ops.BITCAST dtypes.i32 [32] dtypes.i32
+38 Ops.INDEX dtypes.i32 [37, 12]
+39 Ops.LOAD dtypes.i32 [38]
+40 Ops.CONST dtypes.weakint [] 5
+41 Ops.CAST dtypes.i32 [40] dtypes.i32
+42 Ops.INDEX dtypes.i32 [37, 41]
+43 Ops.LOAD dtypes.i32 [42]
+44 Ops.SUB dtypes.i32 [43, 39]
+45 Ops.RANGE dtypes.i32 [44] (AxisType.WEAK, 0)
+46 Ops.ADD dtypes.i32 [39, 45]
+47 Ops.SHL dtypes.i32 [46, 9]
+48 Ops.SHRINK dtypes.f32 [36, 47, 12]
+49 Ops.INDEX dtypes.u64 [33, 22]
+50 Ops.LOAD dtypes.u64 [49]
+51 Ops.REFPARAM dtypes.f32 [1, 50] ParamArg(slot=1, dtype=dtypes.f32)
+52 Ops.SHRINK dtypes.f32 [51, 47, 12]
+53 Ops.LOAD dtypes.f32 [52]
+54 Ops.INDEX dtypes.f32 [53, 18]
+55 Ops.INDEX dtypes.f32 [53, 9]
+56 Ops.INDEX dtypes.f32 [53, 22]
+57 Ops.INDEX dtypes.f32 [53, 25]
+58 Ops.STACK dtypes.f32 [54, 55, 56, 57]
+59 Ops.STORE dtypes.void [48, 58]
+60 Ops.AFTER dtypes.void [0, 59]
+61 Ops.END dtypes.void [60, 45]
+62 Ops.SINK dtypes.void [61] KernelInfo(name="flip_contract_32", estimates=Estimates(lds=256, mem=256), optimized=True, split=(8, 2, 3))
+63 Ops.LINEAR dtypes.void [1, 32, 11, 12, 37, 38, 39, 40, 41, 42, 43, 24, 25, 33, 34, 35, 21, 22, 49, 50, 36, 51, 0, 8, 9, 17, 18, 44, 45, 46, 47, 52, 53, 57, 56, 55, 54, 58, 48, 59, 60, 61, 62]
+64 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void flip_contract_32(unsigned char* restrict args_32) {\n  int val0 = (*(((int*)(args_32))+4));\n  int val1 = (*(((int*)(args_32))+5));\n  unsigned long val2 = (*(((unsigned long*)(args_32))+0));\n  unsigned long val3 = (*(((unsigned long*)(args_32))+1));\n  for (int Lidx0 = 0; Lidx0 < (val1-val0); Lidx0++) {\n    int alu0 = ((val0+Lidx0)<<2);\n    float4 val4 = (*((float4*)((((float*)(val3))+alu0))));\n    *((float4*)((((float*)(val2))+alu0))) = (float4){val4[3],val4[2],val4[1],val4[0]};\n  }\n}\n"
+65 Ops.PROGRAM dtypes.void [62, 63, 64] ProgramInfo(global_size=(8, 1, 1), params=(%2, %14, %3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+66 Ops.SINK dtypes.void [31, 65]
+

@@ -1,0 +1,63 @@
+typedef __fp16 __fp164 __attribute__((aligned(2),ext_vector_type(4)));
+void r_16_16_4_4_16_4(unsigned char* restrict args_24) {
+  float buf0[16];
+  unsigned long val0 = (*(((unsigned long*)(args_24))+0));
+  unsigned long val1 = (*(((unsigned long*)(args_24))+1));
+  unsigned long val2 = (*(((unsigned long*)(args_24))+2));
+  for (int Lidx1 = 0; Lidx1 < 16; Lidx1++) {
+    int alu0 = (Lidx1<<8);
+    for (int Lidx2 = 0; Lidx2 < 16; Lidx2++) {
+      int alu1 = (Lidx2<<2);
+      *(buf0+0) = 0.0f;
+      *(buf0+1) = 0.0f;
+      *(buf0+10) = 0.0f;
+      *(buf0+11) = 0.0f;
+      *(buf0+12) = 0.0f;
+      *(buf0+13) = 0.0f;
+      *(buf0+14) = 0.0f;
+      *(buf0+15) = 0.0f;
+      *(buf0+2) = 0.0f;
+      *(buf0+3) = 0.0f;
+      *(buf0+4) = 0.0f;
+      *(buf0+5) = 0.0f;
+      *(buf0+6) = 0.0f;
+      *(buf0+7) = 0.0f;
+      *(buf0+8) = 0.0f;
+      *(buf0+9) = 0.0f;
+      for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+        int alu18 = ((Lidx0<<2)+alu0);
+        __fp164 val3 = (*((__fp164*)((((__fp16*)(val1))+(alu18+128)))));
+        __fp164 val4 = (*((__fp164*)((((__fp16*)(val1))+(alu18+192)))));
+        __fp164 val5 = (*((__fp164*)((((__fp16*)(val1))+(alu18+64)))));
+        __fp164 val6 = (*((__fp164*)((((__fp16*)(val1))+alu18))));
+        int alu19 = ((Lidx0<<8)+alu1);
+        __fp164 val7 = (*((__fp164*)((((__fp16*)(val2))+(alu19+128)))));
+        __fp164 val8 = (*((__fp164*)((((__fp16*)(val2))+(alu19+192)))));
+        __fp164 val9 = (*((__fp164*)((((__fp16*)(val2))+(alu19+64)))));
+        __fp164 val10 = (*((__fp164*)((((__fp16*)(val2))+alu19))));
+        *(buf0+0) = ((*(buf0+0))+((float)(((__fp16)((val6[0]*val10[0])))))+((float)(((__fp16)((val6[1]*val9[0])))))+((float)(((__fp16)((val6[2]*val7[0])))))+((float)(((__fp16)((val6[3]*val8[0]))))));
+        *(buf0+1) = ((*(buf0+1))+((float)(((__fp16)((val6[0]*val10[1])))))+((float)(((__fp16)((val6[1]*val9[1])))))+((float)(((__fp16)((val6[2]*val7[1])))))+((float)(((__fp16)((val6[3]*val8[1]))))));
+        *(buf0+10) = ((*(buf0+10))+((float)(((__fp16)((val3[0]*val10[2])))))+((float)(((__fp16)((val3[1]*val9[2])))))+((float)(((__fp16)((val3[2]*val7[2])))))+((float)(((__fp16)((val3[3]*val8[2]))))));
+        *(buf0+11) = ((*(buf0+11))+((float)(((__fp16)((val3[0]*val10[3])))))+((float)(((__fp16)((val3[1]*val9[3])))))+((float)(((__fp16)((val3[2]*val7[3])))))+((float)(((__fp16)((val3[3]*val8[3]))))));
+        *(buf0+12) = ((*(buf0+12))+((float)(((__fp16)((val4[0]*val10[0])))))+((float)(((__fp16)((val4[1]*val9[0])))))+((float)(((__fp16)((val4[2]*val7[0])))))+((float)(((__fp16)((val4[3]*val8[0]))))));
+        *(buf0+13) = ((*(buf0+13))+((float)(((__fp16)((val4[0]*val10[1])))))+((float)(((__fp16)((val4[1]*val9[1])))))+((float)(((__fp16)((val4[2]*val7[1])))))+((float)(((__fp16)((val4[3]*val8[1]))))));
+        *(buf0+14) = ((*(buf0+14))+((float)(((__fp16)((val4[0]*val10[2])))))+((float)(((__fp16)((val4[1]*val9[2])))))+((float)(((__fp16)((val4[2]*val7[2])))))+((float)(((__fp16)((val4[3]*val8[2]))))));
+        *(buf0+15) = ((*(buf0+15))+((float)(((__fp16)((val4[0]*val10[3])))))+((float)(((__fp16)((val4[1]*val9[3])))))+((float)(((__fp16)((val4[2]*val7[3])))))+((float)(((__fp16)((val4[3]*val8[3]))))));
+        *(buf0+2) = ((*(buf0+2))+((float)(((__fp16)((val6[0]*val10[2])))))+((float)(((__fp16)((val6[1]*val9[2])))))+((float)(((__fp16)((val6[2]*val7[2])))))+((float)(((__fp16)((val6[3]*val8[2]))))));
+        *(buf0+3) = ((*(buf0+3))+((float)(((__fp16)((val6[0]*val10[3])))))+((float)(((__fp16)((val6[1]*val9[3])))))+((float)(((__fp16)((val6[2]*val7[3])))))+((float)(((__fp16)((val6[3]*val8[3]))))));
+        *(buf0+4) = ((*(buf0+4))+((float)(((__fp16)((val5[0]*val10[0])))))+((float)(((__fp16)((val5[1]*val9[0])))))+((float)(((__fp16)((val5[2]*val7[0])))))+((float)(((__fp16)((val5[3]*val8[0]))))));
+        *(buf0+5) = ((*(buf0+5))+((float)(((__fp16)((val5[0]*val10[1])))))+((float)(((__fp16)((val5[1]*val9[1])))))+((float)(((__fp16)((val5[2]*val7[1])))))+((float)(((__fp16)((val5[3]*val8[1]))))));
+        *(buf0+6) = ((*(buf0+6))+((float)(((__fp16)((val5[0]*val10[2])))))+((float)(((__fp16)((val5[1]*val9[2])))))+((float)(((__fp16)((val5[2]*val7[2])))))+((float)(((__fp16)((val5[3]*val8[2]))))));
+        *(buf0+7) = ((*(buf0+7))+((float)(((__fp16)((val5[0]*val10[3])))))+((float)(((__fp16)((val5[1]*val9[3])))))+((float)(((__fp16)((val5[2]*val7[3])))))+((float)(((__fp16)((val5[3]*val8[3]))))));
+        *(buf0+8) = ((*(buf0+8))+((float)(((__fp16)((val3[0]*val10[0])))))+((float)(((__fp16)((val3[1]*val9[0])))))+((float)(((__fp16)((val3[2]*val7[0])))))+((float)(((__fp16)((val3[3]*val8[0]))))));
+        *(buf0+9) = ((*(buf0+9))+((float)(((__fp16)((val3[0]*val10[1])))))+((float)(((__fp16)((val3[1]*val9[1])))))+((float)(((__fp16)((val3[2]*val7[1])))))+((float)(((__fp16)((val3[3]*val8[1]))))));
+      }
+      int alu37 = (alu0+alu1);
+      *((__fp164*)((((__fp16*)(val0))+(alu37+128)))) = (__fp164){((__fp16)((*(buf0+8)))),((__fp16)((*(buf0+9)))),((__fp16)((*(buf0+10)))),((__fp16)((*(buf0+11))))};
+      *((__fp164*)((((__fp16*)(val0))+(alu37+192)))) = (__fp164){((__fp16)((*(buf0+12)))),((__fp16)((*(buf0+13)))),((__fp16)((*(buf0+14)))),((__fp16)((*(buf0+15))))};
+      *((__fp164*)((((__fp16*)(val0))+(alu37+64)))) = (__fp164){((__fp16)((*(buf0+4)))),((__fp16)((*(buf0+5)))),((__fp16)((*(buf0+6)))),((__fp16)((*(buf0+7))))};
+      *((__fp164*)((((__fp16*)(val0))+alu37))) = (__fp164){((__fp16)((*(buf0+0)))),((__fp16)((*(buf0+1)))),((__fp16)((*(buf0+2)))),((__fp16)((*(buf0+3))))};
+    }
+  }
+}
+

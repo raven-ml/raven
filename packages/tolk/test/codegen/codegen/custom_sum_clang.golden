@@ -45,7 +45,7 @@
 44 Ops.END dtypes.void [43, 12]
 45 Ops.SINK dtypes.void [28, 30, 44] KernelInfo(name="custom_sum_64", estimates=Estimates(ops=64, lds=772, mem=264), optimized=True)
 46 Ops.LINEAR dtypes.void [23, 24, 2, 3, 25, 26, 27, 0, 36, 37, 38, 28, 10, 39, 29, 5, 6, 30, 31, 32, 11, 12, 40, 41, 33, 34, 35, 42, 43, 44, 45]
-47 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void custom_sum_64(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_16))+1));\n  *(((float*)(val0))+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 64; Lidx0++) {\n    float val2 = (*(((float*)(val1))+Lidx0));\n    float val3 = (*(((float*)(val0))+0));\n    *(((float*)(val0))+0) = (val3+val2);\n  }\n}\n"
+47 Ops.SOURCE dtypes.void [] "\nvoid custom_sum_64(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_16))+1));\n  *(((float*)(val0))+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 64; Lidx0++) {\n    float val2 = (*(((float*)(val1))+Lidx0));\n    float val3 = (*(((float*)(val0))+0));\n    *(((float*)(val0))+0) = (val3+val2);\n  }\n}\n"
 48 Ops.PROGRAM dtypes.void [45, 46, 47] ProgramInfo(params=(%1, %16), globals=(0, 1), outs=(0,), ins=(0, 1), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 49 Ops.SINK dtypes.void [22, 48]
 

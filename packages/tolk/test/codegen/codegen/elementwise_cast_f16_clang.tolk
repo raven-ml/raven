@@ -1,0 +1,50 @@
+# tolk D151 golden=71fb3480153c0ed2db0e7e276fd253fb
+0 Ops.CONST dtypes.weakint [] 256
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32)
+2 Ops.CAST dtypes.i32 [0] dtypes.i32
+3 Ops.RANGE dtypes.i32 [2] (AxisType.LOOP, 0)
+4 Ops.INDEX dtypes.f32 [1, 3]
+5 Ops.PARAM dtypes.f16 [0] ParamArg(slot=0, dtype=dtypes.f16)
+6 Ops.INDEX dtypes.f16 [5, 3]
+7 Ops.LOAD dtypes.f16 [6]
+8 Ops.CAST dtypes.f32 [7] dtypes.f32
+9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+10 Ops.INDEX dtypes.f32 [9, 3]
+11 Ops.LOAD dtypes.f32 [10]
+12 Ops.ADD dtypes.f32 [8, 11]
+13 Ops.STORE dtypes.void [4, 12]
+14 Ops.END dtypes.void [13, 3]
+15 Ops.SINK dtypes.void [14] KernelInfo(name="elementwise_cast_f16", optimized=True)
+16 Ops.CONST dtypes.weakint [] 24
+17 Ops.PARAM dtypes.u8 [16] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+18 Ops.BITCAST dtypes.u64 [17] dtypes.u64
+19 Ops.CONST dtypes.weakint [] 2
+20 Ops.CAST dtypes.i32 [19] dtypes.i32
+21 Ops.INDEX dtypes.u64 [18, 20]
+22 Ops.LOAD dtypes.u64 [21]
+23 Ops.REFPARAM dtypes.f32 [0, 22] ParamArg(slot=2, dtype=dtypes.f32)
+24 Ops.INDEX dtypes.f32 [23, 3]
+25 Ops.CONST dtypes.weakint [] 0
+26 Ops.CAST dtypes.i32 [25] dtypes.i32
+27 Ops.INDEX dtypes.u64 [18, 26]
+28 Ops.LOAD dtypes.u64 [27]
+29 Ops.REFPARAM dtypes.f16 [0, 28] ParamArg(slot=0, dtype=dtypes.f16)
+30 Ops.INDEX dtypes.f16 [29, 3]
+31 Ops.LOAD dtypes.f16 [30]
+32 Ops.CAST dtypes.f32 [31] dtypes.f32
+33 Ops.CONST dtypes.weakint [] 1
+34 Ops.CAST dtypes.i32 [33] dtypes.i32
+35 Ops.INDEX dtypes.u64 [18, 34]
+36 Ops.LOAD dtypes.u64 [35]
+37 Ops.REFPARAM dtypes.f32 [0, 36] ParamArg(slot=1, dtype=dtypes.f32)
+38 Ops.INDEX dtypes.f32 [37, 3]
+39 Ops.LOAD dtypes.f32 [38]
+40 Ops.ADD dtypes.f32 [32, 39]
+41 Ops.STORE dtypes.void [24, 40]
+42 Ops.END dtypes.void [41, 3]
+43 Ops.SINK dtypes.void [42] KernelInfo(name="elementwise_cast_f16", estimates=Estimates(ops=256, lds=2560, mem=2560), optimized=True)
+44 Ops.LINEAR dtypes.void [16, 17, 25, 26, 18, 27, 28, 33, 34, 35, 36, 19, 20, 21, 22, 0, 29, 37, 23, 2, 3, 30, 31, 38, 39, 24, 32, 40, 41, 42, 43]
+45 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void elementwise_cast_f16(unsigned char* restrict args_24) {\n  unsigned long val0 = (*(((unsigned long*)(args_24))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_24))+1));\n  unsigned long val2 = (*(((unsigned long*)(args_24))+2));\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    __fp16 val3 = (*(((__fp16*)(val0))+Lidx0));\n    float val4 = (*(((float*)(val1))+Lidx0));\n    *(((float*)(val2))+Lidx0) = (((float)(val3))+val4);\n  }\n}\n"
+46 Ops.PROGRAM dtypes.void [43, 44, 45] ProgramInfo(params=(%5, %9, %1), globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+47 Ops.SINK dtypes.void [15, 46]
+

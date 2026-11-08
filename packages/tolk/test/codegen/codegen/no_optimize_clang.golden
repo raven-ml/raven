@@ -41,7 +41,7 @@
 40 Ops.END dtypes.void [39, 3]
 41 Ops.SINK dtypes.void [40] KernelInfo(name="no_optimize", estimates=Estimates(ops=256, lds=3072, mem=3072), optimized=True)
 42 Ops.LINEAR dtypes.void [15, 16, 24, 25, 17, 26, 27, 31, 32, 33, 34, 18, 19, 20, 21, 0, 28, 35, 22, 2, 3, 29, 30, 36, 37, 23, 38, 39, 40, 41]
-43 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void no_optimize(unsigned char* restrict args_24) {\n  unsigned long val0 = (*(((unsigned long*)(args_24))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_24))+1));\n  unsigned long val2 = (*(((unsigned long*)(args_24))+2));\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val3 = (*(((float*)(val0))+Lidx0));\n    float val4 = (*(((float*)(val1))+Lidx0));\n    *(((float*)(val2))+Lidx0) = (val3+val4);\n  }\n}\n"
+43 Ops.SOURCE dtypes.void [] "\nvoid no_optimize(unsigned char* restrict args_24) {\n  unsigned long val0 = (*(((unsigned long*)(args_24))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_24))+1));\n  unsigned long val2 = (*(((unsigned long*)(args_24))+2));\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val3 = (*(((float*)(val0))+Lidx0));\n    float val4 = (*(((float*)(val1))+Lidx0));\n    *(((float*)(val2))+Lidx0) = (val3+val4);\n  }\n}\n"
 44 Ops.PROGRAM dtypes.void [41, 42, 43] ProgramInfo(params=(%5, %8, %1), globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 45 Ops.SINK dtypes.void [14, 44]
 

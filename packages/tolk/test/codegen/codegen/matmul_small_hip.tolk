@@ -1,0 +1,56 @@
+# tolk D25 D89 golden=52b60bda7ce263220c00dd3c22896a1f
+0 Ops.CONST dtypes.weakint [] 16
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.CAST dtypes.i32 [2] dtypes.i32
+4 Ops.RANGE dtypes.i32 [3] (AxisType.LOOP, 0)
+5 Ops.CONST dtypes.weakint [] 2
+6 Ops.CAST dtypes.i32 [5] dtypes.i32
+7 Ops.SHL dtypes.i32 [4, 6]
+8 Ops.AFTER dtypes.i32 [3, 4]
+9 Ops.RANGE dtypes.i32 [8] (AxisType.LOOP, 1)
+10 Ops.ADD dtypes.i32 [7, 9]
+11 Ops.INDEX dtypes.f32 [1, 10]
+12 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+13 Ops.SHRINK dtypes.f32 [12, 7, 3]
+14 Ops.LOAD dtypes.f32 [13]
+15 Ops.CONST dtypes.weakint [] 3
+16 Ops.CAST dtypes.i32 [15] dtypes.i32
+17 Ops.INDEX dtypes.f32 [14, 16]
+18 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+19 Ops.CONST dtypes.weakint [] 12
+20 Ops.CAST dtypes.i32 [19] dtypes.i32
+21 Ops.ADD dtypes.i32 [9, 20]
+22 Ops.INDEX dtypes.f32 [18, 21]
+23 Ops.LOAD dtypes.f32 [22]
+24 Ops.INDEX dtypes.f32 [14, 6]
+25 Ops.CONST dtypes.weakint [] 8
+26 Ops.CAST dtypes.i32 [25] dtypes.i32
+27 Ops.ADD dtypes.i32 [9, 26]
+28 Ops.INDEX dtypes.f32 [18, 27]
+29 Ops.LOAD dtypes.f32 [28]
+30 Ops.CONST dtypes.weakint [] 1
+31 Ops.CAST dtypes.i32 [30] dtypes.i32
+32 Ops.INDEX dtypes.f32 [14, 31]
+33 Ops.ADD dtypes.i32 [9, 3]
+34 Ops.INDEX dtypes.f32 [18, 33]
+35 Ops.LOAD dtypes.f32 [34]
+36 Ops.CONST dtypes.weakint [] 0
+37 Ops.CAST dtypes.i32 [36] dtypes.i32
+38 Ops.INDEX dtypes.f32 [14, 37]
+39 Ops.INDEX dtypes.f32 [18, 9]
+40 Ops.LOAD dtypes.f32 [39]
+41 Ops.MUL dtypes.f32 [38, 40]
+42 Ops.MULACC dtypes.f32 [32, 35, 41]
+43 Ops.MULACC dtypes.f32 [24, 29, 42]
+44 Ops.MULACC dtypes.f32 [17, 23, 43]
+45 Ops.STORE dtypes.void [11, 44]
+46 Ops.END dtypes.void [45, 9]
+47 Ops.END dtypes.void [46, 4]
+48 Ops.SINK dtypes.void [47] KernelInfo(name="matmul_small", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)),), optimized=True)
+49 Ops.SINK dtypes.void [47] KernelInfo(name="matmul_small", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=112, lds=384, mem=192), optimized=True)
+50 Ops.LINEAR dtypes.void [0, 12, 18, 1, 36, 37, 30, 31, 19, 20, 5, 6, 15, 16, 2, 3, 25, 26, 4, 7, 13, 14, 8, 38, 32, 24, 17, 9, 21, 22, 23, 33, 34, 35, 27, 28, 29, 39, 40, 10, 11, 41, 42, 43, 44, 45, 46, 47, 49]
+51 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((ext_vector_type(4)));\nstatic inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) matmul_small(float* data0_16, float* data1_16, float* data2_16) {\n  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {\n    int alu0 = (Lidx0<<2);\n    float4 val0 = (*((float4*)((data0_16+alu0))));\n    for (int Lidx1 = 0; Lidx1 < 4; Lidx1++) {\n      float val1 = (*(data1_16+(Lidx1+12)));\n      float val2 = (*(data1_16+(Lidx1+4)));\n      float val3 = (*(data1_16+(Lidx1+8)));\n      float val4 = (*(data1_16+Lidx1));\n      *(data2_16+(alu0+Lidx1)) = __builtin_fmaf(val0.w,val1,__builtin_fmaf(val0.z,val3,__builtin_fmaf(val0.y,val2,(val0.x*val4))));\n    }\n  }\n}"
+52 Ops.PROGRAM dtypes.void [49, 50, 51] ProgramInfo(params=(%12, %18, %1), globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+53 Ops.SINK dtypes.void [48, 52]
+

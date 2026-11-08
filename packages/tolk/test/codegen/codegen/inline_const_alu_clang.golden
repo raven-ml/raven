@@ -30,7 +30,7 @@
 29 Ops.STORE dtypes.void [20, 28]
 30 Ops.SINK dtypes.void [29] KernelInfo(name="E", estimates=Estimates(ops=2, lds=8, mem=8), optimized=True)
 31 Ops.LINEAR dtypes.void [14, 15, 0, 21, 16, 22, 23, 24, 2, 3, 25, 26, 17, 18, 19, 20, 8, 9, 27, 28, 29, 30]
-32 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+1));\n  int val1 = (*(((int*)(val0))+0));\n  unsigned long val2 = (*(((unsigned long*)(args_16))+0));\n  int alu0 = ((val1<-2147483647)?-2147483647:val1);\n  *(((int*)(val2))+0) = alu0;\n}\n"
+32 Ops.SOURCE dtypes.void [] "\nvoid E(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+1));\n  int val1 = (*(((int*)(val0))+0));\n  unsigned long val2 = (*(((unsigned long*)(args_16))+0));\n  int alu0 = ((val1<-2147483647)?-2147483647:val1);\n  *(((int*)(val2))+0) = alu0;\n}\n"
 33 Ops.PROGRAM dtypes.void [30, 31, 32] ProgramInfo(params=(%1, %5), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 34 Ops.SINK dtypes.void [13, 33]
 

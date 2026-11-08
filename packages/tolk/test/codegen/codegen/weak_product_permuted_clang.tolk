@@ -1,0 +1,98 @@
+# tolk D141 D151 golden=b1560a5c8d4f30ed3bf393d13be63aeb
+0 Ops.CONST dtypes.weakint [] 8
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CAST dtypes.i32 [2] dtypes.i32
+4 Ops.CONST dtypes.weakint [] 4
+5 Ops.CAST dtypes.i32 [4] dtypes.i32
+6 Ops.SHRINK dtypes.i32 [1, 3, 5]
+7 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
+8 Ops.SHRINK dtypes.i32 [7, 3, 5]
+9 Ops.LOAD dtypes.i32 [8]
+10 Ops.INDEX dtypes.i32 [9, 3]
+11 Ops.CONST dtypes.weakint [] 2
+12 Ops.CAST dtypes.i32 [11] dtypes.i32
+13 Ops.INDEX dtypes.i32 [9, 12]
+14 Ops.SHRINK dtypes.i32 [7, 5, 5]
+15 Ops.LOAD dtypes.i32 [14]
+16 Ops.INDEX dtypes.i32 [15, 3]
+17 Ops.INDEX dtypes.i32 [15, 12]
+18 Ops.CONST dtypes.weakint [] 1
+19 Ops.CAST dtypes.i32 [18] dtypes.i32
+20 Ops.INDEX dtypes.i32 [9, 19]
+21 Ops.CONST dtypes.weakint [] 3
+22 Ops.CAST dtypes.i32 [21] dtypes.i32
+23 Ops.INDEX dtypes.i32 [9, 22]
+24 Ops.INDEX dtypes.i32 [15, 19]
+25 Ops.INDEX dtypes.i32 [15, 22]
+26 Ops.STACK dtypes.i32 [10, 13, 16, 17, 20, 23, 24, 25]
+27 Ops.CAST dtypes.u32 [26] dtypes.u32
+28 Ops.CONST dtypes.weakint [] 31
+29 Ops.CAST dtypes.u32 [28] dtypes.u32
+30 Ops.SHL dtypes.u32 [27, 29]
+31 Ops.CAST dtypes.i32 [30] dtypes.i32
+32 Ops.INDEX dtypes.i32 [31, 3]
+33 Ops.INDEX dtypes.i32 [31, 19]
+34 Ops.INDEX dtypes.i32 [31, 12]
+35 Ops.INDEX dtypes.i32 [31, 22]
+36 Ops.STACK dtypes.i32 [32, 33, 34, 35]
+37 Ops.STORE dtypes.void [6, 36]
+38 Ops.SHRINK dtypes.i32 [1, 5, 5]
+39 Ops.INDEX dtypes.i32 [31, 5]
+40 Ops.CONST dtypes.weakint [] 5
+41 Ops.CAST dtypes.i32 [40] dtypes.i32
+42 Ops.INDEX dtypes.i32 [31, 41]
+43 Ops.CONST dtypes.weakint [] 6
+44 Ops.CAST dtypes.i32 [43] dtypes.i32
+45 Ops.INDEX dtypes.i32 [31, 44]
+46 Ops.CONST dtypes.weakint [] 7
+47 Ops.CAST dtypes.i32 [46] dtypes.i32
+48 Ops.INDEX dtypes.i32 [31, 47]
+49 Ops.STACK dtypes.i32 [39, 42, 45, 48]
+50 Ops.STORE dtypes.void [38, 49]
+51 Ops.SINK dtypes.void [37, 37, 37, 37, 50, 50, 50, 50] KernelInfo(name="E_4_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))), optimized=True)
+52 Ops.CONST dtypes.weakint [] 16
+53 Ops.PARAM dtypes.u8 [52] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+54 Ops.BITCAST dtypes.u64 [53] dtypes.u64
+55 Ops.INDEX dtypes.u64 [54, 3]
+56 Ops.LOAD dtypes.u64 [55]
+57 Ops.REFPARAM dtypes.i32 [0, 56] ParamArg(slot=0, dtype=dtypes.i32)
+58 Ops.SHRINK dtypes.i32 [57, 3, 5]
+59 Ops.INDEX dtypes.u64 [54, 19]
+60 Ops.LOAD dtypes.u64 [59]
+61 Ops.REFPARAM dtypes.i32 [0, 60] ParamArg(slot=1, dtype=dtypes.i32)
+62 Ops.SHRINK dtypes.i32 [61, 3, 5]
+63 Ops.LOAD dtypes.i32 [62]
+64 Ops.INDEX dtypes.i32 [63, 3]
+65 Ops.INDEX dtypes.i32 [63, 12]
+66 Ops.SHRINK dtypes.i32 [61, 5, 5]
+67 Ops.LOAD dtypes.i32 [66]
+68 Ops.INDEX dtypes.i32 [67, 3]
+69 Ops.INDEX dtypes.i32 [67, 12]
+70 Ops.INDEX dtypes.i32 [63, 19]
+71 Ops.INDEX dtypes.i32 [63, 22]
+72 Ops.INDEX dtypes.i32 [67, 19]
+73 Ops.INDEX dtypes.i32 [67, 22]
+74 Ops.STACK dtypes.i32 [64, 65, 68, 69, 70, 71, 72, 73]
+75 Ops.CAST dtypes.u32 [74] dtypes.u32
+76 Ops.SHL dtypes.u32 [75, 29]
+77 Ops.CAST dtypes.i32 [76] dtypes.i32
+78 Ops.INDEX dtypes.i32 [77, 3]
+79 Ops.INDEX dtypes.i32 [77, 19]
+80 Ops.INDEX dtypes.i32 [77, 12]
+81 Ops.INDEX dtypes.i32 [77, 22]
+82 Ops.STACK dtypes.i32 [78, 79, 80, 81]
+83 Ops.STORE dtypes.void [58, 82]
+84 Ops.SHRINK dtypes.i32 [57, 5, 5]
+85 Ops.INDEX dtypes.i32 [77, 5]
+86 Ops.INDEX dtypes.i32 [77, 41]
+87 Ops.INDEX dtypes.i32 [77, 44]
+88 Ops.INDEX dtypes.i32 [77, 47]
+89 Ops.STACK dtypes.i32 [85, 86, 87, 88]
+90 Ops.STORE dtypes.void [84, 89]
+91 Ops.SINK dtypes.void [83, 83, 83, 83, 90, 90, 90, 90] KernelInfo(name="E_4_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))), estimates=Estimates(ops=8, lds=64, mem=64), optimized=True)
+92 Ops.LINEAR dtypes.void [52, 53, 18, 19, 54, 59, 60, 0, 61, 2, 3, 4, 5, 62, 63, 66, 67, 55, 56, 57, 64, 70, 11, 12, 65, 21, 22, 71, 68, 72, 69, 73, 74, 75, 28, 29, 76, 77, 78, 79, 80, 81, 82, 85, 40, 41, 86, 43, 44, 87, 46, 47, 88, 89, 58, 84, 83, 90, 91]
+93 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));\ntypedef int int8 __attribute__((aligned(4),ext_vector_type(8)));\ntypedef unsigned int unsigned_int8 __attribute__((aligned(4),ext_vector_type(8)));\n__attribute__((min_vector_width(512))) void E_4_2(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+1));\n  int4 val1 = (*((int4*)((((int*)(val0))+0))));\n  int4 val2 = (*((int4*)((((int*)(val0))+4))));\n  unsigned long val3 = (*(((unsigned long*)(args_16))+0));\n  unsigned_int8 cast0 = __builtin_convertvector((int8){val1[0],val1[2],val2[0],val2[2],val1[1],val1[3],val2[1],val2[3]}, unsigned_int8);\n  int8 cast1 = __builtin_convertvector((cast0<<31u), int8);\n  *((int4*)((((int*)(val3))+0))) = (int4){cast1[0],cast1[1],cast1[2],cast1[3]};\n  *((int4*)((((int*)(val3))+4))) = (int4){cast1[4],cast1[5],cast1[6],cast1[7]};\n}\n"
+94 Ops.PROGRAM dtypes.void [91, 92, 93] ProgramInfo(params=(%1, %7), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+95 Ops.SINK dtypes.void [51, 94]
+

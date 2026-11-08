@@ -87,6 +87,7 @@ UNMODIFIED = {
     "renderer/cstyle",
     "codegen/opt/postrange",
     "codegen/opt/heuristic",
+    "codegen/codegen",
 }
 
 HERE = Path(__file__).resolve().parent

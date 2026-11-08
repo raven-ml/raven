@@ -1,0 +1,90 @@
+# tolk D89 golden=225bdf1c0099e727701da66fb81d3050
+0 Ops.CONST dtypes.weakint [] 64
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CAST dtypes.i32 [0] dtypes.i32
+3 Ops.SPECIAL dtypes.i32 [2] "gidx0"
+4 Ops.INDEX dtypes.f32 [1, 3]
+5 Ops.CONST dtypes.weakint [] 1
+6 Ops.ALLOC dtypes.f32 [5] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+7 Ops.AFTER dtypes.f32 [6, 3]
+8 Ops.CONST dtypes.weakint [] 0
+9 Ops.CAST dtypes.i32 [8] dtypes.i32
+10 Ops.INDEX dtypes.f32 [7, 9]
+11 Ops.CONST dtypes.weakfloat [] 0.0
+12 Ops.CAST dtypes.f32 [11] dtypes.f32
+13 Ops.STORE dtypes.void [10, 12]
+14 Ops.CONST dtypes.weakint [] 16
+15 Ops.CAST dtypes.i32 [14] dtypes.i32
+16 Ops.RANGE dtypes.i32 [15] (AxisType.WEAK, 0)
+17 Ops.AFTER dtypes.f32 [6, 13, 16]
+18 Ops.INDEX dtypes.f32 [17, 9]
+19 Ops.LOAD dtypes.f32 [18]
+20 Ops.CONST dtypes.weakint [] 4096
+21 Ops.PARAM dtypes.f32 [20] ParamArg(slot=1, dtype=dtypes.f32)
+22 Ops.CONST dtypes.weakint [] 6
+23 Ops.CAST dtypes.i32 [22] dtypes.i32
+24 Ops.SHL dtypes.i32 [3, 23]
+25 Ops.CONST dtypes.weakint [] 2
+26 Ops.CAST dtypes.i32 [25] dtypes.i32
+27 Ops.SHL dtypes.i32 [16, 26]
+28 Ops.ADD dtypes.i32 [24, 27]
+29 Ops.CONST dtypes.weakint [] 4
+30 Ops.CAST dtypes.i32 [29] dtypes.i32
+31 Ops.SHRINK dtypes.f32 [21, 28, 30]
+32 Ops.LOAD dtypes.f32 [31]
+33 Ops.INDEX dtypes.f32 [32, 9]
+34 Ops.CAST dtypes.i32 [5] dtypes.i32
+35 Ops.INDEX dtypes.f32 [32, 34]
+36 Ops.ADD dtypes.f32 [33, 35]
+37 Ops.INDEX dtypes.f32 [32, 26]
+38 Ops.ADD dtypes.f32 [36, 37]
+39 Ops.CONST dtypes.weakint [] 3
+40 Ops.CAST dtypes.i32 [39] dtypes.i32
+41 Ops.INDEX dtypes.f32 [32, 40]
+42 Ops.ADD dtypes.f32 [38, 41]
+43 Ops.ADD dtypes.f32 [19, 42]
+44 Ops.STORE dtypes.void [18, 43]
+45 Ops.END dtypes.void [44, 16]
+46 Ops.AFTER dtypes.f32 [6, 45]
+47 Ops.INDEX dtypes.f32 [46, 9]
+48 Ops.LOAD dtypes.f32 [47]
+49 Ops.STORE dtypes.void [4, 48]
+50 Ops.SINK dtypes.void [49] KernelInfo(name="r_64_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), optimized=True)
+51 Ops.PARAM dtypes.u8 [14] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+52 Ops.BITCAST dtypes.u64 [51] dtypes.u64
+53 Ops.INDEX dtypes.u64 [52, 9]
+54 Ops.LOAD dtypes.u64 [53]
+55 Ops.REFPARAM dtypes.f32 [0, 54] ParamArg(slot=0, dtype=dtypes.f32)
+56 Ops.INDEX dtypes.f32 [55, 3]
+57 Ops.BUFFER dtypes.f32 [5] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+58 Ops.AFTER dtypes.f32 [57, 3]
+59 Ops.INDEX dtypes.f32 [58, 9]
+60 Ops.STORE dtypes.void [59, 12]
+61 Ops.AFTER dtypes.f32 [57, 60, 16]
+62 Ops.INDEX dtypes.f32 [61, 9]
+63 Ops.LOAD dtypes.f32 [62]
+64 Ops.INDEX dtypes.u64 [52, 34]
+65 Ops.LOAD dtypes.u64 [64]
+66 Ops.REFPARAM dtypes.f32 [20, 65] ParamArg(slot=1, dtype=dtypes.f32)
+67 Ops.SHRINK dtypes.f32 [66, 28, 30]
+68 Ops.LOAD dtypes.f32 [67]
+69 Ops.INDEX dtypes.f32 [68, 9]
+70 Ops.INDEX dtypes.f32 [68, 34]
+71 Ops.ADD dtypes.f32 [69, 70]
+72 Ops.INDEX dtypes.f32 [68, 26]
+73 Ops.ADD dtypes.f32 [71, 72]
+74 Ops.INDEX dtypes.f32 [68, 40]
+75 Ops.ADD dtypes.f32 [73, 74]
+76 Ops.ADD dtypes.f32 [63, 75]
+77 Ops.STORE dtypes.void [62, 76]
+78 Ops.END dtypes.void [77, 16]
+79 Ops.AFTER dtypes.f32 [57, 78]
+80 Ops.INDEX dtypes.f32 [79, 9]
+81 Ops.LOAD dtypes.f32 [80]
+82 Ops.STORE dtypes.void [56, 81]
+83 Ops.SINK dtypes.void [82] KernelInfo(name="r_64_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=4096, lds=16640, mem=16640), optimized=True)
+84 Ops.LINEAR dtypes.void [14, 51, 5, 57, 34, 52, 64, 65, 0, 2, 3, 20, 66, 58, 8, 9, 59, 11, 12, 15, 25, 26, 39, 40, 29, 30, 22, 23, 24, 60, 16, 61, 62, 63, 27, 28, 67, 68, 69, 70, 72, 74, 71, 73, 75, 76, 77, 78, 53, 54, 79, 80, 81, 55, 56, 82, 83]
+85 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void r_64_16_4(device unsigned char* args_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  float buf0[1];\n  unsigned long val0 = (*(((device unsigned long*)(args_16))+1));\n  int gidx0 = gid.x; /* 64 */\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    float4 val1 = (*((device float4*)((((device float*)(val0))+((gidx0<<6)+(Lidx0<<2))))));\n    *(buf0+0) = ((*(buf0+0))+(val1.x+val1.y+val1.z+val1.w));\n  }\n  unsigned long val2 = (*(((device unsigned long*)(args_16))+0));\n  *(((device float*)(val2))+gidx0) = (*(buf0+0));\n}"
+86 Ops.PROGRAM dtypes.void [83, 84, 85] ProgramInfo(global_size=(64, 1, 1), params=(%1, %21), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+87 Ops.SINK dtypes.void [50, 86]
+

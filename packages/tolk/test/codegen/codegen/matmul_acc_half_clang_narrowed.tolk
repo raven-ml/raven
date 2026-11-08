@@ -1,0 +1,24 @@
+# tolk D151 golden=bb16e0e6b14e396bb1530b4526ffae33
+
+__attribute__((min_vector_width(512))) void r_8_8_8(unsigned char* restrict args_40) {
+  __fp16 buf0[1];
+  int val0 = (*(((int*)(args_40))+6));
+  int val1 = (*(((int*)(args_40))+7));
+  unsigned long val2 = (*(((unsigned long*)(args_40))+0));
+  unsigned long val3 = (*(((unsigned long*)(args_40))+1));
+  unsigned long val4 = (*(((unsigned long*)(args_40))+2));
+  for (int Lidx1 = 0; Lidx1 < (val1-val0); Lidx1++) {
+    int alu0 = (val0+Lidx1);
+    int alu1 = (alu0<<3);
+    for (int Lidx2 = 0; Lidx2 < 8; Lidx2++) {
+      *(buf0+0) = ((__fp16)(0.0f));
+      for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {
+        __fp16 val5 = (*(((__fp16*)(val3))+(alu1+Lidx0)));
+        __fp16 val6 = (*(((__fp16*)(val4))+((Lidx0<<3)+Lidx2)));
+        *(buf0+0) = ((*(buf0+0))+((__fp16)((val5*val6))));
+      }
+      *(((__fp16*)(val2))+(alu1+Lidx2)) = (*(buf0+0));
+    }
+  }
+}
+

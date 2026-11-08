@@ -1,0 +1,79 @@
+# tolk D151 D342 golden=12511bffb9a11e92043dced617774738
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
+2 Ops.CONST dtypes.weakint [] 16
+3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=0, dtype=dtypes.i32)
+4 Ops.CAST dtypes.i32 [0] dtypes.i32
+5 Ops.RANGE dtypes.i32 [4] (AxisType.LOOP, 0)
+6 Ops.CONST dtypes.weakint [] 2
+7 Ops.CAST dtypes.i32 [6] dtypes.i32
+8 Ops.SHL dtypes.i32 [5, 7]
+9 Ops.CAST dtypes.u32 [8] dtypes.u32
+10 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32)
+11 Ops.INDEX dtypes.i32 [10, 5]
+12 Ops.LOAD dtypes.i32 [11]
+13 Ops.CONST dtypes.weakint [] 0
+14 Ops.CAST dtypes.i32 [13] dtypes.i32
+15 Ops.CMPLT dtypes.bool [12, 14]
+16 Ops.WHERE dtypes.i32 [15, 14, 12]
+17 Ops.CONST dtypes.weakint [] -1
+18 Ops.CAST dtypes.i32 [17] dtypes.i32
+19 Ops.XOR dtypes.i32 [16, 18]
+20 Ops.CONST dtypes.weakint [] -5
+21 Ops.CAST dtypes.i32 [20] dtypes.i32
+22 Ops.CMPLT dtypes.bool [19, 21]
+23 Ops.WHERE dtypes.i32 [22, 21, 19]
+24 Ops.XOR dtypes.i32 [23, 18]
+25 Ops.AFTER dtypes.i32 [24, 5]
+26 Ops.RANGE dtypes.i32 [25] (AxisType.WEAK, 1)
+27 Ops.CAST dtypes.u32 [26] dtypes.u32
+28 Ops.ADD dtypes.u32 [9, 27]
+29 Ops.CAST dtypes.i32 [28] dtypes.i32
+30 Ops.INDEX dtypes.i32 [3, 29]
+31 Ops.CONST dtypes.weakint [] 1
+32 Ops.CAST dtypes.i32 [31] dtypes.i32
+33 Ops.STORE dtypes.void [30, 32]
+34 Ops.END dtypes.void [33, 26]
+35 Ops.AFTER dtypes.i32 [1, 34]
+36 Ops.INDEX dtypes.i32 [35, 5]
+37 Ops.STORE dtypes.void [36, 7]
+38 Ops.END dtypes.void [37, 5]
+39 Ops.SINK dtypes.void [38] KernelInfo(name="E_(weakint)((max((max(p2[r0], 0)^-1), -5)^-1))_4", optimized=True)
+40 Ops.CONST dtypes.weakint [] 24
+41 Ops.PARAM dtypes.u8 [40] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+42 Ops.BITCAST dtypes.u64 [41] dtypes.u64
+43 Ops.INDEX dtypes.u64 [42, 32]
+44 Ops.LOAD dtypes.u64 [43]
+45 Ops.REFPARAM dtypes.i32 [0, 44] ParamArg(slot=1, dtype=dtypes.i32)
+46 Ops.INDEX dtypes.u64 [42, 14]
+47 Ops.LOAD dtypes.u64 [46]
+48 Ops.REFPARAM dtypes.i32 [2, 47] ParamArg(slot=0, dtype=dtypes.i32)
+49 Ops.INDEX dtypes.u64 [42, 7]
+50 Ops.LOAD dtypes.u64 [49]
+51 Ops.REFPARAM dtypes.i32 [0, 50] ParamArg(slot=2, dtype=dtypes.i32)
+52 Ops.INDEX dtypes.i32 [51, 5]
+53 Ops.LOAD dtypes.i32 [52]
+54 Ops.CMPLT dtypes.bool [53, 14]
+55 Ops.WHERE dtypes.i32 [54, 14, 53]
+56 Ops.XOR dtypes.i32 [55, 18]
+57 Ops.CMPLT dtypes.bool [56, 21]
+58 Ops.WHERE dtypes.i32 [57, 21, 56]
+59 Ops.XOR dtypes.i32 [58, 18]
+60 Ops.AFTER dtypes.i32 [59, 5]
+61 Ops.RANGE dtypes.i32 [60] (AxisType.WEAK, 1)
+62 Ops.CAST dtypes.u32 [61] dtypes.u32
+63 Ops.ADD dtypes.u32 [9, 62]
+64 Ops.CAST dtypes.i32 [63] dtypes.i32
+65 Ops.INDEX dtypes.i32 [48, 64]
+66 Ops.STORE dtypes.void [65, 32]
+67 Ops.END dtypes.void [66, 61]
+68 Ops.AFTER dtypes.i32 [45, 67]
+69 Ops.INDEX dtypes.i32 [68, 5]
+70 Ops.STORE dtypes.void [69, 7]
+71 Ops.END dtypes.void [70, 5]
+72 Ops.SINK dtypes.void [71] KernelInfo(name="E_(weakint)((max((max(p2[r0], 0)^-1), -5)^-1))_4", estimates=Estimates(lds=96, mem=96), optimized=True)
+73 Ops.LINEAR dtypes.void [40, 41, 13, 14, 42, 46, 47, 31, 32, 43, 44, 6, 7, 49, 50, 2, 48, 0, 45, 51, 17, 18, 20, 21, 4, 5, 52, 53, 54, 55, 56, 57, 58, 59, 60, 8, 9, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72]
+74 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E_28weakint292828max2828max28p25Br05D2C200295E2D1292C202D5295E2D12929_4(unsigned char* restrict args_24) {\n  unsigned long val0 = (*(((unsigned long*)(args_24))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_24))+1));\n  unsigned long val2 = (*(((unsigned long*)(args_24))+2));\n  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {\n    int val3 = (*(((int*)(val2))+Lidx0));\n    int alu0 = ((val3<0)?0:val3);\n    int alu1 = (alu0^-1);\n    int alu2 = ((alu1<-5)?-5:alu1);\n    for (int Lidx1 = 0; Lidx1 < (alu2^-1); Lidx1++) {\n      *(((int*)(val0))+((int)((((unsigned int)((Lidx0<<2)))+((unsigned int)(Lidx1)))))) = 1;\n    }\n    *(((int*)(val1))+Lidx0) = 2;\n  }\n}\n"
+75 Ops.PROGRAM dtypes.void [72, 73, 74] ProgramInfo(params=(%3, %1, %10), globals=(0, 1, 2), outs=(0, 1), ins=(2,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+76 Ops.SINK dtypes.void [39, 75]
+

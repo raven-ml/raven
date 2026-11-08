@@ -1,0 +1,24 @@
+# tolk D151 golden=7aca2c6bca8552313262a6f65e659eaa
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CAST dtypes.i32 [2] dtypes.i32
+4 Ops.INDEX dtypes.f32 [1, 3]
+5 Ops.CONST dtypes.weakfloat [] 12.0
+6 Ops.CAST dtypes.f32 [5] dtypes.f32
+7 Ops.STORE dtypes.void [4, 6]
+8 Ops.SINK dtypes.void [7] KernelInfo(name="E", optimized=True)
+9 Ops.CONST dtypes.weakint [] 8
+10 Ops.PARAM dtypes.u8 [9] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+11 Ops.BITCAST dtypes.u64 [10] dtypes.u64
+12 Ops.INDEX dtypes.u64 [11, 3]
+13 Ops.LOAD dtypes.u64 [12]
+14 Ops.REFPARAM dtypes.f32 [0, 13] ParamArg(slot=0, dtype=dtypes.f32)
+15 Ops.INDEX dtypes.f32 [14, 3]
+16 Ops.STORE dtypes.void [15, 6]
+17 Ops.SINK dtypes.void [16] KernelInfo(name="E", estimates=Estimates(lds=4, mem=4), optimized=True)
+18 Ops.LINEAR dtypes.void [9, 10, 2, 3, 11, 12, 13, 0, 14, 15, 5, 6, 16, 17]
+19 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E(unsigned char* restrict args_8) {\n  unsigned long val0 = (*(((unsigned long*)(args_8))+0));\n  *(((float*)(val0))+0) = 12.0f;\n}\n"
+20 Ops.PROGRAM dtypes.void [17, 18, 19] ProgramInfo(params=(%1,), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+21 Ops.SINK dtypes.void [8, 20]
+

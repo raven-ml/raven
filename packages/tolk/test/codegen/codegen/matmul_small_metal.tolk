@@ -1,0 +1,90 @@
+# tolk D25 D89 golden=b5262659c31c3e787d2783366ca7d3e2
+0 Ops.CONST dtypes.weakint [] 16
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.CAST dtypes.i32 [2] dtypes.i32
+4 Ops.RANGE dtypes.i32 [3] (AxisType.LOOP, 0)
+5 Ops.CONST dtypes.weakint [] 2
+6 Ops.CAST dtypes.i32 [5] dtypes.i32
+7 Ops.SHL dtypes.i32 [4, 6]
+8 Ops.AFTER dtypes.i32 [3, 4]
+9 Ops.RANGE dtypes.i32 [8] (AxisType.LOOP, 1)
+10 Ops.ADD dtypes.i32 [7, 9]
+11 Ops.INDEX dtypes.f32 [1, 10]
+12 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+13 Ops.SHRINK dtypes.f32 [12, 7, 3]
+14 Ops.LOAD dtypes.f32 [13]
+15 Ops.CONST dtypes.weakint [] 3
+16 Ops.CAST dtypes.i32 [15] dtypes.i32
+17 Ops.INDEX dtypes.f32 [14, 16]
+18 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+19 Ops.CONST dtypes.weakint [] 12
+20 Ops.CAST dtypes.i32 [19] dtypes.i32
+21 Ops.ADD dtypes.i32 [9, 20]
+22 Ops.INDEX dtypes.f32 [18, 21]
+23 Ops.LOAD dtypes.f32 [22]
+24 Ops.INDEX dtypes.f32 [14, 6]
+25 Ops.CONST dtypes.weakint [] 8
+26 Ops.CAST dtypes.i32 [25] dtypes.i32
+27 Ops.ADD dtypes.i32 [9, 26]
+28 Ops.INDEX dtypes.f32 [18, 27]
+29 Ops.LOAD dtypes.f32 [28]
+30 Ops.CONST dtypes.weakint [] 1
+31 Ops.CAST dtypes.i32 [30] dtypes.i32
+32 Ops.INDEX dtypes.f32 [14, 31]
+33 Ops.ADD dtypes.i32 [9, 3]
+34 Ops.INDEX dtypes.f32 [18, 33]
+35 Ops.LOAD dtypes.f32 [34]
+36 Ops.CONST dtypes.weakint [] 0
+37 Ops.CAST dtypes.i32 [36] dtypes.i32
+38 Ops.INDEX dtypes.f32 [14, 37]
+39 Ops.INDEX dtypes.f32 [18, 9]
+40 Ops.LOAD dtypes.f32 [39]
+41 Ops.MUL dtypes.f32 [38, 40]
+42 Ops.MULACC dtypes.f32 [32, 35, 41]
+43 Ops.MULACC dtypes.f32 [24, 29, 42]
+44 Ops.MULACC dtypes.f32 [17, 23, 43]
+45 Ops.STORE dtypes.void [11, 44]
+46 Ops.END dtypes.void [45, 9]
+47 Ops.END dtypes.void [46, 4]
+48 Ops.SINK dtypes.void [47] KernelInfo(name="matmul_small", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)),), optimized=True)
+49 Ops.CONST dtypes.weakint [] 24
+50 Ops.PARAM dtypes.u8 [49] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+51 Ops.BITCAST dtypes.u64 [50] dtypes.u64
+52 Ops.INDEX dtypes.u64 [51, 6]
+53 Ops.LOAD dtypes.u64 [52]
+54 Ops.REFPARAM dtypes.f32 [0, 53] ParamArg(slot=2, dtype=dtypes.f32)
+55 Ops.INDEX dtypes.f32 [54, 10]
+56 Ops.INDEX dtypes.u64 [51, 37]
+57 Ops.LOAD dtypes.u64 [56]
+58 Ops.REFPARAM dtypes.f32 [0, 57] ParamArg(slot=0, dtype=dtypes.f32)
+59 Ops.SHRINK dtypes.f32 [58, 7, 3]
+60 Ops.LOAD dtypes.f32 [59]
+61 Ops.INDEX dtypes.f32 [60, 16]
+62 Ops.INDEX dtypes.u64 [51, 31]
+63 Ops.LOAD dtypes.u64 [62]
+64 Ops.REFPARAM dtypes.f32 [0, 63] ParamArg(slot=1, dtype=dtypes.f32)
+65 Ops.INDEX dtypes.f32 [64, 21]
+66 Ops.LOAD dtypes.f32 [65]
+67 Ops.INDEX dtypes.f32 [60, 6]
+68 Ops.INDEX dtypes.f32 [64, 27]
+69 Ops.LOAD dtypes.f32 [68]
+70 Ops.INDEX dtypes.f32 [60, 31]
+71 Ops.INDEX dtypes.f32 [64, 33]
+72 Ops.LOAD dtypes.f32 [71]
+73 Ops.INDEX dtypes.f32 [60, 37]
+74 Ops.INDEX dtypes.f32 [64, 9]
+75 Ops.LOAD dtypes.f32 [74]
+76 Ops.MUL dtypes.f32 [73, 75]
+77 Ops.MULACC dtypes.f32 [70, 72, 76]
+78 Ops.MULACC dtypes.f32 [67, 69, 77]
+79 Ops.MULACC dtypes.f32 [61, 66, 78]
+80 Ops.STORE dtypes.void [55, 79]
+81 Ops.END dtypes.void [80, 9]
+82 Ops.END dtypes.void [81, 4]
+83 Ops.SINK dtypes.void [82] KernelInfo(name="matmul_small", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=112, lds=384, mem=192), optimized=True)
+84 Ops.LINEAR dtypes.void [49, 50, 36, 37, 51, 56, 57, 30, 31, 62, 63, 5, 6, 52, 53, 0, 58, 64, 54, 19, 20, 15, 16, 2, 3, 25, 26, 4, 7, 59, 60, 8, 73, 70, 67, 61, 9, 21, 65, 66, 33, 71, 72, 27, 68, 69, 74, 75, 10, 55, 76, 77, 78, 79, 80, 81, 82, 83]
+85 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void matmul_small(device unsigned char* args_24, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  unsigned long val0 = (*(((device unsigned long*)(args_24))+0));\n  unsigned long val1 = (*(((device unsigned long*)(args_24))+1));\n  unsigned long val2 = (*(((device unsigned long*)(args_24))+2));\n  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {\n    int alu0 = (Lidx0<<2);\n    float4 val3 = (*((device float4*)((((device float*)(val0))+alu0))));\n    for (int Lidx1 = 0; Lidx1 < 4; Lidx1++) {\n      float val4 = (*(((device float*)(val1))+(Lidx1+12)));\n      float val5 = (*(((device float*)(val1))+(Lidx1+4)));\n      float val6 = (*(((device float*)(val1))+(Lidx1+8)));\n      float val7 = (*(((device float*)(val1))+Lidx1));\n      *(((device float*)(val2))+(alu0+Lidx1)) = fma(val3.w,val4,fma(val3.z,val6,fma(val3.y,val5,(val3.x*val7))));\n    }\n  }\n}"
+86 Ops.PROGRAM dtypes.void [83, 84, 85] ProgramInfo(params=(%12, %18, %1), globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+87 Ops.SINK dtypes.void [48, 86]
+

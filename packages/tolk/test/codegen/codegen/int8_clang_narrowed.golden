@@ -1,0 +1,25 @@
+
+void E_16_4(unsigned char* restrict args_24) {
+  unsigned long val0 = (*(((unsigned long*)(args_24))+0));
+  unsigned long val1 = (*(((unsigned long*)(args_24))+1));
+  unsigned long val2 = (*(((unsigned long*)(args_24))+2));
+  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+    int alu0 = (Lidx0<<2);
+    int alu1 = (alu0+1);
+    signed char val3 = (*(((signed char*)(val1))+alu1));
+    int alu2 = (alu0+2);
+    signed char val4 = (*(((signed char*)(val1))+alu2));
+    int alu3 = (alu0+3);
+    signed char val5 = (*(((signed char*)(val1))+alu3));
+    signed char val6 = (*(((signed char*)(val1))+alu0));
+    signed char val7 = (*(((signed char*)(val2))+alu1));
+    signed char val8 = (*(((signed char*)(val2))+alu2));
+    signed char val9 = (*(((signed char*)(val2))+alu3));
+    signed char val10 = (*(((signed char*)(val2))+alu0));
+    *(((signed char*)(val0))+alu1) = (((signed char)((val3+val7)))*((signed char)(3)));
+    *(((signed char*)(val0))+alu2) = (((signed char)((val4+val8)))*((signed char)(3)));
+    *(((signed char*)(val0))+alu3) = (((signed char)((val5+val9)))*((signed char)(3)));
+    *(((signed char*)(val0))+alu0) = (((signed char)((val6+val10)))*((signed char)(3)));
+  }
+}
+

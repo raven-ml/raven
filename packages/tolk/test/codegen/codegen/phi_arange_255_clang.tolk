@@ -1,0 +1,42 @@
+# tolk D80 D151 golden=62882016aa75f003ad71fd934801b952
+0 Ops.CONST dtypes.weakint [] 255
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
+2 Ops.STACK dtypes.void []
+3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=1, dtype=dtypes.i32, vmin_vmax=(0, 255), name="block_lo", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.i32 [2] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(0, 255), name="block_hi", addrspace=AddrSpace.ALU)
+5 Ops.SUB dtypes.i32 [4, 3]
+6 Ops.RANGE dtypes.i32 [5] (AxisType.WEAK, 0)
+7 Ops.ADD dtypes.i32 [3, 6]
+8 Ops.INDEX dtypes.i32 [1, 7]
+9 Ops.STORE dtypes.void [8, 7]
+10 Ops.END dtypes.void [9, 6]
+11 Ops.SINK dtypes.void [10] KernelInfo(name="E_255", optimized=True, split=(255, 1, 2))
+12 Ops.CONST dtypes.weakint [] 24
+13 Ops.PARAM dtypes.u8 [12] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+14 Ops.BITCAST dtypes.u64 [13] dtypes.u64
+15 Ops.CONST dtypes.weakint [] 0
+16 Ops.CAST dtypes.i32 [15] dtypes.i32
+17 Ops.INDEX dtypes.u64 [14, 16]
+18 Ops.LOAD dtypes.u64 [17]
+19 Ops.REFPARAM dtypes.i32 [0, 18] ParamArg(slot=0, dtype=dtypes.i32)
+20 Ops.BITCAST dtypes.i32 [13] dtypes.i32
+21 Ops.CONST dtypes.weakint [] 2
+22 Ops.CAST dtypes.i32 [21] dtypes.i32
+23 Ops.INDEX dtypes.i32 [20, 22]
+24 Ops.LOAD dtypes.i32 [23]
+25 Ops.CONST dtypes.weakint [] 3
+26 Ops.CAST dtypes.i32 [25] dtypes.i32
+27 Ops.INDEX dtypes.i32 [20, 26]
+28 Ops.LOAD dtypes.i32 [27]
+29 Ops.SUB dtypes.i32 [28, 24]
+30 Ops.RANGE dtypes.i32 [29] (AxisType.WEAK, 0)
+31 Ops.ADD dtypes.i32 [24, 30]
+32 Ops.INDEX dtypes.i32 [19, 31]
+33 Ops.STORE dtypes.void [32, 31]
+34 Ops.END dtypes.void [33, 30]
+35 Ops.SINK dtypes.void [34] KernelInfo(name="E_255", estimates=Estimates(lds=1020, mem=1020), optimized=True, split=(255, 1, 2))
+36 Ops.LINEAR dtypes.void [12, 13, 21, 22, 20, 23, 24, 25, 26, 27, 28, 15, 16, 14, 17, 18, 0, 19, 29, 30, 31, 32, 33, 34, 35]
+37 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E_255(unsigned char* restrict args_24) {\n  int val0 = (*(((int*)(args_24))+2));\n  int val1 = (*(((int*)(args_24))+3));\n  unsigned long val2 = (*(((unsigned long*)(args_24))+0));\n  for (int Lidx0 = 0; Lidx0 < (val1-val0); Lidx0++) {\n    int alu0 = (val0+Lidx0);\n    *(((int*)(val2))+alu0) = alu0;\n  }\n}\n"
+38 Ops.PROGRAM dtypes.void [35, 36, 37] ProgramInfo(global_size=(255, 1, 1), params=(%1, %3, %4), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+39 Ops.SINK dtypes.void [11, 38]
+

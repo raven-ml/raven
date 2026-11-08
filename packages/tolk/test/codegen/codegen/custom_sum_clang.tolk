@@ -1,0 +1,52 @@
+# tolk D151 golden=43b97f0788264dc4b6b36b9852d5e7e9
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CAST dtypes.i32 [2] dtypes.i32
+4 Ops.INDEX dtypes.f32 [1, 3]
+5 Ops.CONST dtypes.weakfloat [] 0.0
+6 Ops.CAST dtypes.f32 [5] dtypes.f32
+7 Ops.STORE dtypes.void [4, 6]
+8 Ops.AFTER dtypes.f32 [1, 7]
+9 Ops.INDEX dtypes.f32 [8, 3]
+10 Ops.CONST dtypes.weakint [] 64
+11 Ops.CAST dtypes.i32 [10] dtypes.i32
+12 Ops.RANGE dtypes.i32 [11] (AxisType.LOOP, 0)
+13 Ops.AFTER dtypes.f32 [8, 12]
+14 Ops.INDEX dtypes.f32 [13, 3]
+15 Ops.LOAD dtypes.f32 [14]
+16 Ops.PARAM dtypes.f32 [10] ParamArg(slot=1, dtype=dtypes.f32)
+17 Ops.INDEX dtypes.f32 [16, 12]
+18 Ops.LOAD dtypes.f32 [17]
+19 Ops.ADD dtypes.f32 [15, 18]
+20 Ops.STORE dtypes.void [9, 19]
+21 Ops.END dtypes.void [20, 12]
+22 Ops.SINK dtypes.void [1, 7, 21] KernelInfo(name="custom_sum_64", optimized=True)
+23 Ops.CONST dtypes.weakint [] 16
+24 Ops.PARAM dtypes.u8 [23] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+25 Ops.BITCAST dtypes.u64 [24] dtypes.u64
+26 Ops.INDEX dtypes.u64 [25, 3]
+27 Ops.LOAD dtypes.u64 [26]
+28 Ops.REFPARAM dtypes.f32 [0, 27] ParamArg(slot=0, dtype=dtypes.f32)
+29 Ops.INDEX dtypes.f32 [28, 3]
+30 Ops.STORE dtypes.void [29, 6]
+31 Ops.AFTER dtypes.f32 [28, 30]
+32 Ops.INDEX dtypes.f32 [31, 3]
+33 Ops.AFTER dtypes.f32 [31, 12]
+34 Ops.INDEX dtypes.f32 [33, 3]
+35 Ops.LOAD dtypes.f32 [34]
+36 Ops.CAST dtypes.i32 [0] dtypes.i32
+37 Ops.INDEX dtypes.u64 [25, 36]
+38 Ops.LOAD dtypes.u64 [37]
+39 Ops.REFPARAM dtypes.f32 [10, 38] ParamArg(slot=1, dtype=dtypes.f32)
+40 Ops.INDEX dtypes.f32 [39, 12]
+41 Ops.LOAD dtypes.f32 [40]
+42 Ops.ADD dtypes.f32 [35, 41]
+43 Ops.STORE dtypes.void [32, 42]
+44 Ops.END dtypes.void [43, 12]
+45 Ops.SINK dtypes.void [28, 30, 44] KernelInfo(name="custom_sum_64", estimates=Estimates(ops=64, lds=772, mem=264), optimized=True)
+46 Ops.LINEAR dtypes.void [23, 24, 2, 3, 25, 26, 27, 0, 36, 37, 38, 28, 10, 39, 29, 5, 6, 30, 31, 32, 11, 12, 40, 41, 33, 34, 35, 42, 43, 44, 45]
+47 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void custom_sum_64(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_16))+1));\n  *(((float*)(val0))+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 64; Lidx0++) {\n    float val2 = (*(((float*)(val1))+Lidx0));\n    float val3 = (*(((float*)(val0))+0));\n    *(((float*)(val0))+0) = (val3+val2);\n  }\n}\n"
+48 Ops.PROGRAM dtypes.void [45, 46, 47] ProgramInfo(params=(%1, %16), globals=(0, 1), outs=(0,), ins=(0, 1), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+49 Ops.SINK dtypes.void [22, 48]
+

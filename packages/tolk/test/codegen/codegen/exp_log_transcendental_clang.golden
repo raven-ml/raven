@@ -1,1188 +1,2044 @@
-0 Ops.CONST dtypes.weakint [] 16
-1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
-2 Ops.CONST dtypes.weakint [] 0
-3 Ops.CAST dtypes.i32 [2] dtypes.i32
-4 Ops.CONST dtypes.weakint [] 4
-5 Ops.CAST dtypes.i32 [4] dtypes.i32
-6 Ops.SHRINK dtypes.f32 [1, 3, 5]
-7 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
-8 Ops.SHRINK dtypes.f32 [7, 3, 5]
-9 Ops.LOAD dtypes.f32 [8]
-10 Ops.INDEX dtypes.f32 [9, 3]
-11 Ops.CONST dtypes.weakint [] 1
-12 Ops.CAST dtypes.i32 [11] dtypes.i32
-13 Ops.INDEX dtypes.f32 [9, 12]
-14 Ops.CONST dtypes.weakint [] 2
-15 Ops.CAST dtypes.i32 [14] dtypes.i32
-16 Ops.INDEX dtypes.f32 [9, 15]
-17 Ops.CONST dtypes.weakint [] 3
-18 Ops.CAST dtypes.i32 [17] dtypes.i32
-19 Ops.INDEX dtypes.f32 [9, 18]
-20 Ops.SHRINK dtypes.f32 [7, 5, 5]
-21 Ops.LOAD dtypes.f32 [20]
-22 Ops.INDEX dtypes.f32 [21, 3]
-23 Ops.INDEX dtypes.f32 [21, 12]
-24 Ops.INDEX dtypes.f32 [21, 15]
-25 Ops.INDEX dtypes.f32 [21, 18]
-26 Ops.CONST dtypes.weakint [] 8
-27 Ops.CAST dtypes.i32 [26] dtypes.i32
-28 Ops.SHRINK dtypes.f32 [7, 27, 5]
-29 Ops.LOAD dtypes.f32 [28]
-30 Ops.INDEX dtypes.f32 [29, 3]
-31 Ops.INDEX dtypes.f32 [29, 12]
-32 Ops.INDEX dtypes.f32 [29, 15]
-33 Ops.INDEX dtypes.f32 [29, 18]
-34 Ops.CONST dtypes.weakint [] 12
-35 Ops.CAST dtypes.i32 [34] dtypes.i32
-36 Ops.SHRINK dtypes.f32 [7, 35, 5]
-37 Ops.LOAD dtypes.f32 [36]
-38 Ops.INDEX dtypes.f32 [37, 3]
-39 Ops.INDEX dtypes.f32 [37, 12]
-40 Ops.INDEX dtypes.f32 [37, 15]
-41 Ops.INDEX dtypes.f32 [37, 18]
-42 Ops.STACK dtypes.f32 [10, 13, 16, 19, 22, 23, 24, 25, 30, 31, 32, 33, 38, 39, 40, 41]
-43 Ops.CONST dtypes.weakfloat [] 1.4426950216293335
-44 Ops.CAST dtypes.f32 [43] dtypes.f32
-45 Ops.MUL dtypes.f32 [42, 44]
-46 Ops.CMPNE dtypes.bool [45, 45]
-47 Ops.CONST dtypes.weakfloat [] nan
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
+6 Ops.CONST dtypes.weakint [] 2
+7 Ops.CAST dtypes.i32 [6] dtypes.i32
+8 Ops.SHL dtypes.i32 [5, 7]
+9 Ops.SHRINK dtypes.f32 [2, 8, 4]
+10 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32)
+11 Ops.SHRINK dtypes.f32 [10, 8, 4]
+12 Ops.LOAD dtypes.f32 [11]
+13 Ops.CONST dtypes.weakint [] 0
+14 Ops.CAST dtypes.i32 [13] dtypes.i32
+15 Ops.INDEX dtypes.f32 [12, 14]
+16 Ops.CONST dtypes.weakfloat [] 1.4426950216293335
+17 Ops.CAST dtypes.f32 [16] dtypes.f32
+18 Ops.MUL dtypes.f32 [15, 17]
+19 Ops.CMPNE dtypes.bool [18, 18]
+20 Ops.CONST dtypes.weakfloat [] nan
+21 Ops.CAST dtypes.f32 [20] dtypes.f32
+22 Ops.CONST dtypes.weakfloat [] -150.0
+23 Ops.CAST dtypes.f32 [22] dtypes.f32
+24 Ops.CMPLT dtypes.bool [18, 23]
+25 Ops.CONST dtypes.weakfloat [] 0.0
+26 Ops.CAST dtypes.f32 [25] dtypes.f32
+27 Ops.CONST dtypes.weakfloat [] 128.0
+28 Ops.CAST dtypes.f32 [27] dtypes.f32
+29 Ops.CMPLT dtypes.bool [18, 28]
+30 Ops.CONST dtypes.bool [] False
+31 Ops.CAST dtypes.bool [30] dtypes.bool
+32 Ops.CMPEQ dtypes.bool [29, 31]
+33 Ops.CONST dtypes.weakfloat [] inf
+34 Ops.CAST dtypes.f32 [33] dtypes.f32
+35 Ops.CONST dtypes.weakfloat [] 0.00015359208919107914
+36 Ops.CAST dtypes.f32 [35] dtypes.f32
+37 Ops.CMPNE dtypes.bool [18, 34]
+38 Ops.CONST dtypes.weakfloat [] -inf
+39 Ops.CAST dtypes.f32 [38] dtypes.f32
+40 Ops.CMPNE dtypes.bool [18, 39]
+41 Ops.WHERE dtypes.f32 [40, 18, 26]
+42 Ops.WHERE dtypes.f32 [19, 26, 41]
+43 Ops.WHERE dtypes.f32 [37, 42, 26]
+44 Ops.CMPLT dtypes.bool [43, 26]
+45 Ops.CONST dtypes.weakfloat [] -0.5
+46 Ops.CAST dtypes.f32 [45] dtypes.f32
+47 Ops.CONST dtypes.weakfloat [] 0.5
 48 Ops.CAST dtypes.f32 [47] dtypes.f32
-49 Ops.CONST dtypes.weakfloat [] -150.0
-50 Ops.CAST dtypes.f32 [49] dtypes.f32
-51 Ops.CMPLT dtypes.bool [45, 50]
-52 Ops.CONST dtypes.weakfloat [] 0.0
-53 Ops.CAST dtypes.f32 [52] dtypes.f32
-54 Ops.CONST dtypes.weakfloat [] 128.0
-55 Ops.CAST dtypes.f32 [54] dtypes.f32
-56 Ops.CMPLT dtypes.bool [45, 55]
-57 Ops.CONST dtypes.bool [] False
-58 Ops.CAST dtypes.bool [57] dtypes.bool
-59 Ops.CMPEQ dtypes.bool [56, 58]
-60 Ops.CONST dtypes.weakfloat [] inf
-61 Ops.CAST dtypes.f32 [60] dtypes.f32
-62 Ops.CONST dtypes.weakfloat [] 0.00015359208919107914
-63 Ops.CAST dtypes.f32 [62] dtypes.f32
-64 Ops.CMPNE dtypes.bool [45, 61]
-65 Ops.CONST dtypes.weakfloat [] -inf
-66 Ops.CAST dtypes.f32 [65] dtypes.f32
-67 Ops.CMPNE dtypes.bool [45, 66]
-68 Ops.WHERE dtypes.f32 [67, 45, 53]
-69 Ops.WHERE dtypes.f32 [46, 53, 68]
-70 Ops.WHERE dtypes.f32 [64, 69, 53]
-71 Ops.CMPLT dtypes.bool [70, 53]
-72 Ops.CONST dtypes.weakfloat [] -0.5
-73 Ops.CAST dtypes.f32 [72] dtypes.f32
-74 Ops.CONST dtypes.weakfloat [] 0.5
-75 Ops.CAST dtypes.f32 [74] dtypes.f32
-76 Ops.WHERE dtypes.f32 [71, 73, 75]
-77 Ops.ADD dtypes.f32 [70, 76]
-78 Ops.CAST dtypes.i32 [77] dtypes.i32
-79 Ops.CAST dtypes.f32 [78] dtypes.f32
-80 Ops.SUB dtypes.f32 [70, 79]
-81 Ops.MUL dtypes.f32 [63, 80]
-82 Ops.CONST dtypes.weakfloat [] 0.0013392627006396651
-83 Ops.CAST dtypes.f32 [82] dtypes.f32
-84 Ops.ADD dtypes.f32 [81, 83]
-85 Ops.MUL dtypes.f32 [84, 80]
-86 Ops.CONST dtypes.weakfloat [] 0.009618384763598442
-87 Ops.CAST dtypes.f32 [86] dtypes.f32
-88 Ops.ADD dtypes.f32 [85, 87]
-89 Ops.MUL dtypes.f32 [88, 80]
-90 Ops.CONST dtypes.weakfloat [] 0.055503472685813904
-91 Ops.CAST dtypes.f32 [90] dtypes.f32
-92 Ops.ADD dtypes.f32 [89, 91]
-93 Ops.MUL dtypes.f32 [92, 80]
-94 Ops.CONST dtypes.weakfloat [] 0.24022644758224487
-95 Ops.CAST dtypes.f32 [94] dtypes.f32
-96 Ops.ADD dtypes.f32 [93, 95]
-97 Ops.MUL dtypes.f32 [96, 80]
-98 Ops.CONST dtypes.weakfloat [] 0.6931471824645996
-99 Ops.CAST dtypes.f32 [98] dtypes.f32
-100 Ops.ADD dtypes.f32 [97, 99]
-101 Ops.MUL dtypes.f32 [100, 80]
-102 Ops.CONST dtypes.weakfloat [] 1.0
-103 Ops.CAST dtypes.f32 [102] dtypes.f32
-104 Ops.ADD dtypes.f32 [101, 103]
-105 Ops.SHR dtypes.i32 [78, 12]
-106 Ops.CONST dtypes.weakint [] 127
-107 Ops.CAST dtypes.i32 [106] dtypes.i32
-108 Ops.ADD dtypes.i32 [105, 107]
-109 Ops.CAST dtypes.u32 [108] dtypes.u32
-110 Ops.CONST dtypes.weakint [] 23
-111 Ops.CAST dtypes.u32 [110] dtypes.u32
-112 Ops.SHL dtypes.u32 [109, 111]
-113 Ops.CAST dtypes.i32 [112] dtypes.i32
-114 Ops.BITCAST dtypes.f32 [113] dtypes.f32
-115 Ops.MUL dtypes.f32 [104, 114]
-116 Ops.CAST dtypes.u32 [78] dtypes.u32
-117 Ops.CAST dtypes.u32 [105] dtypes.u32
-118 Ops.SUB dtypes.u32 [116, 117]
-119 Ops.CAST dtypes.i32 [118] dtypes.i32
-120 Ops.CAST dtypes.u32 [119] dtypes.u32
-121 Ops.CAST dtypes.u32 [106] dtypes.u32
-122 Ops.ADD dtypes.u32 [120, 121]
-123 Ops.CAST dtypes.i32 [122] dtypes.i32
-124 Ops.CAST dtypes.u32 [123] dtypes.u32
-125 Ops.SHL dtypes.u32 [124, 111]
-126 Ops.CAST dtypes.i32 [125] dtypes.i32
-127 Ops.BITCAST dtypes.f32 [126] dtypes.f32
-128 Ops.MUL dtypes.f32 [115, 127]
-129 Ops.WHERE dtypes.f32 [59, 61, 128]
-130 Ops.WHERE dtypes.f32 [51, 53, 129]
-131 Ops.WHERE dtypes.f32 [46, 48, 130]
-132 Ops.PARAM dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32)
-133 Ops.SHRINK dtypes.f32 [132, 3, 5]
-134 Ops.LOAD dtypes.f32 [133]
-135 Ops.INDEX dtypes.f32 [134, 3]
-136 Ops.INDEX dtypes.f32 [134, 12]
-137 Ops.INDEX dtypes.f32 [134, 15]
-138 Ops.INDEX dtypes.f32 [134, 18]
-139 Ops.SHRINK dtypes.f32 [132, 5, 5]
-140 Ops.LOAD dtypes.f32 [139]
-141 Ops.INDEX dtypes.f32 [140, 3]
-142 Ops.INDEX dtypes.f32 [140, 12]
-143 Ops.INDEX dtypes.f32 [140, 15]
-144 Ops.INDEX dtypes.f32 [140, 18]
-145 Ops.SHRINK dtypes.f32 [132, 27, 5]
-146 Ops.LOAD dtypes.f32 [145]
-147 Ops.INDEX dtypes.f32 [146, 3]
-148 Ops.INDEX dtypes.f32 [146, 12]
-149 Ops.INDEX dtypes.f32 [146, 15]
-150 Ops.INDEX dtypes.f32 [146, 18]
-151 Ops.SHRINK dtypes.f32 [132, 35, 5]
-152 Ops.LOAD dtypes.f32 [151]
-153 Ops.INDEX dtypes.f32 [152, 3]
-154 Ops.INDEX dtypes.f32 [152, 12]
-155 Ops.INDEX dtypes.f32 [152, 15]
-156 Ops.INDEX dtypes.f32 [152, 18]
-157 Ops.STACK dtypes.f32 [135, 136, 137, 138, 141, 142, 143, 144, 147, 148, 149, 150, 153, 154, 155, 156]
-158 Ops.CMPNE dtypes.bool [157, 157]
-159 Ops.CONST dtypes.weakfloat [] -0.0
-160 Ops.CAST dtypes.f32 [159] dtypes.f32
-161 Ops.CMPLT dtypes.bool [157, 160]
-162 Ops.FDIV dtypes.f32 [103, 157]
-163 Ops.CMPNE dtypes.bool [162, 66]
-164 Ops.CMPNE dtypes.bool [157, 53]
-165 Ops.CMPNE dtypes.bool [157, 61]
-166 Ops.CONST dtypes.weakfloat [] 1.1754943508222875e-38
-167 Ops.CAST dtypes.f32 [166] dtypes.f32
-168 Ops.CMPLT dtypes.bool [157, 167]
-169 Ops.CONST dtypes.weakfloat [] 1.8446744073709552e+19
-170 Ops.CAST dtypes.f32 [169] dtypes.f32
-171 Ops.MUL dtypes.f32 [157, 170]
-172 Ops.WHERE dtypes.f32 [168, 171, 157]
-173 Ops.BITCAST dtypes.i32 [172] dtypes.i32
-174 Ops.CAST dtypes.u32 [173] dtypes.u32
-175 Ops.CONST dtypes.weakfloat [] 1.4142135381698608
-176 Ops.CAST dtypes.f32 [175] dtypes.f32
-177 Ops.MUL dtypes.f32 [172, 176]
-178 Ops.BITCAST dtypes.i32 [177] dtypes.i32
-179 Ops.CAST dtypes.i32 [110] dtypes.i32
-180 Ops.SHR dtypes.i32 [178, 179]
-181 Ops.CONST dtypes.weakint [] 255
-182 Ops.CAST dtypes.i32 [181] dtypes.i32
-183 Ops.AND dtypes.i32 [180, 182]
-184 Ops.CONST dtypes.weakint [] -127
-185 Ops.CAST dtypes.i32 [184] dtypes.i32
-186 Ops.ADD dtypes.i32 [183, 185]
-187 Ops.CAST dtypes.f32 [186] dtypes.f32
-188 Ops.NEG dtypes.f32 [187]
-189 Ops.CAST dtypes.i32 [188] dtypes.i32
-190 Ops.CAST dtypes.u32 [189] dtypes.u32
-191 Ops.SHL dtypes.u32 [190, 111]
-192 Ops.CAST dtypes.i32 [191] dtypes.i32
-193 Ops.CAST dtypes.u32 [192] dtypes.u32
-194 Ops.ADD dtypes.u32 [174, 193]
-195 Ops.CAST dtypes.i32 [194] dtypes.i32
-196 Ops.BITCAST dtypes.f32 [195] dtypes.f32
-197 Ops.CONST dtypes.weakfloat [] -1.0
-198 Ops.CAST dtypes.f32 [197] dtypes.f32
-199 Ops.ADD dtypes.f32 [196, 198]
-200 Ops.MUL dtypes.f32 [75, 199]
-201 Ops.MUL dtypes.f32 [200, 199]
-202 Ops.SUB dtypes.f32 [199, 201]
-203 Ops.BITCAST dtypes.u32 [202] dtypes.u32
-204 Ops.CONST dtypes.weakint [] 4294963200
-205 Ops.CAST dtypes.u32 [204] dtypes.u32
-206 Ops.AND dtypes.u32 [203, 205]
-207 Ops.BITCAST dtypes.f32 [206] dtypes.f32
-208 Ops.SUB dtypes.f32 [199, 207]
-209 Ops.SUB dtypes.f32 [208, 201]
-210 Ops.CONST dtypes.weakfloat [] 2.0
-211 Ops.CAST dtypes.f32 [210] dtypes.f32
-212 Ops.ADD dtypes.f32 [211, 199]
-213 Ops.FDIV dtypes.f32 [103, 212]
-214 Ops.MUL dtypes.f32 [199, 213]
-215 Ops.MUL dtypes.f32 [214, 214]
-216 Ops.CONST dtypes.weakfloat [] 0.24279078841209412
-217 Ops.CAST dtypes.f32 [216] dtypes.f32
-218 Ops.MUL dtypes.f32 [217, 215]
-219 Ops.CONST dtypes.weakfloat [] 0.2849878668785095
-220 Ops.CAST dtypes.f32 [219] dtypes.f32
-221 Ops.ADD dtypes.f32 [218, 220]
-222 Ops.MUL dtypes.f32 [221, 215]
-223 Ops.CONST dtypes.weakfloat [] 0.40000972151756287
-224 Ops.CAST dtypes.f32 [223] dtypes.f32
-225 Ops.ADD dtypes.f32 [222, 224]
-226 Ops.MUL dtypes.f32 [225, 215]
-227 Ops.CONST dtypes.weakfloat [] 0.6666666269302368
-228 Ops.CAST dtypes.f32 [227] dtypes.f32
-229 Ops.ADD dtypes.f32 [226, 228]
-230 Ops.MUL dtypes.f32 [215, 229]
-231 Ops.ADD dtypes.f32 [201, 230]
-232 Ops.MUL dtypes.f32 [214, 231]
-233 Ops.ADD dtypes.f32 [209, 232]
-234 Ops.ADD dtypes.f32 [233, 207]
-235 Ops.CONST dtypes.weakfloat [] -0.00017605285393074155
-236 Ops.CAST dtypes.f32 [235] dtypes.f32
-237 Ops.MUL dtypes.f32 [234, 236]
-238 Ops.CONST dtypes.weakfloat [] 1.44287109375
-239 Ops.CAST dtypes.f32 [238] dtypes.f32
-240 Ops.MUL dtypes.f32 [233, 239]
-241 Ops.ADD dtypes.f32 [237, 240]
-242 Ops.CONST dtypes.weakfloat [] -64.0
-243 Ops.CAST dtypes.f32 [242] dtypes.f32
-244 Ops.ADD dtypes.f32 [187, 243]
-245 Ops.WHERE dtypes.f32 [168, 244, 187]
-246 Ops.MUL dtypes.f32 [207, 239]
-247 Ops.ADD dtypes.f32 [245, 246]
-248 Ops.SUB dtypes.f32 [245, 247]
-249 Ops.ADD dtypes.f32 [248, 246]
-250 Ops.ADD dtypes.f32 [241, 249]
-251 Ops.ADD dtypes.f32 [250, 247]
-252 Ops.WHERE dtypes.f32 [165, 251, 61]
-253 Ops.WHERE dtypes.f32 [164, 252, 66]
-254 Ops.WHERE dtypes.f32 [163, 253, 66]
-255 Ops.WHERE dtypes.f32 [161, 48, 254]
-256 Ops.WHERE dtypes.f32 [158, 48, 255]
-257 Ops.MUL dtypes.f32 [256, 99]
-258 Ops.ADD dtypes.f32 [131, 257]
-259 Ops.PARAM dtypes.f32 [0] ParamArg(slot=3, dtype=dtypes.f32)
-260 Ops.SHRINK dtypes.f32 [259, 3, 5]
-261 Ops.LOAD dtypes.f32 [260]
-262 Ops.INDEX dtypes.f32 [261, 3]
-263 Ops.INDEX dtypes.f32 [261, 12]
-264 Ops.INDEX dtypes.f32 [261, 15]
-265 Ops.INDEX dtypes.f32 [261, 18]
-266 Ops.SHRINK dtypes.f32 [259, 5, 5]
-267 Ops.LOAD dtypes.f32 [266]
-268 Ops.INDEX dtypes.f32 [267, 3]
-269 Ops.INDEX dtypes.f32 [267, 12]
-270 Ops.INDEX dtypes.f32 [267, 15]
-271 Ops.INDEX dtypes.f32 [267, 18]
-272 Ops.SHRINK dtypes.f32 [259, 27, 5]
-273 Ops.LOAD dtypes.f32 [272]
-274 Ops.INDEX dtypes.f32 [273, 3]
-275 Ops.INDEX dtypes.f32 [273, 12]
-276 Ops.INDEX dtypes.f32 [273, 15]
-277 Ops.INDEX dtypes.f32 [273, 18]
-278 Ops.SHRINK dtypes.f32 [259, 35, 5]
-279 Ops.LOAD dtypes.f32 [278]
-280 Ops.INDEX dtypes.f32 [279, 3]
-281 Ops.INDEX dtypes.f32 [279, 12]
-282 Ops.INDEX dtypes.f32 [279, 15]
-283 Ops.INDEX dtypes.f32 [279, 18]
-284 Ops.STACK dtypes.f32 [262, 263, 264, 265, 268, 269, 270, 271, 274, 275, 276, 277, 280, 281, 282, 283]
-285 Ops.CMPNE dtypes.bool [284, 61]
-286 Ops.CMPNE dtypes.bool [284, 284]
-287 Ops.CMPNE dtypes.bool [284, 66]
-288 Ops.WHERE dtypes.f32 [287, 284, 53]
-289 Ops.WHERE dtypes.f32 [286, 53, 288]
-290 Ops.WHERE dtypes.f32 [285, 289, 53]
-291 Ops.CMPNE dtypes.bool [290, 53]
-292 Ops.CMPLT dtypes.bool [290, 53]
-293 Ops.WHERE dtypes.f32 [292, 198, 103]
-294 Ops.MUL dtypes.f32 [290, 293]
-295 Ops.CONST dtypes.weakfloat [] 30.0
-296 Ops.CAST dtypes.f32 [295] dtypes.f32
-297 Ops.CMPLT dtypes.bool [294, 296]
-298 Ops.CONST dtypes.weakfloat [] 0.6366197466850281
-299 Ops.CAST dtypes.f32 [298] dtypes.f32
-300 Ops.MUL dtypes.f32 [294, 299]
-301 Ops.CMPLT dtypes.bool [300, 53]
-302 Ops.WHERE dtypes.f32 [301, 73, 75]
-303 Ops.ADD dtypes.f32 [300, 302]
+49 Ops.WHERE dtypes.f32 [44, 46, 48]
+50 Ops.ADD dtypes.f32 [43, 49]
+51 Ops.CAST dtypes.i32 [50] dtypes.i32
+52 Ops.CAST dtypes.f32 [51] dtypes.f32
+53 Ops.SUB dtypes.f32 [43, 52]
+54 Ops.MUL dtypes.f32 [36, 53]
+55 Ops.CONST dtypes.weakfloat [] 0.0013392627006396651
+56 Ops.CAST dtypes.f32 [55] dtypes.f32
+57 Ops.ADD dtypes.f32 [54, 56]
+58 Ops.MUL dtypes.f32 [57, 53]
+59 Ops.CONST dtypes.weakfloat [] 0.009618384763598442
+60 Ops.CAST dtypes.f32 [59] dtypes.f32
+61 Ops.ADD dtypes.f32 [58, 60]
+62 Ops.MUL dtypes.f32 [61, 53]
+63 Ops.CONST dtypes.weakfloat [] 0.055503472685813904
+64 Ops.CAST dtypes.f32 [63] dtypes.f32
+65 Ops.ADD dtypes.f32 [62, 64]
+66 Ops.MUL dtypes.f32 [65, 53]
+67 Ops.CONST dtypes.weakfloat [] 0.24022644758224487
+68 Ops.CAST dtypes.f32 [67] dtypes.f32
+69 Ops.ADD dtypes.f32 [66, 68]
+70 Ops.MUL dtypes.f32 [69, 53]
+71 Ops.CONST dtypes.weakfloat [] 0.6931471824645996
+72 Ops.CAST dtypes.f32 [71] dtypes.f32
+73 Ops.ADD dtypes.f32 [70, 72]
+74 Ops.MUL dtypes.f32 [73, 53]
+75 Ops.CONST dtypes.weakfloat [] 1.0
+76 Ops.CAST dtypes.f32 [75] dtypes.f32
+77 Ops.ADD dtypes.f32 [74, 76]
+78 Ops.CONST dtypes.weakint [] 1
+79 Ops.CAST dtypes.i32 [78] dtypes.i32
+80 Ops.SHR dtypes.i32 [51, 79]
+81 Ops.CONST dtypes.weakint [] 127
+82 Ops.CAST dtypes.i32 [81] dtypes.i32
+83 Ops.ADD dtypes.i32 [80, 82]
+84 Ops.CONST dtypes.weakint [] 23
+85 Ops.CAST dtypes.i32 [84] dtypes.i32
+86 Ops.SHL dtypes.i32 [83, 85]
+87 Ops.BITCAST dtypes.f32 [86] dtypes.f32
+88 Ops.MUL dtypes.f32 [77, 87]
+89 Ops.SUB dtypes.i32 [51, 80]
+90 Ops.ADD dtypes.i32 [89, 82]
+91 Ops.SHL dtypes.i32 [90, 85]
+92 Ops.BITCAST dtypes.f32 [91] dtypes.f32
+93 Ops.MUL dtypes.f32 [88, 92]
+94 Ops.WHERE dtypes.f32 [32, 34, 93]
+95 Ops.WHERE dtypes.f32 [24, 26, 94]
+96 Ops.WHERE dtypes.f32 [19, 21, 95]
+97 Ops.PARAM dtypes.f32 [1] ParamArg(slot=2, dtype=dtypes.f32)
+98 Ops.SHRINK dtypes.f32 [97, 8, 4]
+99 Ops.LOAD dtypes.f32 [98]
+100 Ops.INDEX dtypes.f32 [99, 14]
+101 Ops.CMPNE dtypes.bool [100, 100]
+102 Ops.FDIV dtypes.f32 [76, 100]
+103 Ops.CMPNE dtypes.bool [102, 39]
+104 Ops.CONST dtypes.weakfloat [] -0.0
+105 Ops.CAST dtypes.f32 [104] dtypes.f32
+106 Ops.CMPLT dtypes.bool [100, 105]
+107 Ops.CMPNE dtypes.bool [100, 26]
+108 Ops.CMPNE dtypes.bool [100, 34]
+109 Ops.CONST dtypes.weakfloat [] 0.43745502829551697
+110 Ops.CAST dtypes.f32 [109] dtypes.f32
+111 Ops.CONST dtypes.weakfloat [] 9.999999747378752e-05
+112 Ops.CAST dtypes.f32 [111] dtypes.f32
+113 Ops.CMPLT dtypes.bool [100, 112]
+114 Ops.CONST dtypes.weakfloat [] 1.8446744073709552e+19
+115 Ops.CAST dtypes.f32 [114] dtypes.f32
+116 Ops.MUL dtypes.f32 [100, 115]
+117 Ops.WHERE dtypes.f32 [113, 116, 100]
+118 Ops.BITCAST dtypes.i32 [117] dtypes.i32
+119 Ops.CONST dtypes.weakfloat [] 1.3333333730697632
+120 Ops.CAST dtypes.f32 [119] dtypes.f32
+121 Ops.MUL dtypes.f32 [117, 120]
+122 Ops.BITCAST dtypes.i32 [121] dtypes.i32
+123 Ops.SHR dtypes.i32 [122, 85]
+124 Ops.CONST dtypes.weakint [] 255
+125 Ops.CAST dtypes.i32 [124] dtypes.i32
+126 Ops.AND dtypes.i32 [123, 125]
+127 Ops.CONST dtypes.weakint [] -127
+128 Ops.CAST dtypes.i32 [127] dtypes.i32
+129 Ops.ADD dtypes.i32 [126, 128]
+130 Ops.CAST dtypes.f32 [129] dtypes.f32
+131 Ops.NEG dtypes.f32 [130]
+132 Ops.CAST dtypes.i32 [131] dtypes.i32
+133 Ops.SHL dtypes.i32 [132, 85]
+134 Ops.ADD dtypes.i32 [118, 133]
+135 Ops.BITCAST dtypes.f32 [134] dtypes.f32
+136 Ops.CONST dtypes.weakfloat [] -1.0
+137 Ops.CAST dtypes.f32 [136] dtypes.f32
+138 Ops.ADD dtypes.f32 [135, 137]
+139 Ops.ADD dtypes.f32 [135, 76]
+140 Ops.FDIV dtypes.f32 [138, 139]
+141 Ops.MUL dtypes.f32 [140, 140]
+142 Ops.MUL dtypes.f32 [110, 141]
+143 Ops.CONST dtypes.weakfloat [] 0.5764790177345276
+144 Ops.CAST dtypes.f32 [143] dtypes.f32
+145 Ops.ADD dtypes.f32 [142, 144]
+146 Ops.MUL dtypes.f32 [145, 141]
+147 Ops.CONST dtypes.weakfloat [] 0.961801290512085
+148 Ops.CAST dtypes.f32 [147] dtypes.f32
+149 Ops.ADD dtypes.f32 [146, 148]
+150 Ops.MUL dtypes.f32 [140, 141]
+151 Ops.MUL dtypes.f32 [149, 150]
+152 Ops.CONST dtypes.weakfloat [] -64.0
+153 Ops.CAST dtypes.f32 [152] dtypes.f32
+154 Ops.ADD dtypes.f32 [130, 153]
+155 Ops.WHERE dtypes.f32 [113, 154, 130]
+156 Ops.ADD dtypes.f32 [151, 155]
+157 Ops.CONST dtypes.weakfloat [] 2.885390043258667
+158 Ops.CAST dtypes.f32 [157] dtypes.f32
+159 Ops.MUL dtypes.f32 [140, 158]
+160 Ops.ADD dtypes.f32 [156, 159]
+161 Ops.CONST dtypes.weakfloat [] 3.2734472910078694e-08
+162 Ops.CAST dtypes.f32 [161] dtypes.f32
+163 Ops.MUL dtypes.f32 [140, 162]
+164 Ops.ADD dtypes.f32 [160, 163]
+165 Ops.WHERE dtypes.f32 [108, 164, 34]
+166 Ops.WHERE dtypes.f32 [107, 165, 39]
+167 Ops.WHERE dtypes.f32 [106, 21, 166]
+168 Ops.WHERE dtypes.f32 [103, 167, 39]
+169 Ops.WHERE dtypes.f32 [101, 21, 168]
+170 Ops.MUL dtypes.f32 [169, 72]
+171 Ops.ADD dtypes.f32 [96, 170]
+172 Ops.PARAM dtypes.f32 [1] ParamArg(slot=3, dtype=dtypes.f32)
+173 Ops.SHRINK dtypes.f32 [172, 8, 4]
+174 Ops.LOAD dtypes.f32 [173]
+175 Ops.INDEX dtypes.f32 [174, 14]
+176 Ops.CMPNE dtypes.bool [175, 34]
+177 Ops.CMPNE dtypes.bool [175, 175]
+178 Ops.CMPNE dtypes.bool [175, 39]
+179 Ops.WHERE dtypes.f32 [178, 175, 26]
+180 Ops.WHERE dtypes.f32 [177, 26, 179]
+181 Ops.WHERE dtypes.f32 [176, 180, 26]
+182 Ops.CMPNE dtypes.bool [181, 26]
+183 Ops.CMPLT dtypes.bool [181, 26]
+184 Ops.WHERE dtypes.f32 [183, 137, 76]
+185 Ops.WHERE dtypes.f32 [182, 184, 26]
+186 Ops.MUL dtypes.f32 [181, 185]
+187 Ops.CONST dtypes.weakfloat [] 30.0
+188 Ops.CAST dtypes.f32 [187] dtypes.f32
+189 Ops.CMPLT dtypes.bool [186, 188]
+190 Ops.CONST dtypes.weakfloat [] 0.31830987334251404
+191 Ops.CAST dtypes.f32 [190] dtypes.f32
+192 Ops.MUL dtypes.f32 [186, 191]
+193 Ops.CMPLT dtypes.bool [192, 26]
+194 Ops.WHERE dtypes.f32 [193, 46, 48]
+195 Ops.ADD dtypes.f32 [192, 194]
+196 Ops.CAST dtypes.i32 [195] dtypes.i32
+197 Ops.CAST dtypes.f32 [196] dtypes.f32
+198 Ops.CONST dtypes.weakfloat [] -1.215420125655342e-10
+199 Ops.CAST dtypes.f32 [198] dtypes.f32
+200 Ops.MUL dtypes.f32 [197, 199]
+201 Ops.CONST dtypes.weakfloat [] -1.984187258941006e-09
+202 Ops.CAST dtypes.f32 [201] dtypes.f32
+203 Ops.MUL dtypes.f32 [197, 202]
+204 Ops.CONST dtypes.weakfloat [] -0.0001131594181060791
+205 Ops.CAST dtypes.f32 [204] dtypes.f32
+206 Ops.MUL dtypes.f32 [197, 205]
+207 Ops.CONST dtypes.weakfloat [] -3.1414794921875
+208 Ops.CAST dtypes.f32 [207] dtypes.f32
+209 Ops.MUL dtypes.f32 [197, 208]
+210 Ops.ADD dtypes.f32 [209, 186]
+211 Ops.ADD dtypes.f32 [206, 210]
+212 Ops.ADD dtypes.f32 [203, 211]
+213 Ops.ADD dtypes.f32 [200, 212]
+214 Ops.CONST dtypes.weakfloat [] 2.6083159809786594e-06
+215 Ops.CAST dtypes.f32 [214] dtypes.f32
+216 Ops.MUL dtypes.f32 [213, 213]
+217 Ops.MUL dtypes.f32 [215, 216]
+218 Ops.CONST dtypes.weakfloat [] -0.00019810690719168633
+219 Ops.CAST dtypes.f32 [218] dtypes.f32
+220 Ops.ADD dtypes.f32 [217, 219]
+221 Ops.MUL dtypes.f32 [220, 216]
+222 Ops.CONST dtypes.weakfloat [] 0.00833307858556509
+223 Ops.CAST dtypes.f32 [222] dtypes.f32
+224 Ops.ADD dtypes.f32 [221, 223]
+225 Ops.MUL dtypes.f32 [224, 216]
+226 Ops.CONST dtypes.weakfloat [] -0.16666659712791443
+227 Ops.CAST dtypes.f32 [226] dtypes.f32
+228 Ops.ADD dtypes.f32 [225, 227]
+229 Ops.MUL dtypes.f32 [228, 216]
+230 Ops.ADD dtypes.f32 [229, 76]
+231 Ops.MUL dtypes.f32 [213, 230]
+232 Ops.AND dtypes.i32 [196, 79]
+233 Ops.CMPNE dtypes.bool [232, 14]
+234 Ops.WHERE dtypes.f32 [233, 137, 76]
+235 Ops.MUL dtypes.f32 [231, 234]
+236 Ops.BITCAST dtypes.u32 [186] dtypes.u32
+237 Ops.CONST dtypes.weakint [] 2155872255
+238 Ops.CAST dtypes.u32 [237] dtypes.u32
+239 Ops.AND dtypes.u32 [236, 238]
+240 Ops.CONST dtypes.weakint [] 1056964608
+241 Ops.CAST dtypes.u32 [240] dtypes.u32
+242 Ops.OR dtypes.u32 [239, 241]
+243 Ops.BITCAST dtypes.f32 [242] dtypes.f32
+244 Ops.CMPLT dtypes.bool [243, 48]
+245 Ops.CONST dtypes.weakfloat [] 4294967296.0
+246 Ops.CAST dtypes.f32 [245] dtypes.f32
+247 Ops.MUL dtypes.f32 [243, 246]
+248 Ops.CAST dtypes.u64 [247] dtypes.u64
+249 Ops.CAST dtypes.u32 [84] dtypes.u32
+250 Ops.SHR dtypes.u32 [236, 249]
+251 Ops.CAST dtypes.u32 [124] dtypes.u32
+252 Ops.AND dtypes.u32 [250, 251]
+253 Ops.CONST dtypes.weakint [] 4294967170
+254 Ops.CAST dtypes.u32 [253] dtypes.u32
+255 Ops.ADD dtypes.u32 [252, 254]
+256 Ops.CAST dtypes.u64 [255] dtypes.u64
+257 Ops.CONST dtypes.weakint [] 5
+258 Ops.CAST dtypes.u64 [257] dtypes.u64
+259 Ops.SHR dtypes.u64 [256, 258]
+260 Ops.CAST dtypes.u64 [13] dtypes.u64
+261 Ops.CMPNE dtypes.bool [259, 260]
+262 Ops.CAST dtypes.u64 [78] dtypes.u64
+263 Ops.CMPNE dtypes.bool [259, 262]
+264 Ops.CAST dtypes.u64 [6] dtypes.u64
+265 Ops.CMPNE dtypes.bool [259, 264]
+266 Ops.CONST dtypes.weakint [] 3
+267 Ops.CAST dtypes.u64 [266] dtypes.u64
+268 Ops.CMPNE dtypes.bool [259, 267]
+269 Ops.CAST dtypes.u64 [3] dtypes.u64
+270 Ops.CMPNE dtypes.bool [259, 269]
+271 Ops.CMPNE dtypes.bool [259, 258]
+272 Ops.CAST dtypes.u32 [13] dtypes.u32
+273 Ops.CONST dtypes.weakint [] 920167782
+274 Ops.CAST dtypes.u32 [273] dtypes.u32
+275 Ops.WHERE dtypes.u32 [271, 272, 274]
+276 Ops.CONST dtypes.weakint [] 2102212464
+277 Ops.CAST dtypes.u32 [276] dtypes.u32
+278 Ops.WHERE dtypes.u32 [270, 275, 277]
+279 Ops.CONST dtypes.weakint [] 2131351028
+280 Ops.CAST dtypes.u32 [279] dtypes.u32
+281 Ops.WHERE dtypes.u32 [268, 278, 280]
+282 Ops.CONST dtypes.weakint [] 2475754826
+283 Ops.CAST dtypes.u32 [282] dtypes.u32
+284 Ops.WHERE dtypes.u32 [265, 281, 283]
+285 Ops.CONST dtypes.weakint [] 683565275
+286 Ops.CAST dtypes.u32 [285] dtypes.u32
+287 Ops.WHERE dtypes.u32 [263, 284, 286]
+288 Ops.WHERE dtypes.u32 [261, 287, 272]
+289 Ops.CAST dtypes.u64 [288] dtypes.u64
+290 Ops.CAST dtypes.i32 [255] dtypes.i32
+291 Ops.CONST dtypes.weakint [] 31
+292 Ops.CAST dtypes.i32 [291] dtypes.i32
+293 Ops.AND dtypes.i32 [290, 292]
+294 Ops.CAST dtypes.u64 [293] dtypes.u64
+295 Ops.SHL dtypes.u64 [289, 294]
+296 Ops.CAST dtypes.u32 [295] dtypes.u32
+297 Ops.WHERE dtypes.u32 [270, 272, 274]
+298 Ops.WHERE dtypes.u32 [268, 297, 277]
+299 Ops.WHERE dtypes.u32 [265, 298, 280]
+300 Ops.WHERE dtypes.u32 [263, 299, 283]
+301 Ops.WHERE dtypes.u32 [261, 300, 286]
+302 Ops.CAST dtypes.u64 [301] dtypes.u64
+303 Ops.CONST dtypes.weakint [] 32
 304 Ops.CAST dtypes.i32 [303] dtypes.i32
-305 Ops.BITCAST dtypes.u32 [294] dtypes.u32
-306 Ops.CONST dtypes.weakint [] 2155872255
-307 Ops.CAST dtypes.u32 [306] dtypes.u32
-308 Ops.AND dtypes.u32 [305, 307]
-309 Ops.CONST dtypes.weakint [] 1056964608
-310 Ops.CAST dtypes.u32 [309] dtypes.u32
-311 Ops.OR dtypes.u32 [308, 310]
-312 Ops.BITCAST dtypes.f32 [311] dtypes.f32
-313 Ops.CONST dtypes.weakfloat [] 16777216.0
-314 Ops.CAST dtypes.f32 [313] dtypes.f32
-315 Ops.MUL dtypes.f32 [312, 314]
-316 Ops.CAST dtypes.u64 [315] dtypes.u64
-317 Ops.CONST dtypes.weakint [] 4294967295
-318 Ops.CAST dtypes.u64 [317] dtypes.u64
-319 Ops.AND dtypes.u64 [316, 318]
-320 Ops.SHR dtypes.u32 [305, 111]
-321 Ops.CAST dtypes.u32 [181] dtypes.u32
-322 Ops.AND dtypes.u32 [320, 321]
-323 Ops.CONST dtypes.weakint [] 4294967170
-324 Ops.CAST dtypes.u32 [323] dtypes.u32
-325 Ops.ADD dtypes.u32 [322, 324]
-326 Ops.CAST dtypes.i32 [325] dtypes.i32
-327 Ops.CAST dtypes.u32 [326] dtypes.u32
-328 Ops.CONST dtypes.weakint [] 104
-329 Ops.CAST dtypes.u32 [328] dtypes.u32
-330 Ops.ADD dtypes.u32 [327, 329]
-331 Ops.CAST dtypes.i32 [330] dtypes.i32
-332 Ops.CMPLT dtypes.bool [331, 3]
-333 Ops.WHERE dtypes.i32 [332, 3, 331]
-334 Ops.CONST dtypes.weakint [] 5
-335 Ops.CAST dtypes.i32 [334] dtypes.i32
-336 Ops.SHR dtypes.i32 [333, 335]
-337 Ops.AND dtypes.i32 [336, 12]
-338 Ops.CMPNE dtypes.bool [337, 3]
-339 Ops.AND dtypes.i32 [336, 15]
-340 Ops.CMPNE dtypes.bool [339, 3]
-341 Ops.AND dtypes.i32 [336, 5]
-342 Ops.CMPNE dtypes.bool [341, 3]
-343 Ops.CONST dtypes.weakint [] 2102212464
-344 Ops.CAST dtypes.u64 [343] dtypes.u64
-345 Ops.CAST dtypes.u64 [2] dtypes.u64
-346 Ops.WHERE dtypes.u64 [342, 344, 345]
-347 Ops.CONST dtypes.weakint [] 2475754826
-348 Ops.CAST dtypes.u64 [347] dtypes.u64
-349 Ops.WHERE dtypes.u64 [342, 348, 345]
-350 Ops.WHERE dtypes.u64 [340, 346, 349]
-351 Ops.CONST dtypes.weakint [] 2131351028
+305 Ops.SUB dtypes.i32 [304, 293]
+306 Ops.CAST dtypes.u64 [305] dtypes.u64
+307 Ops.SHR dtypes.u64 [302, 306]
+308 Ops.CAST dtypes.u32 [307] dtypes.u32
+309 Ops.OR dtypes.u32 [296, 308]
+310 Ops.CAST dtypes.u64 [309] dtypes.u64
+311 Ops.MUL dtypes.u64 [248, 310]
+312 Ops.CAST dtypes.u64 [303] dtypes.u64
+313 Ops.SHL dtypes.u64 [311, 312]
+314 Ops.SHL dtypes.u64 [302, 294]
+315 Ops.CAST dtypes.u32 [314] dtypes.u32
+316 Ops.WHERE dtypes.u32 [268, 272, 274]
+317 Ops.WHERE dtypes.u32 [265, 316, 277]
+318 Ops.WHERE dtypes.u32 [263, 317, 280]
+319 Ops.WHERE dtypes.u32 [261, 318, 283]
+320 Ops.CAST dtypes.u64 [319] dtypes.u64
+321 Ops.SHR dtypes.u64 [320, 306]
+322 Ops.CAST dtypes.u32 [321] dtypes.u32
+323 Ops.OR dtypes.u32 [315, 322]
+324 Ops.CAST dtypes.u64 [323] dtypes.u64
+325 Ops.MUL dtypes.u64 [248, 324]
+326 Ops.ADD dtypes.u64 [313, 325]
+327 Ops.SHL dtypes.u64 [320, 294]
+328 Ops.CAST dtypes.u32 [327] dtypes.u32
+329 Ops.WHERE dtypes.u32 [265, 272, 274]
+330 Ops.WHERE dtypes.u32 [263, 329, 277]
+331 Ops.WHERE dtypes.u32 [261, 330, 280]
+332 Ops.CAST dtypes.u64 [331] dtypes.u64
+333 Ops.SHR dtypes.u64 [332, 306]
+334 Ops.CAST dtypes.u32 [333] dtypes.u32
+335 Ops.OR dtypes.u32 [328, 334]
+336 Ops.CAST dtypes.u64 [335] dtypes.u64
+337 Ops.MUL dtypes.u64 [248, 336]
+338 Ops.SHR dtypes.u64 [337, 312]
+339 Ops.ADD dtypes.u64 [326, 338]
+340 Ops.CONST dtypes.weakint [] 4611686018427387903
+341 Ops.CAST dtypes.u64 [340] dtypes.u64
+342 Ops.AND dtypes.u64 [339, 341]
+343 Ops.CAST dtypes.f32 [342] dtypes.f32
+344 Ops.CONST dtypes.weakfloat [] 3.4061216748705226e-19
+345 Ops.CAST dtypes.f32 [344] dtypes.f32
+346 Ops.MUL dtypes.f32 [343, 345]
+347 Ops.CONST dtypes.weakfloat [] -1.5707963705062866
+348 Ops.CAST dtypes.f32 [347] dtypes.f32
+349 Ops.ADD dtypes.f32 [346, 348]
+350 Ops.WHERE dtypes.f32 [244, 346, 349]
+351 Ops.CONST dtypes.weakint [] 62
 352 Ops.CAST dtypes.u64 [351] dtypes.u64
-353 Ops.WHERE dtypes.u64 [342, 352, 345]
-354 Ops.CONST dtypes.weakint [] 683565275
-355 Ops.CAST dtypes.u64 [354] dtypes.u64
-356 Ops.WHERE dtypes.u64 [342, 355, 345]
-357 Ops.WHERE dtypes.u64 [340, 353, 356]
-358 Ops.WHERE dtypes.u64 [338, 350, 357]
-359 Ops.CONST dtypes.weakint [] 31
-360 Ops.CAST dtypes.i32 [359] dtypes.i32
-361 Ops.AND dtypes.i32 [333, 360]
-362 Ops.CAST dtypes.u64 [361] dtypes.u64
-363 Ops.SHL dtypes.u64 [358, 362]
-364 Ops.CONST dtypes.weakint [] 920167782
-365 Ops.CAST dtypes.u64 [364] dtypes.u64
-366 Ops.WHERE dtypes.u64 [342, 365, 355]
-367 Ops.WHERE dtypes.u64 [340, 366, 353]
-368 Ops.WHERE dtypes.u64 [338, 367, 350]
-369 Ops.CONST dtypes.weakint [] 32
-370 Ops.CAST dtypes.u64 [369] dtypes.u64
-371 Ops.SUB dtypes.u64 [370, 362]
-372 Ops.SHR dtypes.u64 [368, 371]
-373 Ops.OR dtypes.u64 [363, 372]
-374 Ops.AND dtypes.u64 [373, 318]
-375 Ops.MUL dtypes.u64 [319, 374]
-376 Ops.AND dtypes.u64 [375, 318]
-377 Ops.SHL dtypes.u64 [368, 362]
-378 Ops.CONST dtypes.weakint [] 1326507024
-379 Ops.CAST dtypes.u64 [378] dtypes.u64
-380 Ops.WHERE dtypes.u64 [342, 379, 348]
-381 Ops.WHERE dtypes.u64 [340, 380, 346]
-382 Ops.WHERE dtypes.u64 [338, 381, 367]
-383 Ops.SHR dtypes.u64 [382, 371]
-384 Ops.OR dtypes.u64 [377, 383]
-385 Ops.AND dtypes.u64 [384, 318]
-386 Ops.MUL dtypes.u64 [319, 385]
-387 Ops.SHR dtypes.u64 [386, 370]
-388 Ops.ADD dtypes.u64 [376, 387]
-389 Ops.AND dtypes.u64 [386, 318]
-390 Ops.SHL dtypes.u64 [382, 362]
-391 Ops.CONST dtypes.weakint [] 2140428522
-392 Ops.CAST dtypes.u64 [391] dtypes.u64
-393 Ops.WHERE dtypes.u64 [342, 392, 352]
-394 Ops.WHERE dtypes.u64 [340, 393, 366]
-395 Ops.WHERE dtypes.u64 [338, 394, 381]
-396 Ops.SHR dtypes.u64 [395, 371]
-397 Ops.OR dtypes.u64 [390, 396]
-398 Ops.AND dtypes.u64 [397, 318]
-399 Ops.MUL dtypes.u64 [319, 398]
-400 Ops.SHR dtypes.u64 [399, 370]
-401 Ops.ADD dtypes.u64 [389, 400]
-402 Ops.AND dtypes.u64 [399, 318]
-403 Ops.SHL dtypes.u64 [395, 362]
-404 Ops.CONST dtypes.weakint [] 4155437400
-405 Ops.CAST dtypes.u64 [404] dtypes.u64
-406 Ops.WHERE dtypes.u64 [342, 405, 344]
-407 Ops.WHERE dtypes.u64 [340, 406, 380]
-408 Ops.WHERE dtypes.u64 [338, 407, 394]
-409 Ops.SHR dtypes.u64 [408, 371]
-410 Ops.OR dtypes.u64 [403, 409]
-411 Ops.AND dtypes.u64 [410, 318]
-412 Ops.MUL dtypes.u64 [319, 411]
-413 Ops.SHR dtypes.u64 [412, 370]
-414 Ops.ADD dtypes.u64 [402, 413]
-415 Ops.AND dtypes.u64 [412, 318]
-416 Ops.SHL dtypes.u64 [408, 362]
-417 Ops.CONST dtypes.weakint [] 1841896334
-418 Ops.CAST dtypes.u64 [417] dtypes.u64
-419 Ops.WHERE dtypes.u64 [342, 418, 365]
-420 Ops.WHERE dtypes.u64 [340, 419, 393]
-421 Ops.WHERE dtypes.u64 [338, 420, 407]
-422 Ops.SHR dtypes.u64 [421, 371]
-423 Ops.OR dtypes.u64 [416, 422]
-424 Ops.AND dtypes.u64 [423, 318]
-425 Ops.MUL dtypes.u64 [319, 424]
-426 Ops.SHR dtypes.u64 [425, 370]
-427 Ops.ADD dtypes.u64 [415, 426]
-428 Ops.AND dtypes.u64 [425, 318]
-429 Ops.SHL dtypes.u64 [421, 362]
-430 Ops.CONST dtypes.weakint [] 2425582776
-431 Ops.CAST dtypes.u64 [430] dtypes.u64
-432 Ops.WHERE dtypes.u64 [342, 431, 379]
-433 Ops.WHERE dtypes.u64 [340, 432, 406]
-434 Ops.WHERE dtypes.u64 [338, 433, 420]
-435 Ops.SHR dtypes.u64 [434, 371]
-436 Ops.OR dtypes.u64 [429, 435]
-437 Ops.AND dtypes.u64 [436, 318]
-438 Ops.MUL dtypes.u64 [319, 437]
-439 Ops.SHR dtypes.u64 [438, 370]
-440 Ops.ADD dtypes.u64 [428, 439]
-441 Ops.AND dtypes.u64 [438, 318]
-442 Ops.SHL dtypes.u64 [434, 362]
-443 Ops.CONST dtypes.weakint [] 26364858
-444 Ops.CAST dtypes.u64 [443] dtypes.u64
-445 Ops.WHERE dtypes.u64 [342, 444, 392]
-446 Ops.WHERE dtypes.u64 [340, 445, 419]
-447 Ops.WHERE dtypes.u64 [338, 446, 433]
-448 Ops.SHR dtypes.u64 [447, 371]
-449 Ops.OR dtypes.u64 [442, 448]
-450 Ops.AND dtypes.u64 [449, 318]
-451 Ops.MUL dtypes.u64 [319, 450]
-452 Ops.SHR dtypes.u64 [451, 370]
-453 Ops.ADD dtypes.u64 [441, 452]
-454 Ops.AND dtypes.u64 [451, 318]
-455 Ops.SHR dtypes.u64 [454, 370]
-456 Ops.ADD dtypes.u64 [453, 455]
-457 Ops.SHR dtypes.u64 [456, 370]
-458 Ops.ADD dtypes.u64 [440, 457]
-459 Ops.SHR dtypes.u64 [458, 370]
-460 Ops.ADD dtypes.u64 [427, 459]
-461 Ops.SHR dtypes.u64 [460, 370]
-462 Ops.ADD dtypes.u64 [414, 461]
-463 Ops.SHR dtypes.u64 [462, 370]
-464 Ops.ADD dtypes.u64 [401, 463]
-465 Ops.SHR dtypes.u64 [464, 370]
-466 Ops.ADD dtypes.u64 [388, 465]
-467 Ops.AND dtypes.u64 [466, 318]
-468 Ops.SHL dtypes.u64 [467, 370]
-469 Ops.AND dtypes.u64 [464, 318]
-470 Ops.OR dtypes.u64 [468, 469]
-471 Ops.CONST dtypes.weakint [] 62
-472 Ops.CAST dtypes.u64 [471] dtypes.u64
-473 Ops.SHR dtypes.u64 [470, 472]
-474 Ops.CONST dtypes.weakint [] 61
-475 Ops.CAST dtypes.u64 [474] dtypes.u64
-476 Ops.SHR dtypes.u64 [470, 475]
-477 Ops.CAST dtypes.u64 [11] dtypes.u64
-478 Ops.AND dtypes.u64 [476, 477]
-479 Ops.ADD dtypes.u64 [473, 478]
-480 Ops.CAST dtypes.i32 [479] dtypes.i32
-481 Ops.WHERE dtypes.i32 [297, 304, 480]
-482 Ops.AND dtypes.i32 [481, 15]
-483 Ops.CMPNE dtypes.bool [482, 3]
-484 Ops.AND dtypes.i32 [481, 12]
-485 Ops.CMPNE dtypes.bool [484, 3]
-486 Ops.CAST dtypes.f32 [304] dtypes.f32
-487 Ops.CONST dtypes.weakfloat [] -0.00048351287841796875
-488 Ops.CAST dtypes.f32 [487] dtypes.f32
-489 Ops.MUL dtypes.f32 [486, 488]
-490 Ops.CONST dtypes.weakfloat [] -1.5703125
-491 Ops.CAST dtypes.f32 [490] dtypes.f32
-492 Ops.MUL dtypes.f32 [486, 491]
-493 Ops.ADD dtypes.f32 [492, 294]
-494 Ops.ADD dtypes.f32 [489, 493]
-495 Ops.CONST dtypes.weakfloat [] -3.1385570764541626e-07
-496 Ops.CAST dtypes.f32 [495] dtypes.f32
-497 Ops.MUL dtypes.f32 [486, 496]
-498 Ops.ADD dtypes.f32 [494, 497]
-499 Ops.SUB dtypes.f32 [498, 494]
-500 Ops.SUB dtypes.f32 [497, 499]
-501 Ops.CONST dtypes.weakfloat [] -6.07710062827671e-11
-502 Ops.CAST dtypes.f32 [501] dtypes.f32
-503 Ops.MUL dtypes.f32 [486, 502]
-504 Ops.ADD dtypes.f32 [500, 503]
-505 Ops.ADD dtypes.f32 [498, 504]
-506 Ops.CONST dtypes.weakint [] 4611686018427387903
-507 Ops.CAST dtypes.u64 [506] dtypes.u64
-508 Ops.AND dtypes.u64 [470, 507]
-509 Ops.CAST dtypes.i64 [508] dtypes.i64
-510 Ops.CAST dtypes.i64 [478] dtypes.i64
-511 Ops.CAST dtypes.i64 [471] dtypes.i64
-512 Ops.SHL dtypes.i64 [510, 511]
-513 Ops.SUB dtypes.i64 [509, 512]
-514 Ops.CONST dtypes.weakint [] 42
-515 Ops.CAST dtypes.i64 [514] dtypes.i64
-516 Ops.SHR dtypes.i64 [513, 515]
-517 Ops.CAST dtypes.f32 [516] dtypes.f32
-518 Ops.CONST dtypes.weakfloat [] 4398046511104.0
-519 Ops.CAST dtypes.f32 [518] dtypes.f32
-520 Ops.MUL dtypes.f32 [517, 519]
-521 Ops.CONST dtypes.weakint [] 21
-522 Ops.CAST dtypes.i64 [521] dtypes.i64
-523 Ops.SHR dtypes.i64 [513, 522]
-524 Ops.CONST dtypes.weakint [] 2097151
-525 Ops.CAST dtypes.i64 [524] dtypes.i64
-526 Ops.AND dtypes.i64 [523, 525]
-527 Ops.CAST dtypes.f32 [526] dtypes.f32
-528 Ops.CONST dtypes.weakfloat [] 2097152.0
-529 Ops.CAST dtypes.f32 [528] dtypes.f32
-530 Ops.MUL dtypes.f32 [527, 529]
-531 Ops.ADD dtypes.f32 [520, 530]
-532 Ops.AND dtypes.i64 [513, 525]
-533 Ops.CAST dtypes.f32 [532] dtypes.f32
-534 Ops.ADD dtypes.f32 [531, 533]
-535 Ops.AND dtypes.u64 [462, 318]
-536 Ops.SHL dtypes.u64 [535, 370]
-537 Ops.AND dtypes.u64 [460, 318]
-538 Ops.OR dtypes.u64 [536, 537]
-539 Ops.CONST dtypes.weakint [] 43
-540 Ops.CAST dtypes.u64 [539] dtypes.u64
-541 Ops.SHR dtypes.u64 [538, 540]
-542 Ops.CAST dtypes.f32 [541] dtypes.f32
-543 Ops.CONST dtypes.weakfloat [] 1.1368683772161603e-13
-544 Ops.CAST dtypes.f32 [543] dtypes.f32
-545 Ops.MUL dtypes.f32 [542, 544]
-546 Ops.ADD dtypes.f32 [534, 545]
-547 Ops.CONST dtypes.weakfloat [] 3.4061216748705226e-19
-548 Ops.CAST dtypes.f32 [547] dtypes.f32
-549 Ops.MUL dtypes.f32 [546, 548]
-550 Ops.CONST dtypes.weakfloat [] 4097.0
-551 Ops.CAST dtypes.f32 [550] dtypes.f32
-552 Ops.MUL dtypes.f32 [546, 551]
-553 Ops.SUB dtypes.f32 [552, 546]
-554 Ops.SUB dtypes.f32 [552, 553]
-555 Ops.CONST dtypes.weakfloat [] 3.406131239146355e-19
-556 Ops.CAST dtypes.f32 [555] dtypes.f32
-557 Ops.MUL dtypes.f32 [554, 556]
-558 Ops.SUB dtypes.f32 [557, 549]
-559 Ops.CONST dtypes.weakfloat [] -9.564275832644382e-25
-560 Ops.CAST dtypes.f32 [559] dtypes.f32
-561 Ops.MUL dtypes.f32 [554, 560]
-562 Ops.ADD dtypes.f32 [558, 561]
-563 Ops.SUB dtypes.f32 [546, 554]
-564 Ops.MUL dtypes.f32 [563, 556]
-565 Ops.ADD dtypes.f32 [562, 564]
-566 Ops.MUL dtypes.f32 [563, 560]
-567 Ops.ADD dtypes.f32 [565, 566]
-568 Ops.CONST dtypes.weakfloat [] -9.478396428567739e-27
-569 Ops.CAST dtypes.f32 [568] dtypes.f32
-570 Ops.MUL dtypes.f32 [546, 569]
-571 Ops.ADD dtypes.f32 [567, 570]
-572 Ops.SUB dtypes.f32 [531, 520]
-573 Ops.SUB dtypes.f32 [530, 572]
-574 Ops.ADD dtypes.f32 [53, 573]
-575 Ops.SUB dtypes.f32 [534, 531]
-576 Ops.SUB dtypes.f32 [533, 575]
-577 Ops.ADD dtypes.f32 [574, 576]
-578 Ops.SUB dtypes.f32 [546, 534]
-579 Ops.SUB dtypes.f32 [545, 578]
-580 Ops.ADD dtypes.f32 [577, 579]
-581 Ops.MUL dtypes.f32 [580, 548]
-582 Ops.ADD dtypes.f32 [571, 581]
-583 Ops.ADD dtypes.f32 [549, 582]
-584 Ops.WHERE dtypes.f32 [297, 505, 583]
-585 Ops.MUL dtypes.f32 [584, 584]
-586 Ops.MUL dtypes.f32 [75, 585]
-587 Ops.SUB dtypes.f32 [103, 586]
-588 Ops.SUB dtypes.f32 [103, 587]
-589 Ops.SUB dtypes.f32 [588, 586]
-590 Ops.MUL dtypes.f32 [585, 585]
-591 Ops.CONST dtypes.weakfloat [] -2.7557314297155244e-07
-592 Ops.CAST dtypes.f32 [591] dtypes.f32
-593 Ops.MUL dtypes.f32 [592, 585]
-594 Ops.CONST dtypes.weakfloat [] 2.4801587642286904e-05
-595 Ops.CAST dtypes.f32 [594] dtypes.f32
-596 Ops.ADD dtypes.f32 [593, 595]
-597 Ops.MUL dtypes.f32 [596, 585]
-598 Ops.CONST dtypes.weakfloat [] -0.0013888889225199819
-599 Ops.CAST dtypes.f32 [598] dtypes.f32
-600 Ops.ADD dtypes.f32 [597, 599]
-601 Ops.MUL dtypes.f32 [600, 585]
-602 Ops.CONST dtypes.weakfloat [] 0.0416666679084301
-603 Ops.CAST dtypes.f32 [602] dtypes.f32
-604 Ops.ADD dtypes.f32 [601, 603]
-605 Ops.MUL dtypes.f32 [590, 604]
-606 Ops.SUB dtypes.f32 [505, 498]
-607 Ops.SUB dtypes.f32 [504, 606]
-608 Ops.SUB dtypes.f32 [583, 549]
-609 Ops.SUB dtypes.f32 [582, 608]
-610 Ops.WHERE dtypes.f32 [297, 607, 609]
-611 Ops.MUL dtypes.f32 [584, 610]
-612 Ops.SUB dtypes.f32 [605, 611]
-613 Ops.ADD dtypes.f32 [589, 612]
-614 Ops.ADD dtypes.f32 [587, 613]
-615 Ops.MUL dtypes.f32 [75, 610]
-616 Ops.MUL dtypes.f32 [585, 584]
-617 Ops.CONST dtypes.weakfloat [] 2.7557314297155244e-06
-618 Ops.CAST dtypes.f32 [617] dtypes.f32
-619 Ops.MUL dtypes.f32 [618, 585]
-620 Ops.CONST dtypes.weakfloat [] -0.00019841270113829523
-621 Ops.CAST dtypes.f32 [620] dtypes.f32
-622 Ops.ADD dtypes.f32 [619, 621]
-623 Ops.MUL dtypes.f32 [622, 585]
-624 Ops.CONST dtypes.weakfloat [] 0.008333333767950535
-625 Ops.CAST dtypes.f32 [624] dtypes.f32
-626 Ops.ADD dtypes.f32 [623, 625]
-627 Ops.MUL dtypes.f32 [616, 626]
-628 Ops.SUB dtypes.f32 [615, 627]
-629 Ops.MUL dtypes.f32 [585, 628]
-630 Ops.SUB dtypes.f32 [629, 610]
-631 Ops.CONST dtypes.weakfloat [] -0.1666666716337204
-632 Ops.CAST dtypes.f32 [631] dtypes.f32
-633 Ops.MUL dtypes.f32 [616, 632]
-634 Ops.SUB dtypes.f32 [630, 633]
-635 Ops.SUB dtypes.f32 [584, 634]
-636 Ops.WHERE dtypes.f32 [485, 614, 635]
-637 Ops.MUL dtypes.f32 [636, 293]
-638 Ops.NEG dtypes.f32 [637]
-639 Ops.WHERE dtypes.f32 [483, 638, 637]
-640 Ops.WHERE dtypes.f32 [291, 639, 290]
-641 Ops.WHERE dtypes.f32 [287, 640, 48]
-642 Ops.WHERE dtypes.f32 [286, 48, 641]
-643 Ops.WHERE dtypes.f32 [285, 642, 48]
-644 Ops.ADD dtypes.f32 [258, 643]
-645 Ops.INDEX dtypes.f32 [644, 3]
-646 Ops.INDEX dtypes.f32 [644, 12]
-647 Ops.INDEX dtypes.f32 [644, 15]
-648 Ops.INDEX dtypes.f32 [644, 18]
-649 Ops.STACK dtypes.f32 [645, 646, 647, 648]
-650 Ops.STORE dtypes.void [6, 649]
-651 Ops.SHRINK dtypes.f32 [1, 5, 5]
-652 Ops.INDEX dtypes.f32 [644, 5]
-653 Ops.INDEX dtypes.f32 [644, 335]
-654 Ops.CONST dtypes.weakint [] 6
-655 Ops.CAST dtypes.i32 [654] dtypes.i32
-656 Ops.INDEX dtypes.f32 [644, 655]
-657 Ops.CONST dtypes.weakint [] 7
-658 Ops.CAST dtypes.i32 [657] dtypes.i32
-659 Ops.INDEX dtypes.f32 [644, 658]
-660 Ops.STACK dtypes.f32 [652, 653, 656, 659]
-661 Ops.STORE dtypes.void [651, 660]
-662 Ops.SHRINK dtypes.f32 [1, 27, 5]
-663 Ops.INDEX dtypes.f32 [644, 27]
-664 Ops.CONST dtypes.weakint [] 9
-665 Ops.CAST dtypes.i32 [664] dtypes.i32
-666 Ops.INDEX dtypes.f32 [644, 665]
-667 Ops.CONST dtypes.weakint [] 10
-668 Ops.CAST dtypes.i32 [667] dtypes.i32
-669 Ops.INDEX dtypes.f32 [644, 668]
-670 Ops.CONST dtypes.weakint [] 11
-671 Ops.CAST dtypes.i32 [670] dtypes.i32
-672 Ops.INDEX dtypes.f32 [644, 671]
-673 Ops.STACK dtypes.f32 [663, 666, 669, 672]
-674 Ops.STORE dtypes.void [662, 673]
-675 Ops.SHRINK dtypes.f32 [1, 35, 5]
-676 Ops.INDEX dtypes.f32 [644, 35]
-677 Ops.CONST dtypes.weakint [] 13
-678 Ops.CAST dtypes.i32 [677] dtypes.i32
-679 Ops.INDEX dtypes.f32 [644, 678]
-680 Ops.CONST dtypes.weakint [] 14
-681 Ops.CAST dtypes.i32 [680] dtypes.i32
-682 Ops.INDEX dtypes.f32 [644, 681]
-683 Ops.CONST dtypes.weakint [] 15
-684 Ops.CAST dtypes.i32 [683] dtypes.i32
-685 Ops.INDEX dtypes.f32 [644, 684]
-686 Ops.STACK dtypes.f32 [676, 679, 682, 685]
-687 Ops.STORE dtypes.void [675, 686]
-688 Ops.SINK dtypes.void [650, 650, 650, 650, 661, 661, 661, 661, 674, 674, 674, 674, 687, 687, 687, 687] KernelInfo(name="E_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),), optimized=True)
-689 Ops.PARAM dtypes.u8 [369] ParamArg(slot=0, dtype=dtypes.u8, name="args")
-690 Ops.BITCAST dtypes.u64 [689] dtypes.u64
-691 Ops.INDEX dtypes.u64 [690, 3]
-692 Ops.LOAD dtypes.u64 [691]
-693 Ops.REFPARAM dtypes.f32 [0, 692] ParamArg(slot=0, dtype=dtypes.f32)
-694 Ops.SHRINK dtypes.f32 [693, 3, 5]
-695 Ops.INDEX dtypes.u64 [690, 12]
-696 Ops.LOAD dtypes.u64 [695]
-697 Ops.REFPARAM dtypes.f32 [0, 696] ParamArg(slot=1, dtype=dtypes.f32)
-698 Ops.SHRINK dtypes.f32 [697, 3, 5]
-699 Ops.LOAD dtypes.f32 [698]
-700 Ops.INDEX dtypes.f32 [699, 3]
-701 Ops.INDEX dtypes.f32 [699, 12]
-702 Ops.INDEX dtypes.f32 [699, 15]
-703 Ops.INDEX dtypes.f32 [699, 18]
-704 Ops.SHRINK dtypes.f32 [697, 5, 5]
-705 Ops.LOAD dtypes.f32 [704]
-706 Ops.INDEX dtypes.f32 [705, 3]
-707 Ops.INDEX dtypes.f32 [705, 12]
-708 Ops.INDEX dtypes.f32 [705, 15]
-709 Ops.INDEX dtypes.f32 [705, 18]
-710 Ops.SHRINK dtypes.f32 [697, 27, 5]
-711 Ops.LOAD dtypes.f32 [710]
-712 Ops.INDEX dtypes.f32 [711, 3]
-713 Ops.INDEX dtypes.f32 [711, 12]
-714 Ops.INDEX dtypes.f32 [711, 15]
-715 Ops.INDEX dtypes.f32 [711, 18]
-716 Ops.SHRINK dtypes.f32 [697, 35, 5]
-717 Ops.LOAD dtypes.f32 [716]
-718 Ops.INDEX dtypes.f32 [717, 3]
-719 Ops.INDEX dtypes.f32 [717, 12]
-720 Ops.INDEX dtypes.f32 [717, 15]
-721 Ops.INDEX dtypes.f32 [717, 18]
-722 Ops.STACK dtypes.f32 [700, 701, 702, 703, 706, 707, 708, 709, 712, 713, 714, 715, 718, 719, 720, 721]
-723 Ops.MUL dtypes.f32 [722, 44]
-724 Ops.CMPNE dtypes.bool [723, 723]
-725 Ops.CMPLT dtypes.bool [723, 50]
-726 Ops.CMPLT dtypes.bool [723, 55]
-727 Ops.CMPEQ dtypes.bool [726, 58]
-728 Ops.CMPNE dtypes.bool [723, 61]
-729 Ops.CMPNE dtypes.bool [723, 66]
-730 Ops.WHERE dtypes.f32 [729, 723, 53]
-731 Ops.WHERE dtypes.f32 [724, 53, 730]
-732 Ops.WHERE dtypes.f32 [728, 731, 53]
-733 Ops.CMPLT dtypes.bool [732, 53]
-734 Ops.WHERE dtypes.f32 [733, 73, 75]
-735 Ops.ADD dtypes.f32 [732, 734]
-736 Ops.CAST dtypes.i32 [735] dtypes.i32
-737 Ops.CAST dtypes.f32 [736] dtypes.f32
-738 Ops.SUB dtypes.f32 [732, 737]
-739 Ops.MUL dtypes.f32 [63, 738]
-740 Ops.ADD dtypes.f32 [739, 83]
-741 Ops.MUL dtypes.f32 [740, 738]
-742 Ops.ADD dtypes.f32 [741, 87]
-743 Ops.MUL dtypes.f32 [742, 738]
-744 Ops.ADD dtypes.f32 [743, 91]
-745 Ops.MUL dtypes.f32 [744, 738]
-746 Ops.ADD dtypes.f32 [745, 95]
-747 Ops.MUL dtypes.f32 [746, 738]
-748 Ops.ADD dtypes.f32 [747, 99]
-749 Ops.MUL dtypes.f32 [748, 738]
-750 Ops.ADD dtypes.f32 [749, 103]
-751 Ops.SHR dtypes.i32 [736, 12]
-752 Ops.ADD dtypes.i32 [751, 107]
-753 Ops.CAST dtypes.u32 [752] dtypes.u32
-754 Ops.SHL dtypes.u32 [753, 111]
-755 Ops.CAST dtypes.i32 [754] dtypes.i32
-756 Ops.BITCAST dtypes.f32 [755] dtypes.f32
-757 Ops.MUL dtypes.f32 [750, 756]
-758 Ops.CAST dtypes.u32 [736] dtypes.u32
-759 Ops.CAST dtypes.u32 [751] dtypes.u32
-760 Ops.SUB dtypes.u32 [758, 759]
-761 Ops.CAST dtypes.i32 [760] dtypes.i32
-762 Ops.CAST dtypes.u32 [761] dtypes.u32
-763 Ops.ADD dtypes.u32 [762, 121]
-764 Ops.CAST dtypes.i32 [763] dtypes.i32
-765 Ops.CAST dtypes.u32 [764] dtypes.u32
-766 Ops.SHL dtypes.u32 [765, 111]
-767 Ops.CAST dtypes.i32 [766] dtypes.i32
-768 Ops.BITCAST dtypes.f32 [767] dtypes.f32
-769 Ops.MUL dtypes.f32 [757, 768]
-770 Ops.WHERE dtypes.f32 [727, 61, 769]
-771 Ops.WHERE dtypes.f32 [725, 53, 770]
-772 Ops.WHERE dtypes.f32 [724, 48, 771]
-773 Ops.INDEX dtypes.u64 [690, 15]
-774 Ops.LOAD dtypes.u64 [773]
-775 Ops.REFPARAM dtypes.f32 [0, 774] ParamArg(slot=2, dtype=dtypes.f32)
-776 Ops.SHRINK dtypes.f32 [775, 3, 5]
-777 Ops.LOAD dtypes.f32 [776]
-778 Ops.INDEX dtypes.f32 [777, 3]
-779 Ops.INDEX dtypes.f32 [777, 12]
-780 Ops.INDEX dtypes.f32 [777, 15]
-781 Ops.INDEX dtypes.f32 [777, 18]
-782 Ops.SHRINK dtypes.f32 [775, 5, 5]
-783 Ops.LOAD dtypes.f32 [782]
-784 Ops.INDEX dtypes.f32 [783, 3]
-785 Ops.INDEX dtypes.f32 [783, 12]
-786 Ops.INDEX dtypes.f32 [783, 15]
-787 Ops.INDEX dtypes.f32 [783, 18]
-788 Ops.SHRINK dtypes.f32 [775, 27, 5]
-789 Ops.LOAD dtypes.f32 [788]
-790 Ops.INDEX dtypes.f32 [789, 3]
-791 Ops.INDEX dtypes.f32 [789, 12]
-792 Ops.INDEX dtypes.f32 [789, 15]
-793 Ops.INDEX dtypes.f32 [789, 18]
-794 Ops.SHRINK dtypes.f32 [775, 35, 5]
-795 Ops.LOAD dtypes.f32 [794]
-796 Ops.INDEX dtypes.f32 [795, 3]
-797 Ops.INDEX dtypes.f32 [795, 12]
-798 Ops.INDEX dtypes.f32 [795, 15]
-799 Ops.INDEX dtypes.f32 [795, 18]
-800 Ops.STACK dtypes.f32 [778, 779, 780, 781, 784, 785, 786, 787, 790, 791, 792, 793, 796, 797, 798, 799]
-801 Ops.CMPNE dtypes.bool [800, 800]
-802 Ops.CMPLT dtypes.bool [800, 160]
-803 Ops.FDIV dtypes.f32 [103, 800]
-804 Ops.CMPNE dtypes.bool [803, 66]
-805 Ops.CMPNE dtypes.bool [800, 53]
-806 Ops.CMPNE dtypes.bool [800, 61]
-807 Ops.CMPLT dtypes.bool [800, 167]
-808 Ops.MUL dtypes.f32 [800, 170]
-809 Ops.WHERE dtypes.f32 [807, 808, 800]
-810 Ops.BITCAST dtypes.i32 [809] dtypes.i32
-811 Ops.CAST dtypes.u32 [810] dtypes.u32
-812 Ops.MUL dtypes.f32 [809, 176]
-813 Ops.BITCAST dtypes.i32 [812] dtypes.i32
-814 Ops.SHR dtypes.i32 [813, 179]
-815 Ops.AND dtypes.i32 [814, 182]
-816 Ops.ADD dtypes.i32 [815, 185]
-817 Ops.CAST dtypes.f32 [816] dtypes.f32
-818 Ops.NEG dtypes.f32 [817]
-819 Ops.CAST dtypes.i32 [818] dtypes.i32
-820 Ops.CAST dtypes.u32 [819] dtypes.u32
-821 Ops.SHL dtypes.u32 [820, 111]
-822 Ops.CAST dtypes.i32 [821] dtypes.i32
-823 Ops.CAST dtypes.u32 [822] dtypes.u32
-824 Ops.ADD dtypes.u32 [811, 823]
-825 Ops.CAST dtypes.i32 [824] dtypes.i32
-826 Ops.BITCAST dtypes.f32 [825] dtypes.f32
-827 Ops.ADD dtypes.f32 [826, 198]
-828 Ops.MUL dtypes.f32 [75, 827]
-829 Ops.MUL dtypes.f32 [828, 827]
-830 Ops.SUB dtypes.f32 [827, 829]
-831 Ops.BITCAST dtypes.u32 [830] dtypes.u32
-832 Ops.AND dtypes.u32 [831, 205]
-833 Ops.BITCAST dtypes.f32 [832] dtypes.f32
-834 Ops.SUB dtypes.f32 [827, 833]
-835 Ops.SUB dtypes.f32 [834, 829]
-836 Ops.ADD dtypes.f32 [211, 827]
-837 Ops.FDIV dtypes.f32 [103, 836]
-838 Ops.MUL dtypes.f32 [827, 837]
-839 Ops.MUL dtypes.f32 [838, 838]
-840 Ops.MUL dtypes.f32 [217, 839]
-841 Ops.ADD dtypes.f32 [840, 220]
-842 Ops.MUL dtypes.f32 [841, 839]
-843 Ops.ADD dtypes.f32 [842, 224]
-844 Ops.MUL dtypes.f32 [843, 839]
-845 Ops.ADD dtypes.f32 [844, 228]
-846 Ops.MUL dtypes.f32 [839, 845]
-847 Ops.ADD dtypes.f32 [829, 846]
-848 Ops.MUL dtypes.f32 [838, 847]
-849 Ops.ADD dtypes.f32 [835, 848]
-850 Ops.ADD dtypes.f32 [849, 833]
-851 Ops.MUL dtypes.f32 [850, 236]
-852 Ops.MUL dtypes.f32 [849, 239]
-853 Ops.ADD dtypes.f32 [851, 852]
-854 Ops.ADD dtypes.f32 [817, 243]
-855 Ops.WHERE dtypes.f32 [807, 854, 817]
-856 Ops.MUL dtypes.f32 [833, 239]
-857 Ops.ADD dtypes.f32 [855, 856]
-858 Ops.SUB dtypes.f32 [855, 857]
-859 Ops.ADD dtypes.f32 [858, 856]
-860 Ops.ADD dtypes.f32 [853, 859]
-861 Ops.ADD dtypes.f32 [860, 857]
-862 Ops.WHERE dtypes.f32 [806, 861, 61]
-863 Ops.WHERE dtypes.f32 [805, 862, 66]
-864 Ops.WHERE dtypes.f32 [804, 863, 66]
-865 Ops.WHERE dtypes.f32 [802, 48, 864]
-866 Ops.WHERE dtypes.f32 [801, 48, 865]
-867 Ops.MUL dtypes.f32 [866, 99]
-868 Ops.ADD dtypes.f32 [772, 867]
-869 Ops.INDEX dtypes.u64 [690, 18]
-870 Ops.LOAD dtypes.u64 [869]
-871 Ops.REFPARAM dtypes.f32 [0, 870] ParamArg(slot=3, dtype=dtypes.f32)
-872 Ops.SHRINK dtypes.f32 [871, 3, 5]
-873 Ops.LOAD dtypes.f32 [872]
-874 Ops.INDEX dtypes.f32 [873, 3]
-875 Ops.INDEX dtypes.f32 [873, 12]
-876 Ops.INDEX dtypes.f32 [873, 15]
-877 Ops.INDEX dtypes.f32 [873, 18]
-878 Ops.SHRINK dtypes.f32 [871, 5, 5]
-879 Ops.LOAD dtypes.f32 [878]
-880 Ops.INDEX dtypes.f32 [879, 3]
-881 Ops.INDEX dtypes.f32 [879, 12]
-882 Ops.INDEX dtypes.f32 [879, 15]
-883 Ops.INDEX dtypes.f32 [879, 18]
-884 Ops.SHRINK dtypes.f32 [871, 27, 5]
-885 Ops.LOAD dtypes.f32 [884]
-886 Ops.INDEX dtypes.f32 [885, 3]
-887 Ops.INDEX dtypes.f32 [885, 12]
-888 Ops.INDEX dtypes.f32 [885, 15]
-889 Ops.INDEX dtypes.f32 [885, 18]
-890 Ops.SHRINK dtypes.f32 [871, 35, 5]
-891 Ops.LOAD dtypes.f32 [890]
-892 Ops.INDEX dtypes.f32 [891, 3]
-893 Ops.INDEX dtypes.f32 [891, 12]
-894 Ops.INDEX dtypes.f32 [891, 15]
-895 Ops.INDEX dtypes.f32 [891, 18]
-896 Ops.STACK dtypes.f32 [874, 875, 876, 877, 880, 881, 882, 883, 886, 887, 888, 889, 892, 893, 894, 895]
-897 Ops.CMPNE dtypes.bool [896, 61]
-898 Ops.CMPNE dtypes.bool [896, 896]
-899 Ops.CMPNE dtypes.bool [896, 66]
-900 Ops.WHERE dtypes.f32 [899, 896, 53]
-901 Ops.WHERE dtypes.f32 [898, 53, 900]
-902 Ops.WHERE dtypes.f32 [897, 901, 53]
-903 Ops.CMPNE dtypes.bool [902, 53]
-904 Ops.CMPLT dtypes.bool [902, 53]
-905 Ops.WHERE dtypes.f32 [904, 198, 103]
-906 Ops.MUL dtypes.f32 [902, 905]
-907 Ops.CMPLT dtypes.bool [906, 296]
-908 Ops.MUL dtypes.f32 [906, 299]
-909 Ops.CMPLT dtypes.bool [908, 53]
-910 Ops.WHERE dtypes.f32 [909, 73, 75]
-911 Ops.ADD dtypes.f32 [908, 910]
-912 Ops.CAST dtypes.i32 [911] dtypes.i32
-913 Ops.BITCAST dtypes.u32 [906] dtypes.u32
-914 Ops.AND dtypes.u32 [913, 307]
-915 Ops.OR dtypes.u32 [914, 310]
-916 Ops.BITCAST dtypes.f32 [915] dtypes.f32
-917 Ops.MUL dtypes.f32 [916, 314]
-918 Ops.CAST dtypes.u64 [917] dtypes.u64
-919 Ops.AND dtypes.u64 [918, 318]
-920 Ops.SHR dtypes.u32 [913, 111]
-921 Ops.AND dtypes.u32 [920, 321]
-922 Ops.ADD dtypes.u32 [921, 324]
-923 Ops.CAST dtypes.i32 [922] dtypes.i32
-924 Ops.CAST dtypes.u32 [923] dtypes.u32
-925 Ops.ADD dtypes.u32 [924, 329]
-926 Ops.CAST dtypes.i32 [925] dtypes.i32
-927 Ops.CMPLT dtypes.bool [926, 3]
-928 Ops.WHERE dtypes.i32 [927, 3, 926]
-929 Ops.SHR dtypes.i32 [928, 335]
-930 Ops.AND dtypes.i32 [929, 12]
-931 Ops.CMPNE dtypes.bool [930, 3]
-932 Ops.AND dtypes.i32 [929, 15]
-933 Ops.CMPNE dtypes.bool [932, 3]
-934 Ops.AND dtypes.i32 [929, 5]
-935 Ops.CMPNE dtypes.bool [934, 3]
-936 Ops.WHERE dtypes.u64 [935, 344, 345]
-937 Ops.WHERE dtypes.u64 [935, 348, 345]
-938 Ops.WHERE dtypes.u64 [933, 936, 937]
-939 Ops.WHERE dtypes.u64 [935, 352, 345]
-940 Ops.WHERE dtypes.u64 [935, 355, 345]
-941 Ops.WHERE dtypes.u64 [933, 939, 940]
-942 Ops.WHERE dtypes.u64 [931, 938, 941]
-943 Ops.AND dtypes.i32 [928, 360]
-944 Ops.CAST dtypes.u64 [943] dtypes.u64
-945 Ops.SHL dtypes.u64 [942, 944]
-946 Ops.WHERE dtypes.u64 [935, 365, 355]
-947 Ops.WHERE dtypes.u64 [933, 946, 939]
-948 Ops.WHERE dtypes.u64 [931, 947, 938]
-949 Ops.SUB dtypes.u64 [370, 944]
-950 Ops.SHR dtypes.u64 [948, 949]
-951 Ops.OR dtypes.u64 [945, 950]
-952 Ops.AND dtypes.u64 [951, 318]
-953 Ops.MUL dtypes.u64 [919, 952]
-954 Ops.AND dtypes.u64 [953, 318]
-955 Ops.SHL dtypes.u64 [948, 944]
-956 Ops.WHERE dtypes.u64 [935, 379, 348]
-957 Ops.WHERE dtypes.u64 [933, 956, 936]
-958 Ops.WHERE dtypes.u64 [931, 957, 947]
-959 Ops.SHR dtypes.u64 [958, 949]
-960 Ops.OR dtypes.u64 [955, 959]
-961 Ops.AND dtypes.u64 [960, 318]
-962 Ops.MUL dtypes.u64 [919, 961]
-963 Ops.SHR dtypes.u64 [962, 370]
-964 Ops.ADD dtypes.u64 [954, 963]
-965 Ops.AND dtypes.u64 [962, 318]
-966 Ops.SHL dtypes.u64 [958, 944]
-967 Ops.WHERE dtypes.u64 [935, 392, 352]
-968 Ops.WHERE dtypes.u64 [933, 967, 946]
-969 Ops.WHERE dtypes.u64 [931, 968, 957]
-970 Ops.SHR dtypes.u64 [969, 949]
-971 Ops.OR dtypes.u64 [966, 970]
-972 Ops.AND dtypes.u64 [971, 318]
-973 Ops.MUL dtypes.u64 [919, 972]
-974 Ops.SHR dtypes.u64 [973, 370]
-975 Ops.ADD dtypes.u64 [965, 974]
-976 Ops.AND dtypes.u64 [973, 318]
-977 Ops.SHL dtypes.u64 [969, 944]
-978 Ops.WHERE dtypes.u64 [935, 405, 344]
-979 Ops.WHERE dtypes.u64 [933, 978, 956]
-980 Ops.WHERE dtypes.u64 [931, 979, 968]
-981 Ops.SHR dtypes.u64 [980, 949]
-982 Ops.OR dtypes.u64 [977, 981]
-983 Ops.AND dtypes.u64 [982, 318]
-984 Ops.MUL dtypes.u64 [919, 983]
-985 Ops.SHR dtypes.u64 [984, 370]
-986 Ops.ADD dtypes.u64 [976, 985]
-987 Ops.AND dtypes.u64 [984, 318]
-988 Ops.SHL dtypes.u64 [980, 944]
-989 Ops.WHERE dtypes.u64 [935, 418, 365]
-990 Ops.WHERE dtypes.u64 [933, 989, 967]
-991 Ops.WHERE dtypes.u64 [931, 990, 979]
-992 Ops.SHR dtypes.u64 [991, 949]
-993 Ops.OR dtypes.u64 [988, 992]
-994 Ops.AND dtypes.u64 [993, 318]
-995 Ops.MUL dtypes.u64 [919, 994]
-996 Ops.SHR dtypes.u64 [995, 370]
-997 Ops.ADD dtypes.u64 [987, 996]
-998 Ops.AND dtypes.u64 [995, 318]
-999 Ops.SHL dtypes.u64 [991, 944]
-1000 Ops.WHERE dtypes.u64 [935, 431, 379]
-1001 Ops.WHERE dtypes.u64 [933, 1000, 978]
-1002 Ops.WHERE dtypes.u64 [931, 1001, 990]
-1003 Ops.SHR dtypes.u64 [1002, 949]
-1004 Ops.OR dtypes.u64 [999, 1003]
-1005 Ops.AND dtypes.u64 [1004, 318]
-1006 Ops.MUL dtypes.u64 [919, 1005]
-1007 Ops.SHR dtypes.u64 [1006, 370]
-1008 Ops.ADD dtypes.u64 [998, 1007]
-1009 Ops.AND dtypes.u64 [1006, 318]
-1010 Ops.SHL dtypes.u64 [1002, 944]
-1011 Ops.WHERE dtypes.u64 [935, 444, 392]
-1012 Ops.WHERE dtypes.u64 [933, 1011, 989]
-1013 Ops.WHERE dtypes.u64 [931, 1012, 1001]
-1014 Ops.SHR dtypes.u64 [1013, 949]
-1015 Ops.OR dtypes.u64 [1010, 1014]
-1016 Ops.AND dtypes.u64 [1015, 318]
-1017 Ops.MUL dtypes.u64 [919, 1016]
-1018 Ops.SHR dtypes.u64 [1017, 370]
-1019 Ops.ADD dtypes.u64 [1009, 1018]
-1020 Ops.AND dtypes.u64 [1017, 318]
-1021 Ops.SHR dtypes.u64 [1020, 370]
-1022 Ops.ADD dtypes.u64 [1019, 1021]
-1023 Ops.SHR dtypes.u64 [1022, 370]
-1024 Ops.ADD dtypes.u64 [1008, 1023]
-1025 Ops.SHR dtypes.u64 [1024, 370]
-1026 Ops.ADD dtypes.u64 [997, 1025]
-1027 Ops.SHR dtypes.u64 [1026, 370]
-1028 Ops.ADD dtypes.u64 [986, 1027]
-1029 Ops.SHR dtypes.u64 [1028, 370]
-1030 Ops.ADD dtypes.u64 [975, 1029]
-1031 Ops.SHR dtypes.u64 [1030, 370]
-1032 Ops.ADD dtypes.u64 [964, 1031]
-1033 Ops.AND dtypes.u64 [1032, 318]
-1034 Ops.SHL dtypes.u64 [1033, 370]
-1035 Ops.AND dtypes.u64 [1030, 318]
-1036 Ops.OR dtypes.u64 [1034, 1035]
-1037 Ops.SHR dtypes.u64 [1036, 472]
-1038 Ops.SHR dtypes.u64 [1036, 475]
-1039 Ops.AND dtypes.u64 [1038, 477]
-1040 Ops.ADD dtypes.u64 [1037, 1039]
-1041 Ops.CAST dtypes.i32 [1040] dtypes.i32
-1042 Ops.WHERE dtypes.i32 [907, 912, 1041]
-1043 Ops.AND dtypes.i32 [1042, 15]
-1044 Ops.CMPNE dtypes.bool [1043, 3]
-1045 Ops.AND dtypes.i32 [1042, 12]
-1046 Ops.CMPNE dtypes.bool [1045, 3]
-1047 Ops.CAST dtypes.f32 [912] dtypes.f32
-1048 Ops.MUL dtypes.f32 [1047, 488]
-1049 Ops.MUL dtypes.f32 [1047, 491]
-1050 Ops.ADD dtypes.f32 [1049, 906]
-1051 Ops.ADD dtypes.f32 [1048, 1050]
-1052 Ops.MUL dtypes.f32 [1047, 496]
-1053 Ops.ADD dtypes.f32 [1051, 1052]
-1054 Ops.SUB dtypes.f32 [1053, 1051]
-1055 Ops.SUB dtypes.f32 [1052, 1054]
-1056 Ops.MUL dtypes.f32 [1047, 502]
-1057 Ops.ADD dtypes.f32 [1055, 1056]
-1058 Ops.ADD dtypes.f32 [1053, 1057]
-1059 Ops.AND dtypes.u64 [1036, 507]
-1060 Ops.CAST dtypes.i64 [1059] dtypes.i64
-1061 Ops.CAST dtypes.i64 [1039] dtypes.i64
-1062 Ops.SHL dtypes.i64 [1061, 511]
-1063 Ops.SUB dtypes.i64 [1060, 1062]
-1064 Ops.SHR dtypes.i64 [1063, 515]
-1065 Ops.CAST dtypes.f32 [1064] dtypes.f32
-1066 Ops.MUL dtypes.f32 [1065, 519]
-1067 Ops.SHR dtypes.i64 [1063, 522]
-1068 Ops.AND dtypes.i64 [1067, 525]
-1069 Ops.CAST dtypes.f32 [1068] dtypes.f32
-1070 Ops.MUL dtypes.f32 [1069, 529]
-1071 Ops.ADD dtypes.f32 [1066, 1070]
-1072 Ops.AND dtypes.i64 [1063, 525]
-1073 Ops.CAST dtypes.f32 [1072] dtypes.f32
-1074 Ops.ADD dtypes.f32 [1071, 1073]
-1075 Ops.AND dtypes.u64 [1028, 318]
-1076 Ops.SHL dtypes.u64 [1075, 370]
-1077 Ops.AND dtypes.u64 [1026, 318]
-1078 Ops.OR dtypes.u64 [1076, 1077]
-1079 Ops.SHR dtypes.u64 [1078, 540]
-1080 Ops.CAST dtypes.f32 [1079] dtypes.f32
-1081 Ops.MUL dtypes.f32 [1080, 544]
-1082 Ops.ADD dtypes.f32 [1074, 1081]
-1083 Ops.MUL dtypes.f32 [1082, 548]
-1084 Ops.MUL dtypes.f32 [1082, 551]
-1085 Ops.SUB dtypes.f32 [1084, 1082]
-1086 Ops.SUB dtypes.f32 [1084, 1085]
-1087 Ops.MUL dtypes.f32 [1086, 556]
-1088 Ops.SUB dtypes.f32 [1087, 1083]
-1089 Ops.MUL dtypes.f32 [1086, 560]
-1090 Ops.ADD dtypes.f32 [1088, 1089]
-1091 Ops.SUB dtypes.f32 [1082, 1086]
-1092 Ops.MUL dtypes.f32 [1091, 556]
-1093 Ops.ADD dtypes.f32 [1090, 1092]
-1094 Ops.MUL dtypes.f32 [1091, 560]
-1095 Ops.ADD dtypes.f32 [1093, 1094]
-1096 Ops.MUL dtypes.f32 [1082, 569]
-1097 Ops.ADD dtypes.f32 [1095, 1096]
-1098 Ops.SUB dtypes.f32 [1071, 1066]
-1099 Ops.SUB dtypes.f32 [1070, 1098]
-1100 Ops.ADD dtypes.f32 [53, 1099]
-1101 Ops.SUB dtypes.f32 [1074, 1071]
-1102 Ops.SUB dtypes.f32 [1073, 1101]
-1103 Ops.ADD dtypes.f32 [1100, 1102]
-1104 Ops.SUB dtypes.f32 [1082, 1074]
-1105 Ops.SUB dtypes.f32 [1081, 1104]
-1106 Ops.ADD dtypes.f32 [1103, 1105]
-1107 Ops.MUL dtypes.f32 [1106, 548]
-1108 Ops.ADD dtypes.f32 [1097, 1107]
-1109 Ops.ADD dtypes.f32 [1083, 1108]
-1110 Ops.WHERE dtypes.f32 [907, 1058, 1109]
-1111 Ops.MUL dtypes.f32 [1110, 1110]
-1112 Ops.MUL dtypes.f32 [75, 1111]
-1113 Ops.SUB dtypes.f32 [103, 1112]
-1114 Ops.SUB dtypes.f32 [103, 1113]
-1115 Ops.SUB dtypes.f32 [1114, 1112]
-1116 Ops.MUL dtypes.f32 [1111, 1111]
-1117 Ops.MUL dtypes.f32 [592, 1111]
-1118 Ops.ADD dtypes.f32 [1117, 595]
-1119 Ops.MUL dtypes.f32 [1118, 1111]
-1120 Ops.ADD dtypes.f32 [1119, 599]
-1121 Ops.MUL dtypes.f32 [1120, 1111]
-1122 Ops.ADD dtypes.f32 [1121, 603]
-1123 Ops.MUL dtypes.f32 [1116, 1122]
-1124 Ops.SUB dtypes.f32 [1058, 1053]
-1125 Ops.SUB dtypes.f32 [1057, 1124]
-1126 Ops.SUB dtypes.f32 [1109, 1083]
-1127 Ops.SUB dtypes.f32 [1108, 1126]
-1128 Ops.WHERE dtypes.f32 [907, 1125, 1127]
-1129 Ops.MUL dtypes.f32 [1110, 1128]
-1130 Ops.SUB dtypes.f32 [1123, 1129]
-1131 Ops.ADD dtypes.f32 [1115, 1130]
-1132 Ops.ADD dtypes.f32 [1113, 1131]
-1133 Ops.MUL dtypes.f32 [75, 1128]
-1134 Ops.MUL dtypes.f32 [1111, 1110]
-1135 Ops.MUL dtypes.f32 [618, 1111]
-1136 Ops.ADD dtypes.f32 [1135, 621]
-1137 Ops.MUL dtypes.f32 [1136, 1111]
-1138 Ops.ADD dtypes.f32 [1137, 625]
-1139 Ops.MUL dtypes.f32 [1134, 1138]
-1140 Ops.SUB dtypes.f32 [1133, 1139]
-1141 Ops.MUL dtypes.f32 [1111, 1140]
-1142 Ops.SUB dtypes.f32 [1141, 1128]
-1143 Ops.MUL dtypes.f32 [1134, 632]
-1144 Ops.SUB dtypes.f32 [1142, 1143]
-1145 Ops.SUB dtypes.f32 [1110, 1144]
-1146 Ops.WHERE dtypes.f32 [1046, 1132, 1145]
-1147 Ops.MUL dtypes.f32 [1146, 905]
-1148 Ops.NEG dtypes.f32 [1147]
-1149 Ops.WHERE dtypes.f32 [1044, 1148, 1147]
-1150 Ops.WHERE dtypes.f32 [903, 1149, 902]
-1151 Ops.WHERE dtypes.f32 [899, 1150, 48]
-1152 Ops.WHERE dtypes.f32 [898, 48, 1151]
-1153 Ops.WHERE dtypes.f32 [897, 1152, 48]
-1154 Ops.ADD dtypes.f32 [868, 1153]
-1155 Ops.INDEX dtypes.f32 [1154, 3]
-1156 Ops.INDEX dtypes.f32 [1154, 12]
-1157 Ops.INDEX dtypes.f32 [1154, 15]
-1158 Ops.INDEX dtypes.f32 [1154, 18]
-1159 Ops.STACK dtypes.f32 [1155, 1156, 1157, 1158]
-1160 Ops.STORE dtypes.void [694, 1159]
-1161 Ops.SHRINK dtypes.f32 [693, 5, 5]
-1162 Ops.INDEX dtypes.f32 [1154, 5]
-1163 Ops.INDEX dtypes.f32 [1154, 335]
-1164 Ops.INDEX dtypes.f32 [1154, 655]
-1165 Ops.INDEX dtypes.f32 [1154, 658]
-1166 Ops.STACK dtypes.f32 [1162, 1163, 1164, 1165]
-1167 Ops.STORE dtypes.void [1161, 1166]
-1168 Ops.SHRINK dtypes.f32 [693, 27, 5]
-1169 Ops.INDEX dtypes.f32 [1154, 27]
-1170 Ops.INDEX dtypes.f32 [1154, 665]
-1171 Ops.INDEX dtypes.f32 [1154, 668]
-1172 Ops.INDEX dtypes.f32 [1154, 671]
-1173 Ops.STACK dtypes.f32 [1169, 1170, 1171, 1172]
-1174 Ops.STORE dtypes.void [1168, 1173]
-1175 Ops.SHRINK dtypes.f32 [693, 35, 5]
-1176 Ops.INDEX dtypes.f32 [1154, 35]
-1177 Ops.INDEX dtypes.f32 [1154, 678]
-1178 Ops.INDEX dtypes.f32 [1154, 681]
-1179 Ops.INDEX dtypes.f32 [1154, 684]
-1180 Ops.STACK dtypes.f32 [1176, 1177, 1178, 1179]
-1181 Ops.STORE dtypes.void [1175, 1180]
-1182 Ops.SINK dtypes.void [1160, 1160, 1160, 1160, 1167, 1167, 1167, 1167, 1174, 1174, 1174, 1174, 1181, 1181, 1181, 1181] KernelInfo(name="E_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),), estimates=Estimates(ops=5360, lds=256, mem=256), optimized=True)
-1183 Ops.LINEAR dtypes.void [369, 689, 2, 3, 690, 691, 692, 11, 12, 695, 696, 14, 15, 773, 774, 17, 18, 869, 870, 0, 697, 4, 5, 698, 699, 34, 35, 716, 717, 704, 705, 26, 27, 710, 711, 775, 776, 777, 794, 795, 782, 783, 788, 789, 871, 872, 873, 890, 891, 878, 879, 884, 885, 693, 700, 701, 702, 703, 718, 719, 720, 721, 706, 707, 708, 709, 712, 713, 714, 715, 722, 778, 779, 780, 781, 796, 797, 798, 799, 784, 785, 786, 787, 790, 791, 792, 793, 800, 874, 875, 876, 877, 892, 893, 894, 895, 880, 881, 882, 883, 886, 887, 888, 889, 896, 57, 58, 72, 73, 197, 198, 65, 66, 52, 53, 74, 75, 298, 299, 102, 103, 60, 61, 898, 899, 897, 900, 901, 902, 904, 905, 906, 908, 909, 910, 911, 912, 1047, 43, 44, 723, 729, 728, 724, 730, 731, 732, 733, 734, 735, 736, 737, 166, 167, 175, 176, 169, 170, 184, 185, 110, 179, 181, 182, 808, 807, 809, 812, 813, 814, 815, 816, 817, 313, 314, 111, 321, 323, 324, 913, 920, 921, 922, 923, 924, 328, 329, 925, 926, 359, 360, 334, 335, 309, 310, 306, 307, 914, 915, 916, 917, 918, 927, 928, 943, 944, 345, 477, 378, 379, 417, 418, 343, 344, 351, 352, 391, 392, 430, 431, 347, 348, 443, 444, 370, 404, 405, 317, 318, 474, 475, 354, 355, 364, 365, 929, 930, 931, 932, 933, 934, 935, 989, 967, 990, 956, 978, 979, 991, 999, 949, 1000, 1001, 1002, 1003, 1004, 919, 1005, 1006, 1010, 1011, 1012, 1013, 1014, 1015, 1016, 1017, 1018, 1009, 1019, 1020, 1021, 1022, 946, 968, 980, 988, 992, 993, 994, 995, 1007, 998, 1008, 1023, 1024, 936, 957, 969, 977, 981, 982, 983, 984, 996, 987, 997, 1025, 1026, 939, 947, 958, 966, 970, 971, 972, 973, 985, 976, 986, 1027, 1028, 937, 938, 948, 955, 959, 960, 961, 962, 974, 965, 975, 1029, 1030, 940, 941, 942, 945, 950, 951, 952, 953, 963, 954, 964, 1031, 1032, 1033, 1034, 1035, 1036, 1038, 1039, 1061, 506, 507, 1059, 1060, 514, 515, 471, 511, 1062, 1063, 1064, 1065, 539, 540, 1075, 1076, 1077, 1078, 1079, 1080, 524, 525, 521, 522, 1067, 1068, 1069, 1072, 1073, 159, 160, 235, 236, 620, 621, 487, 488, 598, 599, 631, 632, 490, 491, 49, 50, 591, 592, 495, 496, 501, 502, 242, 243, 568, 569, 559, 560, 62, 63, 82, 83, 624, 625, 86, 87, 602, 603, 90, 91, 94, 95, 216, 217, 219, 220, 223, 224, 227, 228, 98, 99, 543, 544, 238, 239, 54, 55, 210, 211, 594, 595, 617, 618, 528, 529, 547, 548, 555, 556, 295, 296, 550, 551, 518, 519, 47, 48, 818, 819, 758, 751, 759, 760, 761, 762, 106, 121, 763, 764, 820, 821, 822, 823, 810, 811, 824, 825, 472, 1037, 1040, 1041, 765, 766, 767, 107, 752, 753, 754, 755, 204, 205, 826, 768, 756, 827, 828, 829, 830, 831, 832, 833, 1066, 1070, 1071, 1098, 1099, 1100, 1074, 1101, 1102, 1103, 1081, 1082, 1104, 1105, 1106, 1083, 1084, 1085, 1086, 1089, 1087, 1088, 1090, 1091, 1092, 1093, 1094, 1095, 1096, 1097, 1107, 1108, 1049, 1050, 1048, 1051, 1052, 1053, 1056, 1054, 1055, 1057, 1058, 1109, 907, 1110, 1111, 1117, 1118, 1135, 1136, 1119, 1120, 1137, 1138, 1121, 1122, 1112, 1116, 1123, 1126, 1127, 1124, 1125, 1128, 1129, 1113, 1114, 1130, 1115, 1131, 1132, 1133, 1134, 1143, 1139, 1140, 1141, 1042, 1045, 1046, 1142, 1144, 1145, 1146, 1147, 1148, 854, 836, 837, 838, 839, 840, 841, 842, 843, 844, 845, 846, 847, 848, 834, 835, 849, 850, 851, 852, 853, 856, 855, 857, 858, 859, 860, 861, 738, 739, 740, 741, 742, 743, 744, 745, 746, 747, 748, 749, 750, 757, 769, 802, 801, 805, 806, 803, 804, 862, 863, 864, 865, 866, 867, 725, 726, 727, 770, 771, 772, 868, 1043, 1044, 903, 1149, 1150, 1151, 1152, 1153, 1154, 1155, 1156, 1157, 1158, 1159, 1176, 677, 678, 1177, 680, 681, 1178, 683, 684, 1179, 1180, 1162, 1163, 654, 655, 1164, 657, 658, 1165, 1166, 667, 668, 1171, 670, 671, 1172, 1169, 664, 665, 1170, 1173, 694, 1175, 1161, 1168, 1160, 1181, 1167, 1174, 1182]
-1184 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\ntypedef float float16 __attribute__((aligned(4),ext_vector_type(16)));\ntypedef int int16 __attribute__((aligned(4),ext_vector_type(16)));\ntypedef unsigned int unsigned_int16 __attribute__((aligned(4),ext_vector_type(16)));\ntypedef unsigned long unsigned_long16 __attribute__((aligned(8),ext_vector_type(16)));\ntypedef long long16 __attribute__((aligned(8),ext_vector_type(16)));\n__attribute__((min_vector_width(512))) void E_16(unsigned char* restrict args_32) {\n  unsigned long val0 = (*(((unsigned long*)(args_32))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_32))+1));\n  unsigned long val2 = (*(((unsigned long*)(args_32))+2));\n  unsigned long val3 = (*(((unsigned long*)(args_32))+3));\n  float4 val4 = (*((float4*)((((float*)(val1))+0))));\n  float4 val5 = (*((float4*)((((float*)(val1))+12))));\n  float4 val6 = (*((float4*)((((float*)(val1))+4))));\n  float4 val7 = (*((float4*)((((float*)(val1))+8))));\n  float4 val8 = (*((float4*)((((float*)(val2))+0))));\n  float4 val9 = (*((float4*)((((float*)(val2))+12))));\n  float4 val10 = (*((float4*)((((float*)(val2))+4))));\n  float4 val11 = (*((float4*)((((float*)(val2))+8))));\n  float4 val12 = (*((float4*)((((float*)(val3))+0))));\n  float4 val13 = (*((float4*)((((float*)(val3))+12))));\n  float4 val14 = (*((float4*)((((float*)(val3))+4))));\n  float4 val15 = (*((float4*)((((float*)(val3))+8))));\n  float16 cast0 = (float16){val8[0],val8[1],val8[2],val8[3],val10[0],val10[1],val10[2],val10[3],val11[0],val11[1],val11[2],val11[3],val9[0],val9[1],val9[2],val9[3]};\n  float16 cast1 = (float16){val12[0],val12[1],val12[2],val12[3],val14[0],val14[1],val14[2],val14[3],val15[0],val15[1],val15[2],val15[3],val13[0],val13[1],val13[2],val13[3]};\n  int16 alu0 = (cast1!=cast1);\n  int16 alu1 = (cast1!=((float)(-__builtin_inff())));\n  int16 alu2 = (cast1!=((float)(__builtin_inff())));\n  float16 alu3 = (alu1?cast1:0.0f);\n  float16 alu4 = (alu0?0.0f:alu3);\n  float16 alu5 = (alu2?alu4:0.0f);\n  float16 alu6 = ((alu5<0.0f)?((float16)(-1.0f)):1.0f);\n  float16 alu7 = (alu5*alu6);\n  float16 alu8 = (alu7*0.6366197466850281f);\n  float16 alu9 = ((alu8<0.0f)?((float16)(-0.5f)):0.5f);\n  int16 cast2 = __builtin_convertvector((alu8+alu9), int16);\n  float16 cast3 = __builtin_convertvector(cast2, float16);\n  float16 alu10 = ((float16){val4[0],val4[1],val4[2],val4[3],val6[0],val6[1],val6[2],val6[3],val7[0],val7[1],val7[2],val7[3],val5[0],val5[1],val5[2],val5[3]}*1.4426950216293335f);\n  int16 alu11 = (alu10!=alu10);\n  float16 alu12 = ((alu10!=((float)(-__builtin_inff())))?alu10:0.0f);\n  float16 alu13 = (alu11?0.0f:alu12);\n  float16 alu14 = ((alu10!=((float)(__builtin_inff())))?alu13:0.0f);\n  float16 alu15 = ((alu14<0.0f)?((float16)(-0.5f)):0.5f);\n  int16 cast4 = __builtin_convertvector((alu14+alu15), int16);\n  float16 cast5 = __builtin_convertvector(cast4, float16);\n  int16 alu16 = (cast0<1.1754943508222875e-38f);\n  float16 alu17 = (alu16?(cast0*1.8446744073709552e+19f):cast0);\n  float16 cast6 = __builtin_convertvector((((((int16)((float16)((alu17*1.4142135381698608f))))>>23)&255)+-127), float16);\n  unsigned_int16 cast7 = ((unsigned_int16)((float16)(alu7)));\n  int16 cast8 = __builtin_convertvector((((cast7>>23u)&255u)+4294967170u), int16);\n  unsigned_int16 cast9 = __builtin_convertvector(cast8, unsigned_int16);\n  int16 cast10 = __builtin_convertvector((cast9+104u), int16);\n  unsigned_long16 cast11 = __builtin_convertvector((((float16)((unsigned_int16)(((cast7&2155872255u)|1056964608u))))*16777216.0f), unsigned_long16);\n  int16 alu18 = ((cast10<0)?0:cast10);\n  unsigned_long16 cast12 = __builtin_convertvector((alu18&31), unsigned_long16);\n  int16 alu19 = (alu18>>5);\n  int16 alu20 = ((alu19&1)!=0);\n  int16 alu21 = ((alu19&2)!=0);\n  int16 alu22 = ((alu19&4)!=0);\n  unsigned_long16 alu23 = (__builtin_convertvector(alu22, long16)?((unsigned_long16)(1841896334ul)):920167782ul);\n  unsigned_long16 alu24 = (__builtin_convertvector(alu22, long16)?((unsigned_long16)(2140428522ul)):2131351028ul);\n  unsigned_long16 alu25 = (__builtin_convertvector(alu21, long16)?alu23:alu24);\n  unsigned_long16 alu26 = (__builtin_convertvector(alu22, long16)?((unsigned_long16)(1326507024ul)):2475754826ul);\n  unsigned_long16 alu27 = (__builtin_convertvector(alu22, long16)?((unsigned_long16)(4155437400ul)):2102212464ul);\n  unsigned_long16 alu28 = (__builtin_convertvector(alu21, long16)?alu27:alu26);\n  unsigned_long16 alu29 = (__builtin_convertvector(alu20, long16)?alu25:alu28);\n  unsigned_long16 alu30 = (32ul-cast12);\n  unsigned_long16 alu31 = (__builtin_convertvector(alu22, long16)?((unsigned_long16)(2425582776ul)):1326507024ul);\n  unsigned_long16 alu32 = (__builtin_convertvector(alu21, long16)?alu31:alu27);\n  unsigned_long16 alu33 = (__builtin_convertvector(alu20, long16)?alu32:alu25);\n  unsigned_long16 alu34 = (cast11&4294967295ul);\n  unsigned_long16 alu35 = (alu34*(((alu29<<cast12)|(alu33>>alu30))&4294967295ul));\n  unsigned_long16 alu36 = (__builtin_convertvector(alu22, long16)?((unsigned_long16)(26364858ul)):2140428522ul);\n  unsigned_long16 alu37 = (__builtin_convertvector(alu21, long16)?alu36:alu23);\n  unsigned_long16 alu38 = (__builtin_convertvector(alu20, long16)?alu37:alu32);\n  unsigned_long16 alu39 = (alu34*(((alu33<<cast12)|(alu38>>alu30))&4294967295ul));\n  unsigned_long16 alu40 = (__builtin_convertvector(alu22, long16)?((unsigned_long16)(920167782ul)):683565275ul);\n  unsigned_long16 alu41 = (__builtin_convertvector(alu21, long16)?alu24:alu40);\n  unsigned_long16 alu42 = (__builtin_convertvector(alu20, long16)?alu28:alu41);\n  unsigned_long16 alu43 = (alu34*(((alu42<<cast12)|(alu29>>alu30))&4294967295ul));\n  unsigned_long16 alu44 = (__builtin_convertvector(alu22, long16)?((unsigned_long16)(2102212464ul)):0ul);\n  unsigned_long16 alu45 = (__builtin_convertvector(alu21, long16)?alu26:alu44);\n  unsigned_long16 alu46 = (__builtin_convertvector(alu20, long16)?alu41:alu45);\n  unsigned_long16 alu47 = (alu34*(((alu46<<cast12)|(alu42>>alu30))&4294967295ul));\n  unsigned_long16 alu48 = ((alu47&4294967295ul)+(alu43>>32ul)+(((alu43&4294967295ul)+(alu35>>32ul)+(((alu35&4294967295ul)+(alu39>>32ul)+((alu39&4294967295ul)>>32ul))>>32ul))>>32ul));\n  unsigned_long16 alu49 = (__builtin_convertvector(alu22, long16)?((unsigned_long16)(2131351028ul)):0ul);\n  unsigned_long16 alu50 = (__builtin_convertvector(alu21, long16)?alu40:alu49);\n  unsigned_long16 alu51 = (__builtin_convertvector(alu20, long16)?alu45:alu50);\n  unsigned_long16 alu52 = (alu34*(((alu51<<cast12)|(alu46>>alu30))&4294967295ul));\n  unsigned_long16 alu53 = ((alu52&4294967295ul)+(alu47>>32ul)+(alu48>>32ul));\n  unsigned_long16 alu54 = (__builtin_convertvector(alu22, long16)?((unsigned_long16)(2475754826ul)):0ul);\n  unsigned_long16 alu55 = (__builtin_convertvector(alu21, long16)?alu44:alu54);\n  unsigned_long16 alu56 = (__builtin_convertvector(alu20, long16)?alu50:alu55);\n  unsigned_long16 alu57 = (alu34*(((alu56<<cast12)|(alu51>>alu30))&4294967295ul));\n  unsigned_long16 alu58 = ((alu57&4294967295ul)+(alu52>>32ul)+(alu53>>32ul));\n  unsigned_long16 alu59 = (__builtin_convertvector(alu22, long16)?((unsigned_long16)(683565275ul)):0ul);\n  unsigned_long16 alu60 = (__builtin_convertvector(alu21, long16)?alu49:alu59);\n  unsigned_long16 alu61 = (__builtin_convertvector(alu20, long16)?alu55:alu60);\n  unsigned_long16 alu62 = ((((((alu34*(((alu61<<cast12)|(alu56>>alu30))&4294967295ul))&4294967295ul)+(alu57>>32ul)+(alu58>>32ul))&4294967295ul)<<32ul)|(alu58&4294967295ul));\n  unsigned_long16 alu63 = ((alu62>>61ul)&1ul);\n  long16 cast13 = __builtin_convertvector(alu63, long16);\n  long16 cast14 = __builtin_convertvector((alu62&4611686018427387903ul), long16);\n  long16 alu64 = (cast14-(cast13<<62l));\n  float16 cast15 = __builtin_convertvector((alu64>>42l), float16);\n  float16 cast16 = __builtin_convertvector(((((alu53&4294967295ul)<<32ul)|(alu48&4294967295ul))>>43ul), float16);\n  float16 cast17 = __builtin_convertvector(((alu64>>21l)&2097151l), float16);\n  float16 cast18 = __builtin_convertvector((alu64&2097151l), float16);\n  int16 cast19 = __builtin_convertvector(-cast6, int16);\n  unsigned_int16 cast20 = __builtin_convertvector(cast4, unsigned_int16);\n  int16 alu65 = (cast4>>1);\n  unsigned_int16 cast21 = __builtin_convertvector(alu65, unsigned_int16);\n  int16 cast22 = __builtin_convertvector((cast20-cast21), int16);\n  unsigned_int16 cast23 = __builtin_convertvector(cast22, unsigned_int16);\n  int16 cast24 = __builtin_convertvector((cast23+127u), int16);\n  unsigned_int16 cast25 = __builtin_convertvector(cast19, unsigned_int16);\n  int16 cast26 = __builtin_convertvector((cast25<<23u), int16);\n  unsigned_int16 cast27 = __builtin_convertvector(cast26, unsigned_int16);\n  unsigned_int16 cast28 = __builtin_convertvector(((int16)((float16)(alu17))), unsigned_int16);\n  int16 cast29 = __builtin_convertvector((cast28+cast27), int16);\n  int16 cast30 = __builtin_convertvector(((alu62>>62ul)+alu63), int16);\n  unsigned_int16 cast31 = __builtin_convertvector(cast24, unsigned_int16);\n  int16 cast32 = __builtin_convertvector((cast31<<23u), int16);\n  unsigned_int16 cast33 = __builtin_convertvector((alu65+127), unsigned_int16);\n  int16 cast34 = __builtin_convertvector((cast33<<23u), int16);\n  float16 alu66 = (((float16)((int16)(cast29)))+-1.0f);\n  float16 alu67 = (0.5f*alu66*alu66);\n  float16 cast35 = ((float16)((unsigned_int16)((((unsigned_int16)((float16)((alu66-alu67))))&4294963200u))));\n  float16 alu68 = (cast15*4398046511104.0f);\n  float16 alu69 = (cast17*2097152.0f);\n  float16 alu70 = (alu68+alu69);\n  float16 alu71 = (alu70+cast18);\n  float16 alu72 = (cast16*1.1368683772161603e-13f);\n  float16 alu73 = (alu71+alu72);\n  float16 alu74 = (alu73*3.4061216748705226e-19f);\n  float16 alu75 = (alu73*4097.0f);\n  float16 alu76 = (alu75-(alu75-alu73));\n  float16 alu77 = (alu73-alu76);\n  float16 alu78 = (((alu76*3.406131239146355e-19f)-alu74)+(alu76*-9.564275832644382e-25f)+(alu77*3.406131239146355e-19f)+(alu77*-9.564275832644382e-25f)+(alu73*-9.478396428567739e-27f)+((0.0f+(alu69-(alu70-alu68))+(cast18-(alu71-alu70))+(alu72-(alu73-alu71)))*3.4061216748705226e-19f));\n  float16 alu79 = ((cast3*-0.00048351287841796875f)+((cast3*-1.5703125f)+alu7));\n  float16 alu80 = (cast3*-3.1385570764541626e-07f);\n  float16 alu81 = (alu79+alu80);\n  float16 alu82 = ((alu80-(alu81-alu79))+(cast3*-6.07710062827671e-11f));\n  float16 alu83 = (alu81+alu82);\n  float16 alu84 = (alu74+alu78);\n  int16 alu85 = (alu7<30.0f);\n  float16 alu86 = (alu85?alu83:alu84);\n  float16 alu87 = (alu86*alu86);\n  float16 alu88 = (0.5f*alu87);\n  float16 alu89 = (alu85?(alu82-(alu83-alu81)):(alu78-(alu84-alu74)));\n  float16 alu90 = (1.0f-alu88);\n  float16 alu91 = (alu87*alu86);\n  int16 alu92 = (alu85?cast2:cast30);\n  float16 alu93 = (((alu92&1)!=0)?(alu90+(((1.0f-alu90)-alu88)+((alu87*alu87*((((((-2.7557314297155244e-07f*alu87)+2.4801587642286904e-05f)*alu87)+-0.0013888889225199819f)*alu87)+0.0416666679084301f))-(alu86*alu89)))):(alu86-(((alu87*((0.5f*alu89)-(alu91*((((2.7557314297155244e-06f*alu87)+-0.00019841270113829523f)*alu87)+0.008333333767950535f))))-alu89)-(alu91*-0.1666666716337204f))));\n  float16 alu94 = (alu93*alu6);\n  float16 alu95 = (alu66*(1.0f/(2.0f+alu66)));\n  float16 alu96 = (alu95*alu95);\n  float16 alu97 = (((alu66-cast35)-alu67)+(alu95*(alu67+(alu96*((((((0.24279078841209412f*alu96)+0.2849878668785095f)*alu96)+0.40000972151756287f)*alu96)+0.6666666269302368f)))));\n  float16 alu98 = (cast35*1.44287109375f);\n  float16 alu99 = (alu16?(cast6+-64.0f):cast6);\n  float16 alu100 = (alu99+alu98);\n  float16 alu101 = (alu14-cast5);\n  float16 alu102 = ((cast0!=((float)(__builtin_inff())))?(((alu97+cast35)*-0.00017605285393074155f)+(alu97*1.44287109375f)+((alu99-alu100)+alu98)+alu100):((float)(__builtin_inff())));\n  float16 alu103 = ((cast0!=0.0f)?alu102:((float)(-__builtin_inff())));\n  float16 alu104 = (((1.0f/cast0)!=((float)(-__builtin_inff())))?alu103:((float)(-__builtin_inff())));\n  float16 alu105 = ((cast0<-0.0f)?__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)):alu104);\n  float16 alu106 = ((cast0!=cast0)?__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)):alu105);\n  float16 alu107 = ((~((alu10<128.0f)^0))?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu101)+0.0013392627006396651f)*alu101)+0.009618384763598442f)*alu101)+0.055503472685813904f)*alu101)+0.24022644758224487f)*alu101)+0.6931471824645996f)*alu101)+1.0f)*((float16)((int16)(cast34)))*((float16)((int16)(cast32)))));\n  float16 alu108 = ((alu10<-150.0f)?0.0f:alu107);\n  float16 alu109 = (alu11?__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)):alu108);\n  float16 alu110 = (((alu92&2)!=0)?-alu94:alu94);\n  float16 alu111 = ((alu5!=0.0f)?alu110:alu5);\n  float16 alu112 = (alu1?alu111:__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)));\n  float16 alu113 = (alu0?__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)):alu112);\n  float16 alu114 = (alu2?alu113:__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)));\n  float16 alu115 = (alu109+(alu106*0.6931471824645996f)+alu114);\n  *((float4*)((((float*)(val0))+0))) = (float4){alu115[0],alu115[1],alu115[2],alu115[3]};\n  *((float4*)((((float*)(val0))+12))) = (float4){alu115[12],alu115[13],alu115[14],alu115[15]};\n  *((float4*)((((float*)(val0))+4))) = (float4){alu115[4],alu115[5],alu115[6],alu115[7]};\n  *((float4*)((((float*)(val0))+8))) = (float4){alu115[8],alu115[9],alu115[10],alu115[11]};\n}\n"
-1185 Ops.PROGRAM dtypes.void [1182, 1183, 1184] ProgramInfo(params=(%1, %7, %132, %259), globals=(0, 1, 2, 3), outs=(0,), ins=(1, 2, 3), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
-1186 Ops.SINK dtypes.void [688, 1185]
+353 Ops.SHR dtypes.u64 [339, 352]
+354 Ops.CAST dtypes.i32 [353] dtypes.i32
+355 Ops.ADD dtypes.i32 [354, 79]
+356 Ops.WHERE dtypes.i32 [244, 354, 355]
+357 Ops.AND dtypes.i32 [356, 79]
+358 Ops.CMPNE dtypes.bool [357, 14]
+359 Ops.CONST dtypes.weakfloat [] 1.5707963705062866
+360 Ops.CAST dtypes.f32 [359] dtypes.f32
+361 Ops.WHERE dtypes.f32 [358, 360, 26]
+362 Ops.ADD dtypes.f32 [350, 361]
+363 Ops.MUL dtypes.f32 [362, 362]
+364 Ops.MUL dtypes.f32 [215, 363]
+365 Ops.ADD dtypes.f32 [364, 219]
+366 Ops.MUL dtypes.f32 [365, 363]
+367 Ops.ADD dtypes.f32 [366, 223]
+368 Ops.MUL dtypes.f32 [367, 363]
+369 Ops.ADD dtypes.f32 [368, 227]
+370 Ops.MUL dtypes.f32 [369, 363]
+371 Ops.ADD dtypes.f32 [370, 76]
+372 Ops.MUL dtypes.f32 [362, 371]
+373 Ops.AND dtypes.i32 [356, 7]
+374 Ops.CMPNE dtypes.bool [373, 14]
+375 Ops.WHERE dtypes.f32 [374, 137, 76]
+376 Ops.MUL dtypes.f32 [372, 375]
+377 Ops.WHERE dtypes.f32 [189, 235, 376]
+378 Ops.MUL dtypes.f32 [377, 185]
+379 Ops.WHERE dtypes.f32 [178, 378, 21]
+380 Ops.WHERE dtypes.f32 [177, 21, 379]
+381 Ops.WHERE dtypes.f32 [176, 380, 21]
+382 Ops.ADD dtypes.f32 [171, 381]
+383 Ops.INDEX dtypes.f32 [12, 79]
+384 Ops.MUL dtypes.f32 [383, 17]
+385 Ops.CMPNE dtypes.bool [384, 384]
+386 Ops.CMPLT dtypes.bool [384, 23]
+387 Ops.CMPLT dtypes.bool [384, 28]
+388 Ops.CMPEQ dtypes.bool [387, 31]
+389 Ops.CMPNE dtypes.bool [384, 34]
+390 Ops.CMPNE dtypes.bool [384, 39]
+391 Ops.WHERE dtypes.f32 [390, 384, 26]
+392 Ops.WHERE dtypes.f32 [385, 26, 391]
+393 Ops.WHERE dtypes.f32 [389, 392, 26]
+394 Ops.CMPLT dtypes.bool [393, 26]
+395 Ops.WHERE dtypes.f32 [394, 46, 48]
+396 Ops.ADD dtypes.f32 [393, 395]
+397 Ops.CAST dtypes.i32 [396] dtypes.i32
+398 Ops.CAST dtypes.f32 [397] dtypes.f32
+399 Ops.SUB dtypes.f32 [393, 398]
+400 Ops.MUL dtypes.f32 [36, 399]
+401 Ops.ADD dtypes.f32 [400, 56]
+402 Ops.MUL dtypes.f32 [401, 399]
+403 Ops.ADD dtypes.f32 [402, 60]
+404 Ops.MUL dtypes.f32 [403, 399]
+405 Ops.ADD dtypes.f32 [404, 64]
+406 Ops.MUL dtypes.f32 [405, 399]
+407 Ops.ADD dtypes.f32 [406, 68]
+408 Ops.MUL dtypes.f32 [407, 399]
+409 Ops.ADD dtypes.f32 [408, 72]
+410 Ops.MUL dtypes.f32 [409, 399]
+411 Ops.ADD dtypes.f32 [410, 76]
+412 Ops.SHR dtypes.i32 [397, 79]
+413 Ops.ADD dtypes.i32 [412, 82]
+414 Ops.SHL dtypes.i32 [413, 85]
+415 Ops.BITCAST dtypes.f32 [414] dtypes.f32
+416 Ops.MUL dtypes.f32 [411, 415]
+417 Ops.SUB dtypes.i32 [397, 412]
+418 Ops.ADD dtypes.i32 [417, 82]
+419 Ops.SHL dtypes.i32 [418, 85]
+420 Ops.BITCAST dtypes.f32 [419] dtypes.f32
+421 Ops.MUL dtypes.f32 [416, 420]
+422 Ops.WHERE dtypes.f32 [388, 34, 421]
+423 Ops.WHERE dtypes.f32 [386, 26, 422]
+424 Ops.WHERE dtypes.f32 [385, 21, 423]
+425 Ops.INDEX dtypes.f32 [99, 79]
+426 Ops.CMPNE dtypes.bool [425, 425]
+427 Ops.FDIV dtypes.f32 [76, 425]
+428 Ops.CMPNE dtypes.bool [427, 39]
+429 Ops.CMPLT dtypes.bool [425, 105]
+430 Ops.CMPNE dtypes.bool [425, 26]
+431 Ops.CMPNE dtypes.bool [425, 34]
+432 Ops.CMPLT dtypes.bool [425, 112]
+433 Ops.MUL dtypes.f32 [425, 115]
+434 Ops.WHERE dtypes.f32 [432, 433, 425]
+435 Ops.BITCAST dtypes.i32 [434] dtypes.i32
+436 Ops.MUL dtypes.f32 [434, 120]
+437 Ops.BITCAST dtypes.i32 [436] dtypes.i32
+438 Ops.SHR dtypes.i32 [437, 85]
+439 Ops.AND dtypes.i32 [438, 125]
+440 Ops.ADD dtypes.i32 [439, 128]
+441 Ops.CAST dtypes.f32 [440] dtypes.f32
+442 Ops.NEG dtypes.f32 [441]
+443 Ops.CAST dtypes.i32 [442] dtypes.i32
+444 Ops.SHL dtypes.i32 [443, 85]
+445 Ops.ADD dtypes.i32 [435, 444]
+446 Ops.BITCAST dtypes.f32 [445] dtypes.f32
+447 Ops.ADD dtypes.f32 [446, 137]
+448 Ops.ADD dtypes.f32 [446, 76]
+449 Ops.FDIV dtypes.f32 [447, 448]
+450 Ops.MUL dtypes.f32 [449, 449]
+451 Ops.MUL dtypes.f32 [110, 450]
+452 Ops.ADD dtypes.f32 [451, 144]
+453 Ops.MUL dtypes.f32 [452, 450]
+454 Ops.ADD dtypes.f32 [453, 148]
+455 Ops.MUL dtypes.f32 [449, 450]
+456 Ops.MUL dtypes.f32 [454, 455]
+457 Ops.ADD dtypes.f32 [441, 153]
+458 Ops.WHERE dtypes.f32 [432, 457, 441]
+459 Ops.ADD dtypes.f32 [456, 458]
+460 Ops.MUL dtypes.f32 [449, 158]
+461 Ops.ADD dtypes.f32 [459, 460]
+462 Ops.MUL dtypes.f32 [449, 162]
+463 Ops.ADD dtypes.f32 [461, 462]
+464 Ops.WHERE dtypes.f32 [431, 463, 34]
+465 Ops.WHERE dtypes.f32 [430, 464, 39]
+466 Ops.WHERE dtypes.f32 [429, 21, 465]
+467 Ops.WHERE dtypes.f32 [428, 466, 39]
+468 Ops.WHERE dtypes.f32 [426, 21, 467]
+469 Ops.MUL dtypes.f32 [468, 72]
+470 Ops.ADD dtypes.f32 [424, 469]
+471 Ops.INDEX dtypes.f32 [174, 79]
+472 Ops.CMPNE dtypes.bool [471, 34]
+473 Ops.CMPNE dtypes.bool [471, 471]
+474 Ops.CMPNE dtypes.bool [471, 39]
+475 Ops.WHERE dtypes.f32 [474, 471, 26]
+476 Ops.WHERE dtypes.f32 [473, 26, 475]
+477 Ops.WHERE dtypes.f32 [472, 476, 26]
+478 Ops.CMPNE dtypes.bool [477, 26]
+479 Ops.CMPLT dtypes.bool [477, 26]
+480 Ops.WHERE dtypes.f32 [479, 137, 76]
+481 Ops.WHERE dtypes.f32 [478, 480, 26]
+482 Ops.MUL dtypes.f32 [477, 481]
+483 Ops.CMPLT dtypes.bool [482, 188]
+484 Ops.MUL dtypes.f32 [482, 191]
+485 Ops.CMPLT dtypes.bool [484, 26]
+486 Ops.WHERE dtypes.f32 [485, 46, 48]
+487 Ops.ADD dtypes.f32 [484, 486]
+488 Ops.CAST dtypes.i32 [487] dtypes.i32
+489 Ops.CAST dtypes.f32 [488] dtypes.f32
+490 Ops.MUL dtypes.f32 [489, 199]
+491 Ops.MUL dtypes.f32 [489, 202]
+492 Ops.MUL dtypes.f32 [489, 205]
+493 Ops.MUL dtypes.f32 [489, 208]
+494 Ops.ADD dtypes.f32 [493, 482]
+495 Ops.ADD dtypes.f32 [492, 494]
+496 Ops.ADD dtypes.f32 [491, 495]
+497 Ops.ADD dtypes.f32 [490, 496]
+498 Ops.MUL dtypes.f32 [497, 497]
+499 Ops.MUL dtypes.f32 [215, 498]
+500 Ops.ADD dtypes.f32 [499, 219]
+501 Ops.MUL dtypes.f32 [500, 498]
+502 Ops.ADD dtypes.f32 [501, 223]
+503 Ops.MUL dtypes.f32 [502, 498]
+504 Ops.ADD dtypes.f32 [503, 227]
+505 Ops.MUL dtypes.f32 [504, 498]
+506 Ops.ADD dtypes.f32 [505, 76]
+507 Ops.MUL dtypes.f32 [497, 506]
+508 Ops.AND dtypes.i32 [488, 79]
+509 Ops.CMPNE dtypes.bool [508, 14]
+510 Ops.WHERE dtypes.f32 [509, 137, 76]
+511 Ops.MUL dtypes.f32 [507, 510]
+512 Ops.BITCAST dtypes.u32 [482] dtypes.u32
+513 Ops.AND dtypes.u32 [512, 238]
+514 Ops.OR dtypes.u32 [513, 241]
+515 Ops.BITCAST dtypes.f32 [514] dtypes.f32
+516 Ops.CMPLT dtypes.bool [515, 48]
+517 Ops.MUL dtypes.f32 [515, 246]
+518 Ops.CAST dtypes.u64 [517] dtypes.u64
+519 Ops.SHR dtypes.u32 [512, 249]
+520 Ops.AND dtypes.u32 [519, 251]
+521 Ops.ADD dtypes.u32 [520, 254]
+522 Ops.CAST dtypes.u64 [521] dtypes.u64
+523 Ops.SHR dtypes.u64 [522, 258]
+524 Ops.CMPNE dtypes.bool [523, 260]
+525 Ops.CMPNE dtypes.bool [523, 262]
+526 Ops.CMPNE dtypes.bool [523, 264]
+527 Ops.CMPNE dtypes.bool [523, 267]
+528 Ops.CMPNE dtypes.bool [523, 269]
+529 Ops.CMPNE dtypes.bool [523, 258]
+530 Ops.WHERE dtypes.u32 [529, 272, 274]
+531 Ops.WHERE dtypes.u32 [528, 530, 277]
+532 Ops.WHERE dtypes.u32 [527, 531, 280]
+533 Ops.WHERE dtypes.u32 [526, 532, 283]
+534 Ops.WHERE dtypes.u32 [525, 533, 286]
+535 Ops.WHERE dtypes.u32 [524, 534, 272]
+536 Ops.CAST dtypes.u64 [535] dtypes.u64
+537 Ops.CAST dtypes.i32 [521] dtypes.i32
+538 Ops.AND dtypes.i32 [537, 292]
+539 Ops.CAST dtypes.u64 [538] dtypes.u64
+540 Ops.SHL dtypes.u64 [536, 539]
+541 Ops.CAST dtypes.u32 [540] dtypes.u32
+542 Ops.WHERE dtypes.u32 [528, 272, 274]
+543 Ops.WHERE dtypes.u32 [527, 542, 277]
+544 Ops.WHERE dtypes.u32 [526, 543, 280]
+545 Ops.WHERE dtypes.u32 [525, 544, 283]
+546 Ops.WHERE dtypes.u32 [524, 545, 286]
+547 Ops.CAST dtypes.u64 [546] dtypes.u64
+548 Ops.SUB dtypes.i32 [304, 538]
+549 Ops.CAST dtypes.u64 [548] dtypes.u64
+550 Ops.SHR dtypes.u64 [547, 549]
+551 Ops.CAST dtypes.u32 [550] dtypes.u32
+552 Ops.OR dtypes.u32 [541, 551]
+553 Ops.CAST dtypes.u64 [552] dtypes.u64
+554 Ops.MUL dtypes.u64 [518, 553]
+555 Ops.SHL dtypes.u64 [554, 312]
+556 Ops.SHL dtypes.u64 [547, 539]
+557 Ops.CAST dtypes.u32 [556] dtypes.u32
+558 Ops.WHERE dtypes.u32 [527, 272, 274]
+559 Ops.WHERE dtypes.u32 [526, 558, 277]
+560 Ops.WHERE dtypes.u32 [525, 559, 280]
+561 Ops.WHERE dtypes.u32 [524, 560, 283]
+562 Ops.CAST dtypes.u64 [561] dtypes.u64
+563 Ops.SHR dtypes.u64 [562, 549]
+564 Ops.CAST dtypes.u32 [563] dtypes.u32
+565 Ops.OR dtypes.u32 [557, 564]
+566 Ops.CAST dtypes.u64 [565] dtypes.u64
+567 Ops.MUL dtypes.u64 [518, 566]
+568 Ops.ADD dtypes.u64 [555, 567]
+569 Ops.SHL dtypes.u64 [562, 539]
+570 Ops.CAST dtypes.u32 [569] dtypes.u32
+571 Ops.WHERE dtypes.u32 [526, 272, 274]
+572 Ops.WHERE dtypes.u32 [525, 571, 277]
+573 Ops.WHERE dtypes.u32 [524, 572, 280]
+574 Ops.CAST dtypes.u64 [573] dtypes.u64
+575 Ops.SHR dtypes.u64 [574, 549]
+576 Ops.CAST dtypes.u32 [575] dtypes.u32
+577 Ops.OR dtypes.u32 [570, 576]
+578 Ops.CAST dtypes.u64 [577] dtypes.u64
+579 Ops.MUL dtypes.u64 [518, 578]
+580 Ops.SHR dtypes.u64 [579, 312]
+581 Ops.ADD dtypes.u64 [568, 580]
+582 Ops.AND dtypes.u64 [581, 341]
+583 Ops.CAST dtypes.f32 [582] dtypes.f32
+584 Ops.MUL dtypes.f32 [583, 345]
+585 Ops.ADD dtypes.f32 [584, 348]
+586 Ops.WHERE dtypes.f32 [516, 584, 585]
+587 Ops.SHR dtypes.u64 [581, 352]
+588 Ops.CAST dtypes.i32 [587] dtypes.i32
+589 Ops.ADD dtypes.i32 [588, 79]
+590 Ops.WHERE dtypes.i32 [516, 588, 589]
+591 Ops.AND dtypes.i32 [590, 79]
+592 Ops.CMPNE dtypes.bool [591, 14]
+593 Ops.WHERE dtypes.f32 [592, 360, 26]
+594 Ops.ADD dtypes.f32 [586, 593]
+595 Ops.MUL dtypes.f32 [594, 594]
+596 Ops.MUL dtypes.f32 [215, 595]
+597 Ops.ADD dtypes.f32 [596, 219]
+598 Ops.MUL dtypes.f32 [597, 595]
+599 Ops.ADD dtypes.f32 [598, 223]
+600 Ops.MUL dtypes.f32 [599, 595]
+601 Ops.ADD dtypes.f32 [600, 227]
+602 Ops.MUL dtypes.f32 [601, 595]
+603 Ops.ADD dtypes.f32 [602, 76]
+604 Ops.MUL dtypes.f32 [594, 603]
+605 Ops.AND dtypes.i32 [590, 7]
+606 Ops.CMPNE dtypes.bool [605, 14]
+607 Ops.WHERE dtypes.f32 [606, 137, 76]
+608 Ops.MUL dtypes.f32 [604, 607]
+609 Ops.WHERE dtypes.f32 [483, 511, 608]
+610 Ops.MUL dtypes.f32 [609, 481]
+611 Ops.WHERE dtypes.f32 [474, 610, 21]
+612 Ops.WHERE dtypes.f32 [473, 21, 611]
+613 Ops.WHERE dtypes.f32 [472, 612, 21]
+614 Ops.ADD dtypes.f32 [470, 613]
+615 Ops.INDEX dtypes.f32 [12, 7]
+616 Ops.MUL dtypes.f32 [615, 17]
+617 Ops.CMPNE dtypes.bool [616, 616]
+618 Ops.CMPLT dtypes.bool [616, 23]
+619 Ops.CMPLT dtypes.bool [616, 28]
+620 Ops.CMPEQ dtypes.bool [619, 31]
+621 Ops.CMPNE dtypes.bool [616, 34]
+622 Ops.CMPNE dtypes.bool [616, 39]
+623 Ops.WHERE dtypes.f32 [622, 616, 26]
+624 Ops.WHERE dtypes.f32 [617, 26, 623]
+625 Ops.WHERE dtypes.f32 [621, 624, 26]
+626 Ops.CMPLT dtypes.bool [625, 26]
+627 Ops.WHERE dtypes.f32 [626, 46, 48]
+628 Ops.ADD dtypes.f32 [625, 627]
+629 Ops.CAST dtypes.i32 [628] dtypes.i32
+630 Ops.CAST dtypes.f32 [629] dtypes.f32
+631 Ops.SUB dtypes.f32 [625, 630]
+632 Ops.MUL dtypes.f32 [36, 631]
+633 Ops.ADD dtypes.f32 [632, 56]
+634 Ops.MUL dtypes.f32 [633, 631]
+635 Ops.ADD dtypes.f32 [634, 60]
+636 Ops.MUL dtypes.f32 [635, 631]
+637 Ops.ADD dtypes.f32 [636, 64]
+638 Ops.MUL dtypes.f32 [637, 631]
+639 Ops.ADD dtypes.f32 [638, 68]
+640 Ops.MUL dtypes.f32 [639, 631]
+641 Ops.ADD dtypes.f32 [640, 72]
+642 Ops.MUL dtypes.f32 [641, 631]
+643 Ops.ADD dtypes.f32 [642, 76]
+644 Ops.SHR dtypes.i32 [629, 79]
+645 Ops.ADD dtypes.i32 [644, 82]
+646 Ops.SHL dtypes.i32 [645, 85]
+647 Ops.BITCAST dtypes.f32 [646] dtypes.f32
+648 Ops.MUL dtypes.f32 [643, 647]
+649 Ops.SUB dtypes.i32 [629, 644]
+650 Ops.ADD dtypes.i32 [649, 82]
+651 Ops.SHL dtypes.i32 [650, 85]
+652 Ops.BITCAST dtypes.f32 [651] dtypes.f32
+653 Ops.MUL dtypes.f32 [648, 652]
+654 Ops.WHERE dtypes.f32 [620, 34, 653]
+655 Ops.WHERE dtypes.f32 [618, 26, 654]
+656 Ops.WHERE dtypes.f32 [617, 21, 655]
+657 Ops.INDEX dtypes.f32 [99, 7]
+658 Ops.CMPNE dtypes.bool [657, 657]
+659 Ops.FDIV dtypes.f32 [76, 657]
+660 Ops.CMPNE dtypes.bool [659, 39]
+661 Ops.CMPLT dtypes.bool [657, 105]
+662 Ops.CMPNE dtypes.bool [657, 26]
+663 Ops.CMPNE dtypes.bool [657, 34]
+664 Ops.CMPLT dtypes.bool [657, 112]
+665 Ops.MUL dtypes.f32 [657, 115]
+666 Ops.WHERE dtypes.f32 [664, 665, 657]
+667 Ops.BITCAST dtypes.i32 [666] dtypes.i32
+668 Ops.MUL dtypes.f32 [666, 120]
+669 Ops.BITCAST dtypes.i32 [668] dtypes.i32
+670 Ops.SHR dtypes.i32 [669, 85]
+671 Ops.AND dtypes.i32 [670, 125]
+672 Ops.ADD dtypes.i32 [671, 128]
+673 Ops.CAST dtypes.f32 [672] dtypes.f32
+674 Ops.NEG dtypes.f32 [673]
+675 Ops.CAST dtypes.i32 [674] dtypes.i32
+676 Ops.SHL dtypes.i32 [675, 85]
+677 Ops.ADD dtypes.i32 [667, 676]
+678 Ops.BITCAST dtypes.f32 [677] dtypes.f32
+679 Ops.ADD dtypes.f32 [678, 137]
+680 Ops.ADD dtypes.f32 [678, 76]
+681 Ops.FDIV dtypes.f32 [679, 680]
+682 Ops.MUL dtypes.f32 [681, 681]
+683 Ops.MUL dtypes.f32 [110, 682]
+684 Ops.ADD dtypes.f32 [683, 144]
+685 Ops.MUL dtypes.f32 [684, 682]
+686 Ops.ADD dtypes.f32 [685, 148]
+687 Ops.MUL dtypes.f32 [681, 682]
+688 Ops.MUL dtypes.f32 [686, 687]
+689 Ops.ADD dtypes.f32 [673, 153]
+690 Ops.WHERE dtypes.f32 [664, 689, 673]
+691 Ops.ADD dtypes.f32 [688, 690]
+692 Ops.MUL dtypes.f32 [681, 158]
+693 Ops.ADD dtypes.f32 [691, 692]
+694 Ops.MUL dtypes.f32 [681, 162]
+695 Ops.ADD dtypes.f32 [693, 694]
+696 Ops.WHERE dtypes.f32 [663, 695, 34]
+697 Ops.WHERE dtypes.f32 [662, 696, 39]
+698 Ops.WHERE dtypes.f32 [661, 21, 697]
+699 Ops.WHERE dtypes.f32 [660, 698, 39]
+700 Ops.WHERE dtypes.f32 [658, 21, 699]
+701 Ops.MUL dtypes.f32 [700, 72]
+702 Ops.ADD dtypes.f32 [656, 701]
+703 Ops.INDEX dtypes.f32 [174, 7]
+704 Ops.CMPNE dtypes.bool [703, 34]
+705 Ops.CMPNE dtypes.bool [703, 703]
+706 Ops.CMPNE dtypes.bool [703, 39]
+707 Ops.WHERE dtypes.f32 [706, 703, 26]
+708 Ops.WHERE dtypes.f32 [705, 26, 707]
+709 Ops.WHERE dtypes.f32 [704, 708, 26]
+710 Ops.CMPNE dtypes.bool [709, 26]
+711 Ops.CMPLT dtypes.bool [709, 26]
+712 Ops.WHERE dtypes.f32 [711, 137, 76]
+713 Ops.WHERE dtypes.f32 [710, 712, 26]
+714 Ops.MUL dtypes.f32 [709, 713]
+715 Ops.CMPLT dtypes.bool [714, 188]
+716 Ops.MUL dtypes.f32 [714, 191]
+717 Ops.CMPLT dtypes.bool [716, 26]
+718 Ops.WHERE dtypes.f32 [717, 46, 48]
+719 Ops.ADD dtypes.f32 [716, 718]
+720 Ops.CAST dtypes.i32 [719] dtypes.i32
+721 Ops.CAST dtypes.f32 [720] dtypes.f32
+722 Ops.MUL dtypes.f32 [721, 199]
+723 Ops.MUL dtypes.f32 [721, 202]
+724 Ops.MUL dtypes.f32 [721, 205]
+725 Ops.MUL dtypes.f32 [721, 208]
+726 Ops.ADD dtypes.f32 [725, 714]
+727 Ops.ADD dtypes.f32 [724, 726]
+728 Ops.ADD dtypes.f32 [723, 727]
+729 Ops.ADD dtypes.f32 [722, 728]
+730 Ops.MUL dtypes.f32 [729, 729]
+731 Ops.MUL dtypes.f32 [215, 730]
+732 Ops.ADD dtypes.f32 [731, 219]
+733 Ops.MUL dtypes.f32 [732, 730]
+734 Ops.ADD dtypes.f32 [733, 223]
+735 Ops.MUL dtypes.f32 [734, 730]
+736 Ops.ADD dtypes.f32 [735, 227]
+737 Ops.MUL dtypes.f32 [736, 730]
+738 Ops.ADD dtypes.f32 [737, 76]
+739 Ops.MUL dtypes.f32 [729, 738]
+740 Ops.AND dtypes.i32 [720, 79]
+741 Ops.CMPNE dtypes.bool [740, 14]
+742 Ops.WHERE dtypes.f32 [741, 137, 76]
+743 Ops.MUL dtypes.f32 [739, 742]
+744 Ops.BITCAST dtypes.u32 [714] dtypes.u32
+745 Ops.AND dtypes.u32 [744, 238]
+746 Ops.OR dtypes.u32 [745, 241]
+747 Ops.BITCAST dtypes.f32 [746] dtypes.f32
+748 Ops.CMPLT dtypes.bool [747, 48]
+749 Ops.MUL dtypes.f32 [747, 246]
+750 Ops.CAST dtypes.u64 [749] dtypes.u64
+751 Ops.SHR dtypes.u32 [744, 249]
+752 Ops.AND dtypes.u32 [751, 251]
+753 Ops.ADD dtypes.u32 [752, 254]
+754 Ops.CAST dtypes.u64 [753] dtypes.u64
+755 Ops.SHR dtypes.u64 [754, 258]
+756 Ops.CMPNE dtypes.bool [755, 260]
+757 Ops.CMPNE dtypes.bool [755, 262]
+758 Ops.CMPNE dtypes.bool [755, 264]
+759 Ops.CMPNE dtypes.bool [755, 267]
+760 Ops.CMPNE dtypes.bool [755, 269]
+761 Ops.CMPNE dtypes.bool [755, 258]
+762 Ops.WHERE dtypes.u32 [761, 272, 274]
+763 Ops.WHERE dtypes.u32 [760, 762, 277]
+764 Ops.WHERE dtypes.u32 [759, 763, 280]
+765 Ops.WHERE dtypes.u32 [758, 764, 283]
+766 Ops.WHERE dtypes.u32 [757, 765, 286]
+767 Ops.WHERE dtypes.u32 [756, 766, 272]
+768 Ops.CAST dtypes.u64 [767] dtypes.u64
+769 Ops.CAST dtypes.i32 [753] dtypes.i32
+770 Ops.AND dtypes.i32 [769, 292]
+771 Ops.CAST dtypes.u64 [770] dtypes.u64
+772 Ops.SHL dtypes.u64 [768, 771]
+773 Ops.CAST dtypes.u32 [772] dtypes.u32
+774 Ops.WHERE dtypes.u32 [760, 272, 274]
+775 Ops.WHERE dtypes.u32 [759, 774, 277]
+776 Ops.WHERE dtypes.u32 [758, 775, 280]
+777 Ops.WHERE dtypes.u32 [757, 776, 283]
+778 Ops.WHERE dtypes.u32 [756, 777, 286]
+779 Ops.CAST dtypes.u64 [778] dtypes.u64
+780 Ops.SUB dtypes.i32 [304, 770]
+781 Ops.CAST dtypes.u64 [780] dtypes.u64
+782 Ops.SHR dtypes.u64 [779, 781]
+783 Ops.CAST dtypes.u32 [782] dtypes.u32
+784 Ops.OR dtypes.u32 [773, 783]
+785 Ops.CAST dtypes.u64 [784] dtypes.u64
+786 Ops.MUL dtypes.u64 [750, 785]
+787 Ops.SHL dtypes.u64 [786, 312]
+788 Ops.SHL dtypes.u64 [779, 771]
+789 Ops.CAST dtypes.u32 [788] dtypes.u32
+790 Ops.WHERE dtypes.u32 [759, 272, 274]
+791 Ops.WHERE dtypes.u32 [758, 790, 277]
+792 Ops.WHERE dtypes.u32 [757, 791, 280]
+793 Ops.WHERE dtypes.u32 [756, 792, 283]
+794 Ops.CAST dtypes.u64 [793] dtypes.u64
+795 Ops.SHR dtypes.u64 [794, 781]
+796 Ops.CAST dtypes.u32 [795] dtypes.u32
+797 Ops.OR dtypes.u32 [789, 796]
+798 Ops.CAST dtypes.u64 [797] dtypes.u64
+799 Ops.MUL dtypes.u64 [750, 798]
+800 Ops.ADD dtypes.u64 [787, 799]
+801 Ops.SHL dtypes.u64 [794, 771]
+802 Ops.CAST dtypes.u32 [801] dtypes.u32
+803 Ops.WHERE dtypes.u32 [758, 272, 274]
+804 Ops.WHERE dtypes.u32 [757, 803, 277]
+805 Ops.WHERE dtypes.u32 [756, 804, 280]
+806 Ops.CAST dtypes.u64 [805] dtypes.u64
+807 Ops.SHR dtypes.u64 [806, 781]
+808 Ops.CAST dtypes.u32 [807] dtypes.u32
+809 Ops.OR dtypes.u32 [802, 808]
+810 Ops.CAST dtypes.u64 [809] dtypes.u64
+811 Ops.MUL dtypes.u64 [750, 810]
+812 Ops.SHR dtypes.u64 [811, 312]
+813 Ops.ADD dtypes.u64 [800, 812]
+814 Ops.AND dtypes.u64 [813, 341]
+815 Ops.CAST dtypes.f32 [814] dtypes.f32
+816 Ops.MUL dtypes.f32 [815, 345]
+817 Ops.ADD dtypes.f32 [816, 348]
+818 Ops.WHERE dtypes.f32 [748, 816, 817]
+819 Ops.SHR dtypes.u64 [813, 352]
+820 Ops.CAST dtypes.i32 [819] dtypes.i32
+821 Ops.ADD dtypes.i32 [820, 79]
+822 Ops.WHERE dtypes.i32 [748, 820, 821]
+823 Ops.AND dtypes.i32 [822, 79]
+824 Ops.CMPNE dtypes.bool [823, 14]
+825 Ops.WHERE dtypes.f32 [824, 360, 26]
+826 Ops.ADD dtypes.f32 [818, 825]
+827 Ops.MUL dtypes.f32 [826, 826]
+828 Ops.MUL dtypes.f32 [215, 827]
+829 Ops.ADD dtypes.f32 [828, 219]
+830 Ops.MUL dtypes.f32 [829, 827]
+831 Ops.ADD dtypes.f32 [830, 223]
+832 Ops.MUL dtypes.f32 [831, 827]
+833 Ops.ADD dtypes.f32 [832, 227]
+834 Ops.MUL dtypes.f32 [833, 827]
+835 Ops.ADD dtypes.f32 [834, 76]
+836 Ops.MUL dtypes.f32 [826, 835]
+837 Ops.AND dtypes.i32 [822, 7]
+838 Ops.CMPNE dtypes.bool [837, 14]
+839 Ops.WHERE dtypes.f32 [838, 137, 76]
+840 Ops.MUL dtypes.f32 [836, 839]
+841 Ops.WHERE dtypes.f32 [715, 743, 840]
+842 Ops.MUL dtypes.f32 [841, 713]
+843 Ops.WHERE dtypes.f32 [706, 842, 21]
+844 Ops.WHERE dtypes.f32 [705, 21, 843]
+845 Ops.WHERE dtypes.f32 [704, 844, 21]
+846 Ops.ADD dtypes.f32 [702, 845]
+847 Ops.CAST dtypes.i32 [266] dtypes.i32
+848 Ops.INDEX dtypes.f32 [12, 847]
+849 Ops.MUL dtypes.f32 [848, 17]
+850 Ops.CMPNE dtypes.bool [849, 849]
+851 Ops.CMPLT dtypes.bool [849, 23]
+852 Ops.CMPLT dtypes.bool [849, 28]
+853 Ops.CMPEQ dtypes.bool [852, 31]
+854 Ops.CMPNE dtypes.bool [849, 34]
+855 Ops.CMPNE dtypes.bool [849, 39]
+856 Ops.WHERE dtypes.f32 [855, 849, 26]
+857 Ops.WHERE dtypes.f32 [850, 26, 856]
+858 Ops.WHERE dtypes.f32 [854, 857, 26]
+859 Ops.CMPLT dtypes.bool [858, 26]
+860 Ops.WHERE dtypes.f32 [859, 46, 48]
+861 Ops.ADD dtypes.f32 [858, 860]
+862 Ops.CAST dtypes.i32 [861] dtypes.i32
+863 Ops.CAST dtypes.f32 [862] dtypes.f32
+864 Ops.SUB dtypes.f32 [858, 863]
+865 Ops.MUL dtypes.f32 [36, 864]
+866 Ops.ADD dtypes.f32 [865, 56]
+867 Ops.MUL dtypes.f32 [866, 864]
+868 Ops.ADD dtypes.f32 [867, 60]
+869 Ops.MUL dtypes.f32 [868, 864]
+870 Ops.ADD dtypes.f32 [869, 64]
+871 Ops.MUL dtypes.f32 [870, 864]
+872 Ops.ADD dtypes.f32 [871, 68]
+873 Ops.MUL dtypes.f32 [872, 864]
+874 Ops.ADD dtypes.f32 [873, 72]
+875 Ops.MUL dtypes.f32 [874, 864]
+876 Ops.ADD dtypes.f32 [875, 76]
+877 Ops.SHR dtypes.i32 [862, 79]
+878 Ops.ADD dtypes.i32 [877, 82]
+879 Ops.SHL dtypes.i32 [878, 85]
+880 Ops.BITCAST dtypes.f32 [879] dtypes.f32
+881 Ops.MUL dtypes.f32 [876, 880]
+882 Ops.SUB dtypes.i32 [862, 877]
+883 Ops.ADD dtypes.i32 [882, 82]
+884 Ops.SHL dtypes.i32 [883, 85]
+885 Ops.BITCAST dtypes.f32 [884] dtypes.f32
+886 Ops.MUL dtypes.f32 [881, 885]
+887 Ops.WHERE dtypes.f32 [853, 34, 886]
+888 Ops.WHERE dtypes.f32 [851, 26, 887]
+889 Ops.WHERE dtypes.f32 [850, 21, 888]
+890 Ops.INDEX dtypes.f32 [99, 847]
+891 Ops.CMPNE dtypes.bool [890, 890]
+892 Ops.FDIV dtypes.f32 [76, 890]
+893 Ops.CMPNE dtypes.bool [892, 39]
+894 Ops.CMPLT dtypes.bool [890, 105]
+895 Ops.CMPNE dtypes.bool [890, 26]
+896 Ops.CMPNE dtypes.bool [890, 34]
+897 Ops.CMPLT dtypes.bool [890, 112]
+898 Ops.MUL dtypes.f32 [890, 115]
+899 Ops.WHERE dtypes.f32 [897, 898, 890]
+900 Ops.BITCAST dtypes.i32 [899] dtypes.i32
+901 Ops.MUL dtypes.f32 [899, 120]
+902 Ops.BITCAST dtypes.i32 [901] dtypes.i32
+903 Ops.SHR dtypes.i32 [902, 85]
+904 Ops.AND dtypes.i32 [903, 125]
+905 Ops.ADD dtypes.i32 [904, 128]
+906 Ops.CAST dtypes.f32 [905] dtypes.f32
+907 Ops.NEG dtypes.f32 [906]
+908 Ops.CAST dtypes.i32 [907] dtypes.i32
+909 Ops.SHL dtypes.i32 [908, 85]
+910 Ops.ADD dtypes.i32 [900, 909]
+911 Ops.BITCAST dtypes.f32 [910] dtypes.f32
+912 Ops.ADD dtypes.f32 [911, 137]
+913 Ops.ADD dtypes.f32 [911, 76]
+914 Ops.FDIV dtypes.f32 [912, 913]
+915 Ops.MUL dtypes.f32 [914, 914]
+916 Ops.MUL dtypes.f32 [110, 915]
+917 Ops.ADD dtypes.f32 [916, 144]
+918 Ops.MUL dtypes.f32 [917, 915]
+919 Ops.ADD dtypes.f32 [918, 148]
+920 Ops.MUL dtypes.f32 [914, 915]
+921 Ops.MUL dtypes.f32 [919, 920]
+922 Ops.ADD dtypes.f32 [906, 153]
+923 Ops.WHERE dtypes.f32 [897, 922, 906]
+924 Ops.ADD dtypes.f32 [921, 923]
+925 Ops.MUL dtypes.f32 [914, 158]
+926 Ops.ADD dtypes.f32 [924, 925]
+927 Ops.MUL dtypes.f32 [914, 162]
+928 Ops.ADD dtypes.f32 [926, 927]
+929 Ops.WHERE dtypes.f32 [896, 928, 34]
+930 Ops.WHERE dtypes.f32 [895, 929, 39]
+931 Ops.WHERE dtypes.f32 [894, 21, 930]
+932 Ops.WHERE dtypes.f32 [893, 931, 39]
+933 Ops.WHERE dtypes.f32 [891, 21, 932]
+934 Ops.MUL dtypes.f32 [933, 72]
+935 Ops.ADD dtypes.f32 [889, 934]
+936 Ops.INDEX dtypes.f32 [174, 847]
+937 Ops.CMPNE dtypes.bool [936, 34]
+938 Ops.CMPNE dtypes.bool [936, 936]
+939 Ops.CMPNE dtypes.bool [936, 39]
+940 Ops.WHERE dtypes.f32 [939, 936, 26]
+941 Ops.WHERE dtypes.f32 [938, 26, 940]
+942 Ops.WHERE dtypes.f32 [937, 941, 26]
+943 Ops.CMPNE dtypes.bool [942, 26]
+944 Ops.CMPLT dtypes.bool [942, 26]
+945 Ops.WHERE dtypes.f32 [944, 137, 76]
+946 Ops.WHERE dtypes.f32 [943, 945, 26]
+947 Ops.MUL dtypes.f32 [942, 946]
+948 Ops.CMPLT dtypes.bool [947, 188]
+949 Ops.MUL dtypes.f32 [947, 191]
+950 Ops.CMPLT dtypes.bool [949, 26]
+951 Ops.WHERE dtypes.f32 [950, 46, 48]
+952 Ops.ADD dtypes.f32 [949, 951]
+953 Ops.CAST dtypes.i32 [952] dtypes.i32
+954 Ops.CAST dtypes.f32 [953] dtypes.f32
+955 Ops.MUL dtypes.f32 [954, 199]
+956 Ops.MUL dtypes.f32 [954, 202]
+957 Ops.MUL dtypes.f32 [954, 205]
+958 Ops.MUL dtypes.f32 [954, 208]
+959 Ops.ADD dtypes.f32 [958, 947]
+960 Ops.ADD dtypes.f32 [957, 959]
+961 Ops.ADD dtypes.f32 [956, 960]
+962 Ops.ADD dtypes.f32 [955, 961]
+963 Ops.MUL dtypes.f32 [962, 962]
+964 Ops.MUL dtypes.f32 [215, 963]
+965 Ops.ADD dtypes.f32 [964, 219]
+966 Ops.MUL dtypes.f32 [965, 963]
+967 Ops.ADD dtypes.f32 [966, 223]
+968 Ops.MUL dtypes.f32 [967, 963]
+969 Ops.ADD dtypes.f32 [968, 227]
+970 Ops.MUL dtypes.f32 [969, 963]
+971 Ops.ADD dtypes.f32 [970, 76]
+972 Ops.MUL dtypes.f32 [962, 971]
+973 Ops.AND dtypes.i32 [953, 79]
+974 Ops.CMPNE dtypes.bool [973, 14]
+975 Ops.WHERE dtypes.f32 [974, 137, 76]
+976 Ops.MUL dtypes.f32 [972, 975]
+977 Ops.BITCAST dtypes.u32 [947] dtypes.u32
+978 Ops.AND dtypes.u32 [977, 238]
+979 Ops.OR dtypes.u32 [978, 241]
+980 Ops.BITCAST dtypes.f32 [979] dtypes.f32
+981 Ops.CMPLT dtypes.bool [980, 48]
+982 Ops.MUL dtypes.f32 [980, 246]
+983 Ops.CAST dtypes.u64 [982] dtypes.u64
+984 Ops.SHR dtypes.u32 [977, 249]
+985 Ops.AND dtypes.u32 [984, 251]
+986 Ops.ADD dtypes.u32 [985, 254]
+987 Ops.CAST dtypes.u64 [986] dtypes.u64
+988 Ops.SHR dtypes.u64 [987, 258]
+989 Ops.CMPNE dtypes.bool [988, 260]
+990 Ops.CMPNE dtypes.bool [988, 262]
+991 Ops.CMPNE dtypes.bool [988, 264]
+992 Ops.CMPNE dtypes.bool [988, 267]
+993 Ops.CMPNE dtypes.bool [988, 269]
+994 Ops.CMPNE dtypes.bool [988, 258]
+995 Ops.WHERE dtypes.u32 [994, 272, 274]
+996 Ops.WHERE dtypes.u32 [993, 995, 277]
+997 Ops.WHERE dtypes.u32 [992, 996, 280]
+998 Ops.WHERE dtypes.u32 [991, 997, 283]
+999 Ops.WHERE dtypes.u32 [990, 998, 286]
+1000 Ops.WHERE dtypes.u32 [989, 999, 272]
+1001 Ops.CAST dtypes.u64 [1000] dtypes.u64
+1002 Ops.CAST dtypes.i32 [986] dtypes.i32
+1003 Ops.AND dtypes.i32 [1002, 292]
+1004 Ops.CAST dtypes.u64 [1003] dtypes.u64
+1005 Ops.SHL dtypes.u64 [1001, 1004]
+1006 Ops.CAST dtypes.u32 [1005] dtypes.u32
+1007 Ops.WHERE dtypes.u32 [993, 272, 274]
+1008 Ops.WHERE dtypes.u32 [992, 1007, 277]
+1009 Ops.WHERE dtypes.u32 [991, 1008, 280]
+1010 Ops.WHERE dtypes.u32 [990, 1009, 283]
+1011 Ops.WHERE dtypes.u32 [989, 1010, 286]
+1012 Ops.CAST dtypes.u64 [1011] dtypes.u64
+1013 Ops.SUB dtypes.i32 [304, 1003]
+1014 Ops.CAST dtypes.u64 [1013] dtypes.u64
+1015 Ops.SHR dtypes.u64 [1012, 1014]
+1016 Ops.CAST dtypes.u32 [1015] dtypes.u32
+1017 Ops.OR dtypes.u32 [1006, 1016]
+1018 Ops.CAST dtypes.u64 [1017] dtypes.u64
+1019 Ops.MUL dtypes.u64 [983, 1018]
+1020 Ops.SHL dtypes.u64 [1019, 312]
+1021 Ops.SHL dtypes.u64 [1012, 1004]
+1022 Ops.CAST dtypes.u32 [1021] dtypes.u32
+1023 Ops.WHERE dtypes.u32 [992, 272, 274]
+1024 Ops.WHERE dtypes.u32 [991, 1023, 277]
+1025 Ops.WHERE dtypes.u32 [990, 1024, 280]
+1026 Ops.WHERE dtypes.u32 [989, 1025, 283]
+1027 Ops.CAST dtypes.u64 [1026] dtypes.u64
+1028 Ops.SHR dtypes.u64 [1027, 1014]
+1029 Ops.CAST dtypes.u32 [1028] dtypes.u32
+1030 Ops.OR dtypes.u32 [1022, 1029]
+1031 Ops.CAST dtypes.u64 [1030] dtypes.u64
+1032 Ops.MUL dtypes.u64 [983, 1031]
+1033 Ops.ADD dtypes.u64 [1020, 1032]
+1034 Ops.SHL dtypes.u64 [1027, 1004]
+1035 Ops.CAST dtypes.u32 [1034] dtypes.u32
+1036 Ops.WHERE dtypes.u32 [991, 272, 274]
+1037 Ops.WHERE dtypes.u32 [990, 1036, 277]
+1038 Ops.WHERE dtypes.u32 [989, 1037, 280]
+1039 Ops.CAST dtypes.u64 [1038] dtypes.u64
+1040 Ops.SHR dtypes.u64 [1039, 1014]
+1041 Ops.CAST dtypes.u32 [1040] dtypes.u32
+1042 Ops.OR dtypes.u32 [1035, 1041]
+1043 Ops.CAST dtypes.u64 [1042] dtypes.u64
+1044 Ops.MUL dtypes.u64 [983, 1043]
+1045 Ops.SHR dtypes.u64 [1044, 312]
+1046 Ops.ADD dtypes.u64 [1033, 1045]
+1047 Ops.AND dtypes.u64 [1046, 341]
+1048 Ops.CAST dtypes.f32 [1047] dtypes.f32
+1049 Ops.MUL dtypes.f32 [1048, 345]
+1050 Ops.ADD dtypes.f32 [1049, 348]
+1051 Ops.WHERE dtypes.f32 [981, 1049, 1050]
+1052 Ops.SHR dtypes.u64 [1046, 352]
+1053 Ops.CAST dtypes.i32 [1052] dtypes.i32
+1054 Ops.ADD dtypes.i32 [1053, 79]
+1055 Ops.WHERE dtypes.i32 [981, 1053, 1054]
+1056 Ops.AND dtypes.i32 [1055, 79]
+1057 Ops.CMPNE dtypes.bool [1056, 14]
+1058 Ops.WHERE dtypes.f32 [1057, 360, 26]
+1059 Ops.ADD dtypes.f32 [1051, 1058]
+1060 Ops.MUL dtypes.f32 [1059, 1059]
+1061 Ops.MUL dtypes.f32 [215, 1060]
+1062 Ops.ADD dtypes.f32 [1061, 219]
+1063 Ops.MUL dtypes.f32 [1062, 1060]
+1064 Ops.ADD dtypes.f32 [1063, 223]
+1065 Ops.MUL dtypes.f32 [1064, 1060]
+1066 Ops.ADD dtypes.f32 [1065, 227]
+1067 Ops.MUL dtypes.f32 [1066, 1060]
+1068 Ops.ADD dtypes.f32 [1067, 76]
+1069 Ops.MUL dtypes.f32 [1059, 1068]
+1070 Ops.AND dtypes.i32 [1055, 7]
+1071 Ops.CMPNE dtypes.bool [1070, 14]
+1072 Ops.WHERE dtypes.f32 [1071, 137, 76]
+1073 Ops.MUL dtypes.f32 [1069, 1072]
+1074 Ops.WHERE dtypes.f32 [948, 976, 1073]
+1075 Ops.MUL dtypes.f32 [1074, 946]
+1076 Ops.WHERE dtypes.f32 [939, 1075, 21]
+1077 Ops.WHERE dtypes.f32 [938, 21, 1076]
+1078 Ops.WHERE dtypes.f32 [937, 1077, 21]
+1079 Ops.ADD dtypes.f32 [935, 1078]
+1080 Ops.STACK dtypes.f32 [382, 614, 846, 1079]
+1081 Ops.STORE dtypes.void [9, 1080]
+1082 Ops.AFTER dtypes.void [0, 1081]
+1083 Ops.END dtypes.void [1082, 5]
+1084 Ops.SINK dtypes.void [1083] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+1085 Ops.PARAM dtypes.u8 [303] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+1086 Ops.BITCAST dtypes.u64 [1085] dtypes.u64
+1087 Ops.INDEX dtypes.u64 [1086, 14]
+1088 Ops.LOAD dtypes.u64 [1087]
+1089 Ops.REFPARAM dtypes.f32 [1, 1088] ParamArg(slot=0, dtype=dtypes.f32)
+1090 Ops.SHRINK dtypes.f32 [1089, 8, 4]
+1091 Ops.INDEX dtypes.u64 [1086, 79]
+1092 Ops.LOAD dtypes.u64 [1091]
+1093 Ops.REFPARAM dtypes.f32 [1, 1092] ParamArg(slot=1, dtype=dtypes.f32)
+1094 Ops.SHRINK dtypes.f32 [1093, 8, 4]
+1095 Ops.LOAD dtypes.f32 [1094]
+1096 Ops.INDEX dtypes.f32 [1095, 14]
+1097 Ops.MUL dtypes.f32 [1096, 17]
+1098 Ops.CMPNE dtypes.bool [1097, 1097]
+1099 Ops.CMPLT dtypes.bool [1097, 23]
+1100 Ops.CMPLT dtypes.bool [1097, 28]
+1101 Ops.CMPEQ dtypes.bool [1100, 31]
+1102 Ops.CMPNE dtypes.bool [1097, 34]
+1103 Ops.CMPNE dtypes.bool [1097, 39]
+1104 Ops.WHERE dtypes.f32 [1103, 1097, 26]
+1105 Ops.WHERE dtypes.f32 [1098, 26, 1104]
+1106 Ops.WHERE dtypes.f32 [1102, 1105, 26]
+1107 Ops.CMPLT dtypes.bool [1106, 26]
+1108 Ops.WHERE dtypes.f32 [1107, 46, 48]
+1109 Ops.ADD dtypes.f32 [1106, 1108]
+1110 Ops.CAST dtypes.i32 [1109] dtypes.i32
+1111 Ops.CAST dtypes.f32 [1110] dtypes.f32
+1112 Ops.SUB dtypes.f32 [1106, 1111]
+1113 Ops.MUL dtypes.f32 [36, 1112]
+1114 Ops.ADD dtypes.f32 [1113, 56]
+1115 Ops.MUL dtypes.f32 [1114, 1112]
+1116 Ops.ADD dtypes.f32 [1115, 60]
+1117 Ops.MUL dtypes.f32 [1116, 1112]
+1118 Ops.ADD dtypes.f32 [1117, 64]
+1119 Ops.MUL dtypes.f32 [1118, 1112]
+1120 Ops.ADD dtypes.f32 [1119, 68]
+1121 Ops.MUL dtypes.f32 [1120, 1112]
+1122 Ops.ADD dtypes.f32 [1121, 72]
+1123 Ops.MUL dtypes.f32 [1122, 1112]
+1124 Ops.ADD dtypes.f32 [1123, 76]
+1125 Ops.SHR dtypes.i32 [1110, 79]
+1126 Ops.ADD dtypes.i32 [1125, 82]
+1127 Ops.SHL dtypes.i32 [1126, 85]
+1128 Ops.BITCAST dtypes.f32 [1127] dtypes.f32
+1129 Ops.MUL dtypes.f32 [1124, 1128]
+1130 Ops.SUB dtypes.i32 [1110, 1125]
+1131 Ops.ADD dtypes.i32 [1130, 82]
+1132 Ops.SHL dtypes.i32 [1131, 85]
+1133 Ops.BITCAST dtypes.f32 [1132] dtypes.f32
+1134 Ops.MUL dtypes.f32 [1129, 1133]
+1135 Ops.WHERE dtypes.f32 [1101, 34, 1134]
+1136 Ops.WHERE dtypes.f32 [1099, 26, 1135]
+1137 Ops.WHERE dtypes.f32 [1098, 21, 1136]
+1138 Ops.INDEX dtypes.u64 [1086, 7]
+1139 Ops.LOAD dtypes.u64 [1138]
+1140 Ops.REFPARAM dtypes.f32 [1, 1139] ParamArg(slot=2, dtype=dtypes.f32)
+1141 Ops.SHRINK dtypes.f32 [1140, 8, 4]
+1142 Ops.LOAD dtypes.f32 [1141]
+1143 Ops.INDEX dtypes.f32 [1142, 14]
+1144 Ops.CMPNE dtypes.bool [1143, 1143]
+1145 Ops.FDIV dtypes.f32 [76, 1143]
+1146 Ops.CMPNE dtypes.bool [1145, 39]
+1147 Ops.CMPLT dtypes.bool [1143, 105]
+1148 Ops.CMPNE dtypes.bool [1143, 26]
+1149 Ops.CMPNE dtypes.bool [1143, 34]
+1150 Ops.CMPLT dtypes.bool [1143, 112]
+1151 Ops.MUL dtypes.f32 [1143, 115]
+1152 Ops.WHERE dtypes.f32 [1150, 1151, 1143]
+1153 Ops.BITCAST dtypes.i32 [1152] dtypes.i32
+1154 Ops.MUL dtypes.f32 [1152, 120]
+1155 Ops.BITCAST dtypes.i32 [1154] dtypes.i32
+1156 Ops.SHR dtypes.i32 [1155, 85]
+1157 Ops.AND dtypes.i32 [1156, 125]
+1158 Ops.ADD dtypes.i32 [1157, 128]
+1159 Ops.CAST dtypes.f32 [1158] dtypes.f32
+1160 Ops.NEG dtypes.f32 [1159]
+1161 Ops.CAST dtypes.i32 [1160] dtypes.i32
+1162 Ops.SHL dtypes.i32 [1161, 85]
+1163 Ops.ADD dtypes.i32 [1153, 1162]
+1164 Ops.BITCAST dtypes.f32 [1163] dtypes.f32
+1165 Ops.ADD dtypes.f32 [1164, 137]
+1166 Ops.ADD dtypes.f32 [1164, 76]
+1167 Ops.FDIV dtypes.f32 [1165, 1166]
+1168 Ops.MUL dtypes.f32 [1167, 1167]
+1169 Ops.MUL dtypes.f32 [110, 1168]
+1170 Ops.ADD dtypes.f32 [1169, 144]
+1171 Ops.MUL dtypes.f32 [1170, 1168]
+1172 Ops.ADD dtypes.f32 [1171, 148]
+1173 Ops.MUL dtypes.f32 [1167, 1168]
+1174 Ops.MUL dtypes.f32 [1172, 1173]
+1175 Ops.ADD dtypes.f32 [1159, 153]
+1176 Ops.WHERE dtypes.f32 [1150, 1175, 1159]
+1177 Ops.ADD dtypes.f32 [1174, 1176]
+1178 Ops.MUL dtypes.f32 [1167, 158]
+1179 Ops.ADD dtypes.f32 [1177, 1178]
+1180 Ops.MUL dtypes.f32 [1167, 162]
+1181 Ops.ADD dtypes.f32 [1179, 1180]
+1182 Ops.WHERE dtypes.f32 [1149, 1181, 34]
+1183 Ops.WHERE dtypes.f32 [1148, 1182, 39]
+1184 Ops.WHERE dtypes.f32 [1147, 21, 1183]
+1185 Ops.WHERE dtypes.f32 [1146, 1184, 39]
+1186 Ops.WHERE dtypes.f32 [1144, 21, 1185]
+1187 Ops.MUL dtypes.f32 [1186, 72]
+1188 Ops.ADD dtypes.f32 [1137, 1187]
+1189 Ops.INDEX dtypes.u64 [1086, 847]
+1190 Ops.LOAD dtypes.u64 [1189]
+1191 Ops.REFPARAM dtypes.f32 [1, 1190] ParamArg(slot=3, dtype=dtypes.f32)
+1192 Ops.SHRINK dtypes.f32 [1191, 8, 4]
+1193 Ops.LOAD dtypes.f32 [1192]
+1194 Ops.INDEX dtypes.f32 [1193, 14]
+1195 Ops.CMPNE dtypes.bool [1194, 34]
+1196 Ops.CMPNE dtypes.bool [1194, 1194]
+1197 Ops.CMPNE dtypes.bool [1194, 39]
+1198 Ops.WHERE dtypes.f32 [1197, 1194, 26]
+1199 Ops.WHERE dtypes.f32 [1196, 26, 1198]
+1200 Ops.WHERE dtypes.f32 [1195, 1199, 26]
+1201 Ops.CMPNE dtypes.bool [1200, 26]
+1202 Ops.CMPLT dtypes.bool [1200, 26]
+1203 Ops.WHERE dtypes.f32 [1202, 137, 76]
+1204 Ops.WHERE dtypes.f32 [1201, 1203, 26]
+1205 Ops.MUL dtypes.f32 [1200, 1204]
+1206 Ops.CMPLT dtypes.bool [1205, 188]
+1207 Ops.MUL dtypes.f32 [1205, 191]
+1208 Ops.CMPLT dtypes.bool [1207, 26]
+1209 Ops.WHERE dtypes.f32 [1208, 46, 48]
+1210 Ops.ADD dtypes.f32 [1207, 1209]
+1211 Ops.CAST dtypes.i32 [1210] dtypes.i32
+1212 Ops.CAST dtypes.f32 [1211] dtypes.f32
+1213 Ops.MUL dtypes.f32 [1212, 199]
+1214 Ops.MUL dtypes.f32 [1212, 202]
+1215 Ops.MUL dtypes.f32 [1212, 205]
+1216 Ops.MUL dtypes.f32 [1212, 208]
+1217 Ops.ADD dtypes.f32 [1216, 1205]
+1218 Ops.ADD dtypes.f32 [1215, 1217]
+1219 Ops.ADD dtypes.f32 [1214, 1218]
+1220 Ops.ADD dtypes.f32 [1213, 1219]
+1221 Ops.MUL dtypes.f32 [1220, 1220]
+1222 Ops.MUL dtypes.f32 [215, 1221]
+1223 Ops.ADD dtypes.f32 [1222, 219]
+1224 Ops.MUL dtypes.f32 [1223, 1221]
+1225 Ops.ADD dtypes.f32 [1224, 223]
+1226 Ops.MUL dtypes.f32 [1225, 1221]
+1227 Ops.ADD dtypes.f32 [1226, 227]
+1228 Ops.MUL dtypes.f32 [1227, 1221]
+1229 Ops.ADD dtypes.f32 [1228, 76]
+1230 Ops.MUL dtypes.f32 [1220, 1229]
+1231 Ops.AND dtypes.i32 [1211, 79]
+1232 Ops.CMPNE dtypes.bool [1231, 14]
+1233 Ops.WHERE dtypes.f32 [1232, 137, 76]
+1234 Ops.MUL dtypes.f32 [1230, 1233]
+1235 Ops.BITCAST dtypes.u32 [1205] dtypes.u32
+1236 Ops.AND dtypes.u32 [1235, 238]
+1237 Ops.OR dtypes.u32 [1236, 241]
+1238 Ops.BITCAST dtypes.f32 [1237] dtypes.f32
+1239 Ops.CMPLT dtypes.bool [1238, 48]
+1240 Ops.MUL dtypes.f32 [1238, 246]
+1241 Ops.CAST dtypes.u64 [1240] dtypes.u64
+1242 Ops.SHR dtypes.u32 [1235, 249]
+1243 Ops.AND dtypes.u32 [1242, 251]
+1244 Ops.ADD dtypes.u32 [1243, 254]
+1245 Ops.CAST dtypes.u64 [1244] dtypes.u64
+1246 Ops.SHR dtypes.u64 [1245, 258]
+1247 Ops.CMPNE dtypes.bool [1246, 260]
+1248 Ops.CMPNE dtypes.bool [1246, 262]
+1249 Ops.CMPNE dtypes.bool [1246, 264]
+1250 Ops.CMPNE dtypes.bool [1246, 267]
+1251 Ops.CMPNE dtypes.bool [1246, 269]
+1252 Ops.CMPNE dtypes.bool [1246, 258]
+1253 Ops.WHERE dtypes.u32 [1252, 272, 274]
+1254 Ops.WHERE dtypes.u32 [1251, 1253, 277]
+1255 Ops.WHERE dtypes.u32 [1250, 1254, 280]
+1256 Ops.WHERE dtypes.u32 [1249, 1255, 283]
+1257 Ops.WHERE dtypes.u32 [1248, 1256, 286]
+1258 Ops.WHERE dtypes.u32 [1247, 1257, 272]
+1259 Ops.CAST dtypes.u64 [1258] dtypes.u64
+1260 Ops.CAST dtypes.i32 [1244] dtypes.i32
+1261 Ops.AND dtypes.i32 [1260, 292]
+1262 Ops.CAST dtypes.u64 [1261] dtypes.u64
+1263 Ops.SHL dtypes.u64 [1259, 1262]
+1264 Ops.CAST dtypes.u32 [1263] dtypes.u32
+1265 Ops.WHERE dtypes.u32 [1251, 272, 274]
+1266 Ops.WHERE dtypes.u32 [1250, 1265, 277]
+1267 Ops.WHERE dtypes.u32 [1249, 1266, 280]
+1268 Ops.WHERE dtypes.u32 [1248, 1267, 283]
+1269 Ops.WHERE dtypes.u32 [1247, 1268, 286]
+1270 Ops.CAST dtypes.u64 [1269] dtypes.u64
+1271 Ops.SUB dtypes.i32 [304, 1261]
+1272 Ops.CAST dtypes.u64 [1271] dtypes.u64
+1273 Ops.SHR dtypes.u64 [1270, 1272]
+1274 Ops.CAST dtypes.u32 [1273] dtypes.u32
+1275 Ops.OR dtypes.u32 [1264, 1274]
+1276 Ops.CAST dtypes.u64 [1275] dtypes.u64
+1277 Ops.MUL dtypes.u64 [1241, 1276]
+1278 Ops.SHL dtypes.u64 [1277, 312]
+1279 Ops.SHL dtypes.u64 [1270, 1262]
+1280 Ops.CAST dtypes.u32 [1279] dtypes.u32
+1281 Ops.WHERE dtypes.u32 [1250, 272, 274]
+1282 Ops.WHERE dtypes.u32 [1249, 1281, 277]
+1283 Ops.WHERE dtypes.u32 [1248, 1282, 280]
+1284 Ops.WHERE dtypes.u32 [1247, 1283, 283]
+1285 Ops.CAST dtypes.u64 [1284] dtypes.u64
+1286 Ops.SHR dtypes.u64 [1285, 1272]
+1287 Ops.CAST dtypes.u32 [1286] dtypes.u32
+1288 Ops.OR dtypes.u32 [1280, 1287]
+1289 Ops.CAST dtypes.u64 [1288] dtypes.u64
+1290 Ops.MUL dtypes.u64 [1241, 1289]
+1291 Ops.ADD dtypes.u64 [1278, 1290]
+1292 Ops.SHL dtypes.u64 [1285, 1262]
+1293 Ops.CAST dtypes.u32 [1292] dtypes.u32
+1294 Ops.WHERE dtypes.u32 [1249, 272, 274]
+1295 Ops.WHERE dtypes.u32 [1248, 1294, 277]
+1296 Ops.WHERE dtypes.u32 [1247, 1295, 280]
+1297 Ops.CAST dtypes.u64 [1296] dtypes.u64
+1298 Ops.SHR dtypes.u64 [1297, 1272]
+1299 Ops.CAST dtypes.u32 [1298] dtypes.u32
+1300 Ops.OR dtypes.u32 [1293, 1299]
+1301 Ops.CAST dtypes.u64 [1300] dtypes.u64
+1302 Ops.MUL dtypes.u64 [1241, 1301]
+1303 Ops.SHR dtypes.u64 [1302, 312]
+1304 Ops.ADD dtypes.u64 [1291, 1303]
+1305 Ops.AND dtypes.u64 [1304, 341]
+1306 Ops.CAST dtypes.f32 [1305] dtypes.f32
+1307 Ops.MUL dtypes.f32 [1306, 345]
+1308 Ops.ADD dtypes.f32 [1307, 348]
+1309 Ops.WHERE dtypes.f32 [1239, 1307, 1308]
+1310 Ops.SHR dtypes.u64 [1304, 352]
+1311 Ops.CAST dtypes.i32 [1310] dtypes.i32
+1312 Ops.ADD dtypes.i32 [1311, 79]
+1313 Ops.WHERE dtypes.i32 [1239, 1311, 1312]
+1314 Ops.AND dtypes.i32 [1313, 79]
+1315 Ops.CMPNE dtypes.bool [1314, 14]
+1316 Ops.WHERE dtypes.f32 [1315, 360, 26]
+1317 Ops.ADD dtypes.f32 [1309, 1316]
+1318 Ops.MUL dtypes.f32 [1317, 1317]
+1319 Ops.MUL dtypes.f32 [215, 1318]
+1320 Ops.ADD dtypes.f32 [1319, 219]
+1321 Ops.MUL dtypes.f32 [1320, 1318]
+1322 Ops.ADD dtypes.f32 [1321, 223]
+1323 Ops.MUL dtypes.f32 [1322, 1318]
+1324 Ops.ADD dtypes.f32 [1323, 227]
+1325 Ops.MUL dtypes.f32 [1324, 1318]
+1326 Ops.ADD dtypes.f32 [1325, 76]
+1327 Ops.MUL dtypes.f32 [1317, 1326]
+1328 Ops.AND dtypes.i32 [1313, 7]
+1329 Ops.CMPNE dtypes.bool [1328, 14]
+1330 Ops.WHERE dtypes.f32 [1329, 137, 76]
+1331 Ops.MUL dtypes.f32 [1327, 1330]
+1332 Ops.WHERE dtypes.f32 [1206, 1234, 1331]
+1333 Ops.MUL dtypes.f32 [1332, 1204]
+1334 Ops.WHERE dtypes.f32 [1197, 1333, 21]
+1335 Ops.WHERE dtypes.f32 [1196, 21, 1334]
+1336 Ops.WHERE dtypes.f32 [1195, 1335, 21]
+1337 Ops.ADD dtypes.f32 [1188, 1336]
+1338 Ops.INDEX dtypes.f32 [1095, 79]
+1339 Ops.MUL dtypes.f32 [1338, 17]
+1340 Ops.CMPNE dtypes.bool [1339, 1339]
+1341 Ops.CMPLT dtypes.bool [1339, 23]
+1342 Ops.CMPLT dtypes.bool [1339, 28]
+1343 Ops.CMPEQ dtypes.bool [1342, 31]
+1344 Ops.CMPNE dtypes.bool [1339, 34]
+1345 Ops.CMPNE dtypes.bool [1339, 39]
+1346 Ops.WHERE dtypes.f32 [1345, 1339, 26]
+1347 Ops.WHERE dtypes.f32 [1340, 26, 1346]
+1348 Ops.WHERE dtypes.f32 [1344, 1347, 26]
+1349 Ops.CMPLT dtypes.bool [1348, 26]
+1350 Ops.WHERE dtypes.f32 [1349, 46, 48]
+1351 Ops.ADD dtypes.f32 [1348, 1350]
+1352 Ops.CAST dtypes.i32 [1351] dtypes.i32
+1353 Ops.CAST dtypes.f32 [1352] dtypes.f32
+1354 Ops.SUB dtypes.f32 [1348, 1353]
+1355 Ops.MUL dtypes.f32 [36, 1354]
+1356 Ops.ADD dtypes.f32 [1355, 56]
+1357 Ops.MUL dtypes.f32 [1356, 1354]
+1358 Ops.ADD dtypes.f32 [1357, 60]
+1359 Ops.MUL dtypes.f32 [1358, 1354]
+1360 Ops.ADD dtypes.f32 [1359, 64]
+1361 Ops.MUL dtypes.f32 [1360, 1354]
+1362 Ops.ADD dtypes.f32 [1361, 68]
+1363 Ops.MUL dtypes.f32 [1362, 1354]
+1364 Ops.ADD dtypes.f32 [1363, 72]
+1365 Ops.MUL dtypes.f32 [1364, 1354]
+1366 Ops.ADD dtypes.f32 [1365, 76]
+1367 Ops.SHR dtypes.i32 [1352, 79]
+1368 Ops.ADD dtypes.i32 [1367, 82]
+1369 Ops.SHL dtypes.i32 [1368, 85]
+1370 Ops.BITCAST dtypes.f32 [1369] dtypes.f32
+1371 Ops.MUL dtypes.f32 [1366, 1370]
+1372 Ops.SUB dtypes.i32 [1352, 1367]
+1373 Ops.ADD dtypes.i32 [1372, 82]
+1374 Ops.SHL dtypes.i32 [1373, 85]
+1375 Ops.BITCAST dtypes.f32 [1374] dtypes.f32
+1376 Ops.MUL dtypes.f32 [1371, 1375]
+1377 Ops.WHERE dtypes.f32 [1343, 34, 1376]
+1378 Ops.WHERE dtypes.f32 [1341, 26, 1377]
+1379 Ops.WHERE dtypes.f32 [1340, 21, 1378]
+1380 Ops.INDEX dtypes.f32 [1142, 79]
+1381 Ops.CMPNE dtypes.bool [1380, 1380]
+1382 Ops.FDIV dtypes.f32 [76, 1380]
+1383 Ops.CMPNE dtypes.bool [1382, 39]
+1384 Ops.CMPLT dtypes.bool [1380, 105]
+1385 Ops.CMPNE dtypes.bool [1380, 26]
+1386 Ops.CMPNE dtypes.bool [1380, 34]
+1387 Ops.CMPLT dtypes.bool [1380, 112]
+1388 Ops.MUL dtypes.f32 [1380, 115]
+1389 Ops.WHERE dtypes.f32 [1387, 1388, 1380]
+1390 Ops.BITCAST dtypes.i32 [1389] dtypes.i32
+1391 Ops.MUL dtypes.f32 [1389, 120]
+1392 Ops.BITCAST dtypes.i32 [1391] dtypes.i32
+1393 Ops.SHR dtypes.i32 [1392, 85]
+1394 Ops.AND dtypes.i32 [1393, 125]
+1395 Ops.ADD dtypes.i32 [1394, 128]
+1396 Ops.CAST dtypes.f32 [1395] dtypes.f32
+1397 Ops.NEG dtypes.f32 [1396]
+1398 Ops.CAST dtypes.i32 [1397] dtypes.i32
+1399 Ops.SHL dtypes.i32 [1398, 85]
+1400 Ops.ADD dtypes.i32 [1390, 1399]
+1401 Ops.BITCAST dtypes.f32 [1400] dtypes.f32
+1402 Ops.ADD dtypes.f32 [1401, 137]
+1403 Ops.ADD dtypes.f32 [1401, 76]
+1404 Ops.FDIV dtypes.f32 [1402, 1403]
+1405 Ops.MUL dtypes.f32 [1404, 1404]
+1406 Ops.MUL dtypes.f32 [110, 1405]
+1407 Ops.ADD dtypes.f32 [1406, 144]
+1408 Ops.MUL dtypes.f32 [1407, 1405]
+1409 Ops.ADD dtypes.f32 [1408, 148]
+1410 Ops.MUL dtypes.f32 [1404, 1405]
+1411 Ops.MUL dtypes.f32 [1409, 1410]
+1412 Ops.ADD dtypes.f32 [1396, 153]
+1413 Ops.WHERE dtypes.f32 [1387, 1412, 1396]
+1414 Ops.ADD dtypes.f32 [1411, 1413]
+1415 Ops.MUL dtypes.f32 [1404, 158]
+1416 Ops.ADD dtypes.f32 [1414, 1415]
+1417 Ops.MUL dtypes.f32 [1404, 162]
+1418 Ops.ADD dtypes.f32 [1416, 1417]
+1419 Ops.WHERE dtypes.f32 [1386, 1418, 34]
+1420 Ops.WHERE dtypes.f32 [1385, 1419, 39]
+1421 Ops.WHERE dtypes.f32 [1384, 21, 1420]
+1422 Ops.WHERE dtypes.f32 [1383, 1421, 39]
+1423 Ops.WHERE dtypes.f32 [1381, 21, 1422]
+1424 Ops.MUL dtypes.f32 [1423, 72]
+1425 Ops.ADD dtypes.f32 [1379, 1424]
+1426 Ops.INDEX dtypes.f32 [1193, 79]
+1427 Ops.CMPNE dtypes.bool [1426, 34]
+1428 Ops.CMPNE dtypes.bool [1426, 1426]
+1429 Ops.CMPNE dtypes.bool [1426, 39]
+1430 Ops.WHERE dtypes.f32 [1429, 1426, 26]
+1431 Ops.WHERE dtypes.f32 [1428, 26, 1430]
+1432 Ops.WHERE dtypes.f32 [1427, 1431, 26]
+1433 Ops.CMPNE dtypes.bool [1432, 26]
+1434 Ops.CMPLT dtypes.bool [1432, 26]
+1435 Ops.WHERE dtypes.f32 [1434, 137, 76]
+1436 Ops.WHERE dtypes.f32 [1433, 1435, 26]
+1437 Ops.MUL dtypes.f32 [1432, 1436]
+1438 Ops.CMPLT dtypes.bool [1437, 188]
+1439 Ops.MUL dtypes.f32 [1437, 191]
+1440 Ops.CMPLT dtypes.bool [1439, 26]
+1441 Ops.WHERE dtypes.f32 [1440, 46, 48]
+1442 Ops.ADD dtypes.f32 [1439, 1441]
+1443 Ops.CAST dtypes.i32 [1442] dtypes.i32
+1444 Ops.CAST dtypes.f32 [1443] dtypes.f32
+1445 Ops.MUL dtypes.f32 [1444, 199]
+1446 Ops.MUL dtypes.f32 [1444, 202]
+1447 Ops.MUL dtypes.f32 [1444, 205]
+1448 Ops.MUL dtypes.f32 [1444, 208]
+1449 Ops.ADD dtypes.f32 [1448, 1437]
+1450 Ops.ADD dtypes.f32 [1447, 1449]
+1451 Ops.ADD dtypes.f32 [1446, 1450]
+1452 Ops.ADD dtypes.f32 [1445, 1451]
+1453 Ops.MUL dtypes.f32 [1452, 1452]
+1454 Ops.MUL dtypes.f32 [215, 1453]
+1455 Ops.ADD dtypes.f32 [1454, 219]
+1456 Ops.MUL dtypes.f32 [1455, 1453]
+1457 Ops.ADD dtypes.f32 [1456, 223]
+1458 Ops.MUL dtypes.f32 [1457, 1453]
+1459 Ops.ADD dtypes.f32 [1458, 227]
+1460 Ops.MUL dtypes.f32 [1459, 1453]
+1461 Ops.ADD dtypes.f32 [1460, 76]
+1462 Ops.MUL dtypes.f32 [1452, 1461]
+1463 Ops.AND dtypes.i32 [1443, 79]
+1464 Ops.CMPNE dtypes.bool [1463, 14]
+1465 Ops.WHERE dtypes.f32 [1464, 137, 76]
+1466 Ops.MUL dtypes.f32 [1462, 1465]
+1467 Ops.BITCAST dtypes.u32 [1437] dtypes.u32
+1468 Ops.AND dtypes.u32 [1467, 238]
+1469 Ops.OR dtypes.u32 [1468, 241]
+1470 Ops.BITCAST dtypes.f32 [1469] dtypes.f32
+1471 Ops.CMPLT dtypes.bool [1470, 48]
+1472 Ops.MUL dtypes.f32 [1470, 246]
+1473 Ops.CAST dtypes.u64 [1472] dtypes.u64
+1474 Ops.SHR dtypes.u32 [1467, 249]
+1475 Ops.AND dtypes.u32 [1474, 251]
+1476 Ops.ADD dtypes.u32 [1475, 254]
+1477 Ops.CAST dtypes.u64 [1476] dtypes.u64
+1478 Ops.SHR dtypes.u64 [1477, 258]
+1479 Ops.CMPNE dtypes.bool [1478, 260]
+1480 Ops.CMPNE dtypes.bool [1478, 262]
+1481 Ops.CMPNE dtypes.bool [1478, 264]
+1482 Ops.CMPNE dtypes.bool [1478, 267]
+1483 Ops.CMPNE dtypes.bool [1478, 269]
+1484 Ops.CMPNE dtypes.bool [1478, 258]
+1485 Ops.WHERE dtypes.u32 [1484, 272, 274]
+1486 Ops.WHERE dtypes.u32 [1483, 1485, 277]
+1487 Ops.WHERE dtypes.u32 [1482, 1486, 280]
+1488 Ops.WHERE dtypes.u32 [1481, 1487, 283]
+1489 Ops.WHERE dtypes.u32 [1480, 1488, 286]
+1490 Ops.WHERE dtypes.u32 [1479, 1489, 272]
+1491 Ops.CAST dtypes.u64 [1490] dtypes.u64
+1492 Ops.CAST dtypes.i32 [1476] dtypes.i32
+1493 Ops.AND dtypes.i32 [1492, 292]
+1494 Ops.CAST dtypes.u64 [1493] dtypes.u64
+1495 Ops.SHL dtypes.u64 [1491, 1494]
+1496 Ops.CAST dtypes.u32 [1495] dtypes.u32
+1497 Ops.WHERE dtypes.u32 [1483, 272, 274]
+1498 Ops.WHERE dtypes.u32 [1482, 1497, 277]
+1499 Ops.WHERE dtypes.u32 [1481, 1498, 280]
+1500 Ops.WHERE dtypes.u32 [1480, 1499, 283]
+1501 Ops.WHERE dtypes.u32 [1479, 1500, 286]
+1502 Ops.CAST dtypes.u64 [1501] dtypes.u64
+1503 Ops.SUB dtypes.i32 [304, 1493]
+1504 Ops.CAST dtypes.u64 [1503] dtypes.u64
+1505 Ops.SHR dtypes.u64 [1502, 1504]
+1506 Ops.CAST dtypes.u32 [1505] dtypes.u32
+1507 Ops.OR dtypes.u32 [1496, 1506]
+1508 Ops.CAST dtypes.u64 [1507] dtypes.u64
+1509 Ops.MUL dtypes.u64 [1473, 1508]
+1510 Ops.SHL dtypes.u64 [1509, 312]
+1511 Ops.SHL dtypes.u64 [1502, 1494]
+1512 Ops.CAST dtypes.u32 [1511] dtypes.u32
+1513 Ops.WHERE dtypes.u32 [1482, 272, 274]
+1514 Ops.WHERE dtypes.u32 [1481, 1513, 277]
+1515 Ops.WHERE dtypes.u32 [1480, 1514, 280]
+1516 Ops.WHERE dtypes.u32 [1479, 1515, 283]
+1517 Ops.CAST dtypes.u64 [1516] dtypes.u64
+1518 Ops.SHR dtypes.u64 [1517, 1504]
+1519 Ops.CAST dtypes.u32 [1518] dtypes.u32
+1520 Ops.OR dtypes.u32 [1512, 1519]
+1521 Ops.CAST dtypes.u64 [1520] dtypes.u64
+1522 Ops.MUL dtypes.u64 [1473, 1521]
+1523 Ops.ADD dtypes.u64 [1510, 1522]
+1524 Ops.SHL dtypes.u64 [1517, 1494]
+1525 Ops.CAST dtypes.u32 [1524] dtypes.u32
+1526 Ops.WHERE dtypes.u32 [1481, 272, 274]
+1527 Ops.WHERE dtypes.u32 [1480, 1526, 277]
+1528 Ops.WHERE dtypes.u32 [1479, 1527, 280]
+1529 Ops.CAST dtypes.u64 [1528] dtypes.u64
+1530 Ops.SHR dtypes.u64 [1529, 1504]
+1531 Ops.CAST dtypes.u32 [1530] dtypes.u32
+1532 Ops.OR dtypes.u32 [1525, 1531]
+1533 Ops.CAST dtypes.u64 [1532] dtypes.u64
+1534 Ops.MUL dtypes.u64 [1473, 1533]
+1535 Ops.SHR dtypes.u64 [1534, 312]
+1536 Ops.ADD dtypes.u64 [1523, 1535]
+1537 Ops.AND dtypes.u64 [1536, 341]
+1538 Ops.CAST dtypes.f32 [1537] dtypes.f32
+1539 Ops.MUL dtypes.f32 [1538, 345]
+1540 Ops.ADD dtypes.f32 [1539, 348]
+1541 Ops.WHERE dtypes.f32 [1471, 1539, 1540]
+1542 Ops.SHR dtypes.u64 [1536, 352]
+1543 Ops.CAST dtypes.i32 [1542] dtypes.i32
+1544 Ops.ADD dtypes.i32 [1543, 79]
+1545 Ops.WHERE dtypes.i32 [1471, 1543, 1544]
+1546 Ops.AND dtypes.i32 [1545, 79]
+1547 Ops.CMPNE dtypes.bool [1546, 14]
+1548 Ops.WHERE dtypes.f32 [1547, 360, 26]
+1549 Ops.ADD dtypes.f32 [1541, 1548]
+1550 Ops.MUL dtypes.f32 [1549, 1549]
+1551 Ops.MUL dtypes.f32 [215, 1550]
+1552 Ops.ADD dtypes.f32 [1551, 219]
+1553 Ops.MUL dtypes.f32 [1552, 1550]
+1554 Ops.ADD dtypes.f32 [1553, 223]
+1555 Ops.MUL dtypes.f32 [1554, 1550]
+1556 Ops.ADD dtypes.f32 [1555, 227]
+1557 Ops.MUL dtypes.f32 [1556, 1550]
+1558 Ops.ADD dtypes.f32 [1557, 76]
+1559 Ops.MUL dtypes.f32 [1549, 1558]
+1560 Ops.AND dtypes.i32 [1545, 7]
+1561 Ops.CMPNE dtypes.bool [1560, 14]
+1562 Ops.WHERE dtypes.f32 [1561, 137, 76]
+1563 Ops.MUL dtypes.f32 [1559, 1562]
+1564 Ops.WHERE dtypes.f32 [1438, 1466, 1563]
+1565 Ops.MUL dtypes.f32 [1564, 1436]
+1566 Ops.WHERE dtypes.f32 [1429, 1565, 21]
+1567 Ops.WHERE dtypes.f32 [1428, 21, 1566]
+1568 Ops.WHERE dtypes.f32 [1427, 1567, 21]
+1569 Ops.ADD dtypes.f32 [1425, 1568]
+1570 Ops.INDEX dtypes.f32 [1095, 7]
+1571 Ops.MUL dtypes.f32 [1570, 17]
+1572 Ops.CMPNE dtypes.bool [1571, 1571]
+1573 Ops.CMPLT dtypes.bool [1571, 23]
+1574 Ops.CMPLT dtypes.bool [1571, 28]
+1575 Ops.CMPEQ dtypes.bool [1574, 31]
+1576 Ops.CMPNE dtypes.bool [1571, 34]
+1577 Ops.CMPNE dtypes.bool [1571, 39]
+1578 Ops.WHERE dtypes.f32 [1577, 1571, 26]
+1579 Ops.WHERE dtypes.f32 [1572, 26, 1578]
+1580 Ops.WHERE dtypes.f32 [1576, 1579, 26]
+1581 Ops.CMPLT dtypes.bool [1580, 26]
+1582 Ops.WHERE dtypes.f32 [1581, 46, 48]
+1583 Ops.ADD dtypes.f32 [1580, 1582]
+1584 Ops.CAST dtypes.i32 [1583] dtypes.i32
+1585 Ops.CAST dtypes.f32 [1584] dtypes.f32
+1586 Ops.SUB dtypes.f32 [1580, 1585]
+1587 Ops.MUL dtypes.f32 [36, 1586]
+1588 Ops.ADD dtypes.f32 [1587, 56]
+1589 Ops.MUL dtypes.f32 [1588, 1586]
+1590 Ops.ADD dtypes.f32 [1589, 60]
+1591 Ops.MUL dtypes.f32 [1590, 1586]
+1592 Ops.ADD dtypes.f32 [1591, 64]
+1593 Ops.MUL dtypes.f32 [1592, 1586]
+1594 Ops.ADD dtypes.f32 [1593, 68]
+1595 Ops.MUL dtypes.f32 [1594, 1586]
+1596 Ops.ADD dtypes.f32 [1595, 72]
+1597 Ops.MUL dtypes.f32 [1596, 1586]
+1598 Ops.ADD dtypes.f32 [1597, 76]
+1599 Ops.SHR dtypes.i32 [1584, 79]
+1600 Ops.ADD dtypes.i32 [1599, 82]
+1601 Ops.SHL dtypes.i32 [1600, 85]
+1602 Ops.BITCAST dtypes.f32 [1601] dtypes.f32
+1603 Ops.MUL dtypes.f32 [1598, 1602]
+1604 Ops.SUB dtypes.i32 [1584, 1599]
+1605 Ops.ADD dtypes.i32 [1604, 82]
+1606 Ops.SHL dtypes.i32 [1605, 85]
+1607 Ops.BITCAST dtypes.f32 [1606] dtypes.f32
+1608 Ops.MUL dtypes.f32 [1603, 1607]
+1609 Ops.WHERE dtypes.f32 [1575, 34, 1608]
+1610 Ops.WHERE dtypes.f32 [1573, 26, 1609]
+1611 Ops.WHERE dtypes.f32 [1572, 21, 1610]
+1612 Ops.INDEX dtypes.f32 [1142, 7]
+1613 Ops.CMPNE dtypes.bool [1612, 1612]
+1614 Ops.FDIV dtypes.f32 [76, 1612]
+1615 Ops.CMPNE dtypes.bool [1614, 39]
+1616 Ops.CMPLT dtypes.bool [1612, 105]
+1617 Ops.CMPNE dtypes.bool [1612, 26]
+1618 Ops.CMPNE dtypes.bool [1612, 34]
+1619 Ops.CMPLT dtypes.bool [1612, 112]
+1620 Ops.MUL dtypes.f32 [1612, 115]
+1621 Ops.WHERE dtypes.f32 [1619, 1620, 1612]
+1622 Ops.BITCAST dtypes.i32 [1621] dtypes.i32
+1623 Ops.MUL dtypes.f32 [1621, 120]
+1624 Ops.BITCAST dtypes.i32 [1623] dtypes.i32
+1625 Ops.SHR dtypes.i32 [1624, 85]
+1626 Ops.AND dtypes.i32 [1625, 125]
+1627 Ops.ADD dtypes.i32 [1626, 128]
+1628 Ops.CAST dtypes.f32 [1627] dtypes.f32
+1629 Ops.NEG dtypes.f32 [1628]
+1630 Ops.CAST dtypes.i32 [1629] dtypes.i32
+1631 Ops.SHL dtypes.i32 [1630, 85]
+1632 Ops.ADD dtypes.i32 [1622, 1631]
+1633 Ops.BITCAST dtypes.f32 [1632] dtypes.f32
+1634 Ops.ADD dtypes.f32 [1633, 137]
+1635 Ops.ADD dtypes.f32 [1633, 76]
+1636 Ops.FDIV dtypes.f32 [1634, 1635]
+1637 Ops.MUL dtypes.f32 [1636, 1636]
+1638 Ops.MUL dtypes.f32 [110, 1637]
+1639 Ops.ADD dtypes.f32 [1638, 144]
+1640 Ops.MUL dtypes.f32 [1639, 1637]
+1641 Ops.ADD dtypes.f32 [1640, 148]
+1642 Ops.MUL dtypes.f32 [1636, 1637]
+1643 Ops.MUL dtypes.f32 [1641, 1642]
+1644 Ops.ADD dtypes.f32 [1628, 153]
+1645 Ops.WHERE dtypes.f32 [1619, 1644, 1628]
+1646 Ops.ADD dtypes.f32 [1643, 1645]
+1647 Ops.MUL dtypes.f32 [1636, 158]
+1648 Ops.ADD dtypes.f32 [1646, 1647]
+1649 Ops.MUL dtypes.f32 [1636, 162]
+1650 Ops.ADD dtypes.f32 [1648, 1649]
+1651 Ops.WHERE dtypes.f32 [1618, 1650, 34]
+1652 Ops.WHERE dtypes.f32 [1617, 1651, 39]
+1653 Ops.WHERE dtypes.f32 [1616, 21, 1652]
+1654 Ops.WHERE dtypes.f32 [1615, 1653, 39]
+1655 Ops.WHERE dtypes.f32 [1613, 21, 1654]
+1656 Ops.MUL dtypes.f32 [1655, 72]
+1657 Ops.ADD dtypes.f32 [1611, 1656]
+1658 Ops.INDEX dtypes.f32 [1193, 7]
+1659 Ops.CMPNE dtypes.bool [1658, 34]
+1660 Ops.CMPNE dtypes.bool [1658, 1658]
+1661 Ops.CMPNE dtypes.bool [1658, 39]
+1662 Ops.WHERE dtypes.f32 [1661, 1658, 26]
+1663 Ops.WHERE dtypes.f32 [1660, 26, 1662]
+1664 Ops.WHERE dtypes.f32 [1659, 1663, 26]
+1665 Ops.CMPNE dtypes.bool [1664, 26]
+1666 Ops.CMPLT dtypes.bool [1664, 26]
+1667 Ops.WHERE dtypes.f32 [1666, 137, 76]
+1668 Ops.WHERE dtypes.f32 [1665, 1667, 26]
+1669 Ops.MUL dtypes.f32 [1664, 1668]
+1670 Ops.CMPLT dtypes.bool [1669, 188]
+1671 Ops.MUL dtypes.f32 [1669, 191]
+1672 Ops.CMPLT dtypes.bool [1671, 26]
+1673 Ops.WHERE dtypes.f32 [1672, 46, 48]
+1674 Ops.ADD dtypes.f32 [1671, 1673]
+1675 Ops.CAST dtypes.i32 [1674] dtypes.i32
+1676 Ops.CAST dtypes.f32 [1675] dtypes.f32
+1677 Ops.MUL dtypes.f32 [1676, 199]
+1678 Ops.MUL dtypes.f32 [1676, 202]
+1679 Ops.MUL dtypes.f32 [1676, 205]
+1680 Ops.MUL dtypes.f32 [1676, 208]
+1681 Ops.ADD dtypes.f32 [1680, 1669]
+1682 Ops.ADD dtypes.f32 [1679, 1681]
+1683 Ops.ADD dtypes.f32 [1678, 1682]
+1684 Ops.ADD dtypes.f32 [1677, 1683]
+1685 Ops.MUL dtypes.f32 [1684, 1684]
+1686 Ops.MUL dtypes.f32 [215, 1685]
+1687 Ops.ADD dtypes.f32 [1686, 219]
+1688 Ops.MUL dtypes.f32 [1687, 1685]
+1689 Ops.ADD dtypes.f32 [1688, 223]
+1690 Ops.MUL dtypes.f32 [1689, 1685]
+1691 Ops.ADD dtypes.f32 [1690, 227]
+1692 Ops.MUL dtypes.f32 [1691, 1685]
+1693 Ops.ADD dtypes.f32 [1692, 76]
+1694 Ops.MUL dtypes.f32 [1684, 1693]
+1695 Ops.AND dtypes.i32 [1675, 79]
+1696 Ops.CMPNE dtypes.bool [1695, 14]
+1697 Ops.WHERE dtypes.f32 [1696, 137, 76]
+1698 Ops.MUL dtypes.f32 [1694, 1697]
+1699 Ops.BITCAST dtypes.u32 [1669] dtypes.u32
+1700 Ops.AND dtypes.u32 [1699, 238]
+1701 Ops.OR dtypes.u32 [1700, 241]
+1702 Ops.BITCAST dtypes.f32 [1701] dtypes.f32
+1703 Ops.CMPLT dtypes.bool [1702, 48]
+1704 Ops.MUL dtypes.f32 [1702, 246]
+1705 Ops.CAST dtypes.u64 [1704] dtypes.u64
+1706 Ops.SHR dtypes.u32 [1699, 249]
+1707 Ops.AND dtypes.u32 [1706, 251]
+1708 Ops.ADD dtypes.u32 [1707, 254]
+1709 Ops.CAST dtypes.u64 [1708] dtypes.u64
+1710 Ops.SHR dtypes.u64 [1709, 258]
+1711 Ops.CMPNE dtypes.bool [1710, 260]
+1712 Ops.CMPNE dtypes.bool [1710, 262]
+1713 Ops.CMPNE dtypes.bool [1710, 264]
+1714 Ops.CMPNE dtypes.bool [1710, 267]
+1715 Ops.CMPNE dtypes.bool [1710, 269]
+1716 Ops.CMPNE dtypes.bool [1710, 258]
+1717 Ops.WHERE dtypes.u32 [1716, 272, 274]
+1718 Ops.WHERE dtypes.u32 [1715, 1717, 277]
+1719 Ops.WHERE dtypes.u32 [1714, 1718, 280]
+1720 Ops.WHERE dtypes.u32 [1713, 1719, 283]
+1721 Ops.WHERE dtypes.u32 [1712, 1720, 286]
+1722 Ops.WHERE dtypes.u32 [1711, 1721, 272]
+1723 Ops.CAST dtypes.u64 [1722] dtypes.u64
+1724 Ops.CAST dtypes.i32 [1708] dtypes.i32
+1725 Ops.AND dtypes.i32 [1724, 292]
+1726 Ops.CAST dtypes.u64 [1725] dtypes.u64
+1727 Ops.SHL dtypes.u64 [1723, 1726]
+1728 Ops.CAST dtypes.u32 [1727] dtypes.u32
+1729 Ops.WHERE dtypes.u32 [1715, 272, 274]
+1730 Ops.WHERE dtypes.u32 [1714, 1729, 277]
+1731 Ops.WHERE dtypes.u32 [1713, 1730, 280]
+1732 Ops.WHERE dtypes.u32 [1712, 1731, 283]
+1733 Ops.WHERE dtypes.u32 [1711, 1732, 286]
+1734 Ops.CAST dtypes.u64 [1733] dtypes.u64
+1735 Ops.SUB dtypes.i32 [304, 1725]
+1736 Ops.CAST dtypes.u64 [1735] dtypes.u64
+1737 Ops.SHR dtypes.u64 [1734, 1736]
+1738 Ops.CAST dtypes.u32 [1737] dtypes.u32
+1739 Ops.OR dtypes.u32 [1728, 1738]
+1740 Ops.CAST dtypes.u64 [1739] dtypes.u64
+1741 Ops.MUL dtypes.u64 [1705, 1740]
+1742 Ops.SHL dtypes.u64 [1741, 312]
+1743 Ops.SHL dtypes.u64 [1734, 1726]
+1744 Ops.CAST dtypes.u32 [1743] dtypes.u32
+1745 Ops.WHERE dtypes.u32 [1714, 272, 274]
+1746 Ops.WHERE dtypes.u32 [1713, 1745, 277]
+1747 Ops.WHERE dtypes.u32 [1712, 1746, 280]
+1748 Ops.WHERE dtypes.u32 [1711, 1747, 283]
+1749 Ops.CAST dtypes.u64 [1748] dtypes.u64
+1750 Ops.SHR dtypes.u64 [1749, 1736]
+1751 Ops.CAST dtypes.u32 [1750] dtypes.u32
+1752 Ops.OR dtypes.u32 [1744, 1751]
+1753 Ops.CAST dtypes.u64 [1752] dtypes.u64
+1754 Ops.MUL dtypes.u64 [1705, 1753]
+1755 Ops.ADD dtypes.u64 [1742, 1754]
+1756 Ops.SHL dtypes.u64 [1749, 1726]
+1757 Ops.CAST dtypes.u32 [1756] dtypes.u32
+1758 Ops.WHERE dtypes.u32 [1713, 272, 274]
+1759 Ops.WHERE dtypes.u32 [1712, 1758, 277]
+1760 Ops.WHERE dtypes.u32 [1711, 1759, 280]
+1761 Ops.CAST dtypes.u64 [1760] dtypes.u64
+1762 Ops.SHR dtypes.u64 [1761, 1736]
+1763 Ops.CAST dtypes.u32 [1762] dtypes.u32
+1764 Ops.OR dtypes.u32 [1757, 1763]
+1765 Ops.CAST dtypes.u64 [1764] dtypes.u64
+1766 Ops.MUL dtypes.u64 [1705, 1765]
+1767 Ops.SHR dtypes.u64 [1766, 312]
+1768 Ops.ADD dtypes.u64 [1755, 1767]
+1769 Ops.AND dtypes.u64 [1768, 341]
+1770 Ops.CAST dtypes.f32 [1769] dtypes.f32
+1771 Ops.MUL dtypes.f32 [1770, 345]
+1772 Ops.ADD dtypes.f32 [1771, 348]
+1773 Ops.WHERE dtypes.f32 [1703, 1771, 1772]
+1774 Ops.SHR dtypes.u64 [1768, 352]
+1775 Ops.CAST dtypes.i32 [1774] dtypes.i32
+1776 Ops.ADD dtypes.i32 [1775, 79]
+1777 Ops.WHERE dtypes.i32 [1703, 1775, 1776]
+1778 Ops.AND dtypes.i32 [1777, 79]
+1779 Ops.CMPNE dtypes.bool [1778, 14]
+1780 Ops.WHERE dtypes.f32 [1779, 360, 26]
+1781 Ops.ADD dtypes.f32 [1773, 1780]
+1782 Ops.MUL dtypes.f32 [1781, 1781]
+1783 Ops.MUL dtypes.f32 [215, 1782]
+1784 Ops.ADD dtypes.f32 [1783, 219]
+1785 Ops.MUL dtypes.f32 [1784, 1782]
+1786 Ops.ADD dtypes.f32 [1785, 223]
+1787 Ops.MUL dtypes.f32 [1786, 1782]
+1788 Ops.ADD dtypes.f32 [1787, 227]
+1789 Ops.MUL dtypes.f32 [1788, 1782]
+1790 Ops.ADD dtypes.f32 [1789, 76]
+1791 Ops.MUL dtypes.f32 [1781, 1790]
+1792 Ops.AND dtypes.i32 [1777, 7]
+1793 Ops.CMPNE dtypes.bool [1792, 14]
+1794 Ops.WHERE dtypes.f32 [1793, 137, 76]
+1795 Ops.MUL dtypes.f32 [1791, 1794]
+1796 Ops.WHERE dtypes.f32 [1670, 1698, 1795]
+1797 Ops.MUL dtypes.f32 [1796, 1668]
+1798 Ops.WHERE dtypes.f32 [1661, 1797, 21]
+1799 Ops.WHERE dtypes.f32 [1660, 21, 1798]
+1800 Ops.WHERE dtypes.f32 [1659, 1799, 21]
+1801 Ops.ADD dtypes.f32 [1657, 1800]
+1802 Ops.INDEX dtypes.f32 [1095, 847]
+1803 Ops.MUL dtypes.f32 [1802, 17]
+1804 Ops.CMPNE dtypes.bool [1803, 1803]
+1805 Ops.CMPLT dtypes.bool [1803, 23]
+1806 Ops.CMPLT dtypes.bool [1803, 28]
+1807 Ops.CMPEQ dtypes.bool [1806, 31]
+1808 Ops.CMPNE dtypes.bool [1803, 34]
+1809 Ops.CMPNE dtypes.bool [1803, 39]
+1810 Ops.WHERE dtypes.f32 [1809, 1803, 26]
+1811 Ops.WHERE dtypes.f32 [1804, 26, 1810]
+1812 Ops.WHERE dtypes.f32 [1808, 1811, 26]
+1813 Ops.CMPLT dtypes.bool [1812, 26]
+1814 Ops.WHERE dtypes.f32 [1813, 46, 48]
+1815 Ops.ADD dtypes.f32 [1812, 1814]
+1816 Ops.CAST dtypes.i32 [1815] dtypes.i32
+1817 Ops.CAST dtypes.f32 [1816] dtypes.f32
+1818 Ops.SUB dtypes.f32 [1812, 1817]
+1819 Ops.MUL dtypes.f32 [36, 1818]
+1820 Ops.ADD dtypes.f32 [1819, 56]
+1821 Ops.MUL dtypes.f32 [1820, 1818]
+1822 Ops.ADD dtypes.f32 [1821, 60]
+1823 Ops.MUL dtypes.f32 [1822, 1818]
+1824 Ops.ADD dtypes.f32 [1823, 64]
+1825 Ops.MUL dtypes.f32 [1824, 1818]
+1826 Ops.ADD dtypes.f32 [1825, 68]
+1827 Ops.MUL dtypes.f32 [1826, 1818]
+1828 Ops.ADD dtypes.f32 [1827, 72]
+1829 Ops.MUL dtypes.f32 [1828, 1818]
+1830 Ops.ADD dtypes.f32 [1829, 76]
+1831 Ops.SHR dtypes.i32 [1816, 79]
+1832 Ops.ADD dtypes.i32 [1831, 82]
+1833 Ops.SHL dtypes.i32 [1832, 85]
+1834 Ops.BITCAST dtypes.f32 [1833] dtypes.f32
+1835 Ops.MUL dtypes.f32 [1830, 1834]
+1836 Ops.SUB dtypes.i32 [1816, 1831]
+1837 Ops.ADD dtypes.i32 [1836, 82]
+1838 Ops.SHL dtypes.i32 [1837, 85]
+1839 Ops.BITCAST dtypes.f32 [1838] dtypes.f32
+1840 Ops.MUL dtypes.f32 [1835, 1839]
+1841 Ops.WHERE dtypes.f32 [1807, 34, 1840]
+1842 Ops.WHERE dtypes.f32 [1805, 26, 1841]
+1843 Ops.WHERE dtypes.f32 [1804, 21, 1842]
+1844 Ops.INDEX dtypes.f32 [1142, 847]
+1845 Ops.CMPNE dtypes.bool [1844, 1844]
+1846 Ops.FDIV dtypes.f32 [76, 1844]
+1847 Ops.CMPNE dtypes.bool [1846, 39]
+1848 Ops.CMPLT dtypes.bool [1844, 105]
+1849 Ops.CMPNE dtypes.bool [1844, 26]
+1850 Ops.CMPNE dtypes.bool [1844, 34]
+1851 Ops.CMPLT dtypes.bool [1844, 112]
+1852 Ops.MUL dtypes.f32 [1844, 115]
+1853 Ops.WHERE dtypes.f32 [1851, 1852, 1844]
+1854 Ops.BITCAST dtypes.i32 [1853] dtypes.i32
+1855 Ops.MUL dtypes.f32 [1853, 120]
+1856 Ops.BITCAST dtypes.i32 [1855] dtypes.i32
+1857 Ops.SHR dtypes.i32 [1856, 85]
+1858 Ops.AND dtypes.i32 [1857, 125]
+1859 Ops.ADD dtypes.i32 [1858, 128]
+1860 Ops.CAST dtypes.f32 [1859] dtypes.f32
+1861 Ops.NEG dtypes.f32 [1860]
+1862 Ops.CAST dtypes.i32 [1861] dtypes.i32
+1863 Ops.SHL dtypes.i32 [1862, 85]
+1864 Ops.ADD dtypes.i32 [1854, 1863]
+1865 Ops.BITCAST dtypes.f32 [1864] dtypes.f32
+1866 Ops.ADD dtypes.f32 [1865, 137]
+1867 Ops.ADD dtypes.f32 [1865, 76]
+1868 Ops.FDIV dtypes.f32 [1866, 1867]
+1869 Ops.MUL dtypes.f32 [1868, 1868]
+1870 Ops.MUL dtypes.f32 [110, 1869]
+1871 Ops.ADD dtypes.f32 [1870, 144]
+1872 Ops.MUL dtypes.f32 [1871, 1869]
+1873 Ops.ADD dtypes.f32 [1872, 148]
+1874 Ops.MUL dtypes.f32 [1868, 1869]
+1875 Ops.MUL dtypes.f32 [1873, 1874]
+1876 Ops.ADD dtypes.f32 [1860, 153]
+1877 Ops.WHERE dtypes.f32 [1851, 1876, 1860]
+1878 Ops.ADD dtypes.f32 [1875, 1877]
+1879 Ops.MUL dtypes.f32 [1868, 158]
+1880 Ops.ADD dtypes.f32 [1878, 1879]
+1881 Ops.MUL dtypes.f32 [1868, 162]
+1882 Ops.ADD dtypes.f32 [1880, 1881]
+1883 Ops.WHERE dtypes.f32 [1850, 1882, 34]
+1884 Ops.WHERE dtypes.f32 [1849, 1883, 39]
+1885 Ops.WHERE dtypes.f32 [1848, 21, 1884]
+1886 Ops.WHERE dtypes.f32 [1847, 1885, 39]
+1887 Ops.WHERE dtypes.f32 [1845, 21, 1886]
+1888 Ops.MUL dtypes.f32 [1887, 72]
+1889 Ops.ADD dtypes.f32 [1843, 1888]
+1890 Ops.INDEX dtypes.f32 [1193, 847]
+1891 Ops.CMPNE dtypes.bool [1890, 34]
+1892 Ops.CMPNE dtypes.bool [1890, 1890]
+1893 Ops.CMPNE dtypes.bool [1890, 39]
+1894 Ops.WHERE dtypes.f32 [1893, 1890, 26]
+1895 Ops.WHERE dtypes.f32 [1892, 26, 1894]
+1896 Ops.WHERE dtypes.f32 [1891, 1895, 26]
+1897 Ops.CMPNE dtypes.bool [1896, 26]
+1898 Ops.CMPLT dtypes.bool [1896, 26]
+1899 Ops.WHERE dtypes.f32 [1898, 137, 76]
+1900 Ops.WHERE dtypes.f32 [1897, 1899, 26]
+1901 Ops.MUL dtypes.f32 [1896, 1900]
+1902 Ops.CMPLT dtypes.bool [1901, 188]
+1903 Ops.MUL dtypes.f32 [1901, 191]
+1904 Ops.CMPLT dtypes.bool [1903, 26]
+1905 Ops.WHERE dtypes.f32 [1904, 46, 48]
+1906 Ops.ADD dtypes.f32 [1903, 1905]
+1907 Ops.CAST dtypes.i32 [1906] dtypes.i32
+1908 Ops.CAST dtypes.f32 [1907] dtypes.f32
+1909 Ops.MUL dtypes.f32 [1908, 199]
+1910 Ops.MUL dtypes.f32 [1908, 202]
+1911 Ops.MUL dtypes.f32 [1908, 205]
+1912 Ops.MUL dtypes.f32 [1908, 208]
+1913 Ops.ADD dtypes.f32 [1912, 1901]
+1914 Ops.ADD dtypes.f32 [1911, 1913]
+1915 Ops.ADD dtypes.f32 [1910, 1914]
+1916 Ops.ADD dtypes.f32 [1909, 1915]
+1917 Ops.MUL dtypes.f32 [1916, 1916]
+1918 Ops.MUL dtypes.f32 [215, 1917]
+1919 Ops.ADD dtypes.f32 [1918, 219]
+1920 Ops.MUL dtypes.f32 [1919, 1917]
+1921 Ops.ADD dtypes.f32 [1920, 223]
+1922 Ops.MUL dtypes.f32 [1921, 1917]
+1923 Ops.ADD dtypes.f32 [1922, 227]
+1924 Ops.MUL dtypes.f32 [1923, 1917]
+1925 Ops.ADD dtypes.f32 [1924, 76]
+1926 Ops.MUL dtypes.f32 [1916, 1925]
+1927 Ops.AND dtypes.i32 [1907, 79]
+1928 Ops.CMPNE dtypes.bool [1927, 14]
+1929 Ops.WHERE dtypes.f32 [1928, 137, 76]
+1930 Ops.MUL dtypes.f32 [1926, 1929]
+1931 Ops.BITCAST dtypes.u32 [1901] dtypes.u32
+1932 Ops.AND dtypes.u32 [1931, 238]
+1933 Ops.OR dtypes.u32 [1932, 241]
+1934 Ops.BITCAST dtypes.f32 [1933] dtypes.f32
+1935 Ops.CMPLT dtypes.bool [1934, 48]
+1936 Ops.MUL dtypes.f32 [1934, 246]
+1937 Ops.CAST dtypes.u64 [1936] dtypes.u64
+1938 Ops.SHR dtypes.u32 [1931, 249]
+1939 Ops.AND dtypes.u32 [1938, 251]
+1940 Ops.ADD dtypes.u32 [1939, 254]
+1941 Ops.CAST dtypes.u64 [1940] dtypes.u64
+1942 Ops.SHR dtypes.u64 [1941, 258]
+1943 Ops.CMPNE dtypes.bool [1942, 260]
+1944 Ops.CMPNE dtypes.bool [1942, 262]
+1945 Ops.CMPNE dtypes.bool [1942, 264]
+1946 Ops.CMPNE dtypes.bool [1942, 267]
+1947 Ops.CMPNE dtypes.bool [1942, 269]
+1948 Ops.CMPNE dtypes.bool [1942, 258]
+1949 Ops.WHERE dtypes.u32 [1948, 272, 274]
+1950 Ops.WHERE dtypes.u32 [1947, 1949, 277]
+1951 Ops.WHERE dtypes.u32 [1946, 1950, 280]
+1952 Ops.WHERE dtypes.u32 [1945, 1951, 283]
+1953 Ops.WHERE dtypes.u32 [1944, 1952, 286]
+1954 Ops.WHERE dtypes.u32 [1943, 1953, 272]
+1955 Ops.CAST dtypes.u64 [1954] dtypes.u64
+1956 Ops.CAST dtypes.i32 [1940] dtypes.i32
+1957 Ops.AND dtypes.i32 [1956, 292]
+1958 Ops.CAST dtypes.u64 [1957] dtypes.u64
+1959 Ops.SHL dtypes.u64 [1955, 1958]
+1960 Ops.CAST dtypes.u32 [1959] dtypes.u32
+1961 Ops.WHERE dtypes.u32 [1947, 272, 274]
+1962 Ops.WHERE dtypes.u32 [1946, 1961, 277]
+1963 Ops.WHERE dtypes.u32 [1945, 1962, 280]
+1964 Ops.WHERE dtypes.u32 [1944, 1963, 283]
+1965 Ops.WHERE dtypes.u32 [1943, 1964, 286]
+1966 Ops.CAST dtypes.u64 [1965] dtypes.u64
+1967 Ops.SUB dtypes.i32 [304, 1957]
+1968 Ops.CAST dtypes.u64 [1967] dtypes.u64
+1969 Ops.SHR dtypes.u64 [1966, 1968]
+1970 Ops.CAST dtypes.u32 [1969] dtypes.u32
+1971 Ops.OR dtypes.u32 [1960, 1970]
+1972 Ops.CAST dtypes.u64 [1971] dtypes.u64
+1973 Ops.MUL dtypes.u64 [1937, 1972]
+1974 Ops.SHL dtypes.u64 [1973, 312]
+1975 Ops.SHL dtypes.u64 [1966, 1958]
+1976 Ops.CAST dtypes.u32 [1975] dtypes.u32
+1977 Ops.WHERE dtypes.u32 [1946, 272, 274]
+1978 Ops.WHERE dtypes.u32 [1945, 1977, 277]
+1979 Ops.WHERE dtypes.u32 [1944, 1978, 280]
+1980 Ops.WHERE dtypes.u32 [1943, 1979, 283]
+1981 Ops.CAST dtypes.u64 [1980] dtypes.u64
+1982 Ops.SHR dtypes.u64 [1981, 1968]
+1983 Ops.CAST dtypes.u32 [1982] dtypes.u32
+1984 Ops.OR dtypes.u32 [1976, 1983]
+1985 Ops.CAST dtypes.u64 [1984] dtypes.u64
+1986 Ops.MUL dtypes.u64 [1937, 1985]
+1987 Ops.ADD dtypes.u64 [1974, 1986]
+1988 Ops.SHL dtypes.u64 [1981, 1958]
+1989 Ops.CAST dtypes.u32 [1988] dtypes.u32
+1990 Ops.WHERE dtypes.u32 [1945, 272, 274]
+1991 Ops.WHERE dtypes.u32 [1944, 1990, 277]
+1992 Ops.WHERE dtypes.u32 [1943, 1991, 280]
+1993 Ops.CAST dtypes.u64 [1992] dtypes.u64
+1994 Ops.SHR dtypes.u64 [1993, 1968]
+1995 Ops.CAST dtypes.u32 [1994] dtypes.u32
+1996 Ops.OR dtypes.u32 [1989, 1995]
+1997 Ops.CAST dtypes.u64 [1996] dtypes.u64
+1998 Ops.MUL dtypes.u64 [1937, 1997]
+1999 Ops.SHR dtypes.u64 [1998, 312]
+2000 Ops.ADD dtypes.u64 [1987, 1999]
+2001 Ops.AND dtypes.u64 [2000, 341]
+2002 Ops.CAST dtypes.f32 [2001] dtypes.f32
+2003 Ops.MUL dtypes.f32 [2002, 345]
+2004 Ops.ADD dtypes.f32 [2003, 348]
+2005 Ops.WHERE dtypes.f32 [1935, 2003, 2004]
+2006 Ops.SHR dtypes.u64 [2000, 352]
+2007 Ops.CAST dtypes.i32 [2006] dtypes.i32
+2008 Ops.ADD dtypes.i32 [2007, 79]
+2009 Ops.WHERE dtypes.i32 [1935, 2007, 2008]
+2010 Ops.AND dtypes.i32 [2009, 79]
+2011 Ops.CMPNE dtypes.bool [2010, 14]
+2012 Ops.WHERE dtypes.f32 [2011, 360, 26]
+2013 Ops.ADD dtypes.f32 [2005, 2012]
+2014 Ops.MUL dtypes.f32 [2013, 2013]
+2015 Ops.MUL dtypes.f32 [215, 2014]
+2016 Ops.ADD dtypes.f32 [2015, 219]
+2017 Ops.MUL dtypes.f32 [2016, 2014]
+2018 Ops.ADD dtypes.f32 [2017, 223]
+2019 Ops.MUL dtypes.f32 [2018, 2014]
+2020 Ops.ADD dtypes.f32 [2019, 227]
+2021 Ops.MUL dtypes.f32 [2020, 2014]
+2022 Ops.ADD dtypes.f32 [2021, 76]
+2023 Ops.MUL dtypes.f32 [2013, 2022]
+2024 Ops.AND dtypes.i32 [2009, 7]
+2025 Ops.CMPNE dtypes.bool [2024, 14]
+2026 Ops.WHERE dtypes.f32 [2025, 137, 76]
+2027 Ops.MUL dtypes.f32 [2023, 2026]
+2028 Ops.WHERE dtypes.f32 [1902, 1930, 2027]
+2029 Ops.MUL dtypes.f32 [2028, 1900]
+2030 Ops.WHERE dtypes.f32 [1893, 2029, 21]
+2031 Ops.WHERE dtypes.f32 [1892, 21, 2030]
+2032 Ops.WHERE dtypes.f32 [1891, 2031, 21]
+2033 Ops.ADD dtypes.f32 [1889, 2032]
+2034 Ops.STACK dtypes.f32 [1337, 1569, 1801, 2033]
+2035 Ops.STORE dtypes.void [1090, 2034]
+2036 Ops.AFTER dtypes.void [0, 2035]
+2037 Ops.END dtypes.void [2036, 5]
+2038 Ops.SINK dtypes.void [2037] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=3136, lds=256, mem=256), optimized=True)
+2039 Ops.LINEAR dtypes.void [303, 1085, 13, 14, 1086, 1087, 1088, 78, 79, 1091, 1092, 6, 7, 1138, 1139, 266, 847, 1189, 1190, 1, 1089, 1093, 1140, 1191, 0, 30, 31, 104, 105, 204, 205, 218, 219, 226, 227, 45, 46, 136, 137, 198, 199, 347, 348, 201, 202, 22, 23, 207, 208, 152, 153, 38, 39, 25, 26, 35, 36, 55, 56, 222, 223, 59, 60, 63, 64, 67, 68, 190, 191, 109, 110, 47, 48, 143, 144, 71, 72, 147, 148, 75, 76, 119, 120, 16, 17, 359, 360, 114, 115, 27, 28, 214, 215, 157, 158, 161, 162, 344, 345, 187, 188, 245, 246, 111, 112, 33, 34, 20, 21, 127, 128, 81, 82, 84, 85, 124, 125, 291, 292, 304, 3, 4, 272, 240, 241, 276, 277, 279, 280, 237, 238, 249, 282, 283, 251, 253, 254, 285, 286, 273, 274, 260, 262, 264, 267, 312, 269, 340, 341, 257, 258, 351, 352, 5, 8, 1094, 1095, 1141, 1142, 1192, 1193, 1096, 1338, 1570, 1802, 1143, 1380, 1612, 1844, 1194, 1426, 1658, 1890, 1196, 1197, 1195, 1198, 1199, 1200, 1202, 1201, 1203, 1204, 1205, 1207, 1208, 1209, 1210, 1211, 1212, 1428, 1429, 1427, 1430, 1431, 1432, 1434, 1433, 1435, 1436, 1437, 1439, 1440, 1441, 1442, 1443, 1444, 1660, 1661, 1659, 1662, 1663, 1664, 1666, 1665, 1667, 1668, 1669, 1671, 1672, 1673, 1674, 1675, 1676, 1892, 1893, 1891, 1894, 1895, 1896, 1898, 1897, 1899, 1900, 1901, 1903, 1904, 1905, 1906, 1907, 1908, 1097, 1103, 1102, 1098, 1104, 1105, 1106, 1107, 1108, 1109, 1110, 1111, 1339, 1345, 1344, 1340, 1346, 1347, 1348, 1349, 1350, 1351, 1352, 1353, 1571, 1577, 1576, 1572, 1578, 1579, 1580, 1581, 1582, 1583, 1584, 1585, 1803, 1809, 1808, 1804, 1810, 1811, 1812, 1813, 1814, 1815, 1816, 1817, 1151, 1150, 1152, 1154, 1155, 1156, 1157, 1158, 1159, 1388, 1387, 1389, 1391, 1392, 1393, 1394, 1395, 1396, 1620, 1619, 1621, 1623, 1624, 1625, 1626, 1627, 1628, 1852, 1851, 1853, 1855, 1856, 1857, 1858, 1859, 1860, 1235, 1242, 1243, 1244, 1260, 1245, 1261, 1262, 1246, 1247, 1248, 1249, 1250, 1281, 1282, 1283, 1284, 1285, 1292, 1293, 1251, 1265, 1266, 1267, 1268, 1269, 1270, 1279, 1280, 1252, 1253, 1254, 1255, 1256, 1257, 1258, 1259, 1263, 1264, 1271, 1272, 1294, 1295, 1296, 1297, 1298, 1299, 1286, 1287, 1273, 1274, 1236, 1237, 1238, 1240, 1241, 1300, 1301, 1288, 1289, 1275, 1276, 1290, 1277, 1278, 1291, 1302, 1303, 1304, 1305, 1306, 1467, 1474, 1475, 1476, 1492, 1477, 1493, 1494, 1478, 1479, 1480, 1481, 1482, 1513, 1514, 1515, 1516, 1517, 1524, 1525, 1483, 1497, 1498, 1499, 1500, 1501, 1502, 1511, 1512, 1484, 1485, 1486, 1487, 1488, 1489, 1490, 1491, 1495, 1496, 1503, 1504, 1526, 1527, 1528, 1529, 1530, 1531, 1518, 1519, 1505, 1506, 1468, 1469, 1470, 1472, 1473, 1532, 1533, 1520, 1521, 1507, 1508, 1522, 1509, 1510, 1523, 1534, 1535, 1536, 1537, 1538, 1699, 1706, 1707, 1708, 1724, 1709, 1725, 1726, 1710, 1711, 1712, 1713, 1714, 1745, 1746, 1747, 1748, 1749, 1756, 1757, 1715, 1729, 1730, 1731, 1732, 1733, 1734, 1743, 1744, 1716, 1717, 1718, 1719, 1720, 1721, 1722, 1723, 1727, 1728, 1735, 1736, 1758, 1759, 1760, 1761, 1762, 1763, 1750, 1751, 1737, 1738, 1700, 1701, 1702, 1704, 1705, 1764, 1765, 1752, 1753, 1739, 1740, 1754, 1741, 1742, 1755, 1766, 1767, 1768, 1769, 1770, 1931, 1938, 1939, 1940, 1956, 1941, 1957, 1958, 1942, 1943, 1944, 1945, 1946, 1977, 1978, 1979, 1980, 1981, 1988, 1989, 1947, 1961, 1962, 1963, 1964, 1965, 1966, 1975, 1976, 1948, 1949, 1950, 1951, 1952, 1953, 1954, 1955, 1959, 1960, 1967, 1968, 1990, 1991, 1992, 1993, 1994, 1995, 1982, 1983, 1969, 1970, 1932, 1933, 1934, 1936, 1937, 1996, 1997, 1984, 1985, 1971, 1972, 1986, 1973, 1974, 1987, 1998, 1999, 2000, 2001, 2002, 1160, 1161, 1397, 1398, 1629, 1630, 1861, 1862, 1310, 1311, 1542, 1543, 1774, 1775, 2006, 2007, 1153, 1162, 1163, 1164, 1390, 1399, 1400, 1401, 1622, 1631, 1632, 1633, 1854, 1863, 1864, 1865, 1125, 1126, 1127, 1128, 1367, 1368, 1369, 1370, 1599, 1600, 1601, 1602, 1831, 1832, 1833, 1834, 1130, 1131, 1132, 1133, 1372, 1373, 1374, 1375, 1604, 1605, 1606, 1607, 1836, 1837, 1838, 1839, 1312, 1544, 1776, 2008, 1175, 1412, 1644, 1876, 1165, 1166, 1402, 1403, 1634, 1635, 1866, 1867, 1167, 1168, 1169, 1170, 1171, 1172, 1173, 1174, 1176, 1177, 1178, 1179, 1180, 1181, 1404, 1405, 1406, 1407, 1408, 1409, 1410, 1411, 1413, 1414, 1415, 1416, 1417, 1418, 1636, 1637, 1638, 1639, 1640, 1641, 1642, 1643, 1645, 1646, 1647, 1648, 1649, 1650, 1868, 1869, 1870, 1871, 1872, 1873, 1874, 1875, 1877, 1878, 1879, 1880, 1881, 1882, 1216, 1217, 1215, 1218, 1214, 1219, 1213, 1220, 1307, 1308, 1112, 1113, 1114, 1221, 1222, 1223, 1239, 1313, 1314, 1315, 1309, 1316, 1317, 1318, 1319, 1320, 1115, 1116, 1224, 1225, 1321, 1322, 1117, 1118, 1226, 1227, 1323, 1324, 1119, 1120, 1228, 1229, 1325, 1326, 1121, 1122, 1123, 1124, 1129, 1134, 1147, 1144, 1148, 1149, 1145, 1146, 1182, 1183, 1184, 1185, 1186, 1187, 1099, 1100, 1101, 1135, 1136, 1137, 1188, 1230, 1327, 1231, 1232, 1233, 1234, 1328, 1329, 1330, 1331, 1206, 1332, 1333, 1334, 1335, 1336, 1337, 1448, 1449, 1447, 1450, 1446, 1451, 1445, 1452, 1539, 1540, 1354, 1355, 1356, 1453, 1454, 1455, 1471, 1545, 1546, 1547, 1541, 1548, 1549, 1550, 1551, 1552, 1357, 1358, 1456, 1457, 1553, 1554, 1359, 1360, 1458, 1459, 1555, 1556, 1361, 1362, 1460, 1461, 1557, 1558, 1363, 1364, 1365, 1366, 1371, 1376, 1384, 1381, 1385, 1386, 1382, 1383, 1419, 1420, 1421, 1422, 1423, 1424, 1341, 1342, 1343, 1377, 1378, 1379, 1425, 1462, 1559, 1463, 1464, 1465, 1466, 1560, 1561, 1562, 1563, 1438, 1564, 1565, 1566, 1567, 1568, 1569, 1680, 1681, 1679, 1682, 1678, 1683, 1677, 1684, 1771, 1772, 1586, 1587, 1588, 1685, 1686, 1687, 1703, 1777, 1778, 1779, 1773, 1780, 1781, 1782, 1783, 1784, 1589, 1590, 1688, 1689, 1785, 1786, 1591, 1592, 1690, 1691, 1787, 1788, 1593, 1594, 1692, 1693, 1789, 1790, 1595, 1596, 1597, 1598, 1603, 1608, 1616, 1613, 1617, 1618, 1614, 1615, 1651, 1652, 1653, 1654, 1655, 1656, 1573, 1574, 1575, 1609, 1610, 1611, 1657, 1694, 1791, 1695, 1696, 1697, 1698, 1792, 1793, 1794, 1795, 1670, 1796, 1797, 1798, 1799, 1800, 1801, 1912, 1913, 1911, 1914, 1910, 1915, 1909, 1916, 2003, 2004, 1818, 1819, 1820, 1917, 1918, 1919, 1935, 2009, 2010, 2011, 2005, 2012, 2013, 2014, 2015, 2016, 1821, 1822, 1920, 1921, 2017, 2018, 1823, 1824, 1922, 1923, 2019, 2020, 1825, 1826, 1924, 1925, 2021, 2022, 1827, 1828, 1829, 1830, 1835, 1840, 1848, 1845, 1849, 1850, 1846, 1847, 1883, 1884, 1885, 1886, 1887, 1888, 1805, 1806, 1807, 1841, 1842, 1843, 1889, 1926, 2023, 1927, 1928, 1929, 1930, 2024, 2025, 2026, 2027, 1902, 2028, 2029, 2030, 2031, 2032, 2033, 2034, 1090, 2035, 2036, 2037, 2038]
+2040 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\nvoid E_4_4(unsigned char* restrict args_32) {\n  unsigned long val0 = (*(((unsigned long*)(args_32))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_32))+1));\n  unsigned long val2 = (*(((unsigned long*)(args_32))+2));\n  unsigned long val3 = (*(((unsigned long*)(args_32))+3));\n  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {\n    int alu0 = (Lidx0<<2);\n    float4 val4 = (*((float4*)((((float*)(val1))+alu0))));\n    float4 val5 = (*((float4*)((((float*)(val2))+alu0))));\n    float4 val6 = (*((float4*)((((float*)(val3))+alu0))));\n    _Bool alu1 = (val6[0]!=val6[0]);\n    _Bool alu2 = (val6[0]!=((float)(-__builtin_inff())));\n    _Bool alu3 = (val6[0]!=((float)(__builtin_inff())));\n    float alu4 = (alu2?val6[0]:0.0f);\n    float alu5 = (alu1?0.0f:alu4);\n    float alu6 = (alu3?alu5:0.0f);\n    float alu7 = ((alu6<0.0f)?-1.0f:1.0f);\n    float alu8 = ((alu6!=0.0f)?alu7:0.0f);\n    float alu9 = (alu6*alu8);\n    float alu10 = (alu9*0.31830987334251404f);\n    float alu11 = ((alu10<0.0f)?-0.5f:0.5f);\n    int cast0 = ((int)((alu10+alu11)));\n    float cast1 = ((float)(cast0));\n    _Bool alu12 = (val6[1]!=val6[1]);\n    _Bool alu13 = (val6[1]!=((float)(-__builtin_inff())));\n    _Bool alu14 = (val6[1]!=((float)(__builtin_inff())));\n    float alu15 = (alu13?val6[1]:0.0f);\n    float alu16 = (alu12?0.0f:alu15);\n    float alu17 = (alu14?alu16:0.0f);\n    float alu18 = ((alu17<0.0f)?-1.0f:1.0f);\n    float alu19 = ((alu17!=0.0f)?alu18:0.0f);\n    float alu20 = (alu17*alu19);\n    float alu21 = (alu20*0.31830987334251404f);\n    float alu22 = ((alu21<0.0f)?-0.5f:0.5f);\n    int cast2 = ((int)((alu21+alu22)));\n    float cast3 = ((float)(cast2));\n    _Bool alu23 = (val6[2]!=val6[2]);\n    _Bool alu24 = (val6[2]!=((float)(-__builtin_inff())));\n    _Bool alu25 = (val6[2]!=((float)(__builtin_inff())));\n    float alu26 = (alu24?val6[2]:0.0f);\n    float alu27 = (alu23?0.0f:alu26);\n    float alu28 = (alu25?alu27:0.0f);\n    float alu29 = ((alu28<0.0f)?-1.0f:1.0f);\n    float alu30 = ((alu28!=0.0f)?alu29:0.0f);\n    float alu31 = (alu28*alu30);\n    float alu32 = (alu31*0.31830987334251404f);\n    float alu33 = ((alu32<0.0f)?-0.5f:0.5f);\n    int cast4 = ((int)((alu32+alu33)));\n    float cast5 = ((float)(cast4));\n    _Bool alu34 = (val6[3]!=val6[3]);\n    _Bool alu35 = (val6[3]!=((float)(-__builtin_inff())));\n    _Bool alu36 = (val6[3]!=((float)(__builtin_inff())));\n    float alu37 = (alu35?val6[3]:0.0f);\n    float alu38 = (alu34?0.0f:alu37);\n    float alu39 = (alu36?alu38:0.0f);\n    float alu40 = ((alu39<0.0f)?-1.0f:1.0f);\n    float alu41 = ((alu39!=0.0f)?alu40:0.0f);\n    float alu42 = (alu39*alu41);\n    float alu43 = (alu42*0.31830987334251404f);\n    float alu44 = ((alu43<0.0f)?-0.5f:0.5f);\n    int cast6 = ((int)((alu43+alu44)));\n    float cast7 = ((float)(cast6));\n    float alu45 = (val4[0]*1.4426950216293335f);\n    _Bool alu46 = (alu45!=alu45);\n    float alu47 = ((alu45!=((float)(-__builtin_inff())))?alu45:0.0f);\n    float alu48 = (alu46?0.0f:alu47);\n    float alu49 = ((alu45!=((float)(__builtin_inff())))?alu48:0.0f);\n    float alu50 = ((alu49<0.0f)?-0.5f:0.5f);\n    int cast8 = ((int)((alu49+alu50)));\n    float alu51 = (val4[1]*1.4426950216293335f);\n    _Bool alu52 = (alu51!=alu51);\n    float alu53 = ((alu51!=((float)(-__builtin_inff())))?alu51:0.0f);\n    float alu54 = (alu52?0.0f:alu53);\n    float alu55 = ((alu51!=((float)(__builtin_inff())))?alu54:0.0f);\n    float alu56 = ((alu55<0.0f)?-0.5f:0.5f);\n    int cast9 = ((int)((alu55+alu56)));\n    float alu57 = (val4[2]*1.4426950216293335f);\n    _Bool alu58 = (alu57!=alu57);\n    float alu59 = ((alu57!=((float)(-__builtin_inff())))?alu57:0.0f);\n    float alu60 = (alu58?0.0f:alu59);\n    float alu61 = ((alu57!=((float)(__builtin_inff())))?alu60:0.0f);\n    float alu62 = ((alu61<0.0f)?-0.5f:0.5f);\n    int cast10 = ((int)((alu61+alu62)));\n    float alu63 = (val4[3]*1.4426950216293335f);\n    _Bool alu64 = (alu63!=alu63);\n    float alu65 = ((alu63!=((float)(-__builtin_inff())))?alu63:0.0f);\n    float alu66 = (alu64?0.0f:alu65);\n    float alu67 = ((alu63!=((float)(__builtin_inff())))?alu66:0.0f);\n    float alu68 = ((alu67<0.0f)?-0.5f:0.5f);\n    int cast11 = ((int)((alu67+alu68)));\n    _Bool alu69 = (val5[0]<9.999999747378752e-05f);\n    float alu70 = (alu69?(val5[0]*1.8446744073709552e+19f):val5[0]);\n    float cast12 = ((float)((((__builtin_bit_cast(int, (float)((alu70*1.3333333730697632f)))>>23)&255)+-127)));\n    _Bool alu71 = (val5[1]<9.999999747378752e-05f);\n    float alu72 = (alu71?(val5[1]*1.8446744073709552e+19f):val5[1]);\n    float cast13 = ((float)((((__builtin_bit_cast(int, (float)((alu72*1.3333333730697632f)))>>23)&255)+-127)));\n    _Bool alu73 = (val5[2]<9.999999747378752e-05f);\n    float alu74 = (alu73?(val5[2]*1.8446744073709552e+19f):val5[2]);\n    float cast14 = ((float)((((__builtin_bit_cast(int, (float)((alu74*1.3333333730697632f)))>>23)&255)+-127)));\n    _Bool alu75 = (val5[3]<9.999999747378752e-05f);\n    float alu76 = (alu75?(val5[3]*1.8446744073709552e+19f):val5[3]);\n    float cast15 = ((float)((((__builtin_bit_cast(int, (float)((alu76*1.3333333730697632f)))>>23)&255)+-127)));\n    unsigned int cast16 = __builtin_bit_cast(unsigned int, (float)(alu9));\n    unsigned int alu77 = (((cast16>>23u)&255u)+4294967170u);\n    int alu78 = (((int)(alu77))&31);\n    unsigned long cast17 = ((unsigned long)(alu78));\n    unsigned long alu79 = (((unsigned long)(alu77))>>5ul);\n    _Bool alu80 = (alu79!=0ul);\n    _Bool alu81 = (alu79!=1ul);\n    _Bool alu82 = (alu79!=2ul);\n    _Bool alu83 = (alu79!=3ul);\n    unsigned int alu84 = (alu83?0u:920167782u);\n    unsigned int alu85 = (alu82?alu84:2102212464u);\n    unsigned int alu86 = (alu81?alu85:2131351028u);\n    unsigned int alu87 = (alu80?alu86:2475754826u);\n    unsigned long cast18 = ((unsigned long)(alu87));\n    _Bool alu88 = (alu79!=4ul);\n    unsigned int alu89 = (alu88?0u:920167782u);\n    unsigned int alu90 = (alu83?alu89:2102212464u);\n    unsigned int alu91 = (alu82?alu90:2131351028u);\n    unsigned int alu92 = (alu81?alu91:2475754826u);\n    unsigned int alu93 = (alu80?alu92:683565275u);\n    unsigned long cast19 = ((unsigned long)(alu93));\n    unsigned int alu94 = ((alu79!=5ul)?0u:920167782u);\n    unsigned int alu95 = (alu88?alu94:2102212464u);\n    unsigned int alu96 = (alu83?alu95:2131351028u);\n    unsigned int alu97 = (alu82?alu96:2475754826u);\n    unsigned int alu98 = (alu81?alu97:683565275u);\n    unsigned int alu99 = (alu80?alu98:0u);\n    unsigned long cast20 = ((unsigned long)((32-alu78)));\n    unsigned int alu100 = (alu82?0u:920167782u);\n    unsigned int alu101 = (alu81?alu100:2102212464u);\n    unsigned int alu102 = (alu80?alu101:2131351028u);\n    float cast21 = __builtin_bit_cast(float, (unsigned int)(((cast16&2155872255u)|1056964608u)));\n    unsigned long cast22 = ((unsigned long)((cast21*4294967296.0f)));\n    unsigned long alu103 = (((cast22*((unsigned long)((((unsigned int)((((unsigned long)(alu99))<<cast17)))|((unsigned int)((cast19>>cast20)))))))<<32ul)+(cast22*((unsigned long)((((unsigned int)((cast19<<cast17)))|((unsigned int)((cast18>>cast20)))))))+((cast22*((unsigned long)((((unsigned int)((cast18<<cast17)))|((unsigned int)((((unsigned long)(alu102))>>cast20)))))))>>32ul));\n    unsigned int cast23 = __builtin_bit_cast(unsigned int, (float)(alu20));\n    unsigned int alu104 = (((cast23>>23u)&255u)+4294967170u);\n    int alu105 = (((int)(alu104))&31);\n    unsigned long cast24 = ((unsigned long)(alu105));\n    unsigned long alu106 = (((unsigned long)(alu104))>>5ul);\n    _Bool alu107 = (alu106!=0ul);\n    _Bool alu108 = (alu106!=1ul);\n    _Bool alu109 = (alu106!=2ul);\n    _Bool alu110 = (alu106!=3ul);\n    unsigned int alu111 = (alu110?0u:920167782u);\n    unsigned int alu112 = (alu109?alu111:2102212464u);\n    unsigned int alu113 = (alu108?alu112:2131351028u);\n    unsigned int alu114 = (alu107?alu113:2475754826u);\n    unsigned long cast25 = ((unsigned long)(alu114));\n    _Bool alu115 = (alu106!=4ul);\n    unsigned int alu116 = (alu115?0u:920167782u);\n    unsigned int alu117 = (alu110?alu116:2102212464u);\n    unsigned int alu118 = (alu109?alu117:2131351028u);\n    unsigned int alu119 = (alu108?alu118:2475754826u);\n    unsigned int alu120 = (alu107?alu119:683565275u);\n    unsigned long cast26 = ((unsigned long)(alu120));\n    unsigned int alu121 = ((alu106!=5ul)?0u:920167782u);\n    unsigned int alu122 = (alu115?alu121:2102212464u);\n    unsigned int alu123 = (alu110?alu122:2131351028u);\n    unsigned int alu124 = (alu109?alu123:2475754826u);\n    unsigned int alu125 = (alu108?alu124:683565275u);\n    unsigned int alu126 = (alu107?alu125:0u);\n    unsigned long cast27 = ((unsigned long)((32-alu105)));\n    unsigned int alu127 = (alu109?0u:920167782u);\n    unsigned int alu128 = (alu108?alu127:2102212464u);\n    unsigned int alu129 = (alu107?alu128:2131351028u);\n    float cast28 = __builtin_bit_cast(float, (unsigned int)(((cast23&2155872255u)|1056964608u)));\n    unsigned long cast29 = ((unsigned long)((cast28*4294967296.0f)));\n    unsigned long alu130 = (((cast29*((unsigned long)((((unsigned int)((((unsigned long)(alu126))<<cast24)))|((unsigned int)((cast26>>cast27)))))))<<32ul)+(cast29*((unsigned long)((((unsigned int)((cast26<<cast24)))|((unsigned int)((cast25>>cast27)))))))+((cast29*((unsigned long)((((unsigned int)((cast25<<cast24)))|((unsigned int)((((unsigned long)(alu129))>>cast27)))))))>>32ul));\n    unsigned int cast30 = __builtin_bit_cast(unsigned int, (float)(alu31));\n    unsigned int alu131 = (((cast30>>23u)&255u)+4294967170u);\n    int alu132 = (((int)(alu131))&31);\n    unsigned long cast31 = ((unsigned long)(alu132));\n    unsigned long alu133 = (((unsigned long)(alu131))>>5ul);\n    _Bool alu134 = (alu133!=0ul);\n    _Bool alu135 = (alu133!=1ul);\n    _Bool alu136 = (alu133!=2ul);\n    _Bool alu137 = (alu133!=3ul);\n    unsigned int alu138 = (alu137?0u:920167782u);\n    unsigned int alu139 = (alu136?alu138:2102212464u);\n    unsigned int alu140 = (alu135?alu139:2131351028u);\n    unsigned int alu141 = (alu134?alu140:2475754826u);\n    unsigned long cast32 = ((unsigned long)(alu141));\n    _Bool alu142 = (alu133!=4ul);\n    unsigned int alu143 = (alu142?0u:920167782u);\n    unsigned int alu144 = (alu137?alu143:2102212464u);\n    unsigned int alu145 = (alu136?alu144:2131351028u);\n    unsigned int alu146 = (alu135?alu145:2475754826u);\n    unsigned int alu147 = (alu134?alu146:683565275u);\n    unsigned long cast33 = ((unsigned long)(alu147));\n    unsigned int alu148 = ((alu133!=5ul)?0u:920167782u);\n    unsigned int alu149 = (alu142?alu148:2102212464u);\n    unsigned int alu150 = (alu137?alu149:2131351028u);\n    unsigned int alu151 = (alu136?alu150:2475754826u);\n    unsigned int alu152 = (alu135?alu151:683565275u);\n    unsigned int alu153 = (alu134?alu152:0u);\n    unsigned long cast34 = ((unsigned long)((32-alu132)));\n    unsigned int alu154 = (alu136?0u:920167782u);\n    unsigned int alu155 = (alu135?alu154:2102212464u);\n    unsigned int alu156 = (alu134?alu155:2131351028u);\n    float cast35 = __builtin_bit_cast(float, (unsigned int)(((cast30&2155872255u)|1056964608u)));\n    unsigned long cast36 = ((unsigned long)((cast35*4294967296.0f)));\n    unsigned long alu157 = (((cast36*((unsigned long)((((unsigned int)((((unsigned long)(alu153))<<cast31)))|((unsigned int)((cast33>>cast34)))))))<<32ul)+(cast36*((unsigned long)((((unsigned int)((cast33<<cast31)))|((unsigned int)((cast32>>cast34)))))))+((cast36*((unsigned long)((((unsigned int)((cast32<<cast31)))|((unsigned int)((((unsigned long)(alu156))>>cast34)))))))>>32ul));\n    unsigned int cast37 = __builtin_bit_cast(unsigned int, (float)(alu42));\n    unsigned int alu158 = (((cast37>>23u)&255u)+4294967170u);\n    int alu159 = (((int)(alu158))&31);\n    unsigned long cast38 = ((unsigned long)(alu159));\n    unsigned long alu160 = (((unsigned long)(alu158))>>5ul);\n    _Bool alu161 = (alu160!=0ul);\n    _Bool alu162 = (alu160!=1ul);\n    _Bool alu163 = (alu160!=2ul);\n    _Bool alu164 = (alu160!=3ul);\n    unsigned int alu165 = (alu164?0u:920167782u);\n    unsigned int alu166 = (alu163?alu165:2102212464u);\n    unsigned int alu167 = (alu162?alu166:2131351028u);\n    unsigned int alu168 = (alu161?alu167:2475754826u);\n    unsigned long cast39 = ((unsigned long)(alu168));\n    _Bool alu169 = (alu160!=4ul);\n    unsigned int alu170 = (alu169?0u:920167782u);\n    unsigned int alu171 = (alu164?alu170:2102212464u);\n    unsigned int alu172 = (alu163?alu171:2131351028u);\n    unsigned int alu173 = (alu162?alu172:2475754826u);\n    unsigned int alu174 = (alu161?alu173:683565275u);\n    unsigned long cast40 = ((unsigned long)(alu174));\n    unsigned int alu175 = ((alu160!=5ul)?0u:920167782u);\n    unsigned int alu176 = (alu169?alu175:2102212464u);\n    unsigned int alu177 = (alu164?alu176:2131351028u);\n    unsigned int alu178 = (alu163?alu177:2475754826u);\n    unsigned int alu179 = (alu162?alu178:683565275u);\n    unsigned int alu180 = (alu161?alu179:0u);\n    unsigned long cast41 = ((unsigned long)((32-alu159)));\n    unsigned int alu181 = (alu163?0u:920167782u);\n    unsigned int alu182 = (alu162?alu181:2102212464u);\n    unsigned int alu183 = (alu161?alu182:2131351028u);\n    float cast42 = __builtin_bit_cast(float, (unsigned int)(((cast37&2155872255u)|1056964608u)));\n    unsigned long cast43 = ((unsigned long)((cast42*4294967296.0f)));\n    unsigned long alu184 = (((cast43*((unsigned long)((((unsigned int)((((unsigned long)(alu180))<<cast38)))|((unsigned int)((cast40>>cast41)))))))<<32ul)+(cast43*((unsigned long)((((unsigned int)((cast40<<cast38)))|((unsigned int)((cast39>>cast41)))))))+((cast43*((unsigned long)((((unsigned int)((cast39<<cast38)))|((unsigned int)((((unsigned long)(alu183))>>cast41)))))))>>32ul));\n    int cast44 = ((int)((alu103>>62ul)));\n    int cast45 = ((int)((alu130>>62ul)));\n    int cast46 = ((int)((alu157>>62ul)));\n    int cast47 = ((int)((alu184>>62ul)));\n    float cast48 = __builtin_bit_cast(float, (int)((__builtin_bit_cast(int, (float)(alu70))+(((int)(-cast12))<<23))));\n    float cast49 = __builtin_bit_cast(float, (int)((__builtin_bit_cast(int, (float)(alu72))+(((int)(-cast13))<<23))));\n    float cast50 = __builtin_bit_cast(float, (int)((__builtin_bit_cast(int, (float)(alu74))+(((int)(-cast14))<<23))));\n    float cast51 = __builtin_bit_cast(float, (int)((__builtin_bit_cast(int, (float)(alu76))+(((int)(-cast15))<<23))));\n    int alu185 = (cast8>>1);\n    int alu186 = (cast9>>1);\n    int alu187 = (cast10>>1);\n    int alu188 = (cast11>>1);\n    float alu189 = ((cast48+-1.0f)/(cast48+1.0f));\n    float alu190 = (alu189*alu189);\n    float alu191 = (alu69?(cast12+-64.0f):cast12);\n    float alu192 = ((cast49+-1.0f)/(cast49+1.0f));\n    float alu193 = (alu192*alu192);\n    float alu194 = (alu71?(cast13+-64.0f):cast13);\n    float alu195 = ((cast50+-1.0f)/(cast50+1.0f));\n    float alu196 = (alu195*alu195);\n    float alu197 = (alu73?(cast14+-64.0f):cast14);\n    float alu198 = ((cast51+-1.0f)/(cast51+1.0f));\n    float alu199 = (alu198*alu198);\n    float alu200 = (alu75?(cast15+-64.0f):cast15);\n    float alu201 = ((cast1*-1.215420125655342e-10f)+(cast1*-1.984187258941006e-09f)+(cast1*-0.0001131594181060791f)+(cast1*-3.1414794921875f)+alu9);\n    float alu202 = (((float)((alu103&4611686018427387903ul)))*3.4061216748705226e-19f);\n    float alu203 = (alu49-((float)(cast8)));\n    float alu204 = (alu201*alu201);\n    _Bool alu205 = (cast21<0.5f);\n    int alu206 = (alu205?cast44:(cast44+1));\n    float alu207 = (alu205?alu202:(alu202+-1.5707963705062866f));\n    float alu208 = (((alu206&1)!=0)?1.5707963705062866f:0.0f);\n    float alu209 = (alu207+alu208);\n    float alu210 = (alu209*alu209);\n    float alu211 = ((val5[0]!=((float)(__builtin_inff())))?((((((0.43745502829551697f*alu190)+0.5764790177345276f)*alu190)+0.961801290512085f)*alu189*alu190)+alu191+(alu189*2.885390043258667f)+(alu189*3.2734472910078694e-08f)):((float)(__builtin_inff())));\n    float alu212 = ((val5[0]!=0.0f)?alu211:((float)(-__builtin_inff())));\n    float alu213 = ((val5[0]<-0.0f)?((float)(__builtin_nanf(\"\"))):alu212);\n    float alu214 = (((1.0f/val5[0])!=((float)(-__builtin_inff())))?alu213:((float)(-__builtin_inff())));\n    float alu215 = ((val5[0]!=val5[0])?((float)(__builtin_nanf(\"\"))):alu214);\n    float alu216 = (((alu45<128.0f)==0)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu203)+0.0013392627006396651f)*alu203)+0.009618384763598442f)*alu203)+0.055503472685813904f)*alu203)+0.24022644758224487f)*alu203)+0.6931471824645996f)*alu203)+1.0f)*__builtin_bit_cast(float, (int)(((alu185+127)<<23)))*__builtin_bit_cast(float, (int)((((cast8-alu185)+127)<<23)))));\n    float alu217 = ((alu45<-150.0f)?0.0f:alu216);\n    float alu218 = (alu46?((float)(__builtin_nanf(\"\"))):alu217);\n    float alu219 = (((cast0&1)!=0)?-1.0f:1.0f);\n    float alu220 = (((alu206&2)!=0)?-1.0f:1.0f);\n    float alu221 = ((alu9<30.0f)?(alu201*((((((((2.6083159809786594e-06f*alu204)+-0.00019810690719168633f)*alu204)+0.00833307858556509f)*alu204)+-0.16666659712791443f)*alu204)+1.0f)*alu219):(alu209*((((((((2.6083159809786594e-06f*alu210)+-0.00019810690719168633f)*alu210)+0.00833307858556509f)*alu210)+-0.16666659712791443f)*alu210)+1.0f)*alu220));\n    float alu222 = (alu2?(alu221*alu8):((float)(__builtin_nanf(\"\"))));\n    float alu223 = (alu1?((float)(__builtin_nanf(\"\"))):alu222);\n    float alu224 = (alu3?alu223:((float)(__builtin_nanf(\"\"))));\n    float alu225 = ((cast3*-1.215420125655342e-10f)+(cast3*-1.984187258941006e-09f)+(cast3*-0.0001131594181060791f)+(cast3*-3.1414794921875f)+alu20);\n    float alu226 = (((float)((alu130&4611686018427387903ul)))*3.4061216748705226e-19f);\n    float alu227 = (alu55-((float)(cast9)));\n    float alu228 = (alu225*alu225);\n    _Bool alu229 = (cast28<0.5f);\n    int alu230 = (alu229?cast45:(cast45+1));\n    float alu231 = (alu229?alu226:(alu226+-1.5707963705062866f));\n    float alu232 = (((alu230&1)!=0)?1.5707963705062866f:0.0f);\n    float alu233 = (alu231+alu232);\n    float alu234 = (alu233*alu233);\n    float alu235 = ((val5[1]!=((float)(__builtin_inff())))?((((((0.43745502829551697f*alu193)+0.5764790177345276f)*alu193)+0.961801290512085f)*alu192*alu193)+alu194+(alu192*2.885390043258667f)+(alu192*3.2734472910078694e-08f)):((float)(__builtin_inff())));\n    float alu236 = ((val5[1]!=0.0f)?alu235:((float)(-__builtin_inff())));\n    float alu237 = ((val5[1]<-0.0f)?((float)(__builtin_nanf(\"\"))):alu236);\n    float alu238 = (((1.0f/val5[1])!=((float)(-__builtin_inff())))?alu237:((float)(-__builtin_inff())));\n    float alu239 = ((val5[1]!=val5[1])?((float)(__builtin_nanf(\"\"))):alu238);\n    float alu240 = (((alu51<128.0f)==0)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu227)+0.0013392627006396651f)*alu227)+0.009618384763598442f)*alu227)+0.055503472685813904f)*alu227)+0.24022644758224487f)*alu227)+0.6931471824645996f)*alu227)+1.0f)*__builtin_bit_cast(float, (int)(((alu186+127)<<23)))*__builtin_bit_cast(float, (int)((((cast9-alu186)+127)<<23)))));\n    float alu241 = ((alu51<-150.0f)?0.0f:alu240);\n    float alu242 = (alu52?((float)(__builtin_nanf(\"\"))):alu241);\n    float alu243 = (((cast2&1)!=0)?-1.0f:1.0f);\n    float alu244 = (((alu230&2)!=0)?-1.0f:1.0f);\n    float alu245 = ((alu20<30.0f)?(alu225*((((((((2.6083159809786594e-06f*alu228)+-0.00019810690719168633f)*alu228)+0.00833307858556509f)*alu228)+-0.16666659712791443f)*alu228)+1.0f)*alu243):(alu233*((((((((2.6083159809786594e-06f*alu234)+-0.00019810690719168633f)*alu234)+0.00833307858556509f)*alu234)+-0.16666659712791443f)*alu234)+1.0f)*alu244));\n    float alu246 = (alu13?(alu245*alu19):((float)(__builtin_nanf(\"\"))));\n    float alu247 = (alu12?((float)(__builtin_nanf(\"\"))):alu246);\n    float alu248 = (alu14?alu247:((float)(__builtin_nanf(\"\"))));\n    float alu249 = ((cast5*-1.215420125655342e-10f)+(cast5*-1.984187258941006e-09f)+(cast5*-0.0001131594181060791f)+(cast5*-3.1414794921875f)+alu31);\n    float alu250 = (((float)((alu157&4611686018427387903ul)))*3.4061216748705226e-19f);\n    float alu251 = (alu61-((float)(cast10)));\n    float alu252 = (alu249*alu249);\n    _Bool alu253 = (cast35<0.5f);\n    int alu254 = (alu253?cast46:(cast46+1));\n    float alu255 = (alu253?alu250:(alu250+-1.5707963705062866f));\n    float alu256 = (((alu254&1)!=0)?1.5707963705062866f:0.0f);\n    float alu257 = (alu255+alu256);\n    float alu258 = (alu257*alu257);\n    float alu259 = ((val5[2]!=((float)(__builtin_inff())))?((((((0.43745502829551697f*alu196)+0.5764790177345276f)*alu196)+0.961801290512085f)*alu195*alu196)+alu197+(alu195*2.885390043258667f)+(alu195*3.2734472910078694e-08f)):((float)(__builtin_inff())));\n    float alu260 = ((val5[2]!=0.0f)?alu259:((float)(-__builtin_inff())));\n    float alu261 = ((val5[2]<-0.0f)?((float)(__builtin_nanf(\"\"))):alu260);\n    float alu262 = (((1.0f/val5[2])!=((float)(-__builtin_inff())))?alu261:((float)(-__builtin_inff())));\n    float alu263 = ((val5[2]!=val5[2])?((float)(__builtin_nanf(\"\"))):alu262);\n    float alu264 = (((alu57<128.0f)==0)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu251)+0.0013392627006396651f)*alu251)+0.009618384763598442f)*alu251)+0.055503472685813904f)*alu251)+0.24022644758224487f)*alu251)+0.6931471824645996f)*alu251)+1.0f)*__builtin_bit_cast(float, (int)(((alu187+127)<<23)))*__builtin_bit_cast(float, (int)((((cast10-alu187)+127)<<23)))));\n    float alu265 = ((alu57<-150.0f)?0.0f:alu264);\n    float alu266 = (alu58?((float)(__builtin_nanf(\"\"))):alu265);\n    float alu267 = (((cast4&1)!=0)?-1.0f:1.0f);\n    float alu268 = (((alu254&2)!=0)?-1.0f:1.0f);\n    float alu269 = ((alu31<30.0f)?(alu249*((((((((2.6083159809786594e-06f*alu252)+-0.00019810690719168633f)*alu252)+0.00833307858556509f)*alu252)+-0.16666659712791443f)*alu252)+1.0f)*alu267):(alu257*((((((((2.6083159809786594e-06f*alu258)+-0.00019810690719168633f)*alu258)+0.00833307858556509f)*alu258)+-0.16666659712791443f)*alu258)+1.0f)*alu268));\n    float alu270 = (alu24?(alu269*alu30):((float)(__builtin_nanf(\"\"))));\n    float alu271 = (alu23?((float)(__builtin_nanf(\"\"))):alu270);\n    float alu272 = (alu25?alu271:((float)(__builtin_nanf(\"\"))));\n    float alu273 = ((cast7*-1.215420125655342e-10f)+(cast7*-1.984187258941006e-09f)+(cast7*-0.0001131594181060791f)+(cast7*-3.1414794921875f)+alu42);\n    float alu274 = (((float)((alu184&4611686018427387903ul)))*3.4061216748705226e-19f);\n    float alu275 = (alu67-((float)(cast11)));\n    float alu276 = (alu273*alu273);\n    _Bool alu277 = (cast42<0.5f);\n    int alu278 = (alu277?cast47:(cast47+1));\n    float alu279 = (alu277?alu274:(alu274+-1.5707963705062866f));\n    float alu280 = (((alu278&1)!=0)?1.5707963705062866f:0.0f);\n    float alu281 = (alu279+alu280);\n    float alu282 = (alu281*alu281);\n    float alu283 = ((val5[3]!=((float)(__builtin_inff())))?((((((0.43745502829551697f*alu199)+0.5764790177345276f)*alu199)+0.961801290512085f)*alu198*alu199)+alu200+(alu198*2.885390043258667f)+(alu198*3.2734472910078694e-08f)):((float)(__builtin_inff())));\n    float alu284 = ((val5[3]!=0.0f)?alu283:((float)(-__builtin_inff())));\n    float alu285 = ((val5[3]<-0.0f)?((float)(__builtin_nanf(\"\"))):alu284);\n    float alu286 = (((1.0f/val5[3])!=((float)(-__builtin_inff())))?alu285:((float)(-__builtin_inff())));\n    float alu287 = ((val5[3]!=val5[3])?((float)(__builtin_nanf(\"\"))):alu286);\n    float alu288 = (((alu63<128.0f)==0)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu275)+0.0013392627006396651f)*alu275)+0.009618384763598442f)*alu275)+0.055503472685813904f)*alu275)+0.24022644758224487f)*alu275)+0.6931471824645996f)*alu275)+1.0f)*__builtin_bit_cast(float, (int)(((alu188+127)<<23)))*__builtin_bit_cast(float, (int)((((cast11-alu188)+127)<<23)))));\n    float alu289 = ((alu63<-150.0f)?0.0f:alu288);\n    float alu290 = (alu64?((float)(__builtin_nanf(\"\"))):alu289);\n    float alu291 = (((cast6&1)!=0)?-1.0f:1.0f);\n    float alu292 = (((alu278&2)!=0)?-1.0f:1.0f);\n    float alu293 = ((alu42<30.0f)?(alu273*((((((((2.6083159809786594e-06f*alu276)+-0.00019810690719168633f)*alu276)+0.00833307858556509f)*alu276)+-0.16666659712791443f)*alu276)+1.0f)*alu291):(alu281*((((((((2.6083159809786594e-06f*alu282)+-0.00019810690719168633f)*alu282)+0.00833307858556509f)*alu282)+-0.16666659712791443f)*alu282)+1.0f)*alu292));\n    float alu294 = (alu35?(alu293*alu41):((float)(__builtin_nanf(\"\"))));\n    float alu295 = (alu34?((float)(__builtin_nanf(\"\"))):alu294);\n    float alu296 = (alu36?alu295:((float)(__builtin_nanf(\"\"))));\n    *((float4*)((((float*)(val0))+alu0))) = (float4){(alu218+(alu215*0.6931471824645996f)+alu224),(alu242+(alu239*0.6931471824645996f)+alu248),(alu266+(alu263*0.6931471824645996f)+alu272),(alu290+(alu287*0.6931471824645996f)+alu296)};\n  }\n}\n"
+2041 Ops.PROGRAM dtypes.void [2038, 2039, 2040] ProgramInfo(params=(%2, %10, %97, %172), globals=(0, 1, 2, 3), outs=(0,), ins=(1, 2, 3), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+2042 Ops.SINK dtypes.void [1084, 2041]
 

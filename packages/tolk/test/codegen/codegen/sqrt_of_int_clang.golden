@@ -32,7 +32,7 @@
 31 Ops.END dtypes.void [30, 3]
 32 Ops.SINK dtypes.void [31] KernelInfo(name="E_16", estimates=Estimates(ops=16, lds=128, mem=128), optimized=True)
 33 Ops.LINEAR dtypes.void [0, 13, 21, 22, 14, 23, 24, 15, 16, 17, 18, 25, 19, 2, 3, 26, 27, 20, 28, 29, 30, 31, 32]
-34 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E_16(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_16))+1));\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    int val2 = (*(((int*)(val0))+Lidx0));\n    *(((float*)(val1))+Lidx0) = __builtin_sqrtf(((float)(val2)));\n  }\n}\n"
+34 Ops.SOURCE dtypes.void [] "\nvoid E_16(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_16))+1));\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    int val2 = (*(((int*)(val0))+Lidx0));\n    *(((float*)(val1))+Lidx0) = __builtin_sqrtf(((float)(val2)));\n  }\n}\n"
 35 Ops.PROGRAM dtypes.void [32, 33, 34] ProgramInfo(params=(%5, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 36 Ops.SINK dtypes.void [12, 35]
 

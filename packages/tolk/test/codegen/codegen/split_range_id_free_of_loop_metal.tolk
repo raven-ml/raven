@@ -1,0 +1,73 @@
+# tolk D89 D342 golden=a887da1e4588017bb53897fe4c3a0c50
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.STACK dtypes.void []
+3 Ops.CONST dtypes.weakint [] 2
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.SPECIAL dtypes.i32 [4] "gidx0"
+6 Ops.CONST dtypes.weakint [] 1
+7 Ops.CAST dtypes.i32 [6] dtypes.i32
+8 Ops.SHL dtypes.i32 [5, 7]
+9 Ops.SHRINK dtypes.f32 [1, 8, 4]
+10 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+11 Ops.SHRINK dtypes.f32 [10, 8, 4]
+12 Ops.LOAD dtypes.f32 [11]
+13 Ops.CONST dtypes.weakint [] 0
+14 Ops.CAST dtypes.i32 [13] dtypes.i32
+15 Ops.INDEX dtypes.f32 [12, 14]
+16 Ops.BUFFER dtypes.i32 [6] ParamArg(slot=0, dtype=dtypes.i32, addrspace=AddrSpace.REG)
+17 Ops.AFTER dtypes.i32 [16, 5]
+18 Ops.INDEX dtypes.i32 [17, 14]
+19 Ops.STORE dtypes.void [18, 14]
+20 Ops.AFTER dtypes.i32 [17, 19]
+21 Ops.INDEX dtypes.i32 [20, 14]
+22 Ops.NOOP dtypes.void []
+23 Ops.RANGE dtypes.void [22] (AxisType.WEAK, 1)
+24 Ops.AFTER dtypes.i32 [20, 23]
+25 Ops.INDEX dtypes.i32 [24, 14]
+26 Ops.LOAD dtypes.i32 [25]
+27 Ops.CAST dtypes.u32 [26] dtypes.u32
+28 Ops.CAST dtypes.u32 [6] dtypes.u32
+29 Ops.ADD dtypes.u32 [27, 28]
+30 Ops.CAST dtypes.i32 [29] dtypes.i32
+31 Ops.STORE dtypes.void [21, 30]
+32 Ops.CONST dtypes.weakint [] 3
+33 Ops.CAST dtypes.i32 [32] dtypes.i32
+34 Ops.CMPLT dtypes.bool [30, 33]
+35 Ops.BACKEDGE dtypes.void [31, 23, 34]
+36 Ops.AFTER dtypes.i32 [20, 35]
+37 Ops.INDEX dtypes.i32 [36, 14]
+38 Ops.LOAD dtypes.i32 [37]
+39 Ops.CAST dtypes.f32 [38] dtypes.f32
+40 Ops.ADD dtypes.f32 [15, 39]
+41 Ops.INDEX dtypes.f32 [12, 7]
+42 Ops.ADD dtypes.f32 [41, 39]
+43 Ops.STACK dtypes.f32 [40, 42]
+44 Ops.STORE dtypes.void [9, 43]
+45 Ops.AFTER dtypes.void [2, 44]
+46 Ops.SINK dtypes.void [1, 45] KernelInfo(name="E_2_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),), optimized=True)
+47 Ops.CONST dtypes.weakint [] 16
+48 Ops.PARAM dtypes.u8 [47] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+49 Ops.BITCAST dtypes.u64 [48] dtypes.u64
+50 Ops.INDEX dtypes.u64 [49, 14]
+51 Ops.LOAD dtypes.u64 [50]
+52 Ops.REFPARAM dtypes.f32 [0, 51] ParamArg(slot=0, dtype=dtypes.f32)
+53 Ops.SHRINK dtypes.f32 [52, 8, 4]
+54 Ops.INDEX dtypes.u64 [49, 7]
+55 Ops.LOAD dtypes.u64 [54]
+56 Ops.REFPARAM dtypes.f32 [0, 55] ParamArg(slot=1, dtype=dtypes.f32)
+57 Ops.SHRINK dtypes.f32 [56, 8, 4]
+58 Ops.LOAD dtypes.f32 [57]
+59 Ops.INDEX dtypes.f32 [58, 14]
+60 Ops.ADD dtypes.f32 [59, 39]
+61 Ops.INDEX dtypes.f32 [58, 7]
+62 Ops.ADD dtypes.f32 [61, 39]
+63 Ops.STACK dtypes.f32 [60, 62]
+64 Ops.STORE dtypes.void [53, 63]
+65 Ops.AFTER dtypes.void [2, 64]
+66 Ops.SINK dtypes.void [52, 65] KernelInfo(name="E_2_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),), estimates=Estimates(ops=8, lds=32, mem=32), optimized=True)
+67 Ops.LINEAR dtypes.void [47, 48, 6, 16, 3, 4, 5, 22, 17, 13, 14, 18, 19, 20, 21, 32, 33, 28, 23, 24, 25, 26, 27, 29, 30, 34, 31, 35, 36, 37, 38, 49, 50, 51, 7, 54, 55, 0, 56, 8, 57, 58, 52, 2, 59, 61, 39, 60, 62, 63, 53, 64, 65, 66]
+68 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void E_2_2(device unsigned char* args_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  int buf0[1];\n  int gidx0 = gid.x; /* 2 */\n  *(buf0+0) = 0;\n  for (;;) {\n    int cast0 = ((int)((((uint)((*(buf0+0))))+1u)));\n    *(buf0+0) = cast0;\n    if (!((cast0<3))) { break; }\n  }\n  unsigned long val0 = (*(((device unsigned long*)(args_16))+0));\n  unsigned long val1 = (*(((device unsigned long*)(args_16))+1));\n  int alu3 = (gidx0<<1);\n  float2 val2 = (*((device float2*)((((device float*)(val1))+alu3))));\n  float cast1 = ((float)((*(buf0+0))));\n  *((device float2*)((((device float*)(val0))+alu3))) = float2((val2.x+cast1),(val2.y+cast1));\n}"
+69 Ops.PROGRAM dtypes.void [66, 67, 68] ProgramInfo(global_size=(2, 1, 1), params=(%1, %10), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+70 Ops.SINK dtypes.void [46, 69]
+

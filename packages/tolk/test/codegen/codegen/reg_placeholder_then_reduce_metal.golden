@@ -34,7 +34,7 @@
 33 Ops.LOAD dtypes.f32 [32]
 34 Ops.BUFFER dtypes.f32 [5] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
 35 Ops.AFTER dtypes.f32 [34, 3]
-36 Ops.INDEX dtypes.f32 [34, 9]
+36 Ops.INDEX dtypes.f32 [35, 9]
 37 Ops.INDEX dtypes.f32 [21, 24]
 38 Ops.LOAD dtypes.f32 [37]
 39 Ops.STORE dtypes.void [36, 38]

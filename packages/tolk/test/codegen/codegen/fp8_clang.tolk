@@ -1,0 +1,262 @@
+# tolk D80 D151 golden=a4b00b5c02369bab1227240b956805bd
+0 Ops.CONST dtypes.weakint [] 16
+1 Ops.PARAM dtypes.u8 [0] ParamArg(slot=0, dtype=dtypes.u8)
+2 Ops.STACK dtypes.void []
+3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(0, 16), name="block_lo", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 16), name="block_hi", addrspace=AddrSpace.ALU)
+5 Ops.SUB dtypes.i32 [4, 3]
+6 Ops.RANGE dtypes.i32 [5] (AxisType.WEAK, 0)
+7 Ops.ADD dtypes.i32 [3, 6]
+8 Ops.INDEX dtypes.u8 [1, 7]
+9 Ops.PARAM dtypes.u8 [0] ParamArg(slot=1, dtype=dtypes.u8)
+10 Ops.INDEX dtypes.u8 [9, 7]
+11 Ops.LOAD dtypes.u8 [10]
+12 Ops.CONST dtypes.weakint [] 128
+13 Ops.CAST dtypes.u8 [12] dtypes.u8
+14 Ops.AND dtypes.u8 [11, 13]
+15 Ops.CAST dtypes.u32 [14] dtypes.u32
+16 Ops.CONST dtypes.weakint [] 24
+17 Ops.CAST dtypes.u32 [16] dtypes.u32
+18 Ops.SHL dtypes.u32 [15, 17]
+19 Ops.CONST dtypes.weakint [] 127
+20 Ops.CAST dtypes.u8 [19] dtypes.u8
+21 Ops.AND dtypes.u8 [11, 20]
+22 Ops.CAST dtypes.u32 [21] dtypes.u32
+23 Ops.CONST dtypes.weakint [] 3
+24 Ops.CAST dtypes.u32 [23] dtypes.u32
+25 Ops.SHR dtypes.u32 [22, 24]
+26 Ops.CONST dtypes.weakint [] 0
+27 Ops.CAST dtypes.u32 [26] dtypes.u32
+28 Ops.CMPEQ dtypes.bool [25, 27]
+29 Ops.CAST dtypes.u32 [19] dtypes.u32
+30 Ops.CMPEQ dtypes.bool [22, 29]
+31 Ops.CONST dtypes.weakint [] 20
+32 Ops.CAST dtypes.u32 [31] dtypes.u32
+33 Ops.SHL dtypes.u32 [22, 32]
+34 Ops.CONST dtypes.weakint [] 2139095040
+35 Ops.CAST dtypes.u32 [34] dtypes.u32
+36 Ops.OR dtypes.u32 [33, 35]
+37 Ops.CONST dtypes.weakint [] 1006632960
+38 Ops.CAST dtypes.u32 [37] dtypes.u32
+39 Ops.ADD dtypes.u32 [33, 38]
+40 Ops.WHERE dtypes.u32 [30, 36, 39]
+41 Ops.WHERE dtypes.u32 [28, 27, 40]
+42 Ops.OR dtypes.u32 [18, 41]
+43 Ops.BITCAST dtypes.f32 [42] dtypes.f32
+44 Ops.CONST dtypes.weakfloat [] 2.0
+45 Ops.CAST dtypes.f32 [44] dtypes.f32
+46 Ops.MUL dtypes.f32 [43, 45]
+47 Ops.BITCAST dtypes.u32 [46] dtypes.u32
+48 Ops.SHR dtypes.u32 [47, 17]
+49 Ops.CAST dtypes.u32 [12] dtypes.u32
+50 Ops.AND dtypes.u32 [48, 49]
+51 Ops.CONST dtypes.weakint [] 2147483647
+52 Ops.CAST dtypes.u32 [51] dtypes.u32
+53 Ops.AND dtypes.u32 [47, 52]
+54 Ops.CMPLT dtypes.bool [35, 53]
+55 Ops.CMPEQ dtypes.bool [53, 35]
+56 Ops.CONST dtypes.weakint [] 1013972992
+57 Ops.CAST dtypes.u32 [56] dtypes.u32
+58 Ops.CMPLT dtypes.bool [53, 57]
+59 Ops.CONST dtypes.weakint [] 1015021568
+60 Ops.CAST dtypes.u32 [59] dtypes.u32
+61 Ops.CMPLT dtypes.bool [53, 60]
+62 Ops.WHERE dtypes.u32 [61, 60, 53]
+63 Ops.SHR dtypes.u32 [62, 32]
+64 Ops.CONST dtypes.weakint [] 19
+65 Ops.CAST dtypes.u32 [64] dtypes.u32
+66 Ops.SHR dtypes.u32 [62, 65]
+67 Ops.CONST dtypes.weakint [] 1
+68 Ops.CAST dtypes.u32 [67] dtypes.u32
+69 Ops.AND dtypes.u32 [66, 68]
+70 Ops.CONST dtypes.weakint [] 524287
+71 Ops.CAST dtypes.u32 [70] dtypes.u32
+72 Ops.AND dtypes.u32 [62, 71]
+73 Ops.CMPNE dtypes.bool [72, 27]
+74 Ops.CAST dtypes.u32 [73] dtypes.u32
+75 Ops.AND dtypes.u32 [63, 68]
+76 Ops.OR dtypes.u32 [74, 75]
+77 Ops.AND dtypes.u32 [69, 76]
+78 Ops.ADD dtypes.u32 [63, 77]
+79 Ops.CONST dtypes.weakint [] 4294966336
+80 Ops.CAST dtypes.u32 [79] dtypes.u32
+81 Ops.ADD dtypes.u32 [78, 80]
+82 Ops.CONST dtypes.weakint [] 4294967295
+83 Ops.CAST dtypes.u32 [82] dtypes.u32
+84 Ops.XOR dtypes.u32 [81, 83]
+85 Ops.CONST dtypes.weakint [] 4294967169
+86 Ops.CAST dtypes.u32 [85] dtypes.u32
+87 Ops.CMPLT dtypes.bool [84, 86]
+88 Ops.WHERE dtypes.u32 [87, 86, 84]
+89 Ops.XOR dtypes.u32 [88, 83]
+90 Ops.WHERE dtypes.u32 [58, 27, 89]
+91 Ops.WHERE dtypes.u32 [55, 29, 90]
+92 Ops.WHERE dtypes.u32 [54, 29, 91]
+93 Ops.OR dtypes.u32 [50, 92]
+94 Ops.CAST dtypes.u8 [93] dtypes.u8
+95 Ops.AND dtypes.u8 [94, 13]
+96 Ops.CAST dtypes.u32 [95] dtypes.u32
+97 Ops.SHL dtypes.u32 [96, 17]
+98 Ops.AND dtypes.u8 [94, 20]
+99 Ops.CAST dtypes.u32 [98] dtypes.u32
+100 Ops.SHR dtypes.u32 [99, 24]
+101 Ops.CMPEQ dtypes.bool [100, 27]
+102 Ops.CMPEQ dtypes.bool [99, 29]
+103 Ops.SHL dtypes.u32 [99, 32]
+104 Ops.OR dtypes.u32 [103, 35]
+105 Ops.ADD dtypes.u32 [103, 38]
+106 Ops.WHERE dtypes.u32 [102, 104, 105]
+107 Ops.WHERE dtypes.u32 [101, 27, 106]
+108 Ops.OR dtypes.u32 [97, 107]
+109 Ops.SHR dtypes.u32 [108, 17]
+110 Ops.AND dtypes.u32 [109, 49]
+111 Ops.AND dtypes.u32 [108, 52]
+112 Ops.CMPLT dtypes.bool [35, 111]
+113 Ops.CMPEQ dtypes.bool [111, 35]
+114 Ops.CMPLT dtypes.bool [111, 57]
+115 Ops.CMPLT dtypes.bool [111, 60]
+116 Ops.WHERE dtypes.u32 [115, 60, 111]
+117 Ops.SHR dtypes.u32 [116, 32]
+118 Ops.SHR dtypes.u32 [116, 65]
+119 Ops.AND dtypes.u32 [118, 68]
+120 Ops.AND dtypes.u32 [116, 71]
+121 Ops.CMPNE dtypes.bool [120, 27]
+122 Ops.CAST dtypes.u32 [121] dtypes.u32
+123 Ops.AND dtypes.u32 [117, 68]
+124 Ops.OR dtypes.u32 [122, 123]
+125 Ops.AND dtypes.u32 [119, 124]
+126 Ops.ADD dtypes.u32 [117, 125]
+127 Ops.ADD dtypes.u32 [126, 80]
+128 Ops.XOR dtypes.u32 [127, 83]
+129 Ops.CMPLT dtypes.bool [128, 86]
+130 Ops.WHERE dtypes.u32 [129, 86, 128]
+131 Ops.XOR dtypes.u32 [130, 83]
+132 Ops.WHERE dtypes.u32 [114, 27, 131]
+133 Ops.WHERE dtypes.u32 [113, 29, 132]
+134 Ops.WHERE dtypes.u32 [112, 29, 133]
+135 Ops.OR dtypes.u32 [110, 134]
+136 Ops.CAST dtypes.u8 [135] dtypes.u8
+137 Ops.STORE dtypes.void [8, 136]
+138 Ops.END dtypes.void [137, 6]
+139 Ops.SINK dtypes.void [138] KernelInfo(name="E_16", optimized=True, split=(16, 2, 3))
+140 Ops.CONST dtypes.weakint [] 32
+141 Ops.PARAM dtypes.u8 [140] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+142 Ops.BITCAST dtypes.u64 [141] dtypes.u64
+143 Ops.CAST dtypes.i32 [26] dtypes.i32
+144 Ops.INDEX dtypes.u64 [142, 143]
+145 Ops.LOAD dtypes.u64 [144]
+146 Ops.REFPARAM dtypes.u8 [0, 145] ParamArg(slot=0, dtype=dtypes.u8)
+147 Ops.BITCAST dtypes.i32 [141] dtypes.i32
+148 Ops.CONST dtypes.weakint [] 4
+149 Ops.CAST dtypes.i32 [148] dtypes.i32
+150 Ops.INDEX dtypes.i32 [147, 149]
+151 Ops.LOAD dtypes.i32 [150]
+152 Ops.CONST dtypes.weakint [] 5
+153 Ops.CAST dtypes.i32 [152] dtypes.i32
+154 Ops.INDEX dtypes.i32 [147, 153]
+155 Ops.LOAD dtypes.i32 [154]
+156 Ops.SUB dtypes.i32 [155, 151]
+157 Ops.RANGE dtypes.i32 [156] (AxisType.WEAK, 0)
+158 Ops.ADD dtypes.i32 [151, 157]
+159 Ops.INDEX dtypes.u8 [146, 158]
+160 Ops.CAST dtypes.i32 [67] dtypes.i32
+161 Ops.INDEX dtypes.u64 [142, 160]
+162 Ops.LOAD dtypes.u64 [161]
+163 Ops.REFPARAM dtypes.u8 [0, 162] ParamArg(slot=1, dtype=dtypes.u8)
+164 Ops.INDEX dtypes.u8 [163, 158]
+165 Ops.LOAD dtypes.u8 [164]
+166 Ops.AND dtypes.u8 [165, 13]
+167 Ops.CAST dtypes.u32 [166] dtypes.u32
+168 Ops.SHL dtypes.u32 [167, 17]
+169 Ops.AND dtypes.u8 [165, 20]
+170 Ops.CAST dtypes.u32 [169] dtypes.u32
+171 Ops.SHR dtypes.u32 [170, 24]
+172 Ops.CMPEQ dtypes.bool [171, 27]
+173 Ops.CMPEQ dtypes.bool [170, 29]
+174 Ops.SHL dtypes.u32 [170, 32]
+175 Ops.OR dtypes.u32 [174, 35]
+176 Ops.ADD dtypes.u32 [174, 38]
+177 Ops.WHERE dtypes.u32 [173, 175, 176]
+178 Ops.WHERE dtypes.u32 [172, 27, 177]
+179 Ops.OR dtypes.u32 [168, 178]
+180 Ops.BITCAST dtypes.f32 [179] dtypes.f32
+181 Ops.MUL dtypes.f32 [180, 45]
+182 Ops.BITCAST dtypes.u32 [181] dtypes.u32
+183 Ops.SHR dtypes.u32 [182, 17]
+184 Ops.AND dtypes.u32 [183, 49]
+185 Ops.AND dtypes.u32 [182, 52]
+186 Ops.CMPLT dtypes.bool [35, 185]
+187 Ops.CMPEQ dtypes.bool [185, 35]
+188 Ops.CMPLT dtypes.bool [185, 57]
+189 Ops.CMPLT dtypes.bool [185, 60]
+190 Ops.WHERE dtypes.u32 [189, 60, 185]
+191 Ops.SHR dtypes.u32 [190, 32]
+192 Ops.SHR dtypes.u32 [190, 65]
+193 Ops.AND dtypes.u32 [192, 68]
+194 Ops.AND dtypes.u32 [190, 71]
+195 Ops.CMPNE dtypes.bool [194, 27]
+196 Ops.CAST dtypes.u32 [195] dtypes.u32
+197 Ops.AND dtypes.u32 [191, 68]
+198 Ops.OR dtypes.u32 [196, 197]
+199 Ops.AND dtypes.u32 [193, 198]
+200 Ops.ADD dtypes.u32 [191, 199]
+201 Ops.ADD dtypes.u32 [200, 80]
+202 Ops.XOR dtypes.u32 [201, 83]
+203 Ops.CMPLT dtypes.bool [202, 86]
+204 Ops.WHERE dtypes.u32 [203, 86, 202]
+205 Ops.XOR dtypes.u32 [204, 83]
+206 Ops.WHERE dtypes.u32 [188, 27, 205]
+207 Ops.WHERE dtypes.u32 [187, 29, 206]
+208 Ops.WHERE dtypes.u32 [186, 29, 207]
+209 Ops.OR dtypes.u32 [184, 208]
+210 Ops.CAST dtypes.u8 [209] dtypes.u8
+211 Ops.AND dtypes.u8 [210, 13]
+212 Ops.CAST dtypes.u32 [211] dtypes.u32
+213 Ops.SHL dtypes.u32 [212, 17]
+214 Ops.AND dtypes.u8 [210, 20]
+215 Ops.CAST dtypes.u32 [214] dtypes.u32
+216 Ops.SHR dtypes.u32 [215, 24]
+217 Ops.CMPEQ dtypes.bool [216, 27]
+218 Ops.CMPEQ dtypes.bool [215, 29]
+219 Ops.SHL dtypes.u32 [215, 32]
+220 Ops.OR dtypes.u32 [219, 35]
+221 Ops.ADD dtypes.u32 [219, 38]
+222 Ops.WHERE dtypes.u32 [218, 220, 221]
+223 Ops.WHERE dtypes.u32 [217, 27, 222]
+224 Ops.OR dtypes.u32 [213, 223]
+225 Ops.SHR dtypes.u32 [224, 17]
+226 Ops.AND dtypes.u32 [225, 49]
+227 Ops.AND dtypes.u32 [224, 52]
+228 Ops.CMPLT dtypes.bool [35, 227]
+229 Ops.CMPEQ dtypes.bool [227, 35]
+230 Ops.CMPLT dtypes.bool [227, 57]
+231 Ops.CMPLT dtypes.bool [227, 60]
+232 Ops.WHERE dtypes.u32 [231, 60, 227]
+233 Ops.SHR dtypes.u32 [232, 32]
+234 Ops.SHR dtypes.u32 [232, 65]
+235 Ops.AND dtypes.u32 [234, 68]
+236 Ops.AND dtypes.u32 [232, 71]
+237 Ops.CMPNE dtypes.bool [236, 27]
+238 Ops.CAST dtypes.u32 [237] dtypes.u32
+239 Ops.AND dtypes.u32 [233, 68]
+240 Ops.OR dtypes.u32 [238, 239]
+241 Ops.AND dtypes.u32 [235, 240]
+242 Ops.ADD dtypes.u32 [233, 241]
+243 Ops.ADD dtypes.u32 [242, 80]
+244 Ops.XOR dtypes.u32 [243, 83]
+245 Ops.CMPLT dtypes.bool [244, 86]
+246 Ops.WHERE dtypes.u32 [245, 86, 244]
+247 Ops.XOR dtypes.u32 [246, 83]
+248 Ops.WHERE dtypes.u32 [230, 27, 247]
+249 Ops.WHERE dtypes.u32 [229, 29, 248]
+250 Ops.WHERE dtypes.u32 [228, 29, 249]
+251 Ops.OR dtypes.u32 [226, 250]
+252 Ops.CAST dtypes.u8 [251] dtypes.u8
+253 Ops.STORE dtypes.void [159, 252]
+254 Ops.END dtypes.void [253, 157]
+255 Ops.SINK dtypes.void [254] KernelInfo(name="E_16", estimates=Estimates(ops=1232, lds=32, mem=32), optimized=True, split=(16, 2, 3))
+256 Ops.LINEAR dtypes.void [140, 141, 148, 149, 147, 150, 151, 152, 153, 154, 155, 26, 143, 142, 144, 145, 67, 160, 161, 162, 0, 146, 163, 44, 45, 27, 68, 37, 38, 56, 57, 59, 60, 19, 29, 12, 49, 64, 65, 31, 32, 34, 35, 51, 52, 16, 17, 23, 24, 79, 80, 85, 86, 82, 83, 70, 71, 20, 13, 156, 157, 158, 164, 165, 159, 169, 170, 166, 167, 174, 176, 168, 171, 173, 172, 175, 177, 178, 179, 180, 181, 182, 185, 189, 190, 194, 195, 196, 192, 191, 197, 198, 193, 199, 200, 201, 183, 186, 202, 203, 188, 187, 204, 205, 184, 206, 207, 208, 209, 210, 214, 215, 211, 212, 219, 221, 213, 216, 218, 217, 220, 222, 223, 224, 227, 231, 232, 236, 237, 238, 234, 233, 239, 240, 235, 241, 242, 243, 225, 228, 244, 245, 230, 229, 246, 247, 226, 248, 249, 250, 251, 252, 253, 254, 255]
+257 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E_16(unsigned char* restrict args_32) {\n  int val0 = (*(((int*)(args_32))+4));\n  int val1 = (*(((int*)(args_32))+5));\n  unsigned long val2 = (*(((unsigned long*)(args_32))+0));\n  unsigned long val3 = (*(((unsigned long*)(args_32))+1));\n  for (int Lidx0 = 0; Lidx0 < (val1-val0); Lidx0++) {\n    int alu0 = (val0+Lidx0);\n    unsigned char val4 = (*(((unsigned char*)(val3))+alu0));\n    unsigned int cast0 = ((unsigned int)((val4&((unsigned char)(127u)))));\n    unsigned int alu1 = (cast0<<20u);\n    unsigned int alu2 = ((cast0==127u)?(alu1|2139095040u):(alu1+1006632960u));\n    unsigned int alu3 = (((cast0>>3u)==0u)?0u:alu2);\n    unsigned int cast1 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)(((((unsigned int)((val4&((unsigned char)(128u)))))<<24u)|alu3)))*2.0f)));\n    unsigned int alu4 = (cast1&2147483647u);\n    unsigned int alu5 = ((alu4<1015021568u)?1015021568u:alu4);\n    unsigned int alu6 = (alu5>>20u);\n    unsigned int alu7 = ((alu6+((alu5>>19u)&1u&(((unsigned int)(((alu5&524287u)!=0u)))|(alu6&1u)))+4294966336u)^4294967295u);\n    unsigned int alu8 = ((alu7<4294967169u)?4294967169u:alu7);\n    unsigned int alu9 = ((alu4<1013972992u)?0u:(alu8^4294967295u));\n    unsigned int alu10 = ((alu4==2139095040u)?127u:alu9);\n    unsigned int alu11 = ((2139095040u<alu4)?127u:alu10);\n    unsigned char cast2 = ((unsigned char)((((cast1>>24u)&128u)|alu11)));\n    unsigned int cast3 = ((unsigned int)((cast2&((unsigned char)(127u)))));\n    unsigned int alu12 = (cast3<<20u);\n    unsigned int alu13 = ((cast3==127u)?(alu12|2139095040u):(alu12+1006632960u));\n    unsigned int alu14 = (((cast3>>3u)==0u)?0u:alu13);\n    unsigned int alu15 = ((((unsigned int)((cast2&((unsigned char)(128u)))))<<24u)|alu14);\n    unsigned int alu16 = (alu15&2147483647u);\n    unsigned int alu17 = ((alu16<1015021568u)?1015021568u:alu16);\n    unsigned int alu18 = (alu17>>20u);\n    unsigned int alu19 = ((alu18+((alu17>>19u)&1u&(((unsigned int)(((alu17&524287u)!=0u)))|(alu18&1u)))+4294966336u)^4294967295u);\n    unsigned int alu20 = ((alu19<4294967169u)?4294967169u:alu19);\n    unsigned int alu21 = ((alu16<1013972992u)?0u:(alu20^4294967295u));\n    unsigned int alu22 = ((alu16==2139095040u)?127u:alu21);\n    unsigned int alu23 = ((2139095040u<alu16)?127u:alu22);\n    *(((unsigned char*)(val2))+alu0) = ((unsigned char)((((alu15>>24u)&128u)|alu23)));\n  }\n}\n"
+258 Ops.PROGRAM dtypes.void [255, 256, 257] ProgramInfo(global_size=(16, 1, 1), params=(%1, %9, %3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+259 Ops.SINK dtypes.void [139, 258]
+

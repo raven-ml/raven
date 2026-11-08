@@ -1,0 +1,68 @@
+# tolk D89 golden=de1a34478c59b2b7ca0fda48b624cb37
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CAST dtypes.i32 [0] dtypes.i32
+3 Ops.SPECIAL dtypes.i32 [2] "gidx0"
+4 Ops.INDEX dtypes.f32 [1, 3]
+5 Ops.CONST dtypes.weakint [] 1
+6 Ops.ALLOC dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+7 Ops.AFTER dtypes.f32 [6, 3]
+8 Ops.CONST dtypes.weakint [] 0
+9 Ops.CAST dtypes.i32 [8] dtypes.i32
+10 Ops.INDEX dtypes.f32 [7, 9]
+11 Ops.CONST dtypes.weakfloat [] 0.0
+12 Ops.CAST dtypes.f32 [11] dtypes.f32
+13 Ops.STORE dtypes.void [10, 12]
+14 Ops.CONST dtypes.weakint [] 8
+15 Ops.CAST dtypes.i32 [14] dtypes.i32
+16 Ops.RANGE dtypes.i32 [15] (AxisType.WEAK, 1)
+17 Ops.AFTER dtypes.f32 [6, 13, 16]
+18 Ops.INDEX dtypes.f32 [17, 9]
+19 Ops.LOAD dtypes.f32 [18]
+20 Ops.CONST dtypes.weakint [] 32
+21 Ops.PARAM dtypes.f32 [20] ParamArg(slot=1, dtype=dtypes.f32)
+22 Ops.CONST dtypes.weakint [] 3
+23 Ops.CAST dtypes.i32 [22] dtypes.i32
+24 Ops.SHL dtypes.i32 [3, 23]
+25 Ops.ADD dtypes.i32 [24, 16]
+26 Ops.INDEX dtypes.f32 [21, 25]
+27 Ops.LOAD dtypes.f32 [26]
+28 Ops.ADD dtypes.f32 [19, 27]
+29 Ops.STORE dtypes.void [18, 28]
+30 Ops.END dtypes.void [29, 16]
+31 Ops.AFTER dtypes.f32 [6, 30]
+32 Ops.INDEX dtypes.f32 [31, 9]
+33 Ops.LOAD dtypes.f32 [32]
+34 Ops.BUFFER dtypes.f32 [5] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+35 Ops.AFTER dtypes.f32 [34, 3]
+36 Ops.INDEX dtypes.f32 [34, 9]
+37 Ops.INDEX dtypes.f32 [21, 24]
+38 Ops.LOAD dtypes.f32 [37]
+39 Ops.STORE dtypes.void [36, 38]
+40 Ops.AFTER dtypes.f32 [35, 39]
+41 Ops.INDEX dtypes.f32 [40, 9]
+42 Ops.LOAD dtypes.f32 [41]
+43 Ops.ADD dtypes.f32 [33, 42]
+44 Ops.STORE dtypes.void [4, 43]
+45 Ops.SINK dtypes.void [44] KernelInfo(name="r_4_8", optimized=True)
+46 Ops.BUFFER dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+47 Ops.AFTER dtypes.f32 [46, 3]
+48 Ops.INDEX dtypes.f32 [47, 9]
+49 Ops.STORE dtypes.void [48, 12]
+50 Ops.AFTER dtypes.f32 [46, 49, 16]
+51 Ops.INDEX dtypes.f32 [50, 9]
+52 Ops.LOAD dtypes.f32 [51]
+53 Ops.ADD dtypes.f32 [52, 27]
+54 Ops.STORE dtypes.void [51, 53]
+55 Ops.END dtypes.void [54, 16]
+56 Ops.AFTER dtypes.f32 [46, 55]
+57 Ops.INDEX dtypes.f32 [56, 9]
+58 Ops.LOAD dtypes.f32 [57]
+59 Ops.ADD dtypes.f32 [58, 42]
+60 Ops.STORE dtypes.void [4, 59]
+61 Ops.SINK dtypes.void [60] KernelInfo(name="r_4_8", estimates=Estimates(ops=36, lds=160, mem=144), optimized=True)
+62 Ops.LINEAR dtypes.void [0, 1, 20, 21, 5, 34, 46, 2, 3, 47, 8, 9, 48, 11, 12, 22, 23, 14, 15, 24, 49, 16, 25, 26, 27, 50, 51, 52, 53, 54, 55, 37, 38, 56, 57, 58, 35, 36, 39, 40, 41, 42, 4, 59, 60, 61]
+63 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) r_4_8(float* data0_4, float* data1_32) {\n  float buf0[1];\n  float buf1[1];\n  int gidx0 = __ockl_get_group_id(0); /* 4 */\n  int alu0 = (gidx0<<3);\n  *(buf1+0) = 0.0f;\n  for (int Lidx1 = 0; Lidx1 < 8; Lidx1++) {\n    float val0 = (*(data1_32+(alu0+Lidx1)));\n    *(buf1+0) = ((*(buf1+0))+val0);\n  }\n  float val1 = (*(data1_32+alu0));\n  *(buf0+0) = val1;\n  *(data0_4+gidx0) = ((*(buf1+0))+(*(buf0+0)));\n}"
+64 Ops.PROGRAM dtypes.void [61, 62, 63] ProgramInfo(global_size=(4, 1, 1), params=(%1, %21), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+65 Ops.SINK dtypes.void [45, 64]
+

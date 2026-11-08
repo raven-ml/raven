@@ -1,0 +1,30 @@
+# tolk D151 golden=3abbec584b0189ecae4fd4c24e985c1f
+0 Ops.CONST dtypes.weakint [] 16
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
+2 Ops.CAST dtypes.i32 [0] dtypes.i32
+3 Ops.RANGE dtypes.i32 [2] (AxisType.LOOP, 0)
+4 Ops.INDEX dtypes.i32 [1, 3]
+5 Ops.CONST dtypes.weakint [] 8
+6 Ops.CAST dtypes.i32 [5] dtypes.i32
+7 Ops.CMPLT dtypes.bool [3, 6]
+8 Ops.STORE dtypes.void [4, 3, 7]
+9 Ops.END dtypes.void [8, 3]
+10 Ops.SINK dtypes.void [9] KernelInfo(optimized=True)
+11 Ops.PARAM dtypes.u8 [5] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+12 Ops.BITCAST dtypes.u64 [11] dtypes.u64
+13 Ops.CONST dtypes.weakint [] 0
+14 Ops.CAST dtypes.i32 [13] dtypes.i32
+15 Ops.INDEX dtypes.u64 [12, 14]
+16 Ops.LOAD dtypes.u64 [15]
+17 Ops.REFPARAM dtypes.i32 [0, 16] ParamArg(slot=0, dtype=dtypes.i32)
+18 Ops.INDEX dtypes.i32 [17, 3]
+19 Ops.STORE dtypes.void [18, 3]
+20 Ops.END dtypes.void [19, 3]
+21 Ops.SINK dtypes.void [20] KernelInfo(estimates=Estimates(ops=16, lds=64, mem=64), optimized=True)
+22 Ops.IF dtypes.void [7, 18]
+23 Ops.ENDIF dtypes.void [22]
+24 Ops.LINEAR dtypes.void [5, 11, 13, 14, 12, 15, 16, 0, 17, 2, 6, 3, 18, 7, 22, 19, 23, 20, 21]
+25 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void test(unsigned char* restrict args_8) {\n  unsigned long val0 = (*(((unsigned long*)(args_8))+0));\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    if ((Lidx0<8)) {\n      *(((int*)(val0))+Lidx0) = Lidx0;\n    }\n  }\n}\n"
+26 Ops.PROGRAM dtypes.void [21, 24, 25] ProgramInfo(params=(%1,), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+27 Ops.SINK dtypes.void [10, 26]
+

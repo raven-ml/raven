@@ -43,7 +43,7 @@
 42 Ops.END dtypes.void [41, 3]
 43 Ops.SINK dtypes.void [42] KernelInfo(name="elementwise_cast_f16", estimates=Estimates(ops=256, lds=2560, mem=2560), optimized=True)
 44 Ops.LINEAR dtypes.void [16, 17, 25, 26, 18, 27, 28, 33, 34, 35, 36, 19, 20, 21, 22, 0, 29, 37, 23, 2, 3, 30, 31, 38, 39, 24, 32, 40, 41, 42, 43]
-45 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void elementwise_cast_f16(unsigned char* restrict args_24) {\n  unsigned long val0 = (*(((unsigned long*)(args_24))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_24))+1));\n  unsigned long val2 = (*(((unsigned long*)(args_24))+2));\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    __fp16 val3 = (*(((__fp16*)(val0))+Lidx0));\n    float val4 = (*(((float*)(val1))+Lidx0));\n    *(((float*)(val2))+Lidx0) = (((float)(val3))+val4);\n  }\n}\n"
+45 Ops.SOURCE dtypes.void [] "\nvoid elementwise_cast_f16(unsigned char* restrict args_24) {\n  unsigned long val0 = (*(((unsigned long*)(args_24))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_24))+1));\n  unsigned long val2 = (*(((unsigned long*)(args_24))+2));\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    __fp16 val3 = (*(((__fp16*)(val0))+Lidx0));\n    float val4 = (*(((float*)(val1))+Lidx0));\n    *(((float*)(val2))+Lidx0) = (((float)(val3))+val4);\n  }\n}\n"
 46 Ops.PROGRAM dtypes.void [43, 44, 45] ProgramInfo(params=(%5, %9, %1), globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 47 Ops.SINK dtypes.void [15, 46]
 

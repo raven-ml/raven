@@ -1,0 +1,39 @@
+# tolk D151 golden=90731b0df91cbba8e88c886730952537
+0 Ops.CONST dtypes.weakint [] 16
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+2 Ops.CAST dtypes.i32 [0] dtypes.i32
+3 Ops.RANGE dtypes.i32 [2] (AxisType.LOOP, 0)
+4 Ops.INDEX dtypes.f32 [1, 3]
+5 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
+6 Ops.INDEX dtypes.i32 [5, 3]
+7 Ops.LOAD dtypes.i32 [6]
+8 Ops.CAST dtypes.f32 [7] dtypes.f32
+9 Ops.SQRT dtypes.f32 [8]
+10 Ops.STORE dtypes.void [4, 9]
+11 Ops.END dtypes.void [10, 3]
+12 Ops.SINK dtypes.void [11] KernelInfo(name="E_16", optimized=True)
+13 Ops.PARAM dtypes.u8 [0] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+14 Ops.BITCAST dtypes.u64 [13] dtypes.u64
+15 Ops.CONST dtypes.weakint [] 1
+16 Ops.CAST dtypes.i32 [15] dtypes.i32
+17 Ops.INDEX dtypes.u64 [14, 16]
+18 Ops.LOAD dtypes.u64 [17]
+19 Ops.REFPARAM dtypes.f32 [0, 18] ParamArg(slot=1, dtype=dtypes.f32)
+20 Ops.INDEX dtypes.f32 [19, 3]
+21 Ops.CONST dtypes.weakint [] 0
+22 Ops.CAST dtypes.i32 [21] dtypes.i32
+23 Ops.INDEX dtypes.u64 [14, 22]
+24 Ops.LOAD dtypes.u64 [23]
+25 Ops.REFPARAM dtypes.i32 [0, 24] ParamArg(slot=0, dtype=dtypes.i32)
+26 Ops.INDEX dtypes.i32 [25, 3]
+27 Ops.LOAD dtypes.i32 [26]
+28 Ops.CAST dtypes.f32 [27] dtypes.f32
+29 Ops.SQRT dtypes.f32 [28]
+30 Ops.STORE dtypes.void [20, 29]
+31 Ops.END dtypes.void [30, 3]
+32 Ops.SINK dtypes.void [31] KernelInfo(name="E_16", estimates=Estimates(ops=16, lds=128, mem=128), optimized=True)
+33 Ops.LINEAR dtypes.void [0, 13, 21, 22, 14, 23, 24, 15, 16, 17, 18, 25, 19, 2, 3, 26, 27, 20, 28, 29, 30, 31, 32]
+34 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E_16(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_16))+1));\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    int val2 = (*(((int*)(val0))+Lidx0));\n    *(((float*)(val1))+Lidx0) = __builtin_sqrtf(((float)(val2)));\n  }\n}\n"
+35 Ops.PROGRAM dtypes.void [32, 33, 34] ProgramInfo(params=(%5, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+36 Ops.SINK dtypes.void [12, 35]
+

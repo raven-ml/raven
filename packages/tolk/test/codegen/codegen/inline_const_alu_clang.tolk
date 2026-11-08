@@ -1,0 +1,37 @@
+# tolk D151 golden=19b55ef3a82f6085f4bd61a16711622c
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CAST dtypes.i32 [2] dtypes.i32
+4 Ops.INDEX dtypes.i32 [1, 3]
+5 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
+6 Ops.INDEX dtypes.i32 [5, 3]
+7 Ops.LOAD dtypes.i32 [6]
+8 Ops.CONST dtypes.weakint [] -2147483647
+9 Ops.CAST dtypes.i32 [8] dtypes.i32
+10 Ops.CMPLT dtypes.bool [7, 9]
+11 Ops.WHERE dtypes.i32 [10, 9, 7]
+12 Ops.STORE dtypes.void [4, 11]
+13 Ops.SINK dtypes.void [12] KernelInfo(name="E", optimized=True)
+14 Ops.CONST dtypes.weakint [] 16
+15 Ops.PARAM dtypes.u8 [14] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+16 Ops.BITCAST dtypes.u64 [15] dtypes.u64
+17 Ops.INDEX dtypes.u64 [16, 3]
+18 Ops.LOAD dtypes.u64 [17]
+19 Ops.REFPARAM dtypes.i32 [0, 18] ParamArg(slot=0, dtype=dtypes.i32)
+20 Ops.INDEX dtypes.i32 [19, 3]
+21 Ops.CAST dtypes.i32 [0] dtypes.i32
+22 Ops.INDEX dtypes.u64 [16, 21]
+23 Ops.LOAD dtypes.u64 [22]
+24 Ops.REFPARAM dtypes.i32 [0, 23] ParamArg(slot=1, dtype=dtypes.i32)
+25 Ops.INDEX dtypes.i32 [24, 3]
+26 Ops.LOAD dtypes.i32 [25]
+27 Ops.CMPLT dtypes.bool [26, 9]
+28 Ops.WHERE dtypes.i32 [27, 9, 26]
+29 Ops.STORE dtypes.void [20, 28]
+30 Ops.SINK dtypes.void [29] KernelInfo(name="E", estimates=Estimates(ops=2, lds=8, mem=8), optimized=True)
+31 Ops.LINEAR dtypes.void [14, 15, 0, 21, 16, 22, 23, 24, 2, 3, 25, 26, 17, 18, 19, 20, 8, 9, 27, 28, 29, 30]
+32 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+1));\n  int val1 = (*(((int*)(val0))+0));\n  unsigned long val2 = (*(((unsigned long*)(args_16))+0));\n  int alu0 = ((val1<-2147483647)?-2147483647:val1);\n  *(((int*)(val2))+0) = alu0;\n}\n"
+33 Ops.PROGRAM dtypes.void [30, 31, 32] ProgramInfo(params=(%1, %5), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+34 Ops.SINK dtypes.void [13, 33]
+

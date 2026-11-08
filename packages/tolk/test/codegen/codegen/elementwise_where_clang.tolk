@@ -1,0 +1,42 @@
+# tolk D151 golden=397bada6fd80eb5e95c0cb49e88af1fc
+0 Ops.CONST dtypes.weakint [] 256
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+2 Ops.CAST dtypes.i32 [0] dtypes.i32
+3 Ops.RANGE dtypes.i32 [2] (AxisType.LOOP, 0)
+4 Ops.INDEX dtypes.f32 [1, 3]
+5 Ops.CONST dtypes.weakfloat [] 0.0
+6 Ops.CAST dtypes.f32 [5] dtypes.f32
+7 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+8 Ops.INDEX dtypes.f32 [7, 3]
+9 Ops.LOAD dtypes.f32 [8]
+10 Ops.CMPLT dtypes.bool [6, 9]
+11 Ops.WHERE dtypes.f32 [10, 9, 6]
+12 Ops.STORE dtypes.void [4, 11]
+13 Ops.END dtypes.void [12, 3]
+14 Ops.SINK dtypes.void [13] KernelInfo(name="relu", optimized=True)
+15 Ops.CONST dtypes.weakint [] 16
+16 Ops.PARAM dtypes.u8 [15] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+17 Ops.BITCAST dtypes.u64 [16] dtypes.u64
+18 Ops.CONST dtypes.weakint [] 1
+19 Ops.CAST dtypes.i32 [18] dtypes.i32
+20 Ops.INDEX dtypes.u64 [17, 19]
+21 Ops.LOAD dtypes.u64 [20]
+22 Ops.REFPARAM dtypes.f32 [0, 21] ParamArg(slot=1, dtype=dtypes.f32)
+23 Ops.INDEX dtypes.f32 [22, 3]
+24 Ops.CONST dtypes.weakint [] 0
+25 Ops.CAST dtypes.i32 [24] dtypes.i32
+26 Ops.INDEX dtypes.u64 [17, 25]
+27 Ops.LOAD dtypes.u64 [26]
+28 Ops.REFPARAM dtypes.f32 [0, 27] ParamArg(slot=0, dtype=dtypes.f32)
+29 Ops.INDEX dtypes.f32 [28, 3]
+30 Ops.LOAD dtypes.f32 [29]
+31 Ops.CMPLT dtypes.bool [6, 30]
+32 Ops.WHERE dtypes.f32 [31, 30, 6]
+33 Ops.STORE dtypes.void [23, 32]
+34 Ops.END dtypes.void [33, 3]
+35 Ops.SINK dtypes.void [34] KernelInfo(name="relu", estimates=Estimates(ops=512, lds=2048, mem=2048), optimized=True)
+36 Ops.LINEAR dtypes.void [15, 16, 24, 25, 17, 26, 27, 18, 19, 20, 21, 0, 28, 22, 5, 6, 2, 3, 29, 30, 23, 31, 32, 33, 34, 35]
+37 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void relu(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_16))+1));\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val2 = (*(((float*)(val0))+Lidx0));\n    float alu0 = ((0.0f<val2)?val2:0.0f);\n    *(((float*)(val1))+Lidx0) = alu0;\n  }\n}\n"
+38 Ops.PROGRAM dtypes.void [35, 36, 37] ProgramInfo(params=(%7, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+39 Ops.SINK dtypes.void [14, 38]
+

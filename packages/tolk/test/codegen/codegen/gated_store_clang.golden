@@ -46,7 +46,7 @@
 45 Ops.IF dtypes.void [14, 26]
 46 Ops.ENDIF dtypes.void [45]
 47 Ops.LINEAR dtypes.void [18, 19, 27, 28, 20, 29, 30, 34, 35, 36, 37, 21, 22, 23, 24, 0, 31, 38, 25, 12, 13, 2, 3, 32, 33, 39, 40, 26, 41, 14, 45, 42, 46, 43, 44]
-48 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void gated_store(unsigned char* restrict args_24) {\n  unsigned long val0 = (*(((unsigned long*)(args_24))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_24))+1));\n  unsigned long val2 = (*(((unsigned long*)(args_24))+2));\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val3 = (*(((float*)(val0))+Lidx0));\n    float val4 = (*(((float*)(val1))+Lidx0));\n    if ((Lidx0<200)) {\n      *(((float*)(val2))+Lidx0) = (val3+val4);\n    }\n  }\n}\n"
+48 Ops.SOURCE dtypes.void [] "\nvoid gated_store(unsigned char* restrict args_24) {\n  unsigned long val0 = (*(((unsigned long*)(args_24))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_24))+1));\n  unsigned long val2 = (*(((unsigned long*)(args_24))+2));\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val3 = (*(((float*)(val0))+Lidx0));\n    float val4 = (*(((float*)(val1))+Lidx0));\n    if ((Lidx0<200)) {\n      *(((float*)(val2))+Lidx0) = (val3+val4);\n    }\n  }\n}\n"
 49 Ops.PROGRAM dtypes.void [44, 47, 48] ProgramInfo(params=(%5, %8, %1), globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 50 Ops.SINK dtypes.void [17, 49]
 

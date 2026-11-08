@@ -20,7 +20,7 @@
 19 Ops.END dtypes.void [18, 3]
 20 Ops.SINK dtypes.void [19] KernelInfo(estimates=Estimates(lds=32, mem=32), optimized=True)
 21 Ops.LINEAR dtypes.void [0, 10, 12, 13, 11, 14, 15, 16, 5, 6, 2, 3, 17, 18, 19, 20]
-22 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void test(unsigned char* restrict args_8) {\n  unsigned long val0 = (*(((unsigned long*)(args_8))+0));\n  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n    *(((float*)(val0))+Lidx0) = 1.0f;\n  }\n}\n"
+22 Ops.SOURCE dtypes.void [] "\nvoid test(unsigned char* restrict args_8) {\n  unsigned long val0 = (*(((unsigned long*)(args_8))+0));\n  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n    *(((float*)(val0))+Lidx0) = 1.0f;\n  }\n}\n"
 23 Ops.PROGRAM dtypes.void [20, 21, 22] ProgramInfo(params=(%1,), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 24 Ops.SINK dtypes.void [9, 23]
 

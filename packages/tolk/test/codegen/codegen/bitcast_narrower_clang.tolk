@@ -1,0 +1,113 @@
+# tolk D141 D151 golden=2dd585a15262bcc495459a1d600d4d97
+0 Ops.CONST dtypes.weakint [] 8
+1 Ops.PARAM dtypes.u16 [0] ParamArg(slot=0, dtype=dtypes.u16)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CAST dtypes.i32 [2] dtypes.i32
+4 Ops.INDEX dtypes.u16 [1, 3]
+5 Ops.CONST dtypes.weakint [] 4
+6 Ops.PARAM dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32)
+7 Ops.CAST dtypes.i32 [5] dtypes.i32
+8 Ops.SHRINK dtypes.f32 [6, 3, 7]
+9 Ops.LOAD dtypes.f32 [8]
+10 Ops.BITCAST dtypes.u32 [9] dtypes.u32
+11 Ops.INDEX dtypes.u32 [10, 3]
+12 Ops.CONST dtypes.weakint [] 16
+13 Ops.CAST dtypes.u32 [12] dtypes.u32
+14 Ops.SHR dtypes.u32 [10, 13]
+15 Ops.INDEX dtypes.u32 [14, 3]
+16 Ops.CONST dtypes.weakint [] 1
+17 Ops.CAST dtypes.i32 [16] dtypes.i32
+18 Ops.INDEX dtypes.u32 [10, 17]
+19 Ops.INDEX dtypes.u32 [14, 17]
+20 Ops.CONST dtypes.weakint [] 2
+21 Ops.CAST dtypes.i32 [20] dtypes.i32
+22 Ops.INDEX dtypes.u32 [10, 21]
+23 Ops.INDEX dtypes.u32 [14, 21]
+24 Ops.CONST dtypes.weakint [] 3
+25 Ops.CAST dtypes.i32 [24] dtypes.i32
+26 Ops.INDEX dtypes.u32 [10, 25]
+27 Ops.INDEX dtypes.u32 [14, 25]
+28 Ops.STACK dtypes.u32 [11, 15, 18, 19, 22, 23, 26, 27]
+29 Ops.CAST dtypes.u16 [28] dtypes.u16
+30 Ops.INDEX dtypes.u16 [29, 3]
+31 Ops.STORE dtypes.void [4, 30]
+32 Ops.INDEX dtypes.u16 [1, 17]
+33 Ops.INDEX dtypes.u16 [29, 17]
+34 Ops.STORE dtypes.void [32, 33]
+35 Ops.INDEX dtypes.u16 [1, 21]
+36 Ops.INDEX dtypes.u16 [29, 21]
+37 Ops.STORE dtypes.void [35, 36]
+38 Ops.INDEX dtypes.u16 [1, 25]
+39 Ops.INDEX dtypes.u16 [29, 25]
+40 Ops.STORE dtypes.void [38, 39]
+41 Ops.INDEX dtypes.u16 [1, 7]
+42 Ops.INDEX dtypes.u16 [29, 7]
+43 Ops.STORE dtypes.void [41, 42]
+44 Ops.CONST dtypes.weakint [] 5
+45 Ops.CAST dtypes.i32 [44] dtypes.i32
+46 Ops.INDEX dtypes.u16 [1, 45]
+47 Ops.INDEX dtypes.u16 [29, 45]
+48 Ops.STORE dtypes.void [46, 47]
+49 Ops.CONST dtypes.weakint [] 6
+50 Ops.CAST dtypes.i32 [49] dtypes.i32
+51 Ops.INDEX dtypes.u16 [1, 50]
+52 Ops.INDEX dtypes.u16 [29, 50]
+53 Ops.STORE dtypes.void [51, 52]
+54 Ops.CONST dtypes.weakint [] 7
+55 Ops.CAST dtypes.i32 [54] dtypes.i32
+56 Ops.INDEX dtypes.u16 [1, 55]
+57 Ops.INDEX dtypes.u16 [29, 55]
+58 Ops.STORE dtypes.void [56, 57]
+59 Ops.SINK dtypes.void [31, 34, 37, 40, 43, 48, 53, 58] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))), optimized=True)
+60 Ops.PARAM dtypes.u8 [12] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+61 Ops.BITCAST dtypes.u64 [60] dtypes.u64
+62 Ops.INDEX dtypes.u64 [61, 3]
+63 Ops.LOAD dtypes.u64 [62]
+64 Ops.REFPARAM dtypes.u16 [0, 63] ParamArg(slot=0, dtype=dtypes.u16)
+65 Ops.INDEX dtypes.u16 [64, 3]
+66 Ops.INDEX dtypes.u64 [61, 17]
+67 Ops.LOAD dtypes.u64 [66]
+68 Ops.REFPARAM dtypes.f32 [5, 67] ParamArg(slot=1, dtype=dtypes.f32)
+69 Ops.SHRINK dtypes.f32 [68, 3, 7]
+70 Ops.LOAD dtypes.f32 [69]
+71 Ops.BITCAST dtypes.u32 [70] dtypes.u32
+72 Ops.INDEX dtypes.u32 [71, 3]
+73 Ops.SHR dtypes.u32 [71, 13]
+74 Ops.INDEX dtypes.u32 [73, 3]
+75 Ops.INDEX dtypes.u32 [71, 17]
+76 Ops.INDEX dtypes.u32 [73, 17]
+77 Ops.INDEX dtypes.u32 [71, 21]
+78 Ops.INDEX dtypes.u32 [73, 21]
+79 Ops.INDEX dtypes.u32 [71, 25]
+80 Ops.INDEX dtypes.u32 [73, 25]
+81 Ops.STACK dtypes.u32 [72, 74, 75, 76, 77, 78, 79, 80]
+82 Ops.CAST dtypes.u16 [81] dtypes.u16
+83 Ops.INDEX dtypes.u16 [82, 3]
+84 Ops.STORE dtypes.void [65, 83]
+85 Ops.INDEX dtypes.u16 [64, 17]
+86 Ops.INDEX dtypes.u16 [82, 17]
+87 Ops.STORE dtypes.void [85, 86]
+88 Ops.INDEX dtypes.u16 [64, 21]
+89 Ops.INDEX dtypes.u16 [82, 21]
+90 Ops.STORE dtypes.void [88, 89]
+91 Ops.INDEX dtypes.u16 [64, 25]
+92 Ops.INDEX dtypes.u16 [82, 25]
+93 Ops.STORE dtypes.void [91, 92]
+94 Ops.INDEX dtypes.u16 [64, 7]
+95 Ops.INDEX dtypes.u16 [82, 7]
+96 Ops.STORE dtypes.void [94, 95]
+97 Ops.INDEX dtypes.u16 [64, 45]
+98 Ops.INDEX dtypes.u16 [82, 45]
+99 Ops.STORE dtypes.void [97, 98]
+100 Ops.INDEX dtypes.u16 [64, 50]
+101 Ops.INDEX dtypes.u16 [82, 50]
+102 Ops.STORE dtypes.void [100, 101]
+103 Ops.INDEX dtypes.u16 [64, 55]
+104 Ops.INDEX dtypes.u16 [82, 55]
+105 Ops.STORE dtypes.void [103, 104]
+106 Ops.SINK dtypes.void [84, 87, 90, 93, 96, 99, 102, 105] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))), estimates=Estimates(ops=4, lds=32, mem=32), optimized=True)
+107 Ops.LINEAR dtypes.void [12, 60, 2, 3, 61, 62, 63, 16, 17, 66, 67, 5, 68, 7, 69, 70, 0, 64, 71, 72, 75, 20, 21, 77, 24, 25, 79, 13, 73, 74, 76, 78, 80, 81, 65, 85, 88, 91, 94, 44, 45, 97, 49, 50, 100, 54, 55, 103, 82, 83, 86, 89, 92, 95, 98, 101, 104, 84, 87, 90, 93, 96, 99, 102, 105, 106]
+108 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\ntypedef unsigned int unsigned_int4 __attribute__((aligned(4),ext_vector_type(4)));\ntypedef unsigned int unsigned_int8 __attribute__((aligned(4),ext_vector_type(8)));\ntypedef unsigned short unsigned_short8 __attribute__((aligned(2),ext_vector_type(8)));\n__attribute__((min_vector_width(512))) void E_2_4(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_16))+1));\n  float4 val2 = (*((float4*)((((float*)(val1))+0))));\n  unsigned_int4 cast0 = ((unsigned_int4)((float4)(val2)));\n  unsigned_int4 alu0 = (cast0>>16u);\n  unsigned_short8 cast1 = __builtin_convertvector((unsigned_int8){cast0[0],alu0[0],cast0[1],alu0[1],cast0[2],alu0[2],cast0[3],alu0[3]}, unsigned_short8);\n  *(((unsigned short*)(val0))+0) = cast1[0];\n  *(((unsigned short*)(val0))+1) = cast1[1];\n  *(((unsigned short*)(val0))+2) = cast1[2];\n  *(((unsigned short*)(val0))+3) = cast1[3];\n  *(((unsigned short*)(val0))+4) = cast1[4];\n  *(((unsigned short*)(val0))+5) = cast1[5];\n  *(((unsigned short*)(val0))+6) = cast1[6];\n  *(((unsigned short*)(val0))+7) = cast1[7];\n}\n"
+109 Ops.PROGRAM dtypes.void [106, 107, 108] ProgramInfo(params=(%1, %6), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+110 Ops.SINK dtypes.void [59, 109]
+

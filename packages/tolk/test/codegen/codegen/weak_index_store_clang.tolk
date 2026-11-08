@@ -1,0 +1,27 @@
+# tolk D151 golden=494c4d5e2c169c9dd85002975b201655
+0 Ops.CONST dtypes.weakint [] 8
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CAST dtypes.i32 [0] dtypes.i32
+3 Ops.RANGE dtypes.i32 [2] (AxisType.WEAK, 0)
+4 Ops.INDEX dtypes.f32 [1, 3]
+5 Ops.CONST dtypes.weakfloat [] 1.0
+6 Ops.CAST dtypes.f32 [5] dtypes.f32
+7 Ops.STORE dtypes.void [4, 6]
+8 Ops.END dtypes.void [7, 3]
+9 Ops.SINK dtypes.void [8] KernelInfo(optimized=True)
+10 Ops.PARAM dtypes.u8 [0] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+11 Ops.BITCAST dtypes.u64 [10] dtypes.u64
+12 Ops.CONST dtypes.weakint [] 0
+13 Ops.CAST dtypes.i32 [12] dtypes.i32
+14 Ops.INDEX dtypes.u64 [11, 13]
+15 Ops.LOAD dtypes.u64 [14]
+16 Ops.REFPARAM dtypes.f32 [0, 15] ParamArg(slot=0, dtype=dtypes.f32)
+17 Ops.INDEX dtypes.f32 [16, 3]
+18 Ops.STORE dtypes.void [17, 6]
+19 Ops.END dtypes.void [18, 3]
+20 Ops.SINK dtypes.void [19] KernelInfo(estimates=Estimates(lds=32, mem=32), optimized=True)
+21 Ops.LINEAR dtypes.void [0, 10, 12, 13, 11, 14, 15, 16, 5, 6, 2, 3, 17, 18, 19, 20]
+22 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void test(unsigned char* restrict args_8) {\n  unsigned long val0 = (*(((unsigned long*)(args_8))+0));\n  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n    *(((float*)(val0))+Lidx0) = 1.0f;\n  }\n}\n"
+23 Ops.PROGRAM dtypes.void [20, 21, 22] ProgramInfo(params=(%1,), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+24 Ops.SINK dtypes.void [9, 23]
+

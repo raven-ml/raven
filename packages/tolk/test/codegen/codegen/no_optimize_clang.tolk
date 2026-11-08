@@ -1,0 +1,48 @@
+# tolk D151 golden=8d28660203f9bd6e389f8110aa54242c
+0 Ops.CONST dtypes.weakint [] 256
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32)
+2 Ops.CAST dtypes.i32 [0] dtypes.i32
+3 Ops.RANGE dtypes.i32 [2] (AxisType.LOOP, 0)
+4 Ops.INDEX dtypes.f32 [1, 3]
+5 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+6 Ops.INDEX dtypes.f32 [5, 3]
+7 Ops.LOAD dtypes.f32 [6]
+8 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+9 Ops.INDEX dtypes.f32 [8, 3]
+10 Ops.LOAD dtypes.f32 [9]
+11 Ops.ADD dtypes.f32 [7, 10]
+12 Ops.STORE dtypes.void [4, 11]
+13 Ops.END dtypes.void [12, 3]
+14 Ops.SINK dtypes.void [13] KernelInfo(name="no_optimize", optimized=True)
+15 Ops.CONST dtypes.weakint [] 24
+16 Ops.PARAM dtypes.u8 [15] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+17 Ops.BITCAST dtypes.u64 [16] dtypes.u64
+18 Ops.CONST dtypes.weakint [] 2
+19 Ops.CAST dtypes.i32 [18] dtypes.i32
+20 Ops.INDEX dtypes.u64 [17, 19]
+21 Ops.LOAD dtypes.u64 [20]
+22 Ops.REFPARAM dtypes.f32 [0, 21] ParamArg(slot=2, dtype=dtypes.f32)
+23 Ops.INDEX dtypes.f32 [22, 3]
+24 Ops.CONST dtypes.weakint [] 0
+25 Ops.CAST dtypes.i32 [24] dtypes.i32
+26 Ops.INDEX dtypes.u64 [17, 25]
+27 Ops.LOAD dtypes.u64 [26]
+28 Ops.REFPARAM dtypes.f32 [0, 27] ParamArg(slot=0, dtype=dtypes.f32)
+29 Ops.INDEX dtypes.f32 [28, 3]
+30 Ops.LOAD dtypes.f32 [29]
+31 Ops.CONST dtypes.weakint [] 1
+32 Ops.CAST dtypes.i32 [31] dtypes.i32
+33 Ops.INDEX dtypes.u64 [17, 32]
+34 Ops.LOAD dtypes.u64 [33]
+35 Ops.REFPARAM dtypes.f32 [0, 34] ParamArg(slot=1, dtype=dtypes.f32)
+36 Ops.INDEX dtypes.f32 [35, 3]
+37 Ops.LOAD dtypes.f32 [36]
+38 Ops.ADD dtypes.f32 [30, 37]
+39 Ops.STORE dtypes.void [23, 38]
+40 Ops.END dtypes.void [39, 3]
+41 Ops.SINK dtypes.void [40] KernelInfo(name="no_optimize", estimates=Estimates(ops=256, lds=3072, mem=3072), optimized=True)
+42 Ops.LINEAR dtypes.void [15, 16, 24, 25, 17, 26, 27, 31, 32, 33, 34, 18, 19, 20, 21, 0, 28, 35, 22, 2, 3, 29, 30, 36, 37, 23, 38, 39, 40, 41]
+43 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void no_optimize(unsigned char* restrict args_24) {\n  unsigned long val0 = (*(((unsigned long*)(args_24))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_24))+1));\n  unsigned long val2 = (*(((unsigned long*)(args_24))+2));\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val3 = (*(((float*)(val0))+Lidx0));\n    float val4 = (*(((float*)(val1))+Lidx0));\n    *(((float*)(val2))+Lidx0) = (val3+val4);\n  }\n}\n"
+44 Ops.PROGRAM dtypes.void [41, 42, 43] ProgramInfo(params=(%5, %8, %1), globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+45 Ops.SINK dtypes.void [14, 44]
+

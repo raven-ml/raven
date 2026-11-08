@@ -1,0 +1,68 @@
+# tolk D89 D342 golden=42fd9f270132e3ad5e1042bb16a0c7d6
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.PARAM dtypes.i64 [1] ParamArg(slot=0, dtype=dtypes.i64)
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.SPECIAL dtypes.i32 [4] "lidx0"
+6 Ops.CONST dtypes.weakint [] 2
+7 Ops.CAST dtypes.i32 [6] dtypes.i32
+8 Ops.SHL dtypes.i32 [5, 7]
+9 Ops.INDEX dtypes.i64 [2, 8]
+10 Ops.PARAM dtypes.i64 [1] ParamArg(slot=1, dtype=dtypes.i64)
+11 Ops.INDEX dtypes.i64 [10, 8]
+12 Ops.LOAD dtypes.i64 [11]
+13 Ops.CAST dtypes.u64 [12] dtypes.u64
+14 Ops.CONST dtypes.weakint [] 3
+15 Ops.CAST dtypes.u64 [14] dtypes.u64
+16 Ops.MUL dtypes.u64 [13, 15]
+17 Ops.CAST dtypes.i64 [16] dtypes.i64
+18 Ops.CAST dtypes.u64 [17] dtypes.u64
+19 Ops.CONST dtypes.weakint [] 1
+20 Ops.CAST dtypes.u64 [19] dtypes.u64
+21 Ops.ADD dtypes.u64 [18, 20]
+22 Ops.CAST dtypes.i64 [21] dtypes.i64
+23 Ops.STORE dtypes.void [9, 22]
+24 Ops.CAST dtypes.i32 [19] dtypes.i32
+25 Ops.ADD dtypes.i32 [8, 24]
+26 Ops.INDEX dtypes.i64 [2, 25]
+27 Ops.INDEX dtypes.i64 [10, 25]
+28 Ops.LOAD dtypes.i64 [27]
+29 Ops.CAST dtypes.u64 [28] dtypes.u64
+30 Ops.MUL dtypes.u64 [29, 15]
+31 Ops.CAST dtypes.i64 [30] dtypes.i64
+32 Ops.CAST dtypes.u64 [31] dtypes.u64
+33 Ops.ADD dtypes.u64 [32, 20]
+34 Ops.CAST dtypes.i64 [33] dtypes.i64
+35 Ops.STORE dtypes.void [26, 34]
+36 Ops.ADD dtypes.i32 [8, 7]
+37 Ops.INDEX dtypes.i64 [2, 36]
+38 Ops.INDEX dtypes.i64 [10, 36]
+39 Ops.LOAD dtypes.i64 [38]
+40 Ops.CAST dtypes.u64 [39] dtypes.u64
+41 Ops.MUL dtypes.u64 [40, 15]
+42 Ops.CAST dtypes.i64 [41] dtypes.i64
+43 Ops.CAST dtypes.u64 [42] dtypes.u64
+44 Ops.ADD dtypes.u64 [43, 20]
+45 Ops.CAST dtypes.i64 [44] dtypes.i64
+46 Ops.STORE dtypes.void [37, 45]
+47 Ops.CAST dtypes.i32 [14] dtypes.i32
+48 Ops.ADD dtypes.i32 [8, 47]
+49 Ops.INDEX dtypes.i64 [2, 48]
+50 Ops.INDEX dtypes.i64 [10, 48]
+51 Ops.LOAD dtypes.i64 [50]
+52 Ops.CAST dtypes.u64 [51] dtypes.u64
+53 Ops.MUL dtypes.u64 [52, 15]
+54 Ops.CAST dtypes.i64 [53] dtypes.i64
+55 Ops.CAST dtypes.u64 [54] dtypes.u64
+56 Ops.ADD dtypes.u64 [55, 20]
+57 Ops.CAST dtypes.i64 [56] dtypes.i64
+58 Ops.STORE dtypes.void [49, 57]
+59 Ops.AFTER dtypes.void [0, 23, 35, 46, 58]
+60 Ops.SINK dtypes.void [59] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), optimized=True)
+61 Ops.SINK dtypes.void [59] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=32, lds=256, mem=256), optimized=True)
+62 Ops.LINEAR dtypes.void [1, 2, 10, 3, 4, 5, 19, 24, 6, 7, 8, 25, 27, 28, 36, 38, 39, 14, 47, 48, 50, 51, 11, 12, 0, 26, 37, 49, 9, 29, 15, 30, 31, 32, 20, 33, 34, 40, 41, 42, 43, 44, 45, 52, 53, 54, 55, 56, 57, 13, 16, 17, 18, 21, 22, 35, 46, 58, 23, 59, 61]
+63 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(4) E_4_4(long* data0_16, long* data1_16) {\n  int lidx0 = threadIdx.x; /* 4 */\n  int alu0 = (lidx0<<2);\n  int alu1 = (alu0+1);\n  long val0 = (*(data1_16+alu1));\n  int alu2 = (alu0+2);\n  long val1 = (*(data1_16+alu2));\n  int alu3 = (alu0+3);\n  long val2 = (*(data1_16+alu3));\n  long val3 = (*(data1_16+alu0));\n  *(data0_16+alu1) = ((long)((((unsigned long)(((long)((((unsigned long)(val0))*3ul)))))+1ul)));\n  *(data0_16+alu2) = ((long)((((unsigned long)(((long)((((unsigned long)(val1))*3ul)))))+1ul)));\n  *(data0_16+alu3) = ((long)((((unsigned long)(((long)((((unsigned long)(val2))*3ul)))))+1ul)));\n  *(data0_16+alu0) = ((long)((((unsigned long)(((long)((((unsigned long)(val3))*3ul)))))+1ul)));\n}"
+64 Ops.PROGRAM dtypes.void [61, 62, 63] ProgramInfo(local_size=(4, 1, 1), params=(%2, %10), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+65 Ops.SINK dtypes.void [60, 64]
+

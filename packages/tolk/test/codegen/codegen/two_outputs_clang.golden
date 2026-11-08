@@ -50,7 +50,7 @@
 49 Ops.END dtypes.void [48, 4]
 50 Ops.SINK dtypes.void [49] KernelInfo(name="two_outputs", estimates=Estimates(ops=512, lds=3072, mem=3072), optimized=True)
 51 Ops.LINEAR dtypes.void [22, 23, 31, 32, 24, 33, 34, 25, 26, 27, 28, 40, 41, 42, 43, 1, 35, 29, 44, 0, 9, 10, 15, 16, 3, 4, 36, 37, 30, 45, 38, 46, 39, 47, 48, 49, 50]
-52 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void two_outputs(unsigned char* restrict args_24) {\n  unsigned long val0 = (*(((unsigned long*)(args_24))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_24))+1));\n  unsigned long val2 = (*(((unsigned long*)(args_24))+2));\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val3 = (*(((float*)(val0))+Lidx0));\n    *(((float*)(val1))+Lidx0) = (val3+1.0f);\n    *(((float*)(val2))+Lidx0) = (val3*2.0f);\n  }\n}\n"
+52 Ops.SOURCE dtypes.void [] "\nvoid two_outputs(unsigned char* restrict args_24) {\n  unsigned long val0 = (*(((unsigned long*)(args_24))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_24))+1));\n  unsigned long val2 = (*(((unsigned long*)(args_24))+2));\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val3 = (*(((float*)(val0))+Lidx0));\n    *(((float*)(val1))+Lidx0) = (val3+1.0f);\n    *(((float*)(val2))+Lidx0) = (val3*2.0f);\n  }\n}\n"
 53 Ops.PROGRAM dtypes.void [50, 51, 52] ProgramInfo(params=(%6, %2, %13), globals=(0, 1, 2), outs=(1, 2), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 54 Ops.SINK dtypes.void [21, 53]
 

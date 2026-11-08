@@ -1,0 +1,44 @@
+# tolk D89 D210 golden=a29d487f4b4cd6fd840a441c839f414a
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.SPECIAL dtypes.i32 [4] "lidx0"
+6 Ops.CONST dtypes.weakint [] 2
+7 Ops.CAST dtypes.i32 [6] dtypes.i32
+8 Ops.SHL dtypes.i32 [5, 7]
+9 Ops.SHRINK dtypes.f32 [2, 8, 4]
+10 Ops.PARAM dtypes.bf16 [1] ParamArg(slot=1, dtype=dtypes.bf16)
+11 Ops.SHRINK dtypes.bf16 [10, 8, 4]
+12 Ops.LOAD dtypes.bf16 [11]
+13 Ops.CONST dtypes.weakint [] 0
+14 Ops.CAST dtypes.i32 [13] dtypes.i32
+15 Ops.INDEX dtypes.bf16 [12, 14]
+16 Ops.CONST dtypes.weakfloat [] 1.0
+17 Ops.CAST dtypes.bf16 [16] dtypes.bf16
+18 Ops.ADD dtypes.bf16 [15, 17]
+19 Ops.CAST dtypes.f32 [18] dtypes.f32
+20 Ops.CONST dtypes.weakint [] 1
+21 Ops.CAST dtypes.i32 [20] dtypes.i32
+22 Ops.INDEX dtypes.bf16 [12, 21]
+23 Ops.ADD dtypes.bf16 [22, 17]
+24 Ops.CAST dtypes.f32 [23] dtypes.f32
+25 Ops.INDEX dtypes.bf16 [12, 7]
+26 Ops.ADD dtypes.bf16 [25, 17]
+27 Ops.CAST dtypes.f32 [26] dtypes.f32
+28 Ops.CONST dtypes.weakint [] 3
+29 Ops.CAST dtypes.i32 [28] dtypes.i32
+30 Ops.INDEX dtypes.bf16 [12, 29]
+31 Ops.ADD dtypes.bf16 [30, 17]
+32 Ops.CAST dtypes.f32 [31] dtypes.f32
+33 Ops.STACK dtypes.f32 [19, 24, 27, 32]
+34 Ops.STORE dtypes.void [9, 33]
+35 Ops.AFTER dtypes.void [0, 34]
+36 Ops.SINK dtypes.void [35] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), optimized=True)
+37 Ops.SINK dtypes.void [35] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=16, lds=96, mem=96), optimized=True)
+38 Ops.LINEAR dtypes.void [1, 2, 10, 3, 4, 5, 6, 7, 8, 11, 12, 0, 13, 14, 15, 20, 21, 22, 25, 28, 29, 30, 16, 17, 18, 19, 23, 24, 26, 27, 31, 32, 33, 9, 34, 35, 37]
+39 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\n#include <cuda_bf16.h>\nstruct __align__(8) nv_bfloat164 { nv_bfloat16 x, y, z, w; }; __device__ nv_bfloat164 make_nv_bfloat164(nv_bfloat16 x, nv_bfloat16 y, nv_bfloat16 z, nv_bfloat16 w) { nv_bfloat164 r={x, y, z, w}; return r; }\nextern \"C\" __global__ void __launch_bounds__(4) E_4_4(float* data0_16, nv_bfloat16* data1_16) {\n  int lidx0 = threadIdx.x; /* 4 */\n  int alu0 = (lidx0<<2);\n  nv_bfloat164 val0 = (*((nv_bfloat164*)((data1_16+alu0))));\n  *((float4*)((data0_16+alu0))) = make_float4(((float)((val0.x+((nv_bfloat16)(1.0f))))),((float)((val0.y+((nv_bfloat16)(1.0f))))),((float)((val0.z+((nv_bfloat16)(1.0f))))),((float)((val0.w+((nv_bfloat16)(1.0f))))));\n}"
+40 Ops.PROGRAM dtypes.void [37, 38, 39] ProgramInfo(local_size=(4, 1, 1), params=(%2, %10), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+41 Ops.SINK dtypes.void [36, 40]
+
