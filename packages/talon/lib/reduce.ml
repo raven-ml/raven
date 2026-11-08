@@ -298,11 +298,28 @@ let moments variance =
 
 (* Scales
 
+   [scales max x] is, for each frame, the powers of two [(up, down)], [up]
+   the reciprocal of [down], such that the frame's finite values [x] times
+   [down] are below [2^below] and, unless they are all zero or subnormal,
+   reach 2^-433 or more; [up = 1] where [max] already lies in that band.
+   [max y] bounds from above each frame's elements of [y] over its values,
+   for a [y] of no negative element.
+
    A frame whose greatest finite magnitude lies in [\[2^t, 2^(t + 1))] takes
    [down = 2^-e]: [e] the exponent [t] past [below - 1], so that its values
    times [down] are below [2^below], or [t + above] for a frame below
    [2^-above], so that their squares are far above the range's bottom, or
-   [0]. *)
+   [0].
+
+   Below 2^480, the squares of the deviations of up to 2^53 values sum below
+   max_float, and above 2^-433 a value's nonzero deviation squares well above
+   the range's bottom. A product by a power of two is exact unless it leaves
+   the normal range, so a frame's values times [down] keep their moments,
+   scaled, where [up = 1]. Elsewhere the values times [down] that fall below
+   2^-1022 round, by at most 2^-1075 each, less than the variance can show in
+   a frame whose sum of squared deviations reaches about max_float / 2, as it
+   does in a frame whose greatest magnitude [max] gives exactly and that holds
+   2^480 or more, or in one whose moments overflowed. *)
 
 let below = 480
 let above = 432
@@ -323,6 +340,9 @@ let scales max x =
   let power k = Nx.bitcast Nx.float64 (Nx.lshift (Nx.add_s k bias) 52) in
   (power e, power (Nx.neg e))
 
+(* [helped var down] is whether [scales]'s [down] can change [var]: where
+   [var] overflowed and a frame scales down, or where it is below [tiny] and a
+   frame scales up. *)
 let helped var down =
   Nx.logical_or
     (Nx.logical_and (Nx.logical_not (Nx.isfinite var)) (Nx.less_s down 1.))

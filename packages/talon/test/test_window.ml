@@ -655,6 +655,25 @@ let large_cases =
     ( "the deviation of a variance past max_float, two at a time", std,
       Some 2, [| Some 1e200; Some (-1e200) |],
       [| None; Some (sqrt 2. *. 1e200) |] );
+    ( "the deviation of a variance past max_float, a null among three at a time",
+      std, Some 3,
+      [| Some 1e200; None; Some (-1e200) |],
+      [| None; None; Some (sqrt 2. *. 1e200) |] );
+    ( "the deviation of tiny values beside a large one", std, None,
+      [| Some 1e-170; Some (-1e-170); Some 1e300 |],
+      [| None; Some (sqrt 2. *. 1e-170); Some (1e300 /. sqrt 3.) |] );
+    ( "the deviation of tiny values beside a large one, two at a time", std,
+      Some 2,
+      [| Some 1e-170; Some (-1e-170); Some 1e300 |],
+      [| None; Some (sqrt 2. *. 1e-170); Some (1e300 /. sqrt 2.) |] );
+    ("no rows, two at a time", var, Some 2, [||], [||]);
+    ("no rows, from the start", var, None, [||], [||]);
+    ( "no values, from the start", var, None, [| None; None; None |],
+      [| None; None; None |] );
+    ( "no values, two at a time", var, Some 2, [| None; None; None |],
+      [| None; None; None |] );
+    ( "one value among nulls, two at a time", std, Some 2,
+      [| None; Some 1.; None |], [| None; None; None |] );
   ]
 
 let large_case (_, r, before, x, want) =

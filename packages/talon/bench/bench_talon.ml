@@ -515,6 +515,14 @@ let asof_range () =
 let window e = run Query.(of_table nulls |> select Expr.[ "w" := e ])
 let hash_keys e = window Expr.(hash ~seed:1 e)
 
+(* A rolling deviation of [w] rows over the first 2^16 rows of [nulls]. *)
+let rolling_std w () =
+  run
+    Query.(
+      of_table nulls
+      |> slice ~offset:0 ~length:65536
+      |> select Expr.[ "w" := window ~before:(int w) (std (Col.float "f")) ])
+
 (* Lists: 2^16 rows of 0 to 64 float64 elements, about 32 each, reduced with
    the row's factor [w]. *)
 let lists =
@@ -634,6 +642,8 @@ let () =
                 Expr.(
                   window ~on:(Col.int "i") ~before:(int 1000)
                     (sum (Col.float "f"))));
+          Thumper.bench "Window/rolling-std-28-64k" (rolling_std 28);
+          Thumper.bench "Window/rolling-std-365-64k" (rolling_std 365);
           Thumper.bench "Window/running-std-1M" (fun () ->
               window Expr.(window (std (Col.float "f"))));
           Thumper.bench "Window/running-sum-1M" (fun () ->

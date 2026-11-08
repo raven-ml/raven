@@ -3941,6 +3941,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Expr.window`'s `var` and `std` with `before` take O(n log n) for n rows
+  whatever the window's size, through `Nx.moments_ranges`, instead of
+  reducing every window's rows; their bits change. A window that excludes
+  its key and has `after` still reduces its rows.
 - `Query.aggregate` over several batches holds a state of one row per group
   and at most a batch and the groups so far of held rows, for `rows`,
   `count`, `sum`, `mean`, `min`, `max`, `first`, `last`, `only`, `arg_min` and
@@ -3951,7 +3955,7 @@ word comes from its lock and from samples the dashboard saw arrive.
   two-pass), so they keep their digits for values far from zero. Their last
   bits change on most data. Running windows are unchanged.
 - `Expr.std` of float64 values whose squares underflow is no longer `0`, for
-  a group of them or a window whose partition holds only them, and `Expr.var`
+  a group of them or a window of them, and `Expr.var`
   of equal values near `max_float` is `0` rather than `infinity`.
 - Add `Expr.hash ?seed`: a frozen, per-kind xxHash64 of each row's value,
   defined for every width, float, date, time, text, null and record.

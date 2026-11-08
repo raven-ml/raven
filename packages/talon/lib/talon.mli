@@ -1527,8 +1527,12 @@ module Expr : sig
       A float sum's bits depend on the window's rows, their places among the
       rows of the enclosing frame, all partitions included, and whether the
       window has [before] or [~exclude_key:true] with [after]. They may differ
-      from {!Query.aggregate}'s over the same rows. [var] and [std] may also
-      differ between a window with [before] and one without. *)
+      from {!Query.aggregate}'s over the same rows. With [~exclude_key:true]
+      and [after], [var] and [std] are {!Query.aggregate}'s over the window's
+      rows. Otherwise, with [before], they come from {!Nx.moments_ranges} over
+      the enclosing frame's values, so that their bits depend on the window's
+      values and their places among them, and without [before] they may differ
+      from both. *)
 
   (** {3:window_cost Cost}
 
@@ -1537,13 +1541,15 @@ module Expr : sig
       booleans also sort their values. Without [before], {!count}, {!sum},
       {!mean}, {!first}, {!last}, {!var} and {!std} then take one scan, O(n)
       for n rows, and {!min}, {!max}, {!only} and the [arg_] reductions take
-      that scan too. With [before], all of these but {!var} and {!std} take
-      O(n log n). {!var} and {!std} with [before], and {!median}, {!quantile}
-      and {!n_unique} always, reduce every window's rows, in time proportional
-      to the windows' total size, which is O(n{^ 2}) without [before]. They
-      hold in memory at most 2{^ 20} of those rows, or one window's rows when
-      a window has more. A window with [~exclude_key:true] and an explicit
-      [after] costs in all of these as one with [before]. *)
+      that scan too. With [before], all of these take O(n log n), as {!var}
+      and {!std} without it do over float64 values whose variance overflows
+      or underflows. {!median}, {!quantile} and {!n_unique} reduce every
+      window's rows, in time proportional to the windows' total size, which
+      is O(n{^ 2}) without [before]. They hold in memory at most 2{^ 20} of
+      those rows, or one window's rows when a window has more. A window with
+      [~exclude_key:true] and an explicit [after] costs in all of these as
+      one with [before], but its {!var} and {!std} reduce every window's
+      rows, as {!median} does. *)
 
   (** {2:lists Lists}
 

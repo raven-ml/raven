@@ -240,6 +240,7 @@ let v s ~on ~before ~after ~exclude =
             (Nx.slice [ Nx.R (0, n - 1) ] g);
         ]
   in
+  let split = exclude && Option.is_some after in
   {
     sorted;
     position = lazy (Nx.scatter ~axis:0 sorted (positions n) (full n 0L));
@@ -253,8 +254,8 @@ let v s ~on ~before ~after ~exclude =
     a_hi = compact a_hi;
     b_lo = compact b_lo;
     b_hi = compact b_hi;
-    split = exclude;
-    running = Option.is_none before && ((not exclude) || Option.is_none after);
+    split;
+    running = Option.is_none before && not split;
   }
 
 let windows w = Nx.dim 0 w.rows
@@ -324,23 +325,82 @@ let fold : type v e.
     Nx.cast dt (fold (Nx.cast Nx.float32 x))
   else fold x
 
-(* [variance w held c] is each running window's sample variance of [c]'s
-   values at the sorted positions where [held], from their count, mean and
-   sum of squared deviations, combined by Chan, Golub and LeVeque's update of
-   partial moments. A part without values leaves the other as it is: its
-   mean, [0], is no value of the window, and no deviation is taken from it.
-   An infinite or NaN value makes the mean so, and the variance NaN, as the
-   deviations from the mean are then.
+(* Moments
 
-   A window of finite values whose moments overflow, or whose variance lies
-   where a square's underflow could show, takes them again of the values
-   scaled by its segment's [Reduce.scales]. The scale comes from values the
-   window may not hold, so it serves those windows alone: a window overflows
-   only with sums of squared deviations near max_float / 2 or more, so that
-   a value the scale takes below 2^-1022 rounds by less than their ulp, and
-   a window is scaled up only where its segment is small throughout. *)
-let variance w held c =
-  let x = Nx.take w.sorted (tensor Nx.float64 c) in
+   A window's values are one range of the held values, the range's bounds the
+   counts of held positions before the window's. [Nx.moments_ranges] gives
+   each range's mean and variance over [k] values; the sample variance is that
+   times [k / (k - 1)].
+
+   A variance past max_float is infinite, where its root need not be: the
+   spread of float64 values is below 2^1025, so that a variance is below
+   2^2049 and the values times [down] have one below 2^1009. A value that
+   [down] takes below 2^-1022 rounds by at most 2^-1075, invisible beside the
+   root of those windows, at least 2^-8 at that scale.
+
+   A variance below [Reduce.tiny] can be a square's underflow. Unequal values
+   with so small a variance have a spread below 2^-484 sqrt (2 k), and being
+   apart by at least their ulp, lie below 2^-431 sqrt (2 k), under [low] for
+   any [k] up to 2^53. Those values times [lift] have squares far above the
+   range's bottom, even the least subnormal's at 2^-968. Windows of zeros and
+   of equal large values keep their variance of exactly 0. *)
+
+let down = Float.ldexp 1. (-520)
+let lift = Float.ldexp 1. 590
+let low = Float.ldexp 1. (-400)
+let nonzero_low top = Nx.logical_and (Nx.greater_s top 0.) (Nx.less_s top low)
+
+(* [ranged w held x] is each window's sample variance of the values [x] at the
+   sorted positions where [held]. *)
+let ranged w held x : Reduce.moments =
+  let x, lo, hi =
+    match held with
+    | None -> (x, w.a_lo, w.a_hi)
+    | Some h ->
+        let before =
+          Nx.concatenate ~axis:0
+            [ Nx.zeros Nx.int64 [| 1 |]; Nx.cumsum (Nx.cast Nx.int64 h) ]
+        in
+        let bound b = Nx.take b before in
+        (Nx.take (Nx.positions h) x, bound w.a_lo, bound w.a_hi)
+  in
+  let n = Nx.sub hi lo in
+  let sample x =
+    let k = Nx.cast Nx.float64 n in
+    let _, var = Nx.moments_ranges ~lo ~hi x in
+    Nx.mul var (Nx.div k (Nx.sub_s k 1.))
+  in
+  let var = sample x in
+  let past = Nx.equal_s var Float.infinity in
+  let small = Nx.less_s var Reduce.tiny in
+  let any b = Nx.item [] (Nx.any b) in
+  let small =
+    if not (any small) then small
+    else
+      let top = Nx.reduce_ranges Max ~lo ~hi (Nx.abs x) in
+      Nx.logical_and small (nonzero_low top)
+  in
+  if not (any past || any small) then { var; up = None; n }
+  else
+    let again which scale (var, up) =
+      if not (any which) then (var, up)
+      else
+        let v = sample (Nx.mul_s x scale) in
+        (Nx.where which v var, Nx.where which (Nx.full_like up (1. /. scale)) up)
+    in
+    let var, up =
+      (var, Nx.ones_like var) |> again past down |> again small lift
+    in
+    { var; up = Some up; n }
+
+(* [running w held x] is each running window's sample variance of the values
+   [x] at the sorted positions where [held], and their number, from their
+   count, mean and sum of squared deviations, combined by Chan, Golub and
+   LeVeque's update of partial moments in one scan. A part without values
+   leaves the other as it is: its mean, [0], is no value of the window, and no
+   deviation is taken from it. An infinite or NaN value makes the mean so, and
+   the variance NaN, as the deviations from the mean are then. *)
+let running w held x =
   let len = Nx.dim 0 x in
   let held =
     match held with Some h -> h | None -> Nx.ones Nx.bool [| len |]
@@ -358,50 +418,41 @@ let variance w held c =
   in
   let s = Nx.Ptree.(triple tensor tensor tensor) in
   let at empty y = last w (Nx.full Nx.float64 [| 1 |] empty) y in
-  let moments x =
-    let x = (Nx.cast Nx.float64 held, Nx.where held x zero, zero) in
-    let n, m, q = scan w s chan x in
-    let n = at 0. n in
-    let v = Nx.div (at 0. q) (Nx.sub_s n 1.) in
-    (Nx.where (Nx.isfinite (at 0. m)) v (Nx.full_like v Float.nan), n)
-  in
-  let var, n = moments x in
-  let n = Nx.cast Nx.int64 n in
-  (* The windows of two values or more, all finite, whose variance is not,
-     or whose variance lies where a square's underflow could show. *)
-  let suspect () =
-    let some b = if Nx.item [] (Nx.any b) then Some b else None in
+  let x = (Nx.cast Nx.float64 held, Nx.where held x zero, zero) in
+  let n, m, q = scan w s chan x in
+  let n = at 0. n in
+  let v = Nx.div (at 0. q) (Nx.sub_s n 1.) in
+  (Nx.where (Nx.isfinite (at 0. m)) v (Nx.full_like v Float.nan), n)
+
+(* [variance w held c] is each window's sample variance of [c]'s values at the
+   sorted positions where [held]: one scan for running windows, the ranges
+   otherwise. The windows of two values or more, all finite, whose scan
+   overflowed where their variance need not, or whose variance is below
+   [Reduce.tiny] with values as small as [low], take the ranges too: the scan
+   costs less, and the ranges overflow only where the variance does. *)
+let variance w held c =
+  let x = Nx.take w.sorted (tensor Nx.float64 c) in
+  if not w.running then ranged w held x
+  else
+    let var, n = running w held x in
+    let n = Nx.cast Nx.int64 n in
     let infinite = Nx.logical_not (Nx.isfinite var) in
-    let tiny = Nx.less_s var Reduce.tiny in
-    let odd =
-      Nx.logical_and (Nx.greater_equal_s n 2L) (Nx.logical_or infinite tiny)
-    in
-    if not (Reduce.overflows c && Nx.item [] (Nx.any odd)) then None
+    let suspect = Nx.logical_or infinite (Nx.less_s var Reduce.tiny) in
+    let odd = Nx.logical_and (Nx.greater_equal_s n 2L) suspect in
+    let unscaled = { Reduce.var; up = None; n } in
+    if not (Reduce.overflows c && Nx.item [] (Nx.any odd)) then unscaled
     else
       let bad = Nx.cast Nx.int64 (Nx.logical_not (Nx.isfinite x)) in
-      let clean = Nx.equal_s (fold w Add ~held:(Some held) bad) 0L in
-      some (Nx.logical_and odd clean)
-  in
-  match suspect () with
-  | None -> { Reduce.var; up = None; n }
-  | Some redo ->
-      let ids = Nx.sub_s (Nx.cumsum (Nx.cast Nx.int64 w.starts)) 1L in
-      let segments = Int64.to_int (Nx.item [ -1 ] ids) + 1 in
-      let max y = Nx.reduce_segments Max ~segments ids (Nx.where held y zero) in
-      let up, down = Reduce.scales max x in
-      let down_w = at 1. (Nx.take ids down) in
-      let redo = Nx.logical_and redo (Reduce.helped var down_w) in
-      if not (Nx.item [] (Nx.any redo)) then { Reduce.var; up = None; n }
+      let clean = Nx.equal_s (fold w Add ~held bad) 0L in
+      let top = fold w Max ~held (Nx.abs x) in
+      let reachable = Nx.logical_or infinite (nonzero_low top) in
+      let redo = Nx.logical_and (Nx.logical_and odd clean) reachable in
+      if not (Nx.item [] (Nx.any redo)) then unscaled
       else
-        (* Equal values have variance 0: a rounded mean's one deviation,
-           scaled into range, must not show. *)
-        let extreme op = fold w op ~held:(Some held) x in
-        let same = Nx.logical_and redo (Nx.equal (extreme Min) (extreme Max)) in
-        let redo = Nx.logical_and redo (Nx.logical_not same) in
-        let scaled, _ = moments (Nx.mul x (Nx.take ids down)) in
-        let up = Nx.where redo (at 1. (Nx.take ids up)) (Nx.ones_like var) in
-        let var = Nx.where redo scaled var in
-        { var = Nx.where same (Nx.zeros_like var) var; up = Some up; n }
+        let r = ranged w held x in
+        let only up = Nx.where redo up (Nx.ones_like up) in
+        let up = Option.map only r.up in
+        { var = Nx.where redo r.var var; up; n }
 
 (* Gathers
 
@@ -476,7 +527,7 @@ let frame w : Reduce.frame =
       fold = (fun op x -> fold w op ~held (Nx.take w.sorted x));
       pick;
       extreme;
-      variance = (if w.running then Some variance else None);
+      variance = (if w.split then None else Some variance);
       holistic = (fun r ty p -> gather r ty w p);
     }
   in
