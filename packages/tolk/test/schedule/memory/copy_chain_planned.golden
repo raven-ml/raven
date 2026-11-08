@@ -12,38 +12,44 @@
 11 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=0, dtype=dtypes.i8, device="CPU")
 12 Ops.SINK dtypes.void [10, 11]
 13 Ops.CONST dtypes.weakint [] 256
-14 Ops.SHRINK dtypes.i8 [5, 13, 0]
-15 Ops.CALL dtypes.void [12, 14, 7] CallInfo()
-16 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
-17 Ops.STORE dtypes.void [16, 2]
-18 Ops.CONST dtypes.weakint [] 64
-19 Ops.SHRINK dtypes.i8 [5, 6, 18]
-20 Ops.BITCAST dtypes.f32 [19] dtypes.f32
-21 Ops.CALL dtypes.void [17, 20, 8] CallInfo()
-22 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=4, dtype=dtypes.i8, device="CPU")
-23 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
-24 Ops.SINK dtypes.void [22, 23]
-25 Ops.CALL dtypes.void [24, 14, 20] CallInfo()
-26 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=6, dtype=dtypes.f32, device="CPU")
-27 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=5, dtype=dtypes.i8, device="CPU")
-28 Ops.SINK dtypes.void [26, 27]
-29 Ops.SHRINK dtypes.i8 [5, 13, 18]
-30 Ops.BITCAST dtypes.f32 [29] dtypes.f32
-31 Ops.CALL dtypes.void [28, 30, 7] CallInfo()
-32 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=8, dtype=dtypes.i8, device="CPU")
-33 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=7, dtype=dtypes.i8, device="CPU")
-34 Ops.SINK dtypes.void [32, 33]
-35 Ops.CALL dtypes.void [34, 14, 7] CallInfo()
-36 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=10, dtype=dtypes.i8, device="CPU")
-37 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=9, dtype=dtypes.f32, device="CPU")
-38 Ops.SINK dtypes.void [36, 37]
-39 Ops.CALL dtypes.void [38, 14, 20] CallInfo()
-40 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=12, dtype=dtypes.f32, device="CPU")
-41 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=11, dtype=dtypes.i8, device="CPU")
-42 Ops.SINK dtypes.void [40, 41]
-43 Ops.CALL dtypes.void [42, 30, 7] CallInfo()
-44 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=13, dtype=dtypes.i8, device="CPU")
-45 Ops.SINK dtypes.void [44]
-46 Ops.CALL dtypes.void [45, 44] CallInfo()
-47 Ops.LINEAR dtypes.void [9, 15, 21, 25, 9, 31, 9, 35, 21, 39, 9, 43, 46]
+14 Ops.BUFFER dtypes.i8 [13] ParamArg(slot=15, dtype=dtypes.i8, device="CPU")
+15 Ops.SHRINK dtypes.i8 [14, 6, 0]
+16 Ops.CALL dtypes.void [12, 15, 7] CallInfo()
+17 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+18 Ops.STORE dtypes.void [17, 2]
+19 Ops.CONST dtypes.weakint [] 64
+20 Ops.SHRINK dtypes.i8 [5, 13, 19]
+21 Ops.BITCAST dtypes.f32 [20] dtypes.f32
+22 Ops.CALL dtypes.void [18, 21, 8] CallInfo()
+23 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=4, dtype=dtypes.i8, device="CPU")
+24 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+25 Ops.SINK dtypes.void [23, 24]
+26 Ops.CALL dtypes.void [25, 15, 21] CallInfo()
+27 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=6, dtype=dtypes.f32, device="CPU")
+28 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=5, dtype=dtypes.i8, device="CPU")
+29 Ops.SINK dtypes.void [27, 28]
+30 Ops.SHRINK dtypes.i8 [14, 6, 19]
+31 Ops.BITCAST dtypes.f32 [30] dtypes.f32
+32 Ops.CALL dtypes.void [29, 31, 7] CallInfo()
+33 Ops.SHRINK dtypes.i8 [5, 13, 0]
+34 Ops.CALL dtypes.void [3, 33, 8] CallInfo()
+35 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=8, dtype=dtypes.i8, device="CPU")
+36 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=7, dtype=dtypes.i8, device="CPU")
+37 Ops.SINK dtypes.void [35, 36]
+38 Ops.CALL dtypes.void [37, 15, 33] CallInfo()
+39 Ops.SHRINK dtypes.i8 [5, 6, 19]
+40 Ops.BITCAST dtypes.f32 [39] dtypes.f32
+41 Ops.CALL dtypes.void [18, 40, 8] CallInfo()
+42 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=10, dtype=dtypes.i8, device="CPU")
+43 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=9, dtype=dtypes.f32, device="CPU")
+44 Ops.SINK dtypes.void [42, 43]
+45 Ops.CALL dtypes.void [44, 15, 40] CallInfo()
+46 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=12, dtype=dtypes.f32, device="CPU")
+47 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=11, dtype=dtypes.i8, device="CPU")
+48 Ops.SINK dtypes.void [46, 47]
+49 Ops.CALL dtypes.void [48, 31, 33] CallInfo()
+50 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=13, dtype=dtypes.i8, device="CPU")
+51 Ops.SINK dtypes.void [50]
+52 Ops.CALL dtypes.void [51, 50] CallInfo()
+53 Ops.LINEAR dtypes.void [9, 16, 22, 26, 9, 32, 34, 38, 41, 45, 34, 49, 52]
 
