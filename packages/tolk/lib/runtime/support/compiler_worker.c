@@ -252,11 +252,19 @@ static bool start_watch(void) {
 }
 
 void serve(int argc, char **argv, const char *library) {
-  if (argc != 2) {
-    fprintf(stderr, "usage: %s %s\n", argv[0], library);
+  if (argc != 3) {
+    fprintf(stderr, "usage: %s %s TEMP\n", argv[0], library);
     exit(2);
   }
   reset();
+  /* The library's temporary files go to TEMP, which the parent removes when
+     the worker ends: a compile that aborts leaves its files there. */
+#ifdef _WIN32
+  _putenv_s("TMP", argv[2]);
+  _putenv_s("TEMP", argv[2]);
+#else
+  setenv("TMPDIR", argv[2], 1);
+#endif
 #ifdef _WIN32
   _setmode(0, _O_BINARY);
   _setmode(1, _O_BINARY);

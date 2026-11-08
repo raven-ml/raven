@@ -42,13 +42,15 @@ let rec remove path =
       Unix.rmdir path
   | _ -> Unix.unlink path
 
-(* comgr writes its temporary files under TMPDIR, and its own cache under
-   AMD_COMGR_CACHE_DIR, which the workers inherit: both name a directory of
-   this process's own, removed when it exits, so that a compile that ends its
-   worker, which leaves its temporary files behind, leaves them there. *)
+(* This process's temporary directory, where workers' temporary directories
+   are made, its TMPDIR, and AMD_COMGR_CACHE_DIR, where comgr keeps its own
+   cache, are a directory of this process's own, removed when it exits: what
+   a compile leaves behind, in a worker's directory or in TMPDIR, is seen
+   there, and gone after. *)
 let scratch =
   let dir = Filename.temp_dir "tolk-test-comgr" "" in
   at_exit (fun () -> remove dir);
+  Filename.set_temp_dir_name dir;
   Unix.putenv "TMPDIR" dir;
   dir
 
@@ -267,6 +269,19 @@ let ended pid =
           | Some i -> i + 2 < String.length s && s.[i + 2] = 'Z'
           | None -> false))
 
+(* The paths under [dir] of comgr's temporary directories, named comgr-XXXXXX,
+   which a compile that aborts leaves behind. *)
+let rec comgr_files dir =
+  List.concat_map
+    (fun name ->
+      let path = Filename.concat dir name in
+      if String.starts_with ~prefix:"comgr-" name then [ path ]
+      else
+        match (Unix.lstat path).st_kind with
+        | S_DIR -> comgr_files path
+        | _ -> [])
+    (Array.to_list (Sys.readdir dir))
+
 (* [kernel] including the FIFO [fifo]: its compile waits in the preprocessor
    for a writer to open [fifo], then for the writer to close it. *)
 let waiting fifo = Printf.sprintf "#include \"%s\"\n%s" fifo kernel
@@ -375,6 +390,12 @@ let process =
             else []
           in
           equal (list string) [] entries);
+      slow
+      @@ test "a compile that ends its process leaves no temporary file"
+           (fun () ->
+             ignore (with_comgr (fun () -> compile kernel));
+             is_some (rejection (fun () -> compile unselectable));
+             equal (list string) [] (comgr_files scratch));
       slow
       @@ test "a worker whose parent is killed during a compile ends"
            (fun () ->

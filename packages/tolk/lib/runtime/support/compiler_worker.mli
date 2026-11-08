@@ -29,7 +29,12 @@ val v : name:string -> string -> t
 
 val call : t -> string -> string -> (string, string) result
 (** [call w library request] has a worker of [w] serving [library] answer
-    [request]: one that is idle, or else one it starts, as [PROGRAM LIBRARY].
+    [request]: one that is idle, or else one it starts, as
+    [PROGRAM LIBRARY TEMP]. [TEMP] is a directory of the worker's own in
+    {!Filename.get_temp_dir_name}, made its temporary directory, which this
+    process removes when it finds the worker ended, crashed or not, or else
+    when this process exits, so that the files a crashed compile leaves go
+    with it.
     A serving worker reads requests, each [N\n] then [N] bytes, on its
     standard input, replies to each on its standard output once it has read
     it whole, and ends when its input does, which this process's end closes

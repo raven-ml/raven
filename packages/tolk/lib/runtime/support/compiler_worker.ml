@@ -22,7 +22,8 @@ external spawn :
 
 (* A serving worker: the process that started it, its process, the library
    it loaded, the descriptors of its replies and its requests (one socket but
-   on Windows), and of its diagnostics, a file that no name reaches. *)
+   on Windows), and of its diagnostics, a file that no name reaches, and the
+   directory of its temporary files. *)
 type serving = {
   owner : int;
   pid : int;
@@ -30,6 +31,7 @@ type serving = {
   replies : Unix.file_descr;
   requests : Unix.file_descr;
   log : Unix.file_descr;
+  temp : string;
 }
 
 (* [lock] guards [path] and [idle], the serving workers no call holds. *)
@@ -41,8 +43,30 @@ type t = {
   mutable idle : serving list;
 }
 
+let rec remove_tree path =
+  match (Unix.lstat path).st_kind with
+  | S_DIR ->
+      let names = Sys.readdir path in
+      Array.iter (fun n -> remove_tree (Filename.concat path n)) names;
+      Unix.rmdir path
+  | _ -> Unix.unlink path
+
+(* Removes the file or directory tree [path], following no symbolic link. What
+   cannot be removed stays: it is in the system's temporary directory, and
+   the compile it served has its outcome already. *)
+let remove path =
+  try remove_tree path with Unix.Unix_error _ | Sys_error _ -> ()
+
+(* The idle workers' directories are removed when this process exits; their
+   processes end then too, their input closed. *)
 let v ~name program =
-  { name; program; lock = Mutex.create (); path = None; idle = [] }
+  let w = { name; program; lock = Mutex.create (); path = None; idle = [] } in
+  at_exit (fun () ->
+      Mutex.protect w.lock @@ fun () ->
+      List.iter
+        (fun p -> if p.owner = Unix.getpid () then remove p.temp)
+        w.idle);
+  w
 
 (* The program *)
 
@@ -193,18 +217,17 @@ let channel () =
     guarded [ mine; theirs ] (fun () -> no_sigpipe mine);
     ((mine, mine), (theirs, theirs))
 
-(* Starts [program] on [library], its standard input, output and error the
-   descriptors [input], [output] and [errors]. On Windows the child inherits
-   these alone ([caml_tolk_worker_spawn]): Unix.create_process would let it
-   inherit any handle another start makes inheritable meanwhile, such as
-   another worker's pipe. *)
-let spawn_worker program library input output errors =
+(* Starts [program] on [library] and [temp], its standard input, output and
+   error the descriptors [input], [output] and [errors]. On Windows the child
+   inherits these alone ([caml_tolk_worker_spawn]): Unix.create_process would
+   let it inherit any handle another start makes inheritable meanwhile, such
+   as another worker's pipe. *)
+let spawn_worker program library temp input output errors =
+  let args = [ program; library; temp ] in
   if Sys.win32 then
-    let cmdline =
-      String.concat " " (List.map Filename.quote [ program; library ])
-    in
+    let cmdline = String.concat " " (List.map Filename.quote args) in
     spawn program cmdline input output errors
-  else Unix.create_process program [| program; library |] input output errors
+  else Unix.create_process program (Array.of_list args) input output errors
 
 let start w library =
   let program = program_path w in
@@ -216,19 +239,26 @@ let start w library =
     | Unix.Unix_error (e, _, _) -> Unix.error_message e
     | e -> raise e
   in
-  let log = try log_file w with e -> fail (reason e) in
-  let (replies, requests), theirs =
-    try guarded [ log ] channel with e -> fail (reason e)
+  let temp =
+    try Filename.temp_dir ("tolk-" ^ w.name ^ "-") "" with e -> fail (reason e)
   in
-  match spawn_worker program library (fst theirs) (snd theirs) log with
+  let fail_removing e =
+    remove temp;
+    fail (reason e)
+  in
+  let log = try log_file w with e -> fail_removing e in
+  let (replies, requests), theirs =
+    try guarded [ log ] channel with e -> fail_removing e
+  in
+  match spawn_worker program library temp (fst theirs) (snd theirs) log with
   | pid ->
       close_pair theirs;
-      { owner = Unix.getpid (); pid; library; replies; requests; log }
+      { owner = Unix.getpid (); pid; library; replies; requests; log; temp }
   | exception e ->
       close_pair theirs;
       close_pair (replies, requests);
       Unix.close log;
-      fail (reason e)
+      fail_removing e
 
 (* An idle worker of [library]. Workers started by another process, the one
    this process was forked from, are dropped, their descriptors closed: their
@@ -344,6 +374,7 @@ let stop p ~kill =
   let status = wait () in
   close_pair (p.replies, p.requests);
   Unix.close p.log;
+  remove p.temp;
   ending status
 
 (* A worker taken idle whose end is closed when the request is sent died

@@ -9,9 +9,11 @@
    compiles until its input ends, and ends during a compile if the parent's
    end of its input closes.
 
-     worker LIBRARY
+     worker LIBRARY TEMP
 
-   LIBRARY is the vendor's library. A request, on standard input, is N\n then
+   LIBRARY is the vendor's library, TEMP a directory of the worker's own for
+   the library's temporary files (TMPDIR, or TMP and TEMP on Windows), which
+   the parent removes when the worker ends. A request, on standard input, is N\n then
    N bytes: the worker's fields, each NUL-terminated, then the source. The
    reply goes to standard output, once per request:
 
