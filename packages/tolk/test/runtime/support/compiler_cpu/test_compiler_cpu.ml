@@ -595,9 +595,10 @@ let features =
           let text = disassembly arch (rendered arch "half_add") in
           equal ~msg:text bool fcvt (mentions "fcvt" text));
       test "arm64 vectorizes with its SIMD registers" (fun () ->
-          is_true (uses_vectors (disassembly "arm64,generic" add)));
+          let text = disassembly "arm64,generic" add_n in
+          is_true ~msg:text (uses_vectors text));
       test "-simd on arm64 disables them" (fun () ->
-          let text = disassembly "arm64,generic,-simd" add in
+          let text = disassembly "arm64,generic,-simd" add_n in
           is_false ~msg:text (uses_vectors text));
       test "a feature on riscv64 is an extension the processor gains" (fun () ->
           not_equal string
