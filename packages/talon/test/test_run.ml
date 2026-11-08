@@ -2766,6 +2766,38 @@ let streamed_edges =
             Expr.[ "o" := only x; "n" := rows ]
             stream;
           same_as_one_batch ~by:[ "x" ] ~plan Expr.[ "n" := rows ] stream);
+      test "a group of nulls is the same bytes whatever the batches" (fun () ->
+          let t n =
+            v
+              [
+                ("g", Column.v Type.int64 (Array.make n 0));
+                ("x", Column.of_options Type.int64 (Array.make n None));
+              ]
+          in
+          let x = Col.int "x" in
+          let q by os t = Query.aggregate ~by os (Query.of_table t) in
+          let same by os =
+            same_outcome (q by os (t 3)) (q by os (of_batches [ t 2; t 1 ]))
+          in
+          (* A group of no row: a filter empties both batches. *)
+          let empties by os =
+            let p t =
+              Query.aggregate ~by os
+                (Query.filter
+                   Expr.(Col.int "g" <> int 0)
+                   (Query.of_table t))
+            in
+            same_outcome (p (t 2)) (p (of_batches [ t 1; t 1 ]))
+          in
+          List.iter
+            (fun by ->
+              same by Expr.[ "r" := arg_min x ];
+              same by Expr.[ "r" := arg_max x ];
+              same by Expr.[ "r" := mean x ];
+              empties by Expr.[ "r" := arg_min x ];
+              empties by Expr.[ "r" := arg_max x ];
+              empties by Expr.[ "r" := mean x ])
+            [ []; [ "g" ] ]);
       test "a leading batch a filter empties" (fun () ->
           let t xs = v [ ("x", Column.v Type.int64 xs) ] in
           let plan = Query.filter Expr.(Col.int "x" < int 3) in
@@ -2846,6 +2878,23 @@ let law_streamed (sample, by, whole, stream) =
   equal ~msg:"all" outcome_w (run whole outs) (run stream outs);
   equal ~msg:"streamed together" outcome_w (run whole streams)
     (run stream streams);
+  (* {!Query.run}'s layouts do not depend on batches, the bytes under a null
+     included: a group without a value holds nothing to merge. *)
+  let (G.Sample (ty, _)) = sample in
+  let x = Col.v (Type.kind ty) "x" in
+  let counts =
+    run_ok
+      (Query.aggregate ~by
+         Expr.[ "n" := count x; "r" := rows ]
+         (Query.of_table whole))
+  in
+  let ints n = Nx.to_array (Column.to_tensor Nx.int64 (column counts n)) in
+  let without_value =
+    Array.exists2 (fun n r -> n = 0L && r > 0L) (ints "n") (ints "r")
+  in
+  cover "a group of nulls only" without_value;
+  let bytes t = Query.aggregate ~by streams (Query.of_table t) in
+  same_outcome (bytes whole) (bytes stream);
   List.iter
     (fun o -> equal outcome_w (run whole [ o ]) (run stream [ o ]))
     outs;

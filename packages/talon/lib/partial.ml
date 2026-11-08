@@ -68,7 +68,9 @@ let small_int : type a. a Type.t -> bool = function
   | _ -> false
 
 (* An [arg_min] or [arg_max]: a state row wins at its own place, and a later
-   row at the rows before it plus its place. *)
+   row at the rows before it plus its place. A group of no value is [at]
+   itself, which is null over the blocking aggregate's slot, where the place's
+   arithmetic would leave the state's row count under the null. *)
 let arg st j ty a r v =
   let extreme = field st j ty a (reduce ty v) in
   let rows = field st j int64 (lit 1) (reduce int64 Sum) in
@@ -76,10 +78,11 @@ let arg st j ty a r v =
   let place = branch int64 (is_null a) null (lit 0) in
   field st j int64 place (fun p ->
       let at = reduce int64 r extreme in
-      branch int64
-        (compare_ `Eq at (lit 0))
-        (reduce int64 First p)
-        (add (reduce int64 First rows) (add at (lit (-1)))))
+      branch int64 (is_null at) at
+        (branch int64
+           (compare_ `Eq at (lit 0))
+           (reduce int64 First p)
+           (add (reduce int64 First rows) (add at (lit (-1))))))
 
 let mean st j ty a =
   let sum ty x = field st j ty x (reduce ty Sum) in
@@ -93,11 +96,15 @@ let mean st j ty a =
         total
         (nx_cast float64 int64 (sum int64 (nx_cast int64 ty a)))
   in
-  let n = nx_cast float64 int64 c in
-  branch float64
-    (compare_ `Eq c (lit 0))
-    (Expr.typed (fixed float64) Null)
-    (Expr.typed (fixed float64) (Float (Div, total, n)))
+  (* A null count leaves the quotient's slot, [total / 0], as a blocking mean
+     does; a null branch would put [0.] there. *)
+  let n =
+    branch float64
+      (compare_ `Eq c (lit 0))
+      (Expr.typed (fixed float64) Null)
+      (nx_cast float64 int64 c)
+  in
+  Expr.typed (fixed float64) (Float (Div, total, n))
 
 let reduction : type a b s r.
     st -> int -> (a, b) Expr.reduction -> (a, s) Expr.t -> (b, r) Expr.t =
