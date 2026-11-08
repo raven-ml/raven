@@ -134,6 +134,8 @@ and rune), raven / llama.cpp b12048 Vulkan:
   `-mllvm -disable-loop-idiom-all` covers host Clang only, and no CI job runs
   LLVM 22+, where the pass's CRC recogniser walks a running select's paths
   (fixed upstream after 23.1.5)
+- tolk's Tc case "chain › an accumulator chains…" takes 16.6 s alone and
+  timed out at 60 s at load 34-50
 
 ## rune, kaun, vega
 
