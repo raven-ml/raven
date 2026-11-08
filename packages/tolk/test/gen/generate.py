@@ -68,6 +68,7 @@ UNMODIFIED = {
     "uop/symbolic",
     "renderer/renderer",
     "schedule/prepare",
+    "device",
 }
 
 HERE = Path(__file__).resolve().parent
