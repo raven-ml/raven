@@ -5171,31 +5171,12 @@ fold wraps integers and holds its float bound`, hold.
   compile bench `linalg/eigh-f64-32x32`. These three fail without the fix
   only under a Clang of LLVM 22 or 23.
 
-## D168. The renderer finds a program's callees by a scan of its instructions
+## D168. Withdrawn
 
-- **tinygrad:** `renderer/cstyle.py:278-286` (`CStyleLanguage.render`, which
-  lists the callees by a toposort of `UOp.sink(*uops)`, entering calls where
-  the renderer inlines their bodies, then renders each body, then the
-  program).
-- **tolk:** `Cstyle.callees`, which `Cstyle.render` asks.
-- **Differs:** a scan of the instructions replaces the toposort: each
-  call's callee is met at the call, and a body not met before is scanned
-  through its own instructions, then listed. The instructions are in order,
-  each after its sources, and hold every node but the bodies of calls, which
-  a toposort of their sink enters at their call: the externs and the bodies
-  come in the toposort's order, and the source is the same.
-- **Reason:** (d): compile time of every kernel, most of which call nothing.
-  The toposort of the whole program, call bodies entered, took 16 to 22% of
-  the tolk bench's `*/render` rows on fudge and 7 to 13% of their
-  allocation, `gpt_oss_decode/render` and `gpt_oss_prefill/render` among
-  them. On fudge, rendering `conv`'s kernels took 1.33M instructions with
-  it and 1.12M with the scan, against 1.06M before calls were rendered.
-- **Pinned by:** `Tolk.Codegen › calls in a kernel ›` `externs and functions
-  are declared as a toposort of the instructions meets them`, `a body calls
-  an external function the kernel declares once`, `bodies of one name traced
-  apart are two functions` and `one body called twice is one function`; the
-  tolk bench's `*/render` rows on fudge, whose time and exact allocation
-  would catch the toposort's return.
+The renderer listed a program's callees by a scan of its instructions, in
+place of tinygrad's toposort of the program, for 7 to 13% of render
+allocation. On fudge that gain is 2% of render words and 0.4% of compile
+instructions: it did not pay for the scan.
 
 ## D169. A scheduler reads its kernel's axes once, and keeps a flat kernel
 

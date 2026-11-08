@@ -1126,28 +1126,18 @@ let render_uops l uops =
   List.iter visit uops;
   (!name, List.rev !kernel, List.rev !bufs)
 
-(* The external functions and the call bodies the instructions [uops] call,
-   in the order a walk of the program meets them: a body after the callees of
-   its own instructions. The instructions are in order, each after its
-   sources, and hold every node but the bodies of calls, which the walk enters
-   at their call. *)
+(* The external functions and the call bodies the instructions [uops] call, in
+   the order a toposort of the program meets their calls, bodies included. *)
 let callees uops =
-  let found = ref [] in
-  let rec scan us =
-    List.iter
-      (fun u -> if is Op.Call u && not (code_call u) then enter (nth u 0))
-      us
-  and enter callee =
-    if not (List.memq callee !found) then
-      match op callee with
-      | Op.Custom_function -> found := callee :: !found
-      | Op.Linear ->
-          scan (src callee);
-          found := callee :: !found
-      | _ -> ()
+  let callee u =
+    if not (is Op.Call u) || code_call u then None
+    else
+      let c = nth u 0 in
+      if is Op.Custom_function c || is Op.Linear c then Some c else None
   in
-  scan uops;
-  List.rev !found
+  List.filter_map callee (toposort ~calls:Enter (sink uops))
+  |> List.fold_left (fun a c -> if List.memq c a then a else c :: a) []
+  |> List.rev
 
 (* The bodies that a call compiled on its own calls ({!Ops.call_info}): a
    compiler keeps them out of line, so that it compiles each once however
