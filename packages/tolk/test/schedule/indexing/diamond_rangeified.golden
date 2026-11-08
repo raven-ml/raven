@@ -12,12 +12,12 @@
 11 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
 12 Ops.MUL dtypes.f32 [10, 11]
 13 Ops.EXP2 dtypes.f32 [12]
-14 Ops.STAGE dtypes.f32 [13, 6, 8] BufferizeOpts(device="CPU", broadcast=True)
+14 Ops.STAGE dtypes.f32 [13, 6, 8] BufferizeOpts(device="CPU")
 15 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 5)
 16 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 4)
 17 Ops.INDEX dtypes.f32 [14, 15, 16]
 18 Ops.REDUCE dtypes.f32 [17, 15] (Ops.ADD, 0)
-19 Ops.STAGE dtypes.f32 [18, 16] BufferizeOpts(device="CPU", broadcast=True)
+19 Ops.STAGE dtypes.f32 [18, 16] BufferizeOpts(device="CPU")
 20 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 3)
 21 Ops.INDEX dtypes.f32 [19, 20]
 22 Ops.INDEX dtypes.f32 [14, 2, 20]
@@ -27,11 +27,9 @@
 26 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 2)
 27 Ops.INDEX dtypes.f32 [14, 25, 26]
 28 Ops.REDUCE dtypes.f32 [27, 25, 26] (Ops.MAX, 0)
-29 Ops.STAGE dtypes.f32 [28] BufferizeOpts(device="CPU", broadcast=True)
-30 Ops.INDEX dtypes.f32 [29]
-31 Ops.ADD dtypes.f32 [24, 30]
-32 Ops.STORE dtypes.void [3, 31]
-33 Ops.END dtypes.void [32, 2]
-34 Ops.AFTER dtypes.f32 [1, 33]
-35 Ops.SINK dtypes.void [34]
+29 Ops.ADD dtypes.f32 [24, 28]
+30 Ops.STORE dtypes.void [3, 29]
+31 Ops.END dtypes.void [30, 2]
+32 Ops.AFTER dtypes.f32 [1, 31]
+33 Ops.SINK dtypes.void [32]
 

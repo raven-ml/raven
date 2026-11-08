@@ -27,7 +27,7 @@
 26 Ops.CONST dtypes.weakfloat [] -inf
 27 Ops.WHERE dtypes.f32 [13, 25, 26]
 28 Ops.CONST dtypes.weakint [] 0
-29 Ops.STAGE dtypes.f32 [27, 28, 21, 17, 19] BufferizeOpts(device="CPU", broadcast=True)
+29 Ops.STAGE dtypes.f32 [27, 28, 21, 17, 19] BufferizeOpts(device="CPU")
 30 Ops.MUL dtypes.weakint [3, 7]
 31 Ops.RANGE dtypes.weakint [7] (AxisType.WEAK, 3)
 32 Ops.ADD dtypes.weakint [30, 31]

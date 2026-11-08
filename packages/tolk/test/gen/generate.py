@@ -75,6 +75,7 @@ UNMODIFIED = {
     "engine/realize",
     "schedule/memory",
     "codegen/opt/search",
+    "schedule/indexing",
 }
 
 HERE = Path(__file__).resolve().parent

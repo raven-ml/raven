@@ -1,0 +1,53 @@
+# tolk D77 golden=b2e41994bb6ab5e50aba50e9f935c518
+0 Ops.CONST dtypes.weakint [] 32
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+4 Ops.CONST dtypes.weakint [] 8
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 1)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.INDEX dtypes.f32 [1, 7]
+9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+10 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 8)
+11 Ops.MUL dtypes.weakint [10, 4]
+12 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 9)
+13 Ops.ADD dtypes.weakint [11, 12]
+14 Ops.INDEX dtypes.f32 [9, 13]
+15 Ops.STAGE dtypes.f32 [14, 10, 12] BufferizeOpts(device="CPU")
+16 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 4)
+17 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 5)
+18 Ops.INDEX dtypes.f32 [15, 16, 17]
+19 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 6)
+20 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 7)
+21 Ops.INDEX dtypes.f32 [15, 19, 20]
+22 Ops.REDUCE dtypes.f32 [21, 20] (Ops.ADD, 0)
+23 Ops.CONST dtypes.weakfloat [] 8.0
+24 Ops.RECIP dtypes.weakfloat [23]
+25 Ops.MUL dtypes.f32 [22, 24]
+26 Ops.CONST dtypes.weakint [] 0
+27 Ops.STAGE dtypes.f32 [25, 19, 26] BufferizeOpts(device="CPU", broadcast=True)
+28 Ops.INDEX dtypes.f32 [27, 16, 26]
+29 Ops.CONST dtypes.weakfloat [] -1.0
+30 Ops.MUL dtypes.f32 [28, 29]
+31 Ops.ADD dtypes.f32 [18, 30]
+32 Ops.STAGE dtypes.f32 [31, 16, 17] BufferizeOpts(device="CPU")
+33 Ops.INDEX dtypes.f32 [32, 3, 6]
+34 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 2)
+35 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 3)
+36 Ops.INDEX dtypes.f32 [32, 34, 35]
+37 Ops.MUL dtypes.f32 [36, 36]
+38 Ops.REDUCE dtypes.f32 [37, 35] (Ops.ADD, 0)
+39 Ops.CONST dtypes.weakfloat [] 7.0
+40 Ops.RECIP dtypes.weakfloat [39]
+41 Ops.MUL dtypes.f32 [38, 40]
+42 Ops.SQRT dtypes.f32 [41]
+43 Ops.STAGE dtypes.f32 [42, 34, 26] BufferizeOpts(device="CPU", broadcast=True)
+44 Ops.INDEX dtypes.f32 [43, 3, 26]
+45 Ops.RECIP dtypes.f32 [44]
+46 Ops.MUL dtypes.f32 [33, 45]
+47 Ops.STORE dtypes.void [8, 46]
+48 Ops.END dtypes.void [47, 3, 6]
+49 Ops.AFTER dtypes.f32 [1, 48]
+50 Ops.SINK dtypes.void [49]
+

@@ -51,7 +51,7 @@
 50 Ops.INDEX dtypes.f32 [48, 49]
 51 Ops.SQRT dtypes.f32 [50]
 52 Ops.RECIP dtypes.f32 [51]
-53 Ops.STAGE dtypes.f32 [52, 49] BufferizeOpts(device="CPU", broadcast=True)
+53 Ops.STAGE dtypes.f32 [52, 49] BufferizeOpts(device="CPU")
 54 Ops.INDEX dtypes.f32 [53, 8]
 55 Ops.MUL dtypes.f32 [47, 54]
 56 Ops.CMPLT dtypes.bool [13, 55]

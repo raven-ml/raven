@@ -1,0 +1,51 @@
+# tolk D77 golden=53059a1174e8f7f235bbd3f060212355
+0 Ops.CONST dtypes.weakint [] 2
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+3 Ops.INDEX dtypes.i32 [1, 2]
+4 Ops.ALLOC dtypes.i32 [0] ParamArg(slot=3, dtype=dtypes.i32, device="CPU")
+5 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 5)
+6 Ops.INDEX dtypes.i32 [4, 5]
+7 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="PYTHON")
+8 Ops.INDEX dtypes.i32 [7, 5]
+9 Ops.STORE dtypes.void [6, 8]
+10 Ops.END dtypes.void [9, 5]
+11 Ops.AFTER dtypes.i32 [4, 10]
+12 Ops.INDEX dtypes.i32 [11, 2]
+13 Ops.CONST dtypes.bool [] True
+14 Ops.CONST dtypes.weakint [] 8
+15 Ops.RANGE dtypes.weakint [14] (AxisType.WEAK, 3)
+16 Ops.RANGE dtypes.weakint [14] (AxisType.WEAK, 4)
+17 Ops.ADD dtypes.weakint [15, 16]
+18 Ops.CONST dtypes.weakint [] 7
+19 Ops.CMPLT dtypes.bool [17, 18]
+20 Ops.CONST dtypes.bool [] False
+21 Ops.CMPEQ dtypes.bool [19, 20]
+22 Ops.AND dtypes.bool [13, 21]
+23 Ops.CONST dtypes.weakint [] 1
+24 Ops.CAST dtypes.i32 [23] dtypes.i32
+25 Ops.CONST dtypes.weakint [] 0
+26 Ops.WHERE dtypes.i32 [22, 24, 25]
+27 Ops.REDUCE dtypes.i32 [26, 16] (Ops.ADD, 0)
+28 Ops.STAGE dtypes.i32 [27, 15] BufferizeOpts(device="CPU", broadcast=True)
+29 Ops.RANGE dtypes.weakint [14] (AxisType.WEAK, 1)
+30 Ops.INDEX dtypes.i32 [28, 29]
+31 Ops.CONST dtypes.weakint [] -1
+32 Ops.ADD dtypes.i32 [30, 31]
+33 Ops.CMPEQ dtypes.bool [12, 32]
+34 Ops.ALLOC dtypes.i32 [14] ParamArg(slot=4, dtype=dtypes.i32, device="CPU")
+35 Ops.RANGE dtypes.weakint [14] (AxisType.WEAK, 2)
+36 Ops.INDEX dtypes.i32 [34, 35]
+37 Ops.PARAM dtypes.i32 [14] ParamArg(slot=2, dtype=dtypes.i32, device="PYTHON")
+38 Ops.INDEX dtypes.i32 [37, 35]
+39 Ops.STORE dtypes.void [36, 38]
+40 Ops.END dtypes.void [39, 35]
+41 Ops.AFTER dtypes.i32 [34, 40]
+42 Ops.INDEX dtypes.i32 [41, 29]
+43 Ops.WHERE dtypes.i32 [33, 42, 25]
+44 Ops.REDUCE dtypes.i32 [43, 29] (Ops.ADD, 0)
+45 Ops.STORE dtypes.void [3, 44]
+46 Ops.END dtypes.void [45, 2]
+47 Ops.AFTER dtypes.i32 [1, 46]
+48 Ops.SINK dtypes.void [47]
+

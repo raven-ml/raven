@@ -25,7 +25,7 @@
 24 Ops.RECIP dtypes.weakfloat [23]
 25 Ops.MUL dtypes.f32 [22, 24]
 26 Ops.CONST dtypes.weakint [] 0
-27 Ops.STAGE dtypes.f32 [25, 19, 26] BufferizeOpts(device="CPU", broadcast=True)
+27 Ops.STAGE dtypes.f32 [25, 19, 26] BufferizeOpts(device="CPU")
 28 Ops.INDEX dtypes.f32 [27, 16, 26]
 29 Ops.CONST dtypes.weakfloat [] -1.0
 30 Ops.MUL dtypes.f32 [28, 29]
@@ -41,7 +41,7 @@
 40 Ops.CONST dtypes.weakfloat [] 1e-05
 41 Ops.ADD dtypes.f32 [39, 40]
 42 Ops.SQRT dtypes.f32 [41]
-43 Ops.STAGE dtypes.f32 [42, 34, 26] BufferizeOpts(device="CPU", broadcast=True)
+43 Ops.STAGE dtypes.f32 [42, 34, 26] BufferizeOpts(device="CPU")
 44 Ops.INDEX dtypes.f32 [43, 3, 26]
 45 Ops.RECIP dtypes.f32 [44]
 46 Ops.MUL dtypes.f32 [33, 45]

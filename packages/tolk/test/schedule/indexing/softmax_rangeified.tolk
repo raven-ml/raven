@@ -1,0 +1,47 @@
+# tolk D77 golden=8b415823a124e4db3eee46c72b9ac22d
+0 Ops.CONST dtypes.weakint [] 32
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+4 Ops.CONST dtypes.weakint [] 8
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 1)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.INDEX dtypes.f32 [1, 7]
+9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+10 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 8)
+11 Ops.MUL dtypes.weakint [10, 4]
+12 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 9)
+13 Ops.ADD dtypes.weakint [11, 12]
+14 Ops.INDEX dtypes.f32 [9, 13]
+15 Ops.STAGE dtypes.f32 [14, 10, 12] BufferizeOpts(device="CPU")
+16 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 4)
+17 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 5)
+18 Ops.INDEX dtypes.f32 [15, 16, 17]
+19 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 6)
+20 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 7)
+21 Ops.INDEX dtypes.f32 [15, 19, 20]
+22 Ops.REDUCE dtypes.f32 [21, 20] (Ops.MAX, 0)
+23 Ops.STAGE dtypes.f32 [22, 19] BufferizeOpts(device="CPU", broadcast=True)
+24 Ops.INDEX dtypes.f32 [23, 16]
+25 Ops.CONST dtypes.weakfloat [] -1.0
+26 Ops.MUL dtypes.f32 [24, 25]
+27 Ops.ADD dtypes.f32 [18, 26]
+28 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
+29 Ops.MUL dtypes.f32 [27, 28]
+30 Ops.EXP2 dtypes.f32 [29]
+31 Ops.STAGE dtypes.f32 [30, 16, 17] BufferizeOpts(device="CPU")
+32 Ops.INDEX dtypes.f32 [31, 3, 6]
+33 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 2)
+34 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 3)
+35 Ops.INDEX dtypes.f32 [31, 33, 34]
+36 Ops.REDUCE dtypes.f32 [35, 34] (Ops.ADD, 0)
+37 Ops.STAGE dtypes.f32 [36, 33] BufferizeOpts(device="CPU", broadcast=True)
+38 Ops.INDEX dtypes.f32 [37, 3]
+39 Ops.RECIP dtypes.f32 [38]
+40 Ops.MUL dtypes.f32 [32, 39]
+41 Ops.STORE dtypes.void [8, 40]
+42 Ops.END dtypes.void [41, 3, 6]
+43 Ops.AFTER dtypes.f32 [1, 42]
+44 Ops.SINK dtypes.void [43]
+

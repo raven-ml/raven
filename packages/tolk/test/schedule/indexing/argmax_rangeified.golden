@@ -17,7 +17,7 @@
 16 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 5)
 17 Ops.INDEX dtypes.f32 [12, 15, 16]
 18 Ops.REDUCE dtypes.f32 [17, 16] (Ops.MAX, 0)
-19 Ops.STAGE dtypes.f32 [18, 15] BufferizeOpts(device="CPU", broadcast=True)
+19 Ops.STAGE dtypes.f32 [18, 15] BufferizeOpts(device="CPU")
 20 Ops.INDEX dtypes.f32 [19, 2]
 21 Ops.CMPEQ dtypes.bool [14, 20]
 22 Ops.CAST dtypes.i32 [21] dtypes.i32
@@ -35,7 +35,7 @@
 34 Ops.CONST dtypes.weakint [] 0
 35 Ops.WHERE dtypes.i32 [31, 33, 34]
 36 Ops.REDUCE dtypes.i32 [35, 25] (Ops.ADD, 0)
-37 Ops.STAGE dtypes.i32 [36, 24] BufferizeOpts(device="CPU", broadcast=True)
+37 Ops.STAGE dtypes.i32 [36, 24] BufferizeOpts(device="CPU")
 38 Ops.INDEX dtypes.i32 [37, 13]
 39 Ops.CONST dtypes.weakint [] 9
 40 Ops.ADD dtypes.i32 [38, 39]

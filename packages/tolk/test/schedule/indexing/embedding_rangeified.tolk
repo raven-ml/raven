@@ -1,0 +1,59 @@
+# tolk D77 golden=f54569c48bf28a86625ebae9adabd766
+0 Ops.CONST dtypes.weakint [] 12
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 3
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+4 Ops.CONST dtypes.weakint [] 4
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 1)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.INDEX dtypes.f32 [1, 7]
+9 Ops.ALLOC dtypes.i32 [2] ParamArg(slot=4, dtype=dtypes.i32, device="CPU")
+10 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 6)
+11 Ops.INDEX dtypes.i32 [9, 10]
+12 Ops.PARAM dtypes.i32 [2] ParamArg(slot=1, dtype=dtypes.i32, device="PYTHON")
+13 Ops.INDEX dtypes.i32 [12, 10]
+14 Ops.STORE dtypes.void [11, 13]
+15 Ops.END dtypes.void [14, 10]
+16 Ops.AFTER dtypes.i32 [9, 15]
+17 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 5)
+18 Ops.INDEX dtypes.i32 [16, 17]
+19 Ops.CONST dtypes.weakint [] 0
+20 Ops.CMPLT dtypes.bool [18, 19]
+21 Ops.CONST dtypes.weakint [] 10
+22 Ops.ADD dtypes.i32 [18, 21]
+23 Ops.WHERE dtypes.i32 [20, 22, 18]
+24 Ops.STAGE dtypes.i32 [23, 17] BufferizeOpts(device="CPU", broadcast=True)
+25 Ops.INDEX dtypes.i32 [24, 3]
+26 Ops.CONST dtypes.bool [] True
+27 Ops.RANGE dtypes.weakint [21] (AxisType.WEAK, 3)
+28 Ops.RANGE dtypes.weakint [21] (AxisType.WEAK, 4)
+29 Ops.ADD dtypes.weakint [27, 28]
+30 Ops.CONST dtypes.weakint [] 9
+31 Ops.CMPLT dtypes.bool [29, 30]
+32 Ops.CONST dtypes.bool [] False
+33 Ops.CMPEQ dtypes.bool [31, 32]
+34 Ops.AND dtypes.bool [26, 33]
+35 Ops.CONST dtypes.weakint [] 1
+36 Ops.CAST dtypes.i32 [35] dtypes.i32
+37 Ops.WHERE dtypes.i32 [34, 36, 19]
+38 Ops.REDUCE dtypes.i32 [37, 28] (Ops.ADD, 0)
+39 Ops.CONST dtypes.weakint [] -1
+40 Ops.ADD dtypes.i32 [38, 39]
+41 Ops.STAGE dtypes.i32 [40, 27] BufferizeOpts(device="CPU", broadcast=True)
+42 Ops.RANGE dtypes.weakint [21] (AxisType.WEAK, 2)
+43 Ops.INDEX dtypes.i32 [41, 42]
+44 Ops.CMPEQ dtypes.bool [25, 43]
+45 Ops.CONST dtypes.weakint [] 40
+46 Ops.PARAM dtypes.f32 [45] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+47 Ops.MUL dtypes.weakint [42, 4]
+48 Ops.ADD dtypes.weakint [47, 6]
+49 Ops.INDEX dtypes.f32 [46, 48]
+50 Ops.CONST dtypes.weakfloat [] 0.0
+51 Ops.WHERE dtypes.f32 [44, 49, 50]
+52 Ops.REDUCE dtypes.f32 [51, 42] (Ops.ADD, 0)
+53 Ops.STORE dtypes.void [8, 52]
+54 Ops.END dtypes.void [53, 3, 6]
+55 Ops.AFTER dtypes.f32 [1, 54]
+56 Ops.SINK dtypes.void [55]
+

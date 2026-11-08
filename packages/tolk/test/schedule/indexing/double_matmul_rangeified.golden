@@ -19,7 +19,7 @@
 18 Ops.INDEX dtypes.f32 [14, 17]
 19 Ops.MUL dtypes.f32 [13, 18]
 20 Ops.REDUCE dtypes.f32 [19, 11] (Ops.ADD, 0)
-21 Ops.STAGE dtypes.f32 [20, 9, 16] BufferizeOpts(device="CPU", broadcast=True)
+21 Ops.STAGE dtypes.f32 [20, 9, 16] BufferizeOpts(device="CPU")
 22 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 2)
 23 Ops.INDEX dtypes.f32 [21, 3, 22]
 24 Ops.PARAM dtypes.f32 [0] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")

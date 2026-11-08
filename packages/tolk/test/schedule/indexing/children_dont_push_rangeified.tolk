@@ -1,0 +1,32 @@
+# tolk D77 golden=88fc684ebf4b8b5964b8efc50d774ee3
+0 Ops.CONST dtypes.weakint [] 1000
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 10
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
+4 Ops.MUL dtypes.weakint [3, 2]
+5 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 2)
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+8 Ops.CONST dtypes.weakint [] 100
+9 Ops.MUL dtypes.weakint [7, 8]
+10 Ops.ADD dtypes.weakint [6, 9]
+11 Ops.INDEX dtypes.f32 [1, 10]
+12 Ops.PARAM dtypes.f32 [8] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+13 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 5)
+14 Ops.MUL dtypes.weakint [13, 2]
+15 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 6)
+16 Ops.ADD dtypes.weakint [14, 15]
+17 Ops.INDEX dtypes.f32 [12, 16]
+18 Ops.PARAM dtypes.f32 [8] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+19 Ops.INDEX dtypes.f32 [18, 16]
+20 Ops.ADD dtypes.f32 [17, 19]
+21 Ops.CONST dtypes.weakint [] 0
+22 Ops.STAGE dtypes.f32 [20, 13, 15, 21] BufferizeOpts(device="CPU", broadcast=True)
+23 Ops.INDEX dtypes.f32 [22, 7, 3, 21]
+24 Ops.INDEX dtypes.f32 [22, 5, 3, 21]
+25 Ops.ADD dtypes.f32 [23, 24]
+26 Ops.STORE dtypes.void [11, 25]
+27 Ops.END dtypes.void [26, 7, 3, 5]
+28 Ops.AFTER dtypes.f32 [1, 27]
+29 Ops.SINK dtypes.void [28]
+

@@ -1,0 +1,64 @@
+# tolk D77 golden=77b77ad7cbbfa76729a3038f7d924abe
+0 Ops.CONST dtypes.weakint [] 144
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 6
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
+4 Ops.MUL dtypes.weakint [3, 2]
+5 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 2)
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.CONST dtypes.weakint [] 4
+8 Ops.RANGE dtypes.weakint [7] (AxisType.WEAK, 0)
+9 Ops.CONST dtypes.weakint [] 36
+10 Ops.MUL dtypes.weakint [8, 9]
+11 Ops.ADD dtypes.weakint [6, 10]
+12 Ops.INDEX dtypes.f32 [1, 11]
+13 Ops.CONST dtypes.weakfloat [] 0.0
+14 Ops.CONST dtypes.weakint [] 128
+15 Ops.PARAM dtypes.f32 [14] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+16 Ops.CONST dtypes.weakint [] 3
+17 Ops.RANGE dtypes.weakint [16] (AxisType.WEAK, 6)
+18 Ops.ADD dtypes.weakint [5, 17]
+19 Ops.RANGE dtypes.weakint [16] (AxisType.WEAK, 5)
+20 Ops.ADD dtypes.weakint [3, 19]
+21 Ops.CONST dtypes.weakint [] 8
+22 Ops.MUL dtypes.weakint [20, 21]
+23 Ops.ADD dtypes.weakint [18, 22]
+24 Ops.CONST dtypes.weakint [] 2
+25 Ops.RANGE dtypes.weakint [24] (AxisType.WEAK, 4)
+26 Ops.CONST dtypes.weakint [] 64
+27 Ops.MUL dtypes.weakint [25, 26]
+28 Ops.ADD dtypes.weakint [23, 27]
+29 Ops.INDEX dtypes.f32 [15, 28]
+30 Ops.CONST dtypes.weakint [] 72
+31 Ops.PARAM dtypes.f32 [30] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+32 Ops.MUL dtypes.weakint [19, 16]
+33 Ops.ADD dtypes.weakint [32, 17]
+34 Ops.CONST dtypes.weakint [] 9
+35 Ops.MUL dtypes.weakint [25, 34]
+36 Ops.ADD dtypes.weakint [33, 35]
+37 Ops.CONST dtypes.weakint [] 18
+38 Ops.MUL dtypes.weakint [8, 37]
+39 Ops.ADD dtypes.weakint [36, 38]
+40 Ops.INDEX dtypes.f32 [31, 39]
+41 Ops.MUL dtypes.f32 [29, 40]
+42 Ops.REDUCE dtypes.f32 [41, 25, 19, 17] (Ops.ADD, 0)
+43 Ops.PARAM dtypes.f32 [7] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+44 Ops.INDEX dtypes.f32 [43, 8]
+45 Ops.CONST dtypes.weakfloat [] -1.0
+46 Ops.MUL dtypes.f32 [44, 45]
+47 Ops.ADD dtypes.f32 [42, 46]
+48 Ops.PARAM dtypes.f32 [7] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+49 Ops.RANGE dtypes.weakint [7] (AxisType.WEAK, 3)
+50 Ops.INDEX dtypes.f32 [48, 49]
+51 Ops.SQRT dtypes.f32 [50]
+52 Ops.RECIP dtypes.f32 [51]
+53 Ops.STAGE dtypes.f32 [52, 49] BufferizeOpts(device="CPU", broadcast=True)
+54 Ops.INDEX dtypes.f32 [53, 8]
+55 Ops.MUL dtypes.f32 [47, 54]
+56 Ops.CMPLT dtypes.bool [13, 55]
+57 Ops.WHERE dtypes.f32 [56, 55, 13]
+58 Ops.STORE dtypes.void [12, 57]
+59 Ops.END dtypes.void [58, 8, 3, 5]
+60 Ops.AFTER dtypes.f32 [1, 59]
+61 Ops.SINK dtypes.void [60]
+

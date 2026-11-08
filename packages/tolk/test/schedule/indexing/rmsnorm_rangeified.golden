@@ -27,7 +27,7 @@
 26 Ops.ADD dtypes.f32 [24, 25]
 27 Ops.SQRT dtypes.f32 [26]
 28 Ops.CONST dtypes.weakint [] 0
-29 Ops.STAGE dtypes.f32 [27, 17, 28] BufferizeOpts(device="CPU", broadcast=True)
+29 Ops.STAGE dtypes.f32 [27, 17, 28] BufferizeOpts(device="CPU")
 30 Ops.INDEX dtypes.f32 [29, 3, 28]
 31 Ops.RECIP dtypes.f32 [30]
 32 Ops.MUL dtypes.f32 [16, 31]

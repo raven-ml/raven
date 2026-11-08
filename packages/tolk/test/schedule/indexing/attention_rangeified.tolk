@@ -1,0 +1,95 @@
+# tolk D77 golden=e9823362357f971a34a2382ed8e36c3b
+0 Ops.CONST dtypes.weakint [] 128
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 8
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 2)
+4 Ops.CONST dtypes.weakint [] 4
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 3)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.CONST dtypes.weakint [] 2
+9 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 1)
+10 Ops.CONST dtypes.weakint [] 32
+11 Ops.MUL dtypes.weakint [9, 10]
+12 Ops.ADD dtypes.weakint [7, 11]
+13 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 0)
+14 Ops.CONST dtypes.weakint [] 64
+15 Ops.MUL dtypes.weakint [13, 14]
+16 Ops.ADD dtypes.weakint [12, 15]
+17 Ops.INDEX dtypes.f32 [1, 16]
+18 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+19 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 23)
+20 Ops.MUL dtypes.weakint [19, 4]
+21 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 25)
+22 Ops.ADD dtypes.weakint [20, 21]
+23 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 22)
+24 Ops.MUL dtypes.weakint [23, 10]
+25 Ops.ADD dtypes.weakint [22, 24]
+26 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 21)
+27 Ops.MUL dtypes.weakint [26, 14]
+28 Ops.ADD dtypes.weakint [25, 27]
+29 Ops.INDEX dtypes.f32 [18, 28]
+30 Ops.PARAM dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+31 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 24)
+32 Ops.MUL dtypes.weakint [31, 4]
+33 Ops.ADD dtypes.weakint [32, 21]
+34 Ops.ADD dtypes.weakint [33, 24]
+35 Ops.ADD dtypes.weakint [34, 27]
+36 Ops.INDEX dtypes.f32 [30, 35]
+37 Ops.MUL dtypes.f32 [29, 36]
+38 Ops.REDUCE dtypes.f32 [37, 21] (Ops.ADD, 0)
+39 Ops.CONST dtypes.weakfloat [] 2.0
+40 Ops.RECIP dtypes.weakfloat [39]
+41 Ops.MUL dtypes.f32 [38, 40]
+42 Ops.STAGE dtypes.f32 [41, 26, 23, 19, 31] BufferizeOpts(device="CPU")
+43 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 13)
+44 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 14)
+45 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 15)
+46 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 16)
+47 Ops.INDEX dtypes.f32 [42, 43, 44, 45, 46]
+48 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 17)
+49 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 18)
+50 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 19)
+51 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 20)
+52 Ops.INDEX dtypes.f32 [42, 48, 49, 50, 51]
+53 Ops.REDUCE dtypes.f32 [52, 51] (Ops.MAX, 0)
+54 Ops.STAGE dtypes.f32 [53, 48, 49, 50] BufferizeOpts(device="CPU", broadcast=True)
+55 Ops.INDEX dtypes.f32 [54, 43, 44, 45]
+56 Ops.CONST dtypes.weakfloat [] -1.0
+57 Ops.MUL dtypes.f32 [55, 56]
+58 Ops.ADD dtypes.f32 [47, 57]
+59 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
+60 Ops.MUL dtypes.f32 [58, 59]
+61 Ops.EXP2 dtypes.f32 [60]
+62 Ops.STAGE dtypes.f32 [61, 43, 44, 45, 46] BufferizeOpts(device="CPU")
+63 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 5)
+64 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 6)
+65 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 7)
+66 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 8)
+67 Ops.INDEX dtypes.f32 [62, 63, 64, 65, 66]
+68 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 9)
+69 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 10)
+70 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 11)
+71 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 12)
+72 Ops.INDEX dtypes.f32 [62, 68, 69, 70, 71]
+73 Ops.REDUCE dtypes.f32 [72, 71] (Ops.ADD, 0)
+74 Ops.STAGE dtypes.f32 [73, 68, 69, 70] BufferizeOpts(device="CPU", broadcast=True)
+75 Ops.INDEX dtypes.f32 [74, 63, 64, 65]
+76 Ops.RECIP dtypes.f32 [75]
+77 Ops.MUL dtypes.f32 [67, 76]
+78 Ops.STAGE dtypes.f32 [77, 63, 64, 65, 66] BufferizeOpts(device="CPU", broadcast=True)
+79 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 4)
+80 Ops.INDEX dtypes.f32 [78, 13, 9, 3, 79]
+81 Ops.PARAM dtypes.f32 [0] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+82 Ops.MUL dtypes.weakint [79, 4]
+83 Ops.ADD dtypes.weakint [82, 6]
+84 Ops.ADD dtypes.weakint [83, 11]
+85 Ops.ADD dtypes.weakint [84, 15]
+86 Ops.INDEX dtypes.f32 [81, 85]
+87 Ops.MUL dtypes.f32 [80, 86]
+88 Ops.REDUCE dtypes.f32 [87, 79] (Ops.ADD, 0)
+89 Ops.STORE dtypes.void [17, 88]
+90 Ops.END dtypes.void [89, 13, 9, 3, 6]
+91 Ops.AFTER dtypes.f32 [1, 90]
+92 Ops.SINK dtypes.void [91]
+

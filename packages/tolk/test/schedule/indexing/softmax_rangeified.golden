@@ -21,7 +21,7 @@
 20 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 7)
 21 Ops.INDEX dtypes.f32 [15, 19, 20]
 22 Ops.REDUCE dtypes.f32 [21, 20] (Ops.MAX, 0)
-23 Ops.STAGE dtypes.f32 [22, 19] BufferizeOpts(device="CPU", broadcast=True)
+23 Ops.STAGE dtypes.f32 [22, 19] BufferizeOpts(device="CPU")
 24 Ops.INDEX dtypes.f32 [23, 16]
 25 Ops.CONST dtypes.weakfloat [] -1.0
 26 Ops.MUL dtypes.f32 [24, 25]
@@ -35,7 +35,7 @@
 34 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 3)
 35 Ops.INDEX dtypes.f32 [31, 33, 34]
 36 Ops.REDUCE dtypes.f32 [35, 34] (Ops.ADD, 0)
-37 Ops.STAGE dtypes.f32 [36, 33] BufferizeOpts(device="CPU", broadcast=True)
+37 Ops.STAGE dtypes.f32 [36, 33] BufferizeOpts(device="CPU")
 38 Ops.INDEX dtypes.f32 [37, 3]
 39 Ops.RECIP dtypes.f32 [38]
 40 Ops.MUL dtypes.f32 [32, 39]
