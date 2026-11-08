@@ -49,9 +49,9 @@ let field ls k =
 
 let kfd = "/sys/class/kfd/kfd"
 
-(* A GPU node of KFD's topology: its GPU id, and its PCI function's domain
-   and location. *)
-type node = { id : int; domain : int; location : int }
+(* A GPU node of KFD's topology: its directory, its GPU id, and its PCI
+   function's domain and location. *)
+type node = { dir : string; id : int; domain : int; location : int }
 
 let node n =
   let dir = kfd // "topology/nodes" // n in
@@ -59,7 +59,7 @@ let node n =
   | Some p, Some [ id ] -> (
       match (int_of_string_opt id, field p "domain", field p "location_id") with
       | Some id, Some domain, Some location when id <> 0 ->
-          Some { id; domain; location }
+          Some { dir; id; domain; location }
       | _ -> None)
   | _ -> None
 
@@ -95,6 +95,26 @@ let vram i =
           let counts = List.map count (List.filter (at bus) ns) in
           if counts = [] || List.mem None counts then None
           else Some (List.fold_left (fun s c -> s + Option.get c) 0 counts))
+
+(* The level and bytes of a cache that the node directory [dir] lists, its
+   size stated in KiB. *)
+let cache dir c =
+  match lines (dir // "caches" // c // "properties") with
+  | None -> None
+  | Some p -> (
+      match (field p "level", field p "size") with
+      | Some level, Some kib -> Some (level, kib * 1024)
+      | _ -> None)
+
+let caches bus =
+  match gpu_nodes () with
+  | Error _ -> None
+  | Ok ns -> (
+      match List.find_opt (at bus) ns with
+      | None -> None
+      | Some n ->
+          let cs = Result.value (names (n.dir // "caches")) ~default:[] in
+          Some (List.filter_map (cache n.dir) cs))
 
 let queues () =
   let dir = kfd // "proc" // string_of_int (Unix.getpid ()) // "queues" in

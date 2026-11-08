@@ -34,6 +34,13 @@ val vram : int -> int option
     are not the host's. KFD counts the GPU memory its allocations made and
     its frees gave back. *)
 
+val caches : string -> (int * int) list option
+(** [caches bus] is the level and bytes of each cache that KFD's topology lists
+    for the GPU at [bus], at its first node ([caches] under
+    [/sys/class/kfd/kfd/topology/nodes/<n>]), or [None] where KFD lists no node
+    of it. KFD lists a cache once for each group of compute units that shares
+    it. *)
+
 val queues : unit -> int option
 (** [queues ()] is the number of hardware queues KFD holds for this process,
     on every GPU (the entries of [queues] under

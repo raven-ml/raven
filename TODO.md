@@ -96,10 +96,11 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - AMD beam search times 16-21% of candidates below 2 GHz: hold rig's stable
   power state around a search, or ties within noise
 - device facts (762ad1c31): `core_threads = 16384` and `stream_threads =
-  32768` are fudge's (sm_89, 100 SMs); a small part (an RTX 4060-class
-  sm_89) may lose 1.4-2x by the model: a row owed there, and values for
-  nonnormal's R9700 and Metal. `Rig.cache_bytes` has not run on hardware
-  for AMD through amdgpu (L2 plus MALL) or NV over PCI
+  32768` are fudge's (sm_89, 100 SMs) and also the R9700's best, where
+  D175's SMs x clock scaling put its window at 0.59x; a small part (an
+  RTX 4060-class sm_89) may lose by that model: a row owed there, and
+  Metal's values. `Rig.cache_bytes` has not run on hardware for NV over
+  PCI
 - a Metal kernel loads 8-byte arguments from the bytes setBytes copies,
   whose alignment Apple does not document and `rig_metal.mli` does not
   promise; it holds on Apple GPUs at 32 bytes as observed

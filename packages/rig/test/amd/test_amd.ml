@@ -1142,6 +1142,34 @@ let declared () =
   | None -> fail "no record under the key");
   is_none ~msg:"the host" (Rig.capability Rig.host Abi.key)
 
+(* Through amdgpu, a device's last-level cache is the L2 and the MALL behind
+   it, as the kernel driver states them: KFD's caches of level 2 and 3. KFD
+   lists a cache once for each group of compute units that shares it. A kernel
+   that states no L2 to amdgpu's query may still list one in KFD, from a table
+   of its own: rig then states none, as rig_amd.mli says. *)
+let kfd_caches () =
+  if S.driverless () then skip ~reason:"amdgpu does not hold the GPU" ();
+  S.with_ @@ fun t ->
+  let bus = require_some ~msg:"the device's bus" (Rig.bus t.d) in
+  let caches =
+    match S.caches bus with
+    | Some cs -> cs
+    | None -> skip ~reason:"KFD lists no node of the GPU" ()
+  in
+  let level l =
+    let at_l (l', n) = if l' = l then Some n else None in
+    match List.sort_uniq compare (List.filter_map at_l caches) with
+    | [] -> 0
+    | [ n ] -> n
+    | ns ->
+        failf "caches of level %d of several sizes: %s" l
+          (String.concat ", " (List.map string_of_int ns))
+  in
+  match Rig.cache_bytes t.d with
+  | None -> skip ~reason:"amdgpu states no L2 of the GPU" ()
+  | Some n ->
+      equal int ~msg:"the L2's and the MALL's bytes" (level 2 + level 3) n
+
 (* [locate] names a region by its GPU address, its handle too, and the host
    addresses every region but Device memory. *)
 let locates () =
@@ -1246,6 +1274,7 @@ let work =
           equal bool ~msg:"AQL" (c.gpu.xccs > 1)
             (match c.compute with Aql _ -> true | Pm4 -> false));
       test "rig finds its record" declared;
+      test "amdgpu states the L2 and the MALL that KFD lists" kfd_caches;
       test "an allocation past the GPU's memory is None" (fun () ->
           S.with_ @@ fun t ->
           equal bool ~msg:"none" true
