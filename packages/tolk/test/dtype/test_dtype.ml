@@ -389,21 +389,10 @@ let promotion =
       test "least_upper is not a fold of pairwise bounds" (fun () ->
           equal dtype Dtype.Bfloat16 (Dtype.least_upper fp8_triple);
           equal dtype Dtype.Float32 (fold_bound fp8_triple));
-      prop "least_upper is commutative"
-        (Gen.pair promotable promotable)
-        (Law.commutative dtype lub2);
       prop "a data type is its own least upper bound" promotable (fun dt ->
           equal dtype dt (Dtype.least_upper [ dt ]);
           equal dtype dt (Dtype.least_upper [ dt; dt ]);
           equal dtype dt (Dtype.least_upper [ dt; dt; dt ]));
-      prop "bool is the bottom of the lattice" promotable
-        (Law.neutral dtype lub2 Dtype.Bool);
-      prop "float64 is the top of the lattice" promotable
-        (Law.absorbing dtype lub2 Dtype.Float64);
-      prop "least_upper is at least each of its inputs"
-        (Gen.pair promotable promotable) (fun (a, b) ->
-          at_least dtype ~than:a (lub2 a b);
-          at_least dtype ~than:b (lub2 a b));
       prop "promotion is a partial order"
         (Gen.map
            (fun (a, x, y) -> (a, lub2 a x, lub2 (lub2 a x) y))

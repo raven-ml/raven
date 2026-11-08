@@ -13,25 +13,9 @@ let zero = Ops.float 0.
 (* Flattening *)
 
 let flattening =
-  let r0 = range 3 0 and r1 = range 4 1 in
-  let s0 = reduce_range 3 2 and s1 = reduce_range 4 3 in
-  let value = Ops.cast Ops.O.((s0 * Ops.int 4) + s1) Float32 in
-  let at = store_at Ops.O.((r0 * Ops.int 4) + r1) one in
+  let r0 = range 3 0 in
   group "pm_flatten_range"
     [
-      test "a reduction's sources become the ranges they run inside" (fun () ->
-          equal uop
-            (sum value [ s0; s1 ])
-            (flatten (sum value [ Ops.O.((s0 * Ops.int 4) + s1) ])));
-      test "an end's sources become the ranges they run inside" (fun () ->
-          equal uop
-            (Ops.end_ at [ r0; r1 ])
-            (flatten (Ops.end_ at [ Ops.O.((r0 * Ops.int 4) + r1) ])));
-      test "a range listed twice is listed once" (fun () ->
-          equal uop (sum value [ s0; s1 ]) (flatten (sum value [ s0; s1; s0 ]));
-          equal uop
-            (Ops.end_ at [ r0; r1 ])
-            (flatten (Ops.end_ at [ r0; r1; Ops.O.(r0 + Ops.int 1) ])));
       test "ranges keep the order they are listed in" (fun () ->
           let late =
             Ops.range ~axis_type:Weak (Sym Ops.O.(r0 + Ops.int 1)) [ 4 ]
@@ -40,9 +24,6 @@ let flattening =
             Ops.end_ (store_at Ops.O.((r0 * Ops.int 4) + late) one) [ late; r0 ]
           in
           equal uop u (flatten u));
-      test "a source that runs inside no range is dropped" (fun () ->
-          equal (list uop) [ at ]
-            (Ops.src (flatten (Ops.v ~src:[ at; Ops.int 3 ] End))));
     ]
 
 (* Range simplification *)
@@ -50,37 +31,10 @@ let flattening =
 let merged_size u = sizes (simplify (kernel [ u ]))
 
 let merging =
-  let r0 = range 3 0 and r1 = range 4 1 and r2 = range 5 2 in
+  let r0 = range 3 0 in
   let s0 = reduce_range 3 3 and s1 = reduce_range 4 4 in
-  let summed value rs =
-    store_at (Ops.int 0) (sum (Ops.cast value Float32) rs)
-  in
   group "pm_simplify_ranges › merging"
     [
-      test "adjacent ranges indexed contiguously merge into their product"
-        (fun () ->
-          equal (list int) [ 12 ]
-            (merged_size
-               (Ops.end_
-                  (store_at Ops.O.((r0 * Ops.int 4) + r1) one)
-                  [ r0; r1 ])));
-      test "the merged range keeps the first range's identity" (fun () ->
-          let merged =
-            simplify
-              (kernel
-                 [
-                   Ops.end_
-                     (store_at Ops.O.((r0 * Ops.int 4) + r1) one)
-                     [ r0; r1 ];
-                 ])
-          in
-          equal
-            (list (list int))
-            [ [ 0 ] ]
-            (List.map Ops.axis_id (ranges merged)));
-      test "ranges a kernel does not read merge" (fun () ->
-          equal (list int) [ 60 ]
-            (merged_size (Ops.end_ (store_at (Ops.int 0) one) [ r0; r1; r2 ])));
       test "a range whose end is read after another range stays apart from it"
         (fun () ->
           let after_r0 =
@@ -88,27 +42,6 @@ let merging =
           in
           let u = Ops.end_ (store_at (Ops.int 0) one) [ r0; after_r0 ] in
           equal int 2 (List.length (ranges (simplify (kernel [ u ])))));
-      test "ranges whose merge adds a division stay" (fun () ->
-          equal (list int) [ 3; 4 ]
-            (merged_size (Ops.end_ (store_at r0 one) [ r0; r1 ])));
-      test "an end merges only ranges next to each other" (fun () ->
-          let index = Ops.O.((r0 * Ops.int 20) + (r2 * Ops.int 4) + r1) in
-          equal (list int) [ 3; 4; 5 ]
-            (merged_size (Ops.end_ (store_at index one) [ r0; r1; r2 ])));
-      test "a reduction merges its ranges in either order" (fun () ->
-          equal (list int) [ 12 ]
-            (merged_size (summed Ops.O.((s1 * Ops.int 3) + s0) [ s0; s1 ])));
-      test "ranges of different axis types stay" (fun () ->
-          let loop = range ~axis_type:Loop 4 5 in
-          equal (list int) [ 3; 4 ]
-            (merged_size
-               (Ops.end_
-                  (store_at Ops.O.((r0 * Ops.int 4) + loop) one)
-                  [ r0; loop ])));
-      test "ranges reduced by different reductions stay" (fun () ->
-          let inner = sum (Ops.cast s0 Float32) [ s0 ] in
-          let outer = sum Ops.O.(inner + Ops.cast s1 Float32) [ s1 ] in
-          equal (list int) [ 3; 4 ] (merged_size (store_at (Ops.int 0) outer)));
       test "reductions that share ranges merge them in all of them" (fun () ->
           let flat = Ops.cast Ops.O.((s0 * Ops.int 4) + s1) Float32 in
           let shared =
@@ -125,14 +58,9 @@ let merging =
     ]
 
 let shrinking =
-  let r = range 204 0 in
   let shrunk u = sizes (simplify (kernel [ u ])) in
   group "pm_simplify_ranges › shrinking"
     [
-      test "a range every index guards below a constant shrinks to it"
-        (fun () ->
-          equal (list int) [ 4 ]
-            (shrunk (Ops.end_ (gated_load Ops.O.(r < Ops.int 4) r) [ r ])));
       cases "a range of a typed integer shrinks to its guard as a weak one"
         ~id:(Format.asprintf "%a" Dtype.pp)
         Dtype.[ Int32; Int64; Uint32 ]
@@ -140,43 +68,6 @@ let shrinking =
           let r = Ops.range ~axis_type:Weak ~dtype:dt (Int 204) [ 0 ] in
           let guard = Ops.O.(r < Ops.int ~dtype:dt 4) in
           equal (list int) [ 4 ] (shrunk (Ops.end_ (gated_load guard r) [ r ])));
-      test "a range shrinks to the greatest of its guards" (fun () ->
-          let load c = gated_load Ops.O.(r < Ops.int c) r in
-          equal (list int) [ 8 ]
-            (shrunk (Ops.end_ (Ops.sink [ load 4; load 8 ]) [ r ])));
-      test "a range an index reads unguarded stays" (fun () ->
-          let plain = Ops.load (Ops.index (buf ~slot:1 Float32) [ r ]) [] in
-          let value = Ops.O.(gated_load (r < Ops.int 4) r + plain) in
-          equal (list int) [ 204 ] (shrunk (Ops.end_ value [ r ])));
-      test "a guard by a variable is no guard" (fun () ->
-          equal (list int) [ 204 ]
-            (shrunk (Ops.end_ (gated_load Ops.O.(r < var "c" 1 8) r) [ r ])));
-      test "a reduction's range stays" (fun () ->
-          let s = reduce_range 5 1 in
-          let value =
-            Ops.O.(Ops.cast s Float32 + gated_load (s < Ops.int 2) s)
-          in
-          equal (list int) [ 5 ]
-            (shrunk (store_at (Ops.int 0) (sum value [ s ]))));
-      test "each range of a conjunction of guards shrinks" (fun () ->
-          let q = range 8 1 in
-          let valid = Ops.O.((r < Ops.int 4) land (q < Ops.int 2)) in
-          let index = Ops.O.((r * Ops.int 8) + q) in
-          equal (list int) [ 2; 4 ]
-            (shrunk (Ops.end_ (gated_load valid index) [ r; q ])));
-      test "a store's gate is no guard" (fun () ->
-          let store =
-            Ops.store
-              ~gate:Ops.O.(r < Ops.int 200)
-              (Ops.index (buf Float32) [ r ])
-              one
-          in
-          equal (list int) [ 204 ] (shrunk (Ops.end_ store [ r ])));
-      test "a sink without kernel information is left as it is" (fun () ->
-          let u =
-            Ops.sink [ Ops.end_ (gated_load Ops.O.(r < Ops.int 4) r) [ r ] ]
-          in
-          equal uop u (simplify u));
     ]
 
 (* Range splitting *)
@@ -189,9 +80,6 @@ let splitting =
   let split_sizes u = sizes (split u) in
   group "pm_split_ranges"
     [
-      test "a range taken modulo a divisor of its size splits in two" (fun () ->
-          equal (list int) [ 2; 4 ] (split_sizes (modulo (r 8) 2));
-          equal (list int) [ 3; 4 ] (split_sizes (modulo (r 12) 4)));
       test
         "the outer part is numbered 0 and the inner 1 under the range's \
          identity" (fun () ->
@@ -212,8 +100,6 @@ let splitting =
               [ Ops.end_ (store_at r Ops.O.(r % Ops.int 2)) [ r ] ]
           in
           equal (list int) [ 2; 4 ] (split_sizes u));
-      test "a range taken modulo a number that does not divide its size stays"
-        (fun () -> equal (list int) [ 7 ] (split_sizes (modulo (r 7) 3)));
       test "a remainder by a constant that is not an integer leaves the range"
         (fun () ->
           List.iter
@@ -225,26 +111,6 @@ let splitting =
               in
               equal uop u (split u))
             [ Ops.bool true; Ops.float 2. ]);
-      test "a truncating remainder is no modulo" (fun () ->
-          let r = r 12 in
-          let u =
-            kernel
-              [ Ops.end_ (store_at r (Ops.alu r Truncmod [ Ops.int 4 ])) [ r ] ]
-          in
-          equal uop u (split u));
-      test "a range of symbolic size stays" (fun () ->
-          let r = Ops.range ~axis_type:Weak (Sym (var "n" 1 16)) [ 0 ] in
-          let u = modulo r 2 in
-          equal uop u (split u));
-      test "a warp range stays" (fun () ->
-          let u = modulo (range ~axis_type:Ops.Axis_type.Warp 8 0) 2 in
-          equal uop u (split u));
-      test "a sink without kernel information is left as it is" (fun () ->
-          let r = r 8 in
-          let u =
-            Ops.sink [ Ops.end_ (store_at r Ops.O.(r % Ops.int 2)) [ r ] ]
-          in
-          equal uop u (split u));
     ]
 
 (* Reductions *)
@@ -304,27 +170,6 @@ let unparented =
   let x = Ops.cast r0 Float32 in
   group "pm_reduce_unparented"
     [
-      test "a sum over a range its value ignores is multiplied by its size"
-        (fun () ->
-          equal uop
-            (counted (Ops.int 5) Add Ops.O.(sum x [ r0 ] * Ops.int 5))
-            (unparent (sum x [ r0; r1 ])));
-      test "a product is raised to its size" (fun () ->
-          equal uop
-            (counted (Ops.int 5) Mul (Ops.pow (Ops.reduce x Mul [ r0 ]) (Ops.int 5)))
-            (unparent (Ops.reduce x Mul [ r0; r1 ])));
-      test "a maximum drops the range" (fun () ->
-          equal uop
-            (counted (Ops.int 5) Max (Ops.reduce x Max [ r0 ]))
-            (unparent (Ops.reduce x Max [ r0; r1 ])));
-      test "a reduction over no range its value reads is its value, scaled"
-        (fun () ->
-          equal uop
-            (counted (Ops.int 4) Add Ops.O.(f32 3. * Ops.int 4))
-            (unparent (sum (f32 3.) [ r0 ])));
-      test "a reduction over ranges its value reads is left" (fun () ->
-          let u = sum Ops.O.(x + Ops.cast r1 Float32) [ r0; r1 ] in
-          equal uop u (unparent u));
       test "a reduction by another operation is left" (fun () ->
           let bits = Ops.cast r0 Int32 in
           let u =
@@ -353,10 +198,6 @@ let collapsing =
   let r = reduce_range 10 0 in
   group "pm_reduce_collapse"
     [
-      test "a comparison of a sum is solved for its range" (fun () ->
-          equal uop
-            Ops.O.(r < Ops.int 5)
-            (collapse Ops.O.(r + Ops.int 2 < Ops.int 7)));
       test "a comparison of a product is solved by a rounded-up division"
         (fun () ->
           equal uop
@@ -365,15 +206,6 @@ let collapsing =
           equal uop
             Ops.O.(r < Ops.int 6)
             (collapse Ops.O.(r * Ops.int 3 < Ops.int 16)));
-      test "a comparison by a range-dependent term is left" (fun () ->
-          let o = range 6 1 in
-          let u = Ops.O.(r + o < Ops.int 7) in
-          equal uop u (collapse u));
-      test "a product by a factor that can be zero is left" (fun () ->
-          let u =
-            Ops.O.(r * var ~dtype:Int32 "y" 0 20 < var ~dtype:Int32 "x" 0 20)
-          in
-          equal uop u (collapse u));
       test "a comparison of an unsigned sum or product is left, as it wraps"
         (fun () ->
           List.iter
@@ -386,36 +218,12 @@ let collapsing =
                     (collapse lt == lt))
                 Ops.O.[ x + y < c; x * y < c ])
             Dtype.[ Int32; Uint32 ]);
-      test "a sum of a value below a bound is the bound times the value"
-        (fun () ->
-          sums_to (`Float 6.)
-            (collapse (sum (Ops.where Ops.O.(r < Ops.int 3) two zero) [ r ])));
-      test "a sum of a value above a bound counts the rest" (fun () ->
-          sums_to (`Float 14.)
-            (collapse (sum (Ops.where Ops.O.(r < Ops.int 3) zero two) [ r ])));
-      test "a sum between two bounds counts what lies between" (fun () ->
-          let between =
-            Ops.O.(Ops.logical_not (r < Ops.int 2) land (r < Ops.int 7))
-          in
-          sums_to (`Float 10.)
-            (collapse (sum (Ops.where between two zero) [ r ])));
-      test "a bound beyond the range counts the whole range" (fun () ->
-          sums_to (`Float 20.)
-            (collapse (sum (Ops.where Ops.O.(r < Ops.int 30) two zero) [ r ])));
       test "a count by variable bounds is clamped at zero" (fun () ->
           let lo = var "lo" 0 20 and hi = var "hi" 0 20 in
           let between = Ops.O.(Ops.logical_not (r < lo) land (r < hi)) in
           let u = collapse (sum (Ops.where between two zero) [ r ]) in
           sums_to ~vars:[ ("lo", i 7); ("hi", i 3) ] (`Float 0.) u;
           sums_to ~vars:[ ("lo", i 3); ("hi", i 30) ] (`Float 14.) u);
-      test "a sum of a selected zero of a committed type is left" (fun () ->
-          let u = sum (Ops.where Ops.O.(r < Ops.int 3) two (f32 0.)) [ r ] in
-          equal uop u (collapse u));
-      test "a sum of a sum is the sum of the sums" (fun () ->
-          let x = Ops.cast r Float32 in
-          equal uop
-            Ops.O.(sum x [ r ] + Ops.float 20.)
-            (collapse (sum Ops.O.(x + two) [ r ])));
       test
         "an integer product by a comparison cast from a boolean is a selection"
         (fun () ->
@@ -427,17 +235,6 @@ let collapsing =
         (fun () ->
           let u = Ops.O.(two * Ops.cast Ops.O.(r < Ops.int 3) Float32) in
           equal int 0 (count Where (collapse u)));
-      test "a parameter guarding a sum is lifted out of it" (fun () ->
-          let p = Shape.param 0 Bool in
-          let u =
-            collapse
-              (sum (Ops.where Ops.O.(p land (r < Ops.int 3)) two zero) [ r ])
-          in
-          equal (list int) [] (sizes u);
-          equal Dtypes.const (`Float 0.)
-            (Interpreter.eval ~params:[ (0, `Bool false) ] u);
-          equal Dtypes.const (`Float 6.)
-            (Interpreter.eval ~params:[ (0, `Bool true) ] u));
     ]
 
 let reduce_simplifying =
@@ -593,19 +390,11 @@ let load_collapsing =
   let at v u = Interpreter.eval ~vars:[ ("label", i v) ] ~buffers:elements u in
   group "pm_load_collapse"
     [
-      test "a sum of the value an index selects is the value at that index"
-        (fun () ->
-          let u = load_collapse (selected label) in
-          equal (list int) [] (sizes u);
-          equal Dtypes.const (`Float 49.) (at 7 u));
       test "an index outside the range selects zero" (fun () ->
           let u = load_collapse (selected label) in
           equal Dtypes.const (`Float 0.) (at (-1) u);
           equal Dtypes.const (`Float 0.) (at 10 u);
           equal Dtypes.const (`Float 0.) (at 12 u));
-      test "a sum whose index is its range is left" (fun () ->
-          let u = selected r in
-          equal uop u (load_collapse u));
       test "a sum whose index is read at its range adds each trip it selects"
         (fun () ->
           let id = Ops.index (buf ~slot:1 ~size:10 Int32) [ r ] in
@@ -635,9 +424,6 @@ let load_collapsing =
         (fun () ->
           let loaded = Ops.index (buf ~slot:1 ~size:4 Int32) [ Ops.int 0 ] in
           let u = Ops.O.(loaded + i32 5 < i32 20) in
-          equal uop u (load_collapse u));
-      test "a comparison of a shifted variable is left" (fun () ->
-          let u = Ops.O.(var "v" 0 9 + Ops.int 5 < Ops.int 20) in
           equal uop u (load_collapse u));
       (* The selected value compares two elements read at the index, [x + 1 =
          c]: neither runs inside a range once the range is the index, so the

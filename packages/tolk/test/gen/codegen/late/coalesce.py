@@ -271,7 +271,7 @@ def index_cases():
         ("bound_already_known", gated_load(i < 100, i * 1 + 0)),
         ("store", UOp.param(0, dtypes.float, 1024).index((i + 4).valid(i < 4)).store(UOp.const(1.0, dtypes.float))),
         # an ungated index. An image access, through two indices, is an excluded
-        # path (README), which the suite tests by itself.
+        # path (README).
         ("ungated", UOp.param(0, dtypes.float, 1024).index(r0 * 4).load()),
     ]
 

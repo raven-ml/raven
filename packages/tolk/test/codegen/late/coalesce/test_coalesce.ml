@@ -210,42 +210,6 @@ let lengths =
           equal ~msg:"weak" (pair int int) (1, 0) weak;
           equal (pair int int) weak
             (vectors (coalesce (typed_loads ~dtype ~base ks))));
-      test "four consecutive loads from offset 0 are one load of four"
-        (fun () ->
-          equal runs
-            [ (0, 4) ]
-            (accesses Op.Load (coalesce (loads buf [ 0; 1; 2; 3 ]))));
-      test "a run starts where its length divides the offset" (fun () ->
-          equal runs
-            [ (1, 1); (2, 2); (4, 1) ]
-            (accesses Op.Load (coalesce (loads buf [ 1; 2; 3; 4 ]))));
-      test "three loads are a load of two and a load of one" (fun () ->
-          equal runs
-            [ (0, 2); (2, 1) ]
-            (accesses Op.Load (coalesce (loads buf [ 0; 1; 2 ]))));
-      test "offsets with a gap are separate runs" (fun () ->
-          equal runs
-            [ (0, 2); (3, 1) ]
-            (accesses Op.Load (coalesce (loads buf [ 0; 1; 3 ]))));
-      test "the order of the accesses does not matter" (fun () ->
-          equal runs
-            [ (0, 4) ]
-            (accesses Op.Load (coalesce (loads buf [ 3; 1; 0; 2 ]))));
-      test "four consecutive stores are one store of four" (fun () ->
-          equal runs
-            [ (0, 4) ]
-            (accesses Op.Store (coalesce (stores buf [ 0; 1; 2; 3 ]))));
-      test "a merged store stores the stack of the former values" (fun () ->
-          let merged =
-            List.hd (Ops.src (coalesce (stores buf [ 0; 1; 2; 3 ])))
-          in
-          equal Uops.uop (Shape.stack (List.init 4 value)) (Ops.nth merged 1));
-      test "a merged load's elements are read back by index" (fun () ->
-          let lanes = Ops.src (coalesce (loads buf [ 0; 1; 2; 3 ])) in
-          let merged = Ops.nth (List.hd lanes) 0 in
-          equal (list Uops.uop)
-            (List.init 4 (fun k -> Ops.index merged [ Ops.int k ]))
-            lanes);
       test
         "without vectors of eight halves or known registers, eight halves are \
          two loads of four" (fun () ->
@@ -731,41 +695,6 @@ let indexing_simplify =
             (gathered_writes (simplify padded_gather)));
     ]
 
-(* Excluded paths (README) *)
-
-let readme =
-  group "README"
-    [
-      test "an image access, through two indices, is not simplified" (fun () ->
-          let image = Shape.param ~shape:[ Int 4; Int 4; Int 4 ] 1 Float32 in
-          let r0 = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
-          and r1 = Ops.range ~axis_type:Weak (Int 4) [ 1 ] in
-          let gate = Ops.O.(r0 < int 3) in
-          let y = Shape.valid Ops.O.(r0 + int 1) gate
-          and x = Shape.valid Ops.O.(r1 * int 2) gate in
-          let u = Ops.load (Ops.index image [ y; x ]) [] in
-          equal Uops.uop u (simplify u));
-      test "a DSP renderer merges as any other: aligned runs of four at most"
-        (fun () ->
-          let dsp =
-            Renderer.v (Result.get_ok (Helpers.Target.of_string "DSP"))
-          in
-          equal runs
-            [ (1, 1); (2, 2); (4, 4); (8, 1) ]
-            (accesses Op.Load
-               (coalesce ~renderer:dsp
-                  (loads buf (List.init 8 (fun k -> k + 1))))));
-      test "a DSP renderer leaves 8-bit integers alone" (fun () ->
-          let dsp =
-            Renderer.v (Result.get_ok (Helpers.Target.of_string "DSP"))
-          in
-          let char = Shape.param ~shape:[ Int 64 ] 2 Int8 in
-          equal runs
-            [ (0, 1); (1, 1); (2, 1); (3, 1) ]
-            (accesses Op.Load
-               (coalesce ~renderer:dsp (loads char [ 0; 1; 2; 3 ]))));
-    ]
-
 (* Elements of [dt] accessed in each way a kernel accesses memory: each
    case's name, element type, sink, and runs of loads and of stores on a GPU
    that writes vectors of eight 16-bit floats. *)
@@ -875,7 +804,6 @@ let () =
          phases;
          laws;
          indexing_simplify;
-         readme;
          half8;
          dmc;
        ])

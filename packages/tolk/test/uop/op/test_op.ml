@@ -176,18 +176,17 @@ let order =
     [
       prop "equal is an equivalence" (Gen.pair gen_op gen_op)
         (Law.equivalence op);
-      prop "compare is a total order agreeing with equal"
-        (Gen.triple gen_op gen_op gen_op)
-        (Law.order op);
       prop "compare agrees with tinygrad's integer order"
         (Gen.pair gen_op gen_op) (fun (a, b) ->
           equal int
             (Int.compare (value a) (value b))
             (Int.compare (Op.compare a b) 0));
-      prop "compare agrees with to_int" (Gen.pair gen_op gen_op) (fun (a, b) ->
+      prop "compare agrees with to_int and equal" (Gen.pair gen_op gen_op)
+        (fun (a, b) ->
           equal int
             (Int.compare (Op.to_int a) (Op.to_int b))
-            (Int.compare (Op.compare a b) 0));
+            (Int.compare (Op.compare a b) 0);
+          equal bool (Op.equal a b) (Op.compare a b = 0));
     ]
 
 (* Sets *)

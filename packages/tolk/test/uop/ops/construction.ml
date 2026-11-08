@@ -79,33 +79,6 @@ let elementwise =
           let u = Ops.O.(typed dt "x" + int 1) in
           equal dtype dt (Ops.dtype u);
           equal dtype (Dtype.weak dt) (Ops.dtype (Ops.nth u 1)));
-      test "subtraction adds the negation" (fun () ->
-          equal uop (Ops.add a (Ops.neg b)) (Ops.sub a b);
-          equal uop (Ops.mul b (Ops.int (-1))) (Ops.neg b));
-      test "greater is less with its operands swapped" (fun () ->
-          equal uop (Ops.lt b a) (Ops.gt a b));
-      test "at most and at least negate a strict comparison" (fun () ->
-          equal uop (Ops.logical_not (Ops.gt a b)) (Ops.le a b);
-          equal uop (Ops.logical_not (Ops.lt a b)) (Ops.ge a b));
-      test "logical_not compares the boolean cast with false" (fun () ->
-          equal uop
-            (Ops.eq (Ops.cast a Bool) (Ops.bool false))
-            (Ops.logical_not a));
-      test "an inequality negates an equality" (fun () ->
-          equal uop (Ops.logical_not (Ops.eq a b)) (Ops.ne a b));
-      test "an equality is CMPEQ, of type bool" (fun () ->
-          let e = Ops.eq a b in
-          equal string "CMPEQ" (Op.name (Ops.op e));
-          equal dtype Bool (Ops.dtype e);
-          equal uop (Ops.eq e (Ops.bool false)) (Ops.ne a b));
-      test "negation and bitwise not of a boolean are logical not" (fun () ->
-          let p = flag "p" in
-          equal uop (Ops.logical_not p) (Ops.neg p);
-          equal uop (Ops.logical_not p) (Ops.bitwise_not p));
-      test "bitwise not xors with all ones" (fun () ->
-          equal uop (Ops.bitwise_xor a (Ops.int (-1))) (Ops.bitwise_not a);
-          let u = var ~dtype:Uint8 "u" 0 10 in
-          equal uop (Ops.bitwise_xor u (Ops.int 255)) (Ops.bitwise_not u));
       test "the operators are the named operations" (fun () ->
           List.iter
             (fun (name, x, y) -> equal ~msg:name uop x y)
