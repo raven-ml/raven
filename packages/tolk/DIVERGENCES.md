@@ -7878,9 +7878,12 @@ as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
   reduce whose result a gate selects, or whose store a gate guards, runs
   every trip of its loops in every workgroup, where the gate fails too.
 - **tolk:** `Codegen.lift_uniform_gates`, after the post-optimisation
-  symbolic pass, through `Uniform.varying`; `test/gen/tinygrad.patch`,
-  which gives tinygrad's `full_rewrite_to_sink` the same rewrite
-  (`pm_lift_uniform_gates`, `varying_fn`) before the goldens are recorded.
+  symbolic pass, through `Uniform.varying`; `Shape.fold_where_closure`,
+  whose assumption leaves each range whole (`Ops.assuming`);
+  `test/gen/tinygrad.patch`, which gives tinygrad's `full_rewrite_to_sink`
+  the same rewrite (`pm_lift_uniform_gates`, `varying_fn`) and its
+  `fold_where_closure` the same substitution (`pm_keep_range`) before the
+  goldens are recorded.
 - **Differs:** a value computed by casts and arithmetic from one reduce,
   which `where (g, v, e)` selects where `g` holds (or where it fails) or a
   store through `where (g, i, Invalid)` writes, gets the reduce's outermost
@@ -7894,6 +7897,9 @@ as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
   second reduce over the loop.
   rune's routed product (`Lower_reduce`, blocks of 64 rows of one group)
   states a block of padding as `Invalid`, which the gated store carries.
+  A selection's condition, assumed within its arms, stops at a range: the
+  lifted bound holds the condition, and rewriting the bound inside an arm
+  would fork a second loop of the range's identity.
 - **Reason:** (d) rune's routed product, whose blocks past the groups' hold
   only padding rows that no row reads: kaun's
   `GptOss/experts-at-prefill-512`, 3.78-3.80 ms without the rewrite and
@@ -7903,13 +7909,18 @@ as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
   without a value, 119.5-120.0 µs to 82.8-83.5 µs, and
   `gated/bf16-2048-all-on` 120.8-121.9 µs to 119.8-120.7 µs; fudge's RTX
   5000 Ada, three interleaved rounds each. The rows' wall-clock baselines
-  wait for the scheduled re-record.
+  wait for the scheduled re-record. Leaving a range whole in
+  `fold_where_closure` is part of that rewrite: tinygrad makes no bound that
+  holds a condition, and without it a lifted kernel with a load gated by the
+  loop's own clause does not compile.
 - **Pinned by:** `Tolk.Codegen`'s `reduces under a uniform gate` (values
   equal to the reference on the host and CUDA with every block off, every
   block on, one off and any counts; the bounded loop in the lowered
   program and its source; two sums over one loop and a gate that varies
   between threads keep the loop whole; a sum gated by a clause its loads are
-  gated by too); the goldens `uniform_gate_reduce`, `uniform_gate_store`
+  gated by too, either side of it; a loop the gate of its loads bounds stays
+  one loop on every target); `Tolk.Symbolic`'s selections (`the condition is
+  not assumed in the bound of a loop in a branch`); the goldens `uniform_gate_reduce`, `uniform_gate_store`
   and `varying_gate_reduce`; rune's `rows in blocks give eager's integers and
   hold their bound`; the bench rows above.
 

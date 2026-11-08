@@ -901,6 +901,23 @@ let symbolic_selections =
           by_symbolic
             (Ops.where cond Ops.O.(inner * int 2) Ops.O.(inner + int 1))
             (Ops.where cond Ops.O.(a * int (-2)) Ops.O.(a + int 1)));
+      test "the condition is not assumed in the bound of a loop in a branch"
+        (fun () ->
+          let bound = Ops.where cond (Ops.int 3) (Ops.int 0) in
+          let r = Ops.range ~axis_type:Weak (Sym bound) [ 0 ] in
+          let index = Ops.O.(r * int 2) in
+          let invalid = Shape.const_like index `Invalid in
+          by_symbolic
+            (Ops.where cond index invalid)
+            (Ops.where cond index invalid));
+      test "the condition is still true elsewhere in a branch holding such a \
+            loop" (fun () ->
+          let bound = Ops.where cond (Ops.int 3) (Ops.int 0) in
+          let r = Ops.range ~axis_type:Weak (Sym bound) [ 0 ] in
+          let inner = Ops.where cond Ops.O.(r * int 2) a in
+          by_symbolic
+            (Ops.where cond inner e)
+            (Ops.where cond Ops.O.(r * int 2) e));
       test "the condition is false in the false branch" (fun () ->
           let t = var "t" 0 3 in
           by_symbolic

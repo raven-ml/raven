@@ -720,7 +720,8 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
       constant, [c], [t] or [f] reaches an {!Op.Index} or an {!Op.Load}, or
       [c] reaches the operand of a conversion of a float to an integer in a
       branch, where it may be the guard of a value that conversion is
-      undefined for;
+      undefined for; a range's bound keeps [c] whatever the branch, since a
+      loop is one loop wherever it is read;
       [where g x 0 <> 0] is [g land (x <> 0)]; nested selections sharing a
       branch merge their conditions with [land] or [lor], or with [land] of
       the inner one's negation where the outer's other branch is the inner's

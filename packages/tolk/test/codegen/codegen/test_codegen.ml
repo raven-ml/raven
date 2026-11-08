@@ -2811,10 +2811,11 @@ module Gated = struct
     let store = Ops.store (Ops.index out [ i ]) (gated Stored ~fl ~i sum) in
     kernel ?opts_to_apply [ Ops.end_ store [ i ] ]
 
-  (* [out[i, j] = Σ a[i, k] b[k, j]] for the rows [i >= h], whose loads of [a]
-     the same condition gates, and [-1] for the others: the gate's clause bounds
-     the loop it gates loads in. No optimisation makes [i] lanes. *)
-  let last_rows h (m, k, n) =
+  (* [out[i, j] = Σ a[i, k] b[k, j]] for the rows on the [side] of [h] that
+     holds, whose loads of [a] the same condition gates, and [-1] for the
+     others: the gate's clause bounds the loop it gates loads in. No
+     optimisation makes [i] lanes. *)
+  let some_rows side h (m, k, n) =
     let out = param 0 Stdlib.(m * n) Float32
     and a = param 1 Stdlib.(m * k) Float32
     and b = param 2 Stdlib.(k * n) Float32 in
@@ -2822,15 +2823,20 @@ module Gated = struct
     and j = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
     let kk = Ops.range ~axis_type:Weak (Int k) [ 2 ] in
     let before = i < int h in
+    let holds =
+      match side with `First -> before | `Last -> Ops.logical_not before
+    in
     let at =
-      Ops.where (Ops.logical_not before)
-        ((i * int k) + kk)
-        (Shape.const_like i `Invalid)
+      Ops.where holds ((i * int k) + kk) (Shape.const_like i `Invalid)
     in
     let x = Ops.load (Ops.index a [ at ]) [] * ld b ((kk * int n) + j) in
     let sum = Ops.reduce x Op.Add [ kk ] in
     let rest = Ops.float ~dtype:Float32 rest_value in
-    let v = Ops.where before rest sum in
+    let v =
+      match side with
+      | `First -> Ops.where before sum rest
+      | `Last -> Ops.where before rest sum
+    in
     let store = Ops.store (Ops.index out [ (i * int n) + j ]) v in
     kernel ~opts_to_apply:[] [ Ops.end_ store [ i; j ] ]
 end
@@ -3008,21 +3014,39 @@ let shared_sums device =
 
 (* The rows from [h] of a product whose loads the same condition gates, on the
    host. *)
-let last_rows h =
-  let m, k, n = (3 * gate_block, 64, gated_n) in
+let some_rows_shape = (3 * gate_block, 64, gated_n)
+
+let some_rows side h =
+  let ((m, k, n) as shape) = some_rows_shape in
   let a = nonzero 6 (m * k) and b = nonzero 7 (k * n) in
   let all = Array.make m gate_block in
-  let reference = gated_expected Selected all (m, k, n) a b in
+  let reference = gated_expected Selected all shape a b in
+  let holds row = match side with `First -> row < h | `Last -> row >= h in
   let expected =
     Array.mapi
-      (fun e x -> if e / n >= h then x else `Float rest_value)
+      (fun e x -> if holds (e / n) then x else `Float rest_value)
       reference
   in
   equal (array Dtypes.value) expected
     (List.assoc 0
        (gated_runner Host
-          (Gated.last_rows h (m, k, n))
+          (Gated.some_rows side h shape)
           [ (1, floats a); (2, floats b) ]))
+
+(* A loop is one loop: lowering leaves one range of each identity. *)
+let one_loop_each (_, r) =
+  let prg =
+    let k = Gated.some_rows `First 100 some_rows_shape in
+    let r = r () in
+    Codegen.compile (Codegen.linearize k r) r
+  in
+  let identities =
+    List.filter_map
+      (fun u -> if is Range u then Some (Ops.axis_id u) else None)
+      (Ops.src (Ops.nth prg 1))
+  in
+  equal (list (list int)) (List.sort_uniq compare identities)
+    (List.sort compare identities)
 
 let group_opt top = Opt.Split { axis = 1; amount = 16; target = Local; top }
 
@@ -3218,7 +3242,20 @@ let reduces_under_gates =
       cases
         "a sum gated by a clause its loads are gated by too, on the host, is \
          the reference from"
-        ~id:(Printf.sprintf "row %d") [ 0; 1; 100; 191; 192 ] last_rows;
+        ~id:(Printf.sprintf "row %d") [ 0; 1; 100; 191; 192 ] (some_rows `Last);
+      cases
+        "a sum gated by a clause its loads are gated by too, holding before \
+         the row, on the host, is the reference to"
+        ~id:(Printf.sprintf "row %d") [ 0; 1; 100; 191; 192 ] (some_rows `First);
+      cases "a loop the gate of its loads bounds stays one loop, for"
+        ~id:fst
+        [
+          ("the host", host_renderer);
+          ("Metal", fun () -> metal ());
+          ("CUDA", cuda_renderer);
+          ("HIP", fun () -> renderer_for (target "AMD" "HIP" "gfx1100"));
+        ]
+        one_loop_each;
       cases "a sum a workgroup's threads share is the reference, on CUDA, with"
         ~id:(function
           | None -> "the hand-coded optimisations"

@@ -1422,6 +1422,12 @@ val substitute :
     substitution, and treating calls and results as {!graph_rewrite} does. Nodes
     paired with themselves are ignored. *)
 
+val assuming : t -> (t * t) list -> t
+(** [assuming u subs] is [u] with each node of [subs] replaced by its pair, as
+    {!substitute} does outside calls, for a fact that holds only where [u] is
+    read: it leaves each range it does not replace whole, bound included, since
+    a loop is one loop wherever it is read. *)
+
 val pm_substitute : (t Tbl.t, t) Pattern_matcher.t
 (** [pm_substitute] replaces each node its context maps by its image. *)
 

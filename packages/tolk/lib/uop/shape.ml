@@ -2649,11 +2649,9 @@ let fold_where_closure cond t f =
     guards_partial cond t || guards_partial cond f
   then None
   else
-    let assume b u =
-      substitute ~calls:Skip ~pass:Fixed_point u
-        [ (cond, const_like cond (`Bool b)) ]
-    in
-    Some (where cond (assume true t) (assume false f))
+    let assume b u = assuming u [ (cond, const_like cond (`Bool b)) ] in
+    let t' = assume true t and f' = assume false f in
+    if t' == t && f' == f then None else Some (where cond t' f')
 
 let both_const u0 u1 = is_const u0 && is_const u1
 

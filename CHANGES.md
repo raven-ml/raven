@@ -1091,6 +1091,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A kernel whose reduce and whose loads one condition gates compiles: folding
+  the condition inside a selection's arms rewrote the bound of the loop it
+  gates, forking a second loop of one identity, which Clang refused.
 - Rune's routed rows (`Nx.matmul_segments`, `Nx_quant.apply_experts`)
   compile for an x86-64 host of AVX2 or AVX-512 under Apple's Clang 17,
   which raised `Compile_error` on invalid IR: `Compiler_cpu.clang` compiles

@@ -4945,7 +4945,8 @@ index de2a9b382..7341a53ca 100644
 +  # a conversion that the selection keeps from an operand it is undefined for stays guarded: C computes it in every lane of
 +  # a vector, and a selection of vectors keeps an undefined lane it discards
 +  if _guards_partial(cond, t) or _guards_partial(cond, f): return None
-   return cond.where(t.substitute({cond: cond.const_like(True)}), f.substitute({cond: cond.const_like(False)}))
+-  return cond.where(t.substitute({cond: cond.const_like(True)}), f.substitute({cond: cond.const_like(False)}))
++  return cond.where(t.substitute({cond: cond.const_like(True)}, extra_pm=pm_keep_range), f.substitute({cond: cond.const_like(False)}, extra_pm=pm_keep_range))
  
  symbolic = symbolic_simple+commutative+PatternMatcher([
 @@ -257,13 +305,12 @@ symbolic = symbolic_simple+commutative+PatternMatcher([

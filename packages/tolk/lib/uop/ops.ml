@@ -4401,6 +4401,20 @@ let substitute ?extra_pm ~calls ~pass u subs =
     in
     graph_rewrite ~calls ~pass ~ctx:tbl u (Before_sources pm)
 
+(* A range is a loop, whatever the values it computes with: assuming a fact
+   inside one's bound would make another loop of the same identity, which runs
+   apart. *)
+let pm_keep_ranges =
+  Pattern_matcher.(
+    v
+      (fun () -> [
+        rule_ctx (Upat.op Op.Range ~name:"r") (fun subs m ->
+            if Tbl.mem subs (m "r") then None else raise Bottom_up_gate);
+      ]))
+
+let assuming u subs =
+  substitute ~extra_pm:pm_keep_ranges ~calls:Skip ~pass:Fixed_point u subs
+
 let pm_drop_after =
   Pattern_matcher.(
     v (fun () -> [ rule (Upat.op Op.After ~name:"a") (fun m -> Some (nth (m "a") 0)) ]))
