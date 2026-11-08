@@ -284,16 +284,26 @@ let cdf_of_quantile =
 (* An [x] whose CDF lies in either tail, from [y = s x] for the gamma and
    [y = s / x] for the inverse gamma: [log2 y] in
    [[log2 a - min (800, 200 / a), log2 a]] for the lower tail of [P(a, y)]
-   and in [[log2 a, log2 (2 a + 40)]] for its upper. *)
+   and in [[log2 a, log2 (2 a + 40)]] for its upper. Half the gamma's cases
+   whose [a] allows it stay below [log2 a - 100 / a - 3/2], where the
+   Chernoff bound [(y / a)^a e^(a - y)] puts [P(a, y)] below [2^-100], so
+   that every run reaches that tail. *)
 let gen_point c =
   Gen.(
     let la = Float.log2 c.a in
+    let deepest = la -. Float.min 800. (200. /. c.a) in
+    let deep = la -. (100. /. c.a) -. 1.5 in
+    let tail =
+      if c.inverse || deep <= deepest then []
+      else [ (2, float_range deepest deep) ]
+    in
     let+ ly =
-      one_of
-        [
-          float_range (la -. Float.min 800. (200. /. c.a)) la;
-          float_range la (Float.log2 ((2. *. c.a) +. 40.));
-        ]
+      frequency
+        (tail
+        @ [
+            (1, float_range deepest la);
+            (1, float_range la (Float.log2 ((2. *. c.a) +. 40.)));
+          ])
     in
     let y = Float.pow 2. ly in
     if c.inverse then c.s /. y else y /. c.s)
