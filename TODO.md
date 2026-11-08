@@ -95,13 +95,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   float32 select-zero; decide on the scheduled quiet re-record
 - AMD beam search times 16-21% of candidates below 2 GHz: hold rig's stable
   power state around a search, or ties within noise
-- comgr's per-process setup is paid on every compile: each HIP compile
-  starts a process (D5) that loads comgr and compiles once. NVRTC's
-  processes serve compiles in turn (`Compiler_worker.call`), which took
-  fudge's search/nv from 1.90 s to 1.34 s, its time in the process with
-  NVRTC's cache disabled. Move comgr to
-  serving workers once nonnormal times search/amd and a first call both
-  ways
 - device facts (762ad1c31): `core_threads = 16384` and `stream_threads =
   32768` are fudge's (sm_89, 100 SMs); a small part (an RTX 4060-class
   sm_89) may lose 1.4-2x by the model: a row owed there, and values for
@@ -109,25 +102,21 @@ and rune), raven / llama.cpp b12048 Vulkan:
   for AMD through amdgpu (L2 plus MALL) or NV over PCI
 - Metal's packed kernel arguments (8869adcc8, af8961676) have not run on
   Metal hardware; check `rig_metal.mli`'s contract against them on a Mac
-- comgr may compile with LLVM's verifier off, as Clang did before D275:
-  check `Compiler_amd`'s commands on a ROCm build and keep the verifier on
 - Apple Clang and LLVM 23 keep the straight-line vectorizer that D167
   turns off under LLVM 18-20: run 73455ffe7's reduced kernel and rune's
   ALiBi attention example (test_attention.ml, the dense tq 2 tk 3 case)
   through them on the Mac and extend D167 if they miscompile (LLVM 21
   and 22 compile both)
-- programs that share a kernel load its binary once each (D146): rig could
-  share a binary with no module variables and keep its promise, but on
-  fudge that saves at most 1-1.5 ms of a 70 ms gpt-oss first call on CUDA
-  and 2.5 ms of 60 ms on NV, against a driver function and an image table
-  (about 80 lines); NV's cost is an allocation and map per image, and
-  AMD's loads are unmeasured
 - HIP's unstaged tensor-core operands load 8 bytes again since D261's copy
   rule: unmeasured on nonnormal
 - AMD's comgr and Metal's compiler run LLVM's loop-idiom pass too; D167's
   `-mllvm -disable-loop-idiom-all` covers host Clang only, and no CI job runs
   LLVM 22+, where the pass's CRC recogniser walks a running select's paths
   (fixed upstream after 23.1.5)
+- a Cast from an integer to float32 on Metal relies on the conversion
+  rounding to nearest, which MSL 8.6 does not promise (it allows round
+  toward zero); Apple's GPUs round to nearest when tested. Make
+  tolk's Cast own it, as `Decomp_dtype.narrow` does for narrow floats
 
 ## rune, kaun, vega
 
