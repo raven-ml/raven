@@ -253,6 +253,60 @@ let static =
               "l" := last a;
               "med" := median a;
             ]));
+    agrees "aggregate over two traced batches"
+      (verb [ "s"; "c"; "m"; "lo"; "f" ]
+         (fun q ->
+           Query.aggregate ~by:[]
+             [
+               "s" := sum a;
+               "c" := count a;
+               "m" := mean a;
+               "lo" := min a;
+               "f" := first a;
+             ]
+             (Query.append q q)));
+    agrees "aggregate of an eager batch, then a traced one"
+      (verb [ "s"; "c"; "m"; "lo"; "f" ]
+         (fun q ->
+           let eager =
+             table
+               (arrays
+                  {
+                    fx = [| 1.; 2. |];
+                    fvalid = [| true; true |];
+                    fis = [| 1l; 2l |];
+                    fflags = [| true; false |];
+                    fds = [| 0l; 1l |];
+                  })
+           in
+           Query.aggregate ~by:[]
+             [
+               "s" := sum a;
+               "c" := count a;
+               "m" := mean a;
+               "lo" := min a;
+               "f" := first a;
+             ]
+             (Query.append q (Query.of_table eager))));
+    agrees "aggregate of eager batches, then a traced one"
+      (verb [ "s"; "lo"; "f" ]
+         (fun q ->
+           let eager =
+             table
+               (arrays
+                  {
+                    fx = [| 1.; 2. |];
+                    fvalid = [| true; true |];
+                    fis = [| 1l; 2l |];
+                    fflags = [| true; false |];
+                    fds = [| 0l; 1l |];
+                  })
+           in
+           let eager = Query.of_table eager in
+           let rest = Query.append eager eager in
+           Query.aggregate ~by:[]
+             [ "s" := sum a; "lo" := min a; "f" := first a ]
+             (Query.append q rest)));
     agrees "n_unique"
       (verb [ "k"; "i"; "t"; "d" ]
          (Query.aggregate ~by:[]

@@ -48,7 +48,7 @@ let frame b =
 let groups b segments = { (frame b) with segments; reduced = true }
 
 type cause = Data of Error.t | Raised of exn * Printexc.raw_backtrace
-type failure = { row : int; cause : cause }
+type failure = { row : int; output : int; cause : cause }
 
 (* Columns
 
@@ -449,6 +449,7 @@ type env = {
   slots : Column.t option array;
   parts : Reduce.parts option array;
   failure : failure option ref;
+  output : int ref;
 }
 
 let per_row env =
@@ -500,7 +501,7 @@ let fail env i cause =
   let row = env.origin i in
   match !(env.failure) with
   | Some f when f.row <= row -> ()
-  | _ -> env.failure := Some { row; cause }
+  | _ -> env.failure := Some { row; output = !(env.output); cause }
 
 let data why = Data (Error.v (why ^ "."))
 
@@ -1029,6 +1030,7 @@ let env st frame =
       slots = Array.make st.slots None;
       parts = Array.make st.parts None;
       failure = ref None;
+      output = ref 0;
     }
   in
   if frame.reduced then over_segments env frame else env
@@ -1038,7 +1040,11 @@ let outputs s os =
   let nodes = List.map (fun (_, Expr.Packed e) -> compile st e) os in
   fun frame ->
     let env = env st frame in
-    let cs = List.map (fun n -> fill env (get env n)) nodes in
+    let eval i n =
+      env.output := i;
+      fill env (get env n)
+    in
+    let cs = List.mapi eval nodes in
     (cs, !(env.failure))
 
 let predicate s p =

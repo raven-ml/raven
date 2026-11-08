@@ -2567,6 +2567,369 @@ let law_shared (G.Sample (ty, vs), g) =
         (buffers (column together n)))
     os
 
+(* Streamed aggregates
+
+   An aggregate of the rows of several batches gives exactly the blocking
+   aggregate of those rows in one batch: the same bits, NaNs compared as NaNs,
+   and the same failure. *)
+
+(* [words dt c] is [c]'s values at the stored dtype [dt], as int64, the nulls
+   in their places. *)
+let words (type a b) (dt : (a, b) Nx.dtype) c =
+  let n = Column.length c in
+  let held =
+    match Column.validity c with
+    | None -> Array.make n true
+    | Some v -> Nx.to_array (Nx.cast Nx.bool v)
+  in
+  let kept = List.filter (fun i -> held.(i)) (List.init n Fun.id) in
+  let kept = Array.of_list (List.map Int64.of_int kept) in
+  let idx = Nx.create Nx.int64 [| Array.length kept |] kept in
+  let vs =
+    Nx.to_array
+      (Nx.cast Nx.int64
+         (Column.to_tensor dt (column (take idx (v [ ("c", c) ])) "c")))
+  in
+  let next = ref 0 in
+  List.init n (fun i ->
+      if not held.(i) then "null"
+      else begin
+        incr next;
+        Int64.to_string vs.(!next - 1)
+      end)
+
+let show c =
+  let (Type.Any ty) = Column.type_ c in
+  let is t = Type.equal ty t in
+  let float v = if Float.is_nan v then "nan" else Printf.sprintf "%h" v in
+  let decoded (type a) (ty : a Type.t) (value : a -> string) =
+    Array.to_list
+      (Array.map
+         (function None -> "null" | Some x -> value x)
+         (Column.options (Type.kind ty) c))
+  in
+  if is Type.int8 then words Nx.int8 c
+  else if is Type.int16 then words Nx.int16 c
+  else if is Type.int32 then words Nx.int32 c
+  else if is Type.int64 then words Nx.int64 c
+  else if is Type.uint8 then words Nx.uint8 c
+  else if is Type.uint16 then words Nx.uint16 c
+  else if is Type.uint32 then words Nx.uint32 c
+  else if is Type.uint64 then words Nx.uint64 c
+  else if Option.is_some (Kind.provably_equal (Type.kind ty) Kind.span) then
+    words Nx.int64 c
+  else
+    match Kind.provably_equal (Type.kind ty) Kind.float with
+    | Some Equal -> decoded ty float
+    | None -> decoded ty (Testable.to_string (G.witness ty))
+
+let outcome_w =
+  Windtrap.result (list (Testable.pair string (list string))) string
+
+let outcome = function
+  | Ok t ->
+      Ok
+        (List.map
+           (fun (n, _) -> (n, show (column t n)))
+           (Schema.columns (schema t)))
+  | Error e -> Error (Format.asprintf "%a" Error.pp e)
+
+(* The keys a draw groups by: integers, none, text with nulls, compound, and
+   floats with NaN, nulls and both zeros. *)
+let key_choices =
+  [
+    ([ "g" ], fun _ -> []);
+    ([], fun _ -> []);
+    ( [ "t" ],
+      fun g ->
+        let text =
+          Array.map
+            (fun k -> [| Some "a"; Some ""; Some "\u{00E9}"; None |].(k mod 4))
+            g
+        in
+        [ ("t", Column.of_options Type.string text) ] );
+    ( [ "t"; "g" ],
+      fun g ->
+        let text =
+          Array.map (fun k -> [| Some "x"; None |].(k mod 2)) g
+        in
+        [ ("t", Column.of_options Type.string text) ] );
+    ( [ "f" ],
+      fun g ->
+        let keys =
+          Array.map
+            (fun k -> [| Some 0.; Some (-0.); Some Float.nan; None |].(k mod 4))
+            g
+        in
+        [ ("f", Column.of_options Type.float64 keys) ] );
+  ]
+
+let streamable =
+  reduced @ Type.[ Any string; Any date; Any (duration Ms) ]
+
+let batched =
+  Gen.(
+    bind
+      (pair (grouped streamable) (int_range 0 (List.length key_choices - 1)))
+      (fun (((G.Sample (ty, vs) as sample), g), k) ->
+        let by, extra = List.nth key_choices k in
+        let whole =
+          v
+            (("g", Column.v Type.int64 g)
+            :: ("x", Column.of_options ty vs)
+            :: extra g)
+        in
+        map (fun t -> (sample, by, whole, t)) (G.split whole)))
+
+(* [same_as_one_batch ~by ?plan os stream] states that the aggregate of
+   [stream]'s rows is what it is over the same rows in one batch. *)
+let same_as_one_batch ~by ?(plan = Fun.id) os stream =
+  let whole = run_ok (Query.of_table stream) in
+  let run t =
+    outcome
+      (Query.run (Query.aggregate ~by os (plan (Query.of_table t))))
+  in
+  equal outcome_w (run whole) (run stream)
+
+let streamed_edges =
+  group "streamed aggregate edges"
+    [
+      test "within reads a record's fields" (fun () ->
+          let t i x =
+            v
+              [
+                ("i", Column.v Type.int64 [| i |]);
+                ("f", Column.v Type.float64 [| x |]);
+              ]
+          in
+          let plan =
+            Query.derive Expr.[ "r" := record [ "f" := Col.float "f" ] ]
+          in
+          same_as_one_batch ~by:[] ~plan
+            Expr.[ within (Col.v Record.kind "r") ("s" := sum (Col.float "f")) ]
+            (of_batches [ t 0 1.; t 1 2. ]));
+      test "localize_ordered sees each group's rows, not a batch's" (fun () ->
+          let hour = 3_600_000_000_000L in
+          let w h = Time.of_ns (Int64.mul (Int64.of_int h) hour) in
+          let t ks hs =
+            v
+              [
+                ("k", Column.v Type.string ks);
+                ("w", Column.v (Type.wall Ms) (Array.map w hs));
+              ]
+          in
+          let e =
+            Expr.Temporal.localize_ordered Tz.utc ~ambiguous:`Fail ~gap:`Fail
+              (Col.wall "w")
+          in
+          same_as_one_batch ~by:[ "k" ]
+            Expr.[ "m" := max e ]
+            (of_batches
+               [ t [| "a"; "b" |] [| 10; 9 |]; t [| "a" |] [| 11 |] ]));
+      test "batches a filter empties, all of them" (fun () ->
+          let t xs = v [ ("x", Column.v Type.int64 xs) ] in
+          let x = Col.int "x" in
+          let plan = Query.filter Expr.(x < int 3) in
+          let stream = of_batches [ t [| 5 |]; t [| 6 |] ] in
+          same_as_one_batch ~by:[] ~plan
+            Expr.[ "o" := only x; "n" := rows ]
+            stream;
+          same_as_one_batch ~by:[ "x" ] ~plan Expr.[ "n" := rows ] stream);
+      test "a leading batch a filter empties" (fun () ->
+          let t xs = v [ ("x", Column.v Type.int64 xs) ] in
+          let plan = Query.filter Expr.(Col.int "x" < int 3) in
+          same_as_one_batch ~by:[] ~plan
+            Expr.[ "o" := only (Col.int "x") ]
+            (of_batches [ t [| 5 |]; t [| 1; 2 |] ]));
+    ]
+
+let reductions_of (G.Sample (ty, _)) =
+  let x = Col.v (Type.kind ty) "x" in
+  let any =
+    Expr.
+      [
+        "rows" := rows;
+        "count" := count x;
+        "n_unique" := n_unique x;
+        "fn" := store Type.int64 (const succ $ rows);
+      ]
+  in
+  let ordered =
+    Expr.
+      [
+        "min" := min x;
+        "max" := max x;
+        "first" := first x;
+        "last" := last x;
+        "only" := only x;
+        "arg_min" := arg_min x;
+        "arg_max" := arg_max x;
+      ]
+  in
+  let is k = Option.is_some (Kind.provably_equal (Type.kind ty) k) in
+  let numeric =
+    if is Kind.int || is Kind.float then
+      Expr.
+        [
+          "sum" := sum x;
+          "mean" := mean x;
+          "var" := var x;
+          "std" := std x;
+          "median" := median x;
+          "quantile" := quantile 0.5 x;
+        ]
+    else if is Kind.span then Expr.[ "sum" := sum x ]
+    else []
+  in
+  any @ ordered @ numeric
+
+(* The outputs of {!reductions_of} that stream together. *)
+let streamed_outs (G.Sample (ty, _)) =
+  let x = Col.v (Type.kind ty) "x" in
+  let is k = Option.is_some (Kind.provably_equal (Type.kind ty) k) in
+  Expr.
+    [
+      "rows" := rows;
+      "count" := count x;
+      "min" := min x;
+      "max" := max x;
+      "first" := first x;
+      "last" := last x;
+      "only" := only x;
+      "arg_min" := arg_min x;
+      "arg_max" := arg_max x;
+    ]
+  @
+  if is Kind.int || is Kind.float then
+    Expr.[ "sum" := sum x; "mean" := mean x ]
+  else []
+
+let law_streamed (sample, by, whole, stream) =
+  cover "several batches" (List.length (batches stream) > 1);
+  cover "no row" (rows whole = 0);
+  let outs = reductions_of sample in
+  let run t os =
+    outcome (Query.run (Query.aggregate ~by os (Query.of_table t)))
+  in
+  let streams = streamed_outs sample in
+  equal ~msg:"all" outcome_w (run whole outs) (run stream outs);
+  equal ~msg:"streamed together" outcome_w (run whole streams)
+    (run stream streams);
+  List.iter
+    (fun o -> equal outcome_w (run whole [ o ]) (run stream [ o ]))
+    outs;
+  (* A filter that empties batches, a leading one included, hands the aggregate
+     batches of no rows. *)
+  let filtered t os =
+    outcome
+      (Query.run
+         (Query.of_table t
+         |> Query.filter Expr.(Col.int "g" <> int 0)
+         |> Query.aggregate ~by os))
+  in
+  let empties =
+    List.exists
+      (fun b ->
+        let g = Column.to_tensor Nx.int64 (column b "g") in
+        Nx.dim 0 g > 0 && Nx.item [] (Nx.all (Nx.equal_s g 0L)))
+      (batches stream)
+    && List.length (batches stream) > 1
+  in
+  cover "a batch the filter empties" empties;
+  equal ~msg:"filtered" outcome_w (filtered whole streams)
+    (filtered stream streams)
+
+(* A cast at a row of one output and a conflict at the row of another, in
+   every order: the failure reported is the one that the single batch finds
+   first. [t] holds, for each draw, integers and a text that holds an integer
+   or does not parse. *)
+let failing_ints =
+  Gen.(
+    let int =
+      frequency
+        [
+          (6, int_range (-20) 20);
+          (1, one_of [ constant 1000; constant (-1000) ]);
+        ]
+    in
+    pair (list ~size:(int_range 0 30) (pair int int)) (int_range 0 3))
+
+let law_failures (rows_, k) =
+  let n = List.length rows_ in
+  (* Ties: a row where a cast fails, and that is the first row of a group whose
+     [x] values conflict. *)
+  let first_rows =
+    List.filter
+      (fun i ->
+        not
+          (List.exists
+             (fun j -> j < i && j mod 3 = i mod 3)
+             (List.init n Fun.id)))
+      (List.init n Fun.id)
+  in
+  let fails i = let y = snd (List.nth rows_ i) in y > 127 || y < -128 in
+  let conflict i =
+    let group = List.filter (fun j -> j mod 3 = i mod 3) (List.init n Fun.id) in
+    let vs =
+      List.sort_uniq compare (List.map (fun j -> fst (List.nth rows_ j)) group)
+    in
+    List.length vs > 1
+  in
+  cover "a tie" (List.exists (fun i -> fails i && conflict i) first_rows);
+  let xs = Array.of_list (List.map fst rows_) in
+  let ys = Array.of_list (List.map snd rows_) in
+  let text =
+    Array.map
+      (fun i -> if i = 13 then "not a number" else string_of_int i)
+      xs
+  in
+  let keys = Array.init n (fun i -> i mod 3) in
+  let t =
+    v
+      [
+        ("g", Column.v Type.int64 keys);
+        ("x", Column.v Type.int64 xs);
+        ("y", Column.v Type.int64 ys);
+        ("s", Column.v Type.string text);
+      ]
+  in
+  let x = Col.int "x" and y = Col.int "y" and s = Col.string "s" in
+  let narrowed = Expr.(cast Type.int8 y) in
+  let parsed = Expr.(Str.parse Type.int64 s) in
+  let outs =
+    Expr.
+      [
+        [ "o" := only x; "c" := sum narrowed ];
+        [ "c" := sum narrowed; "o" := only x ];
+        [ "a" := only x + sum narrowed ];
+        [ "a" := sum narrowed + only x ];
+        [ "p" := first parsed; "o" := only y; "c" := sum narrowed ];
+        [ "o" := only y; "p" := first parsed ];
+      ]
+  in
+  let by = [ []; [ "g" ] ] in
+  let whole = t in
+  (* Batches of at most [k + 1] rows, so that a failure outlives compactions. *)
+  let stream =
+    let size = k + 1 in
+    let cut i =
+      let stop = Stdlib.min n ((i + 1) * size) in
+      Talon.take (Nx.arange Nx.int64 (i * size) stop 1) t
+    in
+    if n = 0 then t
+    else Talon.of_batches (List.init (((n - 1) / size) + 1) cut)
+  in
+  cover "three batches or more" (List.length (batches stream) >= 3);
+  let run os by t =
+    outcome (Query.run (Query.aggregate ~by os (Query.of_table t)))
+  in
+  List.iter
+    (fun by ->
+      List.iter
+        (fun os -> equal outcome_w (run os by whole) (run os by stream))
+        outs)
+    by
+
 (* [min] and [max] of integers and booleans are each group's least and
    greatest value, null over none. *)
 let law_extremes (G.Sample (ty, vs), g) =
@@ -2650,6 +3013,10 @@ let one_column =
       prop "each output is its own aggregate's" (grouped reduced) law_shared;
       prop ~count:20 "var and std follow the exact variance far from zero"
         far_from_zero law_exact_variance;
+      prop ~count:400 "a streamed aggregate is the blocking one, bit for bit"
+        batched law_streamed;
+      prop ~count:300 "a streamed aggregate fails as the blocking one does"
+        failing_ints law_failures;
       prop "an integer's or a boolean's min and max are its extremes"
         (grouped
            (List.filter
@@ -4686,6 +5053,7 @@ let () =
     (run "Run"
        [
          laws;
+         streamed_edges;
          kleene;
          arithmetic;
          widening;

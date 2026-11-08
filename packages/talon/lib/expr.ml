@@ -2514,6 +2514,16 @@ let can_fail e =
   in
   fails e
 
+let reductions e =
+  check_bound "reductions" e;
+  let rec walk : type a s. (a, s) t -> packed list =
+   fun e ->
+    match e.node with
+    | Reduce _ -> [ Packed e ]
+    | n -> List.concat_map (fun (Packed e) -> walk e) (operands n)
+  in
+  walk e
+
 type mapper = { map : 'a 's. ('a, 's) t -> ('a, 's) t }
 
 (* [map_node m n] is the bound node [n] with [m] applied to each of its

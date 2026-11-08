@@ -2547,10 +2547,19 @@ module Query : sig
       keys in the columns [by], by key identity (null is one key, and NaN is
       one), in order of first appearance. Each row holds the columns [by], then
       the outputs [os] reduced over the group's rows in [q]'s order. [~by:[]]
-      makes one group of every row, so one row, even when [q] has none. It
-      blocks, in O(n) expected time, holding the columns [by] and those that
-      [os] read. Over traced columns ({!section-compiled}) it raises unless
-      [by] is empty.
+      makes one group of every row, so one row, even when [q] has none.
+
+      It takes O(n) expected time. A stream of several batches holds O(groups
+      + largest batch) rows, a state of one row per group, where each output
+      reduces with {!rows}, [count], [sum], [mean], [min], [max], [first],
+      [last], [only], [arg_min] or [arg_max] of an operand that reads its own
+      row alone and holds no [per_list]. Its values and failures do not depend
+      on the batches. Otherwise it blocks, holding the columns [by] and those
+      that [os] read: for any other reduction, a [sum] of durations, an OCaml
+      function or value ([$], [const], [of_option]), an extension value, a
+      {!Expr.within}, an output that can fail outside a reduction, or a traced
+      batch ({!section-compiled}). Over traced columns it raises unless [by] is
+      empty.
 
       Its problems are a key that names no column or is named twice, those of
       binding [os], two outputs of one name, and an output of a key's name. *)

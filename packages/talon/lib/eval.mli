@@ -55,9 +55,10 @@ type cause =
   | Raised of exn * Printexc.raw_backtrace
       (** An exception a user function raised. *)
 
-type failure = { row : int; cause : cause }
+type failure = { row : int; output : int; cause : cause }
 (** The type for the earliest failure of a call, at the frame's row [row]: for a
-    value of a segment, the segment's first row. *)
+    value of a segment, the segment's first row. [output] is the place in
+    {!outputs} of the output that found it, [0] from every other call. *)
 
 val outputs :
   Schema.t ->
@@ -96,6 +97,12 @@ val unnest :
     any. A null list has length 0, the lengths of a row's lists must agree, and
     a row without positions gives none, or with [keep_empty] one position of
     null elements. *)
+
+type dtype = Dtype : ('a, 'b) Nx.dtype -> dtype
+
+val dtype : 'a Type.t -> dtype option
+(** [dtype ty] is the dtype in which nx operations compute [ty]'s values, or
+    [None] for a type stored otherwise. *)
 
 val widen : Type.any -> Type.any -> Column.t -> Column.t
 (** [widen from t] converts a column of type [from] to the type [t] that

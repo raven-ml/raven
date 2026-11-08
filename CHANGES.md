@@ -3941,6 +3941,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Query.aggregate` over several batches holds a state of one row per group
+  and at most a batch and the groups so far of held rows, for `rows`,
+  `count`, `sum`, `mean`, `min`, `max`, `first`, `last`, `only`, `arg_min` and
+  `arg_max`. Its values and failures do not depend on the batches. Other
+  outputs block as before.
 - `Expr.var` and `Expr.std` of aggregates, gathered windows and `per_list`
   take the rounding of the mean out of the squared deviations (the corrected
   two-pass), so they keep their digits for values far from zero. Their last

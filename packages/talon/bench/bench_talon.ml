@@ -208,6 +208,39 @@ let by key =
 (* [over_k os] is [os] in each group of [k]. *)
 let over_k os = run Query.(of_table groups |> aggregate ~by:[ "k" ] os)
 
+(* [batched t] is [t]'s rows in batches of 2^14 rows. *)
+let batched t =
+  let n = rows t and size = 1 lsl 14 in
+  let batch i =
+    let stop = Stdlib.min n ((i + 1) * size) in
+    Talon.take (Nx.arange Nx.int64 (i * size) stop 1) t
+  in
+  Talon.of_batches (List.init ((n + size - 1) / size) batch)
+
+(* Streamed aggregates of 2^20 rows in batches: over the [groups] keys, few
+   groups, and over a key that repeats every 4 rows, a quarter as many groups
+   as rows. *)
+let streamed_few = lazy (batched groups)
+
+let streamed_many =
+  lazy
+    (let n = 1 lsl 20 in
+     batched
+       (Talon.v
+          [
+            ( "k",
+              Column.of_tensor
+                (Nx.repeat ~axis:0 4 (Nx.arange Nx.int64 0 n 4)) );
+            ("v", Column.of_tensor (Nx.arange Nx.int64 0 n 1));
+          ]))
+
+let streamed t =
+  run
+    Query.(
+      of_table (Lazy.force t)
+      |> aggregate ~by:[ "k" ]
+           Expr.[ "s" := sum (Col.int "v"); "c" := count (Col.int "v") ])
+
 (* [filter th] keeps the rows whose [key] is below [th]: [th / 10] percent of
    them. *)
 let filter th =
@@ -569,6 +602,10 @@ let () =
           Thumper.bench "Group/minmax-int32-100-1M" (fun () ->
               let v = Col.int "v" in
               over_k Expr.[ "r" := max v - min v ]);
+          Thumper.bench "Group/streamed-few-groups" (fun () ->
+              streamed streamed_few);
+          Thumper.bench "Group/streamed-many-groups" (fun () ->
+              streamed streamed_many);
           Thumper.bench "Group/mean-std-int32-100-1M" (fun () ->
               let v = Col.int "v" in
               over_k Expr.[ "m" := mean v; "d" := std v ]);

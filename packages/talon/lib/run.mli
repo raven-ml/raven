@@ -11,14 +11,17 @@
     A run optimizes its plan ({!Optimize.query}), then compiles each step to a
     stream of one-batch tables that pulls the streams of its inputs, and each
     step's expressions once ({!Eval}). A step that streams transforms one batch
-    at a time, in order. A step that blocks (a [sort], an [aggregate], and a
-    [select], [derive] or [filter] whose expressions read other rows than their
-    own) pulls its input to its end, concatenates it and computes once; a slice
-    from the start over a [sort] is one step, a top-k ({!Order_run.top_k}). A
-    join blocks on both inputs, the left pulled first, except a join on
-    [Join.all], which pulls its right to its end and then streams its left. A
-    source's parts are opened in order, each when the one before ends, and its
-    batches are checked against the request and the source's order.
+    at a time, in order. A step that blocks (a [sort], an [aggregate] that does
+    not stream ({!Partial}), and a [select], [derive] or [filter] whose
+    expressions read other rows than their own) pulls its input to its end,
+    concatenates it and computes once; a slice from the start over a [sort] is
+    one step, a top-k ({!Order_run.top_k}). An aggregate of several batches that
+    streams folds them into a {!Partial} state and emits once at its end, a
+    failure included. A join blocks on both inputs, the left pulled first,
+    except a join on [Join.all], which pulls its right to its end and then
+    streams its left. A source's parts are opened in order, each when the one
+    before ends, and its batches are checked against the request and the
+    source's order.
 
     {b Failures as one row at a time.} A run fails exactly where evaluating its
     optimized plan one row at a time would: at the first row, in that order,

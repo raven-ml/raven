@@ -90,7 +90,7 @@ let failure side count keys row c =
     Format.asprintf "the %s row%a matches %Ld rows, not %s" side whose keys c
       (phrase count)
   in
-  Error { Eval.row; cause = Data (Error.v (why ^ ".")) }
+  Error { Eval.row; output = 0; cause = Data (Error.v (why ^ ".")) }
 
 (* [check side count keys counts] fails at the first row of [side] whose number
    of matches [counts] [count] does not allow, naming the row's [keys]. *)

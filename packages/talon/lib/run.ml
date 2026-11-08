@@ -137,20 +137,25 @@ let gather input s =
   | [] -> empty (Query.schema input)
   | bs -> Table.concat (Table.of_batches bs)
 
-(* [blocking q input s step] is [step] applied once, to all of [s]'s rows, the
-   input of [q]'s step. It emits nothing when [step] fails. *)
-let blocking q input s step =
+(* [once close f] is the stream of [f ()]'s batch, then its end. *)
+let once close f =
   let ran = ref false in
   let next () =
     if !ran then None
     else begin
       ran := true;
-      match step (gather input s) with
-      | out, None -> Some out
-      | _, Some f -> failed (line Query.pp_step q) f
+      f ()
     end
   in
-  { next; close = s.close }
+  { next; close }
+
+(* [blocking q input s step] is [step] applied once, to all of [s]'s rows, the
+   input of [q]'s step. It emits nothing when [step] fails. *)
+let blocking q input s step =
+  once s.close (fun () ->
+      match step (gather input s) with
+      | out, None -> Some out
+      | _, Some f -> failed (line Query.pp_step q) f)
 
 let select q outputs input =
   let eval = Eval.outputs (Query.schema input) outputs in
@@ -238,6 +243,101 @@ let aggregate q by outputs input =
     ( Table.batch (Query.schema q) ~rows:(Reduce.count s)
         (Array.of_list (keys @ outs)),
       f )
+
+(* A streamed aggregate holds [O (groups + batch)] rows: each batch's operands
+   as rows of the state's schema, and when the rows held reach the groups so
+   far, they reduce together with the state rows, state first ({!Partial}), by
+   the ordinary aggregate [merge]. A failure is held to the end, as a later
+   batch can show a group's failure at an earlier row: the earliest row wins,
+   then the earliest node in evaluation order, a reduction's operand before
+   the reduction. A traced batch, whose rows a compaction could not take back,
+   stays held, and its rows reduce once with the state at the end. The state
+   and the held rows are released before they reduce, so that one copy is
+   live. *)
+let streamed q by (p : Partial.t) input s =
+  let frames = Query.of_table (empty p.schema) in
+  let state_q =
+    Query.make (Aggregate { by; outputs = p.merge; input = frames })
+  in
+  let merge = aggregate state_q by p.merge frames in
+  let finish = select q p.finish state_q in
+  let project = Eval.outputs (Query.schema input) p.held in
+  let keys = List.length by in
+  let state = ref None and held = ref [] and held_rows = ref 0 in
+  let rows = ref 0 and blocked = ref false and failure = ref None in
+  let note row rank =
+    Option.iter (fun (f : Eval.failure) ->
+        let key = (row f.row, rank f.output) in
+        match !failure with
+        | Some (k, _) when k <= key -> ()
+        | _ -> failure := Some (key, { f with row = fst key }))
+  in
+  let compact () =
+    let tables = Option.to_list !state @ List.rev !held in
+    let t = Table.concat (Table.of_batches tables) in
+    state := None;
+    held := [];
+    held_rows := 0;
+    let out, f = merge t in
+    let first = Table.column t Partial.row_field in
+    note
+      (fun r -> Int64.to_int (Nx.item [ r ] (Column.to_tensor Nx.int64 first)))
+      (fun o -> (2 * (o + keys)) + 1)
+      f;
+    state := Some out
+  in
+  let traced c =
+    match Column.data c with Fixed (P x) -> Column.traced x | _ -> false
+  in
+  let push b =
+    let n = Table.rows b and base = !rows in
+    let cs, f = project (Eval.frame b) in
+    note (( + ) base) (fun o -> 2 * o) f;
+    let row = Column.of_tensor (Nx.arange Nx.int64 base (base + n) 1) in
+    let columns = Array.of_list (cs @ [ row ]) in
+    held := Table.batch p.schema ~rows:n columns :: !held;
+    held_rows := !held_rows + n;
+    rows := base + n;
+    blocked := !blocked || List.exists traced cs;
+    let groups = match !state with Some s -> Table.rows s | None -> 0 in
+    let due = !held_rows > 0 && !held_rows >= groups in
+    if (not !blocked) && due then compact ()
+  in
+  let rec pull () =
+    match s.next () with
+    | Some b ->
+        push b;
+        pull ()
+    | None ->
+        if not (List.is_empty !held) then compact ();
+        Option.iter (fun (_, f) -> failed (line Query.pp_step q) f) !failure;
+        Some (fst (finish (Option.get !state)))
+  in
+  pull ()
+
+(* [partial q by outputs input s] is the aggregate [q] of [s]. One batch, or
+   outputs that {!Partial} does not stream, block as ever, and only a second
+   batch pays for the lowering. The batches pulled to tell are replayed. *)
+let partial q by outputs input s =
+  once s.close (fun () ->
+      let a = s.next () in
+      let b = if Option.is_none a then None else s.next () in
+      let peeked = ref (List.filter_map Fun.id [ a; b ]) in
+      let next () =
+        match !peeked with
+        | x :: rest ->
+            peeked := rest;
+            Some x
+        | [] -> s.next ()
+      in
+      let rest = { s with next } in
+      let lowered =
+        if Option.is_none b then None
+        else Partial.v ~by outputs (Query.schema input)
+      in
+      match lowered with
+      | Some p -> streamed q by p input rest
+      | None -> (blocking q input rest (aggregate q by outputs input)).next ())
 
 (* [head ~offset ~length s] is [s]'s rows [offset] to [offset + length - 1]; it
    closes [s] past them, and pulls nothing when it keeps no row. *)
@@ -360,16 +460,9 @@ let join q left right l r =
   in
   match Join_run.compile q with
   | Blocking f ->
-      let ran = ref false in
-      let next () =
-        if !ran then None
-        else begin
-          ran := true;
+      once close (fun () ->
           let l = gather left l in
-          emit (f l (gather right r))
-        end
-      in
-      { next; close }
+          emit (f l (gather right r)))
   | Streaming { batch; last } ->
       let held = lazy (gather right r) in
       let rows = ref 0 and ended = ref false in
@@ -407,7 +500,7 @@ let ordered q keys s =
               (Type.pp_list Order.pp) keys
           in
           ( sub b ~offset:0 ~length:row,
-            Some { Eval.row; cause = Data (Error.v why) } ))
+            Some { Eval.row; output = 0; cause = Data (Error.v why) } ))
 
 (* [source q source r] reads [q]'s source with its request, and checks the
    source's order on the longest prefix of it that the request reads. *)
@@ -483,7 +576,7 @@ let compile q =
     | Filter { predicate; input } ->
         step input (Expr.row_local predicate) (filter q predicate input)
     | Aggregate { by; outputs; input } ->
-        step input false (aggregate q by outputs input)
+        partial q by outputs input (stream input)
     | Sort { keys; input } ->
         step input false (fun b -> (Order_run.sort keys b, None))
     | Slice { offset; length; input } when offset >= 0 -> (
@@ -539,7 +632,7 @@ let values e q =
     (match Array.find_index Option.is_none (Array.sub vs 0 stop) with
     | Some i ->
         let null = "the value is null; read it through Expr.option." in
-        failed step { row = rows + i; cause = Data (Error.v null) }
+        failed step { row = rows + i; output = 0; cause = Data (Error.v null) }
     | None ->
         Option.iter
           (fun (f : Eval.failure) -> failed step { f with row = rows + f.row })

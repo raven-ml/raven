@@ -27,6 +27,7 @@
   order_run
   tee
   eval
+  partial
   run)
  (foreign_stubs
   (language c)

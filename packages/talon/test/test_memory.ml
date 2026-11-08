@@ -101,6 +101,46 @@ let law_parse_with rows =
   in
   Talon_held.check ~inputs:[ texts ] parse
 
+(* A streamed aggregate holds its state, at most one row a group, and held
+   rows that a compaction empties once they reach the groups: its host bytes
+   between batches follow groups + a batch. Each row of a held table holds
+   24 bytes, the key, the sum and the row; a batch of the input holds 16
+   more until it is reduced. *)
+let law_peak (groups, batch) =
+  let batches = 40 in
+  let table b =
+    let key i = (b * batch + i) mod groups in
+    Talon.v
+      [
+        ("k", Column.v Type.int64 (Array.init batch key));
+        ("x", Column.v Type.float64 (Array.init batch float_of_int));
+      ]
+  in
+  let produced = ref 0 and peak = ref 0 in
+  let baseline = Talon_held.settled () in
+  let next () =
+    if !produced = batches then Ok None
+    else begin
+      peak := max !peak (Talon_held.settled () - baseline);
+      let t = table !produced in
+      incr produced;
+      Ok (Some t)
+    end
+  in
+  let open_ () = Ok { Source.next; close = ignore } in
+  let part = { Source.rows = None; open_ } in
+  let schema = Talon.schema (table 0) in
+  let source = Source.v ~name:"stream" ~schema (fun _ -> Ok [ part ]) in
+  let q =
+    Query.(
+      of_source source
+      |> aggregate ~by:[ "k" ] Expr.[ "s" := sum (Col.float "x") ])
+  in
+  let result = Result.get_ok (Query.run q) in
+  equal int groups (Talon.rows result);
+  let limit = 64 * ((2 * groups) + (2 * batch)) in
+  less ~msg:"peak bytes" int ~than:limit !peak
+
 let () =
   exit
     (run "talon memory"
@@ -111,4 +151,8 @@ let () =
            sample law_parse;
          prop ~count:50 "a column Temporal.parse reads is the host's memory"
            (G.options Type.date) law_parse_with;
+         prop ~count:6
+           "a streamed aggregate's bytes follow its groups and a batch"
+           Gen.(pair (int_range 1 3000) (int_range 100 2000))
+           law_peak;
        ])

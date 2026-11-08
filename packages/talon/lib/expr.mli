@@ -461,6 +461,17 @@ val can_fail : ('a, 's) t -> bool
     {!( $ )}, or, in a {!per_list} body, {!only} or a {!sum} of durations; or a
     {!per_list} of several outputs, which lists of unequal lengths fail. *)
 
+val reductions : ('a, 's) t -> packed list
+(** [reductions b] is [b]'s reductions in evaluation order: operands before
+    their node, from left to right. *)
+
+type mapper = { map : 'a 's. ('a, 's) t -> ('a, 's) t }
+(** The type for maps of bound expressions. *)
+
+val map_node : mapper -> 'a node -> 'a node
+(** [map_node m n] is the bound node [n] with [m] applied to each of its
+    operands. *)
+
 val rename : (string -> string) -> ('a, 's) t -> ('a, 's) t
 (** [rename f b] is [b] reading the column [f n] wherever it reads the column
     [n] of its frame ({!reads}): handles, reads and {!over}'s keys, not a
