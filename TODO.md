@@ -166,10 +166,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   makes the call synchronous: decide a GPU stop (a read after a lower
   bound, or every m sweeps, or one kernel per matrix as batched syevj)
   (_plans/todo-campaign/design/eigh-compile.adjudication.md)
-- fudge's `rune.thumper` words rows moved at main since they were recorded:
-  `Loops/scan-grad-100x100` 3967612 -> 4039461 (+1.8%, unexplained),
-  `MlpGrad/mlp-forward-nx-eager` 2440 -> 1819, `WarmStart/*` 13-37% lower;
-  explain the rise, then re-record
 
 ## nx
 
