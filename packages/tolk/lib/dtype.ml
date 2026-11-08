@@ -398,7 +398,7 @@ module Value = struct
     in
     (q, m)
 
-  let ( = ) v0 v1 = order v0 v1 = Some 0
+  let ( = ) v0 v1 = match order v0 v1 with Some 0 -> true | _ -> false
   let ( <> ) v0 v1 = not (v0 = v1)
   let ( < ) v0 v1 = match order v0 v1 with Some c -> c < 0 | None -> false
   let ( <= ) v0 v1 = match order v0 v1 with Some c -> c <= 0 | None -> false

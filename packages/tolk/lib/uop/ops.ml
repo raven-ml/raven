@@ -354,7 +354,8 @@ let equal_arg (a0 : arg) (a1 : arg) =
   | Dtype d0, Dtype d1 -> Dtype.equal d0 d1
   | Param p0, Param p1 -> equal_param_arg p0 p1
   | Range r0, Range r1 ->
-      r0.axis_id = r1.axis_id && Axis_type.equal r0.axis_type r1.axis_type
+      List.equal Int.equal r0.axis_id r1.axis_id
+      && Axis_type.equal r0.axis_type r1.axis_type
   | Reduce r0, Reduce r1 ->
       Op.equal r0.op r1.op && Int.equal r0.num_axes r1.num_axes
   | Device d0, Device d1 -> String.equal d0 d1

@@ -89,13 +89,13 @@ and rune), raven / llama.cpp b12048 Vulkan:
   in tolk (424 M words): about 40 passes, each linear in the program's size
   and under 0.4 s and 40 M words, rangeify's cleanups, `run_rangeify` and
   the symbolic passes before decomposition the largest. On rune's
-  `special/betaincinv-grad-f64` compile row (207 M words, 19.9 G
-  instructions under cachegrind) what is left in tolk is the walks (a
-  quarter of the instructions: a node's lookup by id, its rewrite's
-  bookkeeping), matching (a seventh, and a further 5% in the development
-  profile, where `-opaque` makes each `Op.Set.mem` a call through
-  `caml_apply2`), the collector (a seventh), the linearizer's ties broken
-  by structure (4%) and `caml_modify` (3%)
+  `special/betaincinv-grad-f64` compile row (199 M words, 23.4 G
+  instructions under cachegrind) the collector takes 22%, the walks 21%
+  (5.9 M rows, about 130 walks of the 42k-node graph, mostly first
+  visits), matching 12%, hash-consing 6%, the development profile's
+  `caml_apply2` 3%, the linearizer's ties broken by structure 3% and
+  `caml_modify` 3%; promotions are the graphs between passes, nodes and
+  their memo records a third of them
 - whether memory-bound host kernels take lanes at all: no upcast ran 4-7%
   faster than 64-byte lanes in two of seven loaded fudge runs of a 4M
   float32 select-zero; decide on the scheduled quiet re-record
