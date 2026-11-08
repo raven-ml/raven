@@ -319,9 +319,9 @@ value caml_rig_metal_image(value v_d, value v_b) {
 }
 
 /* The bytes of parameters a function reads, as [reflection] binds them:
-   the size of the struct at buffer 0, which a launch sets with
-   [setBytes:]; 0 with no buffer 0; -1 where buffer 0 is no struct, such as
-   a pointer to words, whose length the function does not state. */
+   the size of the struct at buffer 0; 0 with no buffer 0; -1 where buffer
+   0 is no struct, such as a pointer to words, whose length the function
+   does not state. */
 static int64_t params_of(MTLComputePipelineReflection *reflection) {
   for (id<MTLBinding> b in reflection.bindings) {
     if (b.index != 0 || b.type != MTLBindingTypeBuffer) continue;

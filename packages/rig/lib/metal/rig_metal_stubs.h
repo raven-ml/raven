@@ -94,9 +94,12 @@ struct rig_metal {
 /* The parameter arena's alignment of each launch's bytes: the largest
    "Minimum constant buffer offset alignment" of the Metal Feature Set
    Tables, 256 B on Mac2 (4 B on Apple GPUs). A growth makes an arena of at
-   least ARENA_MIN bytes. */
+   least ARENA_MIN bytes, which holds the parameters of 4,096 launches of
+   at most 256 bytes each whose command buffers have not completed: a
+   further launch waits (RIG_LATER). A decode step of a 24-layer model at
+   48 launches a layer takes about 1,200. */
 #define ARENA_ALIGN 256
-#define ARENA_MIN 65536
+#define ARENA_MIN (1 << 20)
 
 /* The arena bytes the parts whose room answered RIG_GROW on this thread
    take (rig_metal_room). */

@@ -48,11 +48,11 @@ All notable changes to this project will be documented in this file.
   last-level cache (4 MiB at least), as host buffers do, unless their device
   nears its budget. A small heap ran one every few calls: a data-parallel
   step over 16 memory devices runs a quarter fewer instructions a call.
-- A Metal launch of exactly 4,096 bytes of parameters takes them from the
-  parameter arena instead of `setBytes`, which Apple documents for data
-  smaller than 4 KB. A parameter arena Metal places off 256 bytes now
-  faults the device instead of misaligning parameters `rig_metal.mli`
-  states start on 256 bytes.
+- Every Metal launch's parameters start on 256 bytes in the parameter
+  arena; `setBytes`, whose copy Apple places at no stated alignment, is no
+  longer used. tolk's packed kernels are no longer bound read-only or
+  misaligned. A parameter arena Metal places off 256 bytes faults the
+  device.
 - AMD GPUs copy a box of two rows or more in one SDMA sub-window packet
   per 2^14 rows (2^16 on GFX12) where it took one packet per row: on an
   R9700, `Rig.Buffer.submit_copy` of 65,536 rows of 4 bytes takes 153 µs

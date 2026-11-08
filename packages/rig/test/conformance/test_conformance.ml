@@ -1323,8 +1323,7 @@ let largest_launches (module G : Gpu) =
       (Array.init n (fun i -> i + 1))
       (words (get out) ~at:0 n)
 
-(* The bytes of [wide]'s parameters: its [out], then words past 4,096 bytes,
-   the most a launch had on Metal's setBytes. *)
+(* The bytes of [wide]'s parameters: its [out], then words past 4,096 bytes. *)
 let wide_bytes = 8192
 
 (* The bytes [extra_params] gives [wide], eight times those it reads. *)

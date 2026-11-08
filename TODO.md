@@ -101,9 +101,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   RTX 4060-class sm_89) may lose by that model: a row owed there, and
   Metal's values. `Rig.cache_bytes` has not run on hardware for NV over
   PCI
-- a Metal kernel loads 8-byte arguments from the bytes setBytes copies,
-  whose alignment Apple does not document and `rig_metal.mli` does not
-  promise; it holds on Apple GPUs at 32 bytes as observed
 - LLVM 23 keeps the straight-line vectorizer that D167 turns off under
   LLVM 18-20 and Apple clang 17: run 73455ffe7's reduced kernel and
   rune's ALiBi attention example (test_attention.ml, the dense tq 2 tk 3

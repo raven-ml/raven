@@ -1187,8 +1187,8 @@ let no_params () =
   wait t p;
   equal int (Rig.Point.value p) (Rig_metal.signaled t.g)
 
-(* 4,096 bytes of parameters, the fewest the parameter arena holds: [last]
-   sums the 1,022 words before its ref, the last 8 bytes. *)
+(* 4,096 bytes of parameters: [last] sums the 1,022 words before its ref,
+   the last 8 bytes. *)
 let widest () =
   let t = dev () in
   let image = launch_image t.d in
@@ -1207,9 +1207,9 @@ let widest () =
   run_wait run [| out |];
   equal int (1022 * 1023 / 2) (words out).(0)
 
-(* 4,097 bytes of parameters, a length off a multiple of 8 in the parameter
-   arena: [last] reads its first 4,096. *)
-let past_set_bytes () =
+(* 4,097 bytes of parameters, a length off a multiple of 8: [last] reads its
+   first 4,096. *)
+let odd_length () =
   let t = dev () in
   let image = launch_image t.d in
   let out = zeroed t.d 4 in
@@ -1227,10 +1227,9 @@ let past_set_bytes () =
   run_wait run [| out |];
   equal int (1022 * 1023 / 2) (words out).(0)
 
-(* setBytes takes fewer than 4,096 bytes: a fresh device, whose arena is
-   empty, fits a launch of 4,095 bytes of parameters and grows its arena for
-   one of 4,096. *)
-let set_bytes_bound () =
+(* A fresh device, whose arena is empty, fits a launch of no parameters and
+   grows its arena for one of 8 bytes. *)
+let first_growth () =
   let g = second () in
   Fun.protect ~finally:(fun () -> Rig_metal.stop g ~fault:None) @@ fun () ->
   let image =
@@ -1238,50 +1237,104 @@ let set_bytes_bound () =
     | Rig_edge.Loaded i -> i
     | Place (n, _) -> failf "the device asked to place %d bytes of code" n
   in
-  let last = found (Rig_metal.entry image "last") in
+  let where = found (Rig_metal.entry image "where") in
   let room params =
-    match S.room g last ~params with
+    match S.room g where ~params with
     | `Fits -> "fits"
     | `Later -> "later"
     | `Never -> "never"
     | `Grow -> "grow"
   in
-  equal ~msg:"4,095 bytes" string "fits" (room 4095);
-  equal ~msg:"4,096 bytes" string "grow" (room 4096);
+  equal ~msg:"no parameters" string "fits" (room 0);
+  equal ~msg:"8 bytes" string "grow" (room 8);
   Rig_metal.unload g image
 
-(* Parameters in the arena start on 256 bytes: [where] stores the address of
-   its parameters' first byte, for launches of one submission whose
-   parameters the arena holds in turn, of sizes off a multiple of 256 among
-   them. *)
-let arena_aligned () =
-  let t = dev () in
-  let image = launch_image t.d in
-  let sizes = [| 4096; 4097; 8192; 5000; 4096 |] in
-  let n = Array.length sizes in
-  let out = zeroed t.d (8 * n) in
-  let where params = launch image "where" ~params [ Sub.write 0 ~at:0 ] in
-  let s = Sub.make t.d (Array.map where sizes) in
-  let run = Sub.take s in
-  for i = 0 to n - 1 do
-    let k = Sub.block s i in
-    set_grid run k one;
-    Run.int64 run k 0 (Int64.of_int (8 * i))
-  done;
-  run_wait run [| out |];
-  let w = words out in
-  let at i = w.(2 * i) lor (w.((2 * i) + 1) lsl 32) in
-  equal (array int) (Array.make n 0) (Array.init n (fun i -> at i mod 256))
+(* Submissions of launches of parameters from 8 bytes, a ref's, to 8 KiB:
+   short ones of up to 300 launches, mostly below 4 KiB with the shortest
+   drawn often, and wide ones of 250 to 300 launches past 4 KiB, which take
+   more than 1 MiB of the arena. *)
+let gen_submissions =
+  let short =
+    Gen.list ~size:(Gen.int_range 1 300)
+      (Gen.frequency
+         [
+           (4, Gen.int_range 8 4095);
+           (1, Gen.of_list [ 8; 9; 15; 16; 17; 255; 256; 257 ]);
+         ])
+  in
+  let wide =
+    Gen.list ~size:(Gen.int_range 250 300) (Gen.int_range 4097 8192)
+  in
+  Gen.list ~size:(Gen.int_range 1 4) (Gen.frequency [ (2, short); (1, wide) ])
 
-(* Launches of [wide] with 8 KiB of parameters, past what setBytes takes:
-   200 values of one launch, more than the first parameter arena holds at
-   once, then one value of 16 launches, more than it holds at all. Each
+(* The arena bytes of parameters of [n] bytes: from a multiple of 256. *)
+let slot n = (n + 255) / 256 * 256
+
+(* Whether each submission grows the arena, by [rig_metal.mli]'s rule: a
+   submission whose parameters exceed the empty arena grows it to the least
+   power of two of at least 1 MiB that holds twice them. *)
+let growths subs =
+  let size = ref 0 in
+  List.map
+    (fun lengths ->
+      let need = List.fold_left (fun a l -> a + slot l) 0 lengths in
+      let grows = need > !size in
+      if grows then begin
+        let n = ref (1 lsl 20) in
+        while !n < 2 * need do
+          n := 2 * !n
+        done;
+        size := !n
+      end;
+      grows)
+    subs
+
+(* Every launch's parameters start on 256 bytes: [where] stores the address
+   of its parameters' first byte, for the launches of each submission in
+   turn on a fresh device, whose arena some of them grow. *)
+let aligned subs =
+  S.with_ @@ fun s ->
+  let t = dev_of s in
+  let image = launch_image t.d in
+  let later = List.tl (growths subs) in
+  cover "a later submission grows the arena" (List.mem true later);
+  cover "a later submission fits the arena it finds" (List.mem false later);
+  cover "a length off a multiple of 8"
+    (List.exists (List.exists (fun l -> l mod 8 <> 0)) subs);
+  let where params = launch image "where" ~params [ Sub.write 0 ~at:0 ] in
+  let run_one lengths =
+    let lengths = Array.of_list lengths in
+    let n = Array.length lengths in
+    let out = zeroed t.d (8 * n) in
+    let s = Sub.make t.d (Array.map where lengths) in
+    let run = Sub.take s in
+    for i = 0 to n - 1 do
+      let k = Sub.block s i in
+      set_grid run k one;
+      Run.int64 run k 0 (Int64.of_int (8 * i))
+    done;
+    run_wait run [| out |];
+    let w = words out in
+    Array.init n (fun i -> (w.(2 * i) lor (w.((2 * i) + 1) lsl 32)) mod 256)
+  in
+  List.iteri
+    (fun j lengths ->
+      equal (array int)
+        ~msg:(strf "submission %d" j)
+        (Array.make (List.length lengths) 0)
+        (run_one lengths))
+    subs
+
+(* Launches of [wide] with 8 KiB of parameters on a fresh device: 200 values
+   of one launch, more than its first parameter arena, of 1 MiB, holds at
+   once, then one value of 160 launches, more than it holds at all. Each
    launch stores its own two words, as the arena's bytes come back, wrap and
    grow. *)
 let arena () =
-  let t = dev () in
+  S.with_ @@ fun s ->
+  let t = dev_of s in
   let image = launch_image t.d in
-  let values = 200 and together = 16 in
+  let values = 200 and together = 160 in
   let n = values + together in
   let out = zeroed t.d (8 * n) in
   let set run k i =
@@ -1477,11 +1530,12 @@ let launches =
       test "a launch of no parameters runs" no_params;
       test "a launch reads 4,096 bytes of parameters, a ref in the last 8"
         widest;
-      test "a launch of 4,097 bytes of parameters reads them from the arena"
-        past_set_bytes;
-      test "setBytes takes fewer than 4,096 bytes of parameters"
-        set_bytes_bound;
-      test "parameters in the arena start on 256 bytes" arena_aligned;
+      test "a launch of 4,097 bytes of parameters reads its first 4,096"
+        odd_length;
+      test "a fresh device grows its arena for 8 bytes of parameters"
+        first_growth;
+      prop ~count:50 "every launch's parameters start on 256 bytes"
+        gen_submissions aligned;
       test
         "launches of 8 KiB of parameters each read their own as the arena's \
          bytes come back, wrap and grow"

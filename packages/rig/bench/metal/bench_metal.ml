@@ -214,7 +214,7 @@ let launch_rows =
   Thumper.group "launch"
     [
       row "1" (launched 1) run_launches;
-      (* Past the 4 KB setBytes takes: the parameters go in the arena. *)
+      (* 8 KiB of parameters, which the launch copies into the arena. *)
       row "params-8192"
         (fun () ->
           let t = dev () in

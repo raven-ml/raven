@@ -227,20 +227,16 @@ static int fits(const struct rig_part *p, const uint8_t *args) {
   return p->kind == RIG_FILL;
 }
 
-/* [setBytes:] copies fewer bytes than this. Its doc says it "only works
-   for data smaller than 4 kilobytes", while Apple's Metal Feature Set
-   Tables give 4 KB as the "Maximum length of inlined buffer contents using
-   setBytes" in every family; rig follows the stricter. */
-#define SET_BYTES_LIMIT 4096
-
 /* The parameter arena
 
-   A launch's parameters of SET_BYTES_LIMIT bytes or more go into the
-   device's arena, a shared buffer whose bytes the launches take in turn,
-   ARENA_ALIGN apart and none across its end, from a first byte on
-   ARENA_ALIGN (caml_rig_metal_grow). Bytes are counted from the device's
-   open: [arena_put] are taken, and a count from [arena_base] on lies at
-   its offset from it, modulo the arena's size. A command buffer's slot
+   Every launch's parameters go into the device's arena, a shared buffer
+   whose bytes the launches take in turn, ARENA_ALIGN apart and none across
+   its end, from a first byte on ARENA_ALIGN (caml_rig_metal_grow). So rig
+   chooses where they start: Apple states no placement for the copy
+   [setBytes:] makes, while the Metal compiler assumes a pointer's object is
+   aligned for its type. Bytes are counted from the device's open:
+   [arena_put] are taken, and a count from [arena_base] on lies at its
+   offset from it, modulo the arena's size. A command buffer's slot
    holds the count its launches took up to, and the ring gives those bytes
    back as it releases the slot. Metal bounds a buffer's contents by its length
    alone (the Feature Set Tables), so the device's longest buffer bounds a
@@ -254,7 +250,6 @@ _Thread_local uint64_t rig_metal_asked;
 /* The arena bytes part [p] takes. */
 static uint64_t arena_bytes(const struct rig_part *p) {
   uint64_t n = p->kind == RIG_LAUNCH ? p->launch.args.params : 0;
-  if (n < SET_BYTES_LIMIT) return 0;
   return (n + ARENA_ALIGN - 1) & ~(uint64_t)(ARENA_ALIGN - 1);
 }
 
@@ -337,16 +332,15 @@ static void commit_residency(struct rig_metal_run *r) {
 
 /* Encodes the launch [p], its block in [args], into [q]'s encoder: its
    pipeline, its parameters as buffer 0, each ref's word plus its slot's
-   address, its threadgroup memory, and its grid. Metal copies parameters
-   of fewer than SET_BYTES_LIMIT bytes at [setBytes:], from the block's
-   place, and longer ones lie in the arena, which room made hold them.
-   Every state the dispatch reads is set here, as a fill sets its own. */
+   address, its threadgroup memory, and its grid. The parameters lie in the
+   arena, which room made hold them, bound at each launch: a fill may have
+   bound another buffer at index 0. Every state the dispatch reads is set
+   here, as a fill sets its own. */
 static void launch(struct rig_metal_queue *q, const struct rig_part *p,
                    uint8_t *args, const uint64_t *slots) {
   struct rig_metal_run *r = q->r;
   const struct rig_metal_entry *e = p->launch.launch;
   const struct rig_block *b = (const void *)(args + p->launch.args.block);
-  uint32_t n = p->launch.args.params;
   id<MTLComputeCommandEncoder> c = q->encoder;
   [c setComputePipelineState:e->pipeline];
   uint64_t taken = arena_bytes(p);
@@ -358,10 +352,6 @@ static void launch(struct rig_metal_queue *q, const struct rig_part *p,
     r->arena_put = put;
     atomic_store_explicit(&r->ring.slots[q->slot].arena_end, put,
                           memory_order_release);
-  } else if (n > 0) {
-    uint8_t *params = rig_place(&p->launch.args, args);
-    rig_params(params, &p->launch.args, args, slots);
-    [c setBytes:params length:n atIndex:0];
   }
   if (b->shared > 0)
     [c setThreadgroupMemoryLength:shared_length(b->shared) atIndex:0];

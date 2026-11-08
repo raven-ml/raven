@@ -221,37 +221,42 @@ val capability : t -> Rig_metal_abi.t
 
     A launch dispatches its function once, in the open command buffer's
     encoder. It sets the function's pipeline; its parameters as kernel buffer
-    [0], unless it has none: fewer than 4,096 bytes, the data
-    [setBytes:length:atIndex:] takes, with it, and longer ones in the
-    device's {e parameter arena}, a shared buffer bound with
-    [setBuffer:offset:atIndex:]; its threadgroup memory, rounded up to a
-    multiple of 16 bytes, as threadgroup memory [0]
-    ([setThreadgroupMemoryLength:atIndex:]), unless it is [0]; and its grid
-    ([dispatchThreadgroups:threadsPerThreadgroup:]). The function reads its
-    parameters' bytes at [[[buffer(0)]]], in the [constant] or the [device]
-    address space, and each ref's 8 bytes as the GPU address of the ref's
-    buffer plus the offset. Parameters of fewer than 4,096 bytes lie where
-    [setBytes:length:atIndex:] copies them, at an alignment Apple does not
-    document.
+    [0], unless it has none, in the device's {e parameter arena}, a shared
+    buffer bound at each launch with [setBuffer:offset:atIndex:]; its
+    threadgroup memory, rounded up to a multiple of 16 bytes, as threadgroup
+    memory [0] ([setThreadgroupMemoryLength:atIndex:]), unless it is [0]; and
+    its grid ([dispatchThreadgroups:threadsPerThreadgroup:]). The function
+    reads its parameters' bytes at [[[buffer(0)]]], in the [constant] or the
+    [device] address space, and each ref's 8 bytes as the GPU address of the
+    ref's buffer plus the offset. Its parameters start on 256 bytes, so any
+    type of an alignment of at most 256 bytes may be declared there. The
+    Metal compiler assumes that the object a pointer argument refers to is
+    aligned as its type requires (Metal Shading Language Specification,
+    §2.5), and Apple states no alignment for the copy
+    [setBytes:length:atIndex:] makes, so a launch never binds its parameters
+    with it.
 
     The Metal Feature Set Tables bound a buffer's contents by its length
     alone, so the device's [maxBufferLength] bounds a launch's parameters.
     The launches take the arena's bytes in turn, each at an offset that is a
     multiple of 256 bytes, the largest constant buffer offset alignment, from
-    an arena whose first byte is on 256 bytes, so parameters of 4,096 bytes
-    or more start on 256 bytes. The bytes of a command buffer's launches come
-    back once its work completes. [rig_metal_room] returns [RIG_LATER] for
-    parts whose parameters the arena holds only once earlier work completes,
-    and [RIG_GROW] for parts whose parameters exceed the empty arena. The
-    growth ({!val-grow}) makes an arena of the least power of two of bytes,
-    at least 64 KiB and at most [maxBufferLength], that holds twice them,
-    and the next submission takes it; the command buffers that use the old
-    one keep it until their work completes. A growth Metal has no memory for
-    answers [Short], so a launch rig cannot find memory for raises
-    [Rig.Out_of_memory]. Apple documents no alignment for a buffer's first
-    byte ({!section-memory}), so a growth whose arena Metal places, by its
-    GPU or host address, off a multiple of 256 bytes raises [Fault] and
-    makes nothing. The arena never shrinks: it stays until the device stops,
+    an arena whose first byte is on 256 bytes. The bytes of a command
+    buffer's launches come back once its work completes. [rig_metal_room]
+    returns [RIG_LATER] for parts whose parameters the arena holds only once
+    earlier work completes, and [RIG_GROW] for parts whose parameters exceed
+    the empty arena, as a device's first launch with parameters finds it.
+    The growth ({!val-grow}) makes an arena of the least power of two of
+    bytes, at least 1 MiB and at most [maxBufferLength], that holds twice
+    them, and the next submission takes it; the command buffers that use the
+    old one keep it until their work completes. An arena of 1 MiB holds the
+    parameters of 4,096 launches of at most 256 bytes each whose command
+    buffers have not completed. A submission past what the arena holds
+    waits until enough of that work completes, and the GPU runs it
+    meanwhile. A growth Metal has no memory for answers [Short], so a launch
+    rig cannot find memory for raises [Rig.Out_of_memory]. Apple documents
+    no alignment for a buffer's first byte ({!section-memory}), so a growth
+    whose arena Metal places, by its GPU or host address, off a multiple of
+    256 bytes raises [Fault] and makes nothing. The arena never shrinks: it stays until the device stops,
     and counts in no budget, since a budget counts buffers, images' code and
     caches ({!Rig.section-reclaim}), as no driver's queues count in one.
 
@@ -264,8 +269,8 @@ val capability : t -> Rig_metal_abi.t
     {- its threadgroup memory, rounded, exceeds the device's
        [maxThreadgroupMemoryLength] less the function's
        [staticThreadgroupMemoryLength].}}
-    It also refuses parts whose parameters of 4,096 bytes or more take more
-    than [maxBufferLength] together.
+    It also refuses parts whose parameters take more than [maxBufferLength]
+    together.
 
     {2:profiles Profiles}
 
@@ -391,7 +396,7 @@ val capability : t -> Rig_metal_abi.t
       [MTLFunction.h] ([functionType]), [MTLComputePipeline.h]
       ([supportIndirectCommandBuffers], [maxTotalThreadsPerThreadgroup],
       [staticThreadgroupMemoryLength]), [MTLComputeCommandEncoder.h]
-      ([setBytes:length:atIndex:], [setBuffer:offset:atIndex:],
+      ([setBuffer:offset:atIndex:],
       [setThreadgroupMemoryLength:atIndex:],
       [dispatchThreadgroups:threadsPerThreadgroup:]),
       [MTLIndirectCommandBuffer.h].
@@ -403,12 +408,17 @@ val capability : t -> Rig_metal_abi.t
        makeBuffer(bytesNoCopy:length:options:deallocator:)}: the wrapped memory
       starts at a page.
     - {{:https://developer.apple.com/documentation/metal/mtlcomputecommandencoder/setbytes(_:length:index:)}
-       setBytes(_:length:index:)}: it takes only data smaller than 4 KB, and
-      states no alignment for its copy.
+       setBytes(_:length:index:)}: it states no alignment for its copy.
+    - {{:https://developer.apple.com/documentation/metal/mtlcomputecommandencoder/setbuffer(_:offset:index:)}
+       setBuffer(_:offset:index:)}: the offset of a buffer bound to a [device]
+      argument is aligned to its type's size, and a [constant] one's to the
+      family's minimum.
+    - {{:https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf}Metal
+       Shading Language Specification}, §2.5: the compiler assumes that the
+      object a pointer argument refers to is aligned as its type requires.
     - {{:https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf}Metal
        feature set tables}: GPU families, minimum constant buffer offset
-      alignment, the 4 KB of inlined buffer contents [setBytes] takes, and
-      buffer contents limited only by the buffer's length. *)
+      alignment, and buffer contents limited only by the buffer's length. *)
 
 (**/**)
 
