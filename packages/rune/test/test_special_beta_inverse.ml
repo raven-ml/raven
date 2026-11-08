@@ -98,7 +98,63 @@ let beta_inverse_second =
           (fun a b p -> Nx.betainccinv a b (Nx.rsub_s 1. p));
         ])
 
+(* The compiled quantile runs the eager one's expression, and keeps nx.mli's
+   bound at float32 at large shapes next to [p = 1/2], where rounding in the
+   guess's equation once sent the answer across the unit interval. The float64
+   inverse, within its own much smaller bound, is the reference. *)
+let beta_inverse_compiled =
+  group "incomplete beta inverse, compiled"
+    [
+      test "betaincinv keeps its bound at large shapes" (fun () ->
+          let rows =
+            [|
+              (62106.55078125, 1048576., 0x1.000002p-1);
+              (189.10256958007812, 14081.4921875, 0x1.000002p-1);
+              (8836.404296875, 658001.375, 0x1.000004p-1);
+              (11154.80859375, 830641., 0.5);
+              (1048576., 62106.55078125, 0x1.000002p-1);
+            |]
+          in
+          let column f =
+            Nx.create Nx.float32 [| Array.length rows |] (Array.map f rows)
+          in
+          let a = column (fun (a, _, _) -> a)
+          and b = column (fun (_, b, _) -> b)
+          and p = column (fun (_, _, p) -> p) in
+          let s = Nx.Ptree.(pair (pair tensor tensor) tensor) in
+          let compiled =
+            Rune.jit
+              Nx.Ptree.(s @-> returns tensor)
+              (fun ((a, b), p) -> Nx.betaincinv a b p)
+              ((a, b), p)
+          in
+          let wide v = Nx.cast Nx.float64 v in
+          let a = wide a and b = wide b and p = wide p in
+          let x = Nx.betaincinv a b p in
+          (* [log (x ∂ₓI)], for [κ = m / (x ∂ₓI)]. *)
+          let density =
+            Nx.(
+              sub
+                (add (mul a (log x)) (mul (sub_s b 1.) (log1p (neg x))))
+                (lbeta a b))
+          in
+          let x = Nx.to_array x and density = Nx.to_array density in
+          let p = Nx.to_array p in
+          Array.iteri
+            (fun i c ->
+              let m = Float.min p.(i) (1. -. p.(i)) in
+              let kappa = Float.exp (Stdlib.log m -. density.(i)) in
+              (* [4 + κ B(m)] ulps, and half an ulp for the reference. *)
+              let bound = 5. +. (kappa *. log_ulps 32 m) in
+              at_most
+                ~msg:(Printf.sprintf "row %d" i)
+                float_exact
+                ~than:(bound *. 0x1p-23 *. x.(i))
+                (Float.abs (c -. x.(i))))
+            (Nx.to_array (wide compiled)));
+    ]
+
 let () =
   exit
     (run "rune special beta inverse"
-       [ beta_inverse_derivatives; beta_inverse_second ])
+       [ beta_inverse_derivatives; beta_inverse_second; beta_inverse_compiled ])

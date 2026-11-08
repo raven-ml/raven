@@ -2065,31 +2065,41 @@ let temme_guess a b m l q_tail =
   let e1 = e.(0) and e2 = e.(1) and e3 = e.(2) in
   let ir = recip r in
   let eta = add eta0 (mul ir (add e1 (mul ir (add e2 (mul ir e3))))) in
-  let lx0 = log x0 and ly0 = log y0 in
-  let z0 = sub lx0 ly0 in
-  let h = add (mul x0 lx0) (mul y0 ly0) in
-  let target = add (mul_s (mul eta eta) (-0.5)) h in
-  let z = ref (add z0 (div eta sc)) in
+  let z0 = sub (log x0) (log y0) in
+  let half_eta2 = mul_s (mul eta eta) 0.5 in
+  (* With [d = z - z0] the equation's left side is [g = u t - log1p (u
+     expm1 t)], at [u = x0], [t = d] or at [u = y0], [t = -d]. Near the mean
+     [u] is the smaller of the two, whose terms round by [u t ε] where the
+     slope is about [u v t], so that a step's rounding stays near [ε]: written
+     as the two logarithms' sum, [g]'s rounding is that of [x0 log x0 + y0 log
+     y0] whatever [eta], and where [eta] is near 0 a step divides it by a
+     slope near 0. Far from the mean [t] is negative, so [expm1 t] stays
+     finite. *)
+  let d = ref (div eta sc) in
   for _ = 1 to T.beta_guess_newton do
-    let pt = logit_point !z in
-    let f = sub (add (mul x0 pt.lx) (mul y0 pt.ly)) target in
-    (* At the mean, where the slope is 0, [eta] is 0 and so is [f]. *)
-    let slope = sub x0 pt.x in
+    let far = ge (abs !d) 1. in
+    let mirror = where far (gt !d 0.) (cmple y0 x0) in
+    let u = where mirror y0 x0 and v = where mirror x0 y0 in
+    let t = where mirror (neg !d) !d in
+    let em = expm1 t in
+    let f = add (sub (mul u t) (log1p (mul u em))) half_eta2 in
+    (* [dg / dt = -u v expm1 t / (1 + u expm1 t)], and [x0 - x] is [dg / dd].
+       At the mean, where the slope is 0, [eta] is 0 and so is [f]. *)
+    let dt = neg (div (mul (mul u v) em) (add_s (mul u em) 1.)) in
+    let slope = where mirror (neg dt) dt in
     let flat = is slope 0. in
     let step =
       where flat (zeros_like f) (div f (where flat (ones_like slope) slope))
     in
-    let next = sub !z step in
+    let next = sub !d step in
     (* A step to the other side of [z0], or past the floats, halves the
        distance to [z0] instead. *)
     let wrong =
-      logical_or
-        (logical_not (isfinite next))
-        (lt (mul (sub next z0) eta) 0.)
+      logical_or (logical_not (isfinite next)) (lt (mul next eta) 0.)
     in
-    z := where wrong (add z0 (mul_s (sub !z z0) 0.5)) next
+    d := where wrong (mul_s !d 0.5) next
   done;
-  !z
+  add z0 !d
 
 (* The logit of [x] where [I_x(a, b)] is near the gamma's [P(a, w)], [w = -nu
    log (1 - x)] and [nu = b + (a - 1)/2], as it is for [b] large beside [a]

@@ -1095,6 +1095,7 @@ let beta_laws =
   let shapes = log_batch 1e-3 1e4 in
   (* The inverses' shapes reach down to where [log (a B(a, b))] is O(a). *)
   let inverse_shapes = log_batch 1e-30 1e5 in
+  let large_shapes = log_batch 0x1p6 0x1p20 in
   group "incomplete beta laws"
     [
       prop "betaincc a b x is betainc b a (1 - x) bit for bit where x >= 1/2"
@@ -1159,6 +1160,36 @@ let beta_laws =
                   ~than:(((own *. x) +. (mirror *. c) +. c) *. eps)
                   (Float.abs (c -. (1. -. x))))
             x q (betainccinv a b q));
+      prop "float32 betaincinv keeps its bound at large shapes near p = 1/2"
+        (Gen.triple large_shapes large_shapes (batch 0.4 0.6))
+        (fun (a, b, p) ->
+          (* Every fourth [p] is 1/2 and every fourth after it the float above
+             it, where the guess's equation has [eta] near 0. The float64
+             inverse, within its own much smaller bound, is the reference. *)
+          let at r v p =
+            where (init Nx.bool (shape p) (fun i -> i.(0) mod 4 = r)) (full_like p v) p
+          in
+          let p = at 1 0x1.000002p-1 (at 0 0.5 (cast Nx.float32 p)) in
+          let a = cast Nx.float32 a and b = cast Nx.float32 b in
+          let wide v = cast Nx.float64 v in
+          let a64 = wide a and b64 = wide b and p64 = wide p in
+          let x = betaincinv a64 b64 p64 in
+          let kappa = values ((beta_kappa { c = betaincinv }).f [| a64; b64; p64 |]) in
+          let bv = values b64 and pv = values p64 in
+          let got = wide (betaincinv a b p) in
+          elementwise
+            (fun i a x got ->
+              if a <= 0x1p20 && bv.(i) <= 0x1p20 then
+                let m = Float.min pv.(i) (1. -. pv.(i)) in
+                let bound = 5. +. (kappa.(i) *. log_ulps 32 m) in
+                close i ~than:(bound *. 0x1p-23 *. x) (Float.abs (got -. x)))
+            a64 x got);
+      test "bfloat16 betaincinv at a large shape" (fun () ->
+          (* The exact quantile, from mpmath: a float32 result rounds once,
+             within an ulp of bfloat16, 2^-12 at 0.06. *)
+          let args = Array.map (scalar Nx.bfloat16) [| 67584.; 0x1p20; 0.5 |] in
+          let got = item [] (betaincinv args.(0) args.(1) args.(2)) in
+          close 0 ~than:0x1p-12 (Float.abs (got -. 0x1.f006f71390e46p-5)));
       test "betainccinv where one ulp of q is most of its tail" (fun () ->
           (* [q = 1 - 3 2^-53], whose tail [m] is [3 2^-53], and the exact
              quantile at it, from mpmath; a [q] one float away moves the

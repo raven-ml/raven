@@ -865,6 +865,13 @@ def beta_quantile_points(fmt):
             p = r(mpf(p) if rng.random() < 0.5 else 1 - mpf(p))
             if 0 < p < 1:
                 points.append((a, b, p))
+    # Large shapes at p next to 1/2, where the guess's equation has eta near
+    # 0 and a float's rounding is larger than the whole of eta^2 / 2.
+    half = [r(0.5), next_up(fmt, r(0.5)), next_up(fmt, next_up(fmt, r(0.5))), next_down(fmt, r(0.5))]
+    large = [(189.10256958007812, 14081.4921875), (8836.404296875, 658001.375),
+             (11154.80859375, 830641.0), (62106.55078125, 1048576.0), (67584.0, 1048576.0),
+             (50.0, 2.0 ** 20), (1048576.0, 62106.55078125), (1e3, 1e3 + 2.0 ** 9)]
+    points += [(r(a), r(b), p) for a, b in large for p in half]
     return points
 
 

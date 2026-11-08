@@ -2487,6 +2487,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.betaincinv` and `Nx.betainccinv` keep their bound at float32 and the
+  narrower floats at large shapes with `p` near 1/2, where the guess's Newton
+  steps divided a rounding error by a slope near 0.
 - `Nx.betaincinv` and `Nx.betainccinv` stay in \[0, 1\] on a flat tail, at
   shapes far below 1 such as `a = 2.3e-17`, `b = 1.6e-17`, where the last
   correction's series could leave the interval.
