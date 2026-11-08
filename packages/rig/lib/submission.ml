@@ -1181,7 +1181,7 @@ let words_at d =
   else
     match Memory.host_making d words_start words_bytes with
     | None -> decide_words d host_wait
-    | Some { region; make } -> (
+    | Some { region; make; _ } -> (
         if not (Lock.protect l.lock record_words (d, region)) then
           Dev.raise_lost d;
         make ();
@@ -1210,7 +1210,7 @@ let words_at d =
 let map_word d p r =
   match Memory.peer_making d r with
   | None -> (host_wait, None)
-  | Some { region; make } -> (
+  | Some { region; make; _ } -> (
       let m = (region, p) in
       if not (Memory.record_word d m) then (host_wait, None)
       else begin
@@ -1342,7 +1342,8 @@ let check_owner s b =
    the driver to its side [k]. *)
 let name_one s c use k b =
   if not (Buffer.is_live b) then
-    invalid_argf "Rig.%s: buffers.(%d) is dead: %s" fn k b.mem.alloc.why;
+    invalid_argf "Rig.%s: buffers.(%d) is dead: %s" fn k
+      (Option.value (Buffer.dead b) ~default:"");
   let naming = Array.unsafe_get s.naming k in
   let carried =
     match naming with Copies -> carried s.dev b | Refs | Both -> false

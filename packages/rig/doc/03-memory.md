@@ -9,7 +9,8 @@ Reclamation section.
 
 ## A buffer's life
 
-No call frees a buffer. A buffer is a range of bytes in an allocation, and
+Only `Buffer.free` frees a buffer early. A buffer is a range of bytes in an
+allocation, and
 views and borrows add further buffers over the same allocation, sharing its
 stamps and claims. Once no buffer over the allocation, and no array that
 `Buffer.read`, `Buffer.write` or `Buffer.export` made of it, is reachable,
@@ -44,7 +45,8 @@ states each step, and the calls inside which collected memory moves.
 
 ## Reclamation
 
-Live buffers are never freed. A program that keeps every buffer reachable
+Live buffers are freed only by `Buffer.free`. A program that keeps every
+buffer reachable
 runs out of memory however large its budget, and one that lets them go can
 allocate far more than its budget over its life:
 
@@ -94,28 +96,37 @@ exported array reads after a device is lost.
 
 This traces the GPU program of the [quick start](index.md#on-a-gpu) on a GPU
 *d* whose memory the host does not address and which maps host memory, as a
-CUDA GPU does. `host` is 256 KiB, so it starts on a page and *d* borrows it,
-and *d*'s copy engine runs both copies. *H* is `host`'s allocation and *X*
-`x`'s. Each cell gives the last write, then the use by *d*. The host's own
-writes, such as `a.{i} <- …`, take no value and add no point.
+CUDA GPU does. Neither copy names a borrow of `host` on *d*, so each passes
+through staging memory. The host moves the bytes between `host` and staging
+memory, and *d*'s copy engine between staging memory and `x`. *H* is
+`host`'s allocation and *X* `x`'s. Each cell gives the last write, then the
+use by *d*. The host's own writes, such as `a.{i} <- …` and its moves of a
+copy's bytes, take no value and add no point.
 
 | After | Value | *H*: write; use | *X*: write; use |
 |---|---|---|---|
 | `Buffer.create Rig.host (4 * n)` | | none; none | |
 | `Buffer.create d (4 * n)` | | none; none | none; none |
-| `Buffer.copy ~src:host ~dst:x` | `d:1` | none; `d:1` | `d:1`; `d:1` |
-| `submit` in `double` | `d:2` | none; `d:1` | `d:2`; `d:2` |
-| `Buffer.copy ~src:x ~dst:host` | `d:3` | `d:3`; `d:3` | `d:2`; `d:3` |
+| `Buffer.copy ~src:host ~dst:x` | `d:1` | none; none | `d:1`; `d:1` |
+| `submit` in `double` | `d:2` | none; none | `d:2`; `d:2` |
+| `Buffer.copy ~src:x ~dst:host` | `d:3` | none; none | `d:2`; `d:3` |
 
-The first copy reads *H*, which has no write to follow, and writes *X*, which
-has no use. The launch reads and writes *X*, so it follows `d:1`, which device
-order covers already. The copy back reads *X*, so it follows *X*'s write
-`d:2`, and writes *H*, so it follows *H*'s use `d:1`. Each copy returns once
-*d* has reached its value, and `Point.wait` once *d* has reached `d:2`. Once
-`x` is unreachable, the next call that moves memory on *d* puts *X* in *d*'s
-cache, since its points are reached. Once `host` is unreachable,
-*d* releases its mapping of *H* when it has run the work submitted until
-then, and *H* returns after that.
+The first copy's transfer on *d* writes *X*, which has no use. The launch
+reads and writes *X*, so it follows `d:1`, which device order covers
+already. The copy back reads *X*, so it follows *X*'s write `d:2`, and the
+host moves its bytes into *H* once *d* has reached `d:3`. Each copy returns
+once the bytes are in its destination, and `Point.wait` once *d* has reached
+`d:2`. Once `x` is unreachable, the next call that moves memory on *d* puts
+*X* in *d*'s cache, since its points are reached. Once `host` is
+unreachable, the collection that frees it returns *H*, since no device maps
+it.
+
+A program that copies `host` to and from *d* many times borrows it on *d*
+once, `Buffer.borrow d host`, and copies through the borrow, which *d*'s
+copy engine reads and writes in place (the `Buffer` module's Copying
+section). The copies then give *H* *d*'s points. The copy back's `d:3`
+becomes *H*'s write, and *d* releases its mapping of *H* once the borrow
+is gone and *d* has run the work submitted until then.
 
 On Metal, whose memory the host addresses, the host runs both copies, which
 take no value. The launch is `d:1`, *X*'s only write and use, and *H* gets no
@@ -128,19 +139,20 @@ not. The Loss section of `rig.mli` says which uses then raise `Rig.Lost`:
 |---|---|
 | `Point.wait` in `double` | raises `Lost (d, why)` |
 | `Buffer.copy ~src:x ~dst:host` | raises `Lost`, since *X* is *d*'s memory |
-| `Buffer.blit_to_bytes host …` | copies the bytes, since a read depends on the last write, and *H* has none |
-| `Buffer.read host …` | reads `65535.`, the value the host wrote, since *H*'s only point is reached |
+| `Buffer.blit_to_bytes host …` | copies the bytes, since *H* has no point |
+| `Buffer.read host …` | reads `65535.`, the value the host wrote |
 
-*H*'s only point, `d:1`, was reached, so every use of *H* stays valid,
-writes and claims included. *X* raises `Lost` at every use. *d* releases its
-mapping of *H* once it has stopped, and *X* returns then too.
+*H* has no point of *d*, so every use of *H* stays valid, writes and claims
+included. *X* raises `Lost` at every use, and returns once *d* has stopped.
 
 If instead *d* is lost during the copy back, with `d:3` submitted and not
-reached, the copy raises `Lost`. *H*'s last write is then `d:3`, which *d*
-never reached, so every read or write of *H* in this trace raises `Lost`
-for the rest of the process. An array that `Buffer.export` made of *H*
-before the loss would read whatever bytes are there without an error, which
-may be the values the host wrote, the doubled ones, or a mix.
+reached, the copy raises `Lost` before the host moves any byte into *H*,
+which keeps the values the host wrote. Had the copy named a borrow of *H*,
+*H*'s last write would be `d:3`, which *d* never reached, so every read or
+write of *H* would raise `Lost` for the rest of the process. An array that
+`Buffer.export` made of *H* before the loss would read whatever bytes are
+there without an error, which may be the values the host wrote, the doubled
+ones, or a mix.
 
 Neither case shows memory that the lost device only read while its use was
 unreached. Such memory still serves reads, and raises `Lost` for the uses that

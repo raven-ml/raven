@@ -210,6 +210,7 @@ external heap_release : int -> unit = "caml_rig_heap_release" [@@noalloc]
 external heap_made : int -> unit = "caml_rig_heap_made" [@@noalloc]
 external heap_refuse : int -> unit = "caml_rig_heap_refuse" [@@noalloc]
 external heap_held : unit -> int = "caml_rig_heap_held" [@@noalloc]
+external heap_live : unit -> int = "caml_rig_heap_live" [@@noalloc]
 
 external ba_address : ('a, 'b, 'c) Bigarray.Array1.t -> int
   = "caml_rig_bigarray_address"
@@ -298,6 +299,15 @@ let claim_add b =
   w >= 0
   && (Atomic.Loc.compare_and_set [%atomic.loc a.count] w (w + one_claim)
      || claim_retry b)
+  && begin
+    (* A claim through a borrow counts on its lease too, which an unborrow
+       waits on, as C's claims do ([lease_take] in rig_memory.c). *)
+    (match b.mem.lease with
+    | Some l ->
+        ignore (Atomic.Loc.fetch_and_add [%atomic.loc l.lease_count] 1 : int)
+    | None -> ());
+    true
+  end
 
 external claim_drop : buffer -> unit = "caml_rig_claim_drop" [@@noalloc]
 
@@ -323,6 +333,15 @@ let rec mark_outside (a : alloc) =
      || Atomic.Loc.compare_and_set [%atomic.loc a.count] w (w lor outside)
      || mark_outside a)
 
+(* Leases *)
+
+(* The count a lease's end adds, past every count of claims; C's LEASE_END. *)
+let lease_end = 1 lsl 40
+let lease_ended m =
+  match m.lease with
+  | None -> false
+  | Some l -> Atomic.Loc.get [%atomic.loc l.lease_count] >= lease_end
+
 let make ?(keep = Nothing) ?(host = -1) ?(address = -1) ?(handle = 0n) dev
     entry =
   let alloc =
@@ -337,10 +356,10 @@ let make ?(keep = Nothing) ?(host = -1) ?(address = -1) ?(handle = 0n) dev
       keep;
     }
   in
-  { dev; host; address; handle; alloc }
+  { dev; host; address; handle; alloc; lease = None }
 
-let memory_of alloc dev ~host ~address ~handle =
-  { dev; host; address; handle; alloc }
+let memory_of ?lease alloc dev ~host ~address ~handle =
+  { dev; host; address; handle; alloc; lease }
 
 (* Host memory's size is its bigarray's, other memory's its entry's:
    [no_entry], of no bytes, for memory of no bytes. *)
@@ -351,14 +370,18 @@ let size (a : alloc) =
   | Nothing -> a.entry.bytes
 
 (* Where [r] lies, which its driver made. *)
-let locate (Region { m; r; _ }) =
+let locate (Region { m; r; mapped; _ }) =
   let module D = (val m) in
-  match r with
-  | Some r -> D.locate r
-  | None -> invalid_arg "Rig: a region its driver did not make"
+  match (r, mapped) with
+  | Some r, _ | None, Maps r -> D.locate r
+  | None, (Never | No_room) ->
+      invalid_arg "Rig: a region its driver did not make"
 
 (* Whether the driver's call that makes [r] returned it into rig's record. *)
-let made (Region { r; _ }) = Option.is_some r
+let made (Region { r; mapped; _ }) =
+  match (r, mapped) with
+  | Some _, _ | None, Maps _ -> true
+  | None, (Never | No_room) -> false
 
 let io_made (Io_region { r; _ }) = Option.is_some r
 
@@ -381,10 +404,10 @@ type memory_kind = Rig_edge.memory = Device | Pinned | Mapped
 (* Gives back a region [d] allocated or mapped, an io region or an image
    ([Dev.give]). A record whose driver's call made nothing gives back
    nothing. *)
-let free_region d (Region { m; h; r; _ }) =
-  match r with
-  | None -> Dev.Given
-  | Some r ->
+let free_region d (Region { m; h; r; mapped; _ }) =
+  match (r, mapped) with
+  | None, (Never | No_room) -> Dev.Given
+  | Some r, _ | None, Maps r ->
       let module D = (val m) in
       Dev.give d Dev.Any D.free h r
 
@@ -557,7 +580,7 @@ let fresh_entry d (kind : memory_kind) n =
         Driver_memory
           {
             memory = kind;
-            region = Region { m; h; rid; r = None };
+            region = Region { m; h; rid; r = None; mapped = Never };
             location = { address = None; host = None; handle = 0n };
           }
     | Io { m; h } ->
@@ -824,6 +847,34 @@ let free_entry (e : entry) =
   release_maps e maps;
   entry_unmapped e
 
+(* Under [e]'s owner's lock: ends a hold of [mp], and takes [mp] out of [e]'s
+   mappings once no lease holds it and rig does not keep it: whether it took
+   it. A mapping that [e]'s free or its device's stop took is [e]'s no
+   more. *)
+let end_hold_locked ((e : entry), mp) =
+  List.memq mp e.maps
+  && begin
+    mp.holds <- mp.holds - 1;
+    mp.holds = 0 && (not mp.kept)
+    && begin
+      e.maps <- List.filter (fun mp' -> mp' != mp) e.maps;
+      true
+    end
+  end
+
+(* Ends a hold of [d]'s mapping [mp] of [e], once [d] ran the work submitted
+   before the lease ended, and gives the mapping back after the last
+   ([give]). *)
+let end_hold d w mp : Dev.given =
+  match Weak.get w 0 with
+  | None -> Given
+  | Some (e : entry) ->
+      if Dev.protect e.owner end_hold_locked (e, mp) then begin
+        Dev.protect d forget_note (d, mp.id);
+        give d mp.map e
+      end
+      else Given
+
 let key n kind =
   let k = match kind with Device -> 0 | Pinned -> 1 | Mapped -> 2 in
   (n * 4) + k
@@ -954,7 +1005,8 @@ let route_one d =
     | Memory r -> retire_entry !r
     | Image loaded -> append_pending (d, Unload loaded)
     | Release h -> append_pending (d, Let_go h)
-    | Stamps st -> stamps_unref st);
+    | Stamps st -> stamps_unref st
+    | Unborrow (w, mp) -> append_pending (d, Unhold (w, mp)));
     release_pop l.release;
     true
   end
@@ -979,7 +1031,8 @@ external hold_record : int -> holds = "caml_rig_node_record" [@@noalloc]
    callback that interrupts another at [Weak.get]'s allocation, and a release
    that an asynchronous exception interrupts and a later drain runs again,
    release each hold once. *)
-external unhold : Bytes.t -> int -> alloc -> unit = "caml_rig_claim_unhold"
+external unhold : Bytes.t -> int -> alloc -> lease option -> unit
+  = "caml_rig_claim_unhold"
 [@@noalloc]
 
 let hold_list = release_list ()
@@ -991,7 +1044,11 @@ let no_hold = no_token
 
 let unhold_all (h : holds) =
   for i = 0 to Weak.length h.allocs - 1 do
-    match Weak.get h.allocs i with Some a -> unhold h.taken i a | None -> ()
+    match Weak.get h.allocs i with
+    | Some a ->
+        (* A lease collected is one no buffer can use any more. *)
+        unhold h.taken i a (Weak.get h.leases i)
+    | None -> ()
   done
 
 external token_link : token -> unit = "caml_rig_token_link" [@@noalloc]
@@ -1060,6 +1117,7 @@ let take_free_halves l =
       | Some b when not h.held ->
           let bs = b :: bs in
           h.buffer <- None;
+          h.names <- [];
           h.cursor <- 0;
           bs
       | Some _ | None -> bs)
@@ -1431,6 +1489,7 @@ let run_pending d : pending -> Dev.given = function
   | Let_go _ ->
       let_go ();
       Given
+  | Unhold (w, mp) -> end_hold d w mp
 
 (* Unloads [d]'s image [l] now, then gives back its code memory, or does both
    later ([waits]). *)
@@ -1593,7 +1652,11 @@ let holds_back (pool, l) =
   let holds = function
     | _, (Free e | Give e | Unmap (_, Some e)) -> charged pool e
     | _, Unload (Loaded { code; _ }) -> charged pool !code
-    | _, (Unmap (_, None) | Unload (Linked _) | Unmap_word _ | Let_go _) ->
+    | _,
+      ( Unmap (_, None)
+      | Unload (Linked _)
+      | Unmap_word _
+      | Let_go _ | Unhold _ ) ->
         false
   in
   let front, back = l.pending in
@@ -1739,20 +1802,30 @@ type home = Token | Code of entry ref
 
 (* The token of a try at [n] bytes of [d]'s memory of [kind], whose record
    holds the entry the try takes, none yet. It paces the collector by the
-   [n] bytes, which a cached entry of the try's key has too, as memory the
-   host shares where the host addresses memory of [kind]: pinned and mapped
-   memory by their kinds, and a device's own memory where its driver states
-   the host addresses all of it. A driver that states nothing gives its
-   device's memory a host address only for Polled with a transport, which
-   this paces as the device's own: the pace then differs from the one the
-   host address implies, which changes how soon the collector runs, never a
-   result. Raises [Lost] if [d]'s list is closed, as it is once [d] has
-   stopped. *)
+   [n] bytes, which a cached entry of the try's key has too, against the
+   budget the memory counts in. Memory the host's budget counts, a discrete
+   GPU's [Pinned] memory, is the host's: it takes the room the host's budget
+   has left beside the heap, and the live bytes host buffers pace by, so a
+   GPU nearly full of its own memory does not hold dropped pinned memory
+   back from collection. A device's own memory is memory the host shares
+   where the host addresses memory of [kind]: mapped memory by its kind, and
+   a device's own memory where its driver states the host addresses all of
+   it; it takes [d]'s room and allocated bytes. A driver that states nothing
+   gives its device's memory a host address only for Polled with a
+   transport, which this paces as the device's own: the pace then differs
+   from the one the host address implies, which changes how soon the
+   collector runs, never a result. Raises [Lost] if [d]'s list is closed, as
+   it is once [d] has stopped. *)
 let try_token d kind n r =
   let l = d.live in
-  let shared = kind <> Device || d.host_addresses in
-  let live = if shared && not (Dev.is_io d) then l.used else -1 in
-  let t = token l.release (Memory r) n (room d) live in
+  let room, live =
+    if budget_of d kind = Host_budget then
+      (Int.max 0 (Dev.host.budget - heap_held ()), heap_live ())
+    else
+      let shared = kind <> Device || d.host_addresses in
+      (room d, if shared && not (Dev.is_io d) then l.used else -1)
+  in
+  let t = token l.release (Memory r) n room live in
   if t == no_token then Dev.raise_lost d;
   t
 
@@ -1854,8 +1927,12 @@ let laddered d kind n home =
       let pool = if budget_of d kind = Host_budget then Dev.host else d in
       reclaiming d ~pool n (try_entry d kind n home)
 
+(* The kind that Mapped memory falls back to: Pinned, or the device's own
+   memory where the host addresses it, which has no Pinned memory. *)
+let fallback d = if d.host_addresses then Device else Pinned
+
 let alloc_entry d kind n home =
-  let kind = if kind = Mapped && whole n > d.budget then Pinned else kind in
+  let kind = if kind = Mapped && whole n > d.budget then fallback d else kind in
   let limit =
     match budget_of d kind with
     | Device_budget -> d.budget
@@ -1871,7 +1948,7 @@ let alloc_entry d kind n home =
        which keeps its promises, and the cache stays. *)
     match try_entry d Mapped n home () with
     | Some e -> e
-    | None -> laddered d Pinned n home
+    | None -> laddered d (fallback d) n home
 
 let alloc d kind n =
   let e, t = alloc_entry d kind n Token in
@@ -1930,7 +2007,14 @@ let[@inline] host_records keep addr n =
     }
   in
   let mem =
-    { dev = Dev.host; host = addr; address = addr; handle = 0n; alloc }
+    {
+      dev = Dev.host;
+      host = addr;
+      address = addr;
+      handle = 0n;
+      alloc;
+      lease = None;
+    }
   in
   { mem; offset = 0; length = n; generation = host_generation }
 
@@ -1973,6 +2057,24 @@ let rec map_on d = function
 (* [d]'s located mapping of [e], if any. *)
 let find_map ((e : entry), d) = map_on d e.maps
 
+(* What takes a mapping: a borrow's lease, which holds it until the lease
+   ends, or rig, which keeps it until its memory returns: rig's staging, and
+   memory the host does not page that a copy reaches ([reach_kept]). *)
+type purpose = Hold | Keep
+
+(* Takes [mp] for [how], under its memory's owner's lock. *)
+let take mp = function
+  | Hold -> mp.holds <- mp.holds + 1
+  | Keep -> mp.kept <- true
+
+(* [d]'s located mapping of [e] taken for [how], if any. *)
+let find_taken ((e : entry), d, how) =
+  match map_on d e.maps with
+  | Some mp as found ->
+      take mp how;
+      found
+  | None -> None
+
 (* Counts [mp] in [e] and adds it to [e]'s mappings. The list is made first:
    nothing allocates between the count and its store. *)
 let add_map ((e : entry), mp) =
@@ -1996,45 +2098,53 @@ let note_mapped (d, (e : entry), mp) =
 type settled = Located | Beaten of mapping | Taken
 
 (* Locates [mp] at [l], unless its device located another mapping of [e]
-   first, or its drain took [mp]. *)
-let settle_map ((e : entry), mp, (l : Rig_edge.location)) =
+   first, or its drain took [mp]. The mapping located is taken for [how] in
+   the same hold of the lock, so no release of a last hold comes between. *)
+let settle_map ((e : entry), mp, (l : Rig_edge.location), how) =
   if not (List.memq mp e.maps) then Taken
   else
     match find_map (e, mp.on) with
-    | Some other -> Beaten other
+    | Some other ->
+        take other how;
+        Beaten other
     | None ->
         mp.at <- Option.value ~default:(-1) l.address;
         mp.by <- l.handle;
         mp.located <- true;
+        take mp how;
         Located
 
 (* A record of a region the counted call [make] makes: it stores the
    driver's answer in the record as it is, allocating nothing, before its
-   count ends. The record is made, and kept where the frees that give the
-   region back find it, before the call, so that an exception once the call
-   returned leaves the region recorded. *)
+   count ends, which masks signals. The record is made, and kept where the
+   frees that give the region back find it, before the call, so that an
+   exception once the call returned leaves the region recorded. *)
 type making = { region : region; make : unit -> unit }
+
+(* The refusal a driver's answer in [r] holds, [r] not {!made}. *)
+let refusal (Region { mapped; _ }) : _ Rig_edge.mapping =
+  match mapped with No_room -> No_room | Maps _ | Never -> Never
 
 let host_making d p n =
   match d.kind with
   | Driver { m; h; rid } when d.maps_host ->
       let module D = (val m) in
-      let c = { m; h; rid; r = None } in
-      let map () = c.r <- D.map_host h p n in
+      let c = { m; h; rid; r = None; mapped = Never } in
+      let map () = c.mapped <- D.map_host h p n in
       Some { region = Region c; make = Dev.counted d Dev.Any map }
   | Driver _ | Host | Io _ -> None
 
 (* The region's module types the mapping; the keys' equality types [d]'s
    handle. *)
-let peer_making d (Region { m = om; h = oh; r; rid }) =
+let peer_making d (Region { m = om; h = oh; r; rid; _ }) =
   match (d.kind, r) with
   | Driver { m = dm; h; _ }, Some r -> (
       let module D = (val dm) in
       let module O = (val om) in
       match Type.Id.provably_equal D.key O.key with
       | Some Type.Equal ->
-          let c = { m = om; h; rid; r = None } in
-          let map () = c.r <- O.map_peer h oh r in
+          let c = { m = om; h; rid; r = None; mapped = Never } in
+          let map () = c.mapped <- O.map_peer h oh r in
           Some { region = Region c; make = Dev.counted d Dev.Any map }
       | None -> None)
   | (Driver _ | Host | Io _), _ -> None
@@ -2059,14 +2169,15 @@ let drop_map d (e : entry) mp =
   Dev.protect d forget_note (d, mp.id)
 
 (* [d]'s new mapping of the allocation [a], whose host address is [host] or
-   [-1]. It is recorded before the driver's call that makes it: counted in
-   the memory and added to its mappings, which the memory's free gives back,
-   then noted on [d] unless [d]'s stop returned, which [d]'s drain once it is
-   Stopped gives back. An exception from then on leaves it to those. Once
-   made it is located, and serves borrows, unless [d]'s stop's drain gave it
-   back meanwhile, which loses [d]; of two that [d] made at once, the one
-   located second is given back. *)
-let map_new d (a : alloc) host =
+   [-1], taken for [how], or the driver's refusal. It is recorded before the
+   driver's call that makes it: counted in the memory and added to its
+   mappings, which the memory's free gives back, then noted on [d] unless
+   [d]'s stop returned, which [d]'s drain once it is Stopped gives back. An
+   exception from then on leaves it to those. Once made it is located, and
+   serves borrows, unless [d]'s stop's drain gave it back meanwhile, which
+   loses [d]; of two that [d] made at once, the one located second is given
+   back. *)
+let map_new d (a : alloc) host how : mapping Rig_edge.mapping =
   let e = a.entry in
   (* Memory of a device of [d]'s driver maps as a peer's; other memory the
      host addresses, as host memory. *)
@@ -2076,7 +2187,7 @@ let map_new d (a : alloc) host =
     else peer_of d a
   in
   match making with
-  | None -> None
+  | None -> Never
   | Some { region; make } -> (
       let mp =
         {
@@ -2086,6 +2197,8 @@ let map_new d (a : alloc) host =
           at = -1;
           by = 0n;
           located = false;
+          holds = 0;
+          kept = false;
         }
       in
       Dev.protect a.owner add_map (e, mp);
@@ -2103,23 +2216,25 @@ let map_new d (a : alloc) host =
           Printexc.raise_with_backtrace x bt);
       if not (made region) then begin
         drop_map d e mp;
-        None
+        refusal region
       end
       else
         let l = locate region in
-        match Dev.protect a.owner settle_map (e, mp, l) with
-        | Located -> Some mp
+        match Dev.protect a.owner settle_map (e, mp, l, how) with
+        | Located -> Maps mp
         | Beaten other ->
             drop_map d e mp;
-            Some other
+            Maps other
         | Taken -> Dev.raise_lost d)
 
 (* [d]'s mapping of the allocation [a], whose host address is [host] or [-1],
-   made at the first borrow and shared by the later ones. *)
-let mapping d (a : alloc) host =
-  match Dev.protect a.owner find_map (a.entry, d) with
-  | Some _ as found -> found
-  | None -> map_new d a host
+   taken for [how]: the one [d] has, which every lease and keep of the
+   allocation on [d] shares, or a new one. *)
+let mapping d (a : alloc) host how =
+  match Dev.protect a.owner find_taken (a.entry, d, how) with
+  | Some mp -> Rig_edge.Maps mp
+  | None -> map_new d a host how
+
 
 (* Keeps [got] as [e]'s pages, unless a call kept some first. *)
 let set_pages ((e : entry), got) =
@@ -2196,49 +2311,125 @@ let owned (a : alloc) =
       memory_of a dev ~host ~address:(if host >= 0 then host else 0)
         ~handle:0n
 
-let borrow d m =
+(* A borrow's lease of the [n] bytes from byte [at] of its memory, ended by
+   [t]'s collection or link. *)
+let lease ?(t = no_token) at n =
+  {
+    lease_count = 0;
+    lease_why = "";
+    lease_token = t;
+    lease_offset = at;
+    lease_length = n;
+  }
+
+(* A borrow's lease of [d]'s mapping [mp] of [a], held for it: its token, on
+   [d]'s list, ends the hold once the lease is collected or ended. Its
+   record, a root from now on, holds [a]'s entry weakly, so that the entry's
+   host bytes return with the memory, on whichever device drains, never at
+   a drain of [d]. A closed list is a stopped [d]'s, whose stop took the
+   mapping back. *)
+let mapped_lease d (a : alloc) mp at n =
+  let w = Weak.create 1 in
+  Weak.set w 0 (Some a.entry);
+  let t = token d.live.release (Unborrow (w, mp)) 0 max_int (-1) in
+  if t == no_token then Dev.raise_lost d;
+  lease ~t at n
+
+let pinned (e : entry) =
+  match e.backing with
+  | Driver_memory { memory = Pinned; _ } -> true
+  | Driver_memory _ | Io_memory _ | Kept _ -> false
+
+(* Returns what may hold the room a mapping was refused for, a limit on
+   locked memory or on mappings, which the process's devices share, such as
+   a machine's memlock limit, a VFIO container's mappings, or the pages
+   CUDA locks: on every device of this machine, the mappings of leases
+   collected or ended, and those of memory returning, staging memory no copy
+   holds among it, which the devices that copy through it map; and cached
+   [Pinned] memory, which such a limit counts too. Each goes once the work
+   that may use it is done, so each busy device is waited for once the
+   returns are routed. It frees no other cached memory. *)
+let make_room () =
+  Gc.full_major ();
+  release_staging Dev.host;
+  Dev.iter (fun d -> if Dev.same_machine d Dev.host then release_staging d);
+  drain_all ();
+  Dev.iter (fun d ->
+      if Dev.same_machine d Dev.host then begin
+        if not (reached_or_lost d (Dev.submitted d)) then
+          wait_for d (Dev.submitted d);
+        release_cache_if ~wait:true d pinned
+      end);
+  drain_all ()
+
+(* [d]'s mapping of [a] taken for [how]. A refusal for room returns memory
+   ([make_room]) and asks once more, then raises [Out_of_memory] if [ladder],
+   and is [None] otherwise, as a refusal for good is. *)
+let rec mapped d (a : alloc) host how ~ladder ~retried =
+  match mapping d a host how with
+  | Maps mp -> Some mp
+  | Never -> None
+  | No_room when not ladder -> None
+  | No_room when retried -> raise (Dev.Out_of_memory (d, size a))
+  | No_room ->
+      make_room ();
+      if Dev.is_lost d then Dev.raise_lost d;
+      mapped d a host how ~ladder ~retried:true
+
+let borrow d m ~at ~n =
   let a = m.alloc in
   if empty_io d a then
-    let at = ba_address empty in
-    Some (memory_of a d ~host:at ~address:at ~handle:0n)
+    let addr = ba_address empty in
+    Some (memory_of ~lease:(lease at n) a d ~host:addr ~address:addr ~handle:0n)
   else
     let host = host_of a in
     match reach d a host with
     | Cannot -> None
     | Itself -> Some (if m.dev == d then m else owned a)
-    | At_host -> Some (memory_of a d ~host ~address:host ~handle:0n)
+    | At_host ->
+        Some (memory_of ~lease:(lease at n) a d ~host ~address:host ~handle:0n)
     | Addressed ->
-        Some (memory_of a d ~host ~address:host ~handle:(Nativeint.of_int host))
-    | Empty -> Some (memory_of a d ~host ~address:0 ~handle:0n)
+        let handle = Nativeint.of_int host in
+        Some (memory_of ~lease:(lease at n) a d ~host ~address:host ~handle)
+    | Empty ->
+        Some (memory_of ~lease:(lease at n) a d ~host ~address:0 ~handle:0n)
     | Map -> (
         if a.entry == no_entry then ensure_entry a;
         (* A borrow of host memory keeps its host address: it is host memory,
            which the host copies. *)
-        match mapping d a host with
+        match mapped d a host Hold ~ladder:true ~retried:false with
         | None -> None
-        | Some mp -> Some (memory_of a d ~host ~address:mp.at ~handle:mp.by))
+        | Some mp ->
+            let lease = mapped_lease d a mp at n in
+            Some (memory_of ~lease a d ~host ~address:mp.at ~handle:mp.by))
 
-(* Whether one of [maps] is [d]'s. A loop of its own, so asking builds no
-   closure. *)
-let rec mapped_on d = function
-  | [] -> false
-  | mp :: maps -> (mp.on == d && mp.located) || mapped_on d maps
-
-let maps d m =
+(* [d]'s reach of [m]'s allocation through a mapping rig keeps until the
+   memory returns, made if [d] has none: [None] where [d] cannot map it, or
+   its driver refuses, with the ladder's raise for room if [ladder]. *)
+let kept_reach d m ~ladder =
   let a = m.alloc in
-  empty_io d a
-  ||
   let host = host_of a in
   match reach d a host with
-  | Cannot -> false
-  | Itself | At_host | Addressed | Empty -> true
-  | Map ->
+  | Cannot -> None
+  | Itself -> Some (if m.dev == d then m else owned a)
+  | At_host -> Some (memory_of a d ~host ~address:host ~handle:0n)
+  | Addressed ->
+      Some (memory_of a d ~host ~address:host ~handle:(Nativeint.of_int host))
+  | Empty -> Some (memory_of a d ~host ~address:0 ~handle:0n)
+  | Map -> (
       if a.entry == no_entry then ensure_entry a;
-      let l = a.owner.live in
-      Lock.hold l.lock;
-      let maps = a.entry.maps in
-      Lock.release l.lock;
-      mapped_on d maps || Option.is_some (mapping d a host)
+      match mapped d a host Keep ~ladder ~retried:false with
+      | None -> None
+      | Some mp -> Some (memory_of a d ~host ~address:mp.at ~handle:mp.by))
+
+let end_lease l = token_link l.lease_token
+
+let reach_kept d m = kept_reach d m ~ladder:false
+let staging d m = kept_reach d m ~ladder:true
+
+(* Whether the host pages [a]'s memory: the host's own, and a memory
+   device's, which it allocates from the host's. *)
+let paged (a : alloc) = Dev.is_host a.owner || a.owner.memory_device
 
 (* Asks an io device to read ahead the bytes that a borrow on [d], a device
    other than the host, reaches through its pages. It is a hint, so its

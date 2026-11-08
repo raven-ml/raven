@@ -102,8 +102,8 @@ let mark b =
      marked, which costs only its donations. *)
   Buffer.check_live "Claim.share" b
 
-(* Memory a library hands out again is marked already: two loads answer, the
-   word unheld and marked, then [b] live, with no call. *)
+(* Memory a library hands out again is marked already: loads answer, the word
+   unheld and marked, then [b] live, with no call. *)
 let share b =
   let c = b.mem.alloc in
   let n = count c in
@@ -111,6 +111,7 @@ let share b =
     n < 0
     || n land Memory.outside = 0
     || Atomic.Loc.get [%atomic.loc c.generation] <> b.generation
+    || Memory.lease_ended b.mem
   then mark b
 
 (* The buffers [with_] was given, which it holds for reading. [state] is twice
@@ -320,6 +321,30 @@ let free ?(why = "freed") b =
       true
   | _ -> Buffer.refuse_dead fn b
 
+(* The lease's step: 1 if it ended [b]'s lease, 0 if a claim or a hold
+   through the borrow kept it, 2 if [b] is dead. *)
+external lease_freed : buffer -> string -> int = "caml_rig_lease_free"
+
+(* A borrow's end drops its hold of its mapping as its collection would
+   ([Memory.section-leases]). *)
+let unborrow ?(why = "unborrowed") b =
+  let fn = "Buffer.unborrow" in
+  Dev.check_held fn;
+  Buffer.check_live fn b;
+  let l =
+    match b.mem.lease with
+    | Some l -> l
+    | None -> invalid_arg "Rig.Buffer.unborrow: the buffer is no borrow"
+  in
+  if b.offset <> l.lease_offset || b.length <> l.lease_length then
+    invalid_arg "Rig.Buffer.unborrow: the buffer is part of its borrow";
+  match lease_freed b why with
+  | 0 -> false
+  | 1 ->
+      Memory.end_lease l;
+      true
+  | _ -> Buffer.refuse_dead fn b
+
 let consumable c b =
   let cl = b.mem.alloc in
   (not (ended c))
@@ -336,7 +361,8 @@ let consumable c b =
    token that releases them. *)
 type hold = { token : token; record : holds }
 
-let no_record = { allocs = Weak.create 0; taken = Bytes.empty }
+let no_record =
+  { allocs = Weak.create 0; leases = Weak.create 0; taken = Bytes.empty }
 
 external take_holds : buffer array -> Bytes.t -> int = "caml_rig_claim_holds"
 [@@noalloc]
@@ -353,11 +379,12 @@ let held fn bs =
   let n = Array.length bs in
   if n = 0 then { token = Memory.no_hold; record = no_record }
   else begin
-    let allocs = Weak.create n in
+    let allocs = Weak.create n and leases = Weak.create n in
     for i = 0 to n - 1 do
-      Weak.set allocs i (Some bs.(i).mem.alloc)
+      Weak.set allocs i (Some bs.(i).mem.alloc);
+      Weak.set leases i bs.(i).mem.lease
     done;
-    let record = { allocs; taken = Bytes.make n '\000' } in
+    let record = { allocs; leases; taken = Bytes.make n '\000' } in
     let token = Memory.hold_token record in
     take_all fn bs record.taken;
     { token; record }

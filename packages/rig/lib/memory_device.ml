@@ -61,8 +61,8 @@ module D = struct
     { Rig_edge.address = Some r.at; host = Some r.at; handle = Nativeint.of_int r.at }
 
   let peer _ _ = true
-  let map_peer _ _ r = Some { r with base = 0 }
-  let map_host _ p _ = Some { at = p; base = 0 }
+  let map_peer _ _ r = Rig_edge.Maps { r with base = 0 }
+  let map_host _ p _ = Rig_edge.Maps { at = p; base = 0 }
 
   (* rig asks no memory device: its memory is the host's. *)
   let dma _ _ ~fn:_ =

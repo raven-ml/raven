@@ -292,8 +292,8 @@ val capability : t -> Rig_cuda_abi.t
     when the later of the two GPUs first opened. That open enables the
     access both ways where CUDA gives it, for the rest of the process.
     {!map_peer} maps host memory always, and GPU memory where {!peer} is
-    [true]. Freeing a {!map_peer} region ends only that region. Peer access
-    between two GPUs is untested.
+    [true], and is [Never] otherwise. Freeing a {!map_peer} region ends only
+    that region. Peer access between two GPUs is untested.
 
     {!map_host}[ g a n] page-locks the [n] bytes at [a] for every CUDA device
     and maps them, at the address CUDA gives for the memory
@@ -310,10 +310,11 @@ val capability : t -> Rig_cuda_abi.t
        such as an allocation of {!alloc} or of another library, is mapped as
        it is, uncounted. That memory must stay locked until the region is
        freed.}
-    {- Any other range is locked, or [None] if CUDA refuses, as it does for
-       read-only memory and for a range that overlaps locked memory without
-       lying inside one of its ranges.}}
-    It is also [None] where [g] does not map host memory ([maps_host]).
+    {- Any other range is locked. Where CUDA refuses, it is [No_room] if
+       CUDA had no memory to lock or map the range, and [Never] otherwise,
+       as for read-only memory, a shared mapping of a file and a range that
+       overlaps locked memory without lying inside one of its ranges.}}
+    It is also [Never] where [g] does not map host memory ([maps_host]).
 
     On Linux, CUDA locks host pages for writing, which Linux refuses for a
     shared mapping of a file. A CUDA device therefore cannot borrow a region
@@ -398,7 +399,8 @@ val capability : t -> Rig_cuda_abi.t
     would have ended later.
 
     Before a fault, {!alloc}, {!map_host}, {!val-image} and {!entry} return
-    CUDA's refusals as their result, [None], [Error] or [Absent], and
+    CUDA's refusals as their result, [None], [Never] or [No_room], [Error]
+    or [Absent], and
     {!unload} raises {!exception-Fault} if CUDA refuses to unload the module.
     After a fault, the calls of {!alloc}, {!map_host}, {!val-image},
     {!entry}, {!unload} and {!sleep} that call CUDA raise {!exception-Fault}

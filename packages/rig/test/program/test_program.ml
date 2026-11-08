@@ -3266,6 +3266,33 @@ let test_move_ints_queued () =
   Array.iter Rig.Point.wait ends;
   equal ~msg:"the word through the ints" int 42 (word_of y)
 
+(* Moves between the program's host memory and a device of the program are
+   queued, as through the ints: input 0 into memory 0, of 64 bytes on the
+   host, and memory 0 out into input 1. *)
+let test_move_host_queued () =
+  let d, pd = polled ~host_visible:false "move-host-queued" in
+  let t =
+    {
+      G.devices = [| Rig.arch d; Rig.arch Rig.host |];
+      ints = 0;
+      memory = [| alloc 1 64 |];
+      images = [||];
+      inputs = Iarray.init 2 (fun _ -> { G.device = 0; bytes = 64 });
+      steps = [| move (Input 0) (all 0) 64; move (all 0) (Input 1) 64 |];
+    }
+  in
+  let p = load_ok t [ d; Rig.host ] in
+  let x = of_bytes d (String.make 64 'h')
+  and y = of_bytes d (String.make 64 '0') in
+  let before = P.sleeps pd in
+  let ends =
+    G.run p { inputs = [| x; y |]; ints = [||]; step_points = G.step_points p }
+  in
+  equal ~msg:"sleeps" int before (P.sleeps pd);
+  Array.iter Rig.Point.wait ends;
+  equal ~msg:"the bytes through host memory" string (String.make 64 'h')
+    (read y)
+
 (* An [Int] that a queued move wrote is read once the move is done: word 0 of
    the ints, which a move sets from input 0, picks the row of memory 0 that a
    second move takes into input 1. *)
@@ -3529,7 +3556,7 @@ let test_collected () =
   let drain () =
     for _ = 1 to 3 do
       Gc.full_major ();
-      ignore (B.create ~memory:Pinned d 8)
+      ignore (B.create d 0)
     done
   in
   let before = P.allocated pd Device in
@@ -4033,6 +4060,8 @@ let tests =
           test_move_outside;
         test "moves through the ints a device runs are queued"
           test_move_ints_queued;
+        test "moves through host memory a device runs are queued"
+          test_move_host_queued;
         test "an Int a queued move wrote is read once the move is done"
           test_move_writes_int;
         test "a move in a loop moves with its trips" test_move_loop;

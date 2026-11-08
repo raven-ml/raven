@@ -459,7 +459,7 @@ let test_submit_refusals () =
     Sub.make d [| launch image "main" ~params:8 ~refs:[| Sub.read 0 ~at:0 |] |]
   in
   let b = Sub.block s 0 in
-  let buffers = [| B.create ~memory:Pinned d 8 |] in
+  let buffers = [| B.create ~memory:Mapped d 8 |] in
   refused_submit ~msg:"a run no setter stored into" d (fun () ->
       submit ~buffers (Sub.take s));
   let geometry ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1)) ?(shared = 0) () =

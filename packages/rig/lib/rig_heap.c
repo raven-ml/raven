@@ -810,6 +810,13 @@ value caml_rig_heap_held(value unit) {
   return Val_long(rig_heap_held());
 }
 
+/* The bytes host buffers held live at the last major cycle, by which host
+   buffers pace the collector ([heap_cycle_bytes]). */
+value caml_rig_heap_live(value unit) {
+  (void)unit;
+  return Val_long(atomic_load_explicit(&heap_live, memory_order_relaxed));
+}
+
 /* Gives back kept buffers until they fit in [v_budget] beside the bytes
    host buffers hold. */
 value caml_rig_heap_trim(value v_budget) {

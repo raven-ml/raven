@@ -231,9 +231,9 @@ type 'm path = {
   doorbell : int;
   flush : int option;
   alloc : Rig_edge.memory -> int -> 'm memory option;
-  map_host : (int -> int -> 'm memory option) option;
+  map_host : (int -> int -> 'm memory option Rig_edge.mapping) option;
   reaches : int -> bool;
-  map_peer : 'm memory -> 'm memory option;
+  map_peer : 'm memory -> 'm memory option Rig_edge.mapping;
   free : 'm memory -> unit;
   bus : string option;
   dma : 'm memory -> fn:string -> (Rig_edge.dma, string) result;
@@ -423,6 +423,9 @@ external set_template : int -> int -> string -> string -> unit
 external set_entry : int -> int -> int -> unit = "caml_rig_nv_entry" [@@noalloc]
 external set_flush : int -> int -> unit = "caml_rig_nv_bar" [@@noalloc]
 external count_flush : int -> int -> int -> bool = "caml_rig_nv_flush"
+[@@noalloc]
+
+external flush_stopped : int -> bool = "caml_rig_nv_flush_stopped"
 [@@noalloc]
 
 external drop_flush : int -> unit = "caml_rig_nv_drop" [@@noalloc]
@@ -1181,7 +1184,10 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
     | None -> None
     | Some _ when word < start || word + 8 > start + bytes -> None
     | Some map ->
-        recorded (fun () -> placed Below_windows chunk (map at chunk))
+        recorded (fun () ->
+            match map at chunk with
+            | Maps m -> placed Below_windows chunk m
+            | Never | No_room -> None)
   in
   let word_host, word_mem =
     match mapped with
@@ -1397,6 +1403,17 @@ let region d (p : _ path) flush bytes =
    memory into [c], else [None]. *)
 let answered (c : _ reg) r = match c.mem with Some _ -> r | None -> None
 
+(* Stores in [c] the memory a path's map answered, and answers [v], the [Maps]
+   made with [c] before the call, as [answered] does. The [Some] comes from the
+   path, so that nothing allocates once [c] holds memory. *)
+let stored (c : _ reg) reach n v : _ Rig_edge.mapping -> _ Rig_edge.mapping =
+  function
+  | Maps (Some _ as m) ->
+      c.mem <- placed reach n m;
+      v
+  | Maps None | Never -> Never
+  | No_room -> No_room
+
 let unmade () = invalid_arg "Rig_nv: memory its path did not make"
 let made (r : _ reg) = match r.mem with Some m -> m | None -> unmade ()
 
@@ -1480,41 +1497,37 @@ let peer (T d) (T d') =
    submissions flush the host's writes through the BAR behind it, which [d]'s
    own doorbell does not order: it is counted before the path's call, as in
    [alloc]. *)
-let map_peer (T d) (T _) (R r) =
+let map_peer (T d) (T _) (R r) : region Rig_edge.mapping =
   match Type.Id.provably_equal d.key r.dev.key with
-  | None -> None
+  | None -> Never
   | Some Type.Equal -> (
       let p = (live d).path in
       let m = made r in
       let c = region d p r.flush r.bytes in
-      let v = Some (R c) in
+      let v = Rig_edge.Maps (R c) in
       match r.flush with
-      | None ->
-          c.mem <- placed Outside_windows r.bytes (p.map_peer m);
-          answered c v
-      | Some src when not (count d src 1) -> None
+      | None -> stored c Outside_windows r.bytes v (p.map_peer m)
+      | Some src when not (count d src 1) ->
+          if flush_stopped src then Never else No_room
       | Some src -> (
-          match c.mem <- placed Outside_windows r.bytes (p.map_peer m) with
-          | () -> (
-              match answered c v with
-              | Some _ as v -> v
-              | None ->
-                  ignore (count d src (-1) : bool);
-                  None)
+          match stored c Outside_windows r.bytes v (p.map_peer m) with
+          | Maps _ as a -> a
+          | (Never | No_room) as refused ->
+              ignore (count d src (-1) : bool);
+              refused
           | exception e ->
               ignore (count d src (-1) : bool);
               reraise e))
 
-let map_host (T d) a n =
+let map_host (T d) a n : region Rig_edge.mapping =
   if n < 1 then invalid_argf "Rig_nv.map_host: %d bytes, expected at least 1" n;
   let p = (live d).path in
   match p.map_host with
-  | None -> None
+  | None -> Never
   | Some map ->
       let c = region d p None n in
-      let r = Some (R c) in
-      c.mem <- placed Below_windows n (map a n);
-      answered c r
+      let v = Rig_edge.Maps (R c) in
+      stored c Below_windows n v (map a n)
 
 (* rig asks only of the device's own regions. *)
 let dma (T d) (R r) ~fn =

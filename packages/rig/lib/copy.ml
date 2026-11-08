@@ -206,12 +206,17 @@ let on_host_run fn ~waits ~into_half transfer src s dst t n start =
   record src dst n start;
   on_host_done
 
-(* [m] as [d]'s copy engine takes it: a device of another machine takes this
-   process's memory as it is, its driver carrying the bytes; another device
-   maps it. *)
+(* [m] as [d]'s copy engine takes it, or [None] for a copy through staging
+   memory. A device of another machine takes this process's memory as it is,
+   its driver carrying the bytes. Another device takes memory on it, its own
+   or a borrow on it, and memory the host does not page, which it maps for
+   copies until the memory returns. Memory the host pages it takes only
+   through a borrow the copy names, so a copy locks none of it. *)
 let mine d m =
   if (not (Dev.same_machine d Dev.host)) && local m then Some m
-  else Memory.borrow d m
+  else if m.dev == d then Some m
+  else if Memory.paged m.alloc then None
+  else Memory.reach_kept d m
 
 (* A copy of the run of [n] bytes from byte [s] of [src] to byte [t] of
    [dst] on [d]'s copy engine, which maps both, after the points of [waits],
@@ -437,6 +442,7 @@ let take_locked d writer need =
           {
             buffer = None;
             held = true;
+            names = [];
             cursor = 0;
             lap = l.laps;
             last = l.takes;
@@ -488,6 +494,7 @@ let give_locked d h0 h1 =
     | Some b when (not h.held) && l.takes - h.last >= n ->
         bs := b :: !bs;
         h.buffer <- None;
+        h.names <- [];
         h.cursor <- 0
     | Some _ | None -> ()
   done;
@@ -519,10 +526,13 @@ let give_back d h0 h1 =
 let ready h =
   let make () =
     let d = h.stage in
+    (* A device's staging memory is memory both it and the host address:
+       its Pinned memory, or its own where the host addresses that. *)
     let b =
-      if Dev.is_host d then Buffer.create d half_bytes
+      if Buffer.host_addresses d then Buffer.create d half_bytes
       else Buffer.create ~memory:Pinned d half_bytes
     in
+    h.names <- [];
     h.buffer <- Some b;
     b
   in
@@ -535,18 +545,17 @@ let ready h =
         | exception Dev.Lost _ -> make ())
   | _ -> make ()
 
-(* Maps the buffer [b] of a half of [stage]'s staging memory on [d], which
-   runs legs through it. A map of the host's half that [d]'s driver refuses is
-   memory [d] cannot give: the out-of-memory ladder reclaims for it, then
-   raises [Out_of_memory]. A device's half is its own Pinned memory, which
-   another device maps as a peer's or not at all: a refusal is no copy between
+(* The buffer [b] of a half of [stage]'s staging memory as [d], which runs
+   legs through it, names it: [d]'s mapping of the host's half, kept until the
+   half returns, or a device's half, its own Pinned memory, which another
+   device maps as a peer's or not at all. A host half [d] cannot map is
+   memory [d] cannot give ([Memory.staging]); a device's is no copy between
    the two. *)
-let map_half fn stage d b =
-  if not (Memory.maps d b.mem) then
-    if Dev.is_host stage then
-      Memory.reclaiming d ~pool:d half_bytes (fun () ->
-          if Memory.maps d b.mem then Some () else None)
-    else
+let half_on fn stage d b =
+  match Memory.staging d b.mem with
+  | Some m -> { b with mem = m }
+  | None when Dev.is_host stage -> raise (Dev.Out_of_memory (d, half_bytes))
+  | None ->
       invalid_argf "Rig.%s: no device copies between %s and %s" fn d.name
         stage.name
 
@@ -559,14 +568,29 @@ let hosted b = local b.mem || io_owned b.mem
    [b]; another machine's reaches no staging memory. *)
 let runs b = not (local b.mem || Dev.is_io b.mem.dev)
 
-(* Maps the buffers [b0] and [b1] of [stage]'s halves on the device that runs
-   [b]'s legs, if one does, before they run. *)
-let map_halves fn stage b b0 b1 =
-  let d = b.mem.dev in
-  if runs b && Dev.same_machine d Dev.host then begin
-    map_half fn stage d b0;
-    if b1 != b0 then map_half fn stage d b1
-  end
+(* The name of [b] among [names] on [d], or [b]: a loop of its own, so looking
+   builds no closure. *)
+let rec named_on d b = function
+  | [] -> b
+  | n :: names -> if n.mem.dev == d then n else named_on d b names
+
+(* The buffer [b] of the half [h] of [stage]'s staging memory as the leg to or
+   from [side] names it: as the device that runs [side]'s legs names it
+   ([half_on]), where one of this machine does, kept among [h]'s names for the
+   copies after, and as the host does otherwise. The holder of [h] sets its
+   names, as it sets its buffer. *)
+let half_for fn stage side (h : half) b =
+  match side with
+  | Some s when runs s && Dev.same_machine s.mem.dev Dev.host ->
+      let d = runner s in
+      let n = named_on d b h.names in
+      if n != b then n
+      else begin
+        let n = half_on fn stage d b in
+        h.names <- n :: h.names;
+        n
+      end
+  | Some _ | None -> b
 
 (* Whether [b]'s legs run on a device of this machine that maps no host memory,
    which then stages through its own memory. *)
@@ -740,13 +764,6 @@ let extent writer ps =
 let alternate h0 h1 k = if k land 1 = 0 then h0 else h1
 let piece_base base0 k = if k = 0 then base0 else 0
 
-(* Maps [b0] and [b1] for each side of [sides] ([map_halves]). *)
-let rec map_sides fn d b0 b1 = function
-  | [] -> ()
-  | b :: bs ->
-      map_halves fn d b b0 b1;
-      map_sides fn d b0 b1 bs
-
 (* [f h0 h1] on two halves of [d]'s staging memory that [writer] writes, or
    one, [h0] and [h1] the same, unless [two]; the halves given back once it
    returns or raises. A half [f] returns normally has its cursor set by [f].
@@ -790,26 +807,31 @@ let fill_piece ~writer ~into b0 b1 base0 ps k =
    p] out of it, each the point of its transfer. One piece goes through one
    half, from its cursor where the host writes it; more alternate between two
    halves from their start, so one fills while the other drains, and the host
-   waits for a half's last drain before it fills it again. The halves are
-   first mapped on the devices that run legs of [sides]. With [ahead], the leg
-   into a half runs one piece ahead of the leg out of it, as when a device
-   fills and the host drains; otherwise the host's leg into a half fills one
-   while a device drains the other. Is the point of the last leg out. *)
-let through fn d ps ~writer ~sides ~ahead ~into ~out_of =
+   waits for a half's last drain before it fills it again. [into] gets the
+   halves as the legs to or from [src_side] name them, and [out_of] as those
+   of [dst_side] ([half_for]), each side [None] where the host runs its legs.
+   With [ahead], the leg into a half runs one piece ahead of the leg out of
+   it, as when a device fills and the host drains; otherwise the host's leg
+   into a half fills one while a device drains the other. Is the point of the
+   last leg out. *)
+let through fn d ps ~writer ~src_side ~dst_side ~ahead ~into ~out_of =
   let n = Array.length ps in
   let need = if n = 1 && writer = Host then extent Host ps else 0 in
   holding d writer need ~two:(n > 1) (fun h0 h1 ->
       let b0 = ready h0 in
       let b1 = if n > 1 then ready h1 else b0 in
       let base0 = h0.cursor in
-      map_sides fn d b0 b1 sides;
+      let i0 = half_for fn d src_side h0 b0
+      and o0 = half_for fn d dst_side h0 b0 in
+      let i1 = if b1 == b0 then i0 else half_for fn d src_side h1 b1
+      and o1 = if b1 == b0 then o0 else half_for fn d dst_side h1 b1 in
       let last = ref 0 in
-      if ahead then fill_piece ~writer ~into b0 b1 base0 ps 0;
+      if ahead then fill_piece ~writer ~into i0 i1 base0 ps 0;
       for k = 0 to n - 1 do
-        if not ahead then fill_piece ~writer ~into b0 b1 base0 ps k
-        else if k + 1 < n then fill_piece ~writer ~into b0 b1 base0 ps (k + 1);
+        if not ahead then fill_piece ~writer ~into i0 i1 base0 ps k
+        else if k + 1 < n then fill_piece ~writer ~into i0 i1 base0 ps (k + 1);
         last :=
-          pipelined n (out_of (alternate b0 b1 k) (piece_base base0 k) ps.(k))
+          pipelined n (out_of (alternate o0 o1 k) (piece_base base0 k) ps.(k))
       done;
       h0.cursor <- base0 + extent writer ps;
       h1.cursor <- base0 + extent writer ps;
@@ -825,7 +847,7 @@ let rec staged fn ~waits src dst boxes =
   else
     through fn (stage_for src dst) ps
       ~writer:(if runs src then Device else Host)
-      ~sides:[ src; dst ] ~ahead:(runs src)
+      ~src_side:(Some src) ~dst_side:(Some dst) ~ahead:(runs src)
       ~into:(fun h base p -> leg_into fn ~waits src h base p)
       ~out_of:(fun h base p -> leg_out_of fn ~waits h base dst p)
 
@@ -842,8 +864,8 @@ and between fn ~waits src dst ps =
           let ha1 = if n > 1 then ready a1 else ha0 in
           let hb1 = if n > 1 then ready b1 else hb0 in
           let base0 = b0.cursor in
-          map_halves fn a0.stage src ha0 ha1;
-          map_halves fn b0.stage dst hb0 hb1;
+          (* Each stage is its runner's own memory, which its legs name as
+             it is. *)
           let into k =
             let p = leg_into fn ~waits src (alternate ha0 ha1 k) 0 ps.(k) in
             ignore (pipelined n p : int)
@@ -995,7 +1017,7 @@ let upload fn dst put =
       if n > 0 then
         let p =
           through fn (stage_with dst) (pieces [| row n |]) ~writer:Host
-            ~sides:[ dst ] ~ahead:false
+            ~src_side:None ~dst_side:(Some dst) ~ahead:false
             ~into:(fun h base p ->
               for i = 0 to Array.length p.boxes - 1 do
                 let x = p.boxes.(i) in
@@ -1018,7 +1040,7 @@ let download fn src take =
       if n > 0 then
         ignore
           (through fn (stage_with src) (pieces [| row n |]) ~writer:Device
-             ~sides:[ src ] ~ahead:true
+             ~src_side:(Some src) ~dst_side:None ~ahead:true
              ~into:(fun h base p -> leg_into fn ~waits:[||] src h base p)
              ~out_of:(fun h base p ->
                Buffer.wait h Buffer.Read;

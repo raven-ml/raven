@@ -787,10 +787,10 @@ let locate r =
 let addresses g i = i = g.gpu || List.mem i (Atomic.get g.reached)
 let peer g g' = addresses g g'.gpu
 
-let map_peer g _ (r : region) =
+let map_peer g _ (r : region) : region Rig_edge.mapping =
   let kind = match r.kind with Peer k -> k | k -> k in
-  if not (on_host kind || addresses g r.home) then None
-  else Some { r with kind = Peer kind }
+  if not (on_host kind || addresses g r.home) then Never
+  else Maps { r with kind = Peer kind }
 
 let page_locking n a = strf "page-locking %d bytes at 0x%x" n a
 
@@ -822,15 +822,24 @@ let rec counted e =
   let k = Atomic.get e.maps in
   k > 0 && (Atomic.compare_and_set e.maps k (k + 1) || counted e)
 
+(* CUDA's code for memory it could not lock or map, the only refusal that
+   returning memory may undo: it refuses read-only, file-backed and unmapped
+   ranges with CUDA_ERROR_INVALID_VALUE. *)
+let cuda_error_out_of_memory = 2
+
+(* The answer to CUDA's refusal [s] of a range to lock. *)
+let refusal s : _ Rig_edge.mapping =
+  if s = cuda_error_out_of_memory then No_room else Never
+
 (* A range inside a registration [map_host] made counts against it. Any other
    is registered; if CUDA refuses, it is mapped as it is when both its ends lie
    in one allocation of CUDA's, which another owner locked: two allocations
    may have unlocked pages between them. A registration a free left to end,
    which may hold the range, ends first. *)
-let map_host g a n =
+let map_host g a n : region Rig_edge.mapping =
   if n < 1 then
     invalid_argf "Rig_cuda.map_host: %d bytes, expected at least 1" n;
-  if not g.facts.maps_host then None
+  if not g.facts.maps_host then Never
   else
     registered @@ fun () ->
     let inside e =
@@ -846,50 +855,52 @@ let map_host g a n =
       | Some e -> (
           match locked g (Some e) a with
           | Ok r ->
-              let some = Some r in
+              let some = Rig_edge.Maps r in
               if counted e then some
               else begin
                 ignore (settle () : bool);
                 map ()
               end
           | Error s -> fault (page_locking n a) s)
-      | None when lock g.context true a n = 0 -> (
-          match
-            let e =
-              {
-                start = a;
-                bytes = n;
-                maps = Atomic.make 1;
-                context = g.context;
-                registered = true;
-              }
+      | None -> (
+          match lock g.context true a n with
+          | 0 -> fresh ()
+          | s -> if settle () then map () else other s)
+    and fresh () =
+      match
+        let e =
+          {
+            start = a;
+            bytes = n;
+            maps = Atomic.make 1;
+            context = g.context;
+            registered = true;
+          }
+        in
+        match locked g (Some e) a with
+        | Ok r ->
+            let some = Rig_edge.Maps r
+            and entries =
+              e
+              :: List.filter
+                   (fun e -> Atomic.get e.maps > 0 || e.registered)
+                   !registry
             in
-            match locked g (Some e) a with
-            | Ok r ->
-                let some = Some r
-                and entries =
-                  e
-                  :: List.filter
-                       (fun e -> Atomic.get e.maps > 0 || e.registered)
-                       !registry
-                in
-                registry := entries;
-                some
-            | Error s -> fault (page_locking n a) s
-          with
-          | some -> some
-          | exception x ->
-              ignore (lock g.context false a 0 : int);
-              reraise x)
-      | None when settle () -> map ()
-      | None -> other ()
-    and other () =
+            registry := entries;
+            some
+        | Error s -> fault (page_locking n a) s
+      with
+      | some -> some
+      | exception x ->
+          ignore (lock g.context false a 0 : int);
+          reraise x
+    and other s =
       let start = allocation g.context a in
       if start < 0 || start <> allocation g.context (a + n - 1) then
-        refused (page_locking n a) g.self None
+        refused (page_locking n a) g.self (refusal s)
       else
         match locked g None a with
-        | Ok r -> Some r
+        | Ok r -> Maps r
         | Error s -> fault (page_locking n a) s
     in
     ignore (settle () : bool);

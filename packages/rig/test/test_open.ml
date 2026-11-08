@@ -74,17 +74,20 @@ let test_reach () =
   equal (list bool) [ true; false ] [ Rig.reaches d e; Rig.reaches f d ]
 
 (* Where the host reaches a device's memory, every buffer of it has a host
-   address, of each memory and in each of Polled's modes, and on a memory
-   device. *)
+   address, of each memory it has and in each of Polled's modes, and on a
+   memory device. It has no Pinned memory. *)
 let test_reach_addresses () =
   let n = ref 0 in
   let check ~msg d =
-    if Rig.reaches Rig.host d then
+    if Rig.reaches Rig.host d then begin
       List.iter
         (fun memory ->
           let b = Rig.Buffer.create ~memory d 64 in
           not_equal ~msg int 0 (Support.Reader.host b))
-        Rig.Buffer.[ Device; Pinned; Mapped ]
+        Rig.Buffer.[ Device; Mapped ];
+      raises_match ~msg Exn.invalid_arg (fun () ->
+          Rig.Buffer.create ~memory:Pinned d 64)
+    end
   in
   let bools = [ false; true ] in
   List.iter
@@ -318,14 +321,18 @@ let open_host machine name =
   Rig.open_host ~machine
     (P.opener name (P.make ()))
 
-(* Every non-empty buffer starts on its device's alignment, of each kind and on
-   either side of the sizes the host aligns further. *)
+(* Every non-empty buffer starts on its device's alignment, of each kind it
+   has and on either side of the sizes the host aligns further. A device whose
+   memory the host addresses has no Pinned memory. *)
 let test_alignment () =
   let d = memory "open:alignment" in
   let p, _ = P.open_ ~alignment:256 "open:alignment-polled" in
+  let hidden, _ =
+    P.open_ ~alignment:256 ~host_visible:false "open:alignment-hidden"
+  in
   let io = open_store "open:alignment-io" in
-  equal ~msg:"the stated values" (list int) [ 16; 64; 256; 1 ]
-    (List.map Rig.alignment [ Rig.host; d; p; io ]);
+  equal ~msg:"the stated values" (list int) [ 16; 64; 256; 256; 1 ]
+    (List.map Rig.alignment [ Rig.host; d; p; hidden; io ]);
   List.iter
     (fun (d, memory, n) ->
       let b = Rig.Buffer.create ~memory d n in
@@ -334,14 +341,20 @@ let test_alignment () =
         bool true
         (Rig.Buffer.aligned b ~at:0 (Rig.alignment d)))
     (List.concat_map
-       (fun d ->
+       (fun (d, kinds) ->
          List.concat_map
            (fun memory ->
              List.map
                (fun n -> (d, memory, n))
                [ 1; 15; 16; 17; 127; 128; 129; 4096; 65535; 1 lsl 18 ])
-           Rig.Buffer.[ Device; Pinned; Mapped ])
-       [ Rig.host; d; p ])
+           kinds)
+       Rig.Buffer.
+         [
+           (Rig.host, [ Device; Mapped ]);
+           (d, [ Device; Mapped ]);
+           (p, [ Device; Mapped ]);
+           (hidden, [ Device; Pinned; Mapped ]);
+         ])
 
 (* A non-empty buffer's memory runs on to whole words, through bytes that
    belong to no other memory: a write of every word that holds a byte of a
@@ -351,6 +364,9 @@ let test_alignment () =
 let test_tail () =
   let d = memory "open:tail" in
   let p, polled = P.open_ ~alignment:256 "open:tail-polled" in
+  let hidden, unseen =
+    P.open_ ~alignment:256 ~host_visible:false "open:tail-hidden"
+  in
   let w = Rig.word in
   let sizes = [ 1; 3; 15; 17; 63; 65; 127; 129; 255; 257; 65537; 262145 ] in
   let pattern n seed =
@@ -358,12 +374,18 @@ let test_tail () =
   in
   let made =
     List.concat_map
-      (fun d ->
+      (fun (d, kinds) ->
         List.concat_map
           (fun memory ->
             List.map (fun n -> Rig.Buffer.create ~memory d n) sizes)
-          Rig.Buffer.[ Device; Pinned; Mapped ])
-      [ Rig.host; d; p ]
+          kinds)
+      Rig.Buffer.
+        [
+          (Rig.host, [ Device; Mapped ]);
+          (d, [ Device; Mapped ]);
+          (p, [ Device; Mapped ]);
+          (hidden, [ Pinned ]);
+        ]
   in
   (* The bytes of [b] whose words are written, as [(first, length, borrow)]:
      its last byte, a view from an offset off a word to before its end, and
@@ -422,7 +444,7 @@ let test_tail () =
   List.iter
     (fun (_, n, _) ->
       equal ~msg:(Printf.sprintf "%d bytes asked" n) int 0 (n mod w))
-    (P.allocs polled);
+    (P.allocs polled @ P.allocs unseen);
   Gc.full_major ()
 
 (* An alignment that is not a power of two refuses the open, and the driver's

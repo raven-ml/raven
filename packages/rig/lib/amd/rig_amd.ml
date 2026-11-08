@@ -136,9 +136,9 @@ type 'm path = {
   budget : int;
   cache_bytes : int option;
   alloc : Rig_edge.memory -> int -> 'm memory option;
-  map_host : (int -> int -> 'm memory option) option;
+  map_host : (int -> int -> 'm memory option Rig_edge.mapping) option;
   reaches : int -> bool;
-  map_peer : 'm memory -> 'm memory option;
+  map_peer : 'm memory -> 'm memory option Rig_edge.mapping;
   free : 'm memory -> unit;
   bus : string option;
   dma : 'm memory -> fn:string -> (Rig_edge.dma, string) result;
@@ -205,12 +205,13 @@ let region ?flush n m = { bytes = n; mem = m; flush }
 (* The path's functions over memory whose type the owner hides. Memory is made
    into a record [held] made, empty, before the path's call: [alloc m k n],
    [map_host m a n] and [map_peer m m'] store the path's answer in [m] as it
-   is, and are whether the path made memory. *)
+   is. [alloc] is whether the path made memory, and the maps are the path's
+   answer without its memory. *)
 type ops = {
   held : unit -> mem;
   alloc : mem -> Rig_edge.memory -> int -> bool;
-  map_host : (mem -> int -> int -> bool) option;
-  map_peer : mem -> mem -> bool;
+  map_host : (mem -> int -> int -> unit Rig_edge.mapping) option;
+  map_peer : mem -> mem -> unit Rig_edge.mapping;
   dma : mem -> fn:string -> (Rig_edge.dma, string) result;
   queue :
     [ `Pm4 | `Aql | `Sdma ] ->
@@ -241,15 +242,28 @@ let ops (type m) (p : m path) =
         c.memory <- make ();
         Option.is_some c.memory
   in
+  let fill_map (Mem c) (make : unit -> m memory option Rig_edge.mapping) :
+      unit Rig_edge.mapping =
+    match Type.Id.provably_equal c.owner.key p.key with
+    | None -> invalid_arg "Rig_amd: a record of another path's memory"
+    | Some Type.Equal -> (
+        match make () with
+        | Maps (Some _ as m) ->
+            c.memory <- m;
+            Maps ()
+        | Maps None | Never -> Never
+        | No_room -> No_room)
+  in
   {
     held = (fun () -> Mem { owner; memory = None });
     alloc = (fun m k n -> fill m (fun () -> p.alloc k n));
-    map_host = Option.map (fun f m a n -> fill m (fun () -> f a n)) p.map_host;
+    map_host =
+      Option.map (fun f m a n -> fill_map m (fun () -> f a n)) p.map_host;
     map_peer =
       (fun m m' ->
         match own m' with
-        | None -> false
-        | Some m' -> fill m (fun () -> p.map_peer m'));
+        | None -> Never
+        | Some m' -> fill_map m (fun () -> p.map_peer m'));
     dma =
       (fun m ~fn ->
         match own m with
@@ -281,6 +295,15 @@ let answer ?flush ops n make =
   let m = ops.held () in
   let r = Some (region ?flush n m) in
   if make m then r else None
+
+(* [answer] for a mapping, the path's refusal as it gave it. *)
+let mapped ?flush ops n make : region Rig_edge.mapping =
+  let m = ops.held () in
+  let r = Rig_edge.Maps (region ?flush n m) in
+  match make m with
+  | Rig_edge.Maps () -> r
+  | Never -> Never
+  | No_room -> No_room
 
 (* [n] bytes of [k] for the driver's own use, or [None]. *)
 let alloc_mem ops k n =
@@ -897,18 +920,18 @@ let peer g g' = g.path = g'.path && g.reaches g'.index
 
 (* A view of a region that keeps [src]'s HDP register flushed is counted
    before the path's call, as in [alloc]. *)
-let map_peer g _ r =
+let map_peer g _ r : region Rig_edge.mapping =
   let ops = (live g).ops in
   let peer m = ops.map_peer m r.mem in
   match r.flush with
-  | None -> answer ops r.bytes peer
-  | Some src when not (count_hdp g src 1) -> None
+  | None -> mapped ops r.bytes peer
+  | Some src when not (count_hdp g src 1) -> Never
   | Some src -> (
-      match answer ?flush:r.flush ops r.bytes peer with
-      | Some _ as view -> view
-      | None ->
+      match mapped ?flush:r.flush ops r.bytes peer with
+      | Maps _ as view -> view
+      | (Never | No_room) as refused ->
           ignore (count_hdp g src (-1));
-          None
+          refused
       | exception e ->
           ignore (count_hdp g src (-1));
           reraise e)
@@ -949,8 +972,8 @@ let map_host g a n =
   if n < 1 then invalid_argf "Rig_amd.map_host: %d bytes, expected at least 1" n;
   let ops = (live g).ops in
   match ops.map_host with
-  | None -> None
-  | Some map -> answer ops n (fun m -> map m a n)
+  | None -> Rig_edge.Never
+  | Some map -> mapped ops n (fun m -> map m a n)
 
 (* Images *)
 
@@ -1273,7 +1296,9 @@ let make (type m) ~word (p : m path) =
       | Some map ->
           let m = ops.held () in
           taken := m :: !taken;
-          if map m start bytes then Some m else None
+          match map m start bytes with
+          | Maps () -> Some m
+          | Never | No_room -> None
     in
     let* word =
       match mapped with

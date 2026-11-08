@@ -52,8 +52,11 @@
     for writing while they are mapped, for the long term on x86-64. From
     Linux 6.5 on, Linux refuses such a pin of a shared mapping of a file
     whose file system tracks its dirty pages, such as ext4's but not
-    tmpfs's, so there {!Rig_nv.val-map_host} returns [None] for those pages,
-    as for unmapped ones.
+    tmpfs's, so there {!Rig_nv.val-map_host} answers [Never] for those
+    pages, as for unmapped ones. The kernel driver answers [Never] for any
+    pin that falls short, a lack of memory included, and [No_room] only for
+    a lack of the RM's own memory, of GPU addresses or of the process's
+    files.
 
     {!Rig_nv.val-dma} exports the RM object a region lies in as a new
     dma-buf ({!Rig_edge.Dmabuf}), through the GPU's file, at the region's

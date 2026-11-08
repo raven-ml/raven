@@ -53,6 +53,16 @@ let get b =
   B.blit_to_bytes h 0 s 0 n;
   Bytes.to_string s
 
+(* The kind of [d]'s memory that both [d]'s work and the host address: its
+   own where the host addresses it, which has no Pinned memory, and its Pinned
+   memory elsewhere. *)
+let both d = if Rig.reaches Rig.host d then B.Device else B.Pinned
+
+(* [memory] as [d] has it: [Pinned] drawn for a device whose memory the host
+   addresses is its own memory, as it has no Pinned memory. *)
+let has d (memory : B.kind) =
+  if memory = Pinned && Rig.reaches Rig.host d then B.Device else memory
+
 (* A buffer of [d]'s memory [memory] holding [s]. *)
 let filled ?memory d s =
   let b = B.create ?memory d (String.length s) in
@@ -65,11 +75,11 @@ let borrowed d n =
   let h = B.view (B.create Rig.host (Int.max n 65536)) ~first:0 ~length:n in
   B.borrow d h
 
-(* [n] zeroed bytes of [d]'s Pinned memory, which every driver's host addresses,
+(* [n] zeroed bytes of [d]'s memory both address ([both]),
    and a read of them at that address (rig.h's [rig_buffer_host]), which calls
    nothing of rig. The caller keeps the buffer reachable while it reads. *)
 let watched d n =
-  let b = filled ~memory:Pinned d (String.make n '\000') in
+  let b = filled ~memory:(both d) d (String.make n '\000') in
   let a = Rig_support.Reader.host b in
   (b, fun () -> Rig_gpu_support.Host.read a n)
 
@@ -312,10 +322,12 @@ let copies (module G : Gpu) (ka, kb, n, (oa, ob)) =
   G.with_shared @@ fun t ->
   if (G.D.facts t.g).copy_engine = None then
     skip ~reason:"the device has no copy engine" ();
-  let at memory o = B.view (B.create ~memory t.d (n + o)) ~first:o ~length:n in
+  let at memory o =
+    B.view (B.create ~memory:(has t.d memory) t.d (n + o)) ~first:o ~length:n
+  in
   let data = pattern n (n + oa) in
-  let src = filled ~memory:Pinned t.d data in
-  let dst = filled ~memory:Pinned t.d (String.make n '\000') in
+  let src = filled ~memory:(both t.d) t.d data in
+  let dst = filled ~memory:(both t.d) t.d (String.make n '\000') in
   let a = at ka oa and b = at kb ob in
   let v =
     submit t.d
@@ -338,8 +350,8 @@ let copies (module G : Gpu) (ka, kb, n, (oa, ob)) =
 (* A profile records a copy per copy part, from the device in whose budget the
    memory its bytes leave counts to the one they reach, with its bytes and the
    times of its submission's span where the device times its work. A borrow of
-   host memory names the host; [Pinned] memory names the device only where the
-   host addresses the device's memory, and the host elsewhere. *)
+   host memory names the host; memory both address ([both]) names the device
+   where the host addresses the device's memory, and the host elsewhere. *)
 let profiled_copies (module G : Gpu) () =
   G.with_ @@ fun t ->
   if (G.D.facts t.g).copy_engine = None then
@@ -349,9 +361,9 @@ let profiled_copies (module G : Gpu) () =
   let src, from =
     match borrowed t.d n with
     | Some b -> (b, Rig.host)
-    | None -> (filled ~memory:Pinned t.d (pattern n 1), pinned)
+    | None -> (filled ~memory:(both t.d) t.d (pattern n 1), pinned)
   in
-  let a = B.create t.d n and b = B.create ~memory:Pinned t.d n in
+  let a = B.create t.d n and b = B.create ~memory:(both t.d) t.d n in
   let (), events =
     Rig.Profile.take (fun () ->
         Rig.Point.wait
@@ -457,7 +469,8 @@ let chains (module G : Gpu) (kinds, links) =
   let buffers =
     Array.of_list
       (List.mapi
-         (fun k memory -> filled ~memory t.d (Bytes.to_string model.(k)))
+         (fun k memory ->
+           filled ~memory:(has t.d memory) t.d (Bytes.to_string model.(k)))
          kinds)
   in
   let parts =
@@ -512,7 +525,7 @@ let readers (module G : Gpu) (place, writer, reader, same) =
   let n = 16384 in
   let mem =
     match place with
-    | Own memory -> B.create ~memory t.d n
+    | Own memory -> B.create ~memory:(has t.d memory) t.d n
     | Borrowed -> (
         (* A device that maps no host memory has no such place. *)
         match borrowed t.d n with
@@ -530,8 +543,8 @@ let readers (module G : Gpu) (place, writer, reader, same) =
   for round = 1 to 4 do
     let msg = strf "round %d" round in
     let p = pattern n ((8 * round) + 1) in
-    let src = filled ~memory:Pinned t.d p in
-    let out = filled ~memory:Pinned t.d (String.make n '\000') in
+    let src = filled ~memory:(both t.d) t.d p in
+    let out = filled ~memory:(both t.d) t.d (String.make n '\000') in
     match (writer, reader) with
     | Host, Host ->
         put mem p;
@@ -579,19 +592,19 @@ let blit_cases =
 let blits (module G : Gpu) (memory, n) =
   G.with_shared @@ fun t ->
   let late = 50_000_000 in
-  let mem = B.create ~memory t.d n in
+  let mem = B.create ~memory:(has t.d memory) t.d n in
   let read_late o =
     submit t.d
       [ G.spin t ~ns:late; G.copy_words t ~dst:o ~src:mem ]
       ~uses:[ (mem, Rig.Read); (o, Rig.Read_write) ]
   in
   let write_late s =
-    let src = filled ~memory:Pinned t.d s in
+    let src = filled ~memory:(both t.d) t.d s in
     submit t.d
       [ G.spin t ~ns:late; G.copy_words t ~dst:mem ~src ]
       ~uses:[ (src, Rig.Read); (mem, Rig.Read_write) ]
   in
-  let out () = filled ~memory:Pinned t.d (String.make n '\000') in
+  let out () = filled ~memory:(both t.d) t.d (String.make n '\000') in
   let x = pattern n 1 and y = pattern n 2 and z = pattern n 3 in
   B.blit_from_string x 0 mem 0 n;
   let before = out () in
@@ -897,7 +910,7 @@ let buffer_fills (module G : Gpu) ((memory : B.kind), f) =
   cover "a byte with its high bit set" (f.n > 0 && Char.code f.byte >= 0x80);
   G.with_shared @@ fun t ->
   let size = f.offset + f.n + f.slack in
-  let b = filled ~memory t.d (pattern size 4) in
+  let b = filled ~memory:(has t.d memory) t.d (pattern size 4) in
   B.fill (B.view b ~first:f.offset ~length:f.n) f.byte;
   let model = Bytes.of_string (pattern size 4) in
   Bytes.fill model f.offset f.n f.byte;
@@ -940,9 +953,9 @@ let device_order (module G : Gpu) () =
   let n = 4096 in
   let late = 50_000_000 in
   let data = pattern n 3 in
-  let src = filled ~memory:Pinned t.d data in
+  let src = filled ~memory:(both t.d) t.d data in
   let fresh () = filled t.d (String.make n '\000') in
-  let out () = filled ~memory:Pinned t.d (String.make n '\000') in
+  let out () = filled ~memory:(both t.d) t.d (String.make n '\000') in
   let sp = G.spin t ~ns:late in
   let mid = fresh () and o = out () in
   let w = G.copy_words t ~dst:mid ~src in
@@ -972,8 +985,8 @@ let spans (module G : Gpu) () =
   G.with_ @@ fun t ->
   let f = G.D.facts t.g in
   let late = 20_000_000 and n = 4096 in
-  let src = filled ~memory:Pinned t.d (pattern n 9) in
-  let dst = filled ~memory:Pinned t.d (String.make n '\000') in
+  let src = filled ~memory:(both t.d) t.d (pattern n 9) in
+  let dst = filled ~memory:(both t.d) t.d (String.make n '\000') in
   let uses = [ (src, Rig.Read); (dst, Rig.Read_write) ] in
   let work () = G.spin t ~ns:late and copy () = copy_part ~dst src in
   let shapes =
@@ -1051,8 +1064,8 @@ let spans_after_idle (module G : Gpu) () =
   let opened = Rig.Profile.now () in
   G.with_ @@ fun t ->
   let n = 64 in
-  let src = filled ~memory:Pinned t.d (pattern n 6) in
-  let dst = filled ~memory:Pinned t.d (String.make n '\000') in
+  let src = filled ~memory:(both t.d) t.d (pattern n 6) in
+  let dst = filled ~memory:(both t.d) t.d (String.make n '\000') in
   let uses = [ (src, Rig.Read); (dst, Rig.Read_write) ] in
   let run, buffers =
     Rig_gpu_support.prepare ~fixed:uses t.d [ G.copy_words t ~dst ~src ]
@@ -1072,8 +1085,8 @@ let spans_after_stop (module G : Gpu) () =
   let opened = Rig.Profile.now () in
   G.with_ @@ fun t ->
   let n = 64 in
-  let src = filled ~memory:Pinned t.d (pattern n 5) in
-  let dst = filled ~memory:Pinned t.d (String.make n '\000') in
+  let src = filled ~memory:(both t.d) t.d (pattern n 5) in
+  let dst = filled ~memory:(both t.d) t.d (String.make n '\000') in
   let uses = [ (src, Rig.Read); (dst, Rig.Read_write) ] in
   let run, buffers =
     Rig_gpu_support.prepare ~fixed:uses t.d [ G.copy_words t ~dst ~src ]
@@ -1131,8 +1144,8 @@ let spans_across (module G : Gpu) () =
   G.with_ @@ fun t ->
   let f = G.D.facts t.g in
   let n = 64 in
-  let src = filled ~memory:Pinned t.d (pattern n 4) in
-  let dst = filled ~memory:Pinned t.d (String.make n '\000') in
+  let src = filled ~memory:(both t.d) t.d (pattern n 4) in
+  let dst = filled ~memory:(both t.d) t.d (String.make n '\000') in
   let uses = [ (src, Rig.Read); (dst, Rig.Read_write) ] in
   let prepare ws = Rig_gpu_support.prepare ~fixed:uses t.d ws in
   let work () = G.copy_words t ~dst ~src and copy () = copy_part ~dst src in
@@ -1554,8 +1567,8 @@ let workspace (module G : Gpu) sizes =
   let launch i k =
     let n = k * 1024 in
     let data = pattern n i in
-    let src = filled ~memory:Pinned t.d data in
-    let out = filled ~memory:Pinned t.d (String.make n '\000') in
+    let src = filled ~memory:(both t.d) t.d data in
+    let out = filled ~memory:(both t.d) t.d (String.make n '\000') in
     let ws = B.view s ~first:0 ~length:n in
     let p0 = into ~dst:ws ~src in
     let p1 = G.copy_words t ~dst:out ~src:ws in
@@ -1716,17 +1729,27 @@ let stale_seen (module G : Gpu) () =
   Rig.Point.wait p;
   G.D.sleep t.g ~seen:(Rig.Point.value p - 1) ~still_ms:600_000
 
-(* Sleeps over work that runs 1 s raise no fault, return with the word unmoved,
-   and block: 10 of 50 ms take little of the CPU. *)
+(* Sleeps over work that runs 1 s raise no fault, return with the word unmoved
+   while the work runs, and block: 10 of 50 ms take little of the CPU. [G.spin]
+   loads its image on this device, and [Rig.Image.load] returns without waiting
+   for the copy that places the code, so the wait for an empty point first
+   leaves the spin the only unfinished work. A read of the word is checked
+   only while the host's clock says the spin, which started after [start],
+   cannot have run its second. *)
 let long_work (module G : Gpu) () =
   G.with_ @@ fun t ->
-  let p = G.spin t ~ns:1_000_000_000 in
+  let ns = 1_000_000_000 in
+  let p = G.spin t ~ns in
+  Rig.Point.wait (empty_point t.d);
+  let start = Rig.Profile.now () in
   let done_ = submit t.d [ p ] ~uses:[] in
   let v = Rig.Point.value done_ in
   let cpu = Sys.time () in
   for _ = 1 to 10 do
     G.D.sleep t.g ~seen:(v - 1) ~still_ms:50;
-    equal int ~msg:"the word while the work runs" (v - 1) (G.D.signaled t.g)
+    let word = G.D.signaled t.g in
+    if Rig.Profile.now () - start < ns then
+      equal int ~msg:"the word while the work runs" (v - 1) word
   done;
   less float_exact ~msg:"CPU seconds of 10 sleeps of 50 ms" ~than:0.25
     (Sys.time () -. cpu);
@@ -1779,7 +1802,7 @@ let runs_alone (module G : Gpu) () =
   let n = 4096 in
   let dst, read = watched t.d n in
   let data = pattern n 5 in
-  let src = filled ~memory:Pinned t.d data in
+  let src = filled ~memory:(both t.d) t.d data in
   let p = G.copy_words t ~dst ~src in
   let v = submit t.d [ p ] ~uses:[ (src, Rig.Read); (dst, Rig.Read_write) ] in
   await "the work ran" (fun () -> read () = data);
@@ -1880,7 +1903,7 @@ let holds (module G : Gpu) (t : G.t) point go =
   let dst, read = watched t.G.d n in
   let old = String.make n '\000' in
   let data = pattern n 9 in
-  let src = filled ~memory:Pinned t.d data in
+  let src = filled ~memory:(both t.d) t.d data in
   let p = G.copy_words t ~dst ~src in
   let finished = Atomic.make false in
   let early = Atomic.make None in
@@ -1969,17 +1992,17 @@ let peers (module G : Gpu) () =
   with_second (module G) @@ fun g' ->
   Fun.protect ~finally:(fun () -> G.D.stop g' ~fault:None) @@ fun () ->
   let d = require_some (G.D.alloc g' Device 64) in
-  let view = G.D.map_peer t.g g' d in
+  let view = Rig_gpu_support.mapped (G.D.map_peer t.g g' d) in
   equal bool ~msg:"peer is map_peer's answer for Device memory"
     (G.D.peer t.g g') (Option.is_some view);
   Option.iter (G.D.free t.g) view;
   let h = require_some (G.D.alloc g' Pinned 64) in
   (match G.D.map_peer t.g g' h with
-  | Some v ->
+  | Maps v ->
       equal (option int) ~msg:"the host address of Pinned memory"
         (G.D.locate h).host (G.D.locate v).host;
       G.D.free t.g v
-  | None -> ());
+  | Never | No_room -> ());
   G.D.free g' h;
   G.D.free g' d
 
@@ -2001,11 +2024,11 @@ let views_past_stop (module G : Gpu) () =
   | None -> skip ~reason:"the second device has no Mapped memory" ()
   | Some m -> (
       match G.D.map_peer t.g g' m with
-      | None ->
+      | Never | No_room ->
           G.D.free g' m;
           skip ~reason:"the device does not view the second's Mapped memory"
             ()
-      | Some v ->
+      | Maps v ->
           Rig.Point.wait (empty_point t.d);
           stop ();
           Rig.Point.wait (empty_point t.d);

@@ -300,10 +300,10 @@ val capability : t -> Rig_metal_abi.t
 
     Metal wraps only memory that starts at a page, so {!map_host}[ d p n]
     wraps the pages that hold the [n] bytes at [p], without a copy, and the
-    region's host address is [p] rounded down to a page. It is [None] if Metal
-    cannot wrap the memory.
+    region's host address is [p] rounded down to a page. It is [Never] if
+    Metal cannot wrap the memory; Metal gives no reason.
 
-    {!peer} is [false] and {!map_peer} is [None], since a Metal device maps
+    {!peer} is [false] and {!map_peer} is [Never], since a Metal device maps
     only its own memory and the host's. {!val-dma} is [Error], since Metal
     gives no other device DMA to its buffers. *)
 

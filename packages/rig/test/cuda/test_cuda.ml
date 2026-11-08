@@ -8,6 +8,8 @@ module C = Rig_cuda
 module S = Rig_cuda_support
 module H = Rig_gpu_support.Host
 
+let maps = Rig_gpu_support.mapped
+
 let strf = Printf.sprintf
 
 (* The function an entry answered, which the test needs. *)
@@ -369,6 +371,108 @@ let memory =
         exports_pinned;
     ]
 
+(* Host memory *)
+
+(* A copy between a host buffer and the GPU passes through rig's staging
+   memory and locks none of the buffer. A borrow of it on the GPU locks it, a
+   copy from the borrow runs on the GPU's copy engine from it, and the borrow's
+   end unlocks it once the GPU ran that copy, while the buffer lives on: a
+   borrow made again locks it again, until its collection. *)
+let host_copies () =
+  S.with_ @@ fun { d; _ } ->
+  let n = 1 lsl 20 in
+  let h = B.create Rig.host n and g = B.create d n in
+  B.write h Bigarray.char (fun a -> Bigarray.Array1.fill a 'h');
+  let locked () = S.locked (H.at h) && S.locked (H.at h + n - 1) in
+  B.copy ~src:h ~dst:g;
+  B.copy ~src:g ~dst:h;
+  equal ~msg:"copies to and from the buffer" bool false (locked ());
+  let on_g = require_some (B.borrow d h) in
+  equal ~msg:"the borrow" bool true (locked ());
+  B.copy ~src:on_g ~dst:g;
+  equal ~msg:"the borrow ended" bool true (B.unborrow on_g);
+  ignore (B.create d 0);
+  equal ~msg:"once the copy ran" bool false (locked ());
+  equal ~msg:"the buffer lives" (option string) None (B.dead h);
+  (fun () ->
+    let again = require_some (B.borrow d h) in
+    equal ~msg:"a borrow made again" bool true (locked ());
+    B.copy ~src:g ~dst:again)
+    ();
+  Gc.full_major ();
+  Gc.full_major ();
+  ignore (B.create d 0);
+  equal ~msg:"once collected" bool false (locked ());
+  equal ~msg:"the bytes" char 'h'
+    (B.read h Bigarray.char (fun a -> Bigarray.Array1.get a (n - 1)))
+
+(* A copy from the GPU into a host buffer returns once its bytes are there,
+   as the host moves them out of staging memory last: its point is reached at
+   the return. Into a borrow of the buffer the GPU copies directly, and the
+   point is the GPU's. *)
+let into_host_waits () =
+  S.with_ @@ fun { d; _ } ->
+  let n = 1 lsl 20 in
+  let src = B.create d n and h = B.create Rig.host n in
+  B.copy ~src:(B.create Rig.host n) ~dst:src;
+  let p = B.submit_copy ~src ~dst:h [| B.row n |] in
+  equal ~msg:"a host buffer: reached at the return" (pair bool bool)
+    (true, true)
+    (Rig.Point.reached p, B.reached h Read_write);
+  let on_d = require_some (B.borrow d h) in
+  let p = B.submit_copy ~src ~dst:on_d [| B.row n |] in
+  equal ~msg:"a borrow: the GPU's point" bool true
+    (Option.fold ~none:false ~some:(Rig.equal d) (Rig.Point.device p));
+  Rig.Point.wait p
+
+(* Dropped Pinned memory of the GPU, which counts in the host's budget, paces
+   the collector as host buffers do, by the host's memory: GPU memory held
+   live changes nothing. Over 400 drops of 4 MiB the host holds about as much
+   of it at most as of dropped host buffers of that size, never most of
+   what was dropped. *)
+let pinned_paced () =
+  S.with_ @@ fun { d; _ } ->
+  let n = 4 lsl 20 and drops = 400 in
+  let peak make =
+    Gc.full_major ();
+    ignore (B.create d 0);
+    ignore (B.create Rig.host 0);
+    let start = Rig.allocated Rig.host and most = ref 0 in
+    for _ = 1 to drops do
+      ignore (Sys.opaque_identity (make ()));
+      most := Int.max !most (Rig.allocated Rig.host - start)
+    done;
+    !most
+  in
+  let host () = B.create Rig.host n
+  and pinned () = B.create ~memory:Pinned d n in
+  ignore (peak pinned);
+  let held = peak host in
+  let live = B.create d (4 lsl 30) in
+  let pinned_held = peak pinned in
+  less ~msg:"pinned memory held, beside 4 GiB of the GPU's" int
+    ~than:((4 * held) + (64 lsl 20)) pinned_held;
+  less ~msg:"of what was dropped" int ~than:(drops * n / 4) pinned_held;
+  ignore (Sys.opaque_identity live)
+
+let host_memory =
+  group ~timeout:120. "host memory"
+    [
+      test
+        "a copy locks no host buffer it does not name; a borrow locks it until \
+         it goes"
+        host_copies;
+      test "a copy into a host buffer returns once its bytes are there"
+        into_host_waits;
+      test "dropped Pinned memory paces the collector by the host's memory"
+        pinned_paced;
+      test "map_host answers Never for read-only pages" (fun () ->
+          S.with_ @@ fun { g; _ } ->
+          let p = H.pages ~read_only:true H.page in
+          equal string "Never" (Rig_gpu_support.refusal (C.map_host g p 64));
+          H.free_pages p H.page);
+    ]
+
 (* Work *)
 
 let fills_in_a_fresh_domain () =
@@ -722,7 +826,7 @@ let unload_after_reopen () =
 let stop_idle () =
   S.with_ @@ fun ({ d; g } as t) ->
   let p = H.pages H.page in
-  let r = require_some (C.map_host g p 64) in
+  let r = require_some (maps (C.map_host g p 64)) in
   equal bool ~msg:"locked" true (S.locked p);
   let last = S.submit t [||] in
   Rig.Point.wait last;
@@ -845,10 +949,10 @@ let fills_own_arguments () =
 let registry_is_the_process () =
   let p = H.pages H.page in
   let a = S.open_ () in
-  let ra = require_some (C.map_host a.g p 256) in
+  let ra = require_some (maps (C.map_host a.g p 256)) in
   S.close a;
   S.with_ @@ fun b ->
-  let rb = require_some (C.map_host b.g (p + 64) 64) in
+  let rb = require_some (maps (C.map_host b.g (p + 64) 64)) in
   C.free a.g ra;
   equal bool ~msg:"locked after the first free" true (S.locked p);
   C.free b.g rb;
@@ -1408,10 +1512,10 @@ module Registry = struct
       | Read_only -> s.read_only + a
     in
     match C.map_host s.g a n with
-    | Some r ->
+    | Maps r ->
         Mutex.protect s.lock (fun () -> s.live <- s.live @ [ r ]);
         true
-    | None -> false
+    | Never | No_room -> false
 
   let free_sys s i =
     C.free s.g (List.nth s.live i);
@@ -1520,6 +1624,7 @@ let () =
              opening;
              facts;
              memory;
+             host_memory;
              work;
              images;
              launches;

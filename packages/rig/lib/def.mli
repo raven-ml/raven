@@ -32,8 +32,10 @@ type ('a, 'r) im = (module Rig_edge.Io with type t = 'a and type region = 'r)
 
 (** The type for rig's record of a region of a driver: the module and the
     device that hold it, the witness of its type, which equates the regions
-    of one device, and the region, [None] until the driver's call that makes
-    it returns into the record. rig makes the record before that call,
+    of one device, and the region: an allocation's in [r], [None] until the
+    driver's call that makes it returns into the record, and a mapping's in
+    [mapped], which holds the driver's answer, [Never] until then. rig makes
+    the record before that call,
     where the frees that give the region back find it, and the call stores
     the driver's answer as it is, allocating nothing, so that an exception
     once the call returned leaves the region recorded ({!Memory}). *)
@@ -42,6 +44,7 @@ type ('a, 'r, 'i) cell = {
   h : 'a;
   rid : 'r Type.Id.t;
   mutable r : 'r option;
+  mutable mapped : 'r Rig_edge.mapping;
 }
 
 (** The type for a region of a driver, of any driver. *)
@@ -296,12 +299,12 @@ and pages =
   | No_pages
 
 (** The type for a device's mapping of an allocation: the device, its
-    region, its key among the entries the device maps, and the address and
-    handle its work uses. rig records it, its region not yet made, in the
-    allocation's [maps] and the device's [mapped] before the driver's call
-    that makes it, and sets [at] and [by] once the call has returned, then
-    [located], under the allocation's owner's lock. Only a located mapping
-    serves a borrow. *)
+    region, its key among the entries the device maps, the address and
+    handle its work uses, and what keeps it. rig records it, its region not
+    yet made, in the allocation's [maps] and the device's [mapped] before
+    the driver's call that makes it, and sets [at] and [by] once the call
+    has returned, then [located], under the allocation's owner's lock. Only
+    a located mapping serves a borrow. *)
 and mapping = {
   on : device;
   map : region;
@@ -309,6 +312,13 @@ and mapping = {
   mutable at : int;
   mutable by : nativeint;
   mutable located : bool;
+  mutable holds : int;
+      (** The borrows that hold it, under the owner's lock: it goes once the
+          last one's lease ends, unless [kept]. *)
+  mutable kept : bool;
+      (** Whether it stays until its memory returns: rig's staging, and
+          memory the host does not page that a copy maps. Set under the
+          owner's lock. *)
 }
 
 (** The type for releases that wait for a value of their device, which
@@ -327,6 +337,12 @@ and pending =
           through it ({!Dev.next_value}). *)
   | Let_go of held
       (** A value a collected submission kept: dropped, it is let go. *)
+  | Unhold of entry Weak.t * mapping
+      (** A borrow's hold of its device's mapping of the entry, whose lease
+          ended: the mapping goes back once it is the last
+          ({!Memory.section-leases}). The entry is weak: once collected, its
+          free gave its mappings back, and its host bytes need not wait for
+          the release. *)
 
 (** The type for the value a submission keeps ({!Rig.Submission.make}). *)
 and held = Held : 'a -> held
@@ -393,9 +409,30 @@ and memory = {
   address : int;  (** As [dev]'s work addresses it, [-1] if none. *)
   handle : nativeint;  (** The driver object that names it on [dev]. *)
   alloc : alloc;  (** The allocation. *)
+  lease : lease option;
+      (** A borrow's own life, [None] for every other reach. *)
 }
 (** The type for a device's reach of an allocation: the owner's, whose [dev]
     is [alloc]'s [owner], or a borrow's. *)
+
+(** The type for a borrow's lease ({!Rig.Buffer.borrow}): its own life within
+    its memory's, ended by {!Rig.Buffer.unborrow} or, through
+    [lease_token], its collection, and the range of the buffer the borrow
+    made. Its token,
+    {!Memory.no_token} for a borrow that holds no mapping, ends the borrow's
+    hold of its mapping. C reads [lease_count] and [lease_why] in this
+    order. *)
+and lease = {
+  mutable lease_count : int; [@atomic]
+      (** The claims and holds through the borrow, plus [lease_end]
+          once an unborrow ended it, which then makes the borrow's buffers
+          dead. *)
+  mutable lease_why : string;
+      (** The unborrow's reason, set before its end. *)
+  mutable lease_token : token;
+  lease_offset : int;
+  lease_length : int;
+}
 
 and buffer = { mem : memory; offset : int; length : int; generation : int }
 (** {!Rig.Buffer.t}: live while [generation] is its allocation's, whose low
@@ -409,6 +446,9 @@ and half = {
       (** Its allocation of 32 MiB, made at the first copy that needs it, and
           dropped as a give or a release returns it. *)
   mutable held : bool;  (** Whether a copy holds it. *)
+  mutable names : buffer list;
+      (** [buffer] as each device that ran legs through it names it, made at
+          its first such leg and dropped with [buffer]. *)
   mutable cursor : int;
       (** The byte from which no unfinished work uses [buffer]. *)
   mutable lap : int;
@@ -420,12 +460,13 @@ and half = {
   stage : device;  (** The device whose [live] holds it. *)
 }
 
-type holds = { allocs : alloc Weak.t; taken : Bytes.t }
+type holds = { allocs : alloc Weak.t; leases : lease Weak.t; taken : Bytes.t }
 (** The type for the allocations a {!Rig.Claim.hold} holds, by the index of
     its buffer, and whether each hold is taken, ['\001'], which the C steps
     that take and release a hold set. The allocations are weak, so a hold
     keeps no memory from its return: a collected allocation needs no
-    release. *)
+    release. [leases] holds the lease, also weakly, of each buffer that is
+    a borrow's, whose count the hold's release ends. *)
 
 type image = { idev : device; loaded : loaded; itoken : token }
 (** {!Rig.Image.t}: its device, what the driver loaded, and the token that
@@ -489,3 +530,7 @@ type released =
   | Stamps of int
       (** The stamps a freed allocation keeps a reference on
           ({!Memory.release_early}), dropped once it is collected. *)
+  | Unborrow of entry Weak.t * mapping
+      (** A borrow's hold of its device's mapping of the entry, put on the
+          list once its lease is collected or ended. The entry is weak, as
+          in [Unhold]: the record is a root from the borrow on. *)

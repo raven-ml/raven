@@ -231,7 +231,9 @@ let map_host_rows =
     [
       row "256MiB"
         (fun () -> (dev (), H.pages n))
-        (fun (t, p) -> N.free t.g (Option.get (N.map_host t.g p n)));
+        (fun (t, p) ->
+          N.free t.g
+            (Option.get (Rig_gpu_support.mapped (N.map_host t.g p n))));
     ]
 
 (* A cubin loaded by the driver over a new code region, then unloaded and the

@@ -2557,6 +2557,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- A placement between a GPU and host memory copies through rig's staging
+  memory and locks none of it: an array uploaded many times uploads at the
+  borrowed rate through `Nx_array.borrow` of it on the GPU.
+- `Nx_array.create ~memory:Pinned` raises `Invalid_argument` on a device
+  whose memory the host addresses, as `Rig.Buffer.create` now does.
 - `Nx_kernel.S.attention` bounds `q·k` and `o`'s weighted sum normwise,
   states what a library's `ε` bounds, and may round weights to float16 or
   bfloat16, so matrix units can compute it. nx.cpu's `ε` and

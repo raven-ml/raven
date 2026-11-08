@@ -106,14 +106,15 @@ let two_links () =
       equal ~msg:"a word's handle" nativeint 0n (Proxy.locate r).handle;
       equal ~msg:"a word's shadow is this process's" bool true
         (Option.is_some (Proxy.locate r).host);
-      equal ~msg:"map_host" bool true
-        (Option.is_none (Proxy.map_host p 4096 4096));
+      equal ~msg:"map_host" string "Never"
+        (Rig_gpu_support.refusal (Proxy.map_host p 4096 4096));
       Link.fail job "lost";
       equal ~msg:"once lost" bool true (Proxy.peer p q');
-      equal bool true (Option.is_none (Proxy.map_peer p q (word q)));
+      equal string "Never"
+        (Rig_gpu_support.refusal (Proxy.map_peer p q (word q)));
       match Proxy.map_peer p q' (word q') with
-      | Some r -> equal (option int) (Some 2) (Proxy.locate r).address
-      | None -> fail "a proxy of the same link maps the word")
+      | Maps r -> equal (option int) (Some 2) (Proxy.locate r).address
+      | Never | No_room -> fail "a proxy of the same link maps the word")
 
 let make_misuse () =
   with_job_link @@ fun far ->

@@ -601,6 +601,12 @@ value caml_rig_nv_flush(value v_self, value v_src, value v_delta) {
   return Val_bool(counted);
 }
 
+/* Whether [v_src]'s flush word is gone, as it is once [v_src] has stopped. */
+value caml_rig_nv_flush_stopped(value v_src) {
+  return Val_bool(atomic_load_explicit(&Edge_val(v_src)->bar,
+                                       memory_order_seq_cst) == NULL);
+}
+
 /* Takes [v_self]'s flush word out of every other live device's entries,
    before its path unmaps it, and returns once no submission may still read
    it. [bar] goes first, so no entry for the word starts after its walk

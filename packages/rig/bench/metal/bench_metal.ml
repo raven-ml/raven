@@ -265,7 +265,8 @@ let map_host_rows =
   Thumper.group "map-host"
     [
       row "64MiB" pages (fun (t, p) ->
-          M.free t.g (Option.get (M.map_host t.g p n)));
+          M.free t.g
+            (Option.get (Rig_gpu_support.mapped (M.map_host t.g p n))));
     ]
 
 (* An image's load makes no pipeline; its first entry makes one, which Metal's

@@ -612,8 +612,9 @@ let half_bytes = 32 * 1024 * 1024
    through, where its halves count in that device's budget. Memory the host
    addresses the host copies. A copy of other memory runs on [b]'s device, or
    on its memory's where [b]'s runs no copy, and a device that maps no host
-   memory stages through its own [Pinned] memory, which counts in its budget
-   where the host addresses its memory (rig.mli, Buffer.copy and budgets). *)
+   memory stages through memory of its own that the host addresses, which
+   counts in its budget where the host addresses its memory (rig.mli,
+   Buffer.copy and budgets). *)
 let own_stage b =
   if b.local <> Remote then None
   else
@@ -1102,11 +1103,20 @@ let created d memory =
   | Disk -> Io
   | _ -> Local
 
+(* Whether the host addresses all of [d]'s memory, which so has no [Pinned]
+   memory (rig.mli, Buffer.Pinned). *)
+let addressed_all d =
+  match d.kind with
+  | Host | Memory | Gpu Metal -> true
+  | Polled c -> host_addresses c
+  | Disk | Gpu (Cuda | Nv | Amd) -> false
+
 let create_ref (v : rdevv) memory n c outcome =
   let d = v.r and w = c.w in
   let vd = verdict () in
   uses vd [ d ];
   invalid_if vd (d.kind = Disk && n > 0);
+  invalid_if vd (memory = B.Pinned && addressed_all d);
   let budgeted =
     match (d.kind, memory) with
     | Polled c, _ when host_addresses c -> n > 0

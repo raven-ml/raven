@@ -85,11 +85,12 @@ let load ~cold (p, dst) =
   if cold then evicted p;
   B.copy ~src:(ok (Rig_disk.of_file p)) ~dst
 
-(* Copies: 256 MiB between a GPU's memory and the host's, both ways. Host memory
-   that starts on a page is memory the GPU maps; memory 16 bytes past a page,
-   such as a C library's large allocation, the GPU maps none of, and the bytes
-   go through the host's staging memory, one host copy per byte beside the
-   GPU's. Host memory is written first: pages never written read as one page of
+(* Copies: 256 MiB between a GPU's memory and the host's, both ways. A copy maps
+   no host memory it does not name through a borrow, so the bytes of a host
+   buffer, on a page or 16 bytes past one, such as a C library's large
+   allocation, go through the host's staging memory, one host copy per byte
+   beside the GPU's; the GPU copies a borrow of a buffer on a page directly.
+   Host memory is written first: pages never written read as one page of
    zeros, which no copy of real data reads as fast. *)
 
 let copy_bytes = 256 lsl 20
@@ -249,6 +250,35 @@ let gpu_rows ?graph v ~opened ~kernel =
   in
   let paged () = written copy_bytes
   and off_page () = written ~off:true copy_bytes in
+  (* A borrow on the GPU of a host buffer, made once, as a program that copies
+     one buffer many times makes it. *)
+  let borrowed_host ~to_device () =
+    let g, _ = opened () in
+    let h = Option.get (B.borrow g (written copy_bytes)) in
+    let d = B.create g copy_bytes in
+    if to_device then (h, d) else (d, h)
+  in
+  (* A fresh host buffer of 1 MiB for each upload, as a step that makes its
+     input anew does: no copy maps it. *)
+  let fresh () =
+    let g, _ = opened () in
+    B.create g (1 lsl 20)
+  in
+  let fresh_upload dst = B.copy ~src:(written (1 lsl 20)) ~dst in
+  (* Four host buffers of 256 MiB copied to the GPU and dropped, as a program
+     loads weights through host buffers, then collected, then a host buffer
+     made: no copy locked the four, so the create unlocks nothing. *)
+  let dropped () =
+    let g, _ = opened () in
+    B.create g copy_bytes
+  in
+  let drop_then_create dst =
+    for _ = 1 to 4 do
+      B.copy ~src:(written copy_bytes) ~dst
+    done;
+    Gc.full_major ();
+    B.create Rig.host (1 lsl 20)
+  in
   let within_device bytes () =
     let g, _ = opened () in
     let src = B.create g bytes and dst = B.create g bytes in
@@ -327,6 +357,10 @@ let gpu_rows ?graph v ~opened ~kernel =
         row "to-device-256M" (copying paged ~to_device:true) copy;
         row "from-device-256M" (copying paged ~to_device:false) copy;
         row "to-device-off-page-256M" (copying off_page ~to_device:true) copy;
+        row "to-device-borrowed-256M" (borrowed_host ~to_device:true) copy;
+        row "from-device-borrowed-256M" (borrowed_host ~to_device:false) copy;
+        row "fresh-host-to-device-1M" fresh fresh_upload;
+        row "drop-4x256M-then-create" dropped drop_then_create;
         row "from-device-off-page-256M" (copying off_page ~to_device:false) copy;
         row
           (strf "queued/host-to-device-%dx4K" queued)

@@ -925,7 +925,7 @@ let waits_on_producer d =
 let makings =
   [
     making "an allocation of each kind" (fun () ->
-        let d, p = P.open_ (fresh "making:create") in
+        let d, p = P.open_ ~host_visible:false (fresh "making:create") in
         ( [ (d, p) ],
           fun () ->
             List.iter

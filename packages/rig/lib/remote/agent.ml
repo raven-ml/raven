@@ -981,7 +981,7 @@ let answer : type a. state -> a Wire.request -> a =
       | Some b ->
           Hashtbl.replace s.objects id (Buffer b);
           true
-      | None -> false)
+      | None | (exception Rig.Out_of_memory _) -> false)
   | Wire.Load { id; binary } -> (
       fresh s id;
       let rails id =

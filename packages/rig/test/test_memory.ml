@@ -26,12 +26,12 @@ let out_of_memory d n = function
    address. *)
 let[@inline never] dropped ?memory d n = Support.at (B.create ?memory d n)
 
-(* Collects, then drains [d], as an allocation on it does first: of pinned
-   memory, which no budget refuses. *)
+(* Collects, then drains [d], as an allocation on it does first: of no bytes,
+   which no budget refuses. *)
 let collect d =
   Gc.full_major ();
   Gc.full_major ();
-  ignore (Sys.opaque_identity (B.create ~memory:Pinned d 8))
+  ignore (Sys.opaque_identity (B.create d 0))
 
 (* A buffer of [n] bytes on [d] that the submission [s], of one write, writes
    once, and that is unreachable once this returns: its address. Its return
@@ -581,7 +581,7 @@ let test_judged_once () =
     Domain.spawn (fun () ->
         Support.await "the first drain's read" (fun () -> Atomic.get judging);
         Atomic.set second (Some (Support.self ()));
-        ignore (Sys.opaque_identity (B.create ~memory:Pinned d 8));
+        ignore (Sys.opaque_identity (B.create d 0));
         Atomic.set drained true)
   in
   P.before p "signaled" (fun () ->
@@ -842,28 +842,38 @@ let test_borrowed_reclaimed () =
   with_host_budget (Support.host_held ()) (fun () ->
       equal int n (B.length (B.create ~memory:Pinned d n)))
 
-(* On a device whose memory the host addresses, pinned memory is the device's
-   own: it counts in the device's budget. *)
+(* A device whose memory the host addresses has no pinned memory: a create
+   of it raises, asking its driver nothing, on the host, a memory device and
+   a driver's device that declares [host_addresses], of no bytes too. *)
 let test_pinned_own () =
-  let d, _ = P.open_ "memory:pinned-own" in
-  Rig.set_budget d (8 * kib);
-  raises_match
-    (out_of_memory d (16 * kib))
-    (fun () -> B.create ~memory:Pinned d (16 * kib));
-  let b = B.create ~memory:Pinned d (4 * kib) in
-  raises_match (out_of_memory d (8 * kib)) (fun () -> B.create d (8 * kib));
-  ignore (Sys.opaque_identity b)
+  let d, p = P.open_ "memory:pinned-own" in
+  let m = Result.get_ok (Rig.memory_device "memory:pinned-own-memory") in
+  let refused = Exn.invalid_arg ~sub:"Buffer.borrow" in
+  List.iter
+    (fun (msg, d, n) ->
+      raises_match ~msg refused (fun () -> B.create ~memory:Pinned d n))
+    [
+      ("the host", Rig.host, 4 * kib);
+      ("the host, no bytes", Rig.host, 0);
+      ("a memory device", m, 4 * kib);
+      ("a driver's device the host addresses", d, 4 * kib);
+      ("one of no bytes", d, 0);
+    ];
+  equal ~msg:"asked of the driver" allocs [] (P.allocs p)
 
 (* Mapped memory the window cannot hold is pinned memory, and the cache
-   stays. *)
-let test_mapped_window () =
-  let d, p = P.open_ ~window:(4 * kib) "memory:window" in
+   stays; where the host addresses the device's memory, which has no pinned
+   memory, it is the device's own. *)
+let test_mapped_window host_visible =
+  let name = if host_visible then "memory:window-own" else "memory:window" in
+  let d, p = P.open_ ~host_visible ~window:(4 * kib) name in
   let at = dropped d (4 * kib) in
   collect d;
   let b = B.create ~memory:Mapped d (8 * kib) in
   equal ~msg:"the cached memory" bool false (freed p at);
+  let fallback = if host_visible then B.Device else B.Pinned in
   equal allocs
-    [ (B.Mapped, 8 * kib, false); (B.Pinned, 8 * kib, true) ]
+    [ (B.Mapped, 8 * kib, false); (fallback, 8 * kib, true) ]
     (last 2 (P.allocs p));
   ignore (Sys.opaque_identity b)
 
@@ -1615,10 +1625,13 @@ let tests =
       [
         test "pinned memory of hidden device memory counts in the host's budget"
           test_pinned;
-        test "pinned memory the host addresses counts in its device's budget"
+        test "a device whose memory the host addresses has no pinned memory"
           test_pinned_own;
-        test "mapped memory the window cannot hold is pinned, the cache kept"
-          test_mapped_window;
+        cases
+          "mapped memory the window cannot hold is pinned, or the device's \
+           own where the host addresses it, the cache kept"
+          ~id:(fun v -> if v then "host addressed" else "hidden")
+          [ false; true ] test_mapped_window;
         test "mapped memory the budget cannot hold is pinned" test_mapped_budget;
         test "mapped memory is the device's" test_mapped;
         test "a budget counts each buffer by its whole words"

@@ -234,6 +234,9 @@ val borrow : Rig.t -> ('v, 's) t -> ('v, 's) t option
     dtype and layout over a borrow of its buffer ({!Rig.Buffer.borrow}), which
     shares [a]'s memory, so writes through either show in the other. It is
     [Some a] for [a] on [d], and [None] where [d] cannot map [a]'s memory.
+    On another device, [a'] holds [d]'s mapping of the memory while it lives,
+    and a copy between [a'] and [d]'s memory runs on [d] directly
+    ({!Rig.Buffer.section-copying}).
 
     Raises [Invalid_argument] if [a]'s buffer is dead, and what
     {!Rig.Buffer.borrow} raises: {!Rig.Lost} for a lost device. *)

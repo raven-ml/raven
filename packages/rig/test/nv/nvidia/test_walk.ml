@@ -116,7 +116,7 @@ let take on op =
       | Error e -> ("Error " ^ e, ignore))
   | Alloc kind, Some g -> region g (N.alloc g kind page)
   | Map_host, Some g ->
-      region g (N.map_host g on.host host_bytes)
+      region g (Rig_gpu_support.mapped (N.map_host g on.host host_bytes))
   | Grow, Some g -> (
       (* A part of [2 n] words takes [1 + n] entries. *)
       let room n = Rig_nv_support.Edge.room g [| (0, Array.make (2 * n) 0) |] in

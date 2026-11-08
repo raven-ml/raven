@@ -128,6 +128,14 @@ val free : ?why:string -> Def.buffer -> bool
     it, so a claim that follows finds [b] dead. A borrow maps under a read
     claim, so no free returns memory that a borrow maps meanwhile. *)
 
+val unborrow : ?why:string -> Def.buffer -> bool
+(** [unborrow ~why b] is {!Rig.Buffer.unborrow}[ ~why b]. A claim or a hold
+    through a borrow counts on its lease as well as on its memory's word
+    ({!Memory.claim_add}, [rig_buffer_claim]), and one C step moves the
+    lease's count from no claims or holds to its end, so a claim through the borrow
+    that follows finds its buffers dead. The memory's word is not
+    touched. *)
+
 val consumable : t -> Def.buffer -> bool
 (** [consumable c b] is {!Rig.Claim.consumable}[ c b]. *)
 

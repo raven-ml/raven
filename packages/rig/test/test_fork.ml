@@ -296,7 +296,7 @@ let test_own_device () =
         let at = dropped d 4096 in
         Gc.full_major ();
         Gc.full_major ();
-        ignore (B.create ~memory:Pinned d 8);
+        ignore (B.create d 0);
         [
           Option.value ~default:"not lost" (Rig.lost d);
           Printf.sprintf "reused: %b" (Support.at (B.create d 4096) = at);
@@ -409,7 +409,8 @@ let test_staging () =
   in
   ignore (B.submit_copy ~src:(filled 'q') ~dst:(B.create d 64) [| B.row 64 |]);
   let paged = B.create Rig.host (1 lsl 16) in
-  ignore (B.submit_copy ~src ~dst:paged [| B.row 64 |]);
+  let on_d = require_some (B.borrow d paged) in
+  ignore (B.submit_copy ~src ~dst:on_d [| B.row 64 |]);
   P.gate p;
   let holder =
     Thread.create (fun () -> B.copy ~src ~dst:(B.create Rig.host 64)) ()
@@ -435,7 +436,8 @@ let test_staging () =
   equal string "exited 0" (status ended);
   equal (list string) [ "c"; "forked" ] lines;
   equal ~msg:"the queued copy in the parent" string "s"
-    (B.read paged Bigarray.char (fun a -> String.make 1 a.{0}))
+    (B.read paged Bigarray.char (fun a -> String.make 1 a.{0}));
+  ignore (Sys.opaque_identity on_d)
 
 (* A drain on [d], also on a lost [d], whose {!B.create} then raises. *)
 let drain d =

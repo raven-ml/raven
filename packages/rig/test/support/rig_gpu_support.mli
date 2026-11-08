@@ -10,6 +10,14 @@ val opened : 'a Rig_edge.opener -> ('a, string) result
 (** [opened o] is [o.make] given a {!Host.word}: the device opened outside
     rig, for a test that calls its driver itself. *)
 
+val mapped : 'r Rig_edge.mapping -> 'r option
+(** [mapped a] is the region a driver's map answered, [None] for a
+    refusal. *)
+
+val refusal : 'r Rig_edge.mapping -> string
+(** [refusal a] names [a]'s constructor: ["Maps"], ["Never"] or
+    ["No_room"]. *)
+
 (** {1:dmabufs Dma-bufs} *)
 
 (** The dma-bufs a driver exports ({!Rig.Buffer.dma}), by descriptor. *)

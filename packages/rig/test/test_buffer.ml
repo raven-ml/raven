@@ -316,17 +316,196 @@ let test_offset () =
   equal nativeint (B.handle b) (B.handle v);
   raises_match Exn.invalid_arg (fun () -> B.handle (B.create Rig.host 8))
 
-(* A borrow collected while its memory lives keeps its mapping: a borrow made
-   again maps nothing. *)
+(* A borrow's mapping lives as long as the borrow: collected while its memory
+   lives, the borrow gives its mapping back once the device ran the work
+   submitted before, and a borrow made again maps again. *)
 let test_borrow_remade () =
   let d, p = P.open_ "buffer:remade" in
   let h = B.create Rig.host (1 lsl 16) in
   ignore (Sys.opaque_identity (B.borrow d h));
   Gc.full_major ();
   Gc.full_major ();
-  ignore (B.create ~memory:Pinned d 8);
+  ignore (B.create d 0);
+  equal ~msg:"once collected" (pair int int) (1, 0)
+    (count "unmap" p, P.mapped p);
   ignore (require_some (B.borrow d h));
-  equal int 1 (List.length (List.filter (( = ) "map_host") (P.log p)))
+  equal ~msg:"made again" (pair int int) (2, 1)
+    (count "map_host" p, P.mapped p)
+
+(* A borrow's end ends the borrow alone: its buffers and their views are dead
+   with its reason, its memory lives, and its mapping goes back once the
+   device ran the work submitted before. A borrow made again maps again.
+   Only a borrow ends, whole. *)
+let test_unborrow () =
+  let d, p = P.open_ "buffer:unborrow" in
+  let h = filled (1 lsl 16) 'f' in
+  let b = require_some (B.borrow d h) in
+  let v = B.view b ~first:8 ~length:8 in
+  raises_match ~msg:"a view of the borrow" Exn.invalid_arg (fun () ->
+      B.unborrow v);
+  raises_match ~msg:"memory of its own" Exn.invalid_arg (fun () ->
+      B.unborrow h);
+  equal ~msg:"ended" bool true (B.unborrow ~why:"done with it" b);
+  equal ~msg:"the borrow and its view dead"
+    (pair (option string) (option string))
+    (Some "done with it", Some "done with it")
+    (B.dead b, B.dead v);
+  equal ~msg:"its memory live" (option string) None (B.dead h);
+  ignore (B.create d 0);
+  equal ~msg:"its mapping gone" (pair int int) (1, 0)
+    (count "unmap" p, P.mapped p);
+  let b' = require_some (B.borrow d h) in
+  equal ~msg:"made again" (pair int int) (2, 1)
+    (count "map_host" p, P.mapped p);
+  equal ~msg:"the bytes through it" char 'f'
+    (B.read b' Bigarray.char (fun a -> Bigarray.Array1.get a 0));
+  raises_match ~msg:"an ended borrow" Exn.invalid_arg (fun () -> B.unborrow b)
+
+(* A hold through a borrow keeps it from ending, as a prepared submission that
+   fixes it does for its life, since the submission's addresses are made; a
+   hold of the memory through another buffer does not. *)
+let test_unborrow_holds () =
+  let d, _ = P.open_ "buffer:unborrow-holds" in
+  let h = B.create Rig.host (1 lsl 16) in
+  let b = require_some (B.borrow d h) in
+  let hold = Rig.Claim.hold [ b ] in
+  equal ~msg:"under a hold through it" bool false (B.unborrow b);
+  Rig.Claim.release hold;
+  let s = Sub.make ~fixed:[ (b, Rig.Read) ] d [||] in
+  equal ~msg:"under a prepared submission" bool false (B.unborrow b);
+  ignore (Sys.opaque_identity s);
+  let other = require_some (B.borrow d h) in
+  let owner = Rig.Claim.hold [ h ] in
+  equal ~msg:"under a hold of the memory itself" bool true (B.unborrow other);
+  Rig.Claim.release owner
+
+(* A claim through a borrow keeps it from ending; claims of its memory through
+   other buffers neither keep it nor see its end. *)
+let test_unborrow_claims () =
+  let d, _ = P.open_ "buffer:unborrow-claims" in
+  let h = B.create Rig.host (1 lsl 16) in
+  let b = require_some (B.borrow d h) in
+  Rig.Claim.with_ ~read:[ b ] ~donate:[] (fun _ ->
+      equal ~msg:"under a claim through it" bool false (B.unborrow b));
+  Rig.Claim.with_ ~read:[ h ] ~donate:[] (fun _ ->
+      equal ~msg:"under a claim of the memory itself" bool true
+        (B.unborrow b);
+      B.write h Bigarray.char (fun a -> Bigarray.Array1.fill a 'c'));
+  equal ~msg:"the memory's buffer" char 'c'
+    (B.read h Bigarray.char (fun a -> Bigarray.Array1.get a 0))
+
+(* A borrow of memory outside the claims, a bigarray's, ends as any borrow
+   does, its bigarray living on. *)
+let test_unborrow_outside () =
+  let d, p = P.open_ "buffer:unborrow-outside" in
+  let paged = B.export (B.create Rig.host (1 lsl 16)) Bigarray.char in
+  let h = B.of_bigarray paged in
+  let b = require_some (B.borrow d h) in
+  equal ~msg:"ended" bool true (B.unborrow b);
+  ignore (B.create d 0);
+  equal ~msg:"its mapping gone" int 0 (P.mapped p);
+  equal ~msg:"the bigarray's buffer" (option string) None (B.dead h)
+
+(* A free of a borrow returns its memory, as a free of any buffer that spans
+   it does: also of the buffer a consumption of the borrow gave. Every buffer
+   over the memory is then dead, and its mappings go once its work is done. *)
+let test_borrow_free () =
+  let d, p = P.open_ "buffer:borrow-free" in
+  let h = B.create Rig.host (1 lsl 16) in
+  let b = require_some (B.borrow d h) in
+  let b' =
+    Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+        Rig.Claim.consume c ~why:"donated" b)
+  in
+  equal ~msg:"freed" bool true (B.free b');
+  equal ~msg:"its memory dead" bool true (Option.is_some (B.dead h));
+  ignore (B.create Rig.host 0);
+  ignore (B.create d 0);
+  equal ~msg:"its mapping gone" (pair int int) (1, 0)
+    (count "unmap" p, P.mapped p)
+
+(* The staging memory a room's return gives back is unmapped before the
+   second ask, even while the device that maps it has other work queued: the
+   return waits for that work. *)
+let test_borrow_room_staging () =
+  let d, p = P.open_ ~host_visible:false "buffer:borrow-room-staging" in
+  let n = 1 lsl 16 in
+  B.copy ~src:(B.create Rig.host n) ~dst:(B.create d n);
+  let s = Sub.make d [| Support.touching [| Sub.read |] |] in
+  ignore (submit s ~buffers:[| B.create d 64 |]);
+  P.fail_at p 1 (`Refuse 1);
+  ignore (require_some (B.borrow d (B.create Rig.host n)));
+  let maps =
+    List.filter (fun c -> c = "map_host" || c = "unmap") (P.log p)
+  in
+  equal ~msg:"the half mapped, refused, unmapped, then the borrow mapped"
+    (list string)
+    [ "map_host"; "map_host"; "unmap"; "map_host" ]
+    maps
+
+(* Borrows on one device of one allocation share one mapping, which goes once
+   the last of them goes, ended or collected. A borrow of a view ends as a
+   borrow of the bytes it was made over. *)
+let test_borrows_share () =
+  let d, p = P.open_ "buffer:borrows-share" in
+  let h = B.create Rig.host (1 lsl 16) in
+  let b = require_some (B.borrow d h) in
+  let part = require_some (B.borrow d (B.view h ~first:4096 ~length:4096)) in
+  equal ~msg:"one mapping" (pair int int) (1, 1)
+    (count "map_host" p, P.mapped p);
+  equal ~msg:"the borrow of a view ends" bool true (B.unborrow part);
+  ignore (B.create d 0);
+  equal ~msg:"the other holds it" int 1 (P.mapped p);
+  equal bool true (B.unborrow b);
+  ignore (B.create d 0);
+  equal ~msg:"the last gone" (pair int int) (1, 0)
+    (count "unmap" p, P.mapped p)
+
+(* A mapping a driver has no room for returns memory once and asks again: a
+   borrow that finds room then maps, and one that finds none raises
+   [Out_of_memory] for the memory's bytes. A mapping the driver never makes
+   asks once, and the borrow is [None]. The memory returned first includes
+   the mappings of borrows collected on any device of the machine, once
+   their work ran, and the cached Pinned memory of every device. *)
+let test_borrow_room () =
+  let d, p = P.open_ "buffer:borrow-room" in
+  let e, pe = P.open_ ~host_visible:false "buffer:borrow-room-other" in
+  let n = 1 lsl 16 in
+  let maps () =
+    List.filter (fun c -> c = "map_host" || c = "unmap") (P.log p)
+  in
+  (* A borrow whose work is queued, unrun, dropped: its mapping waits for the
+     work, which only the room's wait runs. *)
+  (fun () ->
+    let b0 = require_some (B.borrow d (B.create Rig.host n)) in
+    let s = Sub.make d [| Support.touching [| Sub.read |] |] in
+    ignore (submit s ~buffers:[| b0 |]))
+    ();
+  ignore (Sys.opaque_identity (B.borrow e (B.create Rig.host n)));
+  ignore (Sys.opaque_identity (B.create ~memory:Pinned e n));
+  Gc.full_major ();
+  ignore (B.create e 0);
+  let h = B.create Rig.host n in
+  P.fail_at p 1 (`Refuse 1);
+  ignore (require_some ~msg:"room at the second ask" (B.borrow d h));
+  equal ~msg:"the collected borrow's mapping went before the second ask"
+    (list string)
+    [ "map_host"; "map_host"; "unmap"; "map_host" ]
+    (maps ());
+  equal ~msg:"the other device's mapping and cached Pinned memory"
+    (pair int int) (1, 1)
+    (count "unmap" pe, count "free" pe);
+  let h' = B.create Rig.host n in
+  P.fail_at p 1 (`Refuse 2);
+  raises_match
+    (function Rig.Out_of_memory (d', k) -> Rig.equal d d' && k = n | _ -> false)
+    (fun () -> B.borrow d h');
+  equal ~msg:"asked twice more" int 5 (count "map_host" p);
+  P.fail_at p 1 (`Refuse 0);
+  P.never_map p true;
+  is_none ~msg:"never mapped" (B.borrow d (B.create Rig.host n));
+  equal ~msg:"asked once more" int 6 (count "map_host" p);
+  P.never_map p false
 
 let test_lost_memory () =
   let d, p = P.open_ "buffer:lost" in
@@ -759,7 +938,7 @@ let test_mapping_released () =
     Gc.full_major ();
     Gc.full_major ();
     ignore (B.create Rig.host 8);
-    ignore (B.create ~memory:Pinned d 8)
+    ignore (B.create d 0)
   in
   drain ();
   equal ~msg:"while its work is unrun" int 0 (unmaps ());
@@ -787,7 +966,7 @@ let test_bytes_after_unmap () =
     Gc.full_major ();
     Gc.full_major ();
     ignore (B.create Rig.host 8);
-    ignore (B.create ~memory:Pinned d 8);
+    ignore (B.create d 0);
     Gc.full_major ();
     Gc.full_major ()
   in
@@ -884,17 +1063,65 @@ let roundtrip ~src ~dst =
   B.copy ~src:dst ~dst:back;
   equal string (String.make (B.length src) 'r') (bytes back)
 
-(* Between host memory and memory the host does not address, the device copies:
-   from a mapping of host memory that starts on a page. *)
-let test_copy_mapped_host () =
+(* The bytes of staging memory's allocations (rig.mli, Copying). *)
+let half_bytes = 32 lsl 20
+
+(* Between host memory and memory the host does not address, the device copies
+   through staging memory, which it maps: a copy maps no memory of the host's
+   that it does not name, even memory that starts on a page. *)
+let test_copy_host_staged () =
   let d, p = P.open_ ~host_visible:false "buffer:direct" in
   let src = B.create Rig.host (1 lsl 16) in
   let dst = B.create d (1 lsl 16) in
   roundtrip ~src ~dst;
   equal ~msg:"copies the device ran" int 2 (P.submits p);
-  equal ~msg:"host memory mapped" (list int)
-    [ 1 lsl 16; 1 lsl 16 ]
-    (List.filter (( = ) (1 lsl 16)) (P.host_maps p))
+  equal ~msg:"host memory mapped: staging memory alone" (list int)
+    [ half_bytes ] (P.host_maps p)
+
+(* A copy from a borrow of host memory on the device that copies runs directly
+   through the borrow's mapping, made at the borrow: the copy maps nothing.
+   One from the host buffer itself goes through staging memory while the
+   borrow lives: a copy runs directly only on what it names. *)
+let test_copy_borrowed_direct () =
+  let d, p = P.open_ ~host_visible:false "buffer:borrowed-direct" in
+  let n = 1 lsl 16 in
+  let h = filled n 'b' in
+  let on_d = require_some (B.borrow d h) in
+  let dst = B.create d n in
+  equal ~msg:"mapped at the borrow" (list int) [ n ] (P.host_maps p);
+  B.copy ~src:on_d ~dst;
+  equal ~msg:"a copy from the borrow: one submit" int 1 (P.submits p);
+  equal ~msg:"and no mapping" (list int) [ n ] (P.host_maps p);
+  let back = filled n '0' in
+  let on_back = require_some (B.borrow d back) in
+  B.copy ~src:dst ~dst:on_back;
+  equal ~msg:"the bytes back through a borrow" string (String.make n 'b')
+    (bytes back);
+  B.copy ~src:h ~dst;
+  equal ~msg:"a copy from the host buffer, through staging memory"
+    (list int) [ n; n; half_bytes ] (P.host_maps p);
+  equal ~msg:"its leg on the device" int 3 (P.submits p);
+  ignore (Sys.opaque_identity on_d)
+
+(* A copy by a device into a host buffer passes through staging memory, so the
+   host waits for its bytes: [submit_copy] returns once they are there. Into a
+   borrow of the buffer it returns once the copy is queued. *)
+let test_copy_into_host_waits () =
+  let d, p = P.open_ ~host_visible:false "buffer:into-host" in
+  let n = 1 lsl 16 in
+  let src = B.create d n in
+  B.copy ~src:(filled n 'w') ~dst:src;
+  let h = filled n '0' in
+  ignore (B.submit_copy ~src ~dst:h [| B.row n |] : Rig.Point.t);
+  equal ~msg:"a host buffer: its bytes there at the return" bool true
+    (B.reached h Read_write);
+  equal ~msg:"the bytes" string (String.make n 'w') (bytes h);
+  let on_d = require_some (B.borrow d h) in
+  let p' = B.submit_copy ~src ~dst:on_d [| B.row n |] in
+  equal ~msg:"a borrow: queued at the return" (pair int bool) (1, false)
+    (P.queued p, Rig.Point.reached p');
+  ignore (P.run p);
+  Rig.Point.wait p'
 
 (* Host memory and a device's memory that the host does not address, filled from
    host memory the device maps. *)
@@ -1841,7 +2068,7 @@ let test_wait_keeps (name, use) =
   ignore (P.run p);
   Gc.full_major ();
   Gc.full_major ();
-  ignore (B.create ~memory:Pinned d 8);
+  ignore (B.create d 0);
   Rig.free_cache d;
   equal ~msg:"frees while the use sleeps" int 0 (count "free" p);
   P.open_gate p;
@@ -1865,9 +2092,10 @@ let test_bigarray_keeps () =
       equal ~msg:(Printf.sprintf "%d bytes" n) char 'v' view.{n - 1})
     [ 16; 1 lsl 17 ]
 
-(* A pinned buffer on [d] filled with [c], seen through a borrow on the host. *)
+(* A buffer on [d], whose memory the host addresses, filled with [c], seen
+   through a borrow on the host. *)
 let viewed d n c =
-  let m = B.create ~memory:Pinned d n in
+  let m = B.create d n in
   let view = B.write (require_some (B.borrow Rig.host m)) Bigarray.char Fun.id in
   Bigarray.Array1.fill view c;
   (Support.at m, view)
@@ -1876,7 +2104,7 @@ let viewed d n c =
 let collect d =
   Gc.full_major ();
   Gc.full_major ();
-  ignore (Sys.opaque_identity (B.create ~memory:Pinned d 8))
+  ignore (Sys.opaque_identity (B.create d 0))
 
 (* A bigarray over a borrow on the host keeps the device memory it reads, as
    does an array made from it: no buffer reuses that memory while one is
@@ -1889,14 +2117,14 @@ let test_bigarray_keeps_borrowed () =
   let sub = ref (Some (Bigarray.Array1.sub (Option.get !view) 0 8)) in
   view := None;
   collect d;
-  let other = B.create ~memory:Pinned d n in
+  let other = B.create d n in
   B.write (require_some (B.borrow Rig.host other)) Bigarray.char (fun a ->
       Bigarray.Array1.fill a 'w');
   equal ~msg:"another buffer's memory" bool false (Support.at other = at);
   equal ~msg:"read through the array" char 'v' (Option.get !sub).{7};
   sub := None;
   collect d;
-  let again = B.create ~memory:Pinned d n in
+  let again = B.create d n in
   equal ~msg:"once no array reads it" int at (Support.at again);
   ignore (Sys.opaque_identity other)
 
@@ -1905,7 +2133,7 @@ let test_bigarray_keeps_borrowed () =
    nothing. *)
 let test_bigarray_shares () =
   let d, _ = P.open_ "buffer:shared" in
-  let m = B.create ~memory:Pinned d 4096 in
+  let m = B.create d 4096 in
   let on_host = require_some (B.borrow Rig.host m) in
   let collected_shares () =
     Gc.full_major ();
@@ -2053,7 +2281,20 @@ let tests =
       [
         test "a borrow is the memory it maps" test_borrow;
         test "a memory a device borrows is mapped once" test_borrow_maps_once;
-        test "a borrow collected and made again maps nothing" test_borrow_remade;
+        test "a borrow collected and made again maps again" test_borrow_remade;
+        test "unborrow ends the borrow, whose mapping goes" test_unborrow;
+        test "a borrow of memory outside the claims ends" test_unborrow_outside;
+        test "only a claim through a borrow keeps it from ending"
+          test_unborrow_claims;
+        test "a hold through a borrow keeps it from ending" test_unborrow_holds;
+        test "a free of a borrow returns its memory, also once consumed"
+          test_borrow_free;
+        test "borrows of one allocation share one mapping until the last goes"
+          test_borrows_share;
+        test "a mapping refused for room returns memory and asks once more"
+          test_borrow_room;
+        test "a room's return unmaps staging memory before it asks again"
+          test_borrow_room_staging;
         test "a view lies its offset into its buffer's memory" test_offset;
         test "host memory off a page does not borrow on a driver's device"
           test_borrow_small;
@@ -2104,7 +2345,11 @@ let tests =
       ];
     group ~timeout "copy routes"
       [
-        test "a device copies from host memory it maps" test_copy_mapped_host;
+        test "a device copies host memory through staging memory, mapping none"
+          test_copy_host_staged;
+        test "a copy names a borrow to run directly" test_copy_borrowed_direct;
+        test "a copy into a host buffer returns once its bytes are there"
+          test_copy_into_host_waits;
         test "host memory off a page is copied through the staging memory"
           test_copy_staged;
         test

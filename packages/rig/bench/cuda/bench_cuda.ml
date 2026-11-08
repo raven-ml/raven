@@ -172,7 +172,9 @@ let map_host_rows =
     [
       row "256MiB"
         (fun () -> (dev (), H.pages n))
-        (fun (t, p) -> C.free t.g (Option.get (C.map_host t.g p n)));
+        (fun (t, p) ->
+          C.free t.g
+            (Option.get (Rig_gpu_support.mapped (C.map_host t.g p n))));
     ]
 
 (* Loading an image of 140 kernels, the size of a kernel library's, every

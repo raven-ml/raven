@@ -23,6 +23,8 @@ module C = Rig_cuda
 module S = Rig_cuda_support
 module H = Rig_gpu_support.Host
 
+let maps = Rig_gpu_support.mapped
+
 let strf = Printf.sprintf
 let timeout = 120.
 let stopped_graph = "making the graph: the device was stopped"
@@ -145,11 +147,13 @@ let free_in_map_host () =
   walk (fun g n ->
       S.bind g;
       let p = H.pages H.page and q = H.pages H.page in
-      let r = require_some (C.map_host g p 64) in
+      let r = require_some (maps (C.map_host g p 64)) in
       let landing, landed =
         Rig_support.landing seen retaken (fun () -> C.free g r)
       in
-      let mapped = ref None in
+      (* The answer as the driver gave it: nothing allocates between its
+         return and the store. *)
+      let mapped = ref Rig_edge.Never in
       let reached =
         Rig_support.interrupted ~landing n (fun () ->
             mapped := C.map_host g q 64)
@@ -159,7 +163,7 @@ let free_in_map_host () =
       equal ~msg:(what ^ ", the first memory locked") bool (not freed)
         (S.locked p);
       if not freed then C.free g r;
-      Option.iter (C.free g) !mapped;
+      Option.iter (C.free g) (maps !mapped);
       equal ~msg:(what ^ ", locked after the frees") bool false
         (S.locked p || S.locked q);
       S.stop_driver g;
@@ -199,16 +203,18 @@ let map_host_cut ~over () =
   S.bind g;
   cut (fun n ->
       let p = H.pages H.page in
-      let before = if over then C.map_host g p H.page else None in
+      let before =
+        if over then maps (C.map_host g p H.page) else None
+      in
       if over then is_some ~msg:"the mapping before" before;
-      let mapped = ref None in
+      let mapped = ref Rig_edge.Never in
       let reached =
         Rig_support.interrupted n (fun () -> mapped := C.map_host g p 64)
       in
       let what = strf "from allocation %d" n in
-      let again = C.map_host g p 64 in
+      let again = maps (C.map_host g p 64) in
       is_some ~msg:(what ^ ", a mapping after") again;
-      List.iter (Option.iter (C.free g)) [ again; !mapped; before ];
+      List.iter (Option.iter (C.free g)) [ again; maps !mapped; before ];
       equal ~msg:(what ^ ", locked after the frees") bool false (S.locked p);
       H.free_pages p H.page;
       reached)
@@ -220,12 +226,16 @@ let free_uncut () =
   S.with_driver @@ fun g ->
   S.bind g;
   let p = H.pages H.page and q = H.pages H.page in
-  let first = require_some ~msg:"a mapping" (C.map_host g p H.page) in
-  let inner = require_some ~msg:"a mapping inside it" (C.map_host g p 64) in
+  let first =
+    require_some ~msg:"a mapping" (maps (C.map_host g p H.page))
+  in
+  let inner =
+    require_some ~msg:"a mapping inside it" (maps (C.map_host g p 64))
+  in
   S.register q H.page;
   let foreign =
     require_some ~msg:"a mapping of another owner's memory"
-      (C.map_host g q 64)
+      (maps (C.map_host g q 64))
   in
   let free what r =
     let reached = Rig_support.interrupted 1 (fun () -> C.free g r) in

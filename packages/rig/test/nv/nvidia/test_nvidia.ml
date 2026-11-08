@@ -255,8 +255,10 @@ let many_maps () =
     if i = maps then acc
     else
       match Rig_nv.map_host g a gib with
-      | Some r -> map (i + 1) (r :: acc)
-      | None -> List.iter (Rig_nv.free g) acc; failf "map %d refused" i
+      | Maps r -> map (i + 1) (r :: acc)
+      | Never | No_room ->
+          List.iter (Rig_nv.free g) acc;
+          failf "map %d refused" i
   in
   let rs = map 0 [] in
   List.iter (Rig_nv.free g) rs;

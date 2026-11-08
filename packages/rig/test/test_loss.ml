@@ -128,7 +128,7 @@ let test_free_after_stop () =
 let test_faulted_frees () =
   let d, p = P.open_ "loss:faulted-frees" in
   let h = B.create Rig.host (1 lsl 16) in
-  let kept = ref [ B.create d 64; B.create ~memory:Pinned d 128 ] in
+  let kept = ref [ B.create d 64; B.create d 128 ] in
   let mapped = ref (Some (require_some (B.borrow d h))) in
   P.fault p "the device fell off the bus";
   raises_match (lost d) (fun () -> B.create d 8);
@@ -487,7 +487,7 @@ let test_reused_after_loss () =
   raises_match (lost u) (fun () -> submit (empty u));
   Gc.full_major ();
   Gc.full_major ();
-  ignore (Sys.opaque_identity (B.create ~memory:Pinned a 8));
+  ignore (Sys.opaque_identity (B.create a 0));
   let b = B.create a n in
   equal ~msg:"the cached memory" int at (Support.at b);
   B.wait b Rig.Read_write
@@ -552,7 +552,7 @@ let test_close_reopen () =
    loss. *)
 let close_frees name returns =
   let d, p = P.open_ name in
-  let kept = ref [ B.create d 64; B.create ~memory:Pinned d 128 ] in
+  let kept = ref [ B.create d 64; B.create d 128 ] in
   let image = ref (Some (require_ok (Rig.Image.load d "functions"))) in
   Rig.close d;
   equal ~msg:"held at the close" (slist int compare) [ 64; 128 ]

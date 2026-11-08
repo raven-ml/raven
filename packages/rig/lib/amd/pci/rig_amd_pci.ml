@@ -258,17 +258,21 @@ let alloc g (kind : Rig_edge.memory) n =
   | Ok None -> None
   | Error why -> raise (Amd.Fault why)
 
-(* A mapping's [Error] is the GPU's refusal of the memory, such as pages the
+(* A mapping's [Ok None] is no room: the GPU's space, the machine's limit on
+   pinned memory or on the IOMMU's mappings, which returning memory may undo,
+   or pages past the addresses of a function taken physically, which it cannot
+   ([Function.pin] answers both alike).
+   Its [Error] is the GPU's refusal of the memory for good, such as pages the
    machine does not pin or another GPU's memory this one does not reach,
    unless the GPU's function [fn] can no longer be reached: that is the
    path's failure, a fault. *)
-let mapped fn = function
-  | Ok (Some r) -> Some (memory r)
-  | Ok None -> None
+let mapped fn : _ -> _ Rig_edge.mapping = function
+  | Ok (Some r) -> Maps (Some (memory r))
+  | Ok None -> No_room
   | Error _ -> (
       match Rig_pci.Function.failed fn with
       | Some why -> raise (Amd.Fault why)
-      | None -> None)
+      | None -> Never)
 
 let map_host g fn a n =
   mapped fn (protect g (fun () -> Memory.map_host g.memory a n))

@@ -157,8 +157,10 @@ let memory_kind =
 
 (* [create ~memory] allocates [d]'s memory of that kind, [Device] by default:
    the kind a Late device's driver is asked for. Every kind holds the array
-   [create] makes, on the host too, whose memory is of one kind. Each array has
-   its own size, so none reuses another's memory. *)
+   [create] makes, on the host too, whose memory is of one kind, but [Pinned]
+   on a device whose memory the host addresses, which has none and raises as
+   {!Rig.Buffer.create} does. Each array has its own size, so none reuses
+   another's memory. *)
 let test_create_memory () =
   let d, driver = late () in
   let allocations () =
@@ -182,10 +184,12 @@ let test_create_memory () =
     [
       ("default", None, B.Device);
       ("Device", Some B.Device, B.Device);
-      ("Pinned", Some B.Pinned, B.Pinned);
       ("Mapped", Some B.Mapped, B.Mapped);
     ];
-  made ~msg:"host, Pinned" Rig.host (Some B.Pinned) 1;
+  raises_match Exn.invalid_arg (fun () ->
+      made ~msg:"Pinned" d (Some B.Pinned) 4);
+  raises_match Exn.invalid_arg (fun () ->
+      made ~msg:"host, Pinned" Rig.host (Some B.Pinned) 1);
   made ~msg:"host, Mapped" Rig.host (Some B.Mapped) 2
 
 let test_create_refuses () =

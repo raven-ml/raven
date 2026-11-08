@@ -309,7 +309,9 @@ let map_host_rows =
     [
       row "256MiB"
         (fun () -> (dev (), pages n))
-        (fun (t, p) -> A.free t.g (Option.get (A.map_host t.g p n)));
+        (fun (t, p) ->
+          A.free t.g
+            (Option.get (Rig_gpu_support.mapped (A.map_host t.g p n))));
     ]
 
 let image_rows =

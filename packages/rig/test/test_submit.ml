@@ -670,7 +670,7 @@ let test_unordered_keeps () =
   let drain () =
     Gc.full_major ();
     Gc.full_major ();
-    ignore (B.create ~memory:Pinned a 8);
+    ignore (B.create a 0);
     Rig.free_cache a
   in
   let frees () = List.length (List.filter (( = ) "free") (P.log pa)) in

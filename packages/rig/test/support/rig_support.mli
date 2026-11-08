@@ -189,6 +189,11 @@ module Polled : sig
   (** [break_word d] makes [d]'s next read of its word ([signaled]) raise
       [Sys.Break], as a Ctrl-C landing in it does. *)
 
+  val never_map : t -> bool -> unit
+  (** [never_map d on] makes [d]'s [map_peer] and [map_host] answer [Never]
+      while [on], as a driver does for memory it never maps, and as they do
+      otherwise. Each such call is still counted. *)
+
   val fail_at : t -> int -> [ `Fault of string | `Refuse of int ] -> unit
   (** [fail_at d n how] fails [d]'s fallible calls from the [n]-th from now on,
       counting from [1]: its facts, its counted calls and its hand-over. With
@@ -196,8 +201,9 @@ module Polled : sig
       hand-over among them fails with [why] (at most 63 bytes of it), as on a
       device that faulted; from then on a commit of uncommitted values fails
       with [why] too, uncounted. With [`Refuse k] that call and the [k - 1]
-      after it refuse where they can, as on a device short of memory: [alloc],
-      [map_peer] and [map_host] answer [None], [dma] and [image] [Error],
+      after it refuse where they can, as on a device short of memory: [alloc]
+      answers [None], [map_peer] and [map_host] [No_room], [dma] and [image]
+      [Error],
       [entry] [No_memory entry_scratch] and [grow] [Short 4096]; other calls
       go on.
       [`Refuse 0] ends an earlier refusal. *)

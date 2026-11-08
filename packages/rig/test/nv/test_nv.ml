@@ -12,6 +12,8 @@ module B = Rig.Buffer
 module S = Rig_nv_support
 module H = Rig_gpu_support.Host
 
+let maps = Rig_gpu_support.mapped
+
 let strf = Printf.sprintf
 
 (* The code of the function an entry answered, if it answered one. *)
@@ -282,7 +284,10 @@ let kinds_of_memory () =
     [ ("Device", Device); ("Pinned", Pinned); ("Mapped", Mapped) ];
   if (N.facts g).maps_host then begin
     let p = H.pages H.page in
-    let r = require_some ~msg:"map_host" (N.map_host g p H.page) in
+    let r =
+      require_some ~msg:"map_host"
+        (maps (N.map_host g p H.page))
+    in
     less int ~msg:"map_host: its last byte" ~than:N.windows
       (address r + H.page - 1);
     N.free g r;
@@ -321,13 +326,14 @@ let refusal () =
   done;
   N.free g (require_some ~msg:"64 MiB after" (N.alloc g Device (64 lsl 20)))
 
-(* Host memory no page backs is refused: map_host answers None. *)
+(* Host memory no page backs is refused for good: map_host answers Never. *)
 let refused_host () =
   S.with_driver @@ fun g ->
   let p = H.pages H.page in
   H.free_pages p H.page;
-  equal bool ~msg:"an unmapped page" true (Option.is_none (N.map_host g p 8));
-  equal bool ~msg:"address 0" true (Option.is_none (N.map_host g 0 8))
+  let refusal = Rig_gpu_support.refusal in
+  equal string ~msg:"an unmapped page" "Never" (refusal (N.map_host g p 8));
+  equal string ~msg:"address 0" "Never" (refusal (N.map_host g 0 8))
 
 (* So is a page of a file mapped shared, where Linux refuses the kernel
    driver's long-term pin for writing: on x86-64 from Linux 6.5 on, for a file
@@ -369,8 +375,8 @@ let refused_file () =
     Unix.map_file fd Bigarray.char Bigarray.c_layout true [| H.page |]
   in
   let a = H.data (Bigarray.array1_of_genarray file) in
-  equal bool ~msg:"a file's shared mapping" true
-    (Option.is_none (N.map_host g a 8));
+  equal string ~msg:"a file's shared mapping" "Never"
+    (Rig_gpu_support.refusal (N.map_host g a 8));
   ignore (Sys.opaque_identity file)
 
 (* Two host ranges that end in one page at different places both map, and
@@ -380,10 +386,10 @@ let shared_page () =
   if (N.facts g).maps_host then begin
     let p = H.pages (3 * H.page) in
     let q = H.page / 4 in
-    let a = require_some ~msg:"the first" (N.map_host g p (6 * q)) in
+    let a = require_some ~msg:"the first" (maps (N.map_host g p (6 * q))) in
     let b =
       require_some ~msg:"the second, which shares a page"
-        (N.map_host g (p + (5 * q)) (7 * q))
+        (maps (N.map_host g (p + (5 * q)) (7 * q)))
     in
     N.free g a;
     N.free g b;
@@ -401,7 +407,8 @@ let views_of_mapped () =
   S.stop_driver a;
   S.with_ @@ fun t ->
   let view () =
-    require_some ~msg:"a view of memory its GPU maps" (N.map_peer t.g a src)
+    require_some ~msg:"a view of memory its GPU maps"
+      (maps (N.map_peer t.g a src))
   in
   let v = view () in
   let v' = view () in
@@ -425,7 +432,7 @@ let views_of_bar () =
   S.stop_driver a;
   S.with_ @@ fun t ->
   is_none ~msg:"a view of a stopped device's Mapped memory"
-    (N.map_peer t.g a src);
+    (maps (N.map_peer t.g a src));
   N.free a src
 
 let memory =
@@ -440,9 +447,9 @@ let memory =
         "an allocation past the GPU's memory is None, and gives back what it \
          took"
         refusal;
-      test "map_host answers None for host memory no page backs" refused_host;
+      test "map_host answers Never for host memory no page backs" refused_host;
       test
-        "map_host answers None for a file's shared mapping Linux will not pin"
+        "map_host answers Never for a file's shared mapping Linux will not pin"
         refused_file;
       test "map_host maps host ranges that share a page at different ends"
         shared_page;
@@ -1910,7 +1917,7 @@ let stop_idle () =
   S.with_ @@ fun t ->
   let r = alloc t.g Device 64 in
   let a = H.pages H.page in
-  let m = require_some (N.map_host t.g a 64) in
+  let m = require_some (maps (N.map_host t.g a 64)) in
   S.run t [||];
   S.close t;
   equal int ~msg:"the word" (Rig.submitted t.d) (Rig.signaled t.d);
@@ -2093,10 +2100,10 @@ module Registry = struct
 
   let map_sys s (a, n) =
     match N.map_host s.t.g (s.base + a) n with
-    | Some r ->
+    | Maps r ->
         Mutex.protect s.lock (fun () -> s.live <- s.live @ [ (r, a, n) ]);
         true
-    | None -> false
+    | Never | No_room -> false
 
   let free_sys s i =
     let r, _, _ = List.nth s.live i in

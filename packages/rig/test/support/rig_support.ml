@@ -213,6 +213,7 @@ module Driver = struct
     frees : (int * int) list Atomic.t;
     mutable allocs : (kind * int * bool) list;
     mutable maps : int list;
+    never_maps : bool Atomic.t;
     mutable held : (kind * int) list;
     mutable mapped : int list;
     mutable images : int;  (** The images it holds loaded. *)
@@ -435,14 +436,21 @@ module Driver = struct
   let mapping d m =
     protect d.lock (fun () -> d.mapped <- m.bytes :: d.mapped);
     polled_mapped d.c m.at m.bytes;
-    Some m
+    Rig_edge.Maps m
+
+  (* A refused map has no room, as on a device short of memory, unless the
+     device never maps ([never_map]). *)
+  let refused d : _ Rig_edge.mapping =
+    if Atomic.get d.never_maps then Never else No_room
 
   let map_peer d _ r =
-    if counted d "map_peer" || not d.peers then None
+    let refusing = counted d "map_peer" in
+    if not d.peers then Rig_edge.Never
+    else if refusing || Atomic.get d.never_maps then refused d
     else mapping d { r with kind = None; mapper = Some d }
 
   let map_host d p n =
-    if counted d "map_host" then None
+    if counted d "map_host" || Atomic.get d.never_maps then refused d
     else begin
       protect d.lock (fun () -> d.maps <- n :: d.maps);
       mapping d
@@ -642,6 +650,7 @@ module Polled = struct
         frees = Atomic.make [];
         allocs = [];
         maps = [];
+        never_maps = Atomic.make false;
         held = [];
         mapped = [];
         images = 0;
@@ -702,6 +711,8 @@ module Polled = struct
   let fault d why = protect d.lock (fun () -> d.fault <- Some why)
 
   let before d call f = push d.before (call, f)
+
+  let never_map d on = Atomic.set d.never_maps on
 
   let fail_at d n how =
     match how with

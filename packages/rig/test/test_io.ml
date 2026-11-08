@@ -460,7 +460,7 @@ let test_free () =
     Gc.full_major ();
     Gc.full_major ();
     ignore (B.create io 0);
-    ignore (B.create ~memory:Pinned d 8)
+    ignore (B.create d 0)
   in
   drain ();
   equal ~msg:"while its use is unreached" int 0 (count "free" t);

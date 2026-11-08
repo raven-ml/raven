@@ -8,10 +8,11 @@
 
     A buffer is a range of a memory record ({!Def.memory}): the offset of its
     first byte, its length, and the claim generation it was made in. It is
-    live while that generation is its claim's, and dead once {!Claim.consume}
-    has raised the claim's generation. Every view and borrow of an
-    allocation shares its claim, so a consumption kills every buffer over the
-    allocation made before it.
+    live while that generation is its claim's and its borrow's lease has not
+    ended ({!Def.lease}), and dead once {!Claim.consume} has raised the
+    claim's generation. Every view and borrow of an allocation shares its
+    claim, so a consumption kills every buffer over the allocation made
+    before it; an unborrow kills only the borrow and its views.
 
     The host's buffers lie in bigarrays of the host's heap
     ({!Memory.host_memory}) or of the caller ({!of_bigarray}), and get an
@@ -98,6 +99,12 @@ val device : t -> device
 
 val length : t -> int
 (** [length b] is {!Rig.Buffer.length}[ b]. *)
+
+val host_addresses : device -> bool
+(** [host_addresses d] is whether its machine's host addresses all of [d]'s
+    memory, and [d] has no [Pinned] memory: a machine's host, a memory device,
+    and a driver's device that declares [host_addresses] or that the host of
+    another machine reaches. *)
 
 val is_borrowed : t -> bool
 (** [is_borrowed b] is {!Rig.Buffer.is_borrowed}[ b]. *)

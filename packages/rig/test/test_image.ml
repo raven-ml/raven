@@ -89,7 +89,7 @@ let test_unload () =
   let drain () =
     Gc.full_major ();
     Gc.full_major ();
-    ignore (B.create ~memory:Pinned d 8)
+    ignore (B.create d 0)
   in
   drain ();
   equal ~msg:"while its work is unrun" int 0 (count "unload" pd);
@@ -109,7 +109,7 @@ let test_entry_keeps () =
   P.before pd "entry" (fun () ->
       Gc.full_major ();
       Gc.full_major ();
-      ignore (B.create ~memory:Pinned d 8);
+      ignore (B.create d 0);
       unloads := count "unload" pd);
   ignore (Image.resolve (load d "code:64") "main");
   equal ~msg:"unloads during the entry" int 0 !unloads
@@ -167,9 +167,12 @@ let collect d =
 
 (* A load whose upload loses the device gives its code memory back only once the
    device counts as stopped: its work may still run until then. The upload's
-   staging memory is pinned, so the device memory held is the code's. *)
+   staging memory is pinned on a device whose memory the host does not
+   address, so the device memory held is the code's. *)
 let test_upload_frees_after_stop () =
-  let d, p = P.open_ ~answer:`Unknown "image:upload-unknown" in
+  let d, p =
+    P.open_ ~host_visible:false ~answer:`Unknown "image:upload-unknown"
+  in
   P.fail p;
   raises_match (lost d) (fun () -> Image.load d "code:64");
   Rig.close d;

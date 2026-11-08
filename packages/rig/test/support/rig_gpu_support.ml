@@ -36,6 +36,15 @@ end
 
 let opened (o : _ Rig_edge.opener) = o.make ~word:(Host.word ())
 
+let mapped : _ Rig_edge.mapping -> _ = function
+  | Maps r -> Some r
+  | Never | No_room -> None
+
+let refusal : _ Rig_edge.mapping -> string = function
+  | Maps _ -> "Maps"
+  | Never -> "Never"
+  | No_room -> "No_room"
+
 (* Dma-bufs *)
 
 module Dmabuf = struct

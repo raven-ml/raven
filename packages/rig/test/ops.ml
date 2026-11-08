@@ -59,8 +59,15 @@ let op ?(opener = fun name -> P.open_ name) ?(raises = false) name prepare =
 (* A refusal may reach a call that answers [None] or [Error]. *)
 let refusing = function Some (Refuse _ | Exhaust _) -> true | _ -> false
 
+(* Pinned memory is a device's whose memory the host does not address: one
+   whose memory the host addresses has none. *)
 let create memory =
-  op
+  let opener =
+    match memory with
+    | B.Pinned -> Some (fun name -> P.open_ ~host_visible:false name)
+    | Device | Mapped -> None
+  in
+  op ?opener
     (match memory with
     | B.Device -> "create"
     | Pinned -> "create pinned"

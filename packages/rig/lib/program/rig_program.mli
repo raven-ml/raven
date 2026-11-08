@@ -291,7 +291,15 @@ type step =
       (** One {!Rig.Buffer.submit_copy} of [length] bytes from byte
           [src_offset] of [src]'s buffer into byte [dst_offset] of [dst]'s.
           An offset is the sum of its terms, as a [Copy] part's, so a move in
-          a loop may move with the loop's trips. *)
+          a loop may move with the loop's trips. Between the program's host
+          memory, the ints included, and memory of another of its devices,
+          the move names the host memory's borrow on that device, made at
+          the first such move and kept with the program, so that the device
+          copies it directly and the host does not wait for the bytes
+          ({!Rig.Buffer.section-copying}). Host memory a move names is made
+          so that a device can borrow it ({!Rig.Buffer.create}). Where the
+          device does not borrow it, or has no room to map it, the program's
+          moves through it pass through staging memory. *)
   | Loop of {
       trips : value;
       trip : int option;

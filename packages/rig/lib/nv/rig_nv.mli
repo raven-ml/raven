@@ -301,9 +301,11 @@ val capability : t -> Rig_nv_abi.Gpu.t
     {!type-path}), and {!val-map_peer} then maps it. A view of [Mapped]
     memory orders the host's writes through the other GPU's BAR before this
     device's later work until the other device stops. {!val-map_peer} of a
-    stopped device's [Mapped] memory is [None]. Peer access between GPUs is
-    untested. {!val-map_host} returns [None] if the
-    path maps no host memory or refuses the pages ({!field-map_host}).
+    stopped device's [Mapped] memory is [Never], and is [No_room] where this
+    device has no entry left for that order. Peer access between GPUs is
+    untested. {!val-map_host} answers [Never] if the path maps no host
+    memory, and the path's refusal of the pages otherwise
+    ({!field-map_host}).
 
     {!val-dma} is the path's answer ({!field-dma}). Another function reads
     what a value's work wrote once the value is reached: a copy's release
@@ -562,18 +564,22 @@ type 'm path = {
       (** [alloc k n] is [n] new bytes of the kind [k] ({!section-regions}) at
           an address aligned to 4 KiB, [Mapped] memory mapped uncached for the
           host, or [None] if the GPU or the host lacks the memory. *)
-  map_host : (int -> int -> 'm memory option) option;
-      (** [Some map] if the GPU maps host memory: [map a n] is the [n] bytes of
-          host memory at [a], mapped for the GPU, or [None] if the path refuses
-          them. The path maps whole pages and keeps them mapped until every
-          memory it gave over them is freed. [None] if the GPU maps no host
-          memory. *)
+  map_host : (int -> int -> 'm memory option Rig_edge.mapping) option;
+      (** [Some map] if the GPU maps host memory: [map a n] maps the [n] bytes
+          of host memory at [a] for the GPU and must answer [Maps (Some m)],
+          or the path's refusal, [No_room] where it lacked the room it maps
+          them in and [Never] otherwise ({!Rig_edge.type-mapping}). The path
+          maps whole pages and
+          keeps them mapped until every memory it gave over them is freed.
+          [None] if the GPU maps no host memory. *)
   reaches : int -> bool;
       (** [reaches i] is [true] iff this GPU's work addresses the GPU memory of
           another GPU of this path's machine, GPU [i], numbered as [index]. *)
-  map_peer : 'm memory -> 'm memory option;
-      (** [map_peer m] is the memory [m] of another device of this path, mapped
-          for this GPU, or [None] if this GPU cannot address it. *)
+  map_peer : 'm memory -> 'm memory option Rig_edge.mapping;
+      (** [map_peer m] maps for this GPU the memory [m] of another device of
+          this path and must answer [Maps (Some _)], or its refusal: [Never]
+          where this GPU cannot
+          address it, [No_room] where it lacked the room to map it. *)
   free : 'm memory -> unit;
       (** [free m] gives back what [alloc], [map_host] or [map_peer] gave. *)
   bus : string option;

@@ -217,10 +217,12 @@ let map_to_cpu g h size va =
 let set_uuid p (at, _) uuid =
   String.iteri (fun i ch -> Bigarray.Array1.set p (at + i) ch) uuid
 
-(* The RM's refusals of host memory to describe: an address no memory backs,
-   such as an unmapped page, or memory it cannot pin. *)
-let refusals =
-  [ D.nv_err_invalid_address; D.nv_err_invalid_argument; D.nv_err_no_memory ]
+(* The RM's refusals of host memory to describe for good: an address no memory
+   backs, such as an unmapped page, or memory it cannot pin. The kernel driver
+   answers NV_ERR_INVALID_ADDRESS for every pin that falls short, a lack of
+   memory included (os-mlock.c, os_lock_user_pages); NV_ERR_NO_MEMORY, which
+   returning memory may undo, comes from its own allocations. *)
+let refusals = [ D.nv_err_invalid_address; D.nv_err_invalid_argument ]
 
 (* The parameters of video memory in pages of [page_size]. *)
 let video_params g ~contiguous ~page_size size =
@@ -270,6 +272,10 @@ let free_addresses g space va size =
    needs. *)
 
 exception No_memory
+
+(* Host memory the RM refuses for good, which [No_memory]'s returning of memory
+   cannot undo. *)
+exception Refused
 
 (* The fault of a free that unified memory or the RM refused, made once, so
    that raising it allocates nothing. *)
@@ -416,13 +422,17 @@ let made m =
   Atomic.incr held;
   m
 
-let unmade r e =
+let gave_up r e no_room never =
   let gone = give_back r in
-      if not gone then Atomic.incr held;
-      give_numbers r;
-      if e != No_memory then reraise e
-      else if gone then None
-      else raise refused_free
+  if not gone then Atomic.incr held;
+  give_numbers r;
+  if e != No_memory && e != Refused then reraise e
+  else if not gone then raise refused_free
+  else if e == Refused then never
+  else no_room
+
+let unmade r e = gave_up r e None None
+let unmapped r e = gave_up r e Rig_edge.No_room Rig_edge.Never
 
 (* Steps
 
@@ -502,8 +512,8 @@ let describe r va =
   if s = D.nv_ok then r.made <- true;
   close_file r;
   if not r.made then begin
-    if List.mem s refusals then raise No_memory;
-    ok (Rm.check g.c what s)
+    if List.mem s refusals then raise Refused;
+    fitted g what s
   end
 
 (* Allocates [r]'s object in its GPU's memory with the parameters [p]. *)
@@ -675,36 +685,38 @@ let borrowed_steps r ~a ~a0 ~page =
   describe r a0;
   take_addresses r ~align:page;
   unify r;
-  Some (answer r ~va:(r.gpu_addr + (a - a0)) ~host:(Some a) ~video:None)
+  Rig_edge.Maps
+    (Some (answer r ~va:(r.gpu_addr + (a - a0)) ~host:(Some a) ~video:None))
 
 (* Each call maps a range of its own, over the whole pages that hold the
    memory, which unified memory requires of its bounds: two ranges may describe
    the same pages. The GPUs address it from the low range, as the host's own
    address may lie above the 40 bits a semaphore takes. *)
-let map_host g a n =
+let map_host g a n : mem Rig_nv.memory option Rig_edge.mapping =
   let page = Rm.host_page () in
   let a0 = a land lnot (page - 1) in
   let size = round_up (a + n) page - a0 in
   let r = range g ~naming:Self_named ~space:Host_visible size in
   match borrowed_steps r ~a ~a0 ~page with
   | m -> made m
-  | exception e -> unmade r e
+  | exception e -> unmapped r e
 
 (* Another GPU's video memory needs peer access, which may be refused; host
    memory needs none. A view counts in the range of the region it views, and
    is made before the count. *)
-let map_peer g (m : mem Rig_nv.memory) =
+let map_peer g (m : mem Rig_nv.memory) :
+    mem Rig_nv.memory option Rig_edge.mapping =
   let viewed = m.data in
   let refused = function
     | Some u -> List.mem (g.index, u) (Atomic.get peer_refusals)
     | None -> false
   in
-  if refused viewed.video then None
+  if refused viewed.video then Never
   else
     let v = { viewed with user = viewed.user } in
-    let view = Some (memory v) in
+    let view = Rig_edge.Maps (Some (memory v)) in
     Rig_nv.Lock.protect ranges_lock @@ fun () ->
-    if take g viewed.range v then view else None
+    if take g viewed.range v then view else No_room
 
 let free _ (m : mem Rig_nv.memory) =
   Rig_nv.Lock.protect ranges_lock m.data.user.release

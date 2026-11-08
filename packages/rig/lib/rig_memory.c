@@ -197,7 +197,8 @@ value caml_rig_set_bytes(value v_b, value v_j, value v_n, value v_c) {
 /* Reading buffers
 
    A buffer is the record { mem; offset; length; generation }, its
-   memory { dev; host; address; handle; alloc }, its allocation
+   memory { dev; host; address; handle; alloc; lease }, its lease, an option,
+   { count; why; ... }, its allocation
    { owner; host; count; generation; why; entry; ... }, the allocation's
    entry { owner; backing; bytes; access; stamps; ... } and a device
    { index; name; machine; opened; ... }, as rig's Def module lays them
@@ -205,7 +206,13 @@ value caml_rig_set_bytes(value v_b, value v_j, value v_n, value v_c) {
 
 enum { DEVICE_INDEX, DEVICE_NAME, DEVICE_MACHINE, DEVICE_OPENED };
 enum { BUFFER_MEM, BUFFER_OFFSET, BUFFER_LENGTH, BUFFER_GEN };
-enum { MEMORY_DEV, MEMORY_HOST, MEMORY_ADDRESS, MEMORY_HANDLE, MEMORY_ALLOC };
+enum { MEMORY_DEV, MEMORY_HOST, MEMORY_ADDRESS, MEMORY_HANDLE, MEMORY_ALLOC,
+       MEMORY_LEASE };
+enum { LEASE_COUNT, LEASE_WHY };
+
+/* What a lease's end adds to its count, past every count of its claims, as
+   Memory.lease_end. */
+#define LEASE_END ((intnat)1 << 40)
 enum { ALLOC_OWNER, ALLOC_HOST, ALLOC_COUNT, ALLOC_GEN, ALLOC_WHY,
        ALLOC_ENTRY };
 
@@ -245,6 +252,40 @@ static value load_field(value v, int i) {
 /* The allocation [b] lies in, and its claim word. */
 static value alloc_of(value b) {
   return Field(Field(b, BUFFER_MEM), MEMORY_ALLOC);
+}
+
+/* The lease of [b]'s memory record, an option: [Some] of a borrow's. */
+static value lease_opt(value b) {
+  return Field(Field(b, BUFFER_MEM), MEMORY_LEASE);
+}
+
+/* The lease of a borrow's buffer [b]. */
+static value lease_of(value b) { return Field(lease_opt(b), 0); }
+
+static _Atomic value *lease_count(value b) {
+  return (_Atomic value *)&Field(lease_of(b), LEASE_COUNT);
+}
+
+/* Whether an unborrow ended [b]'s lease. It stores the reason first. */
+static int lease_ended(value b) {
+  return Is_block(lease_opt(b)) &&
+         Long_val(atomic_load_explicit(lease_count(b), memory_order_acquire)) >=
+             LEASE_END;
+}
+
+/* Counts a claim or a hold through a borrow's [b] on its lease, which an
+   unborrow refuses while it holds, and ends one. A count past an end only
+   marks claims that will find the borrow dead. Other buffers have none. */
+static void lease_take(value b) {
+  if (Is_block(lease_opt(b)))
+    atomic_fetch_add_explicit(lease_count(b), Val_long(1) - Val_long(0),
+                              memory_order_acquire);
+}
+
+static void lease_give(value b) {
+  if (Is_block(lease_opt(b)))
+    atomic_fetch_sub_explicit(lease_count(b), Val_long(1) - Val_long(0),
+                              memory_order_release);
 }
 
 static _Atomic value *claim_word(value b) {
@@ -406,8 +447,10 @@ const char *rig_buffer_why(value b) {
   value alloc = alloc_of(b);
   value g = atomic_load_explicit((_Atomic value *)&Field(alloc, ALLOC_GEN),
                                  memory_order_acquire);
-  if (Long_val(g) == Long_val(Field(b, BUFFER_GEN))) return NULL;
-  return String_val(Field(alloc, ALLOC_WHY));
+  if (Long_val(g) != Long_val(Field(b, BUFFER_GEN)))
+    return String_val(Field(alloc, ALLOC_WHY));
+  if (lease_ended(b)) return String_val(Field(lease_of(b), LEASE_WHY));
+  return NULL;
 }
 
 /* Claims */
@@ -496,7 +539,10 @@ claim_checked(value b, enum rig_access access, int every) {
     if (Long_val(w) < 0) return RIG_EXCLUSIVE;
   } while (!atomic_compare_exchange_weak(word, &w,
                                          Val_long(Long_val(w) + CLAIM_ONE)));
-  if (Long_val(load_field(alloc, ALLOC_GEN)) != Long_val(Field(b, BUFFER_GEN))) {
+  lease_take(b);
+  if (Long_val(load_field(alloc, ALLOC_GEN)) !=
+          Long_val(Field(b, BUFFER_GEN)) ||
+      lease_ended(b)) {
     rig_buffer_release(b);
     return RIG_DEAD;
   }
@@ -541,14 +587,20 @@ value caml_rig_claim_add(value v_b) {
   return Val_true;
 }
 
-/* Ends a read claim on [b]'s memory: one subtraction of the tagged step.
-   If the word's read claims were none, the word the subtraction left matches
-   none of the claims' states, so the process aborts. */
-static void claim_end(value b, const char *who) {
+/* Ends a read claim on [b]'s memory's word: one subtraction of the tagged
+   step. If the word's read claims were none, the word the subtraction left
+   matches none of the claims' states, so the process aborts. */
+static void word_end(value b, const char *who) {
   value w = atomic_fetch_sub_explicit(
       claim_word(b), Val_long(CLAIM_ONE) - Val_long(0), memory_order_release);
   if (Long_val(w) < 0 || (Long_val(w) & (CLAIM_HOLD - 1)) < CLAIM_ONE)
     caml_fatal_error("%s: no read claim to end", who);
+}
+
+/* Ends a read claim through [b]: its lease's count, then the word's. */
+static void claim_end(value b, const char *who) {
+  lease_give(b);
+  word_end(b, who);
 }
 
 /* Ends a read claim of Memory.claim_add. */
@@ -595,19 +647,40 @@ value caml_rig_buffer_free(value v_b, value v_why) {
   _Atomic value *gen = (_Atomic value *)&Field(alloc, ALLOC_GEN);
   value g = Field(v_b, BUFFER_GEN);
   if (atomic_load(gen) != g) {
-    claim_end(v_b, "Rig.Buffer.free");
+    word_end(v_b, "Rig.Buffer.free");
     return Val_long(2);
   }
   value one = Val_long(CLAIM_ONE);
   if (!atomic_compare_exchange_strong(word, &one,
                                       Val_long(CLAIM_EXCLUSIVE))) {
-    claim_end(v_b, "Rig.Buffer.free");
+    word_end(v_b, "Rig.Buffer.free");
     return Val_long(0);
   }
   caml_modify(&Field(alloc, ALLOC_WHY), v_why);
   atomic_store(gen, Val_long(Long_val(g) + 1));
   atomic_store_explicit(word, Val_long(0), memory_order_release);
   return Val_long(1);
+}
+
+/* Buffer.unborrow's step: ends [v_b]'s lease with the reason [v_why] where
+   no claim or hold through the borrow keeps it, in one compare-and-set of its count
+   from none to its end, so that the borrow's buffers are dead and a claim
+   through it that follows finds them so. The memory's claims, of its other
+   buffers, are not its. It is 1 if it ended the lease, 0 if a claim through
+   the borrow kept it, and 2 if [v_b] is dead. */
+value caml_rig_lease_free(value v_b, value v_why) {
+  value alloc = alloc_of(v_b);
+  if (Long_val(load_field(alloc, ALLOC_GEN)) !=
+          Long_val(Field(v_b, BUFFER_GEN)) ||
+      lease_ended(v_b))
+    return Val_long(2);
+  caml_modify(&Field(lease_of(v_b), LEASE_WHY), v_why);
+  value none = Val_long(0);
+  if (atomic_compare_exchange_strong_explicit(
+          lease_count(v_b), &none, Val_long(LEASE_END), memory_order_acq_rel,
+          memory_order_acquire))
+    return Val_long(1);
+  return Val_long(Long_val(none) >= LEASE_END ? 2 : 0);
 }
 
 /* Holds
@@ -642,8 +715,11 @@ static int hold_one(value b) {
                                      Val_long(Long_val(w) + CLAIM_HOLD)))
       break;
   }
+  lease_take(b);
   if (Long_val(load_field(alloc_of(b), ALLOC_GEN)) !=
-      Long_val(Field(b, BUFFER_GEN))) {
+          Long_val(Field(b, BUFFER_GEN)) ||
+      lease_ended(b)) {
+    lease_give(b);
     unhold_word(word);
     return 0;
   }
@@ -658,6 +734,7 @@ value caml_rig_claim_holds(value v_bs, value v_taken) {
   for (intnat i = 0; i < n; i++) {
     if (!hold_one(Field(v_bs, i))) {
       for (intnat k = 0; k < i; k++) {
+        lease_give(Field(v_bs, k));
         unhold_word(claim_word(Field(v_bs, k)));
         taken[k] = 0;
       }
@@ -669,13 +746,19 @@ value caml_rig_claim_holds(value v_bs, value v_taken) {
 }
 
 /* Ends the hold [v_i] of [v_taken] on the allocation [v_alloc]'s memory, if
-   it is taken. The mark is cleared in one exchange, so of two releases on two
+   it is taken, and its count on the lease it went through, [v_lease] an
+   option. The mark is cleared in one exchange, so of two releases on two
    domains one ends the hold. */
-value caml_rig_claim_unhold(value v_taken, value v_i, value v_alloc) {
+value caml_rig_claim_unhold(value v_taken, value v_i, value v_alloc,
+                            value v_lease) {
   _Atomic unsigned char *taken =
       (_Atomic unsigned char *)(Bytes_val(v_taken) + Long_val(v_i));
   if (atomic_exchange_explicit(taken, 0, memory_order_relaxed) == 0)
     return Val_unit;
+  if (Is_block(v_lease))
+    atomic_fetch_sub_explicit(
+        (_Atomic value *)&Field(Field(v_lease, 0), LEASE_COUNT),
+        Val_long(1) - Val_long(0), memory_order_release);
   unhold_word((_Atomic value *)&Field(v_alloc, ALLOC_COUNT));
   return Val_unit;
 }

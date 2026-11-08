@@ -15,9 +15,13 @@
     which see writes through the pages ({!Rig_edge.Io.pages}); toward a
     device's copy engine it goes through staging memory, which the host's
     side of a copy with another machine's device also takes. A device's copy
-    engine copies between memory it reaches, its own or a borrow's, and a
-    device of another machine between its memory and this process's, which
-    its driver carries: one submission of a part per box, or the device's
+    engine copies between memory on it, its own or a borrow on it, and memory
+    the host does not page, which it maps until that memory returns
+    ([Memory.reach_kept]). Memory the host pages reaches it only through a
+    borrow the copy names, and staging memory through the mapping rig keeps
+    of each half. A device of another
+    machine copies between its memory and this process's, which its driver
+    carries: one submission of a part per box, or the device's
     cached copy of one run ({!Submission.run_copy}). A borrow on a device
     that runs no copy is copied by its allocation's own device. A host
     transfer waits for the points the copy follows and the buffers' stamps

@@ -16,12 +16,20 @@ type dma = Rig_edge.dma =
 type access = Def.access = Read | Read_write
 
 let generation (a : alloc) = Atomic.Loc.get [%atomic.loc a.generation]
-let is_live b = b.generation = generation b.mem.alloc
-let dead b = if is_live b then None else Some b.mem.alloc.why
+
+(* A buffer is dead once its memory is consumed, or its borrow's lease
+   ended. *)
+let is_live b =
+  b.generation = generation b.mem.alloc && not (Memory.lease_ended b.mem)
+
+let why b =
+  if b.generation <> generation b.mem.alloc then b.mem.alloc.why
+  else match b.mem.lease with Some l -> l.lease_why | None -> ""
+
+let dead b = if is_live b then None else Some (why b)
 let access b = Memory.admits b.generation
 
-let refuse_dead fn b =
-  invalid_argf "Rig.%s: the buffer is dead: %s" fn b.mem.alloc.why
+let refuse_dead fn b = invalid_argf "Rig.%s: the buffer is dead: %s" fn (why b)
 
 (* Inlined where it is called per buffer of a submit. *)
 let[@inline] check_live fn b = if not (is_live b) then refuse_dead fn b
@@ -29,10 +37,26 @@ let[@inline] check_live fn b = if not (is_live b) then refuse_dead fn b
 let of_memory mem length =
   { mem; offset = 0; length; generation = generation mem.alloc }
 
+(* Whether its machine's host addresses all of [d]'s memory, which so has no
+   [Pinned] memory: the host's own, a memory device's, a driver's that
+   declares [host_addresses], and on another machine one its host reaches
+   there, as that machine's agent accounts it. An io device's memory is what
+   its library allocates, whatever the kind. *)
+let host_addresses d =
+  (not (Dev.is_io d))
+  &&
+  let h = Dev.host_of d in
+  h == d || Dev.reaches h d
+
 (* The host is never lost, so its buffers skip the check. *)
 let create ?(memory = Device) d n =
   Dev.check_held "Buffer.create";
   if n < 0 then invalid_argf "Rig.Buffer.create: %d bytes is negative" n;
+  if memory = Pinned && host_addresses d then
+    invalid_argf
+      "Rig.Buffer.create: the host addresses %s's memory, so it has no \
+       Pinned memory; borrow host memory instead (Buffer.borrow)"
+      d.name;
   if Dev.is_host d then Memory.host_buffer n
   else begin
     if Dev.is_lost d then begin
@@ -153,7 +177,7 @@ let borrow d b =
     match
       check_live "Buffer.borrow" b;
       Memory.check b.mem;
-      Memory.borrow d b.mem
+      Memory.borrow d b.mem ~at:b.offset ~n:b.length
     with
     | Some mem ->
         Memory.claim_drop b;

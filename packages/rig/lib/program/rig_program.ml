@@ -1278,7 +1278,11 @@ type here = {
          before it waits for run [n - 2]. *)
   mutable ngiven : int;
   borrows : (int * int * int, B.t) Hashtbl.t;
-      (* By memory, copy and device: the borrows made at load. *)
+      (* By memory, copy and device: the borrows made at load, and those of
+         host memory a move made. *)
+  unborrowed : (int * int * int, unit) Hashtbl.t;
+      (* By memory, copy and device: host memory a move's device did not
+         borrow, which its moves stage. *)
   fixes : (int * int * int, Sub.t) Hashtbl.t;
       (* A submission fixing each whole memory, copy and device. *)
   mutable images : Rig.Image.t array; (* Those loaded so far, while loading. *)
@@ -1646,10 +1650,38 @@ let rec lstep p next i = function
       let body = Array.map (lstep p next i) (Iarray.to_array body) in
       Lloop { trips; trip; flag; body }
 
-let make_memory devices rails = function
+(* A device borrows host memory that starts on a page, as a host buffer of 64
+   KiB or more does (rig.mli, [Buffer.create]). *)
+let page_bytes = 65536
+
+let is_ints = function Ints -> true | Memory _ | Input _ -> false
+
+let rec names_ints = function
+  | Submit s -> Iarray.exists is_ints s.slots
+  | Move { src; dst; _ } -> is_ints src || is_ints dst
+  | Loop { body; _ } -> Iarray.exists names_ints body
+
+(* Whether a move of [step] names memory [m]. *)
+let rec names_memory m = function
+  | Submit _ -> false
+  | Move { src; dst; _ } ->
+      let is = function Memory v -> v.memory = m | Ints | Input _ -> false in
+      is src || is dst
+  | Loop { body; _ } -> Iarray.exists (names_memory m) body
+
+(* Memory [m] of [t]: on the host and named by a move, a view of a buffer a
+   device can borrow, as the ints are. *)
+let make_memory (t : t) devices rails m = function
   | Alloc { device; kind; bytes; copies; _ } ->
       let n = match copies with One -> 1 | Two -> 2 in
-      Array.init n (fun _ -> B.create ~memory:kind devices.(device) bytes)
+      let d = devices.(device) in
+      let make () =
+        if Rig.equal d Rig.host && Iarray.exists (names_memory m) t.steps then
+          B.view (B.create ~memory:kind d (max bytes page_bytes)) ~first:0
+            ~length:bytes
+        else B.create ~memory:kind d bytes
+      in
+      Array.init n (fun _ -> make ())
   | Rail { rail; area } ->
       [| B.of_bigarray (rail_area (rail_end rails rail) area) |]
 
@@ -1671,17 +1703,6 @@ let write_init p m k =
 let words b =
   if B.length b = 0 then Bigarray.(Array1.create int64 c_layout 0)
   else B.export b Bigarray.int64
-
-(* A device borrows host memory that starts on a page, as a host buffer of 64
-   KiB or more does (rig.mli, [Buffer.create]). *)
-let page_bytes = 65536
-
-let is_ints = function Ints -> true | Memory _ | Input _ -> false
-
-let rec names_ints = function
-  | Submit s -> Iarray.exists is_ints s.slots
-  | Move { src; dst; _ } -> is_ints src || is_ints dst
-  | Loop { body; _ } -> Iarray.exists names_ints body
 
 (* One copy of the run's ints: a view of a buffer a device can borrow where a
    step names them. *)
@@ -1727,7 +1748,7 @@ let load_here ~rails t devices =
   let ints = Array.init 2 (fun _ -> make_ints t) in
   let mem =
     Array.append
-      (Iarray.to_array (Iarray.map (make_memory devices rails) t.memory))
+      (Iarray.to_array (Iarray.mapi (make_memory t devices rails) t.memory))
       [| ints |]
   in
   let twos k =
@@ -1747,6 +1768,7 @@ let load_here ~rails t devices =
       given = Array.make t.ints 0;
       ngiven = 0;
       borrows = Hashtbl.create 8;
+      unborrowed = Hashtbl.create 8;
       fixes = Hashtbl.create 8;
       images = [||];
       funcs;
@@ -2011,6 +2033,57 @@ let device_index (p : here) point =
       done;
       !i
 
+(* The index among [p]'s devices of [d], or [-1]. *)
+let index_of (p : here) d =
+  let i = ref (-1) and j = ref 0 in
+  while !i < 0 && !j < Array.length p.devices do
+    if Rig.equal d p.devices.(!j) then i := !j;
+    incr j
+  done;
+  !i
+
+(* The index among [p.mem] of the program's memory [slot] names, or [-1] for
+   an input. *)
+let slot_memory p = function
+  | Memory v -> v.memory
+  | Ints -> Iarray.length p.t.memory
+  | Input _ -> -1
+
+(* A move's end [b] in the program's host memory, of [slot], as the device of
+   [other], the move's other end, names it: a view of the memory's borrow on
+   that device where it is one of [p]'s and can borrow it, asked once, kept
+   with [p]'s borrows or its refusals. A copy from the host memory itself
+   would pass through staging memory, and one into it would make the host
+   wait for its bytes. Elsewhere [b] as it is. *)
+let named p k slot b other =
+  let m = slot_memory p slot in
+  if m < 0 || not (Rig.equal (B.device b) Rig.host) then b
+  else
+    let d = index_of p (B.device other) in
+    if d < 0 || Rig.equal p.devices.(d) Rig.host then b
+    else
+      let c = copy_of p m k in
+      let whole = p.mem.(m).(c) and key = (m, c, d) in
+      let borrowed =
+        match Hashtbl.find_opt p.borrows key with
+        | Some _ as found -> found
+        | None when Hashtbl.mem p.unborrowed key -> None
+        | None -> (
+            (* A device that cannot borrow the memory, or has no room to
+               map it, stages it: the move costs a wait, never the run. *)
+            match B.borrow p.devices.(d) whole with
+            | Some b ->
+                Hashtbl.replace p.borrows key b;
+                Some b
+            | None | (exception Rig.Out_of_memory _) ->
+                Hashtbl.replace p.unborrowed key ();
+                None)
+      in
+      match borrowed with
+      | None -> b
+      | Some w ->
+          B.view w ~first:(B.offset b - B.offset whole) ~length:(B.length b)
+
 (* A move follows [waits], since it may be the first work of whichever device
    runs it. Its point becomes the run's last on its device where that device
    is one of [p]'s. Otherwise the step waits for it, as where a device outside
@@ -2019,8 +2092,9 @@ let device_index (p : here) point =
    returns. *)
 let move_step p k waits ~src ~src_offset ~dst ~dst_offset boxes =
   let length = boxes.(0).B.width in
-  let src = move_end p k src src_offset length
-  and dst = move_end p k dst dst_offset length in
+  let s = move_end p k src src_offset length
+  and t = move_end p k dst dst_offset length in
+  let src = named p k src s t and dst = named p k dst t s in
   let point = B.submit_copy ?waits ~src ~dst boxes in
   match device_index p point with
   | -1 -> Rig.Point.wait point

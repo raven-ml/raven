@@ -6,6 +6,8 @@
 open Windtrap
 module S = Rig_metal_support
 module H = Rig_gpu_support.Host
+
+let maps = Rig_gpu_support.mapped
 module B = Rig.Buffer
 
 let strf = Printf.sprintf
@@ -621,8 +623,8 @@ let stop_in_flight () =
   let page = H.pages H.page in
   H.set32 page 0;
   H.set32 (page + 4) 0;
-  let flag = require_some (Rig_metal.map_host t.g page H.page) in
-  let flag' = require_some (Rig_metal.map_host o.g page H.page) in
+  let flag = require_some (maps (Rig_metal.map_host t.g page H.page)) in
+  let flag' = require_some (maps (Rig_metal.map_host o.g page H.page)) in
   let args = alloc t args_bytes and args' = alloc o args_bytes in
   set_args args ~at:0 ~out:(gpu flag) ~c:gate_rounds;
   set_args args' ~at:0 ~out:(gpu flag') ~c:1;
@@ -1382,8 +1384,8 @@ let arena_crossing () =
   for w = 0 to 7 do
     H.set32 (page + (4 * w)) 0
   done;
-  let flag = require_some (Rig_metal.map_host t.g page H.page) in
-  let flag' = require_some (Rig_metal.map_host o.g page H.page) in
+  let flag = require_some (maps (Rig_metal.map_host t.g page H.page)) in
+  let flag' = require_some (maps (Rig_metal.map_host o.g page H.page)) in
   let args = alloc t (2 * args_bytes) and args' = alloc o (2 * args_bytes) in
   let gate k =
     let at = k * args_bytes in
@@ -1674,7 +1676,8 @@ let no_peer () =
   Fun.protect ~finally:(fun () -> Rig_metal.stop other ~fault:None) @@ fun () ->
   let o = alloc_on other 64 in
   equal bool false (Rig_metal.peer t.g other);
-  equal (option pass) None (Rig_metal.map_peer t.g other o);
+  equal string "Never"
+    (Rig_gpu_support.refusal (Rig_metal.map_peer t.g other o));
   Rig_metal.free other o
 
 (* No other function reaches a Metal buffer, which has no bus address. *)
@@ -1690,7 +1693,7 @@ let no_dma () =
 let given_back () =
   let t = dev () in
   let r = alloc t 64 in
-  let m = require_some (Rig_metal.map_host t.g (H.pages page) page) in
+  let m = require_some (maps (Rig_metal.map_host t.g (H.pages page) page)) in
   let wr = S.weak (handle r) and wm = S.weak (handle m) in
   wait t (submit t [||]);
   Rig_metal.free t.g r;
@@ -1704,7 +1707,7 @@ let mapped_pages () =
   let t = dev () in
   let p = H.pages (2 * H.page) in
   let a = p + H.page - 8 in
-  let m = require_some (Rig_metal.map_host t.g a 16) in
+  let m = require_some (maps (Rig_metal.map_host t.g a 16)) in
   equal int ~msg:"the host address" p (host m);
   Rig_metal.free t.g m;
   H.free_pages p (2 * H.page)

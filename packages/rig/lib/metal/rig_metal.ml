@@ -18,7 +18,10 @@ external open_device : nativeint -> int = "caml_rig_metal_open"
 external device_facts : int -> int * int = "caml_rig_metal_facts"
 external alloc_buffer : int -> int -> buffer option = "caml_rig_metal_alloc"
 
-external map_buffer : int -> int -> int -> buffer option
+(* The stub's answer is [Never], the first constant constructor, or a block of
+   tag 0 holding the buffer, which is [Maps]: the driver answers it as it is,
+   allocating nothing once the buffer exists. *)
+external map_buffer : int -> int -> int -> buffer Rig_edge.mapping
   = "caml_rig_metal_map_host"
 
 external free_buffer : int -> nativeint -> unit = "caml_rig_metal_free"
@@ -446,14 +449,14 @@ let map_host d p n =
   if n < 1 then
     invalid_argf "Rig_metal.map_host: %d bytes, expected at least 1" n;
   match map_buffer d.self p n with
-  | None -> None
-  | Some r as some ->
+  | (Never | No_room) as refused -> refused
+  | Maps r as mapped ->
       enter d r n;
-      some
+      mapped
 
 let peer _ _ = false
 
-let map_peer _ _ _ = None
+let map_peer _ _ _ = Rig_edge.Never
 
 (* The cell of no region, which [cell] answers so that it allocates
    nothing. *)

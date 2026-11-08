@@ -176,15 +176,18 @@ let test_views () =
   let first = List.filteri (fun k _ -> k < 32) rs and r = List.nth rs 32 in
   let view r =
     match A.map_peer g g' r with
-    | Some v -> v
-    | None -> fail "GPU 0 maps no view of GPU 1's memory"
+    | Maps v -> v
+    | Never | No_room -> fail "GPU 0 maps no view of GPU 1's memory"
   in
   let views = List.map view first in
-  let interrupted = ref None in
+  (* The answer as the driver gave it: nothing allocates between its return
+     and the store. *)
+  let interrupted = ref Rig_edge.Never in
   let reached =
     Rig_support.interrupted n (fun () -> interrupted := A.map_peer g g' r)
   in
-  List.iter (A.free g) (Option.to_list !interrupted @ views);
+  List.iter (A.free g)
+    (Option.to_list (Rig_gpu_support.mapped !interrupted) @ views);
   List.iter (A.free g') rs;
   reached
 
@@ -207,8 +210,8 @@ let test_view_free () =
   let r = List.hd (regions g' 1) in
   let v =
     match A.map_peer g g' r with
-    | Some v -> v
-    | None -> fail "GPU 0 maps no view of GPU 1's memory"
+    | Maps v -> v
+    | Never | No_room -> fail "GPU 0 maps no view of GPU 1's memory"
   in
   let freed = ref false in
   let reached =
@@ -424,7 +427,7 @@ let overlap_maps p =
   match open_gpu () with
   | Error why -> fail ("no GPU opens: " ^ why)
   | Ok g ->
-      let r = A.map_host g (p + page) (2 * page) in
+      let r = Rig_gpu_support.mapped (A.map_host g (p + page) (2 * page)) in
       Option.iter (A.free g) r;
       A.stop g ~fault:None;
       Option.is_some r
@@ -435,9 +438,9 @@ let overlap_maps p =
    device, which then raises [Lost] at the next borrow. The signal, which
    rig blocks across the call, lands once it returned and loses nothing: the
    borrow's mapping was recorded and the device serves the next borrow, and
-   both go once the memory returns. Once the device is closed, or its memory
-   returned, no mapping of the pages is left: a new device maps pages that
-   partly overlap them. *)
+   both go once the borrows are collected or the memory returns. Once the
+   device is closed, or its memory returned, no mapping of the pages is
+   left: a new device maps pages that partly overlap them. *)
 let test_borrow_host () =
   needs_amdgpu ();
   let page = H.page in

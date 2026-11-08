@@ -8,6 +8,8 @@ module A = Rig_amd
 module S = Rig_amd_support
 module E = S.Edge
 module H = Rig_gpu_support.Host
+
+let maps = Rig_gpu_support.mapped
 module Abi = Rig_amd_abi
 module Gpu = Abi.Gpu
 module Pm4 = Abi.Pm4
@@ -1202,12 +1204,14 @@ let map_host_refusals () =
   if not (A.facts g).maps_host then
     skip ~reason:"the device maps no host memory" ();
   let read_only = H.pages ~read_only:true n in
-  is_none ~msg:"read-only pages" (A.map_host g read_only n);
+  equal string ~msg:"read-only pages" "Never"
+    (Rig_gpu_support.refusal (A.map_host g read_only n));
   H.free_pages read_only n;
   if not (S.driverless ()) then begin
     let pages = H.pages (2 * n) in
-    let m = Option.get (A.map_host g pages n) in
-    is_none ~msg:"pages partly within a mapping" (A.map_host g pages (2 * n));
+    let m = Option.get (maps (A.map_host g pages n)) in
+    is_none ~msg:"pages partly within a mapping"
+      (maps (A.map_host g pages (2 * n)));
     A.free g m;
     H.free_pages pages (2 * n)
   end
@@ -2338,8 +2342,8 @@ let one_gpu_shared ~second g =
   in
   equal bool ~msg:"peers" true (A.peer g g');
   (match A.map_peer g g' theirs with
-  | None -> fail "a device refused memory of its own GPU"
-  | Some view ->
+  | Never | No_room -> fail "a device refused memory of its own GPU"
+  | Maps view ->
       equal string ~msg:"read through the view" p (read_through view);
       A.free g view);
   H.write (host staging') (String.make n '\000');
@@ -2350,8 +2354,8 @@ let one_gpu_shared ~second g =
   | None -> ()
   | Some mapped' -> (
       match A.map_peer g g' mapped' with
-      | None -> fail "a device refused Mapped memory of its own GPU"
-      | Some view ->
+      | Never | No_room -> fail "a device refused Mapped memory of its own GPU"
+      | Maps view ->
           let p = pattern n 11 in
           H.write (host mapped') p;
           equal string ~msg:"the host's writes, read through a view" p
@@ -2361,9 +2365,10 @@ let one_gpu_shared ~second g =
   (* A host page maps once per GPU: the second device's region shares the
      first's mapping, which outlives the first region's free. *)
   let page = H.pages n in
-  let m = Option.get (A.map_host g page n) in
+  let m = Option.get (maps (A.map_host g page n)) in
   let m' =
-    require_some ~msg:"a page the other device maps" (A.map_host g' page n)
+    require_some ~msg:"a page the other device maps"
+      (maps (A.map_host g' page n))
   in
   let back' = Option.get (A.alloc g' Pinned n) in
   let read_on_second view =
@@ -2380,8 +2385,8 @@ let one_gpu_shared ~second g =
     (pattern n 15) (read_on_second m');
   A.free g' m';
   (match A.map_host g' page n with
-  | None -> fail "a page no device maps refused"
-  | Some m' -> A.free g' m');
+  | Never | No_room -> fail "a page no device maps refused"
+  | Maps m' -> A.free g' m');
   H.free_pages page n;
   List.iter (A.free g') [ staging'; theirs; back' ];
   A.free g back
@@ -2414,7 +2419,7 @@ let stopped_mapped () =
       A.stop g' ~fault:None;
       skip ~reason:"the GPU has no Mapped memory" ()
   | Some m ->
-      let view = require_some ~msg:"a view" (A.map_peer g g' m) in
+      let view = require_some ~msg:"a view" (maps (A.map_peer g g' m)) in
       let r = device g in
       let back = Option.get (A.alloc g Pinned n) in
       let p = pattern n 13 in
@@ -2425,7 +2430,7 @@ let stopped_mapped () =
       A.stop g' ~fault:None;
       go r [||];
       is_none ~msg:"a view of a stopped device's Mapped memory"
-        (A.map_peer g g' m);
+        (maps (A.map_peer g g' m));
       A.free g back;
       A.free g view;
       A.free g' m
@@ -2492,9 +2497,10 @@ let shared_after_stop () =
   in
   let n = 4096 in
   let page = H.pages n in
-  let first = Option.get (A.map_host g page n) in
+  let first = Option.get (maps (A.map_host g page n)) in
   let shared =
-    require_some ~msg:"the second device's map" (A.map_host g' page n)
+    require_some ~msg:"the second device's map"
+      (maps (A.map_host g' page n))
   in
   let back = Option.get (A.alloc g' Pinned n) in
   let r = device g' in

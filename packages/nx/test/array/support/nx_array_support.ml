@@ -194,9 +194,9 @@ module Driver = struct
     }
 
   let peer _ _ = false
-  let map_peer _ _ _ = None
+  let map_peer _ _ _ = Rig_edge.Never
   (* Host pages lie at their own address; [raw = 0] frees nothing. *)
-  let map_host _ p _ = Some { at = p; raw = 0 }
+  let map_host _ p _ = Rig_edge.Maps { at = p; raw = 0 }
 
   let dma _ _ ~fn:_ = Error "late gives no driver its memory"
   let image _ _ = Error "late loads no code"

@@ -360,10 +360,15 @@ let unreached = Unix.Unix_error (EIO, "ioctl", "")
 let map_gpu fd handle gpu map =
   if kfd_map_gpu fd handle gpu map <> 1 then raise unreached
 
-(* Counts a view of [handle] for GPU [gpu], mapping it at the first: whether the
-   GPU maps it. The counted table is made before the MAP, so that nothing
-   allocates between the MAP and its count. *)
-let take_view fd handle gpu =
+(* KFD's refusal [e] of a mapping: ENOMEM, a limit of TTM's or KFD's on the
+   memory they map, which returning memory may undo, or for good. *)
+let refusal e : _ Rig_edge.mapping =
+  if e = Unix.ENOMEM then No_room else Never
+
+(* Counts a view of [handle] for GPU [gpu], mapping it at the first: whether
+   the GPU maps it, or KFD's refusal. The counted table is made before the
+   MAP, so that nothing allocates between the MAP and its count. *)
+let take_view fd handle gpu : unit Rig_edge.mapping =
   let key = (handle, gpu) in
   Amd.Lock.protect views_lock @@ fun () ->
   let n = Option.value ~default:0 (Pairs.find_opt key !views) in
@@ -371,8 +376,8 @@ let take_view fd handle gpu =
   match if n = 0 then map_gpu fd handle gpu true with
   | () ->
       views := counted;
-      true
-  | exception Unix.Unix_error _ -> false
+      Rig_edge.Maps ()
+  | exception Unix.Unix_error (e, _, _) -> refusal e
 
 (* Ends a view of [handle] for GPU [gpu], unmapping it at the last. A failed
    UNMAP raises and leaves no count, so that the next view maps again. The
@@ -477,7 +482,7 @@ let free fd g (m : mem Amd.memory) =
    one KFD refuses. A mapping's region, and a new mapping's registration, are
    made before its count or KFD's mapping, so that nothing allocates or polls
    between those and their record. *)
-let map_host fd g a n : mem Amd.memory option =
+let map_host fd g a n : mem Amd.memory option Rig_edge.mapping =
   let start = a land lnot (page - 1) in
   let bytes = round_up (a + n - start) page in
   let gpu_id = g.node.gpu_id in
@@ -494,7 +499,9 @@ let map_host fd g a n : mem Amd.memory option =
       vram = false;
     }
   in
-  let region data = Some { Amd.address = a; host = Some a; data } in
+  let region data =
+    Rig_edge.Maps (Some { Amd.address = a; host = Some a; data })
+  in
   Amd.Lock.protect registry_lock @@ fun () ->
   match List.find_opt inside !registry with
   | Some e ->
@@ -506,14 +513,14 @@ let map_host fd g a n : mem Amd.memory option =
       let m = data e in
       let listed = e :: !registry and r = region m in
       match kfd_alloc fd gpu_id start bytes Userptr with
-      | exception Unix.Unix_error _ -> None
+      | exception Unix.Unix_error (err, _, _) -> refusal err
       | handle, _ -> (
           match map_gpu fd handle gpu_id true with
-          | exception Unix.Unix_error _ ->
+          | exception Unix.Unix_error (err, _, _) ->
               (match kfd_free fd handle with
               | () -> ()
               | exception Unix.Unix_error _ -> ());
-              None
+              refusal err
           | () ->
               e.handle <- handle;
               m.handle <- handle;
@@ -525,15 +532,21 @@ let map_host fd g a n : mem Amd.memory option =
 let linked g (n : Topology.node) =
   n.gpu_id = g.node.gpu_id || List.mem n.index g.links
 
-let map_peer fd g (m : mem Amd.memory) =
+let map_peer fd g (m : mem Amd.memory) :
+    mem Amd.memory option Rig_edge.mapping =
   let o = m.data.owner in
   if o.node.gpu_id = g.node.gpu_id then
-    Some { m with data = { m.data with kind = View } }
-  else if not (linked g o.node) then None
+    Maps (Some { m with data = { m.data with kind = View } })
+  else if not (linked g o.node) then Never
   else
     (* Made before the view counts, so that nothing allocates after. *)
-    let view = Some { m with data = { m.data with kind = Peer } } in
-    if take_view fd m.data.handle g.node.gpu_id then view else None
+    let view =
+      Rig_edge.Maps (Some { m with data = { m.data with kind = Peer } })
+    in
+    match take_view fd m.data.handle g.node.gpu_id with
+    | Maps () -> view
+    | Never -> Never
+    | No_room -> No_room
 
 (* Another function's DMA
 

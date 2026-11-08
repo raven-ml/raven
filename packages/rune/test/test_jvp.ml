@@ -1201,7 +1201,7 @@ let test_rebuilt_chain () =
   let rebuilt = link [ 2.; 3.; 2. ] in
   equal ~msg:"words per link" float_exact (link [ 2. ]) rebuilt;
   Windtrap.expect (Printf.sprintf "%.0f words" rebuilt)
-  @@ __POS_OF__ {| 256 words |}
+  @@ __POS_OF__ {| 258 words |}
 
 let () =
   exit

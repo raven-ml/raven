@@ -171,10 +171,11 @@
     since its release writes the L2 back, and the host data path of the
     GPUs this driver drives keeps no read cache to invalidate.
 
-    {!val-map_host} returns a region the GPU addresses, or [None] if the
-    path maps no host memory or refuses the pages. Both paths map host
-    pages for writing, so it returns [None] for pages mapped read-only,
-    such as an io device's pages over a read-only file.
+    {!val-map_host} returns a region the GPU addresses, or [Never] if the
+    path maps no host memory, and otherwise the path's refusal of the pages
+    ({!field-map_host}). Both paths map host pages for writing, so it
+    answers [Never] for pages mapped read-only, such as an io device's
+    pages over a read-only file.
     [Rig_amd_amdgpu]'s kernel driver faults the pages in for writing, and
     [Rig_amd_pci] pins them for writing through VFIO. *)
 
@@ -509,21 +510,24 @@ type 'm path = {
              process's memory takes it from the GPU.}}
           It is [None] if the memory of [k] is exhausted, or if [Mapped]
           memory does not exist. *)
-  map_host : (int -> int -> 'm memory option) option;
+  map_host : (int -> int -> 'm memory option Rig_edge.mapping) option;
       (** [Some map] if the GPU maps host memory. [map a n] maps for the GPU
-          the pages that hold the [n] bytes of host memory at [a]. The
-          result's [address] is where the GPU reaches the byte at [a], and its
-          [host] is [Some a]. It is [None] if the path refuses the pages, such
-          as read-only ones. [map_host] is [None] if the GPU maps no host
-          memory. *)
+          the pages that hold the [n] bytes of host memory at [a] and must
+          answer [Maps (Some m)]. [m]'s [address] is where the GPU reaches the
+          byte at [a], and its [host] is [Some a]. Where the path refuses the pages, it is
+          [No_room] if the path lacked the room it maps them in, and [Never]
+          otherwise, such as for read-only pages. [map_host] is [None] if the
+          GPU maps no host memory. *)
   reaches : int -> bool;
       (** [reaches j] is [true] iff [map_peer] maps the GPU memory the path
           gives a device of GPU [j], numbered as [index]. It is [true] for
           this GPU. *)
-  map_peer : 'm memory -> 'm memory option;
+  map_peer : 'm memory -> 'm memory option Rig_edge.mapping;
       (** [map_peer m] maps for the GPU the memory [m] that the path gave
-          another of its devices, at the same address, or is [None] if the
-          GPU does not reach that device's GPU's memory. Memory of a device of
+          another of its devices, at the same address, and must answer
+          [Maps (Some _)]. It is [Never] if the
+          GPU does not reach that device's GPU's memory, and [No_room] if the
+          path lacked the room to map it. Memory of a device of
           the same GPU is in its address space already, so the view maps
           nothing, and [free] of it gives nothing back. *)
   free : 'm memory -> unit;

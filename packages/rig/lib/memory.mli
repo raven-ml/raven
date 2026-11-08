@@ -23,8 +23,9 @@
       within its budget, or reclaims ({!reclaiming}).
     + {!alloc} wraps the entry in the new lifetime, with that token, and the
       owner's memory record over it.
-    + A borrow on another device maps it ({!borrow}). The entry lists each
-      mapping.
+    + A borrow on another device maps it, or shares the device's mapping
+      ({!borrow}), and holds that mapping until the borrow's lease ends
+      ({!section-leases}). The entry lists each mapping.
     + Once the record is collected, a {!drain} takes the entry off the
       release list. The entry enters the cache if it is a driver's region,
       its device is live and holds no more than its budget, every point of
@@ -286,7 +287,8 @@ val exclusive : int
 
 val claim_add : buffer -> bool
 (** [claim_add b] adds a read claim to [b]'s memory, with no check of [b],
-    unless the memory is held exclusive: whether it did. It tries one
+    unless the memory is held exclusive: whether it did. A borrow's claim
+    counts on its lease too ({!section-leases}). It tries one
     compare-and-set and retries in C, so in native code nothing in it polls
     or allocates, contended or not, and a sequence of takes needs no
     handler between them. *)
@@ -319,7 +321,7 @@ type making = { region : region; make : unit -> unit }
 (** The type for a mapping about to be made: its record, not yet {!made},
     and the counted call that makes it. The caller keeps [region] where the
     frees that give it back find it, then calls [make], which stores the
-    driver's answer in it, or [None], before its count ends. *)
+    driver's answer in it before its count ends. *)
 
 val host_making : device -> int -> int -> making option
 (** [host_making d p n] makes [d]'s mapping of the [n] bytes of host memory
@@ -394,17 +396,54 @@ val give_retired : device -> unit
     pending releases. It frees no memory, and leaves a word that loses its
     last mapping to the next drain ({!word_unmapped}). *)
 
-val borrow : device -> memory -> memory option
-(** [borrow d m] is [d]'s borrow of [m]'s allocation, or [None] where [d]
-    cannot map it. On the allocation's owner it is [m] if [m] is the owner's
-    record, and otherwise a record with the coordinates the owner's record
-    was made with. An io allocation borrows through its pages, and raises
-    what asking for them raises. *)
+(** {1:leases Leases}
 
-val maps : device -> memory -> bool
-(** [maps d m] is whether [d] can borrow [m]'s allocation, as {!borrow}
-    says, making [d]'s mapping of it if it needs one. It builds no
-    borrow. *)
+    A borrow on a device other than its memory's owner has a lease
+    ({!Def.lease}), its life within its memory's. A borrow that reaches its
+    memory through a mapping holds that mapping, which every borrow of the
+    allocation on the device shares, and its lease's token ends the hold
+    once the lease is collected or ended: a release record on the borrowing
+    device's list, routed to a pending release at the device's submitted
+    value, which ends the hold once the device has run the work that may
+    use the borrow. The last hold's end gives the mapping back, unless rig
+    keeps it until the memory returns: rig's staging memory, and memory the host does
+    not page that a copy reaches ({!reach_kept}). The memory's return gives
+    back every mapping still held. *)
+
+val lease_ended : memory -> bool
+(** [lease_ended m] is whether [m] is a borrow's whose lease an unborrow
+    ended. *)
+
+val end_lease : lease -> unit
+(** [end_lease l] puts the release record of [l]'s token on its list now,
+    as its collection would, so the next drain of the borrowing device ends
+    its hold. The caller ended [l] first. *)
+
+val borrow : device -> memory -> at:int -> n:int -> memory option
+(** [borrow d m ~at ~n] is [d]'s borrow of [m]'s allocation, for the [n]
+    bytes of it from byte [at], with a lease of its own, or [None] where [d]
+    cannot map it or its driver never maps it. On the allocation's owner it
+    is [m] if [m] is the owner's record, and otherwise a record with the
+    coordinates the owner's record was made with, with no lease. A mapping
+    the driver has no room for returns memory once, as
+    {!Rig.section-reclaim} states, and raises {!Dev.Out_of_memory} if the
+    driver still has no room. An io allocation borrows through its pages,
+    and raises what asking for them raises. *)
+
+val reach_kept : device -> memory -> memory option
+(** [reach_kept d m] is [d]'s reach of [m]'s allocation for a copy, through
+    [d]'s mapping, made if [d] has none and kept until the memory returns,
+    or as [borrow] reaches it with no mapping, with no lease. [None] where
+    [d] cannot map it or its driver refuses. *)
+
+val staging : device -> memory -> memory option
+(** [staging d m] is {!reach_kept}[ d m] for [m], staging memory, whose
+    mapping on [d] returns memory as {!borrow} does when the driver has no
+    room. Raises {!Dev.Out_of_memory} if it still has none. *)
+
+val paged : alloc -> bool
+(** [paged a] is whether the host pages [a]'s memory. It pages its own and a
+    memory device's. *)
 
 val prefetch : device -> memory -> at:int -> len:int -> unit
 (** [prefetch d m ~at ~len] asks the io device of [m] to read [len] bytes of

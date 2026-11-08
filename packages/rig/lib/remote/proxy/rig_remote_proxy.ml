@@ -123,20 +123,20 @@ let peer d d' =
   if d.account.id > d'.account.id then List.mem d'.account.id d.account.reaches
   else List.mem d.account.id d'.account.reached_by
 
-let map_peer d d' r =
-  if d.link != d'.link then None
+let map_peer d d' r : region Rig_edge.mapping =
+  if d.link != d'.link then Never
   else
     match r with
-    | Word _ -> Some r
+    | Word _ -> Maps r
     | Memory { id = region } -> (
         let id = Link.fresh () in
         match
           request d.link (Wire.Map { id; device = d.account.id; region })
         with
-        | Ok true -> Some (Memory { id })
-        | Ok false | Error _ -> None)
+        | Ok true -> Maps (Memory { id })
+        | Ok false | Error _ -> Never)
 
-let map_host _ _ _ = None
+let map_host _ _ _ = Rig_edge.Never
 
 let dma _ _ ~fn:_ =
   Error "memory of another machine: its agent describes it there"

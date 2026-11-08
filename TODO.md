@@ -30,12 +30,6 @@ raven / llama.cpp b12048 Vulkan:
 
 ### drivers
 
-- host buffers on CUDA: a call that makes the process's first copy from
-  the host pays one 8-11 ms `cuMemHostRegister`, and gpt-oss's prefill
-  pays 17-19 ms of `cuMemHostUnregister` for weight buffers the GC freed
-  just before; registration and release belong in rig's staging
-- `Pinned` memory on a discrete GPU counts in the host's budget but is
-  paced by the GPU's room and allocated bytes
 
 ### tests and runs
 
@@ -106,8 +100,6 @@ raven / llama.cpp b12048 Vulkan:
   s_load_u16 and a wait each, about 4100 serial round trips a tile; at
   gpt-oss's decode shape float32 (global_load_b32) takes 51 µs against
   bfloat16's 323 µs on the R9700
-- a fresh process's first calls fault 72-188 pages each for 1 MiB results
-  until rig's buffer cache warms
 
 ## nx
 

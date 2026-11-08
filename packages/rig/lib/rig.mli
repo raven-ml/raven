@@ -850,11 +850,10 @@ val failure : unit -> string option
     A device's {e budget} is the most bytes it holds at one time of the
     memory that counts in it: its live buffers, its loaded images' code and
     its cache ({!budget}), each allocation by its whole words
-    ({!section-words}). [Pinned] memory counts in the host's budget, except
-    on a device whose memory the host addresses, such as Metal's, where it
-    counts in the device's. A host buffer counts the bytes it takes of the C
-    library's memory: its whole words, and up to 112 more where it starts on
-    128 bytes ({!Buffer.create}). On Windows, where [free] releases
+    ({!section-words}). [Pinned] memory counts in the host's budget. A host
+    buffer counts the bytes it takes of the C library's memory: its whole
+    words, and up to 112 more where it starts on 128 bytes
+    ({!Buffer.create}). On Windows, where [free] releases
     no allocation aligned to a page, one that starts on a page counts a
     page less 16 bytes more. An allocation's bytes also pace the
     OCaml collector, so a device nearing its budget collects unreachable
@@ -865,32 +864,43 @@ val failure : unit -> string option
     {- A dropped host buffer holds its memory until a collection frees it:
        a minor one for a buffer the minor heap still holds, one of at most
        [custom_minor_max_size] bytes ({!Gc.control}), and a major cycle
-       otherwise. A cycle comes once the bytes of host buffers, of any size,
-       that reached the major heap since the last one reach
-       [custom_major_ratio] / 150 of the program's memory, the allocating
-       domain's major heap and the host buffers live at the last cycle, or
-       half the host's last-level cache if that is more, and at least 4 MiB.
-       Above both floors, that amount is proportional to
-       [custom_major_ratio], so raising the ratio holds more dropped memory
-       between cycles and runs fewer of them. The bytes of buffers the minor
-       heap holds bring a minor collection once they reach the same
-       amount.}
+       otherwise. Once the bytes of host buffers, of any size, that reached the
+       major heap since the last cycle reach a bound, they complete one cycle's
+       work of the collector. The bound is [custom_major_ratio] / 150 of the
+       program's memory, the allocating domain's major heap and the host
+       buffers live at the last cycle, or half the host's last-level cache if
+       that is more, and at least 4 MiB. In a small heap a cycle also does the
+       runtime's minimum work ([small_heap_limit] of OCaml 5.5's runtime). A
+       dropped buffer returns with the sweep after the marking that finds it
+       unreachable, so its memory returns within about two cycles. Above both
+       floors the bound is proportional to [custom_major_ratio], so raising the
+       ratio holds more dropped memory between cycles and runs fewer of them.
+       rig sets none of the runtime's parameters. The bytes of buffers the
+       minor heap holds bring a minor collection once they reach the same
+       bound.}
     {- A dropped buffer of another device holds its memory until a
-       collection frees it, as a host buffer does. Its device's {e room} is
-       the bytes its budget has left. The memory of a {!memory_device}, of a
-       driver's device whose driver declares [host_addresses]
-       ({!Rig_edge.type-facts}), and the [Pinned] and [Mapped] memory of a
-       driver's device brings a cycle as host buffers do, floors included,
-       with the device's {!allocated} bytes standing for the host buffers
-       live; or sooner, once the dropped bytes reach [custom_major_ratio] /
-       150 of the room, so a device nearing its budget collects in time.
-       A device's other memory brings a cycle at that share of the room
-       alone. Either amount is at least a page, and for a buffer of at most
-       [custom_minor_max_size] bytes at least the minor heap's bytes.}
+       collection frees it, as a host buffer does. A budget's {e room} is
+       the bytes it has left. Memory that counts in the host's budget, a
+       driver's device's [Pinned] memory, brings a cycle as host buffers do,
+       floors included, beside the bytes live in the host's budget at the
+       last cycle; or
+       sooner, once the dropped bytes reach [custom_major_ratio] / 150 of the
+       host's room. The memory of a {!memory_device}, of a driver's device
+       whose driver declares [host_addresses] ({!Rig_edge.type-facts}), and
+       a driver's device's [Mapped] memory brings a cycle as host buffers
+       do, floors included, with the device's {!allocated} bytes standing
+       for the host buffers live; or sooner, once the dropped bytes reach
+       [custom_major_ratio] / 150 of the device's room, so a device nearing
+       its budget collects in time. A device's other memory brings a cycle
+       at that share of its room alone. Either amount is at least a page,
+       and for a buffer of at most [custom_minor_max_size] bytes at least
+       the minor heap's bytes.}
     {- The host keeps collected buffers of 64 KiB or more for reuse. It keeps
        up to 32 MiB of them, and beyond that only while the bytes of its kept
        and live buffers together stay within the peak of its live buffers
-       over the collector's current and previous major cycles.}
+       over the collector's current and previous major cycles. Pages of a
+       host buffer that reuses none fault in at their first write, in the
+       call that writes them.}
     {- On a driver's or an io device, an allocation larger than the budget it
        counts in raises {!Out_of_memory} immediately, without freeing the
        cache.}
@@ -904,6 +914,16 @@ val failure : unit -> string option
        [keep] ({!Submission.make}): only those make memory unreachable that
        the second run missed. The allocation raises {!Out_of_memory} after
        three such rounds.}
+    {- When a driver has no room for a mapping that a borrow
+       ({!Buffer.borrow}) or staging memory needs, such as under a limit on
+       locked memory or on mappings, rig returns memory once and asks again.
+       The process's devices may share such a limit, so rig runs the
+       collector, waits
+       for each device of the machine that has unfinished work, and returns
+       on each the mappings of borrows collected or ended, the staging
+       memory no copy holds and the cached [Pinned] memory. It frees no
+       other cached memory. It raises {!Out_of_memory} if the driver still
+       has no room.}
     {- A growth of a device's queues ({!submit}) that its driver has no
        memory for reclaims as an allocation does, both the device's budget
        and the host's, as the driver may grow them in memory that counts in
@@ -937,7 +957,9 @@ exception Out_of_memory of t * int
 (** [Out_of_memory (d, n)] is raised when [d] cannot allocate [n] bytes,
     immediately or after the rounds of reclamation. [d] is the device the
     allocation was for, also when another device's budget refused it, as the
-    host's does for [Pinned] memory ({!Buffer.Pinned}). *)
+    host's does for [Pinned] memory ({!Buffer.Pinned}). A mapping a borrow
+    needs raises it too, for the bytes of the memory it maps
+    ({!Buffer.borrow}). *)
 
 (** {1:buffers Buffers} *)
 
@@ -958,13 +980,20 @@ type access =
     not interpret the bytes.
 
     A device's work addresses only buffers on that device. To use another
-    device's memory, a submission names a borrow of it, which exists where
-    the device can map that memory ({!Rig.reaches}). A borrow may map the
-    allocation into the borrowing device, and every borrow on that device
-    shares the mapping. When the allocation returns, rig releases the
-    mapping once the borrowing device has run the work submitted until then,
-    and gives the allocation back after that. A lost device keeps its
-    mappings until it has stopped ({!Rig.section-stops}).
+    device's memory, a submission names a borrow of it, which exists where the
+    device can map that memory ({!Rig.reaches}). A {e mapping} is the access to
+    an allocation that a device's driver makes for the device. A borrow that
+    needs one holds the borrowing device's mapping of the allocation, which
+    every live borrow of it on that device shares. The first borrow that needs
+    a mapping pays for the mapping. The device's driver maps the pages and
+    locks them where the device needs that. The mapping lasts while a borrow
+    holding it lives. Once the last has ended ({!Buffer.unborrow}) or been
+    collected, rig releases the mapping after the borrowing device has run the
+    work submitted until then. When the allocation returns, rig releases its
+    mappings the same way and gives it back after them. A lost device keeps its
+    mappings until it has stopped ({!Rig.section-stops}). Empty memory borrows
+    on every device of its machine but an io device, whatever {!Rig.reaches}
+    says, and an io device's on every other device.
 
     {!Buffer.create}, {!Buffer.of_string}, {!Buffer.of_bigarray} and
     {!Buffer.of_io} make an allocation, with empty stamps, and
@@ -991,21 +1020,22 @@ module Buffer : sig
     | Device
         (** The device's own memory, which counts in the device's {!budget}. *)
     | Pinned
-        (** Host memory that both the device's work and the host address,
-            page-locked where the host pages memory out, with no flush
-            needed between them. On a device whose memory the host addresses,
-            it is the device's own memory. Which {!budget} it counts in is
-            stated in {!Rig.section-reclaim}. *)
+        (** Page-locked host memory that the device's driver allocates for
+            the device, which both the device's work and the host address,
+            with no flush needed between them. Which {!budget} it counts in
+            is stated in {!Rig.section-reclaim}. A device whose memory the
+            host addresses, such as {!Rig.host}, a {!Rig.memory_device} or a
+            Metal device, has none ({!create}). Host memory reaches a device
+            through {!borrow}. *)
     | Mapped
         (** The device's own memory, which the host also addresses through a
             write-combined window, and which counts in the device's {!budget}.
             Work submitted after a host write sees it, and host reads are
             slow. Where the device has no such window, or the window or the
             device's budget has no room for the buffer, it is [Pinned]
-            memory, so it counts in the host's budget where the host does
-            not address the device's memory ({!Rig.section-reclaim}). rig
-            falls back to [Pinned] without first freeing the device's
-            cache. *)
+            memory, or, on a device whose memory the host addresses, the
+            device's own memory. rig falls back without first freeing the
+            device's cache. *)
 
   val create : ?memory:kind -> device -> int -> t
   (** [create d n] is a buffer of [n] new bytes of [d]'s memory of kind
@@ -1019,9 +1049,10 @@ module Buffer : sig
       ones. On an io device the memory is what {!Rig_edge.Io.alloc} makes,
       whatever [memory].
 
-      Raises [Invalid_argument] if [n < 0], or if [n > 0], [d] is an io
-      device and its {!Rig_edge.Io.alloc} raises it, and {!Lost} if [d] is
-      lost or its driver faults during the allocation. *)
+      Raises [Invalid_argument] if [n < 0], if [memory] is [Pinned] and the
+      host addresses [d]'s memory, or if [n > 0], [d] is an io device and
+      its {!Rig_edge.Io.alloc} raises it, and {!Lost} if [d] is lost or its
+      driver faults during the allocation. *)
 
   val of_string : string -> t
   (** [of_string s] is a buffer on {!host} holding [s]'s bytes, placed as
@@ -1057,23 +1088,18 @@ module Buffer : sig
   val borrow : device -> t -> t option
   (** [borrow d b] is a buffer on [d] over [b]'s bytes, without a copy, or
       [None] if [d] cannot map [b]'s memory ({!Rig.reaches}) or its driver
-      refuses the mapping. It is [Some b] for [b] on [d]. Memory of no
-      bytes, which has none to map, borrows on every device of its machine
-      but an io device, whatever {!Rig.reaches} says, and an io device's on
-      every other device. The borrow keeps [b] reachable and shares its
-      memory, so work through it is ordered as work on [b]. A borrow of a
-      borrow maps the memory the first one maps. Every borrow on [d] of one
-      allocation shares one mapping, which lasts until the allocation
-      returns or [d] has stopped. A borrow of an io device's memory is its
-      pages, whose reads by the host or by work are as the io device states
-      once the object behind them changes, such as a file that a truncation
-      cut short ([Rig_disk]). A copy reads such memory through the io device
-      ({!section-copying}).
+      never maps it, such as pages mapped read-only. A host buffer under
+      64 KiB may not start on a page ({!create}), and host memory off a page
+      does not borrow on a driver's device. It is [Some b] for [b] on [d].
+      The borrow keeps [b] reachable and shares its memory, so
+      work through it is ordered as work on [b], and a borrow of a borrow
+      maps the memory the first one maps.
 
       Raises [Invalid_argument] if [b] is dead or, on a device other than
       [b]'s, a {!Claim.with_} holds its memory exclusive; {!Lost} if [d] is
-      lost or its driver faults during the borrow; and [Sys_error] if asking
-      an io device for [b]'s pages fails transiently
+      lost or its driver faults during the borrow; {!Rig.Out_of_memory} if
+      [d]'s driver has no room for the mapping ({!Rig.section-reclaim}); and
+      [Sys_error] if asking an io device for [b]'s pages fails transiently
       ({!Rig_edge.Io.pages}). *)
 
   val free : ?why:string -> t -> bool
@@ -1089,6 +1115,22 @@ module Buffer : sig
       operation.
 
       Raises [Invalid_argument] if [b] is dead. *)
+
+  val unborrow : ?why:string -> t -> bool
+  (** [unborrow ~why b] tries to end the borrow [b] early, and is [false],
+      changing nothing, if a claim or a hold through the borrow or one of
+      its views keeps it, such as a host access or a submit through it on
+      another domain, or a prepared submission that names it
+      ({!Claim.hold}). Otherwise every buffer of the borrow,
+      its views included, is dead with the reason [why] (["unborrowed"] by
+      default), which {!dead} then answers, the memory and its other
+      buffers live on, the borrow's hold of its mapping ends as at its
+      collection, and it is [true]. Claims of the memory through
+      its other buffers neither refuse it nor see it. A program ends a
+      borrow to unlock host memory it keeps.
+
+      Raises [Invalid_argument] if [b] is dead, is not a borrow on a device
+      other than its memory's owner, or is a view of part of one. *)
 
   (** {1:properties Properties}
 
@@ -1143,7 +1185,8 @@ module Buffer : sig
 
   val dead : t -> string option
   (** [dead b] is [Some why] if [b] is dead, where [why] is the reason its
-      memory was consumed with ({!Claim.consume}), and [None] otherwise. A
+      memory was consumed with ({!Claim.consume}), or its borrow ended with
+      ({!unborrow}), and [None] otherwise. A
       library that receives a buffer checks it first, so that it reports the
       error itself. *)
 
@@ -1256,6 +1299,9 @@ module Buffer : sig
       ({!Rig.submitted}). On another machine, a device of that machine
       copies.
 
+      A borrow of an io device's memory is its pages, whose reads by the
+      host or by work are as the io device states once the object behind
+      them changes, such as a file that a truncation cut short ([Rig_disk]).
       Memory an io device owns, its own or a borrow of its pages
       ({!borrow}), moves only through that io device's read or write. A
       copy from or into it never reads or writes the pages, and no device
@@ -1265,25 +1311,45 @@ module Buffer : sig
       A program must not copy between bytes of the object that both name,
       whose result is unspecified.
 
-      A copy that no device can run directly passes through {e staging
-      memory}, host memory that rig makes in allocations of 32 MiB, each at
-      the first copy whose bytes need it. A copy holds one allocation, or two
-      for more than 32 MiB, until the transfers the host makes for it are
-      done. A copy of at most 32 MiB whose bytes the host writes into staging
-      memory puts them after the bytes earlier such copies put in an
-      allocation that no copy holds, where it has room, and waits for no work
-      there; once rig has seen that allocation's work done, it puts them at
-      its start. Where none has room, it takes an allocation whose work is
-      done, else the one whose bytes were placed from its start longest ago,
-      and waits for its work. A copy whose bytes a device writes into staging
-      memory takes an allocation whose work is done, or a new one, and no
-      copy puts bytes after them. Staging memory so grows by 32 or 64 MiB for
-      each copy holding it at once, and by as much for each copy whose bytes
-      a device wrote into it and whose work is still queued, or, on a device
-      whose word rig reads through its driver, until a wait reads it. A copy
-      of more than 32 MiB whose bytes the host writes waits before it reuses
-      one of its two allocations until the work that last read it is done;
-      where a device writes them, its queue waits.
+      A device copies directly between memory on it, its own or a borrow on it,
+      and memory the host does not page that the device maps, which is another
+      device's memory of its driver and another driver's memory that the host
+      addresses, such as its [Pinned] memory. Such a mapping lasts until the
+      memory returns, also where a borrow made it.
+
+      Memory the host pages (the host's own, a bigarray's, an exported
+      array's and a memory device's) reaches the copy engine of a device of
+      this machine through a borrow on that device that the copy names
+      ({!borrow}). A copy that names the memory itself passes through
+      staging memory, also while a borrow of it lives.
+
+      Any other copy passes through {e staging memory}, host memory that rig
+      makes in allocations of 32 MiB, each at the first copy whose bytes
+      need it, and maps on each device that copies through it for the
+      allocation's life. Between a device and memory the host pages, the
+      host moves the bytes into or out of staging memory before the call
+      returns. Such a copy is synchronous for the host and slower than a
+      copy through a borrow of the same memory, which takes the device's
+      direct route once the borrow has paid for its mapping. A program that
+      copies one allocation many times borrows it once and copies through
+      the borrow.
+
+      A copy holds one allocation, or two for more than 32 MiB, until the
+      transfers the host makes for it are done. A copy of at most 32 MiB whose
+      bytes the host writes into staging memory puts them after the bytes
+      earlier such copies put in an allocation that no copy holds, where it has
+      room, and waits for no work there; once rig has seen that allocation's
+      work done, it puts them at its start. Where none has room, it takes an
+      allocation whose work is done, else the one whose bytes were placed from
+      its start longest ago, and waits for its work. A copy whose bytes a
+      device writes into staging memory takes an allocation whose work is done,
+      or a new one, and no copy puts bytes after them. Staging memory so grows
+      by 32 or 64 MiB for each copy holding it at once, and by as much for each
+      copy whose bytes a device wrote into it and whose work is still queued,
+      or, on a device whose word rig reads through its driver, until a wait
+      reads it. A copy of more than 32 MiB whose bytes the host writes waits
+      before it reuses one of its two allocations until the work that last read
+      it is done; where a device writes them, its queue waits.
 
       A copy's allocations serve the copies after it. Let [n] be the most
       allocations a staging memory has had at once. When a copy gives
@@ -1301,10 +1367,11 @@ module Buffer : sig
       allocation returns once the work that used it is done.
 
       A device that maps no host memory ([maps_host] in
-      {!Rig_edge.type-facts}) stages through [Pinned] memory of its own,
-      kept and returned in the same way, and returned too once the device
-      is lost and has stopped. Between two such devices, the host copies
-      from one device's staging memory into the other's.
+      {!Rig_edge.type-facts}) stages through memory of its own that both it
+      and the host address, its [Pinned] memory, or its own memory where
+      the host addresses it, kept and returned in the same way, and returned
+      too once the device is lost and has stopped. Between two such devices, the
+      host copies from one device's staging memory into the other's.
 
       The blits copy between a buffer and an OCaml string or bytes, and
       {!submit_fill} and {!fill} set a buffer's bytes. They are ordered as
@@ -1378,11 +1445,10 @@ module Buffer : sig
       work the copy follows, where a transfer into staging memory waits for
       the work that last read that memory, and where the host moves bytes
       out of staging memory after a device's transfer into it, which it
-      waits for. So a copy by a device of this machine into host memory it
-      does not map waits for its bytes: all host memory for a device without
-      [maps_host] ({!Rig_edge.type-facts}), and otherwise a host buffer that
-      does not start on a page, such as one under 64 KiB. A device of
-      another machine queues such a copy and does not wait. It allocates.
+      waits for. So a copy by a device of this machine into memory the host
+      pages waits for its bytes, unless it names a borrow of that memory on
+      the device ({!section-copying}). A device of another machine queues
+      such a copy and does not wait. It allocates.
 
       Memory outside the claims, such as a bigarray's ({!of_bigarray}) or
       an exported array's ({!export}), is read and written by the copy until
@@ -1398,7 +1464,8 @@ module Buffer : sig
       is lost before its submission, or its submission loses it, or while
       the host waits for a transfer it moves bytes after, or if a point of
       [waits] is a lost device's and that device never reached it;
-      {!Out_of_memory} if staging memory cannot be allocated or mapped, or
+      {!Out_of_memory} if staging memory cannot be allocated or mapped
+      ({!Rig.section-reclaim}), or
       the device's queues must grow for a submission and it has no memory
       for the growth ({!Rig.submit}); and what an io device's read or write
       raises. Where it raises after it queued some of the copy's

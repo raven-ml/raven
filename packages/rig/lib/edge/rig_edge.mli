@@ -68,11 +68,24 @@
 type memory =
   | Device  (** The device's own memory. *)
   | Pinned
-      (** Host memory that both the device's work and the host address,
-          page-locked where the host pages memory out. *)
+      (** Page-locked host memory that the device's driver allocates for
+          the device, which both the device's work and the host address.
+          rig asks for none on a device that declares [host_addresses]. *)
   | Mapped
       (** The device's own memory, which the host also addresses through a
           write-combined window. *)
+
+(** The type for a driver's answer to a request to map memory
+    ({!Driver.val-map_host}, {!Driver.val-map_peer}). *)
+type 'region mapping =
+  | Maps of 'region  (** The region over the memory. *)
+  | Never
+      (** The device does not map this memory, now or later, such as pages
+          mapped read-only. *)
+  | No_room
+      (** The device has no room for the mapping now, such as under a limit
+          on locked memory or on mappings. rig may return memory and ask
+          once more. *)
 
 (** The type for the work of a part, as [rig_edge.h] tags it. *)
 type kind =
@@ -149,8 +162,8 @@ type 'region facts = {
   host_addresses : bool;
       (** Whether the host addresses every region the device allocates, with
           a [host] address in each one's location ({!Driver.locate}). The
-          host then reaches the device's memory and copies it, and the
-          device's [Pinned] memory is its own and counts in [budget]. *)
+          host then reaches the device's memory and copies it, and rig asks
+          for none of the device's [Pinned] memory. *)
   alignment : int;
       (** The power of two that the address of every region {!Driver.alloc}
           makes is a multiple of, for every memory kind: its [address] and
@@ -462,7 +475,8 @@ type grown =
     {- it unloads each image once, and calls {!Driver.val-entry} only on a
        loaded image;}
     {- it allocates [Pinned] memory where [alloc] of [Mapped] returns
-       [None];}
+       [None], or [Device] memory on a device that declares
+       [host_addresses];}
     {- it bounds hangs itself ([hang_ms]), so {!Driver.sleep} never times out
        work.}} *)
 module type Driver = sig
@@ -507,16 +521,14 @@ module type Driver = sig
       [d']. It must return its result from what [d] and [d'] learned when they
       opened, also once either is lost. *)
 
-  val map_peer : t -> t -> region -> region option
-  (** [map_peer d d' r] is a region of [d] over [r], any memory of [d'], or
-      [None]. [d]'s GPU may already map [r]'s memory, through [r] or another
-      region. Each region must keep the memory mapped until rig frees it.
-      Counted. *)
+  val map_peer : t -> t -> region -> region mapping
+  (** [map_peer d d' r] maps for [d] the memory of [r], any memory of [d'].
+      [d]'s GPU may already map [r]'s memory, through [r] or another region.
+      Each region must keep the memory mapped until rig frees it. Counted. *)
 
-  val map_host : t -> int -> int -> region option
-  (** [map_host d p n] is a region of [d] over the [n] bytes of host memory at
-      [p], or [None] if [d] does not map these pages, such as read-only ones.
-      [p] starts a page and [n] is positive. rig calls it only where [d]
+  val map_host : t -> int -> int -> region mapping
+  (** [map_host d p n] maps for [d] the [n] bytes of host memory at [p]. [p]
+      starts a page and [n] is positive. rig calls it only where [d]
       declares [maps_host]. The region must map the whole pages that hold
       the [n] bytes, so that work reaches through it each word of the
       allocation's last bytes ([Rig]'s Words section), and they must stay

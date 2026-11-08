@@ -12,8 +12,9 @@ type t = image
 type func = Def.func
 
 (* Places [code] at the start of [d]'s code memory [e], whose region is
-   [region], after [d]'s queued work. A copy on [d]'s copy engine from pinned
-   memory is queued and not waited for: work that runs the image is later work
+   [region], after [d]'s queued work. A copy on [d]'s copy engine from memory
+   both address, [d]'s Pinned memory or, where the host addresses [d]'s own,
+   that, is queued and not waited for: work that runs the image is later work
    of [d], which starts once the copy completed (device order, rig_edge.mli),
    so a load behind a step's queued work returns at once. Where [d] runs no
    copy, the host writes the code once that work is done. *)
@@ -26,7 +27,8 @@ let place d (e : entry) region code =
   let dst = Buffer.of_memory m n in
   match d.live.copy_engine with
   | Some _ ->
-      let src = Buffer.create ~memory:Buffer.Pinned d n in
+      let memory = if Buffer.host_addresses d then Buffer.Device else Pinned in
+      let src = Buffer.create ~memory d n in
       Buffer.blit_string code 0 src 0 n;
       ignore (Submission.run_copy d ~waits:[||] ~src ~dst : int)
   | None ->
