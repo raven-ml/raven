@@ -209,12 +209,12 @@ def lower_stacked_weak_casts_of_a_weak_value_one_at_a_time():
 
 @graph
 def lower_around_a_weak_node_it_does_not_lower():
-    return rewritten(UOp.sink(UOp(Ops.CUSTOM, arg=("n", dtypes.weakint)) + 1), pm_lower_weak)
+    return rewritten(UOp.sink(UOp.custom_function("n", dtype=dtypes.weakint, fmt=True).call(inline=True) + 1), pm_lower_weak)
 
 
 @graph
 def lower_stacked_weak_casts_of_a_node_it_does_not_lower():
-    custom = UOp(Ops.CUSTOM, arg=("n", dtypes.weakint))
+    custom = UOp.custom_function("n", dtype=dtypes.weakint, fmt=True).call(inline=True)
     return rewritten(UOp.sink(custom.cast(dtypes.weakfloat).cast(dtypes.weakint)), pm_lower_weak)
 
 

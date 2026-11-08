@@ -329,7 +329,7 @@ def reprs_of():
         "permute": UOp.param(0, dtypes.float, (2, 3)).permute((1, 0)),
         "flip": UOp.param(0, dtypes.float, (2, 3)).flip(1),
         "device": UOp.param(0, dtypes.float, 4, device="CPU").copy_to_device("CUDA"),
-        "custom": UOp(Ops.CUSTOM, src=(), arg=("barrier();", dtypes.void)),
+        "custom": UOp.custom_function("barrier();", fmt=True).call(),
         "ins": UOp(Ops.INS, src=(), arg=("s_endpgm", dtypes.void)),
         "binary": UOp(Ops.BINARY, arg=b"\x7fELF\x00\n'\""),
         "source": UOp(Ops.SOURCE, arg="int x = 'a';\n"),

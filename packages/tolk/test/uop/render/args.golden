@@ -1,4 +1,4 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 0 Ops.CONST dtypes.bool [] True
 1 Ops.CONST dtypes.bool [] False
 2 Ops.CONST dtypes.weakint [] 3
@@ -86,7 +86,7 @@
 84 Ops.CALL dtypes.void [82, 83] CallInfo()
 85 Ops.CALL dtypes.void [82, 83] CallInfo(name="fill")
 86 Ops.CALL dtypes.void [82, 83] CallInfo(name="fill", precompile=True)
-87 Ops.CUSTOM_FUNCTION dtypes.f64 [] CustomFunction(name="sqrt", dtype=dtypes.f64)
+87 Ops.CUSTOM_FUNCTION dtypes.f64 [58] CustomFunction(name="sqrt", dtype=dtypes.f64)
 88 Ops.CONST dtypes.weakfloat [] 16.0
 89 Ops.CAST dtypes.f64 [88] dtypes.f64
 90 Ops.CALL dtypes.f64 [87, 89] CallInfo()
@@ -97,11 +97,12 @@
 95 Ops.BITCAST dtypes.f32 [94] dtypes.f32
 96 Ops.COPY dtypes.f32 [83] "CPU"
 97 Ops.SPECIAL dtypes.weakint [53] "lidx1"
-98 Ops.CUSTOM dtypes.i32 [65] ("abs({0})", dtypes.i32)
-99 Ops.SOURCE dtypes.void [] "int main() { return 0; }"
-100 Ops.CONST dtypes.weakint [] 2
-101 Ops.STACK dtypes.weakint [75, 100]
-102 Ops.STACK dtypes.weakint [65, 100]
-103 Ops.ADD dtypes.weakint [65, 101]
-104 Ops.SINK dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 18, 19, 20, 22, 24, 25, 27, 28, 30, 30, 20, 31, 32, 33, 35, 36, 37, 38, 40, 42, 44, 47, 49, 50, 52, 54, 56, 57, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 76, 84, 85, 86, 90, 91, 92, 93, 95, 96, 97, 98, 99, 101, 58, 102, 103]
+98 Ops.CUSTOM_FUNCTION dtypes.i32 [58] CustomFunction(name="abs({0})", dtype=dtypes.i32, fmt=True)
+99 Ops.CALL dtypes.i32 [98, 65] CallInfo(inline=True)
+100 Ops.SOURCE dtypes.void [] "int main() { return 0; }"
+101 Ops.CONST dtypes.weakint [] 2
+102 Ops.STACK dtypes.weakint [75, 101]
+103 Ops.STACK dtypes.weakint [65, 101]
+104 Ops.ADD dtypes.weakint [65, 102]
+105 Ops.SINK dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 18, 19, 20, 22, 24, 25, 27, 28, 30, 30, 20, 31, 32, 33, 35, 36, 37, 38, 40, 42, 44, 47, 49, 50, 52, 54, 56, 57, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 76, 84, 85, 86, 90, 91, 92, 93, 95, 96, 97, 99, 100, 102, 58, 103, 104]
 

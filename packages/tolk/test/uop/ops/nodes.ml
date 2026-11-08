@@ -720,7 +720,7 @@ let data_types =
           rejects (fun () -> Ops.v ~src:[ Ops.int 1 ] Op.Cast);
           rejects (fun () -> Ops.v ~src:[ Ops.int 1 ] ~arg:(Device "CPU") Op.Bitcast);
           rejects (fun () -> Ops.v Op.Param);
-          rejects (fun () -> Ops.v Op.Custom));
+          rejects (fun () -> Ops.v Op.Ins));
       test "a transcendental of Invalid is boolean" (fun () ->
           equal dtype Bool (Ops.dtype (Ops.alu Ops.invalid Op.Sqrt [])));
       test "effects are void, and a call has its body's type" (fun () ->
@@ -1059,7 +1059,7 @@ let shapes =
             (fun u -> is_none ~msg:(str Op.pp (Ops.op u)) (Shape.shape_opt u))
             [
               Ops.sink [];
-              Ops.v ~arg:(Code { code = "nop"; dtype = Void }) Op.Custom;
+              Ops.call (Ops.custom_function ~fmt:true "nop" []) [];
               Ops.v ~arg:(Code { code = "nop"; dtype = Void }) Op.Ins;
               Ops.call (Ops.sink []) [];
               Ops.custom_function "f" [];
@@ -1074,8 +1074,8 @@ let shapes =
           equal shape (ints [ 4 ])
             (Shape.shape (Ops.call (Ops.store a b) [ a; b ])));
       test
-        "a typed instruction is a scalar, and a custom node broadcasts its \
-         sources" (fun () ->
+        "a typed instruction is a scalar, and code has the shape its function \
+         states" (fun () ->
           equal shape []
             (Shape.shape
                (Ops.v
@@ -1085,9 +1085,10 @@ let shapes =
           let pair = Shape.consts [ i 1; i 2 ] in
           equal shape (ints [ 2 ])
             (Shape.shape
-               (Ops.v
-                  ~arg:(Code { code = "x"; dtype = Int32 })
-                  ~src:[ pair ] Op.Customi)));
+               (Ops.call ~inline:true
+                  (Ops.custom_function ~dtype:Int32 ~shape:(ints [ 2 ])
+                     ~fmt:true "x" [])
+                  [ pair ])));
       test "a stack prepends its length" (fun () ->
           let vec = Shape.consts [ i 5; i 6; i 7 ] in
           equal shape (ints [ 3 ]) (Shape.shape vec);

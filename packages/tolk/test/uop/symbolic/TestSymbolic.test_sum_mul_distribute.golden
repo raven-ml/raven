@@ -1,7 +1,7 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 0 Ops.CONST dtypes.weakint [] 0
 1 Ops.CONST dtypes.weakint [] 80
-2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
+2 Ops.CUSTOM_FUNCTION dtypes.void [0, 1] CustomFunction(name="sym")
 3 Ops.STACK dtypes.void []
 4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 7), name="gidx0", addrspace=AddrSpace.ALU)
 5 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 12), name="lidx2", addrspace=AddrSpace.ALU)
@@ -17,19 +17,19 @@
 15 Ops.ADD dtypes.weakint [13, 14]
 16 Ops.SINK dtypes.void [2, 10, 15]
 17 Ops.CONST dtypes.weakint [] 12
-18 Ops.CUSTOM dtypes.void [0, 17] ("simplify", dtypes.void)
+18 Ops.CUSTOM_FUNCTION dtypes.void [0, 17] CustomFunction(name="simplify")
 19 Ops.SINK dtypes.void [18, 5, 5]
 20 Ops.CONST dtypes.weakint [] 7
-21 Ops.CUSTOM dtypes.void [0, 20] ("simplify", dtypes.void)
+21 Ops.CUSTOM_FUNCTION dtypes.void [0, 20] CustomFunction(name="simplify")
 22 Ops.SINK dtypes.void [21, 4, 4]
 23 Ops.CONST dtypes.weakint [] 1
-24 Ops.CUSTOM dtypes.void [0, 23] ("simplify", dtypes.void)
+24 Ops.CUSTOM_FUNCTION dtypes.void [0, 23] CustomFunction(name="simplify")
 25 Ops.SINK dtypes.void [24, 7, 7]
-26 Ops.CUSTOM dtypes.void [0, 1] ("commutative", dtypes.void)
+26 Ops.CUSTOM_FUNCTION dtypes.void [0, 1] CustomFunction(name="commutative")
 27 Ops.ADD dtypes.weakint [12, 11]
 28 Ops.ADD dtypes.weakint [27, 14]
 29 Ops.SINK dtypes.void [26, 28, 15]
-30 Ops.CUSTOM dtypes.void [0, 1] ("simplify", dtypes.void)
+30 Ops.CUSTOM_FUNCTION dtypes.void [0, 1] CustomFunction(name="simplify")
 31 Ops.SINK dtypes.void [30, 15, 15]
 32 Ops.SINK dtypes.void [16, 19, 22, 25, 29, 31]
 

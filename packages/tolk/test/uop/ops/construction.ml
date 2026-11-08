@@ -900,7 +900,7 @@ let calls =
           let fn = Ops.custom_function "f" [ arg ] in
           equal op Op.Custom_function (Ops.op fn);
           equal Common.arg
-            (Custom_function { name = "f"; dtype = Void })
+            (Custom_function { name = "f"; dtype = Void; fmt = false })
             (Ops.arg fn);
           equal uops [ arg ] (Ops.src fn);
           equal dtype Int32

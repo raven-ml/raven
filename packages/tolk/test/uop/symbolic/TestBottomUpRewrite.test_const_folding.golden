@@ -1,6 +1,6 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 0 Ops.CONST dtypes.weakint [] 50
-1 Ops.CUSTOM dtypes.void [0, 0] ("symbolic_simple", dtypes.void)
+1 Ops.CUSTOM_FUNCTION dtypes.void [0, 0] CustomFunction(name="symbolic_simple")
 2 Ops.CONST dtypes.weakint [] 5
 3 Ops.CONST dtypes.weakint [] 3
 4 Ops.MUL dtypes.weakint [2, 3]
@@ -8,7 +8,7 @@
 6 Ops.MUL dtypes.weakint [2, 5]
 7 Ops.ADD dtypes.weakint [4, 6]
 8 Ops.SINK dtypes.void [1, 7, 0]
-9 Ops.CUSTOM dtypes.void [0, 0] ("symbolic_simple bottom_up", dtypes.void)
+9 Ops.CUSTOM_FUNCTION dtypes.void [0, 0] CustomFunction(name="symbolic_simple bottom_up")
 10 Ops.SINK dtypes.void [9, 7, 0]
 11 Ops.SINK dtypes.void [8, 10]
 

@@ -62,8 +62,6 @@ let declared =
       Endif;
       Backedge;
       Const;
-      Custom;
-      Customi;
       Ins;
       Contiguous_backward;
       Detach;

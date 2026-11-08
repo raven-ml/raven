@@ -1,4 +1,4 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 name	arg
 none	None
 int	42
@@ -19,7 +19,7 @@ special	'gidx0'
 permute	None
 flip	None
 device	'CUDA'
-custom	('barrier();', dtypes.void)
+custom	CallInfo(None, None, False, False, False, None)
 ins	('s_endpgm', dtypes.void)
 binary	b'\x7fELF\x00\n\'"'
 source	"int x = 'a';\n"
@@ -34,7 +34,7 @@ kernel	KernelInfo(name='test', applied_opts=(), opts_to_apply=None, estimates=No
 kernel with opts	KernelInfo(name='kern', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.TC, axis=0, arg=(-1, 2, 1)), Opt(op=OptOps.PADTO, axis=1, arg=32), Opt(op=OptOps.SWAP, axis=0, arg=1)), opts_to_apply=(Opt(op=OptOps.PADTO, axis=0, arg=4),), estimates=Estimates(ops=1, lds=2, mem=3), beam=2, optimized=False, kernel=True, split=None)
 bufferize	BufferizeOpts(device='CPU', addrspace=AddrSpace.LOCAL, removable=False, broadcast=False)
 bufferize without device	BufferizeOpts(device=None, addrspace=AddrSpace.GLOBAL, removable=True, broadcast=False)
-call	CallInfo(None, 'f', False, False)
-call returning	CallInfo(None, None, True, False)
+call	CallInfo(None, 'f', False, False, False, None)
+call returning	CallInfo(None, None, True, False, False, None)
 program	ProgramInfo(global_size=(4, 1, 1), local_size=(8, 1, 1), params=(), globals=(0, 1), outs=(0,), ins=(1,), target=CPU:CLANG)
 wmma	((8, 16, 16), dtypes.f16, 32, ((((AxisType.UPCAST, 0), 2), ((AxisType.UPCAST, 1), 2)), (((AxisType.UPCAST, 2), 2),), (((AxisType.UPCAST, 3), 2),)))

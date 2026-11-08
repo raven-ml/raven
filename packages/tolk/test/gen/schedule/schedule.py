@@ -124,6 +124,51 @@ def read_stage(direct):
     return lambda: empty(1, dtype=dtypes.int32).custom_kernel(fxn=kernel)[0] + 1
 
 
+def reduce_axis_and_range():
+    """A function whose sum pops A's axis and loops a range of its own
+    (runtime/test_custom_kernel.py, test_reduce_axis_and_range): 3 times A's
+    sum."""
+    def kernel(C, A): return C[0].store(A.reduce(UOp.range(3, 0), arg=(Ops.ADD, 1))).sink()
+    return Tensor.custom_kernel(empty(1, dtype=dtypes.int32), empty(2, dtype=dtypes.int32), fxn=kernel)[0] + 1
+
+
+def reduce_singleton_axis_and_range():
+    """A sum of a tensor's axes, the last of one element, and of a range
+    (test_reduce_singleton_axis_and_range): 3 times the tensor's sum."""
+    return Tensor(empty(2, 1, dtype=dtypes.int32).uop.reduce(UOp.range(3, 0), arg=(Ops.ADD, 2))) + 1
+
+
+def stage_padded_slice():
+    """A function storing a stage of a padded range, a row per step
+    (test_explicit_stage_padded_slice): [[0, 0, 0, 0], [0, 1, 1, 0]]."""
+    def kernel(out):
+        r = UOp.range(2, 0, AxisType.LOOP)
+        return out.store(r.expand(2).pad((1, 1)).bufferize(r, arg=BufferizeOpts(out.device, removable=False))).sink()
+    return empty(2, 4, dtype=dtypes.int32).custom_kernel(fxn=kernel)[0] + 1
+
+
+def stage_in_registers(free_range):
+    """A function staging a value in registers, over a range its store does not
+    read or over none (test_explicit_stage_free_range_reg,
+    test_explicit_stage_no_range_reg): [2, 12, 22], or [1, 11, 21]."""
+    def kernel(out):
+        i = UOp.range(3, 0, AxisType.LOOP)
+        if free_range:
+            j = UOp.range(4, 1, AxisType.LOOP)
+            v = (i*10+j).cast(dtypes.int).bufferize(j, arg=BufferizeOpts(None, AddrSpace.REG, removable=False)).index(2)
+        else: v = (i*10).cast(dtypes.int).bufferize(arg=BufferizeOpts(None, AddrSpace.REG, removable=False))+1
+        return out[i].store(v).end(i).sink()
+    return lambda: empty(3, dtype=dtypes.int32).custom_kernel(fxn=kernel)[0] + 1
+
+
+def after_sum():
+    """A value ordered after a sum it does not read (runtime/test_schedule.py,
+    test_reduce_order_dependency): the sum plus c[0]."""
+    a, c = empty(2, dtype=dtypes.int32), empty(1, dtype=dtypes.int32)
+    s = a.sum()
+    return s + Tensor(c.uop.after(s.uop))[0]
+
+
 def assign_reads_behind_other_after():
     # an assign whose value reads a buffer after that buffer's own assign,
     # which read the destination: the value waits on the other assign, not on
@@ -353,6 +398,12 @@ PROGRAMS = {
     "custom_kernel_unused_then_variable": custom_kernel_unused_then_variable,
     "custom_kernel_stage": read_stage(True),
     "custom_kernel_stage_table": read_stage(False),
+    "reduce_axis_and_range": reduce_axis_and_range,
+    "reduce_singleton_axis_and_range": reduce_singleton_axis_and_range,
+    "stage_padded_slice": stage_padded_slice,
+    "stage_free_range_reg": stage_in_registers(True),
+    "stage_no_range_reg": stage_in_registers(False),
+    "after_sum": after_sum,
     "inline_function": inline_function,
     "precompiled_function": precompiled_function,
     "chained_functions": chained_functions,

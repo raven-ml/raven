@@ -14,7 +14,7 @@ index c19a95f13..b70de225a 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index 9fb9a4c3f..7defa0df8 100644
+index 9fb9a4c3f..6a6ac6d1b 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,31 +2,31 @@ from dataclasses import replace, dataclass, field
@@ -410,10 +410,10 @@ index 9fb9a4c3f..7defa0df8 100644
 +
 +def split_blocks(sink:UOp) -> UOp:
 +  nodes = list(sink.backward_slice_with_self)
-+  effects = [u for u in nodes if (u.op is Ops.STORE and writes_memory(u)) or u.op in (Ops.CALL, Ops.CUSTOM)]
-+  # an effect misses r when r is none of the ranges of a store's index, or of a call's arguments or code's sources
++  effects = [u for u in nodes if (u.op is Ops.STORE and writes_memory(u)) or u.op is Ops.CALL]
++  # an effect misses r when r is none of the ranges of a store's index, or of a call's arguments
 +  def misses(r:UOp, e:UOp) -> bool:
-+    return not any(r in s.ranges for s in ((e.src[0],) if e.op is Ops.STORE else e.src[1:] if e.op is Ops.CALL else e.src))
++    return not any(r in s.ranges for s in ((e.src[0],) if e.op is Ops.STORE else e.src[1:]))
 +  def qualifies(r:UOp) -> bool:
 +    return r.op is Ops.RANGE and r.axis_type == AxisType.WEAK and not r.src[0].ranges and int(r.src[0].vmax) >= 2 and \
 +      not any(misses(r, e) for e in effects)
@@ -445,8 +445,8 @@ index 9fb9a4c3f..7defa0df8 100644
 +  writes: dict[UOp, list[UOp]] = {}
 +  for u in nodes:
 +    if u.op is Ops.STORE and (b:=storage(u.src[0])) is not None: writes.setdefault(b, []).append(u)
-+    elif u.op in {Ops.CALL, Ops.CUSTOM}:
-+      for a in (u.src[1:] if u.op is Ops.CALL else u.src):
++    elif u.op is Ops.CALL:
++      for a in u.src[1:]:
 +        if a.addrspace in (AddrSpace.GLOBAL, AddrSpace.LOCAL, AddrSpace.REG) and (b:=storage(a)) is not None: writes.setdefault(b, []).append(u)
 +  regs = [(b, ws) for b,ws in writes.items() if space(b) is AddrSpace.REG]
 +  backedges = [u for u in nodes if u.op is Ops.BACKEDGE]
@@ -468,7 +468,7 @@ index 9fb9a4c3f..7defa0df8 100644
 +        elif u.axis_type is AxisType.PLACEHOLDER: c[u] = None
 +        else: c[u] = None if (u in marked if u.dtype == dtypes.void else c[u.src[0]] != frozenset()) else frozenset()
 +      elif u.op is Ops.AFTER: c[u] = c[u.src[0]]
-+      elif u.op in {Ops.WMMA, Ops.INS, Ops.CUSTOM, Ops.CUSTOMI, Ops.CALL}: c[u] = None
++      elif u.op in {Ops.WMMA, Ops.INS, Ops.CALL}: c[u] = None
 +      elif u.op is Ops.REDUCE:
 +        closed = u.ended_ranges
 +        x = c[u.src[0]]
@@ -1358,7 +1358,7 @@ index 65fb29491..7bdb9b872 100644
      # do the grouping
      for _,group in itertools.groupby(enumerate(sorted(offsets.keys())), lambda x: x[1]-x[0]):
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index ec97cac6f..9e238a9a7 100644
+index ec97cac6f..d6363ca12 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
 @@ -1,9 +1,337 @@
@@ -1579,7 +1579,7 @@ index ec97cac6f..9e238a9a7 100644
 +  for r in k.reduceops:
 +    if r.arg[0] is not Ops.ADD or r.src[0].op is not Ops.MUL: continue
 +    over = [x for x in reduces_of(k) if any(x is s for s in r.src[1:])]
-+    if all(accesses(o) and not reduces_in(over, o) for o in r.src[0].src): return r.src[0], over
++    if over and all(accesses(o) and not reduces_in(over, o) for o in r.src[0].src): return r.src[0], over
 +  return None
 +def contracted(k:Scheduler) -> list[UOp]: return [] if (c:=contraction(k)) is None else c[1]
 +# the main access of w is the one with a range of unit stride whose terms span the most bytes along the contracted ranges: its codes or
@@ -1617,7 +1617,7 @@ index ec97cac6f..9e238a9a7 100644
 +  return r <= STREAM_FIRST and (not isinstance(n, int) or n >= LANES*IN_FLIGHT) and ((i:=per_byte(k, w)) is None or i <= k.ren.per_byte_first)
 +def streamed(k:Scheduler):
 +  # a kernel where a loop's bound reads an axis is not streamed: the layouts upcast output axes by their accesses
-+  if not (k.ren.has_local and k.ren.has_shared and getenv("MV",1) != 0) or k.read_by_bounds or k.opaque or k.read_by_opaque or (c:=contraction(k)) is None: return None
++  if not (k.ren.has_local and k.ren.has_shared and getenv("MV",1) != 0) or k.read_by_bounds or k.opaque or (c:=contraction(k)) is None: return None
 +  a, b = c[0].src
 +  def rows_first(o): return (l:=layout(k, o)) is not None and l[0] == "rows"
 +  ra, rb = reuse(k, a), reuse(k, b)
@@ -1985,7 +1985,7 @@ index ec97cac6f..9e238a9a7 100644
        deleted_shape = 0
        for axis, local_sz in sorted(to_local[:3]):
 diff --git a/tinygrad/codegen/opt/postrange.py b/tinygrad/codegen/opt/postrange.py
-index a54fbf3aa..f99b47107 100644
+index a54fbf3aa..0d473a823 100644
 --- a/tinygrad/codegen/opt/postrange.py
 +++ b/tinygrad/codegen/opt/postrange.py
 @@ -1,10 +1,10 @@
@@ -2032,7 +2032,7 @@ index a54fbf3aa..f99b47107 100644
      self.ast = self.ast.substitute({r:r.replace(arg=(AxisType.GLOBAL,)+r.axis_id) for r in self.rngs if r in rngs})
  
    def colors(self) -> list[str]: return [axis_colors[t] for t in self.axis_types]
-@@ -81,8 +91,30 @@ class Scheduler:
+@@ -81,8 +91,28 @@ class Scheduler:
  
    def upcast_size(self): return prod(self.full_shape[a] for a in self.axes_of(AxisType.UPCAST))
  
@@ -2042,14 +2042,12 @@ index a54fbf3aa..f99b47107 100644
 +
 +  # the calls and custom code: each runs once for each point of the ranges its sources read, and takes one pointer or value for each source
 +  @property
-+  def opaque(self) -> list[UOp]: return [u for u in self.ast.toposort() if u.op in (Ops.CALL, Ops.CUSTOM)]
-+  def _reads(self, u:UOp) -> set[UOp]: return {r for s in (u.src[1:] if u.op is Ops.CALL else u.src) for r in s.ranges}
++  def opaque(self) -> list[UOp]: return [u for u in self.ast.toposort() if u.op is Ops.CALL]
++  def _reads(self, u:UOp) -> set[UOp]: return {r for s in u.src[1:] for r in s.ranges}
 +
 +  # the ranges the sources of a call or of custom code read: none of them can become lanes or take padding
 +  @property
-+  def read_by_opaque(self) -> set[UOp]:
-+    # an expression (CUSTOMI) takes one value for each source too, but has no effect: every thread may compute it
-+    return {r for u in self.opaque+[u for u in self.ast.toposort() if u.op is Ops.CUSTOMI] for r in self._reads(u)}
++  def read_by_opaque(self) -> set[UOp]: return {r for u in self.opaque for r in self._reads(u)}
 +
 +  # the ranges the sources of a call or of custom code do not read: every thread runs it, so none of them can take threads
 +  @property
@@ -2064,7 +2062,7 @@ index a54fbf3aa..f99b47107 100644
  
    def apply_opt(self, opt:Opt, append_opt:bool=True):
      if opt.op is OptOps.TC: rng = UOp(Ops.NOOP)
-@@ -96,26 +128,38 @@ class Scheduler:
+@@ -96,26 +126,37 @@ class Scheduler:
        amt, new_type, top = (*cast(tuple, opt.arg), False)[0:3]
        check(type(amt) is int and (amt == 0 or amt > 1) and isinstance(new_type, AxisType) and new_type in split_targets and isinstance(top, bool),
              f"invalid split arg {opt.arg}")
@@ -2107,22 +2105,19 @@ index a54fbf3aa..f99b47107 100644
        check(len(self.applied_opts) == 0, "tensor core opts must be first") # TODO: remove the need for this by having warps
 +      check(not self.read_by_bounds, "tensor cores need loops whose bounds read no axis")
 +      check(not self.opaque, "tensor cores need a kernel without calls or custom code")
-+      check(not self.read_by_opaque, "tensor cores need custom expressions that read no axis")
        check(opt.axis is not None and opt.axis >= 0, "tensor core opts must have an axis")
        check(opt.arg is not None and isinstance(opt.arg, tuple) and len(opt.arg) == 3, "tensor core opts must have valid arg")
        check(-1 <= (tc_select:=cast(tuple, opt.arg)[0]) < len(self.ren.tensor_cores), "tensor core opts must have valid tc_select")
-@@ -126,7 +170,9 @@ class Scheduler:
+@@ -126,7 +167,7 @@ class Scheduler:
        check(ret is not None, "no tensor core available")
      elif opt.op is OptOps.PADTO:
        check(type(opt.arg) is int and opt.arg > 1, f"padto arg is a multiple > 1, not {opt.arg}")
 -      check(rng.src[0].op is Ops.CONST, "only pad const axes")
 +      check(rng.src[0].op is Ops.CONST or (rng.src[0].op is Ops.CAST and rng.src[0].src[0].op is Ops.CONST), "only pad const axes")
-+      # a padded point would run the call or the code on a source of no element
-+      check(rng not in self.read_by_opaque, f"a call or custom code reads axis {opt.axis}")
        # TODO: upcasted is only wrong for a range pinned in WMMA tc_upcast_axes
        check(rng.axis_type not in {AxisType.UPCAST, AxisType.WARP}, "cannot pad upcasted or warp")
        new_sz = round_up(int(rng.vmax+1), cast(int, opt.arg))
-@@ -161,6 +207,39 @@ class Scheduler:
+@@ -161,6 +202,39 @@ class Scheduler:
      if append_opt: self.applied_opts.append(opt)
      return ret
  
@@ -2162,7 +2157,7 @@ index a54fbf3aa..f99b47107 100644
    def _apply_tc_opt(self, use_tensor_cores:int, axis:int, tc_select:int, opt_level:int) -> None|list[UOp]:
      if not (reduceops := self.reduceops): raise KernelOptError("no reduce ops for TensorCore")
      reduceop = reduceops[0]
-@@ -170,21 +249,28 @@ class Scheduler:
+@@ -170,21 +244,28 @@ class Scheduler:
        in0, in1 = mul.src
        for tc in self.ren.tensor_cores if tc_select == -1 else [self.ren.tensor_cores[tc_select]]:
          if self.ren.target.device in ("CUDA", "NV") and tc.dtype_in == dtypes.float and not ALLOW_TF32: continue
@@ -2203,7 +2198,7 @@ index a54fbf3aa..f99b47107 100644
            check(not any(r in self.reduce_ranges for r in axes[:2]), "tensor core N and M can't be contracted")
  
            # do optimizations and save the ranges
-@@ -207,7 +293,11 @@ class Scheduler:
+@@ -207,7 +288,11 @@ class Scheduler:
              reduceop = get_single_element([x for x in self.reduceops if axes[2] in x.src[1:]])
              gate, mul = (r0.src[0], r0.src[1]) if (r0:=reduceop.src[0]).op is Ops.WHERE else (None, r0)
              if mul.op is Ops.CAST: mul = mul.src[0]
@@ -2216,14 +2211,15 @@ index a54fbf3aa..f99b47107 100644
              srcs = [x.substitute({ne[a]: ne[b] for a,b in rl.items()}, walk=True) for x,rl in zip(ins, tc.relabel())]
  
              # get upcast axes for the tensor cores
-@@ -243,13 +333,18 @@ def args_from_ast(ast:UOp, dname:str) -> tuple[list[Buffer], dict[str, int]]:
+@@ -243,13 +328,19 @@ def args_from_ast(ast:UOp, dname:str) -> tuple[list[Buffer], dict[str, int]]:
    glbls = sorted([x for x in ast.backward_slice if x.op is Ops.PARAM and x.arg.slot >= 0], key=lambda x: x.arg.slot)
    return [Buffer(dname, x.max_numel() * x.dtype.itemsize) for x in glbls], {k.expr:int(k.vmax+k.vmin)//2 for k in ast.variables()}
  
 +# the builder fixed the threads: workgroup or register storage, a barrier, a matrix multiply-accumulate or custom code, here or in a called body
 +def threads_fixed(ast:UOp) -> bool:
 +  return any((isinstance(u.arg, ParamArg) and u.arg.addrspace in (AddrSpace.LOCAL, AddrSpace.REG)) or
-+             u.op in (Ops.BARRIER, Ops.WMMA, Ops.CUSTOM, Ops.CUSTOMI) for u in ast.toposort(enter_calls=True))
++             u.op in (Ops.BARRIER, Ops.WMMA) or (u.op is Ops.CALL and u.body.op is Ops.CUSTOM_FUNCTION and u.body.arg.fmt)
++             for u in ast.toposort(enter_calls=True))
 +
  def apply_opts(ast:UOp, ren:Renderer, beam:int=0) -> UOp:
    if ast.arg is not None and ast.arg.optimized: return ast
@@ -2236,7 +2232,7 @@ index a54fbf3aa..f99b47107 100644
      from tinygrad.codegen.opt.search import beam_search
      rawbufs, var_vals = args_from_ast(ast, ren.target.device)
      # beam search may open devices
-@@ -258,6 +353,6 @@ def apply_opts(ast:UOp, ren:Renderer, beam:int=0) -> UOp:
+@@ -258,6 +349,6 @@ def apply_opts(ast:UOp, ren:Renderer, beam:int=0) -> UOp:
    elif not NOOPT and (ast.arg is None or ast.arg.applied_opts == ()):
      from tinygrad.codegen.opt.heuristic import hand_coded_optimizations
      # NOTE: hand_coded_optimizations doesn't support multiblock opts yet
@@ -2261,7 +2257,7 @@ index af2199821..901f0054c 100644
      uops = prg.src[1].src
      if len(uops) >= (uops_max:=getenv("BEAM_UOPS_MAX", 3000)) > 0:
 diff --git a/tinygrad/codegen/simplify.py b/tinygrad/codegen/simplify.py
-index b17b303b2..170b1c593 100644
+index b17b303b2..fa86f273a 100644
 --- a/tinygrad/codegen/simplify.py
 +++ b/tinygrad/codegen/simplify.py
 @@ -1,9 +1,9 @@
@@ -2310,7 +2306,7 @@ index b17b303b2..170b1c593 100644
 +# the ranges the index and the effect's other sources read
 +def effect_index(u:UOp) -> UOp|None:
 +  if u.op is Ops.STORE: return u.src[0] if u.src[0].op is Ops.INDEX else None
-+  if u.op in {Ops.CUSTOM, Ops.CALL}: return next((s for s in u.src if s.op is Ops.INDEX), None)
++  if u.op is Ops.CALL: return next((s for s in u.src if s.op is Ops.INDEX), None)
 +  return None
 +
 +def pin_index(ctx:set[UOp], x:UOp) -> UOp|None:
@@ -2324,12 +2320,12 @@ index b17b303b2..170b1c593 100644
 +
 +pm_pin_effects = PatternMatcher([
 +  (UPat(Ops.INDEX, name="x"), pin_index),
-+  (UPat((Ops.STORE, Ops.CUSTOM, Ops.CALL), name="x"), lambda ctx,x: pin_effect(x)),
++  (UPat((Ops.STORE, Ops.CALL), name="x"), lambda ctx,x: pin_effect(x)),
 +])
 +
 +# the buffers an effect may write: those of each index it takes
 +def effect_buffers(u:UOp) -> list[UOp]:
-+  idxs = (u.src[0],) if u.op is Ops.STORE else u.src if u.op in {Ops.CUSTOM, Ops.CALL} else ()
++  idxs = (u.src[0],) if u.op is Ops.STORE else u.src if u.op is Ops.CALL else ()
 +  return [s.src[0].buf_uop for s in idxs if s.op is Ops.INDEX]
 +
 +def pin_effects(sink:UOp) -> UOp:
@@ -2345,7 +2341,7 @@ index b17b303b2..170b1c593 100644
 +
 +pm_unpin_effects = PatternMatcher([
 +  (UPat(Ops.INDEX, name="x"), lambda x: unpin(x, x)),
-+  (UPat((Ops.STORE, Ops.CUSTOM, Ops.CALL), name="x"), lambda x: unpin(x, idx) if (idx:=effect_index(x)) is not None else None),
++  (UPat((Ops.STORE, Ops.CALL), name="x"), lambda x: unpin(x, idx) if (idx:=effect_index(x)) is not None else None),
 +])
 +
  def reduce_unparented(red:UOp) -> UOp|None:
@@ -2634,7 +2630,7 @@ index 7fb5ccac2..7d16f2fd2 100644
    tensor_cores: list[TensorCore] = []
    extra_matcher: PatternMatcher|None = None
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
-index d5f2494e4..4c9bbeaf7 100644
+index 1bfa0be77..9f62bbcce 100644
 --- a/tinygrad/renderer/cstyle.py
 +++ b/tinygrad/renderer/cstyle.py
 @@ -5,9 +5,28 @@ from tinygrad.renderer import tc
@@ -2697,7 +2693,7 @@ index d5f2494e4..4c9bbeaf7 100644
  
    # call an external function by symbol: the CUSTOM_FUNCTION body names the callee, the srcs are the args and set the types
    (UPat(Ops.CALL, src=(UPat(Ops.CUSTOM_FUNCTION, name="f"),), allow_any_len=True, name="x"), lambda ctx,x,f:
-@@ -86,6 +103,61 @@ base_rewrite = PatternMatcher([
+@@ -84,6 +101,61 @@ base_rewrite = PatternMatcher([
  pm_narrow_uint = PatternMatcher([(UPat((Ops.ADD, Ops.SUB, Ops.MUL, Ops.NEG, Ops.SHL, Ops.MULACC), (dtypes.uint8, dtypes.uint16), name="x"),
                                    lambda x: x.replace(src=tuple(s.cast(dtypes.uint32) for s in x.src)).cast(x.dtype))])
  
@@ -2759,7 +2755,7 @@ index d5f2494e4..4c9bbeaf7 100644
  def create_non_native_float_pats(dts:tuple[DType, ...], casting:bool=True):
    patterns = PatternMatcher([
      # a weak CONST states no width and cannot be restated: commit it at the emulated dtype a sibling src states
-@@ -117,8 +189,9 @@ pm_manual_bf16_cast = PatternMatcher([
+@@ -115,8 +187,9 @@ pm_manual_bf16_cast = PatternMatcher([
  # a bfloat16 stored as ushort renders its const as the bit pattern
  pm_bf16_ushort_const = PatternMatcher([(UPat.cvar("c").cast(dtypes.bfloat16), lambda ctx,c: f"{to_storage_scalar(c.val, dtypes.bfloat16)}u")])
  
@@ -2771,7 +2767,7 @@ index d5f2494e4..4c9bbeaf7 100644
  
  def _wmma_name(u:UOp) -> str:
    return f"WMMA_{'_'.join(map(str, u.arg[0]))}_{u.arg[1].name}_{u.dtype.name}"
-@@ -127,6 +200,24 @@ def _wmma_name(u:UOp) -> str:
+@@ -125,6 +198,24 @@ def _wmma_name(u:UOp) -> str:
  def wmma_args(uops:list[UOp]):
    return dedup((_wmma_name(uop), uop.arg[0], uop.arg[1], uop.dtype, tuple(x.shape[-1] for x in uop.src)) for uop in uops if uop.op is Ops.WMMA)
  
@@ -2796,7 +2792,7 @@ index d5f2494e4..4c9bbeaf7 100644
  class CStyleLanguage(Renderer):
    abi: str = ""
    kernel_typedef: str = "void"
-@@ -158,7 +249,8 @@ class CStyleLanguage(Renderer):
+@@ -156,7 +247,8 @@ class CStyleLanguage(Renderer):
      Ops.ADD: lambda a,b,dtype: f"({a}+{b})", Ops.SUB: lambda a,b,dtype: f"({a}-{b})", Ops.MUL: lambda a,b,dtype: f"({a}*{b})",
      Ops.TRUNCMOD: lambda a,b,dtype: f"({a}%{b})", Ops.TRUNCDIV: lambda a,b,dtype: f"({a}/{b})", Ops.CMPNE: lambda a,b,dtype: f"({a}!={b})",
      Ops.SHR: lambda a,b,dtype: f"({a}>>{b})", Ops.SHL: lambda a,b,dtype: f"({a}<<{b})", Ops.CMPLT: lambda a,b,dtype: f"({a}<{b})",
@@ -2806,7 +2802,7 @@ index d5f2494e4..4c9bbeaf7 100644
  
    string_rewrite = base_rewrite
  
-@@ -209,6 +301,7 @@ class CStyleLanguage(Renderer):
+@@ -207,6 +299,7 @@ class CStyleLanguage(Renderer):
      else: return f"{self[u]}"
    def render_access(self, u:UOp): return f"*{self.render_ptr(u)}"
    def render_cast(self, u:UOp, val:str) -> str: return f"({self.render_type(u)})({val})"
@@ -2814,7 +2810,7 @@ index d5f2494e4..4c9bbeaf7 100644
  
    # LEGACY
    def render_dtype(self, dt:DType, mutable=True) -> str:
-@@ -218,6 +311,7 @@ class CStyleLanguage(Renderer):
+@@ -216,6 +309,7 @@ class CStyleLanguage(Renderer):
    def _render(self, uops:list[UOp]) -> tuple[str, list[str], list[tuple[str,tuple[UOp,bool]]]]:
      r: dict[UOp, str] = {}
      self.r = r
@@ -2822,7 +2818,7 @@ index d5f2494e4..4c9bbeaf7 100644
  
      child_count = Counter(v for ru in uops for v in ru.src)
      # find which PARAMs are stored to with a single toposort
-@@ -265,12 +359,13 @@ class CStyleLanguage(Renderer):
+@@ -264,12 +358,13 @@ class CStyleLanguage(Renderer):
          r[u] = l
        else:
          if u.op not in {Ops.RANGE, Ops.BUFFER, Ops.BINARY} and u.dtype != dtypes.void:
@@ -3396,7 +3392,7 @@ index 366485ae0..0b8681bfb 100644
    ret = ret.call(*ctx.replacements, precompile=True)
    if VIZ: graph_rewrite(ret, PatternMatcher([]), name="View Call")
 diff --git a/tinygrad/schedule/indexing.py b/tinygrad/schedule/indexing.py
-index 3c0116896..e209bbee9 100644
+index b2dd94bd0..a115a3b9f 100644
 --- a/tinygrad/schedule/indexing.py
 +++ b/tinygrad/schedule/indexing.py
 @@ -1,17 +1,35 @@
@@ -3744,12 +3740,12 @@ index c02f1b0c9..1dfc7c36f 100644
  
    offsets:dict[UOp, int] = {}
 diff --git a/tinygrad/schedule/prepare.py b/tinygrad/schedule/prepare.py
-index 042666a13..bace2ec4a 100644
+index 91fc79e22..3020f3eda 100644
 --- a/tinygrad/schedule/prepare.py
 +++ b/tinygrad/schedule/prepare.py
 @@ -1,10 +1,10 @@
  from dataclasses import replace
--from tinygrad.dtype import dtypes, to_dtype
+-from tinygrad.dtype import AddrSpace, dtypes, to_dtype
 -from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, GroupOp
 +from tinygrad.dtype import dtypes, to_dtype, AddrSpace
 +from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, GroupOp, sint
@@ -3804,7 +3800,7 @@ index 042666a13..bace2ec4a 100644
  # *****************
  # 0. do some cleanup rewrites, mostly copied from the old stuff
  
-@@ -154,13 +172,13 @@ def copy_to_anon_store(x:UOp, copy:UOp):
+@@ -154,14 +172,14 @@ def copy_to_anon_store(x:UOp, copy:UOp):
    # copies are always cross device: pad to the max shape so the copy reads a whole buffer (SDMA can't do offset copies)
    x = x.pad_to(x.max_shape)
    # the buffer takes the DEVICE range from the copy (no-op for single device copies)
@@ -3814,13 +3810,14 @@ index 042666a13..bace2ec4a 100644
    return buf.after(buf.store(x)).shrink_to(copy.shape)
  
  def stage_to_anon_store(x:UOp, stg:UOp):
+   if stg.arg is not None and stg.arg.addrspace is not AddrSpace.GLOBAL: return None
    # the buffer created here is inside the call and is not persisted, like the buffers created for copies
--  buf = UOp.alloc(x.max_shape, stg.dtype, device=x.device)
-+  buf = UOp.alloc(x.max_shape, stg.dtype, device=x.device, vmin_vmax=x.stored_bounds(stg.dtype))
+-  buf = UOp.alloc(stg.max_shape, stg.dtype, device=x.device)
++  buf = UOp.alloc(stg.max_shape, stg.dtype, device=x.device, vmin_vmax=x.stored_bounds(stg.dtype))
    view = buf.shrink_to(stg.shape)
-   return view.after(view.store(x))
- 
-@@ -225,9 +243,6 @@ earliest_rewrites = mop_cleanup+PatternMatcher([
+   dst = view.index(*stg.src[1:]) if len(stg.src) > 1 else view
+   return view.after(dst.store(x).end(*stg.src[1:]))
+@@ -227,9 +245,6 @@ earliest_rewrites = mop_cleanup+PatternMatcher([
    # materialize the src of a cross device STORE on its own device first: the STORE itself is the copy
    (UPat(Ops.STORE, src=(UPat(name="dest"), UPat(name="src"))), materialize_cross_device_src),
  
@@ -3830,7 +3827,7 @@ index 042666a13..bace2ec4a 100644
    # store a buffer's own current contents back into itself: TestAssign.test_assign_from_alias
    (UPat.var("buf").after(UPat.var("buf").store(UPat.var("buf").after(UPat.var("buf").store(UPat()), name="a1"))), lambda buf,a1:a1),
  
-@@ -254,7 +269,7 @@ earliest_rewrites = mop_cleanup+PatternMatcher([
+@@ -256,7 +271,7 @@ earliest_rewrites = mop_cleanup+PatternMatcher([
  def prepare_rangeify(sink:UOp) -> UOp:
    # prepare for rangeify
    tsink = graph_rewrite(forward_call_outputs(sink), multi_pm, name="multi_pm")
@@ -3841,7 +3838,7 @@ index 042666a13..bace2ec4a 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 8238ec207..9164c859f 100644
+index 6b9600089..fe8ba6898 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
 @@ -1,13 +1,13 @@
@@ -4025,7 +4022,7 @@ index 8238ec207..9164c859f 100644
 +  copies = max(min([ctx.copies.get(r.arg, 0) for r in rngs], default=1), 1)
 +  copied = len([x for x in computed if any(r in x.ranges for r in rngs)])
 +  def positional(x:UOp) -> bool: return x.device is None and x.dtype in (dtypes.weakint, dtypes.bool)
-+  computes = any((x.op in GroupOp.Elementwise or x.op in {Ops.REDUCE, Ops.CUSTOM, Ops.CUSTOMI}) and not positional(x) for x in computed)
++  computes = any((x.op in GroupOp.Elementwise or x.op in {Ops.REDUCE, Ops.CALL}) and not positional(x) for x in computed)
 +  if not (src.op is Ops.INDEX and not computes) and copied * (copies - 1) > INLINE_BUDGET: return None
 +
    # if any reduces access a buffer, don't remove this buffer
@@ -4088,7 +4085,7 @@ index 8238ec207..9164c859f 100644
  # collapse any BUFFERIZE to single input BUFFERIZE
  def flatten_bufferize(x:UOp):
    if len(x.src) == 2: return None
-@@ -255,6 +423,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -256,6 +424,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
    # this must run in the same rewrite that adds the cast, or the expander expands the whole casted buffer into one big VECTORIZE
    (UPat(Ops.INDEX, src=(UPat(Ops.CAST, dtype=dtypes.weaks, src=(UPat.var("buf"),)),), allow_any_len=True, name="u"),
     lambda u,buf: u.replace(src=(buf,)+u.src[1:]).cast(u.dtype)),
@@ -4098,7 +4095,7 @@ index 8238ec207..9164c859f 100644
  
    # move RESHAPEs through MSELECT/MSTACK
    (UPat((Ops.MSELECT, Ops.MSTACK), src=UPat(Ops.RESHAPE), name="m"),
-@@ -275,33 +446,50 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -276,34 +447,51 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
  class LocalAddBufferContext:
    map:dict = field(default_factory=dict)
    ranges:dict = field(default_factory=dict)
@@ -4140,6 +4137,9 @@ index 8238ec207..9164c859f 100644
  
  def handle_after(ctx:LocalAddBufferContext, after:UOp):
 -  if after.addrspace == AddrSpace.LOCAL: return None
++  # a group of stores, an AFTER of an empty STACK, is no state of a buffer
++  if after.addrspace == AddrSpace.LOCAL or (after.src[0].op is Ops.STACK and not after.src[0].src): return None
+   if after.addrspace is AddrSpace.ALU: raise RuntimeError("kernel boundary requires storage")
 -  buf = after.buf_uop
 -  # NOTE: this is bottom up, so we only add it once
 -  if buf not in ctx.map: ctx.map[buf] = after
@@ -4150,8 +4150,6 @@ index 8238ec207..9164c859f 100644
 -  read_from: dict[UOp, UOp] = {}
 -  if any((buf:=idx.buf_uop).op in GroupOp.Defines and read_from.setdefault(buf, state:=idx.src[0]) is not state for idx in idxs):
 -    raise RuntimeError(f"cycle detected while indexing {buf}")
-+  # a group of stores, an AFTER of an empty STACK, is no state of a buffer
-+  if after.addrspace == AddrSpace.LOCAL or (after.src[0].op is Ops.STACK and not after.src[0].src): return None
 +  # a join is no state either: the kernel reads the state under it, and its call's argument waits for what the join waits for
 +  state, deps = _unjoin(after)
 +  p = _stand_in(ctx, state)
@@ -4163,7 +4161,7 @@ index 8238ec207..9164c859f 100644
    (UPat((Ops.BUFFER, Ops.ALLOC, Ops.MSTACK, Ops.MSELECT), name="buf"), add_buf),
    # Only storage parameters get kernel-local slots; scalar parameters retain their enclosing call's slots.
    (UPat(Ops.PARAM, name="buf"), lambda ctx, buf:
-@@ -329,23 +517,107 @@ def split_store(x:UOp) -> UOp|None:
+@@ -331,23 +519,107 @@ def split_store(x:UOp) -> UOp|None:
    ret = graph_rewrite(ret, pm_renumber_range, ctx={a:i for i,a in enumerate(lctx.ranges)}, walk=True)
  
    # create the Kernel. NOTE: buffers can be on different devices here now, they are compiled to SDMA copies later by schedule
@@ -4275,7 +4273,7 @@ index 8238ec207..9164c859f 100644
  
    # bufferize -> store
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index 13ab05458..e66eebe06 100644
+index d038fa43f..c9fe09af4 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -1,6 +1,7 @@
@@ -4327,7 +4325,7 @@ index 13ab05458..e66eebe06 100644
  def sym_infer(uop: UOp|int, var_vals: dict[str, int]) -> int: return uop.sym_infer(var_vals) if isinstance(uop, UOp) else uop
  
  def range_str(u:UOp, color=False) -> str:
-@@ -978,6 +998,10 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -974,6 +994,10 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
      # a Variable is a scalar ALU PARAM that carries a value range
      return self.op is Ops.PARAM and self.arg.vmin_vmax is not None and self.arg.addrspace is AddrSpace.ALU and self._shape == ()
    @property
@@ -4338,7 +4336,7 @@ index 13ab05458..e66eebe06 100644
    def is_bound_var(self) -> bool:
      # a bound Variable is a Variable with the val payload set
      return self.is_variable and self.arg.val is not None
-@@ -1020,7 +1044,8 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1016,7 +1040,8 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
      return 1
    def divides(self, v:int) -> UOp|None:
      if v==1: return self
@@ -4348,7 +4346,7 @@ index 13ab05458..e66eebe06 100644
      if self.op is Ops.ADD: return d0+d1 if (d0:=self.src[0].divides(v)) is not None and (d1:=self.src[1].divides(v)) is not None else None
      if self.op is Ops.MUL:
        if (d0:=self.src[0].divides(v)) is not None: return d0 * self.src[1]
-@@ -1051,8 +1076,31 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1047,8 +1072,31 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
    def vmax(self) -> PyConst: return self._min_max[1]
    @functools.cached_property
    def _min_max(self) -> tuple[PyConst, PyConst]:
@@ -4381,7 +4379,7 @@ index 13ab05458..e66eebe06 100644
        if self.op is Ops.ADD: return wrapped(self.dtype, s0_vmin+s1_vmin, s0_vmax+s1_vmax)
        if self.op is Ops.SUB: return wrapped(self.dtype, s0_vmin-s1_vmax, s0_vmax-s1_vmin)
        if self.op is Ops.AND and dtypes.is_int(self.dtype) and s1_vmin == s1_vmax and (s0_vmin >= 0 or s1_vmax >= 0):
-@@ -1093,32 +1141,59 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1089,32 +1137,59 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
        if self.op is Ops.OR and self.dtype == dtypes.bool: return s0_vmin or s1_vmin, s0_vmax or s1_vmax
        if self.op is Ops.AND and self.dtype == dtypes.bool: return s0_vmin and s1_vmin, s0_vmax and s1_vmax
      if self.op is Ops.WHERE:
@@ -4458,7 +4456,7 @@ index 13ab05458..e66eebe06 100644
  
    @functools.cached_property
    def _sym_fxn(self):
-@@ -1152,9 +1227,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1148,9 +1223,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
  
    @staticmethod
    def alloc(shape:tuple[sint, ...], dtype:DType, slot:int|None=None, addrspace=AddrSpace.GLOBAL, device=None, axis:int|None=None,
@@ -4470,7 +4468,7 @@ index 13ab05458..e66eebe06 100644
                             addrspace=addrspace, device=device, spec=spec, bind_on_realize=bind_on_realize, name=name))
      return ret.reshape(()) if not shape else ret.view_as(shape, axis)
    def alloc_like(self, slot:int|None=None, addrspace=AddrSpace.GLOBAL): return UOp.alloc(self.max_shard_shape, self.dtype, slot, addrspace)
-@@ -1265,7 +1340,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1262,7 +1337,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
      placeholders = [s.replace(arg=replace(s.arg, slot=i, val=None)) if s.is_variable else UOp.placeholder_like(s, slot=i)
                      for i,s in enumerate(srcs)]
      kernel = fxn(*placeholders).call(*srcs, grad_fxn=grad_fxn)
@@ -4481,7 +4479,7 @@ index 13ab05458..e66eebe06 100644
  
    @functools.cached_property
    def kernel_params(self) -> tuple[UOp, ...]:
-@@ -1302,6 +1379,8 @@ class KernelInfo:
+@@ -1299,6 +1376,8 @@ class KernelInfo:
    beam: int = 0
    optimized: bool = False       # the AST has been through the optimizer, skip re-optimization
    kernel: bool = True           # launched by the runtime, not called from another kernel
@@ -4490,7 +4488,7 @@ index 13ab05458..e66eebe06 100644
    @property
    def function_name(self): return to_function_name(self.name)
  
-@@ -1328,6 +1407,7 @@ class ProgramInfo:
+@@ -1325,6 +1404,7 @@ class ProgramInfo:
      ins: list[int] = []
      global_size: list[int] = [1, 1, 1]
      local_size: list[int] = [1, 1, 1]
@@ -4498,7 +4496,7 @@ index 13ab05458..e66eebe06 100644
      for u in sink.toposort():
        if u.op is Ops.PARAM: _params.append(u)
        if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
-@@ -1365,22 +1445,99 @@ class CallInfo:
+@@ -1364,22 +1444,99 @@ class CallInfo:
  
  # ******** ops in python ********
  
@@ -4603,7 +4601,7 @@ index 13ab05458..e66eebe06 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.TRUNCMOD: cmod, Ops.TRUNCDIV: cdiv, Ops.DIV: floordiv, Ops.MOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1391,6 +1548,10 @@ def exec_alu(op:Ops, dtype:DType, operands):
+@@ -1390,6 +1547,10 @@ def exec_alu(op:Ops, dtype:DType, operands):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)
@@ -4614,7 +4612,7 @@ index 13ab05458..e66eebe06 100644
    return truncate_fxn(alu) if (truncate_fxn:=truncate.get(dtype)) is not None else alu
  
  # ***** pattern matcher *****
-@@ -1889,3 +2050,38 @@ sint = int|UOp
+@@ -1888,3 +2049,35 @@ sint = int|UOp
  Variable = UOp
  
  ConstLike = ConstType|Variable|tuple[ConstType, ...]
@@ -4641,23 +4639,20 @@ index 13ab05458..e66eebe06 100644
 +    elif e.op is Ops.LINEAR:
 +      for x in e.src: entry(x)
 +  if body.op is Ops.SINK:
-+    nodes = body.toposort(enter_calls=False)
-+    if any(u.op in {Ops.CUSTOM, Ops.CUSTOMI} for u in nodes): return None
-+    for u in nodes:
++    for u in body.toposort(enter_calls=False):
 +      if u.op is Ops.STORE: add(u.src[0])
 +      elif u.op is Ops.CALL: inner(u)
 +  elif body.op is Ops.LINEAR:
-+    # a schedule's calls, or a kernel's lines: a body lowered inside a kernel holds its stores and code
-+    if any(u.op in {Ops.CUSTOM, Ops.CUSTOMI} for u in body.src): return None
++    # a schedule's calls, or a kernel's lines: a body lowered inside a kernel holds its stores and calls
 +    entry(body)
 +  elif body.op is Ops.STORE: add(body.src[0])
 +  else: return None
 +  return sorted(out)
 diff --git a/tinygrad/uop/spec.py b/tinygrad/uop/spec.py
-index c359a697f..1b9fad6d6 100644
+index 2802d04ee..6edf0652f 100644
 --- a/tinygrad/uop/spec.py
 +++ b/tinygrad/uop/spec.py
-@@ -213,6 +213,9 @@ spec_program = PatternMatcher([
+@@ -209,6 +209,9 @@ spec_program = PatternMatcher([
    # movement ops are not allowed in programs
    (UPat(GroupOp.Movement), lambda: False),
  
@@ -4667,7 +4662,7 @@ index c359a697f..1b9fad6d6 100644
    # REG/LOCAL buffer
    (UPat((Ops.BUFFER, Ops.ALLOC), src=(p_size,), name="x"), lambda x: isinstance(x.arg, ParamArg) and x.addrspace in (AddrSpace.REG, AddrSpace.LOCAL)),
  
-@@ -225,13 +228,10 @@ spec_program = PatternMatcher([
+@@ -221,13 +224,10 @@ spec_program = PatternMatcher([
  
    # SPECIAL is int32 after index lowering
    (UPat(Ops.SPECIAL, src=(UPat(dtype=dtypes.int32),), name="s"), lambda s: isinstance(s.arg, str)),
@@ -4684,7 +4679,7 @@ index c359a697f..1b9fad6d6 100644
  ])+spec_shared
  
  # these are intermediate ops. everything should be deleted from here
-@@ -247,17 +247,22 @@ spec_full = PatternMatcher([
+@@ -243,17 +243,22 @@ spec_full = PatternMatcher([
  
    # all loads/stores
    (UPat((Ops.LOAD, Ops.STORE)), lambda: True),
@@ -4709,7 +4704,7 @@ index c359a697f..1b9fad6d6 100644
    # linear for more kernels (TODO: we should enter non sink calls)
    #(UPat(Ops.LINEAR), lambda: True),
    # PARAM is caller-provided storage (or a Variable in the ALU addrspace), ALLOC is call-local storage
-@@ -271,8 +276,13 @@ spec_kernel_graph = PatternMatcher([
+@@ -267,8 +272,13 @@ spec_kernel_graph = PatternMatcher([
    # mstack/mselect
    (UPat(Ops.MSTACK, name="x"), lambda x: all(isinstance(s.device, str) for s in x.src) or (all_same(x.src) and x.src[0].device is None)),
    (UPat(Ops.MSELECT, name="x"), lambda x: isinstance(x.src[0].device, tuple) and x.arg < len(x.src[0].device)),
@@ -5092,16 +5087,16 @@ index 466a4f01d..cfce7fa64 100644
    (UPat(Ops.MUL).reduce(name="r", allow_any_len=True), reduce_mul_chain),
    # ** combine terms (opinionated) **
 diff --git a/tinygrad/uop/upat.py b/tinygrad/uop/upat.py
-index ab8800b84..cd5237d08 100644
+index 205f78ea7..f93f6e9e3 100644
 --- a/tinygrad/uop/upat.py
 +++ b/tinygrad/uop/upat.py
-@@ -53,7 +53,8 @@ def _get_clause(self:UPat, base:UOp, depth=0) -> UOp:
-         pred.append(UOp(Ops.CUSTOM, src=(st.src[1], first), arg=("{0} is {1}", dtypes.void)))
+@@ -49,7 +49,8 @@ def _get_clause(self:UPat, base:UOp, depth=0) -> UOp:
+         pred.append(UOp.custom_function("{0} is {1}", fmt=True).call(st.src[1], first))
          and_clause.append(UOp(Ops.STORE, src=(st.src[0], first)))
-       if len(stores): and_clause.append(UOp(Ops.CUSTOM, src=(base,), arg=("len({0}.src) != 0", dtypes.void)))
--      and_clause.append(UOp(Ops.CUSTOM, src=(UOp(Ops.AND, src=tuple(pred)), it, base), arg=("all([{0} for {1} in {2}.src])", dtypes.void)))
+       if len(stores): and_clause.append(UOp.custom_function("len({0}.src) != 0", fmt=True).call(base))
+-      and_clause.append(UOp.custom_function("all([{0} for {1} in {2}.src])", fmt=True).call(UOp(Ops.AND, src=tuple(pred)), it, base))
 +      # lazily, as the interpreter matches: an element after one that fails may not reach as far as the first's binds
-+      and_clause.append(UOp(Ops.CUSTOM, src=(UOp(Ops.AND, src=tuple(pred)), it, base), arg=("all({0} for {1} in {2}.src)", dtypes.void)))
++      and_clause.append(UOp.custom_function("all({0} for {1} in {2}.src)", fmt=True).call(UOp(Ops.AND, src=tuple(pred)), it, base))
      # multi match (fork)
      elif len(self.src) > 1 and all(isinstance(x, tuple) for x in self.src):
        fork_cond = [UOp(Ops.AND, src=tuple([_get_clause(s, base.index(i), depth) for i,s in enumerate(ss)])) for ss in self.src]

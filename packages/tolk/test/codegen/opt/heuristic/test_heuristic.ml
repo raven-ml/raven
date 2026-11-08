@@ -695,6 +695,27 @@ let streams_no_call =
              else None)
            (K.read_by_opaque o)))
 
+(* [out[i] = sum over k < 1 of a[i + k] * b[k]], over 64 [i]: a sum of a
+   product whose only range is of one trip, no axis of the kernel, is no
+   contraction to stream, and the heuristic optimises it. *)
+let one_trip_product =
+  test "a sum of a product over a range of one trip is not streamed"
+    (fun () ->
+      let i = Ops.range ~axis_type:Weak (Int 64) [ 0 ]
+      and k = Ops.range ~axis_type:Weak (Int 1) [ 1 ] in
+      let out = Shape.param ~shape:[ Ops.Int 64 ] 0 Float32
+      and a = Shape.param ~shape:[ Ops.Int 64 ] 1 Float32
+      and b = Shape.param ~shape:[ Ops.Int 1 ] 2 Float32 in
+      let at p x = Ops.index p [ x ] in
+      let sum = Ops.reduce Ops.O.(at a Ops.O.(i + k) * at b k) Op.Add [ k ] in
+      let ast =
+        Ops.sink ~kernel:(Ops.kernel_info ())
+          [ Ops.end_ (Ops.store (at out i) sum) [ i ] ]
+      in
+      let s = K.v ast (renderer "cuda") in
+      K.convert_loop_to_global s;
+      equal Testable.bool false (streams (Heuristic.hand_coded_optimizations s)))
+
 (* A target's bound of multiply-adds per byte: 64 on every renderer, sm_89's
    measured crossover, which the others take until they measure their own. *)
 let per_byte_bounds =
@@ -2120,6 +2141,7 @@ let () =
              per_byte_order;
              recorded_order;
              streams_no_call;
+             one_trip_product;
            ];
          no_threads_beside_call;
          warps_within_runs;

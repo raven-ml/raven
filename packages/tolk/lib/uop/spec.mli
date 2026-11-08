@@ -33,7 +33,7 @@ val shared : t
     - casts, ranges, indexes with integer indexes, ends of bounded loops, and
       loop back-edges on a scalar boolean condition;
     - parameters, local and register buffers, binaries, groups of effects,
-      orderings of storage, custom code, calls of opaque bodies whose arguments
+      orderings of storage, calls of opaque bodies whose arguments
       start where their parameters assume ({!Shape.storage_phase}), barriers and
       instructions;
     - loads and stores through an index or a shrink, a gated load's alternative

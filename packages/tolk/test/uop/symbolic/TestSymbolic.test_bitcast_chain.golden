@@ -1,24 +1,24 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 0 Ops.CONST dtypes.weakint [] 0
 1 Ops.CONST dtypes.weakint [] 3
-2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
+2 Ops.CUSTOM_FUNCTION dtypes.void [0, 1] CustomFunction(name="sym")
 3 Ops.STACK dtypes.void []
 4 Ops.PARAM dtypes.i32 [3] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 3), name="a", addrspace=AddrSpace.ALU)
 5 Ops.BITCAST dtypes.f32 [4] dtypes.f32
 6 Ops.BITCAST dtypes.i32 [5] dtypes.i32
 7 Ops.SINK dtypes.void [2, 6, 4]
 8 Ops.CONST dtypes.weakint [] 16256
-9 Ops.CUSTOM dtypes.void [8, 8] ("sym", dtypes.void)
+9 Ops.CUSTOM_FUNCTION dtypes.void [8, 8] CustomFunction(name="sym")
 10 Ops.CONST dtypes.weakfloat [] 1.0
 11 Ops.CAST dtypes.bf16 [10] dtypes.bf16
 12 Ops.BITCAST dtypes.u16 [11] dtypes.u16
 13 Ops.CAST dtypes.u16 [8] dtypes.u16
 14 Ops.SINK dtypes.void [9, 12, 13]
-15 Ops.CUSTOM dtypes.void [] ("sym", dtypes.void)
+15 Ops.CUSTOM_FUNCTION dtypes.void [] CustomFunction(name="sym")
 16 Ops.BITCAST dtypes.bf16 [13] dtypes.bf16
 17 Ops.SINK dtypes.void [15, 16, 11]
 18 Ops.CONST dtypes.weakint [] 56
-19 Ops.CUSTOM dtypes.void [18, 18] ("sym", dtypes.void)
+19 Ops.CUSTOM_FUNCTION dtypes.void [18, 18] CustomFunction(name="sym")
 20 Ops.CAST dtypes.fp8e4m3 [10] dtypes.fp8e4m3
 21 Ops.BITCAST dtypes.u8 [20] dtypes.u8
 22 Ops.CAST dtypes.u8 [18] dtypes.u8
@@ -26,7 +26,7 @@
 24 Ops.BITCAST dtypes.fp8e4m3 [22] dtypes.fp8e4m3
 25 Ops.SINK dtypes.void [15, 24, 20]
 26 Ops.CONST dtypes.weakint [] 60
-27 Ops.CUSTOM dtypes.void [26, 26] ("sym", dtypes.void)
+27 Ops.CUSTOM_FUNCTION dtypes.void [26, 26] CustomFunction(name="sym")
 28 Ops.CAST dtypes.fp8e5m2 [10] dtypes.fp8e5m2
 29 Ops.BITCAST dtypes.u8 [28] dtypes.u8
 30 Ops.CAST dtypes.u8 [26] dtypes.u8

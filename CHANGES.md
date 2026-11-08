@@ -1074,11 +1074,22 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Code in the target's language is a call of a custom function
+  (`Ops.custom_function ~fmt:true`, `Ops.call ~inline`), an effect like any
+  call: `Op.Custom` and `Op.Customi` are gone.
+- A custom function returning a value states its shape
+  (`Ops.custom_function ~shape`).
+- A sum of leading axes keeps its own ranges, and a stage stores each slice at
+  its ranges' coordinates.
+- A shrink whose start waits on effects keeps them (`Shape.shrink`).
+- A value ordered after a store with no storage to hold it is refused
+  (`Rangeify.get_kernel_graph`).
 - Compiled kernels no longer fold a float comparison to `true` from its
-  operands' bounds (`Ops.vmin`), since a NaN compares false; a padded range
-  (`Opt.Padto`) stores nothing on its padding, its back edges included, and a
-  pad of a range an unguarded effect runs along is refused; a loop ordered
-  after a load stores after it; a sum read as an index compiles.
+  operands' bounds (`Ops.vmin`): a NaN compares false.
+- A padded range (`Opt.Padto`) stores nothing on its padding, its loops' back
+  edges included; a pad of a range an unguarded effect runs along is refused.
+- A loop ordered after a load stores after it, and a sum read as an index
+  compiles.
 - Compiling runs about 8% fewer instructions and allocates about 4% fewer
   words: `Pattern_matcher` compiles a rule's pattern on its first try into
   closures that test only the fields the pattern has.

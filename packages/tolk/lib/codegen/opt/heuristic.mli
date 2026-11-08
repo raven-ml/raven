@@ -80,9 +80,8 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
 
     {b Streaming} applies on a renderer with local indices and shared memory,
     when {!Setting.mv} is on, to a kernel where no range's bound reads an axis
-    and that has no call or custom code ({!Postrange.Scheduler.opaque}) and
-    no expression in the target's language that reads an axis
-    ({!Postrange.Scheduler.read_by_opaque}), to the first of [k]'s reduces
+    and that has no call, code in the target's language among them
+    ({!Postrange.Scheduler.opaque}), to the first of [k]'s reduces
     that sums a product of two computations of accesses, where neither reads
     a reduce that runs in a range the sum closes: a row's expert that a reduce
     over the experts finds runs in the row alone, and is computed once for the

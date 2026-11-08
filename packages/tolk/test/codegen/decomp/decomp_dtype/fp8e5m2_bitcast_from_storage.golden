@@ -1,4 +1,4 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 16
 2 Ops.PARAM dtypes.fp8e5m2 [1] ParamArg(slot=0, dtype=dtypes.fp8e5m2)
@@ -34,35 +34,37 @@
 32 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8)
 33 Ops.ADD dtypes.i32 [7, 12]
 34 Ops.INDEX dtypes.u8 [32, 33]
-35 Ops.CUSTOM dtypes.f32 [14] ("f2f fp8e5m2 f32 True", dtypes.f32)
-36 Ops.CAST dtypes.f32 [35] dtypes.f32
-37 Ops.BITCAST dtypes.u32 [36] dtypes.u32
-38 Ops.CUSTOM dtypes.u8 [37] ("f2f f32 fp8e5m2 True", dtypes.u8)
-39 Ops.STORE dtypes.void [34, 38]
-40 Ops.ADD dtypes.i32 [7, 16]
-41 Ops.INDEX dtypes.u8 [32, 40]
-42 Ops.CUSTOM dtypes.f32 [18] ("f2f fp8e5m2 f32 True", dtypes.f32)
-43 Ops.CAST dtypes.f32 [42] dtypes.f32
-44 Ops.BITCAST dtypes.u32 [43] dtypes.u32
-45 Ops.CUSTOM dtypes.u8 [44] ("f2f f32 fp8e5m2 True", dtypes.u8)
-46 Ops.STORE dtypes.void [41, 45]
-47 Ops.ADD dtypes.i32 [7, 6]
-48 Ops.INDEX dtypes.u8 [32, 47]
-49 Ops.CUSTOM dtypes.f32 [21] ("f2f fp8e5m2 f32 True", dtypes.f32)
-50 Ops.CAST dtypes.f32 [49] dtypes.f32
-51 Ops.BITCAST dtypes.u32 [50] dtypes.u32
-52 Ops.CUSTOM dtypes.u8 [51] ("f2f f32 fp8e5m2 True", dtypes.u8)
-53 Ops.STORE dtypes.void [48, 52]
-54 Ops.ADD dtypes.i32 [7, 23]
-55 Ops.INDEX dtypes.u8 [32, 54]
-56 Ops.CUSTOM dtypes.f32 [25] ("f2f fp8e5m2 f32 True", dtypes.f32)
-57 Ops.CAST dtypes.f32 [56] dtypes.f32
-58 Ops.BITCAST dtypes.u32 [57] dtypes.u32
-59 Ops.CUSTOM dtypes.u8 [58] ("f2f f32 fp8e5m2 True", dtypes.u8)
-60 Ops.STORE dtypes.void [55, 59]
-61 Ops.AFTER dtypes.void [0, 39, 46, 53, 60]
-62 Ops.AFTER dtypes.void [0, 61]
-63 Ops.END dtypes.void [62, 5]
-64 Ops.SINK dtypes.void [63] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
-65 Ops.SINK dtypes.void [31, 64]
+35 Ops.CUSTOM_FUNCTION dtypes.u8 [0] CustomFunction(name="f2f f32 fp8e5m2 True", dtype=dtypes.u8, fmt=True)
+36 Ops.CUSTOM_FUNCTION dtypes.f32 [0] CustomFunction(name="f2f fp8e5m2 f32 True", dtype=dtypes.f32, fmt=True)
+37 Ops.CALL dtypes.f32 [36, 14] CallInfo()
+38 Ops.CAST dtypes.f32 [37] dtypes.f32
+39 Ops.BITCAST dtypes.u32 [38] dtypes.u32
+40 Ops.CALL dtypes.u8 [35, 39] CallInfo()
+41 Ops.STORE dtypes.void [34, 40]
+42 Ops.ADD dtypes.i32 [7, 16]
+43 Ops.INDEX dtypes.u8 [32, 42]
+44 Ops.CALL dtypes.f32 [36, 18] CallInfo()
+45 Ops.CAST dtypes.f32 [44] dtypes.f32
+46 Ops.BITCAST dtypes.u32 [45] dtypes.u32
+47 Ops.CALL dtypes.u8 [35, 46] CallInfo()
+48 Ops.STORE dtypes.void [43, 47]
+49 Ops.ADD dtypes.i32 [7, 6]
+50 Ops.INDEX dtypes.u8 [32, 49]
+51 Ops.CALL dtypes.f32 [36, 21] CallInfo()
+52 Ops.CAST dtypes.f32 [51] dtypes.f32
+53 Ops.BITCAST dtypes.u32 [52] dtypes.u32
+54 Ops.CALL dtypes.u8 [35, 53] CallInfo()
+55 Ops.STORE dtypes.void [50, 54]
+56 Ops.ADD dtypes.i32 [7, 23]
+57 Ops.INDEX dtypes.u8 [32, 56]
+58 Ops.CALL dtypes.f32 [36, 25] CallInfo()
+59 Ops.CAST dtypes.f32 [58] dtypes.f32
+60 Ops.BITCAST dtypes.u32 [59] dtypes.u32
+61 Ops.CALL dtypes.u8 [35, 60] CallInfo()
+62 Ops.STORE dtypes.void [57, 61]
+63 Ops.AFTER dtypes.void [0, 41, 48, 55, 62]
+64 Ops.AFTER dtypes.void [0, 63]
+65 Ops.END dtypes.void [64, 5]
+66 Ops.SINK dtypes.void [65] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+67 Ops.SINK dtypes.void [31, 66]
 

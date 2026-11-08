@@ -1,5 +1,5 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
-0 Ops.CUSTOM dtypes.void [] ("sym+pm_move_where_on_load", dtypes.void)
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
+0 Ops.CUSTOM_FUNCTION dtypes.void [] CustomFunction(name="sym+pm_move_where_on_load")
 1 Ops.CONST dtypes.weakint [] 16
 2 Ops.RANGE dtypes.weakint [1] (AxisType.WEAK, 0)
 3 Ops.CAST dtypes.i32 [2] dtypes.i32
@@ -14,7 +14,7 @@
 12 Ops.SINK dtypes.void [0, 8, 11]
 13 Ops.CONST dtypes.weakint [] -2147483648
 14 Ops.CONST dtypes.weakint [] 2147483647
-15 Ops.CUSTOM dtypes.void [13, 14] ("simplify", dtypes.void)
+15 Ops.CUSTOM_FUNCTION dtypes.void [13, 14] CustomFunction(name="simplify")
 16 Ops.SINK dtypes.void [15, 10, 10]
 17 Ops.SINK dtypes.void [12, 16]
 

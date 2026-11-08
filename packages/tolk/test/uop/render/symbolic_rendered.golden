@@ -1,4 +1,4 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 case	src	render	simplified
 param_of_variable_size	0	p0.shrink(((0, a),))	p0.shrink(((0, a),))
 reshape_of_variable_size	1	p1.reshape((4,5)).shrink(((0, 4),(0, a)))	p1.reshape((4,5)).shrink(((0, 4),(0, a)))

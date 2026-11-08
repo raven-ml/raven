@@ -118,10 +118,11 @@ let pointee a =
   | _ -> None
 
 let is_effect u =
-  match op u with Op.Store | Op.Call | Op.Custom -> true | _ -> false
+  match op u with Op.Store | Op.Call -> true | _ -> false
 
 (* The storage each of [effects] writes. A call writes the arguments its body
-   writes ({!Shape.written_params}), code every pointer it is passed. *)
+   writes ({!Shape.written_params}), and code in the target's language every
+   pointer it is passed. *)
 let writers effects =
   List.concat_map
     (fun u ->
@@ -136,7 +137,6 @@ let writers effects =
             | None -> args
           in
           List.filter_map by written
-      | Op.Custom, args -> List.filter_map by args
       | _ -> [])
     effects
 
@@ -188,7 +188,7 @@ let thread_bound slice rngs =
     (* Effects' reads are walked only where stored storage is read. *)
     let read_in u =
       match (op u, src u) with
-      | (Op.Call | Op.Custom | Op.Customi), _ -> true
+      | Op.Call, _ -> true
       | Op.Store, _ :: rest -> List.exists read rest
       | _, s -> List.exists read s
     in
@@ -319,16 +319,12 @@ module Scheduler = struct
           else acc)
         [] slice
     in
-    (* The calls and custom code, and the ranges the sources of each read, as
-       [i] in [f(&x[i])]: each takes one pointer or value for each source, so
-       none of them can become lanes or take padding, nor can those of an
-       expression in the target's language. Every thread runs a call or a
-       statement, so a range one of them does not read cannot take threads; an
-       expression has no effect, and every thread may compute it. *)
-    let opaque =
-      List.filter (fun u -> op u = Op.Call || op u = Op.Custom) slice
-    in
-    let expressions = List.filter (fun u -> op u = Op.Customi) slice in
+    (* The calls, of code in the target's language among them, and the ranges
+       the sources of each read, as [i] in [f(&x[i])]: each takes one pointer
+       or value for each source, so none of them can become lanes. Every
+       thread runs a call, so a range one of them does not read cannot take
+       threads. *)
+    let opaque = List.filter (fun u -> op u = Op.Call) slice in
     let reads u =
       List.fold_left
         (fun acc a ->
@@ -340,7 +336,7 @@ module Scheduler = struct
     let read_by_opaque =
       List.fold_left
         (List.fold_left (fun acc r -> if List.memq r acc then acc else r :: acc))
-        [] (List.map reads (opaque @ expressions))
+        [] (List.map reads opaque)
     in
     let unread_by_opaque =
       if opaque = [] then []
@@ -766,9 +762,6 @@ module Scheduler = struct
           check
             (List.is_empty (opaque k))
             "tensor cores need a kernel without calls or custom code";
-          check
-            (List.is_empty (read_by_opaque k))
-            "tensor cores need custom expressions that read no axis";
           check (axis >= 0) "tensor core opts must have an axis";
           check
             (-1 <= tc_select && tc_select < List.length k.ren.tensor_cores)
@@ -786,11 +779,6 @@ module Scheduler = struct
           let rng = axis_rng axis in
           check (amount > 1) (strf "padto arg is a multiple > 1, not %d" amount);
           check (is_literal (nth rng 0)) "only pad const axes";
-          (* a padded point would run the call or the code on a source of no
-             element *)
-          check
-            (not (List.memq rng (read_by_opaque k)))
-            (strf "a call or custom code reads axis %d" axis);
           check
             (not (List.mem (axis_type rng) [ Axis_type.Upcast; Warp ]))
             "cannot pad upcasted or warp";
@@ -828,7 +816,8 @@ module Scheduler = struct
                   if Op.Set.mem o Op.Set.effectful then
                     raise_notrace
                       (Refused
-                         (strf "cannot gate %s in a padded range" (Op.name o)))
+                         (Format.asprintf "cannot gate %a in a padded range"
+                            Op.pp o))
                   else []
           in
           let pad_reduce r =
@@ -1162,15 +1151,18 @@ let bound_by_memory ast =
 (* Whether the builder of [ast], or of a body it calls, fixed its threads:
    workgroup memory sized for one workgroup, registers for one thread, a
    barrier every thread must reach, a matrix multiply-accumulate on a warp's
-   lanes, or custom code. A split of an axis into threads or lanes would leave
-   each of them as the builder made it, for threads it did not make. *)
+   lanes, or code in the target's language. A split of an axis into threads or
+   lanes would leave each of them as the builder made it, for threads it did
+   not make. *)
 let threads_fixed ast =
   List.exists
     (fun u ->
       match (op u, arg u) with
       | (Op.Param | Op.Buffer | Op.Alloc), Param p ->
           List.mem p.addrspace Dtype.[ Local; Reg ]
-      | (Op.Barrier | Op.Wmma | Op.Custom | Op.Customi), _ -> true
+      | (Op.Barrier | Op.Wmma), _ -> true
+      | Op.Call, _ -> (
+          match arg (body u) with Custom_function f -> f.fmt | _ -> false)
       | _ -> false)
     (toposort ~calls:Enter ast)
 

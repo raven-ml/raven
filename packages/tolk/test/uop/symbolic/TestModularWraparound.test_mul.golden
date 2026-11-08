@@ -1,6 +1,6 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 0 Ops.CONST dtypes.weakint [] 1147018174
-1 Ops.CUSTOM dtypes.void [0, 0] ("simplify", dtypes.void)
+1 Ops.CUSTOM_FUNCTION dtypes.void [0, 0] CustomFunction(name="simplify")
 2 Ops.CONST dtypes.weakint [] 2882344918
 3 Ops.CAST dtypes.u32 [2] dtypes.u32
 4 Ops.CONST dtypes.weakint [] 2864434397

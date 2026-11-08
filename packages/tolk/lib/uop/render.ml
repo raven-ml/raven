@@ -120,12 +120,6 @@ let render_arg u =
         (axis_name (axis_type u) :: List.map string_of_int (axis_id u))
   | Op.Sink, Kernel k -> k.name
   | Op.Sink, _ -> ""
-  | Op.Call, Call c ->
-      String.concat " "
-        ((match c.name with
-         | Some n -> [ "name=" ^ to_string pp_arg (String n) ]
-         | None -> [])
-        @ if c.precompile then [ "precompile=true" ] else [])
   | Op.Reduce, Reduce r ->
       strf "op=%s%s"
         (String.lowercase_ascii (Op.name r.op))

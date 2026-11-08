@@ -60,7 +60,7 @@ val pin_effects : Ops.t -> Ops.t
     ({!Ops.ranges}) it depends on, and a rewrite that keeps every value may
     drop a range from what it reads: [r / 8] over a range [r] of size [8] is
     [0] at every step. An effect's index is a {!Op.Store}'s destination, or
-    the first {!Op.Index} a {!Op.Custom} or {!Op.Call} takes. Each
+    the first {!Op.Index} a {!Op.Call} takes. Each
     {!Op.Index} of storage that any {!Op.Index} an effect takes reads
     ({!Ops.buf_uop}) reads it through an
     {!Op.After} of the ranges its offsets depend on, and an effect that

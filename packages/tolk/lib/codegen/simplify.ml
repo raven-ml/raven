@@ -244,12 +244,12 @@ let pm_split_ranges =
    fold to. A load of that storage keeps its ranges too: the effect it reads
    may run at each step. *)
 
-(* An effect's index: a store's destination, or the first index a call or code
-   in the target's language takes. *)
+(* An effect's index: a store's destination, or the first index a call
+   takes. *)
 let effect_index u =
   match op u with
   | Op.Store -> if op (nth u 0) = Op.Index then Some (nth u 0) else None
-  | Op.Custom | Op.Call -> List.find_opt (fun s -> op s = Op.Index) (src u)
+  | Op.Call -> List.find_opt (fun s -> op s = Op.Index) (src u)
   | _ -> None
 
 (* [pin idx deps] is the index [idx] reading its storage after the ranges
@@ -272,7 +272,7 @@ let pm_pin_effects =
           else Some (pin x deps));
       (* an effect whose other sources read ranges its index does not *)
       rule_ctx
-        (Upat.v ~op:(Op.Set.of_list [ Op.Store; Op.Custom; Op.Call ]) ~name:"x" ())
+        (Upat.v ~op:(Op.Set.of_list [ Op.Store; Op.Call ]) ~name:"x" ())
         (fun _ m ->
           let x = m "x" in
           match effect_index x with
@@ -297,7 +297,7 @@ let effect_storage u =
   let indices =
     match op u with
     | Op.Store -> [ nth u 0 ]
-    | Op.Custom | Op.Call -> src u
+    | Op.Call -> src u
     | _ -> []
   in
   List.filter_map
@@ -338,7 +338,7 @@ let pm_unpin_effects =
     (fun () -> [
       rule (Upat.op Op.Index ~name:"x") (fun m -> unpin (m "x") (m "x"));
       rule
-        (Upat.v ~op:(Op.Set.of_list [ Op.Store; Op.Custom; Op.Call ]) ~name:"x" ())
+        (Upat.v ~op:(Op.Set.of_list [ Op.Store; Op.Call ]) ~name:"x" ())
         (fun m ->
           let x = m "x" in
           Option.bind (effect_index x) (unpin x));

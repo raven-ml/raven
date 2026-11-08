@@ -704,7 +704,7 @@ let reprs () =
     ("permute", permute (param [ 2; 3 ] 0 Float32) [ 1; 0 ]);
     ("flip", flip (param [ 2; 3 ] 0 Float32) [ 1 ]);
     ("device", copy_to_device cpu "CUDA");
-    ("custom", v ~arg:(Code { code = "barrier();"; dtype = Void }) Op.Custom);
+    ("custom", call (custom_function ~fmt:true "barrier();" []) []);
     ("ins", v ~arg:(Code { code = "s_endpgm"; dtype = Void }) Op.Ins);
     ("binary", v ~arg:(Bytes "\x7fELF\x00\n'\"") Op.Binary);
     ("source", v ~arg:(String "int x = 'a';\n") Op.Source);

@@ -242,7 +242,8 @@ and compute_shape u : sint list option =
   | Op.If | Op.Barrier | Op.Sink | Op.Endif | Op.Backedge | Op.Linear
   | Op.Program | Op.Source ->
       None
-  | Op.Custom_function | Op.Ins -> if void then None else Some []
+  | Op.Custom_function -> if void then None else Some (as_shape (src0 ()))
+  | Op.Ins -> if void then None else Some []
   | Op.Reshape when (op (src0 ())) = Op.Noop -> Some (marg_shape u)
   | Op.Noop -> ( match src u with s :: _ -> shape_opt s | [] -> None)
   | Op.Index ->
@@ -261,12 +262,6 @@ and compute_shape u : sint list option =
       match as_shape (first (op u) (src u)) with
       | ([] | [ _ ]) as s -> Some s
       | _ -> invalid_arg "storage has one axis")
-  | Op.Custom | Op.Customi -> (
-      if void then None
-      else
-        match List.filter_map shape_opt (src u) with
-        | [] -> None
-        | shapes -> Some (broadcast_shape shapes))
   | Op.Stage ->
       let rs = drop 1 (src u) in
       Some
@@ -529,9 +524,13 @@ let check_rank u what l =
   if ndim u <> List.length l then
     invalid_argf "%s of %d axes for a node of %d" what (List.length l) (ndim u)
 
+(* A shrink to the same shape is its source unless a start is symbolic: an
+   offset of 0 that waits on effects, as one ordered after a store, would lose
+   them. *)
 let shrink u bounds =
   check_rank u "bounds" bounds;
-  unless_same u
+  let concrete = function Some (Sym _, _) -> false | _ -> true in
+  (if List.for_all concrete bounds then unless_same u else Fun.id)
     (mop u
        (Shrink
           (List.map2
@@ -3440,29 +3439,21 @@ let rec written_params body =
     | _ -> ()
   in
   let shown () = Some (List.sort Int.compare !slots) in
-  let code = List.exists (fun u -> op u = Op.Custom || op u = Op.Customi) in
   match op body with
   | Op.Sink ->
-      let nodes = toposort ~calls:Skip body in
-      if code nodes then None
-      else begin
-        List.iter
-          (fun u ->
-            match op u with
-            | Op.Store -> add (nth u 0)
-            | Op.Call -> call u
-            | _ -> ())
-          nodes;
-        shown ()
-      end
+      List.iter
+        (fun u ->
+          match op u with
+          | Op.Store -> add (nth u 0)
+          | Op.Call -> call u
+          | _ -> ())
+        (toposort ~calls:Skip body);
+      shown ()
   | Op.Linear ->
       (* A schedule's calls, or a kernel's lines: a body lowered inside a
-         kernel holds its stores and code. *)
-      if code (src body) then None
-      else begin
-        List.iter entry (src body);
-        shown ()
-      end
+         kernel holds its stores and calls. *)
+      List.iter entry (src body);
+      shown ()
   | Op.Store ->
       add (nth body 0);
       shown ()

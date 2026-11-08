@@ -438,7 +438,9 @@ let custom code =
   in
   let operands = [ Ops.load (at 1) []; Ops.load (at 2) [] ] in
   let value =
-    Ops.v Customi ~src:operands ~arg:(Code { code; dtype = Float32 })
+    Ops.call ~inline:true
+      (Ops.custom_function ~dtype:Float32 ~fmt:true code [])
+      operands
   in
   render clang (Ops.toposort ~calls:Enter (Ops.sink [ Ops.store (at 0) value ]))
 

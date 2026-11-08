@@ -265,8 +265,13 @@ let end_shared ctx members =
       Tbl.replace ctx.ends first e;
       e
 
+(* A stage the graph already holds, as a function's builder writes one, is
+   read as storage too: staged again, its index would be read as data. *)
+let read_as_storage = Op.Set.union storage (ops [ Op.Stage ])
+
 let bufferize_and_index ctx ~indexed s src_rngs =
-  if Op.Set.mem (op s) storage then if indexed then index s src_rngs else s
+  if Op.Set.mem (op s) read_as_storage then
+    if indexed then index s src_rngs else s
   else if Tbl.mem ctx.shares s then end_shared ctx (Tbl.find ctx.shares s)
   else
     match Tbl.find_opt ctx.realize_map s with
@@ -300,7 +305,7 @@ let create_bufferize_and_index_srcs ctx x =
       in
       let indexed =
         Option.is_some rngs
-        && (i < data_src_count || not (Op.Set.mem (op s) storage))
+        && (i < data_src_count || not (Op.Set.mem (op s) read_as_storage))
       in
       bufferize_and_index ctx ~indexed s src_rngs)
     (src x)
@@ -351,10 +356,15 @@ let convert_reduce_to_reduce_with_ranges ctx x =
       match Tbl.find_opt ctx.range_map x with
       | None -> invalid_arg "a reduction of leading axes has no ranges"
       | Some (rngs, _) ->
-          let s = List.hd (create_bufferize_and_index_srcs ctx x) in
+          (* The leading axes it reduces loop beside its own ranges, but those
+             of one element, which take no range. *)
+          let srcs = create_bufferize_and_index_srcs ctx x in
+          let popped =
+            List.filter (fun r -> op r = Op.Range) (List.take num_axes rngs)
+          in
           Some
             (v Op.Reduce
-               ~src:(s :: List.take num_axes rngs)
+               ~src:((List.hd srcs :: popped) @ List.tl srcs)
                ~arg:(Reduce { op = rop; num_axes = 0 })))
   | _ -> None
 

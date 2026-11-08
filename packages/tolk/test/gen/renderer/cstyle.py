@@ -243,8 +243,8 @@ def custom(ren):
     a, b = UOp.param(0, dtypes.float, 4), UOp.param(1, dtypes.float, 4)
     r = UOp.range(4, 0, AxisType.LOOP)
     val = b.index(r).load()
-    inline = UOp(Ops.CUSTOMI, src=(val,), arg=(magnitude, dtypes.float))
-    named = UOp(Ops.CUSTOM, src=(inline, val), arg=(maximum, dtypes.float))
+    inline = UOp.custom_function(magnitude, dtype=dtypes.float, fmt=True).call(val, inline=True)
+    named = UOp.custom_function(maximum, dtype=dtypes.float, fmt=True).call(inline, val)
     return a.index(r).store(named).end(r).sink(arg=KernelInfo(name="custom"))
 
 

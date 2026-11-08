@@ -84,17 +84,16 @@ module Scheduler : sig
 
   val opaque : t -> Ops.t list
   (** [opaque k] is [k]'s opaque operations, but those of the bodies it calls:
-      its calls ({!Ops.call}) and its code in the target's language
-      ({!Op.Custom}). Each runs once for each point of the ranges its sources
-      read, and takes one pointer or value for each source. *)
+      its calls ({!Ops.call}), of code in the target's language among them
+      ({!Ops.type-custom_function}). Each runs once for each point of the
+      ranges its sources read, and takes one pointer or value for each
+      source. *)
 
   val read_by_opaque : t -> Ops.t list
   (** [read_by_opaque k] is the ranges that a source of one of [k]'s {!opaque}
-      operations, or of one of its expressions in the target's language
-      ({!Op.Customi}), reads, as [i] in [f(&x[i])] or [popcount(x[i])]. Each
-      takes one pointer or value for each source, so none of them can become
-      a thread's lanes, which would pass it a vector, and none can be padded,
-      which would run it on a source of no element. *)
+      operations reads, as [i] in [f(&x[i])] or [popcount(x[i])]. Each takes
+      one pointer or value for each source, so none of them can become a
+      thread's lanes, which would pass it a vector. *)
 
   val unread_by_opaque : t -> Ops.t list
   (** [unread_by_opaque k] is [k]'s ranges that the sources of one of its
@@ -206,12 +205,10 @@ module Scheduler : sig
       opaque operation does not read ({!unread_by_opaque}), a local split of a
       reduce axis where a range's bound reads an axis or whose reduction runs
       inside an unrolled reduce axis, a pad's axis is not
-      of a constant size, would more than quadruple, is read by an opaque
-      operation, or holds an effect a guard cannot make a no-op: a call, code
-      in the target's language, or a store not through an {!Op.Index}; or no
-      tensor core fits, as none does a kernel where a range's
-      bound reads an axis, one with an opaque operation, or one where an
-      expression in the target's language reads an axis. Raises
+      of a constant size, would more than quadruple, or holds an effect a
+      guard cannot make a no-op: a call or a store not through an
+      {!Op.Index}; or no tensor core fits, as none does a kernel where a
+      range's bound reads an axis, or one with an opaque operation. Raises
       [Invalid_argument] if the shared memory a split needs depends on a
       symbolic size and cannot be decided. *)
 
@@ -235,14 +232,14 @@ val threads_fixed : Ops.t -> bool
 (** [threads_fixed ast] is [true] iff the builder of the kernel [ast], or of a
     body it calls, fixed its threads: it holds workgroup or register storage
     ({!Dtype.Local}, {!Dtype.Reg}), a barrier, a matrix multiply-accumulate or
-    custom code. *)
+    a call of code in the target's language. *)
 
 val misses : Ops.t -> Ops.t -> bool
 (** [misses r e] is [true] iff the effect [e] does not depend on the range
     [r]: [r] is none of the ranges ({!Ops.ranges}) of [e]'s index, its
     validity included, if [e] is a store, or of [e]'s sources, but a call's
-    body, if [e] is a call ({!Ops.call}) or code in the target's language
-    ({!Op.Custom}). Such an effect runs once for all of [r]'s steps. *)
+    body, if [e] is a call ({!Ops.call}). Such an effect runs once for all of
+    [r]'s steps. *)
 
 val apply_opts :
   ?beam:(Scheduler.t -> Scheduler.t) ->

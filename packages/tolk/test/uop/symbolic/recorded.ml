@@ -48,10 +48,10 @@ let bound c : Dtype.value =
 let record u =
   let kind, bounds, srcs =
     match Ops.src u with
-    | k :: srcs when Ops.op k = Op.Custom -> (
+    | k :: srcs when Ops.op k = Op.Custom_function -> (
         let kind =
           match Ops.arg k with
-          | Code c -> c.code
+          | Custom_function f -> f.name
           | _ -> failf "a record's kind without its name"
         in
         match Ops.src k with

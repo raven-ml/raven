@@ -1185,7 +1185,7 @@ let split_blocks sink =
   let effects =
     List.filter
       (fun u ->
-        (is Op.Store u && writes_memory u) || is Op.Call u || is Op.Custom u)
+        (is Op.Store u && writes_memory u) || is Op.Call u)
       all
   in
   let qualifies r =

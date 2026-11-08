@@ -70,8 +70,6 @@ type t =
   | Endif
   | Backedge
   | Const
-  | Custom
-  | Customi
   | Ins
   (* Tensor graph *)
   | Contiguous_backward
@@ -144,8 +142,6 @@ let ops =
     Endif;
     Backedge;
     Const;
-    Custom;
-    Customi;
     Ins;
     Contiguous_backward;
     Detach;
@@ -217,8 +213,6 @@ let name = function
   | Endif -> "ENDIF"
   | Backedge -> "BACKEDGE"
   | Const -> "CONST"
-  | Custom -> "CUSTOM"
-  | Customi -> "CUSTOMI"
   | Ins -> "INS"
   | Contiguous_backward -> "CONTIGUOUS_BACKWARD"
   | Detach -> "DETACH"
@@ -322,7 +316,7 @@ module Set = struct
   let defines = of_list [ Param; Refparam; Buffer; Alloc; Binary ]
   let irreducible = of_list [ Const; Special; Range; Param; Getaddr ]
   let movement = of_list [ Reshape; Expand; Permute; Pad; Shrink ]
-  let effectful = of_list [ Store; Custom; Call; Barrier ]
+  let effectful = of_list [ Store; Call; Barrier ]
   let commutative = of_list [ Add; Mul; Max; Cmpne; Cmpeq; Xor; And; Or ]
   let associative = of_list [ Add; Mul; And; Or; Max; Xor ]
   let idempotent = of_list [ Or; And; Max ]

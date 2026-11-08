@@ -408,7 +408,8 @@ let base_rewrite =
         (Upat.op ~src:[ Upat.var "a"; Upat.var "b" ] Op.Fdiv)
         (fun ctx m -> Some (strf "(%s/%s)" ctx.%{m "a"} ctx.%{m "b"}));
       (* call an external function by symbol: the CUSTOM_FUNCTION body names
-         the callee, the sources are the arguments and set the types *)
+         the callee, the sources are the arguments and set the types; code in
+         the target's language is its format string of the arguments *)
       r
         (Upat.op ~name:"x" ~allow_any_len:true
            ~src:[ Upat.op ~name:"f" Op.Custom_function ]
@@ -421,6 +422,8 @@ let base_rewrite =
             List.map2 (fun t y -> strf "(%s)(%s)" t ctx.%{y}) types args
           in
           match arg (m "f") with
+          | Custom_function f when f.fmt ->
+              Some (format f.name (List.map (fun y -> ctx.%{y}) args))
           | Custom_function f ->
               Some
                 (strf "((%s(*)(%s))(%s))(%s)%s"
@@ -452,15 +455,6 @@ let base_rewrite =
             (strf "%s(%s);" (body_name body)
                (String.concat ", "
                   (List.map arg (List.sort by_slot params)))));
-      (* custom passes through with format *)
-      r
-        (Upat.v ~op:(Op.Set.of_list [ Op.Custom; Op.Customi ]) ~name:"x" ())
-        (fun ctx m ->
-          let x = m "x" in
-          match arg x with
-          | Code { code; _ } ->
-              Some (format code (List.map (fun y -> ctx.%{y}) (src x)))
-          | _ -> None);
     ])
 
 (* Non-native floats *)
@@ -957,8 +951,17 @@ let closes = Op.Set.of_list [ Op.Endif; Op.End; Op.Backedge ]
 let opens = Op.Set.of_list [ Op.If; Op.Range ]
 let undeclared = Op.Set.of_list [ Op.Range; Op.Buffer; Op.Binary ]
 let always_inlined =
-  Op.Set.of_list [ Op.Index; Op.Shrink; Op.Customi; Op.Refparam ]
+  Op.Set.of_list [ Op.Index; Op.Shrink; Op.Refparam ]
 let casts = Op.Set.of_list [ Op.Cast; Op.Bitcast ]
+
+(* Code in the target's language, called as an expression: written into its
+   reader. *)
+let code_call u =
+  is Op.Call u
+  && match arg (nth u 0) with Custom_function f -> f.fmt | _ -> false
+
+let inline_code u =
+  code_call u && match arg u with Call c -> c.inline | _ -> false
 
 (* Clang and Metal reject a statement nested more than 256 brackets deep. A
    value read once is written into its reader, so a chain of them nests without
@@ -1033,6 +1036,7 @@ let render_uops l uops =
     ((not cast) || max_numel u = 1)
     && ((cast && is Op.Const (nth u 0))
        || Op.Set.mem o always_inlined
+       || inline_code u
        || Op.equal o Op.Load
           && addrspace (nth u 0) = Some Dtype.Reg
           && children u = 1
@@ -1129,7 +1133,10 @@ let render_uops l uops =
    at their call. *)
 let callees uops =
   let found = ref [] in
-  let rec scan us = List.iter (fun u -> if is Op.Call u then enter (nth u 0)) us
+  let rec scan us =
+    List.iter
+      (fun u -> if is Op.Call u && not (code_call u) then enter (nth u 0))
+      us
   and enter callee =
     if not (List.memq callee !found) then
       match op callee with

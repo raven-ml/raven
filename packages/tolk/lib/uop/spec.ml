@@ -88,9 +88,10 @@ let param_of u =
 (* Storage has one source, its size. *)
 let size_only u = List.compare_length_with (src u) 1 = 0
 
-(* Construction gives CONST, CAST, BITCAST, PARAM, BUFFER, ALLOC, CUSTOM,
-   CUSTOMI and INS the argument their type comes from, and a CONST the type of
-   its value, so the rules check only the arguments construction leaves free. *)
+(* Construction gives CONST, CAST, BITCAST, PARAM, BUFFER, ALLOC,
+   CUSTOM_FUNCTION and INS the argument their type comes from, and a CONST the
+   type of its value, so the rules check only the arguments construction leaves
+   free. *)
 
 let memory = Upat.or_casted (pat [ Op.Index; Op.Shrink ] ~name:"uidx")
 
@@ -280,7 +281,6 @@ let shared : t =
              ])
         "x"
         (fun x -> shape_opt x = Some []);
-      accept (pat [ Op.Customi; Op.Custom ]);
       check (pat [ Op.Custom_function ] ~allow_any_len:true ~name:"x") "x"
         (fun x -> match arg x with Custom_function _ -> true | _ -> false);
       check

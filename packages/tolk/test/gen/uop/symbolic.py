@@ -14,7 +14,7 @@ records, with the file that declares them.
 A record is a sink whose sources are its kind, the input and the result:
 `(kind, in, out)` for a rewrite and for `simplify`, `(kind, valid, out)` for
 `simplify_valid`, and `(kind, valid)` when it is `None`. The kind is a void
-`CUSTOM` whose text names the matcher, `sym`, `symbolic`, ..., or `simplify` or
+`CUSTOM_FUNCTION` whose name is the matcher's, `sym`, `symbolic`, ..., or `simplify` or
 `simplify_valid`, with ` bottom_up` for a bottom-up rewrite. When the result is
 an integer or a boolean whose bounds are integers of 62 bits, the kind's
 sources are the constants `vmin` and `vmax`, the bounds tinygrad computes for
@@ -118,7 +118,7 @@ def kind_node(kind, out):
     if out is not None and (out.dtype in (dtypes.bool, dtypes.weakint) or dtypes.is_int(out.dtype)):
         lo, hi = out.vmin, out.vmax
         if all(isinstance(v, (bool, int)) and -BOUND < v < BOUND for v in (lo, hi)): bounds = (UOp.const(lo), UOp.const(hi))
-    return UOp(Ops.CUSTOM, src=bounds, arg=(kind, dtypes.void))
+    return UOp.custom_function(kind, *bounds)
 
 
 def make_record(kind, srcs, out):

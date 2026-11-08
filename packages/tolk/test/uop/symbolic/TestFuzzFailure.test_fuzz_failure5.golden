@@ -1,7 +1,7 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 0 Ops.CONST dtypes.weakint [] -2
 1 Ops.CONST dtypes.weakint [] 1
-2 Ops.CUSTOM dtypes.void [0, 1] ("simplify", dtypes.void)
+2 Ops.CUSTOM_FUNCTION dtypes.void [0, 1] CustomFunction(name="simplify")
 3 Ops.CONST dtypes.weakint [] 0
 4 Ops.STACK dtypes.void []
 5 Ops.PARAM dtypes.weakint [4] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 1), name="v2", addrspace=AddrSpace.ALU)
@@ -29,7 +29,7 @@
 27 Ops.ADD dtypes.weakint [7, 26]
 28 Ops.ADD dtypes.weakint [27, 0]
 29 Ops.SINK dtypes.void [2, 24, 28]
-30 Ops.CUSTOM dtypes.void [0, 0] ("simplify", dtypes.void)
+30 Ops.CUSTOM_FUNCTION dtypes.void [0, 0] CustomFunction(name="simplify")
 31 Ops.MUL dtypes.weakint [3, 25]
 32 Ops.ADD dtypes.weakint [3, 31]
 33 Ops.ADD dtypes.weakint [32, 0]

@@ -585,17 +585,24 @@ let copy_to_anon_store x copy =
   let buf = reshape buf (ints (max_shape x)) in
   shrink_to (after buf [ store buf x ]) (List.map Option.some (shape copy))
 
-(* The buffer is inside the call and not kept, as those of copies. *)
+(* A stage in global memory stores each slice of its value at the coordinates
+   of its ranges, into a buffer inside the call and not kept, as those of
+   copies. *)
 let stage_to_anon_store x stg =
-  let buf =
-    alloc
-      ?vmin_vmax:(stored_bounds x (dtype stg))
-      ?device:(device x)
-      (ints (max_shape x))
-      (dtype stg)
-  in
-  let view = shrink_to buf (List.map Option.some (shape stg)) in
-  after view [ store view x ]
+  match arg stg with
+  | Bufferize { addrspace; _ } when addrspace <> Dtype.Global -> None
+  | _ ->
+      let buf =
+        alloc
+          ?vmin_vmax:(stored_bounds x (dtype stg))
+          ?device:(device x)
+          (ints (max_shape stg))
+          (dtype stg)
+      in
+      let view = shrink_to buf (List.map Option.some (shape stg)) in
+      let rngs = List.tl (src stg) in
+      let dst = if rngs = [] then view else index view rngs in
+      Some (after view [ end_ (store dst x) rngs ])
 
 (* A copy across devices reads a whole buffer. *)
 let materialize_cross_device_src dest src =
@@ -697,11 +704,11 @@ let earliest_rewrites =
              if has_buffer_identity ~after_ok:true x || op x = Op.Copy then
                Some x
              else None);
-         (* Any other stage stores into new call-local storage on the same
-            device. *)
+         (* Any other stage in global memory stores into new call-local
+            storage on the same device. *)
          rule
-           (Upat.op Op.Stage ~name:"stg" ~src:[ var "x" ])
-           (fun m -> Some (stage_to_anon_store (m "x") (m "stg")));
+           (Upat.op Op.Stage ~name:"stg" ~allow_any_len:true ~src:[ var "x" ])
+           (fun m -> stage_to_anon_store (m "x") (m "stg"));
          rule
            (Upat.op Op.Store
               ~src:

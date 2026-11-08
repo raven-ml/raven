@@ -76,7 +76,8 @@ val prepare_rangeify : Ops.t -> Ops.t
           value, the store being the copy; any other copy stores the value, padded to its greatest
           shape, into new storage on the copy's device;
         - a materialisation ({!Op.Stage}) of storage or of a copy is its source;
-          any other stores its source into new storage on its device;
+          any other in global memory stores its source into new storage on
+          its device, each slice at the coordinates of the stage's ranges;
         - a store of a reshape into a reshape of the same shape stores the
           sources; a store across devices first materialises its value on its
           own device; a store of a storage's contents into itself is

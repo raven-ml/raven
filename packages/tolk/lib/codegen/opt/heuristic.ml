@@ -1697,7 +1697,6 @@ let streams k =
     && Setting.value Setting.mv
     && List.is_empty (K.read_by_bounds k)
     && List.is_empty (K.opaque k)
-    && List.is_empty (K.read_by_opaque k)
   then streamed k
   else None
 

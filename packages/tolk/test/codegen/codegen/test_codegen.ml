@@ -222,8 +222,7 @@ let opaque =
       After;
       Special;
       Wmma;
-      Custom;
-      Customi;
+      Custom_function;
       Barrier;
       If;
       Endif;
@@ -2045,7 +2044,7 @@ let breaking =
     ~extra_matcher:
       (Ops.Pattern_matcher.v (fun () ->
            [
-             Ops.Pattern_matcher.rule (Ops.Upat.op Customi) (fun _ ->
+             Ops.Pattern_matcher.rule (Ops.Upat.op Call) (fun _ ->
                  Some (Ops.v Source ~arg:(String "x")));
            ]))
     (target "" "" "")
@@ -2053,7 +2052,9 @@ let breaking =
 let marker_kernel =
   lazy
     (let marker =
-       Ops.v Customi ~arg:(Code { code = "make_movement()"; dtype = Int32 })
+       Ops.call ~inline:true
+         (Ops.custom_function ~dtype:Int32 ~fmt:true "make_movement()" [])
+         []
      in
      Ops.sink ~kernel:(Ops.kernel_info ())
        [
@@ -6139,7 +6140,7 @@ let symbolic_end () =
     ]
 
 let code ?(dtype = Dtype.Void) c src =
-  Ops.v Custom ~src ~arg:(Code { code = c; dtype })
+  Ops.call (Ops.custom_function ~dtype ~fmt:true c []) src
 
 (* [C[r] += 1] in the target's language, beside [D[r] = 1]. *)
 let group_custom () =
@@ -6711,13 +6712,14 @@ let counted_once =
   group "calls, custom code and stores on CUDA"
     [
       cases "one beside stores across threads runs once" ~id:opaque_id
-        [ Op.Call; Op.Custom ] (fun o ->
+        [ Op.Call; Op.Custom_function ] (fun o ->
           let a = List.init 64 Fun.id in
           equal
             (list (array Dtypes.value))
             [ int_values (List.map succ a); int_values [ 1 ] ]
             (counted_on_cuda (counted_beside_rows o) a));
-      cases "one beside a sum runs once" ~id:opaque_id [ Op.Call; Op.Custom ]
+      cases "one beside a sum runs once" ~id:opaque_id
+        [ Op.Call; Op.Custom_function ]
         (fun o ->
           let a = List.init 4096 (fun x -> x mod 7) in
           equal
@@ -6826,9 +6828,10 @@ let counted_beside_host_blocks =
   group "calls and custom code beside host blocks"
     [
       cases "a loop beside one that does not depend on it does not split"
-        ~id:opaque_id [ Op.Call; Op.Custom ] (fun o ->
+        ~id:opaque_id [ Op.Call; Op.Custom_function ] (fun o ->
           equal (option sint) None (host_split (counted_beside_blocks o)));
-      cases "one beside a loop runs once" ~id:opaque_id [ Op.Call; Op.Custom ]
+      cases "one beside a loop runs once" ~id:opaque_id
+        [ Op.Call; Op.Custom_function ]
         (fun o ->
           let k = counted_beside_blocks o in
           match effects_of k [ (1, int_values a) ] [ 0; 2 ] with
@@ -6839,7 +6842,7 @@ let counted_beside_host_blocks =
                 out
           | _ -> assert false);
       cases "a loop that one depends on splits, beside no store"
-        ~id:opaque_id [ Op.Call; Op.Custom ] (fun o ->
+        ~id:opaque_id [ Op.Call; Op.Custom_function ] (fun o ->
           let k = counted_alone o in
           equal (option sint) (Some (Int rows)) (host_split k);
           equal
@@ -7476,11 +7479,12 @@ let lanes_and_threads =
         (fun (_, k) ->
           raises_match (Exn.invalid_arg ~sub:"shares storage with its steps")
             (fun () -> Codegen.to_program (k ()) (cuda_target ())));
-      cases "a body lowered to its lines writes what its stores write"
+      cases
+        "a body lowered to its lines writes what its stores and calls write"
         ~id:fst
         [
           ("a store", (Ops.store (first p0) (first p1), Some [ 0 ]));
-          ("code", (code "{0}[0] = 1;" [ first p1 ], None));
+          ("code", (code "{0}[0] = 1;" [ first p1 ], Some [ 1 ]));
         ]
         (fun (_, (line, expected)) ->
           let body = Ops.sink [ line ] in
@@ -7638,10 +7642,40 @@ let before_empty_loop () =
   let q_at = first (Ops.after q [ Ops.store (first p) (i32 8); r ]) in
   effect_kernel [ Ops.end_ (Ops.store q_at (i32 64)) [ r ] ]
 
+(* [A[0] = 7], then [B[0] = A[s]] through the shrink of [A] from [s] to
+   [s + 1], [s] a 0 ordered after the store: the shrink keeps every element,
+   but its start keeps the store before the read. *)
+let shrink_after_store () =
+  let a = int_param ~name:"A" 0 1 and b = int_param ~name:"B" 1 1 in
+  let s = Ops.after (Ops.int 0) [ Ops.store (first a) (i32 7) ] in
+  let view = Shape.shrink a [ Some (Sym s, Sym Ops.O.(s + int 1)) ] in
+  effect_kernel [ Ops.store (first b) (Ops.load (first view) []) ]
+
+(* [X = shuffle X], the four elements of [X] reversed by code in the target's
+   language whose value states its shape, a vector of four. *)
+let reversed_by_code () =
+  let x = int_param ~name:"X" 0 4 in
+  let shuffle =
+    Ops.custom_function ~dtype:Int32 ~shape:[ Int 4 ] ~fmt:true
+      "__builtin_shufflevector({0}, {0}, 3, 2, 1, 0)" []
+  in
+  let lanes =
+    Shape.stack (List.init 4 (fun i -> Ops.load (at x (Ops.int i)) []))
+  in
+  effect_kernel [ Ops.store x (Ops.call shuffle [ lanes ]) ]
+
 let hand_written =
   group "hand-written kernels on the host"
     [
-      cases "a padded range's padding stores nothing" ~id:fst padded_stores
+      test "code whose value is a vector stores each of its lanes"
+        (writes reversed_by_code [ (0, int_values [ 0; 1; 2; 3 ]) ]
+           [ [ 3; 2; 1; 0 ] ]);
+      test "a shrink whose start waits on a store reads after it"
+        (writes shrink_after_store [] [ [ 7 ]; [ 7 ] ]);
+      (* an ungated back edge of the padding would loop forever: the limit
+         fails the case by name *)
+      cases "a padded range's padding stores nothing" ~timeout:10. ~id:fst
+        padded_stores
         (fun (_, store) -> writes (padded_steps store) [] [ [ 3 ] ] ());
       test "a sum is the index of a load"
         (writes sum_as_index

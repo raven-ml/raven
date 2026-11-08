@@ -32,14 +32,15 @@ let programs =
   [
     "add";
     "add_row_from_self";
+    "after_sum";
     "assign";
     "assign_bitcast";
     "assign_double_diamond";
     "assign_flipped_from_self";
     "assign_permuted_self";
     "assign_reads_behind_other_after";
-    "call_given_one_state_twice";
     "attention";
+    "call_given_one_state_twice";
     "cat";
     "chained_functions";
     "clone";
@@ -65,12 +66,14 @@ let programs =
     "matmul";
     "precompiled_function";
     "precompiled_scalar";
+    "read_beside_overwrite";
     "read_join_of_assigned";
     "read_join_of_overwritten";
-    "read_beside_overwrite";
     "read_overwritten_through";
     "read_then_overwrite";
+    "reduce_axis_and_range";
     "reduce_multiple_paths";
+    "reduce_singleton_axis_and_range";
     "roll_from_self";
     "select_no_lane";
     "select_no_lane_rows";
@@ -79,7 +82,10 @@ let programs =
     "softmax";
     "sort";
     "split_sum";
+    "stage_free_range_reg";
+    "stage_no_range_reg";
     "stage_of_overwritten";
+    "stage_padded_slice";
     "sum";
     "swap_through_values";
     "two_outputs";
@@ -95,15 +101,16 @@ let kernel_graphs =
   [
     "add_kernels";
     "add_row_from_self_kernels";
+    "after_sum_kernels";
     "assign_bitcast_kernels";
     "assign_double_diamond_kernels";
     "assign_flipped_from_self_kernels";
     "assign_kernels";
     "assign_permuted_self_kernels";
     "assign_reads_behind_other_after_kernels";
+    "attention_kernels";
     "call_given_one_state_twice_kernels";
     "call_given_one_state_twice_kernels_1";
-    "attention_kernels";
     "cat_kernels";
     "chained_functions_kernels";
     "chained_functions_kernels_1";
@@ -133,12 +140,14 @@ let kernel_graphs =
     "precompiled_function_kernels_1";
     "precompiled_scalar_kernels";
     "precompiled_scalar_kernels_1";
+    "read_beside_overwrite_kernels";
     "read_join_of_assigned_kernels";
     "read_join_of_overwritten_kernels";
-    "read_beside_overwrite_kernels";
     "read_overwritten_through_kernels";
     "read_then_overwrite_kernels";
+    "reduce_axis_and_range_kernels";
     "reduce_multiple_paths_kernels";
+    "reduce_singleton_axis_and_range_kernels";
     "roll_from_self_kernels";
     "select_no_lane_kernels";
     "select_no_lane_rows_kernels";
@@ -147,7 +156,10 @@ let kernel_graphs =
     "softmax_kernels";
     "sort_kernels";
     "split_sum_kernels";
+    "stage_free_range_reg_kernels";
+    "stage_no_range_reg_kernels";
     "stage_of_overwritten_kernels";
+    "stage_padded_slice_kernels";
     "sum_kernels";
     "swap_through_values_kernels";
     "two_outputs_kernels";
@@ -258,8 +270,11 @@ let calls_only_kernels u =
    bitcast of it as two arguments, one memory that storage, a memory per slot,
    cannot alias. The call of custom_kernel_variable_arg passes a variable,
    which the kernel graph's writes hold no storage for. The functions of
-   custom_kernel_stage and custom_kernel_stage_table load, which the
-   Interpreter does not evaluate; the engine's suite runs them. *)
+   custom_kernel_stage and custom_kernel_stage_table load, and those of
+   stage_padded_slice, stage_free_range_reg and stage_no_range_reg stage,
+   which the Interpreter does not evaluate; it sums no range of its own beside
+   a sum's leading axes, as reduce_axis_and_range and
+   reduce_singleton_axis_and_range do. The engine's suite runs them. *)
 let apart_from_values =
   [
     "custom_kernel_kernels";
@@ -270,6 +285,16 @@ let apart_from_values =
     "custom_kernel_stage";
     "custom_kernel_stage_table_kernels";
     "custom_kernel_stage_table";
+    "reduce_axis_and_range_kernels";
+    "reduce_axis_and_range";
+    "reduce_singleton_axis_and_range_kernels";
+    "reduce_singleton_axis_and_range";
+    "stage_padded_slice_kernels";
+    "stage_padded_slice";
+    "stage_free_range_reg_kernels";
+    "stage_free_range_reg";
+    "stage_no_range_reg_kernels";
+    "stage_no_range_reg";
     "assign_bitcast_kernels";
     "assign_bitcast";
   ]
@@ -4026,6 +4051,28 @@ let repro_tests =
           backedge_aliases;
       ])
 
+(* A value ordered after a store but held by no storage: the kernel that reads
+   it has nothing to wait on for it, so it is refused (runtime/test_schedule.py,
+   test_value_order_dependency_requires_storage). *)
+let boundary =
+  group "create_linear_with_vars › boundaries"
+    [
+      test "a constant ordered after a store has no storage to wait on"
+        (fun () ->
+          let c = Ops.new_buffer ~slot:1 cpu 1 Int32
+          and o = Ops.new_buffer ~slot:2 cpu 1 Int32 in
+          let stored =
+            Ops.store (Ops.index c [ Ops.int 0 ]) (Ops.int ~dtype:Int32 5)
+          in
+          let v = Ops.after (Ops.int ~dtype:Int32 1) [ stored ] in
+          let big =
+            Ops.sink [ Ops.after o [ Ops.store o (Shape.reshape v [ Int 1 ]) ] ]
+          in
+          raises_match
+            (Exn.invalid_arg ~sub:"kernel boundary requires storage")
+            (fun () -> Schedule.create_linear_with_vars big));
+    ]
+
 let () =
   exit
     (run "Tolk.Schedule"
@@ -4053,6 +4100,7 @@ let () =
          aliased;
          relation;
          writes;
+         boundary;
          group "create_linear_with_vars › laws" [ values_law ];
          group "create_schedule › laws" [ copy_iff_cycle ];
          repro_tests;

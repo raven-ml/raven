@@ -125,10 +125,6 @@ type t =
       (** Runs its body, then repeats its unbounded {!Range} while its condition
           holds. *)
   | Const  (** A constant. *)
-  | Custom  (** A statement written in the target's source language. *)
-  | Customi
-      (** An expression written in the target's source language, rendered
-          inline. *)
   | Ins
       (** An instruction named by its argument: a machine instruction, or a
           command of a device queue such as a wait, a barrier or a timestamp. *)
@@ -250,7 +246,7 @@ module Set : sig
 
   val effectful : t
   (** [effectful] is the operations that may act beyond their value each time
-      they run: {!Store}, {!Custom}, {!Call} and {!Barrier}. A rewrite that
+      they run: {!Store}, {!Call} and {!Barrier}. A rewrite that
       changes how often one runs, or whether it runs, changes what the kernel
       does. *)
 

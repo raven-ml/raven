@@ -1,5 +1,5 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
-0 Ops.CUSTOM dtypes.void [] ("sym", dtypes.void)
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
+0 Ops.CUSTOM_FUNCTION dtypes.void [] CustomFunction(name="sym")
 1 Ops.STACK dtypes.void []
 2 Ops.PARAM dtypes.i32 [1] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 3), name="s", addrspace=AddrSpace.ALU)
 3 Ops.CONST dtypes.weakint [] 2

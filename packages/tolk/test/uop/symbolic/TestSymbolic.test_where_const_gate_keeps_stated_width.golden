@@ -1,5 +1,5 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
-0 Ops.CUSTOM dtypes.void [] ("sym", dtypes.void)
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
+0 Ops.CUSTOM_FUNCTION dtypes.void [] CustomFunction(name="sym")
 1 Ops.CONST dtypes.bool [] True
 2 Ops.CONST dtypes.weakfloat [] 0.0
 3 Ops.STACK dtypes.void []
@@ -8,7 +8,7 @@
 6 Ops.CAST dtypes.f16 [2] dtypes.f16
 7 Ops.SINK dtypes.void [0, 5, 6]
 8 Ops.CONST dtypes.weakint [] 0
-9 Ops.CUSTOM dtypes.void [8, 8] ("sym", dtypes.void)
+9 Ops.CUSTOM_FUNCTION dtypes.void [8, 8] CustomFunction(name="sym")
 10 Ops.PARAM dtypes.i32 [3] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 3), name="i", addrspace=AddrSpace.ALU)
 11 Ops.WHERE dtypes.i32 [1, 8, 10]
 12 Ops.CAST dtypes.i32 [8] dtypes.i32
@@ -16,7 +16,7 @@
 14 Ops.CONST dtypes.bool [] False
 15 Ops.WHERE dtypes.f16 [14, 2, 4]
 16 Ops.SINK dtypes.void [0, 15, 4]
-17 Ops.CUSTOM dtypes.void [14, 1] ("sym", dtypes.void)
+17 Ops.CUSTOM_FUNCTION dtypes.void [14, 1] CustomFunction(name="sym")
 18 Ops.CONST dtypes.bool [] Invalid
 19 Ops.WHERE dtypes.weakfloat [14, 2, 18]
 20 Ops.SINK dtypes.void [17, 19, 18]

@@ -111,4 +111,6 @@ val get_kernel_graph : Ops.t -> Ops.t
     against {!Spec.kernel_graph}.
 
     Raises [Invalid_argument] if a stage has no elements, which a prepared
-    graph does not have, or if the check fails. *)
+    graph does not have, if a kernel's value is ordered after effects with no
+    storage to hold it, as a constant after a store, or if the check
+    fails. *)

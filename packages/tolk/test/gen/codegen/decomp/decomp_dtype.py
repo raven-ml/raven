@@ -11,9 +11,9 @@ told to emulate `<type>`, and one that lacks `<type>`. The generator checks that
 both make the same graph, which the golden holds.
 
 The conversions of a narrow float are IEEE conversions in tolk, so for the
-narrow floats the pass runs with `f2f` held opaque: each call is a CUSTOM node
-of the type the call returns, over the call's operand, whose code names the
-call and its arguments, `f2f <from> <to> <sat>`. Everything else in the graph
+narrow floats the pass runs with `f2f` held opaque: each is a call of code
+in the target's language, of the type `f2f` returns, on its operand, whose
+code names it and its arguments, `f2f <from> <to> <sat>`. Everything else in the graph
 is tinygrad's. A cast to a narrow float from a type more precise than a float32
 narrows its operand otherwise in tolk, so does a cast of an emulated 64-bit
 integer to a float32 or narrower, and a cast of a float to an emulated 64-bit
@@ -49,7 +49,7 @@ def name(dt): return repr(dt)[len("dtypes."):]
 
 def opaque_f2f(v, fr, to, sat=True):
     dt = to if fr.bitsize < to.bitsize else decomp.f2f_dt[to]
-    return UOp(Ops.CUSTOM, src=(v,), arg=(f"f2f {name(fr)} {name(to)} {sat}", dt))
+    return UOp.custom_function(f"f2f {name(fr)} {name(to)} {sat}", shape=v.shape, dtype=dt, fmt=True).call(v)
 
 
 def emulate(kernel, renderer, floats):

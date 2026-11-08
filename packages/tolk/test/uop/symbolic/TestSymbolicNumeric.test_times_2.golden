@@ -1,46 +1,46 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 0 Ops.CONST dtypes.weakint [] 0
-1 Ops.CUSTOM dtypes.void [0, 0] ("sym", dtypes.void)
+1 Ops.CUSTOM_FUNCTION dtypes.void [0, 0] CustomFunction(name="sym")
 2 Ops.CONST dtypes.weakint [] 2
 3 Ops.MUL dtypes.weakint [0, 2]
 4 Ops.SINK dtypes.void [1, 3, 0]
-5 Ops.CUSTOM dtypes.void [2, 2] ("sym", dtypes.void)
+5 Ops.CUSTOM_FUNCTION dtypes.void [2, 2] CustomFunction(name="sym")
 6 Ops.CONST dtypes.weakint [] 1
 7 Ops.MUL dtypes.weakint [6, 2]
 8 Ops.SINK dtypes.void [5, 7, 2]
 9 Ops.CONST dtypes.weakint [] 4
-10 Ops.CUSTOM dtypes.void [9, 9] ("sym", dtypes.void)
+10 Ops.CUSTOM_FUNCTION dtypes.void [9, 9] CustomFunction(name="sym")
 11 Ops.MUL dtypes.weakint [2, 2]
 12 Ops.SINK dtypes.void [10, 11, 9]
 13 Ops.CONST dtypes.weakint [] 6
-14 Ops.CUSTOM dtypes.void [13, 13] ("sym", dtypes.void)
+14 Ops.CUSTOM_FUNCTION dtypes.void [13, 13] CustomFunction(name="sym")
 15 Ops.CONST dtypes.weakint [] 3
 16 Ops.MUL dtypes.weakint [15, 2]
 17 Ops.SINK dtypes.void [14, 16, 13]
 18 Ops.CONST dtypes.weakint [] 8
-19 Ops.CUSTOM dtypes.void [18, 18] ("sym", dtypes.void)
+19 Ops.CUSTOM_FUNCTION dtypes.void [18, 18] CustomFunction(name="sym")
 20 Ops.MUL dtypes.weakint [9, 2]
 21 Ops.SINK dtypes.void [19, 20, 18]
 22 Ops.CONST dtypes.weakint [] 10
-23 Ops.CUSTOM dtypes.void [22, 22] ("sym", dtypes.void)
+23 Ops.CUSTOM_FUNCTION dtypes.void [22, 22] CustomFunction(name="sym")
 24 Ops.CONST dtypes.weakint [] 5
 25 Ops.MUL dtypes.weakint [24, 2]
 26 Ops.SINK dtypes.void [23, 25, 22]
 27 Ops.CONST dtypes.weakint [] 12
-28 Ops.CUSTOM dtypes.void [27, 27] ("sym", dtypes.void)
+28 Ops.CUSTOM_FUNCTION dtypes.void [27, 27] CustomFunction(name="sym")
 29 Ops.MUL dtypes.weakint [13, 2]
 30 Ops.SINK dtypes.void [28, 29, 27]
 31 Ops.CONST dtypes.weakint [] 14
-32 Ops.CUSTOM dtypes.void [31, 31] ("sym", dtypes.void)
+32 Ops.CUSTOM_FUNCTION dtypes.void [31, 31] CustomFunction(name="sym")
 33 Ops.CONST dtypes.weakint [] 7
 34 Ops.MUL dtypes.weakint [33, 2]
 35 Ops.SINK dtypes.void [32, 34, 31]
 36 Ops.CONST dtypes.weakint [] 16
-37 Ops.CUSTOM dtypes.void [36, 36] ("sym", dtypes.void)
+37 Ops.CUSTOM_FUNCTION dtypes.void [36, 36] CustomFunction(name="sym")
 38 Ops.MUL dtypes.weakint [18, 2]
 39 Ops.SINK dtypes.void [37, 38, 36]
 40 Ops.CONST dtypes.weakint [] 18
-41 Ops.CUSTOM dtypes.void [40, 40] ("sym", dtypes.void)
+41 Ops.CUSTOM_FUNCTION dtypes.void [40, 40] CustomFunction(name="sym")
 42 Ops.CONST dtypes.weakint [] 9
 43 Ops.MUL dtypes.weakint [42, 2]
 44 Ops.SINK dtypes.void [41, 43, 40]

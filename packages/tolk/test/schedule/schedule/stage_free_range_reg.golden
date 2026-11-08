@@ -1,0 +1,27 @@
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
+0 Ops.CONST dtypes.weakint [] 3
+1 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32, device="CPU")
+2 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+3 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
+4 Ops.RANGE dtypes.weakint [0] (AxisType.LOOP, 0)
+5 Ops.INDEX dtypes.i32 [3, 4]
+6 Ops.CONST dtypes.weakint [] 10
+7 Ops.MUL dtypes.weakint [4, 6]
+8 Ops.CONST dtypes.weakint [] 4
+9 Ops.RANGE dtypes.weakint [8] (AxisType.LOOP, 1)
+10 Ops.ADD dtypes.weakint [7, 9]
+11 Ops.CAST dtypes.i32 [10] dtypes.i32
+12 Ops.STAGE dtypes.i32 [11, 9] BufferizeOpts(device=None, addrspace=AddrSpace.REG, removable=False)
+13 Ops.CONST dtypes.weakint [] 2
+14 Ops.INDEX dtypes.i32 [12, 13]
+15 Ops.STORE dtypes.void [5, 14]
+16 Ops.END dtypes.void [15, 4]
+17 Ops.SINK dtypes.void [16]
+18 Ops.CALL dtypes.void [17, 2] CallInfo()
+19 Ops.AFTER dtypes.i32 [2, 18]
+20 Ops.CONST dtypes.weakint [] 1
+21 Ops.ADD dtypes.i32 [19, 20]
+22 Ops.STORE dtypes.void [1, 21]
+23 Ops.AFTER dtypes.i32 [1, 22]
+24 Ops.SINK dtypes.void [23]
+

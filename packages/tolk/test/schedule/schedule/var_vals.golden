@@ -1,4 +1,4 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 program	var_vals
 add	-
 sum	-
@@ -50,6 +50,12 @@ custom_kernel_scalar_with_other_variable	m=70 n=5
 custom_kernel_unused_then_variable	n=5
 custom_kernel_stage	-
 custom_kernel_stage_table	-
+reduce_axis_and_range	-
+reduce_singleton_axis_and_range	-
+stage_padded_slice	-
+stage_free_range_reg	-
+stage_no_range_reg	-
+after_sum	-
 inline_function	-
 precompiled_function	-
 chained_functions	-

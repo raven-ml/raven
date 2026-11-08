@@ -464,41 +464,43 @@ let range_types =
 
 (* Axes a call or custom code reads
 
-   A call, or code in the target's language, a statement or an expression,
-   takes one pointer or value for each source, so an axis they read cannot
-   become a thread's lanes, nor take padding. A call or a statement runs once
-   for each point of the axes they read, so an axis they do not read cannot
-   take threads; an expression has no effect, and every thread may compute
-   it. *)
+   A call, of a body or of code in the target's language, a statement or an
+   expression, takes one pointer or value for each source, so an axis it reads
+   cannot become a thread's lanes, nor take padding. It runs once for each
+   point of the axes it reads, so an axis it does not read cannot take
+   threads. *)
 
-(* An opaque operation of kind [o] on [&x[r]]: [f(&x[r])], the code
+type opaque = Body | Statement | Expression
+
+(* A call of kind [o] on [&x[r]]: [f(&x[r])] of a body, the code
    [{0}[0] = 1;], or [z[0] = {0}[0]] of the expression [{0}[0]]. *)
 let opaque o x r =
   match o with
-  | Op.Call ->
+  | Body ->
       let p = Shape.param ~shape:[ Int 1 ] 0 Int32 in
       let f =
         Ops.sink
           [ Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.int ~dtype:Int32 1) ]
       in
       Ops.call ~name:"f" f [ Ops.index x [ r ] ]
-  | Op.Customi ->
+  | Expression ->
       let z = Shape.param ~shape:[ Int 1 ] 12 Int32 in
+      let code = Ops.custom_function ~dtype:Int32 ~fmt:true "{0}[0]" [] in
       Ops.store
         (Ops.index z [ Ops.int 0 ])
-        (Ops.v Customi
-           ~src:[ Ops.index x [ r ] ]
-           ~arg:(Code { code = "{0}[0]"; dtype = Int32 }))
-  | _ ->
-      Ops.v Custom
-        ~src:[ Ops.index x [ r ] ]
-        ~arg:(Code { code = "{0}[0] = 1;"; dtype = Void })
+        (Ops.call ~inline:true code [ Ops.index x [ r ] ])
+  | Statement ->
+      Ops.call
+        (Ops.custom_function ~fmt:true "{0}[0] = 1;" [])
+        [ Ops.index x [ r ] ]
 
-let opaques = [ Op.Call; Op.Custom; Op.Customi ]
+let opaques = [ Body; Statement; Expression ]
 
-(* The opaque operations that run as effects: an expression has none. *)
-let effects = [ Op.Call; Op.Custom ]
-let opaque_id o = Format.asprintf "%a" Op.pp o
+let opaque_id = function
+  | Body -> "a body"
+  | Statement -> "a statement"
+  | Expression -> "an expression"
+
 
 (* [o] on [&x[i]] and [out[i * 8 + n] = n], for four [i] and eight [n]. *)
 let called_rows o =
@@ -521,10 +523,11 @@ let with_opaque o k =
   Ops.replace ast ~src:(Ops.src ast @ [ Ops.end_ (opaque o y r) [ r ] ])
 
 let refused axis = Error (Printf.sprintf "a call or custom code reads axis %d" axis)
+let ungated = Error "cannot gate Ops.CALL in a padded range"
 
 let called_axes =
   let opaque_cases name f = cases name ~id:opaque_id opaques f in
-  let effect_cases name f = cases name ~id:opaque_id effects f in
+  let effect_cases name f = cases name ~id:opaque_id opaques f in
   group "axes a call or custom code reads"
     [
       opaque_cases "read_by_opaque is the axes its sources read" (fun o ->
@@ -558,7 +561,7 @@ let called_axes =
           let k = K.v ast (renderer "cpu") in
           equal
             (result (list Uops.uop) string)
-            (refused (position i k))
+            ungated
             (K.apply_opt k (Opt.Padto { axis = position i k; amount = 8 })));
       opaque_cases "apply_opt upcasts and pads an axis its sources do not read"
         (fun o ->
@@ -625,33 +628,6 @@ let called_axes =
           let y = Shape.param ~shape:[ Int 1 ] 11 Int32 in
           let ast = K.ast k in
           refused (Ops.replace ast ~src:(Ops.src ast @ [ opaque o y (Ops.int 0) ])));
-      test "an expression's unread axes take threads" (fun () ->
-          let _, n, ast = called_rows Op.Customi in
-          let k = K.v ast (renderer "cuda") in
-          equal (list Uops.uop) [] (K.unread_by_opaque k);
-          is_ok ~pp:Format.pp_print_string
-            (K.apply_opt (K.copy k) (split (position n k) 2 Local));
-          K.convert_loop_to_global k;
-          equal string "[AxisType.GLOBAL, AxisType.GLOBAL]"
-            (repr_list Ops.Axis_type.pp (K.axis_types k)));
-      test "a tensor core is refused where an expression reads an axis"
-        (fun () ->
-          let k = K.v (kernel "tc_metal_0") (renderer "metal") in
-          equal
-            (result (list Uops.uop) string)
-            (Error "tensor cores need custom expressions that read no axis")
-            (K.apply_opt
-               (K.v (with_opaque Op.Customi k) (renderer "metal"))
-               tc);
-          let y = Shape.param ~shape:[ Int 1 ] 11 Int32 in
-          let ast = K.ast k in
-          is_ok ~pp:Format.pp_print_string
-            (K.apply_opt
-               (K.v
-                  (Ops.replace ast
-                     ~src:(Ops.src ast @ [ opaque Op.Customi y (Ops.int 0) ]))
-                  (renderer "metal"))
-               tc));
     ]
 
 (* Splitting *)
@@ -740,7 +716,7 @@ let padding =
           let k = K.v (whole_store ()) (renderer "cpu") in
           equal
             (result (list Uops.uop) string)
-            (Error "cannot gate STORE in a padded range")
+            (Error "cannot gate Ops.STORE in a padded range")
             (K.apply_opt k (Opt.Padto { axis = 0; amount = 4 })));
     ]
 
@@ -800,7 +776,7 @@ let fixed_by reason =
         Ops.group
           [
             store value;
-            Ops.v Op.Custom ~arg:(Code { code = "f();"; dtype = Void });
+            Ops.call (Ops.custom_function ~fmt:true "f();" []) [];
           ]
     | "a call whose body holds a barrier" ->
         let p = Shape.param ~shape:[ Int 1 ] 0 Float32 in

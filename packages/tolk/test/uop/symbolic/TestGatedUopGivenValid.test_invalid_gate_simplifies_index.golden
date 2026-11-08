@@ -1,7 +1,7 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 0 Ops.CONST dtypes.weakint [] -1
 1 Ops.CONST dtypes.bool [] True
-2 Ops.CUSTOM dtypes.void [0, 1] ("pm_simplify_valid", dtypes.void)
+2 Ops.CUSTOM_FUNCTION dtypes.void [0, 1] CustomFunction(name="pm_simplify_valid")
 3 Ops.STACK dtypes.void []
 4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 2), name="r0", addrspace=AddrSpace.ALU)
 5 Ops.CONST dtypes.weakint [] 3
@@ -17,7 +17,7 @@
 15 Ops.WHERE dtypes.weakint [6, 14, 9]
 16 Ops.SINK dtypes.void [2, 10, 15]
 17 Ops.CONST dtypes.weakint [] 0
-18 Ops.CUSTOM dtypes.void [17, 1] ("pm_simplify_valid", dtypes.void)
+18 Ops.CUSTOM_FUNCTION dtypes.void [17, 1] CustomFunction(name="pm_simplify_valid")
 19 Ops.CONST dtypes.weakint [] 1
 20 Ops.CMPLT dtypes.bool [19, 4]
 21 Ops.CONST dtypes.bool [] False

@@ -272,14 +272,24 @@ type bufferize_opts = {
 (** The type for the arguments of an {!Op.Stage} that makes a buffer. *)
 
 type custom_function = {
-  name : string;  (** The symbol of the function. *)
+  name : string;
+      (** The symbol of the function, or with [fmt] the code that the call
+          writes. *)
   dtype : Dtype.t;  (** The type it returns, {!Dtype.Void} for none. *)
+  fmt : bool;
+      (** [name] is code in the target's language: a format string of the
+          call's arguments, where [{}] is the next argument, [{i}] the [i]th
+          from 0, and [{{] and [}}] are braces, as Python's [str.format]
+          reads positional fields; any other field is refused. *)
 }
 (** The type for the arguments of {!Op.Custom_function}. *)
 
 type call_info = {
   name : string option;  (** The name of the function called. *)
   precompile : bool;  (** Compile the body on its own. *)
+  inline : bool;
+      (** Write the call of code in the target's language into its reader,
+          as an expression. *)
 }
 (** The type for the arguments of {!Op.Call}. *)
 
@@ -315,8 +325,7 @@ type arg =
           {!Op.Source}: the source text. *)
   | Bytes of string  (** {!Op.Binary}: the bytes. *)
   | Code of { code : string; dtype : Dtype.t }
-      (** {!Op.Custom}, {!Op.Customi}: source text; {!Op.Ins}: an instruction;
-          with the type produced. *)
+      (** {!Op.Ins}: an instruction, with the type produced. *)
   | Bufferize of bufferize_opts  (** {!Op.Stage}. *)
   | Kernel of kernel_info  (** {!Op.Sink}: the root of a kernel. *)
   | Program of program_info  (** {!Op.Program}. *)
@@ -344,8 +353,9 @@ val pp_arg : Format.formatter -> arg -> unit
     - {!Bufferize}: [BufferizeOpts(device='CPU', addrspace=AddrSpace.GLOBAL,
       removable=True, broadcast=False)], [removable] [False] for {!Whole}
       only and [broadcast] [True] for {!Broadcast} only;
-    - {!Custom_function}: [CustomFunction(name='f', dtype=dtypes.i32)];
-    - {!Call}: [CallInfo(None, 'f', False, False)].
+    - {!Custom_function}: [CustomFunction(name='f', dtype=dtypes.i32,
+      fmt=False)];
+    - {!Call}: [CallInfo(None, 'f', False, False, False, None)].
 
     Raises [Invalid_argument] on an integer that {!Bigint.to_string} refuses. *)
 
@@ -358,8 +368,7 @@ val v : ?src:t list -> ?arg:arg -> Op.t -> t
     Its data type is derived from [op], [src] and [arg] ({!dtype_of}). The
     operations whose type comes from their argument need its shape: {!Op.Const}
     a [Const], {!Op.Cast} and {!Op.Bitcast} a [Dtype], {!Op.Param}, {!Op.Buffer}
-    and {!Op.Alloc} a [Param], {!Op.Custom}, {!Op.Customi} and {!Op.Ins} a
-    [Code].
+    and {!Op.Alloc} a [Param], and {!Op.Ins} a [Code].
 
     Raises [Invalid_argument] if no type can be derived, as for a {!Op.Where}
     whose condition is not boolean.
@@ -956,19 +965,25 @@ val has_unbound_outputs : t -> bool
 val unbound_outputs : t -> t list
 (** [unbound_outputs c] is those outputs, each ordered after [c]. *)
 
-val custom_function : ?dtype:Dtype.t -> string -> t list -> t
-(** [custom_function ~dtype name src] is the external function [name], which
-    returns [dtype] (default {!Dtype.Void}). Its value has no shape when
-    [dtype] is {!Dtype.Void}, and is a scalar otherwise. *)
+val custom_function :
+  ?dtype:Dtype.t -> ?shape:sint list -> ?fmt:bool -> string -> t list -> t
+(** [custom_function ~dtype ~shape ~fmt name src] is the external function
+    [name], or with [fmt] (default [false]) the code [name] in the target's
+    language ({!type-custom_function}), which returns [dtype] (default
+    {!Dtype.Void}). Its value has no shape when [dtype] is {!Dtype.Void}, and
+    is of [shape] (default [[]]) otherwise, which its first source states. *)
 
-val call : ?name:string -> ?precompile:bool -> t -> t list -> t
-(** [call body args] calls [body] on [args]. The call has the type and the
-    shape of [body]. Given one state of storage at an argument [body] writes
-    ({!Shape.written_params}) and at another, it reads that state at the other
-    as it was before the call, as [memmove] reads its source. A call compiled
-    on its own takes storage, a run of its elements from the first, and a row
-    a loop moves along as they are, and reads a copy of most other arguments;
-    scheduling refuses one it would copy where the call writes it, and a
+val call :
+  ?name:string -> ?precompile:bool -> ?inline:bool -> t -> t list -> t
+(** [call ~inline body args] calls [body] on [args]; a call of code in the
+    target's language is written into its reader if [inline] (default
+    [false]). The call has the type and the shape of [body]. Given one state
+    of storage at an argument [body] writes ({!Shape.written_params}) and at
+    another, it reads that state at the other as it was before the call, as
+    [memmove] reads its source. A call compiled on its own takes storage, a
+    run of its elements from the first, and a row a loop moves along as they
+    are, and reads a copy of most other arguments; scheduling refuses one it
+    would copy where the call writes it, and a
     constant ({!Indexing.run_rangeify}).
 
     Raises [Invalid_argument] if [body] cannot be called ({!opaque_call_bodies})

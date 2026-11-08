@@ -131,7 +131,11 @@ let pm_lower_weak =
     Ops.index (Shape.param ~shape:[ Int size ] 0 Float32) [ Shape.valid idx flag ]
   in
   let max_uint64 = Bigint.(pred (shift_left one 64)) in
-  let custom = Ops.v Op.Custom ~arg:(Code { code = "n"; dtype = Weak_int }) in
+  let custom =
+    Ops.call ~inline:true
+      (Ops.custom_function ~dtype:Weak_int ~fmt:true "n" [])
+      []
+  in
   group "pm_lower_weak"
     [
       lower "lower_an_int_to_int32" Ops.O.(int 1 + int 2);

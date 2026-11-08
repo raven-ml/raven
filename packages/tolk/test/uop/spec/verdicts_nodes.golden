@@ -1,4 +1,4 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 0 Ops.CONST dtypes.weakint [] 16
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -228,152 +228,155 @@
 226 Ops.LOAD dtypes.i32 [225]
 227 Ops.AFTER dtypes.i32 [226, 138]
 228 Ops.RANGE dtypes.i32 [227] (AxisType.LOOP, 1)
-229 Ops.CUSTOM dtypes.f32 [4] ("{0}+1", dtypes.f32)
-230 Ops.CUSTOMI dtypes.f32 [4] ("({0}*2)", dtypes.f32)
-231 Ops.CUSTOM dtypes.void [] ("__syncthreads();", dtypes.void)
-232 Ops.CUSTOM_FUNCTION dtypes.void [1] CustomFunction(name="fn")
-233 Ops.CUSTOM_FUNCTION dtypes.void [] CustomFunction(name="fn")
-234 Ops.SINK dtypes.void [8]
-235 Ops.CALL dtypes.void [234, 1, 6] CallInfo()
-236 Ops.CALL dtypes.void [8, 1, 6] CallInfo()
-237 Ops.CUSTOM_FUNCTION dtypes.i32 [1] CustomFunction(name="fn", dtype=dtypes.i32)
-238 Ops.CALL dtypes.i32 [237, 1] CallInfo()
-239 Ops.CALL dtypes.weakint [16, 1] CallInfo()
-240 Ops.CALL dtypes.f32 [4] CallInfo()
-241 Ops.BARRIER dtypes.void [8]
-242 Ops.INS dtypes.f32 [4] ("v_mov", dtypes.f32)
-243 Ops.PARAM dtypes.f16 [18] ParamArg(slot=-1, dtype=dtypes.f16, vmin_vmax=(-10.0, 10.0), name="a", addrspace=AddrSpace.ALU)
-244 Ops.PARAM dtypes.f16 [18] ParamArg(slot=-1, dtype=dtypes.f16, vmin_vmax=(-10.0, 10.0), name="b", addrspace=AddrSpace.ALU)
-245 Ops.PARAM dtypes.f32 [18] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), name="acc", addrspace=AddrSpace.ALU)
-246 Ops.WMMA dtypes.f32 [243, 244, 245] ((8, 8, 8), dtypes.f16, 32, None)
-247 Ops.CAST dtypes.i32 [3] dtypes.i32
-248 Ops.LOAD dtypes.i32 [247]
-249 Ops.CAST dtypes.i64 [247] dtypes.i64
-250 Ops.LOAD dtypes.i64 [249]
-251 Ops.BITCAST dtypes.i32 [3] dtypes.i32
-252 Ops.LOAD dtypes.i32 [251]
-253 Ops.SHRINK dtypes.f32 [1, 2, 142]
-254 Ops.LOAD dtypes.f32 [253]
-255 Ops.LOAD dtypes.f32 [1]
-256 Ops.PARAM dtypes.bool [18] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), name="g", addrspace=AddrSpace.ALU)
-257 Ops.LOAD dtypes.f32 [3, 163, 256]
-258 Ops.LOAD dtypes.f32 [3, 162, 256]
-259 Ops.CAST dtypes.i32 [2] dtypes.i32
-260 Ops.LOAD dtypes.f32 [3, 259, 256]
-261 Ops.LOAD dtypes.f32 [154, 15, 256]
-262 Ops.PARAM dtypes.i32 [18] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), name="g", addrspace=AddrSpace.ALU)
-263 Ops.LOAD dtypes.f32 [3, 163, 262]
-264 Ops.CAST dtypes.i32 [7] dtypes.i32
-265 Ops.STORE dtypes.void [264, 19]
-266 Ops.SHRINK dtypes.f32 [6, 2, 142]
-267 Ops.STORE dtypes.void [266, 28]
-268 Ops.STORE dtypes.void [7, 4, 256]
-269 Ops.STORE dtypes.void [6, 4]
-270 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=210, dtype=dtypes.f32)
-271 Ops.STORE dtypes.void [270, 4]
-272 Ops.STORE dtypes.void [192, 4]
-273 Ops.STORE dtypes.void [217, 4]
-274 Ops.RESHAPE dtypes.f32 [6, 148]
-275 Ops.STORE dtypes.void [274, 4]
-276 Ops.STORE dtypes.void [7, 37]
-277 Ops.STORE dtypes.void [7, 13]
-278 Ops.STORE dtypes.void [7, 16]
-279 Ops.AFTER dtypes.f32 [6, 8]
-280 Ops.STORE dtypes.void [279, 4]
-281 Ops.AFTER dtypes.f32 [7, 8]
-282 Ops.STORE dtypes.void [281, 4]
-283 Ops.STORE dtypes.void [16, 4]
-284 Ops.STORE dtypes.void [4, 4]
-285 Ops.SPECIAL dtypes.weakint [155] "gidx0"
-286 Ops.CAST dtypes.i32 [155] dtypes.i32
-287 Ops.SPECIAL dtypes.i32 [286] "lidx0"
-288 Ops.CONST dtypes.weakfloat [] 4.0
-289 Ops.CAST dtypes.f32 [288] dtypes.f32
-290 Ops.STACK dtypes.f32 [289, 289]
-291 Ops.RESHAPE dtypes.f32 [1, 290]
-292 Ops.STACK dtypes.weakint [16, 0]
-293 Ops.RESHAPE dtypes.f32 [1, 292]
-294 Ops.STACK dtypes.weakint [142, 0]
-295 Ops.EXPAND dtypes.f32 [293, 294]
-296 Ops.STACK dtypes.weakint [16]
-297 Ops.PAD dtypes.f32 [1, 296, 296]
-298 Ops.STACK dtypes.weakint [16, 16]
-299 Ops.PAD dtypes.f32 [149, 298, 296]
-300 Ops.STACK dtypes.weakint [20]
-301 Ops.CONST dtypes.weakint [] 10
-302 Ops.STACK dtypes.weakint [301]
-303 Ops.SHRINK dtypes.f32 [1, 300, 302]
-304 Ops.STACK dtypes.weakint [16, 2]
-305 Ops.PERMUTE dtypes.f32 [149, 304]
-306 Ops.STACK dtypes.weakint [2, 2]
-307 Ops.PAD dtypes.f32 [149, 306, 148]
-308 Ops.STACK dtypes.weakint [142, 16, 142]
-309 Ops.RESHAPE dtypes.f32 [307, 308]
-310 Ops.STACK dtypes.weakint [2, 2, 2]
-311 Ops.STACK dtypes.weakint [142, 12, 142]
-312 Ops.PAD dtypes.f32 [309, 310, 311]
-313 Ops.CONST dtypes.weakint [] 12
-314 Ops.STACK dtypes.weakint [313, 142]
-315 Ops.RESHAPE dtypes.f32 [312, 314]
-316 Ops.STACK dtypes.weakint [12, 2]
-317 Ops.STACK dtypes.weakint [0, 142]
-318 Ops.PAD dtypes.f32 [315, 316, 317]
-319 Ops.STACK dtypes.weakint [142, 142, 142]
-320 Ops.RESHAPE dtypes.f32 [318, 319]
-321 Ops.STACK dtypes.weakint [16, 2, 20]
-322 Ops.PERMUTE dtypes.f32 [320, 321]
-323 Ops.RESHAPE dtypes.f32 [322, 317]
-324 Ops.SHRINK dtypes.f32 [323, 316, 314]
-325 Ops.RESHAPE dtypes.f32 [324, 311]
-326 Ops.SHRINK dtypes.f32 [325, 310, 308]
-327 Ops.RESHAPE dtypes.f32 [326, 148]
-328 Ops.REDUCE dtypes.f32 [1] (Ops.ADD, 1)
-329 Ops.REDUCE dtypes.f32 [4, 138, 166] (Ops.MAX, 0)
-330 Ops.RANGE dtypes.i32 [168] (AxisType.WEAK, 1)
-331 Ops.REDUCE dtypes.f32 [4, 330] (Ops.ADD, 0)
-332 Ops.CAST dtypes.u32 [142] dtypes.u32
-333 Ops.RANGE dtypes.u32 [332] (AxisType.WEAK, 1)
+229 Ops.CUSTOM_FUNCTION dtypes.f32 [18] CustomFunction(name="{0}+1", dtype=dtypes.f32, fmt=True)
+230 Ops.CALL dtypes.f32 [229, 4] CallInfo()
+231 Ops.CUSTOM_FUNCTION dtypes.f32 [18] CustomFunction(name="({0}*2)", dtype=dtypes.f32, fmt=True)
+232 Ops.CALL dtypes.f32 [231, 4] CallInfo(inline=True)
+233 Ops.CUSTOM_FUNCTION dtypes.void [] CustomFunction(name="__syncthreads();", fmt=True)
+234 Ops.CALL dtypes.void [233] CallInfo()
+235 Ops.CUSTOM_FUNCTION dtypes.void [1] CustomFunction(name="fn")
+236 Ops.CUSTOM_FUNCTION dtypes.void [] CustomFunction(name="fn")
+237 Ops.SINK dtypes.void [8]
+238 Ops.CALL dtypes.void [237, 1, 6] CallInfo()
+239 Ops.CALL dtypes.void [8, 1, 6] CallInfo()
+240 Ops.CUSTOM_FUNCTION dtypes.i32 [18, 1] CustomFunction(name="fn", dtype=dtypes.i32)
+241 Ops.CALL dtypes.i32 [240, 1] CallInfo()
+242 Ops.CALL dtypes.weakint [16, 1] CallInfo()
+243 Ops.CALL dtypes.f32 [4] CallInfo()
+244 Ops.BARRIER dtypes.void [8]
+245 Ops.INS dtypes.f32 [4] ("v_mov", dtypes.f32)
+246 Ops.PARAM dtypes.f16 [18] ParamArg(slot=-1, dtype=dtypes.f16, vmin_vmax=(-10.0, 10.0), name="a", addrspace=AddrSpace.ALU)
+247 Ops.PARAM dtypes.f16 [18] ParamArg(slot=-1, dtype=dtypes.f16, vmin_vmax=(-10.0, 10.0), name="b", addrspace=AddrSpace.ALU)
+248 Ops.PARAM dtypes.f32 [18] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), name="acc", addrspace=AddrSpace.ALU)
+249 Ops.WMMA dtypes.f32 [246, 247, 248] ((8, 8, 8), dtypes.f16, 32, None)
+250 Ops.CAST dtypes.i32 [3] dtypes.i32
+251 Ops.LOAD dtypes.i32 [250]
+252 Ops.CAST dtypes.i64 [250] dtypes.i64
+253 Ops.LOAD dtypes.i64 [252]
+254 Ops.BITCAST dtypes.i32 [3] dtypes.i32
+255 Ops.LOAD dtypes.i32 [254]
+256 Ops.SHRINK dtypes.f32 [1, 2, 142]
+257 Ops.LOAD dtypes.f32 [256]
+258 Ops.LOAD dtypes.f32 [1]
+259 Ops.PARAM dtypes.bool [18] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), name="g", addrspace=AddrSpace.ALU)
+260 Ops.LOAD dtypes.f32 [3, 163, 259]
+261 Ops.LOAD dtypes.f32 [3, 162, 259]
+262 Ops.CAST dtypes.i32 [2] dtypes.i32
+263 Ops.LOAD dtypes.f32 [3, 262, 259]
+264 Ops.LOAD dtypes.f32 [154, 15, 259]
+265 Ops.PARAM dtypes.i32 [18] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), name="g", addrspace=AddrSpace.ALU)
+266 Ops.LOAD dtypes.f32 [3, 163, 265]
+267 Ops.CAST dtypes.i32 [7] dtypes.i32
+268 Ops.STORE dtypes.void [267, 19]
+269 Ops.SHRINK dtypes.f32 [6, 2, 142]
+270 Ops.STORE dtypes.void [269, 28]
+271 Ops.STORE dtypes.void [7, 4, 259]
+272 Ops.STORE dtypes.void [6, 4]
+273 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=210, dtype=dtypes.f32)
+274 Ops.STORE dtypes.void [273, 4]
+275 Ops.STORE dtypes.void [192, 4]
+276 Ops.STORE dtypes.void [217, 4]
+277 Ops.RESHAPE dtypes.f32 [6, 148]
+278 Ops.STORE dtypes.void [277, 4]
+279 Ops.STORE dtypes.void [7, 37]
+280 Ops.STORE dtypes.void [7, 13]
+281 Ops.STORE dtypes.void [7, 16]
+282 Ops.AFTER dtypes.f32 [6, 8]
+283 Ops.STORE dtypes.void [282, 4]
+284 Ops.AFTER dtypes.f32 [7, 8]
+285 Ops.STORE dtypes.void [284, 4]
+286 Ops.STORE dtypes.void [16, 4]
+287 Ops.STORE dtypes.void [4, 4]
+288 Ops.SPECIAL dtypes.weakint [155] "gidx0"
+289 Ops.CAST dtypes.i32 [155] dtypes.i32
+290 Ops.SPECIAL dtypes.i32 [289] "lidx0"
+291 Ops.CONST dtypes.weakfloat [] 4.0
+292 Ops.CAST dtypes.f32 [291] dtypes.f32
+293 Ops.STACK dtypes.f32 [292, 292]
+294 Ops.RESHAPE dtypes.f32 [1, 293]
+295 Ops.STACK dtypes.weakint [16, 0]
+296 Ops.RESHAPE dtypes.f32 [1, 295]
+297 Ops.STACK dtypes.weakint [142, 0]
+298 Ops.EXPAND dtypes.f32 [296, 297]
+299 Ops.STACK dtypes.weakint [16]
+300 Ops.PAD dtypes.f32 [1, 299, 299]
+301 Ops.STACK dtypes.weakint [16, 16]
+302 Ops.PAD dtypes.f32 [149, 301, 299]
+303 Ops.STACK dtypes.weakint [20]
+304 Ops.CONST dtypes.weakint [] 10
+305 Ops.STACK dtypes.weakint [304]
+306 Ops.SHRINK dtypes.f32 [1, 303, 305]
+307 Ops.STACK dtypes.weakint [16, 2]
+308 Ops.PERMUTE dtypes.f32 [149, 307]
+309 Ops.STACK dtypes.weakint [2, 2]
+310 Ops.PAD dtypes.f32 [149, 309, 148]
+311 Ops.STACK dtypes.weakint [142, 16, 142]
+312 Ops.RESHAPE dtypes.f32 [310, 311]
+313 Ops.STACK dtypes.weakint [2, 2, 2]
+314 Ops.STACK dtypes.weakint [142, 12, 142]
+315 Ops.PAD dtypes.f32 [312, 313, 314]
+316 Ops.CONST dtypes.weakint [] 12
+317 Ops.STACK dtypes.weakint [316, 142]
+318 Ops.RESHAPE dtypes.f32 [315, 317]
+319 Ops.STACK dtypes.weakint [12, 2]
+320 Ops.STACK dtypes.weakint [0, 142]
+321 Ops.PAD dtypes.f32 [318, 319, 320]
+322 Ops.STACK dtypes.weakint [142, 142, 142]
+323 Ops.RESHAPE dtypes.f32 [321, 322]
+324 Ops.STACK dtypes.weakint [16, 2, 20]
+325 Ops.PERMUTE dtypes.f32 [323, 324]
+326 Ops.RESHAPE dtypes.f32 [325, 320]
+327 Ops.SHRINK dtypes.f32 [326, 319, 317]
+328 Ops.RESHAPE dtypes.f32 [327, 314]
+329 Ops.SHRINK dtypes.f32 [328, 313, 311]
+330 Ops.RESHAPE dtypes.f32 [329, 148]
+331 Ops.REDUCE dtypes.f32 [1] (Ops.ADD, 1)
+332 Ops.REDUCE dtypes.f32 [4, 138, 166] (Ops.MAX, 0)
+333 Ops.RANGE dtypes.i32 [168] (AxisType.WEAK, 1)
 334 Ops.REDUCE dtypes.f32 [4, 333] (Ops.ADD, 0)
-335 Ops.REDUCE dtypes.f32 [1] (Ops.SIN, 1)
-336 Ops.COPY dtypes.f32 [1] "CPU"
-337 Ops.COPY dtypes.f32 [1] "DISK:/tmp/x"
-338 Ops.DETACH dtypes.f32 [1]
-339 Ops.CONTIGUOUS_BACKWARD dtypes.f32 [1]
-340 Ops.STAGE dtypes.f32 [4, 138]
-341 Ops.LINEAR dtypes.void [8]
-342 Ops.SOURCE dtypes.void [] "void k(){}"
-343 Ops.PROGRAM dtypes.void [234]
-344 Ops.PROGRAM dtypes.void [234, 341]
-345 Ops.PROGRAM dtypes.void [234, 341, 342]
-346 Ops.BINARY dtypes.u8 [] b"\x00"
-347 Ops.PROGRAM dtypes.void [234, 341, 342, 346]
-348 Ops.PROGRAM dtypes.void [341]
-349 Ops.PROGRAM dtypes.void [1]
-350 Ops.AFTER dtypes.f32 [192, 8]
-351 Ops.PROGRAM dtypes.void [350]
-352 Ops.SHRINK dtypes.f32 [1, 259, 168]
-353 Ops.SHRINK dtypes.i32 [213, 259, 168]
-354 Ops.SHRINK dtypes.f32 [1, 259, 66]
-355 Ops.SHRINK dtypes.f32 [4, 259, 168]
-356 Ops.IF dtypes.void [256, 3]
-357 Ops.CAST dtypes.i32 [4] dtypes.i32
-358 Ops.IF dtypes.void [256, 357]
-359 Ops.IF dtypes.void [256, 352]
-360 Ops.IF dtypes.void [256, 4]
-361 Ops.IF dtypes.void [262, 3]
-362 Ops.ENDIF dtypes.void [356]
-363 Ops.ENDIF dtypes.void [8]
-364 Ops.STACK dtypes.f32 [1, 6]
-365 Ops.ADD dtypes.weakint [16, 100]
-366 Ops.STACK dtypes.weakint [365]
-367 Ops.CAST dtypes.i64 [16] dtypes.i64
-368 Ops.BINARY dtypes.u8 []
-369 Ops.CALL dtypes.void [234, 1, 6]
-370 Ops.WMMA dtypes.f32 [243, 244, 245]
-371 Ops.SPECIAL dtypes.weakint [155]
-372 Ops.SPECIAL dtypes.i32 [286]
-373 Ops.PERMUTE dtypes.f32 [149]
-374 Ops.REDUCE dtypes.f32 [1]
-375 Ops.COPY dtypes.f32 [1]
-376 Ops.SINK dtypes.void [5, 9, 10, 11, 12, 13, 14, 15, 17, 18, 22, 23, 26, 29, 30, 34, 35, 36, 38, 39, 40, 42, 43, 44, 45, 46, 47, 48, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 63, 65, 67, 70, 71, 72, 73, 74, 75, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 102, 105, 108, 111, 112, 113, 114, 116, 117, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 141, 143, 144, 145, 147, 150, 152, 153, 154, 158, 160, 165, 167, 170, 171, 173, 174, 175, 176, 179, 180, 182, 183, 184, 1, 185, 186, 187, 66, 188, 189, 190, 191, 192, 193, 194, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 208, 209, 210, 211, 212, 214, 216, 218, 220, 221, 222, 223, 227, 228, 229, 230, 231, 232, 233, 235, 236, 238, 239, 240, 241, 242, 246, 4, 248, 250, 252, 254, 255, 257, 258, 260, 261, 263, 8, 265, 267, 268, 269, 271, 272, 273, 275, 276, 277, 278, 280, 282, 283, 284, 285, 287, 149, 291, 295, 297, 299, 303, 305, 327, 328, 329, 331, 334, 335, 336, 337, 338, 339, 217, 340, 341, 342, 343, 344, 345, 347, 348, 349, 351, 98, 19, 352, 353, 354, 355, 356, 358, 359, 360, 361, 362, 363, 364, 366, 367, 368, 369, 370, 371, 372, 373, 374, 375]
+335 Ops.CAST dtypes.u32 [142] dtypes.u32
+336 Ops.RANGE dtypes.u32 [335] (AxisType.WEAK, 1)
+337 Ops.REDUCE dtypes.f32 [4, 336] (Ops.ADD, 0)
+338 Ops.REDUCE dtypes.f32 [1] (Ops.SIN, 1)
+339 Ops.COPY dtypes.f32 [1] "CPU"
+340 Ops.COPY dtypes.f32 [1] "DISK:/tmp/x"
+341 Ops.DETACH dtypes.f32 [1]
+342 Ops.CONTIGUOUS_BACKWARD dtypes.f32 [1]
+343 Ops.STAGE dtypes.f32 [4, 138]
+344 Ops.LINEAR dtypes.void [8]
+345 Ops.SOURCE dtypes.void [] "void k(){}"
+346 Ops.PROGRAM dtypes.void [237]
+347 Ops.PROGRAM dtypes.void [237, 344]
+348 Ops.PROGRAM dtypes.void [237, 344, 345]
+349 Ops.BINARY dtypes.u8 [] b"\x00"
+350 Ops.PROGRAM dtypes.void [237, 344, 345, 349]
+351 Ops.PROGRAM dtypes.void [344]
+352 Ops.PROGRAM dtypes.void [1]
+353 Ops.AFTER dtypes.f32 [192, 8]
+354 Ops.PROGRAM dtypes.void [353]
+355 Ops.SHRINK dtypes.f32 [1, 262, 168]
+356 Ops.SHRINK dtypes.i32 [213, 262, 168]
+357 Ops.SHRINK dtypes.f32 [1, 262, 66]
+358 Ops.SHRINK dtypes.f32 [4, 262, 168]
+359 Ops.IF dtypes.void [259, 3]
+360 Ops.CAST dtypes.i32 [4] dtypes.i32
+361 Ops.IF dtypes.void [259, 360]
+362 Ops.IF dtypes.void [259, 355]
+363 Ops.IF dtypes.void [259, 4]
+364 Ops.IF dtypes.void [265, 3]
+365 Ops.ENDIF dtypes.void [359]
+366 Ops.ENDIF dtypes.void [8]
+367 Ops.STACK dtypes.f32 [1, 6]
+368 Ops.ADD dtypes.weakint [16, 100]
+369 Ops.STACK dtypes.weakint [368]
+370 Ops.CAST dtypes.i64 [16] dtypes.i64
+371 Ops.BINARY dtypes.u8 []
+372 Ops.CALL dtypes.void [237, 1, 6]
+373 Ops.WMMA dtypes.f32 [246, 247, 248]
+374 Ops.SPECIAL dtypes.weakint [155]
+375 Ops.SPECIAL dtypes.i32 [289]
+376 Ops.PERMUTE dtypes.f32 [149]
+377 Ops.REDUCE dtypes.f32 [1]
+378 Ops.COPY dtypes.f32 [1]
+379 Ops.SINK dtypes.void [5, 9, 10, 11, 12, 13, 14, 15, 17, 18, 22, 23, 26, 29, 30, 34, 35, 36, 38, 39, 40, 42, 43, 44, 45, 46, 47, 48, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 63, 65, 67, 70, 71, 72, 73, 74, 75, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 102, 105, 108, 111, 112, 113, 114, 116, 117, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 141, 143, 144, 145, 147, 150, 152, 153, 154, 158, 160, 165, 167, 170, 171, 173, 174, 175, 176, 179, 180, 182, 183, 184, 1, 185, 186, 187, 66, 188, 189, 190, 191, 192, 193, 194, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 208, 209, 210, 211, 212, 214, 216, 218, 220, 221, 222, 223, 227, 228, 230, 232, 234, 235, 236, 238, 239, 241, 242, 243, 244, 245, 249, 4, 251, 253, 255, 257, 258, 260, 261, 263, 264, 266, 8, 268, 270, 271, 272, 274, 275, 276, 278, 279, 280, 281, 283, 285, 286, 287, 288, 290, 149, 294, 298, 300, 302, 306, 308, 330, 331, 332, 334, 337, 338, 339, 340, 341, 342, 217, 343, 344, 345, 346, 347, 348, 350, 351, 352, 354, 98, 19, 355, 356, 357, 358, 359, 361, 362, 363, 364, 365, 366, 367, 369, 370, 371, 372, 373, 374, 375, 376, 377, 378]
 

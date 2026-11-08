@@ -1142,8 +1142,8 @@ let ieee_narrow_floats =
 (* Goldens *)
 
 (* A golden holds a kernel and what tinygrad's pass makes of it, with each call
-   of f2f held as a placeholder: a custom node over its operand,
-   whose code names the call and its arguments
+   of f2f held as a placeholder: a call of code in the target's language on
+   its operand, whose code names f2f and its arguments
    (gen/codegen/decomp/decomp_dtype.py). The conversions are IEEE's. *)
 
 let dtype_named s = Result.get_ok (Dtype.of_string s)
@@ -1154,8 +1154,11 @@ let sat_named = function
   | s -> failf "%S is not a boolean" s
 
 let conversion u =
-  match (Ops.arg u, Ops.src u) with
-  | Code { code; _ }, [ v ] -> (
+  match Ops.src u with
+  | [ f; v ] when Ops.op f = Custom_function -> (
+      let code =
+        match Ops.arg f with Custom_function f -> f.name | _ -> ""
+      in
       match String.split_on_char ' ' code with
       | [ "f2f"; fr; to_; sat ] ->
           Some
@@ -1170,7 +1173,7 @@ let conversion u =
 let with_conversions u =
   let restore =
     PM.v (fun () ->
-        [ PM.rule (Ops.Upat.op Custom ~name:"c") (fun m -> conversion (m "c")) ])
+        [ PM.rule (Ops.Upat.op Call ~name:"c") (fun m -> conversion (m "c")) ])
   in
   Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
     (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u

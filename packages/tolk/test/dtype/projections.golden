@@ -1,4 +1,4 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 dtype	weak	strong	least_upper_float	storage_fmt
 dtypes.void	dtypes.void	dtypes.void	raises KeyError	None
 dtypes.bool	dtypes.bool	dtypes.bool	dtypes.f32	?

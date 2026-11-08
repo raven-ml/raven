@@ -533,7 +533,7 @@ let remove_bufferize ~reads src buf idx =
         && List.exists (Dtype.equal (dtype x)) Dtype.[ Weak_int; Bool ]
       in
       (Op.Set.mem (op x) Op.Set.elementwise
-      || List.mem (op x) Op.[ Reduce; Custom; Customi ])
+      || List.mem (op x) Op.[ Reduce; Call ])
       && not positional
     in
     let view = op src = Op.Index && not (List.exists computes computed) in
@@ -888,11 +888,14 @@ let flatten_bufferize x =
 
 (* Whether an effect an After waits on does nothing: a noop, the empty stack
    that a group of stores leaves once each store is dropped, as a store of a
-   value into itself is, or an end of one. *)
+   value into itself is, or an end of one or an After of one on ranges
+   alone. *)
 let rec is_noop_after_dep x =
   (op x = Op.Noop && src x = []) [@mutate off "a noop has no sources"]
   || (op x = Op.Stack && src x = [])
-  || (op x = Op.End && is_noop_after_dep (nth x 0))
+  || (op x = Op.End || op x = Op.After)
+     && is_noop_after_dep (nth x 0)
+     && List.for_all (fun s -> op s = Op.Range) (List.tl (src x))
 
 let remove_noop_afters x =
   match src x with
@@ -1035,6 +1038,8 @@ let unjoin u =
    join waits for. *)
 let handle_after ctx after =
   if addrspace after = Some Dtype.Local || is_group after then None
+  else if addrspace after = Some Dtype.Alu then
+    invalid_arg "kernel boundary requires storage"
   else
     let state, deps = unjoin after in
     let p = stand_in ctx state in

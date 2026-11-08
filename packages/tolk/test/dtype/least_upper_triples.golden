@@ -1,4 +1,4 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 a	b	c	least_upper	folded
 dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	dtypes.bf16	dtypes.bf16	dtypes.f32
 dtypes.fp8e4m3	dtypes.fp8e5m2	dtypes.bf16	dtypes.bf16	dtypes.f32

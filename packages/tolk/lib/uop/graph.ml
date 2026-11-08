@@ -677,7 +677,9 @@ let bufferize_opts : Ops.bufferize_opts codec =
 (* A call that precompiles its backward pass differentiates, which tolk does
    not, so the field is written and read only as its default. *)
 let call_info : Ops.call_info codec =
-  let make name precompile () : Ops.call_info = { name; precompile } in
+  let make name precompile () inline : Ops.call_info =
+    { name; precompile; inline }
+  in
   let get (f : Ops.call_info -> _) = f in
   let no_backward =
     let read = function
@@ -690,14 +692,16 @@ let call_info : Ops.call_info codec =
   |> field "name" ~default:None (option str) (get (fun c -> c.name))
   |> field "precompile" ~default:false bool (get (fun c -> c.precompile))
   |> field "precompile_backward" ~default:() no_backward (fun _ -> ())
+  |> field "inline" ~default:false bool (get (fun c -> c.inline))
   |> finish
 
 let custom_function : Ops.custom_function codec =
-  let make name dtype : Ops.custom_function = { name; dtype } in
+  let make name dtype fmt : Ops.custom_function = { name; dtype; fmt } in
   let get (f : Ops.custom_function -> _) = f in
   record "CustomFunction" make
   |> field "name" str (get (fun f -> f.name))
   |> field "dtype" ~default:Dtype.Void dtype (get (fun f -> f.dtype))
+  |> field "fmt" ~default:false bool (get (fun f -> f.fmt))
   |> finish
 
 let wmma : Ops.wmma codec =
@@ -757,7 +761,7 @@ let arg_of (o : Op.t) v : Ops.arg =
   | Special | Source | Load | Store | Linear -> String (str.read v)
   | Custom_function -> Custom_function (custom_function.read v)
   | Binary -> Bytes (bytes.read v)
-  | Custom | Customi | Ins ->
+  | Ins ->
       let code, dtype = (pair str dtype).read v in
       Code { code; dtype }
   | Stage -> Bufferize (bufferize_opts.read v)

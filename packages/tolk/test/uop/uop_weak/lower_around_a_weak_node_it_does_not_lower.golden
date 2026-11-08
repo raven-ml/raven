@@ -1,10 +1,12 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
-0 Ops.CUSTOM dtypes.weakint [] ("n", dtypes.weakint)
-1 Ops.CONST dtypes.weakint [] 1
-2 Ops.ADD dtypes.weakint [0, 1]
-3 Ops.SINK dtypes.void [2]
-4 Ops.CAST dtypes.i32 [1] dtypes.i32
-5 Ops.ADD dtypes.i32 [0, 4]
-6 Ops.SINK dtypes.void [5]
-7 Ops.SINK dtypes.void [3, 6]
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
+0 Ops.STACK dtypes.void []
+1 Ops.CUSTOM_FUNCTION dtypes.weakint [0] CustomFunction(name="n", dtype=dtypes.weakint, fmt=True)
+2 Ops.CALL dtypes.weakint [1] CallInfo(inline=True)
+3 Ops.CONST dtypes.weakint [] 1
+4 Ops.ADD dtypes.weakint [2, 3]
+5 Ops.SINK dtypes.void [4]
+6 Ops.CAST dtypes.i32 [3] dtypes.i32
+7 Ops.ADD dtypes.i32 [2, 6]
+8 Ops.SINK dtypes.void [7]
+9 Ops.SINK dtypes.void [5, 8]
 

@@ -1,4 +1,4 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
@@ -11,12 +11,13 @@
 9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 10 Ops.CALL dtypes.void [8, 9] CallInfo()
 11 Ops.CALL dtypes.void [8, 9] CallInfo(name="fill", precompile=True)
-12 Ops.CONST dtypes.weakint [] 0
-13 Ops.CAST dtypes.u64 [12] dtypes.u64
-14 Ops.CUSTOM_FUNCTION dtypes.i32 [13] CustomFunction(name="f", dtype=dtypes.i32)
-15 Ops.CALL dtypes.i32 [14] CallInfo()
-16 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
-17 Ops.STORE dtypes.void [9, 16]
-18 Ops.CALL dtypes.void [17, 9, 16] CallInfo()
-19 Ops.SINK dtypes.void [10, 11, 15, 18]
+12 Ops.STACK dtypes.void []
+13 Ops.CONST dtypes.weakint [] 0
+14 Ops.CAST dtypes.u64 [13] dtypes.u64
+15 Ops.CUSTOM_FUNCTION dtypes.i32 [12, 14] CustomFunction(name="f", dtype=dtypes.i32)
+16 Ops.CALL dtypes.i32 [15] CallInfo()
+17 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+18 Ops.STORE dtypes.void [9, 17]
+19 Ops.CALL dtypes.void [18, 9, 17] CallInfo()
+20 Ops.SINK dtypes.void [10, 11, 16, 19]
 

@@ -218,9 +218,9 @@ about 330,000 graphs, and refused none.
 | `SPECIAL` | a string, the name of the launch dimension: `"gidx0"` |
 | `COPY` | a device |
 | `LINEAR` | none, or a string |
-| `CUSTOM`, `CUSTOMI` | `(<code>, <data type>)`, the code a string |
 | `INS` | `(<instruction>, <data type>)`, the instruction a string |
-| `CUSTOM_FUNCTION`, `SOURCE` | a string |
+| `CUSTOM_FUNCTION` | `CustomFunction` |
+| `SOURCE` | a string |
 | `BINARY` | bytes |
 | `WMMA` | `((<N>, <M>, <K>), <input data type>, <threads>, <upcast axes>)`, the upcast axes a tuple of tuples of `(<range argument>, <size>)` pairs, a range argument as a `RANGE` writes it |
 | `PARAM`, `BUFFER`, `ALLOC` | `ParamArg` |
@@ -239,7 +239,8 @@ The records, with their fields in order:
 | `Estimates` | `ops`, `lds`, `mem`: each an integer or a node |
 | `ProgramInfo` | `global_size` and `local_size` tuples of integers, `vars` a tuple of nodes, `globals`, `outs` and `ins` tuples of integers, `target` `Target` |
 | `Target` | `device`, `renderer`, `arch`, `interface`, `indices`: strings |
-| `CallInfo` | `grad_fxn` (never written), `name` string or none, `precompile` and `precompile_backward` booleans, `dtype` data type |
+| `CallInfo` | `grad_fxn` (never written), `name` string or none, `precompile`, `precompile_backward` and `inline` booleans, `aux` (never written) |
+| `CustomFunction` | `name` string, `dtype` data type, `fmt` boolean |
 | `BufferizeOpts` | `device` a device or none, `addrspace` `AddrSpace`, `removable` and `broadcast` booleans |
 
 A device is a string. The enumerations are `Ops`, `AxisType`, `AddrSpace` and `OptOps`. A tag is a

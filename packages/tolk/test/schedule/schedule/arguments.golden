@@ -1,4 +1,4 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 graph	arguments
 add_kernels	-
 sum_kernels	-
@@ -51,6 +51,12 @@ custom_kernel_scalar_with_other_variable_kernels	2=70 4=5
 custom_kernel_unused_then_variable_kernels	3=5
 custom_kernel_stage_kernels	-
 custom_kernel_stage_table_kernels	-
+reduce_axis_and_range_kernels	-
+reduce_singleton_axis_and_range_kernels	-
+stage_padded_slice_kernels	-
+stage_free_range_reg_kernels	-
+stage_no_range_reg_kernels	-
+after_sum_kernels	-
 inline_function_kernels	-
 precompiled_function_kernels	-
 precompiled_function_kernels_1	-

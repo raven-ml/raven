@@ -1,4 +1,4 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 case	device	renderer	arch	input	output
 clang_bf16_add	CPU	CLANG	x86_64,x86-64	0	0
 clang_bf16_mul	CPU	CLANG	x86_64,x86-64	1	1

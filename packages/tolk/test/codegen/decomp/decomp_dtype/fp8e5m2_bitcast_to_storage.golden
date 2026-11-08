@@ -1,4 +1,4 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 16
 2 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8)
@@ -39,44 +39,46 @@
 37 Ops.AFTER dtypes.void [0, 16, 23, 29, 36]
 38 Ops.END dtypes.void [37, 5]
 39 Ops.SINK dtypes.void [38] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
-40 Ops.PARAM dtypes.u8 [1] ParamArg(slot=1, dtype=dtypes.u8)
-41 Ops.ADD dtypes.i32 [7, 12]
-42 Ops.INDEX dtypes.u8 [40, 41]
-43 Ops.LOAD dtypes.u8 [42]
-44 Ops.CUSTOM dtypes.f32 [43] ("f2f fp8e5m2 f32 True", dtypes.f32)
-45 Ops.INDEX dtypes.u8 [40, 18]
-46 Ops.LOAD dtypes.u8 [45]
-47 Ops.CUSTOM dtypes.f32 [46] ("f2f fp8e5m2 f32 True", dtypes.f32)
-48 Ops.INDEX dtypes.u8 [40, 24]
-49 Ops.LOAD dtypes.u8 [48]
-50 Ops.CUSTOM dtypes.f32 [49] ("f2f fp8e5m2 f32 True", dtypes.f32)
-51 Ops.INDEX dtypes.u8 [40, 31]
-52 Ops.LOAD dtypes.u8 [51]
-53 Ops.CUSTOM dtypes.f32 [52] ("f2f fp8e5m2 f32 True", dtypes.f32)
-54 Ops.STACK dtypes.f32 [44, 47, 50, 53]
-55 Ops.CAST dtypes.f32 [54] dtypes.f32
-56 Ops.INDEX dtypes.f32 [55, 13]
-57 Ops.BITCAST dtypes.u32 [56] dtypes.u32
-58 Ops.CUSTOM dtypes.u8 [57] ("f2f f32 fp8e5m2 True", dtypes.u8)
-59 Ops.BITCAST dtypes.u8 [58] dtypes.u8
-60 Ops.STORE dtypes.void [8, 59]
-61 Ops.INDEX dtypes.f32 [55, 20]
-62 Ops.BITCAST dtypes.u32 [61] dtypes.u32
-63 Ops.CUSTOM dtypes.u8 [62] ("f2f f32 fp8e5m2 True", dtypes.u8)
-64 Ops.BITCAST dtypes.u8 [63] dtypes.u8
-65 Ops.STORE dtypes.void [19, 64]
-66 Ops.INDEX dtypes.f32 [55, 26]
-67 Ops.BITCAST dtypes.u32 [66] dtypes.u32
-68 Ops.CUSTOM dtypes.u8 [67] ("f2f f32 fp8e5m2 True", dtypes.u8)
-69 Ops.BITCAST dtypes.u8 [68] dtypes.u8
-70 Ops.STORE dtypes.void [25, 69]
-71 Ops.INDEX dtypes.f32 [55, 33]
-72 Ops.BITCAST dtypes.u32 [71] dtypes.u32
-73 Ops.CUSTOM dtypes.u8 [72] ("f2f f32 fp8e5m2 True", dtypes.u8)
-74 Ops.BITCAST dtypes.u8 [73] dtypes.u8
-75 Ops.STORE dtypes.void [32, 74]
-76 Ops.AFTER dtypes.void [0, 60, 65, 70, 75]
-77 Ops.END dtypes.void [76, 5]
-78 Ops.SINK dtypes.void [77] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
-79 Ops.SINK dtypes.void [39, 78]
+40 Ops.CUSTOM_FUNCTION dtypes.u8 [0] CustomFunction(name="f2f f32 fp8e5m2 True", dtype=dtypes.u8, fmt=True)
+41 Ops.CUSTOM_FUNCTION dtypes.f32 [0] CustomFunction(name="f2f fp8e5m2 f32 True", dtype=dtypes.f32, fmt=True)
+42 Ops.PARAM dtypes.u8 [1] ParamArg(slot=1, dtype=dtypes.u8)
+43 Ops.ADD dtypes.i32 [7, 12]
+44 Ops.INDEX dtypes.u8 [42, 43]
+45 Ops.LOAD dtypes.u8 [44]
+46 Ops.CALL dtypes.f32 [41, 45] CallInfo()
+47 Ops.INDEX dtypes.u8 [42, 18]
+48 Ops.LOAD dtypes.u8 [47]
+49 Ops.CALL dtypes.f32 [41, 48] CallInfo()
+50 Ops.INDEX dtypes.u8 [42, 24]
+51 Ops.LOAD dtypes.u8 [50]
+52 Ops.CALL dtypes.f32 [41, 51] CallInfo()
+53 Ops.INDEX dtypes.u8 [42, 31]
+54 Ops.LOAD dtypes.u8 [53]
+55 Ops.CALL dtypes.f32 [41, 54] CallInfo()
+56 Ops.STACK dtypes.f32 [46, 49, 52, 55]
+57 Ops.CAST dtypes.f32 [56] dtypes.f32
+58 Ops.INDEX dtypes.f32 [57, 13]
+59 Ops.BITCAST dtypes.u32 [58] dtypes.u32
+60 Ops.CALL dtypes.u8 [40, 59] CallInfo()
+61 Ops.BITCAST dtypes.u8 [60] dtypes.u8
+62 Ops.STORE dtypes.void [8, 61]
+63 Ops.INDEX dtypes.f32 [57, 20]
+64 Ops.BITCAST dtypes.u32 [63] dtypes.u32
+65 Ops.CALL dtypes.u8 [40, 64] CallInfo()
+66 Ops.BITCAST dtypes.u8 [65] dtypes.u8
+67 Ops.STORE dtypes.void [19, 66]
+68 Ops.INDEX dtypes.f32 [57, 26]
+69 Ops.BITCAST dtypes.u32 [68] dtypes.u32
+70 Ops.CALL dtypes.u8 [40, 69] CallInfo()
+71 Ops.BITCAST dtypes.u8 [70] dtypes.u8
+72 Ops.STORE dtypes.void [25, 71]
+73 Ops.INDEX dtypes.f32 [57, 33]
+74 Ops.BITCAST dtypes.u32 [73] dtypes.u32
+75 Ops.CALL dtypes.u8 [40, 74] CallInfo()
+76 Ops.BITCAST dtypes.u8 [75] dtypes.u8
+77 Ops.STORE dtypes.void [32, 76]
+78 Ops.AFTER dtypes.void [0, 62, 67, 72, 77]
+79 Ops.END dtypes.void [78, 5]
+80 Ops.SINK dtypes.void [79] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+81 Ops.SINK dtypes.void [39, 80]
 

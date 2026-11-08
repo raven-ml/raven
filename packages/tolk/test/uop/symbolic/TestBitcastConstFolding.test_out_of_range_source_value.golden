@@ -1,19 +1,19 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 0 Ops.CONST dtypes.weakint [] 3000000000
-1 Ops.CUSTOM dtypes.void [0, 0] ("simplify", dtypes.void)
+1 Ops.CUSTOM_FUNCTION dtypes.void [0, 0] CustomFunction(name="simplify")
 2 Ops.CONST dtypes.weakint [] -1294967296
 3 Ops.CAST dtypes.i32 [2] dtypes.i32
 4 Ops.BITCAST dtypes.u32 [3] dtypes.u32
 5 Ops.CAST dtypes.u32 [0] dtypes.u32
 6 Ops.SINK dtypes.void [1, 4, 5]
 7 Ops.CONST dtypes.weakint [] 4464
-8 Ops.CUSTOM dtypes.void [7, 7] ("simplify", dtypes.void)
+8 Ops.CUSTOM_FUNCTION dtypes.void [7, 7] CustomFunction(name="simplify")
 9 Ops.CAST dtypes.i16 [7] dtypes.i16
 10 Ops.BITCAST dtypes.u16 [9] dtypes.u16
 11 Ops.CAST dtypes.u16 [7] dtypes.u16
 12 Ops.SINK dtypes.void [8, 10, 11]
 13 Ops.CONST dtypes.weakint [] -5
-14 Ops.CUSTOM dtypes.void [13, 13] ("simplify", dtypes.void)
+14 Ops.CUSTOM_FUNCTION dtypes.void [13, 13] CustomFunction(name="simplify")
 15 Ops.CONST dtypes.weakint [] 4294967291
 16 Ops.CAST dtypes.u32 [15] dtypes.u32
 17 Ops.BITCAST dtypes.i32 [16] dtypes.i32

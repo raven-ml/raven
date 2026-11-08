@@ -251,7 +251,9 @@ val flip : Ops.t -> int list -> Ops.t
 
 val shrink : Ops.t -> (Ops.sint * Ops.sint) option list -> Ops.t
 (** [shrink u bounds] keeps, on each axis, the elements from its start to its
-    end, excluded; [None] keeps the axis whole. *)
+    end, excluded; [None] keeps the axis whole. It is [u] if it keeps every
+    element and each start is an integer: a symbolic start, even one of 0,
+    stays, with the effects it waits on. *)
 
 val shrink_to : Ops.t -> Ops.sint option list -> Ops.t
 (** [shrink_to u shape] keeps the first elements of each axis. *)
@@ -538,8 +540,8 @@ val written_params : Ops.t -> int list option
     writes every parameter it is passed. A body of an {!Op.Linear}, a
     schedule's calls or the lines a body inside a kernel is lowered to, writes
     what its calls and stores write, in loops too. [None] when [body] does not
-    show what it writes: a {!Op.Program}, a {!Op.Custom_function}, or a sink
-    or lines holding code of the target's ({!Op.Custom}, {!Op.Customi}). *)
+    show what it writes: a {!Op.Program} or a {!Op.Custom_function}, the
+    body of a call of code in the target's language among them. *)
 
 val custom_kernel : Ops.t list -> (Ops.t list -> Ops.t) -> Ops.t list
 (** [custom_kernel args f] calls the kernel [f] builds on placeholders of

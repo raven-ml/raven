@@ -1,4 +1,4 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 16
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
@@ -36,31 +36,32 @@
 34 Ops.AFTER dtypes.void [0, 33]
 35 Ops.END dtypes.void [34, 5]
 36 Ops.SINK dtypes.void [35] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
-37 Ops.PARAM dtypes.u16 [1] ParamArg(slot=1, dtype=dtypes.u16)
-38 Ops.INDEX dtypes.u16 [37, 7]
-39 Ops.LOAD dtypes.u16 [38]
-40 Ops.CUSTOM dtypes.f32 [39] ("f2f bf16 f32 True", dtypes.f32)
-41 Ops.CAST dtypes.f32 [40] dtypes.f32
-42 Ops.MUL dtypes.f32 [41, 13]
-43 Ops.INDEX dtypes.u16 [37, 16]
-44 Ops.LOAD dtypes.u16 [43]
-45 Ops.CUSTOM dtypes.f32 [44] ("f2f bf16 f32 True", dtypes.f32)
-46 Ops.CAST dtypes.f32 [45] dtypes.f32
-47 Ops.MUL dtypes.f32 [46, 13]
-48 Ops.INDEX dtypes.u16 [37, 21]
-49 Ops.LOAD dtypes.u16 [48]
-50 Ops.CUSTOM dtypes.f32 [49] ("f2f bf16 f32 True", dtypes.f32)
-51 Ops.CAST dtypes.f32 [50] dtypes.f32
-52 Ops.MUL dtypes.f32 [51, 13]
-53 Ops.INDEX dtypes.u16 [37, 27]
-54 Ops.LOAD dtypes.u16 [53]
-55 Ops.CUSTOM dtypes.f32 [54] ("f2f bf16 f32 True", dtypes.f32)
-56 Ops.CAST dtypes.f32 [55] dtypes.f32
-57 Ops.MUL dtypes.f32 [56, 13]
-58 Ops.STACK dtypes.f32 [42, 47, 52, 57]
-59 Ops.STORE dtypes.void [8, 58]
-60 Ops.AFTER dtypes.void [0, 59]
-61 Ops.END dtypes.void [60, 5]
-62 Ops.SINK dtypes.void [61] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
-63 Ops.SINK dtypes.void [36, 62]
+37 Ops.CUSTOM_FUNCTION dtypes.f32 [0] CustomFunction(name="f2f bf16 f32 True", dtype=dtypes.f32, fmt=True)
+38 Ops.PARAM dtypes.u16 [1] ParamArg(slot=1, dtype=dtypes.u16)
+39 Ops.INDEX dtypes.u16 [38, 7]
+40 Ops.LOAD dtypes.u16 [39]
+41 Ops.CALL dtypes.f32 [37, 40] CallInfo()
+42 Ops.CAST dtypes.f32 [41] dtypes.f32
+43 Ops.MUL dtypes.f32 [42, 13]
+44 Ops.INDEX dtypes.u16 [38, 16]
+45 Ops.LOAD dtypes.u16 [44]
+46 Ops.CALL dtypes.f32 [37, 45] CallInfo()
+47 Ops.CAST dtypes.f32 [46] dtypes.f32
+48 Ops.MUL dtypes.f32 [47, 13]
+49 Ops.INDEX dtypes.u16 [38, 21]
+50 Ops.LOAD dtypes.u16 [49]
+51 Ops.CALL dtypes.f32 [37, 50] CallInfo()
+52 Ops.CAST dtypes.f32 [51] dtypes.f32
+53 Ops.MUL dtypes.f32 [52, 13]
+54 Ops.INDEX dtypes.u16 [38, 27]
+55 Ops.LOAD dtypes.u16 [54]
+56 Ops.CALL dtypes.f32 [37, 55] CallInfo()
+57 Ops.CAST dtypes.f32 [56] dtypes.f32
+58 Ops.MUL dtypes.f32 [57, 13]
+59 Ops.STACK dtypes.f32 [43, 48, 53, 58]
+60 Ops.STORE dtypes.void [8, 59]
+61 Ops.AFTER dtypes.void [0, 60]
+62 Ops.END dtypes.void [61, 5]
+63 Ops.SINK dtypes.void [62] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+64 Ops.SINK dtypes.void [36, 63]
 

@@ -1,4 +1,4 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 extern "C" __attribute__((device, pure)) float __ocml_exp2_f32(float);
 extern "C" __attribute__((device, pure)) float __ocml_log2_f32(float);
 extern "C" __attribute__((device)) float __ocml_sin_f32(float);

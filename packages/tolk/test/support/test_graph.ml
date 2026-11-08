@@ -78,7 +78,9 @@ let kinds =
     ("bytes", Ops.v ~arg:(Bytes "\x7fELF\x00") Binary);
     ("a named linear", Ops.v ~src:[ x ] ~arg:(String "kernargs") Linear);
     ( "custom code",
-      Ops.v ~src:[ x ] ~arg:(Code { code = "{0}+1"; dtype = Float32 }) Custom );
+      Ops.call
+        (Ops.custom_function ~dtype:Float32 ~fmt:true "{0}+1" [])
+        [ x ] );
     ( "a stage",
       Ops.v ~src:[ buffer ]
         ~arg:
@@ -129,7 +131,7 @@ let kinds =
       Ops.v
         ~src:[ Ops.sink [ x ]; buffer ]
         ~arg:
-          (Call { name = Some "f"; precompile = true })
+          (Call { name = Some "f"; precompile = true; inline = false })
         Call );
     ( "a tensor core product",
       Ops.v ~src:[ half; half; x ]

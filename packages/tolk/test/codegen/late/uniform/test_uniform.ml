@@ -133,7 +133,11 @@ let values_kernel =
          value_cases)
 
 let custom_values =
-  let custom = Ops.v Op.Customi ~arg:(Code { code = "f()"; dtype = Int32 }) in
+  let custom =
+    Ops.call ~inline:true
+      (Ops.custom_function ~dtype:Int32 ~fmt:true "f()" [])
+      []
+  in
   let ins = Ops.v Op.Ins ~arg:(Code { code = "s_nop"; dtype = Int32 }) in
   [ ("custom code", custom); ("an instruction", ins) ]
 

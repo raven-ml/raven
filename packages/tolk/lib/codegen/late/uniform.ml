@@ -33,7 +33,7 @@ let storage p =
 let space b = match arg b with Param p -> Some p.addrspace | _ -> None
 
 (* The writes to each storage of a kernel: the stores that target it, and the
-   calls and custom code it is a memory argument of. *)
+   calls it is a memory argument of. *)
 let writers nodes =
   let tbl = Tbl.create 16 in
   let add w b =
@@ -46,7 +46,7 @@ let writers nodes =
     (fun u ->
       match op u with
       | Op.Store -> Option.iter (add u) (storage (nth u 0))
-      | Op.Call | Op.Custom ->
+      | Op.Call ->
           List.iter
             (fun a -> if memory a then Option.iter (add u) (storage a))
             (src_without_body u)
@@ -92,7 +92,7 @@ let causes ~launched ~writes ~marked =
     | Op.After, _ -> cause (nth u 0)
     | Op.Load, _ -> join (sources u) (memory u)
     | Op.Reduce, _ -> reduce u
-    | (Op.Wmma | Op.Ins | Op.Custom | Op.Customi | Op.Call), _ -> Any
+    | (Op.Wmma | Op.Ins | Op.Call), _ -> Any
     | _ -> sources u
   and range r =
     match axis_type r with

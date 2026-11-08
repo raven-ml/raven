@@ -1,4 +1,4 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 %0 = cast -5 : i32
 %1 = cast 12345678901234 : i64
 %2 = cast 200 : u8
@@ -54,12 +54,12 @@
 %52 = store %50, %51
 %53 = sink %52
 %54 = param 4 : dtype=f32 slot=9
-%55 = call %53, %54
-%56 = call %53, %54 : name='fill'
-%57 = call %53, %54 : name='fill' precompile=true
-%58 = custom_function : CustomFunction(name='sqrt', dtype=dtypes.f64)
+%55 = call %53, %54 : CallInfo(None, None, False, False, False, None)
+%56 = call %53, %54 : CallInfo(None, 'fill', False, False, False, None)
+%57 = call %53, %54 : CallInfo(None, 'fill', True, False, False, None)
+%58 = custom_function () : CustomFunction(name='sqrt', dtype=dtypes.f64, fmt=False)
 %59 = cast 16.0 : f64
-%60 = call %58, %59
+%60 = call %58, %59 : CallInfo(None, None, False, False, False, None)
 %61 = reduce %54, %40 : op=add
 %62 = reduce %54, %40 : op=max pop=1
 %63 = cast %38 : i64
@@ -67,9 +67,10 @@
 %65 = bitcast %64 : f32
 %66 = copy %54 : CPU
 %67 = special 4 : lidx1
-%68 = custom %38 : ('abs({0})', dtypes.i32)
-%69 = source : 'int main() { return 0; }'
-%70 = stack %38, 2
-%71 = add %38, (1, 2)
-%72 = sink true, false, 3, -5, 1180591620717411303424, 1.5, 0.1, inf, nan, -0.0, invalid, %0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %12, %6, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %24, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %55, %56, %57, %60, %61, %62, %63, %65, %66, %67, %68, %69, (1, 2), (), %70, %71
+%68 = custom_function () : CustomFunction(name='abs({0})', dtype=dtypes.i32, fmt=True)
+%69 = call %68, %38 : CallInfo(None, None, False, False, True, None)
+%70 = source : 'int main() { return 0; }'
+%71 = stack %38, 2
+%72 = add %38, (1, 2)
+%73 = sink true, false, 3, -5, 1180591620717411303424, 1.5, 0.1, inf, nan, -0.0, invalid, %0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %12, %6, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %24, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %55, %56, %57, %60, %61, %62, %63, %65, %66, %67, %69, %70, (1, 2), (), %71, %72
 

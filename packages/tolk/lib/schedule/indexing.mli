@@ -89,7 +89,8 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
     - storage read by an indexed node is indexed by that node's ranges;
     - a gather reads its gathered source at the element its index holds,
       followed by the gather's trailing ranges;
-    - a reduction of leading axes becomes a reduction over its ranges;
+    - a reduction of leading axes becomes a reduction over their ranges,
+      those of one element left out, and its own;
     - a {!Op.Pad} becomes a selection of its source where its index is valid,
       and of [0] elsewhere;
     - a {!Op.Stack} becomes a selection of its sources by its leading range: a

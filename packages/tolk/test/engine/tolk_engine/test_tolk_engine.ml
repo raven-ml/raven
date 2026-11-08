@@ -1332,14 +1332,39 @@ let custom_kernel_closes ?(devices = devices) closure () =
   equal values ~msg:"the custom kernel's" (plus 7) (contents (of_node o1))
 
 (* The custom kernels whose variable sits among their buffers. *)
-(* custom_kernel_stage and custom_kernel_stage_table: a function stages [r]
-   over [r < 4] and reads the stage at 2, the element read, 2, or the
-   element 2 of the table [10; 20; 30; 40] at that index, 30; slot 2 is that
-   plus 1. *)
-let reads_a_stage ?(devices = devices) name expected () =
+(* [name] leaves in slot [out] the integers [f] computes from what each slot
+   held before. *)
+let runs_to ?(devices = devices) name out f () =
   let s, vars, storage = linked ~devices (program name) in
   Engine.run ~vars s [||];
-  equal values [| `Int (Bigint.of_int expected) |] (contents (slot storage 2))
+  let before k = Array.map Dtype.Value.to_int (slot storage k).before in
+  equal values
+    (Array.map (fun n -> `Int (Bigint.of_int n)) (f before))
+    (contents (slot storage out))
+
+let sum = Array.fold_left ( + ) 0
+
+(* Functions and kernels with stages and sums, each result plus 1:
+   custom_kernel_stage and custom_kernel_stage_table stage [r] over [r < 4]
+   and read the stage at 2, the element read, or the element 2 of the table
+   [10; 20; 30; 40] at that index; reduce_axis_and_range and
+   reduce_singleton_axis_and_range sum their input's axes and a range of 3;
+   stage_padded_slice stores the rows [r] of the stage of [r] padded by one
+   each side, over [r < 2]; stage_free_range_reg reads at 2 a register stage
+   of [10 i + j] over [j < 4], and stage_no_range_reg adds 1 to one of
+   [10 i], over [i < 3]; after_sum is the sum of slot 2 plus slot 3's element
+   ordered after the sum. *)
+let stages_and_sums =
+  [
+    ("custom_kernel_stage", 2, fun _ -> [| 3 |]);
+    ("custom_kernel_stage_table", 2, fun _ -> [| 31 |]);
+    ("reduce_axis_and_range", 4, fun b -> [| (3 * sum (b 3)) + 1 |]);
+    ("reduce_singleton_axis_and_range", 2, fun b -> [| (3 * sum (b 1)) + 1 |]);
+    ("stage_padded_slice", 2, fun _ -> [| 1; 1; 1; 1; 1; 2; 2; 1 |]);
+    ("stage_free_range_reg", 2, fun _ -> [| 3; 13; 23 |]);
+    ("stage_no_range_reg", 2, fun _ -> [| 2; 12; 22 |]);
+    ("after_sum", 4, fun b -> [| sum (b 2) + (b 3).(0) |]);
+  ]
 
 let custom_kernel_scalars ?(devices = devices) () =
   [
@@ -3125,10 +3150,10 @@ let schedules =
       cases "a schedule runs on the buffers each run binds to its parameters"
         ~id:Fun.id [ "contiguous"; "copy_view" ] (fun name ->
           runs_on_its_slots name ());
-      test "a function reads its own stage at an index"
-        (reads_a_stage "custom_kernel_stage" 3);
-      test "a function reads a table at an index its own stage holds"
-        (reads_a_stage "custom_kernel_stage_table" 31);
+      cases "stages and sums compute what their programs state"
+        ~id:(fun (name, _, _) -> name)
+        stages_and_sums
+        (fun (name, out, f) -> runs_to name out f ());
       test "a range around a call runs it once per trip" runs_once_per_trip;
       test "a scan runs its body once per trip, carrying in place"
         scans_with_a_carry;

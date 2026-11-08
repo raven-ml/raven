@@ -410,7 +410,7 @@ def arguments():
         a.cast(dtypes.long), UOp(Ops.BITCAST, src=(a.cast(dtypes.int),), arg=dtypes.float),
         buf.copy_to_device("CPU"),
         UOp.special(4, "lidx1"),
-        UOp(Ops.CUSTOM, src=(a,), arg=("abs({0})", dtypes.int)),
+        UOp.custom_function("abs({0})", dtype=dtypes.int, fmt=True).call(a, inline=True),
         UOp(Ops.SOURCE, arg="int main() { return 0; }"),
         UOp.stack(UOp.const(1), UOp.const(2)), UOp(Ops.STACK, src=()), UOp.stack(a, UOp.const(2)),
         a + UOp.stack(UOp.const(1), UOp.const(2)),

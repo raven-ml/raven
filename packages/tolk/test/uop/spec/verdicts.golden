@@ -1,4 +1,4 @@
-# tinygrad d4201de2d16c3687d08552864910eb2aee6b00e2
+# tinygrad 7984f41ab5af7443d00d72bb484ff12a828c427e
 case	shared	tensor	program	full	kernel_graph
 a sink of a load	True	True	True	True	True
 a sink with kernel info	True	True	True	True	True
@@ -158,9 +158,9 @@ a constant after a store	True	True	False	True	None
 a load after a store	None	None	False	True	None
 an int32 load after a range	None	None	True	True	None
 a range bounded by a load after a range	True	True	True	True	True
-custom code	True	True	True	True	None
-inline custom code	True	True	True	True	None
-a void custom statement	True	True	True	True	None
+custom code	True	True	True	True	True
+inline custom code	True	True	True	True	True
+a void custom statement	True	True	True	True	True
 a custom function	True	True	True	True	None
 a custom function without sources	True	True	True	True	None
 a call of a sink	True	True	True	True	True
