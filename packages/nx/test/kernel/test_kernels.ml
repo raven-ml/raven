@@ -661,6 +661,125 @@ let law_map_over_load (b : Support.backend) (Pair (x, y), seed) =
       want
   end
 
+(* Offsets *)
+
+(* The alignment Nx_array promises an array's first element: its dtype's
+   width for dtypes of a byte or more, one byte for narrower ones, one
+   component's for complex ones. *)
+let alignment (type v s) (dt : (v, s) D.t) =
+  let bits = D.bits dt in
+  if bits < 8 then 1 else if D.is D.Complex dt then bits / 16 else bits / 8
+
+type offsets = {
+  dt : D.any;
+  shape : int array;
+  src : int;
+  dst : int;
+  seed : int;
+}
+
+let pp_offsets ppf c =
+  let (D.Any dt) = c.dt in
+  Format.fprintf ppf "%a %a from byte %d into byte %d, seed %d" D.pp dt
+    pp_ints c.shape c.src c.dst c.seed
+
+(* A dtype, complex half the time, a shape of a few axes, and the bytes a
+   source and a destination start at past a buffer's start: each a multiple
+   of the dtype's alignment below 16, the widest access a kernel makes. *)
+let offset_cases =
+  let open Gen in
+  let complexes = of_list ~pp:pp_dtype D.[ Any Complex64; Any Complex128 ] in
+  let* (D.Any d as dt) = frequency [ (1, dtypes); (1, complexes) ] in
+  let a = alignment d in
+  let at = of_list ~pp:Format.pp_print_int (List.init (16 / a) (( * ) a)) in
+  let* shape = array ~size:(int_range 1 3) extent in
+  let* src = at in
+  let* dst = at in
+  let+ seed = int in
+  { dt; shape; src; dst; seed }
+
+(* [x]'s bytes on [b]'s device in a fresh buffer from its byte [at]. *)
+let placed (type v s) (b : Support.backend) at (x : (v, s) A.t) : (v, s) A.t =
+  let src = A.buffer x in
+  let n = B.length src in
+  let dst = B.view (B.create b.device (at + n)) ~first:at ~length:n in
+  B.copy ~src ~dst;
+  A.v (A.dtype x) (A.layout x) dst
+
+(* A C-contiguous array of [dt] and shape [s] on [b]'s device in a fresh
+   buffer from its byte [at]. *)
+let blank (type v s) (b : Support.backend) at (dt : (v, s) D.t) s :
+    (v, s) A.t =
+  let n = max 1 (D.bytes dt (Array.fold_left ( * ) 1 s)) in
+  let buffer = B.view (B.create b.device (at + n)) ~first:at ~length:n in
+  A.v dt (L.contiguous (Iarray.of_array s)) buffer
+
+(* A copy, a padded load's map, a sum along the last axis and a sum's scan
+   along the first from a carry, each with its source at byte [src] and its
+   destination and carry at byte [dst], or the multiple of the carrier's
+   alignment below it: each answer, and each result where the host reads
+   it. *)
+let offset_runs (type v s) (b : Support.backend) c (x : (v, s) A.t) ~src
+    ~dst =
+  let module K = (val b.kernels) in
+  let dt = A.dtype x and s = c.shape in
+  let x = placed b src x in
+  let into s = blank b dst dt s in
+  let ran name f y = (name, f y, y) in
+  let p = Reduce_cases.identity c.dt in
+  let r = Array.length s - 1 in
+  let maps =
+    [
+      ran "copy" (fun y -> Support.map1 (module K) Copy ~dst:y x) (into s);
+      ran "padded load"
+        (fun y -> K.map p ~dsts:[| A.Any y |] [| unpadded x |])
+        (into s);
+    ]
+  in
+  if not (Reduce_cases.accepts Sum c.dt) then maps
+  else
+    let (D.Any ct) = Nx_kernel.carrier c.dt in
+    let carry_shape = Array.mapi (fun i e -> if i = 0 then 1 else e) s in
+    let carry =
+      placed b
+        (dst / alignment ct * alignment ct)
+        (seeded ct (Iarray.of_array carry_shape) (c.seed + 1))
+    in
+    maps
+    @ [
+        ran "sum"
+          (fun y ->
+            K.reduce p ~shape:(Iarray.of_array s) ~axes:(Iarray.of_list [ r ])
+              [| (Monoid Sum, 0) |] ~dsts:[| A.Any y |] [| Plain x |])
+          (into (Array.sub s 0 r));
+        ran "scan from a carry"
+          (fun y ->
+            K.scan ~carry:(A.Any carry) p ~axis:0 (Monoid Sum, 0)
+              ~dsts:[| A.Any y |] [| Plain x |])
+          (into s);
+      ]
+
+(* A map, a reduction and a scan over arrays at any offset their dtype's
+   alignment admits give the answers and the bits they give over arrays at
+   a buffer's start. *)
+let law_offsets (b : Support.backend) c =
+  let (D.Any dt) = c.dt in
+  let complex bytes = D.is D.Complex dt && 8 * bytes = D.bits dt in
+  let off o = o mod (D.bits dt / 8) <> 0 in
+  cover "complex64 from 4 bytes past 8" (complex 8 && off c.src);
+  cover "complex64 into 4 bytes past 8" (complex 8 && off c.dst);
+  cover "complex128 from 8 bytes past 16" (complex 16 && off c.src);
+  cover "complex128 into 8 bytes past 16" (complex 16 && off c.dst);
+  let x = seeded dt (Iarray.of_array c.shape) c.seed in
+  let want = offset_runs b c x ~src:0 ~dst:0 in
+  let got = offset_runs b c x ~src:c.src ~dst:c.dst in
+  List.iter2
+    (fun (msg, a, w) (_, a', g) ->
+      equal ~msg answer a a';
+      if a = A.Done then
+        equal ~msg (list string) [] (differ (host w) (host g)))
+    want got
+
 (* Operands outlive the call *)
 
 (* While another domain collects and compacts, copies of arrays no other value
@@ -1261,6 +1380,10 @@ let laws (b : Support.backend) =
         (unit (test_map_identical_view b));
       test "a map of a padded load reads its coordinates"
         (unit (test_padded_coordinate b));
+      prop ~count:200
+        "a map, a sum and a scan at any offset their dtype admits have the \
+         bits they have at a buffer's start"
+        (Gen.with_pp pp_offsets offset_cases) (run (law_offsets b));
       (* "a where" and "a load of one repeated element" come in one case
          in twenty-five: 400 cases reach each in every run. *)
       prop ~count:400
