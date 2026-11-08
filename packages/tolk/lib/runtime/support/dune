@@ -16,8 +16,8 @@
    %{target}
    (run %{exe:../../../tools/embed.exe} %{dep:compiler_cuda_worker.exe}))))
 
-; dlopen is a library of its own on Linux; elsewhere it is part of the C
-; library (macOS) or of kernel32 (Windows).
+; dlopen and threads are libraries of their own on Linux before glibc 2.34;
+; elsewhere they are part of the C library (macOS) or of kernel32 (Windows).
 
 (rule
  (target compiler_amd_worker.exe)
@@ -32,7 +32,8 @@
    %{target}
    %{dep:compiler_amd_worker.c}
    %{dep:compiler_worker.c}
-   -ldl)))
+   -ldl
+   -pthread)))
 
 (rule
  (target compiler_amd_worker.exe)
@@ -61,7 +62,8 @@
    %{target}
    %{dep:compiler_cuda_worker.c}
    %{dep:compiler_worker.c}
-   -ldl)))
+   -ldl
+   -pthread)))
 
 (rule
  (target compiler_cuda_worker.exe)

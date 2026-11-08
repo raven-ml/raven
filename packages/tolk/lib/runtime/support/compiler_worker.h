@@ -6,7 +6,8 @@
 
 /* What every worker shares: a program that runs compiles in a process of its
    own, embedded in tolk and spawned by Compiler_worker. A worker serves
-   compiles until its input ends.
+   compiles until its input ends, and ends during a compile if the parent's
+   end of its input closes.
 
      worker LIBRARY
 

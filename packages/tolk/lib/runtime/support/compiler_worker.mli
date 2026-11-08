@@ -33,7 +33,8 @@ val call : t -> string -> string -> (string, string) result
     A serving worker reads requests, each [N\n] then [N] bytes, on its
     standard input, replies to each on its standard output once it has read
     it whole, and ends when its input does, which this process's end closes
-    when the process exits. A worker is idle between calls, from any domain;
+    when the process exits, killed or not: a worker in a compile that does not
+    return ends too, at once, or within a second on Windows. A worker is idle between calls, from any domain;
     there is no limit to their number. A process forked from this one starts
     workers of its own: those it inherits are its parent's, and it closes its
     copies of their descriptors. On Windows a worker inherits only its own

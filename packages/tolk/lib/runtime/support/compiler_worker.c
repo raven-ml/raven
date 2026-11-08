@@ -44,6 +44,8 @@ const char *library_error(const char *path) {
 #include <dirent.h>
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <pthread.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -207,7 +209,48 @@ static bool read_all(char *bytes, size_t size) {
 
 /* A worker never dies with the thread that spawned it: that thread may end
    long before the process. It ends when its input does, which the parent's
-   end closes, with the parent. */
+   end closes, with the parent. Between requests it reads its input, which
+   ends; during a compile, which may never return, a thread of its own waits
+   for the parent's end to close and ends the process. Elsewhere than
+   Windows that is the hang-up poll reports; on Windows, whose pipes poll
+   cannot wait on, a peek every second that finds the pipe broken. */
+#ifdef _WIN32
+static DWORD WINAPI watch(LPVOID unused) {
+  (void)unused;
+  HANDLE requests = (HANDLE)_get_osfhandle(request_fd);
+  for (;;) {
+    DWORD available;
+    if (!PeekNamedPipe(requests, NULL, 0, NULL, &available, NULL) &&
+        GetLastError() == ERROR_BROKEN_PIPE)
+      _exit(1);
+    Sleep(1000);
+  }
+}
+#else
+static void *watch(void *unused) {
+  (void)unused;
+  struct pollfd requests = {request_fd, 0, 0};
+  for (;;)
+    if (poll(&requests, 1, -1) > 0 &&
+        (requests.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0)
+      _exit(1);
+}
+#endif
+
+static bool start_watch(void) {
+#ifdef _WIN32
+  HANDLE thread = CreateThread(NULL, 0, watch, NULL, 0, NULL);
+  if (thread == NULL) return false;
+  CloseHandle(thread);
+  return true;
+#else
+  pthread_t thread;
+  if (pthread_create(&thread, NULL, watch, NULL) != 0) return false;
+  pthread_detach(thread);
+  return true;
+#endif
+}
+
 void serve(int argc, char **argv, const char *library) {
   if (argc != 2) {
     fprintf(stderr, "usage: %s %s\n", argv[0], library);
@@ -231,6 +274,10 @@ void serve(int argc, char **argv, const char *library) {
 #endif
   if (request_fd < 0 || reply_fd < 0 || none < 0) {
     fprintf(stderr, "%s: no descriptor for its requests\n", argv[0]);
+    exit(1);
+  }
+  if (!start_watch()) {
+    fprintf(stderr, "%s: no thread to watch its parent\n", argv[0]);
     exit(1);
   }
 }

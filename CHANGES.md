@@ -1077,6 +1077,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A comgr or NVRTC worker process whose compile does not return now ends
+  when the process that started it ends, killed or not, where it lived on
+  holding its memory.
 - `Compiler_amd.hip`'s `Compile_error` for a source that code generation or
   linking rejects carries comgr's log, as it did for a rejected compile,
   where it said only `comgr fail 1, ERROR`.
