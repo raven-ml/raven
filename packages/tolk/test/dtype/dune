@@ -4,4 +4,5 @@
  (package tolk)
  (libraries windtrap tolk tolk_test)
  (deps
-  (glob_files *.golden)))
+  (glob_files *.golden)
+  (glob_files *.tolk)))

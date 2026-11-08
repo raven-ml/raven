@@ -10,7 +10,8 @@
  (libraries windtrap tolk tolk_test unix)
  (deps
   (sandbox always)
-  (glob_files *.golden))
+  (glob_files *.golden)
+  (glob_files *.tolk))
  (action
   (setenv
    CACHEDB
@@ -49,6 +50,7 @@
  (alias runtest)
  (package tolk)
  (deps
-  (glob_files *.golden))
+  (glob_files *.golden)
+  (glob_files *.tolk))
  (action
   (run %{exe:test_search_exec.exe})))

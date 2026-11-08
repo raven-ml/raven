@@ -124,9 +124,21 @@ rest is its body. A golden check is one line:
   `Golden.columns` and `Golden.rows` give the table itself, for a claim about
   the whole table, such as that it has no column the suite does not check.
 
-A golden is tinygrad's output and is never edited by hand. When a ledger entry
+A golden is tinygrad's output, with each kernel body's parameters written
+without a device (`gen/graph.py`, D170), and is never edited by hand. When a ledger entry
 changes an output, the test that compares it states the difference in code and
 names the entry, and it is that entry's pinning test.
+
+Where tolk differs on purpose, `<name>.tolk` sits beside `<name>.golden`: the
+same body format under a first line `# tolk D81 D96 golden=<hash>`, naming the
+entries and the MD5 of the golden's body. A golden test reads the `.tolk` when
+it exists and fails if the hash no longer matches the golden, if the two bodies
+are equal, or if it names no entry. A suite lists `*.tolk` beside `*.golden`
+in its `deps`. Running the executable with `-u` writes a text or graph golden's
+`.tolk`, keeping the entries of the file it replaces; a new file is then edited
+to name one. A table or an input has no output to write: its failure prints the
+new hash, for the header. A `.tolk` with no `.golden` is output with no upstream answer, and carries
+no hash.
 
 ## Graphs
 

@@ -4,7 +4,8 @@
  (libraries windtrap tolk tolk_test)
  (deps
   comgr_stand_in
-  (glob_files *.golden))
+  (glob_files *.golden)
+  (glob_files *.tolk))
  (action
   (setenv
    COMGR_PATH

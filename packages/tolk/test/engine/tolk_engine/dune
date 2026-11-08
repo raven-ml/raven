@@ -18,4 +18,6 @@
   rig.amd.amdgpu)
  (deps
   (glob_files ../../schedule/schedule/*.golden)
-  (glob_files ../../codegen/late/linearizer/*.golden)))
+  (glob_files ../../schedule/schedule/*.tolk)
+  (glob_files ../../codegen/late/linearizer/*.golden)
+  (glob_files ../../codegen/late/linearizer/*.tolk)))

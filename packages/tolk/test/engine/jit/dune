@@ -4,7 +4,8 @@
  (package tolk)
  (libraries windtrap tolk tolk.engine tolk_test tolk_run rig)
  (deps
-  (glob_files *.golden)))
+  (glob_files *.golden)
+  (glob_files *.tolk)))
 
 ; JITBEAM is read once per process, so each of its settings is a run of its
 ; own.

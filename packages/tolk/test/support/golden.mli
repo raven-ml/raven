@@ -3,7 +3,8 @@
     A golden is a file [<name>.golden] beside the suite that reads it. Its first
     line names the tinygrad commit it was recorded from, as
     [# tinygrad <commit>], and the rest is its body. A suite lists its goldens
-    in its stanza's [deps], which copies them beside its executable, and names
+    and their {{!tolk}[.tolk]} files in its stanza's [deps], which copies them
+    beside its executable, and names
     them by file name. A relative file name is read from there, whatever the
     working directory.
 
@@ -12,8 +13,33 @@
     cannot be read raises [Sys_error], and one that is not a golden raises
     [Failure]. *)
 
+(** {1:tolk Tolk's output}
+
+    Where tolk differs from upstream on purpose, [<name>.tolk] sits beside
+    [<name>.golden]. Every function here, given a file [<name>.golden], reads
+    [<name>.tolk] when it exists. Its first line is
+
+    {v # tolk D81 D96 golden=<hash> v}
+
+    and the rest is the golden's body format. The [D]-numbers are the entries of
+    [DIVERGENCES.md] the difference belongs to, and [golden=] is the hash of the
+    body of [<name>.golden] the file was recorded against, so a golden that
+    moves fails its test without running the generator. A [<name>.tolk] with no
+    [<name>.golden] is an output with no upstream answer and carries no hash.
+
+    Reading a [.tolk] raises [Failure] naming the file and what is wrong if its
+    header names no entry or is malformed, if the golden's hash is missing or
+    not the current golden's, if it carries a hash and the golden is gone, or if
+    its body equals the golden's. Under windtrap's [-u], {!text} and {!graph}
+    write an output that differs from its golden as [<name>.tolk], keeping the
+    entries of the file it replaces; a new file names none and fails until a
+    person adds one. [-u] writes nothing for an output equal to its golden. A
+    table or an input has no output to write: when its golden moves, the failure
+    prints the new hash, for the header. *)
+
 val body : string -> string
-(** [body file] is the body of the golden [file]. *)
+(** [body file] is the body of [file]'s [.tolk] when one exists, else of the
+    golden [file]. *)
 
 val text : string -> (unit -> string) -> Windtrap.test
 (** [text file actual] is the test, named [file], that [actual ()] is the body
@@ -46,7 +72,8 @@ val cases :
 (** [cases file check] is the table, named [file], that runs [check cell] on
     each row of the table golden [file]. A row is identified by its cells in
     [key], as [a=dtypes.half b=dtypes.char]; [key] defaults to the first column.
-*)
+    A table that cannot be read as a golden is one failing test named [file],
+    so a stale [.tolk] does not stop the suite. *)
 
 val columns : string -> string list
 (** [columns file] is the column names of the table golden [file], in order. *)

@@ -9,7 +9,8 @@
  (alias runtest)
  (package tolk)
  (deps
-  (glob_files *.golden))
+  (glob_files *.golden)
+  (glob_files *.tolk))
  (action
   (run %{exe:test_decomp_dtype.exe} --shard 1/4)))
 
@@ -17,7 +18,8 @@
  (alias runtest)
  (package tolk)
  (deps
-  (glob_files *.golden))
+  (glob_files *.golden)
+  (glob_files *.tolk))
  (action
   (run %{exe:test_decomp_dtype.exe} --shard 2/4)))
 
@@ -25,7 +27,8 @@
  (alias runtest)
  (package tolk)
  (deps
-  (glob_files *.golden))
+  (glob_files *.golden)
+  (glob_files *.tolk))
  (action
   (run %{exe:test_decomp_dtype.exe} --shard 3/4)))
 
@@ -33,6 +36,7 @@
  (alias runtest)
  (package tolk)
  (deps
-  (glob_files *.golden))
+  (glob_files *.golden)
+  (glob_files *.tolk))
  (action
   (run %{exe:test_decomp_dtype.exe} --shard 4/4)))

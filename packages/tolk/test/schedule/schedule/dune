@@ -8,7 +8,8 @@
  (libraries windtrap tolk tolk_test str unix)
  (deps
   (sandbox always)
-  (glob_files *.golden)))
+  (glob_files *.golden)
+  (glob_files *.tolk)))
 
 ; The launches run their schedules on the host and on each GPU present.
 

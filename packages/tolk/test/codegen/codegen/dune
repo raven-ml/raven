@@ -21,7 +21,8 @@
  (package tolk)
  (deps
   (sandbox always)
-  (glob_files *.golden))
+  (glob_files *.golden)
+  (glob_files *.tolk))
  (action
   (run %{exe:test_codegen.exe} --shard 1/3)))
 
@@ -30,7 +31,8 @@
  (package tolk)
  (deps
   (sandbox always)
-  (glob_files *.golden))
+  (glob_files *.golden)
+  (glob_files *.tolk))
  (action
   (run %{exe:test_codegen.exe} --shard 2/3)))
 
@@ -39,6 +41,7 @@
  (package tolk)
  (deps
   (sandbox always)
-  (glob_files *.golden))
+  (glob_files *.golden)
+  (glob_files *.tolk))
  (action
   (run %{exe:test_codegen.exe} --shard 3/3)))

@@ -11,6 +11,7 @@
  (deps
   (sandbox always)
   (glob_files *.golden)
+  (glob_files *.tolk)
   clang_slp
   vectorized_search.c
   gathered_lanes.c

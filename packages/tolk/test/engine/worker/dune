@@ -5,4 +5,5 @@
  (package tolk)
  (libraries windtrap tolk tolk_test tolk_run tolk.engine rig unix)
  (deps
-  ../../runtime/support/compiler_cpu/kernels.golden))
+  ../../runtime/support/compiler_cpu/kernels.golden
+  (glob_files ../../runtime/support/compiler_cpu/kernels.tolk)))
