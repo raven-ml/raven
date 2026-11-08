@@ -261,7 +261,13 @@ let best_step =
 ```
 
 A whole-input `over` at the top of `derive` or `filter` needs every row
-before it can return one, so that step holds its input in memory.
+before it can return one, so that step holds its input in memory. The Frames
+section of `Expr` in [`talon.mli`](../lib/talon.mli) states the rules of
+`over`.
+
+`window` reduces the rows around each row of a frame, and its Windows section
+in `talon.mli` states which rows those are. A window to reuse is a function,
+such as `let week r = window ~on:ts ~before:(span week) r`.
 
 ## Many Columns at Once
 

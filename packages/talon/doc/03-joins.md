@@ -46,7 +46,8 @@ right column:
 Atoms combine with `&&`, written inside `Join.( … )`:
 `Join.(keys [ "ticker" ] && eq "day" "date")`. A join keeps exactly the
 pairs on which every atom holds. `position` with another atom, or one atom
-twice, raises when the condition is built.
+twice, raises when the condition is built. The `Join` module's preamble in
+[`talon.mli`](../lib/talon.mli) states the matching rules.
 
 Keys match by identity: the same values in the total order that sorting
 uses, where NaN equals NaN and `-0.` equals `0.`. A null key is one more key,
@@ -89,11 +90,13 @@ The event at 5.0 is at the first window's stop, so it falls in neither. With
 the events on the left, the same pairs are
 `Join.inside "t" ("start", "stop")`, in the events' order.
 
-The join sorts one side by one column, its band, and searches it for each
-row of the other side, so it reads only the band's pairs. Here the band is
-the events' `t`, which both comparisons bound. With equality atoms
-beside the comparisons it sorts within each key. Every other atom is tested
-on each of the band's pairs.
+The join sorts one side by one column, its band column, and searches it for
+each row of the other side, so it reads only the pairs its bands hold. Here
+the band column is the events' `t`, which both comparisons bound. With
+equality atoms beside the comparisons it sorts within each key. Every other
+comparison is tested on each of those pairs. The Range joins section of
+`Join` in [`talon.mli`](../lib/talon.mli) states how the band column is
+chosen.
 
 `overlaps` reads each side's two columns as a period from the lesser value
 to the greater. Periods that only touch, such as `(0, 2)` and `(2, 3)`, do
@@ -167,8 +170,10 @@ first with `Kit.rename`.
 Rows come in the left's order, each left row followed by its matches in the
 right's order. An equality join reads both inputs before it returns a row and
 runs in time proportional to the rows of both inputs plus the matches. A
-range join reads both inputs too, sorts its band's side unless it is already
-in order, and searches it once per bound for each row of the other side.
+range join reads both inputs too, sorts its band column's side unless it is
+already in order, and searches it for each row of the other side. The Algorithms
+section of `Join` in [`talon.mli`](../lib/talon.mli) states the costs, the
+`Join` preamble the order of the rows, and `Query.join` when a join blocks.
 
 ## Asserting Matches
 

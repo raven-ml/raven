@@ -1364,20 +1364,30 @@ module Expr : sig
   (** [arg_max a] is the position of [a]'s first greatest value, like
       {!arg_min}. *)
 
-  (** {1:frames Frames} *)
+  (** {1:frames Frames}
+
+      {!over} evaluates an expression in each {e partition} of the enclosing
+      frame, the rows whose columns [by] are the same keys
+      ({!Type.compare_value}), each partition ordered by [order]. A reduction
+      is broadcast over its partition's rows. A row expression such as
+      {!shift} or {!rank} runs within its partition and returns its values to
+      their rows. *)
 
   val over : ?by:string list -> ?order:Order.t list -> ('a, 's) t -> ('a, row) t
-  (** [over ~by ~order e] evaluates [e] in the enclosing frame, partitioned by
-      the columns [by] (key identity, null being one key) and each partition
-      ordered by [order]. A reduction is broadcast over its partition's rows,
-      and a row expression such as {!shift} or {!rank} runs within its partition
-      and returns its values to their rows. [by] defaults to no columns, one
-      partition; [order] to none, the frame's order. At the top of [derive] or
-      [filter], [over (mean x)] is the mean of the whole input, and it blocks
-      the pipeline. Its type is [e]'s. A column named twice in [by] or in
-      [order] is a problem, and so is an [order] key on a column whose type is
-      or holds an extension type. Over traced columns
-      ({!Query.section-compiled}) a nonempty [by] raises. *)
+  (** [over ~by ~order e] is [e] evaluated in each partition of the enclosing
+      frame ({!section-frames}). Its type is [e]'s. [by] defaults to no
+      columns, which is one partition. [order] defaults to none, which is the
+      frame's order.
+
+      At the top of [derive] or [filter] the frame is the whole input, so
+      [over (mean x)] is the input's mean and it blocks the pipeline
+      ({!Query}).
+
+      Its problems are a column named twice in [by] or in [order], and an
+      [order] key on a column whose type is or holds an extension type.
+
+      Raises [Invalid_argument] over traced columns ({!Query.section-compiled})
+      if [by] is nonempty. *)
 
   val shift : int -> ('a, row) t -> ('a, row) t
   (** [shift n a] is [a]'s value [n] rows earlier in the frame, or [-n] rows
@@ -1397,28 +1407,9 @@ module Expr : sig
       frame from [0]. Row [i]'s window holds the rows of its frame whose key
       [k] has [ki - before < k <= ki + after] in talon's total order, where
       [ki] is row [i]'s key and the {e bounds} [before] and [after] are
-      expressions of the frame, so they may differ by row. Without [before]
-      the window starts at the frame's first row, and [after] defaults to [0].
-      With [~exclude_key:true] the window leaves out the rows whose key is
-      [ki], which without [on] is the row itself. A window holds its rows in
-      key order, the rows of one key in the frame's order, which
-      {!over}[ ~order] sets.
-
-      [ki - before] and [ki + after] compute in the type where [on] and its
-      bounds meet. They are exact for integers, and for temporal keys, which
-      compute in ticks of [on]'s unit (seconds for a date). An exact result
-      past the type's range lies below or above every key. Float bounds follow
-      IEEE 754 and round once, and NaN is the greatest key, so that:
-      - an infinite or NaN key's window is empty under finite bounds, and
-        without [before] holds every key up to its own;
-      - at a finite key, [~before:(float infinity)] reaches every key above
-        [neg_infinity] and [~after:(float infinity)] every key up to
-        [infinity];
-      - a NaN [before] holds no key, and a NaN [after] every key from the
-        lower end.
-
-      A row whose key or bound is null has no window, and its value is null. A
-      row whose key is null is in no window. *)
+      expressions of the frame, so they may differ by row. At a row whose key
+      or bound is null, the value is null. Every window leaves out the rows
+      whose key is null. *)
 
   val window :
     ?on:('k, row) t ->
@@ -1428,87 +1419,138 @@ module Expr : sig
     ('a, agg) t ->
     ('a, row) t
   (** [window ~on ~before ~after ~exclude_key r] is, at each row, [r] over the
-      row's window ({!section-windows}), of [r]'s type. [window (sum x)] is the
-      running sum, and [window ~on:ts ~before:(span (Time.Span.days 7))
-      ~exclude_key:true (sum x)] sums the seven days before [ts]. A window of
-      places reads an order, as in [over ~order:[ Order.asc "day" ]
+      row's window ({!section-windows}). Its type is [r]'s. Without [before]
+      the window has no lower limit, and [after] defaults to [0]. With
+      [~exclude_key:true] it leaves out the rows whose key is [ki], which
+      without [on] is the row itself.
+
+      [window (sum x)] is the running sum, and [window ~on:ts ~before:(span
+      (Time.Span.days 7)) ~exclude_key:true (sum x)] sums the seven days before
+      [ts]. Without [on] the key is the row's place, so {!over}[ ~order] sets
+      it, as in [over ~order:[ Order.asc "day" ]
       (window ~before:(int 28) (mean x))], the mean of a day and the 27 before
-      it. A window to reuse is a function, [let week r = window ~on:ts
-      ~before:(span week) r]. It needs the whole frame, as {!over} does.
+      it.
 
-      [on] is an integer, a float, a date, a datetime, a duration or a clock. A
-      bound is a number of [on]'s kind, a duration of [on]'s unit or a coarser
-      one for a temporal [on], and an integer without [on].
+      It blocks the pipeline as {!over} does. {!section-window_keys} and
+      {!section-window_floats} give its keys and bounds, and
+      {!section-window_cost} its cost.
 
-      {b Cost.} Along [on] the rows are sorted, and {!min}, {!max}, {!only} and
-      the [arg_] reductions sort their values. Without [before], {!count},
-      {!sum}, {!mean}, {!first}, {!last}, {!var} and {!std} then take one scan,
-      O(n) for n rows, and with [before] O(n log n), except [var] and [std].
-      These with [before], and {!median}, {!quantile} and {!n_unique} always,
-      reduce every window's rows, in time their total number, O(n{^ 2}) without
-      [before], holding at most 2{^ 20} of them or one window's at once. A
-      window that excludes its key and has [after] costs as one with [before].
+      Its problems are an [on] of another type than {!section-window_keys}
+      allows, a bound of another kind, type or unit, and {!over}, {!shift},
+      {!rank} or [window] inside [r], outside a {!per_list}'s body. *)
 
-      {b Bits.} A float sum's bits depend on the window's rows, their places
-      among the rows of the enclosing frame, all partitions included, and
-      whether the window has [before]. They may differ from
-      {!Query.aggregate}'s over the same rows, and [var] and [std] differ
-      between windows with and without [before].
+  (** {3:window_keys Keys and bounds}
 
-      An [on] of another type, a bound of another kind, type or unit, and
-      {!over}, {!shift}, {!rank} or [window] inside [r], outside a
-      {!per_list}'s body, are problems. *)
+      [on] is an integer, a float, a date, a datetime, a duration or a clock.
+      A bound is a number of [on]'s kind, a duration of [on]'s unit or a
+      coarser one for a temporal [on], and an integer without [on]. A window
+      holds its rows in key order, the rows of one key in the frame's order,
+      which {!over}[ ~order] sets.
+
+      [ki - before] and [ki + after] compute in the type where [on] and its
+      bounds meet. They are exact for integers, and for temporal keys, which
+      compute in ticks of [on]'s unit (seconds for a date). An exact result
+      past the type's range lies below or above every key. *)
+
+  (** {3:window_floats Float keys and results}
+
+      Float bounds follow IEEE 754 and round once, and NaN is the greatest
+      key, so that:
+      - an infinite or NaN key's window is empty under finite bounds, and
+        without [before] holds every key up to its own;
+      - at a finite key, [~before:(float infinity)] reaches every key above
+        [neg_infinity] and [~after:(float infinity)] every key up to
+        [infinity];
+      - a NaN [before] holds no key, and a NaN [after] every key from the
+        window's lower limit on, NaN included.
+
+      A float sum's bits depend on the window's rows, their places among the
+      rows of the enclosing frame, all partitions included, and whether the
+      window has [before] or [~exclude_key:true] with [after]. They may differ
+      from {!Query.aggregate}'s over the same rows. [var] and [std] may also
+      differ between a window with [before] and one without. *)
+
+  (** {3:window_cost Cost}
+
+      With [on], the frame's rows are sorted once by key. {!only}, the [arg_]
+      reductions, and {!min} and {!max} of values other than integers and
+      booleans also sort their values. Without [before], {!count}, {!sum},
+      {!mean}, {!first}, {!last}, {!var} and {!std} then take one scan, O(n)
+      for n rows, and {!min}, {!max}, {!only} and the [arg_] reductions take
+      that scan too. With [before], all of these but {!var} and {!std} take
+      O(n log n). {!var} and {!std} with [before], and {!median}, {!quantile}
+      and {!n_unique} always, reduce every window's rows, in time proportional
+      to the windows' total size, which is O(n{^ 2}) without [before]. They
+      hold in memory at most 2{^ 20} of those rows, or one window's rows when
+      a window has more. A window with [~exclude_key:true] and an explicit
+      [after] costs in all of these as one with [before]. *)
 
   (** {2:lists Lists}
 
       The elements of a row's lists are a frame, with one row per position, in
       list order. An output's column holds the list's element at the position,
       and every other column of the enclosing frame the row's value. Several
-      outputs are read in lockstep: position [j] holds element [j] of each, and
-      lists of one row whose lengths differ are a data error at that row. A
-      null among them ends the row's frame first. Frames nest, so a [per_list]
-      of an element that is itself a list reads that inner list.
-
-      {!rows} is a list's length. {!over}, {!shift}, {!rank} and {!window} run
-      along the list, never into another row's, and each must read an output
-      of its list: one that reads only the row's values, which do not change
-      along the list, would look like the enclosing frame's.
-
-      A row where an output is null has no frame, and its value is null, that
-      of {!count} and {!rows} included. An empty list's frame has no rows, so
-      reductions give their value over no values ({!section-reductions}). A
-      null element is a null value of the frame, which reductions skip.
-
-      A float {!sum} adds a list's values in list order, a float {!mean}
-      divides that sum by their count, and {!var} and {!std} sum squared
-      deviations from the list's mean in list order. *)
+      outputs are read in lockstep, so position [j] holds element [j] of each,
+      and lists of one row whose lengths differ are a data error at that row,
+      unless one of them is null. Frames nest, so a [per_list] of an element
+      that is itself a list reads that inner list. {!rows} is a list's length.
+      {!over}, {!shift}, {!rank} and {!window} run within the list, and each
+      must read an output of its list. One that reads only the row's values,
+      which do not change along the list, would look like the enclosing
+      frame's. *)
 
   val per_list : row out list -> ('a, agg) t -> ('a, row) t
   (** [per_list ls r] is, at each row, [r] over the frame of the elements of
-      the lists that the outputs [ls] compute ({!section-lists}), of [r]'s
-      type:
+      the lists that the outputs [ls] compute ({!section-lists}). Its type is
+      [r]'s. A list's norm is:
       {[
       let xs = Col.v Kind.(list float) "xs" and x = Col.float "x"
       let norm = per_list [ "x" := xs ] (sum (x *. x)) ** float 0.5
       ]}
       [per_list [ "t" := spikes ] (mean (t -. shift 1 t))] is a spike train's
-      mean interval. Its value at a row reads that row alone, so it streams
-      and may stand in a {!window}'s operand.
+      mean interval. {!section-list_values} gives its nulls and float results,
+      and {!section-list_cost} its cost.
 
-      {b Cost.} O(n + e) for n rows and e elements, as a reduction of e rows
-      costs. {!median}, {!quantile} and an [over ~order] in [r] sort, and a
-      column of the enclosing frame that [r] reads is copied once per element.
+      Where its outputs hold no {!over}, {!shift}, {!rank} or {!window}, its
+      value at a row reads that row alone, so it streams. It may stand in a
+      {!window}'s operand. A failure in [r] is at the row of its list.
 
-      A failure in [r] is at the row of its list. Under [Rune.jit] it raises,
+      Its problems are a hiding output ({!section-list_outputs}), an output
+      that is not a list, no output, two outputs of one name, and an {!over},
+      {!shift}, {!rank} or {!window} in [r] that reads no output.
+
+      Raises [Invalid_argument] under [Rune.jit] when it reads a row's list,
       and under [Rune.vmap] where the lists' offsets or validity are traced
       ({!Query.section-compiled}).
+  *)
+
+  (** {3:list_outputs Outputs}
 
       An output must not hide a column of the enclosing frame other than a
       list it outputs unchanged, since [r] could not read the hidden column.
       [keep] therefore outputs a list under its own name, and [r] reads its
-      element there. A hiding output, an output that is not a list, no output,
-      two outputs of one name, and an {!over}, {!shift}, {!rank} or {!window}
-      in [r] that reads no output are problems. *)
+      element there. *)
+
+  (** {3:list_values Nulls and floats}
+
+      A row where an output is null has no frame, so [r] does not run there,
+      and the value is null, that of {!count} and {!rows} included. An empty
+      list's frame has no rows, so reductions give their value over no values
+      ({!section-reductions}). A null element is a null value of the frame,
+      which a reduction reads as it reads any null.
+
+      A float {!sum} adds a list's values in list order, a float {!mean} sums
+      them in [float64] in list order and divides by their count, and {!var}
+      and {!std} sum squared deviations from the list's mean in list order. *)
+
+  (** {3:list_cost Cost}
+
+      A reduction in [r] costs O(n + e) for n rows and e elements, as a
+      reduction of e rows costs, and a {!window} costs as {!section-window_cost}
+      states. {!median}, {!quantile}, {!rank}, a {!window}[ ~on] and an
+      [over ~order] in [r] sort, and a column of the enclosing frame that [r]
+      reads is copied once per element.
+  *)
 
   (** {1:ocaml OCaml values}
 
@@ -1999,60 +2041,46 @@ module Source : sig
 end
 
 module Join : sig
-  (** Joins: conditions, kinds and counts.
+  (** Joins of two queries by conditions on their columns.
 
       [left |> Query.join ~on right] pairs the rows of [left] and [right] that
       the condition [on] matches. A condition is a value, a conjunction of
-      {e atoms} built with {!( && )} inside [Join.( … )]:
-      [Join.(keys [ "ticker" ] && eq "day" "date")]. Atoms name a left column,
-      then a right column.
+      {e atoms} built with {!( && )} inside [Join.( … )], as in
+      [Join.(keys [ "ticker" ] && eq "day" "date")]. An atom names a left
+      column, then a right column. A {!type-kind} says which rows are kept,
+      and a {!type-count} how many matches each row must have. Each condition
+      runs as one algorithm ({!section-algorithms}).
 
       {b Matching.} A join keeps exactly the pairs of rows on which every atom
-      holds: the pairs of the join on {!all} that its condition holds on. An
-      equality atom holds by key identity ({!Type.compare_value}, null being
-      one key), so null keys match. A comparison holds where {!Expr.( < )} or
-      its sibling is [true] on the two values: in talon's total order, NaN
-      after every number and [-0.] equal to [0.], and never at a null. No
-      value fails a join. A null, and a period whose values come in either
-      order ({!overlaps}), decide which pairs match.
+      holds. It is the join on {!all}, restricted to those pairs. An equality
+      atom holds by key identity ({!Type.compare_value}), so null keys match.
+      A comparison holds where {!Expr.( < )} or its sibling is [true] on the
+      two values, in talon's total order (NaN after every number and [-0.]
+      equal to [0.]), and never at a null. A value cannot fail a join, and a
+      null or a period whose values come in either order ({!overlaps})
+      changes only which pairs match.
 
-      {b Algorithms.} Each condition runs as one algorithm, with the cost that
-      [Query.join] states:
-      - {e equality}: equality atoms ({!keys}, {!eq});
-      - {e range}: equality atoms, if any, and at least one comparison
-        ({!lt}, {!le}, {!gt}, {!ge}, {!inside}) or {!overlaps}. It sorts one
-        side's rows within their equality keys by one column, its {e band},
-        and finds each row of the other side's matches between two searches
-        of that order. The band's atoms are the first {!overlaps}, which sorts
-        each side by its periods' starts, or else the comparisons that name
-        the band column and meet it at the type the first of them does. The
-        band column is, of the columns that comparisons name, on their side,
-        the one named most, a right column on a tie between the sides, else
-        the one written first. The band's atoms decide which pairs it reads,
-        and each other atom is tested on every one of them. A side whose rows
-        come grouped by their equality keys, each group in the band column's
-        order, is in the band's order, as is the right side of an
-        {!overlaps} whose rows come so by their periods' starts;
-      - {!position}, alone;
-      - {!all}, every pair, which is also the condition with no atom: [all && c]
-        is [c].
+      {b Columns.} A {!Semi} or {!Anti} join has the left columns. Another
+      join has the left columns, then the right columns without those of
+      equality atoms, in order, so the key of [eq l r] appears once, as [l].
+      In a {!Full} join that key has the common type of [l] and [r]
+      ({!Type.common}), since an unmatched right row gives it [r]'s value.
+      Every other column keeps its type. Except in a {!Semi} or {!Anti} join,
+      a name on both sides is a problem, and talon adds no suffixes. Rename
+      one side first.
 
-      {b Columns.} A {!Semi} or {!Anti} join has the left columns. Another join
-      has the left columns, then the right columns but those of equality atoms,
-      in order: the key of [eq l r] appears once, as [l]. In a {!Full} join that
-      key has the common type of [l] and [r] ({!Type.common}), since an
-      unmatched right row gives it [r]'s value; every other column keeps its
-      type. A name on both sides is a problem, and talon adds no suffixes:
-      rename one side first. *)
+      {b Order.} A join's rows come in [left]'s order, each left row followed
+      by its matches in [right]'s order, and a {!Full} join then appends
+      [right]'s unmatched rows in order. *)
 
   (** {1:conditions Conditions} *)
 
   type cond
-  (** The type for conditions: conjunctions of atoms. *)
+  (** The type for conditions, which are conjunctions of atoms. *)
 
   val keys : string list -> cond
   (** [keys ns] matches the rows whose columns [ns] are the same keys on both
-      sides: it is [eq n n] for each [n] of [ns].
+      sides. It is [eq n n] for each [n] of [ns].
 
       Raises [Invalid_argument] if [ns] is empty, since a join on no key is
       {!all}, written so, or if [ns] names a column twice. *)
@@ -2077,9 +2105,10 @@ module Join : sig
   (** [ge l r] is {!lt}, as {!Expr.( >= )} compares. *)
 
   val inside : string -> string * string -> cond
-  (** [inside p (s, e)] is [ge p s && lt p e]: the rows whose left column [p]
-      is from the right column [s], included, to the right column [e],
-      excluded. It matches no row whose [e] is not after its [s]. *)
+  (** [inside p (s, e)] matches the rows whose left column [p] is from the
+      right column [s], included, to the right column [e], excluded. It is
+      [ge p s && lt p e], so it matches only rows whose [e] is after their
+      [s]. *)
 
   val overlaps : string * string -> string * string -> cond
   (** [overlaps (ls, le) (rs, re)] matches the rows whose left period
@@ -2087,15 +2116,19 @@ module Join : sig
       predicate defines it (ISO/IEC 9075:1992, 8.11), in talon's total order.
       A period's {e start} is the lesser of its two values and its {e stop}
       the greater; with one value null, its start is the other one and its
-      stop is unknown. Two periods overlap where their starts are equal and
-      neither stop is unknown, or where one's start is after the other's
+      stop is unknown, and a period of two nulls overlaps nothing. Two periods
+      overlap where their starts are equal and neither stop is unknown, or
+      where one's start is after the other's
       start and before the other's known stop. So [(0, 2)] and [(2, 3)] do
       not overlap, [(5, 5)] overlaps [(3, 8)] and [(5, 9)] but not [(1, 5)],
       and [(8, 3)] is [(3, 8)]. The four columns must meet at a type with an
       order. *)
 
   val position : cond
-  (** [position] matches row i of the left with row i of the right. *)
+  (** [position] matches row i of the left with row i of the right. For a
+      left side of n rows and a right side of m, {!Inner} and {!Semi} keep
+      min(n, m) rows, {!Left} keeps n, {!Full} max(n, m), and {!Anti} the left
+      rows past m. *)
 
   val all : cond
   (** [all] matches every pair of rows. *)
@@ -2106,9 +2139,50 @@ module Join : sig
       Raises [Invalid_argument] if the conjunction holds {!position} and
       another atom, or holds one atom twice. *)
 
+  (** {1:algorithms Algorithms}
+
+      - A condition of equality atoms alone ({!keys}, {!eq}) runs as an
+        {e equality} join, in O(n + m + matches) for sides of n and m rows.
+      - Equality atoms, if any, with at least one comparison ({!lt}, {!le},
+        {!gt}, {!ge}, {!inside}) or {!overlaps} run as a {e range} join
+        ({!section-range}).
+      - {!position} takes no other atom and runs as its own algorithm.
+      - {!all}, the condition with no atom, runs every pair, so [all && c] is
+        [c]. *)
+
+  (** {2:range Range joins}
+
+      A range join sorts one side's rows within their {e equality keys}, the
+      columns of its equality atoms, by the {e band column}. Each row of the
+      other side searches that order for its {e band}, the rows the bounding
+      atoms select. The band column is the column that comparisons name most,
+      where a left and a right column of one name are two columns. On a tie
+      between the sides it is the right column, and on a tie within a side
+      the one written first. If the condition has an {!overlaps}, the first
+      one bounds the band and each side is sorted by its periods' starts.
+      Otherwise the comparisons that name the band column bound the band,
+      when they meet that column at the type of the first such comparison.
+      Every other comparison or {!overlaps} is tested on each pair the bands
+      read. *)
+
+  (** {2:range_cost Cost of a range join}
+
+      A side needs no sort when its rows come grouped by their equality keys,
+      each group ascending in the band column, which the join checks by reading
+      them. The right side of an {!overlaps} needs none when its rows come
+      grouped that way by their periods' starts. A range join whose bands read
+      p pairs, on a side of s rows searched from a side of o rows, costs
+      O(s log s + o log s + p), less the sort when the side needs none.
+      Matches out of the join's order are reordered once. An {!overlaps}
+      join sorts and searches each side. When every atom but the equality
+      atoms bounds the band, a {!Semi} or {!Anti} join costs
+      O(s log s + o log s), and the checks of [each_left] and [each_right]
+      add no p term. *)
+
   (** {1:kinds Kinds and counts} *)
 
-  (** The type for join kinds: which rows a join keeps. *)
+  (** The type for join kinds, which say which rows a join keeps. A right join
+      is a left join with the arguments swapped. *)
   type kind =
     | Inner  (** The matched pairs. *)
     | Left
@@ -2285,37 +2359,24 @@ module Query : sig
     t
   (** [join ?kind ?each_left ?each_right ~on right left] pairs [left]'s rows
       with the rows of [right] that [on] matches, written
-      [left |> join ~on right], with:
-      - [kind], the rows kept ({!Join.kind}). Defaults to {!Join.Inner}. A right
-        join is a left join with the arguments swapped.
-      - [each_left] and [each_right], the number of matches each row of [left]
-        and of [right] must have; another number fails the run. Both default to
-        {!Join.Any}.
+      [left |> join ~on right]. [kind] says which rows are kept ({!Join.kind})
+      and defaults to {!Join.Inner}. [each_left] and [each_right] are the
+      numbers of matches each row of [left] and of [right] must have
+      ({!Join.type-count}), {!Join.Any} by default. Its rows and columns are
+      those {!Join} describes.
 
-      The rows come in [left]'s order, each left row followed by its matches in
-      [right]'s order; a {!Join.Full} join then appends [right]'s unmatched rows
-      in order. Over {!Join.position}, {!Join.Inner} and {!Join.Semi} keep
-      min(n, m) rows, {!Join.Left} keeps n, {!Join.Full} max(n, m), and
-      {!Join.Anti} [left]'s rows past m. Its columns are those {!Join}
-      describes. An equality, range or {!Join.position} join blocks on both
-      inputs; a join on {!Join.all} blocks on [right] and streams [left]. An
-      equality join runs in O(n + m + matches). A range join over a band of
-      p pairs, sorting a side of s rows and searching it from one of o rows,
-      runs in O(s log s + o log s + p), with no sort of a side in the band's
-      order, and one more sort of its matches when they are out of the
-      join's order; an {!Join.overlaps} band sorts and searches each side.
-      When the band holds every atom but the equality atoms, a {!Join.Semi}
-      or {!Join.Anti} join and the counts make no pair. Over
-      traced columns ({!section-compiled}) an equality or range join raises,
-      and the others run, their counts included.
+      A join on {!Join.all} blocks on [right] and streams [left], and the
+      others block on both inputs. The cost of an equality or range join is in
+      {!Join.section-algorithms}.
 
-      Its problems are, for each atom of [on] in order: a column missing on its
-      side, columns that do not meet, and the columns of a comparison or of
-      {!Join.overlaps} that meet at a type with no order. Then, in a
-      {!Join.Full} join, a left
-      column that is the left of two equality atoms, and, except in a
-      {!Join.Semi} or {!Join.Anti} join, the joined columns that have one name.
-  *)
+      Its problems are, for each atom of [on] in order, a column missing on
+      its side and the atom's own ({!Join.eq}, {!Join.lt}, {!Join.overlaps}).
+      Then, in a {!Join.Full} join, a left column that is the left of two
+      equality atoms, and the joined columns that have one name, as {!Join}
+      states.
+
+      Raises [Invalid_argument] over traced columns ({!section-compiled}) on
+      an equality or range join. The others run, their counts included. *)
 
   val append : t -> t -> t
   (** [append rest q] is [q]'s rows, then [rest]'s, written [q |> append rest].
@@ -2760,10 +2821,8 @@ module Kit : sig
 
   (** {1:windows Windows}
 
-      These compose {!Expr.window}, so they hold its rule on operands: an [x]
-      or [r] holding {!Expr.over}, {!Expr.shift}, {!Expr.rank} or
-      {!Expr.window}, outside an {!Expr.per_list}'s body, is a problem that
-      names a window. *)
+      These compose {!Expr.window}, so its problems on [r] apply to [x] and
+      [r]. *)
 
   val cumulative : ('a, Expr.agg) Expr.t -> ('a, Expr.row) Expr.t
   (** [cumulative r] is [r] over the frame's rows up to and including each:
@@ -2788,12 +2847,13 @@ module Kit : sig
   val interpolate :
     ?on:('k, Expr.row) Expr.t -> (float, Expr.row) Expr.t ->
     (float, Expr.row) Expr.t
-  (** [interpolate ~on x] is [x] where it holds a value, and elsewhere the
+  (** [interpolate ~on x] is [x] where it holds a value. Elsewhere it is the
       value at the row's key on the line through the last value at or before
-      that key and the first value after it, in [float64]. Keys are [on]'s
-      values cast to [float64], an integer or a float, or without [on] the rows'
-      places. It is null before the first value and after the last, and the
-      value of a row of the same key where one has a value:
+      that key and the first value after it, in [float64]. Where a row of the
+      same key holds a value, it is that value. It is null before the first
+      value and after the last. Keys are [on]'s values cast to [float64], an
+      integer or a float, or without [on] the rows' places. Inside
+      [Expr.( … )] it is:
       {[
       let line ~at ~x0 ~k0 ~x1 ~k1 =
         coalesce
@@ -2818,27 +2878,30 @@ module Kit : sig
           let k1 = k0 +. place (window ~on:c ~before:(int 1) rows) in
           line ~at:(place (window rows)) ~x0:(window (last x)) ~k0
             ~x1:(window ~before:(int 0) ~after:(int max_int) (first x)) ~k1
-      ]}
-      inside [Expr.( … )]. *)
+      ]} *)
 
   (** {1:asof As-of joins}
 
       An {e as-of join} pairs each row of a query [left] with at most one row
-      of a query [right]. The {e matches} of a left row are the right rows of
-      its keys in the columns [by] with [r <= l] going backward and [r >= l]
-      going forward, where [l] is a left column and [r] a right one, less
-      those whose [r] equals [l] under [~strict:true]. Its {e pick} is the
-      match nearest [l] in a {!type-direction}. [l] and [r] compare as
-      {!Expr.( < )} does, so a null key matches nothing and NaN is the
-      greatest value, and [by] matches by key identity, as {!Join.keys} does.
-      Among matches of equal [r], a backward pick is the last in [right]'s
-      order and a forward pick the first, as {!Expr.last} and {!Expr.first}
-      take them in a frame sorted stably by [r]. *)
+      of a query [right]. [l] is a column of [left] and [r] a column of
+      [right]. The {e matches} of a left row are the right rows with its
+      values in the columns [by] and with [r <= l] for {!Backward} or
+      [r >= l] for {!Forward}. Under [~strict:true] they leave out those whose
+      [r] equals [l]. Its {e pick} is the match nearest [l] in a
+      {!type-direction}. [l] and [r] compare as {!Expr.( < )} does, so a null
+      key matches nothing and NaN is the greatest value, and [by] matches by
+      key identity, as {!Join.keys} does. *)
 
   (** The type for the directions of an as-of join. *)
   type direction =
-    | Backward  (** The match of the greatest [r], at or before [l]. *)
-    | Forward  (** The match of the least [r], at or after [l]. *)
+    | Backward
+        (** The match of the greatest [r], at or before [l], and among matches
+            of equal [r] the last in [right]'s order, as {!Expr.last} takes it
+            in a frame sorted stably by [r]. *)
+    | Forward
+        (** The match of the least [r], at or after [l], and among matches of
+            equal [r] the first in [right]'s order, as {!Expr.first} takes it
+            in a frame sorted stably by [r]. *)
     | Nearest
         (** Of the backward and the forward pick, the one nearer [l], and the
             backward pick on a tie. It takes keys that meet at an integer, a
@@ -2846,8 +2909,8 @@ module Kit : sig
             distance between two values is [0] where they are equal, infinite
             where one is infinite or NaN, and else the exact absolute value of
             their difference. Between datetimes or durations the difference is
-            a span ({!Expr.Temporal.diff}), and where a left row has both
-            picks, a span past a duration's range is a data error. *)
+            a span ({!Expr.Temporal.diff}). Where a left row has both picks, a
+            span past a duration's range is a data error. *)
 
   val join_asof :
     ?by:string list ->
@@ -2860,19 +2923,31 @@ module Kit : sig
   (** [join_asof ~by ~direction ~strict ~on:(l, r) right left] is each row of
       [left], in order, with its pick in [right] ({!section-asof}), written
       [left |> Kit.join_asof ~on right]. [direction] defaults to {!Backward}
-      and [strict] to [false]. Its columns are [left]'s, then [right]'s but
-      [by], null where a row has no pick. A name on both sides, [r] included
-      when it is [l], is a problem of the join: rename one side first.
+      and [strict] to [false]. Its columns are [left]'s, then [right]'s without
+      [by], null where a row has no pick. Neither side need be sorted. A
+      tolerance is applied after the join ({!section-asof_tolerance}).
+      {!section-asof_definition} shows its definition.
+
+      A name on both sides, [r] included when it is [l], is a problem of the
+      join.
+
+      Raises [Invalid_argument] if [by] names a column twice, or if
+      [direction] is {!Nearest} and the keys meet at another type. *)
+
+  (** {2:asof_tolerance Tolerances}
 
       A tolerance is a comparison [within] on the pick's key, such as
       [Expr.(Col.int r >= Col.int l - int 5)]. [Query.filter within] keeps
       the rows picked within it and drops the others. To keep every left row
       and null the picks beyond it, derive
       [each sel { column = (fun n x -> n := if_ within x null) }], where [sel]
-      selects [right]'s columns but [by].
+      selects [right]'s columns without [by]. *)
 
-      It sorts both sides' keys within [by], takes each left row's pick with
-      a window, and gathers the picks:
+  (** {2:asof_definition Definition}
+
+      Inside [Expr.( … )], where [key], [side], [j] and [row] are names that
+      neither side has and a name in an expression reads its column,
+      {!join_asof} is:
       {[
       let tagged q c s number =
         Query.select [ keep (Sel.names by); key := c; side := int s; number ] q
@@ -2898,44 +2973,47 @@ module Kit : sig
            (drop (Sel.names by) right |> Query.derive [ row := window rows ])
       |> drop (Sel.names [ row ])
       ]}
-      inside [Expr.( … )], where [key], [side], [j] and [row] are names that
-      neither side has and a name in an expression reads its column. [picked]
-      is [pick ~forward:false j] for {!Backward}, [pick ~forward:true j] for
-      {!Forward}, and for {!Nearest}
+      [picked] is [pick ~forward:false j] for {!Backward},
+      [pick ~forward:true j] for {!Forward}, and for {!Nearest}
       [if_ (is_null jb) ja (if_ (is_null ja) jb (if_ (nearer ka kb) ja jb))],
       where [ja] and [jb] are the backward and forward picks of [j], [ka] and
       [kb] those of [if_ (is_null j) null key] where both picks exist, and
       [nearer] compares the distances to [key]. It sorts the n + m keys once,
-      twice for {!Nearest}, and reads each side twice.
-
-      Raises [Invalid_argument] if [by] names a column twice, or if
-      [direction] is {!Nearest} and the keys meet at another type. *)
+      four times for {!Nearest}, and reads each side at most twice. *)
 
   (** {1:intervals Interval sets}
 
-      These read each row of a query as a {e period} of its columns [(s, e)]:
-      its start is the lesser of its two values and its stop the greater, in
-      talon's total order, as {!Join.overlaps} reads them. A period holds the
-      values from its start, included, to its stop, excluded, and a period
+      These read each row of a query as a {e period} of its columns [(s, e)],
+      with its start and stop as {!Join.overlaps} defines them. A period holds
+      the values from its start, included, to its stop, excluded. A period
       whose stop equals its start holds its start alone, a point whose length
-      is zero. The rows of one key in the columns [by] (key identity, null
-      being one key) form a {e set}, the values that its periods of positive
-      length hold, so a zero-length period adds nothing to a set. A normal
-      form of half-open periods holds no point, though {!Join.overlaps}
-      matches a zero-length period as its point. A period with a null value holds none. Events
-      of zero duration, {e impulses}, are matched against a set by a join on
-      {!Join.overlaps},
-      [events |> Query.join ~on:Join.(keys by && overlaps (t, t) (s, e)) set],
-      or by its {!Join.Anti} join for the impulses outside the set.
+      is zero. A period with a null value holds none. The rows of one key in
+      the columns [by] (key identity, {!Type.compare_value}) form a {e set},
+      the values that its periods of positive length hold, so a zero-length
+      period adds nothing to a set and takes nothing from one. *)
 
-      Each function returns a set in {e normal form}: its keys in ascending
-      order, nulls last, and for each key the fewest periods that hold the
-      set's values, sorted by start, each starting before it stops and
-      stopping before the next one starts. Its columns are [by], then [s] and
-      [e], at the type where the inputs' columns meet. Each is one sweep over
-      the starts and stops of the periods of [q] and [rest], which counts the
-      periods of each that hold a value, [a] and [b], and keeps the values
-      where [holds a b] is [true]:
+  (** {2:normal_form Normal form}
+
+      Each function returns a set in {e normal form}, which has its keys in
+      ascending order, nulls last, and for each key the fewest periods that
+      hold the set's values, sorted by start, each starting before it stops
+      and stopping before the next one starts. Its columns are [by], then [s]
+      and [e], at the type where the inputs' columns meet. Every period of a
+      normal form has positive length, though {!Join.overlaps} matches a
+      zero-length period as its point. {e Impulses}, events of zero duration,
+      are matched against a set by a join on {!Join.overlaps}, as
+      [events |> Query.join ~on:Join.(keys by && overlaps (t, t) (s, e)) set]
+      (without [by], the {!Join.overlaps} alone), or by the {!Join.Anti} join
+      on that condition for the impulses outside the set. *)
+
+  (** {2:sweep Sweep}
+
+      Each function is one sweep over the starts and stops of the periods of
+      [q] and [rest], which counts the periods of each that hold a value, [a]
+      and [b], and keeps the values where [holds a b] is [true]. Inside
+      [Expr.( … )], where [at], [a], [b] and [held] are names that neither
+      [by] nor the period has and a name in an expression reads its column,
+      it is:
       {[
       let events q (wa, wb) =
         let start = if_ (s <= e) s e and stop = if_ (s <= e) e s in
@@ -2957,36 +3035,31 @@ module Kit : sig
       |> Query.filter held
       |> Query.select [ keep (Sel.names by); s := at; keep (Sel.names [ e ]) ]
       ]}
-      inside [Expr.( … )], where [at], [a], [b] and [held] are names that
-      neither [by] nor the period has, and a name in an expression reads its
-      column. It sorts the starts and stops once. Each raises
-      [Invalid_argument] if [by] names a column twice. *)
+      It sorts the starts and stops once.
+
+      Each raises [Invalid_argument] if [by] names a column twice. *)
 
   val merge_intervals : ?by:string list -> string * string -> Query.t -> Query.t
-  (** [merge_intervals ~by (s, e) q] is [q]'s sets in normal form, so periods
-      that overlap or touch merge. A zero-length period adds nothing, since a
-      half-open normal form holds no point, so impulses are matched with
-      {!Join.overlaps} ({!section-intervals}). It is the sweep without [rest]
-      and with [holds a _ = a > 0]. The union of two sets is the merge of
-      their [Query.append]. *)
+  (** [merge_intervals ~by (s, e) q] is [q]'s sets in normal form
+      ({!section-normal_form}), so periods that overlap merge, and so do
+      periods that touch, where one's stop is the next one's start. It is the
+      sweep ({!section-sweep}) without [rest] and with [holds a _ = a > 0].
+      The union of two sets is the merge of their [Query.append]. *)
 
   val intersect_intervals :
     ?by:string list -> string * string -> Query.t -> Query.t -> Query.t
   (** [intersect_intervals ~by (s, e) rest q] is the values that both [q]'s
       and [rest]'s set of a key hold, written
-      [q |> Kit.intersect_intervals (s, e) rest]. A zero-length period of
-      either adds nothing, since a half-open normal form holds no point, so
-      impulses are matched with {!Join.overlaps} ({!section-intervals}). It is
-      the sweep with [holds a b = a > 0 && b > 0]. *)
+      [q |> Kit.intersect_intervals (s, e) rest], in normal form
+      ({!section-normal_form}). It is the sweep ({!section-sweep}) with
+      [holds a b = a > 0 && b > 0]. *)
 
   val subtract_intervals :
     ?by:string list -> string * string -> Query.t -> Query.t -> Query.t
   (** [subtract_intervals ~by (s, e) rest q] is the values that [q]'s set of a
       key holds and [rest]'s does not, written
-      [q |> Kit.subtract_intervals (s, e) rest]. A zero-length period of
-      either adds or removes nothing, since a half-open normal form holds no
-      point, so impulses outside [rest] are kept with a {!Join.Anti} join on
-      {!Join.overlaps} ({!section-intervals}). It is the sweep with
+      [q |> Kit.subtract_intervals (s, e) rest], in normal form
+      ({!section-normal_form}). It is the sweep ({!section-sweep}) with
       [holds a b = a > 0 && b = 0]. *)
 
   (** {1:runs Runs} *)
