@@ -16,6 +16,7 @@
 # forced: blessed Talon/Join/spikes_in_trials Talon/Join/keyed_inequality under load 13.8 on 14 cores
 # forced: blessed Talon/Window/rolling-mean-28-1M Talon/Window/rolling-sum-on-1M Talon/Window/running-std-1M Talon/Window/running-sum-1M Talon/Window/running-max-1M under load 9.5 on 14 cores
 # forced: blessed Talon/Join/asof-1M-64k Talon/Join/asof-as-range-1M-64k under load 13.6 on 14 cores
+# forced: blessed Talon/List/per-list-sum-64k-32 under load 48.1 on 14 cores
 
 Talon/Filter/high_value	alloc_words	exact	12395
 Talon/Group/category_region	alloc_words	exact	6446
@@ -34,6 +35,7 @@ Talon/Join/keyed_inequality	alloc_words	exact	45004
 Talon/Join/repeated_keys	alloc_words	exact	26431
 Talon/Join/spikes_in_trials	alloc_words	exact	49406
 Talon/Layout/text-1M	alloc_words	exact	1249
+Talon/List/per-list-sum-64k-32	alloc_words	exact	8396
 Talon/Nulls/concat-3	alloc_words	exact	1065
 Talon/Nulls/filter-1pct	alloc_words	exact	8629
 Talon/Nulls/filter-50pct	alloc_words	exact	8629

@@ -67,6 +67,8 @@ holds about 10^7 spikes. `Talon/Join/keyed_inequality` joins 2^16 rows with
 at or before it within a key of 100 values, neither side in order, with
 `Kit.join_asof`. `Talon/Join/asof-as-range-1M-64k` finds the same rows with a
 range join, each right row holding up to the next one of its key.
+`Talon/List/per-list-sum-64k-32` reduces with `Expr.per_list`, over 2^16 rows
+of 0 to 64 float64 elements, each element times the row's factor.
 
 `Talon_csv/read-mixed` reads a CSV text of 2^16 records from memory, drawn from
 a seeded key: an int64 column, a float64 column with nulls, and a string column

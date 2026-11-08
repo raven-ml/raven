@@ -481,6 +481,42 @@ let asof_range () =
    over a million values, in no order. *)
 let window e = run Query.(of_table nulls |> select Expr.[ "w" := e ])
 
+(* Lists: 2^16 rows of 0 to 64 float64 elements, about 32 each, reduced with
+   the row's factor [w]. *)
+let lists =
+  let keys = Nx.Rng.split ~n:3 (Nx.Rng.key 31) in
+  let rows = 1 lsl 16 in
+  let lengths =
+    Nx.cast Nx.int64 (Nx.Rng.randint ~key:keys.(0) ~high:65 [| rows |])
+  in
+  let offsets =
+    Nx.concatenate ~axis:0 [ Nx.zeros Nx.int64 [| 1 |]; Nx.cumsum lengths ]
+  in
+  let child =
+    Column.of_tensor
+      (Nx.Rng.uniform ~key:keys.(1) Nx.float64
+         [| Int64.to_int (Nx.item [ rows ] offsets) |])
+  in
+  let layout = Column.Varsize { validity = None; offsets; child } in
+  let xs =
+    Result.get_ok (Column.of_layout (Any (Type.list Type.float64)) layout)
+  in
+  Talon.v
+    [
+      ("xs", xs);
+      ( "w",
+        Column.of_tensor (Nx.Rng.uniform ~key:keys.(2) Nx.float64 [| rows |]) );
+    ]
+
+let per_list_sum () =
+  let xs = Col.v Kind.(list float) "xs"
+  and x = Col.float "x"
+  and w = Col.float "w" in
+  run
+    Query.(
+      of_table lists
+      |> select Expr.[ "s" := per_list [ "x" := xs ] (sum (x *. w)) ])
+
 let () =
   Thumper.run "talon"
     [
@@ -518,6 +554,7 @@ let () =
           Thumper.bench "Nulls/join-left" (fun () -> run joined_nulls);
           Thumper.bench "Join/spikes_in_trials" spikes_in_trials;
           Thumper.bench "Join/keyed_inequality" below;
+          Thumper.bench "List/per-list-sum-64k-32" per_list_sum;
           Thumper.bench "Join/asof-1M-64k" asof_window;
           Thumper.bench "Join/asof-as-range-1M-64k" asof_range;
           Thumper.bench "Group/text-100-1M" (fun () -> by "t");
