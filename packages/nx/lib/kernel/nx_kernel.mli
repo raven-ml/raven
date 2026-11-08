@@ -259,11 +259,16 @@ val scan_refusal :
     [n] terms, a reduction's, a scan's or a fold's, is within
     [γ(n - 1) Σ|x|] of the exact sum, and a float product within a relative
     [γ(n - 1)]. A complex product is within a normwise relative
-    [γ(2n - 2)], where each {!Prog.Mul} errs by at most [2u]. Barring
-    overflow and underflow, each fused multiply-add of a float or complex
-    contraction ({!S.contract}), and an addition of [init] that a library
-    makes apart, errs by at most [2u] times the modulus of the partial sum
-    it rounds, [u] the accumulator's unit roundoff. *)
+    [γ(2n - 2)], where each {!Prog.Mul} errs by at most [2u].
+
+    Barring overflow and underflow, an output of a float or complex
+    contraction ({!S.contract}) with [K] products [a·b] is within
+    [e(K) (|init| + Σ|a||b|)] of the exact sum of its products and [init]
+    as the accumulator holds them, a complex one in modulus, [|init|] being
+    [0] without [init]. [e] is the library's {e error factor}, a function
+    of [K] that the library states and that may vary with the dtypes and
+    the device model. It is at most [γ(2K + 2)], [u] the accumulator's
+    unit roundoff, its parts' for a complex one. *)
 
 (** {2:scans Scans}
 

@@ -2292,6 +2292,18 @@ module Scaled = struct
             let y = placed S2.on where c in
             equal bool ~msg:"the result's rows are cut" true
               (Nx.Placement.equal (S2.split ~axis:0) y));
+        (* Rows of group 2 have their products on the second device: from
+           an init of 2^25, whose spacing is 4, a chain of products near
+           0.1 rounds each away, which init plus their sum would not. *)
+        test "rows by groups from init, b cut along its groups, give one \
+              device's bits" (fun () ->
+            let segs = Rows [| 2L; 0L; 1L; 2L; -1L; 2L; 1L; 0L |] in
+            let c = mx ~segs ~g:3 ~m:8 ~k:32 ~n:8 ~per:2 () in
+            let xs = Array.init (8 * 32) (fun i -> 0.1 +. (Float.of_int i *. 1e-3)) in
+            let c =
+              { c with a = { c.a with xs }; init = Some (Array.make 64 0x1p25) }
+            in
+            ignore (placed S2.on (b_cut (S2.split ~axis:0)) c));
       ]
 
   (* An output of no products is [init] as the accumulator holds it, rounded
@@ -2343,11 +2355,17 @@ module Scaled = struct
     let bits y =
       Array.map Int64.bits_of_float (Nx.to_array (Nx.cast Nx.float64 y))
     in
-    let run (type o e) (p : e put) (out : (float, o) Nx.dtype) c =
+    let run (type o e) ?(nans = true) (p : e put) (out : (float, o) Nx.dtype)
+        c =
       let xs = Option.get c.init in
       let init = Nx.cast out (Nx.create Nx.float64 (result_shape c) xs) in
+      (* Where [nans] is false, a NaN is any NaN. *)
+      let any_nan b =
+        if nans || not (Float.is_nan (Int64.float_of_bits b)) then b
+        else Int64.bits_of_float Float.nan
+      in
       let pick y =
-        let y = bits y in
+        let y = Array.map any_nan (bits y) in
         List.filter_map
           (fun i -> if alone c i then Some y.(i) else None)
           (List.init (Array.length y) Fun.id)
@@ -2357,8 +2375,8 @@ module Scaled = struct
       let op = op p Nx.float32 out c in
       equal (list int64) ~msg:"nx.cpu" want (pick (P.eval ~by:"t" op))
     in
-    let half_or_not p (_, c) =
-      if c.half then run p Nx.float16 c else run p Nx.float32 c
+    let half_or_not ?nans p (_, c) =
+      if c.half then run ?nans p Nx.float16 c else run ?nans p Nx.float32 c
     in
     let cases_ =
       [
@@ -2396,14 +2414,17 @@ module Scaled = struct
       ]
     in
     (* [b] split along its groups over two devices, the rest whole on
-       each. *)
+       each: the closing adds [-0] to an init, which keeps a number's bits
+       and a NaN's NaN, whose sign and payload the NaN rule leaves free. *)
     let grouped ((_, c) as named) =
       let nb = List.length (lead c) in
       let at = function
         | B -> S2.split ~axis:nb
         | A | A_scale | B_scale | Ids | Init -> S2.on
       in
-      half_or_not { put = (fun role x -> Nx.place (at role) x) } named
+      half_or_not ~nans:false
+        { put = (fun role x -> Nx.place (at role) x) }
+        named
     in
     let rows (_, c) = match c.segs with Some (Rows _) -> true | _ -> false in
     group "no products"
@@ -2412,8 +2433,8 @@ module Scaled = struct
           ~id:(fun (n, _) -> n)
           cases_ (half_or_not on_host);
         cases
-          "an output of no products keeps its init's bits with b split \
-           along its groups"
+          "an output of no products keeps its init with b split along its \
+           groups"
           ~id:(fun (n, _) -> n)
           (List.filter rows cases_) grouped;
       ]

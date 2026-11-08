@@ -2399,6 +2399,15 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- The kernel contract (`Nx_kernel`) bounds a float or complex contraction
+  normwise, by `(|init| + Σ|a||b|)` times an error factor each library
+  states, at most `γ(2K + 2)`, in place of a bound on each fused
+  multiply-add, which hardware summing products in groups cannot keep.
+  nx.cpu states its factor, `γ(K + 1)` real and `γ(2K + 2)` complex.
+- A contraction cut along its summed axes starts the first window's sum
+  from `init`, where it added `init` after closing: it keeps
+  `Nx.contract`'s bound with `init`, and one window holding every product
+  gives one device's bits.
 - `Nx_kernel.map_refusal`, `reduce_refusal` and `scan_refusal` give the
   refusal a kernel library's loops answer, and why, reading the arrays in
   place through `Nx_kernel.dtypes` and `reductions`; nx and nx.cpu refuse

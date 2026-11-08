@@ -2469,10 +2469,13 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     the result from its windows of the operands. Where both operands' paired
     summed axes are cut alike, the devices that hold one window of the
     result compute it together: each contracts the products its windows
-    hold, and only these partial sums move, in the accumulator, stacked in
-    C order of the windows' first indices and summed over the stack by the
-    kernels piece by piece, as a reduction's partials are
-    ({!section-reductions}), then [init] added and the sum rounded once. An
+    hold, the first windows' from [init] and the others' from [-0], and
+    only these partial sums move, in the accumulator, stacked in C order of
+    the windows' first indices and summed over the stack by the kernels
+    piece by piece, as a reduction's partials are ({!section-reductions}),
+    then rounded once. Where the first windows hold every product, as an
+    axis of fewer elements than its cuts can leave, each window of the
+    result has the bits of that window's contraction on one device. An
     operand whole on every device is read at the other's cut; summed axes
     cut otherwise raise ({!section-routing}). [Nx_quant.apply_experts],
     which multiplies each row by its expert's matrix, computes so too with
@@ -2502,8 +2505,8 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     dtype, then [t - 1] additions do (Higham, {e Accuracy and Stability of
     Numerical Algorithms}, §4.2 and Lemma 3.3). Where the dtype is the
     accumulator's, the terms round nothing, the bound is
-    [γ(t - 1, u) Σ|term|], and a sum without [init] closes to the bits of
-    the product without [~sum:true]. *)
+    [γ(t - 1, u) Σ|term|], and the sum closes to the bits of the product
+    without [~sum:true]. *)
 
 val contract :
   ?sizes:(string * int) list ->
@@ -2531,7 +2534,7 @@ val contract :
     without it, and associates in an order each kernel library states,
     never a function of the order a pattern lists its names. Barring
     overflow and underflow, before rounding it is within
-    [γ(K + 1, 2u) (|init| + Σ|a||b|)] of the exact sum of its [K] products,
+    [γ(2K + 2, u) (|init| + Σ|a||b|)] of the exact sum of its [K] products,
     wherever its operands lie, where [γ(n, v) = n v / (1 - n v)] and [u] is
     the accumulator's unit roundoff.
     With [~sum:true] (default [false]) over cut summed names, it is the
@@ -2669,7 +2672,7 @@ val conv :
     Each output sums its [K] products, one per tap and channel of its group,
     from [+0], in the dtype's carrier, as {!contract} does, and rounds
     once: the float formats narrower than 32 bits sum at [float32]. Integers
-    wrap. Before rounding it is within [γ(K + 1, 2u) Σ|x||w|] of the exact
+    wrap. Before rounding it is within [γ(2K + 2, u) Σ|x||w|] of the exact
     sum, [γ] and [u] as {!contract} states. On one device it gives the same
     bits on every run of the same computation ({!section-reductions}),
     computing as follows:

@@ -3,10 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Contractions through every kernel library the host runs: within the bound
-   Nx_kernel.S.contract states of the exact sum, the same bits into a
-   destination identical to init, nothing written where declined, and
-   misfits refused. *)
+(* Contractions through every kernel library the host runs: within the
+   largest bound nx_kernel.mli allows a library of the exact sum, the same
+   bits into a destination identical to init, nothing written where
+   declined, and misfits refused. *)
 
 open Windtrap
 open Contract_cases
@@ -42,31 +42,89 @@ let smallest_subnormal acc =
 
 (* The bound *)
 
-(* An output [x] of [c] is within γ(K + 1, 2u) (|init| + Σ|a·b|) of the exact
-   sum of [o], u being [acc]'s unit roundoff, and (K + 1) η where results
-   underflow, η [acc]'s smallest subnormal, twice the most a rounding into
-   the subnormals errs; a NaN or infinite sum is matched. *)
-let within c o x =
-  let naive = ref (Option.value ~default:0. o.init) in
+(* [o]'s sum in plain float64 additions, which is not finite where the
+   exact one is not. *)
+let naive o =
+  let s = ref (Option.value ~default:0. o.init) in
   for k = 0 to Array.length o.av - 1 do
-    naive := !naive +. (o.av.(k) *. o.bv.(k))
+    s := !s +. (o.av.(k) *. o.bv.(k))
   done;
-  let naive = !naive in
-  let show = Printf.sprintf "%h" in
-  if not (Float.is_finite naive) then
-    if bits x = bits naive then None else Some (show x ^ ", not " ^ show naive)
+  !s
+
+(* |init| + Σ|a||b| of an output whose parts are [parts]: a complex one's
+   factors are its real part's, [ar] and [ai] at terms [2p] and [2p + 1]
+   against [br] and [-bi]. *)
+let magnitude parts =
+  let o = parts.(0) in
+  if Array.length parts = 1 then begin
+    let m = ref (Float.abs (Option.value ~default:0. o.init)) in
+    for k = 0 to Array.length o.av - 1 do
+      m := !m +. Float.abs (o.av.(k) *. o.bv.(k))
+    done;
+    !m
+  end
+  else begin
+    let init p = Option.value ~default:0. parts.(p).init in
+    let m = ref (Float.hypot (init 0) (init 1)) in
+    for p = 0 to (Array.length o.av / 2) - 1 do
+      let a = Float.hypot o.av.(2 * p) o.av.((2 * p) + 1) in
+      let b = Float.hypot o.bv.(2 * p) o.bv.((2 * p) + 1) in
+      m := !m +. (a *. b)
+    done;
+    !m
+  end
+
+(* An output [xs] of [c], one value a part, is within the largest bound
+   nx_kernel.mli allows a library, γ(2K + 2) (|init| + Σ|a||b|) of the
+   exact sum of its [K] products and init, a complex one in modulus, u
+   being the unit roundoff of [acc]'s parts. Where results
+   underflow it may err by η more for each term of each part, [η] [acc]'s
+   smallest subnormal, twice the most a rounding into the subnormals errs.
+   A part whose sum is not finite is matched to the bits of its naive
+   sum. *)
+let within c parts xs =
+  let show x = Printf.sprintf "%h" x in
+  let sums = Array.map naive parts in
+  if not (Array.for_all Float.is_finite sums) then
+    let bad = ref None in
+    Array.iteri
+      (fun p s ->
+        if (not (Float.is_finite s)) && bits xs.(p) <> bits s then
+          bad := Some (show xs.(p) ^ ", not " ^ show s))
+      sums;
+    !bad
   else
-    let want, mag = exact o in
+    let exact = Array.map exact parts in
+    let off = Array.mapi (fun p (want, _) -> xs.(p) -. want) exact in
+    let err = Array.fold_left Float.hypot 0. off in
+    let terms = Array.length parts.(0).av in
+    let k = terms / Array.length parts in
     let u = unit_roundoff c.acc in
-    let n = float_of_int (Array.length o.av + 1) in
-    let g = n *. 2. *. u /. (1. -. (n *. 2. *. u)) in
-    let eta = smallest_subnormal c.acc in
-    let bound = (g *. mag) +. (0x1p-100 *. mag) +. (n *. eta) in
-    if Float.abs (x -. want) <= bound then None
+    let n = float_of_int ((2 * k) + 2) in
+    let g = n *. u /. (1. -. (n *. u)) in
+    let parts_n = float_of_int (Array.length parts) in
+    let eta = smallest_subnormal c.acc *. float_of_int (terms + 1) *. parts_n in
+    let slack = Array.fold_left (fun s (_, m) -> s +. (0x1p-100 *. m)) 0. exact in
+    let bound = (g *. magnitude parts) +. slack +. eta in
+    if err <= bound then None
     else
+      let all f = String.concat ", " (Array.to_list (Array.map f exact)) in
       Some
-        (Printf.sprintf "%s is %h from %s, past %h" (show x) (x -. want)
-           (show want) bound)
+        (Printf.sprintf "%s is %h from %s, past %h"
+           (String.concat ", " (Array.to_list (Array.map show xs)))
+           err (all (fun (w, _) -> show w)) bound)
+
+(* The first outputs of [y] past their bound. *)
+let outside c y =
+  let _, each = outputs c in
+  let g = planes c.acc y in
+  let bad = ref [] in
+  each (fun yi k parts ->
+      match within c parts (Array.map (fun part -> part.(k)) g) with
+      | Some why when List.length !bad < 8 ->
+          bad := Format.asprintf "%a: %s" Nx_array_gen.pp_ints yi why :: !bad
+      | _ -> ());
+  List.rev !bad
 
 let law_bound b c =
   covers c;
@@ -74,7 +132,7 @@ let law_bound b c =
   | None -> cover "declined" true
   | Some y ->
       cover "computed" true;
-      equal (list string) [] (wrong c y (within c))
+      equal (list string) [] (outside c y)
 
 (* In place *)
 

@@ -126,18 +126,27 @@
 
 (** {2:contraction_bound Bound}
 
-    A complex output of [K] products is within
-    [γ(2K + 2) (|init| + Σ|a||b|)] of the exact sum of [a], [b] and [init]
-    as [acc] holds them, with [γ] as {!Nx_kernel.section-bounds}
-    defines it and [u] its parts' unit roundoff, barring overflow and
-    underflow. A rounding errs by at most [u] times the modulus of the
+    nx.cpu's error factor ({!Nx_kernel.section-bounds}) is [γ(K + 1)] for
+    a real [acc] and [γ(2K + 2)] for a complex one, [K] an output's
+    products and [u] the unit roundoff of [acc], its parts' for a complex
+    one. An integer sum is exact modulo [2^w] ({!section-contractions}).
+
+    Each fused multiply-add and each addition rounds once, so a real term
+    that passes [r] roundings is within [γ(r)] of itself. Chain order
+    rounds [K] times, its first fused multiply-add rounding a product
+    where the chain starts from [+0]. In lane order, with [B] the blocks, a
+    term passes at most [⌈K/16⌉] roundings in its lane,
+    [⌈log₂ min(K, 16)⌉] in the lanes' tree, [⌈log₂ B⌉] in the blocks' tree
+    and one for [init]: at most [K + 1].
+
+    A complex rounding errs by at most [u] times the modulus of the
     partial sum it rounds, both parts at once, and a partial sum of any of
     the terms has a modulus of at most [|init| + Σ|a||b|]. Chain order
     rounds [2K] times. Lane order holds a product's two terms in
     neighbouring lanes until lane 0 takes lane 1. Until then, a term passes
-    at most [⌈2K/16⌉ + 3] roundings and a product's two weigh at most
-    [√2 |a||b|]; after, at most [log₂] of the blocks [+ 2]. Both stay
-    within [2K + 2] roundings. *)
+    at most [⌈2K/16⌉ + ⌈log₂ min(2K, 16)⌉ - 1] roundings and a product's
+    two weigh at most [√2 |a||b|]; after, at most [⌈log₂ B⌉ + 2]. The
+    first count times [√2] plus the second is at most [2K + 2]. *)
 
 (** {1:reductions Reductions and scans}
 
