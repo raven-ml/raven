@@ -16,7 +16,7 @@ import math
 import struct
 
 from tinygrad.dtype import DType, InvalidType
-from tinygrad.uop.ops import UOp
+from tinygrad.uop.ops import KernelInfo, Ops, UOp
 
 
 # Values
@@ -103,9 +103,63 @@ def toposort(sink):
     return order
 
 
+def value_map(x, fn):
+    """`x` with `fn` applied to each UOp inside it."""
+    if isinstance(x, UOp): return fn(x)
+    if isinstance(x, tuple): return tuple(value_map(v, fn) for v in x)
+    if dataclasses.is_dataclass(x) and not isinstance(x, type) and any(True for _ in uops(x)):
+        return dataclasses.replace(x, **{k: value_map(v, fn) for k, v in fields(x)})
+    return x
+
+
+def rewrite(sink, fn):
+    """`sink` with each node `u` replaced by `fn(u, src, arg)`, its sources and the
+    UOps of its arg rebuilt first."""
+    memo = {}
+    for u in toposort(sink):
+        memo[u] = fn(u, tuple(memo[s] for s in u.src), value_map(u.arg, memo.__getitem__))
+    return memo[sink]
+
+
+def unplaced_kernels(sink):
+    """`sink` with each parameter of a kernel body naming no device.
+
+    In a tensor graph a `PARAM` names the device of its storage. A kernel body's
+    `PARAM`s are slots its call binds: the call's arguments name the devices, so
+    a body's parameters name none, wherever the body sits. A `PARAM` a body
+    shares with its call's argument is therefore split, by position: the
+    argument keeps its device. A body is what is under a `SINK` holding a
+    `KernelInfo`; a copy's `STORE` as a call's body, which moves data across
+    devices or to a disk; and what such a `SINK` became, a `PROGRAM` or a
+    `LINEAR` holding it. A function's body, a `SINK` or `LINEAR` with no
+    `KernelInfo`, is not one: its parameters keep their devices, as does a
+    `STORE` body over one device, a generator's stand-in for a copy."""
+    def kernel(u):
+        return u.op is Ops.SINK and isinstance(u.arg, KernelInfo)
+
+    def copy_body(u):
+        devices = {p.arg.device for p in toposort(u) if p.op is Ops.PARAM and p.arg.device is not None}
+        return u.op is Ops.STORE and (len(devices) > 1 or any(str(d).startswith("DISK") for d in devices))
+
+    def erase(u, src, arg):
+        if u.op in (Ops.PARAM, Ops.REFPARAM) and arg.device is not None:
+            arg = dataclasses.replace(arg, device=None)
+        return u.replace(src=src, arg=arg)
+
+    def enter(u, src, arg):
+        if u.op is Ops.PROGRAM or kernel(u) or (u.op is Ops.LINEAR and any(map(kernel, u.src))):
+            return rewrite(u, erase)
+        if u.op is Ops.CALL and copy_body(u.src[0]):
+            src = (rewrite(u.src[0], erase),) + src[1:]
+        return u.replace(src=src, arg=arg)
+
+    return rewrite(sink, enter)
+
+
 def write(sink):
-    """The graph under `sink` in the graph format."""
-    index = toposort(sink)
+    """The graph under `sink` in the graph format, with its kernels' parameters
+    unplaced (`unplaced_kernels`)."""
+    index = toposort(unplaced_kernels(sink))
     lines = []
     for u, i in index.items():
         line = f"{i} {u.op} {u.dtype} [{', '.join(str(index[s]) for s in u.src)}]"

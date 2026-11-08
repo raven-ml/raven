@@ -152,21 +152,34 @@ def patched(tinygrad, scratch):
 def generators(modules):
     found = {path.relative_to(HERE).with_suffix("").as_posix(): path
              for path in sorted(HERE.rglob("*.py"))
-             if path.parent != HERE or path.name not in ("generate.py", "golden.py", "graph.py")}
+             if path.parent != HERE or path.name not in ("generate.py", "golden.py", "graph.py", "gen_test.py")}
     unknown = [module for module in modules if module not in found]
     if unknown:
         sys.exit(f"no generator for {', '.join(unknown)}; generators: {', '.join(found)}")
     return {module: found[module] for module in (modules or found)}
 
 
-def run(module, generator, tinygrad):
-    """The files of the goldens `generator` declares, by path under test/, and
-    the programs tinygrad refused, as (name, reason)."""
+def child_env(tinygrad):
     env = {key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR", "LANG") if key in os.environ}
     # Scrub everything tinygrad reads (DEBUG, DEV, BEAM, ...) and fix string
     # hashing, so that a golden depends on tinygrad alone.
     env.update(PYTHONPATH=os.pathsep.join([str(tinygrad), str(HERE)]), PYTHONHASHSEED="0",
                PYTHONDONTWRITEBYTECODE="1", NO_COLOR="1")
+    return env
+
+
+def self_test(tinygrad):
+    """Fail if the generators' machinery does not do what gen_test.py states."""
+    result = subprocess.run([sys.executable, str(HERE / "gen_test.py")], cwd=tinygrad, env=child_env(tinygrad),
+                            capture_output=True, text=True)
+    if result.returncode:
+        sys.exit(f"gen/gen_test.py failed:\n{result.stdout}{result.stderr}")
+
+
+def run(module, generator, tinygrad):
+    """The files of the goldens `generator` declares, by path under test/, and
+    the programs tinygrad refused, as (name, reason)."""
+    env = child_env(tinygrad)
     with tempfile.TemporaryDirectory(prefix="tolk-gen-") as scratch:
         out = Path(scratch) / "goldens.json"
         result = subprocess.run([sys.executable, "-c", CHILD, str(generator), str(out)], cwd=scratch,
@@ -209,6 +222,7 @@ def main():
     goldens = {}
     with tempfile.TemporaryDirectory(prefix="tolk-tinygrad-") as scratch:
         tree = patched(tinygrad, scratch)
+        self_test(tree)
         for module, generator in selected.items():
             files, refused = run(module, generator, tree)
             goldens.update(files)

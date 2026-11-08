@@ -5280,7 +5280,9 @@ instructions: it did not pay for the scan.
   kernel's (`_copy_state`), reads copies and the one-device check from
   `call.src[1 + slot]`, takes the renderer from
   `get_call_arg_uops(c)[0]`, compiles a search's candidates without naming a
-  device, and refuses a device in `spec_program`.
+  device, and refuses a device in `spec_program`. `test/gen/graph.py`
+  (`unplaced_kernels`) writes a kernel body's parameters without a device, so
+  the goldens carry this whatever tinygrad computes.
 - **Reason:** (b): rune's compiled programs over several devices
   (`Compile.make`, `Pieces.split`) lower each device's operations on that
   device, so a program over `n` memory devices of one host makes `n` copies
