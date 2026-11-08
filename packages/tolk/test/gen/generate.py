@@ -70,6 +70,7 @@ UNMODIFIED = {
     "schedule/prepare",
     "device",
     "uop/ops",
+    "codegen/late/gater",
 }
 
 HERE = Path(__file__).resolve().parent

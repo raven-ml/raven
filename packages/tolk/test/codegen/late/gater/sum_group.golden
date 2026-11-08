@@ -32,9 +32,9 @@
 31 Ops.LOAD dtypes.f32 [30]
 32 Ops.CONST dtypes.weakint [] 4096
 33 Ops.PARAM dtypes.f32 [32] ParamArg(slot=1, dtype=dtypes.f32)
-34 Ops.CONST dtypes.weakint [] 4
-35 Ops.SHL dtypes.i32 [28, 34]
-36 Ops.ADD dtypes.i32 [35, 4]
+34 Ops.CONST dtypes.weakint [] 8
+35 Ops.SHL dtypes.i32 [4, 34]
+36 Ops.ADD dtypes.i32 [35, 28]
 37 Ops.INDEX dtypes.f32 [33, 36]
 38 Ops.LOAD dtypes.f32 [37]
 39 Ops.ADD dtypes.f32 [31, 38]
@@ -55,5 +55,5 @@
 54 Ops.INDEX dtypes.f32 [53, 7]
 55 Ops.LOAD dtypes.f32 [54]
 56 Ops.STORE dtypes.void [10, 55]
-57 Ops.SINK dtypes.void [56] KernelInfo(name="r_16_256", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)),), optimized=True)
+57 Ops.SINK dtypes.void [56] KernelInfo(name="r_16_256", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),), optimized=True)
 
