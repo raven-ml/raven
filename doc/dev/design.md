@@ -310,11 +310,11 @@ Datapoints (implementations without a written design) are not listed.
   semantic rule.
 - **Legion** (Bauer et al., SC 2012,
   <https://legion.stanford.edu/pdfs/sc2012.pdf>) and **Legate**
-  (<https://legion.stanford.edu/pdfs/legate-preprint.pdf>): projection
-  functors per argument, and a variant chosen per point task. Converges
-  independently with the GSPMD lineage on one rule per operation. Scope:
-  Legate's fallback to NumPy is a prototype limitation it lists, not a
-  design.
+  (<https://legion.stanford.edu/pdfs/legate-preprint.pdf>): a variant chosen
+  per point task, and Legate §3.3's projection functions per argument.
+  Converges independently with the GSPMD lineage on one rule per operation.
+  Scope: Legate's fallback to NumPy is a prototype limitation it lists, not
+  a design.
 - **High Performance Fortran 2.0** (<https://www.netlib.org/hpf/hpf-v20-final.ps.gz>)
   and **Chapel** (<https://chapel-lang.org/publications/hotpar10-final.pdf>,
   <https://chapel-lang.org/docs/primers/parIters.html>): decades of data
