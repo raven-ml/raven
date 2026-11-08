@@ -636,6 +636,20 @@ let large_cases =
     ( "the deviation of small values before one near max_float", std, None,
       [| Some 1.; Some 2.; Some 3.; Some 1e308 |],
       [| None; Some (sqrt 0.5); Some 1.; Some 5e307 |] );
+    ( "the deviation of tiny values", std, None,
+      [| Some 1e-170; Some (-1e-170) |],
+      [| None; Some (sqrt 2. *. 1e-170) |] );
+    ( "the deviation of tiny values, two at a time", std, Some 2,
+      [| Some 1e-170; Some (-1e-170); Some 1e-170 |],
+      [| None; Some (sqrt 2. *. 1e-170); Some (sqrt 2. *. 1e-170) |] );
+    ( "the variance of tiny values, below the range", var, None,
+      [| Some 1e-170; Some (-1e-170) |], [| None; Some 0. |] );
+    ( "the deviation of equal tiny values, seven at a time", std, Some 7,
+      Array.make 12 (Some 1.3e-170),
+      Array.append [| None |] (Array.make 11 (Some 0.)) );
+    ( "the variance of equal values near max_float, seven at a time", var,
+      Some 7, Array.make 12 (Some 1.3e300),
+      Array.append [| None |] (Array.make 11 (Some 0.)) );
     ( "the deviation of a variance past max_float", std, None,
       [| Some 1e200; Some (-1e200) |], [| None; Some (sqrt 2. *. 1e200) |] );
     ( "the deviation of a variance past max_float, two at a time", std,

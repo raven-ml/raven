@@ -3936,6 +3936,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Expr.std` of float64 values whose squares underflow is no longer `0`, for
+  a group of them or a window whose partition holds only them, and `Expr.var`
+  of equal values near `max_float` is `0` rather than `infinity`.
+
 - Add `Expr.hash ?seed`: a frozen, per-kind xxHash64 of each row's value,
   defined for every width, float, date, time, text, null and record.
 - Add `Kit.shuffle`, `Kit.sample` and `Kit.folds` from `Expr.hash`, each with

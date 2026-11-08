@@ -299,19 +299,34 @@ let moments variance =
 (* Scales
 
    A frame whose greatest finite magnitude lies in [\[2^t, 2^(t + 1))] takes
-   [down = 2^-e], [e] the exponent [t] past [below - 1], or [0]: its values
-   times [down] are below [2^below]. *)
+   [down = 2^-e]: [e] the exponent [t] past [below - 1], so that its values
+   times [down] are below [2^below], or [t + above] for a frame below
+   [2^-above], so that their squares are far above the range's bottom, or
+   [0]. *)
 
 let below = 480
+let above = 432
 let bias = 1023L
+let tiny = 0x1p-969
 
 let scales max x =
   let a = Nx.where (Nx.isfinite x) (Nx.abs x) (Nx.zeros_like x) in
   let top = Nx.maximum_s (max a) 0. in
   let t = Nx.sub_s (Nx.rshift (Nx.bitcast Nx.int64 top) 52) bias in
-  let e = Nx.maximum_s (Nx.sub_s t (Int64.of_int (below - 1))) 0L in
+  let high = Nx.maximum_s (Nx.sub_s t (Int64.of_int (below - 1))) 0L in
+  (* A zero or subnormal greatest magnitude has exponent field 0, [t = -1023],
+     and takes the least normal's scale. *)
+  let low =
+    Nx.minimum_s (Nx.add_s (Nx.maximum_s t (-1022L)) (Int64.of_int above)) 0L
+  in
+  let e = Nx.add high low in
   let power k = Nx.bitcast Nx.float64 (Nx.lshift (Nx.add_s k bias) 52) in
   (power e, power (Nx.neg e))
+
+let helped var down =
+  Nx.logical_or
+    (Nx.logical_and (Nx.logical_not (Nx.isfinite var)) (Nx.less_s down 1.))
+    (Nx.logical_and (Nx.less_s var tiny) (Nx.greater_s down 1.))
 
 let words =
   memo (fun p -> p.words) (fun p x -> p.words <- x) (fun p ->
@@ -418,14 +433,25 @@ let frame s =
       let var = deviations x (mean p) in
       if not (overflows p.c) then { var; up = None; n }
       else
-        let over = Nx.equal_s var Float.infinity in
-        if not (Nx.item [] (Nx.any over)) then { var; up = None; n }
+        let odd =
+          Nx.logical_or (Nx.equal_s var Float.infinity) (Nx.less_s var tiny)
+        in
+        if not (Nx.item [] (Nx.any odd)) then { var; up = None; n }
         else
           let up, down = scales (fold Max) x in
-          let x = Nx.mul x (Nx.take s.ids down) in
-          let m = Nx.div (fold Add x) (Nx.cast Nx.float64 n) in
-          let var = Nx.where over (deviations x m) var in
-          { var; up = Some (Nx.where over up (Nx.ones_like up)); n }
+          let redo = helped var down in
+          if not (Nx.item [] (Nx.any redo)) then { var; up = None; n }
+          else
+            (* Equal values have variance 0: a rounded mean's one deviation,
+               scaled into range, must not show. *)
+            let equal = Nx.equal (fold Min x) (fold Max x) in
+            let same = Nx.logical_and redo equal in
+            let redo = Nx.logical_and redo (Nx.logical_not same) in
+            let x = Nx.mul x (Nx.take s.ids down) in
+            let m = Nx.div (fold Add x) (Nx.cast Nx.float64 n) in
+            let var = Nx.where redo (deviations x m) var in
+            let var = Nx.where same (Nx.zeros_like var) var in
+            { var; up = Some (Nx.where redo up (Nx.ones_like up)); n }
     in
     let holistic : type a b.
         (a, b) Expr.reduction ->

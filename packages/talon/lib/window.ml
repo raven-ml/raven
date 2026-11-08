@@ -332,11 +332,13 @@ let fold : type v e.
    An infinite or NaN value makes the mean so, and the variance NaN, as the
    deviations from the mean are then.
 
-   A window of finite values whose moments overflow takes them again of the
-   values scaled by its segment's [Reduce.scales]. The scale comes from
-   values the window may not hold, so it serves those windows alone: their
-   sums of squared deviations reach about max_float / 2 or more, so that a
-   value the scale takes below 2^-1022 rounds by less than their ulp. *)
+   A window of finite values whose moments overflow, or whose variance lies
+   where a square's underflow could show, takes them again of the values
+   scaled by its segment's [Reduce.scales]. The scale comes from values the
+   window may not hold, so it serves those windows alone: a window overflows
+   only with sums of squared deviations near max_float / 2 or more, so that
+   a value the scale takes below 2^-1022 rounds by less than their ulp, and
+   a window is scaled up only where its segment is small throughout. *)
 let variance w held c =
   let x = Nx.take w.sorted (tensor Nx.float64 c) in
   let len = Nx.dim 0 x in
@@ -365,27 +367,41 @@ let variance w held c =
   in
   let var, n = moments x in
   let n = Nx.cast Nx.int64 n in
-  (* The windows of two values or more, all finite, whose variance is not. *)
-  let overflowed () =
+  (* The windows of two values or more, all finite, whose variance is not,
+     or whose variance lies where a square's underflow could show. *)
+  let suspect () =
     let some b = if Nx.item [] (Nx.any b) then Some b else None in
     let infinite = Nx.logical_not (Nx.isfinite var) in
-    let odd = Nx.logical_and (Nx.greater_equal_s n 2L) infinite in
+    let tiny = Nx.less_s var Reduce.tiny in
+    let odd =
+      Nx.logical_and (Nx.greater_equal_s n 2L) (Nx.logical_or infinite tiny)
+    in
     if not (Reduce.overflows c && Nx.item [] (Nx.any odd)) then None
     else
       let bad = Nx.cast Nx.int64 (Nx.logical_not (Nx.isfinite x)) in
       let clean = Nx.equal_s (fold w Add ~held:(Some held) bad) 0L in
       some (Nx.logical_and odd clean)
   in
-  match overflowed () with
+  match suspect () with
   | None -> { Reduce.var; up = None; n }
   | Some redo ->
       let ids = Nx.sub_s (Nx.cumsum (Nx.cast Nx.int64 w.starts)) 1L in
       let segments = Int64.to_int (Nx.item [ -1 ] ids) + 1 in
       let max y = Nx.reduce_segments Max ~segments ids (Nx.where held y zero) in
       let up, down = Reduce.scales max x in
-      let scaled, _ = moments (Nx.mul x (Nx.take ids down)) in
-      let up = Nx.where redo (at 1. (Nx.take ids up)) (Nx.ones_like var) in
-      { var = Nx.where redo scaled var; up = Some up; n }
+      let down_w = at 1. (Nx.take ids down) in
+      let redo = Nx.logical_and redo (Reduce.helped var down_w) in
+      if not (Nx.item [] (Nx.any redo)) then { Reduce.var; up = None; n }
+      else
+        (* Equal values have variance 0: a rounded mean's one deviation,
+           scaled into range, must not show. *)
+        let extreme op = fold w op ~held:(Some held) x in
+        let same = Nx.logical_and redo (Nx.equal (extreme Min) (extreme Max)) in
+        let redo = Nx.logical_and redo (Nx.logical_not same) in
+        let scaled, _ = moments (Nx.mul x (Nx.take ids down)) in
+        let up = Nx.where redo (at 1. (Nx.take ids up)) (Nx.ones_like var) in
+        let var = Nx.where redo scaled var in
+        { var = Nx.where same (Nx.zeros_like var) var; up = Some up; n }
 
 (* Gathers
 

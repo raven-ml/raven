@@ -126,19 +126,32 @@ val scales :
   Nx.host Nx.float64_t * Nx.host Nx.float64_t
 (** [scales max x] is, for each frame, the powers of two [(up, down)], [up]
     the reciprocal of [down], such that the frame's finite values [x] times
-    [down] are below 2{^480}, with [up = 1] where [max] is already below it.
+    [down] are below 2{^480} and, unless they are all zero or subnormal,
+    reach 2{^-433} or more; [up = 1] where [max] already lies in that band.
     [max y] bounds from above each frame's elements of [y] over its values,
     for a [y] of no negative element.
 
     Below 2{^480}, the squares of the deviations of up to 2{^53} values sum
-    below max_float. A product by a power of two is exact unless it leaves the
-    normal range, so a frame's values times [down] keep their moments, scaled,
-    where [up = 1]. Elsewhere the values times [down] that fall below
-    2{^-1022} round, by at most 2{^-1075} each. That is less than the
-    variance can show in a frame whose sum of squared deviations reaches
+    below max_float, and above 2{^-433} a value's nonzero deviation squares
+    well above the range's bottom. A product by a power of two is exact unless
+    it leaves the normal range, so a frame's values times [down] keep their
+    moments, scaled, where [up = 1]. Elsewhere the values times [down] that
+    fall below 2{^-1022} round, by at most 2{^-1075} each. That is less than
+    the variance can show in a frame whose sum of squared deviations reaches
     about max_float / 2, as it does in a frame whose greatest magnitude [max]
     gives exactly and that holds 2{^480} or more, or in one whose moments
     overflowed. *)
+
+val tiny : float
+(** [tiny] is the sample variance below which a square's underflow can show
+    in it, [2{^-969}]. *)
+
+val helped :
+  Nx.host Nx.float64_t -> Nx.host Nx.float64_t -> Nx.host Nx.bool_t
+(** [helped var down] is whether {!scales}'s [down] can change [var]: where
+    [var] overflowed and a frame scales down, or where it is below {!tiny}
+    and a frame scales up. *)
+
 
 val parts : frame -> Column.t -> parts
 (** [parts f c] is the parts of [c] over [f]. *)

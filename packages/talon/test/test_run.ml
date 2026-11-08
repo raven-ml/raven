@@ -2114,6 +2114,84 @@ let reductions =
             (floats t "v");
           equal w [| Some 1e154; Some 0.; Some (sqrt 2. *. 1e200); Some 1. |]
             (floats t "s"));
+      test "std of values whose squares underflow" (fun () ->
+          (* From the definition: [+-1e-170] has a sample variance of
+             [2e-340], below float64's range, and a standard deviation of
+             [sqrt 2 *. 1e-170]; a frame of ordinary values is untouched. *)
+          let g = Column.v Type.int64 [| 0; 0; 1; 1; 1; 2; 2 |] in
+          let x' =
+            Column.v Type.float64
+              [| 1e-170; -1e-170; 2e-200; -2e-200; 0.; 1.; 2. |]
+          in
+          let t =
+            require_ok ~pp:Error.pp
+              (aggregate [ "g" ]
+                 Expr.[ "v" := var x; "s" := std x ]
+                 (v [ ("g", g); ("x", x') ]))
+          in
+          let w = array (option (float_rel ~rel:1e-9 ~abs:0.)) in
+          equal ~msg:"var" w [| Some 0.; Some 0.; Some 0.5 |] (floats t "v");
+          equal ~msg:"std" w
+            [| Some (sqrt 2. *. 1e-170); Some 2e-200; Some (sqrt 0.5) |]
+            (floats t "s"));
+      test "std of the least subnormals is not zero" (fun () ->
+          let g = Column.v Type.int64 [| 0; 0 |] in
+          let x' = Column.v Type.float64 [| 5e-324; -5e-324 |] in
+          let t =
+            require_ok ~pp:Error.pp
+              (aggregate [ "g" ]
+                 Expr.[ "s" := std x ]
+                 (v [ ("g", g); ("x", x') ]))
+          in
+          equal
+            (array (option (float_rel ~rel:0.5 ~abs:0.)))
+            [| Some 5e-324 |] (floats t "s"));
+      test "std of tiny values with nulls" (fun () ->
+          let x' =
+            Column.of_options Type.float64
+              [| Some 1e-170; None; Some (-1e-170); None |]
+          in
+          let g = Column.v Type.int64 [| 0; 0; 0; 0 |] in
+          let t =
+            require_ok ~pp:Error.pp
+              (aggregate [ "g" ]
+                 Expr.[ "s" := std x ]
+                 (v [ ("g", g); ("x", x') ]))
+          in
+          equal
+            (array (option (float_rel ~rel:1e-9 ~abs:0.)))
+            [| Some (sqrt 2. *. 1e-170) |]
+            (floats t "s"));
+      test "std of tiny values over the whole table" (fun () ->
+          let x' =
+            Column.v Type.float64 [| 1e-170; -1e-170; 3e-170 |]
+          in
+          let t =
+            require_ok ~pp:Error.pp
+              (aggregate [] Expr.[ "s" := std x ] (v [ ("x", x') ]))
+          in
+          equal
+            (array (option (float_rel ~rel:1e-9 ~abs:0.)))
+            [| Some 2e-170 |]
+            (floats t "s"));
+      test "a constant frame's variance is zero at both ends" (fun () ->
+          (* A rounded mean leaves every deviation the same [delta], whose
+             square a scale must not bring into range: the exact variance of
+             equal values is 0. *)
+          let g = Column.v Type.int64 [| 0; 0; 0; 0; 0; 0; 0; 1; 1; 1 |] in
+          let x' =
+            Column.v Type.float64
+              (Array.append (Array.make 7 1.3e-170) (Array.make 3 1.3e300))
+          in
+          let t =
+            require_ok ~pp:Error.pp
+              (aggregate [ "g" ]
+                 Expr.[ "v" := var x; "s" := std x ]
+                 (v [ ("g", g); ("x", x') ]))
+          in
+          let w = array (option float_exact) in
+          equal ~msg:"var" w [| Some 0.; Some 0. |] (floats t "v");
+          equal ~msg:"std" w [| Some 0.; Some 0. |] (floats t "s"));
       test "an int32 mean is of the exact sum" (fun () ->
           (* 2^23 values of 2^31 - 1: a float64 sum of them passes 2^53,
              where it rounds. *)
