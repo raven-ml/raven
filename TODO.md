@@ -81,14 +81,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   small kernels spent 19.5 s CPU / 4.9 s wall cold at `PARALLEL=14`
   against 10.0 s / 10.1 s at 1 (rune's law_carries, 728 kernels, fudge
   Clang 19); batching small kernels per worker needs quiet timing
-- dune's watch server goes stale on files a rebase or checkout rewrites
-  (reported missing, or the old version built): dune keys a directory's
-  listing on the directory's stat and keeps it across server restarts, so
-  a listing read while git rewrote the directory stays until the
-  directory's mtime changes; creating and removing a file in it clears it
-  (touching the files does not). Records in `_plans/dune-stale-watch/`
-  (tolk-scan-aligned-20261103T150140.txt has the cause). Report upstream
-  with a reproduction
 - long programs: the incomplete beta (~11,400 ops) compiles in 3 s, 10-20 s
   per derivative, past 10 min for three; a 1,000-term slice-tree sum is one
   kernel clang -O2 takes over 8 min on. Past 400 KB of C Clang compiles
