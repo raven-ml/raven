@@ -1286,7 +1286,7 @@ index 48f88612f..10d74c422 100644
          assert len(idx.src) == 2, "index has 2 sources"
          mask: UOp = UOp.uprod(*[x.eq(0) for x in missing_locals])
 diff --git a/tinygrad/codegen/late/coalesce.py b/tinygrad/codegen/late/coalesce.py
-index 65fb29491..7bdb9b872 100644
+index 65fb29491..39507f037 100644
 --- a/tinygrad/codegen/late/coalesce.py
 +++ b/tinygrad/codegen/late/coalesce.py
 @@ -39,7 +39,9 @@ def _drop_valid_stmts(valid:UOp, idx:UOp, height:int, width:int) -> list[UOp]:
@@ -4756,7 +4756,7 @@ index b247430ef..915103610 100644
    (UPat(Ops.CALL, src=(UPat(tuple(OPAQUE_CALL_BODIES)),), allow_any_len=True), lambda: True),
    # after on PARAM or AFTER
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
-index de2a9b382..eda5cce11 100644
+index de2a9b382..7341a53ca 100644
 --- a/tinygrad/uop/symbolic.py
 +++ b/tinygrad/uop/symbolic.py
 @@ -1,8 +1,8 @@
@@ -4847,15 +4847,7 @@ index de2a9b382..eda5cce11 100644
  pm_data_invalid = PatternMatcher([
    (invalid_pat.broadcast(name="s"), lambda i,s: i.expand(s.shape)),
    (UPat(GroupOp.Unary|{Ops.CAST, Ops.BITCAST}, src=(invalid_pat,)), lambda i: i),
-@@ -126,14 +161,21 @@ def lift_value_after(x:UOp) -> UOp|None:
-   if x.shape != () or x.src[-1].is_invalid: return None
-   if any(a.src[0].op not in GroupOp.ALU and a.src[0].addrspace is not AddrSpace.ALU for a in afters): return None
-   return x.replace(src=tuple(s.src[0] if s.op is Ops.AFTER else s for s in x.src)).after(*dedup(flatten(a.src[1:] for a in afters)))
-+def broadcast_const(u:UOp) -> UOp|None:
-+  # the constant u is through movements that keep each element's value
-+  while u.op in {Ops.RESHAPE, Ops.EXPAND, Ops.PERMUTE, Ops.SHRINK}: u = u.src[0]
-+  return u if u.op is Ops.CONST else None
- 
+@@ -130,10 +165,13 @@ def lift_value_after(x:UOp) -> UOp|None:
  symbolic_simple = pm_data_invalid + PatternMatcher([
    (UPat(GroupOp.ALU|{Ops.CAST}, custom_early_reject={Ops.AFTER}, name="x"), lift_value_after),
    # ** self folding **
@@ -4871,7 +4863,7 @@ index de2a9b382..eda5cce11 100644
    (UPat.var("x") // 1, lambda x: x),   # x//1 -> x
    (UPat.var("x", dtypes.sints+(dtypes.weakint,)) // -1, lambda x: -x), # x//-1 -> -x
    ((UPat.var("x") ^ UPat.var("y", dtypes.weakint)) ^ UPat.var("y"), lambda x,y: x), # (x^y)^y -> x
-@@ -175,8 +217,9 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
+@@ -175,8 +213,9 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
     a.replace(src=tuple(s.ccast(dt) if s.dtype in dtypes.weaks else s for s in a.src))
     if (dt:=promo_dtype(a.src)) not in dtypes.weaks else None),
    # ** two stage ALU folding **
@@ -4883,7 +4875,7 @@ index de2a9b382..eda5cce11 100644
      for op in GroupOp.Associative),
    # bool MUL is AND, ADD/MAX is OR. prevents other rules to rewrite bool ADD/MUL incorrectly
    (UPat.var('x', dtype=dtypes.bool) * UPat.var('y', dtype=dtypes.bool), lambda x,y: x&y),
-@@ -184,13 +227,8 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
+@@ -184,13 +223,8 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
    (UPat.var('x', dtype=dtypes.bool).maximum(UPat.var('y', dtype=dtypes.bool)), lambda x,y: x|y),
    # *** div rules ***
    (UPat.cvar('x', arg=0) / 0, lambda x: x.const_like(float('nan'))),   # 0/0 -> nan
@@ -4899,7 +4891,7 @@ index de2a9b382..eda5cce11 100644
    # *** cast/bitcast ***
    (UPat((Ops.CAST, Ops.BITCAST), name="root"), lambda root: root.src[0] if root.dtype == root.src[0].dtype else None),
    # a BITCAST reads its operand at the width it states, so a weak const is nonsense here: the bare arm is bool only
-@@ -203,17 +241,18 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
+@@ -203,9 +237,9 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
    (UPat.var("x").cast(dtypes.bool), lambda x: x != 0),
    # ** pow **
    (UPat.var("x").alu(Ops.POW, UPat.cvar("c")), simplify_pow),
@@ -4912,18 +4904,7 @@ index de2a9b382..eda5cce11 100644
    # unpack a uint64 packed from two uint32 (threefry)
    (((UPat.var(None, dtypes.uint64)<<32) | UPat.var('y', dtypes.uint32).cast(dtypes.uint64)).cast(dtypes.uint32), lambda y: y),
    (((UPat.var('x', dtypes.uint64)<<32) | UPat.var(None, dtypes.uint32).cast(dtypes.uint64))>>32,
-    lambda x: x.cast(dtypes.uint32).cast(dtypes.uint64)),
-   # ** simple where folding **
--  # a conditional with the same results either way is a noop, also fold const conditionals
-+  # a conditional with the same results either way is a noop, also fold const conditionals, broadcast ones included
-   (UPat.var().where(UPat.var("val"), UPat.var("val")), lambda val: val),
--  (UPat.cvar("gate").where(UPat.var("c0"), UPat.var("c1")).named("w"), fold_const_where),
-+  (UPat.var("gate").where(UPat.var("c0"), UPat.var("c1")).named("w"),
-+   lambda gate,c0,c1,w: None if (g:=broadcast_const(gate)) is None else fold_const_where(g, c0, c1, w)),
- ])+mop_cleanup
- 
- # ******** phase 2 builds on phase 1, it includes the old "symbolic", rules that match deeper ********
-@@ -244,11 +283,25 @@ commutative = PatternMatcher([
+@@ -244,11 +278,25 @@ commutative = PatternMatcher([
    (UPat(GroupOp.Commutative, dtype=dtypes.weakint, name='x'), lambda x: x.replace(src=x.src[::-1]) if x.src[1].tuplize < x.src[0].tuplize else None),
  ])
  
@@ -4950,7 +4931,7 @@ index de2a9b382..eda5cce11 100644
    return cond.where(t.substitute({cond: cond.const_like(True)}), f.substitute({cond: cond.const_like(False)}))
  
  symbolic = symbolic_simple+commutative+PatternMatcher([
-@@ -257,13 +310,12 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -257,13 +305,12 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
    ((UPat.var("x", dtype=dtypes.bool).logical_not() | UPat.var("y")) & UPat.var("x"), lambda x,y: y & x),
    # TODO: make a more general or folder like simplify_valid
    (UPat.var("x", dtype=dtypes.bool) | UPat.var("x", dtype=dtypes.bool).logical_not(), lambda x: x.const_like(True)),  # x|!x -> True
@@ -4966,7 +4947,7 @@ index de2a9b382..eda5cce11 100644
    ((UPat.var("y") + UPat.var("x", dtypes.wints)) + UPat.var("x") * UPat.cvar("c"),
     lambda x,y,c: y+m if fits(x, c.vmin+1) and no_overflow(m:=x*(c+1)) else None),
    ((UPat.var("y") + UPat.var("x", dtypes.wints) * UPat.cvar("c")) + UPat.var("x"),
-@@ -291,26 +343,27 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -291,26 +338,27 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
    ((UPat.var("y", dtypes.wints)+UPat.var("c").where(UPat.var("t"), UPat.var("f"))) + UPat.var("c").where(UPat.var("tt"), UPat.var("ff")), \
     lambda y,c,t,tt,f,ff: y+m if (t.op == tt.op == Ops.CONST or f.op == ff.op == Ops.CONST) and no_overflow(m:=c.where(t+tt, f+ff)) else None),
    # complementary zero branches under the same condition select directly
@@ -5004,7 +4985,7 @@ index de2a9b382..eda5cce11 100644
    # x//d<c -> x<c*d for d>0
    ((UPat.var("x", dtype=dtypes.weakint)//UPat.cvar("d"))<UPat.cvar("c"),
     lambda x,d,c: (x<c.val*d.val) if d.val > 0 else None),
-@@ -321,8 +374,12 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -321,8 +369,12 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
    # *** rules from symbolic ***
    # generic lt folding
    (UPat.var("x", dtypes.weakint)<UPat.cvar("c"), lambda x,c: lt_folding(x, c.val)),
@@ -5019,7 +5000,7 @@ index de2a9b382..eda5cce11 100644
    # canonicalize a simplex with positive coefficients > 0. NOTE: not x < 1 means x > 0
    ((UPat.var("x", dtypes.weakint)<1).logical_not(), lambda x: (newx<1).logical_not() if (newx:=canonicalize_simplex(x)) is not None else None),
    # a range mod its own upper bound is just the range
-@@ -339,12 +396,16 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -339,12 +391,16 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
      and not (u.op is Ops.SHR and u.src[1].vmax >= 32)
      and not (u.op in (Ops.MOD, Ops.TRUNCMOD) and u.src[0].vmin <= dtypes.int.min and u.src[1].vmin <= -1 <= u.src[1].vmax) else None),
    ((UPat.var("x", dtypes.weakint) + UPat.cvar("c")).cast(dtypes.sints, name="cast"), lambda x,c,cast:x.cast(cast.dtype)+cast.const_like(c.val)),
@@ -5037,7 +5018,7 @@ index de2a9b382..eda5cce11 100644
    # the rules above key on bare CONSTs, so a redundantly committed const has to be uncast in the same fixpoint
  ])+div_and_mod_symbolic+pm_uncast_const
  
-@@ -412,8 +473,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
+@@ -412,8 +468,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
  
  # ******** phase 3 is the complete symbolic ********
  
@@ -5048,7 +5029,7 @@ index de2a9b382..eda5cce11 100644
    # max(x*m) = max(x)*m needs x*m monotone in x, and an unsigned multiply wraps
    if r.arg[0] is Ops.MAX and dtypes.is_unsigned(r.dtype): return None
    inside, outside = [], []
-@@ -422,7 +484,14 @@ def reduce_mul_chain(r:UOp) -> UOp|None:
+@@ -422,7 +479,14 @@ def reduce_mul_chain(r:UOp) -> UOp|None:
      if m not in r.src[1:] and all(r not in m_parents for r in r.src[1:]) and (r.arg[0] != Ops.MAX or m.vmin >= 0): outside.append(m)
      else: inside.append(m)
    if len(outside) == 0: return None
@@ -5064,7 +5045,7 @@ index de2a9b382..eda5cce11 100644
  
  def drop_and_clauses(cond:UOp, x:UOp, i:UOp) -> UOp|None:
    keep, drop = partition(cond.split_uop(Ops.AND), lambda c: any(r in x.ranges for r in c.ranges))
-@@ -445,10 +514,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
+@@ -445,10 +509,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
    return UOp.const(True).uprod(*keep).where(ret_idx, ret_idx.const_like(0))
  
  # where after gated load becomes alt value, TODO: this is sort of duplicated with rules in devectorizer
@@ -5080,7 +5061,7 @@ index de2a9b382..eda5cce11 100644
  ])
  
  def gated_given_valid(cond:UOp, x:UOp, i:UOp) -> UOp|None:
-@@ -488,9 +559,6 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
+@@ -488,9 +554,6 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
    # store of where with invalid -> gated store
    (UPat(Ops.STORE, src=(UPat(Ops.INDEX, name="index"), UPat.var("cond").where(UPat.var("val"), invalid_pat))),
     lambda index, cond, val, i: UOp.store(index.src[0].index(index.src[1].valid(cond)), val)),

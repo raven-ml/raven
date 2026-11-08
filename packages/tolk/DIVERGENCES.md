@@ -2033,43 +2033,32 @@ does the same.
   `Compiled › 8-bit floats › the sine, cosine and tangent of an 8-bit float
   NaN are NaN`, went with its rewrite).
 
-## D75. A selection by a constant condition
+## D75. A constant condition assumes nothing in its branches
 
-- **tinygrad:** `uop/symbolic.py:216`, which folds a `WHERE` whose condition is
-  a `CONST` (`UPat.cvar("gate")`), and `:247-252` (`fold_where_closure`),
-  which substitutes `True` for a selection's condition in its true branch and
+- **tinygrad:** `uop/symbolic.py:247-252` (`fold_where_closure`), which
+  substitutes `True` for a selection's condition in its true branch and
   `False` in its false branch, whatever the condition is.
-- **tolk:** `Shape.broadcast_const`, its rule in `Shape.symbolic_simple`,
-  and `Shape.fold_where_closure`; `test/gen/tinygrad.patch`, which gives
-  tinygrad the same.
-- **Differs:** a selection whose condition is a constant through movements
-  that keep each element's value (reshape, expand, permute, shrink) is
-  its branch, as one by a `CONST` is. A padded constant is not folded, since
-  its padding holds `False`. `fold_where_closure` leaves a condition that is
-  a constant, broadcast, padded or not, in the branches: a broadcast constant
-  is one node for every use of that constant, so substituting it is no
-  assumption about the selection. In `where F (where F x (where F y x)) y`,
-  with `F` a broadcast `False`, the outer selection makes the inner `F`s
-  `True`, the inner selection makes its false branch's `True` back into
-  `False`, and the rewrite does not terminate; tinygrad raises "infinite loop
-  in graph_rewrite" on that graph.
-- **Reason:** (b): D74's float bounds fold the comparisons of rune's sine and
-  cosine (`Lower_real.reduce`) to broadcast constants in the tensor graph.
-  Two symbolic passes over such graphs did not terminate:
-  `Prepare.contiguous_view`'s, on the old rune's staged scan reading a draw on
-  Metal, and the multi-device rewrite's, since out of scope (see README), on
-  a sharded model's rope. Folding the selection at its constant also drops
-  the branch never taken, such as the long reduction of a bounded angle.
-  Unverified that current rune builds the first graph: rune still stages
-  scans (`Loop`), but the Metal test of a scan reading a draw went with the
-  old rune.
-- **Pinned by:** the Symbolic suite: `symbolic_simple › selections › a
-  selection by a broadcast constant is the branch it picks` and `› a selection
-  by a padded constant is no constant's`, and `symbolic › selections › a
-  padded constant condition is not folded in the branches`. On rune: missing
-  (the old rune's `Rune_internals.Jit › metal › staged scans › stage a scan
-  whose step reads a draw and another scan's result made before it` went with
-  its rewrite).
+- **tolk:** `Shape.fold_where_closure`; `test/gen/tinygrad.patch`, which
+  gives tinygrad the same.
+- **Differs:** `fold_where_closure` leaves a condition that is a constant,
+  broadcast, padded or not, in the branches: a broadcast constant is one node
+  for every use of that constant, so substituting it is no assumption about
+  the selection. In `where F (where F x (where F y x)) y`, with `F` a
+  broadcast `False`, the outer selection makes the inner `F`s `True`, the
+  inner selection makes its false branch's `True` back into `False`, and the
+  rewrite does not terminate; tinygrad raises "infinite loop in
+  graph_rewrite" on that graph, and tolk's rewrite, without this rule,
+  "graph_rewrite does not terminate".
+- **Reason:** (e): a graph tinygrad's rewrite does not terminate on, valid
+  by construction. The fold of a selection whose condition is a constant
+  through movements, this entry's other part, is withdrawn: its witnesses,
+  the old rune's staged scan on Metal and the multi-device rewrite, are gone,
+  and rune's suites pass without it. A selection by a `CONST` still folds, as
+  in tinygrad.
+- **Pinned by:** the Symbolic suite: `symbolic › selections › a broadcast
+  constant condition is not folded in the branches`, which raises without
+  the rule, and `› a padded constant condition is not folded in the
+  branches`.
 
 ## D76. Withdrawn
 

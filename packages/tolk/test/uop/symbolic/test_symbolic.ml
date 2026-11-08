@@ -708,20 +708,6 @@ let selections =
         (fun () ->
           let v = var ~dtype:Weak_float "v" 0 3 in
           folds_to (raw Where [ Ops.bool true; Ops.int 1; v ]) (Ops.int 1));
-      test "a selection by a broadcast constant is the branch it picks"
-        (fun () ->
-          let p = Shape.param ~shape:[ Int 4 ] 0 Dtype.Float32
-          and q = Shape.param ~shape:[ Int 4 ] 1 Dtype.Float32 in
-          let truth b = Shape.const_like ~dtype:Bool p (`Bool b) in
-          folds_to (Ops.where (truth true) p q) p;
-          folds_to (Ops.where (truth false) p q) q;
-          (* Assuming the outer condition false within its false branch, and the
-             inner one true within its true branch, would trade the two
-             constants without end. *)
-          simplifies_to
-            (Ops.where (truth true) p
-               (Ops.where (truth false) (Ops.where (truth true) p q) q))
-            p);
       test "a selection by a padded constant is no constant's" (fun () ->
           let p = Shape.param ~shape:[ Int 6 ] 0 Dtype.Float32
           and q = Shape.param ~shape:[ Int 6 ] 1 Dtype.Float32 in
@@ -835,6 +821,17 @@ let symbolic_selections =
           let e' = Ops.where other t e in
           let sel = Ops.where cond e' (Ops.where other e t) in
           by_symbolic sel sel);
+      test
+        "a broadcast constant condition is not folded in the branches"
+        (fun () ->
+          let x = Shape.param ~shape:[ Ops.Int 4 ] 0 Dtype.Float32 in
+          let y = Shape.param ~shape:[ Ops.Int 4 ] 1 Dtype.Float32 in
+          (* One node for every use of the constant: assuming it false in the
+             false branch, and true in the true one, trades the two without
+             end. *)
+          let f = Shape.const_like ~dtype:Bool x (`Bool false) in
+          let sel = Ops.where f (Ops.where f x (Ops.where f y x)) y in
+          equal uop sel (symbolic sel));
       test
         "a padded constant condition is not folded in the branches"
         (fun () ->
