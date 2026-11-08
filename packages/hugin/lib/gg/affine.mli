@@ -65,8 +65,8 @@ val stretch : t -> float
     singular value of [linear m]: a vector of length [l] maps to one of length
     at most [stretch m *. l]. It is computed so that it neither overflows nor
     underflows where its value is a finite float:
-    [stretch (scale 1e-200 1e-200)] is [1e-200]. It is NaN if [linear m] is zero
-    or a coefficient of it is not finite. *)
+    [stretch (scale 1e-200 1e-200)] is [1e-200]. It is [0.] if [linear m] is
+    zero, and NaN if a coefficient of [linear m] is not finite. *)
 
 (** {1:comparing Comparing and formatting} *)
 

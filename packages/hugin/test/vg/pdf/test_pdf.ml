@@ -1034,6 +1034,21 @@ let stamps =
               [ 1.; 0.; 0.; 1.; 30.; 7. ];
             ]
             (List.tl (operands "cm" (content doc))));
+      test "an instance holding a stroke shrunk to nothing is painted"
+        (fun () ->
+          (* Two scales of 1e-200 compose to the zero map, under which the
+             stroke paints nothing. *)
+          let shrunk = Picture.transform (Affine.scale 1e-200 1e-200) in
+          let p =
+            Picture.group
+              [
+                Picture.fill red disc;
+                shrunk (shrunk (Picture.stroke (Stroke.v 1.) red disc));
+              ]
+          in
+          let doc = pdf (Picture.stamp [| 10.; 20. |] [| 5.; 5. |] p) in
+          equal int 2 (count (content doc) " Do
+"));
       test "fills and strokes are set before each instance" (fun () ->
           let doc =
             pdf

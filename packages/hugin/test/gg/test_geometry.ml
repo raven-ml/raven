@@ -160,11 +160,38 @@ let swept_stretch (m : Affine.t) =
   done;
   !best
 
-(* The sweep misses the largest image by a relative 1e-7 at most. *)
-let stretch_is_largest_image m =
+(* The least subnormal float. Below the least normal float, results are
+   rounded to multiples of it, so relative precision runs out. *)
+let least_subnormal = Float.succ 0.
+
+(* Maps from [gen_affine] with their linear part scaled by [0.] or by the least
+   subnormal float as often as left as drawn: the zero map and stretches that
+   only a few subnormals represent are cases the law must hold on. *)
+let gen_stretched =
+  Gen.with_pp pp_affine
+    (Gen.map
+       (fun ((m : Affine.t), f) ->
+         {
+           m with
+           xx = m.xx *. f;
+           yx = m.yx *. f;
+           xy = m.xy *. f;
+           yy = m.yy *. f;
+         })
+       (Gen.pair gen_affine
+          (Gen.of_list ~pp:pp_float [ 1.; 1.; 0.; least_subnormal ])))
+
+(* The sweep misses the largest image by a relative 1e-7 at most. Among
+   subnormals it rounds each image coordinate within one least subnormal of its
+   value and each length within two, and the stretch rounds within half of one:
+   the two agree within three least subnormals. *)
+let stretch_is_largest_image (m : Affine.t) =
   let s = Affine.stretch m and swept = swept_stretch m in
-  at_least float_exact ~than:(swept *. (1. -. 1e-12)) s;
-  at_most float_exact ~than:(swept *. (1. +. 1e-6)) s
+  let slack = 3. *. least_subnormal in
+  cover "the zero map" (m.xx = 0. && m.yx = 0. && m.xy = 0. && m.yy = 0.);
+  cover "a subnormal stretch" (0. < swept && swept < Float.min_float);
+  at_least float_exact ~than:((swept *. (1. -. 1e-12)) -. slack) s;
+  at_most float_exact ~than:((swept *. (1. +. 1e-6)) +. slack) s
 
 let stretch_cases =
   [
@@ -176,6 +203,17 @@ let stretch_cases =
     ( "scale 1e200 under a rotation",
       Affine.(rotate 1. * scale 1e200 1e200),
       1e200 );
+    ("the zero map", Affine.scale 0. 0., 0.);
+    ( "the least subnormal in every coefficient",
+      {
+        Affine.xx = least_subnormal;
+        yx = least_subnormal;
+        xy = least_subnormal;
+        yy = least_subnormal;
+        x0 = 0.;
+        y0 = 0.;
+      },
+      2. *. least_subnormal );
   ]
 
 let affine_tests =
@@ -231,11 +269,10 @@ let affine_tests =
           equal (float_rel ~rel:1e-15 ~abs:0.) s (Affine.stretch m));
       cases "stretch is NaN for" ~id:fst
         [
-          ("the zero map", Affine.scale 0. 0.);
           ("an infinite coefficient", Affine.scale infinity 1.);
         ]
         (fun (_, m) -> equal float_exact Float.nan (Affine.stretch m));
-      prop "stretch is the largest image of a unit vector" gen_affine
+      prop "stretch is the largest image of a unit vector" gen_stretched
         stretch_is_largest_image;
       test "equal follows Float.equal" equality_of_floats;
       prop "equal is an equivalence"

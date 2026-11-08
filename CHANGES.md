@@ -168,6 +168,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Affine.stretch` of a map whose linear part is zero is `0.`, where it was
+  NaN. A stamp whose picture held a stroke under transforms that compose to
+  the zero map, such as two scales of `1e-200`, drew none of its instances.
 - A tick label of a value equally near two shortest decimals takes the one
   whose last digit is even, as the SVG writer does: 2^50 + 0.75 reads
   `1,125,899,906,842,624.8`, where it read `…624.7`.

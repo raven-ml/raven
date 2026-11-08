@@ -55,20 +55,24 @@ let invert m =
 let linear m = { m with x0 = 0.; y0 = 0. }
 
 (* The coefficients are divided by the largest of their magnitudes [k] first, so
-   that their squares neither overflow nor underflow. *)
+   that their squares neither overflow nor underflow. The zero map, where [k] is
+   [0.], scales every length to [0.]. *)
 let stretch m =
   let k =
     Float.max
       (Float.max (Float.abs m.xx) (Float.abs m.yx))
       (Float.max (Float.abs m.xy) (Float.abs m.yy))
   in
-  let xx = m.xx /. k and yx = m.yx /. k and xy = m.xy /. k and yy = m.yy /. k in
-  let a = (xx *. xx) +. (yx *. yx) and b = (xy *. xy) +. (yy *. yy) in
-  let c = (xx *. xy) +. (yx *. yy) in
-  k
-  *. Float.sqrt
-       ((0.5 *. (a +. b))
-       +. Float.sqrt ((0.25 *. (a -. b) *. (a -. b)) +. (c *. c)))
+  if k = 0. then 0.
+  else
+    let xx = m.xx /. k and yx = m.yx /. k in
+    let xy = m.xy /. k and yy = m.yy /. k in
+    let a = (xx *. xx) +. (yx *. yx) and b = (xy *. xy) +. (yy *. yy) in
+    let c = (xx *. xy) +. (yx *. yy) in
+    k
+    *. Float.sqrt
+         ((0.5 *. (a +. b))
+         +. Float.sqrt ((0.25 *. (a -. b) *. (a -. b)) +. (c *. c)))
 
 let equal m n =
   Float.equal m.xx n.xx && Float.equal m.yx n.yx && Float.equal m.xy n.xy

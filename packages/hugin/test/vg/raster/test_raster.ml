@@ -1030,6 +1030,18 @@ let stamps =
               (Picture.stroke (Stroke.v 1.) red (Path.circle (P2.v 0. 0.) 2.5))
           in
           greater (float 1e-9) ~than:0. (coverage (render 20. 20. p)));
+      test "an instance holding a stroke shrunk to nothing is drawn"
+        (fun () ->
+          (* Two scales of 1e-200 compose to the zero map, under which the
+             ring paints nothing. *)
+          let shrunk = Picture.transform (Affine.scale 1e-200 1e-200) in
+          let s =
+            Picture.stamp ~scales:[| 1.; 2. |] [| 5.; 12. |] [| 5.; 12. |]
+              (Picture.group [ solid 2. 2.; shrunk (shrunk (ring 1.)) ])
+          in
+          same_image ~within:1
+            (render 20. 20. (instances s))
+            (render 20. 20. s));
     ]
 
 (* Glyphs *)

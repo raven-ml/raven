@@ -1061,6 +1061,20 @@ let stamps =
           equal int 3 (count s "<use");
           equal (list string) [ "10"; "20"; "30" ] (attrs "x" s);
           equal (list string) [ "5"; "6"; "7" ] (attrs "y" s));
+      test "an instance holding a stroke shrunk to nothing is used"
+        (fun () ->
+          (* Two scales of 1e-200 compose to the zero map, under which the
+             stroke paints nothing. *)
+          let shrunk = Picture.transform (Affine.scale 1e-200 1e-200) in
+          let p =
+            Picture.group
+              [
+                Picture.fill red disc;
+                shrunk (shrunk (Picture.stroke (Stroke.v 1.) red disc));
+              ]
+          in
+          let s = svg (Picture.stamp [| 10.; 20. |] [| 5.; 5. |] p) in
+          equal int 2 (count s "<use"));
       test "fills and strokes are set on each use and inherited" (fun () ->
           let half = Color.with_alpha 0.5 red in
           let s =
