@@ -255,11 +255,14 @@ let ownership =
             (Nx.to_array (List.nth (fst x) 1)));
     ]
 
+(* An absent option: drawn, some seeds reach none in a hundred values. *)
+let absent = S (record ("a", P.option P.tensor) ("b", P.tensor), (None, one))
+
 let values =
   group "values"
     [
       prop "a value read back from its archive is the value"
-        (samples safetensors_dtypes) (fun (S (s, x)) ->
+        ~examples:[ absent ] (samples safetensors_dtypes) (fun (S (s, x)) ->
           covers s x;
           Law.round_trip (value_of s) archive (Archive.of_value s)
             (Archive.to_value s ~like:(like s x))
