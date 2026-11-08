@@ -207,13 +207,15 @@ let relayed port =
        ());
   let pass first fd =
     Fun.protect ~finally:finished @@ fun () ->
-    if not first then begin
-      print_endline "dialled";
+    (* Printed under [lock]: the threads of several dials print at once, and
+       print_endline writes a line's text and its newline separately, so two
+       of them could leave "dialleddialled". *)
+    if not first then
       Mutex.protect lock (fun () ->
+          print_endline "dialled";
           while not !go do
             Condition.wait opened lock
-          done)
-    end;
+          done);
     let up = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
     Unix.connect up (Unix.ADDR_INET (Unix.inet_addr_loopback, port));
     let down = Thread.create (fun () -> relay fd up) () in
