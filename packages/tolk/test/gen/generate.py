@@ -69,6 +69,7 @@ UNMODIFIED = {
     "renderer/renderer",
     "schedule/prepare",
     "device",
+    "uop/ops",
 }
 
 HERE = Path(__file__).resolve().parent

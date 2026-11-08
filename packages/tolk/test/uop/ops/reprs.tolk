@@ -1,0 +1,40 @@
+# tolk D77 D80 golden=19f7fed46c081e67e18a69c087134bae
+name	arg
+none	None
+int	42
+negative int	-3
+huge int	1267650600228229401496703205376
+float	ConstFloat(1.5)
+negative zero	ConstFloat(-0.0)
+nan	ConstFloat(nan)
+inf	ConstFloat(inf)
+bool	True
+invalid	Invalid
+dtype	dtypes.f16
+range	(AxisType.WEAK, 0)
+range with sub-axes	(AxisType.UPCAST, 1, 0)
+negative range	(AxisType.LOOP, -1)
+reduce	(Ops.ADD, 1)
+special	'gidx0'
+permute	None
+flip	None
+device	'CUDA'
+custom	CallInfo(None, None, False, False, False, None)
+ins	('s_endpgm', dtypes.void)
+binary	b'\x7fELF\x00\n\'"'
+source	"int x = 'a';\n"
+param	ParamArg(3, dtypes.f32)
+scalar param	ParamArg(1, dtypes.i32)
+variable	ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 10), name='n', addrspace=AddrSpace.ALU)
+bound variable	ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 10), name='n', addrspace=AddrSpace.ALU, val=3)
+named local buffer	ParamArg(2, dtypes.i32, name='buf', addrspace=AddrSpace.LOCAL)
+volatile param	ParamArg(0, dtypes.u32, device='CPU', volatile=True)
+alloc	ParamArg(7, dtypes.f32, device='CPU')
+kernel	KernelInfo(name='test', applied_opts=(), opts_to_apply=None, estimates=None, beam=0, optimized=False, kernel=True, split=None)
+kernel with opts	KernelInfo(name='kern', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.TC, axis=0, arg=(-1, 2, 1)), Opt(op=OptOps.PADTO, axis=1, arg=32), Opt(op=OptOps.SWAP, axis=0, arg=1)), opts_to_apply=(Opt(op=OptOps.PADTO, axis=0, arg=4),), estimates=Estimates(ops=1, lds=2, mem=3), beam=2, optimized=False, kernel=True, split=None)
+bufferize	BufferizeOpts(device='CPU', addrspace=AddrSpace.LOCAL, removable=False, broadcast=False)
+bufferize without device	BufferizeOpts(device=None, addrspace=AddrSpace.GLOBAL, removable=True, broadcast=False)
+call	CallInfo(None, 'f', False, False, False, None)
+call returning	CallInfo(None, None, True, False, False, None)
+program	ProgramInfo(global_size=(4, 1, 1), local_size=(8, 1, 1), params=(), globals=(0, 1), outs=(0,), ins=(1,), target=CPU:CLANG)
+wmma	((8, 16, 16), dtypes.f16, 32, ((((AxisType.UPCAST, 0), 2), ((AxisType.UPCAST, 1), 2)), (((AxisType.UPCAST, 2), 2),), (((AxisType.UPCAST, 3), 2),)))

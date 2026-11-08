@@ -17,7 +17,7 @@ UOp(Ops.MUL, arg=None, src=(
 UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 8), name='n', addrspace=AddrSpace.ALU), src=(
   UOp(Ops.STACK, arg=None, src=()),))
 
-UOp(Ops.SINK, arg=KernelInfo(name='test', applied_opts=(), opts_to_apply=None, estimates=None, beam=0, optimized=False, kernel=True, split=None), src=(
+UOp(Ops.SINK, arg=KernelInfo(name='test', applied_opts=(), opts_to_apply=None, estimates=None, beam=0, optimized=False, kernel=True), src=(
   UOp(Ops.ADD, arg=None, src=(
     x1:=UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 8), name='n', addrspace=AddrSpace.ALU), src=(
       UOp(Ops.STACK, arg=None, src=()),)),

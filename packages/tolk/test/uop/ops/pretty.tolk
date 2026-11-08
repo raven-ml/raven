@@ -1,0 +1,44 @@
+# tolk D80 golden=773f750e87bcf03844a630df11e20dd0
+UOp(Ops.CONST, arg=42, src=())
+
+UOp(Ops.ADD, arg=None, src=(
+  UOp(Ops.CONST, arg=42, src=()),
+  UOp(Ops.CONST, arg=3, src=()),))
+
+UOp(Ops.ADD, arg=None, src=(
+  x0:=UOp(Ops.CONST, arg=42, src=()),
+  x0,))
+
+UOp(Ops.MUL, arg=None, src=(
+  x0:=UOp(Ops.ADD, arg=None, src=(
+    x1:=UOp(Ops.CONST, arg=1, src=()),
+    x1,)),
+  x0,))
+
+UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 8), name='n', addrspace=AddrSpace.ALU), src=(
+  UOp(Ops.STACK, arg=None, src=()),))
+
+UOp(Ops.SINK, arg=KernelInfo(name='test', applied_opts=(), opts_to_apply=None, estimates=None, beam=0, optimized=False, kernel=True, split=None), src=(
+  UOp(Ops.ADD, arg=None, src=(
+    x1:=UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 8), name='n', addrspace=AddrSpace.ALU), src=(
+      UOp(Ops.STACK, arg=None, src=()),)),
+    UOp(Ops.CONST, arg=1, src=()),)),
+  UOp(Ops.MUL, arg=None, src=(
+    x1,
+    UOp(Ops.CONST, arg=2, src=()),)),))
+
+UOp(Ops.RANGE, arg=(AxisType.WEAK, 0), src=(
+  UOp(Ops.CONST, arg=4, src=()),))
+
+UOp(Ops.CAST, arg=dtypes.i32, src=(
+  UOp(Ops.CONST, arg=3, src=()),))
+
+UOp(Ops.CONST, arg=ConstFloat(1.5), src=())
+
+UOp(Ops.RESHAPE, arg=None, src=(
+  UOp(Ops.PARAM, arg=ParamArg(0, dtypes.f32), src=(
+    UOp(Ops.CONST, arg=6, src=()),)),
+  UOp(Ops.STACK, arg=None, src=(
+    UOp(Ops.CONST, arg=2, src=()),
+    UOp(Ops.CONST, arg=3, src=()),)),))
+

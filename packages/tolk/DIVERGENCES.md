@@ -8855,3 +8855,17 @@ reason and its pins.
   Compile_error with the verifier's finding`, a call of an intrinsic with an
   argument it does not take, which comgr 3.0 compiles without the
   verifier.
+
+## D416. The constant folder divides floats
+
+- **tinygrad:** `uop/ops.py` (`exec_alu`, `python_alu`): no rule for `FDIV`, so
+  a folded float division raises `KeyError`.
+- **tolk:** `Ops.exec_alu`.
+- **Differs:** `exec_alu` folds an `FDIV` as IEEE does, then rounds to the
+  operation's type, as it multiplies: a zero divisor gives an infinity of the
+  quotient's sign and `0. / 0.` is NaN.
+- **Reason:** (e). A quotient the folder could not compute would differ from
+  the one compiled code computes for the same constants, or stop the compile
+  with a host-language exception.
+- **Pinned by:** `Tolk.Ops › exec_alu › exec_alu_values.golden`, whose `.tolk`
+  holds each `op=Ops.FDIV` row's quotient.

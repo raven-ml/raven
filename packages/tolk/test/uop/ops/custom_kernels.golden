@@ -12,5 +12,6 @@
 11 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
 12 Ops.CALL dtypes.void [10, 1, 11] CallInfo()
 13 Ops.AFTER dtypes.f32 [1, 12]
-14 Ops.SINK dtypes.void [13, 11]
+14 Ops.AFTER dtypes.f32 [11, 12]
+15 Ops.SINK dtypes.void [13, 14]
 

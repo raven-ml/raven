@@ -1,0 +1,17 @@
+# tolk D160 golden=cda40b861b8fa9d137862d6056cb212a
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+3 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+4 Ops.INDEX dtypes.f32 [2, 3]
+5 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+6 Ops.INDEX dtypes.f32 [5, 3]
+7 Ops.LOAD dtypes.f32 [6]
+8 Ops.STORE dtypes.void [4, 7]
+9 Ops.END dtypes.void [8, 3]
+10 Ops.SINK dtypes.void [9]
+11 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+12 Ops.CALL dtypes.void [10, 1, 11] CallInfo()
+13 Ops.AFTER dtypes.f32 [1, 12]
+14 Ops.SINK dtypes.void [13, 11]
+

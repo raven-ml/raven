@@ -1,0 +1,4417 @@
+# tolk D150 D416 golden=48dd2f15601ce129d3f1abd697612143
+op	dtype	operands	result
+Ops.ADD	dtypes.i8	[0, 0]	0
+Ops.ADD	dtypes.i8	[7, 3]	10
+Ops.ADD	dtypes.i8	[7, -3]	4
+Ops.ADD	dtypes.i8	[-7, 3]	-4
+Ops.ADD	dtypes.i8	[-7, -3]	-10
+Ops.ADD	dtypes.i8	[-50, 6]	-44
+Ops.ADD	dtypes.i8	[8, 2]	10
+Ops.ADD	dtypes.i8	[1, 0]	1
+Ops.ADD	dtypes.i8	[0, 1]	1
+Ops.ADD	dtypes.i8	[-1, 1]	0
+Ops.ADD	dtypes.i8	[5, 5]	10
+Ops.ADD	dtypes.i8	[250, 250]	-12
+Ops.ADD	dtypes.i8	[256, 0]	0
+Ops.ADD	dtypes.i8	[0, -1]	-1
+Ops.ADD	dtypes.i8	[0, -1000]	24
+Ops.ADD	dtypes.i8	[-100, -100]	56
+Ops.ADD	dtypes.i8	[-130, 0]	126
+Ops.ADD	dtypes.i8	[127, 1]	-128
+Ops.ADD	dtypes.i8	[-128, -1]	127
+Ops.ADD	dtypes.i8	[2147483647, 1]	0
+Ops.ADD	dtypes.i8	[-2147483648, -1]	-1
+Ops.ADD	dtypes.i8	[9223372036854775807, 1]	0
+Ops.ADD	dtypes.i8	[-9223372036854775808, -1]	-1
+Ops.ADD	dtypes.i8	[18446744073709551615, 3]	2
+Ops.ADD	dtypes.i8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.ADD	dtypes.i8	[3, 63]	66
+Ops.SUB	dtypes.i8	[0, 0]	0
+Ops.SUB	dtypes.i8	[7, 3]	4
+Ops.SUB	dtypes.i8	[7, -3]	10
+Ops.SUB	dtypes.i8	[-7, 3]	-10
+Ops.SUB	dtypes.i8	[-7, -3]	-4
+Ops.SUB	dtypes.i8	[-50, 6]	-56
+Ops.SUB	dtypes.i8	[8, 2]	6
+Ops.SUB	dtypes.i8	[1, 0]	1
+Ops.SUB	dtypes.i8	[0, 1]	-1
+Ops.SUB	dtypes.i8	[-1, 1]	-2
+Ops.SUB	dtypes.i8	[5, 5]	0
+Ops.SUB	dtypes.i8	[250, 250]	0
+Ops.SUB	dtypes.i8	[256, 0]	0
+Ops.SUB	dtypes.i8	[0, -1]	1
+Ops.SUB	dtypes.i8	[0, -1000]	-24
+Ops.SUB	dtypes.i8	[-100, -100]	0
+Ops.SUB	dtypes.i8	[-130, 0]	126
+Ops.SUB	dtypes.i8	[127, 1]	126
+Ops.SUB	dtypes.i8	[-128, -1]	-127
+Ops.SUB	dtypes.i8	[2147483647, 1]	-2
+Ops.SUB	dtypes.i8	[-2147483648, -1]	1
+Ops.SUB	dtypes.i8	[9223372036854775807, 1]	-2
+Ops.SUB	dtypes.i8	[-9223372036854775808, -1]	1
+Ops.SUB	dtypes.i8	[18446744073709551615, 3]	-4
+Ops.SUB	dtypes.i8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.SUB	dtypes.i8	[3, 63]	-60
+Ops.MUL	dtypes.i8	[0, 0]	0
+Ops.MUL	dtypes.i8	[7, 3]	21
+Ops.MUL	dtypes.i8	[7, -3]	-21
+Ops.MUL	dtypes.i8	[-7, 3]	-21
+Ops.MUL	dtypes.i8	[-7, -3]	21
+Ops.MUL	dtypes.i8	[-50, 6]	-44
+Ops.MUL	dtypes.i8	[8, 2]	16
+Ops.MUL	dtypes.i8	[1, 0]	0
+Ops.MUL	dtypes.i8	[0, 1]	0
+Ops.MUL	dtypes.i8	[-1, 1]	-1
+Ops.MUL	dtypes.i8	[5, 5]	25
+Ops.MUL	dtypes.i8	[250, 250]	36
+Ops.MUL	dtypes.i8	[256, 0]	0
+Ops.MUL	dtypes.i8	[0, -1]	0
+Ops.MUL	dtypes.i8	[0, -1000]	0
+Ops.MUL	dtypes.i8	[-100, -100]	16
+Ops.MUL	dtypes.i8	[-130, 0]	0
+Ops.MUL	dtypes.i8	[127, 1]	127
+Ops.MUL	dtypes.i8	[-128, -1]	-128
+Ops.MUL	dtypes.i8	[2147483647, 1]	-1
+Ops.MUL	dtypes.i8	[-2147483648, -1]	0
+Ops.MUL	dtypes.i8	[9223372036854775807, 1]	-1
+Ops.MUL	dtypes.i8	[-9223372036854775808, -1]	0
+Ops.MUL	dtypes.i8	[18446744073709551615, 3]	-3
+Ops.MUL	dtypes.i8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MUL	dtypes.i8	[3, 63]	-67
+Ops.TRUNCDIV	dtypes.i8	[0, 0]	0
+Ops.TRUNCDIV	dtypes.i8	[7, 3]	2
+Ops.TRUNCDIV	dtypes.i8	[7, -3]	-2
+Ops.TRUNCDIV	dtypes.i8	[-7, 3]	-2
+Ops.TRUNCDIV	dtypes.i8	[-7, -3]	2
+Ops.TRUNCDIV	dtypes.i8	[-50, 6]	-8
+Ops.TRUNCDIV	dtypes.i8	[8, 2]	4
+Ops.TRUNCDIV	dtypes.i8	[1, 0]	0
+Ops.TRUNCDIV	dtypes.i8	[0, 1]	0
+Ops.TRUNCDIV	dtypes.i8	[-1, 1]	-1
+Ops.TRUNCDIV	dtypes.i8	[5, 5]	1
+Ops.TRUNCDIV	dtypes.i8	[250, 250]	1
+Ops.TRUNCDIV	dtypes.i8	[256, 0]	0
+Ops.TRUNCDIV	dtypes.i8	[0, -1]	0
+Ops.TRUNCDIV	dtypes.i8	[0, -1000]	0
+Ops.TRUNCDIV	dtypes.i8	[-100, -100]	1
+Ops.TRUNCDIV	dtypes.i8	[-130, 0]	0
+Ops.TRUNCDIV	dtypes.i8	[127, 1]	127
+Ops.TRUNCDIV	dtypes.i8	[-128, -1]	-128
+Ops.TRUNCDIV	dtypes.i8	[2147483647, 1]	-1
+Ops.TRUNCDIV	dtypes.i8	[-2147483648, -1]	0
+Ops.TRUNCDIV	dtypes.i8	[9223372036854775807, 1]	-1
+Ops.TRUNCDIV	dtypes.i8	[-9223372036854775808, -1]	0
+Ops.TRUNCDIV	dtypes.i8	[18446744073709551615, 3]	85
+Ops.TRUNCDIV	dtypes.i8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.TRUNCDIV	dtypes.i8	[3, 63]	0
+Ops.TRUNCMOD	dtypes.i8	[0, 0]	0
+Ops.TRUNCMOD	dtypes.i8	[7, 3]	1
+Ops.TRUNCMOD	dtypes.i8	[7, -3]	1
+Ops.TRUNCMOD	dtypes.i8	[-7, 3]	-1
+Ops.TRUNCMOD	dtypes.i8	[-7, -3]	-1
+Ops.TRUNCMOD	dtypes.i8	[-50, 6]	-2
+Ops.TRUNCMOD	dtypes.i8	[8, 2]	0
+Ops.TRUNCMOD	dtypes.i8	[1, 0]	1
+Ops.TRUNCMOD	dtypes.i8	[0, 1]	0
+Ops.TRUNCMOD	dtypes.i8	[-1, 1]	0
+Ops.TRUNCMOD	dtypes.i8	[5, 5]	0
+Ops.TRUNCMOD	dtypes.i8	[250, 250]	0
+Ops.TRUNCMOD	dtypes.i8	[256, 0]	0
+Ops.TRUNCMOD	dtypes.i8	[0, -1]	0
+Ops.TRUNCMOD	dtypes.i8	[0, -1000]	0
+Ops.TRUNCMOD	dtypes.i8	[-100, -100]	0
+Ops.TRUNCMOD	dtypes.i8	[-130, 0]	126
+Ops.TRUNCMOD	dtypes.i8	[127, 1]	0
+Ops.TRUNCMOD	dtypes.i8	[-128, -1]	0
+Ops.TRUNCMOD	dtypes.i8	[2147483647, 1]	0
+Ops.TRUNCMOD	dtypes.i8	[-2147483648, -1]	0
+Ops.TRUNCMOD	dtypes.i8	[9223372036854775807, 1]	0
+Ops.TRUNCMOD	dtypes.i8	[-9223372036854775808, -1]	0
+Ops.TRUNCMOD	dtypes.i8	[18446744073709551615, 3]	0
+Ops.TRUNCMOD	dtypes.i8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.TRUNCMOD	dtypes.i8	[3, 63]	3
+Ops.DIV	dtypes.i8	[0, 0]	0
+Ops.DIV	dtypes.i8	[7, 3]	2
+Ops.DIV	dtypes.i8	[7, -3]	-3
+Ops.DIV	dtypes.i8	[-7, 3]	-3
+Ops.DIV	dtypes.i8	[-7, -3]	2
+Ops.DIV	dtypes.i8	[-50, 6]	-9
+Ops.DIV	dtypes.i8	[8, 2]	4
+Ops.DIV	dtypes.i8	[1, 0]	0
+Ops.DIV	dtypes.i8	[0, 1]	0
+Ops.DIV	dtypes.i8	[-1, 1]	-1
+Ops.DIV	dtypes.i8	[5, 5]	1
+Ops.DIV	dtypes.i8	[250, 250]	1
+Ops.DIV	dtypes.i8	[256, 0]	0
+Ops.DIV	dtypes.i8	[0, -1]	0
+Ops.DIV	dtypes.i8	[0, -1000]	0
+Ops.DIV	dtypes.i8	[-100, -100]	1
+Ops.DIV	dtypes.i8	[-130, 0]	0
+Ops.DIV	dtypes.i8	[127, 1]	127
+Ops.DIV	dtypes.i8	[-128, -1]	-128
+Ops.DIV	dtypes.i8	[2147483647, 1]	-1
+Ops.DIV	dtypes.i8	[-2147483648, -1]	0
+Ops.DIV	dtypes.i8	[9223372036854775807, 1]	-1
+Ops.DIV	dtypes.i8	[-9223372036854775808, -1]	0
+Ops.DIV	dtypes.i8	[18446744073709551615, 3]	85
+Ops.DIV	dtypes.i8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.DIV	dtypes.i8	[3, 63]	0
+Ops.MOD	dtypes.i8	[0, 0]	0
+Ops.MOD	dtypes.i8	[7, 3]	1
+Ops.MOD	dtypes.i8	[7, -3]	-2
+Ops.MOD	dtypes.i8	[-7, 3]	2
+Ops.MOD	dtypes.i8	[-7, -3]	-1
+Ops.MOD	dtypes.i8	[-50, 6]	4
+Ops.MOD	dtypes.i8	[8, 2]	0
+Ops.MOD	dtypes.i8	[1, 0]	1
+Ops.MOD	dtypes.i8	[0, 1]	0
+Ops.MOD	dtypes.i8	[-1, 1]	0
+Ops.MOD	dtypes.i8	[5, 5]	0
+Ops.MOD	dtypes.i8	[250, 250]	0
+Ops.MOD	dtypes.i8	[256, 0]	0
+Ops.MOD	dtypes.i8	[0, -1]	0
+Ops.MOD	dtypes.i8	[0, -1000]	0
+Ops.MOD	dtypes.i8	[-100, -100]	0
+Ops.MOD	dtypes.i8	[-130, 0]	126
+Ops.MOD	dtypes.i8	[127, 1]	0
+Ops.MOD	dtypes.i8	[-128, -1]	0
+Ops.MOD	dtypes.i8	[2147483647, 1]	0
+Ops.MOD	dtypes.i8	[-2147483648, -1]	0
+Ops.MOD	dtypes.i8	[9223372036854775807, 1]	0
+Ops.MOD	dtypes.i8	[-9223372036854775808, -1]	0
+Ops.MOD	dtypes.i8	[18446744073709551615, 3]	0
+Ops.MOD	dtypes.i8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MOD	dtypes.i8	[3, 63]	3
+Ops.MAX	dtypes.i8	[0, 0]	0
+Ops.MAX	dtypes.i8	[7, 3]	7
+Ops.MAX	dtypes.i8	[7, -3]	7
+Ops.MAX	dtypes.i8	[-7, 3]	3
+Ops.MAX	dtypes.i8	[-7, -3]	-3
+Ops.MAX	dtypes.i8	[-50, 6]	6
+Ops.MAX	dtypes.i8	[8, 2]	8
+Ops.MAX	dtypes.i8	[1, 0]	1
+Ops.MAX	dtypes.i8	[0, 1]	1
+Ops.MAX	dtypes.i8	[-1, 1]	1
+Ops.MAX	dtypes.i8	[5, 5]	5
+Ops.MAX	dtypes.i8	[250, 250]	-6
+Ops.MAX	dtypes.i8	[256, 0]	0
+Ops.MAX	dtypes.i8	[0, -1]	0
+Ops.MAX	dtypes.i8	[0, -1000]	0
+Ops.MAX	dtypes.i8	[-100, -100]	-100
+Ops.MAX	dtypes.i8	[-130, 0]	0
+Ops.MAX	dtypes.i8	[127, 1]	127
+Ops.MAX	dtypes.i8	[-128, -1]	-1
+Ops.MAX	dtypes.i8	[2147483647, 1]	-1
+Ops.MAX	dtypes.i8	[-2147483648, -1]	-1
+Ops.MAX	dtypes.i8	[9223372036854775807, 1]	-1
+Ops.MAX	dtypes.i8	[-9223372036854775808, -1]	-1
+Ops.MAX	dtypes.i8	[18446744073709551615, 3]	-1
+Ops.MAX	dtypes.i8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MAX	dtypes.i8	[3, 63]	63
+Ops.AND	dtypes.i8	[0, 0]	0
+Ops.AND	dtypes.i8	[7, 3]	3
+Ops.AND	dtypes.i8	[7, -3]	5
+Ops.AND	dtypes.i8	[-7, 3]	1
+Ops.AND	dtypes.i8	[-7, -3]	-7
+Ops.AND	dtypes.i8	[-50, 6]	6
+Ops.AND	dtypes.i8	[8, 2]	0
+Ops.AND	dtypes.i8	[1, 0]	0
+Ops.AND	dtypes.i8	[0, 1]	0
+Ops.AND	dtypes.i8	[-1, 1]	1
+Ops.AND	dtypes.i8	[5, 5]	5
+Ops.AND	dtypes.i8	[250, 250]	-6
+Ops.AND	dtypes.i8	[256, 0]	0
+Ops.AND	dtypes.i8	[0, -1]	0
+Ops.AND	dtypes.i8	[0, -1000]	0
+Ops.AND	dtypes.i8	[-100, -100]	-100
+Ops.AND	dtypes.i8	[-130, 0]	0
+Ops.AND	dtypes.i8	[127, 1]	1
+Ops.AND	dtypes.i8	[-128, -1]	-128
+Ops.AND	dtypes.i8	[2147483647, 1]	1
+Ops.AND	dtypes.i8	[-2147483648, -1]	0
+Ops.AND	dtypes.i8	[9223372036854775807, 1]	1
+Ops.AND	dtypes.i8	[-9223372036854775808, -1]	0
+Ops.AND	dtypes.i8	[18446744073709551615, 3]	3
+Ops.AND	dtypes.i8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.AND	dtypes.i8	[3, 63]	3
+Ops.OR	dtypes.i8	[0, 0]	0
+Ops.OR	dtypes.i8	[7, 3]	7
+Ops.OR	dtypes.i8	[7, -3]	-1
+Ops.OR	dtypes.i8	[-7, 3]	-5
+Ops.OR	dtypes.i8	[-7, -3]	-3
+Ops.OR	dtypes.i8	[-50, 6]	-50
+Ops.OR	dtypes.i8	[8, 2]	10
+Ops.OR	dtypes.i8	[1, 0]	1
+Ops.OR	dtypes.i8	[0, 1]	1
+Ops.OR	dtypes.i8	[-1, 1]	-1
+Ops.OR	dtypes.i8	[5, 5]	5
+Ops.OR	dtypes.i8	[250, 250]	-6
+Ops.OR	dtypes.i8	[256, 0]	0
+Ops.OR	dtypes.i8	[0, -1]	-1
+Ops.OR	dtypes.i8	[0, -1000]	24
+Ops.OR	dtypes.i8	[-100, -100]	-100
+Ops.OR	dtypes.i8	[-130, 0]	126
+Ops.OR	dtypes.i8	[127, 1]	127
+Ops.OR	dtypes.i8	[-128, -1]	-1
+Ops.OR	dtypes.i8	[2147483647, 1]	-1
+Ops.OR	dtypes.i8	[-2147483648, -1]	-1
+Ops.OR	dtypes.i8	[9223372036854775807, 1]	-1
+Ops.OR	dtypes.i8	[-9223372036854775808, -1]	-1
+Ops.OR	dtypes.i8	[18446744073709551615, 3]	-1
+Ops.OR	dtypes.i8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.OR	dtypes.i8	[3, 63]	63
+Ops.XOR	dtypes.i8	[0, 0]	0
+Ops.XOR	dtypes.i8	[7, 3]	4
+Ops.XOR	dtypes.i8	[7, -3]	-6
+Ops.XOR	dtypes.i8	[-7, 3]	-6
+Ops.XOR	dtypes.i8	[-7, -3]	4
+Ops.XOR	dtypes.i8	[-50, 6]	-56
+Ops.XOR	dtypes.i8	[8, 2]	10
+Ops.XOR	dtypes.i8	[1, 0]	1
+Ops.XOR	dtypes.i8	[0, 1]	1
+Ops.XOR	dtypes.i8	[-1, 1]	-2
+Ops.XOR	dtypes.i8	[5, 5]	0
+Ops.XOR	dtypes.i8	[250, 250]	0
+Ops.XOR	dtypes.i8	[256, 0]	0
+Ops.XOR	dtypes.i8	[0, -1]	-1
+Ops.XOR	dtypes.i8	[0, -1000]	24
+Ops.XOR	dtypes.i8	[-100, -100]	0
+Ops.XOR	dtypes.i8	[-130, 0]	126
+Ops.XOR	dtypes.i8	[127, 1]	126
+Ops.XOR	dtypes.i8	[-128, -1]	127
+Ops.XOR	dtypes.i8	[2147483647, 1]	-2
+Ops.XOR	dtypes.i8	[-2147483648, -1]	-1
+Ops.XOR	dtypes.i8	[9223372036854775807, 1]	-2
+Ops.XOR	dtypes.i8	[-9223372036854775808, -1]	-1
+Ops.XOR	dtypes.i8	[18446744073709551615, 3]	-4
+Ops.XOR	dtypes.i8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.XOR	dtypes.i8	[3, 63]	60
+Ops.CMPLT	dtypes.bool	[0, 0]	False
+Ops.CMPLT	dtypes.bool	[7, 3]	False
+Ops.CMPLT	dtypes.bool	[7, -3]	False
+Ops.CMPLT	dtypes.bool	[-7, 3]	True
+Ops.CMPLT	dtypes.bool	[-7, -3]	True
+Ops.CMPLT	dtypes.bool	[-50, 6]	True
+Ops.CMPLT	dtypes.bool	[8, 2]	False
+Ops.CMPLT	dtypes.bool	[1, 0]	False
+Ops.CMPLT	dtypes.bool	[0, 1]	True
+Ops.CMPLT	dtypes.bool	[-1, 1]	True
+Ops.CMPLT	dtypes.bool	[5, 5]	False
+Ops.CMPLT	dtypes.bool	[250, 250]	False
+Ops.CMPLT	dtypes.bool	[256, 0]	False
+Ops.CMPLT	dtypes.bool	[0, -1]	False
+Ops.CMPLT	dtypes.bool	[0, -1000]	False
+Ops.CMPLT	dtypes.bool	[-100, -100]	False
+Ops.CMPLT	dtypes.bool	[-130, 0]	True
+Ops.CMPLT	dtypes.bool	[127, 1]	False
+Ops.CMPLT	dtypes.bool	[-128, -1]	True
+Ops.CMPLT	dtypes.bool	[2147483647, 1]	False
+Ops.CMPLT	dtypes.bool	[-2147483648, -1]	True
+Ops.CMPLT	dtypes.bool	[9223372036854775807, 1]	False
+Ops.CMPLT	dtypes.bool	[-9223372036854775808, -1]	True
+Ops.CMPLT	dtypes.bool	[18446744073709551615, 3]	False
+Ops.CMPLT	dtypes.bool	[1267650600228229401496703205376, 1237940039285380274899124224]	False
+Ops.CMPLT	dtypes.bool	[3, 63]	True
+Ops.CMPNE	dtypes.bool	[0, 0]	False
+Ops.CMPNE	dtypes.bool	[7, 3]	True
+Ops.CMPNE	dtypes.bool	[7, -3]	True
+Ops.CMPNE	dtypes.bool	[-7, 3]	True
+Ops.CMPNE	dtypes.bool	[-7, -3]	True
+Ops.CMPNE	dtypes.bool	[-50, 6]	True
+Ops.CMPNE	dtypes.bool	[8, 2]	True
+Ops.CMPNE	dtypes.bool	[1, 0]	True
+Ops.CMPNE	dtypes.bool	[0, 1]	True
+Ops.CMPNE	dtypes.bool	[-1, 1]	True
+Ops.CMPNE	dtypes.bool	[5, 5]	False
+Ops.CMPNE	dtypes.bool	[250, 250]	False
+Ops.CMPNE	dtypes.bool	[256, 0]	True
+Ops.CMPNE	dtypes.bool	[0, -1]	True
+Ops.CMPNE	dtypes.bool	[0, -1000]	True
+Ops.CMPNE	dtypes.bool	[-100, -100]	False
+Ops.CMPNE	dtypes.bool	[-130, 0]	True
+Ops.CMPNE	dtypes.bool	[127, 1]	True
+Ops.CMPNE	dtypes.bool	[-128, -1]	True
+Ops.CMPNE	dtypes.bool	[2147483647, 1]	True
+Ops.CMPNE	dtypes.bool	[-2147483648, -1]	True
+Ops.CMPNE	dtypes.bool	[9223372036854775807, 1]	True
+Ops.CMPNE	dtypes.bool	[-9223372036854775808, -1]	True
+Ops.CMPNE	dtypes.bool	[18446744073709551615, 3]	True
+Ops.CMPNE	dtypes.bool	[1267650600228229401496703205376, 1237940039285380274899124224]	True
+Ops.CMPNE	dtypes.bool	[3, 63]	True
+Ops.CMPEQ	dtypes.bool	[0, 0]	True
+Ops.CMPEQ	dtypes.bool	[7, 3]	False
+Ops.CMPEQ	dtypes.bool	[7, -3]	False
+Ops.CMPEQ	dtypes.bool	[-7, 3]	False
+Ops.CMPEQ	dtypes.bool	[-7, -3]	False
+Ops.CMPEQ	dtypes.bool	[-50, 6]	False
+Ops.CMPEQ	dtypes.bool	[8, 2]	False
+Ops.CMPEQ	dtypes.bool	[1, 0]	False
+Ops.CMPEQ	dtypes.bool	[0, 1]	False
+Ops.CMPEQ	dtypes.bool	[-1, 1]	False
+Ops.CMPEQ	dtypes.bool	[5, 5]	True
+Ops.CMPEQ	dtypes.bool	[250, 250]	True
+Ops.CMPEQ	dtypes.bool	[256, 0]	False
+Ops.CMPEQ	dtypes.bool	[0, -1]	False
+Ops.CMPEQ	dtypes.bool	[0, -1000]	False
+Ops.CMPEQ	dtypes.bool	[-100, -100]	True
+Ops.CMPEQ	dtypes.bool	[-130, 0]	False
+Ops.CMPEQ	dtypes.bool	[127, 1]	False
+Ops.CMPEQ	dtypes.bool	[-128, -1]	False
+Ops.CMPEQ	dtypes.bool	[2147483647, 1]	False
+Ops.CMPEQ	dtypes.bool	[-2147483648, -1]	False
+Ops.CMPEQ	dtypes.bool	[9223372036854775807, 1]	False
+Ops.CMPEQ	dtypes.bool	[-9223372036854775808, -1]	False
+Ops.CMPEQ	dtypes.bool	[18446744073709551615, 3]	False
+Ops.CMPEQ	dtypes.bool	[1267650600228229401496703205376, 1237940039285380274899124224]	False
+Ops.CMPEQ	dtypes.bool	[3, 63]	False
+Ops.SHL	dtypes.i8	[1, 0]	1
+Ops.SHL	dtypes.i8	[1, 7]	-128
+Ops.SHL	dtypes.i8	[1, 31]	0
+Ops.SHL	dtypes.i8	[-8, 1]	-16
+Ops.SHL	dtypes.i8	[255, 4]	-16
+Ops.SHL	dtypes.i8	[18446744073709551615, 63]	0
+Ops.SHL	dtypes.i8	[-1, 63]	0
+Ops.SHL	dtypes.i8	[5, 64]	0
+Ops.SHR	dtypes.i8	[1, 0]	1
+Ops.SHR	dtypes.i8	[1, 7]	0
+Ops.SHR	dtypes.i8	[1, 31]	0
+Ops.SHR	dtypes.i8	[-8, 1]	-4
+Ops.SHR	dtypes.i8	[255, 4]	15
+Ops.SHR	dtypes.i8	[18446744073709551615, 63]	1
+Ops.SHR	dtypes.i8	[-1, 63]	-1
+Ops.SHR	dtypes.i8	[5, 64]	0
+Ops.NEG	dtypes.i8	[0]	0
+Ops.NEG	dtypes.i8	[1]	-1
+Ops.NEG	dtypes.i8	[-1]	1
+Ops.NEG	dtypes.i8	[3]	-3
+Ops.NEG	dtypes.i8	[-7]	7
+Ops.NEG	dtypes.i8	[8]	-8
+Ops.NEG	dtypes.i8	[127]	-127
+Ops.NEG	dtypes.i8	[-128]	-128
+Ops.NEG	dtypes.i8	[255]	1
+Ops.NEG	dtypes.i8	[2147483647]	1
+Ops.NEG	dtypes.i8	[9223372036854775808]	0
+Ops.NEG	dtypes.i8	[-1180591620717411303424]	0
+Ops.MULACC	dtypes.i8	[3, 4, 5]	17
+Ops.MULACC	dtypes.i8	[1099511627776, 1099511627776, -1]	-1
+Ops.WHERE	dtypes.i8	[True, 2, 4]	2
+Ops.WHERE	dtypes.i8	[False, 2, 4]	4
+Ops.ADD	dtypes.u8	[0, 0]	0
+Ops.ADD	dtypes.u8	[7, 3]	10
+Ops.ADD	dtypes.u8	[7, -3]	4
+Ops.ADD	dtypes.u8	[-7, 3]	252
+Ops.ADD	dtypes.u8	[-7, -3]	246
+Ops.ADD	dtypes.u8	[-50, 6]	212
+Ops.ADD	dtypes.u8	[8, 2]	10
+Ops.ADD	dtypes.u8	[1, 0]	1
+Ops.ADD	dtypes.u8	[0, 1]	1
+Ops.ADD	dtypes.u8	[-1, 1]	0
+Ops.ADD	dtypes.u8	[5, 5]	10
+Ops.ADD	dtypes.u8	[250, 250]	244
+Ops.ADD	dtypes.u8	[256, 0]	0
+Ops.ADD	dtypes.u8	[0, -1]	255
+Ops.ADD	dtypes.u8	[0, -1000]	24
+Ops.ADD	dtypes.u8	[-100, -100]	56
+Ops.ADD	dtypes.u8	[-130, 0]	126
+Ops.ADD	dtypes.u8	[127, 1]	128
+Ops.ADD	dtypes.u8	[-128, -1]	127
+Ops.ADD	dtypes.u8	[2147483647, 1]	0
+Ops.ADD	dtypes.u8	[-2147483648, -1]	255
+Ops.ADD	dtypes.u8	[9223372036854775807, 1]	0
+Ops.ADD	dtypes.u8	[-9223372036854775808, -1]	255
+Ops.ADD	dtypes.u8	[18446744073709551615, 3]	2
+Ops.ADD	dtypes.u8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.ADD	dtypes.u8	[3, 63]	66
+Ops.SUB	dtypes.u8	[0, 0]	0
+Ops.SUB	dtypes.u8	[7, 3]	4
+Ops.SUB	dtypes.u8	[7, -3]	10
+Ops.SUB	dtypes.u8	[-7, 3]	246
+Ops.SUB	dtypes.u8	[-7, -3]	252
+Ops.SUB	dtypes.u8	[-50, 6]	200
+Ops.SUB	dtypes.u8	[8, 2]	6
+Ops.SUB	dtypes.u8	[1, 0]	1
+Ops.SUB	dtypes.u8	[0, 1]	255
+Ops.SUB	dtypes.u8	[-1, 1]	254
+Ops.SUB	dtypes.u8	[5, 5]	0
+Ops.SUB	dtypes.u8	[250, 250]	0
+Ops.SUB	dtypes.u8	[256, 0]	0
+Ops.SUB	dtypes.u8	[0, -1]	1
+Ops.SUB	dtypes.u8	[0, -1000]	232
+Ops.SUB	dtypes.u8	[-100, -100]	0
+Ops.SUB	dtypes.u8	[-130, 0]	126
+Ops.SUB	dtypes.u8	[127, 1]	126
+Ops.SUB	dtypes.u8	[-128, -1]	129
+Ops.SUB	dtypes.u8	[2147483647, 1]	254
+Ops.SUB	dtypes.u8	[-2147483648, -1]	1
+Ops.SUB	dtypes.u8	[9223372036854775807, 1]	254
+Ops.SUB	dtypes.u8	[-9223372036854775808, -1]	1
+Ops.SUB	dtypes.u8	[18446744073709551615, 3]	252
+Ops.SUB	dtypes.u8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.SUB	dtypes.u8	[3, 63]	196
+Ops.MUL	dtypes.u8	[0, 0]	0
+Ops.MUL	dtypes.u8	[7, 3]	21
+Ops.MUL	dtypes.u8	[7, -3]	235
+Ops.MUL	dtypes.u8	[-7, 3]	235
+Ops.MUL	dtypes.u8	[-7, -3]	21
+Ops.MUL	dtypes.u8	[-50, 6]	212
+Ops.MUL	dtypes.u8	[8, 2]	16
+Ops.MUL	dtypes.u8	[1, 0]	0
+Ops.MUL	dtypes.u8	[0, 1]	0
+Ops.MUL	dtypes.u8	[-1, 1]	255
+Ops.MUL	dtypes.u8	[5, 5]	25
+Ops.MUL	dtypes.u8	[250, 250]	36
+Ops.MUL	dtypes.u8	[256, 0]	0
+Ops.MUL	dtypes.u8	[0, -1]	0
+Ops.MUL	dtypes.u8	[0, -1000]	0
+Ops.MUL	dtypes.u8	[-100, -100]	16
+Ops.MUL	dtypes.u8	[-130, 0]	0
+Ops.MUL	dtypes.u8	[127, 1]	127
+Ops.MUL	dtypes.u8	[-128, -1]	128
+Ops.MUL	dtypes.u8	[2147483647, 1]	255
+Ops.MUL	dtypes.u8	[-2147483648, -1]	0
+Ops.MUL	dtypes.u8	[9223372036854775807, 1]	255
+Ops.MUL	dtypes.u8	[-9223372036854775808, -1]	0
+Ops.MUL	dtypes.u8	[18446744073709551615, 3]	253
+Ops.MUL	dtypes.u8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MUL	dtypes.u8	[3, 63]	189
+Ops.TRUNCDIV	dtypes.u8	[0, 0]	0
+Ops.TRUNCDIV	dtypes.u8	[7, 3]	2
+Ops.TRUNCDIV	dtypes.u8	[7, -3]	254
+Ops.TRUNCDIV	dtypes.u8	[-7, 3]	254
+Ops.TRUNCDIV	dtypes.u8	[-7, -3]	2
+Ops.TRUNCDIV	dtypes.u8	[-50, 6]	248
+Ops.TRUNCDIV	dtypes.u8	[8, 2]	4
+Ops.TRUNCDIV	dtypes.u8	[1, 0]	0
+Ops.TRUNCDIV	dtypes.u8	[0, 1]	0
+Ops.TRUNCDIV	dtypes.u8	[-1, 1]	255
+Ops.TRUNCDIV	dtypes.u8	[5, 5]	1
+Ops.TRUNCDIV	dtypes.u8	[250, 250]	1
+Ops.TRUNCDIV	dtypes.u8	[256, 0]	0
+Ops.TRUNCDIV	dtypes.u8	[0, -1]	0
+Ops.TRUNCDIV	dtypes.u8	[0, -1000]	0
+Ops.TRUNCDIV	dtypes.u8	[-100, -100]	1
+Ops.TRUNCDIV	dtypes.u8	[-130, 0]	0
+Ops.TRUNCDIV	dtypes.u8	[127, 1]	127
+Ops.TRUNCDIV	dtypes.u8	[-128, -1]	128
+Ops.TRUNCDIV	dtypes.u8	[2147483647, 1]	255
+Ops.TRUNCDIV	dtypes.u8	[-2147483648, -1]	0
+Ops.TRUNCDIV	dtypes.u8	[9223372036854775807, 1]	255
+Ops.TRUNCDIV	dtypes.u8	[-9223372036854775808, -1]	0
+Ops.TRUNCDIV	dtypes.u8	[18446744073709551615, 3]	85
+Ops.TRUNCDIV	dtypes.u8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.TRUNCDIV	dtypes.u8	[3, 63]	0
+Ops.TRUNCMOD	dtypes.u8	[0, 0]	0
+Ops.TRUNCMOD	dtypes.u8	[7, 3]	1
+Ops.TRUNCMOD	dtypes.u8	[7, -3]	1
+Ops.TRUNCMOD	dtypes.u8	[-7, 3]	255
+Ops.TRUNCMOD	dtypes.u8	[-7, -3]	255
+Ops.TRUNCMOD	dtypes.u8	[-50, 6]	254
+Ops.TRUNCMOD	dtypes.u8	[8, 2]	0
+Ops.TRUNCMOD	dtypes.u8	[1, 0]	1
+Ops.TRUNCMOD	dtypes.u8	[0, 1]	0
+Ops.TRUNCMOD	dtypes.u8	[-1, 1]	0
+Ops.TRUNCMOD	dtypes.u8	[5, 5]	0
+Ops.TRUNCMOD	dtypes.u8	[250, 250]	0
+Ops.TRUNCMOD	dtypes.u8	[256, 0]	0
+Ops.TRUNCMOD	dtypes.u8	[0, -1]	0
+Ops.TRUNCMOD	dtypes.u8	[0, -1000]	0
+Ops.TRUNCMOD	dtypes.u8	[-100, -100]	0
+Ops.TRUNCMOD	dtypes.u8	[-130, 0]	126
+Ops.TRUNCMOD	dtypes.u8	[127, 1]	0
+Ops.TRUNCMOD	dtypes.u8	[-128, -1]	0
+Ops.TRUNCMOD	dtypes.u8	[2147483647, 1]	0
+Ops.TRUNCMOD	dtypes.u8	[-2147483648, -1]	0
+Ops.TRUNCMOD	dtypes.u8	[9223372036854775807, 1]	0
+Ops.TRUNCMOD	dtypes.u8	[-9223372036854775808, -1]	0
+Ops.TRUNCMOD	dtypes.u8	[18446744073709551615, 3]	0
+Ops.TRUNCMOD	dtypes.u8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.TRUNCMOD	dtypes.u8	[3, 63]	3
+Ops.DIV	dtypes.u8	[0, 0]	0
+Ops.DIV	dtypes.u8	[7, 3]	2
+Ops.DIV	dtypes.u8	[7, -3]	253
+Ops.DIV	dtypes.u8	[-7, 3]	253
+Ops.DIV	dtypes.u8	[-7, -3]	2
+Ops.DIV	dtypes.u8	[-50, 6]	247
+Ops.DIV	dtypes.u8	[8, 2]	4
+Ops.DIV	dtypes.u8	[1, 0]	0
+Ops.DIV	dtypes.u8	[0, 1]	0
+Ops.DIV	dtypes.u8	[-1, 1]	255
+Ops.DIV	dtypes.u8	[5, 5]	1
+Ops.DIV	dtypes.u8	[250, 250]	1
+Ops.DIV	dtypes.u8	[256, 0]	0
+Ops.DIV	dtypes.u8	[0, -1]	0
+Ops.DIV	dtypes.u8	[0, -1000]	0
+Ops.DIV	dtypes.u8	[-100, -100]	1
+Ops.DIV	dtypes.u8	[-130, 0]	0
+Ops.DIV	dtypes.u8	[127, 1]	127
+Ops.DIV	dtypes.u8	[-128, -1]	128
+Ops.DIV	dtypes.u8	[2147483647, 1]	255
+Ops.DIV	dtypes.u8	[-2147483648, -1]	0
+Ops.DIV	dtypes.u8	[9223372036854775807, 1]	255
+Ops.DIV	dtypes.u8	[-9223372036854775808, -1]	0
+Ops.DIV	dtypes.u8	[18446744073709551615, 3]	85
+Ops.DIV	dtypes.u8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.DIV	dtypes.u8	[3, 63]	0
+Ops.MOD	dtypes.u8	[0, 0]	0
+Ops.MOD	dtypes.u8	[7, 3]	1
+Ops.MOD	dtypes.u8	[7, -3]	254
+Ops.MOD	dtypes.u8	[-7, 3]	2
+Ops.MOD	dtypes.u8	[-7, -3]	255
+Ops.MOD	dtypes.u8	[-50, 6]	4
+Ops.MOD	dtypes.u8	[8, 2]	0
+Ops.MOD	dtypes.u8	[1, 0]	1
+Ops.MOD	dtypes.u8	[0, 1]	0
+Ops.MOD	dtypes.u8	[-1, 1]	0
+Ops.MOD	dtypes.u8	[5, 5]	0
+Ops.MOD	dtypes.u8	[250, 250]	0
+Ops.MOD	dtypes.u8	[256, 0]	0
+Ops.MOD	dtypes.u8	[0, -1]	0
+Ops.MOD	dtypes.u8	[0, -1000]	0
+Ops.MOD	dtypes.u8	[-100, -100]	0
+Ops.MOD	dtypes.u8	[-130, 0]	126
+Ops.MOD	dtypes.u8	[127, 1]	0
+Ops.MOD	dtypes.u8	[-128, -1]	0
+Ops.MOD	dtypes.u8	[2147483647, 1]	0
+Ops.MOD	dtypes.u8	[-2147483648, -1]	0
+Ops.MOD	dtypes.u8	[9223372036854775807, 1]	0
+Ops.MOD	dtypes.u8	[-9223372036854775808, -1]	0
+Ops.MOD	dtypes.u8	[18446744073709551615, 3]	0
+Ops.MOD	dtypes.u8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MOD	dtypes.u8	[3, 63]	3
+Ops.MAX	dtypes.u8	[0, 0]	0
+Ops.MAX	dtypes.u8	[7, 3]	7
+Ops.MAX	dtypes.u8	[7, -3]	7
+Ops.MAX	dtypes.u8	[-7, 3]	3
+Ops.MAX	dtypes.u8	[-7, -3]	253
+Ops.MAX	dtypes.u8	[-50, 6]	6
+Ops.MAX	dtypes.u8	[8, 2]	8
+Ops.MAX	dtypes.u8	[1, 0]	1
+Ops.MAX	dtypes.u8	[0, 1]	1
+Ops.MAX	dtypes.u8	[-1, 1]	1
+Ops.MAX	dtypes.u8	[5, 5]	5
+Ops.MAX	dtypes.u8	[250, 250]	250
+Ops.MAX	dtypes.u8	[256, 0]	0
+Ops.MAX	dtypes.u8	[0, -1]	0
+Ops.MAX	dtypes.u8	[0, -1000]	0
+Ops.MAX	dtypes.u8	[-100, -100]	156
+Ops.MAX	dtypes.u8	[-130, 0]	0
+Ops.MAX	dtypes.u8	[127, 1]	127
+Ops.MAX	dtypes.u8	[-128, -1]	255
+Ops.MAX	dtypes.u8	[2147483647, 1]	255
+Ops.MAX	dtypes.u8	[-2147483648, -1]	255
+Ops.MAX	dtypes.u8	[9223372036854775807, 1]	255
+Ops.MAX	dtypes.u8	[-9223372036854775808, -1]	255
+Ops.MAX	dtypes.u8	[18446744073709551615, 3]	255
+Ops.MAX	dtypes.u8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MAX	dtypes.u8	[3, 63]	63
+Ops.AND	dtypes.u8	[0, 0]	0
+Ops.AND	dtypes.u8	[7, 3]	3
+Ops.AND	dtypes.u8	[7, -3]	5
+Ops.AND	dtypes.u8	[-7, 3]	1
+Ops.AND	dtypes.u8	[-7, -3]	249
+Ops.AND	dtypes.u8	[-50, 6]	6
+Ops.AND	dtypes.u8	[8, 2]	0
+Ops.AND	dtypes.u8	[1, 0]	0
+Ops.AND	dtypes.u8	[0, 1]	0
+Ops.AND	dtypes.u8	[-1, 1]	1
+Ops.AND	dtypes.u8	[5, 5]	5
+Ops.AND	dtypes.u8	[250, 250]	250
+Ops.AND	dtypes.u8	[256, 0]	0
+Ops.AND	dtypes.u8	[0, -1]	0
+Ops.AND	dtypes.u8	[0, -1000]	0
+Ops.AND	dtypes.u8	[-100, -100]	156
+Ops.AND	dtypes.u8	[-130, 0]	0
+Ops.AND	dtypes.u8	[127, 1]	1
+Ops.AND	dtypes.u8	[-128, -1]	128
+Ops.AND	dtypes.u8	[2147483647, 1]	1
+Ops.AND	dtypes.u8	[-2147483648, -1]	0
+Ops.AND	dtypes.u8	[9223372036854775807, 1]	1
+Ops.AND	dtypes.u8	[-9223372036854775808, -1]	0
+Ops.AND	dtypes.u8	[18446744073709551615, 3]	3
+Ops.AND	dtypes.u8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.AND	dtypes.u8	[3, 63]	3
+Ops.OR	dtypes.u8	[0, 0]	0
+Ops.OR	dtypes.u8	[7, 3]	7
+Ops.OR	dtypes.u8	[7, -3]	255
+Ops.OR	dtypes.u8	[-7, 3]	251
+Ops.OR	dtypes.u8	[-7, -3]	253
+Ops.OR	dtypes.u8	[-50, 6]	206
+Ops.OR	dtypes.u8	[8, 2]	10
+Ops.OR	dtypes.u8	[1, 0]	1
+Ops.OR	dtypes.u8	[0, 1]	1
+Ops.OR	dtypes.u8	[-1, 1]	255
+Ops.OR	dtypes.u8	[5, 5]	5
+Ops.OR	dtypes.u8	[250, 250]	250
+Ops.OR	dtypes.u8	[256, 0]	0
+Ops.OR	dtypes.u8	[0, -1]	255
+Ops.OR	dtypes.u8	[0, -1000]	24
+Ops.OR	dtypes.u8	[-100, -100]	156
+Ops.OR	dtypes.u8	[-130, 0]	126
+Ops.OR	dtypes.u8	[127, 1]	127
+Ops.OR	dtypes.u8	[-128, -1]	255
+Ops.OR	dtypes.u8	[2147483647, 1]	255
+Ops.OR	dtypes.u8	[-2147483648, -1]	255
+Ops.OR	dtypes.u8	[9223372036854775807, 1]	255
+Ops.OR	dtypes.u8	[-9223372036854775808, -1]	255
+Ops.OR	dtypes.u8	[18446744073709551615, 3]	255
+Ops.OR	dtypes.u8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.OR	dtypes.u8	[3, 63]	63
+Ops.XOR	dtypes.u8	[0, 0]	0
+Ops.XOR	dtypes.u8	[7, 3]	4
+Ops.XOR	dtypes.u8	[7, -3]	250
+Ops.XOR	dtypes.u8	[-7, 3]	250
+Ops.XOR	dtypes.u8	[-7, -3]	4
+Ops.XOR	dtypes.u8	[-50, 6]	200
+Ops.XOR	dtypes.u8	[8, 2]	10
+Ops.XOR	dtypes.u8	[1, 0]	1
+Ops.XOR	dtypes.u8	[0, 1]	1
+Ops.XOR	dtypes.u8	[-1, 1]	254
+Ops.XOR	dtypes.u8	[5, 5]	0
+Ops.XOR	dtypes.u8	[250, 250]	0
+Ops.XOR	dtypes.u8	[256, 0]	0
+Ops.XOR	dtypes.u8	[0, -1]	255
+Ops.XOR	dtypes.u8	[0, -1000]	24
+Ops.XOR	dtypes.u8	[-100, -100]	0
+Ops.XOR	dtypes.u8	[-130, 0]	126
+Ops.XOR	dtypes.u8	[127, 1]	126
+Ops.XOR	dtypes.u8	[-128, -1]	127
+Ops.XOR	dtypes.u8	[2147483647, 1]	254
+Ops.XOR	dtypes.u8	[-2147483648, -1]	255
+Ops.XOR	dtypes.u8	[9223372036854775807, 1]	254
+Ops.XOR	dtypes.u8	[-9223372036854775808, -1]	255
+Ops.XOR	dtypes.u8	[18446744073709551615, 3]	252
+Ops.XOR	dtypes.u8	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.XOR	dtypes.u8	[3, 63]	60
+Ops.SHL	dtypes.u8	[1, 0]	1
+Ops.SHL	dtypes.u8	[1, 7]	128
+Ops.SHL	dtypes.u8	[1, 31]	0
+Ops.SHL	dtypes.u8	[-8, 1]	240
+Ops.SHL	dtypes.u8	[255, 4]	240
+Ops.SHL	dtypes.u8	[18446744073709551615, 63]	0
+Ops.SHL	dtypes.u8	[-1, 63]	0
+Ops.SHL	dtypes.u8	[5, 64]	0
+Ops.SHR	dtypes.u8	[1, 0]	1
+Ops.SHR	dtypes.u8	[1, 7]	0
+Ops.SHR	dtypes.u8	[1, 31]	0
+Ops.SHR	dtypes.u8	[-8, 1]	252
+Ops.SHR	dtypes.u8	[255, 4]	15
+Ops.SHR	dtypes.u8	[18446744073709551615, 63]	1
+Ops.SHR	dtypes.u8	[-1, 63]	255
+Ops.SHR	dtypes.u8	[5, 64]	0
+Ops.NEG	dtypes.u8	[0]	0
+Ops.NEG	dtypes.u8	[1]	255
+Ops.NEG	dtypes.u8	[-1]	1
+Ops.NEG	dtypes.u8	[3]	253
+Ops.NEG	dtypes.u8	[-7]	7
+Ops.NEG	dtypes.u8	[8]	248
+Ops.NEG	dtypes.u8	[127]	129
+Ops.NEG	dtypes.u8	[-128]	128
+Ops.NEG	dtypes.u8	[255]	1
+Ops.NEG	dtypes.u8	[2147483647]	1
+Ops.NEG	dtypes.u8	[9223372036854775808]	0
+Ops.NEG	dtypes.u8	[-1180591620717411303424]	0
+Ops.MULACC	dtypes.u8	[3, 4, 5]	17
+Ops.MULACC	dtypes.u8	[1099511627776, 1099511627776, -1]	255
+Ops.WHERE	dtypes.u8	[True, 2, 4]	2
+Ops.WHERE	dtypes.u8	[False, 2, 4]	4
+Ops.ADD	dtypes.i16	[0, 0]	0
+Ops.ADD	dtypes.i16	[7, 3]	10
+Ops.ADD	dtypes.i16	[7, -3]	4
+Ops.ADD	dtypes.i16	[-7, 3]	-4
+Ops.ADD	dtypes.i16	[-7, -3]	-10
+Ops.ADD	dtypes.i16	[-50, 6]	-44
+Ops.ADD	dtypes.i16	[8, 2]	10
+Ops.ADD	dtypes.i16	[1, 0]	1
+Ops.ADD	dtypes.i16	[0, 1]	1
+Ops.ADD	dtypes.i16	[-1, 1]	0
+Ops.ADD	dtypes.i16	[5, 5]	10
+Ops.ADD	dtypes.i16	[250, 250]	500
+Ops.ADD	dtypes.i16	[256, 0]	256
+Ops.ADD	dtypes.i16	[0, -1]	-1
+Ops.ADD	dtypes.i16	[0, -1000]	-1000
+Ops.ADD	dtypes.i16	[-100, -100]	-200
+Ops.ADD	dtypes.i16	[-130, 0]	-130
+Ops.ADD	dtypes.i16	[127, 1]	128
+Ops.ADD	dtypes.i16	[-128, -1]	-129
+Ops.ADD	dtypes.i16	[2147483647, 1]	0
+Ops.ADD	dtypes.i16	[-2147483648, -1]	-1
+Ops.ADD	dtypes.i16	[9223372036854775807, 1]	0
+Ops.ADD	dtypes.i16	[-9223372036854775808, -1]	-1
+Ops.ADD	dtypes.i16	[18446744073709551615, 3]	2
+Ops.ADD	dtypes.i16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.ADD	dtypes.i16	[3, 63]	66
+Ops.SUB	dtypes.i16	[0, 0]	0
+Ops.SUB	dtypes.i16	[7, 3]	4
+Ops.SUB	dtypes.i16	[7, -3]	10
+Ops.SUB	dtypes.i16	[-7, 3]	-10
+Ops.SUB	dtypes.i16	[-7, -3]	-4
+Ops.SUB	dtypes.i16	[-50, 6]	-56
+Ops.SUB	dtypes.i16	[8, 2]	6
+Ops.SUB	dtypes.i16	[1, 0]	1
+Ops.SUB	dtypes.i16	[0, 1]	-1
+Ops.SUB	dtypes.i16	[-1, 1]	-2
+Ops.SUB	dtypes.i16	[5, 5]	0
+Ops.SUB	dtypes.i16	[250, 250]	0
+Ops.SUB	dtypes.i16	[256, 0]	256
+Ops.SUB	dtypes.i16	[0, -1]	1
+Ops.SUB	dtypes.i16	[0, -1000]	1000
+Ops.SUB	dtypes.i16	[-100, -100]	0
+Ops.SUB	dtypes.i16	[-130, 0]	-130
+Ops.SUB	dtypes.i16	[127, 1]	126
+Ops.SUB	dtypes.i16	[-128, -1]	-127
+Ops.SUB	dtypes.i16	[2147483647, 1]	-2
+Ops.SUB	dtypes.i16	[-2147483648, -1]	1
+Ops.SUB	dtypes.i16	[9223372036854775807, 1]	-2
+Ops.SUB	dtypes.i16	[-9223372036854775808, -1]	1
+Ops.SUB	dtypes.i16	[18446744073709551615, 3]	-4
+Ops.SUB	dtypes.i16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.SUB	dtypes.i16	[3, 63]	-60
+Ops.MUL	dtypes.i16	[0, 0]	0
+Ops.MUL	dtypes.i16	[7, 3]	21
+Ops.MUL	dtypes.i16	[7, -3]	-21
+Ops.MUL	dtypes.i16	[-7, 3]	-21
+Ops.MUL	dtypes.i16	[-7, -3]	21
+Ops.MUL	dtypes.i16	[-50, 6]	-300
+Ops.MUL	dtypes.i16	[8, 2]	16
+Ops.MUL	dtypes.i16	[1, 0]	0
+Ops.MUL	dtypes.i16	[0, 1]	0
+Ops.MUL	dtypes.i16	[-1, 1]	-1
+Ops.MUL	dtypes.i16	[5, 5]	25
+Ops.MUL	dtypes.i16	[250, 250]	-3036
+Ops.MUL	dtypes.i16	[256, 0]	0
+Ops.MUL	dtypes.i16	[0, -1]	0
+Ops.MUL	dtypes.i16	[0, -1000]	0
+Ops.MUL	dtypes.i16	[-100, -100]	10000
+Ops.MUL	dtypes.i16	[-130, 0]	0
+Ops.MUL	dtypes.i16	[127, 1]	127
+Ops.MUL	dtypes.i16	[-128, -1]	128
+Ops.MUL	dtypes.i16	[2147483647, 1]	-1
+Ops.MUL	dtypes.i16	[-2147483648, -1]	0
+Ops.MUL	dtypes.i16	[9223372036854775807, 1]	-1
+Ops.MUL	dtypes.i16	[-9223372036854775808, -1]	0
+Ops.MUL	dtypes.i16	[18446744073709551615, 3]	-3
+Ops.MUL	dtypes.i16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MUL	dtypes.i16	[3, 63]	189
+Ops.TRUNCDIV	dtypes.i16	[0, 0]	0
+Ops.TRUNCDIV	dtypes.i16	[7, 3]	2
+Ops.TRUNCDIV	dtypes.i16	[7, -3]	-2
+Ops.TRUNCDIV	dtypes.i16	[-7, 3]	-2
+Ops.TRUNCDIV	dtypes.i16	[-7, -3]	2
+Ops.TRUNCDIV	dtypes.i16	[-50, 6]	-8
+Ops.TRUNCDIV	dtypes.i16	[8, 2]	4
+Ops.TRUNCDIV	dtypes.i16	[1, 0]	0
+Ops.TRUNCDIV	dtypes.i16	[0, 1]	0
+Ops.TRUNCDIV	dtypes.i16	[-1, 1]	-1
+Ops.TRUNCDIV	dtypes.i16	[5, 5]	1
+Ops.TRUNCDIV	dtypes.i16	[250, 250]	1
+Ops.TRUNCDIV	dtypes.i16	[256, 0]	0
+Ops.TRUNCDIV	dtypes.i16	[0, -1]	0
+Ops.TRUNCDIV	dtypes.i16	[0, -1000]	0
+Ops.TRUNCDIV	dtypes.i16	[-100, -100]	1
+Ops.TRUNCDIV	dtypes.i16	[-130, 0]	0
+Ops.TRUNCDIV	dtypes.i16	[127, 1]	127
+Ops.TRUNCDIV	dtypes.i16	[-128, -1]	128
+Ops.TRUNCDIV	dtypes.i16	[2147483647, 1]	-1
+Ops.TRUNCDIV	dtypes.i16	[-2147483648, -1]	0
+Ops.TRUNCDIV	dtypes.i16	[9223372036854775807, 1]	-1
+Ops.TRUNCDIV	dtypes.i16	[-9223372036854775808, -1]	0
+Ops.TRUNCDIV	dtypes.i16	[18446744073709551615, 3]	21845
+Ops.TRUNCDIV	dtypes.i16	[1267650600228229401496703205376, 1237940039285380274899124224]	1024
+Ops.TRUNCDIV	dtypes.i16	[3, 63]	0
+Ops.TRUNCMOD	dtypes.i16	[0, 0]	0
+Ops.TRUNCMOD	dtypes.i16	[7, 3]	1
+Ops.TRUNCMOD	dtypes.i16	[7, -3]	1
+Ops.TRUNCMOD	dtypes.i16	[-7, 3]	-1
+Ops.TRUNCMOD	dtypes.i16	[-7, -3]	-1
+Ops.TRUNCMOD	dtypes.i16	[-50, 6]	-2
+Ops.TRUNCMOD	dtypes.i16	[8, 2]	0
+Ops.TRUNCMOD	dtypes.i16	[1, 0]	1
+Ops.TRUNCMOD	dtypes.i16	[0, 1]	0
+Ops.TRUNCMOD	dtypes.i16	[-1, 1]	0
+Ops.TRUNCMOD	dtypes.i16	[5, 5]	0
+Ops.TRUNCMOD	dtypes.i16	[250, 250]	0
+Ops.TRUNCMOD	dtypes.i16	[256, 0]	256
+Ops.TRUNCMOD	dtypes.i16	[0, -1]	0
+Ops.TRUNCMOD	dtypes.i16	[0, -1000]	0
+Ops.TRUNCMOD	dtypes.i16	[-100, -100]	0
+Ops.TRUNCMOD	dtypes.i16	[-130, 0]	-130
+Ops.TRUNCMOD	dtypes.i16	[127, 1]	0
+Ops.TRUNCMOD	dtypes.i16	[-128, -1]	0
+Ops.TRUNCMOD	dtypes.i16	[2147483647, 1]	0
+Ops.TRUNCMOD	dtypes.i16	[-2147483648, -1]	0
+Ops.TRUNCMOD	dtypes.i16	[9223372036854775807, 1]	0
+Ops.TRUNCMOD	dtypes.i16	[-9223372036854775808, -1]	0
+Ops.TRUNCMOD	dtypes.i16	[18446744073709551615, 3]	0
+Ops.TRUNCMOD	dtypes.i16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.TRUNCMOD	dtypes.i16	[3, 63]	3
+Ops.DIV	dtypes.i16	[0, 0]	0
+Ops.DIV	dtypes.i16	[7, 3]	2
+Ops.DIV	dtypes.i16	[7, -3]	-3
+Ops.DIV	dtypes.i16	[-7, 3]	-3
+Ops.DIV	dtypes.i16	[-7, -3]	2
+Ops.DIV	dtypes.i16	[-50, 6]	-9
+Ops.DIV	dtypes.i16	[8, 2]	4
+Ops.DIV	dtypes.i16	[1, 0]	0
+Ops.DIV	dtypes.i16	[0, 1]	0
+Ops.DIV	dtypes.i16	[-1, 1]	-1
+Ops.DIV	dtypes.i16	[5, 5]	1
+Ops.DIV	dtypes.i16	[250, 250]	1
+Ops.DIV	dtypes.i16	[256, 0]	0
+Ops.DIV	dtypes.i16	[0, -1]	0
+Ops.DIV	dtypes.i16	[0, -1000]	0
+Ops.DIV	dtypes.i16	[-100, -100]	1
+Ops.DIV	dtypes.i16	[-130, 0]	0
+Ops.DIV	dtypes.i16	[127, 1]	127
+Ops.DIV	dtypes.i16	[-128, -1]	128
+Ops.DIV	dtypes.i16	[2147483647, 1]	-1
+Ops.DIV	dtypes.i16	[-2147483648, -1]	0
+Ops.DIV	dtypes.i16	[9223372036854775807, 1]	-1
+Ops.DIV	dtypes.i16	[-9223372036854775808, -1]	0
+Ops.DIV	dtypes.i16	[18446744073709551615, 3]	21845
+Ops.DIV	dtypes.i16	[1267650600228229401496703205376, 1237940039285380274899124224]	1024
+Ops.DIV	dtypes.i16	[3, 63]	0
+Ops.MOD	dtypes.i16	[0, 0]	0
+Ops.MOD	dtypes.i16	[7, 3]	1
+Ops.MOD	dtypes.i16	[7, -3]	-2
+Ops.MOD	dtypes.i16	[-7, 3]	2
+Ops.MOD	dtypes.i16	[-7, -3]	-1
+Ops.MOD	dtypes.i16	[-50, 6]	4
+Ops.MOD	dtypes.i16	[8, 2]	0
+Ops.MOD	dtypes.i16	[1, 0]	1
+Ops.MOD	dtypes.i16	[0, 1]	0
+Ops.MOD	dtypes.i16	[-1, 1]	0
+Ops.MOD	dtypes.i16	[5, 5]	0
+Ops.MOD	dtypes.i16	[250, 250]	0
+Ops.MOD	dtypes.i16	[256, 0]	256
+Ops.MOD	dtypes.i16	[0, -1]	0
+Ops.MOD	dtypes.i16	[0, -1000]	0
+Ops.MOD	dtypes.i16	[-100, -100]	0
+Ops.MOD	dtypes.i16	[-130, 0]	-130
+Ops.MOD	dtypes.i16	[127, 1]	0
+Ops.MOD	dtypes.i16	[-128, -1]	0
+Ops.MOD	dtypes.i16	[2147483647, 1]	0
+Ops.MOD	dtypes.i16	[-2147483648, -1]	0
+Ops.MOD	dtypes.i16	[9223372036854775807, 1]	0
+Ops.MOD	dtypes.i16	[-9223372036854775808, -1]	0
+Ops.MOD	dtypes.i16	[18446744073709551615, 3]	0
+Ops.MOD	dtypes.i16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MOD	dtypes.i16	[3, 63]	3
+Ops.MAX	dtypes.i16	[0, 0]	0
+Ops.MAX	dtypes.i16	[7, 3]	7
+Ops.MAX	dtypes.i16	[7, -3]	7
+Ops.MAX	dtypes.i16	[-7, 3]	3
+Ops.MAX	dtypes.i16	[-7, -3]	-3
+Ops.MAX	dtypes.i16	[-50, 6]	6
+Ops.MAX	dtypes.i16	[8, 2]	8
+Ops.MAX	dtypes.i16	[1, 0]	1
+Ops.MAX	dtypes.i16	[0, 1]	1
+Ops.MAX	dtypes.i16	[-1, 1]	1
+Ops.MAX	dtypes.i16	[5, 5]	5
+Ops.MAX	dtypes.i16	[250, 250]	250
+Ops.MAX	dtypes.i16	[256, 0]	256
+Ops.MAX	dtypes.i16	[0, -1]	0
+Ops.MAX	dtypes.i16	[0, -1000]	0
+Ops.MAX	dtypes.i16	[-100, -100]	-100
+Ops.MAX	dtypes.i16	[-130, 0]	0
+Ops.MAX	dtypes.i16	[127, 1]	127
+Ops.MAX	dtypes.i16	[-128, -1]	-1
+Ops.MAX	dtypes.i16	[2147483647, 1]	-1
+Ops.MAX	dtypes.i16	[-2147483648, -1]	-1
+Ops.MAX	dtypes.i16	[9223372036854775807, 1]	-1
+Ops.MAX	dtypes.i16	[-9223372036854775808, -1]	-1
+Ops.MAX	dtypes.i16	[18446744073709551615, 3]	-1
+Ops.MAX	dtypes.i16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MAX	dtypes.i16	[3, 63]	63
+Ops.AND	dtypes.i16	[0, 0]	0
+Ops.AND	dtypes.i16	[7, 3]	3
+Ops.AND	dtypes.i16	[7, -3]	5
+Ops.AND	dtypes.i16	[-7, 3]	1
+Ops.AND	dtypes.i16	[-7, -3]	-7
+Ops.AND	dtypes.i16	[-50, 6]	6
+Ops.AND	dtypes.i16	[8, 2]	0
+Ops.AND	dtypes.i16	[1, 0]	0
+Ops.AND	dtypes.i16	[0, 1]	0
+Ops.AND	dtypes.i16	[-1, 1]	1
+Ops.AND	dtypes.i16	[5, 5]	5
+Ops.AND	dtypes.i16	[250, 250]	250
+Ops.AND	dtypes.i16	[256, 0]	0
+Ops.AND	dtypes.i16	[0, -1]	0
+Ops.AND	dtypes.i16	[0, -1000]	0
+Ops.AND	dtypes.i16	[-100, -100]	-100
+Ops.AND	dtypes.i16	[-130, 0]	0
+Ops.AND	dtypes.i16	[127, 1]	1
+Ops.AND	dtypes.i16	[-128, -1]	-128
+Ops.AND	dtypes.i16	[2147483647, 1]	1
+Ops.AND	dtypes.i16	[-2147483648, -1]	0
+Ops.AND	dtypes.i16	[9223372036854775807, 1]	1
+Ops.AND	dtypes.i16	[-9223372036854775808, -1]	0
+Ops.AND	dtypes.i16	[18446744073709551615, 3]	3
+Ops.AND	dtypes.i16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.AND	dtypes.i16	[3, 63]	3
+Ops.OR	dtypes.i16	[0, 0]	0
+Ops.OR	dtypes.i16	[7, 3]	7
+Ops.OR	dtypes.i16	[7, -3]	-1
+Ops.OR	dtypes.i16	[-7, 3]	-5
+Ops.OR	dtypes.i16	[-7, -3]	-3
+Ops.OR	dtypes.i16	[-50, 6]	-50
+Ops.OR	dtypes.i16	[8, 2]	10
+Ops.OR	dtypes.i16	[1, 0]	1
+Ops.OR	dtypes.i16	[0, 1]	1
+Ops.OR	dtypes.i16	[-1, 1]	-1
+Ops.OR	dtypes.i16	[5, 5]	5
+Ops.OR	dtypes.i16	[250, 250]	250
+Ops.OR	dtypes.i16	[256, 0]	256
+Ops.OR	dtypes.i16	[0, -1]	-1
+Ops.OR	dtypes.i16	[0, -1000]	-1000
+Ops.OR	dtypes.i16	[-100, -100]	-100
+Ops.OR	dtypes.i16	[-130, 0]	-130
+Ops.OR	dtypes.i16	[127, 1]	127
+Ops.OR	dtypes.i16	[-128, -1]	-1
+Ops.OR	dtypes.i16	[2147483647, 1]	-1
+Ops.OR	dtypes.i16	[-2147483648, -1]	-1
+Ops.OR	dtypes.i16	[9223372036854775807, 1]	-1
+Ops.OR	dtypes.i16	[-9223372036854775808, -1]	-1
+Ops.OR	dtypes.i16	[18446744073709551615, 3]	-1
+Ops.OR	dtypes.i16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.OR	dtypes.i16	[3, 63]	63
+Ops.XOR	dtypes.i16	[0, 0]	0
+Ops.XOR	dtypes.i16	[7, 3]	4
+Ops.XOR	dtypes.i16	[7, -3]	-6
+Ops.XOR	dtypes.i16	[-7, 3]	-6
+Ops.XOR	dtypes.i16	[-7, -3]	4
+Ops.XOR	dtypes.i16	[-50, 6]	-56
+Ops.XOR	dtypes.i16	[8, 2]	10
+Ops.XOR	dtypes.i16	[1, 0]	1
+Ops.XOR	dtypes.i16	[0, 1]	1
+Ops.XOR	dtypes.i16	[-1, 1]	-2
+Ops.XOR	dtypes.i16	[5, 5]	0
+Ops.XOR	dtypes.i16	[250, 250]	0
+Ops.XOR	dtypes.i16	[256, 0]	256
+Ops.XOR	dtypes.i16	[0, -1]	-1
+Ops.XOR	dtypes.i16	[0, -1000]	-1000
+Ops.XOR	dtypes.i16	[-100, -100]	0
+Ops.XOR	dtypes.i16	[-130, 0]	-130
+Ops.XOR	dtypes.i16	[127, 1]	126
+Ops.XOR	dtypes.i16	[-128, -1]	127
+Ops.XOR	dtypes.i16	[2147483647, 1]	-2
+Ops.XOR	dtypes.i16	[-2147483648, -1]	-1
+Ops.XOR	dtypes.i16	[9223372036854775807, 1]	-2
+Ops.XOR	dtypes.i16	[-9223372036854775808, -1]	-1
+Ops.XOR	dtypes.i16	[18446744073709551615, 3]	-4
+Ops.XOR	dtypes.i16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.XOR	dtypes.i16	[3, 63]	60
+Ops.SHL	dtypes.i16	[1, 0]	1
+Ops.SHL	dtypes.i16	[1, 7]	128
+Ops.SHL	dtypes.i16	[1, 31]	0
+Ops.SHL	dtypes.i16	[-8, 1]	-16
+Ops.SHL	dtypes.i16	[255, 4]	4080
+Ops.SHL	dtypes.i16	[18446744073709551615, 63]	0
+Ops.SHL	dtypes.i16	[-1, 63]	0
+Ops.SHL	dtypes.i16	[5, 64]	0
+Ops.SHR	dtypes.i16	[1, 0]	1
+Ops.SHR	dtypes.i16	[1, 7]	0
+Ops.SHR	dtypes.i16	[1, 31]	0
+Ops.SHR	dtypes.i16	[-8, 1]	-4
+Ops.SHR	dtypes.i16	[255, 4]	15
+Ops.SHR	dtypes.i16	[18446744073709551615, 63]	1
+Ops.SHR	dtypes.i16	[-1, 63]	-1
+Ops.SHR	dtypes.i16	[5, 64]	0
+Ops.NEG	dtypes.i16	[0]	0
+Ops.NEG	dtypes.i16	[1]	-1
+Ops.NEG	dtypes.i16	[-1]	1
+Ops.NEG	dtypes.i16	[3]	-3
+Ops.NEG	dtypes.i16	[-7]	7
+Ops.NEG	dtypes.i16	[8]	-8
+Ops.NEG	dtypes.i16	[127]	-127
+Ops.NEG	dtypes.i16	[-128]	128
+Ops.NEG	dtypes.i16	[255]	-255
+Ops.NEG	dtypes.i16	[2147483647]	1
+Ops.NEG	dtypes.i16	[9223372036854775808]	0
+Ops.NEG	dtypes.i16	[-1180591620717411303424]	0
+Ops.MULACC	dtypes.i16	[3, 4, 5]	17
+Ops.MULACC	dtypes.i16	[1099511627776, 1099511627776, -1]	-1
+Ops.WHERE	dtypes.i16	[True, 2, 4]	2
+Ops.WHERE	dtypes.i16	[False, 2, 4]	4
+Ops.ADD	dtypes.u16	[0, 0]	0
+Ops.ADD	dtypes.u16	[7, 3]	10
+Ops.ADD	dtypes.u16	[7, -3]	4
+Ops.ADD	dtypes.u16	[-7, 3]	65532
+Ops.ADD	dtypes.u16	[-7, -3]	65526
+Ops.ADD	dtypes.u16	[-50, 6]	65492
+Ops.ADD	dtypes.u16	[8, 2]	10
+Ops.ADD	dtypes.u16	[1, 0]	1
+Ops.ADD	dtypes.u16	[0, 1]	1
+Ops.ADD	dtypes.u16	[-1, 1]	0
+Ops.ADD	dtypes.u16	[5, 5]	10
+Ops.ADD	dtypes.u16	[250, 250]	500
+Ops.ADD	dtypes.u16	[256, 0]	256
+Ops.ADD	dtypes.u16	[0, -1]	65535
+Ops.ADD	dtypes.u16	[0, -1000]	64536
+Ops.ADD	dtypes.u16	[-100, -100]	65336
+Ops.ADD	dtypes.u16	[-130, 0]	65406
+Ops.ADD	dtypes.u16	[127, 1]	128
+Ops.ADD	dtypes.u16	[-128, -1]	65407
+Ops.ADD	dtypes.u16	[2147483647, 1]	0
+Ops.ADD	dtypes.u16	[-2147483648, -1]	65535
+Ops.ADD	dtypes.u16	[9223372036854775807, 1]	0
+Ops.ADD	dtypes.u16	[-9223372036854775808, -1]	65535
+Ops.ADD	dtypes.u16	[18446744073709551615, 3]	2
+Ops.ADD	dtypes.u16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.ADD	dtypes.u16	[3, 63]	66
+Ops.SUB	dtypes.u16	[0, 0]	0
+Ops.SUB	dtypes.u16	[7, 3]	4
+Ops.SUB	dtypes.u16	[7, -3]	10
+Ops.SUB	dtypes.u16	[-7, 3]	65526
+Ops.SUB	dtypes.u16	[-7, -3]	65532
+Ops.SUB	dtypes.u16	[-50, 6]	65480
+Ops.SUB	dtypes.u16	[8, 2]	6
+Ops.SUB	dtypes.u16	[1, 0]	1
+Ops.SUB	dtypes.u16	[0, 1]	65535
+Ops.SUB	dtypes.u16	[-1, 1]	65534
+Ops.SUB	dtypes.u16	[5, 5]	0
+Ops.SUB	dtypes.u16	[250, 250]	0
+Ops.SUB	dtypes.u16	[256, 0]	256
+Ops.SUB	dtypes.u16	[0, -1]	1
+Ops.SUB	dtypes.u16	[0, -1000]	1000
+Ops.SUB	dtypes.u16	[-100, -100]	0
+Ops.SUB	dtypes.u16	[-130, 0]	65406
+Ops.SUB	dtypes.u16	[127, 1]	126
+Ops.SUB	dtypes.u16	[-128, -1]	65409
+Ops.SUB	dtypes.u16	[2147483647, 1]	65534
+Ops.SUB	dtypes.u16	[-2147483648, -1]	1
+Ops.SUB	dtypes.u16	[9223372036854775807, 1]	65534
+Ops.SUB	dtypes.u16	[-9223372036854775808, -1]	1
+Ops.SUB	dtypes.u16	[18446744073709551615, 3]	65532
+Ops.SUB	dtypes.u16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.SUB	dtypes.u16	[3, 63]	65476
+Ops.MUL	dtypes.u16	[0, 0]	0
+Ops.MUL	dtypes.u16	[7, 3]	21
+Ops.MUL	dtypes.u16	[7, -3]	65515
+Ops.MUL	dtypes.u16	[-7, 3]	65515
+Ops.MUL	dtypes.u16	[-7, -3]	21
+Ops.MUL	dtypes.u16	[-50, 6]	65236
+Ops.MUL	dtypes.u16	[8, 2]	16
+Ops.MUL	dtypes.u16	[1, 0]	0
+Ops.MUL	dtypes.u16	[0, 1]	0
+Ops.MUL	dtypes.u16	[-1, 1]	65535
+Ops.MUL	dtypes.u16	[5, 5]	25
+Ops.MUL	dtypes.u16	[250, 250]	62500
+Ops.MUL	dtypes.u16	[256, 0]	0
+Ops.MUL	dtypes.u16	[0, -1]	0
+Ops.MUL	dtypes.u16	[0, -1000]	0
+Ops.MUL	dtypes.u16	[-100, -100]	10000
+Ops.MUL	dtypes.u16	[-130, 0]	0
+Ops.MUL	dtypes.u16	[127, 1]	127
+Ops.MUL	dtypes.u16	[-128, -1]	128
+Ops.MUL	dtypes.u16	[2147483647, 1]	65535
+Ops.MUL	dtypes.u16	[-2147483648, -1]	0
+Ops.MUL	dtypes.u16	[9223372036854775807, 1]	65535
+Ops.MUL	dtypes.u16	[-9223372036854775808, -1]	0
+Ops.MUL	dtypes.u16	[18446744073709551615, 3]	65533
+Ops.MUL	dtypes.u16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MUL	dtypes.u16	[3, 63]	189
+Ops.TRUNCDIV	dtypes.u16	[0, 0]	0
+Ops.TRUNCDIV	dtypes.u16	[7, 3]	2
+Ops.TRUNCDIV	dtypes.u16	[7, -3]	65534
+Ops.TRUNCDIV	dtypes.u16	[-7, 3]	65534
+Ops.TRUNCDIV	dtypes.u16	[-7, -3]	2
+Ops.TRUNCDIV	dtypes.u16	[-50, 6]	65528
+Ops.TRUNCDIV	dtypes.u16	[8, 2]	4
+Ops.TRUNCDIV	dtypes.u16	[1, 0]	0
+Ops.TRUNCDIV	dtypes.u16	[0, 1]	0
+Ops.TRUNCDIV	dtypes.u16	[-1, 1]	65535
+Ops.TRUNCDIV	dtypes.u16	[5, 5]	1
+Ops.TRUNCDIV	dtypes.u16	[250, 250]	1
+Ops.TRUNCDIV	dtypes.u16	[256, 0]	0
+Ops.TRUNCDIV	dtypes.u16	[0, -1]	0
+Ops.TRUNCDIV	dtypes.u16	[0, -1000]	0
+Ops.TRUNCDIV	dtypes.u16	[-100, -100]	1
+Ops.TRUNCDIV	dtypes.u16	[-130, 0]	0
+Ops.TRUNCDIV	dtypes.u16	[127, 1]	127
+Ops.TRUNCDIV	dtypes.u16	[-128, -1]	128
+Ops.TRUNCDIV	dtypes.u16	[2147483647, 1]	65535
+Ops.TRUNCDIV	dtypes.u16	[-2147483648, -1]	0
+Ops.TRUNCDIV	dtypes.u16	[9223372036854775807, 1]	65535
+Ops.TRUNCDIV	dtypes.u16	[-9223372036854775808, -1]	0
+Ops.TRUNCDIV	dtypes.u16	[18446744073709551615, 3]	21845
+Ops.TRUNCDIV	dtypes.u16	[1267650600228229401496703205376, 1237940039285380274899124224]	1024
+Ops.TRUNCDIV	dtypes.u16	[3, 63]	0
+Ops.TRUNCMOD	dtypes.u16	[0, 0]	0
+Ops.TRUNCMOD	dtypes.u16	[7, 3]	1
+Ops.TRUNCMOD	dtypes.u16	[7, -3]	1
+Ops.TRUNCMOD	dtypes.u16	[-7, 3]	65535
+Ops.TRUNCMOD	dtypes.u16	[-7, -3]	65535
+Ops.TRUNCMOD	dtypes.u16	[-50, 6]	65534
+Ops.TRUNCMOD	dtypes.u16	[8, 2]	0
+Ops.TRUNCMOD	dtypes.u16	[1, 0]	1
+Ops.TRUNCMOD	dtypes.u16	[0, 1]	0
+Ops.TRUNCMOD	dtypes.u16	[-1, 1]	0
+Ops.TRUNCMOD	dtypes.u16	[5, 5]	0
+Ops.TRUNCMOD	dtypes.u16	[250, 250]	0
+Ops.TRUNCMOD	dtypes.u16	[256, 0]	256
+Ops.TRUNCMOD	dtypes.u16	[0, -1]	0
+Ops.TRUNCMOD	dtypes.u16	[0, -1000]	0
+Ops.TRUNCMOD	dtypes.u16	[-100, -100]	0
+Ops.TRUNCMOD	dtypes.u16	[-130, 0]	65406
+Ops.TRUNCMOD	dtypes.u16	[127, 1]	0
+Ops.TRUNCMOD	dtypes.u16	[-128, -1]	0
+Ops.TRUNCMOD	dtypes.u16	[2147483647, 1]	0
+Ops.TRUNCMOD	dtypes.u16	[-2147483648, -1]	0
+Ops.TRUNCMOD	dtypes.u16	[9223372036854775807, 1]	0
+Ops.TRUNCMOD	dtypes.u16	[-9223372036854775808, -1]	0
+Ops.TRUNCMOD	dtypes.u16	[18446744073709551615, 3]	0
+Ops.TRUNCMOD	dtypes.u16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.TRUNCMOD	dtypes.u16	[3, 63]	3
+Ops.DIV	dtypes.u16	[0, 0]	0
+Ops.DIV	dtypes.u16	[7, 3]	2
+Ops.DIV	dtypes.u16	[7, -3]	65533
+Ops.DIV	dtypes.u16	[-7, 3]	65533
+Ops.DIV	dtypes.u16	[-7, -3]	2
+Ops.DIV	dtypes.u16	[-50, 6]	65527
+Ops.DIV	dtypes.u16	[8, 2]	4
+Ops.DIV	dtypes.u16	[1, 0]	0
+Ops.DIV	dtypes.u16	[0, 1]	0
+Ops.DIV	dtypes.u16	[-1, 1]	65535
+Ops.DIV	dtypes.u16	[5, 5]	1
+Ops.DIV	dtypes.u16	[250, 250]	1
+Ops.DIV	dtypes.u16	[256, 0]	0
+Ops.DIV	dtypes.u16	[0, -1]	0
+Ops.DIV	dtypes.u16	[0, -1000]	0
+Ops.DIV	dtypes.u16	[-100, -100]	1
+Ops.DIV	dtypes.u16	[-130, 0]	0
+Ops.DIV	dtypes.u16	[127, 1]	127
+Ops.DIV	dtypes.u16	[-128, -1]	128
+Ops.DIV	dtypes.u16	[2147483647, 1]	65535
+Ops.DIV	dtypes.u16	[-2147483648, -1]	0
+Ops.DIV	dtypes.u16	[9223372036854775807, 1]	65535
+Ops.DIV	dtypes.u16	[-9223372036854775808, -1]	0
+Ops.DIV	dtypes.u16	[18446744073709551615, 3]	21845
+Ops.DIV	dtypes.u16	[1267650600228229401496703205376, 1237940039285380274899124224]	1024
+Ops.DIV	dtypes.u16	[3, 63]	0
+Ops.MOD	dtypes.u16	[0, 0]	0
+Ops.MOD	dtypes.u16	[7, 3]	1
+Ops.MOD	dtypes.u16	[7, -3]	65534
+Ops.MOD	dtypes.u16	[-7, 3]	2
+Ops.MOD	dtypes.u16	[-7, -3]	65535
+Ops.MOD	dtypes.u16	[-50, 6]	4
+Ops.MOD	dtypes.u16	[8, 2]	0
+Ops.MOD	dtypes.u16	[1, 0]	1
+Ops.MOD	dtypes.u16	[0, 1]	0
+Ops.MOD	dtypes.u16	[-1, 1]	0
+Ops.MOD	dtypes.u16	[5, 5]	0
+Ops.MOD	dtypes.u16	[250, 250]	0
+Ops.MOD	dtypes.u16	[256, 0]	256
+Ops.MOD	dtypes.u16	[0, -1]	0
+Ops.MOD	dtypes.u16	[0, -1000]	0
+Ops.MOD	dtypes.u16	[-100, -100]	0
+Ops.MOD	dtypes.u16	[-130, 0]	65406
+Ops.MOD	dtypes.u16	[127, 1]	0
+Ops.MOD	dtypes.u16	[-128, -1]	0
+Ops.MOD	dtypes.u16	[2147483647, 1]	0
+Ops.MOD	dtypes.u16	[-2147483648, -1]	0
+Ops.MOD	dtypes.u16	[9223372036854775807, 1]	0
+Ops.MOD	dtypes.u16	[-9223372036854775808, -1]	0
+Ops.MOD	dtypes.u16	[18446744073709551615, 3]	0
+Ops.MOD	dtypes.u16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MOD	dtypes.u16	[3, 63]	3
+Ops.MAX	dtypes.u16	[0, 0]	0
+Ops.MAX	dtypes.u16	[7, 3]	7
+Ops.MAX	dtypes.u16	[7, -3]	7
+Ops.MAX	dtypes.u16	[-7, 3]	3
+Ops.MAX	dtypes.u16	[-7, -3]	65533
+Ops.MAX	dtypes.u16	[-50, 6]	6
+Ops.MAX	dtypes.u16	[8, 2]	8
+Ops.MAX	dtypes.u16	[1, 0]	1
+Ops.MAX	dtypes.u16	[0, 1]	1
+Ops.MAX	dtypes.u16	[-1, 1]	1
+Ops.MAX	dtypes.u16	[5, 5]	5
+Ops.MAX	dtypes.u16	[250, 250]	250
+Ops.MAX	dtypes.u16	[256, 0]	256
+Ops.MAX	dtypes.u16	[0, -1]	0
+Ops.MAX	dtypes.u16	[0, -1000]	0
+Ops.MAX	dtypes.u16	[-100, -100]	65436
+Ops.MAX	dtypes.u16	[-130, 0]	0
+Ops.MAX	dtypes.u16	[127, 1]	127
+Ops.MAX	dtypes.u16	[-128, -1]	65535
+Ops.MAX	dtypes.u16	[2147483647, 1]	65535
+Ops.MAX	dtypes.u16	[-2147483648, -1]	65535
+Ops.MAX	dtypes.u16	[9223372036854775807, 1]	65535
+Ops.MAX	dtypes.u16	[-9223372036854775808, -1]	65535
+Ops.MAX	dtypes.u16	[18446744073709551615, 3]	65535
+Ops.MAX	dtypes.u16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MAX	dtypes.u16	[3, 63]	63
+Ops.AND	dtypes.u16	[0, 0]	0
+Ops.AND	dtypes.u16	[7, 3]	3
+Ops.AND	dtypes.u16	[7, -3]	5
+Ops.AND	dtypes.u16	[-7, 3]	1
+Ops.AND	dtypes.u16	[-7, -3]	65529
+Ops.AND	dtypes.u16	[-50, 6]	6
+Ops.AND	dtypes.u16	[8, 2]	0
+Ops.AND	dtypes.u16	[1, 0]	0
+Ops.AND	dtypes.u16	[0, 1]	0
+Ops.AND	dtypes.u16	[-1, 1]	1
+Ops.AND	dtypes.u16	[5, 5]	5
+Ops.AND	dtypes.u16	[250, 250]	250
+Ops.AND	dtypes.u16	[256, 0]	0
+Ops.AND	dtypes.u16	[0, -1]	0
+Ops.AND	dtypes.u16	[0, -1000]	0
+Ops.AND	dtypes.u16	[-100, -100]	65436
+Ops.AND	dtypes.u16	[-130, 0]	0
+Ops.AND	dtypes.u16	[127, 1]	1
+Ops.AND	dtypes.u16	[-128, -1]	65408
+Ops.AND	dtypes.u16	[2147483647, 1]	1
+Ops.AND	dtypes.u16	[-2147483648, -1]	0
+Ops.AND	dtypes.u16	[9223372036854775807, 1]	1
+Ops.AND	dtypes.u16	[-9223372036854775808, -1]	0
+Ops.AND	dtypes.u16	[18446744073709551615, 3]	3
+Ops.AND	dtypes.u16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.AND	dtypes.u16	[3, 63]	3
+Ops.OR	dtypes.u16	[0, 0]	0
+Ops.OR	dtypes.u16	[7, 3]	7
+Ops.OR	dtypes.u16	[7, -3]	65535
+Ops.OR	dtypes.u16	[-7, 3]	65531
+Ops.OR	dtypes.u16	[-7, -3]	65533
+Ops.OR	dtypes.u16	[-50, 6]	65486
+Ops.OR	dtypes.u16	[8, 2]	10
+Ops.OR	dtypes.u16	[1, 0]	1
+Ops.OR	dtypes.u16	[0, 1]	1
+Ops.OR	dtypes.u16	[-1, 1]	65535
+Ops.OR	dtypes.u16	[5, 5]	5
+Ops.OR	dtypes.u16	[250, 250]	250
+Ops.OR	dtypes.u16	[256, 0]	256
+Ops.OR	dtypes.u16	[0, -1]	65535
+Ops.OR	dtypes.u16	[0, -1000]	64536
+Ops.OR	dtypes.u16	[-100, -100]	65436
+Ops.OR	dtypes.u16	[-130, 0]	65406
+Ops.OR	dtypes.u16	[127, 1]	127
+Ops.OR	dtypes.u16	[-128, -1]	65535
+Ops.OR	dtypes.u16	[2147483647, 1]	65535
+Ops.OR	dtypes.u16	[-2147483648, -1]	65535
+Ops.OR	dtypes.u16	[9223372036854775807, 1]	65535
+Ops.OR	dtypes.u16	[-9223372036854775808, -1]	65535
+Ops.OR	dtypes.u16	[18446744073709551615, 3]	65535
+Ops.OR	dtypes.u16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.OR	dtypes.u16	[3, 63]	63
+Ops.XOR	dtypes.u16	[0, 0]	0
+Ops.XOR	dtypes.u16	[7, 3]	4
+Ops.XOR	dtypes.u16	[7, -3]	65530
+Ops.XOR	dtypes.u16	[-7, 3]	65530
+Ops.XOR	dtypes.u16	[-7, -3]	4
+Ops.XOR	dtypes.u16	[-50, 6]	65480
+Ops.XOR	dtypes.u16	[8, 2]	10
+Ops.XOR	dtypes.u16	[1, 0]	1
+Ops.XOR	dtypes.u16	[0, 1]	1
+Ops.XOR	dtypes.u16	[-1, 1]	65534
+Ops.XOR	dtypes.u16	[5, 5]	0
+Ops.XOR	dtypes.u16	[250, 250]	0
+Ops.XOR	dtypes.u16	[256, 0]	256
+Ops.XOR	dtypes.u16	[0, -1]	65535
+Ops.XOR	dtypes.u16	[0, -1000]	64536
+Ops.XOR	dtypes.u16	[-100, -100]	0
+Ops.XOR	dtypes.u16	[-130, 0]	65406
+Ops.XOR	dtypes.u16	[127, 1]	126
+Ops.XOR	dtypes.u16	[-128, -1]	127
+Ops.XOR	dtypes.u16	[2147483647, 1]	65534
+Ops.XOR	dtypes.u16	[-2147483648, -1]	65535
+Ops.XOR	dtypes.u16	[9223372036854775807, 1]	65534
+Ops.XOR	dtypes.u16	[-9223372036854775808, -1]	65535
+Ops.XOR	dtypes.u16	[18446744073709551615, 3]	65532
+Ops.XOR	dtypes.u16	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.XOR	dtypes.u16	[3, 63]	60
+Ops.SHL	dtypes.u16	[1, 0]	1
+Ops.SHL	dtypes.u16	[1, 7]	128
+Ops.SHL	dtypes.u16	[1, 31]	0
+Ops.SHL	dtypes.u16	[-8, 1]	65520
+Ops.SHL	dtypes.u16	[255, 4]	4080
+Ops.SHL	dtypes.u16	[18446744073709551615, 63]	0
+Ops.SHL	dtypes.u16	[-1, 63]	0
+Ops.SHL	dtypes.u16	[5, 64]	0
+Ops.SHR	dtypes.u16	[1, 0]	1
+Ops.SHR	dtypes.u16	[1, 7]	0
+Ops.SHR	dtypes.u16	[1, 31]	0
+Ops.SHR	dtypes.u16	[-8, 1]	65532
+Ops.SHR	dtypes.u16	[255, 4]	15
+Ops.SHR	dtypes.u16	[18446744073709551615, 63]	1
+Ops.SHR	dtypes.u16	[-1, 63]	65535
+Ops.SHR	dtypes.u16	[5, 64]	0
+Ops.NEG	dtypes.u16	[0]	0
+Ops.NEG	dtypes.u16	[1]	65535
+Ops.NEG	dtypes.u16	[-1]	1
+Ops.NEG	dtypes.u16	[3]	65533
+Ops.NEG	dtypes.u16	[-7]	7
+Ops.NEG	dtypes.u16	[8]	65528
+Ops.NEG	dtypes.u16	[127]	65409
+Ops.NEG	dtypes.u16	[-128]	128
+Ops.NEG	dtypes.u16	[255]	65281
+Ops.NEG	dtypes.u16	[2147483647]	1
+Ops.NEG	dtypes.u16	[9223372036854775808]	0
+Ops.NEG	dtypes.u16	[-1180591620717411303424]	0
+Ops.MULACC	dtypes.u16	[3, 4, 5]	17
+Ops.MULACC	dtypes.u16	[1099511627776, 1099511627776, -1]	65535
+Ops.WHERE	dtypes.u16	[True, 2, 4]	2
+Ops.WHERE	dtypes.u16	[False, 2, 4]	4
+Ops.ADD	dtypes.i32	[0, 0]	0
+Ops.ADD	dtypes.i32	[7, 3]	10
+Ops.ADD	dtypes.i32	[7, -3]	4
+Ops.ADD	dtypes.i32	[-7, 3]	-4
+Ops.ADD	dtypes.i32	[-7, -3]	-10
+Ops.ADD	dtypes.i32	[-50, 6]	-44
+Ops.ADD	dtypes.i32	[8, 2]	10
+Ops.ADD	dtypes.i32	[1, 0]	1
+Ops.ADD	dtypes.i32	[0, 1]	1
+Ops.ADD	dtypes.i32	[-1, 1]	0
+Ops.ADD	dtypes.i32	[5, 5]	10
+Ops.ADD	dtypes.i32	[250, 250]	500
+Ops.ADD	dtypes.i32	[256, 0]	256
+Ops.ADD	dtypes.i32	[0, -1]	-1
+Ops.ADD	dtypes.i32	[0, -1000]	-1000
+Ops.ADD	dtypes.i32	[-100, -100]	-200
+Ops.ADD	dtypes.i32	[-130, 0]	-130
+Ops.ADD	dtypes.i32	[127, 1]	128
+Ops.ADD	dtypes.i32	[-128, -1]	-129
+Ops.ADD	dtypes.i32	[2147483647, 1]	-2147483648
+Ops.ADD	dtypes.i32	[-2147483648, -1]	2147483647
+Ops.ADD	dtypes.i32	[9223372036854775807, 1]	0
+Ops.ADD	dtypes.i32	[-9223372036854775808, -1]	-1
+Ops.ADD	dtypes.i32	[18446744073709551615, 3]	2
+Ops.ADD	dtypes.i32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.ADD	dtypes.i32	[3, 63]	66
+Ops.SUB	dtypes.i32	[0, 0]	0
+Ops.SUB	dtypes.i32	[7, 3]	4
+Ops.SUB	dtypes.i32	[7, -3]	10
+Ops.SUB	dtypes.i32	[-7, 3]	-10
+Ops.SUB	dtypes.i32	[-7, -3]	-4
+Ops.SUB	dtypes.i32	[-50, 6]	-56
+Ops.SUB	dtypes.i32	[8, 2]	6
+Ops.SUB	dtypes.i32	[1, 0]	1
+Ops.SUB	dtypes.i32	[0, 1]	-1
+Ops.SUB	dtypes.i32	[-1, 1]	-2
+Ops.SUB	dtypes.i32	[5, 5]	0
+Ops.SUB	dtypes.i32	[250, 250]	0
+Ops.SUB	dtypes.i32	[256, 0]	256
+Ops.SUB	dtypes.i32	[0, -1]	1
+Ops.SUB	dtypes.i32	[0, -1000]	1000
+Ops.SUB	dtypes.i32	[-100, -100]	0
+Ops.SUB	dtypes.i32	[-130, 0]	-130
+Ops.SUB	dtypes.i32	[127, 1]	126
+Ops.SUB	dtypes.i32	[-128, -1]	-127
+Ops.SUB	dtypes.i32	[2147483647, 1]	2147483646
+Ops.SUB	dtypes.i32	[-2147483648, -1]	-2147483647
+Ops.SUB	dtypes.i32	[9223372036854775807, 1]	-2
+Ops.SUB	dtypes.i32	[-9223372036854775808, -1]	1
+Ops.SUB	dtypes.i32	[18446744073709551615, 3]	-4
+Ops.SUB	dtypes.i32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.SUB	dtypes.i32	[3, 63]	-60
+Ops.MUL	dtypes.i32	[0, 0]	0
+Ops.MUL	dtypes.i32	[7, 3]	21
+Ops.MUL	dtypes.i32	[7, -3]	-21
+Ops.MUL	dtypes.i32	[-7, 3]	-21
+Ops.MUL	dtypes.i32	[-7, -3]	21
+Ops.MUL	dtypes.i32	[-50, 6]	-300
+Ops.MUL	dtypes.i32	[8, 2]	16
+Ops.MUL	dtypes.i32	[1, 0]	0
+Ops.MUL	dtypes.i32	[0, 1]	0
+Ops.MUL	dtypes.i32	[-1, 1]	-1
+Ops.MUL	dtypes.i32	[5, 5]	25
+Ops.MUL	dtypes.i32	[250, 250]	62500
+Ops.MUL	dtypes.i32	[256, 0]	0
+Ops.MUL	dtypes.i32	[0, -1]	0
+Ops.MUL	dtypes.i32	[0, -1000]	0
+Ops.MUL	dtypes.i32	[-100, -100]	10000
+Ops.MUL	dtypes.i32	[-130, 0]	0
+Ops.MUL	dtypes.i32	[127, 1]	127
+Ops.MUL	dtypes.i32	[-128, -1]	128
+Ops.MUL	dtypes.i32	[2147483647, 1]	2147483647
+Ops.MUL	dtypes.i32	[-2147483648, -1]	-2147483648
+Ops.MUL	dtypes.i32	[9223372036854775807, 1]	-1
+Ops.MUL	dtypes.i32	[-9223372036854775808, -1]	0
+Ops.MUL	dtypes.i32	[18446744073709551615, 3]	-3
+Ops.MUL	dtypes.i32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MUL	dtypes.i32	[3, 63]	189
+Ops.TRUNCDIV	dtypes.i32	[0, 0]	0
+Ops.TRUNCDIV	dtypes.i32	[7, 3]	2
+Ops.TRUNCDIV	dtypes.i32	[7, -3]	-2
+Ops.TRUNCDIV	dtypes.i32	[-7, 3]	-2
+Ops.TRUNCDIV	dtypes.i32	[-7, -3]	2
+Ops.TRUNCDIV	dtypes.i32	[-50, 6]	-8
+Ops.TRUNCDIV	dtypes.i32	[8, 2]	4
+Ops.TRUNCDIV	dtypes.i32	[1, 0]	0
+Ops.TRUNCDIV	dtypes.i32	[0, 1]	0
+Ops.TRUNCDIV	dtypes.i32	[-1, 1]	-1
+Ops.TRUNCDIV	dtypes.i32	[5, 5]	1
+Ops.TRUNCDIV	dtypes.i32	[250, 250]	1
+Ops.TRUNCDIV	dtypes.i32	[256, 0]	0
+Ops.TRUNCDIV	dtypes.i32	[0, -1]	0
+Ops.TRUNCDIV	dtypes.i32	[0, -1000]	0
+Ops.TRUNCDIV	dtypes.i32	[-100, -100]	1
+Ops.TRUNCDIV	dtypes.i32	[-130, 0]	0
+Ops.TRUNCDIV	dtypes.i32	[127, 1]	127
+Ops.TRUNCDIV	dtypes.i32	[-128, -1]	128
+Ops.TRUNCDIV	dtypes.i32	[2147483647, 1]	2147483647
+Ops.TRUNCDIV	dtypes.i32	[-2147483648, -1]	-2147483648
+Ops.TRUNCDIV	dtypes.i32	[9223372036854775807, 1]	-1
+Ops.TRUNCDIV	dtypes.i32	[-9223372036854775808, -1]	0
+Ops.TRUNCDIV	dtypes.i32	[18446744073709551615, 3]	1431655765
+Ops.TRUNCDIV	dtypes.i32	[1267650600228229401496703205376, 1237940039285380274899124224]	1024
+Ops.TRUNCDIV	dtypes.i32	[3, 63]	0
+Ops.TRUNCMOD	dtypes.i32	[0, 0]	0
+Ops.TRUNCMOD	dtypes.i32	[7, 3]	1
+Ops.TRUNCMOD	dtypes.i32	[7, -3]	1
+Ops.TRUNCMOD	dtypes.i32	[-7, 3]	-1
+Ops.TRUNCMOD	dtypes.i32	[-7, -3]	-1
+Ops.TRUNCMOD	dtypes.i32	[-50, 6]	-2
+Ops.TRUNCMOD	dtypes.i32	[8, 2]	0
+Ops.TRUNCMOD	dtypes.i32	[1, 0]	1
+Ops.TRUNCMOD	dtypes.i32	[0, 1]	0
+Ops.TRUNCMOD	dtypes.i32	[-1, 1]	0
+Ops.TRUNCMOD	dtypes.i32	[5, 5]	0
+Ops.TRUNCMOD	dtypes.i32	[250, 250]	0
+Ops.TRUNCMOD	dtypes.i32	[256, 0]	256
+Ops.TRUNCMOD	dtypes.i32	[0, -1]	0
+Ops.TRUNCMOD	dtypes.i32	[0, -1000]	0
+Ops.TRUNCMOD	dtypes.i32	[-100, -100]	0
+Ops.TRUNCMOD	dtypes.i32	[-130, 0]	-130
+Ops.TRUNCMOD	dtypes.i32	[127, 1]	0
+Ops.TRUNCMOD	dtypes.i32	[-128, -1]	0
+Ops.TRUNCMOD	dtypes.i32	[2147483647, 1]	0
+Ops.TRUNCMOD	dtypes.i32	[-2147483648, -1]	0
+Ops.TRUNCMOD	dtypes.i32	[9223372036854775807, 1]	0
+Ops.TRUNCMOD	dtypes.i32	[-9223372036854775808, -1]	0
+Ops.TRUNCMOD	dtypes.i32	[18446744073709551615, 3]	0
+Ops.TRUNCMOD	dtypes.i32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.TRUNCMOD	dtypes.i32	[3, 63]	3
+Ops.DIV	dtypes.i32	[0, 0]	0
+Ops.DIV	dtypes.i32	[7, 3]	2
+Ops.DIV	dtypes.i32	[7, -3]	-3
+Ops.DIV	dtypes.i32	[-7, 3]	-3
+Ops.DIV	dtypes.i32	[-7, -3]	2
+Ops.DIV	dtypes.i32	[-50, 6]	-9
+Ops.DIV	dtypes.i32	[8, 2]	4
+Ops.DIV	dtypes.i32	[1, 0]	0
+Ops.DIV	dtypes.i32	[0, 1]	0
+Ops.DIV	dtypes.i32	[-1, 1]	-1
+Ops.DIV	dtypes.i32	[5, 5]	1
+Ops.DIV	dtypes.i32	[250, 250]	1
+Ops.DIV	dtypes.i32	[256, 0]	0
+Ops.DIV	dtypes.i32	[0, -1]	0
+Ops.DIV	dtypes.i32	[0, -1000]	0
+Ops.DIV	dtypes.i32	[-100, -100]	1
+Ops.DIV	dtypes.i32	[-130, 0]	0
+Ops.DIV	dtypes.i32	[127, 1]	127
+Ops.DIV	dtypes.i32	[-128, -1]	128
+Ops.DIV	dtypes.i32	[2147483647, 1]	2147483647
+Ops.DIV	dtypes.i32	[-2147483648, -1]	-2147483648
+Ops.DIV	dtypes.i32	[9223372036854775807, 1]	-1
+Ops.DIV	dtypes.i32	[-9223372036854775808, -1]	0
+Ops.DIV	dtypes.i32	[18446744073709551615, 3]	1431655765
+Ops.DIV	dtypes.i32	[1267650600228229401496703205376, 1237940039285380274899124224]	1024
+Ops.DIV	dtypes.i32	[3, 63]	0
+Ops.MOD	dtypes.i32	[0, 0]	0
+Ops.MOD	dtypes.i32	[7, 3]	1
+Ops.MOD	dtypes.i32	[7, -3]	-2
+Ops.MOD	dtypes.i32	[-7, 3]	2
+Ops.MOD	dtypes.i32	[-7, -3]	-1
+Ops.MOD	dtypes.i32	[-50, 6]	4
+Ops.MOD	dtypes.i32	[8, 2]	0
+Ops.MOD	dtypes.i32	[1, 0]	1
+Ops.MOD	dtypes.i32	[0, 1]	0
+Ops.MOD	dtypes.i32	[-1, 1]	0
+Ops.MOD	dtypes.i32	[5, 5]	0
+Ops.MOD	dtypes.i32	[250, 250]	0
+Ops.MOD	dtypes.i32	[256, 0]	256
+Ops.MOD	dtypes.i32	[0, -1]	0
+Ops.MOD	dtypes.i32	[0, -1000]	0
+Ops.MOD	dtypes.i32	[-100, -100]	0
+Ops.MOD	dtypes.i32	[-130, 0]	-130
+Ops.MOD	dtypes.i32	[127, 1]	0
+Ops.MOD	dtypes.i32	[-128, -1]	0
+Ops.MOD	dtypes.i32	[2147483647, 1]	0
+Ops.MOD	dtypes.i32	[-2147483648, -1]	0
+Ops.MOD	dtypes.i32	[9223372036854775807, 1]	0
+Ops.MOD	dtypes.i32	[-9223372036854775808, -1]	0
+Ops.MOD	dtypes.i32	[18446744073709551615, 3]	0
+Ops.MOD	dtypes.i32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MOD	dtypes.i32	[3, 63]	3
+Ops.MAX	dtypes.i32	[0, 0]	0
+Ops.MAX	dtypes.i32	[7, 3]	7
+Ops.MAX	dtypes.i32	[7, -3]	7
+Ops.MAX	dtypes.i32	[-7, 3]	3
+Ops.MAX	dtypes.i32	[-7, -3]	-3
+Ops.MAX	dtypes.i32	[-50, 6]	6
+Ops.MAX	dtypes.i32	[8, 2]	8
+Ops.MAX	dtypes.i32	[1, 0]	1
+Ops.MAX	dtypes.i32	[0, 1]	1
+Ops.MAX	dtypes.i32	[-1, 1]	1
+Ops.MAX	dtypes.i32	[5, 5]	5
+Ops.MAX	dtypes.i32	[250, 250]	250
+Ops.MAX	dtypes.i32	[256, 0]	256
+Ops.MAX	dtypes.i32	[0, -1]	0
+Ops.MAX	dtypes.i32	[0, -1000]	0
+Ops.MAX	dtypes.i32	[-100, -100]	-100
+Ops.MAX	dtypes.i32	[-130, 0]	0
+Ops.MAX	dtypes.i32	[127, 1]	127
+Ops.MAX	dtypes.i32	[-128, -1]	-1
+Ops.MAX	dtypes.i32	[2147483647, 1]	2147483647
+Ops.MAX	dtypes.i32	[-2147483648, -1]	-1
+Ops.MAX	dtypes.i32	[9223372036854775807, 1]	-1
+Ops.MAX	dtypes.i32	[-9223372036854775808, -1]	-1
+Ops.MAX	dtypes.i32	[18446744073709551615, 3]	-1
+Ops.MAX	dtypes.i32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MAX	dtypes.i32	[3, 63]	63
+Ops.AND	dtypes.i32	[0, 0]	0
+Ops.AND	dtypes.i32	[7, 3]	3
+Ops.AND	dtypes.i32	[7, -3]	5
+Ops.AND	dtypes.i32	[-7, 3]	1
+Ops.AND	dtypes.i32	[-7, -3]	-7
+Ops.AND	dtypes.i32	[-50, 6]	6
+Ops.AND	dtypes.i32	[8, 2]	0
+Ops.AND	dtypes.i32	[1, 0]	0
+Ops.AND	dtypes.i32	[0, 1]	0
+Ops.AND	dtypes.i32	[-1, 1]	1
+Ops.AND	dtypes.i32	[5, 5]	5
+Ops.AND	dtypes.i32	[250, 250]	250
+Ops.AND	dtypes.i32	[256, 0]	0
+Ops.AND	dtypes.i32	[0, -1]	0
+Ops.AND	dtypes.i32	[0, -1000]	0
+Ops.AND	dtypes.i32	[-100, -100]	-100
+Ops.AND	dtypes.i32	[-130, 0]	0
+Ops.AND	dtypes.i32	[127, 1]	1
+Ops.AND	dtypes.i32	[-128, -1]	-128
+Ops.AND	dtypes.i32	[2147483647, 1]	1
+Ops.AND	dtypes.i32	[-2147483648, -1]	-2147483648
+Ops.AND	dtypes.i32	[9223372036854775807, 1]	1
+Ops.AND	dtypes.i32	[-9223372036854775808, -1]	0
+Ops.AND	dtypes.i32	[18446744073709551615, 3]	3
+Ops.AND	dtypes.i32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.AND	dtypes.i32	[3, 63]	3
+Ops.OR	dtypes.i32	[0, 0]	0
+Ops.OR	dtypes.i32	[7, 3]	7
+Ops.OR	dtypes.i32	[7, -3]	-1
+Ops.OR	dtypes.i32	[-7, 3]	-5
+Ops.OR	dtypes.i32	[-7, -3]	-3
+Ops.OR	dtypes.i32	[-50, 6]	-50
+Ops.OR	dtypes.i32	[8, 2]	10
+Ops.OR	dtypes.i32	[1, 0]	1
+Ops.OR	dtypes.i32	[0, 1]	1
+Ops.OR	dtypes.i32	[-1, 1]	-1
+Ops.OR	dtypes.i32	[5, 5]	5
+Ops.OR	dtypes.i32	[250, 250]	250
+Ops.OR	dtypes.i32	[256, 0]	256
+Ops.OR	dtypes.i32	[0, -1]	-1
+Ops.OR	dtypes.i32	[0, -1000]	-1000
+Ops.OR	dtypes.i32	[-100, -100]	-100
+Ops.OR	dtypes.i32	[-130, 0]	-130
+Ops.OR	dtypes.i32	[127, 1]	127
+Ops.OR	dtypes.i32	[-128, -1]	-1
+Ops.OR	dtypes.i32	[2147483647, 1]	2147483647
+Ops.OR	dtypes.i32	[-2147483648, -1]	-1
+Ops.OR	dtypes.i32	[9223372036854775807, 1]	-1
+Ops.OR	dtypes.i32	[-9223372036854775808, -1]	-1
+Ops.OR	dtypes.i32	[18446744073709551615, 3]	-1
+Ops.OR	dtypes.i32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.OR	dtypes.i32	[3, 63]	63
+Ops.XOR	dtypes.i32	[0, 0]	0
+Ops.XOR	dtypes.i32	[7, 3]	4
+Ops.XOR	dtypes.i32	[7, -3]	-6
+Ops.XOR	dtypes.i32	[-7, 3]	-6
+Ops.XOR	dtypes.i32	[-7, -3]	4
+Ops.XOR	dtypes.i32	[-50, 6]	-56
+Ops.XOR	dtypes.i32	[8, 2]	10
+Ops.XOR	dtypes.i32	[1, 0]	1
+Ops.XOR	dtypes.i32	[0, 1]	1
+Ops.XOR	dtypes.i32	[-1, 1]	-2
+Ops.XOR	dtypes.i32	[5, 5]	0
+Ops.XOR	dtypes.i32	[250, 250]	0
+Ops.XOR	dtypes.i32	[256, 0]	256
+Ops.XOR	dtypes.i32	[0, -1]	-1
+Ops.XOR	dtypes.i32	[0, -1000]	-1000
+Ops.XOR	dtypes.i32	[-100, -100]	0
+Ops.XOR	dtypes.i32	[-130, 0]	-130
+Ops.XOR	dtypes.i32	[127, 1]	126
+Ops.XOR	dtypes.i32	[-128, -1]	127
+Ops.XOR	dtypes.i32	[2147483647, 1]	2147483646
+Ops.XOR	dtypes.i32	[-2147483648, -1]	2147483647
+Ops.XOR	dtypes.i32	[9223372036854775807, 1]	-2
+Ops.XOR	dtypes.i32	[-9223372036854775808, -1]	-1
+Ops.XOR	dtypes.i32	[18446744073709551615, 3]	-4
+Ops.XOR	dtypes.i32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.XOR	dtypes.i32	[3, 63]	60
+Ops.SHL	dtypes.i32	[1, 0]	1
+Ops.SHL	dtypes.i32	[1, 7]	128
+Ops.SHL	dtypes.i32	[1, 31]	-2147483648
+Ops.SHL	dtypes.i32	[-8, 1]	-16
+Ops.SHL	dtypes.i32	[255, 4]	4080
+Ops.SHL	dtypes.i32	[18446744073709551615, 63]	0
+Ops.SHL	dtypes.i32	[-1, 63]	0
+Ops.SHL	dtypes.i32	[5, 64]	0
+Ops.SHR	dtypes.i32	[1, 0]	1
+Ops.SHR	dtypes.i32	[1, 7]	0
+Ops.SHR	dtypes.i32	[1, 31]	0
+Ops.SHR	dtypes.i32	[-8, 1]	-4
+Ops.SHR	dtypes.i32	[255, 4]	15
+Ops.SHR	dtypes.i32	[18446744073709551615, 63]	1
+Ops.SHR	dtypes.i32	[-1, 63]	-1
+Ops.SHR	dtypes.i32	[5, 64]	0
+Ops.NEG	dtypes.i32	[0]	0
+Ops.NEG	dtypes.i32	[1]	-1
+Ops.NEG	dtypes.i32	[-1]	1
+Ops.NEG	dtypes.i32	[3]	-3
+Ops.NEG	dtypes.i32	[-7]	7
+Ops.NEG	dtypes.i32	[8]	-8
+Ops.NEG	dtypes.i32	[127]	-127
+Ops.NEG	dtypes.i32	[-128]	128
+Ops.NEG	dtypes.i32	[255]	-255
+Ops.NEG	dtypes.i32	[2147483647]	-2147483647
+Ops.NEG	dtypes.i32	[9223372036854775808]	0
+Ops.NEG	dtypes.i32	[-1180591620717411303424]	0
+Ops.MULACC	dtypes.i32	[3, 4, 5]	17
+Ops.MULACC	dtypes.i32	[1099511627776, 1099511627776, -1]	-1
+Ops.WHERE	dtypes.i32	[True, 2, 4]	2
+Ops.WHERE	dtypes.i32	[False, 2, 4]	4
+Ops.ADD	dtypes.u32	[0, 0]	0
+Ops.ADD	dtypes.u32	[7, 3]	10
+Ops.ADD	dtypes.u32	[7, -3]	4
+Ops.ADD	dtypes.u32	[-7, 3]	4294967292
+Ops.ADD	dtypes.u32	[-7, -3]	4294967286
+Ops.ADD	dtypes.u32	[-50, 6]	4294967252
+Ops.ADD	dtypes.u32	[8, 2]	10
+Ops.ADD	dtypes.u32	[1, 0]	1
+Ops.ADD	dtypes.u32	[0, 1]	1
+Ops.ADD	dtypes.u32	[-1, 1]	0
+Ops.ADD	dtypes.u32	[5, 5]	10
+Ops.ADD	dtypes.u32	[250, 250]	500
+Ops.ADD	dtypes.u32	[256, 0]	256
+Ops.ADD	dtypes.u32	[0, -1]	4294967295
+Ops.ADD	dtypes.u32	[0, -1000]	4294966296
+Ops.ADD	dtypes.u32	[-100, -100]	4294967096
+Ops.ADD	dtypes.u32	[-130, 0]	4294967166
+Ops.ADD	dtypes.u32	[127, 1]	128
+Ops.ADD	dtypes.u32	[-128, -1]	4294967167
+Ops.ADD	dtypes.u32	[2147483647, 1]	2147483648
+Ops.ADD	dtypes.u32	[-2147483648, -1]	2147483647
+Ops.ADD	dtypes.u32	[9223372036854775807, 1]	0
+Ops.ADD	dtypes.u32	[-9223372036854775808, -1]	4294967295
+Ops.ADD	dtypes.u32	[18446744073709551615, 3]	2
+Ops.ADD	dtypes.u32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.ADD	dtypes.u32	[3, 63]	66
+Ops.SUB	dtypes.u32	[0, 0]	0
+Ops.SUB	dtypes.u32	[7, 3]	4
+Ops.SUB	dtypes.u32	[7, -3]	10
+Ops.SUB	dtypes.u32	[-7, 3]	4294967286
+Ops.SUB	dtypes.u32	[-7, -3]	4294967292
+Ops.SUB	dtypes.u32	[-50, 6]	4294967240
+Ops.SUB	dtypes.u32	[8, 2]	6
+Ops.SUB	dtypes.u32	[1, 0]	1
+Ops.SUB	dtypes.u32	[0, 1]	4294967295
+Ops.SUB	dtypes.u32	[-1, 1]	4294967294
+Ops.SUB	dtypes.u32	[5, 5]	0
+Ops.SUB	dtypes.u32	[250, 250]	0
+Ops.SUB	dtypes.u32	[256, 0]	256
+Ops.SUB	dtypes.u32	[0, -1]	1
+Ops.SUB	dtypes.u32	[0, -1000]	1000
+Ops.SUB	dtypes.u32	[-100, -100]	0
+Ops.SUB	dtypes.u32	[-130, 0]	4294967166
+Ops.SUB	dtypes.u32	[127, 1]	126
+Ops.SUB	dtypes.u32	[-128, -1]	4294967169
+Ops.SUB	dtypes.u32	[2147483647, 1]	2147483646
+Ops.SUB	dtypes.u32	[-2147483648, -1]	2147483649
+Ops.SUB	dtypes.u32	[9223372036854775807, 1]	4294967294
+Ops.SUB	dtypes.u32	[-9223372036854775808, -1]	1
+Ops.SUB	dtypes.u32	[18446744073709551615, 3]	4294967292
+Ops.SUB	dtypes.u32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.SUB	dtypes.u32	[3, 63]	4294967236
+Ops.MUL	dtypes.u32	[0, 0]	0
+Ops.MUL	dtypes.u32	[7, 3]	21
+Ops.MUL	dtypes.u32	[7, -3]	4294967275
+Ops.MUL	dtypes.u32	[-7, 3]	4294967275
+Ops.MUL	dtypes.u32	[-7, -3]	21
+Ops.MUL	dtypes.u32	[-50, 6]	4294966996
+Ops.MUL	dtypes.u32	[8, 2]	16
+Ops.MUL	dtypes.u32	[1, 0]	0
+Ops.MUL	dtypes.u32	[0, 1]	0
+Ops.MUL	dtypes.u32	[-1, 1]	4294967295
+Ops.MUL	dtypes.u32	[5, 5]	25
+Ops.MUL	dtypes.u32	[250, 250]	62500
+Ops.MUL	dtypes.u32	[256, 0]	0
+Ops.MUL	dtypes.u32	[0, -1]	0
+Ops.MUL	dtypes.u32	[0, -1000]	0
+Ops.MUL	dtypes.u32	[-100, -100]	10000
+Ops.MUL	dtypes.u32	[-130, 0]	0
+Ops.MUL	dtypes.u32	[127, 1]	127
+Ops.MUL	dtypes.u32	[-128, -1]	128
+Ops.MUL	dtypes.u32	[2147483647, 1]	2147483647
+Ops.MUL	dtypes.u32	[-2147483648, -1]	2147483648
+Ops.MUL	dtypes.u32	[9223372036854775807, 1]	4294967295
+Ops.MUL	dtypes.u32	[-9223372036854775808, -1]	0
+Ops.MUL	dtypes.u32	[18446744073709551615, 3]	4294967293
+Ops.MUL	dtypes.u32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MUL	dtypes.u32	[3, 63]	189
+Ops.TRUNCDIV	dtypes.u32	[0, 0]	0
+Ops.TRUNCDIV	dtypes.u32	[7, 3]	2
+Ops.TRUNCDIV	dtypes.u32	[7, -3]	4294967294
+Ops.TRUNCDIV	dtypes.u32	[-7, 3]	4294967294
+Ops.TRUNCDIV	dtypes.u32	[-7, -3]	2
+Ops.TRUNCDIV	dtypes.u32	[-50, 6]	4294967288
+Ops.TRUNCDIV	dtypes.u32	[8, 2]	4
+Ops.TRUNCDIV	dtypes.u32	[1, 0]	0
+Ops.TRUNCDIV	dtypes.u32	[0, 1]	0
+Ops.TRUNCDIV	dtypes.u32	[-1, 1]	4294967295
+Ops.TRUNCDIV	dtypes.u32	[5, 5]	1
+Ops.TRUNCDIV	dtypes.u32	[250, 250]	1
+Ops.TRUNCDIV	dtypes.u32	[256, 0]	0
+Ops.TRUNCDIV	dtypes.u32	[0, -1]	0
+Ops.TRUNCDIV	dtypes.u32	[0, -1000]	0
+Ops.TRUNCDIV	dtypes.u32	[-100, -100]	1
+Ops.TRUNCDIV	dtypes.u32	[-130, 0]	0
+Ops.TRUNCDIV	dtypes.u32	[127, 1]	127
+Ops.TRUNCDIV	dtypes.u32	[-128, -1]	128
+Ops.TRUNCDIV	dtypes.u32	[2147483647, 1]	2147483647
+Ops.TRUNCDIV	dtypes.u32	[-2147483648, -1]	2147483648
+Ops.TRUNCDIV	dtypes.u32	[9223372036854775807, 1]	4294967295
+Ops.TRUNCDIV	dtypes.u32	[-9223372036854775808, -1]	0
+Ops.TRUNCDIV	dtypes.u32	[18446744073709551615, 3]	1431655765
+Ops.TRUNCDIV	dtypes.u32	[1267650600228229401496703205376, 1237940039285380274899124224]	1024
+Ops.TRUNCDIV	dtypes.u32	[3, 63]	0
+Ops.TRUNCMOD	dtypes.u32	[0, 0]	0
+Ops.TRUNCMOD	dtypes.u32	[7, 3]	1
+Ops.TRUNCMOD	dtypes.u32	[7, -3]	1
+Ops.TRUNCMOD	dtypes.u32	[-7, 3]	4294967295
+Ops.TRUNCMOD	dtypes.u32	[-7, -3]	4294967295
+Ops.TRUNCMOD	dtypes.u32	[-50, 6]	4294967294
+Ops.TRUNCMOD	dtypes.u32	[8, 2]	0
+Ops.TRUNCMOD	dtypes.u32	[1, 0]	1
+Ops.TRUNCMOD	dtypes.u32	[0, 1]	0
+Ops.TRUNCMOD	dtypes.u32	[-1, 1]	0
+Ops.TRUNCMOD	dtypes.u32	[5, 5]	0
+Ops.TRUNCMOD	dtypes.u32	[250, 250]	0
+Ops.TRUNCMOD	dtypes.u32	[256, 0]	256
+Ops.TRUNCMOD	dtypes.u32	[0, -1]	0
+Ops.TRUNCMOD	dtypes.u32	[0, -1000]	0
+Ops.TRUNCMOD	dtypes.u32	[-100, -100]	0
+Ops.TRUNCMOD	dtypes.u32	[-130, 0]	4294967166
+Ops.TRUNCMOD	dtypes.u32	[127, 1]	0
+Ops.TRUNCMOD	dtypes.u32	[-128, -1]	0
+Ops.TRUNCMOD	dtypes.u32	[2147483647, 1]	0
+Ops.TRUNCMOD	dtypes.u32	[-2147483648, -1]	0
+Ops.TRUNCMOD	dtypes.u32	[9223372036854775807, 1]	0
+Ops.TRUNCMOD	dtypes.u32	[-9223372036854775808, -1]	0
+Ops.TRUNCMOD	dtypes.u32	[18446744073709551615, 3]	0
+Ops.TRUNCMOD	dtypes.u32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.TRUNCMOD	dtypes.u32	[3, 63]	3
+Ops.DIV	dtypes.u32	[0, 0]	0
+Ops.DIV	dtypes.u32	[7, 3]	2
+Ops.DIV	dtypes.u32	[7, -3]	4294967293
+Ops.DIV	dtypes.u32	[-7, 3]	4294967293
+Ops.DIV	dtypes.u32	[-7, -3]	2
+Ops.DIV	dtypes.u32	[-50, 6]	4294967287
+Ops.DIV	dtypes.u32	[8, 2]	4
+Ops.DIV	dtypes.u32	[1, 0]	0
+Ops.DIV	dtypes.u32	[0, 1]	0
+Ops.DIV	dtypes.u32	[-1, 1]	4294967295
+Ops.DIV	dtypes.u32	[5, 5]	1
+Ops.DIV	dtypes.u32	[250, 250]	1
+Ops.DIV	dtypes.u32	[256, 0]	0
+Ops.DIV	dtypes.u32	[0, -1]	0
+Ops.DIV	dtypes.u32	[0, -1000]	0
+Ops.DIV	dtypes.u32	[-100, -100]	1
+Ops.DIV	dtypes.u32	[-130, 0]	0
+Ops.DIV	dtypes.u32	[127, 1]	127
+Ops.DIV	dtypes.u32	[-128, -1]	128
+Ops.DIV	dtypes.u32	[2147483647, 1]	2147483647
+Ops.DIV	dtypes.u32	[-2147483648, -1]	2147483648
+Ops.DIV	dtypes.u32	[9223372036854775807, 1]	4294967295
+Ops.DIV	dtypes.u32	[-9223372036854775808, -1]	0
+Ops.DIV	dtypes.u32	[18446744073709551615, 3]	1431655765
+Ops.DIV	dtypes.u32	[1267650600228229401496703205376, 1237940039285380274899124224]	1024
+Ops.DIV	dtypes.u32	[3, 63]	0
+Ops.MOD	dtypes.u32	[0, 0]	0
+Ops.MOD	dtypes.u32	[7, 3]	1
+Ops.MOD	dtypes.u32	[7, -3]	4294967294
+Ops.MOD	dtypes.u32	[-7, 3]	2
+Ops.MOD	dtypes.u32	[-7, -3]	4294967295
+Ops.MOD	dtypes.u32	[-50, 6]	4
+Ops.MOD	dtypes.u32	[8, 2]	0
+Ops.MOD	dtypes.u32	[1, 0]	1
+Ops.MOD	dtypes.u32	[0, 1]	0
+Ops.MOD	dtypes.u32	[-1, 1]	0
+Ops.MOD	dtypes.u32	[5, 5]	0
+Ops.MOD	dtypes.u32	[250, 250]	0
+Ops.MOD	dtypes.u32	[256, 0]	256
+Ops.MOD	dtypes.u32	[0, -1]	0
+Ops.MOD	dtypes.u32	[0, -1000]	0
+Ops.MOD	dtypes.u32	[-100, -100]	0
+Ops.MOD	dtypes.u32	[-130, 0]	4294967166
+Ops.MOD	dtypes.u32	[127, 1]	0
+Ops.MOD	dtypes.u32	[-128, -1]	0
+Ops.MOD	dtypes.u32	[2147483647, 1]	0
+Ops.MOD	dtypes.u32	[-2147483648, -1]	0
+Ops.MOD	dtypes.u32	[9223372036854775807, 1]	0
+Ops.MOD	dtypes.u32	[-9223372036854775808, -1]	0
+Ops.MOD	dtypes.u32	[18446744073709551615, 3]	0
+Ops.MOD	dtypes.u32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MOD	dtypes.u32	[3, 63]	3
+Ops.MAX	dtypes.u32	[0, 0]	0
+Ops.MAX	dtypes.u32	[7, 3]	7
+Ops.MAX	dtypes.u32	[7, -3]	7
+Ops.MAX	dtypes.u32	[-7, 3]	3
+Ops.MAX	dtypes.u32	[-7, -3]	4294967293
+Ops.MAX	dtypes.u32	[-50, 6]	6
+Ops.MAX	dtypes.u32	[8, 2]	8
+Ops.MAX	dtypes.u32	[1, 0]	1
+Ops.MAX	dtypes.u32	[0, 1]	1
+Ops.MAX	dtypes.u32	[-1, 1]	1
+Ops.MAX	dtypes.u32	[5, 5]	5
+Ops.MAX	dtypes.u32	[250, 250]	250
+Ops.MAX	dtypes.u32	[256, 0]	256
+Ops.MAX	dtypes.u32	[0, -1]	0
+Ops.MAX	dtypes.u32	[0, -1000]	0
+Ops.MAX	dtypes.u32	[-100, -100]	4294967196
+Ops.MAX	dtypes.u32	[-130, 0]	0
+Ops.MAX	dtypes.u32	[127, 1]	127
+Ops.MAX	dtypes.u32	[-128, -1]	4294967295
+Ops.MAX	dtypes.u32	[2147483647, 1]	2147483647
+Ops.MAX	dtypes.u32	[-2147483648, -1]	4294967295
+Ops.MAX	dtypes.u32	[9223372036854775807, 1]	4294967295
+Ops.MAX	dtypes.u32	[-9223372036854775808, -1]	4294967295
+Ops.MAX	dtypes.u32	[18446744073709551615, 3]	4294967295
+Ops.MAX	dtypes.u32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MAX	dtypes.u32	[3, 63]	63
+Ops.AND	dtypes.u32	[0, 0]	0
+Ops.AND	dtypes.u32	[7, 3]	3
+Ops.AND	dtypes.u32	[7, -3]	5
+Ops.AND	dtypes.u32	[-7, 3]	1
+Ops.AND	dtypes.u32	[-7, -3]	4294967289
+Ops.AND	dtypes.u32	[-50, 6]	6
+Ops.AND	dtypes.u32	[8, 2]	0
+Ops.AND	dtypes.u32	[1, 0]	0
+Ops.AND	dtypes.u32	[0, 1]	0
+Ops.AND	dtypes.u32	[-1, 1]	1
+Ops.AND	dtypes.u32	[5, 5]	5
+Ops.AND	dtypes.u32	[250, 250]	250
+Ops.AND	dtypes.u32	[256, 0]	0
+Ops.AND	dtypes.u32	[0, -1]	0
+Ops.AND	dtypes.u32	[0, -1000]	0
+Ops.AND	dtypes.u32	[-100, -100]	4294967196
+Ops.AND	dtypes.u32	[-130, 0]	0
+Ops.AND	dtypes.u32	[127, 1]	1
+Ops.AND	dtypes.u32	[-128, -1]	4294967168
+Ops.AND	dtypes.u32	[2147483647, 1]	1
+Ops.AND	dtypes.u32	[-2147483648, -1]	2147483648
+Ops.AND	dtypes.u32	[9223372036854775807, 1]	1
+Ops.AND	dtypes.u32	[-9223372036854775808, -1]	0
+Ops.AND	dtypes.u32	[18446744073709551615, 3]	3
+Ops.AND	dtypes.u32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.AND	dtypes.u32	[3, 63]	3
+Ops.OR	dtypes.u32	[0, 0]	0
+Ops.OR	dtypes.u32	[7, 3]	7
+Ops.OR	dtypes.u32	[7, -3]	4294967295
+Ops.OR	dtypes.u32	[-7, 3]	4294967291
+Ops.OR	dtypes.u32	[-7, -3]	4294967293
+Ops.OR	dtypes.u32	[-50, 6]	4294967246
+Ops.OR	dtypes.u32	[8, 2]	10
+Ops.OR	dtypes.u32	[1, 0]	1
+Ops.OR	dtypes.u32	[0, 1]	1
+Ops.OR	dtypes.u32	[-1, 1]	4294967295
+Ops.OR	dtypes.u32	[5, 5]	5
+Ops.OR	dtypes.u32	[250, 250]	250
+Ops.OR	dtypes.u32	[256, 0]	256
+Ops.OR	dtypes.u32	[0, -1]	4294967295
+Ops.OR	dtypes.u32	[0, -1000]	4294966296
+Ops.OR	dtypes.u32	[-100, -100]	4294967196
+Ops.OR	dtypes.u32	[-130, 0]	4294967166
+Ops.OR	dtypes.u32	[127, 1]	127
+Ops.OR	dtypes.u32	[-128, -1]	4294967295
+Ops.OR	dtypes.u32	[2147483647, 1]	2147483647
+Ops.OR	dtypes.u32	[-2147483648, -1]	4294967295
+Ops.OR	dtypes.u32	[9223372036854775807, 1]	4294967295
+Ops.OR	dtypes.u32	[-9223372036854775808, -1]	4294967295
+Ops.OR	dtypes.u32	[18446744073709551615, 3]	4294967295
+Ops.OR	dtypes.u32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.OR	dtypes.u32	[3, 63]	63
+Ops.XOR	dtypes.u32	[0, 0]	0
+Ops.XOR	dtypes.u32	[7, 3]	4
+Ops.XOR	dtypes.u32	[7, -3]	4294967290
+Ops.XOR	dtypes.u32	[-7, 3]	4294967290
+Ops.XOR	dtypes.u32	[-7, -3]	4
+Ops.XOR	dtypes.u32	[-50, 6]	4294967240
+Ops.XOR	dtypes.u32	[8, 2]	10
+Ops.XOR	dtypes.u32	[1, 0]	1
+Ops.XOR	dtypes.u32	[0, 1]	1
+Ops.XOR	dtypes.u32	[-1, 1]	4294967294
+Ops.XOR	dtypes.u32	[5, 5]	0
+Ops.XOR	dtypes.u32	[250, 250]	0
+Ops.XOR	dtypes.u32	[256, 0]	256
+Ops.XOR	dtypes.u32	[0, -1]	4294967295
+Ops.XOR	dtypes.u32	[0, -1000]	4294966296
+Ops.XOR	dtypes.u32	[-100, -100]	0
+Ops.XOR	dtypes.u32	[-130, 0]	4294967166
+Ops.XOR	dtypes.u32	[127, 1]	126
+Ops.XOR	dtypes.u32	[-128, -1]	127
+Ops.XOR	dtypes.u32	[2147483647, 1]	2147483646
+Ops.XOR	dtypes.u32	[-2147483648, -1]	2147483647
+Ops.XOR	dtypes.u32	[9223372036854775807, 1]	4294967294
+Ops.XOR	dtypes.u32	[-9223372036854775808, -1]	4294967295
+Ops.XOR	dtypes.u32	[18446744073709551615, 3]	4294967292
+Ops.XOR	dtypes.u32	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.XOR	dtypes.u32	[3, 63]	60
+Ops.SHL	dtypes.u32	[1, 0]	1
+Ops.SHL	dtypes.u32	[1, 7]	128
+Ops.SHL	dtypes.u32	[1, 31]	2147483648
+Ops.SHL	dtypes.u32	[-8, 1]	4294967280
+Ops.SHL	dtypes.u32	[255, 4]	4080
+Ops.SHL	dtypes.u32	[18446744073709551615, 63]	0
+Ops.SHL	dtypes.u32	[-1, 63]	0
+Ops.SHL	dtypes.u32	[5, 64]	0
+Ops.SHR	dtypes.u32	[1, 0]	1
+Ops.SHR	dtypes.u32	[1, 7]	0
+Ops.SHR	dtypes.u32	[1, 31]	0
+Ops.SHR	dtypes.u32	[-8, 1]	4294967292
+Ops.SHR	dtypes.u32	[255, 4]	15
+Ops.SHR	dtypes.u32	[18446744073709551615, 63]	1
+Ops.SHR	dtypes.u32	[-1, 63]	4294967295
+Ops.SHR	dtypes.u32	[5, 64]	0
+Ops.NEG	dtypes.u32	[0]	0
+Ops.NEG	dtypes.u32	[1]	4294967295
+Ops.NEG	dtypes.u32	[-1]	1
+Ops.NEG	dtypes.u32	[3]	4294967293
+Ops.NEG	dtypes.u32	[-7]	7
+Ops.NEG	dtypes.u32	[8]	4294967288
+Ops.NEG	dtypes.u32	[127]	4294967169
+Ops.NEG	dtypes.u32	[-128]	128
+Ops.NEG	dtypes.u32	[255]	4294967041
+Ops.NEG	dtypes.u32	[2147483647]	2147483649
+Ops.NEG	dtypes.u32	[9223372036854775808]	0
+Ops.NEG	dtypes.u32	[-1180591620717411303424]	0
+Ops.MULACC	dtypes.u32	[3, 4, 5]	17
+Ops.MULACC	dtypes.u32	[1099511627776, 1099511627776, -1]	4294967295
+Ops.WHERE	dtypes.u32	[True, 2, 4]	2
+Ops.WHERE	dtypes.u32	[False, 2, 4]	4
+Ops.ADD	dtypes.i64	[0, 0]	0
+Ops.ADD	dtypes.i64	[7, 3]	10
+Ops.ADD	dtypes.i64	[7, -3]	4
+Ops.ADD	dtypes.i64	[-7, 3]	-4
+Ops.ADD	dtypes.i64	[-7, -3]	-10
+Ops.ADD	dtypes.i64	[-50, 6]	-44
+Ops.ADD	dtypes.i64	[8, 2]	10
+Ops.ADD	dtypes.i64	[1, 0]	1
+Ops.ADD	dtypes.i64	[0, 1]	1
+Ops.ADD	dtypes.i64	[-1, 1]	0
+Ops.ADD	dtypes.i64	[5, 5]	10
+Ops.ADD	dtypes.i64	[250, 250]	500
+Ops.ADD	dtypes.i64	[256, 0]	256
+Ops.ADD	dtypes.i64	[0, -1]	-1
+Ops.ADD	dtypes.i64	[0, -1000]	-1000
+Ops.ADD	dtypes.i64	[-100, -100]	-200
+Ops.ADD	dtypes.i64	[-130, 0]	-130
+Ops.ADD	dtypes.i64	[127, 1]	128
+Ops.ADD	dtypes.i64	[-128, -1]	-129
+Ops.ADD	dtypes.i64	[2147483647, 1]	2147483648
+Ops.ADD	dtypes.i64	[-2147483648, -1]	-2147483649
+Ops.ADD	dtypes.i64	[9223372036854775807, 1]	-9223372036854775808
+Ops.ADD	dtypes.i64	[-9223372036854775808, -1]	9223372036854775807
+Ops.ADD	dtypes.i64	[18446744073709551615, 3]	2
+Ops.ADD	dtypes.i64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.ADD	dtypes.i64	[3, 63]	66
+Ops.SUB	dtypes.i64	[0, 0]	0
+Ops.SUB	dtypes.i64	[7, 3]	4
+Ops.SUB	dtypes.i64	[7, -3]	10
+Ops.SUB	dtypes.i64	[-7, 3]	-10
+Ops.SUB	dtypes.i64	[-7, -3]	-4
+Ops.SUB	dtypes.i64	[-50, 6]	-56
+Ops.SUB	dtypes.i64	[8, 2]	6
+Ops.SUB	dtypes.i64	[1, 0]	1
+Ops.SUB	dtypes.i64	[0, 1]	-1
+Ops.SUB	dtypes.i64	[-1, 1]	-2
+Ops.SUB	dtypes.i64	[5, 5]	0
+Ops.SUB	dtypes.i64	[250, 250]	0
+Ops.SUB	dtypes.i64	[256, 0]	256
+Ops.SUB	dtypes.i64	[0, -1]	1
+Ops.SUB	dtypes.i64	[0, -1000]	1000
+Ops.SUB	dtypes.i64	[-100, -100]	0
+Ops.SUB	dtypes.i64	[-130, 0]	-130
+Ops.SUB	dtypes.i64	[127, 1]	126
+Ops.SUB	dtypes.i64	[-128, -1]	-127
+Ops.SUB	dtypes.i64	[2147483647, 1]	2147483646
+Ops.SUB	dtypes.i64	[-2147483648, -1]	-2147483647
+Ops.SUB	dtypes.i64	[9223372036854775807, 1]	9223372036854775806
+Ops.SUB	dtypes.i64	[-9223372036854775808, -1]	-9223372036854775807
+Ops.SUB	dtypes.i64	[18446744073709551615, 3]	-4
+Ops.SUB	dtypes.i64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.SUB	dtypes.i64	[3, 63]	-60
+Ops.MUL	dtypes.i64	[0, 0]	0
+Ops.MUL	dtypes.i64	[7, 3]	21
+Ops.MUL	dtypes.i64	[7, -3]	-21
+Ops.MUL	dtypes.i64	[-7, 3]	-21
+Ops.MUL	dtypes.i64	[-7, -3]	21
+Ops.MUL	dtypes.i64	[-50, 6]	-300
+Ops.MUL	dtypes.i64	[8, 2]	16
+Ops.MUL	dtypes.i64	[1, 0]	0
+Ops.MUL	dtypes.i64	[0, 1]	0
+Ops.MUL	dtypes.i64	[-1, 1]	-1
+Ops.MUL	dtypes.i64	[5, 5]	25
+Ops.MUL	dtypes.i64	[250, 250]	62500
+Ops.MUL	dtypes.i64	[256, 0]	0
+Ops.MUL	dtypes.i64	[0, -1]	0
+Ops.MUL	dtypes.i64	[0, -1000]	0
+Ops.MUL	dtypes.i64	[-100, -100]	10000
+Ops.MUL	dtypes.i64	[-130, 0]	0
+Ops.MUL	dtypes.i64	[127, 1]	127
+Ops.MUL	dtypes.i64	[-128, -1]	128
+Ops.MUL	dtypes.i64	[2147483647, 1]	2147483647
+Ops.MUL	dtypes.i64	[-2147483648, -1]	2147483648
+Ops.MUL	dtypes.i64	[9223372036854775807, 1]	9223372036854775807
+Ops.MUL	dtypes.i64	[-9223372036854775808, -1]	-9223372036854775808
+Ops.MUL	dtypes.i64	[18446744073709551615, 3]	-3
+Ops.MUL	dtypes.i64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MUL	dtypes.i64	[3, 63]	189
+Ops.TRUNCDIV	dtypes.i64	[0, 0]	0
+Ops.TRUNCDIV	dtypes.i64	[7, 3]	2
+Ops.TRUNCDIV	dtypes.i64	[7, -3]	-2
+Ops.TRUNCDIV	dtypes.i64	[-7, 3]	-2
+Ops.TRUNCDIV	dtypes.i64	[-7, -3]	2
+Ops.TRUNCDIV	dtypes.i64	[-50, 6]	-8
+Ops.TRUNCDIV	dtypes.i64	[8, 2]	4
+Ops.TRUNCDIV	dtypes.i64	[1, 0]	0
+Ops.TRUNCDIV	dtypes.i64	[0, 1]	0
+Ops.TRUNCDIV	dtypes.i64	[-1, 1]	-1
+Ops.TRUNCDIV	dtypes.i64	[5, 5]	1
+Ops.TRUNCDIV	dtypes.i64	[250, 250]	1
+Ops.TRUNCDIV	dtypes.i64	[256, 0]	0
+Ops.TRUNCDIV	dtypes.i64	[0, -1]	0
+Ops.TRUNCDIV	dtypes.i64	[0, -1000]	0
+Ops.TRUNCDIV	dtypes.i64	[-100, -100]	1
+Ops.TRUNCDIV	dtypes.i64	[-130, 0]	0
+Ops.TRUNCDIV	dtypes.i64	[127, 1]	127
+Ops.TRUNCDIV	dtypes.i64	[-128, -1]	128
+Ops.TRUNCDIV	dtypes.i64	[2147483647, 1]	2147483647
+Ops.TRUNCDIV	dtypes.i64	[-2147483648, -1]	2147483648
+Ops.TRUNCDIV	dtypes.i64	[9223372036854775807, 1]	9223372036854775807
+Ops.TRUNCDIV	dtypes.i64	[-9223372036854775808, -1]	-9223372036854775808
+Ops.TRUNCDIV	dtypes.i64	[18446744073709551615, 3]	6148914691236517205
+Ops.TRUNCDIV	dtypes.i64	[1267650600228229401496703205376, 1237940039285380274899124224]	1024
+Ops.TRUNCDIV	dtypes.i64	[3, 63]	0
+Ops.TRUNCMOD	dtypes.i64	[0, 0]	0
+Ops.TRUNCMOD	dtypes.i64	[7, 3]	1
+Ops.TRUNCMOD	dtypes.i64	[7, -3]	1
+Ops.TRUNCMOD	dtypes.i64	[-7, 3]	-1
+Ops.TRUNCMOD	dtypes.i64	[-7, -3]	-1
+Ops.TRUNCMOD	dtypes.i64	[-50, 6]	-2
+Ops.TRUNCMOD	dtypes.i64	[8, 2]	0
+Ops.TRUNCMOD	dtypes.i64	[1, 0]	1
+Ops.TRUNCMOD	dtypes.i64	[0, 1]	0
+Ops.TRUNCMOD	dtypes.i64	[-1, 1]	0
+Ops.TRUNCMOD	dtypes.i64	[5, 5]	0
+Ops.TRUNCMOD	dtypes.i64	[250, 250]	0
+Ops.TRUNCMOD	dtypes.i64	[256, 0]	256
+Ops.TRUNCMOD	dtypes.i64	[0, -1]	0
+Ops.TRUNCMOD	dtypes.i64	[0, -1000]	0
+Ops.TRUNCMOD	dtypes.i64	[-100, -100]	0
+Ops.TRUNCMOD	dtypes.i64	[-130, 0]	-130
+Ops.TRUNCMOD	dtypes.i64	[127, 1]	0
+Ops.TRUNCMOD	dtypes.i64	[-128, -1]	0
+Ops.TRUNCMOD	dtypes.i64	[2147483647, 1]	0
+Ops.TRUNCMOD	dtypes.i64	[-2147483648, -1]	0
+Ops.TRUNCMOD	dtypes.i64	[9223372036854775807, 1]	0
+Ops.TRUNCMOD	dtypes.i64	[-9223372036854775808, -1]	0
+Ops.TRUNCMOD	dtypes.i64	[18446744073709551615, 3]	0
+Ops.TRUNCMOD	dtypes.i64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.TRUNCMOD	dtypes.i64	[3, 63]	3
+Ops.DIV	dtypes.i64	[0, 0]	0
+Ops.DIV	dtypes.i64	[7, 3]	2
+Ops.DIV	dtypes.i64	[7, -3]	-3
+Ops.DIV	dtypes.i64	[-7, 3]	-3
+Ops.DIV	dtypes.i64	[-7, -3]	2
+Ops.DIV	dtypes.i64	[-50, 6]	-9
+Ops.DIV	dtypes.i64	[8, 2]	4
+Ops.DIV	dtypes.i64	[1, 0]	0
+Ops.DIV	dtypes.i64	[0, 1]	0
+Ops.DIV	dtypes.i64	[-1, 1]	-1
+Ops.DIV	dtypes.i64	[5, 5]	1
+Ops.DIV	dtypes.i64	[250, 250]	1
+Ops.DIV	dtypes.i64	[256, 0]	0
+Ops.DIV	dtypes.i64	[0, -1]	0
+Ops.DIV	dtypes.i64	[0, -1000]	0
+Ops.DIV	dtypes.i64	[-100, -100]	1
+Ops.DIV	dtypes.i64	[-130, 0]	0
+Ops.DIV	dtypes.i64	[127, 1]	127
+Ops.DIV	dtypes.i64	[-128, -1]	128
+Ops.DIV	dtypes.i64	[2147483647, 1]	2147483647
+Ops.DIV	dtypes.i64	[-2147483648, -1]	2147483648
+Ops.DIV	dtypes.i64	[9223372036854775807, 1]	9223372036854775807
+Ops.DIV	dtypes.i64	[-9223372036854775808, -1]	-9223372036854775808
+Ops.DIV	dtypes.i64	[18446744073709551615, 3]	6148914691236517205
+Ops.DIV	dtypes.i64	[1267650600228229401496703205376, 1237940039285380274899124224]	1024
+Ops.DIV	dtypes.i64	[3, 63]	0
+Ops.MOD	dtypes.i64	[0, 0]	0
+Ops.MOD	dtypes.i64	[7, 3]	1
+Ops.MOD	dtypes.i64	[7, -3]	-2
+Ops.MOD	dtypes.i64	[-7, 3]	2
+Ops.MOD	dtypes.i64	[-7, -3]	-1
+Ops.MOD	dtypes.i64	[-50, 6]	4
+Ops.MOD	dtypes.i64	[8, 2]	0
+Ops.MOD	dtypes.i64	[1, 0]	1
+Ops.MOD	dtypes.i64	[0, 1]	0
+Ops.MOD	dtypes.i64	[-1, 1]	0
+Ops.MOD	dtypes.i64	[5, 5]	0
+Ops.MOD	dtypes.i64	[250, 250]	0
+Ops.MOD	dtypes.i64	[256, 0]	256
+Ops.MOD	dtypes.i64	[0, -1]	0
+Ops.MOD	dtypes.i64	[0, -1000]	0
+Ops.MOD	dtypes.i64	[-100, -100]	0
+Ops.MOD	dtypes.i64	[-130, 0]	-130
+Ops.MOD	dtypes.i64	[127, 1]	0
+Ops.MOD	dtypes.i64	[-128, -1]	0
+Ops.MOD	dtypes.i64	[2147483647, 1]	0
+Ops.MOD	dtypes.i64	[-2147483648, -1]	0
+Ops.MOD	dtypes.i64	[9223372036854775807, 1]	0
+Ops.MOD	dtypes.i64	[-9223372036854775808, -1]	0
+Ops.MOD	dtypes.i64	[18446744073709551615, 3]	0
+Ops.MOD	dtypes.i64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MOD	dtypes.i64	[3, 63]	3
+Ops.MAX	dtypes.i64	[0, 0]	0
+Ops.MAX	dtypes.i64	[7, 3]	7
+Ops.MAX	dtypes.i64	[7, -3]	7
+Ops.MAX	dtypes.i64	[-7, 3]	3
+Ops.MAX	dtypes.i64	[-7, -3]	-3
+Ops.MAX	dtypes.i64	[-50, 6]	6
+Ops.MAX	dtypes.i64	[8, 2]	8
+Ops.MAX	dtypes.i64	[1, 0]	1
+Ops.MAX	dtypes.i64	[0, 1]	1
+Ops.MAX	dtypes.i64	[-1, 1]	1
+Ops.MAX	dtypes.i64	[5, 5]	5
+Ops.MAX	dtypes.i64	[250, 250]	250
+Ops.MAX	dtypes.i64	[256, 0]	256
+Ops.MAX	dtypes.i64	[0, -1]	0
+Ops.MAX	dtypes.i64	[0, -1000]	0
+Ops.MAX	dtypes.i64	[-100, -100]	-100
+Ops.MAX	dtypes.i64	[-130, 0]	0
+Ops.MAX	dtypes.i64	[127, 1]	127
+Ops.MAX	dtypes.i64	[-128, -1]	-1
+Ops.MAX	dtypes.i64	[2147483647, 1]	2147483647
+Ops.MAX	dtypes.i64	[-2147483648, -1]	-1
+Ops.MAX	dtypes.i64	[9223372036854775807, 1]	9223372036854775807
+Ops.MAX	dtypes.i64	[-9223372036854775808, -1]	-1
+Ops.MAX	dtypes.i64	[18446744073709551615, 3]	-1
+Ops.MAX	dtypes.i64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MAX	dtypes.i64	[3, 63]	63
+Ops.AND	dtypes.i64	[0, 0]	0
+Ops.AND	dtypes.i64	[7, 3]	3
+Ops.AND	dtypes.i64	[7, -3]	5
+Ops.AND	dtypes.i64	[-7, 3]	1
+Ops.AND	dtypes.i64	[-7, -3]	-7
+Ops.AND	dtypes.i64	[-50, 6]	6
+Ops.AND	dtypes.i64	[8, 2]	0
+Ops.AND	dtypes.i64	[1, 0]	0
+Ops.AND	dtypes.i64	[0, 1]	0
+Ops.AND	dtypes.i64	[-1, 1]	1
+Ops.AND	dtypes.i64	[5, 5]	5
+Ops.AND	dtypes.i64	[250, 250]	250
+Ops.AND	dtypes.i64	[256, 0]	0
+Ops.AND	dtypes.i64	[0, -1]	0
+Ops.AND	dtypes.i64	[0, -1000]	0
+Ops.AND	dtypes.i64	[-100, -100]	-100
+Ops.AND	dtypes.i64	[-130, 0]	0
+Ops.AND	dtypes.i64	[127, 1]	1
+Ops.AND	dtypes.i64	[-128, -1]	-128
+Ops.AND	dtypes.i64	[2147483647, 1]	1
+Ops.AND	dtypes.i64	[-2147483648, -1]	-2147483648
+Ops.AND	dtypes.i64	[9223372036854775807, 1]	1
+Ops.AND	dtypes.i64	[-9223372036854775808, -1]	-9223372036854775808
+Ops.AND	dtypes.i64	[18446744073709551615, 3]	3
+Ops.AND	dtypes.i64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.AND	dtypes.i64	[3, 63]	3
+Ops.OR	dtypes.i64	[0, 0]	0
+Ops.OR	dtypes.i64	[7, 3]	7
+Ops.OR	dtypes.i64	[7, -3]	-1
+Ops.OR	dtypes.i64	[-7, 3]	-5
+Ops.OR	dtypes.i64	[-7, -3]	-3
+Ops.OR	dtypes.i64	[-50, 6]	-50
+Ops.OR	dtypes.i64	[8, 2]	10
+Ops.OR	dtypes.i64	[1, 0]	1
+Ops.OR	dtypes.i64	[0, 1]	1
+Ops.OR	dtypes.i64	[-1, 1]	-1
+Ops.OR	dtypes.i64	[5, 5]	5
+Ops.OR	dtypes.i64	[250, 250]	250
+Ops.OR	dtypes.i64	[256, 0]	256
+Ops.OR	dtypes.i64	[0, -1]	-1
+Ops.OR	dtypes.i64	[0, -1000]	-1000
+Ops.OR	dtypes.i64	[-100, -100]	-100
+Ops.OR	dtypes.i64	[-130, 0]	-130
+Ops.OR	dtypes.i64	[127, 1]	127
+Ops.OR	dtypes.i64	[-128, -1]	-1
+Ops.OR	dtypes.i64	[2147483647, 1]	2147483647
+Ops.OR	dtypes.i64	[-2147483648, -1]	-1
+Ops.OR	dtypes.i64	[9223372036854775807, 1]	9223372036854775807
+Ops.OR	dtypes.i64	[-9223372036854775808, -1]	-1
+Ops.OR	dtypes.i64	[18446744073709551615, 3]	-1
+Ops.OR	dtypes.i64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.OR	dtypes.i64	[3, 63]	63
+Ops.XOR	dtypes.i64	[0, 0]	0
+Ops.XOR	dtypes.i64	[7, 3]	4
+Ops.XOR	dtypes.i64	[7, -3]	-6
+Ops.XOR	dtypes.i64	[-7, 3]	-6
+Ops.XOR	dtypes.i64	[-7, -3]	4
+Ops.XOR	dtypes.i64	[-50, 6]	-56
+Ops.XOR	dtypes.i64	[8, 2]	10
+Ops.XOR	dtypes.i64	[1, 0]	1
+Ops.XOR	dtypes.i64	[0, 1]	1
+Ops.XOR	dtypes.i64	[-1, 1]	-2
+Ops.XOR	dtypes.i64	[5, 5]	0
+Ops.XOR	dtypes.i64	[250, 250]	0
+Ops.XOR	dtypes.i64	[256, 0]	256
+Ops.XOR	dtypes.i64	[0, -1]	-1
+Ops.XOR	dtypes.i64	[0, -1000]	-1000
+Ops.XOR	dtypes.i64	[-100, -100]	0
+Ops.XOR	dtypes.i64	[-130, 0]	-130
+Ops.XOR	dtypes.i64	[127, 1]	126
+Ops.XOR	dtypes.i64	[-128, -1]	127
+Ops.XOR	dtypes.i64	[2147483647, 1]	2147483646
+Ops.XOR	dtypes.i64	[-2147483648, -1]	2147483647
+Ops.XOR	dtypes.i64	[9223372036854775807, 1]	9223372036854775806
+Ops.XOR	dtypes.i64	[-9223372036854775808, -1]	9223372036854775807
+Ops.XOR	dtypes.i64	[18446744073709551615, 3]	-4
+Ops.XOR	dtypes.i64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.XOR	dtypes.i64	[3, 63]	60
+Ops.SHL	dtypes.i64	[1, 0]	1
+Ops.SHL	dtypes.i64	[1, 7]	128
+Ops.SHL	dtypes.i64	[1, 31]	2147483648
+Ops.SHL	dtypes.i64	[-8, 1]	-16
+Ops.SHL	dtypes.i64	[255, 4]	4080
+Ops.SHL	dtypes.i64	[18446744073709551615, 63]	-9223372036854775808
+Ops.SHL	dtypes.i64	[-1, 63]	-9223372036854775808
+Ops.SHL	dtypes.i64	[5, 64]	0
+Ops.SHR	dtypes.i64	[1, 0]	1
+Ops.SHR	dtypes.i64	[1, 7]	0
+Ops.SHR	dtypes.i64	[1, 31]	0
+Ops.SHR	dtypes.i64	[-8, 1]	-4
+Ops.SHR	dtypes.i64	[255, 4]	15
+Ops.SHR	dtypes.i64	[18446744073709551615, 63]	1
+Ops.SHR	dtypes.i64	[-1, 63]	-1
+Ops.SHR	dtypes.i64	[5, 64]	0
+Ops.NEG	dtypes.i64	[0]	0
+Ops.NEG	dtypes.i64	[1]	-1
+Ops.NEG	dtypes.i64	[-1]	1
+Ops.NEG	dtypes.i64	[3]	-3
+Ops.NEG	dtypes.i64	[-7]	7
+Ops.NEG	dtypes.i64	[8]	-8
+Ops.NEG	dtypes.i64	[127]	-127
+Ops.NEG	dtypes.i64	[-128]	128
+Ops.NEG	dtypes.i64	[255]	-255
+Ops.NEG	dtypes.i64	[2147483647]	-2147483647
+Ops.NEG	dtypes.i64	[9223372036854775808]	-9223372036854775808
+Ops.NEG	dtypes.i64	[-1180591620717411303424]	0
+Ops.MULACC	dtypes.i64	[3, 4, 5]	17
+Ops.MULACC	dtypes.i64	[1099511627776, 1099511627776, -1]	-1
+Ops.WHERE	dtypes.i64	[True, 2, 4]	2
+Ops.WHERE	dtypes.i64	[False, 2, 4]	4
+Ops.ADD	dtypes.u64	[0, 0]	0
+Ops.ADD	dtypes.u64	[7, 3]	10
+Ops.ADD	dtypes.u64	[7, -3]	4
+Ops.ADD	dtypes.u64	[-7, 3]	18446744073709551612
+Ops.ADD	dtypes.u64	[-7, -3]	18446744073709551606
+Ops.ADD	dtypes.u64	[-50, 6]	18446744073709551572
+Ops.ADD	dtypes.u64	[8, 2]	10
+Ops.ADD	dtypes.u64	[1, 0]	1
+Ops.ADD	dtypes.u64	[0, 1]	1
+Ops.ADD	dtypes.u64	[-1, 1]	0
+Ops.ADD	dtypes.u64	[5, 5]	10
+Ops.ADD	dtypes.u64	[250, 250]	500
+Ops.ADD	dtypes.u64	[256, 0]	256
+Ops.ADD	dtypes.u64	[0, -1]	18446744073709551615
+Ops.ADD	dtypes.u64	[0, -1000]	18446744073709550616
+Ops.ADD	dtypes.u64	[-100, -100]	18446744073709551416
+Ops.ADD	dtypes.u64	[-130, 0]	18446744073709551486
+Ops.ADD	dtypes.u64	[127, 1]	128
+Ops.ADD	dtypes.u64	[-128, -1]	18446744073709551487
+Ops.ADD	dtypes.u64	[2147483647, 1]	2147483648
+Ops.ADD	dtypes.u64	[-2147483648, -1]	18446744071562067967
+Ops.ADD	dtypes.u64	[9223372036854775807, 1]	9223372036854775808
+Ops.ADD	dtypes.u64	[-9223372036854775808, -1]	9223372036854775807
+Ops.ADD	dtypes.u64	[18446744073709551615, 3]	2
+Ops.ADD	dtypes.u64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.ADD	dtypes.u64	[3, 63]	66
+Ops.SUB	dtypes.u64	[0, 0]	0
+Ops.SUB	dtypes.u64	[7, 3]	4
+Ops.SUB	dtypes.u64	[7, -3]	10
+Ops.SUB	dtypes.u64	[-7, 3]	18446744073709551606
+Ops.SUB	dtypes.u64	[-7, -3]	18446744073709551612
+Ops.SUB	dtypes.u64	[-50, 6]	18446744073709551560
+Ops.SUB	dtypes.u64	[8, 2]	6
+Ops.SUB	dtypes.u64	[1, 0]	1
+Ops.SUB	dtypes.u64	[0, 1]	18446744073709551615
+Ops.SUB	dtypes.u64	[-1, 1]	18446744073709551614
+Ops.SUB	dtypes.u64	[5, 5]	0
+Ops.SUB	dtypes.u64	[250, 250]	0
+Ops.SUB	dtypes.u64	[256, 0]	256
+Ops.SUB	dtypes.u64	[0, -1]	1
+Ops.SUB	dtypes.u64	[0, -1000]	1000
+Ops.SUB	dtypes.u64	[-100, -100]	0
+Ops.SUB	dtypes.u64	[-130, 0]	18446744073709551486
+Ops.SUB	dtypes.u64	[127, 1]	126
+Ops.SUB	dtypes.u64	[-128, -1]	18446744073709551489
+Ops.SUB	dtypes.u64	[2147483647, 1]	2147483646
+Ops.SUB	dtypes.u64	[-2147483648, -1]	18446744071562067969
+Ops.SUB	dtypes.u64	[9223372036854775807, 1]	9223372036854775806
+Ops.SUB	dtypes.u64	[-9223372036854775808, -1]	9223372036854775809
+Ops.SUB	dtypes.u64	[18446744073709551615, 3]	18446744073709551612
+Ops.SUB	dtypes.u64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.SUB	dtypes.u64	[3, 63]	18446744073709551556
+Ops.MUL	dtypes.u64	[0, 0]	0
+Ops.MUL	dtypes.u64	[7, 3]	21
+Ops.MUL	dtypes.u64	[7, -3]	18446744073709551595
+Ops.MUL	dtypes.u64	[-7, 3]	18446744073709551595
+Ops.MUL	dtypes.u64	[-7, -3]	21
+Ops.MUL	dtypes.u64	[-50, 6]	18446744073709551316
+Ops.MUL	dtypes.u64	[8, 2]	16
+Ops.MUL	dtypes.u64	[1, 0]	0
+Ops.MUL	dtypes.u64	[0, 1]	0
+Ops.MUL	dtypes.u64	[-1, 1]	18446744073709551615
+Ops.MUL	dtypes.u64	[5, 5]	25
+Ops.MUL	dtypes.u64	[250, 250]	62500
+Ops.MUL	dtypes.u64	[256, 0]	0
+Ops.MUL	dtypes.u64	[0, -1]	0
+Ops.MUL	dtypes.u64	[0, -1000]	0
+Ops.MUL	dtypes.u64	[-100, -100]	10000
+Ops.MUL	dtypes.u64	[-130, 0]	0
+Ops.MUL	dtypes.u64	[127, 1]	127
+Ops.MUL	dtypes.u64	[-128, -1]	128
+Ops.MUL	dtypes.u64	[2147483647, 1]	2147483647
+Ops.MUL	dtypes.u64	[-2147483648, -1]	2147483648
+Ops.MUL	dtypes.u64	[9223372036854775807, 1]	9223372036854775807
+Ops.MUL	dtypes.u64	[-9223372036854775808, -1]	9223372036854775808
+Ops.MUL	dtypes.u64	[18446744073709551615, 3]	18446744073709551613
+Ops.MUL	dtypes.u64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MUL	dtypes.u64	[3, 63]	189
+Ops.TRUNCDIV	dtypes.u64	[0, 0]	0
+Ops.TRUNCDIV	dtypes.u64	[7, 3]	2
+Ops.TRUNCDIV	dtypes.u64	[7, -3]	18446744073709551614
+Ops.TRUNCDIV	dtypes.u64	[-7, 3]	18446744073709551614
+Ops.TRUNCDIV	dtypes.u64	[-7, -3]	2
+Ops.TRUNCDIV	dtypes.u64	[-50, 6]	18446744073709551608
+Ops.TRUNCDIV	dtypes.u64	[8, 2]	4
+Ops.TRUNCDIV	dtypes.u64	[1, 0]	0
+Ops.TRUNCDIV	dtypes.u64	[0, 1]	0
+Ops.TRUNCDIV	dtypes.u64	[-1, 1]	18446744073709551615
+Ops.TRUNCDIV	dtypes.u64	[5, 5]	1
+Ops.TRUNCDIV	dtypes.u64	[250, 250]	1
+Ops.TRUNCDIV	dtypes.u64	[256, 0]	0
+Ops.TRUNCDIV	dtypes.u64	[0, -1]	0
+Ops.TRUNCDIV	dtypes.u64	[0, -1000]	0
+Ops.TRUNCDIV	dtypes.u64	[-100, -100]	1
+Ops.TRUNCDIV	dtypes.u64	[-130, 0]	0
+Ops.TRUNCDIV	dtypes.u64	[127, 1]	127
+Ops.TRUNCDIV	dtypes.u64	[-128, -1]	128
+Ops.TRUNCDIV	dtypes.u64	[2147483647, 1]	2147483647
+Ops.TRUNCDIV	dtypes.u64	[-2147483648, -1]	2147483648
+Ops.TRUNCDIV	dtypes.u64	[9223372036854775807, 1]	9223372036854775807
+Ops.TRUNCDIV	dtypes.u64	[-9223372036854775808, -1]	9223372036854775808
+Ops.TRUNCDIV	dtypes.u64	[18446744073709551615, 3]	6148914691236517205
+Ops.TRUNCDIV	dtypes.u64	[1267650600228229401496703205376, 1237940039285380274899124224]	1024
+Ops.TRUNCDIV	dtypes.u64	[3, 63]	0
+Ops.TRUNCMOD	dtypes.u64	[0, 0]	0
+Ops.TRUNCMOD	dtypes.u64	[7, 3]	1
+Ops.TRUNCMOD	dtypes.u64	[7, -3]	1
+Ops.TRUNCMOD	dtypes.u64	[-7, 3]	18446744073709551615
+Ops.TRUNCMOD	dtypes.u64	[-7, -3]	18446744073709551615
+Ops.TRUNCMOD	dtypes.u64	[-50, 6]	18446744073709551614
+Ops.TRUNCMOD	dtypes.u64	[8, 2]	0
+Ops.TRUNCMOD	dtypes.u64	[1, 0]	1
+Ops.TRUNCMOD	dtypes.u64	[0, 1]	0
+Ops.TRUNCMOD	dtypes.u64	[-1, 1]	0
+Ops.TRUNCMOD	dtypes.u64	[5, 5]	0
+Ops.TRUNCMOD	dtypes.u64	[250, 250]	0
+Ops.TRUNCMOD	dtypes.u64	[256, 0]	256
+Ops.TRUNCMOD	dtypes.u64	[0, -1]	0
+Ops.TRUNCMOD	dtypes.u64	[0, -1000]	0
+Ops.TRUNCMOD	dtypes.u64	[-100, -100]	0
+Ops.TRUNCMOD	dtypes.u64	[-130, 0]	18446744073709551486
+Ops.TRUNCMOD	dtypes.u64	[127, 1]	0
+Ops.TRUNCMOD	dtypes.u64	[-128, -1]	0
+Ops.TRUNCMOD	dtypes.u64	[2147483647, 1]	0
+Ops.TRUNCMOD	dtypes.u64	[-2147483648, -1]	0
+Ops.TRUNCMOD	dtypes.u64	[9223372036854775807, 1]	0
+Ops.TRUNCMOD	dtypes.u64	[-9223372036854775808, -1]	0
+Ops.TRUNCMOD	dtypes.u64	[18446744073709551615, 3]	0
+Ops.TRUNCMOD	dtypes.u64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.TRUNCMOD	dtypes.u64	[3, 63]	3
+Ops.DIV	dtypes.u64	[0, 0]	0
+Ops.DIV	dtypes.u64	[7, 3]	2
+Ops.DIV	dtypes.u64	[7, -3]	18446744073709551613
+Ops.DIV	dtypes.u64	[-7, 3]	18446744073709551613
+Ops.DIV	dtypes.u64	[-7, -3]	2
+Ops.DIV	dtypes.u64	[-50, 6]	18446744073709551607
+Ops.DIV	dtypes.u64	[8, 2]	4
+Ops.DIV	dtypes.u64	[1, 0]	0
+Ops.DIV	dtypes.u64	[0, 1]	0
+Ops.DIV	dtypes.u64	[-1, 1]	18446744073709551615
+Ops.DIV	dtypes.u64	[5, 5]	1
+Ops.DIV	dtypes.u64	[250, 250]	1
+Ops.DIV	dtypes.u64	[256, 0]	0
+Ops.DIV	dtypes.u64	[0, -1]	0
+Ops.DIV	dtypes.u64	[0, -1000]	0
+Ops.DIV	dtypes.u64	[-100, -100]	1
+Ops.DIV	dtypes.u64	[-130, 0]	0
+Ops.DIV	dtypes.u64	[127, 1]	127
+Ops.DIV	dtypes.u64	[-128, -1]	128
+Ops.DIV	dtypes.u64	[2147483647, 1]	2147483647
+Ops.DIV	dtypes.u64	[-2147483648, -1]	2147483648
+Ops.DIV	dtypes.u64	[9223372036854775807, 1]	9223372036854775807
+Ops.DIV	dtypes.u64	[-9223372036854775808, -1]	9223372036854775808
+Ops.DIV	dtypes.u64	[18446744073709551615, 3]	6148914691236517205
+Ops.DIV	dtypes.u64	[1267650600228229401496703205376, 1237940039285380274899124224]	1024
+Ops.DIV	dtypes.u64	[3, 63]	0
+Ops.MOD	dtypes.u64	[0, 0]	0
+Ops.MOD	dtypes.u64	[7, 3]	1
+Ops.MOD	dtypes.u64	[7, -3]	18446744073709551614
+Ops.MOD	dtypes.u64	[-7, 3]	2
+Ops.MOD	dtypes.u64	[-7, -3]	18446744073709551615
+Ops.MOD	dtypes.u64	[-50, 6]	4
+Ops.MOD	dtypes.u64	[8, 2]	0
+Ops.MOD	dtypes.u64	[1, 0]	1
+Ops.MOD	dtypes.u64	[0, 1]	0
+Ops.MOD	dtypes.u64	[-1, 1]	0
+Ops.MOD	dtypes.u64	[5, 5]	0
+Ops.MOD	dtypes.u64	[250, 250]	0
+Ops.MOD	dtypes.u64	[256, 0]	256
+Ops.MOD	dtypes.u64	[0, -1]	0
+Ops.MOD	dtypes.u64	[0, -1000]	0
+Ops.MOD	dtypes.u64	[-100, -100]	0
+Ops.MOD	dtypes.u64	[-130, 0]	18446744073709551486
+Ops.MOD	dtypes.u64	[127, 1]	0
+Ops.MOD	dtypes.u64	[-128, -1]	0
+Ops.MOD	dtypes.u64	[2147483647, 1]	0
+Ops.MOD	dtypes.u64	[-2147483648, -1]	0
+Ops.MOD	dtypes.u64	[9223372036854775807, 1]	0
+Ops.MOD	dtypes.u64	[-9223372036854775808, -1]	0
+Ops.MOD	dtypes.u64	[18446744073709551615, 3]	0
+Ops.MOD	dtypes.u64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MOD	dtypes.u64	[3, 63]	3
+Ops.MAX	dtypes.u64	[0, 0]	0
+Ops.MAX	dtypes.u64	[7, 3]	7
+Ops.MAX	dtypes.u64	[7, -3]	7
+Ops.MAX	dtypes.u64	[-7, 3]	3
+Ops.MAX	dtypes.u64	[-7, -3]	18446744073709551613
+Ops.MAX	dtypes.u64	[-50, 6]	6
+Ops.MAX	dtypes.u64	[8, 2]	8
+Ops.MAX	dtypes.u64	[1, 0]	1
+Ops.MAX	dtypes.u64	[0, 1]	1
+Ops.MAX	dtypes.u64	[-1, 1]	1
+Ops.MAX	dtypes.u64	[5, 5]	5
+Ops.MAX	dtypes.u64	[250, 250]	250
+Ops.MAX	dtypes.u64	[256, 0]	256
+Ops.MAX	dtypes.u64	[0, -1]	0
+Ops.MAX	dtypes.u64	[0, -1000]	0
+Ops.MAX	dtypes.u64	[-100, -100]	18446744073709551516
+Ops.MAX	dtypes.u64	[-130, 0]	0
+Ops.MAX	dtypes.u64	[127, 1]	127
+Ops.MAX	dtypes.u64	[-128, -1]	18446744073709551615
+Ops.MAX	dtypes.u64	[2147483647, 1]	2147483647
+Ops.MAX	dtypes.u64	[-2147483648, -1]	18446744073709551615
+Ops.MAX	dtypes.u64	[9223372036854775807, 1]	9223372036854775807
+Ops.MAX	dtypes.u64	[-9223372036854775808, -1]	18446744073709551615
+Ops.MAX	dtypes.u64	[18446744073709551615, 3]	18446744073709551615
+Ops.MAX	dtypes.u64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MAX	dtypes.u64	[3, 63]	63
+Ops.AND	dtypes.u64	[0, 0]	0
+Ops.AND	dtypes.u64	[7, 3]	3
+Ops.AND	dtypes.u64	[7, -3]	5
+Ops.AND	dtypes.u64	[-7, 3]	1
+Ops.AND	dtypes.u64	[-7, -3]	18446744073709551609
+Ops.AND	dtypes.u64	[-50, 6]	6
+Ops.AND	dtypes.u64	[8, 2]	0
+Ops.AND	dtypes.u64	[1, 0]	0
+Ops.AND	dtypes.u64	[0, 1]	0
+Ops.AND	dtypes.u64	[-1, 1]	1
+Ops.AND	dtypes.u64	[5, 5]	5
+Ops.AND	dtypes.u64	[250, 250]	250
+Ops.AND	dtypes.u64	[256, 0]	0
+Ops.AND	dtypes.u64	[0, -1]	0
+Ops.AND	dtypes.u64	[0, -1000]	0
+Ops.AND	dtypes.u64	[-100, -100]	18446744073709551516
+Ops.AND	dtypes.u64	[-130, 0]	0
+Ops.AND	dtypes.u64	[127, 1]	1
+Ops.AND	dtypes.u64	[-128, -1]	18446744073709551488
+Ops.AND	dtypes.u64	[2147483647, 1]	1
+Ops.AND	dtypes.u64	[-2147483648, -1]	18446744071562067968
+Ops.AND	dtypes.u64	[9223372036854775807, 1]	1
+Ops.AND	dtypes.u64	[-9223372036854775808, -1]	9223372036854775808
+Ops.AND	dtypes.u64	[18446744073709551615, 3]	3
+Ops.AND	dtypes.u64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.AND	dtypes.u64	[3, 63]	3
+Ops.OR	dtypes.u64	[0, 0]	0
+Ops.OR	dtypes.u64	[7, 3]	7
+Ops.OR	dtypes.u64	[7, -3]	18446744073709551615
+Ops.OR	dtypes.u64	[-7, 3]	18446744073709551611
+Ops.OR	dtypes.u64	[-7, -3]	18446744073709551613
+Ops.OR	dtypes.u64	[-50, 6]	18446744073709551566
+Ops.OR	dtypes.u64	[8, 2]	10
+Ops.OR	dtypes.u64	[1, 0]	1
+Ops.OR	dtypes.u64	[0, 1]	1
+Ops.OR	dtypes.u64	[-1, 1]	18446744073709551615
+Ops.OR	dtypes.u64	[5, 5]	5
+Ops.OR	dtypes.u64	[250, 250]	250
+Ops.OR	dtypes.u64	[256, 0]	256
+Ops.OR	dtypes.u64	[0, -1]	18446744073709551615
+Ops.OR	dtypes.u64	[0, -1000]	18446744073709550616
+Ops.OR	dtypes.u64	[-100, -100]	18446744073709551516
+Ops.OR	dtypes.u64	[-130, 0]	18446744073709551486
+Ops.OR	dtypes.u64	[127, 1]	127
+Ops.OR	dtypes.u64	[-128, -1]	18446744073709551615
+Ops.OR	dtypes.u64	[2147483647, 1]	2147483647
+Ops.OR	dtypes.u64	[-2147483648, -1]	18446744073709551615
+Ops.OR	dtypes.u64	[9223372036854775807, 1]	9223372036854775807
+Ops.OR	dtypes.u64	[-9223372036854775808, -1]	18446744073709551615
+Ops.OR	dtypes.u64	[18446744073709551615, 3]	18446744073709551615
+Ops.OR	dtypes.u64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.OR	dtypes.u64	[3, 63]	63
+Ops.XOR	dtypes.u64	[0, 0]	0
+Ops.XOR	dtypes.u64	[7, 3]	4
+Ops.XOR	dtypes.u64	[7, -3]	18446744073709551610
+Ops.XOR	dtypes.u64	[-7, 3]	18446744073709551610
+Ops.XOR	dtypes.u64	[-7, -3]	4
+Ops.XOR	dtypes.u64	[-50, 6]	18446744073709551560
+Ops.XOR	dtypes.u64	[8, 2]	10
+Ops.XOR	dtypes.u64	[1, 0]	1
+Ops.XOR	dtypes.u64	[0, 1]	1
+Ops.XOR	dtypes.u64	[-1, 1]	18446744073709551614
+Ops.XOR	dtypes.u64	[5, 5]	0
+Ops.XOR	dtypes.u64	[250, 250]	0
+Ops.XOR	dtypes.u64	[256, 0]	256
+Ops.XOR	dtypes.u64	[0, -1]	18446744073709551615
+Ops.XOR	dtypes.u64	[0, -1000]	18446744073709550616
+Ops.XOR	dtypes.u64	[-100, -100]	0
+Ops.XOR	dtypes.u64	[-130, 0]	18446744073709551486
+Ops.XOR	dtypes.u64	[127, 1]	126
+Ops.XOR	dtypes.u64	[-128, -1]	127
+Ops.XOR	dtypes.u64	[2147483647, 1]	2147483646
+Ops.XOR	dtypes.u64	[-2147483648, -1]	2147483647
+Ops.XOR	dtypes.u64	[9223372036854775807, 1]	9223372036854775806
+Ops.XOR	dtypes.u64	[-9223372036854775808, -1]	9223372036854775807
+Ops.XOR	dtypes.u64	[18446744073709551615, 3]	18446744073709551612
+Ops.XOR	dtypes.u64	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.XOR	dtypes.u64	[3, 63]	60
+Ops.SHL	dtypes.u64	[1, 0]	1
+Ops.SHL	dtypes.u64	[1, 7]	128
+Ops.SHL	dtypes.u64	[1, 31]	2147483648
+Ops.SHL	dtypes.u64	[-8, 1]	18446744073709551600
+Ops.SHL	dtypes.u64	[255, 4]	4080
+Ops.SHL	dtypes.u64	[18446744073709551615, 63]	9223372036854775808
+Ops.SHL	dtypes.u64	[-1, 63]	9223372036854775808
+Ops.SHL	dtypes.u64	[5, 64]	0
+Ops.SHR	dtypes.u64	[1, 0]	1
+Ops.SHR	dtypes.u64	[1, 7]	0
+Ops.SHR	dtypes.u64	[1, 31]	0
+Ops.SHR	dtypes.u64	[-8, 1]	18446744073709551612
+Ops.SHR	dtypes.u64	[255, 4]	15
+Ops.SHR	dtypes.u64	[18446744073709551615, 63]	1
+Ops.SHR	dtypes.u64	[-1, 63]	18446744073709551615
+Ops.SHR	dtypes.u64	[5, 64]	0
+Ops.NEG	dtypes.u64	[0]	0
+Ops.NEG	dtypes.u64	[1]	18446744073709551615
+Ops.NEG	dtypes.u64	[-1]	1
+Ops.NEG	dtypes.u64	[3]	18446744073709551613
+Ops.NEG	dtypes.u64	[-7]	7
+Ops.NEG	dtypes.u64	[8]	18446744073709551608
+Ops.NEG	dtypes.u64	[127]	18446744073709551489
+Ops.NEG	dtypes.u64	[-128]	128
+Ops.NEG	dtypes.u64	[255]	18446744073709551361
+Ops.NEG	dtypes.u64	[2147483647]	18446744071562067969
+Ops.NEG	dtypes.u64	[9223372036854775808]	9223372036854775808
+Ops.NEG	dtypes.u64	[-1180591620717411303424]	0
+Ops.MULACC	dtypes.u64	[3, 4, 5]	17
+Ops.MULACC	dtypes.u64	[1099511627776, 1099511627776, -1]	18446744073709551615
+Ops.WHERE	dtypes.u64	[True, 2, 4]	2
+Ops.WHERE	dtypes.u64	[False, 2, 4]	4
+Ops.ADD	dtypes.weakint	[0, 0]	0
+Ops.ADD	dtypes.weakint	[7, 3]	10
+Ops.ADD	dtypes.weakint	[7, -3]	4
+Ops.ADD	dtypes.weakint	[-7, 3]	-4
+Ops.ADD	dtypes.weakint	[-7, -3]	-10
+Ops.ADD	dtypes.weakint	[-50, 6]	-44
+Ops.ADD	dtypes.weakint	[8, 2]	10
+Ops.ADD	dtypes.weakint	[1, 0]	1
+Ops.ADD	dtypes.weakint	[0, 1]	1
+Ops.ADD	dtypes.weakint	[-1, 1]	0
+Ops.ADD	dtypes.weakint	[5, 5]	10
+Ops.ADD	dtypes.weakint	[250, 250]	500
+Ops.ADD	dtypes.weakint	[256, 0]	256
+Ops.ADD	dtypes.weakint	[0, -1]	-1
+Ops.ADD	dtypes.weakint	[0, -1000]	-1000
+Ops.ADD	dtypes.weakint	[-100, -100]	-200
+Ops.ADD	dtypes.weakint	[-130, 0]	-130
+Ops.ADD	dtypes.weakint	[127, 1]	128
+Ops.ADD	dtypes.weakint	[-128, -1]	-129
+Ops.ADD	dtypes.weakint	[2147483647, 1]	2147483648
+Ops.ADD	dtypes.weakint	[-2147483648, -1]	-2147483649
+Ops.ADD	dtypes.weakint	[9223372036854775807, 1]	9223372036854775808
+Ops.ADD	dtypes.weakint	[-9223372036854775808, -1]	-9223372036854775809
+Ops.ADD	dtypes.weakint	[18446744073709551615, 3]	18446744073709551618
+Ops.ADD	dtypes.weakint	[1267650600228229401496703205376, 1237940039285380274899124224]	1268888540267514781771602329600
+Ops.ADD	dtypes.weakint	[3, 63]	66
+Ops.SUB	dtypes.weakint	[0, 0]	0
+Ops.SUB	dtypes.weakint	[7, 3]	4
+Ops.SUB	dtypes.weakint	[7, -3]	10
+Ops.SUB	dtypes.weakint	[-7, 3]	-10
+Ops.SUB	dtypes.weakint	[-7, -3]	-4
+Ops.SUB	dtypes.weakint	[-50, 6]	-56
+Ops.SUB	dtypes.weakint	[8, 2]	6
+Ops.SUB	dtypes.weakint	[1, 0]	1
+Ops.SUB	dtypes.weakint	[0, 1]	-1
+Ops.SUB	dtypes.weakint	[-1, 1]	-2
+Ops.SUB	dtypes.weakint	[5, 5]	0
+Ops.SUB	dtypes.weakint	[250, 250]	0
+Ops.SUB	dtypes.weakint	[256, 0]	256
+Ops.SUB	dtypes.weakint	[0, -1]	1
+Ops.SUB	dtypes.weakint	[0, -1000]	1000
+Ops.SUB	dtypes.weakint	[-100, -100]	0
+Ops.SUB	dtypes.weakint	[-130, 0]	-130
+Ops.SUB	dtypes.weakint	[127, 1]	126
+Ops.SUB	dtypes.weakint	[-128, -1]	-127
+Ops.SUB	dtypes.weakint	[2147483647, 1]	2147483646
+Ops.SUB	dtypes.weakint	[-2147483648, -1]	-2147483647
+Ops.SUB	dtypes.weakint	[9223372036854775807, 1]	9223372036854775806
+Ops.SUB	dtypes.weakint	[-9223372036854775808, -1]	-9223372036854775807
+Ops.SUB	dtypes.weakint	[18446744073709551615, 3]	18446744073709551612
+Ops.SUB	dtypes.weakint	[1267650600228229401496703205376, 1237940039285380274899124224]	1266412660188944021221804081152
+Ops.SUB	dtypes.weakint	[3, 63]	-60
+Ops.MUL	dtypes.weakint	[0, 0]	0
+Ops.MUL	dtypes.weakint	[7, 3]	21
+Ops.MUL	dtypes.weakint	[7, -3]	-21
+Ops.MUL	dtypes.weakint	[-7, 3]	-21
+Ops.MUL	dtypes.weakint	[-7, -3]	21
+Ops.MUL	dtypes.weakint	[-50, 6]	-300
+Ops.MUL	dtypes.weakint	[8, 2]	16
+Ops.MUL	dtypes.weakint	[1, 0]	0
+Ops.MUL	dtypes.weakint	[0, 1]	0
+Ops.MUL	dtypes.weakint	[-1, 1]	-1
+Ops.MUL	dtypes.weakint	[5, 5]	25
+Ops.MUL	dtypes.weakint	[250, 250]	62500
+Ops.MUL	dtypes.weakint	[256, 0]	0
+Ops.MUL	dtypes.weakint	[0, -1]	0
+Ops.MUL	dtypes.weakint	[0, -1000]	0
+Ops.MUL	dtypes.weakint	[-100, -100]	10000
+Ops.MUL	dtypes.weakint	[-130, 0]	0
+Ops.MUL	dtypes.weakint	[127, 1]	127
+Ops.MUL	dtypes.weakint	[-128, -1]	128
+Ops.MUL	dtypes.weakint	[2147483647, 1]	2147483647
+Ops.MUL	dtypes.weakint	[-2147483648, -1]	2147483648
+Ops.MUL	dtypes.weakint	[9223372036854775807, 1]	9223372036854775807
+Ops.MUL	dtypes.weakint	[-9223372036854775808, -1]	9223372036854775808
+Ops.MUL	dtypes.weakint	[18446744073709551615, 3]	55340232221128654845
+Ops.MUL	dtypes.weakint	[1267650600228229401496703205376, 1237940039285380274899124224]	1569275433846670190958947355801916604025588861116008628224
+Ops.MUL	dtypes.weakint	[3, 63]	189
+Ops.TRUNCDIV	dtypes.weakint	[0, 0]	0
+Ops.TRUNCDIV	dtypes.weakint	[7, 3]	2
+Ops.TRUNCDIV	dtypes.weakint	[7, -3]	-2
+Ops.TRUNCDIV	dtypes.weakint	[-7, 3]	-2
+Ops.TRUNCDIV	dtypes.weakint	[-7, -3]	2
+Ops.TRUNCDIV	dtypes.weakint	[-50, 6]	-8
+Ops.TRUNCDIV	dtypes.weakint	[8, 2]	4
+Ops.TRUNCDIV	dtypes.weakint	[1, 0]	0
+Ops.TRUNCDIV	dtypes.weakint	[0, 1]	0
+Ops.TRUNCDIV	dtypes.weakint	[-1, 1]	-1
+Ops.TRUNCDIV	dtypes.weakint	[5, 5]	1
+Ops.TRUNCDIV	dtypes.weakint	[250, 250]	1
+Ops.TRUNCDIV	dtypes.weakint	[256, 0]	0
+Ops.TRUNCDIV	dtypes.weakint	[0, -1]	0
+Ops.TRUNCDIV	dtypes.weakint	[0, -1000]	0
+Ops.TRUNCDIV	dtypes.weakint	[-100, -100]	1
+Ops.TRUNCDIV	dtypes.weakint	[-130, 0]	0
+Ops.TRUNCDIV	dtypes.weakint	[127, 1]	127
+Ops.TRUNCDIV	dtypes.weakint	[-128, -1]	128
+Ops.TRUNCDIV	dtypes.weakint	[2147483647, 1]	2147483647
+Ops.TRUNCDIV	dtypes.weakint	[-2147483648, -1]	2147483648
+Ops.TRUNCDIV	dtypes.weakint	[9223372036854775807, 1]	9223372036854775807
+Ops.TRUNCDIV	dtypes.weakint	[-9223372036854775808, -1]	9223372036854775808
+Ops.TRUNCDIV	dtypes.weakint	[18446744073709551615, 3]	6148914691236517205
+Ops.TRUNCDIV	dtypes.weakint	[1267650600228229401496703205376, 1237940039285380274899124224]	1024
+Ops.TRUNCDIV	dtypes.weakint	[3, 63]	0
+Ops.TRUNCMOD	dtypes.weakint	[0, 0]	0
+Ops.TRUNCMOD	dtypes.weakint	[7, 3]	1
+Ops.TRUNCMOD	dtypes.weakint	[7, -3]	1
+Ops.TRUNCMOD	dtypes.weakint	[-7, 3]	-1
+Ops.TRUNCMOD	dtypes.weakint	[-7, -3]	-1
+Ops.TRUNCMOD	dtypes.weakint	[-50, 6]	-2
+Ops.TRUNCMOD	dtypes.weakint	[8, 2]	0
+Ops.TRUNCMOD	dtypes.weakint	[1, 0]	1
+Ops.TRUNCMOD	dtypes.weakint	[0, 1]	0
+Ops.TRUNCMOD	dtypes.weakint	[-1, 1]	0
+Ops.TRUNCMOD	dtypes.weakint	[5, 5]	0
+Ops.TRUNCMOD	dtypes.weakint	[250, 250]	0
+Ops.TRUNCMOD	dtypes.weakint	[256, 0]	256
+Ops.TRUNCMOD	dtypes.weakint	[0, -1]	0
+Ops.TRUNCMOD	dtypes.weakint	[0, -1000]	0
+Ops.TRUNCMOD	dtypes.weakint	[-100, -100]	0
+Ops.TRUNCMOD	dtypes.weakint	[-130, 0]	-130
+Ops.TRUNCMOD	dtypes.weakint	[127, 1]	0
+Ops.TRUNCMOD	dtypes.weakint	[-128, -1]	0
+Ops.TRUNCMOD	dtypes.weakint	[2147483647, 1]	0
+Ops.TRUNCMOD	dtypes.weakint	[-2147483648, -1]	0
+Ops.TRUNCMOD	dtypes.weakint	[9223372036854775807, 1]	0
+Ops.TRUNCMOD	dtypes.weakint	[-9223372036854775808, -1]	0
+Ops.TRUNCMOD	dtypes.weakint	[18446744073709551615, 3]	0
+Ops.TRUNCMOD	dtypes.weakint	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.TRUNCMOD	dtypes.weakint	[3, 63]	3
+Ops.DIV	dtypes.weakint	[0, 0]	0
+Ops.DIV	dtypes.weakint	[7, 3]	2
+Ops.DIV	dtypes.weakint	[7, -3]	-3
+Ops.DIV	dtypes.weakint	[-7, 3]	-3
+Ops.DIV	dtypes.weakint	[-7, -3]	2
+Ops.DIV	dtypes.weakint	[-50, 6]	-9
+Ops.DIV	dtypes.weakint	[8, 2]	4
+Ops.DIV	dtypes.weakint	[1, 0]	0
+Ops.DIV	dtypes.weakint	[0, 1]	0
+Ops.DIV	dtypes.weakint	[-1, 1]	-1
+Ops.DIV	dtypes.weakint	[5, 5]	1
+Ops.DIV	dtypes.weakint	[250, 250]	1
+Ops.DIV	dtypes.weakint	[256, 0]	0
+Ops.DIV	dtypes.weakint	[0, -1]	0
+Ops.DIV	dtypes.weakint	[0, -1000]	0
+Ops.DIV	dtypes.weakint	[-100, -100]	1
+Ops.DIV	dtypes.weakint	[-130, 0]	0
+Ops.DIV	dtypes.weakint	[127, 1]	127
+Ops.DIV	dtypes.weakint	[-128, -1]	128
+Ops.DIV	dtypes.weakint	[2147483647, 1]	2147483647
+Ops.DIV	dtypes.weakint	[-2147483648, -1]	2147483648
+Ops.DIV	dtypes.weakint	[9223372036854775807, 1]	9223372036854775807
+Ops.DIV	dtypes.weakint	[-9223372036854775808, -1]	9223372036854775808
+Ops.DIV	dtypes.weakint	[18446744073709551615, 3]	6148914691236517205
+Ops.DIV	dtypes.weakint	[1267650600228229401496703205376, 1237940039285380274899124224]	1024
+Ops.DIV	dtypes.weakint	[3, 63]	0
+Ops.MOD	dtypes.weakint	[0, 0]	0
+Ops.MOD	dtypes.weakint	[7, 3]	1
+Ops.MOD	dtypes.weakint	[7, -3]	-2
+Ops.MOD	dtypes.weakint	[-7, 3]	2
+Ops.MOD	dtypes.weakint	[-7, -3]	-1
+Ops.MOD	dtypes.weakint	[-50, 6]	4
+Ops.MOD	dtypes.weakint	[8, 2]	0
+Ops.MOD	dtypes.weakint	[1, 0]	1
+Ops.MOD	dtypes.weakint	[0, 1]	0
+Ops.MOD	dtypes.weakint	[-1, 1]	0
+Ops.MOD	dtypes.weakint	[5, 5]	0
+Ops.MOD	dtypes.weakint	[250, 250]	0
+Ops.MOD	dtypes.weakint	[256, 0]	256
+Ops.MOD	dtypes.weakint	[0, -1]	0
+Ops.MOD	dtypes.weakint	[0, -1000]	0
+Ops.MOD	dtypes.weakint	[-100, -100]	0
+Ops.MOD	dtypes.weakint	[-130, 0]	-130
+Ops.MOD	dtypes.weakint	[127, 1]	0
+Ops.MOD	dtypes.weakint	[-128, -1]	0
+Ops.MOD	dtypes.weakint	[2147483647, 1]	0
+Ops.MOD	dtypes.weakint	[-2147483648, -1]	0
+Ops.MOD	dtypes.weakint	[9223372036854775807, 1]	0
+Ops.MOD	dtypes.weakint	[-9223372036854775808, -1]	0
+Ops.MOD	dtypes.weakint	[18446744073709551615, 3]	0
+Ops.MOD	dtypes.weakint	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.MOD	dtypes.weakint	[3, 63]	3
+Ops.MAX	dtypes.weakint	[0, 0]	0
+Ops.MAX	dtypes.weakint	[7, 3]	7
+Ops.MAX	dtypes.weakint	[7, -3]	7
+Ops.MAX	dtypes.weakint	[-7, 3]	3
+Ops.MAX	dtypes.weakint	[-7, -3]	-3
+Ops.MAX	dtypes.weakint	[-50, 6]	6
+Ops.MAX	dtypes.weakint	[8, 2]	8
+Ops.MAX	dtypes.weakint	[1, 0]	1
+Ops.MAX	dtypes.weakint	[0, 1]	1
+Ops.MAX	dtypes.weakint	[-1, 1]	1
+Ops.MAX	dtypes.weakint	[5, 5]	5
+Ops.MAX	dtypes.weakint	[250, 250]	250
+Ops.MAX	dtypes.weakint	[256, 0]	256
+Ops.MAX	dtypes.weakint	[0, -1]	0
+Ops.MAX	dtypes.weakint	[0, -1000]	0
+Ops.MAX	dtypes.weakint	[-100, -100]	-100
+Ops.MAX	dtypes.weakint	[-130, 0]	0
+Ops.MAX	dtypes.weakint	[127, 1]	127
+Ops.MAX	dtypes.weakint	[-128, -1]	-1
+Ops.MAX	dtypes.weakint	[2147483647, 1]	2147483647
+Ops.MAX	dtypes.weakint	[-2147483648, -1]	-1
+Ops.MAX	dtypes.weakint	[9223372036854775807, 1]	9223372036854775807
+Ops.MAX	dtypes.weakint	[-9223372036854775808, -1]	-1
+Ops.MAX	dtypes.weakint	[18446744073709551615, 3]	18446744073709551615
+Ops.MAX	dtypes.weakint	[1267650600228229401496703205376, 1237940039285380274899124224]	1267650600228229401496703205376
+Ops.MAX	dtypes.weakint	[3, 63]	63
+Ops.AND	dtypes.weakint	[0, 0]	0
+Ops.AND	dtypes.weakint	[7, 3]	3
+Ops.AND	dtypes.weakint	[7, -3]	5
+Ops.AND	dtypes.weakint	[-7, 3]	1
+Ops.AND	dtypes.weakint	[-7, -3]	-7
+Ops.AND	dtypes.weakint	[-50, 6]	6
+Ops.AND	dtypes.weakint	[8, 2]	0
+Ops.AND	dtypes.weakint	[1, 0]	0
+Ops.AND	dtypes.weakint	[0, 1]	0
+Ops.AND	dtypes.weakint	[-1, 1]	1
+Ops.AND	dtypes.weakint	[5, 5]	5
+Ops.AND	dtypes.weakint	[250, 250]	250
+Ops.AND	dtypes.weakint	[256, 0]	0
+Ops.AND	dtypes.weakint	[0, -1]	0
+Ops.AND	dtypes.weakint	[0, -1000]	0
+Ops.AND	dtypes.weakint	[-100, -100]	-100
+Ops.AND	dtypes.weakint	[-130, 0]	0
+Ops.AND	dtypes.weakint	[127, 1]	1
+Ops.AND	dtypes.weakint	[-128, -1]	-128
+Ops.AND	dtypes.weakint	[2147483647, 1]	1
+Ops.AND	dtypes.weakint	[-2147483648, -1]	-2147483648
+Ops.AND	dtypes.weakint	[9223372036854775807, 1]	1
+Ops.AND	dtypes.weakint	[-9223372036854775808, -1]	-9223372036854775808
+Ops.AND	dtypes.weakint	[18446744073709551615, 3]	3
+Ops.AND	dtypes.weakint	[1267650600228229401496703205376, 1237940039285380274899124224]	0
+Ops.AND	dtypes.weakint	[3, 63]	3
+Ops.OR	dtypes.weakint	[0, 0]	0
+Ops.OR	dtypes.weakint	[7, 3]	7
+Ops.OR	dtypes.weakint	[7, -3]	-1
+Ops.OR	dtypes.weakint	[-7, 3]	-5
+Ops.OR	dtypes.weakint	[-7, -3]	-3
+Ops.OR	dtypes.weakint	[-50, 6]	-50
+Ops.OR	dtypes.weakint	[8, 2]	10
+Ops.OR	dtypes.weakint	[1, 0]	1
+Ops.OR	dtypes.weakint	[0, 1]	1
+Ops.OR	dtypes.weakint	[-1, 1]	-1
+Ops.OR	dtypes.weakint	[5, 5]	5
+Ops.OR	dtypes.weakint	[250, 250]	250
+Ops.OR	dtypes.weakint	[256, 0]	256
+Ops.OR	dtypes.weakint	[0, -1]	-1
+Ops.OR	dtypes.weakint	[0, -1000]	-1000
+Ops.OR	dtypes.weakint	[-100, -100]	-100
+Ops.OR	dtypes.weakint	[-130, 0]	-130
+Ops.OR	dtypes.weakint	[127, 1]	127
+Ops.OR	dtypes.weakint	[-128, -1]	-1
+Ops.OR	dtypes.weakint	[2147483647, 1]	2147483647
+Ops.OR	dtypes.weakint	[-2147483648, -1]	-1
+Ops.OR	dtypes.weakint	[9223372036854775807, 1]	9223372036854775807
+Ops.OR	dtypes.weakint	[-9223372036854775808, -1]	-1
+Ops.OR	dtypes.weakint	[18446744073709551615, 3]	18446744073709551615
+Ops.OR	dtypes.weakint	[1267650600228229401496703205376, 1237940039285380274899124224]	1268888540267514781771602329600
+Ops.OR	dtypes.weakint	[3, 63]	63
+Ops.XOR	dtypes.weakint	[0, 0]	0
+Ops.XOR	dtypes.weakint	[7, 3]	4
+Ops.XOR	dtypes.weakint	[7, -3]	-6
+Ops.XOR	dtypes.weakint	[-7, 3]	-6
+Ops.XOR	dtypes.weakint	[-7, -3]	4
+Ops.XOR	dtypes.weakint	[-50, 6]	-56
+Ops.XOR	dtypes.weakint	[8, 2]	10
+Ops.XOR	dtypes.weakint	[1, 0]	1
+Ops.XOR	dtypes.weakint	[0, 1]	1
+Ops.XOR	dtypes.weakint	[-1, 1]	-2
+Ops.XOR	dtypes.weakint	[5, 5]	0
+Ops.XOR	dtypes.weakint	[250, 250]	0
+Ops.XOR	dtypes.weakint	[256, 0]	256
+Ops.XOR	dtypes.weakint	[0, -1]	-1
+Ops.XOR	dtypes.weakint	[0, -1000]	-1000
+Ops.XOR	dtypes.weakint	[-100, -100]	0
+Ops.XOR	dtypes.weakint	[-130, 0]	-130
+Ops.XOR	dtypes.weakint	[127, 1]	126
+Ops.XOR	dtypes.weakint	[-128, -1]	127
+Ops.XOR	dtypes.weakint	[2147483647, 1]	2147483646
+Ops.XOR	dtypes.weakint	[-2147483648, -1]	2147483647
+Ops.XOR	dtypes.weakint	[9223372036854775807, 1]	9223372036854775806
+Ops.XOR	dtypes.weakint	[-9223372036854775808, -1]	9223372036854775807
+Ops.XOR	dtypes.weakint	[18446744073709551615, 3]	18446744073709551612
+Ops.XOR	dtypes.weakint	[1267650600228229401496703205376, 1237940039285380274899124224]	1268888540267514781771602329600
+Ops.XOR	dtypes.weakint	[3, 63]	60
+Ops.SHL	dtypes.weakint	[1, 0]	1
+Ops.SHL	dtypes.weakint	[1, 7]	128
+Ops.SHL	dtypes.weakint	[1, 31]	2147483648
+Ops.SHL	dtypes.weakint	[-8, 1]	-16
+Ops.SHL	dtypes.weakint	[255, 4]	4080
+Ops.SHL	dtypes.weakint	[18446744073709551615, 63]	170141183460469231722463931679029329920
+Ops.SHL	dtypes.weakint	[-1, 63]	-9223372036854775808
+Ops.SHL	dtypes.weakint	[5, 64]	92233720368547758080
+Ops.SHR	dtypes.weakint	[1, 0]	1
+Ops.SHR	dtypes.weakint	[1, 7]	0
+Ops.SHR	dtypes.weakint	[1, 31]	0
+Ops.SHR	dtypes.weakint	[-8, 1]	-4
+Ops.SHR	dtypes.weakint	[255, 4]	15
+Ops.SHR	dtypes.weakint	[18446744073709551615, 63]	1
+Ops.SHR	dtypes.weakint	[-1, 63]	-1
+Ops.SHR	dtypes.weakint	[5, 64]	0
+Ops.NEG	dtypes.weakint	[0]	0
+Ops.NEG	dtypes.weakint	[1]	-1
+Ops.NEG	dtypes.weakint	[-1]	1
+Ops.NEG	dtypes.weakint	[3]	-3
+Ops.NEG	dtypes.weakint	[-7]	7
+Ops.NEG	dtypes.weakint	[8]	-8
+Ops.NEG	dtypes.weakint	[127]	-127
+Ops.NEG	dtypes.weakint	[-128]	128
+Ops.NEG	dtypes.weakint	[255]	-255
+Ops.NEG	dtypes.weakint	[2147483647]	-2147483647
+Ops.NEG	dtypes.weakint	[9223372036854775808]	-9223372036854775808
+Ops.NEG	dtypes.weakint	[-1180591620717411303424]	1180591620717411303424
+Ops.MULACC	dtypes.weakint	[3, 4, 5]	17
+Ops.MULACC	dtypes.weakint	[1099511627776, 1099511627776, -1]	1208925819614629174706175
+Ops.WHERE	dtypes.weakint	[True, 2, 4]	2
+Ops.WHERE	dtypes.weakint	[False, 2, 4]	4
+Ops.ADD	dtypes.f16	[0.0, 0.0]	0.0
+Ops.ADD	dtypes.f16	[1.0, -0.0]	1.0
+Ops.ADD	dtypes.f16	[-0.0, 0.0]	0.0
+Ops.ADD	dtypes.f16	[1.5, 2.5]	4.0
+Ops.ADD	dtypes.f16	[-2.5, 0.5]	-2.0
+Ops.ADD	dtypes.f16	[7.0, 3.0]	10.0
+Ops.ADD	dtypes.f16	[2.0, 0.5]	2.5
+Ops.ADD	dtypes.f16	[1e+300, 1e+300]	inf
+Ops.ADD	dtypes.f16	[-1e+300, 1e+300]	0.0
+Ops.ADD	dtypes.f16	[65504.0, 32.0]	inf
+Ops.ADD	dtypes.f16	[inf, 1.0]	inf
+Ops.ADD	dtypes.f16	[1.0, inf]	inf
+Ops.ADD	dtypes.f16	[-inf, inf]	nan
+Ops.ADD	dtypes.f16	[nan, 1.0]	nan
+Ops.ADD	dtypes.f16	[1.0, nan]	nan
+Ops.ADD	dtypes.f16	[0.1, 0.2]	0.300048828125
+Ops.ADD	dtypes.f16	[3.4028234663852886e+38, 2.0]	inf
+Ops.SUB	dtypes.f16	[0.0, 0.0]	0.0
+Ops.SUB	dtypes.f16	[1.0, -0.0]	1.0
+Ops.SUB	dtypes.f16	[-0.0, 0.0]	-0.0
+Ops.SUB	dtypes.f16	[1.5, 2.5]	-1.0
+Ops.SUB	dtypes.f16	[-2.5, 0.5]	-3.0
+Ops.SUB	dtypes.f16	[7.0, 3.0]	4.0
+Ops.SUB	dtypes.f16	[2.0, 0.5]	1.5
+Ops.SUB	dtypes.f16	[1e+300, 1e+300]	0.0
+Ops.SUB	dtypes.f16	[-1e+300, 1e+300]	-inf
+Ops.SUB	dtypes.f16	[65504.0, 32.0]	65472.0
+Ops.SUB	dtypes.f16	[inf, 1.0]	inf
+Ops.SUB	dtypes.f16	[1.0, inf]	-inf
+Ops.SUB	dtypes.f16	[-inf, inf]	-inf
+Ops.SUB	dtypes.f16	[nan, 1.0]	nan
+Ops.SUB	dtypes.f16	[1.0, nan]	nan
+Ops.SUB	dtypes.f16	[0.1, 0.2]	-0.0999755859375
+Ops.SUB	dtypes.f16	[3.4028234663852886e+38, 2.0]	inf
+Ops.MUL	dtypes.f16	[0.0, 0.0]	0.0
+Ops.MUL	dtypes.f16	[1.0, -0.0]	-0.0
+Ops.MUL	dtypes.f16	[-0.0, 0.0]	-0.0
+Ops.MUL	dtypes.f16	[1.5, 2.5]	3.75
+Ops.MUL	dtypes.f16	[-2.5, 0.5]	-1.25
+Ops.MUL	dtypes.f16	[7.0, 3.0]	21.0
+Ops.MUL	dtypes.f16	[2.0, 0.5]	1.0
+Ops.MUL	dtypes.f16	[1e+300, 1e+300]	inf
+Ops.MUL	dtypes.f16	[-1e+300, 1e+300]	-inf
+Ops.MUL	dtypes.f16	[65504.0, 32.0]	inf
+Ops.MUL	dtypes.f16	[inf, 1.0]	inf
+Ops.MUL	dtypes.f16	[1.0, inf]	inf
+Ops.MUL	dtypes.f16	[-inf, inf]	-inf
+Ops.MUL	dtypes.f16	[nan, 1.0]	nan
+Ops.MUL	dtypes.f16	[1.0, nan]	nan
+Ops.MUL	dtypes.f16	[0.1, 0.2]	0.0200042724609375
+Ops.MUL	dtypes.f16	[3.4028234663852886e+38, 2.0]	inf
+Ops.FDIV	dtypes.f16	[0.0, 0.0]	nan
+Ops.FDIV	dtypes.f16	[1.0, -0.0]	-inf
+Ops.FDIV	dtypes.f16	[-0.0, 0.0]	nan
+Ops.FDIV	dtypes.f16	[1.5, 2.5]	0.60009765625
+Ops.FDIV	dtypes.f16	[-2.5, 0.5]	-5.0
+Ops.FDIV	dtypes.f16	[7.0, 3.0]	2.333984375
+Ops.FDIV	dtypes.f16	[2.0, 0.5]	4.0
+Ops.FDIV	dtypes.f16	[1e+300, 1e+300]	1.0
+Ops.FDIV	dtypes.f16	[-1e+300, 1e+300]	-1.0
+Ops.FDIV	dtypes.f16	[65504.0, 32.0]	2047.0
+Ops.FDIV	dtypes.f16	[inf, 1.0]	inf
+Ops.FDIV	dtypes.f16	[1.0, inf]	0.0
+Ops.FDIV	dtypes.f16	[-inf, inf]	nan
+Ops.FDIV	dtypes.f16	[nan, 1.0]	nan
+Ops.FDIV	dtypes.f16	[1.0, nan]	nan
+Ops.FDIV	dtypes.f16	[0.1, 0.2]	0.5
+Ops.FDIV	dtypes.f16	[3.4028234663852886e+38, 2.0]	inf
+Ops.MAX	dtypes.f16	[0.0, 0.0]	0.0
+Ops.MAX	dtypes.f16	[1.0, -0.0]	1.0
+Ops.MAX	dtypes.f16	[-0.0, 0.0]	-0.0
+Ops.MAX	dtypes.f16	[1.5, 2.5]	2.5
+Ops.MAX	dtypes.f16	[-2.5, 0.5]	0.5
+Ops.MAX	dtypes.f16	[7.0, 3.0]	7.0
+Ops.MAX	dtypes.f16	[2.0, 0.5]	2.0
+Ops.MAX	dtypes.f16	[1e+300, 1e+300]	inf
+Ops.MAX	dtypes.f16	[-1e+300, 1e+300]	inf
+Ops.MAX	dtypes.f16	[65504.0, 32.0]	65504.0
+Ops.MAX	dtypes.f16	[inf, 1.0]	inf
+Ops.MAX	dtypes.f16	[1.0, inf]	inf
+Ops.MAX	dtypes.f16	[-inf, inf]	inf
+Ops.MAX	dtypes.f16	[nan, 1.0]	nan
+Ops.MAX	dtypes.f16	[1.0, nan]	1.0
+Ops.MAX	dtypes.f16	[0.1, 0.2]	0.199951171875
+Ops.MAX	dtypes.f16	[3.4028234663852886e+38, 2.0]	inf
+Ops.CMPLT	dtypes.bool	[0.0, 0.0]	False
+Ops.CMPLT	dtypes.bool	[1.0, -0.0]	False
+Ops.CMPLT	dtypes.bool	[-0.0, 0.0]	False
+Ops.CMPLT	dtypes.bool	[1.5, 2.5]	True
+Ops.CMPLT	dtypes.bool	[-2.5, 0.5]	True
+Ops.CMPLT	dtypes.bool	[7.0, 3.0]	False
+Ops.CMPLT	dtypes.bool	[2.0, 0.5]	False
+Ops.CMPLT	dtypes.bool	[1e+300, 1e+300]	False
+Ops.CMPLT	dtypes.bool	[-1e+300, 1e+300]	True
+Ops.CMPLT	dtypes.bool	[65504.0, 32.0]	False
+Ops.CMPLT	dtypes.bool	[inf, 1.0]	False
+Ops.CMPLT	dtypes.bool	[1.0, inf]	True
+Ops.CMPLT	dtypes.bool	[-inf, inf]	True
+Ops.CMPLT	dtypes.bool	[nan, 1.0]	False
+Ops.CMPLT	dtypes.bool	[1.0, nan]	False
+Ops.CMPLT	dtypes.bool	[0.1, 0.2]	True
+Ops.CMPLT	dtypes.bool	[3.4028234663852886e+38, 2.0]	False
+Ops.CMPNE	dtypes.bool	[0.0, 0.0]	False
+Ops.CMPNE	dtypes.bool	[1.0, -0.0]	True
+Ops.CMPNE	dtypes.bool	[-0.0, 0.0]	False
+Ops.CMPNE	dtypes.bool	[1.5, 2.5]	True
+Ops.CMPNE	dtypes.bool	[-2.5, 0.5]	True
+Ops.CMPNE	dtypes.bool	[7.0, 3.0]	True
+Ops.CMPNE	dtypes.bool	[2.0, 0.5]	True
+Ops.CMPNE	dtypes.bool	[1e+300, 1e+300]	False
+Ops.CMPNE	dtypes.bool	[-1e+300, 1e+300]	True
+Ops.CMPNE	dtypes.bool	[65504.0, 32.0]	True
+Ops.CMPNE	dtypes.bool	[inf, 1.0]	True
+Ops.CMPNE	dtypes.bool	[1.0, inf]	True
+Ops.CMPNE	dtypes.bool	[-inf, inf]	True
+Ops.CMPNE	dtypes.bool	[nan, 1.0]	True
+Ops.CMPNE	dtypes.bool	[1.0, nan]	True
+Ops.CMPNE	dtypes.bool	[0.1, 0.2]	True
+Ops.CMPNE	dtypes.bool	[3.4028234663852886e+38, 2.0]	True
+Ops.CMPEQ	dtypes.bool	[0.0, 0.0]	True
+Ops.CMPEQ	dtypes.bool	[1.0, -0.0]	False
+Ops.CMPEQ	dtypes.bool	[-0.0, 0.0]	True
+Ops.CMPEQ	dtypes.bool	[1.5, 2.5]	False
+Ops.CMPEQ	dtypes.bool	[-2.5, 0.5]	False
+Ops.CMPEQ	dtypes.bool	[7.0, 3.0]	False
+Ops.CMPEQ	dtypes.bool	[2.0, 0.5]	False
+Ops.CMPEQ	dtypes.bool	[1e+300, 1e+300]	True
+Ops.CMPEQ	dtypes.bool	[-1e+300, 1e+300]	False
+Ops.CMPEQ	dtypes.bool	[65504.0, 32.0]	False
+Ops.CMPEQ	dtypes.bool	[inf, 1.0]	False
+Ops.CMPEQ	dtypes.bool	[1.0, inf]	False
+Ops.CMPEQ	dtypes.bool	[-inf, inf]	False
+Ops.CMPEQ	dtypes.bool	[nan, 1.0]	False
+Ops.CMPEQ	dtypes.bool	[1.0, nan]	False
+Ops.CMPEQ	dtypes.bool	[0.1, 0.2]	False
+Ops.CMPEQ	dtypes.bool	[3.4028234663852886e+38, 2.0]	False
+Ops.POW	dtypes.f16	[0.0, 0.0]	1.0
+Ops.POW	dtypes.f16	[1.0, -0.0]	1.0
+Ops.POW	dtypes.f16	[-0.0, 0.0]	1.0
+Ops.POW	dtypes.f16	[1.5, 2.5]	2.755859375
+Ops.POW	dtypes.f16	[-2.5, 0.5]	nan
+Ops.POW	dtypes.f16	[7.0, 3.0]	343.0
+Ops.POW	dtypes.f16	[2.0, 0.5]	1.4140625
+Ops.POW	dtypes.f16	[65504.0, 32.0]	inf
+Ops.POW	dtypes.f16	[inf, 1.0]	inf
+Ops.POW	dtypes.f16	[1.0, inf]	1.0
+Ops.POW	dtypes.f16	[-inf, inf]	inf
+Ops.POW	dtypes.f16	[nan, 1.0]	nan
+Ops.POW	dtypes.f16	[1.0, nan]	1.0
+Ops.POW	dtypes.f16	[0.1, 0.2]	0.630859375
+Ops.POW	dtypes.f16	[3.4028234663852886e+38, 2.0]	inf
+Ops.EXP2	dtypes.f16	[0.0]	1.0
+Ops.EXP2	dtypes.f16	[-0.0]	1.0
+Ops.EXP2	dtypes.f16	[0.5]	1.4140625
+Ops.EXP2	dtypes.f16	[-0.5]	0.70703125
+Ops.EXP2	dtypes.f16	[1.0]	2.0
+Ops.EXP2	dtypes.f16	[-1.0]	0.5
+Ops.EXP2	dtypes.f16	[2.5]	5.65625
+Ops.EXP2	dtypes.f16	[-2.5]	0.1767578125
+Ops.EXP2	dtypes.f16	[3.0]	8.0
+Ops.EXP2	dtypes.f16	[4.0]	16.0
+Ops.EXP2	dtypes.f16	[1e-45]	1.0
+Ops.EXP2	dtypes.f16	[1e+300]	inf
+Ops.EXP2	dtypes.f16	[65504.0]	inf
+Ops.EXP2	dtypes.f16	[65520.0]	inf
+Ops.EXP2	dtypes.f16	[3.4028235677973366e+38]	inf
+Ops.EXP2	dtypes.f16	[inf]	inf
+Ops.EXP2	dtypes.f16	[-inf]	0.0
+Ops.EXP2	dtypes.f16	[nan]	nan
+Ops.LOG2	dtypes.f16	[0.0]	-inf
+Ops.LOG2	dtypes.f16	[-0.0]	-inf
+Ops.LOG2	dtypes.f16	[0.5]	-1.0
+Ops.LOG2	dtypes.f16	[-0.5]	nan
+Ops.LOG2	dtypes.f16	[1.0]	0.0
+Ops.LOG2	dtypes.f16	[-1.0]	nan
+Ops.LOG2	dtypes.f16	[2.5]	1.322265625
+Ops.LOG2	dtypes.f16	[-2.5]	nan
+Ops.LOG2	dtypes.f16	[3.0]	1.5849609375
+Ops.LOG2	dtypes.f16	[4.0]	2.0
+Ops.LOG2	dtypes.f16	[1e-45]	-149.5
+Ops.LOG2	dtypes.f16	[1e+300]	996.5
+Ops.LOG2	dtypes.f16	[65504.0]	16.0
+Ops.LOG2	dtypes.f16	[65520.0]	16.0
+Ops.LOG2	dtypes.f16	[3.4028235677973366e+38]	128.0
+Ops.LOG2	dtypes.f16	[inf]	inf
+Ops.LOG2	dtypes.f16	[-inf]	nan
+Ops.LOG2	dtypes.f16	[nan]	nan
+Ops.SIN	dtypes.f16	[0.0]	0.0
+Ops.SIN	dtypes.f16	[-0.0]	-0.0
+Ops.SIN	dtypes.f16	[0.5]	0.4794921875
+Ops.SIN	dtypes.f16	[-0.5]	-0.4794921875
+Ops.SIN	dtypes.f16	[1.0]	0.84130859375
+Ops.SIN	dtypes.f16	[-1.0]	-0.84130859375
+Ops.SIN	dtypes.f16	[2.5]	0.5986328125
+Ops.SIN	dtypes.f16	[-2.5]	-0.5986328125
+Ops.SIN	dtypes.f16	[3.0]	0.14111328125
+Ops.SIN	dtypes.f16	[4.0]	-0.7568359375
+Ops.SIN	dtypes.f16	[1e-45]	0.0
+Ops.SIN	dtypes.f16	[1e+300]	-0.81787109375
+Ops.SIN	dtypes.f16	[65504.0]	0.9755859375
+Ops.SIN	dtypes.f16	[65520.0]	-0.87060546875
+Ops.SIN	dtypes.f16	[3.4028235677973366e+38]	-0.38818359375
+Ops.SIN	dtypes.f16	[inf]	nan
+Ops.SIN	dtypes.f16	[-inf]	nan
+Ops.SIN	dtypes.f16	[nan]	nan
+Ops.SQRT	dtypes.f16	[0.0]	0.0
+Ops.SQRT	dtypes.f16	[-0.0]	-0.0
+Ops.SQRT	dtypes.f16	[0.5]	0.70703125
+Ops.SQRT	dtypes.f16	[-0.5]	nan
+Ops.SQRT	dtypes.f16	[1.0]	1.0
+Ops.SQRT	dtypes.f16	[-1.0]	nan
+Ops.SQRT	dtypes.f16	[2.5]	1.5810546875
+Ops.SQRT	dtypes.f16	[-2.5]	nan
+Ops.SQRT	dtypes.f16	[3.0]	1.732421875
+Ops.SQRT	dtypes.f16	[4.0]	2.0
+Ops.SQRT	dtypes.f16	[1e-45]	0.0
+Ops.SQRT	dtypes.f16	[1e+300]	inf
+Ops.SQRT	dtypes.f16	[65504.0]	255.875
+Ops.SQRT	dtypes.f16	[65520.0]	256.0
+Ops.SQRT	dtypes.f16	[3.4028235677973366e+38]	inf
+Ops.SQRT	dtypes.f16	[inf]	inf
+Ops.SQRT	dtypes.f16	[-inf]	nan
+Ops.SQRT	dtypes.f16	[nan]	nan
+Ops.RECIP	dtypes.f16	[0.0]	inf
+Ops.RECIP	dtypes.f16	[-0.0]	-inf
+Ops.RECIP	dtypes.f16	[0.5]	2.0
+Ops.RECIP	dtypes.f16	[-0.5]	-2.0
+Ops.RECIP	dtypes.f16	[1.0]	1.0
+Ops.RECIP	dtypes.f16	[-1.0]	-1.0
+Ops.RECIP	dtypes.f16	[2.5]	0.39990234375
+Ops.RECIP	dtypes.f16	[-2.5]	-0.39990234375
+Ops.RECIP	dtypes.f16	[3.0]	0.333251953125
+Ops.RECIP	dtypes.f16	[4.0]	0.25
+Ops.RECIP	dtypes.f16	[1e-45]	inf
+Ops.RECIP	dtypes.f16	[1e+300]	0.0
+Ops.RECIP	dtypes.f16	[65504.0]	1.52587890625e-05
+Ops.RECIP	dtypes.f16	[65520.0]	1.52587890625e-05
+Ops.RECIP	dtypes.f16	[3.4028235677973366e+38]	0.0
+Ops.RECIP	dtypes.f16	[inf]	0.0
+Ops.RECIP	dtypes.f16	[-inf]	-0.0
+Ops.RECIP	dtypes.f16	[nan]	nan
+Ops.TRUNC	dtypes.f16	[0.0]	0.0
+Ops.TRUNC	dtypes.f16	[-0.0]	-0.0
+Ops.TRUNC	dtypes.f16	[0.5]	0.0
+Ops.TRUNC	dtypes.f16	[-0.5]	-0.0
+Ops.TRUNC	dtypes.f16	[1.0]	1.0
+Ops.TRUNC	dtypes.f16	[-1.0]	-1.0
+Ops.TRUNC	dtypes.f16	[2.5]	2.0
+Ops.TRUNC	dtypes.f16	[-2.5]	-2.0
+Ops.TRUNC	dtypes.f16	[3.0]	3.0
+Ops.TRUNC	dtypes.f16	[4.0]	4.0
+Ops.TRUNC	dtypes.f16	[1e-45]	0.0
+Ops.TRUNC	dtypes.f16	[1e+300]	inf
+Ops.TRUNC	dtypes.f16	[65504.0]	65504.0
+Ops.TRUNC	dtypes.f16	[65520.0]	inf
+Ops.TRUNC	dtypes.f16	[3.4028235677973366e+38]	inf
+Ops.TRUNC	dtypes.f16	[inf]	inf
+Ops.TRUNC	dtypes.f16	[-inf]	-inf
+Ops.TRUNC	dtypes.f16	[nan]	nan
+Ops.NEG	dtypes.f16	[0.0]	-0.0
+Ops.NEG	dtypes.f16	[-0.0]	0.0
+Ops.NEG	dtypes.f16	[0.5]	-0.5
+Ops.NEG	dtypes.f16	[-0.5]	0.5
+Ops.NEG	dtypes.f16	[1.0]	-1.0
+Ops.NEG	dtypes.f16	[-1.0]	1.0
+Ops.NEG	dtypes.f16	[2.5]	-2.5
+Ops.NEG	dtypes.f16	[-2.5]	2.5
+Ops.NEG	dtypes.f16	[3.0]	-3.0
+Ops.NEG	dtypes.f16	[4.0]	-4.0
+Ops.NEG	dtypes.f16	[1e-45]	-0.0
+Ops.NEG	dtypes.f16	[1e+300]	-inf
+Ops.NEG	dtypes.f16	[65504.0]	-65504.0
+Ops.NEG	dtypes.f16	[65520.0]	-inf
+Ops.NEG	dtypes.f16	[3.4028235677973366e+38]	-inf
+Ops.NEG	dtypes.f16	[inf]	-inf
+Ops.NEG	dtypes.f16	[-inf]	inf
+Ops.NEG	dtypes.f16	[nan]	nan
+Ops.TRUNCDIV	dtypes.f16	[7.5, 2.0]	3.0
+Ops.TRUNCDIV	dtypes.f16	[-7.5, 2.0]	-3.0
+Ops.TRUNCDIV	dtypes.f16	[7.5, -2.0]	-3.0
+Ops.TRUNCDIV	dtypes.f16	[1.0, 0.0]	0.0
+Ops.TRUNCDIV	dtypes.f16	[-0.5, 3.0]	-0.0
+Ops.TRUNCMOD	dtypes.f16	[7.5, 2.0]	1.5
+Ops.TRUNCMOD	dtypes.f16	[-7.5, 2.0]	-1.5
+Ops.TRUNCMOD	dtypes.f16	[7.5, -2.0]	1.5
+Ops.TRUNCMOD	dtypes.f16	[1.0, 0.0]	1.0
+Ops.TRUNCMOD	dtypes.f16	[-0.5, 3.0]	-0.5
+Ops.DIV	dtypes.f16	[7.5, 2.0]	3.0
+Ops.DIV	dtypes.f16	[-7.5, 2.0]	-4.0
+Ops.DIV	dtypes.f16	[7.5, -2.0]	-4.0
+Ops.DIV	dtypes.f16	[1.0, 0.0]	0.0
+Ops.DIV	dtypes.f16	[-0.5, 3.0]	-1.0
+Ops.MOD	dtypes.f16	[7.5, 2.0]	1.5
+Ops.MOD	dtypes.f16	[-7.5, 2.0]	0.5
+Ops.MOD	dtypes.f16	[7.5, -2.0]	-0.5
+Ops.MOD	dtypes.f16	[1.0, 0.0]	1.0
+Ops.MOD	dtypes.f16	[-0.5, 3.0]	2.5
+Ops.MULACC	dtypes.f16	[1.5, 2.0, 0.25]	3.25
+Ops.WHERE	dtypes.f16	[True, 2.2, 4.5]	2.19921875
+Ops.WHERE	dtypes.f16	[False, 2.2, 4.5]	4.5
+Ops.ADD	dtypes.bf16	[0.0, 0.0]	0.0
+Ops.ADD	dtypes.bf16	[1.0, -0.0]	1.0
+Ops.ADD	dtypes.bf16	[-0.0, 0.0]	0.0
+Ops.ADD	dtypes.bf16	[1.5, 2.5]	4.0
+Ops.ADD	dtypes.bf16	[-2.5, 0.5]	-2.0
+Ops.ADD	dtypes.bf16	[7.0, 3.0]	10.0
+Ops.ADD	dtypes.bf16	[2.0, 0.5]	2.5
+Ops.ADD	dtypes.bf16	[1e+300, 1e+300]	inf
+Ops.ADD	dtypes.bf16	[-1e+300, 1e+300]	0.0
+Ops.ADD	dtypes.bf16	[65504.0, 32.0]	65536.0
+Ops.ADD	dtypes.bf16	[inf, 1.0]	inf
+Ops.ADD	dtypes.bf16	[1.0, inf]	inf
+Ops.ADD	dtypes.bf16	[-inf, inf]	nan
+Ops.ADD	dtypes.bf16	[nan, 1.0]	nan
+Ops.ADD	dtypes.bf16	[1.0, nan]	nan
+Ops.ADD	dtypes.bf16	[0.1, 0.2]	0.30078125
+Ops.ADD	dtypes.bf16	[3.4028234663852886e+38, 2.0]	inf
+Ops.SUB	dtypes.bf16	[0.0, 0.0]	0.0
+Ops.SUB	dtypes.bf16	[1.0, -0.0]	1.0
+Ops.SUB	dtypes.bf16	[-0.0, 0.0]	-0.0
+Ops.SUB	dtypes.bf16	[1.5, 2.5]	-1.0
+Ops.SUB	dtypes.bf16	[-2.5, 0.5]	-3.0
+Ops.SUB	dtypes.bf16	[7.0, 3.0]	4.0
+Ops.SUB	dtypes.bf16	[2.0, 0.5]	1.5
+Ops.SUB	dtypes.bf16	[1e+300, 1e+300]	0.0
+Ops.SUB	dtypes.bf16	[-1e+300, 1e+300]	-inf
+Ops.SUB	dtypes.bf16	[65504.0, 32.0]	65536.0
+Ops.SUB	dtypes.bf16	[inf, 1.0]	inf
+Ops.SUB	dtypes.bf16	[1.0, inf]	-inf
+Ops.SUB	dtypes.bf16	[-inf, inf]	-inf
+Ops.SUB	dtypes.bf16	[nan, 1.0]	nan
+Ops.SUB	dtypes.bf16	[1.0, nan]	nan
+Ops.SUB	dtypes.bf16	[0.1, 0.2]	-0.10009765625
+Ops.SUB	dtypes.bf16	[3.4028234663852886e+38, 2.0]	inf
+Ops.MUL	dtypes.bf16	[0.0, 0.0]	0.0
+Ops.MUL	dtypes.bf16	[1.0, -0.0]	-0.0
+Ops.MUL	dtypes.bf16	[-0.0, 0.0]	-0.0
+Ops.MUL	dtypes.bf16	[1.5, 2.5]	3.75
+Ops.MUL	dtypes.bf16	[-2.5, 0.5]	-1.25
+Ops.MUL	dtypes.bf16	[7.0, 3.0]	21.0
+Ops.MUL	dtypes.bf16	[2.0, 0.5]	1.0
+Ops.MUL	dtypes.bf16	[1e+300, 1e+300]	inf
+Ops.MUL	dtypes.bf16	[-1e+300, 1e+300]	-inf
+Ops.MUL	dtypes.bf16	[65504.0, 32.0]	2097152.0
+Ops.MUL	dtypes.bf16	[inf, 1.0]	inf
+Ops.MUL	dtypes.bf16	[1.0, inf]	inf
+Ops.MUL	dtypes.bf16	[-inf, inf]	-inf
+Ops.MUL	dtypes.bf16	[nan, 1.0]	nan
+Ops.MUL	dtypes.bf16	[1.0, nan]	nan
+Ops.MUL	dtypes.bf16	[0.1, 0.2]	0.02001953125
+Ops.MUL	dtypes.bf16	[3.4028234663852886e+38, 2.0]	inf
+Ops.FDIV	dtypes.bf16	[0.0, 0.0]	nan
+Ops.FDIV	dtypes.bf16	[1.0, -0.0]	-inf
+Ops.FDIV	dtypes.bf16	[-0.0, 0.0]	nan
+Ops.FDIV	dtypes.bf16	[1.5, 2.5]	0.6015625
+Ops.FDIV	dtypes.bf16	[-2.5, 0.5]	-5.0
+Ops.FDIV	dtypes.bf16	[7.0, 3.0]	2.328125
+Ops.FDIV	dtypes.bf16	[2.0, 0.5]	4.0
+Ops.FDIV	dtypes.bf16	[1e+300, 1e+300]	1.0
+Ops.FDIV	dtypes.bf16	[-1e+300, 1e+300]	-1.0
+Ops.FDIV	dtypes.bf16	[65504.0, 32.0]	2048.0
+Ops.FDIV	dtypes.bf16	[inf, 1.0]	inf
+Ops.FDIV	dtypes.bf16	[1.0, inf]	0.0
+Ops.FDIV	dtypes.bf16	[-inf, inf]	nan
+Ops.FDIV	dtypes.bf16	[nan, 1.0]	nan
+Ops.FDIV	dtypes.bf16	[1.0, nan]	nan
+Ops.FDIV	dtypes.bf16	[0.1, 0.2]	0.5
+Ops.FDIV	dtypes.bf16	[3.4028234663852886e+38, 2.0]	1.7014118346046923e+38
+Ops.MAX	dtypes.bf16	[0.0, 0.0]	0.0
+Ops.MAX	dtypes.bf16	[1.0, -0.0]	1.0
+Ops.MAX	dtypes.bf16	[-0.0, 0.0]	-0.0
+Ops.MAX	dtypes.bf16	[1.5, 2.5]	2.5
+Ops.MAX	dtypes.bf16	[-2.5, 0.5]	0.5
+Ops.MAX	dtypes.bf16	[7.0, 3.0]	7.0
+Ops.MAX	dtypes.bf16	[2.0, 0.5]	2.0
+Ops.MAX	dtypes.bf16	[1e+300, 1e+300]	inf
+Ops.MAX	dtypes.bf16	[-1e+300, 1e+300]	inf
+Ops.MAX	dtypes.bf16	[65504.0, 32.0]	65536.0
+Ops.MAX	dtypes.bf16	[inf, 1.0]	inf
+Ops.MAX	dtypes.bf16	[1.0, inf]	inf
+Ops.MAX	dtypes.bf16	[-inf, inf]	inf
+Ops.MAX	dtypes.bf16	[nan, 1.0]	nan
+Ops.MAX	dtypes.bf16	[1.0, nan]	1.0
+Ops.MAX	dtypes.bf16	[0.1, 0.2]	0.2001953125
+Ops.MAX	dtypes.bf16	[3.4028234663852886e+38, 2.0]	inf
+Ops.POW	dtypes.bf16	[0.0, 0.0]	1.0
+Ops.POW	dtypes.bf16	[1.0, -0.0]	1.0
+Ops.POW	dtypes.bf16	[-0.0, 0.0]	1.0
+Ops.POW	dtypes.bf16	[1.5, 2.5]	2.75
+Ops.POW	dtypes.bf16	[-2.5, 0.5]	nan
+Ops.POW	dtypes.bf16	[7.0, 3.0]	344.0
+Ops.POW	dtypes.bf16	[2.0, 0.5]	1.4140625
+Ops.POW	dtypes.bf16	[65504.0, 32.0]	inf
+Ops.POW	dtypes.bf16	[inf, 1.0]	inf
+Ops.POW	dtypes.bf16	[1.0, inf]	1.0
+Ops.POW	dtypes.bf16	[-inf, inf]	inf
+Ops.POW	dtypes.bf16	[nan, 1.0]	nan
+Ops.POW	dtypes.bf16	[1.0, nan]	1.0
+Ops.POW	dtypes.bf16	[0.1, 0.2]	0.6328125
+Ops.POW	dtypes.bf16	[3.4028234663852886e+38, 2.0]	inf
+Ops.EXP2	dtypes.bf16	[0.0]	1.0
+Ops.EXP2	dtypes.bf16	[-0.0]	1.0
+Ops.EXP2	dtypes.bf16	[0.5]	1.4140625
+Ops.EXP2	dtypes.bf16	[-0.5]	0.70703125
+Ops.EXP2	dtypes.bf16	[1.0]	2.0
+Ops.EXP2	dtypes.bf16	[-1.0]	0.5
+Ops.EXP2	dtypes.bf16	[2.5]	5.65625
+Ops.EXP2	dtypes.bf16	[-2.5]	0.1767578125
+Ops.EXP2	dtypes.bf16	[3.0]	8.0
+Ops.EXP2	dtypes.bf16	[4.0]	16.0
+Ops.EXP2	dtypes.bf16	[1e-45]	1.0
+Ops.EXP2	dtypes.bf16	[1e+300]	inf
+Ops.EXP2	dtypes.bf16	[65504.0]	inf
+Ops.EXP2	dtypes.bf16	[65520.0]	inf
+Ops.EXP2	dtypes.bf16	[3.4028235677973366e+38]	inf
+Ops.EXP2	dtypes.bf16	[inf]	inf
+Ops.EXP2	dtypes.bf16	[-inf]	0.0
+Ops.EXP2	dtypes.bf16	[nan]	nan
+Ops.LOG2	dtypes.bf16	[0.0]	-inf
+Ops.LOG2	dtypes.bf16	[-0.0]	-inf
+Ops.LOG2	dtypes.bf16	[0.5]	-1.0
+Ops.LOG2	dtypes.bf16	[-0.5]	nan
+Ops.LOG2	dtypes.bf16	[1.0]	0.0
+Ops.LOG2	dtypes.bf16	[-1.0]	nan
+Ops.LOG2	dtypes.bf16	[2.5]	1.3203125
+Ops.LOG2	dtypes.bf16	[-2.5]	nan
+Ops.LOG2	dtypes.bf16	[3.0]	1.5859375
+Ops.LOG2	dtypes.bf16	[4.0]	2.0
+Ops.LOG2	dtypes.bf16	[1e-45]	-149.0
+Ops.LOG2	dtypes.bf16	[1e+300]	996.0
+Ops.LOG2	dtypes.bf16	[65504.0]	16.0
+Ops.LOG2	dtypes.bf16	[65520.0]	16.0
+Ops.LOG2	dtypes.bf16	[3.4028235677973366e+38]	128.0
+Ops.LOG2	dtypes.bf16	[inf]	inf
+Ops.LOG2	dtypes.bf16	[-inf]	nan
+Ops.LOG2	dtypes.bf16	[nan]	nan
+Ops.SIN	dtypes.bf16	[0.0]	0.0
+Ops.SIN	dtypes.bf16	[-0.0]	-0.0
+Ops.SIN	dtypes.bf16	[0.5]	0.478515625
+Ops.SIN	dtypes.bf16	[-0.5]	-0.478515625
+Ops.SIN	dtypes.bf16	[1.0]	0.83984375
+Ops.SIN	dtypes.bf16	[-1.0]	-0.83984375
+Ops.SIN	dtypes.bf16	[2.5]	0.59765625
+Ops.SIN	dtypes.bf16	[-2.5]	-0.59765625
+Ops.SIN	dtypes.bf16	[3.0]	0.1416015625
+Ops.SIN	dtypes.bf16	[4.0]	-0.7578125
+Ops.SIN	dtypes.bf16	[1e-45]	0.0
+Ops.SIN	dtypes.bf16	[1e+300]	-0.81640625
+Ops.SIN	dtypes.bf16	[65504.0]	0.9765625
+Ops.SIN	dtypes.bf16	[65520.0]	-0.87109375
+Ops.SIN	dtypes.bf16	[3.4028235677973366e+38]	-0.388671875
+Ops.SIN	dtypes.bf16	[inf]	nan
+Ops.SIN	dtypes.bf16	[-inf]	nan
+Ops.SIN	dtypes.bf16	[nan]	nan
+Ops.SQRT	dtypes.bf16	[0.0]	0.0
+Ops.SQRT	dtypes.bf16	[-0.0]	-0.0
+Ops.SQRT	dtypes.bf16	[0.5]	0.70703125
+Ops.SQRT	dtypes.bf16	[-0.5]	nan
+Ops.SQRT	dtypes.bf16	[1.0]	1.0
+Ops.SQRT	dtypes.bf16	[-1.0]	nan
+Ops.SQRT	dtypes.bf16	[2.5]	1.578125
+Ops.SQRT	dtypes.bf16	[-2.5]	nan
+Ops.SQRT	dtypes.bf16	[3.0]	1.734375
+Ops.SQRT	dtypes.bf16	[4.0]	2.0
+Ops.SQRT	dtypes.bf16	[1e-45]	3.163965843015331e-23
+Ops.SQRT	dtypes.bf16	[1e+300]	inf
+Ops.SQRT	dtypes.bf16	[65504.0]	256.0
+Ops.SQRT	dtypes.bf16	[65520.0]	256.0
+Ops.SQRT	dtypes.bf16	[3.4028235677973366e+38]	1.8446744073709552e+19
+Ops.SQRT	dtypes.bf16	[inf]	inf
+Ops.SQRT	dtypes.bf16	[-inf]	nan
+Ops.SQRT	dtypes.bf16	[nan]	nan
+Ops.RECIP	dtypes.bf16	[0.0]	inf
+Ops.RECIP	dtypes.bf16	[-0.0]	-inf
+Ops.RECIP	dtypes.bf16	[0.5]	2.0
+Ops.RECIP	dtypes.bf16	[-0.5]	-2.0
+Ops.RECIP	dtypes.bf16	[1.0]	1.0
+Ops.RECIP	dtypes.bf16	[-1.0]	-1.0
+Ops.RECIP	dtypes.bf16	[2.5]	0.400390625
+Ops.RECIP	dtypes.bf16	[-2.5]	-0.400390625
+Ops.RECIP	dtypes.bf16	[3.0]	0.333984375
+Ops.RECIP	dtypes.bf16	[4.0]	0.25
+Ops.RECIP	dtypes.bf16	[1e-45]	inf
+Ops.RECIP	dtypes.bf16	[1e+300]	0.0
+Ops.RECIP	dtypes.bf16	[65504.0]	1.52587890625e-05
+Ops.RECIP	dtypes.bf16	[65520.0]	1.52587890625e-05
+Ops.RECIP	dtypes.bf16	[3.4028235677973366e+38]	2.938735877055719e-39
+Ops.RECIP	dtypes.bf16	[inf]	0.0
+Ops.RECIP	dtypes.bf16	[-inf]	-0.0
+Ops.RECIP	dtypes.bf16	[nan]	nan
+Ops.TRUNC	dtypes.bf16	[0.0]	0.0
+Ops.TRUNC	dtypes.bf16	[-0.0]	-0.0
+Ops.TRUNC	dtypes.bf16	[0.5]	0.0
+Ops.TRUNC	dtypes.bf16	[-0.5]	-0.0
+Ops.TRUNC	dtypes.bf16	[1.0]	1.0
+Ops.TRUNC	dtypes.bf16	[-1.0]	-1.0
+Ops.TRUNC	dtypes.bf16	[2.5]	2.0
+Ops.TRUNC	dtypes.bf16	[-2.5]	-2.0
+Ops.TRUNC	dtypes.bf16	[3.0]	3.0
+Ops.TRUNC	dtypes.bf16	[4.0]	4.0
+Ops.TRUNC	dtypes.bf16	[1e-45]	0.0
+Ops.TRUNC	dtypes.bf16	[1e+300]	inf
+Ops.TRUNC	dtypes.bf16	[65504.0]	65536.0
+Ops.TRUNC	dtypes.bf16	[65520.0]	65536.0
+Ops.TRUNC	dtypes.bf16	[3.4028235677973366e+38]	inf
+Ops.TRUNC	dtypes.bf16	[inf]	inf
+Ops.TRUNC	dtypes.bf16	[-inf]	-inf
+Ops.TRUNC	dtypes.bf16	[nan]	nan
+Ops.NEG	dtypes.bf16	[0.0]	-0.0
+Ops.NEG	dtypes.bf16	[-0.0]	0.0
+Ops.NEG	dtypes.bf16	[0.5]	-0.5
+Ops.NEG	dtypes.bf16	[-0.5]	0.5
+Ops.NEG	dtypes.bf16	[1.0]	-1.0
+Ops.NEG	dtypes.bf16	[-1.0]	1.0
+Ops.NEG	dtypes.bf16	[2.5]	-2.5
+Ops.NEG	dtypes.bf16	[-2.5]	2.5
+Ops.NEG	dtypes.bf16	[3.0]	-3.0
+Ops.NEG	dtypes.bf16	[4.0]	-4.0
+Ops.NEG	dtypes.bf16	[1e-45]	-0.0
+Ops.NEG	dtypes.bf16	[1e+300]	-inf
+Ops.NEG	dtypes.bf16	[65504.0]	-65536.0
+Ops.NEG	dtypes.bf16	[65520.0]	-65536.0
+Ops.NEG	dtypes.bf16	[3.4028235677973366e+38]	-inf
+Ops.NEG	dtypes.bf16	[inf]	-inf
+Ops.NEG	dtypes.bf16	[-inf]	inf
+Ops.NEG	dtypes.bf16	[nan]	nan
+Ops.TRUNCDIV	dtypes.bf16	[7.5, 2.0]	3.0
+Ops.TRUNCDIV	dtypes.bf16	[-7.5, 2.0]	-3.0
+Ops.TRUNCDIV	dtypes.bf16	[7.5, -2.0]	-3.0
+Ops.TRUNCDIV	dtypes.bf16	[1.0, 0.0]	0.0
+Ops.TRUNCDIV	dtypes.bf16	[-0.5, 3.0]	-0.0
+Ops.TRUNCMOD	dtypes.bf16	[7.5, 2.0]	1.5
+Ops.TRUNCMOD	dtypes.bf16	[-7.5, 2.0]	-1.5
+Ops.TRUNCMOD	dtypes.bf16	[7.5, -2.0]	1.5
+Ops.TRUNCMOD	dtypes.bf16	[1.0, 0.0]	1.0
+Ops.TRUNCMOD	dtypes.bf16	[-0.5, 3.0]	-0.5
+Ops.DIV	dtypes.bf16	[7.5, 2.0]	3.0
+Ops.DIV	dtypes.bf16	[-7.5, 2.0]	-4.0
+Ops.DIV	dtypes.bf16	[7.5, -2.0]	-4.0
+Ops.DIV	dtypes.bf16	[1.0, 0.0]	0.0
+Ops.DIV	dtypes.bf16	[-0.5, 3.0]	-1.0
+Ops.MOD	dtypes.bf16	[7.5, 2.0]	1.5
+Ops.MOD	dtypes.bf16	[-7.5, 2.0]	0.5
+Ops.MOD	dtypes.bf16	[7.5, -2.0]	-0.5
+Ops.MOD	dtypes.bf16	[1.0, 0.0]	1.0
+Ops.MOD	dtypes.bf16	[-0.5, 3.0]	2.5
+Ops.MULACC	dtypes.bf16	[1.5, 2.0, 0.25]	3.25
+Ops.WHERE	dtypes.bf16	[True, 2.2, 4.5]	2.203125
+Ops.WHERE	dtypes.bf16	[False, 2.2, 4.5]	4.5
+Ops.ADD	dtypes.f32	[0.0, 0.0]	0.0
+Ops.ADD	dtypes.f32	[1.0, -0.0]	1.0
+Ops.ADD	dtypes.f32	[-0.0, 0.0]	0.0
+Ops.ADD	dtypes.f32	[1.5, 2.5]	4.0
+Ops.ADD	dtypes.f32	[-2.5, 0.5]	-2.0
+Ops.ADD	dtypes.f32	[7.0, 3.0]	10.0
+Ops.ADD	dtypes.f32	[2.0, 0.5]	2.5
+Ops.ADD	dtypes.f32	[1e+300, 1e+300]	inf
+Ops.ADD	dtypes.f32	[-1e+300, 1e+300]	0.0
+Ops.ADD	dtypes.f32	[65504.0, 32.0]	65536.0
+Ops.ADD	dtypes.f32	[inf, 1.0]	inf
+Ops.ADD	dtypes.f32	[1.0, inf]	inf
+Ops.ADD	dtypes.f32	[-inf, inf]	nan
+Ops.ADD	dtypes.f32	[nan, 1.0]	nan
+Ops.ADD	dtypes.f32	[1.0, nan]	nan
+Ops.ADD	dtypes.f32	[0.1, 0.2]	0.30000001192092896
+Ops.ADD	dtypes.f32	[3.4028234663852886e+38, 2.0]	3.4028234663852886e+38
+Ops.SUB	dtypes.f32	[0.0, 0.0]	0.0
+Ops.SUB	dtypes.f32	[1.0, -0.0]	1.0
+Ops.SUB	dtypes.f32	[-0.0, 0.0]	-0.0
+Ops.SUB	dtypes.f32	[1.5, 2.5]	-1.0
+Ops.SUB	dtypes.f32	[-2.5, 0.5]	-3.0
+Ops.SUB	dtypes.f32	[7.0, 3.0]	4.0
+Ops.SUB	dtypes.f32	[2.0, 0.5]	1.5
+Ops.SUB	dtypes.f32	[1e+300, 1e+300]	0.0
+Ops.SUB	dtypes.f32	[-1e+300, 1e+300]	-inf
+Ops.SUB	dtypes.f32	[65504.0, 32.0]	65472.0
+Ops.SUB	dtypes.f32	[inf, 1.0]	inf
+Ops.SUB	dtypes.f32	[1.0, inf]	-inf
+Ops.SUB	dtypes.f32	[-inf, inf]	-inf
+Ops.SUB	dtypes.f32	[nan, 1.0]	nan
+Ops.SUB	dtypes.f32	[1.0, nan]	nan
+Ops.SUB	dtypes.f32	[0.1, 0.2]	-0.10000000149011612
+Ops.SUB	dtypes.f32	[3.4028234663852886e+38, 2.0]	3.4028234663852886e+38
+Ops.MUL	dtypes.f32	[0.0, 0.0]	0.0
+Ops.MUL	dtypes.f32	[1.0, -0.0]	-0.0
+Ops.MUL	dtypes.f32	[-0.0, 0.0]	-0.0
+Ops.MUL	dtypes.f32	[1.5, 2.5]	3.75
+Ops.MUL	dtypes.f32	[-2.5, 0.5]	-1.25
+Ops.MUL	dtypes.f32	[7.0, 3.0]	21.0
+Ops.MUL	dtypes.f32	[2.0, 0.5]	1.0
+Ops.MUL	dtypes.f32	[1e+300, 1e+300]	inf
+Ops.MUL	dtypes.f32	[-1e+300, 1e+300]	-inf
+Ops.MUL	dtypes.f32	[65504.0, 32.0]	2096128.0
+Ops.MUL	dtypes.f32	[inf, 1.0]	inf
+Ops.MUL	dtypes.f32	[1.0, inf]	inf
+Ops.MUL	dtypes.f32	[-inf, inf]	-inf
+Ops.MUL	dtypes.f32	[nan, 1.0]	nan
+Ops.MUL	dtypes.f32	[1.0, nan]	nan
+Ops.MUL	dtypes.f32	[0.1, 0.2]	0.019999999552965164
+Ops.MUL	dtypes.f32	[3.4028234663852886e+38, 2.0]	inf
+Ops.FDIV	dtypes.f32	[0.0, 0.0]	nan
+Ops.FDIV	dtypes.f32	[1.0, -0.0]	-inf
+Ops.FDIV	dtypes.f32	[-0.0, 0.0]	nan
+Ops.FDIV	dtypes.f32	[1.5, 2.5]	0.6000000238418579
+Ops.FDIV	dtypes.f32	[-2.5, 0.5]	-5.0
+Ops.FDIV	dtypes.f32	[7.0, 3.0]	2.3333332538604736
+Ops.FDIV	dtypes.f32	[2.0, 0.5]	4.0
+Ops.FDIV	dtypes.f32	[1e+300, 1e+300]	1.0
+Ops.FDIV	dtypes.f32	[-1e+300, 1e+300]	-1.0
+Ops.FDIV	dtypes.f32	[65504.0, 32.0]	2047.0
+Ops.FDIV	dtypes.f32	[inf, 1.0]	inf
+Ops.FDIV	dtypes.f32	[1.0, inf]	0.0
+Ops.FDIV	dtypes.f32	[-inf, inf]	nan
+Ops.FDIV	dtypes.f32	[nan, 1.0]	nan
+Ops.FDIV	dtypes.f32	[1.0, nan]	nan
+Ops.FDIV	dtypes.f32	[0.1, 0.2]	0.5
+Ops.FDIV	dtypes.f32	[3.4028234663852886e+38, 2.0]	1.7014117331926443e+38
+Ops.MAX	dtypes.f32	[0.0, 0.0]	0.0
+Ops.MAX	dtypes.f32	[1.0, -0.0]	1.0
+Ops.MAX	dtypes.f32	[-0.0, 0.0]	-0.0
+Ops.MAX	dtypes.f32	[1.5, 2.5]	2.5
+Ops.MAX	dtypes.f32	[-2.5, 0.5]	0.5
+Ops.MAX	dtypes.f32	[7.0, 3.0]	7.0
+Ops.MAX	dtypes.f32	[2.0, 0.5]	2.0
+Ops.MAX	dtypes.f32	[1e+300, 1e+300]	inf
+Ops.MAX	dtypes.f32	[-1e+300, 1e+300]	inf
+Ops.MAX	dtypes.f32	[65504.0, 32.0]	65504.0
+Ops.MAX	dtypes.f32	[inf, 1.0]	inf
+Ops.MAX	dtypes.f32	[1.0, inf]	inf
+Ops.MAX	dtypes.f32	[-inf, inf]	inf
+Ops.MAX	dtypes.f32	[nan, 1.0]	nan
+Ops.MAX	dtypes.f32	[1.0, nan]	1.0
+Ops.MAX	dtypes.f32	[0.1, 0.2]	0.20000000298023224
+Ops.MAX	dtypes.f32	[3.4028234663852886e+38, 2.0]	3.4028234663852886e+38
+Ops.POW	dtypes.f32	[0.0, 0.0]	1.0
+Ops.POW	dtypes.f32	[1.0, -0.0]	1.0
+Ops.POW	dtypes.f32	[-0.0, 0.0]	1.0
+Ops.POW	dtypes.f32	[1.5, 2.5]	2.755676031112671
+Ops.POW	dtypes.f32	[-2.5, 0.5]	nan
+Ops.POW	dtypes.f32	[7.0, 3.0]	343.0
+Ops.POW	dtypes.f32	[2.0, 0.5]	1.4142135381698608
+Ops.POW	dtypes.f32	[65504.0, 32.0]	inf
+Ops.POW	dtypes.f32	[inf, 1.0]	inf
+Ops.POW	dtypes.f32	[1.0, inf]	1.0
+Ops.POW	dtypes.f32	[-inf, inf]	inf
+Ops.POW	dtypes.f32	[nan, 1.0]	nan
+Ops.POW	dtypes.f32	[1.0, nan]	1.0
+Ops.POW	dtypes.f32	[0.1, 0.2]	0.6309573650360107
+Ops.POW	dtypes.f32	[3.4028234663852886e+38, 2.0]	inf
+Ops.EXP2	dtypes.f32	[0.0]	1.0
+Ops.EXP2	dtypes.f32	[-0.0]	1.0
+Ops.EXP2	dtypes.f32	[0.5]	1.4142135381698608
+Ops.EXP2	dtypes.f32	[-0.5]	0.7071067690849304
+Ops.EXP2	dtypes.f32	[1.0]	2.0
+Ops.EXP2	dtypes.f32	[-1.0]	0.5
+Ops.EXP2	dtypes.f32	[2.5]	5.656854152679443
+Ops.EXP2	dtypes.f32	[-2.5]	0.1767766922712326
+Ops.EXP2	dtypes.f32	[3.0]	8.0
+Ops.EXP2	dtypes.f32	[4.0]	16.0
+Ops.EXP2	dtypes.f32	[1e-45]	1.0
+Ops.EXP2	dtypes.f32	[1e+300]	inf
+Ops.EXP2	dtypes.f32	[65504.0]	inf
+Ops.EXP2	dtypes.f32	[65520.0]	inf
+Ops.EXP2	dtypes.f32	[3.4028235677973366e+38]	inf
+Ops.EXP2	dtypes.f32	[inf]	inf
+Ops.EXP2	dtypes.f32	[-inf]	0.0
+Ops.EXP2	dtypes.f32	[nan]	nan
+Ops.LOG2	dtypes.f32	[0.0]	-inf
+Ops.LOG2	dtypes.f32	[-0.0]	-inf
+Ops.LOG2	dtypes.f32	[0.5]	-1.0
+Ops.LOG2	dtypes.f32	[-0.5]	nan
+Ops.LOG2	dtypes.f32	[1.0]	0.0
+Ops.LOG2	dtypes.f32	[-1.0]	nan
+Ops.LOG2	dtypes.f32	[2.5]	1.3219281435012817
+Ops.LOG2	dtypes.f32	[-2.5]	nan
+Ops.LOG2	dtypes.f32	[3.0]	1.5849624872207642
+Ops.LOG2	dtypes.f32	[4.0]	2.0
+Ops.LOG2	dtypes.f32	[1e-45]	-149.4867706298828
+Ops.LOG2	dtypes.f32	[1e+300]	996.5784301757812
+Ops.LOG2	dtypes.f32	[65504.0]	15.999295234680176
+Ops.LOG2	dtypes.f32	[65520.0]	15.999648094177246
+Ops.LOG2	dtypes.f32	[3.4028235677973366e+38]	128.0
+Ops.LOG2	dtypes.f32	[inf]	inf
+Ops.LOG2	dtypes.f32	[-inf]	nan
+Ops.LOG2	dtypes.f32	[nan]	nan
+Ops.SIN	dtypes.f32	[0.0]	0.0
+Ops.SIN	dtypes.f32	[-0.0]	-0.0
+Ops.SIN	dtypes.f32	[0.5]	0.4794255495071411
+Ops.SIN	dtypes.f32	[-0.5]	-0.4794255495071411
+Ops.SIN	dtypes.f32	[1.0]	0.8414709568023682
+Ops.SIN	dtypes.f32	[-1.0]	-0.8414709568023682
+Ops.SIN	dtypes.f32	[2.5]	0.5984721183776855
+Ops.SIN	dtypes.f32	[-2.5]	-0.5984721183776855
+Ops.SIN	dtypes.f32	[3.0]	0.14112000167369843
+Ops.SIN	dtypes.f32	[4.0]	-0.756802499294281
+Ops.SIN	dtypes.f32	[1e-45]	1.401298464324817e-45
+Ops.SIN	dtypes.f32	[1e+300]	-0.8178819417953491
+Ops.SIN	dtypes.f32	[65504.0]	0.9753761291503906
+Ops.SIN	dtypes.f32	[65520.0]	-0.8705816864967346
+Ops.SIN	dtypes.f32	[3.4028235677973366e+38]	-0.38807353377342224
+Ops.SIN	dtypes.f32	[inf]	nan
+Ops.SIN	dtypes.f32	[-inf]	nan
+Ops.SIN	dtypes.f32	[nan]	nan
+Ops.SQRT	dtypes.f32	[0.0]	0.0
+Ops.SQRT	dtypes.f32	[-0.0]	-0.0
+Ops.SQRT	dtypes.f32	[0.5]	0.7071067690849304
+Ops.SQRT	dtypes.f32	[-0.5]	nan
+Ops.SQRT	dtypes.f32	[1.0]	1.0
+Ops.SQRT	dtypes.f32	[-1.0]	nan
+Ops.SQRT	dtypes.f32	[2.5]	1.5811388492584229
+Ops.SQRT	dtypes.f32	[-2.5]	nan
+Ops.SQRT	dtypes.f32	[3.0]	1.7320507764816284
+Ops.SQRT	dtypes.f32	[4.0]	2.0
+Ops.SQRT	dtypes.f32	[1e-45]	3.162277680678158e-23
+Ops.SQRT	dtypes.f32	[1e+300]	inf
+Ops.SQRT	dtypes.f32	[65504.0]	255.93748474121094
+Ops.SQRT	dtypes.f32	[65520.0]	255.96875
+Ops.SQRT	dtypes.f32	[3.4028235677973366e+38]	1.8446744073709552e+19
+Ops.SQRT	dtypes.f32	[inf]	inf
+Ops.SQRT	dtypes.f32	[-inf]	nan
+Ops.SQRT	dtypes.f32	[nan]	nan
+Ops.RECIP	dtypes.f32	[0.0]	inf
+Ops.RECIP	dtypes.f32	[-0.0]	-inf
+Ops.RECIP	dtypes.f32	[0.5]	2.0
+Ops.RECIP	dtypes.f32	[-0.5]	-2.0
+Ops.RECIP	dtypes.f32	[1.0]	1.0
+Ops.RECIP	dtypes.f32	[-1.0]	-1.0
+Ops.RECIP	dtypes.f32	[2.5]	0.4000000059604645
+Ops.RECIP	dtypes.f32	[-2.5]	-0.4000000059604645
+Ops.RECIP	dtypes.f32	[3.0]	0.3333333432674408
+Ops.RECIP	dtypes.f32	[4.0]	0.25
+Ops.RECIP	dtypes.f32	[1e-45]	inf
+Ops.RECIP	dtypes.f32	[1e+300]	0.0
+Ops.RECIP	dtypes.f32	[65504.0]	1.526624328107573e-05
+Ops.RECIP	dtypes.f32	[65520.0]	1.5262516171787865e-05
+Ops.RECIP	dtypes.f32	[3.4028235677973366e+38]	2.938735877055719e-39
+Ops.RECIP	dtypes.f32	[inf]	0.0
+Ops.RECIP	dtypes.f32	[-inf]	-0.0
+Ops.RECIP	dtypes.f32	[nan]	nan
+Ops.TRUNC	dtypes.f32	[0.0]	0.0
+Ops.TRUNC	dtypes.f32	[-0.0]	-0.0
+Ops.TRUNC	dtypes.f32	[0.5]	0.0
+Ops.TRUNC	dtypes.f32	[-0.5]	-0.0
+Ops.TRUNC	dtypes.f32	[1.0]	1.0
+Ops.TRUNC	dtypes.f32	[-1.0]	-1.0
+Ops.TRUNC	dtypes.f32	[2.5]	2.0
+Ops.TRUNC	dtypes.f32	[-2.5]	-2.0
+Ops.TRUNC	dtypes.f32	[3.0]	3.0
+Ops.TRUNC	dtypes.f32	[4.0]	4.0
+Ops.TRUNC	dtypes.f32	[1e-45]	0.0
+Ops.TRUNC	dtypes.f32	[1e+300]	inf
+Ops.TRUNC	dtypes.f32	[65504.0]	65504.0
+Ops.TRUNC	dtypes.f32	[65520.0]	65520.0
+Ops.TRUNC	dtypes.f32	[3.4028235677973366e+38]	inf
+Ops.TRUNC	dtypes.f32	[inf]	inf
+Ops.TRUNC	dtypes.f32	[-inf]	-inf
+Ops.TRUNC	dtypes.f32	[nan]	nan
+Ops.NEG	dtypes.f32	[0.0]	-0.0
+Ops.NEG	dtypes.f32	[-0.0]	0.0
+Ops.NEG	dtypes.f32	[0.5]	-0.5
+Ops.NEG	dtypes.f32	[-0.5]	0.5
+Ops.NEG	dtypes.f32	[1.0]	-1.0
+Ops.NEG	dtypes.f32	[-1.0]	1.0
+Ops.NEG	dtypes.f32	[2.5]	-2.5
+Ops.NEG	dtypes.f32	[-2.5]	2.5
+Ops.NEG	dtypes.f32	[3.0]	-3.0
+Ops.NEG	dtypes.f32	[4.0]	-4.0
+Ops.NEG	dtypes.f32	[1e-45]	-1.401298464324817e-45
+Ops.NEG	dtypes.f32	[1e+300]	-inf
+Ops.NEG	dtypes.f32	[65504.0]	-65504.0
+Ops.NEG	dtypes.f32	[65520.0]	-65520.0
+Ops.NEG	dtypes.f32	[3.4028235677973366e+38]	-inf
+Ops.NEG	dtypes.f32	[inf]	-inf
+Ops.NEG	dtypes.f32	[-inf]	inf
+Ops.NEG	dtypes.f32	[nan]	nan
+Ops.TRUNCDIV	dtypes.f32	[7.5, 2.0]	3.0
+Ops.TRUNCDIV	dtypes.f32	[-7.5, 2.0]	-3.0
+Ops.TRUNCDIV	dtypes.f32	[7.5, -2.0]	-3.0
+Ops.TRUNCDIV	dtypes.f32	[1.0, 0.0]	0.0
+Ops.TRUNCDIV	dtypes.f32	[-0.5, 3.0]	-0.0
+Ops.TRUNCMOD	dtypes.f32	[7.5, 2.0]	1.5
+Ops.TRUNCMOD	dtypes.f32	[-7.5, 2.0]	-1.5
+Ops.TRUNCMOD	dtypes.f32	[7.5, -2.0]	1.5
+Ops.TRUNCMOD	dtypes.f32	[1.0, 0.0]	1.0
+Ops.TRUNCMOD	dtypes.f32	[-0.5, 3.0]	-0.5
+Ops.DIV	dtypes.f32	[7.5, 2.0]	3.0
+Ops.DIV	dtypes.f32	[-7.5, 2.0]	-4.0
+Ops.DIV	dtypes.f32	[7.5, -2.0]	-4.0
+Ops.DIV	dtypes.f32	[1.0, 0.0]	0.0
+Ops.DIV	dtypes.f32	[-0.5, 3.0]	-1.0
+Ops.MOD	dtypes.f32	[7.5, 2.0]	1.5
+Ops.MOD	dtypes.f32	[-7.5, 2.0]	0.5
+Ops.MOD	dtypes.f32	[7.5, -2.0]	-0.5
+Ops.MOD	dtypes.f32	[1.0, 0.0]	1.0
+Ops.MOD	dtypes.f32	[-0.5, 3.0]	2.5
+Ops.MULACC	dtypes.f32	[1.5, 2.0, 0.25]	3.25
+Ops.WHERE	dtypes.f32	[True, 2.2, 4.5]	2.200000047683716
+Ops.WHERE	dtypes.f32	[False, 2.2, 4.5]	4.5
+Ops.ADD	dtypes.f64	[0.0, 0.0]	0.0
+Ops.ADD	dtypes.f64	[1.0, -0.0]	1.0
+Ops.ADD	dtypes.f64	[-0.0, 0.0]	0.0
+Ops.ADD	dtypes.f64	[1.5, 2.5]	4.0
+Ops.ADD	dtypes.f64	[-2.5, 0.5]	-2.0
+Ops.ADD	dtypes.f64	[7.0, 3.0]	10.0
+Ops.ADD	dtypes.f64	[2.0, 0.5]	2.5
+Ops.ADD	dtypes.f64	[1e+300, 1e+300]	2e+300
+Ops.ADD	dtypes.f64	[-1e+300, 1e+300]	0.0
+Ops.ADD	dtypes.f64	[65504.0, 32.0]	65536.0
+Ops.ADD	dtypes.f64	[inf, 1.0]	inf
+Ops.ADD	dtypes.f64	[1.0, inf]	inf
+Ops.ADD	dtypes.f64	[-inf, inf]	nan
+Ops.ADD	dtypes.f64	[nan, 1.0]	nan
+Ops.ADD	dtypes.f64	[1.0, nan]	nan
+Ops.ADD	dtypes.f64	[0.1, 0.2]	0.30000000000000004
+Ops.ADD	dtypes.f64	[3.4028234663852886e+38, 2.0]	3.4028234663852886e+38
+Ops.SUB	dtypes.f64	[0.0, 0.0]	0.0
+Ops.SUB	dtypes.f64	[1.0, -0.0]	1.0
+Ops.SUB	dtypes.f64	[-0.0, 0.0]	-0.0
+Ops.SUB	dtypes.f64	[1.5, 2.5]	-1.0
+Ops.SUB	dtypes.f64	[-2.5, 0.5]	-3.0
+Ops.SUB	dtypes.f64	[7.0, 3.0]	4.0
+Ops.SUB	dtypes.f64	[2.0, 0.5]	1.5
+Ops.SUB	dtypes.f64	[1e+300, 1e+300]	0.0
+Ops.SUB	dtypes.f64	[-1e+300, 1e+300]	-2e+300
+Ops.SUB	dtypes.f64	[65504.0, 32.0]	65472.0
+Ops.SUB	dtypes.f64	[inf, 1.0]	inf
+Ops.SUB	dtypes.f64	[1.0, inf]	-inf
+Ops.SUB	dtypes.f64	[-inf, inf]	-inf
+Ops.SUB	dtypes.f64	[nan, 1.0]	nan
+Ops.SUB	dtypes.f64	[1.0, nan]	nan
+Ops.SUB	dtypes.f64	[0.1, 0.2]	-0.1
+Ops.SUB	dtypes.f64	[3.4028234663852886e+38, 2.0]	3.4028234663852886e+38
+Ops.MUL	dtypes.f64	[0.0, 0.0]	0.0
+Ops.MUL	dtypes.f64	[1.0, -0.0]	-0.0
+Ops.MUL	dtypes.f64	[-0.0, 0.0]	-0.0
+Ops.MUL	dtypes.f64	[1.5, 2.5]	3.75
+Ops.MUL	dtypes.f64	[-2.5, 0.5]	-1.25
+Ops.MUL	dtypes.f64	[7.0, 3.0]	21.0
+Ops.MUL	dtypes.f64	[2.0, 0.5]	1.0
+Ops.MUL	dtypes.f64	[1e+300, 1e+300]	inf
+Ops.MUL	dtypes.f64	[-1e+300, 1e+300]	-inf
+Ops.MUL	dtypes.f64	[65504.0, 32.0]	2096128.0
+Ops.MUL	dtypes.f64	[inf, 1.0]	inf
+Ops.MUL	dtypes.f64	[1.0, inf]	inf
+Ops.MUL	dtypes.f64	[-inf, inf]	-inf
+Ops.MUL	dtypes.f64	[nan, 1.0]	nan
+Ops.MUL	dtypes.f64	[1.0, nan]	nan
+Ops.MUL	dtypes.f64	[0.1, 0.2]	0.020000000000000004
+Ops.MUL	dtypes.f64	[3.4028234663852886e+38, 2.0]	6.805646932770577e+38
+Ops.FDIV	dtypes.f64	[0.0, 0.0]	nan
+Ops.FDIV	dtypes.f64	[1.0, -0.0]	-inf
+Ops.FDIV	dtypes.f64	[-0.0, 0.0]	nan
+Ops.FDIV	dtypes.f64	[1.5, 2.5]	0.6
+Ops.FDIV	dtypes.f64	[-2.5, 0.5]	-5.0
+Ops.FDIV	dtypes.f64	[7.0, 3.0]	2.3333333333333335
+Ops.FDIV	dtypes.f64	[2.0, 0.5]	4.0
+Ops.FDIV	dtypes.f64	[1e+300, 1e+300]	1.0
+Ops.FDIV	dtypes.f64	[-1e+300, 1e+300]	-1.0
+Ops.FDIV	dtypes.f64	[65504.0, 32.0]	2047.0
+Ops.FDIV	dtypes.f64	[inf, 1.0]	inf
+Ops.FDIV	dtypes.f64	[1.0, inf]	0.0
+Ops.FDIV	dtypes.f64	[-inf, inf]	nan
+Ops.FDIV	dtypes.f64	[nan, 1.0]	nan
+Ops.FDIV	dtypes.f64	[1.0, nan]	nan
+Ops.FDIV	dtypes.f64	[0.1, 0.2]	0.5
+Ops.FDIV	dtypes.f64	[3.4028234663852886e+38, 2.0]	1.7014117331926443e+38
+Ops.MAX	dtypes.f64	[0.0, 0.0]	0.0
+Ops.MAX	dtypes.f64	[1.0, -0.0]	1.0
+Ops.MAX	dtypes.f64	[-0.0, 0.0]	-0.0
+Ops.MAX	dtypes.f64	[1.5, 2.5]	2.5
+Ops.MAX	dtypes.f64	[-2.5, 0.5]	0.5
+Ops.MAX	dtypes.f64	[7.0, 3.0]	7.0
+Ops.MAX	dtypes.f64	[2.0, 0.5]	2.0
+Ops.MAX	dtypes.f64	[1e+300, 1e+300]	1e+300
+Ops.MAX	dtypes.f64	[-1e+300, 1e+300]	1e+300
+Ops.MAX	dtypes.f64	[65504.0, 32.0]	65504.0
+Ops.MAX	dtypes.f64	[inf, 1.0]	inf
+Ops.MAX	dtypes.f64	[1.0, inf]	inf
+Ops.MAX	dtypes.f64	[-inf, inf]	inf
+Ops.MAX	dtypes.f64	[nan, 1.0]	nan
+Ops.MAX	dtypes.f64	[1.0, nan]	1.0
+Ops.MAX	dtypes.f64	[0.1, 0.2]	0.2
+Ops.MAX	dtypes.f64	[3.4028234663852886e+38, 2.0]	3.4028234663852886e+38
+Ops.POW	dtypes.f64	[0.0, 0.0]	1.0
+Ops.POW	dtypes.f64	[1.0, -0.0]	1.0
+Ops.POW	dtypes.f64	[-0.0, 0.0]	1.0
+Ops.POW	dtypes.f64	[1.5, 2.5]	2.7556759606310752
+Ops.POW	dtypes.f64	[-2.5, 0.5]	nan
+Ops.POW	dtypes.f64	[7.0, 3.0]	343.0
+Ops.POW	dtypes.f64	[2.0, 0.5]	1.4142135623730951
+Ops.POW	dtypes.f64	[65504.0, 32.0]	1.319988876500852e+154
+Ops.POW	dtypes.f64	[inf, 1.0]	inf
+Ops.POW	dtypes.f64	[1.0, inf]	1.0
+Ops.POW	dtypes.f64	[-inf, inf]	inf
+Ops.POW	dtypes.f64	[nan, 1.0]	nan
+Ops.POW	dtypes.f64	[1.0, nan]	1.0
+Ops.POW	dtypes.f64	[0.1, 0.2]	0.6309573444801932
+Ops.POW	dtypes.f64	[3.4028234663852886e+38, 2.0]	1.1579207543382391e+77
+Ops.EXP2	dtypes.f64	[0.0]	1.0
+Ops.EXP2	dtypes.f64	[-0.0]	1.0
+Ops.EXP2	dtypes.f64	[0.5]	1.4142135623730951
+Ops.EXP2	dtypes.f64	[-0.5]	0.7071067811865476
+Ops.EXP2	dtypes.f64	[1.0]	2.0
+Ops.EXP2	dtypes.f64	[-1.0]	0.5
+Ops.EXP2	dtypes.f64	[2.5]	5.656854249492381
+Ops.EXP2	dtypes.f64	[-2.5]	0.1767766952966369
+Ops.EXP2	dtypes.f64	[3.0]	8.0
+Ops.EXP2	dtypes.f64	[4.0]	16.0
+Ops.EXP2	dtypes.f64	[1e-45]	1.0
+Ops.EXP2	dtypes.f64	[1e+300]	inf
+Ops.EXP2	dtypes.f64	[65504.0]	inf
+Ops.EXP2	dtypes.f64	[65520.0]	inf
+Ops.EXP2	dtypes.f64	[3.4028235677973366e+38]	inf
+Ops.EXP2	dtypes.f64	[inf]	inf
+Ops.EXP2	dtypes.f64	[-inf]	0.0
+Ops.EXP2	dtypes.f64	[nan]	nan
+Ops.LOG2	dtypes.f64	[0.0]	-inf
+Ops.LOG2	dtypes.f64	[-0.0]	-inf
+Ops.LOG2	dtypes.f64	[0.5]	-1.0
+Ops.LOG2	dtypes.f64	[-0.5]	nan
+Ops.LOG2	dtypes.f64	[1.0]	0.0
+Ops.LOG2	dtypes.f64	[-1.0]	nan
+Ops.LOG2	dtypes.f64	[2.5]	1.3219280948873624
+Ops.LOG2	dtypes.f64	[-2.5]	nan
+Ops.LOG2	dtypes.f64	[3.0]	1.584962500721156
+Ops.LOG2	dtypes.f64	[4.0]	2.0
+Ops.LOG2	dtypes.f64	[1e-45]	-149.4867642699313
+Ops.LOG2	dtypes.f64	[1e+300]	996.5784284662087
+Ops.LOG2	dtypes.f64	[65504.0]	15.99929538702341
+Ops.LOG2	dtypes.f64	[65520.0]	15.99964773652837
+Ops.LOG2	dtypes.f64	[3.4028235677973366e+38]	127.99999995700433
+Ops.LOG2	dtypes.f64	[inf]	inf
+Ops.LOG2	dtypes.f64	[-inf]	nan
+Ops.LOG2	dtypes.f64	[nan]	nan
+Ops.SIN	dtypes.f64	[0.0]	0.0
+Ops.SIN	dtypes.f64	[-0.0]	-0.0
+Ops.SIN	dtypes.f64	[0.5]	0.479425538604203
+Ops.SIN	dtypes.f64	[-0.5]	-0.479425538604203
+Ops.SIN	dtypes.f64	[1.0]	0.8414709848078965
+Ops.SIN	dtypes.f64	[-1.0]	-0.8414709848078965
+Ops.SIN	dtypes.f64	[2.5]	0.5984721441039565
+Ops.SIN	dtypes.f64	[-2.5]	-0.5984721441039565
+Ops.SIN	dtypes.f64	[3.0]	0.1411200080598672
+Ops.SIN	dtypes.f64	[4.0]	-0.7568024953079282
+Ops.SIN	dtypes.f64	[1e-45]	1e-45
+Ops.SIN	dtypes.f64	[1e+300]	-0.8178819121159085
+Ops.SIN	dtypes.f64	[65504.0]	0.9753761096791481
+Ops.SIN	dtypes.f64	[65520.0]	-0.8705816617294938
+Ops.SIN	dtypes.f64	[3.4028235677973366e+38]	-0.3880735264887125
+Ops.SIN	dtypes.f64	[inf]	nan
+Ops.SIN	dtypes.f64	[-inf]	nan
+Ops.SIN	dtypes.f64	[nan]	nan
+Ops.SQRT	dtypes.f64	[0.0]	0.0
+Ops.SQRT	dtypes.f64	[-0.0]	-0.0
+Ops.SQRT	dtypes.f64	[0.5]	0.7071067811865476
+Ops.SQRT	dtypes.f64	[-0.5]	nan
+Ops.SQRT	dtypes.f64	[1.0]	1.0
+Ops.SQRT	dtypes.f64	[-1.0]	nan
+Ops.SQRT	dtypes.f64	[2.5]	1.5811388300841898
+Ops.SQRT	dtypes.f64	[-2.5]	nan
+Ops.SQRT	dtypes.f64	[3.0]	1.7320508075688772
+Ops.SQRT	dtypes.f64	[4.0]	2.0
+Ops.SQRT	dtypes.f64	[1e-45]	3.1622776601683793e-23
+Ops.SQRT	dtypes.f64	[1e+300]	1e+150
+Ops.SQRT	dtypes.f64	[65504.0]	255.93749236874226
+Ops.SQRT	dtypes.f64	[65520.0]	255.9687480924185
+Ops.SQRT	dtypes.f64	[3.4028235677973366e+38]	1.8446743798831643e+19
+Ops.SQRT	dtypes.f64	[inf]	inf
+Ops.SQRT	dtypes.f64	[-inf]	nan
+Ops.SQRT	dtypes.f64	[nan]	nan
+Ops.RECIP	dtypes.f64	[0.0]	inf
+Ops.RECIP	dtypes.f64	[-0.0]	-inf
+Ops.RECIP	dtypes.f64	[0.5]	2.0
+Ops.RECIP	dtypes.f64	[-0.5]	-2.0
+Ops.RECIP	dtypes.f64	[1.0]	1.0
+Ops.RECIP	dtypes.f64	[-1.0]	-1.0
+Ops.RECIP	dtypes.f64	[2.5]	0.4
+Ops.RECIP	dtypes.f64	[-2.5]	-0.4
+Ops.RECIP	dtypes.f64	[3.0]	0.3333333333333333
+Ops.RECIP	dtypes.f64	[4.0]	0.25
+Ops.RECIP	dtypes.f64	[1e-45]	1.0000000000000001e+45
+Ops.RECIP	dtypes.f64	[1e+300]	1e-300
+Ops.RECIP	dtypes.f64	[65504.0]	1.5266243282852955e-05
+Ops.RECIP	dtypes.f64	[65520.0]	1.5262515262515263e-05
+Ops.RECIP	dtypes.f64	[3.4028235677973366e+38]	2.9387359646368754e-39
+Ops.RECIP	dtypes.f64	[inf]	0.0
+Ops.RECIP	dtypes.f64	[-inf]	-0.0
+Ops.RECIP	dtypes.f64	[nan]	nan
+Ops.TRUNC	dtypes.f64	[0.0]	0.0
+Ops.TRUNC	dtypes.f64	[-0.0]	-0.0
+Ops.TRUNC	dtypes.f64	[0.5]	0.0
+Ops.TRUNC	dtypes.f64	[-0.5]	-0.0
+Ops.TRUNC	dtypes.f64	[1.0]	1.0
+Ops.TRUNC	dtypes.f64	[-1.0]	-1.0
+Ops.TRUNC	dtypes.f64	[2.5]	2.0
+Ops.TRUNC	dtypes.f64	[-2.5]	-2.0
+Ops.TRUNC	dtypes.f64	[3.0]	3.0
+Ops.TRUNC	dtypes.f64	[4.0]	4.0
+Ops.TRUNC	dtypes.f64	[1e-45]	0.0
+Ops.TRUNC	dtypes.f64	[1e+300]	1e+300
+Ops.TRUNC	dtypes.f64	[65504.0]	65504.0
+Ops.TRUNC	dtypes.f64	[65520.0]	65520.0
+Ops.TRUNC	dtypes.f64	[3.4028235677973366e+38]	3.4028235677973366e+38
+Ops.TRUNC	dtypes.f64	[inf]	inf
+Ops.TRUNC	dtypes.f64	[-inf]	-inf
+Ops.TRUNC	dtypes.f64	[nan]	nan
+Ops.NEG	dtypes.f64	[0.0]	-0.0
+Ops.NEG	dtypes.f64	[-0.0]	0.0
+Ops.NEG	dtypes.f64	[0.5]	-0.5
+Ops.NEG	dtypes.f64	[-0.5]	0.5
+Ops.NEG	dtypes.f64	[1.0]	-1.0
+Ops.NEG	dtypes.f64	[-1.0]	1.0
+Ops.NEG	dtypes.f64	[2.5]	-2.5
+Ops.NEG	dtypes.f64	[-2.5]	2.5
+Ops.NEG	dtypes.f64	[3.0]	-3.0
+Ops.NEG	dtypes.f64	[4.0]	-4.0
+Ops.NEG	dtypes.f64	[1e-45]	-1e-45
+Ops.NEG	dtypes.f64	[1e+300]	-1e+300
+Ops.NEG	dtypes.f64	[65504.0]	-65504.0
+Ops.NEG	dtypes.f64	[65520.0]	-65520.0
+Ops.NEG	dtypes.f64	[3.4028235677973366e+38]	-3.4028235677973366e+38
+Ops.NEG	dtypes.f64	[inf]	-inf
+Ops.NEG	dtypes.f64	[-inf]	inf
+Ops.NEG	dtypes.f64	[nan]	nan
+Ops.TRUNCDIV	dtypes.f64	[7.5, 2.0]	3.0
+Ops.TRUNCDIV	dtypes.f64	[-7.5, 2.0]	-3.0
+Ops.TRUNCDIV	dtypes.f64	[7.5, -2.0]	-3.0
+Ops.TRUNCDIV	dtypes.f64	[1.0, 0.0]	0.0
+Ops.TRUNCDIV	dtypes.f64	[-0.5, 3.0]	-0.0
+Ops.TRUNCMOD	dtypes.f64	[7.5, 2.0]	1.5
+Ops.TRUNCMOD	dtypes.f64	[-7.5, 2.0]	-1.5
+Ops.TRUNCMOD	dtypes.f64	[7.5, -2.0]	1.5
+Ops.TRUNCMOD	dtypes.f64	[1.0, 0.0]	1.0
+Ops.TRUNCMOD	dtypes.f64	[-0.5, 3.0]	-0.5
+Ops.DIV	dtypes.f64	[7.5, 2.0]	3.0
+Ops.DIV	dtypes.f64	[-7.5, 2.0]	-4.0
+Ops.DIV	dtypes.f64	[7.5, -2.0]	-4.0
+Ops.DIV	dtypes.f64	[1.0, 0.0]	0.0
+Ops.DIV	dtypes.f64	[-0.5, 3.0]	-1.0
+Ops.MOD	dtypes.f64	[7.5, 2.0]	1.5
+Ops.MOD	dtypes.f64	[-7.5, 2.0]	0.5
+Ops.MOD	dtypes.f64	[7.5, -2.0]	-0.5
+Ops.MOD	dtypes.f64	[1.0, 0.0]	1.0
+Ops.MOD	dtypes.f64	[-0.5, 3.0]	2.5
+Ops.MULACC	dtypes.f64	[1.5, 2.0, 0.25]	3.25
+Ops.WHERE	dtypes.f64	[True, 2.2, 4.5]	2.2
+Ops.WHERE	dtypes.f64	[False, 2.2, 4.5]	4.5
+Ops.ADD	dtypes.weakfloat	[0.0, 0.0]	0.0
+Ops.ADD	dtypes.weakfloat	[1.0, -0.0]	1.0
+Ops.ADD	dtypes.weakfloat	[-0.0, 0.0]	0.0
+Ops.ADD	dtypes.weakfloat	[1.5, 2.5]	4.0
+Ops.ADD	dtypes.weakfloat	[-2.5, 0.5]	-2.0
+Ops.ADD	dtypes.weakfloat	[7.0, 3.0]	10.0
+Ops.ADD	dtypes.weakfloat	[2.0, 0.5]	2.5
+Ops.ADD	dtypes.weakfloat	[1e+300, 1e+300]	2e+300
+Ops.ADD	dtypes.weakfloat	[-1e+300, 1e+300]	0.0
+Ops.ADD	dtypes.weakfloat	[65504.0, 32.0]	65536.0
+Ops.ADD	dtypes.weakfloat	[inf, 1.0]	inf
+Ops.ADD	dtypes.weakfloat	[1.0, inf]	inf
+Ops.ADD	dtypes.weakfloat	[-inf, inf]	nan
+Ops.ADD	dtypes.weakfloat	[nan, 1.0]	nan
+Ops.ADD	dtypes.weakfloat	[1.0, nan]	nan
+Ops.ADD	dtypes.weakfloat	[0.1, 0.2]	0.30000000000000004
+Ops.ADD	dtypes.weakfloat	[3.4028234663852886e+38, 2.0]	3.4028234663852886e+38
+Ops.SUB	dtypes.weakfloat	[0.0, 0.0]	0.0
+Ops.SUB	dtypes.weakfloat	[1.0, -0.0]	1.0
+Ops.SUB	dtypes.weakfloat	[-0.0, 0.0]	-0.0
+Ops.SUB	dtypes.weakfloat	[1.5, 2.5]	-1.0
+Ops.SUB	dtypes.weakfloat	[-2.5, 0.5]	-3.0
+Ops.SUB	dtypes.weakfloat	[7.0, 3.0]	4.0
+Ops.SUB	dtypes.weakfloat	[2.0, 0.5]	1.5
+Ops.SUB	dtypes.weakfloat	[1e+300, 1e+300]	0.0
+Ops.SUB	dtypes.weakfloat	[-1e+300, 1e+300]	-2e+300
+Ops.SUB	dtypes.weakfloat	[65504.0, 32.0]	65472.0
+Ops.SUB	dtypes.weakfloat	[inf, 1.0]	inf
+Ops.SUB	dtypes.weakfloat	[1.0, inf]	-inf
+Ops.SUB	dtypes.weakfloat	[-inf, inf]	-inf
+Ops.SUB	dtypes.weakfloat	[nan, 1.0]	nan
+Ops.SUB	dtypes.weakfloat	[1.0, nan]	nan
+Ops.SUB	dtypes.weakfloat	[0.1, 0.2]	-0.1
+Ops.SUB	dtypes.weakfloat	[3.4028234663852886e+38, 2.0]	3.4028234663852886e+38
+Ops.MUL	dtypes.weakfloat	[0.0, 0.0]	0.0
+Ops.MUL	dtypes.weakfloat	[1.0, -0.0]	-0.0
+Ops.MUL	dtypes.weakfloat	[-0.0, 0.0]	-0.0
+Ops.MUL	dtypes.weakfloat	[1.5, 2.5]	3.75
+Ops.MUL	dtypes.weakfloat	[-2.5, 0.5]	-1.25
+Ops.MUL	dtypes.weakfloat	[7.0, 3.0]	21.0
+Ops.MUL	dtypes.weakfloat	[2.0, 0.5]	1.0
+Ops.MUL	dtypes.weakfloat	[1e+300, 1e+300]	inf
+Ops.MUL	dtypes.weakfloat	[-1e+300, 1e+300]	-inf
+Ops.MUL	dtypes.weakfloat	[65504.0, 32.0]	2096128.0
+Ops.MUL	dtypes.weakfloat	[inf, 1.0]	inf
+Ops.MUL	dtypes.weakfloat	[1.0, inf]	inf
+Ops.MUL	dtypes.weakfloat	[-inf, inf]	-inf
+Ops.MUL	dtypes.weakfloat	[nan, 1.0]	nan
+Ops.MUL	dtypes.weakfloat	[1.0, nan]	nan
+Ops.MUL	dtypes.weakfloat	[0.1, 0.2]	0.020000000000000004
+Ops.MUL	dtypes.weakfloat	[3.4028234663852886e+38, 2.0]	6.805646932770577e+38
+Ops.FDIV	dtypes.weakfloat	[0.0, 0.0]	nan
+Ops.FDIV	dtypes.weakfloat	[1.0, -0.0]	-inf
+Ops.FDIV	dtypes.weakfloat	[-0.0, 0.0]	nan
+Ops.FDIV	dtypes.weakfloat	[1.5, 2.5]	0.6
+Ops.FDIV	dtypes.weakfloat	[-2.5, 0.5]	-5.0
+Ops.FDIV	dtypes.weakfloat	[7.0, 3.0]	2.3333333333333335
+Ops.FDIV	dtypes.weakfloat	[2.0, 0.5]	4.0
+Ops.FDIV	dtypes.weakfloat	[1e+300, 1e+300]	1.0
+Ops.FDIV	dtypes.weakfloat	[-1e+300, 1e+300]	-1.0
+Ops.FDIV	dtypes.weakfloat	[65504.0, 32.0]	2047.0
+Ops.FDIV	dtypes.weakfloat	[inf, 1.0]	inf
+Ops.FDIV	dtypes.weakfloat	[1.0, inf]	0.0
+Ops.FDIV	dtypes.weakfloat	[-inf, inf]	nan
+Ops.FDIV	dtypes.weakfloat	[nan, 1.0]	nan
+Ops.FDIV	dtypes.weakfloat	[1.0, nan]	nan
+Ops.FDIV	dtypes.weakfloat	[0.1, 0.2]	0.5
+Ops.FDIV	dtypes.weakfloat	[3.4028234663852886e+38, 2.0]	1.7014117331926443e+38
+Ops.MAX	dtypes.weakfloat	[0.0, 0.0]	0.0
+Ops.MAX	dtypes.weakfloat	[1.0, -0.0]	1.0
+Ops.MAX	dtypes.weakfloat	[-0.0, 0.0]	-0.0
+Ops.MAX	dtypes.weakfloat	[1.5, 2.5]	2.5
+Ops.MAX	dtypes.weakfloat	[-2.5, 0.5]	0.5
+Ops.MAX	dtypes.weakfloat	[7.0, 3.0]	7.0
+Ops.MAX	dtypes.weakfloat	[2.0, 0.5]	2.0
+Ops.MAX	dtypes.weakfloat	[1e+300, 1e+300]	1e+300
+Ops.MAX	dtypes.weakfloat	[-1e+300, 1e+300]	1e+300
+Ops.MAX	dtypes.weakfloat	[65504.0, 32.0]	65504.0
+Ops.MAX	dtypes.weakfloat	[inf, 1.0]	inf
+Ops.MAX	dtypes.weakfloat	[1.0, inf]	inf
+Ops.MAX	dtypes.weakfloat	[-inf, inf]	inf
+Ops.MAX	dtypes.weakfloat	[nan, 1.0]	nan
+Ops.MAX	dtypes.weakfloat	[1.0, nan]	1.0
+Ops.MAX	dtypes.weakfloat	[0.1, 0.2]	0.2
+Ops.MAX	dtypes.weakfloat	[3.4028234663852886e+38, 2.0]	3.4028234663852886e+38
+Ops.POW	dtypes.weakfloat	[0.0, 0.0]	1.0
+Ops.POW	dtypes.weakfloat	[1.0, -0.0]	1.0
+Ops.POW	dtypes.weakfloat	[-0.0, 0.0]	1.0
+Ops.POW	dtypes.weakfloat	[1.5, 2.5]	2.7556759606310752
+Ops.POW	dtypes.weakfloat	[-2.5, 0.5]	nan
+Ops.POW	dtypes.weakfloat	[7.0, 3.0]	343.0
+Ops.POW	dtypes.weakfloat	[2.0, 0.5]	1.4142135623730951
+Ops.POW	dtypes.weakfloat	[65504.0, 32.0]	1.319988876500852e+154
+Ops.POW	dtypes.weakfloat	[inf, 1.0]	inf
+Ops.POW	dtypes.weakfloat	[1.0, inf]	1.0
+Ops.POW	dtypes.weakfloat	[-inf, inf]	inf
+Ops.POW	dtypes.weakfloat	[nan, 1.0]	nan
+Ops.POW	dtypes.weakfloat	[1.0, nan]	1.0
+Ops.POW	dtypes.weakfloat	[0.1, 0.2]	0.6309573444801932
+Ops.POW	dtypes.weakfloat	[3.4028234663852886e+38, 2.0]	1.1579207543382391e+77
+Ops.EXP2	dtypes.weakfloat	[0.0]	1.0
+Ops.EXP2	dtypes.weakfloat	[-0.0]	1.0
+Ops.EXP2	dtypes.weakfloat	[0.5]	1.4142135623730951
+Ops.EXP2	dtypes.weakfloat	[-0.5]	0.7071067811865476
+Ops.EXP2	dtypes.weakfloat	[1.0]	2.0
+Ops.EXP2	dtypes.weakfloat	[-1.0]	0.5
+Ops.EXP2	dtypes.weakfloat	[2.5]	5.656854249492381
+Ops.EXP2	dtypes.weakfloat	[-2.5]	0.1767766952966369
+Ops.EXP2	dtypes.weakfloat	[3.0]	8.0
+Ops.EXP2	dtypes.weakfloat	[4.0]	16.0
+Ops.EXP2	dtypes.weakfloat	[1e-45]	1.0
+Ops.EXP2	dtypes.weakfloat	[1e+300]	inf
+Ops.EXP2	dtypes.weakfloat	[65504.0]	inf
+Ops.EXP2	dtypes.weakfloat	[65520.0]	inf
+Ops.EXP2	dtypes.weakfloat	[3.4028235677973366e+38]	inf
+Ops.EXP2	dtypes.weakfloat	[inf]	inf
+Ops.EXP2	dtypes.weakfloat	[-inf]	0.0
+Ops.EXP2	dtypes.weakfloat	[nan]	nan
+Ops.LOG2	dtypes.weakfloat	[0.0]	-inf
+Ops.LOG2	dtypes.weakfloat	[-0.0]	-inf
+Ops.LOG2	dtypes.weakfloat	[0.5]	-1.0
+Ops.LOG2	dtypes.weakfloat	[-0.5]	nan
+Ops.LOG2	dtypes.weakfloat	[1.0]	0.0
+Ops.LOG2	dtypes.weakfloat	[-1.0]	nan
+Ops.LOG2	dtypes.weakfloat	[2.5]	1.3219280948873624
+Ops.LOG2	dtypes.weakfloat	[-2.5]	nan
+Ops.LOG2	dtypes.weakfloat	[3.0]	1.584962500721156
+Ops.LOG2	dtypes.weakfloat	[4.0]	2.0
+Ops.LOG2	dtypes.weakfloat	[1e-45]	-149.4867642699313
+Ops.LOG2	dtypes.weakfloat	[1e+300]	996.5784284662087
+Ops.LOG2	dtypes.weakfloat	[65504.0]	15.99929538702341
+Ops.LOG2	dtypes.weakfloat	[65520.0]	15.99964773652837
+Ops.LOG2	dtypes.weakfloat	[3.4028235677973366e+38]	127.99999995700433
+Ops.LOG2	dtypes.weakfloat	[inf]	inf
+Ops.LOG2	dtypes.weakfloat	[-inf]	nan
+Ops.LOG2	dtypes.weakfloat	[nan]	nan
+Ops.SIN	dtypes.weakfloat	[0.0]	0.0
+Ops.SIN	dtypes.weakfloat	[-0.0]	-0.0
+Ops.SIN	dtypes.weakfloat	[0.5]	0.479425538604203
+Ops.SIN	dtypes.weakfloat	[-0.5]	-0.479425538604203
+Ops.SIN	dtypes.weakfloat	[1.0]	0.8414709848078965
+Ops.SIN	dtypes.weakfloat	[-1.0]	-0.8414709848078965
+Ops.SIN	dtypes.weakfloat	[2.5]	0.5984721441039565
+Ops.SIN	dtypes.weakfloat	[-2.5]	-0.5984721441039565
+Ops.SIN	dtypes.weakfloat	[3.0]	0.1411200080598672
+Ops.SIN	dtypes.weakfloat	[4.0]	-0.7568024953079282
+Ops.SIN	dtypes.weakfloat	[1e-45]	1e-45
+Ops.SIN	dtypes.weakfloat	[1e+300]	-0.8178819121159085
+Ops.SIN	dtypes.weakfloat	[65504.0]	0.9753761096791481
+Ops.SIN	dtypes.weakfloat	[65520.0]	-0.8705816617294938
+Ops.SIN	dtypes.weakfloat	[3.4028235677973366e+38]	-0.3880735264887125
+Ops.SIN	dtypes.weakfloat	[inf]	nan
+Ops.SIN	dtypes.weakfloat	[-inf]	nan
+Ops.SIN	dtypes.weakfloat	[nan]	nan
+Ops.SQRT	dtypes.weakfloat	[0.0]	0.0
+Ops.SQRT	dtypes.weakfloat	[-0.0]	-0.0
+Ops.SQRT	dtypes.weakfloat	[0.5]	0.7071067811865476
+Ops.SQRT	dtypes.weakfloat	[-0.5]	nan
+Ops.SQRT	dtypes.weakfloat	[1.0]	1.0
+Ops.SQRT	dtypes.weakfloat	[-1.0]	nan
+Ops.SQRT	dtypes.weakfloat	[2.5]	1.5811388300841898
+Ops.SQRT	dtypes.weakfloat	[-2.5]	nan
+Ops.SQRT	dtypes.weakfloat	[3.0]	1.7320508075688772
+Ops.SQRT	dtypes.weakfloat	[4.0]	2.0
+Ops.SQRT	dtypes.weakfloat	[1e-45]	3.1622776601683793e-23
+Ops.SQRT	dtypes.weakfloat	[1e+300]	1e+150
+Ops.SQRT	dtypes.weakfloat	[65504.0]	255.93749236874226
+Ops.SQRT	dtypes.weakfloat	[65520.0]	255.9687480924185
+Ops.SQRT	dtypes.weakfloat	[3.4028235677973366e+38]	1.8446743798831643e+19
+Ops.SQRT	dtypes.weakfloat	[inf]	inf
+Ops.SQRT	dtypes.weakfloat	[-inf]	nan
+Ops.SQRT	dtypes.weakfloat	[nan]	nan
+Ops.RECIP	dtypes.weakfloat	[0.0]	inf
+Ops.RECIP	dtypes.weakfloat	[-0.0]	-inf
+Ops.RECIP	dtypes.weakfloat	[0.5]	2.0
+Ops.RECIP	dtypes.weakfloat	[-0.5]	-2.0
+Ops.RECIP	dtypes.weakfloat	[1.0]	1.0
+Ops.RECIP	dtypes.weakfloat	[-1.0]	-1.0
+Ops.RECIP	dtypes.weakfloat	[2.5]	0.4
+Ops.RECIP	dtypes.weakfloat	[-2.5]	-0.4
+Ops.RECIP	dtypes.weakfloat	[3.0]	0.3333333333333333
+Ops.RECIP	dtypes.weakfloat	[4.0]	0.25
+Ops.RECIP	dtypes.weakfloat	[1e-45]	1.0000000000000001e+45
+Ops.RECIP	dtypes.weakfloat	[1e+300]	1e-300
+Ops.RECIP	dtypes.weakfloat	[65504.0]	1.5266243282852955e-05
+Ops.RECIP	dtypes.weakfloat	[65520.0]	1.5262515262515263e-05
+Ops.RECIP	dtypes.weakfloat	[3.4028235677973366e+38]	2.9387359646368754e-39
+Ops.RECIP	dtypes.weakfloat	[inf]	0.0
+Ops.RECIP	dtypes.weakfloat	[-inf]	-0.0
+Ops.RECIP	dtypes.weakfloat	[nan]	nan
+Ops.TRUNC	dtypes.weakfloat	[0.0]	0.0
+Ops.TRUNC	dtypes.weakfloat	[-0.0]	-0.0
+Ops.TRUNC	dtypes.weakfloat	[0.5]	0.0
+Ops.TRUNC	dtypes.weakfloat	[-0.5]	-0.0
+Ops.TRUNC	dtypes.weakfloat	[1.0]	1.0
+Ops.TRUNC	dtypes.weakfloat	[-1.0]	-1.0
+Ops.TRUNC	dtypes.weakfloat	[2.5]	2.0
+Ops.TRUNC	dtypes.weakfloat	[-2.5]	-2.0
+Ops.TRUNC	dtypes.weakfloat	[3.0]	3.0
+Ops.TRUNC	dtypes.weakfloat	[4.0]	4.0
+Ops.TRUNC	dtypes.weakfloat	[1e-45]	0.0
+Ops.TRUNC	dtypes.weakfloat	[1e+300]	1e+300
+Ops.TRUNC	dtypes.weakfloat	[65504.0]	65504.0
+Ops.TRUNC	dtypes.weakfloat	[65520.0]	65520.0
+Ops.TRUNC	dtypes.weakfloat	[3.4028235677973366e+38]	3.4028235677973366e+38
+Ops.TRUNC	dtypes.weakfloat	[inf]	inf
+Ops.TRUNC	dtypes.weakfloat	[-inf]	-inf
+Ops.TRUNC	dtypes.weakfloat	[nan]	nan
+Ops.NEG	dtypes.weakfloat	[0.0]	-0.0
+Ops.NEG	dtypes.weakfloat	[-0.0]	0.0
+Ops.NEG	dtypes.weakfloat	[0.5]	-0.5
+Ops.NEG	dtypes.weakfloat	[-0.5]	0.5
+Ops.NEG	dtypes.weakfloat	[1.0]	-1.0
+Ops.NEG	dtypes.weakfloat	[-1.0]	1.0
+Ops.NEG	dtypes.weakfloat	[2.5]	-2.5
+Ops.NEG	dtypes.weakfloat	[-2.5]	2.5
+Ops.NEG	dtypes.weakfloat	[3.0]	-3.0
+Ops.NEG	dtypes.weakfloat	[4.0]	-4.0
+Ops.NEG	dtypes.weakfloat	[1e-45]	-1e-45
+Ops.NEG	dtypes.weakfloat	[1e+300]	-1e+300
+Ops.NEG	dtypes.weakfloat	[65504.0]	-65504.0
+Ops.NEG	dtypes.weakfloat	[65520.0]	-65520.0
+Ops.NEG	dtypes.weakfloat	[3.4028235677973366e+38]	-3.4028235677973366e+38
+Ops.NEG	dtypes.weakfloat	[inf]	-inf
+Ops.NEG	dtypes.weakfloat	[-inf]	inf
+Ops.NEG	dtypes.weakfloat	[nan]	nan
+Ops.TRUNCDIV	dtypes.weakfloat	[7.5, 2.0]	3.0
+Ops.TRUNCDIV	dtypes.weakfloat	[-7.5, 2.0]	-3.0
+Ops.TRUNCDIV	dtypes.weakfloat	[7.5, -2.0]	-3.0
+Ops.TRUNCDIV	dtypes.weakfloat	[-0.5, 3.0]	-0.0
+Ops.TRUNCMOD	dtypes.weakfloat	[7.5, 2.0]	1.5
+Ops.TRUNCMOD	dtypes.weakfloat	[-7.5, 2.0]	-1.5
+Ops.TRUNCMOD	dtypes.weakfloat	[7.5, -2.0]	1.5
+Ops.TRUNCMOD	dtypes.weakfloat	[1.0, 0.0]	1.0
+Ops.TRUNCMOD	dtypes.weakfloat	[-0.5, 3.0]	-0.5
+Ops.DIV	dtypes.weakfloat	[7.5, 2.0]	3.0
+Ops.DIV	dtypes.weakfloat	[-7.5, 2.0]	-4.0
+Ops.DIV	dtypes.weakfloat	[7.5, -2.0]	-4.0
+Ops.DIV	dtypes.weakfloat	[-0.5, 3.0]	-1.0
+Ops.MOD	dtypes.weakfloat	[7.5, 2.0]	1.5
+Ops.MOD	dtypes.weakfloat	[-7.5, 2.0]	0.5
+Ops.MOD	dtypes.weakfloat	[7.5, -2.0]	-0.5
+Ops.MOD	dtypes.weakfloat	[1.0, 0.0]	1.0
+Ops.MOD	dtypes.weakfloat	[-0.5, 3.0]	2.5
+Ops.MULACC	dtypes.weakfloat	[1.5, 2.0, 0.25]	3.25
+Ops.WHERE	dtypes.weakfloat	[True, 2.2, 4.5]	2.2
+Ops.WHERE	dtypes.weakfloat	[False, 2.2, 4.5]	4.5
+Ops.ADD	dtypes.bool	[False, False]	False
+Ops.ADD	dtypes.bool	[False, True]	True
+Ops.ADD	dtypes.bool	[True, False]	True
+Ops.ADD	dtypes.bool	[True, True]	True
+Ops.MUL	dtypes.bool	[False, False]	False
+Ops.MUL	dtypes.bool	[False, True]	False
+Ops.MUL	dtypes.bool	[True, False]	False
+Ops.MUL	dtypes.bool	[True, True]	True
+Ops.AND	dtypes.bool	[False, False]	False
+Ops.AND	dtypes.bool	[False, True]	False
+Ops.AND	dtypes.bool	[True, False]	False
+Ops.AND	dtypes.bool	[True, True]	True
+Ops.OR	dtypes.bool	[False, False]	False
+Ops.OR	dtypes.bool	[False, True]	True
+Ops.OR	dtypes.bool	[True, False]	True
+Ops.OR	dtypes.bool	[True, True]	True
+Ops.XOR	dtypes.bool	[False, False]	False
+Ops.XOR	dtypes.bool	[False, True]	True
+Ops.XOR	dtypes.bool	[True, False]	True
+Ops.XOR	dtypes.bool	[True, True]	False
+Ops.MAX	dtypes.bool	[False, False]	False
+Ops.MAX	dtypes.bool	[False, True]	True
+Ops.MAX	dtypes.bool	[True, False]	True
+Ops.MAX	dtypes.bool	[True, True]	True
+Ops.CMPLT	dtypes.bool	[False, False]	False
+Ops.CMPLT	dtypes.bool	[False, True]	True
+Ops.CMPLT	dtypes.bool	[True, False]	False
+Ops.CMPLT	dtypes.bool	[True, True]	False
+Ops.CMPNE	dtypes.bool	[False, False]	False
+Ops.CMPNE	dtypes.bool	[False, True]	True
+Ops.CMPNE	dtypes.bool	[True, False]	True
+Ops.CMPNE	dtypes.bool	[True, True]	False
+Ops.CMPEQ	dtypes.bool	[False, False]	True
+Ops.CMPEQ	dtypes.bool	[False, True]	False
+Ops.CMPEQ	dtypes.bool	[True, False]	False
+Ops.CMPEQ	dtypes.bool	[True, True]	True
+Ops.NEG	dtypes.bool	[True]	True
+Ops.WHERE	dtypes.bool	[False, False, True]	True
+Ops.WHERE	dtypes.bool	[True, False, True]	False
+Ops.SIN	dtypes.f64	[3.141592653589793]	1.2246467991473532e-16
+Ops.SIN	dtypes.f64	[-3.141592653589793]	-1.2246467991473532e-16
+Ops.SIN	dtypes.f64	[3216.990877275948]	-1.2540383223268897e-13
+Ops.SIN	dtypes.f64	[3373259426.1305046]	-1.314954487872237e-07
+Ops.SIN	dtypes.f64	[1e+22]	-0.8522008497671888
+Ops.SIN	dtypes.f64	[0.259]	0.2561140335348204
+Ops.SIN	dtypes.f64	[1.622]	0.9986893783134531
+Ops.SIN	dtypes.f64	[3.226]	-0.08430715400990031
+Ops.SIN	dtypes.f64	[8.85]	0.5436484436660883
+Ops.LOG2	dtypes.f64	[0.86]	-0.21759143507262677
+Ops.LOG2	dtypes.f64	[0.898]	-0.15521264992094005
+Ops.LOG2	dtypes.f64	[1.022]	0.031395196275534325
+Ops.LOG2	dtypes.f64	[1.0000000000000002]	3.203426503814917e-16
+Ops.LOG2	dtypes.f64	[0.9999999999999999]	-1.6017132519074588e-16
+Ops.LOG2	dtypes.f64	[1e-310]	-1029.7977094150824
+Ops.LOG2	dtypes.f64	[2.5e-308]	-1021.8319251304202
+Ops.LOG2	dtypes.f64	[1e+308]	1023.1538532253076
+Ops.LOG2	dtypes.f64	[11505236063118821809467553221049758295155052665230762065499525194094891251552061640493342548634082305351687288311769174890162545204122663839542235560926343960177145179191391057683342054479750023644997308933440369205641643669917624414330439074612943178454432683813523087356623740062701843509462805095950344781825]	1030.0
+Ops.EXP2	dtypes.f64	[-0.338]	0.7911373011854498
+Ops.EXP2	dtypes.f64	[1.523]	2.8738803530881265
+Ops.EXP2	dtypes.f64	[4.419]	21.392007926482137
+Ops.EXP2	dtypes.f64	[-1074.5]	5e-324
+Ops.EXP2	dtypes.f64	[-1075.5]	0.0
+Ops.EXP2	dtypes.f64	[-1022.3]	1.8073215736421466e-308
+Ops.EXP2	dtypes.f64	[1023.9999999999999]	1.7976931348621742e+308
+Ops.EXP2	dtypes.f64	[1e-300]	1.0
+Ops.EXP2	dtypes.f64	[-1e-300]	1.0
+Ops.POW	dtypes.f64	[5.2, 9.6]	7475359.76843132
+Ops.POW	dtypes.f64	[5.4, 0.8]	3.854029263008983
+Ops.POW	dtypes.f64	[15.0, 3.5]	13071.318793450031
+Ops.POW	dtypes.f64	[1.0000000000000002, 1.152921504606847e+18]	1.5114276650040605e+111
+Ops.POW	dtypes.f64	[0.9999999999999999, -2.305843009213694e+18]	1.5114276650041252e+111
+Ops.POW	dtypes.f64	[-3.7, 5.0]	-693.4395700000001
+Ops.POW	dtypes.f64	[10.0, -320.5]	3.16e-321
+Ops.POW	dtypes.f64	[0.1, 3.0]	0.0010000000000000002
+Ops.POW	dtypes.f64	[134217727.0, 2.0]	1.8014398241046528e+16
+Ops.POW	dtypes.f64	[68718952449.0, 1.5]	1.8014192351838208e+16
+Ops.POW	dtypes.f64	[6.25, 1.5]	15.625
+Ops.POW	dtypes.f64	[4.0, 0.25]	1.4142135623730951
+Ops.POW	dtypes.f64	[2.0, -1074.5]	5e-324
+Ops.POW	dtypes.f64	[0.5, 1e-300]	1.0
+Ops.EXP2	dtypes.f32	[0]	1.0
+Ops.EXP2	dtypes.f32	[1]	2.0
+Ops.EXP2	dtypes.f32	[4]	16.0
+Ops.EXP2	dtypes.f32	[8]	256.0
+Ops.EXP2	dtypes.f32	[-3]	0.125
+Ops.EXP2	dtypes.f32	[7]	128.0
+Ops.LOG2	dtypes.f32	[0]	-inf
+Ops.LOG2	dtypes.f32	[1]	0.0
+Ops.LOG2	dtypes.f32	[4]	2.0
+Ops.LOG2	dtypes.f32	[8]	3.0
+Ops.LOG2	dtypes.f32	[-3]	nan
+Ops.LOG2	dtypes.f32	[7]	2.8073549270629883
+Ops.SIN	dtypes.f32	[0]	0.0
+Ops.SIN	dtypes.f32	[1]	0.8414709568023682
+Ops.SIN	dtypes.f32	[4]	-0.756802499294281
+Ops.SIN	dtypes.f32	[8]	0.9893582463264465
+Ops.SIN	dtypes.f32	[-3]	-0.14112000167369843
+Ops.SIN	dtypes.f32	[7]	0.6569865942001343
+Ops.SQRT	dtypes.f32	[0]	0.0
+Ops.SQRT	dtypes.f32	[1]	1.0
+Ops.SQRT	dtypes.f32	[4]	2.0
+Ops.SQRT	dtypes.f32	[8]	2.8284270763397217
+Ops.SQRT	dtypes.f32	[-3]	nan
+Ops.SQRT	dtypes.f32	[7]	2.6457512378692627
+Ops.RECIP	dtypes.f32	[0]	inf
+Ops.RECIP	dtypes.f32	[1]	1.0
+Ops.RECIP	dtypes.f32	[4]	0.25
+Ops.RECIP	dtypes.f32	[8]	0.125
+Ops.RECIP	dtypes.f32	[-3]	-0.3333333432674408
+Ops.RECIP	dtypes.f32	[7]	0.1428571492433548
+Ops.TRUNC	dtypes.f32	[0]	0.0
+Ops.TRUNC	dtypes.f32	[1]	1.0
+Ops.TRUNC	dtypes.f32	[4]	4.0
+Ops.TRUNC	dtypes.f32	[8]	8.0
+Ops.TRUNC	dtypes.f32	[-3]	-3.0
+Ops.TRUNC	dtypes.f32	[7]	7.0
+Ops.NEG	dtypes.f32	[0]	0.0
+Ops.NEG	dtypes.f32	[1]	-1.0
+Ops.NEG	dtypes.f32	[4]	-4.0
+Ops.NEG	dtypes.f32	[8]	-8.0
+Ops.NEG	dtypes.f32	[-3]	3.0
+Ops.NEG	dtypes.f32	[7]	-7.0
+Ops.POW	dtypes.weakint	[2, 3]	8
+Ops.POW	dtypes.weakint	[3, 0]	1
+Ops.POW	dtypes.weakint	[2, -1]	0
+Ops.POW	dtypes.weakint	[-2, -2]	0
+Ops.POW	dtypes.weakint	[0, 5]	0
+Ops.TRUNCDIV	dtypes.weakfloat	[7, 2.0]	3.0
+Ops.TRUNCDIV	dtypes.weakfloat	[-7.0, 2]	-3.0
+Ops.TRUNCDIV	dtypes.weakfloat	[7, -2.5]	-2.0
+Ops.DIV	dtypes.weakfloat	[7, 2.0]	3.0
+Ops.DIV	dtypes.weakfloat	[-7.0, 2]	-4.0
+Ops.DIV	dtypes.weakfloat	[7, -2.5]	-3.0
+Ops.TRUNCMOD	dtypes.weakfloat	[7, 2.0]	1.0
+Ops.TRUNCMOD	dtypes.weakfloat	[-7.0, 2]	-1.0
+Ops.TRUNCMOD	dtypes.weakfloat	[7, -2.5]	2.0
+Ops.MOD	dtypes.weakfloat	[7, 2.0]	1.0
+Ops.MOD	dtypes.weakfloat	[-7.0, 2]	1.0
+Ops.MOD	dtypes.weakfloat	[7, -2.5]	-0.5
+Ops.POW	dtypes.f64	[2, 3]	8.0
+Ops.POW	dtypes.f64	[0, 0]	1.0
+Ops.POW	dtypes.f64	[2.0, -1.0]	0.5
+Ops.POW	dtypes.f64	[0.0, -1.0]	inf
+Ops.POW	dtypes.f64	[-0.0, -1.0]	inf
+Ops.POW	dtypes.f64	[-8.0, 0.3333333333333333]	nan
+Ops.POW	dtypes.f64	[-2.0, 3.0]	-8.0
+Ops.POW	dtypes.f64	[-2.0, 0.5]	nan
+Ops.POW	dtypes.f64	[-inf, 0.5]	inf
+Ops.POW	dtypes.f64	[-inf, 3.0]	-inf
+Ops.POW	dtypes.f64	[-inf, -0.5]	0.0
+Ops.CMPEQ	dtypes.bool	[9007199254740993, 9007199254740992.0]	False
+Ops.CMPEQ	dtypes.bool	[9007199254740992.0, 9007199254740993]	False
+Ops.CMPEQ	dtypes.bool	[1, 1.0]	True
+Ops.CMPEQ	dtypes.bool	[True, 1]	True
+Ops.CMPEQ	dtypes.bool	[0, -0.0]	True
+Ops.CMPLT	dtypes.bool	[9007199254740993, 9007199254740992.0]	False
+Ops.CMPLT	dtypes.bool	[9007199254740992.0, 9007199254740993]	True
+Ops.CMPLT	dtypes.bool	[1, 1.0]	False
+Ops.CMPLT	dtypes.bool	[True, 1]	False
+Ops.CMPLT	dtypes.bool	[0, -0.0]	False
+Ops.CMPNE	dtypes.bool	[9007199254740993, 9007199254740992.0]	True
+Ops.CMPNE	dtypes.bool	[9007199254740992.0, 9007199254740993]	True
+Ops.CMPNE	dtypes.bool	[1, 1.0]	False
+Ops.CMPNE	dtypes.bool	[True, 1]	False
+Ops.CMPNE	dtypes.bool	[0, -0.0]	False
+Ops.ADD	dtypes.weakint	[Invalid, 1]	Invalid
+Ops.ADD	dtypes.weakint	[1, Invalid]	Invalid
+Ops.MUL	dtypes.i32	[Invalid, 1]	Invalid
+Ops.MUL	dtypes.i32	[1, Invalid]	Invalid
+Ops.CMPLT	dtypes.bool	[Invalid, 1]	Invalid
+Ops.CMPLT	dtypes.bool	[1, Invalid]	Invalid
+Ops.CMPNE	dtypes.bool	[Invalid, 1]	Invalid
+Ops.CMPNE	dtypes.bool	[1, Invalid]	Invalid
+Ops.MAX	dtypes.f32	[Invalid, 1]	Invalid
+Ops.MAX	dtypes.f32	[1, Invalid]	Invalid
+Ops.WHERE	dtypes.weakint	[True, Invalid, 1]	Invalid
+Ops.WHERE	dtypes.weakint	[False, Invalid, 1]	1
+Ops.THREEFRY	dtypes.u64	[1, 2]	raises KeyError
+Ops.SQRT	dtypes.f32	[Invalid]	raises TypeError
+Ops.ADD	dtypes.i32	[1]	raises TypeError
+Ops.WHERE	dtypes.i32	[True, 1]	raises TypeError

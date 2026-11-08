@@ -87,7 +87,13 @@ let reprs = lazy (Goldens.reprs ())
 let arguments =
   group "arguments"
     [
-      Golden.cases "reprs.golden" (fun cell ->
+      Golden.cases "reprs.golden"
+        ~differs:
+          [
+            ("D80", [ "name=kernel"; "name=kernel with opts" ]);
+            ("D77", [ "name=bufferize"; "name=bufferize without device" ]);
+          ]
+        (fun cell ->
           let u = List.assoc (cell "name") (Lazy.force reprs) in
           equal string (cell "arg") (str Ops.pp_arg (Ops.arg u)));
       test "reprs.golden names every argument the suite builds" (fun () ->
@@ -750,7 +756,9 @@ let data_types =
           equal dtype Int32
             (Ops.promo_dtype [ var ~dtype:Int8 "a" 0 1; var "b" 0 1 ]);
           equal dtype Weak_int (Ops.promo_dtype [ Ops.int 1; Ops.int 2 ]));
-      Golden.cases "identities.golden" ~key:[ "op"; "dtype" ] (fun cell ->
+      Golden.cases "identities.golden" ~key:[ "op"; "dtype" ]
+        ~differs:[ ("D165", [ "op=Ops.MAX dtype=dtypes.weakint" ]) ]
+        (fun cell ->
           equal const
             (const_of_cell (cell "identity"))
             (Ops.identity_element
