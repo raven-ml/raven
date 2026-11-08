@@ -42,11 +42,11 @@ let rec remove path =
       Unix.rmdir path
   | _ -> Unix.unlink path
 
-(* This process's temporary directory, where workers' temporary directories
-   are made, its TMPDIR, and AMD_COMGR_CACHE_DIR, where comgr keeps its own
-   cache, are a directory of this process's own, removed when it exits: what
-   a compile leaves behind, in a worker's directory or in TMPDIR, is seen
-   there, and gone after. *)
+(* This process's temporary directory, where workers' temporary directories are
+   made, its TMPDIR, and AMD_COMGR_CACHE_DIR, where comgr keeps its own cache,
+   are a directory of this process's own, removed when it exits: what a compile
+   leaves behind, in a worker's directory or in TMPDIR, is seen there, and gone
+   after. *)
 let scratch =
   let dir = Filename.temp_dir "tolk-test-comgr" "" in
   at_exit (fun () -> remove dir);
@@ -249,14 +249,14 @@ let until ~seconds p =
     p ()
     || Unix.gettimeofday () < deadline
        && begin
-            Unix.sleepf 0.01;
-            ask ()
-          end
+         Unix.sleepf 0.01;
+         ask ()
+       end
   in
   ask ()
 
-(* Whether process [pid] has ended: there is none, or it waits for its parent
-   to collect it (Linux's /proc says so). *)
+(* Whether process [pid] has ended: there is none, or it waits for its parent to
+   collect it (Linux's /proc says so). *)
 let ended pid =
   match Unix.kill pid 0 with
   | exception Unix.Unix_error (ESRCH, _, _) -> true
@@ -282,8 +282,8 @@ let rec comgr_files dir =
         | _ -> [])
     (Array.to_list (Sys.readdir dir))
 
-(* [kernel] including the FIFO [fifo]: its compile waits in the preprocessor
-   for a writer to open [fifo], then for the writer to close it. *)
+(* [kernel] including the FIFO [fifo]: its compile waits in the preprocessor for
+   a writer to open [fifo], then for the writer to close it. *)
 let waiting fifo = Printf.sprintf "#include \"%s\"\n%s" fifo kernel
 
 let fresh_reference () =
@@ -343,7 +343,8 @@ let process =
              | _ -> fail "code generation assembled an unknown instruction"
              | exception Compiler.Compile_error msg ->
                  in_order
-                   ~subs:[ "code generation failed"; "cannot compile inline asm" ]
+                   ~subs:
+                     [ "code generation failed"; "cannot compile inline asm" ]
                    msg);
       slow
       @@ test "a compile in turn is served by an idle worker" (fun () ->
@@ -397,45 +398,42 @@ let process =
              is_some (rejection (fun () -> compile unselectable));
              equal (list string) [] (comgr_files scratch));
       slow
-      @@ test "a worker whose parent is killed during a compile ends"
-           (fun () ->
-             ignore (with_comgr (fun () -> compile kernel));
-             let fifo = Filename.concat scratch "include.fifo" in
-             Unix.mkfifo fifo 0o600;
-             Fun.protect ~finally:(fun () -> Sys.remove fifo) @@ fun () ->
-             let parent =
-               match Unix.fork () with
-               | 0 ->
-                   (try ignore (compile (waiting fifo)) with _ -> ());
-                   Unix._exit 0
-               | pid -> pid
-             in
-             (* The FIFO opens for writing once the compile has opened it to
-                read, which then waits until the writer closes it. *)
-             let writer = ref None in
-             let opened () =
-               match
-                 Unix.openfile fifo [ O_WRONLY; O_NONBLOCK; O_CLOEXEC ] 0
-               with
-               | fd ->
-                   writer := Some fd;
-                   true
-               | exception Unix.Unix_error (ENXIO, _, _) -> false
-             in
-             Fun.protect ~finally:(fun () -> Option.iter Unix.close !writer)
-             @@ fun () ->
-             let reached = until ~seconds:60. opened in
-             let workers = children_of parent in
-             Unix.kill parent Sys.sigkill;
-             ignore (Unix.waitpid [] parent);
-             equal bool ~msg:"the compile opened the FIFO" true reached;
-             not_equal (list int) [] workers;
-             let alive =
-               List.filter
-                 (fun pid -> not (until ~seconds:10. (fun () -> ended pid)))
-                 workers
-             in
-             equal (list int) ~msg:"workers alive" [] alive);
+      @@ test "a worker whose parent is killed during a compile ends" (fun () ->
+          ignore (with_comgr (fun () -> compile kernel));
+          let fifo = Filename.concat scratch "include.fifo" in
+          Unix.mkfifo fifo 0o600;
+          Fun.protect ~finally:(fun () -> Sys.remove fifo) @@ fun () ->
+          let parent =
+            match Unix.fork () with
+            | 0 ->
+                (try ignore (compile (waiting fifo)) with _ -> ());
+                Unix._exit 0
+            | pid -> pid
+          in
+          (* The FIFO opens for writing once the compile has opened it to read,
+             which then waits until the writer closes it. *)
+          let writer = ref None in
+          let opened () =
+            match Unix.openfile fifo [ O_WRONLY; O_NONBLOCK; O_CLOEXEC ] 0 with
+            | fd ->
+                writer := Some fd;
+                true
+            | exception Unix.Unix_error (ENXIO, _, _) -> false
+          in
+          Fun.protect ~finally:(fun () -> Option.iter Unix.close !writer)
+          @@ fun () ->
+          let reached = until ~seconds:60. opened in
+          let workers = children_of parent in
+          Unix.kill parent Sys.sigkill;
+          ignore (Unix.waitpid [] parent);
+          equal bool ~msg:"the compile opened the FIFO" true reached;
+          not_equal (list int) [] workers;
+          let alive =
+            List.filter
+              (fun pid -> not (until ~seconds:10. (fun () -> ended pid)))
+              workers
+          in
+          equal (list int) ~msg:"workers alive" [] alive);
       slow
       @@ test "a worker started with SIGCHLD ignored returns its code object"
            (fun () ->
