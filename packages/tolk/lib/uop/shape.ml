@@ -191,27 +191,22 @@ let as_shape u : sint list =
         (src u)
   | _ -> [ ssimplify u ]
 
-let marg u =
-  match movement_memo u with
-  | Some m -> m
-  | None ->
-      let shape_src i = as_shape (nth u i) in
-      let m =
-        match (op u, arg u) with
-        | Op.Reshape, _ -> Reshape (shape_src 1)
-        | Op.Expand, _ -> Expand (shape_src 1)
-        | Op.Pad, _ -> Pad (List.combine (shape_src 1) (shape_src 2))
-        | Op.Shrink, _ -> Shrink (List.combine (shape_src 1) (shape_src 2))
-        | Op.Permute, _ ->
-            let axis = function
-              | Int n -> n
-              | Sym _ -> invalid_arg "a permutation of a symbolic axis"
-            in
-            Permute (List.map axis (shape_src 1))
-        | op, _ -> invalid_argf "%s is not a movement" (Op.name op)
+let compute_marg u =
+  let shape_src i = as_shape (nth u i) in
+  match (op u, arg u) with
+  | Op.Reshape, _ -> Reshape (shape_src 1)
+  | Op.Expand, _ -> Expand (shape_src 1)
+  | Op.Pad, _ -> Pad (List.combine (shape_src 1) (shape_src 2))
+  | Op.Shrink, _ -> Shrink (List.combine (shape_src 1) (shape_src 2))
+  | Op.Permute, _ ->
+      let axis = function
+        | Int n -> n
+        | Sym _ -> invalid_arg "a permutation of a symbolic axis"
       in
-      set_movement_memo u m;
-      m
+      Permute (List.map axis (shape_src 1))
+  | op, _ -> invalid_argf "%s is not a movement" (Op.name op)
+
+let marg u = memoized_movement ~compute:compute_marg u
 
 let marg_shape u =
   match marg u with
@@ -233,10 +228,7 @@ let broadcast_axes src out =
          src)
 
 let rec shape_opt u =
-  memoized ~calls:Enter
-    ~get:(fun n -> shape_memo n)
-    ~set:(fun n s -> set_shape_memo n s)
-    ~compute:compute_shape u
+  memoized_shape ~compute:compute_shape u
 
 and shape u =
   match shape_opt u with

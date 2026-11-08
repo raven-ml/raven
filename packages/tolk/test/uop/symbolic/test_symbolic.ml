@@ -2020,11 +2020,19 @@ let loaded_conditions name n =
   in
   link x x 0
 
-(* [words f] is the words [f ()] allocates. *)
+(* [words f] is the words [f ()] allocates. A full collection first, and a
+   minor heap that holds every word [f] allocates, keep the collector from
+   freeing, during [f], nodes [f] would otherwise find interned: the count is
+   then [f]'s own, whenever it runs. *)
 let words f =
+  let gc = Gc.get () in
+  Gc.full_major ();
+  Gc.set { gc with minor_heap_size = 8 lsl 20 };
   let before = Gc.minor_words () in
   ignore (Sys.opaque_identity (f ()));
-  Gc.minor_words () -. before
+  let words = Gc.minor_words () -. before in
+  Gc.set gc;
+  words
 
 let cost =
   group "cost"

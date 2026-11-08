@@ -209,19 +209,22 @@ type t = {
 
 (* Properties computed on first use. Each is a function of the node, so
    domains racing to fill one write the same value; the fields are atomic so
-   that a reader that sees a value sees it whole. *)
+   that a reader that sees a value sees it whole. A field not yet set holds its
+   type's sentinel, a value made once that no computation returns, compared by
+   [==]: a set field holds its value unboxed. The storage base, set once for a
+   whole path of nodes, is an option. *)
 and memos = {
-  mutable shape_memo : sint list option option; [@atomic]
-  mutable ranges_memo : nodes option; [@atomic]
-  mutable ended_ranges_memo : t list option; [@atomic]
-  mutable min_max_memo : (Dtype.value * Dtype.value) option; [@atomic]
-  mutable device_memo : device option option; [@atomic]
-  mutable addrspace_memo : Dtype.addr_space option option; [@atomic]
-  mutable backward_slice_memo : nodes option; [@atomic]
-  mutable ops_reached_memo : Op.Set.t option; [@atomic]
-  mutable marg_memo : movement option; [@atomic]
-  mutable key_memo : string option; [@atomic]
-  mutable arg_repr_memo : string option; [@atomic]
+  mutable shape_memo : sint list option; [@atomic]
+  mutable ranges_memo : nodes; [@atomic]
+  mutable ended_ranges_memo : t list; [@atomic]
+  mutable min_max_memo : Dtype.value * Dtype.value; [@atomic]
+  mutable device_memo : device option; [@atomic]
+  mutable addrspace_memo : Dtype.addr_space option; [@atomic]
+  mutable backward_slice_memo : nodes; [@atomic]
+  mutable ops_reached_memo : Op.Set.t; [@atomic]
+  mutable marg_memo : movement; [@atomic]
+  mutable key_memo : string; [@atomic]
+  mutable arg_repr_memo : string; [@atomic]
   mutable storage_base_memo : t option; [@atomic]
 }
 
@@ -437,21 +440,56 @@ let shards =
 
 let next_id = Atomic.make 0
 
-let memos () =
+(* The sentinels of the memo fields. Each is allocated when the program
+   starts, from an argument the compiler cannot see, so that no constant of
+   the program is one. *)
+let unset_shape : sint list option = Some (Sys.opaque_identity [])
+
+let unset_nodes =
+  { order = []; cardinal = Sys.opaque_identity (-1); ids = [||]; bits = 0 }
+
+let unset_bounds : Dtype.value * Dtype.value =
+  (Sys.opaque_identity (`Bool false), `Bool false)
+
+let unset_device : device option = Some (Sys.opaque_identity "")
+
+let unset_addrspace : Dtype.addr_space option =
+  Some (Sys.opaque_identity Dtype.Global)
+
+let unset_ops = Op.Set.of_list (Sys.opaque_identity [ Op.Noop ])
+let unset_movement = Permute (Sys.opaque_identity [])
+let unset_string = String.make 1 (Sys.opaque_identity '\000')
+
+let memos_with ended_ranges =
   {
-    shape_memo = None;
-    ranges_memo = None;
-    ended_ranges_memo = None;
-    min_max_memo = None;
-    device_memo = None;
-    addrspace_memo = None;
-    backward_slice_memo = None;
-    ops_reached_memo = None;
-    marg_memo = None;
-    key_memo = None;
-    arg_repr_memo = None;
+    shape_memo = unset_shape;
+    ranges_memo = unset_nodes;
+    ended_ranges_memo = ended_ranges;
+    min_max_memo = unset_bounds;
+    device_memo = unset_device;
+    addrspace_memo = unset_addrspace;
+    backward_slice_memo = unset_nodes;
+    ops_reached_memo = unset_ops;
+    marg_memo = unset_movement;
+    key_memo = unset_string;
+    arg_repr_memo = unset_string;
     storage_base_memo = None;
   }
+
+(* The sentinel of ended ranges is a list of a node no program holds. *)
+let unset_ranges =
+  [
+    {
+      op = Op.Noop;
+      src = [];
+      arg = No_arg;
+      dtype = Dtype.Void;
+      id = Sys.opaque_identity (-1);
+      memos = memos_with [];
+    };
+  ]
+
+let memos () = memos_with unset_ranges
 
 (* A node's memos until one is set: most nodes a rewrite makes are dropped
    before any property of theirs is asked. Never written. *)
@@ -809,12 +847,12 @@ let rec repr u =
   Buffer.contents b
 
 and arg_repr u =
-  match u.memos.arg_repr_memo with
-  | Some s -> s
-  | None ->
-      let s = repr_arg u.arg in
-      (own_memos u).arg_repr_memo <- Some s;
-      s
+  let s = u.memos.arg_repr_memo in
+  if s != unset_string then s
+  else
+    let s = repr_arg u.arg in
+    (own_memos u).arg_repr_memo <- s;
+    s
 
 and repr_sint s = repr_sint_with repr s
 
@@ -1273,26 +1311,27 @@ let topovisit root f cache =
       Work.release work;
       reraise e
 
-let rec all_known get = function
+let rec all_known unset get = function
   | [] -> true
-  | s :: srcs -> Option.is_some (get s) && all_known get srcs
+  | s :: srcs -> get s != unset && all_known unset get srcs
 
 (* A recursive property is filled bottom-up over the nodes that lack it, so a
    deep graph never recurses deeply. *)
-let memoized ~calls ~get ~set ~compute u =
-  match get u with
-  | Some x -> x
-  | None ->
-      (* A new node is mostly built on nodes that have the property. *)
-      let srcs =
-        if calls = Skip && u.op = Op.Call then drop 1 u.src else u.src
-      in
-      if all_known get srcs then set u (compute u)
-      else
-        List.iter
-          (fun n -> set n (compute n))
-          (toposort ~calls ~gate:(fun n -> Option.is_none (get n)) u);
-      Option.get (get u)
+let memoized ~calls ~unset ~get ~set ~compute u =
+  let x = get u in
+  if x != unset then x
+  else begin
+    (* A new node is mostly built on nodes that have the property. *)
+    let srcs =
+      if calls = Skip && u.op = Op.Call then drop 1 u.src else u.src
+    in
+    if all_known unset get srcs then set u (compute u)
+    else
+      List.iter
+        (fun n -> set n (compute n))
+        (toposort ~calls ~gate:(fun n -> get n == unset) u);
+    get u
+  end
 
 (* A slice outside call bodies is kept with its node; one that enters them is
    walked anew. *)
@@ -1300,13 +1339,15 @@ let backward_slice ~calls u =
   let walk () =
     Nodes.of_list (List.filter (fun n -> n != u) (toposort ~calls u))
   in
-  match (calls, u.memos.backward_slice_memo) with
-  | Enter, _ -> walk ()
-  | Skip, Some s -> s
-  | Skip, None ->
-      let s = walk () in
-      (own_memos u).backward_slice_memo <- Some s;
-      s
+  match calls with
+  | Enter -> walk ()
+  | Skip ->
+      let s = u.memos.backward_slice_memo in
+      if s != unset_nodes then s
+      else
+        let s = walk () in
+        (own_memos u).backward_slice_memo <- s;
+        s
 
 let backward_slice_with_self ~calls u =
   Nodes.of_list (u :: Nodes.to_list (backward_slice ~calls u))
@@ -1315,12 +1356,12 @@ let backward_slice_with_self ~calls u =
    property of each node, so that asking costs no walk of the slice. A node
    whose set is one of its sources' shares that source's set. *)
 let ops_reached u =
-  memoized ~calls:Skip
+  memoized ~calls:Skip ~unset:unset_ops
     ~get:(fun n -> n.memos.ops_reached_memo)
-    ~set:(fun n s -> (own_memos n).ops_reached_memo <- Some s)
+    ~set:(fun n s -> (own_memos n).ops_reached_memo <- s)
     ~compute:(fun n ->
       let srcs = if n.op = Op.Call then drop 1 n.src else n.src in
-      let sets = List.map (fun s -> Option.get s.memos.ops_reached_memo) srcs in
+      let sets = List.map (fun s -> s.memos.ops_reached_memo) srcs in
       let all = List.fold_left Op.Set.union (Op.Set.of_list [ n.op ]) sets in
       Option.value ~default:all (List.find_opt (Op.Set.equal all) sets))
     u
@@ -1408,11 +1449,10 @@ let digest n arg_key src_key =
   Digest.BLAKE256.string (Buffer.contents b)
 
 let key u =
-  memoized ~calls:Enter
+  memoized ~calls:Enter ~unset:unset_string
     ~get:(fun n -> n.memos.key_memo)
-    ~set:(fun n k -> (own_memos n).key_memo <- Some k)
-    ~compute:(fun n ->
-      digest n (arg_key n) (fun s -> Option.get s.memos.key_memo))
+    ~set:(fun n k -> (own_memos n).key_memo <- k)
+    ~compute:(fun n -> digest n (arg_key n) (fun s -> s.memos.key_memo))
     u
 
 (* The nodes [arg] gives an argument and those above them differ from their
@@ -1861,12 +1901,12 @@ let rounded dt ((lo, hi) as b : Dtype.value * Dtype.value) =
    fill the whole graph below. A node's bounds, and those of an operand an
    operation commits to its type, are at their width. *)
 let rec min_max u =
-  match u.memos.min_max_memo with
-  | Some b -> b
-  | None ->
-      let b = at_width u.dtype (compute_min_max u) in
-      (own_memos u).min_max_memo <- Some b;
-      b
+  let b = u.memos.min_max_memo in
+  if b != unset_bounds then b
+  else
+    let b = at_width u.dtype (compute_min_max u) in
+    (own_memos u).min_max_memo <- b;
+    b
 
 and operand_bounds u s =
   let operands =
@@ -2224,27 +2264,26 @@ let body u =
   | op, _ -> invalid_argf "%s is not a call" (Op.name op)
 
 let rec ended_ranges u =
-  match u.memos.ended_ranges_memo with
-  | Some l -> l
-  | None ->
-      let l =
-        match u.op with
-        | Op.End -> List.filter (fun r -> r.op = Op.Range) (drop 1 u.src)
-        | Op.Backedge -> (
-            match u.src with _ :: loop :: _ -> [ loop ] | _ -> [])
-        | op when Option.is_some (range_start op) ->
-            drop (Option.get (range_start op)) u.src
-        | Op.After -> List.concat_map ended_ranges (drop 1 u.src)
-        | Op.Barrier -> List.concat_map ended_ranges u.src
-        | _ -> []
-      in
-      (own_memos u).ended_ranges_memo <- Some l;
-      l
+  let l = u.memos.ended_ranges_memo in
+  if l != unset_ranges then l
+  else
+    let l =
+      match u.op with
+      | Op.End -> List.filter (fun r -> r.op = Op.Range) (drop 1 u.src)
+      | Op.Backedge -> ( match u.src with _ :: loop :: _ -> [ loop ] | _ -> [])
+      | op when Option.is_some (range_start op) ->
+          drop (Option.get (range_start op)) u.src
+      | Op.After -> List.concat_map ended_ranges (drop 1 u.src)
+      | Op.Barrier -> List.concat_map ended_ranges u.src
+      | _ -> []
+    in
+    (own_memos u).ended_ranges_memo <- l;
+    l
 
 let rec ranges u =
-  memoized ~calls:Enter
+  memoized ~calls:Enter ~unset:unset_nodes
     ~get:(fun n -> n.memos.ranges_memo)
-    ~set:(fun n r -> (own_memos n).ranges_memo <- Some r)
+    ~set:(fun n r -> (own_memos n).ranges_memo <- r)
     ~compute:compute_ranges u
 
 (* The node itself if it is a range, then the ranges of its sources in order of
@@ -2416,9 +2455,9 @@ let rec get_valid u =
 (* Devices *)
 
 let rec device u =
-  memoized ~calls:Enter
+  memoized ~calls:Enter ~unset:unset_device
     ~get:(fun n -> n.memos.device_memo)
-    ~set:(fun n d -> (own_memos n).device_memo <- Some d)
+    ~set:(fun n d -> (own_memos n).device_memo <- d)
     ~compute:compute_device u
 
 and compute_device u =
@@ -2438,9 +2477,9 @@ let on_disk u =
 let is_virtual u = Option.is_none (device u) || Dtype.mem u.dtype Dtype.weaks
 
 let rec addrspace u =
-  memoized ~calls:Enter
+  memoized ~calls:Enter ~unset:unset_addrspace
     ~get:(fun n -> n.memos.addrspace_memo)
-    ~set:(fun n a -> (own_memos n).addrspace_memo <- Some a)
+    ~set:(fun n a -> (own_memos n).addrspace_memo <- a)
     ~compute:compute_addrspace u
 
 (* A node of no value has no memory: it lives in the ALU. *)
@@ -4354,7 +4393,16 @@ let function_name (k : kernel_info) = Helpers.to_function_name k.name
 
 (* Memos *)
 
-let shape_memo u = u.memos.shape_memo
-let set_shape_memo u s = (own_memos u).shape_memo <- Some s
-let movement_memo u = u.memos.marg_memo
-let set_movement_memo u m = (own_memos u).marg_memo <- Some m
+let memoized_shape ~compute u =
+  memoized ~calls:Enter ~unset:unset_shape
+    ~get:(fun n -> n.memos.shape_memo)
+    ~set:(fun n s -> (own_memos n).shape_memo <- s)
+    ~compute u
+
+let memoized_movement ~compute u =
+  let m = u.memos.marg_memo in
+  if m != unset_movement then m
+  else
+    let m = compute u in
+    (own_memos u).marg_memo <- m;
+    m

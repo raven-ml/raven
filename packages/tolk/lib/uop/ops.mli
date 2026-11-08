@@ -1398,12 +1398,11 @@ val gate_kernel_sink : t -> bool
 
 (**/**)
 
-(* The memos of the properties [Shape] computes: only it writes them. *)
+(* The properties [Shape] computes, kept in each node's memos, the shape filled
+   bottom-up: only it computes them. *)
 
-val shape_memo : t -> sint list option option
-val set_shape_memo : t -> sint list option -> unit
-val movement_memo : t -> movement option
-val set_movement_memo : t -> movement -> unit
+val memoized_shape : compute:(t -> sint list option) -> t -> sint list option
+val memoized_movement : compute:(t -> movement) -> t -> movement
 
 (* The helpers that [Shape] and later modules share with this one. *)
 
@@ -1423,11 +1422,3 @@ val weak_storage : Dtype.t -> unit
 val dedup_nodes : t list -> t list
 val as_value : Dtype.const -> Dtype.value
 val integer : Dtype.const -> Bigint.t
-
-val memoized :
-  calls:calls ->
-  get:(t -> 'a option) ->
-  set:(t -> 'a -> unit) ->
-  compute:(t -> 'a) ->
-  t ->
-  'a
