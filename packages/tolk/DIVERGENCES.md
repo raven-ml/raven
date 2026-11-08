@@ -8430,10 +8430,14 @@ as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
   tinygrad's Python integer would exhaust memory. A count at or past the
   width keeps the `(x & mask) >> k` rule, which tinygrad applies, from
   dropping a mask that clears the sign.
+  tinygrad's fold of a constant and a bare count (`uop/symbolic.py`) commits
+  the count at the operand's type, which wraps it; `Symbolic`'s fold reads it
+  as it is.
 - **Reason:** (e): at the pinned commit, the host's kernel of an int32
   division of the least value by -1 dies with SIGFPE, on the host's vector
-  lanes a uint8 shifted right by 8 is itself, where it is 0, and a masked
-  negative int32 shifted right by 32 is -1, where it is 0.
+  lanes a uint8 shifted right by 8 is itself, where it is 0, a masked
+  negative int32 shifted right by 32 is -1, where it is 0, and a uint16
+  constant 1 shifted left by 65536 folds to 1, where it is 0.
 - **Pinned by:** the Tolk_engine suite's `divisions and shifts at the
   extremes compute as the interpreter`, on the host (`kernels on the
   host`) and on each GPU (`GPUs ›`, run on fudge's CUDA and NV): every
@@ -8442,8 +8446,9 @@ as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
   constant count of its width, in scalars and in vectors of 4 lanes,
   against `Ops.exec_alu`; `a narrow
   type shifted by a uint32 count computes as the interpreter`, by constant
-  counts of 8 to 65537; and the Symbolic suite's `a masked right shift past
-  the width keeps its mask's sign`.
+  counts of 8 to 65537; and the Symbolic suite's `a shift of constants
+  folds by its count, of any size` and `a masked right shift past the
+  width keeps its mask's sign`.
 
 ## D347. Compiles run on as many domains as the cores the process may occupy
 

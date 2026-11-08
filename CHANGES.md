@@ -1115,6 +1115,8 @@ word comes from its lock and from samples the dashboard saw arrive.
   off, from comgr 2.8 (ROCm 6.2): IR that an optimization makes invalid
   raises `Compile_error` instead of compiling into wrong values. Compiles
   take about 2% longer.
+- `Symbolic.sym` folds a shift of constants by its count as a number, whatever
+  the operand's width: `1 << 65536` at `Uint16` is `0`, where it was `1`.
 - Compiling a shift by a count an `int` cannot hold, such as `2^63-1`, no longer
   raises `Bigint.Overflow`, and a huge count no longer allocates its exact
   value: `Ops.exec_alu` takes a count of any size, and a left shift at no

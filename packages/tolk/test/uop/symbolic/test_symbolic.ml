@@ -7,6 +7,44 @@ open Common
 
 (* [folds_to input expected] is the claim that symbolic_simple rewrites [input]
    to [expected]. *)
+(* The value of a shift: past the width a left shift is 0 and a right shift the
+   sign fill; below it, [x 2^k] modulo [2^w] or the floor of [x / 2^k]. *)
+let shift_reference dt o x k : Dtype.value =
+  let past = Bigint.geq k (Bigint.of_int (Dtype.bitsize dt)) in
+  match (o : Op.t) with
+  | Shl when past -> `Int Bigint.zero
+  | Shl -> Dtype.truncate dt (`Int (Bigint.shift_left x (Bigint.to_int k)))
+  | _ when past ->
+      `Int (if Bigint.sign x < 0 then Bigint.minus_one else Bigint.zero)
+  | _ -> `Int (Bigint.shift_right x (Bigint.to_int k))
+
+(* Constant operands at a type's extremes, counts either side of its width and
+   of the larger powers of two. *)
+let gen_constant_shift =
+  let open Gen in
+  let* dt = of_list ~pp:Dtype.pp Dtype.ints in
+  let in_type v d =
+    Dtype.Value.to_z (Dtype.truncate dt Dtype.Value.(v + of_int d))
+  in
+  let xs =
+    [
+      in_type (Dtype.min dt) 0;
+      in_type (Dtype.min dt) 1;
+      in_type (Dtype.max dt) 0;
+    ]
+    @ List.map (fun n -> in_type (Dtype.Value.of_int n) 0) [ -1; 0; 1; 7 ]
+  in
+  let powers =
+    List.map (fun n -> Bigint.shift_left Bigint.one n) [ 8; 16; 32; 63; 64 ]
+  in
+  let around c = Bigint.[ pred c; c; succ c ] in
+  let width = Bigint.of_int (Dtype.bitsize dt) in
+  let z = Testable.pp Dtypes.z in
+  let+ o = of_list ~pp:Op.pp Op.[ Shl; Shr ]
+  and+ x = of_list ~pp:z xs
+  and+ k = of_list ~pp:z (List.concat_map around (width :: powers)) in
+  (dt, o, x, k)
+
 let folds_to input expected =
   equal uop expected (rewrite Shape.symbolic_simple input)
 
@@ -349,6 +387,23 @@ let constants =
           folds_to (tdiv 7 (-3)) (Ops.int (-2));
           folds_to (tdiv (-50) 6) (Ops.int (-8));
           folds_to (tmod 5 (-3)) (Ops.int 2));
+      prop "a shift of constants folds by its count, of any size"
+        gen_constant_shift
+        (fun (dt, o, x, k) ->
+          let u =
+            Ops.alu (Ops.const ~dtype:dt (`Int x)) o [ Ops.const (`Int k) ]
+          in
+          cover "a count at or past the width"
+            (Bigint.geq k (Bigint.of_int (Dtype.bitsize dt)));
+          cover "a count an OCaml int does not hold" (not (Bigint.fits_int k));
+          let folded = sym u in
+          (match Ops.op folded with
+          | Const | Cast -> ()
+          | _ -> failf "%a does not fold" Ops.pp u);
+          equal
+            ~msg:(Format.asprintf "%a" Ops.pp u)
+            Dtypes.const (shift_reference dt o x k :> Dtype.const)
+            (Ops.value folded));
       test "a masked right shift past the width keeps its mask's sign" (fun () ->
           (* The rule that drops a mask reads the bits below the count, and past
              the width that is every bit, the sign included. *)
@@ -364,6 +419,14 @@ let constants =
           in
           keeps (Bigint.of_int 32);
           keeps (Bigint.shift_left Bigint.one 63));
+      test "a bare constant shifted by a committed count commits at its type"
+        (fun () ->
+          let by_u32 o x k =
+            Ops.value (sym (Ops.alu (Ops.int x) o [ Ops.int ~dtype:Uint32 k ]))
+          in
+          equal Dtypes.const (`Int (Bigint.of_int 0x7FFFFFFF))
+            (by_u32 Op.Shr (-1) 1);
+          equal Dtypes.const (`Int Bigint.zero) (by_u32 Op.Shl 1 40));
       test "a left shift of constants at no width by a huge count stays"
         (fun () ->
           let huge = Bigint.shift_left Bigint.one 80 in

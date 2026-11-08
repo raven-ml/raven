@@ -1865,7 +1865,9 @@ let fold_const_alu a =
   let operands =
     if Op.Set.mem (op a) Op.Set.comparison then promo_dtype (src a) else dtype a
   in
-  let read s =
+  (* A shift's count is a number, whatever its operand's width. *)
+  let count i = i = 1 && (op a = Op.Shl || op a = Op.Shr) in
+  let read i s =
     match (op s, value s) with
     (* a float constant is its bits: a NaN operand keeps them for a selection
        or a negation to move *)
@@ -1874,7 +1876,8 @@ let fold_const_alu a =
     | Op.Cast, (#Dtype.value as v) -> (at (dtype s) v :> Dtype.const)
     | Op.Const, (`Int _ as v)
       when Dtype.equal (dtype s) Dtype.Weak_int
-           && Dtype.mem operands Dtype.ints ->
+           && Dtype.mem operands Dtype.ints
+           && not (count i) ->
         (at operands v :> Dtype.const)
     | _, c -> c
   in
@@ -1889,14 +1892,14 @@ let fold_const_alu a =
   let stack s = op s = Op.Stack in
   match List.filter stack (src a) with
   | [] ->
-      let args = List.map read (src a) in
+      let args = List.mapi read (src a) in
       if defined args then Some (const_like a (alu args)) else None
   | stacks ->
       let count =
         List.fold_left (fun n s -> max n (List.length (src s))) 0 stacks
       in
-      let lane i s = read (if stack s then nth s i else s) in
-      let lanes = List.init count (fun i -> List.map (lane i) (src a)) in
+      let lane l i s = read i (if stack s then nth s l else s) in
+      let lanes = List.init count (fun l -> List.mapi (lane l) (src a)) in
       if List.for_all defined lanes then
         Some (consts ~dtype:(dtype a) (List.map alu lanes))
       else None
@@ -2361,7 +2364,12 @@ let symbolic_simple =
               let commit s =
                 if Dtype.mem (dtype s) Dtype.weaks then ccast s dt else s
               in
-              if Dtype.mem dt Dtype.weaks then None
+              let bare_count =
+                (op a = Op.Shl || op a = Op.Shr)
+                && Dtype.mem (dtype (nth a 1)) Dtype.weaks
+              in
+              if bare_count then fold_const_alu a
+              else if Dtype.mem dt Dtype.weaks then None
               else Some (replace a ~src:(List.map commit (src a))));
         ]
         (* Two stage ALU folding; sums, products and maxima for integers: in
