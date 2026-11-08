@@ -510,6 +510,14 @@ let joins () =
            join ~kind:Full (eq "x8" "y8" && eq "x8" "f2");
            join ~right:shared (eq "x8" "y8");
            join ~right:shared ~kind:Semi (eq "x8" "y8");
+           join (lt "nope" "y8");
+           join (ge "g" "y8");
+           join (le "t" "t2");
+           join (gt "f" "r2");
+           join (inside "f" ("y8", "f2"));
+           join (overlaps ("x8", "f") ("y8", "g2"));
+           join (overlaps ("f", "f32") ("f2", "t2"));
+           join ~right:shared (lt "f" "f");
          ])
   @@ __POS_OF__
        {|
@@ -551,6 +559,46 @@ let joins () =
       right (3 columns): y8 int8, f float64, n int64
 
     no exception
+
+    join: 1 problem
+      left: no column "nope". The columns are "x8", "u8", "f", "f32", "n", "g", "d", "b", "ts", "t", "l", "r" and "wait".
+      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
+      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
+
+    join: 1 problem
+      "g" is string and "y8" is int8, which do not meet: cast one first.
+      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
+      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
+
+    join: 1 problem
+      "t" is ext[ymir.epoch, float64], which has no order of its own.
+      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
+      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
+
+    join: 1 problem
+      "r2" is record[e ext[ymir.epoch, float64]], which has no order of its own.
+      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
+      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
+
+    join: 1 problem
+      "f" is float64 and "y8" is int8, which do not meet: cast one first.
+      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
+      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
+
+    join: 1 problem
+      "x8" is int8, "f" is float64, "y8" is int8 and "g2" is string, which do not meet: cast one first.
+      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
+      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
+
+    join: 1 problem
+      "t2" is ext[ymir.epoch, float64], which has no order of its own.
+      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
+      right (8 columns): y8 int8, g2 string, t2 ext[ymir.epoch, float64], d2 date, ts2 datetime[ns, UTC], f2 float64, t3 ext[ymir.epoch "v2", float64], r2 record[e ext[ymir.epoch, float64]]
+
+    join: 1 problem
+      "f", "n" are on both sides: rename one side first.
+      left (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
+      right (3 columns): y8 int8, f float64, n int64
     |}
 
 (* A value outside a dictionary has no order: binding reports it, each time,
@@ -605,6 +653,11 @@ let rejected_conditions () =
            (fun () -> keys [ "a" ] && keys [ "a" ]);
            (fun () -> keys [ "a"; "b" ] && position);
            (fun () -> eq "a" "b" && keys [ "c" ] && eq "a" "b");
+           (fun () -> lt "a" "b" && keys [ "c" ] && lt "a" "b");
+           (fun () ->
+             overlaps ("a", "b") ("c", "d") && overlaps ("a", "b") ("c", "d"));
+           (fun () -> inside "a" ("b", "c") && ge "a" "b");
+           (fun () -> position && le "a" "b");
          ])
   @@ __POS_OF__
        {|
@@ -619,6 +672,14 @@ let rejected_conditions () =
     Join.( && ): keys ["a"; "b"] && position: position joins row i with row i and takes no other atom
 
     Join.( && ): eq "a" "b" && keys ["c"] && eq "a" "b": eq "a" "b" appears twice
+
+    Join.( && ): lt "a" "b" && keys ["c"] && lt "a" "b": lt "a" "b" appears twice
+
+    Join.( && ): overlaps ("a", "b") ("c", "d") && overlaps ("a", "b") ("c", "d"): overlaps ("a", "b") ("c", "d") appears twice
+
+    Join.( && ): ge "a" "b" && lt "a" "c" && ge "a" "b": ge "a" "b" appears twice
+
+    Join.( && ): position && le "a" "b": position joins row i with row i and takes no other atom
     |}
 
 (* [semi_on c] is the semi join on [c] of two fixed sources. *)
@@ -637,12 +698,26 @@ let atom_variants =
       ("position and all", position, all);
       ("position and keys", position, keys [ "a" ]);
       ("one atom and two", keys [ "a" ], keys [ "a"; "b" ]);
+      ("the comparison of a comparison", lt "a" "b", le "a" "b");
+      ("the sides of a comparison", lt "a" "b", lt "b" "a");
+      ( "the order of a period",
+        overlaps ("a", "b") ("a", "b"),
+        overlaps ("b", "a") ("a", "b") );
+      ("a comparison and an equality", le "a" "b", eq "a" "b");
     ]
 
 let conditions =
   group "Join conditions"
     [
-      test "refuses each conjunction that no algorithm runs" rejected_conditions;
+      test "refuses position with another atom, and an atom twice"
+        rejected_conditions;
+      test "inside is a lower and an upper comparison" (fun () ->
+          equal query_w
+            (semi_on Join.(inside "a" ("a", "b")))
+            (semi_on Join.(ge "a" "a" && lt "a" "b")));
+      test "accepts comparisons that bound several columns" (fun () ->
+          ignore
+            Join.(lt "a" "b" && gt "b" "a" && overlaps ("a", "b") ("a", "b")));
       test "accepts two equality atoms on one left column" (fun () ->
           ignore Join.(eq "a" "b" && eq "a" "c"));
       test "all is the unit of &&" (fun () ->

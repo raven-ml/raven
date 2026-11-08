@@ -62,7 +62,15 @@ type 's out =
   | Out : string * ('a, 's) term -> 's out
   | Keep : string list -> Expr.row out
 
-type on = Keys of (string * string) list | Position | All
+type pred =
+  | Compare of [ `Lt | `Le | `Gt | `Ge ] * string * string
+  | Overlaps of (string * string) * (string * string)
+
+type on =
+  | Keys of (string * string) list
+  | Range of (string * string) list * pred list
+  | Position
+  | All
 
 type plan =
   | Table of Talon.t
@@ -228,12 +236,22 @@ let out : type s. s out -> s Expr.out = function
   | Out (n, e) -> Expr.(n := expr e)
   | Keep ns -> Expr.keep (Sel.names ns)
 
+let pred : pred -> Join.cond = function
+  | Compare (`Lt, l, r) -> Join.lt l r
+  | Compare (`Le, l, r) -> Join.le l r
+  | Compare (`Gt, l, r) -> Join.gt l r
+  | Compare (`Ge, l, r) -> Join.ge l r
+  | Overlaps (l, r) -> Join.overlaps l r
+
+let eqs ks = List.fold_left (fun c (l, r) -> Join.(c && eq l r)) Join.all ks
+
 let cond = function
-  | Keys ks -> List.fold_left (fun c (l, r) -> Join.(c && eq l r)) Join.all ks
+  | Keys ks -> eqs ks
+  | Range (ks, ps) -> List.fold_left (fun c p -> Join.(c && pred p)) (eqs ks) ps
   | Position -> Join.position
   | All -> Join.all
 
-let keys = function Keys ks -> ks | Position | All -> []
+let keys = function Keys ks | Range (ks, _) -> ks | Position | All -> []
 
 let rec query = function
   | Table t -> Query.of_table t
@@ -838,6 +856,91 @@ let same_key (Cell (ty, _) as a) (Cell (ty', _) as b) =
   | Some x, Some y -> Type.compare_value t x y = 0
   | _ -> false
 
+(* [order at a b] compares the cells [a] and [b] at the type [at], or is
+   [None] if either is null. *)
+let order (Type.Any t) a b =
+  match (read t a, read t b) with
+  | Some x, Some y -> Some (Type.compare_value t x y)
+  | _ -> None
+
+(* [met ts] is the type at which the types [ts] meet: the one of them that
+   contains all the others. *)
+let met ts =
+  let contains (Type.Any t as a) =
+    List.for_all
+      (fun b ->
+        match meet a b with
+        | Type.Any c -> Type.equal c t
+        | exception Invalid_argument _ -> false)
+      ts
+  in
+  match List.find_opt contains ts with
+  | Some t -> t
+  | None -> invalid_arg "Reference: types that do not meet"
+let cell_type (Cell (ty, _)) = Type.Any ty
+
+(* Kleene's logic, [None] being unknown. *)
+let k_and a b =
+  match (a, b) with
+  | Some false, _ | _, Some false -> Some false
+  | Some true, Some true -> Some true
+  | _ -> None
+
+let k_or a b =
+  match (a, b) with
+  | Some true, _ | _, Some true -> Some true
+  | Some false, Some false -> Some false
+  | _ -> None
+
+(* [overlaps (d1, e1) (d2, e2)] is SQL-92's <overlaps predicate> (ISO/IEC
+   9075:1992, 8.11), its general rules taken literally:
+
+   3) If D1 is the null value or if E1 < D1, then let S1 = E1 and let T1 = D1.
+      Otherwise, let S1 = D1 and let T1 = E1.
+   5) Likewise S2 and T2.
+   6) The result of the <overlaps predicate> is the result of the following
+      expression:
+        ( S1 > S2 AND NOT ( S1 >= T2 AND T1 >= T2 ) )
+        OR
+        ( S2 > S1 AND NOT ( S2 >= T1 AND T2 >= T1 ) )
+        OR
+        ( S1 = S2 AND ( T1 <> T2 OR T1 = T2 ) ) *)
+let overlaps (d1, e1) (d2, e2) =
+  let at = met (List.map cell_type [ d1; e1; d2; e2 ]) in
+  let cmp f a b = Option.map f (order at a b) in
+  let gt = cmp (fun c -> c > 0) and ge = cmp (fun c -> c >= 0) in
+  let eq = cmp (fun c -> c = 0) and ne = cmp (fun c -> c <> 0) in
+  let period (Cell (_, d) as dc) ec =
+    if Option.is_none d || cmp (fun c -> c < 0) ec dc = Some true then (ec, dc)
+    else (dc, ec)
+  in
+  let s1, t1 = period d1 e1 and s2, t2 = period d2 e2 in
+  let not_ = Option.map not in
+  k_or
+    (k_or
+       (k_and (gt s1 s2) (not_ (k_and (ge s1 t2) (ge t1 t2))))
+       (k_and (gt s2 s1) (not_ (k_and (ge s2 t1) (ge t2 t1)))))
+    (k_and (eq s1 s2) (k_or (ne t1 t2) (eq t1 t2)))
+
+(* [holds l r p] is [true] iff the atom [p] holds on the left row [l] and the
+   right row [r]. *)
+let holds l r p =
+  let at side n = List.assoc n side in
+  match p with
+  | Compare (op, ln, rn) ->
+      let test c =
+        match op with
+        | `Lt -> c < 0
+        | `Le -> c <= 0
+        | `Gt -> c > 0
+        | `Ge -> c >= 0
+      in
+      let a = at l ln and b = at r rn in
+      let t = met [ cell_type a; cell_type b ] in
+      Option.map test (order t a b) = Some true
+  | Overlaps ((ls, le), (rs, re)) ->
+      overlaps (at l ls, at l le) (at r rs, at r re) = Some true
+
 let allows (count : Join.count) k =
   match count with
   | Any -> true
@@ -935,16 +1038,19 @@ let join kind (each_left, each_right) on (lschema, rschema) ls rs () =
         else Seq.Nil
       in
       Seq.append (Seq.concat_map each ls) last ()
-  | Keys _ | Position ->
+  | Keys _ | Range _ | Position ->
       let ls = Array.of_seq ls in
       let rs = Array.of_seq rs in
       let matches i l j r =
+        let keyed () =
+          List.for_all
+            (fun (ln, rn) -> same_key (List.assoc ln l) (List.assoc rn r))
+            ks
+        in
         match on with
         | Position -> i = j
-        | _ ->
-            List.for_all
-              (fun (ln, rn) -> same_key (List.assoc ln l) (List.assoc rn r))
-              ks
+        | Range (_, ps) -> keyed () && List.for_all (holds l r) ps
+        | _ -> keyed ()
       in
       let hits =
         Array.mapi

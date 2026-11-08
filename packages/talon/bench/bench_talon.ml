@@ -308,6 +308,54 @@ let joined_nulls =
   Query.(
     of_table nulls |> join ~kind:Left ~on:(Join.keys [ "key" ]) (of_table right))
 
+(* Spikes in trials, a peri-event analysis: 2^20 spike times in order over an
+   hour, and 1000 trials of one second every 3.6 s on the left, each with the
+   spikes it holds, about 290k pairs. A recording holds about 10^7 spikes;
+   2^20 keeps the suite within its time. *)
+let spikes =
+  let key = Nx.Rng.key 26 in
+  let t, _ =
+    Nx.sort (Nx.mul_s (Nx.Rng.uniform ~key Nx.float64 [| n |]) 3600.)
+  in
+  Talon.v [ ("t", nullable t) ]
+
+let trials =
+  let start = Nx.mul_s (Nx.arange Nx.float64 0 1000 1) 3.6 in
+  Talon.v
+    [
+      ("start", nullable start);
+      ("stop", nullable (Nx.add_s start 1.));
+      ("trial", nullable (Nx.arange Nx.int64 0 1000 1));
+    ]
+
+let spikes_in_trials () =
+  run
+    Query.(
+      of_table trials
+      |> join ~on:Join.(le "start" "t" && gt "stop" "t") (of_table spikes))
+
+(* An inequality within keys: 2^16 left rows and 2^10 right ones in 100
+   groups, each left [x] with the right rows of its group whose [y] is not
+   above it, about 330k pairs. Neither side is in order. *)
+let below =
+  let keys = Nx.Rng.split ~n:4 (Nx.Rng.key 27) in
+  let side k rows x =
+    Talon.v
+      [
+        ( "g",
+          nullable
+            (Nx.cast Nx.int64
+               (Nx.Rng.randint ~key:keys.(k) ~high:100 [| rows |])) );
+        (x, nullable (Nx.Rng.uniform ~key:keys.(k + 1) Nx.float64 [| rows |]));
+      ]
+  in
+  let left = side 0 (1 lsl 16) "x" and right = side 2 (1 lsl 10) "y" in
+  fun () ->
+    run
+      Query.(
+        of_table left
+        |> join ~on:Join.(keys [ "g" ] && ge "x" "y") (of_table right))
+
 let parquet = Filename.concat data_dir "nulls.parquet"
 
 (* Texts *)
@@ -424,6 +472,8 @@ let () =
                   of_table nulls
                   |> aggregate ~by:[ "key" ] Expr.[ "f" := sum (Col.float "f") ]));
           Thumper.bench "Nulls/join-left" (fun () -> run joined_nulls);
+          Thumper.bench "Join/spikes_in_trials" spikes_in_trials;
+          Thumper.bench "Join/keyed_inequality" below;
           Thumper.bench "Group/text-100-1M" (fun () -> by "t");
           Thumper.bench "Group/int32-100-1M" (fun () -> by "k");
           Thumper.bench "Nulls/filter-text-eq" (fun () ->

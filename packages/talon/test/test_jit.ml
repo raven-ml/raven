@@ -315,6 +315,9 @@ let dynamic =
   let open Expr in
   let keys = Query.select [ keep (Sel.names [ "k" ]) ] in
   let join kind q = Query.join ~kind ~on:(Join.keys [ "k" ]) (keys q) q in
+  let ranged kind q =
+    Query.join ~kind ~on:Join.(le "a" "z") (Query.select [ "z" := a ] q) q
+  in
   [
     refuses "filter" (verb [ "a" ] (Query.filter (a > float 1.)));
     refuses "aggregate by a key"
@@ -324,6 +327,8 @@ let dynamic =
     refuses "inner join on a key" (verb [ "a" ] (join Join.Inner));
     refuses "left join on a key" (verb [ "a" ] (join Join.Left));
     refuses "semi join on a key" (verb [ "a" ] (join Join.Semi));
+    refuses "inner join on a comparison" (verb [ "a" ] (ranged Join.Inner));
+    refuses "semi join on a comparison" (verb [ "a" ] (ranged Join.Semi));
     refuses "distinct" (verb [ "k" ] (fun q -> Kit.distinct (keys q)));
     refuses "an OCaml function"
       (verb [ "c" ]

@@ -37,18 +37,69 @@ right column:
 |---|---|
 | `Join.keys [ "a"; "b" ]` | rows whose columns `a` and `b` are the same keys on both sides |
 | `Join.eq "subject" "id"` | rows whose left `subject` and right `id` are the same key |
+| `Join.lt "t" "u"`, `le`, `gt`, `ge` | rows whose left `t` comes before the right `u`, as `Expr.( < )` compares, and so on |
+| `Join.inside "t" ("start", "stop")` | rows whose left `t` is from the right `start`, included, to `stop`, excluded |
+| `Join.overlaps ("on", "off") ("start", "stop")` | rows whose periods overlap, as SQL-92's OVERLAPS predicate defines it |
 | `Join.position` | row i of the left with row i of the right |
 | `Join.all` | every pair of rows |
 
-Equality atoms combine with `&&`, written inside `Join.( … )`:
-`Join.(keys [ "ticker" ] && eq "day" "date")`. A combination that no
-algorithm runs, such as `position` with another atom, raises when it is
-built.
+Atoms combine with `&&`, written inside `Join.( … )`:
+`Join.(keys [ "ticker" ] && eq "day" "date")`. A join keeps exactly the
+pairs on which every atom holds. `position` with another atom, or one atom
+twice, raises when the condition is built.
 
 Keys match by identity: the same values in the total order that sorting
 uses, where NaN equals NaN and `-0.` equals `0.`. A null key is one more key,
 so null keys on both sides match each other. The two columns of an `eq` must
 meet at a common type, as operands of an expression do.
+
+## Ranges and Periods
+
+A comparison matches as the expression comparing the two columns would, in
+the total order that sorting uses, and never at a null. Trial windows on the
+left, each with the events it holds:
+
+```ocaml
+let windows =
+  Query.of_table
+    (Talon.v
+       [
+         ("window", Column.v Type.int16 [| 1; 2 |]);
+         ("start", Column.v Type.float64 [| 0.0; 10.0 |]);
+         ("stop", Column.v Type.float64 [| 5.0; 15.0 |]);
+       ])
+
+let events =
+  Query.of_table
+    (Talon.v [ ("t", Column.v Type.float64 [| 12.5; 3.0; 7.0; 5.0 |]) ])
+
+let in_windows =
+  Query.(windows |> join ~on:Join.(le "start" "t" && gt "stop" "t") events)
+```
+
+```text
+table 2 rows × 4 columns
+ window  start    stop      t
+ int16   float64  float64   float64
+      1   0.0000   5.00000   3.00000
+      2  10.0000  15.00000  12.50000
+```
+
+The event at 5.0 is at the first window's stop, so it falls in neither. With
+the events on the left, the same pairs are
+`Join.inside "t" ("start", "stop")`, in the events' order.
+
+The join sorts one side by one column, its band, and searches it for each
+row of the other side, so it reads only the band's pairs. Here the band is
+the events' `t`, which both comparisons bound. With equality atoms
+beside the comparisons it sorts within each key. Every other atom is tested
+on each of the band's pairs.
+
+`overlaps` reads each side's two columns as a period from the lesser value
+to the greater. Periods that only touch, such as `(0, 2)` and `(2, 3)`, do
+not overlap. A period whose two values are equal is the one point, which
+overlaps a period that holds it, so an event of zero duration still meets
+the trials around it.
 
 ## Kinds
 
@@ -115,7 +166,9 @@ first with `Kit.rename`.
 
 Rows come in the left's order, each left row followed by its matches in the
 right's order. An equality join reads both inputs before it returns a row and
-runs in time proportional to the rows of both inputs plus the matches.
+runs in time proportional to the rows of both inputs plus the matches. A
+range join reads both inputs too, sorts its band's side unless it is already
+in order, and searches it once per bound for each row of the other side.
 
 ## Asserting Matches
 

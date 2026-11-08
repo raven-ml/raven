@@ -3888,6 +3888,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Join.lt`, `Join.le`, `Join.gt`, `Join.ge`, `Join.inside` and
+  `Join.overlaps` join on order and time: a join keeps the pairs its
+  condition holds on, comparing as `Expr` does and reading `overlaps` as
+  SQL-92's OVERLAPS. A join sorts one side by one column and reads only
+  the pairs that column's bounds allow, so spikes in trial windows read the
+  spikes in each window.
 - A Parquet source applies a filter on one `string` or `binary` column as it
   reads, once per value of a dictionary-encoded column chunk, and answers
   `Source.Exact` for it, so the filter leaves the plan. Reads also decode

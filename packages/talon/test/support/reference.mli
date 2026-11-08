@@ -113,10 +113,23 @@ type 's out =
   | Out : string * ('a, 's) term -> 's out
   | Keep : string list -> Expr.row out
 
+(** The type for the atoms of a range condition. *)
+type pred =
+  | Compare of [ `Lt | `Le | `Gt | `Ge ] * string * string
+      (** [Compare (op, l, r)] holds where the left [l] compares to the right
+          [r] by [op] at the type they meet, never at a null. *)
+  | Overlaps of (string * string) * (string * string)
+      (** SQL-92's OVERLAPS predicate (ISO/IEC 9075:1992, 8.11), its general
+          rules taken literally in Kleene's logic, at the type where the four
+          columns meet. *)
+
 (** The type for join conditions. *)
 type on =
   | Keys of (string * string) list
       (** [Keys [(l, r); …]] is [eq l r && …], at least one atom. *)
+  | Range of (string * string) list * pred list
+      (** [Range (ks, ps)] is [eq l r] for each [(l, r)] of [ks], and the atoms
+          [ps], at least one. A pair matches where every atom holds. *)
   | Position
   | All
 

@@ -403,13 +403,6 @@ let unkept q =
       input
   | _ -> q
 
-let cond_columns (on : Join.cond) =
-  List.fold_left
-    (fun (ls, rs) -> function
-      | Join.Eq (l, r) -> (l :: ls, r :: rs) | Position -> (ls, rs))
-    ([], [])
-    (on :> Join.atom list)
-
 (* [prune ~ordered need q] is [q] with each step narrowed to the columns [need]
    of its result and those its steps read, and each source given its request.
    Unless [ordered], the order of [q]'s columns is not observed, so a [derive]
@@ -456,7 +449,7 @@ let rec prune ~ordered need q =
           Query.make (Aggregate { by; outputs; input })
       | Join ({ on; left; right; _ } as r) ->
           let lefts = Schema.names (Query.schema left) in
-          let ls, rs = cond_columns on in
+          let ls, rs = Join.reads on in
           let left_need =
             union (List.filter (fun n -> List.mem n lefts) need) ls
           in

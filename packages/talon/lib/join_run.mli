@@ -20,7 +20,7 @@
 type t =
   | Blocking of (Table.t -> Table.t -> (Table.t, Eval.failure) result)
       (** [Blocking f]: [f l r] is the join of all the left rows [l] and all the
-          right rows [r]. Equality and {!Join.position} joins. *)
+          right rows [r]. Equality, range and {!Join.position} joins. *)
   | Streaming of {
       batch : Table.t -> Table.t -> (Table.t, Eval.failure) result;
           (** [batch r b] is the join of the left batch [b] with all the right

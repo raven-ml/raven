@@ -17,6 +17,16 @@ let subjects =
       ("age", Column.v Type.uint8 [| 24; 31; 27 |]);
     ]
 
+let windows =
+  Talon.v
+    [
+      ("window", Column.v Type.int16 [| 1; 2 |]);
+      ("start", Column.v Type.float64 [| 0.0; 10.0 |]);
+      ("stop", Column.v Type.float64 [| 5.0; 15.0 |]);
+    ]
+
+let events = Talon.v [ ("t", Column.v Type.float64 [| 12.5; 3.0; 7.0; 5.0 |]) ]
+
 let show name q =
   match Query.run q with
   | Ok t -> Format.printf "%s:@.%a@.@." name Talon.pp t
@@ -32,4 +42,9 @@ let () =
   show "anti" Query.(trials |> join ~kind:Anti ~on subjects);
 
   (* An assertion on the number of matches fails the run, naming the row. *)
-  show "each_left:One" Query.(trials |> join ~on ~each_left:One subjects)
+  show "each_left:One" Query.(trials |> join ~on ~each_left:One subjects);
+
+  (* Each window with the events from its start to its stop. *)
+  let windows = Query.of_table windows and events = Query.of_table events in
+  show "in windows"
+    Query.(windows |> join ~on:Join.(le "start" "t" && gt "stop" "t") events)

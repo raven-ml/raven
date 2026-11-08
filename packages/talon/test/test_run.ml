@@ -544,12 +544,35 @@ let step level p =
                 (1, Gen.of_list Join.[ At_most_one; One; At_least_one ]);
               ]
         in
-        let keys = R.Keys (List.map (fun (n, r, _) -> (n, r)) ks) in
+        let pairs = List.map (fun (n, r, _) -> (n, r)) in
+        let keys = R.Keys (pairs ks) in
+        (* The first columns as keys, and each other one compared. *)
+        let range =
+          Gen.bind
+            (Gen.int_range 0 (List.length ks - 1))
+            (fun k ->
+              let eqs = List.filteri (fun i _ -> i < k) ks
+              and rest = List.filteri (fun i _ -> i >= k) ks in
+              Gen.map
+                (fun ops ->
+                  R.Range
+                    ( pairs eqs,
+                      List.map2
+                        (fun op (n, r, _) -> R.Compare (op, n, r))
+                        ops rest ))
+                (Gen.list
+                   ~size:(Gen.constant (List.length rest))
+                   (Gen.of_list [ `Lt; `Le; `Gt; `Ge ])))
+        in
         let on =
           if ks = [] then Gen.of_list R.[ Position; All ]
           else
             Gen.frequency
-              [ (3, Gen.constant keys); (1, Gen.of_list R.[ Position; All ]) ]
+              [
+                (3, Gen.constant keys);
+                (2, range);
+                (1, Gen.of_list R.[ Position; All ]);
+              ]
         in
         Gen.map
           (fun ((on, kind), (each_left, each_right), right) ->
@@ -1025,7 +1048,7 @@ let rec right_keys : R.plan -> right list = function
                 };
               ]
             with _ -> [])
-        | Position | All -> []
+        | Range _ | Position | All -> []
       in
       here @ right_keys left @ right_keys right
 
@@ -1038,6 +1061,8 @@ let agrees p =
   cover "the optimizer keeps the plan" kept;
   cover "an aggregate" (mentions "aggregate" p);
   cover "a join" (mentions "join" p);
+  cover "a range join"
+    (List.exists (fun w -> mentions (w ^ " \"") p) [ "lt"; "le"; "gt"; "ge" ]);
   let joins = right_keys p in
   let some f = List.exists f joins in
   cover "a join to distinct right keys, two rows or more"
@@ -2316,6 +2341,395 @@ let keyed_agrees (lk, rk, kind) =
   | Error (row, why) -> failf "the reference fails at row %d: %s" row why
   | Ok cs -> List.iter (holds (run_ok (R.query p))) cs
 
+(* Range joins
+
+   A left of a key [k] and columns [a] and [b] of one type, a right of a key
+   [kr] and columns [c] and [d] of a type that meets it, up to eight rows each.
+   Their values come from one pool of a few, nulls included, so that the sides
+   share values; a float's pool holds [-0.], [0.], NaN and an infinity too. A
+   third of the time a side is in the order of its first column. The condition
+   is up to three comparisons and periods between the sides, a third of the
+   time with the keys. *)
+
+type range =
+  | Range : {
+      ty : 'a Type.t;
+      left : (int option * 'a option * 'a option) array;
+      right : (int option * 'a option * 'a option) array;
+      types : (string * 'a Type.t) list;
+      plan : R.plan;
+    }
+      -> range
+
+let specials : type a. a Type.t -> a list =
+  let floats = [ -0.; 0.; Float.nan; Float.infinity ] in
+  function
+  | Type.Float16 -> floats
+  | Type.Float32 -> floats
+  | Type.Float64 -> floats
+  | _ -> []
+
+let pp_range ppf (Range { plan; _ }) =
+  match plan with
+  | R.Join { left = Table l; right = Table r; _ } ->
+      Format.fprintf ppf "%a@.%a@.%a" pp_plan plan Talon.pp l Talon.pp r
+  | _ -> pp_plan ppf plan
+
+let range_join =
+  Gen.with_pp pp_range
+  @@
+  let open Gen in
+  let orderable =
+    List.map snd (expressible (List.map (fun t -> ("", t)) palette))
+  in
+  let* (Type.Any ty) = of_list orderable in
+  (* Each column's type contains [ty]: one per side, or one per column. *)
+  let* wide = of_list (wider ty) and+ flip = bool and+ apart = int_range 0 1 in
+  let* own = list ~size:(constant 4) (of_list (wider ty)) in
+  let types =
+    let tl, tr = if flip then (wide, ty) else (ty, wide) in
+    let drawn = List.combine [ "a"; "b"; "c"; "d" ] own in
+    let meets (l, r) =
+      Option.is_some (Type.common [ List.assoc l drawn; List.assoc r drawn ])
+    in
+    let pairs = [ ("a", "c"); ("a", "d"); ("b", "c"); ("b", "d") ] in
+    if apart = 0 && List.exists meets pairs then drawn
+    else [ ("a", tl); ("b", tl); ("c", tr); ("d", tr) ]
+  in
+  let meet ns =
+    Option.is_some (Type.common (List.map (fun n -> List.assoc n types) ns))
+  in
+  let* pool = list ~size:(int_range 1 3) (value ty) in
+  let pool = pool @ specials ty in
+  let cell =
+    frequency [ (1, constant None); (5, map Option.some (of_list pool)) ]
+  in
+  let rows =
+    let* sorted = int_range 0 3 in
+    let+ rs =
+      array ~size:(int_range 0 8) (triple (option (int_range 0 2)) cell cell)
+    in
+    let nulls_last cmp x y =
+      match (x, y) with
+      | Some x, Some y -> cmp x y
+      | None, None -> 0
+      | None, _ -> 1
+      | _, None -> -1
+    in
+    let first (_, x, _) (_, y, _) = nulls_last (Type.compare_value ty) x y in
+    let keyed ((k, _, _) as a) ((k', _, _) as b) =
+      match nulls_last Int.compare k k' with 0 -> first a b | c -> c
+    in
+    if sorted = 0 then Array.stable_sort first rs;
+    if sorted = 1 then Array.stable_sort keyed rs;
+    rs
+  in
+  let compare =
+    let pairs =
+      List.filter
+        (fun (l, r) -> meet [ l; r ])
+        [ ("a", "c"); ("a", "d"); ("b", "c"); ("b", "d") ]
+    in
+    let+ op = of_list [ `Lt; `Le; `Gt; `Ge ] and+ l, r = of_list pairs in
+    R.Compare (op, l, r)
+  in
+  let period (s, e) = map (fun flip -> if flip then (e, s) else (s, e)) bool in
+  let overlaps =
+    let+ l = period ("a", "b") and+ r = period ("c", "d") in
+    R.Overlaps (l, r)
+  in
+  let atom =
+    if meet [ "a"; "b"; "c"; "d" ] then
+      frequency [ (3, compare); (1, overlaps) ]
+    else compare
+  in
+  let* preds = list ~size:(int_range 1 3) atom in
+  let preds =
+    List.fold_left
+      (fun ps p -> if List.mem p ps then ps else ps @ [ p ])
+      [] preds
+  in
+  let* keyed = int_range 0 2 in
+  let* left = rows in
+  let* right = rows in
+  let count =
+    frequency
+      [
+        (3, constant Join.Any);
+        (1, of_list Join.[ At_most_one; One; At_least_one ]);
+      ]
+  in
+  let+ kind = of_list Join.[ Inner; Left; Full; Semi; Anti ]
+  and+ each_left = count
+  and+ each_right = count in
+  let table (k, x, y) rs =
+    let column ty f = Column.of_options ty (Array.map f rs) in
+    R.Table
+      (Talon.v
+         [
+           (k, column Type.int64 (fun (k, _, _) -> k));
+           (x, column (List.assoc x types) (fun (_, x, _) -> x));
+           (y, column (List.assoc y types) (fun (_, _, y) -> y));
+         ])
+  in
+  let ks = if keyed = 0 then [ ("k", "kr") ] else [] in
+  let plan =
+    R.Join
+      {
+        kind;
+        each_left;
+        each_right;
+        on = Range (ks, preds);
+        left = table ("k", "a", "b") left;
+        right = table ("kr", "c", "d") right;
+      }
+  in
+  Range { ty; left; right; types; plan }
+
+let range_agrees (Range { ty; left; right; types; plan }) =
+  let preds, keyed =
+    match plan with
+    | R.Join { on = Range (ks, ps); _ } -> (ps, ks <> [])
+    | _ -> assert false
+  in
+  let compares =
+    List.filter_map
+      (function R.Compare (_, l, r) -> Some (l, r) | _ -> None)
+      preds
+  in
+  let named side n =
+    List.length (List.filter (fun lr -> String.equal (side lr) n) compares)
+  in
+  let most side ns = List.exists (fun n -> named side n >= 2) ns in
+  let is_overlaps = function R.Overlaps _ -> true | R.Compare _ -> false in
+  cover "one comparison"
+    (match preds with [ R.Compare _ ] -> true | _ -> false);
+  cover "two comparisons name one right column"
+    (most snd [ "c"; "d" ] && not (most fst [ "a"; "b" ]));
+  cover "two comparisons name one left column"
+    (most fst [ "a"; "b" ] && not (most snd [ "c"; "d" ]));
+  cover "comparisons name two columns of each side"
+    (List.length (List.sort_uniq compare (List.map fst compares)) = 2
+    && List.length (List.sort_uniq compare (List.map snd compares)) = 2);
+  cover "an overlaps alone" (List.for_all is_overlaps preds);
+  cover "an overlaps and another atom"
+    (List.exists is_overlaps preds && List.length preds > 1);
+  cover "equality keys" keyed;
+  let cells rs =
+    Array.to_list rs |> List.concat_map (fun (_, x, y) -> [ x; y ])
+  in
+  let all_cells = cells left @ cells right in
+  let same x y = Type.compare_value ty x y = 0 in
+  cover "a null bound" (List.mem None all_cells);
+  cover "a float type" (specials ty <> []);
+  let row_is f rs =
+    Array.exists
+      (fun (_, x, y) ->
+        match (x, y) with Some x, Some y -> f x y | _ -> false)
+      rs
+  in
+  cover "a reversed period"
+    (row_is (fun x y -> Type.compare_value ty x y > 0) left);
+  cover "a zero-length period" (row_is same left || row_is same right);
+  cover "a value on both sides"
+    (List.exists
+       (fun x ->
+         List.exists
+           (fun y ->
+             match (x, y) with Some x, Some y -> same x y | _ -> false)
+           (cells right))
+       (cells left));
+  let kind, each_left, each_right =
+    match plan with
+    | R.Join { kind; each_left; each_right; _ } -> (kind, each_left, each_right)
+    | _ -> assert false
+  in
+  List.iter
+    (fun (name, k) -> cover name (kind = k))
+    Join.
+      [
+        ("Inner", Inner);
+        ("Left", Left);
+        ("Full", Full);
+        ("Semi", Semi);
+        ("Anti", Anti);
+      ];
+  cover "a count" (each_left <> Any || each_right <> Any);
+  let typed n = List.assoc n types in
+  let at_two =
+    List.exists
+      (fun x ->
+        let partners =
+          List.filter_map
+            (fun (l, r) ->
+              if l = x then Some r else if r = x then Some l else None)
+            compares
+        in
+        List.exists
+          (fun p ->
+            List.exists
+              (fun q -> not (Type.equal (typed p) (typed q)))
+              partners)
+          partners)
+      [ "a"; "b"; "c"; "d" ]
+  in
+  cover "a column compared at two types" at_two;
+  let text t = Type.equal t Type.string in
+  let categorical t =
+    String.starts_with ~prefix:"categorical" (Format.asprintf "%a" Type.pp t)
+  in
+  cover "a categorical compared with text"
+    (List.exists
+       (fun (l, r) ->
+         (text (typed l) && categorical (typed r))
+         || (categorical (typed l) && text (typed r)))
+       compares);
+  let grouped rs =
+    let n = Array.length rs in
+    let keyed i =
+      let k, x, _ = rs.(i) and k', x', _ = rs.(i + 1) in
+      match (k, k') with
+      | Some k, Some k' when k <> k' -> k < k'
+      | Some _, Some _ -> (
+          match (x, x') with
+          | Some x, Some x' -> Type.compare_value ty x x' <= 0
+          | _, None -> true
+          | None, Some _ -> false)
+      | _, None -> true
+      | None, Some _ -> false
+    in
+    n >= 3 && List.for_all keyed (List.init (n - 1) Fun.id)
+  in
+  cover "keys and a side in order of its key, then its first column"
+    (keyed && (grouped left || grouped right));
+  match (R.run plan, Query.run (R.query plan)) with
+  | Ok cs, Ok t ->
+      cover "a left row with two matches or more"
+        (rows t > Array.length left && kind = Inner);
+      equal schema_w (Schema.v (R.schema plan)) (schema t);
+      List.iter (holds t) cs
+  | Error (row, why), Error e ->
+      cover "a count fails" true;
+      contains ~sub:(Printf.sprintf ": row %d: %s." row why) (error e)
+  | Ok _, Error e -> failf "the run fails: %s" (error e)
+  | Error (row, why), Ok _ -> failf "no failure at row %d: %s" row why
+
+(* Spikes in trials, written from either side: trials [[0, 10)] and
+   [[20, 30)], spikes at 25, 5, 15, 28 and 30. Each spike is in one trial at
+   most, and the rows come in the left's order. *)
+let spikes_in_trials =
+  let trials =
+    v
+      [
+        ("start", i64 [| 0; 20 |]);
+        ("stop", i64 [| 10; 30 |]);
+        ("trial", i64 [| 0; 1 |]);
+      ]
+  in
+  let spikes =
+    v [ ("t", i64 [| 25; 5; 15; 28; 30 |]); ("spike", i64 [| 0; 1; 2; 3; 4 |]) ]
+  in
+  let s x = Some x in
+  cases "Spikes in trials, from either side"
+    ~id:(fun (name, _, _, _, _) -> name)
+    [
+      ( "trials on the left",
+        trials,
+        spikes,
+        Join.(le "start" "t" && gt "stop" "t"),
+        [ ("trial", [ s 0; s 1; s 1 ]); ("spike", [ s 1; s 0; s 3 ]) ] );
+      ( "spikes on the left",
+        spikes,
+        trials,
+        Join.inside "t" ("start", "stop"),
+        [ ("spike", [ s 0; s 1; s 3 ]); ("trial", [ s 1; s 0; s 1 ]) ] );
+    ]
+    (fun (_, l, r, on, columns) ->
+      List.iter (column_is (joined on l r)) columns)
+
+(* SQL-92's <overlaps predicate> (ISO/IEC 9075:1992, 8.11), whose general
+   rules read: "3) If D1 is the null value or if E1 < D1, then let S1 = E1 and
+   let T1 = D1. Otherwise, let S1 = D1 and let T1 = E1." (5 likewise for S2
+   and T2) "6) The result of the <overlaps predicate> is the result of the
+   following expression:
+     ( S1 > S2 AND NOT ( S1 >= T2 AND T1 >= T2 ) ) OR
+     ( S2 > S1 AND NOT ( S2 >= T1 AND T2 >= T1 ) ) OR
+     ( S1 = S2 AND ( T1 <> T2 OR T1 = T2 ) )"
+   Each row is two periods and that expression's value, a pair matching where
+   it is true. The expression is symmetric, so each row holds both ways. *)
+let sql92_overlaps =
+  let s x = Some x in
+  let i (d, e) =
+    (Column.of_options Type.int64 [| d |], Column.of_options Type.int64 [| e |])
+  in
+  let f (d, e) =
+    ( Column.of_options Type.float64 [| d |],
+      Column.of_options Type.float64 [| e |] )
+  in
+  let ints =
+    [
+      ("disjoint", (s 0, s 2), (s 3, s 5), false);
+      ( "touching: one's stop is the other's start",
+        (s 0, s 2),
+        (s 2, s 3),
+        false );
+      ("one's start inside the other", (s 0, s 5), (s 3, s 8), true);
+      ("one inside the other", (s 0, s 10), (s 3, s 5), true);
+      ("equal periods", (s 2, s 6), (s 2, s 6), true);
+      ("equal starts, other stops", (s 2, s 3), (s 2, s 9), true);
+      ("a point inside the other", (s 5, s 5), (s 3, s 8), true);
+      ("a point at the other's start", (s 5, s 5), (s 5, s 9), true);
+      ("a point at the other's stop", (s 5, s 5), (s 1, s 5), false);
+      ("one point twice", (s 4, s 4), (s 4, s 4), true);
+      ("two points", (s 4, s 4), (s 5, s 5), false);
+      ("a reversed period, overlapping", (s 8, s 3), (s 0, s 5), true);
+      ("a reversed period, touching", (s 2, s 0), (s 2, s 3), false);
+      ("a reversed period at the other's stop", (s 5, s 3), (s 0, s 3), false);
+      ("a null start, its stop inside the other", (None, s 4), (s 3, s 8), true);
+      ("a null stop, its start inside the other", (s 4, None), (s 3, s 8), true);
+      ( "a null stop, the start before the other's",
+        (s 2, None),
+        (s 3, s 8),
+        false );
+      ("a null stop, equal starts", (s 3, None), (s 3, s 8), false);
+      ( "a null stop, the start at the other's stop",
+        (s 5, None),
+        (s 1, s 5),
+        false );
+      ("null stops on each side, equal starts", (s 3, None), (s 3, None), false);
+      ("a null stop on each side", (s 3, None), (s 4, None), false);
+      ("both null", (None, None), (s 0, s 9), false);
+    ]
+  in
+  let floats =
+    [
+      ( "a NaN stop holds every number after its start",
+        (s 0., s Float.nan),
+        (s 5., s 6.),
+        true );
+      ("a NaN start is a stop", (s Float.nan, s 0.), (s 5., s 6.), true);
+      ("-0. and 0. are one start", (s (-0.), s 1.), (s 0., s 2.), true);
+      ( "an infinite stop before NaN",
+        (s 0., s Float.infinity),
+        (s Float.nan, s Float.nan),
+        false );
+    ]
+  in
+  cases "SQL-92's OVERLAPS, over a pair of one-row tables"
+    ~id:(fun (name, _, _, _) -> name)
+    (List.map (fun (n, l, r, e) -> (n, i l, i r, e)) ints
+    @ List.map (fun (n, l, r, e) -> ("float64: " ^ n, f l, f r, e)) floats)
+    (fun (_, (ld, le), (rd, re), expected) ->
+      let l = v [ ("d1", ld); ("e1", le) ]
+      and r = v [ ("d2", rd); ("e2", re) ] in
+      let matches l r =
+        rows (joined (Join.overlaps ("d1", "e1") ("d2", "e2")) l r) = 1
+      in
+      let swap t = v [ ("d1", column t "d2"); ("e1", column t "e2") ] in
+      let back t = v [ ("d2", column t "d1"); ("e2", column t "e1") ] in
+      equal ~msg:"left, right" bool expected (matches l r);
+      equal ~msg:"right, left" bool expected (matches (swap r) (back l)))
+
 (* A right whose keys are distinct, as a table looked up by its key: left rows
    0 and 2 match right row 1, left row 1 matches right row 0, and left row 3
    and right row 2 match nothing. *)
@@ -2504,6 +2918,40 @@ let joins =
       unmatched_right;
       prop "an equality join gives the reference's rows" keyed_join
         keyed_agrees;
+      prop ~count:1000 "a range join keeps the pairs its condition holds on"
+        range_join range_agrees;
+      spikes_in_trials;
+      test "a categorical bounded by itself and by text" (fun () ->
+          (* "b" comes before "a" in the dictionary and after it as text: each
+             bound compares at the type of its own two columns. *)
+          let d = Type.categorical [| "b"; "a" |] in
+          let l =
+            v
+              [
+                ("y1", Column.v d [| "b" |]);
+                ("y2", Column.v Type.string [| "a" |]);
+              ]
+          and r = v [ ("x", Column.v d [| "a" |]) ] in
+          equal int 1 (rows (joined Join.(le "y1" "x" && le "y2" "x") l r)));
+      test "a band column that its bounds meet at two types" (fun () ->
+          (* uint8 meets int16 and uint16, which do not meet each other. *)
+          let l =
+            v
+              [
+                ("lo", Column.v Type.int16 [| 2; -1 |]);
+                ("hi", Column.v Type.uint16 [| 9; 2 |]);
+              ]
+          and r =
+            v
+              [
+                ("t", Column.v Type.uint8 [| 1; 5; 9 |]);
+                ("y", i64 [| 0; 1; 2 |]);
+              ]
+          in
+          column_is
+            (joined Join.(le "lo" "t" && gt "hi" "t") l r)
+            ("y", [ Some 1; Some 0 ]));
+      sql92_overlaps;
       lookup_order;
       text_lookup;
       shapes;

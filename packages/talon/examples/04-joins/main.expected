@@ -45,3 +45,10 @@ table 2 rows × 3 columns
 each_left:One:
 join ~on:(eq "subject" "id") ~each_left:One: row 3: the left row whose "subject" is "s3" matches 0 rows, not one.
 
+in windows:
+table 2 rows × 4 columns
+ window  start    stop      t
+ int16   float64  float64   float64
+      1   0.0000   5.00000   3.00000
+      2  10.0000  15.00000  12.50000
+

@@ -1880,16 +1880,35 @@ module Join : sig
       [Join.(keys [ "ticker" ] && eq "day" "date")]. Atoms name a left column,
       then a right column.
 
+      {b Matching.} A join keeps exactly the pairs of rows on which every atom
+      holds: the pairs of the join on {!all} that its condition holds on. An
+      equality atom holds by key identity ({!Type.compare_value}, null being
+      one key), so null keys match. A comparison holds where {!Expr.( < )} or
+      its sibling is [true] on the two values: in talon's total order, NaN
+      after every number and [-0.] equal to [0.], and never at a null. No
+      value fails a join. A null, and a period whose values come in either
+      order ({!overlaps}), decide which pairs match.
+
       {b Algorithms.} Each condition runs as one algorithm, with the cost that
-      [Query.join] states, and a conjunction that no algorithm runs raises when
-      it is built. The conditions are:
-      - {e equality}: one or more equality atoms ({!keys}, {!eq});
+      [Query.join] states:
+      - {e equality}: equality atoms ({!keys}, {!eq});
+      - {e range}: equality atoms, if any, and at least one comparison
+        ({!lt}, {!le}, {!gt}, {!ge}, {!inside}) or {!overlaps}. It sorts one
+        side's rows within their equality keys by one column, its {e band},
+        and finds each row of the other side's matches between two searches
+        of that order. The band's atoms are the first {!overlaps}, which sorts
+        each side by its periods' starts, or else the comparisons that name
+        the band column and meet it at the type the first of them does. The
+        band column is, of the columns that comparisons name, on their side,
+        the one named most, a right column on a tie between the sides, else
+        the one written first. The band's atoms decide which pairs it reads,
+        and each other atom is tested on every one of them. A side whose rows
+        come grouped by their equality keys, each group in the band column's
+        order, is in the band's order, as is the right side of an
+        {!overlaps} whose rows come so by their periods' starts;
       - {!position}, alone;
       - {!all}, every pair, which is also the condition with no atom: [all && c]
         is [c].
-
-      {b Keys.} Equality atoms match by key identity ({!Type.compare_value},
-      null being one key), so null keys match.
 
       {b Columns.} A {!Semi} or {!Anti} join has the left columns. Another join
       has the left columns, then the right columns but those of equality atoms,
@@ -1902,7 +1921,7 @@ module Join : sig
   (** {1:conditions Conditions} *)
 
   type cond
-  (** The type for conditions: conjunctions of atoms that an algorithm runs. *)
+  (** The type for conditions: conjunctions of atoms. *)
 
   val keys : string list -> cond
   (** [keys ns] matches the rows whose columns [ns] are the same keys on both
@@ -1915,6 +1934,39 @@ module Join : sig
   (** [eq l r] matches the rows whose left column [l] and right column [r] are
       the same key. [l] and [r] must meet ({!Type.common}). *)
 
+  val lt : string -> string -> cond
+  (** [lt l r] matches the rows whose left column [l] comes before the right
+      column [r], as {!Expr.( < )} compares. [l] and [r] must meet
+      ({!Type.common}) at a type with an order, which an extension type
+      lacks. *)
+
+  val le : string -> string -> cond
+  (** [le l r] is {!lt}, as {!Expr.( <= )} compares. *)
+
+  val gt : string -> string -> cond
+  (** [gt l r] is {!lt}, as {!Expr.( > )} compares. *)
+
+  val ge : string -> string -> cond
+  (** [ge l r] is {!lt}, as {!Expr.( >= )} compares. *)
+
+  val inside : string -> string * string -> cond
+  (** [inside p (s, e)] is [ge p s && lt p e]: the rows whose left column [p]
+      is from the right column [s], included, to the right column [e],
+      excluded. It matches no row whose [e] is not after its [s]. *)
+
+  val overlaps : string * string -> string * string -> cond
+  (** [overlaps (ls, le) (rs, re)] matches the rows whose left period
+      [(ls, le)] and right period [(rs, re)] overlap, as SQL-92's OVERLAPS
+      predicate defines it (ISO/IEC 9075:1992, 8.11), in talon's total order.
+      A period's {e start} is the lesser of its two values and its {e stop}
+      the greater; with one value null, its start is the other one and its
+      stop is unknown. Two periods overlap where their starts are equal and
+      neither stop is unknown, or where one's start is after the other's
+      start and before the other's known stop. So [(0, 2)] and [(2, 3)] do
+      not overlap, [(5, 5)] overlaps [(3, 8)] and [(5, 9)] but not [(1, 5)],
+      and [(8, 3)] is [(3, 8)]. The four columns must meet at a type with an
+      order. *)
+
   val position : cond
   (** [position] matches row i of the left with row i of the right. *)
 
@@ -1924,9 +1976,8 @@ module Join : sig
   val ( && ) : cond -> cond -> cond
   (** [c0 && c1] matches the pairs that both [c0] and [c1] match.
 
-      Raises [Invalid_argument] if no algorithm runs the conjunction, one that
-      holds {!position} and another atom, or if it holds one equality atom
-      twice. *)
+      Raises [Invalid_argument] if the conjunction holds {!position} and
+      another atom, or holds one atom twice. *)
 
   (** {1:kinds Kinds and counts} *)
 
@@ -2118,13 +2169,22 @@ module Query : sig
       in order. Over {!Join.position}, {!Join.Inner} and {!Join.Semi} keep
       min(n, m) rows, {!Join.Left} keeps n, {!Join.Full} max(n, m), and
       {!Join.Anti} [left]'s rows past m. Its columns are those {!Join}
-      describes. An equality or {!Join.position} join blocks on both inputs; a
-      join on {!Join.all} blocks on [right] and streams [left]. An equality join
-      runs in O(n + m + matches). Over traced columns ({!section-compiled}) an
-      equality join raises, and the others run, their counts included.
+      describes. An equality, range or {!Join.position} join blocks on both
+      inputs; a join on {!Join.all} blocks on [right] and streams [left]. An
+      equality join runs in O(n + m + matches). A range join over a band of
+      p pairs, sorting a side of s rows and searching it from one of o rows,
+      runs in O(s log s + o log s + p), with no sort of a side in the band's
+      order, and one more sort of its matches when they are out of the
+      join's order; an {!Join.overlaps} band sorts and searches each side.
+      When the band holds every atom but the equality atoms, a {!Join.Semi}
+      or {!Join.Anti} join and the counts make no pair. Over
+      traced columns ({!section-compiled}) an equality or range join raises,
+      and the others run, their counts included.
 
       Its problems are, for each atom of [on] in order: a column missing on its
-      side, and columns that do not meet. Then, in a {!Join.Full} join, a left
+      side, columns that do not meet, and the columns of a comparison or of
+      {!Join.overlaps} that meet at a type with no order. Then, in a
+      {!Join.Full} join, a left
       column that is the left of two equality atoms, and, except in a
       {!Join.Semi} or {!Join.Anti} join, the joined columns that have one name.
   *)

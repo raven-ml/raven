@@ -1,7 +1,8 @@
 # `04-joins`
 
-Join trials with subjects on `subject = id` with each kind of join, then
-assert that every trial has exactly one subject.
+Join trials with subjects on `subject = id` with each kind of join, assert
+that every trial has exactly one subject, then join trial windows with the
+events inside them.
 
 ```bash
 dune exec ./main.exe
@@ -16,3 +17,6 @@ dune exec ./main.exe
 ```
 join ~on:(eq "subject" "id") ~each_left:One: row 3: the left row whose "subject" is "s3" matches 0 rows, not one.
 ```
+
+- `Join.(le "start" "t" && gt "stop" "t")` keeps each window with the events
+  from its start, included, to its stop, excluded.
