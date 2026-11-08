@@ -1,0 +1,214 @@
+# tolk D27 golden=5ec6dbc73ecc81bfda0ca9da6f3f2b78
+0 Ops.CONST dtypes.weakint [] 0
+1 Ops.CUSTOM_FUNCTION dtypes.void [0, 0] CustomFunction(name="simplify")
+2 Ops.CAST dtypes.i8 [0] dtypes.i8
+3 Ops.SINK dtypes.void [1, 2, 2]
+4 Ops.BITCAST dtypes.u8 [2] dtypes.u8
+5 Ops.CAST dtypes.u8 [0] dtypes.u8
+6 Ops.SINK dtypes.void [1, 4, 5]
+7 Ops.CONST dtypes.bool [] False
+8 Ops.CUSTOM_FUNCTION dtypes.void [7, 7] CustomFunction(name="simplify")
+9 Ops.BITCAST dtypes.bool [2] dtypes.bool
+10 Ops.SINK dtypes.void [8, 9, 7]
+11 Ops.BITCAST dtypes.i8 [5] dtypes.i8
+12 Ops.SINK dtypes.void [1, 11, 2]
+13 Ops.SINK dtypes.void [1, 5, 5]
+14 Ops.BITCAST dtypes.bool [5] dtypes.bool
+15 Ops.SINK dtypes.void [8, 14, 7]
+16 Ops.BITCAST dtypes.i8 [7] dtypes.i8
+17 Ops.SINK dtypes.void [1, 16, 2]
+18 Ops.BITCAST dtypes.u8 [7] dtypes.u8
+19 Ops.SINK dtypes.void [1, 18, 5]
+20 Ops.SINK dtypes.void [8, 7, 7]
+21 Ops.CONST dtypes.weakint [] 1
+22 Ops.CUSTOM_FUNCTION dtypes.void [21, 21] CustomFunction(name="simplify")
+23 Ops.CAST dtypes.i8 [21] dtypes.i8
+24 Ops.SINK dtypes.void [22, 23, 23]
+25 Ops.BITCAST dtypes.u8 [23] dtypes.u8
+26 Ops.CAST dtypes.u8 [21] dtypes.u8
+27 Ops.SINK dtypes.void [22, 25, 26]
+28 Ops.CONST dtypes.bool [] True
+29 Ops.CUSTOM_FUNCTION dtypes.void [28, 28] CustomFunction(name="simplify")
+30 Ops.BITCAST dtypes.bool [23] dtypes.bool
+31 Ops.SINK dtypes.void [29, 30, 28]
+32 Ops.BITCAST dtypes.i8 [26] dtypes.i8
+33 Ops.SINK dtypes.void [22, 32, 23]
+34 Ops.SINK dtypes.void [22, 26, 26]
+35 Ops.BITCAST dtypes.bool [26] dtypes.bool
+36 Ops.SINK dtypes.void [29, 35, 28]
+37 Ops.BITCAST dtypes.i8 [28] dtypes.i8
+38 Ops.SINK dtypes.void [22, 37, 23]
+39 Ops.BITCAST dtypes.u8 [28] dtypes.u8
+40 Ops.SINK dtypes.void [22, 39, 26]
+41 Ops.SINK dtypes.void [29, 28, 28]
+42 Ops.CONST dtypes.weakint [] -1
+43 Ops.CUSTOM_FUNCTION dtypes.void [42, 42] CustomFunction(name="simplify")
+44 Ops.CAST dtypes.i8 [42] dtypes.i8
+45 Ops.SINK dtypes.void [43, 44, 44]
+46 Ops.CONST dtypes.weakint [] 255
+47 Ops.CUSTOM_FUNCTION dtypes.void [46, 46] CustomFunction(name="simplify")
+48 Ops.BITCAST dtypes.u8 [44] dtypes.u8
+49 Ops.CAST dtypes.u8 [46] dtypes.u8
+50 Ops.SINK dtypes.void [47, 48, 49]
+51 Ops.BITCAST dtypes.i8 [49] dtypes.i8
+52 Ops.SINK dtypes.void [43, 51, 44]
+53 Ops.SINK dtypes.void [47, 49, 49]
+54 Ops.CAST dtypes.i16 [42] dtypes.i16
+55 Ops.SINK dtypes.void [43, 54, 54]
+56 Ops.CONST dtypes.weakint [] 65535
+57 Ops.CUSTOM_FUNCTION dtypes.void [56, 56] CustomFunction(name="simplify")
+58 Ops.BITCAST dtypes.u16 [54] dtypes.u16
+59 Ops.CAST dtypes.u16 [56] dtypes.u16
+60 Ops.SINK dtypes.void [57, 58, 59]
+61 Ops.CUSTOM_FUNCTION dtypes.void [] CustomFunction(name="simplify")
+62 Ops.BITCAST dtypes.f16 [54] dtypes.f16
+63 Ops.CONST dtypes.weakfloat [] nan(0xfffffc0000000000)
+64 Ops.CAST dtypes.f16 [63] dtypes.f16
+65 Ops.SINK dtypes.void [61, 62, 64]
+66 Ops.BITCAST dtypes.i16 [59] dtypes.i16
+67 Ops.SINK dtypes.void [43, 66, 54]
+68 Ops.SINK dtypes.void [57, 59, 59]
+69 Ops.BITCAST dtypes.f16 [59] dtypes.f16
+70 Ops.SINK dtypes.void [61, 69, 64]
+71 Ops.CAST dtypes.i32 [42] dtypes.i32
+72 Ops.SINK dtypes.void [43, 71, 71]
+73 Ops.CONST dtypes.weakint [] 4294967295
+74 Ops.CUSTOM_FUNCTION dtypes.void [73, 73] CustomFunction(name="simplify")
+75 Ops.BITCAST dtypes.u32 [71] dtypes.u32
+76 Ops.CAST dtypes.u32 [73] dtypes.u32
+77 Ops.SINK dtypes.void [74, 75, 76]
+78 Ops.BITCAST dtypes.f32 [71] dtypes.f32
+79 Ops.CONST dtypes.weakfloat [] nan(0xffffffffe0000000)
+80 Ops.CAST dtypes.f32 [79] dtypes.f32
+81 Ops.SINK dtypes.void [61, 78, 80]
+82 Ops.BITCAST dtypes.i32 [76] dtypes.i32
+83 Ops.SINK dtypes.void [43, 82, 71]
+84 Ops.SINK dtypes.void [74, 76, 76]
+85 Ops.BITCAST dtypes.f32 [76] dtypes.f32
+86 Ops.SINK dtypes.void [61, 85, 80]
+87 Ops.CAST dtypes.i64 [42] dtypes.i64
+88 Ops.SINK dtypes.void [43, 87, 87]
+89 Ops.BITCAST dtypes.u64 [87] dtypes.u64
+90 Ops.CONST dtypes.weakint [] 18446744073709551615
+91 Ops.CAST dtypes.u64 [90] dtypes.u64
+92 Ops.SINK dtypes.void [61, 89, 91]
+93 Ops.BITCAST dtypes.f64 [87] dtypes.f64
+94 Ops.CONST dtypes.weakfloat [] nan(0xffffffffffffffff)
+95 Ops.CAST dtypes.f64 [94] dtypes.f64
+96 Ops.SINK dtypes.void [61, 93, 95]
+97 Ops.BITCAST dtypes.i64 [91] dtypes.i64
+98 Ops.SINK dtypes.void [43, 97, 87]
+99 Ops.SINK dtypes.void [61, 91, 91]
+100 Ops.BITCAST dtypes.f64 [91] dtypes.f64
+101 Ops.SINK dtypes.void [61, 100, 95]
+102 Ops.CONST dtypes.weakint [] -128
+103 Ops.CUSTOM_FUNCTION dtypes.void [102, 102] CustomFunction(name="simplify")
+104 Ops.CAST dtypes.i8 [102] dtypes.i8
+105 Ops.SINK dtypes.void [103, 104, 104]
+106 Ops.CONST dtypes.weakint [] 128
+107 Ops.CUSTOM_FUNCTION dtypes.void [106, 106] CustomFunction(name="simplify")
+108 Ops.BITCAST dtypes.u8 [104] dtypes.u8
+109 Ops.CAST dtypes.u8 [106] dtypes.u8
+110 Ops.SINK dtypes.void [107, 108, 109]
+111 Ops.BITCAST dtypes.i8 [109] dtypes.i8
+112 Ops.SINK dtypes.void [103, 111, 104]
+113 Ops.SINK dtypes.void [107, 109, 109]
+114 Ops.CONST dtypes.weakint [] -32768
+115 Ops.CUSTOM_FUNCTION dtypes.void [114, 114] CustomFunction(name="simplify")
+116 Ops.CAST dtypes.i16 [114] dtypes.i16
+117 Ops.SINK dtypes.void [115, 116, 116]
+118 Ops.CONST dtypes.weakint [] 32768
+119 Ops.CUSTOM_FUNCTION dtypes.void [118, 118] CustomFunction(name="simplify")
+120 Ops.BITCAST dtypes.u16 [116] dtypes.u16
+121 Ops.CAST dtypes.u16 [118] dtypes.u16
+122 Ops.SINK dtypes.void [119, 120, 121]
+123 Ops.BITCAST dtypes.i16 [121] dtypes.i16
+124 Ops.SINK dtypes.void [115, 123, 116]
+125 Ops.SINK dtypes.void [119, 121, 121]
+126 Ops.CONST dtypes.weakint [] -2147483648
+127 Ops.CUSTOM_FUNCTION dtypes.void [126, 126] CustomFunction(name="simplify")
+128 Ops.CAST dtypes.i32 [126] dtypes.i32
+129 Ops.SINK dtypes.void [127, 128, 128]
+130 Ops.CONST dtypes.weakint [] 2147483648
+131 Ops.CUSTOM_FUNCTION dtypes.void [130, 130] CustomFunction(name="simplify")
+132 Ops.BITCAST dtypes.u32 [128] dtypes.u32
+133 Ops.CAST dtypes.u32 [130] dtypes.u32
+134 Ops.SINK dtypes.void [131, 132, 133]
+135 Ops.BITCAST dtypes.i32 [133] dtypes.i32
+136 Ops.SINK dtypes.void [127, 135, 128]
+137 Ops.SINK dtypes.void [131, 133, 133]
+138 Ops.CONST dtypes.weakint [] -9223372036854775808
+139 Ops.CAST dtypes.i64 [138] dtypes.i64
+140 Ops.SINK dtypes.void [61, 139, 139]
+141 Ops.BITCAST dtypes.u64 [139] dtypes.u64
+142 Ops.CONST dtypes.weakint [] 9223372036854775808
+143 Ops.CAST dtypes.u64 [142] dtypes.u64
+144 Ops.SINK dtypes.void [61, 141, 143]
+145 Ops.BITCAST dtypes.i64 [143] dtypes.i64
+146 Ops.SINK dtypes.void [61, 145, 139]
+147 Ops.SINK dtypes.void [61, 143, 143]
+148 Ops.CONST dtypes.weakint [] 13496
+149 Ops.CUSTOM_FUNCTION dtypes.void [148, 148] CustomFunction(name="simplify")
+150 Ops.CAST dtypes.i16 [148] dtypes.i16
+151 Ops.SINK dtypes.void [149, 150, 150]
+152 Ops.BITCAST dtypes.u16 [150] dtypes.u16
+153 Ops.CAST dtypes.u16 [148] dtypes.u16
+154 Ops.SINK dtypes.void [149, 152, 153]
+155 Ops.BITCAST dtypes.f16 [150] dtypes.f16
+156 Ops.CONST dtypes.weakfloat [] 0.294921875
+157 Ops.CAST dtypes.f16 [156] dtypes.f16
+158 Ops.SINK dtypes.void [61, 155, 157]
+159 Ops.BITCAST dtypes.i16 [153] dtypes.i16
+160 Ops.SINK dtypes.void [149, 159, 150]
+161 Ops.SINK dtypes.void [149, 153, 153]
+162 Ops.BITCAST dtypes.f16 [153] dtypes.f16
+163 Ops.SINK dtypes.void [61, 162, 157]
+164 Ops.BITCAST dtypes.i16 [157] dtypes.i16
+165 Ops.SINK dtypes.void [149, 164, 150]
+166 Ops.BITCAST dtypes.u16 [157] dtypes.u16
+167 Ops.SINK dtypes.void [149, 166, 153]
+168 Ops.SINK dtypes.void [61, 157, 157]
+169 Ops.CONST dtypes.weakint [] 1050081145
+170 Ops.CUSTOM_FUNCTION dtypes.void [169, 169] CustomFunction(name="simplify")
+171 Ops.CAST dtypes.i32 [169] dtypes.i32
+172 Ops.SINK dtypes.void [170, 171, 171]
+173 Ops.BITCAST dtypes.u32 [171] dtypes.u32
+174 Ops.CAST dtypes.u32 [169] dtypes.u32
+175 Ops.SINK dtypes.void [170, 173, 174]
+176 Ops.BITCAST dtypes.f32 [171] dtypes.f32
+177 Ops.CONST dtypes.weakfloat [] 0.29485681653022766
+178 Ops.CAST dtypes.f32 [177] dtypes.f32
+179 Ops.SINK dtypes.void [61, 176, 178]
+180 Ops.BITCAST dtypes.i32 [174] dtypes.i32
+181 Ops.SINK dtypes.void [170, 180, 171]
+182 Ops.SINK dtypes.void [170, 174, 174]
+183 Ops.BITCAST dtypes.f32 [174] dtypes.f32
+184 Ops.SINK dtypes.void [61, 183, 178]
+185 Ops.BITCAST dtypes.i32 [178] dtypes.i32
+186 Ops.SINK dtypes.void [170, 185, 171]
+187 Ops.BITCAST dtypes.u32 [178] dtypes.u32
+188 Ops.SINK dtypes.void [170, 187, 174]
+189 Ops.SINK dtypes.void [61, 178, 178]
+190 Ops.CONST dtypes.weakint [] 4598983288165178391
+191 Ops.CUSTOM_FUNCTION dtypes.void [190, 190] CustomFunction(name="simplify")
+192 Ops.CAST dtypes.i64 [190] dtypes.i64
+193 Ops.SINK dtypes.void [191, 192, 192]
+194 Ops.BITCAST dtypes.u64 [192] dtypes.u64
+195 Ops.CAST dtypes.u64 [190] dtypes.u64
+196 Ops.SINK dtypes.void [191, 194, 195]
+197 Ops.BITCAST dtypes.f64 [192] dtypes.f64
+198 Ops.CONST dtypes.weakfloat [] 0.29485681936461233
+199 Ops.CAST dtypes.f64 [198] dtypes.f64
+200 Ops.SINK dtypes.void [61, 197, 199]
+201 Ops.BITCAST dtypes.i64 [195] dtypes.i64
+202 Ops.SINK dtypes.void [191, 201, 192]
+203 Ops.SINK dtypes.void [191, 195, 195]
+204 Ops.BITCAST dtypes.f64 [195] dtypes.f64
+205 Ops.SINK dtypes.void [61, 204, 199]
+206 Ops.BITCAST dtypes.i64 [199] dtypes.i64
+207 Ops.SINK dtypes.void [191, 206, 192]
+208 Ops.BITCAST dtypes.u64 [199] dtypes.u64
+209 Ops.SINK dtypes.void [191, 208, 195]
+210 Ops.SINK dtypes.void [61, 199, 199]
+211 Ops.SINK dtypes.void [3, 6, 10, 12, 13, 15, 17, 19, 20, 24, 27, 31, 33, 34, 36, 38, 40, 41, 45, 50, 52, 53, 55, 60, 65, 67, 68, 70, 72, 77, 81, 83, 84, 86, 88, 92, 96, 98, 99, 101, 105, 110, 112, 113, 117, 122, 124, 125, 129, 134, 136, 137, 140, 144, 146, 147, 151, 154, 158, 160, 161, 163, 165, 167, 168, 172, 175, 179, 181, 182, 184, 186, 188, 189, 193, 196, 200, 202, 203, 205, 207, 209, 210]
+

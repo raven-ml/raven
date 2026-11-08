@@ -1,0 +1,12 @@
+# tolk D24 golden=d00eef11299db4551d399dae9c3100c4
+0 Ops.CUSTOM_FUNCTION dtypes.void [] CustomFunction(name="sym")
+1 Ops.STACK dtypes.void []
+2 Ops.PARAM dtypes.bf16 [1] ParamArg(slot=-1, dtype=dtypes.bf16, vmin_vmax=(0, 3), name="x", addrspace=AddrSpace.ALU)
+3 Ops.CONST dtypes.weakfloat [] 0.0
+4 Ops.CAST dtypes.f32 [3] dtypes.f32
+5 Ops.CAST dtypes.bf16 [4] dtypes.bf16
+6 Ops.MUL dtypes.bf16 [2, 5]
+7 Ops.MUL dtypes.bf16 [2, 3]
+8 Ops.SINK dtypes.void [0, 6, 7]
+9 Ops.SINK dtypes.void [8]
+

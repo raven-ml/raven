@@ -5,7 +5,7 @@
 4 Ops.CAST dtypes.f32 [3] dtypes.f32
 5 Ops.CAST dtypes.bf16 [4] dtypes.bf16
 6 Ops.MUL dtypes.bf16 [2, 5]
-7 Ops.MUL dtypes.bf16 [2, 3]
+7 Ops.CAST dtypes.bf16 [3] dtypes.bf16
 8 Ops.SINK dtypes.void [0, 6, 7]
 9 Ops.SINK dtypes.void [8]
 
