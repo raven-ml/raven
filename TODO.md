@@ -121,15 +121,12 @@ and rune), raven / llama.cpp b12048 Vulkan:
 
 ## rune, kaun, vega
 
-- sharded jit after its first slice (one target, 1-D sets, no loops) and
-  lending per piece (898ec2b85): a place onto another set
-  (_plans/rune-sharding/adjudication.md). `lanes` and `lane_index`
-  compile, and per-device code, as loops that read their window's
-  coordinates, makes programs that do not grow over 2 to 16 devices, each launch
-  passing its window's start. nx's closing
-  moves a chunk between every pair of devices: time it against tinygrad's
-  ring and hierarchical allreduce on a machine with several GPUs, and if
-  it is slower, write those in nx's partition
+- sharded jit: nx's closing moves a chunk between every pair of devices:
+  time it against tinygrad's ring and hierarchical allreduce on a machine
+  with several GPUs, and if it is slower, write those in nx's partition.
+  Over several devices a `switch`, a `remat`, a custom rule, a check, an
+  addition to a total and an emission still decline, and raise on a set
+  without kernels
 - attention under `Rune.jit`: causal saves little, since a grid under 1.3
   waves takes as long as its longest workgroup (rows already launch longest
   first): pair row tiles i and n-1-i, or split long rows' keys; the

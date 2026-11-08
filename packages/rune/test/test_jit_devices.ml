@@ -1212,21 +1212,18 @@ let gather_kinds set =
         (omap bits (outcome (fun () -> rows x x)))
         (omap bits got)
 
+(* Small integers, so that every sum is exact in any order. *)
+let integers ?(seed = 0) shape =
+  let n = Array.fold_left ( * ) 1 shape in
+  Nx.create f32 shape
+    (Array.init n (fun i -> float_of_int ((((seed * 7) + (i * 5)) mod 9) - 4)))
+
 (* Other sets
 
-   A program that places a value onto another set evaluates, an argument or a
-   value it computes, and gives eager's placements and bits: a split program
-   keeps what it derives from an argument between calls, which would hold a
-   copy on the other set's devices. *)
-
-(* [f] under jit over [x] and [y], evaluating a call. *)
-let evaluated f x y =
-  let before = Rune.evaluations () in
-  let r =
-    outcome (fun () -> Rune.jit T.(tensor @-> tensor @-> returns tensor) f x y)
-  in
-  equal ~msg:"evaluated" bool true (Rune.evaluations () > before);
-  r
+   A program that places a value onto another set compiles, an argument or a
+   value it computes: it computes on the devices of every set it reaches, and
+   gives eager's placements and bits. Between calls the other set's devices
+   hold nothing of it, since a split program takes its storage per run. *)
 
 let others =
   Array.init 2 (fun k ->
@@ -1234,13 +1231,26 @@ let others =
 
 module Other = (val Nx.devices (Array.to_list others))
 
-(* An offload: weights on one device placed whole on each device of the
-   other set. *)
+(* A set no kernel library computes on: a memory device and an io device. *)
+module Bare = (val Nx.devices [ m 3; Nx_array_support.io_device () ])
+
+(* An offload: weights on one device placed whole on each device of the other
+   set; and a value cut across it. *)
 let elsewhere_examples =
   [
     { n = 2; shape = [| 4; 3 |]; x = Device 0; y = On };
     { n = 4; shape = [| 3; 2 |]; x = Device 2; y = On };
+    { n = 2; shape = [| 4; 3 |]; x = Split 0; y = Split 1 };
+    { n = 3; shape = [| 6 |]; x = Split 0; y = Split 0 };
   ]
+
+(* Eager's bits and placement of [f x y], from a compiled call. *)
+let same_compiled f x y =
+  let eager = outcome (fun () -> f x y) and got = compiled f x y in
+  equal (outcome_t bits_t) (omap bits eager) (omap bits got);
+  equal
+    (outcome_t (placement ()))
+    (omap Nx.placement eager) (omap Nx.placement got)
 
 let elsewhere set c =
   cover "cut across the other set"
@@ -1260,13 +1270,136 @@ let elsewhere set c =
     Nx.place back (Nx.sub (Nx.mul_s z 2.) z)
   in
   let argument x _ = Nx.place back (Nx.place there x) in
-  let same f =
-    equal (outcome_t bits_t)
-      (omap bits (outcome (fun () -> f x x)))
-      (omap bits (evaluated f x x))
+  same_compiled computed x x;
+  same_compiled argument x x
+
+(* A partial sum placed onto another set closes there. *)
+let closing_cases =
+  let open Gen in
+  (let* n = int_range 2 4 and+ k = int_range 0 9 in
+   constant (n, k))
+  |> with_pp (fun ppf (n, k) -> Format.fprintf ppf "%d devices, width %d" n k)
+
+let closing_examples = [ (2, 3); (4, 2); (2, 4); (3, 0) ]
+
+let closing set n k =
+  cover "windows of unequal extents" (k mod n <> 0);
+  cover "an empty window" (k < n);
+  let x = Nx.place (at set (Split 1)) (integers [| 3; k |]) in
+  let w = Nx.place (at set (Split 0)) (integers ~seed:1 [| k; 2 |]) in
+  let f x w =
+    Nx.place (at set On) (Nx.place Other.on (Nx.matmul ~sum:true x w))
   in
-  same computed;
-  same argument
+  same_compiled f x w
+
+(* A detour through a set without kernels: eagerly the operation raises, under
+   jit it compiles and gives the arithmetic computed on the host. *)
+let bare_detour () =
+  let there = Nx.Placement.device Bare.v (m 3) in
+  let xs = value [| 4; 3 |] in
+  let x = Nx.place Two.on xs in
+  let f x y =
+    let z = Nx.place there (Nx.mul x y) in
+    Nx.place Two.on (Nx.sub (Nx.add z z) z)
+  in
+  raises_match (Exn.invalid_arg ~sub:"has no kernels") (fun () -> f x x);
+  let expected = bits (Nx.mul xs xs) in
+  match compiled f x x with
+  | Value y -> equal ~msg:"the host's arithmetic" bits_t expected (bits y)
+  | Raised why -> fail ("compiled raised: " ^ why)
+
+(* The other set shares a device with the program's: of a value cut across
+   it, the piece already on that device moves nowhere, so only the other
+   device's piece is copied there and back. *)
+module Both = (val Nx.devices [ m 1; others.(0) ])
+
+let shared_device () =
+  let on_one = Nx.Placement.device Two.v (m 1) in
+  let rows = 4 and columns = 3 in
+  let x = Nx.place on_one (value [| rows; columns |]) in
+  let f x y =
+    let z = Nx.place (Both.split ~axis:0) (Nx.mul x y) in
+    Nx.place on_one (Nx.add z z)
+  in
+  same_compiled f x x;
+  let step = Rune.jit T.(tensor @-> tensor @-> returns tensor) f in
+  ignore (Nx.to_array (step x x));
+  let _, events =
+    Rig.Profile.take (fun () -> ignore (Nx.to_array (step x x)))
+  in
+  let between a b =
+    List.fold_left
+      (fun n -> function
+        | Rig.Profile.Copy { src; dst; bytes; _ }
+          when Rig.equal src a && Rig.equal dst b ->
+            n + bytes
+        | _ -> n)
+      0 events
+  in
+  let piece = rows / 2 * columns * 4 in
+  equal ~msg:"bytes to the other device" int piece (between (m 1) others.(0));
+  equal ~msg:"bytes back" int piece (between others.(0) (m 1))
+
+(* A detour inside a scan's step. *)
+let scan_detour set =
+  let here = at set (Device 0) in
+  let x = Nx.place here (value [| 3; 2 |]) in
+  let xs = Nx.place here (value ~seed:1 [| row_count; 3; 2 |]) in
+  let step carry row =
+    let z = Nx.place Other.on (Nx.mul carry row) in
+    (Nx.place here (Nx.sub (Nx.mul_s z 2.) z), Nx.neg row)
+  in
+  let f x xs = Rune.scan' step ~init:x xs in
+  same_pair (Value (f x xs)) (jit_pair ~compiles:true f x xs)
+
+(* What a detour leaves on the devices of the set it visits, the argument's
+   and the computed value's, once a call returns, the first included, while its
+   program lives: nothing. A device's bytes are counted over devices of their
+   own. *)
+let held_rigs =
+  List.init 2 (fun k ->
+      Result.get_ok (Rig.memory_device (Printf.sprintf "place-held-%d" k)))
+
+module Held = (val Nx.devices held_rigs)
+
+let settled_on rigs =
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    List.iter Rig.free_cache rigs
+  done;
+  List.map Rig.allocated rigs
+
+let held set =
+  let n = 65536 in
+  let there = Held.on in
+  let back = at set On in
+  let x = Nx.place back (value [| n |]) in
+  let computed x y =
+    let z = Nx.place there (Nx.mul x y) in
+    Nx.place back (Nx.sub (Nx.add z z) z)
+  in
+  let argument x _ = Nx.place back (Nx.place there x) in
+  let stays name f =
+    let g = Rune.jit T.(tensor @-> tensor @-> returns tensor) f in
+    let run () = ignore (Nx.to_array (g x x)) in
+    let none = settled_on held_rigs in
+    let calls = Rune.evaluations () in
+    let holds what =
+      equal
+        ~msg:(name ^ ": bytes on the other set " ^ what)
+        (list int) none (settled_on held_rigs)
+    in
+    run ();
+    holds "after the first call";
+    run ();
+    holds "after the second";
+    equal ~msg:(name ^ ": no call evaluated") int 0
+      (Rune.evaluations () - calls);
+    (* A last call keeps the program reachable through every count. *)
+    run ()
+  in
+  stays "computed" computed;
+  stays "an argument" argument
 
 (* Kernels
 
@@ -1478,11 +1611,6 @@ let programs ?(inner = 32) ?hidden n =
    cut axis does, and each device computes its lanes' [Rune.lane_index]. Its
    elements are small integers, so that every sum is exact in any order and a
    compiled call gives eager's bits. *)
-
-let integers ?(seed = 0) shape =
-  let n = Array.fold_left ( * ) 1 shape in
-  Nx.create f32 shape
-    (Array.init n (fun i -> float_of_int ((((seed * 7) + (i * 5)) mod 9) - 4)))
 
 let around = Rune.axis ()
 
@@ -1841,8 +1969,17 @@ let () =
          group "other sets"
            [
              prop ~count:20 ~examples:elsewhere_examples
-               "a value placed onto another set and back evaluates" cases
+               "a value placed onto another set and back compiles" cases
                (fun c -> over c.n { law = (fun set -> elsewhere set c) });
+             prop ~count:20 ~examples:closing_examples
+               "a partial placed onto another set closes there" closing_cases
+               (fun (n, k) -> over n { law = (fun set -> closing set n k) });
+             test "a detour through a set without kernels" bare_detour;
+             test "a device in both sets holds its piece" shared_device;
+             test "a detour inside a scan's step" (fun () ->
+                 over 3 { law = scan_detour });
+             test "the other set holds nothing between calls" (fun () ->
+                 over 2 { law = held });
            ];
          group "loops"
            [

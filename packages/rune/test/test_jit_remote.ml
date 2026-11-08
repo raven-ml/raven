@@ -184,16 +184,28 @@ let narrows_any =
 (* Machines
 
    A compiled program runs on one machine: a set of this machine's host and
-   another's raises at the call, naming the set. *)
+   another's, or a place onto another machine's set, raises at the call, naming
+   the program's devices. *)
+
+(* The message over this machine's host and another's, [h]. *)
+let devices_named h =
+  "Rune.jit: the program computes on devices of several machines, [CPU; "
+  ^ Rig.name h ^ "]"
 
 let spanning () =
   let h = host () in
   let module R = (val Nx.devices [ Rig.host; h ]) in
   let x = Nx.place R.on (Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |]) in
   raises_match
-    (Exn.invalid_arg
-       ~sub:("Rune.jit: values on the set [CPU; " ^ Rig.name h ^ "]"))
-    (fun () -> Rune.jit' Nx.neg x)
+    (Exn.invalid_arg ~sub:(devices_named h)) (fun () -> Rune.jit' Nx.neg x)
+
+let place_elsewhere () =
+  let h = host () in
+  let module R = (val Nx.devices [ h ]) in
+  let x = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let f x = Nx.place Nx.Host.on (Nx.place R.on x) in
+  raises_match
+    (Exn.invalid_arg ~sub:(devices_named h)) (fun () -> Rune.jit' f x)
 
 (* Values on one machine's device of such a set compile. *)
 let on_one_machine () =
@@ -217,6 +229,8 @@ let () =
            compiles_for_its_arch;
          test "a set spanning machines raises at the call, naming it"
            spanning;
+         test "a place onto another machine's set raises at the call"
+           place_elsewhere;
          test "values on one machine of a set spanning machines compile"
            on_one_machine;
          group "gives eager's bits"

@@ -493,15 +493,6 @@ let rec cut ~kind ~(home : Rig.t) ~name (p : Program.t) forms =
               let r =
                 match op with
                 | Check _ -> decline "a check over several devices"
-                | Place (q, x)
-                  when Option.is_some (Nx.Prim.owner x)
-                       && Option.is_none
-                            (Nx.Prim.coerce (Nx.dtype x)
-                               (Nx.Placement.devices q) x) ->
-                    decline
-                      "Nx.place onto another set of devices: a program over \
-                       several devices keeps what it derives from an \
-                       argument between calls"
                 | _ ->
                     let e = engine ri ~gathered ~by moves in
                     Nx.Prim.partition e ~by op

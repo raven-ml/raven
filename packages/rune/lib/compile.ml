@@ -3075,22 +3075,15 @@ let foreseen args =
     Array.map (fun (V x) -> Nx.Prim.donated x) args )
 
 (* A program runs on one machine ({!Tolk_engine.link}), so devices of several
-   are the caller's mistake, named by the set of its first argument. *)
-let one_machine forms rigs =
+   are the caller's mistake. *)
+let one_machine rigs =
   let host = Rig.host_of (List.hd rigs) in
   if List.exists (fun r -> not (Rig.equal (Rig.host_of r) host)) rigs then
-    let set =
-      match forms with
-      | [||] -> rigs
-      | _ ->
-          let (F f) = forms.(0) in
-          Nx.rigs (Nx.Placement.devices f.placement)
-    in
     invalid_arg
       (Printf.sprintf
-         "Rune.jit: values on the set [%s] lie on devices of several \
-          machines; a compiled program runs on one machine"
-         (String.concat "; " (List.map Rig.name set)))
+         "Rune.jit: the program computes on devices of several machines, \
+          [%s]; a compiled program runs on one machine"
+         (String.concat "; " (List.map Rig.name rigs)))
 
 let make ~name ?beam ?parallel ?first p forms =
   match
@@ -3108,7 +3101,7 @@ let make ~name ?beam ?parallel ?first p forms =
       | _ -> (p, forms, [ device p forms ])
     in
     let rig = List.hd rigs in
-    one_machine forms rigs;
+    one_machine rigs;
     let uploads = ref [] in
     let lower (layouts, phases, donated) =
       lower ~rigs ~split:(Option.is_some split) ~uploads p forms ~layouts

@@ -1344,8 +1344,9 @@ val jit :
     a trace if [f] captures a value that another transformation tracks
     (["Rune.jit: the function captures a value another transformation traces;
       pass it as an argument"]); and at a call whose program would compute on
-    devices of several machines ({!Rig.host_of}), naming its arguments' set:
-    a compiled program runs on one machine. *)
+    devices of several machines ({!Rig.host_of}), a place onto another
+    machine's set included, naming those devices: a compiled program runs on
+    one machine. *)
 
 (** {2:keys Keys}
 
@@ -1445,7 +1446,11 @@ val jit :
     each device, the devices of the architecture of the first device holding
     it compute it at each step and the others receive a copy, as eager
     computation does ({!Nx.section-routing}), so the replicas are equal bit
-    for bit.
+    for bit. {!Nx.place} onto another set moves each window as it moves one
+    within a set: the program computes on the devices of every set it
+    reaches, in kernels compiled for each one's target, and a value on the
+    other set computes there as it would on its own, a set without kernels
+    ({!Nx.devices}) included.
 
     A map over an axis cut one row per device is per-device code: each device
     computes its lane, {!lanes} gathers every device's row onto each device, a
@@ -1834,10 +1839,7 @@ val jit :
     than {!detach}, a {!scan} or an {!iterate}, such as a {!switch}, a {!remat}
     or a custom rule; a scan over rows cut along axis 0, an iterate that stacks
     its steps, and a loop whose step gives a carry another placement; a check,
-    an addition to a {!Total}, an emission, a traced value placed onto another
-    set, as weights offloaded to other devices are, since a split program keeps
-    the storage it derives from an argument between calls, and so would hold
-    the copies on that set's devices. It also declines a
+    an addition to a {!Total} or an emission. It also declines a
     program with a value on a device that computes nothing ({!Rig.computes}).
     It declines nothing else: a compiler that fails on a program it takes, as
     one whose library or program is missing, that rejects its source or that

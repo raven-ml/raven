@@ -370,6 +370,23 @@ let test_split_memory () =
   at_most int ~msg:"the result and two products" ~than:(3 * product) held;
   equal ~msg:"the result" float_exact 1. (Nx.item [ 0; 0 ] (Nx.place Nx.Host.on y))
 
+(* A detour
+
+   A function of host values that computes on the GPU's set, which has no
+   kernels, and returns to the host compiles and gives the host's arithmetic. *)
+
+let detour () =
+  let _, (module S : Nx.Devices) = on_gpu () in
+  let x = Nx.create Nx.float32 [| 3 |] [| 1.5; -2.; 3.25 |] in
+  let f x =
+    let y = Nx.place S.on x in
+    Nx.place Nx.Host.on (Nx.add (Nx.mul y y) y)
+  in
+  let before = Rune.evaluations () in
+  let y = Rune.jit' f x in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  equal bits_t (bits (Nx.add (Nx.mul x x) x)) (bits y)
+
 (* Several targets
 
    A program over the GPU beside a memory device compiles, each device running
@@ -1161,6 +1178,7 @@ let () =
                 its plan"
                test_split_memory;
            ];
+         group "a detour" [ test "onto the GPU's set and back" detour ];
          group "a GPU beside a memory device"
            (List.map
               (fun c -> test c.name (over ~devices:2 ~first:0 c))
