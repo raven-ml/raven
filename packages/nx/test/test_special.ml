@@ -161,13 +161,13 @@ let pp_args ppf args =
     ppf (Array.to_list args)
 
 (* [check ~bound name f] holds [f] to [bound args] at every row of [name]'s
-   golden that [keep] keeps, at float32 and float64, and fails listing the
-   rows that miss it, worst first, or where it keeps none. *)
-let check ?(keep = fun ~f32:_ _ -> true) ~bound name f =
+   golden that [keep ~f32 rows] keeps, at float32 and float64, and fails
+   listing the rows that miss it, worst first, or where it keeps none. *)
+let check ?(keep = fun ~f32:_ rows -> rows) ~bound name f =
   List.map
     (fun (short, f32) ->
       test short (fun () ->
-          let rows = List.filter (keep ~f32) (rows name short) in
+          let rows = keep ~f32 (rows name short) in
           (* A golden without rows at this dtype holds nothing: [eval] would
              not know the function's arity. *)
           if rows = [] then failf "%s.golden has no %s row to hold" name short;
@@ -513,7 +513,8 @@ let binary name ~bound ?scale ~firsts ~seconds { b } =
   in
   group name
     [
-      group "against the goldens" (check ~keep:(fun ~f32:_ -> in_domain) ~bound name f);
+      group "against the goldens"
+        (check ~keep:(fun ~f32:_ -> List.filter in_domain) ~bound name f);
       group "at every narrow float"
         (narrow2
            ~keep:(fun args -> args.(0) <= 0x1p20)
@@ -575,6 +576,12 @@ let incomplete_gamma =
 let beta_settings =
   [ (2, [| 2.5; 10.; 0. |]); (0, [| 0.; 0.5; 0.3 |]); (1, [| 10.; 0.; 0.7 |]) ]
 
+(* [log (x ∂ₓI)] for [∂ₓI = x^(a - 1) (1 - x)^(b - 1) / B(a, b)] the beta's
+   density. *)
+let beta_density a b x =
+  let open Nx in
+  sub (add (mul a (log x)) (mul (sub_s b 1.) (log1p (neg x)))) (lbeta a b)
+
 (* The beta's quantile's condition number [|m / (x ∂ₓI)|] at its result [x],
    [m = min (p, 1 - p)] the smaller tail and [∂ₓI = x^(a - 1) (1 - x)^(b - 1)
    / B(a, b)]. *)
@@ -583,13 +590,9 @@ let beta_kappa (inverse : c) =
     f =
       (fun args ->
         let a = args.(0) and b = args.(1) and p = args.(2) in
-        let x = inverse.c a b p in
         let open Nx in
-        let density =
-          sub (add (mul a (log x)) (mul (sub_s b 1.) (log1p (neg x)))) (lbeta a b)
-        in
         let m = minimum p (rsub_s 1. p) in
-        exp (sub (log m) density));
+        exp (sub (log m) (beta_density a b (inverse.c a b p))));
   }
 
 (* The beta's quantile's bound at its probability [args.(2)], read in the
@@ -606,19 +609,43 @@ let beta_in_domain row =
 (* nx.mli's carve-out: where the bound at [x = 1/2], [κ_h (64 (1 + |log m|)
    + 4) ε] for [κ_h = m / (f(1/2) / 2)], reaches 1, the tail is flat between
    masses near 0 and 1, and a [p] within [64 (1 + |log m|) + 4] ulps of [m]
-   of the tail at [1/2] may give any [x] between them. *)
-let beta_plateau ~f32 ~upper a b p =
+   of the tail at [1/2] may give any [x] between them. [half] is the tail at
+   [1/2] and [log_f] is [log f(1/2)]. *)
+let beta_flat ~f32 ~half ~log_f p =
   let eps = if f32 then 0x1p-23 else 0x1p-52 in
   let m = Float.min p (1. -. p) in
-  let s v = Nx.scalar Nx.float64 v in
-  let half = Nx.item [] ((if upper then Nx.betaincc else Nx.betainc) (s a) (s b) (s 0.5)) in
-  let log_f = (-.(a +. b -. 2.) *. Stdlib.log 2.) -. Nx.item [] (Nx.lbeta (s a) (s b)) in
   let kappa = m /. (0.5 *. Float.exp log_f) in
   let bound = log_ulps 32 m *. eps in
   kappa *. bound >= 1. && Float.abs (p -. half) <= bound *. m
 
-let beta_on_plateau ~f32 ~upper row =
-  beta_plateau ~f32 ~upper row.args.(0) row.args.(1) row.args.(2)
+(* The tail and [log f] at [1/2], as float arrays, for the shapes [a] and
+   [b]. *)
+let beta_at_half ~upper a b =
+  let open Nx in
+  let tail = if upper then betaincc else betainc in
+  let half = tail a b (full_like a 0.5) in
+  let log_f =
+    sub (mul_s (sub_s (add a b) 2.) (-.Stdlib.log 2.)) (lbeta a b)
+  in
+  (values half, values log_f)
+
+let beta_plateau ~f32 ~upper a b p =
+  let s v = Nx.scalar Nx.float64 v in
+  let half, log_f = beta_at_half ~upper (s a) (s b) in
+  beta_flat ~f32 ~half:half.(0) ~log_f:log_f.(0) p
+
+(* The rows that are not on the plateau. An incomplete beta costs milliseconds
+   a call and microseconds an element: the rows share one call. *)
+let beta_off_plateau ~f32 ~upper rows =
+  let column i =
+    let values = Array.of_list (List.map (fun r -> r.args.(i)) rows) in
+    Nx.create Nx.float64 [| Array.length values |] values
+  in
+  let half, log_f = beta_at_half ~upper (column 0) (column 1) in
+  List.filteri
+    (fun i row ->
+      not (beta_flat ~f32 ~half:half.(i) ~log_f:log_f.(i) row.args.(2)))
+    rows
 
 (* Every float as [p] beside [a = 2.5, b = 10.], and as [a] beside [b = 0.5,
    p = 0.3]: an inverse's program is three times as long. *)
@@ -636,8 +663,8 @@ let incomplete_beta =
   in
   let inverse name ~upper inverse =
     let f = { f = (fun a -> inverse.c a.(0) a.(1) a.(2)) } in
-    let keep ~f32 row =
-      beta_in_domain row && not (beta_on_plateau ~f32 ~upper row)
+    let keep ~f32 rows =
+      beta_off_plateau ~f32 ~upper (List.filter beta_in_domain rows)
     in
     group name
       [
@@ -867,16 +894,59 @@ let close ~than i error =
     ~msg:(Printf.sprintf "the error at element %d" i)
     float_exact ~than error
 
-(* An inverse's answer [back] for [x]: within its bound [than] of [x], or,
-   at a [p] on the plateau, anywhere in [[0, 1]]. *)
-let beta_inverted ~upper a b i x p back ~than =
-  let error = Float.abs (back -. x) in
-  if error > than && beta_plateau ~f32:false ~upper a b p then
-    at_most
-      ~msg:(Printf.sprintf "element %d, on the plateau, from 1/2" i)
-      float_exact ~than:0.5
-      (Float.abs (back -. 0.5))
-  else close i ~than error
+(* [beta_inverted ~upper a b x p back] holds [back], drawn from [p] at the
+   normal [x], to the equation that defines it, read at the smaller tail
+   [m = min (p, 1 - p)], exact by Sterbenz's lemma where it is [1 - p]. Within
+   [4 + κ B(m)] ulps of the quantile, the tail of [m] at the four floats on
+   each side of [back] brackets [m], the ends within their own [B(t)] ulps
+   and [κ B(m)] ulps moving that tail by [B(m) m ε], since [κ x ∂ₓI = m]. [x]
+   only draws [p]: [|back - x|] has no such bound, since [p] holds [x] only to
+   its own rounding, and where an ulp of [p] is most of [m], a tail going as
+   [x^a] carries [x] to [(1 + δ)^(1/a) x], which a slope at [x] understates by
+   any factor. On the plateau [back] may be anywhere in [[0, 1]]. *)
+let beta_inverted ~upper a b x p back =
+  let open Nx in
+  let n = numel back in
+  let doubled v = Array.append (values v) (values v) in
+  let column v = create Nx.float64 [| 2 * n |] v in
+  (* Four floats aside, within [[0, 1]]: [n] below [back], then [n] above,
+     in one call: a call costs far more than its elements. *)
+  let aside step =
+    let far v = Float.min 1. (Float.max 0. (step (step (step (step v))))) in
+    Array.map far (values back)
+  in
+  let points = column (Array.append (aside Float.pred) (aside Float.succ)) in
+  let a2 = column (doubled a) and b2 = column (doubled b) in
+  let lo = values (betainc a2 b2 points) in
+  let hi = values (betaincc a2 b2 points) in
+  let av = values a and bv = values b and back = values back in
+  let p = values p in
+  Array.iteri
+    (fun i x ->
+      let p = p.(i) in
+      if p >= 0x1p-1022 && p < 1. && x >= 0x1p-1022 then begin
+        let m = Float.min p (1. -. p) in
+        let tail = if upper = (p <= 0.5) then hi else lo in
+        let t1 = tail.(i) and t2 = tail.(n + i) in
+        let t_lo = Float.min t1 t2 and t_hi = Float.max t1 t2 in
+        let own = log_ulps 32 m *. m in
+        let slack t = if t = 0. then own else (log_ulps 32 t *. t) +. own in
+        let floor = t_lo -. (slack t_lo *. eps) in
+        let ceiling = t_hi +. (slack t_hi *. eps) in
+        if (m < floor || m > ceiling)
+           && beta_plateau ~f32:false ~upper av.(i) bv.(i) p
+        then
+          at_most
+            ~msg:(Printf.sprintf "element %d, on the plateau, from 1/2" i)
+            float_exact ~than:0.5
+            (Float.abs (back.(i) -. 0.5))
+        else begin
+          let msg = Printf.sprintf "the tail bracketing element %d" i in
+          at_least ~msg float_exact ~than:floor m;
+          at_most ~msg float_exact ~than:ceiling m
+        end
+      end)
+    (values x)
 
 (* [upper_tail ~tail ~inverse a x] holds [inverse]'s bound above [1/2],
    where it inverts the other tail. [t = tail a x], within [B(t)] ulps, is
@@ -1020,16 +1090,6 @@ let gamma_laws =
             (log_gammainc a x) r x);
     ]
 
-(* The quantile's condition number [m / (x ∂ₓI)] at the exact quantile [x],
-   [m] the smaller tail at it: where a tail is flat, the inverse's result may
-   lie far from [x] with no flatness where it lies. *)
-let beta_kappa_at a b x m =
-  let open Nx in
-  let density =
-    sub (add (mul a (log x)) (mul (sub_s b 1.) (log1p (neg x)))) (lbeta a b)
-  in
-  values (exp (sub (log m) density))
-
 let beta_laws =
   let open Nx in
   let shapes = log_batch 1e-3 1e4 in
@@ -1074,37 +1134,13 @@ let beta_laws =
       prop "betaincinv inverts betainc"
         (Gen.triple inverse_shapes inverse_shapes (batch 0. 1.))
         (fun (a, b, x) ->
-          (* [p] within [B(p)] ulps moves the quantile by [κ_p B(p)], for
-             [κ_p = κ p / m]; the inverse adds [4 + κ B(m)]. *)
           let p = betainc a b x in
-          let back = betaincinv a b p in
-          let kappa = beta_kappa_at a b x (minimum p (rsub_s 1. p)) in
-          let av = values a and bv = values b in
-          elementwise
-            (fun i x p back ->
-              if p >= 0x1p-1022 && p < 1. && x >= 0x1p-1022 then
-                let m = Float.min p (1. -. p) in
-                let moved = kappa.(i) *. p /. m *. log_ulps 32 p in
-                let own = 4. +. (kappa.(i) *. log_ulps 32 m) in
-                beta_inverted ~upper:false av.(i) bv.(i) i x p back
-                  ~than:((own +. moved) *. eps *. x))
-            x p back);
+          beta_inverted ~upper:false a b x p (betaincinv a b p));
       prop "betainccinv inverts betaincc"
         (Gen.triple inverse_shapes inverse_shapes (batch 0. 1.))
         (fun (a, b, x) ->
           let q = betaincc a b x in
-          let back = betainccinv a b q in
-          let kappa = beta_kappa_at a b x (minimum q (rsub_s 1. q)) in
-          let av = values a and bv = values b in
-          elementwise
-            (fun i x q back ->
-              if q >= 0x1p-1022 && q < 1. && x >= 0x1p-1022 then
-                let m = Float.min q (1. -. q) in
-                let moved = kappa.(i) *. q /. m *. log_ulps 32 q in
-                let own = 4. +. (kappa.(i) *. log_ulps 32 m) in
-                beta_inverted ~upper:true av.(i) bv.(i) i x q back
-                  ~than:((own +. moved) *. eps *. x))
-            x q back);
+          beta_inverted ~upper:true a b x q (betainccinv a b q));
       prop "betainccinv a b q is 1 - betaincinv b a q"
         (Gen.triple inverse_shapes inverse_shapes (batch 0. 1.))
         (fun (a, b, q) ->
@@ -1123,6 +1159,20 @@ let beta_laws =
                   ~than:(((own *. x) +. (mirror *. c) +. c) *. eps)
                   (Float.abs (c -. (1. -. x))))
             x q (betainccinv a b q));
+      test "betainccinv where one ulp of q is most of its tail" (fun () ->
+          (* [q = 1 - 3 2^-53], whose tail [m] is [3 2^-53], and the exact
+             quantile at it, from mpmath; a [q] one float away moves the
+             quantile across the unit interval. *)
+          let args =
+            Array.map (scalar Nx.float64)
+              [| 0.017384192644148398; 5.842454388186878e-18;
+                 1. -. (3. *. 0x1p-53) |]
+          in
+          let x = 0x1.807d2f4ecc787p-2 in
+          let got = item [] (betainccinv args.(0) args.(1) args.(2)) in
+          let kappa = item [] ((beta_kappa { c = betainccinv }).f args) in
+          let bound = 5. +. (kappa *. log_ulps 32 (3. *. 0x1p-53)) in
+          close 0 ~than:(bound *. eps *. x) (Float.abs (got -. x)));
       test "betainccinv stays in [0, 1] on a plateau" (fun () ->
           (* Shapes far below 1, at a [q] of the flat tail, where the last
              step's series is read far outside its convergence. *)
