@@ -96,6 +96,8 @@ val window :
   ?exclude_key:bool ->
   ('a, agg) t ->
   ('a, row) t
+
+val per_list : row out list -> ('a, agg) t -> ('a, row) t
 val const : 'a -> ('a, 's) t
 val ( $ ) : ('a -> 'b, 's) t -> ('a, 's) t -> ('b, 's) t
 val option : ('a, 's) t -> ('a option, 's) t
@@ -262,6 +264,9 @@ type 'a node =
     }
       -> 'a node
       (** {!window}: its key, its bounds and its reduction. *)
+  | Per_list : row out list * ('a, 's) t -> 'a node
+      (** {!per_list}: its outputs, named once bound ({!list_outs}), and its
+          reduction, over the elements. *)
   | Const : 'a -> 'a node
   | App : ('a -> 'b, 's0) t * ('a, 's1) t -> 'b node
   | Option : ('a, 's) t -> 'a option node
@@ -291,6 +296,9 @@ and 'a calendar_op =
   | Offset : Time.step * ('a, 's) t -> 'a calendar_op
   | Parse_with : string * 'a Type.t * (string, 's) t -> 'a calendar_op
   | Format_with : string * ('a, 's) t -> string calendar_op
+
+val list_outs : row out list -> (string * packed) list
+(** [list_outs os] is the named outputs of a bound {!Per_list}. *)
 
 val node : ('a, 's) t -> 'a node
 (** [node e] is [e]'s node. *)
@@ -387,31 +395,41 @@ val out_name : 's out -> string option
     [Invalid_argument] on an expression that is not bound. *)
 
 val reads : ('a, 's) t -> string list
-(** [reads b] is the columns that [b] reads, distinct, in order of first
-    appearance: the columns of its handles and reads, and of {!over}'s [~by] and
-    [~order] keys. *)
+(** [reads b] is the columns that [b] reads from its frame, distinct, in order
+    of first appearance: the columns of its handles and reads, and of {!over}'s
+    [~by] and [~order] keys. An output of a {!per_list} is its body's own: the
+    body's reads of it are not [b]'s. *)
 
 val row_local : ('a, 's) t -> bool
 (** [row_local b] is [true] iff [b]'s value at a row depends on that row alone:
+    outside the bodies of its {!per_list}s, whose frames are the row's lists,
     [b] has no {!over}, {!shift}, {!rank} or {!window}. A filter, a slice or a
     reordering of the frame therefore does not change the values of a row-local
     expression on the rows it keeps. *)
 
 val reduces : ('a, 's) t -> bool
 (** [reduces b] is [true] iff [b] has one value per frame: it holds {!rows} or a
-    reduction outside every {!over} and {!window}. *)
+    reduction outside every {!over}, {!window} and {!per_list} body. *)
 
 val can_fail : ('a, 's) t -> bool
 (** [can_fail b] is [true] iff evaluating the {{!row_local}row-local} [b] can
     fail a run or call a user function: [b] holds a {!cast} that does not widen
     its operand to a type that contains it, {!Str.parse}, a {!Temporal}
-    operation other than {!Temporal.field} and {!Temporal.format}, {!of_option}
-    or {!( $ )}. *)
+    operation other than {!Temporal.field} and {!Temporal.format}, {!of_option},
+    {!( $ )}, or, in a {!per_list} body, {!only} or a {!sum} of durations; or a
+    {!per_list} of several outputs, which lists of unequal lengths fail. *)
 
 val rename : (string -> string) -> ('a, 's) t -> ('a, 's) t
 (** [rename f b] is [b] reading the column [f n] wherever it reads the column
-    [n]: handles, reads and {!over}'s keys. Typings are kept, so [f] maps each
-    column that [b] reads to one of the same type. *)
+    [n] of its frame ({!reads}): handles, reads and {!over}'s keys, not a
+    {!per_list} body's reads of its outputs. Typings are kept, so [f] maps each
+    column that [b] reads to one of the same type. {!captures} says where it
+    would not read the same values. *)
+
+val captures : (string -> string) -> ('a, 's) t -> bool
+(** [captures f b] is [true] iff {!rename}[ f b] would make the body of a
+    {!per_list} read one of its outputs where it read a column of its
+    enclosing frame. *)
 
 type evaluator = { eval : 'a. ('a, row) t -> 'a option option }
 (** The type for evaluators of constants: [eval b] is the value of the bound

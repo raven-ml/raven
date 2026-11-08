@@ -1043,7 +1043,9 @@ module Expr : sig
       - {!over}[ ~by ~order e]: the enclosing frame, partitioned by [by], each
         partition in [order]; results return to their rows;
       - {!window}[ r]: at each row, the rows of the enclosing frame around it
-        ({!section-windows}).
+        ({!section-windows});
+      - {!per_list}[ ls r]: at each row, the elements of its lists [ls], in
+        list order ({!section-lists}).
 
       A frame's order is its input order, and no expression reorders values
       without returning them to their rows.
@@ -1454,7 +1456,59 @@ module Expr : sig
       between windows with and without [before].
 
       An [on] of another type, a bound of another kind, type or unit, and
-      {!over}, {!shift}, {!rank} or [window] inside [r] are problems. *)
+      {!over}, {!shift}, {!rank} or [window] inside [r], outside a
+      {!per_list}'s body, are problems. *)
+
+  (** {2:lists Lists}
+
+      The elements of a row's lists are a frame, with one row per position, in
+      list order. An output's column holds the list's element at the position,
+      and every other column of the enclosing frame the row's value. Several
+      outputs are read in lockstep: position [j] holds element [j] of each, and
+      lists of one row whose lengths differ are a data error at that row. A
+      null among them ends the row's frame first. Frames nest, so a [per_list]
+      of an element that is itself a list reads that inner list.
+
+      {!rows} is a list's length. {!over}, {!shift}, {!rank} and {!window} run
+      along the list, never into another row's, and each must read an output
+      of its list: one that reads only the row's values, which do not change
+      along the list, would look like the enclosing frame's.
+
+      A row where an output is null has no frame, and its value is null, that
+      of {!count} and {!rows} included. An empty list's frame has no rows, so
+      reductions give their value over no values ({!section-reductions}). A
+      null element is a null value of the frame, which reductions skip.
+
+      A float {!sum} adds a list's values in list order, a float {!mean}
+      divides that sum by their count, and {!var} and {!std} sum squared
+      deviations from the list's mean in list order. *)
+
+  val per_list : row out list -> ('a, agg) t -> ('a, row) t
+  (** [per_list ls r] is, at each row, [r] over the frame of the elements of
+      the lists that the outputs [ls] compute ({!section-lists}), of [r]'s
+      type:
+      {[
+      let xs = Col.v Kind.(list float) "xs" and x = Col.float "x"
+      let norm = per_list [ "x" := xs ] (sum (x *. x)) ** float 0.5
+      ]}
+      [per_list [ "t" := spikes ] (mean (t -. shift 1 t))] is a spike train's
+      mean interval. Its value at a row reads that row alone, so it streams
+      and may stand in a {!window}'s operand.
+
+      {b Cost.} O(n + e) for n rows and e elements, as a reduction of e rows
+      costs. {!median}, {!quantile} and an [over ~order] in [r] sort, and a
+      column of the enclosing frame that [r] reads is copied once per element.
+
+      A failure in [r] is at the row of its list. Under [Rune.jit] it raises,
+      and under [Rune.vmap] where the lists' offsets or validity are traced
+      ({!Query.section-compiled}).
+
+      An output must not hide a column of the enclosing frame other than a
+      list it outputs unchanged, since [r] could not read the hidden column.
+      [keep] therefore outputs a list under its own name, and [r] reads its
+      element there. A hiding output, an output that is not a list, no output,
+      two outputs of one name, and an {!over}, {!shift}, {!rank} or {!window}
+      in [r] that reads no output are problems. *)
 
   (** {1:ocaml OCaml values}
 
@@ -2368,14 +2422,16 @@ module Query : sig
 
       {b Predicates.} A filter's predicate splits into its {e conjuncts}, the
       operands of its [&&]s. A conjunct moves toward the sources when it is
-      {e row-local}, its value at a row depending on that row alone: it has no
-      {!Expr.over}, {!Expr.shift}, {!Expr.rank} or {!Expr.window}. It moves past
+      {e row-local}, its value at a row depending on that row alone: outside
+      the bodies of its {!Expr.per_list}s, it has no {!Expr.over},
+      {!Expr.shift}, {!Expr.rank} or {!Expr.window}. It moves past
       each step that keeps the rows it sees and the values it reads:
       - a [sort];
       - a [filter] whose predicate is row-local, with which it merges;
       - a [select] or a [derive] whose outputs are row-local, when each column
         the conjunct reads is a column of the step's input kept unchanged, under
-        its name or another ([select ["y" := x]]);
+        its name or another ([select ["y" := x]]), and the renaming hands no
+        {!Expr.per_list} body's read of a column to one of its outputs;
       - an [aggregate] with keys, when the conjunct reads only keys and none of
         their types holds floats, since [-0.] and [0.] are one key with two
         values;
@@ -2392,7 +2448,9 @@ module Query : sig
       input changes the matches of the other input's rows, and so could make
       that side's assertion fail on rows the plan shows it. A conjunct that can
       fail, one with a [cast] that narrows, [Str.parse], temporal arithmetic or
-      parsing, [of_option] or [$], passes only the steps that show it the rows
+      parsing, [of_option] or [$], or a {!Expr.per_list} of several lists or
+      with {!Expr.only} or a duration {!Expr.sum}, passes only the steps that
+      show it the rows
       they receive: a [sort], a [select] or a [derive], an [aggregate]'s keys
       and an [append]. Below a [filter] or a [join] it would meet rows that [q]
       never shows it.
@@ -2704,7 +2762,8 @@ module Kit : sig
 
       These compose {!Expr.window}, so they hold its rule on operands: an [x]
       or [r] holding {!Expr.over}, {!Expr.shift}, {!Expr.rank} or
-      {!Expr.window} is a problem that names a window. *)
+      {!Expr.window}, outside an {!Expr.per_list}'s body, is a problem that
+      names a window. *)
 
   val cumulative : ('a, Expr.agg) Expr.t -> ('a, Expr.row) Expr.t
   (** [cumulative r] is [r] over the frame's rows up to and including each:

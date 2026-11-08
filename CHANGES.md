@@ -3929,6 +3929,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- Add `Expr.per_list ls r`, the reduction `r` over the elements of each row's
+  lists, read in lockstep and beside the row's columns: `per_list [ "t" := ts ]
+  (mean (t -. shift 1 t))`. A null list gives null. It streams.
 - `Expr.mean` of integers of at most 32 bits sums exactly in each frame of
   fewer than 2^31 values, however many rows its batch holds, and a duration
   `sum` over 2^31 values or more no longer wraps to a wrong value.

@@ -172,7 +172,8 @@ let row_local outputs =
 
 (* [through ~derive outputs c] is [c] reading the input of the [select] or
    [derive] of [outputs] if each column it reads is one of the input's,
-   unchanged. *)
+   unchanged, and renaming them does not hand a column's reads in a
+   [per_list] body to one of its outputs. *)
 let through ~derive outputs c =
   let input n =
     match List.assoc_opt n outputs with
@@ -186,9 +187,9 @@ let through ~derive outputs c =
         | Some m, Some ps -> Some ((n, m) :: ps)
         | _ -> None)
   in
-  Option.map
-    (fun ps -> Expr.rename (fun n -> List.assoc n ps) c)
-    (pairs (Expr.reads c))
+  Option.bind (pairs (Expr.reads c)) (fun ps ->
+      let f n = List.assoc n ps in
+      if Expr.captures f c then None else Some (Expr.rename f c))
 
 (* Pending steps are the filters and slices on their way down, the top one
    first. They keep their order: one passes a step only if every one below it

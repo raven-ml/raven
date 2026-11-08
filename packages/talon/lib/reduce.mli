@@ -40,8 +40,8 @@ val view : segments -> (int64, Nx.int64_elt, Nx.host) Nx_ragged.t
 (** [view s] is the rows of each segment of [s], in its order. *)
 
 val first : segments -> Nx.host Nx.int64_t
-(** [first s] is the first row of each segment of [s], ascending: [0] for a
-    segment without rows. *)
+(** [first s] is the first row of each segment of [s], ascending: for a segment
+    without rows, the place where the next segment's rows start. *)
 
 val refine :
   segments -> by:Column.t list -> order:(Column.t * Order.t) list -> segments

@@ -6,16 +6,24 @@
 (* [reduced] holds where the outputs reduce over the segments. Reductions run
    over [frames]: the segments, made when a reduction first reads them, or
    inside a window's reduction each row's window, where [frames] is not the
-   frame of [segments]. A frame whose segments change takes [with_segments]. *)
+   frame of [segments]. A frame whose segments change takes [with_segments].
+
+   [origin j] is the row of the enclosing run that the frame's row [j] came
+   from, the row itself outside a list frame. A list frame, whose segments can
+   be empty, knows each segment's row, [list_row]; any other frame's segment
+   starts at its first row. *)
 type frame = {
   columns : Column.t array;
   rows : int;
   segments : Reduce.segments;
   mutable frames : Reduce.frame option;
   reduced : bool;
+  origin : int -> int;
+  list_row : (int -> int) option;
 }
 
-let with_segments f segments = { f with segments; frames = None }
+let with_segments f segments =
+  { f with segments; frames = None; list_row = None }
 
 let frames f =
   match f.frames with
@@ -33,6 +41,8 @@ let frame b =
     segments = Reduce.one rows;
     frames = None;
     reduced = false;
+    origin = Fun.id;
+    list_row = None;
   }
 
 let groups b segments = { (frame b) with segments; reduced = true }
@@ -441,27 +451,34 @@ type env = {
   failure : failure option ref;
 }
 
-let per_row env = { env with extent = env.frame.rows; origin = Fun.id }
+let per_row env =
+  { env with extent = env.frame.rows; origin = env.frame.origin }
 
 (* [over_segments env frame] evaluates one value per segment of [frame]. *)
 let over_segments env frame =
   let first = lazy (Nx.to_array (Reduce.first frame.segments)) in
-  {
-    env with
-    frame;
-    extent = Reduce.count frame.segments;
-    origin = (fun i -> Int64.to_int (Lazy.force first).(i));
-  }
+  let origin =
+    match frame.list_row with
+    | Some row -> row
+    | None -> fun i -> frame.origin (Int64.to_int (Lazy.force first).(i))
+  in
+  { env with frame; extent = Reduce.count frame.segments; origin }
 
-let per_segment env segments =
-  over_segments env (with_segments env.frame segments)
+(* [per_segment env ~same segments] is [env] over [segments], which cut the
+   frame as its own do if [same]. *)
+let per_segment env ~same segments =
+  let frame =
+    if same then { env.frame with segments; frames = None }
+    else with_segments env.frame segments
+  in
+  over_segments env frame
 
 (* A node that a reduction reads gets a [part], which holds, for a frame, the
    parts its reductions share. *)
 type node = { eval : env -> Column.t; mutable slot : int; mutable part : int }
 
 type state = {
-  names : string list;
+  mutable names : string list;
   mutable nodes : (Expr.packed * node) list;
   mutable slots : int;
   mutable parts : int;
@@ -559,6 +576,120 @@ let store : type a. env -> a Expr.typing -> a option array -> Column.t =
       let c = encode d.storage (each env (fun i -> Option.map d.enc vs.(i))) in
       Column.with_data (Any d.type_) (Column.data c) c
   | Value -> assert false (* An OCaml value is no column. *)
+
+(* A list frame
+
+   [list_frame] lays out the frame of [per_list]'s lists: one row per position
+   of the lists of each row that has them all, valid and of one length, the
+   segment of a row being its list. [e] elements cost [e] words of positions
+   per list that its child does not hold whole and per outer column read. *)
+
+let list_data c =
+  match Column.data c with
+  | List { offsets; child } -> (offsets, child)
+  | _ -> invalid_arg "Eval: per_list reads a column that is not a list"
+
+let lengths n offsets =
+  Nx.sub
+    (Nx.slice [ Nx.R (1, n + 1) ] offsets)
+    (Nx.slice [ Nx.R (0, n) ] offsets)
+
+(* [lockstep env names ls valid] is [valid] without the rows whose lists [ls]
+   differ in length, compared where all are valid. The first such row fails,
+   and the others are past it. *)
+let lockstep env names ls valid =
+  match ls with
+  | [] -> valid
+  | l0 :: rest ->
+      let differ =
+        List.fold_left
+          (fun acc l -> Nx.logical_or acc (Nx.not_equal l l0))
+          (Nx.zeros_like valid) rest
+      in
+      let bad = Nx.positions (Nx.logical_and valid differ) in
+      if Nx.dim 0 bad = 0 then valid
+      else begin
+        let i = Int64.to_int (Nx.item [ 0 ] bad) in
+        let pp ppf (n, l) =
+          Format.fprintf ppf "%a has %Ld" Type.pp_quoted n (Nx.item [ i ] l)
+        in
+        let why =
+          Format.asprintf
+            "per_list reads its lists in lockstep, and their lengths differ: %a"
+            (Format.pp_print_list
+               ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+               pp)
+            (List.combine names ls)
+        in
+        fail env i (data why);
+        Nx.logical_and valid (Nx.logical_not differ)
+      end
+
+(* [list_frame env names cs reads] is the frame of the lists [cs] at the rows
+   of [env] that have a value, and [slot], the place of each row's frame among
+   them or [-1]: [None] if every row has one. [reads] says where each column of
+   the frame comes from. *)
+let list_frame env names cs reads =
+  let n = env.extent in
+  let data = List.map list_data cs in
+  let ls = List.map (fun (o, _) -> lengths n o) data in
+  let valid =
+    List.fold_left
+      (fun acc c ->
+        match Column.validity c with
+        | None -> acc
+        | Some v -> Nx.logical_and acc (Nx.cast Nx.bool v))
+      (Nx.ones Nx.bool [| n |])
+      cs
+  in
+  let live = lockstep env names ls valid in
+  let rows = Nx.positions live in
+  let m = Nx.dim 0 rows in
+  let sizes = Nx.take rows (List.hd ls) in
+  let ids = Nx.positions sizes in
+  let e = Nx.dim 0 ids in
+  let outer = Nx.take ids rows in
+  let start = Nx.sub (Nx.cumsum sizes) sizes in
+  let place = lazy (Nx.sub (Nx.arange Nx.int64 0 e 1) (Nx.take ids start)) in
+  (* A child read whole needs no gather: every row live, offsets from 0 and
+     the child no longer than the lists. *)
+  let element (offsets, child) =
+    if
+      m = n
+      && Int64.equal (Nx.item [ 0 ] offsets) 0L
+      && Int64.equal (Nx.item [ n ] offsets)
+           (Int64.of_int (Column.length child))
+    then child
+    else
+      let first = Nx.take outer offsets in
+      Column.gather (Nx.add first (Lazy.force place)) child
+  in
+  let elements = lazy (Array.of_list (List.map element data)) in
+  let column = function
+    | `Element k -> (Lazy.force elements).(k)
+    | `Outer i -> Column.gather outer env.frame.columns.(i)
+  in
+  let row_of a = lazy (Nx.to_array a) in
+  let outer_rows = row_of outer and live_rows = row_of rows in
+  let frame =
+    {
+      columns = Array.of_list (List.map column reads);
+      rows = e;
+      segments = Reduce.of_ids ~segments:m ~sizes ids;
+      frames = None;
+      reduced = true;
+      origin = (fun j -> env.origin (Int64.to_int (Lazy.force outer_rows).(j)));
+      list_row =
+        Some (fun i -> env.origin (Int64.to_int (Lazy.force live_rows).(i)));
+    }
+  in
+  let slot =
+    if m = n then None
+    else
+      let count = Nx.sub_s (Nx.cumsum (Nx.cast Nx.int64 live)) 1L in
+      Some (Nx.where live count (Nx.full Nx.int64 [| n |] (-1L)))
+  in
+  (frame, slot)
 
 let rec compile : type a s. state -> (a, s) Expr.t -> node =
  fun st e ->
@@ -686,6 +817,7 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
   | Over { by; order; e = x }, _ ->
       (* [x]'s nodes evaluate in the refined frame, so they share no slot with
          the nodes outside. *)
+      let same = List.is_empty by in
       let reduces = Expr.reduces x and scope = st.nodes in
       st.nodes <- [];
       let body = compile st x in
@@ -700,8 +832,9 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
             ~by:(List.map (Array.get cs) by)
             ~order:(List.map (fun (i, k) -> (cs.(i), k)) order)
         in
-        if reduces then Reduce.broadcast s (get (per_segment env s) body)
-        else get { env with frame = with_segments env.frame s } body
+        let refined = per_segment env ~same s in
+        if reduces then Reduce.broadcast s (get refined body)
+        else get { env with frame = refined.frame } body
   | Window { on; before; after; exclude; r }, _ ->
       (* [r]'s nodes evaluate over the windows, so they share no slot with the
          nodes outside. Only rows with a window have one, and a window fails
@@ -722,9 +855,40 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
             ~after:(column after) ~exclude
         in
         let frame = { env.frame with frames = Some (Window.frame w) } in
-        let extent = Window.windows w and origin = Window.row w in
+        let extent = Window.windows w
+        and origin i = frame.origin (Window.row w i) in
         let env = { env with frame; extent; origin } in
         Window.to_rows w (fill env (get env body))
+  | Per_list (os, r), _ ->
+      (* [r]'s nodes evaluate over the elements, so they share no slot with
+         the nodes outside, and read the columns [reads] by their names there.
+         A name reads its output first: a conjunct moved below a select can
+         sit over an input with a column of the output's name. *)
+      let outs = Expr.list_outs os in
+      let names = List.map fst outs in
+      let lists = List.map (fun (_, Expr.Packed e) -> compile st e) outs in
+      let reads = Expr.reads r in
+      let source n =
+        match List.find_index (String.equal n) names with
+        | Some k -> `Element k
+        | None ->
+            `Outer (Option.get (List.find_index (String.equal n) st.names))
+      in
+      let sources = List.map source reads in
+      let scope = st.nodes and outer_names = st.names in
+      st.nodes <- [];
+      st.names <- reads;
+      let body = compile st r in
+      st.nodes <- scope;
+      st.names <- outer_names;
+      fun env ->
+        let cs = List.map (fun n -> fill env (get env n)) lists in
+        let frame, slot = list_frame env names cs sources in
+        let m = Reduce.count frame.segments in
+        let origin = Option.get frame.list_row in
+        let env = { env with frame; extent = m; origin } in
+        let c = fill env (get env body) in
+        Option.fold ~none:c ~some:(fun slot -> Reduce.rows_at slot c) slot
   | Shift (n, a), _ ->
       let a = compile st a in
       fun env -> Reduce.shift env.frame.segments n (fill env (get env a))

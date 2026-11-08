@@ -1141,6 +1141,8 @@ let w = Col.float "w"
 let other_exact =
   source ~pushdown:exact "other_e" Type.[ ("k", Any int8); ("w", Any float64) ]
 
+let list_l = Col.v Kind.(list int) "l"
+
 (* [steps] is the steps that pipelines are drawn from. A step that does not
    apply to the query it is drawn for is skipped. *)
 let steps =
@@ -1159,6 +1161,13 @@ let steps =
       ("filter over", filter Expr.(b > over (mean b)));
       ("filter true &&", filter Expr.(bool true && a > int 0));
       ("filter w", filter Expr.(w > float 0.));
+      ( "filter per_list",
+        filter Expr.(per_list [ "e" := list_l ] (sum (Col.int "e")) > int 0) );
+      ( "filter per_list naming a renamed column",
+        filter
+          Expr.(
+            per_list [ "a" := list_l ] (sum (Col.int "a" * Col.int "y"))
+            > int 0) );
       ("select keep", select Expr.[ keep Sel.(names [ "a"; "b"; "c"; "k" ]) ]);
       ("select rename", select Expr.[ "y" := a; keep Sel.(all - names [ "a" ]) ]);
       ( "select back",

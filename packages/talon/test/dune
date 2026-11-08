@@ -159,3 +159,9 @@
  (modules test_intervals)
  (package talon)
  (libraries windtrap talon))
+
+(test
+ (name test_per_list)
+ (modules test_per_list)
+ (package talon)
+ (libraries windtrap talon talon_gen nx))

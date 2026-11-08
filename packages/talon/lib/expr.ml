@@ -127,6 +127,7 @@ and 'a node =
       r : ('a, 's3) t;
     }
       -> 'a node
+  | Per_list : out_repr list * ('a, 's) t -> 'a node
   | Const : 'a -> 'a node
   | App : ('a -> 'b, 's0) t * ('a, 's1) t -> 'b node
   | Option : ('a, 's) t -> 'a option node
@@ -163,6 +164,10 @@ let mirror : compare -> compare = function
 
 (* Operands *)
 
+(* [list_outs os] is the outputs of a bound [Per_list], all [Named]. *)
+let list_outs os =
+  List.filter_map (function Named (n, p) -> Some (n, p) | _ -> None) os
+
 (* [operands n] is [n]'s operands, in order. *)
 let operands : type a. a node -> packed list = function
   | Handle _ | Ext_handle _ | Read _ | Lit _ | Null | Rows | Const _ -> []
@@ -194,6 +199,7 @@ let operands : type a. a node -> packed list = function
       let some e = Option.map (fun e -> Packed e) e in
       List.filter_map Fun.id
         [ some on; some before; some after; Some (Packed r) ]
+  | Per_list (os, r) -> List.map snd (list_outs os) @ [ Packed r ]
   | Calendar op -> (
       match op with
       | Add_span (a, d) -> [ Packed a; Packed d ]
@@ -383,6 +389,9 @@ let node_equal : type a b. a node -> b node -> bool =
       Bool.equal w0.exclude w1.exclude
       && Bool.equal (Option.is_some w0.on) (Option.is_some w1.on)
       && Bool.equal (Option.is_some w0.before) (Option.is_some w1.before)
+  | Per_list (os0, _), Per_list (os1, _) ->
+      List.equal String.equal (List.map fst (list_outs os0))
+        (List.map fst (list_outs os1))
   | Const v0, Const v1 -> same_value v0 v1
   | Text (op0, _), Text (op1, _) -> text_op_equal op0 op1
   | Concat (sep0, _), Concat (sep1, _) -> String.equal sep0 sep1
@@ -401,8 +410,8 @@ let node_equal : type a b. a node -> b node -> bool =
   | ( ( Handle _ | Ext_handle _ | Read _ | Lit _ | Null | Rows | Int _ | Float _
       | Compare _ | Logic _ | Not _ | If _ | Is_null _ | Coalesce _ | Is_in _
       | Cut _ | Cast _ | Lift _ | Lift2 _ | Nx_map _ | Reduce _ | Over _
-      | Shift _ | Rank _ | Window _ | Const _ | App _ | Option _ | Of_option _
-      | Store _ | Text _ | Concat _ | Calendar _ ),
+      | Shift _ | Rank _ | Window _ | Per_list _ | Const _ | App _ | Option _
+      | Of_option _ | Store _ | Text _ | Concat _ | Calendar _ ),
       _ ) ->
       false
 
@@ -436,6 +445,7 @@ let node_hash : type a. a node -> int =
     | Shift (i, _) -> Hashtbl.hash i
     | Window w ->
         Hashtbl.hash (w.exclude, Option.is_some w.on, Option.is_some w.before)
+    | Per_list (os, _) -> Hashtbl.hash (List.map fst (list_outs os))
     | _ -> 0
   in
   Hashtbl.hash
@@ -501,8 +511,8 @@ let values =
   String.split_on_char ' '
     "across agg arg_max arg_min bool cast coalesce const count cut date each \
      first float if_ instant int is_in is_null keep last max mean median min \
-     n_unique not null nx nx2 of_option only option over pp pp_out quantile \
-     rank rows shift span std store string sum var"
+     n_unique not null nx nx2 of_option only option over per_list pp pp_out \
+     quantile rank rows shift span std store string sum var window"
 
 let is_lowercase_ident n =
   String.length n > 0
@@ -730,6 +740,8 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
       app "window"
         (labelled "on" on @ labelled "before" before @ labelled "after" after
        @ exclude @ [ arg r ])
+  | Per_list (os, r) ->
+      app "per_list" [ (fun ppf -> Type.pp_list pp_out ppf os); arg r ]
   | Const _ -> Format.pp_print_string ppf "<const>"
   | Option a -> app "option" [ arg a ]
   | Of_option a -> app "of_option" [ arg a ]
@@ -1092,15 +1104,70 @@ let window_key : type a. a Type.t -> bool = function
       true
   | _ -> false
 
-(* [order_operation e] names an operation of [e] that orders rows. *)
-let rec order_operation : type a s. (a, s) t -> string option =
- fun e ->
-  match e.node with
+(* [order_name n] names the operation [n] if it orders rows. *)
+let order_name : type a. a node -> string option = function
   | Over _ -> Some "over"
   | Shift _ -> Some "shift"
   | Rank _ -> Some "rank"
   | Window _ -> Some "window"
-  | n -> List.find_map (fun (Packed e) -> order_operation e) (operands n)
+  | _ -> None
+
+(* [order_operation e] names an operation of [e] that orders rows of [e]'s
+   frame. A list frame's body orders its own rows, and its outputs are [e]'s
+   frame's. *)
+let rec order_operation : type a s. (a, s) t -> string option =
+ fun e ->
+  match (order_name e.node, e.node) with
+  | (Some _ as what), _ -> what
+  | None, Per_list (os, _) ->
+      List.find_map (fun (_, Packed e) -> order_operation e) (list_outs os)
+  | None, n -> List.find_map (fun (Packed e) -> order_operation e) (operands n)
+
+(* [free_names e] is the columns that [e] reads from its frame, distinct, in
+   reverse order of first appearance: a list frame's body reads its own outputs
+   and, past them, the enclosing frame's columns. *)
+let free_names e =
+  let rec walk : type a s.
+      string list -> string list -> (a, s) t -> string list =
+   fun bound acc e ->
+    let add acc n =
+      if List.mem n bound || List.mem n acc then acc else n :: acc
+    in
+    match e.node with
+    | Handle (_, n) | Ext_handle (_, n) | Read (_, n) -> add acc n
+    | Over { by; order; e } ->
+        let acc = List.fold_left add acc by in
+        walk bound
+          (List.fold_left (fun acc (k : Order.t) -> add acc k.name) acc order)
+          e
+    | Per_list (os, r) ->
+        let outs = list_outs os in
+        let acc =
+          List.fold_left (fun acc (_, Packed e) -> walk bound acc e) acc outs
+        in
+        walk (List.map fst outs @ bound) acc r
+    | n ->
+        List.fold_left (fun acc (Packed e) -> walk bound acc e) acc (operands n)
+  in
+  walk [] [] e
+
+(* [body_orders env names e] reports each operation of a list frame's body [e]
+   that orders rows and reads none of the frame's outputs [names]: along a list
+   it would be constant, and it reads as the enclosing frame's. *)
+let rec body_orders : type a s. env -> string list -> (a, s) t -> unit =
+ fun env names e ->
+  (match order_name e.node with
+  | Some what when not (List.exists (fun n -> List.mem n names) (free_names e))
+    ->
+      report env
+        "the body of per_list holds %s, which reads no output of the list: \
+         compute it outside per_list."
+        what
+  | _ -> ());
+  match e.node with
+  | Per_list (os, _) ->
+      List.iter (fun (_, Packed e) -> body_orders env names e) (list_outs os)
+  | n -> List.iter (fun (Packed e) -> body_orders env names e) (operands n)
 
 let is_int_or_float : type a. a Type.t -> bool = function
   | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64 -> true
@@ -1755,16 +1822,75 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
           let before = bound before in
           let after = bound after in
           let body = resolve env r (elab env r) in
+          let holds =
+            report env
+              "the reduction of a window holds %s: compute it outside the \
+               window."
+          in
+          (* The bound body is the one that shows [keep]'s and [each]'s
+             outputs; the unbound one still reports when the body has problems
+             of its own. *)
+          Option.iter holds (order_operation r);
           Option.iter
-            (report env
-               "the reduction of a window holds %s: compute it outside the \
-                window.")
-            (order_operation r);
+            (fun (_, b) -> Option.iter holds (order_operation b))
+            body;
           match (before, after, body) with
           | Ok before, Ok after, Some (t, r) ->
               let on = Option.map snd key in
               known t (Window { on; before; after; exclude; r })
           | _ -> Broken))
+  | Per_list (os, r) -> (
+      let problems () = List.length !(env.problems) in
+      let before = problems () in
+      let bound = List.concat_map (outs env) os in
+      if List.is_empty bound && problems () = before then
+        report env "per_list takes at least one output.";
+      (* An output that reads the column of its name hides only that list,
+         whose element has another type, so the body cannot mistake one for
+         the other. *)
+      let own : type b s. string -> (b, s) t -> bool =
+       fun n b ->
+        match b.node with
+        | Handle (_, m) | Ext_handle (_, m) | Read (_, m) -> String.equal m n
+        | _ -> false
+      in
+      let rec element seen = function
+        | [] -> []
+        | (n, Packed (b : (_, _) t)) :: rest -> (
+            if List.mem n seen then
+              report env "per_list: %a is named twice." Type.pp_quoted n;
+            if Option.is_some (Schema.find env.schema n) && not (own n b) then
+              report env
+                "per_list: the output %a would hide the column of that name, \
+                 which its body could then not read: give the output another \
+                 name."
+                Type.pp_quoted n;
+            let others = element (n :: seen) rest in
+            match b.typing with
+            | Some (Column (List ty)) when not (List.mem n seen) ->
+                (n, Type.Any ty) :: others
+            | Some (Column (List _)) | None -> others
+            | Some t ->
+                report env "per_list: the output %a is %a, which is not a list."
+                  Type.pp_quoted n pp_typing t;
+                others)
+      in
+      let elements = element [] bound in
+      let free (n, _) = Option.is_none (Schema.find env.schema n) in
+      let shown (n, ty) =
+        (n, Option.value (List.assoc_opt n elements) ~default:ty)
+      in
+      let columns =
+        List.map shown (Schema.columns env.schema) @ List.filter free elements
+      in
+      let body = { env with schema = Schema.v columns } in
+      let body = resolve body r (elab body r) in
+      let names = List.map fst elements in
+      Option.iter (fun (_, b) -> body_orders env names b) body;
+      match body with
+      | Some (t, r) when problems () = before ->
+          known t (Per_list (List.map (fun (n, p) -> Named (n, p)) bound, r))
+      | _ -> Broken)
   | App (f, a) -> (
       let f =
         match elab env f with
@@ -2117,19 +2243,7 @@ let check_bound fn e =
 
 let reads e =
   check_bound "reads" e;
-  let add acc n = if List.mem n acc then acc else n :: acc in
-  let rec walk : type a s. string list -> (a, s) t -> string list =
-   fun acc e ->
-    match e.node with
-    | Handle (_, n) | Ext_handle (_, n) | Read (_, n) -> add acc n
-    | Over { by; order; e } ->
-        let acc = List.fold_left add acc by in
-        walk
-          (List.fold_left (fun acc (k : Order.t) -> add acc k.name) acc order)
-          e
-    | n -> List.fold_left (fun acc (Packed e) -> walk acc e) acc (operands n)
-  in
-  List.rev (walk [] e)
+  List.rev (free_names e)
 
 let row_local e =
   check_bound "row_local" e;
@@ -2137,6 +2251,8 @@ let row_local e =
    fun e ->
     match e.node with
     | Over _ | Shift _ | Rank _ | Window _ -> false
+    | Per_list (os, _) ->
+        List.for_all (fun (_, Packed e) -> local e) (list_outs os)
     | n -> List.for_all (fun (Packed e) -> local e) (operands n)
   in
   local e
@@ -2148,6 +2264,8 @@ let reduces e =
     match e.node with
     | Rows | Reduce _ -> true
     | Over _ | Window _ -> false
+    | Per_list (os, _) ->
+        List.exists (fun (_, Packed e) -> per_frame e) (list_outs os)
     | n -> List.exists (fun (Packed e) -> per_frame e) (operands n)
   in
   per_frame e
@@ -2174,8 +2292,10 @@ let can_fail e =
     | Cast (ty, a) when not (widens a ty) -> true
     | Text (Parse _, _)
     | Calendar (Add_span _ | Diff _ | Floor _ | Offset _ | Parse_with _)
-    | Of_option _ | App _ ->
+    | Of_option _ | App _ | Reduce (Only, _) ->
         true
+    | Reduce (Sum, { typing = Some (Column (Duration _)); _ }) -> true
+    | Per_list (_ :: _ :: _, _) -> true
     | n -> List.exists (fun (Packed e) -> fails e) (operands n)
   in
   fails e
@@ -2216,6 +2336,9 @@ let map_node : type a. mapper -> a node -> a node =
           after = map_opt w.after;
           r = map w.r;
         }
+  | Per_list (os, r) ->
+      let out (n, Packed e) = Named (n, Packed (map e)) in
+      Per_list (List.map out (list_outs os), map r)
   | App (f, a) -> App (map f, map a)
   | Option a -> Option (map a)
   | Of_option a -> Of_option (map a)
@@ -2233,24 +2356,51 @@ let map_node : type a. mapper -> a node -> a node =
         | Parse_with (fmt, ty, a) -> Parse_with (fmt, ty, map a)
         | Format_with (fmt, a) -> Format_with (fmt, map a))
 
+(* [scoped f os] is [f] inside a list frame of the outputs [os], whose names
+   stay. *)
+let scoped f os =
+  let names = List.map fst (list_outs os) in
+  fun n -> if List.mem n names then n else f n
+
 let rename f e =
   check_bound "rename" e;
-  let key (k : Order.t) =
-    let k' = if k.desc then Order.desc (f k.name) else Order.asc (f k.name) in
-    if k.nulls_first then Order.nulls_first k' else k'
-  in
-  let rec go : type a s. (a, s) t -> (a, s) t =
-   fun e ->
+  let rec go : type a s. (string -> string) -> (a, s) t -> (a, s) t =
+   fun f e ->
+    let key (k : Order.t) =
+      let k' = if k.desc then Order.desc (f k.name) else Order.asc (f k.name) in
+      if k.nulls_first then Order.nulls_first k' else k'
+    in
     typed (typing e)
       (match e.node with
       | Handle (k, n) -> Handle (k, f n)
       | Ext_handle (d, n) -> Ext_handle (d, f n)
       | Read (ty, n) -> Read (ty, f n)
       | Over { by; order; e } ->
-          Over { by = List.map f by; order = List.map key order; e = go e }
-      | n -> map_node { map = go } n)
+          Over { by = List.map f by; order = List.map key order; e = go f e }
+      | Per_list (os, r) ->
+          let out (n, Packed e) = Named (n, Packed (go f e)) in
+          Per_list (List.map out (list_outs os), go (scoped f os) r)
+      | n -> map_node { map = (fun e -> go f e) } n)
   in
-  go e
+  go f e
+
+let captures f e =
+  check_bound "captures" e;
+  let rec capt : type a s. (string -> string) -> (a, s) t -> bool =
+   fun f e ->
+    match e.node with
+    | Per_list (os, r) ->
+        let outs = list_outs os in
+        let names = List.map fst outs in
+        let inner = scoped f os in
+        List.exists (fun (_, Packed e) -> capt f e) outs
+        || List.exists
+             (fun n -> (not (List.mem n names)) && List.mem (f n) names)
+             (free_names r)
+        || capt inner r
+    | n -> List.exists (fun (Packed e) -> capt f e) (operands n)
+  in
+  capt f e
 
 (* Constants *)
 
@@ -2505,6 +2655,7 @@ let arg_max a = reduce Arg_max a
 (* Frames *)
 
 let over ?(by = []) ?(order = []) e = make (Over { by; order; e })
+let per_list ls r = make (Per_list (ls, r))
 let shift n a = make (Shift (n, a))
 let rank a = make (Rank a)
 

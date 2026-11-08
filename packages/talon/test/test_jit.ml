@@ -330,6 +330,67 @@ let dynamic =
     refuses "inner join on a comparison" (verb [ "a" ] (ranged Join.Inner));
     refuses "semi join on a comparison" (verb [ "a" ] (ranged Join.Semi));
     refuses "distinct" (verb [ "k" ] (fun q -> Kit.distinct (keys q)));
+    test "per_list raises over traced columns" (fun () ->
+        let table offsets x =
+          let child = Column.of_tensor x in
+          let xs =
+            Result.get_ok
+              (Column.of_layout
+                 (Any (Type.list Type.float64))
+                 (Varsize { validity = None; offsets; child }))
+          in
+          let q =
+            Query.derive
+              [ "v" := per_list [ "x" := Col.v Kind.(list float) "xs" ] rows ]
+              (Query.of_table (Talon.v [ ("xs", xs) ]))
+          in
+          Talon.to_tensor Nx.int64 [ "v" ] (Result.get_ok (Query.run q))
+        in
+        let offsets = Nx.create Nx.int64 [| 3 |] [| 0L; 1L; 3L |] in
+        let x = Nx.ones f64 [| 3 |] in
+        let traced = Exn.invalid_arg ~sub:"the value is traced by Rune.jit" in
+        let sign () = Nx.Ptree.(tensor @-> returns tensor) in
+        raises_match traced (fun () ->
+            Rune.jit (sign ()) (fun o -> table o x) offsets);
+        raises_match traced (fun () ->
+            Rune.jit (sign ()) (fun x -> table offsets x) x);
+        raises_match
+          (Exn.invalid_arg ~sub:"the value is traced by Rune.vmap")
+          (fun () ->
+            Rune.vmap (sign ())
+              (fun o -> table o x)
+              (Nx.stack [ offsets; offsets ])));
+    test "per_list under vmap of the child computes each lane" (fun () ->
+        let offsets = Nx.create Nx.int64 [| 3 |] [| 0L; 1L; 3L |] in
+        let f x =
+          let xs =
+            Result.get_ok
+              (Column.of_layout
+                 (Any (Type.list Type.float64))
+                 (Varsize
+                    { validity = None; offsets; child = Column.of_tensor x }))
+          in
+          let e =
+            per_list
+              [ "x" := Col.v Kind.(list float) "xs" ]
+              (sum (Col.float "x"))
+          in
+          let q =
+            Query.derive [ "v" := e ] (Query.of_table (Talon.v [ ("xs", xs) ]))
+          in
+          Talon.to_tensor f64 [ "v" ] (Result.get_ok (Query.run q))
+        in
+        let lane a b c = Nx.create f64 [| 3 |] [| a; b; c |] in
+        let got =
+          Rune.vmap
+            Nx.Ptree.(tensor @-> returns tensor)
+            f
+            (Nx.stack [ lane 1. 2. 4.; lane 8. 16. 32. ])
+        in
+        equal
+          Windtrap.(array float_exact)
+          [| 1.; 6.; 8.; 48. |]
+          (Nx.to_array (Nx.flatten got)));
     refuses "an OCaml function"
       (verb [ "c" ]
          (Query.derive [ "c" := store Type.float64 (const Float.abs $ a) ]));
@@ -445,6 +506,33 @@ let derivatives =
         in
         reads (fun t -> ignore (Query.values a (Query.of_table t)));
         reads (fun t -> ignore (Format.asprintf "%a" Talon.pp t)));
+    test "grad runs through per_list" (fun () ->
+        let g x =
+          let offsets = Nx.create Nx.int64 [| 3 |] [| 0L; 1L; 3L |] in
+          let child = Column.of_tensor x in
+          let xs =
+            Result.get_ok
+              (Column.of_layout
+                 (Any (Type.list Type.float64))
+                 (Varsize { validity = None; offsets; child }))
+          in
+          let e =
+            Expr.(
+              per_list
+                [ "x" := Col.v Kind.(list float) "xs" ]
+                (sum (Col.float "x" *. Col.float "x")))
+          in
+          let q =
+            Query.derive Expr.[ "v" := e ]
+              (Query.of_table (Talon.v [ ("xs", xs) ]))
+          in
+          Nx.sum (Talon.to_tensor f64 [ "v" ] (Result.get_ok (Query.run q)))
+        in
+        let x = Nx.create f64 [| 3 |] [| 1.; 2.; 4. |] in
+        equal
+          Windtrap.(array float_exact)
+          [| 2.; 4.; 8. |]
+          (Nx.to_array (Rune.grad' g x)));
     test "grad of a null raises eager's message" (fun () ->
         let f x = Talon.to_tensor f64 [ "a" ] (table { fixed with x }) in
         raises_match
