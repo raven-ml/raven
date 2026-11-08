@@ -7,8 +7,8 @@
    through them, the byte_complete one through the OCaml reference that
    [Sys.backend_type] selects; both build this deterministic dump. Run with
    [--compare], a binary reads the other's dump on stdin and fails, naming the
-   first differing line, unless the two are byte-identical; without it, it
-   prints its dump. Inputs cover every kernel exit: unclassified code points,
+   first differing line and the bytes where it differs, unless the two are
+   byte-identical; without it, it prints its dump. Inputs cover every kernel exit: unclassified code points,
    malformed UTF-8 of every shape, pretokens at and past the 15-byte key limit,
    huge spans, more pretokens than a span chunk, every exit at the seams of
    the stage, bytes without an id, [ignore_merges], caching off, and a merge
@@ -554,20 +554,51 @@ let synth_sp_disagree () =
     ~vocab:(List.mapi (fun i piece -> (piece, i)) (pieces @ derived))
     ~merges ~byte_fallback:true ()
 
-(* Prints to stderr the first line where [ours] and [theirs] differ. *)
+(* The bytes [from] to [until] of [s], in hex. *)
+let hex s ~from ~until =
+  String.concat " "
+    (List.init (until - from) (fun i ->
+         Printf.sprintf "%02x" (Char.code s.[from + i])))
+
+(* Prints to stderr the first line where [ours] and [theirs] differ, then the
+   bytes of each between the two lines' common prefix and common suffix, with
+   the offset of the first in the line and in the dump: whether one side lost,
+   gained or changed bytes, and which. *)
 let report_difference ~ours ~theirs =
   let ours = String.split_on_char '\n' ours in
   let theirs = String.split_on_char '\n' theirs in
-  let rec first n = function
-    | o :: os, t :: ts when String.equal o t -> first (n + 1) (os, ts)
-    | o :: _, t :: _ -> (n, o, t)
-    | o :: _, [] -> (n, o, "<end of dump>")
-    | [], t :: _ -> (n, "<end of dump>", t)
-    | [], [] -> (n, "", "")
+  let rec first n at = function
+    | o :: os, t :: ts when String.equal o t ->
+        first (n + 1) (at + String.length o + 1) (os, ts)
+    | o :: _, t :: _ -> (n, at, o, t)
+    | o :: _, [] -> (n, at, o, "<end of dump>")
+    | [], t :: _ -> (n, at, "<end of dump>", t)
+    | [], [] -> (n, at, "", "")
   in
-  let n, o, t = first 1 (ours, theirs) in
+  let n, at, o, t = first 1 0 (ours, theirs) in
   Printf.eprintf
-    "dumps differ at line %d:\n  this binary: %s\n  stdin:       %s\n%!" n o t
+    "dumps differ at line %d:\n  this binary: %s\n  stdin:       %s\n" n o t;
+  let lo = String.length o and lt = String.length t in
+  let shortest = min lo lt in
+  let prefix = ref 0 in
+  while !prefix < shortest && o.[!prefix] = t.[!prefix] do
+    incr prefix
+  done;
+  let suffix = ref 0 in
+  while
+    !suffix < shortest - !prefix
+    && o.[lo - 1 - !suffix] = t.[lt - 1 - !suffix]
+  do
+    incr suffix
+  done;
+  Printf.eprintf
+    "  from byte %d of the line, %d of the dump:\n\
+    \  this binary: [%s]\n\
+    \  stdin:       [%s]\n\
+     %!"
+    !prefix (at + !prefix)
+    (hex o ~from:!prefix ~until:(lo - !suffix))
+    (hex t ~from:!prefix ~until:(lt - !suffix))
 
 (* [dump_kernels [--compare] [--shard K/N] [CORPUS]]: with [--shard K/N], the
    dump covers a part of the differential, so that dune runs it as several

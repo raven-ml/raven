@@ -234,6 +234,12 @@ and rune), raven / llama.cpp b12048 Vulkan:
   instr/B) of ~200k tokenizer blocks, mostly the two vocabulary Hashtbls.
   Branch-free merges cut callgrind's mispredicts 35% but ran no faster on
   fudge
+- brot's dump_kernels comparison failed once on macOS arm64 CI (run
+  42423619955, f8b600809): shard 2's native encode raised `519254,519240
+  is not a span of the 524288 normalized bytes`, shard 5's bytecode dump
+  had ':' as 0x18; not reproduced on x86 under GC stress, ASan, the debug
+  runtime or checked accesses; run the 8 shards in a loop under --release
+  with 3 domains on an arm64 host
 
 ## repo
 
