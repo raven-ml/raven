@@ -29,7 +29,8 @@ val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
       elements are {!Dtype.Float64}, {!Dtype.Float32}, {!Dtype.Float16},
       {!Dtype.Int32}, {!Dtype.Uint32}, {!Dtype.Int8}, {!Dtype.Uint8} or 8-bit
       floats, but for a store of doubles or bytes whose values are not all
-      loads, which merges as below;
+      loads, or a group of byte loads any of which a computation reads alone,
+      which merge as below;
     - otherwise of [4] or [2] elements, if they are {!Dtype.Float32},
       {!Dtype.Float16}, {!Dtype.Int32}, {!Dtype.Uint32} or 8-bit floats, or
       {!Dtype.Bfloat16} for a renderer other than the [CPU] device's; [8],

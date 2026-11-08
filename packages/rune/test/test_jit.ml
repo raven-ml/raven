@@ -192,6 +192,47 @@ let law_bitcast (Bitcast_case (src, dt, view, offset, seed)) =
 
 type shift_case = Shift_case : ('v, 's) Nx.dtype * int * int -> shift_case
 
+(* A running sum computes a kernel's lanes apart: each reads the bytes of its
+   value by itself. Flipped at an offset, a value's bytes lie in descending
+   addresses and straddle the blocks a vector load reads. *)
+type running_bitcast =
+  | Running_bitcast :
+      ('a, 'b) Nx.dtype * ('c, 'd) Nx.dtype * int * int * int
+      -> running_bitcast
+
+let running_examples =
+  let of_pair (Running_bitcast (src, dt, w, _, _)) =
+    List.map (fun a -> Running_bitcast (src, dt, w, a, a)) [ 2; 3; 4 ]
+  in
+  List.concat_map of_pair
+    [
+      Running_bitcast (Nx.uint8, Nx.int16, 2, 0, 0);
+      Running_bitcast (Nx.int8, Nx.int16, 2, 0, 0);
+      Running_bitcast (Nx.uint8, Nx.int32, 4, 0, 0);
+      Running_bitcast (Nx.int8, Nx.int32, 4, 0, 0);
+      Running_bitcast (Nx.int32, Nx.int64, 2, 0, 0);
+      Running_bitcast (Nx.uint32, Nx.int64, 2, 0, 0);
+      Running_bitcast (Nx.float32, Nx.int64, 2, 0, 0);
+    ]
+
+let pp_running_bitcast ppf (Running_bitcast (src, dt, w, a, seed)) =
+  Format.fprintf ppf "%a to %a, width %d, %d values, seed %d" Nx.pp_dtype src
+    Nx.pp_dtype dt w a seed
+
+let running_bitcasts =
+  let open Gen in
+  (let* pair = of_list running_examples in
+   let+ a = int_range 2 4 and+ seed = int_range 0 1_000_000 in
+   let (Running_bitcast (src, dt, w, _, _)) = pair in
+   Running_bitcast (src, dt, w, a, seed))
+  |> with_pp pp_running_bitcast
+
+let law_running_bitcast (Running_bitcast (src, dt, w, a, seed)) =
+  let st = Random.State.make [| a; w; seed |] in
+  let x = viewed Flipped ~offset:true [| a; 1; w |] (fun s -> random_bits src s st) in
+  let f x = Nx.cumsum ~axis:0 (Nx.bitcast dt x) in
+  equal codes_t (raw (f x)) (raw (Rune.jit' f x))
+
 let integer_dtypes =
   List.filter
     (fun (Nx.Dtype.Any d) -> Nx.Dtype.is Signed d || Nx.Dtype.is Unsigned d)
@@ -5441,6 +5482,9 @@ let () =
                "experts applied give eager's values" experts_cases law_experts;
              prop ~count:20 ~examples:bitcast_examples
                "a bitcast gives eager's bits" bitcast_cases law_bitcast;
+             prop ~count:12 ~examples:running_examples
+               "a running sum of a widening bitcast gives eager's bits"
+               running_bitcasts law_running_bitcast;
              prop ~count:60 ~examples:shift_examples
                "rshift is the integer shift at every dtype, eager and compiled"
                shift_cases law_rshift;

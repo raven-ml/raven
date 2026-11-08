@@ -267,6 +267,21 @@ let lengths =
           equal runs expected
             (accesses Op.Load
                (coalesce ~renderer (loads b (List.init 32 Fun.id)))));
+      cases "thirty-two byte loads each read by a computation stay apart, on"
+        ~id:(fun (name, _, dtype) ->
+          Format.asprintf "%s, %a" name Dtype.pp dtype)
+        [
+          ("16 bytes", host 16 16, Dtype.Uint8);
+          ("32 bytes", host 16 32, Dtype.Int8);
+          ("64 bytes", host 32 64, Dtype.Uint8);
+        ]
+        (fun (_, renderer, dtype) ->
+          let b = Shape.param ~shape:[ Int 64 ] 0 dtype in
+          let read o = Ops.cast (load_at b o) Dtype.Int32 in
+          let sink = Ops.sink (List.map read (List.init 32 Fun.id)) in
+          equal runs
+            (List.init 32 (fun o -> (o, 1)))
+            (accesses Op.Load (coalesce ~renderer sink)));
       cases "without known registers, byte loads stay apart, on"
         ~id:(fun (name, _) -> name)
         [ ("the CPU device", tinygrad); ("a GPU", gpu) ]

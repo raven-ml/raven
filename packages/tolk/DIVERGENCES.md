@@ -6002,7 +6002,14 @@ and an initial value is added after it (D260).
   doubles or 16 bytes on SSE and NEON. A store of
   doubles or bytes merges so only when each value is a load, as an
   accumulator's read is; doubles and bytes computed lane by lane are stored one
-  by one, as tinygrad stores them. On the CPU device a buffer is taken to start on a
+  by one, as tinygrad stores them. A group of byte loads any of which a
+  computation reads alone is not merged, as tinygrad merges no bytes: LLVM's
+  load combine folds an or of bytes in descending addresses, from vector
+  loads, into a byte-swapped load at the address of the first byte's vector,
+  the wrong one where that byte is not its vector's first, so a compiled
+  running sum of a widening bitcast of flipped bytes read a byte off; Clang
+  merges bytes that feed one lane each itself.
+  On the CPU device a buffer is taken to start on a
   boundary of that width (D54). Other renderers merge as tinygrad does.
 - **Reason:** (d): the host's contractions and lorenz_simple's step. Clang's
   straight-line vectorizer packs values into registers as wide as the stores it
@@ -6048,7 +6055,9 @@ and an initial value is added after it (D260).
   MXFP4 rows kept their times, and every row its 698 or 822 words a call.
   Only the loads were measured, so bytes computed lane by lane are stored one
   by one, as doubles are.
-- **Pinned by:** the Coalesce suite's `lengths › eight consecutive stores fill
+- **Pinned by:** `rune jit › classes › a running sum of a widening bitcast
+  gives eager's bits`; the Coalesce suite's `lengths › thirty-two byte loads
+  each read by a computation stay apart, on` and `› eight consecutive stores fill
   registers of` (every case), `› eight consecutive stores of lanes computed
   apart, on 32 bytes, are` (every case, bytes included), `› thirty-two consecutive loads of
   bytes fill registers of` (every case), `› without known registers, byte

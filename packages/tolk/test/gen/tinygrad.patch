@@ -1309,19 +1309,22 @@ index 65fb29491..7bdb9b872 100644
  def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
    if getenv("DMC"): return sink
  
-@@ -110,7 +114,11 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
+@@ -110,7 +114,14 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
    memory: defaultdict[tuple[Ops, UOp, UOp|None, UOp, object, int|tuple[int, int]], dict[int, list[UOp]]] = defaultdict(dict)
    # depth[u] is the lexicographically largest (GLOBAL stores, LOCAL stores) count on any chain u waits on, u included
    depth: dict[UOp, tuple[int, int]] = {}
 +  # the loads read other than as the value a store puts in LOCAL memory
 +  read: set[UOp] = set()
++  # the loads of bytes a computation reads one lane at a time: merged, they reach llvm's load combine, which reads from the wrong address
++  apart: set[UOp] = set()
    for u in sink.toposort():
 +    read.update(s for i,s in enumerate(u.src) if s.op is Ops.LOAD and
 +                not (u.op is Ops.STORE and i == 1 and u.src[0].addrspace is AddrSpace.LOCAL))
++    if u.op in GroupOp.Elementwise: apart.update(s for s in u.src if s.op is Ops.LOAD and s.dtype in (dtypes.int8, dtypes.uint8))
      depth[u] = waits = max([depth[s] for s in u.src_without_body], default=(0, 0))
      if u.op is Ops.STORE: depth[u] = (waits[0]+(u.src[0].addrspace is AddrSpace.GLOBAL), waits[1]+(u.src[0].addrspace is AddrSpace.LOCAL))
      if u.op in {Ops.LOAD, Ops.STORE}:
-@@ -122,14 +130,18 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
+@@ -122,14 +133,18 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
        idx, valid = idx_u.get_idx(), idx_u.get_valid()
        if idx.is_invalid: continue
        root_src: UOp|None
@@ -1343,7 +1346,7 @@ index 65fb29491..7bdb9b872 100644
    # build replacements
    replacements = {}
    for (op,buf,_,_,ld_arg,_),offsets in memory.items():
-@@ -139,9 +151,22 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
+@@ -139,9 +154,23 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
      if ctx.target.device == "DSP":
        lengths = [128,64,32,16,8,4]
        must_divide = False
@@ -1356,7 +1359,8 @@ index 65fb29491..7bdb9b872 100644
 +    # them, which ran twice as slow on a float64 normal sampler. a load, as an accumulator's read, is already a value in memory
 +    elif ctx.registers is not None and buf.dtype in (dtypes.double, dtypes.int8, dtypes.uint8, dtypes.float, dtypes.half, dtypes.int, dtypes.uint,
 +                                                    *dtypes.fp8s) and ctx.supports_float4 and (op is not Ops.STORE or buf.dtype not in (dtypes.double, dtypes.int8, dtypes.uint8) or
-+                                  all(u.src[1].op is Ops.LOAD for us in offsets.values() for u in us)):
++                                  all(u.src[1].op is Ops.LOAD for us in offsets.values() for u in us)) and \
++         not any(u in apart for us in offsets.values() for u in us):
 +      lengths = [l for l in [64,32,16,8,4,2] if l*buf.dtype.itemsize <= ctx.registers[1]]
 +    # a GPU merges bfloat16 accesses as float16's: a tensor core's operands, loaded two bytes at a time, made an RTX 5000 Ada's bfloat16
 +    # products 1.5 times slower than its float16 ones

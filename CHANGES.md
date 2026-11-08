@@ -1077,6 +1077,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A compiled running sum of a widening `Nx.bitcast` of flipped bytes no longer
+  reads the wrong byte on the host: a kernel's byte loads read one lane at a
+  time are no longer merged into vectors, whose reversed bytes LLVM's load
+  combine read from the wrong address.
 - `(!x | y) & x` of booleans simplifies to `y & x` (`Shape.symbolic`).
 - A value ordered after effects keeps them through folds: `x * 0` of a value
   after a store, a gate after a store, and a stack's lane read at an index

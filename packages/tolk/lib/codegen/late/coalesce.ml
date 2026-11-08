@@ -119,9 +119,27 @@ let memory_coalescing sink (r : Renderer.t) =
             Tbl.replace read s ())
         (src u)
     in
+    (* The loads of bytes a computation reads one lane at a time. Clang packs
+       bytes that feed one lane each itself. Merged, such lanes reach LLVM's
+       load combine, which folds an or of bytes in descending addresses, read
+       from vector loads, into one byte-swapped load at the address of the
+       first byte's vector: where that byte is not its vector's first, as in a
+       value straddling two vector loads, it loads from the wrong address.
+       Only bytes reverse so: a wider element keeps its own bytes ascending,
+       and the combine folds no such order. *)
+    let apart = Tbl.create 16 in
+    let read_apart u =
+      if Op.Set.mem (op u) Op.Set.elementwise then
+        List.iter
+          (fun s ->
+            if op s = Op.Load && Dtype.mem (dtype s) Dtype.[ Int8; Uint8 ] then
+              Tbl.replace apart s ())
+          (src u)
+    in
     List.iter
       (fun u ->
         if r.half8 then note u;
+        read_apart u;
         let waits =
           List.fold_left
             (fun d s -> later d (depth_of s))
@@ -212,6 +230,9 @@ let memory_coalescing sink (r : Renderer.t) =
             (fun (_, us) -> List.for_all (fun u -> op (nth u 1) = Op.Load) us)
             offsets
         in
+        let read_alone () =
+          List.exists (fun (_, us) -> List.exists (Tbl.mem apart) us) offsets
+        in
         let width =
           match r.registers () with
           | Some { bytes; _ }
@@ -225,7 +246,8 @@ let memory_coalescing sink (r : Renderer.t) =
         let lengths =
           match width with
           | Some bytes
-            when Dtype.mem dt Dtype.(Float64 :: Int8 :: Uint8 :: merged) ->
+            when Dtype.mem dt Dtype.(Float64 :: Int8 :: Uint8 :: merged)
+                 && not (read_alone ()) ->
               let rec halves l = if l < 2 then [ 1 ] else l :: halves (l / 2) in
               halves (bytes / size)
           | _ ->
