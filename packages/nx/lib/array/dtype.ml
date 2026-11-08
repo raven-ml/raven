@@ -447,7 +447,7 @@ let reals (type v s) (dt : (v, s) t) =
       | Unsigned -> Integers { signed = false; m = bits dt }
       | Complex | Boolean -> assert false)
 
-let exact (type v s w r) (a : (v, s) t) (b : (w, r) t) =
+let exact_reals (type v s w r) (a : (v, s) t) (b : (w, r) t) =
   ((not (is Complex a)) || is Complex b)
   &&
   match (reals a, reals b) with
@@ -459,6 +459,23 @@ let exact (type v s w r) (a : (v, s) t) (b : (w, r) t) =
       f.p <= g.p && f.tiny >= g.tiny && f.max <= g.max
       && (g.inf || not f.inf)
       && (g.nan || not f.nan)
+
+(* [exact_reals] of each pair of dtypes by their codes, made once: a lookup
+   allocates none, where [reals] builds a record for each dtype, and every
+   contraction asks of both operands. *)
+let exacts =
+  let n = Array.length by_code in
+  let t = Array.make (n * n) false in
+  List.iter
+    (fun (Any a) ->
+      List.iter
+        (fun (Any b) -> t.((code a * n) + code b) <- exact_reals a b)
+        all)
+    all;
+  t
+
+let exact a b =
+  Array.unsafe_get exacts ((code a * Array.length by_code) + code b)
 
 (* Conversions. Both stores go through nx_dtype.h, the one source of the rule:
    [round] is a float's value once stored in a float dtype, [store] the bits a

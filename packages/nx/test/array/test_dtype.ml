@@ -1218,6 +1218,20 @@ let exacts =
 let exact_name (D.Any a, D.Any b, _) = strf "%s into %s" (D.name a) (D.name b)
 let test_exact (D.Any a, D.Any b, want) = equal bool want (D.exact a b)
 
+let test_exact_allocates_nothing () =
+  let all = Array.of_list D.all in
+  let n = Array.length all in
+  let before = Gc.minor_words () in
+  for i = 0 to n - 1 do
+    for j = 0 to n - 1 do
+      let (D.Any a) = all.(i) in
+      let (D.Any b) = all.(j) in
+      ignore (Sys.opaque_identity (D.exact a b))
+    done
+  done;
+  let words = Gc.minor_words () -. before in
+  equal ~msg:"words for every pair of dtypes" int 0 (int_of_float words)
+
 let tests =
   [
     group "bigarray kinds"
@@ -1236,6 +1250,7 @@ let tests =
         cases "nx_dtype.h states each row" ~id:row_name table test_header;
         cases "exact holds where every value is the other's" ~id:exact_name
           exacts test_exact;
+        test "exact allocates nothing" test_exact_allocates_nothing;
         test "every dtype is exact into itself" (fun () ->
             List.iter
               (fun (D.Any dt) ->

@@ -1774,19 +1774,21 @@ let summable (type v s) ~by (dt : (v, s) D.t) =
          integers of 8 bits or more"
         by (D.name dt)
 
+let rec summable_outs : type d r. by:string -> (d, r) outs -> unit =
+ fun ~by -> function
+  | [] -> ()
+  | dt :: rest ->
+      summable ~by dt;
+      summable_outs ~by rest
+
 (* Raises unless each result [op] makes at the sum [route]'s result may be
-   one: a contraction's, a map's, a creation's included. *)
+   one: a contraction's, a map's, a creation's included. Every route asks,
+   so a result that is no sum allocates nothing. *)
 let summed_results (type r) ~by (op : r prim) (route : unit Route.t) =
-  let rec outs : type d r. (d, r) outs -> unit = function
-    | [] -> ()
-    | dt :: rest ->
-        summable ~by dt;
-        outs rest
-  in
   if Devices.partial route.result then
     match op with
     | Contract { out; _ } -> summable ~by out
-    | Map m -> outs m.outs
+    | Map m -> summable_outs ~by m.outs
     | _ -> ()
 
 let off_first (type r) (op : r prim) summed : r prim =

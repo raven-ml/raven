@@ -111,8 +111,11 @@ let position g k =
   | One k' -> if k = k' then 0 else -1
   | Grid { devices; _ } -> index k 0 devices
 
-let tiles extents c =
-  List.fold_left (fun n g -> n * List.nth extents g) 1 c.over
+let rec product extents n = function
+  | [] -> n
+  | g :: rest -> product extents (n * List.nth extents g) rest
+
+let tiles extents c = product extents 1 c.over
 
 let rec has_cut = function
   | [] -> false
@@ -202,9 +205,16 @@ let map_axes f = function
       Grid
         { g with cuts = List.sort (fun a b -> Int.compare a.axis b.axis) cuts }
 
+let rec cuts_axis axis = function
+  | [] -> false
+  | c :: rest -> c.axis = axis || cuts_axis axis rest
+
+(* A grid that does not cut [axis] is its own normal form, returned as it
+   is: every route reads its operands' grids without their sums. *)
 let uncut g ~axis =
   match g with
   | One _ -> g
+  | Grid { cuts; _ } when not (cuts_axis axis cuts) -> g
   | Grid { devices; extents; cuts } ->
       normal devices extents (List.filter (fun c -> c.axis <> axis) cuts)
 
@@ -344,14 +354,28 @@ let union g g' =
             then Some (normal a.devices extents cuts)
             else None)
 
+(* Whether two grids' cuts, sorted by axis in normal form, cut the same axes
+   into the same counts of tiles. *)
+let rec same_counts e cuts e' cuts' =
+  match (cuts, cuts') with
+  | [], [] -> true
+  | c :: rest, c' :: rest' ->
+      c.axis = c'.axis
+      && tiles e c = tiles e' c'
+      && same_counts e rest e' rest'
+  | _ :: _, [] | [], _ :: _ -> false
+
 (* Two grids are equal when every device holds the same window under both,
    whatever the shape: the same tile of the same count along every cut axis.
-   A [Grid] has at least two devices, so it never equals a [One], and grids
-   of one device, the common case, compare without allocating. *)
+   A [Grid] has at least two devices, so it never equals a [One]. Grids of one
+   device, the common case, compare without allocating, as do grids that cut
+   other axes or into other counts, which no device's tiles can match. *)
 let equal g g' =
   match (g, g') with
   | One k, One k' -> k = k'
   | One _, Grid _ | Grid _, One _ -> false
+  | Grid a, Grid b when not (same_counts a.extents a.cuts b.extents b.cuts) ->
+      false
   | Grid _, Grid _ ->
       let d = devices g and d' = devices g' in
       let tiles g i = List.sort compare (tile_index g i) in

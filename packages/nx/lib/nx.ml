@@ -2744,6 +2744,14 @@ let untracked (type s d) ~by (x : (float, s, d) t) : (float, s, d) t =
       | Float8_e4m3fn | Float8_e5m2 -> through D.Uint8
       | Float4_e2m1fn -> through D.Uint4)
 
+(* The operands [xs] and, after them, the mask [c] where there is one. *)
+let masked c xs = match c with None -> xs | Some c -> xs @ [ Value.Any c ]
+
+(* [q] of [w], or [v] where the mask [c], read as operand [k], does not
+   hold. Without a mask the operations allocate nothing for it. *)
+let outside c k w v q =
+  match c with None -> q | Some _ -> E.(where (input k D.Bool) q (const w v))
+
 (* [x] scaled in its wide format [w], [scale x], and the greatest [scale x]
    each lane holds [m], broadcast to [x]'s shape: of every element, or of
    those the mask [c] holds, read as operand 1, [-∞] in a lane that holds
@@ -2756,20 +2764,19 @@ let shift (type s d w) ~by (w : (float, w) D.t) s axes ~scale ?c
     let x = at w (operand 0 x) in
     if scale = 1. then x else E.(x * const w scale)
   in
-  let lowest = E.const w Float.neg_infinity in
-  let loads, held =
-    match c with
-    | None -> ([ Value.Any (untracked ~by x) ], scaled)
-    | Some c ->
-        ( [ Value.Any (untracked ~by x); Any c ],
-          E.(where (input 1 D.Bool) scaled lowest) )
+  let m, () =
+    reduce_by ~by s axes
+      (masked c [ Value.Any (untracked ~by x) ])
+      Value.[ Monoid (Max, 0, w) ]
+      (outside c 1 w Float.neg_infinity scaled)
   in
-  let m, () = reduce_by ~by s axes loads Value.[ Monoid (Max, 0, w) ] held in
   (scaled, Eval.broadcast ~by s (kept ~by ~keepdims:true s axes m))
 
 (* [where], read by [by], broadcast to [s]. *)
 let mask_of ~by s where =
-  Option.map (fun c -> Eval.broadcast ~by s (Donate.read ~by c)) where
+  match where with
+  | None -> None
+  | Some c -> Some (Eval.broadcast ~by s (Donate.read ~by c))
 
 (* [e / Σ e] for [e = exp (scale x - m)], computed in [x]'s wide format and
    rounded once. At float32 and float64, the wide format itself, each [e] is
@@ -2795,28 +2802,22 @@ let softmax (type s d) ?(axes = [ -1 ]) ?(scale = 1.) ?where
   else
     let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
     let lanes y = Eval.broadcast ~by s (kept ~by ~keepdims:true s axes y) in
-    let lowest = E.const w Float.neg_infinity and zero = E.const w 0. in
-    (* [q], or [0] where the mask, read as operand [k], does not hold. *)
-    let outside k q =
-      match c with None -> q | Some _ -> E.(where (input k D.Bool) q zero)
-    in
-    let mask = match c with None -> [] | Some c -> [ Value.Any c ] in
     match D.equal_witness w dt with
     | Some Type.Equal ->
         (* The lanes' operand: [x], or under the mask, stored, its elements
            outside it [-∞]. *)
-        let x, scale =
+        let x =
           match c with
-          | None -> (x, scale)
+          | None -> x
           | Some c ->
               let scaled =
                 if scale = 1. then operand 0 x
                 else E.(operand 0 x * const w scale)
               in
-              ( elementwise ~by w [ Any x; Any c ]
-                  E.(where (input 1 D.Bool) scaled lowest),
-                1. )
+              elementwise ~by w [ Any x; Any c ]
+                E.(where (input 1 D.Bool) scaled (const w Float.neg_infinity))
         in
+        let scale = match c with None -> scale | Some _ -> 1. in
         let scaled, m = shift ~by w s axes ~scale x in
         let x = match c with None -> x | Some _ -> Donate.donate ~by x in
         let e =
@@ -2828,27 +2829,24 @@ let softmax (type s d) ?(axes = [ -1 ]) ?(scale = 1.) ?where
         in
         let sum = lanes sum in
         elementwise ~by dt
-          ([ Value.Any (Donate.donate ~by e); Any sum ] @ mask)
-          (outside 2 E.(operand 0 e / operand 1 sum))
+          (masked c [ Value.Any (Donate.donate ~by e); Any sum ])
+          (outside c 2 w 0. E.(operand 0 e / operand 1 sum))
     | None ->
         let scaled, m = shift ~by w s axes ~scale ?c x in
-        (* [exp (scale x - m)], [0] outside the mask, read as operand [k]. *)
-        let e k =
-          let d = E.(scaled - operand 1 m) in
-          match c with
-          | None -> E.exp d
-          | Some _ -> E.(exp (where (input k D.Bool) d lowest))
-        in
+        (* [exp (scale x - m)], [0] outside the mask, read as operand 2 in
+           the sum and 3 in the quotient. *)
+        let d = E.(scaled - operand 1 m) and lowest = Float.neg_infinity in
         let sum, () =
           reduce_by ~by s axes
-            ([ Value.Any x; Any m ] @ mask)
+            (masked c [ Value.Any x; Any m ])
             Value.[ Monoid (Sum, 0, w) ]
-            (e 2)
+            (E.exp (outside c 2 w lowest d))
         in
         let sum = lanes sum in
+        let e = E.exp (outside c 3 w lowest d) in
         elementwise ~by dt
-          ([ Value.Any x; Any m; Any sum ] @ mask)
-          (E.cast dt (outside 3 E.(e 3 / operand 2 sum)))
+          (masked c [ Value.Any x; Any m; Any sum ])
+          (E.cast dt (outside c 3 w 0. E.(e / operand 2 sum)))
 
 (* [(scale x - m) - log Σ exp (scale x - m)], the sum's exponentials taken in
    the reduction, computed in [x]'s wide format and rounded once. Under
@@ -2866,22 +2864,18 @@ let log_softmax (type s d) ?(axes = [ -1 ]) ?(scale = 1.) ?where
   else
     let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
     let scaled, m = shift ~by w s axes ~scale ?c x in
-    let lowest = E.const w Float.neg_infinity in
-    let mask = match c with None -> [] | Some c -> [ Value.Any c ] in
+    let lowest = Float.neg_infinity in
     let shifted = E.(scaled - operand 1 m) in
-    let held k d =
-      match c with None -> d | Some _ -> E.(where (input k D.Bool) d lowest)
-    in
     let sum, () =
       reduce_by ~by s axes
-        ([ Value.Any x; Any m ] @ mask)
+        (masked c [ Value.Any x; Any m ])
         Value.[ Monoid (Sum, 0, w) ]
-        (E.exp (held 2 shifted))
+        (E.exp (outside c 2 w lowest shifted))
     in
     let sum = Eval.broadcast ~by s (kept ~by ~keepdims:true s axes sum) in
     elementwise ~by dt
-      ([ Value.Any x; Any m; Any sum ] @ mask)
-      (E.cast dt (held 3 E.(shifted - log (operand 2 sum))))
+      (masked c [ Value.Any x; Any m; Any sum ])
+      (E.cast dt (outside c 3 w lowest E.(shifted - log (operand 2 sum))))
 
 (* One reduction of the squares, a map of each lane's scale, then one map
    of [x] by its lane's scale: no array of [x]'s size but the result. *)

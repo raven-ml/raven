@@ -245,7 +245,8 @@ val exact : ('v, 's) t -> ('w, 'r) t -> bool
     precision, range and least magnitude that has an infinity and a NaN
     where it does: float16 and bfloat16 into float32, the 8-bit floats into
     float16. A complex number is exact only into a complex dtype, and a
-    real into a complex one whose component it is exact into. *)
+    real into a complex one whose component it is exact into. It allocates
+    nothing. *)
 
 val pp_value : ('v, 's) t -> Format.formatter -> 'v -> unit
 (** [pp_value dt] formats a value of [dt]:

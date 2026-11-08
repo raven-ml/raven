@@ -2388,6 +2388,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Calls allocate nothing for features they do not use (`Nx.softmax` without
+  `~where`, `Nx.contract`'s exactness check, creations), and comparing or
+  placing values cut across devices allocates fewer words.
 - nx.cpu checks SSE4.2 and POPCNT, which its x86-64 code may run, before
   it starts, and names its floor for its features where it said x86-64-v3;
   the flags it installs are `cpu/avx2_flags.sexp`.
