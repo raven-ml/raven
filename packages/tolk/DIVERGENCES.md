@@ -8387,12 +8387,20 @@ C's undefined behaviour.
   count always past it, and a weak expression count the operand's type does
   not hold at its own committed type, then converts it to the operand's. A
   weak count does not widen the type its shift computes at.
+  tinygrad's `codegen/decomp/dtype.py` `l2i` emulates a 64-bit shift from
+  the count's low word: a count of 2^32 shifts by 0, a count of 64 or more
+  by its low 6 bits, and a `Uint32` count fails. tolk's reads both words of
+  the count, applies this rule past the width (0, or the sign fill for a
+  signed right shift), and takes the low word of a `Uint32` count. The
+  rule moves with the emulation, through `test/gen/tinygrad.patch`.
 - **Reason:** (e): at the pinned commit, the host's kernel of an int32
   division of the least value by -1 dies with SIGFPE, on the host's vector
   lanes a uint8 shifted right by 8 is itself, where it is 0, a masked
   negative int32 shifted right by 32 is -1, where it is 0, a uint16
-  constant 1 shifted left by 65536 folds to 1, where it is 0, and a uint8
-  shifted left by a weak count of 256 is itself, where it is 0.
+  constant 1 shifted left by 65536 folds to 1, where it is 0, a uint8
+  shifted left by a weak count of 256 is itself, where it is 0, and on a
+  target emulating 64-bit integers a shift by a count of 2^32 is by 0,
+  where it is past the width.
 - **Pinned by:** the Tolk_engine suite's `divisions and shifts at the
   extremes compute as the interpreter`, on the host (`kernels on the
   host`) and on each GPU (`GPUs ›`, run on fudge's CUDA and NV): every
@@ -8405,9 +8413,12 @@ C's undefined behaviour.
   computes the shift`, compiled and through the interpreter, on the host
   and each GPU, against the shift's meaning written in the test, for
   literal and weak expression counts around the width and at and past
-  2^8, 2^16, 2^32 and 2^63; and the Symbolic suite's `a shift of constants
-  folds by its count, of any size` and `a masked right shift past the
-  width keeps its mask's sign`.
+  2^8, 2^16, 2^32 and 2^63; `an emulated 64-bit shift reads the whole of
+  its count`, compiled with 64-bit integers emulated, by counts of the
+  operand's type, of `Uint32`, weak literals and weak expressions past the
+  word and the width; and the Symbolic suite's `a shift of constants folds
+  by its count, of any size` and `a masked right shift past the width
+  keeps its mask's sign`.
 
 ### A division by zero is defined (D355)
 

@@ -661,7 +661,7 @@ index bfce6943b..734886146 100644
      # instruction selection
      if isinstance(renderer, ISARenderer):
 diff --git a/tinygrad/codegen/decomp/dtype.py b/tinygrad/codegen/decomp/dtype.py
-index d9fee876d..51bffdbde 100644
+index d9fee876d..a54d1ec67 100644
 --- a/tinygrad/codegen/decomp/dtype.py
 +++ b/tinygrad/codegen/decomp/dtype.py
 @@ -1,5 +1,6 @@
@@ -672,7 +672,24 @@ index d9fee876d..51bffdbde 100644
  from tinygrad.helpers import flatten, DEBUG, EMULATED_DTYPES
  from tinygrad.uop import GroupOp
  from tinygrad.uop.ops import UOp, UPat, Ops, PatternMatcher, graph_rewrite, shape_to_shape_arg
-@@ -66,6 +67,8 @@ def l2i(op: Ops, dt: DType, *uops:UOp):
+@@ -40,12 +41,14 @@ def l2i(op: Ops, dt: DType, *uops:UOp):
+     case Ops.SHL:
+       a0u, a1u, n = a0.bitcast(dtypes.uint), a1.bitcast(dtypes.uint), (b0 & 31).cast(dtypes.uint)
+       lo, hi = (a0u << n).bitcast(dt), ((a1u << n) | ((a0u >> 1) >> (31 - n))).bitcast(dt)
+-      return (b0 >= 32).where(zero, lo), (b0 >= 32).where(lo, hi)
++      inside = l2i(Ops.CMPLT, dt, b0, b1, b0.const_like(64), b1.const_like(0))
++      return inside.where((b0 >= 32).where(zero, lo), zero), inside.where((b0 >= 32).where(lo, hi), zero)
+     case Ops.SHR:
+       a0u, a1u, n = a0.bitcast(dtypes.uint), a1.bitcast(dtypes.uint), (b0 & 31).cast(dtypes.uint)
+       lo, hi = ((a0u >> n) | ((a1u << 1) << (31 - n))).bitcast(dt), a1 >> (b0 & 31)
+       fill = a1 >> 31 if dt == dtypes.int else zero  # vacated high word: sign bits when signed, else 0
+-      return (b0 >= 32).where(hi, lo), (b0 >= 32).where(fill, hi)
++      inside = l2i(Ops.CMPLT, dt, b0, b1, b0.const_like(64), b1.const_like(0))
++      return inside.where((b0 >= 32).where(hi, lo), fill), inside.where((b0 >= 32).where(fill, hi), fill)
+     case Ops.ADD: return (low:=a0+b0), a1 + b1 + (low.bitcast(dtypes.uint) < a0.bitcast(dtypes.uint))
+     case Ops.SUB: return a0 - b0, a1 - b1 - (a0.bitcast(dtypes.uint) < b0.bitcast(dtypes.uint))
+     case Ops.MUL:
+@@ -66,6 +69,8 @@ def l2i(op: Ops, dt: DType, *uops:UOp):
          diff = l2i(Ops.SUB, dtypes.uint, *r, b0, b1)
          q = ((q[0] | shl(cond.cast(dtypes.uint), i % 32), q[1]) if i < 32 else (q[0], q[1] | shl(cond.cast(dtypes.uint), i % 32)))
          r = l2i(Ops.WHERE, dtypes.uint, cond, *diff, *r)
@@ -681,7 +698,7 @@ index d9fee876d..51bffdbde 100644
        if dt == dtypes.int:
          (nq0, nq1), (nr0, nr1) = l2i(Ops.BITCAST, dt, *l2i(Ops.NEG, dtypes.uint, *q)), l2i(Ops.BITCAST, dt, *l2i(Ops.NEG, dtypes.uint, *r))
          (q0, q1), (r0, r1) = l2i(Ops.BITCAST, dt, *q), l2i(Ops.BITCAST, dt, *r)
-@@ -140,6 +143,26 @@ def f2f_store(st, idx, val, fr:DType, to:DType):
+@@ -140,6 +145,26 @@ def f2f_store(st, idx, val, fr:DType, to:DType):
  
  def f2f_rewrite(ctx:FloatDecompCtx, x:UOp) -> UOp: return graph_rewrite(x, pm_float_decomp, ctx=ctx, bottom_up=True)
  
@@ -708,7 +725,7 @@ index d9fee876d..51bffdbde 100644
  pm_long_decomp: PatternMatcher = PatternMatcher([
    # the decomp's own bottom-up rewrite can mint bare consts mid-flight: word splitting commits them at the long sibling's dtype
    (UPat(GroupOp.All, name='x'), lambda x: commit_weak_consts(x, next((s.dtype for s in x.src if s.dtype in l2i_dt), None))),
-@@ -184,6 +207,9 @@ pm_float_decomp: PatternMatcher = PatternMatcher([
+@@ -184,6 +209,9 @@ pm_float_decomp: PatternMatcher = PatternMatcher([
     f2f(f2f(val.cast(ctx.to).bitcast(f2f_dt[ctx.to]), ctx.to, ctx.fr), ctx.fr, ctx.to) if x.dtype == ctx.fr else None),
    (UPat(GroupOp.ALU|{Ops.STACK, Ops.INDEX}, dtypes.floats, name="x"), lambda ctx,x:
     x.replace(src=tuple(s.cast(ctx.to) if s.dtype == ctx.fr else s for s in x.src)) if x.dtype == ctx.fr else None),
@@ -718,7 +735,7 @@ index d9fee876d..51bffdbde 100644
    (UPat(Ops.STORE, src=(UPat.var("idx"), UPat(Ops.BITCAST, dtypes.floats, name="val")), name='st'), lambda ctx,st,idx,val:
     st.replace(src=(idx, val.src[0].bitcast(f2f_dt[ctx.fr]))) if val.dtype == ctx.fr and idx.dtype == f2f_dt[ctx.fr] else None),
    (UPat(Ops.STORE, src=(UPat.var("idx").or_casted(), UPat.var("val", dtypes.floats)), name='st'), lambda ctx,st,idx,val:
-@@ -195,9 +221,14 @@ class DTypeDecompCtx:
+@@ -195,9 +223,14 @@ class DTypeDecompCtx:
    renderer: Renderer
    dtypes: set[DType] = field(default_factory=set)
  

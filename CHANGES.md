@@ -1115,6 +1115,9 @@ word comes from its lock and from samples the dashboard saw arrive.
   off, from comgr 2.8 (ROCm 6.2): IR that an optimization makes invalid
   raises `Compile_error` instead of compiling into wrong values. Compiles
   take about 2% longer.
+- A 64-bit shift on a target that emulates 64-bit integers (`EMULATED_DTYPES`)
+  reads its whole count: a count of `2^32` no longer shifts by 0, and a count
+  at or past 64 is past the width. A `Uint32` count compiles.
 - A shift by a weak literal or expression count at or past its operand's
   width computes the shift, where the count wrapped at the operand's type:
   `x:u8 << 256` is `0`, where it was `x`.

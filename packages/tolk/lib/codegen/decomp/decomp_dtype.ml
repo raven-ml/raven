@@ -51,6 +51,24 @@ let rec l2i op dt uops =
         invalid_arg
           (Printf.sprintf "long %s needs two long operands" (Op.name op))
   in
+  (* A shift's operands: its count is a long, or a Uint32, whose bits are the
+     count's low word; the words it computes in stay [dt]. *)
+  let shift () =
+    match uops with
+    | [ a0; a1; b0; b1 ] -> (a0, a1, b0, b1)
+    | [ a0; a1; b ] -> (a0, a1, bitcast b dt, zero)
+    | _ ->
+        invalid_arg
+          (Printf.sprintf "long %s needs a long operand and a count" (Op.name op))
+  in
+  (* The count, whole, as the renderer's own shifts read theirs: below 64, its
+     low word decides. *)
+  let inside b0 b1 =
+    List.hd
+      (l2i Op.Cmplt dt
+         [ b0; b1; const_like b0 (`Int (Bigint.of_int 64));
+           const_like b1 (`Int Bigint.zero) ])
+  in
   let words a0 a1 = [ a0; a1 ] in
   match op with
   | Op.Neg -> l2i Op.Sub dt (zero :: zero :: uops)
@@ -104,17 +122,18 @@ let rec l2i op dt uops =
       let a0, a1 = pair uops in
       words (bitcast a0 dt) (bitcast a1 dt)
   | Op.Shl ->
-      let a0, a1, b0, _ = bin () in
+      let a0, a1, b0, b1 = shift () in
       let a0u = bitcast a0 uint and a1u = bitcast a1 uint in
       let n = cast O.(b0 land int 31) uint in
       let lo = bitcast O.(a0u lsl n) dt in
       let hi =
         bitcast O.((a1u lsl n) lor ((a0u lsr int 1) lsr (int 31 - n))) dt
       in
-      let far = O.(b0 >= int 32) in
-      words (where far zero lo) (where far lo hi)
+      let far = O.(b0 >= int 32) and inside = inside b0 b1 in
+      words (where inside (where far zero lo) zero)
+        (where inside (where far lo hi) zero)
   | Op.Shr ->
-      let a0, a1, b0, _ = bin () in
+      let a0, a1, b0, b1 = shift () in
       let a0u = bitcast a0 uint and a1u = bitcast a1 uint in
       let n = cast O.(b0 land int 31) uint in
       let lo =
@@ -123,8 +142,9 @@ let rec l2i op dt uops =
       let hi = O.(a1 lsr (b0 land int 31)) in
       (* The vacated high word: sign bits when signed, else 0. *)
       let fill = if Dtype.equal dt Int32 then O.(a1 lsr int 31) else zero in
-      let far = O.(b0 >= int 32) in
-      words (where far hi lo) (where far fill hi)
+      let far = O.(b0 >= int 32) and inside = inside b0 b1 in
+      words (where inside (where far hi lo) fill)
+        (where inside (where far fill hi) fill)
   | Op.Add ->
       let a0, a1, b0, b1 = bin () in
       let low = O.(a0 + b0) in
