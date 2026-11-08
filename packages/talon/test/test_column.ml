@@ -1263,6 +1263,265 @@ let take_lists (rows, pre, is) =
     (Array.of_list (List.map at is))
     got
 
+(* Nested columns: a type of lists and records over int64 and text, and a model
+   of its rows with nulls at every depth, a list's elements and a record's
+   fields being cells too. *)
+type shape = Ints | Texts | Lists of shape | Records of shape list
+
+type cell =
+  | Null
+  | Int of int
+  | Text of string
+  | Items of cell array
+  | Fields of cell array
+
+let field_name i = "f" ^ string_of_int i
+
+let rec type_of = function
+  | Ints -> Type.Any Type.int64
+  | Texts -> Type.Any Type.string
+  | Lists e ->
+      let (Type.Any t) = type_of e in
+      Type.Any (Type.list t)
+  | Records fs ->
+      let field i f = (field_name i, type_of f) in
+      Type.Any (Type.record (List.mapi field fs))
+
+let comma ppf () = Format.pp_print_string ppf ", "
+
+let rec pp_shape ppf = function
+  | Ints -> Format.pp_print_string ppf "int64"
+  | Texts -> Format.pp_print_string ppf "string"
+  | Lists e -> Format.fprintf ppf "list[%a]" pp_shape e
+  | Records fs ->
+      Format.fprintf ppf "{%a}" (Format.pp_print_list ~pp_sep:comma pp_shape) fs
+
+let rec pp_cell ppf = function
+  | Null -> Format.pp_print_string ppf "null"
+  | Int i -> Format.pp_print_int ppf i
+  | Text t -> Format.fprintf ppf "%S" t
+  | Items xs -> Format.fprintf ppf "[%a]" pp_cells xs
+  | Fields xs -> Format.fprintf ppf "{%a}" pp_cells xs
+
+and pp_cells ppf xs =
+  Format.pp_print_seq ~pp_sep:comma pp_cell ppf (Array.to_seq xs)
+
+let cell_w = Testable.make ~pp:pp_cell ~equal:( = )
+
+(* [filler s] is a value of [s] that the rows under a null and the values before
+   the first offset hold: no taken row shows it. *)
+let rec filler = function
+  | Ints -> Int 7
+  | Texts -> Text "junk"
+  | Lists e -> Items [| filler e |]
+  | Records fs -> Fields (Array.of_list (List.map filler fs))
+
+let bits_of cells =
+  if Array.mem Null cells then Some (valid_bits (Array.map (( <> ) Null) cells))
+  else None
+
+(* [offsets_of pre lengths] is the offsets from [pre] that cut rows of
+   [lengths]. *)
+let offsets_of pre lengths =
+  let o = Array.make (Array.length lengths + 1) (Int64.of_int pre) in
+  let cut i l = o.(i + 1) <- Int64.add o.(i) (Int64.of_int l) in
+  Array.iteri cut lengths;
+  Nx.create Nx.int64 [| Array.length o |] o
+
+(* [build pre s cells] is the column of [s] whose rows are [cells], every list
+   and text cutting its values after [pre] values that no row holds. *)
+let rec build pre s cells =
+  let validity = bits_of cells and n = Array.length cells in
+  let layout l = Result.get_ok (Column.of_layout (type_of s) l) in
+  match s with
+  | Ints ->
+      let value = function Int i -> Int64.of_int i | _ -> 0L in
+      Column.of_tensor ?validity
+        (Nx.create Nx.int64 [| n |] (Array.map value cells))
+  | Texts ->
+      let texts = Array.map (function Text t -> t | _ -> "junk") cells in
+      let bytes = String.make pre 'p' :: Array.to_list texts in
+      let bytes = String.concat "" bytes in
+      let m = String.length bytes in
+      let child =
+        Column.of_tensor
+          (Nx.init Nx.uint8 [| m |] (fun i -> Char.code bytes.[i.(0)]))
+      in
+      let offsets = offsets_of pre (Array.map String.length texts) in
+      layout (Varsize { validity; offsets; child })
+  | Lists e ->
+      let items = function Items xs -> xs | _ -> [| filler e |] in
+      let rows = Array.map items cells in
+      let before = Array.make pre (filler e) in
+      let child = build pre e (Array.concat (before :: Array.to_list rows)) in
+      let offsets = offsets_of pre (Array.map Array.length rows) in
+      layout (Varsize { validity; offsets; child })
+  | Records fs ->
+      let field i f =
+        let at = function Fields xs -> xs.(i) | _ -> filler f in
+        (field_name i, build pre f (Array.map at cells))
+      in
+      layout (Children { validity; length = n; fields = List.mapi field fs })
+
+let valid validity n =
+  match validity with
+  | None -> Array.make n true
+  | Some v -> Nx.to_array (Nx.cast Nx.bool v)
+
+(* [read s c] is the model of [c]'s rows, read through its layout. *)
+let rec read s c =
+  let n = Column.length c in
+  let leaf f k =
+    Array.map (function None -> Null | Some v -> f v) (Column.options k c)
+  in
+  match (s, Column.layout c) with
+  | Ints, _ -> leaf (fun i -> Int i) Kind.int
+  | Texts, _ -> leaf (fun t -> Text t) Kind.string
+  | Lists e, Varsize { validity; offsets; child } ->
+      let ok = valid validity n and o = Nx.to_array offsets in
+      let elements = read e child in
+      Array.init n (fun i ->
+          if not ok.(i) then Null
+          else
+            let lo = Int64.to_int o.(i) and hi = Int64.to_int o.(i + 1) in
+            Items (Array.sub elements lo (hi - lo)))
+  | Records fs, Children { validity; fields; _ } ->
+      let ok = valid validity n in
+      let fields = List.map2 (fun f (_, c) -> read f c) fs fields in
+      let fields = Array.of_list fields in
+      Array.init n (fun i ->
+          if ok.(i) then Fields (Array.map (fun f -> f.(i)) fields) else Null)
+  | _ -> fail "a nested column's layout is not its type's"
+
+let rec shape_gen depth =
+  let leaf = Gen.of_list [ Ints; Texts ] in
+  if depth = 0 then leaf
+  else
+    let inner = shape_gen (depth - 1) in
+    let fields = Gen.list ~size:(Gen.int_range 1 2) inner in
+    Gen.frequency
+      [
+        (1, leaf);
+        (2, Gen.map (fun e -> Lists e) inner);
+        (1, Gen.map (fun fs -> Records fs) fields);
+      ]
+
+(* A list at the top, or a record with a list field. *)
+let nested_shape =
+  let record (a, b) = Records [ a; Lists b ] in
+  Gen.one_of
+    [
+      Gen.map (fun e -> Lists e) (shape_gen 2);
+      Gen.map record (Gen.pair (shape_gen 1) (shape_gen 1));
+    ]
+
+let texts = [ ""; "a"; "\xc3\xa9t\xc3\xa9"; "xyz" ]
+
+let rec cell_gen s = Gen.frequency [ (1, Gen.constant Null); (4, value_gen s) ]
+
+and value_gen = function
+  | Ints -> Gen.map (fun i -> Int i) (Gen.int_range (-3) 3)
+  | Texts -> Gen.map (fun t -> Text t) (Gen.of_list texts)
+  | Lists e ->
+      let items = Gen.array ~size:(Gen.int_range 0 3) (cell_gen e) in
+      Gen.map (fun xs -> Items xs) items
+  | Records fs ->
+      let cons f rest =
+        Gen.map (fun (x, xs) -> x :: xs) (Gen.pair (cell_gen f) rest)
+      in
+      let fields = List.fold_right cons fs (Gen.constant []) in
+      Gen.map (fun xs -> Fields (Array.of_list xs)) fields
+
+(* Positions into [n] rows: drawn, so repeated and out of order, and outside
+   the rows too; every row in order; or every row permuted. *)
+let positions n =
+  let all = List.init n Fun.id in
+  Gen.frequency
+    [
+      (3, Gen.list ~size:(Gen.int_range 0 12) (Gen.int_range (-1) n));
+      (1, Gen.constant all);
+      (1, Gen.permutation all);
+    ]
+
+let pp_picks ppf (s, cells, pre, is) =
+  Format.fprintf ppf "%a after %d: [%a] at %a" pp_shape s pre pp_cells cells
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space Format.pp_print_int)
+    is
+
+let nested_picks =
+  let open Gen in
+  with_pp pp_picks
+    (let* s = nested_shape in
+     let* cells = array ~size:(int_range 0 8) (cell_gen s) in
+     let+ pre = int_range 0 2 and+ is = positions (Array.length cells) in
+     (s, cells, pre, is))
+
+let rec holds p s =
+  p s
+  ||
+  match s with
+  | Ints | Texts -> false
+  | Lists e -> holds p e
+  | Records fs -> List.exists (holds p) fs
+
+let rec below p = function
+  | Items xs | Fields xs -> Array.exists (fun x -> p x || below p x) xs
+  | Null | Int _ | Text _ -> false
+
+let rec ordered = function
+  | a :: (b :: _ as rest) -> a <= b && ordered rest
+  | _ -> true
+
+let list_of p = function Lists e -> p e | _ -> false
+
+let has_list = function
+  | Records fs -> List.exists (list_of (Fun.const true)) fs
+  | _ -> false
+
+(* A nested column's rows at positions are its rows there, at every depth, and
+   null outside. *)
+let take_nested (s, cells, pre, is) =
+  let n = Array.length cells in
+  let at i = if i >= 0 && i < n then cells.(i) else Null in
+  let taken = List.map at is in
+  let is_list = list_of (Fun.const true) in
+  let is_record = function Records _ -> true | _ -> false in
+  cover "a list of text" (holds (list_of (( = ) Texts)) s);
+  cover "a list of lists" (holds (list_of is_list) s);
+  cover "a list of records" (holds (list_of is_record) s);
+  cover "a record with a list field" (holds has_list s);
+  cover "a null below a taken row" (List.exists (below (( = ) Null)) taken);
+  cover "an empty list taken" (List.exists (below (( = ) (Items [||]))) taken);
+  cover "an empty text taken" (List.exists (below (( = ) (Text ""))) taken);
+  cover "no row" (n = 0);
+  cover "every row, in order" (n > 0 && is = List.init n Fun.id);
+  cover "a repeated position"
+    (List.length (List.sort_uniq compare is) < List.length is);
+  cover "positions out of order" (not (ordered is));
+  cover "a position outside the rows"
+    (List.exists (fun i -> i < 0 || i >= n) is);
+  cover "values before the first offset" (pre > 0);
+  equal (array cell_w) (Array.of_list taken)
+    (read s (take_column is (build pre s cells)))
+
+(* Sorting a table by a key of distinct values moves a nested column's rows
+   with their keys: by the drawn positions where they permute the rows. *)
+let sort_nested (s, cells, pre, is) =
+  let n = Array.length cells in
+  let all = List.init n Fun.id in
+  let order = if List.sort compare is = all then is else all in
+  let keys = Array.make n 0L in
+  List.iteri (fun j i -> keys.(i) <- Int64.of_int j) order;
+  cover "rows moved" (not (ordered order));
+  let k = Column.of_tensor (Nx.create Nx.int64 [| n |] keys) in
+  let t = v [ ("k", k); ("x", build pre s cells) ] in
+  let sorted =
+    Error.get_ok Query.(run (of_table t |> sort [ Order.asc "k" ]))
+  in
+  equal (array cell_w)
+    (Array.of_list (List.map (fun i -> cells.(i)) order))
+    (read s (column sorted "x"))
+
 let nulls_cases =
   group "nulls"
     [
@@ -1275,6 +1534,12 @@ let nulls_cases =
         "a list column's rows at indices are its rows there, null elements \
          included, and null outside"
         list_picks take_lists;
+      prop
+        "a nested column's rows at positions are its rows there, nulls at \
+         every depth included, and null outside"
+        nested_picks take_nested;
+      prop "sorting moves a nested column's rows with their keys" nested_picks
+        sort_nested;
       test "a validity with every row set has no null" (fun () ->
           let c = column_of [| true; true; true |] in
           is_some (Column.validity c);

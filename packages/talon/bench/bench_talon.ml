@@ -223,6 +223,37 @@ let take_text =
   let t = Talon.v [ ("s", strings) ] in
   fun () -> Talon.take indices t
 
+(* [nested ()] is 2^18 rows of lists of zero to three records, each an int64
+   [k] and a list of zero to three texts [tags], a tenth of the rows null. It
+   is made in the case's worker. *)
+let nested () =
+  let tag i = "tag" ^ string_of_int (i * 7919 mod 1000) in
+  let record i =
+    Record.(
+      empty
+      |> add Kind.int "k" (Some i)
+      |> add (Kind.list Kind.string) "tags" (Some (Array.init (i mod 4) tag)))
+  in
+  let row r =
+    if r mod 10 = 3 then None
+    else Some (Array.init (r * 31 mod 4) (fun j -> record ((r * 4) + j)))
+  in
+  let ty =
+    Type.list
+      (Type.record
+         [
+           ("k", Type.Any Type.int64);
+           ("tags", Type.Any (Type.list Type.string));
+         ])
+  in
+  Talon.v [ ("x", Column.of_options ty (Array.init (1 lsl 18) row)) ]
+
+(* The nested column at 2^16 random rows: at each depth every row's elements
+   are copied as one run. *)
+let take_nested =
+  let indices = Nx.slice [ R (0, 1 lsl 16) ] (ints 12 (1 lsl 18)) in
+  fun t -> Talon.take indices t
+
 (* [text_layout ()] is the layout of 2^20 ASCII texts, ["s0"] to ["s99999"],
    which [Column.of_layout] checks as a text column: offsets and UTF-8. It is
    made in the case's worker, so that no other case's process holds it. *)
@@ -363,6 +394,8 @@ let () =
               kleene Expr.(Col.bool "a" || Col.bool "b"));
           Thumper.bench "Nulls/take-random" take_random;
           Thumper.bench "Nulls/take-random-text" take_text;
+          Thumper.bench_with_setup ~setup:nested "Nulls/take-random-nested"
+            take_nested;
           Thumper.bench "Nulls/concat-3" concat_3;
           Thumper.bench_with_setup ~setup:text_layout "Layout/text-1M" (fun l ->
               Column.of_layout (Type.Any Type.string) l);

@@ -202,8 +202,7 @@ and rune), raven / llama.cpp b12048 Vulkan:
   hybrid runs, text decoded per row, talon-dict-text.adjudication.md step
   3), `Nx.unique`'s hashed numbering of all keys (q05 ~540 M) and its
   per-thread table merge, `Nx.positions` at ~2.1k words and ~10 passes a
-  call in the join's runs path, list columns of text, list or record
-  children taking by positions.
+  call in the join's runs path.
   Data: ~/wt/tmp/talon-data on fudge (decision SF0.1/SF1, H2O 1e6/1e7)
 - talon 1.0 plan (_plans/talon/product/plan.md, on the Mac): windows and
   ewm, as-of and interval joins, interval sets and folds, zoned time,

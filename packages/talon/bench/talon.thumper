@@ -10,6 +10,7 @@
 # forced: blessed Talon/Group/category_region Talon/Join/customer_lookup Talon/Layout/text-1M Talon/Group/text-100-1M Talon_csv/read-mixed under load 10.6 on 14 cores
 # forced: blessed Talon/Join/customer_lookup Talon/Nulls/join-left under load 12.8 on 14 cores
 # forced: blessed Talon/Join/customer_lookup Talon/Join/repeated_keys Talon/Nulls/join-left under load 19.3 on 14 cores
+# forced: blessed Talon/Nulls/take-random-nested under load 29.2 on 14 cores
 
 Talon/Filter/high_value	alloc_words	exact	13132
 Talon/Group/category_region	alloc_words	exact	6380
@@ -37,6 +38,7 @@ Talon/Nulls/kleene-and	alloc_words	exact	4435
 Talon/Nulls/kleene-or	alloc_words	exact	3905
 Talon/Nulls/sort	alloc_words	exact	6738
 Talon/Nulls/take-random	alloc_words	exact	613
+Talon/Nulls/take-random-nested	alloc_words	exact	6132
 Talon/Nulls/take-random-text	alloc_words	exact	2114
 Talon/Sort/amount_desc	alloc_words	exact	244960
 Talon_csv/read-mixed	alloc_words	exact	888124

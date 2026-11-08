@@ -744,43 +744,96 @@ let of_ragged ?validity r =
     validity ~length
     (List { offsets = own (Nx_ragged.offsets r); child })
 
+(* Gathers
+
+   Below its first depth a gather copies runs of rows. A list's taken rows hold
+   one run of its child's rows each, and those rows' elements one run of the
+   grandchild's each, at every depth, as a text's taken rows hold one run of
+   bytes each:
+
+     taken rows           2           0
+     child rows         [4  5]     [0  1  2]
+     grandchild rows    [9][10 11] [0][1 2][3]
+
+   A record's fields take the record's runs. So each depth costs one gather of
+   runs and two of offsets, whatever it holds.
+
+   Runs [r] read [r.total] rows: run [j] copies the rows from [r.starts.{j}] on
+   into the result's rows [r.ends.{j - 1}] to [r.ends.{j} - 1], from row [0]
+   for the first. *)
+type runs = {
+  starts : Nx.host Nx.int64_t;
+  ends : Nx.host Nx.int64_t;
+  total : int;
+}
+
+let ranges r x =
+  Nx.Prim.eval ~by:"Column.gather"
+    (Gather_ranges { size = r.total; starts = r.starts; ends = r.ends; x })
+
+(* [cut lengths] is the offsets from [0] that cut rows of [lengths], and their
+   total. With every length in [0, 2^63), the first running total past int64's
+   range is negative. *)
+let cut lengths =
+  let sums = Nx.cumsum lengths in
+  let total =
+    if Nx.dim 0 sums = 0 then 0
+    else
+      let last = Nx.slice [ R (-1, Nx.dim 0 sums) ] sums in
+      let least = Nx.reshape [| 1 |] (Nx.min sums) in
+      match Nx.to_array (Nx.concatenate ~axis:0 [ last; least ]) with
+      | [| total; least |] when least >= 0L && total <= Int64.of_int max_int ->
+          Int64.to_int total
+      | _ -> err "Column.gather: the rows' lengths sum past OCaml's int range"
+  in
+  (Nx.pad [| (1, 0) |] 0L sums, total)
+
+(* [at indices offsets] is the offsets of the rows at [indices] of a column cut
+   at [offsets], and the runs of its child that they hold, empty outside its
+   rows. *)
+let at indices offsets =
+  let bounds =
+    Nx.take ~axis:0 indices (Nx.sliding_window ~axis:0 ~window:2 offsets)
+  in
+  let starts = Nx.slice [ A; I 0 ] bounds in
+  let o, total = cut (Nx.sub (Nx.slice [ A; I 1 ] bounds) starts) in
+  (o, { starts; ends = Nx.slice [ R (1, Nx.dim 0 o) ] o; total })
+
+(* [within r offsets] is the offsets of the rows [r] reads from a column cut at
+   [offsets], and the runs of its child that they hold: one a run of [r]. *)
+let within r offsets =
+  let firsts = ranges r offsets in
+  let lasts = ranges { r with starts = Nx.add_s r.starts 1L } offsets in
+  let o, total = cut (Nx.sub lasts firsts) in
+  let starts = Nx.take ~axis:0 r.starts offsets in
+  (o, { starts; ends = Nx.take ~axis:0 r.ends o; total })
+
 (* [gather_data indices c] is the data of [c]'s rows at [indices], zeros and
    empty rows outside [c]'s rows. *)
 let rec gather_data indices c =
   match c.data with
   | Fixed (P x) -> Fixed (P (Nx.take ~axis:0 indices x))
-  | Bytes r -> Bytes (Nx_ragged.take ~indices r)
-  | List { offsets; child = { data = Fixed (P x); _ } as child } ->
-      (* A row's elements are one run of the child's values and bits: each
-         is taken whole, as a text's bytes are. *)
-      let rows y = Nx_ragged.take ~indices (Nx_ragged.v ~offsets y) in
-      let r = rows x in
-      let validity =
-        Option.map
-          (fun v -> unread (Nx_ragged.values (rows v.bits)))
-          child.validity
-      in
-      let values = Nx_ragged.values r in
-      List
-        {
-          offsets = Nx_ragged.offsets r;
-          child =
-            {
-              child with
-              length = Nx.dim 0 values;
-              validity;
-              data = Fixed (P values);
-            };
-        }
+  | Bytes b -> Bytes (Nx_ragged.take ~indices b)
   | List { offsets; child } ->
-      let elements = Nx.arange Nx.int64 0 child.length 1 in
-      let at = Nx_ragged.take ~indices (Nx_ragged.v ~offsets elements) in
-      List
-        {
-          offsets = Nx_ragged.offsets at;
-          child = gather (Nx_ragged.values at) child;
-        }
+      let offsets, r = at indices offsets in
+      List { offsets; child = take_runs r child }
   | Fields cs -> Fields (List.map (gather indices) cs)
+
+(* [take_runs r c] is the rows of [c] that [r] reads. *)
+and take_runs r c =
+  let validity = Option.map (fun v -> unread (ranges r v.bits)) c.validity in
+  let data =
+    match c.data with
+    | Fixed (P x) -> Fixed (P (ranges r x))
+    | Bytes b ->
+        let offsets, r = within r (Nx_ragged.offsets b) in
+        Bytes (Nx_ragged.v ~offsets (ranges r (Nx_ragged.values b)))
+    | List { offsets; child } ->
+        let offsets, r = within r offsets in
+        List { offsets; child = take_runs r child }
+    | Fields cs -> Fields (List.map (take_runs r) cs)
+  in
+  { type_ = c.type_; length = r.total; validity; data }
 
 and gather indices c =
   let validity =
