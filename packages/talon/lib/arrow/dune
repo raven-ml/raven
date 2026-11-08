@@ -1,0 +1,8 @@
+(library
+ (name talon_arrow)
+ (public_name talon.arrow)
+ (libraries talon nx nx.array rig rig.disk lz bytesrw)
+ (private_modules types ipc)
+ (modules_without_implementation types)
+ (instrumentation
+  (backend ppx_windtrap.coverage)))

@@ -458,6 +458,29 @@ let text_table = lazy (read_text ())
 let write_nulls () = write_table (Lazy.force nulls_table)
 let write_text () = write_table (Lazy.force text_table)
 
+(* The nullable table as an Arrow file: a read maps its buffers. *)
+let arrow_bytes =
+  lazy
+    (let q = Query.of_table (Lazy.force nulls_table) in
+     let b = Buffer.create (1 lsl 24) in
+     let f = Talon_arrow.format (Query.schema q) in
+     let w = Bytesrw.Bytes.Writer.of_buffer b in
+     Error.get_ok (Talon_arrow.encode f q w);
+     Buffer.contents b)
+
+let read_arrow () =
+  let b = Rig.Buffer.of_string (Lazy.force arrow_bytes) in
+  let f = Error.get_ok (Talon_arrow.sniff b) in
+  run (Query.of_source (Talon_arrow.source f b))
+
+let write_arrow () =
+  let q = Query.of_table (Lazy.force nulls_table) in
+  Error.get_ok
+    (Talon_arrow.encode
+       (Talon_arrow.format (Query.schema q))
+       q
+       (Bytesrw.Bytes.Writer.ignore ()))
+
 (* CSV *)
 
 (* The text of 2^16 records, about 1.7 MB, so that a read crosses one of the
@@ -680,6 +703,11 @@ let () =
       Thumper.group "Talon_text"
         [ Thumper.bench "parse-float64-17-digits" parse_floats ];
       Thumper.group "Talon_csv" [ Thumper.bench "read-mixed" read_csv ];
+      Thumper.group "Talon_arrow"
+        [
+          Thumper.bench "read-nullable" read_arrow;
+          Thumper.bench "write-nullable" write_arrow;
+        ];
       Thumper.group "Talon_parquet"
         [
           Thumper.bench "read-nullable" read_parquet;

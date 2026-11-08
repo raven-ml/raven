@@ -1,0 +1,19 @@
+(library
+ (name arrow_corpus)
+ (modules arrow_corpus)
+ (libraries talon talon.arrow nx bytesrw))
+
+(executable
+ (name gen_written)
+ (modules gen_written)
+ (libraries arrow_corpus))
+
+(test
+ (name test_arrow)
+ (modules test_arrow)
+ (package talon)
+ (libraries windtrap talon talon.arrow talon_gen arrow_corpus nx rig rig.disk
+   bytesrw)
+ (deps
+  (source_tree golden)
+  (source_tree support)))

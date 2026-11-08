@@ -4035,6 +4035,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Talon_arrow` reads and writes Arrow IPC files and streams: `Talon_arrow.file`
+  and `source` map a file's buffers into columns, with no copy where the layouts
+  agree, `encode` writes a query's rows with buffer compression and custom
+  metadata, and a file's bytes depend only on its rows and format. Categoricals,
+  tensors and extensions read and write; decimals are refused for now.
 - `Talon_parquet` writes Parquet files: `Talon_parquet.encode` runs a query and
   writes its rows in row groups, in a format that `Talon_parquet.format` states
   from a schema, with its codec (Snappy by default) and row-group size. Every

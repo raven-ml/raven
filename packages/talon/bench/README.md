@@ -34,6 +34,9 @@ uv run packages/talon/bench/queries/nulls_data.py packages/talon/bench/data/null
 uv run packages/talon/bench/queries/nulls_data.py --check
 ```
 
+`Talon_arrow/read-nullable` and `write-nullable` run over the 2^20 rows of
+`nulls.parquet`, encoded in memory as an Arrow file.
+
 `data/text.parquet` holds 2^18 rows of a text column without nulls, words of 8
 to 27 bytes drawn from 100, dictionary-encoded, for the
 `Talon_parquet/read-text` row. pyarrow writes it too, with the SHA-256

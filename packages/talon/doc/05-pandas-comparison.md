@@ -224,4 +224,4 @@ into a matrix requires.
 ## Not in Talon
 
 Talon has no row index and no in-place mutation. It has no `pivot` or
-`melt`, and reads no JSON or Arrow files.
+`melt`, and reads no JSON files.

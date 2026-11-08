@@ -1,7 +1,7 @@
 # talon
 
 Tables of named, typed columns over nx, queried with typed expressions,
-read from and written to CSV and Parquet.
+read from and written to CSV, Parquet and Arrow IPC.
 
 - A file format follows Jsont's shape: one printable description drives
   both decoding and encoding, sniffing returns a description, errors carry

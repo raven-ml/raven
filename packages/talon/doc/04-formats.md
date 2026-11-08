@@ -2,7 +2,7 @@
 
 Files enter a query as **sources**: data whose columns are known when the
 source is built and whose rows arrive in batches when the query runs. This
-page covers CSV and Parquet, the errors they report, and writing a source of
+page covers CSV, Parquet and Arrow IPC, the errors they report, and writing a source of
 your own.
 
 ## Sources
@@ -181,6 +181,40 @@ Every column is written optional, so a column with nulls and one without have
 one type in the file. Each type writes as the Parquet type that reads back as
 it, and types with no Parquet type of their own are described in the module's
 Written files section.
+
+## Arrow IPC
+
+`Talon_arrow.file path` maps an Arrow IPC file or stream in memory. A column's
+buffers are shared with the file where they can be, and the batches of the file
+become the batches of the source:
+
+```ocaml
+let events_arrow () =
+  let* events = Talon_arrow.file "events.arrow" in
+  Query.run (Query.of_source events)
+```
+
+Each Arrow type reads as the talon type that holds its values: dictionary
+columns as categoricals when the file holds one dictionary of distinct strings
+without nulls, fixed-size lists of numbers as tensors, and extension fields as
+extensions over their storage. A field talon cannot hold, such as a decimal, is
+refused when the file is opened, naming the column. `Talon_arrow.with_type`
+reads a fixed-size list as a list when its elements can be null.
+
+`Talon_arrow.encode` writes a query's rows. `Talon_arrow.format` states the
+format from the query's schema, with the framing (a file by default, or a
+stream), the buffer compression and the number of rows of each record batch:
+
+```ocaml
+let write_events q =
+  Out_channel.with_open_bin "events.arrow" @@ fun oc ->
+  let w = Bytesrw.Bytes.Writer.of_out_channel oc in
+  Talon_arrow.encode (Talon_arrow.format (Query.schema q)) q w
+```
+
+A file's bytes depend only on its rows and its format. Custom metadata of the
+schema and of each field travels with the format, read by
+`Talon_arrow.metadata` and set by `Talon_arrow.with_metadata`.
 
 ## Errors
 
