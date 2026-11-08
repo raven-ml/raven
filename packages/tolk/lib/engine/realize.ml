@@ -13,25 +13,32 @@ open Shape
 let get_call_arg_uops call =
   List.filter (fun s -> addrspace s <> Some Dtype.Alu) (src_without_body call)
 
+(* What [call] gives its program's scalar parameter [v]: a nameless parameter,
+   its argument in its slot; a variable, the variable [call] binds to its name,
+   whose value is a default the run's binding of its name overrides, or else
+   the variable a run binds. *)
+let call_value call v =
+  let args = src_without_body call in
+  match arg v with
+  | Param { name = None; slot; _ } -> List.nth args slot
+  | Param p -> (
+      let binds s = is_bound_var s && expr s = expr v in
+      match List.find_opt binds args with
+      | Some b -> b
+      | None -> replace v ~arg:(Param { p with slot = -1 }))
+  | _ -> v
+
+let call_values call u =
+  let scalar v = op v = Op.Param && addrspace v = Some Dtype.Alu in
+  let subs =
+    List.map
+      (fun v -> (v, call_value call v))
+      (List.filter scalar (toposort ~calls:Skip u))
+  in
+  substitute ~calls:Skip ~pass:Once u subs
+
 let get_call_kernel_args call prg =
   let args = src_without_body call in
-  let bound =
-    List.filter_map
-      (fun s -> if is_bound_var s then Some (expr s, s) else None)
-      args
-  in
-  (* A nameless scalar is the call's argument in its slot; a variable, the
-     variable the call binds, whose value is a default the run's binding of
-     its name overrides, or else the variable a run binds. *)
-  let named v =
-    match arg v with
-    | Param { name = None; slot; _ } -> List.nth args slot
-    | Param p -> (
-        match List.assoc_opt (expr v) bound with
-        | Some b -> b
-        | None -> replace v ~arg:(Param { p with slot = -1 }))
-    | _ -> v
-  in
   let value =
     match arg (nth prg 0) with
     | Kernel { split = Some s; _ } -> (
@@ -39,20 +46,14 @@ let get_call_kernel_args call prg =
         let iterations =
           match s.iterations with
           | Int n -> const (`Int (Bigint.of_int n))
-          | Sym n ->
-              let values =
-                List.filter_map
-                  (fun v -> if is_variable v then Some (v, named v) else None)
-                  (toposort ~calls:Skip n)
-              in
-              substitute ~calls:Skip ~pass:Fixed_point n values
+          | Sym n -> call_values call n
         in
         fun v ->
           match arg v with
           | Param { slot; _ } when slot = s.lo -> const (`Int Bigint.zero)
           | Param { slot; _ } when slot = s.hi -> iterations
-          | _ -> named v)
-    | _ -> named
+          | _ -> call_value call v)
+    | _ -> call_value call
   in
   List.map
     (fun p ->

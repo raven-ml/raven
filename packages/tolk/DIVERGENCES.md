@@ -5565,8 +5565,9 @@ the walk of `Rangeify.fix_store_hazard`.
   `used_vars`, which reads the kernels of loops),
   `Schedule.canonicalize_call_body` and `Schedule.pm_pass_bound`,
   `Schedule.resolve_linear_call` and `Schedule.pass_values`;
-  `Tolk_engine.var_word`, and the grid and split size of
-  `Tolk_engine.launch`, which read a nameless scalar from its call's slot.
+  `Tolk_engine.var_word`, and `Realize.call_value`, through which the grid
+  and split size of `Tolk_engine.launch` read a nameless scalar from its
+  call's slot.
 - **Differs:** where the graph binds variables of one name to several values,
   a kernel that reads one takes it as a nameless parameter of its range, in a
   slot past its arguments, and its call passes the bound variable there, as a
@@ -8538,8 +8539,9 @@ as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
   (`exec_kernel`, whose arguments and launch sizes read a call's bound
   values over the run's `var_vals`); `engine/jit.py:30-31`, where a capture
   unbinds its input variables so that each run binds them.
-- **tolk:** `Realize.get_call_kernel_args`; `Tolk_engine.launch`, whose
-  launch sizes and estimates read the variable as its arguments do;
+- **tolk:** `Realize.get_call_kernel_args` and `Realize.call_value`;
+  `Tolk_engine.launch`, whose launch sizes and estimates read the variable
+  as its arguments do (`Realize.call_values`);
   `Tolk_engine.var_word` and `Tolk_engine.reader`.
 - **Differs:** a call that binds a variable a program reads by name, such as
   a custom kernel's (`Shape.custom_kernel`), passes the bound variable, and

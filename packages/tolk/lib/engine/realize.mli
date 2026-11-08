@@ -31,6 +31,16 @@ val get_call_kernel_args : Ops.t -> Ops.t -> Ops.t list
 
     Raises [Invalid_argument] if [prg] is not a linearized program. *)
 
+val call_values : Ops.t -> Ops.t -> Ops.t
+(** [call_values call u] is [u], a launch size, a split's iterations or an
+    estimate of [call]'s program, with each scalar parameter replaced by what
+    [call] gives it: a nameless parameter, [call]'s argument in its slot; a
+    variable, the variable [call] binds to its name, or else the variable, at
+    slot [-1], that a run binds by name.
+
+    Raises [Failure] if a nameless parameter's slot lies past [call]'s
+    arguments, and [Invalid_argument] if it is negative. *)
+
 val get_call_outs_ins : Ops.t -> int list * int list
 (** [get_call_outs_ins call] is the positions among [call]'s arguments of the
     buffers it writes and of those it reads: a program's
