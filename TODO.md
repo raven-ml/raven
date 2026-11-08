@@ -100,8 +100,9 @@ and rune), raven / llama.cpp b12048 Vulkan:
   sm_89) may lose 1.4-2x by the model: a row owed there, and values for
   nonnormal's R9700 and Metal. `Rig.cache_bytes` has not run on hardware
   for AMD through amdgpu (L2 plus MALL) or NV over PCI
-- Metal's packed kernel arguments (8869adcc8, af8961676) have not run on
-  Metal hardware; check `rig_metal.mli`'s contract against them on a Mac
+- a Metal kernel loads 8-byte arguments from the bytes setBytes copies,
+  whose alignment Apple does not document and `rig_metal.mli` does not
+  promise; it holds on Apple GPUs at 32 bytes as observed
 - Apple Clang and LLVM 23 keep the straight-line vectorizer that D167
   turns off under LLVM 18-20: run 73455ffe7's reduced kernel and rune's
   ALiBi attention example (test_attention.ml, the dense tq 2 tk 3 case)
