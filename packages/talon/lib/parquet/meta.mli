@@ -112,6 +112,9 @@ type stats = {
   nans : int option;  (** [nan_count]. *)
   min : string option;  (** [min_value], in [PLAIN] encoding. *)
   max : string option;  (** [max_value], in [PLAIN] encoding. *)
+  min_exact : bool option;
+      (** [is_min_value_exact]: [Some false] for a truncated [min]. *)
+  max_exact : bool option;  (** [is_max_value_exact]. *)
 }
 (** The type for column chunk statistics, [Statistics]. The legacy [min] and
     [max] fields, whose order is undefined for byte arrays, are not read. *)
@@ -229,3 +232,32 @@ val page_header : bigbytes -> pos:int -> limit:int -> header * int
 
     Raises {!Thrift.Error} if the header does not decode before [limit], or a
     size or a count in it is negative. *)
+
+(** {1:writing Writing} *)
+
+type column_out = {
+  column : column_meta;
+  encodings : encoding list;  (** [encodings]: every encoding the chunk uses. *)
+}
+(** The type for a column chunk to write in the footer. *)
+
+val footer_bytes :
+  schema:element array ->
+  row_groups:(column_out list * int) list ->
+  rows:int ->
+  leaves:int ->
+  created_by:string ->
+  string
+(** [footer_bytes ~schema ~row_groups ~rows ~leaves ~created_by] is the
+    [FileMetaData] of a file of [rows] rows, whose [row_groups] are each the
+    chunks of the [leaves] leaves, in schema order, and its number of rows. *)
+
+val data_page_bytes :
+  values:int -> encoding:encoding -> uncompressed:int -> compressed:int -> string
+(** [data_page_bytes ~values ~encoding ~uncompressed ~compressed] is a
+    [DATA_PAGE] header. *)
+
+val dictionary_page_bytes :
+  values:int -> uncompressed:int -> compressed:int -> string
+(** [dictionary_page_bytes ~values ~uncompressed ~compressed] is a
+    [DICTIONARY_PAGE] header. *)

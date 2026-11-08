@@ -80,6 +80,8 @@ type stats = {
   nans : int option;
   min : string option;
   max : string option;
+  min_exact : bool option;
+  max_exact : bool option;
 }
 
 type column_meta = {
@@ -293,16 +295,34 @@ let element r ty =
 let stats r ty =
   let nulls = ref None and nans = ref None in
   let min = ref None and max = ref None in
+  let min_exact = ref None and max_exact = ref None in
   Thrift.structure r ty (fun id ty ->
       match id with
       | 3 -> nulls := Some (Thrift.i64 r ty)
       | 5 -> max := Some (Thrift.binary r ty)
       | 6 -> min := Some (Thrift.binary r ty)
+      | 7 -> max_exact := Some (Thrift.bool r ty)
+      | 8 -> min_exact := Some (Thrift.bool r ty)
       | 9 -> nans := Some (Thrift.i64 r ty)
       | _ -> Thrift.skip r ty);
-  { nulls = !nulls; nans = !nans; min = !min; max = !max }
+  {
+    nulls = !nulls;
+    nans = !nans;
+    min = !min;
+    max = !max;
+    min_exact = !min_exact;
+    max_exact = !max_exact;
+  }
 
-let no_stats = { nulls = None; nans = None; min = None; max = None }
+let no_stats =
+  {
+    nulls = None;
+    nans = None;
+    min = None;
+    max = None;
+    min_exact = None;
+    max_exact = None;
+  }
 
 let column_meta r ty =
   let start = Thrift.pos r in
@@ -555,3 +575,198 @@ let page_header b ~pos ~limit =
     | _ -> Other
   in
   ({ page; uncompressed_size; compressed_size; crc = !crc }, Thrift.pos r)
+
+(* Writing *)
+
+type column_out = { column : column_meta; encodings : encoding list }
+
+let physical_code = function
+  | Boolean -> 0
+  | Int32 -> 1
+  | Int64 -> 2
+  | Int96 -> 3
+  | Float -> 4
+  | Double -> 5
+  | Byte_array -> 6
+  | Fixed_len_byte_array -> 7
+
+let repetition_code = function Required -> 0 | Optional -> 1 | Repeated -> 2
+
+let codec_code = function
+  | Uncompressed -> 0
+  | Snappy -> 1
+  | Gzip -> 2
+  | Lzo -> 3
+  | Brotli -> 4
+  | Lz4 -> 5
+  | Zstd -> 6
+  | Lz4_raw -> 7
+  | Unknown_codec n -> n
+
+let encoding_code = function
+  | Plain -> 0
+  | Plain_dictionary -> 2
+  | Rle -> 3
+  | Bit_packed -> 4
+  | Delta_binary_packed -> 5
+  | Delta_length_byte_array -> 6
+  | Delta_byte_array -> 7
+  | Rle_dictionary -> 8
+  | Byte_stream_split -> 9
+  | Unknown_encoding n -> n
+
+let opt id f = function Some v -> [ (id, f v) ] | None -> []
+
+(* [converted] is the deprecated annotation written beside a logical type, as
+   LogicalTypes.md asks of writers. *)
+let converted : logical -> int option = function
+  | String -> Some 0
+  | Map -> Some 1
+  | List -> Some 3
+  | Enum -> Some 4
+  | Decimal _ -> Some 5
+  | Date -> Some 6
+  | Time { unit_ = Ms; _ } -> Some 7
+  | Time { unit_ = Us; _ } -> Some 8
+  | Timestamp { unit_ = Ms; _ } -> Some 9
+  | Timestamp { unit_ = Us; _ } -> Some 10
+  | Integer { bits; signed } -> (
+      match (bits, signed) with
+      | 8, false -> Some 11
+      | 16, false -> Some 12
+      | 32, false -> Some 13
+      | 64, false -> Some 14
+      | 8, true -> Some 15
+      | 16, true -> Some 16
+      | 32, true -> Some 17
+      | 64, true -> Some 18
+      | _ -> None)
+  | Json -> Some 19
+  | Bson -> Some 20
+  | _ -> None
+
+let unit_value : Talon.Type.unit_ -> Thrift.value = function
+  | S -> invalid_arg "Meta: Parquet has no TimeUnit for seconds"
+  | Ms -> Struct [ (1, Struct []) ]
+  | Us -> Struct [ (2, Struct []) ]
+  | Ns -> Struct [ (3, Struct []) ]
+
+let logical_value : logical -> Thrift.value = function
+  | String -> Struct [ (1, Struct []) ]
+  | List -> Struct [ (3, Struct []) ]
+  | Date -> Struct [ (6, Struct []) ]
+  | Time { unit_; utc } ->
+      Struct [ (7, Struct [ (1, Bool utc); (2, unit_value unit_) ]) ]
+  | Timestamp { unit_; utc } ->
+      Struct [ (8, Struct [ (1, Bool utc); (2, unit_value unit_) ]) ]
+  | Integer { bits; signed } ->
+      Struct [ (10, Struct [ (1, I8 bits); (2, Bool signed) ]) ]
+  | Float16 -> Struct [ (15, Struct []) ]
+  | _ -> invalid_arg "Meta: this logical type is not written"
+
+let element_value (e : element) : Thrift.value =
+  let conv = Option.bind e.logical converted in
+  Struct
+    (opt 1 (fun p -> Thrift.I32 (physical_code p)) e.physical
+    @ (if e.length > 0 then [ (2, Thrift.I32 e.length) ] else [])
+    @ opt 3 (fun r -> Thrift.I32 (repetition_code r)) e.repetition
+    @ [ (4, Thrift.Binary e.name) ]
+    @ (if e.children > 0 then [ (5, Thrift.I32 e.children) ] else [])
+    @ opt 6 (fun c -> Thrift.I32 c) conv
+    @ opt 10 logical_value e.logical)
+
+let stats_value (s : stats) : Thrift.value =
+  Struct
+    (opt 3 (fun n -> Thrift.I64 n) s.nulls
+    @ opt 5 (fun v -> Thrift.Binary v) s.max
+    @ opt 6 (fun v -> Thrift.Binary v) s.min
+    @ opt 7 (fun v -> Thrift.Bool v) s.max_exact
+    @ opt 8 (fun v -> Thrift.Bool v) s.min_exact
+    @ opt 9 (fun n -> Thrift.I64 n) s.nans)
+
+let column_value (c : column_out) : Thrift.value =
+  let m = c.column in
+  Struct
+    ([
+       (1, Thrift.I32 (physical_code m.physical));
+       ( 2,
+         Thrift.List
+           (List.map (fun e -> Thrift.I32 (encoding_code e)) c.encodings) );
+       (3, Thrift.List (List.map (fun p -> Thrift.Binary p) m.path));
+       (4, Thrift.I32 (codec_code m.codec));
+       (5, Thrift.I64 m.values);
+       (6, Thrift.I64 m.uncompressed_size);
+       (7, Thrift.I64 m.compressed_size);
+       (9, Thrift.I64 m.data_page);
+     ]
+    @ opt 11 (fun p -> Thrift.I64 p) m.dictionary_page
+    @ [ (12, stats_value m.stats) ])
+
+let chunk_value (c : column_out) : Thrift.value =
+  Struct [ (2, I64 0); (3, column_value c) ]
+
+let row_group_value (columns, rows) : Thrift.value =
+  let size =
+    List.fold_left (fun t c -> t + c.column.uncompressed_size) 0 columns
+  in
+  let compressed =
+    List.fold_left (fun t c -> t + c.column.compressed_size) 0 columns
+  in
+  Struct
+    [
+      (1, Thrift.List (List.map chunk_value columns));
+      (2, Thrift.I64 size);
+      (3, Thrift.I64 rows);
+      (6, Thrift.I64 compressed);
+    ]
+
+(* [footer_bytes ~schema ~row_groups ~rows ~leaves ~created_by] is the
+   FileMetaData, version 1, as Parquet's own definition recommends, with a type
+   order for each of the [leaves] leaf columns: without one, min_value and
+   max_value mean nothing. *)
+let footer_bytes ~schema ~row_groups ~rows ~leaves ~created_by =
+  let b = Buffer.create 1024 in
+  Thrift.encode b
+    (Struct
+       [
+         (1, I32 1);
+         (2, List (Array.to_list (Array.map element_value schema)));
+         (3, I64 rows);
+         (4, List (List.map row_group_value row_groups));
+         (6, Binary created_by);
+         ( 7,
+           List
+             (List.init leaves (fun _ -> Thrift.Struct [ (1, Struct []) ])) );
+       ]);
+  Buffer.contents b
+
+let data_page_bytes ~values ~encoding ~uncompressed ~compressed =
+  let b = Buffer.create 64 in
+  Thrift.encode b
+    (Struct
+       [
+         (1, I32 0);
+         (2, I32 uncompressed);
+         (3, I32 compressed);
+         ( 5,
+           Struct
+             [
+               (1, I32 values);
+               (2, I32 (encoding_code encoding));
+               (3, I32 (encoding_code Rle));
+               (4, I32 (encoding_code Rle));
+             ] );
+       ]);
+  Buffer.contents b
+
+let dictionary_page_bytes ~values ~uncompressed ~compressed =
+  let b = Buffer.create 32 in
+  Thrift.encode b
+    (Struct
+       [
+         (1, I32 2);
+         (2, I32 uncompressed);
+         (3, I32 compressed);
+         (7, Struct [ (1, I32 values); (2, I32 (encoding_code Plain)) ]);
+       ]);
+  Buffer.contents b

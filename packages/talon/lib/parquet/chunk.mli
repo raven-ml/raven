@@ -144,3 +144,12 @@ val structure :
 val flat : t -> t
 (** [flat c] is [c] with the words of a {!Coded} chunk gathered at its codes,
     as {!Varsize}, and [c] itself otherwise. *)
+
+val reading :
+  ('c, 'd) Bigarray.kind ->
+  ('a, 'b, Nx.host) Nx.t ->
+  (('c, 'd, Bigarray.c_layout) Bigarray.Array1.t -> 'e) ->
+  'e
+(** [reading k x f] is [f b] for [b] [x]'s elements in C order as elements of
+    [k], whose width divides theirs, under a read claim: a view of its buffer
+    where they lie there in order from a byte, a copy's otherwise. *)

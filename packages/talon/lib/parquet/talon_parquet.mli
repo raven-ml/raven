@@ -3,16 +3,19 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Parquet files.
+(** Parquet files, read and written.
 
     A {{:https://parquet.apache.org/docs/file-format/}Parquet} file stores a
     table column by column, in row groups, and describes them in a footer at its
     end. Talon reads Parquet files mapped in memory: open one with
-    {!Rig_disk.of_file}, then {!sniff} its footer into a {!type-format}.
+    {!Rig_disk.of_file}, then {!sniff} its footer into a {!type-format}. It
+    writes the rows of a query with {!encode}, in the format that {!val-format}
+    states for the query's schema.
 
-    A format says how talon reads a file's columns: each column's name, its
-    Parquet type, and the talon type it reads as. Print it with {!pp_format},
-    and change the type a column reads as with {!with_type}.
+    A format says how talon reads a file's columns and how it writes them:
+    each column's name, its Parquet type, and the talon type it reads as. Print
+    it with {!pp_format}, and change the type a column reads as with
+    {!with_type}.
 
     {1:types Types}
 
@@ -60,6 +63,36 @@
     where nothing need be filled under a null. A value below a null is
     unspecified, in a record's field as in a list's offsets.
 
+    {1:written Written files}
+
+    {!encode} writes every column [optional], its nulls as definition levels,
+    and a list column in Parquet's three levels ([LIST], [list], [element]):
+    - [bool], [float32] and [float64] as [boolean], [float] and [double], and
+      [float16] as [fixed_len_byte_array(2)] annotated [FLOAT16];
+    - integers as [int32] or [int64], annotated [INTEGER] but [int32] and
+      [int64];
+    - [string] as [binary] annotated [STRING], and [binary] as [binary];
+    - [date] as [DATE], a [clock] as [TIME] of its unit, [MILLIS] on [int32]
+      and [MICROS] or [NANOS] on [int64], with [isAdjustedToUTC] [false];
+    - a [datetime] as [TIMESTAMP] of its unit, an instant with [isAdjustedToUTC]
+      [true] and a wall clock with [false];
+    - a [list] as a [LIST] group, and a [record] as a group of its fields, which
+      an extension of either has too: an extension writes as its storage;
+    - a [tensor] as nested lists, one per dimension, row-major.
+
+    A type without a Parquet type of its own writes and reads back as another.
+    A [categorical] is a [string], a [clock] or [datetime] of seconds the same
+    type of milliseconds, an extension its storage, and a [duration] its
+    [int64] ticks, whose unit the file does not record.
+
+    Each column chunk records its statistics, as {!source} uses them: its
+    nulls, its NaNs, and its minimum and maximum over the values that are not
+    NaN, [-0.] as a zero minimum and [+0.] as a zero maximum. A byte string
+    bound longer than 64 bytes is truncated to a prefix ending at a whole UTF-8
+    character for text and marked inexact, a truncated maximum being the next
+    value past its prefix; when no value lies past it, as for a prefix of
+    [0xFF] bytes, the chunk records no maximum. All-NaN chunks have no bounds.
+
     {1:refusals Refusals}
 
     {!sniff} refuses a file that talon cannot read in full:
@@ -78,9 +111,10 @@
 
 type format
 (** The type for Parquet formats: the columns of a file, in schema order, each
-    with its name, its Parquet type and the talon type it reads as. A format
-    describes columns, not where a file stores them, so it holds no row groups
-    and no file. *)
+    with its name, its Parquet type and the talon type it reads as, and the
+    codec and row-group size {!encode} writes with. A format describes columns,
+    not where a file stores them, so it holds no row groups and no file. One
+    that {!sniff} gives writes with {!val-format}'s defaults. *)
 
 val sniff : Rig.Buffer.t -> (format, Talon.Error.t) result
 (** [sniff b] is the format of the Parquet file whose bytes are [b], read from
@@ -183,3 +217,50 @@ val file : ?format:format -> string -> (Talon.Source.t, Talon.Error.t) result
 
     Raises [Invalid_argument] as {!source} does, which a file with a decimal
     column does when [format] is absent. *)
+
+(** {1:writing Writing} *)
+
+(** The type for a file's compression: the codec of the pages of every column
+    chunk, [Lz4_raw] being Parquet's [LZ4_RAW]. *)
+type compression = Uncompressed | Snappy | Gzip | Zstd | Lz4_raw
+
+val format :
+  ?compression:compression -> ?row_group:int -> Talon.Schema.t -> format
+(** [format ?compression ?row_group s] is the format of a file that {!encode}
+    writes from a query of schema [s]. Each column has the type it writes and
+    reads back as ({{!written}Written files}), with:
+    - [compression], the pages' codec. Defaults to [Snappy], which every
+      Parquet reader reads.
+    - [row_group], the number of rows of each row group but the last. Defaults
+      to [1_048_576]. A row group is what {!encode} holds in memory while it
+      writes it, what a read skips by its statistics, and one batch of
+      {!source}.
+
+    Raises [Invalid_argument] if [s] has no column, if [row_group] is not
+    positive, or if [s] holds a record without fields or a tensor whose dtype
+    no talon scalar type stores, such as a complex one. *)
+
+val encode :
+  format ->
+  Talon.Query.t ->
+  Bytesrw.Bytes.Writer.t ->
+  (unit, Talon.Error.t) result
+(** [encode f q w] runs [q], folding its batches ({!Talon.Query.fold}), and
+    writes its rows to [w] as a Parquet file of format [f], then
+    [Bytesrw.Bytes.Slice.eod]. {{!written}Written files} says what it writes. A
+    file's bytes depend only on [q]'s rows, in order, and on [f]: batches never
+    change them.
+
+    It writes a row group as soon as it holds its rows, and holds no more than
+    one row group and the batch that completes it.
+
+    [Error e] where the run fails, as {!Talon.Query.fold} does, if writing to
+    [w] raises [Bytesrw.Bytes.Stream.Error] or [Sys_error], or if a value does
+    not write: a value that a page of Parquet's 2 GiB cannot hold, or a
+    [datetime] of seconds that does not fit milliseconds in [int64]. [w] then
+    holds the bytes written so far, and no complete Parquet file.
+
+    Raises [Invalid_argument] if [q]'s columns do not write as [f]'s, names and
+    types, if [f] leaves a decimal undeclared, or if a column of [f] has a
+    Parquet type {!encode} does not write, such as a [required] one;
+    {!val-format} states a format that it does. *)

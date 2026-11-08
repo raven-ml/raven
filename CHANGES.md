@@ -4003,11 +4003,19 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Talon_parquet` writes Parquet files: `Talon_parquet.encode` runs a query and
+  writes its rows in row groups, in a format that `Talon_parquet.format` states
+  from a schema, with its codec (Snappy by default) and row-group size. Every
+  column type writes, lists, records and tensors as Parquet groups, with
+  statistics that talon's reads prune on, and a file's bytes depend only on its
+  rows and format.
+
 - `talon.parquet` reads nested columns: `sniff` and `source` read a list, a
   record and a map, null at any level, as `Type.list`, `Type.record` and a list
   of key and value records. Repeated fields, the legacy list shapes of the
   Parquet format, data page v1 and v2 and dictionary pages all follow one
   decoding of a leaf's repetition and definition levels.
+
 - `Expr.window`'s `var` and `std` without `before` keep their digits far from
   zero, as those of other frames do: a running window's scan takes each value
   less its partition's first. Their bits change.

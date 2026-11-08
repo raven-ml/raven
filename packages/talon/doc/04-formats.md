@@ -164,6 +164,24 @@ query → carrier string, name string
 parquet (2 columns) ~filters:[carrier >= "F"]
 ```
 
+### Writing
+
+`Talon_parquet.encode` runs a query and writes its rows as a Parquet file.
+`Talon_parquet.format` states the format from the query's schema, with the
+codec and the row-group size talon uses, and defaults for both:
+
+```ocaml
+let write_snapshot q =
+  Out_channel.with_open_bin "snapshot.parquet" @@ fun oc ->
+  let w = Bytesrw.Bytes.Writer.of_out_channel oc in
+  Talon_parquet.encode (Talon_parquet.format (Query.schema q)) q w
+```
+
+Every column is written optional, so a column with nulls and one without have
+one type in the file. Each type writes as the Parquet type that reads back as
+it, and types with no Parquet type of their own are described in the module's
+Written files section.
+
 ## Errors
 
 Failures in files are `Talon.Error.t` values. An error holds a message and

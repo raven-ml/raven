@@ -5,9 +5,16 @@
 
 open Talon
 
+type compression = Uncompressed | Snappy | Gzip | Zstd | Lz4_raw
+
 (* [ty] is [None] for a decimal that no [with_type] declared. *)
 type column = { field : Leaf.column; ty : Type.any option }
-type format = column array
+
+type format = {
+  columns : column array;
+  compression : compression;
+  row_group : int;
+}
 
 (* [with_bytes ?file b f] is [f] applied to the bytes of [b], mapped on the
    host, with the errors of the private modules as [Error]. *)
@@ -35,11 +42,18 @@ let open_ bytes =
     m.row_groups;
   (m, schema)
 
+let default_row_group = 1 lsl 20
+
 let sniffed (schema : Leaf.schema) =
-  Array.map
-    (fun (field : Leaf.column) ->
-      { field; ty = Leaf.default_node field.node })
-    schema.columns
+  {
+    columns =
+      Array.map
+        (fun (field : Leaf.column) ->
+          { field; ty = Leaf.default_node field.node })
+        schema.columns;
+    compression = Snappy;
+    row_group = default_row_group;
+  }
 
 let sniff b = with_bytes b @@ fun bytes -> sniffed (snd (open_ bytes))
 
@@ -47,10 +61,12 @@ let is_flat (c : Leaf.column) =
   match c.node with Leaf.Prim l -> not l.nested | _ -> false
 
 let find f name =
-  Array.find_opt (fun c -> String.equal c.field.name name) f
+  Array.find_opt (fun c -> String.equal c.field.name name) f.columns
 
 let index f name =
-  match Array.find_index (fun c -> String.equal c.field.name name) f with
+  match
+    Array.find_index (fun c -> String.equal c.field.name name) f.columns
+  with
   | Some i -> i
   | None ->
       invalid_arg
@@ -61,16 +77,31 @@ let type_name (Type.Any t) = Format.asprintf "%a" Type.pp t
 
 let with_type name t f =
   let i = index f name in
-  let field = f.(i).field in
+  let field = f.columns.(i).field in
   if not (Leaf.node_reads_as field.node t) then
     invalid_arg
       (Format.asprintf
          "Talon_parquet.with_type: column %S (%s) reads as %a, not %s. Cast it \
           once read (Expr.cast)."
          name field.text Leaf.pp_node_reads field.node (type_name t));
-  let f = Array.copy f in
-  f.(i) <- { field; ty = Some t };
-  f
+  let columns = Array.copy f.columns in
+  columns.(i) <- { field; ty = Some t };
+  { f with columns }
+
+let format ?(compression = Snappy) ?(row_group = default_row_group) schema =
+  if row_group < 1 then
+    invalid_arg "Talon_parquet.format: row_group must be positive";
+  let written (name, ty) = (name, Writer.written ty) in
+  let columns = List.map written (Schema.columns schema) in
+  if columns = [] then
+    invalid_arg "Talon_parquet.format: the schema has no columns";
+  let fields = (Leaf.of_schema (Writer.schema_elements columns)).columns in
+  let column field (_, ty) = { field; ty = Some ty } in
+  {
+    columns = Array.map2 column fields (Array.of_list columns);
+    compression;
+    row_group;
+  }
 
 (* [scalars s] is the number of Unicode scalar values of the UTF-8 [s]. *)
 let scalars s =
@@ -86,17 +117,17 @@ let pp_format ppf f =
         | Some ty ->
             Format.asprintf "%a" Schema.pp (Schema.v [ (c.field.name, ty) ])
         | None -> Format.asprintf "%a undeclared" Type.pp_name c.field.name)
-      f
+      f.columns
   in
   let width = Array.fold_left (fun w s -> max w (scalars s)) 0 left in
-  let n = Array.length f in
+  let n = Array.length f.columns in
   Format.fprintf ppf "@[<v>parquet (%d column%s)" n (if n = 1 then "" else "s");
   Array.iteri
     (fun i c ->
       Format.fprintf ppf "@,  %s%s ← %s" left.(i)
         (String.make (width - scalars left.(i)) ' ')
         c.field.text)
-    f;
+    f.columns;
   Format.fprintf ppf "@]"
 
 (* Statistics *)
@@ -546,7 +577,7 @@ let make fn ?file ?rows f b =
     | None -> "parquet"
     | Some p -> Format.asprintf "parquet %a" Type.pp_quoted p
   in
-  let types = Array.to_list (Array.map (declared fn) f) in
+  let types = Array.to_list (Array.map (declared fn) f.columns) in
   let schema = Schema.v types in
   let pushdown p =
     if Option.is_some (in_scan schema p) then Source.Exact
@@ -567,3 +598,50 @@ let file ?format path =
           let m, schema = open_ bytes in
           let f = match format with Some f -> f | None -> sniffed schema in
           make "file" ~file:path ~rows:m.rows f b)
+
+(* Writing *)
+
+let codec : compression -> Meta.codec = function
+  | Uncompressed -> Uncompressed
+  | Snappy -> Snappy
+  | Gzip -> Gzip
+  | Zstd -> Zstd
+  | Lz4_raw -> Lz4_raw
+
+let encode f q w =
+  let stated (c : column) =
+    match c.ty with
+    | Some ty -> (c.field.name, ty)
+    | None ->
+        invalid_arg
+          (Printf.sprintf
+             "Talon_parquet.encode: column %S is an undeclared decimal: read \
+              it as float64 or int64 with with_type first."
+             c.field.name)
+  in
+  let written (name, ty) = (name, Writer.written ty) in
+  let columns = Schema.columns (Query.schema q) in
+  let wanted =
+    Schema.v (List.map written (Array.to_list (Array.map stated f.columns)))
+  in
+  if not (Schema.equal (Schema.v (List.map written columns)) wanted) then
+    invalid_arg
+      (Format.asprintf
+         "Talon_parquet.encode: the query's columns do not write as the \
+          format's: %a, against %a"
+         Schema.pp (Query.schema q) Schema.pp wanted);
+  (* A format prints the file it describes: one that a file gave and encode
+     would not reproduce is refused, not silently changed. *)
+  let same (c : column) =
+    let column = stated c in
+    let schema = Leaf.of_schema (Writer.schema_elements [ written column ]) in
+    let text = schema.columns.(0).text in
+    if not (String.equal c.field.text text) then
+      invalid_arg
+        (Printf.sprintf
+           "Talon_parquet.encode: column %S is %s in the format, and encode \
+            writes %s. State the file with format."
+           c.field.name c.field.text text)
+  in
+  Array.iter same f.columns;
+  Writer.encode ~codec:(codec f.compression) ~row_group:f.row_group ~columns q w

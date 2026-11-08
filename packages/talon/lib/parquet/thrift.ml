@@ -184,3 +184,73 @@ and skip_map r =
       skip r vt
     done
   end
+
+(* Encoding *)
+
+type value =
+  | Bool of bool
+  | I8 of int
+  | I32 of int
+  | I64 of int
+  | Binary of string
+  | List of value list
+  | Struct of (int * value) list
+
+let wire = function
+  | Bool true -> t_true
+  | Bool false -> t_false
+  | I8 _ -> t_i8
+  | I32 _ -> t_i32
+  | I64 _ -> t_i64
+  | Binary _ -> t_binary
+  | List _ -> t_list
+  | Struct _ -> t_struct
+
+let add_varint b v =
+  let rec go v =
+    if v < 0x80 then Buffer.add_char b (Char.chr v)
+    else begin
+      Buffer.add_char b (Char.chr (v land 0x7f lor 0x80));
+      go (v lsr 7)
+    end
+  in
+  go v
+
+let add_zigzag b v = add_varint b ((v lsl 1) lxor (v asr 62))
+
+let rec add_value b = function
+  | Bool _ -> ()
+  | I8 v -> Buffer.add_char b (Char.chr (v land 0xff))
+  | I32 v | I64 v -> add_zigzag b v
+  | Binary s ->
+      add_varint b (String.length s);
+      Buffer.add_string b s
+  | List vs ->
+      let n = List.length vs in
+      let elt = match vs with [] -> t_struct | v :: _ -> element (wire v) in
+      if n < 15 then Buffer.add_char b (Char.chr ((n lsl 4) lor elt))
+      else begin
+        Buffer.add_char b (Char.chr (0xf0 lor elt));
+        add_varint b n
+      end;
+      List.iter (add_value b) vs
+  | Struct fields ->
+      let last = ref 0 in
+      List.iter
+        (fun (id, v) ->
+          let delta = id - !last in
+          if delta > 0 && delta <= 15 then
+            Buffer.add_char b (Char.chr ((delta lsl 4) lor wire v))
+          else begin
+            Buffer.add_char b (Char.chr (wire v));
+            add_zigzag b id
+          end;
+          last := id;
+          add_value b v)
+        fields;
+      Buffer.add_char b '\000'
+
+let encode b v =
+  match v with
+  | Struct _ -> add_value b v
+  | _ -> invalid_arg "Thrift.encode: not a structure"

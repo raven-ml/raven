@@ -3,8 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Parquet's sequential decoders: the RLE and bit-packing hybrid, into bytes,
-   int64s or bits, the walk of a nested leaf's levels, PLAIN booleans, delta binary packing, the assembly of
+/* Parquet's sequential decoders and the writer's encoders: the RLE and
+   bit-packing hybrid, into bytes, int64s or bits, the walk of a nested leaf's
+   levels, PLAIN booleans, delta binary packing, the assembly of
    delta-encoded byte arrays, and PLAIN byte arrays; the gather of
    dictionary-encoded byte arrays and of their ends; and the spread of a
    page's values onto its rows.
@@ -795,5 +796,150 @@ CAMLprim value talon_parquet_gather_byte_arrays(value offsets, value data,
     copy(o + at, d + lo, l);
     at = next;
   }
+  return Val_long(0);
+}
+
+/* Encoders
+
+   The writer's kernels, which write from the start of [dst], check every write
+   against its end, and return the bytes they wrote, or a negative error code,
+   without allocating or raising. */
+
+/* The [i]th element of [wide] bytes, 2 or 8, of [p]. */
+static inline uint64_t at(const uint8_t *p, int wide, int64_t i)
+{
+  if (wide == 2) {
+    uint16_t v;
+    memcpy(&v, p + 2 * i, 2);
+    return v;
+  }
+  uint64_t v;
+  memcpy(&v, p + 8 * i, 8);
+  return v;
+}
+
+/* [emit_varint(d, cap, k, v)] writes the varint of [v] at [d + k] and is the
+   next position, or -1 past [cap]. */
+static inline int64_t emit_varint(uint8_t *d, int64_t cap, int64_t k, uint64_t v)
+{
+  do {
+    if (k >= cap) return -1;
+    d[k++] = (uint8_t)((v & 0x7f) | (v >= 0x80 ? 0x80 : 0));
+    v >>= 7;
+  } while (v != 0);
+  return k;
+}
+
+/* The RLE and bit-packing hybrid of the [n] elements of [p], each of [wide]
+   bytes, in bit width [w]: a run of eight or more equal values as a run, the
+   others bit-packed in groups of eight, a last group padded with zeros. A run
+   ends a literal group only at a group boundary, as the hybrid's grammar
+   requires. */
+CAMLprim value talon_parquet_rle_encode(value vp, value vwide, value vn,
+                                        value vw, value vdst)
+{
+  const uint8_t *p = BYTES(vp);
+  int wide = Int_val(vwide), w = Int_val(vw);
+  int64_t n = Long_val(vn);
+  uint8_t *d = BYTES(vdst);
+  int64_t cap = DIM(vdst), k = 0, i = 0;
+  if (n < 0 || n > DIM(vp)) return Val_long(ERR_CAPACITY);
+  int bytes = (w + 7) / 8;
+  while (i < n) {
+    uint64_t v = at(p, wide, i);
+    int64_t run = 1;
+    while (i + run < n && at(p, wide, i + run) == v) run++;
+    if (run >= 8) {
+      k = emit_varint(d, cap, k, (uint64_t)run << 1);
+      if (k < 0 || k > cap - bytes) return Val_long(ERR_CAPACITY);
+      for (int b = 0; b < bytes; b++) d[k++] = (uint8_t)(v >> (8 * b));
+      i += run;
+      continue;
+    }
+    int64_t j = i + 8;
+    while (j < n) {
+      uint64_t u = at(p, wide, j);
+      int64_t r = 1;
+      while (j + r < n && r < 8 && at(p, wide, j + r) == u) r++;
+      if (r >= 8) break;
+      j += 8;
+    }
+    int64_t groups = (j - i + 7) / 8;
+    k = emit_varint(d, cap, k, ((uint64_t)groups << 1) | 1);
+    if (k < 0) return Val_long(ERR_CAPACITY);
+    int64_t stop = j < n ? j : n;
+    if (cap - k < groups * w) return Val_long(ERR_CAPACITY);
+    uint64_t acc = 0;
+    int bits = 0;
+    for (int64_t m = i; m < i + groups * 8; m++) {
+      uint64_t x = m < stop ? at(p, wide, m) : 0;
+      acc |= x << bits;
+      bits += w;
+      while (bits >= 8) {
+        d[k++] = (uint8_t)acc;
+        acc >>= 8;
+        bits -= 8;
+      }
+    }
+    i = stop;
+  }
+  return Val_long(k);
+}
+
+/* [PLAIN] byte arrays: rows [start, stop) of [offsets] over [data]. */
+CAMLprim value talon_parquet_plain_byte_array_encode(value voffsets, value vdata,
+                                                     value vstart, value vstop,
+                                                     value vdst)
+{
+  const int64_t *o = (const int64_t *)Caml_ba_data_val(voffsets);
+  const uint8_t *s = BYTES(vdata);
+  uint8_t *d = BYTES(vdst);
+  int64_t start = Long_val(vstart), stop = Long_val(vstop);
+  int64_t cap = DIM(vdst), n = DIM(vdata), k = 0;
+  if (start < 0 || stop < start || stop >= DIM(voffsets))
+    return Val_long(ERR_CAPACITY);
+  for (int64_t i = start; i < stop; i++) {
+    int64_t a = o[i], e = o[i + 1];
+    if (a < 0 || e < a || e > n) return Val_long(ERR_BOUND);
+    int64_t len = e - a;
+    if (len > INT32_MAX) return Val_long(ERR_BOUND);
+    if (cap - k < 4 + len) return Val_long(ERR_CAPACITY);
+    uint32_t u = (uint32_t)len;
+    memcpy(d + k, &u, 4);
+    k += 4;
+    memcpy(d + k, s + a, (size_t)len);
+    k += len;
+  }
+  return Val_long(k);
+}
+
+/* [n] bits of [src] from bit [start], written from bit 0 of [dst]. */
+CAMLprim value talon_parquet_pack_bits(value vsrc, value vstart, value vn,
+                                       value vdst)
+{
+  const uint8_t *p = BYTES(vsrc);
+  uint8_t *d = BYTES(vdst);
+  int64_t start = Long_val(vstart), n = Long_val(vn);
+  if (start < 0 || n < 0 || (uint64_t)(start + n) > (uint64_t)DIM(vsrc) * 8
+      || (uint64_t)n > (uint64_t)DIM(vdst) * 8)
+    return Val_long(ERR_CAPACITY);
+  memset(d, 0, (size_t)((n + 7) / 8));
+  const uint8_t *end = p + DIM(vsrc);
+  for (int64_t k = 0; k < n; k += 64) {
+    int m = n - k < 64 ? (int)(n - k) : 64;
+    put(d, (uint64_t)k, bits_at(p, end, (uint64_t)(start + k), m), m);
+  }
+  return Val_long((n + 7) / 8);
+}
+
+/* [n] bytes from position [pos] of [src], copied to [dst]. */
+CAMLprim value talon_parquet_to_bytes(value vsrc, value vpos, value vdst,
+                                      value vn)
+{
+  int64_t pos = Long_val(vpos), n = Long_val(vn);
+  if (pos < 0 || n < 0 || pos > DIM(vsrc) - n
+      || (uint64_t)n > caml_string_length(vdst))
+    return Val_long(ERR_CAPACITY);
+  memcpy(Bytes_val(vdst), BYTES(vsrc) + pos, (size_t)n);
   return Val_long(0);
 }

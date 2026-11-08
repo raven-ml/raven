@@ -197,7 +197,7 @@ and rune), raven / llama.cpp b12048 Vulkan:
   as-of joins, interval sets, nesting and nested Parquet reads landed;
   ewm waits for the maintainer's scope call; then folds, zoned time,
   hash/sample/shuffle, Pivot, dense round trips, partial aggregation,
-  regex, compressed and fixed-width CSV, Parquet datasets and writer,
+  regex, compressed and fixed-width CSV, Parquet datasets,
   talon.arrow, talon.jsont, complex and validity columns, HTML display
 - brot vs gigatoken cd5ee648c6 on fudge (bench README, "Against
   gigatoken"): GPT-2 runs at 0.55-0.65 of its speed on one thread over

@@ -18,3 +18,22 @@
  (libraries windtrap talon talon.parquet rig)
  (deps
   (source_tree support)))
+
+(library
+ (name written_corpus)
+ (modules written_corpus)
+ (libraries talon talon.parquet nx))
+
+(executable
+ (name gen_written)
+ (modules gen_written)
+ (libraries talon talon.parquet written_corpus bytesrw))
+
+(test
+ (name test_writer)
+ (modules test_writer)
+ (package talon)
+ (libraries windtrap talon talon.parquet talon_gen written_corpus nx rig bytesrw)
+ (deps
+  (source_tree golden)
+  (source_tree support)))

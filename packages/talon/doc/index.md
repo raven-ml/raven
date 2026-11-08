@@ -66,7 +66,7 @@ table 7 rows × 4 columns
 |---|---|---|
 | `talon` | `Talon` | Tables, columns, types, expressions and queries |
 | `talon.csv` | `Talon_csv` | CSV files: sniffing, reading and writing |
-| `talon.parquet` | `Talon_parquet` | Parquet files, read mapped in memory |
+| `talon.parquet` | `Talon_parquet` | Parquet files, read mapped in memory and written from queries |
 
 ## Next Steps
 

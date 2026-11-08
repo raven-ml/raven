@@ -78,3 +78,23 @@ val list : t -> ty -> (t -> ty -> 'a) -> 'a list
 
 val skip : t -> ty -> unit
 (** [skip r ty] reads a value of wire type [ty] and drops it. *)
+
+(** {1:encoding Encoding} *)
+
+(** The type for values to encode: Thrift's types, a structure's fields in
+    increasing order of identifier. *)
+type value =
+  | Bool of bool
+  | I8 of int
+  | I32 of int
+  | I64 of int
+  | Binary of string
+  | List of value list
+      (** The elements have one wire type. An empty list is written as a list
+          of structures. *)
+  | Struct of (int * value) list
+
+val encode : Buffer.t -> value -> unit
+(** [encode b v] appends to [b] the value [v] in the compact protocol: a
+    structure without a surrounding field, as a file's metadata and a page
+    header are written. Raises [Invalid_argument] if [v] is not a structure. *)

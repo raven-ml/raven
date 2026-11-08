@@ -23,8 +23,9 @@ _build/default/packages/talon/bench/write_fixtures.exe DIR
 ```
 
 `data/nulls.parquet` holds 2^20 rows of a nullable float64 and a nullable bool
-column, 10% nulls each, for the `Talon_parquet/read-nullable` row. talon has no
-Parquet writer, so pyarrow writes it, and the file is committed. Its SHA-256
+column, 10% nulls each, for the `Talon_parquet/read-nullable` row. pyarrow
+writes it, so that the read row does not depend on talon's writer, and the
+file is committed. Its SHA-256
 is `dd79afb8ddec9ff50870181e2b9a01979ca2edacee17c1b3fbfa6de251579b14`; the
 check writes it again and compares both files' digests with that one:
 
@@ -54,7 +55,9 @@ uv run packages/talon/bench/queries/keys_data.py --check
 ```
 
 `Talon_parquet/filter-text` reads `data/text.parquet` filtered by one of its
-words.
+words. `Talon_parquet/write-nullable` and `Talon_parquet/write-text` write the
+tables that `read-nullable` and `read-text` read to a sink, in the default
+format.
 
 The `Talon/Nulls/*` rows run over a table of 2^20 rows that the bench draws
 from a seeded key, with nulls in five of its seven columns.

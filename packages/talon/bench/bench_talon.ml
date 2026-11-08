@@ -443,6 +443,21 @@ let filter_text () =
 let keys_parquet = "keys.parquet"
 let read_keys () = read_file keys_parquet
 
+(* Writing the tables the reads make, to a sink: nulls compacted in the level
+   and value streams, and dictionary-encoded text. *)
+let write_table t =
+  let q = Query.of_table t in
+  Error.get_ok
+    (Talon_parquet.encode
+       (Talon_parquet.format (Query.schema q))
+       q
+       (Bytesrw.Bytes.Writer.ignore ()))
+
+let nulls_table = lazy (read_parquet ())
+let text_table = lazy (read_text ())
+let write_nulls () = write_table (Lazy.force nulls_table)
+let write_text () = write_table (Lazy.force text_table)
+
 (* CSV *)
 
 (* The text of 2^16 records, about 1.7 MB, so that a read crosses one of the
@@ -671,6 +686,8 @@ let () =
           Thumper.bench "read-text" read_text;
           Thumper.bench "filter-text" filter_text;
           Thumper.bench "read-keys" read_keys;
+          Thumper.bench "write-nullable" write_nulls;
+          Thumper.bench "write-text" write_text;
         ];
     ]
   |> exit

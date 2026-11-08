@@ -1,8 +1,8 @@
 (library
  (name talon_parquet)
  (public_name talon.parquet)
- (libraries talon nx nx.array rig rig.disk lz)
- (private_modules thrift meta leaf chunk)
+ (libraries talon nx nx.array nx.ragged rig rig.disk lz bytesrw)
+ (private_modules thrift meta leaf chunk writer)
  (foreign_stubs
   (language c)
   (names talon_parquet_stubs)
