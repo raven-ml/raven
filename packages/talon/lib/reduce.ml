@@ -279,17 +279,20 @@ let fsum =
 (* Integers of at most 32 bits sum exactly in int64 over a frame of fewer than
    2^31 values, then round once to float64, as a float64 sum does wherever its
    partial sums are exact. The test is each frame's, since a batch holds many
-   frames: a frame of more values sums in float64. *)
+   frames: a frame of more values sums in float64. A column shorter than
+   [exact_values] holds no frame that long, so it skips the test. *)
 let mean =
   memo (fun p -> p.mean) (fun p x -> p.mean <- x) (fun p ->
       let n = counts p in
       let sum =
         if not (small_ints p.c) then fsum p
         else
-          let wide = Nx.greater_equal_s n (Int64.of_int exact_values) in
           let exact = Nx.cast Nx.float64 (sum p) in
-          if Nx.item [] (Nx.any wide) then Nx.where wide (fsum p) exact
-          else exact
+          if Column.length p.c < exact_values then exact
+          else
+            let wide = Nx.greater_equal_s n (Int64.of_int exact_values) in
+            if Nx.item [] (Nx.any wide) then Nx.where wide (fsum p) exact
+            else exact
       in
       Nx.div sum (Nx.cast Nx.float64 n))
 
