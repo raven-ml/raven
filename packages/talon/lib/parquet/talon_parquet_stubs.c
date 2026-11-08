@@ -72,9 +72,21 @@ static inline uint64_t bits_at(const uint8_t *p, const uint8_t *end,
    exactly the bits of its elements, so that pages can start inside a byte. */
 
 /* [put(d, bit, v, n)] writes the [n] bits of [v], at most 64, least
-   significant first, at bit [bit] of [d], and no other bit. */
+   significant first, at bit [bit] of [d], and no other bit. 64 bits take
+   one 8-byte store and, past a byte boundary, the bits of a ninth byte. */
 static inline void put(uint8_t *d, uint64_t bit, uint64_t v, int n)
 {
+  if (n == 64) {
+    uint8_t *q = d + (bit >> 3);
+    int s = (int)(bit & 7);
+    uint64_t lo;
+    memcpy(&lo, q, 8);
+    lo = s == 0 ? v : (lo & ((UINT64_C(1) << s) - 1)) | v << s;
+    memcpy(q, &lo, 8);
+    if (s > 0)
+      q[8] = (uint8_t)((q[8] & ~((1u << s) - 1)) | (uint8_t)(v >> (64 - s)));
+    return;
+  }
   while (n > 0) {
     uint8_t *q = d + (bit >> 3);
     int s = (int)(bit & 7), k = 8 - s < n ? 8 - s : n;
@@ -148,11 +160,30 @@ static int zigzag(const uint8_t **p, const uint8_t *end, int64_t *v)
    bit, which a bit-packed run already holds as bits. */
 enum out { OUT_BYTES, OUT_INT64, OUT_BITS };
 
+/* [group(p, w, dst, most)] writes the 8 values of [w] bits packed from [p]
+   to [dst], and is the largest of them and [most]. The caller checked that 8
+   bytes from each value's first byte lie in the span. For a constant [w], each
+   value's byte and shift are constants. */
+static inline uint64_t group(const uint8_t *p, int w, int64_t *dst,
+                             uint64_t most)
+{
+  uint64_t mask = (UINT64_C(1) << w) - 1;
+  for (int j = 0; j < 8; j++) {
+    uint64_t lo;
+    memcpy(&lo, p + j * w / 8, 8);
+    uint64_t v = lo >> (j * w % 8) & mask;
+    most = v > most ? v : most;
+    dst[j] = (int64_t)v;
+  }
+  return most;
+}
+
 /* [unpack(p, end, w, count, out, dst, bound)] writes the [count] values of [w]
    bits, at most 32, packed from [p], to [dst] as [out] elements, and is
    [ERR_BOUND] if one is not below [bound], else 0. A value starts in the
    lowest 8 bits of its first byte, so one load of the eight bytes from there
-   reads it whole, while those bytes lie before [end]. */
+   reads it whole, while those bytes lie before [end]. Dictionary indices, the
+   int64 elements, unpack 8 at a time, [w] bytes, with [w] a constant. */
 static int unpack(const uint8_t *p, const uint8_t *end, int w, int64_t count,
                   enum out out, uint8_t *dst, uint64_t bound)
 {
@@ -160,6 +191,23 @@ static int unpack(const uint8_t *p, const uint8_t *end, int w, int64_t count,
   int64_t room = end - p - 8, k = 0;
   int64_t fast = room < 0 ? 0 : w == 0 ? count : room * 8 / w + 1;
   if (fast > count) fast = count;
+  if (out == OUT_INT64) {
+#define GROUPS(W)                                                     \
+  case W:                                                             \
+    for (; k + 8 <= fast; k += 8)                                     \
+      most = group(p + k / 8 * W, W, (int64_t *)dst + k, most);      \
+    break;
+    switch (w) {
+      GROUPS(1) GROUPS(2) GROUPS(3) GROUPS(4) GROUPS(5) GROUPS(6) GROUPS(7)
+      GROUPS(8) GROUPS(9) GROUPS(10) GROUPS(11) GROUPS(12) GROUPS(13)
+      GROUPS(14) GROUPS(15) GROUPS(16) GROUPS(17) GROUPS(18) GROUPS(19)
+      GROUPS(20) GROUPS(21) GROUPS(22) GROUPS(23) GROUPS(24) GROUPS(25)
+      GROUPS(26) GROUPS(27) GROUPS(28) GROUPS(29) GROUPS(30) GROUPS(31)
+      GROUPS(32)
+    }
+#undef GROUPS
+    bit = (uint64_t)(k * w);
+  }
   for (; k < fast; k++, bit += (uint64_t)w) {
     uint64_t lo;
     memcpy(&lo, p + (bit >> 3), 8);

@@ -1135,6 +1135,23 @@ let hybrid_runs =
         (List.exists (fun r -> bits r > 64) runs);
       cover "a packed run of under eight bytes"
         (List.exists (fun r -> bits r > 0 && bits r < 64) runs);
+      (* Indices unpack eight at a time while eight bytes from the eighth's
+         first byte lie in the span. *)
+      let rec whole before = function
+        | [] -> false
+        | r :: rest ->
+            let upto = before @ [ r ] in
+            let packed =
+              match r with
+              | Packed vs when List.compare_length_with vs 8 >= 0 ->
+                  let payload = (List.length vs + 7) / 8 * w in
+                  String.length (encode w upto) - payload + (7 * w / 8) + 8
+                  <= len
+              | _ -> false
+            in
+            packed || whole upto rest
+      in
+      cover "eight values unpacked at once" (w > 0 && whole [] runs);
       let dst = int64s (n + 2) in
       Bigarray.Array1.fill dst (-1L);
       equal ~msg:"bytes" int used (hybrid_int64 src pos len w n dst 1 bound);
@@ -1151,6 +1168,62 @@ let hybrid_runs =
       if bound > 0 then
         equal ~msg:"a value at the bound" int (-2)
           (hybrid_int64 src pos len w n dst 0 (bound - 1)))
+
+(* [hybrid_bits src pos len width n dst at] decodes [n] values of [width] bits,
+   at most 1, into the bit array [dst] from bit [at], as definition levels and
+   RLE booleans decode, and writes no other bit of [dst]: a page's rows may
+   start inside a byte. *)
+external hybrid_bits : bytes -> int -> int -> int -> int -> bytes -> int -> int
+  = "talon_parquet_hybrid_bits_byte" "talon_parquet_hybrid_bits"
+[@@noalloc]
+
+let bit_case =
+  let open Gen in
+  let* w = int_range 0 1 in
+  let value = int_range 0 w in
+  let run =
+    one_of
+      [
+        map (fun (k, v) -> Repeated (k, v)) (pair (int_range 0 150) value);
+        map
+          (fun vs -> Packed vs)
+          (list ~size:(map (( * ) 8) (int_range 0 20)) value);
+      ]
+  in
+  let* runs = list ~size:(int_range 1 4) run in
+  let* at = int_range 0 130 in
+  let+ ones = bool in
+  (w, runs, at, ones)
+
+let hybrid_bit_runs =
+  let pp ppf (w, runs, at, ones) =
+    Format.fprintf ppf "width %d, %d runs, from bit %d, over %s" w
+      (List.length runs) at
+      (if ones then "ones" else "zeros")
+  in
+  prop "the hybrid decodes bits at any bit, and writes no other"
+    (Gen.with_pp pp bit_case)
+    (fun (w, runs, at, ones) ->
+      let data = encode w runs in
+      let len = String.length data in
+      let src = filled len 0 in
+      String.iteri (fun i c -> src.{i} <- Char.code c) data;
+      let vs = Array.of_list (List.concat_map values_of runs) in
+      let n = Array.length vs in
+      let size = (at + n + 7) / 8 + 2 in
+      let around = if ones then 1 else 0 in
+      let dst = filled size (if ones then 0xff else 0) in
+      cover "64 bits or more from inside a byte" (n >= 64 && at mod 8 <> 0);
+      cover "64 bits or more from a byte" (n >= 64 && at mod 8 = 0);
+      let bit i = (dst.{i / 8} lsr (i mod 8)) land 1 in
+      let consumed = hybrid_bits src 0 len w n dst at in
+      equal ~msg:"bytes" int (String.length (encode w (needed runs))) consumed;
+      equal ~msg:"values" (array int) vs (Array.init n (fun i -> bit (at + i)));
+      equal ~msg:"before" (array int) (Array.make at around)
+        (Array.init at bit);
+      let past = (8 * size) - at - n in
+      equal ~msg:"after" (array int) (Array.make past around)
+        (Array.init past (fun i -> bit (at + n + i))))
 
 (* Dictionary-encoded text: a dictionary page of PLAIN byte arrays, then a data
    page of the indices, bit-packed at the width of the largest. The words run
@@ -1251,6 +1324,7 @@ let sources =
     [
       spread_tail;
       hybrid_runs;
+      hybrid_bit_runs;
       dictionary_text;
       test
         "a decoded bool column of nulls in 731 rows is canonical, the bits \
