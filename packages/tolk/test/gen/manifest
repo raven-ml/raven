@@ -2564,8 +2564,6 @@ renderer/cstyle/clang_vector_cast_i32_f32.golden
 renderer/cstyle/clang_vector_cast_i64_f64.golden
 renderer/cstyle/clang_vector_cast_u32_f32.golden
 renderer/cstyle/clang_vector_float_to_mask.golden
-renderer/cstyle/clang_vector_fma.golden
-renderer/cstyle/clang_vector_fma_constant.golden
 renderer/cstyle/clang_vector_mask_and.golden
 renderer/cstyle/clang_vector_mask_cmpne_true.golden
 renderer/cstyle/clang_vector_mask_lanes.golden

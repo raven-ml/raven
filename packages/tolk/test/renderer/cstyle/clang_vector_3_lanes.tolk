@@ -1,0 +1,18 @@
+# tolk D141 D151 golden=9b31e462427b6092e184bf9f0dbfd58d
+typedef float float3 __attribute__((aligned(4),ext_vector_type(3)));
+typedef int int3 __attribute__((aligned(4),ext_vector_type(3)));
+__attribute__((min_vector_width(512))) void three(float* restrict data0_3, float* restrict data1_3, float* restrict data2_3) {
+  float val0 = (*(data1_3+0));
+  float val1 = (*(data1_3+1));
+  float val2 = (*(data1_3+2));
+  float3 cast0 = (float3){val0,val1,val2};
+  float val3 = (*(data2_3+0));
+  float val4 = (*(data2_3+1));
+  float val5 = (*(data2_3+2));
+  float3 cast1 = (float3){val3,val4,val5};
+  float3 alu0 = ((cast0<cast1)?(cast0*cast1):__builtin_elementwise_sqrt(cast0));
+  *(data0_3+0) = alu0[0];
+  *(data0_3+1) = alu0[1];
+  *(data0_3+2) = alu0[2];
+}
+

@@ -1,0 +1,30 @@
+# tolk D105 golden=baf35cf1260fa96727a5e9947afdc241
+#include <metal_stdlib>
+using namespace metal;
+float2 __WMMA_8_8_8_bf16_f32(bfloat2 a, bfloat2 b, float2 c){
+  simdgroup_bfloat8x8 mat_a, mat_b; simdgroup_float8x8 mat_c;
+  mat_a.thread_elements()[0] = a[0]; mat_b.thread_elements()[0] = b[0]; mat_c.thread_elements()[0] = c[0];
+  mat_a.thread_elements()[1] = a[1]; mat_b.thread_elements()[1] = b[1]; mat_c.thread_elements()[1] = c[1];
+  simdgroup_multiply_accumulate(mat_c, mat_a, mat_b, mat_c);
+  return float2(mat_c.thread_elements()[0], mat_c.thread_elements()[1]);
+}
+kernel void r_32_2_2(device float* data0_64, device bfloat* data1_128, device bfloat* data2_128, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  float buf0[2];
+  int lidx0 = lid.x; /* 32 */
+  int alu0 = (lidx0>>4);
+  int alu1 = ((lidx0>>1)&3);
+  int alu2 = ((alu0<<5)+(alu1<<3));
+  int alu3 = ((lidx0&1)<<1);
+  int alu4 = (((lidx0>>3)&1)<<2);
+  int alu5 = (alu4+alu3);
+  *(buf0+0) = 0.0f;
+  *(buf0+1) = 0.0f;
+  for (int Lidx0 = 0; Lidx0 < 2; Lidx0++) {
+    bfloat2 val0 = (*((device bfloat2*)((data1_128+(alu4+(Lidx0<<3)+alu3+((alu0<<6)+(alu1<<4)))))));
+    bfloat2 val1 = (*((device bfloat2*)((data2_128+(alu2+(Lidx0<<6)+alu5)))));
+    float2 wmma0 = __WMMA_8_8_8_bf16_f32(val0, val1, float2((*(buf0+0)),(*(buf0+1))));
+    *(buf0+0) = wmma0.x;
+    *(buf0+1) = wmma0.y;
+  }
+  *((device float2*)((data0_64+(alu2+alu5)))) = float2((*(buf0+0)),(*(buf0+1)));
+}

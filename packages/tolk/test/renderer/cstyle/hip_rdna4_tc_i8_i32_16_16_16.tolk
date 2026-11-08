@@ -1,0 +1,66 @@
+# tolk D105 D261 golden=60b5c2bfc4b31437169576e03946e6bc
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef signed char signed_char8 __attribute__((ext_vector_type(8)));
+static inline __attribute__((device)) signed_char8 make_signed_char8(signed char x, signed char y, signed char z, signed char w, signed char a, signed char b, signed char c, signed char d) { return { x, y, z, w, a, b, c, d }; }
+typedef int int8 __attribute__((ext_vector_type(8)));
+static inline __attribute__((device)) int8 make_int8(int x, int y, int z, int w, int a, int b, int c, int d) { return { x, y, z, w, a, b, c, d }; }
+typedef int wmma_int2 __attribute__((ext_vector_type(2)));
+static inline __attribute__((device)) int8 __WMMA_16_16_16_i8_i32(signed_char8 a, signed_char8 b, int8 c) {
+  return __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32_gfx12(true, __builtin_bit_cast(wmma_int2, a),
+    true, __builtin_bit_cast(wmma_int2, b), c, false);
+}
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 32))) r_32_2_2_2_2(int* data0_256, signed char* data1_512, signed char* data2_512) {
+  int buf0[8];
+  int lidx0 = __ockl_get_local_id(0); /* 32 */
+  int alu0 = (lidx0>>4);
+  int alu1 = (lidx0&15);
+  *(buf0+0) = 0;
+  *(buf0+1) = 0;
+  *(buf0+2) = 0;
+  *(buf0+3) = 0;
+  *(buf0+4) = 0;
+  *(buf0+5) = 0;
+  *(buf0+6) = 0;
+  *(buf0+7) = 0;
+  for (int Lidx0 = 0; Lidx0 < 2; Lidx0++) {
+    int alu10 = ((alu0<<2)+(Lidx0<<4)+(alu1<<5));
+    signed char val0 = (*(data1_512+(alu10+1)));
+    signed char val1 = (*(data1_512+(alu10+10)));
+    signed char val2 = (*(data1_512+(alu10+11)));
+    signed char val3 = (*(data1_512+(alu10+2)));
+    signed char val4 = (*(data1_512+(alu10+3)));
+    signed char val5 = (*(data1_512+(alu10+8)));
+    signed char val6 = (*(data1_512+(alu10+9)));
+    signed char val7 = (*(data1_512+alu10));
+    int alu11 = ((alu0<<6)+(Lidx0<<8)+alu1);
+    signed char val8 = (*(data2_512+(alu11+128)));
+    signed char val9 = (*(data2_512+(alu11+144)));
+    signed char val10 = (*(data2_512+(alu11+16)));
+    signed char val11 = (*(data2_512+(alu11+160)));
+    signed char val12 = (*(data2_512+(alu11+176)));
+    signed char val13 = (*(data2_512+(alu11+32)));
+    signed char val14 = (*(data2_512+(alu11+48)));
+    signed char val15 = (*(data2_512+alu11));
+    int8 wmma0 = __WMMA_16_16_16_i8_i32(make_signed_char8(val7,val0,val3,val4,val5,val6,val1,val2), make_signed_char8(val15,val10,val13,val14,val8,val9,val11,val12), make_int8((*(buf0+0)),(*(buf0+1)),(*(buf0+2)),(*(buf0+3)),(*(buf0+4)),(*(buf0+5)),(*(buf0+6)),(*(buf0+7))));
+    *(buf0+0) = wmma0[0];
+    *(buf0+1) = wmma0[1];
+    *(buf0+2) = wmma0[2];
+    *(buf0+3) = wmma0[3];
+    *(buf0+4) = wmma0[4];
+    *(buf0+5) = wmma0[5];
+    *(buf0+6) = wmma0[6];
+    *(buf0+7) = wmma0[7];
+  }
+  int alu21 = ((alu0<<7)+alu1);
+  *(data0_256+(alu21+112)) = (*(buf0+7));
+  *(data0_256+(alu21+16)) = (*(buf0+1));
+  *(data0_256+(alu21+32)) = (*(buf0+2));
+  *(data0_256+(alu21+48)) = (*(buf0+3));
+  *(data0_256+(alu21+64)) = (*(buf0+4));
+  *(data0_256+(alu21+80)) = (*(buf0+5));
+  *(data0_256+(alu21+96)) = (*(buf0+6));
+  *(data0_256+alu21) = (*(buf0+0));
+}

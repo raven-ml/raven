@@ -1,0 +1,13 @@
+# tolk D151 D342 golden=3984ce73eaeb537004f61729accea880
+
+__attribute__((min_vector_width(512))) void fdiv(unsigned short* restrict data0_16, unsigned short* restrict data1_16, unsigned short* restrict data2_16) {
+  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+    unsigned short val0 = (*(data1_16+Lidx0));
+    unsigned short val1 = (*(data2_16+Lidx0));
+    unsigned int cast0 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (unsigned short)(val0))))<<16u)))/__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (unsigned short)(val1))))<<16u))))));
+    unsigned int alu0 = (((cast0&65535u)!=0u)?(cast0|65536u):cast0);
+    unsigned int alu1 = (((-cast0&2139095040u)!=0u)?(cast0+((cast0>>16u)&1u)+32767u):alu0);
+    *(data0_16+Lidx0) = __builtin_bit_cast(unsigned short, (unsigned short)(((unsigned short)((alu1>>16u)))));
+  }
+}
+

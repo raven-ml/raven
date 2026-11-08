@@ -1,0 +1,12 @@
+# tolk D151 golden=82a8f7712b37e6829cf78322d72273dc
+
+__attribute__((min_vector_width(512))) void E(_Bool* restrict data0_1, _Bool* restrict data1_1, _Bool* restrict data2_1, _Bool* restrict data3_1, _Bool* restrict data4_1, _Bool* restrict data5_1, _Bool* restrict data6_1) {
+  _Bool val0 = (*(data1_1+0));
+  _Bool val1 = (*(data2_1+0));
+  _Bool val2 = (*(data3_1+0));
+  _Bool val3 = (*(data4_1+0));
+  _Bool val4 = (*(data5_1+0));
+  _Bool val5 = (*(data6_1+0));
+  *(data0_1+0) = (val0^val1^val2^val3^val4^val5);
+}
+

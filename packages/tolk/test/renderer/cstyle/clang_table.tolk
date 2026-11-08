@@ -1,0 +1,10 @@
+# tolk D151 golden=83717a2132f5a4d6e14a3055f9fe0e55
+
+__attribute__((min_vector_width(512))) void table(unsigned char* restrict data0_4) {
+  const unsigned char alu0[] = "\x00\x7f\x80\xff";
+  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {
+    unsigned char val0 = (*(alu0+Lidx0));
+    *(data0_4+Lidx0) = val0;
+  }
+}
+

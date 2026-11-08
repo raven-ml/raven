@@ -1,0 +1,14 @@
+# tolk D141 D151 golden=9b78a190cfc3e5d8800c481c5cac1bee
+typedef double double4 __attribute__((aligned(8),ext_vector_type(4)));
+typedef long long4 __attribute__((aligned(8),ext_vector_type(4)));
+typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
+typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));
+__attribute__((min_vector_width(512))) void logic(float* restrict data0_4, double* restrict data1_4, double* restrict data2_4, float* restrict data3_4, float* restrict data4_4) {
+  double4 val0 = (*((double4*)((data1_4+0))));
+  double4 val1 = (*((double4*)((data2_4+0))));
+  float4 val2 = (*((float4*)((data3_4+0))));
+  float4 val3 = (*((float4*)((data4_4+0))));
+  float4 alu0 = (__builtin_convertvector(((val0<val1)&__builtin_convertvector((val2<val3), long4)), int4)?val2:val3);
+  *((float4*)((data0_4+0))) = alu0;
+}
+

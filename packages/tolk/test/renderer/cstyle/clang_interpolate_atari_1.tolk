@@ -1,0 +1,35 @@
+# tolk D80 D141 D151 D342 golden=1c747ade10507377c390a16d5eb60079
+typedef unsigned char unsigned_char4 __attribute__((aligned(1),ext_vector_type(4)));
+typedef unsigned int unsigned_int4 __attribute__((aligned(4),ext_vector_type(4)));
+typedef signed char signed_char4 __attribute__((aligned(1),ext_vector_type(4)));
+typedef short short4 __attribute__((aligned(2),ext_vector_type(4)));
+typedef unsigned short unsigned_short4 __attribute__((aligned(2),ext_vector_type(4)));
+__attribute__((min_vector_width(512))) void E_64_16_4(unsigned char* restrict data0_4096, unsigned char* restrict data1_13440, const int block_lo_, const int block_hi_) {
+  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {
+    int alu0 = (block_lo_+Lidx1);
+    int alu1 = (alu0*420);
+    int alu2 = (alu1+146);
+    for (int Lidx2 = 0; Lidx2 < 16; Lidx2++) {
+      int alu3 = (Lidx2<<2);
+      unsigned_char4 val0 = (*((unsigned_char4*)((data1_13440+(((alu2>>7)<<6)+alu3)))));
+      unsigned_char4 val1 = (*((unsigned_char4*)((data1_13440+((((alu1+273)>>7)<<6)+alu3)))));
+      int alu4 = ((alu0<<6)+alu3);
+      unsigned_int4 cast0 = __builtin_convertvector(val0, unsigned_int4);
+      unsigned_int4 cast1 = __builtin_convertvector(val1, unsigned_int4);
+      unsigned_char4 cast2 = __builtin_convertvector((cast1-cast0), unsigned_char4);
+      signed_char4 cast3 = __builtin_convertvector(cast2, signed_char4);
+      short4 cast4 = __builtin_convertvector(cast3, short4);
+      unsigned_short4 cast5 = __builtin_convertvector(val0, unsigned_short4);
+      unsigned_short4 cast6 = __builtin_convertvector(((cast4*((short)(((((float)((alu2&127)))*0.0078125f*128.0f)+0.5f))))+((short)(64))), unsigned_short4);
+      unsigned_int4 cast7 = __builtin_convertvector(cast5, unsigned_int4);
+      unsigned_int4 cast8 = __builtin_convertvector((cast6>>((unsigned short)(7u))), unsigned_int4);
+      unsigned_short4 cast9 = __builtin_convertvector((cast7+cast8), unsigned_short4);
+      unsigned_char4 cast10 = __builtin_convertvector(cast9, unsigned_char4);
+      *(data0_4096+(alu4+1)) = cast10[1];
+      *(data0_4096+(alu4+2)) = cast10[2];
+      *(data0_4096+(alu4+3)) = cast10[3];
+      *(data0_4096+alu4) = cast10[0];
+    }
+  }
+}
+

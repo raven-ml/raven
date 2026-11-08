@@ -1,0 +1,57 @@
+# tolk D25 golden=0d8dd3ae9dfb6e877c5cd10d20660278
+typedef unsigned int uint;
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+extern "C" __global__ void __launch_bounds__(16) r_16_64_16_4_4(float* data0_4096, float* data1_4096, float* data2_4096) {
+  float buf0[4];
+  float buf1[4];
+  __shared__ __align__(16) float buf2[64];
+  int gidx0 = blockIdx.x; /* 64 */
+  int gidx1 = blockIdx.y; /* 16 */
+  int lidx0 = threadIdx.x; /* 16 */
+  int alu0 = (gidx1<<8);
+  *(buf0+0) = 0.0f;
+  *(buf0+1) = 0.0f;
+  *(buf0+2) = 0.0f;
+  *(buf0+3) = 0.0f;
+  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {
+    int alu5 = ((Lidx0<<4)+lidx0+alu0);
+    float val0 = (*(data1_4096+(alu5+128)));
+    float val1 = (*(data1_4096+(alu5+192)));
+    float val2 = (*(data1_4096+(alu5+64)));
+    float val3 = (*(data1_4096+alu5));
+    float val4 = (*(data2_4096+((lidx0<<6)+(Lidx0<<10)+gidx0)));
+    *(buf0+0) = __fmaf_rn(val3,val4,(*(buf0+0)));
+    *(buf0+1) = __fmaf_rn(val2,val4,(*(buf0+1)));
+    *(buf0+2) = __fmaf_rn(val0,val4,(*(buf0+2)));
+    *(buf0+3) = __fmaf_rn(val1,val4,(*(buf0+3)));
+  }
+  *((float4*)((buf2+(lidx0<<2)))) = make_float4((*(buf0+0)),(*(buf0+1)),(*(buf0+2)),(*(buf0+3)));
+  __syncthreads();
+  *(buf1+0) = 0.0f;
+  *(buf1+1) = 0.0f;
+  *(buf1+2) = 0.0f;
+  *(buf1+3) = 0.0f;
+  for (int Lidx103 = 0; Lidx103 < 16; Lidx103++) {
+    float4 val5 = (*((float4*)((buf2+(Lidx103<<2)))));
+    *(buf1+0) = ((*(buf1+0))+val5.x);
+    *(buf1+1) = ((*(buf1+1))+val5.y);
+    *(buf1+2) = ((*(buf1+2))+val5.z);
+    *(buf1+3) = ((*(buf1+3))+val5.w);
+  }
+  int alu22 = (alu0+gidx0);
+  bool alu23 = (lidx0==0);
+  if (alu23) {
+    *(data0_4096+(alu22+128)) = (*(buf1+2));
+  }
+  if (alu23) {
+    *(data0_4096+(alu22+192)) = (*(buf1+3));
+  }
+  if (alu23) {
+    *(data0_4096+(alu22+64)) = (*(buf1+1));
+  }
+  if (alu23) {
+    *(data0_4096+alu22) = (*(buf1+0));
+  }
+}

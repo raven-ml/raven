@@ -1,0 +1,59 @@
+# tolk D25 golden=eb04ea9133200443fb1b6c4a48a8eda3
+typedef unsigned int uint;
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+extern "C" __global__ void __launch_bounds__(16) r_4_4_4_4_4_4_64(float* data0_4096, float* data1_4096, float* data2_4096) {
+  float buf0[16];
+  int gidx0 = blockIdx.x; /* 4 */
+  int gidx1 = blockIdx.y; /* 4 */
+  int lidx0 = threadIdx.x; /* 4 */
+  int lidx1 = threadIdx.y; /* 4 */
+  int alu0 = ((gidx0<<4)+(lidx1<<2));
+  int alu1 = ((gidx1<<10)+(lidx0<<8));
+  *(buf0+0) = 0.0f;
+  *(buf0+1) = 0.0f;
+  *(buf0+10) = 0.0f;
+  *(buf0+11) = 0.0f;
+  *(buf0+12) = 0.0f;
+  *(buf0+13) = 0.0f;
+  *(buf0+14) = 0.0f;
+  *(buf0+15) = 0.0f;
+  *(buf0+2) = 0.0f;
+  *(buf0+3) = 0.0f;
+  *(buf0+4) = 0.0f;
+  *(buf0+5) = 0.0f;
+  *(buf0+6) = 0.0f;
+  *(buf0+7) = 0.0f;
+  *(buf0+8) = 0.0f;
+  *(buf0+9) = 0.0f;
+  for (int Lidx0 = 0; Lidx0 < 64; Lidx0++) {
+    int alu18 = (alu1+Lidx0);
+    float val0 = (*(data1_4096+(alu18+128)));
+    float val1 = (*(data1_4096+(alu18+192)));
+    float val2 = (*(data1_4096+(alu18+64)));
+    float val3 = (*(data1_4096+alu18));
+    float4 val4 = (*((float4*)((data2_4096+(alu0+(Lidx0<<6))))));
+    *(buf0+0) = __fmaf_rn(val3,val4.x,(*(buf0+0)));
+    *(buf0+1) = __fmaf_rn(val3,val4.y,(*(buf0+1)));
+    *(buf0+10) = __fmaf_rn(val0,val4.z,(*(buf0+10)));
+    *(buf0+11) = __fmaf_rn(val0,val4.w,(*(buf0+11)));
+    *(buf0+12) = __fmaf_rn(val1,val4.x,(*(buf0+12)));
+    *(buf0+13) = __fmaf_rn(val1,val4.y,(*(buf0+13)));
+    *(buf0+14) = __fmaf_rn(val1,val4.z,(*(buf0+14)));
+    *(buf0+15) = __fmaf_rn(val1,val4.w,(*(buf0+15)));
+    *(buf0+2) = __fmaf_rn(val3,val4.z,(*(buf0+2)));
+    *(buf0+3) = __fmaf_rn(val3,val4.w,(*(buf0+3)));
+    *(buf0+4) = __fmaf_rn(val2,val4.x,(*(buf0+4)));
+    *(buf0+5) = __fmaf_rn(val2,val4.y,(*(buf0+5)));
+    *(buf0+6) = __fmaf_rn(val2,val4.z,(*(buf0+6)));
+    *(buf0+7) = __fmaf_rn(val2,val4.w,(*(buf0+7)));
+    *(buf0+8) = __fmaf_rn(val0,val4.x,(*(buf0+8)));
+    *(buf0+9) = __fmaf_rn(val0,val4.y,(*(buf0+9)));
+  }
+  int alu36 = (alu0+alu1);
+  *((float4*)((data0_4096+(alu36+128)))) = make_float4((*(buf0+8)),(*(buf0+9)),(*(buf0+10)),(*(buf0+11)));
+  *((float4*)((data0_4096+(alu36+192)))) = make_float4((*(buf0+12)),(*(buf0+13)),(*(buf0+14)),(*(buf0+15)));
+  *((float4*)((data0_4096+(alu36+64)))) = make_float4((*(buf0+4)),(*(buf0+5)),(*(buf0+6)),(*(buf0+7)));
+  *((float4*)((data0_4096+alu36))) = make_float4((*(buf0+0)),(*(buf0+1)),(*(buf0+2)),(*(buf0+3)));
+}

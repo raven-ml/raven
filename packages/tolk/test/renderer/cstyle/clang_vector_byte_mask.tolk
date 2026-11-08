@@ -1,0 +1,13 @@
+# tolk D141 D151 golden=cc2d249768168d91b8b481c9f2768491
+typedef signed char signed_char4 __attribute__((aligned(1),ext_vector_type(4)));
+typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
+typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));
+__attribute__((min_vector_width(512))) void where(float* restrict data0_4, signed char* restrict data1_4, signed char* restrict data2_4, float* restrict data3_4, float* restrict data4_4) {
+  signed_char4 val0 = (*((signed_char4*)((data1_4+0))));
+  signed_char4 val1 = (*((signed_char4*)((data2_4+0))));
+  float4 val2 = (*((float4*)((data3_4+0))));
+  float4 val3 = (*((float4*)((data4_4+0))));
+  float4 alu0 = (__builtin_convertvector(((signed_char4)((val0<val1))), int4)?val2:val3);
+  *((float4*)((data0_4+0))) = alu0;
+}
+

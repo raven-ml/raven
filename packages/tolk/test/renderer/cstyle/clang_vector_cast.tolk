@@ -1,0 +1,9 @@
+# tolk D141 D151 golden=dd977023d556f54d3a28dc1dc9d04ad7
+typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
+typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));
+__attribute__((min_vector_width(512))) void vector_cast(int* restrict data0_4, float* restrict data1_4) {
+  float4 val0 = (*((float4*)((data1_4+0))));
+  int4 cast0 = __builtin_convertvector(val0, int4);
+  *((int4*)((data0_4+0))) = cast0;
+}
+

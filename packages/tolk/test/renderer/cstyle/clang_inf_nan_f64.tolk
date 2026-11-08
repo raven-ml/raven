@@ -1,0 +1,22 @@
+# tolk D27 D80 D151 D342 golden=fc97618d4d0fc45d7a29b91d1048c70a
+typedef double double2 __attribute__((aligned(8),ext_vector_type(2)));
+typedef double double4 __attribute__((aligned(8),ext_vector_type(4)));
+typedef long long4 __attribute__((aligned(8),ext_vector_type(4)));
+__attribute__((min_vector_width(512))) void E_4_4(double* restrict data0_16, double* restrict data1_16, const int block_lo_, const int block_hi_) {
+  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
+    int alu0 = ((block_lo_+Lidx0)<<2);
+    int alu1 = (alu0+2);
+    double2 val0 = (*((double2*)((data1_16+alu1))));
+    double2 val1 = (*((double2*)((data1_16+alu0))));
+    double4 cast0 = (double4){val1[0],val1[1],val0[0],val0[1]};
+    double4 alu2 = ((cast0<-1.0)?__builtin_bit_cast(double, (unsigned long)(0x7ff8000000000000ul)):cast0);
+    double4 alu3 = ((0.0<cast0)?cast0:((double)(__builtin_inff())));
+    double4 alu4 = ((cast0<1.0)?((double)(-__builtin_inff())):cast0);
+    double4 alu5 = (alu3+alu2+alu4);
+    *(data0_16+(alu0+1)) = alu5[1];
+    *(data0_16+alu1) = alu5[2];
+    *(data0_16+(alu0+3)) = alu5[3];
+    *(data0_16+alu0) = alu5[0];
+  }
+}
+

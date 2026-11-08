@@ -1,0 +1,10 @@
+# tolk D151 golden=18f62fb1680ac33c8604f17c7816daf5
+
+__attribute__((min_vector_width(512))) void custom(float* restrict data0_4, float* restrict data1_4) {
+  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {
+    float val0 = (*(data1_4+Lidx0));
+    float alu0 = __builtin_fmaxf(__builtin_fabsf(val0), val0);
+    *(data0_4+Lidx0) = alu0;
+  }
+}
+

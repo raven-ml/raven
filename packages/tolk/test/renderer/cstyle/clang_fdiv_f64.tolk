@@ -1,0 +1,10 @@
+# tolk D151 golden=8a58d00f3bf511153bc3de440753e4c6
+
+__attribute__((min_vector_width(512))) void fdiv(double* restrict data0_16, double* restrict data1_16, double* restrict data2_16) {
+  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+    double val0 = (*(data1_16+Lidx0));
+    double val1 = (*(data2_16+Lidx0));
+    *(data0_16+Lidx0) = (val0/val1);
+  }
+}
+

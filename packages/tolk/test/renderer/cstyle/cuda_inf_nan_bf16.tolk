@@ -1,0 +1,25 @@
+# tolk D27 D210 D342 golden=7096ec7cf768d8d8ed6ed4efc800c320
+typedef unsigned int uint;
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+#include <cuda_bf16.h>
+struct __align__(8) nv_bfloat164 { nv_bfloat16 x, y, z, w; }; __device__ nv_bfloat164 make_nv_bfloat164(nv_bfloat16 x, nv_bfloat16 y, nv_bfloat16 z, nv_bfloat16 w) { nv_bfloat164 r={x, y, z, w}; return r; }
+extern "C" __global__ void __launch_bounds__(4) E_4_4(nv_bfloat16* data0_16, nv_bfloat16* data1_16) {
+  int lidx0 = threadIdx.x; /* 4 */
+  int alu0 = (lidx0<<2);
+  nv_bfloat164 val0 = (*((nv_bfloat164*)((data1_16+alu0))));
+  nv_bfloat16 alu1 = ((val0.x<((nv_bfloat16)(-1.0f)))?tg_bitcast<nv_bfloat16>((unsigned short)(0x7fc0u)):val0.x);
+  nv_bfloat16 alu2 = ((((nv_bfloat16)(0.0f))<val0.x)?val0.x:((nv_bfloat16)(INFINITY)));
+  nv_bfloat16 alu3 = ((val0.x<((nv_bfloat16)(1.0f)))?((nv_bfloat16)(-INFINITY)):val0.x);
+  nv_bfloat16 alu4 = ((val0.y<((nv_bfloat16)(-1.0f)))?tg_bitcast<nv_bfloat16>((unsigned short)(0x7fc0u)):val0.y);
+  nv_bfloat16 alu5 = ((((nv_bfloat16)(0.0f))<val0.y)?val0.y:((nv_bfloat16)(INFINITY)));
+  nv_bfloat16 alu6 = ((val0.y<((nv_bfloat16)(1.0f)))?((nv_bfloat16)(-INFINITY)):val0.y);
+  nv_bfloat16 alu7 = ((val0.z<((nv_bfloat16)(-1.0f)))?tg_bitcast<nv_bfloat16>((unsigned short)(0x7fc0u)):val0.z);
+  nv_bfloat16 alu8 = ((((nv_bfloat16)(0.0f))<val0.z)?val0.z:((nv_bfloat16)(INFINITY)));
+  nv_bfloat16 alu9 = ((val0.z<((nv_bfloat16)(1.0f)))?((nv_bfloat16)(-INFINITY)):val0.z);
+  nv_bfloat16 alu10 = ((val0.w<((nv_bfloat16)(-1.0f)))?tg_bitcast<nv_bfloat16>((unsigned short)(0x7fc0u)):val0.w);
+  nv_bfloat16 alu11 = ((((nv_bfloat16)(0.0f))<val0.w)?val0.w:((nv_bfloat16)(INFINITY)));
+  nv_bfloat16 alu12 = ((val0.w<((nv_bfloat16)(1.0f)))?((nv_bfloat16)(-INFINITY)):val0.w);
+  *((nv_bfloat164*)((data0_16+alu0))) = make_nv_bfloat164((alu2+alu1+alu3),(alu5+alu4+alu6),(alu8+alu7+alu9),(alu11+alu10+alu12));
+}

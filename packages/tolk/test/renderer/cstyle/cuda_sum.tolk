@@ -1,0 +1,26 @@
+# tolk D89 golden=4b1d1cee9d6180ec5ac90fd86bb40aef
+typedef unsigned int uint;
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+extern "C" __global__ void __launch_bounds__(16) r_16_16(float* data0_1, float* data1_256) {
+  float buf0[1];
+  float buf1[1];
+  __shared__ __align__(16) float buf2[16];
+  int lidx0 = threadIdx.x; /* 16 */
+  *(buf0+0) = 0.0f;
+  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+    float val0 = (*(data1_256+((Lidx0<<4)+lidx0)));
+    *(buf0+0) = ((*(buf0+0))+val0);
+  }
+  *(buf2+lidx0) = (*(buf0+0));
+  __syncthreads();
+  *(buf1+0) = 0.0f;
+  for (int Lidx101 = 0; Lidx101 < 16; Lidx101++) {
+    float val1 = (*(buf2+Lidx101));
+    *(buf1+0) = ((*(buf1+0))+val1);
+  }
+  if ((lidx0==0)) {
+    *(data0_1+0) = (*(buf1+0));
+  }
+}

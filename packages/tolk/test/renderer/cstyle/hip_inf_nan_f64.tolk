@@ -1,0 +1,34 @@
+# tolk D27 D342 golden=d6accbbc57e3275355afb530a2fde10b
+#define INFINITY (__builtin_inff())
+#define NAN (__builtin_nanf(""))
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 4))) E_4_4(double* data0_16, double* data1_16) {
+  int lidx0 = __ockl_get_local_id(0); /* 4 */
+  int alu0 = (lidx0<<2);
+  int alu1 = (alu0+1);
+  double val0 = (*(data1_16+alu1));
+  int alu2 = (alu0+2);
+  double val1 = (*(data1_16+alu2));
+  int alu3 = (alu0+3);
+  double val2 = (*(data1_16+alu3));
+  double val3 = (*(data1_16+alu0));
+  double alu4 = ((val0<-1.0)?__builtin_bit_cast(double, (unsigned long)(0x7ff8000000000000ul)):val0);
+  double alu5 = ((0.0<val0)?val0:((double)(INFINITY)));
+  double alu6 = ((val0<1.0)?((double)(-INFINITY)):val0);
+  double alu7 = ((val1<-1.0)?__builtin_bit_cast(double, (unsigned long)(0x7ff8000000000000ul)):val1);
+  double alu8 = ((0.0<val1)?val1:((double)(INFINITY)));
+  double alu9 = ((val1<1.0)?((double)(-INFINITY)):val1);
+  double alu10 = ((val2<-1.0)?__builtin_bit_cast(double, (unsigned long)(0x7ff8000000000000ul)):val2);
+  double alu11 = ((0.0<val2)?val2:((double)(INFINITY)));
+  double alu12 = ((val2<1.0)?((double)(-INFINITY)):val2);
+  double alu13 = ((val3<-1.0)?__builtin_bit_cast(double, (unsigned long)(0x7ff8000000000000ul)):val3);
+  double alu14 = ((0.0<val3)?val3:((double)(INFINITY)));
+  double alu15 = ((val3<1.0)?((double)(-INFINITY)):val3);
+  *(data0_16+alu1) = (alu5+alu4+alu6);
+  *(data0_16+alu2) = (alu8+alu7+alu9);
+  *(data0_16+alu3) = (alu11+alu10+alu12);
+  *(data0_16+alu0) = (alu14+alu13+alu15);
+}

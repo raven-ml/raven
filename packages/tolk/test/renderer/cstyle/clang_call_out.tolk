@@ -1,0 +1,9 @@
+# tolk D151 D342 golden=128b702cb57cef83b52508ba2e589808
+
+extern void frexp();
+__attribute__((min_vector_width(512))) void call_out(int* restrict data0_2) {
+  double alu0 = ((double(*)(double, int*))(frexp))((double)(8.0), (int*)((data0_2+0)));
+  int val0 = (*(data0_2+0));
+  *(data0_2+1) = ((int)((((unsigned int)(val0))+1u)));
+}
+

@@ -1,0 +1,10 @@
+# tolk D151 golden=c2c568984dda0a7fe2348407341f4bf1
+typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
+typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));
+__attribute__((min_vector_width(512))) void where(float* restrict data0_4, float* restrict data1_4, float* restrict data2_4) {
+  float4 val0 = (*((float4*)((data1_4+0))));
+  float4 val1 = (*((float4*)((data2_4+0))));
+  float4 alu0 = ((val0<val1)?((float4)(1.5f)):-2.0f);
+  *((float4*)((data0_4+0))) = alu0;
+}
+

@@ -1,0 +1,9 @@
+# tolk D151 D342 golden=85a4ec6d712f10af12187e25217cf409
+
+__attribute__((min_vector_width(512))) void volatile_add(volatile int* restrict data0_4, volatile int* restrict data1_4) {
+  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {
+    int val0 = (*(data1_4+Lidx0));
+    *(data0_4+Lidx0) = ((int)((((unsigned int)(val0))+1u)));
+  }
+}
+

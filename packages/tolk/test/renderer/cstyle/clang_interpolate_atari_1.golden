@@ -1,33 +1,26 @@
-typedef unsigned char unsigned_char4 __attribute__((aligned(1),ext_vector_type(4)));
-typedef unsigned int unsigned_int4 __attribute__((aligned(4),ext_vector_type(4)));
-typedef signed char signed_char4 __attribute__((aligned(1),ext_vector_type(4)));
-typedef short short4 __attribute__((aligned(2),ext_vector_type(4)));
-typedef unsigned short unsigned_short4 __attribute__((aligned(2),ext_vector_type(4)));
-__attribute__((min_vector_width(512))) void E_64_16_4(unsigned char* restrict data0_4096, unsigned char* restrict data1_13440, const int block_lo_, const int block_hi_) {
-  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {
-    int alu0 = (block_lo_+Lidx1);
-    int alu1 = (alu0*420);
-    int alu2 = (alu1+146);
-    for (int Lidx2 = 0; Lidx2 < 16; Lidx2++) {
-      int alu3 = (Lidx2<<2);
-      unsigned_char4 val0 = (*((unsigned_char4*)((data1_13440+(((alu2>>7)<<6)+alu3)))));
-      unsigned_char4 val1 = (*((unsigned_char4*)((data1_13440+((((alu1+273)>>7)<<6)+alu3)))));
-      int alu4 = ((alu0<<6)+alu3);
-      unsigned_int4 cast0 = __builtin_convertvector(val0, unsigned_int4);
-      unsigned_int4 cast1 = __builtin_convertvector(val1, unsigned_int4);
-      unsigned_char4 cast2 = __builtin_convertvector((cast1-cast0), unsigned_char4);
-      signed_char4 cast3 = __builtin_convertvector(cast2, signed_char4);
-      short4 cast4 = __builtin_convertvector(cast3, short4);
-      unsigned_short4 cast5 = __builtin_convertvector(val0, unsigned_short4);
-      unsigned_short4 cast6 = __builtin_convertvector(((cast4*((short)(((((float)((alu2&127)))*0.0078125f*128.0f)+0.5f))))+((short)(64))), unsigned_short4);
-      unsigned_int4 cast7 = __builtin_convertvector(cast5, unsigned_int4);
-      unsigned_int4 cast8 = __builtin_convertvector((cast6>>((unsigned short)(7u))), unsigned_int4);
-      unsigned_short4 cast9 = __builtin_convertvector((cast7+cast8), unsigned_short4);
-      unsigned_char4 cast10 = __builtin_convertvector(cast9, unsigned_char4);
-      *(data0_4096+(alu4+1)) = cast10[1];
-      *(data0_4096+(alu4+2)) = cast10[2];
-      *(data0_4096+(alu4+3)) = cast10[3];
-      *(data0_4096+alu4) = cast10[0];
+
+void E_64_16_4(unsigned char* restrict data0_4096, unsigned char* restrict data1_13440) {
+  for (int Lidx2 = 0; Lidx2 < 64; Lidx2++) {
+    int alu0 = (Lidx2*420);
+    int alu1 = (alu0+146);
+    short cast0 = ((short)((((float)((alu1&127)))+0.5f)));
+    for (int Lidx3 = 0; Lidx3 < 16; Lidx3++) {
+      int alu2 = (Lidx3<<2);
+      int alu3 = (((alu1>>7)<<6)+alu2);
+      unsigned char val0 = (*(data1_13440+(alu3+1)));
+      unsigned char val1 = (*(data1_13440+(alu3+2)));
+      unsigned char val2 = (*(data1_13440+(alu3+3)));
+      int alu4 = ((((alu0+273)>>7)<<6)+alu2);
+      unsigned char val3 = (*(data1_13440+(alu4+1)));
+      unsigned char val4 = (*(data1_13440+(alu4+2)));
+      unsigned char val5 = (*(data1_13440+(alu4+3)));
+      unsigned char val6 = (*(data1_13440+alu3));
+      unsigned char val7 = (*(data1_13440+alu4));
+      int alu5 = ((Lidx2<<6)+alu2);
+      *(data0_4096+(alu5+1)) = ((unsigned char)(((unsigned short)((((unsigned int)(((unsigned short)(val0))))+((unsigned int)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((((unsigned int)(val3))-((unsigned int)(val0)))))))))*cast0)))+((short)(64)))))))>>((unsigned short)(7u))))))))));
+      *(data0_4096+(alu5+2)) = ((unsigned char)(((unsigned short)((((unsigned int)(((unsigned short)(val1))))+((unsigned int)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((((unsigned int)(val4))-((unsigned int)(val1)))))))))*cast0)))+((short)(64)))))))>>((unsigned short)(7u))))))))));
+      *(data0_4096+(alu5+3)) = ((unsigned char)(((unsigned short)((((unsigned int)(((unsigned short)(val2))))+((unsigned int)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((((unsigned int)(val5))-((unsigned int)(val2)))))))))*cast0)))+((short)(64)))))))>>((unsigned short)(7u))))))))));
+      *(data0_4096+alu5) = ((unsigned char)(((unsigned short)((((unsigned int)(((unsigned short)(val6))))+((unsigned int)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((((unsigned int)(val7))-((unsigned int)(val6)))))))))*cast0)))+((short)(64)))))))>>((unsigned short)(7u))))))))));
     }
   }
 }

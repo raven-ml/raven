@@ -1,0 +1,30 @@
+# tolk D25 golden=3b9fe8b0b98469a22261bd113ac1ea48
+typedef unsigned int uint;
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+extern "C" __global__ void __launch_bounds__(4) r_64_64_4_16(float* data0_4096, float* data1_4096, float* data2_4096) {
+  float buf0[1];
+  float buf1[1];
+  __shared__ __align__(16) float buf2[4];
+  int gidx0 = blockIdx.x; /* 64 */
+  int gidx1 = blockIdx.y; /* 64 */
+  int lidx0 = threadIdx.x; /* 4 */
+  int alu0 = (gidx1<<6);
+  *(buf0+0) = 0.0f;
+  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+    float val0 = (*(data1_4096+((Lidx0<<2)+lidx0+alu0)));
+    float val1 = (*(data2_4096+((lidx0<<6)+(Lidx0<<8)+gidx0)));
+    *(buf0+0) = __fmaf_rn(val0,val1,(*(buf0+0)));
+  }
+  *(buf2+lidx0) = (*(buf0+0));
+  __syncthreads();
+  *(buf1+0) = 0.0f;
+  for (int Lidx103 = 0; Lidx103 < 4; Lidx103++) {
+    float val2 = (*(buf2+Lidx103));
+    *(buf1+0) = ((*(buf1+0))+val2);
+  }
+  if ((lidx0==0)) {
+    *(data0_4096+(alu0+gidx0)) = (*(buf1+0));
+  }
+}

@@ -1,0 +1,14 @@
+# tolk D210 golden=af9f6890ec1c2fa61591ed5dd96717cb
+typedef unsigned int uint;
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+#include <cuda_bf16.h>
+struct __align__(8) nv_bfloat164 { nv_bfloat16 x, y, z, w; }; __device__ nv_bfloat164 make_nv_bfloat164(nv_bfloat16 x, nv_bfloat16 y, nv_bfloat16 z, nv_bfloat16 w) { nv_bfloat164 r={x, y, z, w}; return r; }
+extern "C" __global__ void __launch_bounds__(4) E_4_4(float* data0_16, float* data1_16, nv_bfloat16* data2_16) {
+  int lidx0 = threadIdx.x; /* 4 */
+  int alu0 = (lidx0<<2);
+  nv_bfloat164 val0 = (*((nv_bfloat164*)((data2_16+alu0))));
+  float4 val1 = (*((float4*)((data1_16+alu0))));
+  *((float4*)((data0_16+alu0))) = make_float4(((float)(((((nv_bfloat16)(val1.x))+val0.x)*((nv_bfloat16)(3.0f))))),((float)(((((nv_bfloat16)(val1.y))+val0.y)*((nv_bfloat16)(3.0f))))),((float)(((((nv_bfloat16)(val1.z))+val0.z)*((nv_bfloat16)(3.0f))))),((float)(((((nv_bfloat16)(val1.w))+val0.w)*((nv_bfloat16)(3.0f))))));
+}

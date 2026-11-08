@@ -84,6 +84,7 @@ UNMODIFIED = {
     "schedule/rangeify",
     "engine/jit",
     "schedule/schedule",
+    "renderer/cstyle",
 }
 
 HERE = Path(__file__).resolve().parent

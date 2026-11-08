@@ -386,8 +386,6 @@ def host_vectors():
         ("vector_mask_lanes", lane_by_lane("lanes", lambda a, b: a < b, (f, f), dtypes.bool, n=4)),
         ("vector_sqrt", lanes_of("sqrt", lambda a: a.sqrt(), (f,), f)),
         ("vector_trunc", lanes_of("trunc", lambda a: a.trunc(), (d,), d)),
-        ("vector_fma", lanes_of("fma", lambda a, b, c: a.alu(Ops.MULACC, b, c), (d, d, d), d)),
-        ("vector_fma_constant", lanes_of("fma", lambda a, b: a.alu(Ops.MULACC, cconst(2.0, f), b), (f, f), f)),
         ("vector_3_lanes", lane_by_lane("three", lambda a, b: (a < b).where(a * b, a.sqrt()), (f, f), f)),
     ]
 

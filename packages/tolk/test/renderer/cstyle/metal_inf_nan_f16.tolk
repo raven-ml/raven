@@ -1,0 +1,21 @@
+# tolk D27 D342 golden=2a9991449c28b2cdad8a246e0fb01ce9
+#include <metal_stdlib>
+using namespace metal;
+kernel void E_4_4(device half* data0_16, device half* data1_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  int lidx0 = lid.x; /* 4 */
+  int alu0 = (lidx0<<2);
+  half4 val0 = (*((device half4*)((data1_16+alu0))));
+  half alu1 = ((val0.x<((half)(-1.0f)))?as_type<half>((unsigned short)(0x7e00u)):val0.x);
+  half alu2 = ((((half)(0.0f))<val0.x)?val0.x:((half)(INFINITY)));
+  half alu3 = ((val0.x<((half)(1.0f)))?((half)(-INFINITY)):val0.x);
+  half alu4 = ((val0.y<((half)(-1.0f)))?as_type<half>((unsigned short)(0x7e00u)):val0.y);
+  half alu5 = ((((half)(0.0f))<val0.y)?val0.y:((half)(INFINITY)));
+  half alu6 = ((val0.y<((half)(1.0f)))?((half)(-INFINITY)):val0.y);
+  half alu7 = ((val0.z<((half)(-1.0f)))?as_type<half>((unsigned short)(0x7e00u)):val0.z);
+  half alu8 = ((((half)(0.0f))<val0.z)?val0.z:((half)(INFINITY)));
+  half alu9 = ((val0.z<((half)(1.0f)))?((half)(-INFINITY)):val0.z);
+  half alu10 = ((val0.w<((half)(-1.0f)))?as_type<half>((unsigned short)(0x7e00u)):val0.w);
+  half alu11 = ((((half)(0.0f))<val0.w)?val0.w:((half)(INFINITY)));
+  half alu12 = ((val0.w<((half)(1.0f)))?((half)(-INFINITY)):val0.w);
+  *((device half4*)((data0_16+alu0))) = half4((alu2+alu1+alu3),(alu5+alu4+alu6),(alu8+alu7+alu9),(alu11+alu10+alu12));
+}

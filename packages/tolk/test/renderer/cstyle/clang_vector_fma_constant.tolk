@@ -1,3 +1,4 @@
+# tolk D25 D141 D151
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
 __attribute__((min_vector_width(512))) void fma(float* restrict data0_4, float* restrict data1_4, float* restrict data2_4) {
   float4 val0 = (*((float4*)((data1_4+0))));

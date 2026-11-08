@@ -2,14 +2,15 @@ typedef long unsigned int size_t;
 extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
 extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
 extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
-typedef __bf16 __bf164 __attribute__((ext_vector_type(4)));
-static inline __attribute__((device)) __bf164 make___bf164(__bf16 x, __bf16 y, __bf16 z, __bf16 w) { return { x, y, z, w }; }
 typedef float float4 __attribute__((ext_vector_type(4)));
 static inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }
 extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 4))) E_4_4(float* data0_16, float* data1_16, __bf16* data2_16) {
   int lidx0 = __ockl_get_local_id(0); /* 4 */
   int alu0 = (lidx0<<2);
-  __bf164 val0 = (*((__bf164*)((data2_16+alu0))));
-  float4 val1 = (*((float4*)((data1_16+alu0))));
-  *((float4*)((data0_16+alu0))) = make_float4(((float)(((__bf16)((((float)(((__bf16)((((float)(((__bf16)(val1.x))))+((float)(val0.x)))))))*3.0f))))),((float)(((__bf16)((((float)(((__bf16)((((float)(((__bf16)(val1.y))))+((float)(val0.y)))))))*3.0f))))),((float)(((__bf16)((((float)(((__bf16)((((float)(((__bf16)(val1.z))))+((float)(val0.z)))))))*3.0f))))),((float)(((__bf16)((((float)(((__bf16)((((float)(((__bf16)(val1.w))))+((float)(val0.w)))))))*3.0f))))));
+  __bf16 val0 = (*(data2_16+(alu0+1)));
+  __bf16 val1 = (*(data2_16+(alu0+2)));
+  __bf16 val2 = (*(data2_16+(alu0+3)));
+  __bf16 val3 = (*(data2_16+alu0));
+  float4 val4 = (*((float4*)((data1_16+alu0))));
+  *((float4*)((data0_16+alu0))) = make_float4(((float)(((__bf16)((((float)(((__bf16)((((float)(((__bf16)(val4.x))))+((float)(val3)))))))*3.0f))))),((float)(((__bf16)((((float)(((__bf16)((((float)(((__bf16)(val4.y))))+((float)(val0)))))))*3.0f))))),((float)(((__bf16)((((float)(((__bf16)((((float)(((__bf16)(val4.z))))+((float)(val1)))))))*3.0f))))),((float)(((__bf16)((((float)(((__bf16)((((float)(((__bf16)(val4.w))))+((float)(val2)))))))*3.0f))))));
 }

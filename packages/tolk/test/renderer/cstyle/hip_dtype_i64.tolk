@@ -1,0 +1,17 @@
+# tolk D342 golden=784afd9b6ad19baf1b5730f473d0e10a
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef float float4 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 4))) E_4_4(float* data0_16, float* data1_16, long* data2_16) {
+  int lidx0 = __ockl_get_local_id(0); /* 4 */
+  int alu0 = (lidx0<<2);
+  long val0 = (*(data2_16+(alu0+1)));
+  long val1 = (*(data2_16+(alu0+2)));
+  long val2 = (*(data2_16+(alu0+3)));
+  long val3 = (*(data2_16+alu0));
+  float4 val4 = (*((float4*)((data1_16+alu0))));
+  *((float4*)((data0_16+alu0))) = make_float4(((float)(((long)((((unsigned long)(((long)((((unsigned long)(((long)(val4.x))))+((unsigned long)(val3)))))))*3ul))))),((float)(((long)((((unsigned long)(((long)((((unsigned long)(((long)(val4.y))))+((unsigned long)(val0)))))))*3ul))))),((float)(((long)((((unsigned long)(((long)((((unsigned long)(((long)(val4.z))))+((unsigned long)(val1)))))))*3ul))))),((float)(((long)((((unsigned long)(((long)((((unsigned long)(((long)(val4.w))))+((unsigned long)(val2)))))))*3ul))))));
+}

@@ -1,0 +1,31 @@
+# tolk D27 D261 D342 golden=2e6ba7e9182664c3d1ee3e15f54329a8
+#define INFINITY (__builtin_inff())
+#define NAN (__builtin_nanf(""))
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef __bf16 __bf164 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) __bf164 make___bf164(__bf16 x, __bf16 y, __bf16 z, __bf16 w) { return { x, y, z, w }; }
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 4))) E_4_4(__bf16* data0_16, __bf16* data1_16) {
+  int lidx0 = __ockl_get_local_id(0); /* 4 */
+  int alu0 = (lidx0<<2);
+  __bf164 val0 = (*((__bf164*)((data1_16+alu0))));
+  float cast0 = ((float)(val0.x));
+  __bf16 alu1 = ((cast0<-1.0f)?__builtin_bit_cast(__bf16, (unsigned short)(0x7fc0u)):val0.x);
+  __bf16 alu2 = ((0.0f<cast0)?val0.x:((__bf16)(INFINITY)));
+  __bf16 alu3 = ((cast0<1.0f)?((__bf16)(-INFINITY)):val0.x);
+  float cast1 = ((float)(val0.y));
+  __bf16 alu4 = ((cast1<-1.0f)?__builtin_bit_cast(__bf16, (unsigned short)(0x7fc0u)):val0.y);
+  __bf16 alu5 = ((0.0f<cast1)?val0.y:((__bf16)(INFINITY)));
+  __bf16 alu6 = ((cast1<1.0f)?((__bf16)(-INFINITY)):val0.y);
+  float cast2 = ((float)(val0.z));
+  __bf16 alu7 = ((cast2<-1.0f)?__builtin_bit_cast(__bf16, (unsigned short)(0x7fc0u)):val0.z);
+  __bf16 alu8 = ((0.0f<cast2)?val0.z:((__bf16)(INFINITY)));
+  __bf16 alu9 = ((cast2<1.0f)?((__bf16)(-INFINITY)):val0.z);
+  float cast3 = ((float)(val0.w));
+  __bf16 alu10 = ((cast3<-1.0f)?__builtin_bit_cast(__bf16, (unsigned short)(0x7fc0u)):val0.w);
+  __bf16 alu11 = ((0.0f<cast3)?val0.w:((__bf16)(INFINITY)));
+  __bf16 alu12 = ((cast3<1.0f)?((__bf16)(-INFINITY)):val0.w);
+  *((__bf164*)((data0_16+alu0))) = make___bf164(((__bf16)((((float)(((__bf16)((((float)(alu2))+((float)(alu1)))))))+((float)(alu3))))),((__bf16)((((float)(((__bf16)((((float)(alu5))+((float)(alu4)))))))+((float)(alu6))))),((__bf16)((((float)(((__bf16)((((float)(alu8))+((float)(alu7)))))))+((float)(alu9))))),((__bf16)((((float)(((__bf16)((((float)(alu11))+((float)(alu10)))))))+((float)(alu12))))));
+}

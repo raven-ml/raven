@@ -1,0 +1,26 @@
+# tolk D89 golden=20de20c531c6fd597571788d31f77889
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) r_16_16(float* data0_1, float* data1_256) {
+  float buf0[1];
+  float buf1[1];
+  __attribute__((shared, aligned(16)))float buf2[16];
+  int lidx0 = __ockl_get_local_id(0); /* 16 */
+  *(buf0+0) = 0.0f;
+  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+    float val0 = (*(data1_256+((Lidx0<<4)+lidx0)));
+    *(buf0+0) = ((*(buf0+0))+val0);
+  }
+  *(buf2+lidx0) = (*(buf0+0));
+  __builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");__builtin_amdgcn_s_barrier();__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup");
+  *(buf1+0) = 0.0f;
+  for (int Lidx101 = 0; Lidx101 < 16; Lidx101++) {
+    float val1 = (*(buf2+Lidx101));
+    *(buf1+0) = ((*(buf1+0))+val1);
+  }
+  if ((lidx0==0)) {
+    *(data0_1+0) = (*(buf1+0));
+  }
+}

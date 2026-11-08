@@ -1,0 +1,23 @@
+# tolk D80 D141 D151 golden=a8c788e331ac12385b1f96e756a4cb1b
+typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
+typedef long long4 __attribute__((aligned(8),ext_vector_type(4)));
+typedef unsigned long unsigned_long4 __attribute__((aligned(8),ext_vector_type(4)));
+__attribute__((min_vector_width(512))) void E_4_4(float* restrict data0_16, float* restrict data1_16, long* restrict data2_16, const int block_lo_, const int block_hi_) {
+  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
+    int alu0 = ((block_lo_+Lidx0)<<2);
+    long val0 = (*(data2_16+(alu0+1)));
+    long val1 = (*(data2_16+(alu0+2)));
+    long val2 = (*(data2_16+(alu0+3)));
+    long val3 = (*(data2_16+alu0));
+    float4 val4 = (*((float4*)((data1_16+alu0))));
+    long4 cast0 = __builtin_convertvector(val4, long4);
+    unsigned_long4 cast1 = __builtin_convertvector((long4){val3,val0,val1,val2}, unsigned_long4);
+    unsigned_long4 cast2 = __builtin_convertvector(cast0, unsigned_long4);
+    long4 cast3 = __builtin_convertvector((cast2+cast1), long4);
+    unsigned_long4 cast4 = __builtin_convertvector(cast3, unsigned_long4);
+    long4 cast5 = __builtin_convertvector((cast4*3ul), long4);
+    float4 cast6 = __builtin_convertvector(cast5, float4);
+    *((float4*)((data0_16+alu0))) = cast6;
+  }
+}
+

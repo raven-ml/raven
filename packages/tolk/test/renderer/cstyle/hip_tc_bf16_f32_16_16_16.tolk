@@ -1,0 +1,66 @@
+# tolk D105 D261 golden=2241e0ac0872ee793b3f438473546eda
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef __bf16 __bf164 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) __bf164 make___bf164(__bf16 x, __bf16 y, __bf16 z, __bf16 w) { return { x, y, z, w }; }
+typedef __bf16 __bf1616 __attribute__((ext_vector_type(16)));
+static inline __attribute__((device)) __bf1616 make___bf1616(__bf16 x, __bf16 y, __bf16 z, __bf16 w, __bf16 a, __bf16 b, __bf16 c, __bf16 d, __bf16 e, __bf16 f, __bf16 g, __bf16 h, __bf16 i, __bf16 j, __bf16 k, __bf16 l) { return { x, y, z, w, a, b, c, d, e, f, g, h, i, j, k, l }; }
+typedef float float8 __attribute__((ext_vector_type(8)));
+static inline __attribute__((device)) float8 make_float8(float x, float y, float z, float w, float a, float b, float c, float d) { return { x, y, z, w, a, b, c, d }; }
+#define __WMMA_16_16_16_bf16_f32 __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 32))) r_32_2_2_2_2_2(float* data0_256, __bf16* data1_512, __bf16* data2_512) {
+  float buf0[8];
+  int lidx0 = __ockl_get_local_id(0); /* 32 */
+  int alu0 = (lidx0&15);
+  *(buf0+0) = 0.0f;
+  *(buf0+1) = 0.0f;
+  *(buf0+2) = 0.0f;
+  *(buf0+3) = 0.0f;
+  *(buf0+4) = 0.0f;
+  *(buf0+5) = 0.0f;
+  *(buf0+6) = 0.0f;
+  *(buf0+7) = 0.0f;
+  for (int Lidx0 = 0; Lidx0 < 2; Lidx0++) {
+    int alu9 = ((Lidx0<<8)+alu0);
+    __bf16 val0 = (*(data2_512+(alu9+112)));
+    __bf16 val1 = (*(data2_512+(alu9+128)));
+    __bf16 val2 = (*(data2_512+(alu9+144)));
+    __bf16 val3 = (*(data2_512+(alu9+16)));
+    __bf16 val4 = (*(data2_512+(alu9+160)));
+    __bf16 val5 = (*(data2_512+(alu9+176)));
+    __bf16 val6 = (*(data2_512+(alu9+192)));
+    __bf16 val7 = (*(data2_512+(alu9+208)));
+    __bf16 val8 = (*(data2_512+(alu9+224)));
+    __bf16 val9 = (*(data2_512+(alu9+240)));
+    __bf16 val10 = (*(data2_512+(alu9+32)));
+    __bf16 val11 = (*(data2_512+(alu9+48)));
+    __bf16 val12 = (*(data2_512+(alu9+64)));
+    __bf16 val13 = (*(data2_512+(alu9+80)));
+    __bf16 val14 = (*(data2_512+(alu9+96)));
+    __bf16 val15 = (*(data2_512+alu9));
+    int alu10 = ((alu0<<5)+(Lidx0<<4));
+    __bf164 val16 = (*((__bf164*)((data1_512+(alu10+12)))));
+    __bf164 val17 = (*((__bf164*)((data1_512+(alu10+4)))));
+    __bf164 val18 = (*((__bf164*)((data1_512+(alu10+8)))));
+    __bf164 val19 = (*((__bf164*)((data1_512+alu10))));
+    float8 wmma0 = __WMMA_16_16_16_bf16_f32(make___bf1616(val19.x,val19.y,val19.z,val19.w,val17.x,val17.y,val17.z,val17.w,val18.x,val18.y,val18.z,val18.w,val16.x,val16.y,val16.z,val16.w), make___bf1616(val15,val3,val10,val11,val12,val13,val14,val0,val1,val2,val4,val5,val6,val7,val8,val9), make_float8((*(buf0+0)),(*(buf0+1)),(*(buf0+4)),(*(buf0+5)),(*(buf0+2)),(*(buf0+3)),(*(buf0+6)),(*(buf0+7))));
+    *(buf0+0) = wmma0[0];
+    *(buf0+1) = wmma0[1];
+    *(buf0+2) = wmma0[4];
+    *(buf0+3) = wmma0[5];
+    *(buf0+4) = wmma0[2];
+    *(buf0+5) = wmma0[3];
+    *(buf0+6) = wmma0[6];
+    *(buf0+7) = wmma0[7];
+  }
+  *(data0_256+lidx0) = (*(buf0+0));
+  *(data0_256+(lidx0+128)) = (*(buf0+2));
+  *(data0_256+(lidx0+160)) = (*(buf0+3));
+  *(data0_256+(lidx0+192)) = (*(buf0+6));
+  *(data0_256+(lidx0+224)) = (*(buf0+7));
+  *(data0_256+(lidx0+32)) = (*(buf0+1));
+  *(data0_256+(lidx0+64)) = (*(buf0+4));
+  *(data0_256+(lidx0+96)) = (*(buf0+5));
+}

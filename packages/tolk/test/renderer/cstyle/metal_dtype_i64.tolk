@@ -1,0 +1,13 @@
+# tolk D342 golden=b7b96a0f0a3a6a6d37470c6c1456166d
+#include <metal_stdlib>
+using namespace metal;
+kernel void E_4_4(device float* data0_16, device float* data1_16, device long* data2_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  int lidx0 = lid.x; /* 4 */
+  int alu0 = (lidx0<<2);
+  long val0 = (*(data2_16+(alu0+1)));
+  long val1 = (*(data2_16+(alu0+2)));
+  long val2 = (*(data2_16+(alu0+3)));
+  long val3 = (*(data2_16+alu0));
+  float4 val4 = (*((device float4*)((data1_16+alu0))));
+  *((device float4*)((data0_16+alu0))) = float4(((float)(((long)((((unsigned long)(((long)((((unsigned long)(((long)(val4.x))))+((unsigned long)(val3)))))))*3ul))))),((float)(((long)((((unsigned long)(((long)((((unsigned long)(((long)(val4.y))))+((unsigned long)(val0)))))))*3ul))))),((float)(((long)((((unsigned long)(((long)((((unsigned long)(((long)(val4.z))))+((unsigned long)(val1)))))))*3ul))))),((float)(((long)((((unsigned long)(((long)((((unsigned long)(((long)(val4.w))))+((unsigned long)(val2)))))))*3ul))))));
+}

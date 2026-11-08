@@ -4,12 +4,12 @@ typedef unsigned char hip_fp8;
 extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
 extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
 extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef float float8 __attribute__((ext_vector_type(8)));
+static inline __attribute__((device)) float8 make_float8(float x, float y, float z, float w, float a, float b, float c, float d) { return { x, y, z, w, a, b, c, d }; }
 typedef hip_bf8 hip_bf84 __attribute__((ext_vector_type(4)));
 static inline __attribute__((device)) hip_bf84 make_hip_bf84(hip_bf8 x, hip_bf8 y, hip_bf8 z, hip_bf8 w) { return { x, y, z, w }; }
 typedef hip_bf8 hip_bf88 __attribute__((ext_vector_type(8)));
 static inline __attribute__((device)) hip_bf88 make_hip_bf88(hip_bf8 x, hip_bf8 y, hip_bf8 z, hip_bf8 w, hip_bf8 a, hip_bf8 b, hip_bf8 c, hip_bf8 d) { return { x, y, z, w, a, b, c, d }; }
-typedef float float8 __attribute__((ext_vector_type(8)));
-static inline __attribute__((device)) float8 make_float8(float x, float y, float z, float w, float a, float b, float c, float d) { return { x, y, z, w, a, b, c, d }; }
 typedef unsigned int unsigned_int2 __attribute__((ext_vector_type(2)));
 static inline __attribute__((device)) unsigned_int2 make_unsigned_int2(unsigned int x, unsigned int y) { return { x, y }; }
 #define __WMMA_16_16_16_fp8e5m2_f32 __builtin_amdgcn_wmma_f32_16x16x16_bf8_bf8_w32_gfx12
@@ -39,15 +39,15 @@ extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_si
     int alu11 = ((alu0<<2)+(Lidx0<<4)+(alu1<<5));
     hip_bf84 val8 = (*((hip_bf84*)((data1_512+(alu11+8)))));
     hip_bf84 val9 = (*((hip_bf84*)((data1_512+alu11))));
-    float8 wmma0 = __WMMA_16_16_16_fp8e5m2_f32(__builtin_bit_cast(unsigned_int2, (hip_bf88)(make_hip_bf88(val9.x,val9.y,val9.z,val9.w,val8.x,val8.y,val8.z,val8.w))), __builtin_bit_cast(unsigned_int2, (hip_bf88)(make_hip_bf88(val7,val2,val5,val6,val0,val1,val3,val4))), make_float8((*(buf0+0)),(*(buf0+1)),(*(buf0+2)),(*(buf0+3)),(*(buf0+4)),(*(buf0+5)),(*(buf0+6)),(*(buf0+7))));
-    *(buf0+0) = wmma0[0];
-    *(buf0+1) = wmma0[1];
-    *(buf0+2) = wmma0[2];
-    *(buf0+3) = wmma0[3];
-    *(buf0+4) = wmma0[4];
-    *(buf0+5) = wmma0[5];
-    *(buf0+6) = wmma0[6];
-    *(buf0+7) = wmma0[7];
+    float8 wmma0 = __WMMA_16_16_16_fp8e5m2_f32(__builtin_bit_cast(unsigned_int2, (hip_bf88)(make_hip_bf88(val9.x,val9.y,val9.z,val9.w,val8.x,val8.y,val8.z,val8.w))), __builtin_bit_cast(unsigned_int2, (hip_bf88)(make_hip_bf88(val7,val2,val5,val6,val0,val1,val3,val4))), make_float8(0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f));
+    *(buf0+0) = ((*(buf0+0))+wmma0[0]);
+    *(buf0+1) = ((*(buf0+1))+wmma0[1]);
+    *(buf0+2) = ((*(buf0+2))+wmma0[2]);
+    *(buf0+3) = ((*(buf0+3))+wmma0[3]);
+    *(buf0+4) = ((*(buf0+4))+wmma0[4]);
+    *(buf0+5) = ((*(buf0+5))+wmma0[5]);
+    *(buf0+6) = ((*(buf0+6))+wmma0[6]);
+    *(buf0+7) = ((*(buf0+7))+wmma0[7]);
   }
   int alu21 = ((alu0<<7)+alu1);
   *(data0_256+(alu21+112)) = (*(buf0+7));

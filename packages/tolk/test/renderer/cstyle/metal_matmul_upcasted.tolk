@@ -1,0 +1,55 @@
+# tolk D25 golden=effda530d0c94827b4d2f2fb8292f2bc
+#include <metal_stdlib>
+using namespace metal;
+kernel void r_4_4_4_4_16(device float* data0_256, device float* data1_256, device float* data2_256, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  float buf0[16];
+  int gidx0 = gid.x; /* 4 */
+  int gidx1 = gid.y; /* 4 */
+  int alu0 = (gidx0<<2);
+  int alu1 = (gidx1<<6);
+  *(buf0+0) = 0.0f;
+  *(buf0+1) = 0.0f;
+  *(buf0+10) = 0.0f;
+  *(buf0+11) = 0.0f;
+  *(buf0+12) = 0.0f;
+  *(buf0+13) = 0.0f;
+  *(buf0+14) = 0.0f;
+  *(buf0+15) = 0.0f;
+  *(buf0+2) = 0.0f;
+  *(buf0+3) = 0.0f;
+  *(buf0+4) = 0.0f;
+  *(buf0+5) = 0.0f;
+  *(buf0+6) = 0.0f;
+  *(buf0+7) = 0.0f;
+  *(buf0+8) = 0.0f;
+  *(buf0+9) = 0.0f;
+  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+    int alu18 = (alu1+Lidx0);
+    float val0 = (*(data1_256+(alu18+16)));
+    float val1 = (*(data1_256+(alu18+32)));
+    float val2 = (*(data1_256+(alu18+48)));
+    float val3 = (*(data1_256+alu18));
+    float4 val4 = (*((device float4*)((data2_256+(alu0+(Lidx0<<4))))));
+    *(buf0+0) = fma(val3,val4.x,(*(buf0+0)));
+    *(buf0+1) = fma(val3,val4.y,(*(buf0+1)));
+    *(buf0+10) = fma(val1,val4.z,(*(buf0+10)));
+    *(buf0+11) = fma(val1,val4.w,(*(buf0+11)));
+    *(buf0+12) = fma(val2,val4.x,(*(buf0+12)));
+    *(buf0+13) = fma(val2,val4.y,(*(buf0+13)));
+    *(buf0+14) = fma(val2,val4.z,(*(buf0+14)));
+    *(buf0+15) = fma(val2,val4.w,(*(buf0+15)));
+    *(buf0+2) = fma(val3,val4.z,(*(buf0+2)));
+    *(buf0+3) = fma(val3,val4.w,(*(buf0+3)));
+    *(buf0+4) = fma(val0,val4.x,(*(buf0+4)));
+    *(buf0+5) = fma(val0,val4.y,(*(buf0+5)));
+    *(buf0+6) = fma(val0,val4.z,(*(buf0+6)));
+    *(buf0+7) = fma(val0,val4.w,(*(buf0+7)));
+    *(buf0+8) = fma(val1,val4.x,(*(buf0+8)));
+    *(buf0+9) = fma(val1,val4.y,(*(buf0+9)));
+  }
+  int alu36 = (alu0+alu1);
+  *((device float4*)((data0_256+(alu36+16)))) = float4((*(buf0+4)),(*(buf0+5)),(*(buf0+6)),(*(buf0+7)));
+  *((device float4*)((data0_256+(alu36+32)))) = float4((*(buf0+8)),(*(buf0+9)),(*(buf0+10)),(*(buf0+11)));
+  *((device float4*)((data0_256+(alu36+48)))) = float4((*(buf0+12)),(*(buf0+13)),(*(buf0+14)),(*(buf0+15)));
+  *((device float4*)((data0_256+alu36))) = float4((*(buf0+0)),(*(buf0+1)),(*(buf0+2)),(*(buf0+3)));
+}

@@ -1,5 +1,5 @@
 
-__attribute__((min_vector_width(512))) void unbounded(int* restrict data0_1) {
+void unbounded(int* restrict data0_1) {
   for (;;) {
     int val0 = (*(data0_1+0));
     *(data0_1+0) = (val0+1);

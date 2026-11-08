@@ -1,0 +1,28 @@
+# tolk D25 golden=c920ea501605e73a3c2bf47079d706b1
+#include <metal_stdlib>
+using namespace metal;
+kernel void r_64_64_4_16(device float* data0_4096, device float* data1_4096, device float* data2_4096, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  float buf0[1];
+  float buf1[1];
+  threadgroup __attribute__((aligned(16))) float buf2[4];
+  int gidx0 = gid.x; /* 64 */
+  int gidx1 = gid.y; /* 64 */
+  int lidx0 = lid.x; /* 4 */
+  int alu0 = (gidx1<<6);
+  *(buf0+0) = 0.0f;
+  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+    float val0 = (*(data1_4096+((Lidx0<<2)+lidx0+alu0)));
+    float val1 = (*(data2_4096+((lidx0<<6)+(Lidx0<<8)+gidx0)));
+    *(buf0+0) = fma(val0,val1,(*(buf0+0)));
+  }
+  *(buf2+lidx0) = (*(buf0+0));
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  *(buf1+0) = 0.0f;
+  for (int Lidx103 = 0; Lidx103 < 4; Lidx103++) {
+    float val2 = (*(buf2+Lidx103));
+    *(buf1+0) = ((*(buf1+0))+val2);
+  }
+  if ((lidx0==0)) {
+    *(data0_4096+(alu0+gidx0)) = (*(buf1+0));
+  }
+}

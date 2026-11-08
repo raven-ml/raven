@@ -1,0 +1,17 @@
+# tolk D80 D141 D151 golden=9af7d5ee3c773205a980da8fb21c3362
+typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
+typedef short short4 __attribute__((aligned(2),ext_vector_type(4)));
+__attribute__((min_vector_width(512))) void E_4_4(float* restrict data0_16, float* restrict data1_16, short* restrict data2_16, const int block_lo_, const int block_hi_) {
+  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
+    int alu0 = ((block_lo_+Lidx0)<<2);
+    short val0 = (*(data2_16+(alu0+1)));
+    short val1 = (*(data2_16+(alu0+2)));
+    short val2 = (*(data2_16+(alu0+3)));
+    short val3 = (*(data2_16+alu0));
+    float4 val4 = (*((float4*)((data1_16+alu0))));
+    short4 cast0 = __builtin_convertvector(val4, short4);
+    float4 cast1 = __builtin_convertvector(((cast0+(short4){val3,val0,val1,val2})*((short)(3))), float4);
+    *((float4*)((data0_16+alu0))) = cast1;
+  }
+}
+

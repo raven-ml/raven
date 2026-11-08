@@ -1,0 +1,14 @@
+# tolk D27 D80 D88 D151 D342 golden=2ac991b6551c027ca4a6ae156f468dec
+typedef __fp16 __fp164 __attribute__((aligned(2),ext_vector_type(4)));
+typedef short short4 __attribute__((aligned(2),ext_vector_type(4)));
+__attribute__((min_vector_width(512))) void E_4_4(__fp16* restrict data0_16, __fp16* restrict data1_16, const int block_lo_, const int block_hi_) {
+  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
+    int alu0 = ((block_lo_+Lidx0)<<2);
+    __fp164 val0 = (*((__fp164*)((data1_16+alu0))));
+    __fp164 alu1 = ((val0<((__fp16)(-1.0f)))?__builtin_bit_cast(__fp16, (unsigned short)(0x7e00u)):val0);
+    __fp164 alu2 = ((((__fp16)(({float z = ((__fp16)(0.0f)); __asm__("" : "+x"(z)); z;})))<val0)?val0:((__fp16)(__builtin_inff())));
+    __fp164 alu3 = ((val0<((__fp16)(1.0f)))?((__fp16)(-__builtin_inff())):val0);
+    *((__fp164*)((data0_16+alu0))) = (alu2+alu1+alu3);
+  }
+}
+

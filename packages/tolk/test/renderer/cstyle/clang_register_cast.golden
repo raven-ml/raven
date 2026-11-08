@@ -1,5 +1,5 @@
 
-__attribute__((min_vector_width(512))) void register_cast(unsigned long* restrict data0_1) {
+void register_cast(unsigned long* restrict data0_1) {
   unsigned int buf0[2];
   *(buf0+0) = 1u;
   *(buf0+1) = 2u;

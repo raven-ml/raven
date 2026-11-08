@@ -1,0 +1,34 @@
+# tolk D80 D141 D151 D342 golden=19fa165ac8aeb225e7ffd1c55a6f69f4
+typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
+typedef unsigned short unsigned_short4 __attribute__((aligned(2),ext_vector_type(4)));
+typedef unsigned int unsigned_int4 __attribute__((aligned(4),ext_vector_type(4)));
+typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));
+typedef unsigned short unsigned_short4 __attribute__((aligned(2),ext_vector_type(4)));
+__attribute__((min_vector_width(512))) void E_4_4(float* restrict data0_16, float* restrict data1_16, unsigned short* restrict data2_16, const int block_lo_, const int block_hi_) {
+  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
+    int alu0 = ((block_lo_+Lidx0)<<2);
+    unsigned short val0 = (*(data2_16+(alu0+1)));
+    unsigned short val1 = (*(data2_16+(alu0+2)));
+    unsigned short val2 = (*(data2_16+(alu0+3)));
+    unsigned short val3 = (*(data2_16+alu0));
+    float4 val4 = (*((float4*)((data1_16+alu0))));
+    unsigned_int4 cast0 = ((unsigned_int4)((float4)(val4)));
+    unsigned_int4 alu1 = (((cast0&65535u)!=0u)?(cast0|65536u):cast0);
+    unsigned_int4 alu2 = (((-cast0&2139095040u)!=0u)?(cast0+((cast0>>16u)&1u)+32767u):alu1);
+    unsigned_short4 cast1 = __builtin_convertvector((alu2>>16u), unsigned_short4);
+    unsigned_int4 cast2 = __builtin_convertvector(cast1, unsigned_int4);
+    unsigned_int4 cast3 = __builtin_convertvector(((unsigned_short4)((unsigned_short4)((unsigned_short4){val3,val0,val1,val2}))), unsigned_int4);
+    unsigned_int4 cast4 = ((unsigned_int4)((float4)((((float4)((unsigned_int4)((cast2<<16u))))+((float4)((unsigned_int4)((cast3<<16u))))))));
+    unsigned_int4 alu3 = (((cast4&65535u)!=0u)?(cast4|65536u):cast4);
+    unsigned_int4 alu4 = (((-cast4&2139095040u)!=0u)?(cast4+((cast4>>16u)&1u)+32767u):alu3);
+    unsigned_short4 cast5 = __builtin_convertvector((alu4>>16u), unsigned_short4);
+    unsigned_int4 cast6 = __builtin_convertvector(cast5, unsigned_int4);
+    unsigned_int4 cast7 = ((unsigned_int4)((float4)((((float4)((unsigned_int4)((cast6<<16u))))*3.0f))));
+    unsigned_int4 alu5 = (((cast7&65535u)!=0u)?(cast7|65536u):cast7);
+    unsigned_int4 alu6 = (((-cast7&2139095040u)!=0u)?(cast7+((cast7>>16u)&1u)+32767u):alu5);
+    unsigned_short4 cast8 = __builtin_convertvector((alu6>>16u), unsigned_short4);
+    unsigned_int4 cast9 = __builtin_convertvector(cast8, unsigned_int4);
+    *((float4*)((data0_16+alu0))) = ((float4)((unsigned_int4)((cast9<<16u))));
+  }
+}
+

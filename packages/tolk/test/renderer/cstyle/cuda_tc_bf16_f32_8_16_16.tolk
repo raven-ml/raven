@@ -1,0 +1,48 @@
+# tolk D105 D210 golden=10a301172a26464cc6400cfb4c9df778
+typedef unsigned int uint;
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+#include <cuda_bf16.h>
+#define make_nv_bfloat162 make_bfloat162
+struct __align__(16) nv_bfloat168 { nv_bfloat16 x, y, z, w, a, b, c, d; }; __device__ nv_bfloat168 make_nv_bfloat168(nv_bfloat16 x, nv_bfloat16 y, nv_bfloat16 z, nv_bfloat16 w, nv_bfloat16 a, nv_bfloat16 b, nv_bfloat16 c, nv_bfloat16 d) { nv_bfloat168 r={x, y, z, w, a, b, c, d}; return r; }
+struct __align__(8) nv_bfloat164 { nv_bfloat16 x, y, z, w; }; __device__ nv_bfloat164 make_nv_bfloat164(nv_bfloat16 x, nv_bfloat16 y, nv_bfloat16 z, nv_bfloat16 w) { nv_bfloat164 r={x, y, z, w}; return r; }
+__device__ float4 __WMMA_8_16_16_bf16_f32(nv_bfloat168 a, nv_bfloat164 b, float4 c){
+  int *a_pk = (int *)(&a), *b_pk = (int *)(&b), *c_pk = (int *)(&c);
+  asm("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32"
+      "{%0, %1, %2, %3}, {%4, %5, %6, %7},"
+      "{%8, %9}, {%0, %1, %2, %3};"
+    : "+r"(c_pk[0]), "+r"(c_pk[1]), "+r"(c_pk[2]), "+r"(c_pk[3])
+    : "r"(a_pk[0]), "r"(a_pk[1]), "r"(a_pk[2]), "r"(a_pk[3]), "r"(b_pk[0]), "r"(b_pk[1]));
+  return c;
+}
+extern "C" __global__ void __launch_bounds__(32) r_32_2_2_2_2(float* data0_128, nv_bfloat16* data1_512, nv_bfloat16* data2_256) {
+  float buf0[4];
+  int lidx0 = threadIdx.x; /* 32 */
+  int alu0 = (lidx0>>2);
+  int alu1 = (lidx0&3);
+  *(buf0+0) = 0.0f;
+  *(buf0+1) = 0.0f;
+  *(buf0+2) = 0.0f;
+  *(buf0+3) = 0.0f;
+  for (int Lidx0 = 0; Lidx0 < 2; Lidx0++) {
+    int alu6 = ((alu1<<4)+(Lidx0<<7)+alu0);
+    nv_bfloat16 val0 = (*(data2_256+(alu6+64)));
+    nv_bfloat16 val1 = (*(data2_256+(alu6+72)));
+    nv_bfloat16 val2 = (*(data2_256+(alu6+8)));
+    nv_bfloat16 val3 = (*(data2_256+alu6));
+    int alu7 = ((alu1<<1)+(Lidx0<<4)+(alu0<<5));
+    nv_bfloat162 val4 = (*((nv_bfloat162*)((data1_512+(alu7+256)))));
+    nv_bfloat162 val5 = (*((nv_bfloat162*)((data1_512+(alu7+264)))));
+    nv_bfloat162 val6 = (*((nv_bfloat162*)((data1_512+(alu7+8)))));
+    nv_bfloat162 val7 = (*((nv_bfloat162*)((data1_512+alu7))));
+    float4 wmma0 = __WMMA_8_16_16_bf16_f32(make_nv_bfloat168(val7.x,val7.y,val4.x,val4.y,val6.x,val6.y,val5.x,val5.y), make_nv_bfloat164(val3,val2,val0,val1), make_float4((*(buf0+0)),(*(buf0+1)),(*(buf0+2)),(*(buf0+3))));
+    *(buf0+0) = wmma0.x;
+    *(buf0+1) = wmma0.y;
+    *(buf0+2) = wmma0.z;
+    *(buf0+3) = wmma0.w;
+  }
+  int alu13 = (lidx0<<1);
+  *((float2*)((data0_128+(alu13+64)))) = make_float2((*(buf0+2)),(*(buf0+3)));
+  *((float2*)((data0_128+alu13))) = make_float2((*(buf0+0)),(*(buf0+1)));
+}

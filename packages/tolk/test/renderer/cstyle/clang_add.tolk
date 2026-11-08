@@ -1,0 +1,11 @@
+# tolk D80 D151 golden=97fb972dac5bcf4f5c66417b04154509
+typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
+__attribute__((min_vector_width(512))) void E_16_4(float* restrict data0_64, float* restrict data1_64, float* restrict data2_64, const int block_lo_, const int block_hi_) {
+  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
+    int alu0 = ((block_lo_+Lidx0)<<2);
+    float4 val0 = (*((float4*)((data1_64+alu0))));
+    float4 val1 = (*((float4*)((data2_64+alu0))));
+    *((float4*)((data0_64+alu0))) = (val0+val1);
+  }
+}
+

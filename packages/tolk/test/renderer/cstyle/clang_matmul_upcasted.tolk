@@ -1,0 +1,58 @@
+# tolk D25 D80 D151 golden=2d25f72b0669f74d099ae4bd543db8fe
+typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
+__attribute__((min_vector_width(512))) void r_4_4_4_4_16(float* restrict data0_256, float* restrict data1_256, float* restrict data2_256, const int block_lo_, const int block_hi_) {
+  float buf0[16];
+  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {
+    int alu0 = (block_lo_+Lidx1);
+    int alu1 = (alu0<<6);
+    for (int Lidx2 = 0; Lidx2 < 4; Lidx2++) {
+      int alu2 = (Lidx2<<2);
+      *(buf0+0) = 0.0f;
+      *(buf0+1) = 0.0f;
+      *(buf0+10) = 0.0f;
+      *(buf0+11) = 0.0f;
+      *(buf0+12) = 0.0f;
+      *(buf0+13) = 0.0f;
+      *(buf0+14) = 0.0f;
+      *(buf0+15) = 0.0f;
+      *(buf0+2) = 0.0f;
+      *(buf0+3) = 0.0f;
+      *(buf0+4) = 0.0f;
+      *(buf0+5) = 0.0f;
+      *(buf0+6) = 0.0f;
+      *(buf0+7) = 0.0f;
+      *(buf0+8) = 0.0f;
+      *(buf0+9) = 0.0f;
+      for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+        int alu19 = (alu1+Lidx0);
+        float val0 = (*(data1_256+(alu19+16)));
+        float val1 = (*(data1_256+(alu19+32)));
+        float val2 = (*(data1_256+(alu19+48)));
+        float val3 = (*(data1_256+alu19));
+        float4 val4 = (*((float4*)((data2_256+((Lidx0<<4)+alu2)))));
+        *(buf0+0) = __builtin_fmaf(val3,val4[0],(*(buf0+0)));
+        *(buf0+1) = __builtin_fmaf(val3,val4[1],(*(buf0+1)));
+        *(buf0+10) = __builtin_fmaf(val1,val4[2],(*(buf0+10)));
+        *(buf0+11) = __builtin_fmaf(val1,val4[3],(*(buf0+11)));
+        *(buf0+12) = __builtin_fmaf(val2,val4[0],(*(buf0+12)));
+        *(buf0+13) = __builtin_fmaf(val2,val4[1],(*(buf0+13)));
+        *(buf0+14) = __builtin_fmaf(val2,val4[2],(*(buf0+14)));
+        *(buf0+15) = __builtin_fmaf(val2,val4[3],(*(buf0+15)));
+        *(buf0+2) = __builtin_fmaf(val3,val4[2],(*(buf0+2)));
+        *(buf0+3) = __builtin_fmaf(val3,val4[3],(*(buf0+3)));
+        *(buf0+4) = __builtin_fmaf(val0,val4[0],(*(buf0+4)));
+        *(buf0+5) = __builtin_fmaf(val0,val4[1],(*(buf0+5)));
+        *(buf0+6) = __builtin_fmaf(val0,val4[2],(*(buf0+6)));
+        *(buf0+7) = __builtin_fmaf(val0,val4[3],(*(buf0+7)));
+        *(buf0+8) = __builtin_fmaf(val1,val4[0],(*(buf0+8)));
+        *(buf0+9) = __builtin_fmaf(val1,val4[1],(*(buf0+9)));
+      }
+      int alu37 = (alu1+alu2);
+      *((float4*)((data0_256+(alu37+16)))) = (float4){(*(buf0+4)),(*(buf0+5)),(*(buf0+6)),(*(buf0+7))};
+      *((float4*)((data0_256+(alu37+32)))) = (float4){(*(buf0+8)),(*(buf0+9)),(*(buf0+10)),(*(buf0+11))};
+      *((float4*)((data0_256+(alu37+48)))) = (float4){(*(buf0+12)),(*(buf0+13)),(*(buf0+14)),(*(buf0+15))};
+      *((float4*)((data0_256+alu37))) = (float4){(*(buf0+0)),(*(buf0+1)),(*(buf0+2)),(*(buf0+3))};
+    }
+  }
+}
+

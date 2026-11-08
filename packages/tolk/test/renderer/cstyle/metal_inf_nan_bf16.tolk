@@ -1,0 +1,21 @@
+# tolk D27 D342 golden=1653454f2608aec80a12b957bb4e3364
+#include <metal_stdlib>
+using namespace metal;
+kernel void E_4_4(device bfloat* data0_16, device bfloat* data1_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  int lidx0 = lid.x; /* 4 */
+  int alu0 = (lidx0<<2);
+  bfloat4 val0 = (*((device bfloat4*)((data1_16+alu0))));
+  bfloat alu1 = ((val0.x<((bfloat)(-1.0f)))?as_type<bfloat>((unsigned short)(0x7fc0u)):val0.x);
+  bfloat alu2 = ((((bfloat)(0.0f))<val0.x)?val0.x:((bfloat)(INFINITY)));
+  bfloat alu3 = ((val0.x<((bfloat)(1.0f)))?((bfloat)(-INFINITY)):val0.x);
+  bfloat alu4 = ((val0.y<((bfloat)(-1.0f)))?as_type<bfloat>((unsigned short)(0x7fc0u)):val0.y);
+  bfloat alu5 = ((((bfloat)(0.0f))<val0.y)?val0.y:((bfloat)(INFINITY)));
+  bfloat alu6 = ((val0.y<((bfloat)(1.0f)))?((bfloat)(-INFINITY)):val0.y);
+  bfloat alu7 = ((val0.z<((bfloat)(-1.0f)))?as_type<bfloat>((unsigned short)(0x7fc0u)):val0.z);
+  bfloat alu8 = ((((bfloat)(0.0f))<val0.z)?val0.z:((bfloat)(INFINITY)));
+  bfloat alu9 = ((val0.z<((bfloat)(1.0f)))?((bfloat)(-INFINITY)):val0.z);
+  bfloat alu10 = ((val0.w<((bfloat)(-1.0f)))?as_type<bfloat>((unsigned short)(0x7fc0u)):val0.w);
+  bfloat alu11 = ((((bfloat)(0.0f))<val0.w)?val0.w:((bfloat)(INFINITY)));
+  bfloat alu12 = ((val0.w<((bfloat)(1.0f)))?((bfloat)(-INFINITY)):val0.w);
+  *((device bfloat4*)((data0_16+alu0))) = bfloat4((alu2+alu1+alu3),(alu5+alu4+alu6),(alu8+alu7+alu9),(alu11+alu10+alu12));
+}
