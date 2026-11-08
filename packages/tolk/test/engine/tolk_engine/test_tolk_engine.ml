@@ -1159,7 +1159,8 @@ let custom_kernels_of_one_name ?(devices = devices) ~n (k1, k2) () =
 
 (* A custom kernel on CPU:1 that adds [k], bound to 3, to [a], one element,
    beside a kernel of the schedule's own that adds [k] to [a] too: they run as
-   one kernel, and both read [k]. *)
+   one kernel, and both read [k], the run's binding or else the 3 their call
+   binds. *)
 let custom_kernel_beside_one_by_name ?(devices = devices) () =
   let k = Ops.variable "k" (Dtype.Value.of_int 0) (Dtype.Value.of_int 8) in
   let bound = Shape.bind k (`Int (Bigint.of_int 3)) in
@@ -1184,12 +1185,17 @@ let custom_kernel_beside_one_by_name ?(devices = devices) () =
   equal int ~msg:"kernels" 1 (List.length calls);
   let s, vars, storage = linked ~devices big in
   equal (list (pair string int)) ~msg:"the run's variables" [ ("k", 3) ] vars;
-  Engine.run ~vars s [||];
   let of_node u = List.find (fun s -> s.node == u) storage in
   let xs = Array.map Dtype.Value.to_int (of_node a).before in
-  let plus = Array.map (fun x -> `Int (Bigint.of_int (x + 3))) xs in
-  equal values ~msg:"the custom kernel's" plus (contents (of_node o1));
-  equal values ~msg:"the schedule's" plus (contents (of_node o2))
+  let plus v = Array.map (fun x -> `Int (Bigint.of_int (x + v))) xs in
+  List.iter
+    (fun (run, v) ->
+      Engine.run ~vars:run s [||];
+      let msg what = Printf.sprintf "%s, k = %d" what v in
+      equal values ~msg:(msg "the custom kernel's") (plus v)
+        (contents (of_node o1));
+      equal values ~msg:(msg "the schedule's") (plus v) (contents (of_node o2)))
+    [ ([ ("k", 7) ], 7); ([], 3) ]
 
 (* A custom kernel on CPU:1 that adds [k], bound to 3, to [a], of four
    elements: a run that binds [k] adds the run's value, and a run that does not
@@ -1220,6 +1226,28 @@ let custom_kernel_rebound ?(devices = devices) () =
       equal values ~msg:(Printf.sprintf "k = %d" v) (plus v)
         (contents (of_node o)))
     [ ([ ("k", 1) ], 1); ([ ("k", 7) ], 7); ([], 3) ]
+
+(* A kernel of the schedule's own on CPU:1 that adds [k], bound to 3, to [a],
+   of four elements: its call binds no variable, so it reads [k] from the run
+   alone, and a run that does not bind [k] is refused. A run binding [k] to 7
+   adds 7. *)
+let reads_its_variable_from_the_run ?(devices = devices) () =
+  let k = Ops.variable "k" (Dtype.Value.of_int 0) (Dtype.Value.of_int 8) in
+  let bound = Shape.bind k (`Int (Bigint.of_int 3)) in
+  let a = Ops.new_buffer "CPU:1" 4 Int32
+  and o = Ops.new_buffer "CPU:1" 4 Int32 in
+  let k4 = Shape.reshape (Ops.cast bound Int32) [ Int 1 ] in
+  let big = Ops.sink [ Ops.after o [ Ops.store o Ops.O.(a + k4) ] ] in
+  let s, vars, storage = linked ~devices big in
+  equal (list (pair string int)) ~msg:"the run's variables" [ ("k", 3) ] vars;
+  let of_node u = List.find (fun s -> s.node == u) storage in
+  raises_match (Exn.invalid_arg ~sub:"variable k is unbound") (fun () ->
+      Engine.run ~vars:[] s [||]);
+  Engine.run ~vars:[ ("k", 7) ] s [||];
+  let xs = Array.map Dtype.Value.to_int (of_node a).before in
+  equal values ~msg:"k = 7"
+    (Array.map (fun x -> `Int (Bigint.of_int (x + 7))) xs)
+    (contents (of_node o))
 
 (* A custom kernel on CPU:1 that adds one to the first [k] of eight elements
    of [a], [k] bound to 3, its range [k] long: a run that binds [k] adds to
@@ -3063,6 +3091,8 @@ let schedules =
       @@ test "assign_bitcast stores through a bitcast" stores_through_a_bitcast;
       test "a schedule runs with each binding of its variables"
         runs_each_binding;
+      test "a kernel whose call binds no variable reads it from the run alone"
+        (reads_its_variable_from_the_run ~devices);
       test
         "one program launched on several devices computes each device's \
          window at its start"

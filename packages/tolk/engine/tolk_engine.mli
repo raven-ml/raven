@@ -131,9 +131,13 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> unit
 (** [run ~vars s slots] runs [s] with the buffer of [slots.(i)] bound to its
     parameter [i] (an untagged {!Tolk.Op.Param}), on the parameter's device,
     and each variable of the schedule bound to its value in [vars]
-    (default [[]]), or else to the value it is bound to. It runs the calls of
-    [s] in order, with each range's trips, and each back edge's while its flag
-    holds ({!Rig_program.run}).
+    (default [[]]), or else to the value its call binds it to
+    ({!Tolk.Realize.get_call_kernel_args}). The calls of the kernels
+    {!Tolk.Schedule.create_linear_with_vars} makes bind no name their sink
+    binds to one value, unless the kernel runs as one with a custom kernel
+    that takes it, so [vars] must bind such a name; that function returns it
+    among its variables. It runs the calls of [s] in order, with each range's
+    trips, and each back edge's while its flag holds ({!Rig_program.run}).
 
     A kernel's vector accesses are aligned to their width only where each buffer
     it accesses starts at its parameter's phase: its first byte lies the
@@ -157,8 +161,9 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> unit
 
     Raises [Invalid_argument] if [slots] does not bind each parameter of [s] to
     a buffer of its device holding its parameter's bytes, if a
-    buffer a kernel accesses does not start at its parameter's phase, if a
-    variable is unbound, and as {!Rig_program.run} does; {!Rig.Out_of_memory}
+    buffer a kernel accesses does not start at its parameter's phase, if
+    [vars] leaves out a variable its call binds no value to, and as
+    {!Rig_program.run} does; {!Rig.Out_of_memory}
     if a device cannot allocate the storage of a schedule linked {!Per_run}:
     no call has run, and the storage the run made is returned. *)
 

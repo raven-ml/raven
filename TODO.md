@@ -130,9 +130,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   AMD's loads are unmeasured
 - HIP's unstaged tensor-core operands load 8 bytes again since D261's copy
   rule: unmeasured on nonnormal
-- kernels the schedule splits read a one-value variable only from the run,
-  so `Engine.run ~vars:[]` raises "unbound" for them where a call's bound
-  value would serve (the `.mli` allows either; no caller reaches it)
 - AMD's comgr and Metal's compiler run LLVM's loop-idiom pass too; D167's
   `-mllvm -disable-loop-idiom-all` covers host Clang only, and no CI job runs
   LLVM 22+, where the pass's CRC recogniser walks a running select's paths
