@@ -480,6 +480,7 @@ let asof_range () =
 (* [window e] is [e] over [nulls]'s 2^20 rows: [f] has 10% nulls and [i] ties
    over a million values, in no order. *)
 let window e = run Query.(of_table nulls |> select Expr.[ "w" := e ])
+let hash_keys e = window Expr.(hash ~seed:1 e)
 
 (* Lists: 2^16 rows of 0 to 64 float64 elements, about 32 each, reduced with
    the row's factor [w]. *)
@@ -587,6 +588,8 @@ let () =
                 Query.(
                   of_table nulls
                   |> filter Expr.(is_in texts (Col.string "s"))));
+          Thumper.bench "Hash/int-1M" (fun () -> hash_keys (Col.int "i"));
+          Thumper.bench "Hash/text-1M" (fun () -> hash_keys (Col.string "s"));
           Thumper.bench "Window/rolling-mean-28-1M" (fun () ->
               window Expr.(window ~before:(int 28) (mean (Col.float "f"))));
           Thumper.bench "Window/rolling-sum-on-1M" (fun () ->
