@@ -192,8 +192,10 @@ let uncut ?axis p =
         normal p.set
           (Array.fold_left whole (Grid.closed p.grid) (Grid.cuts p.grid))
   | Some axis ->
-      if Array.exists (fun (a, _) -> a = axis) (Grid.cuts p.grid) then
-        normal p.set (Grid.uncut p.grid ~axis)
+      if
+        Grid.is_cut p.grid
+        && Array.exists (fun (a, _) -> a = axis) (Grid.cuts p.grid)
+      then normal p.set (Grid.uncut p.grid ~axis)
       else p
 
 let closed p =

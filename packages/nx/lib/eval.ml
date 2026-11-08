@@ -797,7 +797,7 @@ let identity p r =
   !i = r
 
 let mapped ~by p x =
-  if identity p (Array.length (Prim.shape x)) then begin
+  if identity p (Prim.rank x) then begin
     Prim.alive ~by x;
     x
   end

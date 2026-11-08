@@ -1672,6 +1672,22 @@ let rec map_entry : type d. (d pick * int option) list -> int -> int -> int =
       else map_entry rest (j - 1) (a + 1)
   | (_, None) :: rest -> map_entry rest j used
 
+(* The selection [picks]'s axis map of [n] entries, each from {!map_entry}: an
+   iarray literal up to four axes, which allocates no closure and no copy. *)
+let axis_map picks n : int iarray =
+  match n with
+  | 1 -> [| map_entry picks 0 0 |]
+  | 2 -> [| map_entry picks 0 0; map_entry picks 1 0 |]
+  | 3 -> [| map_entry picks 0 0; map_entry picks 1 0; map_entry picks 2 0 |]
+  | 4 ->
+      [|
+        map_entry picks 0 0;
+        map_entry picks 1 0;
+        map_entry picks 2 0;
+        map_entry picks 3 0;
+      |]
+  | n -> Iarray.init n (fun j -> map_entry picks j 0)
+
 (* Whether a held axis takes the shape of positions of two axes or more. *)
 let rec spreads : type d. (d pick * int option) list -> bool = function
   | [] -> false
@@ -1691,15 +1707,14 @@ let selected ~by picks x =
   (* Each [At] axis now has extent 1 and goes; each [New] axis comes; each
      held axis takes its positions' shape. An axis map, so that each kept
      axis keeps its cut. *)
-  let s' = selection x picks in
   let n = mapped_rank picks (ndim x - used_axes picks) in
   (* Without a pick that drops or adds an axis, or with no axis left, a
      reshape has no axis of one element to guess at. *)
-  if n = 0 || not (moves_axes picks) then Eval.reshape ~by s' y
+  if n = 0 || not (moves_axes picks) then
+    Eval.reshape ~by (selection x picks) y
   else
-    let map = Iarray.init n (fun j -> map_entry picks j 0) in
-    let y = Eval.mapped ~by map y in
-    if spreads picks then Eval.reshape ~by s' y else y
+    let y = Eval.mapped ~by (axis_map picks n) y in
+    if spreads picks then Eval.reshape ~by (selection x picks) y else y
 
 let slice_by ~by idx x =
   let picks = picks ~by idx x in

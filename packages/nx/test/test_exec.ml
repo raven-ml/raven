@@ -1535,7 +1535,7 @@ let allocation =
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           let ids = on_host Plain D.Int64 [| 3 |] [| 0L; 2L; 3L |] in
           expect (allocated (fun () -> Nx.take ~axis:0 ids a))
-          @@ __POS_OF__ {| 175 words |});
+          @@ __POS_OF__ {| 173 words |});
       test "a set of a row of a 4x4 host value allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
