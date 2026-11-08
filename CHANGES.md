@@ -3926,6 +3926,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Expr.mean` of integers of at most 32 bits sums exactly in each frame of
+  fewer than 2^31 values, however many rows its batch holds, and a duration
+  `sum` over 2^31 values or more no longer wraps to a wrong value.
 - Add `Kit.join_asof`, which pairs each left row with the last right row at or
   before its key, the first at or after it, or the nearer of the two by exact
   distance, within equal `~by` keys. Ties follow the right side's order.

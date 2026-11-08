@@ -2126,6 +2126,147 @@ let reductions =
           equal
             (array (option float_exact))
             [| Some 2147483647. |] (floats t "m"));
+      test "a uint32 mean is exact in each frame" (fun () ->
+          (* 2^22 values of 2^32 - 1 in group 0: a float64 sum of them passes
+             2^53, where it rounds. *)
+          let n = 1 lsl 22 in
+          let g =
+            Nx.concatenate ~axis:0
+              [ Nx.zeros Nx.int64 [| n |]; Nx.ones Nx.int64 [| 3 |] ]
+          in
+          let x =
+            Nx.concatenate ~axis:0
+              [
+                Nx.full Nx.uint32 [| n |] 0xFFFF_FFFFl;
+                Nx.ones Nx.uint32 [| 3 |];
+              ]
+          in
+          let t = v [ ("g", Column.of_tensor g); ("x", Column.of_tensor x) ] in
+          let t =
+            require_ok ~pp:Error.pp
+              (aggregate [ "g" ] Expr.[ "m" := mean (Col.int "x") ] t)
+          in
+          equal
+            (array (option float_exact))
+            [| Some 4294967295.; Some 1. |] (floats t "m"));
+      prop "a duration sum is exact or a data error"
+        Gen.(
+          let tick =
+            frequency
+              [
+                (2, int64);
+                (1, int64_range (-4L) 4L);
+                ( 2,
+                  of_list
+                    Int64.
+                      [
+                        max_int; min_int; pred max_int; succ min_int;
+                        shift_left 1L 42; neg (shift_left 1L 42);
+                        pred (shift_left 1L 42); shift_left 1L 21;
+                        pred (shift_left 1L 21); neg (shift_left 1L 21);
+                      ] );
+              ]
+          in
+          list ~size:(int_range 0 12) (pair (int_range 0 2) tick))
+        (fun rows ->
+          (* A group's sum, exact in OCaml's 63-bit ints as high and low 32
+             bits apart, [None] where it leaves int64. *)
+          let sum g =
+            let add (hi, lo) (k, x) =
+              if k <> g then (hi, lo)
+              else
+                ( hi + Int64.to_int (Int64.shift_right x 32),
+                  lo + Int64.to_int (Int64.logand x 0xFFFF_FFFFL) )
+            in
+            let hi, lo = List.fold_left add (0, 0) rows in
+            let hi = hi + (lo asr 32) and lo = lo land 0xFFFF_FFFF in
+            if hi < -0x8000_0000 || hi >= 0x8000_0000 then None
+            else Some Int64.(logor (shift_left (of_int hi) 32) (of_int lo))
+          in
+          let groups =
+            List.fold_left
+              (fun gs (g, _) -> if List.mem g gs then gs else gs @ [ g ])
+              [] rows
+          in
+          let sums = List.map sum groups in
+          (* Whether group [g]'s values' magnitudes add past int64. *)
+          let wide g =
+            let m (k, x) = if k = g then Float.abs (Int64.to_float x) else 0. in
+            List.fold_left (fun a r -> a +. m r) 0. rows > 0x1p63
+          in
+          cover "an overflow" (List.mem None sums);
+          cover "a sum within int64 of values past it"
+            ((not (List.mem None sums))
+            && List.exists2
+                 (fun g s -> wide g && Option.is_some s)
+                 groups sums);
+          let t =
+            v
+              [
+                ("g", Column.v Type.int64 (Array.of_list (List.map fst rows)));
+                ("d", durations (Array.of_list (List.map snd rows)));
+              ]
+          in
+          let got =
+            match aggregate [ "g" ] Expr.[ "s" := sum (Col.span "d") ] t with
+            | Error _ -> None
+            | Ok t ->
+                let s = Column.to_tensor Nx.int64 (column t "s") in
+                Some (Array.to_list (Nx.to_array s))
+          in
+          let want =
+            if List.mem None sums then None
+            else Some (List.filter_map Fun.id sums)
+          in
+          equal (option (list int64)) want got);
+      prop "a duration sum is exact over 2^31 values and more"
+        (Gen.(
+          let tick =
+            frequency
+              [
+                (2, int64);
+                (1, int64_range (-4L) 4L);
+                (1, of_list Int64.[ max_int; min_int; shift_left 1L 32 ]);
+              ]
+          in
+          let* xs = list ~size:(int_range 1 6) tick in
+          let most = ((1 lsl 42) - 1) / List.length xs in
+          let+ copies =
+            of_list [ 1; 1 lsl 31; (1 lsl 31) + 1; 3 lsl 30; most ]
+          in
+          (xs, copies))
+        |> Gen.with_pp (fun ppf (xs, copies) ->
+               Format.fprintf ppf "%d copies of [%s]" copies
+                 (String.concat "; " (List.map Int64.to_string xs))))
+        (fun (xs, copies) ->
+          (* The sum of [xs], exact in OCaml's 63-bit ints as high and low 32
+             bits apart, then times [copies], [None] where either leaves
+             int64. *)
+          let add (hi, lo) x =
+            ( hi + Int64.to_int (Int64.shift_right x 32),
+              lo + Int64.to_int (Int64.logand x 0xFFFF_FFFFL) )
+          in
+          let hi, lo = List.fold_left add (0, 0) xs in
+          let hi = hi + (lo asr 32) and lo = lo land 0xFFFF_FFFF in
+          let s =
+            if hi < -0x8000_0000 || hi >= 0x8000_0000 then None
+            else Some Int64.(logor (shift_left (of_int hi) 32) (of_int lo))
+          in
+          let c = Int64.of_int copies in
+          let times s =
+            let fits =
+              if Int64.compare s 0L >= 0 then
+                Int64.compare s (Int64.div Int64.max_int c) <= 0
+              else Int64.compare s (Int64.div Int64.min_int c) >= 0
+            in
+            if fits then Some (Int64.mul s c) else None
+          in
+          let want = Option.bind s times in
+          cover "a sum of 2^31 values or more within int64"
+            (copies >= 1 lsl 31 && Option.is_some want);
+          cover "an overflow past 2^31 values"
+            (copies >= 1 lsl 31 && Option.is_none want);
+          equal (option int64) want (duration_sum (Array.of_list xs) ~copies));
       test "a duration sum that overflows fails at its group's first row"
         (fun () ->
           let t =

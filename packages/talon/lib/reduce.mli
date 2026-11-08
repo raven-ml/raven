@@ -157,6 +157,16 @@ val reduce :
     integers at [int64], and floats and durations at [ty]. Over no values
     [count], [sum] and [n_unique] are [0], and the others null. *)
 
+val exact_sum :
+  'a Type.t ->
+  (Nx.host Nx.int64_t -> Nx.host Nx.int64_t) ->
+  Nx.host Nx.int64_t ->
+  Column.t * (int * string) option
+(** [exact_sum ty sum x] is each frame's sum, by [sum], of the [int64] values
+    [x] of the duration type [ty], exact over fewer than 2{^42} values a frame,
+    and null where it leaves [int64], with the first such frame and why. [sum]
+    adds each frame's values of a column of integers. *)
+
 val fixed :
   Type.any -> ?valid:Nx.host Nx.bool_t -> ('a, 'b, Nx.host) Nx.t -> Column.t
 (** [fixed ty ~valid x] is the column of [ty] stored as [x], null where [valid]

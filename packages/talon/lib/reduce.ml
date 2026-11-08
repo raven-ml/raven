@@ -102,16 +102,18 @@ let overflows c =
       Nx.Dtype.is Float dt && Nx.Dtype.bits dt = 64
   | _ -> false
 
-(* Whether [c]'s values are integers whose int64 sum is exact. *)
-let exact_sums c =
+(* Whether [c]'s values are integers of at most 32 bits, whose int64 sum over
+   fewer than [exact_values] of them is exact. *)
+let small_ints c =
   match Column.data c with
   | Fixed (P x) -> (
       let dt = Nx.dtype x in
       match Nx.Dtype.kind dt with
-      | Signed | Unsigned ->
-          Nx.Dtype.bits dt <= 32 && Column.length c < 1 lsl 31
+      | Signed | Unsigned -> Nx.Dtype.bits dt <= 32
       | _ -> false)
   | _ -> false
+
+let exact_values = 1 lsl 31
 
 let sizes s =
   match s.sizes with
@@ -157,20 +159,27 @@ let first_where m why =
   let gs = Nx.positions m in
   if Nx.dim 0 gs = 0 then None else Some (Int64.to_int (Nx.item [ 0 ] gs), why)
 
-(* [exact_sum ty sum x] sums by [sum] the [int64] values [x] exactly, as high
-   and low 32 bits apart, and is null where a sum leaves [int64]. *)
+(* [exact_sum ty sum x] sums by [sum] the [int64] values [x] exactly, and is
+   null where a sum leaves [int64]. A value is three limbs of 21 bits, the top
+   one signed, whose sums are exact over fewer than 2^42 values: two limbs of
+   32 bits sum exactly over fewer than 2^31 only, which a frame can exceed. *)
+let limb = 21
+
 let exact_sum ty sum x =
-  let hi = Nx.rshift x 32 in
-  let lo = Nx.sub x (Nx.lshift hi 32) in
-  let lo = sum lo in
-  let carry = Nx.rshift lo 32 in
-  let hi = Nx.add (sum hi) carry in
-  let fits =
-    Nx.logical_and
-      (Nx.greater_equal_s hi (-0x8000_0000L))
-      (Nx.less_s hi 0x8000_0000L)
+  let split x =
+    let hi = Nx.rshift x limb in
+    (hi, Nx.sub x (Nx.lshift hi limb))
   in
-  let sum = Nx.add (Nx.lshift hi 32) (Nx.sub lo (Nx.lshift carry 32)) in
+  let mid, c = split x in
+  let a, b = split mid in
+  let carry, c = split (sum c) in
+  let carry, b = split (Nx.add (sum b) carry) in
+  let a = Nx.add (sum a) carry in
+  let top = Int64.shift_left 1L (63 - (2 * limb)) in
+  let fits =
+    Nx.logical_and (Nx.greater_equal_s a (Int64.neg top)) (Nx.less_s a top)
+  in
+  let sum = Nx.add (Nx.lshift a (2 * limb)) (Nx.add (Nx.lshift b limb) c) in
   let why = Format.asprintf "the sum overflows %a" Type.pp ty in
   (fixed (Any ty) ~valid:fits sum, first_where (Nx.logical_not fits) why)
 
@@ -267,15 +276,22 @@ let fsum =
   memo (fun p -> p.fsum) (fun p x -> p.fsum <- x) (fun p ->
       p.v.fold Add (tensor Nx.float64 p.c))
 
-(* Integers of at most 32 bits sum exactly in int64 over fewer than 2^31 rows,
-   then round once to float64, as a float64 sum does wherever its partial sums
-   are exact. *)
+(* Integers of at most 32 bits sum exactly in int64 over a frame of fewer than
+   2^31 values, then round once to float64, as a float64 sum does wherever its
+   partial sums are exact. The test is each frame's, since a batch holds many
+   frames: a frame of more values sums in float64. *)
 let mean =
   memo (fun p -> p.mean) (fun p x -> p.mean <- x) (fun p ->
+      let n = counts p in
       let sum =
-        if exact_sums p.c then Nx.cast Nx.float64 (sum p) else fsum p
+        if not (small_ints p.c) then fsum p
+        else
+          let wide = Nx.greater_equal_s n (Int64.of_int exact_values) in
+          let exact = Nx.cast Nx.float64 (sum p) in
+          if Nx.item [] (Nx.any wide) then Nx.where wide (fsum p) exact
+          else exact
       in
-      Nx.div sum (Nx.cast Nx.float64 (counts p)))
+      Nx.div sum (Nx.cast Nx.float64 n))
 
 let moments variance =
   memo (fun p -> p.moments) (fun p x -> p.moments <- x) variance

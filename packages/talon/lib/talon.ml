@@ -482,3 +482,9 @@ module Kit = struct
     in
     run [] queries
 end
+
+let duration_sum xs ~copies =
+  let x = Nx.create Nx.int64 [| Array.length xs |] xs in
+  let sum y = Nx.mul_s (Nx.reshape [| 1 |] (Nx.sum y)) (Int64.of_int copies) in
+  let c, _ = Reduce.exact_sum (Type.duration Ns) sum x in
+  (Column.options Kind.span c).(0) |> Option.map Time.Span.to_ns

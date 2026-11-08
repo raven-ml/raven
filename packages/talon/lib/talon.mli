@@ -1326,9 +1326,9 @@ module Expr : sig
 
   val mean : ('a, row) t -> (float, agg) t
   (** [mean a] is the arithmetic mean of [a]'s values, as [float64]: their
-      sum divided by their count. Integers of at most 32 bits over fewer than
-      2{^31} rows sum exactly in [int64], and the sum rounds once to
-      [float64]; other values sum in [float64] in row order. [a] is an
+      sum divided by their count. Integers of at most 32 bits sum exactly in
+      [int64] in a frame of fewer than 2{^31} values, and the sum rounds once
+      to [float64]; other values sum in [float64] in row order. [a] is an
       integer or float expression, as for {!std}, {!var}, {!median} and
       {!quantile}; other types are a problem. *)
 
@@ -2964,3 +2964,12 @@ module Kit : sig
 
       Raises [Invalid_argument] if [cs] names a column twice. *)
 end
+
+(**/**)
+
+(* For talon's tests. *)
+
+val duration_sum : int64 array -> copies:int -> int64 option
+(** [duration_sum xs ~copies] is the sum of [copies] copies of each tick of
+    [xs], as a [duration[ns]] {!Expr.sum} computes it, or [None] if it leaves
+    [int64]: a frame of [copies * Array.length xs] values, held as [xs]. *)
