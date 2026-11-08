@@ -708,17 +708,9 @@ let launch b call prg d =
      scalar, each aligned to its size, as the program reads them
      ({!Tolk.Codegen}). A split program's bounds are those of its whole loop,
      which its entry narrows to each block's. *)
-  let taken =
-    List.filter (fun u -> Ops.op u = Op.Param) (Ops.src (Ops.nth prg 1))
-  in
-  let position (p, _) =
-    Option.value (List.find_index (Ops.equal p) taken) ~default:max_int
-  in
   let fields =
-    List.stable_sort
-      (fun a b -> Int.compare (position a) (position b))
-      (List.combine (Shape.kernel_params prg)
-         (Realize.get_call_kernel_args call prg))
+    List.combine (Shape.kernel_params prg)
+      (Realize.get_call_kernel_args call prg)
   in
   let offsets = Device.Tiny_elf.layout (List.map fst fields) in
   (* A structure's size is a multiple of its widest field's. *)
