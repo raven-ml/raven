@@ -13,7 +13,8 @@
    cases are those whose compile time rune's lowering, tolk's vectors, a
    library's stores of its intermediates or the number of devices a program
    spans decide. The [cuda/] cases run on CUDA's first GPU, whose driver also
-   loads each binary, and are left out without one.
+   loads each binary, and the [amd/] cases on AMD's first GPU, through Linux's
+   amdgpu driver: each is left out without its GPU.
 
    A [warm/] case's sample is a later process's first call: the case's setup
    compiles it into a disk cache, which each sample's process reads its
@@ -494,6 +495,40 @@ let cuda_sines () =
         (fun x -> List.fold_left (fun x _ -> Nx.sin x) x (List.init 8 Fun.id))
         x
 
+(* A gradient step of a two-layer perceptron of 64 rows of 256 float32
+   values, normalized between its layers, under a softmax cross-entropy, on
+   AMD's first GPU: its forward and backward passes are some 15 kernels, each
+   compiled by comgr, which sets the first call's cost. *)
+let amd_step () =
+  match Rig.open_ (Rig_amd_amdgpu.gpu 0) with
+  | Error e -> failwith e
+  | Ok gpu ->
+      let module D = (val Nx.devices [ gpu ] : Nx.Devices) in
+      let host shape = Nx.sub_s (Nx.Rng.uniform Nx.float32 shape) 0.5 in
+      let f32 shape = Nx.place D.on (host shape) in
+      let x = f32 [| 64; 256 |] in
+      let target = Nx.place D.on (Nx.abs (host [| 64; 16 |])) in
+      let loss (w1, w2) =
+        let h = Nx.matmul x w1 in
+        let mu = Nx.mean ~axes:[ 1 ] ~keepdims:true h in
+        let d = Nx.sub h mu in
+        let var = Nx.mean ~axes:[ 1 ] ~keepdims:true (Nx.square d) in
+        let a = Nx.tanh (Nx.mul d (Nx.rsqrt (Nx.add_s var 1e-5))) in
+        let logp = Nx.log_softmax ~axes:[ 1 ] (Nx.matmul a w2) in
+        Nx.neg (Nx.mean (Nx.sum ~axes:[ 1 ] (Nx.mul target logp)))
+      in
+      let step (w1, w2) =
+        let g1, g2 = Rune.grad Nx.Ptree.(pair tensor tensor) loss (w1, w2) in
+        (Nx.sub w1 (Nx.mul_s g1 0.1), Nx.sub w2 (Nx.mul_s g2 0.1))
+      in
+      let w = Nx.Ptree.(pair tensor tensor) in
+      ignore
+        (Sys.opaque_identity
+           (Rune.jit
+              Nx.Ptree.(w @-> returns w)
+              step
+              (f32 [| 256; 128 |], f32 [| 128; 16 |])))
+
 let cases =
   [
     ("linalg/solve-32", solve);
@@ -528,6 +563,7 @@ let cases =
     ("devices/dp-step-16", data_parallel);
     ("devices/partials-16", partials);
     ("cuda/sin-nested-8", cuda_sines);
+    ("amd/mlp-step", amd_step);
   ]
 
 (* The cases timed again over a warm disk cache, as a user's next run of a
@@ -542,11 +578,12 @@ let warm_cases =
     "cuda/sin-nested-8";
   ]
 
-(* Whether CUDA's first GPU opens, asked of a fresh process. *)
-let cuda_opens () =
+(* Whether [gpu]'s first GPU opens, [gpu] being ["cuda"] or ["amd"], asked of
+   a fresh process. *)
+let opens gpu =
   let exe = Sys.executable_name in
   let pid =
-    Unix.create_process exe [| exe; "--cuda" |] Unix.stdin Unix.stdout
+    Unix.create_process exe [| exe; "--opens"; gpu |] Unix.stdin Unix.stdout
       Unix.stderr
   in
   match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false
@@ -619,11 +656,20 @@ let () =
       | None ->
           prerr_endline ("bench_compile: no case " ^ id);
           exit 2)
-  | [ _; "--cuda" ] ->
-      exit (if Result.is_ok (Rig.open_ (Rig_cuda.gpu 0)) then 0 else 1)
+  | [ _; "--opens"; gpu ] ->
+      let opened =
+        if gpu = "amd" then Result.is_ok (Rig.open_ (Rig_amd_amdgpu.gpu 0))
+        else Result.is_ok (Rig.open_ (Rig_cuda.gpu 0))
+      in
+      exit (if opened then 0 else 1)
   | _ ->
-      let cuda = cuda_opens () in
-      let runs id = cuda || not (String.starts_with ~prefix:"cuda/" id) in
+      let gpus = List.filter opens [ "cuda"; "amd" ] in
+      let runs id =
+        match String.index_opt id '/' with
+        | Some i when List.mem (String.sub id 0 i) [ "cuda"; "amd" ] ->
+            List.mem (String.sub id 0 i) gpus
+        | _ -> true
+      in
       Thumper.run "compile" ~config
         ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
         (List.filter_map

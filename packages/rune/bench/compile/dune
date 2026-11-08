@@ -5,7 +5,7 @@
 
 (executable
  (name bench_compile)
- (libraries nx nx.wide rig rig.cuda rune thumper unix))
+ (libraries nx nx.wide rig rig.amd.amdgpu rig.cuda rune thumper unix))
 
 (rule
  (alias bench)

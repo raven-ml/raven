@@ -18,3 +18,34 @@ shaped-4k-3-lanes	wall_time	batch=1	n=3	3.889e-01	3.883e-01 3.889e-01 3.891e-01
 special/betainc-chain-f32	wall_time	batch=1	n=3	2.874e+00	2.841e+00 2.874e+00 2.877e+00
 trig/sin	wall_time	batch=1	n=3	9.471e-02	9.408e-02 9.471e-02 9.692e-02
 wide/sum-1e6	wall_time	batch=1	n=3	1.768e+00	1.762e+00 1.768e+00 1.777e+00
+
+# machine: baccbeca132e3ae9
+# host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
+# ocaml: 5.5.2 · 64-bit · release
+
+amd/mlp-step	wall_time	batch=1	n=3	9.120e-01	8.992e-01 9.120e-01 9.488e-01
+devices/dp-step-16	wall_time	batch=1	n=3	1.770e+00	1.769e+00 1.770e+00 1.783e+00
+devices/partials-16	wall_time	batch=1	n=3	5.013e+00	5.002e+00 5.013e+00 5.028e+00
+lanes/held-fp8-36	wall_time	batch=1	n=3	4.954e-01	4.919e-01 4.954e-01 4.965e-01
+linalg/eigh-8x8	wall_time	batch=1	n=3	6.151e-01	6.115e-01 6.151e-01 6.172e-01
+linalg/eigh-f64-32x32	wall_time	batch=1	n=3	6.194e-01	6.143e-01 6.194e-01 6.211e-01
+linalg/solve-32	wall_time	batch=1	n=3	4.634e-01	4.620e-01 4.634e-01 4.653e-01
+model/schools-start	wall_time	batch=1	n=3	1.070e+00	1.065e+00 1.070e+00 1.073e+00
+products/segments-grad	wall_time	batch=1	n=3	7.236e-01	7.225e-01 7.236e-01 7.267e-01
+products/vecmat-bf16	wall_time	batch=1	n=3	1.083e-01	1.079e-01 1.083e-01 1.104e-01
+rng/normal-f32	wall_time	batch=1	n=3	2.674e-01	2.655e-01 2.674e-01 2.693e-01
+rng/normal-f64	wall_time	batch=1	n=3	5.814e-01	5.793e-01 5.814e-01 5.817e-01
+scan/checks-48	wall_time	batch=1	n=3	6.055e-01	6.053e-01 6.055e-01 6.079e-01
+scan/tridiagonal-100	wall_time	batch=1	n=3	1.108e+00	1.106e+00 1.108e+00 1.113e+00
+shaped-4k	wall_time	batch=1	n=3	5.564e-01	5.487e-01 5.564e-01 5.595e-01
+shaped-4k-3-lanes	wall_time	batch=1	n=3	3.937e-01	3.897e-01 3.937e-01 3.977e-01
+special/betainc-chain-f32	wall_time	batch=1	n=3	2.662e+00	2.646e+00 2.662e+00 2.674e+00
+special/betainccinv-grad-f32	wall_time	batch=1	n=3	3.951e+00	3.942e+00 3.951e+00 3.971e+00
+special/betaincinv-grad-f64	wall_time	batch=1	n=3	5.263e+00	5.259e+00 5.263e+00 5.281e+00
+special/gammaincinv-grad-f64	wall_time	batch=1	n=3	1.536e+00	1.535e+00 1.536e+00 1.545e+00
+trig/sin	wall_time	batch=1	n=3	1.435e-01	1.394e-01 1.435e-01 1.459e-01
+trig/sin-nested-8	wall_time	batch=1	n=3	5.568e-01	5.558e-01 5.568e-01 5.611e-01
+warm/linalg/eigh-8x8	wall_time	batch=1	n=3	5.918e-02	5.868e-02 5.918e-02 6.176e-02
+warm/model/schools-start	wall_time	batch=1	n=3	6.219e-02	6.138e-02 6.219e-02 6.264e-02
+warm/scan/checks-48	wall_time	batch=1	n=3	8.277e-02	8.209e-02 8.277e-02 8.292e-02
+wide/sum-1e6	wall_time	batch=1	n=3	7.285e-01	7.277e-01 7.285e-01 7.349e-01
