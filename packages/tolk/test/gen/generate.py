@@ -76,6 +76,7 @@ UNMODIFIED = {
     "schedule/memory",
     "codegen/opt/search",
     "schedule/indexing",
+    "codegen/decomp/transcendental",
 }
 
 HERE = Path(__file__).resolve().parent

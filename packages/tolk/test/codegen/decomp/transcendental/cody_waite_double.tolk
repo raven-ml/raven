@@ -1,0 +1,36 @@
+# tolk D126 golden=a8aa47c79f1a196abf475bc48e267c20
+0 Ops.STACK dtypes.void []
+1 Ops.PARAM dtypes.f64 [0] ParamArg(slot=0, dtype=dtypes.f64)
+2 Ops.CONST dtypes.weakfloat [] 0.6366197723675814
+3 Ops.MUL dtypes.f64 [1, 2]
+4 Ops.CONST dtypes.weakfloat [] 0.0
+5 Ops.CMPLT dtypes.bool [3, 4]
+6 Ops.CONST dtypes.weakfloat [] -0.5
+7 Ops.CAST dtypes.f64 [6] dtypes.f64
+8 Ops.CONST dtypes.weakfloat [] 0.5
+9 Ops.CAST dtypes.f64 [8] dtypes.f64
+10 Ops.WHERE dtypes.f64 [5, 7, 9]
+11 Ops.ADD dtypes.f64 [3, 10]
+12 Ops.CAST dtypes.i64 [11] dtypes.i64
+13 Ops.CAST dtypes.f64 [12] dtypes.f64
+14 Ops.CONST dtypes.weakfloat [] -1.5893254712295857e-08
+15 Ops.MUL dtypes.f64 [13, 14]
+16 Ops.CONST dtypes.weakfloat [] -1.5707963109016418
+17 Ops.MUL dtypes.f64 [13, 16]
+18 Ops.ADD dtypes.f64 [17, 1]
+19 Ops.ADD dtypes.f64 [15, 18]
+20 Ops.CONST dtypes.weakfloat [] -6.123233932053594e-17
+21 Ops.MUL dtypes.f64 [13, 20]
+22 Ops.ADD dtypes.f64 [19, 21]
+23 Ops.CONST dtypes.weakfloat [] -1.0
+24 Ops.MUL dtypes.f64 [19, 23]
+25 Ops.ADD dtypes.f64 [22, 24]
+26 Ops.MUL dtypes.f64 [25, 23]
+27 Ops.ADD dtypes.f64 [21, 26]
+28 Ops.CONST dtypes.weakfloat [] -6.36831716351095e-25
+29 Ops.MUL dtypes.f64 [13, 28]
+30 Ops.ADD dtypes.f64 [27, 29]
+31 Ops.ADD dtypes.f64 [22, 30]
+32 Ops.CAST dtypes.i32 [12] dtypes.i32
+33 Ops.SINK dtypes.void [31, 32]
+
