@@ -2192,6 +2192,37 @@ let reductions =
           let w = array (option float_exact) in
           equal ~msg:"var" w [| Some 0.; Some 0. |] (floats t "v");
           equal ~msg:"std" w [| Some 0.; Some 0. |] (floats t "s"));
+      test "var far from zero, through per_list" (fun () ->
+          let c = 1e12 in
+          let xs = [| c +. (1. /. 256.); c; c +. (2. /. 256.); c +. (3. /. 256.) |] in
+          let layout =
+            Column.Varsize
+              {
+                validity = None;
+                offsets = Nx.create Nx.int64 [| 2 |] [| 0L; 4L |];
+                child = Column.of_tensor (Nx.create Nx.float64 [| 4 |] xs);
+              }
+          in
+          let l =
+            Result.get_ok (Column.of_layout (Any (Type.list Type.float64)) layout)
+          in
+          let t =
+            require_ok ~pp:Error.pp
+              (Query.run
+                 Query.(
+                   of_table (Talon.v [ ("l", l) ])
+                   |> select
+                        Expr.[
+                          "v"
+                          := per_list
+                               [ "e" := Col.v Kind.(list float) "l" ]
+                               (var (Col.float "e"));
+                        ]))
+          in
+          (* The variance of 1, 0, 2, 3 is 5/3, over 2^16. *)
+          let want = 5. /. 3. /. 65536. in
+          equal (array (option (float_rel ~rel:1e-12 ~abs:0.))) [| Some want |]
+            (floats t "v"));
       test "an int32 mean is of the exact sum" (fun () ->
           (* 2^23 values of 2^31 - 1: a float64 sum of them passes 2^53,
              where it rounds. *)

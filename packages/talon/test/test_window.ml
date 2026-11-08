@@ -666,6 +666,12 @@ let large_cases =
       Some 2,
       [| Some 1e-170; Some (-1e-170); Some 1e300 |],
       [| None; Some (sqrt 2. *. 1e-170); Some (1e300 /. sqrt 2.) |] );
+    ( "the deviation of values whose difference overflows", std, None,
+      [| Some 1.2e308; Some (-1.2e308) |],
+      [| None; Some (sqrt 2. *. 1.2e308) |] );
+    ( "the deviation of three values whose differences overflow", std, None,
+      [| Some 1.2e308; Some (-1.2e308); Some 0. |],
+      [| None; Some (sqrt 2. *. 1.2e308); Some 1.2e308 |] );
     ("no rows, two at a time", var, Some 2, [||], [||]);
     ("no rows, from the start", var, None, [||], [||]);
     ( "no values, from the start", var, None, [| None; None; None |],
@@ -684,6 +690,76 @@ let large_case (_, r, before, x, want) =
     (array (option (float_rel ~rel:1e-9 ~abs:0.)))
     want
     (Error.get_ok (Query.values (Expr.option e) (Query.of_table t)))
+
+(* Values far from zero *)
+
+(* [exact_var ks] is the sample variance of the integers [ks] divided by
+   2^8, from integer sums that do not round, or [None] under two values. *)
+let exact_var ks =
+  let n = List.length ks in
+  if n < 2 then None
+  else
+    let s = List.fold_left ( + ) 0 ks in
+    let q = List.fold_left (fun q k -> q + (k * k)) 0 ks in
+    let num = (n * q) - (s * s) in
+    Some (Float.of_int num /. Float.of_int (n * (n - 1)) /. 65536.)
+
+(* Frames whose values are [c +. d], [c] far past [d]'s spread and [d] a
+   multiple of 2^-8, so that each value is exact and the variance of the
+   values is that of the [d]. *)
+let offset =
+  let open Gen in
+  let gen =
+    let* f = frame_of (List.map (fun (_, k, _) -> k) kinds) in
+    let* shape = of_list [ `Running; `Excluding; `Any; `Any ] in
+    let f =
+      match shape with
+      | `Running -> { f with before = Absent; exclude = false }
+      | `Excluding -> { f with before = Absent; after = Absent; exclude = true }
+      | `Any -> f
+    in
+    let* c = of_list [ 1e9; 1e12; -1e12 ] in
+    let d = map (fun k -> Float.of_int k /. 256.) (int_range (-256) 256) in
+    let held = map (fun d -> Some (c +. d)) d in
+    let size = constant (Array.length f.o) in
+    let+ x = array ~size (frequency [ (1, constant None); (4, held) ]) in
+    ({ f with x }, c)
+  in
+  let pp ppf (f, c) =
+    Format.fprintf ppf "%s c=%h before %a after %a exclude=%b by=%b@.%a"
+      (kind_name f.kind) c pp_bound f.before pp_bound f.after f.exclude
+      f.partitioned Talon.pp (table f)
+  in
+  with_pp pp gen
+
+let offset_law (f, c) =
+  let t = table f and w = window f and x = Col.float "x" in
+  let got =
+    Error.get_ok (Query.values (Expr.option (w.w (Expr.var x))) (Query.of_table t))
+  in
+  let windows = List.init (Array.length f.o) (members f) in
+  let held rows = List.filter_map (Array.get f.x) rows in
+  let enough = function
+    | Some r -> List.length (held r) >= 2
+    | None -> false
+  in
+  let some = List.exists enough windows in
+  cover "a window of two values or more, without before"
+    (f.before = Absent && some);
+  cover "a window of two values or more, with before"
+    (f.before <> Absent && some);
+  cover "a window of two values or more, excluding its key, with after"
+    (f.exclude && f.after <> Absent && some);
+  cover "a window of two values or more, excluding its key, from the start"
+    (f.exclude && f.before = Absent && f.after = Absent && some);
+  let variance xs =
+    let ks = List.map (fun x -> Int.of_float ((x -. c) *. 256.)) xs in
+    exact_var ks
+  in
+  let want = List.map (fun r -> Option.bind r (fun r -> variance (held r))) windows in
+  equal
+    (array (option (float_rel ~rel:1e-12 ~abs:0.)))
+    (Array.of_list want) got
 
 (* Fills *)
 
@@ -934,6 +1010,8 @@ let () =
              prop ~count:300
                "var and std at large magnitudes, against two passes" large
                large_law;
+             prop ~count:300 "var far from zero is the variance of the spread"
+               offset offset_law;
            ];
          cases "var at large magnitudes"
            ~id:(fun (n, _, _, _, _) -> n)

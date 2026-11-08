@@ -3941,6 +3941,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Expr.window`'s `var` and `std` without `before` keep their digits far from
+  zero, as those of other frames do: a running window's scan takes each value
+  less its partition's first. Their bits change.
 - `Expr.window`'s `var` and `std` with `before` take O(n log n) for n rows
   whatever the window's size, through `Nx.moments_ranges`, instead of
   reducing every window's rows; their bits change. A window that excludes
@@ -3953,7 +3956,7 @@ word comes from its lock and from samples the dashboard saw arrive.
 - `Expr.var` and `Expr.std` of aggregates, gathered windows and `per_list`
   take the rounding of the mean out of the squared deviations (the corrected
   two-pass), so they keep their digits for values far from zero. Their last
-  bits change on most data. Running windows are unchanged.
+  bits change on most data.
 - `Expr.std` of float64 values whose squares underflow is no longer `0`, for
   a group of them or a window of them, and `Expr.var`
   of equal values near `max_float` is `0` rather than `infinity`.

@@ -399,12 +399,25 @@ let ranged w held x : Reduce.moments =
    LeVeque's update of partial moments in one scan. A part without values
    leaves the other as it is: its mean, [0], is no value of the window, and no
    deviation is taken from it. An infinite or NaN value makes the mean so, and
-   the variance NaN, as the deviations from the mean are then. *)
+   the variance NaN, as the deviations from the mean are then.
+
+   Chan's update subtracts means, whose rounding is in units of the values'
+   magnitude, and unlike two passes it has no term to take that rounding out.
+   So the scan reads each value less its segment's first held value, which
+   every window of a value holds, and rounding is in units of the window's
+   spread. A difference that overflows makes the variance non-finite, as the
+   overflow of the moments does. *)
 let running w held x =
   let len = Nx.dim 0 x in
   let held =
     match held with Some h -> h | None -> Nx.ones Nx.bool [| len |]
   in
+  let ids = Nx.sub_s (Nx.cumsum (Nx.cast Nx.int64 w.starts)) 1L in
+  let segments = Nx.item [] (Nx.sum (Nx.cast Nx.int64 w.starts)) in
+  let segments = Int64.to_int segments in
+  let held_at = Nx.where held (positions len) (full len Int64.max_int) in
+  let first = Nx.reduce_segments Min ~segments ids held_at in
+  let x = Nx.sub x (Nx.take ids (Nx.take first x)) in
   let zero = Nx.zeros_like x in
   let chan (n1, m1, q1) (n2, m2, q2) =
     let n = Nx.add n1 n2 in
