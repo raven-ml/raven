@@ -321,22 +321,25 @@ let gather k_bits k =
     (0, 0) k_bits
   |> fst
 
-(* [reads_own x y op k_bits] is [true] iff each element of [y]'s operand [op]
-   is an element of [x]'s accumulator in the same lane, at the coordinates
-   [k_bits] maps its [K] to: the coordinates say it, apart from the bits. *)
-let reads_own x y op k_bits =
+(* [reads_own x y op] is the check of a [k_bits], [true] iff each element of
+   [y]'s operand [op] is an element of [x]'s accumulator in the same lane, at
+   the coordinates [k_bits] maps its [K] to: the coordinates say it, apart from
+   the bits. A search tries many [k_bits] on one pair, so the coordinates are
+   made once. *)
+let reads_own x y op =
   let fa, fb, _ = Tc.frag_coords y and _, _, xc = Tc.frag_coords x in
   let operand = match op with Tc.A -> fa | Tc.B -> fb in
-  let own lane (r, col) =
-    let want =
-      match op with
-      | Tc.A -> (r, gather k_bits col)
-      | Tc.B -> (gather k_bits r, col)
+  fun k_bits ->
+    let own held (r, col) =
+      let want =
+        match op with
+        | Tc.A -> (r, gather k_bits col)
+        | Tc.B -> (gather k_bits r, col)
+      in
+      Array.mem want held
     in
-    Array.mem want xc.(lane)
-  in
-  Array.for_all Fun.id
-    (Array.mapi (fun lane elements -> Array.for_all (own lane) elements) operand)
+    Array.for_all2 (fun elements held -> Array.for_all (own held) elements)
+      operand xc
 
 (* Whether each lane of [x]'s and [y]'s accumulators holds the same lines of
    the dimension [op] keeps. *)
