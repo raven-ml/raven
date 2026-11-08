@@ -1092,17 +1092,18 @@ per trip of each submission under it (D146).
   tolk's `Sin`, whose `xsin` uses it beyond its switch-over, 30 by default.
   Both must give nx's sine and cosine there. Selecting the table's words
   by bits is (d), compile time: every compiled sine or cosine of an
-  unbounded angle builds the reduction, and a kernel's compile time grows
-  with its nodes. Selected as tinygrad's `_take` does, over this 40-word
-  table, the float64 words would take 345 selections and 43 comparisons of
-  728 nodes; by bits they take 111 and 6 of 428. No fudge bench row times
-  it.
+  unbounded angle builds the reduction. Selected as tinygrad's `_take` does,
+  over this 40-word table, the float64 words take 345 selections and 43
+  comparisons of 728 nodes; by bits 111 and 6 of 428. rune's compile bench
+  row `trig/sin`, one float64 sine of an unbounded angle, makes the first
+  call 0.14 s of CPU against 0.17 s and 1.41 M minor words against 1.95 M
+  (fudge, 2026-11-08, Clang included).
 - **Pinned by:** `Tolk.Transcendental › reductions ›
   payne_hanek_near_multiples.golden`, remainders and quadrants of float32 and
   float64 angles near multiples of `pi/2`, from pi to 1400 bits, which the
   old reduction fails; `› payne_hanek_reduction removes quarter turns`; and
   the `payne_hanek_*`, `xsin_*` and `values` goldens, from the equally
-  patched tinygrad.
+  patched tinygrad; and rune's compile bench row `trig/sin`.
 
 ## D34. Withdrawn
 
@@ -1794,11 +1795,8 @@ does the same.
   - refused: a gather by several indices (rune emits one).
   The index is in range: rune clamps it and selects `0` where it was not.
 - **Reason:** (b): rune's gather lowering (`Lower_index`) emits this INDEX
-  for `Nx.take` and `Nx.take_along_axis`. Without it rune would lower them to
-  a one-hot sum over the whole axis, which costs a reduction per element and
-  made gpt-oss's decode step schedule embedding and cache reads as their own
-  kernels: that cost is (d), with no fudge bench row. D68, which recognised
-  the sum in the scheduler, was withdrawn. The sharded clauses are
+  for `Nx.take` and `Nx.take_along_axis`. D68, which recognised a one-hot sum
+  over the axis in the scheduler, was withdrawn. The sharded clauses are
   withdrawn: multi-device is out of scope, see README.
 - **Pinned by:** the Rangeify suite's `gathers` programs (`index_rows`,
   `index_rows_computed`, `index_read_twice`, `index_under_reduce`,
