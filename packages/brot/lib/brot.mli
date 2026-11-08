@@ -1014,7 +1014,8 @@ val bpe :
     - [unk_token]: token for unknown characters. Configures both the role and
       the BPE model's unknown handling. It is a model parameter, never matched
       atomically in the input. Default: none.
-    - [vocab]: initial vocabulary as [(token, id)] pairs. Default: [[]].
+    - [vocab]: initial vocabulary as [(token, id)] pairs. A token given twice
+      keeps only its last pair. Default: [[]].
     - [merges]: merge rules as [(left, right)] pairs learned during training.
       Default: [[]].
     - [cache_capacity]: the most entries of a pretoken cache, rounded up to a
@@ -1068,7 +1069,8 @@ val wordpiece :
     subword pieces prefixed with a continuation marker (e.g., ["running"]
     becomes [["run"; "##ning"]]).
 
-    - [vocab]: initial vocabulary as [(token, id)] pairs. Default: [[]].
+    - [vocab]: initial vocabulary as [(token, id)] pairs. A token given twice
+      keeps only its last pair. Default: [[]].
     - [unk_token]: token for out-of-vocabulary words. Default: ["[UNK]"].
     - [continuing_subword_prefix]: prefix for non-initial subwords. Default:
       ["##"].

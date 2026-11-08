@@ -157,13 +157,28 @@ Ratios are brot's cost over the reference's: above 1, brot is slower.
   misses are mostly a pretoken's first occurrence, moves within the noise.
 - Pages: gigatoken asks for 2 MB pages for its pretoken table
   (`MADV_HUGEPAGE`), and with fudge's transparent huge pages set to
-  `defrag=madvise` gets them; brot's tables land on 4 KB pages
+  `defrag=madvise` gets them. brot takes its large blocks (the pretoken table,
+  each batch's sinks and result) from `malloc`, so the allocator's settings and
+  the kernel's transparent huge pages decide their pages and no brot code does:
+  under glibc's defaults on fudge under load they land on 4 KB pages
   (`AnonHugePages` 0), so a probe can miss the TLB, which callgrind does not
   model. Over the 100 MB corpus under load 32-39, gigatoken with huge pages
   turned off spent 7-17% more user time per Mistral pass, and brot with its
-  blocks of 4 MB or more on huge pages (an `LD_PRELOAD` experiment) 1-7%
-  less. With that, brot's Mistral passes took 0.76-0.79 s of user time
-  against gigatoken's 0.76-0.87.
+  blocks of 4 MB or more on huge pages (an `LD_PRELOAD` experiment) 1-7% less.
+  With that, brot's Mistral passes took 0.76-0.79 s of user time against
+  gigatoken's 0.76-0.87.
+- Allocator: the tables above ran under glibc's defaults, with no
+  `GLIBC_TUNABLES`. A comparison states the settings it ran under, since they
+  decide the share of page faults: `encode_batch_ids` over the 100 MB corpus
+  on one thread, GPT-2 (1235428d3), the faults of passes 2, 3 and 4, with the
+  same ids in each row. The corpus's 90 MB result alone is 22,120 4 KB pages.
+
+  | `GLIBC_TUNABLES`                                                 | Faults per pass          |
+  | ---------------------------------------------------------------- | ------------------------ |
+  | none                                                             | 25,573 / 29,354 / 11,506 |
+  | `glibc.malloc.mmap_max=0:glibc.malloc.trim_threshold=4294967296` | 2,036 / 97 / 0           |
+  | `glibc.malloc.hugetlb=1`                                         | 19,104 / 2,998 / 775     |
+
 - GPT-2, eight warm passes: the kernel (`brot_byte_level_encode_ids32`, the
   batch walk `harvest`, the merge of misses) is 84% of brot's instructions,
   major GC marking and sweeping 7%, the added-token scan (`skip_one`) 6%.
