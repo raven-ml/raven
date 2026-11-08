@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*/
 
 /* Every kind as a loop over contiguous operands, compiled as nx.cpu's
-   rows.c is, the headers included: on x86-64 for x86-64-v3. The loops of
-   the kinds with a near function compute it on every lane and
+   rows.c is, the headers included: on x86-64 for nx.cpu's floor. The loops
+   of the kinds with a near function compute it on every lane and
    redo the lanes past its test, as nx_kinds.h says a vector loop does,
    testing a block for such a lane in a loop that vectorises first. */
 

@@ -483,7 +483,7 @@ static void plan_put(void *p, int rdt);
 #define CAT(a, b) CAT2(a, b)
 #define F(name) CAT(name, SFX)
 
-/* The bytes of a vector of L lanes: the 32 of x86-64-v3's, also on
+/* The bytes of a vector of L lanes: the 32 of AVX2's, also on
    targets of 16-byte vectors where clang builds, but their 16 where gcc
    builds, which computes a 32-byte vector there lane by lane through
    memory. Which lanes share a vector changes no bit. Lines of complex64

@@ -7,16 +7,22 @@
    runs it, and the one the kernels run: the best whose instructions the
    host has.
 
-   On x86-64 every other unit of nx.cpu is compiled for x86-64-v3, which
-   needs AVX, AVX2, FMA, F16C and BMI2 (CPUID leaves 1 and 7), and an
-   operating system that saves the 256-bit registers across a switch
-   (XCR0's bits 1 and 2, read with XGETBV once CPUID reports OSXSAVE).
-   Intel SDM vol. 2A, CPUID; vol. 1, §14.3. This unit is compiled for the
-   architecture's baseline, so that its check runs on any host. A table's
-   fill is code of the other units, so on a host without v3 the
-   constructor fills none, and nx_cpu_require raises when Nx_cpu
-   initialises: the constructor runs before the OCaml runtime, and cannot
-   raise. */
+   On x86-64 every other unit of nx.cpu is compiled for its floor, AVX2,
+   FMA, F16C and BMI2 (probe/avx2.ml), under which the C compiler also
+   takes SSE3 to SSE4.2 and POPCNT, and so needs AVX, AVX2, FMA, F16C,
+   BMI2, SSE4.2 and POPCNT (CPUID leaves 1 and 7), and an operating system
+   that saves the 256-bit registers across a switch (XCR0's bits 1 and 2,
+   read with XGETBV once CPUID reports OSXSAVE). Intel SDM vol. 2A, CPUID;
+   vol. 1, §14.3. AVX gates the SSE instructions the compiler encodes with
+   VEX; SSE4.2's CRC32 and POPCNT have no such encoding, and the x86-64
+   psABI asks for their detection "even if all current CPUs implement
+   certain CPU features together". This is no level of the psABI:
+   x86-64-v3 also has BMI1, LZCNT and MOVBE, which these flags do not take.
+   This unit is compiled for the architecture's baseline, so that its check
+   runs on any host. A table's fill is code of the other units, so on a
+   host without the floor the constructor fills none, and nx_cpu_require
+   raises when Nx_cpu initialises: the constructor runs before the OCaml
+   runtime, and cannot raise. */
 
 #include <string.h>
 
@@ -108,23 +114,45 @@ static int64_t llc_bytes(void) {
 #include <cpuid.h>
 #endif
 
+/* Whether a processor whose CPUID.01H:ECX is [ecx1] and CPUID.07H.00H:EBX
+   [ebx7], under XCR0 [xcr0], runs the other units. */
+static int floor_holds(uint32_t ecx1, uint32_t ebx7, uint64_t xcr0) {
+  const uint32_t leaf1 = (1u << 12)   /* FMA */
+                         | (1u << 20) /* SSE4_2 */
+                         | (1u << 23) /* POPCNT */
+                         | (1u << 27) /* OSXSAVE */
+                         | (1u << 28) /* AVX */
+                         | (1u << 29) /* F16C */;
+  const uint32_t leaf7 = (1u << 5) /* AVX2 */ | (1u << 8) /* BMI2 */;
+  return (ecx1 & leaf1) == leaf1 && (ebx7 & leaf7) == leaf7 &&
+         (xcr0 & 6) == 6; /* XMM and YMM state */
+}
+
+value nx_cpu_floor_holds(value ecx1, value ebx7, value xcr0) {
+  return Val_bool(floor_holds((uint32_t)Long_val(ecx1),
+                              (uint32_t)Long_val(ebx7),
+                              (uint64_t)Long_val(xcr0)));
+}
+
 #if defined(__x86_64__)
 
-static int has_v3(void) {
+static int has_avx2(void) {
   unsigned a, b, c, d;
-  if (!__get_cpuid(1, &a, &b, &c, &d)) return 0;
-  int fma = (c >> 12) & 1, osxsave = (c >> 27) & 1, avx = (c >> 28) & 1;
-  int f16c = (c >> 29) & 1;
-  if (!(fma && osxsave && avx && f16c)) return 0;
-  unsigned lo, hi;
-  __asm__("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
-  if ((lo & 6) != 6) return 0;
-  if (!__get_cpuid_count(7, 0, &a, &b, &c, &d)) return 0;
-  return ((b >> 5) & 1) && ((b >> 8) & 1); /* AVX2, BMI2 */
+  uint32_t ecx1 = 0, ebx7 = 0;
+  uint64_t xcr0 = 0;
+  if (__get_cpuid(1, &a, &b, &c, &d)) ecx1 = c;
+  if (__get_cpuid_count(7, 0, &a, &b, &c, &d)) ebx7 = b;
+  /* XGETBV runs only where OSXSAVE enables it. */
+  if ((ecx1 >> 27) & 1) {
+    unsigned lo, hi;
+    __asm__("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+    xcr0 = ((uint64_t)hi << 32) | lo;
+  }
+  return floor_holds(ecx1, ebx7, xcr0);
 }
 
 /* AVX-VNNI-INT8: CPUID leaf 7 subleaf 1, EDX bit 4 (Intel SDM vol. 2A), its
-   state the AVX state has_v3 checks. */
+   state the AVX state has_avx2 checks. */
 static int has_vnni_int8(void) {
   unsigned a, b, c, d;
   if (!__get_cpuid_count(7, 1, &a, &b, &c, &d)) return 0;
@@ -137,8 +165,8 @@ int64_t nx_cpu_l2, nx_cpu_l1, nx_cpu_llc;
 nx_cpu_target nx_cpu_base = {.name = "base"};
 
 #if defined(__x86_64__)
-/* Whether the host has x86-64-v3, as the constructor found. */
-static int v3;
+/* Whether the host has nx.cpu's floor, as the constructor found. */
+static int avx2;
 #endif
 #if defined(__APPLE__) && defined(__aarch64__)
 nx_cpu_target nx_cpu_amx;
@@ -178,8 +206,8 @@ static int64_t l2_bytes(void) {
 
 __attribute__((constructor)) static void init(void) {
 #if defined(__x86_64__)
-  v3 = has_v3();
-  if (!v3) return;
+  avx2 = has_avx2();
+  if (!avx2) return;
 #endif
   nx_cpu_l2 = l2_bytes();
   nx_cpu_l1 = l1_bytes();
@@ -208,9 +236,9 @@ __attribute__((constructor)) static void init(void) {
 value nx_cpu_require(value unit) {
   (void)unit;
 #if defined(__x86_64__)
-  if (!v3)
-    caml_failwith("nx.cpu needs x86-64-v3 (AVX2, FMA, F16C and BMI2); this "
-                  "host lacks it");
+  if (!avx2)
+    caml_failwith("nx.cpu needs AVX2, FMA, F16C, BMI2, SSE4.2 and POPCNT; "
+                  "this host lacks one");
 #endif
   return Val_unit;
 }

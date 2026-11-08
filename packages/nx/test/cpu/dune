@@ -9,7 +9,8 @@
   test_index
   test_linalg
   test_fft
-  test_release)
+  test_release
+  test_floor)
  (libraries
   nx_array
   nx_array_gen

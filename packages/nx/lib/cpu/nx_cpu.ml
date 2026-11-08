@@ -547,6 +547,10 @@ external swap_target : string -> string = "nx_cpu_swap_target"
 
 let targets = targets_c ()
 
+external floor_holds : int -> int -> int -> bool = "nx_cpu_floor_holds"
+
+let floor_holds ~ecx1 ~ebx7 ~xcr0 = floor_holds ecx1 ebx7 xcr0
+
 let with_target t f =
   let was = swap_target t in
   Fun.protect ~finally:(fun () -> ignore (swap_target was : string)) f

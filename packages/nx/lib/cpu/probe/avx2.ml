@@ -1,6 +1,6 @@
-(* v3.ml CC...: prints the flags that compile nx.cpu's x86-64-v3 units
-   (lib/cpu/dune) with the C compiler CC, as an S-expression for dune's
-   :include.
+(* avx2.ml CC...: prints the flags that compile nx.cpu's units for its
+   floor on x86-64, AVX2, FMA, F16C and BMI2 (lib/cpu/dune), with the C
+   compiler CC, as an S-expression for dune's :include.
 
    gcc for Windows or Cygwin also takes -Wa,-muse-unaligned-vector-move.
    It keeps 32-byte vectors on the stack at addresses it assumes 32-byte
@@ -10,7 +10,7 @@
    an unaligned one, which runs as fast on aligned data. Such a gcc whose
    assembler refuses it fails the build: without it, the units crash. *)
 
-let v3 = [ "-mavx2"; "-mfma"; "-mf16c"; "-mbmi2" ]
+let avx2 = [ "-mavx2"; "-mfma"; "-mf16c"; "-mbmi2" ]
 let unaligned = "-Wa,-muse-unaligned-vector-move"
 
 (* The declaration keeps the unit from being empty, which -Wpedantic -Werror
@@ -28,8 +28,8 @@ let unit = "int f(void);\n"
 
 (* Whether [cc] compiles [source] with [flags]. *)
 let compiles cc flags source =
-  let c = Filename.temp_file "v3" ".c" in
-  let o = Filename.temp_file "v3" ".o" in
+  let c = Filename.temp_file "avx2" ".c" in
+  let o = Filename.temp_file "avx2" ".o" in
   Out_channel.with_open_text c (fun oc -> output_string oc source);
   let cmd =
     Filename.quote_command (List.hd cc) ~stdout:Filename.null
@@ -44,8 +44,8 @@ let compiles cc flags source =
 let () =
   let cc = Array.to_list (Array.sub Sys.argv 1 (Array.length Sys.argv - 1)) in
   let flags =
-    if not (compiles cc [] windows_gcc) then v3
-    else if compiles cc (v3 @ [ unaligned ]) unit then v3 @ [ unaligned ]
+    if not (compiles cc [] windows_gcc) then avx2
+    else if compiles cc (avx2 @ [ unaligned ]) unit then avx2 @ [ unaligned ]
     else begin
       prerr_endline
         ("nx.cpu: gcc for Windows needs an assembler that takes " ^ unaligned

@@ -13,9 +13,10 @@
     any write. It answers [Declined] only where its doc says, and computes
     every other case its contract offers.
 
-    On x86-64 nx.cpu requires x86-64-v3 (AVX2, FMA, F16C and BMI2): on a
-    host without it, initialising the library raises [Failure], before any
-    kernel can run. Other architectures have none.
+    On x86-64 nx.cpu requires AVX2, FMA, F16C, BMI2, SSE4.2 and POPCNT, with
+    the system saving the AVX registers: on a host without them, initialising
+    the library raises [Failure], before any kernel can run. Other
+    architectures have none.
 
     A call keeps other domains waiting to collect for no longer than about
     one unloaded core's copy of 1 MiB at a time, however many operands,
@@ -510,6 +511,11 @@ val with_cache : int -> (unit -> 'a) -> 'a
 (** [with_cache n f] is [f ()], every call choosing its algorithms while
     [f] runs as if the host's largest cache held [n] bytes. The bits are
     the same. For tests, while no other domain calls nx.cpu. *)
+
+val floor_holds : ecx1:int -> ebx7:int -> xcr0:int -> bool
+(** [floor_holds ~ecx1 ~ebx7 ~xcr0] is [true] iff a processor whose
+    CPUID.01H:ECX is [ecx1] and CPUID.07H.00H:EBX [ebx7], under XCR0
+    [xcr0], has what nx.cpu requires on x86-64. For tests. *)
 
 val unique_seed : int64 -> unit
 (** [unique_seed s] keys [unique]'s hash by [s] for the calls that start

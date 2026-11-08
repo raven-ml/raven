@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*/
 
 /* The conversion runs and their tables, compiled as every unit of nx.cpu
-   but target.c is: for x86-64-v3 on x86-64 (AVX2, FMA, F16C and BMI2), the
-   headers' inline codecs and runs.h's runs included.
+   but target.c is: on x86-64 for nx.cpu's floor (AVX2, FMA, F16C and
+   BMI2), the headers' inline codecs and runs.h's runs included.
 
    One loop per pair of dtypes, each element converted by an expression
    built from nx_dtype.h's codecs: the store rule of Dtype.of_float from a

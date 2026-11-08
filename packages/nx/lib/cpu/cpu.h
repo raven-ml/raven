@@ -354,8 +354,8 @@ typedef struct {
    gemm_neon.c's on arm64, gemm_avx2.c's on x86-64, and gemm_vnni.c's
    quads where the host has AVX-VNNI-INT8. amx is base's table with
    gemm_amx.c's kernels for the matrix unit of Apple's M1. On x86-64 every
-   unit but target.c is compiled for x86-64-v3, and base is set only on a
-   host that has it (target.c). */
+   unit but target.c is compiled for nx.cpu's floor, AVX2, FMA, F16C and
+   BMI2, and base is set only on a host that has it (target.c). */
 extern nx_cpu_target nx_cpu_base;
 void nx_cpu_set_gemm(nx_cpu_target *t);
 #if defined(__aarch64__)

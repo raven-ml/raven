@@ -84,7 +84,8 @@ raven exchanges `Nx.t` values and `Nx.Ptree` structures.
   CK), writing our own code. Check its licence first; never GPL. Never read
   the instruction stream of a proprietary library. Code that follows
   LAPACK, ReLAPACK or pocketfft keeps its `LICENSE-*` notice.
-- On x86-64 every nx.cpu unit but `target.c` is built for x86-64-v3.
+- On x86-64 every nx.cpu unit but `target.c` is built for nx.cpu's floor,
+  AVX2, FMA, F16C and BMI2 (`probe/avx2.ml`), which is no psABI level.
   Code that runs before `target.c` checks the host stays there.
 - A kernel's external is never `[@@noalloc]`: the door may run OCaml.
 - Benches are `bench/array`, `bench/kernel` and `bench/nx`. A baseline

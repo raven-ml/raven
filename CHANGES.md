@@ -2382,6 +2382,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- nx.cpu checks SSE4.2 and POPCNT, which its x86-64 code may run, before
+  it starts, and names its floor for its features where it said x86-64-v3;
+  the flags it installs are `cpu/avx2_flags.sexp`.
 - `Nx.positions` without `~size` raises `Invalid_argument` when the counts'
   sum passes `max_int`, where it wrapped and returned a result of the wrong
   length or failed naming a negative extent.
