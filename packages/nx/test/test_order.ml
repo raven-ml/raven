@@ -730,7 +730,15 @@ let test_positions_cases () =
   invalid ~by:"Nx.positions" (fun () ->
       Nx.positions (Nx.zeros Nx.bool [| 2; 2 |]));
   invalid ~by:"Nx.positions" (fun () ->
-      Nx.positions ~size:(-1) (Nx.zeros Nx.bool [| 2 |]))
+      Nx.positions ~size:(-1) (Nx.zeros Nx.bool [| 2 |]));
+  (* Without [size], a sum past [max_int] is no length. *)
+  let past = "Nx.positions: the counts' sum passes max_int" in
+  raises_match (Exn.invalid_arg ~sub:past) (fun () -> Nx.positions big);
+  let to_max = Int64.of_int max_int in
+  raises_match (Exn.invalid_arg ~sub:past) (fun () ->
+      Nx.positions (Nx.create Nx.int64 [| 2 |] [| to_max; 1L |]));
+  raises_match (Exn.invalid_arg ~sub:past) (fun () ->
+      Nx.positions (Nx.create Nx.int64 [| 4 |] [| 1L; Int64.max_int; 0L; 2L |]))
 
 (* Positions of many: 9000 booleans all true, and counts summing past
    9000, with [size] and without. *)

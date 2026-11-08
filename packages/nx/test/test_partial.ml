@@ -1746,8 +1746,8 @@ let counted_case =
      (vs, w, size))
 
 (* The positions of counts at any placement are their positions on one
-   device: the counts' scan, its last element and the scatter of the runs'
-   ends span the devices. *)
+   device: the counts' scan, its largest element and the scatter of the
+   runs' ends span the devices. *)
 let law_counted (vs, w, size) =
   let n = Array.length vs in
   let t = snd (List.hd (tiles w)) in

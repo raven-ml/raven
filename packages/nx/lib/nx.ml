@@ -4229,11 +4229,17 @@ let positions_by ~by ?size c =
   let l =
     match size with
     | Some l -> l
+    | None when n = 0 -> 0
     | None ->
-        (* The total, the last end, gathered, since a slice would read a cut
-           [ends] whole. With no index, position [-1] reads zero. *)
-        let last = fill ~by at D.Int64 [||] (Int64.of_int (n - 1)) in
-        length ~by (take_axis ~by 0 last ends)
+        (* The total is the largest end, read unsigned: the ends rise until
+           one passes int64's range, and that one wraps below zero, which
+           unsigned is past every int64. A total past [max_int] is no
+           length. *)
+        let top = reduce ~by Max [| 0 |] (Eval.bitcast ~by D.Uint64 ends) in
+        let top = Nx_array.get (read ~by top) [||] in
+        if Int64.unsigned_compare top (Int64.of_int max_int) > 0 then
+          invalid_argf "%s: the counts' sum passes max_int" by;
+        Int64.to_int top
   in
   (* The scatter adds into the zeros in place: writing them costs less than
      copying a broadcast 0. *)

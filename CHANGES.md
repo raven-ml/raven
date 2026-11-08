@@ -2356,6 +2356,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.positions` without `~size` raises `Invalid_argument` when the counts'
+  sum passes `max_int`, where it wrapped and returned a result of the wrong
+  length or failed naming a negative extent.
 - `Nx.unique` on nx.cpu skips the hash for a row of the previous row's key
   and merges its threads' tables without growing them: talon's joins in
   decision-support query 5 number keys in 31% fewer instructions on 14

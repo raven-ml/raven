@@ -3609,13 +3609,15 @@ val positions : ?size:int -> ('v, 's, 'd) t -> 'd int64_t
     increasing order. A boolean counts [1] where it holds, so [positions c] is
     the indices where [c] holds; a negative count counts zero, as does a
     [uint64] count past [int64]'s range. Without [size], the result's length is
-    the counts' sum, read on the host. With [size], the result has [size]
-    entries and reads nothing: the first positions, then [dim 0 c]. Along an
-    axis of [c]'s length that pad is out of range, so {!take} reads zero there
-    and {!scatter} writes nothing; along a longer axis it is a real position.
+    the counts' sum, read on the host unless [c] is empty. With [size], the
+    result has [size] entries and reads nothing: the first positions, then
+    [dim 0 c]. Along an axis of [c]'s length that pad is out of range, so
+    {!take} reads zero there and {!scatter} writes nothing; along a longer
+    axis it is a real position.
 
-    Raises [Invalid_argument] if [c] is not 1-d, is a float or a complex, or if
-    [size] is negative. *)
+    Raises [Invalid_argument] if [c] is not 1-d, is a float or a complex, if
+    [size] is negative, or if, without [size], the counts' sum passes
+    [max_int]. *)
 
 val argwhere : ?size:int -> ('v, 's, 'd) t -> 'd int64_t
 (** [argwhere t] is the coordinates of [t]'s elements other than zero, a row
