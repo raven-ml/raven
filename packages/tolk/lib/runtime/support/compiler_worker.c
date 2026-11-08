@@ -13,7 +13,6 @@
 #include <stdarg.h>
 
 #ifdef _WIN32
-#include <direct.h>
 #include <fcntl.h>
 #include <io.h>
 #include <windows.h>
@@ -45,6 +44,7 @@ const char *library_error(const char *path) {
 #include <dirent.h>
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <ftw.h>
 #include <poll.h>
 #include <pthread.h>
 #include <sys/resource.h>
@@ -192,18 +192,59 @@ bool join(struct options *o, struct options later) {
 
 static int request_fd = -1;
 
-/* The directory of the library's temporary files. The worker removes it when
-   it ends, if it is empty, as it is between compiles: a parent that ends
-   without collecting the worker (killed, or a forked child's _exit) cannot. */
+/* The directory of the library's temporary files, which the worker removes
+   with all in it when it ends: when its input ends, and when its parent's end
+   closes during a compile, whose files are then in it. Its parent removes it
+   after a crash. */
 static const char *temp_dir;
 
-static void remove_temp(void) {
 #ifdef _WIN32
-  _rmdir(temp_dir);
-#else
-  rmdir(temp_dir);
-#endif
+/* Removes the tree [path], entering no reparse point (a link). A path too
+   long for MAX_PATH stays. */
+static void remove_tree(const char *path) {
+  char pattern[MAX_PATH], child[MAX_PATH];
+  WIN32_FIND_DATAA e;
+  int n = snprintf(pattern, sizeof pattern, "%s\\*", path);
+  if (n < 0 || (size_t)n >= sizeof pattern) return;
+  HANDLE h = FindFirstFileA(pattern, &e);
+  if (h != INVALID_HANDLE_VALUE) {
+    do {
+      if (strcmp(e.cFileName, ".") == 0 || strcmp(e.cFileName, "..") == 0)
+        continue;
+      n = snprintf(child, sizeof child, "%s\\%s", path, e.cFileName);
+      if (n < 0 || (size_t)n >= sizeof child) continue;
+      DWORD a = e.dwFileAttributes;
+      if ((a & FILE_ATTRIBUTE_DIRECTORY) == 0)
+        DeleteFileA(child);
+      else if ((a & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        RemoveDirectoryA(child);
+      else
+        remove_tree(child);
+    } while (FindNextFileA(h, &e));
+    FindClose(h);
+  }
+  RemoveDirectoryA(path);
 }
+
+static void remove_temp(void) { remove_tree(temp_dir); }
+#else
+/* Removes one entry of the tree, after those below it ([FTW_DEPTH]); a link is
+   removed, never followed ([FTW_PHYS]). */
+static int remove_entry(const char *path, const struct stat *st, int kind,
+                        struct FTW *at) {
+  (void)st;
+  (void)at;
+  if (kind == FTW_DP || kind == FTW_DNR)
+    rmdir(path);
+  else
+    unlink(path);
+  return 0;
+}
+
+static void remove_temp(void) {
+  nftw(temp_dir, remove_entry, 16, FTW_DEPTH | FTW_PHYS);
+}
+#endif
 
 /* Reads [size] bytes into [bytes]: false if the input ends first. */
 static bool read_all(char *bytes, size_t size) {

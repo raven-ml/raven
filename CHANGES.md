@@ -1078,8 +1078,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 ### Tolk (new)
 
 - comgr and NVRTC workers keep their temporary files in a directory of their
-  own, removed when the worker ends, crashed or not: a HIP compile that LLVM
-  aborts no longer leaves a `comgr-XXXXXX` directory in `/tmp`.
+  own, which the worker removes when it ends and the process that started it
+  removes after a crash: a HIP compile that LLVM aborts, or a program killed
+  during a compile, no longer leaves a `comgr-XXXXXX` directory in `/tmp`.
 - A comgr or NVRTC worker process whose compile does not return now ends
   when the process that started it ends, killed or not, where it lived on
   holding its memory.

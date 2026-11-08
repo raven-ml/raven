@@ -51,22 +51,15 @@ let rec remove_tree path =
       Unix.rmdir path
   | _ -> Unix.unlink path
 
-(* Removes the file or directory tree [path], following no symbolic link. What
-   cannot be removed stays: it is in the system's temporary directory, and
-   the compile it served has its outcome already. *)
+(* Removes the file or directory tree [path], following no symbolic link: the
+   temporary directory of a worker that crashed, which could not. What cannot
+   be removed stays: it is in the system's temporary directory, and the
+   compile it served has its outcome already. *)
 let remove path =
   try remove_tree path with Unix.Unix_error _ | Sys_error _ -> ()
 
-(* The idle workers' directories are removed when this process exits; their
-   processes end then too, their input closed. *)
 let v ~name program =
-  let w = { name; program; lock = Mutex.create (); path = None; idle = [] } in
-  at_exit (fun () ->
-      Mutex.protect w.lock @@ fun () ->
-      List.iter
-        (fun p -> if p.owner = Unix.getpid () then remove p.temp)
-        w.idle);
-  w
+  { name; program; lock = Mutex.create (); path = None; idle = [] }
 
 (* The program *)
 

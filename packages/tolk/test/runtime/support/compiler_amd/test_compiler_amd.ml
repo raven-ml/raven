@@ -279,6 +279,17 @@ let rec comgr_files dir =
         | _ -> [])
     (Array.to_list (Sys.readdir dir))
 
+(* The temporary directory of worker [pid], its program's second argument, as
+   Linux's /proc/PID/cmdline lists them. *)
+let temp_of pid =
+  let cmdline = Printf.sprintf "/proc/%d/cmdline" pid in
+  match In_channel.with_open_bin cmdline In_channel.input_all with
+  | s -> (
+      match String.split_on_char '\000' s with
+      | _ :: _ :: temp :: _ -> Some temp
+      | _ -> None)
+  | exception Sys_error _ -> None
+
 (* [kernel] including the FIFO [fifo]: its compile waits in the preprocessor for
    a writer to open [fifo], then for the writer to close it. *)
 let waiting fifo = Printf.sprintf "#include \"%s\"\n%s" fifo kernel
@@ -424,6 +435,7 @@ let process =
           @@ fun () ->
           let reached = until ~seconds:60. opened in
           let workers = children_of parent in
+          let temps = List.filter_map temp_of workers in
           Unix.kill parent Sys.sigkill;
           ignore (Unix.waitpid [] parent);
           equal bool ~msg:"the compile opened the FIFO" true reached;
@@ -433,7 +445,10 @@ let process =
               (fun pid -> not (until ~seconds:10. (fun () -> ended pid)))
               workers
           in
-          equal (list int) ~msg:"workers alive" [] alive);
+          equal (list int) ~msg:"workers alive" [] alive;
+          not_equal (list string) [] temps;
+          equal (list string) ~msg:"their temporary directories" []
+            (List.filter Sys.file_exists temps));
       slow
       @@ test "a worker started with SIGCHLD ignored returns its code object"
            (fun () ->
