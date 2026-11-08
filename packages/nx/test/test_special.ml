@@ -1123,6 +1123,17 @@ let beta_laws =
                   ~than:(((own *. x) +. (mirror *. c) +. c) *. eps)
                   (Float.abs (c -. (1. -. x))))
             x q (betainccinv a b q));
+      test "betainccinv stays in [0, 1] on a plateau" (fun () ->
+          (* Shapes far below 1, at a [q] of the flat tail, where the last
+             step's series is read far outside its convergence. *)
+          let args =
+            Array.map (scalar Nx.float64)
+              [| 2.320895026900713e-17; 1.5764313287958e-17;
+                 0x1.30e6a0610437ap-1 |]
+          in
+          let got = item [] (betainccinv args.(0) args.(1) args.(2)) in
+          at_least float_exact ~than:0. got;
+          at_most float_exact ~than:1. got);
       cases "betaincinv at closed forms" ~id:fst
         [
           ("a b 1/2 is 1/2 for a = b", (3.5, 3.5, 0.5, 0.5));

@@ -2473,6 +2473,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.betaincinv` and `Nx.betainccinv` stay in \[0, 1\] on a flat tail, at
+  shapes far below 1 such as `a = 2.3e-17`, `b = 1.6e-17`, where the last
+  correction's series could leave the interval.
 - The kernel contract (`Nx_kernel`) bounds a float or complex contraction
   normwise, by `(|init| + Σ|a||b|)` times an error factor each library
   states, at most `γ(2K + 2)`, in place of a bound on each fused

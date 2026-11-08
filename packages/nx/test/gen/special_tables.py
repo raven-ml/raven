@@ -1584,8 +1584,8 @@ def beta_slope(a, b, z, l, q_tail):
 def beta_last_step(fmt, a, b, l, q_tail, z):
     """x after nx's last step of the beta's quantile from z, x(z + h) by its
     Taylor series through h^4, and its first two derivatives in l; where x
-    or 1 - x is not normal or |(1 - x) h| is at least 1/2 nx skips the
-    step, and x is that of z, constant."""
+    or 1 - x is not normal or |h| is at least 1/2 nx skips the step, and x
+    is that of z, constant."""
     x, y = beta_sigmoid(z), beta_sigmoid(-z)
     if min(x, y) < fmt.min_normal:
         return x, mpf(0), mpf(0)
@@ -1593,7 +1593,7 @@ def beta_last_step(fmt, a, b, l, q_tail, z):
     w = x * y
     l1 = -(a + b) * w
     h, hl, hll = last_step(f, slope, a - (a + b) * x, l1, l1 * (y - x))
-    if abs(y * h) >= mpf(1) / 2:
+    if abs(h) >= mpf(1) / 2:
         return x, mpf(0), mpf(0)
     p1, p2, p3 = (y - x) / 2, (1 - 6 * w) / 6, (y - x) * (1 - 12 * w) / 24
     x1 = w * (1 + 2 * p1 * h + 3 * p2 * h ** 2 + 4 * p3 * h ** 3)

@@ -2246,7 +2246,10 @@ let ibeta_inverse a b p upper =
   let w = mul at.x at.y and y_x = sub at.y at.x in
   let l1 = neg (mul (add a b) w) in
   let h = fifth_order f slope lam l1 (mul l1 y_x) in
-  let polish = logical_and normal (lt (abs (mul at.y h)) 0.5) in
+  (* The series is the logistic's about [z], converging for [|h| < π]; past
+     the window a flat tail's step would carry the polynomial out of [[0,
+     1]]. *)
+  let polish = logical_and normal (lt (abs h) 0.5) in
   let taylor =
     horner_t
       [|
