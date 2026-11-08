@@ -31,6 +31,30 @@ let with_comgr f =
   | v -> v
   | exception Failure msg when absent msg -> skip ~reason:msg ()
 
+(* comgr's files *)
+
+(* [remove path] removes the file or the directory tree at [path], following no
+   symbolic link. *)
+let rec remove path =
+  match (Unix.lstat path).st_kind with
+  | S_DIR ->
+      Array.iter (fun n -> remove (Filename.concat path n)) (Sys.readdir path);
+      Unix.rmdir path
+  | _ -> Unix.unlink path
+
+(* comgr writes its temporary files under TMPDIR, and its own cache under
+   AMD_COMGR_CACHE_DIR, which the workers inherit: both name a directory of
+   this process's own, removed when it exits, so that a compile that ends its
+   worker, which leaves its temporary files behind, leaves them there. *)
+let scratch =
+  let dir = Filename.temp_dir "tolk-test-comgr" "" in
+  at_exit (fun () -> remove dir);
+  Unix.putenv "TMPDIR" dir;
+  dir
+
+let () =
+  Unix.putenv "AMD_COMGR_CACHE_DIR" (Filename.concat scratch "comgr-cache")
+
 (* The cache *)
 
 let ccache_off f = Setting.context [ B (Setting.ccache, false) ] f
