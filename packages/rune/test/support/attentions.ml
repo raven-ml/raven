@@ -323,10 +323,7 @@ let law (module S : Nx.Devices) c =
   let { q; k; v; table; lengths; docs; blocks; slopes; poisoned } = inputs c in
   let compiled (type a) (acc : (float, a) Nx.dtype) =
     let place x = Nx.place S.on (Nx.cast dt x) in
-    let f q k v =
-      let o, lse = call acc c ~table ~lengths ~docs ~blocks ~slopes q k v in
-      (o, Nx.cast Nx.float64 lse)
-    in
+    let f q k v = call acc c ~table ~lengths ~docs ~blocks ~slopes q k v in
     let g =
       Rune.jit Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor)) f
     in
