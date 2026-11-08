@@ -81,6 +81,7 @@ UNMODIFIED = {
     "codegen/decomp/decomp_dtype",
     "codegen/late/coalesce",
     "codegen/late/linearizer",
+    "schedule/rangeify",
 }
 
 HERE = Path(__file__).resolve().parent

@@ -1,0 +1,46 @@
+# tolk D73 D163 golden=8222f7d574b351c0b5b20f68518455f6
+0 Ops.CONST dtypes.weakint [] 8
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+3 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 2)
+4 Ops.INDEX dtypes.f32 [2, 3]
+5 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
+6 Ops.INDEX dtypes.i32 [5, 3]
+7 Ops.CONST dtypes.weakint [] 0
+8 Ops.CMPLT dtypes.bool [6, 7]
+9 Ops.CONST dtypes.weakint [] 64
+10 Ops.ADD dtypes.i32 [6, 9]
+11 Ops.WHERE dtypes.i32 [8, 10, 6]
+12 Ops.RANGE dtypes.weakint [9] (AxisType.WEAK, 0)
+13 Ops.CAST dtypes.i32 [12] dtypes.i32
+14 Ops.CMPEQ dtypes.bool [11, 13]
+15 Ops.CONST dtypes.weakint [] 2048
+16 Ops.PARAM dtypes.f32 [15] ParamArg(slot=2, dtype=dtypes.f32)
+17 Ops.CONST dtypes.weakint [] 32
+18 Ops.MUL dtypes.weakint [12, 17]
+19 Ops.RANGE dtypes.weakint [17] (AxisType.WEAK, 1)
+20 Ops.ADD dtypes.weakint [18, 19]
+21 Ops.INDEX dtypes.f32 [16, 20]
+22 Ops.CONST dtypes.weakfloat [] 0.0
+23 Ops.WHERE dtypes.f32 [14, 21, 22]
+24 Ops.REDUCE dtypes.f32 [23, 12] (Ops.ADD, 0)
+25 Ops.PARAM dtypes.f32 [17] ParamArg(slot=3, dtype=dtypes.f32)
+26 Ops.INDEX dtypes.f32 [25, 19]
+27 Ops.MUL dtypes.f32 [24, 26]
+28 Ops.REDUCE dtypes.f32 [27, 19] (Ops.ADD, 0)
+29 Ops.PARAM dtypes.f32 [17] ParamArg(slot=4, dtype=dtypes.f32)
+30 Ops.INDEX dtypes.f32 [29, 19]
+31 Ops.MUL dtypes.f32 [24, 30]
+32 Ops.REDUCE dtypes.f32 [31, 19] (Ops.ADD, 0)
+33 Ops.ADD dtypes.f32 [28, 32]
+34 Ops.STORE dtypes.void [4, 33]
+35 Ops.END dtypes.void [34, 3]
+36 Ops.SINK dtypes.void [35] KernelInfo()
+37 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+38 Ops.PARAM dtypes.f32 [15] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+39 Ops.PARAM dtypes.f32 [17] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+40 Ops.PARAM dtypes.f32 [17] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+41 Ops.CALL dtypes.void [36, 1, 37, 38, 39, 40] CallInfo()
+42 Ops.AFTER dtypes.f32 [1, 41]
+43 Ops.SINK dtypes.void [42]
+

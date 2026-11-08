@@ -1,0 +1,50 @@
+# tolk D163 golden=fea35813b22ba85a617b685b4b661be0
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+3 Ops.CONST dtypes.weakint [] 0
+4 Ops.INDEX dtypes.f32 [2, 3]
+5 Ops.CONST dtypes.weakint [] 256
+6 Ops.PARAM dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32)
+7 Ops.RANGE dtypes.weakint [5] (AxisType.WEAK, 0)
+8 Ops.INDEX dtypes.f32 [6, 7]
+9 Ops.REDUCE dtypes.f32 [8, 7] (Ops.MAX, 0)
+10 Ops.STORE dtypes.void [4, 9]
+11 Ops.SINK dtypes.void [10] KernelInfo()
+12 Ops.ALLOC dtypes.f32 [5] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+13 Ops.PARAM dtypes.f32 [5] ParamArg(slot=0, dtype=dtypes.f32)
+14 Ops.RANGE dtypes.weakint [5] (AxisType.WEAK, 1)
+15 Ops.INDEX dtypes.f32 [13, 14]
+16 Ops.CONST dtypes.weakint [] 32768
+17 Ops.PARAM dtypes.f32 [16] ParamArg(slot=1, dtype=dtypes.f32)
+18 Ops.CONST dtypes.weakint [] 128
+19 Ops.MUL dtypes.weakint [14, 18]
+20 Ops.RANGE dtypes.weakint [18] (AxisType.WEAK, 0)
+21 Ops.ADD dtypes.weakint [19, 20]
+22 Ops.INDEX dtypes.f32 [17, 21]
+23 Ops.PARAM dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32)
+24 Ops.INDEX dtypes.f32 [23, 3]
+25 Ops.CONST dtypes.weakfloat [] -1.0
+26 Ops.MUL dtypes.f32 [24, 25]
+27 Ops.ADD dtypes.f32 [22, 26]
+28 Ops.REDUCE dtypes.f32 [27, 20] (Ops.MAX, 0)
+29 Ops.STORE dtypes.void [15, 28]
+30 Ops.END dtypes.void [29, 14]
+31 Ops.SINK dtypes.void [30] KernelInfo()
+32 Ops.PARAM dtypes.f32 [16] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+33 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=5, dtype=dtypes.f32, device="CPU")
+34 Ops.ALLOC dtypes.f32 [5] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+35 Ops.REDUCE dtypes.f32 [22, 20] (Ops.MAX, 0)
+36 Ops.STORE dtypes.void [15, 35]
+37 Ops.END dtypes.void [36, 14]
+38 Ops.SINK dtypes.void [37] KernelInfo()
+39 Ops.CALL dtypes.void [38, 34, 32] CallInfo()
+40 Ops.AFTER dtypes.f32 [34, 39]
+41 Ops.CALL dtypes.void [11, 33, 40] CallInfo()
+42 Ops.AFTER dtypes.f32 [33, 41]
+43 Ops.CALL dtypes.void [31, 12, 32, 42] CallInfo()
+44 Ops.AFTER dtypes.f32 [12, 43]
+45 Ops.CALL dtypes.void [11, 1, 44] CallInfo()
+46 Ops.AFTER dtypes.f32 [1, 45]
+47 Ops.SINK dtypes.void [46]
+

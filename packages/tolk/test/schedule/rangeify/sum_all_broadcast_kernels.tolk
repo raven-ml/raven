@@ -1,0 +1,36 @@
+# tolk D163 golden=d10c77e0267ee44c76dabd17949e0b24
+0 Ops.CONST dtypes.weakint [] 512
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+3 Ops.CONST dtypes.weakint [] 32
+4 Ops.RANGE dtypes.weakint [3] (AxisType.WEAK, 0)
+5 Ops.CONST dtypes.weakint [] 16
+6 Ops.MUL dtypes.weakint [4, 5]
+7 Ops.RANGE dtypes.weakint [5] (AxisType.WEAK, 1)
+8 Ops.ADD dtypes.weakint [6, 7]
+9 Ops.INDEX dtypes.f32 [2, 8]
+10 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+11 Ops.INDEX dtypes.f32 [10, 8]
+12 Ops.CONST dtypes.weakint [] 1
+13 Ops.PARAM dtypes.f32 [12] ParamArg(slot=2, dtype=dtypes.f32)
+14 Ops.CONST dtypes.weakint [] 0
+15 Ops.INDEX dtypes.f32 [13, 14]
+16 Ops.CONST dtypes.weakfloat [] -1.0
+17 Ops.MUL dtypes.f32 [15, 16]
+18 Ops.ADD dtypes.f32 [11, 17]
+19 Ops.STORE dtypes.void [9, 18]
+20 Ops.END dtypes.void [19, 4, 7]
+21 Ops.SINK dtypes.void [20] KernelInfo()
+22 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+23 Ops.ALLOC dtypes.f32 [12] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+24 Ops.PARAM dtypes.f32 [12] ParamArg(slot=0, dtype=dtypes.f32)
+25 Ops.INDEX dtypes.f32 [24, 14]
+26 Ops.REDUCE dtypes.f32 [11, 4, 7] (Ops.ADD, 0)
+27 Ops.STORE dtypes.void [25, 26]
+28 Ops.SINK dtypes.void [27] KernelInfo()
+29 Ops.CALL dtypes.void [28, 23, 22] CallInfo()
+30 Ops.AFTER dtypes.f32 [23, 29]
+31 Ops.CALL dtypes.void [21, 1, 22, 30] CallInfo()
+32 Ops.AFTER dtypes.f32 [1, 31]
+33 Ops.SINK dtypes.void [32]
+

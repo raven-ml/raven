@@ -1,0 +1,41 @@
+# tolk D137 golden=8ea770a6393cbe8d1df733ae35b92d9c
+0 Ops.CONST dtypes.weakint [] 8
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+3 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 1)
+4 Ops.INDEX dtypes.f32 [2, 3]
+5 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+6 Ops.INDEX dtypes.f32 [5, 3]
+7 Ops.CONST dtypes.weakint [] 32
+8 Ops.PARAM dtypes.f32 [7] ParamArg(slot=2, dtype=dtypes.f32)
+9 Ops.CONST dtypes.weakint [] 4
+10 Ops.MUL dtypes.weakint [3, 9]
+11 Ops.RANGE dtypes.weakint [9] (AxisType.WEAK, 0)
+12 Ops.ADD dtypes.weakint [10, 11]
+13 Ops.INDEX dtypes.f32 [8, 12]
+14 Ops.REDUCE dtypes.f32 [13, 11] (Ops.ADD, 0)
+15 Ops.ADD dtypes.f32 [6, 14]
+16 Ops.PARAM dtypes.f32 [7] ParamArg(slot=3, dtype=dtypes.f32)
+17 Ops.INDEX dtypes.f32 [16, 12]
+18 Ops.REDUCE dtypes.f32 [17, 11] (Ops.ADD, 0)
+19 Ops.ADD dtypes.f32 [15, 18]
+20 Ops.STORE dtypes.void [4, 19]
+21 Ops.END dtypes.void [20, 3]
+22 Ops.SINK dtypes.void [21] KernelInfo()
+23 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+24 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+25 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+26 Ops.PARAM dtypes.f32 [7] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+27 Ops.PARAM dtypes.f32 [7] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+28 Ops.CALL dtypes.void [22, 24, 25, 26, 27] CallInfo()
+29 Ops.AFTER dtypes.f32 [24, 28]
+30 Ops.PARAM dtypes.f32 [7] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+31 Ops.PARAM dtypes.f32 [7] ParamArg(slot=5, dtype=dtypes.f32, device="CPU")
+32 Ops.CALL dtypes.void [22, 23, 29, 30, 31] CallInfo()
+33 Ops.AFTER dtypes.f32 [23, 32]
+34 Ops.PARAM dtypes.f32 [7] ParamArg(slot=6, dtype=dtypes.f32, device="CPU")
+35 Ops.PARAM dtypes.f32 [7] ParamArg(slot=7, dtype=dtypes.f32, device="CPU")
+36 Ops.CALL dtypes.void [22, 1, 33, 34, 35] CallInfo()
+37 Ops.AFTER dtypes.f32 [1, 36]
+38 Ops.SINK dtypes.void [37]
+

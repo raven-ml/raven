@@ -1,0 +1,72 @@
+# tolk D60
+0 Ops.CONST dtypes.weakint [] 8
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 2
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.STACK dtypes.weakint [2, 3]
+5 Ops.RESHAPE dtypes.f32 [1, 4]
+6 Ops.CONST dtypes.weakint [] 1
+7 Ops.CONST dtypes.weakint [] 0
+8 Ops.STACK dtypes.weakint [6, 7]
+9 Ops.PERMUTE dtypes.f32 [5, 8]
+10 Ops.STACK dtypes.weakint [7, 7]
+11 Ops.STACK dtypes.weakint [3, 2]
+12 Ops.PAD dtypes.f32 [9, 10, 11]
+13 Ops.STACK dtypes.weakint [3, 6, 2]
+14 Ops.RESHAPE dtypes.f32 [12, 13]
+15 Ops.STACK dtypes.weakint [7, 7, 7]
+16 Ops.CONST dtypes.weakint [] 3
+17 Ops.STACK dtypes.weakint [3, 16, 2]
+18 Ops.PAD dtypes.f32 [14, 15, 17]
+19 Ops.CONST dtypes.weakint [] 12
+20 Ops.STACK dtypes.weakint [19, 2]
+21 Ops.RESHAPE dtypes.f32 [18, 20]
+22 Ops.STACK dtypes.weakint [16, 7]
+23 Ops.CONST dtypes.weakint [] 16
+24 Ops.STACK dtypes.weakint [23, 2]
+25 Ops.PAD dtypes.f32 [21, 22, 24]
+26 Ops.STACK dtypes.weakint [3, 3, 2]
+27 Ops.RESHAPE dtypes.f32 [25, 26]
+28 Ops.STACK dtypes.weakint [6, 7, 2]
+29 Ops.PERMUTE dtypes.f32 [27, 28]
+30 Ops.RESHAPE dtypes.f32 [29, 24]
+31 Ops.SHRINK dtypes.f32 [30, 22, 20]
+32 Ops.RESHAPE dtypes.f32 [31, 17]
+33 Ops.SHRINK dtypes.f32 [32, 15, 13]
+34 Ops.RESHAPE dtypes.f32 [33, 11]
+35 Ops.PERMUTE dtypes.f32 [34, 8]
+36 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=-1, dtype=dtypes.f32, device="CPU")
+37 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+38 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+39 Ops.MUL dtypes.weakint [38, 3]
+40 Ops.RANGE dtypes.weakint [3] (AxisType.WEAK, 1)
+41 Ops.ADD dtypes.weakint [39, 40]
+42 Ops.INDEX dtypes.f32 [37, 41]
+43 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+44 Ops.INDEX dtypes.f32 [43, 41]
+45 Ops.CONST dtypes.weakfloat [] 2.0
+46 Ops.MUL dtypes.f32 [44, 45]
+47 Ops.CONST dtypes.weakfloat [] 1.0
+48 Ops.ADD dtypes.f32 [46, 47]
+49 Ops.STORE dtypes.void [42, 48]
+50 Ops.END dtypes.void [49, 38, 40]
+51 Ops.SINK dtypes.void [50] KernelInfo()
+52 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+53 Ops.CALL dtypes.void [51, 52, 1] CallInfo()
+54 Ops.LINEAR dtypes.void [53]
+55 Ops.RESHAPE dtypes.f32 [52, 4]
+56 Ops.RESHAPE dtypes.f32 [36, 4]
+57 Ops.CALL dtypes.void [54, 55, 56] CallInfo(name="assign_flipped_beside_call.<locals>.f", precompile=True)
+58 Ops.AFTER dtypes.f32 [36, 57]
+59 Ops.RESHAPE dtypes.f32 [58, 4]
+60 Ops.ADD dtypes.f32 [35, 59]
+61 Ops.STORE dtypes.void [5, 60]
+62 Ops.AFTER dtypes.f32 [1, 61]
+63 Ops.PARAM dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+64 Ops.RESHAPE dtypes.f32 [63, 4]
+65 Ops.CONST dtypes.weakfloat [] 3.0
+66 Ops.MUL dtypes.f32 [55, 65]
+67 Ops.STORE dtypes.void [64, 66]
+68 Ops.AFTER dtypes.f32 [63, 67]
+69 Ops.SINK dtypes.void [62, 68]
+

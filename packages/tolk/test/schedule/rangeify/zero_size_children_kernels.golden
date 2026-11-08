@@ -10,12 +10,10 @@
 9 Ops.REDUCE dtypes.f32 [8, 7] (Ops.ADD, 0)
 10 Ops.CONST dtypes.weakfloat [] 2.0
 11 Ops.MUL dtypes.f32 [9, 10]
-12 Ops.CONST dtypes.weakfloat [] 0.0
-13 Ops.ADD dtypes.f32 [11, 12]
-14 Ops.STORE dtypes.void [4, 13]
-15 Ops.SINK dtypes.void [14] KernelInfo()
-16 Ops.PARAM dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
-17 Ops.CALL dtypes.void [15, 1, 16] CallInfo()
-18 Ops.AFTER dtypes.f32 [1, 17]
-19 Ops.SINK dtypes.void [18]
+12 Ops.STORE dtypes.void [4, 11]
+13 Ops.SINK dtypes.void [12] KernelInfo()
+14 Ops.PARAM dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+15 Ops.CALL dtypes.void [13, 1, 14] CallInfo()
+16 Ops.AFTER dtypes.f32 [1, 15]
+17 Ops.SINK dtypes.void [16]
 

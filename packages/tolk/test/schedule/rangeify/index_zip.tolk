@@ -1,0 +1,48 @@
+# tolk D73
+0 Ops.CONST dtypes.weakint [] 6
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 2
+3 Ops.CONST dtypes.weakint [] 3
+4 Ops.STACK dtypes.weakint [2, 3]
+5 Ops.RESHAPE dtypes.f32 [1, 4]
+6 Ops.CONST dtypes.weakint [] 16
+7 Ops.PARAM dtypes.f32 [6] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+8 Ops.CONST dtypes.weakint [] 1
+9 Ops.CAST dtypes.i32 [8] dtypes.i32
+10 Ops.EXPAND dtypes.i32 [9, 2]
+11 Ops.PAD dtypes.i32 [10, 8, 3]
+12 Ops.EXPAND dtypes.i32 [11, 3]
+13 Ops.CONST dtypes.weakint [] 9
+14 Ops.RESHAPE dtypes.i32 [12, 13]
+15 Ops.CONST dtypes.weakint [] 0
+16 Ops.CONST dtypes.weakint [] 8
+17 Ops.SHRINK dtypes.i32 [14, 15, 16]
+18 Ops.CONST dtypes.weakint [] 4
+19 Ops.STACK dtypes.weakint [2, 18]
+20 Ops.RESHAPE dtypes.i32 [17, 19]
+21 Ops.STACK dtypes.weakint [15, 15]
+22 Ops.STACK dtypes.weakint [2, 2]
+23 Ops.SHRINK dtypes.i32 [20, 21, 22]
+24 Ops.REDUCE dtypes.i32 [23] (Ops.ADD, 1)
+25 Ops.CONST dtypes.weakint [] -1
+26 Ops.ADD dtypes.i32 [24, 25]
+27 Ops.CAST dtypes.weakint [26] dtypes.weakint
+28 Ops.EXPAND dtypes.weakint [27, 3]
+29 Ops.STACK dtypes.weakint [8, 15]
+30 Ops.PERMUTE dtypes.weakint [28, 29]
+31 Ops.MUL dtypes.weakint [30, 16]
+32 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32, device="CPU")
+33 Ops.RESHAPE dtypes.i32 [32, 4]
+34 Ops.MAX dtypes.i32 [33, 15]
+35 Ops.XOR dtypes.i32 [34, 25]
+36 Ops.CONST dtypes.weakint [] 7
+37 Ops.XOR dtypes.weakint [36, 25]
+38 Ops.MAX dtypes.i32 [35, 37]
+39 Ops.XOR dtypes.i32 [38, 25]
+40 Ops.CAST dtypes.weakint [39] dtypes.weakint
+41 Ops.ADD dtypes.weakint [31, 40]
+42 Ops.INDEX dtypes.f32 [7, 41]
+43 Ops.STORE dtypes.void [5, 42]
+44 Ops.AFTER dtypes.f32 [1, 43]
+45 Ops.SINK dtypes.void [44]
+

@@ -1,0 +1,45 @@
+# tolk D163 golden=db8a26547b82690f5baaaa9bf00491f0
+0 Ops.CONST dtypes.weakint [] 32
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+3 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 1)
+4 Ops.INDEX dtypes.f32 [2, 3]
+5 Ops.CONST dtypes.weakint [] 64
+6 Ops.PARAM dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32)
+7 Ops.RANGE dtypes.weakint [5] (AxisType.WEAK, 0)
+8 Ops.INDEX dtypes.f32 [6, 7]
+9 Ops.CONST dtypes.weakint [] 2048
+10 Ops.PARAM dtypes.f32 [9] ParamArg(slot=2, dtype=dtypes.f32)
+11 Ops.MUL dtypes.weakint [7, 0]
+12 Ops.ADD dtypes.weakint [11, 3]
+13 Ops.INDEX dtypes.f32 [10, 12]
+14 Ops.MUL dtypes.f32 [8, 13]
+15 Ops.REDUCE dtypes.f32 [14, 7] (Ops.ADD, 0)
+16 Ops.STORE dtypes.void [4, 15]
+17 Ops.END dtypes.void [16, 3]
+18 Ops.SINK dtypes.void [17] KernelInfo()
+19 Ops.ALLOC dtypes.f32 [5] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+20 Ops.PARAM dtypes.f32 [5] ParamArg(slot=0, dtype=dtypes.f32)
+21 Ops.INDEX dtypes.f32 [20, 7]
+22 Ops.CONST dtypes.weakint [] 1
+23 Ops.PARAM dtypes.f32 [22] ParamArg(slot=2, dtype=dtypes.f32)
+24 Ops.CONST dtypes.weakint [] 0
+25 Ops.INDEX dtypes.f32 [23, 24]
+26 Ops.RECIP dtypes.f32 [25]
+27 Ops.MUL dtypes.f32 [8, 26]
+28 Ops.PARAM dtypes.f32 [5] ParamArg(slot=3, dtype=dtypes.f32)
+29 Ops.INDEX dtypes.f32 [28, 7]
+30 Ops.MUL dtypes.f32 [27, 29]
+31 Ops.STORE dtypes.void [21, 30]
+32 Ops.END dtypes.void [31, 7]
+33 Ops.SINK dtypes.void [32] KernelInfo()
+34 Ops.PARAM dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+35 Ops.PARAM dtypes.f32 [22] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+36 Ops.PARAM dtypes.f32 [5] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+37 Ops.CALL dtypes.void [33, 19, 34, 35, 36] CallInfo()
+38 Ops.AFTER dtypes.f32 [19, 37]
+39 Ops.PARAM dtypes.f32 [9] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+40 Ops.CALL dtypes.void [18, 1, 38, 39] CallInfo()
+41 Ops.AFTER dtypes.f32 [1, 40]
+42 Ops.SINK dtypes.void [41]
+
