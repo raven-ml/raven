@@ -234,6 +234,14 @@ extern "C" __attribute__((global)) void f(float *a) { a[0] = mfma(a[1], a[2], a[
 let compile ?(arch = "gfx1100") src =
   Compiler.compile (Compiler_amd.hip arch) src
 
+(* [kernel]'s code object from a worker that has compiled nothing else: idle
+   workers are killed first, so that a compile in turn is compared with one
+   that no earlier compile can have touched. *)
+let fresh_reference () =
+  with_comgr (fun () ->
+      kill_children ();
+      compile kernel)
+
 let process =
   group "compiles in processes of their own"
     [
@@ -281,7 +289,7 @@ let process =
       slow
       @@ test "compiles in turn for other architectures are each one's"
            (fun () ->
-             let lib = with_comgr (fun () -> compile kernel) in
+             let lib = fresh_reference () in
              let other = compile ~arch:"gfx1201" kernel in
              not_equal string lib other;
              equal string lib (compile kernel);
@@ -289,14 +297,14 @@ let process =
       slow
       @@ test "a compile after a rejected source returns its code object"
            (fun () ->
-             let lib = with_comgr (fun () -> compile kernel) in
+             let lib = fresh_reference () in
              is_some (rejection (fun () -> compile "}{"));
              equal string lib (compile kernel));
       slow
       @@ test
            "a compile after a source that ends its process returns its code \
             object" (fun () ->
-             let lib = with_comgr (fun () -> compile kernel) in
+             let lib = fresh_reference () in
              is_some (rejection (fun () -> compile unselectable));
              equal string lib (compile kernel));
       slow
