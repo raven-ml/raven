@@ -2219,6 +2219,10 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
       c "reduce_ranges" 3 (fun d ->
           let lo = d 0 (ids ()) and hi = d 1 (Nx.add_s (ids ()) 3L) in
           show (Nx.reduce_ranges Max ~lo ~hi (d 2 (x [| 5 |]))));
+      c "moments_ranges" 3 (fun d ->
+          let lo = d 0 (ids ()) and hi = d 1 (Nx.add_s (ids ()) 2L) in
+          let m, v = Nx.moments_ranges ~lo ~hi (d 2 (x [| 5; 2 |])) in
+          show (Nx.concatenate ~axis:0 [ m; v ]));
       c "map_segments" 2 (fun d ->
           show
             (Nx.map_segments ~segments:2

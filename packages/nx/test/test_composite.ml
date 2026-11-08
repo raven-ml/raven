@@ -108,6 +108,31 @@ let ranges =
     run;
   }
 
+let moments =
+  let open Gen in
+  let* n = of_list [ 1; 3; 4; 5 ] in
+  let* cols = int_range 1 3 in
+  let* r = of_list [ 1; 2; 4 ] in
+  let+ lo = ints [| r |] (-1) (n + 1)
+  and+ hi = ints [| r |] (-1) (n + 1)
+  and+ x = ints [| n; cols |] (-4) 4 in
+  let args = [ ("lo", lo); ("hi", hi); ("x", x) ] in
+  let run at =
+    let mean, var =
+      Nx.moments_ranges
+        ~lo:(to_int64 (placed "lo" args at))
+        ~hi:(to_int64 (placed "hi" args at))
+        (placed "x" args at)
+    in
+    Array.append (Nx.to_array mean) (Nx.to_array var)
+  in
+  {
+    by = "Nx.moments_ranges";
+    label = Format.asprintf "moments_ranges, %d rows of %d" n cols;
+    args;
+    run;
+  }
+
 let placed_case =
   let open Gen in
   with_pp
@@ -118,7 +143,7 @@ let placed_case =
            (fun ppf (name, p) ->
              Format.fprintf ppf "%s at %a" name Nx.Placement.pp p))
         at)
-    (let* c = one_of [ segments; ranges ] in
+    (let* c = one_of [ segments; ranges; moments ] in
      let place (name, x) =
        map (fun p -> (name, p)) (of_list (candidates (Nx.ndim x)))
      in

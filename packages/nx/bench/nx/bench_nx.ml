@@ -964,6 +964,29 @@ let take_along_grad rows cols () =
   let table = Nx.copy (on_host (Nx.zeros D.Bfloat16 s)) in
   (on_host (Nx.cast D.Int64 p), g, ref table)
 
+(* Windows of [w] rows ending at each of 64K float64 rows at 6e4 with noise,
+   drawn once from a fixed key: a rolling sum, maximum, mean and variance,
+   each range folded by the sparse table, whose cost does not grow with
+   [w]. *)
+let windows_f64_64k w () =
+  let n = 1 lsl 16 in
+  let x = Nx.Rng.uniform ~key:(Nx.Rng.key 16) D.Float64 [| n |] in
+  let hi = on_host (Nx.add_s (Nx.arange D.Int64 0 n 1) 1L) in
+  (Nx.sub_s hi (Int64.of_int w), hi, on_host (Nx.add_s x 6e4))
+
+let range_rows =
+  let row name w f =
+    Thumper.bench_with_setup name ~setup:(windows_f64_64k w) (fun (lo, hi, x) ->
+        f ~lo ~hi x)
+  in
+  Thumper.group "ranges"
+    [
+      row "sum-f64-64K-w365" 365 (Nx.reduce_ranges Add);
+      row "max-f64-64K-w365" 365 (Nx.reduce_ranges Max);
+      row "moments-f64-64K-w28" 28 Nx.moments_ranges;
+      row "moments-f64-64K-w365" 365 Nx.moments_ranges;
+    ]
+
 let index_rows =
   Thumper.group "index"
     ([
@@ -1733,6 +1756,7 @@ let () =
          contract_rows;
          conv_rows;
          index_rows;
+         range_rows;
          interp_rows;
          frontend_rows;
          statistics_rows;

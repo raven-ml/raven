@@ -4994,24 +4994,42 @@ let reduce_segments c ~segments ids x =
    and their rows alone. Level [k] comes from level [k - 1]: a first half's
    suffix goes on through the second half's total, the suffix of its first
    row, and a second half's prefix starts from the first half's total, the
-   prefix of its last row. Rows are padded to whole chunks of the top level;
-   no answer reads the padding. [a ++ b] combines [a]'s rows, the earlier,
-   with [b]'s by [c]. *)
-let ranges (type v s d) ~by (c : P.binary) ~l ~r (x : (v, s, d) t)
-    (none : (v, s, d) t) =
-  let ( ++ ) a b = binary ~by (Binary c) a b in
-  let n = Prim.dim x 0 and dt = dtype x in
-  let rows = Array.sub (shape x) 1 (ndim x - 1) in
-  let m = Prim.dim l 0 in
-  let per_range t =
-    Eval.reshape ~by (Array.append [| m |] (Array.map (fun _ -> 1) rows)) t
+   prefix of its last row.
+
+   A state is the arrays [x] holds, of one dtype and shape with their rows
+   along the first axis, and [f a b] combines [a]'s rows, the earlier, with
+   [b]'s, of equal shapes, into a state of that dtype and shape. Rows are
+   padded to whole chunks of the top level by copies of the last row, and
+   each gather reads a position clamped into the rows, so that [f] meets only
+   combinations of [x]'s rows; no answer reads the padding or a clamped
+   position. A range that holds no row is [none]'s. *)
+let ranges (type v s d) ~by f ~l ~r (x : (v, s, d) t array)
+    (none : (v, s, d) t array) : (v, s, d) t array =
+  let n = Prim.dim x.(0) 0 and m = Prim.dim l 0 in
+  let dt = dtype x.(0) in
+  let rows = Array.sub (shape x.(0)) 1 (ndim x.(0) - 1) in
+  let per_range = Array.append [| m |] (Array.map (fun _ -> 1) rows) in
+  let take p = Array.map (take_axis ~by 0 p) in
+  let where c a b =
+    let c = Eval.reshape ~by per_range c in
+    Array.map2 (ternary ~by Where c) a b
   in
-  let where c a b = ternary ~by Where (per_range c) a b in
+  (* [f] of [a] and [b] broadcast to one shape: a doubling's one row. *)
+  let ( ++ ) a b =
+    if same_shape a.(0) b.(0) then f a b
+    else
+      let s = Prim.broadcast_shape ~by (shape a.(0)) (shape b.(0)) in
+      let wide = Array.map (Eval.broadcast ~by s) in
+      f (wide a) (wide b)
+  in
   let li = operand 0 l and ri = operand 1 r in
-  let single =
-    elementwise ~by D.Bool [ Any l; Any r ] E.(li = ri)
+  let last = i64 (n - 1) in
+  let gl = elementwise ~by D.Int64 [ Any l ] E.(minimum li last)
+  and gr =
+    elementwise ~by D.Int64 [ Any r ] E.(maximum (operand 0 r) (i64 0))
   in
-  let res = where single (take_axis ~by 0 r x) none in
+  let single = elementwise ~by D.Bool [ Any l; Any r ] E.(li = ri) in
+  let res = where single (take gr x) none in
   if n < 2 then res
   else
     (* The highest level: the top bit of [n - 1]. *)
@@ -5019,10 +5037,16 @@ let ranges (type v s d) ~by (c : P.binary) ~l ~r (x : (v, s, d) t)
     let chunk = 1 lsl top in
     let padded = (n + chunk - 1) / chunk * chunk in
     let full = Array.append [| padded |] rows in
-    let xp =
-      if padded = n then x
-      else assemble ~by dt full (D.zero dt) [ (all_of (shape x), x) ]
+    let pad t =
+      let last = Eval.move ~by (Slice (region (shape t) 0 (n - 1) 1)) t in
+      let tail = Array.append [| padded - n |] rows in
+      assemble ~by dt full (D.zero dt)
+        [
+          (all_of (shape t), t);
+          (region full 0 n (padded - n), Eval.broadcast ~by tail last);
+        ]
     in
+    let xp = if padded = n then x else Array.map pad x in
     let whole_rows = all_of rows in
     let double k suf pre =
       let h = 1 lsl (k - 1) in
@@ -5045,13 +5069,15 @@ let ranges (type v s d) ~by (c : P.binary) ~l ~r (x : (v, s, d) t)
           [| whole blocks; { start = i; count = 1; step = 1 }; whole h |]
           whole_rows
       in
-      let joined first second =
-        Eval.reshape ~by full
-          (assemble ~by dt halves (D.zero dt)
-             [ (half 0, first); (half 1, second) ])
+      let joined =
+        Array.map2 (fun first second ->
+            Eval.reshape ~by full
+              (assemble ~by dt halves (D.zero dt)
+                 [ (half 0, first); (half 1, second) ]))
       in
-      ( joined (part 0 0 h suf ++ part 1 0 1 suf) (part 1 0 h suf),
-        joined (part 0 0 h pre) (part 0 (h - 1) 1 pre ++ part 1 0 h pre) )
+      let p half start count = Array.map (part half start count) in
+      ( joined (p 0 0 h suf ++ p 1 0 1 suf) (p 1 0 h suf),
+        joined (p 0 0 h pre) (p 0 (h - 1) 1 pre ++ p 1 0 h pre) )
     in
     let rec go k suf pre res =
       let span = i64 (1 lsl k) in
@@ -5061,7 +5087,7 @@ let ranges (type v s d) ~by (c : P.binary) ~l ~r (x : (v, s, d) t)
             li < ri
             && binary Xor (binary Idiv li span) (binary Idiv ri span) = i64 1)
       in
-      let v = take_axis ~by 0 l suf ++ take_axis ~by 0 r pre in
+      let v = take gl suf ++ take gr pre in
       let res = where here v res in
       if k = top then res
       else
@@ -5070,13 +5096,39 @@ let ranges (type v s d) ~by (c : P.binary) ~l ~r (x : (v, s, d) t)
     in
     go 0 xp xp res
 
-let ranges_of ~by c ~lo ~hi x =
+(* [lo] and [hi] checked against [x]'s rows and clipped into [0, n], and each
+   range's last row, [hi - 1]. *)
+let clipped ~by ~lo ~hi x =
   rows_of ~by x;
   if ndim lo <> 1 || not (same_shape lo hi) then
     invalid_argf "%s: bounds %a and %a, not one of each per range" by pp_value
       lo pp_value hi;
-  let dt = dtype x and n = Prim.dim x 0 and m = Prim.dim lo 0 in
-  let rows = Array.sub (shape x) 1 (ndim x - 1) in
+  let n = Prim.dim x 0 in
+  let clip b =
+    elementwise ~by D.Int64 [ Any b ]
+      E.(minimum (maximum (operand 0 b) (i64 0)) (i64 n))
+  in
+  let l = clip lo and h = clip hi in
+  (l, h, elementwise ~by D.Int64 [ Any h ] E.(operand 0 h - i64 1))
+
+(* The value [v] of [dt] at each of [m] ranges of [x]'s row shape, whole
+   along the ranges beside [x]'s other cuts: a range's row is read wherever
+   the bounds cut the ranges. *)
+let per_range ~by x m dt v =
+  let at = placement x in
+  let at =
+    if Grid.is_cut (Devices.grid at) then Devices.uncut ~axis:0 at else at
+  in
+  fill ~by at dt (Array.append [| m |] (Array.sub (shape x) 1 (ndim x - 1))) v
+
+(* The table over [x] alone, combined by [k]. *)
+let fold_ranges ~by k ~l ~r x none =
+  let f a b = [| binary ~by (Binary k) a.(0) b.(0) |] in
+  (ranges ~by f ~l ~r [| x |] [| none |]).(0)
+
+let ranges_of ~by c ~lo ~hi x =
+  let l, h, r = clipped ~by ~lo ~hi x in
+  let dt = dtype x and m = Prim.dim lo 0 in
   let start = identity ~by c dt in
   (* An [Add], [Max] or [Min] range has the bits its rows give on one
      device: the sparse table's levels regroup the rows into chunks of up
@@ -5085,21 +5137,7 @@ let ranges_of ~by c ~lo ~hi x =
      remedy keeps the other axes' cuts, along which each device computes
      its own columns. *)
   (match c with Set -> () | Add | Max | Min -> rows_whole ~by x);
-  let clip b =
-    elementwise ~by D.Int64 [ Any b ]
-      E.(minimum (maximum (operand 0 b) (i64 0)) (i64 n))
-  in
-  let l = clip lo and h = clip hi in
-  let r = elementwise ~by D.Int64 [ Any h ] E.(operand 0 h - i64 1) in
-  (* The ranges' identities, whole along the ranges beside [x]'s other
-     cuts: a range's row is read wherever the bounds cut the ranges. *)
-  let empty dt v =
-    let at = placement x in
-    let at =
-      if Grid.is_cut (Devices.grid at) then Devices.uncut ~axis:0 at else at
-    in
-    fill ~by at dt (Array.append [| m |] rows) v
-  in
+  let empty dt v = per_range ~by x m dt v in
   match c with
   | Set ->
       let some =
@@ -5107,29 +5145,166 @@ let ranges_of ~by c ~lo ~hi x =
       in
       let some =
         Eval.reshape ~by
-          (Array.append [| m |] (Array.map (fun _ -> 1) rows))
+          (Array.append [| m |] (Array.make (ndim x - 1) 1))
           some
       in
       ternary ~by Where some (take_axis ~by 0 r x) (empty dt start)
-  | Max -> ranges ~by Maximum ~l ~r x (empty dt start)
-  | Min -> ranges ~by Minimum ~l ~r x (empty dt start)
+  | Max -> fold_ranges ~by Maximum ~l ~r x (empty dt start)
+  | Min -> fold_ranges ~by Minimum ~l ~r x (empty dt start)
   | Add ->
       (* Narrow floats sum at float32; [+0] then makes a sum of [-0.] terms
          [+0.], as {!sum}'s is. *)
       let (D.Any w) = Nx_kernel.carrier (D.Any dt) in
       let zero = D.zero w in
-      let s = ranges ~by Add ~l ~r (cast_by ~by w x) (empty w zero) in
+      let s = fold_ranges ~by Add ~l ~r (cast_by ~by w x) (empty w zero) in
       cast_by ~by dt (literal ~by ~swapped:false (Binary Add) w s zero)
 
-let reduce_ranges c ~lo ~hi x =
-  let by = "Nx.reduce_ranges" in
+(* Bounds and rows read as their own values, and through a composite where
+   they lie apart. *)
+let over_ranges ~by f ~lo ~hi x =
   let lo = Donate.read ~by lo in
   let hi = Donate.read ~by hi in
   let x = Donate.read ~by x in
   if Eval.apart lo hi || Eval.apart lo x then
     Eval.composite ~by [ Arg ("lo", lo); Arg ("hi", hi); Arg ("x", x) ]
-      (fun () -> ranges_of ~by c ~lo ~hi x)
-  else ranges_of ~by c ~lo ~hi x
+      (fun () -> f ~lo ~hi x)
+  else f ~lo ~hi x
+
+let reduce_ranges c ~lo ~hi x =
+  over_ranges ~by:"Nx.reduce_ranges" (ranges_of ~by:"Nx.reduce_ranges" c) ~lo
+    ~hi x
+
+(* Moments over ranges. A state is a count [n], its first row [c], half the
+   mean [h] of its rows less [c], the sum [S] of their squared deviations,
+   and [Z], that sum of the rows times [down], all in the carrier. A finite
+   row [t] is [(1, t, 0, 0, 0)], so that each state's shift is a row of it
+   (Chan, Golub and LeVeque, 1983, §3: shifting by a data point bounds the
+   condition number), and a row that is not finite is [(1, 0, t, 0, 0)]. A
+   state [a] then [b] is [n = na + nb], [c = ca], [w = nb / n], half the
+   deviation of the means [e = (cb/2 - ca/2) + (hb - ha)], [h = ha + e w],
+   [S = (Sa + Sb) + 4 (e w) (e na)] and [Z] as [S] of [e down]. The table
+   gives every combine rows, so no count is [0]. Where [ha] or [hb] is not
+   finite, [e] is [0] and [h = ha + hb]: the state is NaN or infinite in any
+   case, and a zero cotangent through a run that holds such a row, or whose
+   [S] overflows, meets no infinite partial. So a range of finite rows has
+   its own derivative, whatever the rows outside it hold.
+
+   Overflow. Halves keep [e] and [h] finite up to rows near the greatest
+   float of both signs; where [hb - ha] alone overflows, [e] is the
+   difference of half the two means, whose rounding is in units of the
+   rows' spread there too. A range's [S] is at least each of its runs', so
+   [S] is infinite only where the range's own is. There its variance is
+   [Z / n] times [up] twice: [down] makes the rows at most [2^480] at
+   float64, where the squared deviations of [2^53] rows sum below the
+   greatest float, and [Z] is at least [2^-64], past what a term's underflow
+   can show. Other ranges read [S] alone, so their bits do not depend on
+   [Z]. At float32, [down = 2^-78] makes the rows at most [2^50], [2^24] of
+   them sum below [2^126], and [Z] is at least [2^-28].
+
+   Error, to first order in [u], for [k] rows of spread [R] and variance [V],
+   counts exact and barring underflow. At a state of height [j] (its children
+   at most [j - 1]), [δ = 2 e] errs by [η_j <= 2 a_(j-1) + 4] in units of
+   [u R]: [1] for [cb - c], [2 + 2 a_(j-1)] for [νb - νa], [1] for their sum,
+   where [ν = 2 h] errs by [a_j]. [ν = νa + δ w] is a convex combination of
+   its children's errors plus at most [6 + 1], so [a_j = 7 j]. Each term
+   [T = δ² na nb / n] takes [4] relative roundings and [2 δ η na nb / n], and
+   the additions take [2] per height. States of one height are disjoint, so
+   Cauchy-Schwarz over [Σ T <= S] and [Σ na nb / n <= k / 4] gives
+   [(2 D + 4) u S + Σ_j η_j u R √(k S)], and the division [u V]: the variance
+   errs by [(2 D + 5) u V + (7 D² - 3 D) u R √V] and the mean by
+   [7 D u R + u|μ|]. *)
+
+(* The map of [prog] over [xs], of one shape, into [k] results of [w]. *)
+let maps (type s d) ~by (w : (float, s) D.t) k prog
+    (xs : (float, s, d) t array) : (float, s, d) t array =
+  let (Prim.Outputs (outs, read)) =
+    Prim.outputs (List.init k (fun _ -> D.Any w))
+  in
+  let loads = Iarray.of_array (Array.map (fun x -> Value.Plain x) xs) in
+  let layout = contiguous ~by (shape xs.(0)) in
+  let op = Value.Map { layout; prog; outs; loads; at = None } in
+  Array.of_list (List.map (Prim.expect w) (read (Eval.eval ~by op)))
+
+let moments_of (type s d) ~by ~lo ~hi (x : (float, s, d) t) =
+  let l, _, r = clipped ~by ~lo ~hi x in
+  rows_whole ~by x;
+  let dt = dtype x and m = Prim.dim lo 0 in
+  let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
+  let lit = E.const w and input k = E.input k w in
+  let finite v = E.(abs v < lit Float.infinity) in
+  let half v = E.(v * lit 0.5) in
+  (* [2^-s]: [544] at float64, [78] at float32, for the bounds above. *)
+  let s = if D.bits w = 64 then 544 else 78 in
+  let down = lit (Float.ldexp 1. (-s)) and up = lit (Float.ldexp 1. s) in
+  let program ins exprs =
+    P.of_exprs
+      ~ins:(Iarray.init ins (fun _ -> D.Any w))
+      (Iarray.of_array (Array.map E.any exprs))
+  in
+  let lift =
+    let t = input 0 in
+    program 1
+      [|
+        lit 1.;
+        E.where (finite t) t (lit 0.);
+        E.where (finite t) (lit 0.) t;
+        lit 0.;
+        lit 0.;
+      |]
+  in
+  let combine =
+    let na = input 0 and ca = input 1 and ha = input 2 in
+    let sa = input 3 and za = input 4 and nb = input 5 in
+    let cb = input 6 and hb = input 7 and sb = input 8 and zb = input 9 in
+    let n = E.(na + nb) and held = E.(finite ha && finite hb) in
+    let wb = E.(nb / n) in
+    let near = E.(half cb - half ca + (hb - ha)) in
+    let far = E.(half cb + hb - (half ca + ha)) in
+    let e = E.(where held (where (finite near) near far) (lit 0.)) in
+    let dw = E.(e * wb) in
+    let h = E.(where held (ha + dw) (ha + hb)) in
+    (* [e] is [0] in the term that overflows, where [S] is [∞] in any case,
+       so that a zero cotangent meets no infinite [e na]. *)
+    let fits = finite E.(dw * (e * na)) in
+    let ef = E.(where fits e (lit 0.)) in
+    let term = E.(ef * wb * (ef * na)) in
+    let inf = lit Float.infinity in
+    let q = E.(where fits (sa + sb + (lit 4. * term)) inf) in
+    let es = E.(e * down) in
+    let z = E.(za + zb + (lit 4. * (es * wb * (es * na)))) in
+    program 10 [| n; ca; h; q; z |]
+  in
+  let f a b = maps ~by w 5 combine (Array.append a b) in
+  let none = Array.init 5 (fun _ -> per_range ~by x m w 0.) in
+  let rows = maps ~by w 5 lift [| cast_by ~by w x |] in
+  let state = ranges ~by f ~l ~r rows none in
+  (* The mean [c + 2 h], or [2 (c/2 + h)] where [2 h] overflows, NaN of no
+     row, and the variance, NaN where the mean is not finite, each rounded
+     once to [dt]. *)
+  let n = input 0 and c = input 1 and h = input 2 in
+  let q = input 3 and z = input 4 in
+  let nan = lit Float.nan in
+  let near = E.(c + (h + h)) in
+  let mean = E.(where (finite near) near (lit 2. * (half c + h))) in
+  let mean = E.(where (lit 0. < n) mean nan) in
+  let spread = E.(where (finite q) (q / n) (z / n * up * up)) in
+  let var = E.(where (finite mean) spread nan) in
+  let results =
+    P.of_exprs
+      ~ins:(Iarray.init 5 (fun _ -> D.Any w))
+      [| E.any (E.cast dt mean); E.any (E.cast dt var) |]
+  in
+  let loads = Iarray.of_array (Array.map (fun v -> Value.Plain v) state) in
+  let layout = contiguous ~by (shape state.(0)) in
+  let outs = Value.[ dt; dt ] in
+  let mean, (var, ()) =
+    Eval.eval ~by (Value.Map { layout; prog = results; outs; loads; at = None })
+  in
+  (mean, var)
+
+let moments_ranges ~lo ~hi x =
+  over_ranges ~by:"Nx.moments_ranges" (moments_of ~by:"Nx.moments_ranges") ~lo
+    ~hi x
 
 (* Maps over segments
 

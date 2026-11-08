@@ -279,6 +279,10 @@ ragged/ids-text-64K-of-4-to-20B	alloc_words	exact	4411
 ragged/ids-text-64K-of-4-to-20B	wall_time	batch=1	n=20	4.908e-03	3.856e-03 4.091e-03 4.225e-03 4.423e-03 4.477e-03 4.571e-03 4.590e-03 4.747e-03 4.753e-03 4.790e-03 5.025e-03 5.120e-03 5.237e-03 5.426e-03 5.758e-03 5.801e-03 6.261e-03 6.544e-03 6.772e-03 7.442e-03
 ragged/take-text-1K-of-512-to-1536B	alloc_words	exact	1615
 ragged/take-text-64K-of-4-to-20B	alloc_words	exact	1615
+ranges/max-f64-64K-w365	alloc_words	exact	35671
+ranges/moments-f64-64K-w28	alloc_words	exact	149380
+ranges/moments-f64-64K-w365	alloc_words	exact	149380
+ranges/sum-f64-64K-w365	alloc_words	exact	35721
 rng/bernoulli-f32-1Kx1K	alloc_words	exact	1220
 rng/bernoulli-f32-1M	alloc_words	exact	1148
 rng/beta-f32-1	alloc_words	exact	13501

@@ -3835,40 +3835,41 @@ val correlate :
 (** {2:segments Segments and ranges}
 
     A {e row} of [x] is its value at one position of its first axis. A
-    {e segment} is the rows whose id, held in data, is one number; a
-    {e range} is the rows between two bounds held in data. As positions held
-    in data, an id or a bound never raises: an id outside the segments drops
-    its row, and a bound clips into the rows.
+    {e segment} is the rows whose id, held in data, is one number. A
+    {e range} is the rows from a bound [lo], included, to a bound [hi],
+    excluded, held in data. An id or a bound never raises. An id outside the
+    segments drops its row, and a bound clips into [\[0, n\]] for [n] rows,
+    so a range may reach past either end of [x].
 
     {!reduce_segments} and {!reduce_ranges} fold each segment's or range's
     rows, in row order, by a {!combine}:
     - [Add] sums from [+0], so a sum of [-0.] rows is [+0.]; the float formats
       narrower than 32 bits sum at [float32] and round once, and integers
       wrap. Every dtype but booleans.
-    - [Max] and [Min] keep the greatest or least row as {!maximum} orders
-      them, or a NaN where a row's is one, as {!max} does. Every dtype.
+    - [Max] and [Min] keep each element's greatest or least across the rows
+      as {!maximum} orders them, or a NaN where one is, as {!max} does. Every
+      dtype.
     - [Set] keeps the last row.
 
-    A segment or range of no row holds [Add]'s and [Set]'s zero, or [Max]'s
-    least and [Min]'s greatest value in the dtype's order: [neg_infinity] and
-    [infinity], [-448.] and [448.] in [float8_e4m3fn], which has no infinity,
-    the least and greatest integers, [false] and [true], and for complex
-    numbers both parts so. *)
+    A segment or range of no row holds the {e identity}: [Add]'s and [Set]'s
+    zero, or [Max]'s least and [Min]'s greatest value in the dtype's order.
+    Those are [neg_infinity] and [infinity], [-448.] and [448.] in
+    [float8_e4m3fn] and [-6.] and [6.] in [float4_e2m1fn], which have no
+    infinity, the least and greatest integers, [false] and [true], and for
+    complex numbers both parts so. *)
 
 val reduce_segments :
   combine -> segments:int -> 'd int64_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [reduce_segments c ~segments ids x] is [segments] rows, row [s] the rows [i]
-    of [x] with [ids.{i} = s] folded by [c]. [ids] holds one id per row: give
-    a row that belongs to no segment the id [-1]. It is
+    of [x] with [ids.{i} = s] folded by [c]. [ids] holds one id per row, and
+    the id [-1] puts a row in no segment. It is
     [scatter ~combine:c ~axis:0] of [x]'s rows into [segments] rows of the
-    identity, lying as [x] does with its rows whole on each device, so its
-    sums have {!scatter}'s bits. Over [ids] or [x] split along the rows,
-    each device folds its rows, then closes the devices' partial results
-    in row order, as {!scatter} does: [Add] sums, [Max] and [Min] give the
-    bits of one device, and [Set] keeps the last row. [ids] that lie
-    elsewhere than the devices read them move there, as a scatter's
-    positions do ({!section-routing}). With no row or no segment, it is the
-    rows of the identity, lying so, and reads neither [ids] nor [x].
+    identity, so its sums have {!scatter}'s bits. The result lies as [x] does,
+    with its rows whole on each device. Over [ids] or [x] cut along the rows,
+    the devices fold and close as {!scatter} does. [ids] that lie elsewhere
+    than the devices read them move there, as a scatter's positions do
+    ({!section-routing}). With no row or no segment, it reads neither [ids]
+    nor [x] and holds the identity where the result lies.
 
     {[
     let ids = Nx.create Nx.int64 [| 5 |] [| 0L; 2L; 0L; -1L; 2L |]
@@ -3884,50 +3885,6 @@ val reduce_segments :
     Raises [Invalid_argument] if [segments] is negative, [x] is 0-d, [ids] is
     not 1-d with one id per row of [x], [c] is [Add] and [x] is boolean, or
     [ids] or [x] lies where it cannot be read ({!section-routing}). *)
-
-val reduce_ranges :
-  combine ->
-  lo:'d int64_t ->
-  hi:'d int64_t ->
-  ('v, 's, 'd) t ->
-  ('v, 's, 'd) t
-(** [reduce_ranges c ~lo ~hi x] is one row per range, row [i] the rows of [x]
-    from [lo.{i}] included to [hi.{i}] excluded folded by [c]. Bounds clip into
-    [\[0, n\]] for [n] rows, so a range may reach past either end of [x], and
-    one whose clipped [lo] is at or after its clipped [hi] holds the identity.
-
-    A row's bits depend on its range's bounds and rows alone: rows outside it
-    never enter it, so a large row outside a range never cancels into its sum.
-    A growing window, a running fold, is the ranges from [0] to [i + 1]. Its
-    work is [O((n + m) log n)] for [m] ranges, and its memory [O(n + m)].
-
-    So that a row's bits do not depend on where [x] lies, [Add], [Max] and
-    [Min] read [x]'s rows whole on each device, where a reduction of a cut
-    axis would compute by partials ({!section-routing}): [x] cut along its
-    first axis raises [Invalid_argument] naming the {!place} that puts its
-    rows whole on each device and keeps its other cuts. [Set] reads the
-    rows where they lie, as {!take} does. With its rows whole, [x] cut along
-    other axes is folded by each device over its own columns, and the result
-    lies as [x] does. [lo] and [hi] lie whole on [x]'s devices or cut along
-    their axis, which cuts the result's first axis, over devices other than
-    those that cut [x]'s other axes, such as another axis of a mesh. A
-    bound cut otherwise raises [Invalid_argument] naming [x] or a bound and
-    the {!place} of it that reads it beside the other
-    ({!section-routing}): one that puts [x] whole, off its cut of the
-    columns, where the bounds join the operations first.
-
-    {[
-    let x = Nx.create Nx.float64 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]
-    let lo = Nx.create Nx.int64 [| 4 |] [| -2L; 0L; 3L; 4L |]
-    let hi = Nx.create Nx.int64 [| 4 |] [| 1L; 3L; 3L; 9L |]
-    (* [|1.; 6.; 0.; 5.|] and [|1.; 3.; neg_infinity; 5.|] *)
-    let sums = Nx.reduce_ranges Add ~lo ~hi x
-    let maxima = Nx.reduce_ranges Max ~lo ~hi x
-    ]}
-
-    Raises [Invalid_argument] if [x] is 0-d, [lo] and [hi] are not 1-d of one
-    length, [c] is [Add] and [x] is boolean, [c] is not [Set] and [x] is
-    cut along its first axis, or a bound is cut where it cannot be read. *)
 
 val map_segments :
   segments:int ->
@@ -4027,6 +3984,87 @@ val matmul_segments :
     Raises [Invalid_argument] if [w] is not 3-d, [x] does not have one axis
     more than [ids] or its leading axes do not broadcast to [ids]', [x]'s
     last axis is not [k], or the dtype is a boolean. *)
+
+(** {3:ranges Ranges}
+
+    {!moments_ranges}, and {!reduce_ranges} but for [Set], combine a range of
+    [k > 1] rows in row order by a tree of depth at most
+    [1 + ⌈log₂ (k - 1)⌉] that its clipped bounds fix. A range's bits are a
+    function of its clipped bounds and its rows alone, so a large row outside
+    a range never cancels into its sum. They take [O((n + m) log n)] work and
+    [O(n + m)] memory for [n] rows and [m] ranges.
+
+    So that a range's bits do not depend on where [x] lies, they read [x]'s
+    rows whole on each device, where a reduction of a cut axis would compute
+    by partials ({!section-routing}). [x] cut along its first axis raises
+    [Invalid_argument] naming the {!place} that puts its rows whole on each
+    device and keeps its other cuts. [Set] reads the rows where they lie, as
+    {!take} does. With its rows whole, [x] cut along other axes is folded by
+    each device over its own columns, and the result lies as [x] does. [lo]
+    and [hi] lie whole on [x]'s devices or cut along their axis, which cuts
+    the result's first axis, over devices other than those that cut [x]'s
+    other axes, such as another axis of a mesh. A bound cut otherwise raises
+    [Invalid_argument] naming [x] or a bound and the {!place} of it that reads
+    it beside the other ({!section-routing}). That {!place} may put [x] whole,
+    off its cut of the columns, where the bounds join the operations first. *)
+
+val reduce_ranges :
+  combine ->
+  lo:'d int64_t ->
+  hi:'d int64_t ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t
+(** [reduce_ranges c ~lo ~hi x] is one row per range, row [i] the rows of [x]
+    from [lo.{i}] to [hi.{i}] folded by [c]. A range whose clipped [lo] is at
+    or after its clipped [hi] holds the identity. The ranges from [0] to
+    [i + 1] compute a running fold.
+
+    {[
+    let x = Nx.create Nx.float64 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]
+    let lo = Nx.create Nx.int64 [| 4 |] [| -2L; 0L; 3L; 4L |]
+    let hi = Nx.create Nx.int64 [| 4 |] [| 1L; 3L; 3L; 9L |]
+    (* [|1.; 6.; 0.; 5.|] and [|1.; 3.; neg_infinity; 5.|] *)
+    let sums = Nx.reduce_ranges Add ~lo ~hi x
+    let maxima = Nx.reduce_ranges Max ~lo ~hi x
+    ]}
+
+    Raises [Invalid_argument] if [x] is 0-d, [lo] and [hi] are not 1-d of one
+    length, [c] is [Add] and [x] is boolean, [c] is not [Set] and [x] is
+    cut along its first axis, or a bound is cut where it cannot be read. *)
+
+val moments_ranges :
+  lo:'d int64_t ->
+  hi:'d int64_t ->
+  (float, 's, 'd) t ->
+  (float, 's, 'd) t * (float, 's, 'd) t
+(** [moments_ranges ~lo ~hi x] is [(mean, var)], one row of each per range.
+    Row [i] holds the mean [μ] and the variance [Σ (t - μ)² / k] of the [k]
+    rows [t] from [lo.{i}] to [hi.{i}], element by element.
+
+    A range of no row has NaN for both. A NaN or both infinities in a range
+    make its mean NaN, and infinities of one sign make it that infinity. The
+    variance is NaN where the mean is not finite.
+
+    It computes in the carrier ({!Nx_kernel.carrier}) and stores each result
+    as {!cast} does, so a NaN is [+0.] in [float4_e2m1fn] and a value past
+    the greatest saturates in [float8_e4m3fn] and [float4_e2m1fn]. Let [R] be
+    the rows' greatest less their least, [V] their variance, [u] the
+    carrier's unit roundoff and [D] the tree's depth bound. For
+    [2 ≤ k ≤ 1/u], to first order in [u] and barring underflow, the mean in
+    the carrier is within [7 D u R + u|μ|] of the exact one and the variance
+    within [(2 D + 5) u V + (7 D² - 3 D) u R √V]. The rounding into the dtype
+    adds its own. One row is exact, except that a [-0.] row's mean is [+0.].
+    Within that bound, finite rows have a finite mean and a variance that is
+    [+∞] only past the dtype's greatest value.
+
+    A derivative of a result, as rune takes one, is that of this computation,
+    and over a range of finite rows depends on those rows alone. The
+    variance's derivative is unspecified where the rows' squared deviations
+    sum past the carrier's greatest value.
+
+    Raises [Invalid_argument] if [x] is 0-d, [lo] and [hi] are not 1-d of one
+    length, [x] is cut along its first axis, or a bound is cut where it
+    cannot be read. *)
 
 (** {1:structures Structures}
 

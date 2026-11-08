@@ -20,7 +20,8 @@
   test_callback
   test_sums
   test_attention
-  test_ranges)
+  test_ranges
+  test_range_folds)
  (modules
   compose
   test_jit
@@ -41,7 +42,8 @@
   test_callback
   test_sums
   test_attention
-  test_ranges)
+  test_ranges
+  test_range_folds)
  (libraries
   nx
   nx_array

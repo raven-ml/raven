@@ -34,6 +34,7 @@
   test_special
   test_patches
   test_segments
+  test_moments
   test_composite
   test_ptree
   test_check
@@ -76,6 +77,7 @@
   test_special
   test_patches
   test_segments
+  test_moments
   test_composite
   test_ptree
   test_check
@@ -101,7 +103,8 @@
   unix
   windtrap)
  (deps
-  (glob_files golden/special/*.golden)))
+  (glob_files golden/special/*.golden)
+  golden/moments_ranges.golden))
 
 ; Checks on a device of another machine, served by rig's test agent over the
 ; loopback.

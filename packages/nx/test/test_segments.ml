@@ -336,6 +336,41 @@ let law_local (x, y, l, h) =
   let sum t = Nx.to_array (Nx.reduce_ranges Add ~lo:(b l) ~hi:(b h) t) in
   equal_elements D.Float32 (sum x) (sum z)
 
+(* Every range with bounds from two before the rows to two past them, over
+   rows of one sign: a row of zeros, or any value from outside the rows,
+   that reached a range would show as its maximum of negative rows or its
+   minimum of positive ones. *)
+let test_range_rows_only () =
+  List.iter
+    (fun n ->
+      List.iter
+        (fun (c, sign) ->
+          let xs = Array.init n (fun i -> sign *. Float.of_int (i + 1)) in
+          let x = Nx.create Nx.float64 [| n |] xs in
+          let bounds =
+            List.concat_map
+              (fun l -> List.init (n + 5) (fun h -> (l - 2, h - 2)))
+              (List.init (n + 5) Fun.id)
+          in
+          let b f =
+            Nx.create Nx.int64 [| List.length bounds |]
+              (Array.of_list (List.map (fun p -> Int64.of_int (f p)) bounds))
+          in
+          let expected =
+            List.map
+              (fun (l, h) ->
+                let l = clip n l and h = clip n h in
+                fold c D.Float64 ~add:( +. )
+                  (List.init (max 0 (h - l)) (fun i -> xs.(l + i))))
+              bounds
+          in
+          equal
+            ~msg:(Format.asprintf "%a of %d rows" pp_combine c n)
+            (array float_exact) (Array.of_list expected)
+            (Nx.to_array (Nx.reduce_ranges c ~lo:(b fst) ~hi:(b snd) x)))
+        [ (Nx.Max, -1.); (Min, 1.) ])
+    [ 0; 1; 2; 3; 4; 5; 7; 8; 9; 11; 16; 17 ]
+
 let test_range_doc () =
   let x = Nx.create Nx.float64 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
   let lo = Nx.create Nx.int64 [| 4 |] [| -2L; 0L; 3L; 4L |]
@@ -704,6 +739,8 @@ let ranges =
         nan_ranges law_nan_ranges;
       prop "each range folds its clipped rows in order" ranged law_ranges;
       prop "a range's bits read its rows alone" local law_local;
+      test "a range's extreme is one of its rows, at either end"
+        test_range_rows_only;
       test "the doc's sums and maxima" test_range_doc;
       test "narrow floats sum at float32" test_range_narrow;
       test "complex extremes in the dtype's order" test_range_complex;

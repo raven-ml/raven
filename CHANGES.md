@@ -2388,6 +2388,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Add `Nx.moments_ranges`: the mean and variance of many ranges of rows in
+  O((n + m) log n), each range shifted by its first row so a level far from
+  zero keeps its digits, infinite only past the dtype's greatest value.
 - Calls allocate nothing for features they do not use (`Nx.softmax` without
   `~where`, `Nx.contract`'s exactness check, creations), and comparing or
   placing values cut across devices allocates fewer words.
