@@ -1554,10 +1554,6 @@ word comes from its lock and from samples the dashboard saw arrive.
 - After a tensor core, N's local split takes the largest of 4 and 2 that
   leaves 256 workgroups, where it took the first that divides and kept 512:
   a prompt's projections on an RTX 5000 Ada run up to 1.2 times faster.
-- After a tensor core, `Heuristic.hand_coded_optimizations` upcasts N once
-  more by 2 while a lane holds at most 160 outputs: a CUDA warp's tile grows
-  to 64 by 64 or 64 by 80, and bfloat16 products run 1.2 to 1.6 times faster
-  on an RTX 5000 Ada.
 - On GPUs, adjacent `bfloat16` loads and stores merge into vectors of 2 and 4
   as `float16`'s do (`Coalesce.memory_coalescing`): bfloat16 products on an
   RTX 5000 Ada's tensor cores run about 1.5 times faster.

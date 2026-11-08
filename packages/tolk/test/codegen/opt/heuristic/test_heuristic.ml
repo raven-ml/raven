@@ -1298,13 +1298,6 @@ let typed_kernels =
 
 (* Tensor cores' warp tiles *)
 
-(* The accumulators a lane of a tensor core holds at most once its splits
-   apply. *)
-let accumulators = 160
-
-let uses_core c =
-  List.exists (function Opt.Tc { use_tc = 1; _ } -> true | _ -> false) c.opts
-
 (* The fewest workgroups a local split after a tensor core leaves. *)
 let local_workgroups = 256
 
@@ -1334,42 +1327,6 @@ let lane_outputs c =
       lane_outputs_of (Heuristic.hand_coded_optimizations k))
 
 let recorded name = List.find (fun c -> c.name = name) recorded_cases
-
-(* Whether [c]'s optimisations upcast an axis twice: [N]'s last upcast, as the
-   core's first upcasts take each axis once. *)
-let upcasts_twice c =
-  let axes =
-    List.filter_map
-      (function
-        | Opt.Split { axis; target = Upcast; _ } -> Some axis | _ -> None)
-      c.opts
-  in
-  List.length (List.sort_uniq Int.compare axes) < List.length axes
-
-let warp_tiles =
-  group "a tensor core's warp tile"
-    [
-      cases "after N's last upcast a lane holds at most 160 accumulators"
-        ~id:(fun c -> c.name)
-        (List.filter
-           (fun c -> c.environment = "" && uses_core c && upcasts_twice c)
-           recorded_cases)
-        (fun c ->
-          at_most int ~than:accumulators (lane_outputs c));
-      (* CUDA's m16n8 core holds 4 outputs a lane; [M] and [N] are first upcast
-         by the first of 5, 4, 3 and 2 that divides them, while 100
-         workgroups remain. *)
-      cases "N's last upcast by 2 applies while 160 accumulators and the \
-             workgroups hold"
-        ~id:(fun (name, why, _) -> name ^ ", " ^ why)
-        [
-          ("matmul_bf16_5760_cuda", "4 by 5 by 2, at the bound", 160);
-          ("matmul_half_1280x2560_cuda", "refused: 5 by 5 by 2 is 200", 100);
-          ("matmul_half_1024_cuda", "refused: 256 workgroups would remain", 64);
-        ]
-        (fun (name, _, expected) ->
-          equal int expected (lane_outputs (recorded name)));
-    ]
 
 (* Contractions in registers *)
 
@@ -1691,11 +1648,11 @@ let core_threads_of s tc =
   | Error e -> failf "the core does not apply: %s" e
 
 (* The splits the interface states after the core [tc] of [s]: upcasts of
-   its M and N axes by the first of 5, 4, 3 and 2 that divides them, and of N
-   by 2 while a lane then holds at most 160 outputs, each applied only while
-   it leaves at least [core_threads / t] workgroups, [t] the core's threads,
-   or an unknown count; then a local split of N by the largest of 4 and 2
-   that divides it and leaves 256 workgroups, or an unknown count. M's
+   its M and N axes by the first of 5, 4, 3 and 2 that divides them, each
+   applied only while it leaves at least [core_threads / t] workgroups, [t]
+   the core's threads, or an unknown count; then a local split of N by the
+   largest of 4 and 2 that divides it and leaves 256 workgroups, or an
+   unknown count. M's
    upcast, where it applies, takes the amount the heuristic gives it in
    [opts], which keeps a warp within a run of rows. *)
 let stated ~core_threads s tc opts =
@@ -1738,9 +1695,6 @@ let stated ~core_threads s tc opts =
   in
   step 1 [ 5; 4; 3; 2 ] Opt.Upcast;
   step 0 [ 5; 4; 3; 2 ] Opt.Upcast;
-  step
-    ~keep:(fun n -> leaves floor n && lane_outputs_of s * n <= accumulators)
-    0 [ 2 ] Opt.Upcast;
   step ~keep:(leaves local_workgroups) ~first:false 0 [ 4; 2 ] Opt.Local;
   K.applied_opts s
 
@@ -2143,7 +2097,6 @@ let () =
        [
          chosen;
          leaves_its_argument;
-         warp_tiles;
          blocks;
          keeps_kernel_writes;
          fastest_threads_coalesce;
