@@ -27,15 +27,18 @@ let held ~check dt (v : Dtype.value) : Dtype.const =
      a constant of it does ({!Dtype.const}) *)
   | `Float x when (not (Float.is_finite x)) && committed_int dt ->
       Dtype.const dt v
+  (* An integer type wraps: [check] sees the exact integer, which one conversion
+     gives for both. *)
+  | _ when committed_int dt ->
+      let exact = `Int (Dtype.Value.to_z v) in
+      check dt exact;
+      (Dtype.truncate dt exact :> Dtype.const)
   | _ -> (
-      (* An integer type wraps its constants: the exact value is the weak
-         one. *)
-      let exact = if committed_int dt then Dtype.Weak_int else dt in
-      match (Dtype.const exact v, Dtype.const dt v) with
-      | (#Dtype.value as e), (#Dtype.value as v) ->
+      match Dtype.const dt v with
+      | #Dtype.value as e ->
           check dt e;
-          (Dtype.truncate dt v :> Dtype.const)
-      | _ -> `Invalid)
+          (Dtype.truncate dt e :> Dtype.const)
+      | `Invalid -> `Invalid)
 
 (* A vector load reads a view of its storage. *)
 let vector_load u =
@@ -342,14 +345,14 @@ let node ~check p i operands =
       (Dtype.bitcast (Ops.dtype (Ops.nth u 0)) (Ops.dtype u) v :> Dtype.const)
   (* A count at or past a committed type's width leaves no bit to overflow. *)
   | ((Shl | Shr) as op), _, ([ _; `Int n ] as src)
-    when Dtype.mem (Ops.dtype u) Dtype.ints
+    when committed_int (Ops.dtype u)
          && Bigint.geq n (Bigint.of_int (Dtype.bitsize (Ops.dtype u))) ->
       Ops.exec_alu op (Ops.dtype u) src
   (* A power at a committed type past a width's worth of products is computed
      in the type's bits. Its exact value, which may not fit in memory, is past
      the type for any base but 0, 1 and -1. *)
   | Pow, _, ([ (`Int _ | `Bool _) as b; `Int n ] as src)
-    when Dtype.mem (Ops.dtype u) Dtype.ints
+    when committed_int (Ops.dtype u)
          && Bigint.geq n (Bigint.of_int (Dtype.bitsize (Ops.dtype u))) ->
       let dt = Ops.dtype u in
       if Bigint.gt (Bigint.abs (Dtype.Value.to_z (b :> Dtype.value))) Bigint.one
@@ -377,11 +380,15 @@ let bind p slot v =
 (* [fresh p i] is [true] iff the value kept for node [i] was computed in this
    evaluation and none of the slots it reads has been bound since. *)
 let fresh p i =
-  let stamp = p.stamps.(i) and deps = p.deps.(i) in
-  let rec unbound j =
-    j = Array.length deps || (p.bound_at.(deps.(j)) <= stamp && unbound (j + 1))
-  in
-  stamp >= p.epoch && unbound 0
+  let stamp = p.stamps.(i) in
+  stamp >= p.epoch
+  &&
+  let deps = p.deps.(i) in
+  let n = Array.length deps and j = ref 0 in
+  while !j < n && p.bound_at.(Array.unsafe_get deps !j) <= stamp do
+    incr j
+  done;
+  !j = n
 
 (* [over ~check p ranges f acc] folds [f] over the bindings of the environment
    extended by each value of [ranges], the last varying fastest, each range's
