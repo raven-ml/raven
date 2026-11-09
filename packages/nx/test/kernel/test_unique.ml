@@ -234,11 +234,13 @@ let law_reference (b : Support.backend) c =
   end;
   agrees b c
 
-(* Refusals *)
+(* Misfits *)
 
-let law_refuses (b : Support.backend) (keys, ids, first, counts, count) =
+(* Shapes that {!Nx_kernel.Shape.unique} fits number the keys; others do
+   not fit: not Done, and nothing written outside the destinations. *)
+let law_misfits (b : Support.backend) (keys, ids, first, counts, count) =
   let module K = (val b.kernels) in
-  let make s = A.create Rig.host D.Int64 (Iarray.of_array s) in
+  let make s = A.create b.device D.Int64 (Iarray.of_array s) in
   let fits =
     match Nx_kernel.Shape.unique ~size:first.(0) keys with
     | Ok (i, f, c) ->
@@ -246,13 +248,17 @@ let law_refuses (b : Support.backend) (keys, ids, first, counts, count) =
     | Error _ -> false
     | exception Invalid_argument _ -> false
   in
-  let got =
-    K.unique ~ids:(make ids) ~first:(make first) ~counts:(make counts)
-      ~count:(make count) (make keys)
-  in
   cover "fits" fits;
   cover "misfits" (not fits);
-  equal answer (if fits then A.Done else A.Shape_mismatch) got
+  let call (g : Misfit.guard) ds =
+    let at k = A.expect D.Int64 ds.(k) in
+    K.unique ~ids:(at 0) ~first:(at 1) ~counts:(at 2) ~count:(at 3)
+      (g.g (make keys))
+  in
+  let dsts =
+    Array.map (fun s -> (D.Any D.Int64, s)) [| ids; first; counts; count |]
+  in
+  Misfit.law ~msg:"a numbering" ~what:"a shape" b ~fit:fits dsts call
 
 let misfits =
   let open Gen in
@@ -421,8 +427,10 @@ let laws (b : Support.backend) =
     [
       prop ~examples "numbers rows in order of first appearance" cases
         (run (law_reference b));
-      prop "refuses what Nx_kernel.Shape refuses and other shapes" misfits
-        (run (law_refuses b));
+      prop
+        "a call of shapes Nx_kernel.Shape refuses is not Done and writes \
+         nothing outside its destinations"
+        misfits (run (law_misfits b));
     ]
 
 let cpu (b : Support.backend) =

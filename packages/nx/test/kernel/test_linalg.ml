@@ -267,12 +267,14 @@ let law_solve_reads (b : Support.backend) c =
 
 (* Dtypes *)
 
-(* Every routine answers Wrong_dtype at the dtypes routines do not take,
-   and computes or declines float32, float64, complex64 and complex128.
-   [eig], [svd] and [eigh] answer Wrong_dtype also for values of another
-   precision than [a]'s. *)
+(* Every routine computes or declines float32, float64, complex64 and
+   complex128, and answers no Wrong_dtype there. A call at another dtype,
+   or of [eig]'s, [svd]'s or [eigh]'s values of another precision than
+   [a]'s, does not fit: not Done, and nothing written outside its
+   destinations. *)
 let test_dtypes (b : Support.backend) () =
   let module K = (val b.kernels) in
+  let i64 = D.Any D.Int64 in
   List.iter
     (fun (D.Any dt) ->
       let takes =
@@ -280,62 +282,76 @@ let test_dtypes (b : Support.backend) () =
         | D.Float32 | D.Float64 | D.Complex64 | D.Complex128 -> true
         | _ -> false
       in
-      let x s = A.create b.device dt s in
-      let positions s = A.create b.device D.Int64 s in
-      let sq : _ iarray = [| 2; 2 |] in
-      let a = x sq in
+      let sq = [| 2; 2 |] and n = [| 2 |] in
+      let a = A.create b.device dt (Iarray.of_array sq) in
       let wide = match dt with D.Float64 | D.Complex128 -> true | _ -> false in
+      (* [call] into destinations of the dtypes and shapes [dsts]. *)
+      let case ~msg ~fit dsts call =
+        if not fit then Misfit.check ~msg ~what:"a dtype" b dsts call
+        else
+          let fresh (D.Any d, s) =
+            A.Any (A.create b.device d (Iarray.of_array s))
+          in
+          let got = call { Misfit.g = Fun.id } (Array.map fresh dsts) in
+          if got = A.Wrong_dtype then failf "%s answered Wrong_dtype" msg
+      in
+      let x ds k = A.expect dt ds.(k) in
       let eig (type c) (c : (Complex.t, c) D.t) =
-        let z s = A.create b.device c s in
-        let paired = wide = (D.Any c = D.Any D.Complex128) in
-        let check ~msg got =
-          if paired && takes then begin
-            if got = A.Wrong_dtype then failf "%s answered Wrong_dtype" msg
-          end
-          else equal ~msg answer A.Wrong_dtype got
-        in
+        let fit = takes && wide = (D.Any c = D.Any D.Complex128) in
         let msg = Format.asprintf "eig of %a into %a" D.pp dt D.pp c in
-        check ~msg (K.eig ~w:(z [| 2 |]) ~v:(z sq) a);
-        check ~msg:(msg ^ ", values") (K.eig ~w:(z [| 2 |]) a)
+        let z ds k = A.expect c ds.(k) in
+        case ~msg ~fit [| (D.Any c, n); (D.Any c, sq) |] (fun g ds ->
+            K.eig ~w:(z ds 0) ~v:(z ds 1) (g.Misfit.g a));
+        case ~msg:(msg ^ ", values") ~fit [| (D.Any c, n) |] (fun g ds ->
+            K.eig ~w:(z ds 0) (g.Misfit.g a))
       in
       eig D.Complex64;
       eig D.Complex128;
       let real (type r) (f : (float, r) D.t) =
-        let y s = A.create b.device f s in
-        let paired = wide = (D.Any f = D.Any D.Float64) && D.bits f >= 32 in
-        let check ~msg got =
-          if paired && takes then begin
-            if got = A.Wrong_dtype then failf "%s answered Wrong_dtype" msg
-          end
-          else equal ~msg answer A.Wrong_dtype got
+        let fit =
+          takes && wide = (D.Any f = D.Any D.Float64) && D.bits f >= 32
         in
         let msg name = Format.asprintf "%s of %a into %a" name D.pp dt D.pp f in
-        check ~msg:(msg "svd")
-          (K.svd ~s:(y [| 2 |]) ~vectors:(~u:(x sq), ~vh:(x sq)) a);
-        check ~msg:(msg "svd's values") (K.svd ~s:(y [| 2 |]) a);
-        check ~msg:(msg "eigh") (K.eigh ~w:(y [| 2 |]) ~v:(x sq) a);
-        check ~msg:(msg "eigh's values") (K.eigh ~w:(y [| 2 |]) a)
+        let y ds = A.expect f ds.(0) and m = (D.Any dt, sq) in
+        case ~msg:(msg "svd") ~fit [| (D.Any f, n); m; m |] (fun g ds ->
+            K.svd ~s:(y ds)
+              ~vectors:(~u:(x ds 1), ~vh:(x ds 2))
+              (g.Misfit.g a));
+        case ~msg:(msg "svd's values") ~fit [| (D.Any f, n) |] (fun g ds ->
+            K.svd ~s:(y ds) (g.Misfit.g a));
+        case ~msg:(msg "eigh") ~fit [| (D.Any f, n); m |] (fun g ds ->
+            K.eigh ~w:(y ds) ~v:(x ds 1) (g.Misfit.g a));
+        case ~msg:(msg "eigh's values") ~fit [| (D.Any f, n) |] (fun g ds ->
+            K.eigh ~w:(y ds) (g.Misfit.g a))
       in
       real D.Float16;
       real D.Float32;
       real D.Float64;
+      let m = (D.Any dt, sq) in
       List.iter
-        (fun (name, call) ->
+        (fun (name, dsts, call) ->
           let msg = Format.asprintf "%s of %a" name D.pp dt in
-          let got = call () in
-          if not takes then equal ~msg answer A.Wrong_dtype got
-          else if got = A.Wrong_dtype then failf "%s answered Wrong_dtype" msg)
+          case ~msg ~fit:takes dsts call)
         [
-          ("cholesky", fun () -> K.cholesky Lower ~dst:(x sq) a);
+          ( "cholesky",
+            [| m |],
+            fun g ds -> K.cholesky Lower ~dst:(x ds 0) (g.Misfit.g a) );
           ( "lu",
-            fun () ->
-              K.lu ~lu:(x sq) ~pivots:(positions [| 2 |])
-                ~perm:(positions [| 2 |]) a );
-          ("qr", fun () -> K.qr ~q:(x sq) ~r:(x sq) a);
+            [| m; (i64, n); (i64, n) |],
+            fun g ds ->
+              K.lu ~lu:(x ds 0)
+                ~pivots:(A.expect D.Int64 ds.(1))
+                ~perm:(A.expect D.Int64 ds.(2))
+                (g.Misfit.g a) );
+          ( "qr",
+            [| m; m |],
+            fun g ds -> K.qr ~q:(x ds 0) ~r:(x ds 1) (g.Misfit.g a) );
           ( "solve_triangular",
-            fun () ->
+            [| m |],
+            fun g ds ->
               K.solve_triangular Lower ~adjoint:false ~unit_diagonal:false
-                ~dst:(x sq) a (x sq) );
+                ~dst:(x ds 0) (g.Misfit.g a)
+                (g.Misfit.g (A.create b.device dt (Iarray.of_array sq))) );
         ])
     D.all
 
@@ -363,8 +379,10 @@ let laws (b : Support.backend) =
       test "a pivot failing past the first block is NaN alone" (fun () ->
           b.around (test_cholesky_fails_late b));
       test "LU's pivot is the scan's" (fun () -> b.around (test_pivots b));
-      test "routines take floats and complex numbers alone" (fun () ->
-          b.around (test_dtypes b));
+      test
+        "routines take floats and complex numbers alone; a call at another \
+         dtype is not Done and writes nothing outside its destinations"
+        (fun () -> b.around (test_dtypes b));
       test "a finite matrix gives numbers in every result" (fun () ->
           b.around (test_overflowing_modulus b));
     ]

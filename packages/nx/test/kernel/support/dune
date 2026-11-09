@@ -40,8 +40,8 @@
 
 ; What nx.kernel's suites and nx.cpu's share: elements as their bits, and
 ; the cases, references and laws of copies, casts and maps, of reductions
-; and scans, of contractions, of gathers and scatters, and of
-; factorisations.
+; and scans, of contractions, of gathers and scatters, of factorisations,
+; and of calls that do not fit.
 
 (library
  (name nx_kernel_cases)
@@ -53,7 +53,8 @@
   contract_cases
   index_cases
   linalg_cases
-  exact)
+  exact
+  misfit)
  (libraries
   nx_array
   nx_array_gen

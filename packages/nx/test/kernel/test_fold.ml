@@ -502,28 +502,33 @@ let test_long_rows (b : Support.backend) () =
       | Some y -> equal (array (same (dtype_of c.x))) (expected c) (elements y))
     D.[ Any Bfloat16; Any Int4 ]
 
-let test_refusals (b : Support.backend) () =
+(* A fold or a map's padded load that does not fit, by a shape, a pad of
+   another rank or booleans, which Prog.Add does not take: not Done, and
+   nothing written outside the destination. *)
+let test_misfits (b : Support.backend) () =
   let module K = (val b.kernels) in
   let p =
     { Nx_kernel.lo = [| 1 |]; hi = [| 1 |]; interior = [| 0 |]; windows = [||] }
   in
-  let x = A.of_array D.Float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-  equal ~msg:"an operand of another shape" answer A.Shape_mismatch
-    (K.fold p
-       ~dst:(A.create Rig.host D.Float32 [| 3 |])
-       (A.of_array D.Float32 [| 4 |] [| 1.; 2.; 3.; 4. |]));
-  equal ~msg:"a destination of another shape" answer A.Shape_mismatch
-    (K.fold p ~dst:(A.create Rig.host D.Float32 [| 4 |]) x);
-  let id = Nx_kernel.Prog.v ~ins:[| D.Any D.Float32 |] [| In 0 |] ~outs:[| 0 |] in
+  let f32 = D.Any D.Float32 in
+  let on_b x = Kernels_cases.on b x in
+  let x = on_b (A.of_array D.Float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]) in
+  let fold ~msg ~what (D.Any d as dt) s x =
+    Misfit.check ~msg ~what b [| (dt, s) |] (fun g ds ->
+        K.fold p ~dst:(A.expect d ds.(0)) (g.Misfit.g (A.expect d (A.Any x))))
+  in
+  fold ~msg:"an operand of another shape" ~what:"a shape" f32 [| 3 |]
+    (on_b (A.of_array D.Float32 [| 4 |] [| 1.; 2.; 3.; 4. |]));
+  fold ~msg:"a destination of another shape" ~what:"a shape" f32 [| 4 |] x;
+  let id = Nx_kernel.Prog.v ~ins:[| f32 |] [| In 0 |] ~outs:[| 0 |] in
   let bad = { p with lo = [| 1; 0 |] } in
-  equal ~msg:"a map's pad of another rank" answer A.Shape_mismatch
-    (K.map id
-       ~dsts:[| A.Any (A.create Rig.host D.Float32 [| 7 |]) |]
-       [| Padded { x; fill = 0.; pad = bad } |]);
-  equal ~msg:"booleans" answer A.Wrong_dtype
-    (K.fold p
-       ~dst:(A.create Rig.host D.Bool [| 3 |])
-       (A.of_array D.Bool [| 5 |] [| true; false; true; false; true |]))
+  Misfit.check ~msg:"a map's pad of another rank" ~what:"an attribute" b
+    [| (f32, [| 7 |]) |]
+    (fun g ds ->
+      K.map id ~dsts:(Iarray.of_array ds)
+        [| Padded { x = g.Misfit.g x; fill = 0.; pad = bad } |]);
+  fold ~msg:"booleans" ~what:"a dtype" (D.Any D.Bool) [| 3 |]
+    (on_b (A.of_array D.Bool [| 5 |] [| true; false; true; false; true |]))
 
 (* The suite *)
 
@@ -595,8 +600,10 @@ let suite (b : Support.backend) =
         ];
       prop "a map's padded load reads what the fold adds into" all_cases
         (run (law_load b));
-      test "refuses shapes and pads that do not fit, and booleans" (fun () ->
-          b.around (test_refusals b));
+      test
+        "a call of shapes, pads or dtypes that do not fit is not Done and \
+         writes nothing outside its destination"
+        (fun () -> b.around (test_misfits b));
       prop ~count:300
         "reads and writes no byte past the operand and dst, whatever pages lie \
          beside them"

@@ -19,29 +19,11 @@ module Support = Nx_kernels_support
 (* What a call answers: a refusal, or [Done]. *)
 type want = Refused of A.answer | Fits
 
-(* The value of each element [o] and [lse] hold before a call, and of
-   the row past them. *)
-let sentinel = 7.
-
-(* [rows b dt tail tq] is an array [[1; tq] @ tail] of [dt] on [b]'s
-   device, the first [tq] rows of an array [[1; tq + 1] @ tail] whose
-   elements are [sentinel], and that array. *)
-let rows (type r) (b : Support.backend) (dt : (float, r) D.t) tail tq =
-  let n = (tq + 1) * Array.fold_left ( * ) 1 tail in
-  let whole =
-    Kernels_cases.on b
-      (A.of_array dt
-         (Iarray.of_array (Array.append [| 1; tq + 1 |] tail))
-         (Array.make n sentinel))
-  in
-  let all count = { A.Move.start = 0; count; step = 1 } in
-  let ranges = Array.append [| all 1; all tq |] (Array.map all tail) in
-  (Option.get (A.move (Slice (Iarray.of_array ranges)) whole), whole)
-
 (* [b]'s attention by [p] of a query [[1; tq; 1]] of [dt] against two keys
-   and values, into [o] of [out] and [lse] of [acc], each {!rows}, over
-   [loads] [[1; tq; 2]] of [lds]: its answer, and the elements of the
-   arrays [o] and [lse] lie in after it. *)
+   and values, over [loads] [[1; tq; 2]] of [lds]: the refusal
+   {!Nx_kernel.attention_refusal} names it by, the dtypes and shapes of [o]
+   [[1; tq; 1]] of [out] and [lse] [[1; tq]] of [acc], and the call into
+   them. *)
 let attention (type v s c r) (b : Support.backend) ?(tq = 1) ?(lds = [])
     (dt : (v, s) D.t) ~(acc : (float, c) D.t) ~(out : (float, r) D.t) p =
   let (module K : Nx_kernel.S) = b.kernels in
@@ -54,11 +36,23 @@ let attention (type v s c r) (b : Support.backend) ?(tq = 1) ?(lds = [])
     Iarray.of_list
       (List.map (fun (D.Any l) -> A.Any (make l [| 1; tq; 2 |])) lds)
   in
-  let o, o_whole = rows b out [| 1 |] tq in
-  let lse, lse_whole = rows b acc [||] tq in
-  let answer = K.attention p ~scale:1. ~o ~lse q kv loads in
-  let elements x = A.to_array (Kernels_cases.host x) in
-  (answer, Array.append (elements o_whole) (elements lse_whole))
+  let named =
+    Nx_kernel.attention_refusal p ~q:dt ~rank:3 ~o:out ~acc
+      ~loads:{ Nx_kernel.arrays = List.length; dtype = List.nth }
+      lds
+  in
+  let dsts = [| (D.Any out, [| 1; tq; 1 |]); (D.Any acc, [| 1; tq |]) |] in
+  let call (g : Misfit.guard) ds =
+    let kv =
+      match kv with
+      | Nx_kernel.Dense { k; v } -> Nx_kernel.Dense { k = g.g k; v = g.g v }
+      | Paged { k; v; table } -> Paged { k = g.g k; v = g.g v; table = g.g table }
+    in
+    K.attention p ~scale:1. ~o:(A.expect out ds.(0))
+      ~lse:(A.expect acc ds.(1)) (g.g q) kv
+      (Iarray.map (fun (A.Any x) -> A.Any (g.g x)) loads)
+  in
+  (Option.map fst named, dsts, call)
 
 let f32 = D.Any D.Float32
 let f64 = D.Any D.Float64
@@ -173,16 +167,19 @@ let table (b : Support.backend) =
              3 0) );
   ]
 
-let check (b : Support.backend) (msg, want, call) =
-  let got, held = b.around call in
+(* A program that fits is computed, or declined writing nothing. One that
+   does not is named by {!Nx_kernel.attention_refusal}, and is not Done
+   and reads and writes nothing outside its arrays. *)
+let check (b : Support.backend) (msg, want, case) =
+  let named, dsts, call = case () in
   match want with
-  | Fits -> equal ~msg Elements.answer A.Done got
+  | Fits -> Misfit.law ~msg ~what:"none" b ~fit:true dsts call
   | Refused r ->
-      equal ~msg Elements.answer r got;
-      equal ~msg:(msg ^ ": o, lse and the row past them hold their values")
-        (array float_exact)
-        (Array.make (Array.length held) sentinel)
-        held
+      (match named with
+      | Some got -> equal ~msg Elements.answer r got
+      | None -> failf "%s: the rule finds it fits" msg);
+      let what = if r = A.Wrong_dtype then "a dtype" else "a program" in
+      Misfit.check ~msg ~what b dsts call
 
 (* Bounds *)
 
@@ -384,8 +381,10 @@ let law_dot (b : Support.backend) c =
 let suite (b : Support.backend) =
   group b.name
     [
-      cases ~id:(fun (msg, _, _) -> msg)
-        "refuses the dtypes and programs it does not take, before any write"
+      cases
+        ~id:(fun (msg, _, _) -> msg)
+        "a call of dtypes or a program it does not take is not Done and \
+         writes nothing outside o and lse; its rule names its refusal"
         (table b) (check b);
       prop "o is within its bound of the weighted sum, at weights 1/tk" sums
         (law_sum b);

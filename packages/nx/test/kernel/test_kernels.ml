@@ -398,71 +398,66 @@ let large_fills =
   D.[ Any Int4; Any Bit; Any Float4_e2m1fn ]
   |> List.map (fun d -> (d, [| 1_000_001 |], (3, 5), 7))
 
-(* A map the loops' rule refuses by its dtypes or coordinates, whatever the
-   program computes: a destination of another dtype than its output, a
-   load of another than its operand, and a coordinate past the loop's
-   rank, an empty loop's included. *)
-let map_refusals (b : Support.backend) =
-  let make dt s = A.Any (A.create b.device dt s) in
-  let f32 = D.Any D.Float32 in
+(* Maps that do not fit their kernel: by a destination's or a load's
+   dtype, by a coordinate past the loop's rank, an empty loop's included,
+   and by other destinations or loads than the program's outputs and
+   operands. Each with its misfit's class and the refusal the loops' rule
+   names it by. *)
+let map_misfits (b : Support.backend) =
+  let f32 = D.Any D.Float32 and i64 = D.Any D.Int64 in
   let double =
     P.v ~ins:[| f32 |] [| P.In 0; Op2 (Binary Add, 0, 0) |] ~outs:[| 1 |]
   in
   let coord = P.v ~ins:[||] [| P.Coord 1 |] ~outs:[| 0 |] in
   let cast = P.v ~ins:[||] [| P.Coord 1; Op1 (Cast, f32, 0) |] ~outs:[| 1 |] in
   let load dt = Nx_kernel.Plain (A.create b.device dt [| 3 |]) in
+  let x = load D.Float32 and dst = (f32, [| 3 |]) in
+  let wrong = A.Wrong_dtype and shape = A.Shape_mismatch in
   [
-    ( "a destination of another dtype",
-      A.Wrong_dtype,
-      fun () -> (double, [| make D.Float64 [| 3 |] |], [| load D.Float32 |]) );
-    ( "a load of another dtype",
-      A.Wrong_dtype,
-      fun () -> (double, [| make D.Float32 [| 3 |] |], [| load D.Float64 |]) );
-    ( "a coordinate past the loop's rank",
-      A.Shape_mismatch,
-      fun () -> (coord, [| make D.Int64 [| 3 |] |], [||]) );
-    ( "a coordinate past the rank of a loop of no element",
-      A.Shape_mismatch,
-      fun () -> (coord, [| make D.Int64 [| 0 |] |], [||]) );
+    ( "a destination of another dtype", "a dtype", wrong, double,
+      [| (D.Any D.Float64, [| 3 |]) |], [| x |] );
+    ("a load of another dtype", "a dtype", wrong, double, [| dst |],
+      [| load D.Float64 |]);
+    ("a coordinate past the loop's rank", "an attribute", shape, coord,
+      [| (i64, [| 3 |]) |], [||]);
+    ( "a coordinate past the rank of a loop of no element", "an attribute",
+      shape, coord, [| (i64, [| 0 |]) |], [||] );
     ( "a cast coordinate past the rank of a loop of no element",
-      A.Shape_mismatch,
-      fun () -> (cast, [| make D.Float32 [| 0 |] |], [||]) );
+      "an attribute", shape, cast, [| (f32, [| 0 |]) |], [||] );
+    ("no destination", "a count", shape, double, [||], [| x |]);
+    ("two destinations", "a count", shape, double, [| dst; dst |], [| x |]);
+    ("no load", "a count", shape, double, [| dst |], [||]);
+    ("two loads", "a count", shape, double, [| dst |], [| x; x |]);
   ]
 
-let check_map_refusal (b : Support.backend) (msg, want, call) =
-  let module K = (val b.kernels) in
-  b.around (fun () ->
-      let p, dsts, loads = call () in
-      equal ~msg answer want
-        (K.map p ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads)))
+(* The dtypes of destinations as their dtypes and shapes give them, and of
+   loads, as Nx_kernel's rules read them. *)
+let specs = { Nx_kernel.arrays = Array.length; dtype = (fun a i -> fst a.(i)) }
 
-(* A map given other destinations or loads than its program's outputs and
-   operands is refused with [Shape_mismatch] and writes nothing. *)
-let test_map_arity (b : Support.backend) () =
+let loads_view =
+  {
+    Nx_kernel.arrays = Array.length;
+    dtype =
+      (fun (a : Nx_kernel.load array) i ->
+        match a.(i) with
+        | Plain x -> D.Any (A.dtype x)
+        | Padded { x; _ } -> D.Any (A.dtype x));
+  }
+
+(* The loops' rule names the misfit [want], and the map is not Done and
+   writes nothing outside its destinations. *)
+let check_map_misfit (b : Support.backend) (msg, what, want, p, dsts, loads)
+    =
   let module K = (val b.kernels) in
-  let p =
-    P.v ~ins:[| D.Any D.Float32 |] [| P.In 0; Op2 (Binary Add, 0, 0) |]
-      ~outs:[| 1 |]
-  in
-  let x = on b (A.of_array D.Float32 [| 3 |] [| 1.; 2.; 3. |]) in
-  let dst () = on b (A.of_array D.Float32 [| 3 |] [| 9.; 9.; 9. |]) in
-  let load = Nx_kernel.Plain x in
-  List.iter
-    (fun (msg, ys, loads) ->
-      let dsts = Array.map (fun y -> A.Any y) ys in
-      equal ~msg answer A.Shape_mismatch
-        (K.map p ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads));
-      Array.iter
-        (fun y ->
-          equal ~msg:(msg ^ ": untouched") (array float_exact) [| 9.; 9.; 9. |]
-            (A.to_array (host y)))
-        ys)
-    [
-      ("no destination", [||], [| load |]);
-      ("two destinations", [| dst (); dst () |], [| load |]);
-      ("no load", [| dst () |], [||]);
-      ("two loads", [| dst () |], [| load; load |]);
-    ]
+  let rank = if dsts = [||] then 0 else Array.length (snd dsts.(0)) in
+  (match
+     Nx_kernel.map_refusal p ~rank ~dsts:specs dsts ~loads:loads_view loads
+   with
+  | Some (r, _) -> equal ~msg answer want r
+  | None -> failf "%s: the rule finds it fits" msg);
+  Misfit.check ~msg ~what b dsts (fun g ds ->
+      K.map p ~dsts:(Iarray.of_array ds)
+        (Iarray.map (Misfit.load g) (Iarray.of_array loads)))
 
 (* A load identical to a destination through another view of its buffer is
    read before the destination is written: float32 offset 1 over a buffer
@@ -701,8 +696,9 @@ type real = Real : (float, 'r) D.t -> real
 type complex = Complex : (Complex.t, 'c) D.t -> complex
 
 (* A real transform takes a real and a complex dtype of one precision,
-   float32 with complex64 and float64 with complex128: it answers
-   Wrong_dtype at every other pair, and computes or declines those two. *)
+   float32 with complex64 and float64 with complex128, and computes or
+   declines those two. Every other pair does not fit: not Done, and
+   nothing written outside its destination. *)
 let test_real_transforms (b : Support.backend) () =
   let module K = (val b.kernels) in
   let reals =
@@ -715,15 +711,22 @@ let test_real_transforms (b : Support.backend) () =
       List.iter
         (fun (Complex c) ->
           let takes = List.mem (D.name r, D.name c) pairs in
-          let check name got =
-            let msg = strf "%s of %s and %s" name (D.name r) (D.name c) in
-            if not takes then equal ~msg answer A.Wrong_dtype got
-            else if got = A.Wrong_dtype then failf "%s answered Wrong_dtype" msg
-          in
           let real s = A.create b.device r s in
           let complex s = A.create b.device c s in
-          check "r2c" (K.r2c ~axes:[| 0 |] ~dst:(complex [| 3 |]) (real [| 4 |]));
-          check "c2r" (K.c2r ~axes:[| 0 |] ~dst:(real [| 4 |]) (complex [| 3 |])))
+          let check (type v s) name (d : (v, s) D.t) sh call =
+            let msg = strf "%s of %s and %s" name (D.name r) (D.name c) in
+            if not takes then
+              Misfit.check ~msg ~what:"a dtype" b [| (D.Any d, sh) |]
+                (fun g ds -> call g (A.expect d ds.(0)))
+            else
+              let dst = A.create b.device d (Iarray.of_array sh) in
+              if call { Misfit.g = Fun.id } dst = A.Wrong_dtype then
+                failf "%s answered Wrong_dtype" msg
+          in
+          check "r2c" c [| 3 |] (fun g dst ->
+              K.r2c ~axes:[| 0 |] ~dst (g.g (real [| 4 |])));
+          check "c2r" r [| 4 |] (fun g dst ->
+              K.c2r ~axes:[| 0 |] ~dst (g.g (complex [| 3 |]))))
         D.[ Complex Complex64; Complex Complex128 ])
     reals
 
@@ -1249,11 +1252,11 @@ let laws (b : Support.backend) =
         "fill and iota store inside a buffer and nothing around it"
         fill_insides
         (run (law_map0_inside b));
-      test "a map of other destinations or loads than its program's is refused"
-        (unit (test_map_arity b));
-      cases ~id:(fun (msg, _, _) -> msg)
-        "a map the loops' rule refuses by dtype or coordinate is refused"
-        (map_refusals b) (check_map_refusal b);
+      cases
+        ~id:(fun (msg, _, _, _, _, _) -> msg)
+        "a map that does not fit is not Done and writes nothing outside its \
+         destinations; the loops' rule names its refusal"
+        (map_misfits b) (check_map_misfit b);
       test "a map reads a load identical to a destination before writing it"
         (unit (test_map_identical_view b));
       test "a map of a padded load reads its coordinates"
@@ -1280,7 +1283,9 @@ let laws (b : Support.backend) =
         box_cases (run (law_box b));
       test "operands outlive a released call"
         (unit (test_collect_during_call b));
-      test "real transforms take one precision"
+      test
+        "real transforms take one precision, and another pair is not Done \
+         and writes nothing outside its destination"
         (unit (test_real_transforms b));
       prop "a kind of one operand the contract fixes gives its result" case
         (run (fun (Case x as c) ->

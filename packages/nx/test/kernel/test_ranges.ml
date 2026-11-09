@@ -423,9 +423,12 @@ let test_threads (_, c) =
   | Some y, Some y' -> equal (array string) (elements y) (elements y')
   | _ -> fail "nx.cpu declined a range gather"
 
-(* Refusals *)
+(* Misfits *)
 
-let refused (b : Support.backend) =
+(* Range gathers that do not fit: not Done, and nothing written outside
+   the destination. A destination over its source fits, and the door
+   refuses it as Overlapping. *)
+let misfits (b : Support.backend) =
   let module K = (val b.kernels) in
   let make dt zero s =
     A.of_array dt (Iarray.of_array s) (Array.make (total s) zero)
@@ -434,32 +437,34 @@ let refused (b : Support.backend) =
   let call ~dst ~runs:(s, e) x =
     K.gather_ranges ~dst ~starts:(ints s) ~ends:(ints e) x
   in
-  let row want name f = (name, fun () -> equal answer want (f ())) in
-  let shape = A.Shape_mismatch in
+  let row name dst ~runs x =
+    ( name,
+      fun () ->
+        Misfit.check ~msg:name ~what:"a shape" b
+          [| (D.Any D.Float32, dst) |]
+          (fun g ds ->
+            call ~dst:(A.expect D.Float32 ds.(0)) ~runs (g.Misfit.g x)) )
+  in
   [
-    row shape "starts and ends of other shapes" (fun () ->
-        call ~dst:(floats [| 4 |]) ~runs:([| 2 |], [| 3 |]) (floats [| 5 |]));
-    row shape "0-d starts" (fun () ->
-        call ~dst:(floats [| 4 |]) ~runs:([||], [||]) (floats [| 5 |]));
-    row shape "another lead extent" (fun () ->
-        call ~dst:(floats [| 3; 4 |])
-          ~runs:([| 2; 2 |], [| 2; 2 |])
-          (floats [| 3; 5 |]));
-    row shape "a destination of other cells" (fun () ->
-        call ~dst:(floats [| 4; 2 |]) ~runs:([| 2 |], [| 2 |])
-          (floats [| 5; 3 |]));
-    row shape "a destination of another rank" (fun () ->
-        call ~dst:(floats [| 4 |]) ~runs:([| 2 |], [| 2 |])
-          (floats [| 5; 3 |]));
-    row shape "a source without the ranged axis" (fun () ->
-        call ~dst:(floats [| 2 |])
-          ~runs:([| 2; 2 |], [| 2; 2 |])
-          (floats [| 2 |]));
-    row A.Overlapping "a destination over its source" (fun () ->
+    row "starts and ends of other shapes" [| 4 |] ~runs:([| 2 |], [| 3 |])
+      (floats [| 5 |]);
+    row "0-d starts" [| 4 |] ~runs:([||], [||]) (floats [| 5 |]);
+    row "another lead extent" [| 3; 4 |]
+      ~runs:([| 2; 2 |], [| 2; 2 |])
+      (floats [| 3; 5 |]);
+    row "a destination of other cells" [| 4; 2 |] ~runs:([| 2 |], [| 2 |])
+      (floats [| 5; 3 |]);
+    row "a destination of another rank" [| 4 |] ~runs:([| 2 |], [| 2 |])
+      (floats [| 5; 3 |]);
+    row "a source without the ranged axis" [| 2 |]
+      ~runs:([| 2; 2 |], [| 2; 2 |])
+      (floats [| 2 |]);
+    ( "a destination over its source",
+      fun () ->
         let x = floats [| 8 |] in
         let range = { A.Move.start = 1; count = 4; step = 1 } in
         let dst = Option.get (A.move (Slice [| range |]) x) in
-        call ~dst ~runs:([| 2 |], [| 2 |]) x);
+        equal answer A.Overlapping (call ~dst ~runs:([| 2 |], [| 2 |]) x) );
   ]
 
 (* The suite *)
@@ -472,8 +477,11 @@ let laws (b : Support.backend) =
         "a range gather is the gather at the positions its sentence gives, bit \
          for bit"
         drawn (run (law_gather b));
-      cases "refuses what does not fit" ~id:fst (refused b) (fun (_, f) ->
-          b.around f);
+      cases
+        "a call that does not fit is not Done and writes nothing outside its \
+         destination"
+        ~id:fst (misfits b)
+        (fun (_, f) -> b.around f);
     ]
 
 let () =

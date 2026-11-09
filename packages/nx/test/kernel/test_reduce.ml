@@ -792,115 +792,161 @@ let law_carry_bound (b : Support.backend) c =
   cover "a result within its bound" (List.mem Bounded !seen);
   equal (list string) [] (List.rev !bad)
 
-(* A carry of a reduction that takes none, or of another shape or dtype than
-   the carrier's, is refused. *)
-let test_carry_refusals (b : Support.backend) () =
+(* A carry of the output's carrier, float32 for float16 terms, is
+   taken. *)
+let test_carrier_carry (b : Support.backend) () =
   let (module K : Nx_kernel.S) = b.kernels in
   let make dt s = A.Any (A.create b.device dt s) in
-  let scan (type v s) (dt : (v, s) D.t) ?carry r dsts =
-    let (A.Any x) = make dt [| 2; 3 |] in
-    K.scan ?carry (identity (D.Any dt)) ~axis:1 (r, 0) ~dsts [| Plain x |]
-  in
-  let f32 s = make D.Float32 s in
-  let refuses msg want got = equal ~msg Elements.answer want got in
-  let carry = f32 [| 2; 1 |] in
-  refuses "a Logsumexp's carry" A.Shape_mismatch
-    (scan D.Float32 ~carry Logsumexp [| f32 [| 2; 3 |] |]);
-  refuses "a Moments' carry" A.Shape_mismatch
-    (scan D.Float32 ~carry Moments [| f32 [| 2; 3 |]; f32 [| 2; 3 |] |]);
-  refuses "an Arg's carry" A.Shape_mismatch
-    (scan D.Float32 ~carry (Arg Max)
-       [| f32 [| 2; 3 |]; make D.Int64 [| 2; 3 |] |]);
-  refuses "a carry of the destination's shape" A.Shape_mismatch
-    (scan D.Float32 ~carry:(f32 [| 2; 3 |]) (Monoid Sum) [| f32 [| 2; 3 |] |]);
-  refuses "a carry of one element" A.Shape_mismatch
-    (scan D.Float32 ~carry:(f32 [| 1; 1 |]) (Monoid Sum) [| f32 [| 2; 3 |] |]);
-  refuses "a carry of another dtype" A.Wrong_dtype
-    (scan D.Float32 ~carry:(make D.Float64 [| 2; 1 |]) (Monoid Max)
-       [| f32 [| 2; 3 |] |]);
-  refuses "a float16 carry of float16 terms" A.Wrong_dtype
-    (scan D.Float16 ~carry:(make D.Float16 [| 2; 1 |]) (Monoid Sum)
-       [| make D.Float16 [| 2; 3 |] |]);
-  refuses "a float32 carry of float16 terms" A.Done
-    (scan D.Float16 ~carry (Monoid Sum) [| make D.Float16 [| 2; 3 |] |])
+  let (A.Any x) = make D.Float16 [| 2; 3 |] in
+  equal Elements.answer A.Done
+    (K.scan ~carry:(make D.Float32 [| 2; 1 |]) (identity (D.Any D.Float16))
+       ~axis:1 (Monoid Sum, 0) ~dsts:[| make D.Float16 [| 2; 3 |] |]
+       [| Plain x |])
 
-(* Reductions and scans the loops' rule refuses, whatever the program
-   computes: [Shape_mismatch] for other numbers of loads, destinations or
-   reductions, an output past the program's or a coordinate past the
-   loop's rank, an empty loop's included; [Wrong_dtype] for a load of
-   another dtype than its operand, a reduction of a dtype it does not take
-   or an Arg's position other than int64. *)
-let loop_refusals (b : Support.backend) =
+(* The dtypes of destinations as their dtypes and shapes give them, of
+   loads and of reductions, as Nx_kernel's rules read them. *)
+let specs = { Nx_kernel.arrays = Array.length; dtype = (fun a i -> fst a.(i)) }
+
+let loads_view =
+  {
+    Nx_kernel.arrays = Array.length;
+    dtype =
+      (fun (a : Nx_kernel.load array) i ->
+        match a.(i) with
+        | Plain x -> D.Any (A.dtype x)
+        | Padded { x; _ } -> D.Any (A.dtype x));
+  }
+
+let reductions_view =
+  {
+    Nx_kernel.reductions = Array.length;
+    kind = (fun rs i -> fst rs.(i));
+    output = (fun rs i -> snd rs.(i));
+  }
+
+(* Reductions and scans that do not fit their kernel, whatever the
+   program computes: by other numbers of loads, destinations or
+   reductions, an output past the program's, a coordinate past the loop's
+   rank, an empty loop's included, a load of another dtype than its
+   operand, a reduction of a dtype it does not take, an Arg's position
+   other than int64, or a carry of a reduction that takes none, of another
+   shape or of another dtype than the carrier. Each with its misfit's
+   class, the refusal nx's rules name it by, the destinations' dtypes and
+   shapes, and the call into them. *)
+let loop_misfits (b : Support.backend) =
   let (module K : Nx_kernel.S) = b.kernels in
-  let make dt s = A.Any (A.create b.device dt s) in
-  let f32 = D.Any D.Float32 in
+  let f32 = D.Any D.Float32 and i64 = D.Any D.Int64 in
   let id = identity f32 in
   let coord = P.v ~ins:[||] [| P.Coord 2 |] ~outs:[| 0 |] in
-  let x s = Nx_kernel.Plain (A.create b.device D.Float32 s) in
-  let reduce ?(shape : int iarray = [| 2; 3 |]) p rs dsts loads =
-    K.reduce p ~shape ~axes:[| 1 |] rs ~dsts loads
+  let x ?(dt = D.Any D.Float32) s =
+    let (D.Any dt) = dt in
+    Nx_kernel.Plain (A.create b.device dt s)
   in
-  let scan p rk dsts loads = K.scan p ~axis:1 rk ~dsts loads in
-  let row = make D.Float32 [| 2 |] in
-  let rows =
-    [
-      ( "a reduction of an output past the program's",
-        A.Shape_mismatch,
-        fun () -> reduce id [| (Monoid Sum, 1) |] [| row |] [| x [| 2; 3 |] |] );
-      ("no reduction", A.Shape_mismatch, fun () -> reduce id [||] [||] [| x [| 2; 3 |] |]);
-      ( "one destination for an Arg",
-        A.Shape_mismatch,
-        fun () -> reduce id [| (Arg Max, 0) |] [| row |] [| x [| 2; 3 |] |] );
-      ( "a load past the program's operands",
-        A.Shape_mismatch,
-        fun () ->
-          reduce id [| (Monoid Sum, 0) |] [| row |]
-            [| x [| 2; 3 |]; x [| 2; 3 |] |] );
-      ( "a coordinate past the loop's rank",
-        A.Shape_mismatch,
-        fun () ->
-          reduce coord [| (Monoid Sum, 0) |] [| make D.Int64 [| 2 |] |] [||] );
-      ( "a coordinate past the rank of a loop of no element",
-        A.Shape_mismatch,
-        fun () ->
-          reduce ~shape:[| 2; 0 |] coord [| (Monoid Sum, 0) |]
-            [| make D.Int64 [| 2 |] |] [||] );
-      ( "a load of another dtype than its operand",
-        A.Wrong_dtype,
-        fun () ->
-          reduce id [| (Monoid Sum, 0) |] [| row |]
-            [| Plain (A.create b.device D.Float64 [| 2; 3 |]) |] );
-      ( "a Logsumexp of int32",
-        A.Wrong_dtype,
-        fun () ->
-          reduce (identity (D.Any D.Int32)) [| (Logsumexp, 0) |]
-            [| make D.Int32 [| 2 |] |]
-            [| Plain (A.create b.device D.Int32 [| 2; 3 |]) |] );
-      ( "an Arg's position of int32",
-        A.Wrong_dtype,
-        fun () ->
-          reduce id [| (Arg Max, 0) |] [| row; make D.Int32 [| 2 |] |]
-            [| x [| 2; 3 |] |] );
-      ( "a scan of an output past the program's",
-        A.Shape_mismatch,
-        fun () -> scan id (Monoid Sum, 1) [| make D.Float32 [| 2; 3 |] |] [| x [| 2; 3 |] |] );
-      ( "two destinations for a scan's Sum",
-        A.Shape_mismatch,
-        fun () ->
-          scan id (Monoid Sum, 0)
-            [| make D.Float32 [| 2; 3 |]; make D.Float32 [| 2; 3 |] |]
-            [| x [| 2; 3 |] |] );
-      ( "a scan's coordinate past the rank of a loop of no element",
-        A.Shape_mismatch,
-        fun () -> scan coord (Monoid Sum, 0) [| make D.Int64 [| 2; 0 |] |] [||] );
-    ]
+  let wrong = A.Wrong_dtype and shape = A.Shape_mismatch in
+  (* A reduction along axis 1 of a loop of [shape], or a scan along it of
+     its destinations' shape, from [carry]. *)
+  let reduce ?(shape = [| 2; 3 |]) p rs loads dsts =
+    let named =
+      Nx_kernel.reduce_refusal p ~rank:(Array.length shape)
+        ~reductions:reductions_view rs ~dsts:specs dsts ~loads:loads_view
+        loads
+    in
+    let call g ds =
+      K.reduce p ~shape:(Iarray.of_array shape) ~axes:[| 1 |]
+        (Iarray.of_array rs) ~dsts:(Iarray.of_array ds)
+        (Iarray.map (Misfit.load g) (Iarray.of_array loads))
+    in
+    (Option.map fst named, dsts, call)
   in
-  rows
+  let scan ?carry p (r, k) loads dsts =
+    let y = if dsts = [||] then [| 2; 3 |] else snd dsts.(0) in
+    let named =
+      match
+        Nx_kernel.scan_refusal p ~rank:(Array.length y) r ~output:k
+          ~dsts:specs dsts ?carry:(Option.map fst carry) ~loads:loads_view
+          loads
+      with
+      | Some (e, _) -> Some e
+      | None -> (
+          match carry with
+          | Some (_, s) when Nx_kernel.Shape.carry ~axis:1 y <> Ok s ->
+              Some A.Shape_mismatch
+          | _ -> None)
+    in
+    let carry =
+      Option.map
+        (fun (D.Any d, s) -> A.Any (A.create b.device d (Iarray.of_array s)))
+        carry
+    in
+    let call (g : Misfit.guard) ds =
+      let carry = Option.map (fun (A.Any c) -> A.Any (g.g c)) carry in
+      K.scan ?carry p ~axis:1 (r, k) ~dsts:(Iarray.of_array ds)
+        (Iarray.map (Misfit.load g) (Iarray.of_array loads))
+    in
+    (named, dsts, call)
+  in
+  let row = (f32, [| 2 |]) and whole = (f32, [| 2; 3 |]) in
+  let one = [| x [| 2; 3 |] |] and carry = (f32, [| 2; 1 |]) in
+  [
+    ( "a reduction of an output past the program's", "a count", shape,
+      reduce id [| (Monoid Sum, 1) |] one [| row |] );
+    ("no reduction", "a count", shape, reduce id [||] one [||]);
+    ( "one destination for an Arg", "a count", shape,
+      reduce id [| (Arg Max, 0) |] one [| row |] );
+    ( "a load past the program's operands", "a count", shape,
+      reduce id [| (Monoid Sum, 0) |] [| x [| 2; 3 |]; x [| 2; 3 |] |]
+        [| row |] );
+    ( "a coordinate past the loop's rank", "an attribute", shape,
+      reduce coord [| (Monoid Sum, 0) |] [||] [| (i64, [| 2 |]) |] );
+    ( "a coordinate past the rank of a loop of no element", "an attribute",
+      shape,
+      reduce ~shape:[| 2; 0 |] coord [| (Monoid Sum, 0) |] [||]
+        [| (i64, [| 2 |]) |] );
+    ( "a load of another dtype than its operand", "a dtype", wrong,
+      reduce id [| (Monoid Sum, 0) |] [| x ~dt:(D.Any D.Float64) [| 2; 3 |] |]
+        [| row |] );
+    ( "a Logsumexp of int32", "a dtype", wrong,
+      reduce (identity (D.Any D.Int32)) [| (Logsumexp, 0) |]
+        [| x ~dt:(D.Any D.Int32) [| 2; 3 |] |]
+        [| (D.Any D.Int32, [| 2 |]) |] );
+    ( "an Arg's position of int32", "a dtype", wrong,
+      reduce id [| (Arg Max, 0) |] one [| row; (D.Any D.Int32, [| 2 |]) |] );
+    ( "a scan of an output past the program's", "a count", shape,
+      scan id (Monoid Sum, 1) one [| whole |] );
+    ( "two destinations for a scan's Sum", "a count", shape,
+      scan id (Monoid Sum, 0) one [| whole; whole |] );
+    ( "a scan's coordinate past the rank of a loop of no element",
+      "an attribute", shape,
+      scan coord (Monoid Sum, 0) [||] [| (i64, [| 2; 0 |]) |] );
+    ( "a Logsumexp's carry", "an attribute", shape,
+      scan ~carry id (Logsumexp, 0) one [| whole |] );
+    ( "a Moments' carry", "an attribute", shape,
+      scan ~carry id (Moments, 0) one [| whole; whole |] );
+    ( "an Arg's carry", "an attribute", shape,
+      scan ~carry id (Arg Max, 0) one [| whole; (i64, [| 2; 3 |]) |] );
+    ( "a carry of the destination's shape", "a shape", shape,
+      scan ~carry:(f32, [| 2; 3 |]) id (Monoid Sum, 0) one [| whole |] );
+    ( "a carry of one element", "a shape", shape,
+      scan ~carry:(f32, [| 1; 1 |]) id (Monoid Sum, 0) one [| whole |] );
+    ( "a carry of another dtype", "a dtype", wrong,
+      scan ~carry:(D.Any D.Float64, [| 2; 1 |]) id (Monoid Max, 0) one
+        [| whole |] );
+    ( "a float16 carry of float16 terms", "a dtype", wrong,
+      scan
+        ~carry:(D.Any D.Float16, [| 2; 1 |])
+        (identity (D.Any D.Float16)) (Monoid Sum, 0)
+        [| x ~dt:(D.Any D.Float16) [| 2; 3 |] |]
+        [| (D.Any D.Float16, [| 2; 3 |]) |] );
+  ]
 
-let check_refusal (b : Support.backend) (msg, want, call) =
-  match b.around call with
-  | got -> equal ~msg Elements.answer want got
-  | exception e -> failf "%s raised %s" msg (Printexc.to_string e)
+(* nx's rules name the misfit [want], and the call is not Done and writes
+   nothing outside its destinations. *)
+let check_misfit (b : Support.backend) (msg, what, want, (named, dsts, call))
+    =
+  (match named with
+  | Some got -> equal ~msg Elements.answer want got
+  | None -> failf "%s: the rules find it fits" msg);
+  Misfit.check ~msg ~what b dsts call
 
 (* A Max's NaN carry that is its destination, a slice of one term, a
    number, makes the result a NaN, though the scan writes the carry's
@@ -1279,11 +1325,13 @@ let laws (b : Support.backend) =
       prop ~count:300 ~examples:special_examples
         "Logsumexp, Moments and Arg give the special values their terms make"
         special_case (run (law_special b));
-      test "a carry the scan cannot take is refused" (fun () ->
-          b.around (test_carry_refusals b));
-      cases ~id:(fun (msg, _, _) -> msg)
-        "a reduction or scan the loops' rule refuses is refused"
-        (loop_refusals b) (check_refusal b);
+      test "a carry of the carrier is taken" (fun () ->
+          b.around (test_carrier_carry b));
+      cases
+        ~id:(fun (msg, _, _, _) -> msg)
+        "a reduction or scan that does not fit is not Done and writes \
+         nothing outside its destinations; nx's rules name its refusal"
+        (loop_misfits b) (check_misfit b);
       test "an extreme's carry its destination aliases" (fun () ->
           b.around (test_aliased_carry b));
     ]
