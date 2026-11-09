@@ -606,6 +606,9 @@ let cases =
     ("scan/tridiagonal-100", tridiagonal);
     ("model/schools-start", schools);
     ("scan/checks-48", checked_scan);
+    (* The same first compile at the default [PARALLEL]: its host kernels
+       lowered, rendered and compiled together. *)
+    ("parallel/checks-48", checked_scan);
     ("rng/normal-f64", normal f64);
     ("rng/normal-f32", normal Nx.float32);
     ( "shaped-4k",
@@ -641,7 +644,7 @@ let first_cases = [ ("metal/one-new", metal_one) ]
 
 (* The cases whose cold samples run at the default [PARALLEL]: their kernels'
    compiles run at once. *)
-let parallel_cases = [ "metal/sums-32" ]
+let parallel_cases = [ "metal/sums-32"; "parallel/checks-48" ]
 
 (* The cases timed again over a warm disk cache, as a user's next run of a
    program makes its first call: a model's first steps, whose schedule reads 40
