@@ -2013,6 +2013,18 @@ let linear_plans =
         (pair (int_range 200 800) (of_list leaves)))
     ratio_law
 
+let linear_union_all =
+  let union_words n =
+    let leaf _ = Query.of_source (source ~pushdown:inexact "part" columns) in
+    let q = Kit.union_all (List.init n leaf) in
+    words (fun () -> Query.optimize (Query.filter Expr.(a > int 0) q))
+  in
+  prop ~count:6 "planning union_all is linear in its queries"
+    Gen.(int_range 200 800)
+    (fun n ->
+      let at_n = union_words n and at_2n = union_words (2 * n) in
+      less (float 0.001) ~than:(2.3 *. at_n) at_2n)
+
 let () =
   exit
     (run "plan"
@@ -2020,5 +2032,6 @@ let () =
          printed; laws; comparing; kit_queries; kit_mistakes;
          test "records and unnest print and narrow" unnest_plans;
          linear_plans;
+         linear_union_all;
          test "constant columns simplify filters" constant_plans;
        ])

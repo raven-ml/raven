@@ -214,6 +214,62 @@ module Kit = struct
     let s = Query.schema q and r = Query.schema rest in
     Query.append (pad (nulls s r) rest) (pad (nulls r s) q)
 
+  (* [meet ts] is the type where the types [ts] of one column meet. Two kinds
+     never meet: {!Type.common} says so. *)
+  let meet : Type.any list -> Type.any option = function
+    | [] -> None
+    | Type.Any t0 :: ts ->
+        let at : type a. a Type.t -> Type.any -> a Type.t option =
+         fun t0 (Type.Any t) ->
+          match Kind.provably_equal (Type.kind t) (Type.kind t0) with
+          | Some Equal -> Some t
+          | None -> None
+        in
+        let same = List.filter_map (at t0) ts in
+        if List.compare_lengths same ts <> 0 then None
+        else Option.map (fun t -> Type.Any t) (Type.common (t0 :: same))
+
+  let union_all = function
+    | [] -> Query.of_table (v ~rows:0 [])
+    | qs ->
+        let order = ref [] and types = Hashtbl.create 16 in
+        let see (n, t) =
+          match Hashtbl.find_opt types n with
+          | Some ts -> ts := t :: !ts
+          | None ->
+              order := n :: !order;
+              Hashtbl.add types n (ref [ t ])
+        in
+        List.iter (fun q -> List.iter see (Schema.columns (Query.schema q))) qs;
+        (* Each column at its common type over every branch, which the order
+           of the branches cannot change; a column that does not meet is left
+           to [append] to report. *)
+        let columns =
+          List.rev_map (fun n -> (n, meet !(Hashtbl.find types n))) !order
+        in
+        let conform q =
+          let s = Query.schema q in
+          let out (n, common) =
+            match (common, Schema.find s n) with
+            | None, _ -> None
+            | Some (Type.Any c), None -> Some Expr.(n := store c null)
+            | Some (Type.Any c), Some (Type.Any t) when Type.equal c t -> None
+            | Some (Type.Any c), Some (Type.Any t) ->
+                Some Expr.(n := cast c (Col.v (Type.kind t) n))
+          in
+          match List.filter_map out columns with
+          | [] -> q
+          | os -> Query.derive os q
+        in
+        let branches = Array.of_list (List.map conform qs) in
+        let rec join lo hi =
+          if hi - lo = 1 then branches.(lo)
+          else
+            let mid = (lo + hi) / 2 in
+            Query.append (join mid hi) (join lo mid)
+        in
+        join 0 (Array.length branches)
+
   (* Runs *)
 
   (* A dictionary's codes are int32. *)

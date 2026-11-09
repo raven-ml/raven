@@ -3219,6 +3219,22 @@ module Kit : sig
       A column that both have, of two types, takes the type where they meet, and
       one whose types do not meet is a problem of the [append]. *)
 
+  val union_all : Query.t list -> Query.t
+  (** [union_all qs] is the rows of [qs], in order, with the columns of the
+      first query, then each column that a later one adds, in order, null on
+      the queries that lack it. Each column has the type where all of its
+      types meet ({!Type.common}), which no order of [qs] can change: columns
+      of [int8], [uint8] and [int16] make [int16], where a fold of {!union} in
+      that order fails. Every query is cast to those types and padded before
+      any is appended, in a balanced tree of [append]s, so its plan takes work
+      linear in the length of [qs], beyond a comparison of each leaf with those
+      of its name and shape. A filter on a column stored at its common
+      type reaches every such query, whatever the others' types; a query whose
+      column was cast is read and filtered after the cast. A column whose types
+      do not meet is a problem of the [append]s. [union_all []] is a query of no
+      column and no row, the identity of {!union}: [q |> union (union_all [])]
+      has [q]'s rows and columns. *)
+
   (** {1:windows Windows}
 
       These compose {!Expr.window}, so its problems on [r] apply to [x] and

@@ -4774,6 +4774,155 @@ let constant_columns =
       extension_cases;
     ]
 
+(* Many branches *)
+
+(* [handing t] is a source of [t]'s rows and the conjuncts of its last request,
+   which it uses as an [Inexact] answer allows. *)
+let handing t =
+  let handed = ref [] in
+  let parts (r : Source.request) =
+    handed := r.filters;
+    Ok
+      [
+        {
+          Source.rows = None;
+          open_ =
+            (fun () ->
+              let rest = ref [ answer r t ] in
+              Ok
+                {
+                  Source.next =
+                    (fun () ->
+                      match !rest with
+                      | [] -> Ok None
+                      | b :: bs ->
+                          rest := bs;
+                          Ok (Some b));
+                  close = ignore;
+                });
+        };
+      ]
+  in
+  ( Source.v ~name:"file" ~schema:(schema t)
+      ~pushdown:(fun _ -> Source.Inexact)
+      parts,
+    handed )
+
+type drifted = { wide : bool; y : float option array option; x_ : int array }
+
+let drifted_gen =
+  Gen.(
+    let+ wide = bool
+    and+ n = int_range 0 3
+    and+ xs = array ~size:(constant 3) (int_range (-4) 9)
+    and+ y =
+      frequency
+        [
+          (1, constant None);
+          ( 2,
+            map Option.some
+              (array ~size:(constant 3)
+                 (of_list [ Some 1.5; Some (-2.); None ])) );
+        ]
+    in
+    { wide; y = Option.map (fun a -> Array.sub a 0 n) y; x_ = Array.sub xs 0 n })
+
+let drifted_table d =
+  let x =
+    if d.wide then Column.v Type.int64 d.x_
+    else Column.v Type.int32 d.x_
+  in
+  let y =
+    match d.y with
+    | Some ys -> [ ("y", Column.of_options Type.float64 ys) ]
+    | None -> []
+  in
+  v (("x", x) :: y)
+
+let union_all_rows =
+  prop "union_all gives every branch's rows at the common types"
+    (Gen.list ~size:(Gen.int_range 1 7) drifted_gen)
+    (fun ds ->
+      let qs = List.map (fun d -> Query.of_table (drifted_table d)) ds in
+      let wide = List.exists (fun d -> d.wide) ds in
+      cover "branches of two types" (wide && List.exists (fun d -> not d.wide) ds);
+      cover "a branch lacks a column" (List.exists (fun d -> d.y = None) ds);
+      let xs = Array.concat (List.map (fun d -> d.x_) ds) in
+      let ys =
+        Array.concat
+          (List.map
+             (fun d ->
+               match d.y with
+               | Some ys -> ys
+               | None -> Array.make (Array.length d.x_) None)
+             ds)
+      in
+      let has_y = List.exists (fun d -> Option.is_some d.y) ds in
+      let x =
+        if wide then Column.v Type.int64 xs else Column.v Type.int32 xs
+      in
+      let expected =
+        v
+          (("x", x)
+          :: (if has_y then [ ("y", Column.of_options Type.float64 ys) ] else []))
+      in
+      equal (Testable.make ~pp:Talon.pp ~equal:Talon.equal) expected
+        (run_ok (Kit.union_all qs)))
+
+let conjunct_reach_gen =
+  Gen.(
+    let+ n = int_range 3 7 and+ at = int_range 0 6 in
+    (n, min at (n - 1)))
+
+let conjunct_reaches_every_stored_branch =
+  prop "a filter reaches every branch stored at the common type"
+    conjunct_reach_gen
+    (fun (n, at) ->
+      let table i =
+        if i = at then v [ ("x", Column.v Type.int32 [| 1; 9 |]) ]
+        else v [ ("x", Column.v Type.int64 [| 1; 9 |]) ]
+      in
+      let branches = List.init n (fun i -> handing (table i)) in
+      let q =
+        Kit.union_all (List.map (fun (s, _) -> Query.of_source s) branches)
+        |> Query.filter Expr.(Col.int "x" > int 5)
+      in
+      ignore (run_ok q);
+      equal (list int)
+        (List.init n (fun i -> if i = at then 0 else 1))
+        (List.map (fun (_, handed) -> List.length !handed) branches))
+
+let types_do_not_depend_on_order =
+  let tables =
+    [
+      v [ ("x", Column.v Type.int8 [| 1 |]) ];
+      v [ ("x", Column.v Type.uint8 [| 2 |]) ];
+      v [ ("x", Column.v Type.int16 [| 3 |]) ];
+    ]
+  in
+  prop "union_all's types do not depend on the branches' order"
+    (Gen.permutation tables)
+    (fun ts ->
+      let q = Kit.union_all (List.map Query.of_table ts) in
+      equal schema_w (Schema.v [ ("x", Any Type.int16) ]) (Query.schema q))
+
+let union_all_of_nothing () =
+  let q = Kit.union_all [] in
+  equal schema_w (Schema.v []) (Query.schema q);
+  equal int 0 (rows (run_ok q));
+  let t = v [ ("a", Column.v Type.int64 [| 1; 2 |]) ] in
+  equal (Testable.make ~pp:Talon.pp ~equal:Talon.equal) t
+    (run_ok (Query.of_table t |> Kit.union (Kit.union_all [])))
+
+let union_all_group =
+  group "Kit.union_all"
+    [
+      union_all_rows;
+      conjunct_reaches_every_stored_branch;
+      types_do_not_depend_on_order;
+      test "of no query is the identity of union" union_all_of_nothing;
+    ]
+
 let appending =
   prop "append is each side at the common type, one after the other" appended
     (fun (Type.Any t0, Type.Any t1, Type.Any c, a, b) ->
@@ -5667,6 +5816,7 @@ let () =
          sorting;
          sources;
          constant_columns;
+         union_all_group;
          constructors;
          utc_wall_clock;
          appending;

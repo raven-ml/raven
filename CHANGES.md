@@ -4171,6 +4171,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- New `Kit.union_all`, a list of queries appended at each column's
+  `Type.common` over every branch, so the result's types do not depend on the
+  order of the branches, and a filter on a column stored at its common type
+  reaches every such branch. Its plan is a balanced tree of appends.
 - A conjunct over a `derive` or `select` of literals is read as those literals
   and simplified, so a filter on a constant column empties the branches it
   excludes before their sources are opened, and `false || x` reaches the source
