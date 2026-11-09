@@ -363,9 +363,8 @@ pattern's group, `lower` and `upper` by Unicode's full case mappings, and
 RE2 and Perl syntax with Unicode's character classes and simple case folding;
 the [`Expr.Str`](../lib/talon.mli) section "Regular expressions" holds the
 language and its promises. A regex reads whole Unicode scalars, so `\w+`
-keeps a word with accented letters whole, and it runs in time proportional
-to the row whatever the pattern. A missing match or a group that did not
-participate is null.
+keeps a word with accented letters whole. A missing match or a group that
+did not participate is null.
 
 ```ocaml
 let lines =

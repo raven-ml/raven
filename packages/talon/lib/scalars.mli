@@ -30,6 +30,10 @@ val decode_before : buf -> int -> int -> int
 (** [decode_before v first j] is the scalar value that ends just before byte
     [j] of [v], [j] past [first]. *)
 
+val blit : buf -> int -> buf -> int -> int -> unit
+(** [blit src lo dst at len] copies the bytes [lo, lo + len) of [src] to [dst]
+    from [at]. *)
+
 val within : int array -> int -> int -> int -> bool
 (** [within bounds u lo hi] is [true] iff [u] lies in the ranges that the
     ascending [bounds] start and end by turns, searched in [\[lo, hi)]. *)

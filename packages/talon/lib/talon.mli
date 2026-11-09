@@ -1760,70 +1760,10 @@ module Expr : sig
   module Str : sig
     type pattern
     (** The type for patterns: what text is matched against. A pattern holds no
-        state, and may be shared. *)
-
-    (** {2:regexes Regular expressions}
-
-        A {!regex} is written in the syntax of RE2 and Perl and matches with
-        UTS #18 Level 1 semantics for Unicode 18.0.0. A column of text is valid
-        UTF-8, and a match is always a whole number of scalar values.
-
-        {3 Matching}
-
-        A match is the leftmost one, and among the matches at that byte the one
-        a backtracking search finds first, as in Perl: [regex "a|ab"] of
-        ["ab"] matches ["a"]. A pattern is matched against the row's whole
-        text, so [^], [\\A] and [\\b] see the start of the row wherever a search
-        resumes. Successive matches run left to right without overlap; an empty
-        match abutting the previous one is discarded, and the next search starts
-        one scalar further on.
-
-        A pattern compiles once, when {!regex} is called. Matching a row of [n]
-        bytes takes time at most proportional to [m * n], for a pattern of [m]
-        instructions, and no input makes one row's time exponential. A kernel's
-        matching memory is bounded, whatever the rows' length. [x{n}] compiles to
-        [n] copies of [x], and nested counts multiply, so a pattern's size and
-        compile time follow from what it writes: a pattern built from untrusted
-        text must be bounded by the program that builds it.
-
-        Backreferences and lookaround cannot be matched in that time and are
-        refused, as are possessive quantifiers and atomic groups. Level 2, the
-        [\\X] grapheme escape and character-class subtraction and intersection
-        are outside the language.
-
-        {3 The language}
-
-        {v
-Construct                Meaning
-any non-metacharacter    that scalar value
-.                        any scalar but U+000A; with (?s), any scalar
-[abc] [^abc] [a-z]       classes of scalars; a first ] or - is literal
-\d \D \w \W \s \S      Annex C: Nd; Alphabetic, Mark, Nd, Pc, Join_Control;
-                         White_Space, the set Str.trim trims
-\pN \p{Name} \P{Name}   a General_Category, Script or binary property;
-\p{Name=Value}          names as UAX #44 loose matching reads them
-\xHH \x{H..}            a code point in hex
-\n \t \r \f \v \a \e   the character; \ before punctuation is that
-                         punctuation
-^ $                      the start and end of the row; with (?m), also after
-                         and before U+000A
-\A \z                   the start and end of the row in every mode
-\b \B                   between a \w and a non-\w scalar, or not
-xy x|y                   sequence; the first branch wins
-x* x+ x? x{n} x{n,} x{n,m}  repetition, greedy; with a following ?, lazy
-(x) (?:x)                capture and non-capture
-(?<name>x) (?P<name>x)   a named capture
-(?flags) (?flags:x)      flags i m s, and negation with -, to the end of
-                         the group or within x
-v}
-
-        [\\d] is Unicode's Decimal_Number; [\\w] and [\\s] are the Standard
-        Recommendation columns of Annex C. [(?i)] applies simple case folding,
-        closing a class over it before any negation, so [(?i)[^a]] matches
-        neither [a] nor [A]. Line boundaries are U+000A only, [\\b] follows
-        [\\w] and does not skip marks, and conformance is at UTS #18 Level 1
-        except for the rules above and the set operations of RL1.3, which
-        [[^\\P{L}\\p{Greek}]] and the like write as complements. *)
+        state, and may be shared. Every pattern reads as a regular expression
+        ({!section-regexes}): {!literal} is its text with {!quote} applied,
+        {!prefix}[ s] and {!suffix}[ s] put [\\A] and [\\z] around it, and
+        {!pieces} joins with [(?s:.*?)]. *)
 
     val literal : string -> pattern
     (** [literal s] matches [s] anywhere in the text.
@@ -1870,16 +1810,6 @@ v}
     val matches : pattern -> (string, 's) t -> (bool, 's) t
     (** [matches p a] is [true] iff [p] matches [a]. *)
 
-    (**/**)
-
-    val dfa_test :
-      limit:int -> pattern -> string array -> bool array option
-    (* Runs the lazy DFA of a {!regex} over [rows], its cache of at most [limit]
-       states, for tests that force the cache to clear; [None] where the
-       pattern's program is not one the DFA handles. *)
-
-    (**/**)
-
     val extract : ?group:int -> pattern -> (string, 's) t -> (string, 's) t
     (** [extract ~group p a] is group [group] of the first match of [p] in [a],
         [0], the whole match, by default. It is null where [a] has no match or
@@ -1898,14 +1828,9 @@ v}
         to right without overlap, as a [list[string]]: k matches give k + 1
         pieces, so a leading, trailing or repeated [p] gives an empty piece, and
         no match gives one piece, [a] itself. [split (literal "_") s] of
-        ["sub-01_ses-02"] is [["sub-01"; "ses-02"]].
-
-        An empty match that abuts the previous match is not a match, and a
-        search resumes one scalar value after an empty match, so
-        [split (regex "x*") a] of ["ab"] is [[""; "a"; "b"; ""]]. Each pattern
-        is defined as a regular expression: {!literal} is its text with {!quote}
-        applied, {!prefix}[ s] is [\\A] and {!suffix}[ s] [\\z] around it, and
-        {!pieces} joins with [(?s:.*?)]. *)
+        ["sub-01_ses-02"] is [["sub-01"; "ses-02"]]. An empty match may split
+        between scalar values ({!section-regexes}): [split (regex "x*")] of
+        ["ab"] is [[""; "a"; "b"; ""]]. *)
 
     val replace : pattern -> by:string -> (string, 's) t -> (string, 's) t
     (** [replace p ~by a] is [a] with each match of [p], found as {!split} finds
@@ -1965,6 +1890,74 @@ v}
         that [ty] does not hold, is a data error. [ty] is a [bool], integer,
         float, [date] or [datetime] type, or a categorical, which takes only the
         strings of its dictionary. *)
+
+    (** {2:regexes Regular expressions}
+
+        A {!regex} is written in the syntax of RE2 and Perl and matches with
+        UTS #18 Level 1 semantics for Unicode 18.0.0. A match is always a whole
+        number of scalar values.
+
+        {3 Matching}
+
+        A match is the leftmost one. At that byte, alternatives are tried left
+        to right and a repetition takes as many iterations as it can, or as few
+        if lazy: [regex "a|ab"] of ["ab"] matches ["a"]. Where the body can
+        match the empty text, the first iteration of the loop of [x*], [x+] or
+        the end of [x{n,}] may match it and end the loop, and a later iteration
+        of the loop never matches it. Each counted copy of [x{n}] and [x{n,m}]
+        is its own iteration and may match it.
+
+        A pattern is matched against the row's whole text, so [^], [\\A] and
+        [\\b] see the start of the row wherever a search resumes. Successive
+        matches run left to right without overlap. An empty match that abuts
+        the previous match is discarded, and after an empty match the search
+        resumes one scalar value further on.
+
+        Matching a row of [n] bytes takes time at most proportional to [m * n],
+        for a pattern of [m] instructions, and a kernel's matching memory is
+        bounded, whatever the rows' length. [x{n}] compiles to [n] copies of
+        [x] and nested counts multiply, so a pattern's size and compile time
+        follow from what it writes. A pattern built from untrusted text must be
+        bounded by the program that builds it.
+
+        Backreferences and lookaround cannot be matched in that time and are
+        refused, as are possessive quantifiers and atomic groups. Level 2, the
+        [\\X] grapheme escape and character-class subtraction and intersection
+        are outside the language.
+
+        {3 The language}
+
+        {v
+Construct                Meaning
+any non-metacharacter    that scalar value
+.                        any scalar but U+000A; with (?s), any scalar
+[abc] [^abc] [a-z]       classes of scalars; a first ] or - is literal
+\d \D \w \W \s \S      Annex C: Nd; Alphabetic, Mark, Nd, Pc, Join_Control;
+                         White_Space, the set Str.trim trims
+\pN \p{Name} \P{Name}   a General_Category, Script or binary property;
+\p{Name=Value}          names as UAX #44 loose matching reads them
+\xHH \x{H..}            a code point in hex
+\n \t \r \f \v \a \e   the character; \ before punctuation is that
+                         punctuation
+^ $                      the start and end of the row; with (?m), also after
+                         and before U+000A
+\A \z                   the start and end of the row in every mode
+\b \B                   between a \w and a non-\w scalar, or not
+xy x|y                   sequence; the first branch wins
+x* x+ x? x{n} x{n,} x{n,m}  repetition, greedy; with a following ?, lazy
+(x) (?:x)                capture and non-capture
+(?<name>x) (?P<name>x)   a named capture
+(?flags) (?flags:x)      flags i m s, and negation with -, to the end of
+                         the group or within x
+v}
+
+        [\\d] is Unicode's Decimal_Number; [\\w] and [\\s] are the Standard
+        Recommendation columns of Annex C. [(?i)] applies simple case folding,
+        closing a class over it before any negation, so [(?i)[^a]] matches
+        neither [a] nor [A]. Line boundaries are U+000A only, [\\b] follows
+        [\\w] and does not skip marks, and conformance is at UTS #18 Level 1
+        except for the rules above and the set operations of RL1.3, which
+        [[^\\P{L}\\p{Greek}]] and the like write as complements. *)
   end
 
   (** {1:time Time} *)

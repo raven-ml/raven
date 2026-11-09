@@ -86,12 +86,11 @@ let golden_lines =
 let golden_agreement =
   test "agrees with Rust's regex crate through Polars, on every column" (fun () ->
       let wrong = ref [] in
-      let report c pat text what expected actual =
+      let report pat text what expected actual =
         wrong :=
           Printf.sprintf "%S on %S %s: expected %s, got %s" pat text what expected
             actual
-          :: !wrong;
-        ignore c
+          :: !wrong
       in
       let pp_opt = function None -> "null" | Some s -> Printf.sprintf "%S" s in
       List.iter
@@ -100,29 +99,29 @@ let golden_agreement =
           let rows = [| Some g.text |] in
           let c = (matches r rows).(0) in
           if c <> Some g.contains then
-            report () g.pattern g.text "contains"
+            report g.pattern g.text "contains"
               (string_of_bool g.contains)
               (Option.fold ~none:"null" ~some:string_of_bool c);
           let e = (extract r rows).(0) in
           if e <> g.whole then
-            report () g.pattern g.text "whole" (pp_opt g.whole) (pp_opt e);
+            report g.pattern g.text "whole" (pp_opt g.whole) (pp_opt e);
           Array.iteri
             (fun i cap ->
               let e = (extract ~group:(i + 1) r rows).(0) in
               if e <> cap then
-                report () g.pattern g.text
+                report g.pattern g.text
                   (Printf.sprintf "group %d" (i + 1))
                   (pp_opt cap) (pp_opt e))
             g.captures;
           let a = Option.get (find_all r rows).(0) in
           let expect_all = Array.map Option.get g.all in
           if a <> expect_all then
-            report () g.pattern g.text "find_all"
+            report g.pattern g.text "find_all"
               (String.concat "|" (Array.to_list expect_all))
               (String.concat "|" (Array.to_list a));
           let rep = Option.get (replace r ~by:"<$0>" rows).(0) in
           if rep <> g.replaced then
-            report () g.pattern g.text "replace" (pp_opt (Some g.replaced))
+            report g.pattern g.text "replace" (pp_opt (Some g.replaced))
               (pp_opt (Some rep)))
         golden_lines;
       equal ~msg:(Printf.sprintf "%d lines" (List.length golden_lines))
@@ -432,6 +431,9 @@ let language =
           ("\\x{110000}", "scalar", 2);
           ("(?<a>b)(?<a>c)", "duplicate", 7);
           ("\\b*", "", -1);
+          ("\\_", "", -1);
+          ("\\x{7fffffffffffffff}", "scalar", 2);
+          ("[\\x{7fffffffffffffff}-a]", "scalar", 3);
         ]
         (fun (p, sub, at) ->
           let raised =
@@ -568,16 +570,45 @@ let templates =
             (replace (regex "z+") ~by:"x" [| Some "cat" |]));
     ]
 
-(* A pathological pattern completes, in a time bounded by the row. *)
+(* A pathological pattern: each row holds the pattern's required literal, so an
+   automaton runs, and a backtracking engine would never finish these rows. *)
 let pathological =
+  let n = 50_000 in
+  let a = String.make n 'a' and x = String.make n 'x' in
   cases "a pathological pattern stays linear"
-    ~id:Fun.id
-    [ "(a+)+b"; "(a|a)*c"; "(a*)*b"; "(x+x+)+y"; "^(([a-z])+.)+[A-Z]([a-z])+$" ]
-    (fun p ->
-      let row = String.make 50_000 'a' in
+    ~id:(fun (p, _, _) -> p)
+    [
+      ("(a+)+b", "b" ^ a, None);
+      ("(a|a)*c", a ^ "c", Some (a ^ "c"));
+      ("(a*)*b", "b" ^ a, Some "b");
+      ("(x+x+)+y", "y" ^ x, None);
+      ("^(([a-z])+.)+[A-Z]([a-z])+$", a, None);
+    ]
+    (fun (p, row, expected) ->
       let r = regex p in
-      equal bools [| Some false |] (matches r [| Some row |]);
-      equal same_rows [| None |] (extract r [| Some row |]))
+      equal bools [| Some (Option.is_some expected) |] (matches r [| Some row |]);
+      equal same_rows [| expected |] (extract r [| Some row |]))
+
+(* A thread starts a new attempt with no group set, whatever the threads before
+   it held. *)
+let fresh_captures =
+  group "a group is unset unless the winning attempt set it"
+    [
+      cases "extract"
+        ~id:(fun (p, t, g, _) -> Printf.sprintf "%s on %s group %d" p t g)
+        [
+          ("(x)y|z", "xz", 1, None);
+          ("(a)b|c", "ac", 1, None);
+          ("(a)(b)c|(a)d", "abad", 2, None);
+          ("(a)(b)c|(a)d", "abad", 3, Some "a");
+        ]
+        (fun (p, t, g, expected) ->
+          equal (option string) expected
+            (extract ~group:g (regex p) [| Some t |]).(0));
+      test "a template writes nothing for such a group" (fun () ->
+          equal same_rows [| Some "a[]" |]
+            (replace (regex "(a)b|c") ~by:"[$1]" [| Some "ac" |]));
+    ]
 
 (* Laws *)
 
@@ -648,44 +679,28 @@ let dfa_equals_pike =
       cover "a non-matching text" (not (Option.get (matches (regex p) [| Some t |]).(0)));
       pike_agrees (regex p) t)
 
-(* The DFA's cache of [limit] states forced small, so it clears inside a row. *)
-let dfa_cache_agrees limit =
-  prop
-    (Printf.sprintf "the DFA with a cache of %d states agrees with the Pike VM"
-       limit)
-    pattern_and_text
-    (fun (p, t) ->
-      let r = regex p in
-      match Expr.Str.dfa_test ~limit r [| t |] with
-      | None -> ()
-      | Some got ->
-          equal (option string)
-            (if got.(0) then (extract r [| Some t |]).(0) else None)
-            (extract r [| Some t |]).(0))
-
+(* A pattern of a thousand-byte window has states of about a thousand
+   instructions, so the DFA's word budget clears its cache again and again over
+   a long random row: the answers must still be the Pike VM's. *)
 let dfa_clears =
-  test "a pattern of many states clears the cache with the right answers"
-    (fun () ->
-      (* A window of two letters on a random text of [a] and [b] makes about
-         2^14 distinct DFA states: more than the cache holds. *)
-      let window = 14 in
-      let p =
-        Printf.sprintf "(?:a|b)*a(?:a|b){%d}c" window
-      in
+  test "a cache that clears within a row keeps the Pike VM's answers" (fun () ->
+      let window = 1000 and n = 20_000 in
+      let p = Printf.sprintf "[ab]*a[ab]{%d}c" window in
       let rng = Random.State.make [| 7 |] in
       let row n =
         String.init n (fun _ -> if Random.State.bool rng then 'a' else 'b')
       in
-      let rows = Array.init 40 (fun i -> row (200 + (i * 37))) in
-      rows.(11) <- rows.(11) ^ "c";
-      let r = regex p in
-      let dfa = Option.get (Expr.Str.dfa_test ~limit:16 r rows) in
-      let pike =
-        Array.map (function Some _ -> true | None -> false)
-          (extract r (Array.map Option.some rows))
+      let hit =
+        let r = Bytes.of_string (row n) in
+        Bytes.set r (n - window - 2) 'a';
+        Bytes.to_string r ^ "c"
       in
-      equal ~msg:"some row matches" bool true (Array.exists Fun.id pike);
-      equal (array bool) pike dfa)
+      let rows = [| Some (row n ^ "d"); Some hit; Some (row n) |] in
+      let r = regex p in
+      let dfa = matches r rows in
+      let pike = Array.map (Option.map Option.is_some) (Array.map Option.some (extract r rows)) in
+      equal bools pike dfa;
+      equal bools [| Some false; Some true; Some false |] dfa)
 
 let round_trip =
   prop "split's pieces interleaved with find_all's matches are the row"
@@ -719,15 +734,39 @@ let quote_equals_literal =
       equal same_rows (replace l ~by rows) (replace q ~by rows))
 
 let quote_escapes =
-  prop "a quoted text matches only itself"
-    (Gen.pair text_gen text_gen)
+  let metachar =
+    Gen.of_list ~pp:(fun ppf -> Format.fprintf ppf "%S")
+      [ "."; "*"; "+"; "?"; "("; ")"; "|"; "["; "]"; "{"; "}"; "^"; "$"; "\\";
+        "-"; "&"; "#"; "~"; "a" ]
+  in
+  let text = Gen.map (String.concat "") (Gen.list ~size:(Gen.int_range 1 6) metachar) in
+  prop "a quoted text matches only itself, metacharacters included"
+    (Gen.pair text text)
     (fun (p, t) ->
-      assume (p <> "");
       let q = regex (Expr.Str.quote p) in
       equal bools
         [| Some (Option.is_some (Expr.Str.pieces [ p ] |> fun pat ->
               (extract pat [| Some t |]).(0))) |]
         (matches q [| Some t |]))
+
+let group_within_match =
+  prop "a group's text lies within the whole match" pattern_and_text
+    (fun (p, t) ->
+      let r = regex p in
+      let whole = (extract r [| Some t |]).(0) in
+      let exists g =
+        match Expr.Str.extract ~group:g r s with
+        | _ -> true
+        | exception Invalid_argument _ -> false
+      in
+      for g = 1 to 2 do
+        if exists g then
+          match (extract ~group:g r [| Some t |]).(0) with
+          | None -> ()
+          | Some text ->
+              equal bool true (String.is_valid_utf_8 text);
+              contains ~sub:text (Option.get whole)
+      done)
 
 let prefix_suffix_pieces =
   test "prefix, suffix and pieces are the regexes they name" (fun () ->
@@ -759,13 +798,13 @@ let () =
          nulls;
          templates;
          pathological;
+         fresh_captures;
          group "laws"
            [
              dfa_equals_pike;
-             dfa_cache_agrees 2;
-             dfa_cache_agrees 16;
              dfa_clears;
              round_trip;
+             group_within_match;
              quote_equals_literal;
              quote_escapes;
              prefix_suffix_pieces;

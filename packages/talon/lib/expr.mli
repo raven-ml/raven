@@ -121,7 +121,6 @@ module Str : sig
   val pieces : string list -> pattern
   val regex : string -> pattern
   val quote : string -> string
-  val dfa_test : limit:int -> pattern -> string array -> bool array option
   val length : (string, 's) t -> (int, 's) t
   val slice : offset:int -> length:int -> (string, 's) t -> (string, 's) t
   val matches : pattern -> (string, 's) t -> (bool, 's) t

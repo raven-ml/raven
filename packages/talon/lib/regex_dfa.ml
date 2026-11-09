@@ -9,56 +9,60 @@ module A = Bigarray.Array1
 type table = (int, Bigarray.int_elt, Bigarray.c_layout) A.t
 type classes = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) A.t
 
-(* Over byte classes rather than bytes, states are numbered at multiples of
-   [ncls], so a state number is its row's start in [trans]. *)
+(* A state is the set of NFA instructions alive at one position. States are
+   numbered at multiples of [width], so a state's number is its row's start in
+   [trans], which the C scan reads directly. A row has an entry per byte class
+   and a last one, [row_end], for the end of the row. *)
 
 let unknown = -1
 let accept = -2
 let dead = -3
 
-(* A kernel reads one column, so the cache lives for one kernel. Its table is
-   bounded by words: a pattern with many byte classes gets fewer states. *)
-let table_budget_words = 1 lsl 20
-let default_limit ~ncls = Int.max 64 (table_budget_words / ncls)
+(* What the cache may hold, in words: a kernel's memory for this DFA, whatever
+   its rows. A state costs its table row, its set and its key; a set can reach
+   the size of the program, so counting only states would hide that factor. *)
+let budget_words = 1 lsl 20
+
+(* Words a state costs beyond its row and set: the key's header, its Hashtbl
+   bucket and the entry of [states]. *)
+let state_overhead = 8
 
 type t = {
   prog : Regex.inst array;
   classes : classes;
-  ncls : int;
+  width : int;
+  row_end : int;  (* the class of the row's end *)
   reps : int array;  (* a byte of each class *)
   mutable trans : table;
-  mutable states : int array array;  (* NFA set of each state, by number *)
-  mutable count : int;  (* states in use *)
-  capacity : int;  (* its limit *)
+  mutable states : int array array;  (* the set of each state, by number *)
+  mutable count : int;
+  mutable used : int;  (* words charged to the cache *)
+  mutable epoch : int;  (* how many times the cache has been cleared *)
   table : (string, int) Hashtbl.t;
   mutable start : int;  (* the start state's number, or [unknown] *)
   mutable start_set : int array;
   mutable empty_row : bool;  (* the answer for a row of no bytes *)
-  mutable ends : Bytes.t;  (* a byte per state: 0 unknown, 1 and 2 its answer *)
-  out : table;  (* one word, the C scan's resting state *)
+  out : table;  (* one word, where the C scan leaves its state *)
   seen : int array;
   mutable gen : int;
 }
 
-(* A row's bytes are grouped into the classes of its Sparse boundaries: two
-   bytes of a class behave alike in every state. *)
+(* Bytes that every Sparse treats alike share a class, so a table row is
+   [width] entries rather than 256. *)
 let byte_classes prog =
   let boundary = Array.make 257 false in
   boundary.(0) <- true;
-  Array.iter
-    (function
-      | Regex.Sparse a ->
-          let i = ref 0 in
-          while !i < Array.length a do
-            boundary.(a.(!i)) <- true;
-            boundary.(a.(!i + 1) + 1) <- true;
-            i := !i + 3
-          done
-      | _ -> ())
-    prog;
+  let add = function
+    | Regex.Sparse a ->
+        for i = 0 to (Array.length a / 3) - 1 do
+          boundary.(a.(3 * i)) <- true;
+          boundary.(a.((3 * i) + 1) + 1) <- true
+        done
+    | _ -> ()
+  in
+  Array.iter add prog;
   let classes = A.create Bigarray.int8_unsigned Bigarray.c_layout 256 in
-  let reps = Array.make 256 0 in
-  let c = ref (-1) in
+  let reps = Array.make 256 0 and c = ref (-1) in
   for b = 0 to 255 do
     if boundary.(b) then begin
       incr c;
@@ -66,16 +70,15 @@ let byte_classes prog =
     end;
     A.unsafe_set classes b !c
   done;
-  (classes, !c + 1, Array.sub reps 0 (!c + 1))
+  (classes, !c + 1, reps)
 
-(* [closure d pcs ~at_start ~at_end] is the sorted set reachable from the
-   instructions [pcs] by empty moves: Save is skipped, Start_text is followed
-   only at the row's start and End_text only at its end. An End_text kept
-   unfollowed in a state is resolved when the row ends. *)
+(* [closure d pcs ~at_start ~at_end] is the set of instructions reachable from
+   [pcs] by empty moves, ascending. Save is passed through; Start_text is
+   followed only at the row's start, End_text only at its end. An End_text not
+   yet followed stays in the set and is resolved when the row ends. *)
 let closure d pcs ~at_start ~at_end =
   d.gen <- d.gen + 1;
   let gen = d.gen in
-  let out = ref [] in
   let rec go pc =
     if d.seen.(pc) <> gen then begin
       d.seen.(pc) <- gen;
@@ -85,145 +88,151 @@ let closure d pcs ~at_start ~at_end =
           go b
       | Save (_, nx) -> go nx
       | Assert (Start_text, nx) -> if at_start then go nx
-      | Assert (End_text, nx) -> if at_end then go nx else out := pc :: !out
-      | Assert ((Start_line | End_line | Word_boundary | Not_word_boundary), _) ->
-          assert false
-      | Sparse _ | Accept -> out := pc :: !out
+      | Assert (End_text, nx) -> if at_end then go nx
+      | Assert _ -> assert false (* [create] refuses the others. *)
+      | Sparse _ | Accept -> ()
     end
   in
   List.iter go pcs;
-  let set = Array.of_list !out in
-  Array.sort Int.compare set;
+  (* Scanning in instruction order gives the set its canonical order in time
+     proportional to the program, within the promised bound. *)
+  let kept pc =
+    d.seen.(pc) = gen
+    &&
+    match d.prog.(pc) with
+    | Regex.Sparse _ | Accept | Assert (End_text, _) -> true
+    | _ -> false
+  in
+  let size = ref 0 in
+  for pc = 0 to Array.length d.prog - 1 do
+    if kept pc then incr size
+  done;
+  let set = Array.make !size 0 and at = ref 0 in
+  for pc = 0 to Array.length d.prog - 1 do
+    if kept pc then begin
+      set.(!at) <- pc;
+      incr at
+    end
+  done;
   set
 
-let set_accepts d set = Array.exists (fun pc -> d.prog.(pc) = Regex.Accept) set
+let accepts d set =
+  Array.exists
+    (fun pc -> match d.prog.(pc) with Regex.Accept -> true | _ -> false)
+    set
 
+let clear d =
+  Hashtbl.reset d.table;
+  d.count <- 0;
+  d.used <- 0;
+  d.epoch <- d.epoch + 1;
+  d.start <- unknown
+
+let grow d =
+  let size = 2 * Array.length d.states in
+  let trans = A.create Bigarray.int Bigarray.c_layout (size * d.width) in
+  A.blit d.trans (A.sub trans 0 (d.count * d.width));
+  d.trans <- trans;
+  let states = Array.make size [||] in
+  Array.blit d.states 0 states 0 d.count;
+  d.states <- states
+
+(* [intern d set] is the state of [set], or the sentinel it stands for. Making
+   room may clear the cache, so a state over the budget by itself still fits
+   alone: the search goes on, at a cost per byte, and memory stays bounded. *)
 let intern d set =
   if Array.length set = 0 then dead
-  else if set_accepts d set then accept
+  else if accepts d set then accept
   else begin
-    let key = Bytes.create (4 * Array.length set) in
+    let n = Array.length set in
+    let key = Bytes.create (4 * n) in
     Array.iteri (fun i pc -> Bytes.set_int32_le key (4 * i) (Int32.of_int pc)) set;
     let key = Bytes.unsafe_to_string key in
     match Hashtbl.find_opt d.table key with
     | Some s -> s
     | None ->
-        let s = d.count * d.ncls in
+        let cost = d.width + (2 * n) + state_overhead in
+        if d.used + cost > budget_words && d.count > 0 then clear d;
+        if d.count = Array.length d.states then grow d;
+        let s = d.count * d.width in
         Hashtbl.add d.table key s;
         d.states.(d.count) <- set;
-        A.fill (A.sub d.trans s d.ncls) unknown;
+        A.fill (A.sub d.trans s d.width) unknown;
         d.count <- d.count + 1;
+        d.used <- d.used + cost;
         s
   end
 
-(* The cache stays small on a small column: its table doubles up to [capacity]
-   states, and past that it is cleared. A cleared state's number is gone, so a
-   transition that clears is not written, and the next use of the start state
-   re-adds it. *)
-let make_room d =
-  if d.count = Array.length d.states then begin
-    if d.count < d.capacity then begin
-      let size = Int.min d.capacity (d.count * 2) in
-      let bigger = A.create Bigarray.int Bigarray.c_layout (size * d.ncls) in
-      A.blit d.trans (A.sub bigger 0 (d.count * d.ncls));
-      d.trans <- bigger;
-      let states = Array.make size [||] in
-      Array.blit d.states 0 states 0 d.count;
-      d.states <- states;
-      let ends = Bytes.make size '\000' in
-      Bytes.blit d.ends 0 ends 0 d.count;
-      d.ends <- ends;
-      false
-    end
-    else begin
-      Hashtbl.reset d.table;
-      Bytes.fill d.ends 0 (Bytes.length d.ends) '\000';
-      d.count <- 0;
-      d.start <- unknown;
-      true
-    end
-  end
-  else false
-
 let start_state d =
-  if d.start = unknown then begin
-    ignore (make_room d);
-    d.start <- intern d d.start_set
-  end;
+  if d.start = unknown then d.start <- intern d d.start_set;
   d.start
 
-(* [resolve d s c] is the state after state [s] (its table row) on byte class
-   [c], built and cached when it is unknown. *)
+(* [resolve d s c] is the state after state [s] on class [c], or the row's
+   answer for the class [row_end]. A transition found across a clear is not
+   stored: [s] has lost its number. *)
 let resolve d s c =
-  let set = d.states.(s / d.ncls) in
-  let rep = d.reps.(c) in
-  let targets = ref [] in
-  Array.iter
-    (fun pc ->
+  let set = d.states.(s / d.width) in
+  if c = d.row_end then begin
+    let t =
+      if accepts d (closure d (Array.to_list set) ~at_start:false ~at_end:true)
+      then accept
+      else dead
+    in
+    A.unsafe_set d.trans (s + c) t;
+    t
+  end
+  else begin
+    let rep = d.reps.(c) in
+    let step pc =
       match d.prog.(pc) with
-      | Regex.Sparse a ->
-          let nx = Regex.sparse_next a rep in
-          if nx >= 0 then targets := nx :: !targets
-      | Assert (End_text, _) | Accept -> ()
-      | Split _ | Save _ | Assert _ -> assert false)
-    set;
-  let next = closure d !targets ~at_start:false ~at_end:false in
-  let cleared = make_room d in
-  let t = intern d next in
-  if not cleared then A.unsafe_set d.trans (s + c) t;
-  t
+      | Regex.Sparse a -> Regex.sparse_next a rep
+      | _ -> -1
+    in
+    let targets =
+      Array.fold_left
+        (fun acc pc ->
+          let nx = step pc in
+          if nx >= 0 then nx :: acc else acc)
+        [] set
+    in
+    let next = closure d targets ~at_start:false ~at_end:false in
+    let epoch = d.epoch in
+    let t = intern d next in
+    if d.epoch = epoch then A.unsafe_set d.trans (s + c) t;
+    t
+  end
 
-let create ?limit r =
+let create r =
   if not (Regex.dfa_handles r) then
     invalid_arg "Regex_dfa.create: the program uses \\b or a (?m) anchor";
   let prog = Regex.program r in
   let classes, ncls, reps = byte_classes prog in
-  let limit =
-    match limit with Some l -> l | None -> default_limit ~ncls
-  in
-  if limit < 2 then invalid_arg "Regex_dfa.create: limit below 2";
-  let initial = Int.min limit 16 in
-  let seen = Array.make (Array.length prog) 0 in
+  let width = ncls + 1 and initial = 16 in
   let d =
     {
       prog;
       classes;
-      ncls;
+      width;
+      row_end = ncls;
       reps;
-      trans = A.create Bigarray.int Bigarray.c_layout (initial * ncls);
+      trans = A.create Bigarray.int Bigarray.c_layout (initial * width);
       states = Array.make initial [||];
       count = 0;
-      capacity = limit;
+      used = 0;
+      epoch = 0;
       table = Hashtbl.create 64;
       start = unknown;
       start_set = [||];
       empty_row = false;
-      ends = Bytes.make initial '\000';
       out = A.create Bigarray.int Bigarray.c_layout 1;
-      seen;
+      seen = Array.make (Array.length prog) 0;
       gen = 0;
     }
   in
-  let entry = Regex.dfa_entry r in
+  let entry = Regex.start r in
   d.start_set <- closure d [ entry ] ~at_start:true ~at_end:false;
-  d.empty_row <-
-    set_accepts d (closure d [ entry ] ~at_start:true ~at_end:true);
+  d.empty_row <- accepts d (closure d [ entry ] ~at_start:true ~at_end:true);
   d
-
-(* [ends_at_row_end d s] is [true] iff an End_text kept in [s] reaches Accept,
-   the row having ended, computed once per state. *)
-let ends_at_row_end d s =
-  let i = s / d.ncls in
-  match Bytes.get d.ends i with
-  | '\002' -> false
-  | '\001' -> true
-  | _ ->
-      let holds =
-        set_accepts d
-          (closure d (Array.to_list d.states.(i)) ~at_start:false ~at_end:true)
-      in
-      Bytes.set d.ends i (if holds then '\001' else '\002');
-      holds
 
 external c_scan :
   table ->
@@ -236,33 +245,33 @@ external c_scan :
   (int[@untagged]) = "talon_dfa_scan_byte" "talon_dfa_scan"
 [@@noalloc]
 
+(* [next_state d s c] is the entry of state [s] on class [c], resolved if the
+   cache does not know it yet. *)
+let next_state d s c =
+  let t = A.unsafe_get d.trans (s + c) in
+  if t <> unknown then t else resolve d s c
+
 let matches d (v : buf) ~first ~stop =
   if first = stop then d.empty_row
-  else begin
-    let s = ref (start_state d) and at = ref first and answer = ref (-1) in
-    (* The start state may itself be Accept or dead. *)
-    if !s = accept then true
-    else if !s = dead then false
+  else
+    let start = start_state d in
+    if start = accept then true
+    else if start = dead then false
     else begin
-      while !answer < 0 do
+      let s = ref start and at = ref first and answer = ref unknown in
+      while !answer = unknown do
         at := c_scan d.trans d.classes v !s !at stop d.out;
         s := A.unsafe_get d.out 0;
-        if !at >= stop then
-          answer := if ends_at_row_end d !s then 1 else 0
+        let c =
+          if !at >= stop then d.row_end
+          else A.unsafe_get d.classes (A.unsafe_get v !at)
+        in
+        let t = next_state d !s c in
+        if t = accept || t = dead then answer := t
         else begin
-          let c = A.unsafe_get d.classes (A.unsafe_get v !at) in
-          let next =
-            let t = A.unsafe_get d.trans (!s + c) in
-            if t <> unknown then t else resolve d !s c
-          in
-          if next = accept then answer := 1
-          else if next = dead then answer := 0
-          else begin
-            s := next;
-            at := !at + 1
-          end
+          s := t;
+          incr at
         end
       done;
-      !answer = 1
+      !answer = accept
     end
-  end

@@ -106,6 +106,7 @@ let fail p at fmt =
     fmt
 
 let peek p = if p.pos < p.n then Some p.src.[p.pos] else None
+let peek2 p = if p.pos + 1 < p.n then Some p.src.[p.pos + 1] else None
 
 let advance p k = p.pos <- p.pos + k
 
@@ -123,6 +124,16 @@ let scalar_of p =
   let d = String.get_utf_8_uchar p.src p.pos in
   advance p (Uchar.utf_decode_length d);
   Uchar.to_int (Uchar.utf_decode_uchar d)
+
+(* [braced p at what] reads the text up to the next [}], past the [{] already
+   eaten, and steps over the [}]. *)
+let braced p at what =
+  match String.index_from_opt p.src p.pos '}' with
+  | None -> fail p at "unclosed %s" what
+  | Some stop ->
+      let body = String.sub p.src p.pos (stop - p.pos) in
+      advance p (stop - p.pos + 1);
+      body
 
 let digit_value c = Char.code c - Char.code '0'
 let is_digit c = c >= '0' && c <= '9'
@@ -192,38 +203,36 @@ let property p at name =
 
 let close_if p set = if p.flags.case then closure set else set
 
-let named p name = close_if p (property p p.pos name)
+let named p at name = close_if p (property p at name)
 
 (* Escapes: [`Set] for a class, [`Scalar] for one code point, [`Assert]
    outside a class only. *)
 let hex_value p at =
   let start = p.pos in
   let braces = eat p '{' in
-  let stop =
-    if braces then (
-      match String.index_from_opt p.src p.pos '}' with
-      | Some j -> j
-      | None -> fail p at "unclosed \\x{")
-    else Int.min p.n (p.pos + 2)
+  let body =
+    if braces then braced p at "\\x{"
+    else begin
+      let body = String.sub p.src p.pos (Int.min 2 (p.n - p.pos)) in
+      advance p (String.length body);
+      body
+    end
   in
-  let body = String.sub p.src p.pos (stop - p.pos) in
   let is_hex c =
     is_digit c || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
   in
   if
-    body = "" || (not braces && String.length body < 2)
+    body = ""
+    || ((not braces) && String.length body < 2)
     || not (String.for_all is_hex body)
   then fail p start "\\x takes two hex digits or {hex digits}";
-  advance p (stop - p.pos + if braces then 1 else 0);
-  let v = try int_of_string ("0x" ^ body) with _ -> scalar_max + 1 in
-  if v > scalar_max || (v >= 0xD800 && v <= 0xDFFF) then
-    fail p start "\\x{%s} is not a Unicode scalar value" body;
-  v
+  match int_of_string_opt ("0x" ^ body) with
+  | Some v when v >= 0 && v <= scalar_max && (v < 0xD800 || v > 0xDFFF) -> v
+  | _ -> fail p start "\\x{%s} is not a Unicode scalar value" body
 
 let unsupported_escape p at c =
   match c with
-  | '1' .. '9' -> fail p at "backreference \\%c is not supported" c
-  | 'k' | 'g' -> fail p at "backreference \\%c is not supported" c
+  | '1' .. '9' | 'k' | 'g' -> fail p at "backreference \\%c is not supported" c
   | 'C' -> fail p at "\\C, a single byte, is not supported"
   | 'Q' | 'E' -> fail p at "\\Q and \\E are not supported; use Str.quote"
   | 'R' -> fail p at "\\R is not supported; write (?:\\r\\n|[\\n-\\r])"
@@ -243,7 +252,7 @@ let escape p ~in_class =
   | Some c -> (
       advance p 1;
       let set name negated =
-        let s = named p name in
+        let s = named p at name in
         `Set (if negated then negate s else s)
       in
       match c with
@@ -256,16 +265,7 @@ let escape p ~in_class =
       | 'p' | 'P' ->
           let start = p.pos in
           let name =
-            if eat p '{' then begin
-              let stop =
-                match String.index_from_opt p.src p.pos '}' with
-                | Some j -> j
-                | None -> fail p at "unclosed \\p{"
-              in
-              let name = String.sub p.src p.pos (stop - p.pos) in
-              advance p (stop - p.pos + 1);
-              name
-            end
+            if eat p '{' then braced p at "\\p{"
             else
               match peek p with
               | Some n when is_alpha n ->
@@ -273,7 +273,7 @@ let escape p ~in_class =
                   String.make 1 n
               | _ -> fail p start "\\p takes a {property} name"
           in
-          let s = close_if p (property p at name) in
+          let s = named p at name in
           `Set (if c = 'P' then negate s else s)
       | 'x' -> `Scalar (hex_value p at)
       | 'n' -> `Scalar 0x0A
@@ -289,7 +289,7 @@ let escape p ~in_class =
       | 'B' when not in_class -> `Assert Not_word_boundary
       | 'A' | 'z' | 'b' | 'B' ->
           fail p at "\\%c is not allowed in a character class" c
-      | c when Char.code c < 0x80 && not (is_alnum c) ->
+      | c when Char.code c < 0x80 && ((not (is_alnum c)) || c = '_') ->
           `Scalar (Char.code c)
       | c when Char.code c >= 0x80 ->
           fail p at "only ASCII punctuation escapes to itself"
@@ -305,13 +305,13 @@ let parse_class p =
     match peek p with
     | None -> fail p at "unclosed character class"
     | Some '[' ->
-        if p.pos + 1 < p.n && p.src.[p.pos + 1] = ':' then
+        if peek2 p = Some ':' then
           fail p at_item "POSIX classes are not supported; use \\p{alpha}"
         else fail p at_item "nested classes are not supported; RL1.3 set \
                              operations are not part of this language"
-    | Some '&' when p.pos + 1 < p.n && p.src.[p.pos + 1] = '&' ->
+    | Some '&' when peek2 p = Some '&' ->
         fail p at_item "class intersection (&&) is not supported"
-    | Some '-' when p.pos + 1 < p.n && p.src.[p.pos + 1] = '-' ->
+    | Some '-' when peek2 p = Some '-' ->
         fail p at_item "class difference (--) is not supported"
     | Some '\\' ->
         advance p 1;
@@ -329,13 +329,9 @@ let parse_class p =
         | `Set s -> items (s :: acc)
         | `Assert _ -> assert false (* [escape ~in_class:true] refuses them. *)
         | `Scalar lo ->
-            if
-              p.pos + 1 < p.n && p.src.[p.pos] = '-'
-              && p.src.[p.pos + 1] = '-'
-            then fail p p.pos "class difference (--) is not supported";
-            if
-              p.pos + 1 < p.n && p.src.[p.pos] = '-'
-              && p.src.[p.pos + 1] <> ']'
+            if peek p = Some '-' && peek2 p = Some '-' then
+              fail p p.pos "class difference (--) is not supported";
+            if peek p = Some '-' && peek2 p <> None && peek2 p <> Some ']'
             then begin
               let at_range = p.pos in
               advance p 1;
@@ -390,6 +386,14 @@ let apply_flags p at flags text =
   String.fold_left set flags text
 
 let parse_group p at_paren parse_alt =
+  (* The flags set inside a group end with it. *)
+  let body () =
+    let saved = p.flags in
+    let node = parse_alt () in
+    p.flags <- saved;
+    expect p ')' "unclosed group";
+    node
+  in
   let open_group ?name () =
     let index =
       p.count <- p.count + 1;
@@ -401,11 +405,12 @@ let parse_group p at_paren parse_alt =
           fail p at_paren "duplicate group name %s" n;
         p.names <- (n, index) :: p.names
     | None -> ());
-    let saved = p.flags in
-    let body = parse_alt () in
-    p.flags <- saved;
-    expect p ')' "unclosed group";
-    Capture (index, body)
+    Capture (index, body ())
+  in
+  let named_group at =
+    let name = group_name p at in
+    expect p '>' "unclosed group name";
+    open_group ~name ()
   in
   if not (eat p '?') then open_group ()
   else
@@ -419,23 +424,19 @@ let parse_group p at_paren parse_alt =
     | Some '(' -> fail_at "conditionals are not supported"
     | Some ('R' | '0' .. '9' | '&' | '+') ->
         fail_at "recursion is not supported"
-    | Some 'P' when p.pos + 1 < p.n && p.src.[p.pos + 1] = '=' ->
+    | Some 'P' when peek2 p = Some '=' ->
         fail_at "backreference (?P=name) is not supported"
-    | Some 'P' when p.pos + 1 < p.n && p.src.[p.pos + 1] = '>' ->
+    | Some 'P' when peek2 p = Some '>' ->
         fail_at "recursion is not supported"
-    | Some 'P' when p.pos + 1 < p.n && p.src.[p.pos + 1] = '<' ->
+    | Some 'P' when peek2 p = Some '<' ->
         advance p 2;
-        let name = group_name p at in
-        expect p '>' "unclosed group name";
-        open_group ~name ()
+        named_group at
     | Some '<' -> (
-        match if p.pos + 1 < p.n then Some p.src.[p.pos + 1] else None with
+        match peek2 p with
         | Some ('=' | '!') -> fail_at "lookbehind is not supported"
         | _ ->
             advance p 1;
-            let name = group_name p at in
-            expect p '>' "unclosed group name";
-            open_group ~name ())
+            named_group at)
     | _ -> (
         let start = p.pos in
         let rec span () =
@@ -457,10 +458,9 @@ let parse_group p at_paren parse_alt =
             advance p 1;
             let saved = p.flags in
             p.flags <- apply_flags p at p.flags text;
-            let body = parse_alt () in
+            let node = body () in
             p.flags <- saved;
-            expect p ')' "unclosed group";
-            body
+            node
         | _ -> fail p at "unknown group construct (?%s" text)
 
 (* The grammar *)
@@ -600,12 +600,8 @@ type t = {
   source_text : string;
   prog : inst array;
   entry : int;
-  dfa_entry : int;
   group_count : int;
   names : (string * int) list;
-  word_boundary : bool;
-  line_assert : bool;
-  at_text_start : bool;
   required_literal : string;
 }
 
@@ -632,26 +628,15 @@ let emit b i =
 let encoded_length u =
   if u < 0x80 then 1 else if u < 0x800 then 2 else if u < 0x10000 then 3 else 4
 
-let bytes_of u =
-  match encoded_length u with
-  | 1 -> [ u ]
-  | 2 -> [ 0xC0 lor (u lsr 6); 0x80 lor (u land 0x3F) ]
-  | 3 ->
-      [
-        0xE0 lor (u lsr 12);
-        0x80 lor ((u lsr 6) land 0x3F);
-        0x80 lor (u land 0x3F);
-      ]
-  | _ ->
-      [
-        0xF0 lor (u lsr 18);
-        0x80 lor ((u lsr 12) land 0x3F);
-        0x80 lor ((u lsr 6) land 0x3F);
-        0x80 lor (u land 0x3F);
-      ]
+let utf_8_of u =
+  let b = Buffer.create 4 in
+  Buffer.add_utf_8_uchar b (Uchar.of_int u);
+  Buffer.contents b
 
-(* [same_length lo hi] splits at the surrogates and the encoded-length
-   boundaries, so each part encodes one length. *)
+let bytes_of u = List.map Char.code (List.of_seq (String.to_seq (utf_8_of u)))
+
+(* [same_length lo hi] cuts [lo, hi] at the encoded-length boundaries and around
+   the surrogates, which it drops, so each part encodes one length. *)
 let same_length lo hi =
   let rec cut lo hi bounds =
     match bounds with
@@ -660,16 +645,9 @@ let same_length lo hi =
         if lo <= b && hi > b then (lo, b) :: cut (b + 1) hi rest
         else cut lo hi rest
   in
-  let cut_surrogates (lo, hi) =
-    if lo <= 0xD7FF && hi >= 0xE000 then [ (lo, 0xD7FF); (0xE000, hi) ]
-    else if lo >= 0xD800 && hi <= 0xDFFF then []
-    else if lo >= 0xD800 && lo <= 0xDFFF then [ (0xE000, hi) ]
-    else if hi >= 0xD800 && hi <= 0xDFFF then [ (lo, 0xD7FF) ]
-    else [ (lo, hi) ]
-  in
-  List.concat_map
-    (fun (lo, hi) -> cut lo hi [ 0x7F; 0x7FF; 0xFFFF ])
-    (cut_surrogates (lo, hi))
+  List.filter
+    (fun (lo, _) -> lo < 0xD800 || lo > 0xDFFF)
+    (cut lo hi [ 0x7F; 0x7FF; 0xD7FF; 0xDFFF; 0xFFFF ])
 
 (* [sequences lo hi] is the runs of byte ranges of the scalars of [lo, hi] of
    one encoded length, split until each byte is a whole range. *)
@@ -779,48 +757,40 @@ let rec compile_node b node next =
       let inner = compile_node b body close in
       emit b (Save (2 * g, inner))
   | Assertion a -> emit b (Assert (a, next))
-  | Repeat { body; min; max; greedy } ->
-      let optional_part =
-        match max with
-        | None when nullable body ->
-            (* [x*] of a body that can match empty is compiled as [(?:x+)?]:
-               an empty iteration then leaves the loop by its Split, as a
-               backtracking search breaks a loop on a zero-length iteration.
-               The plain loop would drop that thread at the Split it has already
-               visited, and let a lower-priority alternative win. *)
-            let split = emit b (Split (-1, -1)) in
-            let entry = compile_node b body split in
-            let pair x y = if greedy then Split (x, y) else Split (y, x) in
-            b.code.(split) <- pair entry next;
-            emit b (pair entry next)
-        | None ->
-            let split = emit b (Split (-1, -1)) in
-            let entry = compile_node b body split in
-            b.code.(split) <-
-              (if greedy then Split (entry, next) else Split (next, entry));
-            split
-        | Some m ->
-            let e = ref next in
-            for _ = 1 to m - min do
-              let inner = compile_node b body !e in
-              e :=
-                emit b
-                  (if greedy then Split (inner, next) else Split (next, inner))
-            done;
-            !e
+  | Repeat { body; min; max; greedy } -> (
+      let pair x y = if greedy then Split (x, y) else Split (y, x) in
+      let copies n next =
+        let e = ref next in
+        for _ = 1 to n do
+          e := compile_node b body !e
+        done;
+        !e
       in
-      let e = ref optional_part in
-      for _ = 1 to min do
-        e := compile_node b body !e
-      done;
-      !e
-
-let rec has_word_assert = function
-  | Empty | Set _ -> false
-  | Assertion a -> a = Word_boundary || a = Not_word_boundary
-  | Cat ns | Alt ns -> List.exists has_word_assert ns
-  | Capture (_, n) -> has_word_assert n
-  | Repeat { body; _ } -> has_word_assert body
+      (* [plus ()] compiles [x+] over one copy of the body: its entry, and the
+         Split after the body that loops back or leaves. *)
+      let plus () =
+        let split = emit b (Split (-1, -1)) in
+        let entry = compile_node b body split in
+        b.code.(split) <- pair entry next;
+        (entry, split)
+      in
+      match max with
+      | None when min = 0 && nullable body ->
+          (* [x*] of a body that can match empty is [(?:x+)?]: an empty first
+             iteration leaves by the Split after the body. The plain loop would
+             reach its own Split again, drop that thread, and let a
+             lower-priority alternative win. Later iterations still reach a
+             visited Split and drop an empty path, the rule the .mli states. *)
+          let entry, _ = plus () in
+          emit b (pair entry next)
+      | None when min = 0 -> snd (plus ())
+      | None -> copies (min - 1) (fst (plus ()))
+      | Some m ->
+          let e = ref next in
+          for _ = 1 to m - min do
+            e := emit b (pair (compile_node b body !e) next)
+          done;
+          copies min !e)
 
 (* [starts_at_text_start n] is [true] iff every match of [n] begins with [\A]
    or a [^] that is not multi-line. *)
@@ -841,9 +811,7 @@ let rec starts_at_text_start = function
 let rec exact = function
   | Empty -> Some ""
   | Set [ (lo, hi) ] when lo = hi ->
-      let b = Buffer.create 4 in
-      Buffer.add_utf_8_uchar b (Uchar.of_int lo);
-      Some (Buffer.contents b)
+      Some (utf_8_of lo)
   | Cat ns ->
       List.fold_left
         (fun acc n ->
@@ -883,13 +851,6 @@ let rec required n =
       | Repeat { body; min; _ } when min > 0 -> required body
       | _ -> "")
 
-let rec has_line_assert = function
-  | Empty | Set _ -> false
-  | Assertion a -> a = Start_line || a = End_line
-  | Cat ns | Alt ns -> List.exists has_line_assert ns
-  | Capture (_, n) -> has_line_assert n
-  | Repeat { body; _ } -> has_line_assert body
-
 let compile source_text =
   let node, group_count, names = parse source_text in
   let b = { code = [||]; len = 0; sparse = Hashtbl.create 64 } in
@@ -897,10 +858,10 @@ let compile source_text =
   let close = emit b (Save (1, accept)) in
   let body = compile_node b node close in
   let entry = emit b (Save (0, body)) in
-  (* The DFA's entry: the match, or a skip of one whole scalar and back to this
-     instruction, for a search that may start anywhere. An anchored search
-     starts only at the row's start. *)
-  let dfa_start =
+  (* The search starts at the match or skips one whole scalar and returns, at
+     lower priority, so every scalar boundary starts a thread. An anchored
+     pattern starts only where its assertion holds. *)
+  let start =
     if starts_at_text_start node then entry
     else begin
       let split = emit b (Split (-1, -1)) in
@@ -912,13 +873,9 @@ let compile source_text =
   {
     source_text;
     prog = Array.sub b.code 0 b.len;
-    entry;
-    dfa_entry = dfa_start;
+    entry = start;
     group_count;
     names;
-    word_boundary = has_word_assert node;
-    line_assert = has_line_assert node;
-    at_text_start = starts_at_text_start node;
     required_literal = required node;
   }
 
@@ -926,8 +883,16 @@ let source r = r.source_text
 let groups r = r.group_count
 let program r = r.prog
 let required r = r.required_literal
-let dfa_entry r = r.dfa_entry
-let dfa_handles r = not (r.word_boundary || r.line_assert)
+let start r = r.entry
+
+let dfa_handles r =
+  Array.for_all
+    (function
+      | Assert ((Start_line | End_line | Word_boundary | Not_word_boundary), _)
+        ->
+          false
+      | _ -> true)
+    r.prog
 
 (* A metacharacter is escaped; whitespace and the rest of ASCII stand for
    themselves in this language. *)
@@ -1055,21 +1020,13 @@ let sparse_next a b =
 let find run (v : buf) ~first ~from ~stop =
   let t = run.regex and nslots = run.nslots in
   let matched = ref false and at = ref from and live = ref true in
-  run.ncur <- 0;
   run.nnext <- 0;
   run.gen <- run.gen + 1;
   run.word_pos <- -1;
   Array.fill run.work 0 (Int.max nslots 2) (-1);
-  (* [stepped] holds whether the thread list carries over a position, so a
-     row is not walked past its last live thread. *)
+  add run v first stop t.entry from;
   while !live do
     let p = !at in
-    let seeded =
-      (not !matched)
-      && (p >= stop || starts_scalar v p)
-      && ((not t.at_text_start) || p = first)
-    in
-    if seeded then add run v first stop t.entry p;
     (* The list just built becomes the current one; the arrays swap, nothing
        is allocated. *)
     let cur = run.cur and slots = run.cur_slots in
@@ -1080,10 +1037,7 @@ let find run (v : buf) ~first ~from ~stop =
     run.ncur <- run.nnext;
     run.nnext <- 0;
     run.gen <- run.gen + 1;
-    if
-      run.ncur = 0
-      && (p >= stop || !matched || (t.at_text_start && p >= first))
-    then live := false
+    if run.ncur = 0 then live := false
     else begin
       let b = if p < stop then A.unsafe_get v p else -1 in
       let i = ref 0 and n = run.ncur in
@@ -1114,9 +1068,6 @@ let find run (v : buf) ~first ~from ~stop =
   !matched
 
 let group run i = run.best.(i)
-
-let next_scalar (v : buf) j stop =
-  if j >= stop then stop + 1 else j + width v j stop
 
 (* Replacement templates *)
 
@@ -1157,6 +1108,14 @@ let template r by =
     end
   in
   let i = ref 0 in
+  let name_while ok at =
+    flush ();
+    let start = !i in
+    while !i < n && ok by.[!i] do
+      incr i
+    done;
+    named at (String.sub by start (!i - start))
+  in
   while !i < n do
     let c = by.[!i] in
     if c <> '$' then (
@@ -1177,20 +1136,8 @@ let template r by =
               flush ();
               named at (String.sub by (!i + 1) (close - !i - 1));
               i := close + 1)
-      | c when is_digit c ->
-          flush ();
-          let start = !i in
-          while !i < n && is_digit by.[!i] do
-            incr i
-          done;
-          named at (String.sub by start (!i - start))
-      | c when is_alpha c ->
-          flush ();
-          let start = !i in
-          while !i < n && is_alnum by.[!i] do
-            incr i
-          done;
-          named at (String.sub by start (!i - start))
+      | c when is_digit c -> name_while is_digit at
+      | c when is_alpha c -> name_while is_alnum at
       | _ -> bad at "$ starts nothing"
     end
   done;
@@ -1221,9 +1168,7 @@ let expand t (spans : int array) base (v : buf) (b : buf) at =
           let lo = spans.(base + (2 * g)) in
           if lo >= 0 then begin
             let hi = spans.(base + (2 * g) + 1) in
-            for k = 0 to hi - lo - 1 do
-              A.unsafe_set b (!at + k) (A.unsafe_get v (lo + k))
-            done;
+            blit v lo b !at (hi - lo);
             at := !at + hi - lo
           end)
     t.parts;

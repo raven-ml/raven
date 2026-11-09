@@ -43,6 +43,12 @@ let decode_before (v : buf) first j =
   done;
   decode v !k j
 
+(* A loop: [A.blit] of [A.sub]s allocates two proxies per row. *)
+let blit (src : buf) lo (dst : buf) at len =
+  for k = 0 to len - 1 do
+    A.unsafe_set dst (at + k) (A.unsafe_get src (lo + k))
+  done
+
 let rec within bounds u lo hi =
   if lo = hi then lo land 1 = 1
   else

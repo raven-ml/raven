@@ -58,10 +58,9 @@ val sparse_next : int array -> int -> int
 (** [sparse_next a b] is the instruction the ranges [a] of a {!Sparse} send the
     byte [b] to, or [-1]. *)
 
-val dfa_entry : t -> int
-(** [dfa_entry r] is where a search that may start anywhere begins: [start r]
-    for an anchored [r], and otherwise an instruction that also skips whole
-    scalars ahead. *)
+val start : t -> int
+(** [start r] is the instruction a search begins at: the match, or a skip of
+    whole scalars ahead for a pattern that may start anywhere. *)
 
 val dfa_handles : t -> bool
 (** [dfa_handles r] is [true] iff [r] uses neither [\b], [\B] nor the
@@ -93,10 +92,6 @@ val group : run -> int -> int
     {!find}, or [-1] where the slot's group did not participate. Slot [0] is
     the start of the whole match, slot [1] its end, slot [2 * g] the start of
     group [g]. *)
-
-val next_scalar : Scalars.buf -> int -> int -> int
-(** [next_scalar v j stop] is the byte after the scalar value at [j], [stop]
-    past it where [j >= stop]. *)
 
 (** {1 Templates} *)
 

@@ -117,13 +117,6 @@ let utf_8 ~by ?mask r =
 
 (* Scalar values *)
 
-(* [blit src lo dst at len] copies the bytes [lo, lo + len) of [src] to [dst]
-   from [at]. A loop: [A.blit] of [A.sub]s allocates two proxies per row. *)
-let blit (src : buf) lo (dst : buf) at len =
-  for k = 0 to len - 1 do
-    A.unsafe_set dst (at + k) (A.unsafe_get src (lo + k))
-  done
-
 (* [count v i stop] is the number of scalar values in the bytes [i, stop). *)
 let count (v : buf) i stop =
   let n = ref 0 in
@@ -515,24 +508,26 @@ external find :
   = "talon_find_byte" "talon_find"
 [@@noalloc]
 
-(* A row without the pattern's required literal has no match, whichever engine
-   would answer. *)
-let filtered_by_literal literal f =
-  if String.equal literal "" then f
-  else fun v first stop -> find v first stop literal >= 0 && f v first stop
+(* [holds_literal v first stop lit] is [false] iff the row lacks the pattern's
+   required literal [lit], so has no match. An empty [lit] says nothing. *)
+let holds_literal v first stop lit =
+  String.equal lit "" || find v first stop lit >= 0
 
 (* [regex_matcher re] answers whether a row matches: by the DFA when the
    program allows it, else by a Pike run without captures. *)
 let regex_matcher re =
-  filtered_by_literal (Regex.required re)
-    (if Regex.dfa_handles re then begin
-       let d = Regex_dfa.create re in
-       fun v first stop -> Regex_dfa.matches d v ~first ~stop
-     end
-     else begin
-       let run = Regex.run re ~slots:0 in
-       fun v first stop -> Regex.find run v ~first ~from:first ~stop
-     end)
+  let lit = Regex.required re in
+  let engine =
+    if Regex.dfa_handles re then begin
+      let d = Regex_dfa.create re in
+      fun v first stop -> Regex_dfa.matches d v ~first ~stop
+    end
+    else begin
+      let run = Regex.run re ~slots:0 in
+      fun v first stop -> Regex.find run v ~first ~from:first ~stop
+    end
+  in
+  fun v first stop -> holds_literal v first stop lit && engine v first stop
 
 (* [find_pieces v i stop ss] is [true] iff the strings [ss] lie in [i, stop) in
    order without overlap. *)
@@ -570,84 +565,13 @@ let matches ~by ?mask p r =
    rows ~by ?mask r (fun i v first stop -> if matches v first stop then hit i));
   bits_of a n
 
-(* Literals
+(* Matches of a pattern
 
    A literal of valid UTF-8 found in valid UTF-8 starts and ends on scalar
-   boundaries, so a byte search finds exactly its scalar matches. Matches are
-   left to right, without overlap. *)
+   boundaries, so a byte search finds exactly its scalar matches, left to
+   right and without overlap. *)
 
-(* [occurrences v i stop s] is the number of matches of [s] in [i, stop). *)
-let occurrences (v : buf) i stop s =
-  let rec go i k =
-    match find v i stop s with -1 -> k | j -> go (j + String.length s) (k + 1)
-  in
-  go i 0
-
-let split_literal ~by ?mask sep r =
-  let n = Nx_ragged.length r and m = String.length sep in
-  let matches = Array.make n (-1) and kept = Array.make n 0 in
-  rows ~by ?mask r (fun i v first stop ->
-      let k = occurrences v first stop sep in
-      matches.(i) <- k;
-      kept.(i) <- stop - first - (k * m));
-  let lists, total = cumulative n (fun i -> matches.(i) + 1) in
-  let pieces = fresh Nx.int64 (total + 1) in
-  let bytes = fresh Nx.uint8 (Array.fold_left ( + ) 0 kept) in
-  (fill pieces @@ fun (p : int64s) ->
-   fill bytes @@ fun (b : buf) ->
-   A.unsafe_set p 0 0L;
-   let piece = ref 0 and at = ref 0 in
-   let emit v lo hi =
-     blit v lo b !at (hi - lo);
-     at := !at + hi - lo;
-     incr piece;
-     A.unsafe_set p !piece (Int64.of_int !at)
-   in
-   rows ~by ?mask r (fun _ v first stop ->
-       let rec go i =
-         match find v i stop sep with
-         | -1 -> emit v i stop
-         | j ->
-             emit v i j;
-             go (j + m)
-       in
-       go first));
-  (value lists, Nx_ragged.v ~offsets:(value pieces) (value bytes))
-
-let replace_literal ~by ?mask ~sub ~into r =
-  let n = Nx_ragged.length r
-  and grow = String.length into - String.length sub in
-  let sizes = Array.make n 0 in
-  rows ~by ?mask r (fun i v first stop ->
-      sizes.(i) <- stop - first + (grow * occurrences v first stop sub));
-  let offsets, total = cumulative n (Array.get sizes) in
-  let bytes = fresh Nx.uint8 total in
-  (fill bytes @@ fun (b : buf) ->
-   peek offsets @@ fun (o : int64s) ->
-   let put = ref 0 in
-   let copy v lo hi =
-     blit v lo b !put (hi - lo);
-     put := !put + hi - lo
-   in
-   rows ~by ?mask r (fun i v first stop ->
-       put := Int64.to_int (A.unsafe_get o i);
-       let rec go j =
-         match find v j stop sub with
-         | -1 -> copy v j stop
-         | h ->
-             copy v j h;
-             String.iteri
-               (fun k c -> A.unsafe_set b (!put + k) (Char.code c))
-               into;
-             put := !put + String.length into;
-             go (h + String.length sub)
-       in
-       go first));
-  Nx_ragged.v ~offsets:(value offsets) (value bytes)
-
-(* The regular-expression kernels
-
-   Every pattern has a regex reading: [literal s] is [s] escaped, [prefix s]
+(* Every pattern has a regex reading: [literal s] is [s] escaped, [prefix s]
    is [\A] before it, [suffix s] is [\z] after it, [pieces ss] joins them by a
    lazy gap. *)
 let regex_of = function
@@ -669,7 +593,7 @@ let iter_matches run (v : buf) first stop f =
       let s = Regex.group run 0 and e = Regex.group run 1 in
       if s = e then begin
         if e <> last then f ();
-        go (Regex.next_scalar v e stop) e
+        go (if e >= stop then stop + 1 else e + width v e stop) e
       end
       else begin
         f ();
@@ -679,30 +603,50 @@ let iter_matches run (v : buf) first stop f =
   in
   go first (-1)
 
-(* [collect ~by ?mask ~slots re r] is [(counts, spans)]: [counts.(i)] the
-   matches of row [i] of [r], [-1] where the row is not read, and [spans] the
-   [slots] slots of each match, rows in order. *)
-let collect ~by ?mask ~slots re r =
+(* [collect ~by ?mask ~slots p r] is [(counts, spans)]: [counts.(i)] the
+   matches of [p] in row [i] of [r], [-1] where the row is not read, and [spans]
+   the [slots] slots of each match, rows in order. A literal goes by the byte
+   search alone. *)
+let collect ~by ?mask ~slots p r =
   let n = Nx_ragged.length r in
-  let run = Regex.run re ~slots and literal = Regex.required re in
   let counts = Array.make n (-1) in
   let spans = ref (Array.make (Int.max 16 slots) 0) and top = ref 0 in
-  let row = ref 0 in
-  let store () =
+  let room () =
     if !top + slots > Array.length !spans then
-      spans := Array.append !spans (Array.make (Array.length !spans) 0);
-    let s = !spans in
-    for k = 0 to slots - 1 do
-      s.(!top + k) <- Regex.group run k
-    done;
-    top := !top + slots;
-    counts.(!row) <- counts.(!row) + 1
+      spans := Array.append !spans (Array.make (Array.length !spans) 0)
   in
-  rows ~by ?mask r (fun i v first stop ->
-      row := i;
-      counts.(i) <- 0;
-      if literal = "" || find v first stop literal >= 0 then
-        iter_matches run v first stop store);
+  (match p with
+  | Literal s ->
+      let m = String.length s in
+      rows ~by ?mask r (fun i v first stop ->
+          let rec go at k =
+            match find v at stop s with
+            | -1 -> k
+            | j ->
+                room ();
+                !spans.(!top) <- j;
+                !spans.(!top + 1) <- j + m;
+                top := !top + slots;
+                go (j + m) (k + 1)
+          in
+          counts.(i) <- go first 0)
+  | Prefix _ | Suffix _ | Pieces _ | Regex _ ->
+      let re = regex_of p in
+      let run = Regex.run re ~slots and lit = Regex.required re in
+      let row = ref 0 in
+      let store () =
+        room ();
+        for k = 0 to slots - 1 do
+          !spans.(!top + k) <- Regex.group run k
+        done;
+        top := !top + slots;
+        counts.(!row) <- counts.(!row) + 1
+      in
+      rows ~by ?mask r (fun i v first stop ->
+          row := i;
+          counts.(i) <- 0;
+          if holds_literal v first stop lit then
+            iter_matches run v first stop store));
   (counts, !spans)
 
 (* [listed ~by ?mask r counts ~extra write] is the [(lists, pieces)] of a split
@@ -719,26 +663,23 @@ let listed ~by ?mask r counts ~extra write =
 let span_slots = 2
 
 let split ~by ?mask p r =
-  match p with
-  | Literal sep -> split_literal ~by ?mask sep r
-  | Prefix _ | Suffix _ | Pieces _ | Regex _ ->
-      let counts, spans = collect ~by ?mask ~slots:span_slots (regex_of p) r in
-      let piece = ref 0 and cursor = ref 0 in
-      listed ~by ?mask r counts ~extra:1 (fun lo hi i _ first stop ->
-          let at = ref first in
-          for _ = 1 to counts.(i) do
-            lo.(!piece) <- !at;
-            hi.(!piece) <- spans.(!cursor);
-            at := spans.(!cursor + 1);
-            cursor := !cursor + span_slots;
-            incr piece
-          done;
-          lo.(!piece) <- !at;
-          hi.(!piece) <- stop;
-          incr piece)
+  let counts, spans = collect ~by ?mask ~slots:span_slots p r in
+  let piece = ref 0 and cursor = ref 0 in
+  listed ~by ?mask r counts ~extra:1 (fun lo hi i _ first stop ->
+      let at = ref first in
+      for _ = 1 to counts.(i) do
+        lo.(!piece) <- !at;
+        hi.(!piece) <- spans.(!cursor);
+        at := spans.(!cursor + 1);
+        cursor := !cursor + span_slots;
+        incr piece
+      done;
+      lo.(!piece) <- !at;
+      hi.(!piece) <- stop;
+      incr piece)
 
 let find_all ~by ?mask p r =
-  let counts, spans = collect ~by ?mask ~slots:span_slots (regex_of p) r in
+  let counts, spans = collect ~by ?mask ~slots:span_slots p r in
   let piece = ref 0 and cursor = ref 0 in
   listed ~by ?mask r counts ~extra:0 (fun lo hi i _ _ _ ->
       for _ = 1 to counts.(i) do
@@ -749,57 +690,52 @@ let find_all ~by ?mask p r =
       done)
 
 let replace ~by ?mask p ~into r =
-  match p with
-  | Literal sub -> replace_literal ~by ?mask ~sub ~into r
-  | Prefix _ | Suffix _ | Pieces _ | Regex _ ->
-      let re = regex_of p in
-      let t =
-        match p with
-        | Regex _ -> Regex.template re into
-        | _ -> Regex.literal_template into
-      in
-      let slots = Regex.template_slots t in
-      let counts, spans = collect ~by ?mask ~slots re r in
-      let n = Nx_ragged.length r in
-      let sizes = Array.make n 0 and cursor = ref 0 in
-      rows ~by ?mask r (fun i _ first stop ->
-          let size = ref (stop - first) in
-          for _ = 1 to counts.(i) do
-            size :=
-              !size - (spans.(!cursor + 1) - spans.(!cursor))
-              + Regex.expand_size t spans !cursor;
-            cursor := !cursor + slots
-          done;
-          sizes.(i) <- !size);
-      let offsets, total = cumulative n (Array.get sizes) in
-      let bytes = fresh Nx.uint8 total in
-      (fill bytes @@ fun (b : buf) ->
-       peek offsets @@ fun (o : int64s) ->
-       let cursor = ref 0 in
-       rows ~by ?mask r (fun i v first stop ->
-           let at = ref (Int64.to_int (A.unsafe_get o i)) and j = ref first in
-           for _ = 1 to counts.(i) do
-             let s = spans.(!cursor) and e = spans.(!cursor + 1) in
-             blit v !j b !at (s - !j);
-             at := Regex.expand t spans !cursor v b (!at + s - !j);
-             j := e;
-             cursor := !cursor + slots
-           done;
-           blit v !j b !at (stop - !j)));
-      Nx_ragged.v ~offsets:(value offsets) (value bytes)
+  let t =
+    match p with
+    | Regex re -> Regex.template re into
+    | _ -> Regex.literal_template into
+  in
+  let slots = Regex.template_slots t in
+  let counts, spans = collect ~by ?mask ~slots p r in
+  let n = Nx_ragged.length r in
+  let sizes = Array.make n 0 and cursor = ref 0 in
+  rows ~by ?mask r (fun i _ first stop ->
+      let size = ref (stop - first) in
+      for _ = 1 to counts.(i) do
+        size :=
+          !size - (spans.(!cursor + 1) - spans.(!cursor))
+          + Regex.expand_size t spans !cursor;
+        cursor := !cursor + slots
+      done;
+      sizes.(i) <- !size);
+  let offsets, total = cumulative n (Array.get sizes) in
+  let bytes = fresh Nx.uint8 total in
+  (fill bytes @@ fun (b : buf) ->
+   peek offsets @@ fun (o : int64s) ->
+   let cursor = ref 0 in
+   rows ~by ?mask r (fun i v first stop ->
+       let at = ref (Int64.to_int (A.unsafe_get o i)) and j = ref first in
+       for _ = 1 to counts.(i) do
+         let s = spans.(!cursor) and e = spans.(!cursor + 1) in
+         blit v !j b !at (s - !j);
+         at := Regex.expand t spans !cursor v b (!at + s - !j);
+         j := e;
+         cursor := !cursor + slots
+       done;
+       blit v !j b !at (stop - !j)));
+  Nx_ragged.v ~offsets:(value offsets) (value bytes)
 
 let extract ~by ?mask p ~group r =
   let n = Nx_ragged.length r in
   let re = regex_of p in
-  let run = Regex.run re ~slots:(2 * (group + 1))
-  and literal = Regex.required re in
+  let run = Regex.run re ~slots:(2 * (group + 1)) and lit = Regex.required re in
   let lo = Array.make n 0 and hi = Array.make n 0 in
   let found = fresh Nx.uint8 ((n + 7) / 8) in
   (fill found @@ fun (bits : buf) ->
    A.fill bits 0;
    rows ~by ?mask r (fun i v first stop ->
        if
-         (literal = "" || find v first stop literal >= 0)
+         holds_literal v first stop lit
          && Regex.find run v ~first ~from:first ~stop
        then
          let s = Regex.group run (2 * group) in
@@ -850,23 +786,6 @@ let bits ~by r f =
   let a = fresh Nx.uint8 ((n + 7) / 8) in
   (fill a @@ fun bits -> host ~by r (fun o v _ -> f v o n bits));
   bits_of a n
-
-let dfa_test ~limit re rows =
-  let n = Array.length rows in
-  let size = Array.fold_left (fun t s -> t + String.length s) 0 rows in
-  let v = A.create Bigarray.int8_unsigned Bigarray.c_layout (Int.max size 1) in
-  let offsets = Array.make (n + 1) 0 in
-  Array.iteri
-    (fun i s ->
-      String.iteri
-        (fun k c -> A.set v (offsets.(i) + k) (Char.code c))
-        s;
-      offsets.(i + 1) <- offsets.(i) + String.length s)
-    rows;
-  let d = Regex_dfa.create ~limit re in
-  Array.mapi
-    (fun i _ -> Regex_dfa.matches d v ~first:offsets.(i) ~stop:offsets.(i + 1))
-    rows
 
 let compare ~by op r one =
   let s = (words ~by one).(0) in
