@@ -66,7 +66,7 @@ let ones n = A.of_array D.Float32 [| n |] (Array.make n 1.)
 let identity = P.v ~ins:[| D.Any D.Float32 |] [| P.In 0 |] ~outs:[| 0 |]
 
 let reduce rs ~dsts x =
-  let shape = Iarray.to_array (Nx_array.Layout.shape (A.layout x)) in
+  let shape = Nx_array.Layout.shape (A.layout x) in
   done_
     (Nx_cpu.reduce identity ~shape ~axes:[| 0 |] rs ~dsts
        [| Nx_kernel.Plain x |])
@@ -96,7 +96,7 @@ let exponents m x =
     let layout = Nx_array.Layout.v ~strides:[| 0 |] [| m |] in
     Nx_kernel.Plain (A.v D.Float64 layout (A.buffer one))
   in
-  [| Nx_kernel.Plain x; along 1.5; along (1. /. 1.5) |]
+  Iarray.of_list [ Nx_kernel.Plain x; along 1.5; along (1. /. 1.5) ]
 
 let families =
   group "a long call lets another domain collect"
@@ -110,8 +110,8 @@ let families =
       test "many reductions of a program" (fun () ->
           let m = 4096 and k = 2048 in
           let x = ones m in
-          let dsts = Array.init k (fun _ -> A.Any (f32 [||])) in
-          let rs = Array.make k (Nx_kernel.Monoid Sum, 0) in
+          let dsts = Iarray.init k (fun _ -> A.Any (f32 [||])) in
+          let rs = Iarray.init k (fun _ -> (Nx_kernel.Monoid Sum, 0)) in
           releases (fun () -> reduce rs ~dsts x));
       test "a scan on one thread" (fun () ->
           let n = 1 lsl 21 in
@@ -173,7 +173,7 @@ let families =
             let range = { Nx_array.Move.start = i; count = 1; step = 1 } in
             (([| range |] : _ iarray), f32 [| 1 |])
           in
-          let pieces = Array.init np piece in
+          let pieces = Iarray.init np piece in
           releases (fun () -> done_ (Nx_cpu.assemble ~fill:0. ~dst pieces)));
       test "a fold of windows" (fun () ->
           let n = 1 lsl 16 in

@@ -40,7 +40,7 @@ let add_direct a =
   let dst =
     A.v D.Float32 l (Rig.Buffer.create (A.device a) (D.bytes D.Float32 1))
   in
-  let loads = [| Nx_kernel.Plain a; Plain a |] in
+  let loads : Nx_kernel.load iarray = [| Plain a; Plain a |] in
   match Nx_cpu.map add_f32 ~dsts:[| A.Any dst |] loads with
   | Done -> Nx.Repr.of_array Nx.Host.v dst
   | refusal -> A.refused "add-1-direct" refusal [ A.Any dst; A.Any a ]
@@ -437,7 +437,7 @@ let threefry =
 
 let threefry_direct (c, one_key) =
   let dst = A.create (A.device c) D.Uint64 [| mib |] in
-  let loads = [| Nx_kernel.Plain c; Plain one_key |] in
+  let loads : Nx_kernel.load iarray = [| Plain c; Plain one_key |] in
   match Nx_cpu.map threefry ~dsts:[| A.Any dst |] loads with
   | Done -> dst
   | refusal -> A.refused "threefry-1M-direct" refusal [ A.Any dst; A.Any c ]

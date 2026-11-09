@@ -126,13 +126,12 @@ let kernel_load (type d) (l : d Value.load) : Nx_kernel.load =
   | Value.Plain x -> Nx_kernel.Plain (one x)
   | Value.Padded { x; fill; pad } -> Nx_kernel.Padded { x = one x; fill; pad }
 
-let kernel_loads loads =
-  Array.init (Iarray.length loads) (fun i -> kernel_load (Iarray.get loads i))
+let kernel_loads loads = Iarray.map kernel_load loads
 
 (* The arrays of the results [r] of [op], each on one device. The results of
    a map of one output, a reduction of one or a scan of one, which most calls
    are, are read without gathering every result's arrays. *)
-let dsts : type r. r Value.prim -> r -> A.any array =
+let dsts : type r. r Value.prim -> r -> A.any iarray =
  fun op r ->
   match (op, r) with
   | Value.Map { outs = [ _ ]; _ }, (y, ()) -> [| A.Any (one y) |]
@@ -142,7 +141,8 @@ let dsts : type r. r Value.prim -> r -> A.any array =
       [| A.Any (one y) |]
   | Value.Scan { reduction = Monoid _; _ }, y -> [| A.Any (one y) |]
   | Value.Scan { reduction = Logsumexp _; _ }, y -> [| A.Any (one y) |]
-  | _ -> Array.map (fun per -> per.(0)) (Prim.result_arrays op r)
+  | _ ->
+      Iarray.of_array (Array.map (fun per -> per.(0)) (Prim.result_arrays op r))
 
 (* [op]'s kernel over its operands' arrays, into the results [r]'s arrays, all
    on one device: [false] where it declines. A refusal raises naming [by], the
@@ -156,9 +156,8 @@ let call : type r.
     | Value.Map { prog; loads; _ } ->
         K.map prog ~dsts:(dsts op r) (kernel_loads loads)
     | Value.Reduce { layout; axes; prog; reductions; loads } ->
-        let rs = Prim.kernel_reductions reductions
-        and shape = Iarray.to_array (L.shape layout) in
-        K.reduce prog ~shape ~axes rs ~dsts:(dsts op r)
+        let rs = Iarray.of_array (Prim.kernel_reductions reductions) in
+        K.reduce prog ~shape:(L.shape layout) ~axes rs ~dsts:(dsts op r)
           (kernel_loads loads)
     | Value.Scan { axis; prog; reduction; loads; carry; _ } ->
         let carry = Option.map (fun (Value.Any c) -> A.Any (one c)) carry in
@@ -236,7 +235,7 @@ let call : type r.
               (one a) (one b))
     | Value.Assemble { fill; pieces; _ } ->
         let pieces =
-          Array.of_list (List.map (fun (rs, x) -> (rs, one x)) pieces)
+          Iarray.of_list (List.map (fun (rs, x) -> (rs, one x)) pieces)
         in
         K.assemble ~fill ~dst:(one r) pieces
     | Value.Copy x -> map1 (module K) Copy ~dst:(one r) (one x)
@@ -248,7 +247,7 @@ let call : type r.
           | Paged { k; v; table } ->
               Paged { k = one k; v = one v; table = one table }
         in
-        let loads = Array.map (fun (Value.Any x) -> A.Any (one x)) (Iarray.to_array loads) in
+        let loads = Iarray.map (fun (Value.Any x) -> A.Any (one x)) loads in
         K.attention prog ~scale ~o:(one o) ~lse:(one lse)
           ?lengths:(Option.map one lengths) (one q) kv loads
     | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
@@ -261,7 +260,7 @@ let call : type r.
       let (Prim.Operands xs) = Prim.operands op in
       let operand (Value.Any x) = A.Any (one x) in
       A.refused by refusal
-        (Array.to_list (dsts op r) @ List.map operand xs)
+        (Iarray.to_list (dsts op r) @ List.map operand xs)
 
 (* Raises for [op], whose kernels on [d] declined it. A routine is named by
    its routine, a reduction and a scan by what they compute, as
@@ -330,7 +329,7 @@ let mapped (type w r d) ~by (module K : Nx_kernel.S) (at : d Devices.placement)
             (D.Any (A.dtype dst) :: ins)
       | None -> refuses ~by ~kernels:K.name "Map" (A.device dst) ins)
   | refusal ->
-      A.refused by refusal (A.Any dst :: List.map any (Array.to_list loads))
+      A.refused by refusal (A.Any dst :: List.map any (Iarray.to_list loads))
 
 (* Whether [loads] are live arrays read plainly at physically one placement,
    the first's: a map over them computes on its one device, where its route
@@ -354,6 +353,12 @@ let beside_first (type d) (loads : d Value.load iarray) =
       !i = n
   | Value.Plain _ | Value.Padded _ -> false
 
+(* The kernel's load of [l], an array read plainly. *)
+let plain_array (type d) (l : d Value.load) : Nx_kernel.load =
+  match l with
+  | Value.Plain (Value.Array r) -> Nx_kernel.Plain r.a
+  | Value.Plain _ | Value.Padded _ -> invalid_arg "Exec.local"
+
 (* The map [op] over loads {!beside_first} holds, computed as {!windows}
    computes it at their placement without its route: its rule checked, its
    results fresh there, the set's kernels called once. A map of one result,
@@ -366,13 +371,7 @@ let local_in : type r. by:string -> L.t array -> r Value.prim -> r =
       match Iarray.get loads 0 with
       | Value.Plain (Value.Array { at; a; _ }) ->
           let kernels = kernels_of ~by ~op:"Map" (Devices.set at) in
-          let n = Iarray.length loads in
-          let arrays = Array.make n (Nx_kernel.Plain a) in
-          for i = 1 to n - 1 do
-            match Iarray.get loads i with
-            | Value.Plain (Value.Array r) -> arrays.(i) <- Nx_kernel.Plain r.a
-            | Value.Plain _ | Value.Padded _ -> invalid_arg "Exec.local"
-          done;
+          let arrays = Iarray.map plain_array loads in
           let dst = fresh_over dt layout (A.device a) in
           (mapped ~by kernels at prog dst arrays, ())
       | Value.Plain _ | Value.Padded _ -> invalid_arg "Exec.local")

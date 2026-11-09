@@ -315,7 +315,8 @@ let door_rows =
       Thumper.bench_with_setup ~budgets:no_alloc
         ~setup:(fun () ->
           let z, x, y = three () in
-          ([| A.Any z |], [| A.Any x; A.Any y |]))
+          ( Iarray.of_list [ A.Any z ],
+            Iarray.of_list [ A.Any x; A.Any y ] ))
         "ocaml-3"
         (fun (written, read) -> ok "ocaml-3" (A.door ~written ~read ignore ()));
       (* The same with work pending on the written array, on a Late device,
@@ -332,7 +333,8 @@ let door_rows =
             Rig.Submission.make ~fixed:[ (A.buffer z, Rig.Read_write) ] d [||]
           in
           ignore (Rig.submit (Rig.Submission.take s) ~buffers:[||]);
-          ([| A.Any z |], [| A.Any x; A.Any y |]))
+          ( Iarray.of_list [ A.Any z ],
+            Iarray.of_list [ A.Any x; A.Any y ] ))
         "ocaml-3-pending"
         (fun (written, read) ->
           ok "ocaml-3-pending" (A.door ~written ~read ignore ()));

@@ -695,7 +695,7 @@ module type S = sig
       a loop for its dtypes, its kinds or its other attributes, as its doc
       states. *)
 
-  val map : Prog.t -> dsts:any array -> load array -> answer
+  val map : Prog.t -> dsts:any iarray -> load iarray -> answer
   (** [map p ~dsts loads] stores [p]'s output [k] at each index into
       [dsts.(k)], of that output's dtype. It is the one elementwise kernel.
       One kind over operands comes as the program of one node that
@@ -704,11 +704,11 @@ module type S = sig
 
   val reduce :
     Prog.t ->
-    shape:int array ->
+    shape:int iarray ->
     axes:int iarray ->
-    (reduction * int) array ->
-    dsts:any array ->
-    load array ->
+    (reduction * int) iarray ->
+    dsts:any iarray ->
+    load iarray ->
     answer
   (** [reduce p ~shape ~axes rs ~dsts loads] reduces, for each [(r, k)] of
       [rs], output [k] of [p] over the loop of shape [shape] along [axes] by
@@ -722,8 +722,8 @@ module type S = sig
     Prog.t ->
     axis:int ->
     reduction * int ->
-    dsts:any array ->
-    load array ->
+    dsts:any iarray ->
+    load iarray ->
     answer
   (** [scan ?carry p ~axis (r, k) ~dsts loads] stores at each index the
       reduction [r] of output [k] of [p] over the indices along [axis] up to
@@ -847,7 +847,7 @@ module type S = sig
   val assemble :
     fill:'v ->
     dst:('v, 's) a ->
-    (Nx_array.Move.range iarray * ('v, 's) a) array ->
+    (Nx_array.Move.range iarray * ('v, 's) a) iarray ->
     answer
   (** [assemble ~fill ~dst pieces] stores into [dst], at each index, the
       element at that index of the last piece whose region holds it, or [fill]
@@ -1017,7 +1017,7 @@ module type S = sig
     ?lengths:index ->
     ('v, 's) a ->
     (('v, 's) a, index) kv ->
-    any array ->
+    any iarray ->
     answer
   (** [attention p ~scale ~o ~lse ?lengths q kv loads] stores the attention
       of [q]'s rows over [kv] ({!section-attention}), [p] the pair's

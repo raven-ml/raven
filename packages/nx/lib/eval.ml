@@ -652,8 +652,8 @@ let fast3 ~by k c x y =
       Some kernels,
       Some p )
     when Exec.beside c x && Exec.beside c y ->
-      let loads =
-        [| Nx_kernel.Plain ca; Nx_kernel.Plain a; Nx_kernel.Plain b |]
+      let loads : Nx_kernel.load iarray =
+        [| Plain ca; Plain a; Plain b |]
       in
       Exec.map ~by kernels at p (A.dtype a) a loads
   | _ -> fst (run ~by (Prim.op3 ~by k c x y))

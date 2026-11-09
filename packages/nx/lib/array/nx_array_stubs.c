@@ -520,8 +520,9 @@ void nx_done(int n, nx_array *a) {
 
 /* The OCaml door (Nx_array.door) admits through enter, in C, so that no
    OCaml code, and so no asynchronous exception, runs between two claims.
-   [written] and [read] are OCaml arrays of Nx_array.any, which is unboxed:
-   an any is its array's block. */
+   [written] and [read] are immutable OCaml arrays of Nx_array.any, which
+   is unboxed: an any is its array's block. Release reads them again and
+   finds the arrays admit claimed. */
 
 static value nth_array(value written, value read, mlsize_t k) {
   mlsize_t nw = Wosize_val(written);

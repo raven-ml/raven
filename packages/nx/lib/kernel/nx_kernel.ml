@@ -837,15 +837,15 @@ module type S = sig
 
   val name : string
   val computes_on : Rig.t -> bool
-  val map : Prog.t -> dsts:any array -> load array -> answer
+  val map : Prog.t -> dsts:any iarray -> load iarray -> answer
 
   val reduce :
     Prog.t ->
-    shape:int array ->
+    shape:int iarray ->
     axes:int iarray ->
-    (reduction * int) array ->
-    dsts:any array ->
-    load array ->
+    (reduction * int) iarray ->
+    dsts:any iarray ->
+    load iarray ->
     answer
 
   val scan :
@@ -853,8 +853,8 @@ module type S = sig
     Prog.t ->
     axis:int ->
     reduction * int ->
-    dsts:any array ->
-    load array ->
+    dsts:any iarray ->
+    load iarray ->
     answer
 
   val gather : axis:int -> dst:('v, 's) a -> index -> ('v, 's) a -> answer
@@ -886,7 +886,7 @@ module type S = sig
   val assemble :
     fill:'v ->
     dst:('v, 's) a ->
-    (Nx_array.Move.range iarray * ('v, 's) a) array ->
+    (Nx_array.Move.range iarray * ('v, 's) a) iarray ->
     answer
 
   val fold : pad -> dst:('v, 's) a -> ('v, 's) a -> answer
@@ -938,6 +938,6 @@ module type S = sig
     ?lengths:index ->
     ('v, 's) a ->
     (('v, 's) a, index) kv ->
-    any array ->
+    any iarray ->
     answer
 end

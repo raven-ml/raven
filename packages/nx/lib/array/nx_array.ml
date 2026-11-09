@@ -91,8 +91,8 @@ let refused name answer operands =
    an allocation, a function's entry or a loop's back edge. No claim the door
    takes is held across one outside the handler that ends it. *)
 
-external admit : any array -> any array -> answer = "nx_array_admit"
-external release : any array -> any array -> unit = "nx_array_release"
+external admit : any iarray -> any iarray -> answer = "nx_array_admit"
+external release : any iarray -> any iarray -> unit = "nx_array_release"
 
 let door ~written ~read f x =
   match admit written read with
@@ -847,7 +847,7 @@ let read a f =
   let fn = "Nx_array.read" in
   bigarray_fits fn a.layout;
   let k = kind fn a in
-  let operands = [| Any a |] in
+  let operands : any iarray = [| Any a |] in
   match admit [||] operands with
   | Done -> (
       match
@@ -867,7 +867,7 @@ let write a f =
   let fn = "Nx_array.write" in
   bigarray_fits fn a.layout;
   let k = kind fn a in
-  let operands = [| Any a |] in
+  let operands : any iarray = [| Any a |] in
   match admit operands [||] with
   | Done -> (
       match

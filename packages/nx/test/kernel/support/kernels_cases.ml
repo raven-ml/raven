@@ -1095,7 +1095,7 @@ let law_map_split ?declines ?(labels = true) ?length ?(padded = false)
           (Iarray.to_array p.outs)
       in
       let before = Array.map (fun (A.Any d) -> bits_of (host d)) dsts in
-      match K.map p ~dsts loads with
+      match K.map p ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads) with
       | A.Declined -> (
           cover "map declined" true;
           Array.iteri

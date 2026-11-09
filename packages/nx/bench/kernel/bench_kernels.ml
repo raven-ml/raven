@@ -24,10 +24,10 @@ let ok = function
 
 (* A call of [map] on the one node [n] over [loads], read plain, into
    [dst]: the program and the arrays built once, as a caller holds them. *)
-let one ins n dst loads =
+let one ins n dst loads : _ * A.any iarray * Nx_kernel.load iarray =
   ( Nx_kernel.Prog.of_node ~ins:(Iarray.of_array ins) n,
     [| A.Any dst |],
-    Array.map (fun (A.Any x) -> Nx_kernel.Plain x) loads )
+    Iarray.map (fun (A.Any x) -> Nx_kernel.Plain x) (Iarray.of_array loads) )
 
 let call (module K : Nx_kernel.S) (p, dsts, loads) = ok (K.map p ~dsts loads)
 
@@ -319,14 +319,14 @@ let unary ?(values = `Filled) name u dt n =
 let map ?work name (p : Nx_kernel.Prog.t) n =
   apply ?work name (fun () ->
       ( p,
-        Array.map
+        Iarray.map
           (fun o ->
             let (D.Any d) = Nx_kernel.Prog.dtype p o in
             A.Any (A.create Rig.host d [| n |]))
-          (Iarray.to_array p.outs),
-        Array.map
+          p.outs,
+        Iarray.map
           (fun (D.Any d) -> Nx_kernel.Plain (filled d [| n |]))
-          (Iarray.to_array p.ins) ))
+          p.ins ))
 
 (* Maps of several nodes: six float32 nodes over one load, a program the
    interpreter runs block by block in L1; a Mul by a constant, a repeated
@@ -781,14 +781,15 @@ let reduce name (r : Nx_kernel.reduction) ~axes a (module K : Nx_kernel.S) =
           (List.filteri (fun i _ -> not (Array.mem i axes)) (Array.to_list s))
       in
       let like () = A.Any (A.create Rig.host (A.dtype x) y) in
-      let dsts =
+      let dsts : A.any iarray =
         match r with
         | Monoid _ | Logsumexp -> [| like () |]
         | Moments -> [| like (); like () |]
         | Arg _ -> [| like (); A.Any (A.create Rig.host D.Int64 y) |]
       in
-      (identity dt, s, Iarray.of_array axes, [| (r, 0) |],
-       [| Nx_kernel.Plain x |], dsts))
+      let loads : Nx_kernel.load iarray = [| Plain x |] in
+      (identity dt, Iarray.of_array s, Iarray.of_array axes,
+       Iarray.of_list [ (r, 0) ], loads, dsts))
     (fun (p, shape, axes, rs, loads, dsts) ->
       ok (K.reduce p ~shape ~axes rs ~dsts loads))
 
@@ -808,11 +809,11 @@ let padded_max name (module K : Nx_kernel.S) =
       let load = Nx_kernel.Padded { x; fill = Float.neg_infinity; pad } in
       let dst = A.Any (A.create Rig.host f32 [| 8; 28; 28; 64 |]) in
       ( identity (D.Any f32),
-        [| 8; 28; 28; 64; 3; 3 |],
+        Iarray.of_list [ 8; 28; 28; 64; 3; 3 ],
         Iarray.of_list [ 4; 5 ],
-        [| (Nx_kernel.Monoid Max, 0) |],
-        [| load |],
-        [| dst |] ))
+        Iarray.of_list [ (Nx_kernel.Monoid Max, 0) ],
+        Iarray.of_list [ load ],
+        Iarray.of_list [ dst ] ))
     (fun (p, shape, axes, rs, loads, dsts) ->
       ok (K.reduce p ~shape ~axes rs ~dsts loads))
 
@@ -827,8 +828,8 @@ let scan name r ~axis a (module K : Nx_kernel.S) =
       in
       ( identity dt,
         (r, 0),
-        [| Nx_kernel.Plain x |],
-        Array.init results (fun _ -> A.Any (A.create Rig.host (A.dtype x) s))
+        Iarray.of_list [ Nx_kernel.Plain x ],
+        Iarray.init results (fun _ -> A.Any (A.create Rig.host (A.dtype x) s))
       ))
     (fun (p, r, loads, dsts) -> ok (K.scan p ~axis r ~dsts loads))
 
@@ -849,7 +850,9 @@ let late_nan name ~dst run (module K : Nx_kernel.S) =
         Nx_kernel.Prog.v ~ins:[| d |] [| In 0; Op1 (Unary Log, d, 0) |]
           ~outs:[| 1 |]
       in
-      (p, [| Nx_kernel.Plain x |], [| A.Any (A.create Rig.host f32 dst) |]))
+      ( p,
+        Iarray.of_list [ Nx_kernel.Plain x ],
+        Iarray.of_list [ A.Any (A.create Rig.host f32 dst) ] ))
     (fun (p, loads, dsts) -> ok (run (module K : Nx_kernel.S) p ~dsts loads))
 
 let reduce_rows =
@@ -1134,8 +1137,10 @@ let sort_rows =
 let assemble_row name ~shape ~fill regions pieces (module K : Nx_kernel.S) =
   row name
     (fun () ->
-      let pieces = Array.combine regions (pieces ()) in
-      let dst = A.create Rig.host (A.dtype (snd pieces.(0))) shape in
+      let pieces = Iarray.of_array (Array.combine regions (pieces ())) in
+      let dst =
+        A.create Rig.host (A.dtype (snd (Iarray.get pieces 0))) shape
+      in
       fun () -> ok (K.assemble ~fill ~dst pieces))
     (fun call -> call ())
 

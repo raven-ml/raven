@@ -51,7 +51,7 @@ let attention (type v s c r) (b : Support.backend) ?(tq = 1) ?(lds = [])
     Nx_kernel.Dense { k = make dt [| 1; 2; 1 |]; v = make dt [| 1; 2; 1 |] }
   in
   let loads =
-    Array.of_list
+    Iarray.of_list
       (List.map (fun (D.Any l) -> A.Any (make l [| 1; tq; 2 |])) lds)
   in
   let o, o_whole = rows b out [| 1 |] tq in

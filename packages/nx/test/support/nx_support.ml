@@ -25,13 +25,13 @@ module Counting = struct
     Atomic.set computed 0;
     Atomic.set multiplied 0
 
-  let size shape = Array.fold_left ( * ) 1 shape
+  let size shape = Iarray.fold_left ( * ) 1 shape
 
   let loop (Nx_array.Any dst) = Nx_array.Layout.numel (Nx_array.layout dst)
 
   let map p ~dsts loads =
     Atomic.incr count;
-    ignore (Atomic.fetch_and_add computed (loop dsts.(0)));
+    ignore (Atomic.fetch_and_add computed (loop (Iarray.get dsts 0)));
     Nx_cpu.map p ~dsts loads
 
   let reduce p ~shape ~axes rs ~dsts loads =
@@ -41,7 +41,7 @@ module Counting = struct
 
   let scan ?carry p ~axis r ~dsts loads =
     Atomic.incr count;
-    ignore (Atomic.fetch_and_add computed (loop dsts.(0)));
+    ignore (Atomic.fetch_and_add computed (loop (Iarray.get dsts 0)));
     Nx_cpu.scan ?carry p ~axis r ~dsts loads
 
   let gather ~axis ~dst idx x =

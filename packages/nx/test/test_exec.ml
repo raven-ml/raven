@@ -53,7 +53,7 @@ module Refusing = struct
     let declined ((r : Nx_kernel.reduction), _) =
       match r with Logsumexp | Arg _ -> true | _ -> false
     in
-    if Array.exists declined rs then decline ()
+    if Iarray.exists declined rs then decline ()
     else C.reduce p ~shape ~axes rs ~dsts loads
 
   let sort ~axis:_ ~descending:_ ~values:_ ~positions:_ _ = decline ()
@@ -1524,12 +1524,12 @@ let allocation =
         (fun () ->
           let a = on_host Plain D.Float32 [| 16 |] (Array.make 16 1.) in
           expect (allocated (fun () -> Nx.sum a))
-          @@ __POS_OF__ {| 138 words |});
+          @@ __POS_OF__ {| 134 words |});
       test "a cumsum of 16 float32 host elements allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 16 |] (Array.make 16 1.) in
           expect (allocated (fun () -> Nx.cumsum a))
-          @@ __POS_OF__ {| 118 words |});
+          @@ __POS_OF__ {| 114 words |});
       test "a take of 3 rows of a 4x4 host value allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in

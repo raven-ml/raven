@@ -162,7 +162,7 @@ val map :
   Nx_kernel.Prog.t ->
   ('w, 'r) Value.dtype ->
   ('v, 's) Nx_array.t ->
-  Nx_kernel.load array ->
+  Nx_kernel.load iarray ->
   ('w, 'r, 'd) Value.t
 (** [map ~by kernels at p dt x loads] is the live value at [at] of the
     program [p], of one output of [dt], over [loads], computed by [kernels]

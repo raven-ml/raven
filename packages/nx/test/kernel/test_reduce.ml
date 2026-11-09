@@ -837,7 +837,7 @@ let loop_refusals (b : Support.backend) =
   let id = identity f32 in
   let coord = P.v ~ins:[||] [| P.Coord 2 |] ~outs:[| 0 |] in
   let x s = Nx_kernel.Plain (A.create b.device D.Float32 s) in
-  let reduce ?(shape = [| 2; 3 |]) p rs dsts loads =
+  let reduce ?(shape : int iarray = [| 2; 3 |]) p rs dsts loads =
     K.reduce p ~shape ~axes:[| 1 |] rs ~dsts loads
   in
   let scan p rk dsts loads = K.scan p ~axis:1 rk ~dsts loads in
@@ -1186,15 +1186,17 @@ let run_special (b : Support.backend) c =
     | Moments -> [| like (A.dtype x); like (A.dtype x) |]
     | Monoid _ | Logsumexp -> [| like (A.dtype x) |]
   in
-  let p = identity (dtype_of xa) and loads = [| plain_of xa |] in
+  let p = identity (dtype_of xa) and loads : _ iarray = [| plain_of xa |] in
+  let dsts = Iarray.of_array dsts in
   let answer =
     if c.scanned then K.scan p ~axis:st.axes.(0) (st.r, 0) ~dsts loads
     else
-      K.reduce p ~shape:(shape_of xa) ~axes:(Iarray.of_array st.axes)
-        [| (st.r, 0) |] ~dsts loads
+      K.reduce p
+        ~shape:(Iarray.of_array (shape_of xa))
+        ~axes:(Iarray.of_array st.axes) [| (st.r, 0) |] ~dsts loads
   in
   match answer with
-  | A.Done -> Some (Array.map (fun d -> terms (host d)) dsts)
+  | A.Done -> Some (Array.map (fun d -> terms (host d)) (Iarray.to_array dsts))
   | A.Declined -> None
   | a -> failf "the kernels answered %a" Nx_array_support.pp_answer a
 

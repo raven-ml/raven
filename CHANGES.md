@@ -2654,6 +2654,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** `Nx_kernel.S.map`, `reduce`, `scan`, `assemble` and
+  `attention` take their destinations, loads, reductions, loop shape and
+  pieces as `iarray`s, and `Nx_array.door` its `written` and `read`. A
+  library's check of them then holds for what it reads: another domain
+  can no longer swap an array in after it. An array literal still builds
+  one at the call.
 - `Nx_cpu.c2r`'s error bound is stated against `√2` times its operand's
   norm. Against the completed bins' norm it was false: the other axes
   transform bins 0 and n/2 before their imaginary parts drop, and round.

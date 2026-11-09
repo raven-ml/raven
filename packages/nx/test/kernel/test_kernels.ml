@@ -433,7 +433,8 @@ let check_map_refusal (b : Support.backend) (msg, want, call) =
   let module K = (val b.kernels) in
   b.around (fun () ->
       let p, dsts, loads = call () in
-      equal ~msg answer want (K.map p ~dsts loads))
+      equal ~msg answer want
+        (K.map p ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads)))
 
 (* A map given other destinations or loads than its program's outputs and
    operands is refused with [Shape_mismatch] and writes nothing. *)
@@ -449,7 +450,8 @@ let test_map_arity (b : Support.backend) () =
   List.iter
     (fun (msg, ys, loads) ->
       let dsts = Array.map (fun y -> A.Any y) ys in
-      equal ~msg answer A.Shape_mismatch (K.map p ~dsts loads);
+      equal ~msg answer A.Shape_mismatch
+        (K.map p ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads));
       Array.iter
         (fun y ->
           equal ~msg:(msg ^ ": untouched") (array float_exact) [| 9.; 9.; 9. |]
@@ -635,16 +637,19 @@ let law_map_over_load (b : Support.backend) (Pair (x, y), seed) =
         A.Any (A.create b.device e shape))
       outs
   in
-  let loads ops = Array.map (fun (A.Any x) -> Nx_kernel.Plain x) ops in
+  let loads ops =
+    Iarray.map (fun (A.Any x) -> Nx_kernel.Plain x) (Iarray.of_array ops)
+  in
   let want = fresh () in
-  let answered = K.map q ~dsts:want (loads ops) in
+  let answered = K.map q ~dsts:(Iarray.of_array want) (loads ops) in
   let over = A.Any (on b (A.copy (host (A.expect d ops.(k))))) in
   let got = fresh () in
   got.(0) <- over;
   let ops' = Array.copy ops in
   ops'.(k) <- over;
   let msg = describe q in
-  equal ~msg answer answered (K.map q ~dsts:got (loads ops'));
+  equal ~msg answer answered
+    (K.map q ~dsts:(Iarray.of_array got) (loads ops'));
   if answered = A.Done then begin
     cover "computed" true;
     cover "the load read after the output is written"
@@ -1167,7 +1172,7 @@ let law_box (b : Support.backend) (Pair (x, y), box) =
     let obox = Array.mapi (fun i g -> if i = r - 1 then whole else g) box in
     let sum ~dst a =
       let dst = A.Any dst in
-      K.reduce id ~shape:(Iarray.to_array (L.shape (A.layout a)))
+      K.reduce id ~shape:(L.shape (A.layout a))
         ~axes:[| r - 1 |] [| (Monoid Sum, 0) |] ~dsts:[| dst |]
         [| Nx_kernel.Plain a |]
     in

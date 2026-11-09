@@ -81,8 +81,9 @@ let accepts m (D.Any dt) = Nx_kernel.accepts (Monoid m) dt
 let compute (module K : Nx_kernel.S) ~scan p m axes dst loads =
   if scan then K.scan p ~axis:axes.(0) (Monoid m, 0) ~dsts:[| dst |] loads
   else
-    K.reduce p ~shape:(loop_shape loads) ~axes:(Iarray.of_array axes)
-      [| (Monoid m, 0) |] ~dsts:[| dst |] loads
+    K.reduce p
+      ~shape:(Iarray.of_array (loop_shape (Iarray.to_array loads)))
+      ~axes:(Iarray.of_array axes) [| (Monoid m, 0) |] ~dsts:[| dst |] loads
 
 (* The result's shape. *)
 let result_shape c =

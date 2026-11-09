@@ -146,7 +146,7 @@ let assemble_on (b : Support.backend) ?(in_place = false) c =
   let pieces =
     Array.map2 (fun r x -> (Iarray.of_array r, x)) c.regions pieces
   in
-  match K.assemble ~fill:(value dt c.fill) ~dst pieces with
+  match K.assemble ~fill:(value dt c.fill) ~dst (Iarray.of_array pieces) with
   | A.Done -> Some (A.Any dst)
   | A.Declined -> None
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
@@ -303,7 +303,8 @@ let law_refuses (b : Support.backend) c =
     (if fit then A.Done else A.Shape_mismatch)
     (K.assemble ~fill:0.
        ~dst:(A.create Rig.host D.Float32 (Iarray.of_array c.into))
-       (Array.map (fun (r, s) -> (Iarray.of_array r, zeros s)) c.parts))
+       (Iarray.of_array
+          (Array.map (fun (r, s) -> (Iarray.of_array r, zeros s)) c.parts)))
 
 (* Whether no claim holds [b]'s memory: a donation of it is exclusive. *)
 let unclaimed b =
@@ -323,7 +324,7 @@ let test_late_refusals (b : Support.backend) () =
         (Array.mapi (fun i x -> (one i, x)) xs)
         [| (one (n - 1), last dst) |]
     in
-    equal ~msg answer want (K.assemble ~fill:0. ~dst pieces);
+    equal ~msg answer want (K.assemble ~fill:0. ~dst (Iarray.of_array pieces));
     Array.iter
       (fun x ->
         equal ~msg:(msg ^ ", released") bool true (unclaimed (A.buffer x)))
@@ -349,7 +350,8 @@ let law_guards (b : Support.backend) (c, side) =
     let pieces =
       Array.map2 (fun r x -> (Iarray.of_array r, A.expect dt x)) c.regions xs
     in
-    K.assemble ~fill:(value dt c.fill) ~dst:(A.expect dt ds.(0)) pieces
+    K.assemble ~fill:(value dt c.fill) ~dst:(A.expect dt ds.(0))
+      (Iarray.of_array pieces)
   in
   equal answer A.Done
     (same_guarded side ~call c.pieces [| (c.dtype, c.shape) |])

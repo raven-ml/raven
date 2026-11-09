@@ -198,7 +198,7 @@ let ocaml_door written read =
   let ran = ref None in
   let all = Array.append written read in
   let e =
-    A.door ~written ~read
+    A.door ~written:(Iarray.of_array written) ~read:(Iarray.of_array read)
       (fun all ->
         ran :=
           Some (Array.for_all (fun (A.Any a) -> not (unclaimed (A.buffer a))) all))
@@ -219,7 +219,8 @@ let test_ocaml_door_runs () =
 let test_ocaml_door_holds () =
   let holds ~msg written read =
     let e = ref A.Done in
-    let call () = e := A.door ~written ~read ignore () in
+    let w = Iarray.of_array written and r = Iarray.of_array read in
+    let call () = e := A.door ~written:w ~read:r ignore () in
     call ();
     Gc.full_major ();
     let held = Nx_release_support.held ~runs:3 call in

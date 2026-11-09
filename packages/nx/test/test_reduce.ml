@@ -303,7 +303,8 @@ let rec reference : type v s.
       in
       let dst = A.create Rig.host dt (Iarray.of_array out) in
       match
-        Nx_cpu.reduce (identity dt) ~shape:s ~axes:(Iarray.of_array axes)
+        Nx_cpu.reduce (identity dt) ~shape:(Iarray.of_array s)
+          ~axes:(Iarray.of_array axes)
           [| (Monoid m, 0) |]
           ~dsts:[| A.Any dst |]
           [| Plain a |]

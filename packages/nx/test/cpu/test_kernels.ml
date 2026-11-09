@@ -213,7 +213,7 @@ let test_loop_widths () =
     { lo = [| 1 |]; hi = [| 0 |]; interior = [| 0 |]; windows = [||] }
   in
   let loads n =
-    Array.init n (fun j ->
+    Iarray.init n (fun j ->
         if j = 0 then Nx_kernel.Padded { x = operand 0; fill; pad }
         else Nx_kernel.Plain (operand j))
   in
@@ -417,7 +417,10 @@ let law_map_full (b : Support.backend) (Case x) =
   | values ->
       let dst = A.create b.device D.Int64 shape in
       equal ~msg:"map" answer A.Done
-        (K.map p ~dsts:[| A.Any dst |] (Array.map (fun (A.Any x) -> Nx_kernel.Plain x) ops));
+        (K.map p ~dsts:[| A.Any dst |]
+           (Iarray.map
+              (fun (A.Any x) -> Nx_kernel.Plain x)
+              (Iarray.of_array ops)));
       let (A.Any want) = values.(List.length nodes - 1) in
       equal (array int) (bits_of (host want)) (bits_of (host dst))
 
@@ -496,7 +499,9 @@ let law_map_widths (b : Support.backend) ((Pair (x, y), seed), w) =
       let msg = strf "%d arrays" w in
       equal ~msg answer A.Done
         (K.map p ~dsts:[| A.Any s; A.Any q |]
-           (Array.map (fun (A.Any a) -> Nx_kernel.Plain a) ops));
+           (Iarray.map
+              (fun (A.Any a) -> Nx_kernel.Plain a)
+              (Iarray.of_array ops)));
       let check name (A.Any got) i =
         let (A.Any want) = values.(i) in
         equal ~msg:(strf "%s, %s" msg name)
@@ -803,7 +808,9 @@ let law_map_guards (b : Support.backend) ((Pair (x, y), seed), side) =
   let s = Iarray.to_array shape in
   let dsts = Array.map (fun o -> (types.(o), s)) (Iarray.to_array p.outs) in
   let load (A.Any x) = if padded then unpadded x else Nx_kernel.Plain x in
-  let call xs ds = K.map p ~dsts:ds (Array.map load xs) in
+  let call xs ds =
+    K.map p ~dsts:(Iarray.of_array ds) (Iarray.map load (Iarray.of_array xs))
+  in
   equal answer A.Done (Elements.same_guarded ~any_nan:true side ~call ops dsts);
   (* The last node cast to the loads' dtype, written over a C-contiguous
      load against the page, as a donated one is. *)
@@ -819,12 +826,13 @@ let law_map_guards (b : Support.backend) ((Pair (x, y), seed), side) =
     in
     let k = Random.State.int st (Array.length ops) in
     let fresh = A.create Rig.host d shape in
-    equal answer A.Done (K.map q ~dsts:[| A.Any fresh |] (Array.map load ops));
+    let loads ops = Iarray.map load (Iarray.of_array ops) in
+    equal answer A.Done (K.map q ~dsts:[| A.Any fresh |] (loads ops));
     Elements.with_guards side (fun guard _ ->
         let (A.Any g) = guard (A.Any (A.copy (A.expect d ops.(k)))) in
         let ops = Array.copy ops in
         ops.(k) <- A.Any g;
-        equal answer A.Done (K.map q ~dsts:[| A.Any g |] (Array.map load ops));
+        equal answer A.Done (K.map q ~dsts:[| A.Any g |] (loads ops));
         equal (array (Elements.same dt)) (Elements.elements (A.Any fresh))
           (Elements.elements (A.Any g)))
   end
@@ -1201,7 +1209,8 @@ let law_map_broadcast (b : Support.backend) (c, side) =
     && Array.for_all (fun (v : Elements.view) -> List.mem (r - 1) v.broadcast)
          c.views);
   let call xs ds =
-    K.map p ~dsts:ds (Array.map (fun (A.Any x) -> Nx_kernel.Plain x) xs)
+    K.map p ~dsts:(Iarray.of_array ds)
+      (Iarray.map (fun (A.Any x) -> Nx_kernel.Plain x) (Iarray.of_array xs))
   in
   let fresh =
     Array.map
@@ -1343,8 +1352,8 @@ let law_map_late (b : Support.backend) c =
           outs
       in
       equal ~msg:"map" answer A.Done
-        (K.map p ~dsts
-           (Array.map (fun (A.Any x) -> Nx_kernel.Plain x) [| x |]));
+        (K.map p ~dsts:(Iarray.of_array dsts)
+           [| (let (A.Any x) = x in Nx_kernel.Plain x) |]);
       Array.iteri
         (fun i o ->
           equal
@@ -1484,7 +1493,7 @@ let law_map_held (b : Support.backend)
                   (Iarray.to_array p.outs)
               in
               equal ~msg:"map" answer A.Done
-                (K.map p ~dsts [| Nx_kernel.Plain x' |]);
+                (K.map p ~dsts:(Iarray.of_array dsts) [| Nx_kernel.Plain x' |]);
               Array.iteri
                 (fun i o ->
                   let (A.Any want) = values.(o) in

@@ -670,10 +670,12 @@ let compute ?(shape = small) (p : P.t) loads =
     let (D.Any dt) = P.dtype p o in
     A.Any (A.create Rig.host dt (Iarray.of_array shape))
   in
-  let dsts = Array.map dst (Iarray.to_array p.outs) in
-  let loads = Array.map (fun (A.Any x) -> Nx_kernel.Plain x) loads in
+  let dsts = Iarray.map dst p.outs in
+  let loads =
+    Iarray.map (fun (A.Any x) -> Nx_kernel.Plain x) (Iarray.of_array loads)
+  in
   match Nx_cpu.map p ~dsts loads with
-  | Done -> Ok (Array.map Elements.elements dsts)
+  | Done -> Ok (Array.map Elements.elements (Iarray.to_array dsts))
   | answer -> Error answer
 
 let outputs = Testable.(result (array (array string)) Elements.answer)

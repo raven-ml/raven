@@ -362,7 +362,7 @@ type answer =
           as a reduction given other than its one or two. *)
 
 val door :
-  written:any array -> read:any array -> ('a -> unit) -> 'a -> answer
+  written:any iarray -> read:any iarray -> ('a -> unit) -> 'a -> answer
 (** [door ~written ~read f x] claims the memory of [written] for writing and of
     [read] for reading, every claim or none, runs [f x], and releases the claims
     when [f] returns or raises, before an exception of [f] propagates. It waits
@@ -373,10 +373,7 @@ val door :
 
     [f] must touch the arrays' elements only through work it submits with
     {!Rig.submit}, naming each array of [written] in its writes and each of
-    [read] in its reads or writes, and must leave [written] and [read] holding
-    the arrays they held. The door allocates nothing, and nor does a caller
-    that passes an [f] that is not a closure and stores [Any a] into the same
-    [written] and [read] each call.
+    [read] in its reads or writes. The door allocates nothing.
 
     Raises {!Rig.Lost}, without running [f] or holding a claim, if an array's
     memory is a lost device's or must follow work a lost device did not

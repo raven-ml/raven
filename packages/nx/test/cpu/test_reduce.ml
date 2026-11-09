@@ -948,10 +948,13 @@ let law_refusals (b : Support.backend) m =
   let before = Array.map Elements.elements dsts in
   let p = identity f32 in
   let answer =
+    let dsts = Iarray.of_array dsts in
     if m.scan then K.scan p ~axis:m.axes.(0) (m.rs.(0), 0) ~dsts [| load |]
     else
-      K.reduce p ~shape:(loop_shape [| load |]) ~axes:(Iarray.of_array m.axes)
-        (Array.map (fun r -> (r, 0)) m.rs)
+      K.reduce p
+        ~shape:(Iarray.of_array (loop_shape [| load |]))
+        ~axes:(Iarray.of_array m.axes)
+        (Iarray.map (fun r -> (r, 0)) (Iarray.of_array m.rs))
         ~dsts [| load |]
   in
   equal Elements.answer (if fit then A.Done else A.Shape_mismatch) answer;
@@ -966,8 +969,9 @@ let answered (b : Support.backend) =
   let module K = (val b.kernels) in
   let make dt s = A.Any (A.create Rig.host dt s) in
   let reduce (A.Any x as a) r dsts =
-    K.reduce (identity (dtype_of a)) ~shape:(shape_of a) ~axes:[| 1 |]
-      [| (r, 0) |] ~dsts [| Nx_kernel.Plain x |]
+    K.reduce (identity (dtype_of a))
+      ~shape:(Iarray.of_array (shape_of a))
+      ~axes:[| 1 |] [| (r, 0) |] ~dsts [| Nx_kernel.Plain x |]
   in
   let scan (A.Any x as a) r dsts =
     K.scan (identity (dtype_of a)) ~axis:1 (r, 0) ~dsts [| Nx_kernel.Plain x |]
@@ -1025,7 +1029,8 @@ let test_huge_padding (b : Support.backend) () =
   let twice = P.v ~ins:[| f32 |] [| P.In 0; Op2 (Binary Add, 0, 0) |] ~outs:[| 1 |] in
   let dst s = A.of_array D.Float32 s (Array.make (Iarray.fold_left ( * ) 1 s) 9.) in
   let refused msg call dsts =
-    equal ~msg Elements.answer A.Shape_mismatch (call (Array.map (fun d -> A.Any d) dsts));
+    equal ~msg Elements.answer A.Shape_mismatch
+      (call (Iarray.map (fun d -> A.Any d) (Iarray.of_array dsts)));
     Array.iter
       (fun d ->
         equal ~msg:(msg ^ ": untouched") (array float_exact)
@@ -1033,7 +1038,7 @@ let test_huge_padding (b : Support.backend) () =
           (A.to_array d))
       dsts
   in
-  let sum = [| (Nx_kernel.Monoid Sum, 0) |] in
+  let sum : _ iarray = [| (Nx_kernel.Monoid Sum, 0) |] in
   List.iter
     (fun (name, p) ->
       refused (name ^ ": a reduction into another shape")
@@ -1309,8 +1314,10 @@ let run_stat k c =
   let module K = (val k : Nx_kernel.S) in
   let dsts = stat_dsts c in
   match
-    K.reduce (identity (dtype_of c.x)) ~shape:(shape_of c.x)
-      ~axes:(Iarray.of_array c.axes) [| (c.r, 0) |] ~dsts [| plain_of c.x |]
+    K.reduce (identity (dtype_of c.x))
+      ~shape:(Iarray.of_array (shape_of c.x))
+      ~axes:(Iarray.of_array c.axes) [| (c.r, 0) |]
+      ~dsts:(Iarray.of_array dsts) [| plain_of c.x |]
   with
   | A.Done -> Some (Array.map terms dsts)
   | A.Declined -> None
@@ -1574,7 +1581,8 @@ let law_logsumexp (b : Support.backend) (Lse (dt, shape, axes, xs, sn)) =
       (Iarray.of_list (List.map (fun a -> shape.(a)) kept))
   in
   (match
-     K.reduce (identity (D.Any dt)) ~shape ~axes:(Iarray.of_array axes)
+     K.reduce (identity (D.Any dt)) ~shape:(Iarray.of_array shape)
+       ~axes:(Iarray.of_array axes)
        [| (Nx_kernel.Logsumexp, 0) |]
        ~dsts:[| A.Any dst |] [| Nx_kernel.Plain x |]
    with
@@ -1707,8 +1715,8 @@ let run_stat_scan k (c : stat) =
     | Monoid _ | Logsumexp -> [| like (A.dtype x) |]
   in
   match
-    K.scan (identity (dtype_of c.x)) ~axis:c.axes.(0) (c.r, 0) ~dsts
-      [| plain_of c.x |]
+    K.scan (identity (dtype_of c.x)) ~axis:c.axes.(0) (c.r, 0)
+      ~dsts:(Iarray.of_array dsts) [| plain_of c.x |]
   with
   | A.Done -> Some (Array.map terms dsts)
   | A.Declined -> None
@@ -2249,7 +2257,8 @@ let test_in_place (b : Support.backend) () =
   in
   let scan r axis x dsts =
     match
-      K.scan (identity (dtype_of x)) ~axis (r, 0) ~dsts [| plain_of x |]
+      K.scan (identity (dtype_of x)) ~axis (r, 0)
+        ~dsts:(Iarray.of_array dsts) [| plain_of x |]
     with
     | A.Done ->
         Array.map
@@ -2550,11 +2559,13 @@ let law_guards (b : Support.backend) ((g : guard), side) =
     | Monoid _ | Logsumexp -> [| (dt, s) |]
   in
   let call xs ds =
-    let p = identity dt and loads = [| plain_of xs.(0) |] in
+    let p = identity dt and loads : _ iarray = [| plain_of xs.(0) |] in
+    let ds = Iarray.of_array ds in
     if g.scan then K.scan p ~axis:g.axes.(0) (g.r, 0) ~dsts:ds loads
     else
-      K.reduce p ~shape:(loop_shape loads) ~axes:(Iarray.of_array g.axes)
-        [| (g.r, 0) |] ~dsts:ds loads
+      K.reduce p
+        ~shape:(Iarray.of_array (loop_shape (Iarray.to_array loads)))
+        ~axes:(Iarray.of_array g.axes) [| (g.r, 0) |] ~dsts:ds loads
   in
   equal Elements.answer A.Done
     (Elements.same_guarded ~any_nan:true side ~call [| g.x |] dsts)
@@ -3155,10 +3166,11 @@ let fused_fits c =
 
 (* [c] by [M] into [dsts] over [loads]. *)
 let fused_compute (module M : Nx_kernel.S) c ~dsts loads =
+  let dsts = Iarray.of_array dsts and loads = Iarray.of_array loads in
   if c.scan then M.scan c.prog ~axis:c.axes.(0) (c.red, c.k) ~dsts loads
   else
-    M.reduce c.prog ~shape:c.shape ~axes:(Iarray.of_array c.axes) [| (c.red, c.k) |]
-      ~dsts loads
+    M.reduce c.prog ~shape:(Iarray.of_array c.shape)
+      ~axes:(Iarray.of_array c.axes) [| (c.red, c.k) |] ~dsts loads
 
 (* [c] fused, its loads guarded where it says, against [c]'s program mapped
    over the arrays its loads read into fresh arrays and reduced as their
@@ -3229,7 +3241,10 @@ let law_fused (b : Support.backend) c =
         A.Any (A.create b.device dt (Iarray.of_array s)))
       (Iarray.to_array c.prog.outs)
   in
-  (match K.map c.prog ~dsts:outs (plain (reads_of c)) with
+  (match
+     K.map c.prog ~dsts:(Iarray.of_array outs)
+       (Iarray.of_array (plain (reads_of c)))
+   with
   | A.Done -> ()
   | r -> failf "the map answered %a" Nx_array_support.pp_answer r);
   let (A.Any y) = outs.(c.k) in
@@ -3318,9 +3333,12 @@ let test_program_in_place (b : Support.backend) () =
       want
   in
   let reduce rs x dsts =
-    K.reduce p ~shape:[| 3 |] ~axes:[||] rs ~dsts [| plain_of x |]
+    K.reduce p ~shape:[| 3 |] ~axes:[||] (Iarray.of_array rs)
+      ~dsts:(Iarray.of_array dsts) [| plain_of x |]
   in
-  let scan r x dsts = K.scan p ~axis:0 (r, 0) ~dsts [| plain_of x |] in
+  let scan r x dsts =
+    K.scan p ~axis:0 (r, 0) ~dsts:(Iarray.of_array dsts) [| plain_of x |]
+  in
   let i64 = D.Any D.Int64 in
   check "a sum along no axis" nans [| h |] (reduce [| (Monoid Sum, 0) |]);
   check "a running sum" nans [| h |] (scan (Monoid Sum));
@@ -3334,8 +3352,8 @@ let test_program_in_place (b : Support.backend) () =
   let pad = pad_v [| 1 |] [| 1 |] ~windows:[| window 0 3 |] in
   let one = "\000\060" in
   check "a sum of a padded load" numbers [| h |] (fun x dsts ->
-      K.reduce p ~shape:[| 3; 3 |] ~axes:[| 1 |] [| (Monoid Sum, 0) |] ~dsts
-        [| padded_load x one pad |])
+      K.reduce p ~shape:[| 3; 3 |] ~axes:[| 1 |] [| (Monoid Sum, 0) |]
+        ~dsts:(Iarray.of_array dsts) [| padded_load x one pad |])
 
 (* Several reductions of one loop: [c]'s and [red] of output [k], with
    [c]'s axes, one call. *)
@@ -3373,18 +3391,22 @@ let law_several (b : Support.backend) s =
   cover "a state and a monoid"
     ((match c.red with Monoid _ -> false | _ -> true)
     <> (match s.red2 with Monoid _ -> false | _ -> true));
-  let loads = loads_of c in
+  let loads = Iarray.of_array (loads_of c) in
+  let shape = Iarray.of_array c.shape in
   let alone red k =
     let d = dsts_of b c red k in
     let axes = Iarray.of_array c.axes in
-    (K.reduce c.prog ~shape:c.shape ~axes [| (red, k) |] ~dsts:d loads, d)
+    ( K.reduce c.prog ~shape ~axes [| (red, k) |] ~dsts:(Iarray.of_array d)
+        loads,
+      d )
   in
   let a1, w1 = alone c.red c.k and a2, w2 = alone s.red2 s.k2 in
   let d1 = dsts_of b c c.red c.k and d2 = dsts_of b c s.red2 s.k2 in
   let answer =
-    K.reduce c.prog ~shape:c.shape ~axes:(Iarray.of_array c.axes)
+    K.reduce c.prog ~shape ~axes:(Iarray.of_array c.axes)
       [| (c.red, c.k); (s.red2, s.k2) |]
-      ~dsts:(Array.append d1 d2) loads
+      ~dsts:(Iarray.of_array (Array.append d1 d2))
+      loads
   in
   (* The pair refuses as the first of them that refuses alone. *)
   let expected = if a1 <> A.Done then a1 else a2 in
@@ -3603,12 +3625,14 @@ let stat_answer k ~scan (c : stat) (D.Any d) x =
     | Moments -> [| make d; make d |]
     | Monoid _ | Logsumexp -> [| make d |]
   in
-  let p = identity (dtype_of x) and loads = [| plain_of x |] in
+  let p = identity (dtype_of x) and loads : _ iarray = [| plain_of x |] in
   let answer =
+    let dsts = Iarray.of_array dsts in
     if scan then K.scan p ~axis:c.axes.(0) (c.r, 0) ~dsts loads
     else
-      K.reduce p ~shape:(shape_of x) ~axes:(Iarray.of_array c.axes)
-        [| (c.r, 0) |] ~dsts loads
+      K.reduce p
+        ~shape:(Iarray.of_array (shape_of x))
+        ~axes:(Iarray.of_array c.axes) [| (c.r, 0) |] ~dsts loads
   in
   (answer, dsts)
 
@@ -3670,7 +3694,7 @@ let law_stat_into (b : Support.backend) { st = c; scan; into } =
    float32 holds, so each result is exact. *)
 let test_wide_loads (b : Support.backend) () =
   let module K = (val b.kernels) in
-  let f32 = D.Any D.Float32 and shape = [| 4; 3 |] in
+  let f32 = D.Any D.Float32 and shape : int iarray = [| 4; 3 |] in
   let x = A.of_array D.Float32 [| 4; 3 |] (Array.init 12 Float.of_int) in
   let y =
     Option.get
@@ -3686,7 +3710,7 @@ let test_wide_loads (b : Support.backend) () =
   let arrays = [| x; y; z |] in
   let at k i j = A.get arrays.(k mod 3) [| i; j |] in
   let wide nl =
-    let loads = Array.init nl (fun k -> Nx_kernel.Plain arrays.(k mod 3)) in
+    let loads = Iarray.init nl (fun k -> Nx_kernel.Plain arrays.(k mod 3)) in
     let ins = Iarray.init nl (fun _ -> f32) in
     let total ~outs =
       let nodes =
@@ -3744,9 +3768,9 @@ let test_wide_loads (b : Support.backend) () =
    load: each result has the bits of a call of few reductions. *)
 let test_many_reductions (b : Support.backend) () =
   let module K = (val b.kernels) in
-  let p = identity (D.Any D.Float32) and shape = [| 4; 3 |] in
+  let p = identity (D.Any D.Float32) and shape : int iarray = [| 4; 3 |] in
   let x =
-    A.of_array D.Float32 (Iarray.of_array shape)
+    A.of_array D.Float32 shape
       [| 1.; 5.; 2.; 0.5; 7.; 3.; 9.; 4.; 4.; 2.; 8.; 6. |]
   in
   let width : Nx_kernel.reduction -> int = function
@@ -3772,8 +3796,9 @@ let test_many_reductions (b : Support.backend) () =
     equal
       ~msg:(Printf.sprintf "%d reductions" n)
       Elements.answer A.Done
-      (K.reduce p ~shape ~axes:[| 1 |] (Array.make n (r, 0)) ~dsts
-         [| plain_of (A.Any x) |]);
+      (K.reduce p ~shape ~axes:[| 1 |]
+         (Iarray.init n (fun _ -> (r, 0)))
+         ~dsts:(Iarray.of_array dsts) [| plain_of (A.Any x) |]);
     Array.map bits dsts
   in
   let agree r few many =
@@ -3806,8 +3831,8 @@ let test_many_claims (b : Support.backend) () =
   let dsts () = Array.init 18 (fun _ -> A.Any (fresh ())) in
   let call dsts =
     K.reduce p ~shape:[| 4 |] ~axes:[||]
-      (Array.make 9 (Nx_kernel.Moments, 0))
-      ~dsts [| plain_of (A.Any x) |]
+      (Iarray.init 9 (fun _ -> (Nx_kernel.Moments, 0)))
+      ~dsts:(Iarray.of_array dsts) [| plain_of (A.Any x) |]
   in
   let values (A.Any d) = A.to_array (A.expect D.Float32 (A.Any d)) in
   let untouched msg ds =
@@ -3829,8 +3854,8 @@ let test_many_claims (b : Support.backend) () =
   ds.(0) <- A.Any x';
   equal ~msg:"the first destination as the load" Elements.answer A.Done
     (K.reduce p ~shape:[| 4 |] ~axes:[||]
-       (Array.make 9 (Nx_kernel.Moments, 0))
-       ~dsts:ds [| plain_of (A.Any x') |]);
+       (Iarray.init 9 (fun _ -> (Nx_kernel.Moments, 0)))
+       ~dsts:(Iarray.of_array ds) [| plain_of (A.Any x') |]);
   Array.iteri
     (fun i d ->
       equal ~msg:(Printf.sprintf "destination %d" i) (array float_exact)
