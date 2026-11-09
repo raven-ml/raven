@@ -2641,7 +2641,15 @@ let test_visible_is_mask () =
     let v = Nx.Rng.normal Nx.float32 [| batch; 2; columns; 3 |] in
     equal ~msg:name (array float_exact)
       (flat (Attention.attend ~mask:(captured m) q k v))
-      (flat (Attention.attend ~mask:(Cache_index.visible index) q k v))
+      (flat (Attention.attend ~mask:(Cache_index.visible index) q k v));
+    let compiled =
+      Rune.jit
+        Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+        (fun q k v -> Attention.attend ~mask:(Cache_index.visible index) q k v)
+    in
+    close ~msg:(name ^ ", compiled")
+      (Attention.attend ~mask:(Cache_index.visible index) q k v)
+      (compiled q k v)
   in
   List.iter agrees
     [
@@ -2659,6 +2667,162 @@ let test_visible_is_mask () =
       ("a draft", draft);
       ("a selection", selected);
     ]
+
+(* [visible]'s law against the reference it answers: which keys a query sees.
+   A state's columns stand at [(j + 1) m - 1] (a whole index at stride 1
+   instead has its tokens as columns, which see their own sequence); a query
+   sees the columns at or before its position, under a window only the last
+   [w] of them. *)
+
+type state = {
+  case : string;
+  index : Nx.host Cache_index.t;
+  context : int;
+  stride : int;
+  runs : bool;
+  window : int option;
+  pos : int array;  (** Each token's position, [-1] for padding. *)
+}
+
+(* A lane of [len] tokens padded on the left of [seq] positions. *)
+let left_padded ~seq len =
+  Array.init seq (fun i -> max (-1) (i - (seq - len)))
+
+let state_gen =
+  let open Gen in
+  let* batch = int_range 1 3 in
+  let lens n = array ~size:(constant batch) (int_range 0 n) in
+  let* kind = int_range 0 3 in
+  let* base =
+    match kind with
+    | 0 ->
+        let* context = int_range 1 9 in
+        let* ls = lens context in
+        let* blocks = bool in
+        let every = if blocks then [ 3 ] else [] in
+        let rows = Cache_index.rows ~every ~context ls in
+        let* advanced = bool in
+        let seq = Array.fold_left max 1 ls in
+        let index, pos =
+          if advanced then (Cache_index.advance rows, Array.map (fun l -> max 0 l) ls)
+          else
+            (rows, Array.concat (Array.to_list (Array.map (left_padded ~seq) ls)))
+        in
+        constant
+          ( (if advanced then "advanced rows" else "rows"),
+            (if blocks then Cache_index.every 3 index else index),
+            (if blocks then (context + 2) / 3 else context),
+            (if blocks then 3 else 1),
+            false,
+            pos )
+    | 1 ->
+        let* seq = int_range 1 9 in
+        let* ls = lens seq in
+        let index = Cache_index.whole ~lens:ls ~batch ~seq () in
+        let pos = Array.concat (Array.to_list (Array.map (left_padded ~seq) ls)) in
+        let* blocks = bool in
+        constant
+          (if blocks then
+             ("whole in blocks", Cache_index.every 2 index, (seq + 1) / 2, 2, false, pos)
+           else ("whole", index, seq, 1, true, pos))
+    | 2 ->
+        let* seq = int_range 1 9 in
+        let* cut = int_range 0 seq in
+        let* n = int_range 0 (seq - cut) in
+        let lane =
+          Array.concat
+            [
+              Array.make (seq - cut - n) (-1);
+              Array.init cut Fun.id;
+              Array.init n Fun.id;
+            ]
+        in
+        constant
+          ( "packed",
+            Cache_index.packed ~seq (Array.make batch [| cut; n |]),
+            seq,
+            1,
+            true,
+            Array.concat (List.init batch (fun _ -> lane)) )
+    | _ ->
+        let* context = int_range 1 9 in
+        let* seq = int_range 1 4 in
+        let* pos =
+          array ~size:(constant (batch * seq)) (int_range (-1) (context + 1))
+        in
+        let* offset = int_range 0 (context - 1) in
+        let tensor = Nx.create Nx.int64 [| batch; seq |] (Array.map Int64.of_int pos) in
+        (* A wrapped table: each lane's columns name a ring of slots. *)
+        let table =
+          Nx.create Nx.int64 [| batch; context |]
+            (Array.init (batch * context) (fun t ->
+                 let b = t / context and j = t mod context in
+                 Int64.of_int ((b * context) + ((j + offset) mod context))))
+        in
+        constant
+          ("wrapped table", Cache_index.make ~pos:tensor ~table (), context, 1, false, pos)
+  in
+  let case, index, context, stride, runs, pos = base in
+  let* w = option (int_range 1 4) in
+  let index =
+    match w with Some w -> Cache_index.window w index | None -> index
+  in
+  constant { case; index; context; stride; runs; window = w; pos }
+
+let pp_state ppf s =
+  Format.fprintf ppf "%s context %d stride %d window %s" s.case s.context
+    s.stride
+    (match s.window with None -> "none" | Some w -> string_of_int w)
+
+(* The pairs of [batch; 1; seq; context], as attention reads them. *)
+let grid ~batch ~seq ~context : Nx.host Nx.pair =
+  let at n shape =
+    Nx.reshape shape (Nx.create Nx.int64 [| n |] (Array.init n Int64.of_int))
+  in
+  {
+    q = at seq [| 1; 1; seq; 1 |];
+    k = at context [| 1; 1; 1; context |];
+    len = Nx.full Nx.int64 [| batch; 1; 1; 1 |] (Int64.of_int context);
+    tq = seq;
+  }
+
+let test_visible_law s =
+  cover s.case true;
+  cover "under a window" (s.window <> None);
+  cover "in blocks" (s.stride > 1);
+  let index = s.index in
+  let batch = Cache_index.batch index and seq = Cache_index.seq index in
+  let pos = s.pos in
+  let stand j = (j + 1) * s.stride - 1 in
+  let shape = [| batch; 1; seq; s.context |] in
+  let seen = Array.make (batch * seq * s.context) false in
+  for b = 0 to batch - 1 do
+    for i = 0 to seq - 1 do
+      let at x j = (((b * seq) + x) * s.context) + j in
+      let query = pos.((b * seq) + i) in
+      for j = 0 to s.context - 1 do
+        let key, related =
+          if not s.runs then (stand j, true)
+          else
+            (* The key is token [j] of the lane: visible if one sequence,
+               whose tokens start together, holds both. *)
+            let p = pos.((b * seq) + j) in
+            (p, p >= 0 && j - p = i - query)
+        in
+        seen.(at i j) <-
+          related && key >= 0 && key <= query
+          && (match s.window with
+             | None -> true
+             | Some w -> key > query - w)
+      done
+    done
+  done;
+  let p = grid ~batch ~seq ~context:s.context in
+  equal ~msg:"visible at each pair" (array bool) seen
+    (Nx.to_array (Nx.reshape shape (Cache_index.visible index p)));
+  (* The mask attention reads is the same one: the law holds through a call. *)
+  equal ~msg:"mask" (array bool) seen
+    (Nx.to_array (Nx.reshape shape (Cache_index.mask index)))
 
 (* Keys of another width than the index's context raise, through [visible]
    as through [mask]. *)
@@ -2965,6 +3129,9 @@ let () =
              test "a whole prompt matches causal apply"
                test_cached_prefill_matches_apply;
              test "visible is the mask read at each pair" test_visible_is_mask;
+             prop ~count:300 "visible is which keys a query sees"
+               (Gen.with_pp pp_state state_gen)
+               test_visible_law;
              test "visible checks the keys' width"
                test_visible_checks_the_keys;
              test "a whole index is causal apply and keeps nothing"

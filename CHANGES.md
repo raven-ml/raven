@@ -3247,6 +3247,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Cache_index.visible` reads each key's column from the attention's pair,
+  so a compiled attention skips the tiles a cache's causal mask hides: an
+  8-head, 4096-token prefill's attention takes 278 us on an RTX 5000 Ada,
+  down from 647.
 - `kaun` no longer links `nx.io`: a program that uses `Nx_io` names `nx.io` in
   its own libraries.
 - **Breaking:** `Kaun.Attention`'s attention is `Nx.attention`, one

@@ -380,29 +380,30 @@ let mask index =
       sees ?window ~keys:(Nx.reshape [| 1; 1; context |] keys) pos
 
 (* [mask] over an attention's pairs, [batch; heads; seq; context]. A program
-   reads the pair's query and arrays of [batch; 1; seq; 1], read at its lane
-   and token, and the columns' positions, [1; 1; 1; context], whose extent
-   checks the keys' width; nothing of [batch; seq; context] is stored. *)
+   reads the pair's key as its column, which a compiled attention bounds over
+   each tile of keys, and the tokens' positions, arrays of [batch; 1; seq; 1]
+   read at its lane and token; nothing of [batch; seq; context] is stored.
+   The broadcast to [context] columns checks the keys' width. *)
 let visible index =
   let pos = pos index and window = index.window in
   let rows t = Nx.reshape [| Nx.dim 0 t; 1; Nx.dim 1 t; 1 |] t in
-  let columns ~context keys = Nx.reshape [| 1; 1; 1; context |] keys in
+  let wide ~context m =
+    Nx.broadcast_to [| Nx.dim 0 pos; 1; Nx.dim 1 pos; context |] m
+  in
   match (index.columns, index.tokens, index.draft) with
   | None, (Whole _ | Packed _), _ when index.every = 1 ->
       (* A token's sequence is the run of tokens from where it starts, column
          [i - p] for token [i] at position [p], to itself: past itself for
          padding. Within a run, positions differ as columns do. *)
-      let start = rows (start pos) in
-      let context = seq index in
-      let keys = columns ~context (column ~like:pos ~context) in
+      let start = rows (start pos) and context = seq index in
       fun (p : _ Nx.pair) ->
-        Nx.logical_and (Nx.less_equal start keys) (within ?window ~keys p.q)
+        let seen = within ?window ~keys:p.k p.q in
+        wide ~context (Nx.logical_and (Nx.less_equal start p.k) seen)
   | None, _, None ->
       let query = rows pos and context = context index in
-      let keys =
-        columns ~context (stands ~every:index.every (column ~like:pos ~context))
-      in
-      fun _ -> within ?window ~keys query
+      let every = index.every in
+      fun (p : _ Nx.pair) ->
+        wide ~context (within ?window ~keys:(stands ~every p.k) query)
   | _ ->
       let m = mask index in
       let m = Nx.reshape [| Nx.dim 0 m; 1; Nx.dim 1 m; Nx.dim 2 m |] m in

@@ -335,7 +335,7 @@ val visible : 'd t -> 'd Nx.pair -> 'd Nx.bool_t
     selection: at a pair it holds where [mask index] holds at the pair's
     lane, token and column, whatever the heads. {!Attention.cached} attends
     under it. Without a selection or a {!draft} it reads the pair's
-    coordinates, the tokens' positions and the columns', so no array of
+    coordinates and the tokens' positions, so no array of
     [[| batch; seq; context |]] is stored; with one it reads [mask index].
     Either way the attention raises unless its keys are [context] wide, [k]
     under a selection, as {!extend}'s [seen] are. *)

@@ -508,6 +508,56 @@ let experts_layer =
     };
   ]
 
+(* Compiled attention of a prefill on the GPU under a cache index's mask: [n]
+   tokens at [hq] query heads over 8 key heads, bfloat16 in a float32
+   accumulator, 64 dimensions. A tile the mask hides is skipped and one it
+   shows runs without voting: the ranges of the positions along the rows of a
+   tile and of the columns along its keys class the causal mask, as for
+   [Nx.causal]. A regression that stops classing a mask, by reading a column
+   as data or a position as an unknown, makes the hidden half vote. *)
+let prefill ~hq ~n =
+  let setup () =
+    let module D = (val Nx.devices [ Lazy.force gpu ]) in
+    let at = D.on in
+    let draw seed shape =
+      Nx.place at
+        (Nx.cast Nx.bfloat16
+           (Nx.Rng.normal ~key:(Nx.Rng.key seed) Nx.float32 shape))
+    in
+    let q = draw 1 [| 1; hq; n; 64 |]
+    and k = draw 2 [| 1; 8; n; 64 |]
+    and v = draw 3 [| 1; 8; n; 64 |] in
+    let index = Cache_index.place at (Cache_index.rows ~context:n [| n |]) in
+    let f =
+      Rune.jit
+        Nx.Ptree.(
+          tensor @-> tensor @-> tensor @-> v Cache_index.walk @-> returns tensor)
+        (fun q k v index ->
+          let mask = Cache_index.visible index in
+          fst (Nx.attention ~mask ~acc:Nx.float32 ~kv:(Dense { k; v }) q))
+    in
+    let call () = ignore (Nx.item [ 0; 0; 0; 0 ] (f q k v index) : float) in
+    lowered "prefill attention" call;
+    call
+  in
+  {
+    name = Printf.sprintf "visible attention, %d/8 heads, %d tokens" hq n;
+    setup;
+  }
+
+let prefills () =
+  match List.find_opt opens [ "cuda"; "amd" ] with
+  | None -> []
+  | Some vendor ->
+      [
+        ( vendor,
+          [
+            prefill ~hq:8 ~n:2048;
+            prefill ~hq:8 ~n:4096;
+            prefill ~hq:64 ~n:512;
+          ] );
+      ]
+
 (* A GPU case times its calls only. A dropped GPU result returns to rig's cache
    once a major cycle finalises it, so whether a call's result takes cached
    memory or new memory from the driver, and the words that cost, follows the
@@ -523,7 +573,9 @@ let () =
   | [ _; "--warm" ] ->
       List.iter
         (fun c -> c.setup () ())
-        (gpt2 @ parallel @ experts_layer @ List.concat_map snd (quant ()))
+        (gpt2 @ parallel @ experts_layer
+        @ List.concat_map snd (quant ())
+        @ List.concat_map snd (prefills ()))
   | [ _; "--cuda" ] ->
       exit (if Result.is_ok (Rig.open_ (Rig_cuda.gpu 0)) then 0 else 1)
   | [ _; "--amd" ] ->
@@ -547,5 +599,10 @@ let () =
                  in
                  Thumper.group ?metrics name (List.map bench cases))
                (quant ()));
+          Thumper.group "Attention"
+            (List.map
+               (fun (name, cases) ->
+                 Thumper.group ~metrics:gpu_metrics name (List.map bench cases))
+               (prefills ()));
         ]
       |> exit
