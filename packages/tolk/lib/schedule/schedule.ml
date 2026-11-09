@@ -29,6 +29,9 @@ end
 
 (* Linearizing *)
 
+(* Whether the parameter [p] is a view of the storage {!Ops.whole} names. *)
+let is_view p = whole p != p
+
 (* The data source a kernel reads: a kernel's output or a buffer. *)
 let rec unwrap_src s =
   match (op s, src s) with
@@ -42,7 +45,7 @@ let rec unwrap_src s =
    dependencies. *)
 let rec state_of s =
   let s = unwrap_src s in
-  if is_join s then state_of (nth s 0) else s
+  if is_join s then state_of (nth s 0) else whole s
 
 let value_state s =
   let rec go deps s =
@@ -50,7 +53,7 @@ let value_state s =
     if is_join s then go (List.rev_append (List.tl (src s)) deps) (nth s 0)
     else
       match op s with
-      | Op.After | Op.Buffer | Op.Alloc | Op.Param -> (s, List.rev deps)
+      | Op.After | Op.Buffer | Op.Alloc | Op.Param -> (whole s, List.rev deps)
       | o ->
           invalid_arg
             (Format.asprintf "a kernel's input is a buffer state, not %a" Op.pp
@@ -209,11 +212,13 @@ let rec swap s c d =
     | (Op.After | Op.Buffer | Op.Alloc | Op.Param), _ | _, [] -> d
     | _, x :: rest -> replace d ~src:(swap s c x :: rest)
 
-(* [sink] with each kernel of [hazards], a list of a kernel and a state it
-   reads, reading a copy of the state through the arguments its calls do not
-   write. A loop whose call writes the state through one argument and reads it
-   through another copies it as each trip starts, in the loop; any other
-   kernel reads one copy, which a kernel of its own makes before it. *)
+(* [sink] with each kernel of [hazards], each a kernel, a state it reads and
+   whether the kernel writes over that state, reading a copy through the
+   arguments its calls do not write: of the state, or of its own run where it
+   reads through a view. A loop whose call writes the state through one
+   argument and reads it through another copies as each trip starts, in the
+   loop; any other kernel reads one copy, which a kernel of its own makes
+   before it. *)
 let copy_before_overwrites sink hazards =
   let slot = ref (next_slot sink) and copies = ref [] in
   let fresh s =
@@ -231,28 +236,48 @@ let copy_before_overwrites sink hazards =
         copies := (s, c) :: !copies;
         c
   in
-  let reread s x c =
+  (* [c] reading [state ()] for the state [s], and a view of it reading
+     [run] of the view: the body names no run of a copy of the whole state. *)
+  let reread s state run c =
     let w = Option.value (written_positions c) ~default:[] in
+    let read a =
+      let r = unwrap_src a in
+      if is_view r && state_of r == s then swap r (run r) a
+      else if state_of a == s then swap s (state ()) a
+      else a
+    in
     replace c
       ~src:
         (body c
-        :: List.mapi
-             (fun i a -> if List.mem i w then a else swap s x a)
+        :: List.mapi (fun i a -> if List.mem i w then a else read a)
              (List.tl (src c)))
   in
   let rebuilt =
     List.fold_left
-      (fun acc (k, s) ->
+      (fun acc (k, s, overwrites) ->
         let k' = Option.value (List.assq_opt k acc) ~default:k in
         let calls = calls_of k' in
         let calls =
           if
             is_loop k'
+            && overwrites
             && List.exists (fun c -> reads_written c s = Some true) calls
           then
-            let dst, c = fresh s in
-            c :: List.map (reread s dst) calls
-          else List.map (reread s (copy s)) calls
+            (* Each is copied once a trip, and only if a call reads it. *)
+            let trip = ref [] in
+            let per_trip u =
+              match List.assq_opt u !trip with
+              | Some (d, _) -> d
+              | None ->
+                  let d, c = fresh u in
+                  trip := (u, (d, c)) :: !trip;
+                  d
+            in
+            let calls =
+              List.map (reread s (fun () -> per_trip s) per_trip) calls
+            in
+            List.rev_map (fun (_, (_, c)) -> c) !trip @ calls
+          else List.map (reread s (fun () -> copy s) copy) calls
         in
         (k, with_calls k' calls) :: List.remove_assq k acc)
       [] hazards
@@ -442,7 +467,8 @@ let written_over u ks =
   let latest best c =
     List.fold_left
       (fun best a ->
-        if scalar_argument c a || is_bound_var a then best
+        if scalar_argument c a || is_bound_var a || is_view (unwrap_src a) then
+          best
         else
           let s = state_of a in
           if buf_uop s != storage then best
@@ -461,13 +487,13 @@ let written_over u ks =
 
 (* The relation
 
-   A kernel reads the states its arguments name, and writes the states the
-   Afters that list it are over. It runs after the kernels that write the
-   states it reads, and before the kernels of every write over them of which
-   it is no part, whichever elements each touches. Where these orders form a
-   cycle, no order runs every kernel at its place: one read on the cycle
-   reads instead a copy of its state, made before the state's overwrite, and
-   the cycle is gone.
+   A kernel reads the states its arguments name, a view of storage being its
+   storage's state, and writes the states the Afters that list it are over. It
+   runs after the kernels that write the states it reads, and before the
+   kernels of every write over them of which it is no part, whichever elements
+   each touches. Where these orders form a cycle, no order runs every kernel
+   at its place: one read on the cycle reads instead a copy of its state, made
+   before the state's overwrite, and the cycle is gone.
 
      a --write--> a'        b reads a, waits for c (through a'),
      b(a, c')               and c overwrites a: b -> c -> b
@@ -484,6 +510,35 @@ let written_over u ks =
 type war = { reader : t; state : t }
 
 let same_war a b = a.reader == b.reader && a.state == b.state
+
+(* Whether the kernel [k] stores into the state [s]. *)
+let writes_state k s =
+  List.exists
+    (fun c ->
+      match written_positions c with
+      | None -> true
+      | Some w -> List.exists (fun i -> List.mem i w) (positions c s))
+    (calls_of k)
+
+(* Whether the argument [a] at position [i] of the call [c] is a view [c]
+   stores through: it names its storage and no state [c] reads. *)
+let stored_view c i a =
+  is_view (unwrap_src a)
+  &&
+  match written_positions c with Some w -> List.mem i w | None -> false
+
+(* Whether the kernel [k] stores into the storage [storage]. *)
+let stores_into k storage =
+  let into c =
+    match written_positions c with
+    | None -> false
+    | Some w ->
+        let args = src_without_body c in
+        List.exists
+          (fun i -> whole (storage_base (List.nth args i)) == storage)
+          w
+  in
+  List.exists into (calls_of k)
 
 (* What a copy of the state [s] costs: storage that cannot be copied last,
    then the bytes, none for a state copied already. *)
@@ -602,14 +657,12 @@ let waits_under st own =
    so that a schedule kept on disk reads back the same. *)
 
 (* [scheduled] tagging each call of a kernel of a write marked disjoint in
-   [sink] with that write's number and the state's position. A kernel of one
-   write stores only into that write's state: each position it writes holds
-   it, a view of it that the call's arguments may have lifted into a parameter
-   of its own included. A kernel several writes list stores into each: only
-   an argument of its state's storage is known to be it. A kernel that is a
-   loop of calls takes no tag: its calls then join by their bytes alone. *)
+   [sink] with that write's number and the state's position: each position it
+   writes of the state's storage, directly or through a view of it. A kernel
+   that is a loop of calls takes no tag: its calls then join by their bytes
+   alone. *)
 let marked_entry nodes =
-  let lists = Tbl.create 16 and marks = Tbl.create 16 and count = ref 0 in
+  let marks = Tbl.create 16 and count = ref 0 in
   let push tbl k x =
     Tbl.replace tbl k (x :: Option.value (Tbl.find_opt tbl k) ~default:[])
   in
@@ -617,10 +670,9 @@ let marked_entry nodes =
     (fun u ->
       if op u = Op.After && not (is_join u) then begin
         let kernels = fst (split_after u) in
-        List.iter (fun k -> push lists k u) kernels;
         if is_disjoint u then begin
           incr count;
-          let number = !count and state = storage_base u in
+          let number = !count and state = whole (storage_base u) in
           List.iter (fun k -> push marks k (number, state)) kernels
         end
       end)
@@ -631,10 +683,9 @@ let marked_entry nodes =
     | Op.Call, Call info, Some marks ->
         let written = Option.value (written_positions c) ~default:[] in
         let args = src_without_body c in
-        let alone = List.length (Tbl.find lists rk) = 1 in
         let positions state =
           List.filter
-            (fun i -> alone || storage_base (List.nth args i) == state)
+            (fun i -> whole (storage_base (List.nth args i)) == state)
             written
         in
         let write =
@@ -648,6 +699,23 @@ let marked_entry nodes =
 
 let tagged nodes =
   if List.exists is_disjoint nodes then marked_entry nodes else scheduled
+
+(* The kernels of a write in the order its After lists them, a kernel listed
+   twice at its last place: a store landing twice leaves what its last landing
+   left. *)
+let rec landing = function
+  | [] -> []
+  | k :: rest -> if List.memq k rest then landing rest else k :: landing rest
+
+(* Whether the kernel [k] reads the state [s] through an argument its calls do
+   not write. *)
+let reads_elsewhere k s =
+  List.exists
+    (fun c ->
+      match written_positions c with
+      | None -> false
+      | Some w -> List.exists (fun i -> not (List.mem i w)) (positions c s))
+    (calls_of k)
 
 let rec schedule ~by_storage ~copies sched_sink =
   (* The graph of kernels: edges go from a kernel to those that must run after
@@ -664,6 +732,9 @@ let rec schedule ~by_storage ~copies sched_sink =
   (* Each written state with the kernels that write over it, and each read of
      a state by a kernel, last first. *)
   let writes = Tbl.create 64 and reads = ref [] and seen = Tbl.create 16 in
+  (* The states all of whose writes so far are through views, and those a
+     marked write is over. *)
+  let viewed = ref [] and marked = ref [] in
   (* The kernels a reader of [x] waits for: the writers of the state it reads,
      what each join on the way to it waits for, and what the state under it
      waits for. A writer given that state waits for it already; one given
@@ -684,6 +755,22 @@ let rec schedule ~by_storage ~copies sched_sink =
         Tbl.replace waited x w;
         w
   in
+  (* No storage holds two successors of one state. Writes of one state of
+     which at most one is over the whole of it are one write, in any listing,
+     each keeping to its run. *)
+  let add_write ~whole prev fresh =
+    match Tbl.find_opt writes prev with
+    | Some ks when not (List.equal ( == ) ks fresh) ->
+        if whole && not (List.memq prev !viewed) then
+          invalid_arg
+            (Format.asprintf "two writes over one state of %a" pp (buf_uop prev));
+        if whole then viewed := List.filter (( != ) prev) !viewed;
+        Tbl.replace writes prev (dedup_nodes (ks @ fresh))
+    | Some _ -> ()
+    | None ->
+        if not whole then viewed := prev :: !viewed;
+        Tbl.replace writes prev fresh
+  in
   List.iter
     (fun u ->
       if op u = Op.After && not (is_join u) then begin
@@ -698,16 +785,13 @@ let rec schedule ~by_storage ~copies sched_sink =
             List.filter (fun k -> not (older k)) kernels
           else kernels
         in
-        if fresh <> [] then begin
-          let prev = written_over u fresh in
-          (* No storage holds two successors of one state. *)
-          match Tbl.find_opt writes prev with
-          | Some ks when not (List.equal ( == ) ks fresh) ->
-              invalid_arg
-                (Format.asprintf "two writes over one state of %a" pp
-                   (buf_uop prev))
-          | _ -> Tbl.replace writes prev fresh
-        end;
+        (* The state [fresh] write over. *)
+        let prior = if fresh = [] then None else Some (written_over u fresh) in
+        (match prior with
+        | None -> ()
+        | Some prev ->
+            add_write ~whole:(not (is_view (unwrap_src (nth u 0)))) prev fresh;
+            if is_disjoint u then marked := prev :: !marked);
         List.iter
           (fun k ->
             if Ordered.find_opt in_degree k = None then
@@ -715,8 +799,9 @@ let rec schedule ~by_storage ~copies sched_sink =
             let kernel_deps =
               List.concat_map
                 (fun call ->
-                  List.filter
-                    (fun s -> not (scalar_argument call s))
+                  List.filteri
+                    (fun i s ->
+                      not (scalar_argument call s || stored_view call i s))
                     (List.tl (src call)))
                 (calls_of k)
             in
@@ -730,27 +815,58 @@ let rec schedule ~by_storage ~copies sched_sink =
             (* Read after write: a kernel runs after the kernels that wrote
                the states it reads, and those its after waits for. *)
             List.iter (fun t -> add_child t k)
-              (List.concat_map waits (read_deps @ after_deps)))
-          kernels
+              (List.concat_map waits (read_deps @ after_deps));
+            (* A kernel of a write that stores through a view of the storage
+               and is not given the state written over still follows that
+               state's writers. *)
+            match prior with
+            | Some prev
+              when op prev = Op.After && List.memq k fresh
+                   && stores_into k (whole storage)
+                   && not (given_state prev k) ->
+                List.iter (fun t -> if t != k then add_child t k) (waits prev)
+            | _ -> ())
+          kernels;
+        (* An unmarked After lists its kernels in the order they land. *)
+        match fresh with
+        | _ :: _ :: _ when not (is_disjoint u) ->
+            let rec order = function
+              | a :: (b :: _ as rest) ->
+                  add_child a b;
+                  order rest
+              | _ -> ()
+            in
+            order (landing fresh)
+        | _ -> ()
       end)
     nodes;
   (* Write after read: a kernel reading a state runs before every write over
-     it of which it is no part. The kernels of one write run in any order, as
-     the stores of an assembly's regions do, whichever Afters list each: a
-     kernel storing into [p] and [q] reads [q] as the store it makes there,
-     beside the write's other kernels. A kernel writing the state it reads
-     through another argument runs before itself, a cycle of one kernel. *)
+     it of which it is no part. Its part is a write of that one kernel, or, in
+     a write of several, a kernel storing into the state that reads it only
+     through the argument it stores through, or that is marked: a kernel
+     storing into [p] and [q] reads [q] as the store it makes there. Any other
+     kernel of a write reads the state as a reader beside it does, before the
+     write's other kernels. A kernel writing the state it reads through
+     another argument runs before itself, a cycle of one kernel. *)
   List.iter
     (fun (k, s) ->
       match Tbl.find_opt writes s with
       | None -> ()
       | Some write_kernels ->
           let war = { reader = k; state = s } in
-          if List.memq k write_kernels then begin
-            if List.exists (fun c -> aliases c s) (calls_of k) then
-              add_child ~war k k
-          end
-          else List.iter (fun t -> add_child ~war k t) write_kernels)
+          let alone = match write_kernels with [ _ ] -> true | _ -> false in
+          let own =
+            List.memq k write_kernels && (alone || writes_state k s)
+          in
+          if own && List.exists (fun c -> aliases c s) (calls_of k) then
+            add_child ~war k k;
+          let exempt =
+            own && (alone || List.memq s !marked || not (reads_elsewhere k s))
+          in
+          if not exempt then
+            List.iter
+              (fun t -> if t != k then add_child ~war k t)
+              write_kernels)
     (List.rev !reads);
   let order = List.rev in_degree.Ordered.keys in
   let entry = tagged nodes in
@@ -760,9 +876,14 @@ let rec schedule ~by_storage ~copies sched_sink =
       match cuts ~copies ~order (List.rev !edges) with
       | [] -> invalid_arg "cycle detected in assign graph"
       | cut ->
+          let overwrites w =
+            match Tbl.find_opt writes w.state with
+            | Some ks -> List.memq w.reader ks
+            | None -> false
+          in
           schedule ~by_storage ~copies:false
             (copy_before_overwrites sched_sink
-               (List.map (fun w -> (w.reader, w.state)) cut)))
+               (List.map (fun w -> (w.reader, w.state, overwrites w)) cut)))
 
 let create_schedule ?(by_storage = false) sched_sink =
   schedule ~by_storage ~copies:true sched_sink
@@ -1214,6 +1335,7 @@ type callify_ctx = {
   views : unit Tbl.t;
   mutable stores : t list; (* Last first. *)
   written : unit Tbl.t; (* The buffers the call's stores write. *)
+  params : t Tbl.t; (* The parameter of each storage. *)
 }
 
 let callify_ctx () =
@@ -1223,6 +1345,7 @@ let callify_ctx () =
     views = Tbl.create 8;
     stores = [];
     written = Tbl.create 8;
+    params = Tbl.create 8;
   }
 
 let all_int shape =
@@ -1335,6 +1458,24 @@ let replace_input_buffer ctx b =
   ctx.replacements <- b :: ctx.replacements;
   param_like b (List.length ctx.replacements - 1)
 
+(* The parameter for the storage [b] of the call, one per storage. *)
+let storage_param ctx b =
+  match Tbl.find_opt ctx.params b with
+  | Some p -> p
+  | None ->
+      let p = replace_input_buffer ctx b in
+      Tbl.replace ctx.params b p;
+      p
+
+(* The parameter for the view [b] of storage: its own slot, for the kernels'
+   programs to be one wherever the view starts, and its storage's parameter
+   beside its size, so that every use names one storage whichever view it
+   goes through. *)
+let view_param ctx b =
+  let whole = storage_param ctx (storage_base b) in
+  let p = replace_input_buffer ctx b in
+  replace p ~src:(src p @ [ whole ])
+
 (* Bound variables become parameters without their value, so that different
    values hit the same cache entry, and a name bound to several values takes a
    parameter for each. *)
@@ -1415,16 +1556,14 @@ let pm_replace_buf =
          variables are scalar parameters and do not match. *)
       rule_ctx (Upat.op Op.Buffer ~name:"b") (fun ctx m ->
           let b = m "b" in
-          if addrspace b = Some Dtype.Global then
-            Some (replace_input_buffer ctx b)
+          if addrspace b = Some Dtype.Global then Some (storage_param ctx b)
           else None);
       (* So do the views of buffers found above. *)
       rule_ctx
         (Upat.v ~op:(ops Op.[ Shrink; Bitcast ]) ~name:"b" ())
         (fun ctx m ->
           let b = m "b" in
-          if Tbl.mem ctx.views b then Some (replace_input_buffer ctx b)
-          else None);
+          if Tbl.mem ctx.views b then Some (view_param ctx b) else None);
     ])
 
 let transform_to_call big_sink =

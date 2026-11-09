@@ -2997,12 +2997,14 @@ let symbolic =
                    [ end_ (after (v Op.Noop) [ nth y 0 ]) (List.tl (src y)) ]
                  else src y
                in
-               Some
-                 (replace x
-                    ~src:
-                      (nth x 0
-                      :: dedup_nodes
-                           (List.concat_map deps (List.tl (src x))))));
+               let all = List.concat_map deps (List.tl (src x)) in
+               (* A store listed twice lands at its last place. *)
+               let kept =
+                 if List.exists (fun y -> op y = Op.Store) all then
+                   List.rev (dedup_nodes (List.rev all))
+                 else dedup_nodes all
+               in
+               Some (replace x ~src:(nth x 0 :: kept)));
            (* after/end with 1 src is just src[0] *)
            rule
              (Upat.v ~op:(ops [ Op.After; Op.End ]) ~src:[ Upat.var "s" ] ())

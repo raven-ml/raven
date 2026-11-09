@@ -861,6 +861,13 @@ let read_across_before () =
   let b = Ops.replace ~src:[ copy_kernel; z; x; Ops.after x [ a ] ] copy_call in
   keeps (Ops.sink [ Ops.after x [ a ]; Ops.after z [ b ] ])
 
+(* [r], listed under [x]'s write beside [a], reads [x] without storing into
+   it: it reads [x] as it was, so it runs before [a]. *)
+let read_in_write order () =
+  let a = copies ~into:x ~from:y in
+  let r = copies ~into:z ~from:x in
+  keeps (Ops.sink [ Ops.after x (order [ a; r ]); Ops.after z [ r ] ])
+
 (* Two kernels read [x] as it was and wait for its overwrite: both read one
    copy. *)
 let read_by_two () =
@@ -1090,6 +1097,12 @@ let ordering =
         read_across;
       test "a kernel reading storage before and after a write reads it before"
         read_across_before;
+      test "a kernel of a write that reads its state and stores elsewhere reads \
+            it as it was"
+        (read_in_write Fun.id);
+      test "a kernel of a write that reads its state, listed first, reads it as \
+            it was"
+        (read_in_write List.rev);
       test "two kernels that wait for the overwrite of a state read one copy"
         read_by_two;
       test "a kernel that waits for the overwrites of two states reads both"
@@ -3589,6 +3602,15 @@ let graph ws =
      else [])
     @ if Ops.is_join s then List.concat_map waits (Ops.src s) else []
   in
+  (* The kernel listed next after [k] in its write, whichever Afters list it:
+     a write lands its kernels in the order listed. *)
+  let listed_next k =
+    let rec next = function
+      | a :: (b :: _ as rest) -> if a == k then [ b ] else next rest
+      | _ -> []
+    in
+    List.concat_map (fun (made, _) -> next made) !writes
+  in
   (* Edges from a kernel to those that must run after it. *)
   let succ (k, curs, read) =
     let war =
@@ -3602,7 +3624,9 @@ let graph ws =
         read
     in
     let own = List.exists (fun s -> List.memq (value s) curs) read in
-    war @ (if own then [ k ] else [])
+    war
+    @ (if own then [ k ] else [])
+    @ listed_next k
     @ List.filter_map
         (fun (t, curs', read') ->
           if List.exists (fun s -> List.memq k (waits s)) (curs' @ read') then
@@ -3637,6 +3661,30 @@ let copy_iff_cycle =
            ws);
       equal bool ~msg:"a copy" cycle (allocs <> []);
       keeps kg)
+
+(* A write's listing makes a cycle no other edge does: the first kernel listed
+   waits for the overwrite of a state the second reads. The law's generator
+   makes this shape about once in 9,000 graphs, so this case pins it: every
+   other cycle through a listing already has an edge from the first kernel
+   past the second, since a reader of the write's state waits for all its
+   kernels, and a kernel reading its own target is a cycle of one. *)
+let listing_cycle () =
+  let kg, cycle =
+    graph
+      [
+        ([ 2 ], [ ((1, 0, None), None) ]);
+        ( [ 0 ],
+          [ ((1, 0, Some 2), Some (1, 0, None)); ((2, 1, None), None) ] );
+      ]
+  in
+  let allocs =
+    List.filter
+      (fun n -> Ops.op n = Alloc)
+      (Ops.toposort ~calls:Skip (Schedule.create_schedule kg))
+  in
+  equal bool ~msg:"a cycle" true cycle;
+  equal bool ~msg:"a copy" true (allocs <> []);
+  keeps kg
 
 (* Repros
 
@@ -4089,5 +4137,10 @@ let () =
          boundary;
          group "create_linear_with_vars › laws" [ values_law ];
          group "create_schedule › laws" [ copy_iff_cycle ];
+         group "create_schedule › a write's listing"
+           [
+             test "the order of a write's kernels can force a copy"
+               listing_cycle;
+           ];
          repro_tests;
        ])

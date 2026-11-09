@@ -610,6 +610,62 @@ let materialize_cross_device_src dest src =
   then None
   else Some (store dest (contiguous src))
 
+(* Whether [u] is a stage no pass removes. *)
+let kept_stage u =
+  match (op u, arg u) with
+  | Op.Stage, Bufferize { keep = Whole; _ } -> true
+  | _ -> false
+
+(* An unmarked After lands its stores in the order it lists them, each reading
+   the states the graph names, older states as they were. A store listed twice
+   lands at its last place. A store that reads a state of the storage it writes,
+   where an earlier effect of the listing writes that storage, reads a stage of
+   its value, made before the write begins, so that what landed before it does
+   not show through. An effect other than a store writes the After's storage.
+   Nothing removes that stage: a store of a storage's elements into themselves
+   restores what an earlier store overwrote. *)
+let stage_listed u =
+  match src u with
+  | b :: (_ :: _ :: _ as deps)
+    when (not (is_disjoint u)) && List.exists (fun s -> op s = Op.Store) deps
+    -> (
+      let storage_of s = whole (storage_base (nth s 0)) in
+      let written s = if op s = Op.Store then storage_of s else storage_of u in
+      let reads_storage s =
+        let storage = storage_of s in
+        let walked r = op r <> Op.After || whole (storage_base r) == storage in
+        Ops.reaches ~gate:walked ~calls:Skip (nth s 1) storage
+      in
+      let stage earlier s =
+        if op s <> Op.Store then s
+        else
+          let value = nth s 1 in
+          if
+            kept_stage value
+            || (not (List.memq (storage_of s) earlier))
+            || not (reads_storage s)
+          then s
+          else
+            let opts =
+              { device = device value; addrspace = Dtype.Global; keep = Whole }
+            in
+            let staged = v Op.Stage ~src:[ value ] ~arg:(Bufferize opts) in
+            replace s ~src:(nth s 0 :: staged :: List.tl (List.tl (src s)))
+      in
+      match List.rev (dedup_nodes (List.rev deps)) with
+      | first :: later ->
+          let earlier = ref [ written first ] in
+          let staged s =
+            let s' = stage !earlier s in
+            earlier := written s :: !earlier;
+            s'
+          in
+          let deps' = first :: List.map staged later in
+          if List.equal ( == ) deps deps' then None
+          else Some (replace u ~src:(b :: deps'))
+      | [] -> None)
+  | _ -> None
+
 let pm_inline_calls =
   Pattern_matcher.v
     (fun () -> [
@@ -618,6 +674,7 @@ let pm_inline_calls =
         (Upat.op Op.After ~allow_any_len:true
            ~src:[ Upat.var "r"; Upat.op Op.Sink ~name:"t" ])
         (fun m -> resolve_returned_after (m "r") (m "t"));
+      rule (Upat.op Op.After ~name:"u") (fun m -> stage_listed (m "u"));
     ])
 
 let pm_disk_copy =
@@ -698,8 +755,10 @@ let earliest_rewrites =
            (Upat.op Op.Stage ~name:"stg" ~src:[ var "x" ])
            (fun m ->
              let x = m "x" in
-             if has_buffer_identity ~after_ok:true x || op x = Op.Copy then
-               Some x
+             if
+               (not (kept_stage (m "stg")))
+               && (has_buffer_identity ~after_ok:true x || op x = Op.Copy)
+             then Some x
              else None);
          (* Any other stage in global memory stores into new call-local
             storage on the same device. *)

@@ -1104,6 +1104,14 @@ word comes from its lock and from samples the dashboard saw arrive.
 - A cast from a double to half rounds once on the CPU: `1 + 2^-11 + 2^-40`
   is `1 + 2^-10`, and `65520 - 2^-20` is `65504`, where the cast through a
   float32 gave `1` and infinity.
+- `Ops.after` lands the stores it lists in that order, each reading the states
+  the graph names and older states as they were, so a later store wins where
+  stores overlap: `after x [store (x 0..5) 1; store (x 3..8) 2]` holds 2 at 3.
+  A store into a run of a buffer no longer lets a reader of the buffer as it
+  was read the store's value (`x[1:6] = 7` beside `y[:5] = x[1:6]`).
+  `Ops.after_disjoint` keeps any order, on its promise that its stores write
+  disjoint elements and read none another writes. An element two `Ops.after`s
+  over views of one state both write holds an unspecified value.
 - CUDA kernels that copy `bfloat16` before sm_80, OCP 8-bit floats before
   sm_89, or fnuz 8-bit floats on any GPU compile: the copy moves vectors of the
   emulated float's storage, which `Cstyle.cuda` now declares.

@@ -578,9 +578,471 @@ let past_the_cap () =
     (written "CUDA" big (apart linear, vars))
     (written "CUDA" big (linear, vars))
 
+(* States read as they were
+
+   A kernel of one write, or a kernel beside a write, that reads a state reads
+   it as it was: run on the host, each program leaves the values the states
+   it names hold. *)
+
+let part lo hi u = Shape.shrink u [ Some (Int lo, Int hi) ]
+let flip u = Shape.flip u [ 0 ]
+let fl = Ops.float
+let f32 ~n slot = Ops.new_buffer ~slot "CPU" n Float32
+
+(* [j] at element [j] of the buffer of slot 0, [10 j] at slot 1. *)
+let start (p : Ops.param_arg) j =
+  `Float (float_of_int (j * if p.slot = 0 then 1 else 10))
+
+(* Every element of [big]'s buffers after its schedule runs on the host, in
+   slot order. *)
+let finals big =
+  let d = device "CPU" in
+  let linear, vars =
+    Setting.context [ B (Setting.scache, 0) ] (fun () ->
+        Schedule.create_linear_with_vars big)
+  in
+  let compiled = compiled "CPU" linear in
+  let bufs =
+    List.map
+      (fun (n, (p : Ops.param_arg)) ->
+        (p, Run.buffer d p.dtype (Array.init (Shape.max_numel n) (start p))))
+      (storage big)
+  in
+  let bound =
+    List.map2 (fun (n, _) (_, b) -> (n, b)) (storage big) bufs
+  in
+  Engine.run ~vars (Engine.link ~devices:(fun _ -> d) ~bound compiled) [||];
+  let bufs =
+    List.sort (fun ((p : Ops.param_arg), _) (q, _) -> compare p.slot q.slot) bufs
+  in
+  List.concat_map
+    (fun ((p : Ops.param_arg), b) -> Array.to_list (Run.values p.dtype b))
+    bufs
+
+let close = Testable.float_rel ~rel:1e-6 ~abs:0.
+
+let holds big expected =
+  equal (list close) expected
+    (List.map
+       (function `Float x -> x | _ -> failf "a float")
+       (finals (Ops.sink big)))
+
+(* [x] holding 0 to 11, [10, 12) reversed from [8, 10) as it was, and [8, 10)
+   overwritten by the write's other store. *)
+let sibling_stores x =
+  [
+    Ops.store (part 10 12 x) (flip (part 8 10 x));
+    Ops.store (part 8 10 x) (fl 5.);
+  ]
+
+let sibling_read order () =
+  let x = f32 ~n:12 0 in
+  holds
+    [ Ops.after x (order (sibling_stores x)) ]
+    [ 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7.; 5.; 5.; 9.; 8. ]
+
+(* The stores of [sibling_read]'s kind under a later write of [x], which alone
+   the sink names. *)
+let chained_read order () =
+  let x = f32 ~n:12 0 in
+  let x1 =
+    Ops.after x
+      (order
+         [
+           Ops.store (part 0 2 x) (fl 5.);
+           Ops.store (part 2 4 x) Ops.O.(part 0 2 x + fl 1.);
+         ])
+  in
+  holds
+    [ Ops.after x1 [ Ops.store (part 8 10 x1) (fl 9.) ] ]
+    [ 5.; 5.; 1.; 2.; 4.; 5.; 6.; 7.; 9.; 9.; 10.; 11. ]
+
+(* As [chained_read], the later write over [x] itself, its destination a run
+   of the first write's state: only that destination reaches the first
+   write. *)
+let read_under_destination () =
+  let x = f32 ~n:12 0 in
+  let x1 =
+    Ops.after x
+      [
+        Ops.store (part 0 2 x) (fl 5.);
+        Ops.store (part 2 4 x) Ops.O.(part 0 2 x + fl 1.);
+      ]
+  in
+  holds
+    [ Ops.after x [ Ops.store (part 8 10 x1) (fl 9.) ] ]
+    [ 5.; 5.; 1.; 2.; 4.; 5.; 6.; 7.; 9.; 9.; 10.; 11. ]
+
+(* A join over the view a store writes reads the state under it: [x] as it
+   was, once [y] is stored. *)
+let read_join_of_view order () =
+  let x = f32 ~n:8 0 and y = f32 ~n:8 1 and z = f32 ~n:5 2 in
+  let v = part 1 6 x in
+  let x' = Ops.after x [ Ops.store v (fl 7.) ] in
+  let y' = Ops.after y [ Ops.store y (fl 2.) ] in
+  let z' = Ops.after z [ Ops.store z (Ops.after v [ y' ]) ] in
+  holds
+    (order [ x'; y'; z' ])
+    ([ 0.; 7.; 7.; 7.; 7.; 7.; 6.; 7. ]
+    @ List.init 8 (fun _ -> 2.)
+    @ [ 1.; 2.; 3.; 4.; 5. ])
+
+(* Two stores in a chain, the second into a run of the buffer as it was, that
+   run read elsewhere as it was: the second writes over the first's state. *)
+let store_over_state_read () =
+  let x = f32 ~n:12 0 and y = f32 ~n:2 1 in
+  let a = Ops.after x [ Ops.store (part 0 2 x) (fl 1.) ] in
+  let b = Ops.after a [ Ops.store (part 8 10 x) (fl 2.) ] in
+  let y' = Ops.after y [ Ops.store y (part 8 10 x) ] in
+  holds [ b; y' ]
+    [ 1.; 1.; 2.; 3.; 4.; 5.; 6.; 7.; 2.; 2.; 10.; 11.; 8.; 9. ]
+
+(* An After over a view names that view's state, and a reader of the view as
+   it was runs before the write. *)
+let read_view_after_over order () =
+  let x = f32 ~n:8 0 and y = f32 ~n:5 1 in
+  let v = part 1 6 x in
+  let x' = Ops.after v [ Ops.store v (fl 7.) ] in
+  let y' = Ops.after y [ Ops.store y v ] in
+  holds (order [ x'; y' ])
+    [ 0.; 7.; 7.; 7.; 7.; 7.; 6.; 7.; 1.; 2.; 3.; 4.; 5. ]
+
+(* A store into a run and a reader of it that share a computed value, which
+   could run in one kernel over one loop: the reader reads the run as it was. *)
+let read_sharing_value order () =
+  let x = f32 ~n:8 0 and w = f32 ~n:5 1 and y = f32 ~n:5 2 in
+  let v = part 1 6 x in
+  let twice = Ops.O.(w * fl 2.) in
+  let x' = Ops.after x [ Ops.store v twice ] in
+  let y' = Ops.after y [ Ops.store y Ops.O.(v + twice) ] in
+  (* [w] is 0 10 20 30 40, doubled 0 20 40 60 80. *)
+  holds
+    (order [ x'; y' ])
+    ([ 0.; 0.; 20.; 40.; 60.; 80.; 6.; 7. ]
+    @ [ 0.; 10.; 20.; 30.; 40. ]
+    @ [ 1.; 22.; 43.; 64.; 85. ])
+
+(* A store of a run reversed, then a store over that run, the state between
+   read: the reversal stages what it overwrites. *)
+let reversed_then_stored () =
+  let x = f32 ~n:8 0 and z = f32 ~n:5 1 in
+  let v = part 1 6 x in
+  let a = Ops.after x [ Ops.store v (flip v) ] in
+  let b = Ops.after a [ Ops.store v (fl 5.) ] in
+  let z' = Ops.after z [ Ops.store z (part 1 6 a) ] in
+  holds [ b; z' ]
+    [ 0.; 5.; 5.; 5.; 5.; 5.; 6.; 7.; 5.; 4.; 3.; 2.; 1. ]
+
+(* A reader of a run that also waits for the store into it reads a copy of
+   the run as it was. *)
+let read_view_waiting () =
+  let x = f32 ~n:8 0 and y = f32 ~n:5 1 in
+  let v = part 1 6 x in
+  let x' = Ops.after x [ Ops.store v (fl 7.) ] in
+  let y' = Ops.after y [ Ops.store y Ops.O.(v + part 1 6 x') ] in
+  let copies = Schedule.copies () in
+  holds [ x'; y' ]
+    [ 0.; 7.; 7.; 7.; 7.; 7.; 6.; 7.; 8.; 9.; 10.; 11.; 12. ];
+  at_least int ~msg:"copies" ~than:(copies + 1) (Schedule.copies ())
+
+(* Each store reads only its own elements. *)
+let own_elements () =
+  let x = f32 ~n:4 0 in
+  let bump lo hi = Ops.store (part lo hi x) Ops.O.(part lo hi x + fl 1.) in
+  let copies = Schedule.copies () in
+  holds [ Ops.after x [ bump 0 2; bump 2 4 ] ] [ 1.; 2.; 3.; 4. ];
+  equal int ~msg:"copies" copies (Schedule.copies ())
+
+(* Each store reads the elements the other writes. *)
+let crossed_reads () =
+  let x = f32 ~n:4 0 in
+  holds
+    [
+      Ops.after x
+        [
+          Ops.store (part 0 2 x) (part 2 4 x);
+          Ops.store (part 2 4 x) (part 0 2 x);
+        ];
+    ]
+    [ 2.; 3.; 0.; 1. ]
+
+(* [x] holding 0 to 7 written through a run of it, and that run of [x] as it
+   was stored into [y]. *)
+let view_read rd order () =
+  let x = f32 ~n:8 0 and y = f32 ~n:8 1 in
+  let x' = Ops.after x [ Ops.store (part 1 6 x) (fl 7.) ] in
+  let lo, hi = rd in
+  let y' = Ops.after y [ Ops.store (part 0 (hi - lo) y) (part lo hi x) ] in
+  let tail = List.init (8 - (hi - lo)) (fun j -> float_of_int ((hi - lo + j) * 10)) in
+  holds
+    (order [ x'; y' ])
+    ([ 0.; 7.; 7.; 7.; 7.; 7.; 6.; 7. ]
+    @ List.init (hi - lo) (fun j -> float_of_int (lo + j))
+    @ tail)
+
+(* A store through a later state of the buffer, and a reader of the first of
+   its runs as it was. *)
+let chained_view order () =
+  let x = f32 ~n:8 0 and y = f32 ~n:5 1 in
+  let a = Ops.after x [ Ops.store (part 1 6 x) (fl 7.) ] in
+  let b = Ops.after a [ Ops.store (part 3 8 x) (fl 8.) ] in
+  let y' = Ops.after y [ Ops.store y (part 1 6 x) ] in
+  holds (order [ b; y' ])
+    ([ 0.; 7.; 7.; 8.; 8.; 8.; 8.; 8. ] @ [ 1.; 2.; 3.; 4.; 5. ])
+
+(* A store through a later state sharing a value with a reader of the first
+   state, through a run the store does not name. *)
+let chained_share order () =
+  let x = f32 ~n:8 0 and y = f32 ~n:4 1 and w = f32 ~n:4 2 in
+  let twice = Ops.O.(w * fl 2.) in
+  let a = Ops.after x [ Ops.store (part 0 4 x) (fl 7.) ] in
+  let b = Ops.after a [ Ops.store (part 2 6 x) twice ] in
+  let y' = Ops.after y [ Ops.store y Ops.O.(part 0 4 x + twice) ] in
+  (* [w] is 0 10 20 30, doubled 0 20 40 60. *)
+  holds (order [ b; y' ])
+    ([ 7.; 7.; 0.; 20.; 40.; 60.; 6.; 7. ]
+    @ [ 0.; 21.; 42.; 63. ]
+    @ [ 0.; 10.; 20.; 30. ])
+
+(* A loop's call stores through one run of the buffer, listed after a write
+   of it, and reads the first state of another: a copy made before that
+   write, once, not each trip. *)
+let loop_reads_older_run () =
+  let x = f32 ~n:16 0 in
+  let vw = part 0 4 x and vr = part 8 12 x in
+  let pre = Ops.after x [ Ops.store vw (fl 1.); Ops.store vr (fl 2.) ] in
+  let r = Ops.range ~axis_type:Weak (Ops.Int 4) [ 0 ] in
+  let a0 = Shape.param ~shape:[ Ops.Int 4 ] 0 Float32
+  and a1 = Shape.param ~shape:[ Ops.Int 4 ] 1 Float32 in
+  let body =
+    Ops.sink ~kernel:(Ops.kernel_info ())
+      [
+        Ops.end_
+          (Ops.store (Ops.index a0 [ r ]) Ops.O.(Ops.index a1 [ r ] + fl 1.))
+          [ r ];
+      ]
+  in
+  let trip = Ops.range ~axis_type:Loop (Ops.Int 3) [ 100 ] in
+  let loop = Ops.end_ (Ops.call ~precompile:true body [ vw; vr ]) [ trip ] in
+  holds
+    [ Ops.after pre [ loop ] ]
+    [
+      9.; 10.; 11.; 12.; 4.; 5.; 6.; 7.; 2.; 2.; 2.; 2.; 12.; 13.; 14.; 15.;
+    ]
+
+(* Two writes of [x] over the whole of it, beside one through a view: no
+   storage holds two successors of a state, whichever is listed first. *)
+let two_whole order () =
+  let x = f32 ~n:8 0 in
+  let v = part 2 6 x in
+  let w1 = Ops.after x [ Ops.store x (fl 1.) ] in
+  let w2 = Ops.after x [ Ops.store x (fl 3.) ] in
+  let u = Ops.after v [ Ops.store v (fl 2.) ] in
+  raises_match (Exn.invalid_arg ~sub:"two writes over one state") (fun () ->
+      ignore (finals (Ops.sink (order [ w1; w2; u ]))))
+
+(* Listed order *)
+
+(* Two overlapping stores of [x], listed in [order]. *)
+let listed_constants order expected () =
+  let x = f32 ~n:8 0 in
+  holds
+    [
+      Ops.after x
+        (order
+           [ Ops.store (part 0 5 x) (fl 1.); Ops.store (part 3 8 x) (fl 2.) ]);
+    ]
+    expected
+
+(* [p]'s elements 0 to 5 doubled, then 2 to 7 tripled, each store reading [p]
+   as it was. *)
+let own_overlap p =
+  Ops.after p
+    [
+      Ops.store (part 0 6 p) Ops.O.(part 0 6 p * fl 2.);
+      Ops.store (part 2 8 p) Ops.O.(part 2 8 p * fl 3.);
+    ]
+
+let tripled = [ 0.; 2.; 6.; 9.; 12.; 15.; 18.; 21. ]
+
+let listed_overlap () = holds [ own_overlap (f32 ~n:8 0) ] tripled
+
+(* [p]'s run 1 to 3 as it was, stored after a store into the run 0 to 2, which
+   it overlaps. *)
+let listed_reads_earlier () =
+  let x = f32 ~n:8 0 in
+  holds
+    [
+      Ops.after x
+        [
+          Ops.store (part 0 2 x) (fl 5.);
+          Ops.store (part 1 3 x) Ops.O.(part 0 2 x + fl 1.);
+        ];
+    ]
+    [ 5.; 1.; 2.; 3.; 4.; 5.; 6.; 7. ]
+
+(* A store listed twice lands at its last place. *)
+let listed_twice () =
+  let x = f32 ~n:8 0 in
+  let a = Ops.store (part 0 6 x) (fl 1.) in
+  let b = Ops.store (part 2 8 x) (fl 2.) in
+  holds [ Ops.after x [ a; b; a ] ] [ 1.; 1.; 1.; 1.; 1.; 1.; 2.; 2. ]
+
+(* A body that lists overlapping stores of its parameter. *)
+let listing_body ?device () =
+  let p = Shape.param ~shape:[ Ops.Int 8 ] ?device 0 Float32 in
+  Ops.sink [ own_overlap p ]
+
+(* The same listing in a function's body, and in a body a loop runs. Each trip
+   doubles elements 0 and 1 and triples 2 to 7 of what the trip before left,
+   each store reading the elements as the trip began. *)
+let listed_in_call ?device () =
+  let x = f32 ~n:8 0 in
+  let call = Ops.call ~precompile:true (listing_body ?device ()) [ x ] in
+  holds [ Ops.after x [ call ] ] tripled
+
+(* The same listing in a body inlined at its call. *)
+let listed_inlined () =
+  let x = f32 ~n:8 0 in
+  let call = Ops.call (listing_body ~device:"CPU" ()) [ x ] in
+  holds [ Ops.after x [ call ] ] tripled
+
+(* [p] doubled by a function of it. *)
+let doubling () =
+  let p = Shape.param ~shape:[ Ops.Int 8 ] ~device:"CPU" 0 Float32 in
+  Ops.sink [ Ops.store p Ops.O.(p * fl 2.) ]
+
+(* The call loads through the parameter it stores through: its load and store
+   are one, and it doubles what the store before it left. *)
+let call_after_store () =
+  let x = f32 ~n:8 0 in
+  holds
+    [
+      Ops.after x
+        [
+          Ops.store (part 0 4 x) (fl 9.);
+          Ops.call ~precompile:true (doubling ()) [ x ];
+        ];
+    ]
+    [ 18.; 18.; 18.; 18.; 8.; 10.; 12.; 14. ]
+
+(* An After over the whole of [x] and one over a view of it are one write in
+   either listing: elements outside the view hold the whole store. *)
+let whole_and_view order () =
+  let x = f32 ~n:8 0 in
+  let v = part 2 6 x in
+  let w = Ops.after x [ Ops.store x (fl 1.) ] in
+  let u = Ops.after v [ Ops.store v (fl 2.) ] in
+  let got =
+    List.map
+      (function `Float x -> x | _ -> failf "a float")
+      (finals (Ops.sink (order [ w; u ])))
+  in
+  equal (list close) [ 1.; 1.; 1.; 1. ]
+    (List.filteri (fun i _ -> i < 2 || i >= 6) got)
+
+let listed_in_loop () =
+  let x = f32 ~n:8 0 in
+  let trip = Ops.range ~axis_type:Loop (Ops.Int 3) [ 100 ] in
+  let call =
+    Ops.call ~precompile:true (listing_body ~device:"CPU" ()) [ x ]
+  in
+  holds
+    [ Ops.after x [ Ops.end_ call [ trip ] ] ]
+    [ 0.; 8.; 54.; 81.; 108.; 135.; 162.; 189. ]
+
+let as_it_was =
+  group "states read as they were"
+    [
+      test "a store reads what its write's other store writes as it was"
+        (sibling_read Fun.id);
+      test "a store reads what its write's other store writes, listed last"
+        (sibling_read List.rev);
+      test "a store under a later write reads its write's other store as it was"
+        (chained_read Fun.id);
+      test "a store under a later write reads it, listed last"
+        (chained_read List.rev);
+      test "a store only a later destination reaches reads it as it was"
+        read_under_destination;
+      test "a join of the view a store writes reads the state under it"
+        (read_join_of_view Fun.id);
+      test "a join of the view a store writes, listed last"
+        (read_join_of_view List.rev);
+      test "a store over a state, into a run of the buffer read elsewhere"
+        store_over_state_read;
+      test "a reader of a view an After is over reads it as it was"
+        (read_view_after_over Fun.id);
+      test "a reader of a view an After is over, listed last"
+        (read_view_after_over List.rev);
+      test "a reader sharing a value with the store into its run reads it as \
+            it was"
+        (read_sharing_value Fun.id);
+      test "a reader sharing a value with the store, listed last"
+        (read_sharing_value List.rev);
+      test "a reversal of a run, then a store over it, leaves the state between"
+        reversed_then_stored;
+      test "a reader of a run that waits for the store into it reads a copy"
+        read_view_waiting;
+      test "stores reading only the elements they write take no copy"
+        own_elements;
+      test "stores of one write reading each other's elements read them as \
+            they were"
+        crossed_reads;
+      test "a reader through the view a write stores into reads it as it was"
+        (view_read (1, 6) Fun.id);
+      test "a reader through the view, listed first" (view_read (1, 6) List.rev);
+      test "a reader through another view reads it as it was"
+        (view_read (2, 5) Fun.id);
+      test "a chain of stores through views of one buffer, its first run read"
+        (chained_view Fun.id);
+      test "a chain of stores through views, the reader listed first"
+        (chained_view List.rev);
+      test "a chained store and a reader of the first state sharing a value"
+        (chained_share Fun.id);
+      test "a chained store and a sharing reader, the reader listed first"
+        (chained_share List.rev);
+      test "a loop reading an older run of its storage reads a copy of the run"
+        loop_reads_older_run;
+    ]
+
+let listed =
+  group "an After lists its stores in the order they land"
+    [
+      test "the later store wins" (listed_constants Fun.id
+        [ 1.; 1.; 1.; 2.; 2.; 2.; 2.; 2. ]);
+      test "listed the other way, the other wins" (listed_constants List.rev
+        [ 1.; 1.; 1.; 1.; 1.; 2.; 2.; 2. ]);
+      test "each store reads its own elements as they were" listed_overlap;
+      test "a later store reads what an earlier one wrote as it was"
+        listed_reads_earlier;
+      test "a store listed twice lands at its last place" listed_twice;
+      test "the listing holds in a function's body, parameters of a device"
+        (listed_in_call ~device:"CPU");
+      test "the listing holds in a function's body, parameters of none"
+        (listed_in_call ?device:None);
+      test "the listing holds in a body inlined at its call" listed_inlined;
+      test "the listing holds in a body a loop runs" listed_in_loop;
+      test "a call loading through what it stores doubles what was listed before"
+        call_after_store;
+      test "an After of a state and one of a view of it, whole first"
+        (whole_and_view Fun.id);
+      test "an After of a state and one of a view of it, view first"
+        (whole_and_view List.rev);
+      test "two writes over the whole of a state raise, whole first"
+        (two_whole Fun.id);
+      test "two writes over the whole of a state raise, view first"
+        (two_whole List.rev);
+      test "two writes over the whole of a state raise, view between"
+        (two_whole (function
+          | [ a; b; c ] -> [ a; c; b ]
+          | l -> l));
+    ]
+
 let () =
   exit @@ run "Tolk.Launch"
     [
+      as_it_was;
+      listed;
       group "cases"
         [
           test "on the host, alike members compile one body" (one_body "CPU");

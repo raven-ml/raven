@@ -736,6 +736,22 @@ let share_loops rctx topo =
         Tbl.replace slices s sl;
         sl
   in
+  (* The stores each store follows in an unmarked After's listing: those land
+     before it, so a group holding both would run neither first. *)
+  let listed = Tbl.create 1 in
+  List.iter
+    (fun u ->
+      if op u = Op.After && not (is_disjoint u) then
+        ignore
+          (List.fold_left
+             (fun earlier s ->
+               if op s <> Op.Store then earlier
+               else begin
+                 if earlier <> [] then Tbl.replace listed s earlier;
+                 s :: earlier
+               end)
+             [] (List.tl (src u))))
+    topo;
   (* The stores each store reads through anything. *)
   let reads_of = Tbl.create 16 in
   let read s =
@@ -743,7 +759,15 @@ let share_loops rctx topo =
     | Some r -> r
     | None ->
         let sl = slice s in
-        let r = List.filter (fun t -> Nodes.mem t sl) stores in
+        let earlier = Option.value (Tbl.find_opt listed s) ~default:[] in
+        let earlier_slices = List.map slice earlier in
+        let r =
+          List.filter
+            (fun t ->
+              Nodes.mem t sl || List.memq t earlier
+              || List.exists (Nodes.mem t) earlier_slices)
+            stores
+        in
         Tbl.replace reads_of s r;
         r
   in

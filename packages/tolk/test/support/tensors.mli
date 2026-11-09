@@ -27,8 +27,9 @@
     Graphs have effects on memory. A {!Tolk.Op.Store} writes its value,
     broadcast to its destination's shape, into the memory its destination
     views. Storage is read as the memory held before any store; an
-    {!Tolk.Op.After} reads its first source once its other sources have run,
-    and a join ({!Tolk.Ops.is_join}) holds the value its first source has. A
+    {!Tolk.Op.After} runs its first source, then its other sources, and reads
+    the first's memory once they have run, and a join ({!Tolk.Ops.is_join})
+    holds the value its first source has. A
     {!Tolk.Op.Call} runs its body with each parameter of slot [k] standing for
     the call's [k]th argument, reshaped to the parameter's shape. An
     {!Tolk.Op.End} of a call over a range runs the call once for each of the

@@ -340,10 +340,11 @@ let rec run m params u =
             none
         | _ -> fail "a store has a destination and a value")
     | After, _ ->
+        (* A state lands after the state it is over. A join holds the value of
+           the state under it, read once its other sources have run. *)
+        let under = value (List.hd src) in
         List.iter (fun s -> ignore (value s)) (List.tl src);
-        (* A join holds the value of the state under it. *)
-        if Ops.is_join u then value (List.hd src)
-        else reread m (value (List.hd src))
+        if Ops.is_join u then under else reread m under
     | Sink, _ ->
         List.iter (fun s -> ignore (value s)) src;
         none

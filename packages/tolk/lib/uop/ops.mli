@@ -811,8 +811,13 @@ val after : t -> t list -> t
 
     Outside a kernel, an {!Op.After} of storage names a state of it. One whose
     [deps] list calls, loops of calls or stores is the state those effects
-    leave the storage in, after the state [u] names: they write it. Stores of
-    one such write that overlap land in an unspecified order. One whose
+    leave the storage in, after the state [u] names: they land in the order
+    listed, each reading the states the graph names, older states as they were,
+    so a later store wins where stores overlap. A call loading through an
+    argument it stores through loads what the effects listed before it left
+    there. An element two {!Op.After}s of one state both write, which
+    {!Schedule.create_schedule} admits for views of the state, holds an
+    unspecified value. One whose
     [deps] are all {!Op.After}s is a join ({!is_join}): it names no state of
     its own, holds the value of the state [u] names, and is read once the
     states [deps] name are reached. *)
@@ -820,12 +825,13 @@ val after : t -> t list -> t
 val after_disjoint : t -> t list -> t
 (** [after_disjoint u stores] is {!after} [u stores] with a promise from its
     maker: [stores], the stores of one write of [u]'s storage, write pairwise
-    disjoint elements, and every kernel of them may run at once. A schedule
-    then runs the kernels of this write as one launch, where it can, without
-    testing which elements each writes ({!Schedule.create_linear_with_vars}).
+    disjoint elements, none reads an element another writes, and every kernel
+    of them may run at once. A schedule then runs the kernels of this write as
+    one launch, where it can, without testing which elements each writes
+    ({!Schedule.create_linear_with_vars}).
 
-    Stores that overlap break the promise and give undefined values: a
-    {!after} of them, unmarked, runs them apart, in an unspecified order. *)
+    Stores that break the promise give undefined values: a {!after} of them,
+    unmarked, runs them in the order listed. *)
 
 val is_disjoint : t -> bool
 (** [is_disjoint u] is [true] iff [u] is the {!Op.After} of an
@@ -935,6 +941,12 @@ type movement =
 val addrspace : t -> Dtype.addr_space option
 (** [addrspace u] is the address space [u] lives in. A node of type [Void]
     holds no memory and lives in [Alu]. *)
+
+val whole : t -> t
+(** [whole p] is the parameter of the storage the {!Op.Param} [p] views, its
+    second source, for a {e view}: a parameter of its own that a run of a
+    buffer takes where a call stores into it, so that the kernel's program does
+    not depend on where the run starts. Any other node is its own [whole]. *)
 
 val buf_uop : t -> t
 (** [buf_uop u] is the storage node [u] accesses. *)

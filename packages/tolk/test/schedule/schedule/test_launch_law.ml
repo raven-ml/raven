@@ -8,8 +8,8 @@
    states, so a later write does not change an earlier value): runs,
    strided columns, reversed runs, runs from a bound variable, bits read
    through a bitcast, stores of one write marked disjoint where they are
-   made so, and stores of one write that may overlap, whose order is
-   unspecified where they do.
+   made so, and stores of one write that may overlap, landing in the order
+   listed.
 
    Its oracle (spec) applies the graph's writes one by one: each write
    computes its stores from the states named, then lands them. *)
@@ -190,7 +190,11 @@ let view_of_numel r n m =
       | 2 -> Bytes (a, a + m)
       | _ -> Run (a, a + m))
 
-let gen_value r sizes ~first_target ~excluding m =
+(* The reads of a store of [m] elements: any buffer but [excluding], the
+   targets of a write marked disjoint, whose promise stops its stores reading
+   the elements another writes, through a view of the buffer's latest state
+   or one up to two writes older. *)
+let gen_value r sizes ~excluding m =
   if Random.State.int r 7 = 0 then { reads = []; ops = []; const = true }
   else
     let usable =
@@ -204,12 +208,9 @@ let gen_value r sizes ~first_target ~excluding m =
           if usable = [] then None
           else
             let b = pick r usable in
-            let view =
-              if b < first_target then view_of_numel r sizes.(b) m
-              else if sizes.(b) = m then Some Whole
-              else None
-            in
-            Option.map (fun rv -> { buf = b; older = 0; rv }) view)
+            Option.map
+              (fun rv -> { buf = b; older = int_in r 0 2; rv })
+              (view_of_numel r sizes.(b) m))
         (List.init (int_in r 1 2) Fun.id)
     in
     if reads = [] then { reads = []; ops = []; const = true }
@@ -222,12 +223,12 @@ let gen_value r sizes ~first_target ~excluding m =
         const = false;
       }
 
-let gen_store r sizes ~first_target b =
+let gen_store r sizes b =
   let view = gen_view r sizes.(b) in
-  let v = gen_value r sizes ~first_target ~excluding:[] (numel sizes.(b) view) in
+  let v = gen_value r sizes ~excluding:[] (numel sizes.(b) view) in
   { dst = b; view; v }
 
-let gen_assembly r sizes ~first_target b =
+let gen_assembly r sizes b =
   let n = sizes.(b) in
   let pairs l =
     let rec go = function a :: (c :: _ as t) -> (a, c) :: go t | _ -> [] in
@@ -252,14 +253,13 @@ let gen_assembly r sizes ~first_target b =
       else
         List.map (fun (a, c) -> Cols (h, w, a, c)) (pairs (cuts w (int_in r 2 4)))
   in
-  if List.compare_length_with views 2 < 0 then
-    Assign (gen_store r sizes ~first_target b)
+  if List.compare_length_with views 2 < 0 then Assign (gen_store r sizes b)
   else
     Assemble
       ( b,
         List.map
           (fun view ->
-            let v = gen_value r sizes ~first_target ~excluding:[ b ] (numel n view) in
+            let v = gen_value r sizes ~excluding:[ b ] (numel n view) in
             { dst = b; view; v })
           views )
 
@@ -284,7 +284,7 @@ let gen_crossed r sizes ~first_target =
     let n = sizes.(i) in
     let h = n / 2 in
     let view c = Cols (h, 2, c, c + 1) in
-    let shared () = gen_value r sizes ~first_target ~excluding:[ i; j ] h in
+    let shared () = gen_value r sizes ~excluding:[ i; j ] h in
     let v0 = shared () and v1 = shared () in
     Some
       (Crossed
@@ -303,7 +303,7 @@ let gen_crossed r sizes ~first_target =
                { dst = j; view = view 1; v = v1 };
              ] ))
 
-let gen_overlap r sizes ~first_target b =
+let gen_overlap r sizes b =
   let n = sizes.(b) in
   let fs = List.filter (fun (h, w) -> h > 1 && w > 1) (factorings n) in
   let view () =
@@ -323,18 +323,15 @@ let gen_overlap r sizes ~first_target b =
     ( b,
       List.init (int_in r 2 3) (fun _ ->
           let view = view () in
-          let v = gen_value r sizes ~first_target ~excluding:[ b ] (numel n view) in
+          let v = gen_value r sizes ~excluding:[] (numel n view) in
           { dst = b; view; v }) )
 
 let gen_program r =
   let n_bufs = int_in r 3 6 in
   let sizes = Array.init n_bufs (fun _ -> pick r [ 1; 4; 6; 8; 12; 16 ]) in
   let first_target = n_bufs / 2 in
-  (* Reads go through views only of buffers no later step writes, each
-     written once and whole first; a buffer the program writes is read
-     whole. A read through a view of a state written through a view, and of
-     what a sibling stores, are questions of the schedule's order, which
-     every launch keeps: this law is about what launches add. *)
+  (* Each buffer is written once and whole first, so that any later read of
+     it holds what the program wrote. *)
   let first =
     List.init n_bufs (fun b ->
         Assign
@@ -348,13 +345,13 @@ let gen_program r =
     List.init (int_in r 2 8) (fun _ ->
         let b = int_in r first_target (n_bufs - 1) in
         match Random.State.int r 8 with
-        | 0 | 1 | 2 -> Assign (gen_store r sizes ~first_target b)
-        | 3 | 4 -> gen_assembly r sizes ~first_target b
-        | 5 -> gen_overlap r sizes ~first_target b
+        | 0 | 1 | 2 -> Assign (gen_store r sizes b)
+        | 3 | 4 -> gen_assembly r sizes b
+        | 5 -> gen_overlap r sizes b
         | _ -> (
             match gen_crossed r sizes ~first_target with
             | Some s -> s
-            | None -> gen_assembly r sizes ~first_target b))
+            | None -> gen_assembly r sizes b))
   in
   { sizes; steps = first @ steps }
 
@@ -370,6 +367,12 @@ let build p =
   in
   let states = Array.map (fun b -> [ b ]) base in
   let latest b = List.hd states.(b) in
+  (* The state a read names: [older] writes before the latest, or the oldest
+     there is. *)
+  let state_at (r : read) =
+    let st = states.(r.buf) in
+    List.nth st (min r.older (List.length st - 1))
+  in
   let value s dims =
     let broadcast c =
       Shape.expand
@@ -380,7 +383,7 @@ let build p =
     else
       let read (r : read) =
         Shape.reshape
-          (apply_view (latest r.buf) p.sizes.(r.buf) r.rv)
+          (apply_view (state_at r) p.sizes.(r.buf) r.rv)
           (List.map int_ dims)
       in
       let x =
@@ -432,8 +435,12 @@ let spec p =
     Array.init (Array.length p.sizes) (fun s ->
         Array.init p.sizes.(s) (initial s))
   in
+  (* Each buffer's states, the latest first. *)
+  let states = Array.map (fun m -> [ Array.copy m ]) memory in
   let read (r : read) =
-    Array.map (fun i -> memory.(r.buf).(i)) (indices p.sizes.(r.buf) r.rv)
+    let st = states.(r.buf) in
+    let m = List.nth st (min r.older (List.length st - 1)) in
+    Array.map (fun i -> m.(i)) (indices p.sizes.(r.buf) r.rv)
   in
   let value s =
     let n = numel p.sizes.(s.dst) s.view in
@@ -465,7 +472,10 @@ let spec p =
         Array.iteri
           (fun k i -> memory.(s.dst).(i) <- v.(k))
           (indices p.sizes.(s.dst) s.view))
-      vs
+      vs;
+    List.iter
+      (fun b -> states.(b) <- Array.copy memory.(b) :: states.(b))
+      (List.sort_uniq Int.compare (List.map (fun s -> s.dst) ss))
   in
   List.iter
     (function
@@ -642,29 +652,26 @@ let order_independent seed =
     | exception Invalid_argument m when m = store_through_two -> reject ()
   in
   cover "a launch" (launches > 0);
-  let overlaps =
-    List.exists (function Overlap _ -> true | _ -> false) p.steps
-  in
-  if not overlaps then begin
-    let expected = spec p in
-    let msg = Format.asprintf "seed %d: %a" seed pp_program p in
-    Array.iteri
-      (fun s b ->
-        let got =
-          match Ops.Tbl.find_opt memory b with
-          | Some v -> Array.to_list (Array.map bits v)
-          | None ->
-              Array.to_list
-                (Array.map
-                   (fun x -> bits (`Float x))
-                   (Array.init p.sizes.(s) (initial s)))
-        in
-        equal (list string) ~msg
-          (Array.to_list
-             (Array.map (fun x -> bits (`Float x)) expected.(s)))
-          got)
-      base
-  end
+  cover "an unmarked overlap"
+    (List.exists (function Overlap _ -> true | _ -> false) p.steps);
+  let expected = spec p in
+  let msg = Format.asprintf "seed %d: %a" seed pp_program p in
+  Array.iteri
+    (fun s b ->
+      let got =
+        match Ops.Tbl.find_opt memory b with
+        | Some v -> Array.to_list (Array.map bits v)
+        | None ->
+            Array.to_list
+              (Array.map
+                 (fun x -> bits (`Float x))
+                 (Array.init p.sizes.(s) (initial s)))
+      in
+      equal (list string) ~msg
+        (Array.to_list
+           (Array.map (fun x -> bits (`Float x)) expected.(s)))
+        got)
+    base
 
 (* The mark: an assembly of columns, which no byte range separates, runs as
    one launch only because it is marked; unmarked, it runs apart. *)

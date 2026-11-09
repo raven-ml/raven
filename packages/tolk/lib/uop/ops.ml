@@ -1882,6 +1882,8 @@ let invalid = const `Invalid
 
 (* Bounds *)
 
+let whole u = match (u.op, u.src) with Op.Param, [ _; w ] -> w | _ -> u
+
 let rec buf_uop u =
   match u.op with
   | op when Op.Set.mem op Op.Set.defines -> u

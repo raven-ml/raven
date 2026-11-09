@@ -35,31 +35,48 @@ val create_schedule : ?by_storage:bool -> Ops.t -> Ops.t
     ({!Ops.backedge}) stays a back edge, its condition the storage it reads.
 
     A kernel reads the states its arguments name, a join ({!Ops.is_join})
-    being the state under it, and writes the states the {!Op.After}s that list
-    it are over. It runs after the kernels that write the states it reads and
-    those the joins it reads through wait for, and before the kernels of
-    every write over a state it reads of which it is no part, whichever
-    elements each touches. The kernels of one write, whichever {!Op.After}s
-    list each, run in any order, and stores of one write that overlap land
-    in an unspecified one: one of them must read the elements another writes
-    only where it writes their state too, which it then reads as it was. A call that writes a state through an argument its body writes
-    ({!Shape.written_params}) and reads it through another reads it as it was
-    before the call. Where these orders form a cycle, one read on the cycle
-    reads instead a copy of its whole state into call-local storage
-    ({!Op.Alloc}) at the state's phase, which a kernel of its own makes before
-    the state's overwrite; as [b + a * 3] does where [b] read [a] before [a]
-    was assigned, or as two buffers swapped through values computed from each
-    do. The read copied is one whose state is copied already, else the one of
-    fewest bytes. A loop whose call writes a state through one argument and
-    reads it through another copies it in the loop, as each trip starts; any
-    other copy is made once, before the loop. A write's prior state is the
-    latest state of the {!Op.After}'s storage its call is given, and the state
-    the {!Op.After} is after where it is given none: a loop after its carry's storage, given the carry's first
-    state, writes over that state. A graph whose kernels form no cycle gets no
-    copy.
+    being the state under it and a view of a storage ({!Ops.whole}) being that
+    storage's state; a view the kernel only stores through names the storage
+    and no state, so that a load through it reads the state the write is over.
+    A kernel writes the states the {!Op.After}s that list it are over. It runs
+    after the kernels that write the states it reads and those the joins it
+    reads through wait for, after the writers of the state it writes over where
+    it stores through a view and is not given that state, and before the
+    kernels of every write over a state it reads of which it is no part,
+    whichever elements each touches. A call that writes a state through an
+    argument its body writes ({!Shape.written_params}) and reads it through
+    another reads it as it was before the call.
 
-    Raises [Invalid_argument] if two {!Op.After}s list different kernels over
-    one state, which no storage holds both successors of, if a call whose body
+    The kernels of a write marked disjoint ({!Ops.after_disjoint}) run in any
+    order, whichever {!Op.After}s list each. An unmarked {!Op.After} lands its
+    stores in the order listed, a kernel listed twice at its last place, each
+    reading the states the graph names, older states as they were, so a later
+    store wins where stores overlap. A call loading through an argument it
+    stores through loads what the kernels listed before it left there: load and
+    store are one parameter, which no copy can part. {!Op.After}s of one state
+    over views of it are one write, and at most one {!Op.After} of a state may
+    be over no view, as one over a run {!contiguous_mops_to_view} made no view
+    of is; an element two {!Op.After}s of one state both write holds an
+    unspecified value.
+
+    Where these orders form a cycle, one read on the cycle reads instead a copy
+    of its whole state, or of its own run for a view of the state, into
+    call-local storage ({!Op.Alloc}) at the state's phase, which a kernel of
+    its own makes before the state's overwrite; as [b + a * 3] does where [b]
+    read [a] before [a] was assigned, or as two buffers swapped through values
+    computed from each do. The read copied is one whose state is copied
+    already, else the one of fewest bytes. A loop whose call writes a state
+    through one argument and reads it through another copies it in the loop, as
+    each trip starts, for a state the loop itself writes; any other copy is
+    made once, before the loop. A write's prior state is the latest state of
+    the {!Op.After}'s storage its call is given, and the state the {!Op.After}
+    is after where it is given none: a loop after its carry's storage, given
+    the carry's first state, writes over that state. A graph whose kernels form
+    no cycle gets no copy.
+
+    Raises [Invalid_argument] if two {!Op.After}s of one state over no view of
+    it list different kernels, which no storage holds both successors of, if a
+    call whose body
     does not show its writes takes one state at two arguments and writes it,
     if a state a kernel reads a copy of has no device, if a cut graph still
     has a cycle, or if an effect is not a call, a loop of a call, a store or an

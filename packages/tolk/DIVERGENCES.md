@@ -7643,7 +7643,7 @@ staged rows is the stated cost.
 Clang selected a 16-bit float by its bits; merged into D27, which holds its
 rule, its reason and its pins.
 
-## D330. The kernels of one write are unordered whichever Afters list them
+## D330. The kernels of one marked write are unordered whichever Afters list them
 
 - **tinygrad:** `schedule/__init__.py` (`create_schedule`'s
   write-after-read edges), which orders a kernel reading a state before the
@@ -7654,13 +7654,16 @@ rule, its reason and its pins.
   one `AFTER`, so its stores never meet the case.
 - **tolk:** `Schedule.schedule`.
 - **Differs:** a kernel reading a state runs before the kernels of every
-  write over it of which it is no part. A kernel that two `AFTER`s list, as one whose stores
-  share their loops (D137) into `p` and `q`, reads `q` as the store it makes
-  there, beside the other kernels of `q`'s write, and is ordered before none
-  of them, as it would be listed under that write alone. tinygrad orders it,
-  through its read listed under `p`'s write, before them.
-  A launch of the kernels of one write holds them apart unless the write is
-  marked disjoint (D405).
+  write over it of which it is no part. A kernel of a write marked disjoint
+  (D405) that two `AFTER`s list, as one whose stores share their loops (D137)
+  into `p` and `q`, reads `q` as the store it makes there, beside the other
+  kernels of `q`'s write, and is ordered before none of them, as it would be
+  listed under that write alone. tinygrad orders it, through its read listed
+  under `p`'s write, before them. A kernel of an unmarked write keeps that
+  exemption only if it stores into the state and reads it through no other
+  argument: one reading the state elsewhere is an ordinary reader, before the
+  write's other kernels (D427). A launch of the kernels of one write holds
+  them apart unless the write is marked disjoint (D405).
 - **Reason:** (b): rune's split program `[a; b] - [b; a]`, two assemblies of
   the same computed pieces stored into their regions of two buffers, makes
   two kernels, each storing a column of both. Each was ordered before the
@@ -8671,7 +8674,7 @@ reason and its pins.
   call's key). In `Schedule.launches` two kernels of one such write do not
   interfere on that state. An unmarked `After` gets the byte relation (D404),
   so tolk's own API cannot make a race: overlapping stores of one unmarked
-  write land in an unspecified order, and two stores of one state that may
+  write land in listed order (D427), and two stores of one state that may
   overlap are never given a launch on the mark's say-so; stores that break a
   mark's promise give undefined values, as `Ops.after_disjoint` states. The
   mark keeps through `Rangeify.bufferize_to_store`, every other rewrite
@@ -8739,3 +8742,74 @@ reason and its pins.
   with an operand of literal zeros holds the product`, into each type, which
   fails to build its pipeline on the M1 Max without it;
   `metal_tc_bf16_f32_8_8_8.tolk` and `metal_tc_bf16_bf16_8_8_8.tolk`.
+
+## D426. A view of storage names its storage
+
+- **tinygrad:** `schedule/__init__.py` (`pm_replace_buf`, `create_schedule`):
+  a view of a buffer lifted into a parameter of its own, and a state keyed by
+  the buffer alone, so a kernel reading a run and a kernel storing through it
+  are not related.
+- **tolk:** `Ops.whole`, `Schedule.view_param`, `Schedule.state_of`,
+  `Schedule.value_state`, `Schedule.written_over`, the view filter of
+  `Schedule.schedule`'s reads, `Spec.shared` and `Spec.kernel_graph`.
+- **Differs:** a run of a buffer a store writes keeps a parameter of its own,
+  which names its storage's parameter as a second source (`Ops.whole`). The
+  link enters the schedule key by structure; offsets stay out. A kernel reading
+  through a view reads its storage's state, and a view it stores through names
+  the storage and no state, so a load through it reads the state the write is
+  over. A kernel of a write storing through a view and not given the state it
+  writes over follows that state's writers. `After`s of one state over views of
+  it are one write; two over no view raise in any listing, and an `After` over a
+  run `view_of` lifted no view of (rows through a reshape, a store reading its
+  own buffer, any run inside a body) counts as over no view.
+  A cut reads a copy of the view's own run; the per-trip copy of a loop is for
+  a state the loop itself writes. Regions stay in the launch scan; ordering is
+  over whole states. `Indexing.joinable` keeps its base check: a kernel's slice
+  now reaches the storage through the link, so a window store and a reader of a
+  later state that share a value split into one more kernel, values equal. On
+  rune's suite the kernels and copies are the same as without the link.
+- **Reason:** (e): `x[1:6] = 7` beside `y[:5] = x[1:6]` read 7 in `y`: the
+  reader of a run and the store through it were not ordered, and neither were
+  two stores of runs of one state. A schedule key holds a run's start only
+  modulo its alignment, so a relation over regions is unsound on a cache hit;
+  the relation is over whole states and regions stay in the launch scan.
+  tinygrad makes the same lift without the link. Cost on tolk's bench rows:
+  `*/schedule` words +1.7%, instructions +4.1% (`adam_mlp`) and +3.2%
+  (`gpt_oss_decode`), a small part of a compile; `*/kernel_graph` +0.04%,
+  `*/prepare` +0.09%. rune's suite is unchanged: 70,424 kernels and 8 copies
+  over 9,408 schedules at one seed on both sides.
+- **Pinned by:** `Tolk.Launch › states read as they were`, among them `a reader
+  through the view a write stores into reads it as it was`, `a chain of stores
+  through views of one buffer, its first run read`, `a loop reading an older
+  run of its storage reads a copy of the run`; `Tolk.Schedule › rules`.
+
+## D427. An unmarked After lands its stores in the order listed
+
+- **tinygrad:** `schedule/__init__.py` (`create_schedule`): the stores of one
+  `AFTER` are kernels in no order, and stores that overlap land in whichever
+  order the kernels run.
+- **tolk:** `Schedule.schedule` (`landing`, the order edges and the narrowed
+  exemption, D330), `Prepare.stage_listed`, `Indexing.share_loops`,
+  `Shape.symbolic`'s `AFTER` cleanup.
+- **Differs:** an unmarked `AFTER` lists its stores in the order they land, a
+  store listed twice at its last place, each reading the states the graph
+  names, older states as they were, so a later store wins where stores
+  overlap. Each kernel of the listing runs before the next one (no copy can
+  cut these edges); a store past the first that reads a state of its storage
+  stores a stage of its value, kept whole, made before the write begins; a
+  kernel of the listing that reads its state elsewhere than through the
+  argument it stores through is an ordinary reader of it; a kernel join honours
+  the listing. A call or loop loading through an argument it stores through
+  loads what the kernels listed before it left there: load and store are one
+  parameter, which no stage or copy can part. An element two `AFTER`s over views of one state both write stays
+  unspecified: those are one write with no order among them (D426).
+- **Reason:** (e): overlapping stores of one `AFTER` landed in an unspecified
+  order, so `after x [store (x 0..6) f(x); store (x 2..8) g(x)]` could read
+  `g(f(x))` at 2..6, a wrong value with a meaning under value semantics. rune and
+  jera emit no unmarked `AFTER` of several stores (0 edges, 0 stages over 451
+  test processes), so the cost is one rule in the schedule stage: `*/schedule`
+  words +0.10%, and only programs that list overlapping stores pay a stage or a
+  kernel.
+- **Pinned by:** `Tolk.Launch › an After lists its stores in the order they
+  land`, `Tolk.Launch_law › a schedule's launches write what its graph states`,
+  `Tolk.Schedule › create_schedule › a write's listing`.

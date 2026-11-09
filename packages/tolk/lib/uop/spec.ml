@@ -233,6 +233,7 @@ let shared : t =
           && (addrspace (nth x 2) = Some Dtype.Alu
              || max_numel (buf_uop (nth x 2)) = 1));
       accept (pat [ Op.Param ] ~src:[ p_size ]);
+      accept (pat [ Op.Param ] ~src:[ p_size; pat [ Op.Param ] ~src:[ p_size ] ]);
       accept
         (pat [ Op.Refparam ]
            ~src:[ p_size; Upat.v ~dtype:[ Dtype.Uint64 ] () ]);
@@ -561,6 +562,7 @@ let kernel_graph : t =
           then Some true
           else None);
       accept (pat [ Op.Param ] ~src:[ p_size ]);
+      accept (pat [ Op.Param ] ~src:[ p_size; pat [ Op.Param ] ~src:[ p_size ] ]);
       check (pat [ Op.Buffer ] ~src:[ p_size ] ~allow_any_len:true ~name:"x") "x"
         (fun x ->
           size_only x
