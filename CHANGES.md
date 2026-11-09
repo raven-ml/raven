@@ -3164,6 +3164,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `kaun` no longer links `nx.io`: a program that uses `Nx_io` names `nx.io` in
+  its own libraries.
 - **Breaking:** `Kaun.Attention`'s attention is `Nx.attention`, one
   operation whose nx.cpu kernel stores no score matrix. The `?mask` of
   `scaled_dot_product_attention`, `attend` and `apply` is `Nx.attention`'s,
