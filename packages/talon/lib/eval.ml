@@ -448,6 +448,7 @@ type env = {
   origin : int -> int;
   slots : Column.t option array;
   parts : Reduce.parts option array;
+  spreads : Column.t array option array;
   failure : failure option ref;
   output : int ref;
 }
@@ -475,17 +476,41 @@ let per_segment env ~same segments =
   over_segments env frame
 
 (* A node that a reduction reads gets a [part], which holds, for a frame, the
-   parts its reductions share. *)
-type node = { eval : env -> Column.t; mutable slot : int; mutable part : int }
+   parts its reductions share. A node {!Expr.within} spreads gets a [spread]:
+   its field names' places and the entry of [spreads] that holds its fields for
+   a frame, so that the k outputs of a spread of k fields share them, in O(k)
+   where each computing its own would be O(k{^ 2}). *)
+type spread = { names : (string, int) Hashtbl.t; at : int }
+
+type node = {
+  eval : env -> Column.t;
+  mutable slot : int;
+  mutable part : int;
+  mutable spread : spread option;
+}
 
 type state = {
-  mutable names : string list;
+  mutable names : (string, int) Hashtbl.t;
   mutable nodes : (Expr.packed * node) list;
   mutable slots : int;
   mutable parts : int;
+  mutable spreads : int;
 }
 
-let state s = { names = Schema.names s; nodes = []; slots = 0; parts = 0 }
+(* [places names] maps each of [names] to its position. *)
+let places names =
+  let t = Hashtbl.create (List.length names) in
+  List.iteri (fun i n -> Hashtbl.replace t n i) names;
+  t
+
+let state s =
+  {
+    names = places (Schema.names s);
+    nodes = [];
+    slots = 0;
+    parts = 0;
+    spreads = 0;
+  }
 
 let get env n =
   if n.slot < 0 then n.eval env
@@ -605,6 +630,22 @@ let under r =
           Column.make (Column.type_ c) ?validity:(valid [ r; c ])
             ~length:(Column.length c) (Column.data c))
         fields
+
+(* [row_lists ty n cs] is [n] lists of type [ty], the [i]th holding row [i] of
+   each of the columns [cs], which have [n] rows, in order. *)
+let row_lists ty n cs =
+  let k = List.length cs in
+  let c = Column.concat cs in
+  let child =
+    if n <= 1 || k <= 1 then c
+    else
+      (* The concatenation holds a row of column [j] at [j * n + row]. *)
+      let at_row = Nx.reshape [| n; 1 |] (Nx.arange Nx.int64 0 n 1) in
+      let at_column = Nx.reshape [| 1; k |] (Nx.arange Nx.int64 0 (k * n) n) in
+      Column.permute (Nx.reshape [| n * k |] (Nx.add at_row at_column)) c
+  in
+  let offsets = Nx.arange Nx.int64 0 ((n * k) + 1) k in
+  Column.make ty ~length:n (List { offsets; child })
 
 (* A list frame
 
@@ -731,6 +772,16 @@ let list_frame env names cs reads =
   in
   (frame, slot)
 
+(* [spread_of st r t] is the node [r]'s spread, of the record typing [t]. *)
+let spread_of st r t =
+  match r.spread with
+  | Some s -> s
+  | None ->
+      let s = { names = places (field_names t); at = st.spreads } in
+      st.spreads <- st.spreads + 1;
+      r.spread <- Some s;
+      s
+
 let rec compile : type a s. state -> (a, s) Expr.t -> node =
  fun st e ->
   match List.find_opt (fun (Expr.Packed e', _) -> Expr.same e e') st.nodes with
@@ -741,7 +792,7 @@ let rec compile : type a s. state -> (a, s) Expr.t -> node =
       end;
       n
   | None ->
-      let n = { eval = lower st e; slot = -1; part = -1 } in
+      let n = { eval = lower st e; slot = -1; part = -1; spread = None } in
       st.nodes <- (Expr.Packed e, n) :: st.nodes;
       n
 
@@ -782,7 +833,7 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
   in
   match (Expr.node e, typing) with
   | (Handle (_, n) | Read (_, n) | Ext_handle (_, n)), _ ->
-      let i = Option.get (List.find_index (String.equal n) st.names) in
+      let i = Hashtbl.find st.names n in
       fun env -> env.frame.columns.(i)
   | (Lit (_, v) | Const v), _ ->
       let c = column typing [| Some v |] in
@@ -809,6 +860,14 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
       ternary c a b (fun c a b ->
           choose (Nx.cast Nx.bool (truth c)) (wa a) (wb b))
   | Is_null a, _ -> unary a is_null
+  | List_of es, Column (List element) ->
+      let t = Type.Any element in
+      let operand e = (compile st e, widen (type_of (Expr.typing e)) t) in
+      let es = List.map operand es in
+      let ty = type_of typing in
+      fun env ->
+        row_lists ty env.extent
+          (List.map (fun (e, w) -> fill env (w (get env e))) es)
   | Coalesce es, _ ->
       let t = type_of typing in
       let operand e = (compile st e, widen (type_of (Expr.typing e)) t) in
@@ -863,7 +922,7 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
       st.nodes <- [];
       let body = compile st x in
       st.nodes <- scope;
-      let column n = Option.get (List.find_index (String.equal n) st.names) in
+      let column n = Hashtbl.find st.names n in
       let by = List.map column by in
       let order = List.map (fun (k : Order.t) -> (column k.name, k)) order in
       fun env ->
@@ -912,13 +971,12 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
       let source n =
         match List.find_index (String.equal n) names with
         | Some k -> `Element k
-        | None ->
-            `Outer (Option.get (List.find_index (String.equal n) st.names))
+        | None -> `Outer (Hashtbl.find st.names n)
       in
       let sources = List.map source reads in
       let scope = st.nodes and outer_names = st.names in
       st.nodes <- [];
-      st.names <- reads;
+      st.names <- places reads;
       let body = compile st r in
       st.nodes <- scope;
       st.names <- outer_names;
@@ -947,17 +1005,25 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
   | Spread (r, a), _ ->
       (* [a]'s nodes read the fields, so they share no slot with the nodes
          outside. *)
-      let names = field_names (Expr.typing r) in
+      let t = Expr.typing r in
       let r = compile st r in
       let scope = st.nodes and outer_names = st.names in
+      let spread = spread_of st r t in
       st.nodes <- [];
-      st.names <- names;
+      st.names <- spread.names;
       let body = compile st a in
       st.nodes <- scope;
       st.names <- outer_names;
       fun env ->
-        let rows = per_row env in
-        let columns = Array.of_list (under (fill rows (get rows r))) in
+        let columns =
+          match env.spreads.(spread.at) with
+          | Some cs -> cs
+          | None ->
+              let rows = per_row env in
+              let cs = Array.of_list (under (fill rows (get rows r))) in
+              env.spreads.(spread.at) <- Some cs;
+              cs
+        in
         get { env with frame = { env.frame with columns } } body
   | Shift (n, a), _ ->
       let a = compile st a in
@@ -1001,7 +1067,7 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
                  (fill env (get env a))))
   (* Binding traces lifts away, an option stands only where [ocaml] reads it,
      and arithmetic and nx operations have a column type. *)
-  | (Lift _ | Lift2 _ | Option _), _
+  | (Lift _ | Lift2 _ | Option _ | List_of _), _
   | (Int _ | Float _ | Nx_map _), (Extension _ | Value) ->
       invalid_arg (Format.asprintf "Eval: %a is not bound" Expr.pp e)
 
@@ -1038,6 +1104,7 @@ let env st frame =
       origin = Fun.id;
       slots = Array.make st.slots None;
       parts = Array.make st.parts None;
+      spreads = Array.make st.spreads None;
       failure = ref None;
       output = ref 0;
     }

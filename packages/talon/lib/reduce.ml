@@ -532,7 +532,8 @@ let reduce : type a b.
       | Some variance ->
           let std = match r with Std -> true | _ -> false in
           ok (output ty std (moments variance p)))
-  | Median | Quantile _ | N_unique | Collect | Moments -> v.holistic r ty p
+  | Median | Quantile _ | N_unique | Collect | Moments | Pivot ->
+      v.holistic r ty p
   | Min -> ok (value_at false)
   | Max -> ok (value_at true)
   | Arg_min -> ok (place (extreme false))
@@ -544,6 +545,77 @@ let reduce : type a b.
       let differ = Nx.not_equal (v.fold Min w) (v.fold Max w) in
       let several = Nx.logical_and (at_least 1) differ in
       (value (extreme false), first_where several "only finds several values")
+
+(* Pivot
+
+   [pivot s ty c] is, per segment of [s], one record of type [ty] holding the
+   operand's value at each category. [c] is the operand, a record of key and
+   value.
+
+   The cells are one row index per (category, segment), category by category,
+   so that a category's cells are contiguous and its field is one [sub] of one
+   gather: O(n + segments * categories), the output's own size. A cell that
+   two rows hold is found by the least and greatest row of the cell, and the
+   failure names the lowest segment, so that it is the first in the frame's
+   order, as a reduction's failure is. *)
+let pivot s (Type.Any ty) c =
+  let fields = match ty with Record fields -> fields | _ -> assert false in
+  let key, value =
+    match Column.data c with
+    | Fields [ key; value ] -> (key, value)
+    | _ -> assert false
+  in
+  let n = Column.length key and g = s.count in
+  let cells = g * List.length fields in
+  let held c = Option.map (Nx.cast Nx.bool) (Column.validity c) in
+  (* The rows with no cell: a null key. *)
+  let place = Nx.add (Nx.mul_s (tensor Nx.int64 key) (Int64.of_int g)) s.ids in
+  let place, lost =
+    match held key with
+    | None -> (place, None)
+    | Some valid ->
+        let null = Nx.logical_not valid in
+        ( Nx.where valid place (none n),
+          Some
+            (match held value with
+            | None -> null
+            | Some v -> Nx.logical_and null v) )
+  in
+  let rows = positions n in
+  let first = Nx.reduce_segments Nx.Min ~segments:cells place rows in
+  let last = Nx.scatter ~axis:0 place rows (none cells) in
+  let two =
+    let where = Nx.positions (Nx.less first last) in
+    if Nx.dim 0 where = 0 then None
+    else
+      let frames = Nx.mod_s where (Int64.of_int g) in
+      let i = Nx.item [] (Nx.argmin frames) in
+      let cell = Int64.to_int (Nx.item [ Int64.to_int i ] where) in
+      let name, _ = List.nth fields (cell / g) in
+      let why =
+        Format.asprintf "pivot finds two rows with key %a" Type.pp_quoted name
+      in
+      Some (cell mod g, why)
+  in
+  let lost =
+    let in_frame rows =
+      Some
+        ( Int64.to_int (Nx.item [] (Nx.min (Nx.take rows s.ids))),
+          "pivot finds a value under a null key" )
+    in
+    Option.bind lost (fun lost ->
+        let rows = Nx.positions lost in
+        if Nx.dim 0 rows = 0 then None else in_frame rows)
+  in
+  let failure =
+    match (two, lost) with
+    | Some (a, _), Some (b, _) when b < a -> lost
+    | Some _, _ -> two
+    | None, _ -> lost
+  in
+  let whole = rows_at last value in
+  let field j _ = Column.sub whole ~offset:(j * g) ~length:g in
+  (Column.make (Any ty) ~length:g (Fields (List.mapi field fields)), failure)
 
 (* [frame s] reads the segments [s]: a row without a value leaves its
    segment, and var and std take the deviations from each segment's mean. A
@@ -696,6 +768,7 @@ let frame s =
           let real = Nx.cast Nx.int64 (Nx.greater_s g.counts 0L) in
           (fixed int64 (segment_sum s (Nx.take g.first s.ids) real), None)
       | Moments -> (merge ty p, None)
+      | Pivot -> pivot s ty p.c
       | _ -> invalid_arg "Reduce: not a holistic reduction"
     in
     {

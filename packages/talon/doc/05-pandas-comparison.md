@@ -184,6 +184,18 @@ let named =
 run fails naming the key if one does not. A column name on both sides is a
 problem: talon adds no suffixes, so rename one side first.
 
+## Reshaping
+
+| pandas | Talon |
+|---|---|
+| `df.melt(id_vars=["id"], value_vars=cols, var_name="n", value_name="v")` | `Kit.longer ~name:"n" ~value:"v" Sel.(names cols)` |
+| `df.pivot(index="id", columns="k", values="x")` | `Kit.wider ~by:[ "id" ] ~key:"k" ~value:"x"`, after `Kit.categorize [ "k" ]` |
+
+`Kit.wider` takes its columns from the key's categories, so one that is not
+yet categorical is read in a run first; a cell two rows fill is a data error
+rather than a choice, so `Query.aggregate` reduces them first. See `Kit.wider`
+in [`talon.mli`](../lib/talon.mli).
+
 ## Summaries
 
 | pandas | Talon |
@@ -224,5 +236,4 @@ into a matrix requires.
 
 ## Not in Talon
 
-Talon has no row index and no in-place mutation. It has no `pivot` or
-`melt`, and reads no JSON files.
+Talon has no row index and no in-place mutation, and reads no JSON files.

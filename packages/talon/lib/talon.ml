@@ -485,6 +485,48 @@ module Kit = struct
     in
     run [] queries
 
+  (* Reshaping *)
+
+  let longer ~name ~value sel q =
+    let ns = column_names (Query.select Expr.[ keep sel ] q) in
+    if ns = [] then err "Kit.longer: the selector selects no column";
+    let selected = Hashtbl.create (List.length ns) in
+    List.iter (fun n -> Hashtbl.replace selected n ()) ns;
+    let others =
+      List.filter (fun n -> not (Hashtbl.mem selected n)) (column_names q)
+    in
+    let check c =
+      if List.mem c others then
+        err "Kit.longer: %a is a column the selector does not select"
+          Type.pp_quoted c
+    in
+    check name;
+    check value;
+    let (Type.Any t) = type_of q (List.hd ns) in
+    let k = Type.kind t in
+    if Option.is_none (Kind.provably_equal k k) then
+      err "Kit.longer: %a holds an extension, which no handle reads"
+        Type.pp_quoted (List.hd ns);
+    let cells = Array.of_list ns in
+    q
+    |> Query.unnest
+         Expr.[
+           name := store Type.(list (categorical cells)) (const cells);
+           value := list (List.map (Col.v k) ns);
+         ]
+    |> Query.select Expr.[ keep (Sel.names (others @ [ name; value ])) ]
+
+  let wider ~by ~key ~value q =
+    let column n x = Expr.(n := pivot (Col.string key) x) in
+    Query.aggregate ~by Expr.[ each (Sel.names [ value ]) { column } ] q
+    (* A record is never null, so this keeps every row. It reads the pivot, so
+       that the pivot's failures happen when no output reads a field. *)
+    |> Query.filter Expr.(not (is_null (Col.v Record.kind value)))
+    |> Query.select
+         Expr.[
+           keep (Sel.names by); within (Col.v Record.kind value) (keep Sel.all);
+         ]
+
   (* Randomness *)
 
   (* [seed_of s] is [s], or a seed drawn when the plan is built, so that a plan

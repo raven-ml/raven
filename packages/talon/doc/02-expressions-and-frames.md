@@ -144,8 +144,8 @@ rows.
 
 `Kit` holds compositions of the verbs, each documented by its definition:
 `head`, `tail`, `top_k`, `distinct`, `count_by`, `value_counts`, `describe`,
-`null_count`, `drop`, `rename`, `complete`, `one_hot`, `union` and
-`categorize`:
+`null_count`, `drop`, `rename`, `complete`, `one_hot`, `union`, `longer`,
+`wider` and `categorize`:
 
 ```ocaml
 let summary = Kit.describe (Query.of_table losses)
@@ -158,6 +158,43 @@ table 2 rows × 10 columns
  step        8      0  250.00000  119.522861  100.00000  175.00000  250.00000  325.00000  400.00000
  loss        7      1    1.90571    0.348370    1.52000    1.63000    1.87000    2.14500    2.40000
 ```
+
+## Reshaping
+
+`Kit.longer` turns columns into rows, keeping each cell with the name of its
+column, and `Kit.wider` undoes it. The columns of `wider` are its key's
+categorical dictionary, so its schema is known before any row is read:
+
+```ocaml
+let readings =
+  Query.of_table
+    (Talon.v
+       [
+         ("station", Column.v Type.string [| "a"; "a"; "b" |]);
+         ( "element",
+           Column.v
+             (Type.categorical [| "tmax"; "tmin" |])
+             [| "tmax"; "tmin"; "tmax" |] );
+         ("value", Column.v Type.float64 [| 21.; 8.; 19. |]);
+       ])
+
+let wide = Kit.wider ~by:[ "station" ] ~key:"element" ~value:"value" readings
+```
+
+```text
+table 2 rows × 3 columns
+ station  tmax     tmin
+ string   float64  float64
+ a        21.0000  8.00000
+ b        19.0000        ∅
+```
+
+`Kit.longer ~name:"element" ~value:"value" Sel.(names [ "tmax"; "tmin" ])
+(wide)` has `readings`' rows back, a null `tmin` row added for `b`. A key whose
+categories are not yet its type comes from `Kit.categorize`, in a run. Their
+contracts are in [`talon.mli`](../lib/talon.mli), at `Kit.longer` and
+`Kit.wider`, and at `Expr.pivot` for the cells a key may repeat or leave
+empty.
 
 ## Reductions
 

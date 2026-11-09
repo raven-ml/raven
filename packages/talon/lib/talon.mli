@@ -1416,6 +1416,37 @@ module Expr : sig
   (** [arg_max a] is the position of [a]'s first greatest value, like
       {!arg_min}. *)
 
+  val pivot : (string, row) t -> ('a, row) t -> (Record.t, agg) t
+  (** [pivot key v] is, per frame, one record with a field per category of
+      [key]'s categorical type, in dictionary order, named as the category. The
+      field holds [v] at the frame's row whose [key] is that category, and is
+      null where the frame has no such row. A null [v] in a cell is a null
+      field, so a missing cell and a null value look alike; a [bool] [true]
+      pivoted beside [v] tells them apart.
+
+      The record's type, and the plan's schema, follow from [key]'s type alone
+      and never from its values: cast [key] to the categorical naming the
+      fields, or read them from the data with {!Kit.categorize}. Every non-null
+      value of [v] lands in a cell of its row, or the run fails: a row with a
+      null [key] and a null [v] holds no cell, so a left join's unmatched row
+      leaves its frame's fields null; a null [key] with a non-null [v] has no
+      field to hold the value and is a data error, as is any value outside the
+      dictionary at the cast. Two rows of one frame with one key are a data
+      error; reduce them first with {!Query.aggregate} on the frame's keys and
+      [key]. Filtering before [pivot] removes the groups left with no row.
+
+      A data error reports the failing frame's first row, naming the key.
+
+      Cost: O(n + g k) for n rows, g frames and k categories. Under {!over} or
+      {!window} a frame's record holds its k cells, so the rows together hold
+      their frames' k cells.
+
+      Its problems are a [key] whose type is not categorical, and a [v] with no
+      column type, or none reachable. [aggregate] with it blocks, holding the
+      columns it reads. Raises [Invalid_argument] under [Rune.jit], and under
+      [Rune.vmap] over traced keys ({!Query.section-compiled}): its failures
+      read them. *)
+
   val collect : ('a, row) t -> ('a array, agg) t
   (** [collect a] is [a]'s values in frame order as a list of [a]'s type, with
       one element per row of the frame and a null element for a null value. It
@@ -1636,6 +1667,21 @@ module Expr : sig
       type from named expressions of the record's shape. A record and its
       fields have separate nulls, and {!is_null} of a record tests the record
       alone. *)
+
+  val list : ('a, 's) t list -> ('a array, 's) t
+  (** [list es] is the list of [es]' values at each row, in order, as a list of
+      the type where the types of [es] meet ({!Type.common}), with a null
+      element for each null value. It is never null: [list [ x; null ]] where
+      [x] is null is a list of two null elements. A literal or [null] element
+      takes that type, and {!store} gives one where nothing does. A list
+      operand stays one element, so a list of lists nests and never flattens.
+
+      It computes under [Rune.jit] and [Rune.vmap], since the lists' sizes
+      follow from the columns' lengths, but reading a list raises under
+      [Rune.jit] as for any list column: in a result, and under {!per_list}
+      and {!Query.unnest} ({!Query.section-compiled}).
+
+      Its problems are an empty [es], and operands that do not meet. *)
 
   val record : 's out list -> (Record.t, 's) t
   (** [record os] is the record of the outputs [os], its fields named as they
@@ -3050,6 +3096,76 @@ module Kit : sig
       to appear in [q]: [-0.] or [0.].
 
       Raises [Invalid_argument] if [ks] is empty or names a column twice. *)
+
+  val longer : name:string -> value:string -> Sel.t -> Query.t -> Query.t
+  (** [longer ~name ~value sel q] is [q] with the columns of [sel] replaced by
+      two columns: [name], the categorical whose dictionary is the selected
+      names in order, and [value], their cells at the type where their types
+      meet ({!Type.common}), one row per cell, nulls included. The other columns
+      come first, repeated, in [q]'s order, then [name] and [value], each row's
+      cells in column order. It is:
+      {[
+      let ns = (* the names [sel] selects, in order *) in
+      let others = (* [q]'s columns but [ns] *) in
+      let cells = Array.of_list ns in
+      Query.unnest
+        Expr.[
+          name := store Type.(list (categorical cells)) (const cells);
+          value := list (List.map (Col.v k) ns);
+        ]
+        q
+      |> Query.select Expr.[ keep (Sel.names (others @ [ name; value ])) ]
+      ]}
+      with [k] the kind of the first selected column. It streams in O(n k),
+      and building and optimizing its plan take O(k{^ 2}) time. Filtering with
+      {!Expr.is_null} after it drops null cells. Selected columns of different
+      kinds are a problem of the handle; widen them first with {!Expr.cast}.
+
+      Raises [Invalid_argument] if [sel] selects no column, if [name] or [value]
+      is a column [sel] does not select, or if the first selected column holds
+      an extension, which no {!Col} handle reads. *)
+
+  val wider : by:string list -> key:string -> value:string -> Query.t -> Query.t
+  (** [wider ~by ~key ~value q] is one row per group of [q]'s rows that have the
+      same [by], in order of first appearance, holding [by], then one column
+      per category of [key]'s categorical type, in dictionary order, holding
+      [value] at the row of that group and category, null where there is none
+      ({!Expr.pivot}). With [by] empty it is one row, even from no rows. It is:
+      {[
+      Query.aggregate ~by
+        Expr.[
+          each (Sel.names [ value ])
+            { column = (fun n x -> n := pivot (Col.string key) x) };
+        ]
+        q
+      |> Query.filter Expr.(not (is_null (Col.v Record.kind value)))
+      |> Query.select
+           Expr.[
+             keep (Sel.names by);
+             within (Col.v Record.kind value) (keep Sel.all);
+           ]
+      ]}
+      The columns come from [key]'s type, so the plan's schema is known before
+      any data is read. Cast a key to the categorical type whose dictionary
+      names the columns, or read them from the data with a run:
+      {[
+      let open Result.Syntax in
+      let* q = Kit.categorize [ "element" ] q in
+      Ok (Kit.wider ~by:[ "station"; "date" ] ~key:"element" ~value:"value" q)
+      ]}
+      An unused category is a column of nulls; {!categorize} a filtered query
+      to read only its categories. {!Expr.pivot} states the failures: duplicates
+      in a cell, a null [key] holding a value, and filtering before it. After
+      {!longer} ~name ~value sel, [wider ~by ~key:name ~value] restores the
+      input when the selected columns have one type, [by] is a key of the
+      input, lists its other columns in their order, and is non-empty or the
+      input has a row, and those columns precede the selected ones. Equality
+      there is by key identity ({!Type.compare_value}).
+
+      It blocks in O(n + groups k), and building and optimizing its plan take
+      O(k{^ 2}) time in its number of columns. Its problems are those of its
+      [aggregate] and [select]: a [key] that is not categorical, a category
+      named as a column of [by]. *)
 
   val one_hot : string -> Query.t -> Query.t
   (** [one_hot c q] is [q] with its categorical column [c] replaced, in place,

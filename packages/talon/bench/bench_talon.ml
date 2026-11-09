@@ -678,6 +678,42 @@ let per_list_sum () =
       of_table lists
       |> select Expr.[ "s" := per_list [ "x" := xs ] (sum (x *. w)) ])
 
+(* Reshaping: 2000 groups of 100 cells, a long table of [(id, k, x)] to a
+   table of 100 columns, and that table back to long. The sizes are what a run
+   of many groups over few columns looks like; the two rows time what a user
+   calls, so they survive a rewrite of the kernel. *)
+
+let reshape_long =
+  lazy
+    (let k = 100 and g = 2000 in
+     let n = g * k in
+     let dictionary = Array.init k (Printf.sprintf "k%d") in
+     let ids = Array.init n (fun i -> Int64.of_int (i / k)) in
+     let keys = Array.init n (fun i -> Some dictionary.(i mod k)) in
+     let xs = Array.init n float_of_int in
+     Talon.v
+       [
+         ("id", Column.of_tensor (Nx.create Nx.int64 [| n |] ids));
+         ("k", Column.of_options (Type.categorical dictionary) keys);
+         ("x", Column.of_tensor (Nx.create Nx.float64 [| n |] xs));
+       ])
+
+let wider q = Kit.wider ~by:[ "id" ] ~key:"k" ~value:"x" q
+
+let reshape_wide =
+  lazy (run (wider (Query.of_table (Lazy.force reshape_long))))
+
+let reshape_wider () =
+  ignore (run (wider (Query.of_table (Lazy.force reshape_long))))
+
+let reshape_longer () =
+  let wide = Lazy.force reshape_wide in
+  ignore
+    (run
+       (Kit.longer ~name:"k" ~value:"x"
+          Sel.(all - names [ "id" ])
+          (Query.of_table wide)))
+
 let unnest_keep () =
   run
     Query.(
@@ -722,6 +758,8 @@ let () =
           Thumper.bench "Join/keyed_inequality" below;
           Thumper.bench "List/per-list-sum-64k-32" per_list_sum;
           Thumper.bench "List/unnest-keep-64k-32" unnest_keep;
+          Thumper.bench "Reshape/wider-2000-100" reshape_wider;
+          Thumper.bench "Reshape/longer-2000-100" reshape_longer;
           Thumper.bench "Join/asof-1M-64k" asof_window;
           Thumper.bench "Join/asof-as-range-1M-64k" asof_range;
           Thumper.bench "Group/text-100-1M" (fun () -> by "t");

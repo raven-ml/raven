@@ -201,3 +201,9 @@
  (libraries windtrap talon nx)
  (deps
   (file golden/case.txt)))
+
+(test
+ (name test_pivot)
+ (modules test_pivot)
+ (package talon)
+ (libraries windtrap talon talon_gen nx))

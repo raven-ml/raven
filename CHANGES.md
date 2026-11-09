@@ -4155,6 +4155,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Kit.longer` and `Kit.wider` reshape tables between wide and long, over the new
+  `Expr.list` and `Expr.pivot`. `wider`'s columns are its key's dictionary, so its
+  schema needs no data; a value in no cell, or two in one, is a data error.
 - `Expr.Str.lower` and `Expr.Str.upper` map text by Unicode 18.0.0's full case
   mappings, with final sigma and without any language's tailoring. A mapping
   can change a row's byte length.

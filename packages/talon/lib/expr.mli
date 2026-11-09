@@ -102,6 +102,8 @@ val window :
 
 val per_list : row out list -> ('a, agg) t -> ('a, row) t
 val record : 's out list -> (Record.t, 's) t
+val list : ('a, 's) t list -> ('a array, 's) t
+val pivot : (string, row) t -> ('a, row) t -> (Record.t, agg) t
 val field : 'a Kind.t -> string -> (Record.t, 's) t -> ('a, 's) t
 val within : (Record.t, row) t -> 's out -> 's out
 val const : 'a -> ('a, 's) t
@@ -231,6 +233,8 @@ type (_, _) reduction =
   | Moments : (Record.t, Record.t) reduction
       (** A streamed [var] or [std]'s state: its operand's record holds a
           state or a value in each row. No expression names it. *)
+  | Pivot : (Record.t, Record.t) reduction
+      (** {!pivot}: its operand's record holds the key, then the value. *)
 
 type ('e, 's) ext = {
   type_ : Type.ext Type.t;  (** The extension type, an [Ext] type. *)
@@ -270,6 +274,7 @@ type 'a node =
   | If : (bool, 's0) t * ('a, 's1) t * ('a, 's2) t -> 'a node
   | Is_null : ('a, 's) t -> bool node
   | Coalesce : ('a, 's) t list -> 'a node
+  | List_of : ('a, 's) t list -> 'a array node
   | Is_in : 'a list * ('a, 's) t -> bool node
   | Cut : 'a array * ('a, 's) t -> int node
       (** Edges as given, copied when built and never mutated. *)

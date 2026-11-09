@@ -186,7 +186,7 @@ let reduction : type a b s r.
   | Arg_max -> arg st j ty a Arg_max Max
   | Var -> moments st j "var" ty a
   | Std -> moments st j "std" ty a
-  | Median | Quantile _ | N_unique | Collect | Moments -> raise Blocks
+  | Median | Quantile _ | N_unique | Collect | Moments | Pivot -> raise Blocks
 
 (* The evaluation order of [st.order] ranks the reductions: [map_node] rebuilds
    operands in no stated order, so {!v} sorts the fields by it. *)

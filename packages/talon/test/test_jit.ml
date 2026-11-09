@@ -436,6 +436,41 @@ let dynamic =
     refuses "inner join on a comparison" (verb [ "a" ] (ranged Join.Inner));
     refuses "semi join on a comparison" (verb [ "a" ] (ranged Join.Semi));
     refuses "distinct" (verb [ "k" ] (fun q -> Kit.distinct (keys q)));
+    (let codes args = Nx.cast Nx.int32 (Nx.argsort args.x) in
+     let names = [ "0"; "1"; "2" ] in
+     let key args =
+       Result.get_ok
+         (Column.of_layout
+            (Any (Type.categorical (Array.of_list names)))
+            (Fixed { validity = None; values = P (codes args) }))
+     in
+     let pivoted args =
+       let valid = Nx.cast Nx.bit args.valid in
+       let t =
+         Talon.v
+           [ ("c", key args); ("a", Column.of_tensor ~validity:valid args.x) ]
+       in
+       let q =
+         Query.aggregate ~by:[] [ "r" := pivot (Col.string "c") a ]
+           (Query.of_table t)
+         |> Query.select [ within (Col.v Record.kind "r") (keep Sel.all) ]
+       in
+       matrix names (run_ok q)
+     in
+     refuses ~read:"Nx.positions: " "pivot over a traced key" pivoted);
+    test "a list column in a result raises under jit" (fun () ->
+        raises_match
+          (Exn.invalid_arg ~sub:"Nx.item: the value is traced by Rune.jit")
+          (fun () ->
+            Rune.jit (signature ())
+              (fun args ->
+                let q =
+                  Query.select [ "l" := list [ Col.float "k"; b ] ]
+                    (Query.of_table (table args))
+                in
+                ignore (run_ok q);
+                Nx.zeros f64 [| 1; 1 |])
+              fixed));
     (let f =
        verb [ "s" ] (fun q ->
            Query.aggregate ~by:[] [ "c" := collect a ] q

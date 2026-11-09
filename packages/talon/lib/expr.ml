@@ -40,6 +40,7 @@ type (_, _) reduction =
   | Arg_max : ('a, int) reduction
   | Collect : ('a, 'a array) reduction
   | Moments : (Record.t, Record.t) reduction
+  | Pivot : (Record.t, Record.t) reduction
 
 type ('e, 's) ext = {
   type_ : Type.ext Type.t;
@@ -114,6 +115,7 @@ and 'a node =
   | If : (bool, 's0) t * ('a, 's1) t * ('a, 's2) t -> 'a node
   | Is_null : ('a, 's) t -> bool node
   | Coalesce : ('a, 's) t list -> 'a node
+  | List_of : ('a, 's) t list -> 'a array node
   | Is_in : 'a list * ('a, 's) t -> bool node
   | Cut : 'a array * ('a, 's) t -> int node
   | Hash : int * ('a, 's) t -> int node
@@ -199,6 +201,7 @@ let operands : type a. a node -> packed list = function
   | App (f, a) -> [ Packed f; Packed a ]
   | If (c, a, b) -> [ Packed c; Packed a; Packed b ]
   | Coalesce es -> List.map (fun e -> Packed e) es
+  | List_of es -> List.map (fun e -> Packed e) es
   | Concat (_, es) -> List.map (fun e -> Packed e) es
   | Not a -> [ Packed a ]
   | Is_null a -> [ Packed a ]
@@ -257,6 +260,7 @@ let reduction_name : type a b. (a, b) reduction -> string = function
   | Arg_max -> "arg_max"
   | Collect -> "collect"
   | Moments -> "moments"
+  | Pivot -> "pivot"
 
 let text_op_name : type a. a text_op -> string = function
   | Length -> "Str.length"
@@ -453,15 +457,16 @@ let node_equal : type a b. a node -> b node -> bool =
   | If _, If _
   | Is_null _, Is_null _
   | Coalesce _, Coalesce _
+  | List_of _, List_of _
   | Rank _, Rank _
   | App _, App _
   | Option _, Option _
   | Of_option _, Of_option _ ->
       true
   | ( ( Handle _ | Ext_handle _ | Read _ | Lit _ | Null | Rows | Int _ | Float _
-      | Compare _ | Logic _ | Not _ | If _ | Is_null _ | Coalesce _ | Is_in _
-      | Cut _ | Hash _ | Cast _ | Lift _ | Lift2 _ | Nx_map _ | Reduce _ | Over _
-      | Shift _ | Rank _ | Window _ | Per_list _ | Record_of _ | Field _
+      | Compare _ | Logic _ | Not _ | If _ | Is_null _ | Coalesce _ | List_of _
+      | Is_in _ | Cut _ | Hash _ | Cast _ | Lift _ | Lift2 _ | Nx_map _
+      | Reduce _ | Over _ | Shift _ | Rank _ | Window _ | Per_list _ | Record_of _ | Field _
       | Spread _ | Const _ | App _ | Option _ | Of_option _ | Store _ | Text _
       | Concat _ | Calendar _ ),
       _ ) ->
@@ -758,6 +763,7 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
   | If (c, a, b) -> app "if_" [ arg c; arg a; arg b ]
   | Is_null a -> app "is_null" [ arg a ]
   | Coalesce es -> app "coalesce" [ (fun ppf -> Type.pp_list (pp_at 0) ppf es) ]
+  | List_of es -> app "list" [ (fun ppf -> Type.pp_list (pp_at 0) ppf es) ]
   | Is_in (vs, a) -> app "is_in" [ pp_values a vs; arg a ]
   | Cut (edges, a) -> app "cut" [ pp_values a (Array.to_list edges); arg a ]
   | Hash (0, a) -> app "hash" [ arg a ]
@@ -772,6 +778,10 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
           pp_at ctx ppf e)
   | Reduce (Quantile p, a) ->
       app "quantile" [ (fun ppf -> Type.pp_lit Float ppf p); arg a ]
+  | Reduce
+      (Pivot, { node = Record_of [ Named (_, Packed k); Named (_, Packed v) ]; _ })
+    ->
+      app "pivot" [ arg k; arg v ]
   | Reduce (r, a) -> app (reduction_name r) [ arg a ]
   | Over { by; order; e } ->
       let labelled label pp = function
@@ -1315,6 +1325,20 @@ let reduction_typing : type a b.
       | Column ty -> Some (Column (Type.list ty))
       | Extension _ | Value -> no_type ())
   | Moments -> Some t
+  | Pivot -> (
+      match t with
+      | Column (Record [ (_, Any (Categorical d)); (_, value) ]) ->
+          let cell name = (name, value) in
+          Some (Column (Type.record (List.map cell (Iarray.to_list d))))
+      | Column (Record ((_, Any ty) :: _)) ->
+          report env
+            "pivot takes a categorical key, not %a: cast it to the categorical \
+             whose dictionary names the columns."
+            Type.pp ty;
+          None
+      | t ->
+          report env "pivot has no type over %a." pp_typing t;
+          None)
   | Sum -> (
       match t with
       | Column ty -> (
@@ -1823,6 +1847,34 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
   | Coalesce es ->
       let els = List.map (elab env) es in
       operation env els (fun at -> Coalesce (List.map at els))
+  | List_of [] ->
+      report env "list takes at least one element.";
+      Broken
+  | List_of es -> (
+      let els = List.map (elab env) es in
+      let build t = List_of (List.map (at t) els) in
+      match meet env els with
+      | Failed -> Broken
+      | Met (Column ty as t) -> known (Column (Type.list ty)) (build t)
+      | Met t ->
+          report env "list has no type over %a." pp_typing t;
+          Broken
+      | Unknown ->
+          (* All elements flexible: what meets the list types them. *)
+          let default =
+            match first_default els with
+            | Some (Column ty) -> Some (Column (Type.list ty))
+            | _ -> None
+          in
+          Flexible
+            {
+              default;
+              at =
+                (fun t ->
+                  match t with
+                  | Column (List ty) -> typed t (build (Column ty))
+                  | _ -> err "Expr.list: an element is not a column value");
+            })
   | Is_in (vs, a) ->
       on_operand env a (fun t a ->
           if all_hold env "value" t vs then known bool_typing (Is_in (vs, a))
@@ -2517,7 +2569,7 @@ let can_fail e =
     | Calendar
         ( Add_span _ | Diff _ | Floor _ | Offset _ | Parse_with _ | Wall _
         | Localize _ | Localize_ordered _ )
-    | Of_option _ | App _ | Reduce (Only, _) ->
+    | Of_option _ | App _ | Reduce (Only, _) | Reduce (Pivot, _) ->
         true
     | Reduce (Sum, { typing = Some (Column (Duration _)); _ }) -> true
     | Per_list (_ :: _ :: _, _) -> true
@@ -2551,6 +2603,7 @@ let map_node : type a. mapper -> a node -> a node =
   | If (c, a, b) -> If (map c, map a, map b)
   | Is_null a -> Is_null (map a)
   | Coalesce es -> Coalesce (List.map map es)
+  | List_of es -> List_of (List.map map es)
   | Is_in (vs, a) -> Is_in (vs, map a)
   | Cut (edges, a) -> Cut (edges, map a)
   | Hash (s, a) -> Hash (s, map a)
@@ -2917,6 +2970,8 @@ let collect a = reduce Collect a
 let over ?(by = []) ?(order = []) e = make (Over { by; order; e })
 let per_list ls r = make (Per_list (ls, r))
 let record os = make (Record_of os)
+let pivot key v = reduce Pivot (record [ "key" := key; "value" := v ])
+let list es = make (List_of es)
 
 let field k n r =
   check_utf_8 "Expr.field" n;
