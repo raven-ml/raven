@@ -429,6 +429,67 @@ let grads (type s) (dt : (float, s) Nx.dtype) ~eps ~tol () =
   equal ~msg:"gradient" (result unit string) (Ok ())
     (Rune.check_grads ~eps ~tol T.(list tensor) loss params)
 
+(* [grads]'s loss, in float64, against its slopes as well: a float capture's
+   cotangent. As [grads] derives, along directions of entries at most [2.1],
+   a slope moves a score by at most [6 · 2.1] more, so [ρ = 0.035] and
+   [|o'''| <= 3! · 1.67 / ρ³ <= 235000]: at [h = 2e-6] that is [1.05e-6 +
+   1.3e-5], [tol = 2e-5]. *)
+let capture_grads () =
+  let w =
+    Nx.create Nx.float64 [| 2; 4; 5; 2 |]
+      (Array.init 80 (fun k -> Float.sin (Float.of_int k)))
+  in
+  let lengths = Nx.create Nx.int64 [| 2 |] [| 6L; 7L |] in
+  let loss = function
+    | [ q; k; v; slopes ] ->
+        let o, _ =
+          Nx.attention ~lengths ~mask:Nx.causal
+            ~score:(fun p s ->
+              Nx.(Infix.(s - (cast Nx.float64 (p.q - p.k) * slopes))))
+            ~acc:Nx.float64
+            ~kv:(Nx.Dense { k; v })
+            q
+        in
+        Nx.sum (Nx.mul w o)
+    | _ -> invalid_arg "loss"
+  in
+  let f s seed =
+    Nx.create Nx.float64 s
+      (Array.init (numel s) (fun k -> Float.sin ((Float.of_int k *. 2.3) +. seed)))
+  in
+  let slopes = Nx.create Nx.float64 [| 4; 1; 1 |] [| 0.1; 0.2; 0.3; 0.4 |] in
+  let params =
+    [ f [| 2; 4; 5; 3 |] 1.; f [| 2; 2; 7; 3 |] 2.; f [| 2; 2; 7; 2 |] 3.; slopes ]
+  in
+  equal ~msg:"gradient" (result unit string) (Ok ())
+    (Rune.check_grads ~eps:2e-6 ~tol:2e-5 T.(list tensor) loss params)
+
+(* The same law through a page table of three entries a lead index, of two
+   keys a page, pages [0, 2, 0] and [1, -1, 2]: page 0 is read twice by the
+   first lead index and page 2 by both, so each cotangent is a sum, and the
+   entry [-1], out of range, hides its keys. In float64, [lse]'s cotangent
+   non-zero. As [grads] derives, whose [e / h + h² F / 6] is [1.05e-6 + 6.2e-7]
+   for [o], the 40 elements of [lse], of magnitude at most [4.4], add [8e-7]:
+   [tol = 3e-6]. *)
+let paged_grads () =
+  let f s seed =
+    Nx.create Nx.float64 s
+      (Array.init (numel s) (fun k -> Float.sin ((Float.of_int k *. 2.3) +. seed)))
+  in
+  let table = Nx.create Nx.int64 [| 2; 3 |] [| 0L; 2L; 0L; 1L; -1L; 2L |] in
+  let w = f [| 2; 4; 5; 2 |] 5. and wl = f [| 2; 4; 5 |] 6. in
+  let loss = function
+    | [ q; k; v ] ->
+        let o, lse =
+          Nx.attention ~acc:Nx.float64 ~kv:(Nx.Paged { k; v; table }) q
+        in
+        Nx.add (Nx.sum (Nx.mul w o)) (Nx.sum (Nx.mul wl lse))
+    | _ -> invalid_arg "loss"
+  in
+  let params = [ f [| 2; 4; 5; 3 |] 1.; f [| 3; 2; 2; 3 |] 2.; f [| 3; 2; 2; 2 |] 3. ] in
+  equal ~msg:"gradient" (result unit string) (Ok ())
+    (Rune.check_grads ~eps:2e-6 ~tol:3e-6 T.(list tensor) loss params)
+
 (* The gradient of a loss over [o] and [lse], [lse]'s cotangent non-zero, in
    the query, keys, values and the slopes the score captures, by
    [Attention_linear] transposed: compiled against eager, and reverse mode
@@ -600,5 +661,7 @@ let () =
            [
              test "float32" (grads Nx.float32 ~eps:1e-2 ~tol:2e-3);
              test "float64" (grads Nx.float64 ~eps:2e-6 ~tol:2e-6);
+             test "against a float capture" capture_grads;
+             test "through a page table" paged_grads;
            ];
        ])
