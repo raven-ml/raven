@@ -1,12 +1,78 @@
-; Settings are read when the program starts, and MTLCompiler is loaded once per
-; process, so CACHEDB is set here, to a directory of the sandbox, and the tests
-; tagged no-library run in a second process, where MTLCOMPILER_PATH names a file
-; that is no library.
+; Settings are read when the program starts, so CACHEDB is set here, to a
+; directory of the sandbox. The tests tagged no-library run in a second
+; process, where MTLCOMPILER_PATH names a file that is no library, those tagged
+; no-spawn in a third, which they forbid to start any process, and those
+; tagged no-symbol and no-service in processes where it names one of the
+; suite's stand-ins for MTLCompiler. Those tagged unwritable-cache run where
+; XDG_CACHE_HOME names a file, and unrunnable-cache and program-changed where
+; it names a directory of the sandbox, one each.
 
 (test
  (name test_compiler_metal)
+ (modules test_compiler_metal platform)
  (package tolk)
- (libraries windtrap tolk)
+ (libraries windtrap tolk tolk_spawn unix)
+ (deps
+  (sandbox always)
+  not_a_library
+  no_symbol.dylib
+  no_service.dylib)
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (progn
+    (run
+     %{test}
+     --exclude-tag
+     no-library
+     --exclude-tag
+     no-symbol
+     --exclude-tag
+     no-service
+     --exclude-tag
+     no-spawn
+     --exclude-tag
+     unwritable-cache
+     --exclude-tag
+     unrunnable-cache
+     --exclude-tag
+     program-changed)
+    (setenv
+     MTLCOMPILER_PATH
+     ./not_a_library
+     (progn
+      (run %{test} --tag no-library)
+      (run %{test} --tag no-spawn)))
+    (setenv
+     MTLCOMPILER_PATH
+     ./no_symbol.dylib
+     (run %{test} --tag no-symbol))
+    (setenv
+     MTLCOMPILER_PATH
+     ./no_service.dylib
+     (run %{test} --tag no-service))
+    (setenv
+     XDG_CACHE_HOME
+     ./not_a_library
+     (run %{test} --tag unwritable-cache))
+    (setenv
+     XDG_CACHE_HOME
+     unrunnable
+     (run %{test} --tag unrunnable-cache))
+    (setenv
+     XDG_CACHE_HOME
+     changed
+     (run %{test} --tag program-changed))))))
+
+; A fork needs a process that never spawned a domain: the fork tests run in a
+; program of their own, with MTLCompiler and with a file that is no library.
+
+(test
+ (name test_fork)
+ (modules test_fork)
+ (package tolk)
+ (libraries windtrap tolk unix)
  (deps
   (sandbox always)
   not_a_library)
@@ -15,16 +81,42 @@
    CACHEDB
    cache
    (progn
-    (run %{test} --exclude-tag no-library)
+    (run %{test})
     (setenv
      MTLCOMPILER_PATH
      ./not_a_library
-     (run %{test} --tag no-library))))))
+     (run %{test}))))))
 
 (rule
  (target not_a_library)
  (action
   (write-file %{target} "This file is no library.\n")))
+
+; The stand-ins for MTLCompiler, libraries that only macOS loads: elsewhere
+; they are files that are no library.
+
+(rule
+ (target no_symbol.dylib)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (run %{cc} -Wall -shared -o %{target} %{dep:stand_in.c})))
+
+(rule
+ (target no_service.dylib)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (run %{cc} -Wall -shared -DNO_SERVICE -o %{target} %{dep:stand_in.c})))
+
+(rule
+ (targets no_symbol.dylib no_service.dylib)
+ (enabled_if
+  (<> %{system} macosx))
+ (action
+  (progn
+   (write-file no_symbol.dylib "This file is no library.\n")
+   (write-file no_service.dylib "This file is no library.\n"))))
 
 ; The system the suite runs on: only macOS loads MTLCompiler.
 

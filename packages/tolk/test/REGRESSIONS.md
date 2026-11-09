@@ -1301,10 +1301,14 @@ are slow and skip without it; no machine here has ROCm, so they have not run.
 
 The suite is `Tolk.Compiler_metal` (`runtime/support/compiler_metal/`),
 written `M` below. It covers `MetalCompiler`, the part of `ops_metal.py` that
-precedes `Cstyle` (DIVERGENCES D4). MTLCompiler is
-loaded once per process, so the tests tagged `no-library` run in a second
-process, where `MTLCOMPILER_PATH` names a file that is no library. The tests
-of MTLCompiler itself skip elsewhere than on macOS.
+precedes `Cstyle` (DIVERGENCES D4). Settings are read when a process starts,
+so the tests tagged `no-library` and `no-spawn` run in processes where
+`MTLCOMPILER_PATH` names a file that is no library, `no-symbol` and
+`no-service` where it names a stand-in library of the suite's, and
+`unwritable-cache` and `unrunnable-cache` where `XDG_CACHE_HOME` names a file
+and a directory of the sandbox. The fork tests run in a program of their own,
+`Tolk.Compiler_metal (fork)`, written `MF` below. The tests of MTLCompiler
+itself skip elsewhere than on macOS.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
@@ -1313,10 +1317,11 @@ of MTLCompiler itself skip elsewhere than on macOS.
 | tinygrad: `device/metal/test_metal.py::TestMetal::test_alloc_oom`, `test_failed_newLibraryWithData`, `test_free` | the device's memory and pipelines | dropped: the device is rig's and `tolk.engine`'s (plan §1a) |
 | tinygrad: `runtime/ops_metal.py` `MetalCompiler.compile` (no test) | the reply's data starts after the header and the warnings | `M › MTLCompiler › a source that draws warnings compiles to a Metal library` |
 | tinygrad: `runtime/ops_metal.py` `MetalCompiler.compile` (no test) | the Metal version by macOS, `-fno-fast-math` | `M › MTLCompiler › the language is the latest the running macOS compiles kernels of`, `fast math is off` |
-| tinygrad: `runtime/ops_metal.py` `MetalCompiler.__reduce__` | one compiler per forked process | dropped: no pickling; `M › MTLCompiler › compiles from several domains at once` pins the concurrent use of one service |
+| tinygrad: `runtime/ops_metal.py` `MetalCompiler.__reduce__` | one compiler per forked process | dropped: no pickling; `MF › a forked process` (2 tests) pins that a forked process compiles with processes of its own |
 | tinygrad: `runtime/ops_metal.py` `MetalCompiler.disassemble` | the applegpu disassembler | `M › MTLCompiler › disassembly prints nothing` (README) |
-| tinygrad: `runtime/ops_metal.py` cache key | `compile_metal_direct` | `M › cache` (3 tests) |
-| tinygrad: `runtime/ops_metal.py` `MetalCompiler` (the framework loaded with the class, its service made by `__init__`) | making the compiler loads MTLCompiler, or fails | `M › without MTLCompiler on the machine › making a compiler raises Failure naming MTLCompiler and MTLCOMPILER_PATH`; `M › a library that does not load` (3 tests) |
+| tinygrad: `runtime/ops_metal.py` cache key | `compile_metal_direct` | `M › cache` (first 3 tests) |
+| tinygrad: `runtime/ops_metal.py` `MetalCompiler` (the framework loaded with the class, its service made by `__init__`) | making the compiler finds MTLCompiler, or fails | `M › without MTLCompiler on the machine › making a compiler raises Failure naming MTLCompiler and MTLCOMPILER_PATH` |
+| D5 | compiles in processes of their own, which load MTLCompiler, make its service and serve in turn: a library found that does not load, lacks MTLCompiler's functions or makes no service is a `Compile_error` at each compile from a process that lives, compiles at once are the bytes of compiles in turn, a killed idle process is replaced, a process that cannot start is a `Failure`, a cache that cannot hold or run the program gives way to the temporary directory, a program file that is a link, writable by others, quarantined, changed or removed is written again before it runs, and a compile the table holds starts no process | `M › a library that does not load` (6 tests), `M › a library without MTLCompiler's functions`, `M › a library that makes no service`, `M › compiles in processes of their own` (every test), `M › a process that cannot start`, `M › a cache that cannot be written` (2 tests), `M › a cache whose program cannot run`, `M › a program that changed` (5 tests), `M › cache › a compile the table holds starts no worker` |
 | tinygrad: `external/external_metal_compile_fail.py` | a kernel that crashed Metal's compiler | dropped: a crash reproducer of a driver bug, outside tinygrad's suite |
 
 ## Indexing

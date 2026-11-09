@@ -36,7 +36,6 @@ raven / llama.cpp b12048 Vulkan:
   AMD driver brackets each timed launch, reading the VMID filter on the
   GPU in the bracket and marking a saturated or foreign count unmeasured
   (_plans/todo-campaign/design/amd-counters.adjudication.md)
-- compile speed: Metal builds run one at a time
 - long programs: tolk's passes are linear in the nodes they walk, about 0.4 us
   a row over about 130 walks, flat (no pass past 8%, no function past 4%):
   the gradient of `betainc` costs tolk and rune's tracing 0.8 s and Clang

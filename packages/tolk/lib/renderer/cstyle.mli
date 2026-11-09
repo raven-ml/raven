@@ -114,7 +114,7 @@ val metal : Helpers.Target.t -> Renderer.t
     {!Dtype.Float64}.
 
     Raises [Invalid_argument] if the architecture starts with [Apple] and is not
-    followed by an integer, and [Failure] if MTLCompiler cannot be loaded
+    followed by an integer, and [Failure] if MTLCompiler is not found
     ({!Compiler_metal.compiler}). *)
 
 val cuda : Helpers.Target.t -> Renderer.t

@@ -12,6 +12,10 @@ external above_stdio : Unix.file_descr -> Unix.file_descr
 
 external no_sigpipe : Unix.file_descr -> unit = "caml_tolk_worker_no_sigpipe"
 
+external quarantined : Unix.file_descr -> bool
+  = "caml_tolk_worker_quarantined"
+[@@noalloc]
+
 external spawn :
   string ->
   string ->
@@ -34,12 +38,15 @@ type serving = {
   temp : string;
 }
 
-(* [lock] guards [path] and [idle], the serving workers no call holds. *)
+(* [lock] guards [path], [refused], the directories whose program the system
+   refused to run, each with why, and [idle], the serving workers no call
+   holds. *)
 type t = {
   name : string;
   program : string;
   lock : Mutex.t;
   mutable path : string option;
+  mutable refused : (string * string) list;
   mutable idle : serving list;
 }
 
@@ -59,7 +66,14 @@ let remove path =
   try remove_tree path with Unix.Unix_error _ | Sys_error _ -> ()
 
 let v ~name program =
-  { name; program; lock = Mutex.create (); path = None; idle = [] }
+  {
+    name;
+    program;
+    lock = Mutex.create ();
+    path = None;
+    refused = [];
+    idle = [];
+  }
 
 (* The program *)
 
@@ -69,62 +83,139 @@ let rec mkdir_p dir =
     try Sys.mkdir dir 0o755 with Sys_error _ when Sys.file_exists dir -> ()
   end
 
-(* The program is read shared for deletion: on Windows, renaming a file holds
-   it open for deletion, and a reader that does not share it fails while
-   another process renames the program into place. *)
-let file_digest path =
-  let fd = Unix.openfile path [ O_RDONLY; O_CLOEXEC; O_SHARE_DELETE ] 0 in
-  let ic = Unix.in_channel_of_descr fd in
-  Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
-      Digest.channel ic (-1))
+(* The directories the program is written to, in order: the cache, then the
+   temporary directory, for a cache that cannot be written, that other users
+   can write, or whose files cannot run, as on a volume mounted noexec. *)
+let program_dirs () = [ Helpers.cache_dir; Filename.get_temp_dir_name () ]
+let digest w = Digest.to_hex (Digest.string w.program)
+let prefix w = w.name ^ "-worker-"
 
-(* The file in [Helpers.cache_dir] named by the program's digest, written aside
-   and renamed into place unless a whole one is there. *)
-let program_file w =
-  let digest = Digest.to_hex (Digest.string w.program) in
-  let prefix = w.name ^ "-worker-" in
-  let path =
-    Filename.concat Helpers.cache_dir
-      (prefix ^ digest ^ if Sys.win32 then ".exe" else "")
-  in
-  let whole () =
-    Sys.file_exists path && Digest.to_hex (file_digest path) = digest
-  in
+(* The file in [dir] named by the program's digest. *)
+let program_name w dir =
+  Filename.concat dir (prefix w ^ digest w ^ if Sys.win32 then ".exe" else "")
+
+(* Owners and modes: Windows has neither here. *)
+
+let own (st : Unix.stats) = Sys.win32 || st.st_uid = Unix.geteuid ()
+
+let others_write (st : Unix.stats) =
+  (not Sys.win32) && st.st_perm land 0o022 <> 0
+
+(* Whether no other user can replace what [dir] holds: a directory of this
+   user's or the system's that no other can write, or whose sticky bit keeps
+   each file to its owner, as /tmp's. *)
+let safe_dir dir =
+  match Unix.stat dir with
+  | exception Unix.Unix_error _ -> false
+  | st ->
+      st.st_kind = S_DIR
+      && (own st || st.st_uid = 0)
+      && ((not (others_write st)) || st.st_perm land 0o1000 <> 0)
+
+(* Whether [path] is the program and may run: a regular file reached through
+   no link, this user's, that no other can write, without macOS's quarantine,
+   whose bytes are the program's. It is read shared for deletion: on Windows,
+   renaming a file holds it open for deletion, and a reader that does not
+   share it fails while another process renames the program into place. *)
+let trusted w path =
+  match Unix.lstat path with
+  | exception Unix.Unix_error _ -> false
+  | entry when entry.st_kind <> S_REG || (not (own entry)) || others_write entry
+    ->
+      false
+  | entry -> (
+      match Unix.openfile path [ O_RDONLY; O_CLOEXEC; O_SHARE_DELETE ] 0 with
+      | exception Unix.Unix_error _ -> false
+      | fd ->
+          let ic = Unix.in_channel_of_descr fd in
+          Fun.protect ~finally:(fun () -> close_in_noerr ic) @@ fun () ->
+          (* A link put in its place since lstat opens another file. *)
+          let st = Unix.fstat fd in
+          (Sys.win32 || (st.st_dev = entry.st_dev && st.st_ino = entry.st_ino))
+          && (not (quarantined fd))
+          && Digest.to_hex (Digest.channel ic (-1)) = digest w)
+
+(* The program in [dir]: [program_name w dir] if it is [trusted], or else
+   written aside under a name no other process can take and renamed there.
+   Where that name holds another user's file, which a sticky directory keeps,
+   the program runs from the file written aside, removed when this process
+   exits. *)
+let program_file w dir =
+  let path = program_name w dir in
+  let fail e = failwith (Printf.sprintf "%s worker %s: %s" w.name path e) in
   try
-    if not (whole ()) then begin
-      mkdir_p Helpers.cache_dir;
+    mkdir_p dir;
+    if not (safe_dir dir) then fail "other users can write its directory";
+    if trusted w path then path
+    else
       let tmp, oc =
-        Filename.open_temp_file ~mode:[ Open_binary ] ~perms:0o755
-          ~temp_dir:Helpers.cache_dir prefix ".tmp"
+        Filename.open_temp_file ~mode:[ Open_binary ] ~perms:0o755 ~temp_dir:dir
+          (prefix w) ".tmp"
       in
       Fun.protect
         ~finally:(fun () -> close_out_noerr oc)
         (fun () -> output_string oc w.program);
-      try Sys.rename tmp path with Sys_error _ when whole () -> Sys.remove tmp
-    end;
-    if not (whole ()) then failwith (path ^ ": differs from the program");
-    path
+      (match Sys.rename tmp path with
+      | () -> ()
+      | exception Sys_error _ when trusted w path -> Sys.remove tmp
+      | exception Sys_error _ -> ());
+      if trusted w path then path
+      else if trusted w tmp then begin
+        at_exit (fun () -> try Sys.remove tmp with Sys_error _ -> ());
+        tmp
+      end
+      else fail "cannot be made the program: quarantined, or another's"
   with
-  | Sys_error e -> failwith (Printf.sprintf "%s worker %s: %s" w.name path e)
-  | Unix.Unix_error (e, _, _) ->
-      failwith
-        (Printf.sprintf "%s worker %s: %s" w.name path (Unix.error_message e))
+  | Sys_error e -> fail e
+  | Unix.Unix_error (e, _, _) -> fail (Unix.error_message e)
 
-(* Written once, by whichever domain first runs [w]. A failure is raised to
-   that run and tried again by the next. *)
+(* The program written to the first of [dirs] that takes it. A failure names
+   each directory's. *)
+let rec first_file w errors = function
+  | [] -> failwith (String.concat "; " (List.rev errors))
+  | dir :: dirs -> (
+      try program_file w dir with Failure e -> first_file w (e :: errors) dirs)
+
+(* Written by whichever domain first runs [w], to the first directory whose
+   program the system has not refused to run, and written again when it is no
+   longer [trusted]: removed, as a cache cleaner does, or replaced. A failure
+   is raised to that run and tried again by the next. *)
 let program_path w =
   Mutex.protect w.lock @@ fun () ->
   match w.path with
-  | Some path -> path
-  | None ->
+  | Some path when Host_config.system = "linux" || trusted w path -> path
+  | Some _ | None ->
       let path =
         if Host_config.system = "linux" then
           let fd = memfd ("tolk-" ^ w.name ^ "-worker") w.program in
           "/proc/self/fd/" ^ string_of_int fd
-        else program_file w
+        else
+          let usable dir = not (List.mem_assoc dir w.refused) in
+          first_file w [] (List.filter usable (program_dirs ()))
       in
       w.path <- Some path;
       path
+
+(* [Ok ()] if the program at [path], which the system refused to run for
+   [why], has a directory left to be written to: then the directory of [path]
+   is refused, and the next [program_path] writes the program to a later one.
+   Otherwise [Error] names each refusal. *)
+let refuse w path why =
+  Mutex.protect w.lock @@ fun () ->
+  let in_dir dir =
+    Filename.dirname (program_name w dir) = Filename.dirname path
+  in
+  let refusal = path ^ ": " ^ why in
+  match List.rev (program_dirs ()) with
+  | last :: earlier when not (in_dir last) -> (
+      match List.find_opt in_dir earlier with
+      | Some dir ->
+          if not (List.mem_assoc dir w.refused) then
+            w.refused <- (dir, refusal) :: w.refused;
+          if w.path = Some path then w.path <- None;
+          Ok ()
+      | None -> Error refusal)
+  | _ -> Error (String.concat "; " (List.rev_map snd w.refused @ [ refusal ]))
 
 (* Running *)
 
@@ -222,7 +313,7 @@ let spawn_worker program library temp input output errors =
     spawn program cmdline input output errors
   else Unix.create_process program (Array.of_list args) input output errors
 
-let start w library =
+let rec start w library =
   let program = program_path w in
   let fail why =
     failwith (Printf.sprintf "%s worker %s: %s" w.name program why)
@@ -243,14 +334,23 @@ let start w library =
   let (replies, requests), theirs =
     try guarded [ log ] channel with e -> fail_removing e
   in
+  let close_all () =
+    close_pair theirs;
+    close_pair (replies, requests);
+    Unix.close log
+  in
   match spawn_worker program library temp (fst theirs) (snd theirs) log with
   | pid ->
       close_pair theirs;
       { owner = Unix.getpid (); pid; library; replies; requests; log; temp }
+  | exception Unix.Unix_error (((EACCES | EPERM) as e), _, _) -> (
+      close_all ();
+      remove temp;
+      match refuse w program (Unix.error_message e) with
+      | Ok () -> start w library
+      | Error refusals -> failwith (w.name ^ " worker " ^ refusals))
   | exception e ->
-      close_pair theirs;
-      close_pair (replies, requests);
-      Unix.close log;
+      close_all ();
       fail_removing e
 
 (* An idle worker of [library]. Workers started by another process, the one

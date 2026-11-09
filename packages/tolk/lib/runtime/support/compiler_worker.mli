@@ -10,9 +10,16 @@
     compiler library and compiles: a library that serialises the compiles of a
     process, or crashes on a source, then holds or ends a worker's process
     only. On Linux the program runs from a sealed memory file, which runs where
-    the home directory is mounted noexec; elsewhere from a file in
-    {!Helpers.cache_dir} named by the program's digest, written aside and
-    renamed into place.
+    the home directory is mounted noexec; elsewhere from a file named by the
+    program's digest, written aside and renamed into place, in
+    {!Helpers.cache_dir}, or in {!Filename.get_temp_dir_name} if the cache
+    cannot be written, other users can write it, or the system refuses to run a
+    program from it. Such a file runs only if it is a regular file reached
+    through no link, this user's, that no other user can write, without macOS's
+    quarantine, holding the program's bytes; it is checked at each start and
+    written again otherwise. Where another user's file holds the name, as in a
+    shared temporary directory, the program runs from the file written aside,
+    removed when this process exits.
 
     A request is the worker's own fields and source. A reply is [ok N\n] then
     [N] bytes of binary, or [error N\n] then [N] bytes of message, whole if
@@ -62,5 +69,6 @@ val call : t -> string -> string -> (string, string) result
     A worker that ends never raises [SIGPIPE] here: requests go to a socket
     sent to without the signal, or on Windows, which has none, to a pipe.
 
-    Raises [Failure] naming the worker if its program cannot be written out or
-    started. *)
+    Raises [Failure] naming the worker if its program can be written to
+    neither directory, or cannot be started; the failure names each
+    directory's. *)

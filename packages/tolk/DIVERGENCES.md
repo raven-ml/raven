@@ -187,9 +187,9 @@ requires a source (`uop/upat.py` `_get_clause`).
   process is started with, and `to_program_cache`, which the parent fills).
 - **tolk:** `Worker.spawned` and `Worker.map`; `Setting.t` and
   `Setting.context`; `Codegen.to_program_cache` (`to_program`'s cache);
-  `Compiler_metal.build`; `Compiler_worker.call`, and the C files
-  `lib/runtime/support/compiler_worker.h`, `compiler_amd_worker.c` and
-  `compiler_cuda_worker.c`.
+  `Compiler_worker.call`, and the C files
+  `lib/runtime/support/compiler_worker.h`, `compiler_amd_worker.c`,
+  `compiler_cuda_worker.c` and `compiler_metal_worker.c`.
 - **Differs:** compilation runs on domains, not processes. `Worker.map` spawns
   its domains for the call and joins them before it returns, where tinygrad
   keeps a pool: an idle domain still takes part in every minor collection. So
@@ -217,24 +217,33 @@ requires a source (`uop/upat.py` `_get_clause`).
   `functools.cache`) are made once and shared by every domain
   (`Decomp_op.simplifying_patterns`, `Decomp_op.late_patterns`,
   `Transcendental.patterns`), and a rule compiles on the domain that tries it
-  first, or on each that tries it at once. MTLCompiler, which a tinygrad worker
-  loads in its own process, is loaded once for every domain, and it re-parses
-  its options into LLVM's global option registry on every build, which is not
-  thread-safe: its builds run one at a time. comgr serialises the compiles of a
-  process on a mutex of its own, and NVRTC 13.3 and 13.4's assembler crashes on
-  some valid sources, so comgr and NVRTC compile in processes of their own,
-  spawned by the compiling domains, where a tinygrad worker process loads the
-  library once and compiles in it. Making the compiler finds the library, and
+  first, or on each that tries it at once. MTLCompiler re-parses its options
+  into LLVM's global option registry on every build, which is not
+  thread-safe, comgr serialises the compiles of a process on a mutex of its
+  own, and NVRTC 13.3 and 13.4's assembler crashes on some valid sources, so
+  MTLCompiler, comgr and NVRTC compile in processes of their own, spawned by
+  the compiling domains, where a tinygrad worker process loads the library
+  once and compiles in it. tinygrad compiles a lone kernel in the parent;
+  tolk sends it to a process too, so that a crash has one outcome, at the
+  cost of one process start in a process's first compile. Making the compiler
+  finds the library, and
   those processes load it, so a file found that is no library raises
   `Compile_error` at each compile, where it fails making tinygrad's compiler.
   Each process is a small C program per library that tolk carries, which runs
-  from memory on Linux and from a file in `Helpers.cache_dir` elsewhere. A
+  from memory on Linux and elsewhere from a file in `Helpers.cache_dir`, or in
+  the temporary directory where the cache cannot be written or its file
+  cannot run: macOS, Metal's only system, has no memory file to run. Such a
+  file runs only if it is this user's regular file, reached through no link,
+  that no other user can write and macOS has not quarantined; another is
+  written again, since a shared directory lets another user plant it. A
   process serves compiles in turn over a socket (two pipes on Windows), idle
   between them in a list every domain takes from, since a process's first
   compile pays the library's setup: about 100 ms for NVRTC, most of it starting
-  CUDA's driver, and about 9 ms for comgr, of which loading it is 4 ms
+  CUDA's driver, about 9 ms for comgr, of which loading it is 4 ms
   (nonnormal: a small kernel's compile takes 23-28 ms in a new process, 15 ms in
-  a serving one); a compile that finds none idle starts another. A compile whose
+  a serving one), and for MTLCompiler a load of 5-33 ms and a first compile of
+  9-28 ms against 3-11 ms later (an M1 Max under load); a compile that finds
+  none idle starts another. A compile whose
   process ends without a reply raises `Compile_error` naming the signal or exit
   status, where it would end tinygrad's worker, and that process serves no
   other. The NVRTC process disables NVRTC's own cache of binaries
@@ -256,8 +265,13 @@ requires a source (`uop/upat.py` `_get_clause`).
   programs are kept › calls from several domains at once make one program,
   compiled once`; `Tolk.Decomp_dtype, compiled in parallel › targets lowered
   on several domains at once get their own rules`; `Tolk.Compiler_metal ›
-  MTLCompiler › compiles
-  from several domains at once`; `Tolk.Compiler_amd › compiles in processes
+  compiles in processes of their own` (every test), `› a library that does
+  not load` (every test), `› a library without MTLCompiler's functions`,
+  `› a library that makes no service`, `› a process that cannot start`, `› a
+  cache that cannot be written`, `› a cache whose program cannot run` and
+  `› cache › a compile the table holds starts no worker`;
+  `Tolk.Compiler_metal (fork) › a forked process` (every test);
+  `Tolk.Compiler_amd › compiles in processes
   of their own` (every test) and `› a process that cannot start`;
   `Tolk.Compiler_cuda › compiles in processes of their own` (every test),
   `› a library that does not load` (every test), and `› a process that cannot
@@ -506,14 +520,15 @@ rendered for those targets without the libraries. As tinygrad's
 `runtime/support/compiler_cuda.py` `NVRTCCompiler.__init__` (`nvrtcVersion`),
 `runtime/support/compiler_amd.py` (`HIPCompiler` asserts comgr is loaded) and
 `runtime/ops_metal.py` (`MetalCompiler`) do when the compiler is made,
-`Compiler_cuda.nvrtc` and `Compiler_amd.hip` find their library and
-`Compiler_metal.compiler` loads MTLCompiler, raising `Failure` without it, so
+`Compiler_cuda.nvrtc`, `Compiler_amd.hip` and `Compiler_metal.compiler` find
+their library, raising `Failure` without it, so
 `Cstyle.cuda`, `Cstyle.hip`, `Cstyle.metal` and `Device.renderer` raise it too.
 The tests that render for those targets skip without the library, as tolk's GPU
 tests do, except HIP's: no machine here has comgr, so the suites that render for
 HIP name a file that stands in for it in `COMGR_PATH`, as tinygrad's goldens'
-generator marks comgr loaded. NVRTC and comgr are loaded by the processes that
-compile (D5), so a file found that is no library fails each compile.
+generator marks comgr loaded. NVRTC, comgr and MTLCompiler are loaded by the
+processes that compile (D5), so a file found that is no library fails each
+compile.
 
 ## D16. Withdrawn
 
@@ -3458,10 +3473,10 @@ held only on another machine is no reason.
   `REWRITE_STACK_LIMIT`.
 - **Reason:** (a): tinygrad bounds a candidate as one unit in a worker
   process. A tolk candidate is lowered on a domain (D5), which no signal
-  stops, and a process with domains cannot fork. MTLCompiler compiles
-  in this process and cannot be stopped either. A limit would reach only
-  Clang, comgr and NVRTC, the toolchains that run as processes, and give the
-  search a promise that depends on the backend.
+  stops, and a process with domains cannot fork. A limit would reach only the
+  toolchains, which run as processes (Clang, and the workers of comgr, NVRTC
+  and MTLCompiler), and give the search a promise its lowering does not
+  keep.
 - **Pinned by:** an absence; the bound tolk keeps is pinned by D115's
   `Tolk.Search › BEAM_PADTO=1 ... › a candidate of BEAM_UOPS_MAX
   instructions or more is not compiled`.

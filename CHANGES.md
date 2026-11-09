@@ -1148,6 +1148,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Metal compiles run in worker processes, several at once, where a lock ran
+  them in turn; a compiler crash or an MTLCompiler that won't load raises
+  `Compile_error`. Off Linux a worker may run from the temporary directory.
 - Metal streams few outputs on 16384 threads (`Renderer.t.stream_threads`),
   and rune's attention decode on Metal splits differently: a vector times a
   16384 by 8192 matrix runs 1.74x faster, a decode key projection 1.38x slower.

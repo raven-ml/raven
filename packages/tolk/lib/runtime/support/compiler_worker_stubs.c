@@ -77,6 +77,23 @@ value caml_tolk_worker_memfd(value v_name, value v_program) {
 }
 #endif
 
+/* Whether the file [v_fd] carries macOS's quarantine attribute: the system
+   holds the start of such a program, before its first instruction, until the
+   user approves it. Elsewhere there is none. */
+#ifdef __APPLE__
+#include <sys/xattr.h>
+
+value caml_tolk_worker_quarantined(value v_fd) {
+  return Val_bool(
+      fgetxattr(Int_val(v_fd), "com.apple.quarantine", NULL, 0, 0, 0) >= 0);
+}
+#else
+value caml_tolk_worker_quarantined(value v_fd) {
+  (void)v_fd;
+  return Val_false;
+}
+#endif
+
 /* Channels */
 
 #ifndef _WIN32

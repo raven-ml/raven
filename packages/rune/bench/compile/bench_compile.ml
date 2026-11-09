@@ -22,9 +22,18 @@
    schedules and programs back from, on as many domains as tolk's default
    [PARALLEL] gives.
 
+   A [first/] case's sample is only the first call of a process that set up
+   its inputs first, with no compile yet: its setup starts processes that
+   prepare the call and wait, and each sample has one of them make it. Such
+   a row sees the cost of a process's first compile, a few milliseconds
+   that a whole process's start and setup would hide.
+
    [--cold ID] runs one case's first call and prints its milliseconds over
    the disk cache [CACHEDB]: a cold sample runs it at an empty path and
-   [PARALLEL=1], a warm one over its setup's cache. *)
+   [PARALLEL=1], or the default [PARALLEL] for a case whose kernels compile
+   at once, and a warm one over its setup's cache. [--first ID] prepares a
+   [first/] case's call, prints "ready", makes the call when a line comes on
+   its standard input, and prints "done". *)
 
 
 let f64 = Nx.float64
@@ -554,6 +563,20 @@ let metal_sums salt () =
         (Sys.opaque_identity
            (Rune.jit Nx.Ptree.(list tensor @-> returns (list tensor)) sums xs))
 
+(* One sum of sines of 8 rows of 64 float32 values on the Mac's GPU, scaled by
+   the process's id, so that Metal's cache holds none of its pipeline: the
+   device opens and the input is placed, then the call compiles one kernel,
+   the process's first compile. *)
+let metal_one () =
+  match Rig.open_ (Rig_metal.gpu 0) with
+  | Error e -> failwith e
+  | Ok gpu ->
+      let module D = (val Nx.devices [ gpu ] : Nx.Devices) in
+      let x = Nx.place D.on (Nx.Rng.uniform Nx.float32 [| 8; 64 |]) in
+      let salt = Float.of_int (Unix.getpid ()) in
+      fun () ->
+        compile (fun x -> Nx.sum ~axes:[ 1 ] (Nx.sin (Nx.mul_s x salt))) x
+
 let cases =
   [
     ("linalg/solve-32", solve);
@@ -597,6 +620,13 @@ let cases =
        after the first: timed warm only. *)
     ("metal/sums-32-cached", metal_sums 0.);
   ]
+
+(* The [first/] cases: each prepares its call, which it returns. *)
+let first_cases = [ ("metal/one-new", metal_one) ]
+
+(* The cases whose cold samples run at the default [PARALLEL]: their kernels'
+   compiles run at once. *)
+let parallel_cases = [ "metal/sums-32" ]
 
 (* The cases timed again over a warm disk cache, as a user's next run of a
    program makes its first call: a model's first steps, whose schedule reads 40
@@ -664,7 +694,70 @@ let temp_dir () = Filename.temp_dir "bench-compile" ""
 let cold id () =
   let dir = temp_dir () in
   Fun.protect ~finally:(fun () -> remove dir) @@ fun () ->
-  first_call ~env:[| "PARALLEL=1" |] dir id
+  let env = if List.mem id parallel_cases then [||] else [| "PARALLEL=1" |] in
+  first_call ~env dir id
+
+(* A process ready to make a [first/] case's call over an empty disk cache:
+   a line on [go] starts the call, and [said] says "ready", then "done". *)
+type ready = { pid : int; go : out_channel; said : in_channel; dir : string }
+
+let start_ready id =
+  let dir = temp_dir () and exe = Sys.executable_name in
+  let env =
+    Array.append
+      [| "CACHEDB=" ^ Filename.concat dir "cache.db"; "PARALLEL=1" |]
+      (Unix.environment ())
+  in
+  let child_in, go = Unix.pipe ~cloexec:true () in
+  let said, child_out = Unix.pipe ~cloexec:true () in
+  let pid =
+    Unix.create_process_env exe [| exe; "--first"; id |] env child_in child_out
+      Unix.stderr
+  in
+  Unix.close child_in;
+  Unix.close child_out;
+  {
+    pid;
+    go = Unix.out_channel_of_descr go;
+    said = Unix.in_channel_of_descr said;
+    dir;
+  }
+
+let expect r line =
+  match In_channel.input_line r.said with
+  | Some l when l = line -> ()
+  | _ -> failwith ("bench_compile: a first call's process did not say " ^ line)
+
+let stop r =
+  (try Unix.kill r.pid Sys.sigkill with Unix.Unix_error (ESRCH, _, _) -> ());
+  ignore (Unix.waitpid [] r.pid);
+  close_out_noerr r.go;
+  close_in_noerr r.said;
+  remove r.dir
+
+(* A trial calls a case once to size its batches, at least 3 times to warm up
+   and 3 times for its samples: a process each. This holds while one call
+   passes the batch floor, so that every batch is one call: a first call of a
+   few milliseconds under the floor would double the batch and run out of
+   processes, which fails the case. *)
+let ready_processes = 8
+
+(* A [first/] case: its setup starts [ready_processes] processes and waits
+   until each has prepared [id]'s call; a sample has the next one make it. *)
+let first id =
+  Thumper.bench_with_setup ("first/" ^ id)
+    ~setup:(fun () ->
+      let all = List.init ready_processes (fun _ -> start_ready id) in
+      List.iter (fun r -> expect r "ready") all;
+      (all, Queue.of_seq (List.to_seq all)))
+    ~teardown:(fun (all, _) -> List.iter stop all)
+    (fun (_, waiting) ->
+      match Queue.take_opt waiting with
+      | None -> failwith "bench_compile: no process left ready"
+      | Some r ->
+          output_string r.go "go\n";
+          flush r.go;
+          expect r "done")
 
 (* A case whose samples read [id]'s programs back from the disk cache its
    setup fills. *)
@@ -693,6 +786,17 @@ let () =
       | None ->
           prerr_endline ("bench_compile: no case " ^ id);
           exit 2)
+  | [ _; "--first"; id ] -> (
+      match List.assoc_opt id first_cases with
+      | Some prepare ->
+          let call = Nx.Rng.with_key (Nx.Rng.key 42) prepare in
+          print_endline "ready";
+          ignore (In_channel.input_line stdin);
+          call ();
+          print_endline "done"
+      | None ->
+          prerr_endline ("bench_compile: no case " ^ id);
+          exit 2)
   | [ _; "--opens"; gpu ] ->
       let opened =
         match gpu with
@@ -718,5 +822,8 @@ let () =
                Some (Thumper.bench id (cold id))
              else None)
            cases
-        @ List.map warm (List.filter runs warm_cases))
+        @ List.map warm (List.filter runs warm_cases)
+        @ List.filter_map
+            (fun (id, _) -> if runs id then Some (first id) else None)
+            first_cases)
       |> exit

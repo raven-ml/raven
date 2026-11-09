@@ -1,6 +1,6 @@
-; The programs that run comgr's and NVRTC's compiles in processes of their own,
-; compiled with what they share (compiler_worker.c) by the target's C compiler
-; and embedded in the library as strings.
+; The programs that run comgr's, NVRTC's and MTLCompiler's compiles in processes
+; of their own, compiled with what they share (compiler_worker.c) by the
+; target's C compiler and embedded in the library as strings.
 
 (rule
  (target comgr_worker.ml)
@@ -15,6 +15,13 @@
   (with-stdout-to
    %{target}
    (run %{exe:../../../tools/embed.exe} %{dep:compiler_cuda_worker.exe}))))
+
+(rule
+ (target mtlcompiler_worker.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{exe:../../../tools/embed.exe} %{dep:compiler_metal_worker.exe}))))
 
 ; dlopen and threads are libraries of their own on Linux before glibc 2.34;
 ; elsewhere they are part of the C library (macOS) or of kernel32 (Windows).
@@ -77,4 +84,34 @@
    -o
    %{target}
    %{dep:compiler_cuda_worker.c}
+   %{dep:compiler_worker.c})))
+
+(rule
+ (target compiler_metal_worker.exe)
+ (enabled_if
+  (= %{system} linux))
+ (deps compiler_worker.h)
+ (action
+  (run
+   %{cc}
+   -Wall
+   -o
+   %{target}
+   %{dep:compiler_metal_worker.c}
+   %{dep:compiler_worker.c}
+   -ldl
+   -pthread)))
+
+(rule
+ (target compiler_metal_worker.exe)
+ (enabled_if
+  (<> %{system} linux))
+ (deps compiler_worker.h)
+ (action
+  (run
+   %{cc}
+   -Wall
+   -o
+   %{target}
+   %{dep:compiler_metal_worker.c}
    %{dep:compiler_worker.c})))

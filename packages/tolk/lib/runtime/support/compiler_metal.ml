@@ -5,40 +5,17 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-external metal_load : string -> (unit, string) result = "caml_tolk_metal_load"
 external macos_major : unit -> int = "caml_tolk_metal_macos_major"
 external macos_build : unit -> string = "caml_tolk_metal_macos_build"
 
-external metal_compile : string -> (string, string) result
-  = "caml_tolk_metal_compile"
+(* MTLCompiler's file. *)
+let library () = C.findlib "MTLCompiler" [ "MTLCompiler" ]
 
-(* The framework is loaded once, by whichever domain first makes a compiler. *)
-let mtl_compiler =
-  let lock = Mutex.create () and loaded = ref None in
-  fun () ->
-    Mutex.protect lock @@ fun () ->
-    match !loaded with
-    | Some l -> l
-    | None ->
-        let l =
-          match C.findlib "MTLCompiler" [ "MTLCompiler" ] with
-          | None ->
-              Error
-                "failed to load library MTLCompiler: try setting \
-                 MTLCOMPILER_PATH?"
-          | Some path ->
-              Result.map_error
-                (fun e -> "failed to load library MTLCompiler: " ^ e)
-                (metal_load path)
-        in
-        loaded := Some l;
-        l
-
-(* MTLCompiler re-parses its options into LLVM's global option registry on every
-   build, which is not thread-safe: one build runs at a time. *)
-let build =
-  let lock = Mutex.create () in
-  fun request -> Mutex.protect lock (fun () -> metal_compile request)
+(* MTLCompiler reads its options into LLVM's, which are global to a process, at
+   every compile, so compiles run in processes of their own: workers, a C
+   program embedded in the library ([compiler_metal_worker.c]), each serving
+   compiles in turn. *)
+let worker = Compiler_worker.v ~name:"metal" Mtlcompiler_worker.program
 
 (* MetalCompiler *)
 
@@ -59,7 +36,7 @@ let options () =
    it not to; its option -ffp-contract=off does not reach the code. *)
 let prologue = "#pragma METAL fp contract(off)\n"
 
-let compile src =
+let compile library src =
   (* llvm creates modules.timestamp in the cache path and caches the compilation
      of Metal's standard library there (250 ms to 8 ms). *)
   let params =
@@ -75,7 +52,8 @@ let compile src =
   let sizes = Bytes.create 16 in
   Bytes.set_int64_le sizes 0 (Int64.of_int (String.length src_padded));
   Bytes.set_int64_le sizes 8 (Int64.of_int (String.length params_padded));
-  match build (Bytes.to_string sizes ^ src_padded ^ params_padded) with
+  let request = Bytes.to_string sizes ^ src_padded ^ params_padded in
+  match Compiler_worker.call worker library request with
   | Error e -> raise (Renderer.Compiler.Compile_error e)
   | Ok reply ->
       (* The library follows a header and the warnings. *)
@@ -91,20 +69,19 @@ let compile src =
 
 (* MTLCompiler is part of macOS: its build names the framework, unless
    MTLCOMPILER_PATH names another, whose file then does. The options and the
-   prologue are the rest of what a library is a function of. *)
-let table () =
+   prologue are the rest of what a library is a function of: the worker passes
+   the request to MTLCompiler as it is. *)
+let table library () =
   let identity =
     String.concat "\n"
-      [
-        macos_build ();
-        C.identity (C.findlib "MTLCompiler" [ "MTLCompiler" ]);
-        options ();
-        prologue;
-      ]
+      [ macos_build (); C.identity (Some library); options (); prologue ]
   in
   "compile_metal_direct_" ^ Digest.to_hex (Digest.string identity)
 
 let compiler () =
-  match mtl_compiler () with
-  | Ok () -> Renderer.Compiler.v ~cachekey:table compile
-  | Error e -> failwith e
+  match library () with
+  | None ->
+      failwith
+        "failed to load library MTLCompiler: try setting MTLCOMPILER_PATH?"
+  | Some library ->
+      Renderer.Compiler.v ~cachekey:(table library) (compile library)
