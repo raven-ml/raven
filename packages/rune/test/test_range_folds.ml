@@ -132,29 +132,125 @@ let law_vmap (c, shared) =
   in
   equal (array float_exact) (Nx.to_array want) (Nx.to_array got)
 
+(* What rounding can do to a loss of moments.
+
+   Each loss below is quadratic in the rows, so a central difference has no
+   truncation at any step and only rounding separates it from the gradient.
+   The step divides that rounding, so it is large: 1, a multiple of the ulp
+   of rows of magnitude between 512 and 1024, so that [x ± 1] is exact.
+
+   A loss is a sum of weighted moments of ranges. To first order in [u] it
+   errs by the rounding {!Nx.moments_ranges} promises for each, weighted, and
+   by [u] per addition of the weighted moments' absolute values: weights of
+   opposite signs can cancel, so these, and not the loss, set the rounding.
+
+   The gradient's own rounding, to first order, for a variance of [k] rows
+   of spread [R] at depth [D]: the error [η_j u R] the promised bound counts
+   for the deviation [e] of a state of height [j], [η_j = 14 j - 10], moves
+   a row's cotangent by at most [2 η_j u R / k], and each of the [D] levels'
+   terms, at most [2 R / k], takes [4 + 2 D] roundings on its way to a row:
+   [(18 D² + 2 D) u R / k]. A mean's cotangent, [1 / k], errs by at most
+   [4 u / k] per level, [4 D u / k], and the sum of the cotangents over a
+   loss's terms by [u] per term. *)
+
+let u = epsilon_float /. 2.
+let step = 1.
+
+(* Rows [l] to [r] of a loss, with the weights of their mean and variance. *)
+type term = { l : int; r : int; wm : float; wv : float }
+
+(* The bound on the depth of a range's tree, per {!Nx.moments_ranges}. *)
+let depth k =
+  let rec log2 p = if p >= k - 1 then 0 else 1 + log2 (2 * p) in
+  if k <= 1 then 0 else 1 + log2 1
+
+(* A range's count, depth, spread, mean and variance. *)
+let stats x t =
+  let k = t.r - t.l in
+  let rows = Array.sub x t.l k in
+  let total = Array.fold_left ( +. ) 0. rows in
+  let kf = Float.of_int k in
+  let mean = total /. kf in
+  let sq s v = s +. ((v -. mean) *. (v -. mean)) in
+  let var = Array.fold_left sq 0. rows /. kf in
+  let high = Array.fold_left Float.max Float.neg_infinity rows in
+  let low = Array.fold_left Float.min Float.infinity rows in
+  (kf, Float.of_int (depth k), high -. low, mean, var)
+
+(* What rounding can move a loss of [count] terms by at rows [x]. *)
+let loss_err ~count ts x =
+  let one (e, s) t =
+    let _, d, r, m, v = stats x t in
+    let em = (7. *. d *. u *. r) +. (u *. Float.abs m) in
+    let ev =
+      ((2. *. d) +. 5.) *. u *. v
+      +. (((7. *. d *. d) -. (3. *. d)) *. u *. r *. sqrt v)
+    in
+    let mag = (Float.abs t.wm *. Float.abs m) +. (Float.abs t.wv *. v) in
+    (e +. (Float.abs t.wm *. em) +. (Float.abs t.wv *. ev), s +. mag)
+  in
+  let e, s = List.fold_left one (0., 0.) ts in
+  e +. (Float.of_int count *. u *. s)
+
+(* What rounding can move a loss's gradient by at rows [x]. *)
+let grad_err ~count ts x =
+  let one (e, s) t =
+    let k, d, r, _, _ = stats x t in
+    let em = 4. *. d *. u /. k in
+    let ev = ((18. *. d *. d) +. (2. *. d)) *. u *. r /. k in
+    let mag = (Float.abs t.wm +. (2. *. Float.abs t.wv *. r)) /. k in
+    (e +. (Float.abs t.wm *. em) +. (Float.abs t.wv *. ev), s +. mag)
+  in
+  let e, s = List.fold_left one (0., 0.) ts in
+  e +. (Float.of_int count *. u *. s)
+
+(* [loss]'s central differences along the rows that [live] selects, 0 at the
+   others, against its gradient, within the rounding of both. A bound of [0.]
+   is a loss without rounding, and {!float} needs a positive one. *)
+let check_differences ~count ~live ts loss x =
+  let n = Array.length x in
+  let at r = Nx.create Nx.float64 [| n |] r in
+  let value r = Nx.item [] (loss (at r)) in
+  let bound = ref 0. in
+  let difference i =
+    if not (live i) then 0.
+    else begin
+      let shift d = Array.mapi (fun j v -> if j = i then v +. d else v) x in
+      let up = shift step and down = shift (-.step) in
+      let d = (value up -. value down) /. (2. *. step) in
+      let err =
+        ((loss_err ~count ts up +. loss_err ~count ts down) /. (2. *. step))
+        +. (u *. Float.abs d)
+      in
+      bound := Float.max !bound err;
+      d
+    end
+  in
+  let fd = Array.init n difference in
+  let g = Nx.to_array (Rune.grad' loss (at x)) in
+  let tol = !bound +. grad_err ~count ts x +. Float.min_float in
+  equal (array (float tol)) fd g
+
 (* The gradient of a weighted sum of the means and variances is its central
-   differences, over finite rows: within 1e-6 of the gradient's scale, the
-   differences' truncation and rounding at a step of 1e-4. *)
+   differences, over finite rows. *)
 let law_grad c =
-  let x = rows Nx.float64 c.n c.seed in
+  let x = Nx.to_array (rows Nx.float64 c.n c.seed) in
   let k = Array.length c.lo in
-  let w = Nx.create Nx.float64 [| 2 * k |] (Array.init (2 * k) (fun i -> Float.of_int ((i mod 5) - 2))) in
+  let count = 2 * k in
+  let weight i = Float.of_int ((i mod 5) - 2) in
+  let w = Nx.create Nx.float64 [| count |] (Array.init count weight) in
   (* An empty range's NaN would make every difference NaN: its weight is
      dropped. *)
   let loss x =
     let y = moments c x in
     Nx.sum (Nx.where (Nx.isnan y) (Nx.zeros_like y) (Nx.mul w y))
   in
-  let g = Nx.to_array (Rune.grad' loss x) in
-  let h = 1e-4 in
-  let fd =
-    Array.init c.n (fun i ->
-        let e = Nx.create Nx.float64 [| c.n |] (Array.init c.n (fun j -> if j = i then h else 0.)) in
-        let at x = Nx.item [] (loss x) in
-        (at (Nx.add x e) -. at (Nx.sub x e)) /. (2. *. h))
+  let clip v = max 0 (min c.n v) in
+  let term j =
+    { l = clip c.lo.(j); r = clip c.hi.(j); wm = weight j; wv = weight (k + j) }
   in
-  let scale = Array.fold_left (fun s v -> Float.max s (Float.abs v)) 1. fd in
-  equal (array (float_rel ~rel:1e-6 ~abs:(1e-6 *. scale))) fd g
+  let ts = List.filter (fun t -> t.l < t.r) (List.init k term) in
+  check_differences ~count ~live:(fun _ -> true) ts loss x
 
 (* A range of finite rows has its finite differences' gradient whatever the
    rows outside it hold: the table's runs through a NaN or an infinity carry
@@ -165,27 +261,14 @@ let law_grad_local (c, fill) =
   let l = max 0 (min (n - 1) (abs c.lo.(0))) in
   let h = min n (l + 1 + abs c.hi.(0)) in
   let inside i = i >= l && i < h in
-  let x0 = rows Nx.float64 n c.seed in
-  let at = Nx.to_array x0 in
-  let x = Nx.create Nx.float64 [| n |] (Array.mapi (fun i v -> if inside i then v else fill) at) in
+  let at = Nx.to_array (rows Nx.float64 n c.seed) in
+  let x = Array.mapi (fun i v -> if inside i then v else fill) at in
   let loss x =
     let m, v = Nx.moments_ranges ~lo:(bounds [| l |]) ~hi:(bounds [| h |]) x in
     Nx.sum (Nx.add m v)
   in
-  let g = Nx.to_array (Rune.grad' loss x) in
-  let eps = 1e-4 in
-  let want =
-    Array.init n (fun i ->
-        if not (inside i) then 0.
-        else
-          let e = Array.make n 0. in
-          e.(i) <- eps;
-          let d = Nx.create Nx.float64 [| n |] e in
-          (Nx.item [] (loss (Nx.add x d)) -. Nx.item [] (loss (Nx.sub x d)))
-          /. (2. *. eps))
-  in
-  let scale = Array.fold_left (fun s v -> Float.max s (Float.abs v)) 1. want in
-  equal (array (float_rel ~rel:1e-6 ~abs:(1e-6 *. scale))) want g
+  let ts = [ { l; r = h; wm = 1.; wv = 1. } ] in
+  check_differences ~count:1 ~live:inside ts loss x
 
 (* The gradient of a sum of range sums counts each row's ranges, exactly. *)
 let law_grad_sums c =
