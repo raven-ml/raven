@@ -88,32 +88,14 @@ raven / llama.cpp b12048 Vulkan:
 
 ## talon, hugin, brot, munin, quill
 
-- talon benches: record the query suite's DuckDB/Polars baselines on a
-  quiet fudge (`baseline.py` refuses loaded runs; H2O 1e8 needs more than
-  a run's 16 GiB), and bless `Talon_csv/read-mixed` on the Mac
-- talon perf on fudge against the faster of DuckDB 1.5.6 and Polars
-  1.44.2, engines re-run beside talon under load (2026-11-04 to 11-07):
-  H2O 1e7 group-by geomean 2.4x at 673340f4e, q10 1.3x at eaff601a6
-  (q01 then 148 -> 96 instructions a row with 5441600cd); H2O joins
-  1.0-2.7x at eaff601a6 (q03 7.83 -> 2.45 G); decision support SF1 at
-  cfef1ad82 q19 ~16x, q12 ~18x, q07 ~15x, q02 ~40x, since cut in
-  instructions by 7e16755a1 (q02 4.71 -> 1.61 G) and c8e1f9fa2 (q19 4.66
-  -> 3.68 G, q12 3.73 -> 3.14 G), and by the join placing only matching
-  right rows (q05 4.13 -> 3.32 G, q03 3.62 -> 3.05 G; text gathered at 35
-  instructions a row, from 48), then by Parquet decoding (e090d2d2b: q19
-  3.51 -> 1.92 G, q12 2.97 -> 2.08 G, q05 3.18 -> 2.74 G), `Nx.unique`
-  (fd09c766a, q05's keys 1.55 -> 1.07 G on 14 threads) and shared
-  aggregate parts (b1fb8d4b4, H2O q07 -26%, q09 -10%); ratios not
-  re-measured. What is left: q05's Snappy at 744 M (~32 instructions an
-  element) and ~0.46 G of memcpy, part a version-1 PLAIN page copied into
-  its column; `Nx.unique` on the pool still makes each key again in the
-  merge and hashes keys a direct table numbers (partitioning by hash or
-  splitting the table needs wall time to judge); a group-by's aggregates
-  fold in one walk only if nx's reduce kernel takes segment ids
-  (_plans/todo-campaign/design/talon-one-pass.md §4.5, a model of q04 and
-  q05 -34%, a kernel contract change for the maintainer). The int64 cast
-  before an integer sum is at most 3.8% of a query and stays.
-  Data: ~/wt/tmp/talon-data on fudge (decision SF0.1/SF1, H2O 1e6/1e7)
+- talon perf against the faster of DuckDB 1.5.6 and Polars 1.44.2 on fudge
+  (9b82c5b57a, alternating rounds under load): decision support SF1 6.6x
+  geomean (2.5-10.1x), H2O 1e7 group-by 2.1x, joins 2.0x. talon uses 3-10x
+  the CPU, so the gap is work. Over the five worst SF1 queries scans are
+  half the instructions (Snappy 20%, copies 14%); on q07, q08 and q12
+  DuckDB's dynamic join filters and join order read far fewer rows; q01's
+  aggregate is 46%. A segment-id reduce kernel in nx is unmeasured.
+  Since then e4b49ffba3 cut q01 by 14%. Data: ~/wt/tmp/talon-data
 - brot vs gigatoken cd5ee648c6 on fudge (bench README, "Against
   gigatoken"): GPT-2 runs at 0.55-0.65 of its speed on one thread over
   100 MB (abbeface7). Pages: a warm pass faults 11.5k-29k times, mostly
