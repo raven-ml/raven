@@ -62,3 +62,5 @@ val v :
   ?pushdown:(Pred.t -> answer) ->
   (request -> (part list, Error.t) result) ->
   t
+
+val hive : string list -> (Table.t, Error.t) result

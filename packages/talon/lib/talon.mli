@@ -2318,6 +2318,32 @@ module Source : sig
       a control character, if [rows] is negative, or if a key of [sorted] names
       no column of [schema], names a column twice, or names a column whose type
       is or contains an extension type, which has no order of its own. *)
+
+  (** {1:paths Paths}
+
+      A directory of a partitioned dataset names partition values in its path,
+      as Hive writes them: [year=2024/month=01/part-0.parquet]. This layout has
+      no specification, and what the partition values mean, like their types,
+      is the caller's: see {!hive}. *)
+
+  val hive : string list -> (table, Error.t) result
+  (** [hive paths] is the table of the keys and values in [paths], one row per
+      path in its order: the column ["path"], then one [string] column per key
+      of the first path, in the order they appear in it. A path is split at
+      each [/], and every part but the last is a {e directory}; a directory
+      holding [=] is a key and a value, split at its first [=] and
+      percent-decoded by bytes, where only a pair of hex digits decodes. A
+      value [__HIVE_DEFAULT_PARTITION__] is null. Each file's keys are matched
+      by name across [paths].
+
+      Values are text. Types are the caller's: {!Expr.Str.parse} them, so one
+      directory cannot change a column's type for its siblings.
+
+      [Error e] on a path that is not valid UTF-8; an empty key or the key
+      ["path"], which holds the file's path; a key or value not valid UTF-8 once
+      decoded; a key repeated in one path; or paths whose keys differ. An
+      invalid percent sequence is not an error and stays literal. It is pure
+      and reads no file: [paths] are any strings. *)
 end
 
 module Join : sig

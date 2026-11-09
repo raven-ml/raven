@@ -135,3 +135,144 @@ let v ~name ~schema ?rows ?(sorted = []) ?(pushdown = unsupported) parts =
       in
       err "~sorted:%a" (Format.pp_print_list ~pp_sep:(fun _ () -> ()) pp) ps);
   { name; schema; rows; sorted; pushdown; parts }
+
+(* Hive paths *)
+
+(* No specification fixes this layout: what a Hive directory name means is the
+   convention its writers and readers share. A partition key and value are
+   percent-encoded in one directory name, [key=value], and split at its first
+   [=]. Decoding is by bytes, and only a pair of hex digits decodes. *)
+
+let hive_null = "__HIVE_DEFAULT_PARTITION__"
+
+let hex c =
+  match c with
+  | '0' .. '9' -> Some (Char.code c - Char.code '0')
+  | 'a' .. 'f' -> Some (Char.code c - Char.code 'a' + 10)
+  | 'A' .. 'F' -> Some (Char.code c - Char.code 'A' + 10)
+  | _ -> None
+
+let percent_decode s =
+  if not (String.contains s '%') then s
+  else begin
+    let n = String.length s in
+    let b = Buffer.create n in
+    let rec go i =
+      if i < n then begin
+        match s.[i] with
+        | '%' when i + 2 < n -> (
+            match (hex s.[i + 1], hex s.[i + 2]) with
+            | Some h, Some l ->
+                Buffer.add_char b (Char.chr ((h * 16) + l));
+                go (i + 3)
+            | _ ->
+                Buffer.add_char b '%';
+                go (i + 1))
+        | c ->
+            Buffer.add_char b c;
+            go (i + 1)
+      end
+    in
+    go 0;
+    Buffer.contents b
+  end
+
+(* [hive_keys path] is the [(key, value)] pairs of [path]'s directory
+   segments, in order. Every segment but the last is a directory; a segment
+   holding no [=] gives no key. *)
+let hive_keys path =
+  let segments = String.split_on_char '/' path in
+  let directories =
+    match List.rev segments with [] -> [] | _ :: dirs -> List.rev dirs
+  in
+  let rec go seen acc = function
+    | [] -> Ok (List.rev acc)
+    | segment :: rest -> (
+        match String.index_opt segment '=' with
+        | None -> go seen acc rest
+        | Some i ->
+            let key = percent_decode (String.sub segment 0 i)
+            and raw =
+              String.sub segment (i + 1) (String.length segment - i - 1)
+            in
+            let bad reason =
+              Error
+                (Error.v ~file:path
+                   (Printf.sprintf "the directory %S is not a Hive pair: %s"
+                      segment reason))
+            in
+            if String.equal key "" then bad "its key is empty"
+            else if not (String.is_valid_utf_8 key) then
+              bad "its key is not valid UTF-8 once decoded"
+            else if List.mem key seen then bad "its key is repeated in the path"
+            else if String.equal key "path" then
+              bad "the column path holds the file's path; rename the directory"
+            else begin
+              let value =
+                if String.equal raw hive_null then Ok None
+                else
+                  let v = percent_decode raw in
+                  if String.is_valid_utf_8 v then Ok (Some v)
+                  else bad "its value is not valid UTF-8 once decoded"
+              in
+              match value with
+              | Error _ as e -> e
+              | Ok v -> go (key :: seen) ((key, v) :: acc) rest
+            end)
+  in
+  go [] [] directories
+
+let hive paths =
+  let rec decode acc = function
+    | [] -> Ok (List.rev acc)
+    | path :: rest -> (
+        if not (String.is_valid_utf_8 path) then
+          Error (Error.v ~file:path "the path is not valid UTF-8")
+        else
+          match hive_keys path with
+          | Error _ as e -> e
+          | Ok kv -> decode ((path, kv) :: acc) rest)
+  in
+  match decode [] paths with
+  | Error _ as e -> e
+  | Ok decoded -> (
+      let keys =
+        match decoded with [] -> [] | (_, kv) :: _ -> List.map fst kv
+      in
+      let same (path0, kv0) (path, kv) =
+        let names = List.map fst kv in
+        if List.equal String.equal (List.sort String.compare names) (List.sort String.compare keys)
+        then Ok ()
+        else
+          Error
+            (Error.v
+               (Printf.sprintf
+                  "%s and %s have different Hive keys: [%s] and [%s]"
+                  path0 path
+                  (String.concat "; " (List.map fst kv0))
+                  (String.concat "; " names)))
+      in
+      let rec check first = function
+        | [] -> Ok ()
+        | row :: rest -> (
+            match same first row with
+            | Ok () -> check first rest
+            | Error _ as e -> e)
+      in
+      let checked =
+        match decoded with [] -> Ok () | first :: rest -> check first rest
+      in
+      match checked with
+      | Error _ as e -> e
+      | Ok () ->
+          let rows = Array.of_list decoded in
+          let column key =
+            ( key,
+              Column.of_options Type.string
+                (Array.map (fun (_, kv) -> List.assoc key kv) rows) )
+          in
+          let path_column =
+            ( "path",
+              Column.v Type.string (Array.map fst rows) )
+          in
+          Ok (Table.v (path_column :: List.map column keys)))

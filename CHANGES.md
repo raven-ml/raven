@@ -4171,6 +4171,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- New `Source.hive`, a pure decoder of Hive partition paths: one row per path,
+  a `path` column and one string column per `key=value` directory, percent-decoded,
+  `__HIVE_DEFAULT_PARTITION__` as null. A file name is never a key; a repeated or
+  empty key, invalid UTF-8 after decoding, and paths whose keys differ are errors.
+  Partition values stay text, typed by the caller.
 - New `Kit.union_all`, a list of queries appended at each column's
   `Type.common` over every branch, so the result's types do not depend on the
   order of the branches, and a filter on a column stored at its common type

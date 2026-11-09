@@ -4923,6 +4923,87 @@ let union_all_group =
       test "of no query is the identity of union" union_all_of_nothing;
     ]
 
+(* Hive paths *)
+
+let hive_row (n, vs) = (n, Column.of_options Type.string vs)
+
+let hive_table paths columns =
+  v
+    (("path", Column.v Type.string (Array.of_list paths))
+    :: List.map hive_row columns)
+
+let hive_cases =
+  let some s = Some s in
+  cases "Hive paths"
+    ~id:(fun (name, _, _) -> name)
+    [
+      ("a second = stays in the value", [ "a=b=c/f" ],
+       `Rows [ ("a", [| some "b=c" |]) ]);
+      ("a slash decodes in a value", [ "a=x%2Fy/f" ],
+       `Rows [ ("a", [| some "x/y" |]) ]);
+      ("an invalid escape stays literal", [ "a=%zz/f"; "a=%2/g"; "a=%/h" ],
+       `Rows [ ("a", [| some "%zz"; some "%2"; some "%" |]) ]);
+      ("a value invalid once decoded", [ "a=%FF/f" ], `Error "not valid UTF-8");
+      ("a key decodes", [ "k%3D1=v/f" ], `Rows [ ("k=1", [| some "v" |]) ]);
+      ("an empty value is text", [ "a=/f" ], `Rows [ ("a", [| some "" |]) ]);
+      ("an empty key", [ "=v/f" ], `Error "its key is empty");
+      ("the default partition is null",
+       [ "a=__HIVE_DEFAULT_PARTITION__/f" ], `Rows [ ("a", [| None |]) ]);
+      ("the file name is never a key", [ "a=1/b=2.parquet" ],
+       `Rows [ ("a", [| some "1" |]) ]);
+      ("a key repeated in a path", [ "a=1/a=2/f" ], `Error "repeated");
+      ("a path without keys beside one with", [ "a=1/f"; "g" ],
+       `Error "different Hive keys");
+      ("different keys", [ "a=1/f"; "b=1/g" ], `Error "different Hive keys");
+      ("keys matched by name", [ "a=1/b=2/f"; "b=3/a=4/g" ],
+       `Rows [ ("a", [| some "1"; some "4" |]); ("b", [| some "2"; some "3" |]) ]);
+      ("a key is text, its digits kept", [ "a=01234/f" ],
+       `Rows [ ("a", [| some "01234" |]) ]);
+      ("the path column is taken", [ "path=1/f" ], `Error "holds the file's path");
+      ("directories without = give no key", [ "x/a=1/y/f"; "x/a=2/y/g" ],
+       `Rows [ ("a", [| some "1"; some "2" |]) ]);
+      ("no directory", [ "f" ], `Rows []);
+      ("a path not valid UTF-8", [ "\xff/f" ], `Error "not valid UTF-8");
+      ("no paths", [], `Rows []);
+    ]
+    (fun (_, paths, expected) ->
+      let table_w = Testable.make ~pp:Talon.pp ~equal:Talon.equal in
+      match (expected, Source.hive paths) with
+      | `Rows columns, Ok t ->
+          equal table_w (hive_table paths columns) t
+      | `Error sub, Error e -> contains ~sub (error e)
+      | `Rows _, Error e -> failf "decoding fails: %s" (error e)
+      | `Error sub, Ok _ -> failf "no error, wanted one containing %S" sub)
+
+let hive_round_trip =
+  let piece =
+    Gen.(string_of ~size:(int_range 0 8) (of_list [ 'a'; 'Z'; '9'; '='; '/'; '%'; ' ' ]))
+  in
+  (* Percent-encodes every byte of [s] that [encode] marks, as a writer may. *)
+  let encode ~all s =
+    let b = Buffer.create 16 in
+    String.iter
+      (fun c ->
+        if all || c = '/' || c = '=' || c = '%' then
+          Buffer.add_string b (Printf.sprintf "%%%02X" (Char.code c))
+        else Buffer.add_char b c)
+      s;
+    Buffer.contents b
+  in
+  prop "a percent-encoded key and value decode to themselves"
+    Gen.(triple piece piece bool)
+    (fun (key, value, all) ->
+      assume (key <> "" && key <> "path");
+      assume (value <> "__HIVE_DEFAULT_PARTITION__");
+      let path = encode ~all key ^ "=" ^ encode ~all value ^ "/f" in
+      match Source.hive [ path ] with
+      | Error e -> failf "decoding %S fails: %s" path (error e)
+      | Ok t ->
+          equal (array (option string)) [| Some value |]
+            (Column.options Kind.string (column t key)))
+
+let hive_group = group "Hive paths" [ hive_cases; hive_round_trip ]
+
 let appending =
   prop "append is each side at the common type, one after the other" appended
     (fun (Type.Any t0, Type.Any t1, Type.Any c, a, b) ->
@@ -5817,6 +5898,7 @@ let () =
          sources;
          constant_columns;
          union_all_group;
+         hive_group;
          constructors;
          utc_wall_clock;
          appending;
