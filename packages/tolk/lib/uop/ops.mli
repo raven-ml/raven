@@ -1068,9 +1068,13 @@ val call :
     run of its elements from the first, and a row a loop moves along as they
     are, and reads a copy of most other arguments, made once before a loop
     around the call; scheduling refuses one it would copy where the call writes
-    it, a read in a loop of storage the call writes that is no run of it, and a
-    constant ({!Indexing.run_rangeify}). A run of storage (no later state of it)
-    the call writes, read in a loop, is read as each trip starts.
+    it, and a constant ({!Indexing.run_rangeify}). In a loop, an argument the
+    call only reads that reads a state the loop writes, or a later one, is
+    computed as each trip starts, each read in it taking its own state: a state
+    older than the one the loop is listed over as it was. A value that moves
+    with the loop and is no row of storage, or that reads, at a state the loop
+    writes or a later one, a join over other writes of that storage, is
+    refused.
 
     Raises [Invalid_argument] if [body] cannot be called ({!opaque_call_bodies})
     or a range leaks out of it. *)

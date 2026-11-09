@@ -206,52 +206,6 @@ let realize_custom_kernel_srcs ctx c =
       end)
     (List.tl (src c))
 
-(* A loop's call reading storage it writes takes it as a view read each trip
-   ({!Schedule.create_linear_with_vars}), or as storage scheduling copies each
-   trip. Any other reading of written storage would be stored once before the
-   loop, a stale value: it is refused. *)
-let refuse_stale_read e c =
-  let in_loop =
-    op e = Op.Backedge
-    || List.exists
-         (fun r -> Axis_type.equal (axis_type r) Axis_type.Loop)
-         (List.tl (src e))
-  in
-  match Shape.written_params (nth c 0) with
-  | Some w when in_loop ->
-      let args = List.tl (src c) in
-      (* A read of an older state reads it as it was, which a store before the
-         loop holds. A state written before the loop ends the walk. *)
-      let written = Shape.reads_state_written c in
-      let stale n = Op.Set.mem (op n) storage && written n in
-      let seen = Tbl.create 8 in
-      (* An {!Op.After} is a state: its dependencies are no part of the read. *)
-      let rec reaches_stale n =
-        if Tbl.mem seen n then false
-        else begin
-          Tbl.replace seen n ();
-          stale n
-          || (op n <> Op.After && List.exists reaches_stale (src_without_body n))
-        end
-      in
-      List.iteri
-        (fun i a ->
-          let s = strip_reshape a in
-          if
-            (not (List.mem i w)) && (not (passed c s))
-            && reaches_stale s
-          then
-            invalid_arg
-              (Format.asprintf
-                 "a call in a loop reads its argument %d, of shape %a, which \
-                  reads storage the call writes and takes no view of it read \
-                  each trip: a read of it would be stored once, before the \
-                  loop, and hold no trip's writes; pass a run of the storage \
-                  and compute the value in the call's body"
-                 i pp_shape (shape a)))
-        args
-  | _ -> ()
-
 let pm_generate_realize_map =
   let mark f ctx m =
     f ctx m;
@@ -259,13 +213,6 @@ let pm_generate_realize_map =
   in
   Pattern_matcher.v (fun () ->
       [
-        rule_ctx
-          (Upat.v
-             ~op:(ops [ Op.End; Op.Backedge ])
-             ~name:"e" ~allow_any_len:true
-             ~src:[ Upat.op Op.Call ~name:"c" ~allow_any_len:true ]
-             ())
-          (mark (fun _ m -> refuse_stale_read (m "e") (m "c")));
         rule_ctx
           (Upat.op Op.Call ~name:"c" ~allow_any_len:true
              ~src:[ Upat.v ~op:(ops [ Op.Sink; Op.Program; Op.Linear ]) () ])

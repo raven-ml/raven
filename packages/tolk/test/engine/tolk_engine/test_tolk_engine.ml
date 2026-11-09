@@ -4116,6 +4116,349 @@ let loop_reads_run_of_a_bitcast_state () =
           10.; 10. |])
     (leaves1 b (Ops.sink [ Ops.after s [ Ops.end_ c [ r ] ] ]))
 
+(* Values of a state a loop writes, computed from it as each trip starts. The
+   written row is row [r] of the state; [b] is 0..15 and the state doubles it. *)
+let values_of_doubled ?(trips = 3) value =
+  let b, b1 = doubled () in
+  let r = Ops.range ~axis_type:Loop (Int trips) [ 100 ] in
+  let c = Ops.call ~precompile:true add1_body [ row4 b1 r; value b1 ] in
+  leaves1 b (Ops.sink [ Ops.after b1 [ Ops.end_ c [ r ] ] ])
+
+let loop_values_each_trip () =
+  equal values
+    (floats
+       [| 15.; 13.; 11.; 9.; 15.; 13.; 11.; 9.; 10.; 12.; 14.; 16.; 24.; 26.;
+          28.; 30. |])
+    (values_of_doubled (fun b1 -> Shape.flip (run_at 4 b1) [ 0 ]));
+  equal values
+    (floats
+       [| 17.; 21.; 25.; 29.; 17.; 21.; 25.; 29.; 35.; 43.; 51.; 59.; 24.; 26.;
+          28.; 30. |])
+    (values_of_doubled (fun b1 -> Ops.O.(run_at 4 b1 * float 2.)))
+
+(* [y] is written too; [b] is the older state beside the written one. *)
+let loop_values_of_several_reads () =
+  let b, b1 = doubled () in
+  let y = Ops.new_buffer "CPU" 16 Float32 in
+  let r = loop3 () in
+  let body =
+    Ops.sink
+      [
+        Ops.store (p4 0) Ops.O.(p4 2 + float 1.);
+        Ops.store (p4 1) Ops.O.(p4 2 + float 2.);
+      ]
+  in
+  let c =
+    Ops.call ~precompile:true body
+      [ row4 b1 r; row4 y r; Ops.O.(run_at 4 b1 * run_at 4 y) ]
+  in
+  let e = Ops.end_ c [ r ] in
+  let got =
+    leaves
+      [ (b, given16); (y, Array.init 16 (fun i -> Float.of_int (i + 1))) ]
+      (Ops.sink [ Ops.after b1 [ e ]; Ops.after y [ e ] ])
+  in
+  equal (list values)
+    [
+      floats
+        [| 41.; 61.; 85.; 113.; 41.; 61.; 85.; 113.; 1723.; 3783.; 7311.;
+           12883.; 24.; 26.; 28.; 30. |];
+      floats
+        [| 42.; 62.; 86.; 114.; 42.; 62.; 86.; 114.; 1724.; 3784.; 7312.;
+           12884.; 13.; 14.; 15.; 16. |];
+    ]
+    got;
+  equal values
+    (floats
+       [| 13.; 16.; 19.; 22.; 13.; 16.; 19.; 22.; 18.; 22.; 26.; 30.; 24.; 26.;
+          28.; 30. |])
+    (let b, b1 = doubled () in
+     let r = loop3 () in
+     let c =
+       Ops.call ~precompile:true add1_body
+         [ row4 b1 r; Ops.O.(run_at 4 b1 + run_at 4 b) ]
+     in
+     leaves1 b (Ops.sink [ Ops.after b1 [ Ops.end_ c [ r ] ] ]))
+
+(* The value read twice in the body; and one leaf in two values. *)
+let loop_value_shared () =
+  let b, b1 = doubled () in
+  let r = loop3 () in
+  let body = Ops.sink [ Ops.store (p4 0) Ops.O.(p4 1 + p4 1) ] in
+  let c =
+    Ops.call ~precompile:true body [ row4 b1 r; Ops.O.(run_at 4 b1 * float 2.) ]
+  in
+  equal values
+    (floats
+       [| 32.; 40.; 48.; 56.; 32.; 40.; 48.; 56.; 128.; 160.; 192.; 224.; 24.;
+          26.; 28.; 30. |])
+    (leaves1 b (Ops.sink [ Ops.after b1 [ Ops.end_ c [ r ] ] ]));
+  let b, b1 = doubled () in
+  let r = loop3 () in
+  let body = Ops.sink [ Ops.store (p4 0) Ops.O.(p4 1 + p4 2) ] in
+  let leaf = run_at 4 b1 in
+  let c =
+    Ops.call ~precompile:true body
+      [ row4 b1 r; Shape.flip leaf [ 0 ]; Ops.O.(leaf * float 2.) ]
+  in
+  equal values
+    (floats
+       [| 30.; 32.; 34.; 36.; 30.; 32.; 34.; 36.; 96.; 98.; 100.; 102.; 24.;
+          26.; 28.; 30. |])
+    (leaves1 b (Ops.sink [ Ops.after b1 [ Ops.end_ c [ r ] ] ]))
+
+let loop_value_bound_variable () =
+  let v = Ops.variable ~dtype:Int32 "v" (Dtype.Value.of_int 0) (Dtype.Value.of_int 10) in
+  let v3 = Shape.bind v (`Int (Bigint.of_int 3)) in
+  equal values
+    (floats
+       [| 25.; 31.; 37.; 43.; 25.; 31.; 37.; 43.; 76.; 94.; 112.; 130.; 24.;
+          26.; 28.; 30. |])
+    (values_of_doubled (fun b1 -> Ops.O.(run_at 4 b1 * Ops.cast v3 Float32)))
+
+(* A state over a flip passed as the argument: read as each trip starts. *)
+let state_over_a_flip_each_trip () =
+  let b, b1 = doubled () in
+  let view = Shape.flip (run_at 0 b1) [ 0 ] in
+  let st = Ops.after view [ Ops.store view (Ops.float 100.) ] in
+  let r = loop3 () in
+  let c = Ops.call ~precompile:true add1_body [ row4 b1 r; st ] in
+  equal values
+    (floats
+       [| 101.; 101.; 101.; 101.; 102.; 102.; 102.; 102.; 102.; 102.; 102.;
+          102.; 24.; 26.; 28.; 30. |])
+    (leaves1 b (Ops.sink [ Ops.after st [ Ops.end_ c [ r ] ] ]))
+
+(* A state over a view of a state over a view: the read is of the elements
+   the views select, as each trip starts. *)
+let state_over_nested_views_each_trip () =
+  let b, b1 = doubled () in
+  let inner = Shape.shrink b1 [ Some (Int 4, Int 12) ] in
+  let s = Ops.after inner [ Ops.store inner (Ops.float 5.) ] in
+  let h = Shape.flip (run_at 0 s) [ 0 ] in
+  let st = Ops.after h [ Ops.store h (Ops.float 100.) ] in
+  let r = loop3 () in
+  let c = Ops.call ~precompile:true add1_body [ row4 b1 r; st ] in
+  equal values
+    (floats
+       [| 101.; 101.; 101.; 101.; 101.; 101.; 101.; 101.; 102.; 102.; 102.;
+          102.; 24.; 26.; 28.; 30. |])
+    (leaves1 b (Ops.sink [ Ops.after st [ Ops.end_ c [ r ] ] ]))
+
+(* A state over a state over a flip, through a join over other storage. *)
+let state_over_a_flip_two_states_deep () =
+  let run value =
+    let b, b1 = doubled () in
+    let x = Ops.new_buffer "CPU" 4 Float32 in
+    let x1 = Ops.after x [ Ops.store x (Ops.float 7.) ] in
+    let h = Shape.flip (run_at 4 b1) [ 0 ] in
+    let st = Ops.after h [ Ops.store h (Ops.float 100.) ] in
+    let st2 = Ops.after st [ x1 ] in
+    let r = loop3 () in
+    let c = Ops.call ~precompile:true add1_body [ row4 b1 r; value st2 ] in
+    List.hd
+      (leaves
+         [ (b, given16); (x, Array.make 4 0.) ]
+         (Ops.sink [ Ops.after st2 [ Ops.end_ c [ r ] ]; x1 ]))
+  in
+  let rest = [| 24.; 26.; 28.; 30. |] in
+  equal values
+    (floats
+       (Array.concat
+          [ Array.make 8 101.; Array.make 4 102.; rest ]))
+    (run Fun.id);
+  equal values
+    (floats
+       (Array.concat
+          [ Array.make 8 201.; Array.make 4 403.; rest ]))
+    (run (fun s -> Ops.O.(s * float 2.)))
+
+let loop_value_store_body () =
+  let b, b1 = doubled () in
+  let r = loop3 () in
+  let body = Ops.store (p4 0) Ops.O.(p4 1 + float 1.) in
+  let c =
+    Ops.call ~precompile:true body
+      [ row4 b1 r; Shape.flip (run_at 4 b1) [ 0 ] ]
+  in
+  equal values
+    (floats
+       [| 15.; 13.; 11.; 9.; 15.; 13.; 11.; 9.; 10.; 12.; 14.; 16.; 24.; 26.;
+          28.; 30. |])
+    (leaves1 b (Ops.sink [ Ops.after b1 [ Ops.end_ c [ r ] ] ]))
+
+let loop_value_kernel_body () =
+  let r_i = Ops.range ~axis_type:Weak (Int 4) [ 1 ] in
+  let param slot = Shape.param ~shape:[ Int 4 ] slot Float32 in
+  let at p = Ops.index p [ r_i ] in
+  let kernel =
+    Ops.sink ~kernel:(Ops.kernel_info ())
+      [
+        Ops.end_
+          (Ops.store (at (param 0)) Ops.O.(at (param 1) + float 1.))
+          [ r_i ];
+      ]
+  in
+  let b, b1 = doubled () in
+  let r = loop3 () in
+  let c =
+    Ops.call ~precompile:true kernel
+      [ row4 b1 r; Shape.flip (run_at 4 b1) [ 0 ] ]
+  in
+  equal values
+    (floats
+       [| 15.; 13.; 11.; 9.; 15.; 13.; 11.; 9.; 10.; 12.; 14.; 16.; 24.; 26.;
+          28.; 30. |])
+    (leaves1 b (Ops.sink [ Ops.after b1 [ Ops.end_ c [ r ] ] ]))
+
+let backedge_value_each_trip () =
+  let b = Ops.new_buffer "CPU" 16 Float32 in
+  let f = Ops.new_buffer "CPU" 1 Bool in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let flag = Shape.param ~shape:[ Int 1 ] ~device:"CPU" 2 Bool in
+  let body =
+    Ops.sink
+      [
+        Ops.store (p4 0) Ops.O.(p4 1 + float 1.);
+        Ops.store flag (Shape.reshape (Ops.const ~dtype:Bool (`Bool true)) [ Int 1 ]);
+      ]
+  in
+  let flipped = Shape.flip (Shape.shrink b [ Some (Int 4, Int 8) ]) [ 0 ] in
+  let call = Ops.call ~precompile:true body [ row4 b r; flipped; f ] in
+  let e = Ops.backedge call ~loop:r ~cond:f in
+  let bound = Run.buffer (devices "CPU") Float32 (floats given16) in
+  let flag_buf = Run.buffer (devices "CPU") Bool [| `Bool true |] in
+  let linear, vars =
+    Schedule.create_linear_with_vars
+      (Ops.sink [ Ops.after b [ e ]; Ops.after f [ e ] ])
+  in
+  Engine.run ~vars
+    (Engine.link ~devices ~bound:[ (b, bound); (f, flag_buf) ] (compile linear))
+    [||];
+  (* Trip 0 reads 7 6 5 4; trip 1 row 1 becomes 8 7 6 5 at 4..7 after trip 0's
+     reading, and trip 2 reads what trip 1 wrote there. *)
+  equal values
+    (floats
+       [| 8.; 7.; 6.; 5.; 8.; 7.; 6.; 5.; 6.; 7.; 8.; 9.; 12.; 13.; 14.; 15. |])
+    (Run.values Float32 bound)
+
+let loop_contiguous_each_trip () =
+  equal values
+    (floats
+       [| 17.; 21.; 25.; 29.; 17.; 21.; 25.; 29.; 35.; 43.; 51.; 59.; 24.; 26.;
+          28.; 30. |])
+    (values_of_doubled (fun b1 -> Ops.contiguous Ops.O.(run_at 4 b1 * float 2.)))
+
+(* A contiguous value of a moving row of a state older than the listing: the
+   stage would be made before the loop. *)
+let moving_stage_refused () =
+  let b = Ops.new_buffer "CPU" 16 Float32 in
+  let x1 = Ops.after b [ Ops.store b Ops.O.(b + float 1.) ] in
+  let x2 = Ops.after x1 [ Ops.store x1 Ops.O.(x1 * float 2.) ] in
+  let r = Ops.range ~axis_type:Loop (Int 2) [ 100 ] in
+  let c =
+    Ops.call ~precompile:true add1_body
+      [ row4 x1 r; Ops.contiguous Ops.O.(row4 x1 r * float 2.) ]
+  in
+  raises_match
+    (Exn.invalid_arg ~sub:"moves with a loop")
+    (fun () ->
+      Schedule.create_linear_with_vars
+        (Ops.sink [ Ops.after x2 [ Ops.end_ c [ r ] ] ]))
+
+let moving_value_refused () =
+  let b, b1 = doubled () in
+  let r = loop3 () in
+  let c =
+    Ops.call ~precompile:true add1_body
+      [ row4 b1 r; Ops.O.(run_at 4 b1 * Ops.cast r Float32) ]
+  in
+  ignore b;
+  raises_match
+    (Exn.invalid_arg ~sub:"moves with a loop")
+    (fun () ->
+      Schedule.create_linear_with_vars
+        (Ops.sink [ Ops.after b1 [ Ops.end_ c [ r ] ] ]));
+  (* A state over a view a loop moves. *)
+  let b, b1 = doubled () in
+  let x = Ops.new_buffer "CPU" 4 Float32 in
+  let zs = Ops.after x [ Ops.store x (Ops.float 7.) ] in
+  let r = loop3 () in
+  let st = Ops.after (Shape.flip (row4 b1 r) [ 0 ]) [ zs ] in
+  let c = Ops.call ~precompile:true add1_body [ row4 b1 r; st ] in
+  ignore b;
+  raises_match
+    (Exn.invalid_arg ~sub:"a state over a view that moves with the loop")
+    (fun () ->
+      Schedule.create_linear_with_vars
+        (Ops.sink [ Ops.after b1 [ Ops.end_ c [ r ] ]; zs ]))
+
+(* A store's value ordered after a store of other storage. *)
+let value_after_refused () =
+  let b = Ops.new_buffer "CPU" 4 Float32 and y = Ops.new_buffer "CPU" 4 Float32 in
+  let sy = Ops.after y [ Ops.store y (Ops.float 1.) ] in
+  let s = Ops.after b [ Ops.store b (Ops.after (Ops.float 9.) [ sy ]) ] in
+  raises_match
+    (Exn.invalid_arg ~sub:"a value ordered after effects")
+    (fun () -> Schedule.create_linear_with_vars (Ops.sink [ s; sy ]))
+
+(* A join whose same-storage dependency is its own state or one under it
+   holds that state: a run or flip of it reads the state each trip. *)
+let loop_reads_join_of_its_own_states () =
+  let older () =
+    let b = Ops.new_buffer "CPU" 16 Float32 in
+    let x1 = Ops.after b [ Ops.store b Ops.O.(b + float 1.) ] in
+    let x2 = Ops.after x1 [ Ops.store x1 Ops.O.(x1 * float 2.) ] in
+    (b, x1, x2)
+  in
+  let run read =
+    let b, x1, x2 = older () in
+    let j = Ops.after x2 [ x1 ] in
+    let r = Ops.range ~axis_type:Loop (Int 2) [ 100 ] in
+    let c = Ops.call ~precompile:true add1_body [ row4 x2 r; read j ] in
+    leaves1 b (Ops.sink [ Ops.after x2 [ Ops.end_ c [ r ] ] ])
+  in
+  let x2_tail = Array.init 8 (fun i -> 2. *. Float.of_int (i + 9)) in
+  equal values
+    (floats (Array.concat [ [| 3.; 5.; 7.; 9.; 4.; 6.; 8.; 10. |]; x2_tail ]))
+    (run (fun j -> Shape.shrink j [ Some (Int 0, Int 4) ]));
+  equal values
+    (floats (Array.concat [ [| 9.; 7.; 5.; 3.; 4.; 6.; 8.; 10. |]; x2_tail ]))
+    (run (fun j -> Shape.flip (Shape.shrink j [ Some (Int 0, Int 4) ]) [ 0 ]));
+  equal values
+    (floats
+       [| 15.; 13.; 11.; 9.; 15.; 13.; 11.; 9.; 10.; 12.; 14.; 16.; 24.; 26.;
+          28.; 30. |])
+    (values_of_doubled (fun b1 ->
+         Shape.flip (run_at 4 (Ops.after b1 [ b1 ])) [ 0 ]))
+
+let loop_reads_older_than_listing () =
+  let b = Ops.new_buffer "CPU" 16 Float32 in
+  let x1 = Ops.after b [ Ops.store b Ops.O.(b + float 1.) ] in
+  let x2 = Ops.after x1 [ Ops.store x1 Ops.O.(x1 * float 2.) ] in
+  let r = Ops.range ~axis_type:Loop (Int 2) [ 100 ] in
+  let c =
+    Ops.call ~precompile:true add1_body
+      [ row4 x1 r; Shape.shrink x1 [ Some (Int 4, Int 8) ] ]
+  in
+  equal values
+    (floats
+       [| 6.; 7.; 8.; 9.; 6.; 7.; 8.; 9.; 18.; 20.; 22.; 24.; 26.; 28.; 30.;
+          32. |])
+    (leaves1 b (Ops.sink [ Ops.after x2 [ Ops.end_ c [ r ] ] ]))
+
+let loop_flip_of_written_storage () =
+  let b = Ops.new_buffer "CPU" 16 Float32 in
+  let r = loop3 () in
+  let flipped = Shape.flip (Shape.shrink b [ Some (Int 0, Int 4) ]) [ 0 ] in
+  let c = Ops.call ~precompile:true add1_body [ row4 b r; flipped ] in
+  (* Trip 0 reads 3 2 1 0 and writes row 0: 4 3 2 1. Trip 1 reads 1 2 3 4
+     flipped from row 0 as written: 1 2 3 4 + 1 at row 1. Trip 2 the same. *)
+  equal values
+    (floats
+       [| 4.; 3.; 2.; 1.; 2.; 3.; 4.; 5.; 2.; 3.; 4.; 5.; 12.; 13.; 14.; 15. |])
+    (leaves1 b (Ops.sink [ Ops.after b [ Ops.end_ c [ r ] ] ]))
+
 (* A loop on a state, reading the run of the first state its store goes
    through: the read holds the run as it was, the store still lands. *)
 let loop_reads_older_plain_run () =
@@ -4878,22 +5221,29 @@ let calls_of_views =
       test "a loop reads earlier states as they were" loop_reads_earlier_states;
       test "runs of one other storage land as listed in an after"
         foreign_runs_land;
-      test "a loop reading a value of a state it writes is refused" (fun () ->
-          let reads kind =
-            let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
-            let b = Ops.new_buffer "CPU" 16 Float32 in
-            let b1 = Ops.after b [ Ops.store b Ops.O.(b + Ops.float 0.) ] in
-            let body = Ops.sink [ Ops.store (p4 0) Ops.O.(p4 1 + Ops.float 1.) ] in
-            let run = Shape.shrink b1 [ Some (Int 4, Int 8) ] in
-            let c = Ops.call ~precompile:true body [ row4 b1 r; kind run ] in
-            raises_match
-              (Exn.invalid_arg ~sub:"reads storage the call writes")
-              (fun () ->
-                Schedule.create_linear_with_vars
-                  (Ops.sink [ Ops.after b1 [ Ops.end_ c [ r ] ] ]))
-          in
-          reads (fun v -> Shape.flip v [ 0 ]);
-          reads (fun v -> Ops.O.(v + float 1.)));
+      test "a loop's value of a state it writes is computed each trip"
+        loop_values_each_trip;
+      test "a loop reads a value of several states each trip"
+        loop_values_of_several_reads;
+      test "a loop's value read twice in the body, or sharing a leaf"
+        loop_value_shared;
+      test "a loop's value through a bound variable" loop_value_bound_variable;
+      test "a state over a view that is no run is read each trip"
+        state_over_a_flip_each_trip;
+      test "a state over a view of a state over a view is read each trip"
+        state_over_nested_views_each_trip;
+      test "a state over a flip, two states deep, is read each trip"
+        state_over_a_flip_two_states_deep;
+      test "a store body takes a value computed each trip" loop_value_store_body;
+      test "a kernel body takes a value computed each trip"
+        loop_value_kernel_body;
+      test "a back edge's value is computed each trip" backedge_value_each_trip;
+      test "a contiguous value of a written read is read each trip"
+        loop_contiguous_each_trip;
+      test "a value moving with a loop in a call is refused"
+        moving_value_refused;
+      test "a stored value moving with a loop is refused" moving_stage_refused;
+      test "a value ordered after effects is refused" value_after_refused;
       test "a loop's fixed read of an After state it writes is read each trip"
         reads_after_run_each_trip;
       test "an After state's fixed run off its parameter's start"
@@ -4913,22 +5263,10 @@ let calls_of_views =
       test "two loops in sequence read their runs" chained_loops_read_runs;
       test "a loop's older run of storage leaves the state before it"
         loop_reads_older_plain_run;
-      test "a loop reading a state older than its listing is refused"
-        (fun () ->
-          let b = Ops.new_buffer "CPU" 16 Float32 in
-          let x1 = Ops.after b [ Ops.store b Ops.O.(b + float 1.) ] in
-          let x2 = Ops.after x1 [ Ops.store x1 Ops.O.(x1 * float 2.) ] in
-          let r = Ops.range ~axis_type:Loop (Int 2) [ 100 ] in
-          let body = Ops.sink [ Ops.store (p4 0) Ops.O.(p4 1 + float 1.) ] in
-          let c =
-            Ops.call ~precompile:true body
-              [ row4 x1 r; Shape.shrink x1 [ Some (Int 4, Int 8) ] ]
-          in
-          raises_match
-            (Exn.invalid_arg ~sub:"reads storage the call writes")
-            (fun () ->
-              Schedule.create_linear_with_vars
-                (Ops.sink [ Ops.after x2 [ Ops.end_ c [ r ] ] ])));
+      test "a loop reads a join of its own states each trip"
+        loop_reads_join_of_its_own_states;
+      test "a loop reading a state older than its listing reads it as it was"
+        loop_reads_older_than_listing;
       test "a store through a run a call reads lands" store_through_read_run_lands;
       test "a store through a reshape of a run a call reads lands"
         store_through_reshape_of_read_lands;
@@ -4973,6 +5311,24 @@ let calls_of_views =
         later_state_over_bitcast_read_each_trip;
       test "a loop reads a run of a state of a bitcast each trip"
         loop_reads_run_of_a_bitcast_state;
+      test "a value reading a join over other writes of its storage is refused"
+        (fun () ->
+          let b = Ops.new_buffer "CPU" 16 Float32 in
+          let half lo = Shape.shrink b [ Some (Int lo, Int (lo + 8)) ] in
+          let s1 = Ops.after (half 0) [ Ops.store (half 0) (Ops.float 5.) ] in
+          let s2 = Ops.after (half 8) [ Ops.store (half 8) (Ops.float 7.) ] in
+          let j = Ops.after b [ s1; s2 ] in
+          let r = Ops.range ~axis_type:Loop (Int 2) [ 100 ] in
+          let body = Ops.sink [ Ops.store (p4 0) Ops.O.(p4 1 + float 1.) ] in
+          let c =
+            Ops.call ~precompile:true body
+              [ row4 j r; Ops.O.(float 2. * Shape.shrink j [ Some (Int 4, Int 8) ]) ]
+          in
+          raises_match
+            (Exn.invalid_arg ~sub:"through a join over other writes")
+            (fun () ->
+              Schedule.create_linear_with_vars
+                (Ops.sink [ Ops.after j [ Ops.end_ c [ r ] ] ])));
       test "a loop reading a join over other writes of its storage is refused"
         (fun () ->
           let b = Ops.new_buffer "CPU" 16 Float32 in
@@ -4987,7 +5343,7 @@ let calls_of_views =
               [ row4 j r; Shape.shrink j [ Some (Int 4, Int 8) ] ]
           in
           raises_match
-            (Exn.invalid_arg ~sub:"reads storage the call writes")
+            (Exn.invalid_arg ~sub:"through a join over other writes")
             (fun () ->
               Schedule.create_linear_with_vars
                 (Ops.sink [ Ops.after j [ Ops.end_ c [ r ] ] ])));
@@ -4999,57 +5355,8 @@ let calls_of_views =
         reads_off_start_each_trip;
       test "a back edge's fixed read sees what its loop wrote"
         backedge_reads_each_trip;
-      test "a back edge reading its written storage through no run is refused"
-        (fun () ->
-          let b = Ops.new_buffer "CPU" 16 Float32 in
-          let f = Ops.new_buffer "CPU" 1 Bool in
-          let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
-          let p slot =
-            Shape.param ~shape:[ Int 4 ] ~device:"CPU" slot Float32
-          in
-          let flag = Shape.param ~shape:[ Int 1 ] ~device:"CPU" 2 Bool in
-          let body =
-            Ops.sink
-              [
-                Ops.store (p 0) Ops.O.(p 1 + float 1.);
-                Ops.store flag (Shape.reshape (Ops.const ~dtype:Bool (`Bool false)) [ Int 1 ]);
-              ]
-          in
-          let moving =
-            Shape.shrink b
-              [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 4)) ]
-          in
-          let flipped = Shape.flip (Shape.shrink b [ Some (Int 0, Int 4) ]) [ 0 ] in
-          let call = Ops.call ~precompile:true body [ moving; flipped; f ] in
-          let e = Ops.backedge call ~loop:r ~cond:f in
-          raises_match
-            (Exn.invalid_arg
-               ~sub:"reads its argument 1, of shape (4,), which reads storage \
-                     the call writes")
-            (fun () ->
-              Schedule.create_linear_with_vars
-                (Ops.sink [ Ops.after b [ e ]; Ops.after f [ e ] ])));
-      test "a loop reading its written storage through no run is refused"
-        (fun () ->
-          let b = Ops.new_buffer "CPU" 16 Float32 in
-          let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
-          let p slot =
-            Shape.param ~shape:[ Int 4 ] ~device:"CPU" slot Float32
-          in
-          let body = Ops.sink [ Ops.store (p 0) Ops.O.(p 1 + float 1.) ] in
-          let moving =
-            Shape.shrink b
-              [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 4)) ]
-          in
-          let flipped = Shape.flip (Shape.shrink b [ Some (Int 0, Int 4) ]) [ 0 ] in
-          let e =
-            Ops.end_ (Ops.call ~precompile:true body [ moving; flipped ]) [ r ]
-          in
-          raises_match
-            (Exn.invalid_arg ~sub:"reads its argument 1, of shape (4,), which reads \
-                                   storage the call writes")
-            (fun () ->
-              Schedule.create_linear_with_vars (Ops.sink [ Ops.after b [ e ] ])));
+      test "a loop reads a flip of its written storage each trip"
+        loop_flip_of_written_storage;
       test "a call reads a view of storage at its elements" (fun () ->
           List.iter
             (fun (_, call) ->

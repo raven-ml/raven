@@ -1197,10 +1197,14 @@ word comes from its lock and from samples the dashboard saw arrive.
 - `Renderer.t.core_threads` (new) floors a tensor core's splits per target:
   16384, and 32768 on Metal, fitted on an M1 Max. A float32 product of 1024
   squared runs 1.18x faster there; 11 other products swept run within noise.
+- A loop's call reads a flip, a strided view or a value computed from states it
+  writes as each trip starts, each read taking its own state; a read of a state
+  older than the loop's listing reads it as it was. These raised "reads storage
+  the call writes" in `Schedule`. A run of a join over other writes of the
+  storage it writes still raises, with a message naming what to read instead.
 - A loop's call reads a fixed run of an `After` state it writes, or a later one,
   as each trip starts: the run raised "reads storage the call writes" in
-  `Schedule`. A run of a join over other writes of its storage still raises; the
-  error now says to compute the value in the call's body.
+  `Schedule`.
 - On NVIDIA GPUs from `sm_80`, a dense product of 32 rows takes a staged tensor
   core when that core keeps its threads: a bfloat16 product of 16384 by 4096
   runs in 425 µs on an RTX 5000 Ada, 540 streamed.

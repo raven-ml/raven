@@ -8914,7 +8914,7 @@ reason and its pins.
   only.
 - **tolk:** `Schedule.loop_runs` (`view_of`'s loop read), `Schedule.copy_start`,
   `Prepare.copy_off_start`, `Indexing.realize_custom_kernel_srcs`,
-  `Indexing.refuse_stale_read`, `Shape.reads_storage_written`, `Spec.args_fit`.
+  `Shape.reads_storage_written`, `Spec.args_fit`.
 - **Differs:** a contiguous run at a constant offset that a loop's call only
   reads, of storage the call writes through another argument, becomes a view
   parameter (D426) of the loop's call, so each trip reads the run as the trip
@@ -8926,8 +8926,7 @@ reason and its pins.
   start does not fit the parameter, cycle or none
   (`Schedule.copy_off_start_reads`). A run of a state is such a view
   (D432). Any other read of the state a loop's call writes, or of a later one,
-  a strided or reversed view, a value computed from it, raises at
-  `Indexing.run_rangeify`: it would be stored once before the loop. A read of an older state, or of storage written before the loop, stays
+  moves into the call's body (D437). A read of an older state, or of storage written before the loop, stays
   stored once, as the graph names it.
   A fixed run of storage the loop does not write is stored once, as before.
 - **Reason:** (e): the loop read the run as it was before its first trip: a call
@@ -8940,8 +8939,7 @@ reason and its pins.
 - **Pinned by:** the `Tolk_engine` suite's `calls of views › a call's fixed read
   sees what its loop wrote`, `› a loop's fixed read off its parameter's start is
   read each trip`, `› a back edge's fixed read sees what its loop wrote`,
-  `› a loop reading its written storage through no run is refused`, `› a loop
-  reading a later state than storage it writes is refused`, `› a loop reads
+  `› a loop reads a flip of its written storage each trip`, `› a loop reads
   earlier states as they were`, `› a call reads storage it writes off its
   parameter's start, no after listing the storage`, `› a loop reads each run
   as its trip starts`.
@@ -9057,9 +9055,9 @@ reason and its pins.
   alignment as for a view of plain storage: no offset enters it, and a lift is
   decided from extents and states alone. A fixed contiguous run a loop's call
   only reads, of the state it writes or a later one, is such a view; a run of
-  an older state is stored once, as it was. A run of a join over other writes
-  of its storage, and a read of a state older than the one the loop is listed
-  over raise as before.
+  an older state is stored once, as it was, as is a read of a state older than
+  the one the loop is listed over. A run of a join over other writes of its
+  storage raises.
 - **Reason:** (e): `Ops.after` gives the read a meaning and it raised, after
   having computed stale values: each trip reads the run as the trip starts.
 - **Pinned by:** `Tolk_engine › calls of views › a loop's fixed read of an
@@ -9071,8 +9069,8 @@ reason and its pins.
   later`, `› a bitcast run of an After state read each trip`, `› older and
   sibling states' runs stay as they were`, `› a loop's older run of storage
   leaves the state before it`, `› a loop reading a state older than its listing
-  is refused`, `› a loop reading a join over other writes of its storage is
-  refused`, `› two loops
+  reads it as it was`, `› a loop reading a join over other writes of its
+  storage is refused`, `› two loops
   in sequence read their runs`, `› a loop reads each run of an After state as its
   trip starts`;
   `Tolk.Schedule › cache › runs at other offsets of a loop's read are one
@@ -9254,3 +9252,36 @@ reason and its pins.
   states through bitcasts`, `› Afters over runs of a bitcast stay views`, `› a
   store through a run of a bitcast of a state`, `› a weak value through a run of
   a bitcast`.
+
+## D437. A loop's read that is no run moves into the call's body
+
+- **tinygrad:** tinygrad renders no loop of a call; a precompiled function
+  copies its arguments once (`uop/ops.py`, `call_with_outputs`).
+- **tolk:** `Schedule.absorb`, `Schedule.loop_runs`,
+  `Indexing.realize_custom_kernel_srcs`.
+- **Differs:** an argument of a loop's call the call only reads, reading a state
+  the trips write or a later one, that the call cannot take as it is (a flip, a
+  strided or reshaped view, a value computed from one or more reads, a state over
+  a view that is no run) is computed inside a wrapper body each trip. Each read
+  in it becomes an argument of the wrapper and is decided by itself: a run or row
+  read each trip, an older state or one older than the loop's listing stored
+  once. A plain body inlines into the wrapper, so the value fuses with its
+  kernel; a kernel body is called with a stored value each trip. A run of a join
+  over other writes of the storage the call writes (a same-storage
+  dependency that is neither the join's state nor one under it), a value that moves with the
+  loop and is no row, and a stage of a moving value stay refused.
+- **Reason:** (e): `Ops.after` gives these programs a meaning and they raised
+  "reads storage the call writes". A join over other writes stays refused because
+  the loop runs after those writes: the read is either the join's value, which no
+  storage holds without a second store of every write the caller did not ask for,
+  or storage as the trip starts, which is not the state the join names.
+- **Pinned by:** `Tolk_engine › calls of views › a loop's value of a state it
+  writes is computed each trip`, `› a loop reads a value of several states each
+  trip`, `› a loop's value read twice in the body, or sharing a leaf`, `› a loop's
+  value through a bound variable`, `› a state over a view that is no run is read
+  each trip`, `› a kernel body takes a value computed each trip`, `› a back edge's
+  value is computed each trip`, `› a contiguous value of a written read is read
+  each trip`, `› a value moving with a loop in a call is refused`, `› a loop
+  reading a state older than its listing reads it as it was`, `› a loop reads a
+  join of its own states each trip`, `› a loop reading a join over other writes of
+  its storage is refused`.

@@ -4179,7 +4179,7 @@ let boundary =
             Ops.sink [ Ops.after o [ Ops.store o (Shape.reshape v [ Int 1 ]) ] ]
           in
           raises_match
-            (Exn.invalid_arg ~sub:"kernel boundary requires storage")
+            (Exn.invalid_arg ~sub:"a value ordered after effects")
             (fun () -> Schedule.create_linear_with_vars big));
     ]
 

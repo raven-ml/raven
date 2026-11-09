@@ -1843,6 +1843,199 @@ let loop_view ctx a view =
       Tbl.replace ctx.params a p;
       p
 
+(* Moving reads into the body
+
+   An argument of a loop's call that reads a state the trips write, and that
+   the call cannot take as it is, is a value of that state: each trip computes
+   it from the state as the trip starts. The call becomes one of a wrapper body
+   that computes the value and calls the original body on it, and the wrapper
+   takes what the value reads as arguments of its own. Each is then read by the
+   rule for its state: a run or a row read each trip, a state older than the
+   loop's listing as it was. A plain body's inner call inlines, so the value
+   fuses with the body's kernel; a body compiled on its own is called with a
+   stored value each trip. [trip_read n] says whether a read of the state [n]
+   takes it as the trip starts. *)
+let storage_ops = Op.Set.union Op.Set.defines (ops [ Op.After ])
+
+let reads_moved ~trip_read =
+  let seen = Tbl.create 8 in
+  let rec reaches n =
+    match Tbl.find_opt seen n with
+    | Some r -> r
+    | None ->
+        let r =
+          (Op.Set.mem (op n) storage_ops && trip_read n)
+          || (op n <> Op.After && List.exists reaches (src_without_body n))
+        in
+        Tbl.replace seen n r;
+        r
+  in
+  reaches
+
+(* Whether the state [a] names views its storage, through its states: a
+   movement under them, whichever depth. Bitcasts are outside every state
+   ({!pm_state_of_bitcast}). *)
+let rec viewed_state a =
+  match op a with
+  | Op.After -> viewed_state (nth a 0)
+  | o -> Op.Set.mem o Op.Set.movement
+
+let absorb ctx c ~run_view ~trip_read =
+  let args = src_without_body c in
+  let loops n =
+    List.exists
+      (fun r -> Axis_type.equal (axis_type r) Axis_type.Loop)
+      (Nodes.to_list (ranges n))
+  in
+  let loop_row n =
+    op n = Op.Shrink && has_buffer_identity ~after_ok:true (nth n 0) && loops n
+  in
+  let is_run n = Option.is_some (run_view n) in
+  (* A state over a view that is no run of its storage, at any depth of
+     states. *)
+  let over_view n = op n = Op.After && viewed_state n && not (is_run n) in
+  let takeable n =
+    (has_buffer_identity ~after_ok:true n && not (over_view n))
+    || (op n = Op.After && is_run n)
+    || loop_row n
+    || (Op.Set.mem (op n) Op.Set.movement || op n = Op.Bitcast)
+       && (not (loops n))
+       && is_run n
+  in
+  let written = Option.value (written_positions c) ~default:[] in
+  (* Most arguments are storage or a view of storage the trips do not write. *)
+  let rec plain_view n =
+    op n = Op.Buffer || op n = Op.Param || op n = Op.Alloc || op n = Op.After
+    || (Op.Set.mem (op n) Op.Set.movement || op n = Op.Bitcast)
+       && plain_view (nth n 0)
+  in
+  let settled a = plain_view a && not (trip_read (named a)) in
+  let candidates =
+    List.filteri
+      (fun i a ->
+        (not (List.mem i written)) && (not (settled a)) && not (takeable a))
+      args
+  in
+  if candidates = [] then c
+  else
+  let reaches = reads_moved ~trip_read in
+  if not (List.exists reaches candidates) then c
+  else
+    let moved a = List.memq a candidates && reaches a in
+    let kept = List.filter (fun a -> not (moved a)) args in
+    let fresh = ref (List.length kept) in
+    let reads = ref [] in
+    let next () =
+      let s = !fresh in
+      incr fresh;
+      s
+    in
+    (* A read of a written state or a row keeps where it starts; a value the
+       loop does not write is stored once, at new storage's start. *)
+    let of_value n slot =
+      if shape n = [] && addrspace n = Some Dtype.Alu then
+        Shape.param ~addrspace:Dtype.Alu slot (dtype n)
+      else if reaches n || loop_row n || has_buffer_identity ~after_ok:true n
+      then Shape.param_like n slot
+      else Shape.param ~shape:(shape n) ?device:(device (storage_base n)) slot (dtype n)
+    in
+    let params = Tbl.create 8 in
+    let refuse_moving () =
+      invalid_arg
+        "a call in a loop reads a value that moves with a loop and is no row \
+         of storage it can take: store it into storage first"
+    in
+    let leaf n =
+      match Tbl.find_opt params n with
+      | Some p -> p
+      | None ->
+          if loops n && not (loop_row n) then refuse_moving ();
+          let slot = next () in
+          reads := n :: !reads;
+          let p = of_value n slot in
+          Tbl.replace params n p;
+          p
+    in
+    (* The whole of the storage of the state [n], for the views over it. *)
+    let whole_state n =
+      let buf = storage_base n in
+      let view = shrink buf [ Some (Int 0, Int (max_numel buf)) ] in
+      let slot = next () in
+      reads := loop_view ctx n view :: !reads;
+      Shape.param ~shape:(shape buf) ?device:(device buf) slot (dtype buf)
+    in
+    let rec over n m =
+      if Op.Set.mem (op m) Op.Set.movement then
+        replace m ~src:(over n (nth m 0) :: List.tl (src m))
+      else if op m = Op.After then over n (nth m 0)
+      else whole_state n
+    in
+    let pure u =
+      not
+        (List.exists
+           (fun n ->
+             (Op.Set.mem (op n) storage_ops && not (is_bound_var n))
+             || op n = Op.Range)
+           (toposort ~calls:Skip u))
+    in
+    let rebuilt = Tbl.create 16 in
+    let rec value n =
+      match Tbl.find_opt rebuilt n with
+      | Some v -> v
+      | None ->
+          let v =
+            if pure n then n
+            else if not (reaches n) then leaf n
+            else if over_view n then begin
+              if loops n then
+                invalid_arg
+                  "a call in a loop reads a state over a view that moves with \
+                   the loop: take that view of the state instead";
+              over n (nth n 0)
+            end
+            else if takeable n || op n = Op.After then leaf n
+            else
+              let body = if op n = Op.Call then [ nth n 0 ] else [] in
+              replace n ~src:(body @ List.map value (src_without_body n))
+          in
+          Tbl.replace rebuilt n v;
+          v
+    in
+    let body_param i a slot =
+      let at u = op u = Op.Param && (param_arg_of u).slot = i in
+      match List.find_opt at (toposort ~calls:Skip (body c)) with
+      | Some p -> replace p ~arg:(Param { (param_arg_of p) with slot })
+      | None -> of_value a slot
+    in
+    let slot = ref 0 in
+    let inner_args =
+      List.mapi
+        (fun i a ->
+          if moved a then value a
+          else begin
+            let s = !slot in
+            incr slot;
+            body_param i a s
+          end)
+        args
+    in
+    let plain =
+      match (op (body c), arg (body c)) with
+      | Op.Sink, Kernel _ -> false
+      | Op.Sink, _ -> true
+      | _ -> false
+    in
+    let inner =
+      if plain then call (body c) inner_args
+      else if op (body c) = Op.Store then call (sink [ body c ]) inner_args
+      else replace c ~src:(body c :: inner_args)
+    in
+    let wrote =
+      List.map (fun i -> after (List.nth inner_args i) [ inner ]) written
+    in
+    let wrapper = sink (if wrote = [] then [ inner ] else wrote) in
+    replace c ~src:(wrapper :: kept @ List.rev !reads)
+
 (* A fixed run of storage that the call of the loop [k] only reads and writes
    through another argument becomes a view of its own, read each trip: stored
    into storage instead, the run would be made once, before the loop. A run of
@@ -1868,35 +2061,119 @@ let loop_runs ctx k =
         let s = state_of s in
         List.exists (fun l -> l != s && is_state_or_after s l) listed
       in
-      (* A join over other writes of its storage, whose order against the
-         loop's write the graph does not state: its run stays refused
-         ({!Indexing.run_rangeify}). *)
+      (* A join over writes of its storage other than its own state and the
+         states under it: the loop runs after them, so storage holds them, not
+         the join's value. *)
+      let over_other_writes s =
+        is_join s
+        &&
+        let own = state_of (nth s 0) in
+        List.exists
+          (fun d ->
+            buf_uop d == buf_uop s && not (is_state_or_after (state_of d) own))
+          (List.tl (src s))
+      in
       let rec unlifted s =
-        (is_join s
-        && List.exists (fun d -> buf_uop d == buf_uop s) (List.tl (src s)))
-        || ((Op.Set.mem (op s) Op.Set.movement || op s = Op.After)
+        over_other_writes s
+        || ((Op.Set.mem (op s) Op.Set.movement || op s = Op.After
+           || op s = Op.Bitcast)
            && unlifted (nth s 0))
       in
+      (* Whether the value [a] reads a join over other writes of its storage,
+         a state the trips write or a later one. *)
+      let reads_join a =
+        let seen = Tbl.create 8 in
+        let rec go n =
+          (not (Tbl.mem seen n))
+          && begin
+               Tbl.replace seen n ();
+               (over_other_writes n && stale n && not (older n))
+               || (op n <> Op.After && List.exists go (src_without_body n))
+               || (op n = Op.After && go (nth n 0))
+             end
+        in
+        go a
+      in
+      let refuse_join i a =
+        if
+          (not (List.mem i written))
+          && ((unlifted a && stale a && not (older a)) || reads_join a)
+        then
+          invalid_arg
+            (Format.asprintf
+               "a call in a loop reads its argument %d through a join over \
+                other writes of the storage it writes: the loop runs after \
+                those writes, so storage holds them, not the join's value; \
+                read a state that holds those writes, or read a copy of the \
+                state made before them and write the copy in the call"
+               i)
+      in
+      List.iteri refuse_join (src_without_body c);
+      let trip_read n = stale n && not (older n) in
+      (* The run each argument views: computed once for both uses below. *)
+      let runs = lazy (Tbl.create 8) in
+      let run_view a =
+        let runs = Lazy.force runs in
+        match Tbl.find_opt runs a with
+        | Some v -> v
+        | None ->
+            (* Under states of another shape than their storage's, as a
+               movement over a state of a stage, the chain is no run. *)
+            let v =
+              match run_of a (without_states a) with
+              | v -> v
+              | exception Invalid_argument _ -> None
+            in
+            Tbl.replace runs a v;
+            v
+      in
+      let c' = absorb ctx c ~run_view ~trip_read in
+      let written, stale =
+        if c' == c then (written, stale)
+        else
+          ( Option.value (written_positions c') ~default:[],
+            Shape.reads_state_written c' )
+      in
+      (* A stage of a value a loop moves, left among the arguments, is stored
+         before the loop, over ranges no store before it holds. *)
+      let moving_stage a =
+        (not (has_buffer_identity ~after_ok:true a))
+        && List.exists
+             (fun n ->
+               op n = Op.Stage
+               && List.exists loops (Nodes.to_list (ranges (nth n 0))))
+             (toposort ~calls:Skip a)
+      in
+      List.iter
+        (fun a ->
+          if moving_stage a then
+            invalid_arg
+              "a call in a loop reads a stored value that moves with a loop: \
+               store it in the call's body")
+        (src_without_body c');
       let run i a =
-        let viewing = Op.Set.mem (op a) Op.Set.movement || op a = Op.Bitcast in
+        let viewing =
+          Op.Set.mem (op a) Op.Set.movement || op a = Op.Bitcast
+          || (op a = Op.After && viewed_state a)
+        in
         let moves = List.exists loops (Nodes.to_list (ranges a)) in
         if
           List.mem i written || (not viewing) || moves
-          || not (Shape.reads_storage_written c i)
+          || not (Shape.reads_storage_written c' i)
           || op (named a) = Op.After
-             && ((not (stale a)) || older (named a) || unlifted (named a))
+             && ((not (stale a)) || older (named a))
         then a
         else
-          match run_of a (without_states a) with
+          match run_view a with
           | None -> a
           | Some view -> reshape (loop_view ctx a view) (shape a)
       in
-      let args = src_without_body c in
+      let args = src_without_body c' in
       let args' = List.mapi run args in
-      if List.for_all2 ( == ) args args' then None
+      if c' == c && List.for_all2 ( == ) args args' then None
       else
-        let c' = replace c ~src:(nth c 0 :: args') in
-        Some (replace k ~src:(c' :: List.tl (src k)))
+        let c'' = replace c' ~src:(nth c' 0 :: args') in
+        Some (replace k ~src:(c'' :: List.tl (src k)))
 
 (* An {!Op.After} of storage listing only stores into other storage leaves the
    state it is over as it is: a join after those stores' states. Stated here,

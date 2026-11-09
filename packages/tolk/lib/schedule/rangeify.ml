@@ -1037,7 +1037,9 @@ let unjoin u =
 let handle_after ctx after =
   if addrspace after = Some Dtype.Local || is_group after then None
   else if addrspace after = Some Dtype.Alu then
-    invalid_arg "kernel boundary requires storage"
+    invalid_arg
+      "a value ordered after effects is stored outside a kernel: order the \
+       store instead, listing the effects in the After that lists it"
   else
     let state, deps = unjoin after in
     let p = stand_in ctx state in
