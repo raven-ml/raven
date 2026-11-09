@@ -2496,7 +2496,8 @@ Withdrawn: multi-device is out of scope, see README.
     parts of one target different bits, and the program key names the
     target alone (D170). `stream_threads` and D175's `local_workgroups` are
     fields of the renderer, since a second reader, rune's attention
-    lowering, sizes its grid by them. `per_byte_first` is one, since
+    lowering, sizes its grid by them. D175's `core_threads` is one, since
+    Metal fitted its own. `per_byte_first` is one, since
     a second target measured another crossover: nonnormal's R9700 (gfx1201)
     streams gpt-oss-20b's routed blocks at 149 a byte faster than its cores
     (gate and up 20.6-22.1 against 26.7-28.0 ms a layer, down 10.2-11.1
@@ -5386,21 +5387,22 @@ the walk of `Rangeify.fix_store_hazard`.
   without `TC_MIN_GLOBALS`: after the core, M and N are upcast and N split
   into local threads, by the first size that divides them, whatever the
   workgroups left; the same at `6b7b018da`).
-- **tolk:** `Heuristic.core_threads`, `Renderer.t.local_workgroups` and
+- **tolk:** `Renderer.t.core_threads`, `Renderer.t.local_workgroups` and
   `Heuristic.tensor_cores`.
 - **Differs:** each upcast applies only while the kernel keeps at least
   `core_threads / Tc.threads` workgroups after it, the product of its global
   axes, or when that product is not known: 16384 threads, 512 workgroups of a
-  CUDA, RDNA or Metal core of 32 threads and 256 of a CDNA core of 64. An
+  CUDA or RDNA core of 32 threads and 256 of a CDNA core of 64, and on Metal
+  32768, 1024 workgroups of its core of 32. An
   upcast leaves fewer threads to keep memory and the L2 busy (concurrency is
   latency times throughput, Volkov, UCB/EECS-2016-143 §3.1). The local split
   keeps the threads and leaves fewer workgroups to share among the compute
   units, so threads do not govern it: it takes the largest of 4 and 2 that
   divides N and leaves at least `local_workgroups` = 256 workgroups, or an
-  unknown count, where tinygrad takes the first that divides. 16384 is the bound
-  of sm_89's parts, and every target takes it until one measures another;
-  then `core_threads` becomes a field of `Renderer.t` set per target. Under
-  `TC_MIN_GLOBALS` the splits are tinygrad's.
+  unknown count, where tinygrad takes the first that divides. 16384 is a
+  bound fitted to sm_89's parts, which every target takes until it fits its
+  own; Metal's 32768 is fitted to an M1 Max. Under `TC_MIN_GLOBALS` the
+  splits are tinygrad's.
   A core whose operands are staged through shared memory takes neither
   these splits nor their floors but a tile of its own (D262), with the
   floor `core_threads / stages`.
@@ -5454,8 +5456,18 @@ the walk of `Rangeify.fix_store_hazard`.
   `matmul_half_512`'s outputs differ from 100 workgroups', by at most 1.2e-5
   on values of 3.5), so it is fixed per target: a floor read from the part
   would give two parts of one target different bits (D89's constants).
-  Metal and AMD take the same value; theirs are to measure on a Mac's GPU
-  and on nonnormal's R9700, which fudge lacks.
+  AMD takes the same value; its own is to measure on nonnormal's R9700,
+  which fudge lacks. Metal takes 32768, fitted on an M1 Max (Apple7, 32 GPU
+  cores); other Apple parts are unmeasured. GPU time, the median of 29 calls,
+  12 products swept from 8192 to 65536 threads under load (7.5-14 on 10
+  cores), in 6 interleaved rounds for 8 of them and 3 for the half products
+  of 1024, 2048 and 4096 and the output projection: a float32 product of
+  1024 squared runs in 268 us against 316 at 16384, which 4 ABBA rounds
+  confirm (267.6-268.5 against 314.0-317.7 us, load 14), and the other 11
+  run within noise (geomean 0.989x of 16384's). 8192 runs a half product of
+  512 by 2880 by 512 1.7x faster and the float32 one 3.2x slower. The
+  heuristic's `matmul_1000` and `scores`, whose splits 32768 changes, are
+  untimed.
   Since staging (D262) the staged tile's rule of `core_threads / stages`
   replaces these floors for a staged core, so `stream/key-projection` and
   `stream/dense-bf16-64` no longer reach them (29.8 against 29.5 us, four
@@ -5473,8 +5485,10 @@ the walk of `Rangeify.fix_store_hazard`.
   core's floor › the splits after a tensor core are those that leave its
   floor of workgroups`, over every recorded core kernel, CDNA's included,
   with the local split's floor of 256 workgroups; the `routed_run` cases of
-  D200 on CUDA, whose local split by 2 the floor of 256 admits; the tolk
-  bench's `stream/decode-keys` row on fudge.
+  D200 on CUDA, whose local split by 2 the floor of 256 admits; its `Metal's
+  renderer floors its cores at 32768 threads`, where `matmul_1000` and
+  `scores` split otherwise at 16384; the tolk bench's `stream/decode-keys` row
+  on fudge, and rune's `rune_metal` row `matmul-f32-1024` on a Mac.
 
 ## D176. Withdrawn
 

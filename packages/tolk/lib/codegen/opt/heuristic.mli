@@ -234,4 +234,4 @@ val held_registers : Postrange.Scheduler.t -> Renderer.registers -> int
 val hand_coded_with :
   core_threads:int -> Postrange.Scheduler.t -> Postrange.Scheduler.t
 (** [hand_coded_with ~core_threads k] is {!hand_coded_optimizations} with the
-    tensor core's floor of 16384 threads made [core_threads]. *)
+    renderer's [core_threads] made [core_threads]. *)

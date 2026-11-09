@@ -47,24 +47,6 @@ let decoded_product k =
       | _ -> false)
   | None -> false
 
-(* The threads a kernel keeps once a tensor core's splits apply: a split
-   applies only while [core_threads / Tc.threads tc] workgroups remain, each
-   holding the core's threads. Fewer leave the memory and the L2 short of loads
-   in flight (latency times throughput); more refuse reuse. The value moves the
-   order of a sum, so it is the bound of a target's parts, never read from a
-   device: measured on sm_89's RTX 5000 Ada, and taken by every target until
-   one measures another. *)
-let core_threads = 16384
-
-(* A local split of a tensor core's [N] leaves at least the renderer's
-   [local_workgroups]. The split keeps the threads and packs a workgroup's
-   warps onto one compute unit, which balances the units coarser: on an RTX
-   5000 Ada's 100 SMs a split that left 512 workgroups ran as fast as one that
-   left 256, and 128 or 144 lost up to 1.34 times. Fitted to sm_89's parts, as
-   [core_threads] is. It governs a core whose operands are not staged: a
-   staged core's local split shares each copied tile among its warps, which
-   [staged_tile] decides. *)
-
 (* The rows of the range [m] that read one value of an operand of [k]'s
    product: the gcd of the runs of the operands that read [m] only as
    [m / d], as a block's rows read their owner's matrix at [owner[r / c]], or
@@ -298,9 +280,6 @@ let columns = 2
 (* The fewest threads across a row in the columns layout: 8 threads of 2
    bfloat16 columns read a 32-byte sector, memory's unit of transfer. *)
 let sector_lanes = 8
-
-(* The columns layout runs the renderer's [stream_threads]: as many loads in
-   flight as keep memory busy. The same standing as [core_threads]. *)
 
 (* The loads of its row a thread keeps in flight, at most, and with rows held,
    each of which multiplies them. More is slower: an MXFP4 matrix of 16384 by
@@ -1158,7 +1137,8 @@ let hand_coded_with ~core_threads k =
         | Some (tk, _) -> tk
         | None -> ( match late () with Some k -> k | None -> general k))
 
-let hand_coded_optimizations k = hand_coded_with ~core_threads k
+let hand_coded_optimizations k =
+  hand_coded_with ~core_threads:(K.ren k).core_threads k
 
 let held_registers = held_registers
 

@@ -1643,17 +1643,29 @@ let cdna =
   in
   lazy (Kernel_opts.renderer_of_row cell)
 
+(* [k] on [ren] with the tensor core the heuristic takes first, if it takes
+   one. *)
+let received k ren =
+  let s = K.v k ren in
+  K.convert_loop_to_global s;
+  match K.applied_opts (Heuristic.hand_coded_optimizations s) with
+  | (Opt.Tc _ as tc) :: _ -> Some (s, tc)
+  | _ -> None
+
+let gpu_kernel_names =
+  List.sort_uniq String.compare (List.map (fun (c, _, _) -> c.kernel) gpu_cases)
+
+(* Each GPU kernel on [ren], named with [suffix]. *)
+let on_renderer suffix ren =
+  List.filter_map
+    (fun name ->
+      Option.map (fun r -> (name ^ suffix, r)) (received (kernel name) ren))
+    gpu_kernel_names
+
 (* The kernels of the default process that take a tensor core, as the
    heuristic receives them, on their renderer and on CDNA's, with the core it
    applies. *)
 let core_kernels =
-  let received k ren =
-    let s = K.v k ren in
-    K.convert_loop_to_global s;
-    match K.applied_opts (Heuristic.hand_coded_optimizations s) with
-    | (Opt.Tc _ as tc) :: _ -> Some (s, tc)
-    | _ -> None
-  in
   let own =
     List.filter_map
       (fun (c, k, _) ->
@@ -1662,19 +1674,7 @@ let core_kernels =
           (received (K.ast k) (renderer c.renderer)))
       gpu_cases
   in
-  let names =
-    List.sort_uniq String.compare
-      (List.map (fun (c, _, _) -> c.kernel) gpu_cases)
-  in
-  let on_cdna =
-    List.filter_map
-      (fun name ->
-        Option.map
-          (fun r -> (name ^ "_cdna", r))
-          (received (kernel name) (Lazy.force cdna)))
-      names
-  in
-  Array.of_list (own @ on_cdna)
+  Array.of_list (own @ on_renderer "_cdna" (Lazy.force cdna))
 
 let product s types =
   Shape.Sint.prod (List.map (List.nth (K.full_shape s)) (K.axes_of s types))
@@ -1794,6 +1794,40 @@ let floored =
         (match workgroups s with Sym _ -> true | Int _ -> false);
       cover "a core of 64 threads" (core_threads_of s tc = 64);
       equal ~msg:name (list Kernel_opts.opt) expected (K.applied_opts o))
+
+(* Metal's renderer floors its cores at 32768 threads, where the others keep
+   16384: each GPU kernel of the cases, on that renderer, takes the splits
+   its floor states, and one splits otherwise at 16384, so the value takes
+   effect. *)
+let metal_floor =
+  test "Metal's renderer floors its cores at 32768 threads" (fun () ->
+      let metal =
+        Cstyle.without_compiler
+          {
+            Helpers.Target.device = "METAL";
+            renderer = "METAL";
+            arch = "Apple7";
+            interface = "";
+            indices = "";
+          }
+      in
+      let differs = ref [] in
+      List.iter
+        (fun (name, (s, tc)) ->
+          let opts =
+            K.applied_opts
+              (unstaged (fun () -> Heuristic.hand_coded_optimizations s))
+          in
+          equal ~msg:name (list Kernel_opts.opt)
+            (stated ~core_threads:32768 s tc opts)
+            opts;
+          let at_16384 = stated ~core_threads:16384 s tc opts in
+          if not (List.equal Opt.equal at_16384 opts) then
+            differs := name :: !differs)
+        (on_renderer "_metal" metal);
+      equal (list string) ~msg:"the kernels 16384 threads would split otherwise"
+        [ "matmul_1000_metal"; "scores_metal" ]
+        (List.rev !differs))
 
 (* The decode bound *)
 
@@ -2183,7 +2217,8 @@ let () =
              room_past_32;
              vectors_bounded;
            ];
-         group "the tensor core's floor" [ floored ];
+         group "the tensor core's floor"
+           [ floored; metal_floor ];
          decode_bound;
          group "the host's decodes"
            [

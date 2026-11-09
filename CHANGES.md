@@ -1148,6 +1148,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Renderer.t.core_threads` (new) floors a tensor core's splits per target:
+  16384, and 32768 on Metal, fitted on an M1 Max. A float32 product of 1024
+  squared runs 1.18x faster there; 11 other products swept run within noise.
 - A loop's call reads a fixed run of an `After` state it writes, or a later one,
   as each trip starts: the run raised "reads storage the call writes" in
   `Schedule`. A run of a state over a bitcast or of a join over other writes of

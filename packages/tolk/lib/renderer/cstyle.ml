@@ -1834,7 +1834,10 @@ let metal_with compiler (target : Helpers.Target.t) =
   let fma dt =
     Dtype.equal dt Dtype.Float32 || (Dtype.equal dt Dtype.Float16 && from 4)
   in
-  Renderer.v ~name:"MetalRenderer" ~launch_locals:false
+  (* Fitted on an M1 Max (Apple7, 32 GPU cores): a float32 product of 1024
+     squared ran 1.18x faster keeping 32768 threads after its core's splits
+     than 16384. *)
+  Renderer.v ~name:"MetalRenderer" ~launch_locals:false ~core_threads:32768
     ~tensor_cores:(if from 7 then Tc.metal else [])
     ~extra_matcher:metal_extra_matcher ~packed_args:true
     ~code_for_op:metal_lang.code_for_op

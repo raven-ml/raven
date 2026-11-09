@@ -220,15 +220,32 @@ type t = private {
           operand, a crossover of the target's achieved rates. It moves the
           order of a sum, so it is fixed per target, never read from a
           device. *)
+  core_threads : int;
+      (** The threads a kernel keeps once a tensor core's splits apply: a
+          split applies only while [core_threads / t] workgroups of the core's
+          [t] threads remain ({!Heuristic}). Fewer leave memory short of loads
+          in flight; more refuse reuse. It is a bound fitted to the products
+          timed on one part of a target: 16384 on an RTX 5000 Ada (sm_89),
+          and Metal's 32768 on an M1 Max, other Apple parts unmeasured. It
+          moves the order of a sum, so it is fixed per target, never read
+          from a device. *)
   stream_threads : int;
-      (** The threads that keep a part's memory busy: as many loads in flight
-          as its latency times its bandwidth. A kernel that streams an operand
-          runs about as many ({!Heuristic}). It moves the order of a sum, so it
-          is fixed per target, never read from a device. *)
+      (** The threads that keep a part's memory busy, about as many loads in
+          flight as its latency times its bandwidth. A kernel that streams an
+          operand runs about as many ({!Heuristic}). It is a bound fitted to
+          the products timed on one part, 32768 on an RTX 5000 Ada (sm_89),
+          which every target takes until it measures its own. Fixed per
+          target, as [core_threads] is. *)
   local_workgroups : int;
       (** The fewest workgroups a split of threads into larger workgroups
           leaves, so that each compute unit of a part takes about as many
-          ({!Heuristic}). Fixed per target, as [stream_threads] is. *)
+          ({!Heuristic}). A local split of a tensor core's [N] keeps the
+          threads and packs a workgroup's warps onto one compute unit, which
+          balances the units coarser: on an RTX 5000 Ada's 100 SMs a split
+          that left 512 workgroups ran as fast as one that left 256, and 128
+          or 144 lost up to 1.34 times. It governs a core whose operands are
+          not staged; a staged core's split shares each copied tile among its
+          warps. Fixed per target, as [core_threads] is. *)
   extra_matcher : (unit, Ops.t) Ops.Pattern_matcher.t;
       (** The rewrites the target needs after every other. *)
   launch_members : int;
@@ -284,6 +301,7 @@ val v :
   ?async_copy:bool ->
   ?tensor_cores:Tc.t list ->
   ?per_byte_first:int ->
+  ?core_threads:int ->
   ?stream_threads:int ->
   ?local_workgroups:int ->
   ?extra_matcher:(unit, Ops.t) Ops.Pattern_matcher.t ->
@@ -308,9 +326,9 @@ val v :
     - [shared_max] is [32768], and [async_copy] is [false];
     - [tensor_cores] and [code_for_op] are empty, and so are the rules of
       [extra_matcher];
-    - [per_byte_first] is [64], [sm_89]'s crossover, [stream_threads] is
-      [32768] and [local_workgroups] [256], [sm_89]'s, which every target
-      takes until its own are measured;
+    - [per_byte_first] is [64], [sm_89]'s crossover, [core_threads] is
+      [16384], [stream_threads] [32768] and [local_workgroups] [256],
+      [sm_89]'s, which every target takes until its own are measured;
     - [launch_members] is [max_int], until a target's compiler is measured;
     - [launch_args] is [max_int];
     - [launch_locals] is [true];
