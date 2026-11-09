@@ -414,11 +414,10 @@ let simplex ?(budget = 2000) ?(tol = Tol.v ~rel:1e-9 ~abs:1e-10) f x0 =
    method promises the diameter per component [e_i] of its simplex around the
    best vertex [y]: the root mean square of [e_i / s_i], [s_i = abs + rel
    |y_i|], is at most 1, so one component of [n] reaches [√n s_i]. The restart's
-   probes [y + σ e_i], [σ] the largest [e_i] or [s_i], find none lower, which on
-   the bowl, [|x − c|²] near [c], puts [c_i] above [y_i − σ / 2]. On the other
-   side the simplex contracted around the minimum, which lies within its
-   diameter. So [|y_i − c_i| <= σ <= √n max_i s_i], and with [|y_i| <= |c_i| +
-   σ], [σ <= √n (abs + rel max_i |c_i|) / (1 − √n rel)]. *)
+   probes [y ± σ e_i], [σ] twice the largest [e_i] or [s_i], find none lower,
+   which on the bowl, [|x − c|²] near [c], puts [c_i] within [σ / 2] of [y_i].
+   So [|y_i − c_i| <= σ / 2 <= √n max_i s_i], and with [|y_i| <= |c_i| +
+   σ / 2], [σ / 2 <= √n (abs + rel max_i |c_i|) / (1 − √n rel)]. *)
 let around ~rel ~abs c =
   let k = Float.sqrt (Float.of_int (Nx.dim 0 c)) in
   k *. (abs +. (rel *. Nx.item [] (Nx.max (Nx.abs c)))) /. (1. -. (k *. rel))
@@ -550,6 +549,41 @@ let least_squares =
   |> with_pp (fun ppf (a, b, (lo, hi)) ->
       Format.fprintf ppf "a = %a@ b = %a@ lo = %a@ hi = %a" Nx.pp a Nx.pp b
         Nx.pp lo Nx.pp hi)
+
+let squares_gradient a b x =
+  Nx.matmul (Nx.transpose a) (Nx.sub (Nx.matmul a x) b)
+
+(* nelder_mead's answer for [½ |a x − b|²] in [box] from 0, to [Tol.abs
+   simplex_abs], and whether it converged. Compiled, one program per number of
+   unknowns, since an eager search takes most of a second. *)
+let simplex_abs = 1e-6
+
+let simplex_in =
+  Rune.jit
+    Nx.Ptree.(
+      tensor @-> tensor @-> pair tensor tensor @-> returns (pair tensor tensor))
+    (fun a b (lo, hi) ->
+      let s =
+        Minimize.solve one Minimize.nelder_mead ~lo ~hi
+          ~tol:(Tol.abs simplex_abs) ~budget:5000
+          (fun x ->
+            Nx.mul_s (Nx.sum (Nx.square (Nx.sub (Nx.matmul a x) b))) 0.5)
+          (Nx.zeros_like lo)
+      in
+      (Solution.best s, Solution.is Converged s))
+
+(* How far from [P (x − g) = x], [g] the gradient and [P] the projection on the
+   box, a [Converged] answer of [simplex_in] may be. Converging, the restart
+   test finds no probe [y ± σ eᵢ], clipped into the box, lower than [y], with [σ
+   ≤ 2 √n simplex_abs] since the diameter's root mean square ratio to
+   [simplex_abs] is at most 1. Component [i] of [x − P (x − g)] is [min (|gᵢ|,
+   δ)], [δ] the distance to the box's side downhill along [eᵢ]: below [σ] when
+   [δ < σ], and otherwise the probe [σ] downhill is not lower, so [|gᵢ| ≤ hᵢ σ /
+   2] on this parabola of curvature [hᵢ ≤ 9] along [eᵢ] (1 plus two entries of
+   [a] in [[-2, 2]], squared). So each component is within [4.5 σ]; the
+   restart's [10⁻⁴] of a predicted decrease and [f]'s rounding over [σ] (about
+   [10⁻¹⁴ / 10⁻⁶]) stay within the margin to [5 σ]. *)
+let stationary n = 10. *. Float.sqrt (Float.of_int n) *. simplex_abs
 
 let box_tests =
   [
@@ -727,6 +761,31 @@ let box_tests =
                 ~budget:2000
                 (fun x -> Nx.sum (bowl c x))
                 (Nx.zeros f64 [| 2 |]))));
+    prop "nelder_mead converges only at a minimum in the box" least_squares
+      (fun (a, b, (lo, hi)) ->
+        let n = Nx.dim 0 lo in
+        let x, converged = simplex_in a b (lo, hi) in
+        let converged = Nx.item [] converged in
+        let step = Nx.sub x (squares_gradient a b x) in
+        let clipped = Nx.minimum hi (Nx.maximum lo step) in
+        let held = Nx.logical_and (Nx.not_equal clipped step) (Nx.less lo hi) in
+        cover "a coordinate held at a bound, with another free"
+          (n > 1 && Nx.item [] (Nx.any held) && not (Nx.item [] (Nx.all held)));
+        cover "it converges" converged;
+        if converged then
+          equal (Oracle.tensor ~abs:(stationary n) ()) clipped x);
+    test "nelder_mead leaves a bound it starts on" (fun () ->
+        (* ½ (x² + (x + 1)²) with x ≤ 0, from 0: the minimum is −1/2. The first
+           simplex's step from 0 is clipped back to 0, so every vertex lies on
+           the bound and only a probe toward −∞ finds the descent. *)
+        let x, converged =
+          simplex_in
+            (Nx.create f64 [| 2; 1 |] [| 1.; 1. |])
+            (vec [| 0.; -1. |])
+            (vec [| Float.neg_infinity |], vec [| 0. |])
+        in
+        equal bool true (Nx.item [] converged);
+        equal (Oracle.tensor ~abs:(stationary 1) ()) (vec [| -0.5 |]) x);
     test "a side of the box not of the start's shapes raises" (fun () ->
         (* Swapped shapes keep the size: without the check they bound other
            coordinates. *)

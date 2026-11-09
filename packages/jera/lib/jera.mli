@@ -775,13 +775,20 @@ module Minimize : sig
       (2012) coefficients for [n] unknowns, [1], [1 + 2/n], [3/4 − 1/(2n)] and
       [1 − 1/n], so the simplex keeps its shape as [n] grows. {b Error.} [e] is
       the simplex's diameter per component around its best vertex, [y] that
-      vertex. Once [e] meets [tol], a fresh simplex of that diameter around the
-      best vertex is evaluated: if no vertex is lower by a sufficient decrease
-      the lane converges, and otherwise it continues from it (Kelley, 1999); a
-      diameter alone converges on McKinnon's function at a point whose gradient
-      is [(0, 1)]. A non-finite value counts as [+∞], one at the start ends the
-      lane [Not_finite]. [budget] counts evaluations. {b Cost.} One evaluation
-      per trip, two when it expands or contracts, [n + 1] more when it shrinks.
+      vertex. Once [e] meets [tol], the points [y ± σ e_i] are evaluated, [σ]
+      twice the largest component of [e] and of [tol]'s scale at [y]: if none
+      is lower than [y] by [10⁻⁴] of the norm of each pair's lower difference
+      from [f y], the lane converges, and otherwise it continues from the
+      simplex of [y] and the lower point of each pair (Kelley, 1999). Where [f]
+      is smooth and its gradient is not zero, one of the [2n] directions
+      [±e_i] descends, so a lane converges where a step [σ] along none of them
+      descends by that margin; a diameter alone converges on McKinnon's
+      function at a point whose gradient is [(0, 1)]. A non-finite value counts
+      as [+∞], one at the start ends the lane [Not_finite]. [budget] counts
+      evaluations.
+      {b Cost.} One evaluation per trip, two when it expands or contracts,
+      [n + 1] more when it shrinks, and [2n] for each diameter that meets
+      [tol].
       {b Derivative.} None: its answer is the detached best vertex, since an
       objective with no useful gradient has a minimum with no equation. *)
 
@@ -823,15 +830,18 @@ module Minimize : sig
       system on the others, with the diagonal of [JᵀJ + λ D] on the held
       ones, so every step tends to zero as [λ] grows; its trial point is
       [P (x + δ)], rejected where the linear model predicts no decrease there.
-      {!nelder_mead} clips its
-      vertices. The undamped step is the projected one, [P (x + δ) − x], and
-      the gradient of {!bfgs}'s and {!lbfgs}'s bound the projected one,
-      [x − P (x − ∇f x)]. The answer is stated as the zero of
-      [x − P (x − ∇f x)], so its derivative is zero in a coordinate held at a
-      constant bound and follows a bound that moves; that system is not
-      symmetric, so its [linear] must not be {!Linear.cg}. A box that holds no
-      point, where a coordinate's [lo] exceeds its [hi] or is [+∞] or its [hi]
-      is [−∞], or either is NaN, ends the lane [Stalled].
+      {!nelder_mead} clips its vertices and the points [y ± σ e_i] of its
+      convergence test: where [f] is smooth and [x − P (x − ∇f x)] is not
+      zero, one of the directions [±e_i] descends and stays in the box (Lewis
+      and Torczon, 1999), and where the box clips one of a pair to [y] the
+      other enters the simplex the lane continues from. The undamped step is
+      the projected one, [P (x + δ) − x], and the gradient of {!bfgs}'s and
+      {!lbfgs}'s bound the projected one, [x − P (x − ∇f x)]. The answer is
+      stated as the zero of [x − P (x − ∇f x)], so its derivative is zero in a
+      coordinate held at a constant bound and follows a bound that moves; that
+      system is not symmetric, so its [linear] must not be {!Linear.cg}. A box
+      that holds no point, where a coordinate's [lo] exceeds its [hi] or is
+      [+∞] or its [hi] is [−∞], or either is NaN, ends the lane [Stalled].
 
       [x0] is projected on the box first. Its evaluations count the calls of
       [f], with its gradient for a gradient method, and [budget] its iterations,

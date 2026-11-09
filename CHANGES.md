@@ -850,6 +850,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.nelder_mead` probes both ways along each axis before it
+  converges: in a box it reported `Converged` off the constrained minimum,
+  as at 0 for `½ (x² + (x + 1)²)` with `x ≤ 0`, whose minimum is −1/2.
 - `Minimize.bfgs` and `lbfgs` no longer spend their budget at a minimum they
   have reached: a search that spends its trials on a move within `ε |x|∞`
   and measures no curvature puts the lane at the floats' limit, so it converges

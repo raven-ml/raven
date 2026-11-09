@@ -1480,10 +1480,11 @@ let lm_path fn x r linear ~steps f start =
    and 1 − 1/n: the classic 1, 2, 1/2, 1/2 collapse the simplex onto a subspace
    as [n] grows and stagnate, as on a 6-D quartic bowl. The second point and the
    shrink are evaluated only when the trip needs them. A non-finite value counts
-   as [+∞]. When the simplex's diameter per component meets [tol], a fresh
-   simplex of that diameter around the best vertex is evaluated: no vertex lower
-   by [10⁻⁴] of the decrease its simplex gradient predicts converges, and
-   otherwise the search continues from it (Kelley, 1999). *)
+   as [+∞]. When the simplex's diameter per component meets [tol], the points a
+   step [σ] either way along each axis from the best vertex are evaluated: none
+   lower by [10⁻⁴] of the decrease they predict converges, and otherwise the
+   search continues from the simplex of the best vertex and the lower point of
+   each pair (Kelley, 1999). *)
 
 type ('x, 'd) simplex =
   | Simplex : {
@@ -1637,48 +1638,79 @@ let simplex_solve fn x ?lo ?hi ~tol ~budget f start =
     let evaluations = Nx.add evaluations spent in
     let best, diameter = spread (v, fv) in
     let met = Search.accepted tol ~e:diameter ~y:best in
-    (* The restart: a fresh simplex of the diameter's norm around the best
-       vertex, evaluated only once the diameter has met [tol]. *)
-    (* A simplex that collapsed, as clipping into a box can make it, restarts
-       at the tolerance's scale, so the restart still probes. *)
-    let sigma = Nx.maximum (Nx.max diameter) (Nx.max (Tol.scale tol best)) in
-    let fresh =
-      project
-      @@ Nx.concatenate ~axis:0
-           [
-             Nx.reshape [| 1; -1 |] best;
-             Nx.add
-               (Nx.reshape [| 1; -1 |] best)
-               (Nx.mul (Nx.eye_at (Nx.beside sigma) p.dtype n) sigma);
-           ]
+    (* The restart test, evaluated only once the diameter has met [tol]: the
+       probes [best ± σ eᵢ], clipped into the box. The [2n] directions [±eᵢ]
+       span positively the directions a box admits at any point (Lewis and
+       Torczon, 1999, §3.1 and Proposition 5.2), so where no probe descends the
+       best vertex is near a minimum in the box. [+σ eᵢ] alone misses descent
+       along [−eᵢ], as back into the box from a bound the simplex collapsed
+       onto, where [+σ eᵢ] clips to the best vertex itself. [σ] is twice the
+       larger of the diameter's components and the tolerance's scale: the scale
+       keeps the probes moving off a simplex that clipping collapsed, and the
+       factor keeps a restarted simplex from meeting [tol] at once, so the
+       search moves from it before the next test instead of creeping by one
+       test's step. *)
+    let sigma =
+      Nx.mul_s (Nx.maximum (Nx.max diameter) (Nx.max (Tol.scale tol best))) 2.
     in
-    let ffresh, _ =
+    let best_row = Nx.reshape [| 1; -1 |] best in
+    let steps = Nx.mul (Nx.eye_at (Nx.beside sigma) p.dtype n) sigma in
+    let probes =
+      project
+        (Nx.concatenate ~axis:0
+           [ Nx.add best_row steps; Nx.sub best_row steps ])
+    in
+    let fbest = Nx.min fv in
+    let fprobes, _ =
       Rune.iterate
         Nx.Ptree.(pair tensor tensor)
         ~max:1
         ~until:(fun (_, settled) -> settled)
-        (fun _ -> (p.values fresh, Nx.scalar_at (Nx.beside fresh) Nx.bool true))
-        (fv, Nx.logical_not met)
+        (fun _ ->
+          (p.values probes, Nx.scalar_at (Nx.beside probes) Nx.bool true))
+        (Nx.broadcast_to [| 2 * n |] fbest, Nx.logical_not met)
     in
-    let fbest = Nx.min fv in
-    let others = Nx.slice [ Nx.R (1, n + 1) ] ffresh in
-    let slope =
-      let d =
-        Nx.div (Nx.sub others fbest)
-          (Nx.where (Nx.equal_s sigma 0.) (Nx.ones_like sigma) sigma)
-      in
+    (* A probe lower than the best by [10⁻⁴] of the decrease the probes predict
+       over [σ], the norm of each pair's lower difference from the best,
+       restarts the search from a simplex oriented along descent, as Kelley's
+       (1999) restart orients it: each edge from the best vertex is the lower
+       probe of its pair, the one along [−eᵢ] only when strictly lower, or the
+       one that moved where the box clipped the other to the best vertex, so
+       the simplex spans every coordinate the box leaves room in. Otherwise the
+       lane converges. *)
+    let forward x = Nx.slice [ Nx.R (0, n) ] x
+    and backward x = Nx.slice [ Nx.R (n, 2 * n) ] x in
+    let moved x = Nx.any ~axes:[ 1 ] (Nx.not_equal x best_row) in
+    let back =
+      Nx.logical_or
+        (Nx.logical_not (moved (forward probes)))
+        (Nx.logical_and
+           (moved (backward probes))
+           (Nx.less (backward fprobes) (forward fprobes)))
+    in
+    let edges =
+      Nx.where (Nx.reshape [| n; 1 |] back) (backward probes) (forward probes)
+    and fedges = Nx.where back (backward fprobes) (forward fprobes) in
+    let decrease =
+      Nx.sub (Nx.minimum (backward fprobes) (forward fprobes)) fbest
+    in
+    let predicted =
       Nx.sqrt
-        (Nx.reshape [||] (Num.sum_rows (Nx.reshape [| 1; -1 |] (Nx.square d))))
+        (Nx.reshape [||]
+           (Num.sum_rows (Nx.reshape [| 1; -1 |] (Nx.square decrease))))
     in
-    let lower =
-      Nx.less (Nx.min others)
-        (Nx.sub fbest (Nx.mul_s (Nx.mul sigma slope) 1e-4))
-    in
+    let lower = Nx.less (Nx.min decrease) (Nx.mul_s predicted (-1e-4)) in
     let st = settle st (Nx.logical_and met (Nx.logical_not lower)) Converged in
     let restart = Nx.logical_and met lower in
-    let v = Nx.where restart fresh v and fv = Nx.where restart ffresh fv in
+    let v = Nx.where restart (Nx.concatenate ~axis:0 [ best_row; edges ]) v
+    and fv =
+      Nx.where restart
+        (Nx.concatenate ~axis:0 [ Nx.reshape [| 1 |] fbest; fedges ])
+        fv
+    in
     let evaluations =
-      Nx.add evaluations (Nx.mul_s (Nx.cast Nx.int32 met) (Int32.of_int n))
+      Nx.add evaluations
+        (Nx.mul_s (Nx.cast Nx.int32 met) (Int32.of_int (2 * n)))
     in
     let st =
       settle st
