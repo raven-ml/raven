@@ -64,10 +64,6 @@ raven / llama.cpp b12048 Vulkan:
   matcher rules on (no gain: the memo it needs costs what it saves)
 - device facts (762ad1c31): Metal's `core_threads` and `stream_threads`
   are owed, and `Rig.cache_bytes` has not run on hardware for NV over PCI
-- a Cast from an integer to float32 on Metal relies on the conversion
-  rounding to nearest, which MSL 8.6 does not promise (it allows round
-  toward zero); Apple's GPUs round to nearest when tested. Make
-  tolk's Cast own it, as `Decomp_dtype.narrow` does for narrow floats
 - `stream/dense-bf16-32` streams at 541 µs where a staged core takes 429:
   the gate stays at 32 because 16 lost on `GptOss/prefill-512` in 4 of 4
   rounds

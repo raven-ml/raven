@@ -8957,3 +8957,26 @@ reason and its pins.
   fold`, `› an integer rounds once`, `› a bool is exact`, `› a float32 narrows
   to its nearest code`, `› a bfloat16 widens to its value`; the `.tolk` files
   that name D430.
+
+## D431. Note: a cast of an integer to a float on Metal rounds to nearest
+
+- **tinygrad:** `renderer/cstyle.py` `MetalRenderer` writes a cast of an
+  integer to a float as `(float)(x)`, `(half)(x)` or `(bfloat)(x)`.
+- **tolk:** `Cstyle.metal` writes it the same way, and
+  `Compiler_metal.compiler` passes no rounding option.
+- **Differs:** nothing. This entry records why tolk needs no rounding of its
+  own there.
+- **Reason:** none needed. The Metal Shading Language Specification 4.1
+  (2026-06-04,
+  https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf)
+  allows a conversion to a float to round toward zero in Section 8.6 ("Use
+  the “round ties to even” or “round toward zero” rounding mode for
+  conversions from a floating-point or integer type to a floating-point
+  type"), but a cast in the source is a `static_cast`, which Section 2.23
+  rounds to nearest: "The static_cast operator converts ... using the
+  default rounding mode with no saturation (when converting to
+  floating-point, round ties to even ...)". Section 1.6.3 makes rounding
+  toward zero opt-in, by `-fmetal-rtz-fp-conversion`, and for float-to-float
+  conversions only. So Section 8.6's latitude does not reach tolk's casts.
+- **Pinned by:** `Rune.jit on a GPU › integers › an integer cast to a float
+  gives eager's bits`, run on Metal, which holds the ties of every exponent.

@@ -61,8 +61,7 @@ val narrow : Ops.t -> Dtype.t -> Ops.t
 
     It needs only that the target's conversion to {!Dtype.Float32} lands on
     one of the two float32 values around [x], as C11 6.3.1.4p2 and 6.3.1.5p1
-    and MSL 8.6, which allows rounding toward zero, promise; not that it
-    rounds to nearest. *)
+    promise; not that it rounds to nearest. *)
 
 (** {1:passes Passes} *)
 

@@ -427,10 +427,9 @@ let rne v s =
    nearest once. Only a source more precise than a float32 needs it, and an
    integer whose bounds lie within 2^24 is exact in one. The conversion to
    float32 need only land on one of the two float32s around [x], as C11
-   6.3.1.4p2 and 6.3.1.5p1 and MSL 8.6, which allows rounding toward zero,
-   promise: its exact conversion back says which. An integer that lands on
-   the power of two past its type's range cannot be cast back, and rounded
-   up. *)
+   6.3.1.4p2 and 6.3.1.5p1 promise: its exact conversion back says which.
+   An integer that lands on the power of two past its type's range cannot
+   be cast back, and rounded up. *)
 let narrow x to_ =
   let src = dtype x in
   let exact () =
