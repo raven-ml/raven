@@ -12,6 +12,8 @@
    32 experts, each a block of its own, whose experts' products stream their
    matrices as a decode step's do. 536 tokens fill 65 blocks of 64 rows, a
    count 5 divides, where a warp of 5 tiles of rows would cross two blocks.
+   [first call 12] times a later process's first 12-token call over a warm
+   disk cache ([first_config]).
 
    Each case's setup builds the 13.8 GB of weights on the host, in the worker
    thumper forks for it, and places them on the GPU; a GPU's driver must not be
@@ -107,22 +109,22 @@ let floats ~scale shape =
     let tiled = Nx.concatenate ~axis:0 (List.init reps (fun _ -> base)) in
     Nx.copy (Nx.slice [ R (0, rows) ] tiled)
 
-(* The weights on the host. *)
-let weights () =
-  let c = config and seed = ref 12345 in
+(* The weights of [c] on the host, floats from [bf16 ~scale shape] and bytes
+   from [u8 lo span shape]. *)
+let weights_of c ~bf16 ~u8 =
   let linear ?(bias = true) i o =
     {
-      Linear.w = floats ~scale:0.02 [| i; o |];
-      b = (if bias then Some (floats ~scale:0.02 [| o |]) else None);
+      Linear.w = bf16 ~scale:0.02 [| i; o |];
+      b = (if bias then Some (bf16 ~scale:0.02 [| o |]) else None);
     }
   in
   let packed ~inputs ~outputs =
     let groups = inputs / 32 in
-    let scales = random_bytes seed [| c.experts; outputs; groups |] 118 6 in
-    let blocks = random_bytes seed [| c.experts; outputs; inputs / 2 |] 0 256 in
+    let scales = u8 118 6 [| c.Gpt_oss.experts; outputs; groups |] in
+    let blocks = u8 0 256 [| c.Gpt_oss.experts; outputs; inputs / 2 |] in
     Moe.Quant (Nx_quant.mxfp4 ~scales blocks)
   in
-  let gamma () = { Rms_norm.gamma = floats ~scale:1.0 [| c.dim |] } in
+  let gamma () = { Rms_norm.gamma = bf16 ~scale:1.0 [| c.Gpt_oss.dim |] } in
   let q_dim = c.n_heads * c.head_dim and kv = c.n_kv_heads * c.head_dim in
   let block _ =
     {
@@ -134,25 +136,30 @@ let weights () =
           v = Gpt_oss.Float (linear c.dim kv);
           out = Gpt_oss.Float (linear q_dim c.dim);
         };
-      sinks = floats ~scale:1.0 [| c.n_heads |];
+      sinks = bf16 ~scale:1.0 [| c.n_heads |];
       ffn_norm = gamma ();
       router = linear c.dim c.experts;
       moe =
         {
           Moe.gate_up = packed ~inputs:c.dim ~outputs:(2 * c.hidden_dim);
-          gate_up_bias = floats ~scale:0.02 [| c.experts; 2 * c.hidden_dim |];
+          gate_up_bias = bf16 ~scale:0.02 [| c.experts; 2 * c.hidden_dim |];
           down = packed ~inputs:c.hidden_dim ~outputs:c.dim;
-          down_bias = floats ~scale:0.02 [| c.experts; c.dim |];
+          down_bias = bf16 ~scale:0.02 [| c.experts; c.dim |];
         };
     }
   in
   {
     Gpt_oss.tok =
-      { Embedding.table = floats ~scale:0.02 [| c.vocab_size; c.dim |] };
+      { Embedding.table = bf16 ~scale:0.02 [| c.vocab_size; c.dim |] };
     blocks = List.map block c.layers;
     norm = gamma ();
     head = Some (Gpt_oss.Float (linear ~bias:false c.dim c.vocab_size));
   }
+
+let weights () =
+  let seed = ref 12345 in
+  weights_of config ~bf16:floats ~u8:(fun lo span shape ->
+      random_bytes seed shape lo span)
 
 (* [weights] with the attention projections and the head packed as Q8_0
    ([Gpt_oss.Q8_0]), quantised on the host. *)
@@ -270,6 +277,107 @@ let experts prompt (weights : _ Gpt_oss.params) =
   call ();
   call
 
+(* A later process's first call: a sample has a process that holds a small
+   gpt-oss on the GPU make the 12-token call of the full model's programs over
+   a disk cache one call filled, and nothing but its own programs' reads is
+   timed. Each kind of layer compiles once, so the two layers here cost as the
+   24 of the model would and its zero weights take the place of 13.8 GB; the
+   programs read the [dim] of the full model, on a smaller vocabulary. *)
+let first_config =
+  {
+    config with
+    vocab_size = 1024;
+    layers = [ Gpt_oss.Sliding; Gpt_oss.Full ];
+  }
+
+let prepare_first () =
+  let zeros shape = Nx.zeros Nx.bfloat16 shape in
+  let w =
+    weights_of first_config
+      ~bf16:(fun ~scale:_ s -> zeros s)
+      ~u8:(fun _ _ s -> Nx.zeros Nx.uint8 s)
+  in
+  let module G = (val Nx.devices [ gpu () ]) in
+  let placement = G.on in
+  let p = Nx.Ptree.place (module Gpt_oss.Params) placement w in
+  let step =
+    Layer_loop.greedy ~jit:true ~placement
+      (Gpt_oss.place_config placement first_config)
+      p
+  in
+  let caches =
+    Gpt_oss.cache
+      ~placement:(fun _ ~axis:_ -> placement)
+      first_config ~slots:context Nx.bfloat16
+  in
+  let index = Cache_index.rows ~context [| short_prompt |] in
+  let ids =
+    Nx.init Nx.int64 [| 1; short_prompt |] (fun i -> Int64.of_int (17 + i.(1)))
+  in
+  fun () -> ignore (Nx.item [ 0 ] (fst (step caches index ids)))
+
+type ready = { pid : int; go : out_channel; said : in_channel }
+
+let start_ready dir =
+  let exe = Sys.executable_name in
+  let env =
+    Array.append
+      [| "CACHEDB=" ^ Filename.concat dir "cache.db" |]
+      (Unix.environment ())
+  in
+  let child_in, go = Unix.pipe ~cloexec:true () in
+  let said, child_out = Unix.pipe ~cloexec:true () in
+  let pid =
+    Unix.create_process_env exe [| exe; "--first" |] env child_in child_out
+      Unix.stderr
+  in
+  Unix.close child_in;
+  Unix.close child_out;
+  {
+    pid;
+    go = Unix.out_channel_of_descr go;
+    said = Unix.in_channel_of_descr said;
+  }
+
+let expect r line =
+  match In_channel.input_line r.said with
+  | Some l when l = line -> ()
+  | _ -> failwith ("bench_gpt_oss: a first call's process did not say " ^ line)
+
+let stop r =
+  (try Unix.kill r.pid Sys.sigkill with Unix.Unix_error (ESRCH, _, _) -> ());
+  ignore (Unix.waitpid [] r.pid);
+  close_out_noerr r.go;
+  close_in_noerr r.said
+
+let finish r =
+  output_string r.go "go\n";
+  flush r.go;
+  expect r "done"
+
+(* A trial makes a call to size its batches, up to 3 to warm up and 3 for its
+   samples, a process each. *)
+let ready_processes = 10
+
+let first_call =
+  Thumper.bench_with_setup "first call 12"
+    ~setup:(fun () ->
+      let dir = Filename.temp_dir "bench-gpt-oss" "" in
+      let fill = start_ready dir in
+      expect fill "ready";
+      finish fill;
+      stop fill;
+      let all = List.init ready_processes (fun _ -> start_ready dir) in
+      List.iter (fun r -> expect r "ready") all;
+      (dir, all, Queue.of_seq (List.to_seq all)))
+    ~teardown:(fun (dir, all, _) ->
+      List.iter stop all;
+      ignore (Sys.command ("rm -rf " ^ Filename.quote dir)))
+    (fun (_, _, waiting) ->
+      match Queue.take_opt waiting with
+      | None -> failwith "bench_gpt_oss: no process left ready"
+      | Some r -> finish r)
+
 let kinds =
   [
     `Decode;
@@ -312,6 +420,13 @@ let opens_in_child () =
 let () =
   match Array.to_list Sys.argv with
   | [ _; "--gpu" ] -> exit (if opens () then 0 else 1)
+  | [ _; "--first" ] ->
+      let call = prepare_first () in
+      print_endline "ready";
+      ignore (In_channel.input_line stdin);
+      call ();
+      print_endline "done";
+      ignore (In_channel.input_line stdin)
   | [ _; "--warm" ] ->
       if opens () then
         let weights = weights () in
@@ -324,9 +439,20 @@ let () =
       (* A trial's deadline covers its setup, which builds the 13.8 GB of
          weights and places them on the GPU, its warmup and its samples: the
          five trials take 69 s together on nonnormal's R9700. *)
-      Thumper.run "gpt_oss"
-        ~config:
-          Thumper.Config.(default |> deadline 120. |> warmup warmup_seconds)
-        ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
-        [ Thumper.group "GptOss" (List.map case kinds) ]
-      |> exit
+      let code =
+        Thumper.run "gpt_oss"
+          ~config:
+            Thumper.Config.(default |> deadline 120. |> warmup warmup_seconds)
+          ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
+          [ Thumper.group "GptOss" (List.map case kinds) ]
+      in
+      let first =
+        Thumper.run "gpt_oss_first"
+          ~config:
+            Thumper.Config.(
+              default |> samples 3 |> warmup 0. |> deadline 120.
+              |> metrics [ Thumper.Metric.wall_time ])
+          ~budgets:[ Thumper.Budget.no_slower_than 0.1 ]
+          [ Thumper.group "GptOss" [ first_call ] ]
+      in
+      exit (max code first)

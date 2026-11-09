@@ -60,3 +60,5 @@ let jit_lower ?beam ?search ~targets ~held_bufs ~inputs ~input_vars
   let linear = Ops.substitute ~calls:Skip ~pass:Once linear scratch in
   Setting.context (bindings ?beam ()) (fun () ->
       Realize.compile_linear ?search ~targets linear)
+
+let source_digest = Source_digest.digest

@@ -1813,6 +1813,7 @@ rule, its reason and its pins.
   a tinygrad worker reads its compile cache: a read took 0.4 to 0.5 ms on
   fudge (eight schools, gpt-oss's 12-token prefill), less than a domain's
   start and the collections it joins.
+  A compiled schedule is kept whole too (D460).
 - **Reason:** (d): a later process's first compiled call of a model. With
   binaries alone on disk, a warm process schedules and lowers every kernel
   again. On fudge at `PARALLEL=1`, rune's compile bench rows
@@ -9112,3 +9113,44 @@ reason and its pins.
   GPU group; `Tolk_engine › a store through whole elements of bytes that are
   no run is refused`; `Tolk.Launch_law › compiled` and `› GPUs`, whose
   programs store through bytes of states.
+
+## D460. A compiled schedule is kept on disk whole
+
+- **tinygrad:** `engine/jit.py` keeps a captured schedule only when a user
+  pickles it; `schedule/__init__.py` keeps a function's schedule and
+  `codegen/__init__.py` each kernel's program, in a process and, for schedules,
+  on disk from `SCACHE=2`. A later process schedules and reads its programs
+  again.
+- **tolk:** `Tolk_engine.compile`, which rune's `Compile.link` calls; `Schedule.numbered`,
+  `engine/dune`'s `source_digest.ml` rule and `Setting.scache`.
+- **Differs:** a later process that compiles an equal graph reads what
+  `Jit.jit_lower` made from one disk entry (table `compiled`): it schedules
+  nothing and compiles or reads no kernel. The key is the graph up to its
+  numbering of ranges and storage (`Schedule.numbered`), the positions of the
+  inputs and the held buffers in that numbering, each device's name, renderer,
+  target and compiler key, the digest of the library's and the engine's sources
+  and the settings that shape compilation (`Jit.shaping`). The entry holds the
+  capture's variables, the schedule's text with each program reduced to what
+  linking reads (its `Program` argument, a `Sink` holding its `Kernel` argument
+  and no body, a `Linear` of its `Param`s, an empty source and a binary) and
+  the binaries as bytes beside it, where quoting would grow them. The engine
+  links it live, so its reads of devices and bound buffers are not in the key.
+  A call that asks for a beam search, under `DEBUG` or `CHECK_OOB`, or a compiler that names
+  no toolchain, keeps nothing, and neither does one collected by
+  `Realize.kernels`, since a hit makes no program to report.
+- **Reason:** (d) gpt-oss's first call of 12 tokens in a later process
+  (`kaun/examples/06-gpt-oss`'s bench, `GptOss/first-call-12`). The schedule
+  and program tables serve the kernels but still run the passes around them
+  on every process start. On fudge, over the 24-block graph, the process's
+  CPU time for the first call falls from 84.5 ms [69.9, 96.6] to 45.7 ms
+  [40.1, 49.7] (medians and ranges of 14 interleaved processes pinned to one
+  core, load 4 to 29), and its allocated words from 12.40 M to 7.93 M.
+  Scheduling, the memory plan and 44 program reads are what a hit does not
+  run; lowering (22 ms) and the key (7 ms) remain.
+- **Pinned by:** rune's `test_first_call` (`Rune.jit across processes`): `a
+  later process's first call › compiles nothing, computes the same:
+  arithmetic`, `a reduction` and `a scan`, `tells apart arguments in another
+  order`, `reads this process's captured constants`, `a damaged entry is made
+  anew, and replaced ›` truncated, holding no graph and of another value, and
+  `nothing is kept ›` with `DEBUG` on, without the binary cache and with
+  `SCACHE` at 1.

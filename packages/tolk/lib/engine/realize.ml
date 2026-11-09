@@ -136,6 +136,8 @@ type kernel = {
 let found : kernel list ref option Domain.DLS.key =
   Domain.DLS.new_key (fun () -> None)
 
+let collecting () = Option.is_some (Domain.DLS.get found)
+
 let kernels f =
   let outer = Domain.DLS.get found and inner = ref [] in
   Domain.DLS.set found (Some inner);

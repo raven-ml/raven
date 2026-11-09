@@ -246,3 +246,11 @@
 (cram
  (applies_to declines)
  (deps declines.exe))
+
+; A later process's first call over a warm disk cache: each part is a process
+; of its own.
+
+(test
+ (name test_first_call)
+ (modules test_first_call)
+ (libraries nx rune tolk tolk_test windtrap))

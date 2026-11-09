@@ -1169,6 +1169,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   range, a weak range whose bound is read from memory, or a range its sum
   closes outside the core's loop, now computes correct values on CUDA: its
   first tile was copied once, so later trips of that loop read a stale tile.
+- A later process's first call of a compiled function reads its compiled
+  schedule whole from the disk cache (`Tolk_engine.compile`): it schedules
+  nothing and reads no kernel, with a third fewer allocated words on
+  gpt-oss's 12-token call.
 - Metal compiles run in worker processes, several at once, where a lock ran
   them in turn; a compiler crash or an MTLCompiler that won't load raises
   `Compile_error`. Off Linux a worker may run from the temporary directory.

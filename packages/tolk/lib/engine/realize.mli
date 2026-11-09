@@ -112,6 +112,9 @@ type kernel = {
 }
 (** The type for a kernel {!lower_and_compile} compiled. *)
 
+val collecting : unit -> bool
+(** [collecting ()] is [true] on a domain running {!kernels}'s function. *)
+
 val kernels : (unit -> 'a) -> 'a * kernel list
 (** [kernels f] is [f ()] and each kernel of each schedule that
     {!lower_and_compile} compiles on the calling domain while [f] runs, in

@@ -16,3 +16,16 @@
   (backend ppx_windtrap.coverage))
  (instrumentation
   (backend ppx_windtrap.mutate)))
+
+; The digest of the engine's sources: what is kept of a compiled schedule
+; is what this code reads of one.
+
+(rule
+ (target source_digest.ml)
+ (deps
+  (sandbox always)
+  (source_tree .))
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{exe:../tools/source_digest.exe} .))))

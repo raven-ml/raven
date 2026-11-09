@@ -251,3 +251,34 @@ val blocks : extent:int -> ops:int -> bytes:int -> int * int
     split loop of [extent] iterations runs in, the loop estimated to do [ops]
     operations and move [bytes] bytes of memory, and the iterations of each
     block but the last ({!link}). For the suites. *)
+
+val compile :
+  ?beam:int ->
+  ?search:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
+  devices:(string -> Rig.t) ->
+  by_storage:bool ->
+  held_bufs:Ops.t list ->
+  inputs:Ops.t list ->
+  Ops.t ->
+  Ops.t * (string * int) list
+(** [compile ~beam ~search ~devices ~by_storage ~held_bufs ~inputs sink] is the
+    schedule {!link} takes: what {!Jit.jit_lower} makes of [sink]'s schedule
+    ({!Schedule.create_linear_with_vars} [~capturing:true ~by_storage]), and the
+    variables of its capture, compiled for each device name's device. A later
+    process that compiles an equal [sink], up to the numbers of its ranges and
+    storage ({!Schedule.numbered}), with the same inputs and held buffers in
+    the same places, the same settings that shape compilation ({!Jit.shaping}),
+    and devices of the same names, renderers and compilers, reads it from the
+    {!Helpers.Diskcache} (table ["compiled"]) instead, running no schedule and
+    no compiler. Its programs are then reduced to what {!link} reads: their
+    {!Op.Kernel} argument, parameters and binary.
+
+    Nothing is kept for a call that asks for a beam search, for one under
+    {!Setting.debug} or {!Setting.check_oob}, whose checks a hit would skip,
+    while {!Realize.kernels} collects, with {!Setting.ccache}
+    off or {!Setting.scache} below [2], or for a device without a renderer or
+    a compiler that names itself. An entry that does not read back is made
+    anew and replaced.
+
+    Raises as {!Schedule.create_linear_with_vars} and {!Jit.jit_lower} do, and
+    [Sys_error] if the entry cannot be written. *)

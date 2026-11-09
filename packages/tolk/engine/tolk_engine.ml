@@ -1449,3 +1449,235 @@ let time ?(vars = []) ?(scrub = []) t slots =
       | _ -> ())
     events;
   Float.of_int !ns *. 1e-9
+
+(* Compiled schedules kept whole
+
+   A later process that lowers the same graph finds what {!Jit.jit_lower} made and
+   schedules nothing, compiles nothing and reads no kernel's program. The entry
+   is a function of the graph up to its numbering ({!Schedule.numbered}), of
+   the positions of the inputs and held buffers in it, of what shapes
+   compilation and of the targets: a search, a program made under debug
+   output and one collected for {!Realize.kernels} are never kept. A program
+   is reduced to what linking reads, its source, kernel body and instructions
+   gone, and its binary kept apart from the graph's text, where quoting would
+   grow it several times. *)
+
+let compiled_table = "compiled"
+let binary_index = function Ops.Bytes i -> int_of_string_opt i | _ -> None
+
+(* [prg] reduced to what linking reads: its information, the kernel's arguments,
+   its parameters, and as binary the index [i] among the binaries. *)
+let thin i prg =
+  match (Ops.arg prg, Ops.src prg) with
+  | Ops.Program info, [ sink; linear; _; _ ] ->
+      let params =
+        List.filter
+          (fun u -> Ops.op u = Op.Param && List.memq u info.params)
+          (Ops.src linear)
+      in
+      Ops.replace prg
+        ~src:
+          [
+            Ops.replace sink ~src:[];
+            Ops.replace linear ~src:params;
+            Ops.v Op.Source ~arg:(Ops.String "");
+            Ops.v Op.Binary ~arg:(Ops.Bytes (string_of_int i));
+          ]
+  | _ -> invalid_arg "Jit: a program that is not compiled"
+
+let binary_of prg =
+  match Ops.src prg with
+  | [ _; _; _; b ] -> (
+      match Ops.arg b with Ops.Bytes lib -> lib | _ -> invalid_arg "Jit: no binary")
+  | _ -> invalid_arg "Jit: no binary"
+
+(* The programs [linear] reaches, each once, and [linear] with each reduced
+   ([thin]). *)
+let reduced linear =
+  let programs =
+    List.filter
+      (fun u -> Ops.op u = Op.Program)
+      (Ops.toposort ~calls:Enter linear)
+  in
+  let linear =
+    Ops.substitute ~calls:Enter ~pass:Once linear
+      (List.mapi (fun i p -> (p, thin i p)) programs)
+  in
+  (linear, List.map binary_of programs)
+
+(* The entry: a header of the numbers of variables and of bytes of the text,
+   followed by the bytes of each binary, then each variable, the text and the
+   binaries. *)
+let encode vars text binaries =
+  let lengths = String.length text :: List.map String.length binaries in
+  let header =
+    String.concat " " (List.map string_of_int (List.length vars :: lengths))
+  in
+  String.concat ""
+    ((header ^ "\n")
+    :: List.map (fun (n, v) -> Printf.sprintf "%d %s\n" v n) vars
+    @ text :: binaries)
+
+(* The entry's variables, text and binaries, or [None] if it is not one. *)
+let decode entry =
+  let line start =
+    Option.map
+      (fun e -> (String.sub entry start (e - start), e + 1))
+      (String.index_from_opt entry start '\n')
+  in
+  let ints s = List.map int_of_string_opt (String.split_on_char ' ' s) in
+  let rec vars n pos acc =
+    if n = 0 then Some (List.rev acc, pos)
+    else
+      match line pos with
+      | None -> None
+      | Some (l, next) -> (
+          match String.index_opt l ' ' with
+          | None -> None
+          | Some i -> (
+              let name = String.sub l (i + 1) (String.length l - i - 1) in
+              match int_of_string_opt (String.sub l 0 i) with
+              | None -> None
+              | Some v -> vars (n - 1) next ((name, v) :: acc)))
+  in
+  match line 0 with
+  | None -> None
+  | Some (header, pos) -> (
+      match List.map Option.get (ints header) with
+      | exception Invalid_argument _ -> None
+      | [] | [ _ ] -> None
+      | n :: text :: bins -> (
+          match vars n pos [] with
+          | None -> None
+          | Some (vars, pos) ->
+              (* Each length is checked against the bytes left before it is
+                 added, so that no sum wraps. *)
+              let rec fits left = function
+                | [] -> left = 0
+                | l :: rest -> l >= 0 && l <= left && fits (left - l) rest
+              in
+              if not (fits (String.length entry - pos) (text :: bins)) then None
+              else
+                let at = ref (pos + text) in
+                let binaries =
+                  List.map
+                    (fun b ->
+                      let s = String.sub entry !at b in
+                      at := !at + b;
+                      s)
+                    bins
+                in
+                Some (vars, String.sub entry pos text, binaries)))
+
+(* [restored binaries linear] is [linear] with each binary's index replaced by
+   its bytes, or [None] if an index is out of range or a call runs no reduced
+   program. *)
+let restored binaries linear =
+  let by_index = Array.of_list binaries in
+  let nodes = Ops.toposort ~calls:Enter linear in
+  let ok =
+    Ops.op linear = Op.Linear
+    && List.for_all
+         (fun u ->
+           Ops.op u <> Op.Program || List.compare_length_with (Ops.src u) 4 = 0)
+         nodes
+  in
+  if not ok then None
+  else
+    let subs =
+      List.filter_map
+        (fun u ->
+          if Ops.op u <> Op.Binary then None
+          else
+            match binary_index (Ops.arg u) with
+            | Some i when i >= 0 && i < Array.length by_index ->
+                Some (u, Ops.v Op.Binary ~arg:(Ops.Bytes by_index.(i)))
+            | _ -> raise Exit)
+        nodes
+    in
+    match Ops.substitute ~calls:Enter ~pass:Once linear subs with
+    | linear -> Some linear
+    | exception Exit -> None
+
+(* What a target-independent numbering cannot name: each device's renderer,
+   target and compiler, which a kernel's program is made for, or [None] if a
+   device has no renderer or its compiler keeps no binaries. *)
+let device_keys ~targets sink =
+  let devices =
+    List.sort_uniq String.compare
+      (List.filter_map
+         (fun u ->
+           match Ops.op u with
+           | Op.Buffer | Op.Alloc | Op.Copy -> Ops.device u
+           | _ -> None)
+         (Ops.toposort ~calls:Enter sink))
+  in
+  let one d =
+    let t = targets d in
+    match Device.renderer t with
+    | Error _ -> raise_notrace Exit
+    | Ok ren -> (
+        match Renderer.Compiler.cachekey ren.compiler with
+        | None -> raise_notrace Exit
+        | Some c ->
+            String.concat " "
+              [ d; ren.name; Format.asprintf "%a" Helpers.Target.pp t; c ])
+  in
+  match List.map one devices with
+  | keys -> Some keys
+  | exception (Exit | Invalid_argument _ | Failure _) -> None
+
+let kept ?beam () =
+  Jit.width ?beam () = 0
+  && Setting.value Setting.ccache
+  && Setting.value Setting.scache >= 2
+  && Setting.value Setting.debug = 0
+  && not (Setting.value Setting.check_oob)
+  && not (Realize.collecting ())
+
+let compile ?beam ?search ~devices ~by_storage ~held_bufs ~inputs sink =
+  let targets name = target (devices name) in
+  let make () =
+    let linear, vars =
+      Schedule.create_linear_with_vars ~capturing:true ~by_storage sink
+    in
+    ( Jit.jit_lower ?beam ?search ~targets ~held_bufs ~inputs ~input_vars:vars
+        linear,
+      vars )
+  in
+  match if kept ?beam () then device_keys ~targets sink else None with
+  | None -> make ()
+  | Some devices -> (
+      let n = Schedule.numbered sink in
+      let positions l = List.map (fun u -> string_of_int (n.position u)) l in
+      let key =
+        String.concat "\n"
+          ([ Source_digest.digest; Jit.source_digest; n.key; string_of_bool by_storage ]
+          @ devices
+          @ [
+              String.concat " " (positions inputs);
+              String.concat " "
+                (List.sort String.compare (positions held_bufs));
+            ]
+          @ List.map (fun (k, v) -> k ^ "=" ^ v) (Jit.shaping ?beam ()))
+      in
+      let read () =
+        match Helpers.Diskcache.get ~table:compiled_table key with
+        | None | (exception (Failure _ | Sys_error _)) -> None
+        | Some entry -> (
+            match decode entry with
+            | None -> None
+            | Some (vars, text, binaries) -> (
+                match restored binaries (Graph.of_string text) with
+                | None -> None
+                | Some linear -> Some (n.restore linear, vars)
+                | exception (Failure _ | Invalid_argument _) -> None))
+      in
+      match read () with
+      | Some kept -> kept
+      | None ->
+          let linear, vars = make () in
+          let thin, binaries = reduced linear in
+          Helpers.Diskcache.put ~table:compiled_table key
+            (encode vars (Graph.to_string (n.place thin)) binaries);
+          (linear, vars))

@@ -115,6 +115,28 @@ val is_store_after : Ops.t -> bool
 
 (** {1:schedules Schedules} *)
 
+(** The type for a graph numbered by its own order: a process names each
+    range and each piece of storage from counters that depend on what it did
+    before, so a key or a kept graph names them by their order instead. *)
+type numbering = {
+  key : string;  (** The graph's key under that numbering. *)
+  place : Ops.t -> Ops.t;
+      (** Each node of the graph's in another graph replaced by its
+          placeholder. *)
+  restore : Ops.t -> Ops.t;  (** The inverse of [place]. *)
+  position : Ops.t -> int;
+      (** A range's or a piece of storage's place in that order; [-1] for a
+          node it does not number. *)
+}
+
+val numbered : Ops.t -> numbering
+(** [numbered g] numbers the ranges and the storage [g] reaches, that of its
+    calls' bodies too, by their order in [g]. Two graphs equal up to renaming
+    of those numbers have the same [key], except where a range's bound or a
+    piece of storage's size reads another that is numbered: such graphs may
+    key apart, which costs a miss. Storage at a negative slot, a variable's, is
+    left as it is. *)
+
 val create_linear_with_vars :
   ?capturing:bool -> ?by_storage:bool -> Ops.t -> Ops.t * (string * int) list
 (** [create_linear_with_vars ~capturing ~by_storage big_sink] is the schedule

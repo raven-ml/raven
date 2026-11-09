@@ -261,7 +261,8 @@ val allow_tf32 : bool t
 
 val scache : int t
 (** [scache] is where schedules are cached, from [SCACHE]: [0] nowhere, [1] in
-    memory, [2] or more also in the {!Helpers.Diskcache}. Defaults to [2]. *)
+    memory, [2] or more also in the {!Helpers.Diskcache}, where
+    a compiled schedule is kept whole too. Defaults to [2]. *)
 
 val disallow_broadcast : bool t
 (** [disallow_broadcast] makes an elementwise operation on operands of different

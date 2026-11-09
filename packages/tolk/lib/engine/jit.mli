@@ -13,6 +13,10 @@
     intermediates share a few arenas, and its kernels are compiled. The engine
     links the result once and runs it on each call. *)
 
+val width : ?beam:int -> unit -> int
+(** [width ~beam ()] is the width {!jit_lower} [~beam] searches at: [beam], or
+    else the setting [JITBEAM]'s, or else [BEAM]'s. *)
+
 val shaping : ?beam:int -> unit -> (string * string) list
 (** [shaping ~beam ()] is {!Setting.shaping} as {!jit_lower} [~beam]
     compiles under it: with [BEAM] at the width the lowering searches, and
@@ -49,3 +53,7 @@ val jit_lower :
       {!Setting.beam}'s, as [BEAM], and [JITBEAM] unset.
 
     Raises as {!Realize.compile_linear} does. *)
+
+val source_digest : string
+(** [source_digest] is the digest of this library's sources, which a key of what
+    they make depends on. *)

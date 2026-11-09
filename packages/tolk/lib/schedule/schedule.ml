@@ -1282,6 +1282,13 @@ let in_order fn =
         (u, replace u ~arg:(Param { p with slot = lowest - 1 - k })))
       storage
 
+type numbering = {
+  key : string;
+  place : t -> t;
+  restore : t -> t;
+  position : t -> int;
+}
+
 (* The key of a schedule, in memory and, with the setting scache at 2 or more,
    on disk: [fn_key], the key of the function with its placeholders
    ([in_order]), every setting and variable that shapes what compilation makes
@@ -1292,6 +1299,39 @@ let schedule_key ~by_storage fn_key =
     ([ Source_digest.digest; fn_key; string_of_bool by_storage ]
     @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ()))
 
+(* [fn]'s numbering by its own order ({!numbering}): [fn] with its placeholders
+   is keyed without being built, so that a hit builds no graph but what it
+   reads. A placeholder keeps its node's sources, so where a placed node reaches
+   another, such as a range whose bound reads a range, [key_with], which would
+   place that one too, is not the key of the placed graph: it is built. *)
+let numbered fn =
+  let placed = in_order fn in
+  let place g = substitute ~calls:Enter ~pass:Once g placed in
+  let placeholder = Tbl.create 64 and rank = Tbl.create 64 in
+  List.iteri
+    (fun i (u, p) ->
+      Tbl.replace placeholder u (arg p);
+      Tbl.replace rank u i)
+    placed;
+  let reaches_placed (u, _) =
+    List.exists
+      (fun s -> s != u && Tbl.mem placeholder s)
+      (toposort ~calls:Enter u)
+  in
+  let key =
+    if List.exists reaches_placed placed then Ops.key (place fn)
+    else key_with ~arg:(Tbl.find_opt placeholder) fn
+  in
+  {
+    key;
+    place;
+    restore =
+      (fun g ->
+        substitute ~calls:Enter ~pass:Once g
+          (List.map (fun (u, p) -> (p, u)) placed));
+    position = (fun u -> Option.value ~default:(-1) (Tbl.find_opt rank u));
+  }
+
 let lower_sink_to_linear ~by_storage call =
   let fn = body call in
   let precompile = match arg call with Call c -> c.precompile | _ -> false in
@@ -1299,26 +1339,9 @@ let lower_sink_to_linear ~by_storage call =
   | Op.Sink, Kernel _ -> None
   | Op.Sink, _ when precompile ->
       let start = Unix.gettimeofday () in
-      let placed = in_order fn in
-      let place g = substitute ~calls:Enter ~pass:Once g placed in
-      (* [fn] with its placeholders is keyed without being built: a hit
-         builds no graph but the schedule it reads. A placeholder keeps its
-         node's sources, so where a placed node reaches another, such as a
-         range whose bound reads a range, [key_with], which would place that
-         one too, is not the key of the placed graph: it is built. *)
-      let placeholder = Tbl.create 64 in
-      List.iter (fun (u, p) -> Tbl.replace placeholder u (arg p)) placed;
-      let reaches_placed (u, _) =
-        List.exists
-          (fun s -> s != u && Tbl.mem placeholder s)
-          (toposort ~calls:Enter u)
-      in
-      let fn_key =
-        if List.exists reaches_placed placed then key (place fn)
-        else key_with ~arg:(Tbl.find_opt placeholder) fn
-      in
+      let numbering = numbered fn in
       let cache_key =
-        Digest.BLAKE256.string (schedule_key ~by_storage fn_key)
+        Digest.BLAKE256.string (schedule_key ~by_storage numbering.key)
       in
       (* Whether neither memory nor disk had the schedule. *)
       let made = ref false in
@@ -1326,7 +1349,7 @@ let lower_sink_to_linear ~by_storage call =
         made := true;
         if setting Setting.spec <> 0 then
           Spec.type_verify ~calls:Skip Spec.tensor fn;
-        place
+        numbering.place
           (schedule ~by_storage ~copies:true
              (Rangeify.get_kernel_graph (Prepare.prepare_rangeify fn)))
       in
@@ -1348,10 +1371,7 @@ let lower_sink_to_linear ~by_storage call =
           ((Unix.gettimeofday () -. start) *. 1000.)
           (if !made then "CACHE MISS" else " cache hit")
           (String.sub (Digest.BLAKE256.to_hex cache_key) 0 8);
-      let linear =
-        substitute ~calls:Enter ~pass:Once linear
-          (List.map (fun (u, p) -> (p, u)) placed)
-      in
+      let linear = numbering.restore linear in
       Some (replace call ~src:(linear :: List.tl (src call)))
   | _ -> None
 

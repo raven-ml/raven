@@ -2935,14 +2935,10 @@ let link ~beam ~parallel ~storage rigs l =
       in
       let ok = Option.map slot l.ok in
       let linear, vars =
-        Tolk.Schedule.create_linear_with_vars ~capturing:true
-          ~by_storage:(storage = Engine.Per_run) sink
-      in
-      let linear =
-        Tolk.Jit.jit_lower ?beam ~search:(search rigs ~parallel)
-          ~targets:(fun name -> Engine.target (named rigs name))
-          ~held_bufs:(List.map fst l.bound) ~inputs:(List.rev !order)
-          ~input_vars:vars linear
+        Engine.compile ?beam ~search:(search rigs ~parallel)
+          ~devices:(named rigs)
+          ~by_storage:(storage = Engine.Per_run)
+          ~held_bufs:(List.map fst l.bound) ~inputs:(List.rev !order) sink
       in
       let schedule =
         Engine.link ~devices:(named rigs) ~bound:l.bound ~storage linear
