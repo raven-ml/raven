@@ -45,8 +45,9 @@ external platform_uuid : unit -> string option = "caml_munin_platform_uuid"
    because another handle holds the file. Windows renames no file over one that
    another handle has open, a reader's included: MoveFileEx, which OCaml's
    [Unix.rename] calls with MOVEFILE_REPLACE_EXISTING, fails until that handle
-   closes, and an open can fail while a rename replaces its file. A reader holds
-   a file for one read and a rename is one call, so [f] is tried again after 1,
+   closes, an open can fail while a rename replaces its file, and a removal can
+   fail while another handle or a rename holds the file. A reader holds a file
+   for one read and a rename is one call, so [f] is tried again after 1,
    2, 4 ... 512 ms: at most 11 tries over about one second, then the failure is
    raised. Elsewhere [f] is tried once. *)
 let shared_tries = 11
@@ -419,9 +420,10 @@ let unlink path =
     Unix.unlink path
 
 (* An entry gone between the listing and its removal was removed by another
-   process, as gc and a deletion may both remove what a deletion left. *)
+   process, as gc and a deletion may both remove what a deletion left, or
+   another domain, as two writers of one run's notes may. *)
 let gone path f =
-  try f () with
+  try shared f with
   | Unix.Unix_error (Unix.ENOENT, _, _) -> ()
   | Unix.Unix_error (e, _, _) -> error path e
 

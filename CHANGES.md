@@ -1063,6 +1063,10 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- `Store.set_notes` and `Store.remove_tags` no longer fail with "Permission
+  denied" on Windows when another domain or program holds the file: a removal
+  waits for the handle as a rename does, up to about a second.
+
 Local experiment tracking for Raven: runs, their metrics, readings of the
 machine and devices, files and versioned artifacts, kept as plain JSON and
 text files that `Munin.Store_format` specifies, so `jq`, `tail -f` and

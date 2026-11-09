@@ -76,12 +76,16 @@ val add_tags : t -> string -> string list -> unit
 
 val remove_tags : t -> string -> string list -> unit
 (** [remove_tags s id tags] removes [tags] from the run [id], ignoring those
-    it lacks. Any process may call it, as {!add_tags}. *)
+    it lacks. Any process may call it, as {!add_tags}. On Windows, it blocks
+    briefly while another handle holds a tag's file, and raises [Sys_error] if
+    the handle outlasts the wait. *)
 
 val set_notes : t -> string -> string option -> unit
 (** [set_notes s id (Some text)] makes [text] the notes of the run [id],
     replacing them whole, and [set_notes s id None] removes them. When two
-    processes set one run's notes at once, the last to finish wins.
+    processes set one run's notes at once, the last to finish wins. On
+    Windows, it blocks briefly while another handle holds the notes, and
+    raises [Sys_error] if the handle outlasts the wait.
 
     Raises [Invalid_argument] if [text] is not UTF-8. *)
 

@@ -142,7 +142,8 @@ val replace : ?parents:bool -> string -> string -> unit
 
 val remove_tree : string -> unit
 (** [remove_tree p] removes the file or directory [p], if it exists. An entry
-    that another process removes meanwhile is not an error. *)
+    that another process removes meanwhile is not an error. On Windows, it
+    blocks briefly while another handle holds an entry. *)
 
 val stamp : string -> (float * int * int) option
 (** [stamp p] is [p]'s modification time, size and inode, if it exists. *)

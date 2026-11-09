@@ -1425,6 +1425,26 @@ let store_tests =
           equal (list string) [ "t" ] (Run.tags (List.hd listing));
           Store.set_notes store (Session.id s) None;
           equal (option string) None (Run.notes (reread store s)));
+      test "notes that another handle holds for a moment are removed" (fun () ->
+          (* A handle that does not share deletion, as a program other than
+             munin may hold, makes Windows refuse the removal until it closes;
+             elsewhere nothing refuses it. *)
+          with_store @@ fun store ->
+          let s = start store in
+          Session.finish s;
+          Store.set_notes store (Session.id s) (Some "n");
+          let notes = Filename.concat (Run.dir (reread store s)) "notes" in
+          let fd = Unix.openfile notes [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 in
+          let held =
+            Thread.create
+              (fun () ->
+                Thread.delay 0.2;
+                Unix.close fd)
+              ()
+          in
+          Fun.protect ~finally:(fun () -> Thread.join held) @@ fun () ->
+          Store.set_notes store (Session.id s) None;
+          equal (option string) None (Run.notes (reread store s)));
       test
         "a listing with prev reads again tags changed within the time \
          resolution" (fun () ->
@@ -2000,10 +2020,16 @@ let ended_run =
    notes a run holds; a system side is its id. *)
 let notes_w : (string option ref, string) abstract = abstract "n"
 
+(* A conflict needs one run and two domains, so a program's prefix stays short:
+   each call to [set] syncs, a program runs 50 times, and a failure's shrink
+   runs up to 10 000 programs, with no limit on Windows, where one of 20-call
+   programs took 688 s. *)
+let notes_steps = 4
+
 let domain_tests =
   group "domains"
     [
-      stateful ~count:30 ~domains:2
+      stateful ~count:30 ~steps:notes_steps ~domains:2
         "notes set, removed and read on two domains read as some order left them"
         [
           command "start"
