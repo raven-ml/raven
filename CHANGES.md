@@ -2654,6 +2654,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_kernel.S`'s caller must pass a call that fits; for one that does
+  not, a library answers a refusal or `Declined`, never `Done`, touches
+  nothing outside its arrays, and chooses which refusal.
 - **Breaking:** `Nx_kernel.S.map`, `reduce`, `scan`, `assemble` and
   `attention` take their destinations, loads, reductions, loop shape and
   pieces as `iarray`s, and `Nx_array.door` its `written` and `read`. A

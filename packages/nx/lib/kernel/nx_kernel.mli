@@ -34,30 +34,40 @@
     and rules, then {!Shape}, the shapes of every kernel's destinations,
     then {!S}.
 
-    nx first checks the arrays' dtypes and shapes, so that an error names
-    them. It then allocates the destinations and calls the kernel. The
-    kernel claims its destinations and operands for the call through the
-    {e door}, the claim of arrays {!Nx_array} defines, and answers as
-    {!Nx_array.type-answer} states. It answers [Done], [Declined] for a
+    A call {e fits} its kernel when its operands and destinations are as
+    many as the kernel's doc states, of the dtypes it takes and of the
+    shapes it and {!Shape} state, and its attributes are ones {!Shape}
+    answers no [Error] for. nx checks that a call fits before it calls a
+    kernel, so that an error names the arrays, then allocates the
+    destinations. The kernel claims its destinations and operands for the
+    call through the {e door}, the claim of arrays {!Nx_array} defines, and
+    answers as {!Nx_array.type-answer} states: [Done], [Declined] for a
     case it does not compute, or a {e refusal}, which names what is wrong
-    with an operand, and answers either of the last two before any write
-    or queued work. Any case may be [Declined], within the bounds
+    with an operand. Any case may be [Declined], within the bounds
     {!S.section-loops} states for loops. nx raises a refusal as
     {!Nx_array.refused} does, and after a decline raises
-    [Invalid_argument] and computes nothing in the library's place. A
-    failure that depends on a float's or a complex number's value is a
-    NaN result. A kernel raises [Out_of_memory] if host memory runs out,
-    {!Rig.Out_of_memory} if its device's does, and {!Rig.Lost} as the door
-    does. After a raise, the destinations' contents are unspecified.
+    [Invalid_argument] and computes nothing in the library's place.
+
+    The caller must pass a call that fits. Where a kernel answers
+    [Declined] or a refusal for a call that fits, it does so before any
+    write or queued work. For one that does not, it answers a refusal or
+    [Declined], never [Done], and reads and writes nothing outside its
+    arrays; the library chooses which refusal, and the destinations'
+    contents are unspecified. nx names a misfit with the refusal
+    {!map_refusal}, {!reduce_refusal}, {!scan_refusal} or
+    {!attention_refusal} gives, or [Shape_mismatch] where {!Shape} answers
+    [Error].
+
+    A failure that depends on a float's or a complex number's value is a
+    NaN result. A kernel raises
+    [Out_of_memory] if host memory runs out, {!Rig.Out_of_memory} if its
+    device's does, and {!Rig.Lost} as the door does. After a raise, the
+    destinations' contents are unspecified.
 
     Unless a function's doc says otherwise:
     - The caller must pass destinations that are C-contiguous, reach no
-      element twice, have the shape {!Shape} gives and the dtype the doc
-      states, and are on the operands' device. Operands may be strided,
-      broadcast or offset. A kernel answers [Wrong_dtype] for dtypes its
-      doc does not take and [Shape_mismatch] for operands or destinations
-      that do not fit it, by their number or their shapes, and for
-      attributes {!Shape} answers [Error] for.
+      element twice and are on the operands' device. Operands may be
+      strided, broadcast or offset.
     - A destination shares no byte with an operand, except one it is
       identical to that the kernel reads only at the result's own index: a
       [Plain] load of [map], [contract]'s [init], [scatter]'s [into], or
@@ -131,11 +141,11 @@ val map_refusal :
   'l ->
   (Nx_array.answer * string) option
 (** [map_refusal p ~rank ~dsts:dv dsts ~loads:lv loads] is
-    [Some (r, why)], [r] the refusal {!S.map} answers for its program [p]
-    over [loads] into [dsts], read by [lv] and [dv], on a loop of rank
-    [rank], and [why] what does not fit, in words; [None] where all fit.
-    It reads no shape but the rank: {!Shape.padded} gives a padded
-    load's. *)
+    [Some (r, why)] where {!S.map}'s program [p] over [loads] into [dsts],
+    read by [lv] and [dv], on a loop of rank [rank], does not fit: [r] the
+    refusal that names the misfit and [why] what does not fit, in words;
+    [None] where all fit. It reads no shape but the rank: {!Shape.padded}
+    gives a padded load's. *)
 
 (** {1:reductions Reductions and scans}
 
@@ -480,12 +490,11 @@ val attention_refusal :
   loads:'l dtypes ->
   'l ->
   (Nx_array.answer * string) option
-(** [attention_refusal p ~q ~rank ~o ~acc ~loads:v loads] is
-    [Some (r, why)], [r] the refusal {!S.attention} answers for its
-    program [p] over [loads], read by [v], a query of dtype [q] and rank
-    [rank], [o] of dtype [o] and [lse] of dtype [acc], and [why] what does
-    not fit, in words; [None] where all fit. It reads no shape but the
-    rank: {!Shape.attention} gives the shapes. *)
+(** [attention_refusal p ~q ~rank ~o ~acc ~loads:v loads] is as
+    {!map_refusal} for {!S.attention}'s program [p] over [loads], read by
+    [v], a query of dtype [q] and rank [rank], [o] of dtype [o] and [lse]
+    of dtype [acc]. It reads no shape but the rank: {!Shape.attention}
+    gives the shapes. *)
 
 (** {1:shapes Shapes} *)
 
@@ -493,7 +502,7 @@ val attention_refusal :
 
     Each function is the shapes of a kernel's destinations for operands of
     the shapes it takes, the destinations its caller allocates, or why the
-    operands do not fit. A kernel refuses other shapes ({!S}). Every shape
+    operands do not fit. A call of other shapes does not fit. Every shape
     it derives, a padded operand's and each destination's, is one a layout
     admits ({!Nx_array.Layout.max_numel}), and one past it is an [Error].
     An axis is checked against the rank it indexes, in \[[0], [rank]). *)
@@ -677,17 +686,15 @@ module type S = sig
       each has the loop's shape once loaded, a [Plain] load its array's and
       a [Padded] one the shape {!Shape.padded} gives. A loop without loads
       runs over its shape alone. Its [Coord] nodes read axes of that shape,
-      and it answers [Shape_mismatch] for a program with a [Coord] past that
-      shape's rank. A reduction or a scan computes in its program output's
+      below its rank. A reduction or a scan computes in its program output's
       carrier ({!carrier}), in the association and within the bounds
       {!section-reductions}, {!section-bounds} and {!section-scans} state.
       Its destinations are of any dtype but an [Arg]'s position, an
       [int64], and each result rounds once into its own, as {!Prog.Cast}
-      stores it. It answers [Wrong_dtype] where {!accepts} is [false] of
-      its reduction and that output's dtype, and [Shape_mismatch] unless
-      each reduction is of an output of the program and a [reduce] has at
-      least one. {!map_refusal}, {!reduce_refusal} and {!scan_refusal}
-      decide each of these refusals; {!Shape} gives the shapes.
+      stores it. Each reduction is of an output of the program, of a dtype
+      {!accepts} takes for it, and a [reduce] has at least one.
+      {!map_refusal}, {!reduce_refusal} and {!scan_refusal} decide whether a
+      loop fits; {!Shape} gives the shapes.
 
       A library declines a loop for its number of loads, program outputs or
       reductions only past a bound its device imposes, which its doc states,
@@ -735,10 +742,8 @@ module type S = sig
       continues from the slice's element of [carry]. Each result is that
       element combined with the terms up to it, and a float or complex one
       is within the bound of a reduction of the element and those terms
-      ({!section-bounds}). A NaN carry makes every result a NaN. It answers
-      [Shape_mismatch] for a carry given with a reduction other than a
-      [Monoid] or of another shape, and [Wrong_dtype] for one of another
-      dtype. *)
+      ({!section-bounds}). A NaN carry makes every result a NaN. Only a
+      [Monoid] scan takes a carry. *)
 
   (** {1:index Gathers and scatters}
 
@@ -801,8 +806,7 @@ module type S = sig
 
       Under [unique], the caller promises each target at most one update,
       which a library may rely on: where two share one, the result there is
-      unspecified. It answers [Wrong_dtype] for an [Add] of a dtype
-      {!Prog.Add} does not take. *)
+      unspecified. [Add] takes the dtypes {!Prog.Add} takes. *)
 
   (** {1:sorts Sorts} *)
 
@@ -863,8 +867,8 @@ module type S = sig
       where it reads none; in the association its library states and
       within the bound {!section-bounds} states, each part of a complex
       sum such a sum. The library states whether a narrow float's sum
-      rounds at each addition or once from [float32]. It answers
-      [Wrong_dtype] for a dtype {!Prog.Add} does not take. *)
+      rounds at each addition or once from [float32]. It takes the dtypes
+      {!Prog.Add} takes. *)
 
   (** {1:contraction Contraction}
 
@@ -905,8 +909,8 @@ module type S = sig
       [init] the sum starts from [+0]. An output without products is as
       {!Nx_kernel.section-contraction} states. Integers wrap in [acc].
       [a], [b], [init] and [dst] may be of any dtypes: an element enters
-      [acc], and the sum enters [dst], as {!Prog.Cast} stores it. It
-      answers [Wrong_dtype] for an [acc] that {!accumulates} refuses. *)
+      [acc], and the sum enters [dst], as {!Prog.Cast} stores it. It takes
+      an [acc] that {!accumulates} accepts. *)
 
   (** {1:fft Fourier transforms}
 
@@ -976,23 +980,22 @@ module type S = sig
   (** [svd ~s ~vectors:(~u, ~vh) a] stores [a = u diag s vh], [s] descending
       and not negative, a zero one [+0]. Without [vectors] it stores [s]
       alone. A matrix that holds NaN or an infinity, or on which the
-      iteration does not converge, is NaN in every result. It answers
-      [Wrong_dtype] unless [s] is of [a]'s precision ({!same_precision}). *)
+      iteration does not converge, is NaN in every result. [s] is of [a]'s
+      precision ({!same_precision}). *)
 
   val eigh : w:(float, 'r) a -> ?v:('v, 's) a -> ('v, 's) a -> answer
   (** [eigh ~w ~v a] stores the eigenvalues of [a], square and Hermitian as
       its lower triangle and the real parts of its diagonal name it, which
       alone are read, ascending into [w], and orthonormal columns [v] with
       [a v = v diag w]. Without [v] it stores [w] alone. NaN as for [svd],
-      over what is read. It answers [Wrong_dtype] unless [w] is of [a]'s
-      precision ({!same_precision}). *)
+      over what is read. [w] is of [a]'s precision ({!same_precision}). *)
 
   val eig :
     w:(Complex.t, 'c) a -> ?v:(Complex.t, 'c) a -> ('v, 's) a -> answer
   (** [eig ~w ~v a] stores the eigenvalues of [a], square, into [w], and
       columns [v] of unit norm with [a v = v diag w]. Without [v] it stores
-      [w] alone. NaN as for [svd]. It answers [Wrong_dtype] unless [w] and
-      [v] are of [a]'s precision ({!same_precision}). *)
+      [w] alone. NaN as for [svd]. [w] and [v] are of [a]'s precision
+      ({!same_precision}). *)
 
   val solve_triangular :
     triangle ->
@@ -1028,14 +1031,12 @@ module type S = sig
       to the values' dtype ({!section-attention}), and each element of [o]
       rounds once into [o]'s dtype.
 
-      It answers [Wrong_dtype] unless [q], [k] and [v] are of one dtype,
-      [float16], [bfloat16], [float32] or [float64], no wider than the
-      accumulator, [o] is of the accumulator or of [q]'s dtype, [p]'s
+      [q], [k] and [v] are of one dtype, [float16], [bfloat16], [float32]
+      or [float64], no wider than the accumulator, [o] is of the
+      accumulator or of [q]'s dtype, and each load is of its operand's
+      dtype. [p] has one operand more than [loads] and two outputs, its
       operand [0] and output [1] are in the accumulator, its output [0] is
-      a [bool] and each load is of its operand's dtype.
-      It answers [Shape_mismatch] unless [p] has one operand more than
-      [loads] and two outputs, its [Coord] nodes read axes below [q]'s
-      rank, and its output [0] does not read operand [0].
-      {!attention_refusal} decides both. Each library states its orders
-      and its bounds. *)
+      a [bool] that does not read operand [0], and its [Coord] nodes read
+      axes below [q]'s rank. {!attention_refusal} decides whether these
+      fit. Each library states its orders and its bounds. *)
 end
