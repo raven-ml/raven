@@ -128,12 +128,12 @@ let remove_in_place dir =
 (* [remove_deleted s dir] moves [dir] to a [.]-named entry of runs/ and removes
    it there, so that no writer that still holds its path, such as {!add_tags},
    adds to it. Windows refuses the move while another program holds a file in
-   [dir] open, and [dir] is then removed in place. *)
+   [dir] open, and past {!File.rename}'s wait [dir] is removed in place. *)
 let remove_deleted s dir =
   let gone = File.temp_name (runs_dir s) in
-  match Unix.rename dir gone with
-  | () -> File.remove_tree gone
-  | exception Unix.Unix_error _ -> remove_in_place dir
+  match File.rename dir gone with
+  | Ok () -> File.remove_tree gone
+  | Error _ -> remove_in_place dir
 
 let delete_run s id =
   let r = existing s id in
@@ -151,19 +151,20 @@ let delete_run s id =
    (* Read-write, for an exclusive lock on NFS, as Session's log. A user who
       may write the run's directory and not its log, as in a group-shared
       store, opens it read-only: a local flock ignores the open mode, and NFS's
-      emulation then refuses the lock, which raises. *)
+      emulation then refuses the lock, which raises. Windows locks through a
+      read-only handle, so it opens read-only at once: a read-write open would
+      wait out a read-only log before falling back. *)
    let fd =
-     let open_ flags =
-       Unix.openfile log (Unix.O_CLOEXEC :: Unix.O_SHARE_DELETE :: flags) 0
-     in
-     try open_ [ Unix.O_RDWR ] with
-     | Unix.Unix_error (Unix.ENOENT, _, _) -> no_run s id
-     | Unix.Unix_error (Unix.EACCES, _, _) -> (
-         try open_ [ Unix.O_RDONLY ]
-         with Unix.Unix_error (e, _, _) ->
-           raise (Sys_error (log ^ ": " ^ Unix.error_message e)))
-     | Unix.Unix_error (e, _, _) ->
-         raise (Sys_error (log ^ ": " ^ Unix.error_message e))
+     let refused e = raise (Sys_error (log ^ ": " ^ Unix.error_message e)) in
+     let mode = if Sys.win32 then Unix.O_RDONLY else Unix.O_RDWR in
+     match File.open_file log [ mode ] 0 with
+     | Ok fd -> fd
+     | Error Unix.ENOENT -> no_run s id
+     | Error Unix.EACCES when not Sys.win32 -> (
+         match File.open_file log [ Unix.O_RDONLY ] 0 with
+         | Ok fd -> fd
+         | Error e -> refused e)
+     | Error e -> refused e
    in
    (* Renaming the log to its mark under the lock ends the run at once for
       readers and writers, so that none meets half a run. The directory goes
@@ -172,9 +173,12 @@ let delete_run s id =
    Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
    if not (File.take_writer fd) then
      failwith (Printf.sprintf "run %s is being written" id);
-   try Unix.rename log (Listing.mark r.dir)
-   with Unix.Unix_error (e, _, _) ->
-     raise (Sys_error (log ^ ": " ^ Unix.error_message e)));
+   (* A handle that outlasts the wait leaves the log and so the run whole, and
+      the deletion, which has not begun, raises: unlike the move of the
+      directory below, nothing here can stand in for this rename. *)
+   match File.rename log (Listing.mark r.dir) with
+   | Ok () -> ()
+   | Error e -> raise (Sys_error (log ^ ": " ^ Unix.error_message e)));
   (* The run is deleted. Whatever its removal leaves, gc removes. *)
   try remove_deleted s r.dir with Sys_error _ -> ()
 

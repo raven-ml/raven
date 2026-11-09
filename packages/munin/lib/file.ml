@@ -41,7 +41,10 @@ external sysctl_string : string -> string option = "caml_munin_sysctl_string"
 external darwin_boot_time : unit -> float option = "caml_munin_boot_time"
 external platform_uuid : unit -> string option = "caml_munin_platform_uuid"
 
-(* [shared f] is [f ()], tried again while Windows refuses it with EACCES
+(* Every rename, removal and open that another handle can meet is made here,
+   so that none lacks this retry.
+
+   [shared f] is [f ()], tried again while Windows refuses it with EACCES
    because another handle holds the file. Windows renames no file over one that
    another handle has open, a reader's included: MoveFileEx, which OCaml's
    [Unix.rename] calls with MOVEFILE_REPLACE_EXISTING, fails until that handle
@@ -66,19 +69,37 @@ let shared f =
 (* Every file munin opens is opened share-delete, so that on Windows another
    process can rename or remove it meanwhile, as a deletion renames a log a
    reader has open. *)
-let open_flags = [ Unix.O_RDONLY; Unix.O_CLOEXEC; Unix.O_SHARE_DELETE ]
-
-let create_flags =
-  Unix.[ O_WRONLY; O_CREAT; O_EXCL; O_CLOEXEC; O_SHARE_DELETE ]
+let open_file path flags perm =
+  let flags = Unix.O_CLOEXEC :: Unix.O_SHARE_DELETE :: flags in
+  match shared (fun () -> Unix.openfile path flags perm) with
+  | fd -> Ok fd
+  | exception Unix.Unix_error (e, _, _) -> Error e
 
 let open_read path =
-  wrap path (fun () -> shared (fun () -> Unix.openfile path open_flags 0))
+  match open_file path [ Unix.O_RDONLY ] 0 with
+  | Ok fd -> fd
+  | Error e -> error path e
 
 let open_read_opt path =
-  match shared (fun () -> Unix.openfile path open_flags 0) with
-  | fd -> Some fd
-  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> None
-  | exception Unix.Unix_error (e, _, _) -> error path e
+  match open_file path [ Unix.O_RDONLY ] 0 with
+  | Ok fd -> Some fd
+  | Error Unix.ENOENT -> None
+  | Error e -> error path e
+
+let new_file = Unix.[ O_WRONLY; O_CREAT; O_EXCL ]
+
+let create path =
+  match open_file path new_file 0o666 with
+  | Ok fd -> fd
+  | Error e -> error path e
+
+let rename src dst =
+  match shared (fun () -> Unix.rename src dst) with
+  | () -> Ok ()
+  | exception Unix.Unix_error (e, _, _) -> Error e
+
+let discard path =
+  try shared (fun () -> Unix.unlink path) with Unix.Unix_error _ -> ()
 
 (* [fill fd b off] reads into [b] from [off] until [b] is full or the file ends,
    and is the offset reached. *)
@@ -240,11 +261,9 @@ let unlock fd =
 
 let with_lock path k f =
   let fd =
-    try
-      Unix.openfile path
-        [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_CLOEXEC; Unix.O_SHARE_DELETE ]
-        0o666
-    with Unix.Unix_error (e, _, _) -> error path e
+    match open_file path [ Unix.O_RDWR; Unix.O_CREAT ] 0o666 with
+    | Ok fd -> fd
+    | Error e -> error path e
   in
   Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
   lock fd k;
@@ -340,14 +359,7 @@ let copy ?dst src =
   let buf = Bytes.create buf_size in
   let ic = open_read src in
   Fun.protect ~finally:(fun () -> Unix.close ic) @@ fun () ->
-  let oc =
-    Option.map
-      (fun dst ->
-        try
-          Unix.openfile dst create_flags 0o666
-        with Unix.Unix_error (e, _, _) -> error dst e)
-      dst
-  in
+  let oc = Option.map create dst in
   Fun.protect ~finally:(fun () -> Option.iter Unix.close oc) @@ fun () ->
   let rec go total =
     match Unix.read ic buf 0 buf_size with
@@ -395,8 +407,12 @@ let replace ?(parents = true) path data =
   let dir = Filename.dirname path in
   if parents then mkdirs dir;
   let tmp = temp_name dir in
+  let fd =
+    match open_file tmp new_file 0o666 with
+    | Ok fd -> fd
+    | Error e -> error path e
+  in
   wrap path @@ fun () ->
-  let fd = Unix.openfile tmp create_flags 0o666 in
   (match
      write_all fd data;
      sync fd
@@ -404,12 +420,13 @@ let replace ?(parents = true) path data =
   | () -> Unix.close fd
   | exception e ->
       Unix.close fd;
-      (try Unix.unlink tmp with Unix.Unix_error _ -> ());
+      discard tmp;
       raise e);
-  try shared (fun () -> Unix.rename tmp path)
-  with e ->
-    (try Unix.unlink tmp with Unix.Unix_error _ -> ());
-    raise e
+  match rename tmp path with
+  | Ok () -> ()
+  | Error e ->
+      discard tmp;
+      error path e
 
 (* Windows refuses to remove a read-only file, which a POSIX system removes
    whatever its mode. Clearing the attribute first gives Windows that rule. *)

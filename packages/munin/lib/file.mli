@@ -7,7 +7,12 @@
 
     Every function that touches the file system raises [Sys_error] with the path
     and the system's message when the system refuses it, and never
-    [Unix.Unix_error]. Descriptors are opened close-on-exec. *)
+    [Unix.Unix_error], except {!open_file} and {!rename}, which return the
+    refusal for their caller to judge. Descriptors are opened close-on-exec.
+
+    On Windows a rename, a removal or an open is refused while another handle
+    holds the file. Each one here blocks briefly until the handle closes, then
+    reports the refusal. *)
 
 (** {1:names Names} *)
 
@@ -96,9 +101,23 @@ val sync_dir : string -> unit
 (** [sync_dir d] syncs the directory [d]'s entries. It does nothing on Windows.
 *)
 
-val create_flags : Unix.open_flag list
-(** [create_flags] opens a new file for writing, failing if it exists,
-    close-on-exec and share-delete, as every file munin writes is opened. *)
+val open_file :
+  string -> Unix.open_flag list -> int -> (Unix.file_descr, Unix.error) result
+(** [open_file path flags perm] opens [path] with [flags], close-on-exec and
+    share-delete added, so that another process can rename or remove it
+    meanwhile, and is the system's refusal when it refuses. *)
+
+val create : string -> Unix.file_descr
+(** [create path] opens the new file [path] for writing, and fails if it
+    exists. *)
+
+val rename : string -> string -> (unit, Unix.error) result
+(** [rename src dst] renames [src] to [dst], replacing a file there, and is the
+    system's refusal when it refuses. *)
+
+val discard : string -> unit
+(** [discard path] removes the temporary file [path], and ignores a refusal:
+    readers ignore the [.]-named file it leaves. *)
 
 val open_read : string -> Unix.file_descr
 

@@ -220,13 +220,12 @@ let publish ~root ~run ~step ~metadata ~name path =
   let blob = Filename.concat blobs hex in
   (if Sys.file_exists blob then File.remove_tree tmp
    else
-     match Unix.rename tmp blob with
-     | () -> File.sync_dir blobs
-     | exception Unix.Unix_error ((Unix.EEXIST | Unix.ENOTEMPTY), _, _) ->
-         File.remove_tree tmp
-     | exception Unix.Unix_error (e, _, _) ->
+     match File.rename tmp blob with
+     | Ok () -> File.sync_dir blobs
+     | Error (Unix.EEXIST | Unix.ENOTEMPTY) -> File.remove_tree tmp
+     | Error e ->
          File.remove_tree tmp;
-         raise (Sys_error (blob ^ ": " ^ Unix.error_message e)));
+         sys_error blob e);
   let dir = name_dir root name in
   File.mkdirs dir;
   let a =
@@ -243,11 +242,7 @@ let publish ~root ~run ~step ~metadata ~name path =
     }
   in
   let tmp = File.temp_name dir in
-  let fd =
-    try
-      Unix.openfile tmp File.create_flags 0o666
-    with Unix.Unix_error (e, _, _) -> sys_error tmp e
-  in
+  let fd = File.create tmp in
   (try
      File.write_all fd (encode a);
      File.sync fd;
@@ -268,7 +263,7 @@ let publish ~root ~run ~step ~metadata ~name path =
   in
   let n =
     Fun.protect
-      ~finally:(fun () -> try Unix.unlink tmp with Unix.Unix_error _ -> ())
+      ~finally:(fun () -> File.discard tmp)
       (fun () -> claim first)
   in
   File.sync_dir dir;

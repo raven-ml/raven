@@ -112,6 +112,9 @@ val resume : ?provenance:Provenance.t -> Run.t -> step:int -> t
     [provenance], and syncs the log ({!Store_format.section-resume}).
     [provenance] defaults to {!Provenance.detect}[ ()].
 
+    On Windows, it blocks briefly while another handle holds the log, and
+    raises [Sys_error] if the handle outlasts the wait.
+
     Raises [Invalid_argument] if [step] is not a step, and [Failure] if the
     run has ended or another writer holds its lock. *)
 

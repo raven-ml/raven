@@ -118,8 +118,12 @@ let rec claim_dir runs =
 (* Read-write: on NFS a lock is a byte-range lock, and an exclusive one needs a
    descriptor open for writing, a shared one (the resumer's probe) one open for
    reading (flock(2), NFS details). *)
-let log_flags =
-  [ Unix.O_RDWR; Unix.O_APPEND; Unix.O_CLOEXEC; Unix.O_SHARE_DELETE ]
+let log_flags = [ Unix.O_RDWR; Unix.O_APPEND ]
+
+let open_log log flags perm =
+  match File.open_file log flags perm with
+  | Ok fd -> fd
+  | Error e -> raise (Sys_error (log ^ ": " ^ Unix.error_message e))
 let identities () = (File.machine_id (), File.boot_id ())
 
 (* Who writes the run now, beside the log, replaced before the start or resume
@@ -188,11 +192,7 @@ let start ?store ?name ?parent ?(tags = []) ?(params = []) ?steps ?provenance
   File.mkdirs runs;
   let id, dir = claim_dir runs in
   let log = Listing.log dir in
-  let fd =
-    try Unix.openfile log (Unix.O_CREAT :: Unix.O_EXCL :: log_flags) 0o666
-    with Unix.Unix_error (e, _, _) ->
-      raise (Sys_error (log ^ ": " ^ Unix.error_message e))
-  in
+  let fd = open_log log (Unix.O_CREAT :: Unix.O_EXCL :: log_flags) 0o666 in
   match
     (* The lock comes before the start, so no listing sees a started run without
        its writer. *)
@@ -235,11 +235,7 @@ let start ?store ?name ?parent ?(tags = []) ?(params = []) ?steps ?provenance
 let resume ?provenance (r : Run.t) ~step =
   check_step "resume" step;
   let log = Listing.log r.dir in
-  let fd =
-    try Unix.openfile log log_flags 0
-    with Unix.Unix_error (e, _, _) ->
-      raise (Sys_error (log ^ ": " ^ Unix.error_message e))
-  in
+  let fd = open_log log log_flags 0 in
   match
     if not (File.take_writer fd) then
       failwith (Printf.sprintf "Session.resume: run %s is being written" r.id);
@@ -437,7 +433,7 @@ let log_file s ~step ~key path =
   in
   let name =
     Fun.protect
-      ~finally:(fun () -> try Unix.unlink tmp with Unix.Unix_error _ -> ())
+      ~finally:(fun () -> File.discard tmp)
       (fun () ->
         ignore (File.copy ~dst:tmp path);
         claim 0)

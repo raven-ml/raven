@@ -114,7 +114,8 @@ val delete_run : t -> string -> unit
 
     Raises [Failure] if another writer holds the run's lock, if the run is
     [`Silent] ({!Run.status}), or if it does not exist, as when another
-    deletion removed it. *)
+    deletion removed it. On Windows, it blocks briefly while another handle
+    holds the log, and raises [Sys_error] if the handle outlasts the wait. *)
 
 (** {1:artifacts Artifacts} *)
 

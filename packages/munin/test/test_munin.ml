@@ -1445,6 +1445,26 @@ let store_tests =
           Fun.protect ~finally:(fun () -> Thread.join held) @@ fun () ->
           Store.set_notes store (Session.id s) None;
           equal (option string) None (Run.notes (reread store s)));
+      test "a run whose log another handle holds for a moment is deleted"
+        (fun () ->
+          (* A handle that does not share deletion makes Windows refuse the
+             rename of the log until it closes; elsewhere nothing refuses it. *)
+          with_store @@ fun store ->
+          let s = start store in
+          Session.finish s;
+          let id = Session.id s in
+          let log = Filename.concat (Run.dir (reread store s)) "events.jsonl" in
+          let fd = Unix.openfile log [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 in
+          let held =
+            Thread.create
+              (fun () ->
+                Thread.delay 0.2;
+                Unix.close fd)
+              ()
+          in
+          Fun.protect ~finally:(fun () -> Thread.join held) @@ fun () ->
+          Store.delete_run store id;
+          equal bool false (Store.run store id <> None));
       test
         "a listing with prev reads again tags changed within the time \
          resolution" (fun () ->
@@ -2021,15 +2041,15 @@ let ended_run =
 let notes_w : (string option ref, string) abstract = abstract "n"
 
 (* A conflict needs one run and two domains, so a program's prefix stays short:
-   each call to [set] syncs, a program runs 50 times, and a failure's shrink
-   runs up to 10 000 programs, with no limit on Windows, where one of 20-call
-   programs took 688 s. *)
-let notes_steps = 4
+   a program syncs or deletes on most calls and runs 50 times, and a failure's
+   shrink runs up to 10 000 programs, with no limit on Windows, where one of
+   20-call programs took 688 s. *)
+let race_steps = 4
 
 let domain_tests =
   group "domains"
     [
-      stateful ~count:30 ~steps:notes_steps ~domains:2
+      stateful ~count:30 ~steps:race_steps ~domains:2
         "notes set, removed and read on two domains read as some order left them"
         [
           command "start"
@@ -2048,7 +2068,7 @@ let domain_tests =
             (fun id ->
               Run.notes (require_some (Store.run (Lazy.force race_store) id)));
         ];
-      stateful ~count:10 ~domains:2
+      stateful ~count:20 ~steps:race_steps ~domains:2
         "a deletion and annotations on two domains leave the run whole or gone"
         [
           command "start"
