@@ -313,7 +313,12 @@ let line_bytes = 128
    take 1.55 ms on a core. Past it a float32 operand streamed loses to the
    general rules' tiles, read once a pass where they share each load: at 64
    rows 2107 to 2171 us against 1909 to 1987, a 1024-cube product 1054
-   against 398 us. *)
+   against 398 us. Past [upcast_max] a thread's upcast no longer holds every
+   row and the operand is read in two passes, so a gate of [upcast_max] would
+   take the rows of reuse 17 to 32 off the stream: an MXFP4 product of 32 rows
+   then runs 1.46 ms against 1.62, but gpt-oss's 512-token prefill, whose router
+   would take a core, runs 124 to 127 ms against 122.8 to 123.6, so the gate
+   stays at 32. *)
 let stream_first = 32
 
 (* The largest power of two at most [cap] that divides [r]'s size. *)
