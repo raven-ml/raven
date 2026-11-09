@@ -131,7 +131,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Raven:** `lower_arith.ml` (`narrow`, `decode`, `encode`, `narrowed`).
 - **Differs:** an operation or comparison on `float16`, `bfloat16`, an 8-bit
   float or `float4_e2m1fn` widens its operands exactly to `float32`, computes,
-  and narrows the result once, to nearest with ties to even. A renderer's
+  and narrows the result once, to nearest with ties to even; fma differs
+  (A27). A renderer's
   half-precision intrinsics never apply. `float16` and `bfloat16` convert by
   tolk's casts, as tinygrad's do; a NaN they give is a NaN of unspecified sign
   and payload, quiet where its operand is, as nx's NaN rule allows. The rule
@@ -529,6 +530,30 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   `Lower_arith › exact unary kinds give eager's bits`, `› exact binary kinds,
   comparisons, where and fma give eager's bits`, `› casts into complex128 give
   eager's values in both parts`.
+
+### A27. A narrow float's fma rounds its exact value once
+
+- **Reference:** none: tinygrad's `Tensor` builds no fused multiply-add.
+- **Raven:** `lower_arith.ml` (`fma_narrow`, `fma_e5m2`).
+- **Differs:** A1's rule, a `float32` fma then the narrowing, rounds twice:
+  `3 * 683 + 2^-14` in halves is 2048, not 2050. fma at `float16` and
+  `bfloat16` is a Mulacc of that type, which tolk's codegen rounds once
+  (`pm_narrow_mulacc` in `Codegen.full_rewrite_to_sink`). At
+  `float8_e4m3fn` and `float4_e2m1fn` A1's rule stands: its two roundings
+  equal one on every triple of codes. At `float8_e5m2`, held as bytes, the
+  lowering rounds the exact value to odd in `float32` from TwoSum's error,
+  and the narrowing rounds once (Boldo and Melquiond, "Emulation of FMA
+  and correctly-rounded sums: proved algorithms using rounding to odd",
+  IEEE Trans. Computers 57(4), 2008, Theorem 3).
+- **nx:** `prog.mli`, Results: a narrow float's `Fma` rounds once from its
+  exact value.
+- **Class:** exact, subnormals aside on a target that flushes them.
+- **Reason:** (b).
+- **Pinned by:** `Jit › classes › fma rounds once at floats narrower than
+  float32, eager and compiled` on the host and `Jit_gpu › multiply-adds ›
+  fma rounds once at floats narrower than float32` on a GPU, each against
+  the exact value; `Lower_arith › exact binary kinds, comparisons, where and
+  fma give eager's bits`.
 
 ### R1. A float sum adds +0.
 

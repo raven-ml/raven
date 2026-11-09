@@ -489,6 +489,40 @@ let narrowed d f xs =
   let y = f (List.map (widen d) xs) in
   if narrow d then encode d y else y
 
+(* Fma at a narrow float rounds its exact value once.
+
+   - float16 and bfloat16, held in their own types, give a Mulacc of that
+     type, which tolk's codegen rounds once on every target
+     (pm_narrow_mulacc in Codegen.full_rewrite_to_sink).
+   - float8_e4m3fn and float4_e2m1fn give a Mulacc of their decoded
+     float32s, encoded after: two roundings that equal one on every triple
+     of codes, each format checked exhaustively against the exact value.
+   - float8_e5m2, held as bytes, has products of at most 6 bits in
+     [2^-32, 2^32), exact and normal in a float32, and sums below 2^33, so
+     TwoSum's error is exact: the sum rounded to odd from it, stepped one
+     float32 toward zero where the error has the other sign and its last
+     bit set where the error is not zero, encodes once (Boldo and
+     Melquiond, "Emulation of FMA and correctly-rounded sums: proved
+     algorithms using rounding to odd", IEEE Trans. Computers 57(4), 2008,
+     Theorem 3). A NaN or an infinity makes the error NaN, which no
+     comparison holds, so the sum passes. Rounded to nearest in a float32
+     first, 1.5 * 2^-7 * -1.25 * 2^15 + 2^-16 would give -512, not -448. *)
+let fma_e5m2 d a b c =
+  let a = decode d a and b = decode d b and c = decode d c in
+  let r, e = Lower_real.two_sum (a * b) c in
+  let zero = Shape.const_like e (`Float 0.) in
+  let below = e < zero and above = zero < e in
+  let toward_zero = (below && zero < r) || (above && r < zero) in
+  let u = bits r in
+  encode d
+    (f32 (where toward_zero (u - num u 1) u lor one_if (below || above) u))
+
+let fma_narrow (D.Any dt as d) a b c =
+  match dt with
+  | D.Float16 | D.Bfloat16 -> Lower_real.fma a b c
+  | D.Float8_e5m2 -> fma_e5m2 d a b c
+  | _ -> encode d (Lower_real.fma (decode d a) (decode d b) (decode d c))
+
 let op1 (k : P.op1) ~src:(D.Any s as src) dt xs =
   match k with
   | Copy -> xs
@@ -525,6 +559,7 @@ let binary k d xs ys = op2 (Binary k) d xs ys
 let op3 (k : P.op3) (D.Any s as d) cs xs ys =
   match (k, cs) with
   | Where, [ c ] -> List.map2 (where (truth c)) xs ys
+  | Fma, _ when narrow d -> [ fma_narrow d (one cs) (one xs) (one ys) ]
   | Fma, _ when D.is D.Float s ->
       [
         narrowed d

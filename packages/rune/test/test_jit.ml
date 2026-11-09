@@ -5458,6 +5458,44 @@ let batch_axes (pattern, sa, sb, expected) =
       in
       equal (list string) [ expected ] names)
 
+(* Multiply-adds of narrow floats: eager and compiled, fma at a float narrower
+   than float32 is its exact value rounded once, as Exact's integers round it,
+   where a float32 would round first. *)
+
+type narrow = Narrow : (float, 's) Nx.dtype -> narrow
+
+let narrows =
+  Nx.Dtype.
+    [
+      Narrow Float16;
+      Narrow Bfloat16;
+      Narrow Float8_e4m3fn;
+      Narrow Float8_e5m2;
+      Narrow Float4_e2m1fn;
+    ]
+
+let narrow_fmas =
+  Gen.pair
+    (Gen.of_list ~pp:(fun ppf (Narrow dt) -> Nx.Dtype.pp ppf dt) narrows)
+    Gen.int
+
+let law_narrow_fma (Narrow dt, seed) =
+  let f = Exact.format dt in
+  let a, b, c = Kernels_cases.Narrow_fma.operands f seed in
+  Kernels_cases.Narrow_fma.covers (Nx.Dtype.name dt) f a b c;
+  let v x = Nx.create dt [| Array.length x |] x in
+  let misses y =
+    Kernels_cases.Narrow_fma.misses f a b c (Nx.to_array (Nx.cast f64 y))
+  in
+  equal ~msg:"eager" (list string) [] (misses (Nx.fma (v a) (v b) (v c)));
+  let fma =
+    Rune.jit T.(tensor @-> tensor @-> tensor @-> returns tensor) Nx.fma
+  in
+  let before = Rune.evaluations () in
+  let y = fma (v a) (v b) (v c) in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  equal ~msg:"compiled" (list string) [] (misses y)
+
 let () =
   exit
     (run "rune jit"
@@ -5474,6 +5512,11 @@ let () =
          group "classes"
            [
              prop "jit gives eager's bits for exact functions" cases law;
+             prop ~count:10
+               ~examples:(List.map (fun d -> (d, 1)) narrows)
+               "fma rounds once at floats narrower than float32, eager and \
+                compiled"
+               narrow_fmas law_narrow_fma;
              prop ~count:40
                "a step updating its donated arguments from each other gives \
                 eager's bits" updates law_update;

@@ -397,6 +397,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx.fma` at `float16`, `bfloat16` and the 8- and 4-bit floats under
+  `Rune.jit` rounds its exact value once, as eager does, on every target,
+  Metal included, subnormals aside where a target flushes them. It rounded
+  a `float32` fma to the narrow float: twice.
 - `Nx.attention` under `Rune.jit` and its gradient compute float16 and
   bfloat16 on the tensor cores of RDNA 4 and Apple GPUs, and of CUDA's
   sm_75 for float16, where they ran a kernel of one row a thread: on an

@@ -8,7 +8,7 @@
    element no update lands on, a cast between float32 and a 16-bit float gives
    eager's bits at every code and tie, as does a cast of an integer to a float
    at the ties of every exponent, a product of narrow floats or of MXFP4
-   weights holds its bound, a call's check raises at the next wait, so the
+   weights holds its bound, a narrow float's fma rounds once, a call's check raises at the next wait, so the
    call returns while its work runs, a key split there has the host's words,
    and a program over the GPU and a memory device, devices of two targets,
    compiles to eager's values with replicas equal bit for bit, a running
@@ -1065,6 +1065,41 @@ let exp16 dt () =
   let d, s = on_gpu () in
   Exps.law16 s ~flushes:(flushes d) dt
 
+(* Multiply-adds of narrow floats: fma at a float narrower than float32,
+   compiled on the GPU, is its exact value rounded once, as Exact's integers
+   round it. Where the GPU flushes float32's subnormals, rune.mli lets an
+   element differ whose operand, product or exact value is one. *)
+
+type fma_dtype = Fma : (float, 's) Nx.dtype -> fma_dtype
+
+let fma_dtypes =
+  Nx.Dtype.
+    [
+      Fma Float16; Fma Bfloat16; Fma Float8_e4m3fn; Fma Float8_e5m2;
+      Fma Float4_e2m1fn;
+    ]
+
+let narrow_fma (Fma dt, seed) =
+  let d, (module S : Nx.Devices) = on_gpu () in
+  let f = Exact.format dt in
+  let a, b, c = Kernels_cases.Narrow_fma.operands f seed in
+  let subnormal x = x <> 0. && Float.abs x < 0x1p-126 in
+  let kept i =
+    not
+      (flushes d
+      && List.exists subnormal
+           [ a.(i); b.(i); c.(i); a.(i) *. b.(i); Exact.exact_fma a.(i) b.(i) c.(i) ])
+  in
+  let keep xs = Array.of_list (List.filteri (fun i _ -> kept i) (Array.to_list xs)) in
+  let a = keep a and b = keep b and c = keep c in
+  let v x = Nx.place S.on (Nx.create dt [| Array.length x |] x) in
+  let fma =
+    Rune.jit Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor) Nx.fma
+  in
+  let y = Nx.place Nx.Host.on (fma (v a) (v b) (v c)) in
+  let got = Nx.to_array (Nx.cast Nx.float64 y) in
+  equal (list string) [] (Kernels_cases.Narrow_fma.misses f a b c got)
+
 let () =
   exit
     (run "Rune.jit on a GPU"
@@ -1115,6 +1150,13 @@ let () =
                (exp16 Nx.float16);
              test "exp of every bfloat16 code within one ulp"
                (exp16 Nx.bfloat16);
+           ];
+         group "multiply-adds"
+           [
+             Windtrap.cases "fma rounds once at floats narrower than float32"
+               ~id:(fun (Fma dt, _) -> Nx.Dtype.name dt)
+               (List.map (fun n -> (n, 1)) fma_dtypes)
+               narrow_fma;
            ];
          group "16-bit casts"
            [
