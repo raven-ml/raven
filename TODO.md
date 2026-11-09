@@ -69,8 +69,10 @@ raven / llama.cpp b12048 Vulkan:
   Jit/chain-100-rooted-hit runs its 4 blocks in 12.9 µs pinned to the
   P-cores, 43.5 µs on one core, and 13.0 or 20.4 µs unpinned on a quiet
   fudge depending on which cores they reach
-- AMD counters and thread traces are not collected: encode them as words
-  parts
+- AMD counters and thread traces are not collected in a profile: rig's
+  AMD driver brackets each timed launch, reading the VMID filter on the
+  GPU in the bracket and marking a saturated or foreign count unmeasured
+  (_plans/todo-campaign/design/amd-counters.adjudication.md)
 - AMD machine code without comgr (_plans/amd-isa/design-reviewed.md): an
   assembly renderer and assembler, gfx12 first, the default once its gate
   passes; HIP stays as a choice. First read the terms of AMD's ISA XML

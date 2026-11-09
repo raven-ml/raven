@@ -12,7 +12,8 @@
     work-group processor of the engine. The run writes each value as a
     64-bit word into its samples. For the counters a profile asks for,
     {!val-layout} gives the register each takes and where its values lie,
-    which the program that counts writes and the reader reads.
+    which the programs that count ({!section-counting}) write and the host
+    reads.
 
     The counters are rocprofiler's for gfx942, gfx950, and GFX11 and GFX12
     GPUs. A GPU of another processor counts none. *)
@@ -59,3 +60,66 @@ val layout : Gpu.t -> string list -> (layout, string) result
     {- if [names] has more counters of a block than the block has counter
        registers, naming the block, as
        ["gfx1201 counts at most 4 GL2C counters at once"].}} *)
+
+(** {1:counting Counting}
+
+    A queue counts the SQ counters of a layout over the work between the
+    packets of {!val-start} and those of {!val-stop}, which a submission
+    places on the queue ([Rig.Submission.words]). The GPU has one set of
+    counters, which all its queues and processes share.
+
+    Counting is filtered by VMID. A process's queues on a GPU share one
+    VMID, which a wave reads in bits 27 to 24 of its [HW_ID2] register and
+    which can change while the process runs. The filter counts the waves of
+    every queue of the process whose VMID it holds. Whether a wave counts is
+    decided when it starts, and holds for its life.
+
+    The counts are exact when the filter word holds the process's VMID while
+    it counts, the process's other queues run nothing while it counts, and
+    no other process counts on the GPU. A preemption of the
+    queue while it counts adds the waves its restore relaunches and the
+    instructions of their trap handler, so ["SQ_WAVES"] exceeds the waves
+    the queue launched.
+
+    Each work-group processor's value saturates at [2{^32} - 1], so a value
+    of [2{^32} - 1] means at least that many.
+
+    The counters count only in the GPU's stable power state, which
+    {!Capability.t.trace} holds. Outside it, ["SQ_INSTS_VALU"] stays [0]. *)
+
+val filter : Gpu.t -> vmid:int -> int
+(** [filter g ~vmid] is the 32-bit filter word that counts the waves of VMID
+    [vmid] alone: [1 lor (1 lsl (vmid + 1))]. A kernel of the process may
+    compute it from its own [HW_ID2] and store it for {!val-start}.
+
+    Raises [Invalid_argument] if [vmid] is not in \[[0];[15]\], or if [g] is
+    a GPU other than a GFX12 of one die. *)
+
+val start : Gpu.t -> layout -> filter_address:int -> string
+(** [start g l ~filter_address] is the packets, as little-endian 32-bit words, that
+    wait until the queue's dispatches before them complete, reset every
+    counter of [g], select [l]'s, and start counting the waves that the
+    filter word at [filter_address] selects ({!val-filter}). They read that word
+    once those dispatches complete, so a dispatch before them may write it.
+    Addresses are as the device's work addresses memory
+    ([Rig.Submission.address]).
+
+    Raises [Invalid_argument] if [filter_address] is not a non-negative
+    multiple of 4, if [l] holds a counter of a block other than SQ, if [g] is a GPU
+    other than a GFX12 of one die, or if [g]'s GC lacks a register the
+    program writes. *)
+
+val stop : Gpu.t -> wgps:int array array -> layout -> address:int -> string
+(** [stop g ~wgps l ~address] is the packets, as little-endian 32-bit
+    words, that wait until the queue's dispatches before them complete,
+    stop counting, and store [l]'s values from [address] as {!t} lays them
+    out, [0] for each work-group processor that [wgps] says runs no work.
+    They then clear the filter, so that no wave started after them counts.
+    [l] must be the layout {!val-start} took. [wgps] is as
+    {!Capability.t}'s. Each store is confirmed before the next packet
+    starts.
+
+    Raises [Invalid_argument] if [address] is not a non-negative multiple
+    of 8, if [wgps] does not hold [g.shader_engines] engines, if [l] holds a
+    counter of a block other than SQ, if [g] is a GPU other than a GFX12 of
+    one die, or if [g]'s GC lacks a register the program reads or writes. *)

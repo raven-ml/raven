@@ -24,6 +24,12 @@ Code objects for gfx1201, each made from its source by `gen.sh`.
   work-items. `plain` names none. `wide` stores its second argument, a
   32-bit word, at the address its first holds, among 8192 bytes of
   arguments.
+- `counts_gfx1201.hsaco`, of `counts.s`, holds three kernels in waves of 32
+  work-items. `valu` runs `16 * k` `v_add_f32` a wave and no other VALU
+  instruction, `k` its 32-bit argument, at least 1. `hw_id2` stores its
+  wave's `HW_ID2` register, whose bits 27 to 24 are the wave's VMID, at the
+  address its argument holds. `filter` stores there the filter word of its
+  wave's VMID, `1 lor (1 lsl (vmid + 1))`.
 
 ## Discovery tables
 

@@ -2647,7 +2647,373 @@ let traces =
               else fail why);
     ]
 
+(* Counters and traces of a launch, as words around it *)
+
+module Counter = Abi.Counter
+module Thread_trace = Abi.Thread_trace
+
+let counts_code = code_of (lazy (read_fixture "counts_gfx1201.hsaco"))
+
+(* [valu]'s groups of 64 work-items run two waves of 32, each of [16 * k] VALU
+   instructions (fixtures/README.md). *)
+let threads = 64
+let expected ~groups ~k = [ 2 * groups; 2 * groups * 16 * k ]
+let counted = [ "SQ_WAVES"; "SQ_INSTS_VALU" ]
+let sums = List.map (List.fold_left ( + ) 0)
+
+let gfx1201_only (t : gpu) =
+  let c = A.capability t.g in
+  if c.gpu.target <> (12, 0, 1) then
+    skip ~reason:(Gpu.processor c.gpu ^ " runs no gfx1201 code") ()
+
+(* The device's trace buffers. Making them holds the GPU's stable power state,
+   which counting needs too. *)
+let steady (t : gpu) =
+  match (A.capability t.g).trace () with
+  | Ok tr -> tr
+  | Error why ->
+      if String.starts_with ~prefix:held why then skip ~reason:why ()
+      else fail why
+
+(* The VMID of this process on [t]'s GPU, bits 27 to 24 of the HW_ID2 that a
+   wave of [hw_id2] stores. *)
+let vmid (t : gpu) p =
+  let out = buffer ~memory:Pinned t 4 in
+  launch t p "hw_id2" ~params:8
+    ~refs:[ (0, 0) ]
+    ~groups:(1, 1, 1) ~threads:(1, 1, 1)
+    ~set:(fun _ _ -> ())
+    ~uses:[ (out, Rig.Read_write) ]
+    ();
+  (Int32.to_int (String.get_int32_le (get out) 0) lsr 24) land 0xf
+
+(* The bytes of a words block. Its words are known only once the submission
+   gives the addresses they hold, so the block is made larger than they are and
+   its rest is NOPs: PACKET3_NOP (soc15d.h, nvd.h) of [n - 2] for [n] words, or
+   of count 0x3fff, a header alone, for one, as amdgpu pads its compute
+   rings. *)
+let words_room = 16384
+let nop = 0x10
+
+let padded w =
+  let n = String.length w in
+  if n > words_room then
+    failf "%d bytes of words, past the %d made room for" n words_room;
+  let header count = (3 lsl 30) lor (count lsl 16) lor (nop lsl 8) in
+  match (words_room - n) / 4 with
+  | 0 -> w
+  | 1 -> w ^ le32s [ header 0x3fff ]
+  | pad -> w ^ le32s (header (pad - 2) :: List.init (pad - 1) (fun _ -> 0))
+
+(* Counts [counted] around one launch of [valu] over [groups] groups with [k],
+   in one submission: [filter] storing this process's filter word, or, with
+   [vmid], the host storing [vmid]'s; then Counter.start, the launch and
+   Counter.stop. The values of each counter, one per place, and the filter
+   word. *)
+let count (t : gpu) p ?vmid ~groups ~k () =
+  let c = A.capability t.g in
+  let l = require_ok ~msg:"layout" (Counter.layout c.gpu counted) in
+  let samples = buffer ~memory:Pinned t l.bytes
+  and word = buffer ~memory:Pinned t 4 in
+  put samples (String.make l.bytes '\xee');
+  put word
+    (le32s
+       [ (match vmid with Some v -> Counter.filter c.gpu ~vmid:v | None -> 0) ]);
+  let fn name = Option.get (Rig.Image.resolve p name) in
+  let start = Rig.Buffer.create Rig.host words_room
+  and stop = Rig.Buffer.create Rig.host words_room in
+  let filter =
+    match vmid with
+    | Some _ -> []
+    | None -> [ Sub.launch (fn "filter") ~params:8 ]
+  in
+  let s =
+    Sub.make
+      ~fixed:[ (samples, Rig.Read_write); (word, Rig.Read_write) ]
+      t.d
+      (Array.of_list
+         (filter
+         @ [ Sub.words start; Sub.launch (fn "valu") ~params:8; Sub.words stop ]
+         ))
+  in
+  let at = Sub.address s in
+  let fill b w = Rig.Buffer.blit_from_string (padded w) 0 b 0 words_room in
+  fill start (Counter.start c.gpu l ~filter_address:(at word));
+  fill stop (Counter.stop c.gpu ~wgps:c.wgps l ~address:(at samples));
+  let run = Sub.take s in
+  if filter <> [] then begin
+    let b = Sub.block s 0 in
+    Sub.Run.groups run b 1 1 1;
+    Sub.Run.threads run b 1 1 1;
+    Sub.Run.int64 run b 0 (Int64.of_int (at word))
+  end;
+  let b = Sub.block s (List.length filter + 1) in
+  Sub.Run.groups run b groups 1 1;
+  Sub.Run.threads run b threads 1 1;
+  Sub.Run.int32 run b 0 k;
+  Rig.Point.wait (Rig.submit run ~buffers:[||]);
+  let bytes = get samples in
+  let values (c : Counter.t) =
+    List.init (c.engines * c.arrays * c.wgps) (fun i ->
+        Int64.to_int (String.get_int64_le bytes (c.offset + (8 * i))))
+  in
+  ( List.map values l.counters,
+    Int32.to_int (String.get_int32_le (get word) 0) land 0xffff_ffff )
+
+let sizes = [ (1, 1); (7, 3); (64, 10); (1024, 100); (8192, 1000) ]
+let reps = 3
+
+let counts_idle () =
+  S.with_ @@ fun t ->
+  gfx1201_only t;
+  ignore (steady t);
+  let c = A.capability t.g in
+  let p = image ~of_:counts_code t in
+  let _, word = count t p ~groups:1 ~k:1 () in
+  let own = vmid t p in
+  equal int ~msg:"the filter word [filter] stores"
+    (Counter.filter c.gpu ~vmid:own)
+    word;
+  equal (list int) ~msg:"the filter word the host stores"
+    (expected ~groups:1024 ~k:100)
+    (sums (fst (count t p ~vmid:own ~groups:1024 ~k:100 ())));
+  List.iter
+    (fun (groups, k) ->
+      for i = 1 to reps do
+        equal (list int)
+          ~msg:(strf "%d groups, k %d, run %d" groups k i)
+          (expected ~groups ~k)
+          (sums (fst (count t p ~groups ~k ())))
+      done)
+    sizes
+
+(* A count whose processors average 5/4 of 2^32 - 1 VALU instructions. Each
+   processor's SQ_INSTS_VALU is [16 * k] for each wave its SQ_WAVES counts, up
+   to 2^32 - 1, at which it saturates. Some processor passes it, since their
+   sum does. *)
+let saturates () =
+  S.with_ @@ fun t ->
+  gfx1201_only t;
+  ignore (steady t);
+  let c = A.capability t.g in
+  let p = image ~of_:counts_code t in
+  let most = (1 lsl 32) - 1 in
+  let places =
+    let l = require_ok ~msg:"layout" (Counter.layout c.gpu counted) in
+    let c = List.hd l.counters in
+    c.engines * c.arrays * c.wgps
+  in
+  let groups = 8192 in
+  let k = 5 * places * (1 lsl 32) / 4 / (2 * groups * 16) in
+  match fst (count t p ~groups ~k ()) with
+  | [ waves; valu ] ->
+      equal int ~msg:"SQ_WAVES" (2 * groups) (List.fold_left ( + ) 0 waves);
+      equal (list int)
+        ~msg:(strf "SQ_INSTS_VALU, k %d" k)
+        (List.map (fun w -> min (w * 16 * k) most) waves)
+        valu;
+      equal bool ~msg:"a processor saturated" true (List.mem most valu)
+  | _ -> fail "two counters"
+
+(* The child of [counts_beside]. It says "ready" and its VMID, then, on "go",
+   launches [valu] over 8192 groups, two launches in flight at once, until
+   SIGTERM, the end of its input or 60 s. It says "busy" once its first launch
+   has completed and its second is queued. *)
+let busy_child = "--busy-gpu"
+let busy_seconds = 60.
+
+let busy () =
+  let stop = ref false in
+  Sys.set_signal Sys.sigterm (Sys.Signal_handle (fun _ -> stop := true));
+  S.with_ @@ fun t ->
+  let p = image ~of_:counts_code t in
+  let fn = Option.get (Rig.Image.resolve p "valu") in
+  let s = Sub.make t.d [| Sub.launch fn ~params:8 |] in
+  print_endline (strf "ready %d" (vmid t p));
+  match input_line stdin with
+  | exception End_of_file -> ()
+  | line when line <> "go" -> ()
+  | _ ->
+      let submit () =
+        let run = Sub.take s and b = Sub.block s 0 in
+        Sub.Run.groups run b 8192 1 1;
+        Sub.Run.threads run b threads 1 1;
+        Sub.Run.int32 run b 0 20_000;
+        Rig.submit run ~buffers:[||]
+      in
+      let deadline = Unix.gettimeofday () +. busy_seconds in
+      let first = submit () in
+      let second = submit () in
+      Rig.Point.wait first;
+      print_endline "busy";
+      let rec go prev =
+        if !stop || Unix.gettimeofday () > deadline then Rig.Point.wait prev
+        else begin
+          let next = submit () in
+          Rig.Point.wait prev;
+          go next
+        end
+      in
+      go second
+
+(* Ends [child]: SIGTERM, then SIGKILL if it has not exited after
+   [reap_seconds]. *)
+let reap_seconds = 5.
+
+let reap child =
+  (try Unix.kill child Sys.sigterm with Unix.Unix_error _ -> ());
+  let deadline = Unix.gettimeofday () +. reap_seconds in
+  let rec go () =
+    match Unix.waitpid [ WNOHANG ] child with
+    | 0, _ when Unix.gettimeofday () < deadline ->
+        Unix.sleepf 0.01;
+        go ()
+    | 0, _ ->
+        (try Unix.kill child Sys.sigkill with Unix.Unix_error _ -> ());
+        snd (Unix.waitpid [] child)
+    | _, status -> status
+  in
+  go ()
+
+(* Counts beside another process of the test: with the child's VMID while it
+   runs nothing, then with this process's while the child keeps the GPU
+   busy. *)
+let counts_beside () =
+  S.with_ @@ fun t ->
+  gfx1201_only t;
+  ignore (steady t);
+  let p = image ~of_:counts_code t in
+  let child_in, to_child = Unix.pipe ~cloexec:true ()
+  and from_child, child_out = Unix.pipe ~cloexec:true () in
+  let child =
+    Unix.create_process Sys.executable_name
+      [| Sys.executable_name; busy_child |]
+      child_in child_out Unix.stderr
+  in
+  Unix.close child_in;
+  Unix.close child_out;
+  let ic = Unix.in_channel_of_descr from_child
+  and oc = Unix.out_channel_of_descr to_child in
+  let ended = ref None in
+  let end_child () =
+    match !ended with
+    | Some status -> status
+    | None ->
+        close_out_noerr oc;
+        let status = reap child in
+        ended := Some status;
+        status
+  in
+  let finally () =
+    (try ignore (end_child ()) with Unix.Unix_error _ -> ());
+    close_in_noerr ic
+  in
+  Fun.protect ~finally @@ fun () ->
+  let theirs =
+    match Scanf.sscanf (input_line ic) "ready %d" Fun.id with
+    | v -> v
+    | exception (End_of_file | Scanf.Scan_failure _ | Failure _) ->
+        fail "the child did not say ready"
+  in
+  equal (list int) ~msg:"the child's VMID, while it runs nothing" [ 0; 0 ]
+    (sums (fst (count t p ~vmid:theirs ~groups:64 ~k:10 ())));
+  output_string oc "go\n";
+  flush oc;
+  (match input_line ic with
+  | "busy" -> ()
+  | line -> failf "the child said %S" line
+  | exception End_of_file -> fail "the child did not say busy");
+  let results =
+    List.concat_map
+      (fun (groups, k) ->
+        List.init reps (fun i ->
+            ( strf "%d groups, k %d, run %d" groups k (i + 1),
+              expected ~groups ~k,
+              sums (fst (count t p ~groups ~k ())) )))
+      [ (64, 10); (1024, 100); (8192, 1000) ]
+  in
+  let running =
+    match Unix.waitpid [ WNOHANG ] child with
+    | 0, _ -> true
+    | _, status ->
+        ended := Some status;
+        false
+  in
+  let status = end_child () in
+  equal bool ~msg:"the child ran throughout" true running;
+  List.iter (fun (msg, want, got) -> equal (list int) ~msg want got) results;
+  match status with
+  | WEXITED 0 -> ()
+  | WEXITED c -> failf "the child exited %d" c
+  | WSIGNALED n | WSTOPPED n -> failf "the child stopped on signal %d" n
+
+(* A trace of each engine that runs work, around a launch of [valu]: its length
+   within the window, its waves and its clock. *)
+let traced_launch () =
+  S.with_ @@ fun t ->
+  gfx1201_only t;
+  let tr = steady t in
+  let c = A.capability t.g in
+  let p = image ~of_:counts_code t in
+  H.write tr.ends_host (String.make (4 * tr.engines) '\xff');
+  let start =
+    Thread_trace.start c.gpu ~wgps:c.wgps ~size:tr.window ~address:tr.buffers
+  and stop = Thread_trace.stop c.gpu ~wgps:c.wgps ~address:tr.ends in
+  let fn = Option.get (Rig.Image.resolve p "valu") in
+  let b0 = Rig.Buffer.create Rig.host (String.length start)
+  and b1 = Rig.Buffer.create Rig.host (String.length stop) in
+  Rig.Buffer.blit_from_string start 0 b0 0 (String.length start);
+  Rig.Buffer.blit_from_string stop 0 b1 0 (String.length stop);
+  let s =
+    Sub.make t.d [| Sub.words b0; Sub.launch fn ~params:8; Sub.words b1 |]
+  in
+  let run = Sub.take s and b = Sub.block s 1 in
+  Sub.Run.groups run b 1024 1 1;
+  Sub.Run.threads run b threads 1 1;
+  Sub.Run.int32 run b 0 1;
+  Rig.Point.wait (Rig.submit run ~buffers:[||]);
+  for e = 0 to tr.engines - 1 do
+    if Array.exists (( <> ) 0) c.wgps.(e) then begin
+      let w =
+        Int32.to_int (String.get_int32_le (H.read (tr.ends_host + (4 * e)) 4) 0)
+        land 0xffff_ffff
+      in
+      let n =
+        Thread_trace.length c.gpu ~buffer:(tr.buffers + (e * tr.window)) w
+      in
+      let msg = strf "engine %d" e in
+      at_least int ~msg ~than:0 n;
+      at_most int ~msg ~than:tr.window n;
+      let trace = H.read (tr.buffers_host + (e * tr.window)) n in
+      greater int ~msg ~than:0 (List.length (Thread_trace.waves c.gpu trace));
+      is_some ~msg (Thread_trace.clock c.gpu trace)
+    end
+  done
+
+let counters =
+  group ~timeout:60. "counters"
+    [
+      test
+        "a launch between Counter.start and Counter.stop on an idle GPU counts \
+         its waves and VALU instructions, filtered by the word that a kernel \
+         of the process or the host stores"
+        counts_idle;
+      test "a processor's count saturates at 2^32 - 1" saturates;
+      test
+        "another process's VMID counts none of this process's waves, and this \
+         process's counts stay exact while that process keeps the GPU busy"
+        counts_beside;
+      test
+        "a launch between Thread_trace.start and stop traces each engine that \
+         runs work"
+        traced_launch;
+    ]
+
 let () =
+  if Array.length Sys.argv = 2 && Sys.argv.(1) = busy_child then begin
+    busy ();
+    exit 0
+  end;
   if Array.length Sys.argv = 2 && Sys.argv.(1) = dma_child then
     exit
       (match exports_bus () with
@@ -2671,6 +3037,7 @@ let () =
          waits;
          two;
          traces;
+         counters;
          rings;
          memory;
          queue_order;

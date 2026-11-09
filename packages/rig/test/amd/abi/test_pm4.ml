@@ -116,6 +116,10 @@ let memory =
               0;
             ]
             (words (Pm4.copy_data Confirmed Clock 8)));
+      test "a word of memory copied to a register through the L2" (fun () ->
+          equal (list int)
+            [ packet3 0x40 4; 2; 0x2345_6788; 1; 0x99; 0 ]
+            (words (Pm4.load_reg 0x1_2345_6788 0x99)));
     ]
 
 let waits =

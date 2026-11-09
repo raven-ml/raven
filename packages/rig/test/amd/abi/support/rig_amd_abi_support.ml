@@ -48,16 +48,20 @@ let uconfig_start = 0xc000
 
 (* A header: type 3 in bits 30-31, the body's words less one from bit 16, the
    opcode from bit 8. *)
-let rec packets = function
-  | [] -> []
-  | h :: rest ->
+let packets ws =
+  let ws = Array.of_list ws in
+  let rec from i =
+    if i = Array.length ws then []
+    else
+      let h = ws.(i) in
       if h lsr 30 <> 3 then failwith (strf "0x%08x starts no type 3 packet" h);
       let n = ((h lsr 16) land 0x3fff) + 1 in
-      if List.length rest < n then
+      if i + 1 + n > Array.length ws then
         failwith (strf "a packet of %d words passes the end" n);
-      let body = List.filteri (fun i _ -> i < n) rest in
-      ((h lsr 8) land 0xff, body)
-      :: packets (List.filteri (fun i _ -> i >= n) rest)
+      let body = Array.to_list (Array.sub ws (i + 1) n) in
+      ((h lsr 8) land 0xff, body) :: from (i + 1 + n)
+  in
+  from 0
 
 let set start = function
   | [] -> []

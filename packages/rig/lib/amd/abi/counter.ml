@@ -98,3 +98,166 @@ let layout g names =
   match twice names with
   | Some n -> Error (strf "%s is listed twice" n)
   | None -> go 0 [] names
+
+(* Counting
+
+   The programs are aqlprofile's for GFX12 (src/pm4/pmc_builder.h and
+   gfxip/gfx12/gfx12_primitives.h at aqlprofile 8f7db79: Start,
+   ReadXccPackets, Stop), register by register. They depart where the interface
+   decides: they count the compute waves of the VMID a word in memory selects;
+   a stop waits for the dispatches before it, stops counting and samples (Mesa's
+   order), stores 0 for a processor that runs no work, and clears the
+   filter. *)
+
+exception Missing of string
+
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
+let register g name =
+  match Register.find g ("reg" ^ name) with
+  | Some r -> r
+  | None -> raise (Missing name)
+
+let at g name = Register.address g (register g name)
+
+let set g name fields =
+  let r = register g name in
+  Pm4.set_reg (Register.address g r) [ Packet.Dword (Register.encode r fields) ]
+
+(* CP_PERFMON_CNTL, which GFX12's headers name CP_PERFMON_CNTL_1. *)
+let perfmon g fields = set g "CP_PERFMON_CNTL_1" fields
+
+(* Its PERFMON_STATE, CP_PERFMON_STATE of soc24_enum.h. *)
+let disable_and_reset = 0
+let start_counting = 1
+let stop_counting = 2
+
+(* GRBM_GFX_INDEX: the register writes and reads after it reach every instance
+   of every engine and array. *)
+let broadcast g =
+  set g "GRBM_GFX_INDEX"
+    [
+      ("instance_broadcast_writes", 1);
+      ("se_broadcast_writes", 1);
+      ("sa_broadcast_writes", 1);
+    ]
+
+(* GRBM_GFX_INDEX for the SQ counters of work-group processor [wgp] of array
+   [sa] of engine [se]: the processor is the instance index from bit 2
+   (aqlprofile's grbm_se_sh_wgp_index_value). *)
+let processor g ~se ~sa ~wgp =
+  set g "GRBM_GFX_INDEX"
+    [ ("se_index", se); ("sa_index", sa); ("instance_index", wgp lsl 2) ]
+
+(* The select register of SQ counter [c]. An SQ counter is 64 bits, two of the
+   32-bit counters the selects number, so counter [n] takes select [2n]. *)
+let select g (c : t) =
+  set g
+    (strf "SQ_PERFCOUNTER%d_SELECT" (2 * c.register))
+    [ ("perf_sel", c.event) ]
+
+(* A KFD user queue's COMPUTE_PERFCOUNT_ENABLE does nothing under MES; the
+   program writes it for queues without MES. *)
+let start_program g ~filter_address (l : layout) =
+  Pm4.event_write Cs_partial_flush
+  @ broadcast g
+  @ perfmon g [ ("perfmon_state", disable_and_reset) ]
+  @ set g "SQ_PERFCOUNTER_CTRL" [ ("cs_en", 1) ]
+  @ Pm4.load_reg filter_address (at g "SQ_PERFCOUNTER_CTRL2")
+  @ List.concat_map (select g) l.counters
+  @ set g "COMPUTE_PERFCOUNT_ENABLE" [ ("perfcount_enable", 1) ]
+  @ perfmon g [ ("perfmon_state", start_counting) ]
+
+(* Whether processor [wgp] of array [sa] of engine [se] runs work. *)
+let runs wgps ~se ~sa ~wgp =
+  let arrays = wgps.(se) in
+  sa < Array.length arrays && arrays.(sa) land (1 lsl wgp) <> 0
+
+(* The words that store SQ counter [c]'s values from [address]: one processor
+   after another, [(engine, array, processor)], the last varying fastest. A
+   processor's SQ counter is the 32 bits of SQ_PERFCOUNTERn_LO, which saturate,
+   so each value's high half is 0. *)
+let store g ~wgps address (c : t) =
+  let lo = at g (strf "SQ_PERFCOUNTER%d_LO" c.register) in
+  let place i =
+    let wgp = i mod c.wgps
+    and sa = i / c.wgps mod c.arrays
+    and se = i / (c.wgps * c.arrays) in
+    let word = address + c.offset + (8 * i) in
+    let low =
+      if runs wgps ~se ~sa ~wgp then
+        processor g ~se ~sa ~wgp @ Pm4.copy_data Confirmed (Counter lo) word
+      else Pm4.write_data (Memory word) 0
+    in
+    low @ Pm4.write_data (Memory (word + 4)) 0
+  in
+  List.concat (List.init (c.engines * c.arrays * c.wgps) place)
+
+(* The second flush waits for the GPU to idle after the stop and sample, so
+   that the copies read the sampled counters, as aqlprofile waits between them
+   (ReadXccPackets). *)
+let stop_program g ~wgps (l : layout) address =
+  Pm4.event_write Cs_partial_flush
+  @ broadcast g
+  @ perfmon g [ ("perfmon_state", stop_counting); ("perfmon_sample_enable", 1) ]
+  @ Pm4.event_write Cs_partial_flush
+  @ List.concat_map (store g ~wgps address) l.counters
+  @ broadcast g
+  @ set g "SQ_PERFCOUNTER_CTRL2" [ ("force_en", 0); ("vmid_en", 0) ]
+
+(* The programs count on GFX12 GPUs of one die, the only ones hardware has run
+   them on, and SQ counters alone, the only ones it has read. *)
+let check_gpu fn (g : Gpu.t) =
+  match g.gc with
+  | 12, _, _ when g.xccs = 1 -> ()
+  | _ ->
+      invalid_argf "Counter.%s: %s is no GFX12 GPU of one die" fn
+        (Gpu.processor g)
+
+let check_sq fn (l : layout) =
+  List.iter
+    (fun (c : t) ->
+      if c.block <> "SQ" then
+        invalid_argf "Counter.%s: %s is no SQ counter" fn c.name)
+    l.counters
+
+let missing fn (g : Gpu.t) r =
+  let a, b, c = g.gc in
+  invalid_argf "Counter.%s: GC %d.%d.%d has no reg%s" fn a b c r
+
+let words fn g program =
+  try Packet.encode Int64.of_int (program ()) with Missing r -> missing fn g r
+
+let filter g ~vmid =
+  check_gpu "filter" g;
+  if vmid < 0 || vmid > 15 then
+    invalid_argf "Counter.filter: VMID %d, expected 0 to 15" vmid;
+  (* SQ_PERFCOUNTER_CTRL2: FORCE_EN counts whether or not the queue enabled
+     counting, and VMID_EN has bit [v] for VMID [v]. *)
+  try
+    Register.encode
+      (register g "SQ_PERFCOUNTER_CTRL2")
+      [ ("force_en", 1); ("vmid_en", 1 lsl vmid) ]
+  with Missing r -> missing "filter" g r
+
+let start g l ~filter_address =
+  check_gpu "start" g;
+  check_sq "start" l;
+  if filter_address < 0 || filter_address mod 4 <> 0 then
+    invalid_argf
+      "Counter.start: filter address 0x%x, expected a non-negative multiple \
+       of 4"
+      filter_address;
+  words "start" g (fun () -> start_program g ~filter_address l)
+
+let stop (g : Gpu.t) ~wgps l ~address =
+  check_gpu "stop" g;
+  check_sq "stop" l;
+  if Array.length wgps <> g.shader_engines then
+    invalid_argf "Counter.stop: wgps covers %d engines, expected %d"
+      (Array.length wgps) g.shader_engines;
+  if address < 0 || address mod 8 <> 0 then
+    invalid_argf
+      "Counter.stop: address 0x%x, expected a non-negative multiple of 8"
+      address;
+  words "stop" g (fun () -> stop_program g ~wgps l address)

@@ -232,7 +232,8 @@ PM4_ENUMS = ["event_index__mec_release_mem__end_of_pipe", "data_sel__mec_release
 # soc15d.h alone: the destinations of WRITE_DATA, and the source and destination
 # of COPY_DATA.
 PM4_SOC15_ONLY = ["PACKET3_WRITE_DATA__DST_SEL__MEM_MAPPED_REGISTER", "PACKET3_WRITE_DATA__DST_SEL__MEMORY",
-                  "PACKET3_COPY_DATA__SRC_SEL__PERFCOUNTERS", "PACKET3_COPY_DATA__SRC_SEL__GPU_CLOCK_COUNT",
+                  "PACKET3_COPY_DATA__SRC_SEL__TC_L2", "PACKET3_COPY_DATA__SRC_SEL__PERFCOUNTERS",
+                  "PACKET3_COPY_DATA__SRC_SEL__GPU_CLOCK_COUNT", "PACKET3_COPY_DATA__DST_SEL__MEM_MAPPED_REGISTER",
                   "PACKET3_COPY_DATA__DST_SEL__TC_L2", "PACKET3_COPY_DATA__COUNT_SEL__64_BITS_OF_DATA",
                   "PACKET3_COPY_DATA__WR_CONFIRM__WAIT_FOR_CONFIRMATION"]
 # Fields, as the shift of their first bit, from the argument macros of both

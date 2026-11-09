@@ -98,6 +98,13 @@ val copy_data : write -> source -> 'v -> 'v Packet.t
     as [w] says, when the queue reaches the packet: once the packets before
     it have started, and before those after it start. *)
 
+val load_reg : 'v -> int -> 'v Packet.t
+(** [load_reg addr r] copies the 32 bits at memory [addr], read through the
+    L2, to the register at address [r], when the queue reaches the packet:
+    once the packets before it have started, and before those after it
+    start. [addr] must be a multiple of 4: the packet reads its word from
+    the address with its low two bits cleared. *)
+
 (** {1:sync Waits, caches and signals} *)
 
 val wait :

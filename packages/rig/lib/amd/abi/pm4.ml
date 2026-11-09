@@ -104,6 +104,15 @@ let copy_data write source addr =
   packet Defs.packet3_copy_data
     [ Dword control; Dword reg; Dword 0; W64 (value addr) ]
 
+let load_reg addr reg =
+  let control =
+    (Defs.packet3_copy_data__src_sel__tc_l2 lsl Defs.packet3_copy_data__src_sel)
+    lor Defs.packet3_copy_data__dst_sel__mem_mapped_register
+        lsl Defs.packet3_copy_data__dst_sel
+  in
+  packet Defs.packet3_copy_data
+    [ Dword control; W64 (value addr); Dword reg; Dword 0 ]
+
 (* Waits, caches and signals *)
 
 (* The poll interval a wait takes by default, in clocks of its poll timer, and
