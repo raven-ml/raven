@@ -73,8 +73,3 @@ raven / llama.cpp b12048 Vulkan:
   reads far fewer rows on q07, q08 and q12), scans (half the instructions
   of the five worst queries), aggregation (46% of q01), and possibly a
   segment-id reduce kernel in nx (unmeasured). Data: ~/wt/tmp/talon-data
-- talon.parquet's pacing law failed once on macOS (run 42473531097: 35
-  major cycles against 34); the runtime's own pace cannot explain it (the
-  loop puts ~4.8k words in the major heap) and it passes at rig's 4 MiB
-  floor on fudge; on failure the law now prints each collector's counts
-  (0247fa6d8)

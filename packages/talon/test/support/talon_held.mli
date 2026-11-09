@@ -35,9 +35,9 @@ type cycles = {
 (** The type for what a run gave the collector. *)
 
 val cycles : (unit -> unit) -> cycles
-(** [cycles f] is what [f ()] gives the collector, counted from a full major
-    collection: the cycles a pacing law bounds, and what else drives them, for
-    its failure to print. *)
+(** [cycles f] is what [f ()] gives the collector, counted from a compaction,
+    which leaves the heap about its live words: the cycles a pacing law
+    bounds, and what else drives them, for its failure to print. *)
 
 val pp_cycles : cycles -> string
 (** [pp_cycles c] is [c] as one line of text. *)

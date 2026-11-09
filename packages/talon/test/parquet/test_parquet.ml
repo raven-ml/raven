@@ -2351,17 +2351,24 @@ let memory =
           let b = buffer file in
           Talon_held.check (fun () ->
               Error.get_ok (read_from f b column)));
-      (* Dropped columns pace the collector as rig's host buffers do: a
-         major cycle at most once per 4 MiB of buffers of 64 KiB or more
-         that reach the major heap, whatever [custom_major_ratio] says of the
-         heap. A read of the column of nulls and a dictionary makes four
-         arrays of its 2^16 rows of 8 bytes in such buffers, the table of
-         values, the indices, the gathered values and the spread ones, and
-         its validity, of 8 KiB; it decompresses into a buffer its source
-         keeps. So at a ratio of 1, which paces a bigarray of Bigarray's own
-         at a cycle each, 64 reads, each held across a minor collection that
-         promotes it, bring at most a cycle per 4 MiB of those arrays and
-         validities, and two under way at either end. *)
+      (* Dropped columns pace the collector as rig's host buffers do,
+         whatever [custom_major_ratio] says of the heap: the bytes of host
+         buffers that reach the major heap bring a cycle's work per bound of
+         at least 4 MiB, and a buffer that starts young with more than
+         [custom_minor_max_size] bytes brings an eighth of its bytes at birth
+         as well. A read of the column of nulls and a dictionary makes four
+         arrays of about its 2^16 rows of 8 bytes, 2 MiB at most together,
+         the table of values, the indices, the gathered values and the spread
+         ones, each starting young, and its validity, of 8 KiB; it
+         decompresses into a buffer its source keeps. Held across a minor
+         collection, the column's spread values and validity reach the major
+         heap, and the other arrays die young. So 64 reads bring at most a
+         cycle's work per 4 MiB of the column's arrays and of an eighth of
+         the four. The count starts from a compaction, which leaves the heap
+         about its live words: a cycle's work, which the runtime sizes as
+         sweeping the heap and marking part of it, then completes at most a
+         cycle, and two more are under way at either end. At a ratio of 1, a
+         bigarray paced by the heap brings a cycle's work each. *)
       test "dropped columns pace the collector by the program's memory"
         (fun () ->
           let reads = 64 in
@@ -2375,11 +2382,13 @@ let memory =
                   ignore (Sys.opaque_identity held)
                 done)
           in
-          let made = reads * ((4 * 8 * nulls_rows) + (nulls_rows / 8)) in
+          let column = (8 * nulls_rows) + (nulls_rows / 8) in
+          let born = 4 * 8 * nulls_rows in
+          let work = reads * (column + (born / 8)) in
           at_most
             ~msg:("major cycles at a ratio of 1: " ^ Talon_held.pp_cycles c)
             int
-            ~than:((made / (4 lsl 20)) + 2)
+            ~than:((work / (4 lsl 20)) + 2)
             c.majors);
     ]
 

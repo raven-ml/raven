@@ -67,7 +67,7 @@ type cycles = {
 }
 
 let cycles f =
-  Gc.full_major ();
+  Gc.compact ();
   let s0 = Gc.quick_stat () in
   f ();
   let s1 = Gc.quick_stat () in

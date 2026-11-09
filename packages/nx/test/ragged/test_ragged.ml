@@ -1275,9 +1275,9 @@ let no_reads =
 
 (* Memory *)
 
-(* [counted f] is what [f ()] gives the collector, counted from a full major
-   collection: the major cycles a pacing law bounds, and what else drives
-   them, for its failure to print. *)
+(* [counted f] is what [f ()] gives the collector, counted from a compaction:
+   the major cycles a pacing law bounds, and what else drives them, for its
+   failure to print. *)
 type counted = {
   majors : int;
   minors : int;
@@ -1286,7 +1286,7 @@ type counted = {
 }
 
 let counted f =
-  Gc.full_major ();
+  Gc.compact ();
   let s0 = Gc.quick_stat () in
   f ();
   let s1 = Gc.quick_stat () in
@@ -1312,13 +1312,19 @@ let with_ratio r f =
       Gc.set { (Gc.get ()) with custom_major_ratio = was })
 
 (* [of_strings] makes its offsets and bytes in host buffers, which pace the
-   collector by the program's memory: a major cycle at most once per 4 MiB
-   of buffers of 64 KiB or more that reach the major heap, whatever
-   [custom_major_ratio] says of the heap. At a ratio of 1, which paces a
-   bigarray of Bigarray's own at a cycle each, 64 calls over 2^14 strings of
-   8 bytes, 256 KiB of offsets and bytes each, each held across a minor
-   collection that promotes it, bring at most a cycle per 4 MiB of them more
-   than at the default ratio, and two under way at either end. *)
+   collector by the program's memory, whatever [custom_major_ratio] says of
+   the heap: the bytes of host buffers that reach the major heap bring a
+   cycle's work per bound of at least 4 MiB, and a buffer that starts young
+   with more than [custom_minor_max_size] bytes brings an eighth of its
+   bytes at birth as well. At a ratio of 1, which paces a bigarray of
+   Bigarray's own at a cycle's work each, 64 calls over 2^14 strings of 8
+   bytes, 128 KiB of offsets and of bytes each, each held across a minor
+   collection that promotes it, bring at most a cycle's work per 4 MiB of
+   them and of an eighth of them more than at the default ratio. The count
+   starts from a compaction, which leaves the heap about its live words: a
+   cycle's work, which the runtime sizes as sweeping the heap and marking
+   part of it, then completes at most a cycle, and two more are under way
+   at either end. *)
 let memory =
   test "of_strings paces the collector by the program's memory" (fun () ->
       let n = 1 lsl 14 and calls = 64 in
@@ -1335,7 +1341,8 @@ let memory =
       in
       let usual = cycles (Gc.get ()).custom_major_ratio in
       let at_1 = cycles 1 in
-      let made = calls * ((8 * n) + (8 * (n + 1))) in
+      let bytes = (8 * n) + (8 * (n + 1)) in
+      let made = calls * (bytes + (bytes / 8)) in
       at_most
         ~msg:
           (Printf.sprintf "major cycles at a ratio of 1: %s; at the default: %s"
