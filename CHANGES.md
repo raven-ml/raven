@@ -2499,6 +2499,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.fma` at `float16`, `bfloat16` and the 8- and 4-bit floats rounds its
+  exact value once, as `nx.mli` states. nx.cpu rounded a `float32` fma to the
+  narrow float, twice: `3 * 683 + 2^-14` in halves gave 2048, not 2050.
 - `Nx.betaincinv` and `Nx.betainccinv` keep their bound at float32 and the
   narrower floats at large shapes with `p` near 1/2, where the guess's Newton
   steps divided a rounding error by a slope near 0.

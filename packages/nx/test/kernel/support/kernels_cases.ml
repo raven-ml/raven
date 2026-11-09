@@ -597,13 +597,19 @@ let low_bytes w v =
 (* The bits of nx_kinds.h's kind [name] at each index of [ops], all of the
    dtype [dt], in C order, as [bits_of] gives them: as [dt] for a kind of
    [dt], as a boolean for a comparison. A narrow float computes in float32 and
-   rounds once on the store; int4 and uint4 in the 32-bit type of their
-   signedness, their result's low bits kept. *)
+   rounds once on the store, but for fma, which rounds its exact value once;
+   int4 and uint4 in the 32-bit type of their signedness, their result's low
+   bits kept. *)
 let rec expected : type v s.
     string -> (v, s) D.t -> compare:bool -> (v, s) A.t array -> int array =
  fun name dt ~compare ops ->
   let shape = L.shape (A.layout ops.(0)) in
   match D.kind dt with
+  | D.Float when D.bits dt < 32 && name = "fma" ->
+      let f = Exact.format dt in
+      let v = Array.map (fun a -> A.to_array (reference a D.Float64)) ops in
+      let r = Array.mapi (fun i a -> Exact.narrow_fma f a v.(1).(i) v.(2).(i)) v.(0) in
+      bits_of (reference (A.of_array D.Float64 shape r) dt)
   | D.Float when D.bits dt < 32 ->
       let r =
         expected name D.Float32 ~compare
@@ -1164,3 +1170,279 @@ let law_split ?declines b ((Pair (x, _) as p), seed, mode) =
   | Plain -> law_map_split ?declines b (p, seed)
   | Padded -> law_map_split ?declines ~padded:true b (p, seed)
   | Long -> law_map_split ?declines ~length:400 ~labels:false b (p, seed)
+
+(* Multiply-adds of narrow floats
+
+   Operands of Fma at a float narrower than float32, as values of its format
+   ({!Exact.format}): {!Narrow_fma.run} of each case {!Narrow_fma.cases} names that the
+   format reaches, then drawn values, {!Narrow_fma.length} in all. Rounded to a
+   float32 first, a sum whose exact value lies off a midpoint of the format by
+   less than a float32 resolves lands on the midpoint, which then ties to even:
+   in halves, 3 * 683 + 2^-14 is 2050, and 2048 through a float32. *)
+
+module Narrow_fma = struct
+  let run = 4
+  let length = 64
+
+  (* The exponent of [f]'s greatest finite value. *)
+  let emax (f : Exact.format) = snd (Float.frexp f.top) - 1
+
+  let sign st = if Random.State.bool st then -1. else 1.
+
+  (* An integer of [lo, hi]. *)
+  let between st lo hi = lo + Random.State.int st (hi - lo + 1)
+
+  (* A finite value of [f]: a zero, a subnormal or a normal, of either sign. *)
+  let value st (f : Exact.format) =
+    let m = f.p - 1 in
+    let v =
+      match Random.State.int st 8 with
+      | 0 -> 0.
+      | 1 -> Float.ldexp (Float.of_int (between st 1 (max 1 ((1 lsl m) - 1)))) f.least
+      | _ ->
+          let s = (1 lsl m) + Random.State.int st (1 lsl m) in
+          Float.min f.top (Float.ldexp (Float.of_int s) (between st f.emin (emax f) - m))
+    in
+    sign st *. v
+
+  (* A value of [f], an infinity or a NaN where [f] has one a sixteenth of the
+     time. *)
+  let operand st (f : Exact.format) =
+    match Random.State.int st 16 with
+    | 0 when f.inf -> sign st *. Float.infinity
+    | 1 when f.nan -> Float.nan
+    | _ -> value st f
+
+  (* [e] as [i + j], each a normal exponent of [f]. *)
+  let split_exponent st (f : Exact.format) e =
+    let i = between st (max f.emin (e - emax f)) (min (emax f) (e - f.emin)) in
+    (i, e - i)
+
+  (* The exponents [e] of the products {!off_midpoint} draws: a normal one of
+     [f] above which a value of [f] lies below half a float32 ulp of [2^e]. *)
+  let off_exponents (f : Exact.format) = (max f.emin (f.least + 25), emax f)
+
+  (* Whether [f] has a sum off a midpoint by less than a float32 resolves:
+     three bits at least, so that {!off_midpoint}'s product has an odd lower
+     neighbour, and exponents for it. *)
+  let resolves (f : Exact.format) =
+    let lo, hi = off_exponents f in
+    f.p >= 3 && lo <= hi
+
+  (* A product on a midpoint of [f], [1.5 (1 + 2^(1-p)) 2^e], whose lower
+     neighbour is odd, and an addend toward it below half a float32 ulp of it. *)
+  let off_midpoint st (f : Exact.format) =
+    let lo, hi = off_exponents f in
+    let e = between st lo hi in
+    let i, j = split_exponent st f e in
+    let sa = sign st and sb = sign st in
+    let a = sa *. Float.ldexp 1.5 i in
+    let b = sb *. Float.ldexp (1. +. Float.ldexp 1. (1 - f.p)) j in
+    (a, b, -.sa *. sb *. Float.ldexp 1. (between st f.least (e - 25)))
+
+  (* A sum on a midpoint: [1.5 (1 + 2^(1-p)) 2^e] less a multiple of the
+     format's step there; [1.5 1.5 2^e + 2^(e-2)] at two bits. *)
+  let on_midpoint st (f : Exact.format) =
+    let sa = sign st and sb = sign st in
+    if f.p = 2 then
+      let e = between st (max f.emin (f.least + 2)) (emax f - 1) in
+      let i, j = split_exponent st f e in
+      (sa *. Float.ldexp 1.5 i, sb *. Float.ldexp 1.5 j, sa *. sb *. Float.ldexp 1. (e - 2))
+    else
+      let e = between st f.emin (emax f) in
+      let i, j = split_exponent st f e in
+      let k = Random.State.int st ((1 lsl (f.p - 2)) + 1) in
+      ( sa *. Float.ldexp 1.5 i,
+        sb *. Float.ldexp (1. +. Float.ldexp 1. (1 - f.p)) j,
+        -.sa *. sb *. Float.ldexp (Float.of_int k) (e - f.p + 1) )
+
+  (* Past the greatest finite value: twice it plus a value, or it plus half its
+     step, a tie with the power of two past it. *)
+  let past_top st (f : Exact.format) =
+    let s = sign st in
+    if Random.State.bool st then (s *. f.top, 2., value st f)
+    else (s *. f.top, 1., s *. Float.ldexp 1. (emax f - f.p))
+
+  (* A product below the least normal, of a value at it and a power of two
+     below one, plus a zero or a subnormal of the other sign. *)
+  let subnormal st (f : Exact.format) =
+    let m = f.p - 1 in
+    let s = sign st in
+    let a = s *. Float.ldexp (Float.of_int ((1 lsl m) + Random.State.int st (1 lsl m))) (f.emin - m) in
+    let b = Float.ldexp 1. (-between st 1 (min f.p (-f.least))) in
+    let c = if Random.State.bool st then 0. else -.s *. Float.ldexp 1. f.least in
+    (a, b, c)
+
+  (* A negative zero: [-x 0 - 0], or a negative product of subnormals that
+     rounds to zero plus [+0]. *)
+  let negative_zero st (f : Exact.format) =
+    if Random.State.bool st then
+      let x = value st f in
+      (Float.copy_sign x (-1.), Float.copy_sign 0. x, -0.)
+    else (-.Float.ldexp 1. f.least, Float.ldexp 1. f.least, 0.)
+
+  (* Whether [f]'s products leave float32's range, above and below, as
+     bfloat16's do. *)
+  let leaves (f : Exact.format) = 2 * f.least < -149 && 2 * (emax f + 1) > 128
+
+  let max_float32 = 0x1.fffffep127
+
+  (* A significand of [f] times 2^[e - p + 1], at most [f]'s greatest. *)
+  let normal st (f : Exact.format) e =
+    let m = f.p - 1 in
+    let s = (1 lsl m) + Random.State.int st (1 lsl m) in
+    sign st *. Float.min f.top (Float.ldexp (Float.of_int s) (e - m))
+
+  (* A product of 2^127 or more plus a value. *)
+  let huge_product st (f : Exact.format) =
+    let i, j = split_exponent st f (between st 127 (2 * emax f)) in
+    (normal st f i, normal st f j, value st f)
+
+  (* A product past float32's range, the greatest finite value times one of
+     its successors, less that value: a finite sum. *)
+  let cancelled_product st (f : Exact.format) =
+    let a = sign st *. f.top in
+    let b = sign st *. (1. +. Float.ldexp (Float.of_int (between st 1 3)) (1 - f.p)) in
+    (a, b, -.Float.copy_sign f.top (a *. b))
+
+  (* A product past float32's range plus an infinity. *)
+  let infinite_addend st (f : Exact.format) =
+    let i, j = split_exponent st f (between st 129 (2 * emax f)) in
+    (normal st f i, normal st f j, sign st *. Float.infinity)
+
+  (* A product of two values of [f] below float32's least normal, mostly
+     below its least subnormal's resolution, plus a zero, a subnormal or a
+     value. *)
+  let tiny_product st (f : Exact.format) =
+    let e = between st (2 * f.least) (-140) in
+    let i = between st f.least (e - f.least) in
+    let factor q =
+      sign st *. Float.ldexp (Float.of_int (between st 1 ((1 lsl f.p) - 1))) q
+    in
+    let a = factor i and b = factor (e - i) in
+    let c =
+      match Random.State.int st 4 with
+      | 0 | 1 -> sign st *. 0.
+      | 2 -> sign st *. Float.ldexp 1. f.least
+      | _ -> value st f
+    in
+    (a, b, c)
+
+  (* Values of [f] with [k] at one of the three places. *)
+  let with_one st f k =
+    let v = Array.init 3 (fun _ -> value st f) in
+    v.(Random.State.int st 3) <- k;
+    (v.(0), v.(1), v.(2))
+
+  (* Equal bits, or both NaN. *)
+  let same x y =
+    (Float.is_nan x && Float.is_nan y)
+    || Int64.equal (Int64.bits_of_float x) (Int64.bits_of_float y)
+
+  (* The cases [f] reaches: a label, whether operands are one, and a draw of
+     one. *)
+  let cases (f : Exact.format) =
+    let once = Exact.narrow_fma f in
+    let any p a b c = p a || p b || p c in
+    let infinite x = Float.abs x = Float.infinity in
+    let twice a b c = not (same (once a b c) (Exact.narrow_fma_twice f a b c)) in
+    let past a b c =
+      Float.abs (Exact.exact_fma ~p:f.p ~least:f.least a b c) > f.top
+    in
+    let tiny a b c =
+      let r = Float.abs (once a b c) in
+      r > 0. && r < Float.ldexp 1. f.emin
+    in
+    let negative_zero_is a b c =
+      let r = once a b c in
+      r = 0. && Float.sign_bit r
+    in
+    List.concat
+      [
+        (if resolves f then
+           [ ("off a midpoint by less than a float32 resolves", twice, off_midpoint) ]
+         else []);
+        [
+          ("on a midpoint", Exact.on_midpoint f, on_midpoint);
+          ("past the greatest finite value", past, past_top);
+          ("a subnormal result", tiny, subnormal);
+          ("a negative zero", negative_zero_is, negative_zero);
+        ];
+        (if leaves f then
+         let finite x = Float.is_finite x in
+         let rounds a b _ =
+           let p = Float.abs (a *. b) in
+           p > 0. && p < 0x1p-126 && Exact.round_f32 (a *. b) <> a *. b
+         in
+         let halved a b _ =
+           finite a && finite b && Float.abs (a *. b) >= 0x1p127
+         in
+         let cancelled a b c =
+           finite a && finite b
+           && Float.abs (a *. b) > max_float32
+           && Float.is_finite (once a b c)
+         in
+         let infinite_added a b c =
+           finite a && finite b
+           && Float.abs (a *. b) > max_float32
+           && infinite c
+         in
+         [
+           ("a product float32 rounds below its least normal", rounds, tiny_product);
+           ("a product of 2^127 or more", halved, huge_product);
+           ("a finite sum of a product past float32's range", cancelled,
+            cancelled_product);
+           ("an infinite addend to a product past float32's range",
+            infinite_added, infinite_addend);
+         ]
+       else []);
+      (if f.nan then
+           [ ("a NaN operand", any Float.is_nan, fun st f -> with_one st f Float.nan) ]
+         else []);
+        (if f.inf then
+           [
+             ( "an infinite operand",
+               any infinite,
+               fun st f -> with_one st f (sign st *. Float.infinity) );
+           ]
+         else []);
+      ]
+
+  (* The operands of a case of [f] drawn from [seed]: {!run} of each case
+     [f] reaches, then drawn values, {!length} of each. *)
+  let operands (f : Exact.format) seed =
+    let st = Random.State.make [| seed |] in
+    let cases =
+      List.concat_map
+        (fun (_, _, draw) -> List.init run (fun _ -> draw st f))
+        (cases f)
+    in
+    let rest =
+      List.init (length - List.length cases) (fun _ ->
+          let a = operand st f in
+          let b = operand st f in
+          (a, b, operand st f))
+    in
+    let t = Array.of_list (cases @ rest) in
+    ( Array.map (fun (a, _, _) -> a) t,
+      Array.map (fun (_, b, _) -> b) t,
+      Array.map (fun (_, _, c) -> c) t )
+
+  (* Covers each case [f] reaches among the operands, under [name]. *)
+  let covers name f a b c =
+    List.iter
+      (fun (label, is, _) ->
+        cover (name ^ ": " ^ label)
+          (List.exists (fun i -> is a.(i) b.(i) c.(i)) (List.init (Array.length a) Fun.id)))
+      (cases f)
+
+  (* The elements where [got] is not [a b + c] rounded once into [f]: any NaN
+     for a NaN, by the NaN rule. *)
+  let misses f a b c got =
+    List.filter_map
+      (fun i ->
+        let want = Exact.narrow_fma f a.(i) b.(i) c.(i) in
+        if same want got.(i) then None
+        else Some (strf "%h * %h + %h is %h, not %h" a.(i) b.(i) c.(i) got.(i) want))
+      (List.init (Array.length a) Fun.id)
+end

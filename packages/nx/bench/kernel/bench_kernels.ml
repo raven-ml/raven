@@ -276,6 +276,13 @@ let narrow name dt n =
         (A.create Rig.host dt [| n |])
         [| A.Any (filled dt [| n |]); A.Any (filled dt [| n |]) |])
 
+let narrow_fma name dt n =
+  apply name (fun () ->
+      one [| D.Any dt; D.Any dt; D.Any dt |]
+        (Op3 (Fma, 0, 1, 2))
+        (A.create Rig.host dt [| n |])
+        (Array.init 3 (fun _ -> A.Any (filled dt [| n |]))))
+
 (* An array of [dt] and shape [s] drawn from N(0, 1), as activations are:
    Box-Muller over a fixed sequence. *)
 let normal (type v s) (dt : (v, s) D.t) s : (v, s) A.t =
@@ -476,6 +483,10 @@ let apply_rows =
             (Op3 (Fma, 0, 1, 2))
             (A.create Rig.host f32 [| m |])
             (Array.init 3 (fun _ -> A.Any (filled f32 [| m |]))));
+      (* A narrow float's fma rounds to odd in its carrier, float16's in
+         float32 alone, bfloat16's in float64. *)
+      narrow_fma "fma-f16-1M" D.Float16 m;
+      narrow_fma "fma-bf16-1M" D.Bfloat16 m;
     ]
   (* A unary kind that moves bits, then the transcendental kinds. *)
   @ [ unary "neg" Neg f32 m ]

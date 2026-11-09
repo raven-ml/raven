@@ -779,7 +779,7 @@ static void *row_of(const step *s, int xt) {
     case NX_NODE_OP2: return (void *)t->op2[s->kind][c];
     default: break;
   }
-  if (s->kind == NX_OP3_FMA) return (void *)t->fma[c];
+  if (s->kind == NX_OP3_FMA) return (void *)t->fma[xt];
   return (void *)t->where[nx_cpu_width_index(width(held(xt)))];
 }
 

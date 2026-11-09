@@ -18,7 +18,8 @@
    loop took about 24 instructions an element on fudge: a Where of two
    repeated values, as the derivative of a maximum takes, was an eighth of
    eager attention's backward. Rows exist at the carriers alone (cpu.h):
-   apply.c runs a narrow or sub-byte dtype's kinds at its carrier's rows. */
+   apply.c runs a narrow or sub-byte dtype's kinds at its carrier's rows,
+   but a narrow float's fma, which rounds to odd there. */
 
 #include "cpu.h"
 
@@ -353,6 +354,10 @@ IDENT(8, uint64_t)
 
 FLOATS(f32, float, f32)
 FLOATS(f64, double, f64)
+/* Fma at a narrow float, over its float32 carriers: rounded to odd, so that
+   the store rounds once (nx_kinds.h). */
+FMA(fma_narrow, float, , nx_fma_narrow)
+FMA(fma_bf16, float, , nx_fma_bf16)
 UN(erf_f32, float, , nx_erf_f32)
 RANGED(erf_f64, double, nx_erf_big_f64, nx_erf_near_f64, nx_erf_far_f64,
        nx_erf_f64)
@@ -560,7 +565,8 @@ FILL(8, uint64_t)
 FILL(16, w16)
 
 /* The table, by kind then dtype: NULL where Nx_kernel.Prog refuses the
-   kind at the dtype. */
+   kind at the dtype. op1 and op2 hold rows at the carriers alone; fma holds
+   one at every dtype it takes, over the dtype's carrier. */
 
 #define CMP_ROWS(DT, D)                                                      \
   .op2[NX_OP2_EQUAL][DT] = equal_##D,                                        \
@@ -617,6 +623,11 @@ const nx_cpu_row_table nx_cpu_rows = {
     FLOAT_ROWS(NX_FLOAT64, f64)
     .op1[NX_OP1_ERF][NX_FLOAT32] = erf_f32,
     .op1[NX_OP1_ERF][NX_FLOAT64] = erf_f64,
+    .fma[NX_FLOAT16] = fma_narrow,
+    .fma[NX_BFLOAT16] = fma_bf16,
+    .fma[NX_FLOAT8_E4M3FN] = fma_narrow,
+    .fma[NX_FLOAT8_E5M2] = fma_narrow,
+    .fma[NX_FLOAT4_E2M1FN] = fma_narrow,
     INT_ROWS(NX_INT8, i8, 1)
     INT_ROWS(NX_INT16, i16, 2)
     INT_ROWS(NX_INT32, i32, 4)
@@ -625,6 +636,8 @@ const nx_cpu_row_table nx_cpu_rows = {
     INT_ROWS(NX_UINT16, u16, 2)
     INT_ROWS(NX_UINT32, u32, 4)
     INT_ROWS(NX_UINT64, u64, 8)
+    .fma[NX_INT4] = fma_i8,
+    .fma[NX_UINT4] = fma_u8,
     CMP_ROWS(NX_BOOL, b)
     .op2[NX_OP2_AND][NX_BOOL] = and_b,
     .op2[NX_OP2_OR][NX_BOOL] = or_b,

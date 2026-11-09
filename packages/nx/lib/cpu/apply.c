@@ -269,7 +269,7 @@ value nx_cpu_apply3(value k, value vd, value vc, value vx, value vy) {
              .f3 = nx_cpu_rows.where[nx_cpu_width_index(nx_cpu_width(s))]};
   } else {
     int s = nx_cpu_carrier(x);
-    j = (op){.as = {s, s, s, s}, .f3 = nx_cpu_rows.fma[s]};
+    j = (op){.as = {s, s, s, s}, .f3 = nx_cpu_rows.fma[x]};
   }
   nx_operand in[4] = {{vd, x, 1}, {vc, c, 0}, {vx, x, 0}, {vy, x, 0}};
   /* A Where's condition stages too where it is a bit. */

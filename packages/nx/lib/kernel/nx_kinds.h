@@ -26,6 +26,8 @@
    and differently in vector and scalar code, and its own NaN has the sign
    bit set where Arm's has it clear.
 
+   A narrow float's fma is nx_fma_narrow or nx_fma_bf16, below.
+
    Each transcendental is one polynomial in one evaluation order, with fma
    where it is written and nowhere else, so its bits, NaNs aside, are the
    same on every target that rounds as this header assumes:
@@ -995,6 +997,70 @@ NX_INLINE double nx_atan2_f64(double y, double x) {
 #undef NX_INTEGRAL
 #undef NX_SUB_SCALE
 #undef NX_SHIFT
+
+/* Narrow floats
+
+   Fma at a float narrower than f32 rounds its exact value once. Its
+   operands reach it as f32s, and nx_fma_narrow and nx_fma_bf16 give the
+   exact value x rounded to odd in f32: toward zero, its last bit set where
+   x is not an f32. Rounded to nearest into the narrow float, at least two
+   bits less precise and no wider at the bottom, that is x rounded once
+   (Boldo and Melquiond, "Emulation of FMA and correctly-rounded sums:
+   proved algorithms using rounding to odd", IEEE Trans. Computers 57(4),
+   2008, Theorem 3). fmaf then the store rounds twice where x lies off a
+   midpoint of the narrow float by less than an f32 resolves: 3 * 683 +
+   2^-14 in halves is 2050, and 2048 through an f32.
+
+   nx_fma_narrow, for float16, the 8-bit floats and float4, computes in f32
+   alone. Of p significant bits and least power 2^l, a nonzero product has
+   at most 2p <= 22 bits and lies in [2^2l, top^2], inside f32's normal
+   range: float16 in [2^-48, 2^32), float8_e5m2 in [2^-32, 2^32),
+   float8_e4m3fn in [2^-18, 2^18), float4_e2m1fn in [2^-2, 36]. So p = a b
+   is exact, and the sum r = p + c, below 2^33, cannot overflow, which
+   makes its error e exact (Knuth's TwoSum): x = r + e. x is a multiple of
+   2^2l, so r = 0 only where x = 0, and an f32's quantum at x is finer than
+   the narrow float's by 2 bits or more, subnormals included.
+
+   Where e has the other sign than r, x lies between r and the next f32
+   toward zero, which is r's bits less one; elsewhere between r and the
+   next away. That f32 toward zero is x truncated; of it and its neighbour
+   away from zero, the one with odd bits is x rounded to odd, the truncated
+   value with its last bit set. A NaN or an infinity makes e NaN, which no
+   comparison holds, so r passes.
+
+   bfloat16's products, of 16 bits but from 2^-266 to 2^256, leave f32's
+   range. nx_fma_bf16 forms them in f64, where they are exact, and takes x
+   as r + e there. t, what rounding r to f32 dropped, is exact, and gives
+   the dropped bits' sign, else e does; the rest is as above. A sum past
+   f32's greatest finite value is that value, whose rounding into bfloat16
+   is its infinity, as x's is. */
+
+NX_INLINE float nx_fma_narrow(float a, float b, float c) {
+  float p = a * b;
+  float r = p + c;
+  float d = r - p;
+  float e = (p - (r - d)) + (c - d);
+  int below = e < 0.0f, above = e > 0.0f;
+  int toward_zero = (below & (r > 0.0f)) | (above & (r < 0.0f));
+  uint32_t u = nx_float_bits(r) - (uint32_t)toward_zero;
+  return nx_bits_float(u | (uint32_t)(below | above));
+}
+
+#ifndef __METAL_VERSION__
+NX_INLINE float nx_fma_bf16(float a, float b, float c) {
+  double p = (double)a * (double)b;
+  double r = p + (double)c;
+  double d = r - p;
+  double e = (p - (r - d)) + ((double)c - d);
+  float f = (float)r;
+  double t = r - (double)f;
+  double lo = t != 0.0 ? t : e;
+  int below = lo < 0.0, above = lo > 0.0;
+  int toward_zero = (below & (f > 0.0f)) | (above & (f < 0.0f));
+  uint32_t u = nx_float_bits(f) - (uint32_t)toward_zero;
+  return nx_bits_float(u | (uint32_t)(below | above));
+}
+#endif
 
 /* Complex
 

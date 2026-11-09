@@ -205,13 +205,14 @@ module Big = struct
     let e = max (snd (Float.frexp x) - 53) (-1074) in
     (x < 0., of_int (Float.to_int (Float.ldexp (Float.abs x) (-e))), e)
 
-  (* [n] 2^[e] rounded once to a float of its sign [neg]: 53 bits, fewer
-     below 2^-1022. *)
-  let round neg n e =
+  (* [n] 2^[e] rounded once, to nearest with ties to even, to a float of its
+     sign [neg] of [p] bits, whose least subnormal is 2^[least]: float64's by
+     default. The exponent is unbounded above. *)
+  let round ?(p = 53) ?(least = -1074) neg n e =
     let l = bits n in
     if l = 0 then 0.
     else
-      let last = max (l + e - 53) (-1074) in
+      let last = max (l + e - p) least in
       let k = last - e in
       let m =
         if k <= 0 then field n 0 l
@@ -224,21 +225,89 @@ module Big = struct
       if neg then -.r else r
 end
 
-let exact_fma a b c =
+(* [a b + c] exactly, for finite operands and [a b] not zero: its sign, its
+   magnitude [n] and the exponent [e] of [n]'s last bit. *)
+let exact_sum a b c =
+  let an, am, ae = Big.parts a and bn, bm, be = Big.parts b in
+  let pn = an <> bn and prod = Big.mul am bm and pe = ae + be in
+  let cn, cm, ce = if c = 0. then (pn, [||], pe) else Big.parts c in
+  let e = min pe ce in
+  let x = Big.shift_left prod (pe - e) and y = Big.shift_left cm (ce - e) in
+  if pn = cn then (pn, Big.add x y, e)
+  else if Big.compare x y >= 0 then (pn, Big.sub x y, e)
+  else (cn, Big.sub y x, e)
+
+(* [?p] and [?least] are those of {!Big.round}: a format of fewer bits is
+   reached once, its exponent unbounded above. *)
+let exact_fma ?p ?least a b c =
   if not (Float.is_finite a && Float.is_finite b) then (a *. b) +. c
   else if not (Float.is_finite c) then c
   else if a = 0. || b = 0. then (a *. b) +. c
   else
-    let an, am, ae = Big.parts a and bn, bm, be = Big.parts b in
-    let pn = an <> bn and p = Big.mul am bm and pe = ae + be in
-    let cn, cm, ce = if c = 0. then (pn, [||], pe) else Big.parts c in
-    let e = min pe ce in
-    let p = Big.shift_left p (pe - e) and q = Big.shift_left cm (ce - e) in
-    if pn = cn then Big.round pn (Big.add p q) e
-    else if Big.compare p q >= 0 then Big.round pn (Big.sub p q) e
-    else Big.round cn (Big.sub q p) e
+    let neg, n, e = exact_sum a b c in
+    Big.round ?p ?least neg n e
 
 let fma a b c =
   let r = Float.fma a b c in
   if Float.abs r >= Float.min_float && Float.abs (a *. b) >= 0x1p-968 then r
   else exact_fma a b c
+
+(* Floats narrower than float32
+
+   A format as dtype.mli states it: [p] bits of precision, the least subnormal
+   2^[least], the least normal 2^[emin], the greatest finite value [top],
+   whether it has infinities, where the others saturate, and NaNs. *)
+type format = {
+  p : int;
+  least : int;
+  emin : int;
+  top : float;
+  inf : bool;
+  nan : bool;
+}
+
+let format (type v s) (dt : (v, s) Nx_array.Dtype.t) =
+  match dt with
+  | Float16 ->
+      { p = 11; least = -24; emin = -14; top = 65504.; inf = true; nan = true }
+  | Bfloat16 ->
+      {
+        p = 8;
+        least = -133;
+        emin = -126;
+        top = 0x1.fep127;
+        inf = true;
+        nan = true;
+      }
+  | Float8_e4m3fn ->
+      { p = 4; least = -9; emin = -6; top = 448.; inf = false; nan = true }
+  | Float8_e5m2 ->
+      { p = 3; least = -16; emin = -14; top = 57344.; inf = true; nan = true }
+  | Float4_e2m1fn ->
+      { p = 2; least = -1; emin = 0; top = 6.; inf = false; nan = false }
+  | _ -> invalid_arg "Exact.format: not a float narrower than float32"
+
+(* [a b + c], of values of [f], rounded once into [f] as dtype.mli's Stores
+   section rounds a float: to nearest with ties to even, and past the greatest
+   finite value to the infinity of its sign, or that value where [f] has no
+   infinity. *)
+let narrow_fma f a b c =
+  let r = exact_fma ~p:f.p ~least:f.least a b c in
+  if Float.is_nan r || Float.abs r <= f.top then r
+  else if f.inf then Float.copy_sign Float.infinity r
+  else Float.copy_sign f.top r
+
+(* [a b + c] rounded to float32, then into [f]: twice. *)
+let narrow_fma_twice f a b c =
+  narrow_fma f (exact_fma ~p:24 ~least:(-149) a b c) 1. (-0.)
+
+(* Whether [a b + c], of finite values of [f], lies on a midpoint of [f]'s
+   consecutive values. *)
+let on_midpoint f a b c =
+  let finite = Float.is_finite a && Float.is_finite b && Float.is_finite c in
+  if a = 0. || b = 0. || not finite then false
+  else
+    let _, n, e = exact_sum a b c in
+    let l = Big.bits n in
+    let k = max (l + e - f.p) f.least - e in
+    l > 0 && k >= 1 && Big.bit n (k - 1) && not (Big.any_below n (k - 1))

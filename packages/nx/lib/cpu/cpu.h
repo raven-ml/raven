@@ -295,8 +295,10 @@ typedef void (*nx_cpu_row0)(int64_t n, uint8_t *d, int64_t sd,
                             const uint8_t *bits);
 
 /* The rows (rows.c). op1[k][dt] and op2[k][dt] compute the kind of one or
-   two operands k (nx_kernel.h's code) at dt, fma[dt] fma: NULL where
-   Nx_kernel.Prog refuses the kind at dt. where[i] and fill[i] move
+   two operands k (nx_kernel.h's code) at dt, a carrier: NULL where
+   Nx_kernel.Prog refuses the kind at dt. fma[dt] computes fma at any dt
+   that takes it, over dt's carrier: at a narrow float it rounds to odd in
+   float32, so that the store rounds once. where[i] and fill[i] move
    elements of 2^i bytes, i in 0..4. */
 typedef struct {
   nx_cpu_row1 op1[NX_OP1_COUNT][NX_DTYPE_COUNT];

@@ -218,11 +218,12 @@ val accepts3 :
 
     A dtype's compute type is the dtype itself for float32, float64, the
     32- and 64-bit integers and the complex dtypes. Floats narrower than
-    float32 compute in float32 and round once to their dtype. 8- and 16-bit
-    integers compute in the 32-bit integer of their signedness, their
-    operands sign- or zero-extended, and wrap to their dtype. Booleans
-    compute in uint32. A complex64 computes as a pair of float32, the real
-    part first as it is stored, and a complex128 as a pair of float64.
+    float32 compute in float32 and round once to their dtype, [Fma] from
+    its exact value. 8- and 16-bit integers compute in the 32-bit integer of
+    their signedness, their operands sign- or zero-extended, and wrap to
+    their dtype. Booleans compute in uint32. A complex64 computes as a pair
+    of float32, the real part first as it is stored, and a complex128 as a
+    pair of float64.
 
     A float kind's bound holds in its compute type, in ulps: the distance
     in ordered-bit ranks from the correctly rounded result, [-0] and [+0]

@@ -532,6 +532,16 @@ let law_lerp_narrow (Narrow dt, ((a, b), w)) =
   in
   equal (array (option int64)) (bits want) (bits (Nx.lerp a b w))
 
+(* fma at a float narrower than float32 is its exact value rounded once, as
+   Exact's integers round it, where a float32 would round first. *)
+let law_narrow_fma (Narrow dt, seed) =
+  let f = Exact.format dt in
+  let a, b, c = Kernels_cases.Narrow_fma.operands f seed in
+  Kernels_cases.Narrow_fma.covers (D.name dt) f a b c;
+  let v x = Nx.create dt [| Array.length x |] x in
+  let got = Nx.to_array (Nx.cast D.Float64 (Nx.fma (v a) (v b) (v c))) in
+  equal (list string) [] (Kernels_cases.Narrow_fma.misses f a b c got)
+
 (* The ends at signed zeros: equal as numbers. *)
 let test_lerp_zero_ends () =
   let s = Nx.scalar Nx.float64 in
@@ -560,6 +570,17 @@ let elementwise =
         test_layouts;
       prop "each comparison is its kind, broadcast" binary_operands law_compare;
       prop "fma is its kind, broadcast" ternary_operands law_fma;
+      prop "fma rounds once at floats narrower than float32" ~count:20
+        ~examples:
+          D.
+            [
+              (Narrow Float16, 1);
+              (Narrow Bfloat16, 1);
+              (Narrow Float8_e4m3fn, 1);
+              (Narrow Float8_e5m2, 1);
+              (Narrow Float4_e2m1fn, 1);
+            ]
+        (Gen.pair narrows Gen.int) law_narrow_fma;
       prop "where is its kind, broadcast"
         (Gen.pair ternary_operands (Gen.list ~size:(Gen.constant 8) Gen.bool))
         law_where;
