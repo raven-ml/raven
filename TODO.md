@@ -51,8 +51,11 @@ raven / llama.cpp b12048 Vulkan:
   `Ops.compare_structure` under `TUPLE_ORDER`, so 10,000 operations read
   once take 0.9 s and 25,000 take 6.6 s; and a flat chain of additions
   stays one C statement, rebuilt and scanned at every step
-- attention's backward (167d026789) has not run on AMD, and its CDNA 4
-  tile rule on no GPU: none here is a CDNA 4
+- not yet run on AMD: attention's backward (167d026789), stores and reads
+  through views and bitcasts (1132c5b84d), a loop's non-run reads each trip
+  (ecfd400a58) and cores on several reduce axes (02e163a27d); each but the
+  first has run on Metal. The backward's CDNA 4 tile rule has run on no GPU:
+  none here is a CDNA 4
 
 ## rune, kaun, vega
 
