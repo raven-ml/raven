@@ -8710,3 +8710,32 @@ reason and its pins.
 - **Pinned by:** `Tolk.Ops › storage › a buffer given a slot is no buffer made
   without one`, `› an alloc given a slot is no alloc made without one` and `› a
   placeholder given a slot is no placeholder made without one`.
+
+## D419. Metal hides a bfloat16 product's operands from its compiler
+
+- **tinygrad:** `renderer/cstyle.py` `MetalRenderer.render_kernel`: each
+  product's matrices are of its own input type, `simdgroup_bfloat8x8` for a
+  bfloat16 product, in a helper the compiler may inline.
+- **tolk:** `Cstyle.metal_wmma`.
+- **Differs:** a product of bfloat16 matrices into float32 converts each
+  lane's elements of `a` and `b` to float and multiplies
+  `simdgroup_float8x8` matrices. bfloat16 has float32's exponents, so the
+  product of two bfloat16 values is exact in float32 while it stays in
+  float32's normal range, and the sums are float32's, as the bfloat16
+  product's were: while every product stays in that range, the result is
+  the same. A product into bfloat16 keeps its bfloat16
+  matrices, since widened its sums would round where float32's do, not
+  where its own do; its helper is `__attribute__((noinline))` instead.
+- **Reason:** (b): Apple7's compiler service (an M1 Max) crashes, with
+  `XPC_ERROR_CONNECTION_INTERRUPTED`, building a kernel whose bfloat16
+  product has an operand it knows, such as literal zeros, into float32 or
+  into bfloat16, and Metal makes no pipeline. rune's attention derivative
+  on Metal (`Lower_attention.core_dq` and `core_dkdv`) gives its products
+  zeros where a tile holds fewer rows or keys than its steps, or where a
+  score program does not read the score. The cost: the float32 product
+  gives up the bfloat16 matrix type, and the bfloat16 product a call per
+  product. Neither's speed is measured, since the Mac does not time.
+- **Pinned by:** `Tolk.Cstyle › tensor cores on Metal › a bfloat16 product
+  with an operand of literal zeros holds the product`, into each type, which
+  fails to build its pipeline on the M1 Max without it;
+  `metal_tc_bf16_f32_8_8_8.tolk` and `metal_tc_bf16_bf16_8_8_8.tolk`.

@@ -1732,20 +1732,41 @@ let metal_extra_matcher =
       pm_manual_bf16_cast;
     ]
 
+(* Apple7's compiler service fails on a product of bfloat16 matrices with an
+   operand it knows, such as literal zeros. A product into float32 multiplies
+   them as float matrices: bfloat16 has float32's exponents, so the product
+   of two bfloat16 values is exact in float32 while it stays in float32's
+   normal range, and the sums are float32's, as before. A product into bfloat16
+   stays one of bfloat16 matrices, whose sums widening would round
+   elsewhere; its helper is never inlined, so the compiler does not see the
+   operand. *)
 let metal_wmma l (name, _, dtype_in, dtype_out, _) =
   let vec dt = render_dtype l dt ~sz:2 ~addrspace:(Some Dtype.Reg) in
   let out = vec dtype_out and in_ = vec dtype_in in
+  let widened =
+    Dtype.equal dtype_in Dtype.Bfloat16 && Dtype.equal dtype_out Dtype.Float32
+  in
+  let matrix = if widened then dtype_out else dtype_in in
+  let opaque =
+    if Dtype.equal dtype_in Dtype.Bfloat16 && not widened then
+      "__attribute__((noinline)) "
+    else ""
+  in
+  let read v i =
+    if widened then strf "%s(%s[%d])" (render_scalar l matrix) v i
+    else strf "%s[%d]" v i
+  in
   let elements i =
     strf
-      "  mat_a.thread_elements()[%d] = a[%d]; mat_b.thread_elements()[%d] = \
-       b[%d]; mat_c.thread_elements()[%d] = c[%d];"
-      i i i i i i
+      "  mat_a.thread_elements()[%d] = %s; mat_b.thread_elements()[%d] = %s; \
+       mat_c.thread_elements()[%d] = c[%d];"
+      i (read "a" i) i (read "b" i) i i
   in
   String.concat "\n"
     [
-      strf "%s __%s(%s a, %s b, %s c){" out name in_ in_ out;
+      strf "%s%s __%s(%s a, %s b, %s c){" opaque out name in_ in_ out;
       strf "  simdgroup_%s8x8 mat_a, mat_b; simdgroup_%s8x8 mat_c;"
-        (render_scalar l dtype_in)
+        (render_scalar l matrix)
         (render_scalar l dtype_out);
       elements 0;
       elements 1;

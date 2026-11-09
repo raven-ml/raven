@@ -1288,6 +1288,94 @@ let division_group =
       slow @@ test "Metal divides as IEEE does, rounding once" divides_on_metal;
     ]
 
+(* Tensor cores on Metal
+
+   A warp's bfloat16 product, [D = A B], then [D + 0 C] with a left operand
+   of literal zeros: Apple7's compiler service failed on a product of
+   bfloat16 matrices with an operand the compiler knows, into float32 and
+   into bfloat16 alike. *)
+
+(* Metal's bfloat16 cores, into float32 and into bfloat16. *)
+let bf16_cores =
+  List.filter (fun (tc : Tc.t) -> Dtype.equal tc.dtype_in Bfloat16) Tc.metal
+
+(* [m.(i).(j)], a small integer: each product's sums are integers below 256,
+   exact in bfloat16. *)
+let entry salt i j = Float.of_int ((((i * 3) + (j * 5) + salt) mod 7) - 3)
+
+let zero_product (tc : Tc.t) =
+  let lanes = Tc.threads tc in
+  let lane = Ops.range ~axis_type:Warp (Int lanes) [ 0 ] in
+  let buffer slot dt = Shape.placeholder ~slot [ 2 * lanes ] dt in
+  let out = buffer 0 tc.dtype_out and a = buffer 1 Bfloat16 in
+  let b = buffer 2 Bfloat16 and c = buffer 3 Bfloat16 in
+  let at e = Ops.O.((lane * int 2) + int e) in
+  let pair buf = Shape.stack (List.init 2 (fun e -> Ops.load (Ops.index buf [ at e ]) [])) in
+  let literal dt = Shape.stack (List.init 2 (fun _ -> Ops.float ~dtype:dt 0.)) in
+  let product x y acc = Ops.wmma x y ~acc ~dims:(Tc.dims tc) ~threads:lanes in
+  let d = product (pair a) (pair b) (literal tc.dtype_out) in
+  let d = product (literal Bfloat16) (pair c) d in
+  let stores =
+    List.init 2 (fun e ->
+        Ops.store (Ops.index out [ at e ]) (Ops.index d [ Ops.int ~dtype:Int32 e ]))
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"zero_product" ~opts_to_apply:[] ())
+    [ Ops.end_ (Ops.group stores) [ lane ] ]
+
+let multiplies_by_zeros_on_metal (tc : Tc.t) =
+  match Rig.open_ (Rig_metal.gpu 0) with
+  | Error why -> skip ~reason:why ()
+  | Ok m ->
+      let devices = function "CPU:1" -> m | _ -> Rig.host in
+      let fa, fb, fc = Tc.frag_coords tc in
+      let lanes = Tc.threads tc in
+      (* Each lane's two elements of a fragment, as its coordinates say. *)
+      let held coords f =
+        Array.init (2 * lanes) (fun i ->
+            let r, col = coords.(i / 2).(i mod 2) in
+            f r col)
+      in
+      let _, _, k = Tc.dims tc in
+      let d r col =
+        List.fold_left ( +. ) 0.
+          (List.init k (fun j -> entry 0 r j *. entry 1 j col))
+      in
+      let buffer dt = Ops.new_buffer "CPU:1" (2 * lanes) dt in
+      let out = buffer tc.dtype_out and a = buffer Bfloat16 in
+      let b = buffer Bfloat16 and c = buffer Bfloat16 in
+      let compiled =
+        Realize.compile_linear
+          ~targets:(fun d -> Tolk_engine.target (devices d))
+          (Ops.v Op.Linear ~src:[ Ops.call (zero_product tc) [ out; a; b; c ] ])
+      in
+      let on_metal dt xs = Run.buffer m dt (floats xs) in
+      let products = on_metal tc.dtype_out (Array.make (2 * lanes) 0.) in
+      let s =
+        Tolk_engine.link ~devices
+          ~bound:
+            [
+              (out, products);
+              (a, on_metal Bfloat16 (held fa (entry 0)));
+              (b, on_metal Bfloat16 (held fb (entry 1)));
+              (c, on_metal Bfloat16 (held fb (entry 2)));
+            ]
+          compiled
+      in
+      Tolk_engine.run s [||];
+      equal values (floats (held fc d)) (Run.values tc.dtype_out products)
+
+let metal_cores =
+  group "tensor cores on Metal"
+    [
+      slow
+      @@ cases
+           "a bfloat16 product with an operand of literal zeros holds the \
+            product"
+           ~id:(fun (tc : Tc.t) -> Format.asprintf "into %a" Dtype.pp tc.dtype_out)
+           bf16_cores multiplies_by_zeros_on_metal;
+    ]
+
 (* Negation *)
 
 (* A kernel of one float lane: [data0[0] = f (data1[0], data2[0])]. *)
@@ -1686,6 +1774,7 @@ let () =
          bf16_truncation;
          execution;
          division_group;
+         metal_cores;
          zeros_compared;
          selections;
          windows_group;

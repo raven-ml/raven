@@ -1091,6 +1091,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A Metal kernel whose bfloat16 tensor-core product has an operand the
+  compiler knows, such as literal zeros, compiles, where Apple7's compiler
+  service crashed and Metal made no pipeline: a product into float32
+  multiplies float matrices of the same values, one into bfloat16 is never
+  inlined.
 - One pass over the finished schedule runs independent calls as launches of
   their kernels (`Schedule.create_linear_with_vars`); a launch's members keep
   their bodies, where independent calls of one domain were fused into one
