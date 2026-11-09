@@ -3542,6 +3542,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Brot.from_model_file` numbers a `vocab.txt` by line, a blank line included.
+  It skipped blank lines, so every later token had the wrong ID.
 - **Breaking:** `Brot.decode_batch` is removed: write
   `List.map (Brot.decode t) ids_list`.
 - A token given twice in a BPE or WordPiece `vocab` keeps only its last pair,

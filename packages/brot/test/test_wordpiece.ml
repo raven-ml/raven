@@ -396,6 +396,44 @@ let cache_props =
         equal ~msg:"after" (array int) expected (encode_ids t text));
   ]
 
+(* Vocabulary files *)
+
+let with_vocab_file text f =
+  let path = Filename.temp_file "wordpiece_vocab" ".txt" in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
+      Out_channel.with_open_bin path (fun oc ->
+          Out_channel.output_string oc text);
+      f (from_model_file ~vocab:path ()))
+
+(* Every line of a vocab.txt takes the next id, a blank one included, as
+   tokenizers' WordPiece::read_file and BERT's load_vocab number them. *)
+let line_ids =
+  cases "each line of a vocab.txt takes an id" ~id:fst
+    [
+      ("no blank line", ("[UNK]\nhello\nworld\n", 2));
+      ("a blank line", ("[UNK]\nhello\n\nworld\n", 3));
+      ("two blank lines", ("[UNK]\nhello\n\n\nworld\n", 4));
+      ("a line of spaces", ("[UNK]\nhello\n  \nworld\n", 3));
+      ("CRLF", ("[UNK]\r\nhello\r\n\r\nworld\r\n", 3));
+      ("no final newline", ("[UNK]\nhello\n\nworld", 3));
+    ]
+    (fun (_, (text, id)) ->
+      with_vocab_file text @@ fun t ->
+      equal ~msg:"token_to_id" (option int) (Some id) (token_to_id t "world");
+      equal ~msg:"id_to_token" (option string) (Some "world")
+        (id_to_token t id);
+      equal ~msg:"encode" (array int) [| id |]
+        (Encoding.ids (encode t "world")))
+
+let blank_ids =
+  test "only the last blank line holds the empty token" (fun () ->
+      with_vocab_file "[UNK]\n\n\nworld\n" @@ fun t ->
+      equal ~msg:"an earlier blank" (option string) None (id_to_token t 1);
+      equal ~msg:"the last blank" (option string) (Some "") (id_to_token t 2);
+      equal ~msg:"vocab_size counts tokens" int 3 (vocab_size t))
+
 let () =
   exit
     (run "WordPiece tests"
@@ -412,4 +450,5 @@ let () =
              test "HuggingFace semantics" test_wordpiece_hf_semantics;
            ];
          group "cache" cache_props;
+         group "vocabulary files" [ line_ids; blank_ids ];
        ])

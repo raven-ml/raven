@@ -196,11 +196,9 @@ let read_file ~vocab_file =
       let index = ref 0 in
       (try
          while true do
-           let line = input_line ic in
-           let token = String.trim line in
-           if token <> "" then (
-             Hashtbl.replace vocab token !index;
-             incr index)
+           (* A blank line takes an id too: an id is the line's number. *)
+           Hashtbl.replace vocab (String.trim (input_line ic)) !index;
+           incr index
          done
        with End_of_file -> ());
       vocab)
