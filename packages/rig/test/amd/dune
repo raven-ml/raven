@@ -9,6 +9,7 @@
  (locks %{workspace_root}/gpu)
  (libraries
   rig
+  rig_program
   rig_amd
   rig_amd_abi
   rig_amd_amdgpu

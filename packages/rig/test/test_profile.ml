@@ -864,7 +864,7 @@ let test_chrome () =
           part = 1;
           data = "\001\002";
         };
-      Prof.Overwritten { device = d; time = 3_600; runs = 2 };
+      Prof.Unmeasured { device = d; time = 3_600; runs = 2 };
       Prof.Span
         {
           device = Rig.host;
@@ -918,7 +918,7 @@ let test_chrome () =
     {"ph":"C","pid":3,"tid":0,"ts":1.500,"name":"memory","args":{"allocated":4096}},
     {"ph":"M","pid":1,"tid":5,"name":"thread_name","args":{"name":"copy"}},
     {"ph":"X","pid":1,"tid":5,"ts":2.000,"dur":0.200,"name":"copy","args":{"to":"profile:chrome","bytes":64}},
-    {"ph":"i","pid":3,"tid":0,"ts":2.600,"s":"p","name":"overwritten","args":{"runs":2}}
+    {"ph":"i","pid":3,"tid":0,"ts":2.600,"s":"p","name":"unmeasured","args":{"runs":2}}
     ]}
     |}
 

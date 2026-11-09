@@ -139,7 +139,7 @@ static int memory_commit(void *self, uint64_t v, const char **failure) {
 }
 
 static const struct rig_driver memory_driver = {memory_room, memory_submit,
-                                                memory_commit, NULL};
+                                                memory_commit, NULL, NULL};
 
 /* A new memory device's state, whose word lies at [v_word]. */
 value caml_rig_memory_new(value v_word) {

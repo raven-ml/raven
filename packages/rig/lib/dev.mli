@@ -407,6 +407,21 @@ val reached_point : int -> bool
     of [p]'s value as {!wait_point} commits it, which waits for no work. It
     raises {!Lost} if [p] is not done and its device is lost. *)
 
+val measures :
+  device ->
+  int ->
+  (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+  bool
+(** [measures d v out] is [true] iff [d]'s driver wrote into [out], zeroed,
+    the measures of [d]'s value [v], which its submit was given while a
+    profile was taken ([measures] of {!Rig_edge.section-calls}), or measures
+    nothing. It waits as {!settle} does. [v] must be reached. A call that
+    fails loses [d]; on a lost device it does nothing and is [false]. *)
+
+val forget_measures : device -> int -> bool
+(** [forget_measures d v] has [d]'s driver free its measures of [v], which no
+    later {!measures} names. It waits and fails as {!measures} does. *)
+
 val settled : int -> bool
 (** [settled p] is [true] iff [p] is settled. A point whose device the read
     of its word loses has not settled. A point of a device that gave its slot

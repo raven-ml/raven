@@ -398,6 +398,7 @@ let open_ ~word i =
           alignment = region_align;
           (* No public API of Metal states the GPU's caches. *)
           cache_bytes = None;
+          counters = [];
           capability = Rig_metal_abi.declare cap;
           word;
           bus = None;

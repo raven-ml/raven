@@ -20,6 +20,7 @@
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
+#include <caml/bigarray.h>
 #include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
@@ -634,6 +635,13 @@ value caml_rig_device_new(value v_index, value v_name, value v_may_block,
   d->self = self;
   d->driver = *rig_driver_of(self);
   CAMLreturn(v);
+}
+
+/* Whether the driver behind the edge [v_edge] gives [measures]. */
+value caml_rig_edge_measures(value v_edge) {
+  void *self = (void *)Nativeint_val(v_edge);
+  const struct rig_driver *r = self == NULL ? NULL : rig_driver_of(self);
+  return Val_bool(r != NULL && r->measures != NULL);
 }
 
 /* An io device of index [v_index]: no queue and no word; its state is its
@@ -1622,3 +1630,40 @@ value caml_rig_settle(value v_d, value v_v) {
   }
   return Val_int(give_turn(d, released, r));
 }
+
+/* Measures */
+
+/* Has [d]'s driver write the measures of its value [v] into [out], or with
+   [out] NULL free them, under the turn ([rig_measures_fn]), as
+   caml_rig_settle has it settle. */
+static int measures(struct rig_device *d, uint64_t v, uint64_t *out) {
+  int released;
+  if (d->driver.measures == NULL) return SUBMIT_OK;
+  if (!lock_turn(d, &released)) return SUBMIT_BUSY;
+  int r = SUBMIT_LOST;
+  if (!is_lost(d)) {
+    const char *why = NULL;
+    begin_turn(d);
+    int a = d->driver.measures(d->self, v, out, &why);
+    end_turn(d);
+    r = a == RIG_OK ? SUBMIT_OK
+                    : fail_locked(d, why != NULL ? why
+                                                 : "the driver's measures failed");
+  }
+  return give_turn(d, released, r);
+}
+
+/* [v_out] is a zeroed Bigarray of 64-bit integers, whose data does not move
+   while the runtime is released. */
+value caml_rig_measures(value v_d, value v_v, value v_out) {
+  CAMLparam3(v_d, v_v, v_out);
+  uint64_t *out = (uint64_t *)Caml_ba_data_val(v_out);
+  CAMLreturn(Val_int(measures(Device_val(v_d), (uint64_t)Long_val(v_v), out)));
+}
+
+value caml_rig_measures_free(value v_d, value v_v) {
+  CAMLparam2(v_d, v_v);
+  CAMLreturn(
+      Val_int(measures(Device_val(v_d), (uint64_t)Long_val(v_v), NULL)));
+}
+

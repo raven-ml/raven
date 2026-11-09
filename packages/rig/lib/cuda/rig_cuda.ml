@@ -717,6 +717,7 @@ let open_ ~word i =
                     host_addresses = false;
                     alignment = allocation_alignment;
                     cache_bytes = (if l2 > 0 then Some l2 else None);
+                    counters = [];
                     capability = Rig_cuda_abi.declare cap;
                     word;
                     bus = List.nth_opt g.buses i;

@@ -90,6 +90,7 @@ let facts d =
     host_addresses = false;
     alignment = d.account.alignment;
     cache_bytes = d.account.cache_bytes;
+    counters = [];
     capability = Rig_remote_abi.declare d.capability;
     word = d.word;
     bus = None;

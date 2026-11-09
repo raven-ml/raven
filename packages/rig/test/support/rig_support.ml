@@ -197,6 +197,7 @@ module Driver = struct
     maps_host : bool;
     alignment : int;
     cache_bytes : int option;
+    counters : (string * int) list;
     budget : int;
     limits : kind -> int;
     may_block : bool;
@@ -298,6 +299,7 @@ module Driver = struct
       host_addresses = d.host_visible && not d.transport;
       alignment = d.alignment;
       cache_bytes = d.cache_bytes;
+      counters = d.counters;
       capability = d.capability;
       word =
         {
@@ -611,7 +613,8 @@ module Polled = struct
   let make ?(capacity = 1024) ?grows ?(copies = true)
       ?(host_visible = true) ?(addresses = true) ?(transport = false)
       ?(peers = true) ?(maps_host = true) ?(alignment = 4096) ?cache_bytes
-      ?(budget = 1 lsl 30) ?(memory = max_int) ?(window = max_int)
+      ?(counters = []) ?(budget = 1 lsl 30) ?(memory = max_int)
+      ?(window = max_int)
       ?(may_block = false) ?(completion = `Host) ?(waits_on = [])
       ?(answer = `Stopped) ?(runs = `When_slept) ?(lag = 1) ?hang_ms
       ?(capability = Rig_edge.Capability (capability_key, ())) ?bus
@@ -636,6 +639,7 @@ module Polled = struct
         maps_host;
         alignment;
         cache_bytes;
+        counters;
         budget;
         limits;
         may_block;

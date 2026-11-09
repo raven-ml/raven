@@ -376,7 +376,7 @@ value caml_rig_amd_amdgpu_device_info(value v_drm) {
 }
 
 /* Holds the GPU in its stable power state with a new context on the render
-   node [v_drm], until the process closes it. */
+   node [v_drm], until the context is freed: its id. */
 value caml_rig_amd_amdgpu_stable_pstate(value v_drm) {
   int drm = Int_val(v_drm);
   union drm_amdgpu_ctx c = {.in = {.op = AMDGPU_CTX_OP_ALLOC_CTX}};
@@ -392,6 +392,16 @@ value caml_rig_amd_amdgpu_stable_pstate(value v_drm) {
     call(drm, DRM_IOCTL_AMDGPU_CTX, &c);
   }
   check(e);
+  return Val_long(id);
+}
+
+/* Frees the context [v_id] of the render node [v_drm]. The kernel driver
+   frees it at once (amdgpu_ctx_free, amdgpu_ctx_fini), and gives back the
+   stable power state the context holds. */
+value caml_rig_amd_amdgpu_free_ctx(value v_drm, value v_id) {
+  union drm_amdgpu_ctx c = {
+      .in = {.op = AMDGPU_CTX_OP_FREE_CTX, .ctx_id = (uint32_t)Long_val(v_id)}};
+  check(call(Int_val(v_drm), DRM_IOCTL_AMDGPU_CTX, &c));
   return Val_unit;
 }
 
@@ -517,6 +527,7 @@ NONE(sleep, value a UNUSED, value b UNUSED, value c UNUSED, value d UNUSED,
      value e UNUSED)
 NONE(device_info, value a UNUSED)
 NONE(stable_pstate, value a UNUSED)
+NONE(free_ctx, value a UNUSED, value b UNUSED)
 NONE(reserve, value a UNUSED)
 NONE(map, value a UNUSED, value b UNUSED, value c UNUSED, value d UNUSED)
 NONE(unmap, value a UNUSED, value b UNUSED)

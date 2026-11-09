@@ -150,6 +150,9 @@ type device = {
   memory_device : bool;  (** Whether it is a memory device. *)
   capability : Rig_edge.capability option;
       (** What compiled code needs of it. *)
+  counters : (string * int) list;
+      (** The counters its driver measures around a timed launch, with how
+          many values each has ({!Rig_edge.type-facts}). *)
   mutable budget : int; [@atomic]  (** {!Rig.budget}. *)
   mutable closing : int; [@atomic]
       (** The closes of this machine's host under way: each adds one under
@@ -510,7 +513,7 @@ type event =
       part : int;
       data : string;
     }
-  | Overwritten of { device : device; time : int; runs : int }
+  | Unmeasured of { device : device; time : int; runs : int }
   | Copy of {
       src : device;
       dst : device;

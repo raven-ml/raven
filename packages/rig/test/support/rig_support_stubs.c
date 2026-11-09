@@ -330,7 +330,8 @@ static rig_commit_fn polled_commit;
 static rig_settle_fn polled_settle;
 
 static const struct rig_driver polled_driver = {polled_room, polled_submit,
-                                                polled_commit, polled_settle};
+                                                polled_commit, polled_settle,
+                                                NULL};
 
 /* What rig must not do, as Polled sees it: read or free twice a word of
    the driver's own after rig freed it, free a word in its array, hand a

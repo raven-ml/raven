@@ -3015,9 +3015,763 @@ let counters =
         traced_launch;
     ]
 
+(* Measures: a device that counts around each timed launch *)
+
+module Prof = Rig.Profile
+module G = Rig_program
+
+let contains ~sub s =
+  let n = String.length sub in
+  let rec go i =
+    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
+  in
+  go 0
+
+(* GPU 0 through amdgpu, if it is a gfx1201: the measured suites need one. *)
+let measured_gpu () =
+  if S.driverless () || S.gpus () = 0 then
+    skip ~reason:"no AMD GPU through amdgpu" ();
+  match Rig_amd_amdgpu.buses () with
+  | Ok (bus :: _) -> (
+      match Rig_amd_amdgpu.gpu_at "/" bus with
+      | Ok g when g.target = (12, 0, 1) -> g
+      | Ok g -> skip ~reason:(Gpu.processor g ^ " runs no gfx1201 code") ()
+      | Error why -> skip ~reason:why ())
+  | Ok [] -> skip ~reason:"no AMD GPU" ()
+  | Error why -> skip ~reason:why ()
+
+let measured = [ "SQ_INSTS_VALU" ]
+
+(* Opens GPU 0 to measure [counters], answering its handle too. *)
+let open_measured counters =
+  let raw = ref None in
+  let o = Rig_amd_amdgpu.gpu ~measure:{ counters } 0 in
+  let make ~word =
+    Result.map
+      (fun g ->
+        raw := Some g;
+        g)
+      (o.make ~word)
+  in
+  Result.map (fun d -> { d; g = Option.get !raw }) (Rig.open_ { o with make })
+
+(* [f] of GPU 0 opened to measure [counters], skipped while another process
+   holds the GPU's stable power state. *)
+let measuring ?(counters = measured) f =
+  ignore (measured_gpu ());
+  match open_measured counters with
+  | Ok t -> Fun.protect ~finally:(fun () -> Rig.close t.d) (fun () -> f t)
+  | Error why when contains ~sub:held why -> skip ~reason:why ()
+  | Error why -> fail why
+
+(* Submits a launch of [valu] for each [(groups, k)], in one submission. *)
+let submit_valu (t : gpu) p launches =
+  let fn = Option.get (Rig.Image.resolve p "valu") in
+  let s =
+    Sub.make t.d
+      (Array.of_list (List.map (fun _ -> Sub.launch fn ~params:8) launches))
+  in
+  let run = Sub.take s in
+  List.iteri
+    (fun i (groups, k) ->
+      let b = Sub.block s i in
+      Sub.Run.groups run b groups 1 1;
+      Sub.Run.threads run b threads 1 1;
+      Sub.Run.int32 run b 0 k)
+    launches;
+  Rig.submit run ~buffers:[||]
+
+(* The events a profile holds of [f]'s work, once it is done. *)
+let profiled f = snd (Prof.take (fun () -> Rig.Point.wait (f ())))
+
+(* Each [Counters] event's counters, summed over their places, ordered by
+   start; and the runs [Unmeasured] events count. *)
+let measures events =
+  let counted =
+    List.filter_map
+      (function
+        | Prof.Counters c ->
+            Some
+              ( c.start,
+                List.map
+                  (fun (n, v) -> (n, Array.fold_left ( + ) 0 v))
+                  c.counters )
+        | _ -> None)
+      events
+  in
+  let unmeasured =
+    List.fold_left
+      (fun a -> function Prof.Unmeasured u -> a + u.runs | _ -> a)
+      0 events
+  in
+  (List.map snd (List.stable_sort (fun (a, _) (b, _) -> compare a b) counted),
+   unmeasured)
+
+let exact ~groups ~k =
+  [ ("SQ_WAVES", 2 * groups); ("SQ_INSTS_VALU", 2 * groups * 16 * k) ]
+
+let counts = list (pair string int)
+
+(* The values of counter [n] on [gpu], one per place its layout counts it
+   in. *)
+let values gpu n =
+  match Counter.layout gpu [ n ] with
+  | Ok l -> l.bytes / 8
+  | Error why -> fail why
+
+(* 1. A launch on an idle GPU, measured. *)
+let launch_sizes =
+  Gen.(
+    with_pp
+      (fun ppf (g, k) -> Format.fprintf ppf "(%d groups, k %d)" g k)
+      (pair
+         (frequency
+            [ (3, constant 1); (2, of_list [ 7; 64; 1024 ]); (3, constant 8192) ])
+         (frequency
+            [ (3, constant 1); (2, of_list [ 3; 10; 100 ]); (3, constant 1000) ])))
+
+let measured_launch (groups, k) =
+  cover "one group" (groups = 1);
+  cover "8192 groups" (groups = 8192);
+  cover "k 1" (k = 1);
+  cover "k 1000" (k = 1000);
+  measuring @@ fun t ->
+  let p = image ~of_:counts_code t in
+  let events = profiled (fun () -> submit_valu t p [ (groups, k) ]) in
+  let counted, unmeasured = measures events in
+  equal int ~msg:"unmeasured runs" 0 unmeasured;
+  equal (list counts) ~msg:"the launch's counts" [ exact ~groups ~k ] counted;
+  List.iter
+    (function
+      | Prof.Counters c ->
+          equal string ~msg:"its function" "valu" c.name;
+          List.iter
+            (function
+              | Prof.Work w ->
+                  at_least int ~msg:"its start, within the work" ~than:w.start
+                    c.start;
+                  at_most int ~msg:"its stop, within the work" ~than:w.stop
+                    c.stop
+              | _ -> ())
+            events;
+          at_most int ~msg:"its start" ~than:c.stop c.start;
+          equal (list (pair string int))
+            ~msg:"its values, one per place"
+            (List.map (fun (n, v) -> (n, Array.length v)) c.counters)
+            (List.map
+               (fun (n, _) -> (n, values (A.capability t.g).gpu n))
+               c.counters)
+      | _ -> ())
+    events
+
+(* 2. A count that saturates: some processor's SQ_INSTS_VALU passes 2^32 - 1
+   when the processors' average is 5/4 of it. *)
+let saturated () =
+  measuring @@ fun t ->
+  let p = image ~of_:counts_code t in
+  let groups = 8192 and places = 32 in
+  let k = 5 * places * (1 lsl 32) / 4 / (2 * groups * 16) in
+  let counted, unmeasured =
+    measures (profiled (fun () -> submit_valu t p [ (groups, k) ]))
+  in
+  equal (list counts) ~msg:"counts" [] counted;
+  equal int ~msg:"unmeasured runs" 1 unmeasured
+
+(* The busy child of [counts_beside], started: its VMID, and its end. *)
+let busy_beside () =
+  let child_in, to_child = Unix.pipe ~cloexec:true ()
+  and from_child, child_out = Unix.pipe ~cloexec:true () in
+  let child =
+    Unix.create_process Sys.executable_name
+      [| Sys.executable_name; busy_child |]
+      child_in child_out Unix.stderr
+  in
+  Unix.close child_in;
+  Unix.close child_out;
+  let ic = Unix.in_channel_of_descr from_child
+  and oc = Unix.out_channel_of_descr to_child in
+  let ended = ref false in
+  let end_child () =
+    if not !ended then begin
+      ended := true;
+      close_out_noerr oc;
+      ignore (reap child);
+      close_in_noerr ic
+    end
+  in
+  match Scanf.sscanf (input_line ic) "ready %d" Fun.id with
+  | vmid ->
+      output_string oc "go\n";
+      flush oc;
+      (match input_line ic with
+      | "busy" -> ()
+      | line ->
+          end_child ();
+          failf "the child said %S" line
+      | exception End_of_file ->
+          end_child ();
+          fail "the child did not say busy");
+      (vmid, end_child)
+  | exception (End_of_file | Scanf.Scan_failure _ | Failure _) ->
+      end_child ();
+      fail "the child did not say ready"
+
+(* 3. A bracket that loads another process's filter, as after a move of the
+   VMID: the GPU counts that process's waves that start under it. *)
+let stale_filter () =
+  measuring @@ fun t ->
+  let p = image ~of_:counts_code t in
+  let c = A.capability t.g in
+  let theirs, end_child = busy_beside () in
+  Fun.protect ~finally:end_child @@ fun () ->
+  let small = (64, 10) in
+  let each launches =
+    measures (profiled (fun () -> submit_valu t p launches))
+  in
+  let check msg (counted, _) =
+    List.iter (equal counts ~msg (exact ~groups:64 ~k:10)) counted
+  in
+  let before = each [ small ] in
+  equal (pair (list counts) int) ~msg:"before" ([ exact ~groups:64 ~k:10 ], 0)
+    before;
+  A.stale_filter t.g (Counter.filter c.gpu ~vmid:theirs);
+  let stale = each [ small; small ] in
+  equal (pair (list counts) int) ~msg:"the stale bracket and the one after"
+    ([], 2) stale;
+  let beside = List.init 20 (fun _ -> each [ small ]) in
+  List.iter (check "beside the child") beside;
+  end_child ();
+  let rec clean n =
+    let r = each [ small ] in
+    check "after the child" r;
+    if fst r = [] && n > 0 then clean (n - 1) else r
+  in
+  equal (pair (list counts) int) ~msg:"once a drain reads nothing"
+    ([ exact ~groups:64 ~k:10 ], 0)
+    (clean 50)
+
+(* A child process that, on "go", opens its own device of GPU 0 and says
+   "opened" with the host's clock before and after the open, runs [work] on
+   it and says "done" with the interval [work] answers, then waits for the
+   end of its input. *)
+let newcomer_child = "--newcomer"
+let counter_child = "--count-beside"
+
+let newcomer work =
+  match input_line stdin with
+  | exception End_of_file -> ()
+  | line when line <> "go" -> ()
+  | _ ->
+      let before = Prof.now () in
+      S.with_ @@ fun t ->
+      print_endline (strf "opened %d %d" before (Prof.now ()));
+      let p = image ~of_:counts_code t in
+      let start, stop = work t p in
+      print_endline (strf "done %d %d" start stop);
+      (try ignore (input_line stdin) with End_of_file -> ())
+
+(* The interval the first [Work] of [events] ran in. *)
+let worked events =
+  List.find_map
+    (function Prof.Work w -> Some (w.start, w.stop) | _ -> None)
+    events
+
+(* The work of [counter_child]: a count of its own, Counter.start and
+   Counter.stop around a launch, and the interval its submission ran in. *)
+let count_beside t p =
+  let _, events = Prof.take (fun () -> ignore (count t p ~groups:1 ~k:1 ())) in
+  match worked events with
+  | Some w -> w
+  | None -> failwith "the count recorded no Work"
+
+let spawn mode =
+  let child_in, to_child = Unix.pipe ~cloexec:true ()
+  and from_child, child_out = Unix.pipe ~cloexec:true () in
+  let child =
+    Unix.create_process Sys.executable_name
+      [| Sys.executable_name; mode |]
+      child_in child_out Unix.stderr
+  in
+  Unix.close child_in;
+  Unix.close child_out;
+  (child, Unix.in_channel_of_descr from_child, Unix.out_channel_of_descr to_child)
+
+(* Host pages KFD maps for [g], then unmapped and the mapping freed: KFD
+   evicts every queue of the process and restores them. *)
+let evict_bytes = 1 lsl 20
+
+let evict g =
+  let pages = H.pages evict_bytes in
+  let m = Option.get (maps (A.map_host g pages evict_bytes)) in
+  H.free_pages pages evict_bytes;
+  A.free g m
+
+let long = (8192, 300_000)
+
+(* The interval a child said after [word]. *)
+let said ic word =
+  let line =
+    try input_line ic
+    with End_of_file -> failf "the child did not say %s" word
+  in
+  match Scanf.sscanf line "%s %d %d%!" (fun w a b -> (w, a, b)) with
+  | w, a, b when w = word -> (a, b)
+  | _ | (exception (Scanf.Scan_failure _ | Failure _ | End_of_file)) ->
+      failf "the child said %S, expected %s" line word
+
+(* The interval [start, stop] lies inside [outer], times of the host's
+   clock. *)
+let inside msg (start, stop) ~outer:(from, until) =
+  greater int ~msg:(msg ^ ": start after the long launch's") ~than:from start;
+  less int ~msg:(msg ^ ": end before the long launch's") ~than:until stop
+
+(* A long launch measured while a child process, 50 ms in, opens its device
+   and runs [mode]'s work; with [churn], evictions of this process's queues
+   meanwhile, 20. A short launch goes first, after the child is spawned:
+   spawning a process, even one that never opens a GPU, holds this
+   process's queues for about 100 ms, which would start the long launch
+   after the child's work. Then 30 short launches. Every count is exact or
+   unmeasured. Answers the long launch's events and the interval its work
+   ran in, and the intervals of the child's open and of its work. *)
+let beside_newcomer t ~mode ~churn =
+  let p = image ~of_:counts_code t in
+  let child, ic, oc = spawn mode in
+  Fun.protect ~finally:(fun () ->
+      close_out_noerr oc;
+      ignore (reap child);
+      close_in_noerr ic)
+  @@ fun () ->
+  ignore (profiled (fun () -> submit_valu t p [ (64, 10) ]));
+  let opened = ref (0, 0) and theirs = ref (0, 0) in
+  let events =
+    profiled (fun () ->
+        let pt = submit_valu t p [ long ] in
+        Unix.sleepf 0.05;
+        output_string oc "go\n";
+        flush oc;
+        for _ = 1 to (if churn then 20 else 0) do
+          evict t.g
+        done;
+        opened := said ic "opened";
+        theirs := said ic "done";
+        pt)
+  in
+  let launch =
+    match worked events with
+    | Some w -> w
+    | None -> fail "the long launch recorded no Work"
+  in
+  List.iter
+    (equal counts ~msg:"the long launch" (exact ~groups:8192 ~k:300_000))
+    (fst (measures events));
+  for _ = 1 to 30 do
+    let counted, _ =
+      measures (profiled (fun () -> submit_valu t p [ (64, 10) ]))
+    in
+    List.iter (equal counts ~msg:"a short launch" (exact ~groups:64 ~k:10))
+      counted
+  done;
+  (events, launch, !opened, !theirs)
+
+(* 4. A newcomer's queue starting while this process's queues are evicted,
+   which moved this process's VMID in 9 of 10 runs: no count is wrong,
+   whether the VMID moved or not. The evictions' restores alone leave the
+   long launch unmeasured through SQ_WAVES, so the filter comparison and
+   the drain are test 3's and test 12's to check. *)
+let newcomer_beside () =
+  measuring @@ fun t ->
+  let _, launch, opened, _ =
+    beside_newcomer t ~mode:newcomer_child ~churn:true
+  in
+  inside "the child's open" opened ~outer:launch
+
+(* 5. Another process starts and stops counting while the long launch's
+   waves start: its start resets the counters and filters its own VMID, and
+   its stop stops them. *)
+let counting_beside () =
+  measuring @@ fun t ->
+  let events, launch, _, counting =
+    beside_newcomer t ~mode:counter_child ~churn:false
+  in
+  inside "the child's count" counting ~outer:launch;
+  equal (pair (list counts) int) ~msg:"the long launch" ([], 1)
+    (measures events)
+
+(* 6. Opens refused. *)
+let measure_open_child = "--measure-open"
+
+(* The child of [refused_opens] and [reopened]: tries to open GPU 0 to
+   measure, and says "opened", then stops the device, or says why not. *)
+let measure_open () =
+  match open_measured measured with
+  | Ok t ->
+      print_endline "opened";
+      Rig.close t.d
+  | Error why -> print_endline why
+
+(* A child of [measure_open], started: its pid and what it said. *)
+(* How long a child's measuring open may take to say how it went: an open
+   takes well under a second. *)
+let open_seconds = 10.
+
+let measure_open_beside () =
+  let from_child, child_out = Unix.pipe ~cloexec:true () in
+  let child =
+    Unix.create_process Sys.executable_name
+      [| Sys.executable_name; measure_open_child |]
+      Unix.stdin child_out Unix.stderr
+  in
+  Unix.close child_out;
+  let ic = Unix.in_channel_of_descr from_child in
+  let said =
+    match Unix.select [ from_child ] [] [] open_seconds with
+    | [], _, _ -> ""
+    | _ -> ( try input_line ic with End_of_file -> "")
+  in
+  close_in_noerr ic;
+  (child, said)
+
+let refused_opens () =
+  let gpu = measured_gpu () in
+  let refused counters =
+    match open_measured counters with
+    | Ok t ->
+        Rig.close t.d;
+        failf "opened to measure %s" (String.concat ", " counters)
+    | Error why -> why
+  in
+  let names = Counter.names gpu in
+  let block n =
+    match Counter.layout gpu [ n ] with
+    | Ok { counters = [ c ]; _ } -> c.block
+    | _ -> ""
+  in
+  let sq = List.filter (fun n -> block n = "SQ" && n <> "SQ_WAVES") names in
+  let gl2c = List.find (fun n -> block n = "GL2C") names in
+  let says msg sub why =
+    equal bool ~msg:(strf "%s: %s" msg why) true (contains ~sub why)
+  in
+  says "an unknown counter" "SQ_FOO" (refused [ "SQ_FOO" ]);
+  says "a GL2C counter" gl2c (refused [ gl2c ]);
+  says "more than 4 SQ counters, SQ_WAVES one of them" "at most 4"
+    (refused (List.filteri (fun i _ -> i < 4) sq));
+  (match open_measured (List.filteri (fun i _ -> i < 3) sq) with
+  | Ok t -> Rig.close t.d
+  | Error why -> failf "4 SQ counters, SQ_WAVES one of them: %s" why);
+  (S.with_ @@ fun _ ->
+   says "beside a plain device" "another device" (refused measured));
+  (measuring @@ fun _ ->
+   match Rig.open_ (S.gpu ()) with
+   | Ok d ->
+       Rig.close d;
+       fail "a plain device opened beside a measuring one"
+   | Error why -> says "a plain device beside" "measures counters" why);
+  (* A child process asks for the GPU's stable power state while this
+     process's measuring device holds it. *)
+  measuring @@ fun _ ->
+  let child, said = measure_open_beside () in
+  ignore (reap child);
+  says "another process's stable state" held said
+
+(* [child]'s exit status, once it exits of itself within [reap_seconds];
+   killed and failed otherwise. *)
+let await child =
+  let deadline = Unix.gettimeofday () +. reap_seconds in
+  let rec go () =
+    match Unix.waitpid [ WNOHANG ] child with
+    | 0, _ when Unix.gettimeofday () < deadline ->
+        Unix.sleepf 0.01;
+        go ()
+    | 0, _ ->
+        ignore (reap child);
+        failf "the child did not exit within %.0f s" reap_seconds
+    | _, status -> status
+  in
+  go ()
+
+(* 10. The stable power state, given back as the last device that holds it
+   stops: a measuring device's or a traced one's stop, an open just after a
+   stop in this process, and one just after a child process stopped its
+   device and exited. Giving it back restores the level read before. *)
+let reopened () =
+  ignore (measured_gpu ());
+  let before = level () in
+  let level_is msg =
+    match before with
+    | Some l -> equal (option string) ~msg (Some l) (level ())
+    | None -> ()
+  in
+  measuring (fun _ -> ());
+  level_is "the level once the measuring device stopped";
+  let traced () =
+    match S.open_gpu ~word:(Rig_gpu_support.Host.word ()) with
+    | Error why -> fail why
+    | Ok g -> (
+        match (A.capability g).trace () with
+        | Ok _ -> g
+        | Error why ->
+            A.stop g ~fault:None;
+            if contains ~sub:held why then skip ~reason:why () else fail why)
+  in
+  let first = traced () in
+  let stopped = ref false in
+  Fun.protect ~finally:(fun () ->
+      if not !stopped then A.stop first ~fault:None)
+  @@ fun () ->
+  let second = traced () in
+  Fun.protect ~finally:(fun () -> A.stop second ~fault:None) (fun () ->
+      A.stop first ~fault:None;
+      stopped := true;
+      if Option.is_some before then
+        equal (option string)
+          ~msg:"the level while a second traced device is open"
+          (Some "profile_standard") (level ()));
+  level_is "the level once the last traced device stopped";
+  let reopen msg =
+    match open_measured measured with
+    | Ok t -> Rig.close t.d
+    | Error why -> failf "%s: %s" msg why
+  in
+  reopen "an open just after a stop";
+  let child, said = measure_open_beside () in
+  (* The child stops its device, then exits of itself. *)
+  ignore (await child);
+  equal string ~msg:"the child's open" "opened" said;
+  reopen "an open just after the child's exit"
+
+(* 9. Records past the first segment, and values past the stamp slots. *)
+let many_launches () =
+  measuring @@ fun t ->
+  let p = image ~of_:counts_code t in
+  let sizes n = List.init n (fun i -> (1 + (i mod 7), 1 + (i mod 13))) in
+  let want n = List.map (fun (groups, k) -> exact ~groups ~k) (sizes n) in
+  let segment = A.segment t.g in
+  let counted, unmeasured =
+    measures (profiled (fun () -> submit_valu t p (sizes 2000)))
+  in
+  equal int ~msg:"unmeasured in one submission" 0 unmeasured;
+  equal (list counts) ~msg:"2000 launches in one submission" (want 2000)
+    counted;
+  greater int ~msg:"the segment grew" ~than:segment (A.segment t.g);
+  let n = 5000 in
+  let _, events =
+    Prof.take (fun () ->
+        let points = List.map (fun l -> submit_valu t p [ l ]) (sizes n) in
+        List.iter Rig.Point.wait points)
+  in
+  let counted, unmeasured = measures events in
+  equal int ~msg:"unmeasured over 5000 values" 0 unmeasured;
+  equal (list counts) ~msg:"5000 values of one launch each" (want n) counted
+
+(* 8. Two profiles taken at once, by two domains, each hold every launch. *)
+let two_profiles () =
+  measuring @@ fun t ->
+  let p = image ~of_:counts_code t in
+  let n = 50 in
+  let started = Atomic.make 0 and submitted = Atomic.make false in
+  let take () =
+    snd
+      (Prof.take (fun () ->
+           Atomic.incr started;
+           while not (Atomic.get submitted) do
+             Domain.cpu_relax ()
+           done))
+  in
+  let other = Domain.spawn take in
+  let mine =
+    Domain.spawn (fun () ->
+        while Atomic.get started < 1 do
+          Domain.cpu_relax ()
+        done;
+        take ())
+  in
+  while Atomic.get started < 2 do
+    Domain.cpu_relax ()
+  done;
+  let points = List.init n (fun _ -> submit_valu t p [ (64, 10) ]) in
+  List.iter Rig.Point.wait points;
+  Atomic.set submitted true;
+  let want = (List.init n (fun _ -> exact ~groups:64 ~k:10), 0) in
+  equal (pair (list counts) int) ~msg:"the first profile" want
+    (measures (Domain.join other));
+  equal (pair (list counts) int) ~msg:"the second profile" want
+    (measures (Domain.join mine))
+
+(* 7. A program's loop: its one submission runs once per trip, trip [i]
+   launching [valu] over 64 groups with [k = i + 1], the trip read from the
+   run's ints. *)
+let program_loop () =
+  measuring @@ fun t ->
+  let trips = 5 and groups = 64 in
+  let k =
+    { G.at = 0; width = W32; terms = [| (G.Int 0, 1) |]; add = 1; shift = 0 }
+  in
+  let launch =
+    G.Launch
+      {
+        image = 0;
+        name = "valu";
+        params = { G.bytes = String.make 8 '\000'; holes = [| k |] };
+        refs = [||];
+        groups = (G.Fixed groups, G.Fixed 1, G.Fixed 1);
+        threads = (G.Fixed threads, G.Fixed 1, G.Fixed 1);
+        shared = G.Fixed 0;
+      }
+  in
+  let description =
+    {
+      G.devices = [| Rig.arch t.d |];
+      memory = [||];
+      images =
+        [|
+          {
+            G.device = 0;
+            binary =
+              { G.bytes = (Lazy.force counts_code).binary; holes = [||] };
+          };
+        |];
+      inputs = [||];
+      ints = 1;
+      steps =
+        [|
+          G.Loop
+            {
+              trips = G.Fixed trips;
+              trip = Some 0;
+              flag = None;
+              body =
+                [|
+                  G.Submit
+                    {
+                      device = 0;
+                      parts = [| launch |];
+                      slots = [||];
+                      fixed = [||];
+                    };
+                |];
+            };
+        |];
+    }
+  in
+  let p =
+    require_ok ~pp:Format.pp_print_string (G.load description [| t.d |])
+  in
+  let frame = { G.inputs = [||]; ints = [||]; step_points = G.step_points p } in
+  let events =
+    snd (Prof.take (fun () -> Array.iter Rig.Point.wait (G.run p frame)))
+  in
+  equal (pair (list counts) int) ~msg:"one Counters per trip, each its own k"
+    (List.init trips (fun i -> exact ~groups ~k:(i + 1)), 0)
+    (measures events)
+
+(* 11. A measuring open of the GPU with other counters, while one is open. *)
+let other_counters () =
+  measuring @@ fun _ ->
+  match
+    Rig.open_
+      (Rig_amd_amdgpu.gpu ~measure:{ counters = [ "SQ_WAVE_CYCLES" ] } 0)
+  with
+  | Ok _ -> fail "a second measuring device opened with other counters"
+  | Error why ->
+      equal bool
+        ~msg:(strf "the second open's error: %s" why)
+        true
+        (contains ~sub:"measures counters" why)
+
+(* 12. A drain whose filter word differs from its value's first launch's:
+   the VMID moved again during the drain, so the value is unmeasured and
+   the device stays marked until a drain reads nothing under the filter its
+   launch loads. VMID 15's filter, which [stale_filter] forces, stands for
+   the old VMID. *)
+let drain_moved () =
+  measuring @@ fun t ->
+  let p = image ~of_:counts_code t in
+  let c = A.capability t.g in
+  let small = (64, 10) in
+  let each launches =
+    measures (profiled (fun () -> submit_valu t p launches))
+  in
+  let old = Counter.filter c.gpu ~vmid:15 in
+  A.stale_filter t.g old;
+  equal (pair (list counts) int) ~msg:"a launch under another filter" ([], 1)
+    (each [ small ]);
+  A.stale_filter t.g old;
+  equal (pair (list counts) int)
+    ~msg:"a value whose drain stored another filter word" ([], 1)
+    (each [ small ]);
+  let rec clean n =
+    let r = each [ small ] in
+    List.iter (equal counts ~msg:"after" (exact ~groups:64 ~k:10)) (fst r);
+    if fst r = [] && n > 0 then clean (n - 1) else r
+  in
+  equal (pair (list counts) int) ~msg:"once a drain reads nothing"
+    ([ exact ~groups:64 ~k:10 ], 0)
+    (clean 50)
+
+let measures_group =
+  group ~timeout:300. "measures"
+    [
+      prop ~count:40
+        "a measured launch on an idle GPU has one Counters event of its own \
+         waves and VALU instructions"
+        launch_sizes measured_launch;
+      test "a launch whose count saturates is unmeasured" saturated;
+      test
+        "a bracket under another process's filter, and every launch until a \
+         drain reads nothing, is unmeasured, and no count is wrong"
+        stale_filter;
+      test
+        "an open to measure refuses unknown, non-SQ and too many counters, \
+         another device of the GPU, and another process's stable state"
+        refused_opens;
+      test
+        "launches past the first segment, and values past the stamp slots, \
+         are each measured exactly"
+        many_launches;
+      test "two profiles taken at once each hold every launch's counters"
+        two_profiles;
+      test "a program's loop of 5 trips has one Counters event per trip"
+        program_loop;
+      test
+        "a measuring open of the GPU with other counters than the open \
+         one's is refused"
+        other_counters;
+      test
+        "a value whose drain stored another filter word than its launch is \
+         unmeasured, until a drain reads nothing"
+        drain_moved;
+      test
+        "the stable power state is held until the last device that holds it \
+         stops, and an open to measure succeeds just after, in this process \
+         or after one that exited"
+        reopened;
+      test
+        "launches during and after another process's queue starts while \
+         this process's are evicted are each exact or unmeasured"
+        newcomer_beside;
+      test
+        "a launch during which another process counts is unmeasured"
+        counting_beside;
+    ]
+
 let () =
   if Array.length Sys.argv = 2 && Sys.argv.(1) = busy_child then begin
     busy ();
+    exit 0
+  end;
+  if Array.length Sys.argv = 2 && Sys.argv.(1) = measure_open_child then begin
+    measure_open ();
+    exit 0
+  end;
+  if Array.length Sys.argv = 2 && Sys.argv.(1) = newcomer_child then begin
+    newcomer (fun t p ->
+        let at = Prof.now () in
+        ignore (submit_valu t p [ (256, 6_000_000) ]);
+        (at, at));
+    exit 0
+  end;
+  if Array.length Sys.argv = 2 && Sys.argv.(1) = counter_child then begin
+    newcomer count_beside;
     exit 0
   end;
   if Array.length Sys.argv = 2 && Sys.argv.(1) = dma_child then
@@ -3044,6 +3798,7 @@ let () =
          two;
          traces;
          counters;
+         measures_group;
          rings;
          memory;
          queue_order;

@@ -40,7 +40,7 @@ type event = Def.event =
       part : int;
       data : string;
     }
-  | Overwritten of { device : device; time : int; runs : int }
+  | Unmeasured of { device : device; time : int; runs : int }
   | Copy of {
       src : device;
       dst : device;
@@ -179,7 +179,7 @@ let time = function
   | Load l -> l.time
   | Counters c -> c.start
   | Trace t -> t.start
-  | Overwritten o -> o.time
+  | Unmeasured o -> o.time
   | Copy c -> c.start
 
 let duration = function
@@ -188,7 +188,7 @@ let duration = function
   | Counters c -> c.stop - c.start
   | Trace t -> t.stop - t.start
   | Copy c -> c.stop - c.start
-  | Allocation _ | Load _ | Overwritten _ -> 0
+  | Allocation _ | Load _ | Unmeasured _ -> 0
 
 (* Time order; at equal times longest first. *)
 let order e e' =
@@ -346,7 +346,7 @@ let device_of = function
   | Load l -> l.image.idev
   | Counters c -> c.device
   | Trace t -> t.device
-  | Overwritten o -> o.device
+  | Unmeasured o -> o.device
   | Copy c -> c.src
 
 let output_chrome_trace oc events =
@@ -392,14 +392,14 @@ let output_chrome_trace oc events =
         | Span s -> tid d pid s.lane
         | Counters _ -> tid d pid "counters"
         | Copy _ -> tid d pid "copy"
-        | Allocation _ | Load _ | Trace _ | Overwritten _ -> 0
+        | Allocation _ | Load _ | Trace _ | Unmeasured _ -> 0
       in
       next ();
       let ph =
         match e with
         | Work _ | Span _ | Counters _ | Copy _ -> "X"
         | Allocation _ -> "C"
-        | Load _ | Trace _ | Overwritten _ -> "i"
+        | Load _ | Trace _ | Unmeasured _ -> "i"
       in
       Printf.fprintf oc "{\"ph\":\"%s\",\"pid\":%d,\"tid\":%d,\"ts\":" ph pid
         tid;
@@ -434,9 +434,9 @@ let output_chrome_trace oc events =
           string oc t.name;
           Printf.fprintf oc ",\"args\":{\"part\":%d,\"bytes\":%d}" t.part
             (String.length t.data)
-      | Overwritten o ->
+      | Unmeasured o ->
           Printf.fprintf oc
-            ",\"s\":\"p\",\"name\":\"overwritten\",\"args\":{\"runs\":%d}"
+            ",\"s\":\"p\",\"name\":\"unmeasured\",\"args\":{\"runs\":%d}"
             o.runs
       | Allocation a ->
           Printf.fprintf oc ",\"name\":\"memory\",\"args\":{\"allocated\":%d}"

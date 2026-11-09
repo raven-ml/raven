@@ -45,6 +45,7 @@ module D = struct
       alignment;
       (* Its memory is the host's, behind the host's caches. *)
       cache_bytes = Dev.host.Def.cache_bytes;
+      counters = [];
       capability = Capability (capability_key, ());
       word = { at = d.word; base = 0 };
       bus = None;

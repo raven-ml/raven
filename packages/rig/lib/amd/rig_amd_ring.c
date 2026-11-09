@@ -355,12 +355,54 @@ static uint64_t slot_bytes(int n) {
   return align_up(8 * ((uint64_t)n + 1), SEGMENT_ALIGN);
 }
 
+/* Counters: what a bracket takes */
+
+/* The segment bytes of a filter wave's arguments. */
+static uint64_t filter_bytes(const struct rig_amd_counting *c) {
+  return align_up(arguments(&c->filter, 8), SEGMENT_ALIGN);
+}
+
+/* The segment bytes of a record of [values] samples. */
+static uint64_t record_bytes(uint64_t values) {
+  return align_up(RIG_AMD_RECORD_SAMPLES + 8 * values, SEGMENT_ALIGN);
+}
+
+/* The words of a filter wave, or of the write that stands in for it, and
+   the flush that waits for it. */
+static uint64_t filter_words(const struct rig_amd *d) {
+  const struct rig_amd_launch *l = &d->counting->filter;
+  uint64_t w = (uint64_t)l->n + words_of(d, T_INVALIDATE);
+  uint64_t k = words_of(d, T_WRITE);
+  return (w > k ? w : k) + words_of(d, T_FLUSH);
+}
+
+/* What the brackets of [launches] launches take, with a drain and a tail
+   wave. A room check cannot tell whether the submission is timed, so a
+   device that measures counters reserves them for every one. */
+static struct cost counting_cost(const struct rig_amd *d, uint64_t launches) {
+  const struct rig_amd_counting *c = d->counting;
+  struct cost k = {0};
+  if (c == NULL || launches == 0) return k;
+  uint64_t f = filter_words(d), fb = filter_bytes(c);
+  uint64_t each = f + (uint64_t)c->start.n + 2 * words_of(d, T_STAMP) +
+                  (uint64_t)c->stop.n;
+  uint64_t once = 2 * f + (uint64_t)c->drain_start.n + c->drain_stop.n;
+  k.compute = launches * each + once;
+  k.bytes = launches * (fb + record_bytes(c->values)) + fb +
+            record_bytes(c->drain_values) + fb + SEGMENT_ALIGN;
+  return k;
+}
+
 /* What a submission of the routed [parts] after [nwaits] waits takes. */
 static struct cost need(const struct rig_amd *d, int nwaits,
                         const struct rig_amd_route *routes,
                         const struct rig_part *p, int n) {
   struct cost k = fixed_cost(d, nwaits);
-  k.bytes += slot_bytes(n);
+  uint64_t launches = 0;
+  for (int i = 0; i < n; i++) launches += p[i].kind == RIG_LAUNCH;
+  struct cost b = counting_cost(d, launches);
+  k.compute += b.compute;
+  k.bytes += b.bytes + slot_bytes(n);
   for (int i = 0; i < n; i++) {
     const struct rig_amd_route *x = &routes[i];
     uint64_t args, w = part_words(d, &p[i], x->kernel, &args);
@@ -435,6 +477,15 @@ static int runs(const struct rig_amd *d, const struct rig_part *p, int i,
    read every packet, and the growth's side destroys it, and frees what it
    replaced, once that is neither installed nor handed. */
 
+/* Copies the counters of every value up to [word] out of the segment
+   (Counters). */
+static void copy_out(struct rig_amd *d, uint64_t word);
+
+/* Keeps the records of a timed value's launches (Counters). */
+static struct rig_amd_counted *count(struct rig_amd *d, uint64_t v,
+                                     const struct rig_part *parts, int n,
+                                     const uint8_t *args);
+
 /* The room of [d] once what [g] made is installed. */
 static struct cost room_after(const struct rig_amd *d,
                               const struct rig_amd_grown *g) {
@@ -500,6 +551,7 @@ static int switch_growth(struct rig_amd *d, const struct cost *k) {
             : RIG_LATER;
     d->draining = r == RIG_LATER;
     if (r == RIG_FITS) {
+      copy_out(d, seen);
       install(d, g);
       d->grown = NULL;
       free(g);
@@ -546,6 +598,8 @@ int rig_amd_room(void *self, int nwaits, const struct rig_part *parts,
   struct rig_amd_ring *s = &d->rings[RIG_AMD_COPY];
   struct rig_amd_segment *g = &d->segment;
   uint64_t word = atomic_load_explicit(d->word, memory_order_acquire);
+  /* The records go before the room under them: the copy reads them. */
+  copy_out(d, word);
   c->free = reclaim(&c->marks, c->free, word);
   s->free = reclaim(&s->marks, s->free, word);
   g->free = reclaim(&g->marks, g->free, word);
@@ -571,6 +625,8 @@ struct submission {
   uint64_t slots;  /* the GPU address of its first slot word */
   int w;           /* the index of slot W, after the parts' */
   struct rig_amd_timed *timed; /* its slot, NULL unless it is timed */
+  struct rig_amd_counted *counted; /* NULL unless its launches are measured */
+  int launches;    /* the launches it bracketed */
 };
 
 static uint64_t slot_gpu(const struct submission *s, int i) {
@@ -998,6 +1054,85 @@ static void copy_compute(struct submission *s, const struct rig_part *p,
   dispatch(s, l, &b, at, acquired);
 }
 
+/* Counters: brackets
+
+   A bracket's packets go on the compute ring, which reads PM4 packets on
+   a device that measures counters (Rig_amd.make). Each record lies in the
+   value's run of the segment. */
+
+/* A record of [bytes] in the segment: its GPU address, and its host
+   address in [*host]. */
+static uint64_t carve(struct rig_amd *d, uint64_t bytes,
+                      volatile uint8_t **host) {
+  struct rig_amd_segment *g = &d->segment;
+  uint64_t at = g->put % g->size;
+  *host = g->host + at;
+  g->put += bytes;
+  return g->gpu + at;
+}
+
+/* Places program [p], its holes filled with the record at [base]. */
+static void program(struct rig_amd *d, const struct rig_amd_program *p,
+                    uint64_t base) {
+  uint32_t *w = d->counting->scratch;
+  memcpy(w, p->words, 4 * (size_t)p->n);
+  rig_amd_holes(p->holes, p->nholes, &base, w);
+  put_words(&d->rings[RIG_AMD_COMPUTE], w, (size_t)p->n);
+}
+
+/* Places a filter wave that stores its filter word at [address], or, if
+   [forced] is not negative, a write of it, then a flush that waits for
+   either. Answers 0, for the [acquired] of the dispatches after it. */
+static int filter(struct submission *s, uint64_t address, int acquired,
+                  int64_t forced) {
+  struct rig_amd *d = s->d;
+  struct rig_amd_counting *c = d->counting;
+  struct rig_amd_ring *r = &d->rings[RIG_AMD_COMPUTE];
+  struct rig_amd_segment *g = &d->segment;
+  if (forced >= 0)
+    emit(d, r, T_WRITE, address, (uint64_t)forced, 0);
+  else {
+    struct rig_block b = {.groups = {1, 1, 1}, .threads = {1, 1, 1}};
+    uint64_t at = g->put % g->size;
+    memcpy(g->host + at, &address, sizeof address);
+    implicit(&c->filter, &b, g->host + at);
+    g->put += filter_bytes(c);
+    dispatch(s, &c->filter, &b, at, acquired);
+  }
+  emit(d, r, T_FLUSH, 0, 0, 0);
+  return 0;
+}
+
+/* Places launch [p] in its bracket: at the value's first launch, while a
+   VMID move is unresolved, a drain; a filter wave, the start program,
+   stamps around the launch, the stop program; after its last launch, the
+   tail's filter wave. */
+static void bracket(struct submission *s, const struct rig_part *p,
+                    const uint8_t *args, const uint64_t *slots,
+                    int acquired) {
+  struct rig_amd *d = s->d;
+  struct rig_amd_counting *c = d->counting;
+  struct rig_amd_counted *k = s->counted;
+  if (s->launches == 0 && c->marked) {
+    uint64_t at = carve(d, record_bytes(c->drain_values), &k->drain);
+    int64_t forced = atomic_exchange(&c->forced, -1);
+    acquired = filter(s, at + RIG_AMD_RECORD_FILTER, acquired, forced);
+    program(d, &c->drain_start, at);
+    program(d, &c->drain_stop, at);
+  }
+  uint64_t at = carve(d, record_bytes(c->values), &k->at[s->launches]);
+  int64_t forced = atomic_exchange(&c->forced, -1);
+  acquired = filter(s, at + RIG_AMD_RECORD_FILTER, acquired, forced);
+  program(d, &c->start, at);
+  stamp(d, RIG_AMD_COMPUTE, at + RIG_AMD_RECORD_START);
+  launch(s, p, args, slots, acquired);
+  stamp(d, RIG_AMD_COMPUTE, at + RIG_AMD_RECORD_END);
+  program(d, &c->stop, at);
+  if (++s->launches < k->n) return;
+  uint64_t tail = carve(d, SEGMENT_ALIGN, &k->tail);
+  filter(s, tail, 0, -1);
+}
+
 static void release(struct submission *s, int q) {
   struct rig_amd *d = s->d;
   struct rig_amd_ring *r = &d->rings[q];
@@ -1078,6 +1213,7 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
 
   struct rig_amd_ring *compute = &d->rings[RIG_AMD_COMPUTE];
   s.timed = take_slot(d, v, nparts > 0 ? times : NULL);
+  if (s.timed != NULL) s.counted = count(d, v, parts, nparts, args);
   if (nwaits > 0) enter(&s, RIG_AMD_COMPUTE, waits, nwaits, copy_parts);
   int placed[RIG_AMD_QUEUES] = {0};
   for (int i = 0; i < nparts; i++) {
@@ -1089,6 +1225,8 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
     int acquired = prepare(&s, parts, i, !placed[q]++);
     flush(d, ring);
     if (p->kind == RIG_WORDS) put_words(ring, p->words.at, p->words.n);
+    else if (p->kind == RIG_LAUNCH && s.counted != NULL)
+      bracket(&s, p, args, slots, acquired);
     else if (p->kind == RIG_LAUNCH) launch(&s, p, args, slots, acquired);
     else if (x->kernel) copy_compute(&s, p, acquired);
     else copy(&s, p);
@@ -1112,6 +1250,205 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
   hand_over(&s);
   atomic_store_explicit(&d->last, v, memory_order_release);
   return RIG_COMMITTED;
+}
+
+/* Counters: records
+
+   A measured value's records are copied out of the segment once the word
+   shows it, before the room under them is taken back, in value order, and
+   whatever they hold: a room check frees every reached value's room, so a
+   room that waits for a value's room ends. The copy checks each launch's
+   records (the guard):
+   - SQ_WAVES, summed, is the launch's grid waves, else a context save and
+     restore added its handler's waves, the GPU counted foreign waves under
+     our filter, or another process started, reset or stopped counting
+     while our waves started;
+   - no value reads 2^32 - 1, at which a counter saturates;
+   - its filter word is the next launch's, or the tail's for the last: if
+     not, the VMID moved during or after its bracket, and the GPU may have
+     counted another process's waves under the old filter for their life.
+     The launch and every later one are unmeasured, and so is every value
+     submitted before the copy saw it, until a value's drain, the counts of
+     a start and a stop around no launch, reads nothing under its first
+     launch's filter word. */
+
+/* The 32 bits, or the 64 bits, the GPU wrote at [p]. */
+static uint32_t word32(volatile const uint8_t *p) {
+  return *(volatile const uint32_t *)p;
+}
+
+static uint64_t word64(volatile const uint8_t *p) {
+  return *(volatile const uint64_t *)p;
+}
+
+/* Sample [j] of the record at [r]: a counter's 32 bits. */
+static uint64_t sample(volatile const uint8_t *r, uint64_t j) {
+  return word32(r + RIG_AMD_RECORD_SAMPLES + 8 * j);
+}
+
+/* Whether the drain at [r] counted nothing. */
+static int drained(const struct rig_amd_counting *c,
+                   volatile const uint8_t *r) {
+  for (uint64_t j = 0; j < c->drain_values; j++)
+    if (sample(r, j) != 0) return 0;
+  return 1;
+}
+
+/* The records of [v]'s launches among [parts], kept in [d]'s table, or
+   NULL if it has none, measures none or the host has no memory for them:
+   its launches are then unmeasured. */
+static struct rig_amd_counted *count(struct rig_amd *d, uint64_t v,
+                                     const struct rig_part *parts, int n,
+                                     const uint8_t *args) {
+  struct rig_amd_counting *c = d->counting;
+  if (c == NULL) return NULL;
+  int launches = 0;
+  for (int i = 0; i < n; i++) launches += parts[i].kind == RIG_LAUNCH;
+  if (launches == 0) return NULL;
+  if (c->ncounted == c->cap) {
+    size_t cap = c->cap == 0 ? 64 : 2 * c->cap;
+    void *m = realloc(c->counted, cap * sizeof *c->counted);
+    if (m == NULL) return NULL;
+    c->counted = m;
+    c->cap = cap;
+  }
+  size_t row = 3 + c->values;
+  struct rig_amd_counted *k =
+      calloc(1, sizeof *k + (size_t)launches * (sizeof *k->at + 8 + 8 * row));
+  if (k == NULL) return NULL;
+  k->v = v;
+  k->n = launches;
+  k->at = (volatile uint8_t **)(k + 1);
+  k->waves = (uint64_t *)(k->at + launches);
+  k->rows = k->waves + launches;
+  int j = 0;
+  for (int i = 0; i < n; i++) {
+    if (parts[i].kind != RIG_LAUNCH) continue;
+    const struct rig_amd_launch *l = parts[i].launch.launch;
+    const struct rig_block *b =
+        (const void *)(args + parts[i].launch.args.block);
+    uint64_t groups = 1, threads = 1, lanes = l->lanes;
+    for (int a = 0; a < 3; a++) {
+      groups *= b->groups[a];
+      threads *= b->threads[a];
+    }
+    k->waves[j++] = groups * ((threads + lanes - 1) / lanes);
+  }
+  c->counted[c->ncounted++] = k;
+  return k;
+}
+
+/* Copies [k]'s records out, checked by the guard. */
+static void copy_one(struct rig_amd *d, struct rig_amd_counted *k) {
+  struct rig_amd_counting *c = d->counting;
+  size_t row = 3 + c->values;
+  int stale = k->v <= c->stale, moved = 0;
+  if (!stale && c->marked) {
+    /* A drain's filter word other than the first launch's: the VMID moved
+       again between them, so a drain that read nothing says nothing of the
+       filter the launch loads. */
+    if (k->drain != NULL && word32(k->drain + RIG_AMD_RECORD_FILTER) !=
+                                word32(k->at[0] + RIG_AMD_RECORD_FILTER))
+      moved = 1;
+    else if (k->drain != NULL && drained(c, k->drain)) c->marked = 0;
+    else stale = 1;
+  }
+  for (int i = 0; i < k->n; i++) {
+    volatile const uint8_t *r = k->at[i];
+    uint32_t next = word32(i + 1 < k->n ? k->at[i + 1] : k->tail);
+    if (word32(r + RIG_AMD_RECORD_FILTER) != next) moved = 1;
+    uint64_t start = word64(r + RIG_AMD_RECORD_START);
+    uint64_t end = word64(r + RIG_AMD_RECORD_END);
+    if (stale || moved || start == 0 || end == 0) continue;
+    uint64_t *o = k->rows + (size_t)i * row, waves = 0;
+    int whole = 1;
+    for (uint64_t j = 0; j < c->values; j++) {
+      uint64_t x = sample(r, j);
+      whole &= x != UINT32_MAX;
+      if (j < c->waves) waves += x;
+      o[3 + j] = x;
+    }
+    if (!whole || waves != k->waves[i]) {
+      memset(o, 0, 8 * row);
+      continue;
+    }
+    o[0] = 1;
+    o[1] = host_ns(d, start);
+    o[2] = host_ns(d, end);
+  }
+  if (moved) {
+    c->marked = 1;
+    c->stale = atomic_load_explicit(&d->last, memory_order_relaxed);
+  }
+  k->copied = 1;
+}
+
+static void copy_out(struct rig_amd *d, uint64_t word) {
+  struct rig_amd_counting *c = d->counting;
+  if (c == NULL) return;
+  size_t i = c->uncopied, j = i;
+  for (; i < c->ncounted && c->counted[i]->v <= word; i++) {
+    struct rig_amd_counted *k = c->counted[i];
+    copy_one(d, k);
+    if (k->dropped) free(k);
+    else c->counted[j++] = k;
+  }
+  memmove(&c->counted[j], &c->counted[i],
+          (c->ncounted - i) * sizeof *c->counted);
+  c->ncounted -= i - j;
+  c->uncopied = j;
+}
+
+/* The index of [v]'s records in [c]'s table, or its count if none. */
+static size_t find(const struct rig_amd_counting *c, uint64_t v) {
+  size_t lo = 0, hi = c->ncounted;
+  while (lo < hi) {
+    size_t mid = lo + (hi - lo) / 2;
+    if (c->counted[mid]->v < v) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo < c->ncounted && c->counted[lo]->v == v ? lo : c->ncounted;
+}
+
+int rig_amd_measures(void *self, uint64_t v, uint64_t *out,
+                     const char **failure) {
+  (void)failure;
+  struct rig_amd *d = ((struct rig_amd_edge *)self)->d;
+  struct rig_amd_counting *c = d->counting;
+  if (c == NULL) return RIG_OK;
+  copy_out(d, atomic_load_explicit(d->word, memory_order_acquire));
+  size_t i = find(c, v);
+  if (i == c->ncounted) return RIG_OK;
+  struct rig_amd_counted *k = c->counted[i];
+  if (out != NULL) {
+    if (k->copied)
+      memcpy(out, k->rows, 8 * (size_t)k->n * (3 + c->values));
+    return RIG_OK;
+  }
+  if (!k->copied) {
+    k->dropped = 1;
+    return RIG_OK;
+  }
+  free(k);
+  memmove(&c->counted[i], &c->counted[i + 1],
+          (c->ncounted - i - 1) * sizeof *c->counted);
+  c->ncounted--;
+  c->uncopied--;
+  return RIG_OK;
+}
+
+void rig_amd_counting_free(struct rig_amd_counting *c) {
+  if (c == NULL) return;
+  struct rig_amd_program *p[4] = {&c->start, &c->stop, &c->drain_start,
+                                  &c->drain_stop};
+  for (int i = 0; i < 4; i++) {
+    free(p[i]->words);
+    free(p[i]->holes);
+  }
+  for (size_t i = 0; i < c->ncounted; i++) free(c->counted[i]);
+  free(c->counted);
+  free(c->scratch);
+  free(c);
 }
 
 /* Calibration */

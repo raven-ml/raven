@@ -655,7 +655,8 @@ static CUresult begin(struct device *d, _Atomic uint64_t *slot, int own) {
 }
 
 static const struct rig_driver driver = {rig_cuda_room, rig_cuda_submit,
-                                         rig_cuda_commit, rig_cuda_settle};
+                                         rig_cuda_commit, rig_cuda_settle,
+                                         NULL};
 
 /* Reads the GPU's limits on a launch's groups and threads, and on a 2D
    copy's pitch, into [d]. */

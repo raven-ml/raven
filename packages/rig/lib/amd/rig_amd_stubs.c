@@ -42,8 +42,13 @@ static int rig_amd_commit(void *self, uint64_t v, const char **failure) {
   return RIG_OK;
 }
 
+/* A device's functions, and a measuring device's, whose facts list
+   counters (Rig_edge: [measures] is NULL iff they list none). */
 static const struct rig_driver driver = {rig_amd_room, rig_amd_submit,
-                                         rig_amd_commit, rig_amd_settle};
+                                         rig_amd_commit, rig_amd_settle, NULL};
+static const struct rig_driver measuring = {rig_amd_room, rig_amd_submit,
+                                            rig_amd_commit, rig_amd_settle,
+                                            rig_amd_measures};
 
 /* The header's values that Rig_amd and Template read rather than state,
    each by its name: caml_rig_amd_<name> is [v]. */
@@ -91,6 +96,9 @@ CONSTANT(h_offset, H_OFFSET)
 CONSTANT(h_dims, H_DIMS)
 CONSTANT(h_lds, H_LDS)
 CONSTANT(hidden, RIG_AMD_HIDDEN)
+CONSTANT(program_words, RIG_AMD_PROGRAM_WORDS)
+CONSTANT(program_holes, RIG_AMD_PROGRAM_HOLES)
+CONSTANT(record_samples, RIG_AMD_RECORD_SAMPLES)
 
 /* Queue [v_q] of a device, which Rig_amd numbers as the header does. */
 static int queue_of(value v_q) {
@@ -150,6 +158,7 @@ value caml_rig_amd_end(value v_self) {
   struct rig_amd *d = e->d;
   e->d = NULL;
   pthread_mutex_unlock(&e->hdp_mu);
+  rig_amd_counting_free(d->counting);
   free(d->grown);
   pthread_mutex_destroy(&d->grown_mu);
   free(d);
@@ -160,6 +169,7 @@ value caml_rig_amd_end(value v_self) {
 value caml_rig_amd_destroy(value v_self) {
   struct rig_amd_edge *e = Edge_val(v_self);
   unlink_edge(e);
+  rig_amd_counting_free(e->d->counting);
   free(e->d->grown);
   pthread_mutex_destroy(&e->d->grown_mu);
   free(e->d);
@@ -410,7 +420,7 @@ static int holes(value v_holes, struct rig_amd_hole *h, int max, int nargs,
     if (f[1] < 1 || f[1] > 2 || f[0] > (uint64_t)n ||
         f[0] + f[1] > (uint64_t)n || f[2] >= (uint64_t)nargs || f[4] > 63)
       caml_invalid_argument(OUT_OF_BOUNDS);
-    h[i] = (struct rig_amd_hole){.at = (uint8_t)f[0],
+    h[i] = (struct rig_amd_hole){.at = (uint16_t)f[0],
                                  .wide = (uint8_t)f[1],
                                  .arg = (uint8_t)f[2],
                                  .add = f[3],
@@ -445,9 +455,9 @@ _Static_assert(sizeof rig_amd_hidden_bytes == RIG_AMD_HIDDEN,
 /* Reads into [c] what a launch of either form holds: its dispatch's words
    and holes, as a template's; [v_max], the function's own LDS bytes, its most
    threads per group and shared bytes, its arguments' bytes and its explicit
-   ones'; and
-   [v_hidden], the offsets of its implicit arguments, each within its
-   arguments, or -1. */
+   ones', and
+   the lanes of its waves; and [v_hidden], the offsets of its implicit
+   arguments, each within its arguments, or -1. */
 static void launch_of(struct rig_amd_launch *c, value v_words, value v_holes,
                       value v_max, value v_hidden) {
   size_t bytes = caml_string_length(v_words);
@@ -461,6 +471,8 @@ static void launch_of(struct rig_amd_launch *c, value v_words, value v_holes,
   c->max_shared = (uint32_t)at(v_max, 2);
   c->kernarg = (uint32_t)at(v_max, 3);
   c->explicit_size = (uint32_t)at(v_max, 4);
+  c->lanes = (uint32_t)at(v_max, 5);
+  if (c->lanes != 32 && c->lanes != 64) caml_invalid_argument(OUT_OF_BOUNDS);
   if (Wosize_val(v_hidden) != RIG_AMD_HIDDEN)
     caml_invalid_argument(OUT_OF_BOUNDS);
   for (int i = 0; i < RIG_AMD_HIDDEN; i++) {
@@ -529,6 +541,70 @@ value caml_rig_amd_launch_free(value v_l) {
 value caml_rig_amd_launches_free(value v_launches) {
   for (value l = v_launches; Is_block(l); l = Field(l, 1))
     free((void *)Long_val(Field(l, 0)));
+  return Val_unit;
+}
+
+/* Reads program [p] from its words [v_words] and holes [v_holes], records
+   as above whose argument is the record's address. Answers 0 if out of
+   memory. */
+static int program_of(struct rig_amd_program *p, value v_words,
+                      value v_holes) {
+  size_t bytes = caml_string_length(v_words);
+  if (bytes > 4 * RIG_AMD_PROGRAM_WORDS || bytes % 4 != 0)
+    caml_invalid_argument(OUT_OF_BOUNDS);
+  p->n = (int)(bytes / 4);
+  p->words = malloc(bytes + 4);
+  p->holes = malloc(RIG_AMD_PROGRAM_HOLES * sizeof *p->holes);
+  if (p->words == NULL || p->holes == NULL) return 0;
+  memcpy(p->words, String_val(v_words), bytes);
+  p->nholes = holes(v_holes, p->holes, RIG_AMD_PROGRAM_HOLES, 1, p->n);
+  return 1;
+}
+
+/* Has the device measure counters, before its first submission: the
+   filter kernel's launch [v_filter], which it copies; in [v_programs] the
+   words and holes of the start and stop programs around a launch, then
+   of the drain's; and in [v_values] the 8-byte values of a launch's
+   samples, of a drain's, and of SQ_WAVES, the samples' first. */
+value caml_rig_amd_counting(value v_self, value v_filter, value v_programs,
+                            value v_values) {
+  CAMLparam4(v_self, v_filter, v_programs, v_values);
+  struct rig_amd *d = Device_val(v_self);
+  struct rig_amd_counting *c = calloc(1, sizeof *c);
+  if (c == NULL) caml_raise_out_of_memory();
+  c->filter = *(const struct rig_amd_launch *)Long_val(v_filter);
+  struct rig_amd_program *p[4] = {&c->start, &c->stop, &c->drain_start,
+                                  &c->drain_stop};
+  /* The state holds [c] while a refused program raises, so that the
+     state's free frees it. */
+  rig_amd_counting_free(d->counting);
+  d->counting = c;
+  int most = 0, made = 1;
+  for (int i = 0; i < 4 && made; i++) {
+    made = program_of(p[i], Field(v_programs, 2 * i),
+                      Field(v_programs, 2 * i + 1));
+    if (p[i]->n > most) most = p[i]->n;
+  }
+  c->scratch = malloc(4 * (size_t)most + 4);
+  c->values = (uint64_t)at(v_values, 0);
+  c->drain_values = (uint64_t)at(v_values, 1);
+  c->waves = (uint64_t)at(v_values, 2);
+  atomic_init(&c->forced, -1);
+  if (!made || c->scratch == NULL) {
+    d->counting = NULL;
+    rig_amd_counting_free(c);
+    caml_raise_out_of_memory();
+  }
+  Edge_val(v_self)->driver = &measuring;
+  CAMLreturn(Val_unit);
+}
+
+/* Has the next bracket store [v_word] as its filter word in place of its
+   filter wave's. */
+value caml_rig_amd_stale_filter(value v_self, value v_word) {
+  struct rig_amd_counting *c = Device_val(v_self)->counting;
+  if (c == NULL) caml_invalid_argument("Rig_amd: the device measures nothing");
+  atomic_store(&c->forced, (int64_t)(uint32_t)Long_val(v_word));
   return Val_unit;
 }
 

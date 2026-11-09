@@ -263,6 +263,21 @@ let test_overstated () =
   equal ~msg:"the region freed" (list string) [ "alloc"; "free" ]
     (List.filter (fun c -> c = "alloc" || c = "free") (P.log p))
 
+(* A device's counters, each with at least one value, are listed iff its
+   driver gives [measures]: the support driver gives none. *)
+let test_counters_refused () =
+  List.iteri
+    (fun i (counters, sub) ->
+      let p = P.make ~counters () in
+      let name = Printf.sprintf "open:counters-%d" i in
+      raises_match ~msg:sub (Exn.invalid_arg ~sub) (fun () ->
+          Rig.open_ (P.opener name p)))
+    [
+      ([ ("A", 0) ], "has 0 values");
+      ([ ("A", -1) ], "has -1 values");
+      ([ ("A", 1) ], "gives no measures");
+    ]
+
 let test_hang_refused () =
   List.iteri
     (fun i n ->
@@ -1605,6 +1620,8 @@ let tests =
       test "a region against the host_addresses fact faults the device"
         test_overstated;
       test "a hang bound below 1 ms refuses the open" test_hang_refused;
+      test "counters without measures, or without values, refuse the open"
+        test_counters_refused;
       test "a buffer starts on its device's alignment" test_alignment;
       test "a buffer's memory runs on to whole words, no other memory's"
         test_tail;

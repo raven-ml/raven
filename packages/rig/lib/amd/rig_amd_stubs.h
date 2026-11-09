@@ -76,7 +76,8 @@ enum {
 /* A word of a template that holds a computation on an argument [v],
    ((v + add) >> shift) | set, written as one word or as two, low first. */
 struct rig_amd_hole {
-  uint8_t at, wide, arg, shift;
+  uint16_t at;
+  uint8_t wide, arg, shift;
   uint64_t add, set;
 };
 
@@ -177,6 +178,7 @@ struct rig_amd_launch {
     } aql;
   };
   uint32_t group, max_threads, max_shared, kernarg, explicit_size;
+  uint32_t lanes; /* of its waves: 32 or 64 */
   int32_t hidden[RIG_AMD_HIDDEN];
 };
 
@@ -355,6 +357,70 @@ struct rig_amd_window {
   uint64_t most_width, most_rows, most_pitch;
 };
 
+/* Counters
+
+   A device opened to measure counters brackets each launch of a timed
+   value on its compute queue, which reads PM4 packets: a one-wave
+   dispatch of the filter kernel stores the counter filter of its own VMID
+   (Rig_amd_abi.Counter.filter) into the launch's record; the start
+   program loads it into the filter register and starts counting; then a
+   stamp, the launch and a stamp; the stop program stores the counters
+   into the record. After the value's last launch the filter kernel stores
+   the value's tail word. The records lie in the value's run of the
+   argument segment, each [RIG_AMD_RECORD_*] bytes in, and the GPU writes
+   them before the word shows the value. Before the segment's room is
+   taken back, the host copies each reached value's records into its own
+   (rig_amd_ring.c's Counters). */
+#define RIG_AMD_PROGRAM_WORDS 16384
+#define RIG_AMD_PROGRAM_HOLES 2048
+#define RIG_AMD_RECORD_FILTER 0
+#define RIG_AMD_RECORD_START 8
+#define RIG_AMD_RECORD_END 16
+#define RIG_AMD_RECORD_SAMPLES 24
+
+/* Packets whose holes read one argument, the address of a record. */
+struct rig_amd_program {
+  uint32_t *words;
+  struct rig_amd_hole *holes;
+  int n, nholes;
+};
+
+/* A measured value's launches, keyed by the value: where each launch's
+   record and the value's tail word and drain lie in the segment, at their
+   host addresses, the drain's NULL for none; each launch's waves; and once
+   copied, for each launch, its status, 1 if measured, its start and end
+   on the host's clock and its values, as rig_edge.mli's [measures]
+   writes them. A value dropped before it was copied is freed once it
+   is. */
+struct rig_amd_counted {
+  uint64_t v;
+  int n;
+  int copied, dropped;
+  volatile uint8_t *tail, *drain;
+  volatile uint8_t **at;
+  uint64_t *waves;
+  uint64_t *rows;
+};
+
+struct rig_amd_counting {
+  struct rig_amd_launch filter;
+  /* around a launch; and the drain's, around no launch */
+  struct rig_amd_program start, stop, drain_start, drain_stop;
+  uint64_t values, drain_values; /* the samples' 8-byte values */
+  uint64_t waves;                /* SQ_WAVES's values, the samples' first */
+  uint32_t *scratch;             /* a program's words, filled */
+  /* a filter word the next bracket stores in place of its filter wave's,
+     or -1 (Rig_amd.stale_filter) */
+  _Atomic int64_t forced;
+  /* set once a VMID moved, until a drain reads nothing; every value up
+     to [stale] is unmeasured */
+  int marked;
+  uint64_t stale;
+  /* in value order, those before [uncopied] copied */
+  struct rig_amd_counted **counted;
+  size_t ncounted, cap, uncopied;
+};
+
 /* What a device runs work with, from its open to its stop. */
 struct rig_amd {
   _Atomic uint64_t *word;
@@ -414,6 +480,8 @@ struct rig_amd {
   int first_wide; /* the first's readings lie wider than the bound */
   uint64_t converted, unconverted, last_end;
   const char *times_failure;
+  /* NULL unless the device measures counters */
+  struct rig_amd_counting *counting;
 };
 
 /* A device's edge, kept for the process: its word, and its run state,
@@ -462,5 +530,8 @@ struct rig_amd_asked {
 };
 
 extern _Thread_local struct rig_amd_asked rig_amd_asked;
+
+/* Frees [c] and what it holds. */
+void rig_amd_counting_free(struct rig_amd_counting *c);
 
 #endif

@@ -7,11 +7,12 @@ open Rig_amd_abi
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
-type form = Packet | Launch
+type form = Packet | Launch | Program
 
 let name = function
   | Packet -> "Rig_amd.make: a packet template"
   | Launch -> "Rig_amd.entry: a launch"
+  | Program -> "Rig_amd.make: a counters program"
 
 (* Each form's bounds in rig_amd_stubs.h, which C refuses past with a fixed
    message: its most words, its most holes and the arguments a hole reads. *)
@@ -27,10 +28,24 @@ external template_args : unit -> int = "caml_rig_amd_template_args"
 external launch_words : unit -> int = "caml_rig_amd_launch_words" [@@noalloc]
 external launch_holes : unit -> int = "caml_rig_amd_launch_holes" [@@noalloc]
 external launch_args : unit -> int = "caml_rig_amd_launch_args" [@@noalloc]
+external program_words : unit -> int = "caml_rig_amd_program_words" [@@noalloc]
+external program_holes : unit -> int = "caml_rig_amd_program_holes" [@@noalloc]
 
-let most_words = function Packet -> template_words () | Launch -> launch_words ()
-let most_holes = function Packet -> template_holes () | Launch -> launch_holes ()
-let most_args = function Packet -> template_args () | Launch -> launch_args ()
+let most_words = function
+  | Packet -> template_words ()
+  | Launch -> launch_words ()
+  | Program -> program_words ()
+
+let most_holes = function
+  | Packet -> template_holes ()
+  | Launch -> launch_holes ()
+  | Program -> program_holes ()
+
+(* A program's holes read one argument, the address its records start at. *)
+let most_args = function
+  | Packet -> template_args ()
+  | Launch -> launch_args ()
+  | Program -> 1
 
 let hole form nwords arg b (at, (w : _ Packet.word)) =
   let t, n =
@@ -40,7 +55,7 @@ let hole form nwords arg b (at, (w : _ Packet.word)) =
     | Dword _ -> assert false (* a hole holds a term *)
   in
   let refuse why = invalid_argf "%s's hole %s" (name form) why in
-  let arg = arg t.Packet.value in
+  let arg, offset = arg t.Packet.value in
   if arg < 0 || arg >= most_args form then refuse "reads an unknown argument";
   if at < 0 || at + n > nwords then refuse "lies outside its words";
   if t.shift < 0 || t.shift > 63 then refuse "shifts outside 0 to 63";
@@ -50,7 +65,7 @@ let hole form nwords arg b (at, (w : _ Packet.word)) =
       Int64.of_int at;
       Int64.of_int n;
       Int64.of_int arg;
-      t.add;
+      Int64.add t.add offset;
       Int64.of_int t.shift;
       t.set;
     ]

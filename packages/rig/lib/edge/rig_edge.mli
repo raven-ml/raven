@@ -172,6 +172,11 @@ type 'region facts = {
       (** [Some n] with [n] the bytes of the device's last-level cache
           ([Rig.cache_bytes]), and [None] where the driver does not know it.
           [n] must be at least [1]. *)
+  counters : (string * int) list;
+      (** The counters the device measures around each launch of a value
+          that [submit] timed, each with how many values it has, at least
+          [1], in the order [measures] writes them ({!section-calls}). It is
+          [[]] iff the device measures none, whose [measures] is [NULL]. *)
   capability : capability;
       (** The ABI record, filled when the device opened. *)
   word : 'region;
@@ -206,7 +211,7 @@ type 'region facts = {
 
 (** {1:calls The C functions}
 
-    A driver's [struct rig_driver] holds four C functions, which rig calls
+    A driver's [struct rig_driver] holds five C functions, which rig calls
     with the facts' [edge]. They return the constants of [rig_edge.h].
     {ul
     {- [room] is given the parts and the number of waits the [submit]
@@ -262,12 +267,26 @@ type 'region facts = {
        clock with the host's, which its interface states. A driver converts
        in value order, and never puts a value's start before the end of the
        value converted before it, since a value's work starts once every
-       earlier value's work has completed ({e device order}).}}
+       earlier value's work has completed ({e device order}).}
+    {- [measures] is given a value [v] that [submit] timed and that has at
+       least one launch, and is [NULL] for a driver whose facts list no
+       [counters]. rig names no value without a launch, so a driver keeps
+       nothing for one. Given an [out] of zeroes, once the word shows [v],
+       it writes the measures of [v]'s launches, in the order of its
+       parts, one row of [3 + n] words each, with [n] the sum of
+       [counters]' values: a status, [1] if measured and [0] if not, its
+       start and its end on the host's clock, then each counter's values
+       in the order of [counters]. It writes nothing for a launch it did
+       not measure. Given [NULL], it frees what it kept of [v], at once or
+       once the word shows [v], and later calls do not name [v]. rig calls
+       it with an [out] at each read of [v]'s measures, and with [NULL]
+       once, after the last. It returns [RIG_OK], or [RIG_FAILED], which
+       loses the device.}}
 
-    rig calls the four one at a time for each device, with [room] before
+    rig calls the five one at a time for each device, with [room] before
     each [submit]. They must call no function of the OCaml runtime and read
     no OCaml value, since rig may call them with the runtime released. A
-    [submit], [commit] or [settle] that returns [RIG_FAILED] sets
+    [submit], [commit], [settle] or [measures] that returns [RIG_FAILED] sets
     [*failure] to the driver's message, which must live as long as the
     device.
 

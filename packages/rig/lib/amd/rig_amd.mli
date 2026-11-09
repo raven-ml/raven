@@ -435,6 +435,42 @@ val capability : t -> Rig_amd_abi.Capability.t
     last value's release is the last write; the stop writes the word itself
     only once the path destroyed every queue. *)
 
+(** {2:measures Measures}
+
+    A device made with [measure] ({!make}) counts [measure.counters] around
+    each launch of a value a profile times. It takes the GPU's stable power
+    state ([stable_power] of {!type-path}) and holds it as its path states,
+    so every process's work on the GPU runs at its stable clocks
+    meanwhile. Of the 8 SQ counters a GFX12 SQ counts at once, it counts at
+    most 4, ["SQ_WAVES"] one of them, which it counts whether listed or
+    not.
+
+    A measured launch starts once the work before it has completed, and
+    the work after it on the compute queue starts once its counters are
+    stored. Its submission's [Work] covers both. A copy part of the same
+    value runs on the copy queue and waits only for what its [after] names,
+    so it may run during the launch, and a counter of cycles or waits may
+    then include its contention for memory. Work submitted while no profile is
+    taken is not measured.
+
+    Its [Counters] event has the launch's own start and stop and each
+    counter's values as {!Rig_amd_abi.Counter.t} lays them out. The values
+    are the launch's alone and exact unless another process counts on the
+    GPU, or waves started under another process's counting still run. A
+    launch records no [Counters], and counts in an [Unmeasured] event, if
+    ["SQ_WAVES"] differs from its grid's waves, if a value reads
+    [2{^32} - 1], if the host had no memory for its records, or once the
+    device's VMID is seen to have moved, until a count with no launch reads
+    nothing under the filter of the launch after it: the GPU may then have
+    counted another process's waves as the device's.
+
+    The device's facts list the counters, ["SQ_WAVES"] first, each with
+    one value per place {!Rig_amd_abi.Counter.t} counts it in. *)
+
+type measure = { counters : string list }
+(** The type for the counters a device measures, by their names in
+    {!Rig_amd_abi.Counter.names}. *)
+
 (** {1:paths Paths}
 
     Only path libraries use these values. A path reaches a GPU in one way,
@@ -602,7 +638,7 @@ type 'm path = {
           work. *)
   stable_power : unit -> (unit, string) result;
       (** [stable_power ()] holds the GPU's clocks and shader engines steady,
-          as tracing needs, for the life of the process. *)
+          as tracing and measures need, for as long as the path states. *)
   stop : fault:string option -> [ `Stopped | `Unknown ];
       (** [stop ~fault] destroys the queues [queue] made, one whose [queue]
           call raised included. It returns [`Stopped] once none of them runs
@@ -627,11 +663,13 @@ type 'm path = {
     {- A function that holds a lock across OCaml code must take it with
        {!Lock.protect} ({!section-locks}).}} *)
 
-val make : word:nativeint -> 'm path -> (t, string) result
+val make : ?measure:measure -> word:nativeint -> 'm path -> (t, string) result
 (** [make ~word p] is a device of the GPU [p] reaches, whose timeline word is
     the 8 bytes at the host address [word] ({!Rig_edge.type-opener}). It
     makes, through [p], the device's queues and argument segment, maps its
-    word, and loads the kernel the device copies with. A failed [make] gives back what it took once
+    word, and loads the kernel the device copies with; with [measure], it
+    measures those counters ({!section-measures}), and loads the kernel
+    that reads its VMID. A failed [make] gives back what it took once
     [p]'s [stop] returns [`Stopped], and keeps it otherwise. It calls [stop]
     only if it made a queue, or if [p]'s [queue] raised, which may have made
     one.
@@ -646,7 +684,11 @@ val make : word:nativeint -> 'm path -> (t, string) result
     {- if this library's copy kernel for the GPU's processor does not load,
        naming the kernel and the processor and saying why;}
     {- if [p.clock] cannot read the GPU's clock, or, with {!Round_trip},
-       the GPU writes no stamp of its clock within a second.}}
+       the GPU writes no stamp of its clock within a second;}
+    {- with [measure], if the GPU is not a GFX12 GPU of one die, if a
+       counter is unknown, listed twice or not an SQ counter, or if they
+       are more than 4 with ["SQ_WAVES"], naming why, or with
+       [stable_power]'s message.}}
 
     It takes its first measure of the GPU's clock as [p.clock] says.
 
@@ -758,5 +800,15 @@ val segment : t -> int
 
    Raises [Invalid_argument] if a size is not a power of two of at least
    4096 bytes. *)
+
 val set_first_sizes :
   compute:int -> copy:int -> segment:int -> int * int * int
+
+(* [stale_filter g w] makes the next filter word [g] places, a drain's or a
+   measured launch's, [w], in place of the one its filter wave stores. A
+   test makes [g] count another process's waves, as after a move of its
+   VMID.
+
+   Raises [Invalid_argument] if [g] has stopped or measures no counters, or
+   from a callback inside a lock ({!Lock.guarded}). *)
+val stale_filter : t -> int -> unit

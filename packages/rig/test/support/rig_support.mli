@@ -41,6 +41,7 @@ module Polled : sig
     ?maps_host:bool ->
     ?alignment:int ->
     ?cache_bytes:int ->
+    ?counters:(string * int) list ->
     ?budget:int ->
     ?memory:int ->
     ?window:int ->
@@ -76,7 +77,8 @@ module Polled : sig
       and without [maps_host] (defaults to [true]) no host memory. Its facts
       state [alignment] (defaults to [4096]), and its regions start on a
       page, which may break a larger [alignment]. They state [cache_bytes]
-      (defaults to none) as given, unchecked. Its budget is
+      (defaults to none) and [counters] (defaults to none) as given,
+      unchecked, though its [measures] is [NULL]. Its budget is
       [budget] (defaults to 1 GiB); it holds at most [memory] bytes of [Device]
       memory and [window] bytes of [Mapped] memory (default to [max_int]);
       [Pinned] memory is unbounded. Its word advances as [completion] says

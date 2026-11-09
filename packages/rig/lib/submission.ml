@@ -273,6 +273,8 @@ type t = {
   span : (string * string) option;
       (** The first part's queue and the launches' functions, or the first
           part's kind. [None] for no parts. *)
+  launches : string array;
+      (** The functions of its launches, in the order of its parts. *)
   copies : copy array;
       (** The copy parts that read memory, in order. *)
   runs : run list Atomic.t;
@@ -1003,6 +1005,7 @@ let build keep ~fixed ~named:(named, named_uses) ~held d parts =
     held;
     blocks;
     span;
+    launches = Array.of_list kernels;
     copies;
     runs = Atomic.make [];
   }
@@ -1532,6 +1535,49 @@ type holds = { mutable left : int; [@atomic] mutable settled : bool [@atomic] }
 let give_pair c h v pair =
   if pair >= 0 then if h.settled then times_free c pair else times_owe c pair v
 
+(* Reads into [prof] the measures of [s]'s value [v] from its driver: a
+   [Counters] per measured launch, its times within [work]'s where the work
+   was timed, and an [Unmeasured] counting the others, at the work's end. *)
+let counters s prof v work =
+  let device = s.dev in
+  let n = Array.length s.launches in
+  let places = List.fold_left (fun a (_, k) -> a + k) 0 device.counters in
+  let row = 3 + places in
+  let out = Bigarray.(Array1.create Int64 C_layout (n * row)) in
+  Bigarray.Array1.fill out 0L;
+  if not (Dev.measures device v out) then Dev.raise_lost device;
+  let at i = Int64.to_int (Bigarray.Array1.get out i) in
+  let within t =
+    match work with Some (a, b) -> Int.max a (Int.min b t) | None -> t
+  in
+  let unmeasured = ref 0 in
+  for i = 0 to n - 1 do
+    let r = i * row in
+    if at r = 0 then incr unmeasured
+    else
+      let next = ref (r + 3) in
+      let counters =
+        List.map
+          (fun (counter, k) ->
+            let values = Array.init k (fun j -> at (!next + j)) in
+            next := !next + k;
+            (counter, values))
+          device.counters
+      in
+      Profile.add [ prof ]
+        (Counters
+           {
+             device;
+             name = s.launches.(i);
+             start = within (at (r + 1));
+             stop = within (at (r + 2));
+             counters;
+           })
+  done;
+  if !unmeasured > 0 then
+    let time = match work with Some (_, b) -> b | None -> Profile.now () in
+    Profile.add [ prof ] (Unmeasured { device; time; runs = !unmeasured })
+
 (* Leaves to each profile of [t.ps] an entry that reads into it the work of
    [s]'s value [p] and a copy per move of [t.moves] once [p] is reached, from
    the time pair [pair] its driver wrote, which the last entry to end gives back
@@ -1547,9 +1593,12 @@ let record s (lane, name) { ps; moves; asked } p pair =
   let c = device.live.c and value = Point.value p in
   let seen = if Dev.is_done p then Profile.now () else -1 in
   let h = { left = List.length ps; settled = false } in
+  let measured = device.counters <> [] && Array.length s.launches > 0 in
   let drop () =
-    if Atomic.Loc.fetch_and_add [%atomic.loc h.left] (-1) = 1 then
-      give_pair c h value pair
+    if Atomic.Loc.fetch_and_add [%atomic.loc h.left] (-1) = 1 then begin
+      give_pair c h value pair;
+      if measured then ignore (Dev.forget_measures device value)
+    end
   in
   let read prof =
     let copies start stop =
@@ -1562,11 +1611,14 @@ let record s (lane, name) { ps; moves; asked } p pair =
     if not (pair < 0 || Dev.settle device value) then Dev.raise_lost device;
     h.settled <- true;
     match if pair < 0 then (0, 0) else times_read c pair with
-    | 0, 0 -> copies asked (if seen >= 0 then seen else Profile.now ())
+    | 0, 0 ->
+        copies asked (if seen >= 0 then seen else Profile.now ());
+        if measured then counters s prof value None
     | start, stop ->
         Profile.add [ prof ]
           (Work { point = p; device; lane; name; start; stop });
-        copies start stop
+        copies start stop;
+        if measured then counters s prof value (Some (start, stop))
   in
   let e = { Profile.device; value; read; drop } in
   Profile.pend ps e

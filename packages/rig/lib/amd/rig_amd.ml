@@ -382,6 +382,14 @@ external set_copy_launch : int -> int -> unit = "caml_rig_amd_copy_launch"
 external write_code : int -> string -> unit = "caml_rig_amd_write_code"
 [@@noalloc]
 
+external set_counting : int -> int -> string array -> int array -> unit
+  = "caml_rig_amd_counting"
+
+external set_stale_filter : int -> int -> unit = "caml_rig_amd_stale_filter"
+
+external record_samples : unit -> int = "caml_rig_amd_record_samples"
+[@@noalloc]
+
 (* Device state *)
 
 (* What growing the scratch answered: [Short bytes] if the GPU has no memory for
@@ -453,6 +461,7 @@ type t = {
   reaches : int -> bool; (* the path's *)
   bus : string option; (* the path's *)
   capability : Abi.Capability.t;
+  counters : (string * int) list; (* measured, with their values *)
   guard : Lock.t;
       (* held by [grow_scratch], [make_trace], and stop over [live] *)
   growth : Lock.t; (* held by [grow] *)
@@ -601,7 +610,7 @@ let set_templates self gpu ~interrupt ~waits64 ~aql =
   let s = { Setting.gpu; interrupt; waits64; aql } in
   let set (i, packet) =
     let words, holes =
-      Template.flatten Packet (fun _ -> None) Fun.id (packet s)
+      Template.flatten Packet (fun _ -> None) (fun i -> (i, 0L)) (packet s)
     in
     set_template self i words holes
   in
@@ -847,6 +856,7 @@ let facts g =
     alignment = region_alignment;
     cache_bytes = g.cache_bytes;
     capability = Abi.declare g.capability;
+    counters = g.counters;
     word = g.word;
     bus = g.bus;
     edge = Nativeint.of_int g.self;
@@ -1087,12 +1097,14 @@ let limits (k : Code_object.kernel) ~lds =
     lds - k.group_segment;
     k.kernarg_size;
     k.explicit_size;
+    (if k.wave32 then 32 else 64);
   |]
 
 let template p =
   Template.flatten Launch
     (function Known n -> Some (Int64.of_int n) | Arg _ -> None)
-    (function Arg i -> i | Known _ -> assert false (* known: no hole *))
+    (function
+      | Arg i -> (i, 0L) | Known _ -> assert false (* known: no hole *))
     p
 
 (* The C launch of kernel [k], named [f], of an image at [base], on [g], whose
@@ -1235,9 +1247,83 @@ let within (Mem c) at host =
       Mem { c with memory = Some m }
   | None -> unmade ()
 
+(* Measures *)
+
+type measure = { counters : string list }
+
+(* What a drain counts: every VALU instruction, and every cycle of a
+   resident wave, which counts a wave that issues none. *)
+let drained = [ "SQ_INSTS_VALU"; "SQ_WAVE_CYCLES" ]
+
+(* The SQ counters a device measures at most, SQ_WAVES one of them: those
+   whose registers have run from a KFD user queue (SQ_PERFCOUNTER0-3_LO and
+   their selects). GFX12's SQ counts 8 at once, through 16 select
+   registers, but a register a user queue may not reach costs a reset of
+   the GPU, so the others wait for a run. *)
+let most_counters = 4
+
+(* The layouts of what a device that measures [m] counts on [gpu]: around a
+   launch, SQ_WAVES first, and around a drain. *)
+let layouts (gpu : Abi.Gpu.t) m =
+  let refuse fmt = Printf.ksprintf (fun s -> Error ("measuring: " ^ s)) fmt in
+  match gpu.target with
+  | 12, _, _ when gpu.xccs = 1 -> (
+      let names = "SQ_WAVES" :: List.filter (( <> ) "SQ_WAVES") m.counters in
+      let sq (c : Abi.Counter.t) = c.block = "SQ" in
+      if List.length names > most_counters then
+        refuse
+          "a device measures at most %d SQ counters, SQ_WAVES one of them, \
+           of the 8 %s's SQ counts"
+          most_counters (Abi.Gpu.processor gpu)
+      else
+        match Abi.Counter.layout gpu names with
+        | Error why -> refuse "%s" why
+        | Ok l -> (
+            match List.find_opt (Fun.negate sq) l.counters with
+            | Some c ->
+                refuse "%s is a %s counter; a device measures SQ counters"
+                  c.name c.block
+            | None -> (
+                match Abi.Counter.layout gpu drained with
+                | Ok d -> Ok (l, d)
+                | Error why -> refuse "%s" why)))
+  | _ ->
+      refuse "%s is not a GFX12 GPU of one die" (Abi.Gpu.processor gpu)
+
+(* The values of each counter of [l]: one per place it is counted in. *)
+let places (c : Abi.Counter.t) = c.instances * c.engines * c.arrays * c.wgps
+
+let values (l : Abi.Counter.layout) = l.bytes / 8
+
+(* A program's holes read the address of a record, at an offset. *)
+type at = Record of int | Zero
+
+let program p =
+  Template.flatten Program
+    (function Zero -> Some 0L | Record _ -> None)
+    (function Record o -> (0, Int64.of_int o) | Zero -> (0, 0L))
+    p
+
+(* The words and holes of the start and stop programs around a launch,
+   counting [l], then around a drain, counting [d]. *)
+let programs gpu ~wgps l d =
+  let samples = record_samples () in
+  let around l =
+    let start, start_holes =
+      program (Abi.Counter.start_packets gpu l ~filter:(Record 0))
+    and stop, stop_holes =
+      program
+        (Abi.Counter.stop_packets gpu ~wgps l
+           ~at:(fun o -> Record (samples + o))
+           ~zero:Zero)
+    in
+    [ start; start_holes; stop; stop_holes ]
+  in
+  Array.of_list (around l @ around d)
+
 (* Makes the device's memory and queues, giving back what it took if one of them
    is refused. *)
-let make (type m) ~word (p : m path) =
+let make (type m) ?measure ~word (p : m path) =
   if p.interrupt = 0 then
     invalid_arg "Rig_amd.make: the release's interrupt context is 0";
   if p.clock_hz < 1 then
@@ -1253,7 +1339,17 @@ let make (type m) ~word (p : m path) =
   count "compute_units" p.gpu.compute_units;
   count "scratch_slots" p.gpu.scratch_slots;
   let* () = supported p.gpu in
+  let* measuring =
+    match measure with
+    | None -> Ok None
+    | Some m -> Result.map Option.some (layouts p.gpu m)
+  in
   let ops = ops p in
+  let* () =
+    if Option.is_some measuring then
+      Result.map_error (fun why -> "measuring: " ^ why) (ops.stable_power ())
+    else Ok ()
+  in
   let taken = ref [] and queues = ref false and copy_launch = ref 0 in
   let state = ref 0 in
   (* Memory a queue the path could not stop may still read stays. The C
@@ -1351,6 +1447,26 @@ let make (type m) ~word (p : m path) =
             c_launch_of p.gpu k ~base:(mem_address code) ~lds:p.lds name;
           Ok [ code ]
     in
+    (* The kernel whose wave stores the filter of its VMID, loaded where the
+       device measures. *)
+    let* filter_code =
+      match measuring with
+      | None -> Ok None
+      | Some _ -> (
+          let processor = Abi.Gpu.processor p.gpu and name = "filter" in
+          match Filter_kernel.find processor with
+          | None -> Error (strf "measuring: no filter kernel for %s" processor)
+          | Some bin ->
+              let refused why =
+                strf "the filter kernel for %s does not load: %s" processor why
+              in
+              let* co = Result.map_error refused (Code_object.of_string bin) in
+              let k = Option.get (Code_object.kernel co name) in
+              let* code = alloc "counter filter code" (Code_object.size co) in
+              let* host = host_of "counter filter code" code in
+              write_code host (Code_object.image co);
+              Ok (Some (code, k)))
+    in
     let queue q kind ring =
       let at = mem_address pointers in
       (* A [queue] that raised may have made the queue. *)
@@ -1380,6 +1496,18 @@ let make (type m) ~word (p : m path) =
     Option.iter (set_hdp self) p.hdp;
     set_templates self p.gpu ~interrupt:p.interrupt ~waits64 ~aql;
     set_copy_launch self !copy_launch;
+    (match (measuring, filter_code) with
+    | Some (l, d), Some (code, k) ->
+        let launch =
+          c_launch_of p.gpu k ~base:(mem_address code) ~lds:p.lds "filter"
+        in
+        Fun.protect
+          ~finally:(fun () -> free_launch launch)
+          (fun () ->
+            set_counting self launch
+              (programs p.gpu ~wgps:p.wgps l d)
+              [| values l; values d; places (List.hd l.counters) |])
+    | _ -> ());
     let ring q kind host bell id =
       set_ring self q host (first_ring kind) (p.most_ring kind)
         (pointers_host + write_at ~aql q)
@@ -1415,6 +1543,11 @@ let make (type m) ~word (p : m path) =
         word = region 8 word;
         reaches = p.reaches;
         bus = p.bus;
+        counters =
+          (match measuring with
+          | None -> []
+          | Some (l, _) ->
+              List.map (fun (c : Abi.Counter.t) -> (c.name, places c)) l.counters);
         capability =
           {
             gpu = p.gpu;
@@ -1435,6 +1568,7 @@ let make (type m) ~word (p : m path) =
               ops;
               own =
                 copy_code
+                @ Option.to_list (Option.map fst filter_code)
                 @ [ pointers; stamps ] @ Option.to_list mapped;
               compute = compute_kind;
               parts =
@@ -1798,6 +1932,14 @@ let segment g =
   Lock.protect g.guard @@ fun () ->
   refuse_stopped g "segment";
   segment_bytes g.self
+
+let stale_filter g w =
+  Lock.guarded "Rig_amd.stale_filter" @@ fun () ->
+  Lock.protect g.guard @@ fun () ->
+  refuse_stopped g "stale_filter";
+  if g.counters = [] then
+    invalid_arg "Rig_amd.stale_filter: the device measures no counters";
+  set_stale_filter g.self w
 
 let set_first_sizes ~compute ~copy ~segment =
   let sized n = n >= 4096 && n land (n - 1) = 0 in

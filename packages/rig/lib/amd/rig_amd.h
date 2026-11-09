@@ -5,7 +5,7 @@
 
 /* Submitting to an AMD device from C.
 
-   A device's room check, submit and settle, for the caller that holds its
+   A device's room check, submit, settle and measures, for the caller that holds its
    submissions in C, over the structures and codes of rig_edge.h. [self] is
    the edge of Rig_amd's facts, whose struct rig_driver holds them. They are
    called without the OCaml runtime: they call no function of it and read no
@@ -59,6 +59,13 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
    every earlier timed value first. Answers RIG_FAILED if a stamp of a
    completed value was never written, or the GPU's clock cannot be read. */
 int rig_amd_settle(void *self, uint64_t v, const char **failure);
+
+/* Writes into [out] the measures of [v]'s launches, or with [out] NULL
+   frees them, as rig_edge.mli's [measures] states. A device that measures
+   no counters writes nothing, and its edge's [measures] is NULL. Answers
+   RIG_OK. */
+int rig_amd_measures(void *self, uint64_t v, uint64_t *out,
+                     const char **failure);
 
 /* A path's reader of the GPU's clock against the host's clock (Rig_amd's
    [Source] clock), which the path keeps while a device may read it,

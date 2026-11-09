@@ -1,4 +1,6 @@
-# Private AMD byte copy
+# Private AMD kernels
+
+## Byte copy
 
 `copy.cl` derives from ROCm clr's MIT-licensed `__amd_rocclr_copyBuffer`
 in `rocclr/device/blitcl.cpp`, commit
@@ -9,7 +11,7 @@ vectors and a byte tail; other addresses use byte loads and stores.
 Regenerate `../copy_kernel.ml` with Clang and AMDGPU LLD 22:
 
 ```sh
-uv run python generate.py --clang /path/to/clang --lld /path/to/ld.lld
+uv run python generate.py copy --clang /path/to/clang --lld /path/to/ld.lld
 ```
 
 It refuses an object whose `copy_bytes` is not what the driver dispatches:
@@ -32,3 +34,28 @@ All three objects have zero private and group segments. Only gfx12-generic
 has run on hardware: gfx1201, through ordinary amdgpu/KFD with PM4, including
 Pinned instruction storage and the complete 256 MiB byte oracle. The other
 targets, AQL, and driverless paths remain untested.
+
+## Counter filter
+
+`filter.cl` is raven's (ISC). One work-item stores the counter filter word
+of its wave's VMID, read from `HW_REG_WAVE_HW_ID2`, at the address its
+argument holds. The driver runs it before each counted launch.
+
+```sh
+uv run python generate.py filter --clang /path/to/clang --lld /path/to/ld.lld
+```
+
+It refuses an object whose `filter` is not what the driver dispatches: no
+private or group memory, 8 bytes of arguments, waves of 32.
+
+The checked-in object was compiled by Homebrew Clang 22.1.7 and linked by
+the LLD 22.0.0 inside Triton 3.6.0's library (`link_hsaco`), LLVM revision
+`f6ded0be897e2878612dd903f7e8bb85448269e5`. That linker gives the three
+copy objects above byte for byte, but for the linker's name in
+`.comment`. Code object V6.
+
+| Target | ELF bytes | Image bytes | SHA256 |
+|---|---:|---:|---|
+| gfx12-generic | 3920 | 12288 | c86118e26f049fa37a8630bec7800e91713c937a1b3784dcc13dc06c84b4c26e |
+
+It has run on gfx1201, through amdgpu/KFD with PM4.

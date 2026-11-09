@@ -52,12 +52,20 @@ val count : unit -> (int, string) result
 (** [count ()] is the number [n] of {!buses}, so GPUs are numbered [0]
     to [n - 1], or their [Error]. A machine with no AMD GPU is [Ok 0]. *)
 
-val gpu : int -> Rig_amd.t Rig_edge.opener
+val gpu : ?measure:Rig_amd.measure -> int -> Rig_amd.t Rig_edge.opener
 (** [gpu i] is the opener of GPU [i], named ["AMD"] for [0] and ["AMD:i"]
     otherwise. Each [make ()] opens a new device of the GPU with queues of
-    its own, also while other devices of the GPU are open. The process reads
-    the list of GPUs at the first [make] that can read it, and keeps it, so
-    after a GPU is plugged in or removed it may differ from {!buses}.
+    its own, also while other devices of the GPU are open, but for one
+    opened with [measure]. With [measure], the opener is named as without,
+    followed by [" measuring "] and the counters, ["SQ_WAVES"] first and
+    the others in their order, separated by commas, such as
+    ["AMD measuring SQ_WAVES,SQ_INSTS_VALU"], and its device measures
+    counters ({!Rig_amd.section-measures}). While it is open no other device
+    of its GPU opens in the process, an open with other counters included,
+    and it opens only if none is open. Its device holds the GPU's stable
+    power state ({!section-stable}). The process reads the list of GPUs at
+    the first [make] that can read it, and keeps it, so after a GPU is
+    plugged in or removed it may differ from {!buses}.
 
     [make ()] returns [Error msg]:
     {ul
@@ -69,6 +77,8 @@ val gpu : int -> Rig_amd.t Rig_edge.opener
        and the reason;}
     {- if the GPU's work faulted in this process, with the fault
        ({!section-process});}
+    {- if a device of the GPU is open in the process, and either it or
+       this one measures counters, saying so;}
     {- with {!Rig_amd.make}'s message, or the report of a fault while the
        device opens.}}
 
@@ -130,13 +140,25 @@ val gpu : int -> Rig_amd.t Rig_edge.opener
     ({!Rig_edge.type-facts}), and rig loses the device once its work has
     made no progress for that long.
 
-    {b Tracing.} The first thread trace takes the GPU's stable power state,
-    which holds its clocks and shader engines steady, until the process
-    exits. The trace fails while another process holds that state. A kernel
-    driver older than its fix of the state's handling may leave the state
-    held by a process that exited, which writing [auto] to the GPU's
-    [power_dpm_force_performance_level], as root, frees. On a GFX 9 GPU,
-    traces take no power state. *)
+    {b Tracing.} A device's first thread trace takes the GPU's stable power
+    state ({!section-stable}), and fails while another process holds it.
+    On a GFX 9 GPU, traces take no power state.
+
+    {2:stable The stable power state}
+
+    The state holds the GPU's clocks and shader engines steady. A device of
+    the GPU that measures counters takes it at open, and a traced one at
+    its first trace. The process holds it while any device of the GPU that
+    took it is open, and gives it back when the last of them stops, which
+    restores the level the GPU had before.
+
+    One process holds the state at a time: another process's open or trace
+    that needs it fails meanwhile. A process that exits without stopping
+    its devices gives the state back shortly after its exit, as the kernel
+    driver frees what the process held, so an open just after may still
+    fail. A kernel driver older than its fix of the state's handling may
+    keep it held by a process that exited, which writing [auto] to the
+    GPU's [power_dpm_force_performance_level], as root, frees. *)
 
 (**/**)
 
@@ -149,7 +171,8 @@ val gpu : int -> Rig_amd.t Rig_edge.opener
    [make] there that can read it. *)
 val buses_under : root:string -> (string list, string) result
 val count_under : root:string -> (int, string) result
-val gpu_under : root:string -> int -> Rig_amd.t Rig_edge.opener
+val gpu_under :
+  ?measure:Rig_amd.measure -> root:string -> int -> Rig_amd.t Rig_edge.opener
 
 (* [event_age ()] is [true] iff this process's KFD, which it opens from
    [/dev/kfd] as an open does, keeps the age of signal events (KFD 1.14), so

@@ -20,6 +20,9 @@ external c_new : int -> string -> bool -> nativeint -> int -> c
 external c_io_new : int -> string -> int -> c = "caml_rig_io_new"
 external c_host_new : string -> c = "caml_rig_host_new"
 external c_slot_word : int -> nativeint = "caml_rig_slot_word"
+
+external c_edge_measures : nativeint -> bool = "caml_rig_edge_measures"
+[@@noalloc]
 (* Publishes a device's record and marks the slot its open took published,
    negating it, in one call: the open's end gives back only an unpublished
    slot. *)
@@ -27,6 +30,12 @@ external c_publish : c -> int Atomic.t -> unit = "caml_rig_publish"
 external c_committed : c -> int = "caml_rig_committed" [@@noalloc]
 external c_commit : c -> int = "caml_rig_commit"
 external c_settle : c -> int -> int = "caml_rig_settle"
+
+external c_measures :
+  c -> int -> (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t -> int
+  = "caml_rig_measures"
+
+external c_measures_free : c -> int -> int = "caml_rig_measures_free"
 external c_done : int -> bool = "caml_rig_done" [@@noalloc]
 external c_lost : int -> bool = "caml_rig_lost" [@@noalloc]
 
@@ -153,7 +162,8 @@ let no_waits = { Rig_edge.stores = false; hosts = false }
 
 let make_device ~index ~name ~machine ~kind ~c ~arch ~bus ~queues ~copy_engine
     ~completion ~waits ~hang_ms ~maps_host ~alignment ~cache_bytes
-    ~host_addresses ~word ~word_region ~key ~memory_device ~fault ~capability ~budget ~opened =
+    ~host_addresses ~word ~word_region ~key ~memory_device ~fault ~capability
+    ~counters ~budget ~opened =
   let live =
     {
       c;
@@ -199,6 +209,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~bus ~queues ~copy_engine
     key;
     memory_device;
     capability;
+    counters;
     budget;
     closing = 0;
     locals = [];
@@ -229,7 +240,7 @@ let host =
       ~word_region:None ~key:(-1)
       ~memory_device:false
       ~fault:[%extension_constructor No_fault]
-      ~capability:None ~budget:max_int ~opened:0
+      ~capability:None ~counters:[] ~budget:max_int ~opened:0
   in
   d
 
@@ -790,6 +801,14 @@ let rec settle d v =
   let r = c_settle d.live.c v in
   if r = Answer.busy then settle d v else r = Answer.ok
 
+let rec measures d v out =
+  let r = c_measures d.live.c v out in
+  if r = Answer.busy then measures d v out else r = Answer.ok
+
+let rec forget_measures d v =
+  let r = c_measures_free d.live.c v in
+  if r = Answer.busy then forget_measures d v else r = Answer.ok
+
 (* A lost device's word of its driver's own moves only where rig reads it
    through the driver: its stop raises it, or the work the stop left running
    writes it. A read there is a driver call refused as lost, so it reads the
@@ -1173,6 +1192,22 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
           "Rig.open_: %s's last-level cache is %d bytes, expected at least 1"
           name n)
     f.cache_bytes;
+  List.iter
+    (fun (counter, n) ->
+      if n < 1 then
+        invalid_argf "Rig.open_: %s's counter %s has %d values, expected at \
+                      least 1"
+          name counter n)
+    f.counters;
+  (match (f.counters, c_edge_measures f.edge) with
+  | [], true ->
+      invalid_argf "Rig.open_: %s's driver gives measures but lists no counters"
+        name
+  | _ :: _, false ->
+      invalid_argf "Rig.open_: %s lists counters but its driver gives no \
+                    measures"
+        name
+  | [], false | _ :: _, true -> ());
   let queues = Array.of_list f.queues in
   Option.iter
     (fun i ->
@@ -1201,7 +1236,8 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       ~word_region:(Some (Region { m; h; rid; r = Some f.word; mapped = Never }))
       ~key:(Type.Id.uid D.key) ~memory_device
       ~fault:[%extension_constructor D.Fault]
-      ~capability:(Some f.capability) ~budget:f.budget ~opened
+      ~capability:(Some f.capability) ~counters:f.counters ~budget:f.budget
+      ~opened
   in
   register d;
   d
@@ -1271,8 +1307,8 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
             ~maps_host:false ~alignment:1 ~cache_bytes:None
             ~host_addresses:false ~word:0
             ~word_region:None ~key ~memory_device:false
-            ~fault:[%extension_constructor I.Fault] ~capability:None ~budget
-            ~opened
+            ~fault:[%extension_constructor I.Fault] ~capability:None
+            ~counters:[] ~budget ~opened
         in
         register d;
         d

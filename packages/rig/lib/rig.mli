@@ -2532,9 +2532,10 @@ module Profile : sig
 
   (** The type for profile events. Times are nanoseconds of the host clock.
       rig records a submission's work, spans, allocations, loads and copies.
+      A device whose driver measures its launches' counters records
+      [Counters] and [Unmeasured] events, as its driver's interface states.
       A library whose compiled code measures its work, such as with a
-      device's counters or thread traces, records [Counters], [Trace] and
-      [Overwritten] events ({!record}). *)
+      device's thread traces, records [Trace] events ({!record}). *)
   type event =
     | Work of {
         point : Point.t;  (** The submit's point ({!submit}). *)
@@ -2590,8 +2591,12 @@ module Profile : sig
         part : int;  (** The index of the device's unit that wrote it. *)
         data : string;  (** The trace as the device wrote it. *)
       }  (** The thread trace that a unit of a device wrote during a run. *)
-    | Overwritten of { device : device; time : int; runs : int }
-        (** Runs whose counters and traces the device overwrote unread. *)
+    | Unmeasured of { device : device; time : int; runs : int }
+        (** [runs] runs of functions on [device], submitted while a profile
+            was taken, whose counters its driver could not measure, as the
+            driver's interface states. [time] is the end of their
+            submission's work, or when rig read them where the device could
+            not time that work. *)
     | Copy of {
         src : device;
         dst : device;
@@ -2667,7 +2672,7 @@ module Profile : sig
       It writes a process per device, a thread per lane, a complete event per
       work and span, per copy (on its [src]'s process) and per run's counters
       (each summed over its units), a counter [memory] per allocation change,
-      and instant events for loads, traces and overwritten runs. Times are
+      and instant events for loads, traces and unmeasured runs. Times are
       microseconds from the earliest event. [oc] is neither flushed nor
       closed. *)
 end

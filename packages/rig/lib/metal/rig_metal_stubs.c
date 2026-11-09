@@ -80,7 +80,7 @@ static int family(id<MTLDevice> device) {
 }
 
 static const struct rig_driver driver = {rig_metal_room, rig_metal_submit,
-                                         rig_metal_commit, NULL};
+                                         rig_metal_commit, NULL, NULL};
 
 /* A device whose word is the 8 bytes at [word], its values starting after
    theirs. */

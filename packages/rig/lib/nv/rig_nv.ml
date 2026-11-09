@@ -641,6 +641,7 @@ let facts (T d) =
     host_addresses = false;
     alignment = region_alignment;
     cache_bytes = d.cache_bytes;
+    counters = [];
     capability = Abi.declare d.capability;
     word = R d.word;
     bus = d.bus;

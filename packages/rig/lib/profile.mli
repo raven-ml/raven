@@ -70,7 +70,7 @@ type event = Def.event =
       part : int;
       data : string;
     }
-  | Overwritten of { device : device; time : int; runs : int }
+  | Unmeasured of { device : device; time : int; runs : int }
   | Copy of {
       src : device;
       dst : device;

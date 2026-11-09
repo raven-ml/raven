@@ -191,8 +191,11 @@ let cache_bytes ~l2_kib ~mall =
   if l2_kib > 0 then Some ((l2_kib * 1024) + mall) else None
 
 (* [stable_pstate drm] holds the GPU in its stable power state with a new
-   context, until the process closes [drm]. *)
-external stable_pstate : int -> unit = "caml_rig_amd_amdgpu_stable_pstate"
+   context of [drm], until [free_ctx drm] of its id, which it answers, or
+   the process ends. *)
+external stable_pstate : int -> int = "caml_rig_amd_amdgpu_stable_pstate"
+
+external free_ctx : int -> int -> unit = "caml_rig_amd_amdgpu_free_ctx"
 
 (* Errors *)
 
@@ -241,7 +244,13 @@ type gpu = {
   cache_bytes : int option;
   mutable doorbells : (int64 * int) option; (* the page: offset, address *)
   mutable events_mapped : bool;
-  mutable stable : bool;
+  mutable stable : int option;
+      (* the context of [drm] that holds the stable power state *)
+  mutable stable_holders : int;
+      (* its devices that hold the state, under [opening] *)
+  mutable devices : int;
+      (* its devices open or opening in the process, under [opening] *)
+  mutable measuring : bool; (* one of them measures counters *)
   faulted : string option Atomic.t;
       (* the first fault the kernel driver reported in the address space *)
   links : int list; (* the topology nodes this GPU has a link to *)
@@ -762,7 +771,10 @@ let acquire fd ~root ~gpus ~bus (node : Topology.node) =
           cache_bytes = cache_bytes ~l2_kib ~mall;
           doorbells = None;
           events_mapped = false;
-          stable = false;
+          stable = None;
+          stable_holders = 0;
+          devices = 0;
+          measuring = false;
           faulted = Atomic.make None;
           links;
           live = [];
@@ -859,7 +871,26 @@ type device = {
       (* the newest age of the signal event a wait gave back: [interrupts] *)
   mutable events_held : bool; (* until destroyed, once *)
   mutable queues : made list;
+  measures : bool; (* it measures counters *)
+  mutable holds_stable : bool; (* it holds the stable power state *)
 }
+
+(* [d]'s hold of the stable power state ended, under [opening]. The last
+   hold's end frees the context that holds the state, which restores the
+   level at once; the render node stays open for the process, and KFD closes
+   it only as it releases the process, some time after the process ends. A
+   free the kernel driver refuses leaves the state held until then. *)
+let let_go d =
+  let g = d.gpu in
+  if d.holds_stable then begin
+    d.holds_stable <- false;
+    g.stable_holders <- g.stable_holders - 1;
+    match g.stable with
+    | Some ctx when g.stable_holders = 0 ->
+        g.stable <- None;
+        quietly (fun () -> free_ctx g.drm ctx)
+    | Some _ | None -> ()
+  end
 
 (* Event ids are the process's: one destroyed twice may already name another
    device's event, which the second destroy would take from it. *)
@@ -867,7 +898,10 @@ let drop_events d =
   if d.events_held then begin
     d.events_held <- false;
     Amd.Lock.protect opening (fun () ->
-        d.gpu.live <- List.filter (fun e -> e != d.events) d.gpu.live);
+        d.gpu.live <- List.filter (fun e -> e != d.events) d.gpu.live;
+        d.gpu.devices <- d.gpu.devices - 1;
+        if d.measures then d.gpu.measuring <- false;
+        let_go d);
     Array.iter
       (fun id -> quietly (fun () -> kfd_destroy_event d.fd id))
       d.events
@@ -1045,28 +1079,40 @@ let poll_faults fd g =
     g.live
 
 (* The kernel driver answers EBUSY while a context other than the caller's
-   owns the state (amdgpu_ctx.c, amdgpu_ctx_set_stable_pstate). Before Linux
+   owns the state (amdgpu_ctx.c, amdgpu_ctx_set_stable_pstate). A process
+   that ends holding it holds it until KFD releases the process, which
+   closes the render node from a work queue (kfd_process.c,
+   kfd_process_wq_release), shortly after the end. Before Linux
    1b5e413713c0 ("drm/amdgpu: Fix context pstate override handling"), a
    context that ends after the level changed forces the level saved when it
    was made, takes ownership if that is a profile, and is freed, so the state
    stays owned until a write to power_dpm_force_performance_level, which
    clears the owner (amdgpu_pm.c,
    amdgpu_set_power_dpm_force_performance_level). *)
-let stable_power g () =
+let stable_power d () =
   Amd.Lock.protect opening @@ fun () ->
+  let g = d.gpu in
+  let hold () =
+    if not d.holds_stable then begin
+      d.holds_stable <- true;
+      g.stable_holders <- g.stable_holders + 1
+    end;
+    Ok ()
+  in
   match g.node.gpu.target with
   | 9, _, _ -> Ok ()
-  | _ when g.stable -> Ok ()
+  | _ when Option.is_some g.stable -> hold ()
   | _ -> (
       match stable_pstate g.drm with
-      | () ->
-          g.stable <- true;
-          Ok ()
+      | ctx ->
+          g.stable <- Some ctx;
+          hold ()
       | exception Unix.Unix_error (EBUSY, _, _) ->
           Error
             "another process holds the GPU's stable power state, or one that \
-             exited left it held, which writing auto to the GPU's \
-             power_dpm_force_performance_level, as root, frees"
+             exited holds it still: the kernel driver releases it shortly \
+             after the exit, or, before its fix, keeps it until auto is \
+             written to the GPU's power_dpm_force_performance_level, as root"
       | exception Unix.Unix_error (e, _, _) ->
           Error
             (strf "the amdgpu driver refused the GPU's stable power state: %s"
@@ -1161,7 +1207,7 @@ let path d ~gpus ~index : mem Amd.path =
     hang_ms = Some hang_ms;
     interrupts = (fun () -> Atomic.get d.age);
     sleep = sleep d;
-    stable_power = stable_power g;
+    stable_power = stable_power d;
     stop = stop d;
   }
 
@@ -1181,7 +1227,21 @@ let device_name i =
   if i < 0 then invalid_argf "Rig_amd_amdgpu.gpu: GPU %d is negative" i;
   if i = 0 then "AMD" else strf "AMD:%d" i
 
-let open_ ~root ~word i =
+(* Counts the device [g] opens, which [measures] or not, or is why it may
+   not: no other device of a GPU is open while one that measures is. Under
+   [opening]. *)
+let admit g ~measures =
+  if g.measuring then
+    Error "a device of the GPU that measures counters is open in the process"
+  else if measures && g.devices > 0 then
+    Error "measuring: another device of the GPU is open in the process"
+  else begin
+    g.devices <- g.devices + 1;
+    g.measuring <- measures;
+    Ok ()
+  end
+
+let open_ ?measure ~root ~word i =
   Amd.Lock.guarded "Rig_amd_amdgpu.gpu" @@ fun () ->
   if i < 0 then invalid_argf "Rig_amd_amdgpu.gpu: GPU %d is negative" i;
   let* gpus =
@@ -1205,9 +1265,13 @@ let open_ ~root ~word i =
                    "GPU %d faulted in this process (%s); a new process opens it"
                    i why)
           | None -> (
+              let* () = admit g ~measures:(Option.is_some measure) in
               match make_events fd g with
               | events -> Ok (fd, g, events)
-              | exception Amd.Fault why -> Error why))
+              | exception Amd.Fault why ->
+                  g.devices <- g.devices - 1;
+                  if Option.is_some measure then g.measuring <- false;
+                  Error why))
     in
     let d =
       {
@@ -1217,12 +1281,14 @@ let open_ ~root ~word i =
         age = Atomic.make first_age;
         events_held = true;
         queues = [];
+        measures = Option.is_some measure;
+        holds_stable = false;
       }
     in
     (* The events stay while a queue the path could not stop may still raise the
        interrupt. *)
     let give_back () = if d.queues = [] then drop_events d in
-    match Amd.make ~word (path d ~gpus ~index:i) with
+    match Amd.make ?measure ~word (path d ~gpus ~index:i) with
     | Ok _ as r ->
         Amd.Lock.protect opening (fun () -> g.live <- events :: g.live);
         r
@@ -1237,14 +1303,23 @@ let open_ ~root ~word i =
         give_back ();
         Printexc.raise_with_backtrace e bt
 
-let gpu_under ~root i : Rig_amd.t Rig_edge.opener =
+let gpu_under ?measure ~root i : Rig_amd.t Rig_edge.opener =
   {
-    name = device_name i;
+    name =
+      (match measure with
+      | None -> device_name i
+      | Some m ->
+          (* The request is in the name: [Rig.open_] answers the open device
+             of a name without [make], so another request must name
+             another device, which [admit] then refuses. *)
+          let rest = List.filter (( <> ) "SQ_WAVES") m.Amd.counters in
+          strf "%s measuring %s" (device_name i)
+            (String.concat "," ("SQ_WAVES" :: rest)));
     driver = (module Rig_amd);
-    make = (fun ~word -> open_ ~root ~word i);
+    make = (fun ~word -> open_ ?measure ~root ~word i);
   }
 
-let gpu i = gpu_under ~root:"/" i
+let gpu ?measure i = gpu_under ?measure ~root:"/" i
 
 (* KFD keeps the age of signal events from ioctl 1.14 (kfd_ioctl.h, "Update
    kfd_event_data"). *)

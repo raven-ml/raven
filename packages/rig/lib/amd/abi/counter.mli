@@ -123,3 +123,22 @@ val stop : Gpu.t -> wgps:int array array -> layout -> address:int -> string
     of 8, if [wgps] does not hold [g.shader_engines] engines, if [l] holds a
     counter of a block other than SQ, if [g] is a GPU other than a GFX12 of
     one die, or if [g]'s GC lacks a register the program reads or writes. *)
+
+(**/**)
+
+(* [start_packets g l ~filter] and [stop_packets g ~wgps l ~at ~zero] are
+   {!val-start} and {!val-stop} as packets over any value: [filter] the
+   filter word's address, [at o] the address [o] bytes into the samples, and
+   [zero] the constant [0], so that a driver may leave the addresses for
+   later ({!Packet.template}). They raise as {!val-start} and {!val-stop},
+   but for the addresses' checks. *)
+val start_packets : Gpu.t -> layout -> filter:'v -> 'v Packet.t
+
+val stop_packets :
+  Gpu.t ->
+  wgps:int array array ->
+  layout ->
+  at:(int -> 'v) ->
+  zero:'v ->
+  'v Packet.t
+

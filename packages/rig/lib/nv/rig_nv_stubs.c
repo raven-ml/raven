@@ -66,7 +66,7 @@ static int rig_nv_commit(void *self, uint64_t v, const char **failure) {
 }
 
 static const struct rig_driver driver = {rig_nv_room, rig_nv_submit,
-                                         rig_nv_commit, rig_nv_settle};
+                                         rig_nv_commit, rig_nv_settle, NULL};
 
 /* The live edges, linked from their create to their end, under [edges_mu],
    which no one takes while holding an edge's [flush_mu]. */
