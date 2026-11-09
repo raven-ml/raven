@@ -36,6 +36,11 @@
     table or an input has no output to write: when its golden moves, the failure
     prints the new hash, for the header. *)
 
+val updating : bool
+(** [updating] is whether this run has windtrap's [-u], which writes each
+    output that differs from its golden as a [.tolk]. A suite whose golden is
+    compared in parts records the whole output only then. *)
+
 val body : string -> string
 (** [body file] is the body of [file]'s [.tolk] when one exists, else of the
     golden [file]. *)
@@ -54,7 +59,13 @@ val graph : string -> (unit -> Tolk.Ops.t) -> Windtrap.test
 
 val sink : string -> Tolk.Ops.t
 (** [sink file] is the sink of the graph golden [file] ({!Graph.of_string}).
-    Raises [Failure] naming [file] if its body is not a graph. *)
+    Raises [Failure] naming [file] if its body is not a graph. Under [-u] a
+    [.tolk] whose golden moved is read without failing, since the run rewrites
+    it. *)
+
+val upstream : string -> Tolk.Ops.t
+(** [upstream file] is the sink of the graph golden [file] itself, whatever
+    [.tolk] sits beside it. Raises [Failure] as {!sink} does. *)
 
 (** {1:tables Tables}
 

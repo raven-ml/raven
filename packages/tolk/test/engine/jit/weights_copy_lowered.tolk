@@ -104,7 +104,7 @@
 102 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
 103 Ops.PROGRAM dtypes.void [97, 98, 99, 100] ProgramInfo(params=(%101, %102), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
 104 Ops.CONST dtypes.weakint [] 512
-105 Ops.ALLOC dtypes.i8 [104] ParamArg(slot=10, dtype=dtypes.i8, device="CPU:1")
+105 Ops.ALLOC dtypes.i8 [104] ParamArg(slot=85, dtype=dtypes.i8, device="CPU:1")
 106 Ops.CONST dtypes.weakint [] 64
 107 Ops.SHRINK dtypes.i8 [105, 3, 106]
 108 Ops.BITCAST dtypes.f32 [107] dtypes.f32

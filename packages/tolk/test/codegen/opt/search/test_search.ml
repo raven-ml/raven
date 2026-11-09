@@ -191,7 +191,7 @@ let recorded_actions file =
   List.map (fun cell -> Kernel_opts.opt_of_cell (cell "opt")) (Golden.rows file)
 
 let actions =
-  test "the actions are tinygrad's, in order" (fun () ->
+  test "the actions are as recorded, in order" (fun () ->
       equal opts (recorded_actions "actions.golden") (Search.actions ()))
 
 (* Candidates
@@ -1245,7 +1245,7 @@ let under_environment =
                  equal ~msg:name (option string) (Some value)
                    (Sys.getenv_opt name))
                environment);
-         test "the actions are tinygrad's, pads included" (fun () ->
+         test "the actions are as recorded, pads included" (fun () ->
              equal opts
                (recorded_actions "actions_padto.golden")
                (Search.actions ()));

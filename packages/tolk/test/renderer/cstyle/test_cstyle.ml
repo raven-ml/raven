@@ -1638,8 +1638,7 @@ let windows_group =
             [
               "__attribute__((sysv_abi)) __attribute__((min_vector_width(512))) \
                void E_16_4(float* restrict data0_64, float* restrict \
-               data1_64, float* restrict data2_64, const int block_lo_, const \
-               int block_hi_) {";
+               data1_64, float* restrict data2_64) {";
             ]
             (List.filter
                (fun l -> String.starts_with ~prefix:"__attribute__" l)
@@ -1648,7 +1647,7 @@ let windows_group =
         (fun () ->
           let src = on_windows (find_case "clang_dtype_i64") in
           Windtrap.contains ~sub:"long long " src;
-          Windtrap.contains ~sub:"*3ull)" src);
+          Windtrap.contains ~sub:"*3ll)" src);
       test
         "an object is compiled for Windows' triple and calls no stack probe"
         (fun () ->

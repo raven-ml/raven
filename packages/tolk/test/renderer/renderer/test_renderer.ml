@@ -347,7 +347,10 @@ let estimates_of_uops =
 (* estimates of recorded kernels *)
 
 (* The cases of a kernel golden are its sink's sources, each a linear program
-   whose sources are the kernel's nodes in order. *)
+   whose sources are the kernel's nodes in order. kernels.tolk and
+   symbolic_kernels.tolk keep their own inputs: the estimates tables' [split]
+   column counts the blocks of a host kernel (D80), which upstream's kernels
+   and tables do not have. *)
 let kernels file = lazy (Array.of_list (Ops.src (Golden.sink file)))
 let recorded = kernels "kernels.golden"
 let symbolic = kernels "symbolic_kernels.golden"

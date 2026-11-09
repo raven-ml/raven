@@ -1,9 +1,0 @@
-# tolk D342 golden=0aac3729b6049fad4b1184f9bf7bf505
-#include <metal_stdlib>
-using namespace metal;
-kernel void volatile_add(volatile device int* data0_4, volatile device int* data1_4, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {
-    int val0 = (*(data1_4+Lidx0));
-    *(data0_4+Lidx0) = ((int)((((uint)(val0))+1u)));
-  }
-}

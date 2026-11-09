@@ -1,4 +1,4 @@
-# tolk D163 D194 golden=08610bee8e25b05dd55fbb71f2c157cd
+# tolk D163 golden=08610bee8e25b05dd55fbb71f2c157cd
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)

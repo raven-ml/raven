@@ -225,16 +225,21 @@ let () =
         In_channel.with_open_bin (Filename.concat dir "actual")
           In_channel.input_all
       in
-      exit
-        (run "update"
-           [ group "update" [ Golden.text file (fun () -> actual) ] ])
+      (* With a file [sink], the output is the graph [Golden.sink] reads: what a
+         suite does to number its output like the recorded one. *)
+      let output () =
+        if Sys.file_exists (Filename.concat dir "sink") then
+          Tolk.Graph.to_string (Golden.sink file)
+        else actual
+      in
+      exit (run "update" [ group "update" [ Golden.text file output ] ])
 
 (* A directory no build tree holds: windtrap reads a path under [_build] as
    dune's copy of a source file. *)
 let scratch_base () =
   if Sys.win32 then Filename.get_temp_dir_name () else "/tmp"
 
-let rerun_updating ?golden ?tolk actual =
+let rerun_updating ?(sink = false) ?golden ?tolk actual =
   let dir = Filename.temp_dir ~temp_dir:(scratch_base ()) "tolk_golden" "" in
   Fun.protect
     ~finally:(fun () ->
@@ -248,6 +253,7 @@ let rerun_updating ?golden ?tolk actual =
         golden;
       Option.iter (write (Filename.concat dir "x.tolk")) tolk;
       write (Filename.concat dir "actual") actual;
+      if sink then write (Filename.concat dir "sink") "";
       let log = Filename.concat dir "log" in
       let out = Unix.openfile log [ O_WRONLY; O_CREAT; O_TRUNC ] 0o644 in
       let env =
@@ -303,6 +309,19 @@ let update_tests =
           let result = rerun_updating ~golden:"same" "same" in
           exits_zero result;
           equal (option string) None (tolk_of result));
+      test "a graph whose golden moved is read from its .tolk, to rewrite it"
+        (fun () ->
+          let moved = "0 Ops.STACK dtypes.void []" in
+          let ours = "0 Ops.SINK dtypes.void []" in
+          let result =
+            rerun_updating ~sink:true ~golden:moved
+              ~tolk:("# tolk D81 golden=stale\n" ^ ours ^ "\n")
+              ""
+          in
+          exits_zero result;
+          equal (option string)
+            (Some ("# tolk D81 golden=" ^ hash moved ^ "\n" ^ ours ^ "\n\n"))
+            (tolk_of result));
       test "a .tolk with no golden stays without a hash" (fun () ->
           let result =
             rerun_updating ~tolk:"# tolk D73\nold\n" "ours"

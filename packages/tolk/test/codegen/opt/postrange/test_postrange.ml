@@ -6,7 +6,10 @@ open Windtrap
 open Tolk
 module K = Postrange.Scheduler
 
-(* Goldens *)
+(* Goldens
+
+   renderers.tolk keeps its own table: it adds the column [registers] that the
+   host's renderers need (D187) and upstream's do not have. *)
 
 let renderers =
   List.map

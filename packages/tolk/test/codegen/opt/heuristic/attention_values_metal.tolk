@@ -1,4 +1,4 @@
-# tolk D89 D280 golden=1189c83580bc9b68b7a06bf027189ce8
+# tolk D89 golden=1189c83580bc9b68b7a06bf027189ce8
 0 Ops.CONST dtypes.weakint [] 4096
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 8
@@ -20,55 +20,54 @@
 18 Ops.DIV dtypes.weakint [7, 4]
 19 Ops.MOD dtypes.weakint [18, 4]
 20 Ops.ADD dtypes.weakint [17, 19]
-21 Ops.RANGE dtypes.weakint [2] (AxisType.GLOBAL, 2)
-22 Ops.MUL dtypes.weakint [21, 4]
-23 Ops.DIV dtypes.weakint [7, 2]
-24 Ops.MOD dtypes.weakint [23, 4]
-25 Ops.ADD dtypes.weakint [22, 24]
-26 Ops.MUL dtypes.weakint [25, 4]
-27 Ops.CONST dtypes.weakint [] 1
-28 Ops.DIV dtypes.weakint [7, 27]
-29 Ops.MOD dtypes.weakint [28, 4]
-30 Ops.ADD dtypes.weakint [26, 29]
-31 Ops.MUL dtypes.weakint [30, 4]
-32 Ops.RANGE dtypes.weakint [4] (AxisType.UPCAST, 3)
-33 Ops.ADD dtypes.weakint [31, 32]
-34 Ops.AFTER dtypes.f32 [1, 20, 33]
-35 Ops.CONST dtypes.weakint [] 64
-36 Ops.MUL dtypes.weakint [20, 35]
-37 Ops.ADD dtypes.weakint [36, 33]
-38 Ops.INDEX dtypes.f32 [34, 37]
-39 Ops.CONST dtypes.weakint [] 65536
-40 Ops.PARAM dtypes.bf16 [39] ParamArg(slot=1, dtype=dtypes.bf16)
-41 Ops.CONST dtypes.weakint [] 1024
-42 Ops.MUL dtypes.weakint [20, 41]
-43 Ops.CONST dtypes.weakint [] 128
-44 Ops.RANGE dtypes.weakint [43] (AxisType.WEAK, 0)
-45 Ops.MUL dtypes.weakint [44, 4]
-46 Ops.ADD dtypes.weakint [45, 24]
-47 Ops.MUL dtypes.weakint [46, 4]
-48 Ops.ADD dtypes.weakint [47, 29]
-49 Ops.MUL dtypes.weakint [48, 4]
-50 Ops.ADD dtypes.weakint [49, 32]
-51 Ops.ADD dtypes.weakint [42, 50]
-52 Ops.INDEX dtypes.bf16 [40, 51]
-53 Ops.CAST dtypes.f32 [52] dtypes.f32
-54 Ops.PARAM dtypes.bf16 [39] ParamArg(slot=2, dtype=dtypes.bf16)
-55 Ops.ADD dtypes.weakint [45, 10]
-56 Ops.MUL dtypes.weakint [55, 4]
-57 Ops.ADD dtypes.weakint [56, 15]
-58 Ops.MUL dtypes.weakint [57, 4]
-59 Ops.ADD dtypes.weakint [58, 19]
-60 Ops.MUL dtypes.weakint [59, 35]
-61 Ops.ADD dtypes.weakint [60, 33]
-62 Ops.INDEX dtypes.bf16 [54, 61]
-63 Ops.CAST dtypes.f32 [62] dtypes.f32
-64 Ops.CONST dtypes.weakfloat [] 0.0
-65 Ops.CAST dtypes.f32 [64] dtypes.f32
-66 Ops.STACK dtypes.f32 [65, 65]
-67 Ops.WMMA dtypes.f32 [53, 63, 66] ((8, 8, 8), dtypes.f32, 32, ((((AxisType.UPCAST, 3), 2),), (((AxisType.UPCAST, 3), 2),), (((AxisType.UPCAST, 3), 2),)))
-68 Ops.REDUCE dtypes.f32 [67, 44] (Ops.ADD, 0)
-69 Ops.STORE dtypes.void [38, 68]
-70 Ops.END dtypes.void [69, 3, 7, 21, 32]
-71 Ops.SINK dtypes.void [70] KernelInfo(name="r_8_8_32_2_128", applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),), optimized=True)
+21 Ops.CONST dtypes.weakint [] 64
+22 Ops.MUL dtypes.weakint [20, 21]
+23 Ops.RANGE dtypes.weakint [2] (AxisType.GLOBAL, 2)
+24 Ops.MUL dtypes.weakint [23, 4]
+25 Ops.DIV dtypes.weakint [7, 2]
+26 Ops.MOD dtypes.weakint [25, 4]
+27 Ops.ADD dtypes.weakint [24, 26]
+28 Ops.MUL dtypes.weakint [27, 4]
+29 Ops.CONST dtypes.weakint [] 1
+30 Ops.DIV dtypes.weakint [7, 29]
+31 Ops.MOD dtypes.weakint [30, 4]
+32 Ops.ADD dtypes.weakint [28, 31]
+33 Ops.MUL dtypes.weakint [32, 4]
+34 Ops.RANGE dtypes.weakint [4] (AxisType.UPCAST, 3)
+35 Ops.ADD dtypes.weakint [33, 34]
+36 Ops.ADD dtypes.weakint [22, 35]
+37 Ops.INDEX dtypes.f32 [1, 36]
+38 Ops.CONST dtypes.weakint [] 65536
+39 Ops.PARAM dtypes.bf16 [38] ParamArg(slot=1, dtype=dtypes.bf16)
+40 Ops.CONST dtypes.weakint [] 1024
+41 Ops.MUL dtypes.weakint [20, 40]
+42 Ops.CONST dtypes.weakint [] 128
+43 Ops.RANGE dtypes.weakint [42] (AxisType.WEAK, 0)
+44 Ops.MUL dtypes.weakint [43, 4]
+45 Ops.ADD dtypes.weakint [44, 26]
+46 Ops.MUL dtypes.weakint [45, 4]
+47 Ops.ADD dtypes.weakint [46, 31]
+48 Ops.MUL dtypes.weakint [47, 4]
+49 Ops.ADD dtypes.weakint [48, 34]
+50 Ops.ADD dtypes.weakint [41, 49]
+51 Ops.INDEX dtypes.bf16 [39, 50]
+52 Ops.CAST dtypes.f32 [51] dtypes.f32
+53 Ops.PARAM dtypes.bf16 [38] ParamArg(slot=2, dtype=dtypes.bf16)
+54 Ops.ADD dtypes.weakint [44, 10]
+55 Ops.MUL dtypes.weakint [54, 4]
+56 Ops.ADD dtypes.weakint [55, 15]
+57 Ops.MUL dtypes.weakint [56, 4]
+58 Ops.ADD dtypes.weakint [57, 19]
+59 Ops.MUL dtypes.weakint [58, 21]
+60 Ops.ADD dtypes.weakint [59, 35]
+61 Ops.INDEX dtypes.bf16 [53, 60]
+62 Ops.CAST dtypes.f32 [61] dtypes.f32
+63 Ops.CONST dtypes.weakfloat [] 0.0
+64 Ops.CAST dtypes.f32 [63] dtypes.f32
+65 Ops.STACK dtypes.f32 [64, 64]
+66 Ops.WMMA dtypes.f32 [52, 62, 65] ((8, 8, 8), dtypes.f32, 32, ((((AxisType.UPCAST, 3), 2),), (((AxisType.UPCAST, 3), 2),), (((AxisType.UPCAST, 3), 2),)))
+67 Ops.REDUCE dtypes.f32 [66, 43] (Ops.ADD, 0)
+68 Ops.STORE dtypes.void [37, 67]
+69 Ops.END dtypes.void [68, 3, 7, 23, 34]
+70 Ops.SINK dtypes.void [69] KernelInfo(name="r_8_8_32_2_128", applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),), optimized=True)
 

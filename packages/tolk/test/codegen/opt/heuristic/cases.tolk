@@ -372,7 +372,7 @@ sum_5_by_3_cuda	sum_5_by_3	cuda		(Opt(op=OptOps.SPLIT, axis=3, arg=(0, AxisType.
 sum_5_by_3_amd	sum_5_by_3	amd		(Opt(op=OptOps.SPLIT, axis=3, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL)))
 cumsum_cpu	cumsum	cpu		(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.UPCAST)),)
 cumsum_avx2	cumsum	avx2		(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.UPCAST)),)
-cumsum_metal	cumsum	metal		(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)))
+cumsum_metal	cumsum	metal		(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL)),)
 cumsum_cuda	cumsum	cuda		(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)))
 cumsum_amd	cumsum	amd		(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)))
 softmax_cpu	softmax	cpu		(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.UPCAST)),)

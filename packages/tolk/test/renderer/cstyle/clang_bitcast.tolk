@@ -1,14 +1,11 @@
-# tolk D80 D141 D151 golden=9a8b184d534381d6c3ccfc22f55fb675
+# tolk D141 D151 golden=9a8b184d534381d6c3ccfc22f55fb675
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
 typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));
-typedef unsigned int unsigned_int4 __attribute__((aligned(4),ext_vector_type(4)));
-__attribute__((min_vector_width(512))) void E_4_4(int* restrict data0_16, float* restrict data1_16, const int block_lo_, const int block_hi_) {
-  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
-    int alu0 = ((block_lo_+Lidx0)<<2);
+__attribute__((min_vector_width(512))) void E_4_4(int* restrict data0_16, float* restrict data1_16) {
+  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {
+    int alu0 = (Lidx0<<2);
     float4 val0 = (*((float4*)((data1_16+alu0))));
-    unsigned_int4 cast0 = __builtin_convertvector(((int4)((float4)(val0))), unsigned_int4);
-    int4 cast1 = __builtin_convertvector((cast0+1u), int4);
-    *((int4*)((data0_16+alu0))) = cast1;
+    *((int4*)((data0_16+alu0))) = (int4){(__builtin_bit_cast(int, (float)(val0[0]))+1),(__builtin_bit_cast(int, (float)(val0[1]))+1),(__builtin_bit_cast(int, (float)(val0[2]))+1),(__builtin_bit_cast(int, (float)(val0[3]))+1)};
   }
 }
 

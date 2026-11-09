@@ -41,9 +41,16 @@ let metal () = renderer_for (target "METAL" "METAL" "Apple9")
 (* Cases *)
 
 (* The cases of cases.golden compile the kernels of kernels.golden, each for a
-   target and under settings. *)
-let kernels = lazy (Array.of_list (Ops.src (Golden.sink "kernels.golden")))
-let rows = Golden.rows "cases.golden"
+   target and under settings. The kernels of owned_kernels.tolk are three of
+   LLaMA's, which upstream's heuristic does not produce; owned_cases.tolk lists
+   their cases, numbering them after kernels.golden's. *)
+let kernels =
+  lazy
+    (Array.of_list
+       (Ops.src (Golden.sink "kernels.golden")
+       @ Ops.src (Golden.sink "owned_kernels.golden")))
+
+let rows = Golden.rows "cases.golden" @ Golden.rows "owned_cases.golden"
 let row_named name = List.find (fun row -> row "name" = name) rows
 let kernel row = (Lazy.force kernels).(int_of_string (row "kernel"))
 let kernel_of name = kernel (row_named name)
@@ -193,6 +200,23 @@ let refuses_as_tinygrad row =
     (function Invalid_argument m -> String.equal m message | _ -> false)
     (fun () -> program row)
 
+(* Under [-u], the whole recorded output of a case: its lowered kernel and its
+   program less its binary. *)
+let recorded_outputs =
+  if not Golden.updating then []
+  else
+    [
+      group "recorded output"
+        (List.filter_map
+           (fun row ->
+             if not (compiles row) then None
+             else
+               Some
+                 (Golden.graph (row "name" ^ ".golden") (fun () ->
+                      Ops.sink [ lowered row; first 3 (program row) ])))
+           rows);
+    ]
+
 let stages =
   group "stages"
     [
@@ -205,7 +229,7 @@ let stages =
            ~only:(fun row -> compiles row && not (d9 row))
            programs_as_tinygrad);
       group "each program is rendered as recorded" sources;
-      group "an emulated float8 program launches as tinygrad's"
+      group "an emulated float8 program launches as recorded"
         (per_row ~only:d9 launches_as_tinygrad);
       group "an optimisation that does not apply raises tinygrad's error"
         (per_row ~only:(fun row -> not (compiles row)) refuses_as_tinygrad);
@@ -8117,59 +8141,60 @@ let () =
   Disk_cache.play (("breaking graph", lowers_a_breaking_graph) :: parts);
   exit
     (run "Tolk.Codegen"
-       [
-         stages;
-         values;
-         claims;
-         lowering_claims;
-         whole_graphs;
-         accumulators;
-         tensor_cores_on_cuda;
-         tensor_cores_by_hand;
-         fixed_threads;
-         bfloat16_vectors_on_cuda;
-         counted_once;
-         counted_beside_host_blocks;
-         weak_ranges;
-         lanes_and_threads;
-         threads_of_workgroups;
-         variable_sizes;
-         multiply_adds;
-         shared_ranges;
-         lanes;
-         bfloat16_casts;
-         test "a selection between bfloat16 vectors takes each lane's arm"
-           selects_bfloat16_lanes;
-         test
-           "a gated bfloat16 load takes its alternative where its gate is false"
-           takes_bfloat16;
-         vectors;
-         signed_zeros;
-         nan_constants;
-         invalid_lanes;
-         square_wrapping;
-         unselected_sum;
-         stores_before;
-         weak_max;
-         gated_stores;
-         divisions;
-         range_shrinking;
-         blocks;
-         beam_search;
-         caching;
-         linearizing;
-         on_disk;
-         programs;
-         errors;
-         diagnostics;
-         line_rewrites;
-         cleanups;
-         calls;
-         stacks;
-         int_powers;
-         effects;
-         folded_effects;
-         hand_written;
-         reduces_under_gates;
-         few_trips_tests;
-       ])
+       (recorded_outputs
+       @ [
+             stages;
+           values;
+           claims;
+           lowering_claims;
+           whole_graphs;
+           accumulators;
+           tensor_cores_on_cuda;
+           tensor_cores_by_hand;
+           fixed_threads;
+           bfloat16_vectors_on_cuda;
+           counted_once;
+           counted_beside_host_blocks;
+           weak_ranges;
+           lanes_and_threads;
+           threads_of_workgroups;
+           variable_sizes;
+           multiply_adds;
+           shared_ranges;
+           lanes;
+           bfloat16_casts;
+           test "a selection between bfloat16 vectors takes each lane's arm"
+             selects_bfloat16_lanes;
+           test
+             "a gated bfloat16 load takes its alternative where its gate is false"
+             takes_bfloat16;
+           vectors;
+           signed_zeros;
+           nan_constants;
+           invalid_lanes;
+           square_wrapping;
+           unselected_sum;
+           stores_before;
+           weak_max;
+           gated_stores;
+           divisions;
+           range_shrinking;
+           blocks;
+           beam_search;
+           caching;
+           linearizing;
+           on_disk;
+           programs;
+           errors;
+           diagnostics;
+           line_rewrites;
+           cleanups;
+           calls;
+           stacks;
+           int_powers;
+           effects;
+           folded_effects;
+           hand_written;
+           reduces_under_gates;
+           few_trips_tests;
+         ]))

@@ -1,4 +1,4 @@
-# tolk D25 D80 D141 D151 D342 golden=f45f21cb7647bedc0968e182c3802836
+# tolk D25 D27 golden=f45f21cb7647bedc0968e182c3802836
 device	renderer	arch	op	dtype	written
 CPU	CLANG	x86_64,x86-64	Ops.SQRT	dtypes.f16	__builtin_sqrtf(a)
 CPU	CLANG	x86_64,x86-64	Ops.SQRT	dtypes.bf16	__builtin_sqrtf(a)

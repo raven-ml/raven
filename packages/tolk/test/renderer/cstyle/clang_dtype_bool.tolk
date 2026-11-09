@@ -1,17 +1,14 @@
-# tolk D80 D141 D151 golden=a028607b086abc63f63749cdd99f1dd0
+# tolk D141 D151 golden=a028607b086abc63f63749cdd99f1dd0
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
-typedef signed char signed_char4 __attribute__((aligned(1),ext_vector_type(4)));
-typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));
-__attribute__((min_vector_width(512))) void E_4_4(float* restrict data0_16, float* restrict data1_16, _Bool* restrict data2_16, const int block_lo_, const int block_hi_) {
-  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
-    int alu0 = ((block_lo_+Lidx0)<<2);
+__attribute__((min_vector_width(512))) void E_4_4(float* restrict data0_16, float* restrict data1_16, _Bool* restrict data2_16) {
+  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {
+    int alu0 = (Lidx0<<2);
     _Bool val0 = (*(data2_16+(alu0+1)));
     _Bool val1 = (*(data2_16+(alu0+2)));
     _Bool val2 = (*(data2_16+(alu0+3)));
     _Bool val3 = (*(data2_16+alu0));
     float4 val4 = (*((float4*)((data1_16+alu0))));
-    float4 cast0 = __builtin_convertvector((((val4!=0.0f)&__builtin_convertvector((-(signed_char4){val3,val0,val1,val2}), int4))&1), float4);
-    *((float4*)((data0_16+alu0))) = cast0;
+    *((float4*)((data0_16+alu0))) = (float4){((float)(((val4[0]!=0.0f)&val3))),((float)(((val4[1]!=0.0f)&val0))),((float)(((val4[2]!=0.0f)&val1))),((float)(((val4[3]!=0.0f)&val2)))};
   }
 }
 

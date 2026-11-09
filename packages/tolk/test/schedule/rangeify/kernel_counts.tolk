@@ -100,9 +100,9 @@ symbolic_kept	2
 symbolic_contiguous	2
 variable_read_twice	1
 read_at_offsets	2
-windowed_chain	5
+windowed_chain	2
 windowed_scaled	1
-windowed_scaled_long	4
+windowed_scaled_long	2
 windowed_pair	2
 read_by_two	2
 long_read_by_two	3
@@ -137,7 +137,7 @@ assign_flipped_beside_call	1
 assign_flipped_beside_call_1	3
 two_outputs	2
 empty_sum	1
-long_cumsum	4
+long_cumsum	3
 disk_view_to	2
 disk_bitcast_to	2
 disk_store	0

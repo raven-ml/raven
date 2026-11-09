@@ -1,0 +1,60 @@
+# tolk D17 golden=97fde427a7d75ef04ccca127f5a2fbc3
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 64
+2 Ops.PARAM dtypes.i8 [1] ParamArg(slot=0, dtype=dtypes.i8)
+3 Ops.CONST dtypes.weakint [] 16
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.SPECIAL dtypes.i32 [4] "lidx0"
+6 Ops.CONST dtypes.weakint [] 2
+7 Ops.CAST dtypes.i32 [6] dtypes.i32
+8 Ops.SHL dtypes.i32 [5, 7]
+9 Ops.INDEX dtypes.i8 [2, 8]
+10 Ops.PARAM dtypes.i8 [1] ParamArg(slot=1, dtype=dtypes.i8)
+11 Ops.INDEX dtypes.i8 [10, 8]
+12 Ops.LOAD dtypes.i8 [11]
+13 Ops.PARAM dtypes.i8 [1] ParamArg(slot=2, dtype=dtypes.i8)
+14 Ops.INDEX dtypes.i8 [13, 8]
+15 Ops.LOAD dtypes.i8 [14]
+16 Ops.ADD dtypes.i8 [12, 15]
+17 Ops.CONST dtypes.weakint [] 3
+18 Ops.CAST dtypes.i8 [17] dtypes.i8
+19 Ops.MUL dtypes.i8 [16, 18]
+20 Ops.STORE dtypes.void [9, 19]
+21 Ops.CONST dtypes.weakint [] 1
+22 Ops.CAST dtypes.i32 [21] dtypes.i32
+23 Ops.ADD dtypes.i32 [8, 22]
+24 Ops.INDEX dtypes.i8 [2, 23]
+25 Ops.INDEX dtypes.i8 [10, 23]
+26 Ops.LOAD dtypes.i8 [25]
+27 Ops.INDEX dtypes.i8 [13, 23]
+28 Ops.LOAD dtypes.i8 [27]
+29 Ops.ADD dtypes.i8 [26, 28]
+30 Ops.MUL dtypes.i8 [29, 18]
+31 Ops.STORE dtypes.void [24, 30]
+32 Ops.ADD dtypes.i32 [8, 7]
+33 Ops.INDEX dtypes.i8 [2, 32]
+34 Ops.INDEX dtypes.i8 [10, 32]
+35 Ops.LOAD dtypes.i8 [34]
+36 Ops.INDEX dtypes.i8 [13, 32]
+37 Ops.LOAD dtypes.i8 [36]
+38 Ops.ADD dtypes.i8 [35, 37]
+39 Ops.MUL dtypes.i8 [38, 18]
+40 Ops.STORE dtypes.void [33, 39]
+41 Ops.CAST dtypes.i32 [17] dtypes.i32
+42 Ops.ADD dtypes.i32 [8, 41]
+43 Ops.INDEX dtypes.i8 [2, 42]
+44 Ops.INDEX dtypes.i8 [10, 42]
+45 Ops.LOAD dtypes.i8 [44]
+46 Ops.INDEX dtypes.i8 [13, 42]
+47 Ops.LOAD dtypes.i8 [46]
+48 Ops.ADD dtypes.i8 [45, 47]
+49 Ops.MUL dtypes.i8 [48, 18]
+50 Ops.STORE dtypes.void [43, 49]
+51 Ops.AFTER dtypes.void [0, 20, 31, 40, 50]
+52 Ops.SINK dtypes.void [51] KernelInfo(name="E_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL))), optimized=True)
+53 Ops.SINK dtypes.void [51] KernelInfo(name="E_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL))), estimates=Estimates(ops=128, lds=192, mem=192), optimized=True)
+54 Ops.LINEAR dtypes.void [1, 2, 10, 13, 3, 4, 5, 21, 22, 6, 7, 8, 23, 25, 26, 32, 34, 35, 17, 41, 42, 44, 45, 11, 12, 27, 28, 36, 37, 46, 47, 14, 15, 0, 24, 33, 43, 9, 18, 29, 38, 48, 16, 30, 39, 49, 19, 31, 40, 50, 20, 51, 53]
+55 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(16) E_16_4(signed char* data0_64, signed char* data1_64, signed char* data2_64) {\n  int lidx0 = threadIdx.x; /* 16 */\n  int alu0 = (lidx0<<2);\n  int alu1 = (alu0+1);\n  signed char val0 = (*(data1_64+alu1));\n  int alu2 = (alu0+2);\n  signed char val1 = (*(data1_64+alu2));\n  int alu3 = (alu0+3);\n  signed char val2 = (*(data1_64+alu3));\n  signed char val3 = (*(data1_64+alu0));\n  signed char val4 = (*(data2_64+alu1));\n  signed char val5 = (*(data2_64+alu2));\n  signed char val6 = (*(data2_64+alu3));\n  signed char val7 = (*(data2_64+alu0));\n  *(data0_64+alu1) = (((signed char)((val0+val4)))*((signed char)(3)));\n  *(data0_64+alu2) = (((signed char)((val1+val5)))*((signed char)(3)));\n  *(data0_64+alu3) = (((signed char)((val2+val6)))*((signed char)(3)));\n  *(data0_64+alu0) = (((signed char)((val3+val7)))*((signed char)(3)));\n}"
+56 Ops.PROGRAM dtypes.void [53, 54, 55] ProgramInfo(local_size=(16, 1, 1), params=(%2, %10, %13), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+57 Ops.SINK dtypes.void [52, 56]
+

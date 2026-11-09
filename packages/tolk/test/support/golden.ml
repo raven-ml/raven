@@ -31,6 +31,10 @@ type header = { entries : string list; hash : string option }
 
 let tolk_name file = Filename.remove_extension file ^ ".tolk"
 
+(* [-u] is windtrap's flag, read from the program's arguments: only then does
+   a golden test write its [.tolk], so a plain run keeps a golden's own diff. *)
+let updating = Array.exists (fun a -> a = "-u" || a = "--update") Sys.argv
+
 (* A hash of a golden's body: stable across runs and machines, and available
    without a dependency. *)
 let digest body = Digest.(to_hex (string body))
@@ -145,10 +149,6 @@ let expected file =
 
 let body file = fst (expected file)
 
-(* [-u] is windtrap's flag, read from the program's arguments: only then does
-   a golden test write its [.tolk], so a plain run keeps a golden's own diff. *)
-let updating = Array.exists (fun a -> a = "-u" || a = "--update") Sys.argv
-
 (* The absolute path windtrap maps back to the source file. *)
 let absolute file =
   let p = path file in
@@ -190,9 +190,18 @@ let graph file sink =
   Windtrap.test file (fun () ->
       compare_text file (Tolk.Graph.to_string (sink ())))
 
-let sink file =
-  try Tolk.Graph.of_string (body file)
+let parsed file text =
+  try Tolk.Graph.of_string text
   with Failure e -> failwith (file ^ ": " ^ e)
+
+(* Under [-u] a graph is read to rewrite it, so a [.tolk] whose golden moved is
+   no failure: it is the file being repaired. *)
+let sink file =
+  let tolk = tolk_name file in
+  if updating && exists tolk then parsed file (snd (tolk_parts tolk))
+  else parsed file (body file)
+
+let upstream file = parsed file (golden_body file)
 
 (* Tables *)
 

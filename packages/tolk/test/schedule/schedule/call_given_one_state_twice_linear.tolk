@@ -9,7 +9,7 @@
 7 Ops.END dtypes.void [6, 2]
 8 Ops.SINK dtypes.void [7] KernelInfo()
 9 Ops.CONST dtypes.weakint [] 256
-10 Ops.BUFFER dtypes.i8 [9] ParamArg(slot=3, dtype=dtypes.i8, device="CPU")
+10 Ops.BUFFER dtypes.i8 [9] ParamArg(slot=113, dtype=dtypes.i8, device="CPU")
 11 Ops.CONST dtypes.weakint [] 0
 12 Ops.CONST dtypes.weakint [] 16
 13 Ops.SHRINK dtypes.i8 [10, 11, 12]

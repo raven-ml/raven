@@ -1,5 +1,5 @@
 (* Tests of Tolk.Jit: the schedules tinygrad captures from the functions its
-   tests jit, lowered as tinygrad lowers them, and the laws of a lowering over
+   tests jit, lowered as recorded, and the laws of a lowering over
    those captures and over drawn ones: its replays leave what the captured
    schedule leaves when it runs unplanned, whatever the inputs and variables;
    its memory plan never places a held buffer or an input in an arena; and it is
@@ -321,11 +321,9 @@ let captures =
 
 let lowers_as_recorded case =
   let file = case ^ "_lowered.golden" in
-  test file (fun () ->
-      let golden = Golden.sink file in
-      equal text (Graph.to_string golden)
-        (lower case |> Uops.binaries_as_sources
-        |> Uops.numbered_like golden |> Graph.to_string))
+  Golden.graph file (fun () ->
+      lower case |> Uops.binaries_as_sources
+      |> Uops.numbered_like (Golden.sink file))
 
 let recorded =
   per_case "jit_lower › recorded" (fun case ->

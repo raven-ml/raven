@@ -1,4 +1,4 @@
-# tolk D141 D280 golden=e1b03e1842d952819b83fec59fcd6091
+# tolk D141 golden=e1b03e1842d952819b83fec59fcd6091
 0 Ops.CONST dtypes.weakint [] 204800
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 16

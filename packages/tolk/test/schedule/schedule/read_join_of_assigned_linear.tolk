@@ -11,7 +11,7 @@
 9 Ops.STORE dtypes.void [3, 8]
 10 Ops.SINK dtypes.void [9] KernelInfo()
 11 Ops.CONST dtypes.weakint [] 512
-12 Ops.BUFFER dtypes.i8 [11] ParamArg(slot=16, dtype=dtypes.i8, device="CPU")
+12 Ops.BUFFER dtypes.i8 [11] ParamArg(slot=13, dtype=dtypes.i8, device="CPU")
 13 Ops.SHRINK dtypes.i8 [12, 2, 4]
 14 Ops.BITCAST dtypes.f32 [13] dtypes.f32
 15 Ops.BUFFER dtypes.f32 [4] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")

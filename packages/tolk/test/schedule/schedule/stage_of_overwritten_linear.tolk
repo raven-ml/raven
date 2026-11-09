@@ -10,12 +10,12 @@
 8 Ops.END dtypes.void [7, 2]
 9 Ops.SINK dtypes.void [8] KernelInfo()
 10 Ops.CONST dtypes.weakint [] 512
-11 Ops.BUFFER dtypes.i8 [10] ParamArg(slot=7, dtype=dtypes.i8, device="CPU")
+11 Ops.BUFFER dtypes.i8 [10] ParamArg(slot=1, dtype=dtypes.i8, device="CPU")
 12 Ops.CONST dtypes.weakint [] 0
 13 Ops.CONST dtypes.weakint [] 8
 14 Ops.SHRINK dtypes.i8 [11, 12, 13]
 15 Ops.BITCAST dtypes.f32 [14] dtypes.f32
-16 Ops.BUFFER dtypes.f32 [4] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+16 Ops.BUFFER dtypes.f32 [4] ParamArg(slot=5, dtype=dtypes.f32, device="CPU")
 17 Ops.CALL dtypes.void [9, 15, 16] CallInfo()
 18 Ops.PARAM dtypes.f32 [4] ParamArg(slot=0, dtype=dtypes.f32)
 19 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 0)

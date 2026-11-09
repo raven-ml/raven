@@ -1,4 +1,4 @@
-# tolk D89 D151 golden=d5f6f666e04ce520a02bc4f9d12a8a62
+# tolk D151 golden=d5f6f666e04ce520a02bc4f9d12a8a62
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
 __attribute__((min_vector_width(512))) void r_64_4(float* restrict data0_1, float* restrict data1_256) {
   float buf0[1];

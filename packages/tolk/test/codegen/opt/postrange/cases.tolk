@@ -132,7 +132,7 @@ double_sum_group_twice	double_sum	metal	(Opt(op=OptOps.SPLIT, axis=1, arg=(4, Ax
 sibling_sums_group	sibling_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),)		ok	
 ten_sums_group	ten_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(1024, AxisType.LOCAL, True)),)		ok	
 ten_shared_sums_group	ten_shared_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(256, AxisType.LOCAL, True)),)		ok	
-ten_shared_sums_group_unfit	ten_shared_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(1024, AxisType.LOCAL, True)),)		KernelOptError	0
+ten_shared_sums_group_unfit	ten_shared_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(1024, AxisType.LOCAL, True)),)		ok	
 single_kernel_softmax_group	single_kernel_softmax	metal	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.LOCAL)),)		ok	
 split_axis_negative	sum_rows	cpu	(Opt(op=OptOps.SPLIT, axis=-1, arg=(2, AxisType.UPCAST)),)		KernelOptError	0
 split_axis_past_end	sum_rows	cpu	(Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType.UPCAST)),)		KernelOptError	0

@@ -7,7 +7,11 @@ open Windtrap
 open Tolk
 module K = Postrange.Scheduler
 
-(* Goldens *)
+(* Goldens
+
+   renderers.tolk keeps its own table: it adds the columns [registers] and
+   [per_byte_first], facts of the host's and the GPUs' heuristics (D89, D187)
+   that upstream's renderers do not have. *)
 
 let renderers =
   List.map
@@ -108,7 +112,7 @@ let chosen =
            cases);
     ]
   in
-  group "the optimisations chosen are tinygrad's"
+  group "the optimisations chosen are as recorded"
     (List.map (fun (environment, _) -> in_process environment tests) processes)
 
 let leaves_its_argument =
@@ -1039,6 +1043,9 @@ let retyped k =
    bytes, from the count's statement: a register holds 8 floats or 4 doubles,
    no more than a store writes at consecutive addresses, and a reduce that no
    longer loops holds nothing. *)
+(* tangent_products keeps its own input in tangent_products.tolk: the budget
+   cases here unroll the shape its reduces have with their ranges pinned
+   (D280), which upstream's kernel does not have. *)
 let held_cases =
   let up axis amount =
     Opt.Split { axis; amount; target = Opt.Upcast; top = false }

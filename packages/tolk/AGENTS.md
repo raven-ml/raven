@@ -45,7 +45,10 @@ runs that data on rig.
   `x.golden`: tolk's output, headed `# tolk D81 D96 golden=<hash>` by the
   `DIVERGENCES.md` entries it belongs to and the hash of the golden's body.
   `Golden` prefers it and fails if the golden moved, if the two agree, or if it
-  names no entry. `-u` writes it, keeping its numbers. A `.tolk` with no
+  names no entry. It holds tolk's output on the golden's own input, and its
+  numbers name the differences of that stage alone; a stage that cannot read
+  the golden's input keeps its own, and its test says why. `-u` writes it,
+  keeping its numbers. A `.tolk` with no
   `.golden` is an output tinygrad cannot produce, and carries no hash. A
   table's `Golden.cases ~differs` states exactly which rows of its `.tolk`
   differ from the golden.

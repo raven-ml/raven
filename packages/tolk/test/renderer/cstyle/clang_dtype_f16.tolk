@@ -1,14 +1,12 @@
-# tolk D80 D141 D151 golden=6173dc5aed621815972a14506f4540a3
+# tolk D141 D151 golden=6173dc5aed621815972a14506f4540a3
 typedef __fp16 __fp164 __attribute__((aligned(2),ext_vector_type(4)));
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
-__attribute__((min_vector_width(512))) void E_4_4(float* restrict data0_16, float* restrict data1_16, __fp16* restrict data2_16, const int block_lo_, const int block_hi_) {
-  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
-    int alu0 = ((block_lo_+Lidx0)<<2);
+__attribute__((min_vector_width(512))) void E_4_4(float* restrict data0_16, float* restrict data1_16, __fp16* restrict data2_16) {
+  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {
+    int alu0 = (Lidx0<<2);
     __fp164 val0 = (*((__fp164*)((data2_16+alu0))));
     float4 val1 = (*((float4*)((data1_16+alu0))));
-    __fp164 cast0 = __builtin_convertvector(val1, __fp164);
-    float4 cast1 = __builtin_convertvector(((cast0+val0)*((__fp16)(3.0f))), float4);
-    *((float4*)((data0_16+alu0))) = cast1;
+    *((float4*)((data0_16+alu0))) = (float4){((float)(((__fp16)((((__fp16)((((__fp16)(val1[0]))+val0[0])))*((__fp16)(3.0f))))))),((float)(((__fp16)((((__fp16)((((__fp16)(val1[1]))+val0[1])))*((__fp16)(3.0f))))))),((float)(((__fp16)((((__fp16)((((__fp16)(val1[2]))+val0[2])))*((__fp16)(3.0f))))))),((float)(((__fp16)((((__fp16)((((__fp16)(val1[3]))+val0[3])))*((__fp16)(3.0f)))))))};
   }
 }
 

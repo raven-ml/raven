@@ -1269,11 +1269,15 @@ let same_graph want got =
    target that lacks [lacks]; [told_as_lacking] checks that the target told to
    emulate [named] rewrites it the same way. *)
 let emulates_as_tinygrad (name, _, lacks) =
-  test (name ^ ".golden") (fun () ->
-      let g = golden name in
-      same_graph
-        (with_conversions (Ops.nth g 1))
-        (emulate (lacking lacks) (Ops.nth g 0)))
+  let file = name ^ ".golden" in
+  let upstream = lazy (Golden.upstream file) in
+  let recorded () = if Golden.updating then Lazy.force upstream else golden name in
+  let input () = Ops.nth (recorded ()) 0 in
+  let actual () = emulate (lacking lacks) (input ()) in
+  let expected () = with_conversions (Ops.nth (recorded ()) 1) in
+  if Golden.updating && not (Ops.equal (expected ()) (actual ())) then
+    Golden.graph file (fun () -> Ops.sink [ input (); actual () ])
+  else test file (fun () -> same_graph (expected ()) (actual ()))
 
 let told_as_lacking (name, named, lacks) =
   test (name ^ ".golden, told to emulate") (fun () ->

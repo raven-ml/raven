@@ -4,6 +4,6 @@ extern void frexp();
 __attribute__((min_vector_width(512))) void call_out(int* restrict data0_2) {
   double alu0 = ((double(*)(double, int*))(frexp))((double)(8.0), (int*)((data0_2+0)));
   int val0 = (*(data0_2+0));
-  *(data0_2+1) = ((int)((((unsigned int)(val0))+1u)));
+  *(data0_2+1) = (val0+1);
 }
 

@@ -1,23 +1,14 @@
-# tolk D80 D141 D151 D342 golden=53a3860bf2326627b0007b93aa784df4
+# tolk D141 D151 D342 golden=53a3860bf2326627b0007b93aa784df4
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
-typedef unsigned short unsigned_short4 __attribute__((aligned(2),ext_vector_type(4)));
-typedef unsigned int unsigned_int4 __attribute__((aligned(4),ext_vector_type(4)));
-__attribute__((min_vector_width(512))) void E_4_4(float* restrict data0_16, float* restrict data1_16, unsigned short* restrict data2_16, const int block_lo_, const int block_hi_) {
-  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
-    int alu0 = ((block_lo_+Lidx0)<<2);
+__attribute__((min_vector_width(512))) void E_4_4(float* restrict data0_16, float* restrict data1_16, unsigned short* restrict data2_16) {
+  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {
+    int alu0 = (Lidx0<<2);
     unsigned short val0 = (*(data2_16+(alu0+1)));
     unsigned short val1 = (*(data2_16+(alu0+2)));
     unsigned short val2 = (*(data2_16+(alu0+3)));
     unsigned short val3 = (*(data2_16+alu0));
     float4 val4 = (*((float4*)((data1_16+alu0))));
-    unsigned_short4 cast0 = __builtin_convertvector(val4, unsigned_short4);
-    unsigned_int4 cast1 = __builtin_convertvector((unsigned_short4){val3,val0,val1,val2}, unsigned_int4);
-    unsigned_int4 cast2 = __builtin_convertvector(cast0, unsigned_int4);
-    unsigned_short4 cast3 = __builtin_convertvector((cast2+cast1), unsigned_short4);
-    unsigned_int4 cast4 = __builtin_convertvector(cast3, unsigned_int4);
-    unsigned_short4 cast5 = __builtin_convertvector((cast4*3u), unsigned_short4);
-    float4 cast6 = __builtin_convertvector(cast5, float4);
-    *((float4*)((data0_16+alu0))) = cast6;
+    *((float4*)((data0_16+alu0))) = (float4){((float)(((unsigned short)((((unsigned int)(((unsigned short)((((unsigned int)(((unsigned short)(val4[0]))))+((unsigned int)(val3)))))))*3u))))),((float)(((unsigned short)((((unsigned int)(((unsigned short)((((unsigned int)(((unsigned short)(val4[1]))))+((unsigned int)(val0)))))))*3u))))),((float)(((unsigned short)((((unsigned int)(((unsigned short)((((unsigned int)(((unsigned short)(val4[2]))))+((unsigned int)(val1)))))))*3u))))),((float)(((unsigned short)((((unsigned int)(((unsigned short)((((unsigned int)(((unsigned short)(val4[3]))))+((unsigned int)(val2)))))))*3u)))))};
   }
 }
 

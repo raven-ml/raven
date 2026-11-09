@@ -120,7 +120,7 @@
 118 Ops.PARAM dtypes.i32 [101] ParamArg(slot=4, dtype=dtypes.i32, vmin_vmax=(0, 10), name="block_hi", addrspace=AddrSpace.ALU)
 119 Ops.PROGRAM dtypes.void [110, 111, 112, 113] ProgramInfo(global_size=(%102, 1, 1), params=(%114, %115, %116, %117, %118), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", arch="x86_64,x86-64"))
 120 Ops.CONST dtypes.weakint [] 1536
-121 Ops.ALLOC dtypes.i8 [120] ParamArg(slot=12, dtype=dtypes.i8, device="CPU")
+121 Ops.ALLOC dtypes.i8 [120] ParamArg(slot=285, dtype=dtypes.i8, device="CPU")
 122 Ops.SHRINK dtypes.i8 [121, 4, 60]
 123 Ops.BITCAST dtypes.f32 [122] dtypes.f32
 124 Ops.PARAM dtypes.f32 [37] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")

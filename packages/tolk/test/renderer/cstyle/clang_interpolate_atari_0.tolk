@@ -1,39 +1,27 @@
-# tolk D80 D141 D151 D342 golden=fc18ff7e911a5128144e7833e8c35af2
-typedef unsigned char unsigned_char4 __attribute__((aligned(1),ext_vector_type(4)));
-typedef unsigned int unsigned_int4 __attribute__((aligned(4),ext_vector_type(4)));
-typedef signed char signed_char4 __attribute__((aligned(1),ext_vector_type(4)));
-typedef short short4 __attribute__((aligned(2),ext_vector_type(4)));
-typedef unsigned short unsigned_short4 __attribute__((aligned(2),ext_vector_type(4)));
-__attribute__((min_vector_width(512))) void E_210_16_4(unsigned char* restrict data0_13440, unsigned char* restrict data1_33600, const int block_lo_, const int block_hi_) {
-  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {
-    int alu0 = (block_lo_+Lidx1);
-    int alu1 = (alu0*160);
-    for (int Lidx2 = 0; Lidx2 < 16; Lidx2++) {
-      int alu2 = (Lidx2*1280);
-      int alu3 = (alu2+1056);
-      unsigned char val0 = (*(data1_33600+((alu3>>7)+alu1)));
-      unsigned char val1 = (*(data1_33600+(((alu2+1183)>>7)+alu1)));
-      unsigned char val2 = (*(data1_33600+(((alu2+223)>>7)+alu1)));
-      int alu4 = (alu2+416);
-      unsigned char val3 = (*(data1_33600+((alu4>>7)+alu1)));
-      unsigned char val4 = (*(data1_33600+(((alu2+543)>>7)+alu1)));
-      int alu5 = (alu2+736);
-      unsigned char val5 = (*(data1_33600+((alu5>>7)+alu1)));
-      unsigned char val6 = (*(data1_33600+(((alu2+863)>>7)+alu1)));
-      int alu6 = (alu2+96);
-      unsigned char val7 = (*(data1_33600+((alu6>>7)+alu1)));
-      unsigned_char4 cast0 = (unsigned_char4){val7,val3,val5,val0};
-      int alu7 = ((alu0<<6)+(Lidx2<<2));
-      unsigned_int4 cast1 = __builtin_convertvector((unsigned_char4){val2,val4,val6,val1}, unsigned_int4);
-      unsigned_int4 cast2 = __builtin_convertvector(cast0, unsigned_int4);
-      unsigned_char4 cast3 = __builtin_convertvector((cast1-cast2), unsigned_char4);
-      signed_char4 cast4 = __builtin_convertvector(cast3, signed_char4);
-      short4 cast5 = __builtin_convertvector(cast4, short4);
-      unsigned_short4 cast6 = __builtin_convertvector(cast0, unsigned_short4);
-      *(data0_13440+(alu7+1)) = ((unsigned char)(((unsigned short)((((unsigned int)(cast6[1]))+((unsigned int)((((unsigned short)(((short)((((short)((cast5[1]*((short)(((((float)((alu4&127)))*0.0078125f*128.0f)+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
-      *(data0_13440+(alu7+2)) = ((unsigned char)(((unsigned short)((((unsigned int)(cast6[2]))+((unsigned int)((((unsigned short)(((short)((((short)((cast5[2]*((short)(((((float)((alu5&127)))*0.0078125f*128.0f)+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
-      *(data0_13440+(alu7+3)) = ((unsigned char)(((unsigned short)((((unsigned int)(cast6[3]))+((unsigned int)((((unsigned short)(((short)((((short)((cast5[3]*((short)(((((float)((alu3&127)))*0.0078125f*128.0f)+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
-      *(data0_13440+alu7) = ((unsigned char)(((unsigned short)((((unsigned int)(cast6[0]))+((unsigned int)((((unsigned short)(((short)((((short)((cast5[0]*((short)(((((float)((alu6&127)))*0.0078125f*128.0f)+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
+# tolk D141 D151 D342 golden=fc18ff7e911a5128144e7833e8c35af2
+
+__attribute__((min_vector_width(512))) void E_210_16_4(unsigned char* restrict data0_13440, unsigned char* restrict data1_33600) {
+  for (int Lidx2 = 0; Lidx2 < 210; Lidx2++) {
+    int alu0 = (Lidx2*160);
+    for (int Lidx3 = 0; Lidx3 < 16; Lidx3++) {
+      int alu1 = (Lidx3*1280);
+      int alu2 = (alu1+1056);
+      unsigned char val0 = (*(data1_33600+((alu2>>7)+alu0)));
+      unsigned char val1 = (*(data1_33600+(((alu1+1183)>>7)+alu0)));
+      unsigned char val2 = (*(data1_33600+(((alu1+223)>>7)+alu0)));
+      int alu3 = (alu1+416);
+      unsigned char val3 = (*(data1_33600+((alu3>>7)+alu0)));
+      unsigned char val4 = (*(data1_33600+(((alu1+543)>>7)+alu0)));
+      int alu4 = (alu1+736);
+      unsigned char val5 = (*(data1_33600+((alu4>>7)+alu0)));
+      unsigned char val6 = (*(data1_33600+(((alu1+863)>>7)+alu0)));
+      int alu5 = (alu1+96);
+      unsigned char val7 = (*(data1_33600+((alu5>>7)+alu0)));
+      int alu6 = ((Lidx2<<6)+(Lidx3<<2));
+      *(data0_13440+(alu6+1)) = ((unsigned char)(((unsigned short)((((unsigned int)(((unsigned short)(val3))))+((unsigned int)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((((unsigned int)(val4))-((unsigned int)(val3)))))))))*((short)((((float)((alu3&127)))+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
+      *(data0_13440+(alu6+2)) = ((unsigned char)(((unsigned short)((((unsigned int)(((unsigned short)(val5))))+((unsigned int)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((((unsigned int)(val6))-((unsigned int)(val5)))))))))*((short)((((float)((alu4&127)))+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
+      *(data0_13440+(alu6+3)) = ((unsigned char)(((unsigned short)((((unsigned int)(((unsigned short)(val0))))+((unsigned int)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((((unsigned int)(val1))-((unsigned int)(val0)))))))))*((short)((((float)((alu2&127)))+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
+      *(data0_13440+alu6) = ((unsigned char)(((unsigned short)((((unsigned int)(((unsigned short)(val7))))+((unsigned int)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((((unsigned int)(val2))-((unsigned int)(val7)))))))))*((short)((((float)((alu5&127)))+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
     }
   }
 }
