@@ -2465,15 +2465,31 @@ let conv_kernel ?opts_to_apply dt (c, o, w) =
   Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply ())
     [ Ops.end_ store [ oc; y; xx ] ]
 
-let conv_on_cuda dt =
-  let d, r = on_cuda () in
-  let c, o, w = (16, 32, 32) in
-  let p = w + 2 in
+(* The first GPU of [kind] and its renderer, skipping without them. *)
+let on_gpu kind =
+  let d = Gpus.gpu kind in
+  match Tolk_engine.renderer d with
+  | r -> (d, r)
+  | exception Failure why -> skip ~reason:why ()
+
+(* [k]'s program under the hand-coded optimisations [r] chooses for it, which
+   must take a core, run on [d] over [inputs]: its first output. *)
+let on_a_core (d, r) k inputs =
   let opts =
-    let s = Postrange.Scheduler.v (conv_kernel dt (c, o, w)) r in
+    let s = Postrange.Scheduler.v (k ?opts_to_apply:None ()) r in
     Postrange.Scheduler.convert_loop_to_global s;
     Postrange.Scheduler.applied_opts (Heuristic.hand_coded_optimizations s)
   in
+  let prg = compiled_for r (k ?opts_to_apply:(Some opts) ()) in
+  let wmmas = List.filter (is Wmma) (Ops.src (Ops.nth prg 1)) in
+  less ~msg:"tensor cores" int ~than:(List.length wmmas) 0;
+  List.assoc 0 (Run.on d prg inputs)
+
+let of_ints v = Array.map (fun i -> `Float (Float.of_int i)) v
+
+let conv_on device dt =
+  let c, o, w = (16, 32, 32) in
+  let p = w + 2 in
   let x = small_integers 1 (c * p * p) and f = small_integers 2 (o * c * 9) in
   let exact =
     Array.init (o * w * w) (fun e ->
@@ -2491,12 +2507,88 @@ let conv_on_cuda dt =
         done;
         `Float (Float.of_int !t))
   in
-  let values v = Array.map (fun i -> `Float (Float.of_int i)) v in
-  let prg = compiled_for r (conv_kernel ~opts_to_apply:opts dt (c, o, w)) in
-  let wmmas = List.filter (is Wmma) (Ops.src (Ops.nth prg 1)) in
-  less ~msg:"tensor cores" int ~than:(List.length wmmas) 0;
+  let k ?opts_to_apply () = conv_kernel ?opts_to_apply dt (c, o, w) in
   equal (array Dtypes.value) exact
-    (List.assoc 0 (Run.on d prg [ (1, values x); (2, values f) ]))
+    (on_a_core (device ()) k [ (1, of_ints x); (2, of_ints f) ])
+
+(* An out projection of [h] heads of [e] elements, each head's element of a
+   row scaled by the row's [s] for that head, as attention's sinks scale it:
+   [c[i, j] = Σ_g Σ_d dt(a[i, g, d] · s[i, g]) · w[g, d, j]]. The scale reads
+   the head apart from its elements, so the sum keeps two reduce axes, a core
+   taking one. Integers from -2 to 2 times scales of 1 or 2: every sum is
+   exact. *)
+let projection = (32, 4, 32, 64)
+
+let projection_kernel ?opts_to_apply dt =
+  let m, h, e, n = projection in
+  let c = Shape.param ~shape:[ Ops.Int (m * n) ] 0 Float32
+  and a = Shape.param ~shape:[ Ops.Int (m * h * e) ] 1 dt
+  and s = Shape.param ~shape:[ Ops.Int (m * h) ] 2 Float32
+  and w = Shape.param ~shape:[ Ops.Int (h * e * n) ] 3 dt in
+  let he = h * e and en = e * n in
+  let open Ops.O in
+  let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ]
+  and g = Ops.range ~axis_type:Weak (Int h) [ 2 ]
+  and d = Ops.range ~axis_type:Weak (Int e) [ 3 ] in
+  let at x idx = Ops.cast (Ops.index x [ idx ]) Float32 in
+  let scaled =
+    Ops.cast
+      (Ops.cast
+         (at a ((i * int he) + (g * int e) + d)
+         * Ops.index s [ (i * int h) + g ])
+         dt)
+      Float32
+  in
+  let sum =
+    Ops.reduce (scaled * at w ((g * int en) + (d * int n) + j)) Add [ g; d ]
+  in
+  let store = Ops.store (Ops.index c [ (i * int n) + j ]) sum in
+  Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply ())
+    [ Ops.end_ store [ i; j ] ]
+
+let projection_on device dt =
+  let m, h, e, n = projection in
+  let a = small_integers 1 (m * h * e) and w = small_integers 2 (h * e * n) in
+  let sc = Array.init (m * h) (fun q -> 1 + (q mod 2)) in
+  let exact =
+    Array.init (m * n) (fun q ->
+        let i = q / n and j = q mod n in
+        let t = ref 0 in
+        for g = 0 to h - 1 do
+          for d = 0 to e - 1 do
+            t :=
+              !t
+              + a.((i * h * e) + (g * e) + d)
+                * sc.((i * h) + g)
+                * w.((g * e * n) + (d * n) + j)
+          done
+        done;
+        `Float (Float.of_int !t))
+  in
+  let k ?opts_to_apply () = projection_kernel ?opts_to_apply dt in
+  equal (array Dtypes.value) exact
+    (on_a_core (device ()) k
+       [ (1, of_ints a); (2, of_ints sc); (3, of_ints w) ])
+
+(* Products of several reduce axes on each GPU present, whose core takes one
+   of them. *)
+let cores_on kind =
+  let narrow = [ Dtype.Float16; Dtype.Bfloat16 ] in
+  let id = Format.asprintf "%a" Dtype.pp in
+  group kind
+    [
+      cases
+        "a convolution of three reduce axes takes a core and is the exact \
+         result"
+        ~id narrow
+        (conv_on (fun () -> on_gpu kind));
+      cases
+        "a projection over heads and their elements takes a core and is the \
+         exact result"
+        ~id narrow
+        (projection_on (fun () -> on_gpu kind));
+    ]
 
 let tensor_cores_on_cuda =
   group "tensor cores on CUDA"
@@ -2525,11 +2617,6 @@ let tensor_cores_on_cuda =
         "a product summed in float32 has the same bits whether the core \
          takes one or two steps of K a trip"
         sums_gen sum_bits;
-      cases
-        "a convolution of three reduce axes takes a core and is the exact \
-         result"
-        ~id:(Format.asprintf "%a" Dtype.pp) [ Dtype.Float16; Dtype.Bfloat16 ]
-        conv_on_cuda;
     ]
 
 (* Tensor cores written by hand
@@ -8793,6 +8880,7 @@ let () =
            whole_graphs;
            accumulators;
            tensor_cores_on_cuda;
+           group "tensor cores on each GPU" (List.map cores_on Gpus.kinds);
            tensor_cores_by_hand;
            fixed_threads;
            bfloat16_vectors_on_cuda;

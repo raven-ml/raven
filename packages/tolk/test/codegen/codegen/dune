@@ -10,6 +10,7 @@
   tolk
   tolk_test
   tolk_run
+  tolk_gpus
   tolk.engine
   rig
   rig.cuda
