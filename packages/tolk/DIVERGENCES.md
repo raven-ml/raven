@@ -9295,16 +9295,16 @@ reason and its pins.
   the CPU device only.
 - **Differs:** a Clang kernel for the CPU device of more than 20 000
   operations, those written into their reader counted, is written as a kernel
-  that calls functions of at most 2 000 operations in order. A statement never
-  moves past another. A block too long for a function stays in the kernel and
-  is cut inside. A value read outside the function that declares it is held in
-  a frame on the kernel's stack, one array per C type: it is written where it
-  is declared and read where a function first uses it, and its slot is free
-  once the last reader of its value has run; a value declared outside a loop
-  and read inside lives to the loop's end, since its next trip reads it again.
-  A kernel that declares a name twice, as two loops one after the other may,
-  stays whole. A kernel of 20 000 operations or fewer renders as before, so no
-  golden changes.
+  that calls functions of at most 2 000 operations in order; a statement of
+  more is a function of its own. Statements keep their order, but for the
+  buffers the kernel declares, which move to its start. A block too long for a
+  function stays in the kernel and is cut inside. A value read outside the
+  function that declares it is held in a frame on the kernel's stack, one
+  array per C type: it is written where it is declared and read where a
+  function first uses it, and its slot is free once the last reader of its
+  value has run; a value declared outside a loop and read inside lives to the
+  loop's end, since its next trip reads it again. A kernel of 20 000
+  operations or fewer renders as before, so no golden changes.
 - **Reason:** (d). An elementwise program written as an OCaml loop is one
   kernel, and Clang's time on one function grows faster than the function.
   Fudge, Clang 19.1.7, user seconds, machine under load: a fixed-step pendulum
@@ -9326,4 +9326,5 @@ reason and its pins.
   `Tolk.Cstyle › execution on the host › writes a long kernel in pieces`,
   `› leaves a GPU's kernels whole`, `› computes a long chain of values read
   once`, `› keeps two loops whose indices render as one name` and `› cut into
-  pieces, writes what it writes whole`.
+  pieces, writes what it writes whole`, whose cases include `keeps a value
+  read early in a loop for its next trip`.

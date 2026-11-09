@@ -945,7 +945,8 @@ let chain_of n c x =
 
 let computes_its_chain n program =
   let c = 3 and xs = [| 10; -2; 0; 7 |] in
-  let out = Run.on_host (Run.program (Lazy.force !host) program) [ (1, ints xs); (2, ints [| c |]) ] in
+  let k = Run.program (Lazy.force !host) program in
+  let out = Run.on_host k [ (1, ints xs); (2, ints [| c |]) ] in
   equal values (ints (Array.map (chain_of n c) xs)) (slot 0 out)
 
 (* Past the length from which a kernel is cut, linearized once for the tests
@@ -990,6 +991,32 @@ let keeps_two_loops_of_one_index_name =
   in
   equal values ~msg:"first loop" (ints [| 200; 206; 212; 218 |]) (slot 0 out);
   equal values ~msg:"second loop" (ints [| 1; 2; 3; 9 |]) (slot 1 out)
+
+(* A loop that reads a value loaded before it only at its start, then declares
+   values of its type: [2 * (2 * (x + c))^2], each value read twice so that it
+   is declared. The value read at the start is read again on the next trip. *)
+let early_read () =
+  let zero = Ops.int ~dtype:Int32 0 in
+  let c =
+    Ops.load (Ops.index (Shape.param ~shape:[ Int 1 ] 2 Int32) [ zero ]) []
+  in
+  let trips = Ops.v Cast ~src:[ Ops.int ~dtype:Int32 4 ] ~arg:(Dtype Int32) in
+  let r = Ops.range ~axis_type:Loop ~dtype:Int32 (Sym trips) [ 0 ] in
+  let at slot = Ops.index (Shape.param ~shape:[ Int 4 ] slot Int32) [ r ] in
+  let twice op x = Ops.alu x op [ x ] in
+  let v = Ops.alu (Ops.load (at 1) []) Add [ c ] in
+  let out = twice Add (twice Mul (twice Add v)) in
+  Linearizer.linearize
+    (Ops.sink
+       ~kernel:(Ops.kernel_info ~name:"early_read" ())
+       [ Ops.end_ (Ops.store (at 0) out) [ r ] ])
+
+let keeps_a_value_read_early_in_a_loop () =
+  let xs = [| 10; -2; 0; 7 |] and c = 3 in
+  let k = Run.program (Lazy.force !host) (early_read ()) in
+  let out = Run.on_host k [ (1, ints xs); (2, ints [| c |]) ] in
+  let expected x = 2 * (2 * (x + c)) * (2 * (x + c)) in
+  equal values (ints (Array.map expected xs)) (slot 0 out)
 
 let cut source = contains source "looped_chain_frame"
 
@@ -1523,6 +1550,8 @@ let execution =
            [
              ("reads a value of the outer scope on every trip",
                reads_a_value_of_the_outer_scope);
+             ("keeps a value read early in a loop for its next trip",
+               keeps_a_value_read_early_in_a_loop);
              ("adds two buffers", adds_two_buffers);
              ("sums a buffer", sums_a_buffer);
              ("takes the maximum of a literal", takes_the_maximum_of_a_literal);
