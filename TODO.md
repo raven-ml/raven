@@ -75,11 +75,6 @@ raven / llama.cpp b12048 Vulkan:
   matcher rules on (no gain: the memo it needs costs what it saves)
 - device facts (762ad1c31): Metal's `core_threads` and `stream_threads`
   are owed, and `Rig.cache_bytes` has not run on hardware for NV over PCI
-- LLVM 23 keeps the straight-line vectorizer that D167 turns off under
-  LLVM 18-20 and Apple clang 17: run 73455ffe7's reduced kernel and
-  rune's ALiBi attention example (test_attention.ml, the dense tq 2 tk 3
-  case) through it and extend D167 if it miscompiles (LLVM 21 and 22
-  compile both)
 - a Cast from an integer to float32 on Metal relies on the conversion
   rounding to nearest, which MSL 8.6 does not promise (it allows round
   toward zero); Apple's GPUs round to nearest when tested. Make

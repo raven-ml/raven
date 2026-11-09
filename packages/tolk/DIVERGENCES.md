@@ -5025,10 +5025,10 @@ wraps integers and holds its float bound`, hold.
   narrows them to 8 bits, since the high halves need only their sign, and
   writes `uitofp <2 x i8>`: a low half of 2^32 - 1 converts to 255, and the
   score is off by 2^32 times its slope (`-opt-bisect-limit` names
-  `SLPVectorizerPass`). Clang 18.1.3, 21.1.0 and 22.1.8 compile the kernel
-  with the vectorizer; 19.1.7 and 20.1.2 compile it wrong with it and right
-  without it. With the verifier on, 20.1.2, 21.1.0 and 22.1.8 compile
-  `E_16_2_4` for `x86-64-v3`, which 19.1.7 rejects.
+  `SLPVectorizerPass`). Clang 18.1.3, 21.1.0, 22.1.8 and 23.1.5 compile the
+  kernel with the vectorizer; 19.1.7 and 20.1.2 compile it wrong with it and
+  right without it. With the verifier on, 20.1.2, 21.1.0, 22.1.8 and 23.1.5
+  compile `E_16_2_4` for `x86-64-v3`, which 19.1.7 rejects.
 
   (d), the loop vectorizer: rune's test_special timed out at 60 s on Ubuntu
   CI compiling float64 `betainccinv`'s gradients. Each is one scalar loop
