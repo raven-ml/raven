@@ -159,16 +159,28 @@ let rewrite_inputs =
 let rewritten = lazy (Array.of_list (Ops.src (Golden.sink "rewritten.golden")))
 let nth_of file row column = (Lazy.force file).(int_of_string (row column))
 
+let rewrite row =
+  let r = renderer_of_row row in
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
+    (nth_of rewrite_inputs row "input")
+    (After_sources r.extra_matcher)
+
+(* Under [-u], each row's rewrite is put in its place among upstream's outputs,
+   and the whole is recorded as [rewritten.tolk] when it differs. *)
+let recorded_rewrites () =
+  let outputs = Array.of_list (Ops.src (Golden.upstream "rewritten.golden")) in
+  List.iter
+    (fun row -> outputs.(int_of_string (row "output")) <- rewrite row)
+    (Golden.rows "rewrites.golden");
+  Ops.sink (Array.to_list outputs)
+
 let rewrites =
   group "extra_matcher"
     [
-      Golden.cases "rewrites.golden" (fun row ->
-          let r = renderer_of_row row in
-          equal Uops.uop
-            (nth_of rewritten row "output")
-            (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
-               (nth_of rewrite_inputs row "input")
-               (After_sources r.extra_matcher)));
+      (if Golden.updating then Golden.graph "rewritten.golden" recorded_rewrites
+       else
+         Golden.cases "rewrites.golden" (fun row ->
+             equal Uops.uop (nth_of rewritten row "output") (rewrite row)));
     ]
 
 (* Declarations *)

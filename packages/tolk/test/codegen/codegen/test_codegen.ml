@@ -4545,26 +4545,31 @@ let nan_constants =
    2^-134 + 2^-160, rounds away from it, where its float32 is the tie. Some
    rows, 2^40 + 1 and 2^40 + 2^32 + 2^24, round alike either way. *)
 
-(* The kernel that stores into slot 0, of bfloat16, the cast of each of the [n]
-   elements of slot 1, of [from]. *)
-let cast_to_bfloat16 from n =
-  let out = Shape.param ~shape:[ Int n ] 0 Bfloat16 in
+(* The kernel that stores into slot 0, of [dt], the cast of each of the [n]
+   elements of slot 1, of [from], its lanes upcast by [lanes]. *)
+let cast_to ?(lanes = 1) dt from n =
+  let out = Shape.param ~shape:[ Int n ] 0 dt in
   let x = Shape.param ~shape:[ Int n ] 1 from in
   let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
-  let store =
-    Ops.store (Ops.index out [ i ]) (Ops.cast (Ops.index x [ i ]) Bfloat16)
+  let store = Ops.store (Ops.index out [ i ]) (Ops.cast (Ops.index x [ i ]) dt) in
+  let opts =
+    if lanes = 1 then []
+    else [ Opt.Split { axis = 0; amount = lanes; target = Upcast; top = false } ]
   in
-  Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ store [ i ] ]
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
+    [ Ops.end_ store [ i ] ]
 
-let rounds_once (from, values) =
+let rounds_once ?lanes dt (from, values) =
   let n = Array.length values in
-  let prg = Codegen.to_program (cast_to_bfloat16 from n) (Lazy.force host) in
+  let prg = Codegen.to_program (cast_to ?lanes dt from n) (Lazy.force host) in
   equal (array Dtypes.value)
     (Array.map
        (fun v ->
-         match Dtype.const Bfloat16 v with
+         match Dtype.const dt v with
          | #Dtype.value as r -> r
-         | `Invalid -> failf "%a is no bfloat16" (Testable.pp Dtypes.value) v)
+         | `Invalid ->
+             failf "%a is no %a" (Testable.pp Dtypes.value) v Dtype.pp dt)
        values)
     (List.assoc 0 (Run.on_host prg [ (1, values) ]))
 
@@ -4597,8 +4602,33 @@ let bfloat16_casts =
               `Float (0x1p-134 +. 0x1p-160);
             |] );
         ]
-        rounds_once;
+        (rounds_once Bfloat16);
     ]
+
+(* Casts to half
+
+   A cast to half from a double rounds once, from the exact value, where a cast
+   through a float32 rounds twice: 1 + 2^-11 + 2^-40 is 1 + 2^-10 once, and 1
+   through the float32 1 + 2^-11, a tie that rounds to even. The subnormal
+   2^-25 + 2^-60 is 2^-24 once, and 0 through the float32 2^-25. *)
+
+let half_casts =
+  let doubles =
+    [|
+      `Float (1. +. 0x1p-11 +. 0x1p-40);
+      `Float (-.(1. +. 0x1p-11 +. 0x1p-52));
+      `Float (2048. +. 1. +. 0x1p-30);
+      `Float (0x1p-25 +. 0x1p-60);
+      `Float (-.(0x1p-25 +. 0x1p-60));
+      `Float (65520. -. 0x1p-20);
+      `Float (1. +. 0x1p-11);
+      `Float 1e300;
+    |]
+  in
+  cases "a double rounds once to half on the host"
+    ~id:(fun lanes -> Printf.sprintf "in %d lanes" lanes)
+    [ 1; 4; 8 ]
+    (fun lanes -> rounds_once ~lanes Float16 (Float64, doubles))
 
 (* Selections between bfloat16 vectors *)
 
@@ -8242,6 +8272,7 @@ let () =
            shared_ranges;
            lanes;
            bfloat16_casts;
+           half_casts;
            test "a selection between bfloat16 vectors takes each lane's arm"
              selects_bfloat16_lanes;
            test

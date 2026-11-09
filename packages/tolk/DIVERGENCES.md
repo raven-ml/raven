@@ -337,10 +337,13 @@ stamps nothing (D146).
     long to a float32 word by word; an emulated cast narrows its source to
     float32 first; `f2f` flushes subnormals to zero both ways, but for those
     within half a subnormal ulp of the least normal, which round up to it, and
-    narrows every NaN to its format's one quiet NaN of its sign.
+    narrows every NaN to its format's one quiet NaN of its sign;
+  - `renderer/cstyle.py` `ClangRenderer.extra_matcher`: Clang casts a
+    double to half through a float32, rounded to nearest.
 - **tolk:** `Dtype.encode_format` (one rounding for every narrow float) and
   `Dtype.float_of_integer`; `Decomp_dtype.long_to_float`,
-  `Decomp_dtype.narrow` and `Decomp_dtype.f2f`.
+  `Decomp_dtype.narrow` and `Decomp_dtype.f2f`; Clang's double to half cast in
+  `Cstyle.clang`'s matcher, through `Decomp_dtype.narrow`.
 - **Differs:** converting to a narrow float rounds once, to nearest with ties
   to even, from any source, and treats every value as IEEE does, folded or
   emulated:
@@ -352,7 +355,9 @@ stamps nothing (D146).
     that the cast's rounding to the narrow float is the one rounding; an
     emulated 64-bit integer
     converts to a float32 once, where tinygrad's word arithmetic rounds each
-    word and their sum;
+    word and their sum. Clang's double to half cast narrows to float32 the
+    same way: `1 + 2^-11 + 2^-40` is half `1 + 2^-10` here and `1.0` in
+    tinygrad, and `65520 - 2^-20` is `65504` here and infinity there;
   - emulation keeps subnormals, both ways.
 
   A NaN converts as the NaN rule allows, which no golden distinguishes:
@@ -384,7 +389,8 @@ stamps nothing (D146).
   gives `0x00` where the folder gives `0x01`, e5m2's `2**-16` likewise, and the
   code `0x01` widens to `0.0`; and a double rounds twice, through a float32: the
   float64 `1 + 2**-4 + 2**-40` becomes e4m3 `0x38` (1.0) where the folder gives
-  `0x39` (1.125).
+  `0x39` (1.125). Clang's double to half cast: (e), as the emulated cast's
+  rounding to odd; rune hands tolk no double to cast to half.
 - **Pinned by:** `Tolk.Dtype › truncate › truncation.golden` (the
   near-tie rows, stated in code), `Tolk.Dtype › truncate › bfloat16 rounds
   once, to the nearest, ties to even` and `Tolk.Dtype › truncate › an
@@ -402,7 +408,9 @@ stamps nothing (D146).
   conversions are IEEE conversions › an emulated narrow float keeps its
   subnormals, both ways`, and `Tolk.Decomp_dtype › emulated narrow floats ›
   an emulated cast of doubles near every <format> tie rounds once` for each
-  8-bit format.
+  8-bit format. Clang's double to half cast: `Tolk.Codegen › a double rounds
+  once to half on the host` and `Tolk.Cstyle › extra_matcher`'s
+  `rewritten.tolk`.
 
 ## D10. Withdrawn
 

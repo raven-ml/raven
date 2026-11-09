@@ -1097,6 +1097,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A cast from a double to half rounds once on the CPU: `1 + 2^-11 + 2^-40`
+  is `1 + 2^-10`, and `65520 - 2^-20` is `65504`, where the cast through a
+  float32 gave `1` and infinity.
 - CUDA kernels that copy `bfloat16` before sm_80, OCP 8-bit floats before
   sm_89, or fnuz 8-bit floats on any GPU compile: the copy moves vectors of the
   emulated float's storage, which `Cstyle.cuda` now declares.

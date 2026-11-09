@@ -1513,7 +1513,9 @@ let bit_loads dts =
       ])
 
 (* LLVM legalizes a double to half cast on CPUs without native support (such as
-   x86 without AVX512-FP16) into a compiler-rt libcall *)
+   x86 without AVX512-FP16) into a compiler-rt libcall, so the cast goes through
+   a float32, which the double reaches rounded to odd: the half is then the
+   double rounded once. *)
 let clang_extra_matcher =
   Pattern_matcher.concat
     [
@@ -1524,7 +1526,9 @@ let clang_extra_matcher =
         (fun () -> [
           rule
             (Upat.cast (Upat.var ~dtype:[ Dtype.Float64 ] "x") Dtype.Float16)
-            (fun m -> Some (cast (cast (m "x") Dtype.Float32) Dtype.Float16));
+            (fun m ->
+              Some
+                (cast (Decomp_dtype.narrow (m "x") Dtype.Float32) Dtype.Float16));
         ]);
       create_non_native_float_pats [ Dtype.Bfloat16 ];
       pm_manual_bf16_cast;
