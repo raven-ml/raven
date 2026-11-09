@@ -1769,6 +1769,23 @@ let kernel_entry image f =
       ignore (Sys.opaque_identity image);
       e
 
+(* [image] stays reachable until the driver's call returns, as for an entry.
+   What the driver starts is [i]'s, which its unload releases. Only a fault
+   loses the device: a prepare reports nothing, so an exception from it, such
+   as an allocation's, loses nothing. *)
+let kernel_prepare image f =
+  match image.loaded with
+  | Linked _ -> ()
+  | Loaded l ->
+      let module D = (val l.m) in
+      let i =
+        match image_of l with
+        | Some i -> i
+        | None -> invalid_arg "Rig: an image its driver did not make"
+      in
+      Dev.counted image.idev Dev.Faults (fun () -> D.prepare i f) ();
+      ignore (Sys.opaque_identity image)
+
 (* The growth of [d]'s queues a submission asks at round [round] of the
    ladder, after a Short of [lacked] bytes, or 0. Every answer takes a round,
    so a submission asks at most [rounds] times whatever its room answers. A

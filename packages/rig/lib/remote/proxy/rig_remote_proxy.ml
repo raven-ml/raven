@@ -210,6 +210,9 @@ let stop d ~fault:_ = stop_c d.c
    queues on its machine. *)
 let grow _ = Rig_edge.Grown
 
+(* The agent links the program, and prepares its launches there. *)
+let prepare _ _ = ()
+
 module Driver = struct
   type nonrec t = t
   type nonrec region = region
@@ -228,6 +231,7 @@ module Driver = struct
   let dma = dma
   let image = image
   let entry = entry
+  let prepare = prepare
   let unload = unload
   let signaled = signaled
   let sleep = sleep

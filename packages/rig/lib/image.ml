@@ -139,6 +139,10 @@ let resolve image f =
     (fun e -> { fimage = image; fname = f; fentry = e })
     (Memory.kernel_entry image f)
 
+let prepare image f =
+  Dev.check_held "Image.prepare";
+  Memory.kernel_prepare image f
+
 let name fn = fn.fname
 let image fn = fn.fimage
 let params fn = fn.fentry.params

@@ -44,8 +44,8 @@ struct rig_metal_entry {
   int64_t params;
 };
 
-/* The pipelines that entries hold, the buffers that regions hold and the
-   run states alive, across devices, which a test counts. */
+/* The pipelines that entries and builds hold, the buffers that regions hold
+   and the run states alive, across devices, which a test counts. */
 extern _Atomic intptr_t rig_metal_pipelines, rig_metal_buffers,
     rig_metal_runs;
 

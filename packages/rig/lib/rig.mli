@@ -1681,6 +1681,19 @@ module Image : sig
       memory for what [f]'s launches need after the rounds of reclamation
       ({!section-reclaim}), and {!Lost} if [i]'s device is lost. *)
 
+  val prepare : t -> string -> unit
+  (** [prepare i f] may start making [i]'s function [f] ready to launch,
+      and returns without waiting. The first {!resolve} of [f] waits for
+      what it started and returns or raises what it would have. Preparing
+      each function a program launches before resolving any lets a device
+      that makes them slowly, as Metal compiles a pipeline, make them
+      concurrently; on another device it does nothing. It does nothing if
+      [i] has no function [f], or [f] was resolved or prepared, and may wait
+      while another domain resolves a function of [i]. What it starts is
+      [i]'s until [i] unloads, which waits for none of it.
+
+      Raises {!Lost} if [i]'s device is lost. *)
+
   val name : func -> string
   (** [name fn] is [fn]'s name in its image. *)
 

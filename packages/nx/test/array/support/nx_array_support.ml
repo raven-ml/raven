@@ -201,6 +201,7 @@ module Driver = struct
   let dma _ _ ~fn:_ = Error "late gives no driver its memory"
   let image _ _ = Error "late loads no code"
   let entry () _ = Rig_edge.Absent
+  let prepare () _ = ()
   let unload _ () = ()
 
   (* Its room never answers RIG_GROW. *)

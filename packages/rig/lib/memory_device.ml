@@ -69,6 +69,7 @@ module D = struct
     Error "a memory device's memory is the process's own, which no driver gives"
   let image _ _ = Error "a memory device loads no code"
   let entry () _ = Rig_edge.Absent
+  let prepare () _ = ()
   let unload _ () = ()
   let signaled d = load d.word
   let sleep _ ~seen:_ ~still_ms:_ = ()

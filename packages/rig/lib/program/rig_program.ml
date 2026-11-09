@@ -1617,7 +1617,7 @@ let prepared p k (s : submit) =
 
 (* A submission [Rig.Submission.make] or a setter refuses is a defect of the
    description. *)
-let prepare p i k s =
+let submission p i k s =
   try prepared p k s with
   | Invalid_argument why -> refuse "step %d: %s" i why
   | Clobbers at ->
@@ -1628,7 +1628,7 @@ let prepare p i k s =
 let rec lstep p next i = function
   | Submit s ->
       let n = if per_copy p.t s then 2 else 1 in
-      let copies = Array.init n (fun k -> prepare p i k s) in
+      let copies = Array.init n (fun k -> submission p i k s) in
       let index = !next in
       incr next;
       Lsubmit { spec = s; copies; index }
@@ -1794,6 +1794,13 @@ let load_here ~rails t devices =
     Iarray.iter
       (fun im -> p.images <- Array.append p.images [| load_image p im |])
       t.images;
+    (* Every launched function starts being made before the steps resolve
+       the first, so that a device makes them concurrently. *)
+    Array.iter
+      (fun (image, name, _) ->
+        if not (Hashtbl.mem funcs (image, name)) then
+          Rig.Image.prepare p.images.(image) name)
+      (launches t);
     let next = ref 0 in
     p.steps <- Array.mapi (lstep p next) (Iarray.to_array t.steps);
     Iarray.iteri

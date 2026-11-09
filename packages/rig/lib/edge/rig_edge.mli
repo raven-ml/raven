@@ -428,7 +428,7 @@ type grown =
     driver's state half changed. An
     [Invalid_argument] from [entry] loses nothing. Neither does any
     exception from {!Driver.val-facts}, {!Driver.locate} or {!Driver.peer},
-    or one other than [Fault] from {!Driver.sleep} or
+    or one other than [Fault] from {!Driver.val-prepare}, {!Driver.sleep} or
     {!Driver.val-signaled}.
 
     An asynchronous exception ([Rig]'s Errors section) can end any OCaml
@@ -472,8 +472,8 @@ type grown =
        devices of the driver;}
     {- it calls {!Driver.val-dma} only with a region {!Driver.val-alloc}
        made, on a device that is not lost;}
-    {- it unloads each image once, and calls {!Driver.val-entry} only on a
-       loaded image;}
+    {- it unloads each image once, and calls {!Driver.val-prepare} and
+       {!Driver.val-entry} only on a loaded image;}
     {- it allocates [Pinned] memory where [alloc] of [Mapped] returns
        [None], or [Device] memory on a device that declares
        [host_addresses];}
@@ -574,10 +574,22 @@ module type Driver = sig
       Raises [Invalid_argument] with the driver's reason if [f] needs more
       than the device offers, where the driver finds that only here. *)
 
+  val prepare : image -> string -> unit
+  (** [prepare i f] may start making what {!val-entry}[ i f] makes and
+      return without waiting, so that the device makes the entries of
+      several functions concurrently: it is [entry]'s asynchronous start. It
+      must report nothing, failures included: the next [entry i f] must wait
+      for what it started and answer as if it made the entry itself. A
+      [prepare] of an [f] that has an entry or a started [prepare] must
+      start nothing, and a [prepare] that raises must have changed nothing.
+      Doing nothing is a valid [prepare], as on a device whose [entry] makes
+      nothing slow. Counted. *)
+
   val unload : t -> image -> unit
-  (** [unload d i] releases what {!val-image} and {!val-entry} made for [i].
-      rig calls it once no work of [d] that runs [i] can run. The region of a
-      [Place] is not [i]'s, and rig frees it after. Counted. *)
+  (** [unload d i] releases what {!val-image}, {!val-prepare} and
+      {!val-entry} made for [i]. rig calls it once no work of [d] that runs
+      [i] can run. The region of a [Place] is not [i]'s, and rig frees it
+      after. Counted. *)
 
   (** {1:driver_queues Queues} *)
 

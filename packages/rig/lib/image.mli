@@ -43,6 +43,10 @@ val resolve : t -> string -> func option
 (** [resolve i f] is {!Rig.Image.resolve}: the driver's entry for [f]
     ({!Memory.kernel_entry}), kept with [i] and [f]. *)
 
+val prepare : t -> string -> unit
+(** [prepare i f] is {!Rig.Image.prepare}: the driver's prepare of [f]
+    ({!Memory.kernel_prepare}). *)
+
 val name : func -> string
 (** [name fn] is {!Rig.Image.name}. *)
 

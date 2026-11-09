@@ -32,3 +32,14 @@
   windtrap)
  (deps
   (source_tree fixtures)))
+
+; test_fork forks before the process opens Metal: a suite of its own, whose
+; process runs no domain and opens no device.
+
+(test
+ (name test_fork)
+ (modules test_fork)
+ (locks %{workspace_root}/gpu)
+ (libraries rig_edge rig_metal rig_metal_support rig_support unix windtrap)
+ (deps
+  (source_tree fixtures)))

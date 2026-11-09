@@ -13,7 +13,9 @@
     A kernel reaches the GPU in a metallib, the binary Apple's Metal compiler
     makes. {!Rig.Image.load} loads the metallib as a Metal library. The first
     {!Rig.Image.resolve} of one of its functions compiles the function for
-    the GPU into a pipeline, which later launches reuse. A Metal command
+    the GPU into a pipeline, which later launches reuse, unless
+    {!Rig.Image.prepare} started the compile before; Metal compiles the
+    functions prepared together at once. A Metal command
     buffer holds encoded work, and Metal runs it only once it is committed.
     The device keeps at most one {e open command buffer}, which collects the
     work of consecutive values until the device commits it. Each
@@ -120,10 +122,9 @@ val gpu : int -> t Rig_edge.opener
 
     rig calls these functions. On Metal, {!alloc}, {!free}, {!locate},
     {!map_host}, {!peer}, {!map_peer} and {!val-dma} behave as in
-    {!section-memory};
-    {!val-image}, {!entry} and {!unload} as in {!section-code}; {!sleep} and
-    {!stop} as in {!section-failure}; and the C functions as in
-    {!section-work}. *)
+    {!section-memory}; {!val-image}, {!prepare}, {!entry} and {!unload} as in
+    {!section-code}; {!sleep} and {!stop} as in {!section-failure}; and the C
+    functions as in {!section-work}. *)
 
 include Rig_edge.Driver with type t := t
 
@@ -310,17 +311,21 @@ val capability : t -> Rig_metal_abi.t
 (** {1:code Code}
 
     {!val-image} loads a metallib as a Metal library, and leaves compiling
-    its functions to {!entry}. The result is [Ok (Loaded i)], or [Error] with
-    the reason if Metal cannot load the bytes as a library, or if one of its
-    functions is not a compute kernel.
+    its functions to {!prepare} and {!entry}. The result is [Ok (Loaded i)],
+    or [Error] with the reason if Metal cannot load the bytes as a library,
+    or if one of its functions is not a compute kernel.
 
-    The first {!entry} for a function compiles it into a pipeline
-    ([MTLComputePipelineState]) that indirect command buffers may also run.
-    Calls for one function from several domains concurrently make one
-    pipeline. Every later call returns the same entry, which is valid until
-    {!unload}. The entry's [code] is the pipeline's address, and its [launch]
-    the address of what a launch reads, the pipeline and its limits. Its
-    [threads] are the least of the pipeline's
+    {!prepare} starts Metal's asynchronous compile of a function into a
+    pipeline ([MTLComputePipelineState]) that indirect command buffers may
+    also run, and returns. Metal compiles in its own processes, several
+    pipelines at once. The first {!entry} for a function waits for the
+    compile {!prepare} started, or compiles the same way and waits. A
+    prepare or an entry waits while another domain's entry waits for a
+    pipeline of the same image. Calls for one function from several domains
+    concurrently make one pipeline. Every later call returns the same entry,
+    which is valid until {!unload}. The entry's [code] is the pipeline's
+    address, and its [launch] the address of what a launch reads, the
+    pipeline and its limits. Its [threads] are the least of the pipeline's
     [maxTotalThreadsPerThreadgroup] and the device's axes. Its [params] are
     the size, trailing padding included, of the struct the function reads
     as kernel buffer 0, [Some 0] for a function with no buffer 0, and [None]
@@ -331,8 +336,10 @@ val capability : t -> Rig_metal_abi.t
     refusal is not kept, so a later call compiles again.
 
     {!unload} releases the library, and the pipelines and launches {!entry}
-    made of it. An indirect command buffer that records one of these
-    pipelines keeps it until its own release ({!Rig_metal_abi.type-icb}). *)
+    made of it. It waits for no compile: a pipeline {!prepare} started and no
+    entry took is released once made. An indirect command buffer that records
+    one of these pipelines keeps it until its own release
+    ({!Rig_metal_abi.type-icb}). *)
 
 (** {1:failure Failure and stopping}
 
@@ -395,11 +402,16 @@ val capability : t -> Rig_metal_abi.t
       ([newLibraryWithData:error:], [functionNames], [newFunctionWithName:]),
       [MTLFunction.h] ([functionType]), [MTLComputePipeline.h]
       ([supportIndirectCommandBuffers], [maxTotalThreadsPerThreadgroup],
-      [staticThreadgroupMemoryLength]), [MTLComputeCommandEncoder.h]
+      [staticThreadgroupMemoryLength]), [MTLDevice.h]
+      ([newComputePipelineStateWithDescriptor:options:completionHandler:]),
+      [MTLComputeCommandEncoder.h]
       ([setBuffer:offset:atIndex:],
       [setThreadgroupMemoryLength:atIndex:],
       [dispatchThreadgroups:threadsPerThreadgroup:]),
       [MTLIndirectCommandBuffer.h].
+    - {{:https://developer.apple.com/library/archive/documentation/3DDrawing/Conceptual/MTLBestPracticesGuide/Pipelines.html}
+       Metal Best Practices Guide, Pipelines}: "Building these pipelines
+      asynchronously maximizes performance and parallelism."
     - {{:https://developer.apple.com/documentation/metal/simplifying-gpu-resource-management-with-residency-sets}
        Simplifying GPU resource management with residency sets}: a set added to
       a queue keeps its committed allocations resident for every command buffer
@@ -424,9 +436,26 @@ val capability : t -> Rig_metal_abi.t
 
 (* For rig's tests. *)
 
-(* [pipelines ()] is the number of pipelines that the entries of the
-   process's devices hold. *)
+(* [pipelines ()] is the number of pipelines that the entries and the
+   builds of the process's devices hold. A build holds its pipeline from
+   Metal's answer until an entry takes it or the last of its image's unload
+   and Metal's handler drops it. *)
 val pipelines : unit -> int
+
+(* [settle ()] returns once Metal answered every compile {!prepare} or
+   {!entry} started in the process. In a child forked while a compile was
+   pending it never returns. *)
+val settle : unit -> unit
+
+(* [hold_builds true] makes Metal's answers to compiles wait, unstored,
+   until [hold_builds false]: {!pipelines} counts none of them meanwhile,
+   and {!entry} waits for them. *)
+val hold_builds : bool -> unit
+
+(* [held i] is the number of [i]'s functions with an entry or a started
+   build. A build holds a pipeline once Metal answers, unless Metal refused
+   the function. *)
+val held : image -> int
 
 (* [buffers ()] is the number of buffers that the regions of the process's
    devices hold, their allocations and mappings. *)

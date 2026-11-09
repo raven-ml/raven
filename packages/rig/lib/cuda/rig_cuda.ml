@@ -1159,6 +1159,9 @@ let stop g ~fault:_ =
 (* Its room never answers RIG_GROW. *)
 let grow _ = Rig_edge.Grown
 
+(* The load placed every function, and an entry makes nothing slow. *)
+let prepare _ _ = ()
+
 module Driver = struct
   type nonrec t = t
   type nonrec region = region
@@ -1177,6 +1180,7 @@ module Driver = struct
   let dma = dma
   let image = image
   let entry = entry
+  let prepare = prepare
   let unload = unload
   let signaled = signaled
   let sleep = sleep

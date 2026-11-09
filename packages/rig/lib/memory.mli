@@ -536,6 +536,12 @@ val grow_queues :
     round, or if [round] is past the last, and [Invalid_argument] if [d] is
     the host or an io device. *)
 
+val kernel_prepare : image -> string -> unit
+(** [kernel_prepare i f] is the driver's prepare of [i]'s function [f], a
+    counted call ({!Rig_edge.Driver.prepare}) whose exceptions but a fault
+    lose nothing, or nothing for the host's linked code. It keeps [i]
+    reachable until the driver returns. *)
+
 val kernel_entry : image -> string -> Rig_edge.entry option
 (** [kernel_entry i f] is the driver's entry for [i]'s function [f], a
     counted call ({!Rig_edge.Driver.entry}), or [None] if [i] has no [f]. It

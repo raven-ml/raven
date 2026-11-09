@@ -12,6 +12,7 @@
 
 #define _GNU_SOURCE
 
+#include <pthread.h>
 #include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -333,59 +334,159 @@ static int64_t params_of(MTLComputePipelineReflection *reflection) {
   return 0;
 }
 
-/* The entry of the function [v_f] of the library [v_lib], whose pipeline
-   an indirect command buffer may use too, as the address of its C state;
-   raises [Failure] with Metal's reason if Metal makes no pipeline. A
-   threadgroup holds at most the pipeline's [maxTotalThreadsPerThreadgroup]
-   threads, and at most the device's along each axis: their least bounds
-   both. It releases the runtime while Metal compiles. */
-value caml_rig_metal_pipeline(value v_lib, value v_f) {
-  CAMLparam2(v_lib, v_f);
-  id<MTLLibrary> library = Object_val(v_lib);
-  char *f = caml_stat_strdup(String_val(v_f));
-  struct rig_metal_entry *e = calloc(1, sizeof *e);
-  if (e == NULL) {
-    caml_stat_free(f);
-    caml_raise_out_of_memory();
+/* A pipeline Metal builds while its caller goes on: Metal's handler and the
+   image's slot each hold a reference, and the last to drop it frees the
+   build, with its pipeline if no entry took it. The handler stores the
+   pipeline, retained and counted, or Metal's reason, then signals [done]. An
+   entry that takes the pipeline gets an entry allocated apart from the
+   build, so the build's last drop never frees what an entry holds. */
+struct build {
+  _Atomic int refs;
+  dispatch_semaphore_t done;
+  id<MTLComputePipelineState> pipeline;
+  int64_t params;
+  char why[512];
+};
+
+/* Every build Metal has not answered, for [caml_rig_metal_settle]. */
+static dispatch_group_t answering(void) {
+  static dispatch_group_t group;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{ group = dispatch_group_create(); });
+  return group;
+}
+
+/* While set, handlers wait before they store their answer, so that a test
+   holds builds unanswered ([caml_rig_metal_hold]). */
+static pthread_mutex_t gate_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t gate_opened = PTHREAD_COND_INITIALIZER;
+static _Atomic int gate_closed;
+
+static void pass_gate(void) {
+  if (!atomic_load(&gate_closed)) return;
+  pthread_mutex_lock(&gate_mutex);
+  while (gate_closed) pthread_cond_wait(&gate_opened, &gate_mutex);
+  pthread_mutex_unlock(&gate_mutex);
+}
+
+static void drop(struct build *b) {
+  if (atomic_fetch_sub(&b->refs, 1) != 1) return;
+  if (b->pipeline != nil) {
+    [b->pipeline release];
+    atomic_fetch_sub(&rig_metal_pipelines, 1);
   }
-  char text[512] = "";
-  id<MTLComputePipelineState> p = nil;
+  dispatch_release(b->done);
+  free(b);
+}
+
+/* Starts Metal's asynchronous build of the pipeline of the function [v_f]
+   of the library [v_lib], one an indirect command buffer may run too. The
+   result is the build as an int, or 0, having started nothing, if the host
+   has no memory for it: the function's entry then builds and reports. It
+   allocates nothing on the OCaml heap and releases the runtime while Metal
+   takes the request. */
+value caml_rig_metal_start(value v_lib, value v_f) {
+  id<MTLLibrary> library = Object_val(v_lib);
+  char *f = strdup(String_val(v_f));
+  struct build *b = calloc(1, sizeof *b);
+  if (f == NULL || b == NULL) {
+    free(f);
+    free(b);
+    return Val_long(0);
+  }
+  atomic_init(&b->refs, 2);
+  b->done = dispatch_semaphore_create(0);
+  dispatch_group_t group = answering();
+  dispatch_group_enter(group);
   caml_enter_blocking_section_no_pending();
   @autoreleasepool {
     MTLComputePipelineDescriptor *desc =
-        [[MTLComputePipelineDescriptor alloc] init];
+        [[[MTLComputePipelineDescriptor alloc] init] autorelease];
     desc.computeFunction = [[library
         newFunctionWithName:[NSString stringWithUTF8String:f]] autorelease];
     desc.supportIndirectCommandBuffers = YES;
-    NSError *error = nil;
-    MTLComputePipelineReflection *reflection = nil;
-    p = [library.device
+    [library.device
         newComputePipelineStateWithDescriptor:desc
                                       options:MTLPipelineOptionBindingInfo
-                                   reflection:&reflection
-                                        error:&error];
-    if (p == nil)
-      snprintf(text, sizeof text, "%s",
-               error.localizedDescription.UTF8String ?: "no reason given");
-    else
-      e->params = params_of(reflection);
-    [desc release];
+                            completionHandler:^(
+                                id<MTLComputePipelineState> p,
+                                MTLComputePipelineReflection *reflection,
+                                NSError *error) {
+                              pass_gate();
+                              if (p != nil) {
+                                b->pipeline = [p retain];
+                                b->params = params_of(reflection);
+                                atomic_fetch_add(&rig_metal_pipelines, 1);
+                              } else
+                                snprintf(b->why, sizeof b->why, "%s",
+                                         error.localizedDescription.UTF8String
+                                             ?: "no reason given");
+                              dispatch_semaphore_signal(b->done);
+                              drop(b);
+                              dispatch_group_leave(group);
+                            }];
   }
   caml_leave_blocking_section();
-  caml_stat_free(f);
+  free(f);
+  return Val_long((intnat)b);
+}
+
+/* The entry the build [v_b] made, as an int, the address of its C state;
+   raises [Failure] with Metal's reason if Metal made no pipeline, and
+   [Out_of_memory] if the host has none for the entry. Either way it drops
+   the slot's reference to the build. It waits for Metal's answer with the
+   runtime released. A threadgroup holds at most the pipeline's
+   [maxTotalThreadsPerThreadgroup] threads, and at most the device's along
+   each axis: their least bounds both. */
+value caml_rig_metal_finish(value v_b) {
+  struct build *b = (struct build *)Long_val(v_b);
+  caml_enter_blocking_section_no_pending();
+  dispatch_semaphore_wait(b->done, DISPATCH_TIME_FOREVER);
+  caml_leave_blocking_section();
+  id<MTLComputePipelineState> p = b->pipeline;
   if (p == nil) {
-    free(e);
-    caml_failwith(text);
+    char why[sizeof b->why];
+    memcpy(why, b->why, sizeof why);
+    drop(b);
+    caml_failwith(why);
   }
-  MTLSize axes = library.device.maxThreadsPerThreadgroup;
+  struct rig_metal_entry *e = calloc(1, sizeof *e);
+  if (e == NULL) {
+    drop(b);
+    caml_raise_out_of_memory();
+  }
+  b->pipeline = nil;
+  e->pipeline = p;
+  e->params = b->params;
+  drop(b);
+  MTLSize axes = p.device.maxThreadsPerThreadgroup;
   NSUInteger n = p.maxTotalThreadsPerThreadgroup;
   n = MIN(n, MIN(axes.width, MIN(axes.height, axes.depth)));
-  e->pipeline = p;
-  atomic_fetch_add(&rig_metal_pipelines, 1);
   e->threads = (uint32_t)n;
-  e->shared = (uint32_t)(library.device.maxThreadgroupMemoryLength -
+  e->shared = (uint32_t)(p.device.maxThreadgroupMemoryLength -
                          p.staticThreadgroupMemoryLength);
-  CAMLreturn(caml_copy_nativeint((intnat)e));
+  return Val_long((intnat)e);
+}
+
+/* Waits, with the runtime released, until Metal answered every build the
+   process started, for rig's tests. */
+value caml_rig_metal_settle(value unit) {
+  (void)unit;
+  dispatch_group_t group = answering();
+  caml_enter_blocking_section_no_pending();
+  dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
+  caml_leave_blocking_section();
+  return Val_unit;
+}
+
+/* Holds every handler before it stores its answer while [v_held], for rig's
+   tests. */
+value caml_rig_metal_hold(value v_held) {
+  pthread_mutex_lock(&gate_mutex);
+  atomic_store(&gate_closed, Bool_val(v_held));
+  if (!Bool_val(v_held)) pthread_cond_broadcast(&gate_opened);
+  pthread_mutex_unlock(&gate_mutex);
+  return Val_unit;
 }
 
 /* An entry's pipeline, as an int, and its most threads per threadgroup. */
@@ -413,18 +514,26 @@ static void free_entry(struct rig_metal_entry *e) {
 }
 
 value caml_rig_metal_release(value v_e) {
-  free_entry((struct rig_metal_entry *)Nativeint_val(v_e));
+  free_entry((struct rig_metal_entry *)Long_val(v_e));
   return Val_unit;
 }
 
 /* Releases each entry of the array [v_entries] whose code is not 0, those an
-   [entry] made, then the library [v_library]: an image's unload, in one
-   call that allocates nothing. */
-value caml_rig_metal_unload(value v_entries, value v_library) {
+   [entry] made, drops each build of the array [v_builds] that is not 0,
+   those a [prepare] started and no entry took, then releases the library
+   [v_library]: an image's unload, in one call that allocates nothing and
+   waits for nothing. A build Metal has not answered yet is freed by its
+   handler. */
+value caml_rig_metal_unload(value v_entries, value v_builds,
+                            value v_library) {
   for (mlsize_t k = 0; k < Wosize_val(v_entries); k++) {
     value v_e = Field(v_entries, k);
     if (Long_val(Field(v_e, 0)) == 0) continue;
     free_entry((struct rig_metal_entry *)Nativeint_val(Field(v_e, 1)));
+  }
+  for (mlsize_t k = 0; k < Wosize_val(v_builds); k++) {
+    intnat b = Long_val(Field(v_builds, k));
+    if (b != 0) drop((struct build *)b);
   }
   [Object_val(v_library) release];
   return Val_unit;
@@ -607,11 +716,14 @@ NO_METAL3(caml_rig_metal_map_host)
 NO_METAL2(caml_rig_metal_free)
 NO_METAL1(caml_rig_metal_release)
 NO_METAL2(caml_rig_metal_image)
-NO_METAL2(caml_rig_metal_pipeline)
+NO_METAL2(caml_rig_metal_start)
+NO_METAL1(caml_rig_metal_finish)
+NO_METAL1(caml_rig_metal_settle)
+NO_METAL1(caml_rig_metal_hold)
 NO_METAL1(caml_rig_metal_entry_code)
 NO_METAL1(caml_rig_metal_entry_threads)
 NO_METAL1(caml_rig_metal_entry_params)
-NO_METAL2(caml_rig_metal_unload)
+NO_METAL3(caml_rig_metal_unload)
 NO_METAL1(caml_rig_metal_icb_release)
 NO_METAL3(caml_rig_metal_sleep)
 NO_METAL1(caml_rig_metal_failure)

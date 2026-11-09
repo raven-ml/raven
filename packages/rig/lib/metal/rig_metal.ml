@@ -27,12 +27,13 @@ external map_buffer : int -> int -> int -> buffer Rig_edge.mapping
 external free_buffer : int -> nativeint -> unit = "caml_rig_metal_free"
 [@@noalloc]
 
-external release : nativeint -> unit = "caml_rig_metal_release"
+external release : int -> unit = "caml_rig_metal_release" [@@noalloc]
 
 external load : int -> string -> string * nativeint * string array
   = "caml_rig_metal_image"
 
-external pipeline : nativeint -> string -> nativeint = "caml_rig_metal_pipeline"
+external start : nativeint -> string -> int = "caml_rig_metal_start"
+external finish : int -> int = "caml_rig_metal_finish"
 external entry_code : nativeint -> int = "caml_rig_metal_entry_code" [@@noalloc]
 
 external entry_threads : nativeint -> int = "caml_rig_metal_entry_threads"
@@ -41,7 +42,7 @@ external entry_threads : nativeint -> int = "caml_rig_metal_entry_threads"
 external entry_params : nativeint -> int = "caml_rig_metal_entry_params"
 [@@noalloc]
 
-external release_image : Rig_edge.entry array -> nativeint -> unit
+external release_image : Rig_edge.entry array -> int array -> nativeint -> unit
   = "caml_rig_metal_unload"
 [@@noalloc]
 
@@ -192,14 +193,16 @@ type tables = {
       (* the regions freed since [regions] last dropped their cells *)
 }
 
-(* An image's entries, [none] until its first [entry], under [guard]: an [entry]
-   compiles holding it, so calls for one function from several domains make one
-   pipeline. [tables] and [device_guard] are its device's, which guards
-   [unloaded]. *)
+(* An image's entries, [none] until its first [entry], and its builds, [0] but
+   between a [prepare] and the next [entry], under [guard]: at most one of a
+   function's entry and build is set. An [entry] compiles holding it, so calls
+   for one function from several domains make one pipeline. [tables] and
+   [device_guard] are its device's, which guards [unloaded]. *)
 and image = {
   library : nativeint;
   names : string array;
   entries : Rig_edge.entry array;
+  builds : int array;
   guard : Mutex.t;
   tables : tables option ref;
   device_guard : Mutex.t;
@@ -493,6 +496,7 @@ let image d b =
   match load d.self b with
   | "", library, names ->
       let entries = Array.make (Array.length names) none in
+      let builds = Array.make (Array.length names) 0 in
       let guard = Mutex.create () in
       let tables = d.tables and device_guard = d.guard in
       Ok
@@ -501,6 +505,7 @@ let image d b =
              library;
              names;
              entries;
+             builds;
              guard;
              tables;
              device_guard;
@@ -534,7 +539,23 @@ let keep ((i : image), k, (e : Rig_edge.entry), threads) =
       t.unloads <- 0;
       i.entries.(k) <- e
 
-(* [entry i f] under [i.guard]. A refusal is not kept: a later call compiles
+(* [prepare i f] under [i.guard]: starts [f]'s build unless [f] has an entry
+   or a build. A build that could not start leaves the slot empty. *)
+let prepare_held (i : image) f =
+  let k = index i.names f 0 in
+  if k >= 0 && i.entries.(k).code = 0 && i.builds.(k) = 0 then
+    i.builds.(k) <- start i.library f
+
+let prepare (i : image) f =
+  take i.guard;
+  match prepare_held i f with
+  | () -> give i.guard
+  | exception x ->
+      give i.guard;
+      reraise x
+
+(* [entry i f] under [i.guard]: waits for [f]'s build, which it takes out of
+   its slot first, or starts one. A refusal is not kept: a later call compiles
    again. The pipeline is [i]'s once [keep] stored it: an exception before,
    such as an asynchronous one where the entry allocates, releases it. *)
 let entry_held (i : image) f =
@@ -542,9 +563,14 @@ let entry_held (i : image) f =
   if k < 0 then Rig_edge.Absent
   else if i.entries.(k).code <> 0 then Entry i.entries.(k)
   else
-    match pipeline i.library f with
-    | launch -> (
+    let b = i.builds.(k) in
+    i.builds.(k) <- 0;
+    let b = if b = 0 then start i.library f else b in
+    if b = 0 then raise Out_of_memory;
+    match finish b with
+    | made -> (
         match
+          let launch = Nativeint.of_int made in
           let params = entry_params launch
           and threads = entry_threads launch in
           let e =
@@ -561,7 +587,7 @@ let entry_held (i : image) f =
         with
         | answer -> answer
         | exception x ->
-            release launch;
+            release made;
             reraise x)
     | exception Failure why ->
         invalid_argf "Rig_metal.entry: Metal makes no pipeline of %S: %s" f why
@@ -577,17 +603,18 @@ let entry (i : image) f =
       give i.guard;
       reraise x
 
-(* Takes [i]'s pipelines out of the ones an icb records, then releases them
-   and its library. rig unloads an image once, so from the take of the
-   guard to its give the unload allocates nothing and polls nowhere: an
-   exception cannot end it with pipelines held, or with one an icb still
-   records. One that ends the take ends it before it changed anything. The
-   next entry drops them from the device's table. *)
+(* Takes [i]'s pipelines out of the ones an icb records, then releases them,
+   its builds and its library; a build Metal has not answered is freed by its
+   handler, so the unload waits for none. rig unloads an image once, so from
+   the take of the guard to its give the unload allocates nothing and polls
+   nowhere: an exception cannot end it with pipelines held, or with one an icb
+   still records. One that ends the take ends it before it changed anything.
+   The next entry drops them from the device's table. *)
 let unload d (i : image) =
   take d.guard;
   i.unloaded <- true;
   (match !(d.tables) with Some t -> t.unloads <- t.unloads + 1 | None -> ());
-  release_image i.entries i.library;
+  release_image i.entries i.builds i.library;
   give d.guard
 
 (* Timeline and loss *)
@@ -658,6 +685,7 @@ module Driver = struct
   let dma = dma
   let image = image
   let entry = entry
+  let prepare = prepare
   let unload = unload
   let signaled = signaled
   let sleep = sleep
@@ -675,6 +703,17 @@ let gpu i : t Rig_edge.opener =
 (* For rig's tests *)
 
 external pipelines : unit -> int = "caml_rig_metal_pipelines"
+external settle : unit -> unit = "caml_rig_metal_settle"
+external hold_builds : bool -> unit = "caml_rig_metal_hold"
+
+let held (i : image) =
+  let n = ref 0 in
+  take i.guard;
+  for k = 0 to Array.length i.names - 1 do
+    if i.entries.(k).code <> 0 || i.builds.(k) <> 0 then incr n
+  done;
+  give i.guard;
+  !n
 external buffers : unit -> int = "caml_rig_metal_buffers"
 external runs : unit -> int = "caml_rig_metal_runs"
 

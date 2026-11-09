@@ -1903,8 +1903,9 @@ let beyond_limits () =
   refused ();
   Rig_metal.unload t.g i
 
-(* Images entered from two domains: whatever the order, every [entry] of one
-   function answers the address the first answered. *)
+(* Images prepared and entered from two domains: whatever the order, every
+   [entry] of one function answers the address the first answered, and every
+   function prepared or entered keeps its build or entry. *)
 
 (* An image, with the first address any domain got for each function. *)
 type held = {
@@ -1930,18 +1931,147 @@ let loaded_image =
 let functions =
   Gen.of_list ~pp:Format.pp_print_string [ "fill"; "step"; "spin"; "bump" ]
 
+(* The functions prepared or entered. *)
+let made m f = if not (List.mem f !m) then m := f :: !m
+
 let entry_commands =
   [
     command "image"
       (Gen.unit @-> makes loaded_image)
-      Fun.id
+      (fun () -> ref [])
       (fun () ->
         { i = load (dev ()).g; first = Hashtbl.create 4; m = Mutex.create () });
+    command "prepare"
+      (loaded_image ^-> functions @-> returns unit)
+      made
+      (fun h f -> Rig_metal.prepare h.i f);
     command "entry"
       (loaded_image ^-> functions @-> returns bool)
-      (fun () _ -> true)
+      (fun m f ->
+        made m f;
+        true)
       entry_system;
+    command "held"
+      (loaded_image ^-> returns int)
+      (fun m -> List.length !m)
+      (fun h -> Rig_metal.held h.i);
   ]
+
+(* Prepares, entries and unloads of images of [threadgroup], against a model
+   of each image's [small]: Metal makes its pipeline, refuses [wide]'s for
+   its threadgroup memory, and [none] is no function. An entry answers the
+   same pipeline each time, prepared or not, and refuses [wide] each time.
+   An unload releases [small]'s pipeline once it was prepared or entered,
+   whether an entry took it or not: the drop in {!Rig_metal.pipelines}
+   across it, Metal's answers settled on both sides. An unload at once
+   follows a prepare of [small] with no settle, while Metal may still
+   compile: the drop across both, settled before the prepare and after the
+   unload, is as large. *)
+
+type small = Unmade | Prepared | Entered
+
+type model = { mutable small : small; mutable unloaded : bool }
+type system = { si : Rig_metal.image; mutable code : int; mutable gone : bool }
+
+let threadgroup g =
+  match
+    require_ok (Rig_metal.image g (S.fixture ~dir:"fixtures" "threadgroup"))
+  with
+  | Rig_edge.Loaded i -> i
+  | Place _ -> failf "Metal asked to place its code"
+
+let small_image =
+  abstract "i" ~release:(fun s ->
+      if not s.gone then Rig_metal.unload (dev ()).g s.si)
+
+let small_functions =
+  Gen.of_list ~pp:Format.pp_print_string [ "small"; "wide"; "none" ]
+
+let refusal = "Rig_metal.entry: Metal makes no pipeline of \"wide\": "
+
+let entry_model m = function
+  | "small" ->
+      cover "an entry of a prepared function" (m.small = Prepared);
+      m.small <- Entered;
+      "entry"
+  | "wide" -> "refused"
+  | _ -> "absent"
+
+let entry_answer s f =
+  match Rig_metal.entry s.si f with
+  | Entry { code; _ } ->
+      if s.code = 0 then s.code <- code;
+      if code = s.code then "entry" else "another pipeline"
+  | Absent -> "absent"
+  | No_memory n -> strf "no memory for %d bytes" n
+  | exception Invalid_argument why when String.starts_with ~prefix:refusal why
+    ->
+      "refused"
+
+let unload_model m =
+  m.unloaded <- true;
+  if m.small = Unmade then 0 else 1
+
+let unload_drop s =
+  Rig_metal.settle ();
+  let before = Rig_metal.pipelines () in
+  Rig_metal.unload (dev ()).g s.si;
+  s.gone <- true;
+  Rig_metal.settle ();
+  before - Rig_metal.pipelines ()
+
+let loaded_only m _ = not m.unloaded
+
+let small_commands =
+  [
+    command "image"
+      (Gen.unit @-> makes small_image)
+      (fun () -> { small = Unmade; unloaded = false })
+      (fun () -> { si = threadgroup (dev ()).g; code = 0; gone = false });
+    command "prepare" ~pre:loaded_only
+      (small_image ^-> small_functions @-> returns unit)
+      (fun m f -> if f = "small" && m.small = Unmade then m.small <- Prepared)
+      (fun s f -> Rig_metal.prepare s.si f);
+    command "entry" ~pre:loaded_only
+      (small_image ^-> small_functions @-> returns string)
+      entry_model entry_answer;
+    command "unload"
+      ~pre:(fun m -> not m.unloaded)
+      (small_image ^-> returns int)
+      unload_model unload_drop;
+    command "unload at once"
+      ~pre:(fun m -> not m.unloaded)
+      (small_image ^-> returns int)
+      unload_model
+      (fun s ->
+        Rig_metal.settle ();
+        let before = Rig_metal.pipelines () in
+        Rig_metal.prepare s.si "small";
+        Rig_metal.unload (dev ()).g s.si;
+        s.gone <- true;
+        Rig_metal.settle ();
+        before - Rig_metal.pipelines ());
+  ]
+
+(* An unload while Metal's answer to a prepare is held, unstored, returns at
+   once, and the pipeline, once answered, is released: the process holds as
+   many pipelines as before the load. The gate holds the answer, after Metal
+   compiled; a library released while Metal still compiles is reached only
+   by timing, by the stateful test's unload at once and by test_interrupt's
+   prepares. *)
+let unload_unstored () =
+  let t = dev () in
+  Rig_metal.settle ();
+  let before = Rig_metal.pipelines () in
+  Rig_metal.hold_builds true;
+  Fun.protect ~finally:(fun () -> Rig_metal.hold_builds false) (fun () ->
+      let i = threadgroup t.g in
+      Rig_metal.prepare i "small";
+      equal int ~msg:"prepared" 1 (Rig_metal.held i);
+      Rig_metal.unload t.g i;
+      equal int ~msg:"while held" before (Rig_metal.pipelines ()));
+  Rig_metal.settle ();
+  equal int ~msg:"once answered" before (Rig_metal.pipelines ())
 
 let unloaded_releases () =
   let t = dev () in
@@ -1990,8 +2120,17 @@ let images =
       test "a function that is no compute kernel is an error" no_kernel;
       test "an entry beyond the GPU's limits raises, each time" beyond_limits;
       stateful ~domains:2 ~count:30
-        "an image entered from two domains makes one pipeline a function"
+        "an image prepared and entered from two domains makes one pipeline \
+         a function"
         entry_commands;
+      stateful ~count:100
+        "a prepared function's entry is its pipeline, and an unload releases \
+         it"
+        small_commands;
+      test
+        "an unload before Metal's answer is stored releases the pipeline \
+         once answered"
+        unload_unstored;
       test "unloaded images release their pipelines" unloaded_releases;
       test "an entry's parameters are its buffer 0's struct" entry_params;
     ]

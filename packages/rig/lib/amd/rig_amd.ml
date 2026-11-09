@@ -1207,6 +1207,9 @@ let entry m f =
             }
       | Error bytes -> No_memory bytes)
 
+(* An entry makes its launch at once, with nothing to start ahead. *)
+let prepare _ _ = ()
+
 (* The image's code is in a region rig frees; the launches [entry] made go
    here. rig unloads an image once, so past its take the unload allocates
    nothing and polls nowhere: an exception cannot end it with launches held.

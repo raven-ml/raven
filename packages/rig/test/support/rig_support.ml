@@ -501,6 +501,8 @@ module Driver = struct
       in
       Entry { code; launch; params; threads = Some 1024 }
 
+  let prepare _ _ = ()
+
   let unload d _ =
     protect d.lock (fun () -> d.images <- d.images - 1);
     ignore (counted d "unload" : bool)

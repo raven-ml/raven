@@ -1765,6 +1765,9 @@ let entry c name =
       | None -> Absent
       | Some k -> set_up c name k)
 
+(* An entry sets up its launch at once, with nothing to start ahead. *)
+let prepare _ _ = ()
+
 (* An image holds of its device its code region, which rig frees, and its
    functions' launches. rig unloads an image once, so past its take the
    unload allocates nothing and polls nowhere: an exception cannot end it

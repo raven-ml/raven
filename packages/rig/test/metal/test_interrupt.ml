@@ -103,6 +103,27 @@ let test_entries () =
   M.free g args;
   reached
 
+(* The entry of a function prepared after 32 images' prepares. A prepare
+   allocates nothing, so the entry, which takes the build out of its slot, is
+   the call walked. Whether it returned or raised, the next entry makes the
+   pipeline, and once every image is unloaded and Metal answered the process
+   holds none of theirs. *)
+let test_prepares () =
+  walk @@ fun g n ->
+  M.settle ();
+  let held = M.pipelines () in
+  let made = List.init pipelines (fun _ -> image g) and last = image g in
+  List.iter (fun i -> M.prepare i "step") (made @ [ last ]);
+  let reached =
+    Rig_support.interrupted n (fun () -> ignore (M.entry last "step"))
+  in
+  ignore (found (M.entry last "step"));
+  List.iter (M.unload g) (last :: made);
+  M.settle ();
+  equal ~msg:(strf "from allocation %d, pipelines held" n) int held
+    (M.pipelines ());
+  reached
+
 (* The regions on the device before the walked allocation. A table that grew
    in place, as a stdlib Hashtbl of its first size does, would grow at the
    129th. *)
@@ -349,6 +370,10 @@ let () =
                "of a pipeline leaves every earlier one recordable, and the \
                 pipeline held only by its image"
                test_entries;
+             test
+               "of a prepared function's entry leaves the next to make the \
+                pipeline, held only by its image"
+               test_prepares;
              test
                "of a region leaves every earlier one recordable, and its \
                 buffer freed if it raised"

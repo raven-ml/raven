@@ -270,17 +270,24 @@ let map_host_rows =
     ]
 
 (* An image's load makes no pipeline; its first entry makes one, which Metal's
-   shader cache holds after the first run on the machine. *)
+   shader cache holds after the first run on the machine. [load-resolve] is
+   what a user calls: rig's load and first resolve, which waits for Metal's
+   asynchronous answer; the image unloads once collected, in whichever later
+   call runs the pending releases, so the row pays the unloads amortised. *)
 let image_rows =
   let first t =
     let i = load t.g in
     ignore (M.entry i "fill");
     M.unload t.g i
   in
+  let resolved t =
+    ignore (Rig.Image.resolve (get (Rig.Image.load t.d metallib)) "fill")
+  in
   Thumper.group "image"
     [
       row "fill" dev (fun t -> M.unload t.g (load t.g));
       row "first-entry" dev first;
+      row "load-resolve" dev resolved;
     ]
 
 let icb_rows =

@@ -13,8 +13,9 @@
    cases are those whose compile time rune's lowering, tolk's vectors, a
    library's stores of its intermediates or the number of devices a program
    spans decide. The [cuda/] cases run on CUDA's first GPU, whose driver also
-   loads each binary, and the [amd/] cases on AMD's first GPU, through Linux's
-   amdgpu driver: each is left out without its GPU.
+   loads each binary, the [amd/] cases on AMD's first GPU, through Linux's
+   amdgpu driver, and the [metal/] cases on the Mac's GPU, whose pipelines
+   Metal builds: each is left out without its GPU.
 
    A [warm/] case's sample is a later process's first call: the case's setup
    compiles it into a disk cache, which each sample's process reads its
@@ -529,6 +530,30 @@ let amd_step () =
               step
               (f32 [| 256; 128 |], f32 [| 128; 16 |])))
 
+(* 32 sums of sines on the Mac's GPU, each of rows of 64 float32 values, of
+   1 to 32 rows, scaled by its own constant offset by [salt]. Metal builds
+   their pipelines in its own processes, several at once, and keeps them in
+   its own cache, on the machine's disk. *)
+let metal_sums salt () =
+  match Rig.open_ (Rig_metal.gpu 0) with
+  | Error e -> failwith e
+  | Ok gpu ->
+      let module D = (val Nx.devices [ gpu ] : Nx.Devices) in
+      let k = 32 in
+      let xs =
+        List.init k (fun i ->
+            Nx.place D.on (Nx.Rng.uniform Nx.float32 [| i + 1; 64 |]))
+      in
+      let sums xs =
+        List.mapi
+          (fun i x ->
+            Nx.sum ~axes:[ 1 ] (Nx.sin (Nx.mul_s x (salt +. Float.of_int i))))
+          xs
+      in
+      ignore
+        (Sys.opaque_identity
+           (Rune.jit Nx.Ptree.(list tensor @-> returns (list tensor)) sums xs))
+
 let cases =
   [
     ("linalg/solve-32", solve);
@@ -564,22 +589,34 @@ let cases =
     ("devices/partials-16", partials);
     ("cuda/sin-nested-8", cuda_sines);
     ("amd/mlp-step", amd_step);
+    (* Offset by the process's id: 32 kernels no earlier process compiled,
+       which Metal's cache holds none of. Each sample leaves its 32 pipelines
+       there. *)
+    ("metal/sums-32", fun () -> metal_sums (Float.of_int (Unix.getpid ())) ());
+    (* The same kernels in every process, whose pipelines Metal's cache holds
+       after the first: timed warm only. *)
+    ("metal/sums-32-cached", metal_sums 0.);
   ]
 
 (* The cases timed again over a warm disk cache, as a user's next run of a
    program makes its first call: a model's first steps, whose schedule reads 40
-   programs back, a scan that reads 112, a decomposition, and a kernel whose
-   binary CUDA's driver loads. *)
+   programs back, a scan that reads 112, a decomposition, a kernel whose
+   binary CUDA's driver loads, and 32 kernels whose pipelines rig prepares
+   together and Metal finds in its cache. *)
 let warm_cases =
   [
     "model/schools-start";
     "scan/checks-48";
     "linalg/eigh-8x8";
     "cuda/sin-nested-8";
+    "metal/sums-32-cached";
   ]
 
-(* Whether [gpu]'s first GPU opens, [gpu] being ["cuda"] or ["amd"], asked of
-   a fresh process. *)
+(* The cases timed warm only. *)
+let warm_only = [ "metal/sums-32-cached" ]
+
+(* Whether [gpu]'s first GPU opens, [gpu] being ["cuda"], ["amd"] or
+   ["metal"], asked of a fresh process. *)
 let opens gpu =
   let exe = Sys.executable_name in
   let pid =
@@ -658,15 +695,18 @@ let () =
           exit 2)
   | [ _; "--opens"; gpu ] ->
       let opened =
-        if gpu = "amd" then Result.is_ok (Rig.open_ (Rig_amd_amdgpu.gpu 0))
-        else Result.is_ok (Rig.open_ (Rig_cuda.gpu 0))
+        match gpu with
+        | "amd" -> Result.is_ok (Rig.open_ (Rig_amd_amdgpu.gpu 0))
+        | "metal" -> Result.is_ok (Rig.open_ (Rig_metal.gpu 0))
+        | _ -> Result.is_ok (Rig.open_ (Rig_cuda.gpu 0))
       in
       exit (if opened then 0 else 1)
   | _ ->
-      let gpus = List.filter opens [ "cuda"; "amd" ] in
+      let vendors = [ "cuda"; "amd"; "metal" ] in
+      let gpus = List.filter opens vendors in
       let runs id =
         match String.index_opt id '/' with
-        | Some i when List.mem (String.sub id 0 i) [ "cuda"; "amd" ] ->
+        | Some i when List.mem (String.sub id 0 i) vendors ->
             List.mem (String.sub id 0 i) gpus
         | _ -> true
       in
@@ -674,7 +714,9 @@ let () =
         ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
         (List.filter_map
            (fun (id, _) ->
-             if runs id then Some (Thumper.bench id (cold id)) else None)
+             if runs id && not (List.mem id warm_only) then
+               Some (Thumper.bench id (cold id))
+             else None)
            cases
         @ List.map warm (List.filter runs warm_cases))
       |> exit
