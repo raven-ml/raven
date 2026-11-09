@@ -1450,8 +1450,17 @@ let pp_contraction ppf c =
    which the lowering cuts into blocks, the first of up to two pairs.
    [Long_rows] segments [a]'s first free axis, of 48 to 140 rows, by [b]'s
    first, of 1 or 2 groups, which the lowering routes into blocks of 64
-   rows. *)
-type extras = Plain_contraction | Scaled | Segmented | Long | Long_rows
+   rows. [Few_rows] segments it by 2 to 6 groups, with fewer rows than
+   groups, 1 to 5 rows a group or 5 to 16 in a third of the draws each. Both
+   contract a first pair of 6 to 12, so that a slice holds as many elements
+   as there are groups, which routing needs. *)
+type extras =
+  | Plain_contraction
+  | Scaled
+  | Segmented
+  | Long
+  | Long_rows
+  | Few_rows
 
 let contraction ?(extras = Plain_contraction) dts accs =
   let open Gen in
@@ -1474,11 +1483,12 @@ let contraction ?(extras = Plain_contraction) dts accs =
   let* rows =
     match extras with
     | Segmented -> bool
-    | Long_rows -> constant true
+    | Long_rows | Few_rows -> constant true
     | Plain_contraction | Scaled | Long -> constant false
   in
   let long = extras = Long and long_rows = extras = Long_rows in
-  let segmented = extras = Segmented || long || long_rows in
+  let few_rows = extras = Few_rows in
+  let segmented = extras = Segmented || long || long_rows || few_rows in
   let count lo hi =
     let* n = int_range lo hi in
     extents n
@@ -1490,10 +1500,13 @@ let contraction ?(extras = Plain_contraction) dts accs =
     else count 0 1
   in
   let* ek =
-    if long then
-      let* n = int_range 24 40 in
+    let first lo hi =
+      let* n = int_range lo hi in
       let+ rest = count 0 1 in
       Array.append [| n |] rest
+    in
+    if long then first 24 40
+    else if long_rows || few_rows then first 6 12
     else count (if segmented && not rows then 1 else 0) 2
   in
   (* [Rows] draws up to two free axes on each side beyond the segmented one. *)
@@ -1509,11 +1522,21 @@ let contraction ?(extras = Plain_contraction) dts accs =
     if long_rows then frequency [ (1, constant false); (3, constant true) ]
     else constant false
   in
-  let* fa =
-    if long_rows then leading (if crowded then 72 else 48) 140
+  let* fb =
+    if long_rows then leading 1 2
+    else if few_rows then leading 2 6
     else count lo hi
   in
-  let* fb = if long_rows then leading 1 2 else count lo hi in
+  let* fa =
+    if long_rows then leading (if crowded then 72 else 48) 140
+    else if few_rows then
+      let g = fb.(0) in
+      let* lo, hi =
+        among [ (1, g - 1); (g, (5 * g) - 1); (5 * g, (16 * g) - 1) ]
+      in
+      leading lo hi
+    else count lo hi
+  in
   let* ra = map ordered (permutation (roles (Array.length fa) eb ek)) in
   let* rb = map ordered (permutation (roles (Array.length fb) eb ek)) in
   let* ta = bool in
@@ -1565,7 +1588,9 @@ let contraction ?(extras = Plain_contraction) dts accs =
   let* seg =
     if not segmented then constant None
     else if rows then
-      let first n = if long_rows then constant 0 else int_range 0 (n - 1) in
+      let first n =
+        if long_rows || few_rows then constant 0 else int_range 0 (n - 1)
+      in
       let* i = first (Array.length fa) in
       let* j = first (Array.length fb) in
       (* Long rows leave their last group empty in half the draws. *)
@@ -2126,7 +2151,11 @@ let batched_block =
     seg = Some (Rows (0, 0, Array.make 96 0L));
   }
 
-(* Rows of 4 a group or more, which the lowering routes into blocks of 64:
+(* The elements of a group's slice of [Rows] over [g] groups, segmenting [b]'s
+   first free axis: its contracted and other free extents. *)
+let slice c g = numel c.ek * (numel c.fb / max 1 g)
+
+(* Rows of 24 a group or more, which the lowering routes into blocks of 64:
    groups past a block's rows, empty groups and rows in no group. *)
 let blocked_rows =
   prop ~count:24
@@ -2141,7 +2170,7 @@ let blocked_rows =
       in
       let any f = List.exists f os in
       let groups = List.init g Fun.id in
-      cover "rows in blocks" (n >= 4 * g);
+      cover "rows in blocks of 64" (n >= 16 * g && g <= slice c g);
       cover "a group past a block's rows"
         (any (fun o -> List.exists (fun e -> count o e > 64) groups));
       cover "an empty group"
@@ -2150,7 +2179,8 @@ let blocked_rows =
          least one a group: with a group empty, a block holds padding
          alone. *)
       cover "a block of padding alone"
-        (n >= 4 * g
+        (n >= 16 * g
+        && g <= slice c g
         && any (fun o -> List.exists (fun e -> count o e = 0) groups));
       cover "a row in no group"
         (any (fun o -> List.fold_left (fun k e -> k + count o e) 0 groups < n));
@@ -2160,6 +2190,32 @@ let blocked_rows =
         && List.for_all
              (fun o -> List.exists (fun e -> count o e mod 64 <> 0) groups)
              os);
+      contract_check c)
+
+(* Rows of fewer than 16 a group: below one a group each reads its own
+   slice, above it the lowering routes them into blocks of 4 or 8 rows. *)
+let few_rows =
+  prop ~count:32
+    "rows in small blocks give eager's integers and hold their bound"
+    (contraction ~extras:Few_rows segmented_dts segmented_accs)
+    (fun c ->
+      let g, n = groups c in
+      let os = batches c in
+      let count o e =
+        List.length
+          (List.filter (fun r -> member o ~g r = Some e) (List.init n Fun.id))
+      in
+      let any f = List.exists f os in
+      let groups = List.init g Fun.id in
+      let routed = g <= slice c g in
+      cover "fewer rows than groups" (n < g);
+      cover "1 to 5 rows a group, routed" (routed && g <= n && n < 5 * g);
+      cover "5 to 16 rows a group, routed"
+        (routed && 5 * g <= n && n < 16 * g);
+      cover "an empty group"
+        (g <= n && any (fun o -> List.exists (fun e -> count o e = 0) groups));
+      cover "a row in no group"
+        (any (fun o -> List.fold_left (fun k e -> k + count o e) 0 groups < n));
       contract_check c)
 
 (* Cases *)
@@ -2447,29 +2503,28 @@ let scan_work n =
   let x = f32 [| n |] (Array.init n (fun i -> Float.of_int (i mod 7))) in
   fst (Lowered.work (fun () -> P.eval ~by:"t" (scan_op Sum 0 x None)))
 
-(* With fewer than 4 rows a group, each row of [Rows] loads its own group's
+(* With fewer rows than groups, each row of [Rows] loads its own group's
    slice, so tolk cannot share a slice's loads, or [x]'s, between rows and
    columns as it does the unsegmented contraction's: a float32 one loads a
    few times its bytes, a float4 one, whose slice is an eighth of [x]'s
    bytes, more. A load of every group's slice would grow the bytes with [g],
    which grow no more than a quarter from 128 groups to 256. A scaled
-   slice's decode is stored where enough rows read it and computed again in
-   each row where few do, as the compiler's store rule decides, so a scaled
-   contraction's unit is [g] unsegmented contractions of a group's [n / g]
-   rows by one slice. The bounds hold at any [k], 256 among them.
+   slice's decode is computed again in each row, so a scaled contraction's
+   unit is [n] unsegmented contractions of one row by one slice. The bounds
+   hold at any [k], 256 among them.
 
-   With 4 rows a group or more, the rows are routed into [S] slots of
-   blocks of 64 rows of one group: the work is the unsegmented contraction
-   of [S] rows, and the routing's, in [n g] and [S log n]. *)
+   With a row a group or more, the rows are routed into [S] slots of blocks
+   of [c] rows of one group: the work is the unsegmented contraction of [S]
+   rows, and the routing's, in [n g] and [S log n]. *)
 let work_bounds =
   let n = 256 and j = 16 in
   let rows ~scaled ~k () =
+    let n = 64 in
     let ops, lds = work ~scaled Plain ~n ~k ~j 1 in
     let at g =
       let o, l = work ~scaled Rows_of ~n ~k ~j g in
       let unit =
-        if scaled then g * fst (work ~scaled Plain ~n:(n / g) ~k ~j 1)
-        else ops
+        if scaled then n * fst (work ~scaled Plain ~n:1 ~k ~j 1) else ops
       in
       at_most int ~msg:"operations" ~than:(2 * unit) o;
       if not scaled then at_most int ~msg:"bytes" ~than:(4 * lds) l;
@@ -2480,10 +2535,9 @@ let work_bounds =
     at_most int ~msg:"bytes at 256 groups" ~than:(l128 + (l128 / 4)) l256
   in
   let blocked ~k g () =
-    (* The block's rows: 64 from 16 rows a group on average, else the most
-       up to 16 whose padding stays under half the rows. *)
-    let rec go c = if c < 2 || 2 * (c - 1) * g < n then c else go (c / 2) in
-    let c = if n >= 16 * g then 64 else go 16 in
+    (* The block's rows: 4 below 5 rows a group on average, 8 below 16 and
+       64 from 16. *)
+    let c = if n < 5 * g then 4 else if n < 16 * g then 8 else 64 in
     let slots = (g + ((n - g) / c)) * c in
     let unit = fst (work Plain ~n:slots ~k ~j 1) in
     let routing = 64 * ((n * g) + (slots * 9)) in
@@ -2500,22 +2554,26 @@ let work_bounds =
         (rows ~scaled:false ~k:256);
       test "a scaled float4 Rows contraction's work is one slice's over 256"
         (rows ~scaled:true ~k:256);
-      test "a Rows contraction of fewer than 4 rows a group is one kernel"
+      test "a Rows contraction of fewer rows than groups is one kernel"
         (fun () ->
           equal int 1
-            (Lowered.kernels (fun () -> rows_op ~n:64 ~k:16 ~j:16 32)));
+            (Lowered.kernels (fun () -> rows_op ~n:24 ~k:16 ~j:16 32)));
+      test "Rows of more groups than a slice's elements are one kernel"
+        (fun () ->
+          equal int 1
+            (Lowered.kernels (fun () -> rows_op ~n:64 ~k:4 ~j:4 32)));
       test "a Rows contraction in blocks works as its slots' at 8 groups"
         (blocked ~k:16 8);
       (* The routing does not depend on [k]: the work added by a deeper
-         contraction is the products', which pad a block of 8 rows a group
-         to under 1.5 times the rows. *)
-      test "a Rows contraction of 8 rows a group pads under half its rows"
+         contraction is the products', which pad blocks of 8 rows at 8 rows
+         a group to under twice the rows, [n + 7 g]. *)
+      test "a Rows contraction of 8 rows a group pads under its rows"
         (fun () ->
           let g = 32 in
           let deeper w = fst (w ~k:256) - fst (w ~k:128) in
           let rows = deeper (fun ~k -> work Rows_of ~n ~k ~j g) in
           let plain = deeper (fun ~k -> work Plain ~n ~k ~j 1) in
-          at_most int ~msg:"operations" ~than:(3 * plain / 2) rows);
+          at_most int ~msg:"operations" ~than:(2 * plain) rows);
       test "a Rows contraction in blocks works as its slots' at 64 groups"
         (blocked ~k:256 64);
       test "a Contracting contraction of 8 groups works in blocks" (fun () ->
@@ -2589,6 +2647,7 @@ let () =
              segmented_contractions;
              blocked_contractions;
              blocked_rows;
+             few_rows;
            ];
          work_bounds;
          cases;

@@ -4635,9 +4635,10 @@ let law_strided_sort xs =
    a segmented contraction leaves open. A [Rows] contraction multiplies x[n;
    k] by W[g; j; k], a [Contracting] one x[n; k] by y[n; j] into [g; k; j],
    their [n] indices grouped by ids that may fall outside the groups, as
-   {!Nx_kernel.type-segments} allows: [Rows] of 4 rows a group or more is
-   computed in blocks of 64 rows, and a pair of 24 indices or more in 3 or 4
-   groups in blocks. *)
+   {!Nx_kernel.type-segments} allows: [Rows] of a row a group or more, whose
+   slices of [j k], [j] of 4 or 5, hold as many elements as there are
+   groups, is computed in blocks, of 64 rows from 16 rows a group, and a
+   pair of 24 indices or more in 3 or 4 groups in blocks. *)
 
 type segmented = {
   sdt : Nx.Dtype.any;
@@ -4706,7 +4707,7 @@ let segmented_cases ?(dts = segmented_dts) () =
           [ (1, int_range 0 3); (3, int_range 24 40); (2, int_range 60 140) ]
   in
   let* g = frequency [ (1, constant 1); (3, int_range 2 4) ] in
-  let* k = int_range 1 3 and+ j = int_range 1 3 in
+  let* k = int_range 1 3 and+ j = int_range 4 5 in
   let* ids = segment_ids mode ~n ~g in
   let* xs = elements (n * k) in
   let+ ws = elements (if rows then g * j * k else n * j) in
@@ -4774,7 +4775,7 @@ let cover_segmented c =
   List.iter (fun r -> Option.iter add (group_of c r)) (List.init c.n Fun.id);
   let held = Array.fold_left ( + ) 0 counts in
   cover "rows" c.rows;
-  cover "rows in blocks" (c.rows && c.n >= 4 * c.g);
+  cover "rows in blocks" (c.rows && c.n >= c.g);
   cover "a group past a block's rows" (Array.exists (fun k -> k > 64) counts);
   cover "a group of a block's rows exactly" (Array.exists (( = ) 64) counts);
   cover "a contracting pair in blocks" ((not c.rows) && c.n >= 24 && c.g >= 3);

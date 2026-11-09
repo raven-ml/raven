@@ -170,17 +170,17 @@ val contract :
     zero result's sign.
 
     A [Rows] contraction of [n] rows over [g] groups contracts each row with
-    its own group's slice of [b] alone. Where [n < 4 g], each row loads its
-    slice at its id, the products of the contraction of one slice, in one
-    kernel. Otherwise it routes the rows by counting, in work [n g] and
-    [S ⌈log2 (n + 1)⌉], into [S = B c] slots of blocks of [c] rows of one
-    group, [B = m + ⌊(n - m) / c⌋] for [m = min n g], [c] 64 from 16 rows a
-    group on average and below it the most up to 16, a power of two, with
-    [2 (c - 1) g < n], or per row where that is 1: each block loads its
-    group's slice, the rows enter at their slots, and each row reads its
-    slot's stored output. A row's sum runs over the
-    contracted extent in the kernel's order whatever its slot, and the form
-    is chosen from [n] and [g], so a row's bits are a function of the
+    its own group's slice of [b] alone. Where [n < g], or [g] is [0] or more
+    than a slice's elements, each row loads its slice at its id, the
+    products of the contraction of one slice, in one kernel. Otherwise it
+    routes the rows by counting, in work [n g] and [S ⌈log2 (n + 1)⌉], into
+    [S = B c] slots of blocks of [c] rows of one group,
+    [B = m + ⌊(n - m) / c⌋] for [m = min n g], [c] 4 below 5 rows a group on
+    average, 8 below 16 and 64 from 16: each block loads its group's slice,
+    the rows enter at their slots, and each row reads its slot's stored
+    output. A row's sum runs over the contracted extent in the kernel's
+    order whatever its slot, and the form is chosen from the shapes, so a
+    row's bits are a function of the
     shapes, its row and its group's slice; with [b]'s groups cut over
     devices, [g] is each device's, so the order follows the count of
     groups.

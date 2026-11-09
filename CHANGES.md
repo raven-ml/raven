@@ -529,17 +529,16 @@ All notable changes to this project will be documented in this file.
   contraction keep their batch axis apart from the rows, and the scores of
   8 heads at 2048 positions run 1.3 times faster on an RTX 5000 Ada.
 - A compiled `Rows` segmented contraction, such as `Nx_quant.apply_experts`
-  and `Nx.matmul_segments`, groups its rows itself. With fewer than 4 rows
-  an expert, each row streams its own expert's matrix, with no routing.
-  With more, it routes them by counting into blocks of one expert, each
-  block reading its expert's matrix once: 64 rows from 16 rows an expert,
-  on a tensor core where one takes them; below that the most rows up to 16,
-  a power of two, whose padding stays under half the rows, so that the
-  host, whose padding rows cost as much as real ones, computes under one
-  and a half times the rows. On fudge's RTX 5000 Ada, gpt-oss-20b's experts
-  at a 512-token prefill take 3.69-3.82 ms, from 4.63-4.72 through
-  `Nx.map_segments`, the 512-token prefill 171-172 ms from 183-184, and one
-  token's routed MXFP4 product 59-67 us from 66-79. The cost, until tolk
+  and `Nx.matmul_segments`, groups its rows itself. With fewer rows than
+  experts, or more experts than a matrix has elements, each row streams its
+  own expert's matrix. Otherwise it routes them by counting into blocks of
+  one expert, each block reading its expert's matrix once: 4 rows below 5
+  rows an expert, 8 below 16 and 64 from 16, on a tensor core where one
+  takes them. On fudge's RTX 5000 Ada, gpt-oss-20b's experts at a 512-token
+  prefill take 3.69-3.82 ms, from 4.63-4.72 through `Nx.map_segments`, the
+  512-token prefill 171-172 ms from 183-184, one token's routed MXFP4
+  product 59-67 us from 66-79, and the 12-token prefill 29 ms from 52 when
+  it streamed below 4 rows an expert. The cost, until tolk
   lays such products out without a core: a float32 routed product, which
   no tensor core takes, in blocks of 64 rather than streamed in blocks of
   16, 24-25 ms from 16-17 for 512 tokens of gpt-oss's MXFP4 gate and up

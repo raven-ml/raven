@@ -789,45 +789,48 @@ let split { dtype; node; scale } axis parts =
 let gathered dt u axis p =
   Arith.of_parts dt (List.map (fun u -> Bits.take u axis p) (Arith.parts dt u))
 
-(* The rows an expert holds on average below which a [Rows] contraction reads
-   [b] per row, and the rows of a block above it. Per row, each row streams
-   its group's slice, [n] slices read for [n] rows; in blocks, a block of 64
-   rows of one group shares each slice it reads, as a tensor core's
-   workgroup of 64 rows does, against routing kernels and padding rows.
-   Measured on gpt-oss-20b's MXFP4 experts layer, 32 experts on an RTX 5000
-   Ada: at 2 rows an expert per row takes 1.6 ms against 2.5 in blocks, at
-   4 rows 3.1 against 2.5, at 8 rows 6.6 against 2.9. *)
-let per_row = 4
+(* [block_rows ~n ~g] is the rows of a block of [n] rows over [g] groups, or
+   [1] for each row reading its own slice. Per row, a group's slice is
+   streamed once for each of its rows; a block of one group's rows reads it
+   once, at the cost of routing kernels and padding rows. Rows share slices
+   from one row a group on average: blocks of 4 from there, of 8 from 5 rows
+   a group, and of 64, a tensor core's workgroup, from 16. Measured on
+   gpt-oss-20b's MXFP4 experts layer, 32 experts, on an RTX 5000 Ada, in ms
+   for its two products, rows routed uniformly at random:
 
-(* [block_rows ~n ~g] is the rows of a block of [n] rows over [g] groups:
-   64 from 16 rows a group on average, where 64 rows of one group fill a
-   tensor core's workgroup (on the RTX 5000 Ada blocks of 64 beat blocks of
-   16 from 16 rows an expert: 3.2 against 7.0 ms on gpt-oss-20b's experts
-   layer at 128 tokens). With fewer, the most rows up to 16, a power of two,
-   whose padding stays under half the rows, [2 (c - 1) g < n], as
-   [Nx.map_segments] bounds its own: a target whose padding rows cost as
-   much as real ones, as the host's do, then computes under one and a half
-   times the rows, where 64 would compute up to 16 times them. Below 2, each
-   row reads its own slice. *)
+     rows a group   per row   blocks of 2      4      8     64
+     1/2               0.42          0.49
+     1                 0.80          0.71   0.82
+     1.5               1.18          0.93   0.94
+     2                               1.15   1.04
+     4                 3.09          1.99   1.51   1.60
+     6                                      2.20   2.00
+     8                 6.47                 2.58   2.35   2.62
+     12                                            3.08   2.65
+
+   A model's routing crowds rows into fewer groups, which favours blocks
+   further: gpt-oss-20b's 12-token prefill, 1.5 rows an expert, takes 52 ms
+   per row, 30 in blocks of 2 and 29 in blocks of 4. Blocks of 64 wait for
+   16 rows a group because padding rows cost as much as real ones on the
+   host, where this layer at 1.5 rows a group takes 106 ms per row against
+   83 in blocks of 4, and at 12 rows 306 in blocks of 4 against 273 in
+   blocks of 8. *)
 let block_rows ~n ~g =
-  if n >= 16 * g then 64
-  else
-    let rec go c = if c < 2 || 2 * (c - 1) * g < n then c else go (c / 2) in
-    go 16
+  if n < g then 1 else if n < 5 * g then 4 else if n < 16 * g then 8 else 64
 
 (* [Rows]: row [r] of [a]'s [a_axis] reads [b] at its group along [b_axis],
    which then holds [a]'s rows, a batch pair whose axis moves back among [a]'s
    free axes in the result. Each row contracts with its own group's slice
    alone: the work of one slice's contraction, whatever [g].
 
-   With fewer than {!per_row} rows a group on average, each row reads [b]'s
-   slice at its id, clamped into [\[0, g)]. Otherwise the rows are routed
-   ({!route}) into blocks of {!block_rows} rows: each slot reads [a]'s row at
-   its index and [b]'s slice at its block's group, [owner[σ / c]], and [init] at
-   its index, so that [init] enters the sum once; its output is stored, and
-   each row reads its slot's. A slot of no index reads [a] as zeros against a
-   real slice, so that it may compute [0 · ∞]; no row reads it. A row in no
-   group takes the no-product rule. *)
+   Where {!block_rows} is [1], or [g] is [0] or more than a slice's elements,
+   each row reads [b]'s slice at its id, clamped into [\[0, g)]. Otherwise
+   the rows are routed ({!route}) into blocks of {!block_rows} rows: each
+   slot reads [a]'s row at its index and [b]'s slice at its block's group,
+   [owner[σ / c]], and [init] at its index, so that [init] enters the sum
+   once; its output is stored, and each row reads its slot's. A slot of no
+   index reads [a] as zeros against a real slice, so that it may compute
+   [0 · ∞]; no row reads it. A row in no group takes the no-product rule. *)
 let rows ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
   let shape x = extents (List.hd (Arith.parts x.dtype x.node)) in
   let sa = shape a and sb = shape b in
@@ -842,9 +845,16 @@ let rows ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
     let s = extents (List.hd (Arith.parts out i)) in
     gathered out i j (spread p s r_sides j)
   in
+  (* Routing works in [n g], at most the products' [n] times a slice's
+     elements where [g] is at most those: with more groups, each row reads
+     its own slice. *)
+  let slice =
+    List.fold_left ( * ) 1
+      (List.filteri (fun i _ -> i <> b_axis && not (List.mem i b_sides)) sb)
+  in
   let r =
-    let c = if g = 0 then 1 else block_rows ~n ~g in
-    if g = 0 || n < per_row * g || c < 2 then
+    let c = if g = 0 || g > slice then 1 else block_rows ~n ~g in
+    if c = 1 then
       let id = Ops.where inside o (int o 0) in
       let b' = picked ~clamped:true b b_axis (spread id sb b_sides b_axis) in
       let a' = entered acc ~other:b.dtype a in

@@ -1075,15 +1075,15 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   `mixin/op.py:1064`, is a one-hot `where` summed over the axis, which
   `codegen/simplify.py:122` (`pm_reduce_load_collapse`, under
   `pm_load_collapse`, `:157`) rewrites into a load at the index.
-- **Raven:** `lower_reduce.ml` (`route`, `rows`, `blocked`,
+- **Raven:** `lower_reduce.ml` (`route`, `rows`, `block_rows`, `blocked`,
   `block_size`), `lower_bits.ml` (`take`).
 - **Differs:** every read is a load at its index by `take`, never a one-hot
-  sum. A `Rows` contraction of `n` rows over `g` groups below `4 g` rows
-  reads `b` at each row's id, clamped into `[0, g - 1]`. From `4 g` rows
-  it routes the rows by counting (a one-hot of the ids, its running sum,
-  each group's count and the scan of its blocks, each slot's row by a binary
-  search of its group's running count) into blocks of rows of one group, 64
-  from 16 rows a group, fewer below with their padding under half the rows:
+  sum. A `Rows` contraction of `n` rows over `g` groups reads `b` at each
+  row's id, clamped into `[0, g - 1]`, where `n < g` or `g` passes a
+  slice's elements. Otherwise it routes the rows by counting (a one-hot of the ids, its running sum, each
+  group's count and the scan of its blocks, each slot's row by a binary
+  search of its group's running count) into blocks of rows of one group, 4
+  below 5 rows a group, 8 below 16 and 64 from 16:
   a block reads its group's slice, its rows at their slots, a slot of none
   reading `0`, and each row reads its slot's stored output. A row reads its
   own group's slice alone, its bits exact, a NaN's payload and `-0.`
@@ -1104,11 +1104,14 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Pinned by:** `Lower_reduce › contractions › segmented contractions give
   eager's integers and hold their bound`, `› contracting pairs in blocks give
   eager's integers and hold their bound`, `› rows in blocks give eager's
+  integers and hold their bound`, `› rows in small blocks give eager's
   integers and hold their bound`, `Lower_reduce › work › a Rows
   contraction's work is one slice's at 128 and 256 groups`, `› a scaled
   float4 Rows contraction's work is one slice's`, `› a Rows contraction of
-  8 rows a group works as 1.5 times its rows'`, `› a Rows contraction in
-  blocks works as its slots' at 8 groups`, `› a Contracting contraction of 8
+  fewer rows than groups is one kernel`, `› Rows of more groups than a
+  slice's elements are one kernel`, `› a Rows contraction of 8 rows a
+  group pads under its rows`, `› a Rows contraction in blocks works as its
+  slots' at 8 groups`, `› a Contracting contraction of 8
   groups works in blocks`, `Jit › classes › a segmented contraction gives
   eager's values`, `› a segmented contraction's gradients give eager's
   values`, `› a group's weight gradient keeps its bits whatever the other
