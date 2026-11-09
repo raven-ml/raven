@@ -111,40 +111,58 @@ The Devices section of [`munin_sys.mli`](../lib/sys/munin_sys.mli) states
 each field's quantity and key. Every device gives its quantities under the
 same keys, whichever vendor made it.
 
-A program that computes on a set of rig devices reads each one's usage,
-its own allocations and its budget from rig. This glue samples the
-machine, the process and every device of a set `devices` every 15
-seconds:
+A program that computes on a set of rig devices reads from rig what it
+holds on each device and its budget there. This glue samples the machine,
+the process and every device of a set `devices` every 15 seconds:
 
 <!-- $MDX skip -->
 ```ocaml
 let every = 15.
 
-let usage d () : Munin_sys.device =
-  match (Rig.usage d ~window:every, Rig.allocated d, Rig.budget d) with
+let held d () : Munin_sys.device =
+  match (Rig.allocated d, Rig.budget d) with
   | exception Rig.Lost (_, why) -> raise (Sys_error why)
-  | Error why, _, _ -> raise (Sys_error why)
-  | Ok u, allocated, budget ->
+  | allocated, budget ->
       {
+        Munin_sys.unknown with
         allocated = Some allocated;
         budget = (if budget = max_int then None else Some budget);
-        memory = u.memory;
-        used = u.used;
-        busy = u.busy;
-        activity = u.activity;
-        temperature = u.temperature;
-        power = u.power;
       }
 
 let monitor s devices =
-  let reading d = Munin_sys.device (Rig.name d) (usage d) in
+  let reading d = Munin_sys.device (Rig.name d) (held d) in
   Session.sample s ~every
     (Munin_sys.host () :: Munin_sys.process ()
     :: List.map reading (Nx.Devices.to_list devices))
 ```
 
 A device that the program closed, or that rig lost, raises `Rig.Lost`
-from any of the three calls, and the glue turns it into `Sys_error`, so
-the sampler skips that device that time and keeps sampling the others.
-rig gives a device without a bound on its memory a budget of `max_int`,
-which the glue records as no budget.
+from either call, and the glue turns it into `Sys_error`, so the sampler
+skips that device that time and keeps sampling the others. rig gives a
+device without a bound on its memory a budget of `max_int`, which the glue
+records as no budget.
+
+What every process holds on a GPU, and how busy it is, comes from the
+GPU's driver. On NVIDIA's kernel driver, `Rig_nv_nvidia.usage` reads the
+GPU's memory, the bytes free of it, and how busy its compute engine was
+over a window, by the GPU's index. A program that opened GPU `i` as the
+device `d` adds them to `d`'s reading:
+
+<!-- $MDX skip -->
+```ocaml
+let nvidia i d () : Munin_sys.device =
+  match Rig_nv_nvidia.usage ~window:every i with
+  | Error why -> raise (Sys_error why)
+  | Ok u ->
+      {
+        (held d ()) with
+        memory = Some u.memory_total;
+        used = Some (u.memory_total - u.memory_free);
+        busy = u.busy;
+      }
+
+let gpu_reading i d = Munin_sys.device (Rig.name d) (nvidia i d)
+```
+
+rig reads no device's activity, temperature or power, so those fields
+stay `None`.

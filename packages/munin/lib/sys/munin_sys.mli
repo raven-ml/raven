@@ -33,20 +33,16 @@
     reading raises [Sys_error], which a sampler skips; any other exception
     would stop the sampler.
     {[
-      let every = 15. in
-      let usage d () : Munin_sys.device =
-        match (Rig.usage d ~window:every, Rig.allocated d, Rig.budget d) with
+      let held d () : Munin_sys.device =
+        match (Rig.allocated d, Rig.budget d) with
         | exception Rig.Lost (_, why) -> raise (Sys_error why)
-        | Error why, _, _ -> raise (Sys_error why)
-        | Ok u, allocated, budget ->
-            { allocated = Some allocated;
-              budget = (if budget = max_int then None else Some budget);
-              memory = u.memory; used = u.used; busy = u.busy;
-              activity = u.activity; temperature = u.temperature;
-              power = u.power }
+        | allocated, budget ->
+            { Munin_sys.unknown with
+              allocated = Some allocated;
+              budget = (if budget = max_int then None else Some budget) }
       in
-      let reading d = Munin_sys.device (Rig.name d) (usage d) in
-      Munin.Session.sample s ~every
+      let reading d = Munin_sys.device (Rig.name d) (held d) in
+      Munin.Session.sample s ~every:15.
         (Munin_sys.host () :: Munin_sys.process ()
          :: List.map reading (Nx.Devices.to_list devices))
     ]} *)
@@ -88,9 +84,11 @@ val process : unit -> unit -> (string * float) list
     munin reads no device. A program builds a device's reading from what
     the device's library reports, through {!device}, which fixes the keys
     the run records and a reader looks for. Each field holds one quantity
-    under one key, whichever vendor made the device. The fields beside
-    [allocated] and [budget] carry rig's [Rig.usage] under its own names,
-    which states each one's source per driver. *)
+    under one key, whichever vendor made the device. rig reports
+    [allocated] and [budget] of every device ([Rig.allocated],
+    [Rig.budget]), and [memory], [used] and [busy] of an NVIDIA GPU on
+    NVIDIA's kernel driver ([Rig_nv_nvidia.usage]); a field that the
+    device's library does not report stays [None]. *)
 
 type device = {
   allocated : int option;
