@@ -258,6 +258,11 @@ val sp_encode_ids32 : string -> int -> int -> ids32 -> Bytes.t -> sp -> reason
     the ids stored as [int32]. Ids room is checked per unit against the buffer's
     length; every other contract is {!sp_encode}'s. *)
 
+val find_byte : string -> int -> int -> int -> int
+(** [find_byte s pos stop b] is the first position in [pos, stop) holding the
+    byte [b], or [stop] if none does; [0 <= pos <= stop <= String.length s] and
+    [0 <= b <= 255]. *)
+
 val cache_align : Bytes.t -> int
 (** [cache_align b] is the offset into [b] of its first byte on a 64-byte
     boundary, where a pretoken table in [b] starts its first set. *)

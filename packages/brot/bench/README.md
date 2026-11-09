@@ -189,3 +189,29 @@ Ratios are brot's cost over the reference's: above 1, brot is slower.
   misses (`merge_run`) is 44% and the unit walk 27%; of its last-level read
   misses the collector's marking is 35% and the added-token scan, which reads
   each document first, 30%.
+
+- Stages, 2026-11-09, GPT-2, one thread, 99,729,892 bytes, a warm pass in
+  10^9 TSC cycles (best-of-pass, load 3-8; both engines with their tables on
+  huge pages; gigatoken's stages by `rdtsc` in a patched build, its other
+  costs the rest of its 0.40):
+
+  | Stage                                | brot  | gigatoken       |
+  | ------------------------------------ | ----- | --------------- |
+  | Walk, then key and prefetch          | 0.221 | 0.188           |
+  | Probe and emit, misses included      | 0.146 | 0.172           |
+  | Added-token scan                     | 0.020 | in the rest     |
+  | Copy into the result                 | 0.045 | in the rest     |
+  | Driver and collector                 | 0.048 | in the rest     |
+  | Pass                                 | 0.48  | 0.40            |
+
+  The scan was 0.040 before it took `memchr`; the 0.020 left is reading the
+  text from memory. Warm, the 20 MB prefix counts 31.9 instructions per byte
+  before and 30.2 after. The copy is 0.019 of `memcpy` and 0.03 to 0.11 of
+  first touching the result, by whether the kernel gives it huge pages, which
+  moves it from 0.045 to 0.135 between runs. Tried and left out: prefetching
+  sets into L2 (`T1`), as gigatoken does, 4-7% slower here; `-march=x86-64-v3`,
+  no gain; handing the sink to the caller to skip the copy, at most the 0.019;
+  sizing the cache for the batch up front, 0.04 of a first pass's 0.87, too
+  small for wall time to show, and it would take the table to its limit for
+  text whose pretokens would not have filled it. A first pass takes 0.27-0.32 s
+  against gigatoken's 0.19-0.20, where merging the new pretokens is 0.25 of 0.87.

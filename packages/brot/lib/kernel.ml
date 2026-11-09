@@ -125,5 +125,8 @@ external sp_encode_ids32 :
   = "brot_sp_encode_ids32_byte" "brot_sp_encode_ids32"
 [@@noalloc]
 
+external find_byte : string -> int -> int -> int -> int = "brot_find_byte"
+[@@noalloc]
+
 external cache_hash : int64 -> int64 -> int = "brot_cache_hash" [@@noalloc]
 external cache_align : Bytes.t -> int = "brot_cache_align" [@@noalloc]

@@ -223,8 +223,19 @@ let pre_tokenizer_suite =
 
 let all_benchmarks =
   let open Fixtures in
+  (* Sixteen documents that stay in the cache: the added-token scan of every
+     document is the most of what a pass spends outside the walk and the probe,
+     so a slower search shows here. *)
   let gpt2 =
-    make_suite ~label:"GPT-2" ~tokenizer:(load_tokenizer "gpt2.json") ()
+    let tokenizer = load_tokenizer "gpt2.json" in
+    let many = List.init 16 (fun _ -> long_text) in
+    make_suite ~label:"GPT-2" ~tokenizer
+      ~extra:
+        [
+          Thumper.bench "Encode/batch_ids_many" (fun () ->
+              encode_batch_ids tokenizer many);
+        ]
+      ()
   in
   (* Four texts of 64 KB over four domains: each fills a chunk, the least a
      batch is spread by, so three domains are spawned for the call, and they

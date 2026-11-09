@@ -9,4 +9,6 @@ WordPiece, Unigram, word-level and character-level.
   pretoken cache probe, and the BPE miss path (the whole-word lookup of
   `ignore_merges`, then the short merge). Their OCaml versions stay as the
   reference and as the bytecode and js_of_ocaml fallback. Each C kernel is
-  tested against its OCaml version. Everything else stays OCaml.
+  tested against its OCaml version. The added-token scan also calls libc's
+  `memchr` for a single anchor byte, with the OCaml SWAR search as the same
+  fallback. Everything else stays OCaml.

@@ -2624,6 +2624,18 @@ CAMLprim value brot_cache_align(value b)
   return Val_long((intnat)((0 - (uintptr_t)Bytes_val(b)) & 63));
 }
 
+/* The first occurrence of [byte] in [pos, stop), or [stop]: the C library's
+   search, which reads a vector at a time, for the scan of added tokens with a
+   single anchor. */
+CAMLprim value brot_find_byte(value text, value vpos, value vstop, value vbyte)
+{
+  const unsigned char *s = (const unsigned char *)String_val(text);
+  intnat pos = Long_val(vpos);
+  const void *r =
+      memchr(s + pos, (int)Long_val(vbyte), (size_t)(Long_val(vstop) - pos));
+  return r ? Val_long((const unsigned char *)r - s) : vstop;
+}
+
 /* For tests. */
 
 /* Kernel.cache_hash: hash_of on two key words. */

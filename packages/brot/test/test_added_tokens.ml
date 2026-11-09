@@ -401,6 +401,21 @@ let test_scan_long_stretch () =
     (ids_of t ("<s>" ^ run));
   equal ~msg:"no match" (array int) (Array.make 200 0) (ids_of t (run ^ run))
 
+(* A single anchor byte is searched by the fastest loop the build has: a match
+   or a lone anchor byte is found wherever it lies, up to the last byte, on
+   each side of the widths that loop reads at a time. *)
+let test_scan_anchor_at_edge () =
+  let t = scan_tokenizer [ added_token "<s>" ] in
+  for n = 0 to 70 do
+    let run = String.make n 'a' in
+    equal ~msg:"a match at the end" (array int)
+      (Array.append (Array.make n 0) [| 11 |])
+      (ids_of t (run ^ "<s>"));
+    equal ~msg:"a lone anchor at the end" (array int)
+      (Array.append (Array.make n 0) [| 5 |])
+      (ids_of t (run ^ ">"))
+  done
+
 let test_scan_single_word_resume () =
   let t = tokenizer [ added_token ~single_word:true "SW" ] in
   equal ~msg:"refused then matched" (array int)
@@ -754,6 +769,7 @@ let suite =
     test "scan three firsts" test_scan_three_firsts;
     test "scan dense near" test_scan_dense_near;
     test "scan long stretch" test_scan_long_stretch;
+    test "scan anchor at the edge" test_scan_anchor_at_edge;
     test "scan single word resume" test_scan_single_word_resume;
     test "scan long space run" test_scan_long_space_run;
     law_scan;

@@ -20,7 +20,6 @@
   test_hf_tokenizers
   test_processors
   test_pretokenizers
-  test_added_tokens
   test_json
   test_pretoken_cache
   test_float_text)
@@ -36,7 +35,6 @@
   test_hf_tokenizers
   test_processors
   test_pretokenizers
-  test_added_tokens
   test_json
   test_pretoken_cache
   test_float_text)
@@ -51,13 +49,13 @@
   (glob_files %{project_root}/packages/brot/bench/data/*.json))
  (libraries brot fixture windtrap unix threads.posix jsont jsont.bytesrw))
 
-; These two suites run twice: the native binary exercises the C kernels, the
+; These suites run twice: the native binary exercises the C kernels, the
 ; byte_complete one (stubs linked statically; a plain .bc could not find them)
 ; the OCaml reference that Sys.backend_type selects. The tests stanza runs
 ; only the native exe on runtest, so the bytecode runs are explicit rules.
 (tests
- (names test_parity test_kernels)
- (modules test_parity test_kernels)
+ (names test_parity test_kernels test_added_tokens)
+ (modules test_parity test_kernels test_added_tokens)
  (modes exe byte_complete)
  (package brot)
  (deps
@@ -86,6 +84,12 @@
   (glob_files %{project_root}/packages/brot/bench/data/*.json))
  (action
   (run %{dep:test_kernels.bc.exe} --slow-threshold 10)))
+
+(rule
+ (alias runtest)
+ (package brot)
+ (action
+  (run %{dep:test_added_tokens.bc.exe} --slow-threshold 10)))
 
 ; The native-vs-bytecode differential: the same deterministic dump from the
 ; kernel and from the reference must be byte-identical. The native binary reads

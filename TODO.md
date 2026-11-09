@@ -78,17 +78,6 @@ raven / llama.cpp b12048 Vulkan:
   DuckDB's dynamic join filters and join order read far fewer rows; q01's
   aggregate is 46%. A segment-id reduce kernel in nx is unmeasured.
   Since then e4b49ffba3 cut q01 by 14%. Data: ~/wt/tmp/talon-data
-- brot vs gigatoken cd5ee648c6 on fudge (bench README, "Against
-  gigatoken"): GPT-2 runs at 0.55-0.65 of its speed on one thread over
-  100 MB (abbeface7). Pages: a warm pass faults 11.5k-29k times, mostly
-  each batch's fresh 90 MB result; glibc's tunables remove them with no
-  brot code (`mmap_max=0` and a large `trim_threshold`: 0 after the first
-  pass; `glibc.malloc.hugetlb=1`: 0.8k-3k). Instructions: GC marking of
-  the vocabulary's blocks is ~0.6 instr/B at 100 MB (2 only at 5 MB), so a
-  flat vocabulary (~0.8%) does not pay; the walk and probe loop (~3 instr/B)
-  remains.
-  Branch-free merges cut callgrind's mispredicts 35% but ran no faster on
-  fudge
 - talon.parquet's pacing law failed once on macOS (run 42473531097: 35
   major cycles against 34); the runtime's own pace cannot explain it (the
   loop puts ~4.8k words in the major heap) and it passes at rig's 4 MiB

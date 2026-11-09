@@ -17,7 +17,7 @@ type token = {
 type pattern = { text : string; token : token }
 
 (* How the scan seeks the next byte that can stand at the anchor of a pattern:
-   a SWAR search for one or two broadcast bytes, eight bytes per load, or the
+   a search for one or two bytes, held broadcast for the SWAR loops, or the
    bytewise [anchors] test when more than two bytes can stand there. *)
 type seek = Seek_one of int64 | Seek_two of int64 * int64 | Seek_bytewise
 
@@ -280,13 +280,17 @@ let rec skip_two text b0 b1 i len =
 
 (* [candidate m text ~pos ~len] is the first position at or after [pos] whose
    byte can stand at the anchor of a pattern of [m], or [len] if there is none.
-   The SWAR loops stop on the window holding such a byte; the bytewise loop
-   pins it down, and covers the trailing window, which keeps every load within
-   [text] — the primitive is bounds-checked under the bytecode runtime. *)
+   A single anchor byte goes to the C library's [memchr] where the kernels are
+   available; the SWAR loops stop on the window holding such a byte, and the
+   bytewise loop pins it down, and covers the trailing window, which keeps every
+   load within [text] — the primitive is bounds-checked under the bytecode
+   runtime. *)
 let candidate m text ~pos ~len =
   let i =
     ref
       (match m.seek with
+      | Seek_one b when pos < len && Kernel.available ->
+          Kernel.find_byte text pos len (Int64.to_int b land 0xff)
       | Seek_one b -> skip_one text b pos len
       | Seek_two (b0, b1) -> skip_two text b0 b1 pos len
       | Seek_bytewise -> pos)

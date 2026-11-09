@@ -3592,6 +3592,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- Encoding scans for an added token with a single anchor byte with `memchr` in
+  native code: about 5% fewer instructions on a GPT-2 pass over prose.
 - `Brot.from_model_file` numbers a `vocab.txt` by line, a blank line included.
   It skipped blank lines, so every later token had the wrong ID.
 - **Breaking:** `Brot.decode_batch` is removed: write
