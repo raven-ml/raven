@@ -913,6 +913,16 @@ let scan_batch_of_one set =
       (1, 1, true);
     ]
 
+(* Bytes copied between devices by [run]. *)
+let moved_bytes run =
+  let _, events = Rig.Profile.take run in
+  List.fold_left
+    (fun n -> function
+      | Rig.Profile.Copy { src; dst; bytes; _ } when not (Rig.equal src dst) ->
+          n + bytes
+      | _ -> n)
+    0 events
+
 (* A scan whose carry and rows are cut alike copies nothing between devices,
    as eager computation copies nothing. *)
 let local_scan set =
@@ -923,17 +933,155 @@ let local_scan set =
   same_pair (Value (f x xs)) (jit_pair ~compiles:true f x xs);
   let s = T.(tensor @-> tensor @-> returns (pair tensor tensor)) in
   let run () = ignore (Nx.to_array (fst (Rune.jit s f x xs))) in
-  let _, events = Rig.Profile.take run in
-  let copied =
-    List.fold_left
-      (fun n -> function
-        | Rig.Profile.Copy { src; dst; bytes; _ } when not (Rig.equal src dst)
-          ->
-            n + bytes
-        | _ -> n)
-      0 events
+  equal ~msg:"bytes copied" int 0 (moved_bytes run)
+
+(* Values a loop makes itself
+
+   A loop's first value made in the program, a constant, and a step's constant
+   output have no device of their own: each piece lies where the values it is
+   stored with lie, on any device, the program's or another's. *)
+
+type first = Zeros_like | Placed
+
+type made_case = {
+  mn : int;
+  row : int array;
+  trips : int;
+  rows : cut;
+  arg : int;
+  first : first;
+}
+
+let pp_made_case ppf c =
+  Format.fprintf ppf "%d devices, row %a, %d trips, rows %a, argument on %d, %s"
+    c.mn Operand.pp_shape c.row c.trips pp_cut c.rows c.arg
+    (match c.first with Zeros_like -> "zeros_like" | Placed -> "placed")
+
+(* Rows whole, on one device or cut inside a row. *)
+let made_cases =
+  let open Gen in
+  (let* mn = int_range 2 4 in
+   let* rank = int_range 1 2 in
+   let* row = array ~size:(constant rank) (int_range 0 ((2 * mn) + 1)) in
+   let mesh =
+     if mn = 4 && rank = 2 then
+       [ (1, constant (Mesh (1, 2))); (1, constant (Mesh (2, 1))) ]
+     else []
+   in
+   let* rows =
+     frequency
+       ([
+          (1, constant On);
+          (2, map (fun k -> Device k) (int_range 0 (mn - 1)));
+          (3, map (fun a -> Split a) (int_range 1 rank));
+        ]
+       @ mesh)
+   in
+   let* trips = frequency [ (1, constant 0); (3, int_range 1 3) ] in
+   let* arg = int_range 0 (mn - 1) in
+   let+ first = one_of [ constant Zeros_like; constant Placed ] in
+   { mn; row; trips; rows; arg; first })
+  |> with_pp pp_made_case
+
+let made_examples =
+  let c mn row trips rows arg first = { mn; row; trips; rows; arg; first } in
+  [
+    (* A cut carry, an empty one, no trips. *)
+    c 2 [| 4 |] 3 (Split 1) 0 Placed;
+    c 2 [| 4 |] 3 (Split 1) 1 Zeros_like;
+    c 3 [| 0 |] 2 (Split 1) 0 Placed;
+    c 2 [| 4 |] 0 (Split 1) 1 Placed;
+    (* On a device that is not the program's. *)
+    c 3 [| 4 |] 2 (Device 2) 0 Placed;
+    c 3 [| 4 |] 0 (Device 1) 0 Zeros_like;
+    c 2 [| 3 |] 2 On 1 Placed;
+    (* The mesh's axes in both orders. *)
+    c 4 [| 2; 3 |] 2 (Mesh (1, 2)) 3 Placed;
+    c 4 [| 2; 3 |] 1 (Mesh (2, 1)) 0 Zeros_like;
+  ]
+
+(* A row's placement, where a value of rows lies at [c]. *)
+let row_cut = function
+  | Split a -> Split (a - 1)
+  | Mesh (a, b) -> Mesh (a - 1, b - 1)
+  | (On | Device _) as c -> c
+
+let first_of set c like =
+  match c.first with
+  | Zeros_like when c.trips > 0 -> Nx.zeros_like (like ())
+  | Zeros_like | Placed ->
+      Nx.place (at set (row_cut c.rows)) (Nx.zeros f32 c.row)
+
+let cover_made c =
+  cover "no trips" (c.trips = 0);
+  cover "a carry cut across devices"
+    (match c.rows with Split _ | Mesh _ -> true | On | Device _ -> false);
+  cover "a device that is not the program's"
+    (match c.rows with Device k -> k <> c.arg | _ -> false)
+
+(* A scan's first value and its stacked outputs, made in the program, over
+   rows of [c.trips], compiled, gives eager's bits and placements. The
+   program's device, that of its first argument, need not hold a piece. *)
+let scan_made set c =
+  cover_made c;
+  let arg = Nx.place (at set (Device c.arg)) (value [||]) in
+  let rows = value (Array.append [| c.trips |] c.row) in
+  let xs = Nx.place (at set c.rows) rows in
+  let f _ xs =
+    let init = first_of set c (fun () -> Nx.get [ 0 ] xs) in
+    Rune.scan' (fun carry x -> (Nx.add carry x, Nx.zeros_like x)) ~init xs
   in
-  equal ~msg:"bytes copied" int 0 copied
+  same_pair (outcome (fun () -> f arg xs)) (jit_pair ~compiles:true f arg xs)
+
+(* An iterate's first value made in the program, its stop a fold of a carry
+   that may hold no element, compiled, gives eager's bits and placements. *)
+let iterate_made set c =
+  cover_made c;
+  let row_at = at set (row_cut c.rows) in
+  let arg = Nx.place (at set (Device c.arg)) (value [||]) in
+  let x = Nx.place row_at (Nx.ones f32 c.row) in
+  let elements = Array.fold_left ( * ) 1 c.row in
+  let limit = float_of_int (c.trips * elements) in
+  let f a x =
+    let init =
+      match c.first with
+      | Zeros_like -> Nx.zeros_like x
+      | Placed -> Nx.place row_at (Nx.zeros f32 c.row)
+    in
+    let until carry = Nx.greater_equal_s (Nx.sum carry) limit in
+    (Nx.neg a, Rune.iterate' ~max:(c.trips + 1) ~until (Nx.add x) init)
+  in
+  same_pair (outcome (fun () -> f arg x)) (jit_pair ~compiles:true f arg x)
+
+(* A scan over rows the program makes, cut inside a row or on one device that
+   is not the program's, compiled, gives eager's bits. *)
+let rows_made set =
+  let check rows =
+    let arg = Nx.place (at set (Device 0)) (value [| 2 |]) in
+    let row = at set (row_cut rows) in
+    let f a _ =
+      let xs = Nx.place (at set rows) (Nx.ones f32 [| 3; 6 |]) in
+      let init = Nx.place row (Nx.zeros f32 [| 6 |]) in
+      let step carry x = (Nx.add carry x, x) in
+      (Nx.neg a, fst (Rune.scan' step ~init xs))
+    in
+    same_pair
+      (outcome (fun () -> f arg arg))
+      (jit_pair ~compiles:true f arg arg)
+  in
+  List.iter check [ Split 1; Device 1 ]
+
+(* A step's constant output is stored on its piece's device, and a first value
+   made in the program too: no byte moves between devices. *)
+let made_local set =
+  let xs = Nx.place (at set (Split 1)) (value [| 3; 6 |]) in
+  let s = T.(tensor @-> returns (pair tensor tensor)) in
+  let f xs =
+    let init = Nx.zeros_like (Nx.get [ 0 ] xs) in
+    Rune.scan' (fun carry x -> (Nx.add carry x, Nx.zeros_like x)) ~init xs
+  in
+  let run () = ignore (Nx.to_array (fst (Rune.jit s f xs))) in
+  equal ~msg:"bytes copied" int 0 (moved_bytes run)
 
 (* An iterate whose stop every device holds reads it on the program's device,
    that of its first argument: no trip copies the stop between devices. *)
@@ -948,17 +1096,7 @@ let stop_home set =
   same_pair (outcome (fun () -> f s x)) (jit_pair ~compiles:true f s x);
   let sig_ = T.(tensor @-> tensor @-> returns (pair tensor tensor)) in
   let run () = ignore (Nx.to_array (snd (Rune.jit sig_ f s x))) in
-  let _, events = Rig.Profile.take run in
-  let copied =
-    List.fold_left
-      (fun n -> function
-        | Rig.Profile.Copy { src; dst; bytes; _ } when not (Rig.equal src dst)
-          ->
-            n + bytes
-        | _ -> n)
-      0 events
-  in
-  equal ~msg:"bytes copied" int 0 copied
+  equal ~msg:"bytes copied" int 0 (moved_bytes run)
 
 let iterated set c =
   cover "carry cut" (carry_cut c);
@@ -1988,6 +2126,19 @@ let () =
              prop ~count:20 "an iterate stopped by a fold over a cut axis"
                loop_cases (fun c ->
                  over c.ln { law = (fun set -> iterated set c) });
+             prop ~count:30 ~examples:made_examples
+               "a scan's first value and outputs made in the program"
+               made_cases (fun c ->
+                 over c.mn { law = (fun set -> scan_made set c) });
+             prop ~count:30 ~examples:made_examples
+               "an iterate's first value made in the program" made_cases
+               (fun c -> over c.mn { law = (fun set -> iterate_made set c) });
+             test "a scan over rows made in the program" (fun () ->
+                 over 2 { law = rows_made };
+                 over 3 { law = rows_made });
+             test "a scan's constant outputs stay on their devices" (fun () ->
+                 over 2 { law = made_local };
+                 over 3 { law = made_local });
              test "a scan cut alike copies nothing between devices" (fun () ->
                  over 3 { law = local_scan });
              test "a step that reads its coordinates gives eager's bits"

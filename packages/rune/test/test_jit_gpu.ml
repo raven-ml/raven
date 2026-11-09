@@ -407,9 +407,10 @@ let detour () =
 
 let f32 = Nx.float32
 
-(* A placement: whole on each device, cut along an axis, or, over a 2 x 2
-   mesh, cut along axis [0] over its first axis and whole along its second. *)
-type cut = On | Split of int | Rows
+(* A placement: whole on each device, cut along an axis, whole on the [k]th
+   device, or, over a 2 x 2 mesh, cut along axis [0] over its first axis and
+   whole along its second. *)
+type cut = On | Split of int | Dev of int | Rows
 
 (* A set, and the mesh over it where it has four devices. *)
 type 'd set = { s : 'd Nx.devices; mesh : 'd Nx.Mesh.t option }
@@ -425,6 +426,7 @@ let set_of (type d) (s : d Nx.devices) =
 let at set = function
   | On -> Nx.Placement.on set.s
   | Split axis -> Nx.Placement.split ~axis set.s
+  | Dev k -> Nx.Placement.device set.s (List.nth (Nx.rigs set.s) k)
   | Rows -> Nx.Placement.mesh (Option.get set.mesh) [ (0, [ "x" ]) ]
 
 (* A value of [shape] on the host, of elements in [-1, 1] that depend on [seed]
@@ -501,6 +503,13 @@ let tanh x = Nx.tanh (Nx.mul_s x 3.)
 let tanh_err = 73. *. ldexp 1. (-24)
 
 let cases =
+  let add_to carry row = (Nx.add carry row, Nx.zeros_like row) in
+  let row_of xs = Nx.zeros_like (Nx.sum ~axes:[ 0 ] xs) in
+  let stops_at limit x =
+    Rune.iterate' ~max:3
+      ~until:(fun c -> Nx.greater_equal_s (Nx.sum c) limit)
+      (Nx.add x) (Nx.zeros_like x)
+  in
   [
     {
       name = "elementwise over a cut and a whole value";
@@ -548,6 +557,46 @@ let cases =
           within
             ~bound:(Nx.mul_s (Nx.matmul (mass x) (mass y)) (2. *. product 7))
             e j);
+    };
+    {
+      name = "a scan over cut rows whose first value the program makes";
+      f = (fun xs _ -> fst (Rune.scan' add_to ~init:(row_of xs) xs));
+      x = (value [| 3; 8 |], Split 1);
+      y = (value ~seed:1 [| 1 |], On);
+      result = Split 0;
+      close = exact;
+    };
+    {
+      name = "a scan's outputs the program makes, on a device apart";
+      f = (fun _ xs -> snd (Rune.scan' add_to ~init:(row_of xs) xs));
+      x = (value ~seed:1 [| 1 |], Dev 0);
+      y = (value [| 3; 8 |], Dev 1);
+      result = Dev 1;
+      close = exact;
+    };
+    {
+      name = "a scan of no rows over cut rows";
+      f = (fun xs _ -> fst (Rune.scan' add_to ~init:(row_of xs) xs));
+      x = (value [| 0; 8 |], Split 1);
+      y = (value ~seed:1 [| 1 |], On);
+      result = Split 0;
+      close = exact;
+    };
+    {
+      name = "an iterate over a cut value whose first value the program makes";
+      f = (fun x _ -> stops_at 16. x);
+      x = (Nx.ones f32 [| 8 |], Split 0);
+      y = (value ~seed:1 [| 1 |], On);
+      result = Split 0;
+      close = exact;
+    };
+    {
+      name = "an iterate of no steps on a device apart";
+      f = (fun _ y -> stops_at (-1.) y);
+      x = (value ~seed:1 [| 1 |], Dev 0);
+      y = (Nx.ones f32 [| 8 |], Dev 1);
+      result = Dev 1;
+      close = exact;
     };
     {
       (* As test_jit_devices.ml's gradient: [g = xᵀ (1 - t²)] for

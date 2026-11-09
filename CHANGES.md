@@ -397,6 +397,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` over several devices compiles a scan or an iterate whose first
+  value, rows or stacked output the program makes itself over cut rows, as
+  `Nx.zeros_like` of a row. It raised tolk's "all buffers must be on the
+  same device", and a step's constant output moved between devices.
 - `Nx.fma` at `float16`, `bfloat16` and the 8- and 4-bit floats under
   `Rune.jit` rounds its exact value once, as eager does, on every target,
   Metal included, subnormals aside where a target flushes them. It rounded

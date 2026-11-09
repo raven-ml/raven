@@ -1627,6 +1627,17 @@ let on_device st u =
   if Option.is_none (Ops.device u) then Ops.copy_to_device u st.device
   else moved u st.device
 
+(* [u], of a value at [q], where a loop or a store reads it from storage: a
+   split program's value that lies on no device, such as a constant, on its
+   own, so that each piece's storage lies with the values it is stored over. *)
+let located st q u =
+  if st.split && Option.is_none (Ops.device u) && not (empty u) then
+    Ops.copy_to_device u (device_at st q)
+  else u
+
+(* The node of [x] where a loop reads it from storage: {!located}. *)
+let node_at st env x = located st (Nx.placement x) (node st env x)
+
 (* A differentiated remat's operands through a barrier, as JAX lowers one
    through an optimization barrier: each operand the program computes is stored
    into storage of its own, which the remat reads once every such operand is
@@ -1865,7 +1876,7 @@ and loop st cs env c =
       let nc = Array.length init and na = Array.length step.adds in
       let ny = Array.length step.outputs - nc - na in
       let _, _, feeds = Program.feeds step in
-      let inits = Array.map (fun (V x) -> node st env x) init in
+      let inits = Array.map (fun (V x) -> node_at st env x) init in
       let starts = starts st env forms ~at:(nc + ny) seeds in
       let finals =
         if n = 0 then
@@ -1891,7 +1902,7 @@ and loop st cs env c =
           let xs =
             Array.map
               (fun (V x) ->
-                let u = node st env x in
+                let u = node_at st env x in
                 match t with
                 | Some t when reverse ->
                     leading (D.Any (Nx.dtype x)) ~reversed:true ~n t u
@@ -1992,7 +2003,7 @@ and loop st cs env c =
          each trip writes its outputs' row. *)
       let stacks = Option.is_some rows in
       let ny = Array.length step.outputs - nc - Array.length step.adds in
-      let inits = Array.map (fun (V x) -> node st env x) init in
+      let inits = Array.map (fun (V x) -> node_at st env x) init in
       let sums = starts st env forms ~at:(nc + Bool.to_int stacks + ny) seeds in
       let go = test cs inits sums in
       let ns = Array.length sums in
@@ -2095,7 +2106,7 @@ and outputs st cs ~reach env args =
       env.reaches.(env.p.params.(k)) <- reach)
     args;
   program st cs env;
-  Array.map (fun (V y) -> node st env y) env.p.outputs
+  Array.map (fun (V y) -> node_at st env y) env.p.outputs
 
 (* [repeat ~into st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip] is the
    values [n] trips of [trip] reach from [inits], the outputs each trip
