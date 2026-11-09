@@ -197,12 +197,10 @@ raven / llama.cpp b12048 Vulkan:
   before an integer sum is at most 3.8% of a query and stays.
   Data: ~/wt/tmp/talon-data on fudge (decision SF0.1/SF1, H2O 1e6/1e7)
 - talon 1.0 plan (_plans/talon/product/plan.md; designs adjudicated in
-  _plans/talon/design/): range joins (6f37e59c7), windows, Kit fills,
-  as-of joins, interval sets, nesting and nested Parquet reads landed;
-  ewm waits for the maintainer's scope call; then folds, zoned time,
-  hash/sample/shuffle, Pivot, dense round trips, partial aggregation,
-  regex, compressed and fixed-width CSV, Parquet datasets,
-  talon.jsont, complex and validity columns, HTML display
+  _plans/talon/design/), open units: Pivot, the Ptree bridge, regex,
+  Unicode case mapping, compressed and fixed-width CSV, Parquet datasets,
+  the C Data Interface, talon.jsont, complex and validity columns, HTML
+  display, streaming var and std. ewm waits for the maintainer's scope call
 - talon interchange follow-ups: `Talon_arrow.sniff` refuses decimals,
   where Parquet's `with_type` reads them as float64 or int64. Parquet
   writes a duration as bare int64 ticks and loses its unit, since no
