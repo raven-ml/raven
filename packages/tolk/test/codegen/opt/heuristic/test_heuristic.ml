@@ -976,7 +976,6 @@ let optimized k file =
   Heuristic.hand_coded_optimizations s
 
 (* The ranges a reduce closes that are axes of its kernel [s]. *)
-let closing s u = List.filter (fun r -> List.memq r (K.rngs s)) (List.tl (Ops.src u))
 let is_upcast r = Ops.axis_type r = Ops.Axis_type.Upcast
 
 (* The output lanes of [s]: the product of its upcast axes no reduce closes. *)
@@ -987,47 +986,15 @@ let output_lanes s =
     1
     (K.axes_of ~reduce:false s [ Ops.Axis_type.Upcast ])
 
-(* The shapes of the budget's clauses that a kernel has once optimised for
-   [file]. *)
+(* The shapes of kernels the budget is checked on, once optimised for [file]. *)
 let shapes k file =
-  let before = K.v k (host file) in
-  let s = optimized k file in
-  let reduces = K.reduceops s in
-  let trips u =
-    List.fold_left
-      (fun n r ->
-        match Ops.vmax r with `Int m -> n * (Bigint.to_int m + 1) | _ -> n)
-      1 (closing before u)
-  in
+  let reduces = List.length (K.reduceops (optimized k file)) in
   List.filter_map
     (fun (label, holds) -> if holds then Some label else None)
     [
-      ("no reduce", reduces = []);
-      ("one reduce", List.length reduces = 1);
-      ( "reduces sharing a loop",
-        List.exists
-          (fun u ->
-            List.exists
-              (fun v ->
-                u != v
-                && List.exists
-                     (fun r -> List.memq r (closing s v))
-                     (closing s u))
-              reduces)
-          reduces );
-      ( "a short reduce beside a long one",
-        List.exists (fun u -> trips u <= 32) (K.reduceops before)
-        && List.exists (fun u -> trips u > 32) (K.reduceops before) );
-      ( "a partial unroll",
-        List.exists
-          (fun u ->
-            List.exists is_upcast (closing s u)
-            && List.exists (fun r -> not (is_upcast r)) (closing s u))
-          reduces );
-      ( "a whole unroll",
-        List.exists
-          (fun u -> closing s u <> [] && List.for_all is_upcast (closing s u))
-          reduces );
+      ("no reduce", reduces = 0);
+      ("one reduce", reduces = 1);
+      ("several reduces", reduces > 1);
     ]
 
 (* [k] with its 32-bit floats made 64-bit ones. *)
@@ -1050,9 +1017,9 @@ let retyped k =
   Graph.of_string (Buffer.contents b)
 
 (* Registers held by kernels of known optimisations on AVX2's file, 16 of 32
-   bytes, from the count's statement: a register holds 8 floats or 4 doubles,
-   no more than a store writes at consecutive addresses, and a reduce that no
-   longer loops holds nothing. *)
+   bytes, from the count's statement: each reduce holds one accumulator for
+   each output lane, and a register holds 8 floats or 4 doubles, no more than
+   a store writes at consecutive addresses. *)
 (* tangent_products keeps its own input in tangent_products.tolk: the budget
    cases here unroll the shape its reduces have with their ranges pinned
    (D280), which upstream's kernel does not have. *)
@@ -1074,11 +1041,13 @@ let held_cases =
       (* 4 rows, which the store writes 128 floats apart: one lane a
          register. *)
       ("4 registers for 4 lanes stored apart", "matmul", false, ([ up 0 4 ], 4));
-      (* Both sums of 4 unrolled whole: nothing loops. *)
-      ("nothing once no reduce loops", "tangent_products", false,
-       ([ up 2 4; up 1 4; up 5 0 ], 0));
-      ("nothing for a reduce unrolled whole", "max_rows", false,
-       ([ up 0 4; up 2 0 ], 0));
+      (* 2 reduces of 16 output lanes stored 4 at consecutive addresses, 4 a
+         register: 4 registers each. *)
+      ("8 registers for two sums of 16 lanes", "tangent_products", false,
+       ([ up 2 4; up 1 4; up 5 0 ], 8));
+      (* One reduce of 4 output lanes stored at consecutive addresses. *)
+      ("1 register for one reduce of 4 lanes", "max_rows", false,
+       ([ up 0 4; up 2 0 ], 1));
     ]
     (fun (_, name, doubles, (opts, expected)) ->
       let k = kernel name in
@@ -1098,17 +1067,30 @@ let budget_rows =
     (fun (name, k) -> List.map (fun file -> (name, k, file)) files)
     host_kernels
 
+(* The budget judges an upcast before it splits, and [held_registers] reads
+   the kernel after: where a later split nests a stored term, as
+   [(a * 4 + b) * 3 + c], the term is no consecutive run. *)
+let r_128 = "r_128_16_3_4_4_3_3_400_400"
+let budget_checked (name, _, file) = not (name = r_128 && file = (16, 32))
+
 let budget =
   group "the register budget"
     [
-      cases
-        "the accumulators of the hottest loop take at most half the registers"
+      cases "a kernel's accumulators take at most half the registers"
         ~id:(fun (name, _, file) -> name ^ " " ^ file_id file)
-        budget_rows
+        (List.filter budget_checked budget_rows)
         (fun (name, k, file) ->
           let s = optimized (Lazy.force k) file in
           at_most ~msg:name int ~than:(fst file / 2)
             (Heuristic.held_registers s (registers file)));
+      (* 4 reduces of 12 output lanes, read as 3 at consecutive addresses a
+         register. *)
+      test "r_128 on AVX2 reads 16 registers once its stored term is nested"
+        (fun () ->
+          let k = Lazy.force (List.assoc r_128 host_kernels) in
+          equal int 16
+            (Heuristic.held_registers (optimized k (16, 32))
+               (registers (16, 32))));
       test "the kernels the budget is checked on have each of its shapes"
         (fun () ->
           let found =
@@ -1118,14 +1100,7 @@ let budget =
                  budget_rows)
           in
           equal (list string)
-            [
-              "a partial unroll";
-              "a short reduce beside a long one";
-              "a whole unroll";
-              "no reduce";
-              "one reduce";
-              "reduces sharing a loop";
-            ]
+            [ "no reduce"; "one reduce"; "several reduces" ]
             found);
     ]
 

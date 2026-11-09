@@ -3022,7 +3022,8 @@ where the fill is a candidate within the register budget.
 ## D109. Withdrawn
 
 On the host, a kernel of several reduces unrolled within 32 lanes; merged
-into D186, whose unroll clauses hold what an unroll keeps across a loop.
+into D186, whose budget counts an unroll by the lanes it holds across a
+loop no more: only an upcast of the outputs adds accumulators.
 
 ## D110. Withdrawn
 
@@ -5787,7 +5788,7 @@ into D183, which holds its rule, its reason and its pins.
   than 32 lanes) and `hand_coded_optimizations` (the unroll of the last reduce
   axis, whole when it is at most 32, by 4 otherwise, while the kernel has fewer
   than 64 lanes).
-- **tolk:** `Heuristic.held_registers` (`held`, `held_share`, `short_trips`,
+- **tolk:** `Heuristic.held_registers` (`held`, `held_share`,
   `computed_bytes`), `Heuristic.fits`, `Heuristic.stored_contiguous`,
   `Heuristic.upcast_contiguous`, and `Heuristic.upcast_more`'s and
   `Heuristic.unroll`'s use of them; `Renderer.registers`, which
@@ -5797,9 +5798,13 @@ into D183, which holds its rule, its reason and its pins.
   with AVX-512, 32 of 16 on arm64), a reduce kernel's lanes are counted in
   registers, a register holding as many lanes of a reduce's type as fit, at
   4 bytes for a narrower type, and no more than its stores write at
-  consecutive addresses. The accumulators of the kernel's hottest loop
-  (`Heuristic.held_registers` states which) take at most half the
-  registers. The upcasts after the masked and shared ones (D92) and the
+  consecutive addresses. Every reduce's accumulators, one for each output
+  lane, take at most half the registers, judged before each split: a later
+  split that nests a stored term, `(a * 4 + b) * 3 + c`, reads as lanes
+  apart afterwards, so `held_registers` can then exceed the half
+  (`r_128_16_3_4_4_3_3_400_400` on AVX2, 16 of 16). Reading through the nest
+  admits more unrolls, and one rune kernel ran 1.7 times slower. The upcasts
+  after the masked and shared ones (D92) and the
   unroll take the budget in place of tinygrad's lane counts:
   - the first output upcast takes the axis the stores write at unit
     stride, when every access that reads it reads it at unit stride, to a
@@ -5813,8 +5818,7 @@ into D183, which holds its rule, its reason and its pins.
     the axis, then the least sum of their strides);
   - the unroll takes what fits, while the lanes upcast fill fewer registers
     than the target has, where tinygrad's take fewer than 64 lanes, 16
-    registers of 4: a partial unroll holds nothing, a whole one its lanes
-    while another reduce of the loop still loops.
+    registers of 4.
   Other devices, and a host renderer that knows no registers (riscv64's),
   upcast and unroll as tinygrad does, after D92's rows of a decoded operand,
   at most 4. The register file is the compile target's,
@@ -5845,18 +5849,27 @@ into D183, which holds its rule, its reason and its pins.
   float32 matmul's unroll by 4 at 64 lanes, which tinygrad's 64 lanes refuse,
   takes it from 50.0-50.1 µs to 34.1-36.2 (one run). D91's 32 lanes were this
   budget at a render that filled half of each float32 register: AVX2's 8
-  registers of 4 floats. The whole-unroll clause, timed at that render on the
-  real path (this campaign's audit and its skeptic, two runs each): the
-  two-sum kernel at 16 lanes takes 3.31-3.42 ms, and 7.92-8.32 with one of
-  its sums unrolled whole while the other loops, D109's case, which the
-  clause refuses; `tangent_products` at 16 lanes takes 277-291 µs, and 183-194
-  with its sums' one axis unrolled whole, which removes every loop, and which
-  the clause takes.
+  registers of 4 floats.
+
+  The budget counts every reduce the same: one accumulator for each output
+  lane, summed over the kernel, with no notion of which loop is hottest. A
+  model of which reduces share the hottest loop, and which unrolled lanes
+  count, took 82 lines and changed 3 of 864 recorded kernels, none on a GPU;
+  against it, lorenz's `r_128_16_3_4_4_3_3_400_400` runs 1.27-1.37 times
+  slower and its `r_32_256_50_4_4_2_4_4` about 1.2 times faster (minima of
+  six interleaved rounds, one core, 151 samples, `lorenz/*/heuristic`). The
+  model refused to unroll one sum whole while another looped, measured at an
+  earlier render as 7.92-8.32 ms against 3.31-3.42 on the two-sum kernel; at
+  this render `r_32_256_50_4_4_2_4_4` takes that unroll and runs 15.8 ms
+  against 18.9 (one core, one run). The
+  rune host kernel that changes, a triangular solve's gradient in
+  `Jit/gaussian-process-grad-float64-8x11`, ran 14.8-16.0 µs before and 11.0
+  µs after (four interleaved rounds, 201 samples, one core); its row takes
+  72.3-83.7 µs against 76.0-86.2 (eight interleaved runs).
 - **Pinned by:** the Heuristic suite: `the host's budget › on AVX2 a
   kernel's accumulators hold` (every case), `the host's budget › the register
-  budget › the accumulators of the hottest loop take at most half the
-  registers` and `› the kernels the budget is checked on have each of its
-  shapes`, `the host's budget › on the host a larger register file never
+  budget › a kernel's accumulators take at most half the registers` and
+  `› the kernels the budget is checked on have each of its shapes`, `the host's budget › on the host a larger register file never
   holds fewer output lanes` and `› on the host a reduce of doubles over a
   stored axis of a multiple of 32 takes half the lanes of floats, in the
   registers floats fill`, over every recorded kernel and lorenz_simple's,

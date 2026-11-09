@@ -188,8 +188,7 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     A kernel of the host with a reduce, for a renderer that knows its vector
     registers ({!Renderer.t.registers}), counts its lanes in registers
     ({!held_registers}): its upcasts after the masked and shared ones, and its
-    unroll, take only what keeps the accumulators of its hottest loop within
-    half the registers, each conversion within 64 lanes, those of the upcast
+    unroll, take only what keeps its accumulators within half the registers, each conversion within 64 lanes, those of the upcast
     axes its value reads that hold distinct values ([n] lanes of an axis read as
     a quotient by [d] hold [n / gcd n d], and a reduce's lanes are summed before
     it), and an iteration within 512 lanes, the product of its upcast axes, the
@@ -214,21 +213,12 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     read as its value. *)
 
 val held_registers : Postrange.Scheduler.t -> Renderer.registers -> int
-(** [held_registers k file] is the registers of [file] that the accumulators of
-    [k]'s hottest loop take. A register of [file.bytes] holds as many lanes of a
-    reduce's type as fit, at 4 bytes for a type narrower than 4, which C
-    computes as an [int] or a [float], and no more than [k]'s stores write at
-    consecutive addresses.
-
-    The hottest loop is the loop of the reduce with the most iterations around
-    its body: its own loops and those of the reduces it runs inside. A reduce of
-    at most 32 iterations belongs to the body around it, the hottest reduce's
-    loop, or the output loop when no reduce is longer. The loop holds, for each
-    output lane, one accumulator of each reduce it runs inside or shares a loop
-    with and of each shorter reduce that runs inside it. An unroll that keeps a
-    reduce's loop holds nothing more; a reduce unrolled whole holds each
-    unrolled lane while another reduce of the loop still loops, and nothing once
-    none does. A kernel without a reduce holds nothing. *)
+(** [held_registers k file] is the registers of [file] that [k]'s reduces'
+    accumulators take: one accumulator for each output lane of each reduce. A
+    register of [file.bytes] holds as many lanes of a reduce's type as fit, at
+    4 bytes for a type narrower than 4, which C computes as an [int] or a
+    [float], and no more than [k]'s stores write at consecutive addresses. A
+    kernel without a reduce holds nothing. *)
 
 (**/**)
 

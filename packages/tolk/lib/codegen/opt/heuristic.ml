@@ -910,38 +910,22 @@ let computed_bytes dt = max 4 (Dtype.itemsize dt)
 
 (* Each accumulator held across a loop is a dependency chain: a fused
    multiply-add's latency of 4 cycles on each of 2 pipes leaves 8 chains in
-   flight, and the operands they read take the rest. So the accumulators of the
-   kernel's hottest loop take at most one register in [held_share]: 8 of AVX2's
-   16, a tile of 16 floats by 4 rows. Past it they spill a loop-carried value
-   into the chain it delays.
-
-   The hottest loop is the loop of the reduce with the most iterations around
-   its body, its own loops and those its value runs inside. A reduce of at most
-   [short_trips] iterations, which Clang unrolls, belongs to the body around it:
-   the hottest reduce's loop, or with no longer reduce the output loop. The loop
-   holds the accumulators of every reduce live in it: those it runs inside or
-   shares, and the short reduces that run inside it, each one for each output
+   flight, and the operands they read take the rest. So the kernel's
+   accumulators take at most one register in [held_share]: 8 of AVX2's 16, a
+   tile of 16 floats by 4 rows. Past it they spill a loop-carried value into
+   the chain it delays. Every reduce holds one accumulator for each output
    lane, as many to a register as fit and as its stores write at consecutive
-   addresses, since Clang packs registers as wide as the stores. An unrolled
-   reduce axis that keeps its loop adds lanes that each iteration sums into
-   those accumulators, and holds nothing more. A reduce unrolled whole holds
-   each unrolled lane across the loop of another reduce of its body, and nothing
-   once none loops: no value of it is carried from one iteration to the next. *)
+   addresses, since Clang packs registers as wide as the stores. *)
 let held_share = 2
-let short_trips = 32
 
-(* The registers the accumulators of [k]'s hottest loop take once [upcast], if
-   any, upcasts an axis by [n] lanes, and [unroll], if any, unrolls an axis by
-   [n] lanes, [0] for whole. *)
-let held ?upcast ?unroll k (file : Renderer.registers) =
+(* The registers the accumulators of [k]'s reduces take once [upcast], if any,
+   upcasts an axis by [n] lanes. *)
+let held ?upcast k (file : Renderer.registers) =
   let rngs = K.rngs k and shape = K.full_shape k in
   let lanes = match upcast with Some (_, n) -> n | None -> 1 in
   let axis_size r =
     match List.find_index (fun x -> x == r) rngs with
-    | Some i -> (
-        match known_size (List.nth shape i) with
-        | Some n -> Some (Bigint.to_int n)
-        | None -> None)
+    | Some i -> Option.map Bigint.to_int (known_size (List.nth shape i))
     | None -> Some 1
   in
   let output =
@@ -949,76 +933,6 @@ let held ?upcast ?unroll k (file : Renderer.registers) =
       (fun n i -> n * Bigint.to_int (size_at k i))
       lanes
       (K.axes_of ~reduce:false k [ Upcast ])
-  in
-  (* The iterations of [r]'s loop and the lanes it is unrolled into. *)
-  let split r =
-    let size = axis_size r in
-    if axis_type r = Upcast then (Some 1, Option.value size ~default:1)
-    else
-      match unroll with
-      | Some (axis, n) when List.nth rngs axis == r -> (
-          match size with
-          | Some s when n = 0 || n >= s -> (Some 1, s)
-          | Some s -> (Some (s / n), n)
-          | None -> (None, n))
-      | _ -> (size, 1)
-  in
-  let reduce_ranges = K.reduce_ranges k in
-  let product =
-    List.fold_left
-      (fun t n -> Option.bind t (fun t -> Option.map (( * ) t) n))
-      (Some 1)
-  in
-  let reduces =
-    List.map
-      (fun u ->
-        let closing =
-          List.filter (fun r -> List.memq r rngs) (List.tl (src u))
-        in
-        let loops = List.filter (fun r -> fst (split r) <> Some 1) closing in
-        let inside =
-          List.filter
-            (fun r -> List.memq r reduce_ranges && fst (split r) <> Some 1)
-            (Nodes.to_list (ranges (nth u 0)))
-        in
-        let trips = product (List.map (fun r -> fst (split r)) loops) in
-        let around = product (List.map (fun r -> fst (split r)) inside) in
-        let unrolled =
-          List.fold_left (fun n r -> n * snd (split r)) 1 closing
-        in
-        let long =
-          match trips with Some t -> t > short_trips | None -> true
-        in
-        (u, loops, inside, around, unrolled, long))
-      (K.reduceops k)
-  in
-  (* Whether [a] iterations are more than [b], an unknown count being more
-     than any known one: the first of equals stays the hottest. *)
-  let deeper a b =
-    match (a, b) with
-    | None, None | Some _, None -> false
-    | None, Some _ -> true
-    | Some a, Some b -> a > b
-  in
-  let hottest =
-    List.fold_left
-      (fun best ((_, _, _, around, _, long) as r) ->
-        match best with
-        | _ when not long -> best
-        | Some (_, _, _, a, _, _) when not (deeper around a) -> best
-        | _ -> Some r)
-      None reduces
-  in
-  let members =
-    match hottest with
-    | None -> reduces
-    | Some (h, h_loops, h_inside, _, _, _) ->
-        List.filter
-          (fun (u, loops, inside, _, _, long) ->
-            u == h
-            || List.exists (fun r -> List.memq r h_inside) loops
-            || ((not long) && List.exists (fun r -> List.memq r h_loops) inside))
-          reduces
   in
   (* The lanes a store writes at consecutive addresses, the upcast [upcast]
      among them: Clang packs a register with no more of them. *)
@@ -1052,24 +966,12 @@ let held ?upcast ?unroll k (file : Renderer.registers) =
       1 (K.bufs k)
   in
   let lanes_registers n dt =
-    let per = max 1 (file.bytes / computed_bytes dt) in
-    let per = min per packed in
+    let per = min (max 1 (file.bytes / computed_bytes dt)) packed in
     (n + per - 1) / per
   in
   List.fold_left
-    (fun total (u, loops, _, _, unrolled, _) ->
-      let looping_other =
-        List.exists
-          (fun (v, loops, _, _, _, _) -> v != u && loops <> [])
-          members
-      in
-      let held =
-        if loops <> [] then output
-        else if looping_other then output * unrolled
-        else 0
-      in
-      total + lanes_registers held (dtype u))
-    0 members
+    (fun total u -> total + lanes_registers output (dtype u))
+    0 (K.reduceops k)
 
 (* A conversion computes as one vector the lanes upcast of every axis its value
    reads, and the C compiler's vectorizer packs that vector from the lanes of
@@ -1185,14 +1087,14 @@ let lanes_after ?upcast ?unroll k =
     (known_size (K.upcast_size k))
 
 (* Whether [k] stays within the host's budget once [upcast] and [unroll] are
-   applied: its hottest loop holds its accumulators within half the registers,
+   applied: its accumulators take at most half the registers,
    a conversion takes at most [converted_lanes] and an iteration at most
    [iteration_lanes]; always off the host. *)
 let fits ?upcast ?unroll k =
   match registers k with
   | None -> true
   | Some file -> (
-      held ?upcast ?unroll k file <= file.count / held_share
+      held ?upcast k file <= file.count / held_share
       && conversion_lanes ?upcast ?unroll k <= converted_lanes
       &&
       match lanes_after ?upcast ?unroll k with
