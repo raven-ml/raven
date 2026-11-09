@@ -3,7 +3,17 @@
 
 (executable
  (name bench_rune)
- (libraries nx nx.quant nx.wide rig rig.cuda rig.amd.amdgpu rune thumper unix))
+ (libraries
+  nx
+  nx.quant
+  nx.wide
+  rig
+  rig.cuda
+  rig.amd.amdgpu
+  rune
+  thumper
+  tolk
+  unix))
 
 (rule
  (alias bench)

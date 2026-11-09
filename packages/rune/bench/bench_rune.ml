@@ -1446,6 +1446,23 @@ let sum_at shape axis =
         fun () -> ignore (synced (f x)));
   }
 
+(* A product of two uniform float32 [1024; 1024] matrices compiled with a beam
+   search of width 2 on 8 domains, searched in each trial, the beam's cache
+   ignored: the kernel the search keeps decides the call's time. *)
+let searched_matmul =
+  {
+    at =
+      (fun at ->
+        let x =
+          Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key 56) f32 [| 1024; 1024 |])
+        in
+        let f = Rune.jit' ~beam:2 ~parallel:8 (fun x -> Nx.matmul x x) in
+        Tolk.Setting.context
+          [ B (Tolk.Setting.ignore_beam_cache, true) ]
+          (fun () -> ignore (synced (f x)));
+        fun () -> ignore (synced (f x)));
+  }
+
 (* [x + s] and [y * s] for [s] made of [p] by 184 steps [s * s - 0.5], two
    operations each. *)
 let shared_scalar p x y =
@@ -1755,6 +1772,12 @@ let gpu_rows g =
       on_gpu g "kv-append-4096" (kv_append ~donated:true);
       on_gpu g "kv-append-4096-copied" (kv_append ~donated:false);
     ]
+    @
+    (* On the AMD GPU only: across processes, the search on fudge's RTX 5000
+       keeps kernels whose calls take 116 to 138 us, too wide for a row. *)
+    match g with
+    | Amd -> [ on_gpu g "search/matmul-float32-1024" searched_matmul ]
+    | Cuda -> []
 
 (* A trial's setup compiles its programs: a cold tolk cache takes seconds for
    the largest, which the default 10 s deadline would kill. *)
