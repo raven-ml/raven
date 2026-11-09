@@ -444,8 +444,7 @@ let norm (zs : Complex.t array) =
        (fun s (z : Complex.t) -> s +. (z.re *. z.re) +. (z.im *. z.im))
        0. zs)
 
-(* ‖x‖₂ as the bound reads it: a c2r's completed bins', at most √2 times its
-   operand's. *)
+(* ‖x‖₂ as the bound reads it: a c2r's √2 times its operand's. *)
 let operand_norm c =
   match c.kind with C2r _ -> sqrt 2. *. norm c.xs | _ -> norm c.xs
 
@@ -480,6 +479,58 @@ let law_bound c =
       (exact ~wide:c.wide c.kind c.axes c.shape (Array.map dd_of xs))
   in
   let err = norm (Array.map2 Complex.sub want got) in
+  let u = if c.wide then epsilon_float /. 2. else 0x1p-24 in
+  let n = Array.fold_left (fun k a -> k * (points c).(a)) 1 c.axes in
+  let bound =
+    epsilon c.kind c.axes c.shape
+    *. u
+    *. sqrt (Float.of_int n)
+    *. operand_norm c
+  in
+  at_most float_exact ~than:bound err
+
+(* c2r cases along several axes whose bins 0 and n/2 hold, along the other
+   axes, X[-j] = -conj X[j] and no other bin anything: the other axes' inverse
+   transforms of those columns are imaginary, and the exact result is +0. *)
+let opposite_gen =
+  let open Gen in
+  let length =
+    of_list ~pp:Format.pp_print_int [ 2; 3; 4; 5; 6; 7; 9; 12; 15 ]
+  in
+  with_pp pp_case
+  @@ let* others = array ~size:(int_range 1 2) length in
+     let* n = int_range 1 4 in
+     let* wide = bool in
+     let+ seed = int in
+     let rs = Random.State.make [| seed |] in
+     let r = Array.length others in
+     let s = Array.append others [| (n / 2) + 1 |] in
+     let xs = Array.make (total s) Complex.zero in
+     let mirror i =
+       Array.mapi (fun a e -> if a = r then e else (s.(a) - e) mod s.(a)) i
+     in
+     Array.iteri
+       (fun k _ ->
+         let i = index_of s k in
+         let o = flat s (mirror i) in
+         if (i.(r) = 0 || 2 * i.(r) = n) && k <= o then begin
+           let im = value wide rs in
+           let re = if k = o then 0. else value wide rs in
+           xs.(k) <- { Complex.re; im };
+           xs.(o) <- { Complex.re = -.re; im }
+         end)
+       xs;
+     let axes = Array.init (r + 1) Fun.id in
+     { kind = C2r n; wide; shape = s; axes; view = plain (r + 1); xs }
+
+(* Within the bound by √2 times the operand's norm: the completed bins' norm,
+   that of the exact result over √N, is +0, and rounding in the other axes'
+   passes leaves real parts. *)
+let law_opposite c =
+  cover "several other axes" (Array.length c.shape > 2);
+  cover "bin n/2" (match c.kind with C2r n -> n mod 2 = 0 | _ -> false);
+  let x = operand c in
+  let err = norm (complexes (run c x)) in
   let u = if c.wide then epsilon_float /. 2. else 0x1p-24 in
   let n = Array.fold_left (fun k a -> k * (points c).(a)) 1 c.axes in
   let bound =
@@ -1009,6 +1060,8 @@ let suite (b : Support.backend) =
         [
           prop ~examples:halved_cases "by the prime factors of the points"
             case_gen (run law_bound);
+          prop "bins whose other axes' transforms are imaginary" opposite_gen
+            (run law_opposite);
           test "long lines" test_long;
           test "a line past the caches" test_past_caches;
           test "a transform of no point is the empty sum" test_empty;

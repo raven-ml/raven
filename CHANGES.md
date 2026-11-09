@@ -2589,6 +2589,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_cpu.c2r`'s error bound is stated against `√2` times its operand's
+  norm. Against the completed bins' norm it was false: the other axes
+  transform bins 0 and n/2 before their imaginary parts drop, and round.
 - A large host result dropped before the next minor collection returns then,
   instead of waiting for a major cycle over the program's live OCaml heap:
   `Nx.take` and `Talon.take` beside a 128 MiB live heap run about 2x faster.

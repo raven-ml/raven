@@ -339,7 +339,8 @@
     underflow and overflow, a transform [ŷ] of [N] points, the product of the
     points along each of [axes], is within [‖ŷ - y‖₂ <= ε u √N ‖x‖₂] of the
     exact [y], [u] the unit roundoff of [x]'s parts and [‖x‖₂] its norm, a
-    [c2r]'s that of its completed bins, at most [√2] times its operand's.
+    [c2r]'s [√2] times its operand's, the parts that never contribute
+    included.
     [ε] is the sum over [axes] of [e(n)], [n] the points along the axis:
     - [e(n) = 8 Σ p{^3/2} + 8] over [n]'s prime factors [p], with
       multiplicity: a line computes by passes of radix 2, 3, 4, 5 and
