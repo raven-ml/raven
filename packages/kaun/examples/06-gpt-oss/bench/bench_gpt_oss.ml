@@ -203,13 +203,15 @@ let gpu () = match first () with Ok d -> d | Error e -> failwith e
 (* A step on the GPU warmed past its compilations: [`Decode] feeds back the
    token it predicts at a fixed position in the middle of the cache,
    [`Decode_q8_0] likewise with the weights {!q8_0} packs, [`Prefill n] runs
-   [n] tokens at positions 0 onwards. Each call takes the caches of
-   the one before and reads its token back on the host. *)
-let step weights kind =
+   [n] tokens at positions 0 onwards, [`Prefill_q8_0 n] over {!q8_0}'s
+   weights, [packed]'s if given. Each call takes the caches of the one before
+   and reads its token back on the host. *)
+let step ?packed weights kind =
   let weights =
-    match kind with
-    | `Decode_q8_0 -> q8_0 weights
-    | `Decode | `Prefill _ -> weights
+    match (kind, packed) with
+    | (`Decode_q8_0 | `Prefill_q8_0 _), Some p -> Lazy.force p
+    | (`Decode_q8_0 | `Prefill_q8_0 _), None -> q8_0 weights
+    | (`Decode | `Prefill _), _ -> weights
   in
   let module G = (val Nx.devices [ gpu () ]) in
   let placement = G.on in
@@ -230,7 +232,7 @@ let step weights kind =
     | `Decode | `Decode_q8_0 ->
         ( Cache_index.advance (Cache_index.rows ~context [| context / 2 |]),
           ref (Nx.zeros Nx.int64 [| 1; 1 |]) )
-    | `Prefill n ->
+    | `Prefill n | `Prefill_q8_0 n ->
         ( Cache_index.rows ~context [| n |],
           ref
             (Nx.init Nx.int64 [| 1; n |] (fun i ->
@@ -242,7 +244,7 @@ let step weights kind =
     let token = Nx.item [ 0 ] token in
     match kind with
     | `Decode | `Decode_q8_0 -> ids := Nx.create Nx.int64 [| 1; 1 |] [| token |]
-    | `Prefill _ -> ()
+    | `Prefill _ | `Prefill_q8_0 _ -> ()
   in
   (* The host weights are garbage once placed. Collected later, by thumper
      between its warmup and its samples, freeing them idled the GPU for
@@ -383,13 +385,15 @@ let kinds =
     `Decode;
     `Decode_q8_0;
     `Prefill prompt;
+    `Prefill_q8_0 prompt;
     `Prefill short_prompt;
     `Experts prompt;
     `Experts blocked_prompt;
   ]
 
-let setup weights = function
-  | (`Decode | `Decode_q8_0 | `Prefill _) as kind -> step weights kind
+let setup ?packed weights = function
+  | (`Decode | `Decode_q8_0 | `Prefill _ | `Prefill_q8_0 _) as kind ->
+      step ?packed weights kind
   | `Experts n -> experts n weights
 
 let case kind =
@@ -398,6 +402,7 @@ let case kind =
     | `Decode -> Printf.sprintf "decode step, cache %d" context
     | `Decode_q8_0 -> Printf.sprintf "decode step, Q8_0, cache %d" context
     | `Prefill n -> Printf.sprintf "prefill %d" n
+    | `Prefill_q8_0 n -> Printf.sprintf "prefill %d, Q8_0" n
     | `Experts n -> Printf.sprintf "experts at prefill %d" n
   in
   Thumper.bench_with_setup
@@ -430,7 +435,14 @@ let () =
   | [ _; "--warm" ] ->
       if opens () then
         let weights = weights () in
-        List.iter (fun kind -> (setup weights kind) ()) kinds
+        (* One packing for both Q8_0 cases: each takes several GB on the
+           host. *)
+        let packed = lazy (q8_0 weights) in
+        List.iter
+          (fun kind ->
+            (setup ~packed weights kind) ();
+            Gc.full_major ())
+          kinds
   | _ ->
       if not (opens_in_child ()) then begin
         prerr_endline "gpt_oss: no CUDA, NV or AMD GPU, nothing to measure";
