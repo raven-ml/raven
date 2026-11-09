@@ -242,7 +242,7 @@ type program_info = {
   global_size : sint list;  (** The number of workgroups on each axis. *)
   local_size : sint list;  (** The threads of a workgroup on each axis. *)
   params : t list;
-      (** The parameters, buffers and scalars, by slot. *)
+      (** The parameters, buffers and scalars, one per slot, by slot. *)
   globals : int list;  (** The slots of the buffers. *)
   outs : int list;  (** The slots of the buffers written. *)
   ins : int list;  (** The slots of the buffers read. *)

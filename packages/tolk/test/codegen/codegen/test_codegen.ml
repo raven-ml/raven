@@ -1380,10 +1380,10 @@ let variable_slots prg =
 let programs =
   group "programs"
     [
-      test "variables of one name take one slot, past the parameters"
+      test "variables of one name are one parameter, past the parameters"
         (fun () ->
           let prg = Codegen.linearize (one_name_twice ()) clang in
-          equal (list int) [ 1; 1 ] (variable_slots prg));
+          equal (list int) [ 1 ] (variable_slots prg));
       group "the estimates count the instructions, leaving out index arithmetic"
         (per_row ~only:compiles counts_its_instructions);
       group "full_rewrite_to_sink lowers a kernel the same each time"

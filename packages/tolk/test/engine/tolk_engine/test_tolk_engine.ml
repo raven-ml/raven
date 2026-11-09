@@ -1984,6 +1984,53 @@ let sizes_from_calls ?(devices = devices) ?(debug = 0) () =
   in
   equal slot_values (expected big storage) (by_slot storage contents)
 
+(* A kernel on CPU:1 adds two elements of four to two elements of eight,
+   each window starting at a variable named [s] bound to 1, of the ranges
+   [0, 2] and [0, 6] its buffer allows, the second of type [dtype]. One name
+   is one value: a run that binds [s] to 0 moves both windows. *)
+let one_name_two_ranges ?(devices = devices) dtype =
+  let start ?dtype hi =
+    Shape.bind
+      (Ops.variable ?dtype "s" (Dtype.Value.of_int 0) (Dtype.Value.of_int hi))
+      (`Int Bigint.one)
+  in
+  let window b s = Shape.shrink b [ Some (Sym s, Sym Ops.O.(s + int 2)) ] in
+  let a = Ops.new_buffer "CPU:1" 4 Float32
+  and b = Ops.new_buffer "CPU:1" 8 Float32
+  and o = Ops.new_buffer "CPU:1" 2 Float32 in
+  let x = Ops.O.(window a (start 2) + window b (start ~dtype 6)) in
+  let big = Ops.sink [ Ops.after o [ Ops.store o x ] ] in
+  let s, vars, storage = linked ~devices big in
+  equal (list (pair string int)) ~msg:"the run's variables" [ ("s", 1) ] vars;
+  let vars = [ ("s", 0) ] in
+  Engine.run ~vars s [||];
+  equal slot_values (expected ~vars big storage) (by_slot storage contents)
+
+(* A kernel on CPU:1 stores [s + s * s] for variables named [s] of types
+   int32 and int64, bound to 100000, the product read through the int64 one:
+   past int32's range, which one value of both types computes in 64 bits,
+   whichever variable the sum reads first. *)
+let one_name_two_types ?(devices = devices) order =
+  let s dtype =
+    Shape.bind
+      (Ops.variable ~dtype "s" (Dtype.Value.of_int 0)
+         (Dtype.Value.of_int 100000))
+      (Dtype.Value.of_int 100000)
+  in
+  let narrow = Ops.cast (s Int32) Int64 and wide = s Int64 in
+  let product = Ops.O.(wide * wide) in
+  let x =
+    if order = "int32 first" then Ops.O.(narrow + product)
+    else Ops.O.(product + narrow)
+  in
+  let o = Ops.new_buffer "CPU:1" 1 Int64 in
+  let big =
+    Ops.sink [ Ops.after o [ Ops.store o (Shape.reshape x [ Int 1 ]) ] ]
+  in
+  let s, vars, storage = linked ~devices big in
+  Engine.run ~vars s [||];
+  equal slot_values (expected ~vars big storage) (by_slot storage contents)
+
 (* The pad_idiv programs pad integer quotients of their inputs: of the inputs
    themselves, of a stored divisor at least 1, padded twice, and shrunk. Their
    inputs hold no zero: a kernel divides by zero only on the padding, which
@@ -5642,6 +5689,12 @@ let schedules =
         one_program_per_start;
       test "kernels whose sizes are one name of two values run each its own"
         sizes_from_calls;
+      cases "a kernel reads one name of two ranges as one value" ~id:Dtype.name
+        [ Dtype.Weak_int; Dtype.Int64 ]
+        one_name_two_ranges;
+      cases "a kernel reads one name of two types as one value" ~id:Fun.id
+        [ "int32 first"; "int64 first" ]
+        one_name_two_types;
       test "a copy runs on a buffer off its parameter's phase" copies_off_phase;
       cases "a pad of integer divisions writes what its tensors compute"
         ~id:Fun.id
@@ -7112,6 +7165,12 @@ let on_a_gpu kind =
       group "aranges" [ arange_windows ~devices "CPU:1" ];
       test "kernels whose sizes are one name of two values run each its own"
         (sizes_from_calls ~devices);
+      cases "a kernel reads one name of two ranges as one value" ~id:Dtype.name
+        [ Dtype.Weak_int; Dtype.Int64 ]
+        (one_name_two_ranges ~devices);
+      cases "a kernel reads one name of two types as one value" ~id:Fun.id
+        [ "int32 first"; "int64 first" ]
+        (one_name_two_types ~devices);
       test "kernels whose sizes are one name of two values report at DEBUG=2"
         (sizes_from_calls ~devices ~debug:2);
       group "recorded"

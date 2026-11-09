@@ -9544,3 +9544,27 @@ reason and its pins.
   ungated on gfx12 where a workgroup shares its address`; `Tolk.Codegen › a
   gated load takes its alternative where its gate fails` on every GPU and the
   host.
+
+## D470. Variables of one name are one parameter
+
+- **tinygrad:** `codegen/__init__.py` (`do_number_param`, `pm_number_params`)
+  gives variables of one name one slot, each its own parameter, and
+  `renderer/cstyle.py` (`CStyleLanguage._render`) names a parameter by its
+  name and shape. A kernel that reads variables of one name stating different
+  ranges declares the name twice: `Variable("s", 0, 2)` and
+  `Variable("s", 0, 6)`, both bound to 1 and read in one kernel, render
+  `const int s_, const int s_` for CUDA, which NVRTC refuses.
+- **tolk:** `Codegen.pm_number_params`.
+- **Differs:** variables of one name, whatever range or type each states, are
+  the first one met, cast to each one's type: one parameter in the name's
+  slot. A run binds the name to one value, which lies in the range of each,
+  so the cast is exact.
+- **Reason:** (e): tinygrad renders a kernel that the compiler of every
+  target naming its parameters (CUDA, HIP) refuses, for a graph whose value
+  is defined; the host and Metal read both from the name's slot.
+- **Pinned by:** `Tolk.Codegen › programs › variables of one name are one
+  parameter, past the parameters`; `Tolk_engine › link and run › a kernel
+  reads one name of two ranges as one value` and `› a kernel reads one name
+  of two types as one value`, and the same on each GPU; the law
+  `Tolk.Launch_law › GPUs › on NV, a schedule's launches write what its graph
+  states`, whose launches join members that read one name at two ranges.

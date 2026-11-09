@@ -41,22 +41,23 @@ let int_shape s =
       | Int n -> n | Sym _ -> invalid_arg "a symbolic axis has no lanes")
     s
 
-(* After the parameters, one slot per name. *)
+(* After the parameters, one slot per name, and one parameter: a run binds a
+   name to one value, which lies in the range of each variable of the name,
+   so each is the first one met, cast to its own type. *)
 let pm_number_params =
   pm
     (fun () -> [
       rule_ctx (Upat.op Op.Param ~name:"x") (fun (first, names) m ->
           match arg (m "x") with
-          | Param p when p.slot = -1 ->
-              let i =
-                match Hashtbl.find_opt names p.name with
-                | Some i -> i
-                | None ->
-                    let i = Hashtbl.length names in
-                    Hashtbl.add names p.name i;
-                    i
-              in
-              Some (replace (m "x") ~arg:(Param { p with slot = first + i }))
+          | Param p when p.slot = -1 -> (
+              match Hashtbl.find_opt names p.name with
+              | Some x when Dtype.equal (dtype x) (dtype (m "x")) -> Some x
+              | Some x -> Some (cast x (dtype (m "x")))
+              | None ->
+                  let slot = first + Hashtbl.length names in
+                  let x = replace (m "x") ~arg:(Param { p with slot }) in
+                  Hashtbl.add names p.name x;
+                  Some x)
           | _ -> None);
     ])
 

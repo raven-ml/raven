@@ -1174,6 +1174,11 @@ word comes from its lock and from samples the dashboard saw arrive.
   its own. Float32 decode attention of 8 heads over 4096 keys runs in 174 µs
   on an R9700, 468 before; bfloat16 attention, gpt-oss's decode included,
   loads keys as vectors and is unchanged.
+- A kernel that reads variables of one name stating different ranges or
+  types compiles on CUDA and HIP: it declared the name twice, which their
+  compilers refuse. Variables of one name are one value, and now one
+  parameter.
+
 - Ordering and rendering a long chain of operations, each read once by the
   next, no longer takes time growing with the square of the chain: 25,000
   operations order in 0.04 s (6.7 s), a sum of 25,000 loads renders in 0.2 s
