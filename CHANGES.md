@@ -4155,6 +4155,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Talon_parquet` gathers dictionary-encoded byte strings of one length, such
+  as one-byte flags, as rows of that length, instead of copying each word.
 - `Query.filter`, and a filter that a Parquet scan applies itself, copy whole
   runs when the rows they keep lie in long runs, instead of gathering each row
   of each column: a filter keeping 98% of its rows costs much less.

@@ -1764,6 +1764,32 @@ let dictionary_text =
         (Array.of_list (List.map (fun i -> Some words.(i)) indices))
         (Column.options Kind.string col))
 
+(* Words of one length read through a gather of fixed rows: the empty word,
+   the widths with a one-element gather and others. *)
+let one_length_case =
+  let open Gen in
+  let* l = one_of [ int_range 0 4; int_range 5 12; constant 8 ] in
+  let* words =
+    array ~size:(int_range 1 12)
+      (string_of ~size:(constant l) (map Char.chr (int_range 32 126)))
+  in
+  let+ indices =
+    list ~size:(int_range 0 40) (int_range 0 (Array.length words - 1))
+  in
+  (l, words, indices)
+
+let dictionary_one_length =
+  prop "dictionary-encoded words of one length read as their words"
+    one_length_case (fun (l, words, indices) ->
+      cover "empty words" (l = 0 && indices <> []);
+      cover "one-byte words" (l = 1 && indices <> []);
+      cover "wider words" (l > 1 && indices <> []);
+      let col = Error.get_ok (read_x (dictionary_file words indices)) in
+      equal
+        (array (option string))
+        (Array.of_list (List.map (fun i -> Some words.(i)) indices))
+        (Column.options Kind.string col))
+
 (* In-scan filters: predicates on one text column, drawn over its values and
    texts it does not hold. *)
 
@@ -2009,6 +2035,7 @@ let sources =
       hybrid_runs;
       hybrid_bit_runs;
       dictionary_text;
+      dictionary_one_length;
       in_scan_filters;
       invalid_words;
       test

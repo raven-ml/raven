@@ -487,6 +487,24 @@ let write_table t =
        q
        (Bytesrw.Bytes.Writer.ignore ()))
 
+(* 2^18 dictionary-encoded words of one byte, read from memory: the flags and
+   codes of decision-support tables, which gather as rows of one length. *)
+let flags_rows = 1 lsl 18
+
+let flags_bytes =
+  lazy
+    (let flag i = if i mod 7 < 4 then "A" else if i mod 7 = 4 then "N" else "R" in
+     let t = Talon.v [ ("f", Column.v Type.string (Array.init flags_rows flag)) ] in
+     let q = Query.of_table t in
+     let f = Talon_parquet.format (Query.schema q) in
+     let b = Buffer.create (1 lsl 16) in
+     Error.get_ok (Talon_parquet.encode f q (Bytesrw.Bytes.Writer.of_buffer b));
+     (f, Rig.Buffer.of_string (Buffer.contents b)))
+
+let read_flags () =
+  let f, b = Lazy.force flags_bytes in
+  run (Query.of_source (Talon_parquet.source f b))
+
 let nulls_table = lazy (read_parquet ())
 let text_table = lazy (read_text ())
 let write_nulls () = write_table (Lazy.force nulls_table)
@@ -838,6 +856,7 @@ let () =
         [
           Thumper.bench "read-nullable" read_parquet;
           Thumper.bench "read-text" read_text;
+          Thumper.bench "read-flags" read_flags;
           Thumper.bench "filter-text" filter_text;
           Thumper.bench "read-keys" read_keys;
           Thumper.bench "write-nullable" write_nulls;

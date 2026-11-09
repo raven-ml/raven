@@ -1208,9 +1208,56 @@ let read ~scratch b m ~row_group i (l : Leaf.t) ty =
     named (Leaf.name l) (fun () -> read_chunk ~scratch b m ~row_group i l ty)
   else read_chunk ~scratch b m ~row_group i l ty
 
-let flat = function
+let flat_coded = function
   | Coded { valid; codes; offsets; data } -> (
       match gather (Strings { offsets; data }) codes with
       | Strings { offsets; data } -> Varsize { valid; offsets; data }
       | Values _ -> assert false)
+  | (Fixed _ | Varsize _) as c -> c
+
+(* [word_length offsets] is the length of every word of [offsets], the empty
+   word after them aside, when they all have one length. *)
+let word_length offsets =
+  let n = Nx.dim 0 offsets - 2 in
+  if n <= 0 then None
+  else
+    let lengths =
+      Nx.sub
+        (Nx.slice [ Nx.R (1, n + 1) ] offsets)
+        (Nx.slice [ Nx.R (0, n) ] offsets)
+    in
+    let w = Nx.item [ 0 ] lengths in
+    if Nx.item [] (Nx.all (Nx.equal_s lengths w)) then Some (Int64.to_int w)
+    else None
+
+(* [gather_words codes data ~n w] is the [n] words of [w] bytes that [data]
+   holds at [codes], and their offsets: a gather of rows of [w] bytes, against
+   the row-by-row copy of words of mixed lengths. *)
+let gather_words codes data ~n w =
+  let m = Nx.dim 0 codes in
+  let words () =
+    if w = 0 then Nx.zeros Nx.uint8 [| 0 |]
+    else
+      let d = Nx.slice [ Nx.R (0, n * w) ] data in
+      if w = 1 then Nx.take codes d
+      else
+        Nx.reshape [| m * w |]
+          (Nx.take ~axis:0 codes (Nx.reshape [| n; w |] d))
+  in
+  let offsets =
+    if w = 0 then Nx.zeros Nx.int64 [| m + 1 |]
+    else Nx.arange Nx.int64 0 ((m + 1) * w) w
+  in
+  (offsets, words ())
+
+let flat = function
+  | Coded { valid = None; codes; offsets; data } as c -> (
+      match word_length offsets with
+      | Some w ->
+          let offsets, data =
+            gather_words codes data ~n:(Nx.dim 0 offsets - 2) w
+          in
+          Varsize { valid = None; offsets; data }
+      | None -> flat_coded c)
+  | Coded _ as c -> flat_coded c
   | (Fixed _ | Varsize _) as c -> c
