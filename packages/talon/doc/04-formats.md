@@ -186,7 +186,7 @@ let write_snapshot q =
 Every column is written optional, so a column with nulls and one without have
 one type in the file. Each type writes as the Parquet type that reads back as
 it, and types with no Parquet type of their own are described in the module's
-Written files section.
+Writing section.
 
 ## Arrow IPC
 
@@ -201,10 +201,11 @@ let events_arrow () =
 ```
 
 Each Arrow type reads as the talon type that holds its values: dictionary
-columns as categoricals when the file holds one dictionary of distinct strings
-without nulls, fixed-size lists of numbers as tensors, and extension fields as
-extensions over their storage. A field talon cannot hold, such as a decimal, is
-refused when the file is opened, naming the column. `Talon_arrow.with_type`
+columns as categoricals when one dictionary of distinct strings without nulls
+stands for the whole file and otherwise as their value type, fixed-size lists
+of numbers as tensors, and extension fields as extensions over their storage.
+A field talon cannot hold, such as a decimal, is refused when the file is
+opened, naming the column. `Talon_arrow.with_type`
 reads a fixed-size list as a list when its elements can be null.
 
 `Talon_arrow.encode` writes a query's rows. `Talon_arrow.format` states the
