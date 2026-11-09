@@ -16,6 +16,7 @@
   unicode_tables
   scalars
   regex
+  regex_dfa
   problem
   sel
   order

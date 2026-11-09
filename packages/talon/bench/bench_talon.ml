@@ -507,6 +507,22 @@ let read_flags () =
 
 let nulls_table = lazy (read_parquet ())
 let text_table = lazy (read_text ())
+(* Regular expressions over text.parquet's words: a filter the DFA decides, with
+   no literal to skip rows by, and a group extraction through the Pike VM. *)
+let regex_filter () =
+  run
+    Query.(
+      of_table (Lazy.force text_table)
+      |> filter Expr.Str.(matches (regex {|[a-z]+ \d+ -+$|}) (Col.string "s")))
+
+let regex_extract () =
+  run
+    Query.(
+      of_table (Lazy.force text_table)
+      |> select
+           Expr.
+             [ "n" := Str.extract ~group:1 (Str.regex {|[a-z]+ (\d+)|}) (Col.string "s") ])
+
 let write_nulls () = write_table (Lazy.force nulls_table)
 let write_text () = write_table (Lazy.force text_table)
 
@@ -892,7 +908,11 @@ let () =
               window Expr.(window (max (Col.float "f"))));
         ];
       Thumper.group "Talon_text"
-        [ Thumper.bench "parse-float64-17-digits" parse_floats ];
+        [
+          Thumper.bench "parse-float64-17-digits" parse_floats;
+          Thumper.bench "regex-filter" regex_filter;
+          Thumper.bench "regex-extract" regex_extract;
+        ];
       Thumper.group "Talon_csv" [ Thumper.bench "read-mixed" read_csv ];
       Thumper.group "Talon_json" [ Thumper.bench "read-ndjson" read_json ];
       Thumper.group "Talon_arrow"

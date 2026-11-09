@@ -515,6 +515,25 @@ external find :
   = "talon_find_byte" "talon_find"
 [@@noalloc]
 
+(* A row without the pattern's required literal has no match, whichever engine
+   would answer. *)
+let filtered_by_literal literal f =
+  if String.equal literal "" then f
+  else fun v first stop -> find v first stop literal >= 0 && f v first stop
+
+(* [regex_matcher re] answers whether a row matches: by the DFA when the
+   program allows it, else by a Pike run without captures. *)
+let regex_matcher re =
+  filtered_by_literal (Regex.required re)
+    (if Regex.dfa_handles re then begin
+       let d = Regex_dfa.create re in
+       fun v first stop -> Regex_dfa.matches d v ~first ~stop
+     end
+     else begin
+       let run = Regex.run re ~slots:0 in
+       fun v first stop -> Regex.find run v ~first ~from:first ~stop
+     end)
+
 (* [find_pieces v i stop ss] is [true] iff the strings [ss] lie in [i, stop) in
    order without overlap. *)
 let rec find_pieces v i stop = function
@@ -540,9 +559,7 @@ let matches ~by ?mask p r =
           let j = stop - String.length s in
           j >= first && at v j s
     | Pieces ss -> fun v first stop -> find_pieces v first stop ss
-    | Regex re ->
-        let run = Regex.run re ~slots:0 in
-        fun v first stop -> Regex.find run v ~first ~from:first ~stop
+    | Regex re -> regex_matcher re
   in
   (fill a @@ fun (hits : buf) ->
    A.fill hits 0;
@@ -667,7 +684,7 @@ let iter_matches run (v : buf) first stop f =
    [slots] slots of each match, rows in order. *)
 let collect ~by ?mask ~slots re r =
   let n = Nx_ragged.length r in
-  let run = Regex.run re ~slots in
+  let run = Regex.run re ~slots and literal = Regex.required re in
   let counts = Array.make n (-1) in
   let spans = ref (Array.make (Int.max 16 slots) 0) and top = ref 0 in
   let row = ref 0 in
@@ -684,7 +701,8 @@ let collect ~by ?mask ~slots re r =
   rows ~by ?mask r (fun i v first stop ->
       row := i;
       counts.(i) <- 0;
-      iter_matches run v first stop store);
+      if literal = "" || find v first stop literal >= 0 then
+        iter_matches run v first stop store);
   (counts, !spans)
 
 (* [listed ~by ?mask r counts ~extra write] is the [(lists, pieces)] of a split
@@ -772,13 +790,18 @@ let replace ~by ?mask p ~into r =
 
 let extract ~by ?mask p ~group r =
   let n = Nx_ragged.length r in
-  let run = Regex.run (regex_of p) ~slots:(2 * (group + 1)) in
+  let re = regex_of p in
+  let run = Regex.run re ~slots:(2 * (group + 1))
+  and literal = Regex.required re in
   let lo = Array.make n 0 and hi = Array.make n 0 in
   let found = fresh Nx.uint8 ((n + 7) / 8) in
   (fill found @@ fun (bits : buf) ->
    A.fill bits 0;
    rows ~by ?mask r (fun i v first stop ->
-       if Regex.find run v ~first ~from:first ~stop then
+       if
+         (literal = "" || find v first stop literal >= 0)
+         && Regex.find run v ~first ~from:first ~stop
+       then
          let s = Regex.group run (2 * group) in
          if s >= 0 then begin
            lo.(i) <- s;
@@ -827,6 +850,23 @@ let bits ~by r f =
   let a = fresh Nx.uint8 ((n + 7) / 8) in
   (fill a @@ fun bits -> host ~by r (fun o v _ -> f v o n bits));
   bits_of a n
+
+let dfa_test ~limit re rows =
+  let n = Array.length rows in
+  let size = Array.fold_left (fun t s -> t + String.length s) 0 rows in
+  let v = A.create Bigarray.int8_unsigned Bigarray.c_layout (Int.max size 1) in
+  let offsets = Array.make (n + 1) 0 in
+  Array.iteri
+    (fun i s ->
+      String.iteri
+        (fun k c -> A.set v (offsets.(i) + k) (Char.code c))
+        s;
+      offsets.(i + 1) <- offsets.(i) + String.length s)
+    rows;
+  let d = Regex_dfa.create ~limit re in
+  Array.mapi
+    (fun i _ -> Regex_dfa.matches d v ~first:offsets.(i) ~stop:offsets.(i + 1))
+    rows
 
 let compare ~by op r one =
   let s = (words ~by one).(0) in

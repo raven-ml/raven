@@ -172,6 +172,33 @@ value talon_find_byte(value b, value i, value stop, value s)
   return Val_long(talon_find(b, Long_val(i), Long_val(stop), s));
 }
 
+/* [talon_dfa_scan(t, c, v, s, i, stop, out)] runs the table [t] over the bytes
+   [i, stop) of [v], from state [s] (its table row): a byte's class comes from
+   [c], and the walk stops at the first entry that is not a state. It stores
+   the resting state in [out[0]] and returns the byte it stopped at. */
+intnat talon_dfa_scan(value t, value c, value v, intnat s, intnat i,
+                      intnat stop, value out)
+{
+  const intnat *table = (const intnat *)Caml_ba_data_val(t);
+  const uint8_t *classes = (const uint8_t *)Caml_ba_data_val(c);
+  const uint8_t *b = Bytes_ba(v);
+  while (i < stop) {
+    intnat next = table[s + classes[b[i]]];
+    if (next < 0) break;
+    s = next;
+    i++;
+  }
+  *(intnat *)Caml_ba_data_val(out) = s;
+  return i;
+}
+
+value talon_dfa_scan_byte(value *argv, int argn)
+{
+  (void)argn;
+  return Val_long(talon_dfa_scan(argv[0], argv[1], argv[2], Long_val(argv[3]),
+                                 Long_val(argv[4]), Long_val(argv[5]), argv[6]));
+}
+
 /* Comparison with texts
 
    A row is compared with each text by its first eight bytes, read as one

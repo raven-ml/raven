@@ -149,6 +149,11 @@ val extract :
     clear where the row has no match or the group did not participate. A row
     outside [mask] is empty. *)
 
+val dfa_test : limit:int -> Regex.t -> string array -> bool array
+(** [dfa_test ~limit re rows] runs the lazy DFA of [re], its cache holding at
+    most [limit] states, over [rows]. It lets a test drive the cache; every other
+    use goes through {!matches}. *)
+
 val concat :
   by:string ->
   ?mask:Nx.host Nx.bit_t ->

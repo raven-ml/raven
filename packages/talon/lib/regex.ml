@@ -600,10 +600,13 @@ type t = {
   source_text : string;
   prog : inst array;
   entry : int;
+  dfa_entry : int;
   group_count : int;
   names : (string * int) list;
   word_boundary : bool;
+  line_assert : bool;
   at_text_start : bool;
+  required_literal : string;
 }
 
 type builder = {
@@ -828,6 +831,65 @@ let rec starts_at_text_start = function
   | Repeat { body; min; _ } when min > 0 -> starts_at_text_start body
   | _ -> false
 
+(* A required literal
+
+   Text every match of the pattern contains: a row without it has no match,
+   found by the kernels' byte search. A literal of valid UTF-8 occurs only on
+   scalar boundaries in valid UTF-8, so the search needs no check. *)
+
+(* [exact n] is the text [n] matches, where it matches exactly one text. *)
+let rec exact = function
+  | Empty -> Some ""
+  | Set [ (lo, hi) ] when lo = hi ->
+      let b = Buffer.create 4 in
+      Buffer.add_utf_8_uchar b (Uchar.of_int lo);
+      Some (Buffer.contents b)
+  | Cat ns ->
+      List.fold_left
+        (fun acc n ->
+          match (acc, exact n) with
+          | Some a, Some b -> Some (a ^ b)
+          | _ -> None)
+        (Some "") ns
+  | Capture (_, n) -> exact n
+  | _ -> None
+
+let longest a b = if String.length b > String.length a then b else a
+
+let rec required n =
+  match exact n with
+  | Some s -> s
+  | None -> (
+      match n with
+      | Cat ns ->
+          (* Adjacent exact parts form one literal; each other part offers its
+             own. The longest wins, for the search's selectivity. *)
+          let best = ref "" and run = Buffer.create 16 in
+          let flush () =
+            best := longest !best (Buffer.contents run);
+            Buffer.clear run
+          in
+          List.iter
+            (fun n ->
+              match exact n with
+              | Some s -> Buffer.add_string run s
+              | None ->
+                  flush ();
+                  best := longest !best (required n))
+            ns;
+          flush ();
+          !best
+      | Capture (_, n) -> required n
+      | Repeat { body; min; _ } when min > 0 -> required body
+      | _ -> "")
+
+let rec has_line_assert = function
+  | Empty | Set _ -> false
+  | Assertion a -> a = Start_line || a = End_line
+  | Cat ns | Alt ns -> List.exists has_line_assert ns
+  | Capture (_, n) -> has_line_assert n
+  | Repeat { body; _ } -> has_line_assert body
+
 let compile source_text =
   let node, group_count, names = parse source_text in
   let b = { code = [||]; len = 0; sparse = Hashtbl.create 64 } in
@@ -835,22 +897,37 @@ let compile source_text =
   let close = emit b (Save (1, accept)) in
   let body = compile_node b node close in
   let entry = emit b (Save (0, body)) in
+  (* The DFA's entry: the match, or a skip of one whole scalar and back to this
+     instruction, for a search that may start anywhere. An anchored search
+     starts only at the row's start. *)
+  let dfa_start =
+    if starts_at_text_start node then entry
+    else begin
+      let split = emit b (Split (-1, -1)) in
+      let any = compile_set b [ (0, scalar_max) ] split in
+      b.code.(split) <- Split (entry, any);
+      split
+    end
+  in
   {
     source_text;
     prog = Array.sub b.code 0 b.len;
     entry;
+    dfa_entry = dfa_start;
     group_count;
     names;
     word_boundary = has_word_assert node;
+    line_assert = has_line_assert node;
     at_text_start = starts_at_text_start node;
+    required_literal = required node;
   }
 
 let source r = r.source_text
 let groups r = r.group_count
-let has_word_boundary r = r.word_boundary
 let program r = r.prog
-let start r = r.entry
-let anchored r = r.at_text_start
+let required r = r.required_literal
+let dfa_entry r = r.dfa_entry
+let dfa_handles r = not (r.word_boundary || r.line_assert)
 
 (* A metacharacter is escaped; whitespace and the rest of ASCII stand for
    themselves in this language. *)
@@ -965,8 +1042,6 @@ let rec add run v first stop pc at =
         Array.blit run.work 0 run.next_slots (i * run.nslots) run.nslots
   end
 
-(* [sparse_next a b] is the instruction the ranges [a] send the byte [b] to, or
-   [-1]. Ranges are few, so the search is a loop on the sorted triples. *)
 let sparse_next a b =
   let lo = ref 0 and hi = ref ((Array.length a / 3) - 1) and hit = ref (-1) in
   while !hit < 0 && !lo <= !hi do

@@ -183,7 +183,18 @@ let orbits =
       else None)
     unicode_lines
 
-let member ranges u = List.exists (fun (a, b) -> a <= u && u <= b) ranges
+(* [member ranges u] is [true] iff [u] lies in the ascending [ranges]. *)
+let member ranges =
+  let a = Array.of_list ranges in
+  fun u ->
+    let rec go lo hi =
+      if lo >= hi then false
+      else
+        let mid = (lo + hi) / 2 in
+        let l, h = a.(mid) in
+        if u < l then go lo mid else if u > h then go (mid + 1) hi else true
+    in
+    go 0 (Array.length a)
 
 let class_named n = List.find (fun c -> c.name = n) classes
 
@@ -212,9 +223,10 @@ let classes_boundaries =
             matches (regex (class_pattern c))
               (Array.map (fun u -> Some (utf_8 u)) rows)
           in
+          let holds = member c.ranges in
           Array.iteri
             (fun i u ->
-              if got.(i) <> Some (member c.ranges u) then
+              if got.(i) <> Some (holds u) then
                 wrong :=
                   Printf.sprintf "%s of U+%04X" c.name u :: !wrong)
             rows;
@@ -224,7 +236,7 @@ let classes_boundaries =
           in
           Array.iteri
             (fun i u ->
-              if negated.(i) <> Some (not (member c.ranges u)) then
+              if negated.(i) <> Some (not (holds u)) then
                 wrong :=
                   Printf.sprintf "\\P{%s} of U+%04X" c.name u :: !wrong)
             rows)
@@ -253,10 +265,11 @@ let scalar_rows = Array.map (fun u -> Some (utf_8 u)) each_scalar
 let every_scalar_of pattern name =
   test (Printf.sprintf "%s: every scalar" pattern) (fun () ->
       let c = class_named name in
+      let holds = member c.ranges in
       let got = matches (regex ("^" ^ pattern ^ "$")) scalar_rows in
       let wrong =
         List.filteri
-          (fun i _ -> got.(i) <> Some (member c.ranges each_scalar.(i)))
+          (fun i _ -> got.(i) <> Some (holds each_scalar.(i)))
           (Array.to_list each_scalar)
       in
       equal (list string) [] (List.map (Printf.sprintf "U+%04X") wrong))
@@ -635,6 +648,45 @@ let dfa_equals_pike =
       cover "a non-matching text" (not (Option.get (matches (regex p) [| Some t |]).(0)));
       pike_agrees (regex p) t)
 
+(* The DFA's cache of [limit] states forced small, so it clears inside a row. *)
+let dfa_cache_agrees limit =
+  prop
+    (Printf.sprintf "the DFA with a cache of %d states agrees with the Pike VM"
+       limit)
+    pattern_and_text
+    (fun (p, t) ->
+      let r = regex p in
+      match Expr.Str.dfa_test ~limit r [| t |] with
+      | None -> ()
+      | Some got ->
+          equal (option string)
+            (if got.(0) then (extract r [| Some t |]).(0) else None)
+            (extract r [| Some t |]).(0))
+
+let dfa_clears =
+  test "a pattern of many states clears the cache with the right answers"
+    (fun () ->
+      (* A window of two letters on a random text of [a] and [b] makes about
+         2^14 distinct DFA states: more than the cache holds. *)
+      let window = 14 in
+      let p =
+        Printf.sprintf "(?:a|b)*a(?:a|b){%d}c" window
+      in
+      let rng = Random.State.make [| 7 |] in
+      let row n =
+        String.init n (fun _ -> if Random.State.bool rng then 'a' else 'b')
+      in
+      let rows = Array.init 40 (fun i -> row (200 + (i * 37))) in
+      rows.(11) <- rows.(11) ^ "c";
+      let r = regex p in
+      let dfa = Option.get (Expr.Str.dfa_test ~limit:16 r rows) in
+      let pike =
+        Array.map (function Some _ -> true | None -> false)
+          (extract r (Array.map Option.some rows))
+      in
+      equal ~msg:"some row matches" bool true (Array.exists Fun.id pike);
+      equal (array bool) pike dfa)
+
 let round_trip =
   prop "split's pieces interleaved with find_all's matches are the row"
     pattern_and_text (fun (p, t) ->
@@ -710,6 +762,9 @@ let () =
          group "laws"
            [
              dfa_equals_pike;
+             dfa_cache_agrees 2;
+             dfa_cache_agrees 16;
+             dfa_clears;
              round_trip;
              quote_equals_literal;
              quote_escapes;

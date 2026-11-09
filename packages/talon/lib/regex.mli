@@ -31,11 +31,8 @@ val groups : t -> int
 (** [groups r] is the number of capture groups of [r], the whole match not
     counted. *)
 
-val has_word_boundary : t -> bool
-(** [has_word_boundary r] is [true] iff [r] holds [\b] or [\B]. *)
-
-(** The automaton below is the compiled form of [t] the lazy DFA also reads;
-    only {!Strings} reads it. *)
+(** The instructions below are the compiled form of [t], read by the lazy DFA
+    of {!Regex_dfa} and by {!sparse_next}. *)
 
 type assertion =
   | Start_text
@@ -55,15 +52,24 @@ type inst =
   | Accept
 
 val program : t -> inst array
-(** [program r] is [r]'s instructions; [r]'s start instruction is
-    {!start}. *)
+(** [program r] is [r]'s instructions. *)
 
-val start : t -> int
-(** [start r] is the instruction a match of [r] begins at. *)
+val sparse_next : int array -> int -> int
+(** [sparse_next a b] is the instruction the ranges [a] of a {!Sparse} send the
+    byte [b] to, or [-1]. *)
 
-val anchored : t -> bool
-(** [anchored r] is [true] iff every match of [r] starts at the start of the
-    text ([\A], or [^] without [m]). *)
+val dfa_entry : t -> int
+(** [dfa_entry r] is where a search that may start anywhere begins: [start r]
+    for an anchored [r], and otherwise an instruction that also skips whole
+    scalars ahead. *)
+
+val dfa_handles : t -> bool
+(** [dfa_handles r] is [true] iff [r] uses neither [\b], [\B] nor the
+    [(?m)] anchors, which the lazy DFA does not resolve. *)
+
+val required : t -> string
+(** [required r] is a literal every match of [r] contains, or [""] where none
+    is known. *)
 
 (** {1 Matching} *)
 

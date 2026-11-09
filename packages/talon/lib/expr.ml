@@ -2906,6 +2906,12 @@ module Str = struct
   let matches p a = text (Matches p) a
   let regex s = Regex (Regex.compile s)
   let quote = Regex.quote
+
+  let dfa_test ~limit p rows =
+    match p with
+    | Regex r when Regex.dfa_handles r -> Some (Strings.dfa_test ~limit r rows)
+    | _ -> None
+
   let split p a = text (Split p) a
   let find_all p a = text (Find_all p) a
 

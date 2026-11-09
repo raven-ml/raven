@@ -1780,8 +1780,8 @@ module Expr : sig
 
         A pattern compiles once, when {!regex} is called. Matching a row of [n]
         bytes takes time at most proportional to [m * n], for a pattern of [m]
-        instructions, and no input makes one row's time exponential. Memory is
-        bounded for each kernel, independently of the rows. [x{n}] compiles to
+        instructions, and no input makes one row's time exponential. A kernel's
+        matching memory is bounded, whatever the rows' length. [x{n}] compiles to
         [n] copies of [x], and nested counts multiply, so a pattern's size and
         compile time follow from what it writes: a pattern built from untrusted
         text must be bounded by the program that builds it.
@@ -1869,6 +1869,16 @@ v}
 
     val matches : pattern -> (string, 's) t -> (bool, 's) t
     (** [matches p a] is [true] iff [p] matches [a]. *)
+
+    (**/**)
+
+    val dfa_test :
+      limit:int -> pattern -> string array -> bool array option
+    (* Runs the lazy DFA of a {!regex} over [rows], its cache of at most [limit]
+       states, for tests that force the cache to clear; [None] where the
+       pattern's program is not one the DFA handles. *)
+
+    (**/**)
 
     val extract : ?group:int -> pattern -> (string, 's) t -> (string, 's) t
     (** [extract ~group p a] is group [group] of the first match of [p] in [a],
