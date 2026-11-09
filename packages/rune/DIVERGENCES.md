@@ -1194,11 +1194,17 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   32 or 64 with a running maximum, sum and accumulator in base 2 (online
   softmax), never storing a score; the rows of a group of query heads
   share each tile of keys. On a target whose tensor core of a narrow
-  float's products chains its accumulator into its own operand, float16
-  and bfloat16 attention computes both products on the core and rounds
-  each weight once to the values' dtype. A tile the mask's ranges over the
-  tile's pairs hide is skipped; one they leave unknown runs where a
-  workgroup's vote finds a visible pair. Few workgroups, or on the host
+  float's products into float32 chains its accumulator into its own
+  operand, float16 and bfloat16 attention computes both products on the
+  core and rounds each weight once to the values' dtype: CUDA's from
+  sm_75 and Apple's chain it as their left operand; RDNA 4's and CDNA's
+  as their right, so the kernels name the transposed core
+  (`Tc.transpose`) and give the hardware each product's operands in the
+  other order. sm_75's core runs here only on an sm_89 GPU, in kernels
+  rendered for sm_89 with sm_75's cores; CDNA's runs on no machine here.
+  Their chain is correct wherever their products are. A tile the mask's
+  ranges over the tile's pairs hide is skipped; one they leave unknown
+  runs where a workgroup's vote finds a visible pair. Few workgroups, or on the host
   few rows, split each row's keys into runs, folded in order by a second
   kernel; a host thread adds a vector of its row's columns at a time.
   Reverse mode on such a core, for keys and values of at most 64

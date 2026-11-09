@@ -5,7 +5,7 @@
 
 open Windtrap
 
-type mask = Unmasked | Causal | Window | Documents | Blocks | Opaque
+type mask = Unmasked | Causal | Window | Documents | Positions | Blocks | Opaque
 
 type t = {
   dtype : Nx.Dtype.any;
@@ -25,6 +25,7 @@ type t = {
   positive : bool;
   nans : bool;
   zeros : bool;
+  faint : bool;
   seed : int;
 }
 
@@ -33,6 +34,7 @@ let mask_name = function
   | Causal -> "causal"
   | Window -> "window"
   | Documents -> "documents"
+  | Positions -> "positions"
   | Blocks -> "blocks"
   | Opaque -> "opaque"
 
@@ -41,17 +43,18 @@ let pp ppf c =
   Format.fprintf ppf
     "%s lead %d hq %d hk %d tq %d tk %d dk %d dv %d page %s holes %b \
      lengths %s mask %s alibi %b rising %b positive %b nans %b zeros %b \
-     seed %d"
+     faint %b seed %d"
     (Nx.Dtype.name dt) c.lead c.hq c.hk c.tq c.tk c.dk c.dv
     (match c.page with Some p -> string_of_int p | None -> "none")
     c.holes
     (match c.lengths with
     | Some l -> String.concat "," (Array.to_list (Array.map string_of_int l))
     | None -> "none")
-    (mask_name c.mask) c.alibi c.rising c.positive c.nans c.zeros c.seed
+    (mask_name c.mask) c.alibi c.rising c.positive c.nans c.zeros c.faint
+    c.seed
 
 let numel = Array.fold_left ( * ) 1
-let edges = [ 0; 1; 2; 15; 16; 17; 31; 32; 33; 63; 64; 65 ]
+let edges = [ 0; 1; 2; 7; 8; 9; 15; 16; 17; 31; 32; 33; 63; 64; 65 ]
 
 let gen dtypes =
   let open Gen in
@@ -74,12 +77,15 @@ let gen dtypes =
                   [ (1, constant 0); (1, constant 1); (2, constant tk); (2, int_range 0 tk) ])) );
       ]
   in
-  let* mask = of_list [ Unmasked; Causal; Window; Documents; Blocks; Opaque ] in
+  let* mask =
+    of_list [ Unmasked; Causal; Window; Documents; Positions; Blocks; Opaque ]
+  in
   let* alibi = bool in
   let* rising = frequency [ (3, constant false); (1, constant true) ] in
   let* positive = frequency [ (3, constant false); (1, constant true) ] in
   let* nans = bool in
   let* zeros = frequency [ (3, constant false); (1, constant true) ] in
+  let* faint = frequency [ (5, constant false); (1, constant true) ] in
   let* dk = of_list [ 1; 8; 16; 24; 64 ] in
   let* dv = of_list [ 1; 8; 16; 64; 72 ] in
   let+ seed = int_range 0 1000 in
@@ -101,6 +107,7 @@ let gen dtypes =
     positive;
     nans = nans && page = None;
     zeros = zeros && page = None;
+    faint = faint && page = None;
     seed;
   }
 
@@ -123,6 +130,7 @@ let base dtype =
     positive = false;
     nans = false;
     zeros = false;
+    faint = false;
     seed = 3;
   }
 
@@ -144,7 +152,45 @@ let examples dtypes =
     ]
   in
   let n = List.length dtypes in
+  let named s =
+    List.find_opt (fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt = s) dtypes
+    |> Option.value ~default:(List.hd dtypes)
+  in
   List.mapi (fun i c -> { c with dtype = List.nth dtypes (i mod n) }) cases
+  @ [
+      (* A decode step of gpt-oss: 64 query heads over 8, the query at the
+         middle of a key cache's captured positions. *)
+      {
+        b with
+        dtype = named "bfloat16";
+        hq = 64;
+        hk = 8;
+        tq = 1;
+        tk = 200;
+        mask = Positions;
+      };
+      (* Keys padded to a step of a tensor core's K, values past one chunk
+         of columns. *)
+      { b with dtype = named "float16"; dk = 24; dv = 72; tq = 40; tk = 100 };
+      (* Faint weights on positive values: the weights' mass below
+         float16's smallest normal outweighs the bound but for the term of
+         each such weight read. *)
+      {
+        b with
+        dtype = named "float16";
+        mask = Unmasked;
+        faint = true;
+        positive = true;
+        tq = 16;
+        tk = 1000;
+      };
+      (* Rows and keys either side of Metal's tiles of 8: a key head a
+         query head, so a tile's rows are one head's. *)
+      { b with dtype = named "float16"; hk = b.hq; tq = 7; tk = 9 };
+      { b with dtype = named "float16"; hk = b.hq; tq = 9; tk = 7 };
+      { b with dtype = named "bfloat16"; hk = b.hq; tq = 7; tk = 9 };
+      { b with dtype = named "bfloat16"; hk = b.hq; tq = 9; tk = 7 };
+    ]
   @ List.map (fun dt -> { (base dt) with zeros = true; tq = 128; tk = 128 }) dtypes
 
 (* Inputs *)
@@ -155,6 +201,15 @@ let examples dtypes =
 let zeros_from = 64L
 let zeros_under = 2000.
 
+(* Faint weights: every key's score but the first's [faint_under] below it,
+   whatever the query and key, so that each of their weights is [e{^-11}],
+   about [2{^-15.9}] of the first's, a float16 subnormal; the first key's
+   values are [0]. [o] is then the faint weights' sum alone, and a kernel
+   that drops them errs by about [o]. A run of keys split from the first
+   weighs its own keys against their own maximum, so it is the run of the
+   first key that holds subnormal weights. *)
+let faint_under = 11.
+
 let draw c salt shape =
   let n = numel shape in
   let st = Random.State.make [| c.seed; salt |] in
@@ -163,7 +218,7 @@ let draw c salt shape =
 
 (* The case's call over [q], [k] and [v], of any device, in [acc]. *)
 let call (type a s d) (acc : (float, a) Nx.dtype) c ~table ~lengths ~docs
-    ~blocks ~slopes (q : (float, s, d) Nx.t) k v =
+    ~positions ~blocks ~slopes (q : (float, s, d) Nx.t) k v =
   let place x = Nx.place (Nx.beside q) x in
   let mask : (d Nx.pair -> d Nx.bool_t) option =
     match c.mask with
@@ -172,6 +227,10 @@ let call (type a s d) (acc : (float, a) Nx.dtype) c ~table ~lengths ~docs
     | Window ->
         Some
           (fun p -> Nx.logical_and (Nx.causal p) (Nx.less p.q (Nx.add_s p.k 8L)))
+    | Positions ->
+        let pq, pk = positions in
+        let pq = place pq and pk = place pk in
+        Some (fun _ -> Nx.less_equal pk pq)
     | Documents ->
         let dq, dk = docs in
         let dq = place dq and dk = place dk in
@@ -188,12 +247,18 @@ let call (type a s d) (acc : (float, a) Nx.dtype) c ~table ~lengths ~docs
             Nx.less_equal (f p.k) (f (Nx.add p.q (Nx.sub p.len (Nx.scalar_like p.len (Int64.of_int c.tq))))))
   in
   let score =
-    match (c.alibi, c.rising, c.zeros) with
-    | false, false, false -> None
+    match (c.alibi, c.rising, c.zeros, c.faint) with
+    | false, false, false, false -> None
     | _ ->
         let slopes = place (Nx.cast acc slopes) in
         Some
           (fun (p : d Nx.pair) s ->
+            let s =
+              if c.faint then
+                let first = Nx.equal p.k (Nx.scalar_like p.k 0L) in
+                Nx.where first (Nx.zeros_like s) (Nx.full_like s (-.faint_under))
+              else s
+            in
             let s =
               if c.alibi then Nx.(Infix.(s - (cast acc (p.q - p.k) * slopes)))
               else s
@@ -237,6 +302,9 @@ type inputs = {
   table : Nx.host Nx.int64_t option;
   lengths : Nx.host Nx.int64_t option;
   docs : Nx.host Nx.int64_t * Nx.host Nx.int64_t;
+  positions : Nx.host Nx.int64_t * Nx.host Nx.int64_t;
+      (** The queries' positions, [[tq; 1]], from the keys' middle on, and
+          the keys', [[1; tk]]. *)
   blocks : Nx.host Nx.bool_t;
   slopes : Nx.host Nx.float32_t;
   poisoned : Nx.host Nx.float32_t -> Nx.host Nx.float32_t;
@@ -268,6 +336,13 @@ let inputs c =
       let late i = key i >= Int64.to_int zeros_from in
       Nx.create Nx.float32 vshape (Array.mapi (fun i x -> if late i then -0. else x) a)
   in
+  let v =
+    if not c.faint then v
+    else
+      let a = Nx.to_array v in
+      let first i = i / max 1 c.dv mod c.tk = 0 in
+      Nx.create Nx.float32 vshape (Array.mapi (fun i x -> if first i then 0. else x) a)
+  in
   let table =
     match c.page with
     | None -> None
@@ -287,6 +362,11 @@ let inputs c =
   let docs =
     let ids n = Nx.create Nx.int64 [| n |] (Array.init n (fun i -> Int64.of_int (i * 3 / 40))) in
     (ids c.tq, ids c.tk)
+  in
+  let positions =
+    ( Nx.create Nx.int64 [| c.tq; 1 |]
+        (Array.init c.tq (fun i -> Int64.of_int ((c.tk / 2) + i))),
+      Nx.create Nx.int64 [| 1; c.tk |] (Array.init c.tk Int64.of_int) )
   in
   let blocks =
     let st = Random.State.make [| c.seed; 9 |] in
@@ -312,7 +392,7 @@ let inputs c =
         Nx.create Nx.float32 s a
     | _ -> x
   in
-  { q; k; v; table; lengths; docs; blocks; slopes; poisoned }
+  { q; k; v; table; lengths; docs; positions; blocks; slopes; poisoned }
 
 let law (module S : Nx.Devices) c =
   cover "paged" (c.page <> None);
@@ -320,10 +400,12 @@ let law (module S : Nx.Devices) c =
   cover (mask_name c.mask) true;
   let (F dt) = float_dtype c.dtype in
   let wide = Nx.Dtype.name dt = "float64" in
-  let { q; k; v; table; lengths; docs; blocks; slopes; poisoned } = inputs c in
+  let { q; k; v; table; lengths; docs; positions; blocks; slopes; poisoned } =
+    inputs c
+  in
   let compiled (type a) (acc : (float, a) Nx.dtype) =
     let place x = Nx.place S.on (Nx.cast dt x) in
-    let f q k v = call acc c ~table ~lengths ~docs ~blocks ~slopes q k v in
+    let f q k v = call acc c ~table ~lengths ~docs ~positions ~blocks ~slopes q k v in
     let g =
       Rune.jit Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor)) f
     in
@@ -336,7 +418,7 @@ let law (module S : Nx.Devices) c =
   let f64 x = Nx.cast Nx.float64 x in
   let reference v =
     let o, lse =
-      call Nx.float64 c ~table ~lengths ~docs ~blocks ~slopes (f64 q) (f64 k) (f64 v)
+      call Nx.float64 c ~table ~lengths ~docs ~positions ~blocks ~slopes (f64 q) (f64 k) (f64 v)
     in
     (Nx.to_array o, Nx.to_array lse)
   in
@@ -355,7 +437,8 @@ let law (module S : Nx.Devices) c =
     a
     +. (if c.alibi then Float.of_int (c.tq + c.tk) else 0.)
     +. (if c.rising then 0.25 *. Float.of_int c.tk else 0.)
-    +. if c.zeros then zeros_under else 0.
+    +. (if c.zeros then zeros_under else 0.)
+    +. if c.faint then faint_under else 0.
   in
   let eta = (Float.of_int ((2 * c.dk) + 4) *. u *. a) +. (2. *. u *. b) in
   let ln = Float.log (Float.of_int (max 1 c.tk)) in
@@ -497,14 +580,16 @@ let grad_law (module S : Nx.Devices) ~vmap c =
      && c.dk <= 64 && c.dv > 0 && c.dv <= 64);
   let lse_alone = c.seed mod 4 = 1 in
   cover "lse's cotangent alone" lse_alone;
-  let { q; k; v; table; lengths; docs; blocks; slopes; poisoned } = inputs c in
+  let { q; k; v; table; lengths; docs; positions; blocks; slopes; poisoned } =
+    inputs c
+  in
   let rounded x = Nx.cast Nx.float32 (Nx.cast dt x) in
   let wo = rounded (draw c 4 [| c.lead; c.hq; c.tq; c.dv |]) in
   let wo = if lse_alone then Nx.zeros_like wo else wo in
   let wl = rounded (draw c 5 [| c.lead; c.hq; c.tq |]) in
   let loss (type a s d) (acc : (float, a) Nx.dtype) ~lengths
       (wo : (float, s, d) Nx.t) wl q k v =
-    let o, lse = call acc c ~table ~lengths ~docs ~blocks ~slopes q k v in
+    let o, lse = call acc c ~table ~lengths ~docs ~positions ~blocks ~slopes q k v in
     let finite x = Nx.where (Nx.isfinite x) x (Nx.zeros_like x) in
     Nx.add
       (Nx.sum (Nx.mul (Nx.cast acc wo) (Nx.cast acc o)))
@@ -538,7 +623,7 @@ let grad_law (module S : Nx.Devices) ~vmap c =
   let refs = List.map Nx.to_array (reference (f64 wo) (f64 wl)) in
   let gs = if wide then compiled Nx.float64 else compiled Nx.float32 in
   let o_ref, lse_ref =
-    let o, lse = call Nx.float64 c ~table ~lengths ~docs ~blocks ~slopes (f64 q) (f64 k) (f64 v) in
+    let o, lse = call Nx.float64 c ~table ~lengths ~docs ~positions ~blocks ~slopes (f64 q) (f64 k) (f64 v) in
     (Nx.to_array o, Nx.to_array lse)
   in
   (* The forward law's constants, by row. *)
@@ -548,7 +633,8 @@ let grad_law (module S : Nx.Devices) ~vmap c =
     a
     +. (if c.alibi then Float.of_int (c.tq + c.tk) else 0.)
     +. (if c.rising then 0.25 *. Float.of_int c.tk else 0.)
-    +. if c.zeros then zeros_under else 0.
+    +. (if c.zeros then zeros_under else 0.)
+    +. if c.faint then faint_under else 0.
   in
   let eta = (Float.of_int ((2 * c.dk) + 4) *. u *. a) +. (2. *. u *. b) in
   let ln = Float.log (Float.of_int (max 1 c.tk)) in

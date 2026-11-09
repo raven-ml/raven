@@ -1166,8 +1166,9 @@ let () =
                (Gen.with_pp Attentions.pp
                   (Gen.map mappable (Attentions.gen attention_dtypes)))
                (attention_grad ~vmap:true);
-             (* float32 on the SIMT kernel; the narrow floats on CUDA's tensor
-                core, elsewhere on the SIMT kernel. *)
+             (* float32 on the SIMT kernel; the narrow floats on the target's
+                tensor core where it has one that chains, else on the SIMT
+                kernel. *)
              Windtrap.cases "a sum of zeros is +0 at rows of one run of keys"
                ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
                Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16; Any Nx.float16 ]

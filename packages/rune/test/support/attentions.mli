@@ -19,6 +19,10 @@ type mask =
   | Causal
   | Window  (** Causal over the last 8 keys. *)
   | Documents  (** Captured document ids of queries and keys, sorted. *)
+  | Positions
+      (** Captured positions of queries and keys, as a key cache's: each
+          query sees the keys at or before its own position, the first
+          query's at the keys' middle. *)
   | Blocks  (** A captured table of visible blocks of 4 by 4 pairs. *)
   | Opaque
       (** Causal through floats, which a tile's ranges cannot class: each
@@ -47,6 +51,11 @@ type t = {
       (** Scores 2000 lower at keys before 64 and values [-0] from key 64
           on: where a row sees a key of each, every weighted value is zero
           in the accumulator. Dense keys only. *)
+  faint : bool;
+      (** Every key's score but the first's 11 below it, whatever the query
+          and key, and the first key's values [0]: each other weight is
+          about [2{^-15.9}] of the first's, below float16's smallest normal,
+          and [o] is their sum alone. Dense keys only. *)
   seed : int;
 }
 (** The type for cases. *)
@@ -56,16 +65,21 @@ val pp : Format.formatter -> t -> unit
 val gen : Nx.Dtype.any list -> t Windtrap.Gen.t
 (** [gen dtypes] draws cases of [dtypes]: one to three lead indices, heads
     of [1/1], [8/8], [8/2] and [8/1], [tq] and [tk] around the tiles' edges
-    ([0], [1], [15] to [17], [31] to [33], [63] to [65]), each mask, pages
-    of 16 keys and of fewer with entries out of range, lengths of [0], [1]
-    and [tk], and the adversarial rows: positive values, rising scores,
-    sums of zeros. *)
+    ([0] to [2], [7] to [9], [15] to [17], [31] to [33], [63] to [65]), each
+    mask, pages of 16 keys and of fewer with entries out of range, lengths of
+    [0], [1] and [tk], and the adversarial rows: positive values, rising
+    scores, sums of zeros, faint weights. *)
 
 val examples : Nx.Dtype.any list -> t list
 (** [examples dts] is cases each draw may miss, of [dts] in turn: a decode
     step of 64 query heads over 8 key heads and 1000 keys, which splits its
-    keys, a prefill of 300 rows under each mask, zero-size shapes, and of
-    each dtype a prefill of 128 rows of sums of zeros. *)
+    keys, a prefill of 300 rows under each mask, zero-size shapes; then, of
+    [dts]'s bfloat16 and float16 where it has them, gpt-oss's decode step
+    under captured positions over 200 keys, keys of 24 dimensions and
+    values of 72, 1000 faint weights on positive values, which fails the
+    bound where a product drops float16's subnormal weights, and rows and
+    keys of 7 and 9 with a key head a query head; and of each dtype a
+    prefill of 128 rows of sums of zeros. *)
 
 val law : (module Nx.Devices) -> t -> unit
 (** [law s c] checks [c] compiled on [s]'s devices, and that the call is

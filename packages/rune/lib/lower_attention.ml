@@ -605,7 +605,10 @@ let simt ~local ~width ~splits a xs =
 
    For a narrow float on a target whose core of that float's products into
    float32 chains its accumulator into its own operand [A] with each row's
-   elements in the same lanes ({!Tc.chain}), as CUDA's [m16n8k16]. A warp
+   elements in the same lanes ({!Tc.chain}), as CUDA's [m16n8k16] and
+   Apple's, or into [B], as RDNA 4's: the kernel then names the transposed
+   core ({!Tc.transpose}), whose accumulator chains as [A], and gives the
+   hardware each product's operands in the other order. A warp
    holds [M] rows of a group of heads, a workgroup [warps] warps, and each
    tile of [keys] keys is copied into workgroup memory, its rows padded by 8
    elements. Per tile, a warp's scores [S = Q Kᵀ] are the core's
@@ -813,8 +816,18 @@ let stage ~tid ~threads ~n ~at src dst ~width ~first ~cols =
                   [ Ops.where inside_tile ((rl * int Stdlib.(cols + pad)) + col) Ops.invalid ])
                v)))
 
+(* [wmma tc ~transposed a b ~acc] is [acc] plus the product of [a] and [b]
+   on [tc], whose hardware takes them in the other order where
+   [transposed]: [Dᵀ = Bᵀ Aᵀ + Cᵀ] holds each lane's elements where [tc]'s
+   fragments place them. *)
+let wmma (tc : Tc.t) ~transposed a b ~acc =
+  let n, m, k = Tc.dims tc and threads = Tc.threads tc in
+  if transposed then Ops.wmma b a ~acc ~dims:(m, n, k) ~threads
+  else Ops.wmma a b ~acc ~dims:(n, m, k) ~threads
+
 type core = {
   tc : Tc.t;
+  transposed : bool;  (** Whether [tc] is the hardware's core transposed. *)
   warps : int;
   keys : int;  (** A tile's keys. *)
   splits : int;  (** Runs of each row's keys ({!run_tiles}). *)
@@ -823,7 +836,7 @@ type core = {
 
 let core c a xs =
   let x = args ~scratch:false a xs in
-  let tc = c.tc and bk = c.keys in
+  let tc = c.tc and transposed = c.transposed and bk = c.keys in
   let acc = Arith.dtype a.acc and vt = Ops.dtype x.q in
   let f = facts tc in
   let n_ = f.n_ and m_ = f.m_ and k_ = f.k_ and lanes = f.lanes in
@@ -921,8 +934,7 @@ let core c a xs =
                        let d = int Stdlib.(kk * k_) + coord tc.frag_b Kb lane e in
                        ld ks ((kl * int Stdlib.(dkp + pad)) + d)))
               in
-              go Stdlib.(kk + 1)
-                (Ops.wmma qa.(kk) bfrag ~acc:accum ~dims:(n_, m_, k_) ~threads:lanes)
+              go Stdlib.(kk + 1) (wmma tc ~transposed qa.(kk) bfrag ~acc:accum)
           in
           go 0 (Shape.stack (List.init ec (fun _ -> fl acc 0.))))
     in
@@ -1009,8 +1021,7 @@ let core c a xs =
                        let col = int Stdlib.(ot * n_) + coord tc.frag_b Nb lane e in
                        ld vs ((kl * int Stdlib.(dcp + pad)) + col)))
               in
-              go Stdlib.(kk + 1)
-                (Ops.wmma pa.(kk) bfrag ~acc:accum ~dims:(n_, m_, k_) ~threads:lanes)
+              go Stdlib.(kk + 1) (wmma tc ~transposed pa.(kk) bfrag ~acc:accum)
           in
           go 0 o0)
     in
@@ -1202,7 +1213,8 @@ let combine ~local ~width ~splits a xs =
 
 (* [plan renderer a] is the tensor-core kernel's shape for [a] on
    [renderer]'s target, if it takes one: a narrow float accumulated in
-   float32 on a core of its products that chains ({!core}). It holds [warps]
+   float32 on the first core of its products that chains as {!core} needs,
+   as it is or transposed. It holds [warps]
    of 8 while the launch keeps the renderer's [local_workgroups] workgroups,
    else 4, as many warps as balance a part's units (FlashAttention-2 §3.3:
    query rows split across warps); tiles of 64 keys while the copies of a
@@ -1214,20 +1226,25 @@ let plan (r : Renderer.t) a =
   let chains (tc : Tc.t) =
     match Tc.chain tc tc A with Some ch -> ch.same_lines | None -> false
   in
-  let fits (tc : Tc.t) =
-    let n, m, k = Tc.dims tc in
-    Dtype.equal tc.dtype_in vt
-    && Dtype.equal tc.dtype_out Dtype.Float32
-    && m = 16 && n = 8 && k = 16 && chains tc
+  (* The core as the kernel names it, and whether it is transposed. *)
+  let named (tc : Tc.t) =
+    if
+      not
+        (Dtype.equal tc.dtype_in vt && Dtype.equal tc.dtype_out Dtype.Float32)
+    then None
+    else if chains tc then Some (tc, false)
+    else
+      let t = Tc.transpose tc in
+      if chains t then Some (t, true) else None
   in
   let narrow = Dtype.equal vt Bfloat16 || Dtype.equal vt Float16 in
-  match List.find_opt fits r.tensor_cores with
-  | Some tc
+  match List.find_map named r.tensor_cores with
+  | Some (tc, transposed)
     when narrow && r.has_local && r.has_shared
          && Dtype.equal (Arith.dtype a.acc) Float32 ->
-      let _, m, k = Tc.dims tc in
+      let n, m, k = Tc.dims tc in
       let cols = min (max a.dv 1) 64 in
-      let dkp = ceil_div a.dk k * k and dcp = ceil_div cols 8 * 8 in
+      let dkp = ceil_div a.dk k * k and dcp = ceil_div cols n * n in
       let bytes keys = keys * (dkp + pad + dcp + pad) * Dtype.itemsize vt in
       (* The rows' maxima and sums take 4096 bytes beside the tiles. *)
       let fits keys = bytes keys + 4096 <= r.shared_max in
@@ -1245,7 +1262,7 @@ let plan (r : Renderer.t) a =
         splits_for ~stream:r.stream_threads ~workgroups:(workgroups warps)
           ~threads:(warps * Tc.threads tc) ~tiles:(ceil_div a.tk keys)
       in
-      Some { tc; warps; keys; cols; splits }
+      Some { tc; transposed; warps; keys; cols; splits }
   | _ -> None
 
 (* The derivative's kernels
@@ -1354,11 +1371,11 @@ let delta_kernel a xs =
       Ops.sink ~kernel [ Ops.end_ store [ gr; l ] ]
   | _ -> invalid_arg "Lower_attention: the δ kernel's arguments"
 
-(* [mma tc ~lane ~steps a b ~acc] is [acc] plus the products of [steps]
-   steps of [K], step [kk]'s [A] operand [a kk] and [B] element [e] at
-   [b kk ~k ~n], [k] and [n] its fragment's coordinates at [lane]. *)
-let mma (tc : Tc.t) ~lane ~steps a b ~acc =
-  let n_, m_, k_ = Tc.dims tc in
+(* [mma tc ~transposed ~lane ~steps a b ~acc] is [acc] plus the products
+   of [steps] steps of [K], step [kk]'s [A] operand [a kk] and [B] element
+   [e] at [b kk ~k ~n], [k] and [n] its fragment's coordinates at [lane]
+   ({!wmma}). *)
+let mma (tc : Tc.t) ~transposed ~lane ~steps a b ~acc =
   let eb = 1 lsl List.length tc.frag_b.elements in
   let rec go kk acc =
     if kk = steps then acc
@@ -1368,7 +1385,7 @@ let mma (tc : Tc.t) ~lane ~steps a b ~acc =
           (List.init eb (fun e ->
                b kk ~k:(coord tc.frag_b Kb lane e) ~n:(coord tc.frag_b Nb lane e)))
       in
-      go (kk + 1) (Ops.wmma (a kk) bfrag ~acc ~dims:(n_, m_, k_) ~threads:(Tc.threads tc))
+      go (kk + 1) (wmma tc ~transposed (a kk) bfrag ~acc)
   in
   go 0 acc
 
@@ -1385,6 +1402,7 @@ let zeros_c f acc = Shape.stack (List.init f.ec (fun _ -> fl acc 0.))
 
 type dcore = {
   dtc : Tc.t;
+  dtransposed : bool;  (* Whether [dtc] is the hardware's core transposed. *)
   qwarps : int;  (* [dq]'s warps, of [M] rows each. *)
   qkeys : int;  (* [dq]'s keys a tile. *)
   kwarps : int;  (* [dkdv]'s warps, of [M] keys each. *)
@@ -1398,7 +1416,7 @@ type dcore = {
 let core_dq c a tr xs =
   let os, d = dargs a ~outs:1 xs in
   let x = d.x in
-  let tc = c.dtc and bk = c.qkeys in
+  let tc = c.dtc and transposed = c.dtransposed and bk = c.qkeys in
   let f = facts tc in
   let n_ = f.n_ and m_ = f.m_ and k_ = f.k_ in
   let acc = Arith.dtype a.acc and vt = Ops.dtype x.q in
@@ -1462,7 +1480,7 @@ let core_dq c a tr xs =
     (* S = Q Kᵀ and dP = ō Vᵀ, each tile of [N] keys an accumulator. *)
     let scores buf w steps ops =
       Array.init ntiles (fun nt ->
-          mma tc ~lane ~steps (fun kk -> ops.(kk))
+          mma tc ~transposed ~lane ~steps (fun kk -> ops.(kk))
             (fun kk ~k ~n ->
               let kl = int Stdlib.(nt * n_) + n in
               ld buf ((kl * int Stdlib.(w + pad)) + int Stdlib.(kk * k_) + k))
@@ -1490,7 +1508,7 @@ let core_dq c a tr xs =
             Shape.stack
               (List.init f.ec (fun e -> ld (inside g_j) (int Stdlib.((dt * f.ec) + e))))
           in
-          mma tc ~lane ~steps:vsteps (chain_a f vt rbar)
+          mma tc ~transposed ~lane ~steps:vsteps (chain_a f vt rbar)
             (fun kk ~k ~n ->
               let kl = int Stdlib.(kk * k_) + key_of f.keymap k_ k in
               ld ks ((kl * int Stdlib.(dkp + pad)) + int Stdlib.(dt * n_) + n))
@@ -1540,7 +1558,7 @@ let core_dq c a tr xs =
 let core_dkdv c a tr xs =
   let os, d = dargs a ~outs:2 xs in
   let x = d.x in
-  let tc = c.dtc and br = c.krows in
+  let tc = c.dtc and transposed = c.dtransposed and br = c.krows in
   let f = facts tc in
   let n_ = f.n_ and m_ = f.m_ and k_ = f.k_ in
   let acc = Arith.dtype a.acc and vt = Ops.dtype x.q in
@@ -1601,7 +1619,7 @@ let core_dkdv c a tr xs =
     (* Sᵀ = K Qᵀ and dPᵀ = V ōᵀ, each tile of [N] rows an accumulator. *)
     let scores buf w steps ops =
       Array.init ntiles (fun nt ->
-          mma tc ~lane ~steps (fun kk -> ops.(kk))
+          mma tc ~transposed ~lane ~steps (fun kk -> ops.(kk))
             (fun kk ~k ~n ->
               let rl = int Stdlib.(nt * n_) + n in
               ld buf ((rl * int Stdlib.(w + pad)) + int Stdlib.(kk * k_) + k))
@@ -1631,7 +1649,7 @@ let core_dkdv c a tr xs =
             Shape.stack
               (List.init f.ec (fun e -> ld (inside g_j) (int Stdlib.((t * f.ec) + e))))
           in
-          mma tc ~lane ~steps:rsteps (chain_a f vt ops)
+          mma tc ~transposed ~lane ~steps:rsteps (chain_a f vt ops)
             (fun kk ~k ~n ->
               let rl = int Stdlib.(kk * k_) + key_of f.keymap k_ k in
               ld buf ((rl * int Stdlib.(w + pad)) + int Stdlib.(t * n_) + n))
@@ -1703,6 +1721,7 @@ let dplan (r : Renderer.t) a ~marked =
       Some
         {
           dtc = c.tc;
+          dtransposed = c.transposed;
           qwarps = warps (grouped a);
           qkeys = 32;
           kwarps = warps a.tk;

@@ -397,6 +397,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx.attention` under `Rune.jit` and its gradient compute float16 and
+  bfloat16 on the tensor cores of RDNA 4 and Apple GPUs, and of CUDA's
+  sm_75 for float16, where they ran a kernel of one row a thread: on an
+  R9700, 14x faster for gpt-oss's decode attention and 8x for the
+  gradient of a 2048-row prefill. CDNA 3 and 4 take their cores too,
+  unchecked on hardware.
 - `Nx.cast` under `Rune.jit` on Metal compiles an integer or boolean cast to
   `float16`, `bfloat16` or an 8- or 4-bit float, and an `int64` or `uint64`
   cast to `float32` or `complex64`, where its lowering computed in `float64`,

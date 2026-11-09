@@ -13,11 +13,11 @@ llama.cpp b12032 CUDA; NV and the first run last measured at 31aa4521b:
 
 gpt-oss-20b, AMD gfx1201 (nonnormal, 502431b668, the new nx and rune),
 raven / llama.cpp b12048 Vulkan:
-- decode at position 512 20.4 ms / 10.38 ms at depth 512: attention 7.9 ms
-  (one query row a thread, 6 GB/s) against 0.31; expert products 5.4 ms at
-  212-254 GB/s against 3.0; top-k's 20-kernel sort and about 37 small
-  kernels a layer about 1.5 ms; argmax over the logits 0.63 ms
-- prefill-512 0.428 s / 0.308 s: expert products 326 ms on WMMA at 7-8
+- decode at position 512 12.7 ms (attention on WMMA) / 10.38 ms at depth
+  512: expert products 5.4 ms at 212-254 GB/s against 3.0; top-k's
+  20-kernel sort and about 37 small kernels a layer about 1.5 ms; argmax
+  over the logits 0.63 ms
+- prefill-512 0.418 s / 0.308 s: expert products 326 ms on WMMA at 7-8
   TFLOPS against 177; the out projection takes no WMMA, 52 ms against q's 10
 - first call 0.30-0.34 s (12 tokens, kernels cached; 1.03 s compiling
   them) / 0.136 s (2.19 s without Mesa's shader cache); lowering and
@@ -128,8 +128,15 @@ raven / llama.cpp b12048 Vulkan:
   waves takes as long as its longest workgroup (rows already launch longest
   first): pair row tiles i and n-1-i, or split long rows' keys; the
   tensor-core backward leaves head dimensions over 64, float captures'
-  cotangents, paged keys, forward mode and float32 on the composition; RDNA4
-  and Metal core paths
+  cotangents, paged keys, forward mode and float32 on the composition
+- attention's SIMT kernel on AMD (RDNA3, and what no core takes): K and V
+  addresses are wave-uniform, so LLVM loads bfloat16 and float16 with
+  s_load_u16 and a wait each, about 4100 serial round trips a tile; at
+  gpt-oss's decode shape float32 (global_load_b32) takes 51 µs against
+  bfloat16's 323 µs on the R9700
+- a cast from bool to bfloat16 aborts comgr on gfx1201 ("Cannot select ...
+  bf16 = uint_to_fp"): test_jit_gpu.ml's integer casts, seed
+  s1:0072ef24ec103aaf
 - a fresh process's first calls fault 72-188 pages each for 1 MiB results
   until rig's buffer cache warms
 - the scatter walk (I4) on a GPU: a scatter of a few updates pays one or
