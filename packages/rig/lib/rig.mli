@@ -220,18 +220,28 @@ val arch : t -> string
     whose registers the system enables (XCR0), ["x86-64"], ["x86-64-v2"],
     ["x86-64-v3"] or ["x86-64-v4"], each level running the code of those
     below it; on arm64 ["arm64"], the base architecture with floating point
-    and Advanced SIMD. It is ["memory"] for a {!memory_device}, [""] for an io
-    device, and for a device of another machine that machine's.
+    and Advanced SIMD, followed by each feature rig reads that the system
+    states the processor has, after a [+] and in lexicographic order. rig
+    reads one, [fp16], half-precision arithmetic in floating point and
+    Advanced SIMD (FEAT_FP16), from macOS's [hw.optional.arm.FEAT_FP16]
+    alone: ["arm64+fp16"] on an M1, and an arm64 host on another system is
+    ["arm64"], with no features. An arm64 arch runs the code of each arm64
+    arch whose features are among its own. It is ["memory"] for a
+    {!memory_device}, [""] for an io device, and for a device of another
+    machine that machine's.
 
     The x86-64 psABI,
     {{:https://gitlab.com/x86-psABIs/x86-64-ABI}System V Application Binary
     Interface, AMD64 Architecture Processor Supplement}, §3.1.1, table
-    "Micro-Architecture Levels". *)
+    "Micro-Architecture Levels". The
+    {{:https://github.com/ARM-software/acle}Arm C Language Extensions},
+    "Function Multi Versioning", which names FEAT_FP16 [fp16] and writes
+    features in lexicographic order. *)
 
 val instruction_set : t -> string
 (** [instruction_set d] is the instruction set of [d]'s {!arch}: ["x86_64"]
-    for a level of x86-64 and the arch itself for any other, such as
-    ["arm64"], which names its instruction set. *)
+    for a level of x86-64, ["arm64"] for an arm64 arch, and the arch itself
+    for any other. *)
 
 val bus : t -> string option
 (** [bus d] is the bus address of [d]'s PCI function on its machine, such as

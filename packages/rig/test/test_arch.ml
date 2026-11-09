@@ -6,11 +6,14 @@
 (* A host's arch: the level of the x86-64 psABI its processor has, from the
    psABI's table "Micro-Architecture Levels", with each feature's CPUID bit
    and the XCR0 state its detection reads from the Intel SDM (vol. 1,
-   §5.1.16.1, §12, §14.3, §15.2; vol. 2A, CMPXCHG16B); arm64's is "arm64". *)
+   §5.1.16.1, §12, §14.3, §15.2; vol. 2A, CMPXCHG16B); arm64's is "arm64"
+   followed by the features the system states, each after a "+" in
+   lexicographic order, as ACLE's "Function Multi Versioning" writes them. *)
 
 open Windtrap
 
 external runs_level : int -> int = "rig_test_runs_level"
+external runs_fp16 : unit -> int = "rig_test_runs_fp16"
 
 let levels = [ "x86-64"; "x86-64-v2"; "x86-64-v3"; "x86-64-v4" ]
 
@@ -168,8 +171,53 @@ let x86_host () =
 let host_names () =
   match Rig.instruction_set Rig.host with
   | "x86_64" -> mem string (Rig.arch Rig.host) levels
-  | "arm64" -> equal string "arm64" (Rig.arch Rig.host)
+  | "arm64" -> (
+      match String.split_on_char '+' (Rig.arch Rig.host) with
+      | "arm64" :: features ->
+          equal ~msg:"features in lexicographic order, once each"
+            (list string)
+            (List.sort_uniq String.compare features)
+            features
+      | _ -> fail ("another arch: " ^ Rig.arch Rig.host))
   | isa -> fail ("another instruction set: " ^ isa)
+
+let arm64_host () =
+  if Rig.instruction_set Rig.host <> "arm64" then
+    skip ~reason:"not an arm64 host" ()
+
+let features () = List.tl (String.split_on_char '+' (Rig.arch Rig.host))
+
+(* What [sysctl -n name] prints, without its newline: [None] where the
+   system has no such parameter or no sysctl. *)
+let sysctl name =
+  match
+    Unix.open_process_args_in "/usr/sbin/sysctl" [| "sysctl"; "-n"; name |]
+  with
+  | exception Unix.Unix_error _ -> None
+  | ic -> (
+      let out = In_channel.input_all ic in
+      match Unix.close_process_in ic with
+      | Unix.WEXITED 0 -> Some (String.trim out)
+      | _ -> None)
+
+(* rig reads one feature, fp16, from macOS's hw.optional.arm.FEAT_FP16
+   alone, a parameter no other system has: an arm64 host elsewhere has no
+   features. *)
+let half_arithmetic () =
+  arm64_host ();
+  let stated = sysctl "hw.optional.arm.FEAT_FP16" = Some "1" in
+  equal ~msg:"the features" (list string)
+    (if stated then [ "fp16" ] else [])
+    (features ())
+
+let runs_features () =
+  arm64_host ();
+  if not (List.mem "fp16" (features ())) then
+    skip ~reason:"the host states no feature this test runs" ();
+  match runs_fp16 () with
+  | -1 -> skip ~reason:"no child forks here" ()
+  | -2 -> fail "the child could not be waited for"
+  | status -> equal ~msg:"the child's status" int 0 status
 
 let cpuinfo_flags () =
   let lines =
@@ -208,6 +256,7 @@ let runs_its_level () =
   in
   match runs_level (index 0 levels) with
   | -1 -> skip ~reason:"no child forks here" ()
+  | -2 -> fail "the child could not be waited for"
   | status -> equal ~msg:"the child's status" int 0 status
 
 let memory_device () =
@@ -226,6 +275,8 @@ let () =
              test "names its instruction set and its level" host_names;
              test "states the level Linux's flags show" matches_linux;
              test "runs each instruction of its level" runs_its_level;
+             test "states the half arithmetic macOS lists" half_arithmetic;
+             test "runs the half arithmetic it states" runs_features;
              test "a memory device's arch is its instruction set" memory_device;
            ];
        ])

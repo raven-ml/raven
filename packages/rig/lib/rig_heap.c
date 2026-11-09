@@ -69,6 +69,24 @@ value caml_rig_instruction_set(value unit) {
 #endif
 }
 
+/* Whether macOS states that the processor has FEAT_FP16, half-precision
+   arithmetic in floating point and Advanced SIMD, as
+   hw.optional.arm.FEAT_FP16; false on another system. Linux states it as
+   HWCAP_FPHP and HWCAP_ASIMDHP, which rig reads once a run on Linux arm64
+   has checked them. */
+value caml_rig_arm64_fp16(value unit) {
+  (void)unit;
+#if defined(__APPLE__) && defined(__aarch64__)
+  int has = 0;
+  size_t size = sizeof has;
+  if (sysctlbyname("hw.optional.arm.FEAT_FP16", &has, &size, NULL, 0) != 0)
+    return Val_false;
+  return Val_bool(has == 1);
+#else
+  return Val_false;
+#endif
+}
+
 /* The words that the x86-64 psABI's levels read ([cpu.ml]): CPUID.01H:ECX,
    CPUID.07H.00H:EBX, CPUID.80000001H:ECX and the low half of XCR0, each 0
    where the processor has no such leaf. XGETBV runs only where

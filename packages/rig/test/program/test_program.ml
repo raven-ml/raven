@@ -1377,16 +1377,34 @@ let test_break (_, t, ds) =
 
 (* A device runs code of its own arch, and a device of an x86-64 level the
    code of each level below it: "the levels are cumulative" (x86-64 psABI,
-   §3.1.1). Code of another arch, of a level above, or of another family is
-   refused. *)
+   §3.1.1). An arm64 arch, "arm64" with features after a "+", as in
+   "arm64+fp16", runs arm64 code whose features are all among its own:
+   "dependent features are all available" (ACLE, "Function Multi
+   Versioning", "Selection"). Code of another arch, of a level above, of a
+   feature the device lacks, or of another family is refused. Another arch
+   that holds a "+", as AMD's target IDs do ("gfx90a:xnack+"), runs only its
+   own code. *)
 let x86_levels = [ "x86-64"; "x86-64-v2"; "x86-64-v3"; "x86-64-v4" ]
-let archs = x86_levels @ [ "arm64"; "gfx1201"; "polled" ]
+
+let arm64s =
+  [
+    ("arm64", []);
+    ("arm64+fp16", [ "fp16" ]);
+    ("arm64+bf16+fp16", [ "bf16"; "fp16" ]);
+  ]
+
+let archs =
+  x86_levels @ List.map fst arm64s
+  @ [ "gfx1201"; "gfx90a:xnack"; "gfx90a:xnack+"; "polled" ]
 
 let runs ~device code =
   let level a = List.find_index (String.equal a) x86_levels in
   match (level device, level code) with
   | Some d, Some c -> c <= d
-  | _ -> String.equal device code
+  | _ -> (
+      match (List.assoc_opt device arm64s, List.assoc_opt code arm64s) with
+      | Some has, Some needs -> List.for_all (fun f -> List.mem f has) needs
+      | _ -> String.equal device code)
 
 let of_arch =
   let opened = Hashtbl.create 8 in
@@ -1398,14 +1416,52 @@ let of_arch =
         Hashtbl.replace opened arch d;
         d
 
-let test_arch_order (code, device) =
+(* Whether load takes code of arch [code] on a device of arch [device] iff
+   [runs]. *)
+let loads ~runs code device =
   let d = of_arch device in
   let t = { (base d) with devices = [| code |] } in
-  if runs ~device code then
+  if runs then
     match G.load t [| d |] with
     | Ok _ -> ()
     | Error why -> fail why
   else raises_match ~msg:"load raises" broken (fun () -> G.load t [| d |])
+
+let test_arch_order (code, device) = loads ~runs:(runs ~device code) code device
+
+(* A device's instruction set: x86-64's for its levels, arm64's for an arm64
+   arch, and the arch itself for any other. *)
+let instruction_sets =
+  [
+    ("x86-64-v3", "x86_64");
+    ("arm64", "arm64");
+    ("arm64+bf16+fp16", "arm64");
+    ("gfx1201", "gfx1201");
+    ("gfx90a:xnack+", "gfx90a:xnack+");
+  ]
+
+let test_instruction_set (arch, isa) =
+  equal string isa (Rig.instruction_set (of_arch arch))
+
+(* arm64 archs of drawn features, written in lexicographic order as ACLE
+   writes them. *)
+let arm64_features = [ "bf16"; "dotprod"; "fp16"; "i8mm" ]
+
+let arm64_arch mask =
+  List.filteri (fun i _ -> (mask lsr i) land 1 = 1) arm64_features
+  |> List.fold_left (fun a f -> a ^ "+" ^ f) "arm64"
+
+let arm64_pairs =
+  let n = 1 lsl List.length arm64_features in
+  Gen.(pair (int_range 0 (n - 1)) (int_range 0 (n - 1)))
+
+let inclusion (code, device) =
+  let subset = code land device = code in
+  cover ~share:0.05 "the code's features are the device's" (code = device);
+  cover ~share:0.1 "fewer features than the device's"
+    (subset && code <> device);
+  cover ~share:0.3 "a feature the device lacks" (not subset);
+  loads ~runs:subset (arm64_arch code) (arm64_arch device)
 
 let test_unborrowable () =
   let a, _ = polled ~peers:false "lone-a"
@@ -3896,6 +3952,11 @@ let tests =
              (fun code -> List.map (fun device -> (code, device)) archs)
              archs)
           test_arch_order;
+        cases "a device's instruction set is" ~id:fst instruction_sets
+          test_instruction_set;
+        prop
+          "an arm64 device loads code whose features are among its own"
+          arm64_pairs inclusion;
         cases "load answers Error for"
           ~id:(fun (n, _, _) -> n)
           (refusals @ host_refusals) test_refusal;

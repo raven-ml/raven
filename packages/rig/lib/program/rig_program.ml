@@ -465,14 +465,28 @@ let check_memory t sizes =
   in
   Iarray.iter step t.steps
 
-(* Whether a device of arch [device] runs code compiled for [arch]: its own,
-   and on x86-64 that of a level at most its own, since "the levels are
-   cumulative" (x86-64 psABI, §3.1.1). *)
+(* The features an arm64 arch names after "arm64", each after a "+";
+   [None] for another arch. *)
+let arm64_features arch =
+  match String.split_on_char '+' arch with
+  | "arm64" :: features -> Some features
+  | _ -> None
+
+(* Whether a device of arch [device] runs code compiled for [arch]: its own;
+   on x86-64 that of a level at most its own, since "the levels are
+   cumulative" (x86-64 psABI, §3.1.1); and on arm64 that of an arm64 arch
+   whose features are all its own, since code runs where its "dependent
+   features are all available" (ACLE, "Function Multi Versioning",
+   "Selection"). Features compare by name, so a feature added later needs no
+   table here. *)
 let runs ~device arch =
   let level a = List.find_index (String.equal a) Rig.x86_levels in
   match (level device, level arch) with
   | Some d, Some a -> a <= d
-  | _ -> device = arch
+  | _ -> (
+      match (arm64_features device, arm64_features arch) with
+      | Some has, Some needs -> List.for_all (fun f -> List.mem f has) needs
+      | _ -> device = arch)
 
 (* [sizes] gives known extents. Only the agent knows a remote rail's extent;
    it checks the bounds and whole-memory claims again before loading. *)

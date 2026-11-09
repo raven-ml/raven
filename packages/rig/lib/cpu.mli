@@ -5,14 +5,16 @@
 
 (** The host's processor: the arch {!Rig.host} states ({!Rig.arch}), from the
     instruction set this code is compiled for and, on x86-64, the CPUID and
-    XCR0 words the x86-64 psABI's levels read. *)
+    XCR0 words the x86-64 psABI's levels read, and on arm64 the features the
+    system states. *)
 
 val host_arch : string
 (** [host_arch] is this machine's host's {!Rig.arch}, read when rig starts. *)
 
 val instruction_set : string -> string
-(** [instruction_set arch] is ["x86_64"] for a level of {!x86_levels} and
-    [arch] for any other. *)
+(** [instruction_set arch] is ["x86_64"] for a level of {!x86_levels},
+    ["arm64"] for an arm64 arch, as ["arm64+fp16"], and [arch] for any
+    other. *)
 
 val x86_levels : string list
 (** [x86_levels] is the x86-64 psABI's levels, in order. *)

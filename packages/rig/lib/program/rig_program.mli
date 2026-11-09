@@ -309,8 +309,9 @@ type input = { device : int; bytes : int }
 type t = {
   devices : string iarray;
       (** The {!Rig.arch} each device's code is compiled for, checked at
-          load: a device runs code of its own arch, and a host of an x86-64
-          level also runs code of each level below it. *)
+          load: a device runs code of its own arch, a host of an x86-64
+          level also runs code of each level below it, and an arm64 host
+          code of each arm64 arch whose features are among its own. *)
   memory : memory iarray;
   images : image iarray;
   inputs : input iarray;
@@ -374,8 +375,9 @@ val load :
     them:
     {ul
     {- [devices] are not as many as [t]'s, or a device does not run code of
-       [t]'s arch for it: its {!Rig.arch} differs, and is not an x86-64 level
-       at or above [t]'s;}
+       [t]'s arch for it: its {!Rig.arch} differs, and is neither an x86-64
+       level at or above [t]'s nor an arm64 arch with each of [t]'s
+       features;}
     {- an index is outside its array, a size is negative, or an [init] or a
        view lies outside its memory;}
     {- a leaf in an image or in memory of one copy names memory of two

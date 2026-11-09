@@ -40,12 +40,13 @@
     85
     (run %{test})))))
 
-; test_arch's stub runs the x86-64 levels' instructions in a forked child.
+; test_arch's stub runs the instructions of the host's arch in a forked child;
+; the test runs macOS's sysctl through unix.
 
 (test
  (name test_arch)
  (modules test_arch)
- (libraries rig windtrap)
+ (libraries rig unix windtrap)
  (foreign_stubs
   (language c)
   (names test_arch_stubs)))

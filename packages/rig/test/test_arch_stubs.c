@@ -3,21 +3,41 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The x86-64 psABI's example instruction of each feature of a level (table
-   "Micro-Architecture Levels"), run in a forked child, so that one the
-   processor lacks kills the child alone. AVX512VL has no example: a 256-bit
+/* An instruction of each feature a host's arch states, run in a forked
+   child, so that one the processor lacks kills the child alone.
+
+   On x86-64, the psABI's example instruction of each feature of a level
+   (table "Micro-Architecture Levels"). AVX512VL has no example: a 256-bit
    EVEX instruction stands for it. LZCNT runs as BSR on a processor without
-   it, so its result is checked. */
+   it, so its result is checked. On arm64, FEAT_FP16's half arithmetic,
+   scalar and Advanced SIMD. */
 
 #include <stdint.h>
 
 #define CAML_NAME_SPACE
 #include <caml/mlvalues.h>
 
-#if defined(__x86_64__) && !defined(_WIN32)
+#if !defined(_WIN32) && (defined(__x86_64__) || defined(__aarch64__))
 #include <errno.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+/* The status of a child that exits with [body(arg)]: its exit code, or 128
+   plus the signal that killed it; -1 if no child forks, and -2 if it cannot
+   be waited for. */
+static int child(int (*body)(int), int arg) {
+  pid_t pid = fork();
+  if (pid < 0) return -1;
+  if (pid == 0) _exit(body(arg));
+  int status;
+  while (waitpid(pid, &status, 0) < 0)
+    if (errno != EINTR) return -2;
+  if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+  return WEXITSTATUS(status);
+}
+#endif
+
+#if defined(__x86_64__) && !defined(_WIN32)
 
 /* The exit status of a child whose LZCNT counted as BSR. */
 #define BSR 3
@@ -67,30 +87,50 @@ __attribute__((noinline)) static void v4(void) {
   __asm__ volatile("vzeroupper" ::: "xmm0", "xmm1", "xmm2");
 }
 
-/* The status of a child that runs the instructions of the levels above the
-   baseline up to [level] (an index of the psABI's levels): its exit code,
-   or 128 plus the signal that killed it; -1 if no child forks. */
+/* The instructions of the levels above the baseline up to [n], an index of
+   the psABI's levels. */
+static int levels(int n) {
+  if (n >= 1) v2();
+  if (n >= 2 && !v3()) return BSR;
+  if (n >= 3) v4();
+  return 0;
+}
+
+/* The status of a child that runs the instructions of the levels up to
+   [level] ([child]). */
 value rig_test_runs_level(value level) {
-  int n = Int_val(level);
-  pid_t pid = fork();
-  if (pid < 0) return Val_int(-1);
-  if (pid == 0) {
-    if (n >= 1) v2();
-    if (n >= 2 && !v3()) _exit(BSR);
-    if (n >= 3) v4();
-    _exit(0);
-  }
-  int status;
-  while (waitpid(pid, &status, 0) < 0)
-    if (errno != EINTR) return Val_int(-1);
-  if (WIFSIGNALED(status)) return Val_int(128 + WTERMSIG(status));
-  return Val_int(WEXITSTATUS(status));
+  return Val_int(child(levels, Int_val(level)));
 }
 
 #else
 
 value rig_test_runs_level(value level) {
   (void)level;
+  return Val_int(-1);
+}
+
+#endif
+
+#if defined(__aarch64__) && !defined(_WIN32)
+
+static int fp16(int unused) {
+  (void)unused;
+  __asm__ volatile(".arch_extension fp16\n\t"
+                   "fmul v0.8h, v1.8h, v2.8h\n\t"
+                   "fadd h0, h1, h2" ::: "v0", "v1", "v2");
+  return 0;
+}
+
+/* The status of a child that runs FEAT_FP16's instructions ([child]). */
+value rig_test_runs_fp16(value unit) {
+  (void)unit;
+  return Val_int(child(fp16, 0));
+}
+
+#else
+
+value rig_test_runs_fp16(value unit) {
+  (void)unit;
   return Val_int(-1);
 }
 
