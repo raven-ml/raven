@@ -31,12 +31,17 @@ let u32 = 0x1p-24
 let round32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
 (* An accumulator: its dtype, its unit roundoff [u], its least positive
-   subnormal and the factor of [ln t] in nx.cpu's [ε], [λ + 2] for [Log]
-   within [λu] (nx_cpu.mli). *)
-type 'a accum = { acc : (float, 'a) D.t; u : float; least : float; ln : float }
+   subnormal and nx.cpu's [λ], [Log] erring by a relative [e{^λu} - 1]
+   (nx_cpu.mli). *)
+type 'a accum = {
+  acc : (float, 'a) D.t;
+  u : float;
+  least : float;
+  lambda : float;
+}
 
-let in32 = { acc = D.Float32; u = u32; least = 0x1p-149; ln = 5. }
-let in64 = { acc = D.Float64; u = 0x1p-53; least = 0x1p-1074; ln = 7. }
+let in32 = { acc = D.Float32; u = u32; least = 0x1p-149; lambda = 3. }
+let in64 = { acc = D.Float64; u = 0x1p-53; least = 0x1p-1074; lambda = 5. }
 
 (* Double-word numbers: [hi + lo] unevaluated, [|lo|] at most half an ulp
    of [hi]. [two_sum] and the product by [Float.fma] are error-free (Knuth;
@@ -296,12 +301,15 @@ let score_error ac c h i j ~a s =
   | Bias _ -> (dot *. (1. +. u)) +. (u *. Float.abs s)
 
 (* nx.cpu's bound for attention, nx.mli's [ε], of a row of [t] keys whose
-   [lse] is [r]: [(13 n + 9 + (λ + 2) ln t) u + u |r|] for [n] blocks of 64
-   keys. *)
+   [lse] is [r]:
+   [e{^λu} (13n + 9 + ln t) u' + (e{^λu} - 1) ln t + u' |r|] for [n] blocks
+   of 64 keys, [u' = u / (1 - u)]. *)
 let logsumexp_bound ac t r =
-  let n = (t + 63) / 64 in
-  ((Float.of_int ((13 * n) + 9) +. (ac.ln *. Float.log (Float.of_int t))) *. ac.u)
-  +. (ac.u *. Float.abs r)
+  let n = (t + 63) / 64 and ln = Float.log (Float.of_int t) in
+  let u' = ac.u /. (1. -. ac.u) and grow = Float.exp (ac.lambda *. ac.u) in
+  (grow *. (Float.of_int ((13 * n) + 9) +. ln) *. u')
+  +. ((grow -. 1.) *. ln)
+  +. (u' *. Float.abs r)
 
 (* The definition's own bound, to first order in float64's [u], for a row of
    [t] keys: each [e{^(s - m)}] within [3u] relative, so [l] too; [lse]
@@ -537,7 +545,8 @@ let agrees ac c ~uq ~tiny (o, lse) (e : exact) =
         let tk = Float.of_int c.tk in
         let w =
           ((1. +. u) *. ((2. *. eta) +. eps))
-          +. (((2. *. e.size.(row)) +. Float.log tk +. 5.) *. u)
+          +. (((2. *. e.size.(row)) +. Float.log tk) *. u)
+          +. (5. *. u /. (1. -. u))
         in
         let weight = Float.expm1 w in
         for d = 0 to c.dv - 1 do

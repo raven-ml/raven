@@ -7,7 +7,8 @@
    Nx_kernel.S.attention states for the dtypes of its arrays and of its
    program, for its program's number of operands and outputs, for a
    coordinate past the query's rank and for a visibility that reads the
-   score, each before any write; a program that fits is computed. *)
+   score, each before any write; a program that fits is computed; and the
+   bounds of q·k and of o's weighted sum. *)
 
 open Windtrap
 module A = Nx_array
@@ -183,12 +184,212 @@ let check (b : Support.backend) (msg, want, call) =
         (Array.make (Array.length held) sentinel)
         held
 
+(* Bounds *)
+
+(* A query's dtype and the accumulator's. *)
+type dtypes = F32 | F64 | F16 | Bf16 | F32_in_f64
+
+let pp_dtypes ppf d =
+  Format.pp_print_string ppf
+    (match d with
+    | F32 -> "float32"
+    | F64 -> "float64"
+    | F16 -> "float16 in float32"
+    | Bf16 -> "bfloat16 in float32"
+    | F32_in_f64 -> "float32 in float64")
+
+let accumulator = function
+  | F64 | F32_in_f64 -> D.Any D.Float64
+  | F32 | F16 | Bf16 -> D.Any D.Float32
+
+(* The unit roundoff of the values' dtype where weights may round to it:
+   float16's and bfloat16's. *)
+let value_roundoff = function
+  | F16 -> 0x1p-11
+  | Bf16 -> 0x1p-8
+  | F32 | F64 | F32_in_f64 -> 0.
+
+(* A large element: a power of two the query's dtype holds, past the
+   accumulator's precision where the dtype's range reaches, so that adding
+   1 to it rounds. *)
+let large = function
+  | F64 -> 0x1p54
+  | F16 -> 0x1p15
+  | F32 | Bf16 | F32_in_f64 -> 0x1p25
+
+
+(* A case: [tk] keys of [dk] and [dv] elements, a query [q], keys [k] and
+   values [v], C-contiguous [[1; 1; dk]], [[1; tk; dk]] and [[1; tk; dv]]. *)
+type case = {
+  d : dtypes;
+  tk : int;
+  dk : int;
+  dv : int;
+  q : float array;
+  k : float array;
+  v : float array;
+}
+
+let pp_case ppf c =
+  let floats =
+    Format.pp_print_list ~pp_sep:Format.pp_print_space Format.pp_print_float
+  in
+  Format.fprintf ppf "@[%a, tk %d, dk %d, dv %d,@ q [%a],@ k [%a],@ v [%a]@]"
+    pp_dtypes c.d c.tk c.dk c.dv floats (Array.to_list c.q) floats
+    (Array.to_list c.k) floats (Array.to_list c.v)
+
+let dtypes = Gen.of_list ~pp:pp_dtypes [ F32; F64; F16; Bf16; F32_in_f64 ]
+
+(* Elements of [d]: [±large d] and [±1] often, so that sums cancel, and
+   others in [[-2, 2]]. *)
+let element d =
+  let m = large d in
+  Gen.frequency
+    [
+      (2, Gen.of_list [ m; -.m ]);
+      (2, Gen.of_list [ 1.; -1. ]);
+      (1, Gen.float_range (-2.) 2.);
+    ]
+
+(* Values [+M], [-M] and [1]. A sum that meets [M] and [1] rounds, and
+   one that also meets [-M] cancels: a group summed at once, aligned to [M]
+   and truncated, may lose [1]s that every order of fused multiply-adds
+   keeps, which the normwise bound allows. *)
+let value d =
+  let m = large d in
+  Gen.of_list [ m; -.m; 1. ]
+
+(* [o]'s cases: a zero query, [tk] a power of two up to four blocks of 64
+   keys. *)
+let sums =
+  let open Gen in
+  with_pp pp_case
+  @@ let* d = dtypes in
+  let* tk = map (fun e -> 1 lsl e) (int_range 0 8) in
+  let* dk = int_range 1 4 in
+  let* dv = int_range 1 3 in
+  let+ k = array ~size:(constant (tk * dk)) (element d)
+  and+ v = array ~size:(constant (tk * dv)) (value d) in
+  { d; tk; dk; dv; q = Array.make dk 0.; k; v }
+
+(* [q·k]'s cases: one key. *)
+let dots =
+  let open Gen in
+  with_pp pp_case
+  @@ let* d = dtypes in
+  let* dk = int_range 1 40 in
+  let+ q = array ~size:(constant dk) (element d)
+  and+ k = array ~size:(constant dk) (element d) in
+  { d; tk = 1; dk; dv = 1; q; k; v = [| 1. |] }
+
+(* [c]'s attention on [b] without mask or score, at scale 1, as the
+   elements it stored [q], [k] and [v] as, then [o] and [lse]. *)
+let attend (b : Support.backend) c =
+  let go (type r a) (dt : (float, r) D.t) (acc : (float, a) D.t) =
+    let (module K : Nx_kernel.S) = b.kernels in
+    let make shape xs =
+      Kernels_cases.on b (A.of_array dt (Iarray.of_array shape) xs)
+    in
+    let q = make [| 1; 1; c.dk |] c.q in
+    let k = make [| 1; c.tk; c.dk |] c.k in
+    let v = make [| 1; c.tk; c.dv |] c.v in
+    let o = A.create b.device acc [| 1; 1; c.dv |] in
+    let lse = A.create b.device acc [| 1; 1 |] in
+    let answer =
+      K.attention (plain (D.Any acc) []) ~scale:1. ~o ~lse q
+        (Nx_kernel.Dense { k; v })
+        [||]
+    in
+    equal ~msg:"attention's answer" Elements.answer A.Done answer;
+    let floats x = A.to_array (Kernels_cases.host x) in
+    ({ c with q = floats q; k = floats k; v = floats v }, floats o, floats lse)
+  in
+  b.around (fun () ->
+      match c.d with
+      | F32 -> go D.Float32 D.Float32
+      | F64 -> go D.Float64 D.Float64
+      | F16 -> go D.Float16 D.Float32
+      | Bf16 -> go D.Bfloat16 D.Float32
+      | F32_in_f64 -> go D.Float32 D.Float64)
+
+(* [Σ xᵢ yᵢ] as an unevaluated pair [hi + lo], and [Σ |xᵢ yᵢ|] rounded.
+   [hi]'s errors and the products' are exact, at most [u] times [Σ|xᵢ yᵢ|]
+   each with [u] float64's, and [lo] adds the [2n] of them with [2n]
+   roundings, so [hi + lo] is within [slack n] of the exact sum: at most
+   [2n (n + 2) u²] times [Σ|xᵢ yᵢ|]. *)
+let exact x y =
+  let hi = ref 0. and lo = ref 0. and mag = ref 0. in
+  for i = 0 to Array.length x - 1 do
+    let p = x.(i) *. y.(i) in
+    let s, t = Contract_cases.two_sum !hi p in
+    hi := s;
+    lo := !lo +. t +. Float.fma x.(i) y.(i) (-.p);
+    mag := !mag +. Float.abs p
+  done;
+  (!hi, !lo, !mag)
+
+let slack n mag = Float.of_int (2 * n * (n + 2)) *. 0x1p-106 *. mag
+
+(* [err] at most [bound]: the subtractions that computed [err] round it by
+   at most a relative [2{^-52}]. *)
+let within ~msg ~bound err =
+  at_most ~msg float_exact ~than:(bound *. (1. +. 0x1p-51)) err
+
+(* A zero query gives every visible key the output [0], so each weight is
+   [exp δ / tk], [|δ|] at most the [δ̄] the library states, and is applied
+   within [u{_v}] of that where it rounds weights to the values' dtype
+   [v]: [c w ≤ 1] and [w] is normal. Each element of [o], in the
+   accumulator, is then within
+   [((e{^δ̄} - 1) + e(tk) e{^δ̄} + u{_v} e{^δ̄} (1 + e(tk))) Σ|v| / tk] of
+   the values' mean (nx_kernel.mli). *)
+let law_sum (b : Support.backend) c =
+  cover "keys in several blocks" (c.tk > 64);
+  cover "values that cancel"
+    (Array.exists (fun x -> x > 1.) c.v && Array.exists (fun x -> x < 0.) c.v);
+  let c, o, _ = attend b c in
+  let n = Float.of_int c.tk and acc = accumulator c.d in
+  let e = b.attention.factor acc c.tk in
+  let grow = Float.exp (b.attention.zero_weights acc c.tk) in
+  let uv = if b.attention.rounds_weights then value_roundoff c.d else 0. in
+  let factor =
+    grow -. 1. +. (e *. grow) +. (uv *. grow *. (1. +. e))
+  in
+  for j = 0 to c.dv - 1 do
+    let column = Array.init c.tk (fun t -> c.v.((t * c.dv) + j)) in
+    let hi, lo, mag = exact column (Array.make c.tk 1.) in
+    within
+      ~msg:(Printf.sprintf "o at %d, %h against the mean %h" j o.(j) (hi /. n))
+      ~bound:((factor *. mag /. n) +. (slack c.tk mag /. n))
+      (Float.abs (o.(j) -. (hi /. n) -. (lo /. n)))
+  done
+
+(* With one key, the exact log-sum-exp is the score, [q·k] times the scale
+   [1], which multiplies exactly. [lse] is within [ε] of it, and it within
+   [e(dk) Σ|qᵢkᵢ|] of the exact [q·k] (nx_kernel.mli). *)
+let law_dot (b : Support.backend) c =
+  let c, _, lse = attend b c in
+  let hi, lo, mag = exact c.q c.k in
+  cover "terms that cancel" (Float.abs (hi +. lo) < 0.5 *. mag);
+  let acc = accumulator c.d in
+  let bound =
+    (b.attention.factor acc c.dk *. mag)
+    +. b.attention.epsilon acc 1 lse.(0)
+    +. slack c.dk mag
+  in
+  within
+    ~msg:(Printf.sprintf "lse %h against q·k %h" lse.(0) hi)
+    ~bound
+    (Float.abs (lse.(0) -. hi -. lo))
+
 let suite (b : Support.backend) =
   group b.name
     [
       cases ~id:(fun (msg, _, _) -> msg)
         "refuses the dtypes and programs it does not take, before any write"
         (table b) (check b);
+      prop "o is within its bound of the weighted sum, at weights 1/tk" sums
+        (law_sum b);
+      prop "q·k is within its bound of the exact sum" dots (law_dot b);
     ]
 
 let () =

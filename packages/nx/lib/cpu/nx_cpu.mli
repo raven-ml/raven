@@ -423,16 +423,27 @@
     block.
 
     For a row that reads [t] keys in [n = ⌈t / 64⌉] blocks, barring
-    overflow and underflow, to first order in the accumulator's unit
-    roundoff [u], [lse] is within [(7 n + 9 + (λ + 1) ln t) u + u |lse|] of
-    the exact log-sum-exp of the row's computed scores, and each weight [o]
-    applies within a relative [(13 n + 9 + 2b + ln t) u] of its exact one,
-    [b] bounding the visible scores' magnitudes, {!Nx_kernel.Prog.Exp}
-    being within 2 ulps and {!Nx_kernel.Prog.Log} within 1 in float32 and
-    2 in float64, [λ] being [3] and [5]: attention.c derives both.
-    The bound {!Nx.attention} reads as its [ε], which covers both, is
-    [(13 n + 9 + (λ + 2) ln t) u + u |lse|]. The value product takes the
-    weights in the accumulator. *)
+    overflow and underflow, let [u] be the accumulator's unit roundoff,
+    [u' = u / (1 - u)], [b] a bound on the visible scores' magnitudes and
+    [L] the exact log-sum-exp of the row's computed scores. In log space a
+    rounding errs by at most [u'], as [|ln (1 + δ)| ≤ u'] where [|δ| ≤ u],
+    and {!Nx_kernel.Prog.Exp}, within 2 ulps, by at most [5u'].
+    {!Nx_kernel.Prog.Log}, within 1 ulp in float32 and 2 in float64, errs
+    by a relative [e{^λu} - 1], [λ] being [3] and [5]. Then [l] is within
+    [(7n + 9 + ln t) u'] of its exact value in log space, [lse] is within
+    [e{^λu} (7n + 9 + ln t) u' + (e{^λu} - 1) ln t + u' |lse|] of [L], and
+    each weight [w] for an element of [o], which holds that element's
+    roundings of [α a] and of the division by [l], has
+    [|ln w - (x - L)| ≤ 2bu + (13n + 9 + ln t) u'], as attention.c
+    derives. nx.cpu's [ε] ({!Nx_kernel.section-attention}) is
+    [e{^λu} (13n + 9 + ln t) u' + (e{^λu} - 1) ln t + u' |lse|], which
+    bounds [lse]'s error and keeps each weight's [δ] within
+    [(1 + u) ε + (2b + ln t) u + 5u'].
+
+    A score's [q·k] rounds [dk] times, and [o]'s sum rounds a term once at
+    each visible pair's fused product from its own on, so both are within
+    nx.cpu's error factor ({!section-contraction_bound}). The value product
+    takes the weights in the accumulator. *)
 
 (** {1:matrices Matrices}
 

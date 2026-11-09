@@ -45,31 +45,43 @@
    where they leave the block mixed by running it at lead index 0 and
    head 0 (shared).
 
-   Bound (nx_cpu.mli), to first order in u, the accumulator's unit
-   roundoff (2^-24 or 2^-53), barring overflow and underflow, for a row of
-   t keys in n blocks, scores s within [-b, b], m the final maximum; exp
-   within 2 ulps, so its relative error is at most 5u (2 ulps of the
-   correctly rounded value, 2.5 of the exact), and log within 1 ulp in
-   float32 and 2 in float64, λu with λ 3 or 5:
+   Bound (nx_cpu.mli), barring overflow and underflow, for a row of t
+   keys in n blocks, scores s within [-b, b], m the final maximum, u the
+   accumulator's unit roundoff (2^-24 or 2^-53) and u' = u / (1 - u). The
+   errors are in log space, which composes by addition: a rounding
+   multiplies by 1 + δ, |δ| <= u, and |ln (1 + δ)| <= u'. exp is within 2
+   ulps, ranks from the correctly rounded value, each rank at most a
+   factor 1 + 2u: 4u + u' <= 5u'. log is within k ulps (1 in float32, 2 in
+   float64) of the correctly rounded value, so within
+   (1 + u) (1 + 2u)^k - 1 <= e^(λu) - 1 relative, λ = 2k + 1.
    1. Exponents. p_j = exp (s_j - m_k) and α_i = exp (m_(i-1) - m_i) each
-      round their difference once, u times its size. A key's weight in l
-      and acc is p_j times the α of each later block, whose differences
-      telescope to m - s_j, as m only rises: at most u (m - s_j) <= 2bu in
-      all, and, weighted by the weights, at most u ln t (Σ w x <= ln t for
-      w proportional to e^-x, x >= 0, one x 0).
-   2. l. A key's term passes p_j's exp (5u), its block's sum (at most 7
-      additions in its lane and 3 in the lanes' tree, 10u) and the addition
-      into l (u); each later block multiplies l by α (exp 5u, product u)
-      and adds into it (u): 7u. So l is within (7n + 9) u + u ln t
-      relative.
-   3. lse = m + log l: log errs by λu |log l| <= λu ln t, the addition by
-      u |lse|: (7n + 9 + (λ + 1) ln t) u + u |lse|.
-   4. o's weights, p_j Π α / l: the exponents' 2bu, p_j's exp (5u), each
-      later block's α (exp 5u, acc's product u), l's (7n + 9) u + u ln t
-      and the division's u: a relative (13n + 9 + 2b + ln t) u. The sums
-      of products add γ(t + 1, 2u) M as nx.mli's chain does.
-   The ε nx.mli reads covers 3 and 4 there:
-   (13n + 9 + (λ + 2) ln t) u + u |lse|.
+      round their difference once, by at most u times its size. A key's
+      weight in l and acc is p_j times the α of each later block, whose
+      differences telescope to m - s_j, as m only rises: at most
+      u (m - s_j) <= 2bu in all. Averaged over l's terms, x_j = m - s_j
+      >= 0, one of them 0: ln Σ π_j e^(u x_j), π_j = e^(-x_j) / Σ e^(-x),
+      is the integral over β in [1 - u, 1] of the mean of x under
+      e^(-βx), and β times that mean is its entropy less ln Σ e^(-βx),
+      at most ln t: u' ln t in all, and -u ln t below.
+   2. l. A key's term passes p_j's exp (5u'), its block's sum (at most 7
+      additions in its lane and 3 in the lanes' tree, 10u') and the
+      addition into l (u'); each later block multiplies l by α (exp 5u',
+      product u') and adds into it (u'): 7u'. With 1's u' ln t, the
+      computed l' is within (7n + 9 + ln t) u' of l = Σ e^(s_j - m) in
+      log space.
+   3. lse = m + log l', l in [1, t]: log errs by
+      (e^(λu) - 1) |ln l'| <= (e^(λu) - 1) (ln t + (7n + 9 + ln t) u'), the
+      addition by u' |lse|: e^(λu) (7n + 9 + ln t) u' + (e^(λu) - 1) ln t
+      + u' |lse|.
+   4. A weight at an element of o, p_j Π α / l with that element's
+      roundings of α acc and of the division: the exponents' 2bu, p_j's
+      exp (5u'), each later block's α (exp 5u', product u'), l's
+      (7n + 9 + ln t) u' and the division's u': within
+      2bu + (13n + 9 + ln t) u' of s_j - L. The sums of products round a
+      term once at each later visible pair's fused product: γ(t), within
+      nx.cpu's error factor γ(t + 1).
+   The ε nx_cpu.mli states covers 3 and 4's (13n + 9 + ln t) u':
+   e^(λu) (13n + 9 + ln t) u' + (e^(λu) - 1) ln t + u' |lse|.
 
    At the end o = acc / l + 0, rounded once to o's dtype, and
    lse = m + log l; a row of l = 0 has o = +0 and lse = -inf. Scores,

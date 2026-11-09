@@ -906,8 +906,8 @@ let law_attention_keys (type s) (dt : (float, s) Nx.dtype) c =
       (Array.init (numel s) (fun k ->
            c.mag *. Float.sin ((Float.of_int k *. 0.37) +. seed +. c.seed)))
   in
-  (* [u], and the factor of [ln tk] in nx.cpu's [ε]. *)
-  let u, lnf = match dt with Float64 -> (0x1p-53, 7.) | _ -> (0x1p-24, 5.) in
+  (* [u], and nx.cpu's [λ]: its [Log] errs by a relative [e{^λu} - 1]. *)
+  let u, lambda = match dt with Float64 -> (0x1p-53, 5.) | _ -> (0x1p-24, 3.) in
   let dk = 8 in
   let page = 25 in
   let tk = if c.paged then 8 * page else c.tk in
@@ -926,11 +926,15 @@ let law_attention_keys (type s) (dt : (float, s) Nx.dtype) c =
   let eta = Float.of_int ((2 * dk) + 4) *. u *. a in
   let ln = Float.log (Float.of_int tk) in
   let e lse =
-    (Float.of_int ((13 * ((tk + 63) / 64)) + 9) +. (lnf *. ln)) *. u
-    +. (u *. Float.abs lse)
+    let u' = u /. (1. -. u) and grow = Float.exp (lambda *. u) in
+    (grow *. (Float.of_int ((13 * ((tk + 63) / 64)) + 9) +. ln) *. u')
+    +. ((grow -. 1.) *. ln)
+    +. (u' *. Float.abs lse)
   in
   let e4 lse = ((4. +. 5. +. (6. *. Float.log 4.)) *. u) +. (u *. Float.abs lse) in
   let rest = ((2. *. a) +. ln +. 5.) *. u in
+  (* [w]'s terms past [2η + ε], nx.mli's [(2b + ln tk) u + 5u/(1 - u)]. *)
+  let rest_w = (((2. *. a) +. ln) *. u) +. (5. *. u /. (1. -. u)) in
   let gamma n = Float.of_int n *. 2. *. u in
   let mask p = Nx.(less_equal (mul_s p.q (Int64.of_int (tk / 5))) p.k) in
   let lengths = Nx.create Nx.int64 [| 2 |] [| Int64.of_int (tk - 37); Int64.of_int tk |] in
@@ -972,7 +976,7 @@ let law_attention_keys (type s) (dt : (float, s) Nx.dtype) c =
         let one = e l and cut = (3. *. Float.max part (e l)) +. e4 l +. rest in
         at_most ~msg:"lse" float_exact
           ~than:((3. *. eta) +. one +. cut) (Float.abs (l -. l'));
-        let w eta eps = (2. *. eta) +. eps +. rest in
+        let w eta eps = (2. *. eta) +. eps +. rest_w in
         let tol =
           (w eta one +. gamma (tk + 1) +. w (2. *. eta) cut
           +. gamma (tk + c.devices + 1))

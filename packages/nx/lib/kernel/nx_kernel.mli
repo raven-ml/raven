@@ -423,12 +423,14 @@ val full_precision : ('v, 's) Nx_array.Dtype.t -> bool
     each index: a query row and a key. It computes in an {e accumulator},
     [float32] or [float64]. A pair's {e score} is [s × q·k], [s] the scale
     rounded to the accumulator and [q·k] the sum of the row's and the key's
-    products, each element widened to the accumulator, in an association
-    its library states. A program over the pair computes two outputs from
-    its operand [0], the score, and its loads, operands [1] on, each of the
-    loop's shape: output [0], a [bool], which reads no score, and output
-    [1], in the accumulator. Its [Coord] nodes read the loop's axes:
-    [rank - 2] the query row, [rank - 1] the key.
+    [dk] products, each element widened to the accumulator, in an order its
+    library states. Barring overflow and underflow, [q·k] is within
+    [e(dk) Σ|qᵢkᵢ|] of the exact sum, [e] the library's error factor
+    ({!section-bounds}), at most [γ(2dk + 2)]. A program over the pair
+    computes two outputs from its operand [0], the score, and its loads,
+    operands [1] on, each of the loop's shape: output [0], a [bool], which
+    reads no score, and output [1], in the accumulator. Its [Coord] nodes
+    read the loop's axes: [rank - 2] the query row, [rank - 1] the key.
 
     A pair is {e visible} where its key is before its lead index's length,
     [tk] without lengths, where a paged key's table entry is in \[[0],
@@ -436,12 +438,28 @@ val full_precision : ('v, 's) Nx_array.Dtype.t -> bool
     of output [1] over its visible pairs, and its [o] the sum of their
     values weighted by [exp (x - lse)], [x] each one's output [1], a sum
     that starts from [+0], so a sum of zeros is [+0]. A row of no visible
-    pair, or of only [-∞] outputs, has [o = +0] and [lse = -∞].
-    A visible pair's value counts where its weight underflows to [0]: a
-    NaN there makes the row's [o] a NaN. A value whose key is past the
-    row's length, or whose table entry is outside \[[0], [pages]), is never
-    read. Whether a NaN or an infinity at another hidden pair reaches [o]
-    is the library's to state. *)
+    pair, or of only [-∞] outputs, has [o = +0] and [lse = -∞]. A visible
+    pair's value counts where its weight underflows to [0]: a NaN there
+    makes the row's [o] a NaN. A value whose key is past the row's length,
+    or whose table entry is outside \[[0], [pages]), is never read.
+    Whether a NaN or an infinity at another hidden pair reaches [o] is the
+    library's to state.
+
+    Barring overflow and underflow, at a row with a visible pair, let [L]
+    be the exact log-sum-exp of its visible outputs [1], [b] a bound on
+    their magnitudes, [u] the accumulator's unit roundoff and
+    [u' = u / (1 - u)]. Each library states a bound [ε] on [|lse - L|].
+    Weights are per element of [o]: a library may compute and round each
+    element's weight for a pair apart. Each weight [w] it computes in the
+    accumulator is [exp (x - L + δ)], with
+    [|δ| ≤ (1 + u) ε + (2b + ln tk) u + 5u']. Where the values are
+    [float16] or [bfloat16], it may apply [r(c w) / c] in place of [w],
+    the quotient exact, [r] the rounding to nearest, ties to even, into
+    their dtype, and [c] a factor it chooses with [c ≥ 1] and [c w ≤ 1].
+    Before its rounding into its dtype, an element of [o] sums the values
+    [vⱼ] of the row's visible pairs times the weights [wⱼ] it applies to
+    them at that element, in an order its library states, within
+    [e(tk) Σ|wⱼ||vⱼ|] of [Σ wⱼ vⱼ], [e] as for [q·k]. *)
 
 (** The type for keys and values. [Dense] holds [k] [[lead…; hk; tk; dk]]
     and [v] [[lead…; hk; tk; dv]]. [Paged] holds pools [k]
@@ -1006,8 +1024,9 @@ module type S = sig
       program over its loads [loads], into [o] and [lse], whose dtype is
       the accumulator. [lengths], [[lead…]], bounds each lead index's
       keys. The scores, their maxima and sums, the weights and [lse]
-      compute in the accumulator, and each element of [o] rounds once into
-      [o]'s dtype.
+      compute in the accumulator, save a weight applied through a rounding
+      to the values' dtype ({!section-attention}), and each element of [o]
+      rounds once into [o]'s dtype.
 
       It answers [Wrong_dtype] unless [q], [k] and [v] are of one dtype,
       [float16], [bfloat16], [float32] or [float64], no wider than the
@@ -1017,6 +1036,6 @@ module type S = sig
       It answers [Shape_mismatch] unless [p] has one operand more than
       [loads] and two outputs, its [Coord] nodes read axes below [q]'s
       rank, and its output [0] does not read operand [0].
-      {!attention_refusal} decides both. Each library states its
-      association and its bounds. *)
+      {!attention_refusal} decides both. Each library states its orders
+      and its bounds. *)
 end

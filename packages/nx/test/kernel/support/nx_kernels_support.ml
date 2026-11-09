@@ -13,16 +13,51 @@ type kind =
   | K2 of Nx_kernel.Prog.op2
   | K3 of Nx_kernel.Prog.op3
 
+type attention = {
+  factor : Nx_array.Dtype.any -> int -> float;
+  epsilon : Nx_array.Dtype.any -> int -> float -> float;
+  zero_weights : Nx_array.Dtype.any -> int -> float;
+  rounds_weights : bool;
+}
+
 type backend = {
   name : string;
   kernels : (module Nx_kernel.S);
   device : Rig.t;
   computes : kind -> Nx_array.Dtype.any -> bool;
   around : 'a. (unit -> 'a) -> 'a;
+  attention : attention;
 }
 
 (* nx_cpu.mli's promise: every kind at every dtype of its domain. *)
 let cpu_computes _ _ = true
+
+(* nx_cpu.mli's attention. Its error factor is [γ(k + 1)] in the
+   accumulator, its [ε] is
+   [e{^λu} (13n + 9 + ln t) u' + (e{^λu} - 1) ln t + u' |lse|], [n] the
+   blocks of 64 keys and [λ] [3] in float32 and [5] in float64. Where every
+   output is [0], its weights are exact: [exp (+0)] is [1] and [log 1] is
+   [+0] (Nx_kernel.Prog's special values), [l] sums [tk] ones exactly, [α]
+   is [1], and the division by a power of two is exact. It keeps its
+   weights in the accumulator. *)
+let cpu_attention =
+  let unit acc =
+    if acc = Nx_array.Dtype.Any Float32 then 0x1p-24 else 0x1p-53
+  in
+  let factor acc k =
+    let u = unit acc and k = Float.of_int (k + 1) in
+    k *. u /. (1. -. (k *. u))
+  in
+  let epsilon acc t lse =
+    let u = unit acc in
+    let u' = u /. (1. -. u) and ln = Float.log (Float.of_int t) in
+    let lambda = if u = 0x1p-24 then 3. else 5. in
+    let grow = Float.exp (lambda *. u) in
+    (grow *. (Float.of_int ((13 * ((t + 63) / 64)) + 9) +. ln) *. u')
+    +. ((grow -. 1.) *. ln)
+    +. (u' *. Float.abs lse)
+  in
+  { factor; epsilon; zero_weights = (fun _ _ -> 0.); rounds_weights = false }
 
 let under target =
   {
@@ -31,6 +66,7 @@ let under target =
     device = Rig.host;
     computes = cpu_computes;
     around = (fun f -> Nx_cpu.with_target target f);
+    attention = cpu_attention;
   }
 
 let cpus = List.map under Nx_cpu.targets

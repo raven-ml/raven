@@ -17,6 +17,24 @@ type kind =
   | K2 of Nx_kernel.Prog.op2
   | K3 of Nx_kernel.Prog.op3
 
+type attention = {
+  factor : Nx_array.Dtype.any -> int -> float;
+      (** [factor acc k] is its error factor [e(k)] in the accumulator [acc]
+          ({!Nx_kernel.section-bounds}). *)
+  epsilon : Nx_array.Dtype.any -> int -> float -> float;
+      (** [epsilon acc t lse] is its attention's [ε] in [acc] for a row of [t]
+          keys whose [lse] is [lse] ({!Nx_kernel.section-attention}). *)
+  zero_weights : Nx_array.Dtype.any -> int -> float;
+      (** [zero_weights acc tk] bounds the [|δ|] of each weight of a row whose
+          [tk] keys, a power of two, are visible with outputs [0]. The
+          contract allows [(1 + u) ε + u ln tk + 5u'], [u' = u / (1 - u)],
+          where the library states nothing tighter. *)
+  rounds_weights : bool;
+      (** [rounds_weights] is [true] iff it may apply weights through a
+          rounding to [float16] or [bfloat16] values' dtype. *)
+}
+(** The type for what a kernel library states of its attention's errors. *)
+
 type backend = {
   name : string;  (** The backend's name in the suite, as ["cpu/base"]. *)
   kernels : (module Nx_kernel.S);  (** Its kernels. *)
@@ -29,6 +47,7 @@ type backend = {
   around : 'a. (unit -> 'a) -> 'a;
       (** [around f] is [f ()] run as the backend: nx.cpu's under its target
           table. *)
+  attention : attention;  (** What it states of its attention's errors. *)
 }
 (** The type for kernel libraries in one configuration. *)
 

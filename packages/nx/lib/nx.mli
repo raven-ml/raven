@@ -2845,9 +2845,9 @@ val attention :
     never read. nx.cpu never lets a value at a key hidden from a row reach
     its [o], a NaN or an infinity included. Other interpretations may make
     the row's [o] NaN for a NaN or an infinity at a hidden key within its
-    length, as [Rune.jit] and rune's derivatives do. The weights are in
-    [acc], and a visible key whose weight underflows to zero still counts:
-    a NaN in its value makes the row's [o] NaN. A sum of zeros is [+0].
+    length, as [Rune.jit] and rune's derivatives do. A visible key whose
+    weight underflows to zero still counts: a NaN in its value makes the
+    row's [o] NaN. A sum of zeros is [+0].
 
     [mask] and [score] are plain [Nx] code over 0-d values, applied once to
     stand-ins and kept as programs that run at each pair. Their results, and
@@ -2866,8 +2866,9 @@ val attention :
 
     [q]'s dtype is float16, bfloat16, float32 or float64, and [acc] is
     float32 or float64, not narrower than [q]'s dtype. Scores, their maxima
-    and sums, the weights and [lse] compute in [acc], and [o] rounds once to
-    [q]'s dtype.
+    and sums, the weights and [lse] compute in [acc]. Where [v] is float16
+    or bfloat16, the value product may take each weight through one
+    rounding to [v]'s dtype. [o] rounds once to [q]'s dtype.
 
     The bound below holds at a row with a visible key, for finite [q], [k]
     and [v], barring overflow and underflow. Let [u] be [acc]'s unit
@@ -2876,14 +2877,15 @@ val attention :
     bound their magnitudes. Each element of [o] is within
     [u{_q} |o| + (1 + u{_q}) (e{^w} - 1 + γ(tk + 1, 2u) e{^w}) M] of the
     exact one, and [lse] within [η + ε], where
-    [w = (1 + u) (2η + ε) + (2b + ln tk + 5) u]. Here [M] is the element's
-    [Σ p |v|] over the row's visible keys at their exact weights [p], at
-    most its greatest [|v|], [ε] is the bound the kernels' library states
-    for attention's [lse] of [tk] keys, and [γ] is as {!contract} defines
-    it. For float16 and bfloat16, the value product may take each weight
-    rounded once to [v]'s dtype: the bound then adds [u{_v} M], [u{_v}]
-    [v]'s unit roundoff, and for float16 at most [2{^-25} |v|] for each
-    visible key whose weight is below [2{^-14}].
+    [w = (1 + u) (2η + ε) + (2b + ln tk) u + 5u/(1 - u)]. Here [M] is the
+    element's [Σ p |v|] over the row's visible keys at their exact weights
+    [p], at most its greatest [|v|], [ε] is the bound the kernels' library
+    states for attention's [lse] of [tk] keys, and [γ] is as {!contract}
+    defines it. Where the value product takes the weights rounded to [v]'s
+    dtype, the bound adds [g (u{_v} e{^w} M + 2{^-25} Σ |v|)], where
+    [g = (1 + u{_q}) (1 + γ(tk + 1, 2u))], [u{_v}] is [v]'s unit
+    roundoff, and the sum, for float16 alone, is over the visible keys
+    whose exact weight is below [2{^-14} e{^w}].
     Without [score], [η] is [((1 + u)² (1 + γ(dk + 1, 2u)) - 1) a], about
     [(2dk + 4) u a], and [b] is at most [a], where [a] is the greatest
     [|scale| Σ |q k|] of a visible key. The bound holds where a set's
