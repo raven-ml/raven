@@ -37,3 +37,16 @@
  (deps
   (source_tree golden)
   (source_tree support)))
+
+; Run under a small address space, so a mapping fails as it does at the mapping
+; limit: only a shell's [ulimit] can set this limit on the child that needs it.
+
+(test
+ (name test_map_failure)
+ (modules test_map_failure)
+ (package talon)
+ (libraries windtrap talon talon.parquet unix)
+ (enabled_if
+  (= %{system} linux))
+ (action
+  (run sh -c "ulimit -v 3000000 && exec %{test}")))

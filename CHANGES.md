@@ -4171,6 +4171,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Talon_parquet.file` names a file that cannot be mapped once in its error, where
+  a mapping failure wrote the path twice.
 - New `Source.hive`, a pure decoder of Hive partition paths: one row per path,
   a `path` column and one string column per `key=value` directory, percent-decoded,
   `__HIVE_DEFAULT_PARTITION__` as null. A file name is never a key; a repeated or

@@ -232,6 +232,155 @@ one type in the file. Each type writes as the Parquet type that reads back as
 it, and types with no Parquet type of their own are described in the module's
 Writing section.
 
+## Many Files as One Table
+
+A dataset is often a directory of Parquet files, such as
+`year=2024/month=01/part-0.parquet`, one per partition. A query over them is a
+fold of one query per file. This section builds one, step by step, over a small
+dataset:
+
+```ocaml
+let ( // ) a b = a ^ "/" ^ b
+
+let dataset = Filename.temp_dir "talon-guide" ""
+
+let write_part path rows =
+  Sys.mkdir (Filename.dirname path) 0o755;
+  Out_channel.with_open_bin path @@ fun oc ->
+  let w = Bytesrw.Bytes.Writer.of_out_channel oc in
+  let t =
+    Talon.v [ ("x", Column.v Type.int64 (Array.of_list rows)) ]
+  in
+  Result.get_ok
+    (Talon_parquet.encode
+       (Talon_parquet.format (Schema.v [ ("x", Type.Any Type.int64) ]))
+       (Query.of_table t) w)
+
+let () =
+  write_part (dataset // "year=2024" // "part-0.parquet") [ 1; 2; 3 ];
+  write_part (dataset // "year=2025" // "part-0.parquet") [ 4; 5 ];
+  write_part (dataset // "year=2026" // "part-0.parquet") [ 6; 7; 8 ]
+```
+
+### Listing
+
+Talon has no directory walk of its own: the listing is a few lines that
+depend on the dataset, such as which files count. Sort the listing by a key
+built with `/`, so `year=1` sorts before `year=10` on every platform, and skip
+the entries a writer leaves behind:
+
+```ocaml
+(* A name starting with [.] or [_] is a writer's bookkeeping, such as
+   [_SUCCESS]. A directory [_key=value] holds a partition, not bookkeeping. *)
+let hidden ~directory name =
+  name.[0] = '.'
+  || (name.[0] = '_' && not (directory && String.contains name '='))
+
+let rec walk root relative =
+  let dir = if relative = "" then root else root // relative in
+  Array.to_list (Sys.readdir dir)
+  |> List.concat_map @@ fun name ->
+     let below = if relative = "" then name else relative // name in
+     let directory = Sys.is_directory (root // below) in
+     if hidden ~directory name then []
+     else if directory then walk root below
+     else [ below ]
+
+let paths root =
+  List.map (( // ) root) (List.sort String.compare (walk root ""))
+```
+
+```ocaml
+# paths dataset |> List.map (fun p -> String.sub p (String.length dataset) (String.length p - String.length dataset));;
+- : string list =
+["/year=2024/part-0.parquet"; "/year=2025/part-0.parquet";
+ "/year=2026/part-0.parquet"]
+```
+
+`Sys.is_directory` follows symbolic links, so a link to a directory lists it
+again; a listing that needs otherwise uses `Unix.lstat`.
+
+### Partition values
+
+`Source.hive` decodes the partition values in the paths into a table, one row
+per path. Its values are text, percent-decoded, with
+`__HIVE_DEFAULT_PARTITION__` as null. Types are the caller's, through
+`Str.parse`, so a new directory cannot change a column's type:
+
+```ocaml
+let manifest =
+  let* t = Source.hive (paths dataset) in
+  Query.of_table t
+  |> Query.derive
+       Expr.[ "year" := Str.parse Type.int64 (Col.string "year") ]
+  |> Query.run
+
+let manifest = Error.get_ok manifest
+```
+
+### Filter the manifest first
+
+`Talon_parquet.file` reads a file's footer when the source is built, and a
+source holds its file's mapping for as long as it lives. Filter the manifest
+before building the sources, so only the files a query can read cost one:
+
+```ocaml
+let recent =
+  Query.of_table manifest
+  |> Query.filter Expr.(Col.int "year" >= int 2025)
+  |> Query.run
+  |> Error.get_ok
+```
+
+### One query over the files
+
+Each surviving file becomes a query with its partition columns derived as
+literals, and `Kit.union_all` appends the branches, casting each column to
+`Type.common` over all of them. A filter on a partition column is folded to
+`true` or `false` on each branch, so an excluded file's rows are never read,
+and a filter mixing partition and file columns reaches each file with the
+partition part folded away:
+
+```ocaml
+let branch path year =
+  let value =
+    match year with Some y -> Expr.int y | None -> Expr.null
+  in
+  Query.of_source (Error.get_ok (Talon_parquet.file path))
+  |> Query.derive Expr.[ "year" := store Type.int64 value ]
+
+let everything =
+  let paths = Column.options Kind.string (column recent "path")
+  and years = Column.options Kind.int (column recent "year") in
+  Kit.union_all
+    (Array.to_list (Array.map2
+       (fun p y -> branch (Option.get p) y)
+       paths years))
+```
+
+```ocaml
+# everything
+  |> Query.filter Expr.(Col.int "year" = int 2025 || Col.int "x" > int 7)
+  |> Query.run
+  |> Error.get_ok
+  |> Talon.rows;;
+- : int = 3
+```
+
+The sample data is on disk until it is removed:
+
+```ocaml
+let () =
+  let rec remove path =
+    if Sys.is_directory path then begin
+      Array.iter (fun name -> remove (path // name)) (Sys.readdir path);
+      Sys.rmdir path
+    end
+    else Sys.remove path
+  in
+  remove dataset
+```
+
 ## Arrow IPC
 
 `Talon_arrow.file path` maps an Arrow IPC file or stream in memory. A column's

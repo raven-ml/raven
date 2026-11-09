@@ -20,7 +20,16 @@ type format = {
    host, with the errors of the private modules as [Error]. *)
 let with_bytes ?file b f =
   match Rig.Buffer.borrow Rig.host b with
-  | exception Sys_error why -> Error (Error.v ?file why)
+  | exception Sys_error why ->
+      (* Rig's message starts with the file's path, as [Error.pp] does. *)
+      let why =
+        match file with
+        | Some path when String.starts_with ~prefix:(path ^ ": ") why ->
+            let prefix = String.length path + 2 in
+            String.sub why prefix (String.length why - prefix)
+        | _ -> why
+      in
+      Error (Error.v ?file why)
   | None -> Error (Error.v ?file "the host cannot map the bytes")
   | Some host -> (
       Rig.Buffer.read host Bigarray.int8_unsigned @@ fun bytes ->
