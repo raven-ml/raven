@@ -443,7 +443,7 @@ let lend f =
     update lenders (List.cons (Unix.getpid (), f));
   Atomic.incr f.lent;
   if released f then begin
-    Atomic.decr f.lent;
+    ignore (Atomic.fetch_and_add f.lent (-1) : int);
     false
   end
   else true
