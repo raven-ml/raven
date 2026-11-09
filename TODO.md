@@ -61,21 +61,18 @@ raven / llama.cpp b12048 Vulkan:
   small kernels spent 19.5 s CPU / 4.9 s wall cold at `PARALLEL=14`
   against 10.0 s / 10.1 s at 1 (rune's law_carries, 728 kernels, fudge
   Clang 19); batching small kernels per worker needs quiet timing
-- long programs: the incomplete beta (~11,400 ops) compiles in 3 s, 10-20 s
-  per derivative, past 10 min for three; a 1,000-term slice-tree sum is one
-  kernel clang -O2 takes over 8 min on. Past 400 KB of C Clang compiles
-  without its loop vectorizer (D167); float64 `betainccinv`'s gradient (1.0
-  MB, 42k instructions) then spends, loaded, 3-4.5 s in Clang and 3.5-5.5 s
-  in tolk (424 M words): about 40 passes, each linear in the program's size
-  and under 0.4 s and 40 M words, rangeify's cleanups, `run_rangeify` and
-  the symbolic passes before decomposition the largest. On rune's
-  `special/betaincinv-grad-f64` compile row (187 M words, 35 M promoted,
-  21.1 G instructions under cachegrind) the collector takes 22%, the walks
-  23% (5.9 M rows, about 130 walks of the 42k-node graph, mostly first
-  visits), matching 7%, hash-consing 7%, the development profile's
-  `caml_apply2` 3%, the linearizer's ties broken by structure 4% and
-  `caml_modify` 3%; promotions are the graphs between passes, nodes and
-  their memo records a third of them
+- long programs: tolk's passes are linear in the nodes they walk, about 0.4 us
+  a row over about 130 walks, flat (no pass past 8%, no function past 4%):
+  the gradient of `betainc` costs tolk and rune's tracing 0.8 s and Clang
+  0.7 s, its third derivative (220k nodes) 5.3 s and 12.9 s. Past 100k nodes
+  Clang decides the wait, and it grows faster than the source on one kernel:
+  a 1,000-term sum of `exp(sin x)` over 64 values, one loop of 15 MB, takes it
+  125 s against 10 s for 250 terms (EarlyCSE, then the machine passes; `-O1`
+  changes nothing). Four kernels of 250 terms would take about 40 s; cutting
+  such a kernel at a store costs one buffer per cut and has no design yet.
+  Measured and declined for tolk: a per-domain cache of the last long walk
+  (-2% instructions, 12 lines), and pruning rewrites by the operations a
+  matcher rules on (no gain: the memo it needs costs what it saves)
 - device facts (762ad1c31): Metal's `core_threads` and `stream_threads`
   are owed, and `Rig.cache_bytes` has not run on hardware for NV over PCI
 - LLVM 23 keeps the straight-line vectorizer that D167 turns off under
