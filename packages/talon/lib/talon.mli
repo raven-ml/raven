@@ -1291,7 +1291,8 @@ module Expr : sig
         is a data error; floats round to nearest; [bool] takes [0] and [1] only,
         and gives [0] and [1];
       - between [string] and categorical types: the text is kept, and a
-        categorical takes only the strings of its dictionary;
+        categorical takes only the strings of its dictionary, and another
+        string is a data error;
       - between datetimes of one clock, between durations, and between clocks:
         values are kept, and a value that is not a whole number of the new unit
         is a data error;
