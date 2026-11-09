@@ -7,7 +7,8 @@ llama.cpp b12032 CUDA; NV and the first run last measured at 31aa4521b:
 - decode at position 512 of a 1024 cache 10.2 ms, GPU time and wall
   (8ef1902f3) / 10.7 ms of GPU time (bench median 12.0 ms) / 6.83 ms at
   depth 512; with Q8_0 attention and head 8.1-8.3 ms (f2af3251b) / 22.8 ms
-- prefill-512 0.186 s (f2af3251b) / not measured again / 56.0 ms
+- prefill-512 122 ms (4e23903949, least of 4 rounds under load) / not
+  measured again / 56.0 ms
 - first call 0.37-0.39 s (c29acaee3) / 0.37 to 0.54 s (12 tokens, kernels
   cached; 1.36 / 1.47 s at the first run) / 75 ms (59 to 151 ms, no warmup)
 
@@ -46,20 +47,14 @@ raven / llama.cpp b12048 Vulkan:
 
 ## tolk
 
-- placement on hybrid cores: nx's P-core cap, on fudge's CPU model
-  (kimchi, 2026-10-01), timed large GEMMs at x0.96-1.04 and batched
-  64x32x32 at x1.59 slower. The Mac's cap closes on fudge's numbers
-  (maintainer, 2026-10-31). Host blocks' placement matters as much:
+- placement on hybrid cores: where host blocks land moves a run by 1.6x.
   Jit/chain-100-rooted-hit runs its 4 blocks in 12.9 µs pinned to the
   P-cores, 43.5 µs on one core, and 13.0 or 20.4 µs unpinned on a quiet
-  fudge depending on which cores they reach
+  fudge, depending on which cores they reach
 - AMD counters and thread traces are not collected in a profile: rig's
   AMD driver brackets each timed launch, reading the VMID filter on the
   GPU in the bracket and marking a saturated or foreign count unmeasured
   (_plans/todo-campaign/design/amd-counters.adjudication.md)
-- AMD machine code without comgr (_plans/amd-isa/design-reviewed.md): an
-  assembly renderer and assembler, gfx12 first, the default once its gate
-  passes; HIP stays as a choice. First read the terms of AMD's ISA XML
 - compile speed: Metal builds run one at a time. On the host,
   `Codegen.to_programs` starts one Clang per worker even for one small
   kernel each, and `clang -cc1` starting costs ~17 ms: a jit of a few
@@ -81,26 +76,32 @@ raven / llama.cpp b12048 Vulkan:
   `caml_apply2` 3%, the linearizer's ties broken by structure 4% and
   `caml_modify` 3%; promotions are the graphs between passes, nodes and
   their memo records a third of them
-- whether memory-bound host kernels take lanes at all: no upcast ran 4-7%
-  faster than 64-byte lanes in two of seven loaded fudge runs of a 4M
-  float32 select-zero; decide on the scheduled quiet re-record
-- device facts (762ad1c31): `core_threads = 16384` and `stream_threads =
-  32768` are fudge's (sm_89, 100 SMs) and also the R9700's best, where
-  D175's SMs x clock scaling put its window at 0.59x; a small part (an
-  RTX 4060-class sm_89) may lose by that model: a row owed there, and
-  Metal's values. `Rig.cache_bytes` has not run on hardware for NV over
-  PCI
+- device facts (762ad1c31): Metal's `core_threads` and `stream_threads`
+  are owed, and `Rig.cache_bytes` has not run on hardware for NV over PCI
 - LLVM 23 keeps the straight-line vectorizer that D167 turns off under
   LLVM 18-20 and Apple clang 17: run 73455ffe7's reduced kernel and
   rune's ALiBi attention example (test_attention.ml, the dense tq 2 tk 3
   case) through it and extend D167 if it miscompiles (LLVM 21 and 22
   compile both)
-- HIP's unstaged tensor-core operands load 8 bytes again since D261's copy
-  rule: unmeasured on RDNA3 (16 contiguous halves a lane) and CDNA
 - a Cast from an integer to float32 on Metal relies on the conversion
   rounding to nearest, which MSL 8.6 does not promise (it allows round
   toward zero); Apple's GPUs round to nearest when tested. Make
   tolk's Cast own it, as `Decomp_dtype.narrow` does for narrow floats
+- D241's conversion bound: keep or cut on a quiet replay of `host/conv_half`,
+  `matmul_half`, `gpt_oss_kv` and `vecmat_1000`. Host wall noise was
+  0.57-1.93x on rows no config changes, so loaded runs cannot decide it
+- `stream/dense-bf16-32` streams at 541 µs where a staged core takes 429:
+  the gate stays at 32 because 16 lost on `GptOss/prefill-512` in 4 of 4
+  rounds
+- `Cuda/cat-16-columns-of-exp-64x64`, the row that catches a lost mark on
+  a concatenation, has no AMD baseline
+- launches group by process history: in about 1 program of 1,000 a
+  1-element call joins a launch or stays alone with GC and node ids
+  (`OCAMLRUNPARAM=s=4M` flips it), in `launched_entries`; values are equal
+- a fixed run of an `After` state read inside a loop raises: lifting it
+  needs a view that names its state
+- one launch pass (ecdd3203f6), views naming their storage (de0bcf38d9)
+  and per-trip loop reads (293eb3f70b) have not run on AMD or Metal
 
 ## rune, kaun, vega
 
