@@ -123,22 +123,24 @@ let values dt b =
   in
   decode dt (n / Dtype.itemsize dt) a
 
-(* A buffer of [n] bytes of [d] that starts on 64 bytes. The kernels these
-   tests run, recorded from tinygrad, access vectors up to that width, wider
-   than the host's alignment ([Rig.alignment]), so it views the first [n] bytes
-   of a buffer of at least 128, which starts on 128 on the host
+(* A buffer of [n] bytes of [d] that starts [phase] bytes past 64. The kernels
+   these tests run, recorded from tinygrad, access vectors up to that width,
+   wider than the host's alignment ([Rig.alignment]), so it views [n] bytes at
+   [phase] of a buffer of at least 128, which starts on 128 on the host
    ([Rig.Buffer.create]) and on its alignment, a page or more, on a GPU. *)
-let aligned d n =
-  Rig.Buffer.view (Rig.Buffer.create d (max n 128)) ~first:0 ~length:n
+let aligned ?(phase = 0) d n =
+  Rig.Buffer.view
+    (Rig.Buffer.create d (max (phase + n) 128))
+    ~first:phase ~length:n
 
-(* A buffer of [d] holding [values] as the parameter [p]. *)
+(* A buffer of [d] holding [values] as the parameter [p], at its phase. *)
 let storage d (p : Ops.param_arg) ~size:n values =
   if Array.length values <> n then
     invalid_arg
       (Printf.sprintf "slot %d holds %d elements, not %d" p.slot n
          (Array.length values));
   let bytes = encode p.dtype values in
-  filled (aligned d (Bigarray.Array1.dim bytes)) bytes
+  filled (aligned ~phase:p.phase d (Bigarray.Array1.dim bytes)) bytes
 
 let contents (p : Ops.param_arg) ~size b = Array.sub (values p.dtype b) 0 size
 
@@ -185,7 +187,8 @@ let on ?vars d prg buffers =
       List.find_opt (fun ((p : Ops.param_arg), _) -> p.slot = slot) params
     with
     | Some (p, size) ->
-        Shape.param ~shape:[ Int size ] ~device slot p.dtype
+        Shape.param ~shape:[ Int size ] ~device ~phase:p.phase ~align:p.align
+          slot p.dtype
     | None ->
         List.find
           (fun v ->

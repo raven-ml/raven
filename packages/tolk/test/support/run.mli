@@ -22,8 +22,8 @@ val on_host :
     ({!Tolk_engine.link_call}) and is the contents of each of its buffer
     parameters after the run, by slot, in the order [prg] declares them. The
     buffer of slot [s] starts as the array [buffers] gives [s], or as zeros if
-    it gives none. A variable of [prg] is bound by [vars] to the value of its
-    name.
+    it gives none, and lies at its parameter's phase ({!Ops.type-param_arg}).
+    A variable of [prg] is bound by [vars] to the value of its name.
 
     Raises [Invalid_argument] if an array's length is not its buffer's size, and
     as {!Tolk_engine.link_call} and {!Tolk_engine.run} do. *)

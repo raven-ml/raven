@@ -2858,6 +2858,96 @@ let hip_lang arch =
     string_rewrite = rewrite;
   }
 
+(* C reads [g ? p[i] : alt] in a branch, since [p[i]] may not be readable where
+   [g] fails. On AMD that branch also holds the load's first use, a conversion
+   or the copy of a scalar load into a vector register, so the wave waits for
+   the load before the branch ends: the n gated loads of a loop's trip make n
+   trips to memory one after another. Such a load, of one scalar from global or
+   workgroup memory that is not volatile and holds n >= 1 elements, reads
+   instead at [clamp i 0 (n - 1)], ungated, and the gate selects between its
+   value and [alt], so the trip's loads issue together. Where [g] holds, [i]
+   is in bounds and the clamp leaves it; where [g] fails, the clamp keeps the
+   read inside the buffer, which a kernel's parameters and workgroup memory
+   hold whole. A buffer of symbolic size keeps its branch: its n is not known.
+
+   The rule applies where [i] is the same for every thread of the workgroup
+   ([Uniform.varying]): it depends on workgroup ids, loop variables, kernel
+   variables, constants and loads of memory no thread of the launch writes, at
+   such addresses, as a key length or a page table entry. The clamp keeps the
+   address the workgroup's under a gate each thread holds, which [g ? i : 0]
+   would not. A load at an address of a thread's id keeps its branch:
+   ungated, such loads also issue together, but each holds its address and its
+   value in vector registers until used. In gpt-oss's expert matmul on gfx1201,
+   whose 32 gated bfloat16 loads at token ids already used all 255 vector
+   registers, the gated loads spilled 75 times and took 8.7 ms, and read
+   ungated they spilled 103 times and took 10.7 ms.
+
+   [i] must also read a serial loop's variable. Read ungated, a load outside
+   any loop issues at the kernel's start and its value holds a register until
+   its use: in float32 attention under gpt-oss's mask on gfx1201, ungating 64
+   such loads of the mask raised the kernel's vector registers from 73 to 148
+   and its time from 50.8 to 66.6 us. Within a loop, a trip's loads issuing
+   together is the gain, and a load that reads no loop variable could be
+   hoisted out of the loop with the same cost.
+
+   The rule applies on gfx12, the family the R9700 times. On gfx1100 the float32
+   attention kernel spilled 160 scalar registers to vector lanes where it
+   spilled 146, which costs vector instructions in the loop, and no RDNA3 or
+   CDNA device has timed it.
+
+   A vector load keeps its branch: a clamped index can start a vector the
+   buffer does not hold whole, or off the alignment of its vectors. A volatile
+   buffer keeps its branch too, so it is read only where its kernel reads it.
+   tolk has no atomic load.
+
+   Where [g] fails, the clamped read may race with another thread's write to
+   that element. C leaves such a race undefined; the compiler is LLVM, where a
+   racing load yields an undefined value and has no other effect, and the
+   selection drops that value. *)
+let pm_select_gated_loads =
+  let serial r =
+    is Op.Range r && List.mem (axis_type r) Axis_type.[ Weak; Loop ]
+  in
+  let in_bounds i n =
+    let last = n - 1 in
+    if Dtype.Value.(vmin i >= of_int 0 && vmax i <= of_int last) then i
+    else
+      let int k = const_like i (`Int (Bigint.of_int k)) in
+      maximum (minimum i (int last)) (int 0)
+  in
+  (* [g ? p[i] : alt] as [g ? p[clamp i] : alt] with the load ungated, if it
+     takes the rule. *)
+  let ungate varying l =
+    match src l with
+    | [ bidx; alt; gate ] when is Op.Index bidx && max_numel l = 1 -> (
+        let buf = buf_uop bidx in
+        let memory = List.mem (addrspace buf) [ Some Global; Some Local ] in
+        match (arg buf, src bidx, numel buf) with
+        | Param p, [ b; i ], Int n
+          when memory && (not p.volatile) && n >= 1
+               && (not (varying i))
+               && List.exists serial (toposort ~calls:Skip i) ->
+            let bidx = replace bidx ~src:[ b; in_bounds i n ] in
+            Some (l, where gate (replace l ~src:[ bidx ]) alt)
+        | _ -> None)
+    | _ -> None
+  in
+  Pattern_matcher.v
+    (fun () -> [
+      rule (Upat.op ~name:"k" Op.Sink) (fun m ->
+          let k = m "k" in
+          let nodes = toposort ~calls:Skip k in
+          let gated u = is Op.Load u && List.length (src u) = 3 in
+          (* most kernels hold no gated load *)
+          if not (List.exists gated nodes) then None
+          else
+            let varying = Uniform.varying k in
+            let ungate u = if gated u then ungate varying u else None in
+            match List.filter_map ungate nodes with
+            | [] -> None
+            | subs -> Some (substitute ~calls:Skip ~pass:Once k subs));
+    ])
+
 (* LLVM folds a float32 converted exactly from an integer and narrowed to
    bfloat16 into one conversion from the integer, through whatever float
    operations lie between them, and narrows a [zext] of an [i1], and an [or] or
@@ -2873,6 +2963,9 @@ let hip_extra_matcher arch =
        create_non_native_float_pats (Dtype.Bfloat16 :: Dtype.fp8s);
        pm_manual_bf16_cast;
      ]
+    @ (if String.starts_with ~prefix:"gfx12" (gpu arch) then
+         [ pm_select_gated_loads ]
+       else [])
     @
     if amd_fp8s arch = [] then []
     else [ Tc.pm_wmma_fp8 (if is_cdna arch then Dtype.Uint64 else Dtype.Uint32) ])

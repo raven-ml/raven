@@ -47,11 +47,10 @@ raven / llama.cpp b12048 Vulkan:
 
 ## rune, kaun, vega
 
-- attention's SIMT kernel on AMD (RDNA3, and what no core takes): K and V
-  addresses are wave-uniform, so LLVM loads bfloat16 and float16 with
-  s_load_u16 and a wait each, about 4100 serial round trips a tile; at
-  gpt-oss's decode shape float32 (global_load_b32) takes 51 µs against
-  bfloat16's 323 µs on the R9700
+- attention's SIMT kernel before gfx12 (RDNA3, and CDNA where no core
+  takes it): D438's ungated read of a shared key load is off there and
+  untimed, since on gfx1100 it adds SGPR spills (146 to 160). Nothing here
+  is an RDNA3 or a CDNA
 
 ## talon, hugin, brot, munin, quill
 

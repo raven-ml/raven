@@ -9472,3 +9472,75 @@ reason and its pins.
   operands` and `› a chain of any length nests a bounded number of brackets`;
   `Tolk.Cstyle › rendering › refuses custom code holding a NUL byte, which C
   cannot` and `› refuses a parameter named with a NUL byte`.
+
+## D438. A gated load in a loop whose address a workgroup shares reads ungated on HIP for gfx12
+
+- **tinygrad:** `renderer/cstyle.py` `CStyleLanguage.string_rewrite` renders a
+  gated `LOAD` as `(gate?*(ptr):alt)`, on HIP as elsewhere.
+- **tolk:** `Cstyle.pm_select_gated_loads`, in `Cstyle.hip_extra_matcher`
+  for an architecture of the gfx12 family, rewrites a gated scalar load into
+  an ungated load at index `clamp i 0 (n - 1)` and `where gate value alt`.
+  The load must be from global or workgroup memory that is not volatile and
+  holds a known n >= 1 elements, and its index `i` must satisfy two
+  conditions:
+  - `Uniform.varying` calls it the same for every thread of the workgroup;
+  - it reads a serial loop's variable (`Loop` or `Weak`).
+  `Uniform.varying` counts as the same in every thread: workgroup ids, loop
+  variables of uniform bounds, kernel variables, constants, and loads of
+  memory no thread of the launch writes, at such indices. The clamp is
+  dropped where the index's bounds already lie in the buffer.
+- **Differs:** where the gate fails, the thread reads the clamped element
+  and the selection drops it; tinygrad reads nothing. That element is
+  readable: a kernel's parameters and its workgroup memory are allocated
+  whole, and a buffer of symbolic size is left as tinygrad renders it.
+  - The clamp keeps the address the workgroup's under a gate each thread
+    holds, as rune's SIMT attention's row gate; `where gate i 0` would make
+    it each thread's.
+  - Excluded loads, each left as tinygrad renders it:
+    - A load at an index of a thread's id, or loaded at one. Ungated, such
+      loads also issue together, but each holds its address and value in
+      vector registers until used. gpt-oss's expert matmul at prefill on
+      gfx1201 (`r_63_18_4_32_2_2_2_4_5_90_2`) has 32 gated bfloat16 loads at
+      token ids and already used all 255 vector registers. Gated, it spilled
+      75 times and took 8.7 ms; ungated, it spilled 103 times and took
+      10.7 ms.
+    - A load whose index reads no loop variable. In float32 attention under
+      gpt-oss's mask on gfx1201, ungating 64 such mask loads raised the
+      kernel's vector registers from 73 to 148 and its time from 50.8 to
+      66.6 µs: read ungated, each issues at the kernel's start and its value
+      stays live until its use. Within a loop, such a load could be hoisted
+      out with the same cost, and it has no trip's loads to issue with.
+    - A vector load: a clamped index can start a vector the buffer does not
+      hold whole, or off the alignment of its vectors.
+    - A volatile buffer, which the host may change during a launch, so it is
+      read only where the kernel reads it. tolk has no atomic load.
+    - Every load on an architecture before gfx12. On gfx1100 the float32
+      SIMT attention kernel spilled scalar registers to vector lanes 160
+      times where it spilled 146, which costs vector instructions in the
+      loop, and no RDNA3 or CDNA device has timed the rule.
+  - Another thread may write the clamped element during the read. C leaves
+    that race undefined; HIP compiles through LLVM, where a racing load yields
+    an undefined value and has no other effect, and the selection drops it.
+  - The values stored are tinygrad's.
+- **Reason:** (d). C may not read `*(ptr)` where the gate fails, so Clang
+  puts each gated load in a branch, and AMD's backend puts the load's first
+  use in that branch: a bfloat16 or half widening, or the copy of a scalar
+  load into a vector register. The branch then waits for the load to return
+  before it ends, so the loads go to memory one after another. rune's SIMT
+  attention, which runs float32 attention on AMD, reads each key element of a
+  tile through such a load: each of its key loop's 64 trips makes 32 gated
+  loads and one of the query. With this rule, comgr (ROCm 7.0) issues the
+  trip's 33 scalar loads under one wait on gfx1201. Whether LLVM loads them
+  with scalar loads depends on its knowing the buffer is not written in the
+  kernel. On the R9700, in alternating runs against the commit before at a
+  load of 0.4 to 24, rune.thumper's `Amd/attention/jit-f32-decode-8x4096x64`
+  took 174 µs where it took 468, its attention kernel 82 µs where it took
+  256, and float32 attention under gpt-oss's mask at its decode shape 30 µs
+  where it took 51. `Amd/attention/jit-f32-8x2048x64-full` is unchanged.
+  gpt-oss's decode attention, in bfloat16, loads keys as vectors and is
+  unchanged, as are its decode step and expert products, where no kernel
+  takes the rule.
+- **Pinned by:** `Tolk.Codegen › on AMD, a gated load in a loop is read
+  ungated on gfx12 where a workgroup shares its address`; `Tolk.Codegen › a
+  gated load takes its alternative where its gate fails` on every GPU and the
+  host.

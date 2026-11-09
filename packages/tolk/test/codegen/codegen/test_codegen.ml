@@ -4382,6 +4382,490 @@ let narrow_multiply_adds =
       group "of float8 e4m3fnuzs" (on e4m3fnuzs);
     ]
 
+(* Gated loads
+
+   A kernel of [waves] workgroups of [wave] threads, thread [t] being thread
+   [l] of workgroup [w], reads [a] where a gate holds and takes 7 where it
+   fails, storing each value as a float32, in one of seven ways:
+   - [Uniform n]: [out0[t * trips + k] = g ? a[w + k] : 7] for each trip [k]
+     of a loop over [a] of [n] elements, where [g] holds when [on[t]] is not 0
+     and [w + k] indexes [a]: scalar loads at an address every thread of a
+     workgroup shares, of its workgroup's id and the loop's variable, under a
+     gate each thread holds;
+   - [Paged n]: [out0[t * trips + k] = g ? a[iw[w] + k] : 7], [g] as for
+     [Uniform]: scalar loads in a loop at an address a workgroup shares, read
+     from memory, as a page table gives;
+   - [Fixed n]: [out0[t] = g ? a[w] : 7], where [g] holds when [on[t]] is not 0
+     and [w] indexes [a]: a scalar load at an address a workgroup shares,
+     outside any loop;
+   - [Gather n]: [out0[t] = g0 ? a[ix[t]] : 7] and [out1[t] = g1 ? a[iw[w]] :
+     7] over [a] of [n] elements, where [g0] holds when [on[t]] is not 0 and
+     [ix[t]] indexes [a], and [g1] when [on[t]] is not 0 and [iw[w]] indexes
+     [a]: scalar loads at an address loaded from memory;
+   - [Shifted]: [out0[t] = g ? a[t - 1] : 7], where [g] holds when [on[t]] is
+     not 0 and [t] is not 0: scalar loads at an address of each thread's id;
+   - [Rows lanes]: [out0[e] = on[e / lanes] ? a[e] : 7] over the [lanes]
+     elements [e] of each thread, which a GPU loads as vectors where [a]'s
+     phase lets it;
+   - [Shared]: each thread stores [a[t]] in workgroup memory [s], and
+     [out0[t] = g0 ? s[ix[t]] : 7] and [out1[t] = g1 ? s[iw[w]] : 7] read it
+     back, the gates as for [Gather] over the workgroup's [wave] elements.
+   [a] lies [phase] bytes past a multiple of 16. On a GPU a workgroup is one
+   wave; on the host both ranges are loops. *)
+
+module Gated_loads = struct
+  let wave = 32
+  let waves = 4
+  let threads = waves * wave
+  let trips = 2
+
+  type access =
+    | Uniform of int
+    | Paged of int
+    | Fixed of int
+    | Gather of int
+    | Shifted
+    | Rows of int
+    | Shared
+
+  let size = function
+    | Uniform n | Paged n | Fixed n | Gather n -> n
+    | Rows lanes -> threads * lanes
+    | Shifted | Shared -> threads
+
+  let pp_access ppf = function
+    | Uniform n -> Format.fprintf ppf "at one address of %d elements" n
+    | Paged n -> Format.fprintf ppf "at one loaded address of %d elements" n
+    | Fixed n ->
+        Format.fprintf ppf "at one address of %d elements, outside a loop" n
+    | Gather n -> Format.fprintf ppf "gathered from %d elements" n
+    | Shifted -> Format.fprintf ppf "at each thread's id"
+    | Rows lanes -> Format.fprintf ppf "%d lanes a thread" lanes
+    | Shared -> Format.fprintf ppf "from workgroup memory"
+
+  (* A kernel's buffers take slots from 0, in the order [out0], [out1], [a],
+     [on], [ix], [iw], less those it does not use. *)
+  let slot access b =
+    let used =
+      match access with
+      | Uniform _ | Fixed _ | Shifted | Rows _ -> [ `Out0; `A; `On ]
+      | Paged _ -> [ `Out0; `A; `On; `Iw ]
+      | Gather _ | Shared -> [ `Out0; `Out1; `A; `On; `Ix; `Iw ]
+    in
+    Option.get (List.find_index (( = ) b) used)
+
+  let outputs = function
+    | Uniform _ | Paged _ -> threads * trips
+    | Rows lanes -> threads * lanes
+    | Fixed _ | Gather _ | Shifted | Shared -> threads
+
+  let kernel dt ~phase access (outer, inner) =
+    let param ?phase b dt n =
+      Shape.param ?phase ~shape:[ Int n ] (slot access b) dt
+    in
+    let span = match access with Rows lanes -> lanes | _ -> 1 in
+    let out0 = param `Out0 Float32 (outputs access) in
+    let a = param ~phase `A dt (size access) and on = param `On Int32 threads in
+    let out1 () = param `Out1 Float32 threads in
+    let ix () = param `Ix Int32 threads and iw () = param `Iw Int32 waves in
+    let w = Ops.range ~axis_type:outer (Int waves) [ 0 ] in
+    let l = Ops.range ~axis_type:inner (Int (wave * span)) [ 1 ] in
+    let row = wave * span in
+    let open Ops.O in
+    let on_at t = Ops.index on [ t ] <> int 0 in
+    let inside i n = (i >= int 0) land (i < int n) in
+    let take g x i =
+      let read = Ops.index x [ Shape.valid i g ] in
+      Ops.cast (Ops.where g read (Ops.cast (int 7) dt)) Float32
+    in
+    let store x i v = Ops.store (Ops.index x [ i ]) v in
+    let t = (w * int wave) + l in
+    let body =
+      match access with
+      | Uniform n ->
+          let k = Ops.range ~axis_type:Loop (Int trips) [ 2 ] in
+          let i = w + k in
+          let v = take (on_at t land inside i n) a i in
+          Ops.end_ (store out0 ((t * int trips) + k) v) [ k ]
+      | Paged n ->
+          let k = Ops.range ~axis_type:Loop (Int trips) [ 2 ] in
+          let i = Ops.index (iw ()) [ w ] + k in
+          let v = take (on_at t land inside i n) a i in
+          Ops.end_ (store out0 ((t * int trips) + k) v) [ k ]
+      | Fixed n -> store out0 t (take (on_at t land inside w n) a w)
+      | Gather n ->
+          let i0 = Ops.index (ix ()) [ t ] and i1 = Ops.index (iw ()) [ w ] in
+          Ops.group
+            [
+              store out0 t (take (on_at t land inside i0 n) a i0);
+              store (out1 ()) t (take (on_at t land inside i1 n) a i1);
+            ]
+      | Shifted ->
+          let i = t - int 1 in
+          store out0 t (take (on_at t land (t > int 0)) a i)
+      | Rows lanes ->
+          let e = (w * int row) + l in
+          store out0 e (take (on_at (e // int lanes)) a e)
+      | Shared ->
+          let s = Shape.alloc ~slot:10 ~addrspace:Local [ Int wave ] dt in
+          let s = Ops.after s [ store s l (Ops.index a [ t ]) ] in
+          let i0 = Ops.index (ix ()) [ t ] and i1 = Ops.index (iw ()) [ w ] in
+          Ops.group
+            [
+              store out0 t (take (on_at t land inside i0 wave) s i0);
+              store (out1 ()) t (take (on_at t land inside i1 wave) s i1);
+            ]
+    in
+    (* The lanes split off the last axis: the thread's, or on the host the one
+       both loops merge into. *)
+    let opts_to_apply =
+      let axis = if outer = Ops.Axis_type.Weak then 0 else 1 in
+      match access with
+      | Rows lanes ->
+          [ Opt.Split { axis; amount = lanes; target = Upcast; top = false } ]
+      | Uniform _ | Paged _ | Fixed _ | Gather _ | Shifted | Shared -> []
+    in
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~opts_to_apply ())
+      [ Ops.end_ body [ w; l ] ]
+
+  (* The loads of [access] lowered for AMD's [arch]. *)
+  let hip_loads arch dt ~phase access =
+    let r = renderer_for (target "AMD" "HIP" arch) in
+    let k = kernel dt ~phase access Ops.Axis_type.(Global, Local) in
+    List.filter (is Load) (Ops.src (Ops.nth (Codegen.to_program k r) 1))
+
+  (* A load keeps its gate while it has its alternative and gate as sources. *)
+  let gated u = List.length (Ops.src u) = 3
+
+  (* The loads of [access]'s [a] among [loads]. *)
+  let of_a access loads =
+    let a = slot access `A in
+    List.filter
+      (fun u ->
+        match Ops.arg (Ops.buf_uop (Ops.nth u 0)) with
+        | Param p -> p.slot = a
+        | _ -> false)
+      loads
+
+  (* The thread ids a load's address reads: hardware indices other than a
+     workgroup's. *)
+  let thread_ids load =
+    List.filter_map
+      (fun u ->
+        match (Ops.op u, Ops.arg u) with
+        | Special, String s when not (String.starts_with ~prefix:"gidx" s) ->
+            Some s
+        | _ -> None)
+      (Ops.toposort ~calls:Skip (Ops.nth load 0))
+
+  (* Where its gate fails, a vector load of [a] at index 0 would read [a]'s
+     first [lanes] elements, which [a] may not hold, and off its phase the
+     vector would not start where [a]'s vectors start. *)
+  let vectors_keep_gates (arch, dt, lanes, phase) =
+    let vectors =
+      List.filter
+        (fun u -> Shape.max_numel u > 1)
+        (hip_loads arch dt ~phase (Rows lanes))
+    in
+    less ~msg:"vector loads" int ~than:(List.length vectors) 0;
+    equal ~msg:"widths of the vector loads read ungated" (list int) []
+      (List.map Shape.max_numel (List.filter (fun u -> not (gated u)) vectors))
+
+  (* Read ungated, the loads of a gather issue together and hold their
+     addresses and values at once, which a kernel short of registers spills. *)
+  let divergent_keep_gates (arch, dt, access) =
+    let loads = hip_loads arch dt ~phase:0 access in
+    less ~msg:"gated loads" int ~than:(List.length (List.filter gated loads)) 0
+
+  (* Ungated, a load whose address a workgroup shares issues with the other
+     loads of its loop's trip; its address stays the workgroup's where the
+     gate, which each thread holds, fails. *)
+  let shared_lose_gates (arch, dt, phase, access) =
+    let loads = of_a access (hip_loads arch dt ~phase access) in
+    less ~msg:"loads of a" int ~than:(List.length loads) 0;
+    equal ~msg:"gated loads of a" int 0 (List.length (List.filter gated loads));
+    equal ~msg:"thread ids in the addresses of a" (list string) []
+      (List.concat_map thread_ids loads)
+
+  (* Before gfx12, no device has timed the rule: each load keeps its gate. *)
+  let before_gfx12_keep_gates (arch, dt, phase, access) =
+    let loads = of_a access (hip_loads arch dt ~phase access) in
+    less ~msg:"loads of a" int ~than:(List.length loads) 0;
+    equal ~msg:"ungated loads of a" int 0
+      (List.length (List.filter (fun u -> not (gated u)) loads))
+
+  (* Outside a loop, a load has no trip's loads to issue with, and read ungated
+     at the kernel's start its value would hold a register to its use. *)
+  let outside_loops_keep_gates (arch, dt, access) =
+    let loads = of_a access (hip_loads arch dt ~phase:0 access) in
+    less ~msg:"loads of a" int ~than:(List.length loads) 0;
+    equal ~msg:"ungated loads of a" int 0
+      (List.length (List.filter (fun u -> not (gated u)) loads))
+
+  let on_amd =
+    let archs = [ "gfx1100"; "gfx1201" ] in
+    let shared arch =
+      Dtype.
+        [
+          (arch, Float32, 0, Uniform 2);
+          (arch, Bfloat16, 8, Uniform 5);
+          (arch, Uint8, 1, Uniform 5);
+          (arch, Float32, 0, Paged 5);
+          (arch, Bfloat16, 2, Paged 5);
+        ]
+    in
+    let id (arch, dt, access) =
+      Format.asprintf "%s, %a, %a" arch Dtype.pp dt pp_access access
+    in
+    group
+      "on AMD, a gated load in a loop is read ungated on gfx12 where a \
+       workgroup shares its address"
+      [
+        cases "a vector load keeps its gate"
+          ~id:(fun (arch, dt, lanes, phase) ->
+            Format.asprintf "%s, %a, %d lanes at phase %d" arch Dtype.pp dt
+              lanes phase)
+          (List.concat_map
+             (fun arch ->
+               Dtype.
+                 [
+                   (arch, Float32, 4, 0);
+                   (arch, Float32, 4, 8);
+                   (arch, Bfloat16, 4, 0);
+                   (arch, Bfloat16, 4, 8);
+                 ])
+             archs)
+          vectors_keep_gates;
+        cases "a load at an address of a thread's id keeps its gate"
+          ~id
+          (List.concat_map
+             (fun arch ->
+               Dtype.
+                 [
+                   (arch, Bfloat16, Gather 37);
+                   (arch, Float16, Shared);
+                   (arch, Float32, Shifted);
+                 ])
+             archs)
+          divergent_keep_gates;
+        cases "a load at a shared address outside any loop keeps its gate" ~id
+          (List.concat_map
+             (fun arch ->
+               Dtype.[ (arch, Float32, Fixed 5); (arch, Bfloat16, Fixed 5) ])
+             archs)
+          outside_loops_keep_gates;
+        cases
+          "a scalar load in a loop at a shared address does not, and its \
+           address stays shared under a thread's gate"
+          ~id:(fun (arch, dt, phase, access) ->
+            Format.asprintf "%s at phase %d" (id (arch, dt, access)) phase)
+          (shared "gfx1201") shared_lose_gates;
+        cases "on gfx1100 the same load keeps its gate"
+          ~id:(fun (arch, dt, phase, access) ->
+            Format.asprintf "%s at phase %d" (id (arch, dt, access)) phase)
+          (shared "gfx1100") before_gfx12_keep_gates;
+      ]
+
+  (* A wave's lanes: all on, all off, or each drawn. *)
+  let wave_lanes =
+    Gen.(
+      bind (int_range 0 2) (function
+        | 0 -> constant (Array.make wave false)
+        | 1 -> constant (Array.make wave true)
+        | _ -> array ~size:(constant wave) bool))
+
+  (* An access, [a]'s phase, then [on], [ix], [iw] and [a]: indices from one
+     below what they index to one past it, a page's first index from [trips]
+     below, so that as many pages start below [a] as end past it, elements from
+     1 to 100, which every type holds. Where [a]'s phase does not change how it is read, at a
+     thread's id or from workgroup memory, it lies on a 16-byte boundary. *)
+  let draw dt ~shared =
+    let accesses =
+      let shared = if shared then [ Shared ] else [] in
+      [
+        Uniform 1;
+        Uniform 5;
+        Paged 5;
+        Fixed 5;
+        Gather 1;
+        Gather 37;
+        Shifted;
+        Rows 2;
+        Rows 4;
+      ]
+      @ shared
+    in
+    let phases = List.sort_uniq compare [ 0; Dtype.itemsize dt; 8 ] in
+    let pp ppf (access, phase, _) =
+      Format.fprintf ppf "%a, [a] at phase %d" pp_access access phase
+    in
+    Gen.(
+      with_pp pp
+        (bind (of_list accesses) (fun access ->
+             let phase =
+               match access with
+               | Shifted | Shared -> constant 0
+               | Uniform _ | Paged _ | Fixed _ | Gather _ | Rows _ ->
+                   of_list phases
+             in
+             let n = size access in
+             let indexed = match access with Shared -> wave | _ -> n in
+             let first = match access with Paged _ -> -trips | _ -> -1 in
+             map
+               (fun (phase, data) -> (access, phase, data))
+               (pair phase
+                  (quad
+                     (map Array.concat (list ~size:(constant waves) wave_lanes))
+                     (array ~size:(constant threads) (int_range (-1) indexed))
+                     (array ~size:(constant waves) (int_range first indexed))
+                     (array ~size:(constant n) (int_range 1 100)))))))
+
+  (* What the kernel stores where it reads [a]. *)
+  let expected access (on, ix, iw, a) =
+    let pick g i = if g then `Float (float_of_int a.(i)) else `Float 7. in
+    let inside n i = i >= 0 && i < n in
+    match access with
+    | Uniform n ->
+        let at e =
+          let t = e / trips in
+          let i = (t / wave) + (e mod trips) in
+          pick (on.(t) && inside n i) i
+        in
+        [ (`Out0, Array.init (threads * trips) at) ]
+    | Paged n ->
+        let at e =
+          let t = e / trips in
+          let i = iw.(t / wave) + (e mod trips) in
+          pick (on.(t) && inside n i) i
+        in
+        [ (`Out0, Array.init (threads * trips) at) ]
+    | Fixed n ->
+        let at t = pick (on.(t) && inside n (t / wave)) (t / wave) in
+        [ (`Out0, Array.init threads at) ]
+    | Gather n ->
+        let at t i = pick (on.(t) && inside n i) i in
+        [
+          (`Out0, Array.init threads (fun t -> at t ix.(t)));
+          (`Out1, Array.init threads (fun t -> at t iw.(t / wave)));
+        ]
+    | Shifted ->
+        let at t = pick (on.(t) && t > 0) (t - 1) in
+        [ (`Out0, Array.init threads at) ]
+    | Rows lanes ->
+        let at e = pick on.(e / lanes) e in
+        [ (`Out0, Array.init (threads * lanes) at) ]
+    | Shared ->
+        let at t i = pick (on.(t) && inside wave i) ((t / wave * wave) + i) in
+        [
+          (`Out0, Array.init threads (fun t -> at t ix.(t)));
+          (`Out1, Array.init threads (fun t -> at t iw.(t / wave)));
+        ]
+
+  let covers access phase (on, ix, iw, _) ~shared =
+    let n = size access in
+    let gates f w = List.init wave (fun l -> f ((w * wave) + l)) in
+    let some_wave p = List.exists p (List.init waves Fun.id) in
+    let all_off gs = not (List.mem true gs) in
+    let mixed gs = List.mem true gs && List.mem false gs in
+    let uniform p =
+      match access with Uniform _ -> some_wave p | _ -> false
+    in
+    let gather p = match access with Gather _ -> some_wave p | _ -> false in
+    let at_trip k t = on.(t) && (t / wave) + k < n in
+    let at_thread t = on.(t) && ix.(t) >= 0 && ix.(t) < n in
+    let at_workgroup t = on.(t) && iw.(t / wave) >= 0 && iw.(t / wave) < n in
+    cover "a load at one address whose every gate in a wave fails"
+      (uniform (fun w -> all_off (gates (at_trip 0) w)));
+    cover "a load at one address whose gates in a wave differ"
+      (uniform (fun w -> mixed (gates (at_trip 0) w)));
+    cover "a load at one address of one element" (access = Uniform 1);
+    cover "a load at one address off a 16-byte boundary"
+      (match access with Uniform _ -> phase <> 0 | _ -> false);
+    let paged p = match access with Paged _ -> some_wave p | _ -> false in
+    cover "a load at one loaded address below [a], its gate failing"
+      (paged (fun w -> iw.(w) < 0));
+    cover "a load at one loaded address past [a]'s end, its gate failing"
+      (paged (fun w -> iw.(w) + trips > n));
+    cover "a load at one address outside any loop"
+      (match access with Fixed _ -> true | _ -> false);
+    cover "a gather whose every gate in a wave fails"
+      (gather (fun w -> all_off (gates at_thread w)));
+    cover "a gather whose gates in a wave differ"
+      (gather (fun w -> mixed (gates at_thread w)));
+    cover "a gather at one address whose every gate in a wave fails"
+      (gather (fun w -> all_off (gates at_workgroup w)));
+    cover "a gather at one address whose gates in a wave differ"
+      (gather (fun w -> mixed (gates at_workgroup w)));
+    cover "a load at each thread's id" (access = Shifted);
+    cover "vectors on a 16-byte boundary"
+      (match access with Rows _ -> phase = 0 | _ -> false);
+    cover "vectors off a 16-byte boundary"
+      (match access with Rows _ -> phase <> 0 | _ -> false);
+    if shared then cover "a gather from workgroup memory" (access = Shared)
+
+  (* [run k] compiles the kernel [k] for a device and is its run on buffers,
+     compiled once per access and phase. *)
+  let takes_where_gated dt ~shared run =
+    let compiled = Hashtbl.create 8 in
+    let program access phase =
+      match Hashtbl.find_opt compiled (access, phase) with
+      | Some p -> p
+      | None ->
+          let p = run (kernel dt ~phase access) in
+          Hashtbl.add compiled (access, phase) p;
+          p
+    in
+    let ints xs = Array.map (fun x -> `Int (Bigint.of_int x)) xs in
+    prop ~count:200 (Dtype.name dt) (draw dt ~shared)
+      (fun (access, phase, ((on, ix, iw, a) as data)) ->
+        covers access phase data ~shared;
+        let elements =
+          if Dtype.is_float dt then
+            Array.map (fun x -> `Float (float_of_int x)) a
+          else ints a
+        in
+        let on = ints (Array.map Bool.to_int on) in
+        let inputs =
+          match access with
+          | Gather _ | Shared ->
+              [ (`A, elements); (`On, on); (`Ix, ints ix); (`Iw, ints iw) ]
+          | Paged _ -> [ (`A, elements); (`On, on); (`Iw, ints iw) ]
+          | Uniform _ | Fixed _ | Shifted | Rows _ ->
+              [ (`A, elements); (`On, on) ]
+        in
+        let at = slot access in
+        let out =
+          program access phase (List.map (fun (b, v) -> (at b, v)) inputs)
+        in
+        List.iter
+          (fun (b, values) ->
+            equal
+              ~msg:(if b = `Out0 then "out0" else "out1")
+              (array Dtypes.value) values
+              (List.assoc (at b) out))
+          (expected access data))
+
+  let law =
+    let types = Dtype.[ Float32; Bfloat16; Float16; Uint8 ] in
+    let on ~shared run =
+      List.map (fun dt -> takes_where_gated dt ~shared run) types
+    in
+    let on_host k =
+      compiled_on Rig.host (Lazy.force host) (k Ops.Axis_type.(Weak, Weak))
+    in
+    let on_gpu gpu k =
+      let d, r = opened_gpu gpu in
+      compiled_on d r (k Ops.Axis_type.(Global, Local))
+    in
+    group "a gated load takes its alternative where its gate fails"
+      (group "on the host" (on ~shared:false on_host)
+      :: List.map
+           (fun ((kind, _, _, _) as gpu) ->
+             group ("on " ^ kind) (on ~shared:true (on_gpu gpu)))
+           gpus)
+end
+
 (* Reductions that share a range
 
    [out[0] = max_{i,k} (a[k] + i) + sum_k a[k]] for [i] below 3 and [k] below
@@ -8938,6 +9422,8 @@ let () =
            variable_sizes;
            multiply_adds;
            narrow_multiply_adds;
+           Gated_loads.on_amd;
+           Gated_loads.law;
            shared_ranges;
            lanes;
            bfloat16_casts;
