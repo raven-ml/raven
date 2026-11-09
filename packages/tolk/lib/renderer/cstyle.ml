@@ -1925,60 +1925,6 @@ let async_rewrite =
                  (render_ptr ctx (nth var 0)) ignore));
     ])
 
-(* Matrix loads
-
-   A load marked ["ldmatrix"] or ["ldmatrix.trans"] reads through a window of
-   shared memory at the address the lane supplies ({!Stage.lower_ldmatrix}):
-   PTX's [ldmatrix] of 8 by 8 matrices of 16-bit elements, as many as the
-   load's 4-byte registers, [.trans] loading them column-major
-   (PTX ISA §9.7.16.5.15). *)
-
-let ldmatrix_mark u =
-  match arg u with
-  | String "ldmatrix" -> Some false
-  | String "ldmatrix.trans" -> Some true
-  | _ -> None
-
-let ldsm =
-  let asm n tr =
-    let regs = String.concat ", " (List.init n (fun i -> strf "%%%d" i)) in
-    let outs =
-      String.concat ", " (List.init n (fun i -> strf "\"=r\"(u[%d])" i))
-    in
-    strf
-      "asm volatile(\"ldmatrix.sync.aligned.m8n8.x%d%s.shared.b16 {%s}, \
-       [%%%d];\" : %s : \"r\"(a));"
-      n
-      (if tr then ".trans" else "")
-      regs n outs
-  in
-  let form n = strf "if (TR) { %s } else { %s }" (asm n true) (asm n false) in
-  strf
-    "template <class T, int N, int TR> __device__ __forceinline__ T \
-     tg_ldsm(const void *p) { T r; unsigned *u = (unsigned *)&r; unsigned a = \
-     (unsigned)__cvta_generic_to_shared(p); if (N == 4) { %s } else if (N == \
-     2) { %s } else { %s } return r; }"
-    (form 4) (form 2) (form 1)
-
-let ldsm_rewrite =
-  Pattern_matcher.fold
-    (fun () -> [
-      rule_ctx (Upat.op ~name:"x" ~src:[ Upat.var "bidx" ] Op.Load)
-        (fun ctx m ->
-          let x = m "x" in
-          match ldmatrix_mark x with
-          | None -> None
-          | Some _ when not (is Op.Shrink (m "bidx")) ->
-              (* Unlowered, its index would be each lane's own element. *)
-              invalid_arg "an ldmatrix load is not lowered to its rows"
-          | Some trans ->
-              let regs = max_numel x * Dtype.itemsize (dtype x) / 4 in
-              Some
-                (strf "tg_ldsm<%s, %d, %d>(%s)" (render_type ctx.lang x) regs
-                   (Bool.to_int trans)
-                   ctx.%{m "bidx"}));
-    ])
-
 let cuda_async_lang =
   {
     cuda_lang with
@@ -2068,7 +2014,7 @@ let cuda_wmma l (name, (n, m, k), dtype_in, dtype_out, upcast_sizes) =
       "}";
     ]
 
-let cuda_kernel ?(copies = false) ?(marked = false) ?(prefix = []) l ~name
+let cuda_kernel ?(copies = false) ?(prefix = []) l ~name
     kernel bufs uops =
   let used = uops_to_dtypes uops in
   let uses p = List.exists (fun (dt, _) -> p dt) used in
@@ -2097,7 +2043,6 @@ let cuda_kernel ?(copies = false) ?(marked = false) ?(prefix = []) l ~name
          [ "#define make_nv_bfloat162 make_bfloat162" ]
        else [])
     @ (if copies then [ cp_async ] else [])
-    @ (if marked then [ ldsm ] else [])
     @ List.map (cuda_vector_prefix l) (List.filter vector used)
     @ List.map (cuda_wmma l) (wmma_args uops)
   in
@@ -2122,8 +2067,6 @@ let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
   (* cp.async "Requires sm_80 or higher" (PTX ISA §9.7.10.28.3.1). A kernel
      that copies asynchronously renders its barriers to wait for the copies. *)
   let async_copy = ver >= 80 && not sync in
-  (* ldmatrix "Requires sm_75 or higher" (PTX ISA §9.7.16.5.15). *)
-  let load_matrix = ver >= 75 in
   let render uops =
     (* The program's choices read the bodies it calls too, whose loads and
        copies it renders. *)
@@ -2135,18 +2078,7 @@ let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
     in
     let copies = async_copy && List.exists copies_async all in
     let l = if copies then cuda_async_lang else cuda_lang in
-    let marked =
-      List.exists (fun u -> is Op.Load u && ldmatrix_mark u <> None) all
-    in
-    let l =
-      if not marked then l
-      else
-        let string_rewrite =
-          Pattern_matcher.append ldsm_rewrite l.string_rewrite
-        in
-        { l with string_rewrite }
-    in
-    render (cuda_kernel ~copies ~marked) l uops
+    render (cuda_kernel ~copies) l uops
   in
   let name = if sync then "CUDARenderer without cp.async" else "CUDARenderer" in
   (* NVRTC's time a call site of a launch falls to its least at 64 members
@@ -2154,8 +2086,7 @@ let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
      96 members 1.4 ms a member, 128 1.9 ms, 256 4.5 ms. *)
   Renderer.v ~name ~half8:true ~launch_members:64 ~launch_args:512
     ~global_max:[ 2147483647; 65535; 65535 ]
-    ~local_max:[ 1024; 1024; 64 ] ~shared_max:49152 ~async_copy
-    ~load_matrix ~tensor_cores
+    ~local_max:[ 1024; 1024; 64 ] ~shared_max:49152 ~async_copy ~tensor_cores
     ~extra_matcher:cuda_extra_matcher ~code_for_op:cuda_lang.code_for_op ~native
     ~render ~compiler target
 

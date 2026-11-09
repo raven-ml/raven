@@ -83,17 +83,15 @@ let on_cuda () =
       | r -> (d, r)
       | exception Failure why -> skip ~reason:why ())
 
-(* [r] rebuilt with [has_shared], [load_matrix] and [registers], named
-   [name]. *)
-let rebuilt ~name ?(has_shared = true) ?(load_matrix = true) ?registers
-    (r : Renderer.t) =
+(* [r] rebuilt with [has_shared] and [registers], named [name]. *)
+let rebuilt ~name ?(has_shared = true) ?registers (r : Renderer.t) =
   let registers = Option.value registers ~default:r.registers in
   Renderer.v ~name ~suffix:r.suffix ~supports_float4:r.supports_float4
     ~half8:r.half8 ~registers ~vector_lanes:r.vector_lanes
     ~has_local:r.has_local ~has_shared ~global_max:r.global_max
     ~local_max:r.local_max ?global_prod_max:r.global_prod_max
     ~shared_max:r.shared_max ~async_copy:r.async_copy
-    ~load_matrix:(load_matrix && r.load_matrix) ~tensor_cores:r.tensor_cores
+    ~tensor_cores:r.tensor_cores
     ~per_byte_first:r.per_byte_first ~extra_matcher:r.extra_matcher
     ~packed_args:r.packed_args ~code_for_op:r.code_for_op ~native:r.native
     ~render:r.render ~compiler:r.compiler r.target
@@ -101,10 +99,6 @@ let rebuilt ~name ?(has_shared = true) ?(load_matrix = true) ?registers
 (* [r] without shared memory: it stages nothing. *)
 let unstaged (r : Renderer.t) =
   rebuilt ~name:(r.name ^ " without shared memory") ~has_shared:false r
-
-(* [r] without ldmatrix: staged operands are read narrow. *)
-let narrow (r : Renderer.t) =
-  rebuilt ~name:(r.name ^ " without ldmatrix") ~load_matrix:false r
 
 (* CUDA's renderer of [r]'s target without asynchronous copies, which stages
    in one stage. *)
@@ -186,8 +180,6 @@ let pp_product ppf p =
 let same_bits ((p, staged_tile, depth, seed) as _case) =
   let d, r = on_cuda () in
   let staged = if depth = 2 then r else one_stage r in
-  (* Odd seeds read staged operands narrow. *)
-  let staged = if seed mod 2 = 1 then narrow staged else staged in
   let opts = chosen ~staged:staged_tile p r in
   let k = kernel ~opts_to_apply:opts p in
   let inputs =
@@ -212,11 +204,6 @@ let same_bits ((p, staged_tile, depth, seed) as _case) =
   cover "the unstaged tile, staged" (shared && not staged_tile);
   cover "batched" (shared && p.batch > 1);
   cover "an [N; K] operand" (shared && p.layout = Nk);
-  cover "ldmatrix" (says "tg_ldsm<" src);
-  cover "ldmatrix.trans" (says "tg_ldsm<" src && says ", 1>(" src);
-  cover "narrow reads" (shared && not (says "tg_ldsm<" src));
-  (* ldmatrix reads only operands staged in two stages. *)
-  if depth = 1 then equal bool false (says "tg_ldsm<" src);
   equal (array Dtypes.value) (run (unstaged r)) (run staged)
 
 let law =
@@ -297,11 +284,7 @@ let walk instrs =
     let at = Ops.nth x 0 in
     if Ops.addrspace at <> Some Dtype.Local then []
     else
-      (* A lane of ldmatrix supplies the address of a row of 16 bytes. *)
-      let width =
-        if Stage.is_ldmatrix x then 16 / Dtype.itemsize (Ops.dtype x)
-        else Shape.max_numel at
-      in
+      let width = Shape.max_numel at in
       let elements =
         List.concat_map
           (fun env ->
@@ -450,12 +433,10 @@ let cube =
   { dt = Bfloat16; batch = 1; m = 128; k = 128; n = 128; layout = Kn;
     toeplitz = false }
 
-(* A product of 128 cubed in [depth] stages, read by ldmatrix if [ldm], is
-   the exact product. *)
-let run_staged ?(ldm = true) depth () =
+(* A product of 128 cubed in [depth] stages is the exact product. *)
+let run_staged depth () =
   let d, r = on_cuda () in
   let r = if depth = 2 then r else one_stage r in
-  let r = if ldm then r else narrow r in
   let k = kernel ~opts_to_apply:(chosen ~staged:true cube r) cube in
   let prg = compiled r k in
   equal ~msg:"operands staged" int 2 (List.length (locals (Ops.nth prg 1)));
@@ -466,14 +447,12 @@ let run_staged ?(ldm = true) depth () =
 let checked = "kernels the race checker runs"
 let in_two = "a product of 128 cubed in two stages of cp.async is exact"
 let in_one = "a product of 128 cubed in one stage is exact"
-let narrowly = "a product of 128 cubed in two stages read narrow is exact"
 
 let checked_kernels =
   group checked
     [
       test in_two (run_staged 2);
       test in_one (run_staged 1);
-      test narrowly (run_staged ~ldm:false 2);
     ]
 
 (* [compute-sanitizer] attaches to the process it starts, so each kernel runs
@@ -505,10 +484,6 @@ let races =
         (racecheck in_two);
       test "the race checker finds no hazard in a kernel staged in one stage"
         (racecheck in_one);
-      test
-        "the race checker finds no hazard in a kernel staged in two stages \
-         without ldmatrix"
-        (racecheck narrowly);
     ]
 
 (* The layout *)
@@ -639,37 +614,6 @@ let staged_tiles =
     (fun (case, expected) ->
       equal (triple int int int) expected (tile case))
 
-(* ldmatrix's rows
-
-   PTX ISA §9.7.16.5.15: lanes [8j] to [8j + 7] supply the addresses of the 8
-   rows of matrix [j]. Without [.trans] lane [t] receives elements [2 (t mod
-   4)] and the next of row [t / 4], so row [r] begins at the element of lane
-   [4r] whose register is [j]; with [.trans] it receives those of column
-   [t / 4], so row [r] begins at lane [r / 2]'s element of half [r mod 2]. *)
-
-let rows (trans, nbits, t, lane, bits) =
-  let l, bs = Stage.ldmatrix_rows ~trans ~nbits (Ops.int t) in
-  let value u = Shape.sym_infer (Sym u) [] in
-  equal ~msg:"lane" int lane (value l);
-  equal ~msg:"element bits" (list int) bits (List.map value bs)
-
-let ldmatrix_rows =
-  cases "the row a lane supplies is the element PTX assigns it"
-    ~id:(fun (trans, nbits, t, _, _) ->
-      Printf.sprintf "%s, %d registers, lane %d"
-        (if trans then ".trans" else "plain")
-        (1 lsl (nbits - 1)) t)
-    [
-      (false, 3, 0, 0, [ 0; 0; 0 ]);
-      (false, 3, 9, 4, [ 0; 1; 0 ]);
-      (false, 3, 22, 24, [ 0; 0; 1 ]);
-      (false, 3, 31, 28, [ 0; 1; 1 ]);
-      (true, 2, 5, 2, [ 1; 0 ]);
-      (true, 2, 14, 3, [ 0; 1 ]);
-      (true, 1, 7, 3, [ 1 ]);
-    ]
-    rows
-
 (* Sources *)
 
 let rendered p file =
@@ -732,7 +676,7 @@ let host_file (count, bytes) =
   let r = Lazy.force host in
   Renderer.with_compiler
     (Renderer.Compiler.v Fun.id)
-    (rebuilt ~name:r.name ~has_shared:r.has_shared ~load_matrix:r.load_matrix
+    (rebuilt ~name:r.name ~has_shared:r.has_shared
        ~registers:(fun () -> Some { Renderer.count; bytes })
        r)
 
@@ -1054,7 +998,6 @@ let () =
          layout;
          group "stages" [ stages; test "none when staging is off" stage_off ];
          staged_tiles;
-         ldmatrix_rows;
          sources;
          group "decoded panels"
            [

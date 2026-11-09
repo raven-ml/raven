@@ -212,11 +212,6 @@ type t = private {
       (** A thread copies from global to shared memory without waiting for
           the copy, which a barrier then waits for: PTX's [cp.async], from
           sm_80. Staged operands then take two stages ({!Stage.depth}). *)
-  load_matrix : bool;
-      (** A warp loads 8 by 8 matrices of 16-bit elements from shared memory,
-          each lane supplying a row's address: PTX's [ldmatrix], from sm_75. An
-          operand staged in two stages ({!Stage.depth}) whose fragment it
-          delivers is read so ({!Stage.operands}). *)
   tensor_cores : Tc.t list;  (** The tensor cores, in order of preference. *)
   per_byte_first : int;
       (** The multiply-adds per byte of a contraction's streamed operand up to
@@ -281,7 +276,6 @@ val v :
   ?global_prod_max:int list ->
   ?shared_max:int ->
   ?async_copy:bool ->
-  ?load_matrix:bool ->
   ?tensor_cores:Tc.t list ->
   ?per_byte_first:int ->
   ?stream_threads:int ->
@@ -304,8 +298,7 @@ val v :
       gives [None], [half8] is [false] and [vector_lanes] is [1];
     - [global_max] and [local_max] are [0x8FFFFFFF] on each axis, the greatest
       size a 32-bit signed index holds, and [global_prod_max] is [None];
-    - [shared_max] is [32768], and [async_copy] and [load_matrix] are
-      [false];
+    - [shared_max] is [32768], and [async_copy] is [false];
     - [tensor_cores] and [code_for_op] are empty, and so are the rules of
       [extra_matcher];
     - [per_byte_first] is [64], [sm_89]'s crossover, [stream_threads] is

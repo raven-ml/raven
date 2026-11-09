@@ -9,8 +9,8 @@ open Ops
 (* Two facts of every target staged so far. Shared memory serves [line] bytes at
    once, 32 banks of 4 bytes (CUDA C++ Programming Guide §2.3.4.2; one of
    RDNA4's two sets of 32 banks, ISA §12.1), and the widest copy, PTX's
-   [cp.async] and an [ldmatrix] row, moves [copy] bytes. Each becomes a
-   renderer's field when a target measures another value. *)
+   [cp.async], moves [copy] bytes. Each becomes a renderer's field when a
+   target measures another value. *)
 let line = 128
 let copy = 16
 
@@ -57,7 +57,7 @@ let rec pow2_factor n =
   if n > 0 && n mod 2 = 0 then 2 * pow2_factor (n / 2) else 1
 
 (* A row of [cols] elements holds [chunks = p 2^j] copies, [p] odd. The 8 rows
-   an ldmatrix reads at one chunk, and 8 consecutive chunks a copy writes, fall
+   read at one chunk, and 8 consecutive chunks a copy writes, fall
    on 8 different 16-byte slots of a line when the low [g = min 2^j (line /
    copy)] bits of the chunk are permuted by the row: by [(row / per_phase) mod
    g], [per_phase = line / copy / g] rows sharing a permutation. With [p = 1]
@@ -199,159 +199,6 @@ let dense dims =
   | () -> Hashtbl.length seen = size
   | exception Exit -> false
 
-(* ldmatrix *)
-
-let ldmatrix_rows ~trans ~nbits t =
-  let lane = if trans then O.(t // int 2 % int 4) else O.(t % int 8 * int 4) in
-  let h = if trans then O.(t % int 2) else int 0 in
-  let bit k =
-    let place = 8 lsl k in
-    O.(t // int place % int 2)
-  in
-  (lane, h :: List.init (nbits - 1) bit)
-
-(* The ldmatrix form, [Some trans], that delivers each lane of the warp [w]
-   the elements its read [base] reads, of element bits [es], least significant
-   first, at every value of [base]'s other ranges, each row it supplies on a
-   16-byte boundary; [None] if neither form does. PTX ISA §9.7.16.5.15: lanes
-   [8j] to [8j + 7] supply the rows of matrix [j]; without [.trans] lane [t]
-   receives elements [2 (t mod 4)] and the next of row [t / 4] of each matrix,
-   with [.trans] those of column [t / 4] in rows [2 (t mod 4)] and the next. *)
-let ldmatrix base w es =
-  let nbits = List.length es and n = 1 lsl List.length es in
-  let rs = Nodes.to_list (ranges base) in
-  let others = List.filter (fun r -> r != w && not (List.memq r es)) rs in
-  let env = Tbl.create 8 in
-  let value u = Bigint.to_int (integer (eval env u)) in
-  let rec each = function
-    | [] -> fun f -> f ()
-    | r :: rest ->
-        fun f ->
-          List.for_all
-            (fun i ->
-              Tbl.replace env r i;
-              each rest f)
-            (List.init (extent r) Fun.id)
-  in
-  let fits trans =
-    let lane, bits = ldmatrix_rows ~trans ~nbits w in
-    let row_at =
-      substitute ~calls:Skip ~pass:Once base
-        ((w, lane) :: List.combine es bits)
-    in
-    let row s = Tbl.replace env w s; value row_at in
-    let read t e =
-      Tbl.replace env w t;
-      List.iteri (fun k r -> Tbl.replace env r ((e lsr k) land 1)) es;
-      value base
-    in
-    let at t e =
-      let j = e / 2 and h = e mod 2 in
-      if trans then row ((8 * j) + (2 * (t mod 4)) + h) + (t / 4)
-      else row ((8 * j) + (t / 4)) + (2 * (t mod 4)) + h
-    in
-    each others (fun () ->
-        List.for_all
-          (fun t ->
-            row t mod 8 = 0
-            && List.for_all (fun e -> read t e = at t e) (List.init n Fun.id))
-          (List.init 32 Fun.id))
-  in
-  if extent w <> 32 || not (List.mem (n / 2) [ 1; 2; 4 ]) then None
-  else
-    List.find_opt
-      (fun trans -> try fits trans with Exit -> false)
-      [ false; true ]
-
-let is_ldmatrix x =
-  Op.equal (op x) Op.Load
-  &&
-  match arg x with
-  | String s -> String.starts_with ~prefix:"ldmatrix" s
-  | _ -> false
-
-(* The address lane [w] supplies to the load [x] ldmatrix delivers, its index
-   the [Stack] of the lane's elements: each element's index with the lane
-   made the lane [ldmatrix_rows] names, selected by the element bits
-   [ldmatrix_rows] names, least significant first. An [After] keeps its
-   ordering sources: the slot's offset is ordered after the next stage's
-   copies, which keep their own lanes. The terms every element shares, as the
-   slot's offset, are added outside the selection. *)
-let lower_ldmatrix x =
-  match src x with
-  | [ ix ] when is_ldmatrix x && Op.equal (op (nth ix 1)) Op.Stack ->
-      let lanes = src (nth ix 1) in
-      let trans = arg x = String "ldmatrix.trans" in
-      let is_lane r =
-        Op.equal (op r) Op.Range
-        && axis_type r = Axis_type.Local
-        && List.hd (List.rev (axis_id r)) = 0
-      in
-      let w = List.find is_lane (toposort ~calls:Skip (nth ix 1)) in
-      let rec log2 n = if n <= 1 then 0 else 1 + log2 (n / 2) in
-      let nbits = log2 (List.length lanes) in
-      let lane, bits = ldmatrix_rows ~trans ~nbits w in
-      (* The ordering sources of each [After] stand aside as holes while the
-         lane moves: the value an [After] orders reads the lane, as an
-         address ordered whole after the copies does. *)
-      let deps =
-        dedup_nodes
-          (List.concat_map
-             (fun u -> if Op.equal (op u) Op.After then List.tl (src u) else [])
-             (toposort ~calls:Skip (nth ix 1)))
-      in
-      let holes =
-        List.mapi
-          (fun i d -> (d, range ~axis_type:Placeholder (Int 1) [ -2; i ]))
-          deps
-      in
-      let sub l subs = substitute ~calls:Skip ~pass:Once l subs in
-      let at_lane l =
-        let back = List.map (fun (a, h) -> (h, a)) holes in
-        sub (sub (sub l holes) [ (w, lane) ]) back
-      in
-      (* A lane ordered whole after the copies is the address it orders: the
-         order goes on the address the lanes select, so that their shared
-         terms still come out of the selection. *)
-      let rec outer l =
-        if Op.equal (op l) Op.After then
-          let v, ds = outer (nth l 0) in
-          (v, List.tl (src l) @ ds)
-        else (l, [])
-      in
-      let outers = List.map (fun l -> outer (at_lane l)) lanes in
-      let lanes = List.map fst outers in
-      let order = dedup_nodes (List.concat_map snd outers) in
-      let rec pick ls = function
-        | [] -> List.hd ls
-        | b :: bs ->
-            let half p = List.filteri (fun i _ -> i mod 2 = p) ls in
-            if constant b = Some 0 then pick (half 0) bs
-            else
-              let c = O.(b <> int 0) in
-              where c (pick (half 1) bs) (pick (half 0) bs)
-      in
-      let same (c, a) (c', a') = c = c' && Option.equal ( == ) a a' in
-      let shared t =
-        List.for_all (fun l -> List.exists (same t) (terms l)) lanes
-      in
-      let sum ts =
-        List.fold_left
-          (fun acc (c, a) ->
-            O.(acc + (Option.value a ~default:(int 1) * int c)))
-          (int 0) ts
-      in
-      let common = List.filter shared (terms (List.hd lanes)) in
-      let rest l =
-        sum (List.filter (fun t -> not (List.exists (same t) common)) (terms l))
-      in
-      let addr = O.(sum common + pick (List.map rest lanes) bits) in
-      let addr = if order = [] then addr else after addr order in
-      let n = int (List.length lanes) in
-      let window = Ops.v Op.Shrink ~src:[ nth ix 0; addr; n ] in
-      Some (replace x ~src:[ window ])
-  | _ -> None
-
 (* Operands *)
 
 (* An operand of a core read from global memory, as a tile. *)
@@ -476,9 +323,9 @@ let tile_of x =
 
 (* Copies *)
 
-(* A kernel's workgroup: its thread ranges, a warp's lanes first, the number
-   of its threads, and the thread's position in it. *)
-type workgroup = { threads : int; tid : Ops.t; warp : Ops.t option }
+(* A kernel's workgroup: the number of its threads and the thread's position
+   in it, a warp's lanes first. *)
+type workgroup = { threads : int; tid : Ops.t }
 
 let workgroup all =
   let rs =
@@ -493,8 +340,7 @@ let workgroup all =
       (fun (acc, n) r -> (O.(acc + (r * int n)), n * extent r))
       (int 0, 1) rs
   in
-  let warp = List.find_opt (fun r -> axis_type r = Axis_type.Warp) rs in
-  if rs = [] then None else Some { threads; tid; warp }
+  if rs = [] then None else Some { threads; tid }
 
 (* The elements of [t] a copy moves at once: [copy] bytes, or fewer where the
    innermost dimension is not contiguous or not a multiple. *)
@@ -520,8 +366,7 @@ let address t cs =
 
 type stager = {
   copy_to : ?ahead:Ops.t -> slot:Ops.t -> at:Ops.t -> unit -> Ops.t;
-  read :
-    lanes:(Ops.t * Ops.t list) option -> deps:Ops.t list -> slot:Ops.t -> Ops.t;
+  read : deps:Ops.t list -> slot:Ops.t -> Ops.t;
 }
 
 (* The staging of [t] by the workgroup [wg] into [buf], in slots of
@@ -593,9 +438,7 @@ let stager wg ~fresh t buf =
     in
     end_ (store (index buf [ lidx ]) (index t.buf [ gidx ])) ranges
   in
-  (* With [lanes], the warp's lane and the fragment's element ranges, a read
-     ldmatrix delivers is marked as one. *)
-  let read ~lanes ~deps ~slot =
+  let read ~deps ~slot =
     let rcs =
       List.map
         (fun d ->
@@ -605,18 +448,7 @@ let stager wg ~fresh t buf =
         t.dims
     in
     let base = address t rcs in
-    let x = index (after buf deps) [ O.(base + (slot * int t.size)) ] in
-    let form =
-      match lanes with
-      | Some (w, es) when Dtype.itemsize t.dt = 2 && es <> [] ->
-          ldmatrix base w es
-      | _ -> None
-    in
-    match form with
-    | None -> x
-    | Some trans ->
-        let mark = if trans then "ldmatrix.trans" else "ldmatrix" in
-        Ops.v Op.Load ~src:[ x ] ~arg:(String mark)
+    index (after buf deps) [ O.(base + (slot * int t.size)) ]
   in
   { copy_to; read }
 
@@ -735,41 +567,11 @@ let operands (ren : Renderer.t) sink =
              before them, which no read waits for: the slot's offset is
              ordered after them. *)
           let slot = if List.is_empty ahead then rslot else after rslot ahead in
-          (* Each operand's element ranges: the core's upcast axes of two
-             that it folds into its fragment. *)
-          let elements i =
-            match arg w with
-            | Wmma { upcast_axes = Some (a0, a1, _); _ } ->
-                let axes = if i = 0 then a0 else a1 in
-                let range_of ((t, id), size) =
-                  if size <> 2 then None
-                  else
-                    List.find_opt
-                      (fun r ->
-                        Op.equal (op r) Op.Range
-                        && Axis_type.equal (axis_type r) t
-                        && axis_id r = id)
-                      all
-                in
-                List.rev (List.filter_map range_of axes)
-            | _ -> []
-          in
-          (* ldmatrix reads only an operand staged in two stages. In one
-             stage the next chunk's loads wait on the barrier after this
-             chunk's cores, and ptxas overlaps them only by moving cores past
-             that barrier, which it does for narrow reads and not for
-             ldmatrix: on an RTX 5000 Ada, gpt-oss's gathered expert
-             products ran 1.05 to 1.12 times slower with it. *)
-          let lanes i =
-            match (ren.load_matrix, wg.warp) with
-            | true, Some w when d = 2 -> Some (w, elements i)
-            | _ -> None
-          in
           let srcs =
-            List.mapi
-              (fun i (x, p) ->
+            List.map
+              (fun (x, p) ->
                 match p with
-                | Some st -> st.read ~lanes:(lanes i) ~deps:first ~slot
+                | Some st -> st.read ~deps:first ~slot
                 | None -> x)
               plans
           in

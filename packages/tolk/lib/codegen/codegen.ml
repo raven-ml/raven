@@ -103,17 +103,6 @@ let unroll_axis u dims sizes =
   let out = unflatten u (-1) (List.map (fun n -> Int n) sizes) in
   permute out (Helpers.argsort (others dims (ndim out) @ dims))
 
-let is_ldmatrix = Stage.is_ldmatrix
-
-(* An operand's fragment axes contracted into its last; a load ldmatrix
-   delivers contracts its index in its place, so that its value stays the read
-   of its index, the lane's elements last. *)
-let contract_operand x dims =
-  if not (is_ldmatrix x) then contract_axis x dims
-  else
-    let ix = nth x 0 in
-    replace x ~src:[ index (nth ix 0) [ contract_axis (nth ix 1) dims ] ]
-
 let expand_wmma ctx u =
   match arg u with
   | Wmma ({ upcast_axes = Some (a0, a1, a2); _ } as w) ->
@@ -122,8 +111,8 @@ let expand_wmma ctx u =
         replace u
           ~src:
             [
-              contract_operand (nth u 0) (axes a0);
-              contract_operand (nth u 1) (axes a1);
+              contract_axis (nth u 0) (axes a0);
+              contract_axis (nth u 1) (axes a1);
               nth u 2;
             ]
           ~arg:(Wmma { w with upcast_axes = None })
@@ -503,7 +492,7 @@ let is_shape_changing_bitcast u =
    changes the lane count stays whole: no lane of it is a lane of its source,
    so its stack of lanes is only itself again. *)
 let do_stack_wmma u =
-  let whole x = is Op.Stack x || is_shape_changing_bitcast x || is_ldmatrix x in
+  let whole x = is Op.Stack x || is_shape_changing_bitcast x in
   if List.for_all (fun x -> whole x || is Op.Wmma x) (src u) then None
   else begin
     assert (ndim u = 1);
@@ -562,41 +551,16 @@ let pm_vector_constants =
             match src (m "x") with [ e; _ ] -> splat e | _ -> None);
       ])
 
-(* A load ldmatrix delivers is one a row of its leading axes, of the lane's
-   elements: it splits on those axes alone, each row's index the stack of its
-   elements' addresses. *)
-let devectorize_ldmatrix b =
-  match (shape b, src b) with
-  | [], _ -> None
-  | s, [ ix ] when not (is Op.Stack (nth ix 1)) ->
-      let n = Helpers.prod (int_shape [ last s ]) in
-      let row idx =
-        let lane k =
-          let l = index_ints (nth ix 1) (idx @ [ k ]) in
-          Option.value (address_lanes l) ~default:l
-        in
-        replace b ~src:[ index (nth ix 0) [ stack (List.init n lane) ] ]
-      in
-      (match product (int_shape (without_last s)) with
-      | [ [] ] -> Some (row [])
-      | rows -> Some (reshape (stack (List.map row rows)) s))
-  | _ -> None
-
 let devectorizer2 =
   lift Prepare.pm_mops
   ++ pm
        (fun () -> [
-         rule (Upat.op Op.Load ~name:"b" ~allow_any_len:true) (fun m ->
-             if is_ldmatrix (m "b") then devectorize_ldmatrix (m "b")
-             else None);
          (* unpack broadcasting *)
          rule_ctx
            (Upat.v
               ~op:(Op.Set.union Op.Set.elementwise (ops [ Op.Load; Op.Store ]))
               ~name:"b" ())
-           (fun ctx m ->
-             if is_ldmatrix (m "b") then None
-             else do_devectorize ctx (m "b"));
+           (fun ctx m -> do_devectorize ctx (m "b"));
          (* an index of storage by a vector indexes each lane apart, at an
             address computed lane by lane *)
          rule
@@ -1403,15 +1367,6 @@ let lift_uniform_gates sink =
     ~ctx:(lazy (Uniform.varying sink), lazy (consumers sink))
     sink (After_sources pm_lift_uniform_gates)
 
-(* a load ldmatrix delivers reads from the address its lane supplies, which the
-   renderer prints as the instruction *)
-let pm_lower_ldmatrix =
-  pm (fun () ->
-      [
-        rule (Upat.op Op.Load ~name:"x" ~allow_any_len:true) (fun m ->
-            Stage.lower_ldmatrix (m "x"));
-      ])
-
 let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   if setting Setting.debug >= 5 then
     print_endline (Render.render_uir (toposort ~calls:Enter ast));
@@ -1588,9 +1543,6 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
          (Decomp_dtype.pm_dtype_decomps ++ lift Uop_weak.pm_commit_weak))
   in
   let sink = rewrite Gater.pm_move_gates_from_index sink in
-  let sink =
-    if not ren.load_matrix then sink else rewrite pm_lower_ldmatrix sink
-  in
   (* final rules for the renderer (without sym) *)
   let pm_final_rewrite =
     Pattern_matcher.concat

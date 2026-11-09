@@ -7142,62 +7142,19 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
 - **Pinned by:** the Stage suite's `barriers` (its second clause), `races`
   and `sources`.
 
-## D264. A staged operand's fragments are loaded by ldmatrix
+## D264. Withdrawn
 
-- **tinygrad:** none: no renderer prints `ldmatrix`, and no operand is staged
-  (D262).
-- **tolk:** `Stage.operands` (the mark and its admission),
-  `Stage.ldmatrix_rows`, `Stage.lower_ldmatrix`, which
-  `Codegen.full_rewrite_to_sink` runs after the gater on a renderer with
-  `Renderer.t.load_matrix`; `Codegen`'s expander and devectorizer, which keep
-  a marked load whole; `Cstyle.cuda` (`ldsm`), from sm_75. A load is marked
-  from sm_80, where operands take two stages.
-- **Differs:** a read of 16-bit elements of an operand staged in two stages
-  whose fragment ldmatrix delivers is a load marked `ldmatrix` or
-  `ldmatrix.trans`, one source, its index: until the lowering its value is the
-  read of its index, so every pass sees the load it knows. Admission evaluates
-  the instruction's delivery on the index: at every lane, element and value of
-  the index's other ranges, the element PTX's row assignment delivers equals
-  the one the index reads, and each supplied row starts on 16 bytes. After the
-  gater the load reads a window at the address its lane supplies, the index of
-  the element `Stage.ldmatrix_rows` names at the lane it names, and CUDA
-  prints it as `ldmatrix.sync.aligned.m8n8.x{1,2,4}[.trans].shared.b16`. A
-  read neither form delivers, and every read of an operand staged in one
-  stage, stays narrow.
-- **Reason:** (d): GPU time on fudge's RTX 5000 Ada, bfloat16, staged, three
-  interleaved rounds, us, narrow against ldmatrix: 512 by 4096 over 2880
-  113.7-119.8 to 98.3-104.4, 2048 cubed 130.1-138.2 to 119.5-129.0, 512 by
-  5760 over 2880 127.9-129.0 to 107.5-112.6, 512 by 2880 over 4096 103.4-106.5
-  to 84.0-92.2. 512 by 512 over 2880 is 25.5-27.4 against 27.6-29.7, slower,
-  and the 64-row products of 2880 and 5760 by 2880, at the same tile, level or
-  1 us slower. There a workgroup of 4 warps runs alone on an SM, one warp to a
-  scheduler, and each trip waits on the next chunk's copy, which no other warp
-  hides. Clock counts in the loop, of the kernels compiled as tolk compiles
-  them, give 616 cycles a trip narrow and 696 with ldmatrix. With every core
-  issued before the copy's wait, the ldmatrix trip is the shorter, 657 cycles
-  against 753, its reads issuing in 428 against 635: the loss is ptxas's
-  schedule. nvcc unrolls the shorter loop by 2, and ptxas issues 8 or 9 of
-  each 16 cores between the copy's wait and the next copy's issue, against 7
-  narrow; unrolled once, the trip takes 635 cycles. Both kernels hold 96
-  registers, and neither form's 8 rows of a phase meet in a bank (the
-  swizzle's law). Where a scheduler holds several warps, as in the first four
-  rows, they hide the copy and the fewer reads pay. In one stage, gpt-oss's
-  gathered expert products of 64-row blocks by MXFP4 weights ran 1.05 to 1.12
-  times slower with ldmatrix: ptxas issues 20 of a trip's 40 cores after its
-  last barrier with narrow reads, where they overlap the next trip's loads,
-  and all 40 before it with ldmatrix. kaun's GptOss/prefill-512 ran
-  174.4-175.3 ms narrow, 185.1-188.1 with ldmatrix in both depths, and
-  174.1-175.2 with it in two stages only. Nsight Compute's counters need
-  administrator rights on fudge, so stall reasons were not read. The
-  two-source form of the same instructions, `Load [index; address]`, measured
-  101.4-102.5 against this single source's 101.4-102.3 on the first row in
-  round 3's prototypes: no difference.
-- **Pinned by:** the Stage suite: `values` (bits equal to the unstaged
-  kernel with ldmatrix, its transposed form, and narrow reads), `barriers`
-  (a marked load counted as a read of the rows its lanes supply), `races`
-  (with and without ldmatrix) and `ldmatrix's rows` (PTX's row assignment);
-  `sources`; the one-stage rule, `values` (a kernel staged in one stage
-  reads narrow) and kaun's `GptOss/prefill-512` row.
+A read of 16-bit elements of an operand staged in two stages was a load marked
+`ldmatrix` or `ldmatrix.trans`, lowered after the gater to the instruction
+CUDA prints, reading a warp's 8-by-8 matrices in one instruction where it now
+reads each element narrow. It gained on staged bfloat16 contractions and
+nothing end to end. On fudge's RTX 5000 Ada, minima of four interleaved rounds
+of each commit against the one before it, its withdrawal costs 1.04-1.18x on
+`contract/bf16-*`, 1.18x and 1.22x on `gated/*` and 1.03x on
+`stream/key-projection`, while the 512-token prefill takes 122.9 ms with it
+gone and 121.9 ms with it and one layer's experts 2.79 ms and 2.80 ms. About
+350 lines for no gain on the workload it named did not pay; the loss on those
+staged rows is the stated cost.
 
 ## D265. No axis a call reads runs as lanes
 

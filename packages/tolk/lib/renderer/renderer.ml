@@ -276,7 +276,6 @@ type t = {
   global_prod_max : int list option;
   shared_max : int;
   async_copy : bool;
-  load_matrix : bool;
   tensor_cores : Tc.t list;
   per_byte_first : int;
   stream_threads : int;
@@ -300,7 +299,6 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     ?(registers = fun () -> None) ?(vector_lanes = 1) ?(has_local = true)
     ?(has_shared = true) ?(global_max = int32_max) ?(local_max = int32_max)
     ?global_prod_max ?(shared_max = 32768) ?(async_copy = false)
-    ?(load_matrix = false)
     ?(tensor_cores = [])
     ?(per_byte_first = 64) ?(stream_threads = 32768)
     ?(local_workgroups = 256)
@@ -326,7 +324,6 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     global_prod_max;
     shared_max;
     async_copy;
-    load_matrix;
     tensor_cores;
     per_byte_first;
     stream_threads;
