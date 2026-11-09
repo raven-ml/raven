@@ -59,6 +59,11 @@ val full_rewrite_to_sink :
     {!Setting.debug} is [5] or more, [ast] is printed so before it is
     lowered.
 
+    An {!Op.Mulacc} of a float narrower than a float32 rounds once, subnormals
+    aside on a target that flushes them: where [ren]'s does not
+    ({!Renderer.t.fma}) and its multiply-add in a float32 does not already, it
+    is computed in a float32 and rounded once from there.
+
     Once its workgroup barriers are placed, the kernel is checked
     ({!Uniform.check}) whatever the setting {!Setting.spec}: a barrier or a
     matrix multiply-accumulate in a loop whose trips may differ between a

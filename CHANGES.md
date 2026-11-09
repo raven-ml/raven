@@ -1136,6 +1136,14 @@ word comes from its lock and from samples the dashboard saw arrive.
 - AMD GPU kernels compile without LLVM's loop idiom recognition
   (`Compiler_amd.hip`), as host kernels do: a comgr built on LLVM 22 or 23
   would take seconds to forever on a chain of float maxima.
+- An `Op.Mulacc` of a half, bfloat16 or 8-bit float rounds once, as its fold
+  does: by the target's fused multiply-add where it rounds once
+  (`Renderer.t.fma`: CUDA's `__hfma`, HIP's `__builtin_fmaf16`, Metal's half
+  `fma`), and through a float32 rounded to odd elsewhere. It rounded twice,
+  and a half vector's bits on the CPU depended on the host's Clang. A
+  bfloat16 one compiles on Metal. On a target that flushes subnormals, such
+  as Metal, a lane with a subnormal operand, product, sum or result is not
+  promised one rounding.
 - A kernel whose reduce and whose loads one condition gates compiles: folding
   the condition inside a selection's arms rewrote the bound of the loop it
   gates, forking a second loop of one identity, which Clang refused.

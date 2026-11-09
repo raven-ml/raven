@@ -13,6 +13,9 @@
   tolk.engine
   rig
   rig.cuda
+  rig.metal
+  rig.nv.nvidia
+  rig.amd.amdgpu
   rig.elf
   unix))
 

@@ -3715,6 +3715,422 @@ let multiply_adds =
           is_false ~msg:"fma" (mentions "fma" (source prg)));
     ]
 
+(* Multiply-adds of narrow floats
+
+   A float multiply-add is [x * y + z] rounded once to its type. The lanes that
+   tell one rounding from two lie off a midpoint of the type by less than a
+   float32 resolves: rounded to a float32 first, such a sum lands on the
+   midpoint, which then ties to even. For halves, [1 + 2^-10] times [1 - 2^-11]
+   plus [9 2^-24] is [1 + 2^-11 + 2^-24], whose half is [1 + 2^-10]; through a
+   float32 it is [1]. *)
+
+type narrow = {
+  dt : Dtype.t;
+  storage : Dtype.t;  (** the unsigned integer of its width *)
+  precision : int;  (** bits of a significand, the leading one included *)
+  emin : int;  (** the exponent of the least normal value *)
+  greatest : int;  (** the bits of the greatest finite value *)
+  below : int;  (** the bits of the greatest value below [2^(emin / 2)] *)
+  specials : int list;
+      (** the bits of its NaNs, infinities and negative zero, those it has *)
+  midpoints : ((int * int) * (int * int)) option;
+      (** the bounds of [q] in a product [o m 2^q] on a midpoint whose
+          float32 a value of the type cannot move, and of [j] that keep
+          [m 2^j] normal; [None] where no such product is finite *)
+}
+
+let halves =
+  {
+    dt = Float16;
+    storage = Uint16;
+    precision = 11;
+    emin = -14;
+    greatest = 0x7bff;
+    below = 0x2bff;
+    specials = [ 0x7e00; 0xfe00; 0x7c00; 0xfc00; 0x8000 ];
+    midpoints = Some ((-10, 2), (-15, 5));
+  }
+
+let bfloat16s =
+  {
+    dt = Bfloat16;
+    storage = Uint16;
+    precision = 8;
+    emin = -126;
+    greatest = 0x7f7f;
+    below = 0x217f;
+    specials = [ 0x7fc0; 0xffc0; 0x7f80; 0xff80; 0x8000 ];
+    midpoints = Some ((-40, 40), (-100, 100));
+  }
+
+let e5m2s =
+  {
+    dt = Fp8e5m2;
+    storage = Uint8;
+    precision = 3;
+    emin = -14;
+    greatest = 0x7b;
+    below = 0x1f;
+    specials = [ 0x7e; 0xfe; 0x7c; 0xfc; 0x80 ];
+    midpoints = Some ((6, 11), (-13, 13));
+  }
+
+let e5m2fnuzs =
+  {
+    dt = Fp8e5m2fnuz;
+    storage = Uint8;
+    precision = 3;
+    emin = -15;
+    greatest = 0x7f;
+    below = 0x1f;
+    specials = [ 0x80 ];
+    midpoints = Some ((6, 11), (-13, 13));
+  }
+
+(* A float32 resolves every sum of these near a midpoint: a value that leaves
+   a product's float32 on a midpoint has too few bits to land that far below
+   it. *)
+let e4m3s =
+  {
+    dt = Fp8e4m3;
+    storage = Uint8;
+    precision = 4;
+    emin = -6;
+    greatest = 0x7e;
+    below = 0x17;
+    specials = [ 0x7f; 0xff; 0x80 ];
+    midpoints = None;
+  }
+
+let e4m3fnuzs =
+  {
+    dt = Fp8e4m3fnuz;
+    storage = Uint8;
+    precision = 4;
+    emin = -7;
+    greatest = 0x7f;
+    below = 0x1f;
+    specials = [ 0x80 ];
+    midpoints = None;
+  }
+
+let float_of (v : Dtype.value) =
+  match v with `Float f -> f | _ -> invalid_arg "a narrow float is a float"
+
+let rounded f x = float_of (Dtype.truncate f.dt (`Float x))
+
+let of_bits f b =
+  float_of (Dtype.bitcast f.storage f.dt (`Int (Bigint.of_int b)))
+
+(* The distance between the values of [f] around [x], a finite value. *)
+let spacing f x =
+  let _, e = Float.frexp x in
+  Float.ldexp 1. (max (e - 1) f.emin - (f.precision - 1))
+
+let is_midpoint f x =
+  let w = spacing f x in
+  Float.rem (Float.abs x) w = w /. 2.
+
+let sum (x, y, z) = Sys.opaque_identity (x *. y) +. z
+
+(* [x * y + z] rounded once to [f], for [x], [y] and [z] of [f], whose product
+   is exact in a double. The sum is [s + e] exactly, [s] the double nearest it.
+   No midpoint of [f] lies strictly between [s] and the sum, so the sum rounds
+   as [s] does, but where [s] is a midpoint: then [e] says on which side of it
+   the sum lies, and it ties only where [e] is zero. A NaN or an infinity makes
+   [s] and [e] NaN or infinite, and [s] is then the value. *)
+let fma f x y z =
+  let p = Sys.opaque_identity (x *. y) in
+  let s = p +. z in
+  let d = s -. p in
+  let e = p -. (s -. d) +. (z -. d) in
+  if Float.is_nan e || e = 0. || not (is_midpoint f s) then rounded f s
+  else
+    let w = spacing f s in
+    rounded f (if e > 0. then s +. (w /. 2.) else s -. (w /. 2.))
+
+(* [h], [f]'s value of the sum [s], as a conversion that saturates stores it:
+   past the greatest finite value, an infinity included, it is that value of
+   [s]'s sign. *)
+let saturated f s h =
+  if Float.is_nan s then h
+  else if Float.abs h = Float.infinity || Float.is_nan h then
+    Float.copy_sign (of_bits f f.greatest) s
+  else h
+
+(* A value of [f] of at most the bits [greatest], of either sign, but for a
+   negative zero where [f] has none. *)
+let narrow_value f greatest =
+  let open Gen in
+  let sign = 1 lsl ((8 * Dtype.itemsize f.storage) - 1) in
+  let+ magnitude = int_range 0 greatest and+ negative = bool in
+  let signed = magnitude <> 0 || List.mem sign f.specials in
+  of_bits f (if negative && signed then magnitude lor sign else magnitude)
+
+(* Values whose product is a midpoint of [f], [o m 2^q], as [o 2^i] times
+   [m 2^(q - i)] with [o] and [m] odd and [o m] of one bit more than [f]'s
+   significand, and [q]. *)
+let on_midpoint f (products, scales) =
+  let open Gen in
+  let p = f.precision in
+  (* the odd [m] of [p] bits whose product by [o] has [p + 1] bits are
+     [2k + 1] for [k] in [ks o] *)
+  let ks o =
+    let lo = ((1 lsl p) + o - 1) / o and hi = ((1 lsl (p + 1)) - 1) / o in
+    (lo / 2, (hi - 1) / 2)
+  in
+  let os =
+    List.filter
+      (fun o ->
+        let lo, hi = ks o in
+        o < 1 lsl p && lo <= hi)
+      [ 3; 5; 7; 9; 11; 13; 15 ]
+  in
+  let* o = of_list os in
+  let* k = int_range (fst (ks o)) (snd (ks o)) in
+  let* q = int_range (fst products) (snd products) in
+  let+ i = int_range (max (-4) (q - snd scales)) (min 4 (q - fst scales))
+  and+ negative = bool in
+  let x = Float.ldexp (Float.of_int o) i in
+  ( (if negative then -.x else x),
+    Float.ldexp (Float.of_int ((2 * k) + 1)) (q - i),
+    q )
+
+(* Values whose product is a midpoint of [f] ({!on_midpoint}), and a value too
+   small to move a float32 off it, or a zero. *)
+let off_midpoint f bounds =
+  let open Gen in
+  let* x, y, q = on_midpoint f bounds in
+  let least = f.emin - (f.precision - 1) in
+  let top = q + f.precision - 25 in
+  let+ t = int_range (max (least - 1) (top - 30)) top and+ negative = bool in
+  let z = if t < least then 0. else Float.ldexp 1. t in
+  (x, y, if negative then -.z else z)
+
+(* The greatest finite value of [f] times one, plus a value of up to about two
+   spacings there: sums around the bound past which [f] overflows, half a
+   spacing above that value. *)
+let near_greatest f =
+  let open Gen in
+  let p = f.precision and g = of_bits f f.greatest in
+  let _, e = Float.frexp (spacing f g) in
+  let+ k = int_range 1 ((1 lsl p) - 1)
+  and+ t = int_range (e - 1 - p) (e - p)
+  and+ x_negative = bool
+  and+ z_negative = bool in
+  let sign negative v = if negative then -.v else v in
+  (sign x_negative g, 1., sign z_negative (Float.ldexp (Float.of_int k) t))
+
+(* A product on a midpoint of [f]'s top binade beside an addend of its least
+   normal binade, whose half a flushing target may read as a zero. *)
+let beside_least f =
+  let open Gen in
+  let _, e = Float.frexp (of_bits f f.greatest) in
+  let q = e - 1 - f.precision in
+  let+ x, y, _ = on_midpoint f ((q, q), (0, q))
+  and+ j = int_range 0 ((1 lsl (f.precision - 1)) - 1)
+  and+ negative = bool in
+  let z =
+    Float.ldexp (1. +. Float.ldexp (Float.of_int j) (1 - f.precision)) f.emin
+  in
+  (x, y, if negative then -.z else z)
+
+let narrow_triples f =
+  let open Gen in
+  let any = narrow_value f f.greatest in
+  (* two values below [2^(emin / 2)] and a subnormal, whose sum is often
+     subnormal *)
+  let tiny =
+    triple (narrow_value f f.below) (narrow_value f f.below)
+      (narrow_value f ((1 lsl (f.precision - 1)) - 1))
+  in
+  let special = map (of_bits f) (of_list f.specials) in
+  let any_or_special = frequency [ (1, special); (1, any) ] in
+  let near =
+    match f.midpoints with
+    | None -> []
+    | Some bounds -> [ (3, off_midpoint f bounds) ]
+  in
+  let lane =
+    frequency
+      ([
+         (2, triple any any any);
+         (1, tiny);
+         (1, triple any_or_special any_or_special any_or_special);
+         (1, near_greatest f);
+         (1, beside_least f);
+       ]
+      @ near)
+  in
+  with_pp
+    (fun ppf lanes ->
+      Array.iter
+        (fun (x, y, z) -> Format.fprintf ppf "(%h, %h, %h) " x y z)
+        lanes)
+    (array ~size:(constant 8) lane)
+
+(* [out[i] = a[i] * b[i] + c[i]] over [n] values of [dt], a multiply-add the
+   graph states, its lanes upcast by [lanes]. *)
+let narrow_muladd dt ~lanes n =
+  let x k = Ops.index (Shape.param ~shape:[ Int n ] k dt) in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let opts =
+    if lanes = 1 then []
+    else [ Opt.Split { axis = 0; amount = lanes; target = Upcast; top = false } ]
+  in
+  let value = Ops.alu (x 1 [ i ]) Op.Mulacc [ x 2 [ i ]; x 3 [ i ] ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
+    [ Ops.end_ (Ops.store (x 0 [ i ]) value) [ i ] ]
+
+(* A lane is exempt on a target that flushes subnormals where an operand, the
+   product, the sum or the result is below [least], the least normal value of
+   the narrow float (MSL 4.1 §8.1, §8.5). *)
+let exempt least (x, y, z) h =
+  let below v = v <> 0. && Float.abs v < least in
+  List.exists below [ x; y; z; x *. y; sum (x, y, z); h ]
+
+(* [run] compiles a kernel and returns whether the target's conversions to [f]
+   saturate, the narrow float's least normal value if it flushes subnormals, and
+   how the kernel runs. *)
+let muladd_rounds_once f run lanes =
+  let n = 8 in
+  let prg = lazy (run (narrow_muladd f.dt ~lanes n)) in
+  prop ~count:200 (Printf.sprintf "in %d lanes" lanes) (narrow_triples f)
+    (fun triples ->
+      let saturates, flushes, run = Lazy.force prg in
+      let column g = Array.map (fun t -> `Float (g t)) triples in
+      let expected =
+        Array.map
+          (fun ((x, y, z) as t) ->
+            let h = fma f x y z in
+            if saturates then saturated f (sum t) h else h)
+          triples
+      in
+      let f32 x = Int32.float_of_bits (Int32.bits_of_float x) in
+      let g = of_bits f f.greatest in
+      let is_special v =
+        Float.is_nan v || Float.abs v = Float.infinity || 1. /. v < 0.
+      in
+      if Option.is_some f.midpoints then
+        cover "a lane off a midpoint, on it as a float32"
+          (Array.exists
+             (fun t ->
+               let s = sum t in
+               is_midpoint f (f32 s) && not (is_midpoint f s))
+             triples);
+      cover "a lane on a midpoint"
+        (Array.exists (fun t -> is_midpoint f (sum t)) triples);
+      cover "a lane within half a spacing past the greatest finite value"
+        (Array.exists
+           (fun t ->
+             let s = Float.abs (sum t) in
+             s > g && s <= g +. (spacing f g /. 2.))
+           triples);
+      cover "a lane further past it"
+        (Array.exists
+           (fun t ->
+             let s = Float.abs (sum t) in
+             s > g +. (spacing f g /. 2.) && s < Float.infinity)
+           triples);
+      cover "a subnormal lane"
+        (Array.exists
+           (fun h -> h <> 0. && Float.abs h < Float.ldexp 1. f.emin)
+           expected);
+      let top = Float.ldexp 1. (snd (Float.frexp g) - 1)
+      and least = Float.ldexp 1. f.emin in
+      cover "a product on a midpoint of the top binade beside an addend of the \
+             least normal binade"
+        (Array.exists
+           (fun (x, y, z) ->
+             let p = x *. y in
+             Float.abs p >= top && is_midpoint f p && z <> 0.
+             && Float.abs z < 2. *. least)
+           triples);
+      cover "a lane of a NaN, an infinity or a negative zero"
+        (Array.exists
+           (fun (x, y, z) -> is_special x || is_special y || is_special z)
+           triples);
+      let out =
+        run
+          [
+            (1, column (fun (x, _, _) -> x));
+            (2, column (fun (_, y, _) -> y));
+            (3, column (fun (_, _, z) -> z));
+          ]
+      in
+      let kept =
+        List.filter
+          (fun i ->
+            match flushes with
+            | None -> true
+            | Some least -> not (exempt least triples.(i) expected.(i)))
+          (List.init n Fun.id)
+      in
+      let actual = List.assoc 0 out in
+      equal (list Dtypes.value)
+        (List.map (fun i -> `Float expected.(i)) kept)
+        (List.map (fun i -> actual.(i)) kept))
+
+(* [k] compiled for [r] and run on [d], its buffers of a type [r] emulates
+   passed and read back as their bits. *)
+let compiled_on d (r : Renderer.t) k =
+  let prg = compiled_for r k in
+  let kernel = buffer_dtypes (Ops.toposort ~calls:Enter k)
+  and program = buffer_dtypes (Shape.kernel_params prg) in
+  fun buffers ->
+    read_back ~kernel ~program
+      (Run.on d prg (stored ~kernel ~program buffers))
+
+let on_host k = (false, None, compiled_on Rig.host (Lazy.force host) k)
+
+(* The GPUs the law runs on, each opened once, at its first case, and skipping
+   it without one or without its compiler, whether its conversions to an 8-bit
+   float saturate ({!Cstyle.cuda}), and whether it flushes subnormals. *)
+let gpus =
+  let opened opener = lazy (Rig.open_ opener) in
+  [
+    ("Metal", opened (Rig_metal.gpu 0), false, true);
+    ("CUDA", opened (Rig_cuda.gpu 0), true, false);
+    ("NV", opened (Rig_nv_nvidia.gpu 0), true, false);
+    ("AMD", opened (Rig_amd_amdgpu.gpu 0), false, false);
+  ]
+
+(* The device of [gpu] and its renderer, or a skip without them. *)
+let opened_gpu (_, device, _, _) =
+  match Lazy.force device with
+  | Error why -> skip ~reason:why ()
+  | Ok d -> (
+      match Tolk_engine.renderer d with
+      | r -> (d, r)
+      | exception Failure why -> skip ~reason:why ())
+
+let on_gpu ((_, _, saturates, flushes) as gpu) f k =
+  let d, r = opened_gpu gpu in
+  ( saturates && Dtype.mem f.dt Dtype.fp8s,
+    (if flushes then Some (Float.ldexp 1. f.emin) else None),
+    compiled_on d r k )
+
+let narrow_multiply_adds =
+  let widths = [ 1; 4; 8 ] in
+  let on f =
+    group "on the host" (List.map (muladd_rounds_once f on_host) widths)
+    :: List.map
+         (fun ((kind, _, _, _) as gpu) ->
+           group ("on " ^ kind)
+             (List.map (muladd_rounds_once f (on_gpu gpu f)) widths))
+         gpus
+  in
+  group "a multiply-add of narrow floats rounds once"
+    [
+      group "of halves" (on halves);
+      group "of bfloat16s" (on bfloat16s);
+      group "of float8 e5m2s" (on e5m2s);
+      group "of float8 e5m2fnuzs" (on e5m2fnuzs);
+      group "of float8 e4m3s" (on e4m3s);
+      group "of float8 e4m3fnuzs" (on e4m3fnuzs);
+    ]
+
 (* Reductions that share a range
 
    [out[0] = max_{i,k} (a[k] + i) + sum_k a[k]] for [i] below 3 and [k] below
@@ -8269,6 +8685,7 @@ let () =
            threads_of_workgroups;
            variable_sizes;
            multiply_adds;
+           narrow_multiply_adds;
            shared_ranges;
            lanes;
            bfloat16_casts;

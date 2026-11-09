@@ -999,6 +999,122 @@ let pm_fuse_products =
               | _ -> Some (replace s ~arg:No_arg));
       ])
 
+(* A multiply-add of a float narrower than a float32, rounded once, where the
+   renderer's does not round once ({!Renderer.t.fma}). Targets compute such a
+   float in a float32, where its multiply-add rounds once, and then round to
+   the narrow float: two roundings, which differ from one where the exact value
+   lies off a midpoint of the narrow float by less than a float32 resolves. So
+   the product is computed exactly in a float32, and the sum rounded to odd
+   there, which the cast then rounds as the exact value (Boldo and Melquiond,
+   "Emulation of FMA and correctly-rounded sums: proved algorithms using
+   rounding to odd", IEEE Trans. Computers 57(4), 2008, Theorem 3, for a float
+   two bits more precise and at least two binades wider at the bottom).
+
+   Rounded to odd is rounded toward zero with the last bit set if inexact
+   (Section 2.B). The sum [r] rounded to nearest and its exact error [e]
+   (Knuth's TwoSum) give it: [r] steps one value toward zero where [e] has the
+   other sign, then its last bit is set where [e] is not zero. A NaN or an
+   infinity makes [e] NaN, which no comparison holds, and [r] passes.
+
+   A product of halves or 8-bit floats has at most 22 bits and lies within a
+   float32's normal range. A bfloat16 has a float32's range, so three guards
+   keep its product exact or its rounding right. From [2^127] the product and
+   the addend are halved, exactly, and the result doubled back: a sum that
+   overflowed only through the product's float32 is finite. A product past a
+   float32's range even halved is held at its greatest value, whose sum with
+   any addend overflows as the exact one does. A product that underflows
+   beside a zero addend is the result alone, so that it keeps its sign, which
+   [r = p + 0] loses. A product inexact in a float32's subnormals lies below
+   [2^-134], further from a bfloat16 midpoint than its error. Checked against
+   the exact sum rounded once on every pair of bfloat16s, NaNs and infinities
+   included, beside twenty addends chosen at the edges of the range, and on
+   4e9 random and cancelling triples.
+
+   A target may flush a float32's subnormals to zero, Metal among them (MSL
+   4.1, Section 8.1). On a lane whose operands, product, sum and result are
+   normal, a flush could change the result only where [r] is a midpoint of the
+   narrow float: elsewhere [odd] is [r] or its odd neighbour, which round as
+   [r] does. There [e] is the addend or zero, and every value TwoSum computes
+   is zero or normal. Halving an addend below [2^-125] would make it
+   subnormal, so it is kept whole: beside a product of at least [2^127] it
+   moves only the direction of the rounding, which its sign keeps. Halves and
+   8-bit floats compute in multiples of [2^-48], never subnormal. Checked with
+   every float32 operation flushing, on the lanes this holds: every pair of
+   bfloat16s beside seven addends, five of the least normal binade, and 4e9
+   random and cancelling triples. *)
+let narrow_mulacc x =
+  let dt = dtype x in
+  let a, b, c =
+    match src x with
+    | [ a; b; c ] -> (cast a Float32, cast b Float32, cast c Float32)
+    | _ -> invalid_arg "a multiply-add takes three operands"
+  in
+  let open O in
+  let k v = const_like a (`Float v) in
+  let zero = k 0. in
+  let bfloat16 = Dtype.equal dt Dtype.Bfloat16 in
+  let big =
+    let p = a * b in
+    lnot ((p < k 0x1p127) land (k (-0x1p127) < p))
+  in
+  let half = where big (k 0.5) (k 1.) in
+  let p = if bfloat16 then a * half * b else a * b in
+  let p =
+    if not bfloat16 then p
+    else
+      let greatest = 0x1.fffffep127 in
+      let infinite v = (k greatest < v) lor (v < k (-.greatest)) in
+      let held = infinite p land lnot (infinite a lor infinite b) in
+      where held (where (p < zero) (k (-.greatest)) (k greatest)) p
+  in
+  let c =
+    if not bfloat16 then c
+    else
+      let whole = (k (-0x1p-125) < c) land (c < k 0x1p-125) in
+      where whole c (c * half)
+  in
+  let r = p + c in
+  let d = r - p in
+  let e = p - (r - d) + (c - d) in
+  let r, e =
+    if not bfloat16 then (r, e)
+    else
+      let alone = lnot (c <> zero) land (a <> zero) land (b <> zero) in
+      (where alone p r, where alone zero e)
+  in
+  let below = e < zero and above = zero < e in
+  let toward_zero = (below land (zero < r)) lor (above land (r < zero)) in
+  let bits = bitcast r Uint32 in
+  let bits = where toward_zero (bits - const_like bits (`Int Bigint.one)) bits in
+  let odd = bitcast (bits lor cast (below lor above) Uint32) Float32 in
+  cast (if bfloat16 then where big (odd * k 2.) odd else odd) dt
+
+(* The narrow floats whose multiply-add a float32 computes, rounded there and
+   then to the type, rounds once. A product of e4m3s has at most 8 bits and is
+   exact in a float32, so the float32 sum [S] is rounded once; where it is
+   inexact, [|S| >= 2^6] (every sum is a multiple of 2^-18), and for [S] to land
+   on a midpoint [M <= 464] of the type within half a float32 spacing, the
+   addend would have to cancel the product's distance from [M], at least
+   [2^(e(M) - 8)], to [2^(e(M) - 24)], which a value of 4 bits cannot. Checked
+   on every finite triple of each, 16.2 and 16.6 million, the bound past which
+   the type overflows included. *)
+let float32_rounds_once = Dtype.[ Fp8e4m3; Fp8e4m3fnuz ]
+
+let narrow_floats =
+  List.filter (fun dt -> Dtype.itemsize dt < 4) Dtype.floats
+
+let pm_narrow_mulacc =
+  pm (fun () ->
+      [
+        rule_ctx
+          (Upat.v ~op:(ops [ Op.Mulacc ]) ~dtype:narrow_floats ~name:"x" ())
+          (fun (ren : Renderer.t) m ->
+            let x = m "x" in
+            let dt = dtype x in
+            if ren.fma dt || Dtype.mem dt float32_rounds_once then None
+            else Some (narrow_mulacc x));
+      ])
+
 (* Barriers *)
 
 let is_local_store x = is Op.Store x && addrspace (nth x 0) = Some Dtype.Local
@@ -1504,6 +1620,10 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   let sink = rewrite Shape.symbolic sink in
   let sink = rewrite pm_cast_float_alu sink in
   let sink = rewrite pm_fuse_products sink in
+  let sink =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:ren sink
+      (After_sources pm_narrow_mulacc)
+  in
   (* floordiv+mod / dtype decomp (early) *)
   (* a multiply-add is a sum's alone, which pm_reduce_local makes: a product
      and a sum elsewhere round apart *)

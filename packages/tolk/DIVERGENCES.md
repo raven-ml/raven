@@ -814,7 +814,9 @@ scope, see README.
   contraction off. `codegen/__init__.py` (`lower_reduce`: a sum adds its
   products unfused), `codegen/decomp/op.py` `get_late_rewrite_patterns` (`a*b +
   c` becomes `MULACC` for a renderer that writes it), `renderer/cstyle.py`
-  `CStyleLanguage.code_for_op` (no C-style language writes `MULACC`).
+  `CStyleLanguage.code_for_op` (no C-style language writes `MULACC`),
+  `renderer/ptx.py` `asm_for_op` (PTX writes a float `MULACC` as `fma.rn` at
+  its own type, so a half's rounds once).
 - **tolk:** `Compiler_cpu` (`-ffp-contract=off`), `Compiler_amd`
   (`-ffp-contract=off`), `Compiler_cuda` (`--fmad=false`), `Compiler_metal`
   (`#pragma METAL fp contract(off)` before the source);
@@ -823,9 +825,11 @@ scope, see README.
   `Codegen.lower_reduce`, and the
   operations `Codegen.full_rewrite_to_sink` decomposes with, without `Mulacc`;
   `Cstyle.fma` (`fma` in C-style and Metal, `__builtin_fmaf` and
-  `__builtin_fma` in Clang and HIP, `__fmaf_rn` and `__fma_rn` in CUDA);
-  `Ops.mulacc`, and its arm in `Ops.exec_alu`; `Shape.pm_data_invalid`'s
-  `Mulacc` rule.
+  `__builtin_fma` in Clang and HIP, `__fmaf_rn` and `__fma_rn` in CUDA, and
+  for halves `__hfma` in CUDA, of bfloat16s too, and `__builtin_fmaf16` in
+  HIP); `Ops.mulacc`, and its arm in `Ops.exec_alu`; `Shape.pm_data_invalid`'s
+  `Mulacc` rule; `Renderer.t.fma`, and `Codegen.narrow_mulacc`, which
+  `Codegen.full_rewrite_to_sink` applies after the products fuse.
 - **Differs:**
   - Each compiler would fuse a product and a sum that a rendered expression
     holds together, `a*b + c`, into one multiply-add with one rounding: Clang
@@ -853,6 +857,31 @@ scope, see README.
     an Invalid operand makes it Invalid, as `pm_data_invalid` does for binary
     operations; no tinygrad tensor graph holds `MULACC`, so it has no such
     rule.
+  - A `Mulacc` of a half, a bfloat16 or an 8-bit float rounds once too. A
+    target writes it so where its specification states one rounding
+    (`Renderer.t.fma`): CUDA's `__hfma` of halves from capability 53 and of
+    bfloat16s from 80 ("rounding the result once in round-to-nearest-even
+    mode", `cuda_fp16.h` and `cuda_bf16.h`), HIP's `__builtin_fmaf16`
+    (`V_FMA_F16`, fused), Metal's `fma` of halves from Apple family 4 ("Correctly
+    rounded", MSL 4.1 Table 8.3, fast math off). Elsewhere its operands widen
+    to a float32, where their product is exact, a bfloat16's within guards
+    at the ends of its range; the sum is rounded to odd there, and the cast
+    back rounds once (Boldo and Melquiond, IEEE Trans. Computers 57(4), 2008,
+    Theorem 3). Before, targets
+    computed a narrow float in a float32, where `Cstyle.fma` rounds once and
+    the narrowing again: Clang's promoted half and HIP's half by
+    `__builtin_fmaf`, CUDA's half and bfloat16 by `__fmaf_rn`, an emulated
+    bfloat16 or 8-bit float by a float32 multiply-add; Clang's
+    `__builtin_elementwise_fma` on half lanes rounded once or twice by
+    compiler and features (Apple clang 17 at arm64 `generic` by `fmadd s` then
+    `fcvt h`, at `generic+fp16` by one `fmla .8h`, Homebrew Clang 22 through a
+    double). An e4m3 or e4m3fnuz `Mulacc` keeps the float32 multiply-add:
+    rounded there and then to the type, it rounds once, on every finite
+    triple. A bfloat16 `Mulacc` compiles on Metal, where it did not. For a
+    target that flushes subnormals, Metal's (MSL 4.1, Section 8.1), a lane
+    whose operand, product, sum or result is subnormal in its type is not
+    promised one rounding; every other lane is: the float32 route keeps an
+    addend below `2^-125` whole rather than halve it into the subnormals.
 - **Reason:** (b). RFC 0012's Law 1: a
   reduction's result is in the rounded-sum class, whose error bound a fused
   multiply-add stays within; every other compiled result meets eager nx, which
@@ -895,6 +924,15 @@ scope, see README.
   that the sum cancels is kept whole` and `Test_compiled_rules › compositions
   › a compiled ewma is its eager value, bit for bit, and so is its gradient`
   went with its rewrite).
+  A narrow float's `Mulacc` is (e), the bits of one graph that differed
+  between hosts and between targets: `Tolk.Codegen › a multiply-add of narrow
+  floats rounds once › of halves`, `› of bfloat16s` and `› of float8
+  <format>s` for e5m2, e5m2fnuz, e4m3 and e4m3fnuz, each on the host and each
+  GPU, in 1, 4 and 8 lanes, against the exact sum rounded once (lanes off a
+  midpoint by less than a float32 resolves, on a midpoint, around the bound
+  past which the type overflows, subnormal, NaN, infinite and negative zero
+  operands, a product on a midpoint of the top binade beside an addend of the
+  least normal binade, which fails on Metal where the addend is halved).
 
 ## D26. A minus never meets a minus in C-style source
 

@@ -256,6 +256,12 @@ type t = private {
   native : Dtype.t -> bool;
       (** [native dt] is [true] iff the target has values of [dt]; see
           {!supported_dtypes}. *)
+  fma : Dtype.t -> bool;
+      (** [fma dt] holds only where an {!Op.Mulacc} of the float [dt], as the
+          target writes it, rounds once to [dt], subnormals aside on a
+          target that flushes them. Code generation rewrites a float
+          narrower than a float32 otherwise, unless its multiply-add in a
+          float32 already rounds once ({!Codegen.full_rewrite_to_sink}). *)
   render : Ops.t list -> string;
       (** [render uops] is the source of the linearized kernel [uops]. *)
   compiler : Compiler.t;  (** The compiler of the rendered source. *)
@@ -287,6 +293,7 @@ val v :
   ?packed_args:bool ->
   ?code_for_op:(Op.t * (string list -> Dtype.t -> string)) list ->
   ?native:(Dtype.t -> bool) ->
+  ?fma:(Dtype.t -> bool) ->
   ?render:(Ops.t list -> string) ->
   ?compiler:Compiler.t ->
   Helpers.Target.t ->
@@ -308,7 +315,8 @@ val v :
     - [launch_args] is [max_int];
     - [launch_locals] is [true];
     - [packed_args] is [false];
-    - [native] holds for every data type;
+    - [native] holds for every data type, and [fma] for {!Dtype.Float32} and
+      {!Dtype.Float64};
     - [render] raises [Invalid_argument];
     - [compiler] returns its source unchanged, and caches nothing. *)
 

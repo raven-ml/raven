@@ -287,6 +287,7 @@ type t = {
   packed_args : bool;
   code_for_op : (Op.t * (string list -> Dtype.t -> string)) list;
   native : Dtype.t -> bool;
+  fma : Dtype.t -> bool;
   render : Ops.t list -> string;
   compiler : Compiler.t;
 }
@@ -307,6 +308,7 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     ?(launch_locals = true) ?(packed_args = false)
     ?(code_for_op = [])
     ?(native = fun _ -> true)
+    ?(fma = fun dt -> Dtype.mem dt Dtype.[ Float32; Float64 ])
     ?(render = fun _ -> invalid_arg "needs a renderer")
     ?(compiler = Compiler.v Fun.id) target =
   {
@@ -335,6 +337,7 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     packed_args;
     code_for_op;
     native;
+    fma;
     render;
     compiler;
   }

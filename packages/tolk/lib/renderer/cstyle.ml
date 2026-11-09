@@ -1803,11 +1803,16 @@ let metal_with compiler (target : Helpers.Target.t) =
     ((not (Dtype.equal dt Dtype.Bfloat16)) || from 6)
     && not (Dtype.mem dt (Dtype.Float64 :: Dtype.fp8s))
   in
+  (* fma of halves is "Correctly rounded" from Apple GPU family 4, fast math
+     off (MSL 4.1, Table 8.3; Compiler_metal); bfloat's table has no fma. *)
+  let fma dt =
+    Dtype.equal dt Dtype.Float32 || (Dtype.equal dt Dtype.Float16 && from 4)
+  in
   Renderer.v ~name:"MetalRenderer" ~launch_locals:false
     ~tensor_cores:(if from 7 then Tc.metal else [])
     ~extra_matcher:metal_extra_matcher ~packed_args:true
     ~code_for_op:metal_lang.code_for_op
-    ~native
+    ~native ~fma
     ~render:(render metal_kernel metal_lang)
     ~compiler:(compiler ()) target
 
@@ -1853,7 +1858,10 @@ let cuda_lang =
             ( Recip,
               unary (fun x dt ->
                   if half dt then strf "hrcp(%s)" x else strf "(1/%s)" x) );
-            (Mulacc, fma (by_width ~double:"__fma_rn" ~single:"__fmaf_rn"));
+            ( Mulacc,
+              fma (fun dt ->
+                  if half dt then "__hfma"
+                  else by_width ~double:"__fma_rn" ~single:"__fmaf_rn" dt) );
           ];
     type_map =
       (Dtype.Uint32, "uint")
@@ -2072,6 +2080,14 @@ let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
     && ((not (Dtype.mem dt Dtype.fp8_ocp)) || ver >= 89)
     && not (Dtype.mem dt Dtype.fp8_fnuz)
   in
+  (* __hfma "Performs half fused multiply-add in round-to-nearest-even mode
+     ... rounding the result once", and likewise of nv_bfloat16 (cuda_fp16.h,
+     cuda_bf16.h, CUDA 13.4), where the capability has the type. *)
+  let fma dt =
+    Dtype.mem dt Dtype.[ Float32; Float64 ]
+    || (Dtype.equal dt Dtype.Float16 && ver >= 53)
+    || (Dtype.equal dt Dtype.Bfloat16 && ver >= 80)
+  in
   let compiler = compiler () in
   (* cp.async "Requires sm_80 or higher" (PTX ISA §9.7.10.28.3.1). A kernel
      that copies asynchronously renders its barriers to wait for the copies. *)
@@ -2097,7 +2113,7 @@ let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
     ~global_max:[ 2147483647; 65535; 65535 ]
     ~local_max:[ 1024; 1024; 64 ] ~shared_max:49152 ~async_copy ~tensor_cores
     ~extra_matcher:cuda_extra_matcher ~code_for_op:cuda_lang.code_for_op ~native
-    ~render ~compiler target
+    ~fma ~render ~compiler target
 
 (* A cubin on every device: the disk cache keeps the GPU's code, which the
    driver loads as it is, where it would translate PTX at each load and keep its
@@ -2235,7 +2251,10 @@ let hip_lang arch =
             (Exp2, ocml "exp2");
             (Sqrt, ocml "sqrt");
             ( Mulacc,
-              fma (by_width ~double:"__builtin_fma" ~single:"__builtin_fmaf") );
+              fma (fun dt ->
+                  if Dtype.equal dt Dtype.Float16 then "__builtin_fmaf16"
+                  else by_width ~double:"__builtin_fma" ~single:"__builtin_fmaf" dt)
+            );
           ];
     smem_prefix = "__attribute__((shared, aligned(16)))";
     smem_prefix_for_cast = false;
@@ -2450,13 +2469,16 @@ let hip_with compiler (target : Helpers.Target.t) =
   let native dt =
     (not (Dtype.mem dt Dtype.fp8s)) || Dtype.mem dt (amd_fp8s arch)
   in
+  (* __builtin_fmaf16 is LLVM's fma of halves, V_FMA_F16 on every GPU here: "D =
+     S0 * S1 + S2", fused (RDNA4 ISA). *)
+  let fma dt = Dtype.mem dt Dtype.[ Float16; Float32; Float64 ] in
   (* the global limit is only really needed on gfx12, though gfx11 reports the
      same *)
   Renderer.v ~name:"HIPRenderer" ~half8:true ~shared_max:65536
     ~global_max:[ 2147483647; 65535; 65535 ]
     ~global_prod_max:[ 0xFFFFFFFF; 0xFFFFFFFF; 0xFFFFFFFF ]
     ~tensor_cores ~extra_matcher:(hip_extra_matcher arch)
-    ~code_for_op:lang.code_for_op ~native
+    ~code_for_op:lang.code_for_op ~native ~fma
     ~render:(render (hip_kernel arch tensor_cores) lang)
     ~compiler:(compiler arch) target
 
