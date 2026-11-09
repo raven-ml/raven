@@ -4,6 +4,8 @@
  (name tolk)
  (public_name tolk)
  (private_modules
+  heuristic_common
+  heuristic_host
   host_config
   source_digest
   compiler_worker

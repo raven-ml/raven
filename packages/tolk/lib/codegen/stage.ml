@@ -602,6 +602,65 @@ let admits (ren : Renderer.t) sink =
   && List.for_all (fun u -> (not (Op.equal (op u) Op.Wmma)) || core u) all
 
 
+(* A staged core's tile. On an RTX 5000 Ada, bfloat16 products of 512 by 512 by
+   2880 and of 64 rows by 5760 by 2880 ran 1.6 to 1.9 times slower without the
+   halving of [tile]; at two stages the knee lies between 5760 and 11520
+   threads. *)
+let warp_tile = 64
+let chunk = 32
+
+let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
+    ~sizes:(sn, sm, sk) ~in_run =
+  let n, m, kd = w.dims and itemsize = Dtype.itemsize w.dtype_in in
+  let unroll =
+    if chunk mod kd = 0 && sk mod (chunk / kd) = 0 then chunk / kd else 1
+  in
+  let rec within u = if u <= 1 || in_run u then u else within (u / 2) in
+  (* The upcasts of M and N, and their local splits, of a warp tile halved
+     [hm] and [hn] times. *)
+  let plan (hm, hn) =
+    let um = within (warp_tile / m / hm) and un = warp_tile / n / hn in
+    if um < 1 || un < 1 || sm = 0 || sn = 0 || sm mod um <> 0 || sn mod un <> 0
+    then None
+    else
+      let lm = if sm / um mod 2 = 0 && in_run (um * 2) then 2 else 1
+      and ln = if sn / un mod 2 = 0 then 2 else 1 in
+      Some (um, un, lm, ln)
+  in
+  let plans = List.filter_map plan [ (1, 1); (2, 1); (2, 2) ] in
+  let bytes (um, un, lm, ln) =
+    let depth = kd * unroll * itemsize in
+    [ lm * um * m * depth; ln * un * n * depth ]
+  in
+  (* The staged tile is taken only where staging stages the core's operands,
+     which it decides of the kernel as the core leaves it. *)
+  let stages =
+    match plans with
+    | p :: _ when admits ren ast -> depth ren (bytes p)
+    | _ -> 0
+  in
+  if stages = 0 then None
+  else
+    let threads (um, un, lm, ln) =
+      match workgroups with
+      | Some g -> g / (um * un * lm * ln) * w.threads * lm * ln
+      | None -> max_int
+    in
+    let fits p = threads p >= core_threads / stages in
+    let um, un, lm, ln =
+      match List.find_opt fits plans with
+      | Some p -> p
+      | None -> List.hd (List.rev plans)
+    in
+    let when_ c split = if c then [ split ] else [] in
+    Some
+      (when_ (um > 1) (1, um, Opt.Upcast)
+      @ (if un > 4 then [ (0, 4, Opt.Upcast); (0, un / 4, Opt.Upcast) ]
+         else when_ (un > 1) (0, un, Opt.Upcast))
+      @ when_ (lm = 2) (1, 2, Opt.Local)
+      @ when_ (ln = 2) (0, 2, Opt.Local)
+      @ when_ (unroll > 1) (2, unroll, Opt.Upcast))
+
 (* Decoded panels on the host *)
 
 let decoded o =

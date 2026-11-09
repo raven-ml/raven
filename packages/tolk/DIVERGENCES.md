@@ -2365,9 +2365,9 @@ Withdrawn: multi-device is out of scope, see README.
 - **tolk:** `Heuristic.lanes`, `Heuristic.rows`, `Heuristic.columns`,
   `Heuristic.sector_lanes`, `Renderer.t.stream_threads`, `Heuristic.in_flight`,
   `Heuristic.in_flight_held`, `Heuristic.stream_first`,
-  `Heuristic.upcast_max`, `Heuristic.summed`, `Renderer.t.per_byte_first`,
-  `Heuristic.per_byte`, `Heuristic.run`,
-  `Heuristic.reuse_ranges`, `Heuristic.reuse`, `Heuristic.stride`,
+  `Heuristic_common.upcast_max`, `Heuristic.summed`, `Renderer.t.per_byte_first`,
+  `Heuristic.per_byte`, `Heuristic_common.run`,
+  `Heuristic.reuse_ranges`, `Heuristic.reuse`, `Heuristic_common.stride`,
   `Heuristic.accesses`, `Heuristic.reduces_in`, `Heuristic.contraction`,
   `Heuristic.contracted`,
   `Heuristic.units`, `Heuristic.main_access`, `Heuristic.layout`,
@@ -2625,8 +2625,8 @@ host's accumulators in its vector registers.
 - **tinygrad:** `codegen/opt/heuristic.py` (`hand_coded_optimizations`'
   upcasts of output axes, which find reuse only on an axis that some access
   does not read, and take 3 or 4 values of it).
-- **tolk:** `Heuristic.share_decodes`, `Heuristic.unbudgeted_rows`,
-  `Heuristic.run`, `Heuristic.decoded` and `share_decodes`' place in
+- **tolk:** `Heuristic_host.share_decodes`, `Heuristic_host.unbudgeted_rows`,
+  `Heuristic_common.run`, `Stage.decoded` and `share_decodes`' place in
   `Heuristic.general`.
 - **Differs:** on the host (`target.device = "CPU"`), before the other
   rules, each output axis along which `f > 1` outputs read each value of a
@@ -2937,7 +2937,7 @@ the expand, as there.
   and the core reads its bits of the range at 0. Either operand may be the
   core's A: the choices with `in0` as A come first, as tinygrad orders them,
   then those with `in1`. A summed product with a decoded operand
-  (`Heuristic.decoded`) tries the cores whatever its number of reduce axes.
+  (`Heuristic.decoded_product`) tries the cores whatever its number of reduce axes.
 - **Reason:** (d): `Nx.map_segments` over `Nx_quant.apply` on a prompt, which
   sorts positions by expert into blocks of up to 16 rows, each multiplying its
   expert's matrix, `W[owner[row / 16]]`. The rows read the row axis and the
@@ -5789,8 +5789,8 @@ into D183, which holds its rule, its reason and its pins.
   axis, whole when it is at most 32, by 4 otherwise, while the kernel has fewer
   than 64 lanes).
 - **tolk:** `Heuristic.held_registers` (`held`, `held_share`,
-  `computed_bytes`), `Heuristic.fits`, `Heuristic.stored_contiguous`,
-  `Heuristic.upcast_contiguous`, and `Heuristic.upcast_more`'s and
+  `computed_bytes`), `Heuristic_host.fits`, `Heuristic_host.stored_contiguous`,
+  `Heuristic_host.upcast_contiguous`, and `Heuristic.upcast_more`'s and
   `Heuristic.unroll`'s use of them; `Renderer.registers`, which
   `Cstyle.clang` sets from `Compiler_cpu.registers`.
 - **Differs:** on the host (the `CPU` device of a renderer that knows its
@@ -5969,9 +5969,9 @@ into D183, which holds its rule, its reason and its pins.
   upcasts of output axes by 3 or 4), `hand_coded_optimizations` (the unroll of
   the last reduce axis, and of a second one when both are at most 3) and
   `hand_coded_optimizations` (the upcast by 4 of a kernel that has none).
-- **tolk:** `Heuristic.host_vector_bytes`, `Heuristic.parallel_operations`,
-  `Heuristic.upcast_vectors`, `Heuristic.upcast_contiguous` and
-  `Heuristic.unroll_vector`.
+- **tolk:** `Heuristic_host.host_vector_bytes`, `Heuristic_host.parallel_operations`,
+  `Heuristic_host.upcast_vectors`, `Heuristic_host.upcast_contiguous` and
+  `Heuristic_host.unroll_vector`.
 - **Differs:** on the host a group of lanes computed as one vector spans 64
   bytes of its widest type, two registers of AVX2. A kernel with no reduce
   takes, after its masked axes, one upcast of its last output axis that 2
@@ -6901,10 +6901,10 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
 - **tinygrad:** `codegen/opt/heuristic.py` `hand_coded_optimizations` (the
   upcasts while fewer than 32 lanes and the unroll while fewer than 64, counting
   every lane of the kernel).
-- **tolk:** `Heuristic.converted_lanes`, `Heuristic.conversion_lanes`,
-  `Heuristic.iteration_lanes`, `Heuristic.unroll_lanes`,
-  `Heuristic.lanes_after` and `Heuristic.fits`; `Cstyle.clang_lanes` and
-  `Codegen.split_lanes`.
+- **tolk:** `Heuristic_host.converted_lanes`, `Heuristic_host.conversion_lanes`,
+  `Heuristic_host.iteration_lanes`, `Heuristic_host.unroll_lanes`,
+  `Heuristic_host.lanes_after` and `Heuristic_host.fits`; `Cstyle.clang_lanes`
+  and `Codegen.split_lanes`.
 - **Differs:** on the host, the upcasts after the masked and shared ones
   and the unroll (D186) apply only while each conversion (`CAST`) computes
   at most 64 lanes: of the upcast axes its value reads, the lanes holding
