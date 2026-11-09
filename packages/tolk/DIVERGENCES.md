@@ -8813,3 +8813,74 @@ reason and its pins.
 - **Pinned by:** `Tolk.Launch › an After lists its stores in the order they
   land`, `Tolk.Launch_law › a schedule's launches write what its graph states`,
   `Tolk.Schedule › create_schedule › a write's listing`.
+
+
+## D428. A loop's call reads a fixed run of storage it writes each trip
+
+- **tinygrad:** tinygrad's precompiled functions copy every argument before
+  the call (`uop/ops.py`, `call_with_outputs`) and render no loop of a call;
+  `schedule/__init__.py` (`pm_replace_buf`) lifts a view for a copy or a store
+  only.
+- **tolk:** `Schedule.loop_runs` (`view_of`'s loop read), `Schedule.copy_start`,
+  `Prepare.copy_off_start`, `Indexing.realize_custom_kernel_srcs`,
+  `Indexing.refuse_stale_read`, `Shape.reads_storage_written`, `Spec.args_fit`.
+- **Differs:** a contiguous run at a constant offset that a loop's call only
+  reads, of storage the call writes through another argument, becomes a view
+  parameter (D426) of the loop's call, so each trip reads the run as the trip
+  starts; it is copied each trip beside the call that writes the storage, as a
+  loop's whole-state read is (D160's per-trip copy). An argument off its
+  parameter's start (D54) of storage the call writes takes no copy before the
+  loop: scheduling makes the copy, per trip in a loop that writes the state, at
+  the start new storage takes (`Shape.allocated_start`) where the state's own
+  start does not fit the parameter, cycle or none
+  (`Schedule.copy_off_start_reads`). Any other read of the state a loop's call writes, or of a later one, a
+  strided or reversed view, a value computed from it, a run of an `After`
+  state, raises at `Indexing.run_rangeify`: it would be stored once before the
+  loop. A read of an older state, or of storage written before the loop, stays
+  stored once, as the graph names it.
+  A fixed run of storage the loop does not write is stored once, as before.
+- **Reason:** (e): the loop read the run as it was before its first trip: a call
+  storing row 1 of a buffer, plus one, into row `r` left `5,6,7,8` in row 2 where
+  the trips compute `6,7,8,9`. A stage cannot be made inside a loop's call, so
+  a read no view can hold is refused rather than computed with stale values.
+  rune and jera emit no read of this shape: 0 firings of a read of written
+  storage over their suites (rune read 1,211 fixed runs, jera 130, of storage
+  the loop does not write, stored once as before).
+- **Pinned by:** the `Tolk_engine` suite's `calls of views › a call's fixed read
+  sees what its loop wrote`, `› a loop's fixed read off its parameter's start is
+  read each trip`, `› a back edge's fixed read sees what its loop wrote`,
+  `› a loop reading its written storage through no run is refused`, `› a loop
+  reading a later state than storage it writes is refused`, `› a loop reads
+  earlier states as they were`, `› a call reads storage it writes off its
+  parameter's start, no after listing the storage`, `› a loop reads each run
+  as its trip starts`.
+
+## D429. A store listed over a later state of its storage writes that state
+
+- **tinygrad:** `schedule/__init__.py` (`create_schedule`), where an `AFTER`'s
+  kernels supersede the `AFTER`'s own source; tolk takes the prior state from
+  the calls' arguments (D160).
+- **tolk:** `Schedule.name_written_states`, `Schedule.join_foreign_stores`.
+- **Differs:** before the read and write relation is built, an argument a
+  kernel stores through that names a state older than the state the earliest
+  `After` listing the kernel is over names that state, unless an `After` of the
+  older state lists the kernel too. `after x1 [store (x 2..4) (x1[0:2] + 1)]`
+  raised "two writes over one state" and runs; a call given `x` to write and
+  `x1` to read, listed over `x1`, reads `x1` as `memmove` reads its source. An
+  `After` of storage listing only stores into other storage is a join after
+  one write of each storage, its stores in the order listed and marked as the
+  `After` is, on the graph as it enters scheduling, where a store
+  names the storage it writes: `after x [store y v]` is `x` as it was, read once
+  the store has landed; it failed verification, a range left open. A store of
+  other storage beside one of its own stays, as tinygrad's goldens hold
+  (`store_ordered_before`).
+- **Reason:** (e): `Ops.after` gives both programs a meaning and each raised
+  an internal error.
+- **Pinned by:** `Tolk.Schedule › create_linear_with_vars › joins › a store
+  naming an older state, listed over a later one`, `› a store through a run of
+  a join`, `› an after listing only a store into other storage is that state`,
+  `› stores into one other storage land as listed`;
+  `Tolk_engine › calls of views › a call given an older state to write and a
+  later to read reads it before the call`, `› a kernel listed over two
+  storages names the later state in either listing`, `› runs of one other
+  storage land as listed in an after`.

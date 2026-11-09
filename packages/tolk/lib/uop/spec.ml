@@ -111,6 +111,9 @@ let args_fit c =
              && p.slot >= 0
              && p.slot < Array.length args ->
           fits_start ~param:(p.align, p.phase) (storage_phase args.(p.slot))
+          (* Storage the call also writes is read through a copy, which
+             scheduling makes at the parameter's start. *)
+          || reads_storage_written c p.slot
       | _ -> true)
     (toposort ~calls:Skip (body c))
 

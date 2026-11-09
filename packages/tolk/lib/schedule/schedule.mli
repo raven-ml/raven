@@ -68,7 +68,13 @@ val create_schedule : ?by_storage:bool -> Ops.t -> Ops.t
     already, else the one of fewest bytes. A loop whose call writes a state
     through one argument and reads it through another copies it in the loop, as
     each trip starts, for a state the loop itself writes; any other copy is
-    made once, before the loop. A write's prior state is the latest state of
+    made once, before the loop. A copy starts as its state's storage does, or
+    where new storage starts ({!Shape.allocated_start}) for a parameter its
+    state's storage starts off: a call reads storage it writes off its
+    parameter's start through a copy, made whether or not its orders form a
+    cycle. An argument a kernel stores through that names a state older than
+    the state the earliest {!Op.After} listing the kernel is over names that
+    state, unless an {!Op.After} of the older state lists the kernel too. A write's prior state is the latest state of
     the {!Op.After}'s storage its call is given, and the state the {!Op.After}
     is after where it is given none: a loop after its carry's storage, given
     the carry's first state, writes over that state. A graph whose kernels form

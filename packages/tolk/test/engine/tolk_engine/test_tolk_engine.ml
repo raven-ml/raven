@@ -3172,6 +3172,368 @@ let copies_moving_rows ?(devices = devices) src_device dst_device () =
   Engine.run s [||];
   equal values (bytes 3) (Run.values Uint8 dst_buffer)
 
+(* Three trips of a call that stores row 1 of a buffer of rows of four, plus
+   one, into row [r]: the fixed read sees the state each trip starts from, so
+   the third trip reads what the second wrote. *)
+let reads_what_its_loop_wrote () =
+  let d = "CPU" in
+  let k = 4 in
+  let p slot = Shape.param ~shape:[ Int k ] ~device:d slot Float32 in
+  let body = Ops.sink [ Ops.store (p 0) Ops.O.(p 1 + float 1.) ] in
+  let b = Ops.new_buffer d (4 * k) Float32 in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let moving =
+    Shape.shrink b
+      [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]
+  in
+  let fixed = Shape.shrink b [ Some (Int k, Int (2 * k)) ] in
+  let e = Ops.end_ (Ops.call ~precompile:true body [ moving; fixed ]) [ r ] in
+  let linear, vars =
+    Schedule.create_linear_with_vars (Ops.sink [ Ops.after b [ e ] ])
+  in
+  let given = Array.init (4 * k) Float.of_int in
+  let buffer = Run.buffer (devices d) Float32 (floats given) in
+  let s = Engine.link ~devices ~bound:[ (b, buffer) ] (compile linear) in
+  Engine.run ~vars s [||];
+  let want =
+    [| 5.; 6.; 7.; 8.; 5.; 6.; 7.; 8.; 6.; 7.; 8.; 9.; 12.; 13.; 14.; 15. |]
+  in
+  equal values (floats want) (Run.values Float32 buffer)
+
+(* A loop's call, reading a fixed run off its parameter's start, reads the run
+   as each trip starts: rows of four, the run from element 6 at byte 24. *)
+let reads_off_start_each_trip () =
+  let d = "CPU" and k = 4 in
+  let p slot = Shape.param ~shape:[ Int k ] ~device:d slot Float32 in
+  let body = Ops.sink [ Ops.store (p 0) Ops.O.(p 1 + float 1.) ] in
+  let b = Ops.new_buffer d (4 * k) Float32 in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let moving =
+    Shape.shrink b
+      [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]
+  in
+  let fixed = Shape.shrink b [ Some (Int 6, Int 10) ] in
+  let e = Ops.end_ (Ops.call ~precompile:true body [ moving; fixed ]) [ r ] in
+  let linear, vars =
+    Schedule.create_linear_with_vars (Ops.sink [ Ops.after b [ e ] ])
+  in
+  let given = Array.init (4 * k) Float.of_int in
+  let buffer = Run.buffer (devices d) Float32 (floats given) in
+  let s = Engine.link ~devices ~bound:[ (b, buffer) ] (compile linear) in
+  Engine.run ~vars s [||];
+  (* Each trip reads elements 6..9 as it starts: 6,7,8,9, then 6,7,8,9 less
+     the row just stored over 6,7 by trip 1. *)
+  let want =
+    [| 7.; 8.; 9.; 10.; 7.; 8.; 9.; 10.; 10.; 11.; 9.; 10.; 12.; 13.; 14.; 15. |]
+  in
+  equal values (floats want) (Run.values Float32 buffer)
+
+(* A back edge's call reads a fixed run as each trip starts, as a range's does:
+   three trips while the flag holds, row 1 read each trip. *)
+let backedge_reads_each_trip () =
+  let d = "CPU" and k = 4 in
+  let p slot dt = Shape.param ~shape:[ Int k ] ~device:d slot dt in
+  let index = Shape.param ~addrspace:Alu 3 Int32 in
+  let body =
+    Ops.sink
+      [
+        Ops.store (p 0 Float32) Ops.O.(p 1 Float32 + float 1.);
+        Ops.store
+          (Shape.param ~shape:[ Int 1 ] ~device:d 2 Bool)
+          (Shape.reshape Ops.O.(index + int 1 < int 3) [ Int 1 ]);
+      ]
+  in
+  let b = Ops.new_buffer d (4 * k) Float32 in
+  let f = Ops.new_buffer d 1 Bool in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let moving =
+    Shape.shrink b
+      [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]
+  in
+  let fixed = Shape.shrink b [ Some (Int k, Int (2 * k)) ] in
+  let call = Ops.call ~precompile:true body [ moving; fixed; f; r ] in
+  let e = Ops.backedge call ~loop:r ~cond:f in
+  let linear, vars =
+    Schedule.create_linear_with_vars
+      (Ops.sink [ Ops.after b [ e ]; Ops.after f [ e ] ])
+  in
+  let f_init, linear = flag_from d f linear in
+  let given = Array.init (4 * k) Float.of_int in
+  let buffer = Run.buffer (devices d) Float32 (floats given) in
+  let flag = Run.buffer (devices d) Bool [| `Bool true |] in
+  let s =
+    Engine.link ~devices ~bound:[ (b, buffer); (f_init, flag) ] (compile linear)
+  in
+  Engine.run ~vars s [||];
+  let want =
+    [| 5.; 6.; 7.; 8.; 5.; 6.; 7.; 8.; 6.; 7.; 8.; 9.; 12.; 13.; 14.; 15. |]
+  in
+  equal values (floats want) (Run.values Float32 buffer)
+
+(* The writes a schedule leaves in [bufs], each given its values. *)
+let leaves bufs sink =
+  let linear, vars = Schedule.create_linear_with_vars sink in
+  let run xs = Run.buffer (devices "CPU") Float32 (floats xs) in
+  let bound = List.map (fun (b, xs) -> (b, run xs)) bufs in
+  Engine.run ~vars (Engine.link ~devices ~bound (compile linear)) [||];
+  List.map (fun (_, x) -> Run.values Float32 x) bound
+
+let p4 slot = Shape.param ~shape:[ Int 4 ] ~device:"CPU" slot Float32
+let of_ints f n = floats (Array.init n (fun i -> f i))
+
+let row4 b r =
+  Shape.shrink b
+    [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 4)) ]
+
+(* A call given [x] to write and [x1] to read, listed over [x1]: one state at
+   both, which it reads as it was before the call, as [memmove] reads. *)
+let older_write_reads_before () =
+  let x = Ops.new_buffer "CPU" 64 Float32 in
+  let x1 = Ops.after x [ Ops.store x Ops.O.(x * float 2.) ] in
+  let p slot = Shape.param ~shape:[ Int 64 ] ~device:"CPU" slot Float32 in
+  let body = Ops.sink [ Ops.store (p 0) (Shape.flip (p 1) [ 0 ]) ] in
+  let k = Ops.call ~precompile:true body [ x; x1 ] in
+  let got =
+    leaves [ (x, Array.init 64 Float.of_int) ] (Ops.sink [ Ops.after x1 [ k ] ])
+  in
+  equal (list values) [ of_ints (fun i -> Float.of_int (2 * (63 - i))) 64 ] got
+
+(* A kernel writing [x] and [y], listed over [y] and over a later state of
+   [x], in either listing. *)
+let listed_two_storages_either_order () =
+  let run order =
+    let x = Ops.new_buffer "CPU" 4 Float32
+    and y = Ops.new_buffer "CPU" 4 Float32 in
+    let x1 = Ops.after x [ Ops.store x Ops.O.(x * float 2.) ] in
+    let body =
+      Ops.sink
+        [ Ops.store (p4 0) Ops.O.(p4 0 + float 1.); Ops.store (p4 1) (Ops.float 7.) ]
+    in
+    let k = Ops.call ~precompile:true body [ x; y ] in
+    let afters = [ Ops.after y [ k ]; Ops.after x1 [ k ] ] in
+    leaves
+      [ (x, Array.init 4 Float.of_int); (y, Array.make 4 0.) ]
+      (Ops.sink (order afters))
+  in
+  let want =
+    [ of_ints (fun i -> Float.of_int ((2 * i) + 1)) 4; floats (Array.make 4 7.) ]
+  in
+  equal (list values) want (run Fun.id);
+  equal (list values) want (run List.rev)
+
+(* A call reading storage it writes off its parameter's start, no [After] of
+   that storage listing it: it still reads a copy at its parameter's start. *)
+let off_start_read_no_after () =
+  let x = Ops.new_buffer ~phase:4 "CPU" 4 Float32
+  and y = Ops.new_buffer "CPU" 4 Float32 in
+  let p ?phase slot =
+    Shape.param ~shape:[ Int 4 ] ~device:"CPU" ?phase slot Float32
+  in
+  let body =
+    Ops.sink [ Ops.store (p 0) (p 2); Ops.store (p ~phase:4 1) (Ops.float 9.) ]
+  in
+  let k = Ops.call ~precompile:true body [ y; x; x ] in
+  let linear, _ =
+    Schedule.create_linear_with_vars (Ops.sink [ Ops.after y [ k ] ])
+  in
+  let member e =
+    if Shape.is_launch (Ops.nth e 0) then Shape.launch_members e else [ e ]
+  in
+  List.iter
+    (fun c ->
+      List.iteri
+        (fun i a ->
+          match Shape.param_start (Ops.nth c 0) i with
+          | Some param ->
+              equal bool ~msg:"the argument starts where its parameter takes it"
+                true
+                (Shape.fits_start ~param (Shape.storage_phase a))
+          | None -> ())
+        (Ops.src_without_body c))
+    (List.concat_map member (Ops.src linear));
+  let out = Run.buffer host Float32 (floats (Array.make 4 0.)) in
+  let given = off_phase (Run.buffer host Float32 (floats [| 1.; 2.; 3.; 4. |])) in
+  Engine.run
+    (Engine.link ~devices ~bound:[ (y, out); (x, given) ] (compile linear))
+    [||];
+  equal values (floats [| 1.; 2.; 3.; 4. |]) (Run.values Float32 out)
+
+(* Runs of one other storage, listed in an after of [x], land as they do listed
+   in that storage's own, marked or not; [x] is as it was. *)
+let foreign_runs_land () =
+  let check write =
+    let x = Ops.new_buffer "CPU" 4 Float32
+    and y = Ops.new_buffer "CPU" 4 Float32
+    and z = Ops.new_buffer "CPU" 4 Float32 in
+    let run a b = Shape.shrink y [ Some (Int a, Int b) ] in
+    let ss =
+      [ Ops.store (run 0 2) (Ops.float 7.); Ops.store (run 2 4) (Ops.float 9.) ]
+    in
+    let xo = write x ss in
+    leaves
+      [
+        (x, Array.init 4 Float.of_int);
+        (y, Array.make 4 0.);
+        (z, Array.make 4 0.);
+      ]
+      (Ops.sink
+         [ Ops.after z [ Ops.store z Ops.O.(xo + Ops.float 1.) ]; write y ss ])
+    |> equal (list values)
+         [
+           of_ints Float.of_int 4;
+           floats [| 7.; 7.; 9.; 9. |];
+           of_ints (fun i -> Float.of_int (i + 1)) 4;
+         ]
+  in
+  check Ops.after;
+  check Ops.after_disjoint
+
+(* A value of storage written before the loop reads no trip's writes, and a read
+   of a state older than the loop's write reads it as it was: both stay stored
+   once. *)
+let loop_reads_earlier_states () =
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let body = Ops.sink [ Ops.store (p4 0) (p4 1) ] in
+  let first4 u = Shape.shrink u [ Some (Int 0, Int 4) ] in
+  let given = Array.init 16 Float.of_int in
+  let x = Ops.new_buffer "CPU" 16 Float32
+  and y = Ops.new_buffer "CPU" 4 Float32 in
+  let y1 = Ops.after y [ Ops.store y (first4 x) ] in
+  let c = Ops.call ~precompile:true body [ row4 x r; Ops.O.(y1 + float 1.) ] in
+  let got =
+    leaves
+      [ (x, given); (y, Array.make 4 0.) ]
+      (Ops.sink [ Ops.after x [ Ops.end_ c [ r ] ]; y1 ])
+  in
+  equal values ~msg:"storage written before the loop"
+    (floats
+       [| 1.; 2.; 3.; 4.; 1.; 2.; 3.; 4.; 1.; 2.; 3.; 4.; 12.; 13.; 14.; 15. |])
+    (List.hd got);
+  let x = Ops.new_buffer "CPU" 16 Float32 in
+  let x1 = Ops.after x [ Ops.store x Ops.O.(x * float 2.) ] in
+  let flipped = Shape.flip (first4 x) [ 0 ] in
+  let c = Ops.call ~precompile:true body [ row4 x1 r; flipped ] in
+  let got = leaves [ (x, given) ] (Ops.sink [ Ops.after x1 [ Ops.end_ c [ r ] ] ]) in
+  equal values ~msg:"an older state"
+    (floats
+       [| 3.; 2.; 1.; 0.; 3.; 2.; 1.; 0.; 3.; 2.; 1.; 0.; 24.; 26.; 28.; 30. |])
+    (List.hd got)
+
+(* The law of a loop's reads: a loop of three trips whose call stores, into a
+   row of each buffer moving 16 bytes a trip, the sum of runs that move with the
+   trip or stay fixed, reads each run as the trip starts, whatever storage the
+   loop has written. Fixed runs start at any element, off 16 bytes too. *)
+
+type loop_step = {
+  target : int;  (* The buffer written, at [lo + 4 t]. *)
+  lo : int;
+  reads : (int * int * int) list;  (* A read's buffer, start and row stride. *)
+}
+
+let gen_loop_program r =
+  let m = 2 + Random.State.int r 2 in
+  let sizes = Array.init m (fun _ -> if Random.State.bool r then 16 else 24) in
+  let elems n = (n - 12) / 4 in
+  let step j =
+    let n = sizes.(j) in
+    let lo = 4 * Random.State.int r (elems n + 1) in
+    let read () =
+      let b = Random.State.int r m in
+      let nb = sizes.(b) in
+      if Random.State.bool r then
+        (* A fixed run, at any element. *)
+        (b, Random.State.int r (nb - 3), 0)
+      else (b, 4 * Random.State.int r (elems nb + 1), 4)
+    in
+    let reads = List.init (1 + Random.State.int r 2) (fun _ -> read ()) in
+    { target = j; lo; reads }
+  in
+  (sizes, List.init m step)
+
+let loop_of_program sizes steps =
+  let bufs = Array.map (fun n -> Ops.new_buffer "CPU" n Float32) sizes in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let view b lo stride =
+    Shape.shrink bufs.(b)
+      [
+        (if stride = 0 then Some (Ops.Int lo, Ops.Int (lo + 4))
+         else
+           let start = Ops.O.((r * int stride) + int lo) in
+           Some (Ops.Sym start, Ops.Sym Ops.O.(start + int 4)));
+      ]
+  in
+  let slot = ref 0 and args = ref [] in
+  let param v =
+    let s = !slot in
+    incr slot;
+    args := v :: !args;
+    Shape.param ~shape:[ Int 4 ] ~device:"CPU" s Float32
+  in
+  let stores =
+    List.map
+      (fun st ->
+        let reads = List.map (fun (b, o, rs) -> param (view b o rs)) st.reads in
+        let target = param (view st.target st.lo 4) in
+        let v = List.fold_left Ops.add (List.hd reads) (List.tl reads) in
+        Ops.store target v)
+      steps
+  in
+  let call = Ops.call ~precompile:true (Ops.sink stores) (List.rev !args) in
+  let e = Ops.end_ call [ r ] in
+  (bufs, Ops.sink (List.map (fun b -> Ops.after b [ e ]) (Array.to_list bufs)))
+
+(* What the loop leaves: each trip reads the state the trip starts from, and
+   each step writes its own buffer. *)
+let loop_spec steps init =
+  let cur = Array.map Array.copy init in
+  for t = 0 to 2 do
+    let start = Array.map Array.copy cur in
+    List.iter
+      (fun st ->
+        for i = 0 to 3 do
+          let sum =
+            List.fold_left
+              (fun acc (b, o, rs) -> acc +. start.(b).(o + (t * rs) + i))
+              0. st.reads
+          in
+          cur.(st.target).(st.lo + (t * 4) + i) <- sum
+        done)
+      steps
+  done;
+  cur
+
+let loop_reads_law =
+  prop ~count:60 "a loop reads each run as its trip starts"
+    (Gen.int_range 1 1_000_000)
+    (fun seed ->
+      let r = Random.State.make [| seed |] in
+      let sizes, steps = gen_loop_program r in
+      let init =
+        Array.mapi
+          (fun j n -> Array.init n (fun i -> Float.of_int (((j * 7) + (i * 13) + 3) mod 11)))
+          sizes
+      in
+      let off s = List.exists (fun (_, o, rs) -> rs = 0 && o mod 4 <> 0) s.reads in
+      let reads_own s =
+        List.exists (fun (b, _, _) -> b = s.target) s.reads
+      in
+      cover "a fixed run read off 16 bytes" (List.exists off steps);
+      cover "a run read of a buffer the step writes" (List.exists reads_own steps);
+      let bufs, sink = loop_of_program sizes steps in
+      let linear, vars = Schedule.create_linear_with_vars sink in
+      let buffers =
+        Array.map (fun xs -> Run.buffer (devices "CPU") Float32 (floats xs)) init
+      in
+      let bound =
+        Array.to_list (Array.map2 (fun b x -> (b, x)) bufs buffers)
+      in
+      let s = Engine.link ~devices ~bound (compile linear) in
+      Engine.run ~vars s [||];
+      let want = loop_spec steps init in
+      Array.iteri
+        (fun j x -> equal values (floats want.(j)) (Run.values Float32 x))
+        buffers)
+
 (* A loop whose trip [r] moves row [r] of a buffer of CPU:1, a GPU, into row
    [r] of host storage made at link, which a move then copies whole into a
    buffer of CPU:1: a move's end in memory made at link moves with the
@@ -3413,6 +3775,96 @@ let calls_of_views =
   in
   group "calls of views"
     [
+      loop_reads_law;
+      test
+        "a call given an older state to write and a later to read reads it \
+         before the call"
+        older_write_reads_before;
+      test
+        "a kernel listed over two storages names the later state in either \
+         listing"
+        listed_two_storages_either_order;
+      test
+        "a call reads storage it writes off its parameter's start, no after \
+         listing the storage"
+        off_start_read_no_after;
+      test "a loop reads earlier states as they were" loop_reads_earlier_states;
+      test "runs of one other storage land as listed in an after"
+        foreign_runs_land;
+      test "a loop reading a later state than storage it writes is refused"
+        (fun () ->
+          let reads kind =
+            let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+            let b = Ops.new_buffer "CPU" 16 Float32 in
+            let b1 = Ops.after b [ Ops.store b Ops.O.(b + Ops.float 0.) ] in
+            let body = Ops.sink [ Ops.store (p4 0) Ops.O.(p4 1 + Ops.float 1.) ] in
+            let run = Shape.shrink b1 [ Some (Int 4, Int 8) ] in
+            let c = Ops.call ~precompile:true body [ row4 b1 r; kind run ] in
+            raises_match
+              (Exn.invalid_arg ~sub:"reads storage the call writes")
+              (fun () ->
+                Schedule.create_linear_with_vars
+                  (Ops.sink [ Ops.after b1 [ Ops.end_ c [ r ] ] ]))
+          in
+          reads Fun.id;
+          reads (fun v -> Shape.flip v [ 0 ]));
+      test "a call's fixed read sees what its loop wrote"
+        reads_what_its_loop_wrote;
+      test "a loop's fixed read off its parameter's start is read each trip"
+        reads_off_start_each_trip;
+      test "a back edge's fixed read sees what its loop wrote"
+        backedge_reads_each_trip;
+      test "a back edge reading its written storage through no run is refused"
+        (fun () ->
+          let b = Ops.new_buffer "CPU" 16 Float32 in
+          let f = Ops.new_buffer "CPU" 1 Bool in
+          let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+          let p slot =
+            Shape.param ~shape:[ Int 4 ] ~device:"CPU" slot Float32
+          in
+          let flag = Shape.param ~shape:[ Int 1 ] ~device:"CPU" 2 Bool in
+          let body =
+            Ops.sink
+              [
+                Ops.store (p 0) Ops.O.(p 1 + float 1.);
+                Ops.store flag (Shape.reshape (Ops.const ~dtype:Bool (`Bool false)) [ Int 1 ]);
+              ]
+          in
+          let moving =
+            Shape.shrink b
+              [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 4)) ]
+          in
+          let flipped = Shape.flip (Shape.shrink b [ Some (Int 0, Int 4) ]) [ 0 ] in
+          let call = Ops.call ~precompile:true body [ moving; flipped; f ] in
+          let e = Ops.backedge call ~loop:r ~cond:f in
+          raises_match
+            (Exn.invalid_arg
+               ~sub:"reads its argument 1, of shape (4,), which reads storage \
+                     the call writes")
+            (fun () ->
+              Schedule.create_linear_with_vars
+                (Ops.sink [ Ops.after b [ e ]; Ops.after f [ e ] ])));
+      test "a loop reading its written storage through no run is refused"
+        (fun () ->
+          let b = Ops.new_buffer "CPU" 16 Float32 in
+          let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+          let p slot =
+            Shape.param ~shape:[ Int 4 ] ~device:"CPU" slot Float32
+          in
+          let body = Ops.sink [ Ops.store (p 0) Ops.O.(p 1 + float 1.) ] in
+          let moving =
+            Shape.shrink b
+              [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 4)) ]
+          in
+          let flipped = Shape.flip (Shape.shrink b [ Some (Int 0, Int 4) ]) [ 0 ] in
+          let e =
+            Ops.end_ (Ops.call ~precompile:true body [ moving; flipped ]) [ r ]
+          in
+          raises_match
+            (Exn.invalid_arg ~sub:"reads its argument 1, of shape (4,), which reads \
+                                   storage the call writes")
+            (fun () ->
+              Schedule.create_linear_with_vars (Ops.sink [ Ops.after b [ e ] ])));
       test "a call reads a view of storage at its elements" (fun () ->
           List.iter
             (fun (_, call) ->

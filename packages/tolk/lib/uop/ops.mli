@@ -817,7 +817,10 @@ val after : t -> t list -> t
     argument it stores through loads what the effects listed before it left
     there. An element two {!Op.After}s of one state both write, which
     {!Schedule.create_schedule} admits for views of the state, holds an
-    unspecified value. One whose
+    unspecified value. A store listed over a later state of its storage than
+    its destination names stores into that later state. One listing only stores
+    into other storage leaves [u]'s state as it is, read once they have landed.
+    One whose
     [deps] are all {!Op.After}s is a join ({!is_join}): it names no state of
     its own, holds the value of the state [u] names, and is read once the
     states [deps] name are reached. *)
@@ -1053,9 +1056,11 @@ val call :
     another, it reads that state at the other as it was before the call, as
     [memmove] reads its source. A call compiled on its own takes storage, a
     run of its elements from the first, and a row a loop moves along as they
-    are, and reads a copy of most other arguments; scheduling refuses one it
-    would copy where the call writes it, and a
-    constant ({!Indexing.run_rangeify}).
+    are, and reads a copy of most other arguments, made once before a loop
+    around the call; scheduling refuses one it would copy where the call writes
+    it, a read in a loop of storage the call writes that is no run of it, and a
+    constant ({!Indexing.run_rangeify}). A run of storage (no later state of it)
+    the call writes, read in a loop, is read as each trip starts.
 
     Raises [Invalid_argument] if [body] cannot be called ({!opaque_call_bodies})
     or a range leaks out of it. *)

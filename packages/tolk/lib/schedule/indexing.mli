@@ -123,7 +123,15 @@ val run_rangeify : Ops.t -> Ops.t
     not is stored whole, and it raises where the call writes it, where loops
     move it, as rows 20 bytes apart for a parameter on a 16-byte boundary,
     and where the parameter assumes a start that new storage
-    ({!Shape.allocated_start}) lacks. *)
+    ({!Shape.allocated_start}) lacks. Storage the call also writes, only read
+    off its parameter's start, is passed as it is: {!Schedule.create_schedule}
+    reads it through a copy, made each trip in a loop. In a loop
+    ({!Ops.Axis_type.Loop}), a read of the state the call writes, or a later
+    one, that the call takes as neither storage nor a state of it, nor a row
+    moving along it, raises unless it is a run of the storage itself
+    ({!Schedule.create_linear_with_vars}): a store would be made once, before
+    the loop, and hold no trip's writes. A read of an older state reads it as
+    it was. *)
 
 (**/**)
 

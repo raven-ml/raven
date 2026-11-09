@@ -534,7 +534,9 @@ let run_from_start a =
 (* Storage, or a state of it, that a call only reads outside loops, and that
    starts elsewhere than its parameter assumes, stored into new storage, which
    starts on a 16-byte boundary: rune's jit makes storage at its inputs' phases,
-   and a kernel's placeholder takes the boundary. *)
+   and a kernel's placeholder takes the boundary. Storage the call also writes
+   stays: {!Schedule} copies it, in the loop where the call runs in one, and a
+   copy made here would be made once. *)
 let copy_off_start c i a =
   let reads =
     match Shape.written_params (body c) with
@@ -551,7 +553,8 @@ let copy_off_start c i a =
     when reads && (not loops)
          && has_buffer_identity ~after_ok:true a
          && (not (fits_start ~param (storage_phase a)))
-         && fits_start ~param allocated_start ->
+         && fits_start ~param allocated_start
+         && not (reads_storage_written c i) ->
       let buf =
         alloc ?device:(device a) (shape a) (dtype a)
       in

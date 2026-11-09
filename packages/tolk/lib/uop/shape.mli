@@ -559,6 +559,11 @@ val written_params : Ops.t -> int list option
     show what it writes: a {!Op.Program} or a {!Op.Custom_function}, the
     body of a call of code in the target's language among them. *)
 
+val reads_storage_written : Ops.t -> int -> bool
+(** [reads_storage_written c i] is [true] iff the call [c], whose body shows
+    its writes ({!written_params}), only reads its argument [i] and writes the
+    storage it holds ({!Ops.storage_base}, {!Ops.whole}) through another. *)
+
 val custom_kernel : Ops.t list -> (Ops.t list -> Ops.t) -> Ops.t list
 (** [custom_kernel args f] calls the kernel [f] builds on placeholders of
     [args], and is [args], each that the kernel writes ({!written_params})

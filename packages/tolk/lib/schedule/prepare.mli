@@ -76,9 +76,10 @@ val prepare_rangeify : Ops.t -> Ops.t
           of a state of it, from the first, of the storage's type, the
           storage or the state ({!contiguous_view}), which the call writes
           through; storage or a state of it that the call only reads, outside
-          loops, and that starts elsewhere than its parameter assumes
-          ({!Shape.storage_phase}), is stored into new storage, where new
-          storage starts as the parameter assumes;
+          loops, that starts elsewhere than its parameter assumes
+          ({!Shape.storage_phase}), and that the call does not write through
+          another argument ({!Shape.reads_storage_written}), is stored into new
+          storage, where new storage starts as the parameter assumes;
         - the sink's sources lose their movements;
         - a copy to the device the value is on is the value; a store of a copy
           into storage on the copy's device, or into a run of its elements

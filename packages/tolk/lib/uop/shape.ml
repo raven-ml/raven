@@ -3492,6 +3492,18 @@ let rec written_params body =
 
 (* Launches *)
 
+let reads_storage_written c i =
+  let storage a = whole (storage_base a) in
+  let args = src_without_body c in
+  match written_params (body c) with
+  | None -> false
+  | Some w when i >= List.length args || List.mem i w -> false
+  | Some w ->
+      let read = storage (List.nth args i) in
+      List.exists
+        (fun j -> j < List.length args && storage (List.nth args j) == read)
+        w
+
 let is_kernel_sink u =
   op u = Op.Sink && match arg u with Kernel _ -> true | _ -> false
 

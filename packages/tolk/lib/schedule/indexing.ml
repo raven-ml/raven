@@ -107,6 +107,20 @@ let pp_start ppf (align, phase) =
   if phase = 0 then Format.fprintf ppf "on a %d-byte boundary" align
   else Format.fprintf ppf "%d bytes past a %d-byte boundary" phase align
 
+let rec strip_reshape s =
+  if op s = Op.Reshape then strip_reshape (nth s 0) else s
+
+(* Whether the argument [a] of the call [c] is one [c] takes as it is:
+   storage or a state of it, a row loops move along, a call's result or a load,
+   and a scalar of a precompiled call. *)
+let passed c a =
+  let precompiled = match arg c with Call i -> i.precompile | _ -> false in
+  has_buffer_identity ~after_ok:true a
+  || op a = Op.Load
+  || op a = Op.Call
+  || (precompiled && addrspace a = Some Dtype.Alu && shape a = [])
+  || loop_row a
+
 (* A call compiled on its own, a kernel given as code or a precompiled call,
    takes flat storage at each argument: storage or a state of it, a row loops
    move along, a call's result or a load, and a scalar of a precompiled call are
@@ -123,21 +137,12 @@ let pp_start ppf (align, phase) =
    assumes; it is refused otherwise: given rows 20 bytes apart, a kernel that
    loads four floats at once would load them off their boundary. *)
 let realize_custom_kernel_srcs ctx c =
-  let rec strip s = if op s = Op.Reshape then strip (nth s 0) else s in
-  let precompiled = match arg c with Call i -> i.precompile | _ -> false in
   let written, verb =
     match Shape.written_params (nth c 0) with
     | Some w ->
         let mem i = List.mem i w in
         (mem, fun i -> if mem i then "writes" else "reads")
     | None -> ((fun _ -> true), fun _ -> "may write")
-  in
-  let passed a =
-    has_buffer_identity ~after_ok:true a
-    || op a = Op.Load
-    || op a = Op.Call
-    || (precompiled && addrspace a = Some Dtype.Alu && shape a = [])
-    || loop_row a
   in
   let refuse i a why =
     invalid_arg
@@ -149,7 +154,7 @@ let realize_custom_kernel_srcs ctx c =
   in
   List.iteri
     (fun i a ->
-      let s = strip a in
+      let s = strip_reshape a in
       let param = Shape.param_start (nth c 0) i in
       let fits start =
         Option.fold ~none:true
@@ -163,8 +168,9 @@ let realize_custom_kernel_srcs ctx c =
              "which starts %a, where its parameter assumes a start %a: %s"
              pp_start start pp_start (Option.get param) why)
       in
-      if passed s && fits start then ()
-      else if written i && passed s then
+      let passed = passed c s in
+      if passed && fits start then ()
+      else if written i && passed then
         off_start "the call cannot take it as it is, and would write a copy"
       else if written i then
         refuse i a
@@ -172,7 +178,7 @@ let realize_custom_kernel_srcs ctx c =
            a row a loop moves along: the write would land in a copy"
       else if not (reads_storage s) then
         refuse i a "a constant: store it into storage first"
-      else if loops s && passed s then
+      else if loops s && passed then
         off_start
           "the call cannot take it as it is, and no store before the call can \
            hold a value a loop moves along"
@@ -186,11 +192,83 @@ let realize_custom_kernel_srcs ctx c =
              "which would be stored whole %a, where its parameter assumes a \
               start %a"
              pp_start Shape.allocated_start pp_start (Option.get param))
+      else if
+        passed
+        && has_buffer_identity ~after_ok:true s
+        && Shape.reads_storage_written c i
+      then
+        (* Scheduling reads a copy, one made each trip in a loop: stored here,
+           it would be made once. *)
+        ()
       else begin
         realize ctx s;
         Tbl.replace ctx.non_removable s ()
       end)
     (List.tl (src c))
+
+(* A loop's call reading storage it writes takes it as a view read each trip
+   ({!Schedule.create_linear_with_vars}), or as storage scheduling copies each
+   trip. Any other reading of written storage would be stored once before the
+   loop, a stale value: it is refused. *)
+let refuse_stale_read e c =
+  let in_loop =
+    op e = Op.Backedge
+    || List.exists
+         (fun r -> Axis_type.equal (axis_type r) Axis_type.Loop)
+         (List.tl (src e))
+  in
+  match Shape.written_params (nth c 0) with
+  | Some w when in_loop ->
+      let args = List.tl (src c) in
+      (* The state a written argument or a read names: joins hold the state
+         under them, and a view of storage names the storage. *)
+      let rec state n =
+        if is_join n then state (nth n 0)
+        else if Op.Set.mem (op n) storage then whole n
+        else if src n = [] then n
+        else state (nth n 0)
+      in
+      let written_states =
+        List.filter_map (fun j -> Option.map state (List.nth_opt args j)) w
+      in
+      let rec at_or_after o r =
+        r == o
+        || (op r = Op.After && (not (is_join r)) && at_or_after o (state (nth r 0)))
+      in
+      (* A read of an older state reads it as it was, which a store before the
+         loop holds. A state written before the loop ends the walk. *)
+      let stale n =
+        Op.Set.mem (op n) storage
+        && List.exists
+             (fun o -> buf_uop o == buf_uop (state n) && at_or_after o (state n))
+             written_states
+      in
+      let seen = Tbl.create 8 in
+      (* An {!Op.After} is a state: its dependencies are no part of the read. *)
+      let rec reaches_stale n =
+        if Tbl.mem seen n then false
+        else begin
+          Tbl.replace seen n ();
+          stale n
+          || (op n <> Op.After && List.exists reaches_stale (src_without_body n))
+        end
+      in
+      List.iteri
+        (fun i a ->
+          let s = strip_reshape a in
+          if
+            (not (List.mem i w)) && (not (passed c s))
+            && reaches_stale s
+          then
+            invalid_arg
+              (Format.asprintf
+                 "a call in a loop reads its argument %d, of shape %a, which \
+                  reads storage the call writes and takes no view of it read \
+                  each trip: a read of it would be stored once, before the \
+                  loop, and hold no trip's writes"
+                 i pp_shape (shape a)))
+        args
+  | _ -> ()
 
 let pm_generate_realize_map =
   let mark f ctx m =
@@ -199,6 +277,13 @@ let pm_generate_realize_map =
   in
   Pattern_matcher.v (fun () ->
       [
+        rule_ctx
+          (Upat.v
+             ~op:(ops [ Op.End; Op.Backedge ])
+             ~name:"e" ~allow_any_len:true
+             ~src:[ Upat.op Op.Call ~name:"c" ~allow_any_len:true ]
+             ())
+          (mark (fun _ m -> refuse_stale_read (m "e") (m "c")));
         rule_ctx
           (Upat.op Op.Call ~name:"c" ~allow_any_len:true
              ~src:[ Upat.v ~op:(ops [ Op.Sink; Op.Program; Op.Linear ]) () ])

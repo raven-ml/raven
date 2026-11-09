@@ -2854,6 +2854,46 @@ let join_one_parameter () =
            (List.filter (fun a -> Ops.buf_uop a == x) (Ops.src_without_body c)))
        into_x)
 
+(* A store through a view of a state, listed over a later state of that
+   storage, is a write of the later state: it reads that state, older values
+   beside it unchanged. *)
+let store_names_older_state () =
+  let x = f32 1 in
+  let x1 = assign x Ops.O.(x * fl 2.) in
+  let run a b = Shape.shrink x [ Some (Int a, Int b) ] in
+  let run1 a b = Shape.shrink x1 [ Some (Int a, Int b) ] in
+  let x2 = Ops.after x1 [ Ops.store (run 2 4) Ops.O.(run1 0 2 + fl 1.) ] in
+  ignore (keeps_values [ x2 ])
+
+(* A store through a run of a join is a store into the state the join holds,
+   waiting for what the join waits for. *)
+let store_through_join () =
+  let x = f32 1 and y = f32 2 in
+  let s1 = Ops.store y Ops.O.(y * fl 2.) in
+  let xo = Ops.after x [ s1 ] in
+  let run = Shape.shrink xo [ Some (Int 0, Int 2) ] in
+  let x1 = Ops.after x [ Ops.store run (fl 3.) ] in
+  ignore (keeps_values [ x1; Ops.after y [ s1 ] ])
+
+(* An after listing only a store into other storage is the state it is over,
+   read once the store has landed, one element or more. *)
+let after_listing_foreign_store () =
+  List.iter
+    (fun n ->
+      let x = f32 ~n 1 and y = f32 ~n 2 and z = f32 ~n 3 in
+      let s1 = Ops.store y Ops.O.(y * fl 2.) in
+      let xo = Ops.after x [ s1 ] in
+      ignore (keeps_values [ assign z Ops.O.(xo + fl 1.); Ops.after y [ s1 ] ]))
+    [ 1; 4 ]
+
+(* Stores into one other storage listed in an after land in the order listed,
+   as they do listed in that storage's own. *)
+let after_listing_foreign_stores () =
+  let x = f32 1 and y = f32 2 and z = f32 3 in
+  let ss = [ Ops.store y Ops.O.(y * fl 2.); Ops.store y Ops.O.(y * fl 3.) ] in
+  let xo = Ops.after x ss in
+  ignore (keeps_values [ assign z Ops.O.(xo + fl 1.); Ops.after y ss ])
+
 let joins =
   group "create_linear_with_vars › joins"
     [
@@ -2866,6 +2906,13 @@ let joins =
       test "two joins over one state are no two writes" two_joins;
       test "a store reading its destination through a join takes it once"
         join_one_parameter;
+      test "a store naming an older state, listed over a later one"
+        store_names_older_state;
+      test "a store through a run of a join" store_through_join;
+      test "an after listing only a store into other storage is that state"
+        after_listing_foreign_store;
+      test "stores into one other storage land as listed"
+        after_listing_foreign_stores;
     ]
 
 (* [x]'s first two elements, staged, read after [x] is overwritten: they are

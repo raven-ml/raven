@@ -1106,6 +1106,13 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A loop's call reads a fixed run of storage it writes as each trip starts:
+  `Schedule` made the read once, before the loop, and `end_ (call [row r; row 1])`
+  read row 1 as it was. Runs off their parameter's start are copied each trip; a
+  read of the loop's written storage that is no run raises at scheduling.
+- `after x1 [store (x 2..4) (x1[0:2] + 1)]` stores into `x1`, where it raised
+  "two writes over one state"; `after x [store y v]` is `x` as it was, read once
+  the store has landed, where it failed verification.
 - A cast from a double to half rounds once on the CPU: `1 + 2^-11 + 2^-40`
   is `1 + 2^-10`, and `65520 - 2^-20` is `65504`, where the cast through a
   float32 gave `1` and infinity.
