@@ -458,10 +458,50 @@ let unwritable_cache =
    process of their own, where XDG_CACHE_HOME names a directory of the
    sandbox. *)
 
+(* [f ()] with [change] run on the program's path each time its check is
+   about to open it. *)
+let while_checked change f =
+  Compiler_metal.before_program_open := change;
+  Fun.protect
+    ~finally:(fun () -> Compiler_metal.before_program_open := ignore)
+    f
+
+(* What another process writing the program does: a whole copy written
+   aside, then renamed to [program]. *)
+let rewrite_as_peer program =
+  let copy = program ^ ".peer" in
+  let bytes = In_channel.with_open_bin program In_channel.input_all in
+  Out_channel.with_open_gen [ Open_wronly; Open_creat; Open_trunc; Open_binary ]
+    0o755 copy (fun oc -> output_string oc bytes);
+  Sys.rename copy program
+
 let program_changed =
   tag "program-changed"
   @@ group "a program that changed"
        [
+         test "a program another process writes again while it is checked runs"
+           (fun () ->
+             let lib = digest (with_metal (fun () -> compile (kernel "add"))) in
+             kill_children ();
+             let compiled () = digest (compile (kernel "add")) in
+             equal string lib (while_checked rewrite_as_peer compiled));
+         test "a link swapped in while the program is checked is not run"
+           (fun () ->
+             (* The program and the script to link there, once planted. *)
+             let armed = ref None and swapped = ref false in
+             let swap path =
+               match !armed with
+               | Some (program, script) when path = program ->
+                   armed := None;
+                   swapped := true;
+                   Sys.remove path;
+                   Unix.symlink script path
+               | _ -> ()
+             in
+             while_checked swap (fun () ->
+                 not_run ~dir:Helpers.cache_dir (fun program script ->
+                     armed := Some (program, script)));
+             equal bool ~msg:"the link was swapped in" true !swapped);
          test "a link at the program's name is not run" (fun () ->
              not_run ~dir:Helpers.cache_dir link_over);
          test "a program rewritten after it ran is not run" (fun () ->

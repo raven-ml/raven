@@ -12,6 +12,9 @@ external above_stdio : Unix.file_descr -> Unix.file_descr
 
 external no_sigpipe : Unix.file_descr -> unit = "caml_tolk_worker_no_sigpipe"
 
+external open_program : string -> Unix.file_descr
+  = "caml_tolk_worker_open_program"
+
 external quarantined : Unix.file_descr -> bool
   = "caml_tolk_worker_quarantined"
 [@@noalloc]
@@ -112,28 +115,37 @@ let safe_dir dir =
       && (own st || st.st_uid = 0)
       && ((not (others_write st)) || st.st_perm land 0o1000 <> 0)
 
+(* [path] opened for reading unless its last component is a link. Windows has
+   no such open: a file that is no regular one is refused before it opens. *)
+let open_unlinked path =
+  if not Sys.win32 then open_program path
+  else
+    match (Unix.lstat path).st_kind with
+    | S_REG -> Unix.openfile path [ O_RDONLY; O_CLOEXEC; O_SHARE_DELETE ] 0
+    | _ -> raise (Unix.Unix_error (ELOOP, "open", path))
+
+let before_program_open : (string -> unit) ref = ref ignore
+
 (* Whether [path] is the program and may run: a regular file reached through
    no link, this user's, that no other can write, without macOS's quarantine,
-   whose bytes are the program's. It is read shared for deletion: on Windows,
-   renaming a file holds it open for deletion, and a reader that does not
-   share it fails while another process renames the program into place. *)
+   whose bytes are the program's. Each check is of the file opened, whatever
+   another process renames to [path] meanwhile, as one writing the program
+   does: a check of the name before the open would see one file and read
+   another. It is read shared for deletion: on Windows, renaming a file holds
+   it open for deletion, and a reader that does not share it fails while
+   another process renames the program into place. *)
 let trusted w path =
-  match Unix.lstat path with
+  !before_program_open path;
+  match open_unlinked path with
   | exception Unix.Unix_error _ -> false
-  | entry when entry.st_kind <> S_REG || (not (own entry)) || others_write entry
-    ->
-      false
-  | entry -> (
-      match Unix.openfile path [ O_RDONLY; O_CLOEXEC; O_SHARE_DELETE ] 0 with
-      | exception Unix.Unix_error _ -> false
-      | fd ->
-          let ic = Unix.in_channel_of_descr fd in
-          Fun.protect ~finally:(fun () -> close_in_noerr ic) @@ fun () ->
-          (* A link put in its place since lstat opens another file. *)
-          let st = Unix.fstat fd in
-          (Sys.win32 || (st.st_dev = entry.st_dev && st.st_ino = entry.st_ino))
-          && (not (quarantined fd))
-          && Digest.to_hex (Digest.channel ic (-1)) = digest w)
+  | fd ->
+      let ic = Unix.in_channel_of_descr fd in
+      Fun.protect ~finally:(fun () -> close_in_noerr ic) @@ fun () ->
+      let st = Unix.fstat fd in
+      st.st_kind = S_REG && own st
+      && (not (others_write st))
+      && (not (quarantined fd))
+      && Digest.to_hex (Digest.channel ic (-1)) = digest w
 
 (* The program in [dir]: [program_name w dir] if it is [trusted], or else
    written aside under a name no other process can take and renamed there.

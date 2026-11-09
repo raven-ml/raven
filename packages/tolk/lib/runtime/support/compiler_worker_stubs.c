@@ -18,18 +18,26 @@
 #define _WIN32_WINNT 0x0600
 #endif
 
+#include <errno.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include <caml/alloc.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
 
-#ifdef __linux__
-#include <errno.h>
-#include <fcntl.h>
-#include <string.h>
-#include <sys/mman.h>
+#ifndef _WIN32
+#include <sys/socket.h>
 #include <unistd.h>
+
+#include <caml/unixsupport.h>
+#endif
+
+#ifdef __linux__
+#include <sys/mman.h>
 
 #ifndef MFD_EXEC
 #define MFD_EXEC 0x0010U
@@ -94,15 +102,35 @@ value caml_tolk_worker_quarantined(value v_fd) {
 }
 #endif
 
+/* The file [v_path] opened for reading, close-on-exec, unless its last
+   component is a symbolic link: then Unix_error ELOOP. It opens without
+   waiting, so that a pipe planted there does not hold the open until a writer
+   comes. It runs without the runtime lock, on a copy of the path, as
+   Unix.openfile does: a file system can be slow to answer. Windows opens
+   through Unix.openfile. */
+#ifndef _WIN32
+value caml_tolk_worker_open_program(value v_path) {
+  CAMLparam1(v_path);
+  if (!caml_string_is_c_safe(v_path)) caml_unix_error(ENOENT, "open", v_path);
+  char *path = caml_stat_strdup(String_val(v_path));
+  caml_release_runtime_system();
+  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+  int error = errno;
+  caml_acquire_runtime_system();
+  caml_stat_free(path);
+  if (fd < 0) caml_unix_error(error, "open", v_path);
+  CAMLreturn(Val_int(fd));
+}
+#else
+value caml_tolk_worker_open_program(value v_path) {
+  (void)v_path;
+  caml_failwith("open_program: Windows opens through Unix.openfile");
+}
+#endif
+
 /* Channels */
 
 #ifndef _WIN32
-#include <errno.h>
-#include <fcntl.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 /* A peer that has closed its end raises SIGPIPE in a process that writes to
    it, which ends an OCaml program, and a library installs no handler. Sends
@@ -184,7 +212,6 @@ value caml_tolk_worker_spawn(value v_program, value v_cmdline, value v_in,
 #else
 #include <caml/osdeps.h>
 #include <caml/unixsupport.h>
-#include <stdlib.h>
 #include <windows.h>
 
 /* caml/unixsupport.h declares the unix library's functions without

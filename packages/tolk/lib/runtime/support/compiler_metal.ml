@@ -85,3 +85,5 @@ let compiler () =
         "failed to load library MTLCompiler: try setting MTLCOMPILER_PATH?"
   | Some library ->
       Renderer.Compiler.v ~cachekey:(table library) (compile library)
+
+let before_program_open = Compiler_worker.before_program_open

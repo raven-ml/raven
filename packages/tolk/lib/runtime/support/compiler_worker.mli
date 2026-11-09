@@ -72,3 +72,10 @@ val call : t -> string -> string -> (string, string) result
     Raises [Failure] naming the worker if its program can be written to
     neither directory, or cannot be started; the failure names each
     directory's. *)
+
+(**/**)
+
+val before_program_open : (string -> unit) ref
+(** [!before_program_open path] runs as the check of a program file at [path]
+    opens it, before each start of any worker, so that a test can change the
+    file there. It does nothing unless a test sets it. *)

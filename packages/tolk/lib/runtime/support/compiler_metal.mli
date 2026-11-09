@@ -52,3 +52,12 @@ val compiler : unit -> Renderer.Compiler.t
     compile only; it raises [Failure] if the compiler replies with no Metal
     library or a process cannot be started. {!Renderer.Compiler.disassemble}
     prints nothing. *)
+
+(**/**)
+
+val before_program_open : (string -> unit) ref
+(** [!before_program_open path] runs as the check of a compiler process's
+    program file at [path] opens it, before each start of any compiler's
+    process, Metal's or another's, so that a test can change the file there,
+    as another process writing the program would. It does nothing unless a
+    test sets it. *)
