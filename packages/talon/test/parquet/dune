@@ -15,7 +15,7 @@
  (name test_fuzz)
  (modules test_fuzz)
  (package talon)
- (libraries windtrap talon talon.parquet rig)
+ (libraries windtrap talon talon.parquet rig bytesrw)
  (deps
   (source_tree support)))
 

@@ -219,6 +219,10 @@ let check (m : Meta.file) ~row_group i (l : Leaf.t) =
       (Leaf.name l);
   let rows = m.row_groups.(row_group).rows in
   (* Only a repeated column holds more entries than rows. *)
+  if rows > Nx_array.Layout.max_numel || cm.values > Nx_array.Layout.max_numel
+  then
+    fail "column %S holds %d values for %d rows, past what a layout holds"
+      (Leaf.name l) cm.values rows;
   if (if l.rep = 0 then cm.values <> rows else cm.values < rows) then
     fail "column %S holds %d values for %d rows" (Leaf.name l) cm.values rows;
   if l.rep > 0 && rows = 0 && cm.values <> 0 then

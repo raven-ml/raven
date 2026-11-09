@@ -68,6 +68,42 @@ let le32 n =
   Bytes.set_int32_le b 0 (Int32.of_int n);
   Bytes.to_string b
 
+(* [huge_rows n] is a three-row file of a flat column whose footer states [n]
+   rows, in every place Thrift's compact encoding holds the count: the field
+   bytes of an [i64] whose zigzagged value is three's. *)
+let huge_rows n =
+  let t =
+    Talon.v [ ("x", Column.of_options Type.int32 [| Some 1; Some 2; Some 3 |]) ]
+  in
+  let q = Query.of_table t in
+  let b = Buffer.create 256 in
+  let f = P.format ~compression:P.Uncompressed (Query.schema q) in
+  Error.get_ok (P.encode f q (Bytesrw.Bytes.Writer.of_buffer b));
+  let s = Buffer.contents b in
+  let at = footer s in
+  let foot = String.sub s at (String.length s - 8 - at) in
+  let varint =
+    let rec go v acc =
+      if v < 0x80 then List.rev (Char.chr v :: acc)
+      else go (v lsr 7) (Char.chr ((v land 0x7F) lor 0x80) :: acc)
+    in
+    String.of_seq (List.to_seq (go (n lsl 1) []))
+  in
+  let out = Buffer.create 256 and i = ref 0 and m = String.length foot in
+  while !i < m do
+    if !i + 1 < m && foot.[!i] = '\x16' && foot.[!i + 1] = '\x06' then begin
+      Buffer.add_char out '\x16';
+      Buffer.add_string out varint;
+      i := !i + 2
+    end
+    else begin
+      Buffer.add_char out foot.[!i];
+      incr i
+    end
+  done;
+  let foot = Buffer.contents out in
+  String.sub s 0 at ^ foot ^ le32 (String.length foot) ^ "PAR1"
+
 (* Decoding *)
 
 let type_name (Type.Any t) = Format.asprintf "%a" Type.pp t
@@ -275,4 +311,19 @@ let footers =
       let len = String.length s - 8 - footer s in
       is_error (P.sniff (Rig.Buffer.of_string (cut_footer s (1 + (k mod len))))))
 
-let () = exit (run "talon.parquet fuzz" [ mutated; footers ])
+(* Each count asks for more bytes than an address space holds, or more elements
+   than a layout does, so that a host never grants the request. *)
+let stated_count =
+  cases "a footer that states more rows than memory holds is an error"
+    ~id:string_of_int
+    [ 1 lsl 51; 1 lsl 60 ]
+    (fun n ->
+      let b = Rig.Buffer.of_string (huge_rows n) in
+      match P.sniff b with
+      | Error _ -> ()
+      | Ok f -> (
+          match Query.run (Query.of_source (P.source f b)) with
+          | Error _ -> ()
+          | Ok _ -> failf "a read of %d rows succeeded" n))
+
+let () = exit (run "talon.parquet fuzz" [ mutated; footers; stated_count ])

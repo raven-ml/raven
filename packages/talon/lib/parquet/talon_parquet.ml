@@ -24,9 +24,11 @@ let with_bytes ?file b f =
   | None -> Error (Error.v ?file "the host cannot map the bytes")
   | Some host -> (
       Rig.Buffer.read host Bigarray.int8_unsigned @@ fun bytes ->
-      try Ok (f bytes)
-      with Meta.Error { row_group; bytes; text; msg } ->
-        Error (Error.v ?file ?row_group ?bytes ?text msg))
+      try Ok (f bytes) with
+      | Meta.Error { row_group; bytes; text; msg } ->
+          Error (Error.v ?file ?row_group ?bytes ?text msg)
+      | Out_of_memory | Stack_overflow | Rig.Out_of_memory _ ->
+          Error (Error.v ?file "the file states more than memory holds"))
 
 let open_ bytes =
   let m = Meta.footer bytes in
