@@ -108,7 +108,7 @@ let fork =
       test "starts workers of its own, and both compile alike" (fun () ->
           let first = first_compile () in
           let workers = children () in
-          not_equal (list int) [] workers;
+          not_equal (list int) ~msg:first [] workers;
           let code =
             in_child (fun () ->
                 let outcome = compile () in
