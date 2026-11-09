@@ -7,9 +7,11 @@
 # forced: blessed WarmStart/donated-step-4096 WarmStart/transposed-matmul-64 under load 42.0 on 14 cores
 # forced: blessed Cuda/kv-append-4096 Cuda/kv-append-4096-copied under load 27.0 on 14 cores
 # forced: blessed Jit/var-float64-1M Jit/std-float64-1M under load 37.5 on 14 cores
+# forced: blessed Cuda/cat-16-columns-of-exp-64x64 under load 7.5 on 14 cores
 
 Bodies/grad-scan-in-a-rule-in-a-total-scope-eager	alloc_words	exact	52718
 Bodies/grad-scan-in-a-rule-in-a-total-scope-eager	wall_time	batch=32	n=20	2.070e-04	2.020e-04 2.025e-04 2.025e-04 2.028e-04 2.033e-04 2.034e-04 2.037e-04 2.057e-04 2.057e-04 2.061e-04 2.079e-04 2.088e-04 2.093e-04 2.095e-04 2.101e-04 2.105e-04 2.108e-04 2.108e-04 2.109e-04 2.116e-04
+Cuda/cat-16-columns-of-exp-64x64	wall_time	batch=1024	n=20	7.171e-06	7.095e-06 7.097e-06 7.135e-06 7.153e-06 7.155e-06 7.158e-06 7.159e-06 7.162e-06 7.164e-06 7.167e-06 7.174e-06 7.176e-06 7.178e-06 7.181e-06 7.181e-06 7.186e-06 7.187e-06 7.211e-06 7.231e-06 7.313e-06
 Cuda/kv-append-4096	wall_time	batch=1024	n=20	8.666e-06	8.444e-06 8.487e-06 8.585e-06 8.592e-06 8.599e-06 8.602e-06 8.629e-06 8.634e-06 8.664e-06 8.665e-06 8.667e-06 8.677e-06 8.680e-06 8.684e-06 8.686e-06 8.705e-06 8.792e-06 8.833e-06 9.134e-06 1.011e-05
 Cuda/kv-append-4096-copied	wall_time	batch=128	n=20	5.583e-05	2.327e-05 2.335e-05 2.342e-05 2.351e-05 2.367e-05 2.475e-05 5.421e-05 5.436e-05 5.463e-05 5.582e-05 5.585e-05 5.588e-05 5.608e-05 5.655e-05 8.092e-05 8.400e-05 1.097e-04 1.849e-04 2.527e-04 3.107e-04
 Custom/custom-jvp-call	alloc_words	exact	5244
