@@ -24,12 +24,16 @@
 
 ; The Metal tests run again under Metal's API validation, which aborts a
 ; launch whose bound arguments break the rules of the function it calls.
+; GitHub's macOS machines have a device without residency sets, and there
+; the validation layer aborts in the call that opens it.
 
 (rule
  (alias runtest)
  (package tolk)
  (enabled_if
-  (= %{system} macosx))
+  (and
+   (= %{system} macosx)
+   (<> %{env:GITHUB_ACTIONS=false} true)))
  (deps
   (glob_files ../../schedule/schedule/*.golden)
   (glob_files ../../schedule/schedule/*.tolk)
