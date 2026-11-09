@@ -6988,6 +6988,16 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   unrolled whole to 32 lanes and no unroll, 2724-2726 µs against 2301-2310,
   2416-2417 against 2029-2078 and 2948-3004 against 2754-2848, and another
   to 1024 lanes, 672-685 µs against 659-669.
+
+  The bound stays since those vectors of 64 lanes held the compile time.
+  Without it, of 5,240 recorded (kernel, target) pairs 4 change: `conv` on
+  AVX2 unrolls both axes of its window, 570 µs against 672, and rune's
+  contraction of 8 groups runs in the same 21.0 µs, but a float32 product of
+  64 by 128 rows over 32 values, a layer's matmul, goes from 16 output lanes
+  unrolled whole to 64 by the sum's 32, 78 µs against 62, and Clang's
+  0.33-0.5 s against 0.13-0.2; its row `Jit/grad-of-jit-mlp-float32` takes
+  215-226 µs against 201-204, and `products/segments-grad` and
+  `linalg/eigh-f64-32x32` compile 1.12 times as long, on a row users run.
 - **Pinned by:** the Heuristic suite's `the host's lanes › on AVX2 a
   recorded host kernel's conversions take their lanes` and `› on the host a
   conversion computes at most 64 lanes`, over every recorded kernel and
