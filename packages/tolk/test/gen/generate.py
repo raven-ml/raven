@@ -9,9 +9,11 @@
 Each generator file `gen/<path>.py` runs in a fresh interpreter against
 the tinygrad checkout, which must be clean and at TINYGRAD: a golden is the
 output of unmodified tinygrad, with stand-ins only for what a GPU renderer's
-compiler needs from the machine. tinygrad folds a sine, a logarithm and the
-powers with the host's C library, so goldens are recorded on Linux with glibc.
-Moving TINYGRAD means regenerating them all.
+compiler needs from the machine, and for the host's C library: tinygrad folds a
+sine, a logarithm and the powers with it, and each C library rounds them
+differently, so the child computes those folds correctly rounded with mpmath.
+Three goldens depend on the bits of these folds. Moving TINYGRAD means
+regenerating them all.
 MODULE, such as `dtype` or `uop/op`, limits the run to those generators; by
 default all run.
 
@@ -51,6 +53,15 @@ HEADER = f"# tinygrad {TINYGRAD}\n"
 # tinygrad (buffer numbering, caches). It writes the goldens to a file, out of
 # reach of anything tinygrad prints.
 #
+# tinygrad folds a sine, a base-2 logarithm and the powers with the host's C
+# library, which rounds them differently from one system to the next, so the
+# child gives every machine the correctly rounded values. math.sin and
+# math.log2 are replaced for the whole of tinygrad, so its few other callers
+# read the same values. Python is called first, so what a domain error, an
+# overflow or an exact value decides stays what it gives, and an integer
+# operand is the double Python makes of it. The value is converted through a
+# fraction: float(mpf) rounds a subnormal twice.
+#
 # No golden compiles a program for a GPU, so the child gives every machine
 # stand-ins for what a GPU renderer's compiler needs from the machine, when
 # tinygrad first imports it: then, and not before, since a generator sets
@@ -67,7 +78,36 @@ HEADER = f"# tinygrad {TINYGRAD}\n"
 #   generator and hold its output open. The child replaces its `__init__`, and
 #   `Compiler.server`, which other compilers call on macOS, starts no server.
 CHILD = """
-import importlib.abc, importlib.machinery, json, runpy, sys, golden
+import fractions, importlib.abc, importlib.machinery, json, math, runpy, sys, golden
+
+import mpmath
+
+mpmath.mp.prec = 400
+
+def operand(x):
+    try: return mpmath.mpf(float(x))
+    except OverflowError: return mpmath.mpf(x)
+
+def to_double(x):
+    sign, man, exp, _ = x._mpf_
+    value = float(fractions.Fraction(man) * fractions.Fraction(2) ** exp)
+    return -value if sign else value
+
+def correctly_rounded(host, exact):
+    def fold(*args):
+        result = host(*args)
+        if not isinstance(result, float) or not math.isfinite(result) or result == 0: return result
+        if any(isinstance(arg, float) and not math.isfinite(arg) for arg in args): return result
+        return to_double(exact(*map(operand, args)))
+    return fold
+
+math.sin = correctly_rounded(math.sin, mpmath.sin)
+math.log2 = correctly_rounded(math.log2, lambda x: mpmath.log(x, 2))
+
+def correctly_rounded_powers(ops):
+    alu = ops.python_alu
+    alu[ops.Ops.EXP2] = correctly_rounded(alu[ops.Ops.EXP2], lambda x: mpmath.power(2, x))
+    alu[ops.Ops.POW] = correctly_rounded(alu[ops.Ops.POW], mpmath.power)
 
 class MetalCompilerModule(importlib.abc.Loader):
     def create_module(self, spec): return None
@@ -89,7 +129,8 @@ def no_nvrtc(compiler_cuda):
     def compile(self, src): raise CompileError("no golden compiles with NVRTC")
     compiler_cuda.NVRTCCompiler.__init__, compiler_cuda.NVRTCCompiler.compile = __init__, compile
 
-PATCHED = {"tinygrad.device": no_server, "tinygrad.runtime.support.compiler_cuda": no_nvrtc}
+PATCHED = {"tinygrad.device": no_server, "tinygrad.runtime.support.compiler_cuda": no_nvrtc,
+           "tinygrad.uop.ops": correctly_rounded_powers}
 
 class Stubs(importlib.abc.MetaPathFinder):
     def find_spec(self, name, path, target=None):

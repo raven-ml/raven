@@ -90,25 +90,6 @@ let exec_alu =
           [
             (* tinygrad has no FDIV rule, and raises KeyError. *)
             ("D416", [ "op=Ops.FDIV" ]);
-            (* tinygrad takes the C library's values. *)
-            ( "D150",
-              [
-                "op=Ops.SIN dtype=dtypes.f64 operands=[0.259]";
-                "op=Ops.SIN dtype=dtypes.f64 operands=[1.622]";
-                "op=Ops.SIN dtype=dtypes.f64 operands=[3.226]";
-                "op=Ops.SIN dtype=dtypes.f64 operands=[8.85]";
-                "op=Ops.LOG2 dtype=dtypes.f64 operands=[0.86]";
-                "op=Ops.LOG2 dtype=dtypes.f64 operands=[0.898]";
-                "op=Ops.LOG2 dtype=dtypes.f64 operands=[1.022]";
-                "op=Ops.EXP2 dtype=dtypes.f64 operands=[-0.338]";
-                "op=Ops.EXP2 dtype=dtypes.f64 operands=[1.523]";
-                "op=Ops.EXP2 dtype=dtypes.f64 operands=[4.419]";
-                "op=Ops.POW dtype=dtypes.f64 operands=[5.2, 9.6]";
-                "op=Ops.POW dtype=dtypes.f64 operands=[5.4, 0.8]";
-                "op=Ops.POW dtype=dtypes.f64 operands=[15.0, 3.5]";
-                "op=Ops.POW dtype=dtypes.f64 \
-                 operands=[0.9999999999999999, -2.305843009213694e+18]";
-              ] );
           ]
         alu_row;
       test

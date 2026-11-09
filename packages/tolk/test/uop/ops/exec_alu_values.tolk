@@ -1,4 +1,4 @@
-# tolk D150 D416 golden=48dd2f15601ce129d3f1abd697612143
+# tolk D416 golden=079ab5ca265b9a4e3eaf6b5dc50ad2fa
 op	dtype	operands	result
 Ops.ADD	dtypes.i8	[0, 0]	0
 Ops.ADD	dtypes.i8	[7, 3]	10

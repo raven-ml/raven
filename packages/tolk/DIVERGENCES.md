@@ -4202,11 +4202,9 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   `exp2 (x * math.log2 c)`).
 - **tolk:** `Ops.sine`, `Ops.py_log2`, `Ops.py_exp2` and `Ops.py_pow`, which
   `python_alu` calls, and the `c ** x` rule of `Shape.symbolic_simple`, which
-  takes `log2 c` from `Ops.exec_alu`; `test/gen/tinygrad.patch`, which gives
-  tinygrad's `python_alu` a correctly rounded sine, logarithm and powers
-  (`cr_sin`, `cr_log2`, `safe_exp2`, `safe_pow`: mpmath's, at a precision
-  doubled until it rounds to one double, a power that is a fraction exact) and
-  its `c ** x` rule `cr_log2`, before the goldens are generated.
+  takes `log2 c` from `Ops.exec_alu`; `test/gen/generate.py`, whose child
+  computes these folds correctly rounded with mpmath, so the goldens do not
+  depend on the host's C library.
 - **Differs:** `exec_alu` computes each on integers and rounds once. A sine's
   argument is reduced exactly by pi/2, held to 1200 bits, and the sine or
   cosine of the remainder is summed in fixed point to 192 bits. A logarithm,
