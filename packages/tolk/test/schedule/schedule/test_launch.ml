@@ -14,14 +14,12 @@ module Engine = Tolk_engine
 
 (* Devices *)
 
-let gpus = [ ("CUDA", lazy (Rig.open_ (Rig_cuda.gpu 0))) ]
+let device name = if name = "CPU" then Rig.host else Gpus.gpu name
 
-let device name =
-  if name = "CPU" then Rig.host
-  else
-    match Lazy.force (List.assoc name gpus) with
-    | Ok d -> d
-    | Error why -> skip ~reason:why ()
+(* A program of a type [name]'s device lacks makes no statement there. *)
+let reject_unsupported name dt =
+  if not (List.mem dt (Renderer.supported_dtypes (Engine.renderer (device name))))
+  then reject ()
 
 (* Programs *)
 
@@ -219,6 +217,7 @@ let alike p =
 let reduces q = q.kind <> Elementwise
 
 let writes_as_apart name p =
+  reject_unsupported name p.dtype;
   cover "one piece" (List.length p.pieces = 1);
   cover "alike pieces" (alike p);
   cover "unlike pieces" (List.length p.pieces > 1 && not (alike p));
@@ -275,6 +274,7 @@ let assembled p =
 (* However many stores of one state a program makes, its buffer holds what
    each stored. *)
 let writes_pieces name p =
+  reject_unsupported name p.dtype;
   cover "past a hundred pieces" (List.length p.pieces > 100);
   let big = sink name p in
   equal (list string) ~msg:(Format.asprintf "%a" pp_program p) (assembled p)
@@ -354,6 +354,17 @@ let gen_many =
             (one_of [ constant 1; constant 9; constant 64 ])
             bool)))
 
+(* A program of 101 one-row pieces, the fewest past a hundred. *)
+let past_a_hundred =
+  {
+    dtype = Int32;
+    width = 9;
+    pieces = List.init 101 (fun _ -> { kind = Elementwise; rows = 1; k = 1 });
+    fill = true;
+    later = false;
+    bound = false;
+  }
+
 (* Cases *)
 
 (* The sources of the programs of the launches of [big]'s schedule on
@@ -425,6 +436,17 @@ let products name () =
   if name = "CUDA" then
     at_least int ~msg:"matrix instructions" ~than:1
       (occurrences "mma.sync" src)
+
+(* Sixteen products of [16; 16] half matrices on [name], whose launch's
+   members hold no workgroup memory: each product sums through it, so each
+   runs on its own, and writes what it writes apart. *)
+let products_apart name () =
+  let big = sink name (sixteen Matmul Float16) in
+  let linear, vars = Schedule.create_linear_with_vars big in
+  equal int ~msg:"launches" 0 (List.length (launch_sources name big));
+  equal (list string)
+    (written name big (apart linear, vars))
+    (written name big (linear, vars))
 
 let pieces dtype rows =
   {
@@ -1038,6 +1060,29 @@ let listed =
           | l -> l));
     ]
 
+(* The launches on each GPU present: a GPU's tests skip without one. *)
+let on_a_gpu kind =
+  group kind
+    [
+      test
+        "sixteen products run as one launch, on tensor cores on CUDA, or \
+         apart where a launch's members hold no workgroup memory"
+        (fun () ->
+          if (Engine.renderer (device kind)).launch_locals then products kind ()
+          else products_apart kind ());
+      prop ~count:30
+        "the stores of one state run as one launch and write what their \
+         kernels apart write"
+        gen_program (writes_as_apart kind);
+      (* Each case compiles a program of its own, whose pipelines a GPU
+         builds anew, so the host draws the breadth. A GPU takes one draw
+         beside a fixed case past a hundred pieces, which reaches the cover
+         on every seed. *)
+      prop ~count:1 ~examples:[ past_a_hundred ]
+        "the stores of one state write each piece's values" gen_many
+        (writes_pieces kind);
+    ]
+
 let () =
   exit @@ run "Tolk.Launch"
     [
@@ -1059,8 +1104,6 @@ let () =
             past_the_cap;
           test "on the host, sixteen products run as one launch"
             (products "CPU");
-          test "on CUDA, sixteen products on tensor cores run as one launch"
-            (products "CUDA");
         ];
       group "launches"
         [
@@ -1068,15 +1111,9 @@ let () =
             "on the host, the stores of one state run as one launch and write \
              what their kernels apart write"
             gen_program (writes_as_apart "CPU");
-          prop ~count:30
-            "on CUDA, the stores of one state run as one launch and write what \
-             their kernels apart write"
-            gen_program (writes_as_apart "CUDA");
           prop ~count:12
             "on the host, the stores of one state write each piece's values"
             gen_many (writes_pieces "CPU");
-          prop ~count:12
-            "on CUDA, the stores of one state write each piece's values"
-            gen_many (writes_pieces "CUDA");
         ];
+      group "GPUs" (List.map on_a_gpu Gpus.kinds);
     ]

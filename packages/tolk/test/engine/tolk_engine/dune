@@ -10,12 +10,9 @@
   tolk.engine
   tolk_test
   tolk_run
+  tolk_gpus
   rig
-  rig.disk
-  rig.metal
-  rig.cuda
-  rig.nv.nvidia
-  rig.amd.amdgpu)
+  rig.disk)
  (deps
   (glob_files ../../schedule/schedule/*.golden)
   (glob_files ../../schedule/schedule/*.tolk)

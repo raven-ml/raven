@@ -14,6 +14,22 @@
  (wrapped false)
  (libraries tolk tolk.engine tolk_test rig unix))
 
+; The GPUs the suites run on, apart so that only the suites that open them
+; link their drivers.
+
+(library
+ (name tolk_gpus)
+ (modules gpus)
+ (wrapped false)
+ (libraries
+  windtrap
+  tolk.engine
+  rig
+  rig.metal
+  rig.cuda
+  rig.nv.nvidia
+  rig.amd.amdgpu))
+
 ; Forbidding a process to start another, for the compilers' suites.
 
 (library

@@ -17,14 +17,30 @@
  (name test_launch)
  (modules test_launch)
  (package tolk)
- (libraries windtrap tolk tolk.engine tolk_test tolk_run rig rig.cuda))
+ (libraries
+  windtrap
+  tolk
+  tolk.engine
+  tolk_test
+  tolk_run
+  tolk_gpus
+  rig))
 
-; A launch's members write what its graph states, in any order of them.
+; A launch's members write what its graph states, in any order of them, on
+; the host and on each GPU present.
 
 (test
  (name test_launch_law)
  (modules test_launch_law)
  (package tolk)
- (libraries windtrap tolk tolk_test unix)
+ (libraries
+  windtrap
+  tolk
+  tolk.engine
+  tolk_test
+  tolk_run
+  tolk_gpus
+  rig
+  unix)
  (deps
   (sandbox always)))

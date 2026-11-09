@@ -49,8 +49,8 @@ raven / llama.cpp b12048 Vulkan:
   matcher rules on (no gain: the memo it needs costs what it saves)
 - a fixed run of an `After` state read inside a loop still raises where the
   state is over a bitcast, or a join over other writes of its storage
-- one launch pass (ecdd3203f6), views naming their storage (de0bcf38d9)
-  and per-trip loop reads (293eb3f70b) have not run on AMD or Metal
+- attention's backward (167d026789) has not run on AMD, and its CDNA 4
+  tile rule on no GPU: none here is a CDNA 4
 
 ## rune, kaun, vega
 

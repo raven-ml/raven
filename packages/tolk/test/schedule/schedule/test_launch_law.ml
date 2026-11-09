@@ -12,7 +12,9 @@
    listed.
 
    Its oracle (spec) applies the graph's writes one by one: each write
-   computes its stores from the states named, then lands them. *)
+   computes its stores from the states named, then lands them. The schedule
+   is interpreted, and compiled and run on the host and on each GPU
+   present. *)
 
 open Windtrap
 open Tolk
@@ -357,8 +359,7 @@ let gen_program r =
 
 (* The value of a store's elements, of its view's shape. *)
 
-let build ?slots p =
-  let device = "CPU" in
+let build ?slots ?(device = "CPU") p =
   (* Storage takes a slot from the counter: a slot given by hand could be one
      a schedule's own storage takes, and hash-consing would make them one.
      [slots] are those of an earlier build, which are the counter's. *)
@@ -875,6 +876,60 @@ let disk_keeps_mark () =
   equal (pair bool int) ~msg:"made" (false, 1) (launches_read db);
   equal (pair bool int) ~msg:"read back" (true, 1) (launches_read db)
 
+(* The law compiled: the schedule of a program whose buffers live on the host
+   or on [kind]'s GPU, compiled for that device and run there, leaves what its
+   graph states. *)
+
+let device kind = if kind = "CPU" then Rig.host else Gpus.gpu kind
+
+let runs_on kind seed =
+  let d = device kind in
+  let r = Random.State.make [| seed |] in
+  let p = gen_program r in
+  let big, base = build ~device:kind p in
+  let linear, vars = Schedule.create_linear_with_vars ~capturing:true big in
+  let stores =
+    List.concat_map
+      (function
+        | Assign s -> [ s ]
+        | Assemble (_, ss) | Overlap (_, ss) -> ss
+        | Crossed (a, b) -> a @ b)
+      p.steps
+  in
+  let through f = List.exists (fun s -> f s.view) stores in
+  cover "a launch" (count_launches linear > 0);
+  cover "an assembly"
+    (List.exists (function Assemble _ -> true | _ -> false) p.steps);
+  cover "a crossed write"
+    (List.exists (function Crossed _ -> true | _ -> false) p.steps);
+  cover "an unmarked overlap"
+    (List.exists (function Overlap _ -> true | _ -> false) p.steps);
+  cover "a store through bytes"
+    (through (function Bytes _ -> true | _ -> false));
+  cover "a store from a bound start"
+    (through (function Bound _ -> true | _ -> false));
+  let compiled =
+    Realize.compile_linear ~targets:(fun _ -> Tolk_engine.target d) linear
+  in
+  let buffers =
+    Array.mapi
+      (fun s n ->
+        Run.buffer d dt (Array.init n (fun j -> `Float (initial s j))))
+      p.sizes
+  in
+  let bound = Array.to_list (Array.map2 (fun b x -> (b, x)) base buffers) in
+  Tolk_engine.run ~vars
+    (Tolk_engine.link ~devices:(fun _ -> d) ~bound compiled)
+    [||];
+  let expected = spec p in
+  let msg = Format.asprintf "seed %d: %a" seed pp_program p in
+  Array.iteri
+    (fun s x ->
+      equal (list string) ~msg
+        (Array.to_list (Array.map (fun x -> bits (`Float x)) expected.(s)))
+        (Array.to_list (Array.map bits (Run.values dt x))))
+    buffers
+
 let () =
   Disk_cache.play [ ("launches", launches_of_cat) ];
   exit @@ run "Tolk.Launch_law"
@@ -898,4 +953,18 @@ let () =
           test "marked writes of two calls run in turn" calls_in_turn;
           test "a marked write of no stores marks nothing" no_stores_no_mark;
         ];
+      group "compiled"
+        [
+          prop ~count:120
+            "on the host, a schedule's launches write what its graph states"
+            (Gen.int_range 1 1_000_000) (runs_on "CPU");
+        ];
+      group "GPUs"
+        (List.map
+           (fun kind ->
+             prop ~count:120
+               ("on " ^ kind
+              ^ ", a schedule's launches write what its graph states")
+               (Gen.int_range 1 1_000_000) (runs_on kind))
+           Gpus.kinds);
     ]

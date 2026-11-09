@@ -35,34 +35,6 @@ let device name =
 
 let devices = device
 
-(* The GPUs the tests run on, each opened once, at its first test, and skipping
-   it without one. *)
-let gpus =
-  let opened opener =
-    lazy (match Rig.open_ opener with Ok d -> Ok d | Error why -> Error why)
-  in
-  [
-    ("Metal", opened (Rig_metal.gpu 0));
-    ("CUDA", opened (Rig_cuda.gpu 0));
-    ("NV", opened (Rig_nv_nvidia.gpu 0));
-    ("AMD", opened (Rig_amd_amdgpu.gpu 0));
-  ]
-
-(* A GPU opened but whose compiler's library is absent (NVRTC's where
-   NVRTC_PATH is unset, comgr's where COMGR_PATH is) renders nothing, as its
-   compiler's own tests expect: the tests on it skip. *)
-let lacks_compiler why =
-  String.starts_with ~prefix:"failed to load library" why
-  || String.starts_with ~prefix:"comgr not available" why
-
-let gpu kind =
-  match Lazy.force (List.assoc kind gpus) with
-  | Error why -> skip ~reason:why ()
-  | Ok d -> (
-      match Engine.renderer d with
-      | _ -> d
-      | exception Failure why when lacks_compiler why -> skip ~reason:why ())
-
 let clang = lazy (Cstyle.clang (Engine.target host))
 
 (* [linear] compiled for the targets of [devices]. *)
@@ -107,7 +79,7 @@ let targets =
           raises_match Exn.invalid_arg (fun () ->
               Engine.renderer Rig_disk.device));
       test "Metal compiles for its GPU family" (fun () ->
-          let d = gpu "Metal" in
+          let d = Gpus.gpu "Metal" in
           let t = Engine.target d in
           equal (pair string string) ("METAL", Rig.arch d) (t.device, t.arch));
     ]
@@ -3696,7 +3668,8 @@ let loop_reads_earlier_states () =
 (* The law of a loop's reads: a loop of three trips whose call stores, into a
    row of each buffer moving 16 bytes a trip, the sum of runs that move with the
    trip or stay fixed, reads each run as the trip starts, whatever storage the
-   loop has written. Fixed runs start at any element, off 16 bytes too. *)
+   loop has written. Fixed runs start at any element, off 16 bytes too. The
+   buffers live on [d] of [devices]. *)
 
 type loop_step = {
   target : int;  (* The buffer written, at [lo + 4 t]. *)
@@ -3724,8 +3697,8 @@ let gen_loop_program r =
   in
   (sizes, List.init m step)
 
-let loop_of_program sizes steps =
-  let bufs = Array.map (fun n -> Ops.new_buffer "CPU" n Float32) sizes in
+let loop_of_program d sizes steps =
+  let bufs = Array.map (fun n -> Ops.new_buffer d n Float32) sizes in
   let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
   let view b lo stride =
     Shape.shrink bufs.(b)
@@ -3741,7 +3714,7 @@ let loop_of_program sizes steps =
     let s = !slot in
     incr slot;
     args := v :: !args;
-    Shape.param ~shape:[ Int 4 ] ~device:"CPU" s Float32
+    Shape.param ~shape:[ Int 4 ] ~device:d s Float32
   in
   let stores =
     List.map
@@ -3778,8 +3751,8 @@ let loop_spec steps init =
 
 (* The same law over a state: each buffer holds its [After] state, [b * 2],
    when the loop starts, and a read names that state or the buffer as given. *)
-let loop_of_states sizes steps older =
-  let bufs = Array.map (fun n -> Ops.new_buffer "CPU" n Float32) sizes in
+let loop_of_states d sizes steps older =
+  let bufs = Array.map (fun n -> Ops.new_buffer d n Float32) sizes in
   let states =
     Array.map (fun b -> Ops.after b [ Ops.store b Ops.O.(b * float 2.) ]) bufs
   in
@@ -3798,7 +3771,7 @@ let loop_of_states sizes steps older =
     let s = !slot in
     incr slot;
     args := v :: !args;
-    Shape.param ~shape:[ Int 4 ] ~device:"CPU" s Float32
+    Shape.param ~shape:[ Int 4 ] ~device:d s Float32
   in
   let stores =
     List.map
@@ -3842,7 +3815,7 @@ let loop_states_spec steps older init =
   done;
   cur
 
-let loop_states_law =
+let loop_states_law ?(devices = devices) d =
   prop ~count:80 "a loop reads each run of an After state as its trip starts"
     (Gen.int_range 1 1_000_000)
     (fun seed ->
@@ -3870,21 +3843,21 @@ let loop_states_law =
       cover "a run of the state the step writes" (List.exists reads_own steps);
       cover "a read of the older state"
         (List.exists (fun st -> List.exists Fun.id (older st)) steps);
-      let bufs, sink = loop_of_states sizes steps older in
+      let bufs, sink = loop_of_states d sizes steps older in
       let linear, vars = Schedule.create_linear_with_vars sink in
       let buffers =
-        Array.map (fun xs -> Run.buffer (devices "CPU") Float32 (floats xs)) init
+        Array.map (fun xs -> Run.buffer (devices d) Float32 (floats xs)) init
       in
       let bound =
         Array.to_list (Array.map2 (fun b x -> (b, x)) bufs buffers)
       in
-      Engine.run ~vars (Engine.link ~devices ~bound (compile linear)) [||];
+      Engine.run ~vars (Engine.link ~devices ~bound (compile ~devices linear)) [||];
       let want = loop_states_spec steps older init in
       Array.iteri
         (fun j x -> equal values (floats want.(j)) (Run.values Float32 x))
         buffers)
 
-let loop_reads_law =
+let loop_reads_law ?(devices = devices) d =
   prop ~count:60 "a loop reads each run as its trip starts"
     (Gen.int_range 1 1_000_000)
     (fun seed ->
@@ -3901,15 +3874,15 @@ let loop_reads_law =
       in
       cover "a fixed run read off 16 bytes" (List.exists off steps);
       cover "a run read of a buffer the step writes" (List.exists reads_own steps);
-      let bufs, sink = loop_of_program sizes steps in
+      let bufs, sink = loop_of_program d sizes steps in
       let linear, vars = Schedule.create_linear_with_vars sink in
       let buffers =
-        Array.map (fun xs -> Run.buffer (devices "CPU") Float32 (floats xs)) init
+        Array.map (fun xs -> Run.buffer (devices d) Float32 (floats xs)) init
       in
       let bound =
         Array.to_list (Array.map2 (fun b x -> (b, x)) bufs buffers)
       in
-      let s = Engine.link ~devices ~bound (compile linear) in
+      let s = Engine.link ~devices ~bound (compile ~devices linear) in
       Engine.run ~vars s [||];
       let want = loop_spec steps init in
       Array.iteri
@@ -4346,8 +4319,8 @@ let calls_of_views =
   in
   group "calls of views"
     [
-      loop_reads_law;
-      loop_states_law;
+      loop_reads_law "CPU";
+      loop_states_law "CPU";
       test
         "a call given an older state to write and a later to read reads it \
          before the call"
@@ -5599,7 +5572,7 @@ let gpu_kind =
 let timing_on name =
   match List.assoc_opt name gpu_kind with
   | Some kind ->
-      let m = gpu kind in
+      let m = Gpus.gpu kind in
       ((fun _ -> m), Engine.renderer m)
   | None -> (devices, Lazy.force clang)
 
@@ -6231,7 +6204,7 @@ let words =
    The recorded programs copy from the host into CPU:1, which is a GPU here, and
    compute on it. A GPU's tests skip without one. *)
 
-let on_gpu kind name = match name with "CPU:1" -> gpu kind | n -> device n
+let on_gpu kind name = match name with "CPU:1" -> Gpus.gpu kind | n -> device n
 let gpu_names = [ "CPU"; "CPU:1" ]
 
 let computes_on devices name =
@@ -6242,7 +6215,7 @@ let computes_on devices name =
       Engine.run ~vars s (slots storage);
       equal slot_values (expected ~vars big storage) (by_slot storage contents))
 
-let on_a_gpu (kind, _) =
+let on_a_gpu kind =
   let devices = on_gpu kind in
   group kind
     [
@@ -6311,6 +6284,9 @@ let on_a_gpu (kind, _) =
       test "a call of 520 buffers reads each from its own address"
         (reads_many_buffers ~devices "CPU:1");
       reads_trips_under_a_back_edge ~devices "CPU:1";
+      loop_reads_law ~devices "CPU:1";
+      loop_states_law ~devices "CPU:1";
+      byte_views ~devices "CPU:1";
       test "a scan's merged calls carry in place as its calls apart do"
         (carries_merged ~devices "CPU:1");
       test "a scan's calls that read one name at two values carry each its own"
@@ -6359,5 +6335,5 @@ let () =
          estimates_past_an_int;
          group "loops bounded by a loaded value" (loaded_bounds ());
          words;
-         group "GPUs" (List.map on_a_gpu gpus);
+         group "GPUs" (List.map on_a_gpu Gpus.kinds);
        ])
