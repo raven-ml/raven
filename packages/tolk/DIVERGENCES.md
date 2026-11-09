@@ -2506,11 +2506,15 @@ Withdrawn: multi-device is out of scope, see README.
     much of the blocks' matrices the cache holds, and sm_89's parts hold
     from 12 MB to 96 MB: no bound of the target tells 8.8 MB working sets
     from 142 MB ones, so the 40-58 a byte band, 1.1-1.55x slower on fudge,
-    is the cost of one program per target. End to end, interleaved, three rounds, ranges
-    apart: kaun's `GptOss/prefill-512` 446-452 to 186-187 ms and
-    `GptOss/experts-at-prefill-512` 18.5-18.7 to 4.66-4.68 ms; unchanged
-    within noise, `GptOss/decode-step-Q8_0-cache-1024` (8.1-8.3 ms), kaun's
-    `Quant/cuda/*` rows and tolk's `stream/*` and `gpt_oss/*` rows. The rule
+    is the cost of one program per target. When the order was introduced, end
+    to end: kaun's `GptOss/prefill-512` 446-452 to 186-187 ms and
+    `GptOss/experts-at-prefill-512` 18.5-18.7 to 4.66-4.68 ms, as the cores
+    took back what the layouts had streamed. Those two rows no longer measure
+    the layouts: their kernels are the cores', so turning the contraction off
+    (`MV=0`) leaves them at 122.0 against 123.1 ms and 2.77 against 2.79 ms
+    (minima of four interleaved rounds). The rows that hold the layouts are
+    tolk's `stream/*` and `gpt_oss/*` and kaun's `Quant/cuda/*`: few outputs
+    and decoded products, 1.65-8.7x and 3.7-65x. The rule
     applies on AMD's and Metal's cores too, where the constant is not
     measured: nonnormal's R9700 rows (`GptOss/experts-at-prefill-512`,
     `GptOss/prefill-512`) and Metal's are pending;
