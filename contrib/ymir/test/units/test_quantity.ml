@@ -1587,7 +1587,7 @@ let outcome f =
 
 type op = {
   name : string;
-  w : float array testable;
+  w : float array -> float array testable;
   eager :
     Nx.host Nx.float32_t Quantity.t ->
     Nx.host Nx.float32_t Quantity.t ->
@@ -1610,7 +1610,31 @@ let ulps k =
   array
     (Testable.make ~pp:(fun ppf x -> Format.fprintf ppf "%h" x) ~equal:close)
 
-let op ?(w = bits) name f =
+(* [sum_within xs] compares an eager and a compiled [Nx.sum] of the float32
+   operands [xs], which agree only within Nx.sum's bound: each is within
+   [γ(n - 1) Σ|x|] of the exact sum, so within twice that of each other. A NaN
+   or an infinite operand leaves no room for rounding, so the results match.
+   The bound holds barring overflow, so a sum whose partial sums may overflow
+   claims nothing. *)
+let sum_within xs =
+  let xs = Array.map (fun x -> Int32.(float_of_bits (bits_of_float x))) xs in
+  let u = 0x1p-24 and greatest = 0x1.fffffep127 in
+  let k = Float.of_int (Array.length xs - 1) *. u in
+  let gamma = k /. (1. -. k) in
+  let add s x = if Float.is_finite x then s +. Float.abs x else s in
+  let total = Array.fold_left add 0. xs in
+  let bound = 2. *. gamma *. total in
+  let overflows = total +. bound >= greatest in
+  let finite = Array.for_all Float.is_finite xs in
+  let close a b =
+    overflows || a = b
+    || (Float.is_nan a && Float.is_nan b)
+    || (finite && Float.abs (a -. b) <= bound)
+  in
+  array
+    (Testable.make ~pp:(fun ppf x -> Format.fprintf ppf "%h" x) ~equal:close)
+
+let op ?(w = fun _ -> bits) name f =
   {
     name;
     w;
@@ -1626,13 +1650,13 @@ let ops =
     op "mul" Quantity.mul;
     op "div" Quantity.div;
     op "map2" (Quantity.map2 (fun x y -> Nx.sub (Nx.mul_s x 2.) y));
-    op "map" (fun a _ -> Quantity.map Nx.sum a);
+    op ~w:sum_within "map" (fun a _ -> Quantity.map Nx.sum a);
     op "pow 3" (fun a _ -> Quantity.pow 3 a);
     op "pow -2" (fun a _ -> Quantity.pow (-2) a);
     (* Nx.pow is within 4 ulps at float32, so an eager and a compiled kernel
        may differ by 8. *)
-    op ~w:(ulps 8) "root 3" (fun a _ -> Quantity.root 3 a);
-    op ~w:(ulps 8) "root 2" (fun a _ -> Quantity.root 2 a);
+    op ~w:(fun _ -> ulps 8) "root 3" (fun a _ -> Quantity.root 3 a);
+    op ~w:(fun _ -> ulps 8) "root 2" (fun a _ -> Quantity.root 2 a);
     op "times" (fun a b -> Quantity.times (Quantity.unit b) a);
     op "per" (fun a b -> Quantity.per (Quantity.unit b) a);
   ]
@@ -1712,7 +1736,7 @@ let rune_laws =
                && Array.exists subnormal32 xs));
           let a = Quantity.v u (f32 xs) and b = Quantity.v w (f32 ys) in
           equal
-            (result (pair string o.w) string)
+            (result (pair string (o.w xs)) string)
             (outcome (fun () -> o.eager a b))
             (outcome (fun () -> o.jitted a b)));
       prop "vmap agrees with the stack of its rows"
