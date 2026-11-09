@@ -251,9 +251,19 @@ let aggregate q by outputs input =
    batch can show a group's failure at an earlier row: the earliest row wins,
    then the earliest node in evaluation order, a reduction's operand before
    the reduction. A traced batch, whose rows a compaction could not take back,
-   stays held, and its rows reduce once with the state at the end. The state
-   and the held rows are released before they reduce, so that one copy is
-   live. *)
+   stays held, and its rows reduce once with the state at the end; [var] and
+   [std] raise, as their fold reads its values. {!partial} blocks when one of
+   the first two batches is traced, so that only a later one meets this. The
+   state and the held rows are released before they reduce, so that one copy
+   is live. *)
+let rec traced c =
+  Option.fold ~none:false ~some:Column.traced (Column.validity c)
+  ||
+  match Column.data c with
+  | Fixed (P x) -> Column.traced x
+  | Fields cs -> List.exists traced cs
+  | _ -> false
+
 let streamed q by (p : Partial.t) input s =
   let frames = Query.of_table (empty p.schema) in
   let state_q =
@@ -286,9 +296,6 @@ let streamed q by (p : Partial.t) input s =
       f;
     state := Some out
   in
-  let traced c =
-    match Column.data c with Fixed (P x) -> Column.traced x | _ -> false
-  in
   let push b =
     let n = Table.rows b and base = !rows in
     let cs, f = project (Eval.frame b) in
@@ -298,6 +305,8 @@ let streamed q by (p : Partial.t) input s =
     held := Table.batch p.schema ~rows:n columns :: !held;
     held_rows := !held_rows + n;
     rows := base + n;
+    if List.exists traced cs && p.folds then
+      invalid_arg "Query.aggregate: var and std cannot fold a traced batch";
     blocked := !blocked || List.exists traced cs;
     let groups = match !state with Some s -> Table.rows s | None -> 0 in
     let due = !held_rows > 0 && !held_rows >= groups in
@@ -331,9 +340,19 @@ let partial q by outputs input s =
         | [] -> s.next ()
       in
       let rest = { s with next } in
+      (* What a batch's operands compute decides, as a table captured under
+         [Rune.jit] computes traced values from untraced columns. *)
+      let traced_held (p : Partial.t) =
+        let project = Eval.outputs (Query.schema input) p.held in
+        let held b = List.exists traced (fst (project (Eval.frame b))) in
+        List.exists held !peeked
+      in
       let lowered =
         if Option.is_none b then None
-        else Partial.v ~by outputs (Query.schema input)
+        else
+          match Partial.v ~by outputs (Query.schema input) with
+          | Some p when p.folds && traced_held p -> None
+          | lowered -> lowered
       in
       match lowered with
       | Some p -> streamed q by p input rest

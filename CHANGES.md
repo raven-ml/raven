@@ -4114,6 +4114,15 @@ word comes from its lock and from samples the dashboard saw arrive.
   bytes, whatever the file's name, every member or frame up to the end of the
   file: sniffing, batches and errors see the decompressed text, read as a
   stream. A stream the decoder refuses is an `Error` naming the byte.
+- `Query.aggregate` streams `var` and `std` over batches in O(groups + a batch)
+  memory. Every eager run of them folds each frame's values once, by the shifted
+  updating form of Chan, Golub and LeVeque, so their bits depend only on the
+  values in row order, and a batching never changes them. A compiled or
+  differentiated run keeps a two-pass form, equal within rounding, and a
+  `float64` operand under `Rune.jit`, or traced `float64` values under
+  `Rune.vmap`, still raise. A traced batch after two untraced batches raises
+  `Invalid_argument`.
+
 - `Talon_arrow` reads and writes Arrow IPC files and streams: `Talon_arrow.file`
   and `source` map a file's buffers into columns, with no copy where the layouts
   agree, `encode` writes a query's rows with buffer compression and custom

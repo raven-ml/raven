@@ -2508,14 +2508,16 @@ let of_groups ty vs g =
    numerator are exact. The exact sample variance is the rational [h^2 S / (n -
    1)], [S] the integers' [\u{03A3} j^2 - (\u{03A3} j)^2 / n] by the division
    with remainder of [\u{03A3} j] by [n], whose terms fit an [int]. *)
-let exact_variance js =
+let exact_squares js =
   let n = Array.length js in
   let total = Array.fold_left ( + ) 0 js in
   let q = total / n and r = total mod n in
   let squares = Array.fold_left (fun a j -> a + (j * j)) 0 js in
   let s = squares - (q * q * n) - (2 * q * r) in
-  let s = float_of_int s -. (float_of_int (r * r) /. float_of_int n) in
-  Float.ldexp s (-40) /. float_of_int (n - 1)
+  float_of_int s -. (float_of_int (r * r) /. float_of_int n)
+
+let exact_variance js =
+  Float.ldexp (exact_squares js) (-40) /. float_of_int (Array.length js - 1)
 
 let far_from_zero =
   Gen.(
@@ -2798,6 +2800,48 @@ let streamed_edges =
               empties by Expr.[ "r" := arg_max x ];
               empties by Expr.[ "r" := mean x ])
             [ []; [ "g" ] ]);
+      test "var and std of values of every scale, in any batching" (fun () ->
+          (* From the definition. A first tiny value is negligible beside
+             [+-1e154]; [+-1e-170] has a variance below float64's range;
+             [+-max_float] has a variance and a standard deviation past it. *)
+          let x = Col.float "x" in
+          let cells =
+            [|
+              (0, 1e-250); (0, 1e154); (0, -1e154); (1, 1e154); (1, -1e154);
+              (1, 1e-250); (2, 1e-170); (2, -1e-170); (3, 1.); (3, 1.);
+              (3, 1.); (4, max_float); (4, -.max_float);
+            |]
+          in
+          let table a b =
+            v
+              [
+                ( "g",
+                  Column.v Type.int64 (Array.map fst (Array.sub cells a b)) );
+                ( "x",
+                  Column.v Type.float64 (Array.map snd (Array.sub cells a b)) );
+              ]
+          in
+          let n = Array.length cells in
+          let os = Expr.[ "v" := var x; "s" := std x ] in
+          let tol = float_rel ~rel:1e-12 ~abs:0. in
+          for cut = 0 to n do
+            let t = of_batches [ table 0 cut; table cut (n - cut) ] in
+            same_as_one_batch ~by:[ "g" ] os t;
+            let q = Query.aggregate ~by:[ "g" ] os (Query.of_table t) in
+            let r = run_ok q in
+            equal ~msg:"var" (array (option tol))
+              [| Some 1e308; Some 1e308; Some 0.; Some 0.; Some infinity |]
+              (floats r "v");
+            equal ~msg:"std" (array (option tol))
+              [|
+                Some 1e154;
+                Some 1e154;
+                Some (sqrt 2. *. 1e-170);
+                Some 0.;
+                Some infinity;
+              |]
+              (floats r "s")
+          done);
       test "a leading batch a filter empties" (fun () ->
           let t xs = v [ ("x", Column.v Type.int64 xs) ] in
           let plan = Query.filter Expr.(Col.int "x" < int 3) in
@@ -2864,7 +2908,7 @@ let streamed_outs (G.Sample (ty, _)) =
     ]
   @
   if is Kind.int || is Kind.float then
-    Expr.[ "sum" := sum x; "mean" := mean x ]
+    Expr.[ "sum" := sum x; "mean" := mean x; "var" := var x; "std" := std x ]
   else []
 
 let law_streamed (sample, by, whole, stream) =
@@ -2918,6 +2962,143 @@ let law_streamed (sample, by, whole, stream) =
   cover "a batch the filter empties" empties;
   equal ~msg:"filtered" outcome_w (filtered whole streams)
     (filtered stream streams)
+
+(* Streamed var and std against their definition
+
+   Each group's values are [(centre + j) 2^e] for integers [j] of at most 10
+   bits, exact in float64: their sample variance is the rational [S / (n - 1)
+   2^2e], [S] the squared deviations of the [j]s ({!exact_squares}), rounded
+   once, so that a run within Chan, Golub and LeVeque's bound for the shifted
+   update, [n kappa u] with [kappa^2 < 1 + n], agrees with it within that
+   tolerance. Past [max_float] the definition is infinite. *)
+
+type moments_group = { exponent : int; centre : int; js : int option array }
+
+let moments_group =
+  Gen.(
+    let* centre = of_list [ 0; 1 lsl 40 ] in
+    let* exponent =
+      of_list
+        (if centre = 0 then [ 0; -560; -1040; 500; 502; 900; 1000 ]
+         else [ 0; -560; -1040; 500; 502; 900 ])
+    in
+    let size =
+      frequency
+        [ (2, constant 0); (2, constant 1); (2, constant 2);
+          (6, int_range 3 40) ]
+    in
+    let value =
+      frequency
+        [ (7, map Option.some (int_range (-1023) 1023)); (1, constant None) ]
+    in
+    let+ js = array ~size value in
+    { exponent; centre; js })
+
+let moments_draw =
+  Gen.(
+    let* groups = array ~size:(int_range 1 6) moments_group in
+    let* seed = nat in
+    let rows =
+      Array.concat
+        (Array.to_list
+           (Array.mapi
+              (fun g { exponent; centre; js } ->
+                Array.map
+                  (fun j ->
+                    let x =
+                      Option.map
+                        (fun j ->
+                          Float.ldexp (float_of_int (centre + j)) exponent)
+                        j
+                    in
+                    (g, x))
+                  js)
+              groups))
+    in
+    let r = Random.State.make [| seed |] in
+    let keys = Array.map (fun _ -> Random.State.bits r) rows in
+    let order =
+      List.sort
+        (fun i j -> Int.compare keys.(i) keys.(j))
+        (List.init (Array.length rows) Fun.id)
+    in
+    let rows = Array.of_list (List.map (fun i -> rows.(i)) order) in
+    let whole =
+      v
+        [
+          ("g", Column.v Type.int64 (Array.map fst rows));
+          ("x", Column.of_options Type.float64 (Array.map snd rows));
+        ]
+    in
+    let+ stream = G.split whole in
+    (groups, whole, stream))
+
+let moments_outs =
+  let x = Col.float "x" in
+  Expr.[ "v" := var x; "s" := std x ]
+
+let moments_tolerance n =
+  let n = float_of_int n in
+  float_rel ~rel:(8. *. n *. sqrt (n +. 1.) *. 0x1p-53) ~abs:0x1p-1070
+
+(* [expected_moments g] is group [g]'s variance and standard deviation by
+   their definition, [None] under two values. *)
+let expected_moments { exponent; js; _ } =
+  let js = Array.of_list (List.filter_map Fun.id (Array.to_list js)) in
+  let n = Array.length js in
+  if n < 2 then (n, None, None)
+  else
+    let per_df = exact_squares js /. float_of_int (n - 1) in
+    ( n,
+      Some (Float.ldexp per_df (2 * exponent)),
+      Some (Float.ldexp (sqrt per_df) exponent) )
+
+let law_streamed_moments (groups, whole, stream) =
+  cover "several batches" (List.length (batches stream) > 1);
+  let n_of g =
+    let n, _, _ = expected_moments g in
+    n
+  in
+  cover "a group of one value" (Array.exists (fun g -> n_of g = 1) groups);
+  cover "a group of nulls alone"
+    (Array.exists (fun g -> Array.length g.js > 0 && n_of g = 0) groups);
+  cover "a group of two values" (Array.exists (fun g -> n_of g = 2) groups);
+  cover "a near-constant group"
+    (Array.exists (fun g -> g.centre > 0 && n_of g >= 2) groups);
+  cover "a group of finite variance whose squares overflow a plain sum"
+    (Array.exists
+       (fun g ->
+         let _, v, _ = expected_moments g in
+         let finite =
+           match v with Some v -> Float.is_finite v | None -> false
+         in
+         let squares =
+           Array.fold_left
+             (fun a -> function
+               | Some j -> a +. (Float.ldexp (float_of_int j) g.exponent ** 2.)
+               | None -> a)
+             0. g.js
+         in
+         finite && not (Float.is_finite squares))
+       groups);
+  let q t = Query.aggregate ~by:[ "g" ] moments_outs (Query.of_table t) in
+  let t = run_ok (q stream) in
+  let keys = Column.options Kind.int (column t "g") in
+  let vs = floats t "v" and ss = floats t "s" in
+  Array.iteri
+    (fun i key ->
+      match key with
+      | None -> ()
+      | Some g ->
+          let n, v, s = expected_moments groups.(g) in
+          let tol = moments_tolerance (Int.max n 1) in
+          equal ~msg:"var" (option tol) v vs.(i);
+          equal ~msg:"std" (option tol) s ss.(i))
+    keys;
+  equal ~msg:"blocking" outcome_w
+    (outcome (Query.run (q whole)))
+    (outcome (Query.run (q stream)));
+  same_outcome (q whole) (q stream)
 
 (* A cast at a row of one output and a conflict at the row of another, in
    every order: the failure reported is the one that the single batch finds
@@ -3095,6 +3276,8 @@ let one_column =
         far_from_zero law_exact_variance;
       prop ~count:400 "a streamed aggregate is the blocking one, bit for bit"
         batched law_streamed;
+      prop ~count:300 "streamed var and std follow their definition"
+        moments_draw law_streamed_moments;
       prop ~count:300 "a streamed aggregate fails as the blocking one does"
         failing_ints law_failures;
       prop "an integer's or a boolean's min and max are its extremes"

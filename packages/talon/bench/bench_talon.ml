@@ -233,17 +233,16 @@ let batched t =
    as rows. *)
 let streamed_few = lazy (batched groups)
 
-let streamed_many =
+let many_groups =
   lazy
     (let n = 1 lsl 20 in
-     batched
-       (Talon.v
-          [
-            ( "k",
-              Column.of_tensor
-                (Nx.repeat ~axis:0 4 (Nx.arange Nx.int64 0 n 4)) );
-            ("v", Column.of_tensor (Nx.arange Nx.int64 0 n 1));
-          ]))
+     Talon.v
+       [
+         ("k", Column.of_tensor (Nx.repeat ~axis:0 4 (Nx.arange Nx.int64 0 n 4)));
+         ("v", Column.of_tensor (Nx.arange Nx.int64 0 n 1));
+       ])
+
+let streamed_many = lazy (batched (Lazy.force many_groups))
 
 let streamed t =
   run
@@ -251,6 +250,13 @@ let streamed t =
       of_table (Lazy.force t)
       |> aggregate ~by:[ "k" ]
            Expr.[ "s" := sum (Col.int "v"); "c" := count (Col.int "v") ])
+
+let streamed_moments t =
+  run
+    Query.(
+      of_table (Lazy.force t)
+      |> aggregate ~by:[ "k" ]
+           Expr.[ "v" := var (Col.int "v"); "d" := std (Col.int "v") ])
 
 (* [filter th] keeps the rows whose [key] is below [th]: [th / 10] percent of
    them. *)
@@ -681,6 +687,14 @@ let () =
               streamed streamed_few);
           Thumper.bench "Group/streamed-many-groups" (fun () ->
               streamed streamed_many);
+          Thumper.bench "Group/var-few-groups" (fun () ->
+              streamed_moments (Lazy.from_val groups));
+          Thumper.bench "Group/var-many-groups" (fun () ->
+              streamed_moments many_groups);
+          Thumper.bench "Group/streamed-var-few-groups" (fun () ->
+              streamed_moments streamed_few);
+          Thumper.bench "Group/streamed-var-many-groups" (fun () ->
+              streamed_moments streamed_many);
           Thumper.bench "Group/mean-std-int32-100-1M" (fun () ->
               let v = Col.int "v" in
               over_k Expr.[ "m" := mean v; "d" := std v ]);

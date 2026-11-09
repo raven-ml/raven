@@ -22,6 +22,9 @@ type t = {
           of [held], and {!row_field}. *)
   finish : (string * Expr.packed) list;
       (** Over [schema]: the keys and the outputs. *)
+  folds : bool;
+      (** Whether an output is a [var] or [std], whose state cannot take a
+          traced batch. *)
 }
 
 val row_field : string

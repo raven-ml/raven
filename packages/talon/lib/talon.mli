@@ -1383,7 +1383,13 @@ module Expr : sig
   val std : ('a, row) t -> (float, agg) t
   (** [std a] is the sample standard deviation of [a]'s values, dividing by n -
       1, and null for fewer than two values. It is infinite only where the
-      standard deviation exceeds [max_float]. *)
+      standard deviation exceeds [max_float]. Its bits depend on the frame's
+      values in row order alone. Over traced values, and under [Rune.jit], it
+      is a two-pass form, equal within rounding.
+
+      Raises [Invalid_argument] over a [float64] operand under [Rune.jit], or
+      over traced [float64] values under [Rune.vmap], as that form reads them
+      to detect overflow. *)
 
   val var : ('a, row) t -> (float, agg) t
   (** [var a] is the sample variance of [a]'s values, like {!std}. It is
@@ -2557,15 +2563,16 @@ module Query : sig
 
       It takes O(n) expected time. A stream of several batches holds O(groups
       + largest batch) rows, a state of one row per group, where each output
-      reduces with {!rows}, [count], [sum], [mean], [min], [max], [first],
-      [last], [only], [arg_min] or [arg_max] of an operand that reads its own
-      row alone and holds no [per_list]. Its values and failures do not depend
-      on the batches. Otherwise it blocks, holding the columns [by] and those
-      that [os] read: for any other reduction, a [sum] of durations, an OCaml
-      function or value ([$], [const], [of_option]), an extension value, a
-      {!Expr.within}, an output that can fail outside a reduction, or a traced
-      batch ({!section-compiled}). Over traced columns it raises unless [by] is
-      empty.
+      reduces with {!rows}, [count], [sum], [mean], [var], [std], [min], [max],
+      [first], [last], [only], [arg_min] or [arg_max] of an operand that reads
+      its own row alone and holds no [per_list]. Its values and failures do
+      not depend on the batches. Otherwise it blocks, holding the columns [by]
+      and those that [os] read: for any other reduction, a [sum] of durations,
+      an OCaml function or value ([$], [const], [of_option]), an extension
+      value, a {!Expr.within}, an output that can fail outside a reduction, or
+      a traced batch ({!section-compiled}). Over traced columns it raises
+      unless [by] is empty. With a [var] or [std] it raises [Invalid_argument]
+      for a traced batch that follows two untraced batches.
 
       Its problems are a key that names no column or is named twice, those of
       binding [os], two outputs of one name, and an output of a key's name. *)
@@ -2696,7 +2703,8 @@ module Query : sig
       runs; under [Rune.jit] so is every result computed from a table the
       function captures, so steps on its text raise. A step over traced columns
       computes eager's values when every size it computes follows from its
-      inputs' sizes. Otherwise it raises [Invalid_argument] at the trace with
+      inputs' sizes, and {!Expr.std} and {!Expr.var} compute them within
+      rounding. Otherwise it raises [Invalid_argument] at the trace with
       nx's message for the read, such as
       [Nx.positions: the value is traced by Rune.jit], and its doc says so.
       Under [Rune.grad] every step runs, {!values} and display aside. *)

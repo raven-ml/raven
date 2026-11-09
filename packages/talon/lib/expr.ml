@@ -39,6 +39,7 @@ type (_, _) reduction =
   | Arg_min : ('a, int) reduction
   | Arg_max : ('a, int) reduction
   | Collect : ('a, 'a array) reduction
+  | Moments : (Record.t, Record.t) reduction
 
 type ('e, 's) ext = {
   type_ : Type.ext Type.t;
@@ -253,6 +254,7 @@ let reduction_name : type a b. (a, b) reduction -> string = function
   | Arg_min -> "arg_min"
   | Arg_max -> "arg_max"
   | Collect -> "collect"
+  | Moments -> "moments"
 
 let text_op_name : type a. a text_op -> string = function
   | Length -> "Str.length"
@@ -1306,6 +1308,7 @@ let reduction_typing : type a b.
       match t with
       | Column ty -> Some (Column (Type.list ty))
       | Extension _ | Value -> no_type ())
+  | Moments -> Some t
   | Sum -> (
       match t with
       | Column ty -> (

@@ -78,8 +78,9 @@ type frame = {
       [words], or greatest with [~desc];
     - [variance p] is each frame's sample variance of [p]'s values, as
       {!moments}; [None] leaves [var] and [std] to [holistic];
-    - [holistic r ty p] is [r], a [median], [quantile] or [n_unique], or a
-      [var] or [std] without [variance], as {!reduce} gives it. *)
+    - [holistic r ty p] is [r], a [median], [quantile], [n_unique] or a
+      [Moments] state's compaction, or a [var] or [std] without [variance], as
+      {!reduce} gives it. *)
 and values = {
   fold :
     'v 'e. Nx.combine -> ('v, 'e, Nx.host) Nx.t -> ('v, 'e, Nx.host) Nx.t;

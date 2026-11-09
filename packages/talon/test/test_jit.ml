@@ -185,24 +185,66 @@ let result_t =
 (* [agrees name f] states that [f], compiled and mapped, computes what it
    computes eagerly. [f] is bound under [jit] once, so each length traces once.
 *)
-let agrees name f =
+let agrees ?(eq = result_t) ?(covers = fun _ -> ()) name f =
   let compiled = Rune.jit (signature ()) f in
   let eager fs = Nx.stack ~axis:0 (List.map (fun fr -> f (arrays fr)) fs) in
   group name
     [
       prop "jit" frame (fun fr ->
           cover_frame fr;
+          covers [ fr ];
           let a = arrays fr in
-          equal result_t (f a) (compiled a));
+          equal eq (f a) (compiled a));
       prop "vmap" lanes (fun fs ->
+          covers fs;
           let stacked = stack (List.map arrays fs) in
           let mapped = Rune.vmap (signature ()) f stacked in
-          equal result_t (eager fs) mapped);
+          equal eq (eager fs) mapped);
     ]
 
 (* [verb names build] runs [build] over the case's table and reads [names]. *)
 let verb names build a =
   matrix names (run_ok (build (Query.of_table (table a))))
+
+(* Moments
+
+   Over traced values [var] and [std] take a two-pass form where eager runs
+   fold, so the two agree within rounding, which {!Expr.std} states: both are
+   within Chan, Golub and LeVeque's bounds, of the order of [n u] here, so a
+   relative tolerance of [64 n u] at the [7] rows drawn. *)
+
+let within_rounding =
+  let near x y =
+    (Float.is_nan x && Float.is_nan y)
+    || x = y
+    || Float.abs (x -. y) <= 5e-14 *. Float.max (Float.abs x) (Float.abs y)
+  in
+  let equal a b =
+    Nx.shape a = Nx.shape b
+    && Array.for_all2 near (Nx.to_array a) (Nx.to_array b)
+  in
+  Testable.make ~pp:Nx.pp ~equal
+
+let two_values fs =
+  let held f = Array.fold_left (fun k v -> if v then k + 1 else k) 0 f.fvalid in
+  cover "two values or more" (List.exists (fun f -> held f >= 2) fs)
+
+(* [moments build a] is [var] and [std] over a [float32] and an [int32] column,
+   since traced [float64] values raise. *)
+let moments build a =
+  let bits = Nx.cast Nx.bit a.valid in
+  let column x = Column.of_tensor ~validity:bits x in
+  let t =
+    Talon.v
+      [ ("f", column (Nx.cast Nx.float32 a.x)); ("i", column a.is) ]
+  in
+  let f = Col.float "f" and i = Col.int "i" in
+  let q =
+    Query.aggregate ~by:[]
+      Expr.[ "vf" := var f; "sf" := std f; "vi" := var i; "si" := std i ]
+      (build (Query.of_table t))
+  in
+  matrix [ "vf"; "sf"; "vi"; "si" ] (run_ok q)
 
 let a = Col.float "a"
 let b = Col.float "b"
@@ -253,6 +295,10 @@ let static =
               "l" := last a;
               "med" := median a;
             ]));
+    agrees ~eq:within_rounding ~covers:two_values "var and std"
+      (moments Fun.id);
+    agrees ~eq:within_rounding ~covers:two_values "var and std over two batches"
+      (moments (fun q -> Query.append q q));
     agrees "aggregate over two traced batches"
       (verb [ "s"; "c"; "m"; "lo"; "f" ]
          (fun q ->
@@ -600,6 +646,74 @@ let derivatives =
   in
   let twice x held = if held then 2. *. x else 0. in
   [
+    test "grad of var over two batches is the definition's" (fun () ->
+        (* Each value appears twice: [d/dx_i var = 4 (x_i - m) / (n - 1)]. *)
+        let values = [| 1.; 2.; 4.; 8. |] in
+        let m = Array.fold_left ( +. ) 0. values /. 4. in
+        let expected = Array.map (fun v -> 4. *. (v -. m) /. 7.) values in
+        let g x =
+          let t = Query.of_table (Talon.v [ ("a", Column.of_tensor x) ]) in
+          let q =
+            Query.aggregate ~by:[] [ Expr.("v" := var (Col.float "a")) ]
+              (Query.append t t)
+          in
+          Nx.sum (Talon.to_tensor f64 [ "v" ] (Result.get_ok (Query.run q)))
+        in
+        equal
+          (array (float 1e-9))
+          expected
+          (Nx.to_array
+             (Rune.grad' g (Nx.create f64 [| 4 |] values))));
+    test "var of a table a jit captures" (fun () ->
+        (* Its columns hold values, but what the function computes from them
+           is traced, in one batch and in two. *)
+        let x = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 4.; 8. |] in
+        let of_array x =
+          Query.of_table (Talon.v [ ("a", Column.of_tensor x) ])
+        in
+        let var_of t =
+          Query.aggregate ~by:[] [ Expr.("v" := var (Col.float "a")) ] t
+          |> Query.run |> Result.get_ok |> Talon.to_tensor f64 [ "v" ]
+        in
+        let tol = array (float 1e-12) in
+        let captured t = Rune.jit' (fun z -> Nx.add z (var_of t)) in
+        let zero = Nx.zeros f64 [| 1 |] in
+        let t = of_array x in
+        equal ~msg:"one batch" tol (Nx.to_array (var_of t))
+          (Nx.to_array (captured t zero));
+        let two = Query.append t t in
+        equal ~msg:"two batches" tol (Nx.to_array (var_of two))
+          (Nx.to_array (captured two zero)));
+    test "var of traced float64 raises under jit" (fun () ->
+        let g x =
+          let t = Query.of_table (Talon.v [ ("a", Column.of_tensor x) ]) in
+          let q =
+            Query.aggregate ~by:[] [ Expr.("v" := var (Col.float "a")) ] t
+          in
+          Talon.to_tensor f64 [ "v" ] (Result.get_ok (Query.run q))
+        in
+        raises_match
+          (Exn.invalid_arg ~sub:"traced by Rune.jit")
+          (fun () -> Rune.jit' g (Nx.create f64 [| 2 |] [| 3.; 5. |])));
+    test "var refuses a traced batch after compacted batches" (fun () ->
+        let g x =
+          let eager () =
+            Query.of_table
+              (Talon.v
+                 [
+                   ("a", Column.of_tensor (Nx.create f64 [| 2 |] [| 1.; 2. |]));
+                 ])
+          in
+          let traced = Query.of_table (Talon.v [ ("a", Column.of_tensor x) ]) in
+          let q =
+            Query.aggregate ~by:[] [ Expr.("v" := var (Col.float "a")) ]
+              (Query.append traced (Query.append (eager ()) (eager ())))
+          in
+          Nx.sum (Talon.to_tensor f64 [ "v" ] (Result.get_ok (Query.run q)))
+        in
+        raises_match
+          (Exn.invalid_arg ~sub:"traced batch")
+          (fun () -> Rune.grad' g (Nx.create f64 [| 2 |] [| 3.; 5. |])));
     prop "grad through a derive" gradient_case (fun ((x, valid) as c) ->
         equal floats_t (Array.map2 twice x valid) (gradient Fun.id c));
     prop "grad through a sort" gradient_case (fun ((x, valid) as c) ->

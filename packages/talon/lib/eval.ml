@@ -516,7 +516,16 @@ let checked env (c, f) =
    times. *)
 let fill env c =
   let n = env.extent in
-  if Column.length c = n then c else Column.gather (Nx.zeros Nx.int64 [| n |]) c
+  if Column.length c = n then c
+  else
+    match (Column.data c, Column.validity c) with
+    | Fixed (P x), None
+      when Nx.ndim x = 1
+           && (not (Column.traced x))
+           && Nx.Dtype.bits (Nx.dtype x) >= 8 ->
+        let x = Nx.full (Nx.dtype x) [| n |] (Nx.item [ 0 ] x) in
+        Column.make (Column.type_ c) ~length:n (Fixed (P x))
+    | _ -> Column.gather (Nx.zeros Nx.int64 [| n |]) c
 
 (* [each env f] is [f i] on each value [i] before the earliest failure, and
    [None] from it on. An exception that [f] raises fails at its row, which ends

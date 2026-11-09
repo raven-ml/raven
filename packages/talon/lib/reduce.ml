@@ -351,6 +351,118 @@ let helped var down =
     (Nx.logical_and (Nx.logical_not (Nx.isfinite var)) (Nx.less_s down 1.))
     (Nx.logical_and (Nx.less_s var tiny) (Nx.greater_s down 1.))
 
+(* Moments
+
+   A frame's [var] and [std] are one left fold in row order, the shifted
+   updating form of Chan, Golub and LeVeque ("Algorithms for Computing the
+   Sample Variance", 1983, section 4): with [c] the frame's first value and
+   [t] each value less [c], the state is the count, the mean [m] of the [t]s
+   and the sum [s] of their squared deviations. Its bits depend on the frame's
+   values in row order alone, so the state of a prefix, resumed over the rest,
+   gives the bits of one fold.
+
+   The state is scaled by a power of two [down] fixed, as in {!scales}, by the
+   greatest finite magnitude so far: [1] inside the band, lifting values below
+   [2^-432] up to it, bringing values past [2^480] down. A frame holds one
+   value raw, [down = 1]: a state of one value is the value, as a held row is.
+   The second value fixes the scale, and any later one only lowers it, so a
+   rescale multiplies the state by a power of two of at most 1. *)
+
+module A1 = Bigarray.Array1
+
+type floats = (float, Bigarray.float64_elt, Bigarray.c_layout) A1.t
+type ints = (int64, Bigarray.int64_elt, Bigarray.c_layout) A1.t
+
+(* Each frame's first value [c], count [n], mean [m], squares [s] and [down]. *)
+type state = { c : floats; n : ints; m : floats; s : floats; d : floats }
+
+let scale a =
+  let t =
+    Int64.to_int (Int64.shift_right_logical (Int64.bits_of_float a) 52) - 1023
+  in
+  let e =
+    if t >= below then t - (below - 1)
+    else if t < -above then Int.max t (-1022) + above
+    else 0
+  in
+  Float.ldexp 1. (-e)
+
+(* [refit st g a] rescales frame [g]'s state to the scale of the magnitude
+   [a]. *)
+let refit st g a =
+  let d = scale a in
+  let r = d /. A1.unsafe_get st.d g in
+  A1.unsafe_set st.c g (A1.unsafe_get st.c g *. r);
+  A1.unsafe_set st.m g (A1.unsafe_get st.m g *. r);
+  A1.unsafe_set st.s g (A1.unsafe_get st.s g *. r *. r);
+  A1.unsafe_set st.d g d
+
+let band_floor = Float.ldexp 1. (-above)
+let band_top = Float.ldexp 1. below
+let lifted_top = Float.ldexp 1. (1 - above)
+
+(* The magnitude at which a value leaves [down]'s band. *)
+let[@inline] limit down = if down > 1. then lifted_top else band_top
+
+(* [fold_values st ids xs] folds [xs.{i}] into frame [ids.{i}] for the rows
+   with [ids.{i} >= 0], in row order. A non-finite value makes the frame's
+   state NaN, as the variance of infinite or NaN values is. *)
+let fold_values { c = cs; n = ns; m = ms; s = qs; d = ds } (ids : ints)
+    (xs : floats) =
+  let st = { c = cs; n = ns; m = ms; s = qs; d = ds } in
+  for i = 0 to A1.dim ids - 1 do
+    let g = Int64.to_int (A1.unsafe_get ids i) in
+    if g >= 0 then begin
+      let x = A1.unsafe_get xs i in
+      let k = Int64.to_int (A1.unsafe_get ns g) in
+      if k = 0 then begin
+        A1.unsafe_set cs g x;
+        A1.unsafe_set ns g 1L
+      end
+      else begin
+        let a = Float.abs x in
+        (if k = 1 then begin
+           let c = Float.abs (A1.unsafe_get cs g) in
+           let a = if c > a then c else a in
+           if a < band_floor || (a >= band_top && a < Float.infinity) then
+             refit st g a
+         end
+         else
+           let d = A1.unsafe_get ds g in
+           if a < Float.infinity && a *. d >= limit d then refit st g a);
+        let t = (x *. A1.unsafe_get ds g) -. A1.unsafe_get cs g in
+        let m = A1.unsafe_get ms g in
+        let dev = t -. m in
+        let m = m +. (dev /. float_of_int (k + 1)) in
+        A1.unsafe_set ms g m;
+        A1.unsafe_set qs g (A1.unsafe_get qs g +. (dev *. (t -. m)));
+        A1.unsafe_set ns g (Int64.of_int (k + 1))
+      end
+    end
+  done
+
+(* [with_state count f] is [f] on the state of [count] frames with no value,
+   then that state's columns. *)
+let with_state count f =
+  let col kind = A1.create kind Bigarray.c_layout count in
+  let c = col Bigarray.float64 and n = col Bigarray.int64 in
+  let m = col Bigarray.float64 and s = col Bigarray.float64 in
+  let d = col Bigarray.float64 in
+  A1.fill c 0.;
+  A1.fill n 0L;
+  A1.fill m 0.;
+  A1.fill s 0.;
+  A1.fill d 1.;
+  f { c; n; m; s; d };
+  let nx x = Nx.of_bigarray (Bigarray.genarray_of_array1 x) in
+  (nx c, nx n, nx m, nx s, nx d)
+
+(* [finished state] is that state's moments. *)
+let finished (_, n, _, s, d) =
+  let k = Nx.cast Nx.float64 (Nx.sub_s n 1L) in
+  let up = Nx.div (Nx.ones_like d) d in
+  { var = Nx.div (Nx.maximum_s s 0.) k; up = Some up; n }
+
 let words =
   memo (fun p -> p.words) (fun p x -> p.words <- x) (fun p ->
       Key.value Order p.c)
@@ -369,6 +481,18 @@ let greatest =
 let direct c =
   let (Type.Any ty) = Column.type_ c in
   match Type.kind ty with Kind.Int | Kind.Bool -> true | _ -> false
+
+(* [output ty std m] is the variance or, with [std], the standard deviation
+   the moments [m] give, null under two values. *)
+let output ty std { var = x; up; n } =
+  let x =
+    match (std, up) with
+    | true, None -> Nx.sqrt x
+    | true, Some up -> Nx.mul (Nx.sqrt x) up
+    | false, None -> x
+    | false, Some up -> Nx.mul (Nx.mul x up) up
+  in
+  fixed ty ~valid:(Nx.greater_equal_s n 2L) x
 
 let reduce : type a b.
     (a, b) Expr.reduction ->
@@ -406,16 +530,9 @@ let reduce : type a b.
       match v.variance with
       | None -> v.holistic r ty p
       | Some variance ->
-          let { var = x; up; n } = moments variance p in
-          let x =
-            match (r, up) with
-            | Std, None -> Nx.sqrt x
-            | Std, Some up -> Nx.mul (Nx.sqrt x) up
-            | _, None -> x
-            | _, Some up -> Nx.mul (Nx.mul x up) up
-          in
-          ok (fixed ty ~valid:(Nx.greater_equal_s n 2L) x))
-  | Median | Quantile _ | N_unique | Collect -> v.holistic r ty p
+          let std = match r with Std -> true | _ -> false in
+          ok (output ty std (moments variance p)))
+  | Median | Quantile _ | N_unique | Collect | Moments -> v.holistic r ty p
   | Min -> ok (value_at false)
   | Max -> ok (value_at true)
   | Arg_min -> ok (place (extreme false))
@@ -446,7 +563,9 @@ let frame s =
       let hit = match held with Some v -> Nx.logical_and v hit | None -> hit in
       pick s Nx.Min (Some hit)
     in
-    let variance p =
+    (* The two-pass over the frame's values, for traced values: a fold reads
+       its values, and a trace or a derivative has none. *)
+    let two_pass (p : parts) =
       let n = counts p and x = tensor Nx.float64 p.c in
       let values = Nx.cast Nx.float64 n in
       let k = Nx.cast Nx.float64 (Nx.sub_s n 1L) in
@@ -487,6 +606,65 @@ let frame s =
             let var = Nx.where same (Nx.zeros_like var) var in
             { var; up = Some (Nx.where redo up (Nx.ones_like up)); n }
     in
+    let variance (p : parts) =
+      let x = tensor Nx.float64 p.c in
+      if Column.traced x || Column.traced ids then two_pass p
+      else
+        finished
+          (with_state s.count (fun st ->
+               Strings.reading ~by:"Reduce.var" ids Bigarray.int64 (fun ids ->
+                   Strings.reading ~by:"Reduce.var" x Bigarray.float64
+                     (fold_values st ids))))
+    in
+    (* A compaction: a row holds a state of [n >= 2] values, its frame's
+       first row, or the value [c] with [n = 1], or no value. *)
+    let merge ty (p : parts) =
+      let field i =
+        match Column.data p.c with Fields l -> List.nth l i | _ -> assert false
+      in
+      let cc = field 0 and nn = field 1 in
+      let out m cols =
+        Column.make ty ~length:s.count
+          (Fields (cols @ [ output float64 false m; output float64 true m ]))
+      in
+      let ns = tensor Nx.int64 nn in
+      let rows = Nx.where (Nx.equal_s ns 1L) s.ids (none n) in
+      let ( let@ ) f k = f k in
+      let ints x = Strings.reading ~by:"Reduce.merge" x Bigarray.int64 in
+      let floats c =
+        Strings.reading ~by:"Reduce.merge" (tensor Nx.float64 c)
+          Bigarray.float64
+      in
+      let ((c, n', m, q, d) as columns) =
+        with_state s.count (fun st ->
+            let@ ids = ints s.ids in
+            let@ nb = ints ns in
+            let@ cs = floats cc in
+            let@ ms = floats (field 2) in
+            let@ qs = floats (field 3) in
+            let@ ds = floats (field 4) in
+            for i = 0 to A1.dim nb - 1 do
+              if Int64.to_int (A1.unsafe_get nb i) >= 2 then begin
+                let g = Int64.to_int (A1.unsafe_get ids i) in
+                A1.unsafe_set st.c g (A1.unsafe_get cs i);
+                A1.unsafe_set st.n g (A1.unsafe_get nb i);
+                A1.unsafe_set st.m g (A1.unsafe_get ms i);
+                A1.unsafe_set st.s g (A1.unsafe_get qs i);
+                A1.unsafe_set st.d g (A1.unsafe_get ds i)
+              end
+            done;
+            let@ rows = ints rows in
+            fold_values st rows cs)
+      in
+      out (finished columns)
+        [
+          fixed float64 c;
+          fixed int64 n';
+          fixed float64 m;
+          fixed float64 q;
+          fixed float64 d;
+        ]
+    in
     let holistic : type a b.
         (a, b) Expr.reduction ->
         Type.any ->
@@ -517,6 +695,7 @@ let frame s =
           let g = Nx.unique ~size:n (keyed s (Key.identity [ c ])) in
           let real = Nx.cast Nx.int64 (Nx.greater_s g.counts 0L) in
           (fixed int64 (segment_sum s (Nx.take g.first s.ids) real), None)
+      | Moments -> (merge ty p, None)
       | _ -> invalid_arg "Reduce: not a holistic reduction"
     in
     {

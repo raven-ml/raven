@@ -10,6 +10,7 @@ type t = {
   held : (string * Expr.packed) list;
   merge : (string * Expr.packed) list;
   finish : (string * Expr.packed) list;
+  folds : bool;
 }
 
 let row_field = "\000row"
@@ -50,7 +51,12 @@ type field = {
   rank : int;
 }
 
-type st = { order : Expr.packed list; mutable fields : field list }
+type st = {
+  order : Expr.packed list;
+  mutable fields : field list;
+  mutable moments : (Expr.packed * (Record.t, Expr.row) Expr.t) list;
+      (* The state of [var] and [std], one per operand. *)
+}
 
 let field st rank ty held merge =
   let name = "\000" ^ string_of_int (List.length st.fields) in
@@ -106,6 +112,55 @@ let mean st j ty a =
   in
   Expr.typed (fixed float64) (Float (Div, total, n))
 
+(* [var] and [std] keep one state per operand, a record of a fold's fields
+   ({!Reduce.frame}), so that their finish reads its results and the fold has
+   no second definition here. A held row is a state of one value: [n] is [0]
+   or [1], [c] the value, [down] [1] and the rest [0]. *)
+let moments_type =
+  Type.record
+    [
+      ("c", Type.Any float64);
+      ("n", Type.Any int64);
+      ("m", Type.Any float64);
+      ("s", Type.Any float64);
+      ("down", Type.Any float64);
+      ("var", Type.Any float64);
+      ("std", Type.Any float64);
+    ]
+
+let flit x = Expr.typed (fixed float64) (Lit (Kind.float, x))
+
+let moments st j name ty a =
+  let state =
+    let same (Expr.Packed a', _) = Expr.same a a' in
+    match List.find_opt same st.moments with
+    | Some (_, r) -> r
+    | None ->
+        let x = nx_cast float64 ty a in
+        let n = branch int64 (is_null a) (lit 0) (lit 1) in
+        let held =
+          Expr.typed (fixed moments_type)
+            (Record_of
+               Expr.
+                 [
+                   "c" := x;
+                   "n" := n;
+                   "m" := flit 0.;
+                   "s" := flit 0.;
+                   "down" := flit 1.;
+                   "var" := flit 0.;
+                   "std" := flit 0.;
+                 ])
+        in
+        let r =
+          field st j moments_type held (fun r ->
+              Expr.typed (fixed moments_type) (Reduce (Moments, r)))
+        in
+        st.moments <- (Expr.Packed a, r) :: st.moments;
+        r
+  in
+  Expr.typed (fixed float64) (Field (Kind.float, name, state))
+
 let reduction : type a b s r.
     st -> int -> (a, b) Expr.reduction -> (a, s) Expr.t -> (b, r) Expr.t =
  fun st j r a ->
@@ -129,7 +184,9 @@ let reduction : type a b s r.
   | Only -> plain Only
   | Arg_min -> arg st j ty a Arg_min Min
   | Arg_max -> arg st j ty a Arg_max Max
-  | Var | Std | Median | Quantile _ | N_unique | Collect -> raise Blocks
+  | Var -> moments st j "var" ty a
+  | Std -> moments st j "std" ty a
+  | Median | Quantile _ | N_unique | Collect | Moments -> raise Blocks
 
 (* The evaluation order of [st.order] ranks the reductions: [map_node] rebuilds
    operands in no stated order, so {!v} sorts the fields by it. *)
@@ -156,7 +213,7 @@ let v ~by outputs schema =
   let order =
     List.concat_map (fun (_, Expr.Packed e) -> Expr.reductions e) outputs
   in
-  let st = { order; fields = [] } in
+  let st = { order; fields = []; moments = [] } in
   let lowered (n, Expr.Packed e) = (n, Expr.Packed (lower st e)) in
   match List.map lowered outputs with
   | exception Blocks -> None
@@ -185,4 +242,5 @@ let v ~by outputs schema =
           merge =
             List.map (fun f -> (f.name, f.merge)) fields @ [ (row_field, row) ];
           finish = List.map read keys @ finish;
+          folds = st.moments <> [];
         }

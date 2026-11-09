@@ -226,6 +226,9 @@ type (_, _) reduction =
   | Arg_min : ('a, int) reduction
   | Arg_max : ('a, int) reduction
   | Collect : ('a, 'a array) reduction
+  | Moments : (Record.t, Record.t) reduction
+      (** A streamed [var] or [std]'s state: its operand's record holds a
+          state or a value in each row. No expression names it. *)
 
 type ('e, 's) ext = {
   type_ : Type.ext Type.t;  (** The extension type, an [Ext] type. *)

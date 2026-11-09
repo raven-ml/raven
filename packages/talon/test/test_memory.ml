@@ -103,10 +103,11 @@ let law_parse_with rows =
 
 (* A streamed aggregate holds its state, at most one row a group, and held
    rows that a compaction empties once they reach the groups: its host bytes
-   between batches follow groups + a batch. Each row of a held table holds
-   24 bytes, the key, the sum and the row; a batch of the input holds 16
-   more until it is reduced. *)
-let law_peak (groups, batch) =
+   between batches follow groups + a batch, [bytes] a row. A row of a held
+   table holds 24 bytes for a sum: the key, the sum and the row. A [var]
+   holds 72: the key, the row and its state, seven fields of 8 bytes. A batch
+   of the input holds 16 more until it is reduced. *)
+let law_peak (out, bytes) (groups, batch) =
   let batches = 40 in
   let table b =
     let key i = (b * batch + i) mod groups in
@@ -134,11 +135,11 @@ let law_peak (groups, batch) =
   let q =
     Query.(
       of_source source
-      |> aggregate ~by:[ "k" ] Expr.[ "s" := sum (Col.float "x") ])
+      |> aggregate ~by:[ "k" ] [ out ])
   in
   let result = Result.get_ok (Query.run q) in
   equal int groups (Talon.rows result);
-  let limit = 64 * ((2 * groups) + (2 * batch)) in
+  let limit = bytes * ((2 * groups) + (2 * batch)) in
   less ~msg:"peak bytes" int ~than:limit !peak
 
 let () =
@@ -154,5 +155,8 @@ let () =
          prop ~count:6
            "a streamed aggregate's bytes follow its groups and a batch"
            Gen.(pair (int_range 1 3000) (int_range 100 2000))
-           law_peak;
+           (law_peak (Expr.("s" := sum (Col.float "x")), 64));
+         prop ~count:6 "a streamed var's bytes follow its groups and a batch"
+           Gen.(pair (int_range 1 3000) (int_range 100 2000))
+           (law_peak (Expr.("s" := var (Col.float "x")), 192));
        ])
