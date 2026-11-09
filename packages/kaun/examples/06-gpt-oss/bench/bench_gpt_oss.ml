@@ -15,9 +15,15 @@
    [first call 12] times a later process's first 12-token call over a warm
    disk cache ([first_config]).
 
-   Each case's setup builds the 13.8 GB of weights on the host, in the worker
-   thumper forks for it, and places them on the GPU; a GPU's driver must not be
-   initialized before the fork. Weights built in the parent would be shared
+   The weights are the checkpoint's entries, named, shaped and laid out as
+   gpt-oss-20b's safetensors files hold them, read by the example's loader
+   ([Gpt_oss.of_hf]) as a user's run reads the file: the steps compile the
+   kernels a user's do, over the same layouts, and the Q8_0 cases quantise
+   on the GPU, compiled, as the loader does.
+
+   Each step case's setup builds the 13.8 GB of entries on the host, in the
+   worker thumper forks for it, and loads them onto the GPU; a GPU's driver
+   must not be initialized before the fork. Weights built in the parent would be shared
    with the worker copy-on-write, and AMD's driver faults the host pages it
    maps for the GPU as writable, so the worker would copy every page: twice
    the weights in memory, more than a 32 GB host holds. Kernels compile in
@@ -109,74 +115,69 @@ let floats ~scale shape =
     let tiled = Nx.concatenate ~axis:0 (List.init reps (fun _ -> base)) in
     Nx.copy (Nx.slice [ R (0, rows) ] tiled)
 
-(* The weights of [c] on the host, floats from [bf16 ~scale shape] and bytes
-   from [u8 lo span shape]. *)
-let weights_of c ~bf16 ~u8 =
-  let linear ?(bias = true) i o =
-    {
-      Linear.w = bf16 ~scale:0.02 [| i; o |];
-      b = (if bias then Some (bf16 ~scale:0.02 [| o |]) else None);
-    }
+(* gpt-oss's checkpoint entries under [c] on the host, floats from
+   [bf16 ~scale shape] and bytes from [u8 lo span shape], with the names,
+   dtypes and shapes of gpt-oss-20b's safetensors files: each projection
+   [outputs; inputs], each expert weight's MXFP4 blocks
+   [experts; outputs; groups; 16] and its scales. *)
+let entries_of c ~bf16 ~u8 =
+  let float ?(scale = 0.02) name shape = (name, Nx.P (bf16 ~scale shape)) in
+  let bytes lo span name shape = (name, Nx.P (u8 lo span shape)) in
+  let linear ?(bias = true) name ~inputs ~outputs =
+    float (name ^ ".weight") [| outputs; inputs |]
+    :: (if bias then [ float (name ^ ".bias") [| outputs |] ] else [])
   in
-  let packed ~inputs ~outputs =
+  let experts name ~inputs ~outputs =
     let groups = inputs / 32 in
-    let scales = u8 118 6 [| c.Gpt_oss.experts; outputs; groups |] in
-    let blocks = u8 0 256 [| c.Gpt_oss.experts; outputs; inputs / 2 |] in
-    Moe.Quant (Nx_quant.mxfp4 ~scales blocks)
+    [
+      bytes 0 256 (name ^ "_blocks")
+        [| c.Gpt_oss.experts; outputs; groups; 16 |];
+      bytes 118 6 (name ^ "_scales") [| c.experts; outputs; groups |];
+      float (name ^ "_bias") [| c.experts; outputs |];
+    ]
   in
-  let gamma () = { Rms_norm.gamma = bf16 ~scale:1.0 [| c.Gpt_oss.dim |] } in
+  let norm name = float ~scale:1.0 name [| c.Gpt_oss.dim |] in
   let q_dim = c.n_heads * c.head_dim and kv = c.n_kv_heads * c.head_dim in
-  let block _ =
-    {
-      Gpt_oss.attn_norm = gamma ();
-      attn =
-        {
-          Gpt_oss.q = Gpt_oss.Float (linear c.dim q_dim);
-          k = Gpt_oss.Float (linear c.dim kv);
-          v = Gpt_oss.Float (linear c.dim kv);
-          out = Gpt_oss.Float (linear q_dim c.dim);
-        };
-      sinks = bf16 ~scale:1.0 [| c.n_heads |];
-      ffn_norm = gamma ();
-      router = linear c.dim c.experts;
-      moe =
-        {
-          Moe.gate_up = packed ~inputs:c.dim ~outputs:(2 * c.hidden_dim);
-          gate_up_bias = bf16 ~scale:0.02 [| c.experts; 2 * c.hidden_dim |];
-          down = packed ~inputs:c.hidden_dim ~outputs:c.dim;
-          down_bias = bf16 ~scale:0.02 [| c.experts; c.dim |];
-        };
-    }
+  let block i _ =
+    let at = Printf.sprintf "model.layers.%d.%s" i in
+    List.concat
+      [
+        [ norm (at "input_layernorm.weight") ];
+        linear (at "self_attn.q_proj") ~inputs:c.dim ~outputs:q_dim;
+        linear (at "self_attn.k_proj") ~inputs:c.dim ~outputs:kv;
+        linear (at "self_attn.v_proj") ~inputs:c.dim ~outputs:kv;
+        linear (at "self_attn.o_proj") ~inputs:q_dim ~outputs:c.dim;
+        [
+          float ~scale:1.0 (at "self_attn.sinks") [| c.n_heads |];
+          norm (at "post_attention_layernorm.weight");
+        ];
+        linear (at "mlp.router") ~inputs:c.dim ~outputs:c.experts;
+        experts
+          (at "mlp.experts.gate_up_proj")
+          ~inputs:c.dim ~outputs:(2 * c.hidden_dim);
+        experts (at "mlp.experts.down_proj") ~inputs:c.hidden_dim
+          ~outputs:c.dim;
+      ]
   in
-  {
-    Gpt_oss.tok =
-      { Embedding.table = bf16 ~scale:0.02 [| c.vocab_size; c.dim |] };
-    blocks = List.map block c.layers;
-    norm = gamma ();
-    head = Some (Gpt_oss.Float (linear ~bias:false c.dim c.vocab_size));
-  }
+  Nx_io.Archive.of_list
+    (List.concat
+       [
+         [ float "model.embed_tokens.weight" [| c.vocab_size; c.dim |] ];
+         List.concat (List.mapi block c.layers);
+         [ norm "model.norm.weight" ];
+         linear ~bias:false "lm_head" ~inputs:c.dim ~outputs:c.vocab_size;
+       ])
 
-let weights () =
+let entries c =
   let seed = ref 12345 in
-  weights_of config ~bf16:floats ~u8:(fun lo span shape ->
+  entries_of c ~bf16:floats ~u8:(fun lo span shape ->
       random_bytes seed shape lo span)
 
-(* [weights] with the attention projections and the head packed as Q8_0
-   ([Gpt_oss.Q8_0]), quantised on the host. *)
-let q8_0 (w : _ Gpt_oss.params) =
-  let pack = function
-    | Gpt_oss.Float { Linear.w; b } ->
-        Gpt_oss.Quant { w = Nx_quant.quantize_q8_0 (Nx.matrix_transpose w); b }
-    | p -> p
-  in
-  let block (b : _ Gpt_oss.block) =
-    let a = b.attn in
-    {
-      b with
-      attn = { q = pack a.q; k = pack a.k; v = pack a.v; out = pack a.out };
-    }
-  in
-  { w with blocks = List.map block w.blocks; head = Option.map pack w.head }
+(* The model of [entries] on [placement], loaded as {!Gpt_oss.of_hf} loads a
+   checkpoint, its projections and head packed as [pack] says. *)
+let load ?pack placement c entries =
+  Gpt_oss.of_hf ?pack ~placement:(fun _ ~axis:_ -> placement) c Nx.bfloat16
+    entries
 
 (* The paths tried, in order: an NVIDIA GPU through CUDA, then through its
    kernel driver (NV), then an AMD GPU through its kernel driver. Hiding the
@@ -202,20 +203,19 @@ let gpu () = match first () with Ok d -> d | Error e -> failwith e
 
 (* A step on the GPU warmed past its compilations: [`Decode] feeds back the
    token it predicts at a fixed position in the middle of the cache,
-   [`Decode_q8_0] likewise with the weights {!q8_0} packs, [`Prefill n] runs
-   [n] tokens at positions 0 onwards, [`Prefill_q8_0 n] over {!q8_0}'s
-   weights, [packed]'s if given. Each call takes the caches of the one before
-   and reads its token back on the host. *)
-let step ?packed weights kind =
-  let weights =
-    match (kind, packed) with
-    | (`Decode_q8_0 | `Prefill_q8_0 _), Some p -> Lazy.force p
-    | (`Decode_q8_0 | `Prefill_q8_0 _), None -> q8_0 weights
-    | (`Decode | `Prefill _), _ -> weights
+   [`Decode_q8_0] likewise with the attention projections and the head
+   packed as Q8_0 ([Gpt_oss.Q8_0]), [`Prefill n] runs [n] tokens at
+   positions 0 onwards, [`Prefill_q8_0 n] packed as Q8_0. Each call takes
+   the caches of the one before and reads its token back on the host. *)
+let step entries kind =
+  let pack =
+    match kind with
+    | `Decode_q8_0 | `Prefill_q8_0 _ -> Gpt_oss.Q8_0
+    | `Decode | `Prefill _ -> Unpacked
   in
   let module G = (val Nx.devices [ gpu () ]) in
   let placement = G.on in
-  let p = Nx.Ptree.place (module Gpt_oss.Params) placement weights in
+  let p = load ~pack placement config entries in
   let step =
     Layer_loop.greedy ~jit:true ~placement
       (Gpt_oss.place_config placement config)
@@ -246,20 +246,25 @@ let step ?packed weights kind =
     | `Decode | `Decode_q8_0 -> ids := Nx.create Nx.int64 [| 1; 1 |] [| token |]
     | `Prefill _ | `Prefill_q8_0 _ -> ()
   in
-  (* The host weights are garbage once placed. Collected later, by thumper
+  (* The host entries are garbage once loaded. Collected later, by thumper
      between its warmup and its samples, freeing them idled the GPU for
      200 ms, which dropped it back to its idle clock. *)
   Gc.full_major ();
   call ();
   call
 
-(* One layer's experts, [Moe.apply] of the first block's, compiled at a
-   prefill of [prompt] tokens: random bfloat16 activations, routed by the
-   router of random logits from a fixed key, as the tensor cores multiply
-   the MXFP4 weights. *)
-let experts prompt (weights : _ Gpt_oss.params) =
+(* gpt-oss of one layer and a small vocabulary: a block's experts have the
+   full model's shapes, and loading the 13.8 GB of the rest to take them
+   would leave GPU memory to be freed during a trial. *)
+let one_layer = { config with vocab_size = 1024; layers = [ Gpt_oss.Sliding ] }
+
+(* One layer's experts, [Moe.apply] of {!one_layer}'s, compiled at a prefill
+   of [prompt] tokens: random bfloat16 activations, routed by the router of
+   random logits from a fixed key, as the tensor cores multiply the MXFP4
+   weights. *)
+let experts prompt =
   let module G = (val Nx.devices [ gpu () ]) in
-  let moe = Nx.Ptree.place (module Moe) G.on (List.hd weights.blocks).moe in
+  let moe = (List.hd (load G.on one_layer (entries one_layer)).blocks).moe in
   let logits =
     Nx.Rng.normal ~key:(Nx.Rng.key 7) Nx.float32 [| prompt; config.experts |]
   in
@@ -276,6 +281,9 @@ let experts prompt (weights : _ Gpt_oss.params) =
       (fun ids w x -> Moe.apply ~limit:config.swiglu_limit moe (ids, w) x)
   in
   let call () = ignore (Nx.item [ 0; 0 ] (f ids w x)) in
+  (* The host entries and the rest of the model are garbage, collected here
+     as {!step} collects its own. *)
+  Gc.full_major ();
   call ();
   call
 
@@ -294,14 +302,14 @@ let first_config =
 
 let prepare_first () =
   let zeros shape = Nx.zeros Nx.bfloat16 shape in
-  let w =
-    weights_of first_config
+  let entries =
+    entries_of first_config
       ~bf16:(fun ~scale:_ s -> zeros s)
       ~u8:(fun _ _ s -> Nx.zeros Nx.uint8 s)
   in
   let module G = (val Nx.devices [ gpu () ]) in
   let placement = G.on in
-  let p = Nx.Ptree.place (module Gpt_oss.Params) placement w in
+  let p = load placement first_config entries in
   let step =
     Layer_loop.greedy ~jit:true ~placement
       (Gpt_oss.place_config placement first_config)
@@ -391,10 +399,11 @@ let kinds =
     `Experts blocked_prompt;
   ]
 
-let setup ?packed weights = function
+(* [full] is the full model's entries, forced by the steps alone. *)
+let setup full = function
   | (`Decode | `Decode_q8_0 | `Prefill _ | `Prefill_q8_0 _) as kind ->
-      step ?packed weights kind
-  | `Experts n -> experts n weights
+      step (Lazy.force full) kind
+  | `Experts n -> experts n
 
 let case kind =
   let name =
@@ -406,7 +415,7 @@ let case kind =
     | `Experts n -> Printf.sprintf "experts at prefill %d" n
   in
   Thumper.bench_with_setup
-    ~setup:(fun () -> setup (weights ()) kind)
+    ~setup:(fun () -> setup (lazy (entries config)) kind)
     name
     (fun call -> call ())
 
@@ -434,13 +443,10 @@ let () =
       ignore (In_channel.input_line stdin)
   | [ _; "--warm" ] ->
       if opens () then
-        let weights = weights () in
-        (* One packing for both Q8_0 cases: each takes several GB on the
-           host. *)
-        let packed = lazy (q8_0 weights) in
+        let full = lazy (entries config) in
         List.iter
           (fun kind ->
-            (setup ~packed weights kind) ();
+            (setup full kind) ();
             Gc.full_major ())
           kinds
   | _ ->
@@ -448,9 +454,10 @@ let () =
         prerr_endline "gpt_oss: no CUDA, NV or AMD GPU, nothing to measure";
         exit 0
       end;
-      (* A trial's deadline covers its setup, which builds the 13.8 GB of
-         weights and places them on the GPU, its warmup and its samples: the
-         five trials take 69 s together on nonnormal's R9700. *)
+      (* A trial's deadline covers its setup, which for a step builds the
+         13.8 GB of entries and loads them onto the GPU, its warmup and its
+         samples: the seven trials take 100 s together on fudge's RTX 5000
+         Ada. *)
       let code =
         Thumper.run "gpt_oss"
           ~config:

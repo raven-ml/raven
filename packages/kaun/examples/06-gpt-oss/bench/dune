@@ -12,7 +12,6 @@
   rig.nv.nvidia
   rig.amd.amdgpu
   nx.io
-  nx.quant
   rune
   kaun
   kaun.hf
