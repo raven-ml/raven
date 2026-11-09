@@ -306,19 +306,19 @@ let in_flight_held = 4
 let vector_bytes = 16
 let line_bytes = 128
 
-(* The reuse at most that streams: up to it a streamed product runs faster
-   than a core's tiles, which leave each warp a serial reduce, and than the
-   general rules. A bfloat16 matrix of 16384 by 4096 multiplies 16 rows in
-   288 us streamed and 805 us on a core, 32 rows in 550 and 840 us; 64 rows
-   take 1.55 ms on a core. Past it a float32 operand streamed loses to the
-   general rules' tiles, read once a pass where they share each load: at 64
-   rows 2107 to 2171 us against 1909 to 1987, a 1024-cube product 1054
-   against 398 us. Past [upcast_max] a thread's upcast no longer holds every
-   row and the operand is read in two passes, so a gate of [upcast_max] would
-   take the rows of reuse 17 to 32 off the stream: an MXFP4 product of 32 rows
-   then runs 1.46 ms against 1.62, but gpt-oss's 512-token prefill, whose router
-   would take a core, runs 124 to 127 ms against 122.8 to 123.6, so the gate
-   stays at 32. *)
+(* The reuse at most that streams. Within one pass over the operand a streamed
+   product runs faster than a core's tiles, which leave each warp a serial
+   reduce, and than the general rules. A bfloat16 matrix of 16384 by 4096 multiplies 16 rows in
+   281 us streamed and 834 us on a core. Past [upcast_max] a thread no longer
+   holds every row, so the operand is read in [ceil (R / upcast_max)] passes:
+   32 rows take 541 us streamed and 429 on a staged core. A gate of
+   [upcast_max] would run those on the core, and an MXFP4 product of 32 rows
+   in 1.46 ms against 1.62, but it costs gpt-oss's 512-token prefill, whose
+   router would take a core, 124 to 127 ms against 122.8 to 123.6: the gate
+   stays at 32. Past it a float32 operand streamed loses to the general rules'
+   tiles, read once a pass where they share each load: at 64 rows 2107 to 2171
+   us against 1909 to 1987, a 1024-cube product 1054 against 398 us; bfloat16's
+   64 rows take 433 us on a core. *)
 let stream_first = 32
 
 (* The largest power of two at most [cap] that divides [r]'s size. *)

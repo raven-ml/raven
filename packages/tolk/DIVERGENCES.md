@@ -2469,8 +2469,8 @@ Withdrawn: multi-device is out of scope, see README.
     408-410 to 27-28 us, `q6_k` 3.40-3.41 ms to 571 us, `q4_k` 255-257 to
     53-55 us, `mxfp4-blocks` (GGUF's 17-byte blocks) 86 to 24-26 us; the
     gpt-oss `--q8_0` decode step 22.8 to 8.0-8.1 ms;
-  - reuse in registers, rows held: `stream/dense-bf16-12` 837-838 to
-    275-276 us, `stream/q8_0-12` 1030 to 431-438 us, `stream/mxfp4-12` 5.35-5.39
+  - reuse in registers, rows held: `stream/dense-bf16-12` 889-914 to
+    267-271 us, `stream/q8_0-12` 1030 to 431-438 us, `stream/mxfp4-12` 5.35-5.39
     to 3.09-3.10 ms (its decode stored as float32, D163), the routed blocks
     of 16 rows of a 512-token prompt `stream/routed-512-bf16` 33.2 to 10.2 ms
     (from a tensor core) and `stream/routed-512-f32` 57.8-58.0 to 20.6 ms,
@@ -2478,9 +2478,13 @@ Withdrawn: multi-device is out of scope, see README.
     held per thread against 4 SIMD groups: at `R = 16` 10.2 against 22.6 ms
     and 20.6 against 28.6 ms; at `R = 2` (dense bfloat16, 16384 by 4096)
     264.6-265.0 against 265.1-265.2 us;
-  - the order against the cores: `stream/dense-bf16-16` 805-807 us on a core
-    to 288-289 us streamed, `stream/dense-bf16-32` 839-844 to 548-550 us; at
-    `R = 64` the core keeps it (`stream/dense-bf16-64`, 1.55 ms both). The
+  - the order against the cores, on the rows' kernels as rune compiles them
+    today: `stream/dense-bf16-16` 834-844 us on a core to 281-283 us
+    streamed; `stream/dense-bf16-32`, where a thread's 16 rows leave two
+    passes over the operand, 429-431 us on a staged core and 541-545 us
+    streamed, the one row the order loses, kept for gpt-oss's prefill
+    (`Heuristic.stream_first`); at `R = 64` the core keeps it
+    (`stream/dense-bf16-64`, 433-436 us with and without `MV`). The
     decode step's attention values, `gpt_oss/gpt_oss_decode_values` (`R = 8`,
     a sum of 1024 slots), 25.2-26.6 us on a core to 14.6-15.3 us streamed;
     its keys, `stream/decode-keys` (`R = 8`, a sum of 64), 8.4 us on a core
@@ -5388,8 +5392,9 @@ the walk of `Rangeify.fix_store_hazard`.
   and on nonnormal's R9700, which fudge lacks.
   Since staging (D262) the staged tile's rule of `core_threads / stages`
   replaces these floors for a staged core, so `stream/key-projection` and
-  `stream/dense-bf16-64` no longer reach them (29.8 against 29.5 us and 1347 us
-  both, four interleaved rounds). gpt-oss-20b's routed experts take the
+  `stream/dense-bf16-64` no longer reach them (29.8 against 29.5 us, four
+  interleaved rounds, and 433-436 us both on the row's kernel as rune compiles
+  it today). gpt-oss-20b's routed experts take the
   unstaged path and reach the floors, which refuse nothing there:
   `GptOss/experts-at-prefill-512` 2.77 against 2.80 ms and
   `GptOss/prefill-512` 122.0 against 121.2 ms with and without them. The row
