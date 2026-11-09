@@ -872,8 +872,8 @@ scope, see README.
   and `› a sum of products unrolled beside upcast lanes adds each into its
   running sum rounded once` (four running sums of a loop unrolled by 4, three
   multiply-adds each, and the same `2^-24`) and `› a product and a sum outside a reduction are not
-  fused`; the Codegen and C-style goldens, from tinygrad with D25 applied by
-  its generator.
+  fused`; the Codegen and C-style goldens, with tolk's output naming D25 in `.tolk`
+  files beside them.
   `Tolk.Ops › exec_alu › a float multiply-add folds rounded once` (its
   float32 case past a double's rounding ties to the wrong float32 when the sum
   is not rounded to odd); `Tolk.Symbolic › invalid values › a multiply-add
@@ -5403,7 +5403,7 @@ the walk of `Rangeify.fix_store_hazard`.
 - **Pinned by:** `Tolk.Heuristic`'s cases, on CUDA: `matmul_half_1024`,
   `matmul_half_512`, `matmul_half_256`, `attention_values` and
   `matmul_half_variable` (a variable counts the workgroups), with the
-  goldens from tinygrad with D175 applied by its generator; its `the tensor
+  layouts in the suite's `.tolk` files; its `the tensor
   core's floor › the splits after a tensor core are those that leave its
   floor of workgroups`, over every recorded core kernel, CDNA's included,
   with the local split's floor of 256 workgroups; the `routed_run` cases of
@@ -6831,7 +6831,7 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
 - **Pinned by:** `Tolk.Heuristic`'s `a contraction in registers` cases
   (`matmul`, `matmul_256` and `scores` blocked on CUDA, `matmul_256` on AMD;
   `matmul_1000`, whose halved axes hold one thread, not blocked), with the
-  goldens from tinygrad with D212 applied by its generator; rune's
+  layouts in the suite's `.tolk` files; rune's
   `test_jit_gpu` `products › a float32 matmul is within its bound of the exact
   product` at extents of 64 and 128 summed over 13 and 52, on the machine's
   first GPU; the tolk bench's `contract/f32-2048` and `contract/qk-f32-2048`
@@ -7461,8 +7461,7 @@ staged rows is the stated cost.
   unmeasured.
 - **Pinned by:** the Heuristic suite's `streaming › no loop is left over
   the other operand's values of one load`, over the recorded streamed
-  kernels, with the goldens from tinygrad with D300 applied by its
-  generator (`gpt_oss_gate_up`, `gpt_oss_down`, `mxfp4_m12`,
+  kernels, with the layouts in the suite's `.tolk` files (`gpt_oss_gate_up`, `gpt_oss_down`, `mxfp4_m12`,
   `routed_blocks`, `vecmat_decoded`); kaun's
   `Quant/cuda/mxfp4-product-of-16384-64-float32-tokens` and
   `Quant/cuda/routed-product-512-tokens`, whose fudge baselines (the first
