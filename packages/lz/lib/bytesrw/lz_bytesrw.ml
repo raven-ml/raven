@@ -275,6 +275,16 @@ module Gzip = struct
     writes fmt (encoding (Lz.Gzip.encoder ?level ())) ?pos ?slice_length ~eod w
 end
 
+(* The longest magic number that [decompress_detected] reads, Zstandard's. *)
+let magic_length = 4
+
+let decompress_detected () ?pos ?slice_length r =
+  let m = Bytes.Reader.sniff magic_length r in
+  if Lz.Gzip.has_magic m then Gzip.decompress_reads () ?pos ?slice_length r
+  else if Lz.Zstd.has_magic m then
+    Zstd.decompress_reads () ?pos ?slice_length r
+  else r
+
 module Zlib = struct
   let fmt = format_error "zlib"
 

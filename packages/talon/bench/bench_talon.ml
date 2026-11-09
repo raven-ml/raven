@@ -522,6 +522,24 @@ let read_csv () =
   Error.get_ok
     (Talon_csv.decode csv_format (Bytesrw.Bytes.Reader.of_string csv_text))
 
+(* The same text in a gzip or Zstandard file, read through [Talon_csv.file],
+   which decompresses it as it reads. *)
+let compressed_csv filter =
+  lazy
+    (let path = Filename.temp_file "talon_bench" ".csv" in
+     at_exit (fun () -> Sys.remove path);
+     Out_channel.with_open_bin path (fun oc ->
+         output_string oc
+           (Bytesrw.Bytes.Reader.to_string
+              (filter (Bytesrw.Bytes.Reader.of_string csv_text))));
+     Error.get_ok (Talon_csv.file ~format:csv_format path))
+
+let gzip_csv = compressed_csv (Lz_bytesrw.Gzip.compress_reads ())
+let zstd_csv = compressed_csv (Lz_bytesrw.Zstd.compress_reads ())
+
+let read_compressed source () =
+  Error.get_ok (Query.run (Query.of_source (Lazy.force source)))
+
 (* As-of: 2^20 left rows [x] and 2^16 right rows [y] in 100 groups, in no
    order, each left row with the right row of its group at or before it. The
    same picks as a range join, each right row holding up to its group's next
@@ -702,7 +720,12 @@ let () =
         ];
       Thumper.group "Talon_text"
         [ Thumper.bench "parse-float64-17-digits" parse_floats ];
-      Thumper.group "Talon_csv" [ Thumper.bench "read-mixed" read_csv ];
+      Thumper.group "Talon_csv"
+        [
+          Thumper.bench "read-mixed" read_csv;
+          Thumper.bench "read-gzip-file" (read_compressed gzip_csv);
+          Thumper.bench "read-zstd-file" (read_compressed zstd_csv);
+        ];
       Thumper.group "Talon_arrow"
         [
           Thumper.bench "read-nullable" read_arrow;

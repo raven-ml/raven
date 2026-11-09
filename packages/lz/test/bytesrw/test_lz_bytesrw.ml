@@ -535,6 +535,44 @@ let levels fmt =
       raises_match Exn.invalid_arg (fun () ->
           fmt.compress_writes ~level () ~eod:true (Bytes.Writer.ignore ())))
 
+(* Values from RFC 1952, 2.3.1, and RFC 8878, 3.1.1 and 3.1.2. *)
+let magic =
+  let case name has s want =
+    test name (fun () -> equal bool want (has s))
+  in
+  let gz = Lz.Gzip.has_magic and zs = Lz.Zstd.has_magic in
+  group "magic numbers"
+    [
+      case "gzip's two bytes" gz "\x1F\x8B" true;
+      case "gzip's, with more" gz "\x1F\x8B\x08\x00" true;
+      case "one byte of gzip's" gz "\x1F" false;
+      case "gzip's second byte off by one" gz "\x1F\x8A" false;
+      case "no bytes" gz "" false;
+      case "a frame" zs "\x28\xB5\x2F\xFD" true;
+      case "three bytes of a frame's" zs "\x28\xB5\x2F" false;
+      case "0x184D2A50" zs "\x50\x2A\x4D\x18" true;
+      case "0x184D2A5F" zs "\x5F\x2A\x4D\x18" true;
+      case "0x184D2A4F" zs "\x4F\x2A\x4D\x18" false;
+      case "0x184D2A60" zs "\x60\x2A\x4D\x18" false;
+      case "0x184C2A50" zs "\x50\x2A\x4C\x18" false;
+    ]
+
+let detected =
+  let reads s =
+    Bytes.Reader.to_string
+      (Lz_bytesrw.decompress_detected () (Bytes.Reader.of_string s))
+  in
+  group "decompress_detected"
+    [
+      test "decodes a gzip member" (fun () ->
+          equal string "text" (reads (Lz.Gzip.encode_string "text")));
+      test "decodes a Zstandard frame" (fun () ->
+          equal string "text" (reads (Lz.Zstd.encode_string "text")));
+      cases ~id:String.escaped "leaves other bytes as they are"
+        [ ""; "\x1F"; "(\xB5/"; "a,b\n1,2\n"; "\x60\x2A\x4D\x18!" ]
+        (fun s -> equal string s (reads s));
+    ]
+
 let each name law = group name (List.map law formats)
 
 let () =
@@ -549,6 +587,8 @@ let () =
          each "a raise from the writer, raised again" raised_again;
          each "a writer with ~eod:false leaves its writer open" open_writer;
          window;
+         magic;
+         detected;
          tag "compress"
          @@ group "compression"
               [

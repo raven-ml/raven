@@ -8,7 +8,10 @@
     A CSV file is text: records on lines, each record's fields separated by a
     separator. Talon reads it as
     {{:https://www.rfc-editor.org/rfc/rfc4180}RFC 4180} writes it, strictly,
-    from a [Bytesrw.Bytes.Reader.t].
+    from a [Bytesrw.Bytes.Reader.t]. A reader's bytes are the text itself: to
+    read compressed input, a caller applies a filter of [Lz_bytesrw] to its
+    reader, whose failures read as any failure of the reader does. {!val-file}
+    decompresses a compressed file.
 
     A {!type-format} says how talon reads a file: its dialect (the separator,
     the quote, whether a header names the columns, and the text that means null)
@@ -81,7 +84,31 @@
 
     A number with a leading zero, such as [007] or [01.5], is text: it writes an
     identifier, whose zeros a number would lose. Sniffing never infers a
-    categorical. *)
+    categorical.
+
+    {1:compressed Compressed files}
+
+    A file that {!val-file} reads is compressed when its first bytes are a gzip
+    member's ({{:https://www.rfc-editor.org/rfc/rfc1952}RFC 1952}) or a
+    Zstandard frame's ({{:https://www.rfc-editor.org/rfc/rfc8878}RFC 8878}),
+    skippable frames included. Its name decides nothing, and a file too short
+    to hold those bytes is text. Its text is the concatenation of every member
+    or frame up to the end of the file, and sniffing, the {{!syntax}syntax},
+    batches and the lines and columns of errors see that text, decompressed as
+    it is read: a sniff, or a read that stops at its limit, does not decompress
+    the rest of the file.
+
+    A read returns [Error e] once it reaches what the decoder refuses, and [e]
+    names the problem and its byte in the file: a member or frame cut short, a
+    structure or a checksum that fails, bytes after the last member or frame, a
+    Zstandard frame that names a dictionary or whose window is above lz's
+    default. Decoding detects nothing else. A file cut exactly at the end of a
+    member or frame reads as a shorter file, and damage inside a Zstandard
+    frame without a checksum can read as other text.
+
+    The text's size is not bounded by the file's. A program that reads files it
+    does not trust uses {!source}, with a reader that a filter of [Lz_bytesrw]
+    decompresses under a window it sets, and counts the bytes delivered. *)
 
 (** {1:formats Formats} *)
 
@@ -193,6 +220,8 @@ val file :
     [csv "path"], whose errors name [path]: as [format] says, or as {!sniff}
     [?nulls] infers from the file when [format] is absent. Each read opens the
     file again.
+
+    A compressed file reads as its text ({{!compressed}compressed files}).
 
     [Error e] if the file cannot be opened, or as {!sniff}.
 

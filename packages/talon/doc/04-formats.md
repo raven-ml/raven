@@ -46,6 +46,12 @@ with `~nulls`. A quoted field is never null: `""` is the empty string.
 Fields follow RFC 4180, strictly: a quoted field may hold separators, line
 breaks and doubled quotes.
 
+`Talon_csv.file` reads gzip and Zstandard files the same way, from their first
+bytes and whatever the file's name. Sniffing and batches see the decompressed
+text, read as a stream. The Compressed files section of
+[`talon_csv.mli`](../lib/csv/talon_csv.mli) states what fails, what decoding
+cannot detect, and how to read files you do not trust.
+
 To see or change a format, sniff it from a reader:
 
 ```ocaml

@@ -173,3 +173,13 @@ module Deflate : sig
       the bytes written on it to [w], at [level] as for
       {!Lz.Deflate.encoder}. *)
 end
+
+(** {1:detecting Detecting a format} *)
+
+val decompress_detected : unit -> Bytesrw.Bytes.Reader.filter
+(** [decompress_detected () r] is {!Gzip.decompress_reads} or
+    {!Zstd.decompress_reads} of [r] when [r]'s first bytes are that format's,
+    as {!Lz.Gzip.has_magic} and {!Lz.Zstd.has_magic} say, and [r] itself
+    otherwise, with [r]'s position and slice length. It reads [r]'s first
+    bytes when applied and pushes them back, so a read of [r] that raises
+    raises from the application. *)

@@ -232,8 +232,6 @@ let padded n = (n + block - 1) / block * block
 
 (* Walking a file *)
 
-let gzip_magic = "\x1f\x8b"
-
 (* The header starting at byte [pos], and the offset after its last block.
    Blocks are copied while they lie inside the file. *)
 let read_header src len ~name ~index pos =
@@ -260,7 +258,7 @@ let read_header src len ~name ~index pos =
 
 let walk ~name src =
   let len = B.length src in
-  if len >= 2 && read_string src ~offset:0 2 = gzip_magic then
+  if len >= 2 && Lz.Gzip.has_magic (read_string src ~offset:0 2) then
     fail
       "%s: a gzip stream; decompress it with Lz.Gzip and read the result"
       name;
