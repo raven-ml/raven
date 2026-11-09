@@ -1018,9 +1018,10 @@ let pm_fuse_products =
 
    A product of halves or 8-bit floats has at most 22 bits and lies within a
    float32's normal range. A bfloat16 has a float32's range, so three guards
-   keep its product exact or its rounding right. From [2^127] the product and
-   the addend are halved, exactly, and the result doubled back: a sum that
-   overflowed only through the product's float32 is finite. A product past a
+   keep its product exact or its rounding right. From [2^127], of finite
+   operands, the product and the addend are halved, exactly, and the result
+   doubled back: a sum that overflowed only through the product's float32 is
+   finite. A product of an infinite operand is infinite or NaN unscaled. A product past a
    float32's range even halved is held at its greatest value, whose sum with
    any addend overflows as the exact one does. A product that underflows
    beside a zero addend is the result alone, so that it keeps its sign, which
@@ -1037,11 +1038,16 @@ let pm_fuse_products =
    [r] does. There [e] is the addend or zero, and every value TwoSum computes
    is zero or normal. Halving an addend below [2^-125] would make it
    subnormal, so it is kept whole: beside a product of at least [2^127] it
-   moves only the direction of the rounding, which its sign keeps. Halves and
-   8-bit floats compute in multiples of [2^-48], never subnormal. Checked with
-   every float32 operation flushing, on the lanes this holds: every pair of
-   bfloat16s beside seven addends, five of the least normal binade, and 4e9
-   random and cancelling triples. *)
+   moves only the direction of the rounding, which its sign keeps. Nor is an
+   operand halved beside an infinite one: a first operand of the least normal
+   binade, whose half is subnormal, would flush to a zero, and the product
+   to NaN. Of finite operands, a product of at least [2^127] needs a first
+   operand of at least [2^-1]. Halves and 8-bit floats compute in multiples
+   of [2^-48], never subnormal. Checked with every float32 operation
+   flushing, on the lanes this holds: every pair of bfloat16s beside seven
+   addends, five of the least normal binade, and 4e9 random and cancelling
+   triples. A lane with an infinite operand, whose product is not normal, is
+   checked on Metal, which flushes. *)
 let narrow_mulacc x =
   let dt = dtype x in
   let a, b, c =
@@ -1053,18 +1059,20 @@ let narrow_mulacc x =
   let k v = const_like a (`Float v) in
   let zero = k 0. in
   let bfloat16 = Dtype.equal dt Dtype.Bfloat16 in
+  let greatest = 0x1.fffffep127 in
+  let infinite v = (k greatest < v) lor (v < k (-.greatest)) in
   let big =
     let p = a * b in
     lnot ((p < k 0x1p127) land (k (-0x1p127) < p))
   in
-  let half = where big (k 0.5) (k 1.) in
+  let infinite_operand = infinite a lor infinite b in
+  let scaled = big land lnot infinite_operand in
+  let half = where scaled (k 0.5) (k 1.) in
   let p = if bfloat16 then a * half * b else a * b in
   let p =
     if not bfloat16 then p
     else
-      let greatest = 0x1.fffffep127 in
-      let infinite v = (k greatest < v) lor (v < k (-.greatest)) in
-      let held = infinite p land lnot (infinite a lor infinite b) in
+      let held = infinite p land lnot infinite_operand in
       where held (where (p < zero) (k (-.greatest)) (k greatest)) p
   in
   let c =
@@ -1087,7 +1095,7 @@ let narrow_mulacc x =
   let bits = bitcast r Uint32 in
   let bits = where toward_zero (bits - const_like bits (`Int Bigint.one)) bits in
   let odd = bitcast (bits lor cast (below lor above) Uint32) Float32 in
-  cast (if bfloat16 then where big (odd * k 2.) odd else odd) dt
+  cast (if bfloat16 then where scaled (odd * k 2.) odd else odd) dt
 
 (* The narrow floats whose multiply-add a float32 computes, rounded there and
    then to the type, rounds once. A product of e4m3s has at most 8 bits and is

@@ -3935,6 +3935,28 @@ let beside_least f =
   in
   (x, y, if negative then -.z else z)
 
+(* The infinities of [f], those it has. *)
+let infinities f =
+  List.filter
+    (fun v -> Float.abs v = Float.infinity)
+    (List.map (of_bits f) f.specials)
+
+(* A value of [f]'s least normal binade of either sign, whose half is
+   subnormal, beside an infinity, in either order, and an addend. *)
+let beside_infinity f =
+  let open Gen in
+  let p = f.precision in
+  let+ j = int_range 0 ((1 lsl (p - 1)) - 1)
+  and+ negative = bool
+  and+ infinity = of_list (infinities f)
+  and+ swapped = bool
+  and+ z = narrow_value f f.greatest in
+  let x =
+    Float.ldexp (1. +. Float.ldexp (Float.of_int j) (1 - p)) f.emin
+  in
+  let x = if negative then -.x else x in
+  if swapped then (infinity, x, z) else (x, infinity, z)
+
 let narrow_triples f =
   let open Gen in
   let any = narrow_value f f.greatest in
@@ -3951,6 +3973,9 @@ let narrow_triples f =
     | None -> []
     | Some bounds -> [ (3, off_midpoint f bounds) ]
   in
+  let infinite =
+    if infinities f = [] then [] else [ (1, beside_infinity f) ]
+  in
   let lane =
     frequency
       ([
@@ -3960,7 +3985,7 @@ let narrow_triples f =
          (1, near_greatest f);
          (1, beside_least f);
        ]
-      @ near)
+      @ near @ infinite)
   in
   with_pp
     (fun ppf lanes ->
@@ -3996,7 +4021,8 @@ let exempt least (x, y, z) h =
 let muladd_rounds_once f run lanes =
   let n = 8 in
   let prg = lazy (run (narrow_muladd f.dt ~lanes n)) in
-  prop ~count:200 (Printf.sprintf "in %d lanes" lanes) (narrow_triples f)
+  prop ~count:200 (Printf.sprintf "in %d lanes" lanes)
+    (narrow_triples f)
     (fun triples ->
       let saturates, flushes, run = Lazy.force prg in
       let column g = Array.map (fun t -> `Float (g t)) triples in
@@ -4047,6 +4073,16 @@ let muladd_rounds_once f run lanes =
              Float.abs p >= top && is_midpoint f p && z <> 0.
              && Float.abs z < 2. *. least)
            triples);
+      if infinities f <> [] then
+        cover "a value of the least normal binade times an infinity"
+          (Array.exists
+             (fun (x, y, _) ->
+               let least_binade v =
+                 v <> 0. && Float.abs v < Float.ldexp 2. f.emin
+               in
+               (least_binade x && Float.abs y = Float.infinity)
+               || (least_binade y && Float.abs x = Float.infinity))
+             triples);
       cover "a lane of a NaN, an infinity or a negative zero"
         (Array.exists
            (fun (x, y, z) -> is_special x || is_special y || is_special z)
