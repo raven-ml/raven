@@ -65,8 +65,8 @@ type t = {
 
 val split : name:string -> home:Rig.t -> Program.t -> Program.form array -> t
 (** [split ~name ~home p forms] is [p], over arguments of [forms], split, to
-    compute on [home] its checks and an iterate's stop, which the split program
-    copies there each trip where it lies only on another device. Its tracer is
+    compute on [home] its checks, an iterate's stop and a switch's index, each
+    copied there where it lies only on another device. Its tracer is
     named [name] in messages.
 
     A scan or an iterate is the loop of its programs split, over its operands'
@@ -75,12 +75,14 @@ val split : name:string -> home:Rig.t -> Program.t -> Program.form array -> t
     Raises [Declined] for a program that emits, and one with a total or a
     check in a loop or an emission or a total in a construct other than the
     outermost, one with a construct other than [Detach], [Call], [Custom],
-    [Linear], [Accumulate], [Remat], [Scan] and [Iterate], a scan over rows
-    cut along axis 0, an iterate that stacks its steps, or a loop whose step
-    gives a carry another placement; and what nx raises for an operation its
-    partition refuses.
+    [Linear], [Accumulate], [Remat], [Switch], [Scan] and [Iterate], a scan
+    over rows cut along axis 0, an iterate that stacks its steps, or a loop
+    whose step gives a carry another placement; and what nx raises for an
+    operation its partition refuses.
 
     A check in the program is one check of each device's window of its flags,
     its data moved to the flags' placement where they lie elsewhere, so that
     each device's position and data stay on it; each device's flag alone
-    reaches [home]. A check inside a loop declines. *)
+    reaches [home]. A check in a loop's step or a switch's branch declines.
+    A switch's index is read on [home], copied there where no piece lies
+    there. *)

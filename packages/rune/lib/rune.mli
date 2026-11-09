@@ -1809,7 +1809,12 @@ val jit :
     its rows through copies in reverse order. A {!switch} compiles as one loop
     per branch of at most one trip, which runs where the index names its branch,
     so a branch not taken computes nothing, each loop updating the results in
-    the storage of the one before. A {!remat}, a {!custom_jvp}, a
+    the storage of the one before. Its index, and each branch's flag, is one
+    value on one device: the host reads each flag before that branch's loop,
+    so that the call waits there for the work the flag depends on, a blocking
+    read per branch per call. Over several devices the index is the copy on
+    the program's device, its first argument's, the element copied there
+    where it lies whole on another. A {!remat}, a {!custom_jvp}, a
     {!custom_vjp} and a {!custom_transpose} compile as their function's
     operations, the program's own. So does a {!root}'s solve, and its derivative
     compiles as its linear solve's operations, each application of the operator
@@ -1849,13 +1854,15 @@ val jit :
       each call copies it into fresh memory of its own device.
 
     Over several devices a program's {!Nx.check}s, additions to a {!Total},
-    {!remat}s, custom rules and calls compile, each as on one device, over its
-    values' pieces. It declines a program that holds another construct than
-    {!detach}, a {!scan} or an {!iterate}, such as a {!switch}; a scan over
-    rows cut along axis 0, an iterate that stacks its steps, and a loop whose
-    step gives a carry another placement; a check inside a loop's step and an
-    addition inside a loop's step or a function a construct runs. An emission
-    compiles as on one device ({!section-emissions}). It also declines a
+    {!switch}es, {!remat}s, custom rules and calls compile, each as on one
+    device, over its values' pieces. It declines a program that holds another
+    construct than {!detach}, a {!scan} or an {!iterate}; a scan over rows
+    cut along axis 0, an iterate that stacks its steps, and a loop whose step
+    gives a carry another placement; a check inside a loop's step or a
+    switch's branch; and an addition inside a loop's step, a branch or a
+    function a construct runs, or at another placement than its {!Total}'s
+    running value. An emission compiles as on one device
+    ({!section-emissions}). It also declines a
     program with a value on a device that computes nothing ({!Rig.computes}).
     On a set without kernels ({!Nx.devices}), nothing evaluates a declined
     program: it raises [Invalid_argument] at the call, naming what the compiler

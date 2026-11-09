@@ -859,6 +859,55 @@ let total set ~jit =
   in
   (codes_text a, codes_text e)
 
+(* A switch compiles over a GPU beside memory devices: its index on any
+   device or whole on each, its branch's value and placement as eagerly
+   over memory devices, an index out of range failing at a wait. *)
+let waited_any f =
+  match f () with
+  | y -> (
+      match host y with
+      | h -> Ok (bits h)
+      | exception (Failure s | Invalid_argument s) -> Error s)
+  | exception (Failure s | Invalid_argument s) -> Error s
+
+let switch_agrees ?devices ~cut:c ~index:ic ~taken shape () =
+  agreeing ?devices
+    {
+      agree =
+        (fun set ~jit ->
+          let x = Nx.place (at set c) (value shape) in
+          let i = Nx.place (at set ic) (Nx.scalar Nx.int32 taken) in
+          let f i x =
+            Rune.switch Nx.Ptree.tensor i
+              [ (fun () -> Nx.neg x); (fun () -> Nx.mul_s x 2.) ]
+          in
+          waited_any (fun () -> compiled_or_eager ~jit f i x));
+    }
+    outcome_t
+
+(* A scan holding a switch and a nested switch agree with eager. *)
+let switch_scan set ~jit =
+  let start = Nx.create f32 [| 6 |] (Array.init 6 Float.of_int) in
+  let x = Nx.place (at set (Split 0)) start in
+  let xs = Nx.place (at set (Split 1)) (value ~seed:1 [| 3; 6 |]) in
+  let i0 = Nx.place (at set On) (Nx.scalar Nx.int32 1l) in
+  let step (i, c) r =
+    let c' =
+      Rune.switch Nx.Ptree.tensor i
+        [ (fun () -> Nx.add c r); (fun () -> Nx.mul c r) ]
+    in
+    ((Nx.sub (Nx.scalar_like i 1l) i, c'), c')
+  in
+  let f x xs =
+    let (_, c), ys =
+      Rune.scan Nx.Ptree.(pair tensor tensor) Nx.Ptree.tensor
+        Nx.Ptree.tensor step ~init:(i0, x) xs
+    in
+    Nx.add c (Rune.switch Nx.Ptree.tensor i0
+                [ (fun () -> Nx.sum ys ~axes:[ 0 ]); (fun () -> c) ])
+  in
+  (codes_text (compiled_or_eager ~jit f x xs), ())
+
 (* A declined program over a GPU beside a memory device raises at the call,
    naming the decline. *)
 let declined set =
@@ -1430,6 +1479,24 @@ let () =
                test_split_memory;
            ];
          group "a detour" [ test "onto the GPU's set and back" detour ];
+         group "switches"
+           [
+             test "over a cut value, the index whole on each"
+               (switch_agrees ~cut:(Split 0) ~index:On ~taken:1l [| 8 |]);
+             test "the index on the first device"
+               (switch_agrees ~cut:(Split 0) ~index:(Dev 0) ~taken:0l [| 8 |]);
+             test "the index on another device"
+               (switch_agrees ~cut:(Split 0) ~index:(Dev 1) ~taken:1l [| 8 |]);
+             test "a value on one device apart"
+               (switch_agrees ~cut:(Dev 1) ~index:(Dev 0) ~taken:1l [| 8 |]);
+             test "an empty value"
+               (switch_agrees ~cut:(Split 0) ~index:On ~taken:0l [| 0 |]);
+             test "an index out of range"
+               (switch_agrees ~cut:(Split 0) ~index:On ~taken:7l [| 8 |]);
+             test "a mesh"
+               (switch_agrees ~devices:4 ~cut:(Grid true) ~index:(Dev 3)
+                  ~taken:1l [| 4; 4 |]);
+           ];
          group "emissions and declines over several devices"
            [
              test "an emission compiles, offered once" (fun () ->
@@ -1462,6 +1529,9 @@ let () =
              test "a custom rule, a remat and a gradient" (fun () ->
                  agreeing { agree = customs }
                    (Testable.pair bits_t bits_t));
+             test "a switch inside a scan's step and nested" (fun () ->
+                 agreeing { agree = switch_scan }
+                   (Testable.pair bits_t Testable.unit));
              test "additions to a total" (fun () ->
                  agreeing { agree = total } (Testable.pair bits_t bits_t));
            ];

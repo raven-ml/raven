@@ -397,6 +397,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` over several devices compiles `Rune.switch` and `Rune.cond`.
+  Each call waits on the host for each branch's flag. An index out of range
+  fails at a wait on the set, as a compiled check does.
 - `Rune.jit` over several devices compiles `Nx.check`, a sampler's parameter
   checks, custom rules, `Rune.remat`, calls and additions to a `Total` at the
   top level, where it evaluated them, or raised on a set without kernels. Each

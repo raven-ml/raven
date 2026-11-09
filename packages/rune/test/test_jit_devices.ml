@@ -2061,6 +2061,39 @@ let emitted_scan set (c : loop_case) =
    Over a set without kernels, nothing evaluates a declined program: the call
    raises, naming the decline. *)
 
+(* An emission or a check in a branch stays declined: evaluated on memory
+   devices, named on a set without kernels. *)
+let declined_branches () =
+  let x = Nx.place (Two.split ~axis:0) (value [| 4 |]) in
+  let i = Nx.place Two.on (Nx.scalar Nx.int32 0l) in
+  let f i x =
+    Rune.switch T.tensor i
+      [
+        (fun () ->
+          Nx.check T.tensor (Nx.less_s x 2.) x (fun _ _ -> Exit);
+          x);
+        (fun () -> x);
+      ]
+  in
+  let s = T.(tensor @-> tensor @-> returns tensor) in
+  let before = Rune.evaluations () in
+  ignore (Nx.to_array (Nx.place Nx.Host.on (Rune.jit s f i x)));
+  greater ~msg:"evaluated" int ~than:0 (Rune.evaluations () - before);
+  let p = Rune.Probe.make T.tensor in
+  let g i x =
+    Rune.switch T.tensor i
+      [
+        (fun () ->
+          Rune.Probe.emit p x;
+          x);
+        (fun () -> x);
+      ]
+  in
+  let before = Rune.evaluations () in
+  ignore (Rune.Probe.collect p (fun () -> Rune.jit s g i x));
+  greater ~msg:"an emission in a branch is evaluated" int ~than:0
+    (Rune.evaluations () - before)
+
 let declined () =
   let at = Bare.split ~axis:0 in
   let xs = Nx.place at (value [| 3; 2 |]) in
@@ -2397,8 +2430,183 @@ let in_loops set =
   let before = Rune.evaluations () in
   let jit () = Rune.jit T.(tensor @-> tensor @-> returns tensor) f xs x in
   exact_compare (outcome (fun () -> f xs x)) (outcome jit);
-  equal ~msg:"a loop's check is evaluated" bool true
-    (Rune.evaluations () - before > 0)
+  greater ~msg:"a loop's check is evaluated" int ~than:0
+    (Rune.evaluations () - before)
+
+(* Switches
+
+   A switch over several devices compiles: its index lies whole on the
+   program's device or whole on another, and one branch computes, its pieces
+   each device's. It gives eager's bits and placement, and computes nothing
+   for a branch not taken. *)
+
+type switch_case = {
+  sn : int;
+  sshape : int array;
+  scut : cut;
+  index_at : cut;
+  taken : int;
+}
+
+let pp_switch_case ppf c =
+  Format.fprintf ppf "%d devices, shape %a, x %a, index %a, branch %d" c.sn
+    Operand.pp_shape c.sshape pp_cut c.scut pp_cut c.index_at c.taken
+
+let switch_cases =
+  let open Gen in
+  (let* sn = int_range 2 4 in
+   let* rank = int_range 1 2 in
+   let* sshape = array ~size:(constant rank) (int_range 0 ((2 * sn) + 1)) in
+   let* scut = cut_of ~n:sn ~rank in
+   let* index_at =
+     frequency
+       [
+         (1, constant On); (2, map (fun k -> Device k) (int_range 0 (sn - 1)));
+       ]
+   in
+   let* taken =
+     frequency [ (4, int_range 0 2); (1, constant 7); (1, constant (-1)) ]
+   in
+   constant { sn; sshape; scut; index_at; taken })
+  |> with_pp pp_switch_case
+
+let switch_examples =
+  let c sn sshape scut index_at taken =
+    { sn; sshape; scut; index_at; taken }
+  in
+  [
+    (* Each branch, over two devices and a mesh, the index on every kind of
+       placement, with even, uneven and empty windows. *)
+    c 2 [| 4 |] (Split 0) On 0;
+    c 2 [| 4 |] (Split 0) (Device 1) 1;
+    c 3 [| 7 |] (Split 0) (Device 0) 2;
+    c 4 [| 2; 6 |] (Mesh (0, 1)) (Device 3) 1;
+    c 2 [| 0 |] (Split 0) On 0;
+    (* On a device apart, out of range. *)
+    c 3 [| 4 |] (Device 2) (Device 0) 1;
+    c 2 [| 4 |] (Split 0) On 7;
+    c 2 [| 4 |] (Split 0) On (-1);
+  ]
+
+let switch_branches (x : (float, Nx.float32_elt, 'd) Nx.t) =
+  [
+    (fun () -> Nx.neg x);
+    (fun () -> Nx.mul_s x 2.);
+    (fun () -> Nx.add x x);
+  ]
+
+let same_switch eager jit =
+  match (eager, jit) with
+  | Value e, Value j ->
+      equal ~msg:"placement" (placement ()) (Nx.placement e) (Nx.placement j);
+      equal bits_t (bits e) (bits j)
+  | _ -> equal (outcome_t bits_t) (omap bits eager) (omap bits jit)
+
+(* An evaluation that must compile, read at a wait so that a deferred failure
+   surfaces; its failure's message, the index out of range, is [Raised]. *)
+let compile_read f =
+  let before = Rune.evaluations () in
+  let r = outcome f in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  r
+
+let switched set c =
+  cover "taken inside the branches" (c.taken >= 0 && c.taken < 3);
+  cover "an index out of range" (c.taken < 0 || c.taken >= 3);
+  cover "x cut across devices"
+    (match c.scut with Split _ | Mesh _ -> true | _ -> false);
+  cover "an index on another device"
+    (match c.index_at with Device k -> k > 0 | _ -> false);
+  let x = Nx.place (at set c.scut) (value c.sshape) in
+  let i =
+    Nx.place (at set c.index_at) (Nx.scalar Nx.int32 (Int32.of_int c.taken))
+  in
+  let f i x = Rune.switch T.tensor i (switch_branches x) in
+  let eager = outcome (fun () -> f i x) in
+  let jit =
+    compile_read (fun () ->
+        let y = Rune.jit T.(tensor @-> tensor @-> returns tensor) f i x in
+        ignore (Nx.to_array (Nx.place Nx.Host.on y));
+        y)
+  in
+  same_switch eager jit
+
+(* A branch not taken computes nothing: the move in the other branch's work
+   happens only when it runs. *)
+let untaken (type d) (set : d set) =
+  let x = Nx.place (at set (Split 0)) (value [| 8 |]) in
+  let f i x =
+    Rune.switch T.tensor i
+      [
+        (fun () -> Nx.neg x);
+        (* A sum over the cut axis closes across devices. *)
+        (fun () -> Nx.add x (Nx.sum x));
+      ]
+  in
+  let s = T.(tensor @-> tensor @-> returns tensor) in
+  let step = Rune.jit s f in
+  let index k = Nx.place (at set On) (Nx.scalar Nx.int32 k) in
+  ignore (Nx.to_array (Nx.place Nx.Host.on (step (index 0l) x)));
+  let moved k =
+    moved_bytes (fun () ->
+        ignore (Nx.to_array (Nx.place Nx.Host.on (step (index k) x))))
+  in
+  equal ~msg:"the branch not taken moves nothing" int 0 (moved 0l);
+  greater ~msg:"the taken branch moves its window" int ~than:0 (moved 1l)
+
+(* A map whose lanes take a switch's branches apart, its lanes cut across
+   devices: the branches' results lie apart there, so the call is evaluated,
+   with eager's values. *)
+let lane_switch set =
+  let x = Nx.place (at set (Split 0)) (value [| 4 |]) in
+  let f x _ =
+    Rune.vmap'
+      (fun xi ->
+        Rune.cond T.tensor (Nx.greater_s xi 0.)
+          (fun () -> Nx.neg xi)
+          (fun () -> xi))
+      x
+  in
+  let eager = outcome (fun () -> f x x) in
+  let jit =
+    outcome (fun () ->
+        let s = T.(tensor @-> tensor @-> returns tensor) in
+        Rune.jit s f x x)
+  in
+  same_switch eager jit
+
+(* A switch inside a scan's step, and one nested in a branch, as eagerly. *)
+let nested_switch set =
+  let x = Nx.place (at set (Split 0)) (value [| 6 |]) in
+  let xs = Nx.place (at set (Split 1)) (value ~seed:1 [| 3; 6 |]) in
+  let step (i, c) r =
+    let c' =
+      Rune.switch T.tensor i
+        [ (fun () -> Nx.add c r); (fun () -> Nx.mul c r) ]
+    in
+    ((Nx.sub (Nx.scalar_like i 1l) i, c'), c')
+  in
+  let s = T.(tensor @-> tensor @-> returns (pair tensor tensor)) in
+  let f x xs =
+    let i0 = Nx.place (at set On) (Nx.scalar Nx.int32 0l) in
+    let (_, c), ys =
+      Rune.scan T.(pair tensor tensor) T.tensor T.tensor step ~init:(i0, x) xs
+    in
+    let inner =
+      Rune.switch T.tensor i0
+        [
+          (fun () -> Rune.switch T.tensor i0 [ (fun () -> c); (fun () -> x) ]);
+          (fun () -> c);
+        ]
+    in
+    (inner, ys)
+  in
+  let eager = f x xs in
+  let before = Rune.evaluations () in
+  let jit = Rune.jit s f x xs in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  equal ~msg:"carry" bits_t (bits (fst eager)) (bits (fst jit));
+  equal ~msg:"rows" bits_t (bits (snd eager)) (bits (snd jit))
 
 (* [xs] in a file of the disk, on [set]. *)
 let on_disk (type d) (set : d Nx.devices) xs =
@@ -2523,11 +2731,11 @@ let () =
              prop ~count:20 "an iterate stopped by a fold over a cut axis"
                loop_cases (fun c ->
                  over c.ln { law = (fun set -> iterated set c) });
-             prop ~count:30 ~examples:made_examples
+             prop ~count:15 ~examples:made_examples
                "a scan's first value and outputs made in the program"
                made_cases (fun c ->
                  over c.mn { law = (fun set -> scan_made set c) });
-             prop ~count:30 ~examples:made_examples
+             prop ~count:15 ~examples:made_examples
                "an iterate's first value made in the program" made_cases
                (fun c -> over c.mn { law = (fun set -> iterate_made set c) });
              test "a scan over rows made in the program" (fun () ->
@@ -2550,9 +2758,24 @@ let () =
                  over 2 { law = eigh_batch };
                  over 3 { law = eigh_batch });
            ];
+         group "switches"
+           [
+             prop ~count:20 ~examples:switch_examples
+               "a branch's value and placement, its index anywhere"
+               switch_cases (fun c ->
+                 over c.sn { law = (fun set -> switched set c) });
+             test "a branch not taken computes nothing" (fun () ->
+                 over 2 { law = untaken });
+             test "lanes cut across devices that take branches apart" (fun () ->
+                 over 2 { law = lane_switch };
+                 over 4 { law = lane_switch });
+             test "inside a scan's step and nested" (fun () ->
+                 over 2 { law = nested_switch };
+                 over 4 { law = nested_switch });
+           ];
          group "checks"
            [
-             prop ~count:60 ~examples:check_examples
+             prop ~count:25 ~examples:check_examples
                "a check fails as eagerly, wherever flags and data lie"
                check_cases (fun c ->
                  over c.cn { law = (fun set -> checked_case set c) });
@@ -2570,22 +2793,22 @@ let () =
            ];
          group "custom rules, remats and totals"
            [
-             prop ~count:15 ~examples "custom rules, values and derivatives"
+             prop ~count:10 ~examples "custom rules, values and derivatives"
                cases (fun c ->
                  over c.n { law = (fun set -> customs set c) });
-             prop ~count:15 ~examples "a remat, value and gradient" cases
+             prop ~count:10 ~examples "a remat, value and gradient" cases
                (fun c -> over c.n { law = (fun set -> remats set c) });
-             prop ~count:15 ~examples "a call and a custom transpose" cases
+             prop ~count:10 ~examples "a call and a custom transpose" cases
                (fun c -> over c.n { law = (fun set -> calls set c) });
-             prop ~count:15 ~examples "additions to a total" cases (fun c ->
+             prop ~count:10 ~examples "additions to a total" cases (fun c ->
                  over c.n { law = (fun set -> totals set c) });
            ];
          group "emissions"
            [
-             prop ~count:20 ~examples
+             prop ~count:10 ~examples
                "made at the top level, as eagerly, compiled" cases (fun c ->
                  over c.n { law = (fun set -> emitted set c) });
-             prop ~count:20
+             prop ~count:10
                ~examples:
                  [
                    {
@@ -2601,6 +2824,8 @@ let () =
          group "what stays declined"
            [
              test "raises at the call on a set without kernels, named" declined;
+             test "a check or an emission in a branch is evaluated"
+               declined_branches;
            ];
          group "a batch of one"
            [

@@ -1822,7 +1822,8 @@ and switch st cs env c (s : Program.switch) =
   let ns = Array.length sum_forms in
   let nr = Array.length forms - ns in
   let (V i) = s.index in
-  let index = Shape.reshape (node st env i) (ints [ 1 ]) in
+  (* The decision lies on the program's device, where the checks do. *)
+  let index = on_device st (Shape.reshape (node st env i) (ints [ 1 ])) in
   let at k = Shape.const_like index (`Int (Tolk.Bigint.of_int k)) in
   let no = Ops.ne (int64 0) (int64 0) in
   let inside = Ops.where (Ops.lt index (at 0)) no (Ops.lt index (at nb)) in
@@ -1845,11 +1846,11 @@ and switch st cs env c (s : Program.switch) =
       rig = None;
     };
   let reach = loop_reach env c in
-  let caps = Array.map (fun (V x) -> node st env x) s.captures in
+  let caps = Array.map (fun (V x) -> node_at st env x) s.captures in
   let results =
     Array.init nr (fun j ->
         let (F f) = forms.(j) in
-        zeros f.dtype (shape_of f))
+        located st f.placement (zeros f.dtype (shape_of f)))
   in
   let sums = starts st env forms ~at:nr s.seeds in
   let branch (carried, into) k =

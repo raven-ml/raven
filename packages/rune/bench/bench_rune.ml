@@ -452,6 +452,37 @@ let data_parallel_step () =
       fun () -> ignore (synced2 (f (x, w))))
     (fun call -> call ())
 
+(* A switch over a value cut across 4 memory devices, warm: each call reads
+   the index on the program's device and runs one branch's kernels. *)
+let sharded_switch () =
+  warm "devices/switch-4"
+    (fun () ->
+      let (module S) = memory_set 4 in
+      let x = Nx.place (S.split ~axis:0) (sine [| 4096 |] 3) in
+      let i = Nx.place S.on (Nx.scalar Nx.int32 1l) in
+      let f i x =
+        Rune.switch Nx.Ptree.tensor i
+          [ (fun () -> Nx.sin x); (fun () -> Nx.cos x) ]
+      in
+      let g = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f in
+      fun () -> ignore (synced (g i x)))
+    (fun call -> call ())
+
+(* A check over a value cut across 4 memory devices, warm: each device checks
+   its window, one flag per device reaching the program's device. *)
+let sharded_check () =
+  warm "devices/check-4"
+    (fun () ->
+      let (module S) = memory_set 4 in
+      let x = Nx.place (S.split ~axis:0) (sine [| 4096 |] 3) in
+      let f x =
+        Nx.check Nx.Ptree.tensor (Nx.less_s (Nx.abs x) 2.) x (fun _ _ -> Exit);
+        Nx.neg x
+      in
+      let g = Rune.jit Nx.Ptree.(tensor @-> returns tensor) f in
+      fun () -> ignore (synced (g x)))
+    (fun call -> call ())
+
 (* The backward call of one layer [relu (h w)] of fully sharded training, warm:
    512 by 512 float32 weights and a batch of 64, both cut along axis 0 across
    8 memory devices, the weights gathered whole on each. *)
@@ -817,6 +848,8 @@ let jit_rows () =
       (fun f -> synced (f views));
     data_parallel_step ();
     sharded_backward ();
+    sharded_switch ();
+    sharded_check ();
   ]
 
 (* Loops whose lanes stop apart: Newton's iteration for one value's square root,

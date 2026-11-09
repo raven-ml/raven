@@ -581,14 +581,14 @@ let rec cut ~kind ~in_loop ~(home : Rig.t) ~name (p : Program.t) forms =
               match op with
               | Check { ok; data; fail } ->
                   if in_loop then
-                    decline "a check in a loop over several devices";
+                    decline "a check in a loop's step over several devices";
                   checked ri ~home e ~by ok data fail
               | _ ->
                   let r = Nx.Prim.partition e ~by op in
                   bind := base;
                   Nx.Prim.iter_results store op r)
           | Do { c = Detach x; base } -> env.(base) <- Some (V (lookup x))
-          | Do { c = (Scan _ | Iterate _ | Remat _) as c; base } ->
+          | Do { c = (Scan _ | Iterate _ | Remat _ | Switch _) as c; base } ->
               let c = Program.map_operands { f = lookup } c in
               Array.iteri
                 (fun k v -> env.(base + k) <- Some v)
@@ -893,6 +893,55 @@ and looped ~in_loop ~home ~name ri moves c =
                 args = Array.append (all_pieces ri args) more;
                 seeds = [||];
                 differentiated;
+              }))
+  | Switch { name = entry; index; branches; captures; seeds = [||] } ->
+      (* Each branch split over the captures' pieces, their captures as one.
+         The index, a 0-d value, is read on [home]: its copy there, or else
+         the first device's, which the compiler then moves. *)
+      let cuts = Array.map (fun b -> split b (forms captures)) branches in
+      let s = fst cuts.(0) in
+      (* A switch's results are one storage per piece: a branch whose results
+         lie elsewhere than the first's, as a map's untaken lanes do, has none
+         to share. *)
+      let alike ((b : t), _) =
+        let ys = b.program.outputs and zs = s.program.outputs in
+        Array.length ys = Array.length zs
+        && Array.for_all2 (fun y z -> same_form (form y) (form z)) ys zs
+      in
+      if not (Array.for_all alike cuts) then
+        decline "%s whose branches' results lie apart" (construct_name c);
+      let params = Array.fold_left ( + ) 0 s.args in
+      let programs, more =
+        Program.unite
+          (Array.map (fun ((s : t), m) -> (s.program, m)) cuts)
+          ~params
+      in
+      let at_home (V x) = Rig.equal (rig_of (Nx.placement x)) home in
+      let copies = pieces ri index in
+      let index =
+        match List.find_opt at_home (Array.to_list copies) with
+        | Some v -> v
+        | None ->
+            let (V x) = copies.(0) in
+            inner :=
+              !inner
+              @ [
+                  Printf.sprintf "%s moves its index, 4 bytes, from %s to %s"
+                    entry
+                    (Rig.name (rig_of (Nx.placement x)))
+                    (Rig.name home);
+                ];
+            copies.(0)
+      in
+      results s
+        (note ~each:"" @@ Program.perform
+           (Switch
+              {
+                name = entry;
+                index;
+                branches = programs;
+                captures = Array.append (all_pieces ri captures) more;
+                seeds = [||];
               }))
   | Iterate { rows = Some _; _ } ->
       decline "an iterate that stacks its steps over several devices"

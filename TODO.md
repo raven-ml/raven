@@ -123,9 +123,8 @@ raven / llama.cpp b12048 Vulkan:
 - sharded jit: nx's closing moves a chunk between every pair of devices:
   time it against tinygrad's ring and hierarchical allreduce on a machine
   with several GPUs, and if it is slower, write those in nx's partition.
-  Over several devices a `switch`, a `remat`, a custom rule, a check, an
-  addition to a total and an emission still decline, and raise on a set
-  without kernels
+  Over several devices a check or a total inside a loop or a switch's
+  branch still declines, with a named error at the call
 - attention under `Rune.jit`: causal saves little, since a grid under 1.3
   waves takes as long as its longest workgroup (rows already launch longest
   first): pair row tiles i and n-1-i, or split long rows' keys; the
