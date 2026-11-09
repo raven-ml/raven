@@ -16,11 +16,6 @@ let series = Fold.series
 let orphans = Fold.orphans
 let stats = Fold.stats
 
-let best h k =
-  match (Fold.goal h k, Fold.stats h k) with
-  | Some g, Some st -> Metric.best g st
-  | _ -> None
-
 let summary = Fold.summary
 
 type file = Fold.file = {

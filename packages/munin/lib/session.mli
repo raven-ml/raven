@@ -160,7 +160,7 @@ val metric :
   t -> ?goal:Metric.goal -> ?step_metric:metric -> string -> metric
 (** [metric s key] declares the metric [key] in [s]'s run and is the
     handle that logs its samples. [goal] says whether lower or higher
-    values are better, which {!History.best} needs. [step_metric] is
+    values are better, which {!Metric.best} needs. [step_metric] is
     another metric of [s] that readers use as [key]'s x axis, paired by
     step ({!Store_format.section-reading}). The first declaration of [key]
     in the run appends a [metric] record; an equal one later, as after a

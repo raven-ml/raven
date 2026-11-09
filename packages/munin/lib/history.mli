@@ -117,10 +117,6 @@ val stats : t -> string -> Metric.stats option
 (** [stats h k] is the statistics of [k]'s samples that are not orphans,
     or [None] if there is none. *)
 
-val best : t -> string -> Metric.sample option
-(** [best h k] is {!Metric.best} of [k]'s goal and {!stats}, or [None] if
-    [k] has no goal or no sample. *)
-
 (** {1:other Summary, files, uses and resumes} *)
 
 val summary : t -> (string * Value.t) list

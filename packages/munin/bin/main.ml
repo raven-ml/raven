@@ -164,7 +164,7 @@ let show_metric h k =
   field "last" (float st.last.value);
   Option.iter
     (fun (s : Metric.sample) -> field "best" (float s.value))
-    (History.best h k);
+    (Option.bind (History.goal h k) (fun g -> Metric.best g st));
   field "non_finite" (string_of_int (non_finite st))
 
 (* A line per thing the run has: an absent name, end or note prints no line, so
@@ -249,7 +249,7 @@ let param_rows runs =
         line (("param." ^ k) :: cells))
 
 (* The index of the best of [values] under [goal]: finite values alone compete,
-   and the earliest of equal values wins, as History.best picks a sample. Strict
+   and the earliest of equal values wins, as Metric.best picks a sample. Strict
    comparisons keep the earliest, and [-0.] equals [0.]. *)
 let best_index goal values =
   let better a b = match goal with `Minimize -> a < b | `Maximize -> a > b in

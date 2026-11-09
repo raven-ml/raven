@@ -51,7 +51,7 @@
     of its [steps] ({!section-numbers}), the focus metric's value, the first
     sample of the run's metrics that is not finite, as [× NaN at 4,250], its
     params, its host and its commit. The value is the run's best sample by the
-    metric's goal ({!Munin.History.best}), or its latest without a goal, and a
+    metric's goal ({!Munin.Metric.best}), or its latest without a goal, and a
     [*] follows the best value of each experiment among the rows shown. The
     parent, the host, each param and the commit are columns only when their
     values differ among the rows shown, a param column with [—] for a run

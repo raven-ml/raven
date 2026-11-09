@@ -1082,6 +1082,8 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- **Breaking:** `History.best` is removed: pass `History.goal` and
+  `History.stats` to `Metric.best`.
 - `Store.set_notes`, `Store.remove_tags`, `Store.delete_run`, `Session.resume`
   and `Session.log_artifact` no longer fail with "Permission denied" on Windows
   when another domain or program holds the file for a moment: each waits briefly

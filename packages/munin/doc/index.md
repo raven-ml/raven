@@ -87,9 +87,12 @@ val run : Munin.Run.t = <abstr>
 val h : Munin.History.t = <abstr>
 # Munin.Metric.length (Munin.History.series h "train/loss");;
 - : int = 100
-# Option.map
-    (fun (b : Munin.Metric.sample) -> (b.step, b.value))
-    (Munin.History.best h "train/loss");;
+# match Munin.History.(goal h "train/loss", stats h "train/loss") with
+  | Some g, Some st ->
+      Option.map
+        (fun (b : Munin.Metric.sample) -> (b.step, b.value))
+        (Munin.Metric.best g st)
+  | _ -> None;;
 - : (int * float) option = Some (99, 1.)
 ```
 

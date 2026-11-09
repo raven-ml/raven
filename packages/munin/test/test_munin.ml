@@ -624,7 +624,9 @@ let fold_tests =
                      (fun (b : Metric.sample) (s : Metric.sample) ->
                        if s.value < b.value then s else b)
                      x rest))
-            (History.best h "a"));
+            (match (History.goal h "a", History.stats h "a") with
+            | Some g, Some st -> Metric.best g st
+            | _ -> None));
       prop
         "following in pieces equals reading at once, and leaves snapshots as \
          they were"

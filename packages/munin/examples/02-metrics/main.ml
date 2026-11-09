@@ -46,6 +46,11 @@ let () =
       Printf.printf "%s: goal %s, x axis %s, %d samples, last %g\n" key goal
         axis st.count st.last.value)
     (History.metrics h);
-  match History.best h "residual" with
+  let best =
+    match (History.goal h "residual", History.stats h "residual") with
+    | Some g, Some st -> Metric.best g st
+    | _ -> None
+  in
+  match best with
   | Some b -> Printf.printf "best residual: %.3e at step %d\n" b.value b.step
   | None -> ()

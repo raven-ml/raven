@@ -161,7 +161,8 @@ let nan_run =
     Option.map (fun (n, (first : Metric.sample)) -> (n, first.step))
       st.non_finite,
     Option.map (fun (b : Metric.sample) -> b.value)
-      (History.best h "train/loss") );;
+      (Option.bind (History.goal h "train/loss") (fun g ->
+           Metric.best g st)) );;
 - : int * (int * int) option * float option = (4, Some (1, 2), Some 1.)
 ```
 

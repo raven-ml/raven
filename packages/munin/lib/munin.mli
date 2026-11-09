@@ -36,7 +36,9 @@
       in
       let run = Option.get (Munin.Store.run store id) in
       let h = Munin.History.read run in
-      Munin.History.best h "train/loss"
+      match Munin.History.(goal h "train/loss", stats h "train/loss") with
+      | Some g, Some st -> Munin.Metric.best g st
+      | _ -> None
     ]} *)
 
 module Store_format = Store_format
