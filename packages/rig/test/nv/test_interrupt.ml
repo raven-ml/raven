@@ -15,7 +15,7 @@
    from a Gc.Memprof callback at that allocation, on the calling thread.
    Inside a lock of the driver's that the callback's call takes, an image's,
    the device's local memory lock or the path's lock on its ranges, the call
-   raises Invalid_argument, having changed nothing; between locks it does
+   raises Invalid_argument, having taken nothing; between locks it does
    its work. Through rig, a call from a callback inside any lock raises
    Invalid_argument as it starts, and the device is kept. *)
 
@@ -136,8 +136,8 @@ let retaken = "Rig_nv: a lock taken inside one of its rank or a later one"
    callback at each of its allocations, on the calling thread, where
    [attempt ()] is [(during, call, after)], and runs [after ()] once
    [during] returned. Inside a lock [call] raises [Invalid_argument] for the
-   lock it would take again, having changed nothing, and does its work
-   outside every lock. *)
+   lock it would take again, having taken nothing, and does its work outside
+   every lock. It is the walk's landings. *)
 let reentry attempt =
   let seen = Rig_support.seen () in
   walk_calls (fun n ->
@@ -147,14 +147,14 @@ let reentry attempt =
       ignore (Rig_support.answered (strf "from allocation %d" n) landed);
       after ();
       reached);
-  Rig_support.covered seen
+  seen
 
 (* A function asked for from a callback while another function of its image
    is: inside the image's lock the entry raises, and the function is made
    when asked for again; outside it, it is made. *)
 let test_entry_in_entry () =
   opened @@ fun g bin ->
-  reentry @@ fun () ->
+  Rig_support.covered @@ reentry @@ fun () ->
   let i, r, _ = Rig_nv_support.image g bin in
   let during () = entries i [ List.nth functions 0 ]
   and call () = entries i [ List.nth functions 1 ]
@@ -265,19 +265,27 @@ let alloc g =
   | Some r -> r
   | None -> fail "no GPU memory"
 
-(* A free from a callback in another free: inside the path's lock on the
-   users of its memory the free raises and leaves the region for a later
-   free; outside it, the region goes back. *)
+(* A free from a callback in another free of Pinned memory. Inside the path's
+   lock on the users of its memory the free raises, having taken nothing, and
+   what it did before stays done: its region is given up, as rig never repeats
+   a free that raised. The [after] frees the region of a call that did not
+   run. *)
 let test_free_in_free () =
   opened @@ fun g _ ->
-  reentry @@ fun () ->
-  let r = alloc g and r' = alloc g in
-  let freed = ref false in
+  let alloc () =
+    match N.alloc g Rig_edge.Pinned bytes with
+    | Some r -> r
+    | None -> fail "no GPU memory"
+  in
+  ignore @@ reentry
+  @@ fun () ->
+  let r = alloc () and r' = alloc () in
+  let called = ref false in
   let during () = N.free g r
   and call () =
-    N.free g r';
-    freed := true
-  and after () = if not !freed then N.free g r' in
+    called := true;
+    N.free g r'
+  and after () = if not !called then N.free g r' in
   (during, call, after)
 
 (* An allocation from a callback in another allocation: on NVIDIA's kernel
@@ -628,7 +636,8 @@ let interrupted_on d n call =
 
 (* Walks [attempt n], a call's whole cycle interrupted from the [n]-th
    allocation, for [n] from 1 on: after each, the process holds the ranges it
-   held after an uninterrupted cycle, which makes what the process keeps. *)
+   held after an uninterrupted cycle, which makes what the process keeps. It
+   is the number of landings. *)
 let ranges_kept attempt =
   needs_gpu ();
   if over_pci () then
@@ -642,11 +651,14 @@ let ranges_kept attempt =
       int before (Rig_nv_nvidia.ranges ());
     if reached then from (n + 1) else n - 1
   in
-  at_least ~msg:"the landings" int ~than:1 (from 1)
+  from 1
+
+(* A walk over a call that takes memory, which allocates as it does. *)
+let landed n = at_least ~msg:"the landings" int ~than:1 n
 
 (* A buffer of [kind] on a device of GPU 0, collected before the close. *)
 let test_create kind () =
-  ranges_kept @@ fun n ->
+  landed @@ ranges_kept @@ fun n ->
   let d = rig_device 0 in
   let[@inline never] create () =
     ignore (Sys.opaque_identity (Rig.Buffer.create ~memory:kind d bytes_made))
@@ -656,17 +668,24 @@ let test_create kind () =
   Rig.close d;
   reached
 
+(* The host memory a borrow maps: at least 64 KiB and four pages of any host
+   page up to 64 KiB, so it starts on a page, as a borrow on a driver's device
+   needs. *)
+let borrowed_bytes = 1 lsl 18
+
 (* A borrow of host memory on a device of GPU 0. *)
 let test_borrow () =
-  let pages = Bigarray.(Array1.create char c_layout (2 * bytes_made)) in
-  ranges_kept (fun n ->
-      let d = rig_device 0 in
-      let b = Rig.Buffer.of_bigarray pages in
-      let borrow () = ignore (Rig.Buffer.borrow d b : Rig.Buffer.t option) in
-      let reached = interrupted_on d n borrow in
-      Rig.close d;
-      reached);
-  ignore (Sys.opaque_identity pages)
+  let pages = Rig.Buffer.create Rig.host borrowed_bytes in
+  landed
+    (ranges_kept (fun n ->
+         let d = rig_device 0 in
+         let borrow () =
+           ignore (Rig.Buffer.borrow d pages : Rig.Buffer.t option)
+         in
+         let reached = interrupted_on d n borrow in
+         Rig.close d;
+         reached));
+  ignore (Rig.Buffer.free pages : bool)
 
 (* A borrow on a device of GPU 0 of memory of a device of GPU 1, where the
    machine has a second GPU that GPU 0 reaches. *)
@@ -675,7 +694,7 @@ let test_borrow_peer () =
   (match Rig_nv_nvidia.count () with
   | Ok n when n >= 2 -> ()
   | Ok _ | Error _ -> skip ~reason:"the machine has one NVIDIA GPU" ());
-  ranges_kept @@ fun n ->
+  landed @@ ranges_kept @@ fun n ->
   let d = rig_device 0 and d' = rig_device 1 in
   if not (Rig.reaches d d') then begin
     Rig.close d;
@@ -689,12 +708,14 @@ let test_borrow_peer () =
   Rig.close d';
   reached
 
-(* A free of a buffer on a device of GPU 0 that gives its memory back to the
-   driver. *)
-let test_free () =
-  ranges_kept @@ fun n ->
+(* A free of a buffer of [kind] on a device of GPU 0 that gives its memory
+   back to the driver. A free that allocates nothing has nothing to land on,
+   so the walk asks for no landing. *)
+let test_free kind () =
+  ignore @@ ranges_kept
+  @@ fun n ->
   let d = rig_device 0 in
-  let b = Rig.Buffer.create d bytes_made in
+  let b = Rig.Buffer.create ~memory:kind d bytes_made in
   let free () =
     ignore (Rig.Buffer.free b : bool);
     Rig.free_cache d
@@ -732,8 +753,12 @@ let () =
              test
                "of a borrow of a peer's memory leaves no range after the close"
                (guarded "the peer walk" test_borrow_peer);
-             test "of a free leaves no range after the close"
-               (guarded "the free walk" test_free);
+             test "of a free of Device memory leaves no range after the close"
+               (guarded "the Device free walk" (test_free Rig.Buffer.Device));
+             test "of a free of Pinned memory leaves no range after the close"
+               (guarded "the Pinned free walk" (test_free Rig.Buffer.Pinned));
+             test "of a free of Mapped memory leaves no range after the close"
+               (guarded "the Mapped free walk" (test_free Rig.Buffer.Mapped));
            ];
          group ~timeout
            "a call from a callback at any allocation raises inside the lock \

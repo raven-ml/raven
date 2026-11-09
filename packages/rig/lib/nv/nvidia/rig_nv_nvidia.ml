@@ -282,10 +282,15 @@ exception Refused
 let refused_free =
   Rig_nv.Fault "unified memory or the RM refused to give back GPU memory"
 
-(* The ranges the process holds: made and not given back, and those whose
-   give-back left a part held. For the suites ([ranges]). *)
+(* The ranges the process holds: each counted as [range] makes it, before
+   anything is taken for it, until it is given back, and for good where its
+   give-back left a part. For the suites ([ranges]). [count_held] is one
+   atomic operation, which allocates nothing ([Atomic.incr] and [Atomic.decr]
+   allocate the location they add to first), so an exception cannot end a
+   free between what it gave back and its count. *)
 let held = Atomic.make 0
 let ranges () = Atomic.get held
+let count_held delta = ignore (Atomic.fetch_and_add held delta : int)
 
 (* [g]'s mapping of a range, which no region counts yet. *)
 let user g =
@@ -374,7 +379,7 @@ let give u r =
     u.count <- 0;
     r.mapping <- 0;
     if not (give_back r) then raise refused_free;
-    Atomic.decr held;
+    count_held (-1);
     give_numbers r
   end
 
@@ -410,21 +415,18 @@ let range g ~naming ~space bytes =
   let u = user g in
   r.users <- [ u ];
   adopt r u;
+  count_held 1;
   r
 
-(* A call that makes a range runs its steps as [match steps r with m -> made m
-   | exception e -> unmade r e], with no closure: [made] counts the range
-   held, its answer made by the steps, so nothing allocates once it is, and
-   [unmade], the handler, gives back what [r] holds before it allocates
-   anything. A step's exception passes; no memory answers [None], or, where
-   the give-back left a part, the fault of a refused free, as a free does. *)
-let made m =
-  Atomic.incr held;
-  m
-
+(* A call that makes a range runs its steps as [try steps r with e -> unmade
+   r e], with no closure. The steps make the answer, so nothing allocates
+   once the last of them returned, and [unmade], the handler, gives back what
+   [r] holds before it allocates anything. A step's exception passes; no
+   memory answers [None], or, where the give-back left a part, the fault of a
+   refused free, as a free does. *)
 let gave_up r e no_room never =
   let gone = give_back r in
-  if not gone then Atomic.incr held;
+  if gone then count_held (-1);
   give_numbers r;
   if e != No_memory && e != Refused then reraise e
   else if not gone then raise refused_free
@@ -626,7 +628,7 @@ let host_steps r =
 
 let alloc_host g size =
   let r = range g ~naming:Self_named ~space:Host_visible size in
-  match host_steps r with m -> made m | exception e -> unmade r e
+  try host_steps r with e -> unmade r e
 
 let video_steps r p ~cpu ~page_size =
   allocate r p;
@@ -646,9 +648,7 @@ let alloc_video g ~cpu size =
   let p = video_params g ~contiguous:cpu ~page_size size in
   let space = if cpu then Host_visible else Process in
   let r = range g ~naming:Rm_named ~space size in
-  match video_steps r p ~cpu ~page_size with
-  | m -> made m
-  | exception e -> unmade r e
+  try video_steps r p ~cpu ~page_size with e -> unmade r e
 
 let alloc g (kind : Rig_edge.memory) n =
   match kind with
@@ -697,9 +697,7 @@ let map_host g a n : mem Rig_nv.memory option Rig_edge.mapping =
   let a0 = a land lnot (page - 1) in
   let size = round_up (a + n) page - a0 in
   let r = range g ~naming:Self_named ~space:Host_visible size in
-  match borrowed_steps r ~a ~a0 ~page with
-  | m -> made m
-  | exception e -> unmapped r e
+  try borrowed_steps r ~a ~a0 ~page with e -> unmapped r e
 
 (* Another GPU's video memory needs peer access, which may be refused; host
    memory needs none. A view counts in the range of the region it views, and

@@ -178,6 +178,6 @@ val gpu_with :
 
 val ranges : unit -> int
 (* [ranges ()] is the number of ranges of unified memory the process holds:
-   each an allocation or a [map_host] made, until the last region over it is
-   freed, and each whose give-back, at that free or after the call that made
-   it failed, left a part the RM or unified memory refused. *)
+   each that an allocation or a [map_host] started, until the call's failure
+   gave it back or the last region over it is freed, and each whose give-back
+   left a part the RM or unified memory refused. *)
