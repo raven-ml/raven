@@ -46,7 +46,11 @@ raven / llama.cpp b12048 Vulkan:
   Clang decides the wait.
   Measured and declined for tolk: a per-domain cache of the last long walk
   (-2% instructions, 12 lines), and pruning rewrites by the operations a
-  matcher rules on (no gain: the memo it needs costs what it saves)
+  matcher rules on (no gain: the memo it needs costs what it saves). Two
+  costs grow with the square of a chain: the linearizer breaks ties by
+  `Ops.compare_structure` under `TUPLE_ORDER`, so 10,000 operations read
+  once take 0.9 s and 25,000 take 6.6 s; and a flat chain of additions
+  stays one C statement, rebuilt and scanned at every step
 - attention's backward (167d026789) has not run on AMD, and its CDNA 4
   tile rule on no GPU: none here is a CDNA 4
 
