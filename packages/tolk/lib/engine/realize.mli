@@ -78,9 +78,16 @@ val lower_and_compile :
     the call's first storage argument ({!get_call_arg_uops}): a kernel's
     parameters name no device.
 
-    A launch ({!Shape.launch}) of more members than the renderer's program
-    holds ({!Renderer.t.launch_members}) is first split into launches of at
-    most that many, in order, run one after another.
+    A launch ({!Shape.launch}) runs on a target only within what it can run,
+    so it is first split, in order, into launches that fit: a member that
+    fixes its threads or reduces, which may share values between a
+    workgroup's threads through workgroup memory and barriers, joins only
+    members of its own kernel, so that every thread reaches each barrier of
+    the member it runs, and runs alone where the target cannot declare
+    workgroup memory there ({!Renderer.t.launch_locals}); and a launch holds
+    at most {!Renderer.t.launch_members} members,
+    {!Renderer.t.launch_args} arguments and, with
+    {!Setting.max_kernel_buffers} at [n] above [0], [n] buffers.
 
     The kernels of one program key ({!Codegen.program_key}) take one program,
     compiled once: a key whose program this process has made or the disk
@@ -130,3 +137,9 @@ val compile_linear :
     the range while the flag's boolean holds.
 
     Raises as {!lower_and_compile} does. *)
+
+(**/**)
+
+val split_launch : Renderer.t -> Ops.t -> Ops.t list
+(** [split_launch ren e] is the launch [e] as launches that [ren] can run
+    ({!lower_and_compile}). *)

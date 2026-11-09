@@ -141,7 +141,7 @@ let sink d p =
         (o + q.rows, Ops.store (region state o q.rows) v :: stores))
       (0, []) p.pieces
   in
-  let state = Ops.after state (List.rev stores) in
+  let state = Ops.after_disjoint state (List.rev stores) in
   let state =
     if not p.later then state
     else
@@ -236,12 +236,14 @@ let writes_as_apart name p =
   let linear, vars = Schedule.create_linear_with_vars big in
   let ls = launches linear in
   (* Pieces of one kernel that reduces nothing run as one launch. *)
+  let msg = Format.asprintf "launches of %a" pp_program p in
   if alike p && not (reduces (List.hd p.pieces)) then
-    equal int ~msg:"launches" 1 (List.length ls);
+    equal int ~msg 1 (List.length ls);
   if List.length p.pieces > 1 && not (List.exists reduces p.pieces) then
-    at_least int ~msg:"launches" ~than:1 (List.length ls);
-  (* A member that reduces shares its launch only with members of its
-     kernel. *)
+    at_least int ~msg ~than:1 (List.length ls);
+  (* A member that reduces shares a launch of its target only with members
+     of its kernel. *)
+  let ren = Engine.renderer (device name) in
   List.iter
     (fun l ->
       let bodies = List.map (fun m -> Ops.nth m 0) (Shape.launch_members l) in
@@ -251,7 +253,9 @@ let writes_as_apart name p =
       if List.exists reducing bodies then
         equal int ~msg:"kernels of a launch of a reducing member" 1
           (List.length (List.sort_uniq Ops.compare bodies)))
-    ls;
+    (List.filter
+       (fun e -> Ops.op e = Call && Shape.is_launch (Ops.nth e 0))
+       (List.concat_map (Realize.split_launch ren) ls));
   equal (list string) ~msg:(Format.asprintf "%a" pp_program p)
     (written name big (apart linear, vars))
     (written name big (linear, vars))
@@ -462,13 +466,91 @@ let blocks () =
   | ns -> failf "%d launches" (List.length ns));
   ignore (as_apart "CPU" p)
 
-(* A schedule ordered by its storage makes and frees each piece's storage in
-   turn, which a launch would hold at once. *)
-let by_storage () =
-  let big = sink "CPU" (sixteen Elementwise Float32) in
-  let linear, _ = Schedule.create_linear_with_vars ~by_storage:true big in
-  equal int ~msg:"launches" 0 (List.length (launches linear));
-  equal int ~msg:"calls" 16 (List.length (Ops.src linear))
+(* Stores of values each kernel makes first, read by the stores: pieces of
+   two kernels each. *)
+let made_first () =
+  let d = "CPU" in
+  let out = Ops.new_buffer ~slot:0 d 256 Float32 in
+  let rows = Shape.reshape out [ Int 16; Int 16 ] in
+  let store i =
+    let x = Ops.new_buffer ~slot:(i + 1) d 16 Float32 in
+    let value = Ops.contiguous (Ops.exp2 (Shape.reshape x [ Int 1; Int 16 ])) in
+    Ops.store (Shape.shrink rows [ Some (Int i, Int (i + 1)); None ]) value
+  in
+  Ops.sink [ Ops.after_disjoint out (List.init 16 store) ]
+
+(* The most storage made by the schedule that is live at once: each takes
+   the entries from the first that takes it to the last. *)
+let peak big linear =
+  let given = List.map fst (storage big) in
+  let entries = Array.of_list (Ops.src linear) in
+  let first = Ops.Tbl.create 16 and last = Ops.Tbl.create 16 in
+  Array.iteri
+    (fun i e ->
+      List.iter
+        (fun a ->
+          let b = Ops.storage_base a in
+          if (not (List.memq b given)) && Ops.addrspace a <> Some Dtype.Alu
+          then begin
+            if not (Ops.Tbl.mem first b) then Ops.Tbl.replace first b i;
+            Ops.Tbl.replace last b i
+          end)
+        (Ops.src_without_body e))
+    entries;
+  let live i =
+    Ops.Tbl.fold
+      (fun b f n -> if f <= i && i <= Ops.Tbl.find last b then n + 1 else n)
+      first 0
+  in
+  List.fold_left max 0 (List.init (Array.length entries) live)
+
+(* A launch never makes storage live longer than the schedule's order does:
+   ordered by storage, each value is made and freed in turn, one at a time,
+   however the stores could run together; in the schedule's own order the
+   values are made first, and their stores run as one launch. *)
+let storage_order_holds () =
+  let big = made_first () in
+  let scheduled ~by_storage =
+    fst (Schedule.create_linear_with_vars ~capturing:true ~by_storage big)
+  in
+  equal int ~msg:"values live at once, ordered by storage" 1
+    (peak big (scheduled ~by_storage:true));
+  equal int ~msg:"launches in the schedule's order" 1
+    (List.length (launches (scheduled ~by_storage:false)))
+
+(* The launch of [sixteen kind Float32]'s program on the host, split for a
+   renderer with [f]'s limits, as lengths of the launches it becomes. *)
+let split ?launch_members ?launch_args ?launch_locals kind =
+  let big = sink "CPU" (sixteen kind Float32) in
+  let linear, _ = Schedule.create_linear_with_vars big in
+  match launches linear with
+  | [ e ] ->
+      let target = Engine.target Rig.host in
+      let ren = Renderer.v ?launch_members ?launch_args ?launch_locals target in
+      List.map
+        (fun l ->
+          if Ops.op l = Call && Shape.is_launch (Ops.nth l 0) then
+            List.length (Shape.launch_members l)
+          else 1)
+        (Realize.split_launch ren e)
+  | ls -> failf "%d launches" (List.length ls)
+
+let fits_target () =
+  let same = List.init 8 (fun _ -> 2) in
+  equal (list int) ~msg:"members" same
+    (split ~launch_members:2 Elementwise);
+  (* A member passes its region of the output and its source. *)
+  equal (list int) ~msg:"arguments" same
+    (split ~launch_args:5 Elementwise);
+  equal (list int) ~msg:"one reducing kernel holds a launch" [ 16 ]
+    (split Matmul);
+  equal (list int) ~msg:"a member that reduces, no workgroup memory"
+    (List.init 16 (fun _ -> 1))
+    (split ~launch_locals:false Matmul);
+  equal (list int) ~msg:"buffers" same
+    (Setting.context
+       [ Setting.B (Setting.max_kernel_buffers, 5) ]
+       (fun () -> split Elementwise))
 
 (* On CUDA, a state of more members than its renderer's launch holds runs
    as several launches, alike ones one program, writing what its members
@@ -507,7 +589,8 @@ let () =
             (out_of_line "CPU" "noinline");
           test "on CUDA, a launch's bodies are out of line"
             (out_of_line "CUDA" "__noinline__");
-          test "a schedule ordered by its storage makes no launch" by_storage;
+          test "a launch never makes storage live longer" storage_order_holds;
+          test "a launch is split by what its target can run" fits_target;
           test "on the host, a launch's blocks split its members" blocks;
           test "on CUDA, members of fewer threads run gated" fewer_threads;
           test "on CUDA, a state past a launch's members runs as several"

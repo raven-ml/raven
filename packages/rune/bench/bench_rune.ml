@@ -1608,6 +1608,20 @@ let gpu_rows g =
   else
     List.map (fun (name, c) -> on_gpu g name c) assembly_calls
     @ [
+      (* 16 computed pieces of [64; 4] concatenated along axis 1: 16 strided
+         stores of one state, which only their mark runs as one launch. *)
+      on_gpu g "cat-16-columns-of-exp-64x64"
+        (over_values
+           [ [| 64; 64 |] ]
+           {
+             f =
+               (fun xs ->
+                 let x = List.hd xs in
+                 Nx.concatenate ~axis:1
+                   (List.init 16 (fun i ->
+                        Nx.exp
+                          (Nx.slice [ Nx.A; Nx.R (i * 4, (i + 1) * 4) ] x))));
+           });
       (* The decode step's key cache concatenated with its new row, and a
          double-word sum of 10^6 float64 numbers, a pad of one piece. *)
       on_gpu g "kv-concat-decode"

@@ -347,6 +347,26 @@ let test_stack () =
 (* A concatenation of each row of a [[2; k; 9]] float64 value, doubled,
    compiles on the host to eager's bits at 46, 47 and 100 rows: each piece is
    a store into the result's storage, which the stores share. *)
+(* The pieces of a concatenation along a later axis write strided regions, which
+   no byte range shows apart: only the assembly's mark, kept from rune's
+   proof that its pieces meet nowhere, runs them as one launch. *)
+let test_concatenate_launch () =
+  let x =
+    Nx.create Nx.float32 [| 64; 64 |] (Array.init (64 * 64) Float.of_int)
+  in
+  let f x =
+    Nx.concatenate ~axis:1
+      (List.init 16 (fun i ->
+           Nx.add_s
+             (Nx.slice [ Nx.A; Nx.R (4 * i, (4 * i) + 4) ] x)
+             (Float.of_int i)))
+  in
+  let (), ks = Tolk.Realize.kernels (fun () -> ignore (Rune.jit' f x)) in
+  let launches =
+    List.filter (fun (k : Tolk.Realize.kernel) -> k.name = "launch") ks
+  in
+  equal ~msg:"launches" int 1 (List.length launches)
+
 let test_doubled_rows () =
   List.iter
     (fun k ->
@@ -5544,6 +5564,8 @@ let () =
                test_selection_memory;
              test "a concatenation of doubled rows compiles at any count"
                test_doubled_rows;
+             test "a concatenation along a later axis runs as one launch"
+               test_concatenate_launch;
              test "crossed assemblies of computed pieces compile"
                test_crossed;
              test "a loop's step assembles its carry anew" test_loop_assembly;

@@ -572,8 +572,10 @@ val launch : Ops.t list -> Ops.t
 (** [launch calls] is the call of the launch of the kernel calls [calls]: its
     arguments are those of [calls], each once, storage first, and each member
     calls its kernel, compiled on its own, on the launch's parameters at
-    those arguments. The launch's kernel information is named ["launch"] and
-    [optimized], since each member keeps its own optimisations.
+    those arguments, a variable its kernel holds in an argument's slot
+    becoming a nameless parameter of that slot. The launch's kernel
+    information is named ["launch"] and [optimized], since each member keeps
+    its own optimisations.
 
     Raises [Invalid_argument] if a call is not of a kernel's sink, or is
     compiled on its own. *)

@@ -76,7 +76,7 @@ let rec walk_mop u =
   then walk_mop (nth u 0)
   else if op u = Op.After then
     let b = walk_mop (nth u 0) in
-    if b != nth u 0 then after b (List.tl (src u)) else u
+    if b != nth u 0 then replace u ~src:(b :: List.tl (src u)) else u
   else u
 
 (* Movements on an index *)

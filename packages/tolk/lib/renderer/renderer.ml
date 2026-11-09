@@ -283,6 +283,8 @@ type t = {
   local_workgroups : int;
   extra_matcher : (unit, Ops.t) Pattern_matcher.t;
   launch_members : int;
+  launch_args : int;
+  launch_locals : bool;
   packed_args : bool;
   code_for_op : (Op.t * (string list -> Dtype.t -> string)) list;
   native : Dtype.t -> bool;
@@ -303,7 +305,8 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     ?(per_byte_first = 64) ?(stream_threads = 32768)
     ?(local_workgroups = 256)
     ?(extra_matcher = Pattern_matcher.v (fun () -> []))
-    ?(launch_members = max_int) ?(packed_args = false)
+    ?(launch_members = max_int) ?(launch_args = max_int)
+    ?(launch_locals = true) ?(packed_args = false)
     ?(code_for_op = [])
     ?(native = fun _ -> true)
     ?(render = fun _ -> invalid_arg "needs a renderer")
@@ -330,6 +333,8 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     local_workgroups;
     extra_matcher;
     launch_members;
+    launch_args;
+    launch_locals;
     packed_args;
     code_for_op;
     native;

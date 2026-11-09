@@ -2369,17 +2369,16 @@ let outputs_sink o =
   in
   Ops.sink made
 
-(* The stores of each call of [linear]. *)
-let stores_of call =
-  List.length
-    (List.filter
-       (fun u -> Ops.op u = Store)
-       (Ops.toposort ~calls:Skip (Ops.body call)))
+(* The calls a schedule's entry runs: a launch's members, or itself. *)
+let members_of call =
+  if Shape.is_launch (Ops.body call) then
+    List.length (Shape.launch_members call)
+  else 1
 
 let merges_keep_values o =
   let big = outputs_sink o in
   let calls = calls_of big in
-  let joined = List.map stores_of calls in
+  let joined = List.map members_of calls in
   cover "two calls run as one" (List.mem 2 joined);
   cover "three or more calls run as one" (List.exists (fun k -> k >= 3) joined);
   cover "a call waits for another"
@@ -2554,7 +2553,7 @@ let joins_keep_bindings steps =
   computes big
 
 let merged_calls =
-  group "create_linear_with_vars › merged calls"
+  group "create_linear_with_vars › launches"
     [
       test "independent calls of one domain in a loop run as one" (fun () ->
           let big =
@@ -2629,7 +2628,7 @@ let merged_calls =
               ]
           in
           equal int 2 (List.length (calls_in_loop big)));
-      test "calls that write two runs of one buffer run apart" (fun () ->
+      test "calls that write disjoint runs of one buffer run as one launch" (fun () ->
           let x = element () and y = element () in
           let o = Ops.new_buffer cpu 2 Float32 in
           let at i =
@@ -2642,8 +2641,8 @@ let merged_calls =
                 into (at 1) Ops.O.(y + float 1.);
               ]
           in
-          equal int 2 (List.length (calls_of big)));
-      test "a call with a reduction runs alone" (fun () ->
+          equal int 1 (List.length (calls_of big)));
+      test "a call with a reduction joins a launch" (fun () ->
           let big =
             looped
               ~sizes:[ (2, 16) ]
@@ -2659,7 +2658,7 @@ let merged_calls =
                 (1, [ 1 ], fun p -> Ops.O.(p 1 * float 2.));
               ]
           in
-          equal int 2 (List.length (calls_in_loop big)));
+          equal int 1 (List.length (calls_in_loop big)));
       test "calls on two devices run apart" (fun () ->
           let on device = element ~device () in
           let big =
@@ -2683,43 +2682,22 @@ let merged_calls =
           let c = into (o 2) Ops.O.(y * float 3.) in
           let d = into (o 3) Ops.O.(b * float 4.) in
           let calls = calls_of (Ops.sink [ a; b; c; d ]) in
-          let stores call =
-            List.length
-              (List.filter
-                 (fun u -> Ops.op u = Store)
-                 (Ops.toposort ~calls:Skip (Ops.body call)))
-          in
-          equal (list int) [ 2; 1; 1 ] (List.map stores calls));
-      test "calls that would pass more buffers than a kernel may run apart"
-        (fun () ->
-          let big () =
-            let x = element () and y = element () in
-            let o = element () and o' = element () in
-            Ops.sink
-              [ into o Ops.O.(x * float 2.); into o' Ops.O.(y + float 1.) ]
-          in
-          let calls limit =
-            Setting.context
-              [ Setting.B (Setting.max_kernel_buffers, limit) ]
-              (fun () -> List.length (calls_of (big ())))
-          in
-          equal int ~msg:"three" 2 (calls 3);
-          equal int ~msg:"four" 1 (calls 4));
+          equal (list int) [ 2; 1; 1 ] (List.map members_of calls));
       test "a schedule of pairs of calls runs each pair as one" (fun () ->
           equal int 50 (List.length (calls_of (two_chains 100))));
       (* Work linear in the length is [a * n + b] with [b >= 0], so twice the
          length costs at most twice the work, and a tenth for tables that double
          their capacity at different lengths. *)
-      test "the merge's work on a long schedule is linear in its length"
+      test "the launches' work on a long schedule is linear in its length"
         (fun () ->
           let work n =
             let linear = chained_calls n in
-            words (fun () -> Schedule.merge_calls ~held:[] linear)
+            words (fun () -> Schedule.launches ~held:[] linear)
           in
           let short = work 1000 and long = work 2000 in
           equal int ~msg:"pairs" 500
             (List.length
-               (Ops.src (Schedule.merge_calls ~held:[] (chained_calls 1000))));
+               (Ops.src (Schedule.launches ~held:[] (chained_calls 1000))));
           less float_exact ~than:(2.2 *. short) long);
       (* Each output reads an earlier one, whose store reads the one before
          it: the whole schedule's work, not only its merge's. *)
@@ -2747,14 +2725,14 @@ let merged_calls =
                 ~src:[ add_one ~read:x ~write:o; add_one ~read:y ~write:t ]
             in
             List.length
-              (Ops.src (Schedule.merge_calls ~held:([ x; o; y ] @ held) linear))
+              (Ops.src (Schedule.launches ~held:([ x; o; y ] @ held) linear))
           in
           let big = buf 4 in
           equal int ~msg:"storage of many elements" 2 (calls big ~held:[]);
           equal int ~msg:"given storage of many elements" 1
             (calls big ~held:[ big ]);
           equal int ~msg:"storage of one element" 1 (calls (buf 1) ~held:[]));
-      test "calls that read one buffer read one parameter and share its work"
+      test "calls that read one buffer read one parameter of their launch"
         (fun () ->
           let x = element () and o = element () and o' = element () in
           let big =
@@ -2766,13 +2744,8 @@ let merged_calls =
           in
           match calls_of big with
           | [ call ] ->
-              let nodes = Ops.toposort ~calls:Skip (Ops.body call) in
-              let count o =
-                List.length (List.filter (fun u -> Ops.op u = o) nodes)
-              in
               equal int ~msg:"arguments" 3
-                (List.length (Ops.src_without_body call));
-              equal int ~msg:"exponentials" 1 (count Exp2)
+                (List.length (Ops.src_without_body call))
           | calls -> failf "%d calls" (List.length calls));
     ]
 
@@ -3249,7 +3222,7 @@ let crossed () =
   let col v = Shape.reshape v [ Int 4; Int 1 ] in
   let a = col Ops.O.(x * fl 0.25) and b = col Ops.O.(x + fl 1.) in
   let assembled buf first second =
-    Ops.after buf
+    Ops.after_disjoint buf
       [ Ops.store (column buf 0) first; Ops.store (column buf 1) second ]
   in
   let linear = keeps_values [ assembled p a b; assembled q b a ] in

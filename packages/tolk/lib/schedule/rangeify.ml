@@ -844,7 +844,10 @@ let bufferize_to_store ctx x idx =
           let ends = sorted_ranges (Nodes.to_list (ranges target) @ rngs) in
           Some (end_ (store target (nth st 1)) ends)
       in
-      Some (after buf (List.filter_map end_store stores))
+      (* The rebuilt write keeps its mark ({!Ops.after_disjoint}). *)
+      match List.filter_map end_store stores with
+      | [] -> Some buf
+      | ends -> Some (v Op.After ~src:(buf :: ends) ~arg:(arg value))
   else
     match opts x with
     | { addrspace = Dtype.Global; device; keep } ->

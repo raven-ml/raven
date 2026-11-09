@@ -738,7 +738,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   every assembly of a piece or more over several devices, is storage of its
   own: the covering piece first, where one holds every element; then the
   pieces whose regions do not meet as stores of one state, which tolk runs as
-  one launch (D338), beside stores of the fill into the regions no piece
+  one launch (D404, D405), beside stores of the fill into the regions no piece
   holds, where every piece is dense (where one lies by steps, the fill is a
   state of its own before them); and a piece whose region may meet an
   earlier one's in a later state. Each store writes exactly its piece's

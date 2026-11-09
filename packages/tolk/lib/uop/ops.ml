@@ -196,7 +196,12 @@ type wmma = {
 }
 
 type custom_function = { name : string; dtype : Dtype.t; fmt : bool }
-type call_info = { name : string option; precompile : bool; inline : bool }
+type call_info = {
+  name : string option;
+  precompile : bool;
+  inline : bool;
+  write : (int * int) list;
+}
 
 type t = {
   op : Op.t;
@@ -279,6 +284,7 @@ and arg =
   | Custom_function of custom_function
   | Call of call_info
   | Wmma of wmma
+  | Disjoint
 
 and movement =
   | Reshape of sint list
@@ -351,6 +357,7 @@ let equal_call_info (c0 : call_info) (c1 : call_info) =
   Option.equal String.equal c0.name c1.name
   && Bool.equal c0.precompile c1.precompile
   && Bool.equal c0.inline c1.inline
+  && c0.write = c1.write
 
 let equal_arg (a0 : arg) (a1 : arg) =
   match (a0, a1) with
@@ -377,6 +384,7 @@ let equal_arg (a0 : arg) (a1 : arg) =
       && Dtype.equal w0.dtype_in w1.dtype_in
       && Int.equal w0.threads w1.threads
       && w0.upcast_axes = w1.upcast_axes
+  | Disjoint, Disjoint -> true
   | _ -> false
 
 let hash_arg (a : arg) =
@@ -396,8 +404,9 @@ let hash_arg (a : arg) =
   | Kernel k -> h (16, k.name, k.beam)
   | Program p -> h (17, p.globals, List.map hash_sint p.global_size)
   | Custom_function f -> h (20, f.name, Dtype.hash f.dtype, f.fmt)
-  | Call c -> h (18, c.name, c.precompile, c.inline)
+  | Call c -> h (18, c.name, c.precompile, c.inline, c.write)
   | Wmma w -> h (19, w.dims, w.threads)
+  | Disjoint -> h 21
 
 (* Hash-consing *)
 
@@ -970,6 +979,7 @@ and repr_arg = function
   | Custom_function f -> repr_custom_function f
   | Call c -> repr_call_info c
   | Wmma w -> repr_wmma w
+  | Disjoint -> "Disjoint"
 
 let pp ppf u = Format.pp_print_string ppf (repr u)
 let pp_arg ppf a = Format.pp_print_string ppf (repr_arg a)
@@ -2473,6 +2483,13 @@ let store ?gate p x = v Op.Store ~src:([ p; x ] @ Option.to_list gate)
 let end_ u = function [] -> u | rs -> v Op.End ~src:(u :: rs)
 let backedge u ~loop ~cond = v Op.Backedge ~src:[ u; loop; cond ]
 let after u = function [] -> u | deps -> v Op.After ~src:(u :: deps)
+
+let after_disjoint u = function
+  | [] -> u
+  | stores -> replace (after u stores) ~arg:Disjoint
+
+let is_disjoint u =
+  u.op = Op.After && match u.arg with Disjoint -> true | _ -> false
 let group = function [ u ] -> u | us -> after (v Op.Stack) us
 
 let is_group u =
@@ -2716,7 +2733,13 @@ let weak_storage dt =
 
 let new_buffer ?slot ?phase d size dt =
   weak_storage dt;
-  let slot = match slot with Some s -> s | None -> unique_num () in
+  let slot =
+    match slot with
+    | None -> unique_num ()
+    | Some s ->
+        take_unique s;
+        s
+  in
   v Op.Buffer
     ~src:[ size_src (Some size) ]
     ~arg:(Param (param_arg ~slot ~device:d ?phase dt))
@@ -4528,7 +4551,7 @@ let call ?name ?(precompile = false) ?(inline = false) body args =
   if Nodes.cardinal (ranges body) > 0 then
     invalid_arg "ranges leak out of the called body";
   v Op.Call ~src:(body :: args)
-    ~arg:(Call { name; precompile; inline })
+    ~arg:(Call { name; precompile; inline; write = [] })
 
 let is_inline_call u =
   u.op = Op.Call && (body u).op = Op.Sink

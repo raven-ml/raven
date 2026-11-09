@@ -906,8 +906,10 @@ let moved u d =
    Then the pieces: the stores of those whose regions meet no earlier one's
    are of one state, which tolk runs as one launch, and a piece whose region
    may meet an earlier one's is stored in a later state, so that the later
-   piece's elements stand, as {!Lower_index.assemble} states. Where no piece
-   covers the value, the fill is stores of the regions no piece holds
+   piece's elements stand, as {!Lower_index.assemble} states. A state's pieces
+   are its proof that its stores write disjoint elements: {!states} placed
+   them apart, step for step, which the schedule cannot read off their
+   regions ({!Ops.after_disjoint}). Where no piece covers the value, the fill is stores of the regions no piece holds
    ({!complement}), in the first state, so that no element is written twice:
    a fill under the pieces would be a pass of its own over the whole value.
    A piece by steps leaves elements between its steps, so where one does,
@@ -1266,7 +1268,7 @@ let assembled ~device ~one_gpu (type v s) (dt : (v, s) D.t) (fill : v) shape
   in
   let start =
     match background with
-    | Some p -> Ops.after buf (stores buf p)
+    | Some p -> Ops.after_disjoint buf (stores buf p)
     | None when gaps <> None || tile s (List.map fst over) -> buf
     | None ->
         Ops.after buf
@@ -1274,7 +1276,8 @@ let assembled ~device ~one_gpu (type v s) (dt : (v, s) D.t) (fill : v) shape
   in
   let filled =
     List.fold_left
-      (fun state ps -> Ops.after state (List.concat_map (stores state) ps))
+      (fun state ps ->
+        Ops.after_disjoint state (List.concat_map (stores state) ps))
       start (states over)
   in
   (whole filled, buf, filled, permuted)

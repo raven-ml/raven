@@ -2098,11 +2098,19 @@ let kernels f = List.length (snd (Tolk.Realize.kernels f))
 (* The stores of the kernels a call of [f] compiles: a copy is one more, whether
    or not its kernel runs as one with another. *)
 let stores f =
-  let count (k : Tolk.Realize.kernel) =
+  let in_body u =
     List.length
       (List.filter
-         (fun u -> Tolk.Ops.op u = Tolk.Op.Store)
-         (Tolk.Ops.toposort ~calls:Skip k.ast))
+         (fun x -> Tolk.Ops.op x = Tolk.Op.Store)
+         (Tolk.Ops.toposort ~calls:Skip u))
+  in
+  (* A launch's stores lie in its members' bodies, each counted as it runs. *)
+  let count (k : Tolk.Realize.kernel) =
+    if Tolk.Shape.is_launch k.ast then
+      List.fold_left
+        (fun n m -> n + in_body (Tolk.Ops.nth m 0))
+        0 (Tolk.Ops.src k.ast)
+    else in_body k.ast
   in
   List.fold_left (fun n k -> n + count k) 0 (snd (Tolk.Realize.kernels f))
 

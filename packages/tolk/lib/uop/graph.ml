@@ -677,8 +677,8 @@ let bufferize_opts : Ops.bufferize_opts codec =
 (* A call that precompiles its backward pass differentiates, which tolk does
    not, so the field is written and read only as its default. *)
 let call_info : Ops.call_info codec =
-  let make name precompile () inline : Ops.call_info =
-    { name; precompile; inline }
+  let make name precompile () inline write : Ops.call_info =
+    { name; precompile; inline; write }
   in
   let get (f : Ops.call_info -> _) = f in
   let no_backward =
@@ -693,6 +693,7 @@ let call_info : Ops.call_info codec =
   |> field "precompile" ~default:false bool (get (fun c -> c.precompile))
   |> field "precompile_backward" ~default:() no_backward (fun _ -> ())
   |> field "inline" ~default:false bool (get (fun c -> c.inline))
+  |> field "write" ~default:[] (list (pair int int)) (get (fun c -> c.write))
   |> finish
 
 let custom_function : Ops.custom_function codec =
@@ -745,6 +746,7 @@ let arg_value : Ops.arg -> value option = function
   | Custom_function f -> Some (custom_function.write f)
   | Call c -> Some (call_info.write c)
   | Wmma w -> Some (wmma.write w)
+  | Disjoint -> Some (bool.write true)
 
 let arg_of (o : Op.t) v : Ops.arg =
   match o with
@@ -769,6 +771,9 @@ let arg_of (o : Op.t) v : Ops.arg =
   | Program -> Program (program_info.read v)
   | Call -> Call (call_info.read v)
   | Wmma -> Wmma (wmma.read v)
+  | After ->
+      if bool.read v then Disjoint
+      else fail "an after's argument states its stores are disjoint"
   (* a sum's addition that fuses with its product is marked by its argument *)
   | Add -> String (str.read v)
   | o -> fail "%s takes no argument" (Format.asprintf "%a" Op.pp o)

@@ -40,9 +40,9 @@ val create_schedule : ?by_storage:bool -> Ops.t -> Ops.t
     those the joins it reads through wait for, and before the kernels of
     every write over a state it reads of which it is no part, whichever
     elements each touches. The kernels of one write, whichever {!Op.After}s
-    list each, run in any order: one of them must read the elements another
-    writes only where it writes their state too, which it then reads as it
-    was. A call that writes a state through an argument its body writes
+    list each, run in any order, and stores of one write that overlap land
+    in an unspecified one: one of them must read the elements another writes
+    only where it writes their state too, which it then reads as it was. A call that writes a state through an argument its body writes
     ({!Shape.written_params}) and reads it through another reads it as it was
     before the call. Where these orders form a cycle, one read on the cycle
     reads instead a copy of its whole state into call-local storage
@@ -118,42 +118,29 @@ val create_linear_with_vars :
       then takes it as a nameless parameter, its own call passing the bound
       variable, so that kernels which differ in that value alone are one
       program;
-    + unless [by_storage], the kernels of one write, as the stores of one
-      state into its regions are, run as one launch ({!Shape.launch}) whose
-      members are their kernels: the kernels of one write run in any order
-      ({!create_schedule}), so they can run at once. A schedule ordered by
-      its storage takes none, since a launch holds every member's storage at
-      once, where the order would make and free each in turn. A kernel
-      joins where no order of the schedule leads from it to another member,
-      through kernels that read what one writes or overwrite what one reads;
-      the launch then runs where its members would. A member is a call of a kernel whose ranges have constant
-      sizes and whose storage lies on one device that is no disk. A member
-      that fixes its threads ({!Postrange.threads_fixed}) or reduces, and may
-      then share values between a workgroup's threads through barriers, joins
-      only members of the same kernel, so that each of the launch's
-      workgroups has its threads, and on Metal, which declares workgroup
-      memory only in a kernel function, runs alone; any other member joins
-      every other such member of its device. A launch passes at most 512
-      arguments, the 4 KiB of parameters CUDA takes, and with
-      {!Setting.max_kernel_buffers} at [n] above [0] at most [n] buffers. A
-      launch of one member is that member's call;
     + a kernel that only copies a buffer between devices, or to or from a disk,
       becomes a call of a store, between views of its arguments where it
       copies a run of one into a run of the other;
-    + kernel calls that can run in either order run as one call: two kernels
-      that reduce nothing, whose storage lies on one device, whose stores
-      end over ranges of the same constant sizes and kinds by position, and
-      neither
-      of which reads or writes storage the other writes, a view counting as
-      its buffer. A call joins the first call of its group, the earliest
-      that starts after every call it conflicts with, and after the first
-      use of each storage it takes that is neither given to the schedule nor
-      of one element; in a loop's body, where storage lives for the whole
-      loop, that last condition does not apply, and at the top level only
-      calls of one element join. An argument several calls pass is passed
-      once, so the merged kernel computes what they share once. With
-      {!Setting.max_kernel_buffers} at [n] above [0], a merged call passes
-      at most [n] buffers. The merged kernel is optimised as one;
+    + calls of one device that run in either order run as one launch
+      ({!Shape.launch}), its members their kernels, whose work is laid end to
+      end at once. A launch keeps no order among its members: a call joins
+      only where it accesses no byte another member writes. It joins the
+      earliest launch of its device that starts after the last call it
+      interferes with, so it moves up only past calls whose bytes it does not
+      touch, a view counting as the bytes of its run of storage and any other
+      view as its whole storage, and a loop or copy writing its storage
+      whole. Only where its order lets them, kernels of one write whose
+      regions no byte test shows apart, as an assembly's columns are, join
+      when their write is marked disjoint ({!Ops.after_disjoint}), which
+      exempts them on the state they write, and only there. A call moves up
+      only where no storage's life grows: past the first use of each storage
+      it takes, unless the schedule is given it, it holds one element, or the
+      call is in a loop's body, where storage lives for the whole loop; at the
+      top level a call of many elements joins only a launch that writes
+      storage it writes. A member is a call of a kernel whose ranges have
+      constant sizes and whose storage lies on one device that is no disk.
+      Limits of the target ({!Realize.lower_and_compile}) split a launch
+      after;
     + unless [capturing] (default [false]), the schedule's buffers are placed in
       arenas ({!Memory.memory_plan_rewrite}), except those the call's arguments
       name or view, whose contents outlive the schedule. A jit capturing the schedule
@@ -172,9 +159,9 @@ val create_linear_with_vars :
 
 (**/**)
 
-val merge_calls : held:Ops.t list -> Ops.t -> Ops.t
-(** [merge_calls ~held linear] is the schedule [linear] with the calls that
-    can run as one merged, as {!create_linear_with_vars} merges them, [held]
+val launches : held:Ops.t list -> Ops.t -> Ops.t
+(** [launches ~held linear] is the schedule [linear] with the calls that run
+    at once launched, as {!create_linear_with_vars} launches them, [held]
     being the storage the schedule is given. *)
 
 val copies : unit -> int

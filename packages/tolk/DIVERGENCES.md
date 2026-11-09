@@ -1697,7 +1697,7 @@ kernel at NVRTC, Metal and the host compute it. `Spec.program` is
   (`test/engine/tolk_engine`): `link and run › a scan runs its body
   once per trip, carrying in place`, against the unrolled loop on the
   host, and `› a scan's merged calls carry in place as its calls apart do`
-  (D199), on the host and each GPU present. The `Spec` suite (`test/uop/spec`): `kernel_graph › loops of calls ›
+  (D404), on the host and each GPU present. The `Spec` suite (`test/uop/spec`): `kernel_graph › loops of calls ›
   accepts a loop of a call over a loop range`, `› refuses a loop of a call
   over a range of any other kind` and `› refuses a weak sum of a weak integer
   variable`; its
@@ -3691,8 +3691,8 @@ driver signals its own (D146).
   all. A group whose every store is dropped, as a store of a value into itself
   is, leaves the empty stack, which waits on nothing and makes no kernel,
   where tinygrad, whose stores end apart, drops a noop and the end of one.
-  Outputs that share only loads stay apart; finished calls of one domain may
-  still share a launch (D199).
+  Outputs that share only loads stay apart; finished calls may still share a
+  launch (D404).
 
   Reductions: a reduction whose output is indexed by the same ranges as an
   earlier one's in the walk, and that reduces axes of the same sizes, takes
@@ -5573,7 +5573,7 @@ its rule, its reason and its pins.
   a body into a call; tolk takes a call's body as built (`Ops.call`), so the
   schedule does it, once, for every builder. No body the schedule splits
   into kernels then binds a name: stores of one kernel (D137) and calls
-  merged into one (D199) read each value from a slot of their own. A kernel
+  run as one launch (D404) read each value from a slot of their own. A kernel
   the body calls, such as a custom kernel whose code binds a variable,
   reads it from the body's slots as the kernels split from the body do
   (`Schedule.pm_pass_kernel_bound`), which resolving the scope fills
@@ -5806,7 +5806,7 @@ and an initial value is added after it (D260).
   that bug), at the cost of a stage kernel per such view.
   The program `after_part_of_older_write`, whose two stores go into one
   element each of one buffer, is recorded as a kernel graph alone: its linear
-  here is one launch (D338) over two one-element views of the buffer, where
+  here is one launch (D404) over two one-element views of the buffer, where
   tinygrad's indexes the whole buffer in a kernel per store.
 - **Pinned by:** `Tolk.Schedule › contiguous_mops_to_view › stores into runs
   of a buffer at a bound start store into views of one alignment, whatever
@@ -6493,91 +6493,9 @@ as tinygrad does, and `of_program` and `Tiny_elf.t` went with it.
   `nuts/schools/4`, tolk's `adam_mlp` rows, vega's Adam row and rune's MLP
   step row.
 
-## D199. Independent calls of one domain run as one call where no lifetime grows past one element
+## D199. Withdrawn
 
-- **tinygrad:** `schedule/__init__.py:78-81` (`create_schedule`, one call
-  per kernel of the kernel graph, in the linear as scheduled) and
-  `schedule/rangeify.py:323-338` (`split_store`, one kernel per store or
-  end).
-- **tolk:** `Schedule.merge_calls`, `Schedule.merge_linear`,
-  `Schedule.shape`, `Schedule.member`, `Schedule.merged` and
-  `Schedule.storage_taken`, which
-  `Schedule.create_linear_with_vars` runs after `pm_copy_from_store`, after
-  the schedule cache.
-- **Differs:** in a schedule, two kernel calls run as one call when each is
-  a kernel of the default kind that reduces nothing and ends its stores over
-  its ranges, all their storage lies on one device, their domains are the
-  same ranges by position (constant sizes and kinds), neither reads or
-  writes storage the other writes (storage compared by `Ops.storage_base`,
-  so two views of one buffer conflict), the later moves up to the group's
-  first call only past calls it does not conflict with, and the merged call
-  passes at most `MAX_KERNEL_BUFFERS` buffers when that is set. A call moves
-  earlier only where every storage whose life that starts earlier is storage
-  the schedule is given, holds one element, or lives for the whole loop
-  around both: in a loop's body every buffer already lives for the whole
-  loop (a loop counts as one entry, D41, and `Tolk_engine` makes storage per
-  run, D173), so calls join freely; at the top level, only calls of one element
-  join, since the order of calls of many elements is the schedule's, chosen
-  for the storage they make (RFC 0005's bound). Arguments that are one node
-  are passed once, storage first, so loads and arithmetic the members share
-  are one node of the merged kernel. A custom kernel's variable, named in a
-  slot of its own (`Shape.custom_kernel`), becomes a nameless parameter in
-  the merged call's slot of its argument: a kernel's named variable takes
-  one value a name, the run's or else the first its call binds to that name
-  (`Realize.get_call_kernel_args`, D356), where members may pass one name two
-  values or another member read it by name. A schedule's variables count
-  the names its calls pass as well as those its kernels read
-  (`Schedule.create_linear_with_vars`), so a name of one value stays one a
-  run binds. Each call is weighed once, in order,
-  against the open groups of its device and domain, the earliest that
-  starts past the last call it conflicts with and past the first use of any
-  storage whose life may not start earlier: the merge is linear in the
-  calls. The decision reads devices only to compare them, after the cache,
-  so the schedule kept stays free of device names.
-
-  The merged kernel takes one set of optimisations for the union of its
-  members. On the host, two independent `[1024; 1024]` float32 carries in a
-  scan lose one member's 16-lane upcast, the `sqrt` member's `E_65536_16`
-  becoming the union's `E_131072_8`: measured at 2-3% a call when the merge
-  was designed, and 36.7-37.1 ms against 36.8-37.3 ms on this tree (best of
-  5 × 20 calls, two interleaved rounds); the same program on CUDA gained
-  10-25%. A mode that merges by target is not taken; the heuristic's choice
-  for a union is the host lane budget's question.
-- **Reason:** (d). On CUDA a launch costs about 1.3-2 µs, so a trip's
-  kernels are its cost: NUTS on eight schools, its density written by hand,
-  4 chains, on fudge's RTX 5000, launches 498 kernels a transition against
-  1,305 and takes 1.36-1.88 ms a warm step against 2.36-2.46 ms, compiling
-  131 programs against 155, with the same bits (three interleaved rounds,
-  each run under the timing and GPU locks, load 4 to 12; with D198 and
-  D163's rule across kernels). On the host a launch costs about 20 ns: the
-  model-language program's schedule holds 162 entries against 368 (top
-  level 78 against 134, main body 69 against 189, cascade 6 against 17)
-  and compiles 114 programs against 147, its cold first call 3.8-4.0 CPU-s
-  either way since Clang runs once per domain (D196), its warm step
-  unchanged; ymir's aperture gradient compiles cold in 13.7-15.1 CPU-s
-  against 22.1-28.3, 180 programs against 196, with the same bits. Pinned
-  by norn's `nuts/schools/4` on the host; a CUDA row of the hand-written
-  density is pending.
-- **Pinned by:** the Schedule suite (`test/schedule/schedule`):
-  `create_linear_with_vars › merged calls` (every test: independent calls in
-  a loop and of one element at the top level run as one, calls of many
-  elements at the top level, a reader of another's output, an overwriter of
-  what another reads, two runs of one buffer, a reduction and two devices
-  run apart, a call moves up only past calls it does not conflict with, the
-  buffer limit, shared arguments and work, pairs of calls, the merge's
-  linear work, the lifetime of storage of many elements, and the laws that
-  outputs run as one write what their tensors compute, bit for bit, and that
-  calls of a loop run as one, reading and overwriting one another's slots
-  and the trip, write what their tensors compute); the Tolk_engine suite
-  (`test/engine/tolk_engine`): `link and run › a scan's merged calls carry
-  in place as its calls apart do` and `› custom kernels with variables ›
-  custom kernels run as one that read one name at two values read each its
-  own`, `› custom kernels run as one that read one name at one value read
-  it` and `› a custom kernel runs as one with a kernel that reads its
-  name`, and the same on each GPU present; the Jit suite
-  (`test/engine/jit`): `jit_lower › variables › merged custom kernels of
-  one value read each run's` and `› merged custom kernels of two values
-  keep each its own`.
+D199 fused independent calls of one domain into one kernel. A launch of bodies (D404) runs the same grouping and more without one set of optimisations for the union: 1.65 against 1.68 ms a NUTS step on CUDA, equal grouping, inside the row's spread, and equal on the host and in compile time.
 
 ## D200. A tensor core's row upcast keeps a warp within a run of rows
 
@@ -7912,6 +7830,8 @@ rule, its reason and its pins.
   there, beside the other kernels of `q`'s write, and is ordered before none
   of them, as it would be listed under that write alone. tinygrad orders it,
   through its read listed under `p`'s write, before them.
+  A launch of the kernels of one write holds them apart unless the write is
+  marked disjoint (D405).
 - **Reason:** (b): rune's split program `[a; b] - [b; a]`, two assemblies of
   the same computed pieces stored into their regions of two buffers, makes
   two kernels, each storing a column of both. Each was ordered before the
@@ -8075,107 +7995,9 @@ rule, its reason and its pins.
   each GPU; rune's `Lower_index › numbering › a Unique of 2^31 rows is
   lowered`.
 
-## D338. The stores of one state run as one launch of their kernels
+## D338. Withdrawn
 
-- **tinygrad:** `schedule/rangeify.py:323-338` (`split_store`, a kernel per
-  store or end) and `schedule/__init__.py:78-81` (`create_schedule`, a call
-  per kernel of the kernel graph). Upstream shipped kernels of several
-  outputs from 2024-06 and deleted them in `1fce864a6` (2025-01-30) without
-  a written reason; its tests of them skip ("multi output not supported
-  anymore", `test/runtime/test_assign.py:356`).
-- **tolk:** `Schedule.launchable`, `Schedule.contract` and its use in
-  `Schedule.schedule` (`~launches`, which `Schedule.lower_sink_to_linear`
-  sets unless the schedule is ordered by its storage, and
-  `Schedule.create_schedule` does not), `Schedule.split_launch`,
-  `Schedule.split_launches` and the launches in
-  `Schedule.resolve_linear_call`; `Shape.is_launch`, `Shape.launch` and
-  `Shape.launch_members`; `Codegen.lower_member`, `Codegen.member_args` and
-  `Codegen.launcher`; `Cstyle.outlined` and `Cstyle.render`'s qualifiers,
-  and the CUDA renderer's choices read from the bodies a program calls;
-  `Shape.call_accesses` in `Shape.program_info_of_sink`;
-  `Renderer.t.launch_members` and `Realize.split_launches`. The goldens record
-  no program whose schedule holds two kernels of one write, so
-  `test/gen/tinygrad.patch` needs no hunk: `create_schedule`, which the
-  goldens record, makes no launch.
-- **Differs:** the kernels of one write, which run in any order (D330), as
-  the stores of one state into its regions do, run as one launch whose
-  members are their kernels, where tinygrad runs a call per kernel. A kernel
-  joins where no order of the schedule leads from it to another member;
-  members are calls of kernels of constant ranges whose storage lies on one
-  device and no disk. A member that fixes its threads or reduces joins only
-  members of its kernel, so a barrier never runs under fewer threads than
-  its workgroup (D285) and the launch's shared memory is one member's; on
-  Metal, which declares workgroup memory only in a kernel function, such a
-  member runs alone. Any other member joins every member of its device. A
-  launch passes at most 512 arguments, the 4 KiB of parameters CUDA takes.
-  A schedule ordered by its storage (`by_storage`, a program over several
-  devices) makes no launch: rune's fully sharded training sums a layer's
-  gradient a piece at a time, and a launch of the pieces' sums held every
-  piece's partials at once, 3.0 MB a device against its bound of 2.3 MB
-  over two devices. Each member is lowered as its own kernel, its
-  heuristic, gates (D305) and launch dimensions its own, and
-  becomes a body; members of one kernel are one body, lowered once. On a GPU
-  the launch's workgroups are its members' laid end to end, each member
-  called inside a loop of one trip or none whose bound reads the workgroup
-  index; on the host the launch's split loop runs its members' split
-  iterations laid end to end, its estimates their sum, so the engine splits
-  it across cores as it would split them. Bodies are out of line on every
-  target, so a compiler compiles each once.
-
-  The cost is the first compile, and it grows with the members: each is a
-  call of its own, since a call's storage argument is a parameter of the
-  launch and the IR selects no storage by an index, so a launch's source
-  holds a call site per member however alike they are. 256 alike pieces of
-  64 elements: the member lowers once (0.45M words, as one kernel apart),
-  then the dispatch lowers about 27 instructions a member (39K words, 10.2M
-  for 256, 0.09 s on the host) and renders 6,918 lines; Clang compiles them
-  in 0.27 s. NVRTC's time a member falls to its least at 64 members (8:
-  3.0 ms, 32: 1.3, 64: 1.0) and grows past them (96: 1.4, 128: 1.9, 192:
-  3.1, 256: 4.5, 1.15 s in all), so a CUDA launch holds at most 64 members
-  (`Renderer.t.launch_members`, set by `Cstyle.cuda`) and a larger state
-  runs as several launches, split in `Realize.split_launches`; alike
-  chunks are one program. 256 alike pieces then compile cold in 0.11 s on
-  CUDA against 0.04 s apart, and run as 4 launches in 18.6-18.9 µs against
-  347-352 apart (three locked rounds, load 7.8-8.1, bits equal). On the
-  host, cold, the launch compiles in 0.46 s against 0.09 s
-  apart. Before the host's bodies were out of line, Clang inlined the body
-  at each call and took 1.45 s. A run time cost of the calls out of line
-  does not show: 256 pieces 18.4-20.3 µs against 30.0-30.5 apart, 16
-  products 17.2-17.4 against 116.6-127.6. Members of different kernels are
-  lowered and compiled in one program, apart from the parallel compile of
-  separate kernels (`Codegen.to_programs`).
-- **Reason:** (d). fudge, RTX 5000 Ada and the host, `probe` runs of the
-  launch against its members called apart, four interleaved rounds, each
-  run under `TIMING.lock`, load 8.1-8.9, µs a call, bits equal: 16
-  products of a `[64; 1024]` matrix and a vector, CUDA 7.94-7.99 against
-  36.55-36.64, host 17.3-34.6 against 119.9-124.0; 64 pieces of 64
-  elements, CUDA 7.33-7.44 against 96.6-96.9; 64 pieces of 4096 elements,
-  CUDA 8.36-8.40 against 102.4-102.6. On the host, cheap pieces cost the
-  same either way (64 of 64: 7.41-7.49 against 5.94-7.72; 8 of 1024:
-  9.67-9.71 against 9.71-9.78). rune's assemblies are the named workload
-  (rune I2): rune stores them once its storage rule lands, and its rows
-  then hold this entry. Bodies out of line: inlined, NVRTC compiles
-  each call again: 256 alike members compiled cold in 11-62 s against
-  1.4-3.2 s out of line, on fudge's RTX 5000 on 2026-11-04, three locked
-  rounds of the launch's prototype.
-- **Pinned by:** the `Tolk.Launch` suite
-  (`test/schedule/schedule/test_launch.ml`):
-  `launches › on the host, …` and `› on CUDA, the stores of one state run
-  as one launch and write what their kernels apart write`, over 1 to 32
-  pieces, alike and unlike, elementwise, sums, products of a matrix and a
-  vector and of two matrices, of every float and integer type, with a fill
-  before, a later state after and bound starts, which checks that a
-  reducing member's launch holds one kernel; `cases › … alike members
-  compile one body`, `› on the host, a launch's bodies are out of line`, `›
-  on CUDA, a launch's bodies are out of line`, `› on
-  CUDA, sixteen products on tensor cores run as one launch`, `› a schedule
-  ordered by its storage makes no launch`, `› on the host, a launch's blocks
-  split its members`, `› on CUDA, members of fewer threads run gated` and
-  `› on CUDA, a state past a launch's members runs as several`;
-  the `Tolk.Schedule` suite's `create_linear_with_vars › writes › stores of
-  one write, one waiting for the other, run apart` and its laws, through
-  launches; rune's `Jit › fully sharded › *`; the bench rows
-  `launch/host/*`, `launch/cuda/*` and `launch/lower-256`.
+Replaced by D404, one pass over the finished schedule, and D405, the mark an assembly's maker states.
 
 ## D340. Lanes keep registers apart and threads keep the code around them
 
@@ -8911,3 +8733,152 @@ reason and its pins.
   rule; `› after a round, the beam's first and its fastest are timed again in
   turn; …`; `› a time taken again that raises ›` (`Failure` counts as
   infinite, for one or both, and `Exit` is raised).
+
+## D404. Calls that interfere with no other run as one launch of bodies
+
+- **tinygrad:** `schedule/rangeify.py:323-338` (`split_store`, one kernel per
+  store or end), `schedule/__init__.py:78-81` (`create_schedule`, one call per
+  kernel of the kernel graph); `sched_batches`
+  (`runtime/support/hcq2.py:320-340`) only batches consecutive calls of a
+  device into a queue program, D146's form. Kernels of several outputs were
+  deleted upstream in `1fce864a6`.
+- **tolk:** `Schedule.launches` (`launch_linear`), after the schedule cache
+  and `pm_copy_from_store`, over the finished schedule; `Shape.launch`,
+  `Shape.launch_members` and `Shape.is_launch`; `Codegen.lower_member`,
+  `Codegen.member_args`, `Codegen.launcher`; `Cstyle.outlined`, `Cstyle.render`'s
+  qualifiers and the CUDA renderer's choices read from a program's bodies;
+  `Shape.call_accesses` in `Shape.program_info_of_sink`;
+  `Realize.split_launch` and `Renderer.t.launch_members`,
+  `Renderer.t.launch_args` and `Renderer.t.launch_locals`. The goldens
+  record no program whose schedule holds a launch, so `test/gen/tinygrad.patch`
+  needs no hunk.
+- **Differs:** calls of one device that run in either order run as one launch
+  whose members are their kernels, each lowered and compiled as a kernel of its
+  own and laid out with its workgroups end to end, gated by the launch's
+  index (D305). Two calls interfere when one writes a byte the other reads or
+  writes: a view's bytes are those of its run of storage, any other view its
+  whole storage, a loop or a copy writes its storage whole, and on the state of
+  one write marked disjoint (D405) two of its kernels do not interfere. A call
+  joins the earliest launch of its device that starts after the last position
+  it interferes with. It moves up only past calls it does not interfere with,
+  and only where no storage's life grows: past the first use of each storage
+  it takes, unless the storage is given to the schedule, holds one element, or
+  the call is in a loop's body, whose storage lives for the whole loop. At the
+  top level a call of many elements joins only a launch writing storage it
+  writes: the top level's order is chosen for what storage calls make, and the
+  stores of one state are what a launch of many elements is for. A member is a
+  call of a kernel whose ranges have constant sizes and whose storage lies on
+  one device that is no disk. The arguments of a launch are its members', each
+  once, storage first; a variable a member's call binds in its slot is read
+  from that slot, as a launch binds each name once, so members may bind one
+  name to several values.
+
+  What a target can run is the target's fact: `Realize.split_launch` splits a
+  launch before it is compiled, into launches a target can run. A member that
+  fixes its threads or reduces, which may share values between a workgroup's
+  threads through workgroup memory and barriers, joins only members of its
+  kernel, so that every thread reaches each barrier of the member it runs
+  (D285); Metal declares workgroup memory only in a kernel function, so there
+  such a member runs alone (`Renderer.t.launch_locals`). A launch holds at
+  most `Renderer.t.launch_members` members (CUDA's 64, NVRTC's time a member
+  rising past it) and `Renderer.t.launch_args` arguments (CUDA's 512, the 4 KiB
+  of parameters a kernel takes), and with `MAX_KERNEL_BUFFERS` at `n` above 0
+  at most `n` buffers. Every subset of a launch is a launch, so splitting one
+  is always legal.
+
+  A launch's members have their own kernels, heuristics and gates: a member
+  reading shared storage reads it as a parameter passed once; no arithmetic is
+  shared across members, as fused kernels did, since `Schedule.schedule` keeps
+  each kernel's own compute shared by D137 before kernels exist.
+
+  A schedule ordered by its storage (`by_storage`, a program over several
+  devices) and a program made per run are launches of what they make: storage
+  is live only from a member's first use, so a piece's store waits for the
+  value it reads and no launch of them holds every piece's value at once.
+
+  Each member is its own body; alike members are one body, lowered once, the
+  dispatch lowers about 27 instructions a member, and Clang compiles 256 alike
+  members in 0.27 s; NVRTC's time a member falls to its least at 64 members and
+  grows past them, and past its member limit a CUDA launch runs as several,
+  alike chunks one program: 256 alike pieces compile cold in 0.11 s on CUDA and
+  run as 4 launches in 18.6-18.9 µs against 347-352 apart. On the host a launch
+  compiles cold in 0.46 s against 0.09 s apart and costs nothing at run time.
+- **Reason:** (d). On CUDA a launch costs about 1.3-2 µs, so a kernel's calls
+  are its cost. fudge's RTX 5000 Ada, against the prior two passes (`contract`
+  and fused `merge_linear`), four interleaved runs each, GPU shared in some:
+  NUTS on eight schools, 4 chains, 0.95-1.06 ms a step against 1.20-2.64;
+  `launch/cuda` rows and rune's `Cuda/stack-*` and `Cuda/cat-*` equal within
+  their spread (minima within 1-5%). Launches against calls apart: 16 pieces
+  concatenated along axis 1 under `Rune.jit` run as one launch, a median 7.2
+  µs a call over 38 interleaved runs, as the two prior passes (a fifth of the
+  runs of either take 8-10), against 29-33 with rune's mark removed (8 runs);
+  16 products of `[64; 1024]`
+  8.6-8.8 µs against 36.6, 64 pieces of 64 elements 9.6 against 96.6, all with
+  the same bits. Pinned by the rows `launch/host/*`, `launch/cuda/*`,
+  `launch/lower-256`, rune's `Cuda/cat-16-columns-of-exp-64x64`, and norn's
+  `nuts/schools/4` and
+  `nuts/schools-density-cuda/4`.
+- **Pinned by:** `Tolk.Launch_law` (`test/schedule/schedule`,
+  `test_launch_law.ml`): `launches › a schedule's launches write what its graph
+  states, in either order of their members` and `› a write marked disjoint runs
+  its columns as one launch`; the `Tolk.Launch` suite
+  (`test/schedule/schedule/test_launch.ml`): `launches › on the host, …` and
+  `› on CUDA, the stores of one state run as one launch and write what their
+  kernels apart write`, `cases › … alike members compile one body`, `› on the
+  host, a launch's bodies are out of line`, `› on CUDA, a launch's bodies are
+  out of line`, `› on CUDA, sixteen products on tensor cores run as one launch`,
+  `› on the host, a launch's blocks split its members`, `› on CUDA, members of
+  fewer threads run gated`, `› on CUDA, a state past a launch's members runs as
+  several`, `› a launch never makes storage live longer` and `› a launch is
+  split by what its target can run`; the `Tolk.Schedule` suite's
+  `create_linear_with_vars › launches` (independent calls in a loop and of
+  one element at the top level run as one, calls of many elements at the top
+  level run apart, a reader of another's output and an overwriter of what
+  another reads run apart, disjoint runs of one buffer run as one launch, a
+  reduction joins, two devices run apart, a call moves up only past calls it
+  does not conflict with, the launches' linear work, the lifetime of storage
+  of many elements, the laws that outputs run as one write what their tensors
+  compute and that calls of a loop run as one, reading and overwriting one
+  another's slots and the trip, write what their tensors compute);
+  `Tolk_engine › a scan's merged calls carry in place as its calls apart do`
+  and the custom-kernel cases of two values of one name, on each GPU present;
+  `Jit › variables › merged custom kernels of one value read each run's` and
+  `› of two values keep each its own`; rune's `Jit › fully sharded › *`.
+
+## D405. A write marked disjoint is exempt on its state
+
+- **tinygrad:** none. `schedule/__init__.py` makes no launches.
+- **tolk:** `Ops.after_disjoint`, `Ops.is_disjoint`, `Schedule.tagged`,
+  `Ops.call_info`'s `write`, read by `Schedule.launches`; rune's
+  `Compile.assembled`.
+- **Differs:** a maker that has proved the stores of one write write disjoint
+  elements states it with `Ops.after_disjoint`; `Schedule` numbers each such
+  write and tags each of its kernels with the number and the position of the
+  state among its arguments (`call_info.write`, outside the program's and the
+  call's key). In `Schedule.launches` two kernels of one such write do not
+  interfere on that state. An unmarked `After` gets the byte relation (D404),
+  so tolk's own API cannot make a race: overlapping stores of one unmarked
+  write land in an unspecified order, and two stores of one state that may
+  overlap are never given a launch on the mark's say-so; stores that break a
+  mark's promise give undefined values, as `Ops.after_disjoint` states. The
+  mark keeps through `Rangeify.bufferize_to_store`, every other rewrite
+  keeps it as a node's argument, and the disk cache's codec holds both the
+  mark and the tag.
+- **Reason:** (d) of D404 and rune's own proof. A concatenation along a later
+  axis writes columns, strided regions which no byte range separates; a
+  variable start is unreadable too, and a stepped assembly's stores overlap as
+  ranges while its regions never meet. rune's `states` (`meet`, step-aware)
+  already proves what tolk would have to re-derive per kernel. Without the
+  exemption the row of concatenating 16 pieces along axis 1 costs 29-33 µs on
+  CUDA against a median 7.2, and NUTS 337 launches a step against 272 (programs 149
+  against 132). A box test of store destinations in the tensor graph, the
+  other way to keep them, is correct on 21,000 programs and three times the
+  lines, with fewer regions it can read; the program shape where its maker
+  already says so needs no such test.
+- **Pinned by:** rune's `Jit › assemblies give eager's bits`'s test of the launch
+  count (`a concatenation along a later axis runs as one launch`, the mark kept
+  through rangeify and the disk cache), `Tolk.Launch_law › a write marked
+  disjoint runs its columns as one launch`, `› a schedule read back keeps a
+  marked write's launch`, `› marked writes of two calls run in turn` and `› a
+  marked write of no stores marks nothing`, and the `create_linear_with_vars ›
+  writes › stores crossed into two buffers write both` pin of D330.

@@ -149,26 +149,78 @@ let note prg key ast renderer =
       l := { name = k.name; key; ast; renderer; opts = k.applied_opts } :: !l
   | Some _, _ | None, _ -> ()
 
-(* [linear] with each launch of more members than its renderer's program
-   holds ({!Renderer.t.launch_members}) run as several, in order: members
-   run in any order. Alike members make alike launches, one program. *)
-let split_launches targets linear =
-  let rec chunks n = function
-    | [] -> []
-    | ms ->
-        let first = List.filteri (fun i _ -> i < n) ms in
-        first :: chunks n (List.filteri (fun i _ -> i >= n) ms)
+(* What a target can run
+
+   A launch the schedule made runs on one device, and its members run in any
+   order, so any subset of them is a launch, and a launch a target can't run
+   as one becomes several, in order. A member whose kernel fixes its threads,
+   or reduces, may make it share values between the threads of a workgroup
+   through workgroup memory and barriers: it joins only members of the same
+   kernel, so that every thread of a workgroup reaches each barrier of the
+   member it runs, and alone where its target can't declare workgroup memory
+   there. Any other member joins every such member of its device. A class of
+   members then splits by what the renderer's program holds
+   ({!Renderer.t.launch_members}, {!Renderer.t.launch_args}) and, with
+   {!Setting.max_kernel_buffers} at [n] above [0], at most [n] buffers. Alike
+   members make alike launches, one program. *)
+
+let holds_threads b =
+  Postrange.threads_fixed b
+  || List.exists (fun u -> op u = Op.Reduce) (toposort ~calls:Enter b)
+
+let launched = function [ m ] -> m | ms -> Shape.launch ms
+
+(* The members [ms], in order, as launches that [ren] can run. *)
+let fitted (ren : Renderer.t) ms =
+  let limit = Setting.value Setting.max_kernel_buffers in
+  let fits ms =
+    let args = dedup_nodes (List.concat_map src_without_body ms) in
+    let buffers = List.filter (fun a -> addrspace a <> Some Dtype.Alu) args in
+    List.compare_length_with ms ren.launch_members <= 0
+    && List.compare_length_with args ren.launch_args <= 0
+    && (limit = 0 || List.compare_length_with buffers limit <= 0)
   in
-  let launched = function [ m ] -> m | ms -> Shape.launch ms in
+  List.rev_map List.rev
+    (List.fold_left
+       (fun acc m ->
+         match acc with
+         | cur :: rest when fits (m :: cur) -> (m :: cur) :: rest
+         | _ -> [ m ] :: acc)
+       [] ms)
+
+(* [e], a launch of the renderer [ren]'s target, as launches it can run. *)
+let split_launch ren e =
+  let alone = ref [] and classes = ref [] in
+  List.iter
+    (fun m ->
+      let holds = holds_threads (body m) in
+      if holds && not ren.Renderer.launch_locals then alone := m :: !alone
+      else
+        let key = if holds then Some (body m) else None in
+        let same (k, _) =
+          match (k, key) with
+          | None, None -> true
+          | Some a, Some b -> a == b
+          | _ -> false
+        in
+        match List.find_opt same !classes with
+        | Some (_, ms) -> ms := m :: !ms
+        | None -> classes := (key, ref [ m ]) :: !classes)
+    (Shape.launch_members e);
+  List.rev !alone
+  @ List.concat_map
+      (fun (_, ms) -> List.map launched (fitted ren (List.rev !ms)))
+      (List.rev !classes)
+
+(* [linear] with each launch as launches its target can run, in loops too. *)
+let split_launches targets linear =
   let rec entries l = List.concat_map entry (src l)
   and entry e =
     match op e with
     | Op.Call when Shape.is_launch (body e) -> (
         match get_call_to_compile targets e with
-        | Some (ast, ren) when List.length (src ast) > ren.launch_members ->
-            List.map launched
-              (chunks ren.launch_members (Shape.launch_members e))
-        | _ -> [ e ])
+        | Some (_, ren) -> split_launch ren e
+        | None -> [ e ])
     | (Op.End | Op.Backedge) when op (nth e 0) = Op.Linear ->
         let body = nth e 0 in
         [ replace e ~src:(replace body ~src:(entries body) :: List.tl (src e)) ]

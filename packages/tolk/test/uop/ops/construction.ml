@@ -707,6 +707,15 @@ let storage =
           in
           equal int (List.length all)
             (List.length (List.sort_uniq Int.compare all)));
+      test "a buffer given a slot is no buffer made without one" (fun () ->
+          (* The number the next fresh buffer would take, given by hand first. *)
+          let slot = Ops.unique_num () + 1 in
+          let given = Ops.new_buffer ~slot cpu 8 Float32 in
+          let made = Ops.new_buffer cpu 8 Float32 in
+          not_equal int (Ops.param_arg_of given).slot
+            (Ops.param_arg_of made).slot);
+      test "a buffer cannot be given the last number" (fun () ->
+          rejects (fun () -> Ops.new_buffer ~slot:max_int cpu 8 Float32));
       test "placeholder rejects a scalar variable's address space" (fun () ->
           rejects (fun () ->
               Shape.placeholder ~slot:0 ~addrspace:Alu [ 4 ] Float32));

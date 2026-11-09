@@ -3522,6 +3522,44 @@ let launch calls =
   let args =
     List.filter (fun a -> not (scalar a)) order @ List.filter scalar order
   in
+  (* A member's variable its call binds is read from the call's argument, in
+     its slot: a launch binds each name once, and members may bind one name
+     to two values. *)
+  let nameless c =
+    let b = nth c 0 and nargs = List.length (src_without_body c) in
+    let unnamed =
+      List.filter_map
+        (fun u ->
+          match arg u with
+          | Param p
+            when op u = Op.Param && p.name <> None && p.slot >= 0
+                 && p.slot < nargs && is_variable u ->
+              Some (u, replace u ~arg:(Param { p with name = None }))
+          | _ -> None)
+        (toposort ~calls:Skip b)
+    in
+    if unnamed = [] then b else substitute ~calls:Skip ~pass:Once b unnamed
+  in
+  (* A launch's storage parameter starts where its members take it to: an
+     argument may be a view moving with a trip, whose known start is weaker
+     than the start a member's body was compiled for. *)
+  let start_wanted = Tbl.create 16 in
+  List.iter
+    (fun c ->
+      let passed = Array.of_list (src_without_body c) in
+      List.iter
+        (fun u ->
+          match arg u with
+          | Param p
+            when op u = Op.Param && p.addrspace = Dtype.Global && p.slot >= 0
+                 && p.slot < Array.length passed -> (
+              let a = passed.(p.slot) in
+              match Tbl.find_opt start_wanted a with
+              | Some (align, _) when align >= p.align -> ()
+              | _ -> Tbl.replace start_wanted a (p.align, p.phase))
+          | _ -> ())
+        (toposort ~calls:Skip (nth c 0)))
+    calls;
   let params = Tbl.create 16 in
   List.iteri
     (fun i a ->
@@ -3535,14 +3573,20 @@ let launch calls =
         else
           let p = param_like a i in
           match arg p with
-          | Param q -> replace p ~arg:(Param { q with device = None })
+          | Param q ->
+              let align, phase =
+                Option.value
+                  (Tbl.find_opt start_wanted a)
+                  ~default:(q.align, q.phase)
+              in
+              replace p ~arg:(Param { q with device = None; align; phase })
           | _ -> p
       in
       Tbl.replace params a p)
     args;
   let member c =
     let name = match arg c with Call k -> k.name | _ -> None in
-    call ?name ~precompile:true (nth c 0)
+    call ?name ~precompile:true (nameless c)
       (List.map (Tbl.find params) (src_without_body c))
   in
   call

@@ -241,6 +241,13 @@ type t = private {
           launch calls each member on its own, and the target's compiler
           takes longer for each past this count. A larger launch runs as
           several. *)
+  launch_args : int;
+      (** The most arguments a launch passes: on CUDA, the 4 KiB of parameters
+          a kernel takes, 512 of 8 bytes. A launch of more runs as several. *)
+  launch_locals : bool;
+      (** Whether a member of a launch can declare workgroup memory. A member
+          that fixes its threads or reduces may hold values there; where this
+          is [false], as on Metal, such a member runs alone. *)
   packed_args : bool;
       (** A kernel takes its arguments as bytes: one parameter, which holds
           each argument at its offset ({!Device.Tiny_elf.iter_sig}), a buffer
@@ -281,6 +288,8 @@ val v :
   ?local_workgroups:int ->
   ?extra_matcher:(unit, Ops.t) Ops.Pattern_matcher.t ->
   ?launch_members:int ->
+  ?launch_args:int ->
+  ?launch_locals:bool ->
   ?packed_args:bool ->
   ?code_for_op:(Op.t * (string list -> Dtype.t -> string)) list ->
   ?native:(Dtype.t -> bool) ->
@@ -303,6 +312,8 @@ val v :
       [32768] and [local_workgroups] [256], [sm_89]'s, which every target
       takes until its own are measured;
     - [launch_members] is [max_int], until a target's compiler is measured;
+    - [launch_args] is [max_int];
+    - [launch_locals] is [true];
     - [packed_args] is [false];
     - [native] holds for every data type;
     - [render] raises [Invalid_argument];

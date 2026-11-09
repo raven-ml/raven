@@ -18,3 +18,13 @@
  (modules test_launch)
  (package tolk)
  (libraries windtrap tolk tolk.engine tolk_test tolk_run rig rig.cuda))
+
+; A launch's members write what its graph states, in any order of them.
+
+(test
+ (name test_launch_law)
+ (modules test_launch_law)
+ (package tolk)
+ (libraries windtrap tolk tolk_test unix)
+ (deps
+  (sandbox always)))

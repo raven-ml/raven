@@ -1778,7 +1778,7 @@ let metal_with compiler (target : Helpers.Target.t) =
     ((not (Dtype.equal dt Dtype.Bfloat16)) || from 6)
     && not (Dtype.mem dt (Dtype.Float64 :: Dtype.fp8s))
   in
-  Renderer.v ~name:"MetalRenderer"
+  Renderer.v ~name:"MetalRenderer" ~launch_locals:false
     ~tensor_cores:(if from 7 then Tc.metal else [])
     ~extra_matcher:metal_extra_matcher ~packed_args:true
     ~code_for_op:metal_lang.code_for_op
@@ -2131,7 +2131,7 @@ let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
   (* NVRTC's time a call site of a launch falls to its least at 64 members
      (0.064 s, 1.0 ms a member, on fudge with CUDA 13) and grows past them:
      96 members 1.4 ms a member, 128 1.9 ms, 256 4.5 ms. *)
-  Renderer.v ~name ~half8:true ~launch_members:64
+  Renderer.v ~name ~half8:true ~launch_members:64 ~launch_args:512
     ~global_max:[ 2147483647; 65535; 65535 ]
     ~local_max:[ 1024; 1024; 64 ] ~shared_max:49152 ~async_copy
     ~load_matrix ~tensor_cores

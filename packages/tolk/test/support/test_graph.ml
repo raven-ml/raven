@@ -131,7 +131,7 @@ let kinds =
       Ops.v
         ~src:[ Ops.sink [ x ]; buffer ]
         ~arg:
-          (Call { name = Some "f"; precompile = true; inline = false })
+          (Call { name = Some "f"; precompile = true; inline = false; write = [] })
         Call );
     ( "a tensor core product",
       Ops.v ~src:[ half; half; x ]

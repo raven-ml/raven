@@ -290,6 +290,12 @@ type call_info = {
   inline : bool;
       (** Write the call of code in the target's language into its reader,
           as an expression. *)
+  write : (int * int) list;
+      (** The disjoint writes ({!after_disjoint}) this kernel call is a
+          kernel of, each as the write's number in its schedule and the
+          position, among the call's arguments, of the state it writes. A
+          schedule sets it and reads it alone: a program's key and the call's
+          {!repr} leave it out. *)
 }
 (** The type for the arguments of {!Op.Call}. *)
 
@@ -332,6 +338,7 @@ type arg =
   | Custom_function of custom_function  (** {!Op.Custom_function}. *)
   | Call of call_info  (** {!Op.Call}. *)
   | Wmma of wmma  (** {!Op.Wmma}. *)
+  | Disjoint  (** An {!Op.After} of disjoint stores ({!after_disjoint}). *)
 
 val equal_arg : arg -> arg -> bool
 (** [equal_arg a0 a1] is structural equality, with constants compared by
@@ -809,10 +816,25 @@ val after : t -> t list -> t
 
     Outside a kernel, an {!Op.After} of storage names a state of it. One whose
     [deps] list calls, loops of calls or stores is the state those effects
-    leave the storage in, after the state [u] names: they write it. One whose
+    leave the storage in, after the state [u] names: they write it. Stores of
+    one such write that overlap land in an unspecified order. One whose
     [deps] are all {!Op.After}s is a join ({!is_join}): it names no state of
     its own, holds the value of the state [u] names, and is read once the
     states [deps] name are reached. *)
+
+val after_disjoint : t -> t list -> t
+(** [after_disjoint u stores] is {!after} [u stores] with a promise from its
+    maker: [stores], the stores of one write of [u]'s storage, write pairwise
+    disjoint elements, and every kernel of them may run at once. A schedule
+    then runs the kernels of this write as one launch, where it can, without
+    testing which elements each writes ({!Schedule.create_linear_with_vars}).
+
+    Stores that overlap break the promise and give undefined values: a
+    {!after} of them, unmarked, runs them apart, in an unspecified order. *)
+
+val is_disjoint : t -> bool
+(** [is_disjoint u] is [true] iff [u] is the {!Op.After} of an
+    {!after_disjoint}. *)
 
 val is_join : t -> bool
 (** [is_join u] is [true] iff [u] is an {!Op.After} whose dependencies are all
@@ -946,8 +968,12 @@ val new_buffer : ?slot:int -> ?phase:int -> device -> int -> Dtype.t -> t
 (** [new_buffer ~slot ~phase d size dt] is a {!Op.Buffer} of [size] elements of
     [dt] on [d], in [slot] (default {!unique_num}), whose first element lies
     [phase] bytes past a 16-byte boundary (default [0]; see {!type-param_arg}).
+    A given [slot] is taken ({!take_unique}), so {!unique_num} returns a
+    greater number afterwards. [slot] must not be a number {!unique_num}
+    returned for another buffer: buffers equal in slot, size, type, device and
+    phase are one node and one storage.
 
-    Raises [Invalid_argument] if [dt] is weak. *)
+    Raises [Invalid_argument] if [dt] is weak or [slot] is [max_int]. *)
 
 val set : ?ends:t list -> t -> t -> t
 (** [set p x] stores [x] through [p], ends [ends], and is [p]'s storage after
