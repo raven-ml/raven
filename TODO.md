@@ -26,19 +26,6 @@ raven / llama.cpp b12048 Vulkan:
 - llama.cpp's ROCm build needs HIP libraries nonnormal lacks; tinygrad
   needs Resizable BAR here
 
-## rig
-
-### drivers
-
-
-### tests and runs
-
-- needs hardware raven's machines lack: rig.amd over PCI on SDMA 4 (the
-  page queue as `Sdma.slots`' second slot; Vega, MI100-MI300); the box and
-  fill laws on SDMA 4 to 6; two GPUs as peers; mlx5 and bnxt NICs and GPU
-  memory between machines over RDMA; NV over PCI with more GPU memory than
-  the range from 64 GiB to `Rig_nv.windows` holds
-
 ## tolk
 
 - placement on hybrid cores: where host blocks land moves a run by 1.6x.
