@@ -1778,6 +1778,24 @@ let one_length_case =
   in
   (l, words, indices)
 
+(* A page of a type talon does not read carries nothing: the dictionary page
+   after it still opens the chunk. *)
+let other_page_first () =
+  let words = [| "a"; "bb" |] and indices = [ 1; 0; 1 ] in
+  let other = thrift (Struct [ (1, I32 1); (2, I32 0); (3, I32 0) ]) in
+  let pages, dict = dictionary_pages words indices in
+  let start = 4 + String.length other in
+  let file =
+    parquet ~rows:3
+      ~column:[ (1, I32 6); (6, I32 0) ]
+      ~chunk:[ (9, I64 (start + dict)); (11, I64 4) ]
+      (other ^ pages)
+  in
+  equal
+    (array (option string))
+    [| Some "bb"; Some "a"; Some "bb" |]
+    (Column.options Kind.string (Error.get_ok (read_x file)))
+
 let dictionary_one_length =
   prop "dictionary-encoded words of one length read as their words"
     one_length_case (fun (l, words, indices) ->
@@ -2036,6 +2054,8 @@ let sources =
       hybrid_bit_runs;
       dictionary_text;
       dictionary_one_length;
+      test "a page of another type may precede the dictionary page"
+        other_page_first;
       in_scan_filters;
       invalid_words;
       test

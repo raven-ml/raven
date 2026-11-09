@@ -4155,6 +4155,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Talon_parquet` reads a column chunk whose first page is a type it skips
+  before a dictionary page; it raised `Invalid_argument`.
 - `Talon_parquet` gathers dictionary-encoded byte strings of one length, such
   as one-byte flags, as rows of that length, instead of copying each word.
 - `Query.filter`, and a filter that a Parquet scan applies itself, copy whole

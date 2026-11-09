@@ -1131,14 +1131,17 @@ let read_chunk ~scratch b (m : Meta.file) ~row_group i (l : Leaf.t)
             with_idx ())
     | _ -> with_idx ()
   in
-  (* The first page makes the table, and the dictionary indices if it is the
-     dictionary's: the claims are taken after it. *)
-  let pages pos stop =
+  (* The first page that is read makes the table, and the dictionary indices
+     if it is the dictionary's: the claims are taken after it. *)
+  let rec pages pos stop =
     if pos < stop then begin
       let pos = page pos stop in
-      if pos < stop then hold (fun () -> rest pos stop);
-      held_bytes := None;
-      held_idx := None
+      if Option.is_none !tbl then pages pos stop
+      else begin
+        if pos < stop then hold (fun () -> rest pos stop);
+        held_bytes := None;
+        held_idx := None
+      end
     end
   in
   (* [claimed pos stop] is the entries the pages' headers add up to, without
