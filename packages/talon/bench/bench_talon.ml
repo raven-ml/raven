@@ -737,6 +737,54 @@ let unnest_keep () =
     Query.(
       of_table lists |> unnest Expr.[ keep (Sel.names [ "xs" ]) ])
 
+(* Many files: a query over 1,000 Parquet files of two rows, each with a
+   partition column derived as a literal. A filter on a partition column and
+   one mixing it with a file column empty or narrow each branch before any file
+   is read. The files are written once, the sources built once: the row plans
+   and runs the query. *)
+let many_files =
+  lazy
+    (let dir = Filename.temp_dir "talon-bench-many" "" in
+     let rec remove path =
+       if Sys.is_directory path then begin
+         Array.iter
+           (fun name -> remove (Filename.concat path name))
+           (Sys.readdir path);
+         Sys.rmdir path
+       end
+       else Sys.remove path
+     in
+     at_exit (fun () ->
+         Sys.chdir start_dir;
+         remove dir);
+     Sys.chdir dir;
+     let branch i =
+       let path = Printf.sprintf "part=%04d/f.parquet" i in
+       Sys.mkdir (Filename.dirname path) 0o755;
+       Out_channel.with_open_bin path (fun oc ->
+           let t =
+             Talon.v
+               [ ("x", Column.v Type.int64 [| i * 10; (i * 10) + 1 |]) ]
+           in
+           Error.get_ok
+             (Talon_parquet.encode
+                (Talon_parquet.format (Talon.schema t))
+                (Query.of_table t)
+                (Bytesrw.Bytes.Writer.of_out_channel oc)));
+       Query.(
+         of_source (Error.get_ok (Talon_parquet.file path))
+         |> derive Expr.[ "part" := store Type.int64 (int i) ])
+     in
+     let branches = List.init 1000 branch in
+     Sys.chdir start_dir;
+     branches)
+
+let many_files_mixed () =
+  run
+    Query.(
+      Kit.union_all (Lazy.force many_files)
+      |> filter Expr.(Col.int "part" = int 7 || Col.int "x" > int 9990))
+
 let () =
   Thumper.run "talon"
     [
@@ -861,6 +909,7 @@ let () =
           Thumper.bench "read-keys" read_keys;
           Thumper.bench "write-nullable" write_nulls;
           Thumper.bench "write-text" write_text;
+          Thumper.bench "many-files-1000-mixed-filter" many_files_mixed;
         ];
     ]
   |> exit
