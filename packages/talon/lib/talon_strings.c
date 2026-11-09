@@ -75,13 +75,14 @@ value talon_utf_8_invalid_byte(value b, value i, value stop)
   return Val_long(talon_utf_8_invalid(b, Long_val(i), Long_val(stop)));
 }
 
-/* [ascii(p, end)] is 1 iff every byte of [p, end) is below 0x80. */
-static int ascii(const uint8_t *p, const uint8_t *end)
+/* [ascii_run(p, end)] is the first byte of [p, end) at or above 0x80, or
+   [end]. */
+static const uint8_t *ascii_run(const uint8_t *p, const uint8_t *end)
 {
   uint64_t w;
   while (end - p >= 8 && (memcpy(&w, p, 8), (w & ASCII) == 0)) p += 8;
   while (p < end && *p < 0x80) p++;
-  return p == end;
+  return p;
 }
 
 /* [talon_utf_8_row(b, o, mask, n)] is the first of the [n] rows of [b], row
@@ -95,7 +96,7 @@ intnat talon_utf_8_row(value b, value o, value mask, intnat n)
   const uint8_t *v = Bytes_ba(b);
   const int64_t *off = Offsets_ba(o);
   const uint8_t *m = Is_block(mask) ? Bytes_ba(Field(mask, 0)) : NULL;
-  if (n > 0 && ascii(v + off[0], v + off[n])) return -1;
+  if (n > 0 && ascii_run(v + off[0], v + off[n]) == v + off[n]) return -1;
   for (intnat r = 0; r < n; r++) {
     if (m != NULL && ((m[r >> 3] >> (r & 7)) & 1) == 0) continue;
     if (invalid(v + off[r], v + off[r + 1]) != NULL) return r;
@@ -106,6 +107,45 @@ intnat talon_utf_8_row(value b, value o, value mask, intnat n)
 value talon_utf_8_row_byte(value b, value o, value mask, value n)
 {
   return Val_long(talon_utf_8_row(b, o, mask, Long_val(n)));
+}
+
+/* [talon_ascii_end(b, i, stop)] is the first byte of [b]'s [i, stop) at or
+   above 0x80, or [stop]. */
+intnat talon_ascii_end(value b, intnat i, intnat stop)
+{
+  const uint8_t *v = Bytes_ba(b);
+  return ascii_run(v + i, v + stop) - v;
+}
+
+value talon_ascii_end_byte(value b, value i, value stop)
+{
+  return Val_long(talon_ascii_end(b, Long_val(i), Long_val(stop)));
+}
+
+/* [talon_ascii_case(src, i, stop, dst, at, upper)] writes the bytes [i, stop)
+   of [src], all ASCII, to [dst] from [at], their case mapped: lower when
+   [upper] is 0, upper otherwise. The loop is the shape the compiler vectorises.
+   [src] and [dst] do not overlap. */
+void talon_ascii_case(value src, intnat i, intnat stop, value dst, intnat at,
+                      intnat upper)
+{
+  const uint8_t *s = Bytes_ba(src) + i;
+  uint8_t *d = (uint8_t *)Caml_ba_data_val(dst) + at;
+  intnat n = stop - i;
+  const uint8_t from = upper ? 'a' : 'A';
+  const uint8_t delta = upper ? (uint8_t)(0u - 0x20) : 0x20;
+  for (intnat k = 0; k < n; k++) {
+    uint8_t c = s[k];
+    d[k] = c + ((uint8_t)(c - from) < 26 ? delta : 0);
+  }
+}
+
+value talon_ascii_case_byte(value *argv, int argn)
+{
+  (void)argn;
+  talon_ascii_case(argv[0], Long_val(argv[1]), Long_val(argv[2]), argv[3],
+                   Long_val(argv[4]), Long_val(argv[5]));
+  return Val_unit;
 }
 
 /* [talon_find(b, i, stop, s)] is the first byte of [b]'s [i, stop) at which

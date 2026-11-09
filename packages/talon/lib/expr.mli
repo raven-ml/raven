@@ -124,6 +124,8 @@ module Str : sig
   val replace : string -> by:string -> (string, 's) t -> (string, 's) t
   val parse : 'a Type.t -> (string, 's) t -> ('a, 's) t
   val trim : (string, 's) t -> (string, 's) t
+  val lower : (string, 's) t -> (string, 's) t
+  val upper : (string, 's) t -> (string, 's) t
   val concat : string -> (string, 's) t list -> (string, 's) t
 end
 
@@ -317,6 +319,8 @@ type 'a node =
 and 'a text_op =
   | Length : int text_op
   | Trim : string text_op
+  | Lower : string text_op
+  | Upper : string text_op
   | Slice : { offset : int; length : int } -> string text_op
   | Matches : Str.pattern -> bool text_op
   | Split : string -> string array text_op

@@ -148,6 +148,8 @@ let print_operations () =
       str pp (Str.split ", " s);
       str pp (Str.replace "\"" ~by:"'" s);
       str pp (Str.trim s);
+      str pp (Str.lower s);
+      str pp (Str.upper s);
       str pp (Str.concat "_" [ s; string "x"; Str.trim s ]);
       str pp (Temporal.field `Hour ts);
       str pp (Temporal.field `Year (Col.date "d"));
@@ -189,6 +191,8 @@ let print_operations () =
             Str.split ", " s
             Str.replace "\"" ~by:"'" s
             Str.trim s
+            Str.lower s
+            Str.upper s
             Str.concat "_" [s; "x"; Str.trim s]
             Temporal.field `Hour ts
             Temporal.field `Year d

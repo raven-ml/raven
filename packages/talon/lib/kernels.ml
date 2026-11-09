@@ -334,6 +334,16 @@ let text : type a. a Expr.text_op -> Column.t -> checked =
       fun c ->
         let by = "Str.trim" and mask = Column.validity c in
         kept (Any Type.string) c (Bytes (Strings.trim ~by ?mask (bytes c)))
+  | Lower ->
+      fun c ->
+        let by = "Str.lower" and mask = Column.validity c in
+        kept (Any Type.string) c
+          (Bytes (Strings.map_case ~by ?mask Lower (bytes c)))
+  | Upper ->
+      fun c ->
+        let by = "Str.upper" and mask = Column.validity c in
+        kept (Any Type.string) c
+          (Bytes (Strings.map_case ~by ?mask Upper (bytes c)))
   | Replace { sub; by = into } ->
       fun c ->
         let by = "Str.replace" and mask = Column.validity c in

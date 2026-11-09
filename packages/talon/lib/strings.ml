@@ -189,6 +189,31 @@ let slice ~by ?mask ~offset ~length r =
       hi.(i) <- skip v lo.(i) stop (Int.max 0 (p1 - p0)));
   ranges ~by r lo hi
 
+(* [width v j stop] is the length of the UTF-8 sequence that starts at byte
+   [j] and ends by [stop], or 1 where none does. A string column holds valid
+   UTF-8, so this only keeps every read within the row. *)
+let width (v : buf) j stop =
+  let b0 = A.unsafe_get v j in
+  let w =
+    if b0 < 0xc0 then 1
+    else if b0 < 0xe0 then 2
+    else if b0 < 0xf0 then 3
+    else if b0 < 0xf8 then 4
+    else 1
+  in
+  if j + w > stop then 1 else w
+
+(* [scalar v j w] is the scalar value of the [w] bytes at [j], [w] > 1. *)
+let scalar (v : buf) j w =
+  let b0 = A.unsafe_get v j and b1 = A.unsafe_get v (j + 1) land 0x3f in
+  if w = 2 then ((b0 land 0x1f) lsl 6) lor b1
+  else
+    let b2 = A.unsafe_get v (j + 2) land 0x3f in
+    if w = 3 then ((b0 land 0x0f) lsl 12) lor (b1 lsl 6) lor b2
+    else
+      let b3 = A.unsafe_get v (j + 3) land 0x3f in
+      ((b0 land 0x07) lsl 18) lor (b1 lsl 12) lor (b2 lsl 6) lor b3
+
 (* White space *)
 
 (* [is_white_space u] is [true] iff the scalar value [u] has Unicode's
@@ -202,20 +227,13 @@ let is_white_space u =
   || u = 0x2028 || u = 0x2029 || u = 0x202F || u = 0x205F || u = 0x3000
 
 (* [white_at v j stop] is the length of the UTF-8 sequence of a white space
-   scalar value that starts at byte [j] and ends by [stop], or [0]. A byte that
-   starts no sequence of at most three bytes reads as no white space. *)
+   scalar value that starts at byte [j] and ends by [stop], or [0]. *)
 let white_at (v : buf) j stop =
   let b0 = A.unsafe_get v j in
   if b0 < 0x80 then if is_white_space b0 then 1 else 0
-  else if b0 land 0xe0 = 0xc0 && j + 1 < stop then
-    let b1 = A.unsafe_get v (j + 1) land 0x3f in
-    if is_white_space (((b0 land 0x1f) lsl 6) lor b1) then 2 else 0
-  else if b0 land 0xf0 = 0xe0 && j + 2 < stop then
-    let b1 = A.unsafe_get v (j + 1) land 0x3f in
-    let b2 = A.unsafe_get v (j + 2) land 0x3f in
-    if is_white_space (((b0 land 0x0f) lsl 12) lor (b1 lsl 6) lor b2) then 3
-    else 0
-  else 0
+  else
+    let w = width v j stop in
+    if w > 1 && is_white_space (scalar v j w) then w else 0
 
 (* [skip_white v j stop] is the first byte from [j] that starts no white space
    before [stop]. *)
@@ -243,6 +261,206 @@ let trim ~by ?mask r =
       lo.(i) <- l;
       hi.(i) <- back_white v l stop);
   ranges ~by r lo hi
+
+(* Case mapping
+
+   Unicode's Default Case Conversion, one scalar at a time through the
+   generated tables. A mapped row can have more or fewer bytes than the row it
+   maps, so a first pass adds up each row's size and a second writes it. Final
+   sigma changes neither pass's size: its two lowercase forms are two bytes
+   each. *)
+
+type case = Lower | Upper
+
+(* ASCII runs, in C: [ascii_end] finds a run's end, [ascii_case] maps its bytes
+   in a loop the compiler vectorises. *)
+external ascii_end :
+  buf -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
+  = "talon_ascii_end_byte" "talon_ascii_end"
+[@@noalloc]
+
+external ascii_case :
+  buf ->
+  (int[@untagged]) ->
+  (int[@untagged]) ->
+  buf ->
+  (int[@untagged]) ->
+  (int[@untagged]) ->
+  unit = "talon_ascii_case_byte" "talon_ascii_case"
+[@@noalloc]
+
+let scalar_width u =
+  if u < 0x80 then 1 else if u < 0x800 then 2 else if u < 0x10000 then 3 else 4
+
+(* [put b at u] writes [u]'s bytes at [at] and is the next byte. *)
+let put (b : buf) at u =
+  if u < 0x80 then (
+    A.unsafe_set b at u;
+    at + 1)
+  else if u < 0x800 then (
+    A.unsafe_set b at (0xc0 lor (u lsr 6));
+    A.unsafe_set b (at + 1) (0x80 lor (u land 0x3f));
+    at + 2)
+  else if u < 0x10000 then (
+    A.unsafe_set b at (0xe0 lor (u lsr 12));
+    A.unsafe_set b (at + 1) (0x80 lor ((u lsr 6) land 0x3f));
+    A.unsafe_set b (at + 2) (0x80 lor (u land 0x3f));
+    at + 3)
+  else (
+    A.unsafe_set b at (0xf0 lor (u lsr 18));
+    A.unsafe_set b (at + 1) (0x80 lor ((u lsr 12) land 0x3f));
+    A.unsafe_set b (at + 2) (0x80 lor ((u lsr 6) land 0x3f));
+    A.unsafe_set b (at + 3) (0x80 lor (u land 0x3f));
+    at + 4)
+
+(* [entry t u] is [u]'s entry in [t]: a delta below [Array.length t.deltas], a
+   mapping of several scalars from there on, 0 for none. *)
+let entry (t : Case_tables.table) u =
+  if u >= t.limit then 0
+  else
+    let open Case_tables in
+    let block = Char.code (String.unsafe_get t.index (u lsr block_bits)) in
+    let within = u land ((1 lsl block_bits) - 1) in
+    Char.code (String.unsafe_get t.blocks ((block lsl block_bits) lor within))
+
+let sigma = 0x03a3
+let final_small_sigma = 0x03c2
+
+(* [within bounds u lo hi] is [true] iff [u] lies in the ranges that the
+   ascending [bounds] start and end by turns: an odd count of bounds at or below
+   [u], searched in [\[lo, hi)]. *)
+let rec within bounds u lo hi =
+  if lo = hi then lo land 1 = 1
+  else
+    let mid = (lo + hi) / 2 in
+    if bounds.(mid) <= u then within bounds u (mid + 1) hi
+    else within bounds u lo mid
+
+let cased u = within Case_tables.cased u 0 (Array.length Case_tables.cased)
+
+let case_ignorable u =
+  within Case_tables.case_ignorable u 0
+    (Array.length Case_tables.case_ignorable)
+
+(* [before v first j] is [true] iff a cased scalar comes before byte [j] of
+   the row starting at [first], past case-ignorable ones: the possessive scan
+   Unicode's Final_Sigma specifies, so a scalar that is both is skipped. *)
+let rec before (v : buf) first j =
+  if j <= first then false
+  else begin
+    let k = ref (j - 1) in
+    while !k > first && not (starts_scalar v !k) do
+      decr k
+    done;
+    let w = width v !k j in
+    let u = if w = 1 then A.unsafe_get v !k else scalar v !k w in
+    if case_ignorable u then before v first !k else cased u
+  end
+
+(* [uncased_after v j stop] is [true] iff no cased scalar follows byte [j],
+   past case-ignorable ones, likewise. *)
+let rec uncased_after (v : buf) j stop =
+  if j >= stop then true
+  else begin
+    let w = width v j stop in
+    let u = if w = 1 then A.unsafe_get v j else scalar v j w in
+    if case_ignorable u then uncased_after v (j + w) stop else not (cased u)
+  end
+
+(* [mapped_size t v stop j n] is [n] plus the bytes of the mapped scalars of
+   [\[j, stop)]. *)
+let rec mapped_size (t : Case_tables.table) (v : buf) stop j n =
+  if j >= stop then n
+  else if A.unsafe_get v j < 0x80 then
+    let r = ascii_end v j stop in
+    mapped_size t v stop r (n + r - j)
+  else
+    let w = width v j stop in
+    if w = 1 then mapped_size t v stop (j + 1) (n + 1)
+    else
+      let u = scalar v j w in
+      let e = entry t u and deltas = Array.length t.deltas in
+      let size =
+        if e = 0 then w
+        else if e < deltas then scalar_width (u + Array.unsafe_get t.deltas e)
+        else String.length t.full.(e - deltas)
+      in
+      mapped_size t v stop (j + w) (n + size)
+
+let ascii_flag = function Lower -> 0 | Upper -> 1
+
+(* [put_string b at s] writes [s] at [at] and is the next byte. *)
+let put_string (b : buf) at s =
+  for k = 0 to String.length s - 1 do
+    A.unsafe_set b (at + k) (Char.code (String.unsafe_get s k))
+  done;
+  at + String.length s
+
+(* [put_mapped c t v first stop b j at] writes the mapped scalars of
+   [\[j, stop)], of the row from [first], to [b] from [at]. *)
+let rec put_mapped c (t : Case_tables.table) (v : buf) first stop (b : buf) j at
+    =
+  if j < stop then
+    if A.unsafe_get v j < 0x80 then begin
+      let r = ascii_end v j stop in
+      ascii_case v j r b at (ascii_flag c);
+      put_mapped c t v first stop b r (at + r - j)
+    end
+    else
+      let w = width v j stop in
+      if w = 1 then begin
+        A.unsafe_set b at (A.unsafe_get v j);
+        put_mapped c t v first stop b (j + 1) (at + 1)
+      end
+      else
+        let u = scalar v j w in
+        let next =
+          if
+            u = sigma && c = Lower && before v first j
+            && uncased_after v (j + w) stop
+          then put b at final_small_sigma
+          else
+            let e = entry t u and deltas = Array.length t.deltas in
+            if e = 0 then begin
+              blit v j b at w;
+              at + w
+            end
+            else if e < deltas then
+              put b at (u + Array.unsafe_get t.deltas e)
+            else put_string b at t.full.(e - deltas)
+        in
+        put_mapped c t v first stop b (j + w) next
+
+let map_case ~by ?mask case r =
+  let n = Nx_ragged.length r in
+  let t =
+    match case with Lower -> Case_tables.lower | Upper -> Case_tables.upper
+  in
+  host ~by ?mask r @@ fun o v m ->
+  let first = Int64.to_int (A.unsafe_get o 0)
+  and stop = Int64.to_int (A.unsafe_get o n) in
+  if Option.is_none m && ascii_end v first stop = stop then begin
+    (* No row changes length, so one loop maps the column's bytes whole. *)
+    let row i = Int64.to_int (A.unsafe_get o i) in
+    let offsets, size = cumulative n (fun i -> row (i + 1) - row i) in
+    let bytes = fresh Nx.uint8 size in
+    (fill bytes @@ fun (b : buf) ->
+     ascii_case v first stop b 0 (ascii_flag case));
+    Nx_ragged.v ~offsets:(value offsets) (value bytes)
+  end
+  else begin
+    let sizes = Array.make n 0 in
+    rows ~by ?mask r (fun i v first stop ->
+        sizes.(i) <- mapped_size t v stop first 0);
+    let offsets, total = cumulative n (Array.get sizes) in
+    let bytes = fresh Nx.uint8 total in
+    (fill bytes @@ fun (b : buf) ->
+     peek offsets @@ fun (at : int64s) ->
+     rows ~by ?mask r (fun i v first stop ->
+         let at = Int64.to_int (A.unsafe_get at i) in
+         put_mapped case t v first stop b first at));
+    Nx_ragged.v ~offsets:(value offsets) (value bytes)
+  end
 
 (* Joining *)
 

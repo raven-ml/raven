@@ -4155,6 +4155,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Expr.Str.lower` and `Expr.Str.upper` map text by Unicode 18.0.0's full case
+  mappings, with final sigma and without any language's tailoring. A mapping
+  can change a row's byte length.
 - New `talon.json` library: `Talon_json` reads and writes JSON and NDJSON from
   `Bytesrw` readers, with `sniff`, `format`, `with_type`, `decode`, `source`,
   `file` and `encode`. Objects read as records and arrays as lists, batches

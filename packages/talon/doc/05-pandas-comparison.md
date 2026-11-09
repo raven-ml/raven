@@ -202,6 +202,7 @@ problem: talon adds no suffixes, so rename one side first.
 | `s.str.startswith("sub")` | `Expr.Str.(matches (prefix "sub") s)` |
 | `s.str.split("_")` | `Expr.Str.split "_" s` |
 | `s.str.replace("a", "b", regex=False)` | `Expr.Str.replace "a" ~by:"b" s` |
+| `s.str.lower()` / `s.str.upper()` | `Expr.Str.lower s` / `Expr.Str.upper s` |
 | `pd.to_datetime(s, format="%d/%m/%Y")` | `Expr.Temporal.parse "%d/%m/%Y" Type.date s` |
 | `t.dt.year` | ``Expr.Temporal.field `Year (Expr.Temporal.wall zone t)`` |
 | `t.dt.floor("D")` | `Expr.Temporal.floor (Time.Days 1) (Expr.Temporal.wall zone t)` |

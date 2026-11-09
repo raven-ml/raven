@@ -193,3 +193,11 @@
  (modules test_grids)
  (package talon)
  (libraries windtrap talon nx))
+
+(test
+ (name test_case)
+ (modules test_case)
+ (package talon)
+ (libraries windtrap talon nx)
+ (deps
+  (file golden/case.txt)))

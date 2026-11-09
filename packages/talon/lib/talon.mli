@@ -1770,6 +1770,23 @@ module Expr : sig
         U+FEFF, which have no width, are kept, and text of white space alone
         trims to the empty text. *)
 
+    val lower : (string, 's) t -> (string, 's) t
+    (** [lower a] is [a] in lowercase by Unicode's Default Case Conversion
+        (Unicode 18.0.0, chapter 3, 3.13): each scalar value maps to its full
+        lowercase mapping, from SpecialCasing.txt where it has an unconditional
+        entry and from UnicodeData.txt otherwise, so the text can change byte
+        length (U+0130 lowers to [i] and U+0307, three bytes for two). U+03A3
+        lowers to U+03C2, the final form, where a Cased scalar precedes it and
+        no Cased scalar follows it, Case_Ignorable scalars being passed over on
+        both sides as Table 3-17's Final_Sigma states, and to U+03C3 otherwise.
+        No language's tailoring is applied: Turkish, Azeri and Lithuanian text
+        lowers as any other. *)
+
+    val upper : (string, 's) t -> (string, 's) t
+    (** [upper a] is [a] in uppercase by the same rules, from the full uppercase
+        mappings: U+00DF becomes [SS], and U+FB03 [FFI]. Uppercase mapping
+        depends on no context, and no language's tailoring is applied. *)
+
     val concat : string -> (string, 's) t list -> (string, 's) t
     (** [concat sep es] is the texts of [es] joined by the literal [sep], as
         [String.concat sep] joins strings: [concat "_" [ session; unit ]] of

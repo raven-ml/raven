@@ -421,6 +421,34 @@ let texts =
   in
   Column.v Type.string (Array.map (fun x -> Printf.sprintf "%.17g" (1000. *. x)) xs)
 
+(* Case mapping over the same 2^16 ASCII texts, with and without a null, so
+   that the whole-column path and the row-by-row one each have a row, and over
+   2^16 Greek words of mostly two-byte scalars, to show what non-ASCII text
+   pays. *)
+let case_texts = v [ ("s", texts) ]
+
+let case_nulls =
+  let null i x = if i mod 16 = 0 then None else x in
+  v
+    [
+      ( "s",
+        Column.of_options Type.string
+          (Array.mapi null (Column.options Kind.string texts)) );
+    ]
+
+let greek =
+  let alpha = "\xce\x91" and sigma = "\xce\xa3" and omikron = "\xce\x9f" in
+  let words = [| alpha ^ sigma; omikron ^ sigma ^ alpha; "\xce\xb5 " ^ sigma |] in
+  v
+    [
+      ( "s",
+        Column.v Type.string
+          (Array.init (1 lsl 16) (fun i -> words.(i mod Array.length words))) );
+    ]
+
+let map_case f t =
+  run Query.(of_table t |> select Expr.[ "out" := f (Col.string "s") ])
+
 let parse_floats () = Result.get_ok (Column.parse float64 texts)
 
 let read_file file =
@@ -732,6 +760,14 @@ let () =
                 Query.(
                   of_table nulls
                   |> filter Expr.(is_in texts (Col.string "s"))));
+          Thumper.bench "Text/lower-ascii-64k" (fun () ->
+              map_case Expr.Str.lower case_texts);
+          Thumper.bench "Text/lower-ascii-nulls-64k" (fun () ->
+              map_case Expr.Str.lower case_nulls);
+          Thumper.bench "Text/lower-greek-64k" (fun () ->
+              map_case Expr.Str.lower greek);
+          Thumper.bench "Text/upper-greek-64k" (fun () ->
+              map_case Expr.Str.upper greek);
           Thumper.bench "Hash/int-1M" (fun () -> hash_keys (Col.int "i"));
           Thumper.bench "Hash/text-1M" (fun () -> hash_keys (Col.string "s"));
           Thumper.bench "Window/rolling-mean-28-1M" (fun () ->

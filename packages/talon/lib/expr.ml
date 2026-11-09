@@ -149,6 +149,8 @@ and 'a node =
 and 'a text_op =
   | Length : int text_op
   | Trim : string text_op
+  | Lower : string text_op
+  | Upper : string text_op
   | Slice : { offset : int; length : int } -> string text_op
   | Matches : pattern -> bool text_op
   | Split : string -> string array text_op
@@ -259,6 +261,8 @@ let reduction_name : type a b. (a, b) reduction -> string = function
 let text_op_name : type a. a text_op -> string = function
   | Length -> "Str.length"
   | Trim -> "Str.trim"
+  | Lower -> "Str.lower"
+  | Upper -> "Str.upper"
   | Slice _ -> "Str.slice"
   | Matches _ -> "Str.matches"
   | Split _ -> "Str.split"
@@ -357,7 +361,7 @@ let reduction_equal : type a b c d. (a, b) reduction -> (c, d) reduction -> bool
 let text_op_equal : type a b. a text_op -> b text_op -> bool =
  fun op0 op1 ->
   match (op0, op1) with
-  | Length, Length | Trim, Trim -> true
+  | Length, Length | Trim, Trim | Lower, Lower | Upper, Upper -> true
   | Slice s0, Slice s1 ->
       Int.equal s0.offset s1.offset && Int.equal s0.length s1.length
   | Matches p0, Matches p1 -> pattern_equal p0 p1
@@ -365,7 +369,9 @@ let text_op_equal : type a b. a text_op -> b text_op -> bool =
   | Replace r0, Replace r1 ->
       String.equal r0.sub r1.sub && String.equal r0.by r1.by
   | Parse ty0, Parse ty1 -> Type.equal ty0 ty1
-  | (Length | Trim | Slice _ | Matches _ | Split _ | Replace _ | Parse _), _ ->
+  | ( ( Length | Trim | Lower | Upper | Slice _ | Matches _ | Split _
+      | Replace _ | Parse _ ),
+      _ ) ->
       false
 
 (* [calendar_equal op0 op1] is [true] iff [op0] and [op1] are one operation with
@@ -819,7 +825,7 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
               (fun ppf -> Format.fprintf ppf "~by:%a" Type.pp_quoted by);
             ]
         | Parse ty -> [ (fun ppf -> Type.pp ppf ty) ]
-        | Length | Trim -> []
+        | Length | Trim | Lower | Upper -> []
       in
       app (text_op_name op) (attributes @ [ arg a ])
   | Concat (sep, es) ->
@@ -2228,6 +2234,8 @@ and text : type a s. env -> a text_op -> (string, s) t -> a elab =
           match op with
           | Length -> known int64
           | Trim -> known (Column Type.string)
+          | Lower -> known (Column Type.string)
+          | Upper -> known (Column Type.string)
           | Slice _ -> known (Column Type.string)
           | Matches _ -> known bool_typing
           | Split _ -> known (Column (Type.list Type.string))
@@ -2813,6 +2821,8 @@ module Str = struct
 
   let parse ty a = text (Parse ty) a
   let trim a = text Trim a
+  let lower a = text Lower a
+  let upper a = text Upper a
 
   let concat sep es =
     check_utf_8 "Expr.Str.concat" sep;

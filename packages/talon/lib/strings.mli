@@ -79,6 +79,16 @@ val trim : by:string -> ?mask:Nx.host Nx.bit_t -> bytes -> bytes
     Unicode's White_Space property at its start and end. A row outside [mask] is
     empty. *)
 
+(** The type for the two directions of case mapping. *)
+type case = Lower | Upper
+
+val map_case : by:string -> ?mask:Nx.host Nx.bit_t -> case -> bytes -> bytes
+(** [map_case ~by c b] is each row of [b], valid UTF-8, with its case mapped by
+    Unicode's Default Case Conversion over the full mappings and Final_Sigma,
+    without any language's tailoring. A row may grow or shrink: U+0130, two
+    bytes, lowers to two scalars of three bytes in all; U+1E9E, three bytes,
+    lowers to two. A row outside [mask] is empty. *)
+
 (** The type for patterns that text matches. Each string is valid UTF-8 and not
     empty. *)
 type pattern =

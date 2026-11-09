@@ -320,7 +320,8 @@ let labels =
 
 `Expr.Str` works on text by Unicode scalar values: `length`, `slice`,
 `matches` with a `literal`, `prefix`, `suffix` or `pieces` pattern, `split`
-and `replace` on literals, and `parse`, which reads text as a typed value.
+and `replace` on literals, `lower` and `upper` by Unicode's full case mappings,
+and `parse`, which reads text as a typed value.
 
 ## Time
 
