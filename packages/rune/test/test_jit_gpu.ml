@@ -13,7 +13,8 @@
    and a program over the GPU and a memory device, devices of two targets,
    compiles to eager's values with replicas equal bit for bit, a running
    operation of a prefix is the prefix of its result, attention holds its
-   bound against a float64 reference and gives +0 for a sum of zeros, exp
+   bound against a float64 reference and gives +0 for a sum of zeros, a sum
+   of a contraction's result holds its bound, exp
    holds its bound in ulps of the correctly rounded result, and a range
    gather and its gradient compile to eager's bits. It skips without a GPU,
    or without the compiler the GPU's kernels need. *)
@@ -109,6 +110,92 @@ let attention_grad ~vmap c =
   let d, s = on_gpu () in
   if c.Attentions.dtype = Nx.Dtype.Any Nx.float64 then assume (has_float64 d);
   Attentions.grad_law s ~vmap c
+
+(* A sum of a weighted contraction's result, with products past those a
+   compiled reduction fuses over, holds the contraction's and the sum's bound
+   [γ(n) Σ |w| |a| |b|] against a float64 reference, for the [n] floating
+   additions and products a term takes: fewer than 65600, so [4e-3]. *)
+let sum_of_contraction () =
+  let _, (module S : Nx.Devices) = on_gpu () in
+  let draw i s = Nx.Rng.normal ~key:(Nx.Rng.key i) Nx.float32 s in
+  let a = draw 1 [| 256; 64 |] and b = draw 2 [| 64; 256 |] in
+  let w = draw 3 [| 256; 256 |] in
+  let p = Nx.Pattern.v "i j, j k -> i k | j" in
+  let f (type s d) (acc : (float, s) Nx.dtype) (w : (float, s, d) Nx.t) a b =
+    Nx.sum (Nx.mul w (Nx.contract acc p a b))
+  in
+  let compiled =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+      (f Nx.float32)
+      (Nx.place S.on w) (Nx.place S.on a) (Nx.place S.on b)
+  in
+  let f64 x = Nx.cast Nx.float64 x in
+  let exact = Nx.item [] (f Nx.float64 (f64 w) (f64 a) (f64 b)) in
+  let mass =
+    Nx.item []
+      (Nx.sum
+         (Nx.mul (Nx.abs (f64 w))
+            (Nx.contract Nx.float64 p (Nx.abs (f64 a)) (Nx.abs (f64 b)))))
+  in
+  at_most ~msg:"the sum" float_exact ~than:(4e-3 *. mass)
+    (Float.abs (Nx.item [] (Nx.place Nx.Host.on compiled) -. exact))
+
+(* A sum over a broadcast of a contraction's result holds the result, which
+   tolk stores before the broadcast, and never the broadcast: 256 KiB against
+   64 MiB here, which at a user's sizes would not fit the device. The bound
+   leaves room for the kernels and the arguments' copies. *)
+let sum_of_broadcast () =
+  let gpu, (module S : Nx.Devices) = on_gpu () in
+  let draw i s = Nx.place S.on (Nx.Rng.normal ~key:(Nx.Rng.key i) Nx.float32 s) in
+  let a = draw 1 [| 256; 64 |] and b = draw 2 [| 64; 256 |] in
+  let p = Nx.Pattern.v "i j, j k -> i k | j" in
+  let f =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      (fun a b ->
+        Nx.sum (Nx.broadcast_to [| 256; 256; 256 |] (Nx.contract Nx.float32 p a b)))
+  in
+  let before = Rig.allocated gpu in
+  Nx.sync (f a b);
+  at_most ~msg:"the bytes the call holds" Testable.int ~than:(16 * 1024 * 1024)
+    (Rig.allocated gpu - before)
+
+(* Forward mode of a loss over attention, whose tangent sums the pair loop's
+   contractions (8 heads, 64 rows, 128 keys of 64 dimensions) and is summed
+   again: compiled in float32 against the host's float64 within [1e-2]
+   relative, set by hand as rounding dominates. *)
+let attention_jvp () =
+  let _, (module S : Nx.Devices) = on_gpu () in
+  let draw i s = Nx.Rng.normal ~key:(Nx.Rng.key i) Nx.float32 s in
+  let q = draw 1 [| 1; 8; 64; 64 |] and w = draw 2 [| 1; 8; 64; 64 |] in
+  let k = draw 3 [| 1; 8; 128; 64 |] and v = draw 4 [| 1; 8; 128; 64 |] in
+  let tq = draw 5 (Nx.shape q) and tk = draw 6 (Nx.shape k) in
+  let tv = draw 7 (Nx.shape v) in
+  let jvp (type a d) (acc : (float, a) Nx.dtype) (w : (float, a, d) Nx.t) xs ts =
+    let s = Nx.Ptree.(list tensor) in
+    let loss = function
+      | [ q; k; v ] ->
+          let o, _ = Nx.attention ~acc ~kv:(Nx.Dense { k; v }) q in
+          Nx.sum (Nx.mul w o)
+      | _ -> invalid_arg "loss"
+    in
+    snd (Rune.jvp s Nx.Ptree.tensor loss xs ts)
+  in
+  let on x = Nx.place S.on x and f64 x = Nx.cast Nx.float64 x in
+  let compiled =
+    Rune.jit
+      Nx.Ptree.(list tensor @-> list tensor @-> returns tensor)
+      (jvp Nx.float32 (on w))
+      [ on q; on k; on v ] [ on tq; on tk; on tv ]
+  in
+  let exact =
+    Nx.item []
+      (jvp Nx.float64 (f64 w) [ f64 q; f64 k; f64 v ] [ f64 tq; f64 tk; f64 tv ])
+  in
+  at_most ~msg:"the tangent" float_exact
+    ~than:(1e-2 *. (1. +. Float.abs exact))
+    (Float.abs (Nx.item [] (Nx.place Nx.Host.on compiled) -. exact))
 
 let attention_dtypes =
   Nx.Dtype.[ Any Nx.float16; Any Nx.bfloat16; Any Nx.float32; Any Nx.float64 ]
@@ -1461,6 +1548,12 @@ let () =
                ~id:(fun (Nx.Dtype.Any dt) -> Nx.Dtype.name dt)
                Nx.Dtype.[ Any Nx.float32; Any Nx.bfloat16; Any Nx.float16 ]
                (fun dt -> Attentions.zero_sums (snd (on_gpu ())) dt);
+             test "forward mode of a summed loss holds its bound" attention_jvp;
+           ];
+         group "a contraction a reduction reads"
+           [
+             test "holds its bound" sum_of_contraction;
+             test "over a broadcast stores no broadcast" sum_of_broadcast;
            ];
          group "linear algebra"
            [

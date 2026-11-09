@@ -1281,3 +1281,23 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   bound against a float64 reference`, `› its compiled gradient holds
   rune's bound against a float64 reference` and `› its gradient mapped by
   vmap holds rune's bound against a float64 reference`; the rows above.
+
+### L12. A reduction reads a large contraction from storage on a GPU
+
+- **Reference:** `schedule/indexing.py:214-215` ("fusion decision: REDUCE
+  before the broadcast"): a reduction is stored where a broadcast ends its
+  ranges, and otherwise fuses into the reduction that reads it.
+- **Raven:** `compile.ml` (`issue`, `fused_products`, `products`, `flows`).
+- **Differs:** on a GPU, a reduction reads the result of a contraction of
+  at least `2^21` products, or a map or move of one other than a broadcast,
+  from storage, where tinygrad fuses the two into one kernel.
+- **Class:** same value; the store rounds nothing, the result being rounded
+  to its dtype at the contraction's close.
+- **Reason:** (d): the fused kernel's two nested reductions take no tile or
+  tensor core. `Cuda/sum-of-contraction-4096x512x4096` 46.5 to 1.1 ms and
+  `Cuda/attention/jit-jvp-bf16-8x2048x64-full` 29.4 to 4.0 ms on fudge's RTX
+  5000 Ada, under load. Rune decides it because only rune sees a contraction:
+  tolk's reductions are alike, and a sum of a sum gains nothing.
+- **Pinned by:** `Rune.jit on a GPU › a contraction a reduction reads › holds
+  its bound`, `› over a broadcast stores no broadcast`, `› attention › forward mode of a
+  summed loss holds its bound`; the rows above.

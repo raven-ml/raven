@@ -260,6 +260,9 @@ type state = {
   dsts : dst Ops.Tbl.t;
       (** The storage each scatter that combines in a kernel of its own
           combines into, by its result's node without reshapes. *)
+  summed : unit Ops.Tbl.t;
+      (** Nodes that hold a contraction's result, or a map or move of one
+          ({!fused_products}): a node keeps it across inlined programs. *)
 }
 
 let view_of st u = Ops.Tbl.replace st.views (Ops.base u) ()
@@ -726,6 +729,44 @@ let env_of ~split ?(carried = 0) ?donated (p : Program.t) =
   }
 
 let var env x = slot env.p x
+
+(* A reduction on a GPU reads a contraction's result, or a map or move of
+   one other than a broadcast, from storage once the contraction has [fused_products] products
+   ({!products}). Left fused, the products run inside the reduction's own
+   ranges, a nest no tile or tensor core takes: a sum of a weighted contraction
+   of 4096 × 512 × 4096 float32 products took 46.5 ms fused and 1.1 ms stored
+   on fudge's RTX 5000 Ada, and [2{^21}] products at the fused rate take about
+   a launch's 10 us. Storing costs a buffer of the result's shape. On the host,
+   whose loops are the same either way, it only costs: at 2048 rows of 64, 49.4
+   against 48.4 ms. *)
+let fused_products = 1 lsl 21
+
+(* The products of a contraction of [a] with [b] over [contracting], which
+   sums; of none, it runs no loop inside the reduction. *)
+let products a b batch contracting =
+  if Iarray.length contracting = 0 then 0
+  else
+    let sb = Nx.shape b in
+    let pair n (_, j) = n * sb.(j) in
+    let paired = Iarray.fold_left pair (Iarray.fold_left pair 1 batch) contracting in
+    numel (Nx.shape a) * (numel sb / max 1 paired)
+
+type pred = { f : 'v 's 'd. ('v, 's, 'd) Nx.t -> bool }
+
+(* Whether [f] holds of an operand whose elements [op]'s follow one for one: a
+   map's loads, or a move's, a copy's or a bitcast's operand, through which a
+   property of how a value is computed flows. *)
+let flows (type r) (op : r Nx.Prim.t) { f } =
+  match op with
+  | Map { loads; _ } ->
+      Iarray.exists
+        (fun (l : _ Nx.Prim.load) ->
+          match l with Plain x -> f x | Padded { x; _ } -> f x)
+        loads
+  | Move (_, x) -> f x
+  | Copy x -> f x
+  | Bitcast (_, x) -> f x
+  | _ -> false
 
 let node st env x =
   match var env x with
@@ -1355,7 +1396,11 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
         | t -> String.equal t.device "CPU"
         | exception Invalid_argument _ -> false
       in
-      let read x = node st env x in
+      let stored_reads = (not host) && match op with Reduce _ -> true | _ -> false in
+      let read x =
+        let u = node st env x in
+        if stored_reads && Ops.Tbl.mem st.summed u then Ops.contiguous u else u
+      in
       let step1 (r : A.Move.range) = r.step = 1 in
       let ys =
         match op with
@@ -1403,25 +1448,24 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
         match var env x with n when n >= 0 -> env.drawn.(n) | _ -> false
       in
       let drawn =
+        (match op with Map { prog; _ } -> Lower.draws prog | _ -> false)
+        || flows op { f = (fun x -> drawn_at x) }
+      in
+      let summed =
         match op with
-        | Map { prog; loads; _ } ->
-            Lower.draws prog
-            || Iarray.exists
-                 (fun (l : _ Nx.Prim.load) ->
-                   match l with
-                   | Plain x -> drawn_at x
-                   | Padded { x; _ } -> drawn_at x)
-                 loads
-        | Move (_, x) -> drawn_at x
-        | Copy x -> drawn_at x
-        | Bitcast (_, x) -> drawn_at x
-        | _ -> false
+        | Contract { a; b; batch; contracting; _ } ->
+            products a b batch contracting >= fused_products
+        (* tolk stores a reduction before it is broadcast; storing the
+           broadcast would hold its whole shape. *)
+        | Move (Broadcast _, _) -> false
+        | _ -> flows op { f = (fun x -> Ops.Tbl.mem st.summed (node st env x)) }
       in
       let ys =
         Array.mapi
           (fun k y ->
             let shared = env.shared.(base + k) in
             env.drawn.(base + k) <- drawn && not shared;
+            if summed then Ops.Tbl.replace st.summed y ();
             if drawn && shared then Ops.contiguous y else y)
           ys
       in
@@ -2534,6 +2578,7 @@ let lower ~rigs ~split ~uploads (p : Program.t) (forms : form array) ~layouts
       views = Ops.Tbl.create 8;
       loops = 0;
       dsts = Ops.Tbl.create 4;
+      summed = Ops.Tbl.create 8;
     }
   in
   let env = env_of ~split:st.split ~donated p in

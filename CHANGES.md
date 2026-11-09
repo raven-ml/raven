@@ -402,6 +402,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` on a GPU stores a contraction's result before a reduction
+  reads it, past 2^21 products: its products otherwise run inside the
+  reduction's loop nest, which no tile or tensor core takes. On an RTX 5000
+  Ada `Nx.sum` of a weighted 4096 x 512 x 4096 float32 contraction takes 1.1
+  ms against 46.5, and `Rune.jvp` of `Nx.attention` over 8 heads of 2048
+  bfloat16 rows 4.0 ms against 29.4.
 - `Rune.jit` compiles `Nx.top_k` of few elements, with keys of at most 32 bits,
   to two kernels where a sorting network took one per stage: 2 launches
   against 20 for gpt-oss's router over 32 experts.

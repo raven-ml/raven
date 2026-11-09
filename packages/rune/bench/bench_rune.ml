@@ -1406,6 +1406,33 @@ let attention_grad_call (type s) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~tk mask
         fun () -> ignore (synced_all s (f [ q; k; v ])));
   }
 
+(* Forward mode compiled: [Σ w∘o] along tangents of the query, keys and
+   values, over {!attention_call}'s call. *)
+let attention_jvp_call (type s) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~tk =
+  {
+    at =
+      (fun (type d) (at : d Nx.Placement.t) ->
+        let draw i s =
+          Nx.place at
+            (Nx.cast dt (Nx.Rng.normal ~key:(Nx.Rng.key i) f32 s))
+        in
+        let q = draw 80 [| 1; hq; tq; 64 |] and w = draw 83 [| 1; hq; tq; 64 |] in
+        let k = draw 81 [| 1; hk; tk; 64 |] and v = draw 82 [| 1; hk; tk; 64 |] in
+        let loss = function
+          | [ q; k; v ] ->
+              let o, _ = Nx.attention ~acc:f32 ~kv:(Nx.Dense { k; v }) q in
+              Nx.sum (Nx.mul (Nx.cast f32 w) (Nx.cast f32 o))
+          | _ -> invalid_arg "attention_jvp_call"
+        in
+        let s = Nx.Ptree.(list tensor) and ts = [ q; k; v ] in
+        let f =
+          Rune.jit
+            Nx.Ptree.(s @-> s @-> returns (pair tensor tensor))
+            (fun xs ts -> Rune.jvp s Nx.Ptree.tensor loss xs ts)
+        in
+        fun () -> ignore (synced2 (f [ q; k; v ] ts)));
+  }
+
 (* Attention compiled on the host: a causal prefill of 8 heads of 512 rows
    and a decode step of one row a head over 4096 keys, float32. *)
 let host_attention_rows () =
@@ -1761,6 +1788,23 @@ let gpu_rows g =
               in
               fun () -> ignore (synced2 (f p x y)));
         };
+      (* The sum of a weighted contraction's result: [w] of [4096 x 4096]
+         times [a × b] of [4096 x 512 x 4096] products, which a sum fused over
+         the products runs far slower than one reading them stored. *)
+      on_gpu g "sum-of-contraction-4096x512x4096"
+        {
+          at =
+            (fun at ->
+              let draw i s = Nx.place at (Nx.Rng.normal ~key:(Nx.Rng.key i) f32 s) in
+              let a = draw 90 [| 4096; 512 |] and b = draw 91 [| 512; 4096 |] in
+              let w = draw 92 [| 4096; 4096 |] in
+              let p = Nx.Pattern.v "i j, j k -> i k | j" in
+              let f =
+                Rune.jit (tri_fn ())
+                  (fun w a b -> Nx.sum (Nx.mul w (Nx.contract f32 p a b)))
+              in
+              fun () -> ignore (synced (f w a b)));
+        };
       (* A histogram: 2^20 updates added into 16 targets. *)
       on_gpu g "scatter-add-1048576-into-16"
         {
@@ -1810,6 +1854,8 @@ let gpu_rows g =
         (attention_grad_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
       on_gpu g "attention/jit-grad-bf16-8x2048x64-causal"
         (attention_grad_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Causal);
+      on_gpu g "attention/jit-jvp-bf16-8x2048x64-full"
+        (attention_jvp_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048);
       on_gpu g "attention/jit-bf16-decode-8x4096x64"
         (attention_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:1 ~tk:4096 Full);
       on_gpu g "attention/jit-f32-decode-8x4096x64"
