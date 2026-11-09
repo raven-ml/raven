@@ -154,7 +154,7 @@ let test_step_result_defaults () =
 
 let test_step_result_custom () =
   let obs = Nx.create Nx.float32 [| 1 |] [| 0.0 |] in
-  let info = Info.set "k" (Info.int 1) Info.empty in
+  let info = Info.set "k" (Value.Int 1) Info.empty in
   let s =
     Env.step_result ~observation:obs ~reward:5.0 ~terminated:true
       ~truncated:false ~info ()

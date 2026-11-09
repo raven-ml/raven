@@ -717,22 +717,24 @@ let (advantages, returns) =
     ~lambda:0.95
 ```
 
-When you have values from a rollout and a final bootstrap value:
+With a value network, evaluate it on each step's final state:
 
 <!-- $MDX skip -->
 ```ocaml
+let next_values = Array.map (estimate_value model) trajectory.next_observations
+
 let (advantages, returns) =
-  Gae.compute_from_values
+  Gae.compute
     ~rewards:trajectory.rewards
     ~values:(Option.get trajectory.values)
     ~terminated:trajectory.terminated
     ~truncated:trajectory.truncated
-    ~last_value:0.0
+    ~next_values
     ~gamma:0.99
     ~lambda:0.95
 ```
 
-`compute_from_values` builds `next_values` from `values` and `last_value` automatically: `next_values.(t) = values.(t+1)` for `t < n-1`, and `next_values.(n-1) = last_value`.
+`next_observations` holds that state even at a truncated step, where `values.(t + 1)` would belong to the next episode.
 
 ### 9.2 Monte Carlo returns
 
@@ -889,14 +891,14 @@ print(info.get("elapsed_steps", 0))
 <!-- $MDX skip -->
 ```ocaml
 let info = Info.of_list [
-  ("elapsed_steps", Info.int 42);
-  ("success", Info.bool true);
+  ("elapsed_steps", Value.Int 42);
+  ("success", Value.Bool true);
 ]
 
 let steps = Info.find "elapsed_steps" info  (* Value.t option *)
 let steps = Info.find_exn "elapsed_steps" info  (* Value.t, raises on missing *)
 
-let info' = Info.set "custom_key" (Info.float 3.14) info
+let info' = Info.set "custom_key" (Value.Float 3.14) info
 let info' = Info.merge info1 info2  (* info2 wins on conflicts *)
 let is_empty = Info.is_empty info
 ```

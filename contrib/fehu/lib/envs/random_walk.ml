@@ -45,7 +45,7 @@ let make ?render_mode () =
     let terminated = Float.abs clamped >= max_position in
     let truncated = (not terminated) && !steps >= max_steps in
     let reward = -.Float.abs clamped in
-    let info = Info.set "steps" (Info.int !steps) Info.empty in
+    let info = Info.set "steps" (Value.Int !steps) Info.empty in
     Env.step_result ~observation:(make_obs clamped) ~reward ~terminated
       ~truncated ~info ()
   in

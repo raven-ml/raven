@@ -33,21 +33,6 @@ let gae_benchmarks () =
     sizes;
   List.rev !benches
 
-let gae_from_values_benchmarks () =
-  let sizes = [ ("256", 256); ("1024", 1024); ("4096", 4096) ] in
-  let benches = ref [] in
-  List.iter
-    (fun (label, n) ->
-      let rewards, values, terminated, truncated, _ = make_arrays n in
-      benches :=
-        Thumper.bench (Printf.sprintf "compute_from_values n=%s" label)
-          (fun () ->
-            Gae.compute_from_values ~rewards ~values ~terminated ~truncated
-              ~last_value:0.0 ~gamma ~lambda)
-        :: !benches)
-    sizes;
-  List.rev !benches
-
 let returns_benchmarks () =
   let sizes = [ ("256", 256); ("1024", 1024); ("4096", 4096) ] in
   let benches = ref [] in
@@ -115,7 +100,6 @@ let buffer_create_benchmarks () =
 let build_benchmarks () =
   [
     Thumper.group "GAE" (gae_benchmarks ());
-    Thumper.group "GAE from values" (gae_from_values_benchmarks ());
     Thumper.group "Returns" (returns_benchmarks ());
     Thumper.group "Normalize" (normalize_benchmarks ());
     Thumper.group "Buffer add" (buffer_add_benchmarks ());

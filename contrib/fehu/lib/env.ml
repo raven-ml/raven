@@ -292,8 +292,8 @@ let time_limit ~max_episode_steps env =
   let steps = ref 0 in
   let add_info info elapsed =
     info
-    |> Info.set "time_limit.truncated" (Info.bool true)
-    |> Info.set "time_limit.elapsed_steps" (Info.int elapsed)
+    |> Info.set "time_limit.truncated" (Value.Bool true)
+    |> Info.set "time_limit.elapsed_steps" (Value.Int elapsed)
   in
   wrap
     ?id:(derive_id env "/TimeLimit")

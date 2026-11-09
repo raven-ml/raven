@@ -5,6 +5,11 @@ All notable changes to Fehu are documented in this file. Releases up to
 
 ## Unreleased
 
+- **Breaking:** `Info.null`, `bool`, `int`, `float`, `string`, `int_array`,
+  `float_array` and `bool_array` are removed: write the `Value` constructor,
+  as `Value.Int 3`, with `Array.copy` where the array later changes.
+- **Breaking:** `Gae.compute_from_values` is removed: pass `Gae.compute` a
+  `next_values` built from `values` and the last value estimate.
 - `Value.pp` writes a float as the shortest decimal that reads back, the same
   text on every system: `1000000` where it wrote `1e+06`, or `1e+006` under
   Windows, and every digit where it kept six.

@@ -201,17 +201,20 @@ let advantages, returns = Gae.compute
   ~lambda:0.95    (* GAE smoothing parameter *)
 ```
 
-When you have values from a value network and the last value estimate,
-`compute_from_values` builds `next_values` for you:
+With a value network, evaluate it on each step's final state.
+`trajectory.next_observations` holds that state even at a truncated step, where
+`values.(t + 1)` would belong to the next episode:
 
 <!-- $MDX skip -->
 ```ocaml
-let advantages, returns = Gae.compute_from_values
+let next_values = Array.map (estimate_value model) trajectory.next_observations
+
+let advantages, returns = Gae.compute
   ~rewards:trajectory.rewards
   ~values:(Option.get trajectory.values)
   ~terminated:trajectory.terminated
   ~truncated:trajectory.truncated
-  ~last_value:0.0   (* V(s_T) for the final state *)
+  ~next_values
   ~gamma:0.99
   ~lambda:0.95
 ```
@@ -293,13 +296,15 @@ let trajectory = Collect.rollout env
   ~n_steps:2048
 
 (* 2. Compute advantages *)
-let last_value = estimate_value model last_obs in
-let advantages, returns = Gae.compute_from_values
+let next_values =
+  Array.map (estimate_value model) trajectory.next_observations
+in
+let advantages, returns = Gae.compute
   ~rewards:trajectory.rewards
   ~values:(Option.get trajectory.values)
   ~terminated:trajectory.terminated
   ~truncated:trajectory.truncated
-  ~last_value
+  ~next_values
   ~gamma:0.99 ~lambda:0.95
 
 let advantages = Gae.normalize advantages

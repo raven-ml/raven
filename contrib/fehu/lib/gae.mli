@@ -31,24 +31,6 @@ val compute :
 
     Raises [Invalid_argument] if array lengths differ. *)
 
-val compute_from_values :
-  rewards:float array ->
-  values:float array ->
-  terminated:bool array ->
-  truncated:bool array ->
-  last_value:float ->
-  gamma:float ->
-  lambda:float ->
-  float array * float array
-(** [compute_from_values ~rewards ~values ~terminated ~truncated ~last_value
-     ~gamma ~lambda] is [(advantages, returns)].
-
-    Convenience wrapper around {!compute} that builds [next_values] from
-    [values] and [last_value]: [next_values.(t) = values.(t+1)] for [t < n-1],
-    and [next_values.(n-1) = last_value].
-
-    Raises [Invalid_argument] if array lengths differ. *)
-
 (** {1:returns Monte Carlo returns} *)
 
 val returns :

@@ -124,47 +124,6 @@ let test_returns_length_mismatch () =
       Gae.returns ~rewards:[| 1.0; 1.0 |] ~terminated:[| false |]
         ~truncated:[| false; false |] ~gamma:0.99)
 
-(* Compute from values *)
-
-let test_compute_from_values_simple () =
-  let rewards = [| 1.0; 1.0; 1.0 |] in
-  let values = [| 0.5; 0.5; 0.5 |] in
-  let terminated = [| false; false; false |] in
-  let truncated = [| false; false; false |] in
-  let last_value = 0.5 in
-  let advantages, returns =
-    Gae.compute_from_values ~rewards ~values ~terminated ~truncated ~last_value
-      ~gamma:0.99 ~lambda:0.95
-  in
-  (* next_values should be [| 0.5; 0.5; 0.5 |] (values shifted + last_value) *)
-  let advantages2, returns2 =
-    Gae.compute ~rewards ~values ~terminated ~truncated
-      ~next_values:[| 0.5; 0.5; 0.5 |] ~gamma:0.99 ~lambda:0.95
-  in
-  for i = 0 to 2 do
-    equal ~msg:"advantages match" f advantages2.(i) advantages.(i);
-    equal ~msg:"returns match" f returns2.(i) returns.(i)
-  done
-
-let test_compute_from_values_shifted () =
-  let rewards = [| 1.0; 1.0; 1.0 |] in
-  let values = [| 1.0; 2.0; 3.0 |] in
-  let terminated = [| false; false; false |] in
-  let truncated = [| false; false; false |] in
-  let last_value = 4.0 in
-  let advantages, _returns =
-    Gae.compute_from_values ~rewards ~values ~terminated ~truncated ~last_value
-      ~gamma:0.99 ~lambda:0.95
-  in
-  (* next_values = [| 2.0; 3.0; 4.0 |] *)
-  let advantages2, _returns2 =
-    Gae.compute ~rewards ~values ~terminated ~truncated
-      ~next_values:[| 2.0; 3.0; 4.0 |] ~gamma:0.99 ~lambda:0.95
-  in
-  for i = 0 to 2 do
-    equal ~msg:"advantages match" f advantages2.(i) advantages.(i)
-  done
-
 (* Normalize *)
 
 let test_normalize_mean_zero () =
@@ -218,11 +177,6 @@ let () =
           test "terminated resets" test_returns_terminated;
           test "truncated resets" test_returns_truncated;
           test "length mismatch" test_returns_length_mismatch;
-        ];
-      group "compute_from_values"
-        [
-          test "matches compute" test_compute_from_values_simple;
-          test "shifted values" test_compute_from_values_shifted;
         ];
       group "normalize"
         [

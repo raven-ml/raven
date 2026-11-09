@@ -48,22 +48,6 @@ let test_find_exn_missing () =
   raises (Invalid_argument "Info.find_exn: key \"missing\" not present")
     (fun () -> ignore (Info.find_exn "missing" Info.empty))
 
-(* Convenience *)
-
-let test_int_convenience () =
-  equal ~msg:"Info.int" value (Value.Int 42) (Info.int 42)
-
-let test_float_convenience () =
-  equal ~msg:"Info.float" value (Value.Float 1.0) (Info.float 1.0)
-
-let test_bool_convenience () =
-  equal ~msg:"Info.bool" value (Value.Bool true) (Info.bool true)
-
-let test_string_convenience () =
-  equal ~msg:"Info.string" value (Value.String "hi") (Info.string "hi")
-
-let test_null_convenience () = equal ~msg:"Info.null" value Value.Null Info.null
-
 let () =
   exit (run "Fehu.Info"
     [
@@ -78,12 +62,4 @@ let () =
           test "of_list/to_list round-trip" test_of_list_to_list_round_trip;
         ];
       group "errors" [ test "find_exn missing raises" test_find_exn_missing ];
-      group "convenience"
-        [
-          test "int" test_int_convenience;
-          test "float" test_float_convenience;
-          test "bool" test_bool_convenience;
-          test "string" test_string_convenience;
-          test "null" test_null_convenience;
-        ];
     ])

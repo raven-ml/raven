@@ -30,14 +30,3 @@ let pp ppf t =
       Format.fprintf ppf "%s: %a" k Value.pp v)
     bindings;
   Format.fprintf ppf "}"
-
-(* Convenience constructors *)
-
-let null = Value.Null
-let bool b = Value.Bool b
-let int i = Value.Int i
-let float f = Value.Float f
-let string s = Value.String s
-let int_array arr = Value.Int_array (Array.copy arr)
-let float_array arr = Value.Float_array (Array.copy arr)
-let bool_array arr = Value.Bool_array (Array.copy arr)

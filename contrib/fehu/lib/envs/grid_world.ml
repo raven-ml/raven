@@ -110,7 +110,7 @@ let make ?render_mode () =
     let terminated = is_goal nr nc in
     let truncated = (not terminated) && !steps >= max_steps in
     let reward = if terminated then 10.0 else -1.0 in
-    let info = Info.set "steps" (Info.int !steps) Info.empty in
+    let info = Info.set "steps" (Value.Int !steps) Info.empty in
     Env.step_result ~observation:(make_obs nr nc) ~reward ~terminated ~truncated
       ~info ()
   in

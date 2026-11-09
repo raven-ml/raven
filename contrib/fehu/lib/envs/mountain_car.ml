@@ -58,7 +58,7 @@ let make ?render_mode () =
     let terminated = pos >= goal_position && vel >= goal_velocity in
     let truncated = (not terminated) && !steps >= max_steps in
     let reward = -1.0 in
-    let info = Info.set "steps" (Info.int !steps) Info.empty in
+    let info = Info.set "steps" (Value.Int !steps) Info.empty in
     Env.step_result ~observation:(make_obs pos vel) ~reward ~terminated
       ~truncated ~info ()
   in

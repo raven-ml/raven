@@ -189,7 +189,7 @@ let with_episode_reward env =
       let info =
         if s.terminated || s.truncated then
           Info.set "episode_reward"
-            (Info.float !episode_reward) s.info
+            (Value.Float !episode_reward) s.info
         else s.info
       in
       { s with info })

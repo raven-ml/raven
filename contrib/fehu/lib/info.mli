@@ -58,29 +58,3 @@ val to_value : t -> Value.t
 
 val pp : Format.formatter -> t -> unit
 (** [pp] formats an info dictionary for debugging. *)
-
-(** {1:convenience Convenience value constructors} *)
-
-val null : Value.t
-(** [null] is {!Value.Null}. *)
-
-val bool : bool -> Value.t
-(** [bool b] is [Value.Bool b]. *)
-
-val int : int -> Value.t
-(** [int i] is [Value.Int i]. *)
-
-val float : float -> Value.t
-(** [float f] is [Value.Float f]. *)
-
-val string : string -> Value.t
-(** [string s] is [Value.String s]. *)
-
-val int_array : int array -> Value.t
-(** [int_array arr] is [Value.Int_array (Array.copy arr)]. *)
-
-val float_array : float array -> Value.t
-(** [float_array arr] is [Value.Float_array (Array.copy arr)]. *)
-
-val bool_array : bool array -> Value.t
-(** [bool_array arr] is [Value.Bool_array (Array.copy arr)]. *)
