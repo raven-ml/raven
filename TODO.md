@@ -59,8 +59,6 @@ raven / llama.cpp b12048 Vulkan:
 
 ## rune, kaun, vega
 
-- sharded jit: over several devices a check or a total inside a loop or a
-  switch's branch still declines, with a named error at the call
 - attention under `Rune.jit`: causal saves little, since a grid under 1.3
   waves takes as long as its longest workgroup (rows already launch longest
   first): pair row tiles i and n-1-i, or split long rows' keys; the
