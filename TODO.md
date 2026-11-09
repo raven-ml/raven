@@ -43,11 +43,7 @@ raven / llama.cpp b12048 Vulkan:
   a row over about 130 walks, flat (no pass past 8%, no function past 4%):
   the gradient of `betainc` costs tolk and rune's tracing 0.8 s and Clang
   0.7 s, its third derivative (220k nodes) 5.3 s and 12.9 s. Past 100k nodes
-  Clang decides the wait, and it grows faster than the source on one kernel:
-  a 1,000-term sum of `exp(sin x)` over 64 values, one loop of 15 MB, takes it
-  125 s against 10 s for 250 terms (EarlyCSE, then the machine passes; `-O1`
-  changes nothing). Four kernels of 250 terms would take about 40 s; cutting
-  such a kernel at a store costs one buffer per cut and has no design yet.
+  Clang decides the wait.
   Measured and declined for tolk: a per-domain cache of the last long walk
   (-2% instructions, 12 lines), and pruning rewrites by the operations a
   matcher rules on (no gain: the memo it needs costs what it saves)

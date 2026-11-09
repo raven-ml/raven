@@ -1208,6 +1208,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 - On NVIDIA GPUs from `sm_80`, a dense product of 32 rows takes a staged tensor
   core when that core keeps its threads: a bfloat16 product of 16384 by 4096
   runs in 425 µs on an RTX 5000 Ada, 540 streamed.
+- A host kernel of more than 20000 operations compiles as several functions,
+  so that Clang's time grows about linearly in the program: 400 steps of an
+  elementwise pendulum under `Rune.jit'` compile in 14 s against 308 s, and
+  run about 1% slower.
 - An `arm64+fp16` host (`Rig.arch`) compiles for `arm64,generic,fp16`: half
   vectors compute in halves and a half `Op.Mulacc` is one `fmla` or `fmadd`.
   Results keep their bits, NaN payloads aside.

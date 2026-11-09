@@ -577,6 +577,17 @@ let metal_one () =
       fun () ->
         compile (fun x -> Nx.sum ~axes:[ 1 ] (Nx.sin (Nx.mul_s x salt))) x
 
+let pendulum () =
+  let steps x =
+    let theta = ref x and v = ref (Nx.zeros_like x) in
+    for _ = 1 to 200 do
+      v := Nx.sub !v (Nx.mul_s (Nx.sin !theta) 0.01);
+      theta := Nx.add !theta (Nx.mul_s !v 0.01)
+    done;
+    !theta
+  in
+  compile steps (input ~n:64 0.1 0.9)
+
 let cases =
   [
     ("linalg/solve-32", solve);
@@ -606,6 +617,10 @@ let cases =
     ("special/betaincinv-grad-f64", betaincinv_grad);
     ("special/gammaincinv-grad-f64", gammaincinv_grad);
     ("wide/sum-1e6", wide_sum);
+    (* A pendulum of 200 fixed steps written as an OCaml loop: one elementwise
+       kernel of 3.6 MB of C, which the host writes as several functions, since
+       Clang's time on one function grows faster than the function. *)
+    ("long/pendulum-200", pendulum);
     ("products/vecmat-bf16", vecmat_bf16);
     ("products/segments-grad", segments_grad);
     ("devices/dp-step-16", data_parallel);

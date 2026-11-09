@@ -951,6 +951,21 @@ let render_kernel ?prefix l ~name kernel bufs uops =
 
 let closes = Op.Set.of_list [ Op.Endif; Op.End; Op.Backedge ]
 let opens = Op.Set.of_list [ Op.If; Op.Range ]
+let held = Op.Set.of_list [ Op.Buffer; Op.Binary ]
+
+type shape = Plain | Opens | Closes | Held
+
+(* One statement of a program's body: its text, how it nests, the name and type
+   it declares, and the operations it computes, those written into it
+   included. *)
+type statement = {
+  text : string;
+  shape : shape;
+  declares : (string * string) option;
+  ops : int;
+}
+
+let texts = List.map (fun s -> s.text)
 let undeclared = Op.Set.of_list [ Op.Range; Op.Buffer; Op.Binary ]
 let always_inlined =
   Op.Set.of_list [ Op.Index; Op.Shrink; Op.Refparam ]
@@ -1020,6 +1035,19 @@ let render_uops l uops =
   and kernel = ref []
   and depth = ref 1
   and name = ref "test" in
+  (* The operations an inlined value computes, written into its reader. *)
+  let inlined_ops = Tbl.create 256 in
+  let ops_of u =
+    List.fold_left
+      (fun a v -> a + Option.value (Tbl.find_opt inlined_ops v) ~default:0)
+      1 (src u)
+  in
+  let shape_of o =
+    if Op.Set.mem o opens then Opens
+    else if Op.Set.mem o closes then Closes
+    else if Op.Set.mem o held then Held
+    else Plain
+  in
   let counts = Hashtbl.create 8 in
   let count p = Option.value (Hashtbl.find_opt counts p) ~default:0 in
   let failed u =
@@ -1090,12 +1118,14 @@ let render_uops l uops =
           | None -> failed u
         in
         if Op.Set.mem o closes then decr depth;
-        if inlined u line then
+        if inlined u line then begin
+          Tbl.replace inlined_ops u (ops_of u);
           if narrowed u then begin
             Tbl.replace ctx.narrowed u ();
             Tbl.replace r u (strf "(%s)" (render_cast ctx u line))
           end
           else Tbl.replace r u line
+        end
         else begin
           let declared =
             (not (Op.Set.mem o undeclared))
@@ -1116,9 +1146,22 @@ let render_uops l uops =
             else line
           in
           let indent s = String.make (2 * !depth) ' ' ^ s in
-          kernel :=
+          let text =
             String.concat "\n"
               (List.map indent (String.split_on_char '\n' line))
+          in
+          let declares =
+            if declared then Some (ctx.%{u}, ty ())
+            else
+              match o with
+              | Op.Range when not (Dtype.equal (dtype u) Dtype.Void) ->
+                  Some (ctx.%{u}, render_scalar l (dtype u))
+              | Op.Buffer -> Some (ctx.%{u}, render_dtype l (dtype u) ^ "*")
+              | Op.Binary -> Some (ctx.%{u}, "const unsigned char*")
+              | _ -> None
+          in
+          kernel :=
+            { text; shape = shape_of o; declares; ops = ops_of u }
             :: !kernel;
           (* if it was used, increment *)
           Option.iter (fun p -> Hashtbl.replace counts p (count p + 1)) prefix
@@ -1165,14 +1208,17 @@ let outlined uops =
 (* The program declares each external function it calls, which it links
    against, and defines a function for each call body, after the bodies it
    calls. *)
-let render render_kernel l uops =
+(* The program's parts: a declaration of each function it calls and a
+   definition of each body, the kernel's name, statements and parameters, and
+   the instructions its kernel and bodies hold. *)
+let program l uops =
   let callees = callees uops in
   let outlined = outlined uops in
   let declare callee =
     match arg callee with
     | Custom_function f -> strf "extern void %s();" f.name
     | _ ->
-        let _, lines, bufs = render_uops l (src callee) in
+        let _, statements, bufs = render_uops l (src callee) in
         let params =
           List.map (fun (n, p) -> strf "%s %s" (param_type l p) n) bufs
         in
@@ -1183,14 +1229,345 @@ let render render_kernel l uops =
         in
         strf "%s void %s(%s) {\n%s\n}" qualifiers (body_name callee)
           (String.concat ", " params)
-          (String.concat "\n" lines)
+          (String.concat "\n" (texts statements))
   in
   let name, kernel, bufs = render_uops l uops in
-  let prefix = match List.map declare callees with [] -> None | p -> Some p in
   let bodies = List.filter (is Op.Linear) callees in
-  render_kernel ?prefix l ~name kernel bufs
-    (List.concat_map src bodies @ uops)
+  ( List.map declare callees,
+    name,
+    kernel,
+    bufs,
+    List.concat_map src bodies @ uops )
 
+let prefix = function [] -> None | p -> Some p
+
+let render render_kernel l uops =
+  let parts, name, kernel, bufs, uops = program l uops in
+  render_kernel ?prefix:(prefix parts) l ~name (texts kernel) bufs uops
+
+(* Long kernels
+
+   A compiler's passes grow faster than the function they read: Clang takes
+   308 s for a kernel of 80 000 statements, in EarlyCSE and in the register
+   allocator as much as anywhere, and no flag changes that. A long host kernel
+   is written as functions of at most [piece] operations, which its body calls
+   in order, so each stays short. Operations are counted with those written
+   into their reader, since a chain of values read once is one statement.
+   Statements keep their order, so the kernel computes the same bits. A kernel
+   that declares a name twice, as two loops one after the other may, stays
+   whole: a value is known by its name.
+
+   A value read outside the function that declares it lives in a frame on the
+   kernel's stack, written where it is declared and read where a function first
+   uses it, since a value read early would be live across the function. The
+   frame holds one array per C type, and a slot is reused once the last reader
+   of its value has run, so that it is as large as the values alive at one
+   time. *)
+
+(* The operations each function holds, and those past which a kernel is cut. A
+   kernel of fewer takes Clang seconds. *)
+let piece_ops = 2000
+let long_ops = 20_000
+
+type item = One of statement | Block of statement * item list * statement
+
+type piece =
+  | Chunk of int * item list
+  | Nest of int * statement * piece list * int * statement
+
+let rec weight = function
+  | One s -> s.ops
+  | Block (o, body, c) ->
+      List.fold_left (fun a i -> a + weight i) (o.ops + c.ops) body
+
+let tree statements =
+  let rec items acc = function
+    | [] -> (List.rev acc, [])
+    | { shape = Closes; _ } :: _ as rest -> (List.rev acc, rest)
+    | ({ shape = Opens; _ } as o) :: rest -> (
+        match items [] rest with
+        | body, c :: rest -> items (Block (o, body, c) :: acc) rest
+        | _, [] -> invalid_arg "a block that does not close")
+    | s :: rest -> items (One s :: acc) rest
+  in
+  fst (items [] statements)
+
+(* [items] cut into pieces of at most [budget] operations, in program order. A
+   block past the budget stays in the kernel's body, and its statements are
+   cut. Each piece and each end of a block takes a number in program order,
+   from 1: 0 is the kernel's start. *)
+let pieces budget items =
+  let event = ref 0 in
+  let next () =
+    incr event;
+    !event
+  in
+  let rec cut items =
+    let flush run acc =
+      if run = [] then acc else Chunk (next (), List.rev run) :: acc
+    in
+    let rec go run size acc = function
+      | [] -> List.rev (flush run acc)
+      | (Block (o, body, c) as b) :: rest when weight b > budget ->
+          let acc = flush run acc in
+          let first = next () in
+          let inner = cut body in
+          let last = next () in
+          go [] 0 (Nest (first, o, inner, last, c) :: acc) rest
+      | item :: rest ->
+          let w = weight item in
+          if size > 0 && size + w > budget then
+            go [ item ] w (flush run acc) rest
+          else go (item :: run) (size + w) acc rest
+    in
+    go [] 0 [] items
+  in
+  cut items
+
+(* The names of [known] that [text] mentions, each once. A name of a rendered
+   statement is a C identifier, so a word of the text is one only if whole. *)
+let reads known text =
+  let n = String.length text and found = Hashtbl.create 8 in
+  let word = function
+    | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' -> true
+    | _ -> false
+  in
+  let i = ref 0 in
+  while !i < n do
+    if word (String.unsafe_get text !i) then begin
+      let j = ref !i in
+      while !j < n && word (String.unsafe_get text !j) do
+        incr j
+      done;
+      let w = String.sub text !i (!j - !i) in
+      if Hashtbl.mem known w then Hashtbl.replace found w ();
+      i := !j
+    end
+    else incr i
+  done;
+  List.of_seq (Hashtbl.to_seq_keys found)
+
+let rec iter_item f = function
+  | One s -> f s
+  | Block (o, body, c) ->
+      f o;
+      List.iter (iter_item f) body;
+      f c
+
+(* Calls [chunk event items] and [ends event s] for each end of a block left in
+   the kernel's body, in program order. *)
+let rec iter_piece ~chunk ~ends = function
+  | Chunk (e, items) -> chunk e items
+  | Nest (first, o, inner, last, c) ->
+      ends first o;
+      List.iter (iter_piece ~chunk ~ends) inner;
+      ends last c
+
+(* Each name's type and the event that declares it, [bufs] and the held
+   statements at 0, and the events that read it. Raises [Exit] if a name is
+   declared twice. *)
+let declared_and_read ptype bufs held cut =
+  let known = Hashtbl.create 1024 and read_at = Hashtbl.create 1024 in
+  let declare e s =
+    Option.iter
+      (fun (n, t) ->
+        if Hashtbl.mem known n then raise_notrace Exit;
+        Hashtbl.replace known n (t, e))
+      s.declares
+  in
+  List.iter (fun (n, p) -> Hashtbl.replace known n (ptype p, 0)) bufs;
+  List.iter (declare 0) held;
+  let each f =
+    List.iter
+      (iter_piece ~chunk:(fun e -> List.iter (iter_item (f e))) ~ends:f)
+      cut
+  in
+  let read e s =
+    List.iter
+      (fun n ->
+        let at = Option.value (Hashtbl.find_opt read_at n) ~default:[] in
+        if not (List.mem e at) then Hashtbl.replace read_at n (e :: at))
+      (reads known s.text)
+  in
+  each declare;
+  each read;
+  (known, read_at)
+
+(* The nests of [cut], as the events of their ends. *)
+let rec nests_of acc = function
+  | Chunk _ -> acc
+  | Nest (first, _, inner, last, _) ->
+      List.fold_left nests_of ((first, last) :: acc) inner
+
+(* The event after which [n] is dead. A value read in a nest it was declared
+   outside lives to the nest's end: its next trip reads it again. *)
+let last_read nests declared at =
+  let reader e =
+    List.fold_left
+      (fun acc (first, last) ->
+        if first < e && e <= last && not (first <= declared && declared <= last)
+        then max acc last
+        else acc)
+      e nests
+  in
+  List.fold_left (fun a e -> max a (reader e)) declared at
+
+(* The frame's slot of each of [names], from a linear scan of their values by
+   the event that declares them: within one type, a slot whose value was last
+   read before an event is free at it. Returns each name's slot, and each
+   type's number and count of slots. *)
+let slots nests known read_at names =
+  let values =
+    List.map
+      (fun n ->
+        let t, d = Hashtbl.find known n in
+        (d, last_read nests d (Hashtbl.find read_at n), n, t))
+      names
+    |> List.sort Stdlib.compare
+  in
+  let slot_of = Hashtbl.create 1024 and types = Hashtbl.create 8 in
+  let type_of t =
+    match Hashtbl.find_opt types t with
+    | Some entry -> entry
+    | None ->
+        let entry = (Hashtbl.length types, ref 0, ref []) in
+        Hashtbl.replace types t entry;
+        entry
+  in
+  let place (d, ended, n, t) =
+    let id, count, busy = type_of t in
+    let free, held = List.partition (fun (e, _) -> e < d) !busy in
+    let slot, rest =
+      match List.sort Stdlib.compare free with
+      | (_, s) :: rest -> (s, rest)
+      | [] ->
+          incr count;
+          (!count - 1, [])
+    in
+    busy := (ended, slot) :: (rest @ held);
+    Hashtbl.replace slot_of n (strf "s%d[%d]" id slot)
+  in
+  List.iter place values;
+  (slot_of, types)
+
+(* The functions of [cut] and the kernel's body that calls them. *)
+let write_cut ~attrs ~name bufs held cut (known, read_at) =
+  let in_piece = Hashtbl.create 64 in
+  List.iter
+    (iter_piece
+       ~chunk:(fun e _ -> Hashtbl.replace in_piece e ())
+       ~ends:(fun _ _ -> ()))
+    cut;
+  let crossing =
+    Hashtbl.fold
+      (fun n (_, d) acc ->
+        match Hashtbl.find_opt read_at n with
+        | Some at when List.exists (( <> ) d) at -> n :: acc
+        | _ -> acc)
+      known []
+  in
+  let nests = List.fold_left nests_of [] cut in
+  let slot_of, types = slots nests known read_at crossing in
+  let slot n = Hashtbl.find slot_of n and frame n = Hashtbl.mem slot_of n in
+  let type_of n = fst (Hashtbl.find known n) in
+  let frame_type = name ^ "_frame" and piece_name e = strf "%s_%d" name e in
+  let frame_def =
+    Hashtbl.fold (fun t (id, count, _) acc -> (id, t, !count) :: acc) types []
+    |> List.sort Stdlib.compare
+    |> List.map (fun (id, t, count) -> strf "  %s s%d[%d];" t id count)
+    |> String.concat "\n"
+    |> strf "struct %s {\n%s\n};" frame_type
+  in
+  (* A piece reads a value from the frame before the item that first uses it,
+     and writes one that crosses where it is declared. *)
+  let piece e items =
+    let loaded = Hashtbl.create 16 and body = Buffer.create 4096 in
+    let line text =
+      Buffer.add_string body text;
+      Buffer.add_char body '\n'
+    in
+    let load s =
+      List.iter
+        (fun n ->
+          if snd (Hashtbl.find known n) <> e && not (Hashtbl.mem loaded n)
+          then begin
+            Hashtbl.replace loaded n ();
+            line (strf "  %s %s = f->%s;" (type_of n) n (slot n))
+          end)
+        (reads known s.text)
+    in
+    let emit s =
+      line s.text;
+      match s.declares with
+      | Some (n, _) when frame n -> line (strf "  f->%s = %s;" (slot n) n)
+      | _ -> ()
+    in
+    List.iter
+      (fun i ->
+        iter_item load i;
+        iter_item emit i)
+      items;
+    strf "static __attribute__((noinline)) %s %s(struct %s* f) {\n%s}" attrs
+      (piece_name e) frame_type (Buffer.contents body)
+  in
+  (* The kernel's body: the frame, the held statements, the blocks too long for
+     a piece, which read the values of pieces into variables it declares, and a
+     call of each piece. *)
+  let statement text = { text; shape = Plain; declares = None; ops = 1 } in
+  let parts = ref [] and locals = Hashtbl.create 16 and body = ref [] in
+  let add s = body := s :: !body in
+  let store n =
+    if frame n then add (statement (strf "  f.%s = %s;" (slot n) n))
+  in
+  let declared s = Option.iter (fun (n, _) -> store n) s.declares in
+  let load s =
+    List.iter
+      (fun n ->
+        if Hashtbl.mem in_piece (snd (Hashtbl.find known n)) then begin
+          Hashtbl.replace locals n ();
+          add (statement (strf "  %s = f.%s;" n (slot n)))
+        end)
+      (reads known s.text)
+  in
+  let rec write = function
+    | Chunk (e, items) ->
+        parts := piece e items :: !parts;
+        add (statement (strf "  %s(&f);" (piece_name e)))
+    | Nest (_, o, inner, _, c) ->
+        load o;
+        add o;
+        declared o;
+        List.iter write inner;
+        load c;
+        add c
+  in
+  add (statement (strf "  struct %s f;" frame_type));
+  List.iter (fun (n, _) -> store n) bufs;
+  List.iter
+    (fun s ->
+      add s;
+      declared s)
+    held;
+  let start = !body in
+  body := [];
+  List.iter write cut;
+  let declarations =
+    Hashtbl.fold
+      (fun n () acc -> statement (strf "  %s %s;" (type_of n) n) :: acc)
+      locals []
+  in
+  (frame_def :: List.rev !parts, List.rev start @ declarations @ List.rev !body)
+
+(* [statements] as several functions of at most [piece] operations past [long],
+   or whole: the program's parts that define them, and the kernel's body. *)
+let cut_kernel ~piece ~long ~param_type:ptype ~attrs ~name bufs statements =
+  let held, rest = List.partition (fun s -> s.shape = Held) statements in
+  if List.fold_left (fun a s -> a + s.ops) 0 rest <= long then ([], statements)
+  else
+    let cut = pieces piece (tree rest) in
+    match declared_and_read ptype bufs held cut with
+    | exception Exit -> ([], statements)
+    | names -> write_cut ~attrs ~name bufs held cut names
 
 (* Clang *)
 
@@ -1574,7 +1951,18 @@ let clang_kernel ~cpu ?prefix l ~name kernel bufs uops =
   in
   defines ^ "\n" ^ render_kernel ?prefix l ~name kernel bufs uops ^ "\n"
 
-let clang (target : Helpers.Target.t) =
+(* A program for the host, its kernel cut into functions of [piece] operations
+   past [long]. *)
+let render_host ~piece ~long l uops =
+  let parts, name, kernel, bufs, uops = program l uops in
+  let pieces, kernel =
+    cut_kernel ~piece ~long ~param_type:(param_type l)
+      ~attrs:(l.kernel_typedef 0) ~name bufs kernel
+  in
+  clang_kernel ~cpu:true ?prefix:(prefix (parts @ pieces)) l ~name
+    (texts kernel) bufs uops
+
+let clang_cut ~piece ~long (target : Helpers.Target.t) =
   let arch = target.arch in
   let native dt =
     ((not (Dtype.equal dt Dtype.Bfloat16))
@@ -1694,8 +2082,13 @@ let clang (target : Helpers.Target.t) =
     ~vector_lanes:clang_lanes ~has_local:false ~global_max:[ 1; 0; 0 ]
     ~extra_matcher:clang_extra_matcher ~packed_args:true
     ~code_for_op:lang.code_for_op ~native ~fma:once
-    ~render:(render (clang_kernel ~cpu:(target.device = "CPU")) lang)
+    ~render:
+      (if target.device = "CPU" then render_host ~piece ~long lang
+       else render (clang_kernel ~cpu:false) lang)
     ~compiler:(Compiler_cpu.clang arch) target
+
+let clang = clang_cut ~piece:piece_ops ~long:long_ops
+let clang_in_pieces ~piece = clang_cut ~piece ~long:0
 
 (* Metal *)
 

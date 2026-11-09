@@ -829,8 +829,9 @@ let bfloat16_on_amd =
 
 (* Execution *)
 
-let host = lazy (Cstyle.clang host_target)
-let loaded name = Run.program (Lazy.force host) (kernel (find_case name))
+(* The host's renderer, which [in_pieces] replaces for its test. *)
+let host = ref (lazy (Cstyle.clang host_target))
+let loaded name = Run.program (Lazy.force !host) (kernel (find_case name))
 let floats xs = Array.map (fun x -> `Float x) xs
 let ints xs = Array.map (fun n -> `Int (Bigint.of_int n)) xs
 let slot s outputs = List.assoc s outputs
@@ -900,12 +901,110 @@ let computes_a_long_chain () =
   let n = 300 and x = 123457 and shift = 7 and modulus = 1000003 in
   let step r _ = (r lsl shift) mod modulus in
   let expected = List.fold_left step x (List.init n Fun.id) in
-  let k = Run.program (Lazy.force host) (chain n) in
+  let k = Run.program (Lazy.force !host) (chain n) in
   let out =
     Run.on_host k
       [ (1, ints [| x |]); (2, ints [| shift |]); (3, ints [| modulus |]) ]
   in
   equal values (ints [| expected |]) (slot 0 out)
+
+(* Long kernels *)
+
+(* A loop of [n] operations on each element, an addition of a value loaded
+   before the loop and an exclusive or with it in turn, so that a piece of the
+   loop reads that value from the frame on every trip. Each operation's value
+   is read once: the source writes the chain as one statement per 60 or so
+   operations. *)
+let looped_chain n =
+  let zero = Ops.int ~dtype:Int32 0 in
+  let c =
+    Ops.load (Ops.index (Shape.param ~shape:[ Int 1 ] 2 Int32) [ zero ]) []
+  in
+  let trips = Ops.v Cast ~src:[ Ops.int ~dtype:Int32 4 ] ~arg:(Dtype Int32) in
+  let r = Ops.range ~axis_type:Loop ~dtype:Int32 (Sym trips) [ 0 ] in
+  let at slot = Ops.index (Shape.param ~shape:[ Int 4 ] slot Int32) [ r ] in
+  let step x i = Ops.alu x (if i mod 2 = 0 then Add else Xor) [ c ] in
+  let out = List.fold_left step (Ops.load (at 1) []) (List.init n Fun.id) in
+  Linearizer.linearize
+    (Ops.sink
+       ~kernel:(Ops.kernel_info ~name:"looped_chain" ())
+       [ Ops.end_ (Ops.store (at 0) out) [ r ] ])
+
+(* [f ()] with every host kernel written as functions of one statement each, so
+   that every value crosses to the statements that read it. *)
+let in_pieces f () =
+  let whole = !host in
+  host := lazy (Cstyle.clang_in_pieces ~piece:1 host_target);
+  Fun.protect ~finally:(fun () -> host := whole) f
+
+(* What [looped_chain n] writes for [x] and [c]. *)
+let chain_of n c x =
+  List.fold_left
+    (fun x i -> if i mod 2 = 0 then x + c else x lxor c)
+    x (List.init n Fun.id)
+
+let computes_its_chain n program =
+  let c = 3 and xs = [| 10; -2; 0; 7 |] in
+  let out = Run.on_host (Run.program (Lazy.force !host) program) [ (1, ints xs); (2, ints [| c |]) ] in
+  equal values (ints (Array.map (chain_of n c) xs)) (slot 0 out)
+
+(* Past the length from which a kernel is cut, linearized once for the tests
+   that read it. *)
+let long_chain = 20_500
+let long_program = lazy (looped_chain long_chain)
+
+let computes_a_long_chain_of_values_read_once () =
+  computes_its_chain long_chain (Lazy.force long_program)
+
+let reads_a_value_of_the_outer_scope () =
+  computes_its_chain 200 (looped_chain 200)
+
+(* Two loops one after the other whose indices render as one name, each
+   scoped to its loop: the first writes [2 * (3 * i + 100)] through a value it
+   reads twice, so that the value is declared, the second [i + 1]. *)
+let sibling_loops () =
+  let trips n = Ops.v Cast ~src:[ Ops.int ~dtype:Int32 n ] ~arg:(Dtype Int32) in
+  let loop n slot value =
+    let r = Ops.range ~axis_type:Loop ~dtype:Int32 (Sym (trips n)) [ 0 ] in
+    let at = Ops.index (Shape.param ~shape:[ Int 4 ] slot Int32) [ r ] in
+    Ops.end_ (Ops.store at (value r)) [ r ]
+  in
+  let first r =
+    let v =
+      Ops.alu (Ops.alu r Mul [ Ops.int ~dtype:Int32 3 ]) Add
+        [ Ops.int ~dtype:Int32 100 ]
+    in
+    Ops.alu v Add [ v ]
+  in
+  let second r = Ops.alu r Add [ Ops.int ~dtype:Int32 1 ] in
+  Linearizer.linearize
+    (Ops.sink
+       ~kernel:(Ops.kernel_info ~name:"sibling_loops" ())
+       [ loop 4 0 first; loop 3 1 second ])
+
+let keeps_two_loops_of_one_index_name =
+  in_pieces @@ fun () ->
+  let k = Run.program (Lazy.force !host) (sibling_loops ()) in
+  let out =
+    Run.on_host k [ (0, ints [| 0; 0; 0; 0 |]); (1, ints [| 9; 9; 9; 9 |]) ]
+  in
+  equal values ~msg:"first loop" (ints [| 200; 206; 212; 218 |]) (slot 0 out);
+  equal values ~msg:"second loop" (ints [| 1; 2; 3; 9 |]) (slot 1 out)
+
+let cut source = contains source "looped_chain_frame"
+
+let a_long_kernel_is_written_in_pieces () =
+  let source program = render (renderer_for clang_target) program in
+  equal ~msg:"past the length" Testable.bool true
+    (cut (source (Lazy.force long_program)));
+  equal ~msg:"below it" Testable.bool false (cut (source (looped_chain 200)))
+
+let a_gpu_kernel_stays_one_function () =
+  List.iter
+    (fun (r, renderer) ->
+      equal ~msg:r Testable.bool false
+        (cut (render (renderer ()) (Lazy.force long_program))))
+    (List.filter (fun (n, _) -> n <> "clang") renderers)
 
 let runs_custom_code () =
   let x = [| -2.5; 0.; 3.; -0. |] in
@@ -1060,7 +1159,7 @@ let stores_ints_as_their_type_holds_them (dt, cs) =
   cover "a 64-bit type" (Dtype.itemsize dt = 8);
   cover "an unsigned type" (Dtype.is_unsigned dt);
   let k =
-    Run.program (Lazy.force host)
+    Run.program (Lazy.force !host)
       (Linearizer.linearize (stores_constants dt cs))
   in
   let expected = List.concat_map (fun c -> [ held dt c; held dt c ]) cs in
@@ -1077,7 +1176,7 @@ let converts_a_special_to_an_int (dt, x) =
       ~kernel:(Ops.kernel_info ~name:"special" ())
       [ Ops.store at (Ops.cast (Ops.float x) dt) ]
   in
-  ignore (Run.program (Lazy.force host) (Linearizer.linearize sink))
+  ignore (Run.program (Lazy.force !host) (Linearizer.linearize sink))
 
 (* The kernel reads the four chars 1, 2, 3 and 4 as one little-endian uint,
    clears its low byte and stores it to the first char. *)
@@ -1312,7 +1411,7 @@ let undefined_in obj =
 let undefined p = undefined_in (Uops.binary_of p)
 
 (* [alone] skips a kernel whose object calls a function of the process. *)
-let agrees_with_the_interpreter ?(on = host) ?(alone = false) row =
+let agrees_with_the_interpreter ?(on = !host) ?(alone = false) row =
   let uops = kernel row in
   let k = lazy (Run.program (Lazy.force on) uops) in
   prop ~count:10 (row "case") (draw_inputs uops)
@@ -1367,7 +1466,7 @@ let narrow_rows =
 let wraps_and_rounds_as_the_interpreter row =
   let uops = kernel row in
   let narrow = Option.get (narrow_of uops) in
-  let k = lazy (Run.program (Lazy.force host) uops) in
+  let k = lazy (Run.program (Lazy.force !host) uops) in
   prop ~count:20 (row "case") (draw_narrow_inputs narrow uops)
     (fun ((buffers, _) as inputs) ->
       equal
@@ -1375,7 +1474,7 @@ let wraps_and_rounds_as_the_interpreter row =
         (interpreted uops inputs)
         (Run.on_host (Lazy.force k) buffers))
 
-let compiles_and_loads ?(on = host) row =
+let compiles_and_loads ?(on = !host) row =
   test (row "case") (fun () -> ignore (Run.program (Lazy.force on) (kernel row)))
 
 let execution =
@@ -1412,6 +1511,35 @@ let execution =
       test "picks a lane of a vector by a variable" picks_a_lane_by_a_variable;
       test "reads two uint registers as a ulong through a cast of their address"
         reads_registers_as_a_ulong;
+      test "writes a long kernel in pieces" a_long_kernel_is_written_in_pieces;
+      test "keeps two loops whose indices render as one name"
+        keeps_two_loops_of_one_index_name;
+      test "leaves a GPU's kernels whole" a_gpu_kernel_stays_one_function;
+      test "computes a long chain of values read once"
+        computes_a_long_chain_of_values_read_once;
+      group "cut into pieces, writes what it writes whole"
+        (List.map
+           (fun (name, f) -> test name (in_pieces f))
+           [
+             ("reads a value of the outer scope on every trip",
+               reads_a_value_of_the_outer_scope);
+             ("adds two buffers", adds_two_buffers);
+             ("sums a buffer", sums_a_buffer);
+             ("takes the maximum of a literal", takes_the_maximum_of_a_literal);
+             ("stores where its gate holds", stores_where_its_gate_holds);
+             ("loads zero outside its padding", loads_zero_outside_its_padding);
+             ("loops until its test fails", loops_until_its_test_fails);
+             ("reads a constant table", reads_a_constant_table);
+             ("passes variables", passes_variables_of_32_and_64_bits);
+             ("computes a long chain", computes_a_long_chain);
+             ("runs custom code", runs_custom_code);
+             ("accesses volatile buffers", accesses_volatile_buffers);
+             ("picks a lane by a variable", picks_a_lane_by_a_variable);
+             ("reads registers as a ulong", reads_registers_as_a_ulong);
+             ("passes named parameters", passes_named_parameters);
+             ("rounds operations on halves", rounds_each_operation_on_halves);
+             ("wraps operations on chars", wraps_each_operation_on_chars);
+           ]);
       test "passes named parameters" passes_named_parameters;
       test "rounds each operation on halves to a half"
         rounds_each_operation_on_halves;
@@ -1614,7 +1742,7 @@ let negation =
       test "Clang compiles and runs a difference with a negated operand"
         (fun () ->
           let k =
-            Run.program (Lazy.force host)
+            Run.program (Lazy.force !host)
               (lane (fun x y -> minus x (negated y)))
           in
           let out =
@@ -1624,7 +1752,7 @@ let negation =
       test "Clang compiles and runs a difference with a negative constant"
         (fun () ->
           let k =
-            Run.program (Lazy.force host)
+            Run.program (Lazy.force !host)
               (lane (fun x _ -> minus x (Ops.float ~dtype:Float32 (-1.5))))
           in
           let out = Run.on_host k [ (1, [| `Float 1. |]) ] in
@@ -1646,7 +1774,7 @@ let grouping =
           let load slot = Ops.load (at slot) [] in
           let mul x y = Ops.alu x Mul [ y ] in
           let k =
-            Run.program (Lazy.force host)
+            Run.program (Lazy.force !host)
               (Linearizer.linearize
                  (Ops.sink
                     ~kernel:(Ops.kernel_info ~name:"grouping" ())
@@ -1740,7 +1868,7 @@ let zeros_compared =
         ~id:Dtype.name
         Dtype.[ Float16; Float32; Float64 ]
         (fun dt ->
-          let k = Run.program (Lazy.force host) (const_select dt 0.) in
+          let k = Run.program (Lazy.force !host) (const_select dt 0.) in
           match List.assoc 0 (Run.on_host k [ (1, [| `Float (-0.) |]) ]) with
           | [| `Float z |] -> equal float_exact 0. z
           | _ -> failf "one float");

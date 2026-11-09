@@ -9285,3 +9285,45 @@ reason and its pins.
   reading a state older than its listing reads it as it was`, `› a loop reads a
   join of its own states each trip`, `› a loop reading a join over other writes of
   its storage is refused`.
+
+## D466. A long host kernel is written as several functions
+
+- **tinygrad:** `renderer/cstyle.py` (`CStyleLanguage.render`) writes a
+  program's body as one function, compiled by `runtime/support/compiler_cpu.py`
+  (`ClangCompiler.compile`).
+- **tolk:** `Cstyle.cut_kernel`, `Cstyle.render_host` and `Cstyle.clang`, on
+  the CPU device only.
+- **Differs:** a Clang kernel for the CPU device of more than 20 000
+  operations, those written into their reader counted, is written as a kernel
+  that calls functions of at most 2 000 operations in order. A statement never
+  moves past another. A block too long for a function stays in the kernel and
+  is cut inside. A value read outside the function that declares it is held in
+  a frame on the kernel's stack, one array per C type: it is written where it
+  is declared and read where a function first uses it, and its slot is free
+  once the last reader of its value has run; a value declared outside a loop
+  and read inside lives to the loop's end, since its next trip reads it again.
+  A kernel that declares a name twice, as two loops one after the other may,
+  stays whole. A kernel of 20 000 operations or fewer renders as before, so no
+  golden changes.
+- **Reason:** (d). An elementwise program written as an OCaml loop is one
+  kernel, and Clang's time on one function grows faster than the function.
+  Fudge, Clang 19.1.7, user seconds, machine under load: a fixed-step pendulum
+  over 64 float64 under `Rune.jit'` takes 16.2 s whole and 3.1 s cut at 100
+  steps, 308 s and 14.0 s at 400, and at 1000 did not finish in 500 s whole
+  and takes 41.7 s cut; a sum of 1000 `exp (sin x)` over 64 float64 takes
+  160 s whole and 28.5 s cut. `-O1` compiles the sum in 119 s. Paired over 15
+  interleaved rounds, the pendulum of 400 steps runs 1.2% slower cut (0.97 to
+  1.07) and the sum 0.5% (0.93 to 1.07), and both give the same bits. A value
+  read at the top of its function instead of at its first use was live
+  across the function: the sum ran 20% slower so. Clang 23.1.5, whose
+  straight-line vectorizer tolk leaves on (D167), compiles the cut sum in
+  14.0 s against 148 s whole, and its vectorizer then speeds the cut sum by
+  3.4% at no compile cost on the pendulum; Clang 18.1.3 gains as 19 does. LLVM
+  20 to 22, Apple's Clang, arm64 and Windows are unmeasured. rune's gradients
+  of float64 `betaincinv` and float32 `betainccinv`, the longest kernels its
+  suites build, stay whole.
+- **Pinned by:** rune's `compile` bench `long/pendulum-200`, on fudge;
+  `Tolk.Cstyle › execution on the host › writes a long kernel in pieces`,
+  `› leaves a GPU's kernels whole`, `› computes a long chain of values read
+  once`, `› keeps two loops whose indices render as one name` and `› cut into
+  pieces, writes what it writes whole`.

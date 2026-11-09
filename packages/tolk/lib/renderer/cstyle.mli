@@ -86,8 +86,13 @@ val clang : Helpers.Target.t -> Renderer.t
     ["arm64,apple-m1,-neon"], and chooses the compiler and its flags
     ({!Compiler_cpu.clang}).
 
-    The kernel is one thread with no workgroups. Vectors are Clang's vector
-    extension, and an operation computes at most 64 lanes of one at once
+    The kernel is one thread with no workgroups. A long kernel for a CPU is
+    written as several functions called in order, since Clang's time on one
+    function grows faster than the function: it compiles in time about linear
+    in its length and runs a little slower. A value read in a function it was
+    not declared in is held in a frame on the kernel's stack, no larger than
+    the values alive at one time. Vectors are Clang's vector extension, and an
+    operation computes at most 64 lanes of one at once
     ({!Renderer.t.vector_lanes}). Half floats are [__fp16], and bfloat16
     values are converted to and from floats with integer operations. The data
     types are those of {!Dtype.all} without the 8-bit floats, and without
@@ -156,6 +161,11 @@ val hip : Helpers.Target.t -> Renderer.t
     Raises [Failure] if no comgr is found ({!Compiler_amd.hip}). *)
 
 (**/**)
+
+val clang_in_pieces : piece:int -> Helpers.Target.t -> Renderer.t
+(** [clang_in_pieces ~piece target] is {!clang}, its every kernel for a CPU
+    written as functions of at most [piece] operations, however short: a
+    test's kernel reaches the long kernels' code. *)
 
 val cuda_sync : Helpers.Target.t -> Renderer.t
 (** [cuda_sync target] is {!without_compiler}'s {!cuda} without asynchronous
