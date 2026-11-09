@@ -1617,6 +1617,151 @@ let termination_tests =
                     (exact_objective a xstar ~boxed:false 0.)
                     (Nx.full_like xstar 0.5))))
           methods);
+    test "a move the gradient's rounding hides is at the floats' limit"
+      (fun () ->
+        (* L-BFGS reaches this minimum in nine steps. Each later move shifts
+           only the components near 0, by ulps far finer than the gradient's
+           rounding, which leaves the gradient unchanged: no curvature can be
+           measured along it, and the lane must not search on to its budget. *)
+        let a =
+          Nx.create f64 [| 4; 4 |]
+            [|
+              10.; -1.; -1.; -1.; -1.; 8.; 1.; -1.; -1.; 1.; 10.; 1.; -1.; -1.;
+              1.; 8.;
+            |]
+        and xstar =
+          vec
+            [|
+              0.01190185546875; 0.; 0.00128173828125; -4.831235855817795e-09;
+            |]
+        in
+        let r = 1e-6 in
+        let abs =
+          Float.sqrt (r *. Float.epsilon *. condition a) *. 0.01190185546875
+        in
+        List.iter
+          (fun (name, m) ->
+            equal ~msg:name status_t Converged
+              (status
+                 (Minimize.solve one m ~tol:(Tol.v ~rel:r ~abs) ~budget:200
+                    (exact_objective a xstar ~boxed:false 0.)
+                    (Nx.full_like xstar 0.5))))
+          methods);
+    test "a small move the gradient shows is no floats' limit" (fun () ->
+        (* Its stiff component learned, the model scales the soft one's step
+           below [ε |x|∞]. That component's ulps are far finer and its gradient
+           shows the move, so the search goes on to the minimum. *)
+        let quad d xstar x =
+          let e = Nx.sub x xstar in
+          Nx.mul_s (Nx.sum (Nx.mul d (Nx.mul e e))) 0.5
+        in
+        let xstar = vec [| 1.; 1e-6 |] in
+        List.iter
+          (fun (stiff, e) ->
+            List.iter
+              (fun (name, m) ->
+                equal ~msg:name
+                  (Oracle.tensor ~abs:1e-9 ())
+                  xstar
+                  (Solution.get
+                     (Minimize.solve one m
+                        ~lo:(vec [| -10.; -10. |])
+                        ~hi:(vec [| 10.; 10. |])
+                        ~tol:(Tol.abs 1e-9) ~budget:200
+                        (quad (vec [| stiff; 1. |]) xstar)
+                        (vec [| 1.0001; 1e-6 +. e |]))))
+              [
+                ("bfgs", Minimize.bfgs ~linear:Linear.dense);
+                ("lbfgs", Minimize.lbfgs ~memory:3 ~linear:Linear.dense);
+              ])
+          [ (1e10, 1e-7); (1e10, 1e-6); (1e12, 1e-5) ]);
+    test "Newton takes a small step beside a large component" (fun () ->
+        (* The step of 10⁻⁹ is below [ε |x|∞] and exact. *)
+        let xstar = vec [| 1e8; 1e-9 |] in
+        let f x =
+          let e = Nx.sub x xstar in
+          Nx.mul_s (Nx.sum (Nx.mul e e)) 0.5
+        in
+        equal
+          (Oracle.tensor ~abs:1e-6 ())
+          xstar
+          (Solution.get
+             (Minimize.solve one
+                (Minimize.newton ~linear:Linear.dense)
+                ~tol:(Tol.abs 1e-6) ~budget:200 f (vec [| 1e8; 0. |]))));
+    test "a stretch where f is linear is no floats' limit" (fun () ->
+        (* In a box the search accepts its longest step with no curvature
+           condition. Beside a stiff large component that step on the linear
+           stretch is below [ε |x|∞], and 5 from the minimum with a gradient of
+           1 the lane has not converged. *)
+        let top = 1e8 and stiff = 1e10 in
+        let huber z =
+          let a = Nx.abs z in
+          Nx.where (Nx.less_equal_s a 1.)
+            (Nx.mul_s (Nx.square z) 0.5)
+            (Nx.sub_s a 0.5)
+        in
+        let f x =
+          Nx.add
+            (Nx.mul_s (Nx.square (Nx.sub_s (Nx.get [ 0 ] x) top)) (stiff /. 2.))
+            (huber (Nx.sub_s (Nx.get [ 1 ] x) 1.))
+        in
+        List.iter
+          (fun (name, m) ->
+            let s =
+              Minimize.solve one m
+                ~lo:(vec [| -4. *. top; -10. |])
+                ~hi:(vec [| 4. *. top; 10. |])
+                ~tol:(Tol.abs 1e-6) ~budget:200 f
+                (vec [| top +. 1.; 6. |])
+            in
+            equal ~msg:name bool false (is Converged s))
+          [
+            ("bfgs", Minimize.bfgs ~linear:Linear.dense);
+            ("lbfgs", Minimize.lbfgs ~memory:3 ~linear:Linear.dense);
+          ]);
+    test "an objective with no minimum does not converge" (fun () ->
+        (* A slope below [tol] makes the step small, and the search doubles
+           along the line through all its trials: nothing there is at the
+           floats' limit. *)
+        let f x =
+          Nx.mul_s
+            (Nx.sub (Nx.get [ 0 ] x) (Nx.mul_s (Nx.get [ 1 ] x) 2.))
+            1e-12
+        in
+        List.iter
+          (fun (name, m) ->
+            let s =
+              Minimize.solve one m ~tol:(Tol.abs 1e-8) ~budget:200 f
+                (vec [| 0.5; 0.5 |])
+            in
+            equal ~msg:name bool false (is Converged s))
+          [
+            ("bfgs", Minimize.bfgs ~linear:Linear.dense);
+            ("lbfgs", Minimize.lbfgs ~memory:3 ~linear:Linear.dense);
+          ]);
+    test "a step with no curvature leaves BFGS's model as it was" (fun () ->
+        (* The first step stays on Huber's linear stretch, where the gradient
+           does not change. *)
+        let a = vec [| 1.; 2.; 3. |] in
+        let f x =
+          let r = Nx.sub x a in
+          let m = Nx.abs r in
+          Nx.sum
+            (Nx.where (Nx.less_equal_s m 1.)
+               (Nx.mul_s (Nx.square r) 0.5)
+               (Nx.sub_s m 0.5))
+        in
+        equal
+          (Oracle.tensor ~abs:1e-6 ())
+          a
+          (Solution.get
+             (Minimize.solve one
+                (Minimize.bfgs ~linear:Linear.dense)
+                ~lo:(Nx.full_like a (-20.))
+                ~hi:(Nx.full_like a 20.)
+                ~tol:(Tol.abs 1e-8) ~budget:200 f
+                (vec [| 10.; -8.; 15. |]))));
     prop "beside a relative term the absolute term jera.mli names converges"
       Gen.(pair spread_minima (float_range (-12.) (-6.)))
       (fun ((a, xstar), e) ->

@@ -479,6 +479,13 @@ let error q ~x ~f delta =
   let size, exact = size ~x ~f delta in
   Nx.where exact (Nx.zeros_like delta) (Nx.div size (gap q))
 
+(* Whether each lane's step is within [ε |x|∞] in every component, the floats'
+   resolution of a coupled problem's gradient, however finely its small
+   components are represented. *)
+let within_ulp x step =
+  let top = Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs x) in
+  every (Nx.less_equal (Nx.abs step) (Nx.mul_s top (Num.eps (Nx.dtype x))))
+
 (* A step at the floats' resolution: within one unit of [x]'s last place in
    every component, so it moves the estimate by rounding at most, as a step that
    flips between the floats either side of a zero does. *)
@@ -612,12 +619,10 @@ let judge tol s ~map ~mu ~resolution ~f delta =
     match resolution with
     | None -> still s.x map
     | Some r ->
-        let top = Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs s.x) in
-        let ulp = Nx.mul_s top (Num.eps (Nx.dtype s.x)) in
         Nx.logical_or (still s.x map)
           (Nx.logical_and
              (Nx.logical_not (within ~scale r))
-             (every (Nx.less_equal (Nx.abs map) ulp)))
+             (within_ulp s.x map))
   in
   let e = Nx.where (column stuck) newest (error (contraction s)) in
   (* A quasi-Newton lane converges once the curvature along its step was

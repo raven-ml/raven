@@ -46,6 +46,11 @@ val moves : from:(float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> 'd Nx.bool_t
 (** [moves ~from x] is [true] in each lane where [x] differs from [from] in
     some component. *)
 
+val within_ulp : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> 'd Nx.bool_t
+(** [within_ulp x step] is [true] in each lane where every component of [step]
+    is at most [ε |x|∞] in magnitude: the floats' resolution of a coupled
+    problem's gradient at [x]. *)
+
 val backtrack :
   ('p, 'd) Nx.Ptree.t ->
   (float, 'b) Nx.dtype ->

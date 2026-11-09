@@ -394,7 +394,10 @@ let bfgs_method at dtype n ~trials evaluate =
     let curved = Nx.greater_s ys 0. in
     let rho = Nx.recip (Nx.where curved ys (Nx.ones_like ys)) in
     let h =
-      Nx.where first (Nx.mul eye (Nx.mul ys (Nx.recip (Search.dot y y)))) h
+      Nx.where
+        (Nx.logical_and first curved)
+        (Nx.mul eye (Nx.mul ys (Nx.recip (Search.dot y y))))
+        h
     in
     let hy = Num.matvec h y in
     let h' =
@@ -836,16 +839,30 @@ let descend ?box ~trials evaluate ~tol ~budget (Method m) (s : _ Search.state)
        bound. *)
     let s, at_limit, (q, moved, tries), mu =
       if m.curvature then
-        let ((q, moved, _) as search) =
+        let q, moved, tries =
           searched (Nx.logical_and (searching s.st) downhill)
         in
         let c = Search.quotient tol ~x:s.x ~x':q.x (Nx.sub q.g s.fx) in
         let c = Nx.where moved c (Nx.full_like c Float.nan) in
         let mu = Search.least mu c in
+        (* A search that spent its trials, measured no curvature and moved
+           within the gradient's rounding cannot give the reading the judgement
+           waits for, and the next search would do the same until the budget:
+           the lane is at the floats' limit. A step accepted on a stretch
+           where [f] is linear, or a search that ran along one, is not. *)
+        let hidden =
+          Nx.logical_and (Nx.isnan c)
+            (Nx.logical_and
+               (Nx.equal_s tries (Int32.of_int trials))
+               (Search.within_ulp s.x (Nx.sub q.x s.x)))
+        in
         let s, at_limit =
           judge (Some (mu, Nx.logical_not (Nx.isnan c)))
         in
-        (s, at_limit, search, mu)
+        ( s,
+          at_limit,
+          (q, Nx.logical_and moved (Nx.logical_not hidden), tries),
+          mu )
       else
         let s, at_limit = judge None in
         (s, at_limit, searched (Nx.logical_and (searching s.st) downhill), mu)

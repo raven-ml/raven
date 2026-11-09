@@ -645,7 +645,8 @@ module Minimize : sig
       a lane converges only once its search measured the curvature along the
       step [δ] it is judged on, which costs a converging lane one more search,
       or at the floats' limit, where its step is an exact zero or its search
-      finds no decrease. It is the distance in [tol]'s scaled norm where [f]'s curvature near the
+      finds no decrease or spends its trials on a move within [ε |x|∞] in every
+      component that measures no curvature. It is the distance in [tol]'s scaled norm where [f]'s curvature near the
       minimum is at least [μ]. Each measured curvature is at least the least, so
       the bound is an estimate that understates the error by up to the ratio of
       [f]'s largest curvature to its least in [tol]'s coordinates [x / σ]: it

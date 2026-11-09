@@ -850,6 +850,12 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.bfgs` and `lbfgs` no longer spend their budget at a minimum they
+  have reached: a search that spends its trials on a move within `ε |x|∞`
+  and measures no curvature puts the lane at the floats' limit, so it converges
+  instead of searching on.
+- `Minimize.bfgs` no longer ends `Stalled` after a first step on a stretch
+  where the objective is linear: the update divided by a zero `yᵀy`.
 - `Minimize.bfgs` and `lbfgs` converge a lane only once their search measured
   the curvature along the step it is judged on: a soft component left after
   the stiff ones converged ended `Converged` up to 7000 times `tol` off.
