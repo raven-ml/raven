@@ -2954,8 +2954,17 @@ let counts_beside () =
   | WSIGNALED n | WSTOPPED n -> failf "the child stopped on signal %d" n
 
 (* A trace of each engine that runs work, around a launch of [valu]: its length
-   within the window, its waves and its clock. *)
+   within the window, its waves and its clock.
+
+   Through amdgpu it is held. KFD may evict the process mid-trace and move the
+   trace's window and page directory, and nothing stops the trace unit, which
+   may then write into moved pages or another process's address space. Until a
+   probe shows a trace stops writing once its queue is removed, it runs only
+   where rig owns the GPU. *)
 let traced_launch () =
+  if not (S.driverless ()) then
+    skip ~reason:"held through amdgpu: a KFD eviction may move a running trace"
+      ();
   S.with_ @@ fun t ->
   gfx1201_only t;
   let tr = steady t in

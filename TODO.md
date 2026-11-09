@@ -28,13 +28,17 @@ raven / llama.cpp b12048 Vulkan:
 
 ## tolk
 
-- AMD thread traces are not collected in a profile
-- spawning any process stalls a rig AMD program's GPU work about 100 ms
-  (nonnormal, KFD): a short launch starts 31-74 us after its submit, and
-  94-104 ms after it right after a spawn, even of a child that opens no GPU
-  file. Inferred, not run: the child closes the inherited render node at
-  exec, which waits for the VM to idle, and KFD evicts the process and
-  restores it 100 ms later
+- AMD thread traces are not collected in a profile. Through KFD a trace is
+  unsafe until shown otherwise: an eviction may move its window and page
+  directory while the trace unit writes on, so rig's traced launch test runs
+  only over PCI. A probe deactivating a traced queue over a poisoned window
+  decides (_plans/todo-campaign/sqtt/adjudication.md)
+- spawning any process stalls a rig AMD program's GPU work about 100 ms on
+  Linux before 6.16 (nonnormal, 6.12): a child's close of its copy of the
+  render node, at exec or exit, runs amdgpu_flush, which waits on KFD's
+  eviction fence and so evicts the process for 100 ms. rig could hold no
+  descriptor on the acquired render node, mapping through dma-bufs
+  (_plans/todo-campaign/spawn-stall/findings.md)
 - long programs: tolk's passes are linear in the nodes they walk, about 0.4 us
   a row over about 130 walks, flat (no pass past 8%, no function past 4%):
   the gradient of `betainc` costs tolk and rune's tracing 0.8 s and Clang
