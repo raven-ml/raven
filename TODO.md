@@ -29,10 +29,6 @@ raven / llama.cpp b12048 Vulkan:
 
 ### drivers
 
-- rig.amd over PCI on SDMA 4: program the page queue (regSDMA_PAGE_*,
-  doorbell sdma_engine0 + 1, as sdma_v4_4_2 does) as the copy queue's
-  second slot (`Sdma.slots`) and drop its 16 MiB ring (`most_ring`).
-  Needs an SDMA 4 GPU (Vega, MI100-MI300); nonnormal's gfx1201 runs SDMA 7
 - host buffers on CUDA: a call that makes the process's first copy from
   the host pays one 8-11 ms `cuMemHostRegister`, and gpt-oss's prefill
   pays 17-19 ms of `cuMemHostUnregister` for weight buffers the GC freed
@@ -40,25 +36,13 @@ raven / llama.cpp b12048 Vulkan:
 - `Pinned` memory on a discrete GPU counts in the host's budget but is
   paced by the GPU's room and allocated bytes
 
-### limits and size
-
-- NV over PCI: every GPU's memory, Device and host-mapped, comes from one
-  range, 64 GiB to `Rig_nv.windows` (about 952 GiB, rig_nv_pci.ml),
-  shared by all GPUs: eight 141 GB GPUs don't fit. Place Device memory in
-  the GSP's 49-bit space (gsp.ml), as e81be363c did for the kernel path;
-  only segments, launch descriptors and semaphores need 2^40
-
-### API
-
-- GPU memory between machines over RDMA (GPUDirect), as nx.rdma had: a
-  copy between two machines' GPUs runs through rig.mlx5 or rig.bnxt, not
-  TCP, over the memory `Rig.Buffer.dma` describes
-
 ### tests and runs
 
-- hardware runs, none possible on fudge or nonnormal (SDMA 7, one GPU
-  each, no RDMA NIC): the box and fill laws on SDMA 4 to 6; two GPUs
-  (peers); mlx5 and bnxt NICs
+- needs hardware raven's machines lack: rig.amd over PCI on SDMA 4 (the
+  page queue as `Sdma.slots`' second slot; Vega, MI100-MI300); the box and
+  fill laws on SDMA 4 to 6; two GPUs as peers; mlx5 and bnxt NICs and GPU
+  memory between machines over RDMA; NV over PCI with more GPU memory than
+  the range from 64 GiB to `Rig_nv.windows` holds
 
 ## tolk
 
@@ -120,11 +104,8 @@ raven / llama.cpp b12048 Vulkan:
 
 ## rune, kaun, vega
 
-- sharded jit: nx's closing moves a chunk between every pair of devices:
-  time it against tinygrad's ring and hierarchical allreduce on a machine
-  with several GPUs, and if it is slower, write those in nx's partition.
-  Over several devices a check or a total inside a loop or a switch's
-  branch still declines, with a named error at the call
+- sharded jit: over several devices a check or a total inside a loop or a
+  switch's branch still declines, with a named error at the call
 - attention under `Rune.jit`: causal saves little, since a grid under 1.3
   waves takes as long as its longest workgroup (rows already launch longest
   first): pair row tiles i and n-1-i, or split long rows' keys; the
@@ -140,34 +121,12 @@ raven / llama.cpp b12048 Vulkan:
   s1:0072ef24ec103aaf
 - a fresh process's first calls fault 72-188 pages each for 1 MiB results
   until rig's buffer cache warms
-- the scatter walk (I4) on a GPU: a scatter of a few updates pays one or
-  two launches more than the comparison it replaced (7 rows, 1.5-3 µs);
-  writing the walk's first chunk over the target (no fill) would remove one.
-  Its launch-cost constants live in rune keyed on host or GPU, and
-  `stream_threads` is sm_89's default on every target, the host included:
-  both belong in the renderer's facts
-- compiled `Nx.eigh` at k = 128 float64 replays in 24-58 ms on the host
-  (9-22 sweeps of 127 rounds) against eager's 3.5 ms: each round's two
-  kernels read their `% 127` gathers as scalar loads (hand C 2.7x
-  faster); float32 rounds take 2.3x float64's there. Compiled `Nx.svd`
-  at k = 128 float64 replays in 53-114 ms (16-36 sweeps). A GPU runs
-  every sweep of both. On an idle RTX 5000 a flag read takes 5.8-6.7 us
-  and stopping eigh f32 every sweep runs 1.4-2.1x faster (k = 128 11.6
-  -> 6.1 ms, k = 32 1.46 -> 0.83 ms); while another process computed on
-  the GPU a read took 0.86 ms and k = 32 went 3.6 -> 15.7 ms, and a stop
-  makes the call synchronous: decide a GPU stop (a read after a lower
-  bound, or every m sweeps, or one kernel per matrix as batched syevj)
-  (_plans/todo-campaign/design/eigh-compile.adjudication.md)
 
 ## nx
 
 - with a large live OCaml heap, the host buffers of each talon take drove
   the major GC to ~150 M instructions a take, ~8x the take's own (probe of
   6281f607b): custom-block pressure from nx and rig host buffers
-- nx.cpu's thread splits follow the call prices (179ea5cc5, 82e42b78d) and
-  the kind tables of f6876a0ad, measured under load 1.3-4.7: time them
-  quiet on fudge, with a row of a costly kind where its threads change
-  (pow-f64-16K), and re-record the elementwise rows
 
 ## talon, hugin, brot, munin, quill
 
@@ -224,8 +183,3 @@ raven / llama.cpp b12048 Vulkan:
   loop puts ~4.8k words in the major heap) and it passes at rig's 4 MiB
   floor on fudge; on failure the law now prints each collector's counts
   (0247fa6d8)
-
-## repo
-
-- thumper: talon.thumper's Mac rows predate the Nx.Rng
-  fixture (76105a215): the maintainer re-records them
