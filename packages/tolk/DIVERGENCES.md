@@ -2448,8 +2448,12 @@ Withdrawn: multi-device is out of scope, see README.
     its output and contracted ranges' sizes against each buffer's bytes
     once), or a number not known, streams before the cores are tried; a
     shorter sum, or more multiply-adds a byte, tries a core first and streams
-    where none applies. Past `R = 32` a core takes it where one applies, and
-    the other rules where none does;
+    where none applies. Past `R = 16` the operand is read in `ceil (R / 16)`
+    passes, and a core of two stages that keeps `core_threads / 2` threads
+    (`Stage.tile`) takes the kernel first. sm_89 was measured; the other CUDA
+    parts of two stages, from sm_80, take the rule unmeasured, and AMD and
+    Metal, of one stage, keep streaming. Past `R = 32` a core takes it where
+    one applies, and the other rules where none does;
   - the layout: `W`'s main access is the one with a range of unit stride
     whose terms of contracted ranges span the most bytes. When that range `u`
     is contracted (rows): `W`'s reuse axes are upcast, each by its share of
@@ -2534,9 +2538,17 @@ Withdrawn: multi-device is out of scope, see README.
   - the order against the cores, on the rows' kernels as rune compiles them
     today: `stream/dense-bf16-16` 834-844 us on a core to 281-283 us
     streamed; `stream/dense-bf16-32`, where a thread's 16 rows leave two
-    passes over the operand, 429-431 us on a staged core and 541-545 us
-    streamed, the one row the order loses, kept for gpt-oss's prefill
-    (`Heuristic.stream_first`); at `R = 64` the core keeps it
+    passes over the operand, 425 us on a staged core and 540 us streamed. The
+    time follows the passes: forced to 2 and 4 passes, 16 rows take 519 and
+    1018 us, 32 rows 540 and 1024. What separates core from stream at
+    `R = 32` is whether a staged core keeps its threads. Keeping them, the
+    core won all 10 shapes measured, by 1.03 to 2.5 times. Short of them the
+    stream won 7 of 9. The core won the other two, gains left untaken: 6144
+    outputs a row by 4096 terms by 0.6 to 4%, and 2048 by 1024 (18 us on the
+    core, 25 streamed). An unstaged core does not pay: 24 rows take 524 us
+    streamed and 827 on one, and gpt-oss's prefill router, which no core
+    stages, 45 and 233. At
+    `R = 64` the core keeps it
     (`stream/dense-bf16-64`, 433-436 us with and without `MV`). The
     decode step's attention values, `gpt_oss/gpt_oss_decode_values` (`R = 8`,
     a sum of 1024 slots), 25.2-26.6 us on a core to 14.6-15.3 us streamed;

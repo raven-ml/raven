@@ -72,11 +72,14 @@ val tile :
   workgroups:int option ->
   sizes:int * int * int ->
   in_run:(int -> bool) ->
-  (int * int * Opt.target) list option
+  ((int * int * Opt.target) list * bool) option
 (** [tile ren sink core ~core_threads ~workgroups ~sizes:(n, m, k) ~in_run] is
     the splits of a tensor core's staged tile, as [(axis, amount, target)] with
     [axis] [0], [1] or [2] for the core's N, M and K, in the order to apply
-    them, when {!admits} and {!depth} stage the core; [None] otherwise. [n],
+    them, and whether the core has two stages and the kernel keeps
+    [core_threads / 2] threads on some tile, which an unknown count of
+    workgroups does not show, when {!admits} and {!depth} stage the core;
+    [None] otherwise. [n],
     [m] and [k] are the sizes of those axes as the core leaves them, [0] when
     unknown, and [workgroups] the kernel's, if known. A warp holds 64 by 64
     outputs, by upcasts of powers of two; a workgroup takes 2 by 2 warps where

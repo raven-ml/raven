@@ -64,9 +64,6 @@ raven / llama.cpp b12048 Vulkan:
   matcher rules on (no gain: the memo it needs costs what it saves)
 - device facts (762ad1c31): Metal's `core_threads` and `stream_threads`
   are owed, and `Rig.cache_bytes` has not run on hardware for NV over PCI
-- `stream/dense-bf16-32` streams at 541 µs where a staged core takes 429:
-  the gate stays at 32 because 16 lost on `GptOss/prefill-512` in 4 of 4
-  rounds
 - `Cuda/cat-16-columns-of-exp-64x64`, the row that catches a lost mark on
   a concatenation, has no AMD baseline
 - a fixed run of an `After` state read inside a loop raises: lifting it

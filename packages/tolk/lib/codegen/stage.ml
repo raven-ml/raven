@@ -647,6 +647,11 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
       | None -> max_int
     in
     let fits p = threads p >= core_threads / stages in
+    (* Whether the core beats a stream of several passes was measured only
+       with copies overlapping its cores, on two stages, and known counts. *)
+    let filled =
+      stages = 2 && Option.is_some workgroups && List.exists fits plans
+    in
     let um, un, lm, ln =
       match List.find_opt fits plans with
       | Some p -> p
@@ -654,12 +659,13 @@ let tile (ren : Renderer.t) ast (w : wmma) ~core_threads ~workgroups
     in
     let when_ c split = if c then [ split ] else [] in
     Some
-      (when_ (um > 1) (1, um, Opt.Upcast)
-      @ (if un > 4 then [ (0, 4, Opt.Upcast); (0, un / 4, Opt.Upcast) ]
-         else when_ (un > 1) (0, un, Opt.Upcast))
-      @ when_ (lm = 2) (1, 2, Opt.Local)
-      @ when_ (ln = 2) (0, 2, Opt.Local)
-      @ when_ (unroll > 1) (2, unroll, Opt.Upcast))
+      ( when_ (um > 1) (1, um, Opt.Upcast)
+        @ (if un > 4 then [ (0, 4, Opt.Upcast); (0, un / 4, Opt.Upcast) ]
+           else when_ (un > 1) (0, un, Opt.Upcast))
+        @ when_ (lm = 2) (1, 2, Opt.Local)
+        @ when_ (ln = 2) (0, 2, Opt.Local)
+        @ when_ (unroll > 1) (2, unroll, Opt.Upcast),
+        filled )
 
 (* Decoded panels on the host *)
 

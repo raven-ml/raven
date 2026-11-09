@@ -108,9 +108,10 @@ let within_run k m rest u =
 
 (* The staged core's splits ({!Stage.tile}), applied to [tk], [k] with the core
    applied, whose core made the axes [rngs] (N, M and K), if the core is
-   staged: [split i size target] splits the axis [rngs.(i)]. A warp's rows, and
-   a workgroup's, stay within a run of rows that read one value of an operand
-   ({!within_run}). *)
+   staged: [split i size target] splits the axis [rngs.(i)]. Whether the kernel
+   keeps the core's threads on them, or [None] where the core is not staged. A
+   warp's rows, and a workgroup's, stay within a run of rows that read one
+   value of an operand ({!within_run}). *)
 let staged_tile ~core_threads k tk rngs split =
   let core =
     List.find_map
@@ -123,7 +124,7 @@ let staged_tile ~core_threads k tk rngs split =
     | None -> 0
   in
   match core with
-  | None -> false
+  | None -> None
   | Some w -> (
       let workgroups =
         match prod_at tk (K.axes_of tk [ Global ]) with
@@ -153,10 +154,10 @@ let staged_tile ~core_threads k tk rngs split =
           ~sizes:(size 0, sm, size 2)
           ~in_run
       with
-      | None -> false
-      | Some splits ->
+      | None -> None
+      | Some (splits, filled) ->
           List.iter (fun (i, amount, target) -> split i amount target) splits;
-          true)
+          Some filled)
 
 (* first try the tensor cores *)
 let tensor_cores ~core_threads k =
@@ -208,17 +209,7 @@ let tensor_cores ~core_threads k =
                   split 1 size Opt.Upcast
               | _ -> ()
             in
-            if min_globals <> 0 then begin
-              (* attempt to upcast M, local N, upcast N, skipping upcast N if
-                 we'd end up with too few globals *)
-              upcast_m ~keep:always;
-              upcast ~keep:always 0 [ 4; 2 ] Opt.Local;
-              upcast
-                ~keep:(leaves ~default:false min_globals)
-                0 core_upcasts Opt.Upcast
-            end
-            else if staged_tile ~core_threads k tk rngs split then ()
-            else begin
+            let unstaged () =
               (* attempt to upcast M, N, local N. Each gives a workgroup more of
                  the outputs and the kernel fewer workgroups, which pays only
                  while the kernel keeps [core_threads] threads: the core's
@@ -240,9 +231,26 @@ let tensor_cores ~core_threads k =
               in
               Option.iter
                 (fun size -> split 0 size Opt.Local)
-                (List.find_opt local [ 4; 2 ])
-            end;
-            Some tk)
+                (List.find_opt local [ 4; 2 ]);
+              false
+            in
+            if min_globals <> 0 then begin
+              (* attempt to upcast M, local N, upcast N, skipping upcast N if
+                 we'd end up with too few globals *)
+              upcast_m ~keep:always;
+              upcast ~keep:always 0 [ 4; 2 ] Opt.Local;
+              upcast
+                ~keep:(leaves ~default:false min_globals)
+                0 core_upcasts Opt.Upcast;
+              Some (tk, false)
+            end
+            else
+              let filled =
+                match staged_tile ~core_threads k tk rngs split with
+                | Some filled -> filled
+                | None -> unstaged ()
+              in
+              Some (tk, filled))
       [ 0; 1; 2 ]
   else None
 
@@ -311,11 +319,15 @@ let line_bytes = 128
    reduce, and than the general rules. A bfloat16 matrix of 16384 by 4096 multiplies 16 rows in
    281 us streamed and 834 us on a core. Past [upcast_max] a thread no longer
    holds every row, so the operand is read in [ceil (R / upcast_max)] passes:
-   32 rows take 541 us streamed and 429 on a staged core. A gate of
-   [upcast_max] would run those on the core, and an MXFP4 product of 32 rows
-   in 1.46 ms against 1.62, but it costs gpt-oss's 512-token prefill, whose
-   router would take a core, 124 to 127 ms against 122.8 to 123.6: the gate
-   stays at 32. Past it a float32 operand streamed loses to the general rules'
+   the time follows the passes, 519 us for 16 rows forced to 2 passes and 540
+   for 32 rows in 2. More rows a thread do not help: 32 rows in one pass take
+   607 us. A core of two stages that keeps its threads takes such a kernel
+   first ([core_first]), at 32 rows 425 us against 540. A gate of [upcast_max]
+   would give the others a slower layout: 24 rows take 524 us streamed and 827
+   on an unstaged core, 28 rows 526 and 1693 on the general rules, and
+   gpt-oss's 512-token prefill's router, whose operand no core stages, 45 and
+   233. Past
+   32 a float32 operand streamed loses to the general rules'
    tiles, read once a pass where they share each load: at 64 rows 2107 to 2171
    us against 1909 to 1987, a 1024-cube product 1054 against 398 us; bfloat16's
    64 rows take 433 us on a core. *)
@@ -1115,8 +1127,17 @@ let hand_coded_with ~core_threads k =
              Option.map (fun l -> (s, l)) (streamed_layout k s)))
     in
     let streamed_as () = Option.map (stream k) (Lazy.force layout) in
+    let core = lazy (tensor_cores ~core_threads k) in
+    (* Past [upcast_max] a stream reads its operand in several passes, which a
+       core of two stages that keeps its threads beats. *)
+    let core_first (_, _, reuse) =
+      Bigint.(gt reuse (of_int upcast_max))
+      && match Lazy.force core with Some (_, filled) -> filled | None -> false
+    in
     let early_stream =
-      match s with Some s when early k s -> streamed_as () | _ -> None
+      match s with
+      | Some s when early k s && not (core_first s) -> streamed_as ()
+      | _ -> None
     in
     (* Past [stream_first] a decoded operand streams too: the other rules share
        only their upcast of 4 rows, and decode each value in every other tile,
@@ -1133,8 +1154,8 @@ let hand_coded_with ~core_threads k =
     match early_stream with
     | Some k -> k
     | None -> (
-        match tensor_cores ~core_threads k with
-        | Some tk -> tk
+        match Lazy.force core with
+        | Some (tk, _) -> tk
         | None -> ( match late () with Some k -> k | None -> general k))
 
 let hand_coded_optimizations k = hand_coded_with ~core_threads k

@@ -1148,6 +1148,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On NVIDIA GPUs from `sm_80`, a dense product of 32 rows takes a staged tensor
+  core when that core keeps its threads: a bfloat16 product of 16384 by 4096
+  runs in 425 µs on an RTX 5000 Ada, 540 streamed.
 - An `arm64+fp16` host (`Rig.arch`) compiles for `arm64,generic,fp16`: half
   vectors compute in halves and a half `Op.Mulacc` is one `fmla` or `fmadd`.
   Results keep their bits, NaN payloads aside.

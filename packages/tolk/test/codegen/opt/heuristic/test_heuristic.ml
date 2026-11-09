@@ -639,6 +639,85 @@ let applies =
       let _, _, o = List.find (fun (c, _, _) -> c.name = name) gpu_cases in
       equal Testable.bool streamed (streams o))
 
+(* [out[i, j] = sum_k x[i, k] w[j, k]] over [rows] rows of [cols] columns and
+   [depth] terms, of bfloat16 operands summed in float32, as rune compiles a
+   product. [divided] divides [x]'s element by one of [i]'s, so that operand
+   is an expression rather than a load. *)
+let dense ~divided rows cols depth =
+  let open Ops.O in
+  let param slot size dt = Shape.param ~shape:[ Ops.Int size ] slot dt in
+  let out = param 0 Stdlib.(rows * cols) Dtype.Bfloat16
+  and x = param 1 Stdlib.(rows * depth) Dtype.Bfloat16
+  and w = param 2 Stdlib.(cols * depth) Dtype.Bfloat16
+  and norm = param 3 rows Dtype.Float32 in
+  let i = Ops.range ~axis_type:Weak (Ops.Int rows) [ 1 ]
+  and j = Ops.range ~axis_type:Weak (Ops.Int cols) [ 2 ]
+  and k = Ops.range ~axis_type:Weak (Ops.Int depth) [ 0 ] in
+  let ld p at = Ops.cast (Ops.index p [ at ]) Dtype.Float32 in
+  let a = ld x ((i * int depth) + k) in
+  let a = if divided then a / Ops.index norm [ i ] else a in
+  let sum = Ops.reduce (a * ld w ((j * int depth) + k)) Add [ k ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [
+      Ops.end_
+        (Ops.store
+           (Ops.index out [ (i * int cols) + j ])
+           (Ops.cast sum Dtype.Bfloat16))
+        [ i; j ];
+    ]
+
+(* Past 16 outputs a load, a stream reads its operand in several passes: a
+   core of two stages that keeps its threads takes the kernel first, and any
+   other core does not. *)
+let passes_or_core =
+  (* The targets' own renderers: stages depend on asynchronous copies, which
+     the renderers of the table above do not state. *)
+  let gpu renderer device arch =
+    Cstyle.without_compiler
+      { Helpers.Target.device; renderer; arch; interface = ""; indices = "" }
+  in
+  let sm_89 = gpu "CUDA" "CUDA" "sm_89"
+  and gfx1201 = gpu "HIP" "AMD" "gfx1201" in
+  let takes_core o =
+    List.exists (function Opt.Tc _ -> true | _ -> false) (K.applied_opts o)
+  in
+  cases "a contraction of several passes streams unless a filled core takes it"
+    ~id:(fun (name, _, _, _, _, _, _) -> name)
+    [
+      ("32 rows, a staged core that keeps its threads", sm_89, 32, 16384, 4096,
+       false, false);
+      ("32 rows, a staged core that keeps them on a halved tile", sm_89, 32,
+       12288, 4096, false, false);
+      ("32 rows, a staged core short of threads", sm_89, 32, 2048, 4096, false,
+       true);
+      ("16 rows are one pass", sm_89, 16, 16384, 4096, false, true);
+      ("32 rows of an operand no core stages", sm_89, 32, 16384, 4096, true,
+       true);
+      ("32 rows, a core of one stage", gfx1201, 32, 16384, 4096, false, true);
+    ]
+    (fun (_, ren, rows, cols, depth, divided, streamed) ->
+      let s = K.v (dense ~divided rows cols depth) ren in
+      K.convert_loop_to_global s;
+      let o = Heuristic.hand_coded_optimizations s in
+      equal Testable.bool streamed (streams o);
+      equal Testable.bool (not streamed) (takes_core o))
+
+let passes_unstaged =
+  test "a contraction of several passes streams with staging off" (fun () ->
+      let s =
+        K.v
+          (dense ~divided:false 32 16384 4096)
+          (Cstyle.without_compiler
+             { Helpers.Target.device = "CUDA"; renderer = "CUDA"; arch = "sm_89";
+               interface = ""; indices = "" })
+      in
+      K.convert_loop_to_global s;
+      equal Testable.bool true
+        (streams
+           (Setting.context
+              [ Setting.B (Setting.stage, false) ]
+              (fun () -> Heuristic.hand_coded_optimizations s))))
+
 (* [k]'s kernel with a call beside its stores, of [f(&y[r0], &y[r1], ...)]
    for its output axes [r0], [r1], ... *)
 let with_call k =
@@ -2082,6 +2161,8 @@ let () =
              unrolls_in_flight;
              loads_together;
              applies;
+             passes_or_core;
+             passes_unstaged;
              per_byte_bounds;
              per_byte_order;
              recorded_order;

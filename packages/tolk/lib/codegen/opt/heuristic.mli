@@ -26,7 +26,9 @@
       streamed operand reads, or a number not known: the product of its
       output and contracted axes' sizes against the bytes of each buffer once,
       unknown when a size is symbolic or the operand reads a buffer that is
-      not a parameter;
+      not a parameter. A reuse past 16 streams only when no tensor core of
+      two stages ({!Stage.tile}) keeps its threads, since the operand is then
+      read in several passes;
     - a {{!section-cores}tensor core}, when the setting {!Setting.use_tc} is
       positive and the kernel reduces over one axis, {!Setting.tc_opt} admits
       more, or it sums a product with a decoded operand;
@@ -36,8 +38,8 @@
       {{!section-decodes}decodes}.
 
     The streaming guards are arithmetic on the kernel's sizes and index
-    terms, so a kernel that passes them takes the layout, and only a tensor
-    core is tried. On the host, a renderer that knows its vector registers
+    terms, so a kernel that passes them takes the layout, unless a core takes
+    a reuse past 16 first, and only a tensor core is tried. On the host, a renderer that knows its vector registers
     ({!Renderer.t.registers}) bounds the general rules with
     {{!section-budget}the budget}.
 
