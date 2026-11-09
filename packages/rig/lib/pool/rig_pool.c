@@ -325,8 +325,9 @@ static long rated_cpus(const char *root, const char *file, const int *cpus,
    scaled so that the largest is 1024 (drivers/base/arch_topology.c,
    topology_init_cpu_capacity_cppc). Elsewhere, Intel's hybrid CPUs among
    them, it writes none, and highest_perf is read the same way. The Core
-   Ultra 5 235 rates its efficiency cores 62 against 80 and they run
-   compute at 0.9 of the performance cores' speed, so all of them count. */
+   Ultra 5 235 rates its efficiency cores 62 against 80. They run a matrix
+   product at 0.9 of the performance cores' speed and a chain of sines in
+   16 lanes at 0.56, more than half either way, so all of them count. */
 long rig_pool_performance_cpus(const char *root, const int *cpus, long n) {
   long fast = rated_cpus(root, "cpu_capacity", cpus, n);
   if (fast >= 0) return fast;

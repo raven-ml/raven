@@ -28,10 +28,6 @@ raven / llama.cpp b12048 Vulkan:
 
 ## tolk
 
-- placement on hybrid cores: where host blocks land moves a run by 1.6x.
-  Jit/chain-100-rooted-hit runs its 4 blocks in 12.9 µs pinned to the
-  P-cores, 43.5 µs on one core, and 13.0 or 20.4 µs unpinned on a quiet
-  fudge, depending on which cores they reach
 - AMD counters and thread traces are not collected in a profile: rig's
   AMD driver brackets each timed launch, reading the VMID filter on the
   GPU in the bracket and marking a saturated or foreign count unmeasured
