@@ -113,6 +113,12 @@ let gen_value : Value.t Gen.t =
       Gen.map (fun n -> `Int n) Gen.int;
       Gen.map (fun n -> `Int n) (Gen.int_range (-(1 lsl 54)) (1 lsl 54));
       Gen.map (fun x -> `Float x) gen_float;
+      (* [any_float] is non-finite in one draw of ten: one value in 70, which
+         100 lists of up to 8 values miss once in 300 runs. This arm makes it
+         11 values in 80, or 40% of the lists. *)
+      Gen.map
+        (fun x -> `Float x)
+        (Gen.of_list [ Float.nan; Float.infinity; Float.neg_infinity ]);
       Gen.map (fun x -> `Float (Float.of_int x)) Gen.small_int;
       Gen.map (fun s -> `String s) (Gen.string_of (Gen.char_range ' ' '~'));
       Gen.constant (`String "tab\tline\nfeed \xc3\xa9 \"q\" \\");
