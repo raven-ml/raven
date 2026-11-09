@@ -113,6 +113,18 @@ val gpu : int -> t Rig_edge.opener
     [0] and ["CUDA:i"] otherwise. Its [make] opens a device on the GPU's
     primary context, with streams of its own.
 
+    [make] sets the context's [CU_LIMIT_MAX_L2_FETCH_GRANULARITY] to 128
+    bytes where it reads 64, the value CUDA reports before any set. On an
+    RTX 5000 Ada, until a set, the L2 fetches from memory only the 32-byte
+    sectors a miss names. At 128, a kernel that reads a few bytes of each of
+    many rows in each iteration of a loop misses a quarter as often, and a
+    random scalar read from memory moves four times the bytes it moved
+    before. The limit holds for every kernel in the context, other
+    libraries' included, after the device closes too. A limit set before
+    the open stays unless it is 64, which cannot be told from CUDA's report.
+    Each open sets it again, so a program that wants another value sets it
+    after every open, with CUDA's [cuCtxSetLimit].
+
     [make] is [Error] with the reason:
     {ul
     {- while a device of GPU [i] is open, or a stopped device's work on GPU

@@ -146,6 +146,7 @@ enum {
   CU_CTX_SCHED_AUTO = 0x00,
   CU_CTX_SCHED_BLOCKING_SYNC = 0x04,
   CU_CTX_SCHED_MASK = 0x07,
+  CU_LIMIT_MAX_L2_FETCH_GRANULARITY = 0x05,
   CU_STREAM_NON_BLOCKING = 0x1,
   CU_EVENT_DISABLE_TIMING = 0x2,
   CU_MEMHOST_PORTABLE_DEVICEMAP = 0x3,
@@ -178,6 +179,8 @@ enum {
   X(cuCtxPushCurrent_v2, (CUcontext))                                          \
   X(cuCtxPopCurrent_v2, (CUcontext *))                                         \
   X(cuCtxGetCurrent, (CUcontext *))                                            \
+  X(cuCtxGetLimit, (size_t *, int))                                            \
+  X(cuCtxSetLimit, (int, size_t))                                              \
   X(cuCtxEnablePeerAccess, (CUcontext, unsigned int))                          \
   X(cuStreamCreate, (CUstream *, unsigned int))                                \
   X(cuStreamDestroy_v2, (CUstream))                                            \
@@ -644,13 +647,35 @@ static CUresult start(struct device *d) {
   return s;
 }
 
-/* Makes [d]'s streams and events, then its word ([word_start]), or none of
-   them. */
+/* The L2's fetch from DRAM on a miss, in bytes: the limit CUDA reports
+   before any set, and the one rig sets. */
+#define CUDA_FETCH 64
+#define FETCH 128
+
+/* Widens the L2's fetches from DRAM in the current context to FETCH bytes
+   where the context's limit still reads CUDA_FETCH. On an RTX 5000 Ada,
+   until a set, the L2 fetches the 32-byte sectors a miss names. A
+   kernel that reads 16 bytes of each of many rows a trip, as a product
+   over quantised weights does, then misses on every second trip; at 128
+   bytes, on every eighth. A random scalar read from DRAM brings four times
+   the bytes it brought before. The limit is the context's, so it holds for
+   other libraries' kernels too, and a limit of CUDA_FETCH set on purpose
+   reads as the default. A hint: a refusal leaves the context as it was. */
+static void fetch(void) {
+  size_t limit = 0;
+  CUresult s = p_cuCtxGetLimit(&limit, CU_LIMIT_MAX_L2_FETCH_GRANULARITY);
+  if (s == CUDA_SUCCESS && limit == CUDA_FETCH)
+    p_cuCtxSetLimit(CU_LIMIT_MAX_L2_FETCH_GRANULARITY, FETCH);
+}
+
+/* Makes [d]'s streams and events, then its word ([word_start]), then
+   widens the context's L2 fetches ([fetch]); or none of them. */
 static CUresult begin(struct device *d, _Atomic uint64_t *slot, int own) {
   CUresult s = start(d);
   if (s != CUDA_SUCCESS) return s;
   s = word_start(d, slot, own);
   if (s != CUDA_SUCCESS) destroy(d);
+  else fetch();
   return s;
 }
 
