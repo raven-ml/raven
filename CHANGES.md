@@ -850,6 +850,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.nelder_mead` no longer reports `Converged` off the minimum where
+  `f` is not finite at a convergence probe, or where its differences there
+  overflow when squared, as when `f` is scaled by `1e170`.
 - `Minimize.nelder_mead` under `Tol.rel` or `Tol.ulps` no longer reports
   `Converged` at 0 where 0 is no minimum: a simplex collapsed there probed
   at a step of 0. It probes at the first simplex's step instead.

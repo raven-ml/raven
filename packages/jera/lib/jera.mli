@@ -779,15 +779,15 @@ module Minimize : sig
       twice the largest component of [e] and of [tol]'s scale at [y], or where
       both are 0, as a relative [tol]'s scale is at [y = 0], the first
       simplex's largest step at [y]: if none is lower than [y] by [10⁻⁴] of
-      the norm of each pair's lower difference from [f y], the lane converges,
-      and otherwise it continues from the simplex of [y] and the lower point of
-      each pair (Kelley, 1999). Where [f]
-      is smooth and its gradient is not zero, one of the [2n] directions
-      [±e_i] descends, so a lane converges where a step [σ] along none of them
-      descends by that margin; a diameter alone converges on McKinnon's
-      function at a point whose gradient is [(0, 1)]. A non-finite value counts
-      as [+∞], one at the start ends the lane [Not_finite]. [budget] counts
-      evaluations.
+      the norm of each pair's lower difference from [f y], a point where [f]
+      is not finite differing by 0, the lane converges, and otherwise it
+      continues from the simplex of [y] and the lower point of each pair
+      (Kelley, 1999). Where [f] is smooth and its gradient is not zero, one of
+      the [2n] directions [±e_i] descends, so a lane converges where a step
+      [σ] along none of them descends by that margin; a diameter alone
+      converges on McKinnon's function at a point whose gradient is [(0, 1)].
+      A non-finite value counts as [+∞], one at the start ends the lane
+      [Not_finite]. [budget] counts evaluations.
       {b Cost.} One evaluation per trip, two when it expands or contracts,
       [n + 1] more when it shrinks, and [2n] for each diameter that meets
       [tol].

@@ -465,6 +465,38 @@ let nelder_mead_tests =
           (Oracle.tensor ~abs:1e-5 ())
           (vec [| 0.; -0.5 |])
           (Solution.get (simplex f (vec [| 1.; 1. |]))));
+    cases "a scaled f converges where f does"
+      ~id:(Printf.sprintf "scaled by %g") [ 1e170; 1e-170 ] (fun c ->
+        (* c ½ (x² + (x + 1)²) with x ≤ 0, from 0, where the first simplex
+           collapses onto the bound: the minimum is −1/2 at any scale. By
+           1e170 the probe's difference toward −1/2 squares past the floats'
+           range, by 1e-170 below it. *)
+        let s =
+          Minimize.solve one Minimize.nelder_mead
+            ~hi:(vec [| 0. |])
+            ~tol:(Tol.abs 1e-6) ~budget:5000
+            (fun x ->
+              let squares = Nx.add (Nx.square x) (Nx.square (Nx.add_s x 1.)) in
+              Nx.mul_s (Nx.sum squares) (0.5 *. c))
+            (vec [| 0. |])
+        in
+        equal bool true (Nx.item [] (Solution.is Converged s));
+        equal (Oracle.tensor ~abs:1e-5 ()) (vec [| -0.5 |]) (Solution.get s));
+    test "a probe outside f's domain leaves the others to decide" (fun () ->
+        (* (y − 3)² defined only where x = 0, NaN elsewhere: every probe along
+           x is outside the domain, and the probes along y descend until y =
+           3. The simplex cannot leave the line x = 0 but by restarts, so it
+           creeps along y and spends its budget; it converges only at (0, 3). *)
+        let f v =
+          let x = Nx.get [ 0 ] v and y = Nx.get [ 1 ] v in
+          Nx.where (Nx.equal_s x 0.)
+            (Nx.square (Nx.sub_s y 3.))
+            (Nx.scalar f64 Float.nan)
+        in
+        let s = simplex f (vec [| 0.; 0. |]) in
+        if Nx.item [] (Solution.is Converged s) then
+          equal (Oracle.tensor ~abs:1e-5 ()) (vec [| 0.; 3. |]) (Solution.get s)
+        else equal bool true (Nx.item [] (Solution.is Budget_spent s)));
     test "its answer carries no derivative" (fun () ->
         let g =
           Rune.grad'
@@ -567,28 +599,68 @@ let simplex_tols =
 (* The first simplex's step at 0, which jera.mli states. *)
 let first_step = 2.5e-4
 
-(* nelder_mead's answer for [½ |a x − b|²] in [box] from 0, to the tolerance
-   [simplex_tols.(k)], and whether it converged. Compiled, one program per
-   tolerance and number of unknowns, since an eager search takes most of a
-   second. *)
+(* nelder_mead's answer for [c ½ |a x − b|²] in [box] from 0, to the tolerance
+   [simplex_tols.(k)], and whether it converged. The objective is [bad] where a
+   coordinate passes its [wall]. Compiled, one program per tolerance and number
+   of unknowns, since an eager search takes most of a second. *)
 let simplex_programs =
   Array.map
     (fun (_, _, _, tol) ->
       Rune.jit
         Nx.Ptree.(
           tensor @-> tensor @-> pair tensor tensor
+          @-> pair tensor (pair tensor tensor)
           @-> returns (pair tensor tensor))
-        (fun a b (lo, hi) ->
+        (fun a b (lo, hi) (wall, (c, bad)) ->
+          let f x =
+            let r = Nx.sub (Nx.matmul a x) b in
+            Nx.where
+              (Nx.any (Nx.greater x wall))
+              bad
+              (Nx.mul c (Nx.mul_s (Nx.sum (Nx.square r)) 0.5))
+          in
           let s =
-            Minimize.solve one Minimize.nelder_mead ~lo ~hi ~tol ~budget:5000
-              (fun x ->
-                Nx.mul_s (Nx.sum (Nx.square (Nx.sub (Nx.matmul a x) b))) 0.5)
+            Minimize.solve one Minimize.nelder_mead ~lo ~hi ~tol ~budget:5000 f
               (Nx.zeros_like lo)
           in
           (Solution.best s, Solution.is Converged s)))
     simplex_tols
 
-let simplex_in k a b box = simplex_programs.(k) a b box
+(* No wall, no scale. *)
+let plain n =
+  ( Nx.full f64 [| n |] Float.infinity,
+    (Nx.scalar f64 1., Nx.scalar f64 Float.nan) )
+
+let simplex_in ?domain k a b box =
+  let domain =
+    match domain with Some d -> d | None -> plain (Nx.dim 0 (fst box))
+  in
+  simplex_programs.(k) a b box domain
+
+(* [least_squares] with the tolerance [k] of [simplex_tols], a wall past which f
+   is [bad], NaN or +∞, and a scale [c] of f. Two coordinates in three have a
+   wall, up to 1 above the start, 0 projected on the box, so the start lies in
+   f's domain and a wall often holds the answer. A scale of 1e170 squares the
+   restart's differences past the floats' range, 1e-170 below it; f's
+   decisions are those of [c = 1] otherwise. *)
+let walled =
+  let open Gen in
+  (let* k = int_range 0 (Array.length simplex_tols - 1) in
+   let* a, b, (lo, hi) = least_squares in
+   let n = Nx.dim 0 lo in
+   let+ rises =
+     list ~size:(constant n) (pair (int_range 0 2) (float_range 0. 1.))
+   and+ c = of_list [ 1.; 1e170; 1e-170 ]
+   and+ bad = of_list [ Float.nan; Float.infinity ] in
+   let start = Nx.minimum hi (Nx.maximum lo (Nx.zeros_like lo)) in
+   let rise (on, u) = if on > 0 then u else Float.infinity in
+   let wall = Nx.add start (vec (Array.of_list (List.map rise rises))) in
+   (k, (a, b, (lo, hi)), (wall, (c, bad))))
+  |> with_pp (fun ppf (k, (a, b, (lo, hi)), (wall, (c, bad))) ->
+      let name, _, _, _ = simplex_tols.(k) in
+      Format.fprintf ppf
+        "%s@ a = %a@ b = %a@ lo = %a@ hi = %a@ wall = %a@ c = %g@ bad = %g" name
+        Nx.pp a Nx.pp b Nx.pp lo Nx.pp hi Nx.pp wall c bad)
 
 (* How far from [P (x − g) = x], [g] the gradient and [P] the projection on the
    box, a [Converged] answer [x] of [simplex_in k a b] may be. Converging, the
@@ -791,15 +863,25 @@ let box_tests =
                 ~budget:2000
                 (fun x -> Nx.sum (bowl c x))
                 (Nx.zeros f64 [| 2 |]))));
-    prop "nelder_mead converges only at a minimum in the box"
-      (Gen.pair (Gen.int_range 0 (Array.length simplex_tols - 1)) least_squares)
-      (fun (k, (a, b, (lo, hi))) ->
+    prop "nelder_mead converges only at a minimum in the box" walled
+      (fun (k, (a, b, (lo, hi)), (wall, (c, bad))) ->
+        (* f is non-finite past the wall, so its minimum is in the box whose
+           upper side is the nearer of [hi] and the wall. *)
         let n = Nx.dim 0 lo in
-        let x, converged = simplex_in k a b (lo, hi) in
+        let domain = (wall, (Nx.scalar f64 c, Nx.scalar f64 bad)) in
+        let x, converged = simplex_in ~domain k a b (lo, hi) in
         let converged = Nx.item [] converged in
+        let top = Nx.minimum hi wall in
         let step = Nx.sub x (squares_gradient a b x) in
-        let clipped = Nx.minimum hi (Nx.maximum lo step) in
-        let held = Nx.logical_and (Nx.not_equal clipped step) (Nx.less lo hi) in
+        let clipped = Nx.minimum top (Nx.maximum lo step) in
+        let held =
+          Nx.logical_and (Nx.not_equal clipped step) (Nx.less lo top)
+        in
+        let walled =
+          Nx.item []
+            (Nx.any
+               (Nx.logical_and (Nx.greater step wall) (Nx.less wall hi)))
+        in
         let name, _, _, _ = simplex_tols.(k) in
         cover "a coordinate held at a bound, with another free"
           (n > 1 && Nx.item [] (Nx.any held) && not (Nx.item [] (Nx.all held)));
@@ -807,6 +889,18 @@ let box_tests =
           (fun (tol, _, _, _) ->
             cover ("it converges under " ^ tol) (converged && name = tol))
           simplex_tols;
+        List.iter
+          (fun v ->
+            cover
+              (Printf.sprintf "a wall of %g holds a converged answer" v)
+              (converged && walled && Float.equal v bad))
+          [ Float.nan; Float.infinity ];
+        List.iter
+          (fun v ->
+            cover
+              (Printf.sprintf "it converges with f scaled by %g" v)
+              (converged && c = v))
+          [ 1e170; 1e-170 ];
         if converged then
           equal (Oracle.tensor ~abs:(stationary k a b x) ()) clipped x);
     cases "nelder_mead leaves a bound it starts on"
@@ -819,7 +913,8 @@ let box_tests =
            simplex's step from 0 is clipped back to 0, so every vertex lies on
            the bound and only a probe toward −∞ finds the descent. A relative
            tolerance's scale is 0 there. *)
-        let a = Nx.create f64 [| 2; 1 |] [| 1.; 1. |] and b = vec [| 0.; -1. |] in
+        let a = Nx.create f64 [| 2; 1 |] [| 1.; 1. |]
+        and b = vec [| 0.; -1. |] in
         let x, converged =
           simplex_in k a b (vec [| Float.neg_infinity |], vec [| 0. |])
         in

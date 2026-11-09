@@ -1698,13 +1698,29 @@ let simplex_solve fn x ?lo ?hi ~tol ~budget f start =
     let edges =
       Nx.where (Nx.reshape [| n; 1 |] back) (backward probes) (forward probes)
     and fedges = Nx.where back (backward fprobes) (forward fprobes) in
+    (* A probe outside f's domain, whose value counts as [+∞], differs from the
+       best by 0, as a probe the box clipped onto the best vertex does: at
+       [+∞] it would make the norm [+∞] and the margin unmeetable, and
+       beside a probe uphill it would let that probe's rise loosen the margin
+       along every other axis. The norm is taken over the largest difference,
+       so one past the square root of the floats' range does not square to
+       [+∞] either. *)
+    let difference fx =
+      Nx.where (Nx.isfinite fx) (Nx.sub fx fbest) (Nx.zeros_like fx)
+    in
     let decrease =
-      Nx.sub (Nx.minimum (backward fprobes) (forward fprobes)) fbest
+      Nx.minimum (difference (backward fprobes)) (difference (forward fprobes))
+    in
+    let largest = Nx.max (Nx.abs decrease) in
+    let unit =
+      Nx.where (Nx.equal_s largest 0.) (Nx.ones_like largest) largest
     in
     let predicted =
-      Nx.sqrt
-        (Nx.reshape [||]
-           (Num.sum_rows (Nx.reshape [| 1; -1 |] (Nx.square decrease))))
+      Nx.mul largest
+        (Nx.sqrt
+           (Nx.reshape [||]
+              (Num.sum_rows
+                 (Nx.reshape [| 1; -1 |] (Nx.square (Nx.div decrease unit))))))
     in
     let lower = Nx.less (Nx.min decrease) (Nx.mul_s predicted (-1e-4)) in
     let st = settle st (Nx.logical_and met (Nx.logical_not lower)) Converged in
