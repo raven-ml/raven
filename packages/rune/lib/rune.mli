@@ -884,7 +884,10 @@ val lane_count : axis -> int option
     made one after another, under every differentiation too, but for a
     {!custom_jvp} tangent map's, which that function states. Under a
     differentiation an addition adds its value's primal. A construct that makes
-    no addition leaves a running value as it is.
+    no addition leaves a running value as it is. Over several devices each
+    addition is the operation it is eagerly, so an addition that folds over a
+    cut axis, as {!Nx.sum} there, has eager's bits at its placement, which may
+    differ from one device's within {!Nx.sum}'s bound.
 
     Inside a {!vmap}, each lane makes the additions of the code it runs. A
     [collect] inside the map receives its lane's. One outside it receives the
@@ -1838,9 +1841,13 @@ val jit :
     Over several devices it declines a program that holds a construct other
     than {!detach}, a {!scan} or an {!iterate}, such as a {!switch}, a {!remat}
     or a custom rule; a scan over rows cut along axis 0, an iterate that stacks
-    its steps, and a loop whose step gives a carry another placement; a check,
-    an addition to a {!Total} or an emission. It also declines a
+    its steps, and a loop whose step gives a carry another placement; a check
+    or an addition to a {!Total}. An emission compiles as on one device
+    ({!section-emissions}). It also declines a
     program with a value on a device that computes nothing ({!Rig.computes}).
+    On a set without kernels ({!Nx.devices}), nothing evaluates a declined
+    program: it raises [Invalid_argument] at the call, naming what the compiler
+    declines, as does each stretch of a program split around a callback.
     It declines nothing else: a compiler that fails on a program it takes, as
     one whose library or program is missing, that rejects its source or that
     ends before answering, raises its failure at the call that compiles,
@@ -1870,10 +1877,10 @@ val jit :
     passes through one more compiled call, which returns it in fresh memory.
     Each compiled call costs a dispatch, a loop holding a callback runs step by
     step, and a switch holding one reads its index on the host. A stretch the
-    compiler declines is evaluated, so on a set without kernels ({!Nx.devices})
-    a stretch that holds what the compiler declines over several devices
-    raises, and so do a call with donated arguments and a loop holding a
-    callback whose outputs it stacks, since nx stacks the rows.
+    compiler declines raises on a set without kernels ({!Nx.devices}), as a
+    declined program does, and is evaluated elsewhere, and on a set without
+    kernels a call with donated arguments and a loop holding a callback whose
+    outputs it stacks raise too, since nx stacks the rows.
 
 
     {b Fully sharded training.} Rajbhandari et al., "ZeRO: Memory

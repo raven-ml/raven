@@ -7499,6 +7499,8 @@ module Prim = struct
 
   let position_rows = position_rows
 
+  let has_kernels s = Option.is_some (Devices.kernels s)
+
   let pieces p shape =
     let set = Devices.set p in
     Array.mapi

@@ -704,25 +704,80 @@ let memory k = Result.get_ok (Rig.memory_device ("rune-jit-gpu-" ^ k))
 let sets =
   Hashtbl.create 4
 
-let over ~devices ~first c () =
+let mixed_sets ~devices ~first =
   let gpu, _ = on_gpu () in
-  let (mixed, eager) =
-    match Hashtbl.find_opt sets (devices, first) with
-    | Some s -> s
-    | None ->
-        let ms = List.init devices (fun k -> memory (string_of_int k)) in
-        let others = List.tl ms in
-        let mixed =
-          List.filteri (fun k _ -> k < first) others
-          @ [ gpu ]
-          @ List.filteri (fun k _ -> k >= first) others
-        in
-        let s = (Nx.devices mixed, Nx.devices ms) in
-        Hashtbl.replace sets (devices, first) s;
-        s
-  in
+  match Hashtbl.find_opt sets (devices, first) with
+  | Some s -> s
+  | None ->
+      let ms = List.init devices (fun k -> memory (string_of_int k)) in
+      let others = List.tl ms in
+      let mixed =
+        List.filteri (fun k _ -> k < first) others
+        @ [ gpu ]
+        @ List.filteri (fun k _ -> k >= first) others
+      in
+      let s = (Nx.devices mixed, Nx.devices ms) in
+      Hashtbl.replace sets (devices, first) s;
+      s
+
+let over ~devices ~first c () =
+  let mixed, eager = mixed_sets ~devices ~first in
   let (module S : Nx.Devices) = mixed and (module M : Nx.Devices) = eager in
   check (set_of S.v) (set_of M.v) c
+
+(* A law over a set of a GPU beside a memory device, or over the set's memory
+   devices alone. *)
+type law = { law : 'd. 'd set -> unit }
+
+(* [l] over the GPU beside a memory device, the GPU first and second. *)
+let on_mixed { law } =
+  List.iter
+    (fun first ->
+      let mixed, _ = mixed_sets ~devices:2 ~first in
+      let (module S : Nx.Devices) = mixed in
+      law (set_of S.v))
+    [ 0; 1 ]
+
+let no_call_evaluated f =
+  let before = Rune.evaluations () in
+  let r = f () in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  r
+
+(* An emission over a GPU beside a memory device compiles and is offered once,
+   with eager's bits. *)
+let emission set =
+  let x = value [| 4 |] in
+  let p = Rune.Probe.make Nx.Ptree.tensor in
+  let f x =
+    Rune.Probe.emit p (Nx.mul x x);
+    Nx.add x x
+  in
+  let placed = Nx.place (at set (Split 0)) x in
+  let r, offers =
+    no_call_evaluated (fun () ->
+        Rune.Probe.collect p (fun () -> Rune.jit' f placed))
+  in
+  (match r with
+  | Ok y -> equal bits_t (bits (Nx.add x x)) (bits (host y))
+  | Error (e, bt) -> Printexc.raise_with_backtrace e bt);
+  match offers with
+  | [ o ] ->
+      (* An offer holds its emits as rows. *)
+      equal bits_t (bits (Nx.stack ~axis:0 [ Nx.mul x x ])) (bits (host o))
+  | _ -> failf "%d offers" (List.length offers)
+
+(* A declined program over a GPU beside a memory device raises at the call,
+   naming the decline. *)
+let declined set =
+  let xs = Nx.place (at set (Split 0)) (value [| 3; 2 |]) in
+  let f xs =
+    let init = Nx.sum ~axes:[ 0 ] xs in
+    fst (Rune.scan' (fun c x -> (Nx.add c x, x)) ~init xs)
+  in
+  raises_match
+    (Exn.invalid_arg ~sub:"the compiler declines this program")
+    (fun () -> Rune.jit' f xs)
 
 (* [split k]'s second key under jit at the GPU's set. A GPU set has no
    kernels, so a key there derives only in a program. *)
@@ -1283,6 +1338,13 @@ let () =
                test_split_memory;
            ];
          group "a detour" [ test "onto the GPU's set and back" detour ];
+         group "emissions and declines over several devices"
+           [
+             test "an emission compiles, offered once" (fun () ->
+                 on_mixed { law = emission });
+             test "a declined program raises at the call, named" (fun () ->
+                 on_mixed { law = declined });
+           ];
          group "a GPU beside a memory device"
            (List.map
               (fun c -> test c.name (over ~devices:2 ~first:0 c))

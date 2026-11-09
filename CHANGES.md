@@ -397,6 +397,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` on a set without kernels raises at the call for a program the
+  compiler declines, naming the decline, where it raised `Nx`'s error for the
+  program's first operation, whose advice was false under a compiler.
+- `Rune.Probe.emit` of a value whose cut axis has one element, in a scan's
+  step, no longer raises: its offer's rows keep the cut.
 - `Rune.jit` over several devices compiles a scan or an iterate whose first
   value, rows or stacked output the program makes itself over cut rows, as
   `Nx.zeros_like` of a row. It raised tolk's "all buffers must be on the

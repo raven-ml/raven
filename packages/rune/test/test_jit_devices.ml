@@ -2002,6 +2002,76 @@ let examples =
 module Disk = (val Nx.devices [ Rig_disk.device ])
 module Io = (val Nx.devices [ m 3; Rig_disk.device ])
 
+(* Emissions
+
+   An emission of a program over several devices is offered as eagerly, at
+   its placement, once per site, and the program compiles. *)
+
+let offers p f =
+  match Rune.Probe.collect p f with
+  | Ok _, rows -> rows
+  | Error (e, bt), _ -> Printexc.raise_with_backtrace e bt
+
+let same_offers eager jit =
+  equal ~msg:"offers" int (List.length eager) (List.length jit);
+  List.iter2
+    (fun e j ->
+      equal ~msg:"placement" (placement ()) (Nx.placement e) (Nx.placement j);
+      equal ~msg:"offer" bits_t (bits e) (bits j))
+    eager jit
+
+let emitted set c =
+  cover_windows c;
+  let x = Nx.place (at set c.x) (value c.shape) in
+  let p = Rune.Probe.make T.tensor in
+  let f x =
+    Rune.Probe.emit p (Nx.mul x x);
+    Nx.add x x
+  in
+  let eager = offers p (fun () -> f x) in
+  let before = Rune.evaluations () in
+  let jit = offers p (fun () -> Rune.jit' f x) in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  same_offers eager jit
+
+let emitted_scan set (c : loop_case) =
+  cover "rows cut inside a row"
+    (match c.rows with Split a -> a > 0 | _ -> false);
+  assume (c.rows <> Split 0);
+  assume (match c.rows with Mesh (a, b) -> a > 0 && b > 0 | _ -> true);
+  let xs =
+    Nx.place (at set c.rows)
+      (value ~seed:1 (Array.append [| row_count |] c.lshape))
+  in
+  let p = Rune.Probe.make T.tensor in
+  let step carry row =
+    Rune.Probe.emit p (Nx.mul row row);
+    (Nx.add carry row, row)
+  in
+  let f xs = Rune.scan' step ~init:(Nx.get [ 0 ] xs) xs in
+  let eager = offers p (fun () -> f xs) in
+  let before = Rune.evaluations () in
+  let s = T.(tensor @-> returns (pair tensor tensor)) in
+  let jit = offers p (fun () -> Rune.jit s f xs) in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  same_offers eager jit
+
+(* What stays declined
+
+   Over a set without kernels, nothing evaluates a declined program: the call
+   raises, naming the decline. *)
+
+let declined () =
+  let at = Bare.split ~axis:0 in
+  let xs = Nx.place at (value [| 3; 2 |]) in
+  let f xs =
+    let init = Nx.sum ~axes:[ 0 ] xs in
+    fst (Rune.scan' (fun c x -> (Nx.add c x, x)) ~init xs)
+  in
+  raises_match
+    (Exn.invalid_arg ~sub:"the compiler declines this program")
+    (fun () -> Rune.jit' f xs)
+
 (* [xs] in a file of the disk, on [set]. *)
 let on_disk (type d) (set : d Nx.devices) xs =
   let n = Array.length xs in
@@ -2028,11 +2098,9 @@ let io_argument () =
   let f x y = Nx.add x (Nx.place at y) in
   let x = Nx.place at (Nx.create f32 [| 8 |] io_xs) in
   let y = on_disk Io.v io_ys in
-  let eager = outcome (fun () -> f x y) in
-  let jit =
-    outcome (fun () -> Rune.jit T.(tensor @-> tensor @-> returns tensor) f x y)
-  in
-  equal (outcome_t unit) (omap ignore eager) (omap ignore jit)
+  raises_match (Exn.invalid_arg ~sub:"has no kernels") (fun () -> f x y);
+  raises_match (Exn.invalid_arg ~sub:"computes nothing") (fun () ->
+      Rune.jit T.(tensor @-> tensor @-> returns tensor) f x y)
 
 let io_capture () =
   let y = on_disk Disk.v io_ys in
@@ -2100,7 +2168,8 @@ let () =
              ]);
          group "values on an io device"
            [
-             test "an argument on the disk raises as eagerly" io_argument;
+             test "an argument on the disk raises, named, as eagerly"
+               io_argument;
              test "a capture on the disk of a cut program gives eager's values"
                io_capture;
            ];
@@ -2152,6 +2221,28 @@ let () =
                (fun () ->
                  over 2 { law = eigh_batch };
                  over 3 { law = eigh_batch });
+           ];
+         group "emissions"
+           [
+             prop ~count:20 ~examples
+               "made at the top level, as eagerly, compiled" cases (fun c ->
+                 over c.n { law = (fun set -> emitted set c) });
+             prop ~count:20
+               ~examples:
+                 [
+                   {
+                     ln = 2;
+                     lshape = [| 1 |];
+                     carry = On;
+                     rows = Split 1;
+                   };
+                 ]
+               "made in a scan's step, stacked, compiled" loop_cases (fun c ->
+                 over c.ln { law = (fun set -> emitted_scan set c) });
+           ];
+         group "what stays declined"
+           [
+             test "raises at the call on a set without kernels, named" declined;
            ];
          group "a batch of one"
            [

@@ -577,7 +577,7 @@ module Probe = struct
   let emit p v =
     if Program.opened p then begin
       let (Program.Probe { tree; _ }) = p in
-      let row (Nx.P x) = V (Nx.reshape (Array.append [| 1 |] (Nx.shape x)) x) in
+      let row (Nx.P x) = V (Nx.unsqueeze ~axes:[ 0 ] x) in
       let values = Array.of_list (List.map row (fst (Ptree.flatten tree v))) in
       let site = Program.fresh_site () in
       let e =

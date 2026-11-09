@@ -260,15 +260,19 @@ let rowed ~reverse (Program.Emission e) =
     let y = Nx.moveaxis 0 e.lead y in
     let s = Nx.shape y in
     let l = e.lead in
-    let shape =
-      Array.concat
-        [
-          Array.sub s 0 l;
-          [| s.(l) * s.(l + 1) |];
-          Array.sub s (l + 2) (Array.length s - l - 2);
-        ]
-    in
-    Program.V (Nx.reshape shape y)
+    (* A site's own axis of one row goes by name, so that a cut of an axis
+       after it, of any extent, stays on the axis it becomes. *)
+    if s.(l + 1) = 1 then Program.V (Nx.squeeze ~axes:[ l + 1 ] y)
+    else
+      let shape =
+        Array.concat
+          [
+            Array.sub s 0 l;
+            [| s.(l) * s.(l + 1) |];
+            Array.sub s (l + 2) (Array.length s - l - 2);
+          ]
+      in
+      Program.V (Nx.reshape shape y)
   in
   over (Program.Emission e) (Array.map row (arrays (Program.Emission e)))
 
@@ -363,14 +367,20 @@ and scan ~name (c : Program.construct) : Program.value array =
         (Array.sub r !at (Array.length r - !at))
   | _ -> invalid_arg "Rune: a scan's emissions"
 
+(* The form of [body]'s first argument, or else of its first result. *)
+let first_form (body : Program.t) forms =
+  if Array.length forms > 0 then Some forms.(0)
+  else if Array.length body.outputs > 0 then
+    Some (Program.form body.outputs.(0))
+  else None
+
 (* Whether [body] computes on the host's set: its first argument's, or else
    its first result's. *)
 let on_host (body : Program.t) forms =
-  let firsts = Array.append forms (Array.map Program.form body.outputs) in
-  Array.length firsts = 0
-  ||
-  let (Program.F f) = firsts.(0) in
-  Option.is_some (Nx.Placement.same f.placement Nx.Host.on)
+  match first_form body forms with
+  | None -> true
+  | Some (Program.F f) ->
+      Option.is_some (Nx.Placement.same f.placement Nx.Host.on)
 
 (* [body] over arguments of [forms] with its emissions as outputs, or [None]
    where it is to be evaluated. *)
@@ -385,6 +395,15 @@ let offered name (body : Program.t) forms =
     with
     | lifted -> Some lifted
     | exception Kept -> None
+
+(* The placement of [body]'s first argument or else first result, as text,
+   where its set has no kernels to evaluate [body]. *)
+let bare (body : Program.t) forms =
+  match first_form body forms with
+  | Some (Program.F f)
+    when not (Nx.Prim.has_kernels (Nx.Placement.devices f.placement)) ->
+      Some (Format.asprintf "%a" Nx.Placement.pp f.placement)
+  | Some _ | None -> None
 
 (* [out] of [body]'s outputs and then [ems]' arrays before its running values
    out, each emission performed: [body]'s outputs. *)
@@ -439,9 +458,17 @@ let rec compiled ~beam ~parallel name body forms =
     let out =
       match c with
       | Ok c -> Compile.run c args
-      | Error _ ->
-          Compile.evaluated_call ();
-          Compile.evaluate ~fresh ~name p args
+      | Error why -> (
+          match if fresh then None else bare p forms with
+          | Some set ->
+              invalid_arg
+                (Printf.sprintf
+                   "%s: the compiler declines this program over %s (%s), and \
+                    its set has no kernels to evaluate it"
+                   name set why)
+          | None ->
+              Compile.evaluated_call ();
+              Compile.evaluate ~fresh ~name p args)
     in
     delivered body ems out
 

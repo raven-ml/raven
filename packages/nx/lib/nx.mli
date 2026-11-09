@@ -6159,6 +6159,10 @@ module Prim : sig
       axis in turn, from the longest, which holds each position's row times
       the extents of the others. *)
 
+  val has_kernels : 'd devices -> bool
+  (** [has_kernels s] is [true] iff [s] has kernels to evaluate an operation
+      ({!val-devices}). *)
+
   val pieces :
     'd Placement.t ->
     int array ->
