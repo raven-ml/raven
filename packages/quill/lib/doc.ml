@@ -116,5 +116,5 @@ let add_output id o d =
   update target (Cell.append_output o) d
 
 let clear_all_outputs d =
-  let by_id = Id_map.map Cell.clear_outputs d.by_id in
+  let by_id = Id_map.map (Cell.set_outputs []) d.by_id in
   { d with by_id }

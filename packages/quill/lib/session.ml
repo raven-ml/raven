@@ -85,7 +85,7 @@ let remove_cell cell_id s = with_history_push (Doc.remove cell_id) s
 let move_cell cell_id ~pos s = with_history_push (Doc.move cell_id ~pos) s
 
 let clear_outputs cell_id s =
-  let doc = Doc.update cell_id Cell.clear_outputs s.doc in
+  let doc = Doc.update cell_id (Cell.set_outputs []) s.doc in
   { s with doc }
 
 let clear_all_outputs s =

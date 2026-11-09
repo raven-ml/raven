@@ -4402,6 +4402,7 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Quill
 
+- **Breaking:** `Cell.clear_outputs` is removed: write `Cell.set_outputs []`.
 - **Breaking:** `Quill_top.load_package` returns `Not_installed` or `Failed`
   instead of raising or printing. A raven package that does not load is
   reported in one line, without its printers' or dependents' errors.

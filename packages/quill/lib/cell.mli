@@ -176,10 +176,6 @@ val append_output : output -> t -> t
     with id [Some d] replaces in place a display of [c] with id [Some d], if
     there is one. Text cells are returned unchanged. *)
 
-val clear_outputs : t -> t
-(** [clear_outputs c] is [c] with an empty output list. Text cells are returned
-    unchanged. *)
-
 val increment_execution_count : t -> t
 (** [increment_execution_count c] increments the execution count of a code cell.
     Text cells are returned unchanged. *)

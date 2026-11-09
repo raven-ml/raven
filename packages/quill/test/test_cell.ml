@@ -68,11 +68,11 @@ let transformation_tests =
         match c with
         | Cell.Code { outputs; _ } -> equal int 2 (List.length outputs)
         | _ -> fail "expected Code cell");
-    test "clear_outputs" (fun () ->
+    test "set_outputs [] clears them" (fun () ->
         let c =
           Cell.code ~language:"ocaml" "x"
           |> Cell.set_outputs [ Cell.Stdout "hello" ]
-          |> Cell.clear_outputs
+          |> Cell.set_outputs []
         in
         match c with
         | Cell.Code { outputs; _ } -> equal int 0 (List.length outputs)

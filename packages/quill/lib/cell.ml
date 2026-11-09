@@ -170,10 +170,6 @@ let append_output o = function
           Code { c with outputs = List.map replace c.outputs }
       | _ -> Code { c with outputs = append_or_coalesce o [] c.outputs })
 
-let clear_outputs = function
-  | Code c -> Code { c with outputs = [] }
-  | Text _ as t -> t
-
 let increment_execution_count = function
   | Code c -> Code { c with execution_count = c.execution_count + 1 }
   | Text _ as t -> t
