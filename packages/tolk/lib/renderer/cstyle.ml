@@ -956,7 +956,8 @@ let held = Op.Set.of_list [ Op.Buffer; Op.Binary ]
 type shape = Plain | Opens | Closes | Held
 
 (* One statement of a program's body: its text, how it nests, the value it
-   declares with its name and type, the declared values it reads, and the
+   declares with its name and type, the values of other statements it reads
+   (among the nodes it reads, through those written into it), and the
    operations it computes, those written into it included. *)
 type statement = {
   text : string;
@@ -1390,8 +1391,9 @@ let rec nests_of acc = function
   | Nest (first, _, inner, last, _) ->
       List.fold_left nests_of ((first, last) :: acc) inner
 
-(* The event after which [n] is dead. A value read in a nest it was declared
-   outside lives to the nest's end: its next trip reads it again. *)
+(* The event after which a value declared at [declared] and read at the events
+   [at] is dead. A value read in a nest it was declared outside lives to the
+   nest's end: its next trip reads it again. *)
 let last_read nests declared at =
   let reader e =
     List.fold_left
@@ -1409,14 +1411,12 @@ let last_read nests declared at =
    number and count of slots. *)
 let slots nests known read_at values =
   let lifetime u =
-    let _, t, d = Tbl.find known u in
-    (d, last_read nests d (Tbl.find read_at u), u, t)
+    let n, t, d = Tbl.find known u in
+    ((d, last_read nests d (Tbl.find read_at u), n), u, t)
   in
-  let by_start (d0, e0, u0, _) (d1, e1, u1, _) =
-    match Int.compare d0 d1 with
-    | 0 -> ( match Int.compare e0 e1 with 0 -> compare u0 u1 | c -> c)
-    | c -> c
-  in
+  (* The order is the program's, and names break ties, so that the source does
+     not depend on the order in which nodes were built. *)
+  let by_start (k0, _, _) (k1, _, _) = Stdlib.compare k0 k1 in
   let slot_of = Tbl.create 1024 and types = Hashtbl.create 8 in
   let type_of t =
     match Hashtbl.find_opt types t with
@@ -1426,7 +1426,7 @@ let slots nests known read_at values =
         Hashtbl.replace types t entry;
         entry
   in
-  let place (d, ended, u, t) =
+  let place ((d, ended, _), u, t) =
     let id, count, busy = type_of t in
     let free, held = List.partition (fun (e, _) -> e < d) !busy in
     let slot, rest =
@@ -1549,10 +1549,9 @@ let write_cut ~attrs ~name bufs held cut (known, read_at) =
   body := [];
   List.iter write cut;
   let declarations =
-    Tbl.fold
-      (fun u () acc ->
-        statement (strf "  %s %s;" (type_of u) (name_of u)) :: acc)
-      locals []
+    Tbl.fold (fun u () acc -> (name_of u, type_of u) :: acc) locals []
+    |> List.sort Stdlib.compare
+    |> List.map (fun (n, t) -> statement (strf "  %s %s;" t n))
   in
   (frame_def :: List.rev !parts, List.rev start @ declarations @ List.rev !body)
 

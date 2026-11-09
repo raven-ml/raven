@@ -165,9 +165,9 @@ val hip : Helpers.Target.t -> Renderer.t
 
 val clang_in_pieces : piece:int -> Helpers.Target.t -> Renderer.t
 (** [clang_in_pieces ~piece target] is {!clang} with each kernel for a CPU,
-    however short, written as functions of [piece] operations, or of one
-    statement where it holds more: a test's kernel reaches the long kernels'
-    code. *)
+    however short, written as functions of at most [piece] operations, or of
+    one statement where it holds more, a block too long for one left in the
+    kernel and cut inside: a test's kernel reaches the long kernels' code. *)
 
 val cuda_sync : Helpers.Target.t -> Renderer.t
 (** [cuda_sync target] is {!without_compiler}'s {!cuda} without asynchronous
