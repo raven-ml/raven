@@ -2575,6 +2575,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- A large host result dropped before the next minor collection returns then,
+  instead of waiting for a major cycle over the program's live OCaml heap:
+  `Nx.take` and `Talon.take` beside a 128 MiB live heap run about 2x faster.
 - A placement between a GPU and host memory copies through rig's staging
   memory and locks none of it: an array uploaded many times uploads at the
   borrowed rate through `Nx_array.borrow` of it on the GPU.

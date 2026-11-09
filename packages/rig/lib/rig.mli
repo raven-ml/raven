@@ -862,14 +862,19 @@ val failure : unit -> string option
     memory however large its budget.
     {ul
     {- A dropped host buffer holds its memory until a collection frees it:
-       a minor one for a buffer the minor heap still holds, one of at most
-       [custom_minor_max_size] bytes ({!Gc.control}), and a major cycle
-       otherwise. Once the bytes of host buffers, of any size, that reached the
-       major heap since the last cycle reach a bound, they complete one cycle's
-       work of the collector. The bound is [custom_major_ratio] / 150 of the
-       program's memory, the allocating domain's major heap and the host
-       buffers live at the last cycle, or half the host's last-level cache if
-       that is more, and at least 4 MiB. In a small heap a cycle also does the
+       a minor one for a buffer the minor heap still holds, and a major cycle
+       otherwise. A buffer starts in the minor heap, unless it holds more than
+       [custom_minor_max_size] ({!Gc.control}) bytes and is as large as the
+       bound below, or that parameter is 0. Once the bytes of host buffers
+       that reached the major heap since the last cycle reach a bound, they
+       complete one cycle's work of the collector. A buffer that starts young
+       of more than [custom_minor_max_size] bytes counts an eighth of its bytes
+       at birth as well, so buffers that die young still bring a cycle per
+       eight bounds of them. The bound is
+       [custom_major_ratio] / 150 of the program's memory, the allocating
+       domain's major heap and the host buffers live at the last cycle, or
+       half the host's last-level cache if that is more, and at least 4 MiB.
+       In a small heap a cycle also does the
        runtime's minimum work ([small_heap_limit] of OCaml 5.5's runtime). A
        dropped buffer returns with the sweep after the marking that finds it
        unreachable, so its memory returns within about two cycles. Above both

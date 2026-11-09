@@ -86,12 +86,6 @@ raven / llama.cpp b12048 Vulkan:
   gpt-oss's decode shape float32 (global_load_b32) takes 51 µs against
   bfloat16's 323 µs on the R9700
 
-## nx
-
-- with a large live OCaml heap, the host buffers of each talon take drove
-  the major GC to ~150 M instructions a take, ~8x the take's own (probe of
-  6281f607b): custom-block pressure from nx and rig host buffers
-
 ## talon, hugin, brot, munin, quill
 
 - talon benches: record the query suite's DuckDB/Polars baselines on a

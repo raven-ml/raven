@@ -865,6 +865,16 @@ let table_1m dt () =
   let table = A.of_array dt [| 4 |] [| true; false; false; true |] in
   (on_host (Nx.cast D.Int64 at), Nx.Repr.of_array Nx.Host.v table)
 
+(* 1M float64 rows taken at positions drawn once from a fixed key, beside a
+   live heap of 128 MiB of pairs: every call drops its 8 MiB result, whose
+   memory the collector must return. The row counts major cycles beside its
+   time: a dropped result that waits for one marks the live heap. *)
+let take_beside_heap () =
+  let live = Array.init (4 lsl 20) (fun i -> (i, i)) in
+  let rows = 1 lsl 20 in
+  let at = Nx.Rng.randint ~key:(Nx.Rng.key 19) ~high:rows [| rows |] in
+  (live, on_host (Nx.cast D.Int64 at), filled D.Float64 [| rows |] 1.)
+
 (* 512K rows of 2 bits taken from a table of 1024, positions drawn once from
    a fixed key: rows too short to pack, moved element by element. *)
 let bit_rows_512k () =
@@ -1013,6 +1023,10 @@ let index_rows =
       Thumper.bench_with_setup "take-bit-rows-512Kx2-of-1K"
         ~setup:bit_rows_512k
         (fun (at, t) -> Nx.take ~axis:0 at t);
+      Thumper.bench_with_setup "take-1M-beside-128M-heap"
+        ~metrics:Thumper.Metric.[ wall_time; alloc_words; major_collections ]
+        ~setup:take_beside_heap
+        (fun (_, at, t) -> Nx.take at t);
       Thumper.bench_with_setup "set-row-8M" ~setup:set_8m
         (fun (cache, row, pos) -> Nx.set Nx.[ A; A; D (pos, 1); A ] row cache);
       Thumper.bench_with_setup "set-held-3-axes-4K-of-32K" ~setup:set_held

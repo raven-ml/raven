@@ -446,20 +446,37 @@ static _Atomic uintnat cycles_seen;
    pointer-dense heap without it, against 8, and 7% slower.
 
    A program whose heap and live buffers are both small still has a share
-   far below one result, and would run a cycle per result. A cycle is due
-   instead after at least half the last-level cache ([heap_cycle_floor]):
-   the results dropped over two cycles, which the cache below hands out
-   again in turn, then fit in the last level. On fudge (Core Ultra 5 235),
-   a dropped 4 MiB result took 97 us at a heap of 188k words and 46 with
-   the floor; on the M1 Max, 255 and 181. Results larger than about a
-   quarter of the last level still rotate past it: four 8 MiB results
-   rotate through fudge's 24 MiB L3 where three did before.
+   far below one result, and results that reach the major heap would run a
+   cycle each. A cycle is due instead after at least half the last-level
+   cache ([heap_cycle_floor]): the results dropped over two cycles, which the
+   cache below hands out again in turn, then fit in the last level. Results
+   larger than about a quarter of the last level still rotate past it: four
+   8 MiB results rotate through fudge's 24 MiB L3 where three did before.
 
    The bytes held live are those held at the end of a major cycle that the
    next cycle did not collect. A cycle frees the garbage the previous cycle
    found, and the blocks it allocates survive it. Minor collections also free
    buffers that died young, made after the previous cycle ended, which it
-   never held: only the buffers made before it ended count as collected. */
+   never held: only the buffers made before it ended count as collected.
+
+   A buffer below the bound starts in the minor heap whatever its size
+   ([heap_bigarray]). The runtime keeps young a custom block of at most
+   [custom_minor_max_size] bytes and allocates a larger one in the major heap,
+   so a dropped large buffer would wait for a major cycle, whose work is
+   marking the heap: at the default ratio, 3.4 bytes of heap per byte of
+   buffer, however large the heap. Results die young, so a dropped one returns
+   at the next minor collection instead. One that survives counts in the major
+   pace at promotion. Results held across a minor collection, such as one
+   operation's several columns, still wait for a cycle.
+
+   Only a major cycle returns a buffer dropped from the major heap, refreshes
+   [heap_live] and trims what is kept for reuse. If only survivors brought
+   cycles, a program whose results all die young would run none, and a large
+   buffer it dropped earlier would stay out of the C library indefinitely. So
+   the bytes of a young buffer over [custom_minor_max_size] also count at
+   birth, a share of one eighth of the bound ([HEAP_YOUNG_SHARE]): a cycle per
+   eight bounds of churn, an eighth of the marking of a block that starts in
+   the major heap, about what writing a result's bytes costs. */
 
 static _Atomic intnat heap_live;
 static _Atomic intnat held_at_cycle;
@@ -986,14 +1003,32 @@ value caml_rig_heap_init(value v_kept_from) {
   return Val_unit;
 }
 
+/* The cycles a host buffer's bytes bring at birth when it starts young
+   ("Pacing the collector"): one per this many bounds of them. */
+#define HEAP_YOUNG_SHARE 8
+
 /* The [n] bytes at [data], allocated from [base], as a [char] bigarray,
    which paces major cycles by the program's memory ([heap_cycle_bytes]),
-   whatever its size. A buffer small enough for the minor heap paces minor
-   collections by the same bound: the runtime takes one bound for both. */
+   whatever its size, and minor collections by the same bound: the runtime
+   takes one bound for both. The block starts in the minor heap, below the
+   bound and at any size. The runtime only ever keeps a block of
+   [custom_minor_max_size] bytes young and paces by the ratio of the two
+   numbers alone, so a larger buffer states that many bytes of a bound in
+   proportion. A larger buffer at least as large as the bound is left to the
+   major heap, as it would be promoted live with a full cycle's work. Its
+   share of a cycle ("Pacing the collector") is charged before the block
+   exists, so that a collection the charge requests cannot promote it. */
 static value heap_bigarray(void *base, void *data, size_t n) {
   size_t f = heap_footprint(n);
-  value ba =
-      caml_alloc_custom(&heap_ops, HEAP_BLOCK_BYTES, f, heap_cycle_bytes());
+  mlsize_t mem = f, max = heap_cycle_bytes();
+  uintnat young =
+      atomic_load_explicit(&caml_custom_minor_max_bsz, memory_order_relaxed);
+  if (f > young && young > 0 && f < max) {
+    caml_adjust_gc_speed(f, HEAP_YOUNG_SHARE * max);
+    max = (mlsize_t)((double)max / (double)f * (double)young);
+    mem = young;
+  }
+  value ba = caml_alloc_custom(&heap_ops, HEAP_BLOCK_BYTES, mem, max);
   struct caml_ba_array *b = Caml_ba_array_val(ba);
   b->data = data;
   b->num_dims = 1;

@@ -1313,11 +1313,12 @@ let with_ratio r f =
 
 (* [of_strings] makes its offsets and bytes in host buffers, which pace the
    collector by the program's memory: a major cycle at most once per 4 MiB
-   of buffers of 64 KiB or more, whatever [custom_major_ratio] says of the
-   heap. At a ratio of 1, which paces a bigarray of Bigarray's own at a cycle
-   each, 64 calls over 2^14 strings of 8 bytes, 256 KiB of offsets and bytes
-   each, bring at most a cycle per 4 MiB of them more than at the default
-   ratio, and two under way at either end. *)
+   of buffers of 64 KiB or more that reach the major heap, whatever
+   [custom_major_ratio] says of the heap. At a ratio of 1, which paces a
+   bigarray of Bigarray's own at a cycle each, 64 calls over 2^14 strings of
+   8 bytes, 256 KiB of offsets and bytes each, each held across a minor
+   collection that promotes it, bring at most a cycle per 4 MiB of them more
+   than at the default ratio, and two under way at either end. *)
 let memory =
   test "of_strings paces the collector by the program's memory" (fun () ->
       let n = 1 lsl 14 and calls = 64 in
@@ -1327,7 +1328,9 @@ let memory =
         ignore (Nx_ragged.of_strings ss);
         counted (fun () ->
             for _ = 1 to calls do
-              ignore (Sys.opaque_identity (Nx_ragged.of_strings ss))
+              let held = Nx_ragged.of_strings ss in
+              Gc.minor ();
+              ignore (Sys.opaque_identity held)
             done)
       in
       let usual = cycles (Gc.get ()).custom_major_ratio in

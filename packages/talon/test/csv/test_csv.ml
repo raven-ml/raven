@@ -1418,13 +1418,15 @@ let memory =
       test "a text column is the host's memory while it is live" (fun () ->
           Talon_held.check texts);
       (* Dropped columns pace the collector as rig's host buffers do: a
-         major cycle at most once per 4 MiB of buffers of 64 KiB or more,
-         whatever [custom_major_ratio] says of the heap. A decode makes its
-         column's bytes and offsets in such buffers, so at a ratio of 1,
-         which paces a bigarray of Bigarray's own at a cycle each, 64 decodes
-         bring at most a cycle per 4 MiB of them more than at the default
-         ratio, and two under way at either end. The cycles they bring at
-         either ratio are the heap's own, paced by its allocations. *)
+         major cycle at most once per 4 MiB of buffers of 64 KiB or more
+         that reach the major heap, whatever [custom_major_ratio] says of the
+         heap. A decode makes its column's bytes and offsets in such buffers,
+         so at a ratio of 1, which paces a bigarray of Bigarray's own at a
+         cycle each, 64 decodes, each held across a minor collection that
+         promotes it, bring at most a cycle per 4 MiB of them more than at
+         the default ratio, and two under way at either end. The cycles they
+         bring at either ratio are the heap's own, paced by its allocations.
+      *)
       test "dropped columns pace the collector by the program's memory"
         (fun () ->
           let decodes = 64 in
@@ -1433,7 +1435,9 @@ let memory =
             ignore (texts ());
             Talon_held.cycles (fun () ->
                 for _ = 1 to decodes do
-                  ignore (Sys.opaque_identity (texts ()))
+                  let held = texts () in
+                  Gc.minor ();
+                  ignore (Sys.opaque_identity held)
                 done)
           in
           let usual = cycles (Gc.get ()).custom_major_ratio in

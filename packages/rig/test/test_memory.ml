@@ -963,15 +963,21 @@ let test_paced () =
   ignore (Sys.opaque_identity heap);
   equal int 0 (forced () - before)
 
-(* Major cycles per dropped buffer of a MiB on [d], the host by default,
-   over [k] of them. *)
-let cycles_per_mib ?(d = Rig.host) k =
-  Gc.full_major ();
+(* Major cycles over [k] dropped buffers of a MiB on [d], the host by default,
+   each held across a minor collection that promotes it, as a buffer that
+   outlives the minor heap is. *)
+let promoted_cycles ?(d = Rig.host) k =
   let before = (Gc.quick_stat ()).major_collections in
   for _ = 1 to k do
-    ignore (Sys.opaque_identity (B.create d (kib * kib)))
+    let b = B.create d (kib * kib) in
+    Gc.minor ();
+    ignore (Sys.opaque_identity b)
   done;
-  Float.of_int ((Gc.quick_stat ()).major_collections - before) /. Float.of_int k
+  Float.of_int ((Gc.quick_stat ()).major_collections - before)
+
+let cycles_per_mib ?d k =
+  Gc.full_major ();
+  promoted_cycles ?d k /. Float.of_int k
 
 (* The margin a cycle-per-bound assertion allows: a count over 256 buffers
    includes the cycles already under way at either end. *)
@@ -1049,19 +1055,14 @@ let test_paced_host_small () =
   at_most ~msg:"cycles over 16 MiB of 8 KiB buffers" float_exact
     ~than:(margin *. 4.) (Float.of_int cycles)
 
-(* A larger minor heap leaves the major pace as it was: dropped buffers of a
-   MiB, which never live in the minor heap, bring cycles at a minor heap of
-   64 MiB, past half the last-level cache, as often as at the default, give
-   or take half again. A bound raised to the minor heap would bring them
-   several times less often. *)
+(* A larger minor heap leaves the major pace as it was: promoted dropped
+   buffers of a MiB bring cycles at a minor heap of 64 MiB, past half the
+   last-level cache, as often as at the default, give or take half again. A
+   bound raised to the minor heap would bring them several times less often. *)
 let test_paced_minor_heap () =
   let cycles () =
     Gc.full_major ();
-    let before = (Gc.quick_stat ()).major_collections in
-    for _ = 1 to 256 do
-      ignore (Sys.opaque_identity (B.create Rig.host (kib * kib)))
-    done;
-    Float.of_int ((Gc.quick_stat ()).major_collections - before)
+    promoted_cycles 256
   in
   let usual = cycles () in
   let was = (Gc.get ()).minor_heap_size in
@@ -1078,21 +1079,14 @@ let test_paced_minor_heap () =
    buffer's, so they count in no bound, and dropped buffers bring cycles after
    it as often as before it. *)
 let test_paced_refused () =
-  let cycles k =
-    let before = (Gc.quick_stat ()).major_collections in
-    for _ = 1 to k do
-      ignore (Sys.opaque_identity (B.create Rig.host (kib * kib)))
-    done;
-    Float.of_int ((Gc.quick_stat ()).major_collections - before)
-  in
   Gc.full_major ();
-  let usual = cycles 256 in
+  let usual = promoted_cycles 256 in
   Gc.full_major ();
   let refused = 1 lsl 60 in
   raises_match (out_of_memory Rig.host refused) (fun () ->
       B.create Rig.host refused);
   at_least ~msg:"cycles over 256 MiB dropped after the refusal" float_exact
-    ~than:(usual /. margin) (cycles 256)
+    ~than:(usual /. margin) (promoted_cycles 256)
 
 (* Live host buffers raise the bound as heap bytes do: beside 256 MiB of
    them, dropped buffers bring a cycle at most once per [custom_major_ratio]
@@ -1123,6 +1117,109 @@ let test_paced_host_heap () =
   at_most ~msg:"cycles per MiB" float_exact
     ~than:(margin *. Float.of_int (kib * kib) /. share)
     rate
+
+(* The bound of the major pace at the current heap, with [live] bytes of
+   buffers: the collector's share of both, at least the floor of half the
+   last-level cache. *)
+let pace_bound live =
+  let cache = Option.value (Rig.cache_bytes Rig.host) ~default:0 in
+  let floor = Int.max (cache / 2) (4 * kib * kib) in
+  let words = (Gc.quick_stat ()).heap_words in
+  let bytes = Float.of_int ((words * (Sys.word_size / 8)) + live) in
+  Float.max (Float.of_int floor)
+    (bytes *. Float.of_int (Gc.get ()).custom_major_ratio /. 150.)
+
+(* A large dropped host buffer the minor heap still holds returns at a minor
+   collection and brings an eighth of a major cycle's work: beside 64 MiB live,
+   256 dropped buffers of a MiB bring cycles at about an eighth of their bytes
+   over the bound, and the promotion of the buffer that crosses each bound; a
+   buffer in the major heap from birth would bring eight times that. The bytes
+   held of them stay within the bound. *)
+let test_paced_host_young () =
+  let heap = Array.make (8 * kib * kib) 0. in
+  Gc.full_major ();
+  let bound = pace_bound 0 in
+  let mib = Float.of_int (kib * kib) in
+  let made = 256. *. mib in
+  let base = Rig.allocated Rig.host in
+  let before = (Gc.quick_stat ()).major_collections in
+  let peak = ref 0 in
+  for _ = 1 to 256 do
+    ignore (Sys.opaque_identity (B.create Rig.host (kib * kib)));
+    peak := Int.max !peak (Rig.allocated Rig.host - base)
+  done;
+  let cycles = (Gc.quick_stat ()).major_collections - before in
+  ignore (Sys.opaque_identity heap);
+  at_most ~msg:"major cycles over 256 MiB dropped young" float_exact
+    ~than:((margin *. (made /. bound *. (1. /. 8. +. (mib /. bound)))) +. 2.)
+    (Float.of_int cycles);
+  at_most ~msg:"bytes of dropped buffers held at once" float_exact
+    ~than:((margin *. bound) +. (2. *. mib))
+    (Float.of_int !peak)
+
+(* A [custom_minor_max_size] of 0 keeps every buffer out of the minor heap: a
+   buffer of a MiB then brings its whole bytes to the major pace at birth. *)
+let test_paced_host_major () =
+  let heap = Array.make (8 * kib * kib) 0. in
+  let was = (Gc.get ()).custom_minor_max_size in
+  Gc.set { (Gc.get ()) with custom_minor_max_size = 0 };
+  let cycles =
+    Fun.protect
+      ~finally:(fun () ->
+        Gc.set { (Gc.get ()) with custom_minor_max_size = was })
+      (fun () ->
+        Gc.full_major ();
+        let bound = pace_bound 0 in
+        let before = (Gc.quick_stat ()).major_collections in
+        for _ = 1 to 256 do
+          ignore (Sys.opaque_identity (B.create Rig.host (kib * kib)))
+        done;
+        (Float.of_int ((Gc.quick_stat ()).major_collections - before), bound))
+  in
+  ignore (Sys.opaque_identity heap);
+  let cycles, bound = cycles in
+  at_least ~msg:"major cycles over 256 MiB in the major heap from birth"
+    float_exact
+    ~than:(Float.of_int (256 * kib * kib) /. bound /. 2.)
+    cycles
+
+(* A host buffer found live by a cycle and dropped afterwards returns although
+   what follows dies young: nothing but a major cycle returns it, and each
+   young buffer brings an eighth of its share of one, so churn past eight
+   bounds, twice over, brings it back. *)
+let test_paced_host_returns () =
+  let n = 64 * kib * kib in
+  Gc.full_major ();
+  let before = Rig.allocated Rig.host in
+  let[@inline never] hold () =
+    let b = B.create Rig.host n in
+    Gc.full_major ();
+    ignore (Sys.opaque_identity b)
+  in
+  hold ();
+  let churn = 4 * 8 * int_of_float (pace_bound n) / (kib * kib) in
+  for _ = 1 to churn do
+    ignore (Sys.opaque_identity (B.create Rig.host (kib * kib)))
+  done;
+  Gc.minor ();
+  at_most ~msg:"host bytes held after churn past the dropped buffer" int
+    ~than:(before + (n / 2))
+    (Rig.allocated Rig.host)
+
+(* A large host buffer that the minor heap promotes still counts in full:
+   beside 64 MiB live, 256 promoted dropped buffers of a MiB, at a bound of
+   about 19 MiB, bring at least one cycle per bound's bytes, give or take a
+   factor of two. Counting less of them than their bytes would bring cycles
+   later or never, and hold more memory unreturned. *)
+let test_paced_host_promoted () =
+  let heap = Array.make (8 * kib * kib) 0. in
+  Gc.full_major ();
+  let bound = pace_bound 0 in
+  let cycles = promoted_cycles 256 in
+  ignore (Sys.opaque_identity heap);
+  at_least ~msg:"major cycles over 256 MiB promoted and dropped" float_exact
+    ~than:(Float.of_int (256 * kib * kib) /. bound /. 2.)
+    cycles
 
 (* Memory another device used enters its owner's cache once that use is
    reached. *)
@@ -1678,6 +1775,14 @@ let tests =
           test_paced_host_live;
         test "a large heap's cycles come once per its share at most"
           test_paced_host_heap;
+        test "a large host buffer dropped young brings an eighth of its cycle"
+          test_paced_host_young;
+        test "a custom_minor_max_size of 0 keeps host buffers in the major heap"
+          test_paced_host_major;
+        test "a large buffer the minor heap promotes paces cycles by its bytes"
+          test_paced_host_promoted;
+        test "a buffer dropped after a cycle returns under young churn"
+          test_paced_host_returns;
         test "memory another device used is cached once that use is reached"
           test_foreign_use;
         test "the host keeps a collected buffer's memory for its size"
