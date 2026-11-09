@@ -357,13 +357,15 @@ let gen_program r =
 
 (* The value of a store's elements, of its view's shape. *)
 
-let build p =
+let build ?slots p =
   let device = "CPU" in
   (* Storage takes a slot from the counter: a slot given by hand could be one
-     a schedule's own storage takes, and hash-consing would make them one. *)
+     a schedule's own storage takes, and hash-consing would make them one.
+     [slots] are those of an earlier build, which are the counter's. *)
+  let slot i = Option.map (fun s -> s.(i)) slots in
   let base =
     Array.init (Array.length p.sizes) (fun i ->
-        Ops.new_buffer device p.sizes.(i) dt)
+        Ops.new_buffer ?slot:(slot i) device p.sizes.(i) dt)
   in
   let states = Array.map (fun b -> [ b ]) base in
   let latest b = List.hd states.(b) in
@@ -423,8 +425,11 @@ let build p =
           write ~after:Ops.after_disjoint bi sa;
           write ~after:Ops.after_disjoint bj sb)
     p.steps;
-  let sinks = Hashtbl.fold (fun b () acc -> latest b :: acc) written [] in
-  (Ops.sink (List.sort Ops.compare sinks), base)
+  (* Listed by buffer: the listing is part of the program, so it may not
+     depend on node ids, which depend on the nodes that outlived earlier
+     programs. *)
+  let bufs = Hashtbl.fold (fun b () acc -> b :: acc) written [] in
+  (Ops.sink (List.map latest (List.sort Int.compare bufs)), base)
 
 (* The spec: each write's values computed from the state before it. *)
 
@@ -673,6 +678,112 @@ let order_independent seed =
         got)
     base
 
+let count_launches linear =
+  List.length
+    (List.filter
+       (fun e -> Ops.op e = Call && Shape.is_launch (Ops.nth e 0))
+       (Ops.src linear))
+
+(* Process history: nodes are interned weakly, so a node that outlived an
+   earlier build of a program keeps its id and one collected is made anew,
+   younger. Node ids order nodes by that history alone, and no schedule may
+   read it. *)
+
+(* A schedule printed with the storage it made numbered by first use, above
+   [slots], the program's own: a made slot is a process-wide counter's. The
+   program's keep theirs, so that a swap of two of its calls shows. *)
+let schedule_text ~slots (linear, vars) =
+  let made u =
+    match Ops.op u with
+    | Alloc -> true
+    | Buffer -> not (Array.mem (Ops.param_arg_of u).slot slots)
+    | _ -> false
+  in
+  let storage = List.filter made (Ops.toposort ~calls:Enter linear) in
+  let above = 1 + Array.fold_left max (-1) slots in
+  let renumber i u =
+    let p = Ops.param_arg_of u in
+    (u, Ops.replace u ~arg:(Param { p with slot = above + i }))
+  in
+  let renumbered =
+    Ops.substitute ~calls:Enter ~pass:Once linear (List.mapi renumber storage)
+  in
+  Format.asprintf "%a@.%s" Ops.pp renumbered
+    (String.concat ","
+       (List.map (fun (n, v) -> Printf.sprintf "%s=%d" n v) vars))
+
+(* Whether each pair of [nodes] is ordered as [Ops.compare] orders them. *)
+let id_order nodes =
+  List.concat_map (fun a -> List.map (Ops.compare a) nodes) nodes
+
+let uncached f = Setting.context [ B (Setting.scache, 0) ] f
+
+let same_program_same_schedule seed =
+  let r = Random.State.make [| seed |] in
+  let p = gen_program r in
+  let schedule big =
+    match Schedule.create_linear_with_vars big with
+    | r -> r
+    | exception Invalid_argument m
+      when String.starts_with ~prefix:"UOp verification failed" m ->
+        reject ()
+  in
+  uncached @@ fun () ->
+  (* In a function of its own, so that only [kept] outlives it. *)
+  let first () =
+    let big, base = build p in
+    let slots = Array.map (fun b -> (Ops.param_arg_of b).slot) base in
+    let kept = List.filter (fun _ -> Random.State.bool r) (Ops.src big) in
+    (schedule_text ~slots (schedule big), slots, kept, id_order (Ops.src big))
+  in
+  let text, slots, kept, order = first () in
+  Gc.full_major ();
+  let big, _ = build ~slots p in
+  cover "a node older in one build, younger in the other"
+    (id_order (Ops.src big) <> order);
+  let second = schedule big in
+  cover "a launch" (count_launches (fst second) > 0);
+  let msg = Format.asprintf "seed %d: %a" seed pp_program p in
+  equal string ~msg text (schedule_text ~slots second);
+  ignore (Sys.opaque_identity kept)
+
+(* A store of one element and a store of many into other storage. The one
+   element joins a launch of the many, and the many open none of its own: so
+   the listing decides, and the order the nodes were built in does not. *)
+let listing_decides () =
+  let launches ~built_first ~listed_first =
+    uncached @@ fun () ->
+    let store n =
+      let b = Ops.new_buffer "CPU" n dt in
+      let one = Shape.reshape (Ops.cast (Ops.float 3.5) dt) [ int_ 1 ] in
+      Ops.after b [ Ops.store b (Shape.expand one [ int_ n ]) ]
+    in
+    let many, single =
+      if built_first = `Many then
+        let m = store 4 in
+        (m, store 1)
+      else
+        let s = store 1 in
+        (store 4, s)
+    in
+    let listing =
+      if listed_first = `Many then [ many; single ] else [ single; many ]
+    in
+    let linear, _ =
+      Schedule.create_linear_with_vars ~capturing:true (Ops.sink listing)
+    in
+    count_launches linear
+  in
+  let launches ~listed_first =
+    let a = launches ~built_first:`Many ~listed_first in
+    Gc.full_major ();
+    equal int ~msg:"built in the other order" a
+      (launches ~built_first:`One ~listed_first);
+    a
+  in
+  equal int ~msg:"the many first" 1 (launches ~listed_first:`Many);
+  equal int ~msg:"the one first" 0 (launches ~listed_first:`One)
+
 (* The mark: an assembly of columns, which no byte range separates, runs as
    one launch only because it is marked; unmarked, it runs apart. *)
 
@@ -688,12 +799,6 @@ let cat ~marked =
   in
   let stores = List.init 4 (fun c -> piece c (c + 1)) in
   Ops.sink [ (if marked then Ops.after_disjoint else Ops.after) out stores ]
-
-let count_launches linear =
-  List.length
-    (List.filter
-       (fun e -> Ops.op e = Call && Shape.is_launch (Ops.nth e 0))
-       (Ops.src linear))
 
 let marked_columns_launch () =
   let launches ~marked =
@@ -780,6 +885,12 @@ let () =
             "a schedule's launches write what its graph states, in either \
              order of their members"
             (Gen.int_range 1 1_000_000) order_independent;
+          prop
+            "a schedule does not depend on which nodes outlived an earlier \
+             build"
+            (Gen.int_range 1 1_000_000) same_program_same_schedule;
+          test "the listing places a one-element store beside a store of many"
+            listing_decides;
           test "a write marked disjoint runs its columns as one launch"
             marked_columns_launch;
           test "a schedule read back keeps a marked write's launch"

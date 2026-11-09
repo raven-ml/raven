@@ -95,9 +95,6 @@ raven / llama.cpp b12048 Vulkan:
   rounds
 - `Cuda/cat-16-columns-of-exp-64x64`, the row that catches a lost mark on
   a concatenation, has no AMD baseline
-- launches group by process history: in about 1 program of 1,000 a
-  1-element call joins a launch or stays alone with GC and node ids
-  (`OCAMLRUNPARAM=s=4M` flips it), in `launched_entries`; values are equal
 - a fixed run of an `After` state read inside a loop raises: lifting it
   needs a view that names its state
 - one launch pass (ecdd3203f6), views naming their storage (de0bcf38d9)

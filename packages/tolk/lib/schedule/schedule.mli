@@ -20,8 +20,11 @@ val create_schedule : ?by_storage:bool -> Ops.t -> Ops.t
 (** [create_schedule ~by_storage sched_sink] is the {!Op.Linear} of the kernel
     calls of the kernel graph [sched_sink] ({!Rangeify.get_kernel_graph}), in
     an order that runs each kernel after those that write the storage it
-    reads, and before those that overwrite the storage it reads. Ready kernels
-    run in the order they become ready, unless [by_storage] (default [false]),
+    reads, and before those that overwrite the storage it reads. The order
+    depends on the graph alone, the order of a node's sources included, and
+    on nothing the process built before it. Ready kernels run in the order
+    they become ready, those ready at the start in the order the graph reaches
+    them, unless [by_storage] (default [false]),
     for a schedule whose storage is made at each run: then a ready kernel runs
     in the order the graph reaches it, after any ready kernel that frees
     storage, being the last to take storage a kernel wrote: first one that
