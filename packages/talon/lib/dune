@@ -13,6 +13,7 @@
   display
   strings
   case_tables
+  unicode_tables
   problem
   sel
   order

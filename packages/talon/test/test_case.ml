@@ -28,9 +28,9 @@ let scan_hex field =
 
 let to_text us = String.concat "" (List.map utf_8 us)
 
-let lowers, uppers, cased_ranges, ignorable_ranges =
+let lowers, uppers, cased_ranges, ignorable_ranges, white_space_ranges =
   let lower = Hashtbl.create 3000 and upper = Hashtbl.create 3000 in
-  let cased = ref [] and ignorable = ref [] in
+  let cased = ref [] and ignorable = ref [] and white = ref [] in
   In_channel.with_open_text "golden/case.txt" @@ fun ic ->
   In_channel.fold_lines
     (fun () line ->
@@ -44,7 +44,7 @@ let lowers, uppers, cased_ranges, ignorable_ranges =
                 Hashtbl.replace lower u (to_text (scan_hex l));
                 Hashtbl.replace upper u (to_text (scan_hex up))
             | _ -> failwith line)
-        | ('C' | 'I') as kind -> (
+        | ('C' | 'I' | 'W') as kind -> (
             let body = String.sub line 2 (String.length line - 2) in
             match String.index_opt body '.' with
             | None -> failwith line
@@ -52,15 +52,21 @@ let lowers, uppers, cased_ranges, ignorable_ranges =
                 let first = int_of_string ("0x" ^ String.sub body 0 d) in
                 let n = String.length body - d - 2 in
                 let last = int_of_string ("0x" ^ String.sub body (d + 2) n) in
-                let into = if kind = 'C' then cased else ignorable in
+                let into =
+                  match kind with
+                  | 'C' -> cased
+                  | 'I' -> ignorable
+                  | _ -> white
+                in
                 into := (first, last) :: !into)
         | _ -> failwith line)
     () ic;
-  (lower, upper, !cased, !ignorable)
+  (lower, upper, !cased, !ignorable, !white)
 
 let member ranges u = List.exists (fun (a, b) -> a <= u && u <= b) ranges
 let is_cased u = member cased_ranges u
 let is_ignorable u = member ignorable_ranges u
+let is_white_space u = member white_space_ranges u
 
 (* [scalars t] are the scalar values of [t] with the byte each starts at. *)
 let scalars t =
@@ -121,6 +127,25 @@ let every_scalar =
       in
       equal (list string) [] (wrong "lower" map_lower (lower inputs));
       equal (list string) [] (wrong "upper" map_upper (upper inputs)))
+
+let every_white_space =
+  test "trim drops exactly the White_Space scalars, from the Unicode files"
+    (fun () ->
+      let surrogates = 0xE000 - 0xD800 in
+      let scalar i = if i < 0xD800 then i else i + surrogates in
+      let us = Array.init (0x110000 - surrogates) scalar in
+      let row u = utf_8 u ^ "x" ^ utf_8 u in
+      let trim vs =
+        Column.options Kind.string (result (Expr.Str.trim s) (texts vs))
+      in
+      let trimmed = trim (Array.map (fun u -> Some (row u)) us) in
+      let expected u = if is_white_space u then "x" else row u in
+      let wrong =
+        List.filteri
+          (fun i _ -> trimmed.(i) <> Some (expected us.(i)))
+          (Array.to_list us)
+      in
+      equal (list string) [] (List.map (Printf.sprintf "U+%04X") wrong))
 
 (* Scalars at the edges of a range decide whether a boundary test or a range
    lookup is off by one. Each is tried next to a sigma, in both sides' positions
@@ -357,4 +382,5 @@ let () =
           shapes;
           invalid_utf_8;
         ];
+      group "Str.trim" [ every_white_space ];
     ]

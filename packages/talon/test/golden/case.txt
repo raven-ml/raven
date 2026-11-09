@@ -1,7 +1,8 @@
 # Unicode 18.0.0: `S scalar;lower;upper` for each scalar whose full
 # mapping is not itself, `C first..last` for Cased, `I first..last` for
-# Case_Ignorable. From UnicodeData.txt, SpecialCasing.txt and
-# DerivedCoreProperties.txt, under the Unicode License v3.
+# Case_Ignorable, `W first..last` for White_Space. From UnicodeData.txt,
+# SpecialCasing.txt, DerivedCoreProperties.txt and PropList.txt, under
+# the Unicode License v3.
 S 0041;0061;0041
 S 0042;0062;0042
 S 0043;0063;0043
@@ -3711,3 +3712,13 @@ I 1F3FB..1F3FF
 I E0001..E0001
 I E0020..E007F
 I E0100..E01EF
+W 0009..000D
+W 0020..0020
+W 0085..0085
+W 00A0..00A0
+W 1680..1680
+W 2000..200A
+W 2028..2029
+W 202F..202F
+W 205F..205F
+W 3000..3000

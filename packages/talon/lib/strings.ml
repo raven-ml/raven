@@ -214,17 +214,23 @@ let scalar (v : buf) j w =
       let b3 = A.unsafe_get v (j + 3) land 0x3f in
       ((b0 land 0x07) lsl 18) lor (b1 lsl 12) lor (b2 lsl 6) lor b3
 
+(* [within bounds u lo hi] is [true] iff [u] lies in the ranges that the
+   ascending [bounds] start and end by turns: an odd count of bounds at or below
+   [u], searched in [\[lo, hi)]. *)
+let rec within bounds u lo hi =
+  if lo = hi then lo land 1 = 1
+  else
+    let mid = (lo + hi) / 2 in
+    if bounds.(mid) <= u then within bounds u (mid + 1) hi
+    else within bounds u lo mid
+
 (* White space *)
 
 (* [is_white_space u] is [true] iff the scalar value [u] has Unicode's
-   White_Space property: one test per line of PropList.txt, Unicode 18.0.0, 25
-   scalar values in all. Each is one byte of UTF-8 (U+0009 to U+000D and
-   U+0020), two (U+0085 and U+00A0) or three. *)
-let is_white_space u =
-  (u >= 0x0009 && u <= 0x000D)
-  || u = 0x0020 || u = 0x0085 || u = 0x00A0 || u = 0x1680
-  || (u >= 0x2000 && u <= 0x200A)
-  || u = 0x2028 || u = 0x2029 || u = 0x202F || u = 0x205F || u = 0x3000
+   White_Space property, the table that the regular-expression class [\s]
+   also reads. *)
+let white_space = Unicode_tables.(bounds white_space)
+let is_white_space u = within white_space u 0 (Array.length white_space)
 
 (* [white_at v j stop] is the length of the UTF-8 sequence of a white space
    scalar value that starts at byte [j] and ends by [stop], or [0]. *)
@@ -325,16 +331,6 @@ let entry (t : Case_tables.table) u =
 
 let sigma = 0x03a3
 let final_small_sigma = 0x03c2
-
-(* [within bounds u lo hi] is [true] iff [u] lies in the ranges that the
-   ascending [bounds] start and end by turns: an odd count of bounds at or below
-   [u], searched in [\[lo, hi)]. *)
-let rec within bounds u lo hi =
-  if lo = hi then lo land 1 = 1
-  else
-    let mid = (lo + hi) / 2 in
-    if bounds.(mid) <= u then within bounds u (mid + 1) hi
-    else within bounds u lo mid
 
 let cased u = within Case_tables.cased u 0 (Array.length Case_tables.cased)
 
