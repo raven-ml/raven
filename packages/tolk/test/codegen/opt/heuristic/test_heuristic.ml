@@ -38,7 +38,7 @@ type case = {
       (** The switch of the matrix-vector layouts, [MV], which is read once from
           the environment: a case under it runs in a process of its own (see
           dune), tagged by {!process}. *)
-  opts : Opt.t list;  (** The optimisations tinygrad chose. *)
+  opts : Opt.t list;  (** The optimisations the table records for this case. *)
 }
 
 let case_of_row cell =
@@ -101,15 +101,25 @@ let size r =
 
 (* Choosing *)
 
+(* The optimisations [optimize] records in its kernel's information. *)
+let applied c =
+  match Ops.arg (optimize c) with
+  | Ops.Kernel info -> info.applied_opts
+  | _ -> failf "%s: the optimised sink has no kernel information" c.name
+
 (* A golden's kernel information holds the optimisations applied, so the
-   optimised kernel states them too. *)
+   optimised kernel states them too, and the table's cell states the same. *)
 let chosen =
-  let tests cases =
+  let tests rows =
     [
       group "the optimised kernel"
         (List.map
            (fun c -> Golden.graph (c.name ^ ".golden") (fun () -> optimize c))
-           cases);
+           rows);
+      cases "the table's optimisations are the optimised kernel's"
+        ~id:(fun c -> c.name)
+        rows
+        (fun c -> equal (list Kernel_opts.opt) c.opts (applied c));
     ]
   in
   group "the optimisations chosen are as recorded"
