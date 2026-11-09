@@ -9413,3 +9413,31 @@ reason and its pins.
   are exact`; rune's bench row `Cuda/argmax-bfloat16-201088` (baseline to
   record) and kaun's `GptOss/decode-step-cache-1024` and
   `GptOss/decode-step-Q8_0-cache-1024`, on fudge.
+
+## D468. Ties of the linear order compare by numbers
+
+- **tinygrad:** `codegen/late/linearizer.py` (`linearize`) sorts the nodes by
+  their priority and, under `TUPLE_ORDER`, by `UOp.tuplize` (`uop/ops.py`), a
+  tuple of the operation, the argument's repr, the type and the sources'
+  tuples, whose comparison walks both graphs.
+- **tolk:** `Linearizer.linearize` and `Ops.structure_ranks`.
+- **Differs:** the order is the same, ties included. Under `TUPLE_ORDER` the
+  kernel's nodes are first numbered in that order, once, by inserting them,
+  sources first, into a treap over an order-maintenance list, where a node's
+  sources compare by their numbers; ties then compare numbers. tinygrad walks
+  the two graphs at each comparison, so a chain of operations each read once
+  by the next costs the square of its length.
+- **Reason:** (d): compile time. Fudge, a chain of products and sums read
+  once, ordered alone: 1,000 operations 17 ms against 3 ms, 10,000 0.95 s
+  against 0.02 s, 25,000 6.7 s against 0.04 s, 100,000 over 120 s against
+  0.17 s, in the same order. rune's compile row `long/pendulum-200`, cold,
+  runs 20.48 G instructions against 16.58 G (Clang excluded) and allocates
+  1.1% more words. A kernel without long chains pays the numbering: tolk's
+  linearize stage rows take 30% to 55% longer (3 µs to 1.6 ms a program, three
+  interleaved pinned rounds under load) and allocate about 30% more words.
+  rune's small cold compiles, with D469: `rng/normal-f64` 1.36 G
+  instructions against 1.23 G, `linalg/solve-32` 0.903 G against 0.924 G,
+  each allocating 1.5% to 1.8% more words.
+- **Pinned by:** tolk's bench `chains/linearize`, on fudge;
+  `Tolk.Ops › compare_structure › structure_ranks numbers a graph's nodes in
+  its order` and `› structure_ranks numbers NaNs of different bits alike`.

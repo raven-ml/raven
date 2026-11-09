@@ -1461,33 +1461,169 @@ let rec split_uop u sep =
   if Op.equal u.op sep then List.concat_map (fun s -> split_uop s sep) u.src
   else [ u ]
 
-(* Equal arguments or types, which most ties have, compare without the
+(* A node's own fields in structural order: operation, argument, data type.
+   Equal arguments or types, which most ties have, compare without the
    arguments' reprs or the types' order. *)
-let compare_structure u0 u1 =
-  let args u0 u1 =
-    if u0.arg == u1.arg then 0 else String.compare (arg_repr u0) (arg_repr u1)
+let[@inline] compare_fields u0 u1 =
+  match Int.compare (Op.to_int u0.op) (Op.to_int u1.op) with
+  | 0 -> (
+      match
+        if u0.arg == u1.arg then 0
+        else String.compare (arg_repr u0) (arg_repr u1)
+      with
+      | 0 ->
+          if u0.dtype = u1.dtype then 0 else Dtype.compare u0.dtype u1.dtype
+      | c -> c)
+  | c -> c
+
+(* Two lists of sources, in order, by [cmp], a shorter prefix first. *)
+let rec compare_srcs cmp l0 l1 =
+  match (l0, l1) with
+  | [], [] -> 0
+  | [], _ -> -1
+  | _, [] -> 1
+  | s0 :: r0, s1 :: r1 -> (
+      match cmp s0 s1 with 0 -> compare_srcs cmp r0 r1 | c -> c)
+
+let rec compare_structure u0 u1 =
+  if u0 == u1 then 0
+  else
+    match compare_fields u0 u1 with
+    | 0 -> compare_srcs compare_structure u0.src u1.src
+    | c -> c
+
+(* Order maintenance: a list whose elements carry labels in [[0, 2^bits)],
+   increasing along it, so that two elements compare as two ints. Element 0
+   heads the list with label 0. An insertion between labels that leave no room
+   relabels evenly the smallest aligned range of [2^i] labels around it whose
+   elements, the new one counted, are at most [(2/t)^i]: a range that dense
+   leaves room for the next insertions, which makes an insertion cost
+   O(log n) amortized (Bender, Cole, Demaine, Farach-Colton and Zito, "Two
+   simplified algorithms for maintaining order in a list", 2002). *)
+module Order = struct
+  type t = {
+    label : int array;
+    next : int array;
+    prev : int array;
+    mutable size : int;
+  }
+
+  let bits = 61
+  let t = 1.25
+  let none = -1
+
+  let create n =
+    {
+      label = Array.make (n + 1) 0;
+      next = Array.make (n + 1) none;
+      prev = Array.make (n + 1) none;
+      size = 1;
+    }
+
+  (* Relabels the range around [x], [y] just linked after it, whose label is
+     not yet read: from [first] to [last], [count] elements. *)
+  let relabel o x y =
+    let i = ref 0 and base = ref 0 in
+    let first = ref x and last = ref y and count = ref 2 in
+    let dense = ref true in
+    while !dense do
+      incr i;
+      if !i > bits then failwith "Order: too many elements";
+      base := o.label.(x) land lnot ((1 lsl !i) - 1);
+      let top = !base + (1 lsl !i) in
+      while o.prev.(!first) <> none && o.label.(o.prev.(!first)) >= !base do
+        first := o.prev.(!first);
+        incr count
+      done;
+      while o.next.(!last) <> none && o.label.(o.next.(!last)) < top do
+        last := o.next.(!last);
+        incr count
+      done;
+      dense := Float.of_int !count > Float.pow (2. /. t) (Float.of_int !i)
+    done;
+    let step = (1 lsl !i) / !count and e = ref !first in
+    for k = 0 to !count - 1 do
+      o.label.(!e) <- !base + (k * step);
+      e := o.next.(!e)
+    done
+
+  (* A new element after [x]. *)
+  let insert_after o x =
+    let y = o.size in
+    o.size <- y + 1;
+    let z = o.next.(x) in
+    o.next.(x) <- y;
+    o.prev.(y) <- x;
+    o.next.(y) <- z;
+    if z <> none then o.prev.(z) <- y;
+    let lo = o.label.(x) in
+    let hi = if z = none then 1 lsl bits else o.label.(z) in
+    if hi - lo >= 2 then o.label.(y) <- lo + ((hi - lo) / 2)
+    else relabel o x y;
+    y
+end
+
+(* The classes of nodes equal by structure, each an element of an [Order],
+   are also kept in a treap ordered by structure, under [Order]'s arrays:
+   [left], [right] and [rep], an element's children and the first node of its
+   class. Element 0, the order's head, is no class and stands for no child.
+   The nodes enter sources first, so that a node's sources compare by their
+   labels: a node joins the class of an equal one, or makes a new one after
+   the greatest smaller one. A treap's shape is that of the tree its
+   elements would make inserted by decreasing [priority], so its depth stays
+   logarithmic, whatever the order of the insertions. *)
+let structure_ranks u =
+  let nodes = toposort ~calls:Enter u in
+  let n = List.length nodes in
+  let order = Order.create n in
+  let left = Array.make (n + 1) 0 and right = Array.make (n + 1) 0 in
+  let rep = Array.make (n + 1) u and element = Tbl.create n in
+  let label n = order.label.(Tbl.find element n) in
+  let by_label s0 s1 = Int.compare (label s0) (label s1) in
+  (* A hash of [e], which fixes the treap's shape. *)
+  let priority e =
+    let h = e * 0x2545F4914F6CDD1D in
+    h lxor (h lsr 29)
   in
-  let dtypes (d0 : Dtype.t) d1 = if d0 = d1 then 0 else Dtype.compare d0 d1 in
-  let rec cmp u0 u1 =
-    if u0 == u1 then 0
+  let rotate_right e =
+    let l = left.(e) in
+    left.(e) <- right.(l);
+    right.(l) <- e;
+    l
+  and rotate_left e =
+    let r = right.(e) in
+    right.(e) <- left.(r);
+    left.(r) <- e;
+    r
+  in
+  (* Under [e], the class of [x], made after [after] if no class there is
+     equal to [x], and the root of the subtree. *)
+  let rec join e after x =
+    if e = 0 then
+      let y = Order.insert_after order after in
+      rep.(y) <- x;
+      Tbl.replace element x y;
+      y
     else
-      match Int.compare (Op.to_int u0.op) (Op.to_int u1.op) with
-      | 0 -> (
-          match args u0 u1 with
-          | 0 -> (
-              match dtypes u0.dtype u1.dtype with
-              | 0 -> srcs u0.src u1.src
-              | c -> c)
-          | c -> c)
-      | c -> c
-  and srcs l0 l1 =
-    match (l0, l1) with
-    | [], [] -> 0
-    | [], _ -> -1
-    | _, [] -> 1
-    | s0 :: r0, s1 :: r1 -> ( match cmp s0 s1 with 0 -> srcs r0 r1 | c -> c)
+      match
+        match compare_fields x rep.(e) with
+        | 0 -> compare_srcs by_label x.src rep.(e).src
+        | c -> c
+      with
+      | 0 ->
+          Tbl.replace element x e;
+          e
+      | c when c < 0 ->
+          let l = join left.(e) after x in
+          left.(e) <- l;
+          if priority l > priority e then rotate_right e else e
+      | _ ->
+          let r = join right.(e) e x in
+          right.(e) <- r;
+          if priority r > priority e then rotate_left e else e
   in
-  cmp u0 u1
+  ignore (List.fold_left (fun root x -> join root 0 x) 0 nodes);
+  label
 
 (* An argument as [key] reads it. A NaN constant enters with its bits, since
    NaNs of different bits are different nodes and a repr writes every NaN [nan].

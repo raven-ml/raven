@@ -548,6 +548,16 @@ let identity =
           equal uops nodes (List.map node tags));
     ]
 
+(* A few expressions and a chain of one operation by a constant over the first
+   of them: each step of the chain falls next to the last in the order. *)
+let gen_ranked =
+  Gen.(
+    pair
+      (list ~size:(int_range 1 4) gen_recipe)
+      (triple
+         (of_list ~pp:Op.pp Op.[ Add; Mul; Max ])
+         (int_range (-2) 2) (int_range 0 400)))
+
 let structure_order =
   group "compare_structure"
     [
@@ -579,6 +589,47 @@ let structure_order =
                    Ops.compare_structure a b = 0))
           in
           Law.order by_structure (build vars r0, build vars r1, build vars r2));
+      prop "structure_ranks numbers a graph's nodes in its order"
+        gen_ranked (fun (recipes, (o, k, length)) ->
+          cover "a chain of one operation past 128 steps" (length > 128);
+          let vars = leaves () in
+          let rec chain n =
+            if n = 0 then List.hd recipes else Bin (o, chain (n - 1), Konst k)
+          in
+          let sink =
+            Ops.sink (List.map (build vars) (chain length :: recipes))
+          in
+          let rank = Ops.structure_ranks sink in
+          let order a b = Int.compare (rank a) (rank b) in
+          let sign c = Int.compare c 0 in
+          let sorted =
+            List.stable_sort Ops.compare_structure
+              (Ops.toposort ~calls:Enter sink)
+          in
+          (* The sign of each step along the order, by both. *)
+          let rec steps = function
+            | a :: (b :: _ as rest) ->
+                (sign (Ops.compare_structure a b), sign (order a b))
+                :: steps rest
+            | _ -> []
+          in
+          let steps = steps sorted in
+          equal (list int) (List.map fst steps) (List.map snd steps));
+      test "structure_ranks numbers NaNs of different bits alike" (fun () ->
+          let nan bits = Ops.float (Int64.float_of_bits bits) in
+          let a = nan 0x7FF8_0000_0000_0000L
+          and b = nan 0x7FF8_0000_0000_0001L in
+          let x = fvar "x" in
+          let rec chain n u =
+            if n = 0 then u else chain (n - 1) Ops.O.(u + x)
+          in
+          let sa = chain 3 a and sb = chain 3 b in
+          let rank = Ops.structure_ranks (Ops.sink [ sa; sb ]) in
+          let order a b = Int.compare (rank a) (rank b) in
+          equal ~msg:"the same node" bool false (a == b);
+          equal int 0 (order sa sb);
+          equal int 0 (order a b);
+          equal int 0 (order Ops.O.(a + x) Ops.O.(b + x)));
     ]
 
 (* Short texts of quotes, escapes and bytes past ASCII, often equal. *)

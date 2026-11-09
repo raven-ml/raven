@@ -72,15 +72,17 @@ let linearize sink =
   Array.iter (fun u -> count (src_without_body u)) lst;
   let priorities = Array.map priority lst in
   (* Number the nodes in the ideal order. *)
-  let tuple_order = Setting.value Setting.tuple_order in
+  let structure =
+    if Setting.value Setting.tuple_order then
+      Array.map (structure_ranks sink) lst
+    else Array.make n 0
+  in
   let ideal i0 i1 =
     let d0, p0, e0 = priorities.(i0) and d1, p1, e1 = priorities.(i1) in
     let c = Int.compare d0 d1 in
     let c = if c <> 0 then c else Int.compare p0 p1 in
     let c = if c <> 0 then c else Option.compare Int.compare e0 e1 in
-    match c with
-    | 0 when tuple_order -> compare_structure lst.(i0) lst.(i1)
-    | c -> c
+    if c <> 0 then c else Int.compare structure.(i0) structure.(i1)
   in
   let by_nkey = Array.init n Fun.id in
   Array.stable_sort ideal by_nkey;

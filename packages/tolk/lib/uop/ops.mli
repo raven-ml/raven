@@ -446,6 +446,18 @@ val compare_structure : t -> t -> int
 
     Raises as {!pp_arg} does where it prints an argument. *)
 
+val structure_ranks : t -> t -> int
+(** [structure_ranks u] numbers [u] and the nodes it reaches, call bodies
+    included, in the order of {!compare_structure}, and is the function that
+    gives each its number: of two of them [n0] and [n1], [n0]'s number is less
+    than [n1]'s exactly when [compare_structure n0 n1 < 0], and the two are
+    equal exactly when it is [0]. Numbering a graph costs about its nodes
+    times their logarithm, where {!compare_structure} walks the graphs it
+    compares.
+
+    The function raises [Not_found] on a node [u] does not reach. Raises as
+    {!pp_arg} does where it prints an argument. *)
+
 val key : t -> string
 (** [key u] is a digest of [u]'s operation, type, argument and sources,
     recursively: equal for equal graphs, whenever and wherever they are built,
