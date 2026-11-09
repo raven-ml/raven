@@ -170,6 +170,11 @@ let examples dtypes =
   in
   List.mapi (fun i c -> { c with dtype = List.nth dtypes (i mod n) }) cases
   @ [
+      (* ALiBi at float32: a score moves by its slope times the pair's
+         distance, so at slopes near 1 over 300 keys some keys' weights
+         lie below float32's least subnormal, [e{^-103}], at every row,
+         and their gradients underflow to [0]. *)
+      { b with dtype = named "float32"; mask = Blocks; alibi = true };
       (* A decode step of gpt-oss: 64 query heads over 8, the query at the
          middle of a key cache's captured positions. *)
       {
@@ -608,9 +613,18 @@ let zero_sums (module S : Nx.Devices) dtype =
      cotangent [x].
    Each result rounds once to [q]'s dtype, [u_q] of it, and for float16 at
    most [f] more below its smallest normal. A float64 case doubles each
-   bound for the reference's own error. A
-   share of cases draws [w = 0], where [A = |w₂|] and [lse]'s cotangent
-   alone reaches the scores. *)
+   bound for the reference's own error. A share of cases draws [w = 0],
+   where [A = |w₂|] and [lse]'s cotangent alone reaches the scores.
+
+   The bounds exclude underflow. A value the accumulator computes below
+   its least normal [λ] errs by up to [λ] where the device flushes
+   subnormals, and by less where it does not. Per pair that is at most
+   [g = (scale (3 dv + 3) V + 5) λ]: scaled, its weight's [λ] times
+   [A <= 2 V dv + 1] and [λ] at each of its cotangent's [dv + 1] terms
+   and at [ds]; unscaled, [λ] at the scaled cotangent, at [p] and [ds]
+   rounded to a narrow dtype, and at the term's product and addition.
+   [q̄] and [B] add [tk g], [k̄] and [v̄] [n g], and each result [λ] for
+   its rounding. *)
 
 let grad_law (module S : Nx.Devices) ~vmap c =
   if vmap && (c.page <> None || c.lengths <> None || c.mask = Spans) then
@@ -698,8 +712,10 @@ let grad_law (module S : Nx.Devices) ~vmap c =
   let ln = Float.log (Float.of_int (max 1 c.tk)) in
   let rows = c.lead * c.hq * c.tq in
   let wo_a = Nx.to_array (f64 wo) and wl_a = Nx.to_array (f64 wl) in
-  let floor = if half then 0x1p-25 else 0. in
   let vmax = if c.positive then 1.01 else 1. in
+  let least = if wide then 0x1p-1022 else 0x1p-126 in
+  let floor = if half then 0x1p-25 else 0. in
+  let under = ((scale *. Float.of_int ((3 * c.dv) + 3) *. vmax) +. 5.) *. least in
   let uv = if narrow then uq else 0. in
   let n = c.lead * c.tq * (c.hq / max 1 c.hk) in
   let ga = Array.make rows 0. and gd = Array.make rows 0. and wr = Array.make rows 0. in
@@ -731,6 +747,7 @@ let grad_law (module S : Nx.Devices) ~vmap c =
       +. (vmax
           *. (((1. +. uq) *. (big_w +. (gamma (c.tk + 1) (2. *. u) *. Float.exp w)))
              +. uv +. (floor *. Float.of_int c.tk)))
+      +. (under *. Float.of_int c.tk)
     in
     let aa = (vmax *. !sw) +. Float.abs delta in
     let dd =
@@ -767,7 +784,7 @@ let grad_law (module S : Nx.Devices) ~vmap c =
         less
           ~msg:(Printf.sprintf "%s at %d" name j)
           float_exact
-          ~than:(twice (bound j +. (uq *. Float.abs r) +. floor) +. 1e-300)
+          ~than:(twice (bound j +. (uq *. Float.abs r) +. floor +. least) +. 1e-300)
           (Float.abs (gs.(j) -. r)))
       refs
   in
@@ -775,11 +792,14 @@ let grad_law (module S : Nx.Devices) ~vmap c =
   | [ rq; rk; rv ], [ cq; ck; cv ] ->
       check "q̄" rq cq (fun j ->
           let i = j / max 1 c.dk in
-          scale *. (gd.(i) +. (gamma (c.tk + 1) (2. *. u) *. ga.(i)) +. (floor *. Float.of_int c.tk)));
+          scale *. (gd.(i) +. (gamma (c.tk + 1) (2. *. u) *. ga.(i)) +. (floor *. Float.of_int c.tk))
+          +. (under *. Float.of_int c.tk));
       (* A key's row of [k̄] or [v̄] is the [j / d]th, its [Σ_i p x] the
          reference's column 0 there. *)
       let row d j = j / max 1 d * max 1 c.dv in
       check "k̄" rk ck (fun j ->
-          scale *. ((if c.dv = 0 then 0. else k_terms.(row c.dk j)) +. (floor *. Float.of_int n)));
-      check "v̄" rv cv (fun j -> v_terms.(j) +. (floor *. Float.of_int n))
+          (scale *. ((if c.dv = 0 then 0. else k_terms.(row c.dk j)) +. (floor *. Float.of_int n)))
+          +. (under *. Float.of_int n));
+      check "v̄" rv cv (fun j ->
+          v_terms.(j) +. ((floor +. under) *. Float.of_int n))
   | _ -> invalid_arg "Attentions.grad_law"
