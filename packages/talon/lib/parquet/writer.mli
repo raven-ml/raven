@@ -16,6 +16,13 @@ val written : Talon.Type.any -> Talon.Type.any
     Raises [Invalid_argument] if [t] holds a record without fields or a tensor
     of a dtype with no talon scalar type. *)
 
+val column : string -> Talon.Type.any -> string * Talon.Type.any
+(** [column name t] is [name] and the {!written} type of a column [name] of type
+    [t].
+
+    Raises [Invalid_argument] as {!written} does, or, naming the column, if its
+    highest definition level does not fit the 16 bits that hold a level. *)
+
 val schema_elements : (string * Talon.Type.any) list -> Meta.element array
 (** [schema_elements columns] is the Parquet schema of [columns], root first. *)
 

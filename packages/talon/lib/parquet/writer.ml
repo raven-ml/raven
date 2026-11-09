@@ -128,6 +128,31 @@ let rec written (Type.Any t as ty) : Type.any =
   | Tensor (dt, shape) -> written (tensor_list dt shape)
   | _ -> ty
 
+(* A level is held in a [u16], so a column's highest level must fit one. Parquet
+   sets no such bound: this is the range of the writer's own level buffers. *)
+let max_level = 0xFFFF
+
+(* [top_level t] is the highest definition level of a column of written type [t]:
+   an optional list takes two levels, for itself and its repeated element, an
+   optional record one and an optional value one. *)
+let rec top_level (Type.Any t) =
+  match t with
+  | List e -> 2 + top_level (Any e)
+  | Record fields ->
+      1 + List.fold_left (fun m (_, t) -> Int.max m (top_level t)) 0 fields
+  | _ -> 1
+
+let column name ty =
+  let w = written ty in
+  let top = top_level w in
+  if top > max_level then
+    invalid_arg
+      (Printf.sprintf
+         "Talon_parquet: column %S reaches definition level %d, past the %d a \
+          level holds"
+         name top max_level);
+  (name, w)
+
 let element name physical length logical children (repetition : Meta.repetition)
     : Meta.element =
   {

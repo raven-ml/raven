@@ -225,6 +225,9 @@ val file : ?format:format -> string -> (Talon.Source.t, Talon.Error.t) result
 
     {!encode} writes every column [optional], its nulls as definition levels,
     and a list column in Parquet's three levels ([LIST], [list], [element]).
+    Each [optional] or repeated field on a column's path adds a definition
+    level, and the column's highest must fit the 16 bits that hold it, at most
+    [65_535].
 
     {2:written Written types}
 
@@ -269,8 +272,9 @@ val format :
     the last and one batch of {!source}, defaults to [1_048_576].
 
     Raises [Invalid_argument] if [s] has no column, if [row_group] is not
-    positive, or if [s] holds a record without fields or a tensor whose dtype
-    no talon scalar type stores, such as a complex one. *)
+    positive, or if [s] holds a record without fields, a tensor whose dtype
+    no talon scalar type stores, such as a complex one, or, naming it, a column
+    whose highest definition level does not fit ({{!writing}Writing}). *)
 
 val encode :
   format ->

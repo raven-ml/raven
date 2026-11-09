@@ -93,7 +93,7 @@ let with_type name t f =
 let format ?(compression = Snappy) ?(row_group = default_row_group) schema =
   if row_group < 1 then
     invalid_arg "Talon_parquet.format: row_group must be positive";
-  let written (name, ty) = (name, Writer.written ty) in
+  let written (name, ty) = Writer.column name ty in
   let columns = List.map written (Schema.columns schema) in
   if columns = [] then
     invalid_arg "Talon_parquet.format: the schema has no columns";
@@ -621,7 +621,7 @@ let encode f q w =
               it as float64 or int64 with with_type first."
              c.field.name)
   in
-  let written (name, ty) = (name, Writer.written ty) in
+  let written (name, ty) = Writer.column name ty in
   let columns = Schema.columns (Query.schema q) in
   let wanted =
     Schema.v (List.map written (Array.to_list (Array.map stated f.columns)))

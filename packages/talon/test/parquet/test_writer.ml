@@ -558,6 +558,22 @@ let corpus (item : Written_corpus.item) =
         equal (list string) golden lines);
   ]
 
+(* A list adds two definition levels and an optional leaf one: 32,767 lists of
+   [int32] reach 65,535, the most a 16-bit level holds, and a record around them
+   one more. *)
+let level_bound =
+  test "format refuses a definition level past 16 bits, naming the column"
+  @@ fun () ->
+  let rec lists k (Type.Any t as ty) =
+    if k = 0 then ty else lists (k - 1) (Type.Any (Type.list t))
+  in
+  let deepest = lists 32_767 (Type.Any Type.int32) in
+  ignore (P.format (Schema.v [ ("a", deepest) ]));
+  let past = Type.Any (Type.record [ ("x", deepest) ]) in
+  raises_match
+    (Exn.invalid_arg ~sub:"\"a\"")
+    (fun () -> P.format (Schema.v [ ("a", past) ]))
+
 let () =
   exit
   @@ run "talon.parquet.writer"
@@ -574,6 +590,7 @@ let () =
           test "a failing sink is an error" sink_failure;
           test "a sniffed format writes what it prints" sniffed_format;
           test "a page takes a value past the target whole" skewed_pages;
+          level_bound;
         ];
       group "pages"
         (List.map large_pages

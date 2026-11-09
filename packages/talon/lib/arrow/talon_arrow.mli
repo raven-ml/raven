@@ -58,6 +58,8 @@
     - [timestamp] reads as [datetime] of its unit, an instant when the field
       states a time zone and a wall clock otherwise. Talon does not keep a
       zone's name.
+    - Reading [utf8_view] or [binary_view] copies each row's value, so such a
+      column takes the memory of its rows' values, whatever its views take.
 
     {2:dictionaries Dictionary-encoded columns}
 
