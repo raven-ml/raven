@@ -1168,6 +1168,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Ordering and rendering a long chain of operations, each read once by the
+  next, no longer takes time growing with the square of the chain: 25,000
+  operations order in 0.04 s (6.7 s), a sum of 25,000 loads renders in 0.2 s
+  (15 s). New `Ops.structure_ranks`. A NUL byte in a custom function's text or
+  a parameter's name is refused.
 - On a GPU, a compiled reduction to few outputs over an axis longer than 32
   that 16 does not divide is padded and shared by a workgroup's threads.
   `Nx.argmax` over gpt-oss's 201088 logits under `Rune.jit` took 272 us in one

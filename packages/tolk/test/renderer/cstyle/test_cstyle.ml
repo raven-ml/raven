@@ -331,11 +331,67 @@ let nests_a_bounded_depth ((r : Renderer.t), n) =
   cover "a chain short enough to be one expression" (n < 30);
   at_most int ~than:max_nesting (nesting (render r (chain n)))
 
+(* [sum n] stores [data1[0] + data1[1] + ... + data1[n-1]], over float32, each
+   addition read once, by the next. *)
+let sum n =
+  let x i =
+    Ops.load
+      (Ops.index
+         (Shape.param ~shape:[ Int n ] 1 Float32)
+         [ Ops.int ~dtype:Int32 i ])
+      []
+  in
+  let add r i = Ops.alu r Add [ x i ] in
+  let r = List.fold_left add (x 0) (List.init (n - 1) succ) in
+  let out =
+    Ops.index
+      (Shape.param ~shape:[ Int 1 ] 0 Float32)
+      [ Ops.int ~dtype:Int32 0 ]
+  in
+  Linearizer.linearize
+    (Ops.sink ~kernel:(Ops.kernel_info ~name:"sum" ()) [ Ops.store out r ])
+
+(* The operands of the sum the kernel [src] stores, as written. *)
+let stored_sum src =
+  let prefix = "*(data0_1+0) = (" in
+  let line =
+    List.find (String.starts_with ~prefix)
+      (List.map String.trim (String.split_on_char '\n' src))
+  in
+  let start = String.length prefix in
+  let sum = String.sub line start (String.length line - start - 2) in
+  String.split_on_char '+' sum
+
+(* The element of [data1] each value of [src] loads, by its name, from the
+   statements that declare them: [float valK = ...] loading [data1_N] at
+   [+I]. *)
+let loads src =
+  List.filter_map
+    (fun line ->
+      match String.split_on_char ' ' (String.trim line) with
+      | [ "float"; name; "="; load ] when String.starts_with ~prefix:"val" name
+        -> (
+          match String.split_on_char '+' load with
+          | [ _; i ] ->
+              Some (name, int_of_string (List.hd (String.split_on_char ')' i)))
+          | _ -> None)
+      | _ -> None)
+    (String.split_on_char '\n' src)
+
+let writes_a_flat_sum n =
+  cover "a sum longer than the chains that nest" (n > 300);
+  let src = render clang (sum n) in
+  let element = loads src in
+  equal (list int) (List.init n Fun.id)
+    (List.map (fun o -> List.assoc o element) (stored_sum src))
+
 let parentheses =
   group "parentheses"
     [
       prop "a chain of any length nests a bounded number of brackets"
         renderers_and_lengths nests_a_bounded_depth;
+      prop "a sum of any length is one flat expression of its loaded operands"
+        (Gen.int_range 2 1000) writes_a_flat_sum;
       cases "an associative chain is written flat" ~id:fst
         [
           ("add", true);
@@ -484,6 +540,22 @@ let rendering =
       cases "refuses custom code str.format refuses, naming it" ~id:Fun.id
         [ "f({0"; "{0}}"; "{0} } {1}"; "{2}"; "{x}" ] (fun code ->
           raises_match (Exn.invalid_arg ~sub:code) (fun () -> custom code));
+      test "refuses custom code holding a NUL byte, which C cannot" (fun () ->
+          raises_match
+            (Exn.invalid_arg ~sub:"NUL")
+            (fun () -> custom "f({0}, \"\000\")"));
+      test "refuses a parameter named with a NUL byte" (fun () ->
+          let at =
+            Ops.index
+              (Shape.param ~shape:[ Int 1 ] ~name:"x\000" 0 Float32)
+              [ Ops.int ~dtype:Int32 0 ]
+          in
+          raises_match
+            (Exn.invalid_arg ~sub:"NUL")
+            (fun () ->
+              render clang
+                (Ops.toposort ~calls:Enter
+                   (Ops.sink [ Ops.store at (Ops.float ~dtype:Float32 1.) ]))));
       test "writes the same CUDA source for the CUDA and NV devices" cuda_on_nv;
       cases "raises Invalid_argument on an operation the target lacks"
         ~id:(fun (name, _) -> name)

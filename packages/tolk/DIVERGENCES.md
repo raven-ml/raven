@@ -9441,3 +9441,34 @@ reason and its pins.
 - **Pinned by:** tolk's bench `chains/linearize`, on fudge;
   `Tolk.Ops › compare_structure › structure_ranks numbers a graph's nodes in
   its order` and `› structure_ranks numbers NaNs of different bits alike`.
+
+## D469. A long expression written into its reader is set aside
+
+- **tinygrad:** `renderer/cstyle.py` (`CStyleLanguage._render`) writes a value
+  read once into its reader as a string, `r[u] = l`, which the reader's rule
+  copies whole into its own.
+- **tolk:** `Cstyle.render_uops`, `Cstyle.set_aside` and `Cstyle.write_out`.
+- **Differs:** the source is the same. An inlined value's text of 128
+  characters or more is held aside, and its reader's text holds a reference
+  to it, written out once in the statement that reads it. A flat chain, such
+  as a sum of loads, which an associative operation writes without its
+  operands' parentheses, stays one statement: tinygrad copies it whole at each
+  term, and tolk also scanned it for its brackets at each term (D157), so its
+  cost was the square of its length. A host kernel cut into functions (D466)
+  also found its frame's free slots by a scan of every live value, now kept
+  ordered. A NUL byte, which C cannot hold and a reference begins with, is
+  refused in a caller's text: a custom function's name or code, a
+  parameter's name.
+- **Reason:** (d): compile time. Fudge, a sum of loads rendered for the host:
+  1,000 loads 18 ms against 9 ms, 10,000 1.7 s against 0.09 s, 25,000 15.5 s
+  against 0.21 s, 100,000 over 120 s against 0.89 s, the same source. rune's
+  compile rows, cold, with D468: `special/betaincinv-grad-f64` 23.21 G
+  instructions against 21.49 G (Clang excluded) and 244.9 M words against
+  196.3 M; `special/betainccinv-grad-f32` 15.10 G against 14.60 G and
+  144.6 M against 127.4 M; `special/betainc-chain-f32` 115.4 M words
+  against 113.2 M. tolk's render rows allocate 1.8% less to 1.1% more.
+- **Pinned by:** tolk's bench `chains/render-sum`, on fudge; `Tolk.Cstyle ›
+  parentheses › a sum of any length is one flat expression of its loaded
+  operands` and `› a chain of any length nests a bounded number of brackets`;
+  `Tolk.Cstyle › rendering › refuses custom code holding a NUL byte, which C
+  cannot` and `› refuses a parameter named with a NUL byte`.

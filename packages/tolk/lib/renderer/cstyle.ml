@@ -29,6 +29,13 @@ let cval u =
 
 let is_ptr = function Some (Dtype.Global | Dtype.Local) -> true | _ -> false
 
+(* [s], text a caller gave, which C cannot hold with a NUL: the renderer
+   refers to a text it sets aside with one ({!set_aside}). *)
+let user_text s =
+  if String.contains s '\000' then
+    invalid_arg (strf "%S: C source cannot hold a NUL byte" s);
+  s
+
 (* Python's str.format on positional arguments: {} and {i}, {{ and }}. *)
 let format fmt args =
   let b = Buffer.create 64 and next = ref 0 and n = String.length fmt in
@@ -92,6 +99,9 @@ type lang = {
   vector_names : (Dtype.t * string) list;
       (* the element names of vector types, where they are not type_map's *)
   code_for_op : (Op.t * (string list -> Dtype.t -> string)) list;
+      (* an operand's text may hold references to texts set aside
+         ({!set_aside}): a rule embeds it whole, or reads its first and last
+         characters and its parentheses, as strip_parens and joined do *)
   string_rewrite : (ctx, string) Pattern_matcher.t;
 }
 
@@ -422,13 +432,14 @@ let base_rewrite =
           in
           match arg (m "f") with
           | Custom_function f when f.fmt ->
-              Some (format f.name (List.map (fun y -> ctx.%{y}) args))
+              Some
+                (format (user_text f.name) (List.map (fun y -> ctx.%{y}) args))
           | Custom_function f ->
               Some
                 (strf "((%s(*)(%s))(%s))(%s)%s"
                    (render_scalar l (dtype x))
                    (String.concat ", " types)
-                   f.name
+                   (user_text f.name)
                    (String.concat ", " values)
                    (if Dtype.equal (dtype x) Dtype.Void then ";" else ""))
           | _ -> None);
@@ -916,7 +927,7 @@ let param_name u =
   | Param p ->
       let base =
         match p.name with
-        | Some n -> String.map (function ':' -> '_' | c -> c) n
+        | Some n -> String.map (function ':' -> '_' | c -> c) (user_text n)
         | None -> strf "data%d" p.slot
       in
       base ^ "_" ^ String.concat "_" (List.map string_of_int (max_shape u))
@@ -989,18 +1000,134 @@ let inline_code u =
    and the braces of the loops around it. *)
 let max_nesting = 64
 
-(* The deepest nesting of brackets, ( [ and {, in [s]. *)
-let nesting s =
-  let depth = ref 0 and deepest = ref 0 in
-  for i = 0 to String.length s - 1 do
-    match String.unsafe_get s i with
+(* Texts set aside *)
+
+(* A value read once is written into its reader, so a chain of them is one
+   expression, which would be copied and scanned whole at each step of the
+   chain. A long inlined value's text is instead set aside, and its reader
+   holds a reference to it, which the reader's statement writes out: the text
+   at [i] of [aside] is referred to as a NUL and [i] in [reference_digits]
+   digits. A text keeps its first and last characters outside the reference,
+   and only one whose parentheses balance is set aside, so that what a reader
+   reads of its operand's text, whether it starts with a minus or is wrapped
+   in parentheses ({!Helpers.strip_parens}), reads it as written out. *)
+type aside = {
+  expr : string; (* set aside but its first and last characters *)
+  deepest : int; (* the deepest nesting of brackets in it, written out *)
+  net : int; (* the brackets it leaves open *)
+  length : int; (* its length, written out *)
+}
+
+let reference_digits = 9
+
+(* A shorter text is copied into its reader: copying it costs about what
+   setting it aside does. *)
+let aside_length = 128
+
+(* The index of the reference at [i] in [s]. *)
+let reference s i =
+  let k = ref 0 in
+  for j = i + 1 to i + reference_digits do
+    k := (10 * !k) + Char.code (String.unsafe_get s j) - Char.code '0'
+  done;
+  !k
+
+(* The deepest nesting of brackets, ( [ and {, in [s] from [lo] to [hi]
+   exclusive, as written out, with the brackets it leaves open in [net]. *)
+let brackets aside ?net s lo hi =
+  let depth = ref 0 and deepest = ref 0 and i = ref lo in
+  while !i < hi do
+    (match String.unsafe_get s !i with
     | '(' | '[' | '{' ->
         incr depth;
         if !depth > !deepest then deepest := !depth
     | ')' | ']' | '}' -> decr depth
-    | _ -> ()
+    | '\000' ->
+        let a = Dynarray.get aside (reference s !i) in
+        deepest := max !deepest (!depth + a.deepest);
+        depth := !depth + a.net;
+        i := !i + reference_digits
+    | _ -> ());
+    incr i
   done;
+  Option.iter (fun net -> net := !depth) net;
   !deepest
+
+let nesting aside s = brackets aside s 0 (String.length s)
+
+(* The length of [s] from [lo] to [hi] exclusive, written out. *)
+let written_length aside s lo hi =
+  let n = ref 0 and i = ref lo in
+  while !i < hi do
+    if String.unsafe_get s !i = '\000' then begin
+      n := !n + (Dynarray.get aside (reference s !i)).length;
+      i := !i + reference_digits
+    end
+    else incr n;
+    incr i
+  done;
+  !n
+
+(* Whether the parentheses of [s] balance from [lo] to [hi] exclusive. A text
+   set aside balances, and a reference holds no parenthesis. *)
+let balanced s lo hi =
+  let depth = ref 0 and i = ref lo in
+  while !i < hi && !depth >= 0 do
+    (match String.unsafe_get s !i with
+    | '(' -> incr depth
+    | ')' -> decr depth
+    | _ -> ());
+    incr i
+  done;
+  !depth = 0
+
+(* [s] with its middle set aside, when it is long enough. A text that starts
+   or ends with a reference, as an operand stripped of its parentheses does,
+   is kept whole: its first and last characters would not be its own. *)
+let set_aside aside s =
+  let n = String.length s in
+  if
+    n < aside_length
+    || s.[0] = '\000'
+    || s.[n - reference_digits - 1] = '\000'
+    || not (balanced s 1 (n - 1))
+  then s
+  else begin
+    let net = ref 0 in
+    let deepest = brackets aside ~net s 1 (n - 1) in
+    let length = written_length aside s 1 (n - 1) in
+    Dynarray.add_last aside { expr = s; deepest; net = !net; length };
+    strf "%c\000%0*d%c" s.[0] reference_digits
+      (Dynarray.length aside - 1)
+      s.[n - 1]
+  end
+
+(* [s] written out. *)
+let write_out aside s =
+  if not (String.contains s '\000') then s
+  else begin
+    let n = String.length s in
+    let b = Bytes.create (written_length aside s 0 n) in
+    (* Writes [s] from [lo] to [hi] exclusive at [at], and is where it ends. *)
+    let rec write s lo hi at =
+      let start = ref lo and at = ref at and i = ref lo in
+      while !i < hi do
+        if String.unsafe_get s !i = '\000' then begin
+          Bytes.blit_string s !start b !at (!i - !start);
+          at := !at + (!i - !start);
+          let a = Dynarray.get aside (reference s !i) in
+          at := write a.expr 1 (String.length a.expr - 1) !at;
+          i := !i + reference_digits + 1;
+          start := !i
+        end
+        else incr i
+      done;
+      Bytes.blit_string s !start b !at (hi - !start);
+      !at + (hi - !start)
+    in
+    ignore (write s 0 n 0);
+    Bytes.unsafe_to_string b
+  end
 
 let special_name u =
   match arg u with
@@ -1012,6 +1139,7 @@ let render_uops l uops =
   let user = Tbl.create 256 in
   let masks = mask_widths uops in
   let ctx = { lang = l; r; narrowed = Tbl.create 16; masks } in
+  let aside = Dynarray.create () in
   let children u = Option.value (Tbl.find_opt child_count u) ~default:0 in
   List.iter
     (fun u ->
@@ -1091,7 +1219,7 @@ let render_uops l uops =
        || (casts || Op.equal o Op.Stack || Op.Set.mem o alu_but_where)
           && children u = 1
           && not (Setting.value Setting.expand_ssa)
-          && nesting line <= max_nesting)
+          && nesting aside line <= max_nesting)
   in
   let visit u =
     match op u with
@@ -1142,9 +1270,10 @@ let render_uops l uops =
           Tbl.replace through u (src u);
           if narrowed u then begin
             Tbl.replace ctx.narrowed u ();
-            Tbl.replace r u (strf "(%s)" (render_cast ctx u line))
+            Tbl.replace r u
+              (set_aside aside (strf "(%s)" (render_cast ctx u line)))
           end
-          else Tbl.replace r u line
+          else Tbl.replace r u (set_aside aside line)
         end
         else begin
           let declared =
@@ -1156,6 +1285,7 @@ let render_uops l uops =
             | Some w -> render_dtype l (mask_dtype w) ~sz:(max_numel u)
             | None -> render_type l u
           in
+          let line = write_out aside line in
           let line =
             if declared then
               strf "%s %s = %s%s" (ty ()) ctx.%{u} line
@@ -1235,7 +1365,7 @@ let program l uops =
   let outlined = outlined uops in
   let declare callee =
     match arg callee with
-    | Custom_function f -> strf "extern void %s();" f.name
+    | Custom_function f -> strf "extern void %s();" (user_text f.name)
     | _ ->
         let _, statements, bufs = render_uops l (src callee) in
         let params =
@@ -1405,6 +1535,14 @@ let last_read nests declared at =
   in
   List.fold_left (fun a e -> max a (reader e)) declared at
 
+(* Slots by the event their value was last read at, then by number. *)
+module Slots = Set.Make (struct
+  type t = int * int
+
+  let compare (e0, s0) (e1, s1) =
+    match Int.compare e0 e1 with 0 -> Int.compare s0 s1 | c -> c
+end)
+
 (* The frame's slot of each of [values], from a linear scan of them by the
    event that declares them: within one type, a slot whose value was last read
    before an event is free at it. Returns each value's slot, and each type's
@@ -1422,21 +1560,35 @@ let slots nests known read_at values =
     match Hashtbl.find_opt types t with
     | Some entry -> entry
     | None ->
-        let entry = (Hashtbl.length types, ref 0, ref []) in
+        let entry =
+          (Hashtbl.length types, ref 0, ref Slots.empty, ref Slots.empty)
+        in
         Hashtbl.replace types t entry;
         entry
   in
+  (* Each slot is busy or free, with the event its last value was last read at:
+     a value takes the free slot whose value died first, then the least. *)
   let place ((d, ended, _), u, t) =
-    let id, count, busy = type_of t in
-    let free, held = List.partition (fun (e, _) -> e < d) !busy in
-    let slot, rest =
-      match List.sort Stdlib.compare free with
-      | (_, s) :: rest -> (s, rest)
-      | [] ->
-          incr count;
-          (!count - 1, [])
+    let id, count, busy, free = type_of t in
+    let rec release () =
+      match Slots.min_elt_opt !busy with
+      | Some ((e, _) as x) when e < d ->
+          busy := Slots.remove x !busy;
+          free := Slots.add x !free;
+          release ()
+      | _ -> ()
     in
-    busy := (ended, slot) :: (rest @ held);
+    release ();
+    let slot =
+      match Slots.min_elt_opt !free with
+      | Some ((_, s) as x) ->
+          free := Slots.remove x !free;
+          s
+      | None ->
+          incr count;
+          !count - 1
+    in
+    busy := Slots.add (ended, slot) !busy;
     Tbl.replace slot_of u (strf "s%d[%d]" id slot)
   in
   List.iter place (List.sort by_start (List.map lifetime values));
@@ -1467,7 +1619,9 @@ let write_cut ~attrs ~name bufs held cut (known, read_at) =
   let reads s = List.filter (Tbl.mem known) s.reads in
   let frame_type = name ^ "_frame" and piece_name e = strf "%s_%d" name e in
   let frame_def =
-    Hashtbl.fold (fun t (id, count, _) acc -> (id, t, !count) :: acc) types []
+    Hashtbl.fold
+      (fun t (id, count, _, _) acc -> (id, t, !count) :: acc)
+      types []
     |> List.sort Stdlib.compare
     |> List.map (fun (id, t, count) -> strf "  %s s%d[%d];" t id count)
     |> String.concat "\n"

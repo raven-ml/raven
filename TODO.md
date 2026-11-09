@@ -39,18 +39,6 @@ raven / llama.cpp b12048 Vulkan:
   eviction fence and so evicts the process for 100 ms. rig could hold no
   descriptor on the acquired render node, mapping through dma-bufs
   (_plans/todo-campaign/spawn-stall/findings.md)
-- long programs: tolk's passes are linear in the nodes they walk, about 0.4 us
-  a row over about 130 walks, flat (no pass past 8%, no function past 4%):
-  the gradient of `betainc` costs tolk and rune's tracing 0.8 s and Clang
-  0.7 s, its third derivative (220k nodes) 5.3 s and 12.9 s. Past 100k nodes
-  Clang decides the wait.
-  Measured and declined for tolk: a per-domain cache of the last long walk
-  (-2% instructions, 12 lines), and pruning rewrites by the operations a
-  matcher rules on (no gain: the memo it needs costs what it saves). Two
-  costs grow with the square of a chain: the linearizer breaks ties by
-  `Ops.compare_structure` under `TUPLE_ORDER`, so 10,000 operations read
-  once take 0.9 s and 25,000 take 6.6 s; and a flat chain of additions
-  stays one C statement, rebuilt and scanned at every step
 - not yet run on AMD: attention's backward (167d026789), stores and reads
   through views and bitcasts (1132c5b84d), a loop's non-run reads each trip
   (ecfd400a58) and cores on several reduce axes (02e163a27d); each but the
