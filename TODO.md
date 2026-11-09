@@ -68,14 +68,15 @@ raven / llama.cpp b12048 Vulkan:
 
 ## talon, hugin, brot, munin, quill
 
-- talon perf against the faster of DuckDB 1.5.6 and Polars 1.44.2 on fudge
-  (9b82c5b57a, alternating rounds under load): decision support SF1 6.6x
-  geomean (2.5-10.1x), H2O 1e7 group-by 2.1x, joins 2.0x. talon uses 3-10x
-  the CPU, so the gap is work. Over the five worst SF1 queries scans are
-  half the instructions (Snappy 20%, copies 14%); on q07, q08 and q12
-  DuckDB's dynamic join filters and join order read far fewer rows; q01's
-  aggregate is 46%. A segment-id reduce kernel in nx is unmeasured.
-  Since then e4b49ffba3 cut q01 by 14%. Data: ~/wt/tmp/talon-data
+- talon needs a query optimizer, a large design campaign, and the other
+  optimization to match the best reference engines; 1.0 has no speed gate.
+  Last measured against the faster of DuckDB 1.5.6 and Polars 1.44.2
+  (9b82c5b57a, under load): decision support SF1 6.6x geomean, H2O 1e7
+  group-by 2.1x, joins 2.0x, with talon using 3-10x the CPU. What the gap
+  is made of: join filters pushed at run time and join reordering (DuckDB
+  reads far fewer rows on q07, q08 and q12), scans (half the instructions
+  of the five worst queries), aggregation (46% of q01), and possibly a
+  segment-id reduce kernel in nx (unmeasured). Data: ~/wt/tmp/talon-data
 - talon.parquet's pacing law failed once on macOS (run 42473531097: 35
   major cycles against 34); the runtime's own pace cannot explain it (the
   loop puts ~4.8k words in the major heap) and it passes at rig's 4 MiB
