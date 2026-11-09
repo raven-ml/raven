@@ -694,7 +694,10 @@ let loader bin =
             i
         | Error why -> failf "%a: %s" Rig.pp d why)
 
+let both d : Rig.Buffer.kind =
+  if Rig.reaches Rig.host d then Device else Pinned
+
 let arguments d s =
-  let b = Rig.Buffer.create ~memory:Pinned d (String.length s) in
+  let b = Rig.Buffer.create ~memory:(both d) d (String.length s) in
   Rig.Buffer.copy ~src:(Rig.Buffer.of_string s) ~dst:b;
   b

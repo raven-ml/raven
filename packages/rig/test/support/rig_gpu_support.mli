@@ -438,5 +438,10 @@ val loader : (unit -> string) -> Rig.t -> Rig.Image.t
 (** [loader bin] is [bin ()] loaded on a device, once per device while it is not
     lost. *)
 
+val both : Rig.t -> Rig.Buffer.kind
+(** [both d] is the kind of [d]'s memory that both [d]'s work and the host
+    address: [Device] where the host addresses [d]'s memory, which then has no
+    [Pinned] memory, and [Pinned] elsewhere. *)
+
 val arguments : Rig.t -> string -> Rig.Buffer.t
-(** [arguments d s] is new [Pinned] memory of [d] holding [s]. *)
+(** [arguments d s] is new memory of [d] of kind [both d] holding [s]. *)

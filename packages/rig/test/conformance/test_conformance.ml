@@ -53,10 +53,7 @@ let get b =
   B.blit_to_bytes h 0 s 0 n;
   Bytes.to_string s
 
-(* The kind of [d]'s memory that both [d]'s work and the host address: its
-   own where the host addresses it, which has no Pinned memory, and its Pinned
-   memory elsewhere. *)
-let both d = if Rig.reaches Rig.host d then B.Device else B.Pinned
+let both = Rig_gpu_support.both
 
 (* [memory] as [d] has it: [Pinned] drawn for a device whose memory the host
    addresses is its own memory, as it has no Pinned memory. *)
@@ -1291,7 +1288,7 @@ let tails (module G : Gpu) =
              List.map
                (fun n -> filled ~memory t.d (String.make n '\000'))
                [ 1; 3; 4; 5; 6; 7; 9; 255; 257 ])
-           [ B.Device; Pinned ])
+           (List.sort_uniq compare [ B.Device; both t.d ]))
     in
     let store i =
       let b = made.(i) in
