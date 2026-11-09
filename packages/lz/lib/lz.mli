@@ -459,10 +459,6 @@ module Gzip : sig
   val decoder : unit -> Decoder.t
   (** [decoder ()] is a new decoder of gzip streams. *)
 
-  val has_magic : string -> bool
-  (** [has_magic s] is [true] iff [s] starts with ID1 and ID2, the two bytes
-      that start a member. *)
-
   val encoder : ?level:int -> unit -> Encoder.t
   (** [encoder ~level ()] is a new encoder of gzip members at [level]. *)
 end
@@ -541,10 +537,6 @@ module Zstd : sig
   val encoder : ?level:int -> unit -> Encoder.t
   (** [encoder ~level ()] is a new encoder of Zstandard frames at
       [level]. *)
-
-  val has_magic : string -> bool
-  (** [has_magic s] is [true] iff [s] starts with the Magic_Number of a frame
-      or of a skippable frame, four bytes. *)
 end
 
 (** LZ4 blocks and frames, with whole-buffer calls only. *)

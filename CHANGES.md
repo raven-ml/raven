@@ -2536,9 +2536,6 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Lz (new)
 
-- `Lz.Gzip.has_magic` and `Lz.Zstd.has_magic` recognise a stream by its first
-  bytes, and `Lz_bytesrw.decompress_detected` decompresses a reader whose first
-  bytes are gzip's or Zstandard's and leaves any other as it is.
 - Add `lz`, compression between bigarrays by raven's own C kernels, held to
   the reference implementations' single-threaded speed: deflate, zlib and
   gzip (levels 1-9), Zstandard (levels 1-12), LZ4 blocks and frames, Snappy,
@@ -4142,10 +4139,6 @@ word comes from its lock and from samples the dashboard saw arrive.
   with a repeat or a null, or one over another type). A column whose rows take
   no bytes, such as `fixed_size_binary(0)`, reads as a tensor of no elements,
   whatever its number of rows; it was refused past eight rows per byte of body.
-- `Talon_csv.file` reads gzip and Zstandard files, detected by their first
-  bytes, whatever the file's name, every member or frame up to the end of the
-  file: sniffing, batches and errors see the decompressed text, read as a
-  stream. A stream the decoder refuses is an `Error` naming the byte.
 - `Query.aggregate` streams `var` and `std` over batches in O(groups + a batch)
   memory. Every eager run of them folds each frame's values once, by the shifted
   updating form of Chan, Golub and LeVeque, so their bits depend only on the

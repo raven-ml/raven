@@ -644,13 +644,7 @@ let source f open_ = source_of ~name:"csv" f (fun () -> (open_ (), ignore))
 let file ?format ?nulls path =
   let open_ () =
     let ic = open_in_bin path in
-    let close () = close_in_noerr ic in
-    (* A filter consumes its reader, which [file] opens again for each read. *)
-    match Lz_bytesrw.decompress_detected () (Reader.of_in_channel ic) with
-    | r -> (r, close)
-    | exception e ->
-        close ();
-        raise e
+    (Reader.of_in_channel ic, fun () -> close_in_noerr ic)
   in
   let source f =
     let name = Format.asprintf "csv %a" Type.pp_quoted path in

@@ -3,9 +3,7 @@
  (modules test_csv)
  (package talon)
  (libraries windtrap talon talon.csv talon_gen talon_held nx nx.array rig
-  bytesrw lz.bytesrw)
- (deps
-  (source_tree support))
+  bytesrw)
  (action
   (progn
    (run %{test} --corrected)

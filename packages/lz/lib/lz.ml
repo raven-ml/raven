@@ -197,16 +197,10 @@ module Zlib = Deflate_family (struct
   let wrap = zlib
 end)
 
-module Gzip = struct
-  include Deflate_family (struct
+module Gzip = Deflate_family (struct
   let name = "Gzip"
   let wrap = gzip
 end)
-
-  (* ID1 and ID2 (RFC 1952, 2.3.1). *)
-  let magic = "\x1F\x8B"
-  let has_magic s = String.starts_with ~prefix:magic s
-end
 
 (* Zstandard *)
 
@@ -221,19 +215,6 @@ external zstd_decoder : int -> state = "lz_zstd_decoder"
 external zstd_encoder : int -> state = "lz_zstd_encoder"
 
 module Zstd = struct
-  (* The Magic_Number, and the three high bytes of a skippable frame's, whose
-     low byte is 0x50 to 0x5F (RFC 8878, 3.1.1 and 3.1.2), as a file holds
-     them. *)
-  let magic = "\x28\xB5\x2F\xFD"
-  let skippable = "\x2A\x4D\x18"
-  let magic_length = String.length magic
-
-  let has_magic s =
-    String.length s >= magic_length
-    && (String.sub s 0 magic_length = magic
-       || Char.code s.[0] land 0xF0 = 0x50
-          && String.sub s 1 (magic_length - 1) = skippable)
-
   let level_of ?(level = 3) () =
     check_level "Zstd" ~lo:1 ~hi:12 level;
     level
