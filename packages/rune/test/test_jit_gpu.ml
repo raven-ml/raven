@@ -409,8 +409,9 @@ let f32 = Nx.float32
 
 (* A placement: whole on each device, cut along an axis, whole on the [k]th
    device, or, over a 2 x 2 mesh, cut along axis [0] over its first axis and
-   whole along its second. *)
-type cut = On | Split of int | Dev of int | Rows
+   whole along its second, or along both, axis [0] over the mesh's first axis
+   or its second. *)
+type cut = On | Split of int | Dev of int | Rows | Grid of bool
 
 (* A set, and the mesh over it where it has four devices. *)
 type 'd set = { s : 'd Nx.devices; mesh : 'd Nx.Mesh.t option }
@@ -428,6 +429,9 @@ let at set = function
   | Split axis -> Nx.Placement.split ~axis set.s
   | Dev k -> Nx.Placement.device set.s (List.nth (Nx.rigs set.s) k)
   | Rows -> Nx.Placement.mesh (Option.get set.mesh) [ (0, [ "x" ]) ]
+  | Grid a ->
+      let x, y = if a then ("x", "y") else ("y", "x") in
+      Nx.Placement.mesh (Option.get set.mesh) [ (0, [ x ]); (1, [ y ]) ]
 
 (* A value of [shape] on the host, of elements in [-1, 1] that depend on [seed]
    and their index. *)
@@ -766,6 +770,94 @@ let emission set =
       (* An offer holds its emits as rows. *)
       equal bits_t (bits (Nx.stack ~axis:0 [ Nx.mul x x ])) (bits (host o))
   | _ -> failf "%d offers" (List.length offers)
+
+(* Constructs compiled over a GPU beside memory devices give what the same
+   function gives eagerly over memory devices of the same number. *)
+
+type 'a agrees = { agree : 'd. 'd set -> jit:bool -> 'a }
+
+let agreeing ?(devices = 2) { agree } t =
+  List.iter
+    (fun first ->
+      let mixed, eager = mixed_sets ~devices ~first in
+      let (module S : Nx.Devices) = mixed
+      and (module M : Nx.Devices) = eager in
+      equal t (agree (set_of M.v) ~jit:false) (agree (set_of S.v) ~jit:true))
+    [ 0; 1 ]
+
+let codes_text y = bits (host y)
+
+let compiled_or_eager ~jit f x y =
+  let s = Nx.Ptree.(tensor @-> tensor @-> returns tensor) in
+  if jit then no_call_evaluated (fun () -> Rune.jit s f x y) else f x y
+
+(* The outcome of [f]: its bits at a wait, or a failure at the wait. *)
+let waited f =
+  match f () with
+  | y -> ( match host y with h -> Ok (bits h) | exception Failure s -> Error s)
+  | exception Failure s -> Error s
+
+let outcome_t = Testable.(result bits_t string)
+
+(* A check fails as eagerly, its flags and data wherever they lie. *)
+let check_fails ?devices ~flags ~data shape falses () =
+  agreeing ?devices
+    {
+      agree =
+        (fun set ~jit ->
+          let n = Array.fold_left ( * ) 1 shape in
+          let ok =
+            Nx.place (at set flags)
+              (Nx.create Nx.bool shape
+                 (Array.init n (fun i -> not (List.mem i falses))))
+          in
+          let d = Nx.place (at set data) (value shape) in
+          let fail idx v =
+            let i =
+              String.concat "," (Array.to_list (Array.map string_of_int idx))
+            in
+            Failure (Printf.sprintf "%s: %h" i (Nx.item [] (host v)))
+          in
+          let f ok d =
+            Nx.check Nx.Ptree.tensor ok d fail;
+            Nx.add d d
+          in
+          waited (fun () -> compiled_or_eager ~jit f ok d));
+    }
+    outcome_t
+
+(* Exact functions' values under custom rules and remats, and their additions
+   to a total, as eagerly. *)
+let eight set =
+  let x = Nx.create f32 [| 8 |] (Array.init 8 Float.of_int) in
+  Nx.place (at set (Split 0)) x
+
+let customs set ~jit =
+  let x = eight set in
+  let square =
+    Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+        (Nx.mul x x, fun ct -> Nx.mul_s ct 3.))
+  in
+  let s = Nx.Ptree.(tensor @-> returns tensor) in
+  let g x _ = Nx.add (Rune.remat s square x) x in
+  let d x _ =
+    Rune.grad' (fun x -> Nx.sum (Rune.remat s square x)) x
+  in
+  (codes_text (compiled_or_eager ~jit g x x),
+   codes_text (compiled_or_eager ~jit d x x))
+
+let total set ~jit =
+  let x = eight set in
+  let t = Rune.Total.make () in
+  let f x =
+    Rune.Total.add t (Nx.mul x x);
+    x
+  in
+  let a, e =
+    Rune.Total.collect t ~init:(Nx.zeros_like x) (fun () ->
+        if jit then no_call_evaluated (fun () -> Rune.jit' f x) else f x)
+  in
+  (codes_text a, codes_text e)
 
 (* A declined program over a GPU beside a memory device raises at the call,
    naming the decline. *)
@@ -1344,6 +1436,34 @@ let () =
                  on_mixed { law = emission });
              test "a declined program raises at the call, named" (fun () ->
                  on_mixed { law = declined });
+           ];
+         group "checks"
+           [
+             test "a first false on another device, data cut alike"
+               (check_fails ~flags:(Split 0) ~data:(Split 0) [| 8 |] [ 6 ]);
+             test "data on one device, a flag on the other"
+               (check_fails ~flags:(Split 0) ~data:(Dev 1) [| 6 |] [ 1 ]);
+             test "data whole on each device"
+               (check_fails ~flags:(Split 0) ~data:On [| 6 |] [ 4 ]);
+             test "passing"
+               (check_fails ~flags:(Split 0) ~data:(Split 0) [| 6 |] []);
+             test "a mesh, first false in C order in another tile"
+               (check_fails ~devices:4 ~flags:(Grid true) ~data:(Grid true)
+                  [| 4; 4 |] [ 3; 4; 10 ]);
+             test "a mesh in the other axis order, data apart"
+               (check_fails ~devices:4 ~flags:(Grid false) ~data:(Grid true)
+                  [| 4; 4 |] [ 7 ]);
+             test "a mesh, data on one device"
+               (check_fails ~devices:4 ~flags:(Grid true) ~data:(Dev 2)
+                  [| 4; 4 |] [ 7 ]);
+           ];
+         group "custom rules, remats and totals"
+           [
+             test "a custom rule, a remat and a gradient" (fun () ->
+                 agreeing { agree = customs }
+                   (Testable.pair bits_t bits_t));
+             test "additions to a total" (fun () ->
+                 agreeing { agree = total } (Testable.pair bits_t bits_t));
            ];
          group "a GPU beside a memory device"
            (List.map

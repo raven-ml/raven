@@ -213,6 +213,9 @@ type check = {
   first : Ops.t;
   data : (D.any * Ops.t) list;
   fail : int array -> A.any list -> exn;
+  rig : Rig.t option;
+      (** The device of the buffers, the program's if none; [Some] for one
+          device's part of a check over several ({!Pieces.Part}). *)
 }
 
 type lowered = {
@@ -233,7 +236,9 @@ type dst = { buf : Ops.t; filled : Ops.t; into : Ops.t; reads : Ops.t list }
 (* The form on whose set a call issues its checks: its first argument's, or
    else its first result's. *)
 let issued (p : Program.t) (forms : form array) =
-  if Array.length forms > 0 then forms.(0) else form p.outputs.(0)
+  if Array.length forms > 0 then forms.(0)
+  else if Array.length p.outputs > 0 then form p.outputs.(0)
+  else decline "no value"
 
 type state = {
   rig : Rig.t;
@@ -740,6 +745,7 @@ type made = {
   first : Ops.t;
   data : (D.any * Ops.t) list;
   fail : int array -> A.any list -> exn;
+  rig : Rig.t option;  (** [first]'s and [data]'s device, else the program's. *)
 }
 
 (* The checks a program makes, in order, newest first, what they read, and
@@ -762,10 +768,20 @@ let int32 n =
 
 let fresh_checks failed = { made = []; read = []; failed }
 
-(* [m] made, after the checks [cs] holds. *)
-let note cs (m : made) =
+(* [u] on [d]: a copy where it lies on another device. *)
+let moved u d =
+  match Ops.device u with
+  | Some d' when not (String.equal d' d) -> Ops.copy_to_device u d
+  | Some _ | None -> u
+
+(* [m] made, after the checks [cs] holds, its flag brought to [home]'s device
+   where it lies on another, only the flag moved ({!Pieces}). *)
+let note ?home cs (m : made) =
   let count = int64 (numel m.shape) in
   let failing = Ops.where (Ops.lt m.first count) (int64 1) (int64 0) in
+  let failing =
+    match home with None -> failing | Some d -> moved failing d
+  in
   cs.failed <- Ops.maximum cs.failed failing;
   cs.made <- m :: cs.made
 
@@ -790,7 +806,14 @@ let first_failure n ok =
    [failure] otherwise. *)
 let raises cs ok failure =
   let first = first_failure 1 (Shape.reshape ok (ints [ 1 ])) in
-  note cs { shape = [| 1 |]; first; data = []; fail = (fun _ _ -> failure ()) }
+  note cs
+    {
+      shape = [| 1 |];
+      first;
+      data = [];
+      fail = (fun _ _ -> failure ());
+      rig = None;
+    }
 
 let check st cs env (type d e) (ok : (bool, _, d) Nx.t)
     (data : (d, e) Nx.Prim.data) (fail : int array -> e -> exn) =
@@ -825,7 +848,14 @@ let check st cs env (type d e) (ok : (bool, _, d) Nx.t)
           ((D.Any dt, at) :: others, read)
     in
     let data, read = walk data in
-    note cs { shape; first; data; fail = (fun i a -> fail i (read a)) }
+    (* Over several devices each device's window of the flags is a check of
+       its own, its position and data kept on that device and read on failure
+       ({!Pieces}), so that only its flag reaches the program's device. *)
+    let rig =
+      if st.split then Some (Pieces.rig_of (Nx.placement ok)) else None
+    in
+    note ~home:st.device cs
+      { shape; first; data; fail = (fun i a -> fail i (read a)); rig }
   end
 
 (* Whether a scatter's result, variable [base], may take its target [into]'s
@@ -882,12 +912,6 @@ let moving x (rs : A.Move.range array) u =
   let bounds = Array.to_list (Array.mapi axis rs) in
   let d = D.Any (Nx.dtype x) in
   Arith.of_parts d (List.map (fun u -> Shape.shrink u bounds) (Arith.parts d u))
-
-(* [u] on [d]: a copy where it lies on another device. *)
-let moved u d =
-  match Ops.device u with
-  | Some d' when not (String.equal d' d) -> Ops.copy_to_device u d
-  | Some _ | None -> u
 
 (* Assemblies
 
@@ -1656,9 +1680,13 @@ let barrier st operands =
       (fun ((u, _, _) as o) ->
         if not (computed o) then None
         else
-          let b = Ops.new_buffer st.device (Shape.max_numel u) (Ops.dtype u) in
+          (* Each operand's storage lies with the operand: a split program's
+             piece stays on its device. *)
+          let device = Option.value (Ops.device u) ~default:st.device in
+          let b = Ops.new_buffer device (Shape.max_numel u) (Ops.dtype u) in
           let view = Shape.reshape b (Shape.shape u) in
-          Some (Ops.after b [ Ops.store view (on_device st u) ]))
+          let u = if Option.is_none (Ops.device u) then on_device st u else u in
+          Some (Ops.after b [ Ops.store view u ]))
       operands
   in
   Array.mapi
@@ -1705,7 +1733,11 @@ and construct st cs env c base =
   | Remat { body; args; seeds; differentiated = true } when st.loops = 0 ->
       (* Inside a loop's step, the remat is a call body's, which shares no node
          with the forward loop. *)
-      let operands = barrier st (Array.map (operand st env) args) in
+      let at (V x as v) =
+        let u, r, sc = operand st env v in
+        (located st (Nx.placement x) u, r, sc)
+      in
+      let operands = barrier st (Array.map at args) in
       bind (threaded_over st cs env body operands seeds)
   | Call { body; args; seeds; _ } | Remat { body; args; seeds; _ } ->
       bind (threaded st cs env body args seeds)
@@ -1810,6 +1842,7 @@ and switch st cs env c (s : Program.switch) =
       first = first_failure 1 inside;
       data = [ (D.Any D.Int32, index) ];
       fail;
+      rig = None;
     };
   let reach = loop_reach env c in
   let caps = Array.map (fun (V x) -> node st env x) s.captures in
@@ -2068,6 +2101,7 @@ and loop st cs env c =
               first = first_failure 1 (Shape.reshape ok (ints [ 1 ]));
               data = [ (D.Any D.Int64, lane) ];
               fail = (fun _ a -> fail (named a));
+              rig = None;
             });
       let count =
         if stacks then [| Shape.reshape carried.(nc + ns) [] |] else [||]
@@ -2656,8 +2690,8 @@ let lower ~rigs ~split ~uploads (p : Program.t) (forms : form array) ~layouts
                 stored (F f) (capture st y)))
       p.outputs
   in
-  let one dt u =
-    let o = buffer dt 1 in
+  let one ?device dt u =
+    let o = buffer ?device dt 1 in
     stores := store dt o u :: !stores;
     o
   in
@@ -2665,11 +2699,14 @@ let lower ~rigs ~split ~uploads (p : Program.t) (forms : form array) ~layouts
   let checks =
     List.rev_map
       (fun (c : made) ->
-        let first = one D.Int64 (read c.first) in
+        let device = Option.map Rig.name c.rig in
+        let first = one ?device D.Int64 (read c.first) in
         let data =
-          List.map (fun ((D.Any dt as d), u) -> (d, one dt (read u))) c.data
+          List.map
+            (fun ((D.Any dt as d), u) -> (d, one ?device dt (read u)))
+            c.data
         in
-        ({ shape = c.shape; first; data; fail = c.fail } : check))
+        ({ shape = c.shape; first; data; fail = c.fail; rig = c.rig } : check))
       cs.made
   in
   (* Whether every check holds: each one's first failure is its element
@@ -2680,7 +2717,9 @@ let lower ~rigs ~split ~uploads (p : Program.t) (forms : form array) ~layouts
     | made ->
         let failing (c : made) =
           let count = int64 (numel c.shape) in
-          Ops.where (Ops.lt (read c.first) count) (int64 1) (int64 0)
+          moved
+            (Ops.where (Ops.lt (read c.first) count) (int64 1) (int64 0))
+            st.device
         in
         let failed =
           List.fold_left
@@ -3372,8 +3411,28 @@ let issue_checks t v slots s =
       v.checks
   in
   let by = t.name in
+  (* The failure of the first failing check in the program's order. A check
+     over several devices has one part per device, whose positions read here
+     decide the failure in C order of the whole value ({!Pieces}). *)
   let fail _ () =
     match List.find_map failure checks with
+    | Some (Pieces.Part { check; position; failure = make }) ->
+        let parts =
+          List.filter_map
+            (fun ((c : check), _, _ as x) ->
+              if Option.is_some c.rig then failure x else None)
+            checks
+        in
+        let _, make =
+          List.fold_left
+            (fun (p, m) -> function
+              | Pieces.Part { check = c; position = q; failure = g }
+                when c = check && q < p ->
+                  (q, g)
+              | _ -> (p, m))
+            (position, make) parts
+        in
+        make ()
     | Some e -> e
     | None -> invalid_arg (by ^ ": a failed check without a failure")
   in
@@ -3505,9 +3564,10 @@ and linked t v leaves c owners =
   | Some s ->
       List.iter
         (fun ((c : check), first, data) ->
-          slots.(first) <- Some (one t.rig D.Int64);
+          let rig = Option.value c.rig ~default:t.rig in
+          slots.(first) <- Some (one rig D.Int64);
           List.iter2
-            (fun (D.Any dt, _) s -> slots.(s) <- Some (one t.rig dt))
+            (fun (D.Any dt, _) s -> slots.(s) <- Some (one rig dt))
             c.data data)
         v.checks;
       slots.(s) <- Some (one t.rig Nx.bool));

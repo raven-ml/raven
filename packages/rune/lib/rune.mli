@@ -1423,7 +1423,8 @@ val jit :
     kernels of its own, a fold over a cut axis closes to a whole value, as a
     contraction does unless asked for its sum ({!Nx.section-contraction}), and a
     window moves from one device to another only where eager computation moves
-    it. Each value's placement is eager's, uneven windows included, and a device
+    it, or a check's data placed apart from its flags ({!section-checks}).
+    Each value's placement is eager's, uneven windows included, and a device
     whose windows of an operation's results are all empty computes nothing for
     it. A program for one device serves every device of its target, so the
     devices of a set compile each kernel once: a window moves between devices,
@@ -1526,7 +1527,16 @@ val jit :
     are lost. On another set the call returns its results, and the failure
     raises at the next wait on that set, so that no check makes a call wait for
     its device, where an {!iterate} or a {!switch} applied eagerly raises at the
-    call. *)
+    call.
+
+    Over several devices each device checks its window of the flags, a window
+    whole on several devices once, and keeps there its position and data.
+    Only its flag reaches the program's device: a passing check moves one
+    flag per device and no data. A failing check reads the positions and data
+    on the host and raises as eagerly, first false in C order of the whole
+    value, the data's elements there. A datum that lies elsewhere than its
+    flags, as a value whole on one device beside flags cut across several,
+    moves to the flags' placement each call. *)
 
 (** {2:numerics Numerics}
 
@@ -1838,12 +1848,14 @@ val jit :
       device, its elements in C order from a byte boundary, is no such result:
       each call copies it into fresh memory of its own device.
 
-    Over several devices it declines a program that holds a construct other
-    than {!detach}, a {!scan} or an {!iterate}, such as a {!switch}, a {!remat}
-    or a custom rule; a scan over rows cut along axis 0, an iterate that stacks
-    its steps, and a loop whose step gives a carry another placement; a check
-    or an addition to a {!Total}. An emission compiles as on one device
-    ({!section-emissions}). It also declines a
+    Over several devices a program's {!Nx.check}s, additions to a {!Total},
+    {!remat}s, custom rules and calls compile, each as on one device, over its
+    values' pieces. It declines a program that holds another construct than
+    {!detach}, a {!scan} or an {!iterate}, such as a {!switch}; a scan over
+    rows cut along axis 0, an iterate that stacks its steps, and a loop whose
+    step gives a carry another placement; a check inside a loop's step and an
+    addition inside a loop's step or a function a construct runs. An emission
+    compiles as on one device ({!section-emissions}). It also declines a
     program with a value on a device that computes nothing ({!Rig.computes}).
     On a set without kernels ({!Nx.devices}), nothing evaluates a declined
     program: it raises [Invalid_argument] at the call, naming what the compiler

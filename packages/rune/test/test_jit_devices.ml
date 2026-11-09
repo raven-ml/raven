@@ -2072,6 +2072,334 @@ let declined () =
     (Exn.invalid_arg ~sub:"the compiler declines this program")
     (fun () -> Rune.jit' f xs)
 
+(* Checks
+
+   A check over several devices fails as eager computation does, whichever
+   device holds the data: the first false flag in C order of the whole value,
+   the data's element there, the first failing check of the program. It
+   compiles. *)
+
+type check_case = {
+  cn : int;
+  cshape : int array;
+  flags : cut;
+  cdata : cut;
+  falses : int list;
+}
+
+let pp_check_case ppf c =
+  Format.fprintf ppf "%d devices, shape %a, flags %a, data %a, false at [%s]"
+    c.cn Operand.pp_shape c.cshape pp_cut c.flags pp_cut c.cdata
+    (String.concat "; " (List.map string_of_int c.falses))
+
+let check_cases =
+  let open Gen in
+  (let* cn = int_range 2 4 in
+   let* rank = int_range 0 2 in
+   let* cshape = array ~size:(constant rank) (int_range 0 ((2 * cn) + 1)) in
+   let cut =
+     if rank = 0 then
+       frequency
+         [
+           (1, constant On);
+           (1, map (fun k -> Device k) (int_range 0 (cn - 1)));
+         ]
+     else cut_of ~n:cn ~rank
+   in
+   let* flags = cut and+ cdata = cut in
+   let n = Array.fold_left ( * ) 1 cshape in
+   let* falses =
+     if n = 0 then constant []
+     else list ~size:(int_range 0 3) (int_range 0 (n - 1))
+   in
+   constant { cn; cshape; flags; cdata; falses })
+  |> with_pp pp_check_case
+
+let check_examples =
+  let mesh_xy = Mesh (0, 1) and mesh_yx = Mesh (1, 0) in
+  let c cn cshape flags cdata falses = { cn; cshape; flags; cdata; falses } in
+  [
+    (* Passing, and an empty value, cut across devices. *)
+    c 2 [| 4 |] (Split 0) (Split 0) [];
+    c 2 [| 0; 3 |] (Split 1) (Split 1) [];
+    (* The first false on either side of a cut, data cut alike. *)
+    c 2 [| 8 |] (Split 0) (Split 0) [ 6 ];
+    c 2 [| 8 |] (Split 0) (Split 0) [ 1; 6 ];
+    (* A 2 x 2 mesh in both axis orders, the first false in C order not the
+       first device's. *)
+    c 4 [| 4; 4 |] mesh_xy mesh_xy [ 3; 4; 10 ];
+    c 4 [| 4; 4 |] mesh_yx mesh_yx [ 3; 4; 10 ];
+    (* Data whole on each device, on one device or cut otherwise. *)
+    c 4 [| 4; 4 |] mesh_xy On [ 7 ];
+    c 4 [| 4; 4 |] mesh_xy (Device 2) [ 7 ];
+    c 4 [| 4; 4 |] mesh_yx mesh_xy [ 7 ];
+    c 2 [| 6 |] (Split 0) (Device 1) [ 1 ];
+    c 2 [| 6; 4 |] (Split 0) (Split 1) [ 5 ];
+    (* One flag, whole on each device. *)
+    c 3 [||] On (Device 1) [ 0 ];
+    c 4 [| 3 |] On On [ 1; 2 ];
+  ]
+
+let index_text i =
+  String.concat "," (Array.to_list (Array.map string_of_int i))
+
+(* A check's failure as its index and datum, in a [Failure]. *)
+let check_fail (type d) (idx : int array) (v : (float, _, d) Nx.t) =
+  let d = Nx.item [] (Nx.place Nx.Host.on v) in
+  Failure (Printf.sprintf "%s: %h" (index_text idx) d)
+
+type 'a check_outcome = Passed of 'a | Failed of string
+
+let pp_outcome pp ppf = function
+  | Passed a -> pp ppf a
+  | Failed s -> Format.fprintf ppf "raised %s" s
+
+let check_outcome_t =
+  Testable.make
+    ~pp:(pp_outcome (Testable.pp bits_t))
+    ~equal:(fun a b ->
+      match (a, b) with
+      | Passed a, Passed b -> Testable.equal bits_t a b
+      | Failed a, Failed b -> String.equal a b
+      | _ -> false)
+
+(* The outcome of [f ()] once its check, here read at a wait, has been read:
+   its value's bits, or its failure. *)
+let waited f =
+  match f () with
+  | y -> (
+      match Nx.place Nx.Host.on y with
+      | h -> Passed (bits h)
+      | exception Failure s -> Failed s)
+  | exception Failure s -> Failed s
+
+let cut_devices c =
+  match c with
+  | Mesh _ | Split _ | On -> true
+  | Device _ -> false
+
+let checked_case set c =
+  cover "passes" (c.falses = []);
+  cover "a cut across devices" (cut_devices c.flags);
+  cover "a mesh" (match c.flags with Mesh _ -> true | _ -> false);
+  cover "data apart from the flags" (c.flags <> c.cdata);
+  cover "the first false on a mesh, in two tiles"
+    (match c.flags with Mesh _ -> List.length c.falses >= 2 | _ -> false);
+  let n = Array.fold_left ( * ) 1 c.cshape in
+  let flags =
+    Nx.create Nx.bool c.cshape
+      (Array.init n (fun i -> not (List.mem i c.falses)))
+  in
+  let d = value c.cshape in
+  let ok = Nx.place (at set c.flags) flags in
+  let data = Nx.place (at set c.cdata) d in
+  let f ok data =
+    Nx.check T.tensor ok data check_fail;
+    Nx.add data data
+  in
+  let eager = waited (fun () -> f ok data) in
+  let before = Rune.evaluations () in
+  let jit =
+    waited (fun () ->
+        Rune.jit T.(tensor @-> tensor @-> returns tensor) f ok data)
+  in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  equal check_outcome_t eager jit
+
+(* Two checks made in order fail as the first made, wherever each lies. *)
+let two_checks set =
+  let check_at a i msg d =
+    let n = 4 in
+    let flags = Nx.create Nx.bool [| n |] (Array.init n (fun k -> k <> i)) in
+    Nx.check T.unit (Nx.place (at set a) flags) ()
+      (fun _ () -> Failure msg)
+    |> ignore;
+    d
+  in
+  let run a b =
+    let d = value [| 4 |] in
+    let x = Nx.place (at set On) d in
+    let f _ x =
+      let x = check_at (Split 0) a "first" x in
+      check_at (Split 0) b "second" x
+    in
+    let eager = waited (fun () -> f () x) in
+    let jit =
+      waited (fun () ->
+          Rune.jit T.(unit @-> tensor @-> returns tensor) f () x)
+    in
+    equal check_outcome_t eager jit
+  in
+  run 3 0;
+  run 0 3;
+  run (-1) 1
+
+(* Elementwise exact functions, gradients of rules and remats over several
+   devices *)
+
+let exact_compare eager jit =
+  match (eager, jit) with
+  | Value e, Value j ->
+      equal ~msg:"placement" (placement ()) (Nx.placement e) (Nx.placement j);
+      equal bits_t (bits e) (bits j)
+  | _ -> equal (outcome_t bits_t) (omap bits eager) (omap bits jit)
+
+(* A custom_vjp and a custom_jvp whose functions and rules are exact: compiled
+   over several devices their values and derivatives are eager's bits. *)
+let customs set c =
+  cover_windows c;
+  let x = Nx.place (at set c.x) (value c.shape) in
+  let square =
+    Rune.custom_vjp T.tensor T.tensor (fun x ->
+        (Nx.mul x x, fun ct -> Nx.mul_s ct 3.))
+  in
+  let forward =
+    Rune.custom_jvp T.tensor T.tensor (fun x ->
+        (Nx.mul x x, fun t -> Nx.mul_s t 3.))
+  in
+  let f x _ = Nx.add (square x) (forward x) in
+  exact_compare (outcome (fun () -> f x x)) (compiled f x x);
+  let d x _ = Rune.grad' (fun x -> Nx.sum (square x)) x in
+  exact_compare (outcome (fun () -> d x x)) (compiled d x x);
+  let t = Nx.ones_like x in
+  let jv x t = snd (Rune.jvp' forward x t) in
+  exact_compare (outcome (fun () -> jv x t)) (compiled jv x t)
+
+(* A remat's value and gradient compiled over several devices are eager's. *)
+let remats set c =
+  cover_windows c;
+  let x = Nx.place (at set c.x) (value c.shape) in
+  let g = Rune.remat T.(tensor @-> returns tensor) (fun x -> Nx.mul x x) in
+  let f x _ = Nx.add (g x) x in
+  exact_compare (outcome (fun () -> f x x)) (compiled f x x);
+  let d x _ = Rune.grad' (fun x -> Nx.sum (g x)) x in
+  exact_compare (outcome (fun () -> d x x)) (compiled d x x)
+
+(* A call of a compiled function and a custom transpose's application inside
+   a compiled function run as eagerly. *)
+let calls set c =
+  cover_windows c;
+  let x = Nx.place (at set c.x) (value c.shape) in
+  let g = Rune.jit' (fun x -> Nx.mul x x) in
+  let linear =
+    Rune.custom_transpose T.tensor T.tensor
+      (fun v -> Nx.mul_s v 2.)
+      ~transpose:(fun w -> Nx.mul_s w 2.)
+  in
+  let f x _ = Nx.add (g x) (linear x) in
+  exact_compare (outcome (fun () -> f x x)) (compiled f x x)
+
+(* A check inside a remat or a custom rule, compiled over several devices,
+   raises as eagerly: first false in C order of the whole value and eager's
+   datum. *)
+let nested_check set =
+  let ok =
+    Nx.place (at set (Split 0))
+      (Nx.create Nx.bool [| 4 |] [| true; true; false; true |])
+  in
+  let d =
+    Nx.place (at set (Split 0)) (Nx.create f32 [| 4 |] [| 1.; 2.; 3.; 4. |])
+  in
+  let checked ok d =
+    Nx.check T.tensor ok d check_fail;
+    d
+  in
+  let r =
+    Rune.remat T.(tensor @-> tensor @-> returns tensor) checked
+  in
+  let c = Rune.custom_jvp T.(pair tensor tensor) T.tensor
+      (fun (ok, d) ->
+        (checked ok d, fun (_, dd) -> dd))
+  in
+  let f1 ok d = Nx.add (r ok d) d in
+  let f2 ok d = Nx.add (c (ok, d)) d in
+  let jit f =
+    waited (fun () -> Rune.jit T.(tensor @-> tensor @-> returns tensor) f ok d)
+  in
+  equal check_outcome_t (waited (fun () -> f1 ok d)) (jit f1);
+  equal check_outcome_t (waited (fun () -> f2 ok d)) (jit f2)
+
+(* A passing check moves only its flags: one per device other than the one that
+   computes. *)
+let check_moves set =
+  let n = List.length (Nx.rigs set.s) in
+  let ok = Nx.place (at set (Split 0)) (Nx.full Nx.bool [| 8 |] true) in
+  let d = Nx.place (at set (Split 0)) (value [| 8 |]) in
+  let f ok d =
+    Nx.check T.tensor ok d check_fail;
+    Nx.neg d
+  in
+  let s = T.(tensor @-> tensor @-> returns tensor) in
+  (* The first call compiles and copies constants: the second is the one
+     measured. *)
+  ignore (Nx.to_array (Nx.place Nx.Host.on (Rune.jit s f ok d)));
+  let run () = ignore (Nx.to_array (Nx.place Nx.Host.on (Rune.jit s f ok d))) in
+  equal ~msg:"bytes copied" int (8 * (n - 1)) (moved_bytes run)
+
+(* Additions to a total compiled over several devices give eager's bits and
+   placement of the running value, wherever the running value starts. A
+   running value placed where no sum with the additions exists raises as
+   eagerly. *)
+let totals set c =
+  cover_windows c;
+  cover "the running value elsewhere" (c.x <> c.y);
+  let x = Nx.place (at set c.x) (value c.shape) in
+  let t = Rune.Total.make () in
+  let init = Nx.place (at set c.y) (Nx.zeros f32 c.shape) in
+  let f x =
+    Rune.Total.add t (Nx.mul x x);
+    Rune.Total.add t x;
+    x
+  in
+  let eager = outcome (fun () -> Rune.Total.collect t ~init (fun () -> f x)) in
+  let before = Rune.evaluations () in
+  let jit =
+    outcome (fun () -> Rune.Total.collect t ~init (fun () -> Rune.jit' f x))
+  in
+  if Nx.Placement.equal (Nx.placement init) (Nx.placement x) then
+    equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  match (eager, jit) with
+  | Value (a, e), Value (b, j) ->
+      equal ~msg:"result" bits_t (bits a) (bits b);
+      equal ~msg:"placement" (placement ()) (Nx.placement e) (Nx.placement j);
+      equal bits_t (bits e) (bits j)
+  | Raised _, Raised _ -> ()
+  | Value _, Raised m -> fail ("compiled raised: " ^ m)
+  | Raised m, Value _ -> fail ("eager raised: " ^ m)
+
+(* A check in a program of no arguments and no results, over several devices,
+   has no set to issue a call's check on: it evaluates, as eagerly. *)
+let no_value set =
+  let ok =
+    Nx.place (at set (Split 0))
+      (Nx.create Nx.bool [| 4 |] [| true; false; true; true |])
+  in
+  let run f =
+    match
+      f ();
+      Nx.sync ok
+    with
+    | () -> "passed"
+    | exception Failure s -> s
+  in
+  let g () = Nx.check T.unit ok () (fun _ () -> Failure "failed") in
+  equal string (run g) (run (Rune.jit T.(unit @-> returns unit) g))
+
+(* A check in a loop's step keeps declining: evaluated on memory devices. *)
+let in_loops set =
+  let x = Nx.place (at set (Split 0)) (Nx.ones f32 [| 4 |]) in
+  let xs = Nx.place (at set (Split 1)) (Nx.ones f32 [| 2; 4 |]) in
+  let check_step c row =
+    Nx.check T.tensor (Nx.greater_s row 0.) row check_fail;
+    (Nx.add c row, row)
+  in
+  let f xs _ = fst (Rune.scan' check_step ~init:x xs) in
+  let before = Rune.evaluations () in
+  let jit () = Rune.jit T.(tensor @-> tensor @-> returns tensor) f xs x in
+  exact_compare (outcome (fun () -> f xs x)) (outcome jit);
+  equal ~msg:"a loop's check is evaluated" bool true
+    (Rune.evaluations () - before > 0)
+
 (* [xs] in a file of the disk, on [set]. *)
 let on_disk (type d) (set : d Nx.devices) xs =
   let n = Array.length xs in
@@ -2221,6 +2549,36 @@ let () =
                (fun () ->
                  over 2 { law = eigh_batch };
                  over 3 { law = eigh_batch });
+           ];
+         group "checks"
+           [
+             prop ~count:60 ~examples:check_examples
+               "a check fails as eagerly, wherever flags and data lie"
+               check_cases (fun c ->
+                 over c.cn { law = (fun set -> checked_case set c) });
+             test "two checks in order, the first made fails" (fun () ->
+                 over 2 { law = two_checks });
+             test "a check inside a remat or a custom rule" (fun () ->
+                 over 2 { law = nested_check });
+             test "a passing check moves one flag per device" (fun () ->
+                 over 2 { law = check_moves };
+                 over 3 { law = check_moves });
+             test "a check of no value evaluates" (fun () ->
+                 over 2 { law = no_value });
+             test "a check in a loop is evaluated" (fun () ->
+                 over 2 { law = in_loops });
+           ];
+         group "custom rules, remats and totals"
+           [
+             prop ~count:15 ~examples "custom rules, values and derivatives"
+               cases (fun c ->
+                 over c.n { law = (fun set -> customs set c) });
+             prop ~count:15 ~examples "a remat, value and gradient" cases
+               (fun c -> over c.n { law = (fun set -> remats set c) });
+             prop ~count:15 ~examples "a call and a custom transpose" cases
+               (fun c -> over c.n { law = (fun set -> calls set c) });
+             prop ~count:15 ~examples "additions to a total" cases (fun c ->
+                 over c.n { law = (fun set -> totals set c) });
            ];
          group "emissions"
            [

@@ -11,6 +11,9 @@ module D = Nx.Dtype
 
 exception Declined of string
 
+exception
+  Part of { check : int; position : int; failure : unit -> exn }
+
 let decline fmt = Printf.ksprintf (fun s -> raise (Declined s)) fmt
 let shape_of (f : _ Nx.Prim.form) = Iarray.to_array (L.shape f.layout)
 let extents w = Array.map (fun (r : M.range) -> r.count) w
@@ -432,15 +435,94 @@ let joined ri (F f) ps =
       let ps = Iarray.map (Program.cast f.dtype set) (Iarray.of_array ps) in
       V (Nx.Prim.traced ri f (Cut ps))
 
+(* Checks
+
+   A check over several devices is computed where its flags lie: each device's
+   window of the flags is a check of its own, whose position counts within
+   that window, and each device's copy of a window whole on several is checked
+   once, on [home] where it holds one. The data, moved to the flags' placement
+   where they lie elsewhere, are read at the same position of each device's
+   window: this is the only data a check moves. Only each device's outcome,
+   one flag, reaches [home], where the call's check reads it ({!Compile}).
+   A failure is a {!Part}: {!Compile} reads the position of each device's
+   failing part and raises the first, in C order of the whole value. *)
+
+let checked_parts = Atomic.make 0
+
+(* The data of a check at device [j]'s window. *)
+let rec data_pieces : type d e.
+    _ -> (d, e) Nx.Prim.data -> int -> (d, e) Nx.Prim.data =
+ fun ri data j ->
+  match data with
+  | [] -> []
+  | x :: rest -> Iarray.get (pieces_of ri x) j :: data_pieces ri rest j
+
+let rec placed_at : type d e.
+    Nx.Prim.engine -> by:string -> d Nx.Placement.t ->
+    (d, e) Nx.Prim.data -> (d, e) Nx.Prim.data =
+ fun e ~by at data ->
+  match data with
+  | [] -> []
+  | x :: rest ->
+      let x =
+        if Nx.Placement.equal (Nx.placement x) at then x
+        else Nx.Prim.partition e ~by (Place (at, x))
+      in
+      x :: placed_at e ~by at rest
+
+let checked (type d e) ri ~home e ~by (ok : (bool, _, d) Nx.t)
+    (data : (d, e) Nx.Prim.data) (fail : int array -> e -> exn) =
+  let shape = Nx.shape ok and at = Nx.placement ok in
+  let check = Atomic.fetch_and_add checked_parts 1 in
+  let data = placed_at e ~by at data in
+  let windows = Nx.Prim.pieces at shape in
+  let devices = Array.map (fun (here, _) -> rig_of here) windows in
+  (* Each window's device that checks it: [home] where it holds that window,
+     else the first. *)
+  let chosen = Hashtbl.create 4 in
+  Array.iteri
+    (fun j (_, w) ->
+      let key = Array.to_list w in
+      match Hashtbl.find_opt chosen key with
+      | Some k when Rig.equal devices.(k) home -> ()
+      | Some _ when not (Rig.equal devices.(j) home) -> ()
+      | Some _ | None -> Hashtbl.replace chosen key j)
+    windows;
+  (* A window's flags at [local], in the whole value's indices and position
+     in C order. *)
+  let at_position (w : M.range array) local =
+    let index = Array.map2 (fun (r : M.range) c -> r.start + c) w local in
+    let position = ref 0 in
+    Array.iteri (fun a n -> position := (!position * n) + index.(a)) shape;
+    (index, !position)
+  in
+  let part j =
+    let _, w = windows.(j) in
+    if Array.for_all (fun (r : M.range) -> r.count > 0) w then
+      Nx.Prim.eval ~by
+        (Check
+           {
+             ok = Iarray.get (pieces_of ri ok) j;
+             data = data_pieces ri data j;
+             fail =
+               (fun local datum ->
+                 let index, position = at_position w local in
+                 Part
+                   { check; position; failure = (fun () -> fail index datum) });
+           })
+  in
+  List.iter part
+    (List.sort compare (Hashtbl.fold (fun _ j l -> j :: l) chosen []))
+
 (* The moves of [noted], each with the value it makes, that [p] keeps: those
    whose value an equation of [p] that reads to its outputs makes. *)
 let kept (p : Program.t) noted =
   let live = Array.make p.slots false in
   let all = Array.init (Array.length p.outputs) Fun.id in
   let q = Program.prune p ~outputs:all in
-  Array.iter
-    (function Op { base; _ } | Do { base; _ } -> live.(base) <- true)
-    q.eqns;
+  (* An equation with no results, such as a check, may number past the slots. *)
+  let mark base = if base < p.slots then live.(base) <- true in
+  Array.iter (function Op { base; _ } | Do { base; _ } -> mark base) q.eqns;
   List.filter_map
     (fun (v, m) ->
       match v with
@@ -455,8 +537,9 @@ let kept (p : Program.t) noted =
    [kind], its captures, and its moves, each with the value it makes, in
    order. [home] is the device the split program computes on, where its
    checks and an iterate's stop lie. *)
-let rec cut ~kind ~(home : Rig.t) ~name (p : Program.t) forms =
-  if Array.length p.adds > 0 then decline "a total over several devices";
+let rec cut ~kind ~in_loop ~(home : Rig.t) ~name (p : Program.t) forms =
+  if kind <> Trace.Jit && Array.length p.adds > 0 then
+    decline "a total in a loop over several devices";
   if p.emits then decline "an emission over several devices";
   let leaves = Array.map piece_forms forms in
   let moves = ref [] and outputs = ref [||] in
@@ -486,25 +569,30 @@ let rec cut ~kind ~(home : Rig.t) ~name (p : Program.t) forms =
         env.(!bind) <- Some (V y);
         incr bind
       in
+      let operands vs = Array.map (fun (V x) -> V (lookup x)) vs in
+      let bound base vs =
+        Array.iteri (fun k v -> env.(base + k) <- Some v) vs
+      in
       Array.iter
         (function
-          | Op { by; op = traced; base } ->
+          | Op { by; op = traced; base } -> (
               let op = Nx.Prim.map lookup traced in
-              let r =
-                match op with
-                | Check _ -> decline "a check over several devices"
-                | _ ->
-                    let e = engine ri ~gathered ~by moves in
-                    Nx.Prim.partition e ~by op
-              in
-              bind := base;
-              Nx.Prim.iter_results store op r
+              let e = engine ri ~gathered ~by moves in
+              match op with
+              | Check { ok; data; fail } ->
+                  if in_loop then
+                    decline "a check in a loop over several devices";
+                  checked ri ~home e ~by ok data fail
+              | _ ->
+                  let r = Nx.Prim.partition e ~by op in
+                  bind := base;
+                  Nx.Prim.iter_results store op r)
           | Do { c = Detach x; base } -> env.(base) <- Some (V (lookup x))
-          | Do { c = (Scan _ | Iterate _) as c; base } ->
+          | Do { c = (Scan _ | Iterate _ | Remat _) as c; base } ->
               let c = Program.map_operands { f = lookup } c in
               Array.iteri
                 (fun k v -> env.(base + k) <- Some v)
-                (looped ~home ~name ri moves c)
+                (looped ~in_loop ~home ~name ri moves c)
           (* Attention's derivative is its default's operations, each
              partitioned. *)
           | Do { c = Attention_linear a as c; base } ->
@@ -522,20 +610,68 @@ let rec cut ~kind ~(home : Rig.t) ~name (p : Program.t) forms =
               in
               if Array.length captures > 0 then
                 decline "Nx.attention's derivative over several devices";
-              let sub = Array.make q.slots None in
-              Array.iteri (fun k v -> sub.(q.params.(k)) <- Some v) operands;
-              run q sub;
-              Array.iteri
-                (fun k (V y) ->
-                  let y =
-                    match Nx.Prim.payload q.owner y with
-                    | Some (Var n) -> Option.get sub.(n)
-                    | _ -> V y
-                  in
-                  env.(base + k) <- Some y)
-                q.outputs
+              bound base (inlined q operands)
+          (* A custom rule, a linear function's application, a call and an
+             addition are the operations of their programs, inlined, each
+             partitioned, as {!Compile} runs them on one device. *)
+          | Do { c = Call { body; args; _ }; base } ->
+              bound base (inlined body (operands args))
+          | Do { c = Linear { apply = Some a; args; captures; _ }; base } ->
+              bound base
+                (inlined a (operands (Array.append args captures)))
+          | Do { c = Custom c; base } ->
+              let primal =
+                inlined c.primal (operands (Array.append c.args c.captures))
+              in
+              bound base (Array.append primal (tangent_sums c.derivative))
+          | Do { c = Accumulate { lanes; running; x }; base } ->
+              let running = lookup running and x = lookup x in
+              (* The program's running value out lies where its running value
+                 in does, which an addition at another placement moves. *)
+              let here = Nx.placement running in
+              if not (Nx.Placement.equal here (Nx.placement x)) then
+                decline "an addition at another placement than its total's";
+              let q, captures =
+                Trace.trace Staged ~name:"Rune.Total.add"
+                  [| form (V running); form (V x) |]
+                  (fun vs ->
+                    let r = like running vs.(0) and x = like x vs.(1) in
+                    [| V (added ~lanes r x) |])
+              in
+              if Array.length captures > 0 then
+                decline "a total over several devices";
+              bound base (inlined q [| V running; V x |])
           | Do { c; _ } -> decline "%s over several devices" (construct_name c))
         p.eqns
+    (* [q]'s equations, each partitioned, over [operands], its parameters'
+       values: its outputs. Its totals and emissions stay the enclosing
+       program's to thread, so a program that holds one declines. *)
+    and inlined (q : Program.t) operands =
+      if Array.length q.adds > 0 || q.emits then
+        decline "a total or an emission in a construct over several devices";
+      let sub = Array.make q.slots None in
+      Array.iteri (fun k v -> sub.(q.params.(k)) <- Some v) operands;
+      run q sub;
+      Array.map
+        (fun (V y) ->
+          match Nx.Prim.payload q.owner y with
+          | Some (Var n) -> Option.get sub.(n)
+          | _ -> V y)
+        q.outputs
+    (* A tangent map's additions' running values out, which no differentiation
+       makes ({!Compile}'s own): the identity, at their forms. *)
+    and tangent_sums = function
+      | Tangent t ->
+          let n = Array.length t.outputs and na = Array.length t.adds in
+          let sum k =
+            let filled _ =
+              [| Loops.filled ~zero:false (form t.outputs.(n - na + k)) |]
+            in
+            let q, _ = Trace.trace Staged ~name:"Rune.custom_jvp" [||] filled in
+            (inlined q [||]).(0)
+          in
+          Array.init na sum
+      | Pullback _ -> [||]
     in
     run p env;
     let lookup (type v s d) (x : (v, s, d) Nx.t) : (v, s, d) Nx.t =
@@ -582,18 +718,18 @@ let rec cut ~kind ~(home : Rig.t) ~name (p : Program.t) forms =
    along axis 0, which eager computation does not read where they lie, and
    rows cut along an axis of one element, whose rows [Nx.get], which reads
    them eagerly, may route elsewhere than the step's rows lie. *)
-and looped ~home ~name ri moves c =
+and looped ~in_loop ~home ~name ri moves c =
   (* The moves a loop's programs keep, each trip's, noted with the loop's first
      result once it is made. *)
   let inner = ref [] in
-  let split q forms =
-    let s, captures, _ = cut ~kind:Staged ~home ~name q forms in
+  let split ?(in_loop = true) q forms =
+    let s, captures, _ = cut ~kind:Staged ~in_loop ~home ~name q forms in
     inner := !inner @ s.moves;
     (s, captures)
   in
-  let note r =
+  let note ?(each = " each trip") r =
     let tag = if Array.length r > 0 then Some r.(0) else None in
-    List.iter (fun m -> moves := (tag, m ^ " each trip") :: !moves) !inner;
+    List.iter (fun m -> moves := (tag, m ^ each) :: !moves) !inner;
     r
   in
   (* The indices of the outputs of [s] that are output [j]'s pieces. *)
@@ -682,7 +818,7 @@ and looped ~home ~name ri moves c =
         split step (Array.append carry (forms step_captures))
       in
       let u, until_more, noted =
-        cut ~kind:Staged ~home ~name until
+        cut ~kind:Staged ~in_loop:true ~home ~name until
           (Array.append carry (forms until_captures))
       in
       carries s (Array.length init);
@@ -745,11 +881,24 @@ and looped ~home ~name ri moves c =
                   Array.append (all_pieces ri until_captures) until_more;
                 seeds = [||];
               }))
+  | Remat { body; args; seeds = [||]; differentiated } ->
+      (* The barrier stays the compiler's: each piece of an operand is stored
+         apart there, and read where it lies. *)
+      let s, more = split ~in_loop body (forms args) in
+      results s
+        (note ~each:"" @@ Program.perform
+           (Remat
+              {
+                body = s.program;
+                args = Array.append (all_pieces ri args) more;
+                seeds = [||];
+                differentiated;
+              }))
   | Iterate { rows = Some _; _ } ->
       decline "an iterate that stacks its steps over several devices"
   | Scan _ | Iterate _ -> decline "a total over several devices"
   | c -> decline "%s over several devices" (construct_name c)
 
 let split ~name ~home p forms =
-  let s, _, _ = cut ~kind:Jit ~home ~name p forms in
+  let s, _, _ = cut ~kind:Jit ~in_loop:false ~home ~name p forms in
   s

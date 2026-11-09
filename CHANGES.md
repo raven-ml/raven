@@ -397,6 +397,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` over several devices compiles `Nx.check`, a sampler's parameter
+  checks, custom rules, `Rune.remat`, calls and additions to a `Total` at the
+  top level, where it evaluated them, or raised on a set without kernels. Each
+  device checks its window of the flags; a failure is eager's, first false in
+  C order of the whole value and its data, wherever they lie.
 - `Rune.jit` on a set without kernels raises at the call for a program the
   compiler declines, naming the decline, where it raised `Nx`'s error for the
   program's first operation, whose advice was false under a compiler.

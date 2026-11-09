@@ -1187,11 +1187,16 @@ let call name t a r f args =
   (* A program takes a total's running value where its trace found it; a call
      that finds it elsewhere has a program of its own, traced there. *)
   let moved = ref false in
+  let elsewhere (type v s d) (into : (v, s, d) Nx.Prim.form) x =
+    match Program.coerce_at into x with
+    | None -> true
+    | Some x -> not (Nx.Placement.equal into.placement (Nx.placement x))
+  in
   let totals =
     Array.map
       (fun (Addition (u, into, out) as a) ->
         match Program.running u into with
-        | Some v when Option.is_none (Program.coerce_at into v) ->
+        | Some v when elsewhere into v ->
             moved := true;
             let at = Nx.Prim.form v in
             Addition (u, { into with placement = at.placement }, out)

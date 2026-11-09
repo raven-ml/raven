@@ -20,6 +20,14 @@ exception Declined of string
 (** The exception for a program the compiler does not split, and the reason.
     {!Compile} raises it for programs it does not lower. *)
 
+exception
+  Part of { check : int; position : int; failure : unit -> exn }
+(** One device's failure of a check over several devices: of the check
+    numbered [check], the position in C order of the whole value of the first
+    false flag of that device's window, and the exception of the check there.
+    {!Compile} raises, among the parts of the failing check, that of the least
+    [position]. *)
+
 val device_of : 'd Nx.Placement.t -> Rig.t option
 (** [device_of p] is the device [p] holds a whole value on, if it is one device
     alone. *)
@@ -64,8 +72,15 @@ val split : name:string -> home:Rig.t -> Program.t -> Program.form array -> t
     A scan or an iterate is the loop of its programs split, over its operands'
     pieces, each device reading its piece of a row from its piece of the rows.
 
-    Raises [Declined] for a program that threads a total or emits, and one with
-    a check, a construct other than [Detach], [Scan] and [Iterate], a scan over
-    rows cut along axis 0, an iterate that stacks its steps, or a loop whose
-    step gives a carry another placement; and what nx raises for an operation its
-    partition refuses. *)
+    Raises [Declined] for a program that emits, and one with a total or a
+    check in a loop or an emission or a total in a construct other than the
+    outermost, one with a construct other than [Detach], [Call], [Custom],
+    [Linear], [Accumulate], [Remat], [Scan] and [Iterate], a scan over rows
+    cut along axis 0, an iterate that stacks its steps, or a loop whose step
+    gives a carry another placement; and what nx raises for an operation its
+    partition refuses.
+
+    A check in the program is one check of each device's window of its flags,
+    its data moved to the flags' placement where they lie elsewhere, so that
+    each device's position and data stay on it; each device's flag alone
+    reaches [home]. A check inside a loop declines. *)

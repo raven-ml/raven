@@ -19,6 +19,13 @@ let f32 = Nx.float32
 let f64 = Nx.float64
 let v xs = Nx.create f32 [| Array.length xs |] xs
 let pair_fn () = T.(tensor @-> tensor @-> returns tensor)
+
+(* A check that [ok] holds of [x], on the host, another set than the program's,
+   which the compiler declines, so that the call evaluates. The check is an
+   operation: a program of operations alone keeps its donations. *)
+let declining ok x =
+  let flags = Nx.place Nx.Host.on (ok x) in
+  Nx.check T.tensor flags flags (fun _ _ -> Exit)
 let v64 xs = Nx.create f64 [| Array.length xs |] xs
 let offset (o : Operand.t) = match o.view with Offset _ -> true | _ -> false
 
@@ -1442,8 +1449,7 @@ let test_evaluated_memory () =
   in
   let refused = option (pair string int) in
   let checked f x =
-    let s = Nx.sum x in
-    Nx.check T.tensor (Nx.less_s s 1.) s (fun _ _ -> Exit);
+    declining (fun s -> Nx.less_s s 1.) (Nx.sum x);
     f x
   in
   let rec chain k x = if k = 0 then x else chain (k - 1) (Nx.sin x) in
@@ -1488,10 +1494,7 @@ let test_in_place ~checked () =
     Rune.jit
       T.(state @-> tensor @-> returns state)
       (fun (w, m) g ->
-        if checked then begin
-          let s = Nx.sum g in
-          Nx.check T.tensor (Nx.isfinite s) s (fun _ _ -> Exit)
-        end;
+        if checked then declining Nx.isfinite (Nx.sum g);
         let m = Nx.add (Nx.mul_s m 0.9) (Nx.mul_s g 0.1) in
         let s = Nx.add_s (Nx.sqrt (Nx.abs g)) 1e-3 in
         (Nx.sub w (Nx.mul_s (Nx.div m s) 1e-3), m))
@@ -1706,7 +1709,7 @@ let test_fresh () =
     (bits r);
   let xd = Nx.place (on Cut) (v [| 1.; -0.; 3.; 4. |]) in
   let checked x =
-    Nx.check T.tensor (Nx.less_s x 10.) x (fun _ _ -> Exit);
+    declining (fun r -> Nx.less_s r 10.) x;
     x
   in
   let before = Rune.evaluations () in
@@ -2089,7 +2092,7 @@ let test_shared () =
 let test_evaluated_donation () =
   let at w () = Nx.place (on w) (v [| 1.; 2.; -0.; 4. |]) in
   let f x =
-    Nx.check T.tensor (Nx.less_s x 10.) x (fun _ _ -> Exit);
+    declining (fun r -> Nx.less_s r 10.) x;
     Nx.mul x x
   in
   let expected = bits (f (at Cut ())) in
