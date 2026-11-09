@@ -28,7 +28,7 @@ figure ── resolve ──▶ Resolved.t ── layout ──▶ Layout.t ─�
 - `draw` reads the data, reduces marks with more rows than the output has
   pixels, and paints the figure as a picture.
 
-`render` runs the three; `save` renders and writes a file. Each stage is a
+`save` runs the three and writes a file. Each stage is a
 pure function of its arguments, so its output can be inspected:
 
 ```ocaml

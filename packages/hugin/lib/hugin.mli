@@ -23,8 +23,8 @@
 
     A figure renders in three pure stages, each able to reuse its previous
     output: {!resolve} fits the scales, {!layout} places text, ticks and panels,
-    and {!draw} paints a tagged picture. {!render} runs the three, {!save}
-    writes PNG, SVG or PDF, and {!pp} displays a figure in a Quill notebook.
+    and {!draw} paints a tagged picture. {!save} runs the three and writes
+    PNG, SVG or PDF, and {!pp} displays a figure in a Quill notebook.
     {!Mark.v} makes marks as the built-in ones are made.
 
     {1:model The figure model}
@@ -1974,12 +1974,6 @@ val draw : ?prev:Drawing.t -> density:float -> Layout.t -> Drawing.t
     Raises [Invalid_argument] if [density] is not finite and positive, what draw
     functions raise, and as reading a tensor raises ({!section-conventions}). *)
 
-val render :
-  ?view:View.t -> ?theme:Theme.t -> ?density:float -> Size.t -> t -> Drawing.t
-(** [render ~view ~theme ~density size f] is
-    [draw ~density (layout ~theme size (resolve ~view f))], with [density] [2.]
-    by default. *)
-
 (** {1:output Output} *)
 
 val save :
@@ -1992,16 +1986,16 @@ val save :
   t ->
   unit
 (** [save ~warn ~view ~theme ~size ~density file f] writes the renderable of
-    [render ~view ~theme ~density size f] to [file] in the format its extension
-    names, ignoring case: PNG for [.png], drawn at [density] with the density
+    [draw ~density (layout ~theme size (resolve ~view f))] to [file] in the
+    format its extension names, ignoring case: PNG for [.png], drawn at [density] with the density
     and the sRGB colour space recorded ({!Hugin_vg_raster.png}); SVG for [.svg];
     PDF for [.pdf]. [size] defaults to [Size.figure 360. 240.] and [density] to
     [2.]. [warn] is called on each of the drawing's warnings, in order, before
     the file is written; by default it formats the warning with {!pp_warning} on
     [Format.err_formatter].
 
-    Raises [Invalid_argument] for another extension, what {!render} raises, and
-    [Sys_error] if [file] cannot be written. *)
+    Raises [Invalid_argument] for another extension, what {!resolve}, {!layout}
+    and {!draw} raise, and [Sys_error] if [file] cannot be written. *)
 
 val pp : Format.formatter -> t -> unit
 (** [pp ppf f] displays [f] in a Quill notebook: it renders [f] as SVG as
@@ -2015,4 +2009,4 @@ val pp : Format.formatter -> t -> unit
     the drawing's warnings, such as [hugin figure (2 warnings)], so that a user
     without the display sees that there are some.
 
-    Raises what {!render} raises. *)
+    Raises what {!resolve}, {!layout} and {!draw} raise. *)

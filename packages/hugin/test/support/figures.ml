@@ -308,4 +308,6 @@ let goldens =
 
 (* Goldens are drawn at one device pixel per point. *)
 let density = 1.
-let drawing (_, f, theme, size) = render ~theme ~density size (f ())
+
+let drawing (_, f, theme, size) =
+  draw ~density (layout ~theme size (resolve (f ())))

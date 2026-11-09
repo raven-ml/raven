@@ -121,8 +121,8 @@ fixes them.
 | `grid rows` | `grid rows`; gaps come from the theme |
 | `render_png file f`, `render_svg`, `render_pdf` | `save file f`, the format from the extension |
 | `~width`, `~height` | `save ~size:(Size.figure w h)`, in points |
-| `render_svg_to_string f` | `Hugin_vg_svg.render (Drawing.renderable (render size f))` |
-| `render_to_buffer f` | `Hugin_vg_raster.png ~density:2. (Drawing.renderable (render size f))` |
+| `render_svg_to_string f` | `Hugin_vg_svg.render (Drawing.renderable (draw ~density:2. (layout size (resolve f))))` |
+| `render_to_buffer f` | `Hugin_vg_raster.png ~density:2. (Drawing.renderable (draw ~density:2. (layout size (resolve f))))` |
 | `pp` | `pp` |
 
 ## Themes and Colours

@@ -238,12 +238,14 @@ let redraw prev ~view ~size fig =
   { r; l; d = draw ~prev:prev.d ~density:2. l }
 
 let to_png f =
-  let d = render (Size.figure 360. 240.) f in
+  let d = draw ~density:2. (layout (Size.figure 360. 240.) (resolve f)) in
   List.iter (Format.eprintf "%a@." pp_warning) (Drawing.warnings d);
   Hugin_vg_raster.png ~density:2. (Drawing.renderable d)
 
 let to_svg f =
-  Hugin_vg_svg.render (Drawing.renderable (render (Size.panels 120. 80.) f))
+  Hugin_vg_svg.render
+    (Drawing.renderable
+       (draw ~density:2. (layout (Size.panels 120. 80.) (resolve f))))
 
 let quietly f = save ~warn:ignore ~density:(Size.dpi 300.) "figure.png" f
 
@@ -256,7 +258,9 @@ let live loss =
 
 let zoomed f =
   let k = View.zoom (Scale.linear ~name:"x" ()) in
-  render ~view:View.(set k (Some (0., 100.)) empty) (Size.figure 360. 240.) f
+  draw ~density:2.
+    (layout (Size.figure 360. 240.)
+       (resolve ~view:View.(set k (Some (0., 100.)) empty) f))
 
 (* Guides as figures. *)
 

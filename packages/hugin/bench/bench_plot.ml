@@ -90,7 +90,8 @@ let nested =
    file at density 2, every stage included. *)
 
 let png size f =
-  Hugin_vg_raster.png ~density:2. (Drawing.renderable (render size f))
+  Hugin_vg_raster.png ~density:2.
+    (Drawing.renderable (draw ~density:2. (layout size (resolve f))))
 
 let walk =
   Nx.cumsum (Nx.Rng.normal ~key:(Nx.Rng.key 1) Nx.float32 [| 10_000_000 |])

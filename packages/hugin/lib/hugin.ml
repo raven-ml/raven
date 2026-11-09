@@ -64,7 +64,7 @@ let resolve = Resolved.resolve
 let layout = Layout.layout
 let draw = Draw.draw
 
-let render ?view ?theme ?(density = 2.) size f =
+let render ?view ?theme ~density size f =
   draw ~density (layout ?theme size (resolve ?view f))
 
 (* Output *)
@@ -94,7 +94,7 @@ let save ?(warn = Format.eprintf "%a@." pp_warning) ?view ?theme
 let svg_display = "quill.display\nimage/svg+xml\n\n"
 
 let pp ppf f =
-  let d = render default_size f in
+  let d = render ~density:default_density default_size f in
   let tag = svg_display ^ Hugin_vg_svg.render (Drawing.renderable d) in
   let summary =
     match List.length (Drawing.warnings d) with

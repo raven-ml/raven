@@ -168,6 +168,8 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- **Breaking:** `Hugin.render` is removed: write
+  `draw ~density (layout ?theme size (resolve ?view f))`.
 - `Picture.stamp` draws the group of its instances in the raster, SVG and PDF
   renderers where it dropped or redrew them: a clip within it, a scale that
   rounds its path's points, a position rounded onto the page.

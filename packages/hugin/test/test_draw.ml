@@ -20,7 +20,7 @@ let path segs = Nx.Ptree.Path.v segs
 (* Drawing *)
 
 let drawn ?view ?theme ?(density = 1.) ?(size = Size.panels 100. 100.) f =
-  render ?view ?theme ~density size f
+  draw ~density (layout ?theme size (resolve ?view f))
 
 (* [probe ~reduce bindings read] is a mark whose draw function records [read
    rows] for each panel it draws, and the records, latest first. Its legend
@@ -906,11 +906,6 @@ let drawings =
         (fun (_, f) ->
           let reused, fresh = f () in
           equal drawing fresh reused);
-      test "render draws the layout of the resolved figure" (fun () ->
-          let f = other () in
-          equal drawing
-            (draw ~density:2. (layout (Size.figure 200. 100.) (resolve f)))
-            (render (Size.figure 200. 100.) f));
       test "the warnings of resolving are the drawing's" (fun () ->
           let view = View.(set (number "unread" ~init:0.) 1. empty) in
           let d = drawn ~view (other ()) in
@@ -1975,7 +1970,7 @@ let stacks =
             e;
           (* rect stacks the one length among a time and a quantity. *)
           ignore
-            (render (Size.panels 50. 50.)
+            (drawn ~size:(Size.panels 50. 50.)
                (rect ~x:(time S t) ~y:(num (f64 [| 1.; 2.; 3. |]))
                   ~stack:`Zero ())));
       test "a pile on a log scale starts at the domain's lower end" (fun () ->
