@@ -2739,6 +2739,29 @@ let is_constant e =
   | (Lit _ | Null), Some (Column _) -> true
   | _ -> false
 
+let substitute f e =
+  check_bound "substitute" e;
+  let rec go : type a s. (a, s) t -> (a, s) t =
+   fun e ->
+    match e.node with
+    | Handle (_, n) | Read (_, n) -> (
+        match (f n, e.typing) with
+        | Some (Packed c), Some (Column ty) -> constant_at ty c e
+        | _ -> e)
+    | Ext_handle _ | Per_list _ | Spread _ -> e
+    | n -> typed (typing e) (map_node { map = (fun e -> go e) } n)
+  and constant_at : type a b s0 s1.
+      a Type.t -> (b, s0) t -> (a, s1) t -> (a, s1) t =
+   fun ty c e ->
+    match (c.node, c.typing) with
+    | (Lit _ | Null), Some (Column ty') when Type.equal ty ty' -> (
+        match Kind.equal_witness (Type.kind ty) (Type.kind ty') with
+        | Some Equal -> typed (Column ty) c.node
+        | None -> e)
+    | _ -> e
+  in
+  go e
+
 (* [folded ev e] is the literal or the operand that the bound operation [e] is,
    if it is one, with [e]'s typing. *)
 let folded : type a s0 s. evaluator -> (a, s0) t -> (a, s) t option =
@@ -2749,7 +2772,9 @@ let folded : type a s0 s. evaluator -> (a, s0) t -> (a, s) t option =
     List.for_all (fun (Packed e) -> is_constant e) (operands e.node)
   in
   match e.node with
-  | (Int _ | Float _ | Compare _ | Not _) when constants () ->
+  | ( Int _ | Float _ | Compare _ | Not _ | Is_in _
+    | Text ((Length | Trim | Lower | Upper | Slice _ | Matches _ | Replace _ | Parse _), _) )
+    when constants () ->
       Option.map (at_typing t) (ev.eval (typed t e.node))
   | Logic (o, a, b) -> (
       let truth e = Option.map snd (literal e) in

@@ -1915,6 +1915,59 @@ let unnest_plans () =
       └ data (3 columns)
     |}
 
+(* Constant columns *)
+
+let branch ?pushdown name y =
+  of_source (source ?pushdown name columns)
+  |> Query.derive Expr.[ "year" := int y ]
+
+let fold_of_years = 
+  branch ~pushdown:inexact "part 2001" 2001
+  |> Query.append (branch ~pushdown:inexact "part 2002" 2002)
+
+let year = Col.int "year"
+
+let constant_plans () =
+  expect
+    (plans
+       [
+         ( "a conjunct on a constant column keeps the branches it is true on",
+           fold_of_years
+           |> Query.filter Expr.(year = int 2001 && a > int 0) );
+         ( "a mixed disjunction reaches the source without its constant part",
+           fold_of_years
+           |> Query.filter Expr.(year = int 2001 || a > int 0) );
+         ( "a negated constant conjunct",
+           fold_of_years |> Query.filter Expr.(not (year = int 2001)) );
+       ])
+  @@ __POS_OF__ {|
+    # a conjunct on a constant column keeps the branches it is true on
+    query → a int64, b float64, c string, k int8, l list[int64], year int64
+    append
+    ├ derive ["year" := 2001]
+    │ └ filter (a > 0)
+    │   └ part 2001 (5 columns) ~filters:[a > 0]
+    └ derive ["year" := 2002]
+      └ slice ~offset:0 ~length:0
+        └ part 2002 (5 columns) ~filters:[a > 0] ~limit:0
+    # a mixed disjunction reaches the source without its constant part
+    query → a int64, b float64, c string, k int8, l list[int64], year int64
+    append
+    ├ derive ["year" := 2001]
+    │ └ part 2001 (5 columns)
+    └ derive ["year" := 2002]
+      └ filter (a > 0)
+        └ part 2002 (5 columns) ~filters:[a > 0]
+    # a negated constant conjunct
+    query → a int64, b float64, c string, k int8, l list[int64], year int64
+    append
+    ├ derive ["year" := 2001]
+    │ └ slice ~offset:0 ~length:0
+    │   └ part 2001 (5 columns) ~limit:0
+    └ derive ["year" := 2002]
+      └ part 2002 (5 columns)
+    |}
+
 (* Plan work *)
 
 (* [words f] is the number of words allocated by [f ()]. *)
@@ -1967,4 +2020,5 @@ let () =
          printed; laws; comparing; kit_queries; kit_mistakes;
          test "records and unnest print and narrow" unnest_plans;
          linear_plans;
+         test "constant columns simplify filters" constant_plans;
        ])

@@ -4440,6 +4440,340 @@ let appended =
     (Gen.bind (Gen.of_list meeting_pairs) (fun (a0, a1, c) ->
          map2 (fun a b -> (a0, a1, c, a, b)) (side a0) (side a1)))
 
+(* Filters over constant columns
+
+   A branch holds a file's columns [x] and [s] and two constant columns, [year]
+   and [region], some of them null, as a fold of files derives them. A filter
+   reads the constants, the file's columns or both, and the reference runs the
+   plan row by row. A conjunct that reads only constants and is not [true] on a
+   branch's constants must exclude the branch: its source is never asked for
+   its parts or opened. *)
+
+type constant_pred =
+  | Int_cmp of string * R.cmp * int
+  | Text_cmp of string * R.cmp * string
+  | Float_cmp of string * R.cmp * float
+  | Is_in_int of string * int list
+  | Null_col of string
+  | Not_p of constant_pred
+  | And_p of constant_pred * constant_pred
+  | Or_p of constant_pred * constant_pred
+
+let rec term = function
+  | Int_cmp (c, op, v) -> R.Cmp (op, Col (Type.int64, c), Lit (Type.int64, v))
+  | Text_cmp (c, op, v) ->
+      R.Cmp (op, Col (Type.string, c), Lit (Type.string, v))
+  | Float_cmp (c, op, v) ->
+      R.Cmp (op, Col (Type.float64, c), Lit (Type.float64, v))
+  | Is_in_int (c, vs) -> R.Is_in (vs, Col (Type.int64, c))
+  | Null_col "region" -> R.Is_null (Col (Type.string, "region"))
+  | Null_col c -> R.Is_null (Col (Type.int64, c))
+  | Not_p p -> R.Not (term p)
+  | And_p (a, b) -> R.And (term a, term b)
+  | Or_p (a, b) -> R.Or (term a, term b)
+
+let rec constant_only = function
+  | Int_cmp (c, _, _) | Is_in_int (c, _) | Null_col c ->
+      List.mem c [ "year"; "region" ]
+  | Text_cmp (c, _, _) | Float_cmp (c, _, _) ->
+      List.mem c [ "year"; "region"; "score" ]
+  | Not_p p -> constant_only p
+  | And_p (a, b) | Or_p (a, b) -> constant_only a && constant_only b
+
+let rec top_conjuncts = function
+  | And_p (a, b) -> top_conjuncts a @ top_conjuncts b
+  | p -> [ p ]
+
+(* [constant_truth (year, region, score) p] is the value of the constant-only
+   [p] on a branch of these constants, Kleene's logic for null, comparisons by
+   the total order of {!Type.compare_value}. *)
+let rec constant_truth ((year, region, score) as cs) = function
+  | Int_cmp (c, op, v) ->
+      let value = if c = "year" then year else None in
+      Option.map (fun x -> cmp_holds op (Int.compare x v)) value
+  | Text_cmp (c, op, v) ->
+      let value = if c = "region" then region else None in
+      Option.map (fun x -> cmp_holds op (String.compare x v)) value
+  | Float_cmp (c, op, v) ->
+      let value = if c = "score" then score else None in
+      Option.map
+        (fun x -> cmp_holds op (Type.compare_value Type.float64 x v))
+        value
+  | Is_in_int (_, vs) ->
+      Some (match year with Some y -> List.mem y vs | None -> false)
+  | Null_col c ->
+      Some (if c = "year" then Option.is_none year else Option.is_none region)
+  | Not_p p -> Option.map not (constant_truth cs p)
+  | And_p (a, b) -> (
+      match (constant_truth cs a, constant_truth cs b) with
+      | Some false, _ | _, Some false -> Some false
+      | Some true, Some true -> Some true
+      | _ -> None)
+  | Or_p (a, b) -> (
+      match (constant_truth cs a, constant_truth cs b) with
+      | Some true, _ | _, Some true -> Some true
+      | Some false, Some false -> Some false
+      | _ -> None)
+
+and cmp_holds op c =
+  match op with
+  | `Eq -> c = 0
+  | `Ne -> c <> 0
+  | `Lt -> c < 0
+  | `Le -> c <= 0
+  | `Gt -> c > 0
+  | `Ge -> c >= 0
+
+type constant_branch = {
+  year : int option;
+  region : string option;
+  score : float option;
+  x : int option array;
+  s : string option array;
+}
+
+let constant_branch_gen =
+  let open Gen in
+  let+ year = of_list [ Some 2000; Some 2001; Some 2002; None ]
+  and+ region = of_list [ Some "eu"; Some "us"; None ]
+  and+ score =
+    of_list [ Some 0.; Some (-0.); Some Float.nan; Some infinity; None ]
+  and+ n = int_range 0 4
+  and+ x = array ~size:(int_range 4 4) (of_list [ Some 0; Some 3; Some 7; None ])
+  and+ s = array ~size:(int_range 4 4) (of_list [ Some "a"; Some "b"; None ]) in
+  { year; region; score; x = Array.sub x 0 n; s = Array.sub s 0 n }
+
+let constant_pred_gen =
+  let open Gen in
+  let ops = of_list [ `Eq; `Ne; `Lt; `Le; `Gt; `Ge ] in
+  let atom =
+    frequency
+      [
+        ( 3,
+          map2 (fun op v -> Int_cmp ("year", op, v)) ops
+            (of_list [ 2000; 2001; 2002; 2003 ]) );
+        ( 2,
+          map2 (fun op v -> Text_cmp ("region", op, v)) ops
+            (of_list [ "eu"; "us"; "zz" ]) );
+        (1, map (fun vs -> Is_in_int ("year", vs)) (list ~size:(int_range 0 3) (int_range 1999 2003)));
+        (1, map (fun c -> Null_col c) (of_list [ "year"; "region"; "x" ]));
+        ( 1,
+          map2 (fun op v -> Float_cmp ("score", op, v)) ops
+            (of_list [ 0.; -0.; Float.nan; infinity; 1. ]) );
+        (2, map2 (fun op v -> Int_cmp ("x", op, v)) ops (of_list [ 0; 3; 7 ]));
+        (1, map (fun v -> Text_cmp ("s", `Eq, v)) (of_list [ "a"; "z" ]));
+      ]
+  in
+  let rec pred depth =
+    if depth = 0 then atom
+    else
+      frequency
+        [
+          (4, atom);
+          (1, map (fun p -> Not_p p) (pred (depth - 1)));
+          (2, map2 (fun a b -> And_p (a, b)) (pred (depth - 1)) (pred (depth - 1)));
+          (2, map2 (fun a b -> Or_p (a, b)) (pred (depth - 1)) (pred (depth - 1)));
+        ]
+  in
+  pred 3
+
+(* [counted t] is a source of [t]'s rows and the number of times its parts were
+   asked for and it was opened. *)
+let counted t =
+  let parts = ref 0 and opens = ref 0 in
+  let part (r : Source.request) =
+    {
+      Source.rows = None;
+      open_ =
+        (fun () ->
+          incr opens;
+          let rest = ref [ answer r t ] in
+          let next () =
+            match !rest with
+            | [] -> Ok None
+            | b :: bs ->
+                rest := bs;
+                Ok (Some b)
+          in
+          Ok { Source.next; close = ignore });
+    }
+  in
+  let s =
+    Source.v ~name:"file" ~schema:(schema t)
+      ~pushdown:(fun _ -> Source.Inexact)
+      (fun r ->
+        incr parts;
+        Ok [ part r ])
+  in
+  (s, parts, opens)
+
+let constant_branch_table b =
+  v
+    [
+      ("x", Column.of_options Type.int64 b.x);
+      ("s", Column.of_options Type.string b.s);
+    ]
+
+let derive_constants b plan =
+  let constant ty = function
+    | Some v -> R.Store (ty, R.Lit (ty, v))
+    | None -> R.Store (ty, R.Null ty)
+  in
+  R.Derive
+    ( [
+        R.Out ("year", constant Type.int64 b.year);
+        R.Out ("region", constant Type.string b.region);
+        R.Out ("score", constant Type.float64 b.score);
+      ],
+      plan )
+
+let filters_over_constants =
+  let gen =
+    Gen.pair
+      (Gen.list ~size:(Gen.int_range 1 6) constant_branch_gen)
+      constant_pred_gen
+  in
+  prop ~count:500 "a filter over constant columns gives the reference's rows"
+    (Gen.with_pp
+       (fun ppf (bs, p) ->
+         let pp_b ppf b =
+           Format.fprintf ppf "(%s, %s, %d rows)"
+             (match b.year with Some y -> string_of_int y | None -> "null")
+             (Option.value ~default:"null" b.region)
+             (Array.length b.x)
+         in
+         Format.fprintf ppf "%a@.%a" (Format.pp_print_list pp_b) bs Expr.pp
+           (R.expr (term p)))
+       gen)
+    (fun (branches, p) ->
+      let sources =
+        List.map
+          (fun b ->
+            let t = constant_branch_table b in
+            let s, parts, opens = counted t in
+            (b, t, s, parts, opens))
+          branches
+      in
+      let plan_of (b, t, s, _, _) = derive_constants b (R.Source (s, t)) in
+      let appended =
+        match sources with
+        | [] -> assert false
+        | b :: bs ->
+            List.fold_left (fun q b -> R.Append (q, plan_of b)) (plan_of b) bs
+      in
+      let plan = R.Filter (term p, appended) in
+      let conjuncts = List.filter constant_only (top_conjuncts p) in
+      let excluded b =
+        List.exists
+          (fun c -> constant_truth (b.year, b.region, b.score) c <> Some true)
+          conjuncts
+      in
+      cover "a branch is excluded by a constant conjunct"
+        (List.exists (fun b -> excluded b) branches);
+      cover "a branch passes the constant conjuncts"
+        (List.exists (fun b -> not (excluded b)) branches);
+      cover "a null constant is excluded by a comparison"
+        (List.exists (fun b -> Option.is_none b.year && excluded b) branches);
+      cover "a filter mixes constant and file columns"
+        (conjuncts <> [] && not (constant_only p));
+      (match (R.run plan, Query.run (R.query plan)) with
+      | Ok cs, Ok t -> List.iter (holds t) cs
+      | Error (row, why), Error e ->
+          contains ~sub:(Printf.sprintf ": row %d: %s." row why) (error e)
+      | Ok _, Error e -> failf "the run fails: %s" (error e)
+      | Error (row, why), Ok _ -> failf "no failure at row %d: %s" row why);
+      let q = R.query plan in
+      equal
+        (Testable.make ~pp:Query.pp ~equal:Query.equal)
+        ~msg:"optimizing an optimized plan changes nothing"
+        (Query.optimize q)
+        (Query.optimize (Query.optimize q));
+      List.iter
+        (fun (b, _, _, parts, opens) ->
+          if excluded b then begin
+            equal ~msg:"parts of an excluded branch" int 0 !parts;
+            equal ~msg:"opens of an excluded branch" int 0 !opens
+          end)
+        sources)
+
+(* An extension column read through a derive, beside a constant, with a source
+   that applies a conjunct only when [Source.Pred.filter] can build it, so an
+   extension's conjunct is never [Exact]. *)
+let faithful t =
+  let sch = schema t in
+  let pushdown p =
+    if Option.is_some (Source.Pred.filter sch p) then Source.Exact
+    else Source.Unsupported
+  in
+  let read (r : Source.request) =
+    let filtered =
+      List.fold_left
+        (fun q p ->
+          match Source.Pred.filter sch p with
+          | Some f -> Query.filter f q
+          | None -> q)
+        (Query.of_table t) r.filters
+    in
+    run_ok (Query.select Expr.[ keep (Sel.names r.columns) ] filtered)
+  in
+  Source.v ~name:"file" ~schema:sch ~pushdown (fun r ->
+      Ok
+        [
+          {
+            Source.rows = None;
+            open_ =
+              (fun () ->
+                let rest = ref [ read r ] in
+                Ok
+                  {
+                    Source.next =
+                      (fun () ->
+                        match !rest with
+                        | [] -> Ok None
+                        | b :: bs ->
+                            rest := bs;
+                            Ok (Some b));
+                    close = ignore;
+                  });
+          };
+        ])
+
+let extension_cases =
+  let t_ = Ext.col celsius "t" and year = Col.int "year" in
+  cases "extension columns beside constants"
+    ~id:(fun (name, _) -> name)
+    [
+      ("constant or extension", Expr.(year = int 2001 || t_ > const 20.));
+      ("extension only", Expr.(t_ > const 20.));
+      ("not extension", Expr.(not (t_ > const 20.)));
+      ("constant and extension", Expr.(year = int 2002 && t_ > const 20.));
+      ("null extension", Expr.(is_null t_ || year = int 2001));
+    ]
+    (fun (_, p) ->
+      let a = degrees [| Some 30.; Some 10.; None |]
+      and b = degrees [| Some 5.; Some 40.; None |] in
+      let branch y t =
+        Query.of_source (faithful t) |> Query.derive Expr.[ "year" := int y ]
+      in
+      let q = branch 2001 a |> Query.append (branch 2002 b) in
+      let materialized y t =
+        run_ok (Query.derive Expr.[ "year" := int y ] (Query.of_table t))
+      in
+      let reference =
+        of_batches [ materialized 2001 a; materialized 2002 b ]
+      in
+      equal
+        (Testable.make ~pp:Talon.pp ~equal:Talon.equal)
+        (run_ok (Query.filter p (Query.of_table reference)))
+        (run_ok (Query.filter p q)))
+
+let constant_columns =
+  group "Filters over constant columns"
+    [
+      filters_over_constants;
+      extension_cases;
+    ]
+
 let appending =
   prop "append is each side at the common type, one after the other" appended
     (fun (Type.Any t0, Type.Any t1, Type.Any c, a, b) ->
@@ -5332,6 +5666,7 @@ let () =
          lifts;
          sorting;
          sources;
+         constant_columns;
          constructors;
          utc_wall_clock;
          appending;

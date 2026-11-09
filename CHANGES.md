@@ -4171,6 +4171,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- A conjunct over a `derive` or `select` of literals is read as those literals
+  and simplified, so a filter on a constant column empties the branches it
+  excludes before their sources are opened, and `false || x` reaches the source
+  as `x`. Filters mixing constant and file columns, under Kleene's logic for
+  null columns, keep their results.
 - `Query.optimize` over a left fold of `Query.append` takes work linear in the
   branches, where it was cubic: optimizing 1,000 branches fell from 4.0e9 words
   allocated to under 1e7.

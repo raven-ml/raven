@@ -144,17 +144,20 @@ let fold_outputs outputs =
     outputs
 
 (* [fold q] is [q] with the constants of its expressions folded, a filter of
-   [true] gone and one of [false] or null an empty slice. *)
+   [true] gone and one with a conjunct of [false] or null an empty slice: a
+   row passes a filter only if every conjunct is [true]. *)
 let rec fold q =
   match Query.node q with
-  | Filter { predicate; input } -> (
+  | Filter { predicate; input } ->
       let predicate = Expr.fold_constants evaluator predicate
       and input = fold input in
-      match truth predicate with
-      | Some (Some true) -> input
-      | Some (Some false | None) ->
-          Query.make (Slice { offset = 0; length = 0; input })
-      | None -> Query.make (Filter { predicate; input }))
+      let never c =
+        match truth c with Some (Some false | None) -> true | _ -> false
+      in
+      if List.exists never (conjuncts predicate) then
+        Query.make (Slice { offset = 0; length = 0; input })
+      else if truth predicate = Some (Some true) then input
+      else Query.make (Filter { predicate; input })
   | n ->
       let folded : Query.node =
         match n with
@@ -173,9 +176,22 @@ let row_local outputs =
 
 (* [through ~derive outputs c] is [c] reading the input of the [select] or
    [derive] of [outputs] if each column it reads is one of the input's,
-   unchanged, and renaming them does not hand a column's reads in a
-   [per_list] body to one of its outputs. *)
+   unchanged, or a constant output, and renaming them does not hand a column's
+   reads in a [per_list] body to one of its outputs. A constant output is
+   replaced by its value first: every row of the step holds it, so the conjunct
+   means the same, and it folds on the spot, to [false] or null over a branch
+   the filter excludes, which [fold] then turns into an empty slice. *)
 let through ~derive outputs c =
+  let constant n =
+    match List.assoc_opt n outputs with
+    | Some (Expr.Packed e) when Expr.is_constant e -> Some (Expr.Packed e)
+    | _ -> None
+  in
+  let c =
+    if List.exists (fun n -> Option.is_some (constant n)) (Expr.reads c) then
+      Expr.fold_constants evaluator (Expr.substitute constant c)
+    else c
+  in
   let input n =
     match List.assoc_opt n outputs with
     | Some (Expr.Packed e) -> column e

@@ -2788,15 +2788,18 @@ module Query : sig
       that only such a value meets does not happen. Of the failures that remain,
       a run reports the one at the earliest row of the optimized plan.
 
-      {b Constants.} Arithmetic, comparisons and [not] of literals are evaluated
-      as a run evaluates them, and become the literal they compute. One whose
+      {b Constants.} Arithmetic, comparisons, [not], {!Expr.is_in} and the text
+      operations other than {!Expr.Str.split} and {!Expr.Str.concat}, of
+      literals, are evaluated as a run evaluates them, and become the literal
+      they compute. One whose
       evaluation fails, or gives a value OCaml's type does not hold (an [int64]
       past [max_int]), stays and evaluates at run time. [&&], [||], [is_null],
       [if_], [coalesce], and [store] of a literal fold alike. [a && false],
       [a || true], [a && true], [a || false], an [if_] on a literal and a
       [coalesce] with literals simplify alike. A filter whose predicate is
-      [true] goes, and one whose predicate is [false] or null becomes
-      [slice ~offset:0 ~length:0].
+      [true] goes, and one with a conjunct [false] or null becomes
+      [slice ~offset:0 ~length:0], since a row passes only if every conjunct
+      is [true].
 
       {b Predicates.} A filter's predicate splits into its {e conjuncts}, the
       operands of its [&&]s. A conjunct moves toward the sources when it is
@@ -2808,8 +2811,14 @@ module Query : sig
       - a [filter] whose predicate is row-local, with which it merges;
       - a [select] or a [derive] whose outputs are row-local, when each column
         the conjunct reads is a column of the step's input kept unchanged, under
-        its name or another ([select ["y" := x]]), and the renaming hands no
-        {!Expr.per_list} body's read of a column to one of its outputs;
+        its name or another ([select ["y" := x]]), or an output that is a
+        literal or null, and the renaming hands no {!Expr.per_list} body's read
+        of a column to one of its outputs. Such an output is read as its value
+        and the conjunct folds, which simplifies a predicate over constant
+        columns: over a fold of files with partition columns derived as
+        literals, a conjunct that folds to [false] or null empties that branch
+        before its source is read, and [false || x] becomes [x], which the
+        source can use;
       - an [aggregate] with keys, when the conjunct reads only keys and none of
         their types holds floats, since [-0.] and [0.] are one key with two
         values;

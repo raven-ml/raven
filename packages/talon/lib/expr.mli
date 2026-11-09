@@ -496,6 +496,17 @@ val captures : (string -> string) -> ('a, 's) t -> bool
     {!per_list} read one of its outputs where it read a column of its
     enclosing frame. *)
 
+val is_constant : ('a, 's) t -> bool
+(** [is_constant b] is [true] iff [b] is a literal or a null of a column type. *)
+
+val substitute : (string -> packed option) -> ('a, 's) t -> ('a, 's) t
+(** [substitute f b] is [b] with each read of the column [n] of its frame for
+    which [f n] is [Some c] replaced by the constant [c] ({!is_constant}) if
+    [c]'s column type is the read's. Other reads stay, as do those through a
+    declaration and those in a {!per_list} body. The expression has the same
+    typing and, where the column holds [c] on every row of the frame, the same
+    value. *)
+
 type evaluator = { eval : 'a. ('a, row) t -> 'a option option }
 (** The type for evaluators of constants: [eval b] is the value of the bound
     operation of literals [b] on one row, [Some None] for null, or [None] if
@@ -504,7 +515,8 @@ type evaluator = { eval : 'a. ('a, row) t -> 'a option option }
 val fold_constants : evaluator -> ('a, 's) t -> ('a, 's) t
 (** [fold_constants ev b] is [b] with each operation of literals replaced by the
     literal it computes, with the same typing:
-    - arithmetic, comparisons and [not], by the value [ev] gives, unless it
+    - arithmetic, comparisons, [not], {!is_in} and the text operations other
+      than {!Str.split} and {!Str.concat}, by the value [ev] gives, unless it
       gives none;
     - [&&], [||], [is_null], [if_] and [coalesce];
     - {!store} of a literal of its type.
