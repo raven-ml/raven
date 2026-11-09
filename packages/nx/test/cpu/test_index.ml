@@ -252,19 +252,6 @@ let law_scatter_refuses (b : Support.backend) c =
         (g.Misfit.g (zeros64 idx))
         (g.Misfit.g (zeros32 u)))
 
-(* An Add of booleans, which Prog.Add does not take, does not fit: not
-   Done, and nothing written outside its destination. *)
-let test_bool_add (b : Support.backend) () =
-  let module K = (val b.kernels) in
-  let bools = A.of_array D.Bool [| 2 |] [| true; false |] in
-  Misfit.check ~msg:"an Add of booleans" ~what:"a dtype" b
-    [| (D.Any D.Bool, [| 2 |]) |]
-    (fun g ds ->
-      K.scatter Add ~unique:false ~axis:0 ~dst:(A.expect D.Bool ds.(0))
-        ~into:(g.Misfit.g bools)
-        (g.Misfit.g (A.of_array D.Int64 [| 1 |] [| 0L |]))
-        (g.Misfit.g (A.of_array D.Bool [| 1 |] [| true |])))
-
 (* nx.cpu's own cases *)
 
 (* A float16 target that 2048 updates of one reach: in float32 the sum is exact,
@@ -1005,8 +992,6 @@ let cpu (b : Support.backend) =
          writes nothing outside dst"
         scatter_misfits
         (run (law_scatter_refuses b));
-      test "an Add of booleans is not Done and writes nothing outside dst"
-        (fun () -> b.around (test_bool_add b));
       prop ~count:300
         "a gather reads and writes no byte past its operands and dst, \
          whatever pages lie beside them"

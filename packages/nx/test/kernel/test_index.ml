@@ -469,6 +469,20 @@ let short_rows (b : Support.backend) (w, dt) () =
   | None -> failf "%s declined a take" b.name
   | Some y -> equal (array string) want (elements y)
 
+(* An Add of booleans, which Prog.Add does not take, does not fit: not
+   Done, and nothing written outside its destination. *)
+let test_bool_add (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let on x = A.to_device b.device x in
+  let bools = on (A.of_array D.Bool [| 2 |] [| true; false |]) in
+  let idx = on (A.of_array D.Int64 [| 1 |] [| 0L |]) in
+  let u = on (A.of_array D.Bool [| 1 |] [| true |]) in
+  Misfit.check ~msg:"an Add of booleans" ~what:"a dtype" b
+    [| (D.Any D.Bool, [| 2 |]) |]
+    (fun g ds ->
+      K.scatter Add ~unique:false ~axis:0 ~dst:(A.expect D.Bool ds.(0))
+        ~into:(g.Misfit.g bools) (g.Misfit.g idx) (g.Misfit.g u))
+
 (* The suite *)
 
 let laws (b : Support.backend) =
@@ -499,6 +513,8 @@ let laws (b : Support.backend) =
           b.around f);
       prop "a scatter promised distinct targets gives the bits of one not"
         unique_scatters (run (law_unique b));
+      test "an Add of booleans is not Done and writes nothing outside dst"
+        (fun () -> b.around (test_bool_add b));
     ]
 
 let () =

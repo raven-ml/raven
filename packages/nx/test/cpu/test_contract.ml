@@ -2052,24 +2052,6 @@ let law_guards (b : Support.backend) g =
   else guarded_product b D.Float32 g
 
 (* nx.cpu under each table the host runs. *)
-(* An [acc] Nx_kernel.accumulates refuses, a narrow float's or a
-   boolean's, does not fit: not Done, and nothing written outside dst. *)
-let test_acc_refused (b : Support.backend) () =
-  let module K = (val b.kernels) in
-  let a = A.create Rig.host D.Float32 [| 2; 3 |] in
-  let x = A.create Rig.host D.Float32 [| 3; 2 |] in
-  List.iter
-    (fun acc ->
-      Misfit.check
-        ~msg:(Format.asprintf "an accumulator of %a" pp_dtype acc)
-        ~what:"a dtype" b
-        [| (D.Any D.Float32, [| 2; 2 |]) |]
-        (fun g ds ->
-          K.contract ~batch:[||] ~contracting:[| (1, 0) |] ~segments:None
-            ~acc ~dst:(A.expect D.Float32 ds.(0)) ~init:None
-            (plain (g.Misfit.g a)) (plain (g.Misfit.g x))))
-    D.[ Any Float16; Any Bfloat16; Any Bool ]
-
 (* Float32 products either side of each bound of nx.cpu's order: 4 and 5
    rows or columns, 63 and 64 outputs, a depth of 128 per output and one
    less. *)
@@ -2333,8 +2315,6 @@ let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
     [
-      test "an acc a contraction does not compute in is not Done" (fun () ->
-          b.around (test_acc_refused b));
       prop
         ~examples:
           (examples @ large_examples @ order_edges @ unroll_examples

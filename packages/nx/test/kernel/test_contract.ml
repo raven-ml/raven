@@ -215,6 +215,24 @@ let test_misfits (b : Support.backend) () =
     [| (3, 2) |] [| 2; 3; 2; 2 |] a
     (arr [| 2; 3; 5; 2 |])
 
+(* An [acc] Nx_kernel.accumulates refuses, a narrow float's or a
+   boolean's, does not fit: not Done, and nothing written outside dst. *)
+let test_acc_refused (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let a = A.create b.device D.Float32 [| 2; 3 |] in
+  let x = A.create b.device D.Float32 [| 3; 2 |] in
+  List.iter
+    (fun acc ->
+      Misfit.check
+        ~msg:(Format.asprintf "an accumulator of %a" pp_dtype acc)
+        ~what:"a dtype" b
+        [| (D.Any D.Float32, [| 2; 2 |]) |]
+        (fun g ds ->
+          K.contract ~batch:[||] ~contracting:[| (1, 0) |] ~segments:None
+            ~acc ~dst:(A.expect D.Float32 ds.(0)) ~init:None
+            (plain (g.g a)) (plain (g.g x))))
+    D.[ Any Float16; Any Bfloat16; Any Bool ]
+
 (* The suite *)
 
 let laws (b : Support.backend) =
@@ -232,6 +250,8 @@ let laws (b : Support.backend) =
         "a call of shapes that do not fit is not Done and writes nothing \
          outside dst"
         (fun () -> b.around (test_misfits b));
+      test "an acc a contraction does not compute in is not Done" (fun () ->
+          b.around (test_acc_refused b));
     ]
 
 let () =
