@@ -954,9 +954,10 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
 
 - **tinygrad:** `codegen/decomp/dtype.py` (`pm_float_decomp`, which
   widens every load of an emulated float to the emulating float and narrows
-  every store back).
+  every store back); `renderer/cstyle.py` (`CUDARenderer.render_kernel`, which
+  declares vectors of `half`, `bfloat16` and the 8-bit floats only).
 - **tolk:** `Decomp_dtype.moved` and the store rule of
-  `Decomp_dtype.pm_float_decomp` that stores it.
+  `Decomp_dtype.pm_float_decomp` that stores it; `Cstyle.cuda_kernel`.
 - **Differs:** a store of a value that moves stored bits without arithmetic
   (a load, a constant the float holds exactly, a selection between such
   values, and stacks and lanes of them) stores those bits, as the storage's
@@ -964,7 +965,10 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   its value but makes every NaN its format's quiet one: a copy of e5m2's
   `0x7d`, half's `0x7c01` or bfloat16's `0x7f81` stores `0x7f`, `0x7e00` or
   `0x7fc0`. Arithmetic still converts, and gives a NaN as the NaN rule allows
-  (D9).
+  (D9). A move keeps a merged access's lanes together, so it loads and stores
+  vectors of the storage, which CUDA does not name as the renderer writes them
+  (`unsigned_short4`, `unsigned_char4`): the CUDA renderer declares a vector of
+  `unsigned char` or `unsigned short` as it declares one of `half`.
 - **Reason:** (b). Under the NaN rule a move keeps a NaN's bits, and nx's do:
   an eager copy, movement or `where` keeps a signalling NaN, so a compiled
   function computes what it computes eagerly only if the emulated moves keep
@@ -981,9 +985,13 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   `NaNs › an emulated copy keeps every NaN code, a signalling one's included`
   and `› an emulated selection keeps every NaN code, a signalling one's
   included`, on every emulated float, and the goldens of the `where`, `flip`,
-  `gather` and `pad` kernels. On rune: missing (the old rune's `Compiled › host
-  › 8-bit floats › a copy of every 8-bit float code keeps its bits` and `› a
-  selection of every 8-bit float code keeps its bits` went with its rewrite).
+  `gather` and `pad` kernels; the Codegen suite's `emulated floats' vectors on
+  CUDA › a copy of every code, a thread's lanes moved together, keeps it`
+  (`bfloat16` on sm_75, `fp8e4m3` on sm_80 and `fp8e4m3fnuz` on sm_89, run on
+  the machine's first CUDA GPU) and `› writes an sm_75 copy of bfloat16 lanes
+  with its vector declared`. On rune: missing (the old rune's `Compiled › host › 8-bit floats › a
+  copy of every 8-bit float code keeps its bits` and `› a selection of every
+  8-bit float code keeps its bits` went with its rewrite).
 
 ### A NaN constant is written from its bits (D156)
 

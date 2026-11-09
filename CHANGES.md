@@ -1097,6 +1097,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- CUDA kernels that copy `bfloat16` before sm_80, OCP 8-bit floats before
+  sm_89, or fnuz 8-bit floats on any GPU compile: the copy moves vectors of the
+  emulated float's storage, which `Cstyle.cuda` now declares.
 - `Tc.transpose` gives the core of `Dᵀ = Bᵀ Aᵀ + Cᵀ`, whose accumulator
   chains as `A` where the core's chains only as `B`, as RDNA 4's and CDNA's.
 - A Metal kernel whose bfloat16 tensor-core product has an operand the

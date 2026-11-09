@@ -2224,6 +2224,84 @@ let bfloat16_vectors_on_cuda =
         ~id:(Printf.sprintf "%d lanes") [ 2; 4 ] sum_on_cuda;
     ]
 
+(* CUDA's renderer of the older GPU [arch], and the first GPU, which runs its
+   kernels: NVRTC compiles their source to PTX of [arch], which the driver
+   compiles for the GPU. *)
+let older_cuda arch =
+  let d, _ = on_cuda () in
+  match Compiler_cuda.nvrtc ~ptx:true arch with
+  | compiler -> (d, renderer_for ~compiler (target "CUDA" "CUDA" arch))
+  | exception Failure why -> skip ~reason:why ()
+
+(* [c = a] over [n] elements of [dt], every code by default, each thread
+   copying [lanes] of them: a GPU that emulates [dt] moves a thread's lanes as
+   one vector of its storage. *)
+let copy_of_codes ?(n = 0) dt lanes =
+  let n = if n > 0 then n else 1 lsl Dtype.bitsize dt in
+  let c = Shape.param ~shape:[ Ops.Int n ] 0 dt
+  and a = Shape.param ~shape:[ Ops.Int n ] 1 dt in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let opts_to_apply =
+    [ Opt.Split { axis = 0; amount = lanes; target = Upcast; top = false } ]
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply ())
+    [ Ops.end_ (Ops.store (Ops.index c [ i ]) (Ops.index a [ i ])) [ i ] ]
+
+(* The program's buffers hold the emulated float's storage: its codes, as
+   unsigned integers of its width. *)
+let code = function
+  | `Int z -> Bigint.to_int z
+  | _ -> invalid_arg "a code is an integer"
+
+let copies_codes (dt, arch, lanes) =
+  let d, r = older_cuda arch in
+  let codes = List.init (1 lsl Dtype.bitsize dt) Fun.id in
+  let prg = compiled_for r (copy_of_codes dt lanes) in
+  let vectors =
+    List.filter
+      (fun u -> is Load u && Shape.max_numel u = lanes)
+      (Ops.src (Ops.nth prg 1))
+  in
+  less ~msg:"loads of all lanes" int ~than:(List.length vectors) 0;
+  let stored = List.map (fun c -> `Int (Bigint.of_int c)) codes in
+  let out = Run.on d prg [ (1, Array.of_list stored) ] in
+  equal (list int) codes (Array.to_list (Array.map code (List.assoc 0 out)))
+
+let emulated_vectors_on_cuda =
+  group "emulated floats' vectors on CUDA"
+    [
+      cases "a copy of every code, a thread's lanes moved together, keeps it"
+        ~id:(fun (dt, arch, lanes) ->
+          Format.asprintf "%a on %s, %d lanes" Dtype.pp dt arch lanes)
+        Dtype.
+          [
+            (Bfloat16, "sm_75", 2);
+            (Bfloat16, "sm_75", 4);
+            (Fp8e4m3, "sm_80", 2);
+            (Fp8e4m3, "sm_80", 4);
+            (Fp8e4m3fnuz, "sm_89", 4);
+          ]
+        copies_codes;
+      test "writes an sm_75 copy of bfloat16 lanes with its vector declared"
+        (fun () ->
+          let r = renderer_for (target "CUDA" "CUDA" "sm_75") in
+          let prg = Codegen.to_program (copy_of_codes ~n:8 Bfloat16 4) r in
+          expect (source prg) @@ __POS_OF__ {|
+            typedef unsigned int uint;
+            #define INFINITY (__int_as_float(0x7f800000))
+            #define NAN (__int_as_float(0x7fffffff))
+            template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+            struct __align__(8) unsigned_short4 { unsigned short x, y, z, w; }; __device__ unsigned_short4 make_unsigned_short4(unsigned short x, unsigned short y, unsigned short z, unsigned short w) { unsigned_short4 r={x, y, z, w}; return r; }
+            extern "C" __global__ void __launch_bounds__(1) E_2_4(unsigned short* data0_8, unsigned short* data1_8) {
+              int gidx0 = blockIdx.x; /* 2 */
+              int alu0 = (gidx0<<2);
+              unsigned_short4 val0 = (*((unsigned_short4*)((data1_8+alu0))));
+              *((unsigned_short4*)((data0_8+alu0))) = val0;
+            }
+            |});
+    ]
+
 (* [c = Σ_r a.(i, r) * float32 b.(r, j)] for a float32 [a] and a bfloat16 [b],
    as attention's values multiply float32 weights by bfloat16 values: a
    bfloat16 core would round [a], which the program does not round, so no core
@@ -8153,6 +8231,7 @@ let () =
            tensor_cores_by_hand;
            fixed_threads;
            bfloat16_vectors_on_cuda;
+           emulated_vectors_on_cuda;
            counted_once;
            counted_beside_host_blocks;
            weak_ranges;

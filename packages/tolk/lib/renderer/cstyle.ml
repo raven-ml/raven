@@ -2019,9 +2019,14 @@ let cuda_kernel ?(copies = false) ?(prefix = []) l ~name
   let used = uops_to_dtypes uops in
   let uses p = List.exists (fun (dt, _) -> p dt) used in
   let is_fp8 dt = Dtype.mem dt Dtype.fp8s in
+  (* CUDA has no vector of unsigned bytes or shorts under the names written
+     here ([unsigned_short4]); a GPU that emulates a 16- or 8-bit float moves
+     its lanes as such vectors of its storage. *)
   let vector (dt, count) =
     (List.mem count [ 4; 8 ] && Dtype.mem dt [ Dtype.Float16; Dtype.Bfloat16 ])
     || (List.mem count [ 2; 4; 8; 16 ] && is_fp8 dt)
+    || List.mem count [ 2; 4; 8; 16 ]
+       && Dtype.mem dt [ Dtype.Uint8; Dtype.Uint16 ]
   in
   let defines =
     [
