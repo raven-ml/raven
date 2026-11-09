@@ -126,3 +126,15 @@ val check_values : ('a, Expr.row) Expr.t -> t -> ('a, Expr.row) Expr.t
 val same : t -> t -> bool
 (** [same q0 q1] is {!equal} with tables compared physically, so it reads no
     data. The optimizer makes such plans one value. *)
+
+val same_step : t -> t -> bool
+(** [same_step q0 q1] is {!same} of two steps whose inputs are compared
+    physically. *)
+
+val id : t -> int
+(** [id q] is the identity of the value [q], which {!make} gives and no other
+    value has. *)
+
+val step_hash : t -> int
+(** [step_hash q] is equal for two steps that {!same_step} holds of. It takes
+    constant time and reads no data. *)

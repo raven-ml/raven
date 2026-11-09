@@ -558,14 +558,20 @@ and limit offset length input =
 
 (* Sharing *)
 
+(* A step is compared with those of its hash, and its inputs are already
+   canonical, so with them physically: the work allocated is linear in the plan.
+   Only leaves of one name and shape share a hash, and they compare by a pointer
+   each. *)
 let share q =
-  let canonical = ref [] in
+  let canonical = Hashtbl.create 64 in
   let rec go q =
     let q = Query.make (Query.map_inputs go (Query.node q)) in
-    match List.find_opt (Query.same q) !canonical with
+    let h = Query.step_hash q in
+    let steps = Option.value ~default:[] (Hashtbl.find_opt canonical h) in
+    match List.find_opt (Query.same_step q) steps with
     | Some c -> c
     | None ->
-        canonical := q :: !canonical;
+        Hashtbl.replace canonical h (q :: steps);
         q
   in
   go q
@@ -579,15 +585,15 @@ let once q =
 
 (* [steps q] is the number of distinct steps of [q]. *)
 let steps q =
-  let seen = ref [] in
+  let seen = Hashtbl.create 64 in
   let rec visit q =
-    if not (List.memq q !seen) then begin
-      seen := q :: !seen;
+    if not (Hashtbl.mem seen (Query.id q)) then begin
+      Hashtbl.add seen (Query.id q) ();
       List.iter visit (Query.inputs q)
     end
   in
   visit q;
-  List.length !seen
+  Hashtbl.length seen
 
 (* Removing a step that nothing reads can let a conjunct or a slice that stopped
    at it move further, so [query] repeats the passes until the plan no longer

@@ -4171,6 +4171,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Query.optimize` over a left fold of `Query.append` takes work linear in the
+  branches, where it was cubic: optimizing 1,000 branches fell from 4.0e9 words
+  allocated to under 1e7.
 - `Talon_parquet` reads a column chunk whose first page is a type it skips
   before a dictionary page; it raised `Invalid_argument`.
 - `Talon_parquet` gathers dictionary-encoded byte strings of one length, such

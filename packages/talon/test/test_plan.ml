@@ -1915,10 +1915,56 @@ let unnest_plans () =
       └ data (3 columns)
     |}
 
+(* Plan work *)
+
+(* [words f] is the number of words allocated by [f ()]. *)
+let words f =
+  let before = Gc.allocated_bytes () in
+  ignore (Sys.opaque_identity (f ()));
+  (Gc.allocated_bytes () -. before) /. float_of_int (Sys.word_size / 8)
+
+(* [left_fold leaf n] is [n] leaves appended one after the other, as
+   [List.fold_left] builds them, under a filter that enters every branch. *)
+let left_fold leaf n =
+  let branch i = leaf i in
+  let rec fold q i =
+    if i = n then q else fold (q |> Query.append (branch i)) (i + 1)
+  in
+  fold (branch 0) 1 |> Query.filter Expr.(a > int 0)
+
+let linear_plans =
+  let leaves =
+    [
+      ( "sources of their own names",
+        fun i ->
+          Query.of_source
+            (source ~pushdown:inexact (Printf.sprintf "part %d" i) columns) );
+      ( "sources of one name",
+        fun _ -> Query.of_source (source ~pushdown:inexact "part" columns) );
+      ( "tables of one shape",
+        fun _ ->
+          Query.of_table (Talon.v [ ("a", Column.v Type.int64 [| 1 |]) ]) );
+    ]
+  in
+  let plan_words leaf n = words (fun () -> Query.optimize (left_fold leaf n)) in
+  let ratio_law (n, (_, leaf)) =
+    (* Doubling the branches doubles the work, within a margin for the constant
+       part of a plan. *)
+    let at_n = plan_words leaf n and at_2n = plan_words leaf (2 * n) in
+    less (float 0.001) ~than:(2.3 *. at_n) at_2n
+  in
+  prop ~count:12 "plan work over a left fold is linear in its branches"
+    Gen.(
+      with_pp
+        (fun ppf (n, (name, _)) -> Format.fprintf ppf "%d %s" n name)
+        (pair (int_range 200 800) (of_list leaves)))
+    ratio_law
+
 let () =
   exit
     (run "plan"
        [
          printed; laws; comparing; kit_queries; kit_mistakes;
          test "records and unnest print and narrow" unnest_plans;
+         linear_plans;
        ])

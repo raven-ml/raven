@@ -40,10 +40,11 @@ type node =
       input : t;
     }
 
-and t = { node : node; schema : Schema.t }
+and t = { node : node; schema : Schema.t; id : int }
 
 let schema q = q.schema
 let node q = q.node
+let id q = q.id
 
 let column_type (Expr.Packed e) =
   match Expr.typing e with
@@ -88,6 +89,8 @@ let unnested s repeated outputs =
   List.filter_map column (Schema.columns s)
   @ List.map (fun (n, e) -> (n, element e)) added
 
+let next_id = Atomic.make 0
+
 let make node =
   let schema =
     match node with
@@ -116,7 +119,7 @@ let make node =
     | Join { kind; on; left; right; _ } ->
         Join.columns kind left.schema right.schema on
   in
-  { node; schema }
+  { node; schema; id = Atomic.fetch_and_add next_id 1 }
 
 let of_table t = make (Of_table t)
 
@@ -249,6 +252,25 @@ let inputs q =
       [ input ]
   | Join { left; right; _ } -> [ left; right ]
   | Append { input; rest } -> [ input; rest ]
+
+(* A hash of a step's arguments and of its inputs' identities, so it agrees with
+   [same_step]. A leaf reads no data to hash: leaves of one name and shape share
+   a bucket and compare physically. *)
+let step_hash q =
+  let ids = List.map (fun i -> i.id) (inputs q) in
+  match q.node with
+  | Of_table t -> Hashtbl.hash (0, Table.rows t, Schema.names (Table.schema t))
+  | Of_source { source; columns; limit; _ } ->
+      Hashtbl.hash (1, source.name, columns, limit)
+  | Select _ -> Hashtbl.hash (2, ids)
+  | Derive _ -> Hashtbl.hash (3, ids)
+  | Filter _ -> Hashtbl.hash (4, ids)
+  | Sort _ -> Hashtbl.hash (5, ids)
+  | Slice { offset; length; _ } -> Hashtbl.hash (6, offset, length, ids)
+  | Aggregate _ -> Hashtbl.hash (7, ids)
+  | Join _ -> Hashtbl.hash (8, ids)
+  | Append _ -> Hashtbl.hash (9, ids)
+  | Unnest _ -> Hashtbl.hash (10, ids)
 
 let map_inputs f = function
   | (Of_table _ | Of_source _) as n -> n
@@ -586,3 +608,4 @@ let rec equal q0 q1 =
   q0 == q1 || step_equal ~input:equal ~table:Table.equal q0 q1
 
 let rec same q0 q1 = q0 == q1 || step_equal ~input:same ~table:( == ) q0 q1
+let same_step q0 q1 = step_equal ~input:( == ) ~table:( == ) q0 q1

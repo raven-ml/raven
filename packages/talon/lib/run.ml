@@ -534,16 +534,16 @@ let source q (source : Source.t) (request : Source.request) =
 (* [readers q] is the number of reads of each step of [q] by the steps above it,
    [q] itself being read once. *)
 let readers q =
-  let counts = ref [] in
+  let counts = Hashtbl.create 64 in
   let rec visit q =
-    match List.assq_opt q !counts with
+    match Hashtbl.find_opt counts (Query.id q) with
     | Some n -> incr n
     | None ->
-        counts := (q, ref 1) :: !counts;
+        Hashtbl.add counts (Query.id q) (ref 1);
         List.iter visit (Query.inputs q)
   in
   visit q;
-  fun q -> !(List.assq q !counts)
+  fun q -> !(Hashtbl.find counts (Query.id q))
 
 (* A step whose expressions read other rows than their own blocks. *)
 let local outputs =
