@@ -736,12 +736,16 @@ static int run(int t, int inverse, const nx_array *x, const nx_array *y,
 
 /* Runs the transform [t], [inverse] for c2c's Inverse, of x into dst
    along the OCaml int array [vaxes], whose shapes nx_cpu.ml checked. The
-   caller roots its values. */
+   real side of a real transform is read or written at the complex side's
+   precision, which the door refuses other dtypes than. The caller roots
+   its values. */
 static value transform(int t, int inverse, value vaxes, value dst, value x) {
   int axes[NX_MAX_RANK], na = (int)Wosize_val(vaxes);
   for (int i = 0; i < na; i++) axes[i] = Int_val(Field(vaxes, i));
-  nx_operand in[2] = {{x, nx_array_dtype(x), 0},
-                      {dst, nx_array_dtype(dst), 1}};
+  int xd = nx_array_dtype(x), yd = nx_array_dtype(dst);
+  if (t == R2C) xd = yd == NX_COMPLEX64 ? NX_FLOAT32 : NX_FLOAT64;
+  if (t == C2R) yd = xd == NX_COMPLEX64 ? NX_FLOAT32 : NX_FLOAT64;
+  nx_operand in[2] = {{x, xd, 0}, {dst, yd, 1}};
   nx_array a[2];
   int e = nx_read(2, in, a);
   if (e) return Val_int(e);

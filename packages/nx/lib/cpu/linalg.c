@@ -981,6 +981,21 @@ static int has_shape(value v, const int64_t *s, int r) {
   return 1;
 }
 
+/* The dtype [c]'s routine reads or writes its array [k] at, its operands
+   then its results, for an operand of [c->dt]: the operand's, but for
+   LU's int64 pivots and permutation, eigh's and svd's real values and
+   eig's complex values and vectors, of the operand's precision. The door
+   refuses an array of another dtype. */
+static int expected(const call *c, int k) {
+  int single = c->dt == NX_FLOAT32 || c->dt == NX_COMPLEX64, j = k - c->nops;
+  if (j < 0) return c->dt;
+  if (c->routine == LU && j > 0) return NX_INT64;
+  if ((c->routine == EIGH || c->routine == SVD) && j == 0)
+    return single ? NX_FLOAT32 : NX_FLOAT64;
+  if (c->routine == EIG) return single ? NX_COMPLEX64 : NX_COMPLEX128;
+  return c->dt;
+}
+
 /* Runs [c], its routine and attributes set, on [arrays], its operands then
    its results. The caller roots the arrays: they are read before nx_read,
    which may run OCaml code. */
@@ -1015,7 +1030,7 @@ static value run(call c, const value *arrays) {
   int n = c.nops + c.nres;
   nx_operand in[ARRAYS];
   for (int k = 0; k < n; k++)
-    in[k] = (nx_operand){arrays[k], nx_array_dtype(arrays[k]), k >= c.nops};
+    in[k] = (nx_operand){arrays[k], expected(&c, k), k >= c.nops};
   nx_array a[ARRAYS];
   int e = nx_read(n, in, a);
   if (e) return Val_int(e);

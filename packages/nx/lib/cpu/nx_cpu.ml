@@ -452,7 +452,8 @@ let contract ~batch ~contracting ~segments ~acc ~dst ~init
 
 (* Fourier transforms (fft.c). fft.c trusts its operands' shapes: they are
    checked here, by Nx_kernel.Shape's rule, which states each transform's
-   shapes once. The externals take the direction as its int. *)
+   shapes once. fft.c passes the door the dtypes it reads and writes. The
+   externals take the direction as its int. *)
 
 external c2c_c :
   Nx_kernel.direction ->
@@ -491,26 +492,22 @@ let c2c d ~axes ~dst x =
   else c2c_c d axes dst x
 
 let r2c ~axes ~dst x =
-  if not (Nx_kernel.same_precision (Nx_array.dtype x) (Nx_array.dtype dst)) then
-    Nx_array.Wrong_dtype
-  else if not (has_shape (Nx_kernel.Shape.r2c ~axes (shape x)) dst) then
+  if not (has_shape (Nx_kernel.Shape.r2c ~axes (shape x)) dst) then
     Nx_array.Shape_mismatch
   else r2c_c axes dst x
 
 let c2r ~axes ~dst x =
-  if not (Nx_kernel.same_precision (Nx_array.dtype dst) (Nx_array.dtype x)) then
-    Nx_array.Wrong_dtype
-  else
-    let s = shape dst and k = Iarray.length axes - 1 in
-    let n =
-      let a = if k >= 0 then Iarray.get axes k else -1 in
-      if a >= 0 && a < Array.length s then s.(a) else -1
-    in
-    if n < 0 || not (has_shape (Nx_kernel.Shape.c2r ~axes ~n (shape x)) dst)
-    then Nx_array.Shape_mismatch
-    else c2r_c axes dst x
+  let s = shape dst and k = Iarray.length axes - 1 in
+  let n =
+    let a = if k >= 0 then Iarray.get axes k else -1 in
+    if a >= 0 && a < Array.length s then s.(a) else -1
+  in
+  if n < 0 || not (has_shape (Nx_kernel.Shape.c2r ~axes ~n (shape x)) dst)
+  then Nx_array.Shape_mismatch
+  else c2r_c axes dst x
 
-(* Matrices (linalg.c) *)
+(* Matrices (linalg.c), which checks its operands' dtypes and shapes and
+   passes the door the dtypes it reads and writes. *)
 
 external cholesky :
   Nx_kernel.triangle ->
@@ -541,43 +538,23 @@ external solve_triangular :
   Nx_array.answer
   = "nx_cpu_solve_triangular_byte" "nx_cpu_solve_triangular"
 
-(* Whether the real result [x] is of [a]'s precision, as eigh and svd store
-   it. *)
-let real_of a x =
-  Nx_kernel.same_precision (Nx_array.dtype a) (Nx_array.dtype x)
-
-external eigh_c :
+external eigh :
   w:(float, 'r) Nx_array.t ->
-  ('v, 's) Nx_array.t option ->
+  ?v:('v, 's) Nx_array.t ->
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_eigh"
 
-let eigh ~w ?v a =
-  if not (real_of a w) then Nx_array.Wrong_dtype else eigh_c ~w v a
-
-external svd_c :
+external svd :
   s:(float, 'r) Nx_array.t ->
-  (u:('v, 's) Nx_array.t * vh:('v, 's) Nx_array.t) option ->
+  ?vectors:(u:('v, 's) Nx_array.t * vh:('v, 's) Nx_array.t) ->
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_svd"
 
-let svd ~s ?vectors a =
-  if not (real_of a s) then Nx_array.Wrong_dtype else svd_c ~s vectors a
-
-external eig_c :
+external eig :
   w:(Complex.t, 'c) Nx_array.t ->
-  (Complex.t, 'c) Nx_array.t option ->
+  ?v:(Complex.t, 'c) Nx_array.t ->
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_eig"
-
-let eig ~w ?v a =
-  let dt = Nx_array.dtype a in
-  let paired (x : (Complex.t, _) Nx_array.t) =
-    Nx_kernel.same_precision dt (Nx_array.dtype x)
-  in
-  let fit = paired w && Option.fold ~none:true ~some:paired v in
-  if not (Nx_kernel.full_precision dt && fit) then Nx_array.Wrong_dtype
-  else eig_c ~w v a
 
 (* One thread *)
 
