@@ -634,7 +634,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reference:** `mixin/op.py:936` (`sort`: a bitonic network of the values,
   each position recovered by matching equal values and their counts), `:988`
   (`argsort`).
-- **Raven:** `lower_index.ml` (`bitonic`, `ranked`, `key`, `keys`, `sort`).
+- **Raven:** `lower_index.ml` (`bitonic`, `ranked`, `selected`, `key`, `keys`,
+  `sort`).
 - **Differs:** tinygrad's network sorts order keys, each the unsigned integer
   of its width with R3's ordering, every NaN the greatest, complemented for a
   descending sort, packed in an `int64` above its position. Packed integers
@@ -642,13 +643,17 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   their low bits. A key of more than 32 bits sorts in passes of 32, the least
   significant first. The sorted values are the operand's elements at those
   positions, read by I3's gather. tinygrad's recovery never matches a NaN, and
-  its network compares floats.
+  its network compares floats. A sort that keeps the first `k` of one 32-bit
+  key each, up to `selection_comparisons` comparisons, compares every pair of
+  packed keys in one kernel instead of running the network, which is a launch
+  per stage (tinygrad's `topk`, `mixin/op.py:999`, sorts then keeps `k`).
 - **nx:** `nx_kernel.mli`, `sort`: stable, `-0` below `+0` and every NaN above
   `+inf`, reversed when descending, bits unchanged.
 - **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `Lower_index › sorts › sorts give eager's values and
-  positions`.
+  positions`, and for the selection `a first k of 32 keys is two kernels` and
+  `a first k selects up to its bound of comparisons`.
 
 ### R6. Complex reductions, scans and contractions by parts
 

@@ -1649,6 +1649,20 @@ let sorts =
         (List.mem c.o_dt
            D.[ Any Float64; Any Int64; Any Uint64; Any Complex64 ]);
       cover "complex128" (c.o_dt = D.Any D.Complex128);
+      cover "a first k by selection"
+        (Option.is_some c.o_k
+        && Option.get c.o_k > 0
+        && c.o_shape.(c.o_axis) > 1
+        && not
+             (List.mem c.o_dt
+                D.
+                  [
+                    Any Float64;
+                    Any Int64;
+                    Any Uint64;
+                    Any Complex64;
+                    Any Complex128;
+                  ]));
       let x = operand dt c.o_view c.o_shape c.o_raws in
       let op () =
         P.eval ~by:"t"
@@ -1659,6 +1673,44 @@ let sorts =
       equal (array int64)
         (Nx.to_array (snd (op ())))
         (Lowered.run (fun () -> snd (op ()))))
+
+(* A first k of a few 32-bit keys compares them in one kernel beside the one
+   that packs its keys, each a launch, where a network has one per stage. *)
+let selection_kernels =
+  test "a first k of 32 keys is two kernels" (fun () ->
+      let x = Nx.zeros D.Float32 [| 32 |] in
+      let ids () =
+        snd
+          (P.eval ~by:"t"
+             (P.Sort { axis = 0; descending = true; k = Some 4; x }))
+      in
+      equal int 2 (Lowered.kernels ids))
+
+(* The bound counts the comparisons of the whole array: 16 rows of 32 keys reach
+   [2^16] with a first 4, and 17 rows pass it. *)
+let selection_bound =
+  let kernels rows =
+    let x = Nx.broadcast_to [| rows; 32 |] (Nx.scalar D.Float32 0.) in
+    Lowered.kernels (fun () ->
+        snd
+          (P.eval ~by:"t"
+             (P.Sort { axis = 1; descending = true; k = Some 4; x })))
+  in
+  test "a first k selects up to its bound of comparisons" (fun () ->
+      equal int 2 (kernels 16);
+      at_least int ~than:3 (kernels 17))
+
+(* A selection's comparisons overflow an OCaml integer past [2^62]: a first k of
+   that many keeps the network, whose kernels stay few enough to schedule. *)
+let selection_wide =
+  test "a first k whose comparisons overflow keeps the network" (fun () ->
+      let x = Nx.broadcast_to [| 1 lsl 47; 32 |] (Nx.scalar D.Float32 0.) in
+      let ids () =
+        snd
+          (P.eval ~by:"t"
+             (P.Sort { axis = 1; descending = true; k = Some 32; x }))
+      in
+      at_least int ~than:3 (Lowered.kernels ids))
 
 (* Numbering *)
 
@@ -1688,6 +1740,7 @@ let () =
          group "gathers and scatters"
            [ gathers; scatters_moved; scatter_adds; unreached ];
          group "folds and assemblies" [ folds; assemblies ];
-         group "sorts" [ sorts ];
+         group "sorts"
+           [ sorts; selection_kernels; selection_bound; selection_wide ];
          group "numbering" wide_unique;
        ])

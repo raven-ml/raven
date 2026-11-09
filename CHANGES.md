@@ -402,6 +402,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` compiles `Nx.top_k` of few elements, with keys of at most 32 bits,
+  to two kernels where a sorting network took one per stage: 2 launches
+  against 20 for gpt-oss's router over 32 experts.
 - `Rune.jit` over several devices compiles `Rune.switch` and `Rune.cond`.
   Each call waits on the host for each branch's flag. An index out of range
   fails at a wait on the set, as a compiled check does.

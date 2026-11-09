@@ -796,16 +796,60 @@ let bitonic x axis =
       (Shape.flatten ~start:axis ~stop:(axis + stages - 1) x)
       (List.map Option.some shape)
 
+(* [packed axis h] is the int64 keys [h], below [2^32], each above its position
+   along [axis]: distinct integers that order as a stable sort of the keys. *)
+let packed axis h =
+  let s = extents h in
+  let low = bit_length (List.nth s axis - 1) in
+  let ranks = laid s axis (Shape.arange ~dtype:Int64 (List.nth s axis)) in
+  Ops.bitwise_or (Ops.shl h (int h low)) ranks
+
 (* [ranked axis h] is the int64 positions that sort the int64 keys [h], below
    [2^32], stably along [axis]. *)
 let ranked axis h =
-  let s = extents h in
-  let n = List.nth s axis in
-  let low = bit_length (n - 1) in
-  let ranks = laid s axis (Shape.arange ~dtype:Int64 n) in
-  let packed = Ops.bitwise_or (Ops.shl h (int h low)) ranks in
-  let sorted = bitonic (Ops.contiguous packed) axis in
+  let low = bit_length (List.nth (extents h) axis - 1) in
+  let sorted = bitonic (Ops.contiguous (packed axis h)) axis in
   Ops.bitwise_and sorted (int h ((1 lsl low) - 1))
+
+(* A sort's first [k] of a few keys need not sort: the position of the [r]th
+   is the one exactly [r] keys precede. Comparing every pair of keys is one
+   kernel of [k·n²] comparisons, in place of a network's kernels, one per stage
+   and each a launch. [selection_comparisons] bounds the comparisons of the
+   whole array: past it a GPU's launches no longer matter (a prefill of 512
+   rows gains nothing measurable) and the host's network is faster (30% at
+   2^21). It divides so that a shape's product cannot overflow. *)
+
+let selection_comparisons = 1 lsl 16
+
+let selecting ~k s axis =
+  let n = List.nth s axis in
+  k <= selection_comparisons / n / n / (numel s / n)
+
+(* [selected axis k h] is the int64 positions of the [k] leading keys of the
+   sort of [h], in sort order, as [ranked] would give them. *)
+let selected axis k h =
+  let s = extents h in
+  let before = List.take axis s and after = List.drop (axis + 1) s in
+  let n = List.nth s axis in
+  let keys = Ops.contiguous (packed axis h) in
+  (* Axes [axis], [axis+1], [axis+2] are [r], [i], [j]: the output, the key
+     ranked, and the key compared with it. *)
+  let space = before @ [ k; n; n ] @ after in
+  let along i j =
+    let extent on = if on then n else 1 in
+    let laid = before @ [ 1; extent i; extent j ] @ after in
+    Shape.expand (Shape.reshape keys (dims laid)) (dims space)
+  in
+  let precedes =
+    Ops.cast (Ops.lt (along false true) (along true false)) Int64
+  in
+  let rank = Shape.rop precedes Op.Add [ axis + 2 ] in
+  let line = before @ [ k; n ] @ after in
+  let at c e = laid line c (Shape.arange ~dtype:Int64 e) in
+  let picked =
+    Ops.where (Ops.eq rank (at axis k)) (at (axis + 1) n) (zeros Int64 line)
+  in
+  Shape.rop picked Op.Add [ axis + 1 ]
 
 (* [key u] is the unsigned integer of [u]'s width that orders as its elements:
    a signed integer's or a float's order key with its sign bit flipped, a
@@ -864,31 +908,40 @@ let sort d ~axis ~descending ~k x =
   let s = extents (List.hd (Arith.parts d x)) in
   let n = List.nth s axis in
   if n > 1 lsl 31 then unlowered "a Sort of more than 2^31 elements";
-  let positions =
-    if n <= 1 || numel s = 0 then zeros Int64 s
-    else
-      match List.rev (keys d ~descending x) with
+  let first k u =
+    Shape.shrink u
+      (List.init (Shape.ndim u) (fun i ->
+           if i = axis then Some (Ops.Int 0, Ops.Int k) else None))
+  in
+  let gathered positions =
+    let take u = Bits.take u axis positions in
+    Arith.of_parts d (List.map take (Arith.parts d x))
+  in
+  if n <= 1 || numel s = 0 then
+    let positions = zeros Int64 s in
+    match k with
+    | None -> (x, positions)
+    | Some k -> (first k x, first k positions)
+  else
+    let ks = keys d ~descending x in
+    let sorted () =
+      match List.rev ks with
       | [] -> assert false
       | least :: rest ->
           List.fold_left
             (fun p h -> Bits.take p axis (ranked axis (Bits.take h axis p)))
             (ranked axis least) rest
-  in
-  let values =
-    if n <= 1 || numel s = 0 then x
-    else
-      let gathered u = Bits.take u axis positions in
-      Arith.of_parts d (List.map gathered (Arith.parts d x))
-  in
-  match k with
-  | None -> (values, positions)
-  | Some k ->
-      let first u =
-        Shape.shrink u
-          (List.init (Shape.ndim u) (fun i ->
-               if i = axis then Some (Ops.Int 0, Ops.Int k) else None))
-      in
-      (first values, first positions)
+    in
+    match (k, ks) with
+    | Some k, [ h ] when k > 0 && selecting ~k s axis ->
+        let positions = selected axis k h in
+        (gathered positions, positions)
+    | None, _ ->
+        let positions = sorted () in
+        (gathered positions, positions)
+    | Some k, _ ->
+        let positions = sorted () in
+        (first k (gathered positions), first k positions)
 
 (* Numbering
 
