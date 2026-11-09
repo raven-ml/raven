@@ -17,7 +17,7 @@ expressions, read from CSV and Parquet files. Talon is part of the
   windows over groups with `over`, text and time
 - **Checked plans**: every problem of a verb reported at once, before any data
   is read; failures in data returned as `Error` values with their location
-- **Formats**: `talon.csv` reads and writes CSV, `talon.parquet` reads Parquet
+- **Formats**: `talon.csv` reads and writes CSV, `talon.json` JSON and NDJSON, `talon.parquet` reads Parquet
   files mapped in memory, skipping row groups by their statistics
 - **Nx interop**: a numeric column becomes a tensor without a copy, and
   `to_tensor` builds a feature matrix

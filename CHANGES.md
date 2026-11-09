@@ -4150,6 +4150,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- New `talon.json` library: `Talon_json` reads and writes JSON and NDJSON from
+  `Bytesrw` readers, with `sniff`, `format`, `with_type`, `decode`, `source`,
+  `file` and `encode`. Objects read as records and arrays as lists, batches
+  stream without holding a top-level array, and a value's error names its
+  line, column and byte. It adds no dependency.
 - `Talon_arrow` reads every dictionary-encoded Arrow column, as its values when
   it cannot be one `categorical` (a dictionary replaced between batches, one
   with a repeat or a null, or one over another type). A column whose rows take

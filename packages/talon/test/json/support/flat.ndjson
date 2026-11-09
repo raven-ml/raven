@@ -1,0 +1,4 @@
+{"id":1,"price":1.5,"name":"alpha","active":true}
+{"id":2,"price":null,"name":"béta","active":false}
+{"id":-9007199254740993,"name":"日本語 emoji 😀","active":null}
+{"id":9223372036854775807,"price":3.0,"name":"","extra":"kept"}

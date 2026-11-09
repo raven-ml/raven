@@ -1,0 +1,1 @@
+[{"user":{"name":"ana","loc":{"lat":45.5,"lng":-73.5}},"tags":["a","b"],"scores":[[1,2],[3]]},{"user":{"name":"ben","loc":null},"tags":[],"scores":[[]]},{"user":null,"tags":["c"],"scores":null},{"user":{"loc":{"lat":1.0,"lng":2.0}},"scores":[[4],[],[5,6]]}]

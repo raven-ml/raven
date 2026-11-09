@@ -145,7 +145,7 @@ raven / llama.cpp b12048 Vulkan:
   Data: ~/wt/tmp/talon-data on fudge (decision SF0.1/SF1, H2O 1e6/1e7)
 - talon 1.0 plan (_plans/talon/product/plan.md; designs adjudicated in
   _plans/talon/design/), open units: regex, Pivot, Unicode case mapping,
-  Parquet datasets, JSON and NDJSON, domain guides. After 1.0: the C Data
+  Parquet datasets, domain guides. After 1.0: the C Data
   Interface, the Ptree bridge, complex and validity columns, `ewm`,
   fixed-width CSV; HTML display once quill's protocol lands
 - talon interchange follow-ups: `Talon_arrow.sniff` refuses decimals,

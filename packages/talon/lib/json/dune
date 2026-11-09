@@ -1,0 +1,7 @@
+(library
+ (name talon_json)
+ (public_name talon.json)
+ (libraries talon nx nx.array bytesrw)
+ (private_modules scan)
+ (instrumentation
+  (backend ppx_windtrap.coverage)))

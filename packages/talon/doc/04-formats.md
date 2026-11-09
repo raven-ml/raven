@@ -2,7 +2,7 @@
 
 Files enter a query as **sources**: data whose columns are known when the
 source is built and whose rows arrive in batches when the query runs. This
-page covers CSV, Parquet and Arrow IPC, the errors they report, and writing a source of
+page covers CSV, JSON, Parquet and Arrow IPC, the errors they report, and writing a source of
 your own.
 
 ## Sources
@@ -116,6 +116,56 @@ oslo,2024-03-01,-3.5,
 oslo,2024-03-02,,"sensor ""B"" offline"
 lima,2024-03-01,22,"humid, calm"
 ```
+
+## JSON
+
+`Talon_json` reads objects, one per row, from a `Bytesrw` reader, in one of
+two framings: `Lines`, one object per line, which NDJSON and JSON Lines write,
+and `Array`, a single JSON array of objects. `Talon_json.sniff` infers the
+framing from the first value and each column's type from the file's first
+16,384 rows. It reads an object as a record, an array as a list, a number as
+`int64` when every value is an integer `int64` holds and as `float64` otherwise,
+and a column of mixed values as `string`, holding each value's JSON text:
+
+```ocaml
+let events =
+  {|{"id":1,"user":{"name":"ana"},"tags":["a","b"],"score":1.5}
+{"id":2,"user":null,"tags":[],"score":null}
+|}
+
+let reader () = Bytesrw.Bytes.Reader.of_string events
+let format = Error.get_ok (Talon_json.sniff (reader ()))
+let () = Format.printf "%a@." Talon_json.pp_format format
+```
+
+```text
+json (4 columns, lines), types sniffed from 2 rows
+  id int64
+  user record[name string]
+  tags list[string]
+  score float64
+```
+
+A key the format does not name is skipped, and a column whose key a row lacks
+is null. A duplicate key fails the read. `Talon_json.with_type` declares a date
+or a datetime, which sniffing never infers, and `Talon_json.source` streams the
+rows in batches, so a large top-level array yields rows before its closing
+bracket is read:
+
+```ocaml
+let table = Error.get_ok (Talon_json.decode format (reader ()))
+let () = Format.printf "%d rows@." (Talon.rows table)
+```
+
+```text
+2 rows
+```
+
+`Talon_json.encode` runs a query and writes its rows, one object per line or
+one array, which `decode` reads back.
+
+To read a gzip or zstd file, apply a filter of `Lz_bytesrw` to the reader.
+`Talon_json.file` opens a path, as `Talon_csv.file` does.
 
 ## Parquet
 

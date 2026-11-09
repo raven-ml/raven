@@ -1,0 +1,25 @@
+[
+  {
+    "id": 1,
+    "price": 1.5,
+    "name": "alpha",
+    "active": true
+  },
+  {
+    "id": 2,
+    "price": null,
+    "name": "b\u00e9ta",
+    "active": false
+  },
+  {
+    "id": -9007199254740993,
+    "name": "\u65e5\u672c\u8a9e emoji \ud83d\ude00",
+    "active": null
+  },
+  {
+    "id": 9223372036854775807,
+    "price": 3.0,
+    "name": "",
+    "extra": "kept"
+  }
+]

@@ -528,6 +528,42 @@ let read_csv () =
   Error.get_ok
     (Talon_csv.decode csv_format (Bytesrw.Bytes.Reader.of_string csv_text))
 
+(* JSON *)
+
+(* The rows of the CSV above as NDJSON, about 3 MB: an int64 [id], a float64
+   [price] with nulls, and a string [label], some with escapes. Words count
+   what a read allocates: the scanner, the builders and the columns. *)
+let json_text =
+  let n = 1 lsl 16 in
+  let keys = Nx.Rng.split ~n:3 (Nx.Rng.key 24) in
+  let uniform k =
+    Nx.to_array (Nx.Rng.uniform ~key:keys.(k) Nx.float64 [| n |])
+  in
+  let id =
+    Nx.to_array
+      (Nx.Rng.randint ~key:keys.(0) ~low:(-1_000_000) ~high:1_000_000 [| n |])
+  in
+  let price = uniform 1 and null = uniform 2 in
+  let b = Buffer.create (1 lsl 21) in
+  for r = 0 to n - 1 do
+    Buffer.add_string b (Printf.sprintf "{\"id\":%ld,\"price\":" id.(r));
+    if null.(r) >= 0.05 then
+      Buffer.add_string b (Printf.sprintf "%.2f" (1000. *. price.(r)))
+    else Buffer.add_string b "null";
+    Buffer.add_string b
+      (if r mod 10 = 0 then Printf.sprintf ",\"label\":\"item \\\"%d\\\"\"}\n" r
+       else Printf.sprintf ",\"label\":\"item-%d\"}\n" r)
+  done;
+  Buffer.contents b
+
+let json_format =
+  Talon_json.format
+    [ ("id", Type.Any Type.int64); ("price", float64); ("label", string) ]
+
+let read_json () =
+  Error.get_ok
+    (Talon_json.decode json_format (Bytesrw.Bytes.Reader.of_string json_text))
+
 (* As-of: 2^20 left rows [x] and 2^16 right rows [y] in 100 groups, in no
    order, each left row with the right row of its group at or before it. The
    same picks as a range join, each right row holding up to its group's next
@@ -717,6 +753,7 @@ let () =
       Thumper.group "Talon_text"
         [ Thumper.bench "parse-float64-17-digits" parse_floats ];
       Thumper.group "Talon_csv" [ Thumper.bench "read-mixed" read_csv ];
+      Thumper.group "Talon_json" [ Thumper.bench "read-ndjson" read_json ];
       Thumper.group "Talon_arrow"
         [
           Thumper.bench "read-nullable" read_arrow;

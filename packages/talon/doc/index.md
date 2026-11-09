@@ -66,6 +66,7 @@ table 7 rows × 4 columns
 |---|---|---|
 | `talon` | `Talon` | Tables, columns, types, expressions and queries |
 | `talon.csv` | `Talon_csv` | CSV files: sniffing, reading and writing |
+| `talon.json` | `Talon_json` | JSON and NDJSON files: sniffing, reading and writing |
 | `talon.parquet` | `Talon_parquet` | Parquet files, read mapped in memory and written from queries |
 
 ## Next Steps
@@ -75,7 +76,7 @@ table 7 rows × 4 columns
 - [Expressions and Frames](02-expressions-and-frames.md): types, nulls, verbs,
   reductions and windows over groups
 - [Joins](03-joins.md): conditions, kinds and assertions on matches
-- [Formats](04-formats.md): CSV, Parquet and your own sources
+- [Formats](04-formats.md): CSV, JSON, Parquet and your own sources
 - [pandas Comparison](05-pandas-comparison.md): side-by-side reference
 - [Examples](../examples/01-tables/README.md): runnable programs, from a
   first table to a feature matrix

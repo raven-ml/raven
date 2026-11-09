@@ -5,4 +5,4 @@
   (and
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
- (libraries talon talon.csv talon.parquet talon.arrow bytesrw nx rig.disk unix))
+ (libraries talon talon.csv talon.json talon.parquet talon.arrow bytesrw nx rig.disk unix))

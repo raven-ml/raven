@@ -1,0 +1,21 @@
+flat.ndjson	id	int64	12-90071992547409939223372036854775807
+flat.ndjson	price	float64	1.5nullnull3
+flat.ndjson	name	string	"alpha""béta""日本語 emoji 😀"""
+flat.ndjson	active	bool	truefalsenullnull
+flat.ndjson	extra	string	nullnullnull"kept"
+nested.ndjson	user	record[name string, loc record[lat float64, lng float64]]	{name="ana",loc={lat=45.5,lng=-73.5}}{name="ben",loc=null}null{name=null,loc={lat=1,lng=2}}
+nested.ndjson	tags	list[string]	["a","b"][]["c"]null
+nested.ndjson	scores	list[list[int64]]	[[1,2],[3]][[]]null[[4],[],[5,6]]
+numbers.ndjson	i	int64	0-92233720368547758089223372036854775807
+numbers.ndjson	x	float64	1e+211.7976931348623157e+3082.5e-08
+numbers.ndjson	y	float64	5e-324-0123456.789
+escapes.ndjson	s	string	"quote " back \\ slash / nl \n tab \t bell  end""emoji 😀 and é"
+flat_ascii.json	id	int64	12-90071992547409939223372036854775807
+flat_ascii.json	price	float64	1.5nullnull3
+flat_ascii.json	name	string	"alpha""béta""日本語 emoji 😀"""
+flat_ascii.json	active	bool	truefalsenullnull
+flat_ascii.json	extra	string	nullnullnull"kept"
+nested.json	user	record[name string, loc record[lat float64, lng float64]]	{name="ana",loc={lat=45.5,lng=-73.5}}{name="ben",loc=null}null{name=null,loc={lat=1,lng=2}}
+nested.json	tags	list[string]	["a","b"][]["c"]null
+nested.json	scores	list[list[int64]]	[[1,2],[3]][[]]null[[4],[],[5,6]]
+escapes_ascii.json	s	string	"quote " back \\ slash / nl \n tab \t bell  end""emoji 😀 and é"

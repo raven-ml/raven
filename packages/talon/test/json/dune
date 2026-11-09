@@ -1,0 +1,18 @@
+(test
+ (name test_json)
+ (modules test_json)
+ (package talon)
+ (libraries windtrap talon talon.json talon_gen bytesrw nx)
+ (deps
+  (source_tree golden)
+  (source_tree support))
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_json.ml test_json.ml.corrected))))
+
+(test
+ (name test_fuzz)
+ (modules test_fuzz)
+ (package talon)
+ (libraries windtrap talon talon.json bytesrw))
