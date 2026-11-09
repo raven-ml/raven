@@ -114,11 +114,6 @@ raven / llama.cpp b12048 Vulkan:
   q05 -34%, a kernel contract change for the maintainer). The int64 cast
   before an integer sum is at most 3.8% of a query and stays.
   Data: ~/wt/tmp/talon-data on fudge (decision SF0.1/SF1, H2O 1e6/1e7)
-- talon 1.0 plan (_plans/talon/product/plan.md; designs adjudicated in
-  _plans/talon/design/), open units:
-  domain guides. After 1.0: the C Data
-  Interface, the Ptree bridge, complex and validity columns, `ewm`,
-  fixed-width CSV; HTML display once quill's protocol lands
 - brot vs gigatoken cd5ee648c6 on fudge (bench README, "Against
   gigatoken"): GPT-2 runs at 0.55-0.65 of its speed on one thread over
   100 MB (abbeface7). Pages: a warm pass faults 11.5k-29k times, mostly
