@@ -57,11 +57,9 @@ raven / llama.cpp b12048 Vulkan:
 
 ## rune, kaun, vega
 
-- attention under `Rune.jit`: causal saves little, since a grid under 1.3
-  waves takes as long as its longest workgroup (rows already launch longest
-  first): pair row tiles i and n-1-i, or split long rows' keys; the
-  tensor-core backward leaves head dimensions over 64, float captures'
-  cotangents, paged keys, forward mode and float32 on the composition
+- attention under `Rune.jit`: the tensor-core backward leaves head
+  dimensions over 64, float captures' cotangents, paged keys, forward mode
+  and float32 on the composition
 - attention's SIMT kernel on AMD (RDNA3, and what no core takes): K and V
   addresses are wave-uniform, so LLVM loads bfloat16 and float16 with
   s_load_u16 and a wait each, about 4100 serial round trips a tile; at
