@@ -5363,9 +5363,7 @@ the walk of `Rangeify.fix_store_hazard`.
     to 128 workgroups that cost the key projection 1.34x stays refused. At
     2048 cubed the floor of 512 left one warp a workgroup, and 256 takes a
     split by 4 (195-219 to 199-203 us). On parts of 24 to 142 SMs the floor
-    is a fit, not the test: unmeasured. Cores staged through shared memory
-    will replace this floor, the upcasts' and D211's split with the staged
-    tile's rule of `core_threads / stages`;
+    is a fit, not the test: unmeasured;
   - kept from before: a decode step's attention values, 64 by 64 outputs
     over 1024 slots, take 32 workgroups and 23.6 us where tinygrad's splits
     leave one and 68.9 us; a prefill's router, 512 tokens by 32 experts over
@@ -5379,6 +5377,15 @@ the walk of `Rangeify.fix_store_hazard`.
   would give two parts of one target different bits (D89's constants).
   Metal and AMD take the same value; theirs are to measure on a Mac's GPU
   and on nonnormal's R9700, which fudge lacks.
+  Since staging (D262) the staged tile's rule of `core_threads / stages`
+  replaces these floors for a staged core, so `stream/key-projection` and
+  `stream/dense-bf16-64` no longer reach them (29.8 against 29.5 us and 1347 us
+  both, four interleaved rounds). gpt-oss-20b's routed experts take the
+  unstaged path and reach the floors, which refuse nothing there:
+  `GptOss/experts-at-prefill-512` 2.77 against 2.80 ms and
+  `GptOss/prefill-512` 122.0 against 121.2 ms with and without them. The row
+  that still gains is `stream/decode-keys`, 7.4 against 7.8 us without the floors, 1.05x
+  for about 15 lines.
 - **Pinned by:** `Tolk.Heuristic`'s cases, on CUDA: `matmul_half_1024`,
   `matmul_half_512`, `matmul_half_256`, `attention_values` and
   `matmul_half_variable` (a variable counts the workgroups), with the
@@ -5386,8 +5393,8 @@ the walk of `Rangeify.fix_store_hazard`.
   core's floor › the splits after a tensor core are those that leave its
   floor of workgroups`, over every recorded core kernel, CDNA's included,
   with the local split's floor of 256 workgroups; the `routed_run` cases of
-  D200 on CUDA and Metal, whose local split by 2 the floor of 256 admits; the tolk bench's `stream/decode-keys`, `stream/dense-bf16-64`
-  and `stream/key-projection` rows on fudge.
+  D200 on CUDA, whose local split by 2 the floor of 256 admits; the tolk
+  bench's `stream/decode-keys` row on fudge.
 
 ## D176. Withdrawn
 
