@@ -74,6 +74,144 @@ let interpreter =
           rejects (fun () -> eval (Ops.sink [ Ops.int ~dtype:Dtype.Int32 1 ])));
     ]
 
+(* Casts *)
+
+(* [bits] compares values as {!Dtypes.const} does, floats bit for bit, NaNs
+   included. *)
+let bits =
+  let float_bits = function
+    | `Float x -> Some (Int64.bits_of_float x)
+    | `Int _ | `Bool _ | `Invalid -> None
+  in
+  Testable.make
+    ~pp:(fun ppf v ->
+      match float_bits v with
+      | Some b -> Format.fprintf ppf "%a (0x%016Lx)" (Testable.pp const) v b
+      | None -> Testable.pp const ppf v)
+    ~equal:(fun v w ->
+      match (float_bits v, float_bits w) with
+      | Some b, Some c -> Int64.equal b c
+      | None, None -> Testable.equal const v w
+      | _ -> false)
+
+(* [cast_of from to_ v] is the cast of the value [v] of [from] to [to_], as
+   Interpreter.mli states it: [v] itself at its own type, a NaN to a float
+   truncated with its sign and payload, and otherwise [v] converted as a
+   constant of [to_], then wrapped. *)
+let cast_of from to_ (v : Dtype.value) : Dtype.const =
+  if Dtype.equal from to_ then (v :> Dtype.const)
+  else
+    match v with
+    | `Float x when Float.is_nan x && Dtype.is_float to_ ->
+        (Dtype.truncate to_ v :> Dtype.const)
+    | v -> (
+        match Dtype.const to_ v with
+        | #Dtype.value as c -> (Dtype.truncate to_ c :> Dtype.const)
+        | `Invalid -> `Invalid)
+
+(* [overflows_of from to_ v] is [true] iff the cast of [v] from [from] to the
+   integer type [to_] gives it an exact value outside it: an infinity or a NaN
+   has none, and takes a value of [to_]. *)
+let overflows_of from to_ (v : Dtype.value) =
+  (not (Dtype.equal from to_))
+  && Dtype.is_int to_
+  &&
+  match v with
+  | `Float x when not (Float.is_finite x) -> false
+  | v ->
+      let lo, hi = int_bounds to_ and z = Dtype.Value.to_z v in
+      Bigint.lt z lo || Bigint.gt z hi
+
+let stored_dtypes =
+  List.filter
+    (fun dt -> not (List.mem dt Dtype.[ Void; Weak_int; Weak_float ]))
+    declared
+
+let int_dtypes = List.filter Dtype.is_int stored_dtypes
+
+(* The bounds of the integer types and their neighbours. *)
+let bounds =
+  List.concat_map
+    (fun dt ->
+      let lo, hi = int_bounds dt in
+      [ Bigint.pred lo; lo; Bigint.succ lo; Bigint.pred hi; hi; Bigint.succ hi ])
+    int_dtypes
+
+let quiet_nan = Int64.float_of_bits 0x7ff8_1234_5000_0000L
+let signalling_nan = Int64.float_of_bits 0x7ff4_0000_0000_0000L
+let negative_nan = Int64.float_of_bits 0xfff8_0000_2000_0000L
+
+let specials =
+  [ quiet_nan; signalling_nan; negative_nan; -0.; infinity; neg_infinity ]
+
+(* A source value, made a value of each type as a constant of it. Every
+   special float and every bound is an example of each run. *)
+let source =
+  Gen.with_pp (Testable.pp value)
+    (Gen.frequency
+       [
+         (2, Gen.map (fun x -> `Float x) finite_float);
+         (1, Gen.map (fun x -> `Float x) (Gen.of_list specials));
+         (1, Gen.map (fun z -> `Int z) integer);
+         (1, Gen.map (fun b -> `Bool b) Gen.bool);
+       ])
+
+let examples =
+  List.map (fun x -> `Float x) specials @ List.map (fun z -> `Int z) bounds
+
+let quiet_bit x = Int64.(logand (bits_of_float x) 0x0008_0000_0000_0000L) <> 0L
+
+let casts =
+  group "casts"
+    [
+      prop
+        "a cast between any two types converts as a constant, then wraps, \
+         and overflows where the constant is past the type"
+        ~examples source (fun s ->
+          (match s with
+          | `Float f ->
+              cover "a quiet NaN with a payload"
+                (Float.is_nan f && quiet_bit f
+                && Int64.bits_of_float f <> Int64.bits_of_float Float.nan);
+              cover "a signalling NaN"
+                (Float.is_nan f && not (quiet_bit f));
+              cover "-0." (f = 0. && Float.sign_bit f);
+              cover "infinity" (f = infinity);
+              cover "-infinity" (f = neg_infinity)
+          | `Int z ->
+              cover "an integer type's bound or its neighbour"
+                (List.exists (Bigint.equal z) bounds)
+          | `Bool _ -> ());
+          let past = ref false in
+          List.iter
+            (fun from ->
+              match Dtype.const from s with
+              | `Invalid -> ()
+              | #Dtype.value as v ->
+                  List.iter
+                    (fun to_ ->
+                      let msg =
+                        Format.asprintf "%a of %a to %a" (Testable.pp value) v
+                          (Testable.pp dtype) from (Testable.pp dtype) to_
+                      in
+                      let u = Ops.cast (x from) to_ and params = [ (0, v) ] in
+                      equal ~msg bits (cast_of from to_ v) (eval ~params u);
+                      let over = overflows_of from to_ v in
+                      past := !past || over;
+                      equal ~msg bool over (Interpreter.overflows ~params u))
+                    stored_dtypes)
+            stored_dtypes;
+          cover "a cast past its integer type" !past);
+      test "a cast of a float past its integer type overflows" (fun () ->
+          let at v =
+            Interpreter.overflows
+              ~params:[ (0, `Float v) ]
+              (Ops.cast (x Dtype.Float32) Dtype.Int8)
+          in
+          equal ~msg:"300.7" bool true (at 300.7);
+          equal ~msg:"127.9" bool false (at 127.9));
+    ]
+
 let leaves =
   let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
   and g = Ops.special (Int 8) "gidx0" in
@@ -367,6 +505,7 @@ let () =
     (run "Interpreter"
        [
          interpreter;
+         casts;
          leaves;
          invalid;
          overflows;
