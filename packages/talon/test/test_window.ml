@@ -509,7 +509,7 @@ let large =
           ( 3,
             constant
               (frequency
-                 [ (3, constant 0); (1, constant 512); (1, constant 1018) ]) );
+                 [ (6, constant 0); (1, constant 512); (3, constant 1018) ]) );
         ]
     in
     let* c = of_list [ 0.; 1.5; -6. ] in
