@@ -713,6 +713,49 @@ let compiles_in_one_call () =
   let _, _, calls = made_together ~parallel:1 5 in
   equal (list int) [ 5 ] calls
 
+(* Workers' compiles of six kernels, the fourth's source rejected until the
+   test accepts it: the first call raises, and the next makes every program
+   the first did not keep. *)
+let remakes_after_raise () =
+  let ks = List.init 6 (fun _ -> fresh_kernel ()) in
+  let rejected =
+    let k = List.nth ks 3 in
+    source (Codegen.compile (Codegen.linearize k clang) clang)
+  in
+  (* What the compiler is given holds the program's source, and more. *)
+  let holds src =
+    let n = String.length rejected in
+    let rec at i =
+      i + n <= String.length src && (String.sub src i n = rejected || at (i + 1))
+    in
+    at 0
+  in
+  let refuse = Atomic.make true in
+  let compiler =
+    Renderer.Compiler.v (fun src ->
+        if Atomic.get refuse && holds src then
+          raise (Renderer.Compiler.Compile_error "rejected");
+        src)
+  in
+  let r = renderer_for ~compiler clang_target in
+  let make () =
+    Setting.context
+      [ B (Setting.parallel, 3) ]
+      (fun () -> Codegen.to_programs (List.map (fun k -> (k, r)) ks))
+  in
+  raises ~msg:"first call" (Renderer.Compiler.Compile_error "rejected") make;
+  Atomic.set refuse false;
+  make ();
+  List.iteri
+    (fun i k ->
+      match Codegen.read k r with
+      | Some made ->
+          same_graph
+            ~msg:(Printf.sprintf "kernel %d" i)
+            (Codegen.to_program k r) made
+      | None -> fail (Printf.sprintf "kernel %d has no program" i))
+    ks
+
 (* A compiler that rejects its first source: the call that raises keeps
    nothing, and the next makes the program. *)
 let raising_keeps_nothing () =
@@ -913,6 +956,8 @@ let caching =
         compiles_together;
       test "to_programs on one domain compiles every source in one call"
         compiles_in_one_call;
+      test "to_programs after a call that raised makes the rest"
+        remakes_after_raise;
       test "a program made under one setting is not returned under another"
         separates_settings;
       group "a program is made again under another value of"

@@ -211,8 +211,9 @@ val to_programs :
     by {!to_program}. A kernel another domain is making at once may be made
     twice, and the first made is kept.
 
-    Raises what {!to_program} raises, that of the first worker that raises,
-    and then keeps no program. *)
+    Raises what {!to_program} raises. A call that raises may have kept some
+    of the programs, in memory or on disk, and a later call makes the
+    rest. *)
 
 val program_key : Ops.t -> Renderer.t -> string
 (** [program_key ast ren] is the key under which {!to_program} keeps the
