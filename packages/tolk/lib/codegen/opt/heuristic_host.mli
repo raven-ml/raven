@@ -8,10 +8,10 @@
 (** The host's rules of the hand-coded optimisations.
 
     On the host a kernel's lanes are counted in its target's vector registers:
-    the accumulators of its reduces take at most half of them and each
-    conversion a bounded number of lanes. These rules decide what a GPU, whose
-    outputs are its threads, does not count. {!Heuristic} states what a kernel
-    gets from them. *)
+    the accumulators of its reduces take at most half of them, and each
+    conversion and each iteration a bounded number of lanes. These rules
+    decide what a GPU, whose outputs are its threads, does not count.
+    {!Heuristic} states what a kernel gets from them. *)
 
 val on_host : Postrange.Scheduler.t -> bool
 (** [on_host k] is [true] iff [k] renders for the [CPU] device. *)
