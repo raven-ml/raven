@@ -40,6 +40,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- An exception raised during a device memory allocation on NVIDIA's kernel
+  driver no longer leaves its range taken, and a free raises when the driver
+  keeps an object it named.
 - `Rig.Buffer.aligned` answers for memory named by a handle alone, such as
   another machine's, up to the alignment its allocation starts on, where it
   raised; `Tolk_engine.run` raised on every such buffer.

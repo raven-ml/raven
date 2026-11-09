@@ -130,6 +130,7 @@ and range = {
   mutable gpu_addr : int; (* the GPUs' address of its first byte, or -1 *)
   mutable memory : int; (* the memory object's handle, or 0 *)
   mutable made : bool; (* whether the RM holds the object *)
+  mutable kept : bool; (* whether the RM refused to free an object it named *)
   mutable cpu : bool; (* whether the process maps memory at [gpu_addr] *)
   mutable unified : bool; (* whether unified memory holds the range *)
   mutable spare : int; (* a file opened for one call, or -1 *)
@@ -312,7 +313,7 @@ let free_object_raw r h =
    then the process's mapping the object describes. Each part leaves [r] once
    its free returned, so a refused one keeps its addresses, but an object the
    RM named, whose handle the RM may give out again once freed: it leaves
-   first, so no free reaches another object. *)
+   first, so no free reaches another object, and [kept] records a refusal. *)
 let give_back r =
   let g = r.parent in
   if r.spare >= 0 then begin
@@ -333,14 +334,14 @@ let give_back r =
     | Rm_named ->
         r.made <- false;
         r.memory <- 0;
-        ignore (free_object_raw r h : bool)
+        if not (free_object_raw r h) then r.kept <- true
     | Self_named -> if free_object_raw r h then r.made <- false
   end;
   if r.cpu && not r.made then begin
     Rm.unmap r.gpu_addr r.bytes;
     r.cpu <- false
   end;
-  not (r.unified || r.made || r.cpu)
+  not (r.unified || r.made || r.cpu || r.kept)
 
 (* Gives back [r]'s handle number and addresses, once nothing holds them. *)
 let give_numbers r =
@@ -402,6 +403,7 @@ let range g ~naming ~space bytes =
       gpu_addr = -1;
       memory = 0;
       made = false;
+      kept = false;
       cpu = false;
       unified = false;
       spare = -1;
