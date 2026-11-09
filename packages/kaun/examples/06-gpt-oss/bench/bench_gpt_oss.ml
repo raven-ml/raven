@@ -54,6 +54,13 @@ let short_prompt = 12
    case's setup. *)
 let period = 1 lsl 20
 
+(* Seconds of uncounted calls before a trial's samples. nonnormal's R9700
+   idles at 41 MHz; under decode steps it holds 1.7 GHz for 0.4 s, ramps to
+   3.2 GHz over 0.5 s, then creeps to 3.33 GHz by 3 s. With thumper's 0.1 s
+   default, the decode step timed the ramp: 32-34 ms against a steady
+   20.1. *)
+let warmup_seconds = 3.
+
 (* Bytes in [lo, lo + span) from a linear congruential generator, the first
    [period] repeated through the array: the expert blocks and their scales, in
    the range a trained checkpoint's scales take. *)
@@ -228,6 +235,10 @@ let step weights kind =
     | `Decode | `Decode_q8_0 -> ids := Nx.create Nx.int64 [| 1; 1 |] [| token |]
     | `Prefill _ -> ()
   in
+  (* The host weights are garbage once placed. Collected later, by thumper
+     between its warmup and its samples, freeing them idled the GPU for
+     200 ms, which dropped it back to its idle clock. *)
+  Gc.full_major ();
   call ();
   call
 
@@ -302,10 +313,11 @@ let () =
         exit 0
       end;
       (* A trial's deadline covers its setup, which builds the 13.8 GB of
-         weights and places them on the GPU, and its 28 calls: a prefill trial
-         takes 52 s on nonnormal's R9700. *)
+         weights and places them on the GPU, its warmup and its samples: the
+         five trials take 69 s together on nonnormal's R9700. *)
       Thumper.run "gpt_oss"
-        ~config:Thumper.Config.(default |> deadline 120.)
+        ~config:
+          Thumper.Config.(default |> deadline 120. |> warmup warmup_seconds)
         ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
         [ Thumper.group "GptOss" (List.map case kinds) ]
       |> exit

@@ -11,12 +11,17 @@ llama.cpp b12032 CUDA; NV and the first run last measured at 31aa4521b:
 - first call 0.37-0.39 s (c29acaee3) / 0.37 to 0.54 s (12 tokens, kernels
   cached; 1.36 / 1.47 s at the first run) / 75 ms (59 to 151 ms, no warmup)
 
-gpt-oss-20b, AMD gfx1201 (nonnormal, f24925ed77 unless stated, the new nx
-and rune), raven / llama.cpp b12048 Vulkan:
-- decode 20.3 ms / 9.40 ms
-- prefill-512 1.13 s (baf728633, one run) / 0.308 s
-- first call 1.47 s (12 tokens, kernels cached; 2.39 s compiling them) /
-  0.136 s (2.19 s without Mesa's shader cache)
+gpt-oss-20b, AMD gfx1201 (nonnormal, 502431b668, the new nx and rune),
+raven / llama.cpp b12048 Vulkan:
+- decode at position 512 20.4 ms / 10.38 ms at depth 512: attention 7.9 ms
+  (one query row a thread, 6 GB/s) against 0.31; expert products 5.4 ms at
+  212-254 GB/s against 3.0; top-k's 20-kernel sort and about 37 small
+  kernels a layer about 1.5 ms; argmax over the logits 0.63 ms
+- prefill-512 0.428 s / 0.308 s: expert products 326 ms on WMMA at 7-8
+  TFLOPS against 177; the out projection takes no WMMA, 52 ms against q's 10
+- first call 0.30-0.34 s (12 tokens, kernels cached; 1.03 s compiling
+  them) / 0.136 s (2.19 s without Mesa's shader cache); lowering and
+  linking the first block takes 69-131 ms of it on the host
 - llama.cpp's ROCm build needs HIP libraries nonnormal lacks; tinygrad
   needs Resizable BAR here
 
