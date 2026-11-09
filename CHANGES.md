@@ -4105,6 +4105,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Talon_arrow` reads every dictionary-encoded Arrow column, as its values when
+  it cannot be one `categorical` (a dictionary replaced between batches, one
+  with a repeat or a null, or one over another type). A column whose rows take
+  no bytes, such as `fixed_size_binary(0)`, reads as a tensor of no elements,
+  whatever its number of rows; it was refused past eight rows per byte of body.
 - `Talon_csv.file` reads gzip and Zstandard files, detected by their first
   bytes, whatever the file's name, every member or frame up to the end of the
   file: sniffing, batches and errors see the decompressed text, read as a

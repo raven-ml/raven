@@ -28,14 +28,27 @@ let with_bytes ?file ?(at = "") host f =
       | Rig.Out_of_memory _) ->
       error "the metadata is malformed or states more than memory holds"
 
+(* An id's dictionary: its chunks, newest first, one per batch since the last
+   replacement, so that a delta costs one list cell and earlier states share
+   their chunks. [stable] holds while every dictionary the file states for the id
+   is a prefix of the next: a delta appends, and a replacement that only extends
+   leaves earlier indices meaning what they meant. *)
+type dictionary = { chunks : Column.t list; stable : bool }
+
+let chunk c = Talon.v [ ("c", c) ]
+let table d = Talon.of_batches (List.rev_map chunk d.chunks)
+let whole d = Talon.column (table d) "c"
+
 (* A cursor walks a batch's field nodes and buffers in schema order. A buffer
-   is bytes of the mapped body, or of a fresh allocation when compressed. *)
+   is bytes of the mapped body, or of a fresh allocation when compressed. [dicts]
+   holds the dictionaries that stand for this batch. *)
 
 type slice = { ba : I.bigbytes; first : int; len : int; rig : Rig.Buffer.t }
 
 type cursor = {
   bytes : I.bigbytes;
   host : Rig.Buffer.t;
+  dicts : dictionary IMap.t;
   batch : batch;
   body : int;
   body_len : int;
@@ -44,10 +57,11 @@ type cursor = {
   mutable variadic : int list;
 }
 
-let cursor bytes host (m : message) batch =
+let cursor bytes host dicts (m : message) batch =
   {
     bytes;
     host;
+    dicts;
     batch;
     body = m.body;
     body_len = m.body_len;
@@ -68,8 +82,9 @@ let fresh n =
   let a = Nx_array.host Nx.uint8 [| n |] in
   (a, Bigarray.array1_of_genarray (Nx_array.bigarray a))
 
-(* Neither codec expands one byte past a block's 128 KiB, so a length beyond
-   that is malformed and allocates nothing. *)
+(* A Zstandard block regenerates at most 128 KiB (RFC 8878, Block_Maximum_Size)
+   from at least four bytes, and LZ4's length bytes add at most 255 each, so a
+   length past 128 KiB per byte is malformed and allocates nothing. *)
 let max_expansion = 131_072
 
 let decompress c s n =
@@ -141,12 +156,24 @@ let times n w =
     fail "a fixed size is out of bounds";
   n * w
 
-(* [stepped c n w] is the offsets of [n] rows of [w] elements. Only here do the
-   rows lack a bit of the body each: zero-width elements bound nothing. *)
-let stepped c n w =
-  if n / 8 > c.body_len then fail "a list states more rows than its body holds";
-  if w = 0 then Nx.zeros Nx.int64 [| n + 1 |]
-  else Nx.arange Nx.int64 0 (times n w + 1) w
+(* [stepped n w] is the offsets of [n] rows of [w > 0] elements. The elements
+   have been read by now, and their bytes bound [n]. *)
+let stepped n w = Nx.arange Nx.int64 0 (times n w + 1) w
+
+(* [empty_cell f] is the shape of the cells of [f], when a row of [f] holds no
+   bytes at all whatever the number of rows, and [None] otherwise. Such a column
+   reads as a tensor of no elements, which takes no memory per row: its row count
+   is the one thing the file states about it, so it must not be what allocates. *)
+let rec empty_cell (f : field) =
+  match (f.encoding, f.arrow, f.children) with
+  | None, Fixed_binary 0, _ -> Some [ 0 ]
+  | None, Fixed_list 0, _ -> Some [ 0 ]
+  | None, Fixed_list w, [ c ] when w > 0 ->
+      Option.map (List.cons w) (empty_cell c)
+  | None, Struct, cs when List.for_all (fun c -> Option.is_some (empty_cell c)) cs
+    ->
+      Some [ 0 ]
+  | _ -> None
 
 let next_variadic c =
   match c.variadic with
@@ -226,21 +253,86 @@ let refuse_where path v bad why =
     let row = Int64.to_int (Nx.item [ 0 ] (Nx.positions bad)) in
     fail "column %S: row %d: %s" path row why
 
+(* [no_null_below c path f ~rows valid row] consumes the nodes and buffers of the
+   zero-width element [f] of [rows] rows, which hold nothing but their validity,
+   and fails at a null element where [valid] holds. [row] names its row. *)
+let rec no_null_below c path (f : field) ~rows valid row =
+  let m, nulls = next_node c in
+  let vs = next_buffer c in
+  if m <> rows then fail "column %S: a list's child has the wrong length" path;
+  if nulls <> 0 then need vs ((m + 7) / 8);
+  let here i = nulls = 0 || slice_bit vs i in
+  if nulls <> 0 then
+    for i = 0 to m - 1 do
+      if valid i && not (here i) then
+        fail "column %S: row %d: a tensor's element is null" path (row i)
+    done;
+  let below i = valid i && here i in
+  match (f.arrow, f.children) with
+  | Fixed_binary _, _ -> ignore (next_buffer c)
+  | Fixed_list 0, _ -> List.iter (skip c) f.children
+  | Fixed_list w, [ ch ] ->
+      no_null_below c path ch ~rows:(times m w)
+        (fun i -> below (i / w))
+        (fun i -> row (i / w))
+  | _, cs -> List.iter (fun ch -> no_null_below c path ch ~rows:m below row) cs
+
 (* [outside w lo hi] is where the [int64]s of [w] leave [lo] to [hi - 1]. *)
 let outside w lo hi =
   Nx.logical_or (Nx.less_s w lo) (Nx.greater_equal_s w hi)
 
-(* [codes path s n v e] is the [int32] codes of [s]. None wraps to a code. *)
+(* [indices path s n e] is the [n] dictionary indices of [s], as [int64]. An
+   unsigned index past [int64] wraps negative, outside every dictionary. *)
+let indices path s n (e : encoding) =
+  match I.find_scalar (Int { bits = e.index_bits; signed = e.index_signed }) with
+  | None -> fail "column %S: dictionary indices of %d bits" path e.index_bits
+  | Some (Scalar (_, _, dt)) -> Nx.cast Nx.int64 (view s dt [| n |])
+
+(* [codes path s n v e] is the [int32] codes of a categorical. A categorical's
+   storage holds [int32] codes, so no index of one wraps to a code. *)
 let codes path s n v (e : encoding) =
   if e.index_bits = 32 && e.index_signed then view s Nx.int32 [| n |]
   else
-    let index = Int { bits = e.index_bits; signed = e.index_signed } in
-    match I.find_scalar index with
-    | None -> fail "column %S: dictionary indices of %d bits" path e.index_bits
-    | Some (Scalar (_, _, dt)) ->
-        let w = Nx.cast Nx.int64 (view s dt [| n |]) in
-        refuse_where path v (outside w 0L 0x8000_0000L) "an index too large";
-        Nx.cast Nx.int32 w
+    let w = indices path s n e in
+    refuse_where path v (outside w 0L 0x8000_0000L) "an index too large";
+    Nx.cast Nx.int32 w
+
+(* [under ty v c] is [c], null also where [v] is clear. *)
+let under ty v c =
+  let meet o = Some (match o with None -> v | Some o -> Nx.logical_and v o) in
+  let l : Column.layout =
+    match Column.layout c with
+    | Fixed f -> Fixed { f with validity = meet f.validity }
+    | Varsize f -> Varsize { f with validity = meet f.validity }
+    | Children f -> Children { f with validity = meet f.validity }
+  in
+  match Column.of_layout ty l with
+  | Ok c -> c
+  | Error (_, why) -> invalid_arg ("Talon_arrow: " ^ why)
+
+(* [decoded c path ty e n v s] is the rows of a column read as its dictionary's
+   values, [ty]: [n] indices of [s] looked up in the dictionary that stands for
+   this batch, null where [v] is clear or the dictionary's entry is. A stream may
+   state a dictionary only after batches of nulls, so an absent dictionary is an
+   empty one, and a valid row of either fails as out of range. *)
+let decoded c path (Type.Any t as ty) (e : encoding) n v s =
+  let dictionary = Option.map table (IMap.find_opt e.id c.dicts) in
+  let size = Option.fold ~none:0 ~some:Talon.rows dictionary in
+  let index = indices path s n e in
+  refuse_where path v
+    (outside index 0L (Int64.of_int size))
+    "a dictionary index out of range";
+  match dictionary with
+  | Some d when size > 0 ->
+      (* A null row may hold any index, so it reads the dictionary's first. *)
+      let idx =
+        match v with
+        | None -> index
+        | Some v -> Nx.where (Nx.cast Nx.bool v) index (Nx.scalar Nx.int64 0L)
+      in
+      let taken = Talon.column (Talon.take idx d) "c" in
+      Option.fold ~none:taken ~some:(fun v -> under ty v taken) v
+  | _ -> Column.of_options t (Array.make n None)
 
 let rec read c path (f : field) (Type.Any t as ty) : Column.t =
   match t with
@@ -263,7 +355,7 @@ let rec read c path (f : field) (Type.Any t as ty) : Column.t =
       match (f.encoding, f.arrow, t) with
       | Some e, _, Categorical _ ->
           fixed (P (codes path (next_buffer c) n validity e))
-      | Some _, _, _ -> fail "column %S does not read as its format's" path
+      | Some e, _, _ -> decoded c path ty e n validity (next_buffer c)
       | None, (Bool | Int _ | Float _), _ ->
           let (Scalar (_, _, dt)) = Option.get (I.find_scalar f.arrow) in
           flat dt
@@ -291,15 +383,28 @@ let rec read c path (f : field) (Type.Any t as ty) : Column.t =
       | None, (Utf8_view | Binary_view), _ ->
           let offs, bytes = views c path (next_buffer c) n in
           varsize offs bytes
+      | None, (Fixed_binary _ | Fixed_list _), Tensor (dt, shape)
+        when Option.is_some (empty_cell f) ->
+          (match (f.arrow, f.children) with
+          | Fixed_binary _, _ -> ignore (next_buffer c)
+          | Fixed_list w, [ ch ] when w > 0 ->
+              let valid r = nulls = 0 || slice_bit vs r in
+              no_null_below c path ch ~rows:(times n w)
+                (fun i -> valid (i / w))
+                (fun i -> i / w)
+          | _ -> List.iter (skip c) f.children);
+          fixed (P (Nx.zeros dt (Array.append [| n |] (Iarray.to_array shape))))
       | None, Fixed_binary w, _ ->
-          let s = next_buffer c in
-          let child = view s Nx.uint8 [| times n w |] in
-          varsize (stepped c n w) (Column.of_tensor child)
+          let child = view (next_buffer c) Nx.uint8 [| times n w |] in
+          varsize (stepped n w) (Column.of_tensor child)
       | None, (List | Large_list | Map), List e ->
           let offs = offsets (next_buffer c) n (f.arrow = Large_list) in
           varsize offs (sub (child ()) (Any e))
       | None, Fixed_list w, List e ->
-          varsize (stepped c n w) (sub (child ()) (Any e))
+          let elements = sub (child ()) (Any e) in
+          if Column.length elements <> times n w then
+            fail "column %S: a list's child has the wrong length" path;
+          varsize (stepped n w) elements
       | None, Struct, Record fs ->
           let field (ch : field) (name, ty) = (name, sub ch ty) in
           let fields = List.map2 field f.children fs in
@@ -325,21 +430,15 @@ let rec read c path (f : field) (Type.Any t as ty) : Column.t =
           fixed (P (view (next_buffer c) dt shape))
       | None, _, _ -> fail "column %S does not read as its format's type" path)
 
-type dictionary = Strings of string array | Refused of string
-
 type doc = {
   host : Rig.Buffer.t;
   is_file : bool;
   schema : schema;
-  messages : (int * message) list;
-  dictionaries : dictionary IMap.t;
+  batches : (int * int * dictionary IMap.t) list;
+  categoricals : string array IMap.t;
 }
 
-let rows d =
-  let count acc (_, (m : message)) =
-    match m.header with Some (Batch b) -> acc + b.length | _ -> acc
-  in
-  List.fold_left count 0 d.messages
+let rows d = List.fold_left (fun acc (_, n, _) -> acc + n) 0 d.batches
 
 let magic = "ARROW1"
 
@@ -371,55 +470,8 @@ let messages bytes =
     | (_, { header = Some (Schema s); _ }) :: rest -> (false, s, rest)
     | _ -> fail "the bytes are neither an Arrow file nor an Arrow stream"
 
-let rec encoded acc (f : field) =
-  match f.encoding with
-  | Some e -> (e.id, f) :: acc
-  | None -> List.fold_left encoded acc f.children
-
 let is_text (f : field) =
   match f.arrow with Utf8 | Large_utf8 | Utf8_view -> true | _ -> false
-
-(* [dictionaries ...] is each id's dictionary, or why talon cannot hold it. *)
-let dictionaries bytes host fields messages =
-  let add acc (_, (m : message)) =
-    match m.header with
-    | Some (Dictionary { id; delta; batch }) -> (
-        match List.assoc_opt id fields with
-        | Some f when is_text f ->
-            let value = { f with encoding = None; extension = None } in
-            let c = cursor bytes host m batch in
-            let col = read c "dictionary" value (Any Type.string) in
-            let next =
-              match IMap.find_opt id acc with
-              | _ when Column.null_count col > 0 -> Refused "holds a null"
-              | Some (Refused _ as r) -> r
-              | None -> Strings (Column.values Kind.string col)
-              | Some (Strings a) ->
-                  let b = Column.values Kind.string col in
-                  if delta then Strings (Array.append a b)
-                  else if a = b then Strings a
-                  else Refused "changes between batches"
-            in
-            IMap.add id next acc
-        | _ -> acc)
-    | _ -> acc
-  in
-  let repeats a =
-    List.compare_lengths (List.sort_uniq compare a) a <> 0
-  in
-  let distinct = function
-    | Strings a when repeats (Array.to_list a) -> Refused "holds a string twice"
-    | d -> d
-  in
-  IMap.map distinct (List.fold_left add IMap.empty messages)
-
-let open_ host bytes =
-  let is_file, schema, messages = messages bytes in
-  if not schema.little then
-    fail "the data is big-endian, which talon does not read";
-  let fields = List.fold_left encoded [] schema.fields in
-  let dictionaries = dictionaries bytes host fields messages in
-  { host; is_file; schema; messages; dictionaries }
 
 let tensor_of (arrow : arrow) shape : Type.any option =
   match I.find_scalar arrow with
@@ -461,35 +513,36 @@ let canonical (f : field) meta =
       tensor_of c.arrow (Array.of_list shape)
   | _ -> None
 
-let rec default_of d path (f : field) : Type.any =
+(* [default_of cats path f] is the type [f] reads as, [cats] holding the
+   dictionary ids that read as categoricals. Below a dictionary, every nested
+   dictionary reads as its values, so a dictionary's values are read before the
+   categoricals are known. *)
+let rec default_of cats path (f : field) : Type.any =
   let ext name meta =
-    let (Type.Any s) = default_of d path { f with extension = None } in
+    let (Type.Any s) = default_of cats path { f with extension = None } in
     Type.Any (Type.ext ~name ~metadata:meta s)
   in
   let dictionary (e : encoding) : Type.any =
-    if not (is_text f) then
-      fail "column %S is dictionary-encoded over %s, which talon cannot hold"
-        path (I.field_text { f with encoding = None });
-    match IMap.find_opt e.id d.dictionaries with
-    | Some (Strings a) -> Any (Type.categorical a)
-    | Some (Refused why) ->
-        fail "column %S: its dictionary %s, which talon cannot hold" path why
-    | None -> Any (Type.categorical [||])
+    match IMap.find_opt e.id cats with
+    | Some a -> Any (Type.categorical a)
+    | None -> plain IMap.empty path { f with encoding = None }
   in
   match (f.extension, f.encoding) with
   | Some (("arrow.fixed_shape_tensor" as n), meta), None -> (
       match canonical f meta with Some t -> t | None -> ext n meta)
   | Some (name, meta), _ -> ext name meta
   | None, Some e -> dictionary e
-  | None, None -> plain d path f
+  | None, None -> plain cats path f
 
-and plain d path (f : field) : Type.any =
-  let child (c : field) = default_of d (path ^ "." ^ c.name) c in
+and plain cats path (f : field) : Type.any =
+  let child (c : field) = default_of cats (path ^ "." ^ c.name) c in
   let list c =
     let (Any e) = child c in
     Type.Any (Type.list e)
   in
+  let empty shape = Type.Any (Type.tensor Nx.uint8 (Array.of_list shape)) in
   match (f.arrow, f.children) with
+  | Fixed_binary 0, _ -> empty [ 0 ]
   | (Utf8 | Large_utf8 | Utf8_view), _ -> Any Type.string
   | (Binary | Large_binary | Binary_view | Fixed_binary _), _ -> Any Type.binary
   | (Date_day | Date_ms), _ -> Any Type.date
@@ -503,7 +556,8 @@ and plain d path (f : field) : Type.any =
       let numeric = c.encoding = None && c.extension = None in
       match if numeric then tensor_of c.arrow [| n |] else None with
       | Some t -> t
-      | None -> list c)
+      | None -> (
+          match empty_cell f with Some s -> empty s | None -> list c))
   | (List | Large_list | Map), [ c ] -> list c
   | (List | Large_list | Map | Fixed_list _), _ ->
       fail "column %S: a list has no element" path
@@ -515,25 +569,131 @@ and plain d path (f : field) : Type.any =
       let (Scalar (_, t, _)) = Option.get (I.find_scalar f.arrow) in
       Any t
 
-let default d (f : field) = default_of d f.name f
+(* [encoded path acc f] adds [f] and its descendants that are dictionary-encoded,
+   each with its path. *)
+let rec encoded path acc (f : field) =
+  let acc =
+    match f.encoding with Some e -> (e.id, (path, f)) :: acc | None -> acc
+  in
+  List.fold_left
+    (fun acc (c : field) -> encoded (path ^ "." ^ c.name) acc c)
+    acc f.children
+
+(* [shape f] is [f] without what does not change how it lays out or writes. *)
+let rec shape (f : field) : field =
+  {
+    f with
+    metadata = [];
+    encoding = Option.map (fun (e : encoding) -> { e with id = 0 }) f.encoding;
+    children = List.map shape f.children;
+  }
+
+(* [by_id fields] is each dictionary id's field. Fields may share a dictionary
+   ("dictionaries can even be used for multiple fields"), which then needs one
+   value type. *)
+let by_id fields =
+  let value (f : field) =
+    { (shape f) with name = ""; encoding = None; extension = None }
+  in
+  let add acc (id, (path, f)) =
+    match IMap.find_opt id acc with
+    | Some (other, g) when value g <> value f ->
+        fail "columns %S and %S share a dictionary and differ in type" other path
+    | Some _ -> acc
+    | None -> IMap.add id (path, f) acc
+  in
+  List.fold_left add IMap.empty fields
+
+(* [prefix a b] is whether the strings of [a] are the first of [b]'s. *)
+let prefix a b =
+  let a = Column.options Kind.string a and b = Column.options Kind.string b in
+  Array.length a <= Array.length b && Array.sub b 0 (Array.length a) = a
+
+(* [dictionaries ...] walks the messages in order: a batch reads under the
+   dictionaries that stand when it is reached, a persistent map per batch. In a
+   file every dictionary comes before every batch, as its footer lists them, and
+   replacing one is malformed, by the IPC format: "only one non-delta dictionary
+   batch can be emitted". *)
+let dictionaries bytes host ~is_file fields messages =
+  let load held id delta m batch =
+    match IMap.find_opt id fields with
+    | None -> held
+    | Some (path, (f : field)) ->
+        let value = { f with encoding = None; extension = None } in
+        let c = cursor bytes host held m batch in
+        let col = read c path value (plain IMap.empty path value) in
+        let old = IMap.find_opt id held in
+        if is_file && (not delta) && Option.is_some old then
+          fail "column %S: a file replaces a dictionary" path;
+        let entry =
+          match old with
+          | None -> { chunks = [ col ]; stable = true }
+          | Some o when delta -> { o with chunks = col :: o.chunks }
+          | Some o ->
+              let stable = is_text f && o.stable && prefix (whole o) col in
+              { chunks = [ col ]; stable }
+        in
+        IMap.add id entry held
+  in
+  let step (held, batches) (pos, (m : message)) =
+    match m.header with
+    | Some (Batch b) -> (held, (pos, b.length, held) :: batches)
+    | Some (Dictionary { id; delta; batch }) ->
+        (load held id delta m batch, batches)
+    | _ -> (held, batches)
+  in
+  let held, batches = List.fold_left step (IMap.empty, []) messages in
+  (held, List.rev batches)
+
+(* [categoricals fields held] is the strings of each text dictionary that can be
+   a categorical: stable, without a null or a repeat. An id without a dictionary
+   has no rows to read, and is a categorical of no strings. *)
+let categoricals fields held =
+  let add id (_, (f : field)) acc =
+    if not (is_text f) then acc
+    else
+      match IMap.find_opt id held with
+      | None -> IMap.add id [||] acc
+      | Some d when not d.stable -> acc
+      | Some d ->
+          let values = whole d in
+          if Column.null_count values > 0 then acc
+          else
+            let a = Column.values Kind.string values in
+            let distinct = List.sort_uniq compare (Array.to_list a) in
+            if List.compare_length_with distinct (Array.length a) = 0 then
+              IMap.add id a acc
+            else acc
+  in
+  IMap.fold add fields IMap.empty
+
+let open_ host bytes =
+  let is_file, schema, messages = messages bytes in
+  if not schema.little then
+    fail "the data is big-endian, which talon does not read";
+  let fields =
+    by_id
+      (List.fold_left
+         (fun acc (f : field) -> encoded f.name acc f)
+         [] schema.fields)
+  in
+  let held, batches = dictionaries bytes host ~is_file fields messages in
+  { host; is_file; schema; batches; categoricals = categoricals fields held }
+
+let default d (f : field) = default_of d.categoricals f.name f
 
 let rec reads_as (f : field) (Type.Any current) (Type.Any t) =
   Type.equal current t
   ||
   match (f.encoding, f.extension, f.arrow, f.children, current, t) with
-  | None, None, Fixed_list _, [ c ], Tensor _, List e ->
-      let (Scalar (_, s, _)) = Option.get (I.find_scalar c.arrow) in
-      reads_as c (Any s) (Any e)
+  | None, None, Fixed_list w, [ c ], Tensor _, List e when w > 0 -> (
+      match I.find_scalar c.arrow with
+      | Some (Scalar (_, s, _)) -> reads_as c (Any s) (Any e)
+      | None -> false)
   | _ -> false
 
 let parts ?file d columns =
-  let batches =
-    List.filter_map
-      (fun (pos, (m : message)) ->
-        match m.header with Some (Batch b) -> Some (pos, b.length) | _ -> None)
-      d.messages
-  in
-  let part i (pos, length) : Source.part =
+  let part i (pos, length, dicts) : Source.part =
     let at = Printf.sprintf "record batch %d: " i in
     let decode bytes =
       let m, b =
@@ -541,7 +701,7 @@ let parts ?file d columns =
         | Some (({ header = Some (Batch b); _ } as m), _) -> (m, b)
         | _ -> fail "a record batch is not where it was"
       in
-      let c = cursor bytes d.host m b in
+      let c = cursor bytes d.host dicts m b in
       let one (f : field) =
         match List.find_opt (fun (g, _) -> g == f) columns with
         | Some (_, ty) -> Some (f.name, read c f.name f ty)
@@ -561,7 +721,7 @@ let parts ?file d columns =
     in
     { rows = Some length; open_ = (fun () -> Ok { next; close = ignore }) }
   in
-  List.mapi part batches
+  List.mapi part d.batches
 
 (* Writing *)
 
@@ -791,19 +951,6 @@ let rec column b (Type.Any t) (f : field) c =
       in
       List.iter2 write f.children fs
   | _ -> invalid_arg "Talon_arrow: a column does not lay out as its type"
-
-(* [under ty v c] is [c], null also where the record above it is. *)
-and under ty v c =
-  let meet o = Some (match o with None -> v | Some o -> Nx.logical_and v o) in
-  let l : Column.layout =
-    match Column.layout c with
-    | Fixed f -> Fixed { f with validity = meet f.validity }
-    | Varsize f -> Varsize { f with validity = meet f.validity }
-    | Children f -> Children { f with validity = meet f.validity }
-  in
-  match Column.of_layout ty l with
-  | Ok c -> c
-  | Error (_, why) -> invalid_arg ("Talon_arrow: " ^ why)
 
 let eos = "\xFF\xFF\xFF\xFF\000\000\000\000"
 let magic = "ARROW1"
@@ -1095,15 +1242,6 @@ let codec = function
   | Uncompressed -> None
   | Lz4_frame -> Some 0
   | Zstd -> Some 1
-
-(* [shape f] is [f] without what does not change how it writes. *)
-let rec shape (f : field) : field =
-  {
-    f with
-    metadata = [];
-    encoding = Option.map (fun (e : encoding) -> { e with id = 0 }) f.encoding;
-    children = List.map shape f.children;
-  }
 
 let encode f q w =
   let wanted = Schema.v (columns_of f) in

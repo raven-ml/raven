@@ -9,7 +9,8 @@ committed, so the suite itself needs neither Python nor the network. With
 
 - ../support/*.arrow and *.arrows: files and streams of every type, nulls at
   every level, batch boundaries, compression, dictionaries (replaced, delta,
-  duplicate), extensions, custom metadata, and fields talon refuses.
+  duplicate, over other types), zero-width columns, extensions, custom
+  metadata, and fields talon refuses.
 - ../golden/values.txt: per file and column, the talon type pyarrow's type
   reads as and every value: integers and ticks in decimal, floats with %.17g,
   text and bytes in hexadecimal, null as `n`, nested values bracketed. The
@@ -38,6 +39,7 @@ def nulled(values, every=5):
 
 
 N = 40
+ZERO_MANY = 1 << 24
 ints = [(i * 3) - 40 for i in range(N)]
 floats = [0.5 * i - 7.25 for i in range(N)] + [float("inf"), float("-inf")]
 texts = ["", "a", "é", "日本語", "🦊", "abc"]
@@ -150,6 +152,93 @@ def dict_table():
         ),
     }
     return pa.table(columns)
+
+
+def bits(flags):
+    """The validity buffer of [flags]."""
+    return pa.array(flags, pa.bool_()).buffers()[1]
+
+
+def zero_width_table():
+    """Zero-width columns, built from buffers: their rows take no bytes."""
+    valid = [i % 5 != 0 for i in range(N)]
+    empty = pa.py_buffer(b"")
+    leaf = lambda n, t: pa.Array.from_buffers(t, n, [None, empty])
+    struct0 = pa.struct([])
+    return pa.table(
+        {
+            "binary0": pa.Array.from_buffers(pa.binary(0), N, [bits(valid), empty]),
+            "text_list0": pa.Array.from_buffers(
+                pa.list_(pa.string(), 0), N, [bits(valid)], children=[pa.array([], pa.string())]
+            ),
+            "ints0": pa.Array.from_buffers(
+                pa.list_(pa.int32(), 0), N, [bits(valid)], children=[pa.array([], pa.int32())]
+            ),
+            "binary0_lists": pa.Array.from_buffers(
+                pa.list_(pa.binary(0), 3),
+                N,
+                [bits(valid)],
+                children=[
+                    pa.Array.from_buffers(
+                        pa.binary(0), 3 * N, [bits([valid[i // 3] for i in range(3 * N)]), empty]
+                    )
+                ],
+            ),
+            "structs": pa.Array.from_buffers(
+                pa.list_(struct0, 2), N, [None], children=[pa.Array.from_buffers(struct0, 2 * N, [None], children=[])]
+            ),
+            "record": pa.Array.from_buffers(
+                pa.struct([("a", pa.binary(0))]), N, [bits(valid)], children=[leaf(N, pa.binary(0))]
+            ),
+        }
+    )
+
+
+def zero_many_table():
+    """A column of more rows than the body holds bytes."""
+    binary0 = pa.Array.from_buffers(pa.binary(0), ZERO_MANY, [None, pa.py_buffer(b"")])
+    return pa.table({"z": binary0})
+
+
+def zero_extension_table():
+    """A fixed list of zero-width elements under an extension, of many rows."""
+    item = pa.field("item", pa.binary(0), metadata={"ARROW:extension:name": "x"})
+    child = pa.Array.from_buffers(pa.binary(0), ZERO_MANY, [None, pa.py_buffer(b"")])
+    t = pa.list_(item, 1)
+    return pa.table({"c": pa.Array.from_buffers(t, ZERO_MANY, [None], children=[child])})
+
+
+def zero_null_table():
+    """A null element under a row that is not null, in zero-width cells."""
+    empty = pa.py_buffer(b"")
+    child = pa.Array.from_buffers(pa.binary(0), 6, [bits([False, True, True, True, True, True]), empty])
+    return pa.table({"c": pa.Array.from_buffers(pa.list_(pa.binary(0), 3), 2, [None], children=[child])})
+
+
+def dictionary_tables():
+    """Dictionaries talon holds by value: over other types, or not one set of strings."""
+    from_arrays = pa.DictionaryArray.from_arrays
+    inner = pa.dictionary(pa.int8(), pa.string())
+    return {
+        "dict_dup": pa.table({"c": from_arrays(pa.array([0, 1, 2, None, 1], pa.int32()), pa.array(["a", "a", "b"]))}),
+        "dict_null": pa.table({"c": from_arrays(pa.array([0, 1, 2, None], pa.int32()), pa.array(["p", None, "q"]))}),
+        "dict_int": pa.table({"c": from_arrays(pa.array([0, 1, None, 0], pa.int16()), pa.array([10, -20], pa.int64()))}),
+        "dict_binary": pa.table({"c": from_arrays(pa.array([1, 0, None], pa.int32()), pa.array([b"\xff", b""], pa.binary()))}),
+        "dict_null_index": pa.table({"c": from_arrays(
+            pa.Array.from_buffers(pa.int32(), 3, [bits([True, False, True]), pa.py_buffer(struct.pack("<3i", 0, 99, 1))]),
+            pa.array(["a", "a", "b"]))}),
+        "dict_float": pa.table({"c": from_arrays(pa.array([1, 0, 1], pa.uint8()), pa.array([0.5, float("inf")], pa.float64()))}),
+        "dict_list": pa.table({"c": from_arrays(
+            pa.array([1, None, 0, 1], pa.int32()), pa.array([[1, 2], None], pa.list_(pa.int32())))}),
+        "dict_struct": pa.table({"c": from_arrays(
+            pa.array([1, 0], pa.int32()), pa.array([{"a": 1, "b": "x"}, {"a": None, "b": "y"}]))}),
+        "dict_binary0": pa.table({"c": from_arrays(
+            pa.array([0, None, 0], pa.int32()),
+            pa.Array.from_buffers(pa.binary(0), 2, [None, pa.py_buffer(b"")]))}),
+        "dict_nested": pa.table({"c": from_arrays(
+            pa.array([1, 0, 1], pa.int32()),
+            pa.array([["v", "u"], ["u"]], pa.list_(inner)))}),
+    }
 
 
 def views_table():
@@ -269,6 +358,14 @@ def delta_arrays():
     return (grow([0, 1, None], ["u", "v"]), grow([2, 0, 3, 1], ["u", "v", "w", "x"]))
 
 
+def write_tensor_dict(path):
+    """A fixed list of dictionary-encoded elements, under the tensor extension."""
+    list_type = pa.list_(pa.dictionary(pa.int32(), pa.int32()), 2)
+    metadata = {"ARROW:extension:name": "arrow.fixed_shape_tensor", "ARROW:extension:metadata": '{"shape":[2]}'}
+    table = pa.table([pa.array([[0, 1]], list_type)], schema=pa.schema([pa.field("c", list_type, metadata=metadata)]))
+    write_file(path, table)
+
+
 def refused_files(out):
     tables = {
         "refused_null": pa.table({"bad": pa.nulls(3)}),
@@ -281,33 +378,140 @@ def refused_files(out):
             {"bad": pa.RunEndEncodedArray.from_arrays(pa.array([3], pa.int32()), pa.array([1], pa.int32()))}
         ),
         "refused_list_view": pa.table({"bad": pa.array([[1]], pa.list_view(pa.int32()))}),
-        "refused_dict_dup": pa.table({"bad": pa.DictionaryArray.from_arrays(
-            pa.array([0, 1, 2], pa.int32()), pa.array(["a", "a", "b"]))}),
-        "refused_dict_null": pa.table({"bad": pa.DictionaryArray.from_arrays(
-            pa.array([0, 1, 2], pa.int32()), pa.array(["p", None, "q"]))}),
-        "refused_dict_int": pa.table({"bad": pa.DictionaryArray.from_arrays(
-            pa.array([0, 1], pa.int16()), pa.array([10, 20], pa.int64()))}),
-        "refused_dict_binary": pa.table({"bad": pa.DictionaryArray.from_arrays(
-            pa.array([0, 1], pa.int32()), pa.array([b"\xff", b"\x00"], pa.binary()))}),
-        "refused_tensor_dict": pa.table(
-            [pa.array([[0, 1]], pa.list_(pa.dictionary(pa.int32(), pa.int32()), 2))],
-            schema=pa.schema([pa.field("bad", pa.list_(pa.dictionary(pa.int32(), pa.int32()), 2), metadata={
-                "ARROW:extension:name": "arrow.fixed_shape_tensor",
-                "ARROW:extension:metadata": '{"shape":[2]}'})])),
         "refused_nested": pa.table(
             {"outer": pa.array([{"bad": Decimal("1.5")}], pa.struct([("bad", pa.decimal128(4, 1))]))}
         ),
     }
     for name, table in tables.items():
         write_file(out / (name + ".arrow"), table)
-    two_batches(out / "refused_dict_replaced.arrows", ["p", "q", None], ["r", "s", "s"])
+    replaced_in_file(out / "refused_dict_replaced.arrow")
+    shared_id(out / "refused_shared_id.arrows")
+    write_stream(out / "refused_zero_null.arrows", zero_null_table())
     (out / "refused_bomb.arrows").write_bytes(schema_bomb(40))
+    # An index past its dictionary is an error at the row, named when it is read.
+    write_file(out / "refused_dict_index.arrow", pa.table({"c": pa.DictionaryArray.from_arrays(
+        pa.Array.from_buffers(pa.int32(), 2, [None, pa.py_buffer(struct.pack("<2i", 0, 5))]),
+        pa.array([10, 20], pa.int64()), safe=False)}))
     # A date past int32 days reads as an error, naming the row.
     days = pa.array([2**31 * 86400000], pa.date64())
     write_file(out / "refused_date_range.arrow", pa.table({"d": days}))
     # Some writers state instants, not midnights. pyarrow will not read them.
     ms = pa.array([-1, 1, -86400000, -86400001, None], pa.date64())
     write_file(out / "date64_floor.arrow", pa.table({"d": ms}))
+
+
+def fb_field(b, table, slot):
+    """The position of field [slot] of the FlatBuffer table at [table], or None."""
+    vtable = table - struct.unpack_from("<i", b, table)[0]
+    entry = 4 + 2 * slot
+    if entry >= struct.unpack_from("<H", b, vtable)[0]:
+        return None
+    offset = struct.unpack_from("<H", b, vtable + entry)[0]
+    return table + offset if offset else None
+
+
+def fb_target(b, at):
+    return at + struct.unpack_from("<I", b, at)[0]
+
+
+def frames(b, at=0):
+    """The framed messages of [b] from [at]: (start, end, message table, header
+    type), the end-of-stream marker with table None."""
+    out = []
+    while at < len(b):
+        meta_len = struct.unpack_from("<I", b, at + 4)[0]
+        if meta_len == 0:
+            out.append((at, at + 8, None, 0))
+            break
+        message = fb_target(b, at + 8)
+        body = fb_field(b, message, 3)
+        length = struct.unpack_from("<q", b, body)[0] if body else 0
+        end = at + 8 + meta_len + length
+        out.append((at, end, message, b[fb_field(b, message, 1)]))
+        at = end
+    return out
+
+
+def late_dictionary(path):
+    """A stream whose dictionary follows a record batch of nulls, which the IPC
+    format allows and pyarrow will not read."""
+    dictionary = pa.array([10, 20], pa.int64())
+    schema = pa.schema([("c", pa.dictionary(pa.int32(), pa.int64()))])
+    grow = lambda idx: pa.DictionaryArray.from_arrays(pa.array(idx, pa.int32()), dictionary)
+    with ipc.new_stream(path, schema) as w:
+        for idx in ([None, None], [0, 1]):
+            w.write_batch(pa.record_batch([grow(idx)], schema=schema))
+    b = path.read_bytes()
+    parts = [b[f[0]:f[1]] for f in frames(b)]
+    assert [f[3] for f in frames(b)] == [1, 2, 3, 3, 0]
+    path.write_bytes(parts[0] + parts[2] + parts[1] + parts[3] + parts[4])
+
+
+def shared_id(path):
+    """A stream of two dictionary fields of different value types under one id."""
+    t = pa.table({
+        "x": pa.DictionaryArray.from_arrays(pa.array([0, 1], pa.int32()), pa.array([7, 8], pa.int64())),
+        "y": pa.DictionaryArray.from_arrays(pa.array([0, 1], pa.int32()), pa.array(["a", "b"])),
+    })
+    write_stream(path, t)
+    b = bytearray(path.read_bytes())
+    fr = frames(b)
+    assert [f[3] for f in fr] == [1, 2, 2, 3, 0]
+    # Field y of the schema and its dictionary batch are given the id of x.
+    schema = fb_target(b, fb_field(b, fr[0][2], 2))
+    fields = fb_target(b, fb_field(b, schema, 1))
+    field_y = fb_target(b, fields + 8)
+    encoding = fb_target(b, fb_field(b, field_y, 4))
+    struct.pack_into("<q", b, fb_field(b, encoding, 0), 0)
+    batch_y = fb_target(b, fb_field(b, fr[2][2], 2))
+    struct.pack_into("<q", b, fb_field(b, batch_y, 0), 0)
+    parts = [bytes(b[f[0]:f[1]]) for f in fr]
+    path.write_bytes(parts[0] + parts[2] + parts[3] + parts[4])
+
+
+def replaced_in_file(path):
+    """A file with two non-delta dictionaries of one id, which pyarrow refuses
+    to write: a file written with a delta, its delta flag cleared."""
+    schema = pa.schema([("c", pa.dictionary(pa.int32(), pa.string()))])
+    grow = lambda idx, d: pa.DictionaryArray.from_arrays(pa.array(idx, pa.int32()), pa.array(d))
+    options = ipc.IpcWriteOptions(emit_dictionary_deltas=True)
+    with ipc.new_file(path, schema, options=options) as w:
+        for values in (grow([0], ["u"]), grow([1], ["u", "v"])):
+            w.write_batch(pa.record_batch([values], schema=schema))
+    b = bytearray(path.read_bytes())
+    u32 = lambda at: struct.unpack_from("<I", b, at)[0]
+    i32 = lambda at: struct.unpack_from("<i", b, at)[0]
+    u16 = lambda at: struct.unpack_from("<H", b, at)[0]
+
+    def field(table, slot):
+        """The position of field [slot] of the table at [table], or None."""
+        vtable = table - i32(table)
+        entry = 4 + 2 * slot
+        if entry >= u16(vtable):
+            return None
+        offset = u16(vtable + entry)
+        return table + offset if offset else None
+
+    at = 8
+    deltas = 0
+    while True:
+        meta_len = u32(at + 4)
+        first = at + 8
+        message = first + u32(first)
+        if b[field(message, 1)] == 2:  # A DictionaryBatch.
+            header = field(message, 2)
+            dictionary = header + u32(header)
+            flag = field(dictionary, 2)
+            if flag is not None and b[flag] == 1:
+                b[flag] = 0
+                deltas += 1
+        body = field(message, 3)
+        length = struct.unpack_from("<q", b, body)[0] if body else 0
+        if b[field(message, 1)] == 3 and deltas:
+            break
+        at = first + meta_len + length
+    assert deltas == 1
+    path.write_bytes(bytes(b))
 
 
 def schema_bomb(depth):
@@ -377,6 +581,22 @@ def write_all(out):
     write_stream(out / "one_row.arrows", flat.slice(1, 1))
     first, second = delta_arrays()
     two_batches(out / "delta.arrows", first, second, ipc.IpcWriteOptions(emit_dictionary_deltas=True))
+    two_batches(out / "dict_replaced.arrows", ["p", "q", None], ["r", "s", "s"])
+    two_batches(out / "dict_extended.arrows", ["u", "v"], ["u", "v", "w"])
+    grow = lambda idx, d, t=None: pa.DictionaryArray.from_arrays(pa.array(idx, pa.int32()), pa.array(d, t))
+    deltas = ipc.IpcWriteOptions(emit_dictionary_deltas=True)
+    two_batches(out / "dict_delta_dup.arrows", grow([0, 1], ["u", "v"]), grow([2], ["u", "v", "u"]), deltas)
+    int_schema = pa.schema([("c", pa.dictionary(pa.int32(), pa.int64()))])
+    with ipc.new_stream(out / "dict_int_delta.arrows", int_schema, options=deltas) as w:
+        for idx, d in (([0, None], [1, 2]), ([2, 1, 0], [1, 2, 3])):
+            w.write_batch(pa.record_batch([grow(idx, d, pa.int64())], schema=int_schema))
+    for name, table in dictionary_tables().items():
+        write_file(out / (name + ".arrow"), table)
+    write_tensor_dict(out / "tensor_dict.arrow")
+    write_file(out / "zero_width.arrow", zero_width_table(), CHUNKS)
+    write_stream(out / "zero_many.arrows", zero_many_table())
+    write_stream(out / "zero_ext.arrows", zero_extension_table())
+    late_dictionary(out / "late_dictionary.arrows")
     refused_files(out)
 
 
@@ -389,14 +609,35 @@ def dict_reads_as(column):
     dictionaries = [column.chunk(i).dictionary for i in range(column.num_chunks)]
     first = dictionaries[-1] if dictionaries else pa.array([], t.value_type)
     same = all(d.equals(first.slice(0, len(d))) for d in dictionaries)
-    text = pa.types.is_string(t.value_type) or pa.types.is_large_string(t.value_type)
-    distinct = len(set(first.to_pylist())) == len(first) and first.null_count == 0
-    if text and same and distinct:
+    if is_text(t.value_type) and same and first.null_count == 0 and len(set(first.to_pylist())) == len(first):
         return "categorical"
     return talon_type(t.value_type)
 
 
+def zero_cell(t):
+    """The shape of the cells of the fixed-size type [t] when they hold no bytes,
+    or None. A numeric list keeps its own tensor type."""
+    if pa.types.is_fixed_size_binary(t) and t.byte_width == 0:
+        return [0]
+    if pa.types.is_fixed_size_list(t):
+        e = t.value_type
+        if pa.types.is_integer(e) or pa.types.is_floating(e):
+            return None
+        if t.list_size == 0:
+            return [0]
+        inner = [0] if zero_struct(e) else zero_cell(e)
+        if inner is not None:
+            return [t.list_size] + inner
+    return None
+
+
+def zero_struct(t):
+    return pa.types.is_struct(t) and all(zero_cell(f.type) is not None or zero_struct(f.type) for f in t)
+
+
 def talon_type(t):
+    if pa.types.is_dictionary(t):
+        return talon_type(t.value_type)
     if isinstance(t, pa.BaseExtensionType):
         if isinstance(t, pa.FixedShapeTensorType) and (t.permutation is None or list(t.permutation) == list(range(len(t.shape)))):
             return "tensor[%s, %s]" % (float_name(t.value_type), "×".join(str(s) for s in t.shape))
@@ -408,6 +649,8 @@ def talon_type(t):
         return "ext[%s%s, %s]" % (t.extension_name, quoted, talon_type(t.storage_type))
     if pa.types.is_integer(t) or pa.types.is_floating(t) or pa.types.is_boolean(t):
         return float_name(t)
+    if zero_cell(t) is not None:
+        return "tensor[uint8, %s]" % "×".join(str(s) for s in zero_cell(t))
     if pa.types.is_string(t) or pa.types.is_large_string(t) or pa.types.is_string_view(t):
         return "string"
     if pa.types.is_binary(t) or pa.types.is_large_binary(t) or pa.types.is_binary_view(t) or pa.types.is_fixed_size_binary(t):
@@ -454,6 +697,10 @@ def token(t, v):
     """The text of the value [v], as pyarrow's as_py gives it, of type [t]."""
     if v is None:
         return "n"
+    if pa.types.is_dictionary(t):
+        return token(t.value_type, v)
+    if zero_cell(t) is not None:
+        return "[]"
     if isinstance(t, pa.BaseExtensionType):
         return token(t.storage_type, v)
     if pa.types.is_boolean(t):
@@ -512,7 +759,7 @@ def read(path):
 def golden_lines(out):
     lines = []
     for path in sorted(out.glob("*.arrow*")):
-        if path.name.startswith(("refused", "date64_floor")):
+        if path.name.startswith(("refused", "date64_floor", "tensor_dict", "zero_many", "zero_ext", "late_")):
             continue
         table = read(path)
         for column, name in zip(table.columns, table.column_names):

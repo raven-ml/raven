@@ -1,4 +1,18 @@
 delta.arrows|c|categorical|75 76 n 77 75 78 76
+dict_binary.arrow|c|binary|e ff n
+dict_binary0.arrow|c|tensor[uint8, 0]|[] n []
+dict_delta_dup.arrows|c|string|75 76 75
+dict_dup.arrow|c|string|61 61 62 n 61
+dict_extended.arrows|c|categorical|75 76 75 76 77
+dict_float.arrow|c|float64|inf 0.5 inf
+dict_int.arrow|c|int64|10 -20 n 10
+dict_int_delta.arrows|c|int64|1 n 3 2 1
+dict_list.arrow|c|list[int32]|n n [1 2] n
+dict_nested.arrow|c|list[string]|[75] [76 75] [75]
+dict_null.arrow|c|string|70 n 71 n
+dict_null_index.arrow|c|string|61 n 61
+dict_replaced.arrows|c|string|70 71 n 72 73 73
+dict_struct.arrow|c|record[a int64, b string]|{n 79} {1 78}
 dicts.arrow|cat|categorical|n 61 c3a9 e697a5e69cace8aa9e e n c3a9 e697a5e69cace8aa9e e 61 n e697a5e69cace8aa9e e 61 c3a9 n e 61 c3a9 e697a5e69cace8aa9e n 61 c3a9 e697a5e69cace8aa9e e n c3a9 e697a5e69cace8aa9e e 61 n e697a5e69cace8aa9e e 61 c3a9 n e 61 c3a9 e697a5e69cace8aa9e
 dicts.arrow|cat_int8|categorical|n 79 7a 78 79 n 78 79 7a 78 n 7a 78 79 7a n 79 7a 78 79 n 78 79 7a 78 n 7a 78 79 7a n 79 7a 78 79 n 78 79 7a 78
 dicts.arrow|cat_uint32|categorical|n 79 7a 78 79 n 78 79 7a 78 n 7a 78 79 7a n 79 7a 78 79 n 78 79 7a 78 n 7a 78 79 7a n 79 7a 78 79 n 78 79 7a 78
@@ -226,3 +240,9 @@ one_row.arrows|dur_us|duration[us]|1
 one_row.arrows|dur_ns|duration[ns]|1000
 views.arrows|utf8_view|string|n 61 6120737472696e67206c6f6e676572207468616e207477656c7665206279746573c3a9 e697a5e69cace8aa9e 6120737472696e67206c6f6e676572207468616e207477656c7665206279746573f09fa68a n 6120737472696e67206c6f6e676572207468616e207477656c7665206279746573 61 6120737472696e67206c6f6e676572207468616e207477656c7665206279746573c3a9 e697a5e69cace8aa9e n 616263 6120737472696e67206c6f6e676572207468616e207477656c7665206279746573 61 6120737472696e67206c6f6e676572207468616e207477656c7665206279746573c3a9 n 6120737472696e67206c6f6e676572207468616e207477656c7665206279746573f09fa68a 616263 6120737472696e67206c6f6e676572207468616e207477656c7665206279746573 61 n e697a5e69cace8aa9e 6120737472696e67206c6f6e676572207468616e207477656c7665206279746573f09fa68a 616263 6120737472696e67206c6f6e676572207468616e207477656c7665206279746573 n 6120737472696e67206c6f6e676572207468616e207477656c7665206279746573c3a9 e697a5e69cace8aa9e 6120737472696e67206c6f6e676572207468616e207477656c7665206279746573f09fa68a 616263 n 61 6120737472696e67206c6f6e676572207468616e207477656c7665206279746573c3a9 e697a5e69cace8aa9e 6120737472696e67206c6f6e676572207468616e207477656c7665206279746573f09fa68a n 6120737472696e67206c6f6e676572207468616e207477656c7665206279746573 61 6120737472696e67206c6f6e676572207468616e207477656c7665206279746573c3a9 e697a5e69cace8aa9e
 views.arrows|binary_view|binary|n 01 020e e 04 n e 07 0838 e n 0b4d e 0d 0e62 n 10 1177 e 13 n e 16 17a1 e n 1ab6 e 1c 1dcb n 1f 20e0 e 22 n e 25 260a e
+zero_width.arrow|binary0|tensor[uint8, 0]|n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] []
+zero_width.arrow|text_list0|tensor[uint8, 0]|n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] []
+zero_width.arrow|ints0|tensor[int32, 0]|n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] []
+zero_width.arrow|binary0_lists|tensor[uint8, 3×0]|n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] [] n [] [] [] []
+zero_width.arrow|structs|tensor[uint8, 2×0]|[] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] []
+zero_width.arrow|record|record[a tensor[uint8, 0]]|n {[]} {[]} {[]} {[]} n {[]} {[]} {[]} {[]} n {[]} {[]} {[]} {[]} n {[]} {[]} {[]} {[]} n {[]} {[]} {[]} {[]} n {[]} {[]} {[]} {[]} n {[]} {[]} {[]} {[]} n {[]} {[]} {[]} {[]}

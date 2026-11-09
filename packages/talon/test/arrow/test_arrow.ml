@@ -131,25 +131,18 @@ let bytes_stay =
 let refused =
   cases "fields talon cannot hold are refused, naming the column" ~id:fst
     [
-      ("refused_null", "bad");
-      ("refused_decimal", "bad");
-      ("refused_interval", "bad");
-      ("refused_union", "bad");
-      ("refused_ree", "bad");
-      ("refused_list_view", "bad");
-      ("refused_nested", "outer.bad");
-      ("refused_tensor_dict", "bad.item");
-      ("refused_dict_dup", "bad");
-      ("refused_dict_null", "bad");
-      ("refused_dict_int", "bad");
-      ("refused_dict_binary", "bad");
-      ("refused_dict_replaced", "c");
+      ("refused_null.arrow", "bad");
+      ("refused_decimal.arrow", "bad");
+      ("refused_interval.arrow", "bad");
+      ("refused_union.arrow", "bad");
+      ("refused_ree.arrow", "bad");
+      ("refused_list_view.arrow", "bad");
+      ("refused_nested.arrow", "outer.bad");
+      ("refused_dict_replaced.arrow", "c");
+      ("refused_shared_id.arrows", "x");
     ]
     (fun (name, column) ->
-      let suffix =
-        if name = "refused_dict_replaced" then ".arrows" else ".arrow"
-      in
-      match A.file (Filename.concat "support" (name ^ suffix)) with
+      match A.file (Filename.concat "support" name) with
       | Ok _ -> failf "%s was not refused" name
       | Error e ->
           contains ~sub:(Printf.sprintf "%S" column)
@@ -192,6 +185,67 @@ let corrupted =
 let bomb =
   test "a schema of repeated children is refused, in bounded work" @@ fun () ->
   is_error ~msg:"the bomb" (A.file "support/refused_bomb.arrows")
+
+(* Zero-width and by-value dictionary columns *)
+
+let zero_many =
+  test "a zero-width column of more rows than bytes takes no memory" @@ fun () ->
+  let t = read "support/zero_many.arrows" in
+  equal int 16_777_216 (rows t);
+  let c = column t "z" in
+  equal string "tensor[uint8, 0]" (type_text (Column.type_ c));
+  match Column.layout c with
+  | Fixed { values = P x; _ } -> equal int 0 (Nx.numel x)
+  | _ -> fail "a zero-width column is not laid out as a tensor"
+
+let tensor_dict =
+  test "a fixed list of dictionary-encoded elements reads as their values"
+  @@ fun () ->
+  let c = column (read "support/tensor_dict.arrow") "c" in
+  equal string "[0 1]" (String.concat " " (Array.to_list (tokens (Column.type_ c) c)))
+
+let zero_width_type =
+  test "a zero-width column reads as a tensor, and not as a list" @@ fun () ->
+  let f =
+    Error.get_ok
+      (A.sniff (Result.get_ok (Rig_disk.of_file "support/zero_width.arrow")))
+  in
+  raises_match ~msg:"elements that take no bytes"
+    (Exn.invalid_arg ~sub:"not as")
+    (fun () -> A.with_type "binary0_lists" (Any (Type.list Type.binary)) f);
+  raises_match ~msg:"no element"
+    (Exn.invalid_arg ~sub:"not as")
+    (fun () -> A.with_type "ints0" (Any (Type.list Type.int32)) f)
+
+let zero_ext =
+  test "zero-width extension elements of many rows take no memory" @@ fun () ->
+  let t = read "support/zero_ext.arrows" in
+  equal int 16_777_216 (rows t);
+  let c = column t "c" in
+  equal string "tensor[uint8, 1\195\1510]" (type_text (Column.type_ c));
+  match Column.layout c with
+  | Fixed { values = P x; _ } -> equal int 0 (Nx.numel x)
+  | _ -> fail "a zero-width column is not laid out as a tensor"
+
+let zero_null =
+  test "a null element of a zero-width cell fails with its row" @@ fun () ->
+  let b = Result.get_ok (Rig_disk.of_file "support/refused_zero_null.arrows") in
+  let f = Error.get_ok (A.sniff b) in
+  let e = Result.get_error (Query.run (Query.of_source (A.source f b))) in
+  contains ~sub:"row 0" (Format.asprintf "%a" Error.pp e)
+
+let late_dictionary =
+  test "a dictionary after a batch of nulls reads its later rows" @@ fun () ->
+  let c = column (read "support/late_dictionary.arrows") "c" in
+  equal string "int64" (type_text (Column.type_ c));
+  equal (array string) [| "n"; "n"; "10"; "20" |] (tokens (Column.type_ c) c)
+
+let dict_index =
+  test "an index past its dictionary fails with its row" @@ fun () ->
+  let b = Result.get_ok (Rig_disk.of_file "support/refused_dict_index.arrow") in
+  let f = Error.get_ok (A.sniff b) in
+  let e = Result.get_error (Query.run (Query.of_source (A.source f b))) in
+  contains ~sub:"row 1" (Format.asprintf "%a" Error.pp e)
 
 let date64_floor =
   test "a date64 reads as the day that holds it" @@ fun () ->
@@ -337,6 +391,9 @@ let () =
       group "corpus" corpus;
       group "written" (bytes_stay :: written);
       group "refusals" [ refused; not_arrow; corrupted; bomb; date_range; date64_floor ];
+      group "by value"
+        [ zero_many; zero_ext; zero_null; zero_width_type; tensor_dict; dict_index;
+          late_dictionary ];
       group "formats" [ flat_format; metadata_kept; tensor_as_list ];
       group "round trips" [ round_trip; deterministic; tensor_round_trip ];
     ]
