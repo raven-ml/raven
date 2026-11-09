@@ -1205,8 +1205,10 @@ val from_model_file :
     The model type is inferred from the arguments: if [merges] is provided, a
     BPE tokenizer is created; otherwise WordPiece.
 
-    - [vocab]: path to vocabulary file ([vocab.json]). Expected format: JSON
-      object mapping tokens to IDs ([{"hello": 0, "world": 1}]).
+    - [vocab]: path to the vocabulary file. With [merges], a [vocab.json]: a
+      JSON object mapping tokens to IDs ([{"hello": 0, "world": 1}]). Without
+      [merges], a BERT-style [vocab.txt]: one token per line, trimmed; IDs
+      number the non-blank lines from 0.
     - [merges]: path to merges file ([merges.txt]). One merge per line as
       space-separated token pairs. Lines starting with ["#version"] are skipped.
 

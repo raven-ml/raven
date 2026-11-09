@@ -47,7 +47,8 @@ val create :
 
 val from_file : vocab_file:string -> t
 (** [from_file ~vocab_file] loads a model from a BERT-style [vocab.txt] file
-    (one token per line, ID equals line number). Uses BERT defaults:
+    (one token per line, trimmed; IDs number the non-blank lines from 0). Uses
+    BERT defaults:
     [unk_token = "[UNK]"], [continuing_subword_prefix = "##"],
     [max_input_chars_per_word = 100]. *)
 
