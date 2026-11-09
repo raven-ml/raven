@@ -430,6 +430,46 @@ let chaining =
             (pairs cores));
     ]
 
+(* Transposition *)
+
+let swap (r, c) = (c, r)
+
+let transposition =
+  group "transpose"
+    [
+      each_core "transpose is an involution" (fun tc ->
+          equal core tc (Tc.transpose (Tc.transpose tc)));
+      each_core "transpose keeps the types and exchanges N and M" (fun tc ->
+          let t = Tc.transpose tc in
+          let n, m, k = Tc.dims tc in
+          equal dtype tc.dtype_in t.dtype_in;
+          equal dtype tc.dtype_out t.dtype_out;
+          equal (triple int int int) (m, n, k) (Tc.dims t));
+      each_core
+        "a lane of the transpose holds the core's B as its A, A as its B and \
+         C transposed"
+        (fun tc ->
+          let a, b, c = Tc.frag_coords tc in
+          let a', b', c' = Tc.frag_coords (Tc.transpose tc) in
+          let flip = Array.map (Array.map swap) in
+          equal (array (array (pair int int))) (flip b) a';
+          equal (array (array (pair int int))) (flip a) b';
+          equal (array (array (pair int int))) (flip c) c');
+      cases "an accumulator chains as B iff the transposes' chains as A"
+        ~id:fst targets
+        (fun (_, cores) ->
+          List.iter
+            (fun (x, y, op) ->
+              let msg =
+                Format.asprintf "%a into %a as %s" Tc.pp x Tc.pp y
+                  (operand_name op)
+              in
+              let other = match op with Tc.A -> Tc.B | Tc.B -> Tc.A in
+              equal ~msg (option chain_t) (Tc.chain x y op)
+                (Tc.chain (Tc.transpose x) (Tc.transpose y) other))
+            (pairs cores));
+    ]
+
 (* Construction *)
 
 let metal = List.hd Tc.metal
@@ -475,4 +515,13 @@ let construction =
 let () =
   exit
     (run "Tolk.Tc"
-       [ bits; listed; described; laws; chaining; equality; construction ])
+       [
+         bits;
+         listed;
+         described;
+         laws;
+         chaining;
+         transposition;
+         equality;
+         construction;
+       ])

@@ -1091,6 +1091,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Tc.transpose` gives the core of `Dᵀ = Bᵀ Aᵀ + Cᵀ`, whose accumulator
+  chains as `A` where the core's chains only as `B`, as RDNA 4's and CDNA's.
 - A Metal kernel whose bfloat16 tensor-core product has an operand the
   compiler knows, such as literal zeros, compiles, where Apple7's compiler
   service crashed and Metal made no pipeline: a product into float32

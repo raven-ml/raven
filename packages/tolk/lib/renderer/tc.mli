@@ -148,6 +148,14 @@ val chain : t -> t -> operand -> chain option
     differ in size, [x]'s other dimension is larger than [y]'s [K], or some
     lane of [op] needs an element another lane of [x]'s accumulator holds. *)
 
+val transpose : t -> t
+(** [transpose tc] is the core of [Dᵀ = Bᵀ Aᵀ + Cᵀ], which a program computes
+    by giving [tc] its operands in the other order: its [A] is [tc]'s [B]
+    and its [B] is [tc]'s [A], each with its [M] and [N] bits exchanged, and
+    its [C] is [tc]'s transposed. [transpose (transpose tc)] is [tc], and
+    [chain (transpose x) (transpose y) A] is [chain x y B]: an accumulator
+    that chains only as [B] chains as [A] in the transposes. *)
+
 (** {1:targets Targets}
 
     The tensor cores of each target, one per tile shape and pair of types. *)
@@ -201,4 +209,8 @@ val pm_wmma_fp8 : Dtype.t -> ('ctx, Ops.t) Ops.Pattern_matcher.t
     which AMD's builtins take them. *)
 
 val metal : t list
-(** [metal] is Apple's [8 x 8 x 8] tensor cores. *)
+(** [metal] is Apple's [8 x 8 x 8] tensor cores. Metal leaves which thread
+    holds which element of a simdgroup matrix unspecified: these fragments
+    are those observed on Apple7 and later. A product on fragments that
+    compute it correctly stays correct when its accumulator is chained, so
+    a chain assumes nothing more than a product does. *)

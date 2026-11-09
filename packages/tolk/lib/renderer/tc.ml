@@ -180,6 +180,14 @@ let chain x y operand =
       in
       Some { k_bits = Array.to_list ks; same_lines }
 
+(* Dᵀ = Bᵀ Aᵀ + Cᵀ: B's fragment is the new A's and A's the new B's, each
+   with its M and N bits exchanged, and C's is transposed. *)
+let transpose tc =
+  let flip = function M i -> N i | N i -> M i | K i -> K i in
+  let flip f = { lanes = List.map flip f.lanes; elements = List.map flip f.elements } in
+  v ~dtype_in:tc.dtype_in ~dtype_out:tc.dtype_out ~frag_a:(flip tc.frag_b)
+    ~frag_b:(flip tc.frag_a) ~frag_c:(flip tc.frag_c)
+
 let rec log2 n = if n <= 1 then 0 else 1 + log2 (n / 2)
 let ks n = List.init (log2 n) (fun i -> K i)
 

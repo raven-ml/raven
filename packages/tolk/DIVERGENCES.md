@@ -6619,16 +6619,22 @@ D199 fused independent calls of one domain into one kernel. A launch of bodies (
 - **tinygrad:** `renderer/tc.py` (`TensorCore`), whose fragments hold
   the fact and whose comment states that "the k bits may be permuted,
   identically in A and B", with no function that answers it.
-- **tolk:** `Tc.chain`.
+- **tolk:** `Tc.chain`, `Tc.transpose`.
 - **Differs:** `Tc.chain x y op` says whether `x`'s accumulator is `y`'s
   operand `op` without leaving its lanes, the permutation of `K` that takes,
   and whether both accumulators hold the same lines in each lane.
+  `Tc.transpose tc` is the core of `Dᵀ = Bᵀ Aᵀ + Cᵀ`, which a program
+  computes by giving `tc` its operands in the other order: an accumulator
+  that chains only as `B`, as RDNA 4's and CDNA's, chains as `A` in the
+  transposes.
 - **Reason:** (b): rune's `Lower_attention`, the fused attention lowering,
-  reads it to chain the scores' accumulator into the values' product.
+  reads it to chain the scores' accumulator into the values' product, and
+  takes a core that chains as `B` transposed.
 - **Pinned by:** `Tolk.Tc › chain › a core's accumulator as its own operand`,
   per shipped core, and `› an accumulator chains iff some permutation of K
   reads it in place, and the chain reads it so`, against every map of the
-  moved bits over every pair of each target's cores.
+  moved bits over every pair of each target's cores; `Tolk.Tc › transpose`,
+  over every shipped core and every pair of each target's cores.
 
 ## D202. A join keeps its dependencies, and holds the state under it
 
