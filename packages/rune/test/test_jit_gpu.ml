@@ -206,9 +206,11 @@ let grad_examples =
   let ex = Attentions.examples attention_dtypes in
   ex @ [ { (List.nth ex 1) with seed = 1 } ]
 
-(* A case vmap maps: dense keys, no lengths, two lead indices or more. *)
+(* A case vmap maps: dense keys, no lengths, two lead indices or more, and
+   no mask that captures an array along the lead axes. *)
 let mappable (c : Attentions.t) =
-  { c with page = None; lengths = None; lead = max 2 c.lead }
+  let mask = if c.mask = Spans then Attentions.Positions else c.mask in
+  { c with page = None; lengths = None; lead = max 2 c.lead; mask }
 
 (* The prefix law on the GPU, a float64 case discarded where its kernels lack
    float64. *)

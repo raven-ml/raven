@@ -255,15 +255,24 @@ let seen a x ~inside ~b ~row ~key ~ok =
 let score a x ~inside ~b ~row ~key ~ok raw =
   snd (pair a x ~inside ~b ~row ~key ~ok raw)
 
+(* The first range id of the tile classes' reduces over a capture's
+   queries, two a capture, past the kernels' own ids. *)
+let slot_cap_range = 300
+
+(* An integer dtype of whole bytes, whose order a bitwise not reverses. *)
+let integer (D.Any dt) =
+  (D.is D.Signed dt || D.is D.Unsigned dt) && D.bits dt >= 8
+
 (* Tile classes
 
    A tile of rows [r0] to [r1] and keys [k0] to [k1] is classed by the ranges
    of the program's output 0 over the box of its pairs: the lead index, the
    heads of the rows' group, the rows' queries, the keys, each capture that
-   varies along lead axes alone at its value there, and any other capture
-   over its dtype's whole range. Where output 0 is false at every pair the
-   tile is hidden; where true, every pair the length and the table show is
-   visible. *)
+   varies along lead axes alone at its value there, an integer capture that
+   also varies along the queries over its elements of the tile's rows, and
+   any other capture over its dtype's whole range. Where output 0 is false
+   at every pair the tile is hidden; where true, every pair the length and
+   the table show is visible. *)
 
 let classes_of (p : P.t) rank =
   match Iarray.get p.nodes (Iarray.get p.outs 0) with
@@ -289,23 +298,41 @@ let classes a x ~inside ~b ~kh ~rows:(r0, r1) ~keys:(k0, k1) =
       let caps =
         Array.mapi
           (fun c (l : load) ->
-            let by_lead =
-              Array.for_all (( = ) 0) (Array.sub l.strides lead 3)
+            let st ax = l.strides.(Stdlib.(lead + ax)) in
+            let at = Array.fold_left ( + ) (int 0)
+                (Array.mapi
+                   (fun ax st ->
+                     if Stdlib.(ax >= lead || st = 0) then int 0
+                     else
+                       let inner =
+                         numel (Array.sub a.lead Stdlib.(ax + 1) Stdlib.(lead - ax - 1))
+                       in
+                       (b // int inner) % int a.lead.(ax) * int st)
+                   l.strides)
             in
-            if by_lead then
-              let at = Array.fold_left ( + ) (int 0)
-                  (Array.mapi
-                     (fun ax st ->
-                       if Stdlib.(ax >= lead || st = 0) then int 0
-                       else
-                         let inner =
-                           numel (Array.sub a.lead Stdlib.(ax + 1) Stdlib.(lead - ax - 1))
-                         in
-                         (b // int inner) % int a.lead.(ax) * int st)
-                     l.strides)
-              in
+            if Stdlib.(st 0 = 0 && st 1 = 0 && st 2 = 0) then
               let v = Arith.parts l.dt (ld (inside x.caps.(c)) at) in
               [ v; v ]
+            else if Stdlib.(st 0 = 0 && st 2 = 0) && integer l.dt then
+              (* Its least and greatest over the tile's queries, each a
+                 reduce over their rows: a bitwise not reverses an integer
+                 order, so the least is the not of the nots' greatest. *)
+              let t0 = r0 // int g in
+              let n = (r1 // int g) - t0 + int 1 in
+              let not u =
+                Ops.bitwise_xor u
+                  (Ops.const ~dtype:(Ops.dtype u) (`Int Bigint.minus_one))
+              in
+              let greatest id f =
+                let t = range Loop (Sym n) id in
+                let v = ld (inside x.caps.(c)) (at + ((t0 + t) * int (st 1))) in
+                Ops.reduce (f v) Max [ t ]
+              in
+              let id = Stdlib.(slot_cap_range + (2 * c)) in
+              [
+                [ not (greatest id not) ];
+                [ greatest Stdlib.(id + 1) Fun.id ];
+              ]
             else
               let lo, hi = bounds l.dt in
               [ consts l.dt lo; consts l.dt hi ])

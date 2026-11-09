@@ -27,6 +27,11 @@ type mask =
   | Opaque
       (** Causal through floats, which a tile's ranges cannot class: each
           tile of the diagonal votes. *)
+  | Spans
+      (** Captured bounds of each query's run of 161 keys, along the lead
+          axes and the queries, rising with a jitter, of int64 for an even
+          seed and uint16 for an odd one: tiles hidden, shown and in
+          part. *)
 
 type t = {
   dtype : Nx.Dtype.any;  (** float16, bfloat16, float32 or float64. *)
@@ -102,4 +107,5 @@ val grad_law : (module Nx.Devices) -> vmap:bool -> t -> unit
     compose, and that the call is compiled. Where [vmap], the compiled
     gradient is that of each lead index, mapped by {!Rune.vmap}.
 
-    Raises [Invalid_argument] if [vmap] and [c] has pages or lengths. *)
+    Raises [Invalid_argument] if [vmap] and [c] has pages, lengths or a
+    [Spans] mask, whose arrays vary along the lead axes. *)

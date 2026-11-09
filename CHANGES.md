@@ -402,6 +402,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit`'s attention bounds an integer array a mask captures along the
+  queries over each tile's rows, so a mask that compares keys with
+  per-query positions, as `Kaun.Cache_index.visible` does, skips hidden
+  tiles without a vote.
 - `Rune.jit` computes `Nx.attention`'s gradient on tensor cores for keys and
   values of up to 128 dimensions, up from 64: on an RTX 5000 Ada, 8 heads of
   2048 bfloat16 rows of 128 take about 1.3 ms against about 2.8.

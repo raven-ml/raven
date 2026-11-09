@@ -5,7 +5,15 @@
 
 open Windtrap
 
-type mask = Unmasked | Causal | Window | Documents | Positions | Blocks | Opaque
+type mask =
+  | Unmasked
+  | Causal
+  | Window
+  | Documents
+  | Positions
+  | Blocks
+  | Opaque
+  | Spans
 
 type t = {
   dtype : Nx.Dtype.any;
@@ -37,6 +45,7 @@ let mask_name = function
   | Positions -> "positions"
   | Blocks -> "blocks"
   | Opaque -> "opaque"
+  | Spans -> "spans"
 
 let pp ppf c =
   let (Nx.Dtype.Any dt) = c.dtype in
@@ -78,7 +87,8 @@ let gen dtypes =
       ]
   in
   let* mask =
-    of_list [ Unmasked; Causal; Window; Documents; Positions; Blocks; Opaque ]
+    of_list
+      [ Unmasked; Causal; Window; Documents; Positions; Blocks; Opaque; Spans ]
   in
   let* alibi = bool in
   let* rising = frequency [ (3, constant false); (1, constant true) ] in
@@ -149,6 +159,8 @@ let examples dtypes =
       { b with dv = 0; tq = 3; tk = 3 };
       { b with page = Some 16; holes = true; tq = 40; tk = 64 };
       { b with dk = 768; tq = 20; tk = 40 };
+      { b with mask = Spans };
+      { b with mask = Spans; seed = 2; lead = 2 };
     ]
   in
   let n = List.length dtypes in
@@ -204,6 +216,9 @@ let examples dtypes =
    weights underflow to zero in float64 beside a score of the later keys,
    and values [-0] from it on. *)
 let zeros_from = 64L
+
+(* A [Spans] query's keys: [span] of them, ending past its centre. *)
+let span = 160
 let zeros_under = 2000.
 
 (* Faint weights: every key's score but the first's [faint_under] below it,
@@ -223,7 +238,7 @@ let draw c salt shape =
 
 (* The case's call over [q], [k] and [v], of any device, in [acc]. *)
 let call (type a s d) (acc : (float, a) Nx.dtype) c ~table ~lengths ~docs
-    ~positions ~blocks ~slopes (q : (float, s, d) Nx.t) k v =
+    ~positions ~spans ~blocks ~slopes (q : (float, s, d) Nx.t) k v =
   let place x = Nx.place (Nx.beside q) x in
   let mask : (d Nx.pair -> d Nx.bool_t) option =
     match c.mask with
@@ -245,6 +260,20 @@ let call (type a s d) (acc : (float, a) Nx.dtype) c ~table ~lengths ~docs
     | Blocks ->
         let blocks = place blocks in
         Some (fun _ -> blocks)
+    | Spans ->
+        (* An even seed compares in int64, an odd one in uint16. *)
+        let (lo, hi), (lo16, hi16) = spans in
+        if c.seed land 1 = 0 then
+          let lo = place lo and hi = place hi in
+          Some
+            (fun p ->
+              Nx.logical_and (Nx.less_equal lo p.k) (Nx.less p.k hi))
+        else
+          let lo = place lo16 and hi = place hi16 in
+          Some
+            (fun p ->
+              let k = Nx.cast Nx.uint16 p.k in
+              Nx.logical_and (Nx.less_equal lo k) (Nx.less k hi))
     | Opaque ->
         Some
           (fun p ->
@@ -307,6 +336,9 @@ type inputs = {
   table : Nx.host Nx.int64_t option;
   lengths : Nx.host Nx.int64_t option;
   docs : Nx.host Nx.int64_t * Nx.host Nx.int64_t;
+  spans :
+    (Nx.host Nx.int64_t * Nx.host Nx.int64_t)
+    * (Nx.host Nx.uint16_t * Nx.host Nx.uint16_t);
   positions : Nx.host Nx.int64_t * Nx.host Nx.int64_t;
       (** The queries' positions, [[tq; 1]], from the keys' middle on, and
           the keys', [[1; tk]]. *)
@@ -368,6 +400,24 @@ let inputs c =
     let ids n = Nx.create Nx.int64 [| n |] (Array.init n (fun i -> Int64.of_int (i * 3 / 40))) in
     (ids c.tq, ids c.tk)
   in
+  (* Each query's keys from [span] before its centre to one past it, the
+     centres rising along the queries with a jitter, shifted by the lead
+     index: a tile of rows sees the keys of some tiles whole, of some in
+     part, and of others none. *)
+  let spans =
+    let st = Random.State.make [| c.seed; 11 |] in
+    let shape = [| c.lead; 1; c.tq; 1 |] in
+    let centre =
+      Array.init (c.lead * c.tq) (fun i ->
+          let b = i / max 1 c.tq and t = i mod max 1 c.tq in
+          (t * c.tk / max 1 c.tq) + (5 * b) + Random.State.int st 7 - 3)
+    in
+    let lo = Array.map (fun x -> x - span) centre in
+    let hi = Array.map (fun x -> x + 1) centre in
+    let wide a = Nx.create Nx.int64 shape (Array.map Int64.of_int a) in
+    let narrow a = Nx.create Nx.uint16 shape (Array.map (max 0) a) in
+    ((wide lo, wide hi), (narrow lo, narrow hi))
+  in
   let positions =
     ( Nx.create Nx.int64 [| c.tq; 1 |]
         (Array.init c.tq (fun i -> Int64.of_int ((c.tk / 2) + i))),
@@ -397,7 +447,7 @@ let inputs c =
         Nx.create Nx.float32 s a
     | _ -> x
   in
-  { q; k; v; table; lengths; docs; positions; blocks; slopes; poisoned }
+  { q; k; v; table; lengths; docs; spans; positions; blocks; slopes; poisoned }
 
 let law (module S : Nx.Devices) c =
   cover "paged" (c.page <> None);
@@ -405,12 +455,12 @@ let law (module S : Nx.Devices) c =
   cover (mask_name c.mask) true;
   let (F dt) = float_dtype c.dtype in
   let wide = Nx.Dtype.name dt = "float64" in
-  let { q; k; v; table; lengths; docs; positions; blocks; slopes; poisoned } =
+  let { q; k; v; table; lengths; docs; spans; positions; blocks; slopes; poisoned } =
     inputs c
   in
   let compiled (type a) (acc : (float, a) Nx.dtype) =
     let place x = Nx.place S.on (Nx.cast dt x) in
-    let f q k v = call acc c ~table ~lengths ~docs ~positions ~blocks ~slopes q k v in
+    let f q k v = call acc c ~table ~lengths ~docs ~positions ~spans ~blocks ~slopes q k v in
     let g =
       Rune.jit Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns (pair tensor tensor)) f
     in
@@ -423,7 +473,7 @@ let law (module S : Nx.Devices) c =
   let f64 x = Nx.cast Nx.float64 x in
   let reference v =
     let o, lse =
-      call Nx.float64 c ~table ~lengths ~docs ~positions ~blocks ~slopes (f64 q) (f64 k) (f64 v)
+      call Nx.float64 c ~table ~lengths ~docs ~positions ~spans ~blocks ~slopes (f64 q) (f64 k) (f64 v)
     in
     (Nx.to_array o, Nx.to_array lse)
   in
@@ -563,8 +613,8 @@ let zero_sums (module S : Nx.Devices) dtype =
    alone reaches the scores. *)
 
 let grad_law (module S : Nx.Devices) ~vmap c =
-  if vmap && (c.page <> None || c.lengths <> None) then
-    invalid_arg "Attentions.grad_law: a mapped case of pages or lengths";
+  if vmap && (c.page <> None || c.lengths <> None || c.mask = Spans) then
+    invalid_arg "Attentions.grad_law: a mapped case of pages, lengths or spans";
   let (F dt) = float_dtype c.dtype in
   let wide = Nx.Dtype.name dt = "float64" in
   let u = if wide then 0x1p-53 else 0x1p-24 in
@@ -588,7 +638,7 @@ let grad_law (module S : Nx.Devices) ~vmap c =
      && c.dk <= 128 && c.dv <= 128 && (c.dk > 64 || c.dv > 64));
   let lse_alone = c.seed mod 4 = 1 in
   cover "lse's cotangent alone" lse_alone;
-  let { q; k; v; table; lengths; docs; positions; blocks; slopes; poisoned } =
+  let { q; k; v; table; lengths; docs; spans; positions; blocks; slopes; poisoned } =
     inputs c
   in
   let rounded x = Nx.cast Nx.float32 (Nx.cast dt x) in
@@ -597,7 +647,7 @@ let grad_law (module S : Nx.Devices) ~vmap c =
   let wl = rounded (draw c 5 [| c.lead; c.hq; c.tq |]) in
   let loss (type a s d) (acc : (float, a) Nx.dtype) ~lengths
       (wo : (float, s, d) Nx.t) wl q k v =
-    let o, lse = call acc c ~table ~lengths ~docs ~positions ~blocks ~slopes q k v in
+    let o, lse = call acc c ~table ~lengths ~docs ~positions ~spans ~blocks ~slopes q k v in
     let finite x = Nx.where (Nx.isfinite x) x (Nx.zeros_like x) in
     Nx.add
       (Nx.sum (Nx.mul (Nx.cast acc wo) (Nx.cast acc o)))
@@ -631,7 +681,7 @@ let grad_law (module S : Nx.Devices) ~vmap c =
   let refs = List.map Nx.to_array (reference (f64 wo) (f64 wl)) in
   let gs = if wide then compiled Nx.float64 else compiled Nx.float32 in
   let o_ref, lse_ref =
-    let o, lse = call Nx.float64 c ~table ~lengths ~docs ~positions ~blocks ~slopes (f64 q) (f64 k) (f64 v) in
+    let o, lse = call Nx.float64 c ~table ~lengths ~docs ~positions ~spans ~blocks ~slopes (f64 q) (f64 k) (f64 v) in
     (Nx.to_array o, Nx.to_array lse)
   in
   (* The forward law's constants, by row. *)
