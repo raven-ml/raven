@@ -1097,8 +1097,9 @@ word comes from its lock and from samples the dashboard saw arrive.
   kernel, and `Ops.after_disjoint` states that a write's stores are disjoint.
   Limits a target imposes split a launch in `Realize.lower_and_compile`
   (`Renderer.t.launch_args`, `launch_locals`).
-- `Ops.new_buffer ~slot` takes its number, so a buffer made later without a slot
-  is no longer the same node as one given that slot.
+- `Ops.new_buffer ~slot`, `Shape.alloc ~slot` and `Shape.placeholder ~slot` take
+  their number, so storage made later without a slot is no longer the same node
+  as one given that slot.
 - `Search.beam_search` decides whether to go on, and what it keeps, by timing
   the beam's first kernel and the round's fastest again, in turn, after each
   round. Comparing times taken rounds apart, a GPU whose clock fell between

@@ -3070,8 +3070,16 @@ let clone ?device:dev u =
   in
   after ret [ store ret (cast src (dtype ret)) ]
 
+(* A slot given by hand is taken, or a later fresh one would be the same number,
+   and storage of the same size and type the same node. *)
+let take_slot = function
+  | None -> unique_num ()
+  | Some s ->
+      take_unique s;
+      s
+
 let alloc ?slot ?(addrspace = Dtype.Global) ?device ?vmin_vmax new_shape dt =
-  let slot = match slot with Some s -> s | None -> unique_num () in
+  let slot = take_slot slot in
   let ret =
     v Op.Alloc
       ~src:[ size_src (Some (size_of (to_max_shape new_shape))) ]
@@ -3090,7 +3098,7 @@ let alloc_like ?slot ?addrspace u =
 
 let placeholder ?slot ?(addrspace = Dtype.Global) new_shape dt =
   let dt = Dtype.strong dt in
-  let slot = match slot with Some s -> s | None -> unique_num () in
+  let slot = take_slot slot in
   let src = [ size_src (Some (size_of new_shape)) ] in
   let ret =
     match addrspace with

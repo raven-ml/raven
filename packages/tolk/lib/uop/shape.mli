@@ -379,22 +379,35 @@ val alloc :
   Ops.sint list ->
   Dtype.t ->
   Ops.t
-(** [alloc shape dt] is call-local storage of [shape], whose values lie within
-    [vmin_vmax] if given. *)
+(** [alloc ~slot shape dt] is call-local storage of [shape], in [slot] (default
+    {!Ops.unique_num}), whose values lie within [vmin_vmax] if given. A given
+    [slot] is taken ({!Ops.take_unique}), so {!Ops.unique_num} returns a greater
+    number afterwards. [slot] must not be a number {!Ops.unique_num} returned for
+    other storage: allocs equal in slot, size, type and device are one node and
+    one storage.
+
+    Raises [Invalid_argument] if [slot] is [max_int]. *)
 
 val alloc_like : ?slot:int -> ?addrspace:Dtype.addr_space -> Ops.t -> Ops.t
-(** [alloc_like u] is [alloc] of [u]'s greatest shape and type. *)
+(** [alloc_like ~slot u] is {!alloc} of [u]'s greatest shape and type. *)
 
 val placeholder :
   ?slot:int -> ?addrspace:Dtype.addr_space -> int list -> Dtype.t -> Ops.t
-(** [placeholder shape dt] is a parameter of [shape] and [dt] ([dt] committed,
-    {!Dtype.strong}), or workgroup or register storage for those address spaces.
+(** [placeholder ~slot shape dt] is a parameter of [shape] and [dt] ([dt]
+    committed, {!Dtype.strong}), or workgroup or register storage for those
+    address spaces, in [slot] (default {!Ops.unique_num}). A given [slot] is
+    taken ({!Ops.take_unique}), so {!Ops.unique_num} returns a greater number
+    afterwards.
 
-    Raises [Invalid_argument] if the address space is the ALU's. *)
+    Raises [Invalid_argument] if the address space is the ALU's or [slot] is
+    [max_int]. *)
 
 val placeholder_like : Ops.t -> int -> Ops.t
-(** [placeholder_like u slot] is a placeholder of [u]'s greatest shape and
-    type. *)
+(** [placeholder_like u slot] is a {!placeholder} in [slot] of [u]'s greatest
+    shape and type.
+
+    Raises [Invalid_argument] if [u]'s shape has a symbolic size or [slot] is
+    [max_int]. *)
 
 val param :
   ?shape:Ops.sint list ->

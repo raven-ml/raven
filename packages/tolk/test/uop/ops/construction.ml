@@ -716,6 +716,28 @@ let storage =
             (Ops.param_arg_of made).slot);
       test "a buffer cannot be given the last number" (fun () ->
           rejects (fun () -> Ops.new_buffer ~slot:max_int cpu 8 Float32));
+      test "an alloc given a slot is no alloc made without one" (fun () ->
+          (* The number the next fresh alloc would take, given by hand first. *)
+          let slot = Ops.unique_num () + 1 in
+          let given = Shape.alloc ~slot ~device:cpu (ints [ 8 ]) Float32 in
+          let made = Shape.alloc ~device:cpu (ints [ 8 ]) Float32 in
+          not_equal int
+            (Ops.param_arg_of (Ops.base given)).slot
+            (Ops.param_arg_of (Ops.base made)).slot);
+      test "a placeholder given a slot is no placeholder made without one"
+        (fun () ->
+          let check addrspace =
+            let slot = Ops.unique_num () + 1 in
+            let given = Shape.placeholder ~slot ~addrspace [ 8 ] Float32 in
+            let made = Shape.placeholder ~addrspace [ 8 ] Float32 in
+            not_equal int (Ops.param_arg_of given).slot
+              (Ops.param_arg_of made).slot
+          in
+          List.iter check [ Dtype.Global; Dtype.Local; Dtype.Reg ]);
+      test "an alloc or a placeholder cannot be given the last number"
+        (fun () ->
+          rejects (fun () -> Shape.alloc ~slot:max_int (ints [ 8 ]) Float32);
+          rejects (fun () -> Shape.placeholder ~slot:max_int [ 8 ] Float32));
       test "placeholder rejects a scalar variable's address space" (fun () ->
           rejects (fun () ->
               Shape.placeholder ~slot:0 ~addrspace:Alu [ 4 ] Float32));

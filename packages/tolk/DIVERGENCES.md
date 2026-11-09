@@ -8882,3 +8882,19 @@ reason and its pins.
   marked write's launch`, `› marked writes of two calls run in turn` and `› a
   marked write of no stores marks nothing`, and the `create_linear_with_vars ›
   writes › stores crossed into two buffers write both` pin of D330.
+
+## D418. A slot given to storage is taken
+
+- **tinygrad:** `uop/ops.py:810-814` (`new_buffer`), `1155-1159` (`alloc`),
+  `1164-1166` (`placeholder`): a given number leaves `UOp.unique_num` where it
+  was.
+- **tolk:** `Ops.new_buffer`, `Shape.alloc` and `Shape.placeholder` take a given
+  slot (`Ops.take_unique`).
+- **Differs:** a number given to one of them is never returned by a later
+  `Ops.unique_num`.
+- **Reason:** (e). Storage made later without a slot could draw the given number
+  and, at the same size and type, be the same node: two storages as one, so a
+  write to one reaches the other.
+- **Pinned by:** `Tolk.Ops › storage › a buffer given a slot is no buffer made
+  without one`, `› an alloc given a slot is no alloc made without one` and `› a
+  placeholder given a slot is no placeholder made without one`.
