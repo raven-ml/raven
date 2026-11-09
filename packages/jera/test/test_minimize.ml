@@ -601,22 +601,22 @@ let first_step = 2.5e-4
 
 (* nelder_mead's answer for [c ½ |a x − b|²] in [box] from 0, to the tolerance
    [simplex_tols.(k)], and whether it converged. The objective is [bad] where a
-   coordinate passes its [wall]. Compiled, one program per tolerance and number
-   of unknowns, since an eager search takes most of a second. *)
+   coordinate is below its wall [below] or above its wall [above]. Compiled,
+   one program per tolerance and number of unknowns, since an eager search
+   takes most of a second. *)
 let simplex_programs =
   Array.map
     (fun (_, _, _, tol) ->
       Rune.jit
         Nx.Ptree.(
           tensor @-> tensor @-> pair tensor tensor
-          @-> pair tensor (pair tensor tensor)
+          @-> pair (pair tensor tensor) (pair tensor tensor)
           @-> returns (pair tensor tensor))
-        (fun a b (lo, hi) (wall, (c, bad)) ->
+        (fun a b (lo, hi) ((below, above), (c, bad)) ->
           let f x =
             let r = Nx.sub (Nx.matmul a x) b in
-            Nx.where
-              (Nx.any (Nx.greater x wall))
-              bad
+            let out = Nx.logical_or (Nx.less x below) (Nx.greater x above) in
+            Nx.where (Nx.any out) bad
               (Nx.mul c (Nx.mul_s (Nx.sum (Nx.square r)) 0.5))
           in
           let s =
@@ -628,7 +628,8 @@ let simplex_programs =
 
 (* No wall, no scale. *)
 let plain n =
-  ( Nx.full f64 [| n |] Float.infinity,
+  ( ( Nx.full f64 [| n |] Float.neg_infinity,
+      Nx.full f64 [| n |] Float.infinity ),
     (Nx.scalar f64 1., Nx.scalar f64 Float.nan) )
 
 let simplex_in ?domain k a b box =
@@ -637,30 +638,41 @@ let simplex_in ?domain k a b box =
   in
   simplex_programs.(k) a b box domain
 
-(* [least_squares] with the tolerance [k] of [simplex_tols], a wall past which f
-   is [bad], NaN or +∞, and a scale [c] of f. Two coordinates in three have a
-   wall, up to 1 above the start, 0 projected on the box, so the start lies in
-   f's domain and a wall often holds the answer. A scale of 1e170 squares the
-   restart's differences past the floats' range, 1e-170 below it; f's
-   decisions are those of [c = 1] otherwise. *)
+(* [least_squares] with the tolerance [k] of [simplex_tols], walls past which f
+   is [bad], NaN, +∞ or −∞, and a scale [c] of f. Of each coordinate's four
+   cases, three have a wall: up to 1 above the start, 0 projected on the box,
+   up to 1 below it, or both. So the start lies in f's domain and a wall often
+   holds the answer. A scale of 1e170 squares the restart's differences past
+   the floats' range, 1e-170 below it; f's decisions are those of [c = 1]
+   otherwise. *)
 let walled =
   let open Gen in
   (let* k = int_range 0 (Array.length simplex_tols - 1) in
    let* a, b, (lo, hi) = least_squares in
    let n = Nx.dim 0 lo in
-   let+ rises =
-     list ~size:(constant n) (pair (int_range 0 2) (float_range 0. 1.))
+   let+ sides =
+     list ~size:(constant n)
+       (pair (int_range 0 3) (pair (float_range 0. 1.) (float_range 0. 1.)))
    and+ c = of_list [ 1.; 1e170; 1e-170 ]
-   and+ bad = of_list [ Float.nan; Float.infinity ] in
+   and+ bad = of_list [ Float.nan; Float.infinity; Float.neg_infinity ] in
    let start = Nx.minimum hi (Nx.maximum lo (Nx.zeros_like lo)) in
-   let rise (on, u) = if on > 0 then u else Float.infinity in
-   let wall = Nx.add start (vec (Array.of_list (List.map rise rises))) in
-   (k, (a, b, (lo, hi)), (wall, (c, bad))))
-  |> with_pp (fun ppf (k, (a, b, (lo, hi)), (wall, (c, bad))) ->
+   let gaps side far =
+     vec
+       (Array.of_list
+          (List.map
+             (fun (s, (u, d)) ->
+               if s land side <> 0 then far u d else Float.infinity)
+             sides))
+   in
+   let above = Nx.add start (gaps 1 (fun u _ -> u)) in
+   let below = Nx.sub start (gaps 2 (fun _ d -> d)) in
+   (k, (a, b, (lo, hi)), ((below, above), (c, bad))))
+  |> with_pp (fun ppf (k, (a, b, (lo, hi)), ((below, above), (c, bad))) ->
       let name, _, _, _ = simplex_tols.(k) in
       Format.fprintf ppf
-        "%s@ a = %a@ b = %a@ lo = %a@ hi = %a@ wall = %a@ c = %g@ bad = %g" name
-        Nx.pp a Nx.pp b Nx.pp lo Nx.pp hi Nx.pp wall c bad)
+        "%s@ a = %a@ b = %a@ lo = %a@ hi = %a@ below = %a@ above = %a@ c = %g@ \
+         bad = %g"
+        name Nx.pp a Nx.pp b Nx.pp lo Nx.pp hi Nx.pp below Nx.pp above c bad)
 
 (* How far from [P (x − g) = x], [g] the gradient and [P] the projection on the
    box, a [Converged] answer [x] of [simplex_in k a b] may be. Converging, the
@@ -864,24 +876,25 @@ let box_tests =
                 (fun x -> Nx.sum (bowl c x))
                 (Nx.zeros f64 [| 2 |]))));
     prop "nelder_mead converges only at a minimum in the box" walled
-      (fun (k, (a, b, (lo, hi)), (wall, (c, bad))) ->
-        (* f is non-finite past the wall, so its minimum is in the box whose
-           upper side is the nearer of [hi] and the wall. *)
+      (fun (k, (a, b, (lo, hi)), ((below, above), (c, bad))) ->
+        (* f is non-finite past the walls, so its minimum is in the box whose
+           sides are the nearer of each bound and its wall. *)
         let n = Nx.dim 0 lo in
-        let domain = (wall, (Nx.scalar f64 c, Nx.scalar f64 bad)) in
+        let domain = ((below, above), (Nx.scalar f64 c, Nx.scalar f64 bad)) in
         let x, converged = simplex_in ~domain k a b (lo, hi) in
         let converged = Nx.item [] converged in
-        let top = Nx.minimum hi wall in
+        let bottom = Nx.maximum lo below and top = Nx.minimum hi above in
         let step = Nx.sub x (squares_gradient a b x) in
-        let clipped = Nx.minimum top (Nx.maximum lo step) in
+        let clipped = Nx.minimum top (Nx.maximum bottom step) in
         let held =
-          Nx.logical_and (Nx.not_equal clipped step) (Nx.less lo top)
+          Nx.logical_and (Nx.not_equal clipped step) (Nx.less bottom top)
         in
-        let walled =
+        let holds past wall bound =
           Nx.item []
-            (Nx.any
-               (Nx.logical_and (Nx.greater step wall) (Nx.less wall hi)))
+            (Nx.any (Nx.logical_and (past step wall) (past bound wall)))
         in
+        let walled_above = holds Nx.greater above hi in
+        let walled_below = holds Nx.less below lo in
         let name, _, _, _ = simplex_tols.(k) in
         cover "a coordinate held at a bound, with another free"
           (n > 1 && Nx.item [] (Nx.any held) && not (Nx.item [] (Nx.all held)));
@@ -893,8 +906,12 @@ let box_tests =
           (fun v ->
             cover
               (Printf.sprintf "a wall of %g holds a converged answer" v)
-              (converged && walled && Float.equal v bad))
-          [ Float.nan; Float.infinity ];
+              (converged
+              && (walled_above || walled_below)
+              && Float.equal v bad))
+          [ Float.nan; Float.infinity; Float.neg_infinity ];
+        cover "a wall below holds a converged answer"
+          (converged && walled_below);
         List.iter
           (fun v ->
             cover

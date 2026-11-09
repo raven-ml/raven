@@ -853,6 +853,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.nelder_mead` counts a value of `f` of −∞ as +∞, as it states for
+  every non-finite value: it took −∞ for a minimum and reported `Converged`
+  past `f`'s domain.
 - `Minimize.nelder_mead` no longer reports `Converged` off the minimum where
   `f` is not finite at a convergence probe, or where its differences there
   overflow when squared, as when `f` is scaled by `1e170`.

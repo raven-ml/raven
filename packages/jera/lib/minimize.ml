@@ -1508,7 +1508,7 @@ let simplex_problem (type b) fn x (f : _ -> (float, b, 'd) Nx.t) start =
         (Printf.sprintf "%s: f returned a value of shape %s, not a scalar" fn
            (Num.shape (Nx.shape y)));
     let y = Nx.cast dtype y in
-    Nx.where (Nx.isnan y) (Nx.full_like y Float.infinity) y
+    Nx.where (Nx.isfinite y) y (Nx.full_like y Float.infinity)
   in
   let values vs =
     Rune.detach (Rune.vmap Nx.Ptree.(tensor @-> returns tensor) value vs)
