@@ -6974,19 +6974,38 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   of the last unrollable axis would take, the axis whole when it holds at
   most 32, 4 otherwise, as tinygrad's 32 output lanes leave room below its
   64 for the unroll.
-- **Reason:** (d): Clang's straight-line vectorizer, which packs a
-  conversion's vector from the lanes it converts, takes time much faster
-  than linear in them where they are loads gathered from apart: 98% of
-  gpt_oss_kv's 0.9-1.2 s at 128 lanes is that pass (`-ftime-report`), 0.15
-  s at 64 and 0.03 s at 32. Against the unbounded lanes, Clang's CPU on
-  fudge: `conv_half` 6.5-6.6 s to 52-66 ms (its run time tied),
-  `matmul_half` 137-144 ms to 29-32, `gpt_oss_qkv` 174-178 ms to 28-37; and
-  the run time of the narrower vectors, one P-core: `matmul_half` 351-352
-  µs to 123-124, `batched_matmul_half` 177-215 to 61-63, `gpt_oss_qkv`
-  6.4-20.5 ms to 3.2-7.2 (loaded). gpt_oss_kv takes 32 output lanes and no
-  unroll, 89-98 µs, where 32 by 4 took 332-336 and 16 by 4 338-344. The
-  routed products read their block's expert as a row's quotient and keep
+- **Reason:** (d): on fudge's AVX2 each row below that the bound changes takes
+  no unroll of its sum with it, and without it an unroll by 4, or
+  `conv_half`'s window of 3 whole. Without the bound (the iteration's kept),
+  one P-core, each round one process alternating the two over 151 samples,
+  minima of six rounds at load 7-21: `gpt_oss_kv` 218-228 µs against 408-429
+  (1.87-1.89 times, every round), `matmul_half` 536-558 against 582-606
+  (1.09); of four rounds at load 4-9, `batched_matmul_half` 276-288 against
+  299-311 (1.08). It costs `conv_half`, 1.27 times as fast without: 1750-1823
+  µs against 1376-1435, every round. `gpt_oss_qkv`'s times scatter (0.63-1.35
+  across rounds) and show nothing. On programs the bound does not change, in
+  the same processes, the ratio was 0.999-1.006 for `conv`, 0.996-1.004 for
+  `matmul`, and 0.96-1.02 for `vecmat_1000`, whose kernel converts nothing.
+  The lanes stand for the unroll's cost, whose cause is not measured: an
+  earlier run of `gpt_oss_kv` took 89-98 µs with no unroll, 332-336 at 32
+  lanes by 4 and 338-344 at 16 by 4, which is 64 lanes and within the bound.
+  The routed products read their block's expert as a row's quotient and keep
   their unroll by 8, which ran 1.35 times as fast as by 2.
+
+  Clang's time, which the bound was written for, is now a smaller gain. CPU
+  seconds of the process tree for a cold compile (lowering, rendering and
+  Clang, one P-core, medians of twelve, eight for the last two) with the bound
+  against without: `conv_half` 0.070 against 0.088, `matmul_half` 0.044
+  against 0.076, `gpt_oss_kv` 0.039 against 0.064, `batched_matmul_half` 0.050
+  against 0.086, `gpt_oss_qkv` 0.040 against 0.065: 1.3-1.7 times, 18-36 ms a
+  kernel. rune's compile rows, one cold round of the whole process:
+  `products/segments-grad` 0.58 s against 0.88, `products/vecmat-bf16` 0.12
+  against 0.20. The 100 times once stated for `conv_half` was against a kernel
+  with neither the iteration's bound nor D141's vectors of 64 lanes, which
+  came later. The bound's 70 lines pay for gpt_oss_kv's 1.9 times on gpt-oss's
+  decode path, the half-precision products' 1.08 and those compile times,
+  against 1.27 times on `conv_half`, a kernel of the Heuristic suite. These
+  rows are 5 of the about 50 recorded (kernel, target) pairs it changes.
 
   The iteration's lanes: Clang's time grows much faster than them where
   they put together vectors from many loaded rows, 97% of it in InstCombine
@@ -7043,7 +7062,8 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   2416-2417 against 2029-2078 and 2948-3004 against 2754-2848, and another
   to 1024 lanes, 672-685 µs against 659-669.
 
-  The bound stays since those vectors of 64 lanes held the compile time.
+  The iteration's bound stays since those vectors of 64 lanes held the
+  compile time.
   Without it, of 5,240 recorded (kernel, target) pairs 4 change: `conv` on
   AVX2 unrolls both axes of its window, 570 µs against 672, and rune's
   contraction of 8 groups runs in the same 21.0 µs, but a float32 product of
@@ -7057,9 +7077,10 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   conversion computes at most 64 lanes`, over every recorded kernel and
   lorenz_simple's on four register files, and the host cases of `the
   optimisations chosen are tinygrad's`; rune's compile bench row
-  `products/vecmat-bf16`, whose fudge baseline the scheduled re-record
-  records. The iteration: the Heuristic suite's `the host's lanes › on the
-  host an iteration computes at most 512 lanes`, over the same kernels and
+  `products/vecmat-bf16` and the tolk bench's `host/gpt_oss_kv/heuristic`,
+  whose fudge baselines the scheduled re-record records. The iteration: the
+  Heuristic suite's `the host's lanes › on the host an iteration computes at
+  most 512 lanes`, over the same kernels and
   rune's contraction of 8 groups (`contracting_groups.graph`), `› on AVX2
   an output upcast leaves room for the whole unroll of an axis of at most
   32` and `› an output upcast leaves 4 lanes for the unroll of an axis past

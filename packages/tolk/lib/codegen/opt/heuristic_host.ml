@@ -107,15 +107,13 @@ let held ?upcast k (file : Renderer.registers) =
     0 (K.reduceops k)
 
 (* A conversion computes as one vector the lanes upcast of every axis its value
-   reads, and the C compiler's vectorizer packs that vector from the lanes of
-   the values it converts. Where those are loads gathered from apart its time
-   grows much faster than the lanes: gpt-oss's key and value projection, a
-   product with a bfloat16 matrix of 512 columns whose lanes convert 4 rows of
-   its unrolled sum by the output lanes, compiles in 0.03 s at 32 lanes, 0.15 s
-   at 64 and 0.9 s at 128. So on the host a conversion takes at most
-   [converted_lanes]. Its lanes are those holding distinct values: [n] lanes
-   of an axis read as a quotient by [d] hold [n / gcd n d], as a block of rows
-   reads its expert once, and a reduce's lanes are summed before it. *)
+   reads, and on the host the number of them decides whether a product unrolls
+   its sum: gpt-oss's key and value projection, with a bfloat16 matrix of 512
+   columns, takes 1.9 times as long unrolled by 4, 128 lanes, as with no
+   unroll. So on the host a conversion takes at most [converted_lanes]. Its
+   lanes are those holding distinct values: [n] lanes of an axis read as a
+   quotient by [d] hold [n / gcd n d], as a block of rows reads its expert
+   once, and a reduce's lanes are summed before it. *)
 let converted_lanes = 64
 
 (* The most lanes a conversion of [k] computes at once once [upcast] and

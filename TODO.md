@@ -68,9 +68,6 @@ raven / llama.cpp b12048 Vulkan:
   rounding to nearest, which MSL 8.6 does not promise (it allows round
   toward zero); Apple's GPUs round to nearest when tested. Make
   tolk's Cast own it, as `Decomp_dtype.narrow` does for narrow floats
-- D241's conversion bound: keep or cut on a quiet replay of `host/conv_half`,
-  `matmul_half`, `gpt_oss_kv` and `vecmat_1000`. Host wall noise was
-  0.57-1.93x on rows no config changes, so loaded runs cannot decide it
 - `stream/dense-bf16-32` streams at 541 µs where a staged core takes 429:
   the gate stays at 32 because 16 lost on `GptOss/prefill-512` in 4 of 4
   rounds
