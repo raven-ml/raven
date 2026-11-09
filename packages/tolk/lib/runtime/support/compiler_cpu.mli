@@ -133,3 +133,14 @@ val registers : string -> Renderer.registers option
 val win64 : string -> bool
 (** [win64 arch] is [true] iff [arch], as {!clang} reads it, is x86_64's
     under Windows: its [MACHINE-SYSTEM] is [x86_64-windows]. *)
+
+val has_feature : string -> string -> bool
+(** [has_feature arch f] is [true] iff the flags {!clang} writes for [arch]
+    enable the feature [f] by name: its last mention among [arch]'s
+    [FEATURE]s is [f] and not [-f], since Clang applies them in order, or,
+    on an arm64 Mac whose [CPU] is [native], [f] is [fp16] and macOS lists
+    it, with no [-fp16] after. It reads nothing of what [CPU] has by itself:
+    [has_feature "arm64,apple-m1" "fp16"] is [false].
+
+    Raises [Invalid_argument] naming [arch] if it has fewer than two
+    fields. *)

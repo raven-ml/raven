@@ -1601,11 +1601,22 @@ let clang (target : Helpers.Target.t) =
      target's float class: [w] on arm64, [x] on x86 and [f] on riscv64. x86 and
      riscv64 compare a bfloat16 in float32. A selection of a half, and of a
      bfloat16 where it is a [__bf16], chooses between bits. *)
+  let arm64 =
+    String.starts_with ~prefix:"arm64" arch
+    || String.starts_with ~prefix:"aarch64" arch
+  in
+  (* A half multiply-add, scalar or of lanes, is LLVM's fma of halves, IEEE
+     754's fusedMultiplyAdd, which rounds once. With fp16, arm64's half
+     arithmetic (FEAT_FP16), halves are legal and it is one fmadd or fmla;
+     without, LLVM computes it in a wider type, and code generation rewrites
+     it instead. *)
+  let fp16 = arm64 && Compiler_cpu.has_feature arch "fp16" in
+  let once dt =
+    Dtype.mem dt Dtype.[ Float32; Float64 ]
+    || (Dtype.equal dt Dtype.Float16 && fp16)
+  in
   let lang =
-    if
-      String.starts_with ~prefix:"arm64" arch
-      || String.starts_with ~prefix:"aarch64" arch
-    then
+    if arm64 then
       {
         clang_lang with
         string_rewrite =
@@ -1654,6 +1665,18 @@ let clang (target : Helpers.Target.t) =
         suffix64 = "ll";
       }
   in
+  let lang =
+    if not fp16 then lang
+    else
+      let name dt =
+        if Dtype.equal dt Dtype.Float16 then "__builtin_fmaf16"
+        else by_width ~double:"__builtin_fma" ~single:"__builtin_fmaf" dt
+      in
+      {
+        lang with
+        code_for_op = override lang.code_for_op [ (Op.Mulacc, fma name) ];
+      }
+  in
   let held =
     if String.starts_with ~prefix:"x86" arch then [ Dtype.Float16 ]
     else Dtype.[ Float16; Bfloat16 ]
@@ -1670,7 +1693,7 @@ let clang (target : Helpers.Target.t) =
     ~registers:(fun () -> Compiler_cpu.registers arch)
     ~vector_lanes:clang_lanes ~has_local:false ~global_max:[ 1; 0; 0 ]
     ~extra_matcher:clang_extra_matcher ~packed_args:true
-    ~code_for_op:lang.code_for_op ~native
+    ~code_for_op:lang.code_for_op ~native ~fma:once
     ~render:(render (clang_kernel ~cpu:(target.device = "CPU")) lang)
     ~compiler:(Compiler_cpu.clang arch) target
 

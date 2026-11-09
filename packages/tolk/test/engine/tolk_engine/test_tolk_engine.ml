@@ -85,7 +85,13 @@ let targets =
          a convention of their own" (fun () ->
           let system = if Sys.win32 then "-windows" else "" in
           let isa = Rig.instruction_set host in
-          let cpu = if isa = "x86_64" then Rig.arch host else "generic" in
+          let cpu =
+            match Rig.arch host with
+            | "arm64" -> "generic"
+            | "arm64+fp16" -> "generic,fp16"
+            | level when isa = "x86_64" -> level
+            | arch -> fail ("an arch this test has no target for: " ^ arch)
+          in
           equal target
             (host_target (isa ^ system) (cpu ^ ",tune=native"))
             (Engine.target host));

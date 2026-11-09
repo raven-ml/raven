@@ -303,28 +303,43 @@ let win64 arch =
 let llvm18_x86_off =
   [ "-mno-avx10.1-512"; "-mno-avx10.1-256"; "-mno-avx512fp16" ]
 
+(* The machine of [arch] without its system, its processor, its features as
+   written, and the flags that tune it. *)
+let fields arch =
+  match String.split_on_char ',' arch with
+  | machine :: cpu :: fields ->
+      let tune, feats =
+        List.partition_map
+          (fun f ->
+            match String.split_on_char '=' f with
+            | [ "tune"; t ] -> Left ("-mtune=" ^ t)
+            | _ -> Right f)
+          fields
+      in
+      (List.hd (String.split_on_char '-' machine), cpu, feats, tune)
+  | _ ->
+      invalid_arg
+        (Printf.sprintf
+           "invalid arch string: '%s', expected '<arch>,<cpu>,[<feats>]' \
+            (eg. 'x86_64,znver2')"
+           arch)
+
+(* The features Clang is given for [machine]'s [cpu]: an arm64 Mac's
+   [native] gains the half arithmetic macOS lists. *)
+let features machine cpu feats =
+  if machine = "arm64" && cpu = "native" then mac_native @ feats else feats
+
+let has_feature arch f =
+  let machine, cpu, feats, _ = fields arch in
+  List.fold_left
+    (fun on g -> if g = f then true else if g = "-" ^ f then false else on)
+    false
+    (features machine cpu feats)
+
 (* The machine of [arch] and the flags that make Clang compile for it: its
    triple, processor and features, and the processor it tunes for. *)
 let selection arch =
-  let machine, cpu, feats, tune =
-    match String.split_on_char ',' arch with
-    | machine :: cpu :: fields ->
-        let tune, feats =
-          List.partition_map
-            (fun f ->
-              match String.split_on_char '=' f with
-              | [ "tune"; t ] -> Left ("-mtune=" ^ t)
-              | _ -> Right f)
-            fields
-        in
-        (List.hd (String.split_on_char '-' machine), cpu, feats, tune)
-    | _ ->
-        invalid_arg
-          (Printf.sprintf
-             "invalid arch string: '%s', expected '<arch>,<cpu>,[<feats>]' \
-              (eg. 'x86_64,znver2')"
-             arch)
-  in
+  let machine, cpu, feats, tune = fields arch in
   let off f = String.starts_with ~prefix:"-" f in
   let target_args =
     match machine with
@@ -339,9 +354,7 @@ let selection arch =
         let feat f =
           if off f then "no" ^ String.sub f 1 (String.length f - 1) else f
         in
-        let feats =
-          if cpu = "native" then mac_native @ feats else feats
-        in
+        let feats = features machine cpu feats in
         [
           "-ffixed-x18";
           "-mcpu=" ^ String.concat "+" (cpu :: List.map feat feats);

@@ -75,15 +75,17 @@ let agrees name { f } =
   equal (array int32) (bits (f x)) (bits (Nx.place Nx.Host.on far))
 
 (* Another machine's host compiles for its arch: on x86-64 its level, which
-   Clang takes as its processor, on arm64 the base architecture, untuned. *)
+   Clang takes as its processor, on arm64 the base architecture with the
+   features its arch names, untuned. *)
 let compiles_for_its_arch () =
   let h = host () in
   let t = Tolk_engine.target h in
   let cpu =
-    match Rig.instruction_set h with
-    | "x86_64" -> Rig.arch h
+    match Rig.arch h with
     | "arm64" -> "generic"
-    | isa -> fail ("another instruction set: " ^ isa)
+    | "arm64+fp16" -> "generic,fp16"
+    | level when Rig.instruction_set h = "x86_64" -> level
+    | arch -> fail ("an arch this test has no target for: " ^ arch)
   in
   equal string (Rig.instruction_set h ^ "," ^ cpu) t.arch;
   equal string "CPU" t.device;

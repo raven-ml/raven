@@ -863,7 +863,11 @@ scope, see README.
     bfloat16s from 80 ("rounding the result once in round-to-nearest-even
     mode", `cuda_fp16.h` and `cuda_bf16.h`), HIP's `__builtin_fmaf16`
     (`V_FMA_F16`, fused), Metal's `fma` of halves from Apple family 4 ("Correctly
-    rounded", MSL 4.1 Table 8.3, fast math off). Elsewhere its operands widen
+    rounded", MSL 4.1 Table 8.3, fast math off), and Clang's
+    `__builtin_fmaf16` and `__builtin_elementwise_fma` of halves on arm64
+    with `fp16` (FEAT_FP16), LLVM's fma of a legal half type, one `fmadd` or
+    `fmla`, checked under Apple clang 17 and Homebrew Clang 18, 19, 21 and
+    22. Elsewhere its operands widen
     to a float32, where their product is exact, a bfloat16's within guards
     at the ends of its range; the sum is rounded to odd there, and the cast
     back rounds once (Boldo and Melquiond, IEEE Trans. Computers 57(4), 2008,
@@ -932,7 +936,10 @@ scope, see README.
   midpoint by less than a float32 resolves, on a midpoint, around the bound
   past which the type overflows, subnormal, NaN, infinite and negative zero
   operands, a product on a midpoint of the top binade beside an addend of the
-  least normal binade, which fails on Metal where the addend is halved).
+  least normal binade, which fails on Metal where the addend is halved);
+  on the host also at `arm64,generic` and `arm64,generic,fp16`, the second
+  written by `fmla` and `fmadd`, which `Tolk.Compiler_cpu › a half
+  multiply-add on arm64` checks in the object.
 
 ## D26. A minus never meets a minus in C-style source
 
@@ -2820,7 +2827,8 @@ gate read a set; merged into D93.
   of its kind. `Helpers.Target` keeps the
   record and its syntax, which tests and the goldens' generator write.
   A host compiles for its `Rig.arch`: on x86-64 its psABI level, such as
-  `x86_64,x86-64-v3`, and on arm64 `generic`, the base architecture; this
+  `x86_64,x86-64-v3`, and on arm64 `generic`, the base architecture, with
+  the features its arch names, as in `arm64,generic,fp16`; this
   machine's host also tunes for its processor, as in
   `x86_64,x86-64-v3,tune=native`, where tinygrad's CPU, remote or not,
   compiles for this machine's instruction set and processor, `native`.

@@ -4084,6 +4084,18 @@ let compiled_on d (r : Renderer.t) k =
 
 let on_host k = (false, None, compiled_on Rig.host (Lazy.force host) k)
 
+(* [k] compiled for arm64 at [arch] and run on this machine's host, which
+   runs it where the host is arm64 with each feature [arch] names. *)
+let on_arm64 arch k =
+  let features = List.tl (String.split_on_char '+' (Rig.arch Rig.host)) in
+  if Rig.instruction_set Rig.host <> "arm64" then
+    skip ~reason:"not an arm64 host" ();
+  (match String.split_on_char ',' arch with
+  | _ :: _ :: needs when List.for_all (fun f -> List.mem f features) needs -> ()
+  | _ -> skip ~reason:("the host does not run " ^ arch) ());
+  let r = Cstyle.clang (target "CPU" "CLANG" arch) in
+  (false, None, compiled_on Rig.host r k)
+
 (* The GPUs the law runs on, each opened once, at its first case, and skipping
    it without one or without its compiler, whether its conversions to an 8-bit
    float saturate ({!Cstyle.cuda}), and whether it flushes subnormals. *)
@@ -4116,6 +4128,11 @@ let narrow_multiply_adds =
   let on f =
     group "on the host" (List.map (muladd_rounds_once f on_host) widths)
     :: List.map
+         (fun arch ->
+           group ("on the host at " ^ arch)
+             (List.map (muladd_rounds_once f (on_arm64 arch)) widths))
+         [ "arm64,generic"; "arm64,generic,fp16" ]
+    @ List.map
          (fun ((kind, _, _, _) as gpu) ->
            group ("on " ^ kind)
              (List.map (muladd_rounds_once f (on_gpu gpu f)) widths))

@@ -93,7 +93,9 @@ val clang : Helpers.Target.t -> Renderer.t
     types are those of {!Dtype.all} without the 8-bit floats, and without
     {!Dtype.Bfloat16} unless the architecture starts with [x86] or [arm]. Its
     vector registers are those of Clang's processor
-    ({!Compiler_cpu.registers}).
+    ({!Compiler_cpu.registers}). On [arm64] with the [FEATURE] [fp16],
+    FEAT_FP16's half arithmetic, a half multiply-add, of one lane or many, is
+    LLVM's fused multiply-add of halves, rounded once ({!Renderer.t.fma}).
 
     Under [x86_64-windows], whose objects call by Windows' convention and
     whose [long] has 32 bits, a 64-bit integer is a [long long], its literals

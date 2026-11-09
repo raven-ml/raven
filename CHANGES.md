@@ -1106,6 +1106,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- An `arm64+fp16` host (`Rig.arch`) compiles for `arm64,generic,fp16`: half
+  vectors compute in halves and a half `Op.Mulacc` is one `fmla` or `fmadd`.
+  Results keep their bits, NaN payloads aside.
+- `Compiler_cpu.has_feature` tells whether an arch's flags enable a feature.
 - A cast of a boolean to `bfloat16` compiles on AMD GPUs, where comgr aborted
   with "Cannot select ... bf16 = uint_to_fp". `Cstyle.hip` converts to and from
   `bfloat16` on the bits.

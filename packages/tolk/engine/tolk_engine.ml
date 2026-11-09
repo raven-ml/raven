@@ -26,9 +26,10 @@ let of_kind ?(renderer = "") ?(arch = "") device =
   { Helpers.Target.device; renderer; arch; interface = ""; indices = "" }
 
 (* A host compiles for its arch: on x86-64 its level, which Clang takes as its
-   processor, and on arm64 its base architecture, Clang's [generic]. This
-   machine's host tunes for its own processor, which allows no instruction its
-   level lacks. *)
+   processor, and on arm64 its base architecture, Clang's [generic], with the
+   features its arch names, which Clang names alike: "arm64+fp16" compiles as
+   "arm64,generic,fp16". This machine's host tunes for its own processor,
+   which allows no instruction its arch lacks. *)
 let target d =
   match vendor d with
   | Some kind -> of_kind ~arch:(Rig.arch d) kind
@@ -38,7 +39,12 @@ let target d =
       let host = Rig.host_of d in
       let here = Rig.equal host Rig.host in
       let machine = Rig.instruction_set host in
-      let cpu = if machine = "x86_64" then Rig.arch host else "generic" in
+      let cpu =
+        if machine = "x86_64" then Rig.arch host
+        else
+          let features = List.tl (String.split_on_char '+' (Rig.arch host)) in
+          String.concat "," ("generic" :: features)
+      in
       let tune = if here then ",tune=native" else "" in
       (* The functions of a Windows process's libraries follow a convention of
          their own, which the object is compiled for (rig's host code). *)

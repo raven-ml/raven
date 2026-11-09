@@ -33,9 +33,10 @@ val target : Rig.t -> Helpers.Target.t
     device ["CPU"], renderer ["CLANG"], and architecture its host's
     {!Rig.instruction_set} with the processor its host's {!Rig.arch} names:
     an x86-64 level, as in ["x86_64,x86-64-v3"], and on arm64 [generic], the
-    base architecture, so that a program runs on every host of its arch. On
-    this machine the code is also tuned for its processor, which chooses among
-    the level's instructions and adds none, as in
+    base architecture, with the features its arch names, as in
+    ["arm64,generic,fp16"], so that a program runs on every host of its arch.
+    On this machine the code is also tuned for its processor, which chooses
+    among the arch's instructions and adds none, as in
     ["x86_64,x86-64-v3,tune=native"] ({!Tolk.Compiler_cpu.clang}).
     On this machine under Windows the architecture names the system, as in
     ["x86_64-windows,x86-64-v3,tune=native"], under which an x86_64 program

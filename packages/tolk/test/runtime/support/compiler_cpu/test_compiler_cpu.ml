@@ -584,11 +584,177 @@ let half_casts_baseline =
           equal values (floats (Array.make n 0x1p-24)) (List.assoc 0 out));
     ]
 
+(* arm64's half arithmetic
+
+   With fp16, FEAT_FP16, Clang computes a half vector in halves where it
+   computes it in floats otherwise. A half's +, -, *, / and square root
+   rounded in a float32 and then to the half are the half's correctly rounded
+   result, since 24 >= 2 * 11 + 2 (Roux, "Innocuous Double Rounding of Basic
+   Arithmetic Operations", 2014), and a multiply-add rounds once either way,
+   so the two compute the same bits. *)
+
+let arm64_fp16 () =
+  if Rig.instruction_set Rig.host <> "arm64" then
+    skip ~reason:"not an arm64 host" ();
+  if not (List.mem "fp16" (String.split_on_char '+' (Rig.arch Rig.host))) then
+    skip ~reason:"the host has no half arithmetic" ()
+
+(* The program of out[i] = f a[i] b[i] c[i] over [n] halves held as their
+   bits, for [arch], its lanes upcast by [lanes]. *)
+let halves ~arch ~lanes ~n f =
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let bits slot =
+    Ops.index (Shape.placeholder ~slot [ n ] Dtype.Uint16) [ i ]
+  in
+  let half slot = Ops.bitcast (bits slot) Dtype.Float16 in
+  let opts =
+    if lanes = 1 then []
+    else
+      [ Opt.Split { axis = 0; amount = lanes; target = Upcast; top = false } ]
+  in
+  let value = Ops.bitcast (f (half 1) (half 2) (half 3)) Dtype.Uint16 in
+  let sink =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"halves" ~opts_to_apply:opts ())
+      [ Ops.end_ (Ops.store (bits 0) value) [ i ] ]
+  in
+  Codegen.to_program sink (Cstyle.clang (target arch))
+
+let source prg =
+  match Ops.arg (Ops.nth prg 2) with
+  | String src -> src
+  | _ -> invalid_arg "a program's third source is its source"
+
+let muladd a b c = Ops.alu a Op.Mulacc [ b; c ]
+
+(* Whether a line of [text] holds the instruction [i] and a word that
+   [operand] accepts. *)
+let has_instruction i operand text =
+  List.exists
+    (fun line ->
+      let ws = words line in
+      List.mem i ws && List.exists operand ws)
+    (String.split_on_char '\n' text)
+
+let half_muladds =
+  group "a half multiply-add on arm64"
+    [
+      cases "rounds once as Clang writes it iff fp16 is on, and is rewritten \
+             otherwise:"
+        ~id:fst
+        [
+          ("arm64,generic", false);
+          ("arm64,generic,fp16", true);
+          ("arm64,generic,-fp16", false);
+          ("arm64,generic,fp16,-fp16", false);
+          ("arm64,generic,-fp16,fp16", true);
+          ("arm64,generic,fp16,tune=native", true);
+          ("x86_64,x86-64-v3", false);
+        ]
+        (fun (arch, once) ->
+          equal bool once ((Cstyle.clang (target arch)).fma Dtype.Float16));
+      cases "is one fmla of eight halves iff fp16 is on:" ~id:fst
+        [ ("arm64,generic", false); ("arm64,generic,fp16", true) ]
+        (fun (arch, fused) ->
+          let prg = halves ~arch ~lanes:8 ~n:8 muladd in
+          let text = disassembly arch (source prg) in
+          equal ~msg:text bool fused
+            (has_instruction "fmla" (String.equal "8h") text));
+      cases "of one lane is one fmadd of halves iff fp16 is on:" ~id:fst
+        [ ("arm64,generic", false); ("arm64,generic,fp16", true) ]
+        (fun (arch, fused) ->
+          let prg = halves ~arch ~lanes:1 ~n:1 muladd in
+          let text = disassembly arch (source prg) in
+          let half_register w =
+            String.length w > 1 && w.[0] = 'h' && w.[1] >= '0' && w.[1] <= '9'
+          in
+          equal ~msg:text bool fused
+            (has_instruction "fmadd" half_register text));
+    ]
+
+(* Halves of every class: zeros, subnormals and the least normal, one and
+   its neighbours, the greatest finite and its neighbour, infinities and
+   NaNs, then any. *)
+let half_bits =
+  let edges =
+    [
+      0x0000; 0x0001; 0x03ff; 0x0400; 0x3bff; 0x3c00; 0x3c01; 0x7bfe; 0x7bff;
+      0x7c00; 0x7c01; 0x7e00;
+    ]
+  in
+  let signed (h, negative) = if negative then h lor 0x8000 else h in
+  Gen.(
+    frequency
+      [
+        (1, map signed (pair (of_list edges) bool));
+        (3, int_range 0 0xffff);
+      ])
+
+let is_nan h = h land 0x7c00 = 0x7c00 && h land 0x3ff <> 0
+
+(* The bits of a half, every NaN read as one. *)
+let canonical h = if is_nan h then 0x7e00 else h
+
+let n_halves = 64
+
+let same_bits (name, f) =
+  let program arch = lazy (halves ~arch ~lanes:8 ~n:n_halves f) in
+  let generic = program "arm64,generic"
+  and fp16 = program "arm64,generic,fp16" in
+  prop ~count:50 name
+    Gen.(array ~size:(constant n_halves) (triple half_bits half_bits half_bits))
+    (fun xs ->
+      arm64_fp16 ();
+      let subnormal h = h land 0x7c00 = 0 && h land 0x3ff <> 0 in
+      cover "a subnormal operand"
+        (Array.exists (fun (a, b, _) -> subnormal a || subnormal b) xs);
+      cover "a NaN or an infinity"
+        (Array.exists (fun (a, _, _) -> a land 0x7c00 = 0x7c00) xs);
+      let column g = ints (Array.map g xs) in
+      let run prg =
+        let prg = Lazy.force prg in
+        Array.map canonical
+          (to_ints
+             (List.assoc 0
+                (Run.on_host prg
+                   [
+                     (1, column (fun (a, _, _) -> a));
+                     (2, column (fun (_, b, _) -> b));
+                     (3, column (fun (_, _, c) -> c));
+                   ])))
+      in
+      equal (array int) (run generic) (run fp16))
+
+let half_bits_agree =
+  group "a program for arm64 with fp16 gives arm64's bits"
+    (List.map same_bits
+       [
+         ("of an addition", fun a b _ -> Ops.alu a Op.Add [ b ]);
+         ("of a subtraction", fun a b _ -> Ops.alu a Op.Sub [ b ]);
+         ("of a product", fun a b _ -> Ops.alu a Op.Mul [ b ]);
+         ("of a quotient", fun a b _ -> Ops.alu a Op.Fdiv [ b ]);
+         ("of a square root", fun a _ _ -> Ops.alu a Op.Sqrt []);
+         ("of a multiply-add", muladd);
+       ])
+
 (* Features *)
 
 let features =
   group "features"
     [
+      cases "a feature is on iff its last mention enables it:"
+        ~id:(fun (arch, f, _) -> arch ^ " " ^ f)
+        [
+          ("arm64,generic", "fp16", false);
+          ("arm64,generic,fp16", "fp16", true);
+          ("arm64,generic,fp16,-fp16", "fp16", false);
+          ("arm64,generic,-fp16,fp16", "fp16", true);
+          ("arm64,generic,fp16,tune=native", "fp16", true);
+          ("arm64,apple-m1", "fp16", false);
+          ("x86_64,x86-64,avx", "avx", true);
+          ("x86_64,x86-64,avx,-avx", "avx", false);
+        ]
+        (fun (arch, f, on) -> equal bool on (Compiler_cpu.has_feature arch f));
       cases "a half addition on arm64 converts iff fp16 is off:" ~id:fst
         [ ("arm64,generic", true); ("arm64,generic,fp16", false) ]
         (fun (arch, fcvt) ->
@@ -1061,6 +1227,8 @@ let () =
          tinygrad;
          execution;
          half_casts_baseline;
+         half_muladds;
+         half_bits_agree;
          features;
          flags;
          registers;
