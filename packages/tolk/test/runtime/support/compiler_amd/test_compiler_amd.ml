@@ -573,6 +573,74 @@ let verifier =
                    msg);
     ]
 
+(* Kernels the HIP renderer writes
+
+   LLVM folds a float32 converted exactly from an integer and narrowed to
+   bfloat16 into one conversion from the integer, and narrows a widened bool to
+   an [i1], from which AMD's backend selects no conversion to bfloat16: the
+   compile aborts. *)
+
+(* The kernel storing in slot 0, as bfloat16, [f] of each of 64 elements of slot
+   1, of [src], named so that code generation lowers it as a launched kernel. *)
+let to_bf16 src f =
+  let n = 64 in
+  let r = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let at slot dt = Ops.index (Shape.param ~shape:[ Int n ] slot dt) [ r ] in
+  let v = f (Ops.load (at 1 src) []) in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"to_bf16" ())
+    [ Ops.end_ (Ops.store (at 0 Dtype.Bfloat16) v) [ r ] ]
+
+let directly x = Ops.cast x Bfloat16
+let through_float32 x = directly (Ops.cast x Float32)
+let through_narrow x = directly (Decomp_dtype.narrow x Float32)
+
+let casts_to_bf16 =
+  List.concat_map
+    (fun arch ->
+      List.concat_map
+        (fun src ->
+          List.map
+            (fun (name, route) -> (arch, src, name, route))
+            [
+              ("directly", directly);
+              ("through a float32", through_float32);
+              ("through narrow", through_narrow);
+            ])
+        Dtype.[ Bool; Int8; Uint8; Int16; Uint16; Int32; Uint32; Int64; Uint64 ])
+    [ "gfx1100"; "gfx1201"; "gfx942"; "gfx950" ]
+
+(* The binary of [prg], a program {!Codegen.compile} completed: its fourth
+   source. *)
+let binary prg =
+  match Ops.arg (Ops.nth prg 3) with
+  | Bytes b -> b
+  | _ -> invalid_arg "a program's fourth source is its binary"
+
+let compiles_to_bf16 (arch, src, _, route) =
+  let target =
+    {
+      Helpers.Target.device = "AMD";
+      renderer = "HIP";
+      arch;
+      interface = "";
+      indices = "";
+    }
+  in
+  let ren = with_comgr (fun () -> Cstyle.hip target) in
+  let prg = Codegen.compile (Codegen.linearize (to_bf16 src route) ren) ren in
+  starts_with ~prefix:"\x7fELF" (binary prg)
+
+let rendered =
+  group "kernels the HIP renderer writes"
+    [
+      slow
+      @@ cases "an integer or a bool cast to bfloat16 compiles"
+           ~id:(fun (arch, src, name, _) ->
+             Format.asprintf "%s %a %s" arch Dtype.pp src name)
+           casts_to_bf16 compiles_to_bf16;
+    ]
+
 (* A process that cannot start: these tests run in a process of their own, where
    COMGR_PATH names a file, and forbid it to start any other for the rest of its
    life. *)
@@ -591,5 +659,12 @@ let () =
   exit
     (run "Tolk.Compiler_amd"
        [
-         cache; without_comgr; not_a_library; smoke; process; verifier; no_spawn;
+         cache;
+         without_comgr;
+         not_a_library;
+         smoke;
+         process;
+         verifier;
+         rendered;
+         no_spawn;
        ])

@@ -114,9 +114,6 @@ raven / llama.cpp b12048 Vulkan:
   s_load_u16 and a wait each, about 4100 serial round trips a tile; at
   gpt-oss's decode shape float32 (global_load_b32) takes 51 µs against
   bfloat16's 323 µs on the R9700
-- a cast from bool to bfloat16 aborts comgr on gfx1201 ("Cannot select ...
-  bf16 = uint_to_fp"): test_jit_gpu.ml's integer casts, seed
-  s1:0072ef24ec103aaf
 - a fresh process's first calls fault 72-188 pages each for 1 MiB results
   until rig's buffer cache warms
 
