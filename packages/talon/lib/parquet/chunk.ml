@@ -418,8 +418,7 @@ let int96 ~row_group t ty (u : Type.unit_) =
 
    A decimal is an integer, unscaled, and a scale: an [int32] or [int64], or a
    big-endian two's complement byte string. It reads as its unscaled [int64]
-   integer, or as the [float64] nearest its value, which the float parser rounds
-   once from the exact text [unscaled]e-[scale]. *)
+   integer, or as the [float64] nearest its value ({!Decimal}). *)
 
 (* [unscaled ~row_group t] is the byte strings of [t] as [int64]s. *)
 let unscaled ~row_group t =
@@ -429,56 +428,16 @@ let unscaled ~row_group t =
   for i = 0 to t.n - 1 do
     let first, len = span t o i in
     if len = 0 then Meta.fail ~row_group "a decimal value has no bytes";
-    let v = ref (Int64.of_int ((b.{first} lxor 0x80) - 0x80)) in
-    for k = 1 to len - 1 do
-      if
-        Int64.compare !v 0x7F_FFFF_FFFF_FFFFL > 0
-        || Int64.compare !v (-0x80_0000_0000_0000L) < 0
-      then Meta.fail ~row_group "a decimal value is outside the range of int64";
-      v := Int64.logor (Int64.shift_left !v 8) (Int64.of_int b.{first + k})
-    done;
-    out.{i} <- !v
+    if not (Decimal.unscaled b ~first ~len ~big:true out i) then
+      Meta.fail ~row_group "a decimal value is outside the range of int64"
   done;
   Values (P (value a))
 
-let billion = 1_000_000_000
-
-(* [big_digits t b o i] is the decimal text of the byte string [i] of [t], a
-   big-endian two's complement integer of any length. Its magnitude is divided
-   by 10^9 until it is zero, each remainder giving nine digits. *)
+(* [big_digits t b o i] is the decimal text of the byte string [i] of [t]. *)
 let big_digits ~row_group t b o i =
   let first, len = span t o i in
   if len = 0 then Meta.fail ~row_group "a decimal value has no bytes";
-  let negative = b.{first} land 0x80 <> 0 in
-  let m =
-    Array.init len (fun k ->
-        if negative then b.{first + k} lxor 0xFF else b.{first + k})
-  in
-  if negative then begin
-    let k = ref (len - 1) in
-    while !k >= 0 && m.(!k) = 0xFF do
-      m.(!k) <- 0;
-      decr k
-    done;
-    if !k >= 0 then m.(!k) <- m.(!k) + 1
-  end;
-  let groups = ref [] in
-  while Array.exists (fun d -> d <> 0) m do
-    let r = ref 0 in
-    for k = 0 to len - 1 do
-      let x = (!r lsl 8) lor m.(k) in
-      m.(k) <- x / billion;
-      r := x mod billion
-    done;
-    groups := !r :: !groups
-  done;
-  match !groups with
-  | [] -> "0"
-  | g :: gs ->
-      String.concat ""
-        ((if negative then "-" else "")
-        :: string_of_int g
-        :: List.map (Printf.sprintf "%09d") gs)
+  Decimal.digits b ~first ~len ~big:true
 
 (* [floats ~row_group (l : Leaf.t) scale t] is the decimals of [t], of scale
    [scale], as the nearest [float64]s. *)
@@ -489,14 +448,9 @@ let floats ~row_group (l : Leaf.t) scale t =
     | Int64 -> Int64.to_string (le b (8 * i) 8)
     | _ -> big_digits ~row_group t b o i
   in
-  let texts =
-    reading_table t @@ fun b o ->
-    Array.init t.n (fun i -> Printf.sprintf "%se-%d" (digits b o i) scale)
-  in
-  let texts = Column.v Type.string texts in
-  match Column.parse (Any Type.float64) texts with
-  | Ok c -> Values (P (Column.to_tensor Nx.float64 c))
-  | Error (_, why) -> Meta.fail ~row_group "a decimal value %s" why
+  match reading_table t (fun b o -> Decimal.floats t.n ~scale (digits b o)) with
+  | Ok a -> Values (P a)
+  | Error why -> Meta.fail ~row_group "a decimal value %s" why
 
 let categorical ~row_group t dict =
   let codes = Hashtbl.create (Iarray.length dict) in

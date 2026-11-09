@@ -4,6 +4,7 @@
  (libraries nx nx.array nx.kernel nx.ragged rig)
  (private_modules
   kind
+  decimal
   record
   schema
   type

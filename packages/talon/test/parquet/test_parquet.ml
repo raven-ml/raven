@@ -893,6 +893,27 @@ let synthesized =
           in
           equal text "parquet (1 column)\n  x int32 ← required int32"
             (format_text (Error.get_ok (P.sniff b))));
+      test "an int64 declaration reads only decimals of its format's scale"
+        (fun () ->
+          let decimal scale =
+            parquet ~rows:2
+              ~column:[ (6, I32 5); (7, I32 scale); (8, I32 5) ]
+              (page 2 (int32s [ 7; -8 ]))
+          in
+          let declared ty b =
+            P.with_type "x" ty (Error.get_ok (P.sniff b))
+          in
+          let as_int = declared (Any Type.int64) (decimal 2) in
+          (match read_from as_int (decimal 4) "x" with
+          | Ok _ -> failf "read decimals of another scale as int64"
+          | Error e -> contains ~sub:"another scale" (error_text e));
+          match read_from (declared (Any Type.float64) (decimal 2)) (decimal 4) "x" with
+          | Ok c ->
+              let bits x = Printf.sprintf "0x%016Lx" (Int64.bits_of_float x) in
+              equal (array string)
+                [| bits 0.0007; bits (-0.0008) |]
+                (render "float64" c)
+          | Error e -> failf "%s" (error_text e));
       test "a text dictionary index past the dictionary is an error"
         (fun () ->
           (* A dictionary page of the texts "a" and "b", then a data page of

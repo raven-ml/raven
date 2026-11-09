@@ -229,7 +229,6 @@ let find_scalar a = List.find_opt (fun (Scalar (b, _, _)) -> a = b) scalars
 let nullary =
   [
     (1, Unsupported "null", "null");
-    (7, Unsupported "decimal", "decimal");
     (11, Unsupported "interval", "interval");
     (14, Unsupported "union", "union");
     (22, Unsupported "run-end encoded", "run-end encoded");
@@ -260,6 +259,22 @@ let unit_of c =
 
 let unit_code u = Option.get (List.find_index (( = ) u) units)
 
+(* The [Decimal] table of Schema.fbs. A precision past what its width holds, 9
+   digits for 32 bits, 18 for 64, 38 for 128 and 76 for 256, is malformed. *)
+let decimal_of t =
+  let precision = int32 t 0 0 and scale = int32 t 1 0 and bits = int32 t 2 128 in
+  let most =
+    match bits with
+    | 32 -> 9
+    | 64 -> 18
+    | 128 -> 38
+    | 256 -> 76
+    | b -> fail "a decimal type has %d bits" b
+  in
+  if precision < 1 || precision > most then
+    fail "a decimal of %d bits has precision %d" bits precision;
+  Decimal { precision; scale; bits }
+
 let type_of tag t : arrow =
   let t = match t with Some t -> t | None -> fail "a type is absent" in
   match tag with
@@ -280,6 +295,7 @@ let type_of tag t : arrow =
       Time u
   | 10 ->
       Timestamp (unit_of (int16 t 0 0), str t 1)
+  | 7 -> decimal_of t
   | 15 -> Fixed_binary (int32 t 0 0)
   | 16 -> Fixed_list (int32 t 0 0)
   | 17 -> Map
@@ -425,6 +441,8 @@ let rec type_text f =
   | Timestamp (u, "") -> Printf.sprintf "timestamp[%s]" (unit_text u)
   | Timestamp (u, z) -> Printf.sprintf "timestamp[%s, %s]" (unit_text u) z
   | Duration u -> Printf.sprintf "duration[%s]" (unit_text u)
+  | Decimal { precision; scale; bits } ->
+      Printf.sprintf "decimal%d(%d, %d)" bits precision scale
   | List -> "list<" ^ child () ^ ">"
   | Large_list -> "large_list<" ^ child () ^ ">"
   | Map -> "map<" ^ child () ^ ">"

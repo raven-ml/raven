@@ -119,12 +119,6 @@ raven / llama.cpp b12048 Vulkan:
   domain guides. After 1.0: the C Data
   Interface, the Ptree bridge, complex and validity columns, `ewm`,
   fixed-width CSV; HTML display once quill's protocol lands
-- talon interchange follow-ups: `Talon_arrow.sniff` refuses decimals,
-  where Parquet's `with_type` reads them as float64 or int64. Parquet
-  writes a duration as bare int64 ticks and loses its unit, since no
-  expression converts a duration to int64 exactly (`Expr.cast` refuses,
-  and `Temporal.div` goes through float64): an exact conversion lets
-  `Talon_parquet.format` refuse durations and name it
 - brot vs gigatoken cd5ee648c6 on fudge (bench README, "Against
   gigatoken"): GPT-2 runs at 0.55-0.65 of its speed on one thread over
   100 MB (abbeface7). Pages: a warm pass faults 11.5k-29k times, mostly

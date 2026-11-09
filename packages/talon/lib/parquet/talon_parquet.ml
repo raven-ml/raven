@@ -518,9 +518,9 @@ let part ?file shared b m g columns filters : Source.part =
   in
   { rows = (if filters = [] then Some rows else None); open_ }
 
-(* [parts ?file shared types b r] are the parts of [b] for the request [r],
+(* [parts ?file f shared types b r] are the parts of [b] for the request [r],
    whose columns read as [types] say, decoded with the scratch [shared]. *)
-let parts ?file shared types b (r : Source.request) =
+let parts ?file f shared types b (r : Source.request) =
   with_bytes ?file b @@ fun bytes ->
   let m, schema = open_ bytes in
   let column_of name =
@@ -537,7 +537,11 @@ let parts ?file shared types b (r : Source.request) =
         Meta.fail "column %S reads as %s, not as the format's %s" name
           (Format.asprintf "%a" Leaf.pp_node_reads c.node)
           (type_name ty)
-    | Some c -> (name, c.node, ty)
+    | Some c -> (
+        match find f name with
+        | Some d when not (Leaf.scales_agree d.field.node c.node ty) ->
+            Meta.fail "column %S %s" name Decimal.other_scale
+        | _ -> (name, c.node, ty))
   in
   let columns = List.map requested r.columns in
   (* A column's conjuncts are one filter, evaluated once. *)
@@ -574,13 +578,8 @@ let declared fn (c : column) =
   match c.ty with
   | Some ty -> (c.field.name, ty)
   | None ->
-      invalid_arg
-        (Printf.sprintf
-           "Talon_parquet.%s: column %S (%s) %s a decimal, which reads as \
-            float64, or as its unscaled int64 integers up to 18 digits. \
-            Declare one with with_type."
-           fn c.field.name c.field.text
-           (if is_flat c.field then "is" else "holds"))
+      Decimal.undeclared ~fn:("Talon_parquet." ^ fn) ~column:c.field.name
+        ~text:c.field.text ~flat:(is_flat c.field)
 
 let make fn ?file ?rows f b =
   let name =
@@ -597,7 +596,7 @@ let make fn ?file ?rows f b =
   in
   let shared = Atomic.make None in
   Source.v ~name ~schema ?rows ~pushdown
-    (parts ?file shared types b)
+    (parts ?file f shared types b)
 
 let source f b = make "source" f b
 
@@ -620,16 +619,7 @@ let codec : compression -> Meta.codec = function
   | Lz4_raw -> Lz4_raw
 
 let encode f q w =
-  let stated (c : column) =
-    match c.ty with
-    | Some ty -> (c.field.name, ty)
-    | None ->
-        invalid_arg
-          (Printf.sprintf
-             "Talon_parquet.encode: column %S is an undeclared decimal: read \
-              it as float64 or int64 with with_type first."
-             c.field.name)
-  in
+  let stated = declared "encode" in
   let written (name, ty) = Writer.column name ty in
   let columns = Schema.columns (Query.schema q) in
   let wanted =

@@ -182,6 +182,98 @@ let held_casts =
           let e = Format.asprintf "%a" Error.pp (require_error r) in
           contains ~sub:(Printf.sprintf ": row %d: cannot cast " row) e)
 
+(* A duration's ticks *)
+
+let units = Type.[ S; Ms; Us; Ns ]
+
+let unit_name : Type.unit_ -> string = function
+  | S -> "s"
+  | Ms -> "ms"
+  | Us -> "us"
+  | Ns -> "ns"
+
+(* [ticks_col u ?validity xs] is the [duration[u]] column of the ticks [xs]. *)
+let ticks_col u ?validity xs =
+  let values = Nx.create Nx.int64 [| Array.length xs |] xs in
+  Result.get_ok
+    (Column.of_layout
+       (Any (Type.duration u))
+       (Fixed { validity; values = P values }))
+
+let bits valid = Nx.create Nx.bit [| Array.length valid |] valid
+
+(* [valid_ticks c] is the ticks of the rows of [c] that hold a value, and [None]
+   for the null rows. *)
+let valid_ticks c =
+  match Column.layout c with
+  | Fixed { validity; values = P x } ->
+      let x = Nx.cast Nx.int64 x in
+      Array.init (Column.length c) (fun i ->
+          let valid =
+            match validity with None -> true | Some v -> Nx.item [ i ] v
+          in
+          if valid then Some (Nx.item [ i ] x) else None)
+  | _ -> failf "a column of ticks is stored one element per row"
+
+(* The int64s no float64 holds, past 2^53, and the bounds of int64. *)
+let extreme_ticks =
+  [|
+    Int64.min_int;
+    Int64.max_int;
+    0x20_0000_0000_0000L;
+    0x20_0000_0000_0001L;
+    -0x20_0000_0000_0001L;
+    0L;
+    -1L;
+  |]
+
+let duration_ticks =
+  cases "cast int64 reads a duration's ticks exactly, in every unit, and back"
+    ~id:unit_name units (fun u ->
+      let c = ticks_col u extreme_ticks in
+      let ticks = result (Expr.cast Type.int64 (Col.span "x")) (one "x" c) in
+      equal (array int64) extreme_ticks (Column.to_tensor Nx.int64 ticks |> Nx.to_array);
+      let back =
+        result (Expr.cast (Type.duration u) (Col.int "x")) (one "x" ticks)
+      in
+      equal (array (option int64))
+        (Array.map Option.some extreme_ticks)
+        (valid_ticks back))
+
+let ticks_and_nulls =
+  cases "the cast between a duration and int64 keeps every null"
+    ~id:unit_name units (fun u ->
+      let xs = [| 1L; Int64.max_int; 3L |]
+      and valid = bits [| true; false; true |] in
+      let c = ticks_col u ~validity:valid xs in
+      let ticks = result (Expr.cast Type.int64 (Col.span "x")) (one "x" c) in
+      equal
+        (array (option int64))
+        [| Some 1L; None; Some 3L |]
+        (valid_ticks ticks))
+
+let ticks_law =
+  let gen =
+    Gen.pair (Gen.of_list units)
+      (Gen.list ~size:(Gen.int_range 0 24) (Gen.pair Gen.int64 Gen.bool))
+  in
+  prop "a duration cast to int64 and back keeps its ticks and nulls"
+    (Gen.with_pp (fun ppf (u, _) -> Format.pp_print_string ppf (unit_name u)) gen)
+    (fun (u, rows) ->
+      let rows = Array.of_list rows in
+      let xs = Array.map fst rows and valid = Array.map snd rows in
+      let c = ticks_col u ~validity:(bits valid) xs in
+      let t = one "x" c in
+      let ticks = result (Expr.cast Type.int64 (Col.span "x")) t in
+      let back =
+        result (Expr.cast (Type.duration u) (Col.int "x")) (one "x" ticks)
+      in
+      let expected =
+        Array.map2 (fun x v -> if v then Some x else None) xs valid
+      in
+      equal (array (option int64)) expected (valid_ticks ticks);
+      equal (array (option int64)) expected (valid_ticks back))
+
 (* Text *)
 
 let s = Col.string "s"
@@ -1644,6 +1736,9 @@ let () =
          casts;
          cast_failures;
          held_casts;
+         duration_ticks;
+         ticks_and_nulls;
+         ticks_law;
          text;
          slices;
          time;

@@ -25,6 +25,7 @@ type arrow =
   | Time of Type.unit_
   | Timestamp of Type.unit_ * string
   | Duration of Type.unit_
+  | Decimal of { precision : int; scale : int; bits : int }
   | List
   | Large_list
   | Fixed_list of int

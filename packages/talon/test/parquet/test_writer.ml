@@ -67,7 +67,6 @@ let rec normal c =
       Column.of_options (Type.instant Ms) (Lazy.force options)
   | Datetime { unit_ = S; clock = Time.Local }, _ ->
       Column.of_options (Type.wall Ms) (Lazy.force options)
-  | Duration _, l -> laid_out (any Type.int64) l
   | Ext { storage; _ }, l -> normal (laid_out (any storage) l)
   | Tensor (_, shape), Fixed { validity; values } ->
       normal (tensor_lists shape validity values)
@@ -84,6 +83,7 @@ let rec normal c =
 (* [writable t] is [true] iff [format] states a column of type [t]. *)
 let rec writable (Type.Any t) =
   match t with
+  | Duration _ -> false
   | List e -> writable (any e)
   | Record [] -> false
   | Record fields -> List.for_all (fun (_, t) -> writable t) fields
@@ -574,10 +574,61 @@ let level_bound =
     (Exn.invalid_arg ~sub:"\"a\"")
     (fun () -> P.format (Schema.v [ ("a", past) ]))
 
+(* Durations: the file records no unit, so format refuses one and names the
+   cast that writes its ticks. *)
+let duration_refused =
+  test "format refuses a duration, naming the expression that writes its ticks"
+  @@ fun () ->
+  raises
+    (Invalid_argument
+       {|Talon_parquet.format: column "d" is duration[ms], which Parquet records with no unit, so its ticks would lose their meaning. Write Expr.cast Type.int64 (Col.span "d") first, its ticks of its own unit; a cast to another duration before it chooses theirs.|})
+    (fun () -> ignore (P.format (Schema.v [ ("d", any (Type.duration Ms)) ])));
+  raises
+    (Invalid_argument
+       {|Talon_parquet.format: column "l" is list[duration[us]], which Parquet records with no unit, so its ticks would lose their meaning. Cast its durations to int64 with Expr.cast first.|})
+    (fun () ->
+      ignore
+        (P.format (Schema.v [ ("l", any (Type.list (Type.duration Us))) ])));
+  raises
+    (Invalid_argument
+       {|Talon_parquet.format: column "e" is ext[raven.span, duration[s]], which Parquet records with no unit, so its ticks would lose their meaning. An extension does not cast: rebuild the column over its storage with Column.of_layout, then cast that.|})
+    (fun () ->
+      ignore
+        (P.format
+           (Schema.v
+              [ ("e", any (Type.ext ~name:"raven.span" (Type.duration S))) ])));
+  let t =
+    Talon.v [ ("r", Column.of_options (Type.duration Ns) [| Some (Time.Span.ns 1) |]) ]
+  in
+  let q = Query.of_table t in
+  raises_match
+    (Exn.invalid_arg ~sub:"Expr.cast Type.int64")
+    (fun () -> ignore (encode_with (P.format (Schema.v [ ("r", any Type.int64) ])) q))
+
+(* The expression the refusal names writes the ticks exactly, past 2^53. *)
+let ticks_written =
+  test "the ticks a duration casts to write and read back exactly" @@ fun () ->
+  let xs = [| Int64.min_int; Int64.max_int; 0x20_0000_0000_0001L; -1L |] in
+  let values = Nx.create Nx.int64 [| Array.length xs |] xs in
+  let c =
+    Result.get_ok
+      (Column.of_layout (Any (Type.duration Ms))
+         (Fixed { validity = None; values = P values }))
+  in
+  let q =
+    Query.select
+      Expr.[ "d" := cast Type.int64 (Col.span "d") ]
+      (Query.of_table (Talon.v [ ("d", c) ]))
+  in
+  let t = decode (encode_with (P.format (Query.schema q)) q) in
+  let got = Column.to_tensor Nx.int64 (Talon.column t "d") in
+  equal (array int64) xs (Nx.to_array got)
+
 let () =
   exit
   @@ run "talon.parquet.writer"
     [
+      group "durations" [ duration_refused; ticks_written ];
       group "round trips"
         [ round_trip; types_written; deterministic; nested_round_trip ];
       group "values"

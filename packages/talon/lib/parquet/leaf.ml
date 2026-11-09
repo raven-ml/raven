@@ -389,8 +389,6 @@ let holds_bytes l =
   | (Byte_array | Fixed_len_byte_array), _ -> true
   | _ -> false
 
-let int64_digits = 18
-
 let default l : Type.any option =
   match (l.annotation, l.physical) with
   | Some (Decimal _), _ -> None
@@ -420,15 +418,28 @@ let default l : Type.any option =
 
 let reads_as l (Type.Any t) =
   match (l.annotation, t) with
-  | Some (Decimal _), Float64 -> true
-  | Some (Decimal { precision; _ }), Int64 -> precision <= int64_digits
-  | Some (Decimal _), _ -> false
+  | Some (Decimal { precision; _ }), _ -> Decimal.reads_as ~precision (Any t)
   | _ -> (
       (match default l with Some (Any d) -> Type.equal d t | None -> false)
       || (holds_bytes l
          && match t with String | Binary | Categorical _ -> true | _ -> false)
       || l.physical = Int96
          && match t with Datetime { clock = Local; _ } -> true | _ -> false)
+
+let rec scales_agree format file (Type.Any t as ty) =
+  let scale = function
+    | Prim { annotation = Some (Decimal { scale; _ }); _ } -> Some scale
+    | _ -> None
+  in
+  match (format, file, t) with
+  | List { element = a; _ }, List { element = b; _ }, List e ->
+      scales_agree a b (Any e)
+  | Struct { fields = a; _ }, Struct { fields = b; _ }, Record ts
+    when List.compare_lengths a b = 0 && List.compare_lengths a ts = 0 ->
+      List.for_all2 Fun.id
+        (List.map2 (fun (_, a) (_, b) (_, t) -> scales_agree a b t) a b)
+        ts
+  | _ -> Decimal.scales_agree ty ~format:(scale format) ~file:(scale file)
 
 let rec default_node = function
   | Prim l -> default l
@@ -459,8 +470,8 @@ let rec node_reads_as node (Type.Any t) =
 let pp_reads ppf l =
   let str = Format.pp_print_string ppf in
   match (default l, l.annotation) with
-  | None, Some (Decimal { precision; _ }) when precision <= int64_digits ->
-      str "float64 or int64"
+  | None, Some (Decimal { precision; _ }) ->
+      str (Decimal.reads_text ~precision)
   | None, _ -> str "float64"
   | Some _, _ when holds_bytes l -> str "string, binary or a categorical"
   | Some _, _ when l.physical = Int96 ->

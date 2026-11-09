@@ -45,7 +45,7 @@
 
     {!sniff} reads a column as the talon type that holds its values with their
     meaning, as these sections say. {!with_type} changes the type of a
-    [fixed_size_list] that reads as a tensor, and only that.
+    [fixed_size_list] that reads as a tensor, and declares a decimal.
 
     {2:scalars Scalars and times}
 
@@ -60,6 +60,16 @@
       zone's name.
     - Reading [utf8_view] or [binary_view] copies each row's value, so such a
       column takes the memory of its rows' values, whatever its views take.
+
+    {2:undeclared Undeclared decimals}
+
+    A [decimal] column, of scale [s], is {e undeclared} as {{!Talon.section-decimals}a
+    file's decimal} is, until {!with_type} declares it, and a [list], [struct]
+    or extension that holds one is undeclared as a whole. A [struct]'s other
+    fields are read as they would be, a text dictionary among them as its value
+    type. A scale may be negative, the unscaled integer then multiplied by
+    [10{^-s}]. Each row converts when it is read, a dictionary's value per row
+    that takes it.
 
     {2:dictionaries Dictionary-encoded columns}
 
@@ -110,8 +120,10 @@
     {!sniff} returns [Error] for bytes that are not a file or a stream in the
     framing since Arrow 0.15, for a message whose metadata is older than V4,
     and for big-endian data. It also refuses these, naming the column:
-    - a [null], [decimal], [interval], [union], [run_end_encoded], [list_view]
-      or [large_list_view] field, at any depth;
+    - a [null], [interval], [union], [run_end_encoded], [list_view] or
+      [large_list_view] field, at any depth;
+    - a dictionary whose values hold a decimal below a [list] or a [struct];
+    - a decimal of a precision or width its Arrow type does not allow;
     - a file with two dictionary batches of one id without the delta flag,
       which the format forbids;
     - two fields of one id with different value types;
@@ -136,13 +148,15 @@ val sniff : Rig.Buffer.t -> (format, Talon.Error.t) result
 
 val with_type : string -> Talon.Type.any -> format -> format
 (** [with_type name t f] is [f] with the column [name] read as [t], the type
-    {!sniff} gives it or, for a [fixed_size_list] of numbers of at least one
-    element that reads as a tensor, a [list] of its elements, which may be
-    null. A column of another type is computed once read: with [Expr.cast],
-    or from [binary] to [string] with {!Talon.Column.parse}.
+    {!sniff} gives it, a declaration if it is {{!undeclared}undeclared}, or,
+    for a [fixed_size_list] of numbers of at least one element that reads as a
+    tensor, a [list] of its elements, which may be null. A column of another
+    type is computed once read: with [Expr.cast], or from [binary] to [string]
+    with {!Talon.Column.parse}.
 
     Raises [Invalid_argument] if [f] has no column [name], or if that column
-    does not read as [t]. *)
+    does not read as [t]; for an undeclared one the message names the types it
+    reads as. *)
 
 val metadata : ?column:string -> format -> (string * string) list
 (** [metadata ?column f] is [f]'s schema-level custom metadata, or that of the
@@ -161,7 +175,8 @@ val pp_format : Format.formatter -> format -> unit
 (** [pp_format ppf f] formats [f] for people: a line naming the framing and
     counting its columns, then one line per column, with its name and type, as
     {!Talon.Schema.pp} formats a column, and its Arrow type after an arrow, as
-    in [a list[string] ← list<item: utf8>]. *)
+    in [a list[string] ← list<item: utf8>]. A column reads as [undeclared]
+    until it is declared. *)
 
 (** {1:reading Reading}
 
@@ -185,7 +200,10 @@ val pp_format : Format.formatter -> format -> unit
 val source : format -> Rig.Buffer.t -> Talon.Source.t
 (** [source f b] is the source, named [arrow], of the rows of the file or
     stream whose bytes are [b], read as [f] says. [b] is a buffer as {!sniff}
-    takes. Each read opens the file as {!sniff} does. *)
+    takes. Each read opens the file as {!sniff} does.
+
+    Raises [Invalid_argument] if [f] leaves a column
+    {{!undeclared}undeclared}; the message names it and the types it reads as. *)
 
 val file : ?format:format -> string -> (Talon.Source.t, Talon.Error.t) result
 (** [file ?format path] is the {!source} of the file or stream at [path], which
@@ -193,7 +211,10 @@ val file : ?format:format -> string -> (Talon.Source.t, Talon.Error.t) result
     when [format] is absent. It is named [arrow "path"] and states its number
     of rows, and its errors name the file.
 
-    [Error e] if the file cannot be mapped, or as {!sniff}. *)
+    [Error e] if the file cannot be mapped, or as {!sniff}.
+
+    Raises [Invalid_argument] as {!source} does, which a file with an
+    {{!undeclared}undeclared} column does when [format] is absent. *)
 
 (** {1:writing Writing}
 
@@ -255,6 +276,7 @@ val encode :
     to [w] raises [Bytesrw.Bytes.Stream.Error] or [Sys_error]. [w] then holds
     an incomplete file.
 
-    Raises [Invalid_argument] if [q]'s columns do not write as [f]'s, or if a
-    column of [f] has an Arrow type {!encode} does not write, such as [utf8].
-    A format from {!val-format} writes. *)
+    Raises [Invalid_argument] if [q]'s columns do not write as [f]'s, if [f]
+    leaves a column {{!undeclared}undeclared}, or if a column of [f] has an
+    Arrow type {!encode} does not write, such as [utf8] or [decimal]. A format
+    from {!val-format} writes. *)

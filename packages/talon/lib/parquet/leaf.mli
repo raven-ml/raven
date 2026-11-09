@@ -97,6 +97,11 @@ val reads_as : t -> Talon.Type.any -> bool
     wall-clock datetime of any unit when [l] is an [int96], or, for a
     decimal, [float64], and [int64] up to 18 digits. *)
 
+val scales_agree : node -> node -> Talon.Type.any -> bool
+(** [scales_agree format file t] is [false] iff a leaf of [format], read as
+    [t] from the node [file], would be an [int64] of another decimal scale
+    ({!Talon.Decimal.scales_agree}). *)
+
 val default_node : node -> Talon.Type.any option
 (** [default_node n] is the type [n] reads as when no format says otherwise, or
     [None] when a leaf under it is a decimal. *)

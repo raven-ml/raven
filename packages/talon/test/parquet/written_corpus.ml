@@ -60,7 +60,6 @@ let flat () =
       c "clock_ms" (T.clock Ms) (span 1_000_000L 0 86399999);
       c "clock_us" (T.clock Us) (span 1000L 0 8639999);
       c "clock_ns" (T.clock Ns) (span 1L 0 86399999);
-      c "duration_ms" (T.duration Ms) (span 1_000_000L (-1000) 1000);
       c "wall_s" (T.wall S) (stamp Time.of_s);
       c "wall_ms" (T.wall Ms) (stamp Time.of_ms);
       c "wall_us" (T.wall Us) (stamp Time.of_us);

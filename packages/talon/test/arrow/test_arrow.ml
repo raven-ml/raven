@@ -132,7 +132,6 @@ let refused =
   cases "fields talon cannot hold are refused, naming the column" ~id:fst
     [
       ("refused_null.arrow", "bad");
-      ("refused_decimal.arrow", "bad");
       ("refused_interval.arrow", "bad");
       ("refused_union.arrow", "bad");
       ("refused_ree.arrow", "bad");
@@ -180,7 +179,10 @@ let corrupted =
       let buffer = Rig.Buffer.of_string (Bytes.to_string b) in
       match A.sniff buffer with
       | Error _ -> ()
-      | Ok f -> ignore (Query.run (Query.of_source (A.source f buffer))))
+      | Ok f -> (
+          match A.source f buffer with
+          | exception Invalid_argument why -> contains ~sub:"with_type" why
+          | s -> ignore (Query.run (Query.of_source s))))
 
 let bomb =
   test "a schema of repeated children is refused, in bounded work" @@ fun () ->
@@ -385,12 +387,160 @@ let tensor_round_trip =
   let back = run_bytes (to_bytes ~batch:1 ~framing:File ~compression:A.Uncompressed t) in
   equal table_w t back
 
+(* Decimals *)
+
+let support_path = Filename.concat "support"
+
+let sniffed path = Error.get_ok (A.sniff (Result.get_ok (Rig_disk.of_file path)))
+
+let declared_type : string -> Type.any = function
+  | "float64" -> Any Type.float64
+  | "int64" -> Any Type.int64
+  | "list[float64]" -> Any (Type.list Type.float64)
+  | "record[a float64, i int32]" ->
+      Any (Type.record [ ("a", Any Type.float64); ("i", Any Type.int32) ])
+  | "list[record[key string, value float64]]" ->
+      Any
+        (Type.list
+           (Type.record [ ("key", Any Type.string); ("value", Any Type.float64) ]))
+  | "ext[raven.money, float64]" ->
+      Any (Type.ext ~name:"raven.money" Type.float64)
+  | t -> failwith ("a type the suite does not know: " ^ t)
+
+let decimal_corpus =
+  let check file cols =
+    let path = support_path file in
+    (* The first of a column's lines declares it when another line reads. *)
+    let first =
+      List.fold_left
+        (fun acc (name, ty, _) ->
+          if List.mem_assoc name acc then acc else (name, ty) :: acc)
+        [] cols
+    in
+    let base () =
+      List.fold_left
+        (fun f (name, ty) -> A.with_type name (declared_type ty) f)
+        (sniffed path) first
+    in
+    List.map
+      (fun (name, ty, values) ->
+        test (Printf.sprintf "%s %s as %s" file name ty) @@ fun () ->
+        let f = A.with_type name (declared_type ty) (base ()) in
+        let b = Result.get_ok (Rig_disk.of_file path) in
+        let t = Error.get_ok (Query.run (Query.of_source (A.source f b))) in
+        let c = column t name in
+        equal ~msg:name string ty (type_text (Column.type_ c));
+        equal ~msg:name string values
+          (String.concat " " (Array.to_list (tokens (Column.type_ c) c))))
+      cols
+  in
+  List.concat_map (fun (f, cols) -> check f cols) (golden "golden/decimals.txt")
+
+let invalid f =
+  match f () with
+  | _ -> failf "the call did not raise"
+  | exception Invalid_argument why -> why
+
+let undeclared_decimals =
+  group "undeclared decimals"
+    [
+      test "sniff reads a decimal file, and pp_format shows it undeclared"
+        (fun () ->
+          let text =
+            Format.asprintf "%a" A.pp_format (sniffed (support_path "decimals.arrow"))
+          in
+          contains ~sub:"d32_1_0 undeclared ← decimal32(1, 0)" text;
+          contains ~sub:"under_null undeclared ← decimal128(18, 0)" text;
+          contains ~sub:"l undeclared ← list<item: decimal128(9, 2)>"
+            (Format.asprintf "%a" A.pp_format
+               (sniffed (support_path "decimals_nested.arrow"))));
+      test "source, file and encode refuse an undeclared column with its types"
+        (fun () ->
+          let f = sniffed (support_path "decimals.arrow") in
+          let buffer =
+            Result.get_ok (Rig_disk.of_file (support_path "decimals.arrow"))
+          in
+          equal string
+            {|Talon_arrow.source: column "d32_1_0" (decimal32(1, 0)) is a decimal, which reads as float64, or as its unscaled int64 integers up to 18 digits. Declare one with with_type.|}
+            (invalid (fun () -> A.source f buffer));
+          equal string
+            {|Talon_arrow.file: column "l" (list<item: decimal128(9, 2)>) holds a decimal, which reads as float64, or as its unscaled int64 integers up to 18 digits. Declare one with with_type.|}
+            (invalid (fun () -> A.file (support_path "decimals_nested.arrow")));
+          contains ~sub:"Talon_arrow.encode:"
+            (invalid (fun () ->
+                 let b = Buffer.create 16 in
+                 let q =
+                   Query.of_table (Talon.v [ ("x", Column.v Type.int32 [| 1 |]) ])
+                 in
+                 A.encode f q (Bytesrw.Bytes.Writer.of_buffer b))));
+      test "with_type states what a decimal reads as" (fun () ->
+          let f = sniffed (support_path "decimals.arrow") in
+          equal string
+            {|Talon_arrow.with_type: column "d128_38_0" (decimal128(38, 0)) reads as float64, not as int64. Cast it once read (Expr.cast).|}
+            (invalid (fun () -> A.with_type "d128_38_0" (Any Type.int64) f));
+          equal string
+            {|Talon_arrow.with_type: column "d32_9_0" (decimal32(9, 0)) reads as float64 or int64, not as int32. Cast it once read (Expr.cast).|}
+            (invalid (fun () -> A.with_type "d32_9_0" (Any Type.int32) f));
+          let nested = sniffed (support_path "decimals_nested.arrow") in
+          equal string
+            {|Talon_arrow.with_type: column "s" (struct<a: decimal128(9, 2), i: int32>) reads as record[a float64 or int64, i int32], not as record[a float64, i int64]. Cast it once read (Expr.cast).|}
+            (invalid (fun () ->
+                 A.with_type "s"
+                   (Any
+                      (Type.record
+                         [ ("a", Any Type.float64); ("i", Any Type.int64) ]))
+                   nested)));
+      test "an unscaled value past int64 fails its row when read as int64"
+        (fun () ->
+          let path = support_path "refused_decimal_range.arrow" in
+          let f = A.with_type "d" (Any Type.int64) (sniffed path) in
+          let b = Result.get_ok (Rig_disk.of_file path) in
+          let e = require_error (Query.run (Query.of_source (A.source f b))) in
+          contains
+            ~sub:{|column "d": row 0: a decimal value is outside the range of int64|}
+            (Format.asprintf "%a" Error.pp e));
+      test "an int64 declaration reads only decimals of its format's scale"
+        (fun () ->
+          let scale_0 = support_path "refused_decimal_range.arrow"
+          and scale_4 = support_path "decimals_other_scale.arrow"
+          and plain = support_path "decimals_plain.arrow" in
+          let run f path =
+            let b = Result.get_ok (Rig_disk.of_file path) in
+            Query.run (Query.of_source (A.source f b))
+          in
+          let refused f path =
+            contains ~sub:"another scale"
+              (Format.asprintf "%a" Error.pp (require_error (run f path)))
+          in
+          let declared ty path = A.with_type "d" ty (sniffed path) in
+          refused (declared (Any Type.int64) scale_0) scale_4;
+          refused (declared (Any Type.int64) scale_0) plain;
+          refused (sniffed plain) scale_0;
+          let t = Error.get_ok (run (declared (Any Type.float64) scale_0) scale_4) in
+          equal (array (option float_exact))
+            [| Some 1.2345 |]
+            (Column.options Kind.float (column t "d")));
+      test "a declared decimal keeps its file type: encode states the file"
+        (fun () ->
+          let path = support_path "refused_decimal_range.arrow" in
+          let f = A.with_type "d" (Any Type.int64) (sniffed path) in
+          let q =
+            Query.of_table (Talon.v [ ("d", Column.v Type.int64 [| 1 |]) ])
+          in
+          equal string
+            {|Talon_arrow.encode: column "d" is decimal128(18, 0) in the format and writes as int64. State the file with format.|}
+            (invalid (fun () ->
+                 let b = Buffer.create 16 in
+                 A.encode f q (Bytesrw.Bytes.Writer.of_buffer b))));
+    ]
+
 let () =
   exit @@ run "talon.arrow"
     [
       group "corpus" corpus;
       group "written" (bytes_stay :: written);
       group "refusals" [ refused; not_arrow; corrupted; bomb; date_range; date64_floor ];
+      group "decimals" (undeclared_decimals :: decimal_corpus);
       group "by value"
         [ zero_many; zero_ext; zero_null; zero_width_type; tensor_dict; dict_index;
           late_dictionary ];

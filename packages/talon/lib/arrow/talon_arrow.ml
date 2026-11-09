@@ -223,6 +223,40 @@ let views c path s n =
   ( Nx.Repr.of_array Nx.Host.v d,
     Column.of_tensor (Nx.Repr.of_array Nx.Host.v a) )
 
+(* [decimals path ~scale ~width t ba first n valid] is the [n] little-endian
+   decimals of [scale], of [width] bytes each, in [ba] from [first], as [t]
+   reads them: a [float64] or an [int64]. A row where [valid] is false is not
+   read. *)
+let decimals (type a) path ~scale ~width (t : a Type.t) ba first n valid :
+    Nx.host Nx.packed =
+  let w = width in
+  let at i = first + (i * w) in
+  match t with
+  | Float64 -> (
+      let digits i =
+        if valid i then Decimal.digits ba ~first:(at i) ~len:w ~big:false
+        else "0"
+      in
+      match Decimal.floats n ~scale digits with
+      | Ok x -> P x
+      | Error why -> fail "column %S: a decimal value %s" path why)
+  | Int64 ->
+      let a = Nx_array.host Nx.int64 [| n |] in
+      Nx_array.write a (fun g ->
+          let out = Bigarray.array1_of_genarray g in
+          for i = 0 to n - 1 do
+            if valid i then begin
+              if not (Decimal.unscaled ba ~first:(at i) ~len:w ~big:false out i)
+              then
+                fail "column %S: row %d: a decimal value is outside the range \
+                      of int64"
+                  path i
+            end
+            else A1.unsafe_set out i 0L
+          done);
+      P (Nx.Repr.of_array Nx.Host.v a)
+  | _ -> fail "column %S does not read as its format's type" path
+
 let finish ty path l =
   match Column.of_layout ty l with
   | Ok c -> c
@@ -355,7 +389,33 @@ let rec read c path (f : field) (Type.Any t as ty) : Column.t =
       match (f.encoding, f.arrow, t) with
       | Some e, _, Categorical _ ->
           fixed (P (codes path (next_buffer c) n validity e))
+      | Some e, Decimal { scale; bits; _ }, _ ->
+          let raw = decoded c path (Any Type.binary) e n validity (next_buffer c) in
+          let cells = Column.options Kind.binary raw and w = bits / 8 in
+          let _, out = fresh (times n w) in
+          Array.iteri
+            (fun i o ->
+              match o with
+              | None -> ()
+              | Some (b : Binary.t) ->
+                  let s = (b :> string) in
+                  for k = 0 to w - 1 do
+                    out.{(i * w) + k} <- Char.code s.[k]
+                  done)
+            cells;
+          let valid i = Option.is_some cells.(i) in
+          finish ty path
+            (Fixed
+               {
+                 validity = Column.validity raw;
+                 values = decimals path ~scale ~width:w t out 0 n valid;
+               })
       | Some e, _, _ -> decoded c path ty e n validity (next_buffer c)
+      | None, Decimal { scale; bits; _ }, _ ->
+          let s = next_buffer c and w = bits / 8 in
+          need s (times n w);
+          let valid i = nulls = 0 || slice_bit vs i in
+          fixed (decimals path ~scale ~width:w t s.ba s.first n valid)
       | None, (Bool | Int _ | Float _), _ ->
           let (Scalar (_, _, dt)) = Option.get (I.find_scalar f.arrow) in
           flat dt
@@ -517,57 +577,60 @@ let canonical (f : field) meta =
    dictionary ids that read as categoricals. Below a dictionary, every nested
    dictionary reads as its values, so a dictionary's values are read before the
    categoricals are known. *)
-let rec default_of cats path (f : field) : Type.any =
+let rec default_of cats path (f : field) : Type.any option =
   let ext name meta =
-    let (Type.Any s) = default_of cats path { f with extension = None } in
-    Type.Any (Type.ext ~name ~metadata:meta s)
+    Option.map
+      (fun (Type.Any s) -> Type.Any (Type.ext ~name ~metadata:meta s))
+      (default_of cats path { f with extension = None })
   in
-  let dictionary (e : encoding) : Type.any =
+  let dictionary (e : encoding) : Type.any option =
     match IMap.find_opt e.id cats with
-    | Some a -> Any (Type.categorical a)
+    | Some a -> Some (Any (Type.categorical a))
     | None -> plain IMap.empty path { f with encoding = None }
   in
   match (f.extension, f.encoding) with
   | Some (("arrow.fixed_shape_tensor" as n), meta), None -> (
-      match canonical f meta with Some t -> t | None -> ext n meta)
+      match canonical f meta with Some t -> Some t | None -> ext n meta)
   | Some (name, meta), _ -> ext name meta
   | None, Some e -> dictionary e
   | None, None -> plain cats path f
 
-and plain cats path (f : field) : Type.any =
+and plain cats path (f : field) : Type.any option =
   let child (c : field) = default_of cats (path ^ "." ^ c.name) c in
-  let list c =
-    let (Any e) = child c in
-    Type.Any (Type.list e)
-  in
+  let list c = Option.map (fun (Type.Any e) -> Type.Any (Type.list e)) (child c) in
   let empty shape = Type.Any (Type.tensor Nx.uint8 (Array.of_list shape)) in
   match (f.arrow, f.children) with
-  | Fixed_binary 0, _ -> empty [ 0 ]
-  | (Utf8 | Large_utf8 | Utf8_view), _ -> Any Type.string
-  | (Binary | Large_binary | Binary_view | Fixed_binary _), _ -> Any Type.binary
-  | (Date_day | Date_ms), _ -> Any Type.date
-  | Time u, _ -> Any (Type.clock u)
-  | Timestamp (u, ""), _ -> Any (Type.wall u)
-  | Timestamp (u, _), _ -> Any (Type.instant u)
-  | Duration u, _ -> Any (Type.duration u)
+  | Decimal _, _ -> None
+  | Fixed_binary 0, _ -> Some (empty [ 0 ])
+  | (Utf8 | Large_utf8 | Utf8_view), _ -> Some (Any Type.string)
+  | (Binary | Large_binary | Binary_view | Fixed_binary _), _ ->
+      Some (Any Type.binary)
+  | (Date_day | Date_ms), _ -> Some (Any Type.date)
+  | Time u, _ -> Some (Any (Type.clock u))
+  | Timestamp (u, ""), _ -> Some (Any (Type.wall u))
+  | Timestamp (u, _), _ -> Some (Any (Type.instant u))
+  | Duration u, _ -> Some (Any (Type.duration u))
   | Unsupported s, _ -> fail "column %S is a %s, which talon cannot hold" path s
   | Fixed_list n, [ c ] -> (
       if n < 0 then fail "column %S has a negative size" path;
       let numeric = c.encoding = None && c.extension = None in
       match if numeric then tensor_of c.arrow [| n |] else None with
-      | Some t -> t
+      | Some t -> Some t
       | None -> (
-          match empty_cell f with Some s -> empty s | None -> list c))
+          match empty_cell f with Some s -> Some (empty s) | None -> list c))
   | (List | Large_list | Map), [ c ] -> list c
   | (List | Large_list | Map | Fixed_list _), _ ->
       fail "column %S: a list has no element" path
-  | Struct, cs ->
-      let field (c : field) = (c.name, child c) in
-      (try Any (Type.record (List.map field cs))
-       with Invalid_argument why -> fail "column %S: %s" path why)
+  | Struct, cs -> (
+      let fields = List.map (fun (c : field) -> (c.name, child c)) cs in
+      if List.exists (fun (_, t) -> Option.is_none t) fields then None
+      else
+        let fields = List.map (fun (n, t) -> (n, Option.get t)) fields in
+        try Some (Any (Type.record fields))
+        with Invalid_argument why -> fail "column %S: %s" path why)
   | _ ->
       let (Scalar (_, t, _)) = Option.get (I.find_scalar f.arrow) in
-      Any t
+      Some (Any t)
 
 (* [encoded path acc f] adds [f] and its descendants that are dictionary-encoded,
    each with its path. *)
@@ -620,8 +683,20 @@ let dictionaries bytes host ~is_file fields messages =
     | None -> held
     | Some (path, (f : field)) ->
         let value = { f with encoding = None; extension = None } in
+        (* A decimal dictionary is held as its bytes: its type is the
+           reader's to declare, and each row converts once taken. *)
+        let value =
+          match value.arrow with
+          | Decimal { bits; _ } -> { value with arrow = Fixed_binary (bits / 8) }
+          | _ -> value
+        in
         let c = cursor bytes host held m batch in
-        let col = read c path value (plain IMap.empty path value) in
+        let ty =
+          match plain IMap.empty path value with
+          | Some ty -> ty
+          | None -> fail "column %S: a dictionary's values hold a decimal" path
+        in
+        let col = read c path value ty in
         let old = IMap.find_opt id held in
         if is_file && (not delta) && Option.is_some old then
           fail "column %S: a file replaces a dictionary" path;
@@ -682,15 +757,80 @@ let open_ host bytes =
 
 let default d (f : field) = default_of d.categoricals f.name f
 
-let rec reads_as (f : field) (Type.Any current) (Type.Any t) =
-  Type.equal current t
-  ||
-  match (f.encoding, f.extension, f.arrow, f.children, current, t) with
-  | None, None, Fixed_list w, [ c ], Tensor _, List e when w > 0 -> (
-      match I.find_scalar c.arrow with
-      | Some (Scalar (_, s, _)) -> reads_as c (Any s) (Any e)
-      | None -> false)
-  | _ -> false
+(* [holding_reads_as f t] is whether [t] declares [f], a field that holds a
+   decimal or a child of one: a decimal as {!Decimal.reads_as} says, and a
+   list or record of what its children read as. Below it, a text dictionary
+   reads as its value type, [string]. *)
+let rec holding_reads_as (f : field) (Type.Any t as ty) =
+  match default_of IMap.empty f.name f with
+  | Some (Any d) -> Type.equal d t
+  | None -> (
+      match (f.extension, f.arrow, f.children, t) with
+      | Some (name, meta), _, _, Ext { name = n; metadata; storage } ->
+          String.equal name n && String.equal meta metadata
+          && holding_reads_as { f with extension = None } (Any storage)
+      | Some _, _, _, _ -> false
+      | None, Decimal { precision; _ }, _, _ -> Decimal.reads_as ~precision ty
+      | None, (List | Large_list | Map | Fixed_list _), [ c ], List e ->
+          holding_reads_as c (Any e)
+      | None, Struct, cs, Record fs ->
+          List.compare_lengths cs fs = 0
+          && List.for_all2
+               (fun (c : field) (n, t) ->
+                 String.equal c.name n && holding_reads_as c t)
+               cs fs
+      | _ -> false)
+
+let rec reads_as (f : field) current (Type.Any t as ty) =
+  match current with
+  | None -> holding_reads_as f ty
+  | Some (Type.Any current) -> (
+      Type.equal current t
+      ||
+      match (f.encoding, f.extension, f.arrow, f.children, current, t) with
+      | None, None, Fixed_list w, [ c ], Tensor _, List e when w > 0 -> (
+          match I.find_scalar c.arrow with
+          | Some (Scalar (_, s, _)) -> reads_as c (Some (Any s)) (Any e)
+          | None -> false)
+      | _ -> false)
+
+(* [same_scales f g t] is [false] iff a leaf of the format's field [f], read as
+   [t] from the file's field [g], would be an [int64] of another decimal scale. *)
+let rec same_scales (f : field) (g : field) (Type.Any t as ty) =
+  let scale (f : field) =
+    match f.arrow with Decimal { scale; _ } -> Some scale | _ -> None
+  in
+  match (t, f.children, g.children) with
+  | Ext { storage; _ }, _, _ -> same_scales f g (Any storage)
+  | List e, [ a ], [ b ] -> same_scales a b (Any e)
+  | Record ts, a, b
+    when List.compare_lengths a ts = 0 && List.compare_lengths b ts = 0 ->
+      List.for_all2 Fun.id
+        (List.map2 (fun a b (_, t) -> same_scales a b t) a b)
+        ts
+  | _ -> Decimal.scales_agree ty ~format:(scale f) ~file:(scale g)
+
+(* [pp_reads ppf f] formats the types the field [f] reads as, for a field that
+   holds a decimal or a child of one. *)
+let rec pp_reads ppf (f : field) =
+  match default_of IMap.empty f.name f with
+  | Some (Any t) -> Type.pp ppf t
+  | None -> (
+      match (f.arrow, f.children) with
+      | Decimal { precision; _ }, _ ->
+          Format.pp_print_string ppf (Decimal.reads_text ~precision)
+      | (List | Large_list | Map | Fixed_list _), [ c ] ->
+          Format.fprintf ppf "list[%a]" pp_reads c
+      | Struct, cs ->
+          let pp_field ppf (c : field) =
+            Format.fprintf ppf "%a %a" Type.pp_name c.name pp_reads c
+          in
+          Format.fprintf ppf "record[%a]"
+            (Format.pp_print_list
+               ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+               pp_field)
+            cs
+      | _ -> Format.pp_print_string ppf "undeclared")
 
 let parts ?file d columns =
   let part i (pos, length, dicts) : Source.part =
@@ -1089,7 +1229,8 @@ let write_query ~file ~compression ~batch ~metadata columns q w =
 
 type framing = File | Stream
 type compression = Uncompressed | Lz4_frame | Zstd
-type column = { field : field; sniffed : Type.any; ty : Type.any }
+(* [sniffed] and [ty] are [None] for a decimal that no [with_type] declared. *)
+type column = { field : field; sniffed : Type.any option; ty : Type.any option }
 
 type format = {
   framing : framing;
@@ -1107,8 +1248,17 @@ let opened ?file b f =
   | None -> Error (Error.v ?file "the host cannot map the bytes")
   | Some host -> with_bytes ?file host (f host)
 
-let columns_of f =
-  Array.to_list (Array.map (fun c -> (c.field.name, c.ty)) f.columns)
+(* [declared fn c] is [c]'s name and type, which a decimal must have been
+   given. *)
+let declared fn c =
+  match c.ty with
+  | Some ty -> (c.field.name, ty)
+  | None ->
+      Decimal.undeclared ~fn:("Talon_arrow." ^ fn) ~column:c.field.name
+        ~text:(I.field_text c.field)
+        ~flat:(c.field.children = [])
+
+let columns_of fn f = Array.to_list (Array.map (declared fn) f.columns)
 
 let sniffed d =
   let s = d.schema in
@@ -1124,7 +1274,9 @@ let sniffed d =
     columns = Array.of_list (List.map column s.fields);
   }
   |> fun f ->
-  (try ignore (Schema.v (columns_of f))
+  (* Only the names matter here: an undeclared decimal has no type yet. *)
+  let names = Array.map (fun c -> (c.field.name, Type.Any Type.bool)) f.columns in
+  (try ignore (Schema.v (Array.to_list names))
    with Invalid_argument why -> I.fail "%s" why);
   f
 
@@ -1140,6 +1292,12 @@ let index fn f name =
 let type_name (Type.Any t) = Format.asprintf "%a" Type.pp t
 let arrow_name = I.field_text
 
+(* [reads_text c] states the types the column [c] reads as, for errors. *)
+let reads_text c =
+  match c.sniffed with
+  | Some ty -> type_name ty
+  | None -> Format.asprintf "%a" pp_reads c.field
+
 let replaced f i c =
   let columns = Array.copy f.columns in
   columns.(i) <- c;
@@ -1153,8 +1311,8 @@ let with_type name ty f =
       (Printf.sprintf
          "Talon_arrow.with_type: column %S (%s) reads as %s, not as %s. Cast \
           it once read (Expr.cast)."
-         name (arrow_name c.field) (type_name c.ty) (type_name ty));
-  replaced f i { c with ty }
+         name (arrow_name c.field) (reads_text c) (type_name ty));
+  replaced f i { c with ty = Some ty }
 
 let metadata ?column f =
   match column with
@@ -1184,9 +1342,11 @@ let pp_format ppf f =
     n
     (if n = 1 then "" else "s");
   let line c =
-    Format.fprintf ppf "@,  %a ← %s" Schema.pp
-      (Schema.v [ (c.field.name, c.ty) ])
-      (I.field_text c.field)
+    (match c.ty with
+    | Some ty ->
+        Format.fprintf ppf "@,  %a" Schema.pp (Schema.v [ (c.field.name, ty) ])
+    | None -> Format.fprintf ppf "@,  %a undeclared" Type.pp_name c.field.name);
+    Format.fprintf ppf " ← %s" (I.field_text c.field)
   in
   Array.iter line f.columns;
   Format.fprintf ppf "@]"
@@ -1196,36 +1356,44 @@ let parts_of ?file host f (r : Source.request) bytes =
   let d = open_ host bytes in
   let s = d.schema in
   let requested name =
-    let ty = f.columns.(index "source" f name).ty in
+    let c = f.columns.(index "source" f name) in
+    let _, ty = declared "source" c in
     match List.find_opt (fun (g : field) -> g.name = name) s.fields with
     | None -> I.fail "the file has no column %S" name
     | Some g when not (reads_as g (default d g) ty) ->
         I.fail "column %S reads as %s, not as the format's %s" name
-          (type_name (default d g))
+          (match default d g with
+          | Some t -> type_name t
+          | None -> Format.asprintf "%a" pp_reads g)
           (type_name ty)
+    | Some g when not (same_scales c.field g ty) ->
+        I.fail "column %S %s" name Decimal.other_scale
     | Some g -> (g, ty)
   in
   parts ?file d (List.map requested r.columns)
 
-let make ?file ?rows f b =
+let make fn ?file ?rows f b =
   let name =
     match file with
     | None -> "arrow"
     | Some p -> Format.asprintf "arrow %a" Type.pp_quoted p
   in
-  Source.v ~name ~schema:(Schema.v (columns_of f)) ?rows (fun r ->
+  Source.v ~name ~schema:(Schema.v (columns_of fn f)) ?rows (fun r ->
       opened ?file b (fun host bytes -> parts_of ?file host f r bytes))
 
-let source f b = make f b
+let source f b = make "source" f b
 
 let file ?format path =
   match Rig_disk.of_file path with
   | Error why -> Error (Error.v why)
   | Ok b ->
-      opened ~file:path b (fun host bytes ->
-          let d = open_ host bytes in
-          let f = Option.value format ~default:(sniffed d) in
-          make ~file:path ~rows:(rows d) f b)
+      (* [make] raises for an undeclared decimal: outside [opened], which turns
+         [Invalid_argument] from malformed bytes into [Error]. *)
+      Result.map
+        (fun (f, rows) -> make "file" ~file:path ~rows f b)
+        (opened ~file:path b (fun host bytes ->
+             let d = open_ host bytes in
+             (Option.value format ~default:(sniffed d), rows d)))
 
 let format ?(framing = File) ?(compression = Uncompressed)
     ?(batch = default_batch) ?(metadata = []) schema =
@@ -1233,7 +1401,7 @@ let format ?(framing = File) ?(compression = Uncompressed)
   check_keys "format" metadata;
   let next = ref 0 in
   let column (name, ty) =
-    { field = field_of next name ty; sniffed = ty; ty }
+    { field = field_of next name ty; sniffed = Some ty; ty = Some ty }
   in
   let columns = Array.of_list (List.map column (Schema.columns schema)) in
   { framing; compression; batch; metadata; columns }
@@ -1244,7 +1412,7 @@ let codec = function
   | Zstd -> Some 1
 
 let encode f q w =
-  let wanted = Schema.v (columns_of f) in
+  let wanted = Schema.v (columns_of "encode" f) in
   if not (Schema.equal (Query.schema q) wanted) then
     invalid_arg
       (Format.asprintf
@@ -1252,7 +1420,8 @@ let encode f q w =
           format's: %a, against %a"
          Schema.pp (Query.schema q) Schema.pp wanted);
   let check c =
-    let written = field_of (ref 0) c.field.name c.ty in
+    let _, ty = declared "encode" c in
+    let written = field_of (ref 0) c.field.name ty in
     if shape written <> shape c.field then
       invalid_arg
         (Printf.sprintf
@@ -1264,5 +1433,5 @@ let encode f q w =
   List.iter check columns;
   write_query ~file:(f.framing = File) ~compression:(codec f.compression)
     ~batch:f.batch ~metadata:f.metadata
-    (List.map (fun c -> (c.field, c.ty)) columns)
+    (List.map (fun c -> (c.field, snd (declared "encode" c))) columns)
     q w

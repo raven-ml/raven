@@ -64,10 +64,9 @@
     {2:undeclared Undeclared decimals}
 
     A [DECIMAL(p,s)] column, the number [unscaled × 10{^-s}] of at most [p]
-    digits, has no talon type until {!with_type} gives it one, and is
-    {e undeclared} before then. A nested column that holds one is undeclared
-    as a whole. A declared decimal reads as [float64], the float nearest each
-    value, or, up to 18 digits, as [int64], each value's [unscaled] integer.
+    digits, is {e undeclared} as {{!Talon.section-decimals}a file's decimal}
+    is, until {!with_type} declares it. A nested column that holds one is
+    undeclared as a whole.
 
     {2:alternatives Alternative types}
 
@@ -244,10 +243,11 @@ val file : ?format:format -> string -> (Talon.Source.t, Talon.Error.t) result
     - a [list] writes as a [LIST] group, a [record] as a group of its fields,
       and a [tensor] as nested lists, one per dimension, row-major.
 
-    A type without a Parquet type of its own reads back as another. A
-    [categorical] reads back as a [string], a [clock] or [datetime] of seconds
-    as the same type of milliseconds, an extension as its storage, and a
-    [duration] as its [int64] ticks, since the file records no unit.
+    A type without a Parquet type of its own reads back as another: a
+    [categorical] as a [string], a [clock] or [datetime] of seconds as the same
+    type of milliseconds, and an extension as its storage. A [duration] has no
+    unit a file can record, so {!val-format} refuses it: write [Expr.cast
+    Type.int64 d], its ticks of its own unit, instead.
 
     {2:statistics Statistics}
 
@@ -272,9 +272,12 @@ val format :
     the last and one batch of {!source}, defaults to [1_048_576].
 
     Raises [Invalid_argument] if [s] has no column, if [row_group] is not
-    positive, or if [s] holds a record without fields, a tensor whose dtype
-    no talon scalar type stores, such as a complex one, or, naming it, a column
-    whose highest definition level does not fit ({{!writing}Writing}). *)
+    positive, or if [s] holds a record without fields, a tensor whose dtype no
+    talon scalar type stores, such as a complex one, or, naming it, a column
+    that holds a duration, with what writes its ticks: an [Expr.cast], or,
+    below an extension, which does not cast, {!Talon.Column.of_layout} over its
+    storage first ({{!written}Written types}), or whose highest definition
+    level does not fit ({{!writing}Writing}). *)
 
 val encode :
   format ->

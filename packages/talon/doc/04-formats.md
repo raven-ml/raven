@@ -230,7 +230,9 @@ let write_snapshot q =
 Every column is written optional, so a column with nulls and one without have
 one type in the file. Each type writes as the Parquet type that reads back as
 it, and types with no Parquet type of their own are described in the module's
-Writing section.
+Writing section. A duration has no unit a Parquet file can record, so
+`Talon_parquet.format` refuses it: select its ticks first with
+`Expr.cast Type.int64 (Col.span "d")`, and record the unit in the column's name.
 
 ## Many Files as One Table
 
@@ -397,9 +399,12 @@ Each Arrow type reads as the talon type that holds its values: dictionary
 columns as categoricals when one dictionary of distinct strings without nulls
 stands for the whole file and otherwise as their value type, fixed-size lists
 of numbers as tensors, and extension fields as extensions over their storage.
-A field talon cannot hold, such as a decimal, is refused when the file is
-opened, naming the column. `Talon_arrow.with_type`
-reads a fixed-size list as a list when its elements can be null.
+A decimal field is undeclared until `Talon_arrow.with_type` gives it a type, as
+`float64` or, up to 18 digits, as `int64` for its unscaled integer, as in a
+Parquet file; a query that leaves one undeclared is refused when it is built.
+A field talon cannot hold is refused when the file is opened, naming the column.
+`Talon_arrow.with_type` also reads a fixed-size list as a list when its elements
+can be null.
 
 `Talon_arrow.encode` writes a query's rows. `Talon_arrow.format` states the
 format from the query's schema, with the framing (a file by default, or a

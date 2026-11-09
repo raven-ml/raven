@@ -4188,6 +4188,18 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Talon_arrow.sniff` no longer refuses a file because of a `decimal` field:
+  it reads as in Parquet, undeclared until `Talon_arrow.with_type` gives it
+  `float64` or, up to 18 digits, `int64`, and a list, struct or dictionary of
+  decimals alike. A negative scale is read.
+- A Parquet or Arrow format that declares a decimal `int64` fails on a file whose
+  column has another scale, where it read integers meaning other numbers.
+- **Breaking:** `Talon_parquet.format` raises `Invalid_argument` on a duration,
+  which it wrote as bare `int64` ticks whose unit no reader could recover. Write
+  `Expr.cast Type.int64 (Col.span "d")`, its ticks of its own unit, first.
+- `Expr.cast` converts between a duration and `int64`: the integer is the
+  duration's ticks of its unit, exact for every `int64`, so a duration keeps past
+  2^53 ticks what `Temporal.div` would round.
 - `Talon_parquet.file` names a file that cannot be mapped once in its error, where
   a mapping failure wrote the path twice.
 - New `Source.hive`, a pure decoder of Hive partition paths: one row per path,

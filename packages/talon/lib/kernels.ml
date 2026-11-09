@@ -248,6 +248,9 @@ let rec convert (Type.Any from) (Type.Any into as t) :
   let cannot c row = error "cannot cast %t to %a" (cell c row) Type.pp into in
   match (from, into, number from, number into) with
   | _ when Type.equal from into -> fun ~live:_ c -> (c, None)
+  | Duration _, Int64, _, _ | Int64, Duration _, _, _ ->
+      (* The same int64 storage: a duration's value is its ticks. *)
+      fun ~live:_ c -> (Column.with_data t (Column.data c) c, None)
   | _, _, Some f, Some i ->
       fun ~live c ->
         let P x, ok = numeric f i c in

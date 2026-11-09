@@ -6,6 +6,7 @@
 type t = Table.t
 
 module Binary = Binary
+module Decimal = Decimal
 module Time = Time
 module Kind = Kind
 module Record = Record

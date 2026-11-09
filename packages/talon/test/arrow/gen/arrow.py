@@ -15,11 +15,14 @@ committed, so the suite itself needs neither Python nor the network. With
   reads as and every value: integers and ticks in decimal, floats with %.17g,
   text and bytes in hexadecimal, null as `n`, nested values bracketed. The
   suite renders talon's columns the same way.
+- ../golden/decimals.txt: per decimal column of decimals*.arrow, the type it is
+  declared as and every value, in the same form.
 """
 
 import argparse
 import filecmp
 import struct
+import random
 import sys
 import tempfile
 from datetime import date, datetime, timedelta
@@ -32,6 +35,7 @@ import pyarrow.ipc as ipc
 HERE = Path(__file__).parent
 OUT = HERE.parent / "support"
 GOLDEN = HERE.parent / "golden" / "values.txt"
+DECIMALS = HERE.parent / "golden" / "decimals.txt"
 
 
 def nulled(values, every=5):
@@ -369,7 +373,6 @@ def write_tensor_dict(path):
 def refused_files(out):
     tables = {
         "refused_null": pa.table({"bad": pa.nulls(3)}),
-        "refused_decimal": pa.table({"bad": pa.array([Decimal("1.5")], pa.decimal128(4, 1))}),
         "refused_interval": pa.table({"bad": pa.array([(1, 2, 3)], pa.month_day_nano_interval())}),
         "refused_union": pa.table(
             {"bad": pa.UnionArray.from_sparse(pa.array([0], pa.int8()), [pa.array([1], pa.int32())])}
@@ -379,7 +382,7 @@ def refused_files(out):
         ),
         "refused_list_view": pa.table({"bad": pa.array([[1]], pa.list_view(pa.int32()))}),
         "refused_nested": pa.table(
-            {"outer": pa.array([{"bad": Decimal("1.5")}], pa.struct([("bad", pa.decimal128(4, 1))]))}
+            {"outer": pa.array([{"bad": (1, 2, 3)}], pa.struct([("bad", pa.month_day_nano_interval())]))}
         ),
     }
     for name, table in tables.items():
@@ -398,6 +401,127 @@ def refused_files(out):
     # Some writers state instants, not midnights. pyarrow will not read them.
     ms = pa.array([-1, 1, -86400000, -86400001, None], pa.date64())
     write_file(out / "date64_floor.arrow", pa.table({"d": ms}))
+
+
+DECIMAL_SPECS = [
+    (32, 1, 0), (32, 9, 0), (32, 9, 2), (32, 9, 9), (32, 5, -2),
+    (64, 10, 3), (64, 18, 0), (64, 18, 6), (64, 18, 18), (64, 18, -3),
+    (128, 18, 0), (128, 18, 6), (128, 19, 2), (128, 38, 0), (128, 38, 10), (128, 38, 38), (128, 38, -10),
+    (256, 18, 6), (256, 39, 5), (256, 76, 0), (256, 76, 38), (256, 76, 76), (256, 76, -5),
+]
+DECIMAL_TYPES = {32: pa.decimal32, 64: pa.decimal64, 128: pa.decimal128, 256: pa.decimal256}
+NESTED_DECIMAL = pa.decimal128(9, 2)
+
+
+def decimal_name(bits, p, s):
+    return "d%d_%d_%s" % (bits, p, ("m%d" % -s) if s < 0 else s)
+
+
+def decimal_units(p, rng):
+    """Unscaled integers of at most [p] digits: the extremes, zero, one of each
+    sign, nulls and drawn values."""
+    top = 10**p - 1
+    drawn = lambda: rng.randrange(-top, top + 1)
+    return [top, -top, 0, 1, -1, None, drawn(), drawn(), None, drawn(), drawn()]
+
+
+def decimal_table():
+    rng = random.Random(11)
+    cols = {}
+    for bits, p, s in DECIMAL_SPECS:
+        units = decimal_units(p, rng)
+        # Built from buffers, since pyarrow's own conversion cannot state every
+        # value at a negative scale.
+        data = b"".join((u or 0).to_bytes(bits // 8, "little", signed=True) for u in units)
+        valid = sum(1 << i for i, u in enumerate(units) if u is not None)
+        bitmap = valid.to_bytes((len(units) + 7) // 8, "little")
+        cols[decimal_name(bits, p, s)] = pa.Array.from_buffers(
+            DECIMAL_TYPES[bits](p, s), len(units), [pa.py_buffer(bitmap), pa.py_buffer(data)]
+        )
+    # A null row's bytes are any: a value past int64 under a null reads.
+    wide = struct.pack("<2q", -1, 7) + struct.pack("<2q", 5, 0)
+    n = len(decimal_units(1, rng))
+    data = wide + bytes(16 * (n - 2))
+    bitmap = (2).to_bytes((n + 7) // 8, "little")
+    cols["under_null"] = pa.Array.from_buffers(pa.decimal128(18, 0), n, [pa.py_buffer(bitmap), pa.py_buffer(data)])
+    return pa.table(cols)
+
+
+def nested_decimal_table():
+    d = NESTED_DECIMAL
+    a, b = Decimal("1.50"), Decimal("-2.25")
+    index = pa.array([0, 1, None, 2], pa.int32())
+    return pa.table(
+        [
+            pa.array([[a, None], None, [], [b]], pa.list_(d)),
+            pa.array([[a, b], [None, None], None, [b, a]], pa.list_(d, 2)),
+            pa.array([{"a": a, "i": 1}, None, {"a": None, "i": 2}, {"a": b, "i": 3}], pa.struct([("a", d), ("i", pa.int32())])),
+            pa.array([[("k", a)], None, [], [("m", None)]], pa.map_(pa.string(), d)),
+            pa.DictionaryArray.from_arrays(index, pa.array([a, b, None], d)),
+            pa.ExtensionArray.from_storage(Money(), pa.array([a, None, b, a], d)),
+        ],
+        names=["l", "fl", "s", "m", "dict", "e"],
+    )
+
+
+class Money(pa.ExtensionType):
+    def __init__(self):
+        pa.ExtensionType.__init__(self, NESTED_DECIMAL, "raven.money")
+
+    def __arrow_ext_serialize__(self):
+        return b""
+
+    @classmethod
+    def __arrow_ext_deserialize__(cls, storage_type, serialized):
+        return cls()
+
+
+def decimal_files(out):
+    write_file(out / "decimals.arrow", decimal_table())
+    write_file(out / "decimals_nested.arrow", nested_decimal_table())
+    # The column [d] of refused_decimal_range.arrow, at another scale and as a
+    # plain integer: what a format of one file meets in another.
+    other = pa.array([Decimal("1.2345")], pa.decimal128(18, 4))
+    write_file(out / "decimals_other_scale.arrow", pa.table({"d": other}))
+    write_file(out / "decimals_plain.arrow", pa.table({"d": pa.array([12345], pa.int64())}))
+    # 2^63, past int64, in a decimal of 18 digits: a writer's bug that a read
+    # of int64 reports at the row.
+    over = struct.pack("<2Q", 1 << 63, 0)
+    write_file(
+        out / "refused_decimal_range.arrow",
+        pa.table({"d": pa.Array.from_buffers(pa.decimal128(18, 0), 1, [None, pa.py_buffer(over)])}),
+    )
+
+
+def decimal_golden(out):
+    """The lines of ../golden/decimals.txt: a column's float64 line, then, up to
+    18 digits, its int64 line of unscaled integers."""
+    rng = random.Random(11)
+    lines = []
+    table = read(out / "decimals.arrow")
+    for bits, p, s in DECIMAL_SPECS:
+        name = decimal_name(bits, p, s)
+        units = decimal_units(p, rng)
+        floats = ["n" if u is None else "%.17g" % float(Decimal(f"{u}E{-s}")) for u in units]
+        lines.append("|".join(["decimals.arrow", name, "float64", " ".join(floats)]) + "\n")
+        if p <= 18:
+            ints = ["n" if u is None else str(u) for u in units]
+            lines.append("|".join(["decimals.arrow", name, "int64", " ".join(ints)]) + "\n")
+    blanks = " ".join("n" * 9)
+    lines.append("decimals.arrow|under_null|float64|n 5 %s\n" % blanks)
+    lines.append("decimals.arrow|under_null|int64|n 5 %s\n" % blanks)
+    table = read(out / "decimals_nested.arrow")
+    declared = {
+        "l": "list[float64]",
+        "fl": "list[float64]",
+        "s": "record[a float64, i int32]",
+        "m": "list[record[key string, value float64]]",
+        "dict": "float64",
+        "e": "ext[raven.money, float64]",
+    }
+    for column, name in zip(table.columns, table.column_names):
+        lines.append("|".join(["decimals_nested.arrow", name, declared[name], " ".join(column_tokens(column))]) + "\n")
+    return "".join(lines)
 
 
 def fb_field(b, table, slot):
@@ -593,6 +717,7 @@ def write_all(out):
     for name, table in dictionary_tables().items():
         write_file(out / (name + ".arrow"), table)
     write_tensor_dict(out / "tensor_dict.arrow")
+    decimal_files(out)
     write_file(out / "zero_width.arrow", zero_width_table(), CHUNKS)
     write_stream(out / "zero_many.arrows", zero_many_table())
     write_stream(out / "zero_ext.arrows", zero_extension_table())
@@ -707,7 +832,7 @@ def token(t, v):
         return "1" if v else "0"
     if pa.types.is_integer(t):
         return str(int(v))
-    if pa.types.is_floating(t):
+    if pa.types.is_floating(t) or pa.types.is_decimal(t):
         return "%.17g" % float(v)
     if is_text(t):
         return v.encode().hex() or "e"
@@ -759,7 +884,7 @@ def read(path):
 def golden_lines(out):
     lines = []
     for path in sorted(out.glob("*.arrow*")):
-        if path.name.startswith(("refused", "date64_floor", "tensor_dict", "zero_many", "zero_ext", "late_")):
+        if path.name.startswith(("refused", "date64_floor", "tensor_dict", "zero_many", "zero_ext", "late_", "decimals")):
             continue
         table = read(path)
         for column, name in zip(table.columns, table.column_names):
@@ -771,6 +896,7 @@ def golden_lines(out):
 def main():
     pa.register_extension_type(Kg())
     pa.register_extension_type(Point())
+    pa.register_extension_type(Money())
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
@@ -779,12 +905,13 @@ def main():
         write_all(OUT)
         GOLDEN.parent.mkdir(exist_ok=True)
         GOLDEN.write_text(golden_lines(OUT), encoding="utf-8")
+        DECIMALS.write_text(decimal_golden(OUT), encoding="utf-8")
         return
     with tempfile.TemporaryDirectory(dir=HERE.parent) as tmp:
         tmp = Path(tmp)
         write_all(tmp)
         differ = [p.name for p in sorted(tmp.iterdir()) if not filecmp.cmp(p, OUT / p.name, shallow=False)]
-        if differ or golden_lines(tmp) != GOLDEN.read_text(encoding="utf-8"):
+        if differ or golden_lines(tmp) != GOLDEN.read_text(encoding="utf-8") or decimal_golden(tmp) != DECIMALS.read_text(encoding="utf-8"):
             sys.exit("differ: %s" % differ)
 
 

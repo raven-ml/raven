@@ -1298,6 +1298,10 @@ module Expr : sig
       - between clocks and durations: a time of day is its span from midnight,
         converted as between durations, and a duration outside \[[0], 1 day) is
         a data error for a clock;
+      - between a duration and [int64]: the integer is the duration's ticks in
+        its own unit, exactly, for every [int64]. To read another unit, cast
+        between durations first, as
+        [cast Type.int64 (cast (Type.duration Ms) d)] does for milliseconds;
       - between dates and wall-clock datetimes: a date becomes the datetime of
         its midnight, and a datetime becomes the day it falls on, so
         [1969-12-31T23:59:59] becomes [1969-12-31]. A value out of the new
@@ -2345,6 +2349,19 @@ module Source : sig
       invalid percent sequence is not an error and stays literal. It is pure
       and reads no file: [paths] are any strings. *)
 end
+
+(** {1:decimals Decimals in files}
+
+    A decimal of a file, the number [unscaled × 10{^-scale}] of at most a
+    precision's digits, has no talon type. A file format leaves its column {e
+    undeclared} until the reader declares it with the format's [with_type], as
+    [float64], the float nearest each value, or, up to 18 digits, as [int64],
+    each value's unscaled integer, a value outside [int64] failing when it is
+    read. An [int64] means what its scale says, so a format that declares one
+    reads only a file whose column has that scale, and any other fails when
+    read. A list or record that holds a decimal is undeclared as a whole. A
+    source of a format that leaves a column undeclared refuses to be read,
+    naming the column and the types it reads as. *)
 
 module Join : sig
   (** Joins of two queries by conditions on their columns.
@@ -3611,6 +3628,72 @@ module Kit : sig
 end
 
 (**/**)
+
+(* What Talon_parquet and Talon_arrow share about decimal columns. *)
+
+module Decimal : sig
+  (** Decimal columns of files.
+
+      A decimal is an integer, its {e unscaled} value, and a scale: the number
+      [unscaled × 10{^-scale}]. Talon has no decimal type, and a file format
+      that stores decimals has its reader declare, for each column, one of two
+      types that hold its values ({!section-decimals}). This module is the one
+      place that states which, and how a file's bytes read as them. *)
+
+  type bytes = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+  (** The type for the bytes a decimal is read from. *)
+
+  val reads_as : precision:int -> Type.any -> bool
+  (** [reads_as ~precision t] is [true] iff a decimal of at most [precision] digits
+      reads as [t]: [float64], and, up to 18 digits, [int64]. *)
+
+  val scales_agree : Type.any -> format:int option -> file:int option -> bool
+  (** [scales_agree t ~format ~file] is [false] iff a leaf declared [t] by a
+      format whose field has decimal scale [format], read from a file whose
+      field has decimal scale [file], [None] for a field that is not a decimal,
+      would read integers that mean other numbers: [t] is [int64] and the two
+      differ. A [float64] applies the file's own scale. *)
+
+  val other_scale : string
+  (** [other_scale] words the failure {!scales_agree} detects, after a column's
+      name. *)
+
+  val reads_text : precision:int -> string
+  (** [reads_text ~precision] states the types a decimal of [precision] digits
+      reads as, for error messages: [float64 or int64], or [float64] past 18
+      digits. *)
+
+  val undeclared : fn:string -> column:string -> text:string -> flat:bool -> 'a
+  (** [undeclared ~fn ~column ~text ~flat] raises [Invalid_argument] with the
+      message for a decimal column left undeclared: [fn] is the function that
+      needs its type, [column] its name and [text] its file type, which is a
+      decimal when [flat] and holds one otherwise. *)
+
+  val unscaled :
+    bytes ->
+    first:int ->
+    len:int ->
+    big:bool ->
+    (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+    int ->
+    bool
+  (** [unscaled b ~first ~len ~big out i] writes to [out.{i}] the two's complement
+      integer of the [len] bytes of [b] from [first], big-endian if [big] and
+      little-endian otherwise, and is [true], or is [false] if it is outside
+      [int64]. [len] is positive. *)
+
+  val digits : bytes -> first:int -> len:int -> big:bool -> string
+  (** [digits b ~first ~len ~big] is the decimal text of the two's complement
+      integer of the [len] bytes of [b] from [first], big-endian if [big] and
+      little-endian otherwise, of any length. [len] is positive. *)
+
+  val floats :
+    int -> scale:int -> (int -> string) -> (Nx.host Nx.float64_t, string) result
+  (** [floats n ~scale digits] is the [n] decimals of unscaled values [digits i]
+      (decimal text) and scale [scale] as [float64]: the float nearest each value,
+      ties to even, or an infinity past [float64]'s range. A value the text does
+      not parse is [Error why]. *)
+end
 
 (* For talon's tests. *)
 

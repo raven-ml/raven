@@ -54,9 +54,9 @@ let stat_limit = 64
 
    A talon type's Parquet type. Every field is optional: a schema does not say
    whether a column holds nulls, and a required field cannot hold a later
-   batch's. Clocks and datetimes of seconds write as milliseconds, durations
-   as their [int64] ticks, categoricals as text and extensions as their
-   storage. *)
+   batch's. Clocks and datetimes of seconds write as milliseconds, categoricals
+   as text and extensions as their storage. A duration has no Parquet type, so
+   {!column} refuses it. *)
 
 let unit_written : Type.unit_ -> Type.unit_ = function S -> Ms | u -> u
 
@@ -72,7 +72,7 @@ let primitive (Type.Any t) : (Meta.physical * int * Meta.logical option) option
   | Int8 -> int Int32 8 true
   | Int16 -> int Int32 16 true
   | Int32 -> Some (Int32, 0, None)
-  | Int64 | Duration _ -> Some (Int64, 0, None)
+  | Int64 -> Some (Int64, 0, None)
   | Uint8 -> int Int32 8 false
   | Uint16 -> int Int32 16 false
   | Uint32 -> int Int32 32 false
@@ -91,6 +91,7 @@ let primitive (Type.Any t) : (Meta.physical * int * Meta.logical option) option
       let utc = match clock with Time.Utc -> true | Time.Local -> false in
       Some (Int64, 0, Some (Timestamp { unit_ = unit_written unit_; utc }))
   | List _ | Record _ | Tensor _ | Ext _ -> None
+  | Duration _ -> assert false
 
 let element_type dt =
   match Column.of_tensor (Nx.zeros dt [| 0 |]) with
@@ -115,7 +116,6 @@ let rec written (Type.Any t as ty) : Type.any =
   | Clock S -> Any (Type.clock Ms)
   | Datetime { unit_ = S; clock = Time.Utc } -> Any (Type.instant Ms)
   | Datetime { unit_ = S; clock = Time.Local } -> Any (Type.wall Ms)
-  | Duration _ -> Any Type.int64
   | Ext { storage; _ } -> written (Any storage)
   | List e ->
       let (Type.Any e) = written (Any e) in
@@ -142,7 +142,42 @@ let rec top_level (Type.Any t) =
       1 + List.fold_left (fun m (_, t) -> Int.max m (top_level t)) 0 fields
   | _ -> 1
 
+(* [duration_in ~ext t] is [Some u] iff [t] holds a duration, [u] telling
+   whether one lies below an extension, which [Expr.cast] does not take. *)
+let rec duration_in ~ext (Type.Any t) =
+  match t with
+  | Duration _ -> Some ext
+  | List e -> duration_in ~ext (Any e)
+  | Record fields -> List.find_map (fun (_, t) -> duration_in ~ext t) fields
+  | Ext { storage; _ } -> duration_in ~ext:true (Any storage)
+  | _ -> None
+
+(* [no_duration name t] refuses a column that holds a duration: the file has no
+   unit to record, so its ticks would lose their meaning. *)
+let no_duration name (Type.Any t as ty) =
+  match duration_in ~ext:false ty with
+  | None -> ()
+  | Some ext ->
+      let fix =
+        match t with
+        | _ when ext ->
+            "An extension does not cast: rebuild the column over its storage \
+             with Column.of_layout, then cast that."
+        | Duration _ ->
+            Printf.sprintf
+              "Write Expr.cast Type.int64 (Col.span %S) first, its ticks of its \
+               own unit; a cast to another duration before it chooses theirs."
+              name
+        | _ -> "Cast its durations to int64 with Expr.cast first."
+      in
+      invalid_arg
+        (Format.asprintf
+           "Talon_parquet.format: column %S is %a, which Parquet records with \
+            no unit, so its ticks would lose their meaning. %s"
+           name Type.pp t fix)
+
 let column name ty =
+  no_duration name ty;
   let w = written ty in
   let top = top_level w in
   if top > max_level then
