@@ -39,6 +39,22 @@ let first_dividing r sizes =
 
 let last l = List.nth l (List.length l - 1)
 
+(* The powers of two from the largest at most [cap] down to 2. *)
+let pow2s_within cap =
+  let rec largest p = if 2 * p > cap then p else largest (2 * p) in
+  let rec down p = if p < 2 then [] else p :: down (p / 2) in
+  down (largest 1)
+
+let rec down_from n = if n < 2 then [] else n :: down_from (n - 1)
+
+(* Upcasts [axis] by the first of [amounts] that divides it and [keep] admits. *)
+let tile_split k axis amounts ~keep =
+  match
+    List.find_opt (fun n -> divisible (shape_at k axis) n && keep n) amounts
+  with
+  | Some n -> ignore (try_split k axis n Opt.Upcast)
+  | None -> ()
+
 let index_of x l =
   let rec go i = function
     | [] -> invalid_arg "the node is not an axis of the kernel"
@@ -50,6 +66,12 @@ let index_of x l =
 let idx b = get_idx (nth b 1)
 let indexes r b = Nodes.mem r (backward_slice ~calls:Skip (idx b))
 let reads r b = Nodes.mem r (backward_slice_with_self ~calls:Skip (idx b))
+
+(* The addresses [k] stores to. *)
+let stored_addresses k =
+  List.filter_map
+    (fun u -> if op u = Op.Store then Some (nth u 0) else None)
+    (toposort ~calls:Skip (K.ast k))
 
 (* The ranges of the axes of [k] of a role in [types], reduced if [reduce]. *)
 let ranges_of ?reduce k types =
@@ -587,186 +609,194 @@ let streamed k =
 (* [n]'s greatest common divisor with the positive [a]. *)
 let gcd_with a n = gcd a (Bigint.to_int (Bigint.rem n (Bigint.of_int a)))
 
-let stream k (w, x, reuse) =
-  (* The axis of [r], or of what replaced it when a split made it shorter. *)
-  let axis r =
-    let id = axis_id r in
-    let rec go i = function
-      | [] -> invalid_arg "the range is not an axis of the kernel"
-      | u :: _ when axis_id u = id -> i
-      | _ :: rest -> go (i + 1) rest
-    in
-    go 0 (K.rngs k)
-  in
-  let rest r = List.find_opt (fun u -> axis_id u = axis_id r) (K.rngs k) in
-  let divisible_at r n = divisible (shape_at k (axis r)) n in
+(* The axis of [r], or of what replaced it when a split made it shorter. *)
+let axis_of k r =
+  let id = axis_id r in
+  match List.find_index (fun u -> axis_id u = id) (K.rngs k) with
+  | Some i -> i
+  | None -> invalid_arg "the range is not an axis of the kernel"
+
+let rest_of k r = List.find_opt (fun u -> axis_id u = axis_id r) (K.rngs k)
+let divisible_at k r n = divisible (shape_at k (axis_of k r)) n
+
+(* The reuse ranges are upcast by the largest divisor of their product at most
+   [upcast_max], each by its share: a thread holds the outputs that share each
+   element of [w] it loads. The rest stay global, each a pass over [w]. One
+   range that [w] does not read takes the fewest passes, [ceil (f / upcast_max)],
+   padded where its rows do not split evenly into them: 17 rows take 2 passes
+   of 9, padded to 18, where the largest divisor would take 17 passes of 1. *)
+let upcast_reuse k w reuse =
   let shared = Option.value ~default:[] (reuse_ranges k w) in
+  let axis = axis_of k in
+  let rec most t =
+    if Bigint.(equal (rem reuse (of_int t)) zero) then t else most (t - 1)
+  in
+  let divisors () =
+    ignore
+      (List.fold_left
+         (fun left (g, f) ->
+           let a =
+             match known_size (shape_at k (axis g)) with
+             | Some n -> gcd_with (gcd_with left f) n
+             | None -> 1
+           in
+           if a > 1 then ignore (split k (axis g) a Opt.Upcast);
+           left / a)
+         (most upcast_max) shared)
+  in
+  match shared with
+  | [ (g, f) ] when not (Nodes.mem g (ranges w)) ->
+      let f = Bigint.to_int f in
+      let passes = (f + upcast_max - 1) / upcast_max in
+      let t = (f + passes - 1) / passes in
+      let padded =
+        f mod t = 0
+        || Result.is_ok (K.apply_opt k (Opt.Padto { axis = axis g; amount = t }))
+      in
+      if padded then ignore (split k (axis g) t Opt.Upcast) else divisors ()
+  | _ -> divisors ()
+
+(* A workgroup's or a thread's rows are the matrix's own, which the other
+   operand does not read, so they share that operand's loads. *)
+let rows_candidates k w x =
+  let shared = Option.value ~default:[] (reuse_ranges k w) in
+  let own, others =
+    List.partition
+      (fun g -> not (Nodes.mem g (ranges x)))
+      (List.filter
+         (fun g -> Nodes.mem g (ranges w) && not (List.mem_assq g shared))
+         (ranges_of k [ Global ]))
+  in
+  own @ others
+
+(* How the streamed layout will take [k]'s axes, its guards held:
+   [`Rows (u, a, g, threads)], [g] the range of 4 rows and [threads] the
+   lanes along the contracted range [u] of its main access [a], or
+   [`Columns (g, k', across, wanted)] on [k'], a copy of [k] whose reuse is
+   already upcast, [across] the threads across [g] and [wanted] the threads of
+   the kernel; [None] when no layout's guards hold. *)
+let streamed_layout k (w, x, reuse) =
   let held = Bigint.(gt reuse one) in
-  (* The reuse ranges are upcast by the largest divisor of their product at
-     most [upcast_max], each by its share: a thread holds the outputs that
-     share each element of [w] it loads. The rest stay global, each a pass
-     over [w]. One range that [w] does not read takes the fewest passes,
-     [ceil (f / upcast_max)], padded where its rows do not split evenly into
-     them: 17 rows take 2 passes of 9, padded to 18, where the largest
-     divisor would take 17 passes of 1. *)
-  let upcast_reuse () =
-    let rec most t =
-      if Bigint.(equal (rem reuse (of_int t)) zero) then t else most (t - 1)
-    in
-    let divisors () =
-      ignore
-        (List.fold_left
-           (fun left (g, f) ->
-             let a =
-               match known_size (shape_at k (axis g)) with
-               | Some n -> gcd_with (gcd_with left f) n
-               | None -> 1
-             in
-             if a > 1 then ignore (split k (axis g) a Opt.Upcast);
-             left / a)
-           (most upcast_max) shared)
-    in
-    match shared with
-    | [ (g, f) ] when not (Nodes.mem g (ranges w)) ->
-        let f = Bigint.to_int f in
-        let passes = (f + upcast_max - 1) / upcast_max in
-        let t = (f + passes - 1) / passes in
-        let padded =
-          f mod t = 0
-          || Result.is_ok (K.apply_opt k (Opt.Padto { axis = axis g; amount = t }))
-        in
-        if padded then ignore (split k (axis g) t Opt.Upcast) else divisors ()
-    | _ -> divisors ()
-  in
-  (* Each contracted range that no split has taken, other than the lanes'
-     [u], along which [x] is read at unit stride is unrolled whole where its
-     values there fit one load of [vector_bytes] and the [lanes] lanes,
-     stepping [x] by its stride along [u], load across more than a line: a
-     byte's two MXFP4 values multiply [x] at [2 b] and [2 b + 1], so that a
-     loop of 2 trips has 32 lanes load float32 values 8 bytes apart, over
-     two lines a load, where unrolled each loads both at once. On an RTX 5000
-     Ada 64 float32 rows of a 16384-square MXFP4 matrix took 4.8-5.0 ms
-     looped and 2.7 ms unrolled; bfloat16 rows, whose lanes load within one
-     line, ran up to 1.2 times slower unrolled. A refused split is
-     skipped. *)
-  let unroll_together u =
-    let together a t =
-      let bytes = Dtype.itemsize (dtype a) in
-      let span = Bigint.of_int (lanes * bytes) in
-      match (rest t, stride u (idx a)) with
-      | Some r, Some step
-        when axis_id r <> axis_id u
-             && List.mem (axis r) (K.upcastable_dims ~reduce:true k)
-             && Bigint.(gt (mul step span) (of_int line_bytes))
-        -> (
-          match (known_size (Sym (nth t 0)), known_size (shape_at k (axis r))) with
-          | Some n, Some n'
-            when Bigint.(
-                   equal n n' && gt n one
-                   && leq (mul n (of_int bytes)) (of_int vector_bytes)) ->
-              Some r
-          | _ -> None)
-      | _ -> None
-    in
-    List.iter
-      (fun a ->
-        List.iter
-          (fun t ->
-            Option.iter
-              (fun r -> ignore (try_split k (axis r) 0 Opt.Upcast))
-              (together a t))
-          (units a))
-      (accesses x)
-  in
-  let rows_layout u a =
-    let i = idx a in
-    let threads = pow2_dividing u lanes in
-    let whole =
-      Option.equal Bigint.equal
-        (known_size (shape_at k (axis u)))
-        (Some (Bigint.of_int threads))
-    in
-    (* A workgroup's or a thread's rows are the matrix's own, which the other
-       operand does not read, so they share that operand's loads. *)
-    let own, others =
-      List.partition
-        (fun g -> not (Nodes.mem g (ranges x)))
-        (List.filter
-           (fun g -> Nodes.mem g (ranges w) && not (List.mem_assq g shared))
-           (ranges_of k [ Global ]))
-    in
-    (* [w]'s reduce range of the next stride: the lanes continue onto it when
-       they take [u] whole, and the loads in flight come from it. *)
-    let next =
-      List.filter_map
-        (fun r ->
-          match stride r i with
-          | Some s when Bigint.(gt s one) -> Some (s, r)
-          | _ -> None)
-        (contracted k)
-      |> List.stable_sort (fun (s, _) (t, _) -> Bigint.compare s t)
-      |> List.map snd
-      |> function
-      | n :: _ -> Some n
-      | [] -> None
-    in
-    match List.find_opt (fun g -> divisible_at g rows) (own @ others) with
-    | Some g when threads > 1 ->
-        if held then upcast_reuse ();
-        if not (try_split k (axis u) threads Opt.Local) then None
-        else begin
-          (match next with
-          | Some n when whole && threads < lanes ->
-              let more = pow2_dividing n (lanes / threads) in
-              if more > 1 then ignore (try_split k (axis n) more Opt.Local)
-          | _ -> ());
-          if
-            not (try_split k (axis g) rows (if held then Opt.Upcast else Opt.Local))
-          then None
-          else
-          (* what the lanes leave of the reduce, if anything, or the next
-             range *)
-          let left = if whole then Option.bind next rest else rest u in
-          (match left with
-          | Some r ->
-              let n =
-                divisor_at_most r (if held then in_flight_held else in_flight)
-              in
-              if n > 1 then ignore (try_split k (axis r) n Opt.Upcast)
-          | None -> ());
-          unroll_together u;
-          Some k
-        end
+  match layout k w with
+  | None -> None
+  | Some (`Rows (u, a)) ->
+      let threads = pow2_dividing u lanes in
+      if threads <= 1 then None
+      else
+        Option.map
+          (fun g -> `Rows (u, a, g, threads))
+          (List.find_opt
+             (fun g -> divisible_at k g rows)
+             (rows_candidates k w x))
+  | Some (`Columns g) ->
+      let c = K.copy k in
+      if held then upcast_reuse c w reuse;
+      let wanted =
+        match prod_at c (K.upcastable_dims c) with
+        | Int n -> pow2_above ((K.ren c).stream_threads * columns / max n 1)
+        | Sym _ -> 1
+      in
+      let across = max sector_lanes (lanes * lanes / max wanted lanes) in
+      if wanted <= 1 || not (divisible_at c g (across * columns)) then None
+      else Some (`Columns (g, c, across, wanted))
+
+(* Each contracted range that no split has taken, other than the lanes' [u],
+   along which [x] is read at unit stride is unrolled whole where its values
+   there fit one load of [vector_bytes] and the [lanes] lanes, stepping [x] by
+   its stride along [u], load across more than a line: a byte's two MXFP4
+   values multiply [x] at [2 b] and [2 b + 1], so that a loop of 2 trips has
+   32 lanes load float32 values 8 bytes apart, over two lines a load, where
+   unrolled each loads both at once. On an RTX 5000 Ada 64 float32 rows of a
+   16384-square MXFP4 matrix took 4.8-5.0 ms looped and 2.7 ms unrolled;
+   bfloat16 rows, whose lanes load within one line, ran up to 1.2 times slower
+   unrolled. A refused split is skipped. *)
+let unroll_together k x u =
+  let together a t =
+    let bytes = Dtype.itemsize (dtype a) in
+    let span = Bigint.of_int (lanes * bytes) in
+    match (rest_of k t, stride u (idx a)) with
+    | Some r, Some step
+      when axis_id r <> axis_id u
+           && List.mem (axis_of k r) (K.upcastable_dims ~reduce:true k)
+           && Bigint.(gt (mul step span) (of_int line_bytes))
+      -> (
+        match
+          (known_size (Sym (nth t 0)), known_size (shape_at k (axis_of k r)))
+        with
+        | Some n, Some n'
+          when Bigint.(
+                 equal n n' && gt n one
+                 && leq (mul n (of_int bytes)) (of_int vector_bytes)) ->
+            Some r
+        | _ -> None)
     | _ -> None
   in
-  let columns_layout g =
-    if held then upcast_reuse ();
-    let first = List.hd (contracted k) in
-    let wanted =
-      match prod_at k (K.upcastable_dims k) with
-      | Int n -> pow2_above ((K.ren k).stream_threads * columns / max n 1)
-      | Sym _ -> 1
-    in
-    (* A workgroup holds [lanes * lanes] threads. Few outputs take fewer of
-       them across, down to [sector_lanes], and more along the reduce, so that
-       more workgroups share the outputs: 512 outputs take 32 workgroups of 8
-       threads across where they took 8 of 32. *)
-    let across = max sector_lanes (lanes * lanes / max wanted lanes) in
-    if wanted <= 1 || not (divisible_at g (across * columns)) then None
-    else begin
-      ignore (split k (axis g) across Opt.Local);
-      ignore (split k (axis g) columns Opt.Upcast);
-      let threads =
-        pow2_dividing first (min wanted (lanes * lanes / across))
-      in
-      if threads > 1 then ignore (try_split k (axis first) threads Opt.Local);
-      Some k
-    end
+  List.iter
+    (fun a ->
+      List.iter
+        (fun t ->
+          Option.iter
+            (fun r -> ignore (try_split k (axis_of k r) 0 Opt.Upcast))
+            (together a t))
+        (units a))
+    (accesses x)
+
+(* The splits of the rows layout, on a copy of [k]. A split that Postrange
+   refuses, as a local split past the shared memory, is skipped: the kernel
+   only runs on the threads it has. *)
+let rows_layout k (w, x, reuse) (u, a, g, threads) =
+  let k = K.copy k in
+  let i = idx a in
+  let held = Bigint.(gt reuse one) in
+  let whole =
+    Option.equal Bigint.equal
+      (known_size (shape_at k (axis_of k u)))
+      (Some (Bigint.of_int threads))
   in
-  match layout k w with
-  | Some (`Rows (u, a)) -> rows_layout u a
-  | Some (`Columns g) -> columns_layout g
-  | None -> None
+  (* [w]'s reduce range of the next stride: the lanes continue onto it when
+     they take [u] whole, and the loads in flight come from it. *)
+  let next =
+    List.filter_map
+      (fun r ->
+        match stride r i with
+        | Some s when Bigint.(gt s one) -> Some (s, r)
+        | _ -> None)
+      (contracted k)
+    |> List.stable_sort (fun (s, _) (t, _) -> Bigint.compare s t)
+    |> List.map snd
+    |> function
+    | n :: _ -> Some n
+    | [] -> None
+  in
+  if held then upcast_reuse k w reuse;
+  ignore (try_split k (axis_of k u) threads Opt.Local);
+  (match next with
+  | Some n when whole && threads < lanes ->
+      let more = pow2_dividing n (lanes / threads) in
+      if more > 1 then ignore (try_split k (axis_of k n) more Opt.Local)
+  | _ -> ());
+  ignore (try_split k (axis_of k g) rows (if held then Opt.Upcast else Opt.Local));
+  (* what the lanes leave of the reduce, if anything, or the next range *)
+  let left = if whole then Option.bind next (rest_of k) else rest_of k u in
+  (match left with
+  | Some r ->
+      let n = divisor_at_most r (if held then in_flight_held else in_flight) in
+      if n > 1 then ignore (try_split k (axis_of k r) n Opt.Upcast)
+  | None -> ());
+  unroll_together k x u;
+  k
+
+let columns_layout (g, k, across, wanted) =
+  let first = List.hd (contracted k) in
+  (* A workgroup holds [lanes * lanes] threads. Few outputs take fewer of them
+     across, down to [sector_lanes], and more along the reduce, so that more
+     workgroups share the outputs: 512 outputs take 32 workgroups of 8 threads
+     across where they took 8 of 32. *)
+  ignore (split k (axis_of k g) across Opt.Local);
+  ignore (split k (axis_of k g) columns Opt.Upcast);
+  let threads = pow2_dividing first (min wanted (lanes * lanes / across)) in
+  if threads > 1 then ignore (try_split k (axis_of k first) threads Opt.Local);
+  k
 
 (* are we grouping? (requires local shape support)
 
@@ -785,11 +815,7 @@ let group_threads = 16
 
 let group k =
   let loaded k =
-    let stored =
-      List.filter_map
-        (fun u -> if op u = Op.Store then Some (nth u 0) else None)
-        (toposort ~calls:Skip (K.ast k))
-    in
+    let stored = stored_addresses k in
     List.filter (fun b -> not (List.memq b stored)) (K.bufs k)
   in
   let unit k axis =
@@ -814,8 +840,9 @@ let group k =
     try_split t axis group_threads Opt.Local && Option.is_some (grouped t)
   in
   if
-    Sint.resolve ~default:false
-      Sint.(prod_at k (K.upcastable_dims k) <= Int 2048)
+    (K.ren k).has_local
+    && Sint.resolve ~default:false
+         Sint.(prod_at k (K.upcastable_dims k) <= Int 2048)
   then begin
     let outputs =
       match grouped (K.copy k) with
@@ -995,17 +1022,7 @@ let held ?upcast ?unroll k (file : Renderer.registers) =
   in
   (* The lanes a store writes at consecutive addresses, the upcast [upcast]
      among them: Clang packs a register with no more of them. *)
-  let stride r i =
-    List.find_map
-      (fun t ->
-        if t == r then Some 1
-        else if op t = Op.Mul && nth t 0 == r && is_literal (nth t 1) then
-          match value (nth t 1) with
-          | #Dtype.value as v -> Some (Dtype.Value.to_int v)
-          | `Invalid -> None
-        else None)
-      (split_uop i Op.Add)
-  in
+  let stride r i = Option.map Bigint.to_int (stride r i) in
   let run i =
     let upcast_terms =
       List.filter_map
@@ -1028,11 +1045,7 @@ let held ?upcast ?unroll k (file : Renderer.registers) =
     in
     extend 1
   in
-  let stored =
-    List.filter_map
-      (fun u -> if op u = Op.Store then Some (nth u 0) else None)
-      (toposort ~calls:Skip (K.ast k))
-  in
+  let stored = stored_addresses k in
   let packed =
     List.fold_left
       (fun c b -> if List.memq b stored then max c (run (idx b)) else c)
@@ -1194,11 +1207,7 @@ let fits ?upcast ?unroll k =
    that reads the axis must read it at unit stride, or its lanes gather from
    apart, as a matrix's rows would for a product with a vector. *)
 let stored_contiguous k =
-  let stored =
-    List.filter_map
-      (fun u -> if op u = Op.Store then Some (nth u 0) else None)
-      (toposort ~calls:Skip (K.ast k))
-  in
+  let stored = stored_addresses k in
   let unit r i = List.exists (fun t -> t == r) (split_uop i Op.Add) in
   List.find_opt
     (fun axis ->
@@ -1270,14 +1279,12 @@ let upcast_vectors k =
     List.fold_left (fun w dt -> max w (Dtype.itemsize dt)) 1 dtypes
   in
   let rec upcast room =
-    let rec pow2 p = if 2 * p > min room split_lanes then p else pow2 (2 * p) in
     let fits axis =
-      let rec largest n =
-        if n < 2 then None
-        else if divisible (shape_at k axis) n then Some (axis, n)
-        else largest (n / 2)
-      in
-      largest (pow2 1)
+      Option.map
+        (fun n -> (axis, n))
+        (List.find_opt
+           (divisible (shape_at k axis))
+           (pow2s_within (min room split_lanes)))
     in
     match List.find_map fits (List.rev (K.upcastable_dims k)) with
     | Some (axis, n) ->
@@ -1307,17 +1314,9 @@ let upcast_contiguous k =
           (fun b u -> max b (computed_bytes (dtype u)))
           1 (K.reduceops k)
       in
-      let rec pow2 p =
-        if 2 * p > min (host_vector_bytes / bytes) split_lanes then p
-        else pow2 (2 * p)
-      in
-      let rec largest n =
-        if n >= 2 then
-          if divisible (shape_at k axis) n && fits ~upcast:(axis, n) k then
-            ignore (split k axis n Opt.Upcast)
-          else largest (n / 2)
-      in
-      largest (pow2 1)
+      tile_split k axis
+        (pow2s_within (min (host_vector_bytes / bytes) split_lanes))
+        ~keep:(fun n -> fits ~upcast:(axis, n) k)
 
 (* A GPU's outputs are its threads: it upcasts while 1024 of them remain. On
    the host the upcasts are bounded by the budget alone. A launch runs its
@@ -1423,14 +1422,7 @@ let upcast_more k =
 let unroll_vector k ~fits unrolled axis =
   let reduce = List.hd (K.reduceops k) in
   let room = host_vector_bytes / Dtype.itemsize (dtype reduce) / unrolled in
-  let rec largest n =
-    if n >= 2 then
-      if divisible (shape_at k axis) n && fits n then
-        ignore (try_split k axis n Opt.Upcast)
-      else largest (n / 2)
-  in
-  let rec pow2 p = if 2 * p > room then p else pow2 (2 * p) in
-  largest (pow2 1)
+  tile_split k axis (pow2s_within room) ~keep:fits
 
 (* An unroll needs fewer than 64 lanes upcast: 16 registers at four lanes a
    register. On the host, fewer registers of lanes than the target has, a
@@ -1662,6 +1654,11 @@ let streams k =
   then streamed k
   else None
 
+let stream k (s, l) =
+  match l with
+  | `Rows r -> rows_layout k s r
+  | `Columns c -> columns_layout c
+
 (* Decodes on the host
 
    On the host, which streams no contraction, an operand decoded from integer
@@ -1696,20 +1693,13 @@ let share_decodes k =
       let share axis =
         match known_size (shape_at k axis) with
         | None -> ()
-        | Some n -> (
+        | Some n ->
             let divides f a = Bigint.(equal (rem f (of_int a)) zero) in
             let shares a =
-              divides n a
-              && List.exists (fun o -> divides (shared axis n o) a) operands
+              List.exists (fun o -> divides (shared axis n o) a) operands
             in
-            let rec amount a =
-              if a < 2 then None
-              else if shares a && fits ~upcast:(axis, a) k then Some a
-              else amount (a - 1)
-            in
-            match amount cap with
-            | Some a -> ignore (split k axis a Opt.Upcast)
-            | None -> ())
+            tile_split k axis (down_from cap)
+              ~keep:(fun a -> shares a && fits ~upcast:(axis, a) k)
       in
       (* later axes first, as an upcast of a whole axis removes it *)
       if operands <> [] then
@@ -1752,19 +1742,30 @@ let hand_coded_with ~core_threads k =
   then K.copy k
   else
     let s = streams k in
-    let stream s = stream (K.copy k) s in
-    let early = match s with Some s when early k s -> stream s | _ -> None in
+    (* A layout's guards upcast a copy in the columns layout, so they run only
+       for a kernel the gates send to a stream. *)
+    let layout =
+      lazy
+        (Option.bind s (fun s ->
+             Option.map (fun l -> (s, l)) (streamed_layout k s)))
+    in
+    let streamed_as () = Option.map (stream k) (Lazy.force layout) in
+    let early_stream =
+      match s with Some s when early k s -> streamed_as () | _ -> None
+    in
     (* Past [stream_first] a decoded operand streams too: the other rules share
        only their upcast of 4 rows, and decode each value in every other tile,
        16 times at 64 rows. *)
     let late () =
       match s with
-      | Some ((w, _, reuse) as s)
+      | Some (w, _, reuse)
         when Bigint.(leq reuse (of_int stream_first)) || Stage.decoded w ->
-          stream s
+          streamed_as ()
       | _ -> None
     in
-    match early with
+    (* The guards decide the streams, so only the tensor cores are a true
+       attempt: whether one applies is the rewrite itself. *)
+    match early_stream with
     | Some k -> k
     | None -> (
         match tensor_cores ~core_threads k with

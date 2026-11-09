@@ -113,8 +113,8 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
         at once.}}
     These two unrolls are skipped where their split is refused.
     The rows layout declines, and the next rule applies, when no global axis
-    that the streamed operand reads other than as a quotient divides by 4,
-    when [u] takes one thread, or when a split it asks for is refused.
+    that the streamed operand reads other than as a quotient divides by 4, or
+    when [u] takes one thread; a split Postrange refuses is skipped.
     When that axis is a global axis, after the upcast of the reuse, it splits
     into 32 local threads and 2 upcast lanes, and the first reduce axis into
     the least power of two of local threads that makes 32768 threads, at most
