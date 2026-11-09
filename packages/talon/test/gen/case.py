@@ -6,9 +6,13 @@
 
     uv run packages/talon/test/gen/case.py [--check]
 
-Every table reads one Unicode version, the pinned VERSION. White_Space, which
-Str.trim trims and the regular-expression class \\s matches, comes from
-PropList.txt into lib/unicode_tables.ml.
+Every table reads one Unicode version, the pinned VERSION. lib/unicode_tables.ml
+holds what Str.regex matches against: White_Space, which Str.trim also trims,
+General_Category, Script and Script_Extensions with their property value
+aliases, the binary properties of RL1.2 and the compatibility properties of
+Annex C of UTS #18, and the orbits of simple case folding. golden/unicode.txt
+states the membership of each class, printed from the parsed files directly: it
+is the expected data of the conformance test.
 
 Str.lower and Str.upper follow Unicode's Default Case Conversion, chapter 3,
 section 3.13, at the pinned VERSION. Their scalar mappings are full case
@@ -20,7 +24,6 @@ DerivedCoreProperties.txt, from which it writes:
 
 - lib/case_tables.ml: lower and upper mappings as two-stage tables, and the
   ranges of the two properties.
-- lib/unicode_tables.ml: the ranges of White_Space, read from PropList.txt.
 - test/golden/case.txt: the same mappings and ranges, and White_Space's, one
   fact a line, as data a test reads, printed from the parsed files directly.
 
@@ -117,6 +120,140 @@ def white_space() -> set[int]:
             first, _, last = fields[0].partition("..")
             members.update(range(int(first, 16), int(last or first, 16) + 1))
     return members
+
+
+def strip_name(name: str) -> str:
+    """A property or value name loosely, by UAX44-LM3: case, spaces, `_`, `-`."""
+    return "".join(c for c in name.lower() if c not in " _-")
+
+
+def code_ranges(field: str) -> range:
+    first, _, last = field.partition("..")
+    return range(int(first, 16), int(last or first, 16) + 1)
+
+
+ALL = range(0x110000)
+
+
+def value_aliases(prop: str) -> dict[str, list[str]]:
+    """Each value of [prop] by its short name: all names, stripped of case."""
+    aliases = {}
+    for fields in data_lines(fetch("PropertyValueAliases.txt")):
+        if fields[0] == prop:
+            names = [strip_name(f) for f in fields[1:] if f != "n/a"]
+            aliases[fields[1]] = list(dict.fromkeys(names))
+    return aliases
+
+
+def general_categories() -> dict[str, set[int]]:
+    """The members of every General_Category value and of the groups."""
+    cats: dict[str, set[int]] = {}
+    for fields in data_lines(fetch("extracted/DerivedGeneralCategory.txt")):
+        cats.setdefault(fields[1], set()).update(code_ranges(fields[0]))
+    groups = {
+        "L": ["Lu", "Ll", "Lt", "Lm", "Lo"],
+        "LC": ["Lu", "Ll", "Lt"],
+        "M": ["Mn", "Mc", "Me"],
+        "N": ["Nd", "Nl", "No"],
+        "P": ["Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po"],
+        "S": ["Sm", "Sc", "Sk", "So"],
+        "Z": ["Zs", "Zl", "Zp"],
+        "C": ["Cc", "Cf", "Cs", "Co", "Cn"],
+    }
+    for name, members in groups.items():
+        cats[name] = set().union(*(cats[m] for m in members))
+    return cats
+
+
+def scripts() -> tuple[dict[str, set[int]], dict[str, set[int]]]:
+    """The members of each Script value and of each Script_Extensions value,
+    which holds a scalar with no ScriptExtensions.txt line under its Script,
+    and a scalar with one under each listed Script."""
+    long_to_short = {}
+    for fields in data_lines(fetch("PropertyValueAliases.txt")):
+        if fields[0] == "sc":
+            for name in fields[1:]:
+                long_to_short[name] = fields[1]
+    sc: dict[str, set[int]] = {}
+    for fields in data_lines(fetch("Scripts.txt")):
+        sc.setdefault(long_to_short[fields[1]], set()).update(code_ranges(fields[0]))
+    explicit: dict[int, list[str]] = {}
+    for fields in data_lines(fetch("ScriptExtensions.txt")):
+        values = [long_to_short[v] for v in fields[1].split()]
+        for u in code_ranges(fields[0]):
+            explicit[u] = values
+    sc["Zzzz"] = set(ALL) - set().union(*sc.values())
+    # Script values no scalar has, as Katakana_Or_Hiragana, match nothing.
+    for name in long_to_short.values():
+        sc.setdefault(name, set())
+    scx = {name: {u for u in members if u not in explicit} for name, members in sc.items()}
+    for u, values in explicit.items():
+        for value in values:
+            scx[value].add(u)
+    return sc, scx
+
+
+def binary_properties() -> dict[str, set[int]]:
+    """The binary properties of RL1.2 and the sets Annex C names, each under
+    every alias PropertyAliases.txt gives it."""
+    derived: dict[str, set[int]] = {}
+    for name in ("DerivedCoreProperties.txt", "PropList.txt"):
+        for fields in data_lines(fetch(name)):
+            if len(fields) == 2:
+                derived.setdefault(fields[1], set()).update(code_ranges(fields[0]))
+    cats = general_categories()
+    alpha = derived["Alphabetic"]
+    white = derived["White_Space"]
+    digit = cats["Nd"]
+    graph = (
+        set(ALL)
+        - white
+        - cats["Cc"]
+        - cats["Cs"]
+        - cats["Cn"]
+    )
+    blank = cats["Zs"] | {0x09}
+    word = alpha | cats["M"] | digit | cats["Pc"] | derived["Join_Control"]
+    return {
+        # RL1.2, with Unicode's short aliases.
+        "alphabetic": alpha,
+        "alpha": alpha,
+        "uppercase": derived["Uppercase"],
+        "upper": derived["Uppercase"],
+        "lowercase": derived["Lowercase"],
+        "lower": derived["Lowercase"],
+        "whitespace": white,
+        "wspace": white,
+        "space": white,
+        "noncharactercodepoint": derived["Noncharacter_Code_Point"],
+        "nchar": derived["Noncharacter_Code_Point"],
+        "defaultignorablecodepoint": derived["Default_Ignorable_Code_Point"],
+        "di": derived["Default_Ignorable_Code_Point"],
+        "any": set(ALL),
+        "ascii": set(range(0x80)),
+        "assigned": set(ALL) - cats["Cn"],
+        # Annex C, its Standard Recommendation column.
+        "punct": cats["P"],
+        "digit": digit,
+        "xdigit": digit | derived["Hex_Digit"],
+        "alnum": alpha | digit,
+        "blank": blank,
+        "cntrl": cats["Cc"],
+        "graph": graph,
+        "print": graph | (blank - cats["Cc"]),
+        "word": word,
+    }
+
+
+def case_orbits() -> list[list[int]]:
+    """The orbits of simple case folding: each set of two or more scalars
+    that fold (CaseFolding.txt, statuses C and S) to one scalar."""
+    orbits: dict[int, set[int]] = {}
+    for fields in data_lines(fetch("CaseFolding.txt")):
+        if fields[1] in ("C", "S"):
+            source, target = int(fields[0], 16), int(fields[2], 16)
+            orbits.setdefault(target, {target}).add(source)
+    return [sorted(o) for o in sorted(orbits.values(), key=min) if len(o) > 1]
 
 
 def utf_8(mapped: tuple[int, ...]) -> bytes:
@@ -269,9 +406,57 @@ def encoded(bounds: list[int]) -> bytes:
     return bytes(out)
 
 
-def ocaml_unicode(white) -> str:
+def ocaml_list(items: list[str]) -> str:
+    return "[ " + "; ".join(items) + " ]"
+
+
+def ocaml_string_list(names: list[str]) -> str:
+    return ocaml_list([f'"{n}"' for n in names])
+
+
+def ocaml_unicode(white, gc_aliases, gcs, sc_aliases, sc, scx, binary, orbits) -> str:
+    tables: dict[bytes, str] = {}
+    names = []
+    def named(members: set[int]) -> str:
+        data = encoded(ranges(members))
+        if data not in tables:
+            tables[data] = f"t{len(tables)}"
+        return tables[data]
+
+    white_data = encoded(ranges(white))
+    tables[white_data] = "white_space"
+
+    general_category = [
+        f"({ocaml_string_list(gc_aliases[name])}, {named(gcs[name])})"
+        for name in sorted(gc_aliases)
+    ]
+    script = [
+        f"({ocaml_string_list(sc_aliases[name])}, {named(sc[name])}, {named(scx[name])})"
+        for name in sorted(sc_aliases)
+    ]
+    by_members: dict[bytes, list[str]] = {}
+    for name in sorted(binary):
+        by_members.setdefault(encoded(ranges(binary[name])), []).append(name)
+    binaries = [
+        f"({ocaml_string_list(names)}, {named(binary[names[0]])})"
+        for names in by_members.values()
+    ]
+    bindings = "".join(
+        f"let {name} = {wrapped(data)}\n"
+        for data, name in tables.items()
+        if name != "white_space"
+    )
+    flat = [u for orbit in orbits for u in orbit + [-1]]
+    # One entry per line would be 1200 lines: three to a line.
+    def entries(xs):
+        return "\n".join(
+            "    " + " ".join(f"{x};" for x in xs[i : i + 3])
+            for i in range(0, len(xs), 3)
+        )
     return f"""(* Generated by packages/talon/test/gen/case.py from the Unicode {VERSION}
-   UCD (PropList.txt); do not edit. Run
+   UCD (PropList.txt, DerivedGeneralCategory.txt, Scripts.txt,
+   ScriptExtensions.txt, PropertyValueAliases.txt, DerivedCoreProperties.txt,
+   CaseFolding.txt); do not edit. Run
    [uv run packages/talon/test/gen/case.py] to regenerate it.
 
    The data is derived from Unicode's data files, under the Unicode License v3
@@ -301,7 +486,30 @@ let bounds s =
   b
 
 (* The scalars with Unicode's White_Space property. *)
-let white_space = {wrapped(encoded(ranges(white)))}
+let white_space = {wrapped(white_data)}
+
+(* The other classes, read through the lookups below. *)
+{bindings}
+(* Every General_Category value and group, under its names by UAX44-LM3. *)
+let general_category =
+  {ocaml_list(general_category)}
+
+(* Every Script value, under its names by UAX44-LM3: its members, then those of
+   Script_Extensions at that value. *)
+let script =
+  {ocaml_list(script)}
+
+(* The binary properties of RL1.2 and the classes of Annex C (UTS #18) under
+   their names, each case-folded like UAX44-LM3. *)
+let binary =
+  {ocaml_list(binaries)}
+
+(* The orbits of simple case folding, each two or more scalars that fold to one
+   value (CaseFolding.txt, statuses C and S), each orbit ended by [-1]. *)
+let case_orbits =
+  [|
+{entries(flat)}
+  |]
 """
 
 
@@ -322,6 +530,35 @@ def golden(lower, upper, cased, ignorable, white) -> str:
         bounds = ranges(members)
         for start, end in zip(bounds[0::2], bounds[1::2]):
             lines.append(f"{name} {start:04X}..{end - 1:04X}")
+    return "\n".join(lines) + "\n"
+
+
+def unicode_golden(gc_aliases, gcs, sc_aliases, sc, scx, binary, orbits) -> str:
+    def spans(members):
+        bounds = ranges(members)
+        return " ".join(
+            f"{start:04X}..{end - 1:04X}"
+            for start, end in zip(bounds[0::2], bounds[1::2])
+        )
+
+    lines = [
+        f"# Unicode {VERSION}: `C name ranges` gives the members of a class, for",
+        "# gc=Value of General_Category, sc=Value of Script, scx=Value of",
+        "# Script_Extensions and the name of a binary or Annex C class; `A",
+        "# class name` an alias the class also answers to; `F a b ...` an orbit",
+        "# of simple case folding. Printed from the UCD files, under the",
+        "# Unicode License v3.",
+    ]
+    for name in sorted(gc_aliases):
+        lines.append(f"C gc={name} {spans(gcs[name])}")
+        lines += [f"A gc={name} {alias}" for alias in gc_aliases[name]]
+    for name in sorted(sc_aliases):
+        lines.append(f"C sc={name} {spans(sc[name])}")
+        lines.append(f"C scx={name} {spans(scx[name])}")
+        lines += [f"A sc={name} {alias}" for alias in sc_aliases[name]]
+    for name in sorted(binary):
+        lines.append(f"C {name} {spans(binary[name])}")
+    lines += ["F " + " ".join(f"{u:04X}" for u in orbit) for orbit in orbits]
     return "\n".join(lines) + "\n"
 
 
@@ -397,8 +634,18 @@ def write(talon: Path) -> list[Path]:
         ocaml(lower, upper, cased, ignorable), encoding="utf-8", newline="\n"
     )
     white = white_space()
+    gc_aliases = value_aliases("gc")
+    gcs = general_categories()
+    sc_aliases = value_aliases("sc")
+    sc, scx = scripts()
+    binary = binary_properties()
+    orbits = case_orbits()
     unicode_tables = talon / "lib" / "unicode_tables.ml"
-    unicode_tables.write_text(ocaml_unicode(white), encoding="utf-8", newline="\n")
+    unicode_tables.write_text(
+        ocaml_unicode(white, gc_aliases, gcs, sc_aliases, sc, scx, binary, orbits),
+        encoding="utf-8",
+        newline="\n",
+    )
     case = talon / "test" / "golden" / "case.txt"
     case.parent.mkdir(parents=True, exist_ok=True)
     case.write_text(
@@ -406,10 +653,17 @@ def write(talon: Path) -> list[Path]:
         encoding="utf-8",
         newline="\n",
     )
+    unicode_data = talon / "test" / "golden" / "unicode.txt"
+    unicode_data.write_text(
+        unicode_golden(gc_aliases, gcs, sc_aliases, sc, scx, binary, orbits),
+        encoding="utf-8",
+        newline="\n",
+    )
     return [
         tables.relative_to(talon),
         unicode_tables.relative_to(talon),
         case.relative_to(talon),
+        unicode_data.relative_to(talon),
     ]
 
 

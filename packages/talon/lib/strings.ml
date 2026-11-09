@@ -7,9 +7,10 @@ module A = Bigarray.Array1
 
 type bytes = (int, Nx.int8_unsigned_elt, Nx.host) Nx_ragged.t
 
-(* Every helper takes its bytes at this type, so that the compiler reads each
+(* Every helper takes its bytes at [Scalars.buf], so that the compiler reads each
    byte inline rather than through the runtime's generic accessor. *)
-type buf = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) A.t
+open Scalars
+
 type int64s = (int64, Bigarray.int64_elt, Bigarray.c_layout) A.t
 
 (* [array_bytes a k f] is [f b], [b] the bytes of the host array [a]'s elements
@@ -123,8 +124,6 @@ let blit (src : buf) lo (dst : buf) at len =
     A.unsafe_set dst (at + k) (A.unsafe_get src (lo + k))
   done
 
-let starts_scalar (v : buf) j = A.unsafe_get v j land 0xc0 <> 0x80
-
 (* [count v i stop] is the number of scalar values in the bytes [i, stop). *)
 let count (v : buf) i stop =
   let n = ref 0 in
@@ -155,10 +154,10 @@ let cumulative n f =
   in
   (a, total)
 
-(* [ranges ~by r lo hi] is the bytes [\[lo.(i), hi.(i))] of each row [i] of
-   [r]. *)
+(* [ranges ~by r lo hi] is the rows [\[lo.(i), hi.(i))] of the bytes of [r], as
+   many as [lo] has. *)
 let ranges ~by r lo hi =
-  let n = Nx_ragged.length r in
+  let n = Array.length lo in
   let offsets, size = cumulative n (fun i -> hi.(i) - lo.(i)) in
   let bytes = fresh Nx.uint8 size in
   (fill bytes @@ fun (b : buf) ->
@@ -188,41 +187,6 @@ let slice ~by ?mask ~offset ~length r =
       lo.(i) <- skip v first stop p0;
       hi.(i) <- skip v lo.(i) stop (Int.max 0 (p1 - p0)));
   ranges ~by r lo hi
-
-(* [width v j stop] is the length of the UTF-8 sequence that starts at byte
-   [j] and ends by [stop], or 1 where none does. A string column holds valid
-   UTF-8, so this only keeps every read within the row. *)
-let width (v : buf) j stop =
-  let b0 = A.unsafe_get v j in
-  let w =
-    if b0 < 0xc0 then 1
-    else if b0 < 0xe0 then 2
-    else if b0 < 0xf0 then 3
-    else if b0 < 0xf8 then 4
-    else 1
-  in
-  if j + w > stop then 1 else w
-
-(* [scalar v j w] is the scalar value of the [w] bytes at [j], [w] > 1. *)
-let scalar (v : buf) j w =
-  let b0 = A.unsafe_get v j and b1 = A.unsafe_get v (j + 1) land 0x3f in
-  if w = 2 then ((b0 land 0x1f) lsl 6) lor b1
-  else
-    let b2 = A.unsafe_get v (j + 2) land 0x3f in
-    if w = 3 then ((b0 land 0x0f) lsl 12) lor (b1 lsl 6) lor b2
-    else
-      let b3 = A.unsafe_get v (j + 3) land 0x3f in
-      ((b0 land 0x07) lsl 18) lor (b1 lsl 12) lor (b2 lsl 6) lor b3
-
-(* [within bounds u lo hi] is [true] iff [u] lies in the ranges that the
-   ascending [bounds] start and end by turns: an odd count of bounds at or below
-   [u], searched in [\[lo, hi)]. *)
-let rec within bounds u lo hi =
-  if lo = hi then lo land 1 = 1
-  else
-    let mid = (lo + hi) / 2 in
-    if bounds.(mid) <= u then within bounds u (mid + 1) hi
-    else within bounds u lo mid
 
 (* White space *)
 
@@ -534,6 +498,7 @@ type pattern =
   | Prefix of string
   | Suffix of string
   | Pieces of string list
+  | Regex of Regex.t
 
 (* [at v j s] is [true] iff the bytes of [s] start at byte [j]. *)
 let at (v : buf) j s =
@@ -550,23 +515,34 @@ external find :
   = "talon_find_byte" "talon_find"
 [@@noalloc]
 
+(* [find_pieces v i stop ss] is [true] iff the strings [ss] lie in [i, stop) in
+   order without overlap. *)
+let rec find_pieces v i stop = function
+  | [] -> true
+  | s :: ss ->
+      let j = find v i stop s in
+      j >= 0 && find_pieces v (j + String.length s) stop ss
+
+(* [bits_of a n] is the bit vector over the bytes [a] of [n] rows. *)
+let bits_of a n =
+  Nx.slice [ Nx.R (0, n) ] (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (value a)))
+
 let matches ~by ?mask p r =
   let n = Nx_ragged.length r in
   let a = fresh Nx.uint8 ((n + 7) / 8) in
-  let rec pieces v i stop = function
-    | [] -> true
-    | s :: ss ->
-        let j = find v i stop s in
-        j >= 0 && pieces v (j + String.length s) stop ss
-  in
-  let matches v first stop =
+  let matches =
     match p with
-    | Literal s -> find v first stop s >= 0
-    | Prefix s -> stop - first >= String.length s && at v first s
+    | Literal s -> fun v first stop -> find v first stop s >= 0
+    | Prefix s ->
+        fun v first stop -> stop - first >= String.length s && at v first s
     | Suffix s ->
-        let j = stop - String.length s in
-        j >= first && at v j s
-    | Pieces ss -> pieces v first stop ss
+        fun v first stop ->
+          let j = stop - String.length s in
+          j >= first && at v j s
+    | Pieces ss -> fun v first stop -> find_pieces v first stop ss
+    | Regex re ->
+        let run = Regex.run re ~slots:0 in
+        fun v first stop -> Regex.find run v ~first ~from:first ~stop
   in
   (fill a @@ fun (hits : buf) ->
    A.fill hits 0;
@@ -575,9 +551,7 @@ let matches ~by ?mask p r =
        (A.unsafe_get hits (i lsr 3) lor (1 lsl (i land 7)))
    in
    rows ~by ?mask r (fun i v first stop -> if matches v first stop then hit i));
-  Nx.slice
-    [ Nx.R (0, n) ]
-    (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (value a)))
+  bits_of a n
 
 (* Literals
 
@@ -592,7 +566,7 @@ let occurrences (v : buf) i stop s =
   in
   go i 0
 
-let split ~by ?mask sep r =
+let split_literal ~by ?mask sep r =
   let n = Nx_ragged.length r and m = String.length sep in
   let matches = Array.make n (-1) and kept = Array.make n 0 in
   rows ~by ?mask r (fun i v first stop ->
@@ -623,7 +597,7 @@ let split ~by ?mask sep r =
        go first));
   (value lists, Nx_ragged.v ~offsets:(value pieces) (value bytes))
 
-let replace ~by ?mask ~sub ~into r =
+let replace_literal ~by ?mask ~sub ~into r =
   let n = Nx_ragged.length r
   and grow = String.length into - String.length sub in
   let sizes = Array.make n 0 in
@@ -653,6 +627,166 @@ let replace ~by ?mask ~sub ~into r =
        in
        go first));
   Nx_ragged.v ~offsets:(value offsets) (value bytes)
+
+(* The regular-expression kernels
+
+   Every pattern has a regex reading: [literal s] is [s] escaped, [prefix s]
+   is [\A] before it, [suffix s] is [\z] after it, [pieces ss] joins them by a
+   lazy gap. *)
+let regex_of = function
+  | Regex r -> r
+  | Literal s -> Regex.compile (Regex.quote s)
+  | Prefix s -> Regex.compile ("\\A" ^ Regex.quote s)
+  | Suffix s -> Regex.compile (Regex.quote s ^ "\\z")
+  | Pieces ss ->
+      Regex.compile (String.concat "(?s:.*?)" (List.map Regex.quote ss))
+
+(* [iter_matches run v first stop f] calls [f ()] on each match of the row
+   [\[first, stop)], left to right and without overlap, the slots of [run]
+   holding its groups. An empty match that abuts the previous match is
+   discarded, and after any empty match the next search starts one scalar
+   further on. *)
+let iter_matches run (v : buf) first stop f =
+  let rec go at last =
+    if at <= stop && Regex.find run v ~first ~from:at ~stop then begin
+      let s = Regex.group run 0 and e = Regex.group run 1 in
+      if s = e then begin
+        if e <> last then f ();
+        go (Regex.next_scalar v e stop) e
+      end
+      else begin
+        f ();
+        go e e
+      end
+    end
+  in
+  go first (-1)
+
+(* [collect ~by ?mask ~slots re r] is [(counts, spans)]: [counts.(i)] the
+   matches of row [i] of [r], [-1] where the row is not read, and [spans] the
+   [slots] slots of each match, rows in order. *)
+let collect ~by ?mask ~slots re r =
+  let n = Nx_ragged.length r in
+  let run = Regex.run re ~slots in
+  let counts = Array.make n (-1) in
+  let spans = ref (Array.make (Int.max 16 slots) 0) and top = ref 0 in
+  let row = ref 0 in
+  let store () =
+    if !top + slots > Array.length !spans then
+      spans := Array.append !spans (Array.make (Array.length !spans) 0);
+    let s = !spans in
+    for k = 0 to slots - 1 do
+      s.(!top + k) <- Regex.group run k
+    done;
+    top := !top + slots;
+    counts.(!row) <- counts.(!row) + 1
+  in
+  rows ~by ?mask r (fun i v first stop ->
+      row := i;
+      counts.(i) <- 0;
+      iter_matches run v first stop store);
+  (counts, !spans)
+
+(* [listed ~by ?mask r counts ~extra write] is the [(lists, pieces)] of a split
+   or a find_all, a read row having [counts.(i) + extra] pieces and [write] the
+   per-row loop that fills their bounds. *)
+let listed ~by ?mask r counts ~extra write =
+  let n = Nx_ragged.length r in
+  let size i = if counts.(i) < 0 then 0 else counts.(i) + extra in
+  let lists, total = cumulative n size in
+  let lo = Array.make total 0 and hi = Array.make total 0 in
+  rows ~by ?mask r (write lo hi);
+  (value lists, ranges ~by r lo hi)
+
+let span_slots = 2
+
+let split ~by ?mask p r =
+  match p with
+  | Literal sep -> split_literal ~by ?mask sep r
+  | Prefix _ | Suffix _ | Pieces _ | Regex _ ->
+      let counts, spans = collect ~by ?mask ~slots:span_slots (regex_of p) r in
+      let piece = ref 0 and cursor = ref 0 in
+      listed ~by ?mask r counts ~extra:1 (fun lo hi i _ first stop ->
+          let at = ref first in
+          for _ = 1 to counts.(i) do
+            lo.(!piece) <- !at;
+            hi.(!piece) <- spans.(!cursor);
+            at := spans.(!cursor + 1);
+            cursor := !cursor + span_slots;
+            incr piece
+          done;
+          lo.(!piece) <- !at;
+          hi.(!piece) <- stop;
+          incr piece)
+
+let find_all ~by ?mask p r =
+  let counts, spans = collect ~by ?mask ~slots:span_slots (regex_of p) r in
+  let piece = ref 0 and cursor = ref 0 in
+  listed ~by ?mask r counts ~extra:0 (fun lo hi i _ _ _ ->
+      for _ = 1 to counts.(i) do
+        lo.(!piece) <- spans.(!cursor);
+        hi.(!piece) <- spans.(!cursor + 1);
+        cursor := !cursor + span_slots;
+        incr piece
+      done)
+
+let replace ~by ?mask p ~into r =
+  match p with
+  | Literal sub -> replace_literal ~by ?mask ~sub ~into r
+  | Prefix _ | Suffix _ | Pieces _ | Regex _ ->
+      let re = regex_of p in
+      let t =
+        match p with
+        | Regex _ -> Regex.template re into
+        | _ -> Regex.literal_template into
+      in
+      let slots = Regex.template_slots t in
+      let counts, spans = collect ~by ?mask ~slots re r in
+      let n = Nx_ragged.length r in
+      let sizes = Array.make n 0 and cursor = ref 0 in
+      rows ~by ?mask r (fun i _ first stop ->
+          let size = ref (stop - first) in
+          for _ = 1 to counts.(i) do
+            size :=
+              !size - (spans.(!cursor + 1) - spans.(!cursor))
+              + Regex.expand_size t spans !cursor;
+            cursor := !cursor + slots
+          done;
+          sizes.(i) <- !size);
+      let offsets, total = cumulative n (Array.get sizes) in
+      let bytes = fresh Nx.uint8 total in
+      (fill bytes @@ fun (b : buf) ->
+       peek offsets @@ fun (o : int64s) ->
+       let cursor = ref 0 in
+       rows ~by ?mask r (fun i v first stop ->
+           let at = ref (Int64.to_int (A.unsafe_get o i)) and j = ref first in
+           for _ = 1 to counts.(i) do
+             let s = spans.(!cursor) and e = spans.(!cursor + 1) in
+             blit v !j b !at (s - !j);
+             at := Regex.expand t spans !cursor v b (!at + s - !j);
+             j := e;
+             cursor := !cursor + slots
+           done;
+           blit v !j b !at (stop - !j)));
+      Nx_ragged.v ~offsets:(value offsets) (value bytes)
+
+let extract ~by ?mask p ~group r =
+  let n = Nx_ragged.length r in
+  let run = Regex.run (regex_of p) ~slots:(2 * (group + 1)) in
+  let lo = Array.make n 0 and hi = Array.make n 0 in
+  let found = fresh Nx.uint8 ((n + 7) / 8) in
+  (fill found @@ fun (bits : buf) ->
+   A.fill bits 0;
+   rows ~by ?mask r (fun i v first stop ->
+       if Regex.find run v ~first ~from:first ~stop then
+         let s = Regex.group run (2 * group) in
+         if s >= 0 then begin
+           lo.(i) <- s;
+           hi.(i) <- Regex.group run ((2 * group) + 1);
+           A.unsafe_set bits (i lsr 3)
+             (A.unsafe_get bits (i lsr 3) lor (1 lsl (i land 7)))
+         end));
+  (ranges ~by r lo hi, bits_of found n)
 
 (* [compare_rows v o n s accept bits] sets bit [r] of [bits] iff the order of
    row [r] of the [n] rows of [v], cut by [o], against [s] is in [accept]: bit
@@ -692,7 +826,7 @@ let bits ~by r f =
   let n = Nx_ragged.length r in
   let a = fresh Nx.uint8 ((n + 7) / 8) in
   (fill a @@ fun bits -> host ~by r (fun o v _ -> f v o n bits));
-  Nx.slice [ Nx.R (0, n) ] (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (value a)))
+  bits_of a n
 
 let compare ~by op r one =
   let s = (words ~by one).(0) in

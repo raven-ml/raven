@@ -31,7 +31,7 @@ let () =
            Expr.
              [
                "subject" := Str.slice ~offset:0 ~length:6 file;
-               "parts" := Str.split "_" (Str.replace ".nwb" ~by:"" file);
+               "parts" := Str.split (Str.literal "_") (Str.replace (Str.literal ".nwb") ~by:"" file);
                "first" := Str.matches (Str.prefix "sub-01") file;
                "length" := Str.length file;
              ]);

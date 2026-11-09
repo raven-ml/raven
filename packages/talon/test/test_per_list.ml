@@ -620,7 +620,7 @@ let rules =
             ]
         in
         let s = Col.string "s" in
-        let e = Expr.(per_list [ "p" := Str.split "_" s ] rows) in
+        let e = Expr.(per_list [ "p" := Str.split (Str.literal "_") s ] rows) in
         equal null_ints
           [| Some 2; None; Some 1 |]
           (Column.options Kind.int
@@ -673,7 +673,7 @@ let rules =
         raises_match (Exn.invalid_arg ~sub:"would hide")
           (fun () ->
             derive
-              Expr.(per_list [ "ls" := Str.split "," (Col.string "s") ] rows)));
+              Expr.(per_list [ "ls" := Str.split (Str.literal ",") (Col.string "s") ] rows)));
     test "a failure in a body is at its list's row" (fun () ->
         let xs_c = of_ints [| Some [| 1 |]; Some [||]; Some [| 300 |] |] in
         let t = v [ ("xs", xs_c) ] in
@@ -710,7 +710,7 @@ let rules =
               (per_list
                  [ "l" := Col.v Kind.(list (list int)) "ll" ]
                  (sum
-                    (per_list [ "l" := Str.split "," (Col.string "s") ] rows))),
+                    (per_list [ "l" := Str.split (Str.literal ",") (Col.string "s") ] rows))),
             "would hide" );
           ( "an output that is not a list",
             problem (per_list [ "x" := Col.int "w" ] (count x)),

@@ -207,3 +207,10 @@
  (modules test_pivot)
  (package talon)
  (libraries windtrap talon talon_gen nx))
+
+(test
+ (name test_regex)
+ (modules test_regex)
+ (package talon)
+ (libraries windtrap talon)
+ (deps golden/regex.txt golden/unicode.txt))

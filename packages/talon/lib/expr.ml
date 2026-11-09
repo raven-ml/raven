@@ -55,6 +55,7 @@ type pattern = Strings.pattern =
   | Prefix of string
   | Suffix of string
   | Pieces of string list
+  | Regex of Regex.t
 
 type field =
   [ `Year
@@ -155,8 +156,10 @@ and 'a text_op =
   | Upper : string text_op
   | Slice : { offset : int; length : int } -> string text_op
   | Matches : pattern -> bool text_op
-  | Split : string -> string array text_op
-  | Replace : { sub : string; by : string } -> string text_op
+  | Split : pattern -> string array text_op
+  | Find_all : pattern -> string array text_op
+  | Replace : { pattern : pattern; by : string } -> string text_op
+  | Extract : { pattern : pattern; group : int } -> string text_op
   | Parse : 'a Type.t -> 'a text_op
 
 and 'a calendar_op =
@@ -270,7 +273,9 @@ let text_op_name : type a. a text_op -> string = function
   | Slice _ -> "Str.slice"
   | Matches _ -> "Str.matches"
   | Split _ -> "Str.split"
+  | Find_all _ -> "Str.find_all"
   | Replace _ -> "Str.replace"
+  | Extract _ -> "Str.extract"
   | Parse _ -> "Str.parse"
 
 let policy_name : policy -> string = function
@@ -352,7 +357,8 @@ let pattern_equal p0 p1 =
   | Literal s0, Literal s1 | Prefix s0, Prefix s1 | Suffix s0, Suffix s1 ->
       String.equal s0 s1
   | Pieces ss0, Pieces ss1 -> List.equal String.equal ss0 ss1
-  | (Literal _ | Prefix _ | Suffix _ | Pieces _), _ -> false
+  | Regex r0, Regex r1 -> String.equal (Regex.source r0) (Regex.source r1)
+  | (Literal _ | Prefix _ | Suffix _ | Pieces _ | Regex _), _ -> false
 
 (* Reductions of one name differ only by a quantile's probability. *)
 let reduction_equal : type a b c d. (a, b) reduction -> (c, d) reduction -> bool
@@ -369,12 +375,15 @@ let text_op_equal : type a b. a text_op -> b text_op -> bool =
   | Slice s0, Slice s1 ->
       Int.equal s0.offset s1.offset && Int.equal s0.length s1.length
   | Matches p0, Matches p1 -> pattern_equal p0 p1
-  | Split s0, Split s1 -> String.equal s0 s1
+  | Split p0, Split p1 -> pattern_equal p0 p1
+  | Find_all p0, Find_all p1 -> pattern_equal p0 p1
   | Replace r0, Replace r1 ->
-      String.equal r0.sub r1.sub && String.equal r0.by r1.by
+      pattern_equal r0.pattern r1.pattern && String.equal r0.by r1.by
+  | Extract e0, Extract e1 ->
+      pattern_equal e0.pattern e1.pattern && Int.equal e0.group e1.group
   | Parse ty0, Parse ty1 -> Type.equal ty0 ty1
   | ( ( Length | Trim | Lower | Upper | Slice _ | Matches _ | Split _
-      | Replace _ | Parse _ ),
+      | Find_all _ | Replace _ | Extract _ | Parse _ ),
       _ ) ->
       false
 
@@ -594,6 +603,7 @@ let pp_pattern ppf = function
   | Prefix s -> Format.fprintf ppf "prefix %a" Type.pp_quoted s
   | Suffix s -> Format.fprintf ppf "suffix %a" Type.pp_quoted s
   | Pieces ss -> Format.fprintf ppf "pieces %a" (Type.pp_list Type.pp_quoted) ss
+  | Regex r -> Format.fprintf ppf "regex %a" Type.pp_quoted (Regex.source r)
 
 let field_name : field -> string = function
   | `Year -> "`Year"
@@ -828,11 +838,17 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
               (fun ppf -> Format.fprintf ppf "~length:%d" length);
             ]
         | Matches p -> [ pattern p ]
-        | Split sep -> [ (fun ppf -> Type.pp_quoted ppf sep) ]
-        | Replace { sub; by } ->
+        | Split p -> [ pattern p ]
+        | Find_all p -> [ pattern p ]
+        | Replace { pattern = p; by } ->
             [
-              (fun ppf -> Type.pp_quoted ppf sub);
+              pattern p;
               (fun ppf -> Format.fprintf ppf "~by:%a" Type.pp_quoted by);
+            ]
+        | Extract { pattern = p; group } ->
+            [
+              (fun ppf -> Format.fprintf ppf "~group:%d" group);
+              pattern p;
             ]
         | Parse ty -> [ (fun ppf -> Type.pp ppf ty) ]
         | Length | Trim | Lower | Upper -> []
@@ -2292,7 +2308,9 @@ and text : type a s. env -> a text_op -> (string, s) t -> a elab =
           | Slice _ -> known (Column Type.string)
           | Matches _ -> known bool_typing
           | Split _ -> known (Column (Type.list Type.string))
+          | Find_all _ -> known (Column (Type.list Type.string))
           | Replace _ -> known (Column Type.string)
+          | Extract _ -> known (Column Type.string)
           | Parse ty -> (
               match ty with
               | Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32
@@ -2886,17 +2904,21 @@ module Str = struct
     text (Slice { offset; length }) a
 
   let matches p a = text (Matches p) a
+  let regex s = Regex (Regex.compile s)
+  let quote = Regex.quote
+  let split p a = text (Split p) a
+  let find_all p a = text (Find_all p) a
 
-  let split sep a =
-    if String.equal sep "" then err "Expr.Str.split: empty separator";
-    check_utf_8 "Expr.Str.split" sep;
-    text (Split sep) a
-
-  let replace sub ~by a =
-    if String.equal sub "" then err "Expr.Str.replace: empty text to replace";
-    check_utf_8 "Expr.Str.replace" sub;
+  let replace p ~by a =
     check_utf_8 "Expr.Str.replace" by;
-    text (Replace { sub; by }) a
+    (match p with Regex r -> ignore (Regex.template r by) | _ -> ());
+    text (Replace { pattern = p; by }) a
+
+  let extract ?(group = 0) p a =
+    let groups = match p with Regex r -> Regex.groups r | _ -> 0 in
+    if group < 0 || group > groups then
+      err "Expr.Str.extract: no group %d in a pattern of %d groups" group groups;
+    text (Extract { pattern = p; group }) a
 
   let parse ty a = text (Parse ty) a
   let trim a = text Trim a

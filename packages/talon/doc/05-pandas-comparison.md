@@ -212,8 +212,11 @@ in [`talon.mli`](../lib/talon.mli).
 |---|---|
 | `s.str.len()` | `Expr.Str.length s` |
 | `s.str.startswith("sub")` | `Expr.Str.(matches (prefix "sub") s)` |
-| `s.str.split("_")` | `Expr.Str.split "_" s` |
-| `s.str.replace("a", "b", regex=False)` | `Expr.Str.replace "a" ~by:"b" s` |
+| `s.str.split("_")` | `Expr.Str.split (Str.literal "_") s` |
+| `s.str.replace("a", "b", regex=False)` | `Expr.Str.replace (Str.literal "a") ~by:"b" s` |
+| `s.str.contains(r"\d+")` | `Expr.Str.(matches (regex {|\d+|}) s)` |
+| `s.str.extract(r"id=(\d+)")` | `Expr.Str.(extract ~group:1 (regex {|id=(\d+)|}) s)` |
+| `s.str.findall(r"\w+")` | `Expr.Str.(find_all (regex {|\w+|}) s)` |
 | `s.str.lower()` / `s.str.upper()` | `Expr.Str.lower s` / `Expr.Str.upper s` |
 | `pd.to_datetime(s, format="%d/%m/%Y")` | `Expr.Temporal.parse "%d/%m/%Y" Type.date s` |
 | `t.dt.year` | ``Expr.Temporal.field `Year (Expr.Temporal.wall zone t)`` |

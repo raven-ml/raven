@@ -145,8 +145,8 @@ let print_operations () =
       str pp (Str.matches (Str.literal ",") s || Str.matches (Str.suffix "!") s);
       str pp (Str.matches (Str.prefix "wk") s);
       str pp (Str.parse Type.int8 s);
-      str pp (Str.split ", " s);
-      str pp (Str.replace "\"" ~by:"'" s);
+      str pp (Str.split (Str.literal ", ") s);
+      str pp (Str.replace (Str.literal "\"") ~by:"'" s);
       str pp (Str.trim s);
       str pp (Str.lower s);
       str pp (Str.upper s);
@@ -188,8 +188,8 @@ let print_operations () =
             Str.matches (literal ",") s || Str.matches (suffix "!") s
             Str.matches (prefix "wk") s
             Str.parse int8 s
-            Str.split ", " s
-            Str.replace "\"" ~by:"'" s
+            Str.split (literal ", ") s
+            Str.replace (literal "\"") ~by:"'" s
             Str.trim s
             Str.lower s
             Str.upper s
@@ -241,10 +241,10 @@ let construction =
                  (fun () -> ignore (Str.suffix ""));
                  (fun () -> ignore (Str.pieces []));
                  (fun () -> ignore (Str.pieces [ "a"; "" ]));
-                 (fun () -> ignore (Str.split "" s));
-                 (fun () -> ignore (Str.split "\xff" s));
-                 (fun () -> ignore (Str.replace "" ~by:"a" s));
-                 (fun () -> ignore (Str.replace "a" ~by:"\xc3" s));
+                 (fun () -> ignore (Str.split (Str.literal "") s));
+                 (fun () -> ignore (Str.split (Str.literal "\xff") s));
+                 (fun () -> ignore (Str.replace (Str.literal "") ~by:"a" s));
+                 (fun () -> ignore (Str.replace (Str.literal "a") ~by:"\xc3" s));
                  (fun () -> ignore (Str.concat "\xff" [ s ]));
                  (fun () -> ignore (cut [| 1 |] n));
                  (fun () -> ignore (cut [||] n));
@@ -271,9 +271,9 @@ let construction =
             Expr.Str.suffix: empty pattern
             Expr.Str.pieces: no pieces
             Expr.Str.pieces: empty pattern
-            Expr.Str.split: empty separator
-            Expr.Str.split: "\255" is not valid UTF-8
-            Expr.Str.replace: empty text to replace
+            Expr.Str.literal: empty pattern
+            Expr.Str.literal: "\255" is not valid UTF-8
+            Expr.Str.literal: empty pattern
             Expr.Str.replace: "\195" is not valid UTF-8
             Expr.Str.concat: "\255" is not valid UTF-8
             Expr.cut: a cut takes two edges or more, not 1

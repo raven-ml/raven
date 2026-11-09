@@ -356,9 +356,48 @@ let labels =
 ## Text
 
 `Expr.Str` works on text by Unicode scalar values: `length`, `slice`,
-`matches` with a `literal`, `prefix`, `suffix` or `pieces` pattern, `split`
-and `replace` on literals, `lower` and `upper` by Unicode's full case mappings,
-and `parse`, which reads text as a typed value.
+`matches`, `split`, `replace` and `find_all` over a pattern, `extract` of a
+pattern's group, `lower` and `upper` by Unicode's full case mappings, and
+`parse`, which reads text as a typed value. A pattern is a `literal`, a
+`prefix`, a `suffix`, in-order `pieces` or a `regex`, a regular expression in
+RE2 and Perl syntax with Unicode's character classes and simple case folding;
+the [`Expr.Str`](../lib/talon.mli) section "Regular expressions" holds the
+language and its promises. A regex reads whole Unicode scalars, so `\w+`
+keeps a word with accented letters whole, and it runs in time proportional
+to the row whatever the pattern. A missing match or a group that did not
+participate is null.
+
+```ocaml
+let lines =
+  Talon.v
+    [ ("line", Column.v Type.string
+         [| "id=42 from raven"; "no id here"; "id=7"; "café id=1234 ok" |]) ]
+
+let line = Col.string "line"
+
+let ids =
+  Query.(
+    of_table lines
+    |> select
+         Expr.[
+           "id" := Str.extract ~group:1 (Str.regex {|id=(\d+)|}) line;
+           "words" := Str.find_all (Str.regex {|\w+|}) line;
+           "masked" := Str.replace (Str.regex {|(\d)\d*|}) ~by:"$1…" line;
+         ]
+    |> run)
+
+let () = Format.printf "%a@." Talon.pp (Error.get_ok ids)
+```
+
+```text
+table 4 rows × 3 columns
+ id      words                          masked
+ string  list[string]                   string
+ 42      ["id"; "42"; "from"; "raven"]  id=4… from raven
+ ∅       ["no"; "id"; "here"]           no id here
+ 7       ["id"; "7"]                    id=7…
+ 1234    ["café"; "id"; "1234"; "ok"]   café id=1… ok
+```
 
 ## Time
 
@@ -387,7 +426,7 @@ let described =
     of_table sessions
     |> select
          Expr.[
-           "parts" := Str.split "_" (Str.replace ".nwb" ~by:"" file);
+           "parts" := Str.split (Str.literal "_") (Str.replace (Str.literal ".nwb") ~by:"" file);
            "weekday" := Temporal.(field `Weekday (wall Tz.utc start));
            "end" := Temporal.add start (span (Time.Span.minutes 90));
            "since" := Temporal.diff start (over (min start));

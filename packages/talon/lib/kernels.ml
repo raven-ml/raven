@@ -308,6 +308,15 @@ let text : type a. a Expr.text_op -> Column.t -> checked =
  fun op ->
   let kept ty c data = (Column.with_data ty data c, None) in
   let bytes c = match Column.data c with Bytes r -> r | _ -> assert false in
+  let pieces_list by f p c =
+    let mask = Column.validity c in
+    let offsets, pieces = f ~by ?mask p (bytes c) in
+    let child =
+      Column.make (Any Type.string) ~length:(Nx_ragged.length pieces)
+        (Bytes pieces)
+    in
+    kept (Any (Type.list Type.string)) c (List { offsets; child })
+  in
   match op with
   | Length ->
       fun c ->
@@ -324,15 +333,8 @@ let text : type a. a Expr.text_op -> Column.t -> checked =
         let by = "Str.matches" in
         let m = Strings.matches ~by ?mask:(Column.validity c) p (bytes c) in
         kept (Any Type.bool) c (Fixed (P m))
-  | Split sep ->
-      fun c ->
-        let by = "Str.split" and mask = Column.validity c in
-        let offsets, pieces = Strings.split ~by ?mask sep (bytes c) in
-        let child =
-          Column.make (Any Type.string) ~length:(Nx_ragged.length pieces)
-            (Bytes pieces)
-        in
-        kept (Any (Type.list Type.string)) c (List { offsets; child })
+  | Split p -> fun c -> pieces_list "Str.split" Strings.split p c
+  | Find_all p -> fun c -> pieces_list "Str.find_all" Strings.find_all p c
   | Trim ->
       fun c ->
         let by = "Str.trim" and mask = Column.validity c in
@@ -347,11 +349,19 @@ let text : type a. a Expr.text_op -> Column.t -> checked =
         let by = "Str.upper" and mask = Column.validity c in
         kept (Any Type.string) c
           (Bytes (Strings.map_case ~by ?mask Upper (bytes c)))
-  | Replace { sub; by = into } ->
+  | Replace { pattern; by = into } ->
       fun c ->
         let by = "Str.replace" and mask = Column.validity c in
-        let r = Strings.replace ~by ?mask ~sub ~into (bytes c) in
+        let r = Strings.replace ~by ?mask pattern ~into (bytes c) in
         kept (Any Type.string) c (Bytes r)
+  | Extract { pattern; group } ->
+      fun c ->
+        let by = "Str.extract" and mask = Column.validity c in
+        let r, found = Strings.extract ~by ?mask pattern ~group (bytes c) in
+        let validity = both found mask in
+        (Column.make (Any Type.string) ~validity ~length:(Column.length c)
+           (Bytes r),
+         None)
   | Parse ty -> fun c -> read_text c (Form.parse (Any ty))
 
 let concat sep cs =

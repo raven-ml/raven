@@ -14,6 +14,8 @@
   strings
   case_tables
   unicode_tables
+  scalars
+  regex
   problem
   sel
   order

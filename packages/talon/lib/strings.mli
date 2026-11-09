@@ -89,13 +89,15 @@ val map_case : by:string -> ?mask:Nx.host Nx.bit_t -> case -> bytes -> bytes
     bytes, lowers to two scalars of three bytes in all; U+1E9E, three bytes,
     lowers to two. A row outside [mask] is empty. *)
 
-(** The type for patterns that text matches. Each string is valid UTF-8 and not
-    empty. *)
+(** The type for patterns that text matches. A string is valid UTF-8 and not
+    empty; a {!Regex} is a compiled regular expression, with the semantics of
+    {!Regex}. *)
 type pattern =
   | Literal of string  (** Anywhere in the text. *)
   | Prefix of string  (** At its start. *)
   | Suffix of string  (** At its end. *)
   | Pieces of string list  (** Anywhere, in order, without overlap. *)
+  | Regex of Regex.t  (** A regular expression. *)
 
 val matches :
   by:string -> ?mask:Nx.host Nx.bit_t -> pattern -> bytes -> Nx.host Nx.bit_t
@@ -105,25 +107,47 @@ val matches :
 val split :
   by:string ->
   ?mask:Nx.host Nx.bit_t ->
-  string ->
+  pattern ->
   bytes ->
   Nx.host Nx.int64_t * bytes
-(** [split ~by sep b] is [(lists, pieces)]: the pieces of each row of [b], valid
-    UTF-8, between the matches of [sep], valid UTF-8 and not empty, left to
-    right without overlap, so a row of k matches has k + 1 pieces; row [i]'s
-    pieces are the rows [lists.{i}] to [lists.{i + 1} - 1] of [pieces]. A row
-    outside [mask] has no piece. *)
+(** [split ~by p b] is [(lists, pieces)]: the pieces of each row of [b], valid
+    UTF-8, between the matches of [p], left to right without overlap, so a row of
+    k matches has k + 1 pieces; row [i]'s pieces are the rows [lists.{i}] to
+    [lists.{i + 1} - 1] of [pieces]. An empty match abutting the previous match
+    is not a match. A row outside [mask] has no piece. *)
+
+val find_all :
+  by:string ->
+  ?mask:Nx.host Nx.bit_t ->
+  pattern ->
+  bytes ->
+  Nx.host Nx.int64_t * bytes
+(** [find_all ~by p b] is the matches of [p] in each row of [b] as text, in the
+    order and with the rules of {!split}, one list per row. *)
 
 val replace :
   by:string ->
   ?mask:Nx.host Nx.bit_t ->
-  sub:string ->
+  pattern ->
   into:string ->
   bytes ->
   bytes
-(** [replace ~by ~sub ~into b] is each row of [b], valid UTF-8, with each match
-    of [sub], valid UTF-8 and not empty, replaced by [into], left to right
-    without overlap. A row outside [mask] is empty. *)
+(** [replace ~by p ~into b] is each row of [b], valid UTF-8, with each match of
+    [p] replaced by [into], matches as in {!split}. [into] is a {!Regex}
+    template when [p] is a {!Regex}, and literal text otherwise. A row outside
+    [mask] is empty. *)
+
+val extract :
+  by:string ->
+  ?mask:Nx.host Nx.bit_t ->
+  pattern ->
+  group:int ->
+  bytes ->
+  bytes * Nx.host Nx.bit_t
+(** [extract ~by p ~group b] is [(values, found)]: the text of group [group] of
+    the first match of [p] in each row of [b], or the empty text, and [found]
+    clear where the row has no match or the group did not participate. A row
+    outside [mask] is empty. *)
 
 val concat :
   by:string ->

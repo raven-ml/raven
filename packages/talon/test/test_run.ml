@@ -4375,8 +4375,8 @@ let constructors =
         Row ("Str.length", Str.length s);
         Row ("Str.slice", Str.slice ~offset:0 ~length:4 s);
         Row ("Str.matches", Str.matches (Str.pieces [ "2024"; "15" ]) s);
-        Row ("Str.split", Str.split "-" s);
-        Row ("Str.replace", Str.replace "-" ~by:"/" s);
+        Row ("Str.split", Str.split (Str.literal "-") s);
+        Row ("Str.replace", Str.replace (Str.literal "-") ~by:"/" s);
         Row ("Str.parse", Str.parse Type.date s);
         Row ("Str.trim", Str.trim s);
         Row ("Str.concat", Str.concat "/" [ s; s ]);
@@ -5060,7 +5060,7 @@ let replaced sub ~by s =
   Buffer.contents b
 
 let split sep rows =
-  over_text Kind.(list string) Expr.(Str.split sep (Col.string "s")) rows
+  over_text Kind.(list string) Expr.(Str.split (Str.literal sep) (Col.string "s")) rows
 
 let pieces = array (option (array string))
 
@@ -5089,7 +5089,7 @@ let splitting =
             (array (option string))
             (Array.map (fun s -> Some (replaced sub ~by s)) ss)
             (over_text Kind.string
-               Expr.(Str.replace sub ~by (Col.string "s"))
+               Expr.(Str.replace (Str.literal sub) ~by (Col.string "s"))
                (Array.map Option.some ss)));
       cases "split"
         ~id:(fun (what, _, _, _) -> what)
@@ -5128,7 +5128,7 @@ let splitting =
             (array (option string))
             [| Some expected |]
             (over_text Kind.string
-               Expr.(Str.replace sub ~by (Col.string "s"))
+               Expr.(Str.replace (Str.literal sub) ~by (Col.string "s"))
                [| Some s |]));
       test "nulls stay null" (fun () ->
           equal pieces
@@ -5138,7 +5138,7 @@ let splitting =
             (array (option string))
             [| None; Some "b" |]
             (over_text Kind.string
-               Expr.(Str.replace "a" ~by:"b" (Col.string "s"))
+               Expr.(Str.replace (Str.literal "a") ~by:"b" (Col.string "s"))
                [| None; Some "a" |]));
     ]
 

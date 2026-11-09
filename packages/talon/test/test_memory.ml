@@ -37,8 +37,8 @@ let kernels =
         fun c -> computed c (Str.matches (Str.suffix "a") s) );
       ( "matches pieces",
         fun c -> computed c (Str.matches (Str.pieces [ "a"; "b" ]) s) );
-      ("split", fun c -> computed c (Str.split "a" s));
-      ("replace", fun c -> computed c (Str.replace "a" ~by:"xyz" s));
+      ("split", fun c -> computed c (Str.split (Str.literal "a") s));
+      ("replace", fun c -> computed c (Str.replace (Str.literal "a") ~by:"xyz" s));
       ("concat", fun c -> computed c (Str.concat "," [ s; string "é"; s ]));
       ("compare", fun c -> computed c (s < string "m"));
       ("equal", fun c -> computed c (s = string "a"));

@@ -4188,6 +4188,14 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Str.regex` compiles a regular expression, RE2 and Perl syntax with UTS #18
+  Level 1 semantics for Unicode 18.0.0, matching in time linear in the row:
+  `Str.matches` filters by it, `Str.extract` and `Str.find_all` read its
+  matches, and `Str.quote` builds patterns from data. A byte-level engine
+  splits scalars; here `\w+` on `café` is `café`.
+- **Breaking:** `Str.split` and `Str.replace` take a `Str.pattern` instead of
+  a literal string: write `Str.split (Str.literal "_")`. With a regex
+  pattern, `Str.replace`'s `by` is a template (`$1`, `${name}`, `$$`).
 - `Talon_arrow.sniff` no longer refuses a file because of a `decimal` field:
   it reads as in Parquet, undeclared until `Talon_arrow.with_type` gives it
   `float64` or, up to 18 digits, `int64`, and a list, struct or dictionary of

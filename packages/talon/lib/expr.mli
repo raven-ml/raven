@@ -119,11 +119,15 @@ module Str : sig
   val prefix : string -> pattern
   val suffix : string -> pattern
   val pieces : string list -> pattern
+  val regex : string -> pattern
+  val quote : string -> string
   val length : (string, 's) t -> (int, 's) t
   val slice : offset:int -> length:int -> (string, 's) t -> (string, 's) t
   val matches : pattern -> (string, 's) t -> (bool, 's) t
-  val split : string -> (string, 's) t -> (string array, 's) t
-  val replace : string -> by:string -> (string, 's) t -> (string, 's) t
+  val split : pattern -> (string, 's) t -> (string array, 's) t
+  val find_all : pattern -> (string, 's) t -> (string array, 's) t
+  val replace : pattern -> by:string -> (string, 's) t -> (string, 's) t
+  val extract : ?group:int -> pattern -> (string, 's) t -> (string, 's) t
   val parse : 'a Type.t -> (string, 's) t -> ('a, 's) t
   val trim : (string, 's) t -> (string, 's) t
   val lower : (string, 's) t -> (string, 's) t
@@ -328,8 +332,10 @@ and 'a text_op =
   | Upper : string text_op
   | Slice : { offset : int; length : int } -> string text_op
   | Matches : Str.pattern -> bool text_op
-  | Split : string -> string array text_op
-  | Replace : { sub : string; by : string } -> string text_op
+  | Split : Str.pattern -> string array text_op
+  | Find_all : Str.pattern -> string array text_op
+  | Replace : { pattern : Str.pattern; by : string } -> string text_op
+  | Extract : { pattern : Str.pattern; group : int } -> string text_op
   | Parse : 'a Type.t -> 'a text_op
 
 (** Temporal operations. *)

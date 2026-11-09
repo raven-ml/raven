@@ -1759,7 +1759,71 @@ module Expr : sig
   *)
   module Str : sig
     type pattern
-    (** The type for patterns: what text is matched against. *)
+    (** The type for patterns: what text is matched against. A pattern holds no
+        state, and may be shared. *)
+
+    (** {2:regexes Regular expressions}
+
+        A {!regex} is written in the syntax of RE2 and Perl and matches with
+        UTS #18 Level 1 semantics for Unicode 18.0.0. A column of text is valid
+        UTF-8, and a match is always a whole number of scalar values.
+
+        {3 Matching}
+
+        A match is the leftmost one, and among the matches at that byte the one
+        a backtracking search finds first, as in Perl: [regex "a|ab"] of
+        ["ab"] matches ["a"]. A pattern is matched against the row's whole
+        text, so [^], [\\A] and [\\b] see the start of the row wherever a search
+        resumes. Successive matches run left to right without overlap; an empty
+        match abutting the previous one is discarded, and the next search starts
+        one scalar further on.
+
+        A pattern compiles once, when {!regex} is called. Matching a row of [n]
+        bytes takes time at most proportional to [m * n], for a pattern of [m]
+        instructions, and no input makes one row's time exponential. Memory is
+        bounded for each kernel, independently of the rows. [x{n}] compiles to
+        [n] copies of [x], and nested counts multiply, so a pattern's size and
+        compile time follow from what it writes: a pattern built from untrusted
+        text must be bounded by the program that builds it.
+
+        Backreferences and lookaround cannot be matched in that time and are
+        refused, as are possessive quantifiers and atomic groups. Level 2, the
+        [\\X] grapheme escape and character-class subtraction and intersection
+        are outside the language.
+
+        {3 The language}
+
+        {v
+Construct                Meaning
+any non-metacharacter    that scalar value
+.                        any scalar but U+000A; with (?s), any scalar
+[abc] [^abc] [a-z]       classes of scalars; a first ] or - is literal
+\d \D \w \W \s \S      Annex C: Nd; Alphabetic, Mark, Nd, Pc, Join_Control;
+                         White_Space, the set Str.trim trims
+\pN \p{Name} \P{Name}   a General_Category, Script or binary property;
+\p{Name=Value}          names as UAX #44 loose matching reads them
+\xHH \x{H..}            a code point in hex
+\n \t \r \f \v \a \e   the character; \ before punctuation is that
+                         punctuation
+^ $                      the start and end of the row; with (?m), also after
+                         and before U+000A
+\A \z                   the start and end of the row in every mode
+\b \B                   between a \w and a non-\w scalar, or not
+xy x|y                   sequence; the first branch wins
+x* x+ x? x{n} x{n,} x{n,m}  repetition, greedy; with a following ?, lazy
+(x) (?:x)                capture and non-capture
+(?<name>x) (?P<name>x)   a named capture
+(?flags) (?flags:x)      flags i m s, and negation with -, to the end of
+                         the group or within x
+v}
+
+        [\\d] is Unicode's Decimal_Number; [\\w] and [\\s] are the Standard
+        Recommendation columns of Annex C. [(?i)] applies simple case folding,
+        closing a class over it before any negation, so [(?i)[^a]] matches
+        neither [a] nor [A]. Line boundaries are U+000A only, [\\b] follows
+        [\\w] and does not skip marks, and conformance is at UTS #18 Level 1
+        except for the rules above and the set operations of RL1.3, which
+        [[^\\P{L}\\p{Greek}]] and the like write as complements. *)
 
     val literal : string -> pattern
     (** [literal s] matches [s] anywhere in the text.
@@ -1791,26 +1855,62 @@ module Expr : sig
 
         Raises [Invalid_argument] if [length < 0]. *)
 
+    val regex : string -> pattern
+    (** [regex r] matches the regular expression [r] anywhere in the text; see
+        {!section-regexes} for the language. It compiles here, once.
+
+        Raises [Invalid_argument], naming the byte, if [r] is not valid UTF-8 or
+        is not a pattern of the language, among them backreferences, lookaround
+        and character-class subtraction or intersection. *)
+
+    val quote : string -> string
+    (** [quote s] is a regular expression that matches exactly [s]. It builds
+        patterns from data: {!regex}[ ("^" ^ quote p)]. *)
+
     val matches : pattern -> (string, 's) t -> (bool, 's) t
     (** [matches p a] is [true] iff [p] matches [a]. *)
 
-    val split : string -> (string, 's) t -> (string array, 's) t
-    (** [split sep a] is the pieces of [a] between the occurrences of the
-        literal [sep], found left to right without overlap, as a [list[string]]:
-        k occurrences give k + 1 pieces, so a leading, trailing or repeated
-        [sep] gives an empty piece, and the empty text one empty piece.
-        [split "_" s] of ["sub-01_ses-02"] is [["sub-01"; "ses-02"]], and the
-        pieces joined by [sep] are [a].
+    val extract : ?group:int -> pattern -> (string, 's) t -> (string, 's) t
+    (** [extract ~group p a] is group [group] of the first match of [p] in [a],
+        [0], the whole match, by default. It is null where [a] has no match or
+        the group did not participate, and [""] where the group matched the
+        empty text. [extract ~group:1 (regex "id=(\\d+)") a].
 
-        Raises [Invalid_argument] if [sep] is empty or not valid UTF-8. *)
+        Raises [Invalid_argument] if [p] has no group [group]. *)
 
-    val replace : string -> by:string -> (string, 's) t -> (string, 's) t
-    (** [replace sub ~by a] is [a] with each occurrence of the literal [sub]
-        replaced by [by], found left to right without overlap:
-        [replace "aa" ~by:"b"] of ["aaa"] is ["ba"].
+    val find_all : pattern -> (string, 's) t -> (string array, 's) t
+    (** [find_all p a] is the matches of [p] in [a], in order, as a
+        [list[string]], found as {!split} finds them: the empty list where [a]
+        has no match. *)
 
-        Raises [Invalid_argument] if [sub] is empty, or if [sub] or [by] is not
-        valid UTF-8. *)
+    val split : pattern -> (string, 's) t -> (string array, 's) t
+    (** [split p a] is the pieces of [a] between the matches of [p], found left
+        to right without overlap, as a [list[string]]: k matches give k + 1
+        pieces, so a leading, trailing or repeated [p] gives an empty piece, and
+        no match gives one piece, [a] itself. [split (literal "_") s] of
+        ["sub-01_ses-02"] is [["sub-01"; "ses-02"]].
+
+        An empty match that abuts the previous match is not a match, and a
+        search resumes one scalar value after an empty match, so
+        [split (regex "x*") a] of ["ab"] is [[""; "a"; "b"; ""]]. Each pattern
+        is defined as a regular expression: {!literal} is its text with {!quote}
+        applied, {!prefix}[ s] is [\\A] and {!suffix}[ s] [\\z] around it, and
+        {!pieces} joins with [(?s:.*?)]. *)
+
+    val replace : pattern -> by:string -> (string, 's) t -> (string, 's) t
+    (** [replace p ~by a] is [a] with each match of [p], found as {!split} finds
+        them, replaced by [by]: [replace (literal "aa") ~by:"b"] of ["aaa"] is
+        ["ba"], and a row with no match is unchanged.
+
+        With a {!regex} [p], [by] is a template: [$n] and [${n}] are group [n],
+        [$0] the whole match, [$name] and [${name}] the group of that name, and
+        [$$] a dollar. A digit run is a group number, so [$1_y] is group 1 then
+        [_y]. A group that did not participate writes nothing. With any other
+        [p], [by] is literal text.
+
+        Raises [Invalid_argument] if [by] is not valid UTF-8, or, with a
+        {!regex} [p], if [by] holds a [$] that starts none of the above or names
+        a group [p] does not have. *)
 
     val trim : (string, 's) t -> (string, 's) t
     (** [trim a] is [a] without the white space at its start and end. White
