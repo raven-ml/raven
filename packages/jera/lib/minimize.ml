@@ -1516,12 +1516,14 @@ let simplex_problem (type b) fn x (f : _ -> (float, b, 'd) Nx.t) start =
   Simplex
     { dtype; size; ravel; unravel; values; start = Rune.detach (ravel start) }
 
-(* The simplex of [x0] and [x0 + h_i e_i], [h_i] a twentieth of [x0_i], or [2.5
-   · 10⁻⁴] where [x0_i] is zero. *)
+(* The first simplex's steps [h_i] at [x0]: a twentieth of [x0_i], or [2.5 ·
+   10⁻⁴] where [x0_i] is zero. *)
+let first_steps x0 =
+  Nx.where (Nx.equal_s x0 0.) (Nx.full_like x0 0.00025) (Nx.mul_s x0 0.05)
+
+(* The simplex of [x0] and [x0 + h_i e_i]. *)
 let initial x0 =
-  let h =
-    Nx.where (Nx.equal_s x0 0.) (Nx.full_like x0 0.00025) (Nx.mul_s x0 0.05)
-  in
+  let h = first_steps x0 in
   Nx.concatenate ~axis:0
     [
       Nx.reshape [| 1; -1 |] x0; Nx.add (Nx.reshape [| 1; -1 |] x0) (Nx.diag h);
@@ -1649,9 +1651,14 @@ let simplex_solve fn x ?lo ?hi ~tol ~budget f start =
        keeps the probes moving off a simplex that clipping collapsed, and the
        factor keeps a restarted simplex from meeting [tol] at once, so the
        search moves from it before the next test instead of creeping by one
-       test's step. *)
+       test's step. Where both are 0, as a relative tolerance's scale is at 0
+       under a collapsed simplex, [σ] is the first simplex's largest step
+       there, since every probe at [σ = 0] is the best vertex. *)
     let sigma =
       Nx.mul_s (Nx.maximum (Nx.max diameter) (Nx.max (Tol.scale tol best))) 2.
+    in
+    let sigma =
+      Nx.where (Nx.equal_s sigma 0.) (Nx.max (Nx.abs (first_steps best))) sigma
     in
     let best_row = Nx.reshape [| 1; -1 |] best in
     let steps = Nx.mul (Nx.eye_at (Nx.beside sigma) p.dtype n) sigma in

@@ -776,10 +776,12 @@ module Minimize : sig
       [1 − 1/n], so the simplex keeps its shape as [n] grows. {b Error.} [e] is
       the simplex's diameter per component around its best vertex, [y] that
       vertex. Once [e] meets [tol], the points [y ± σ e_i] are evaluated, [σ]
-      twice the largest component of [e] and of [tol]'s scale at [y]: if none
-      is lower than [y] by [10⁻⁴] of the norm of each pair's lower difference
-      from [f y], the lane converges, and otherwise it continues from the
-      simplex of [y] and the lower point of each pair (Kelley, 1999). Where [f]
+      twice the largest component of [e] and of [tol]'s scale at [y], or where
+      both are 0, as a relative [tol]'s scale is at [y = 0], the first
+      simplex's largest step at [y]: if none is lower than [y] by [10⁻⁴] of
+      the norm of each pair's lower difference from [f y], the lane converges,
+      and otherwise it continues from the simplex of [y] and the lower point of
+      each pair (Kelley, 1999). Where [f]
       is smooth and its gradient is not zero, one of the [2n] directions
       [±e_i] descends, so a lane converges where a step [σ] along none of them
       descends by that margin; a diameter alone converges on McKinnon's

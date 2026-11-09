@@ -850,6 +850,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.nelder_mead` under `Tol.rel` or `Tol.ulps` no longer reports
+  `Converged` at 0 where 0 is no minimum: a simplex collapsed there probed
+  at a step of 0. It probes at the first simplex's step instead.
 - `Minimize.nelder_mead` probes both ways along each axis before it
   converges: in a box it reported `Converged` off the constrained minimum,
   as at 0 for `½ (x² + (x + 1)²)` with `x ≤ 0`, whose minimum is −1/2.

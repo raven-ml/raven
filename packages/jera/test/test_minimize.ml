@@ -553,37 +553,67 @@ let least_squares =
 let squares_gradient a b x =
   Nx.matmul (Nx.transpose a) (Nx.sub (Nx.matmul a x) b)
 
-(* nelder_mead's answer for [½ |a x − b|²] in [box] from 0, to [Tol.abs
-   simplex_abs], and whether it converged. Compiled, one program per number of
-   unknowns, since an eager search takes most of a second. *)
-let simplex_abs = 1e-6
+(* The tolerances the box's law draws, each with its relative and absolute
+   terms: [Tol.ulps k] is [Tol.rel (k ε)], [ε = 2⁻⁵²] in float64. A relative
+   term alone scales to 0 at an answer of 0. *)
+let simplex_tols =
+  let k = 0x1p25 in
+  [|
+    ("Tol.abs", 0., 1e-6, Tol.abs 1e-6);
+    ("Tol.rel", 1e-6, 0., Tol.rel 1e-6);
+    ("Tol.ulps", k *. epsilon_float, 0., Tol.ulps k);
+  |]
 
-let simplex_in =
-  Rune.jit
-    Nx.Ptree.(
-      tensor @-> tensor @-> pair tensor tensor @-> returns (pair tensor tensor))
-    (fun a b (lo, hi) ->
-      let s =
-        Minimize.solve one Minimize.nelder_mead ~lo ~hi
-          ~tol:(Tol.abs simplex_abs) ~budget:5000
-          (fun x ->
-            Nx.mul_s (Nx.sum (Nx.square (Nx.sub (Nx.matmul a x) b))) 0.5)
-          (Nx.zeros_like lo)
-      in
-      (Solution.best s, Solution.is Converged s))
+(* The first simplex's step at 0, which jera.mli states. *)
+let first_step = 2.5e-4
+
+(* nelder_mead's answer for [½ |a x − b|²] in [box] from 0, to the tolerance
+   [simplex_tols.(k)], and whether it converged. Compiled, one program per
+   tolerance and number of unknowns, since an eager search takes most of a
+   second. *)
+let simplex_programs =
+  Array.map
+    (fun (_, _, _, tol) ->
+      Rune.jit
+        Nx.Ptree.(
+          tensor @-> tensor @-> pair tensor tensor
+          @-> returns (pair tensor tensor))
+        (fun a b (lo, hi) ->
+          let s =
+            Minimize.solve one Minimize.nelder_mead ~lo ~hi ~tol ~budget:5000
+              (fun x ->
+                Nx.mul_s (Nx.sum (Nx.square (Nx.sub (Nx.matmul a x) b))) 0.5)
+              (Nx.zeros_like lo)
+          in
+          (Solution.best s, Solution.is Converged s)))
+    simplex_tols
+
+let simplex_in k a b box = simplex_programs.(k) a b box
 
 (* How far from [P (x − g) = x], [g] the gradient and [P] the projection on the
-   box, a [Converged] answer of [simplex_in] may be. Converging, the restart
-   test finds no probe [y ± σ eᵢ], clipped into the box, lower than [y], with [σ
-   ≤ 2 √n simplex_abs] since the diameter's root mean square ratio to
-   [simplex_abs] is at most 1. Component [i] of [x − P (x − g)] is [min (|gᵢ|,
-   δ)], [δ] the distance to the box's side downhill along [eᵢ]: below [σ] when
-   [δ < σ], and otherwise the probe [σ] downhill is not lower, so [|gᵢ| ≤ hᵢ σ /
-   2] on this parabola of curvature [hᵢ ≤ 9] along [eᵢ] (1 plus two entries of
-   [a] in [[-2, 2]], squared). So each component is within [4.5 σ]; the
-   restart's [10⁻⁴] of a predicted decrease and [f]'s rounding over [σ] (about
-   [10⁻¹⁴ / 10⁻⁶]) stay within the margin to [5 σ]. *)
-let stationary n = 10. *. Float.sqrt (Float.of_int n) *. simplex_abs
+   box, a [Converged] answer [x] of [simplex_in k a b] may be. Converging, the
+   restart test finds no probe [y ± σ eᵢ], clipped into the box, lower than [y].
+   With [s] the tolerance's scale at [x], [abs + rel |x|∞], the diameter's root
+   mean square ratio to [s] is at most 1, so [2 s ≤ σ ≤ 2 √n s], and where [s]
+   is 0, [σ] is the first simplex's step. Component [i] of [x − P (x − g)] is
+   [min (|gᵢ|, δ)], [δ] the distance to the box's side downhill along [eᵢ]:
+   below [σ] when [δ < σ], and otherwise the probe [σ] downhill is not lower, so
+   [|gᵢ| ≤ hᵢ σ / 2 + 2 ε / σ] on this parabola of curvature [hᵢ ≤ 9] along
+   [eᵢ] (1 plus two entries of [a] in [[-2, 2]], squared), [ε] [f]'s rounding.
+   So each component is within [4.5 σ + 2 ε / σ]; the restart's [10⁻⁴] of a
+   predicted decrease stays within the margin to [5 σ]. [ε] is taken as
+   [10⁻¹³ (1 + f x + |b|²)], a few ulps of the sum of squares' terms. *)
+let stationary k a b x =
+  let _, rel, abs, _ = simplex_tols.(k) in
+  let s = abs +. (rel *. Nx.item [] (Nx.max (Nx.abs x))) in
+  let lower, upper =
+    if s = 0. then (first_step, first_step)
+    else (2. *. s, 2. *. Float.sqrt (Float.of_int (Nx.dim 0 x)) *. s)
+  in
+  let r = Nx.sub (Nx.matmul a x) b in
+  let fx = 0.5 *. Nx.item [] (Nx.sum (Nx.square r)) in
+  let rounding = 1e-13 *. (1. +. fx +. Nx.item [] (Nx.sum (Nx.square b))) in
+  (5. *. upper) +. (2. *. rounding /. lower)
 
 let box_tests =
   [
@@ -761,31 +791,40 @@ let box_tests =
                 ~budget:2000
                 (fun x -> Nx.sum (bowl c x))
                 (Nx.zeros f64 [| 2 |]))));
-    prop "nelder_mead converges only at a minimum in the box" least_squares
-      (fun (a, b, (lo, hi)) ->
+    prop "nelder_mead converges only at a minimum in the box"
+      (Gen.pair (Gen.int_range 0 (Array.length simplex_tols - 1)) least_squares)
+      (fun (k, (a, b, (lo, hi))) ->
         let n = Nx.dim 0 lo in
-        let x, converged = simplex_in a b (lo, hi) in
+        let x, converged = simplex_in k a b (lo, hi) in
         let converged = Nx.item [] converged in
         let step = Nx.sub x (squares_gradient a b x) in
         let clipped = Nx.minimum hi (Nx.maximum lo step) in
         let held = Nx.logical_and (Nx.not_equal clipped step) (Nx.less lo hi) in
+        let name, _, _, _ = simplex_tols.(k) in
         cover "a coordinate held at a bound, with another free"
           (n > 1 && Nx.item [] (Nx.any held) && not (Nx.item [] (Nx.all held)));
-        cover "it converges" converged;
+        Array.iter
+          (fun (tol, _, _, _) ->
+            cover ("it converges under " ^ tol) (converged && name = tol))
+          simplex_tols;
         if converged then
-          equal (Oracle.tensor ~abs:(stationary n) ()) clipped x);
-    test "nelder_mead leaves a bound it starts on" (fun () ->
+          equal (Oracle.tensor ~abs:(stationary k a b x) ()) clipped x);
+    cases "nelder_mead leaves a bound it starts on"
+      ~id:(fun k ->
+        let name, _, _, _ = simplex_tols.(k) in
+        name)
+      (List.init (Array.length simplex_tols) Fun.id)
+      (fun k ->
         (* ½ (x² + (x + 1)²) with x ≤ 0, from 0: the minimum is −1/2. The first
            simplex's step from 0 is clipped back to 0, so every vertex lies on
-           the bound and only a probe toward −∞ finds the descent. *)
+           the bound and only a probe toward −∞ finds the descent. A relative
+           tolerance's scale is 0 there. *)
+        let a = Nx.create f64 [| 2; 1 |] [| 1.; 1. |] and b = vec [| 0.; -1. |] in
         let x, converged =
-          simplex_in
-            (Nx.create f64 [| 2; 1 |] [| 1.; 1. |])
-            (vec [| 0.; -1. |])
-            (vec [| Float.neg_infinity |], vec [| 0. |])
+          simplex_in k a b (vec [| Float.neg_infinity |], vec [| 0. |])
         in
         equal bool true (Nx.item [] converged);
-        equal (Oracle.tensor ~abs:(stationary 1) ()) (vec [| -0.5 |]) x);
+        equal (Oracle.tensor ~abs:(stationary k a b x) ()) (vec [| -0.5 |]) x);
     test "a side of the box not of the start's shapes raises" (fun () ->
         (* Swapped shapes keep the size: without the check they bound other
            coordinates. *)
