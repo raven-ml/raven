@@ -446,7 +446,7 @@ let pm_stop_at_effects =
    values a call knows, the elements are a run when they are one at those
    values, from the index at the run's first element, which reads them. A
    bitcast's run is also a run of its source when it starts and ends on whole
-   elements of the source, at a constant offset. *)
+   elements of the source at every value of the variables it reads. *)
 let rec contiguous_view u =
   let numel = numel u in
   let rng = range ~axis_type:Weak numel [ 0 ] in
@@ -472,29 +472,71 @@ let rec contiguous_view u =
       (* Checked at the call's values only: a movement adds a bound variable to
          its index only as an offset, under constant strides and div/mod, so a
          run at one value is a run at all. A variable meeting a range in a
-         div/mod of non-constant size would need the check at every value. *)
-      let bound = List.filter is_bound_var (toposort ~calls:Skip flat) in
-      let value v = (v, int (Dtype.Value.to_int (snd (unbind v)))) in
+         div/mod of non-constant size would need the check at every value. In
+         a call's body, a scalar parameter stands for a bound variable, checked
+         at its least value. *)
+      let scalar u = op u = Op.Param && addrspace u = Some Dtype.Alu in
+      let bound =
+        List.filter
+          (fun u -> is_bound_var u || scalar u)
+          (toposort ~calls:Skip flat)
+      in
+      let value v =
+        let at = if scalar v then vmin v else snd (unbind v) in
+        (v, int (Dtype.Value.to_int at))
+      in
       let valued =
         substitute ~calls:Skip ~pass:Once flat (List.map value bound)
+      in
+      (* The run of a bitcast from [first] as a run of its source, when it
+         starts and ends on whole elements of the source at every value of
+         the variables [first] reads, and [cut] otherwise. *)
+      let of_source ~cut first =
+        let osz = element_size b and isz = element_size (nth b 0) in
+        let simplified s = ssimplify (sint_to_uop s) in
+        let bytes = Sint.(first * Int osz) and len = Sint.(numel * Int osz) in
+        let whole s = Sint.equal (simplified Sint.(s % Int isz)) (Int 0) in
+        if not (whole bytes && whole len) then cut
+        else
+          let start = Sint.(bytes // Int isz) in
+          let count = simplified Sint.(len // Int isz) in
+          contiguous_view
+            (shrink (flatten (nth b 0)) [ Some (start, Sint.(start + count)) ])
       in
       match ssimplify (sub valued rng) with
       | Sym _ -> None
       | Int _ when bound <> [] ->
-          let first = substitute ~calls:Skip ~pass:Once flat [ (rng, int 0) ] in
-          if op b = Op.Bitcast then None else Some (b, ssimplify first)
+          let first =
+            ssimplify (substitute ~calls:Skip ~pass:Once flat [ (rng, int 0) ])
+          in
+          if op b = Op.Bitcast then of_source ~cut:None first
+          else Some (b, first)
       | Int offset when op b <> Op.Bitcast -> Some (b, Int offset)
-      | Int offset ->
-          let osz = element_size b and isz = element_size (nth b 0) in
-          if
-            offset * osz mod isz <> 0
-            || Sint.truth Sint.(numel * Int osz % Int isz <> Int 0)
-          then Some (b, Int offset)
-          else
-            let first = Int (offset * osz / isz) in
-            let last = Sint.((Int offset + numel) * Int osz // Int isz) in
-            contiguous_view
-              (shrink (flatten (nth b 0)) [ Some (first, last) ])
+      | Int offset -> of_source ~cut:(Some (b, Int offset)) (Int offset)
+
+(* A store through movements and bitcasts of storage, or of a state of it,
+   whose elements are a run of whole elements of the storage stores the
+   value's bits into that run: indexed through a bitcast that changes the
+   element size, the target would be shifts of loaded values. A store into a
+   bitcast of the storage itself is left to the rule that bitcasts its
+   value. *)
+let store_into_run dst x =
+  let rec through_bitcast u =
+    op u = Op.Bitcast
+    || (Op.Set.mem (op u) Op.Set.movement && through_bitcast (nth u 0))
+  in
+  let of_storage u = has_buffer_identity ~after_ok:true u in
+  if not (through_bitcast dst) then None
+  else if op dst = Op.Bitcast && of_storage (nth dst 0) then None
+  else
+    match contiguous_view dst with
+    | Some (b, first) when of_storage b ->
+        let n =
+          Sint.(numel dst * Int (element_size dst) // Int (element_size b))
+        in
+        let run = shrink (flatten b) [ Some (first, Sint.(first + n)) ] in
+        Some (store run (bitcast (flatten x) (dtype b)))
+    | _ -> None
 
 (* Whether [u] is storage, or a run of its elements ({!contiguous_view}) that
    shrinks and reshapes view: a copy kernel then indexes the storage at its
@@ -793,6 +835,9 @@ let earliest_rewrites =
                   [ Upat.after ~name:"a1" (var "buf") [ buf_store_src ] ];
               ])
            (fun m -> Some (m "a1"));
+         rule
+           (Upat.op Op.Store ~src:[ var "dst"; var "src" ])
+           (fun m -> store_into_run (m "dst") (m "src"));
          (* A store into a bitcast of storage bitcasts the value instead. *)
          rule
            (Upat.op Op.Store

@@ -1160,6 +1160,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A store through movements and bitcasts of storage, or of a state of it
+  (`Ops.after`), whose target is a run of whole elements writes the value's
+  bits into them. Through a bitcast that changes the element size, code
+  generation failed verification with "STORE ... CAST u8", as it still does
+  for strided or reversed bytes.
 - Metal compiles run in worker processes, several at once, where a lock ran
   them in turn; a compiler crash or an MTLCompiler that won't load raises
   `Compile_error`. Off Linux a worker may run from the temporary directory.

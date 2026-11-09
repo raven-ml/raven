@@ -9072,3 +9072,39 @@ reason and its pins.
   trip starts`;
   `Tolk.Schedule › cache › runs at other offsets of a loop's read are one
   schedule`.
+
+## D433. A store through a bitcast of storage stores into the run its bytes cover
+
+- **tinygrad:** `schedule/prepare.py` (`earliest_rewrites`): a store into a
+  `BITCAST` of a target stores the value bitcast to the target's type, which
+  strips the outermost bitcast only; `expand_bitcast` then rewrites any other
+  bitcast between types of different sizes as shifts. `UOp.contiguous_view`
+  reads a run through a bitcast at a constant offset only.
+- **tolk:** `Prepare.store_into_run`, `Prepare.contiguous_view`.
+- **Differs:** a store whose target is movements and bitcasts of storage, or of
+  a state of it, whose elements are a run of whole elements of the storage
+  (`Prepare.contiguous_view`), stores the value, flattened and bitcast to the
+  storage's type, into that run: `x[1:4] as uint8 bytes 4..16 read as
+  float32 <- v` writes `v`'s bits into elements 1 to 3, into the storage or
+  into a state after other stores, from a constant or a bound start, the
+  target 1-D or in rows, of float32 or of the type the bytes are viewed as, its
+  value reading the storage or not. A run through a bitcast at bound variables
+  is a run of the source where it starts and ends on whole elements at every
+  value of them; in a call's body, a scalar parameter counts as such a
+  variable. A store into a bitcast of storage itself takes tinygrad's
+  rule. A target that is not a run of whole elements still reaches
+  `expand_bitcast` and fails verification ("UOp verification failed ...
+  Ops.STORE ... CAST u8"): a run that cuts an element, strided or reversed
+  bytes such as columns of the storage's bytes, or a reshape over a bitcast
+  of strided elements.
+- **Reason:** (e), as D429: `Ops.store` through a view of storage and
+  `Ops.bitcast` give the graph a meaning, and tinygrad raises an internal
+  error on it ("UOp verification failed ... STORE [CAST u8, CAST u8]") once
+  `expand_bitcast` has made the target a value: at the pin, `x.bitcast(
+  dtypes.uint8)[4:16].bitcast(dtypes.float32).assign(v)` raises it on a
+  realized buffer and on a state. No raven consumer emits such a store.
+- **Pinned by:** `Tolk_engine › a store through whole elements of bytes viewed
+  as another type writes the value's bits into them`, on the host and in each
+  GPU group; `Tolk_engine › a store through whole elements of bytes that are
+  no run is refused`; `Tolk.Launch_law › compiled` and `› GPUs`, whose
+  programs store through bytes of states.

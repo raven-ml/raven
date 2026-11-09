@@ -94,7 +94,10 @@ val prepare_rangeify : Ops.t -> Ops.t
           own device; a store of a storage's contents into itself is
           dropped, while a store of the value the store before it stored
           stays, a state of its own; a store into a bitcast of storage stores
-          the value bitcast to the storage's type;
+          the value bitcast to the storage's type; any other store through
+          movements and bitcasts whose elements are a run of whole elements
+          of storage or of a state of it ({!contiguous_view}) stores the
+          value's bits into that run;
         - a bitcast between types of different sizes is shifts and masks on
           unsigned integers, except on a disk;
         - a reduction of an empty axis to a non-empty result is the operation's
@@ -122,9 +125,12 @@ val contiguous_view : Ops.t -> (Ops.t * Ops.sint) option
     [u] is [b] viewed through movements and bitcasts that neither reorder nor
     skip elements. [b] is the node the view reads, simplified: storage, storage
     ordered after effects, a constant, a computed value, or a bitcast whose view
-    does not start and end on whole elements of its source. [offset] counts
-    elements of [b]'s type: a constant, or, where [u] views [b] without a
-    bitcast, an expression of constants and bound variables. It is [None]
+    does not start and end on whole elements of its source at a constant
+    offset. [offset] counts elements of [b]'s type: a constant, or an
+    expression of constants and bound variables, through a bitcast only where
+    the view starts and ends on whole elements of its source at every value
+    of the variables. A scalar parameter, in a call's body, counts as a bound
+    variable at its least value. It is [None]
     otherwise: when the movements reorder, skip, repeat or pad elements, when
     the offset reads a range or an unbound variable, when [u] is empty, and when
     its size is symbolic.

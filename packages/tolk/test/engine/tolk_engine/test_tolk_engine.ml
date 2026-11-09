@@ -4029,6 +4029,195 @@ let valid_slot_store =
       raises_match (Exn.invalid_arg ~sub:"Invalid, which is no number")
         (fun () -> Schedule.create_linear_with_vars (store_at_valid_slot "CPU")))
 
+(* The law of stores through byte views: a store into float32 storage, or
+   into a state of it, through its bytes viewed as another type, where the
+   bytes are whole elements of the storage, writes the value's bits into those
+   elements and leaves the others. The target is the bytes read back as
+   float32, or of the other type itself; one row or rows of two; from a
+   constant or a bound start; its value a constant or a run of the state it
+   stores into. *)
+
+type byte_store = {
+  of_state : bool;  (* The storage after a store of [x + 1]. *)
+  via : Dtype.t;  (* The type its bytes are viewed as. *)
+  first : int;  (* The first element of the storage the store covers. *)
+  count : int;  (* The elements it covers. *)
+  typed : bool;  (* The target is of [via], not read back as float32. *)
+  rows : bool;
+  bound : bool;
+  reads : int option;  (* The first element of the run of the state stored. *)
+}
+
+let pp_byte_store ppf s =
+  Format.fprintf ppf
+    "%s through %a, elements %d..%d%s%s%s, %s"
+    (if s.of_state then "state" else "storage")
+    Dtype.pp s.via s.first (s.first + s.count - 1)
+    (if s.typed then ", typed" else "")
+    (if s.rows then ", rows" else "")
+    (if s.bound then ", bound start" else "")
+    (match s.reads with
+    | Some r -> Printf.sprintf "reading from %d" r
+    | None -> "a constant")
+
+let byte_elements = 16
+
+let gen_byte_store r =
+  let via = List.nth Dtype.[ Uint8; Float16; Int64 ] (Random.State.int r 3) in
+  let size = Dtype.itemsize via in
+  (* An int64 spans two elements: it starts and ends on even ones. *)
+  let step = if size = 8 then 2 else 1 in
+  let count = step * (1 + Random.State.int r (8 / step)) in
+  let first =
+    step * Random.State.int r (((byte_elements - count) / step) + 1)
+  in
+  let typed = Random.State.bool r in
+  let target_numel = if typed then count * 4 / size else count in
+  {
+    of_state = Random.State.bool r;
+    via;
+    first;
+    count;
+    typed;
+    rows = target_numel mod 2 = 0 && Random.State.bool r;
+    bound = size < 8 && Random.State.bool r;
+    reads =
+      (if typed || Random.State.bool r then None
+       else Some (Random.State.int r (byte_elements - count + 1)));
+  }
+
+(* The bits each element of a typed constant store gives the elements it
+   covers, from the first. *)
+let typed_store = function
+  | Dtype.Uint8 -> (Ops.const ~dtype:Uint8 (`Int (Bigint.of_int 7)), fun _ -> 0x07070707l)
+  | Float16 -> (Ops.const ~dtype:Float16 (`Float 1.5), fun _ -> 0x3E003E00l)
+  | Int64 ->
+      ( Ops.const ~dtype:Int64 (`Int (Bigint.of_int 3)),
+        fun j -> if j mod 2 = 0 then 3l else 0l )
+  | dt -> invalid_arg (Format.asprintf "no typed store of %a" Dtype.pp dt)
+
+let stores_through_bytes ?(devices = devices) d s =
+  let n = byte_elements in
+  let x = Ops.new_buffer d n Float32 in
+  let st =
+    if s.of_state then Ops.after x [ Ops.store x Ops.O.(x + float 1.) ] else x
+  in
+  let size = Dtype.itemsize s.via in
+  let k = s.count * 4 / size in
+  let first, last =
+    if not s.bound then (Ops.Int (s.first * 4 / size), Ops.Int ((s.first * 4 / size) + k))
+    else
+      let v =
+        Shape.bind
+          (Ops.variable "first" (`Int Bigint.zero) (`Int (Bigint.of_int n)))
+          (`Int (Bigint.of_int s.first))
+      in
+      let per = 4 / size in
+      let at = Ops.O.(v * int per) in
+      (Ops.Sym at, Ops.Sym Ops.O.(at + int k))
+  in
+  let viewed = Shape.shrink (Ops.bitcast st s.via) [ Some (first, last) ] in
+  let m = if s.typed then k else s.count in
+  let shape = if s.rows then [ Ops.Int (m / 2); Int 2 ] else [ Ops.Int m ] in
+  let target =
+    Shape.reshape (if s.typed then viewed else Ops.bitcast viewed Float32) shape
+  in
+  let broadcast c =
+    Shape.expand (Shape.reshape c (List.map (fun _ -> Ops.Int 1) shape)) shape
+  in
+  let before i = Float.of_int i +. if s.of_state then 1. else 0. in
+  let value, covered =
+    match s.reads with
+    | Some r ->
+        let run = Shape.shrink st [ Some (Int r, Int (r + s.count)) ] in
+        ( Shape.reshape Ops.O.((run * float 2.) + float 1.) shape,
+          fun j -> Int32.bits_of_float ((before (r + j) *. 2.) +. 1.) )
+    | None when s.typed ->
+        let c, bits = typed_store s.via in
+        (broadcast c, bits)
+    | None ->
+        ( broadcast (Ops.cast (Ops.float 2.5) Float32),
+          fun _ -> Int32.bits_of_float 2.5 )
+  in
+  let sink = Ops.sink [ Ops.after st [ Ops.store target value ] ] in
+  let linear, vars = Schedule.create_linear_with_vars sink in
+  let buffer =
+    Run.buffer (devices d) Float32 (floats (Array.init n Float.of_int))
+  in
+  Engine.run ~vars
+    (Engine.link ~devices ~bound:[ (x, buffer) ] (compile ~devices linear))
+    [||];
+  let want =
+    Array.init n (fun i ->
+        if i >= s.first && i < s.first + s.count then covered (i - s.first)
+        else Int32.bits_of_float (before i))
+  in
+  equal values
+    ~msg:(Format.asprintf "%a" pp_byte_store s)
+    (Array.map (fun b -> `Int (Bigint.of_int32 b)) want)
+    (Run.values Int32 buffer)
+
+let byte_views ?devices d =
+  prop ~count:100
+    "a store through whole elements of bytes viewed as another type writes \
+     the value's bits into them"
+    (Gen.int_range 1 1_000_000)
+    (fun seed ->
+      let s = gen_byte_store (Random.State.make [| seed |]) in
+      cover "a state" s.of_state;
+      cover "storage" (not s.of_state);
+      cover "a value reading its target" (s.reads <> None);
+      cover "a typed target" s.typed;
+      cover "rows" s.rows;
+      cover "a bound start" s.bound;
+      cover "through int64" (s.via = Int64);
+      cover "through float16" (s.via = Float16);
+      cover "through uint8" (s.via = Uint8);
+      stores_through_bytes ?devices d s)
+
+(* A store through whole elements of bytes that are no run of the storage,
+   such as columns of its bytes or its bytes reversed, is refused. [x] holds
+   16 floats, as 4 rows of 16 bytes. *)
+let refuses_byte_columns () =
+  let x = Ops.new_buffer "CPU" 16 Float32 in
+  let fill c shape =
+    Shape.expand (Shape.reshape c (List.map (fun _ -> Ops.Int 1) shape)) shape
+  in
+  let rows = Shape.reshape (Ops.bitcast x Uint8) [ Int 4; Int 16 ] in
+  let columns = Shape.shrink rows [ None; Some (Int 0, Int 8) ] in
+  let floats_of_columns =
+    ( Ops.bitcast columns Float32,
+      fill (Ops.cast (Ops.float 2.5) Float32) [ Int 4; Int 2 ] )
+  in
+  let float_columns =
+    Shape.shrink
+      (Shape.reshape x [ Int 4; Int 4 ])
+      [ None; Some (Int 0, Int 2) ]
+  in
+  let bytes_of_columns =
+    ( Shape.reshape (Ops.bitcast float_columns Uint8) [ Int 32 ],
+      fill (Ops.const ~dtype:Uint8 (`Int (Bigint.of_int 7))) [ Int 32 ] )
+  in
+  let floats_of_reversed =
+    ( Ops.bitcast (Shape.flip (Ops.bitcast x Uint8) [ 0 ]) Float32,
+      fill (Ops.cast (Ops.float 2.5) Float32) [ Int 16 ] )
+  in
+  List.iter
+    (fun (target, value) ->
+      let sink = Ops.sink [ Ops.after x [ Ops.store target value ] ] in
+      raises_match
+        (function
+          | Invalid_argument m ->
+              String.starts_with ~prefix:"UOp verification failed" m
+              && List.exists
+                   (String.equal "Ops.STORE")
+                   (String.split_on_char ' ' m)
+          | _ -> false)
+        (fun () ->
+          let linear, _ = Schedule.create_linear_with_vars sink in
+          compile linear))
+    [ floats_of_columns; bytes_of_columns; floats_of_reversed ]
+
 (* Calls of views
 
    A call compiled on its own takes flat storage at each argument: a kernel
@@ -6156,6 +6345,11 @@ let () =
          schedules;
          gathered_stores;
          group "a store through a shrink" [ valid_slot_store ];
+         byte_views "CPU";
+         test
+           "a store through whole elements of bytes that are no run is \
+            refused"
+           refuses_byte_columns;
          calls_of_views;
          group "aranges" [ arange_windows "CPU" ];
          refusals;
