@@ -35,8 +35,9 @@
     One barrier a trip retires every read of slot [k mod 2] before trip [k + 1]
     overwrites it, and publishes chunk [k + 1] before it is read. The barriers
     are the ones code generation places between a store to shared memory and
-    the reads after it. Without asynchronous copies a single stage copies each
-    trip's tile at the start of the trip. *)
+    the reads after it. The loop's first copy runs before each run of the
+    loop, at each trip of every serial loop around it. Without asynchronous
+    copies a single stage copies each trip's tile at the start of the trip. *)
 
 val depth : ?used:int -> Renderer.t -> int list -> int
 (** [depth ~used ren tiles] is the number of stages a core whose staged

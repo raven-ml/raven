@@ -486,6 +486,180 @@ let races =
         (racecheck in_one);
     ]
 
+(* Serial ranges around a core
+
+   [c.(o, i, j) = Σ_r a.(i, r) * b.(o, r + j)] in float32, or its sum over [o]
+   as well, for [a] of [m] by [k] and [b] Toeplitz in each of [outer] blocks,
+   of bfloat16. [b] reads [o] and its tile overlaps, so it stays unstaged; [a]
+   reads no [o] and stages, its tile stepping through the core's loop [l]. The
+   core runs inside [o], and [l]'s loop inside or around [o]'s:
+
+   {v
+     for o:            serial: a loop, a bound in memory, a sum outside l
+       for l:          the core's loop, copying a's tiles
+         c += a[l] * b[o, l]
+   v}
+
+   [a]'s first tile is copied before [l]'s loop at each trip of [o] around it:
+   copied once, outside [o], its slot would hold a later tile of [l] at [o]'s
+   second trip. Inside [l], [o] reads the tile of [l]'s trip. *)
+
+type around =
+  | Loop_range  (** [o] a {!Ops.Axis_type.Loop}. *)
+  | Bound_in_memory  (** [o] weak, of a bound read from memory. *)
+  | Sum_outside  (** [o] closed by the core's sum, outside [l]. *)
+  | Sum_inside  (** [o] closed by the core's sum, inside [l]. *)
+
+let pp_around ppf a =
+  Format.pp_print_string ppf
+    (match a with
+    | Loop_range -> "a loop"
+    | Bound_in_memory -> "a weak range bounded by memory"
+    | Sum_outside -> "a range the core's sum closes outside its loop"
+    | Sum_inside -> "a range the core's sum closes inside its loop")
+
+let summed = function
+  | Sum_outside | Sum_inside -> true
+  | Loop_range | Bound_in_memory -> false
+
+type nest = { around : around; outer : int; m : int; k : int; n : int }
+
+(* The sum's ranges nest in the order of their identities, the first
+   outermost: [o] takes [0] to run outside [r]'s [3], and [4] inside. *)
+let nested ?opts_to_apply p =
+  let c =
+    Shape.param
+      ~shape:[ Ops.Int ((if summed p.around then 1 else p.outer) * p.m * p.n) ]
+      0 Float32
+  and a = Shape.param ~shape:[ Ops.Int (p.m * p.k) ] 1 Bfloat16
+  and b = Shape.param ~shape:[ Ops.Int (p.outer * (p.k + p.n)) ] 2 Bfloat16
+  and bound = Shape.param ~shape:[ Ops.Int 1 ] 3 Int32 in
+  let rows = p.k + p.n and mn = p.m * p.n in
+  let open Ops.O in
+  let o =
+    match p.around with
+    | Loop_range -> Ops.range ~axis_type:Loop (Int p.outer) [ 0 ]
+    | Bound_in_memory ->
+        let n = Ops.load (Ops.index bound [ int 0 ]) [] in
+        Ops.range ~axis_type:Weak (Sym (Ops.cast n Dtype.Weak_int)) [ 0 ]
+    | Sum_outside -> Ops.range ~axis_type:Weak (Int p.outer) [ 0 ]
+    | Sum_inside -> Ops.range ~axis_type:Weak (Int p.outer) [ 4 ]
+  and i = Ops.range ~axis_type:Weak (Int p.m) [ 1 ]
+  and j = Ops.range ~axis_type:Weak (Int p.n) [ 2 ]
+  and r = Ops.range ~axis_type:Weak (Int p.k) [ 3 ] in
+  let at x idx = Ops.cast (Ops.index x [ idx ]) Float32 in
+  let prod = at a ((i * int p.k) + r) * at b ((o * int rows) + r + j) in
+  let store =
+    if summed p.around then
+      Ops.end_
+        (Ops.store
+           (Ops.index c [ (i * int p.n) + j ])
+           (Ops.reduce prod Add [ o; r ]))
+        [ i; j ]
+    else
+      Ops.end_
+        (Ops.store
+           (Ops.index c [ (o * int mn) + (i * int p.n) + j ])
+           (Ops.reduce prod Add [ r ]))
+        [ o; i; j ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply ()) [ store ]
+
+let nested_exact p a b =
+  let v = function `Float f -> f | _ -> 0. in
+  let one o i j =
+    let s = ref 0. in
+    for q = 0 to p.k - 1 do
+      s := !s +. (v a.((i * p.k) + q) *. v b.((o * (p.k + p.n)) + q + j))
+    done;
+    !s
+  in
+  let mn = p.m * p.n in
+  if summed p.around then
+    Array.init mn (fun e ->
+        let s = ref 0. in
+        for o = 0 to p.outer - 1 do
+          s := !s +. one o (e / p.n) (e mod p.n)
+        done;
+        `Float !s)
+  else
+    Array.init (p.outer * mn) (fun e ->
+        `Float (one (e / mn) (e mod mn / p.n) (e mod p.n)))
+
+(* The core over [j], [i] and [r]: the choices pair [a]'s [i] with each of
+   [b]'s ranges, [o] then [j], and each range of the sum, the last varying
+   fastest. [o] of one trip would leave the kernel, so [outer] is at least
+   [2]. *)
+let nested_opts around =
+  let axis =
+    match around with
+    | Loop_range | Bound_in_memory -> 1
+    | Sum_outside -> 2
+    | Sum_inside -> 3
+  in
+  [ Opt.Tc { axis; tc_select = -1; tc_opt = 2; use_tc = 1 } ]
+
+(* The core's loop runs [k / 16] trips, and [a]'s tile holds the core's 16
+   rows by 16 terms. *)
+let core_trips = 16
+let core_tile = 16 * 16
+
+let nested_value (p, depth, seed) =
+  let d, r = on_cuda () in
+  let r = if depth = 2 then r else one_stage r in
+  let prg = compiled r (nested ~opts_to_apply:(nested_opts p.around) p) in
+  let src = source prg and lin = Ops.nth prg 1 in
+  equal ~msg:"a core" bool true (says "mma.sync" src);
+  (match locals lin with
+  | [ buf ] ->
+      equal ~msg:"the staged slots" int (depth * core_tile)
+        (Shape.max_numel buf)
+  | bufs -> failf "%d staged operands, not 1" (List.length bufs));
+  (match unordered (walk (Ops.src lin)) with
+  | None -> ()
+  | Some (a, b) ->
+      failf "%a then %a with no barrier between them" pp_access a pp_access b);
+  let later = p.k / core_trips > 2 in
+  cover "one stage" (depth = 1);
+  List.iter
+    (fun a ->
+      cover
+        (Format.asprintf "two stages under %a" pp_around a)
+        (depth = 2 && later && p.around = a))
+    [ Loop_range; Bound_in_memory; Sum_outside; Sum_inside ];
+  let a = small seed (p.m * p.k)
+  and b = small (seed + 1) (p.outer * (p.k + p.n)) in
+  let bound = [| `Int (Bigint.of_int p.outer) |] in
+  equal (array Dtypes.value) (nested_exact p a b)
+    (List.assoc 0 (Run.on d prg [ (1, a); (2, b); (3, bound) ]))
+
+let nests =
+  let open Gen in
+  let+ around = of_list [ Loop_range; Bound_in_memory; Sum_outside; Sum_inside ]
+  and+ outer = int_range 2 4
+  and+ m = of_list [ 16; 32 ]
+  and+ k = of_list [ 32; 48; 64; 128 ]
+  and+ n = of_list [ 16; 32 ] in
+  { around; outer; m; k; n }
+
+let pp_nest ppf p =
+  Format.fprintf ppf "[%d; %d] by [%d; %d] under %a of %d trips" p.m p.k p.k
+    p.n pp_around p.around p.outer
+
+let serial =
+  let example around = ({ around; outer = 3; m = 16; k = 64; n = 16 }, 2, 1) in
+  prop ~count:16
+    ~examples:
+      (List.map example [ Loop_range; Bound_in_memory; Sum_outside; Sum_inside ]
+      @ [ ({ around = Loop_range; outer = 2; m = 32; k = 48; n = 16 }, 1, 2) ])
+    "a core staged under a serial range is exact, its copies ordered by \
+     barriers"
+    (Gen.with_pp
+       (fun ppf (p, depth, seed) ->
+         Format.fprintf ppf "%a, %d stages, seed %d" pp_nest p depth seed)
+       Gen.(triple nests (of_list [ 1; 2 ]) (int_range 0 1_000_000)))
+    nested_value
+
 (* The layout *)
 
 (* The 16-byte slot of a 128-byte line that element [e] of 2 bytes falls on. *)
@@ -995,6 +1169,7 @@ let () =
          group "barriers" [ barriers ];
          checked_kernels;
          races;
+         group "serial ranges" [ serial ];
          layout;
          group "stages" [ stages; test "none when staging is off" stage_off ];
          staged_tiles;

@@ -223,13 +223,11 @@ type tile = {
 
 let bytes t = t.size * Dtype.itemsize t.dt
 
+let is_serial r = List.mem (axis_type r) Axis_type.[ Weak; Loop ]
+
 (* The loop of [outer]: its one weak or loop range, if it has one. *)
 let loop_of outer =
-  match
-    List.filter
-      (fun r -> List.mem (axis_type r) Axis_type.[ Weak; Loop ])
-      (Nodes.to_list (ranges outer))
-  with
+  match List.filter is_serial (Nodes.to_list (ranges outer)) with
   | [ l ] -> Some l
   | _ -> None
 
@@ -365,14 +363,21 @@ let address t cs =
     (List.hd cs) row
 
 type stager = {
-  copy_to : ?ahead:Ops.t -> slot:Ops.t -> at:Ops.t -> unit -> Ops.t;
+  copy_to :
+    ?ahead:Ops.t ->
+    ?within:Ops.t list ->
+    slot:Ops.t ->
+    at:Ops.t ->
+    unit ->
+    Ops.t;
   read : deps:Ops.t list -> slot:Ops.t -> Ops.t;
 }
 
 (* The staging of [t] by the workgroup [wg] into [buf], in slots of
    [t.size] elements. [copy_to ~slot ~at] copies the tile of the loop's trip
-   [at] into slot [slot], under the gate [ahead] if given; [read ~deps
-   ~slot] reads it back, ordered after the copies [deps]. *)
+   [at] into slot [slot], under the gate [ahead] if given, at each trip of the
+   ranges [within] (default none) besides those it reads; [read ~deps ~slot]
+   reads it back, ordered after the copies [deps]. *)
 let stager wg ~fresh t buf =
   let v = lanes t in
   let per = wg.threads * v in
@@ -418,7 +423,7 @@ let stager wg ~fresh t buf =
   in
   let partial = if t.size mod per = 0 then None else Some O.(f < int t.size) in
   let laddr = address t coords in
-  let copy_to ?ahead ~slot ~at () =
+  let copy_to ?ahead ?(within = []) ~slot ~at () =
     let moved u =
       match t.loop with
       | Some l when at != l -> substitute ~calls:Skip ~pass:Once u [ (l, at) ]
@@ -436,7 +441,8 @@ let stager wg ~fresh t buf =
     let lidx =
       match partial with Some p -> Shape.valid lidx p | None -> lidx
     in
-    end_ (store (index buf [ lidx ]) (index t.buf [ gidx ])) ranges
+    let dst = index (after buf within) [ lidx ] in
+    end_ (store dst (index t.buf [ gidx ])) ranges
   in
   let read ~deps ~slot =
     let rcs =
@@ -451,6 +457,27 @@ let stager wg ~fresh t buf =
     index (after buf deps) [ O.(base + (slot * int t.size)) ]
   in
   { copy_to; read }
+
+(* The serial ranges the loop [l] of the core [w] runs inside: those the node
+   closing [l] runs inside, and those it closes that sort before [l], as a node
+   closing several ranges nests them in {!Ops.compare_range_arg}'s order, the
+   first outermost. The first chunk's copy runs before [l]'s loop at each of
+   their trips: copied once, outside them, slot [0] would hold a tile of [l]'s
+   last trips at their second trip. *)
+let around all w l =
+  let closes u =
+    List.memq l (ended_ranges u)
+    && Nodes.mem w (backward_slice_with_self ~calls:Skip u)
+  in
+  match List.find_opt closes all with
+  | None -> []
+  | Some y ->
+      let outer =
+        List.filter
+          (fun r -> op r = Op.Range && compare_range_arg r l < 0)
+          (ended_ranges y)
+      in
+      List.filter is_serial (Nodes.to_list (ranges y) @ outer)
 
 (* The kernel's LOCAL memory other than staging's: a grouped reduction's
    buffer, or a stage into LOCAL memory. Staging leaves such kernels as they
@@ -536,11 +563,13 @@ let operands (ren : Renderer.t) sink =
             match loop with
             | Some l when d = 2 ->
                 let n = nth l 0 and next = O.(l + int 1) in
+                let within = around all w l in
                 let firsts =
                   List.filter_map
                     (fun (_, p) ->
                       Option.map
-                        (fun st -> st.copy_to ~slot:(int 0) ~at:(int 0) ())
+                        (fun st ->
+                          st.copy_to ~within ~slot:(int 0) ~at:(int 0) ())
                         p)
                     plans
                 and aheads =

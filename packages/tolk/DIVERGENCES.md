@@ -7254,8 +7254,10 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
   chunks); the core reads its fragments back through the same layout. Two
   stages where the renderer copies asynchronously and they fit
   `shared_max`, the next trip's copy issued before this trip's reads and
-  ordered so by the slot's offset, an AFTER of the loop's range at two trips;
-  one stage otherwise. The barriers are those the implicit rules place. A
+  ordered so by the slot's offset, an AFTER of the loop's range at two trips,
+  and the first trip's copy pinned, by an AFTER of their ranges, inside every
+  serial loop the core's loop runs in, so that each run of the loop copies
+  it; one stage otherwise. The barriers are those the implicit rules place. A
   gated operand (PADTO's validity, or a core's selection of 0) copies 0
   where its gate fails, its thread ranges rebuilt from the tile's
   coordinates. A staged core takes its own tile: 2 by 2 warps of 64 by 64,
@@ -7287,10 +7289,12 @@ without, and the 512-token prefill 141.0 ms and 121.8 ms.
 - **Pinned by:** the Stage suite: `values › a staged kernel computes the bits
   of the same optimisations unstaged` (CUDA's renderer against itself
   without shared memory, both tiles, one and two stages, padded, batched,
-  `[N; K]` operands, a refused operand), `barriers › …` (every store and load
-  of an element separated by a barrier over two trips, on CUDA and on HIP's
-  RDNA3 and RDNA4, and every barrier of a kernel with `cp.async` waiting for
-  it), `races` (`compute-sanitizer`'s race checker in hazard mode on a
+  `[N; K]` operands, a refused operand), `serial ranges › …` (exact values
+  and barriers under a loop, a weak range bounded by memory, and a range the
+  core's sum closes outside and inside its loop), `barriers › …` (every store
+  and load of an element separated by a barrier over two trips, on CUDA and on
+  HIP's RDNA3 and RDNA4, and every barrier of a kernel with `cp.async`
+  waiting for it), `races` (`compute-sanitizer`'s race checker in hazard mode on a
   kernel of each depth), `stages` (`Stage.depth`), `a staged core's
   workgroups, threads and trips`, `the layout` and `sources`; the tolk
   bench's `contract/bf16-*` rows, `bf16-512x4096x2880` and

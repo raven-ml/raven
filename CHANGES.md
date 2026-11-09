@@ -1165,6 +1165,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   bits into them. Through a bitcast that changes the element size, code
   generation failed verification with "STORE ... CAST u8", as it still does
   for strided or reversed bytes.
+- A tensor core staged in two stages under another serial loop, as a `Loop`
+  range, a weak range whose bound is read from memory, or a range its sum
+  closes outside the core's loop, now computes correct values on CUDA: its
+  first tile was copied once, so later trips of that loop read a stale tile.
 - Metal compiles run in worker processes, several at once, where a lock ran
   them in turn; a compiler crash or an MTLCompiler that won't load raises
   `Compile_error`. Off Linux a worker may run from the temporary directory.
