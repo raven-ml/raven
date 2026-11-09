@@ -2359,10 +2359,87 @@ let memory =
             c.majors);
     ]
 
+(* Many files *)
+
+let rec remove path =
+  if Sys.is_directory path then begin
+    Array.iter (fun name -> remove (path ^ "/" ^ name)) (Sys.readdir path);
+    Sys.rmdir path
+  end
+  else Sys.remove path
+
+let write_part path rows =
+  Sys.mkdir (Filename.dirname path) 0o755;
+  Out_channel.with_open_bin path @@ fun oc ->
+  let w = Bytesrw.Bytes.Writer.of_out_channel oc in
+  let t = Talon.v [ ("x", Column.v Type.int64 rows) ] in
+  Result.get_ok (P.encode (P.format (Talon.schema t)) (Query.of_table t) w)
+
+let many_files_count = 1000
+
+(* [occurrences w s] is the number of times [w] occurs in [s]. *)
+let occurrences w s =
+  let n = String.length w and m = String.length s in
+  let rec at i acc =
+    if i + n > m then acc
+    else if String.sub s i n = w then at (i + 1) (acc + 1)
+    else at (i + 1) acc
+  in
+  at 0 0
+
+let many_files () =
+  let root = Filename.temp_dir "talon-many" "" in
+  Fun.protect ~finally:(fun () -> remove root) @@ fun () ->
+  let n = many_files_count in
+  let rows_of i = [| i * 10; (i * 10) + 1 |] in
+  let paths =
+    List.init n (fun i ->
+        let path = Printf.sprintf "%s/part=%04d/file.parquet" root i in
+        write_part path (rows_of i);
+        path)
+  in
+  let manifest = Error.get_ok (Source.hive paths) in
+  let branch path part =
+    Query.of_source (Error.get_ok (P.file path))
+    |> Query.derive Expr.[ "part" := int part ]
+  in
+  let parts = Column.options Kind.string (column manifest "part") in
+  let queries =
+    List.mapi
+      (fun i path -> branch path (int_of_string (Option.get parts.(i))))
+      paths
+  in
+  let reference =
+    let xs = Array.concat (List.init n rows_of) in
+    let part = Array.concat (List.init n (fun i -> [| i; i |])) in
+    Talon.v
+      [ ("x", Column.v Type.int64 xs); ("part", Column.v Type.int64 part) ]
+  in
+  let all = Kit.union_all queries in
+  let run_rows q = Error.get_ok (Query.run q) in
+  let t_equal = Testable.make ~pp:Talon.pp ~equal:Talon.equal in
+  equal ~msg:"every file's rows, in order" t_equal reference (run_rows all);
+  let by_partition = Expr.(Col.int "part" = int 7 || Col.int "x" > int 9990) in
+  equal ~msg:"a filter mixing a partition and a file column" t_equal
+    (run_rows (Query.filter by_partition (Query.of_table reference)))
+    (run_rows (Query.filter by_partition all));
+  (* A partition filter empties every branch but the one it keeps. *)
+  let kept = Query.filter Expr.(Col.int "part" = int 7) all in
+  equal ~msg:"a filter on a partition column" t_equal
+    (run_rows (Query.filter Expr.(Col.int "part" = int 7) (Query.of_table reference)))
+    (run_rows kept);
+  equal ~msg:"branches the filter excludes are never read" int (n - 1)
+    (occurrences "~limit:0"
+       (Format.asprintf "%a" Query.pp (Query.optimize kept)))
+
+let many_files_group =
+  group "Many files"
+    [ test "a query over a thousand files gives the files' rows" many_files ]
+
 let () =
   exit
     (run "talon.parquet"
        [
          agreement; clocks; sniffing; formats; synthesized; nested_files;
-         sources; decoding; memory;
+         sources; decoding; memory; many_files_group;
        ])
