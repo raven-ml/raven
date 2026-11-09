@@ -101,15 +101,6 @@ let test_decode_skip_special () =
   let decoded = decode ~skip_special_tokens:true tokenizer [| 0; 2; 1 |] in
   equal ~msg:"decoded without special" string "hello" decoded
 
-let test_decode_batch () =
-  let tokenizer =
-    make_word_tokenizer ~vocab:(words [ "hello"; "world"; "hi"; "there" ]) ()
-  in
-  let decoded = decode_batch tokenizer [ [| 0; 1 |]; [| 2; 3 |] ] in
-  equal ~msg:"decoded count" int 2 (List.length decoded);
-  equal ~msg:"first decoded" string "hello world" (List.nth decoded 0);
-  equal ~msg:"second decoded" string "hi there" (List.nth decoded 1)
-
 let test_chars_model () =
   let tokenizer = chars () in
   let ids = encode tokenizer "abc" |> Encoding.ids |> Array.to_list in
@@ -783,7 +774,6 @@ let suite =
     test "decode simple" test_decode_simple;
     test "decode with special" test_decode_with_special;
     test "decode skip special" test_decode_skip_special;
-    test "decode batch" test_decode_batch;
     test "chars model" test_chars_model;
     test "offsets through a normalizer" test_offsets_through_normalizer;
     test "offsets of a byte-level pipeline" test_offsets_byte_level;

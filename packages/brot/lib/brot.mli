@@ -1478,12 +1478,6 @@ val decode : t -> ?skip_special_tokens:bool -> int array -> string
     [skip_special_tokens] defaults to [false]. It drops the added tokens whose
     [special] is set, and only those. *)
 
-val decode_batch :
-  t -> ?skip_special_tokens:bool -> int array list -> string list
-(** [decode_batch t ids_list] decodes each element of [ids_list].
-
-    [skip_special_tokens] defaults to [false]. *)
-
 (** {1:streaming Streaming decoding}
 
     A model generates its output one token at a time, and a reader wants each

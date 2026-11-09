@@ -3538,6 +3538,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- **Breaking:** `Brot.decode_batch` is removed: write
+  `List.map (Brot.decode t) ids_list`.
 - A token given twice in a BPE or WordPiece `vocab` keeps only its last pair,
   on every path: byte-level models and `wordpiece` encoded it by another id
   than `token_to_id` gave. `id_to_token` is `None` at an id no token holds,

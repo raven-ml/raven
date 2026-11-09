@@ -1842,9 +1842,6 @@ let decode t ?(skip_special_tokens = false) ids =
   | Some decoder -> Decoder.decode decoder tokens
   | None -> String.concat " " tokens
 
-let decode_batch t ?(skip_special_tokens = false) id_lists =
-  List.map (decode t ~skip_special_tokens) id_lists
-
 (* A tokenizer without a decoder joins its tokens with spaces, so the text of
    each token is known as it arrives. *)
 type decoding = Decoding of Decoder.stream | Joining of { first : bool }

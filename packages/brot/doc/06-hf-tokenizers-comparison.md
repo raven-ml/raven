@@ -202,7 +202,7 @@ texts = tokenizer.decode_batch([[101, 7592, 102], [101, 2088, 102]])
 <!-- $MDX skip -->
 ```ocaml
 let texts =
-  Brot.decode_batch tokenizer
+  List.map (Brot.decode tokenizer)
     [ [| 101; 7592; 102 |]; [| 101; 2088; 102 |] ]
 ```
 
@@ -904,7 +904,7 @@ let token = Brot.id_to_token tokenizer 101       (* string option *)
 | Encode pair         | `tokenizer.encode("a", "b")`                                | `Brot.encode tokenizer ~pair:"b" "a"`                            |
 | Encode pairs batch  | `tokenizer.encode_batch([("a","b"), ...])`                  | `Brot.encode_batch_pairs tokenizer [("a","b"); ...]`             |
 | Decode              | `tokenizer.decode(ids)`                                     | `Brot.decode tokenizer ids`                                      |
-| Decode batch        | `tokenizer.decode_batch([ids1, ids2])`                      | `Brot.decode_batch tokenizer [ids1; ids2]`                       |
+| Decode batch        | `tokenizer.decode_batch([ids1, ids2])`                      | `List.map (Brot.decode tokenizer) [ids1; ids2]`                  |
 | Decode a stream     | `DecodeStream().step(tokenizer, id)`                        | `Brot.decode_step (Brot.decode_stream tokenizer) id`             |
 | Get token IDs       | `output.ids`                                                | `Encoding.ids enc`                                               |
 | Get tokens          | `output.tokens`                                             | `Encoding.tokens enc`                                            |
