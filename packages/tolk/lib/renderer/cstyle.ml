@@ -680,16 +680,19 @@ let create_non_native_float_pats ?(casting = true) dts =
             else Some (cast (cast (m "y") Dtype.Float32) (dtype x)));
       ])
 
+(* bfloat16 is float32's top 16 bits, so a narrowing rounds the low 16 away, to
+   nearest with ties to even. A carry past the fraction moves the exponent, as
+   it must. A NaN sets its quiet bit first, since the bits that made it a NaN
+   may be among those dropped. *)
 let cast_float_to_bf16 x =
-  let x = bitcast x Dtype.Uint32 in
-  let x =
+  let bits = bitcast x Dtype.Uint32 in
+  let rounded =
     O.(
-      where
-        (-x land int 0x7f800000 <> int 0)
-        (x + ((x lsr int 16) land int 1) + int 0x7fff)
-        (where (x land int 0xffff <> int 0) (x lor int 0x10000) x))
+      where (x <> x)
+        (bits lor int 0x400000)
+        (bits + ((bits lsr int 16) land int 1) + int 0x7fff))
   in
-  bitcast (cast O.(x lsr int 16) Dtype.Uint16) Dtype.Bfloat16
+  bitcast (cast O.(rounded lsr int 16) Dtype.Uint16) Dtype.Bfloat16
 
 (* manual bfloat16 casting patterns, which need no compiler intrinsics *)
 let pm_manual_bf16_cast =
@@ -2272,6 +2275,12 @@ let hip_lang arch =
     string_rewrite = rewrite;
   }
 
+(* LLVM folds a float32 converted exactly from an integer and narrowed to
+   bfloat16 into one conversion from the integer, through whatever float
+   operations lie between them, and narrows a [zext] of an [i1], and an [or] or
+   [and] of such [zext]s, to the [i1]. AMD's backend selects no conversion to
+   bfloat16 from an [i1], and the compiler aborts. A conversion to or from
+   bfloat16 is written on its bits, which leaves LLVM none to fold. *)
 let hip_extra_matcher arch =
   Pattern_matcher.concat
     ([
@@ -2279,6 +2288,7 @@ let hip_extra_matcher arch =
        pm_wrap_signed;
        pm_defined_div_shift;
        create_non_native_float_pats (Dtype.Bfloat16 :: Dtype.fp8s);
+       pm_manual_bf16_cast;
      ]
     @
     if amd_fp8s arch = [] then []

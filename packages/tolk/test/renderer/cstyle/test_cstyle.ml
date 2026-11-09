@@ -633,6 +633,200 @@ let bf16_truncation =
            compiles_its_truncation;
     ]
 
+(* bfloat16 on AMD
+
+   LLVM folds a float32 converted from an integer and narrowed to bfloat16 into
+   one conversion from the integer, which AMD's backend cannot select for an
+   [i1], and the compiler aborts. These kernels hold no conversion to or from
+   bfloat16 for LLVM to fold, and their values are IEEE's. *)
+
+let hip_for arch = renderer_for (target "AMD" "HIP" arch)
+
+let through_hip ?(arch = "gfx1201") sink =
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() sink
+    (After_sources (hip_for arch).extra_matcher)
+
+(* The kernel storing in slot 0, of [to_], [f] of each element of slot 1, of
+   [from]. *)
+let converting from to_ n f =
+  let r = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let at slot dt = Ops.index (Shape.param ~shape:[ Int n ] slot dt) [ r ] in
+  let v = f (Ops.load (at 1 from) []) in
+  Ops.sink [ Ops.end_ (Ops.store (at 0 to_) v) [ r ] ]
+
+let directly x = Ops.cast x Bfloat16
+let through_float32 x = directly (Ops.cast x Float32)
+let through_narrow x = directly (Decomp_dtype.narrow x Float32)
+let as_float32 x = Ops.cast x Float32
+let as_int32 x = Ops.cast x Int32
+
+let bf16_conversions sink =
+  let is_bf16 u = Dtype.equal (Ops.dtype u) Bfloat16 in
+  List.filter
+    (fun u -> Op.equal (Ops.op u) Cast && (is_bf16 u || is_bf16 (Ops.nth u 0)))
+    (Ops.toposort ~calls:Enter sink)
+
+let conversions =
+  [
+    ("a bool directly", Dtype.Bool, Dtype.Bfloat16, directly);
+    ("a bool through a float32", Bool, Bfloat16, through_float32);
+    ("a uint8 through a float32", Uint8, Bfloat16, through_float32);
+    ("an int32 through narrow", Int32, Bfloat16, through_narrow);
+    ("a float32", Float32, Bfloat16, directly);
+    ("a bfloat16 to float32", Bfloat16, Float32, as_float32);
+    ("a bfloat16 to int32", Bfloat16, Int32, as_int32);
+  ]
+
+let on_bits =
+  List.concat_map
+    (fun arch -> List.map (fun c -> (arch, c)) conversions)
+    [ "gfx1100"; "gfx1201"; "gfx942"; "gfx950" ]
+
+let leaves_no_conversion (arch, (_, from, to_, f)) =
+  let rewritten = through_hip ~arch (converting from to_ 2 f) in
+  equal ~msg:"conversions of bfloat16" int 0
+    (List.length (bf16_conversions rewritten))
+
+let pow2 k = Bigint.shift_left Bigint.one k
+let bf16_precision = 8
+
+(* The significant bits of the positive [m]. *)
+let bit_length m =
+  let rec at n = if Bigint.compare (pow2 n) m > 0 then n else at (n + 1) in
+  at 0
+
+(* The integer [v] rounded once to bfloat16: to [bf16_precision] significant
+   bits, to nearest with ties to even. No integer reaches its greatest finite
+   value. *)
+let exact_bf16 v =
+  let m = Bigint.abs v in
+  let s = max 0 (bit_length m - bf16_precision) in
+  let unit = pow2 s in
+  let q = Bigint.div m unit and r = Bigint.rem m unit in
+  let twice = Bigint.compare (Bigint.add r r) unit in
+  let odd = not (Bigint.divisible q (Bigint.of_int 2)) in
+  let q = if twice > 0 || (twice = 0 && odd) then Bigint.succ q else q in
+  let x = Float.ldexp (Bigint.to_float q) s in
+  if Bigint.sign v < 0 then -.x else x
+
+(* An integer type's bounds and their neighbours, and at each exponent
+   bfloat16's ties of both signs, with their neighbours: past 24 bits a float32
+   rounds a neighbour to the tie, which a cast that rounds twice gets wrong. *)
+let bf16_inputs src =
+  let w = Dtype.bitsize src and signed = Dtype.mem src Dtype.sints in
+  let top = if signed then w - 1 else w in
+  let lo = if signed then Bigint.neg (pow2 top) else Bigint.zero in
+  let hi = pow2 top in
+  let around v = [ Bigint.pred v; v; Bigint.succ v ] in
+  let ties e =
+    let tie = Bigint.add (pow2 e) (pow2 (e - bf16_precision)) in
+    around tie @ around (Bigint.add tie (pow2 (e - bf16_precision + 1)))
+  in
+  let positive =
+    List.concat_map ties
+      (List.init (max 0 (top - bf16_precision)) (( + ) bf16_precision))
+  in
+  around lo @ around (Bigint.pred hi)
+  @ [ Bigint.zero; Bigint.one; Bigint.neg Bigint.one ]
+  @ positive @ List.map Bigint.neg positive
+  |> List.filter (fun v -> Bigint.compare v lo >= 0 && Bigint.compare v hi < 0)
+
+(* What slot 0 of [k] holds, given slot 1's [inputs]. *)
+let written_by k inputs =
+  Interpreter.writes ~buffers:[ (1, Array.of_list inputs) ] k
+  |> List.filter_map (fun (slot, _, v) -> if slot = 0 then Some v else None)
+
+let integers_round_once src =
+  let inputs = bf16_inputs src in
+  let elements = List.map (fun v -> `Int v) inputs in
+  let want = List.map (fun v -> `Float (exact_bf16 v)) inputs in
+  List.iter
+    (fun (name, route) ->
+      let k = converting src Bfloat16 (List.length inputs) route in
+      equal ~msg:name (list Dtypes.value) want
+        (written_by (through_hip k) elements))
+    [ ("directly", directly); ("through narrow", through_narrow) ]
+
+let bools_are_exact () =
+  List.iter
+    (fun (name, route) ->
+      let k = converting Bool Bfloat16 2 route in
+      equal ~msg:name (list Dtypes.value)
+        [ `Float 0.; `Float 1. ]
+        (written_by (through_hip k) [ `Bool false; `Bool true ]))
+    [ ("directly", directly); ("through a float32", through_float32) ]
+
+let f32_of_bits b = Dtype.bitcast Uint32 Float32 (`Int (Bigint.of_int b))
+let bf16_of_bits b = Dtype.bitcast Uint16 Bfloat16 (`Int (Bigint.of_int b))
+
+let is_nan_value = function `Float x -> Float.is_nan x | _ -> false
+
+let nan_or_value v =
+  if is_nan_value v then "NaN"
+  else Format.asprintf "%a" (Testable.pp Dtypes.value) v
+
+(* Two values agree bit for bit, or are both NaN, whose bits nothing fixes. *)
+let same_float dt want got =
+  if is_nan_value want then equal string "NaN" (nan_or_value got)
+  else
+    let bits = Dtype.bitcast dt (if dt = Float32 then Uint32 else Uint16) in
+    equal Dtypes.value (bits want) (bits got)
+
+(* A float32 with bits [b] narrowed: bfloat16 is float32's top 16 bits, so the
+   low 16 bits round away, to nearest with ties to even. A NaN stays a NaN. *)
+let narrowed_bits b =
+  let q = b lsr 16 and low = b land 0xffff in
+  if low > 0x8000 || (low = 0x8000 && q land 1 = 1) then q + 1 else q
+
+let float32_codes =
+  [
+    0; 0x80000000; 1; 0x7fff; 0x8000; 0x8001; 0x18000; 0x28000; 0x3f808000;
+    0x3f818000; 0x3f808001; 0xbf808000; 0xbf818000; 0x7f7f7fff; 0x7f7f8000;
+    0x7f7fffff; 0x7f800000; 0xff800000; 0x7f800001; 0x7fc00000; 0xffc00001;
+  ]
+
+let narrows_float32_codes () =
+  let n = List.length float32_codes in
+  let k = through_hip (converting Float32 Bfloat16 n directly) in
+  let elements = List.map f32_of_bits float32_codes in
+  List.iter2
+    (fun b got ->
+      let exp_ones = b land 0x7f800000 = 0x7f800000 in
+      let nan = exp_ones && b land 0x7fffff <> 0 in
+      let want =
+        if nan then `Float Float.nan else bf16_of_bits (narrowed_bits b)
+      in
+      same_float Bfloat16 want got)
+    float32_codes (written_by k elements)
+
+let bf16_codes =
+  [ 0; 0x8000; 1; 0x7f; 0x80; 0x3f80; 0xbf81; 0x7f7f; 0x7f80; 0xff80; 0x7fc0 ]
+
+(* Widening puts a bfloat16's bits at the top of a float32's, which is the same
+   value. *)
+let widens_bf16_codes () =
+  let n = List.length bf16_codes in
+  let k = through_hip (converting Bfloat16 Float32 n as_float32) in
+  let elements = List.map bf16_of_bits bf16_codes in
+  List.iter2
+    (fun c got -> same_float Float32 (f32_of_bits (c lsl 16)) got)
+    bf16_codes (written_by k elements)
+
+let bfloat16_on_amd =
+  group "bfloat16 on AMD"
+    [
+      cases "leave LLVM no conversion to fold"
+        ~id:(fun (arch, (name, _, _, _)) -> arch ^ " " ^ name)
+        on_bits leaves_no_conversion;
+      cases "an integer rounds once"
+        ~id:(Format.asprintf "%a" Dtype.pp)
+        Dtype.[ Int8; Uint8; Int16; Uint16; Int32; Uint32; Int64; Uint64 ]
+        integers_round_once;
+      test "a bool is exact" bools_are_exact;
+      test "a float32 narrows to its nearest code" narrows_float32_codes;
+      test "a bfloat16 widens to its value" widens_bf16_codes;
+    ]
+
 (* Execution *)
 
 let host = lazy (Cstyle.clang host_target)
@@ -1784,6 +1978,7 @@ let () =
          compilation;
          cuda_binaries;
          bf16_truncation;
+         bfloat16_on_amd;
          execution;
          division_group;
          metal_cores;

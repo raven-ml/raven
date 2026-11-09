@@ -8884,3 +8884,47 @@ reason and its pins.
   later to read reads it before the call`, `› a kernel listed over two
   storages names the later state in either listing`, `› runs of one other
   storage land as listed in an after`.
+
+## D430. Conversions of bfloat16 on their bits, on HIP and with another formula
+
+- **tinygrad:** `renderer/cstyle.py` `HIPRenderer.extra_matcher` holds
+  `create_non_native_float_pats((dtypes.bfloat16, *dtypes.fp8s))` and not
+  `pm_manual_bf16_cast`, so Clang converts between float32 and bfloat16.
+  `renderer/llvmir.py` `LLVMRenderer` holds `pm_manual_bf16_cast` except on
+  gfx950. `cast_float_to_bf16`, which `ClangRenderer`, `MetalRenderer` and
+  `OpenCLRenderer` also use, tests the exponent and the low 16 bits, and folds
+  the zero-class and rounding cases together.
+- **tolk:** `Cstyle.hip_extra_matcher` holds `Cstyle.pm_manual_bf16_cast` on
+  every HIP target, gfx950 included, and `Cstyle.cast_float_to_bf16` is one
+  formula for every renderer: `(x != x) ? bits | 0x400000 : bits + ((bits >>
+  16) & 1) + 0x7fff`, then the top 16 bits.
+- **Differs:** a conversion between float32 and bfloat16 is written on the
+  float32's bits on HIP, and the narrowing's formula is another one on every
+  target. The value is the same as tinygrad's where tinygrad's is defined: the
+  low 16 bits round to nearest with ties to even, and a NaN stays a NaN with
+  its sign, its quiet bit set.
+- **Reason:** (b): LLVM's InstCombine folds `fptrunc (uitofp x to float) to
+  bfloat` into `uitofp x to bfloat` where the first conversion is exact,
+  through a negation, an absolute value, a truncation, a selection or a phi,
+  and narrows a `zext` of an `i1`, and an `or` or `and` of such `zext`s, to the
+  `i1`. AMD's backend selects no conversion to bfloat16 from an `i1`, and comgr
+  aborts with "Cannot select ... bf16 = uint_to_fp". rune's
+  `Lower_arith.store_real` casts a boolean array to bfloat16 through float32,
+  so `Nx.cast Nx.bfloat16` of one fails to compile on gfx1201 (`test_jit_gpu`'s
+  integer casts). clang 19 reproduces the abort on gfx1100, gfx1201 and gfx942,
+  and only for an `i1`: an 8- or 16-bit source compiles. The `i1` comes from
+  LLVM's own analysis, so `(int)a | (int)b` of two comparisons aborts though
+  `Ops.vmin` and `Ops.vmax` do not bound it, and no rule that looks only at a
+  conversion's source or at the float operations next to it covers every case;
+  a rule that walked a whole kernel's slice would, at the price of the walk.
+  gfx950's conversion instructions cover `fptrunc` only, and the abort is keyed
+  on the integer source (`SITargetLowering`, LLVM 20.1.8), so it most likely
+  remains there; gfx950 is unverified, clang 19 having no such target. The
+  formula is LLVM's own expansion of a narrowing to bfloat16, which it replaces
+  because on gfx1201, in clang 19, tinygrad's takes 8 instructions a lane more
+  than `fptrunc` and this one 3 more. The speed on a workload is to be measured
+  on the R9700, and on fudge's host at the next re-record.
+- **Pinned by:** `Tolk.Cstyle › bfloat16 on AMD › leave LLVM no conversion to
+  fold`, `› an integer rounds once`, `› a bool is exact`, `› a float32 narrows
+  to its nearest code`, `› a bfloat16 widens to its value`; the `.tolk` files
+  that name D430.

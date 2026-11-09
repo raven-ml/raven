@@ -1106,6 +1106,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A cast of a boolean to `bfloat16` compiles on AMD GPUs, where comgr aborted
+  with "Cannot select ... bf16 = uint_to_fp". `Cstyle.hip` converts to and from
+  `bfloat16` on the bits.
 - A loop's call reads a fixed run of storage it writes as each trip starts:
   `Schedule` made the read once, before the loop, and `end_ (call [row r; row 1])`
   read row 1 as it was. Runs off their parameter's start are copied each trip; a
