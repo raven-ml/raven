@@ -7508,9 +7508,11 @@ staged rows is the stated cost.
   lifted bound holds the condition, and rewriting the bound inside an arm
   would fork a second loop of the range's identity.
 - **Reason:** (d) rune's routed product, whose blocks past the groups' hold
-  only padding rows that no row reads: kaun's
-  `GptOss/experts-at-prefill-512`, 3.78-3.80 ms without the rewrite and
-  3.60-3.76 ms with it; and the tolk bench's
+  only padding rows that no row reads. Measured on the kernels as they now
+  stand, minima of four interleaved rounds: kaun's
+  `GptOss/experts-at-prefill-512`, 3.29 ms without the rewrite and 2.80 ms
+  with it, and `GptOss/prefill-512` 133.5 and 121.7 ms; these end-to-end rows
+  are what earn its code. And the tolk bench's
   `gated/bf16-2048-5-of-16-blocks-off`, a 2048-cubed bfloat16 product on a
   staged tensor core whose gate leaves 5 of its 16 blocks of 128 rows
   without a value, 119.5-120.0 µs to 82.8-83.5 µs, and
