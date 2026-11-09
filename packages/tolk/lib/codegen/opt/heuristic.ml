@@ -649,6 +649,10 @@ let columns_layout (g, k, across, wanted) =
    columns. *)
 let group_threads = 16
 
+(* The longest reduce axis that [unroll] unrolls whole, which no group
+   pads. *)
+let unroll_whole = 32
+
 let group k =
   let loaded k =
     let stored = stored_addresses k in
@@ -661,12 +665,34 @@ let group k =
   let reduce_axes k =
     List.filteri (fun i _ -> i < 3) (K.axes_of ~reduce:true k [ Weak ])
   in
-  (* The axis the group takes, split. *)
+  (* The axis the group takes, split: of the axes a load reads at unit stride,
+     then of the others, the first that splits by 16, else the first longer
+     than [unroll_whole] padded to a multiple of 16 by its reduction's
+     identity. The maximum of 128 runs of 1571, a prime, took 122 us in one
+     workgroup of 32 threads looping 1571 times, and 8 us padded to 1584 in
+     128 workgroups of 16. A pad is tried on a copy, since one whose split is
+     refused would leave the axis padded and not grouped. *)
   let grouped k =
     let first, rest = List.partition (unit k) (reduce_axes k) in
-    List.find_opt
-      (fun axis -> try_split k axis group_threads Opt.Local)
-      (first @ rest)
+    let split k axis = try_split k axis group_threads Opt.Local in
+    let padded k axis =
+      (match known_size (shape_at k axis) with
+        | Some n -> Bigint.(gt n (of_int unroll_whole))
+        | None -> false)
+      && Result.is_ok
+           (K.apply_opt k (Opt.Padto { axis; amount = group_threads }))
+      && split k axis
+    in
+    let among axes =
+      match List.find_opt (split k) axes with
+      | Some axis -> Some axis
+      | None ->
+          List.find_opt (fun axis -> padded (K.copy k) axis) axes
+          |> Option.map (fun axis ->
+                 ignore (padded k axis);
+                 axis)
+    in
+    match among first with Some axis -> Some axis | None -> among rest
   in
   (* An output axis whose split leaves the group one, tried on a copy. *)
   let across axis =
@@ -837,7 +863,7 @@ let unroll k =
     let at_most n x = Bigint.(leq x (of_int n)) in
     let fits axis n = fits ~unroll:(axis, n) k in
     let axis = last (unrollable ()) in
-    if at_most 32 s then
+    if at_most unroll_whole s then
       begin if fits axis 0 && try_split k axis 0 Opt.Upcast then
         (* if it's small, upcast a second reduce dimension too *)
         match unrollable () with

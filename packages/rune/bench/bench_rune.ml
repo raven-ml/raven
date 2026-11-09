@@ -1737,6 +1737,21 @@ let gpu_rows g =
          or consecutive columns. *)
       on_gpu g "sum-rows-float32-2048x8192" (sum_at [| 2048; 8192 |] 1);
       on_gpu g "sum-columns-float32-16384x2048" (sum_at [| 16384; 2048 |] 0);
+      (* The position of the greatest of gpt-oss's 201088 bfloat16 logits, a
+         greedy decode step's last call: two reductions, each split into 128
+         runs of 1571, a prime, that a workgroup's threads read together. *)
+      on_gpu g "argmax-bfloat16-201088"
+        {
+          at =
+            (fun at ->
+              let x =
+                Nx.place at
+                  (Nx.cast Nx.bfloat16
+                     (Nx.Rng.uniform ~key:(Nx.Rng.key 57) f32 [| 201088 |]))
+              in
+              let f = Rune.jit' (Nx.argmax ~axis:0) in
+              fun () -> ignore (synced (f x)));
+        };
       (* Running sums: rows of 400 and of 1024, whose time is mostly one
          launch per stage, and long rows of 50500. *)
       on_gpu g "cumsum-float32-100x400" (cumsum_at f32 [| 100; 400 |]);

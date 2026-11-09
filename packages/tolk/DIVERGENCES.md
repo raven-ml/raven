@@ -9371,3 +9371,45 @@ reason and its pins.
   the program is.
 - **Pinned by:** the Heuristic suite's `rows_codes_{metal,cuda,amd}`,
   `q8_0_partial_{metal,cuda,amd}`; rune's `Jit_gpu › quantised products`.
+
+## D467. A group pads a long reduce axis that 16 does not divide
+
+- **tinygrad:** `codegen/opt/heuristic.py` (`hand_coded_optimizations`'
+  grouping: the first of the first three reduce axes that splits by 16; none
+  that 16 divides, no group); `codegen/opt/postrange.py` (`PADTO`, which only
+  `BEAM` and the tensor cores apply).
+- **tolk:** `Heuristic.group` and `Heuristic.unroll_whole`.
+- **Differs:** of the first three reduce axes, those a load reads at unit
+  stride first (D357), then the others, the group takes the first that splits
+  by 16, else the first longer than 32 padded to a multiple of 16 by `PADTO`,
+  its reduction's identity in the padded steps and its loads gated. So a
+  unit-stride axis is padded rather than a strided one that 16 divides
+  grouped. Axes of 32 or less are left to `unroll`, which unrolls them whole.
+  The pad is tried on a copy and kept only where the group applies. An extreme
+  or its position takes the same bits; a sum's order changes with the threads'
+  parts, as any group's does. As with any group, no other split follows, so a
+  second reduce axis of 32 or less that `unroll` would have unrolled stays a
+  loop; no such kernel is measured. tinygrad leaves such a reduction to few
+  threads that loop over the whole axis: `Prepare.split_reduceop` splits
+  gpt-oss's 201088 logits, 2^7 x 1571 with 1571 prime, into 128 runs of 1571,
+  one workgroup of 32 threads.
+- **Reason:** (d): gpt-oss-20b's greedy decode step (`Layer_loop.greedy`),
+  whose argmax over the vocabulary is two such reductions. On fudge's RTX 5000
+  Ada, nsys, each took 122 us (bfloat16 logits) in one workgroup and takes 8.1
+  us in 128 workgroups of 16 threads over 99 steps; the step's kernel span
+  went from 9.42 to 9.21 ms, one run each under load. rune's row
+  `Cuda/argmax-bfloat16-201088` took 272 us and takes 29.5 us, one interleaved
+  pair under load. Vocabularies of 151936 (2^7 x 1187) and 128256 (2^8 x 501)
+  split the same way. AMD and Metal take the rule untimed.
+- **Pinned by:** the Heuristic suite's `max_vocab_{metal,cuda,amd}`,
+  `sum_prime_{metal,cuda,amd}`, `sum_cols_prime_{metal,cuda,amd}` (16 threads
+  first across the columns), `sum_33_{metal,cuda,amd}` (the shortest axis
+  padded) and `sum_strided_prime_{metal,cuda,amd}` (a unit-stride axis padded
+  before a strided one that 16 divides), and `a group's fastest threads read
+  at unit stride where a load reads a reduce or output axis so` over them;
+  `sum_17` and `matmul_half_ragged`, whose axes of 32 or less stay unrolled;
+  rune's `Jit_gpu › an argmax or argmin over a length 16 does not divide is
+  nx's position` and `› a sum and a product over a length 16 does not divide
+  are exact`; rune's bench row `Cuda/argmax-bfloat16-201088` (baseline to
+  record) and kaun's `GptOss/decode-step-cache-1024` and
+  `GptOss/decode-step-Q8_0-cache-1024`, on fudge.

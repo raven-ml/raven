@@ -110,6 +110,16 @@ KERNELS = {
     "sum_two_axes": lambda: last(empty(16, 5, 7, 32).sum((1, 3))),
     "outer_add": lambda: last(empty(4, 1) + empty(1, 256)),
     "max_rows": lambda: last(empty(2048, 16).max(1)),
+    # few outputs over a run that 16 does not divide: the first kernel of the split maximum of gpt-oss's 201088 logits, 128 runs
+    # of 1571, a prime, and 64 sums of 1571
+    "max_vocab": lambda: kernels(empty(201088, dtype=dtypes.bfloat16).max())[0],
+    "sum_prime": lambda: last(empty(64, 1571).sum(1)),
+    # 64 sums of columns over 1571 rows, whose threads first take consecutive columns
+    "sum_cols_prime": lambda: last(empty(1571, 64).sum(0)),
+    # just past the length a reduce is unrolled whole, and a sum over an axis 16 divides, read far apart, and a prime one read
+    # at unit stride
+    "sum_33": lambda: last(empty(512, 33).sum(1)),
+    "sum_strided_prime": lambda: last(empty(64, 8, 257).sum((0, 2))),
     # a sum over a batch and a horizon, neither read at unit stride, of a value one operand reads along an output axis, as a
     # readout's gradient sums, one kernel: grouping its batch from the top made tinygrad's r_3_256_16_64_64
     "readout": lambda: readout(),

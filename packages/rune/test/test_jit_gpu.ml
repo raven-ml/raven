@@ -16,7 +16,9 @@
    bound against a float64 reference and gives +0 for a sum of zeros, a sum
    of a contraction's result holds its bound, exp
    holds its bound in ulps of the correctly rounded result, and a range
-   gather and its gradient compile to eager's bits. It skips without a GPU,
+   gather and its gradient compile to eager's bits, and an argmax or argmin
+   over a length 16 does not divide gives nx's position, a sum and a product
+   their exact values. It skips without a GPU,
    or without the compiler the GPU's kernels need. *)
 
 open Windtrap
@@ -227,6 +229,101 @@ let assembly c =
   if Nx.Dtype.bits dt = 64 && Nx.Dtype.is Float dt then assume (has_float64 d);
   if Nx.Dtype.equal dt Nx.complex128 then assume (has_float64 d);
   Assemblies.law s c
+
+(* The position of a vector's greatest element, compiled, at lengths 16 does
+   not divide: under 32768 one reduction, above it one that scheduling splits
+   in two, 32896 into 128 runs of 257 and gpt-oss's 201088 into 128 of 1571.
+   Every value is exact in bfloat16, the greatest negative in some cases. The
+   position is nx.mli's: the first greatest, the first NaN where there is
+   one, [+0.] above [-0.]; argmin's of the negated values is the same. *)
+type peak = First | Last | Tie | Nan | Zeros | Flat | Negative | Infinite
+
+let peak_name = function
+  | First -> "first"
+  | Last -> "last"
+  | Tie -> "a tie"
+  | Nan -> "NaN"
+  | Zeros -> "-0 and +0"
+  | Flat -> "all equal"
+  | Negative -> "negative"
+  | Infinite -> "all -inf"
+
+type extreme = Extreme : int * (float, 's) Nx.dtype * peak -> extreme
+
+let extremes =
+  List.concat_map
+    (fun n ->
+      List.concat_map
+        (fun peak ->
+          [ Extreme (n, Nx.float32, peak); Extreme (n, Nx.bfloat16, peak) ])
+        [ First; Last; Tie; Nan; Zeros; Flat; Negative; Infinite ])
+    [ 33; 47; 1571; 4099; 128 * 257; 151936; 201088 ]
+
+(* The values of [peak] at length [n], below 0 but those it sets, and the
+   position of their greatest. *)
+let peak_values n peak =
+  let a =
+    Array.init n (fun i -> -.Float.of_int ((i * 31 mod 97) + 1) /. 128.)
+  in
+  let position =
+    match peak with
+    | First ->
+        a.(0) <- 1.;
+        0
+    | Last ->
+        a.(n - 1) <- 1.;
+        n - 1
+    | Tie ->
+        a.(n / 3) <- 1.;
+        a.(n - 1) <- 1.;
+        n / 3
+    | Nan ->
+        a.(n / 2) <- 1.;
+        a.(n - 2) <- Float.nan;
+        a.(n - 1) <- Float.nan;
+        n - 2
+    | Zeros ->
+        Array.fill a 0 n (-0.);
+        a.(n - 1) <- 0.;
+        n - 1
+    | Flat ->
+        Array.fill a 0 n 0.5;
+        0
+    | Negative ->
+        a.(n - 1) <- -1. /. 256.;
+        n - 1
+    | Infinite ->
+        Array.fill a 0 n Float.neg_infinity;
+        0
+  in
+  (a, position)
+
+let argmax_extreme (Extreme (n, dt, peak)) =
+  let _, (module S) = on_gpu () in
+  let a, position = peak_values n peak in
+  let x = Nx.cast dt (Nx.create Nx.float32 [| n |] a) in
+  let x = Nx.place S.on x in
+  let greatest = Rune.jit' (Nx.argmax ~axis:0) x in
+  equal ~msg:"argmax" Testable.int64 (Int64.of_int position)
+    (Nx.item [] greatest);
+  (* Negated, the least is where the greatest was: [-0.] below [+0.]. *)
+  let least = Rune.jit' (fun x -> Nx.argmin ~axis:0 (Nx.neg x)) x in
+  equal ~msg:"argmin of the negation" Testable.int64 (Int64.of_int position)
+    (Nx.item [] least)
+
+(* A float32 sum and product over the same lengths, every term exact: [n]
+   ones sum to [n], and ones with a [-1.] last multiply to [-1.]. *)
+let folds n =
+  let _, (module S) = on_gpu () in
+  let ones = Nx.place S.on (Nx.ones Nx.float32 [| n |]) in
+  let signed =
+    Nx.place S.on
+      (Nx.init Nx.float32 [| n |] (fun i -> if i.(0) = n - 1 then -1. else 1.))
+  in
+  let sum = Rune.jit' (Nx.sum ~axes:[ 0 ]) ones in
+  equal ~msg:"sum" Testable.float_exact (Float.of_int n) (Nx.item [] sum);
+  let prod = Rune.jit' (Nx.prod ~axes:[ 0 ]) signed in
+  equal ~msg:"product" Testable.float_exact (-1.) (Nx.item [] prod)
 
 (* A stack of 64 rows of 64, each computed on the GPU, compiles to the host's
    eager bits. Doubling is exact, a [-0.] kept. *)
@@ -1644,6 +1741,17 @@ let () =
                (Gen.with_pp Prefixes.pp Prefixes.gen)
                prefixes;
            ];
+         Windtrap.cases
+           "an argmax or argmin over a length 16 does not divide is nx's \
+            position"
+           ~id:(fun (Extreme (n, dt, peak)) ->
+             Printf.sprintf "%d %s, %s" n (Nx.Dtype.name dt) (peak_name peak))
+           extremes argmax_extreme;
+         Windtrap.cases
+           "a sum and a product over a length 16 does not divide are exact"
+           ~id:string_of_int
+           [ 33; 47; 1571; 4099; 128 * 257; 151936; 201088 ]
+           folds;
          group "assemblies"
            [
              test "a stack of computed rows compiles to eager's bits"

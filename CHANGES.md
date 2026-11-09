@@ -1168,6 +1168,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On a GPU, a compiled reduction to few outputs over an axis longer than 32
+  that 16 does not divide is padded and shared by a workgroup's threads.
+  `Nx.argmax` over gpt-oss's 201088 logits under `Rune.jit` took 272 us in one
+  workgroup; it takes 30 us.
 - Tensor cores are tried on a kernel of any number of reduce axes, as
   `TC_OPT=1` allowed; `TC_OPT` keeps only padding. gpt-oss's attention out
   projection now runs on them. On AMD and Metal, unmeasured.

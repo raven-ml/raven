@@ -2132,6 +2132,7 @@ let unit_in k r =
     (loads k)
 
 let divides_16 r = Bigint.(equal (rem (size r) (of_int 16)) zero)
+let long_ r = Bigint.(gt (size r) (of_int 32))
 
 (* The fastest thread of a workgroup: of its thread ranges, a warp's, then the
    first made. *)
@@ -2149,9 +2150,10 @@ let fastest o =
   | [] -> None
 
 (* The GPU cases whose kernel groups a reduce and a load reads at unit stride
-   one of the first three reduce axes that 16 divides, or an output axis that 16
-   divides. None of the recorded cases has an output axis whose split leaves no
-   group, where the group's threads read as the kernel allows. *)
+   one of the first three reduce axes that 16 divides or that is longer than
+   32, which the group pads, or an output axis that 16 divides. None of
+   the recorded cases has an output axis whose split leaves no group, where the
+   group's threads read as the kernel allows. *)
 let grouped_cases =
   List.filter
     (fun (_, k, o) ->
@@ -2160,7 +2162,8 @@ let grouped_cases =
       in
       let outputs = ranges_at k ~reduce:false [ Global; Weak ] in
       K.group_for_reduces o > 0
-      && List.exists (fun r -> divides_16 r && unit_in k r) (reduce @ outputs))
+      && (List.exists (fun r -> divides_16 r && unit_in k r) outputs
+         || List.exists (fun r -> (divides_16 r || long_ r) && unit_in k r) reduce))
     gpu_cases
 
 let fastest_threads_coalesce =
