@@ -76,7 +76,7 @@
     before the windows, which are a view of the copy, an axis the operand
     broadcasts and the pad leaves alone held at one element. A pad that
     fits no operand of its load's shape, or a padded shape other than the
-    loop's, is refused with [Shape_mismatch] before the copy is made. *)
+    loop's, is refused before the copy is made. *)
 
 (** {1:contractions Contractions}
 
@@ -167,16 +167,10 @@
     reduction or a scan of an output has the bits of the output mapped into
     an array, then reduced or scanned. [reduce] computes several such
     reductions of one loop, each one's bits alone, every destination checked
-    before any is written, any number of them. They answer [Wrong_dtype]
-    where {!Nx_kernel.accepts} is [false] of a reduction and its output's dtype
-    or an [Arg]'s positions are not [int64], and [Shape_mismatch] for
-    destinations other than a reduction's one or two. A destination identical to the operand, or to a program's
-    load, is accepted: that operand or load is then read from a copy the
-    call holds, and the results are those of fresh destinations. They
-    refuse with [Shape_mismatch] what {!Nx_kernel.Shape.padded} and
-    {!Nx_kernel.Shape.reduce} or {!Nx_kernel.Shape.scan} answer [Error]
-    for, a reduction's loads whose shape once loaded is not its [shape],
-    and destinations whose shapes are not the ones they give. *)
+    before any is written, any number of them. A destination identical to
+    the operand, or to a program's load, is accepted: that operand or load
+    is then read from a copy the call holds, and the results are those of
+    fresh destinations. *)
 
 (** {2:sums Sums and products}
 
@@ -248,9 +242,8 @@
 
 (** {1:scatters Gathers and scatters}
 
-    [gather], [gather_ranges] and [scatter] compute every case, at every
-    dtype, and refuse with [Shape_mismatch] operands and destinations whose
-    shapes do not fit. [gather_ranges] walks each lead index's ends once in
+    [gather], [gather_ranges] and [scatter] compute every case that fits, at
+    every dtype. [gather_ranges] walks each lead index's ends once in
     order, and copies each run's rows inside the source's axis as one
     [memcpy] where the source's rows lie one after the other, else as a
     copy of strided elements; it splits the destination among threads at
@@ -287,8 +280,7 @@
 (** {1:sorts_folds Sorts, assemblies and folds}
 
     [sort] and [assemble] compute every dtype, and [fold] every dtype
-    {!Nx_kernel.Prog.Add} takes. The three refuse with [Shape_mismatch]
-    operands and destinations whose shapes do not fit. A fold adds an
+    {!Nx_kernel.Prog.Add} takes. A fold adds an
     index's elements from left to right, in C order of their taps, with no
     [+0] before the first; it stores [+0] at an index no tap reads. A
     narrow float's or a sub-byte dtype's fold rounds each addition to its
@@ -296,8 +288,7 @@
 
 (** {1:numbering Numbering}
 
-    [unique] refuses with [Shape_mismatch] operands and destinations whose
-    shapes do not fit, and declines keys of [2{^40} - 1] rows or more. Its
+    [unique] declines keys of [2{^40} - 1] rows or more. Its
     [k] keys of [w] words each find their number in a hash table of linear
     probing, by a hash that folds each word in by the high and low halves of
     a 128-bit product xored, wyhash's, keyed by secrets. A row of the
@@ -325,16 +316,13 @@
 
 (** {1:transforms Fourier transforms}
 
-    [c2c], [r2c] and [c2r] answer [Wrong_dtype] for dtypes {!Nx_kernel.S}
-    does not take, and compute the others. They refuse with
-    [Shape_mismatch] what {!Nx_kernel.Shape} answers [Error] for and
-    results of other shapes. A transform's result
-    is a function of its operand's values alone, whatever its layout, its
-    batch or the threads, but for a NaN result's sign and payload, which are
-    unspecified. A transform works in host memory the call holds until it
-    returns. On Linux, a line by Bailey's four steps of at least 32 MiB and
-    past the largest cache, from an operand apart from its result and into
-    points that lie side by side there, keeps its points between the steps
+    [c2c], [r2c] and [c2r] compute every case that fits. A transform's
+    result is a function of its operand's values alone, whatever its
+    layout, its batch or the threads, but for a NaN result's sign and
+    payload, which are unspecified. A transform works in host memory the call
+    holds until it returns. On Linux, a line by Bailey's four steps of at least
+    32 MiB and past the largest cache, from an operand apart from its result and
+    into points that lie side by side there, keeps its points between the steps
     in its result in place of that memory. Barring
     underflow and overflow, a transform [ŷ] of [N] points, the product of the
     points along each of [axes], is within [‖ŷ - y‖₂ <= ε u √N ‖x‖₂] of the
@@ -359,12 +347,10 @@
 
     [attention] computes every case of [q], [k] and [v] of float16,
     bfloat16, float32 or float64 in an accumulator, [lse]'s dtype, of
-    float32 or float64 and not narrower. It refuses with [Shape_mismatch] what
-    {!Nx_kernel.Shape.attention} answers [Error] for and destinations of
-    other shapes. Each query row reads its keys in {e blocks} of 64 from
-    key 0, up to its lead index's length, and keeps a maximum [m], a sum
-    [l] and an accumulator [a] of [dv] elements, from [-∞], [+0] and [+0].
-    For each block in which the row has a visible pair:
+    float32 or float64 and not narrower. Each query row reads its keys in
+    {e blocks} of 64 from key 0, up to its lead index's length, and keeps a
+    maximum [m], a sum [l] and an accumulator [a] of [dv] elements, from [-∞],
+    [+0] and [+0]. For each block in which the row has a visible pair:
     - each pair's score is the sum of the [dk] products of the row's and
       the key's elements in the accumulator, added in increasing
       dimension from [+0], each fused into its sum, times the scale
@@ -449,18 +435,15 @@
 (** {1:matrices Matrices}
 
     [cholesky], [lu], [qr], [solve_triangular], [eigh], [svd] and [eig]
-    answer [Wrong_dtype] for dtypes {!Nx_kernel.S} does not take, and
-    compute the others. They refuse with [Shape_mismatch] what
-    {!Nx_kernel.Shape} answers [Error] for and results of other shapes. A
-    matrix's results are a function of its values alone, whatever its
-    batch, its layout or the threads. A destination of [solve_triangular]
-    identical to [a] or [b] is accepted: they are then read from copies the
-    call holds, and the results are those of a fresh destination. With [γ]
-    as {!Nx_kernel.section-bounds} defines it, [ε(k) = k η], [u] the
-    dtype's unit roundoff and [η] its least positive subnormal (2{^-149} or
-    2{^-1074}), [k] doubled on complex dtypes, and [|·|] taken elementwise,
-    the bounds below hold. Their [ε] terms bound what rounding below the
-    least normal number adds.
+    compute every case that fits. A matrix's results are a function of its
+    values alone, whatever its batch, its layout or the threads. A destination
+    of [solve_triangular] identical to [a] or [b] is accepted: they are then
+    read from copies the call holds, and the results are those of a fresh
+    destination. With [γ] as {!Nx_kernel.section-bounds} defines it, [ε(k) = k
+    η], [u] the dtype's unit roundoff and [η] its least positive subnormal
+    (2{^-149} or 2{^-1074}), [k] doubled on complex dtypes, and [|·|] taken
+    elementwise, the bounds below hold. Their [ε] terms bound what rounding
+    below the least normal number adds.
     - [cholesky]: [L Lᴴ = a + Δ] with
       [|Δ_ij| <= γ(n + 1) (|L| |Lᴴ|)_ij + ε(n + 1) (1 + L_jj)]. The
       [Upper] factor is the [Lower] one's conjugate transpose, bit for bit.

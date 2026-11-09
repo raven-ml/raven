@@ -903,10 +903,10 @@ let misfits =
      let+ dsts = array ~size:(constant (max 0 count)) (Elements.near y) in
      { m with dsts })
 
-(* nx.cpu computes what Nx_kernel.Shape fits and refuses the rest with
-   Shape_mismatch, writing nothing: a padding Shape refuses, an axis past
-   the rank or out of order, an extreme of no term, a destination of
-   another shape, one too few or one too many. *)
+(* nx.cpu computes what Nx_kernel.Shape fits; the rest does not fit, and
+   is not Done and writes nothing outside its destinations: a padding
+   Shape refuses, an axis past the rank or out of order, an extreme of no
+   term, a destination of another shape, one too few or one too many. *)
 let law_refusals (b : Support.backend) m =
   let module K = (val b.kernels) in
   let fit =
@@ -939,84 +939,69 @@ let law_refusals (b : Support.backend) m =
   in
   let dsts =
     Array.mapi
-      (fun i s ->
-        let (D.Any dt as d) = if i < Array.length kinds then kinds.(i) else f32 in
-        let seven = Elements.int_bits d (D.bits dt / 8) 7L in
-        Elements.of_elements d s (Array.make (total s) seven))
+      (fun i s -> ((if i < Array.length kinds then kinds.(i) else f32), s))
       m.dsts
   in
-  let before = Array.map Elements.elements dsts in
   let p = identity f32 in
-  let answer =
-    let dsts = Iarray.of_array dsts in
-    if m.scan then K.scan p ~axis:m.axes.(0) (m.rs.(0), 0) ~dsts [| load |]
-    else
-      K.reduce p
-        ~shape:(Iarray.of_array (loop_shape [| load |]))
-        ~axes:(Iarray.of_array m.axes)
-        (Iarray.map (fun r -> (r, 0)) (Iarray.of_array m.rs))
-        ~dsts [| load |]
-  in
-  equal Elements.answer (if fit then A.Done else A.Shape_mismatch) answer;
-  if not fit then
-    equal ~msg:"untouched" (array (array string)) before
-      (Array.map Elements.elements dsts)
+  Misfit.law ~msg:"a loop" ~what:"a shape" b ~fit dsts (fun g dsts ->
+      let dsts = Iarray.of_array dsts and load = Misfit.load g load in
+      if m.scan then K.scan p ~axis:m.axes.(0) (m.rs.(0), 0) ~dsts [| load |]
+      else
+        K.reduce p
+          ~shape:(Iarray.of_array (loop_shape [| load |]))
+          ~axes:(Iarray.of_array m.axes)
+          (Iarray.map (fun r -> (r, 0)) (Iarray.of_array m.rs))
+          ~dsts [| load |])
 
-(* What nx.cpu answers for a call its contract names: Wrong_dtype for a
-   dtype a reduction does not take or positions other than int64, and
-   Shape_mismatch for a load of another shape than the loop's. *)
+(* Calls that do not fit, by a dtype a reduction does not take, positions
+   other than int64, a carry of another dtype, or a load of another shape
+   than the loop's: each with its misfit's class, its destinations' dtypes
+   and shapes, and the call into them. *)
 let answered (b : Support.backend) =
   let module K = (val b.kernels) in
-  let make dt s = A.Any (A.create Rig.host dt s) in
-  let reduce (A.Any x as a) r dsts =
-    K.reduce (identity (dtype_of a))
-      ~shape:(Iarray.of_array (shape_of a))
-      ~axes:[| 1 |] [| (r, 0) |] ~dsts [| Nx_kernel.Plain x |]
+  let x dt = Nx_kernel.Plain (A.create Rig.host dt [| 2; 3 |]) in
+  let reduce (D.Any dt) r dsts =
+    ( dsts,
+      fun g ds ->
+        K.reduce (identity (D.Any dt)) ~shape:[| 2; 3 |] ~axes:[| 1 |]
+          [| (r, 0) |] ~dsts:(Iarray.of_array ds) [| Misfit.load g (x dt) |] )
   in
-  let scan (A.Any x as a) r dsts =
-    K.scan (identity (dtype_of a)) ~axis:1 (r, 0) ~dsts [| Nx_kernel.Plain x |]
+  let scan (D.Any dt) r dsts =
+    ( dsts,
+      fun g ds ->
+        K.scan (identity (D.Any dt)) ~axis:1 (r, 0) ~dsts:(Iarray.of_array ds)
+          [| Misfit.load g (x dt) |] )
   in
-  let wrong = A.Wrong_dtype in
+  let i32 = D.Any D.Int32 and c64 = D.Any D.Complex64 in
+  let bool = D.Any D.Bool and bit = D.Any D.Bit in
   [
-    ( "a Sum of bool",
-      wrong,
-      fun () -> reduce (make D.Bool [| 2; 3 |]) (Monoid Sum) [| make D.Bool [| 2 |] |] );
-    ( "a Prod of bit",
-      wrong,
-      fun () -> reduce (make D.Bit [| 2; 3 |]) (Monoid Prod) [| make D.Bit [| 2 |] |] );
-    ( "a Moments scan of int32",
-      wrong,
-      fun () ->
-        scan (make D.Int32 [| 2; 3 |]) Moments
-          [| make D.Int32 [| 2; 3 |]; make D.Int32 [| 2; 3 |] |] );
-    ( "a Logsumexp of complex64",
-      wrong,
-      fun () ->
-        reduce (make D.Complex64 [| 2; 3 |]) Logsumexp [| make D.Complex64 [| 2 |] |] );
-    ( "an Arg's positions in int32",
-      wrong,
-      fun () ->
-        reduce (make D.Float32 [| 2; 3 |]) (Arg Max)
-          [| make D.Float32 [| 2 |]; make D.Int32 [| 2 |] |] );
-    ( "a carry of another dtype",
-      wrong,
-      fun () ->
-        let (A.Any x) = make D.Float32 [| 2; 3 |] in
-        K.scan ~carry:(make D.Float64 [| 2; 1 |]) (identity f32) ~axis:1
-          (Monoid Sum, 0) ~dsts:[| make D.Float32 [| 2; 3 |] |]
-          [| Nx_kernel.Plain x |] );
-    ( "a load of another shape than the loop's",
-      A.Shape_mismatch,
-      fun () ->
-        let (A.Any x) = make D.Float32 [| 2; 3 |] in
-        K.reduce (identity f32) ~shape:[| 2; 4 |] ~axes:[| 1 |] [| (Monoid Sum, 0) |]
-          ~dsts:[| make D.Float32 [| 2 |] |] [| Nx_kernel.Plain x |] );
+    ("a Sum of bool", "a dtype", reduce bool (Monoid Sum) [| (bool, [| 2 |]) |]);
+    ("a Prod of bit", "a dtype", reduce bit (Monoid Prod) [| (bit, [| 2 |]) |]);
+    ( "a Moments scan of int32", "a dtype",
+      scan i32 Moments [| (i32, [| 2; 3 |]); (i32, [| 2; 3 |]) |] );
+    ( "a Logsumexp of complex64", "a dtype",
+      reduce c64 Logsumexp [| (c64, [| 2 |]) |] );
+    ( "an Arg's positions in int32", "a dtype",
+      reduce f32 (Arg Max) [| (f32, [| 2 |]); (i32, [| 2 |]) |] );
+    ( "a carry of another dtype", "a dtype",
+      ( [| (f32, [| 2; 3 |]) |],
+        fun g ds ->
+          K.scan
+            ~carry:(A.Any (g.Misfit.g (A.create Rig.host D.Float64 [| 2; 1 |])))
+            (identity f32) ~axis:1 (Monoid Sum, 0) ~dsts:(Iarray.of_array ds)
+            [| Misfit.load g (x D.Float32) |] ) );
+    ( "a load of another shape than the loop's", "a shape",
+      ( [| (f32, [| 2 |]) |],
+        fun g ds ->
+          K.reduce (identity f32) ~shape:[| 2; 4 |] ~axes:[| 1 |]
+            [| (Monoid Sum, 0) |] ~dsts:(Iarray.of_array ds) [| Misfit.load g (x D.Float32) |]
+      ) );
   ]
 
 (* A padded load of 2^50 elements, more than any host's memory, or past
    max_numel, whose loop does not fit its destinations, is refused before
-   the kernel copies it: Shape_mismatch, and the destinations as they
-   were. *)
+   the kernel copies it: not Done, and nothing written outside the
+   destinations. *)
 let test_huge_padding (b : Support.backend) () =
   let module K = (val b.kernels) in
   let x = A.of_array D.Float32 [| 2 |] [| 1.; 2. |] in
@@ -1027,32 +1012,31 @@ let test_huge_padding (b : Support.backend) () =
   let big = 1 lsl 50 in
   let huge = padded big and past = padded (L.max_numel - 1) in
   let twice = P.v ~ins:[| f32 |] [| P.In 0; Op2 (Binary Add, 0, 0) |] ~outs:[| 1 |] in
-  let dst s = A.of_array D.Float32 s (Array.make (Iarray.fold_left ( * ) 1 s) 9.) in
   let refused msg call dsts =
-    equal ~msg Elements.answer A.Shape_mismatch
-      (call (Iarray.map (fun d -> A.Any d) (Iarray.of_array dsts)));
-    Array.iter
-      (fun d ->
-        equal ~msg:(msg ^ ": untouched") (array float_exact)
-          (Array.make (Iarray.fold_left ( * ) 1 (L.shape (A.layout d))) 9.)
-          (A.to_array d))
-      dsts
+    Misfit.check ~msg ~what:"a shape" b
+      (Array.map (fun s -> (f32, s)) dsts)
+      (fun g ds -> call g (Iarray.of_array ds))
   in
   let sum : _ iarray = [| (Nx_kernel.Monoid Sum, 0) |] in
   List.iter
     (fun (name, p) ->
       refused (name ^ ": a reduction into another shape")
-        (fun dsts -> K.reduce p ~shape:[| big + 2 |] ~axes:[| 0 |] sum ~dsts [| huge |])
-        [| dst [| 2 |] |];
+        (fun g dsts ->
+          K.reduce p ~shape:[| big + 2 |] ~axes:[| 0 |] sum ~dsts
+            [| Misfit.load g huge |])
+        [| [| 2 |] |];
       refused (name ^ ": a scan into another shape")
-        (fun dsts -> K.scan p ~axis:0 (Monoid Sum, 0) ~dsts [| huge |])
-        [| dst [| 3 |] |];
+        (fun g dsts ->
+          K.scan p ~axis:0 (Monoid Sum, 0) ~dsts [| Misfit.load g huge |])
+        [| [| 3 |] |];
       refused (name ^ ": a scan past max_numel")
-        (fun dsts -> K.scan p ~axis:0 (Monoid Sum, 0) ~dsts [| past |])
-        [| dst [| 3 |] |];
+        (fun g dsts ->
+          K.scan p ~axis:0 (Monoid Sum, 0) ~dsts [| Misfit.load g past |])
+        [| [| 3 |] |];
       refused (name ^ ": a Moments scan into another shape")
-        (fun dsts -> K.scan p ~axis:0 (Moments, 0) ~dsts [| huge |])
-        [| dst [| 3 |]; dst [| 3 |] |])
+        (fun g dsts ->
+          K.scan p ~axis:0 (Moments, 0) ~dsts [| Misfit.load g huge |])
+        [| [| 3 |]; [| 3 |] |])
     [ ("identity", identity f32); ("a program", twice) ]
 
 (* Carries *)
@@ -4089,15 +4073,16 @@ let refusals (b : Support.backend) =
   group ("refusals, " ^ b.name)
     [
       prop
-        "computes what Nx_kernel.Shape fits and refuses the rest with \
-         Shape_mismatch, writing nothing"
+        "computes what Nx_kernel.Shape fits; the rest is not Done and \
+         writes nothing outside its destinations"
         misfits
         (run (law_refusals b));
-      cases "answers as its contract names"
+      cases
+        "a call of dtypes or shapes that do not fit is not Done and writes \
+         nothing outside its destinations"
         ~id:(fun (n, _, _) -> n)
         (answered b)
-        (fun (_, want, f) ->
-          b.around (fun () -> equal Elements.answer want (f ())));
+        (fun (msg, what, (dsts, call)) -> Misfit.check ~msg ~what b dsts call);
       test
         "refuses a padded load past max_numel or its destinations before \
          copying it"

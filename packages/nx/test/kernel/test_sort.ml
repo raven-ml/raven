@@ -284,12 +284,14 @@ let law_refuses (b : Support.backend) c =
   in
   cover "fits" fit;
   cover "misfits" (not fit);
-  equal answer
-    (if fit then A.Done else A.Shape_mismatch)
-    (K.sort ~axis:c.along ~descending:false
-       ~values:(A.create Rig.host D.Float32 (Iarray.of_array values))
-       ~positions:(A.create Rig.host D.Int64 (Iarray.of_array positions))
-       (A.of_array D.Float32 (Iarray.of_array x) (Array.make (total x) 0.)))
+  let x = A.of_array D.Float32 (Iarray.of_array x) (Array.make (total x) 0.) in
+  Misfit.law ~msg:"a sort" ~what:"a shape" b ~fit
+    [| (D.Any D.Float32, values); (D.Any D.Int64, positions) |]
+    (fun g ds ->
+      K.sort ~axis:c.along ~descending:false
+        ~values:(A.expect D.Float32 ds.(0))
+        ~positions:(A.expect D.Int64 ds.(1))
+        (g.Misfit.g x))
 
 (* Guard pages *)
 
@@ -398,8 +400,10 @@ let cpu (b : Support.backend) =
       prop ~count:4 ~examples:large_examples "large sorts on the job's threads"
         large
         (run (law_large b));
-      prop "refuses what Nx_kernel.Shape refuses and other shapes" misfits
-        (run (law_refuses b));
+      prop
+        "computes what Nx_kernel.Shape fits; another shape is not Done and \
+         writes nothing outside its destinations"
+        misfits (run (law_refuses b));
       prop ~count:300
         "reads and writes no byte past the operand and destinations, \
          whatever pages lie beside them"

@@ -299,12 +299,15 @@ let law_refuses (b : Support.backend) c =
   let fit = want = Ok (Array.map snd c.parts) in
   cover "fits" fit;
   cover "misfits" (not fit);
-  equal answer
-    (if fit then A.Done else A.Shape_mismatch)
-    (K.assemble ~fill:0.
-       ~dst:(A.create Rig.host D.Float32 (Iarray.of_array c.into))
-       (Iarray.of_array
-          (Array.map (fun (r, s) -> (Iarray.of_array r, zeros s)) c.parts)))
+  let pieces =
+    Iarray.of_array
+      (Array.map (fun (r, s) -> (Iarray.of_array r, zeros s)) c.parts)
+  in
+  Misfit.law ~msg:"an assembly" ~what:"a shape" b ~fit
+    [| (D.Any D.Float32, c.into) |]
+    (fun g ds ->
+      K.assemble ~fill:0. ~dst:(A.expect D.Float32 ds.(0))
+        (Iarray.map (fun (r, x) -> (r, g.Misfit.g x)) pieces))
 
 (* Whether no claim holds [b]'s memory: a donation of it is exclusive. *)
 let unclaimed b =
@@ -316,7 +319,7 @@ let test_late_refusals (b : Support.backend) () =
   let module K = (val b.kernels) in
   let n = 3 * A.max_operands in
   let one i : _ iarray = [| { M.start = i; count = 1; step = 1 } |] in
-  let refused ~msg want last =
+  let refused ~msg ?want last =
     let dst = A.create Rig.host D.Float32 [| n |] in
     let xs = Array.init (n - 1) (fun _ -> A.create Rig.host D.Float32 [| 1 |]) in
     let pieces =
@@ -324,15 +327,18 @@ let test_late_refusals (b : Support.backend) () =
         (Array.mapi (fun i x -> (one i, x)) xs)
         [| (one (n - 1), last dst) |]
     in
-    equal ~msg answer want (K.assemble ~fill:0. ~dst (Iarray.of_array pieces));
+    let got = K.assemble ~fill:0. ~dst (Iarray.of_array pieces) in
+    (match want with
+    | Some want -> equal ~msg answer want got
+    | None -> if got = A.Done then failf "%s: a misfit answered Done" msg);
     Array.iter
       (fun x ->
         equal ~msg:(msg ^ ", released") bool true (unclaimed (A.buffer x)))
       (Array.append [| dst |] xs)
   in
-  refused ~msg:"a last piece off its region" A.Shape_mismatch (fun _ ->
+  refused ~msg:"a last piece off its region" (fun _ ->
       A.create Rig.host D.Float32 [| 2 |]);
-  refused ~msg:"a last piece over the destination's bytes" A.Overlapping
+  refused ~msg:"a last piece over the destination's bytes" ~want:A.Overlapping
     (fun dst ->
       A.v D.Float32 (L.v ~offset:1 ~strides:[| 1 |] [| 1 |]) (A.buffer dst))
 
@@ -437,8 +443,10 @@ let cpu (b : Support.backend) =
         "the last piece holding an element wins, the fill elsewhere" cases
         (run (law_reference b));
       test "fills on the job's threads" (fun () -> b.around (test_threads b));
-      prop "refuses what Nx_kernel.Shape refuses and other shapes" misfits
-        (run (law_refuses b));
+      prop
+        "computes what Nx_kernel.Shape fits; another shape is not Done and \
+         writes nothing outside its destination"
+        misfits (run (law_refuses b));
       test "a refusal in a later run of reads leaves no claim" (fun () ->
           b.around (test_late_refusals b));
       prop ~count:300

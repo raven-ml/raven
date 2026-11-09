@@ -2654,6 +2654,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** `Nx_cpu` no longer promises `Wrong_dtype` or
+  `Shape_mismatch` for a call that does not fit, only some refusal.
 - `Nx_kernel.S`'s caller must pass a call that fits; for one that does
   not, a library answers a refusal or `Declined`, never `Done`, touches
   nothing outside its arrays, and chooses which refusal.

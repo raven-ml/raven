@@ -219,40 +219,51 @@ let zeros32 s =
 let zeros64 s =
   A.of_array D.Int64 (Iarray.of_array s) (Array.make (total s) 0L)
 
-(* [got] is Done where [want] is [dst]'s shape, else Shape_mismatch. *)
-let check_fit want dst got =
+(* [call] into a float32 [dst] computes where [want] is [dst]'s shape;
+   otherwise it does not fit, and is not Done and writes nothing outside
+   [dst]. *)
+let check_fit ~msg (b : Support.backend) want dst call =
   let fit = want = Ok dst in
   cover "fits" fit;
   cover "misfits" (not fit);
-  equal answer (if fit then A.Done else A.Shape_mismatch) got
+  Misfit.law ~msg ~what:"a shape" b ~fit [| (D.Any D.Float32, dst) |]
+    (fun g ds -> call g (A.expect D.Float32 ds.(0)))
 
 let law_gather_refuses (b : Support.backend) c =
   let module K = (val b.kernels) in
   let x = c.shapes.(0) and idx = c.shapes.(1) and dst = c.shapes.(2) in
-  check_fit
+  check_fit ~msg:"a gather" b
     (Nx_kernel.Shape.gather ~axis:c.along idx x)
     dst
-    (K.gather ~axis:c.along ~dst:(zeros32 dst) (zeros64 idx) (zeros32 x))
+    (fun g dst ->
+      K.gather ~axis:c.along ~dst (g.Misfit.g (zeros64 idx))
+        (g.Misfit.g (zeros32 x)))
 
 let law_scatter_refuses (b : Support.backend) c =
   let module K = (val b.kernels) in
   let into = c.shapes.(0) and idx = c.shapes.(1) in
   let u = c.shapes.(2) and dst = c.shapes.(3) in
-  check_fit
+  check_fit ~msg:"a scatter" b
     (Nx_kernel.Shape.scatter ~axis:c.along into idx u)
     dst
-    (K.scatter Set ~unique:false ~axis:c.along ~dst:(zeros32 dst)
-       ~into:(zeros32 into) (zeros64 idx) (zeros32 u))
+    (fun g dst ->
+      K.scatter Set ~unique:false ~axis:c.along ~dst
+        ~into:(g.Misfit.g (zeros32 into))
+        (g.Misfit.g (zeros64 idx))
+        (g.Misfit.g (zeros32 u)))
 
-(* An Add of booleans answers Wrong_dtype. *)
+(* An Add of booleans, which Prog.Add does not take, does not fit: not
+   Done, and nothing written outside its destination. *)
 let test_bool_add (b : Support.backend) () =
   let module K = (val b.kernels) in
   let bools = A.of_array D.Bool [| 2 |] [| true; false |] in
-  let bdst = A.create Rig.host D.Bool [| 2 |] in
-  equal ~msg:"an Add of booleans" answer A.Wrong_dtype
-    (K.scatter Add ~unique:false ~axis:0 ~dst:bdst ~into:bools
-       (A.of_array D.Int64 [| 1 |] [| 0L |])
-       (A.of_array D.Bool [| 1 |] [| true |]))
+  Misfit.check ~msg:"an Add of booleans" ~what:"a dtype" b
+    [| (D.Any D.Bool, [| 2 |]) |]
+    (fun g ds ->
+      K.scatter Add ~unique:false ~axis:0 ~dst:(A.expect D.Bool ds.(0))
+        ~into:(g.Misfit.g bools)
+        (g.Misfit.g (A.of_array D.Int64 [| 1 |] [| 0L |]))
+        (g.Misfit.g (A.of_array D.Bool [| 1 |] [| true |])))
 
 (* nx.cpu's own cases *)
 
@@ -984,13 +995,18 @@ let cpu (b : Support.backend) =
           b.around (test_float16_sum b));
       test "a parted float4_e2m1fn Add of 4Mi updates fits 512 MiB" (fun () ->
           b.around (test_parted_memory b));
-      prop "a gather refuses what Nx_kernel.Shape refuses and other shapes"
+      prop
+        "a gather of shapes Nx_kernel.Shape does not fit is not Done and \
+         writes nothing outside dst"
         gather_misfits
         (run (law_gather_refuses b));
-      prop "a scatter refuses what Nx_kernel.Shape refuses and other shapes"
+      prop
+        "a scatter of shapes Nx_kernel.Shape does not fit is not Done and \
+         writes nothing outside dst"
         scatter_misfits
         (run (law_scatter_refuses b));
-      test "refuses an Add of booleans" (fun () -> b.around (test_bool_add b));
+      test "an Add of booleans is not Done and writes nothing outside dst"
+        (fun () -> b.around (test_bool_add b));
       prop ~count:300
         "a gather reads and writes no byte past its operands and dst, \
          whatever pages lie beside them"

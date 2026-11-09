@@ -1002,8 +1002,8 @@ let law_unscalable b (c, sa, sb) =
       equal (array (array float_exact)) before (planes c.out (host dst))
   | r -> failf "contract answered %a" Nx_array_support.pp_answer r
 
-(* nx.cpu answers Shape_mismatch for a scale that does not fit its
-   operand, a [2 × 4] by [4 × 3] product's, and writes nothing: of
+(* A scale that does not fit its operand, a [2 × 4] by [4 × 3] product's,
+   makes a call that is not Done and writes nothing outside dst: of
    another rank, with an extent that does not divide the operand's, or of
    0 along an axis with elements. *)
 let test_scale_misfits (b : Support.backend) () =
@@ -1017,20 +1017,22 @@ let test_scale_misfits (b : Support.backend) () =
     let x = A.of_array D.Uint8 (Iarray.of_array s) (Array.make (total s) 127) in
     Nx_kernel.Exponent (A.expect D.Uint8 (on b (A.Any x)))
   in
-  let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = ) in
   let refused ~msg ?sa ?sb () =
-    let dst = arr [| 2; 3 |] in
-    let before = A.to_array (to64 (host (A.Any dst))) in
     let op x scale : Nx_kernel.operand = { array = A.Any x; scale } in
     List.iter
       (fun acc ->
-        equal ~msg answer A.Shape_mismatch
-          (K.contract ~batch:[||] ~contracting:[| (1, 0) |]
-             ~segments:None ~acc ~dst ~init:None
-             (op (arr [| 2; 4 |]) sa)
-             (op (arr [| 4; 3 |]) sb));
-        equal ~msg:(msg ^ ": untouched") (array float_exact) before
-          (A.to_array (to64 (host (A.Any dst)))))
+        Misfit.check ~msg ~what:"a shape" b
+          [| (D.Any D.Float32, [| 2; 3 |]) |]
+          (fun g ds ->
+            let scale =
+              Option.map (function
+                | Nx_kernel.Exponent x -> Nx_kernel.Exponent (g.Misfit.g x)
+                | Value x -> Value (g.Misfit.g x))
+            in
+            K.contract ~batch:[||] ~contracting:[| (1, 0) |] ~segments:None
+              ~acc ~dst:(A.expect D.Float32 ds.(0)) ~init:None
+              (op (g.Misfit.g (arr [| 2; 4 |])) (scale sa))
+              (op (g.Misfit.g (arr [| 4; 3 |])) (scale sb))))
       D.[ Any Float32; Any Float64 ]
   in
   refused ~msg:"a's scale of rank 1" ~sa:(codes [| 2 |]) ();
@@ -1734,8 +1736,8 @@ let law_others (b : Support.backend) s =
          differ_bits c.acc ~other:"redrawn" (restrict y cut) (restrict y' cut))
        cuts)
 
-(* nx.cpu answers Shape_mismatch for segments that do not fit, and writes
-   nothing: ids of another shape than the batch extents then the cut
+(* Segments that do not fit make a call that is not Done and writes
+   nothing outside dst: ids of another shape than the batch extents then the cut
    axis's, a cut axis in a pair or past its operand's rank, a pair past
    the pairs, groups below 0, a result of another shape than the segmented
    one. No ids' values are refused: any values name their groups. *)
@@ -1753,15 +1755,20 @@ let test_segment_misfits (b : Support.backend) () =
             (A.of_array D.Int64 (Iarray.of_array s)
                (Array.init (total s) Int64.of_int))))
   in
-  let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = ) in
   let refused ~msg ?(batch : _ iarray = [||])
       ?(contracting : _ iarray = [| (1, 0) |]) segments dst a b' =
-    let before = A.to_array (to64 (host (A.Any dst))) in
-    equal ~msg answer A.Shape_mismatch
-      (K.contract ~batch ~contracting ~segments:(Some segments)
-         ~acc:(D.Any D.Float32) ~dst ~init:None (plain a) (plain b'));
-    equal ~msg:(msg ^ ": untouched") (array float_exact) before
-      (A.to_array (to64 (host (A.Any dst))))
+    let s = Iarray.to_array (Nx_array.Layout.shape (A.layout dst)) in
+    Misfit.check ~msg ~what:"a shape" b [| (D.Any D.Float32, s) |]
+      (fun g ds ->
+        let segments =
+          match (segments : _ Nx_kernel.segments) with
+          | Rows r -> Nx_kernel.Rows { r with ids = g.Misfit.g r.ids }
+          | Contracting r ->
+              Nx_kernel.Contracting { r with ids = g.Misfit.g r.ids }
+        in
+        K.contract ~batch ~contracting ~segments:(Some segments)
+          ~acc:(D.Any D.Float32) ~dst:(A.expect D.Float32 ds.(0)) ~init:None
+          (plain (g.Misfit.g a)) (plain (g.Misfit.g b')))
   in
   let rows ?(a_axis = 0) ?(b_axis = 1) ids =
     Nx_kernel.Rows { ids; a_axis; b_axis }
@@ -2045,19 +2052,22 @@ let law_guards (b : Support.backend) g =
   else guarded_product b D.Float32 g
 
 (* nx.cpu under each table the host runs. *)
-(* An [acc] Nx_kernel.accumulates refuses, a narrow float's or a boolean's, is
-   refused with Wrong_dtype: the caller's error, which nx.cpu never declines. *)
+(* An [acc] Nx_kernel.accumulates refuses, a narrow float's or a
+   boolean's, does not fit: not Done, and nothing written outside dst. *)
 let test_acc_refused (b : Support.backend) () =
   let module K = (val b.kernels) in
   let a = A.create Rig.host D.Float32 [| 2; 3 |] in
   let x = A.create Rig.host D.Float32 [| 3; 2 |] in
-  let dst = A.create Rig.host D.Float32 [| 2; 2 |] in
   List.iter
     (fun acc ->
-      equal ~msg:(Format.asprintf "%a" pp_dtype acc) Elements.answer
-        A.Wrong_dtype
-        (K.contract ~batch:[||] ~contracting:[| (1, 0) |]
-           ~segments:None ~acc ~dst ~init:None (plain a) (plain x)))
+      Misfit.check
+        ~msg:(Format.asprintf "an accumulator of %a" pp_dtype acc)
+        ~what:"a dtype" b
+        [| (D.Any D.Float32, [| 2; 2 |]) |]
+        (fun g ds ->
+          K.contract ~batch:[||] ~contracting:[| (1, 0) |] ~segments:None
+            ~acc ~dst:(A.expect D.Float32 ds.(0)) ~init:None
+            (plain (g.Misfit.g a)) (plain (g.Misfit.g x))))
     D.[ Any Float16; Any Bfloat16; Any Bool ]
 
 (* Float32 products either side of each bound of nx.cpu's order: 4 and 5
@@ -2323,7 +2333,7 @@ let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
     [
-      test "refuses an acc a contraction does not compute in" (fun () ->
+      test "an acc a contraction does not compute in is not Done" (fun () ->
           b.around (test_acc_refused b));
       prop
         ~examples:
@@ -2353,7 +2363,7 @@ let cpu (b : Support.backend) =
         "a block-scaled float4 operand has the bits of its elements scaled \
          on the host"
         mx_draws (run (law_mx b));
-      test "refuses a scale that does not fit its operand" (fun () ->
+      test "a scale that does not fit its operand is not Done" (fun () ->
           b.around (test_scale_misfits b));
       prop ~examples:seg_examples
         "each output of a segmented contraction adds its products in the \
@@ -2361,7 +2371,7 @@ let cpu (b : Support.backend) =
         seg_draws (run (law_segments b));
       prop "a group's outputs keep their bits whatever the other indices' ids"
         seg_draws (run (law_others b));
-      test "refuses segments that do not fit" (fun () ->
+      test "segments that do not fit are not Done" (fun () ->
           b.around (test_segment_misfits b));
       test "a row in no group is init as acc holds it, or +0" (fun () ->
           b.around (test_rows_in_none b));

@@ -1027,29 +1027,35 @@ let test_empty () =
   let y = A.create Rig.host D.Float32 [| 2; 0 |] in
   equal answer A.Done (Nx_cpu.c2r ~axes:[| 1 |] ~dst:y x)
 
-let test_refusals () =
-  let c64 s = A.create Rig.host D.Complex64 s
-  and c128 s = A.create Rig.host D.Complex128 s in
-  let f32 s = A.create Rig.host D.Float32 s
-  and f64 s = A.create Rig.host D.Float64 s in
-  equal answer A.Wrong_dtype
-    (Nx_cpu.r2c ~axes:[| 0 |] ~dst:(c128 [| 3 |]) (f32 [| 4 |]));
-  equal answer A.Wrong_dtype
-    (Nx_cpu.c2r ~axes:[| 0 |] ~dst:(f64 [| 4 |]) (c64 [| 3 |]));
-  equal answer A.Shape_mismatch
-    (Nx_cpu.c2c Forward ~axes:[||] ~dst:(c64 [| 4 |]) (c64 [| 4 |]));
-  equal answer A.Shape_mismatch
-    (Nx_cpu.c2c Forward ~axes:[| 1; 0 |] ~dst:(c64 [| 2; 2 |]) (c64 [| 2; 2 |]));
-  equal answer A.Shape_mismatch
-    (Nx_cpu.c2c Forward ~axes:[| 1 |] ~dst:(c64 [| 4 |]) (c64 [| 4 |]));
-  equal answer A.Shape_mismatch
-    (Nx_cpu.c2c Inverse ~axes:[| 0 |] ~dst:(c128 [| 5 |]) (c128 [| 4 |]));
-  equal answer A.Shape_mismatch
-    (Nx_cpu.r2c ~axes:[| 0 |] ~dst:(c64 [| 4 |]) (f32 [| 4 |]));
-  equal answer A.Shape_mismatch
-    (Nx_cpu.c2r ~axes:[| 0 |] ~dst:(f64 [| 4 |]) (c128 [| 4 |]));
-  equal answer A.Shape_mismatch
-    (Nx_cpu.c2r ~axes:[| 2 |] ~dst:(f64 [| 4 |]) (c128 [| 3 |]))
+(* Transforms that do not fit, by their dtypes, axes or shapes: not Done,
+   and nothing written outside the destination. *)
+let test_misfits (b : Support.backend) () =
+  let c64 s = A.create Rig.host D.Complex64 (Iarray.of_array s)
+  and c128 s = A.create Rig.host D.Complex128 (Iarray.of_array s) in
+  let f32 s = A.create Rig.host D.Float32 (Iarray.of_array s) in
+  let row (type v s) msg what (dt : (v, s) D.t) dst call =
+    Misfit.check ~msg ~what b [| (D.Any dt, dst) |] (fun g ds ->
+        call g (A.expect dt ds.(0)))
+  in
+  let c64' = D.Complex64 and c128' = D.Complex128 and f64' = D.Float64 in
+  row "r2c of float32 into complex128" "a dtype" c128' [| 3 |] (fun g dst ->
+      Nx_cpu.r2c ~axes:[| 0 |] ~dst (g.Misfit.g (f32 [| 4 |])));
+  row "c2r of complex64 into float64" "a dtype" f64' [| 4 |] (fun g dst ->
+      Nx_cpu.c2r ~axes:[| 0 |] ~dst (g.Misfit.g (c64 [| 3 |])));
+  row "c2c along no axis" "an attribute" c64' [| 4 |] (fun g dst ->
+      Nx_cpu.c2c Forward ~axes:[||] ~dst (g.Misfit.g (c64 [| 4 |])));
+  row "c2c along decreasing axes" "an attribute" c64' [| 2; 2 |] (fun g dst ->
+      Nx_cpu.c2c Forward ~axes:[| 1; 0 |] ~dst (g.Misfit.g (c64 [| 2; 2 |])));
+  row "c2c along an axis past the rank" "an attribute" c64' [| 4 |]
+    (fun g dst -> Nx_cpu.c2c Forward ~axes:[| 1 |] ~dst (g.Misfit.g (c64 [| 4 |])));
+  row "c2c into another shape" "a shape" c128' [| 5 |] (fun g dst ->
+      Nx_cpu.c2c Inverse ~axes:[| 0 |] ~dst (g.Misfit.g (c128 [| 4 |])));
+  row "r2c into all the bins" "a shape" c64' [| 4 |] (fun g dst ->
+      Nx_cpu.r2c ~axes:[| 0 |] ~dst (g.Misfit.g (f32 [| 4 |])));
+  row "c2r of other bins than its points'" "a shape" f64' [| 4 |]
+    (fun g dst -> Nx_cpu.c2r ~axes:[| 0 |] ~dst (g.Misfit.g (c128 [| 4 |])));
+  row "c2r along an axis past the rank" "an attribute" f64' [| 4 |]
+    (fun g dst -> Nx_cpu.c2r ~axes:[| 2 |] ~dst (g.Misfit.g (c128 [| 3 |])))
 
 let suite (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
@@ -1077,7 +1083,10 @@ let suite (b : Support.backend) =
           test "on every target, infinities among the points"
             test_infinity_digests;
         ];
-      test "refuses dtypes and shapes" test_refusals;
+      test
+        "a transform of dtypes, axes or shapes that do not fit is not Done \
+         and writes nothing outside dst"
+        (test_misfits b);
       group
         "reads and writes no byte past the operand and the result, whatever \
          pages lie beside them"

@@ -2144,11 +2144,19 @@ let law_cpu_refuses (b : Support.backend) c =
     A.of_array D.Float32 (Iarray.of_array s)
       (Array.make (Elements.total s) 0.)
   in
-  let dst i = A.create Rig.host D.Float32 (Iarray.of_array c.dsts.(i)) in
-  let ints i = A.create Rig.host D.Int64 (Iarray.of_array c.dsts.(i)) in
-  let cdst i = A.create Rig.host D.Complex64 (Iarray.of_array c.dsts.(i)) in
   let a = zeros c.a in
-  let got =
+  let dtype i =
+    match c.routine with
+    | Lu when i > 0 -> D.Any D.Int64
+    | Eig _ -> D.Any D.Complex64
+    | _ -> D.Any D.Float32
+  in
+  let dsts = Array.mapi (fun i s -> (dtype i, s)) c.dsts in
+  let call (g : Misfit.guard) ds =
+    let a = g.g a in
+    let dst i = A.expect D.Float32 ds.(i) in
+    let ints i = A.expect D.Int64 ds.(i) in
+    let cdst i = A.expect D.Complex64 ds.(i) in
     match c.routine with
     | Cholesky t -> K.cholesky t ~dst:(dst 0) a
     | Lu -> K.lu ~lu:(dst 0) ~pivots:(ints 1) ~perm:(ints 2) a
@@ -2161,7 +2169,7 @@ let law_cpu_refuses (b : Support.backend) c =
     | Eig false -> K.eig ~w:(cdst 0) a
     | Solve { triangle; adjoint; unit_diagonal } ->
         K.solve_triangular triangle ~adjoint ~unit_diagonal ~dst:(dst 0) a
-          (zeros c.b)
+          (g.g (zeros c.b))
   in
   (* A QR's or an SVD's destinations fit as either factors' shapes. *)
   let either r =
@@ -2177,71 +2185,56 @@ let law_cpu_refuses (b : Support.backend) c =
   in
   cover "fits" fit;
   cover "misfits" (not fit);
-  equal answer (if fit then A.Done else A.Shape_mismatch) got
+  Misfit.law ~msg:"a routine" ~what:"a shape" b ~fit dsts call
 
+(* Routines that do not fit, by a dtype, a shape, or values of another
+   precision than [a]'s: not Done, and nothing written outside their
+   destinations. *)
 let test_cpu_refusals (b : Support.backend) () =
   let module K = (val b.kernels) in
   let f32 = A.of_array D.Float32 [| 2; 2 |] [| 4.; 1.; 1.; 3. |] in
   let i32 = A.of_array D.Int32 [| 2; 2 |] [| 4l; 1l; 1l; 3l |] in
   let wide = A.of_array D.Float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let sentinel dt v s =
-    A.of_array dt s (Array.make (Iarray.fold_left ( * ) 1 s) v)
-  in
-  let refuses ~msg t want got dst seven =
-    equal ~msg answer want got;
-    let n = Array.length (A.to_array dst) in
-    equal ~msg:(msg ^ ": nothing written") (array t) (Array.make n seven)
-      (A.to_array dst)
-  in
-  let dst = sentinel D.Int32 7l [| 2; 2 |] in
-  refuses ~msg:"int32" int32 A.Wrong_dtype (K.cholesky Lower ~dst i32) dst 7l;
-  let dst = sentinel D.Float32 7. [| 2; 3 |] in
-  refuses ~msg:"not square" float_exact A.Shape_mismatch (K.cholesky Lower ~dst wide) dst 7.;
-  let dst = sentinel D.Float32 7. [| 3; 3 |] in
-  refuses ~msg:"a result of another shape" float_exact A.Shape_mismatch
-    (K.cholesky Lower ~dst f32) dst 7.;
-  let dst = sentinel D.Float32 7. [| 3; 2 |] in
-  refuses ~msg:"right-hand sides of other rows" float_exact
-    A.Shape_mismatch
-    (K.solve_triangular Lower ~adjoint:false ~unit_diagonal:false ~dst f32
-       (sentinel D.Float32 7. [| 3; 2 |]))
-    dst 7.;
   let tall = A.of_array D.Float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let q = sentinel D.Float32 7. [| 3; 2 |] in
-  refuses ~msg:"a reduced q with a complete r" float_exact
-    A.Shape_mismatch
-    (K.qr ~q ~r:(sentinel D.Float32 7. [| 3; 2 |]) tall)
-    q 7.;
+  let c128 = A.of_array D.Complex128 [| 2; 2 |] (Array.make 4 Complex.one) in
+  let f = D.Float32 and c = D.Complex128 in
+  let misfit ~msg ~what dsts call = Misfit.check ~msg ~what b dsts call in
+  misfit ~msg:"int32" ~what:"a dtype" [| (D.Any D.Int32, [| 2; 2 |]) |]
+    (fun g ds ->
+      K.cholesky Lower ~dst:(A.expect D.Int32 ds.(0)) (g.Misfit.g i32));
+  misfit ~msg:"not square" ~what:"a shape" [| (D.Any f, [| 2; 3 |]) |]
+    (fun g ds -> K.cholesky Lower ~dst:(A.expect f ds.(0)) (g.Misfit.g wide));
+  misfit ~msg:"a result of another shape" ~what:"a shape"
+    [| (D.Any f, [| 3; 3 |]) |]
+    (fun g ds -> K.cholesky Lower ~dst:(A.expect f ds.(0)) (g.Misfit.g f32));
+  misfit ~msg:"right-hand sides of other rows" ~what:"a shape"
+    [| (D.Any f, [| 3; 2 |]) |]
+    (fun g ds ->
+      K.solve_triangular Lower ~adjoint:false ~unit_diagonal:false
+        ~dst:(A.expect f ds.(0)) (g.Misfit.g f32)
+        (g.Misfit.g (A.create Rig.host f [| 3; 2 |])));
+  misfit ~msg:"a reduced q with a complete r" ~what:"a shape"
+    [| (D.Any f, [| 3; 2 |]); (D.Any f, [| 3; 2 |]) |]
+    (fun g ds ->
+      K.qr ~q:(A.expect f ds.(0)) ~r:(A.expect f ds.(1)) (g.Misfit.g tall));
   (* Values of another precision than [a]'s, and of [a]'s own complex
      dtype's. *)
-  let s = sentinel D.Float64 7. [| 2 |] in
-  refuses ~msg:"float64 singular values of float32" float_exact
-    A.Wrong_dtype (K.svd ~s f32) s 7.;
-  let c128 = A.of_array D.Complex128 [| 2; 2 |] (Array.make 4 Complex.one) in
-  (* The vectors too are left as they were. *)
-  let ones () = sentinel D.Complex128 Complex.one [| 2; 2 |] in
-  let untouched ~msg x =
-    equal ~msg
-      (array
-         (Testable.make
-            ~pp:(fun ppf (z : Complex.t) -> Format.fprintf ppf "%h%+hi" z.re z.im)
-            ~equal:( = )))
-      (Array.make 4 Complex.one) (A.to_array x)
-  in
-  let s = sentinel D.Float32 7. [| 2 |] and u = ones () and vh = ones () in
-  refuses ~msg:"float32 singular values of complex128" float_exact
-    A.Wrong_dtype
-    (K.svd ~s ~vectors:(~u, ~vh) c128)
-    s 7.;
-  untouched ~msg:"svd's refused u" u;
-  untouched ~msg:"svd's refused vh" vh;
-  let w = sentinel D.Float16 7. [| 2 |] in
-  refuses ~msg:"float16 eigenvalues of float32" float_exact A.Wrong_dtype
-    (K.eigh ~w f32) w 7.;
-  let w = sentinel D.Float32 7. [| 2 |] and v = ones () in
-  refuses ~msg:"float32 eigenvalues of complex128" float_exact A.Wrong_dtype
-    (K.eigh ~w ~v c128) w 7.;
-  untouched ~msg:"eigh's refused v" v
+  misfit ~msg:"float64 singular values of float32" ~what:"a dtype"
+    [| (D.Any D.Float64, [| 2 |]) |]
+    (fun g ds -> K.svd ~s:(A.expect D.Float64 ds.(0)) (g.Misfit.g f32));
+  misfit ~msg:"float32 singular values of complex128" ~what:"a dtype"
+    [| (D.Any f, [| 2 |]); (D.Any c, [| 2; 2 |]); (D.Any c, [| 2; 2 |]) |]
+    (fun g ds ->
+      K.svd ~s:(A.expect f ds.(0))
+        ~vectors:(~u:(A.expect c ds.(1)), ~vh:(A.expect c ds.(2)))
+        (g.Misfit.g c128));
+  misfit ~msg:"float16 eigenvalues of float32" ~what:"a dtype"
+    [| (D.Any D.Float16, [| 2 |]) |]
+    (fun g ds -> K.eigh ~w:(A.expect D.Float16 ds.(0)) (g.Misfit.g f32));
+  misfit ~msg:"float32 eigenvalues of complex128" ~what:"a dtype"
+    [| (D.Any f, [| 2 |]); (D.Any c, [| 2; 2 |]) |]
+    (fun g ds ->
+      K.eigh ~w:(A.expect f ds.(0)) ~v:(A.expect c ds.(1)) (g.Misfit.g c128))
 
 (* Guard pages *)
 
@@ -2381,11 +2374,11 @@ let cpu (b : Support.backend) =
           prop "a solve into its operand gives a fresh destination's bits" case
             (run (law_solve_aliased b));
         ];
-      group "refusals"
+      group "misfits are not Done and write nothing outside their results"
         [
-          prop "refuses what Nx_kernel.Shape refuses and other shapes" misfits
-            (run (law_cpu_refuses b));
-          test "refuses dtypes and shapes before any write" test_cpu_refusals;
+          prop "computes what Nx_kernel.Shape fits, of any other shapes"
+            misfits (run (law_cpu_refuses b));
+          test "of dtypes and shapes" test_cpu_refusals;
         ];
       prop ~count:100
         "reads and writes no byte past its operands and results, whatever \

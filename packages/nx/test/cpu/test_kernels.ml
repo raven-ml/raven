@@ -23,7 +23,7 @@ let cast (k : kernels) ~dst a = Support.map1 k Nx_kernel.Prog.Cast ~dst a
 
 (* nx.cpu's refusals *)
 
-(* Each answers the refusal nx_cpu.mli states, before any write. *)
+(* Each answers the door's refusal, before any write. *)
 let refuses r dst call =
   let before = bits_of dst in
   equal answer r (call ());
@@ -43,12 +43,19 @@ let test_refusals k () =
   let x = A.of_array f32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let i32 = A.of_array D.Int32 [| 2; 3 |] (Array.make 6 7l) in
   let t = Option.get (A.move (M.Permute [| 1; 0 |]) x) in
-  let d = A.of_array f32 [| 2; 3 |] (Array.make 6 9.) in
-  refuses A.Wrong_dtype d (fun () -> copy_f32 ~dst:d i32);
-  refuses A.Shape_mismatch d (fun () -> copy k ~dst:d t);
-  refuses A.Shape_mismatch d (fun () -> cast k ~dst:d t);
-  let d = A.of_array D.Int32 [| 2; 3 |] (Array.make 6 9l) in
-  refuses A.Wrong_dtype d (fun () -> copy_f32 ~dst:d x);
+  (* Misfits: not Done, and nothing written outside the destination. *)
+  let misfit ~msg ~what dt call =
+    Misfit.check ~msg ~what Support.cpu [| (D.Any dt, [| 2; 3 |]) |]
+      (fun g ds -> call g (A.expect dt ds.(0)))
+  in
+  misfit ~msg:"a copy of int32 as float32" ~what:"a dtype" f32 (fun g dst ->
+      copy_f32 ~dst (g.Misfit.g i32));
+  misfit ~msg:"a copy of another shape" ~what:"a shape" f32 (fun g dst ->
+      copy k ~dst (g.Misfit.g t));
+  misfit ~msg:"a cast of another shape" ~what:"a shape" f32 (fun g dst ->
+      cast k ~dst (g.Misfit.g t));
+  misfit ~msg:"a copy of float32 into int32" ~what:"a dtype" D.Int32
+    (fun g dst -> copy_f32 ~dst (g.Misfit.g x));
   (* Into bytes the source reads, and into a broadcast. *)
   let flat = A.of_array f32 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let part start =
@@ -104,8 +111,9 @@ let test_kind_values () =
   done_ ~msg:"iota" (map0 (Iota 1) ~dst:d);
   equal ~msg:"iota along axis 1" (array int64) [| 0L; 1L; 2L; 0L; 1L; 2L |]
     (A.to_array d);
-  equal ~msg:"an iota is an int64" answer A.Wrong_dtype
-    (map0 (Iota 0) ~dst:(A.create Rig.host D.Int32 [| 2 |]));
+  Misfit.check ~msg:"an iota into int32" ~what:"a dtype" Support.cpu
+    [| (D.Any D.Int32, [| 2 |]) |]
+    (fun _ ds -> map0 (Iota 0) ~dst:(A.expect D.Int32 ds.(0)));
   (* Large enough for a job of several units, each starting inside a run. *)
   let big = A.create Rig.host D.Int64 [| 3; 70001 |] in
   List.iter
@@ -178,11 +186,14 @@ let test_kind_values () =
         (f32 [| 1.; 2. |]) (f32 [| 1.; 2. |]));
   let module K = (val k) in
   let f32' = D.Any D.Float32 in
-  equal ~msg:"a destination of another dtype is refused" answer A.Wrong_dtype
-    (K.map
-       (P.of_node ~ins:[| f32' |] (Op1 (Unary Neg, f32', 0)))
-       ~dsts:[| A.Any (A.create Rig.host D.Float64 [| 1 |]) |]
-       [| Plain (f32 [| 1. |]) |])
+  Misfit.check ~msg:"a destination of another dtype" ~what:"a dtype"
+    Support.cpu
+    [| (D.Any D.Float64, [| 1 |]) |]
+    (fun g ds ->
+      K.map
+        (P.of_node ~ins:[| f32' |] (Op1 (Unary Neg, f32', 0)))
+        ~dsts:(Iarray.of_array ds)
+        [| Plain (g.Misfit.g (f32 [| 1. |])) |])
 
 (* A map of constants alone holds no value in a slot: it runs at its
    destination's shape all the same. *)
@@ -305,21 +316,21 @@ let test_bool_bytes () =
       (A.to_array int)
   done
 
-(* A map whose coordinate names an axis past its rank answers
-   [Shape_mismatch] and writes nothing. *)
+(* A map whose coordinate names an axis past its rank does not fit: not
+   Done, and nothing written outside its destination. *)
 let test_coord_past_rank () =
   let p =
     P.v ~ins:[||] [| P.Coord 1; Op1 (Cast, D.Any D.Float32, 0) |] ~outs:[| 1 |]
   in
-  let y = A.of_array D.Float32 [| 3 |] [| 9.; 9.; 9. |] in
-  equal ~msg:"answer" answer A.Shape_mismatch
-    (Nx_cpu.map p ~dsts:[| A.Any y |] [||]);
-  equal ~msg:"untouched" (array float_exact) [| 9.; 9.; 9. |] (A.to_array y)
+  Misfit.check ~msg:"a coordinate past the rank" ~what:"an attribute"
+    Support.cpu
+    [| (D.Any D.Float32, [| 3 |]) |]
+    (fun _ ds -> Nx_cpu.map p ~dsts:(Iarray.of_array ds) [||])
 
 (* A map whose padded load has more elements than a layout admits, or
-   another shape than its destinations, answers [Shape_mismatch] before it
-   copies the load: padded to 2^50 elements, more than any host's memory,
-   and writes nothing. *)
+   another shape than its destinations, is refused before it copies the
+   load, padded to 2^50 elements, more than any host's memory: not Done,
+   and nothing written outside its destination. *)
 let test_padded_misfits () =
   let x = A.of_array D.Float32 [| 2 |] [| 1.; 2. |] in
   let padded lo : Nx_kernel.load =
@@ -335,12 +346,11 @@ let test_padded_misfits () =
     (fun (name, p) ->
       List.iter
         (fun (what, lo) ->
-          let y = A.of_array D.Float32 [| 3 |] [| 9.; 9.; 9. |] in
-          let msg = name ^ ", " ^ what in
-          equal ~msg answer A.Shape_mismatch
-            (Nx_cpu.map p ~dsts:[| A.Any y |] [| padded lo |]);
-          equal ~msg:(msg ^ ": untouched") (array float_exact) [| 9.; 9.; 9. |]
-            (A.to_array y))
+          Misfit.check ~msg:(name ^ ", " ^ what) ~what:"a shape" Support.cpu
+            [| (f32, [| 3 |]) |]
+            (fun g ds ->
+              Nx_cpu.map p ~dsts:(Iarray.of_array ds)
+                [| Misfit.load g (padded lo) |]))
         [ ("past max_numel", L.max_numel - 1); ("another shape", 1 lsl 50) ])
     [
       ("identity", P.v ~ins:[| f32 |] [| P.In 0 |] ~outs:[| 0 |]);
@@ -1646,7 +1656,9 @@ let cpu =
   group "nx.cpu"
     (maps Support.cpu
     @ [
-      test "refuses before any write"
+      test
+        "a misfit is not Done and writes nothing outside its destination; \
+         the door refuses before any write"
         (test_refusals (module Nx_cpu : Nx_kernel.S));
       test "kinds give the values their documentation states" test_kind_values;
       test "a map of constants alone fills its destination" test_constant_map;
@@ -1654,7 +1666,7 @@ let cpu =
         test_loop_widths;
       test "a boolean constant is true iff its byte is not zero"
         test_bool_bytes;
-      test "a map's coordinate past its rank is refused" test_coord_past_rank;
+      test "a map's coordinate past its rank is not Done" test_coord_past_rank;
       test "a map refuses a padded load that does not fit before copying it"
         test_padded_misfits;
       test "a padded load of a dead operand is refused, fill alone or not"
