@@ -1673,7 +1673,14 @@ val jit :
     A complex sum adds each part as a real one. A sum, product or
     extreme with a NaN term is NaN. Terms all [-0.] sum to [+0.], or to [-0.] in
     a scatter and {!Nx.combine_patches}. Special values are eager's, and a
-    variance is never negative.
+    variance is never negative. A product of integer codes by block scales
+    of values, as [Q8_0]'s, that a device's tensor cores take multiplies each
+    block's partial sum by its scale: an operand times a code, or a partial
+    sum, may overflow or underflow before the scale reduces or raises it,
+    giving NaN or an infinity where eager, scaling each element, gives a
+    value, an infinite scale may give an infinity where eager gives a NaN,
+    and a zero sum after an [init] of [-0.] may be [-0.] where eager gives
+    [+0.].
 
     {b Attention.} A compiled {!Nx.attention} folds each query row over its
     keys in tiles, with a running maximum, sum and accumulator, so its

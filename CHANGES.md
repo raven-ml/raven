@@ -402,6 +402,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled product of integer codes by block scales of values, as
+  `Q8_0`'s, whose rows and outputs take a tensor core multiplies each
+  block's partial sum by its scale. gpt-oss's attention
+  projections at Q8_0 run on cores. An infinite scale may give an infinity
+  where eager gives a NaN.
 - `Rune.jit`'s attention bounds an integer array a mask captures along the
   queries over each tile's rows, so a mask that compares keys with
   per-query positions, as `Kaun.Cache_index.visible` does, skips hidden

@@ -1172,12 +1172,27 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
     value, so that both operands take tolk's `bfloat16` tensor cores.
   - A scale with an accumulator other than `float32` or `float64` is
     refused, and the program runs uncompiled.
+  - Where the shape takes a tensor core (`Heuristic.core_fits`, with integer
+    codes that the other operand's narrow float holds exactly and a `Value`
+    scale running along every contracted axis but the last), the scale
+    multiplies each block's partial sum instead of each element
+    (`partial`): `x q`, exact in `float32`, is what a core multiplies.
 - **nx:** `nx_kernel.mli`, `scale`: code `e` scales by `2^(e - 127)`, 255
   makes it NaN; Contraction: the library states which a scale multiplies,
   each element rounded once into the accumulator among them.
 - **Class:** rounded sum: `Nx.contract`'s bound with `K + 1 + s` for `s`
-  scaled operands.
-- **Reason:** (b). The `bfloat16` entry: none; it would be (d) by
+  scaled operands; the partial form's `c + B` roundings for `c` values a
+  block and `B` blocks are within it, barring a partial sum's overflow or
+  underflow before its scale. An infinite scale may give an infinity where
+  the flat form gives a NaN, and a zero sum after an `init` of `-0.` may be
+  `-0.` (`rune.mli`'s Numerics).
+- **Reason:** (b). The partial form: (d) by `GptOss/prefill-512-Q8_0`, a
+  row whose baseline waits for the next scheduled re-record: on an RTX 5000
+  Ada a 512-token prefill at Q8_0 of 24 blocks takes 104.8-107.1 ms against
+  209.8-214.6 (3 interleaved rounds under the timing and GPU locks), its q, k,
+  v and out projections on bfloat16 cores instead of streaming decoded
+  blocks; a decode step keeps its programs and its 7.3 ms. The
+  `bfloat16` entry: none; it would be (d) by
   `GptOss/experts-at-prefill-512` (`gpt_oss.thumper`), whose fudge baseline
   holds allocated words alone. The refusal: none.
 - **Pinned by:** `Lower_reduce › contractions › scaled float contractions
@@ -1186,7 +1201,12 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   contraction scaled in int32 is not lowered`; `Jit › classes › an MXFP4
   product is within its bound of the exact one` on the host and `Jit_gpu ›
   products › an MXFP4 product is within its bound of the exact one` on a GPU,
-  each over `bfloat16` operands and scale bytes up to 255.
+  each over `bfloat16` operands and scale bytes up to 255; in the partial
+  form on a GPU, `Jit_gpu › quantised products ›` `a NaN scale reaches
+  exactly the outputs that read its block, the others eager's bits` (scales
+  varying by row and block), `a weight of no blocks sums no term` and `a
+  Value scale on the first operand in the partial form` (batch axes, random
+  scales, within the bound).
 
 ### L10. Fourier transforms by prime factors
 

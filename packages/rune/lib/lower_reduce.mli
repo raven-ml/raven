@@ -114,7 +114,12 @@ val scan :
     A contraction stores each operand into [acc] and, where the operand has a
     block scale ({!type-scale}), multiplies each element by its block's scale
     read into [acc]. It sums the products and [init] in [acc] and rounds the sum
-    once to [out]. An integer [acc] wraps and is exact.
+    once to [out]. An integer [acc] wraps and is exact. A float32 contraction
+    of integer codes whose [Value] scale runs along its first contracted axes
+    with a narrow float of a type that holds every code, where
+    {!Tolk.Heuristic.core_fits} holds, sums the products along its last
+    contracted axis, multiplies each partial sum by its block's scale, then
+    sums the blocks: a tensor core multiplies only its narrow operands.
 
     A float [acc]'s result of [K] products is within
     [γ(2K + 2 + 2s) (|init| + Σ|a||b|)] of the exact sum, where [s] is the
@@ -141,6 +146,7 @@ type operand = {
 }
 
 val contract :
+  renderer:Tolk.Renderer.t Lazy.t ->
   batch:(int * int) iarray ->
   contracting:(int * int) iarray ->
   segments:Ops.t Nx_kernel.segments option ->
@@ -150,9 +156,10 @@ val contract :
   operand ->
   Ops.t option ->
   Ops.t
-(** [contract ~batch ~contracting ~segments ~acc ~out a b init] is the
-    contraction of [a] with [b] by the pairs [batch] and [contracting], as
-    {!Nx_kernel.S.contract} states. [init], where present, must be a value of
+(** [contract ~renderer ~batch ~contracting ~segments ~acc ~out a b init] is
+    the contraction of [a] with [b] by the pairs [batch] and [contracting], as
+    {!Nx_kernel.S.contract} states, in the form the section above states for
+    [renderer]'s tensor cores. [init], where present, must be a value of
     [out]. Each group of [segments], by a node of [int64] ids, is as
     {!Nx_kernel.type-segments} states. An output without products is [init] in
     [acc], rounded to [out], or [+0].

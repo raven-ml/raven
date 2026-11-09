@@ -1387,6 +1387,183 @@ let quant_law c =
   near "compiled on the GPU"
     (compiled (Nx_quant.place S.on w) (Nx.place S.on x))
 
+(* A Value scale on the first operand, batch axes and both of a Prim Contract
+   in the partial form, within the contraction's bound of eager's. *)
+let partial_side_a () =
+  let _, (module S) = on_gpu () in
+  let n = 64 and m = 64 and blocks = 8 and c = 32 in
+  let s = [| 2; n; blocks; c |] in
+  let codes =
+    Nx.cast Nx.int8
+      (Nx.mul_s (Nx.sub_s (Nx.Rng.uniform Nx.float32 s) 0.5) 200.)
+  in
+  let scale =
+    Nx.cast Nx.float16
+      (Nx.add_s (Nx.mul_s (Nx.Rng.uniform Nx.float32 [| 2; n; blocks; 1 |]) 1.9) 0.1)
+  in
+  let x = Nx.cast Nx.bfloat16 (Nx.Rng.uniform Nx.float32 [| 2; m; blocks; c |]) in
+  let contract ~acc codes scale x =
+    Nx.Prim.eval ~by:"partial_side_a"
+      (Contract
+         {
+           batch = Iarray.of_list [ (0, 0) ];
+           contracting = Iarray.of_list [ (2, 2); (3, 3) ];
+           acc = Nx.Dtype.Any acc;
+           out = acc;
+           a = codes;
+           b = x;
+           init = None;
+           a_scale = Some (Value scale);
+           b_scale = None;
+           segments = None;
+           sum = false;
+         })
+  in
+  let f c d x = contract ~acc:Nx.float32 c d x in
+  let y =
+    host
+      (Rune.jit
+         Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+         f (Nx.place S.on codes) (Nx.place S.on scale) (Nx.place S.on x))
+  in
+  let r = f codes scale x in
+  equal ~msg:"shape" (array int) [| 2; n; m |] (Nx.shape y);
+  let sum =
+    contract ~acc:Nx.float64 (Nx.abs (Nx.cast Nx.float64 codes))
+      (Nx.abs (Nx.cast Nx.float64 scale))
+      (Nx.abs (Nx.cast Nx.float64 x))
+  in
+  let products = float_of_int (blocks * c) in
+  let u = 0x1p-24 in
+  let gamma = (((2. *. products) +. 2.) *. u) /. (1. -. (((2. *. products) +. 2.) *. u)) in
+  let y = Nx.to_array y and r = Nx.to_array r and sum = Nx.to_array sum in
+  Array.iteri
+    (fun i e ->
+      less ~msg:(Printf.sprintf "at %d" i) float_exact
+        ~than:((2. *. gamma *. sum.(i)) +. Float.min_float)
+        (Float.abs (e -. r.(i))))
+    y
+
+(* A contraction over two axes whose operand does not read the outer one, its
+   co-operand computed: the core's trips are the inner axis, its operand's
+   tile is re-copied at each trip of the outer axis, and each output is
+   within the contraction's bound of eager's. *)
+let core_under_a_reduce () =
+  let _, (module S) = on_gpu () in
+  let m = 64 and h = 4 and k = 64 and n = 64 in
+  let a =
+    Nx.broadcast_to [| m; h; k |]
+      (Nx.cast Nx.bfloat16 (Nx.Rng.uniform Nx.float32 [| m; 1; k |]))
+  in
+  let b = Nx.cast Nx.bfloat16 (Nx.Rng.uniform Nx.float32 [| h; n; k |]) in
+  let scale = Nx.Rng.uniform Nx.float32 [| h; 1; 1 |] in
+  let p = Nx.Pattern.v "i h k, h j k -> i j | h k" in
+  let f a b s =
+    Nx.contract Nx.float32 p a
+      (Nx.cast Nx.bfloat16 (Nx.mul (Nx.cast Nx.float32 b) s))
+  in
+  let y =
+    host
+      (Rune.jit
+         Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+         f (Nx.place S.on a) (Nx.place S.on b) (Nx.place S.on scale))
+  in
+  let r = f a b scale in
+  let sum =
+    Nx.contract Nx.float64 p (Nx.abs (Nx.cast Nx.float64 a))
+      (Nx.abs (Nx.cast Nx.float64 (Nx.cast Nx.bfloat16 (Nx.mul (Nx.cast Nx.float32 b) scale))))
+  in
+  let products = float_of_int (h * k) in
+  let u = 0x1p-24 in
+  let gamma = (((2. *. products) +. 2.) *. u) /. (1. -. (((2. *. products) +. 2.) *. u)) in
+  let y = Nx.to_array y and r = Nx.to_array r and sum = Nx.to_array sum in
+  Array.iteri
+    (fun i e ->
+      less ~msg:(Printf.sprintf "at %d" i) float_exact
+        ~than:((2. *. gamma *. sum.(i)) +. Float.min_float)
+        (Float.abs (e -. r.(i))))
+    y
+
+(* A Q8_0 product of 512 rows on the GPU multiplies each block's partial sum by
+   its scale ({!Tolk.Heuristic.core_fits}): a NaN scale makes every output that
+   reads its block NaN, and a weight of no blocks sums no term. *)
+
+let q8_0_block = 34
+
+let q8_0_blocks rows blocks scale =
+  let bytes = rows * blocks * q8_0_block in
+  let b =
+    Array.init bytes (fun i ->
+        if i mod q8_0_block = 0 then fst scale
+        else if i mod q8_0_block = 1 then snd scale
+        else (i mod 200) + 1)
+  in
+  Nx_quant.q8_0
+    (Nx.create Nx.uint8 [| rows; blocks * q8_0_block |] b)
+
+let q8_0_special =
+  let unit_scale = (0x00, 0x3c) in
+  let nan_scale = (0x00, 0x7e) in
+  [
+    test "a NaN scale reaches exactly the outputs that read its block, the \
+          others eager's bits"
+      (fun () ->
+        let _, (module S) = on_gpu () in
+        let rows = 64 and blocks = 16 in
+        (* Scales of 1/2, 1, 2 and 4 that vary along the rows and the blocks,
+           NaN at row 0's block 0 and row 5's block 3; codes from -4 to 4 that
+           vary along a row and a block, against integers from -2 to 2 that
+           vary along a row and a column. Each sum is exact, so an output read
+           with another layout of the codes, the scales or the rows differs
+           from eager's. *)
+        let nan_block r b = (r = 0 && b = 0) || (r = 5 && b = 3) in
+        let high = [| 0x38; 0x3c; 0x40; 0x44 |] in
+        let bytes =
+          Array.init (rows * blocks * q8_0_block) (fun i ->
+              let blk = i / q8_0_block in
+              let r = blk / blocks and b = blk mod blocks in
+              match i mod q8_0_block with
+              | 0 -> if nan_block r b then fst nan_scale else 0x00
+              | 1 ->
+                  if nan_block r b then snd nan_scale
+                  else high.(((r * 3) + b) mod 4)
+              | _ -> ((((i * 7) + (blk * 3)) mod 9) - 4) land 0xff)
+        in
+        let w =
+          Nx_quant.q8_0
+            (Nx.create Nx.uint8 [| rows; blocks * q8_0_block |] bytes)
+        in
+        let k = 32 * blocks in
+        let x =
+          Nx.cast Nx.bfloat16
+            (Nx.init Nx.float32 [| 512; k |] (fun ix ->
+                 Float.of_int ((((ix.(0) * 2) + (ix.(1) * 3)) mod 5) - 2)))
+        in
+        let y =
+          Nx.to_array
+            (host
+               (Rune.jit'
+                  (Nx_quant.apply (Nx_quant.place S.on w))
+                  (Nx.place S.on x)))
+        and e = Nx.to_array (Nx_quant.apply w x) in
+        Array.iteri
+          (fun i v ->
+            let o = i mod rows in
+            let want = if o = 0 || o = 5 then Float.nan else e.(i) in
+            equal ~msg:(Printf.sprintf "output %d" i) float_exact want v)
+          y);
+    test "a weight of no blocks sums no term" (fun () ->
+        let _, (module S) = on_gpu () in
+        let w = q8_0_blocks 64 0 unit_scale in
+        let x = Nx.full Nx.bfloat16 [| 512; 0 |] 1.0 in
+        let y =
+          host
+            (Rune.jit' (Nx_quant.apply (Nx_quant.place S.on w)) (Nx.place S.on x))
+        in
+        equal ~msg:"shape" (array int) [| 512; 64 |] (Nx.shape y);
+        Array.iter (fun v -> equal ~msg:"+0" float_exact 0. v) (Nx.to_array y));
+  ]
+
 (* Exp at rune.mli's bound for a device whose exp2 is within 4 ulps, as
    CUDA's exp2f is within 2 (CUDA C++ Programming Guide, Mathematical
    Functions), against libm's float64 exp rounded once (Exps). Measured over
@@ -1649,11 +1826,18 @@ let () =
               mesh_cases);
          group "a contraction on matrix units holds its bound" unit_cases;
          group "quantised products"
-           [
-             prop ~count:10 ~examples:quant_examples
-               "one row and 512 rows hold the bound, eager and compiled"
-               quant_gen quant_law;
-           ];
+           ([
+              prop ~count:10 ~examples:quant_examples
+                "one row and 512 rows hold the bound, eager and compiled"
+                quant_gen quant_law;
+            ]
+           @ q8_0_special
+           @ [
+               test "a Value scale on the first operand in the partial form"
+                 partial_side_a;
+               test "a core under a reduce re-reads a tile of each outer trip"
+                 core_under_a_reduce;
+             ]);
          group "keys"
            [
              prop ~count:20

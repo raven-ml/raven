@@ -993,16 +993,122 @@ let block_size ~n ~g =
     let c = if cost by_root < cost by_groups then by_root else by_groups in
     if cost c < g * n then c else whole
 
-let contract ~batch ~contracting ~segments ~acc ~out a b init =
+(* Scaling a block's partial sum
+
+   [Value] scales of codes: where every element of [q] is exact in the other
+   operand's narrow float and a tensor core of that type takes the contraction,
+   the scale multiplies the sum over its block rather than each element, as a
+   core multiplies only its two narrow inputs: [Σ_B d_B Σ_c x q]. A product of
+   [x] and [q] is exact in float32 barring overflow, so each term takes at most [c - 1] sums, one
+   rounding of [partial * d], and [B - 1] outer sums, against [K + 1 = cB + 1]
+   in the bound: [(c - 1) + 1 + (B - 1) <= cB + 1], from [(c - 1) (B - 1) >= 0],
+   each rounding at most [2u] on a core that truncates its sums. *)
+let partial ~renderer ~batch ~contracting ~acc ~out a b init =
+  let narrow = function D.Any D.Bfloat16 | D.Any D.Float16 -> true | _ -> false in
+  (* [other] the plain operand and [scaled] the operand with the scale [d] of
+     values [v]. *)
+  let attempt ~scaled ~other (d, v) ~side =
+    let ints = Arith.dtype scaled.dtype and over = Arith.dtype other.dtype in
+    match (acc, List.rev contracting) with
+    | D.Any D.Float32, (ka, kb) :: outer_rev
+      when Dtype.is_int ints && narrow other.dtype
+           && Dtype.can_lossless_cast ints over
+           && (not (List.is_empty outer_rev))
+           && (Option.is_none other.scale) -> (
+        let inner_axis = match side with `A -> ka | `B -> kb in
+        let sq = extents scaled.node and sd = extents v in
+        let extent_ok =
+          List.nth sd inner_axis = 1
+          && List.for_all2
+               (fun i (s, e) -> i = inner_axis || s = e)
+               (List.init (List.length sq) Fun.id)
+               (List.combine sq sd)
+        in
+        if not extent_ok then None
+        else
+          let block = List.nth sq inner_axis in
+          (* The free extents past 1: a core's M and N each take one range of
+             the operand that reads it and not the other's. *)
+          let free_of u pairs =
+            let s = extents u in
+            let bound = List.map pairs (batch @ contracting) in
+            List.filter
+              (fun e -> e > 1)
+              (List.map (List.nth s) (free (List.length s) bound))
+          in
+          let rows, outputs =
+            match side with
+            | `A -> (free_of other.node snd, free_of scaled.node fst)
+            | `B -> (free_of other.node fst, free_of scaled.node snd)
+          in
+          let fits =
+            match (rows, outputs) with
+            | [ rows ], [ outputs ] when block > 0 ->
+                Tolk.Heuristic.core_fits (Lazy.force renderer) ~dtype_in:over
+                  ~dtype_out:Float32 ~rows ~outputs ~block
+            | _ -> false
+          in
+          if not fits then None
+          else
+            let outer = List.rev outer_rev in
+            let batch' = batch @ outer in
+            let q = Arith.cast ~src:scaled.dtype acc scaled.node in
+            let x = Arith.cast ~src:other.dtype acc other.node in
+            let a', b' = match side with `A -> (q, x) | `B -> (x, q) in
+            let r, empty =
+              products ~batch:batch' ~contracting:[ (ka, kb) ] [ a' ] [ b' ]
+            in
+            let inner = List.hd r in
+            let sa = extents a' and sb = extents b' in
+            let empty =
+              empty
+              || List.exists (fun (ka, _) -> List.nth sa ka = 0) outer
+            in
+            let nb = List.length batch in
+            let fa = free (List.length sa) (List.map fst (batch' @ [ (ka, kb) ])) in
+            let fb = free (List.length sb) (List.map snd (batch' @ [ (ka, kb) ])) in
+            let pick s = List.map (List.nth s) in
+            let target =
+              pick sa (List.map fst batch') @ pick sa fa @ pick sb fb
+            in
+            (* The scale, without its axis of 1, laid over [inner]'s axes. *)
+            let side_of = match side with `A -> fst | `B -> snd in
+            let sd' = List.filteri (fun i _ -> i <> inner_axis) sd in
+            let drop i = if i > inner_axis then i - 1 else i in
+            let dv = Shape.reshape (Arith.cast ~src:d acc v) (dims sd') in
+            let own_free = match side with `A -> fa | `B -> fb in
+            let order =
+              List.map drop (List.map side_of batch' @ own_free)
+            in
+            let at, ones =
+              match side with
+              | `A -> (nb + List.length outer + List.length fa, List.length fb)
+              | `B -> (nb + List.length outer, List.length fa)
+            in
+            let scaled_sum = Ops.mul inner (laid dv sd' order ~at ~ones target) in
+            let axes = List.init (List.length outer) (fun i -> nb + i) in
+            let summed = Shape.rop scaled_sum Op.Add axes in
+            Some (close ~acc ~out ~empty (Ops.dtype x) init [ summed ]))
+    | _ -> None
+  in
+  match (a.scale, b.scale) with
+  | None, Some (Value (d, v)) -> attempt ~scaled:b ~other:a (d, v) ~side:`B
+  | Some (Value (d, v)), None -> attempt ~scaled:a ~other:b (d, v) ~side:`A
+  | _ -> None
+
+let contract ~renderer ~batch ~contracting ~segments ~acc ~out a b init =
   let batch = Iarray.to_list batch in
   let contracting = Iarray.to_list contracting in
   let entered () =
     (entered acc ~other:b.dtype a, entered acc ~other:a.dtype b)
   in
   match (segments : Ops.t Nx_kernel.segments option) with
-  | None ->
-      let a, b = entered () in
-      sum ~batch ~contracting ~acc ~out a b init
+  | None -> (
+      match partial ~renderer ~batch ~contracting ~acc ~out a b init with
+      | Some r -> r
+      | None ->
+          let a, b = entered () in
+          sum ~batch ~contracting ~acc ~out a b init)
   | Some (Rows { ids; a_axis; b_axis }) ->
       rows ~batch ~contracting ~acc ~out a b init ids ~a_axis ~b_axis
   | Some (Contracting { ids; groups; pair }) -> (

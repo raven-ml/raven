@@ -217,9 +217,11 @@ val apply : ?sum:bool -> 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
     Read where it lies or unpacked, the product needs kernels that compute a
     block-scaled contraction, as nx.cpu's do. Each element times its block's
     scale is then the value {!dequant} gives, exact in [acc], so in kernels
-    that scale each element, as nx.cpu's and rune's lowering do, the scales
-    add no rounding: the product holds {!Nx.contract}'s bound over [w]'s
-    values.
+    that scale each element, as nx.cpu's do, the scales add no rounding: the
+    product holds {!Nx.contract}'s bound over [w]'s values. A compiled [Q8_0]
+    product that a device's tensor cores take scales each block's partial sum
+    instead, and holds the same bound, barring the partial sum's overflow or
+    underflow.
 
     Raises [Invalid_argument] if [w] is read where it lies or unpacked on a
     set whose kernels decline that contraction, if [x] is 0-d, if [x]'s last

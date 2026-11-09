@@ -299,7 +299,7 @@ let op ?dst ~renderer ~device ~host ~local
         | Some (Contracting c) -> Some (Contracting { c with ids = node c.ids })
       in
       [|
-        Reduce.contract ~batch ~contracting ~segments ~acc ~out:(D.Any out)
+        Reduce.contract ~renderer ~batch ~contracting ~segments ~acc ~out:(D.Any out)
           (operand a a_scale) (operand b b_scale) (Option.map node init);
       |]
   | Copy x -> [| node x |]
