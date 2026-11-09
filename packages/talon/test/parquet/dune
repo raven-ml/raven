@@ -49,4 +49,4 @@
  (enabled_if
   (= %{system} linux))
  (action
-  (run sh -c "ulimit -v 3000000 && exec %{test}")))
+  (run sh -c "ulimit -v 3000000 && exec ./%{dep:test_map_failure.exe}")))
