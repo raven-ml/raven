@@ -414,6 +414,215 @@ let before_start =
     ]
     (fun (_, s, at) -> malformed ~at "copy offset too far back" s)
 
+(* A reference, written from the format and lz.mli's offsets *)
+
+(* [reference ~cap s] is the block [s]'s bytes, byte by byte and with no
+   fast path, with the error each input earns: [Too_long] when the preamble
+   passes [cap], the input's length for a truncation, otherwise the tag of
+   the first element that is wrong, the preamble's first byte for a
+   preamble past 32 bits (Sections 1 and 2.1-2.2). *)
+let reference ~cap s =
+  let input = String.length s in
+  let byte i = Char.code (String.get s i) in
+  let exception Stop of Lz.error in
+  let fail at why = raise (Stop { Lz.at; why }) in
+  let truncated () = fail input Lz.Truncated in
+  let malformed at msg = fail at (Lz.Malformed msg) in
+  let rec preamble k acc i =
+    if i = input then truncated ()
+    else
+      let b = byte i in
+      if k = 4 && b > 0x0f then malformed 0 "invalid preamble"
+      else
+        let acc = acc lor ((b land 0x7f) lsl (7 * k)) in
+        if b < 0x80 then (acc, i + 1) else preamble (k + 1) acc (i + 1)
+  in
+  let element out n at =
+    let tag = byte at and produced = Buffer.length out in
+    let room = n - produced and kind = tag land 3 in
+    let is_copy = kind <> 0 in
+    let len, hi, extra =
+      match kind with
+      | 0 ->
+          let h = tag lsr 2 in
+          if h < 60 then (h + 1, 0, 0) else (0, 0, h - 59)
+      | 1 -> (4 + ((tag lsr 2) land 7), (tag lsr 5) lsl 8, 1)
+      | 2 -> ((tag lsr 2) + 1, 0, 2)
+      | _ -> ((tag lsr 2) + 1, 0, 4)
+    in
+    if room = 0 || len > room then
+      malformed at "output longer than the preamble";
+    if is_copy && (produced = 0 || hi > produced) then
+      malformed at "copy offset too far back";
+    let rec trailer k acc i =
+      if k = extra then (acc, i)
+      else if i = input then truncated ()
+      else
+        let acc = acc lor (byte i lsl (8 * k)) in
+        if len = 0 && acc + 1 > room then
+          malformed at "output longer than the preamble";
+        if is_copy && hi + acc > produced then
+          malformed at "copy offset too far back";
+        trailer (k + 1) acc (i + 1)
+    in
+    let t, i = trailer 0 0 (at + 1) in
+    if is_copy then begin
+      let off = hi + t in
+      if off = 0 then malformed at "invalid copy offset";
+      for _ = 1 to len do
+        Buffer.add_char out (Buffer.nth out (Buffer.length out - off))
+      done;
+      i
+    end
+    else begin
+      let len = if len = 0 then t + 1 else len in
+      if len > input - i then truncated ();
+      Buffer.add_substring out s i len;
+      i + len
+    end
+  in
+  match
+    let n, i = preamble 0 0 0 in
+    if n > cap then fail 0 Lz.Too_long;
+    let out = Buffer.create n in
+    let i = ref i in
+    while !i < input do
+      i := element out n !i
+    done;
+    if Buffer.length out = n then Buffer.contents out else truncated ()
+  with
+  | v -> Ok v
+  | exception Stop e -> Error e
+
+(* [guarded ~cap s] is [s] decoded into a destination of [cap] bytes, with
+   the bytes past [cap] shown still untouched. *)
+let guarded ~cap s =
+  let guard = 64 in
+  let buf = create (cap + guard) in
+  let r =
+    Lz.Snappy.decode (placed ~offset:0 s) (Bigarray.Array1.sub buf 0 cap)
+  in
+  equal string ~msg:"bytes past the destination" (String.make guard '\xa5')
+    (String.sub (to_string buf) cap guard);
+  match r with
+  | Ok { produced; _ } -> Ok (String.sub (to_string buf) 0 produced)
+  | Error e -> Error e
+
+(* [header e] is how many bytes [e] takes before any literal data: its tag
+   and the length or offset bytes after it. *)
+let header = function
+  | Literal s ->
+      let m = String.length s - 1 in
+      let rec count k = if m lsr (8 * k) = 0 then k else count (k + 1) in
+      if m < 60 then 1 else 1 + count 1
+  | Copy { kind; _ } -> 1 + kind
+
+let encoded e =
+  header e + match e with Literal s -> String.length s | Copy _ -> 0
+
+let set_byte s p v =
+  String.mapi (fun i c -> if i = p then Char.chr v else c) s
+
+(* The offsets in [block ~n es] of the first [header_bytes e] bytes of each
+   element, as a list in order. *)
+let offsets_of ?(header_bytes = header) s es =
+  let body = List.fold_left (fun n e -> n + encoded e) 0 es in
+  let first = String.length s - body in
+  let at = ref first in
+  List.concat_map
+    (fun e ->
+      let here = !at in
+      at := here + encoded e;
+      List.init (header_bytes e) (fun k -> here + k))
+    es
+
+let law_reference =
+  (* Well-formed blocks, then the same with a tag, length or offset byte
+     changed, a byte of literal data changed, cut short, or under a preamble
+     that lies. *)
+  let mutate s es =
+    let open Gen in
+    let n = String.length s in
+    frequency
+      [
+        (1, constant (s, `Same));
+        ( 4,
+          let* p = of_list (offsets_of s es) in
+          let+ v = int_range 0 255 in
+          (set_byte s p v, `Header) );
+        ( 1,
+          let* p = int_range 0 (n - 1) in
+          let+ v = int_range 0 255 in
+          (set_byte s p v, `Any) );
+        (2, map (fun p -> (String.sub s 0 p, `Cut)) (int_range 0 n));
+      ]
+  in
+  let gen =
+    let open Gen in
+    let* es = elements in
+    let total = List.fold_left (fun n e -> n + size e) 0 es in
+    let* n =
+      frequency
+        [
+          (3, constant total);
+          (1, map (fun d -> max 0 (total - d)) (int_range 1 8));
+          (1, map (fun d -> total + d) (int_range 1 8));
+        ]
+    in
+    let+ s, how = mutate (block ~n es) es in
+    (s, max n total, how)
+  in
+  prop "any bytes decode as the reference decodes them"
+    (Gen.with_pp
+       (fun ppf (s, _, _) -> Format.fprintf ppf "<%d bytes>" (String.length s))
+       gen)
+    (fun (s, cap, how) ->
+      let want = reference ~cap s in
+      cover "a tag, length or offset byte changed" (how = `Header);
+      cover "a block refused" (Result.is_error want);
+      cover "a block decoded after a change" (how <> `Same && Result.is_ok want);
+      equal decoded want (guarded ~cap s))
+
+let every_tag name es =
+  (* Every value of every tag of the tail of [es], past the first element,
+     through the source and destination of exactly the block's size that
+     the sanitize profile checks. *)
+  let s = block es in
+  let cap = String.length (meaning es) in
+  let tags = offsets_of ~header_bytes:(fun _ -> 1) s es in
+  List.iter
+    (fun p ->
+      for v = 0 to 255 do
+        equal decoded ~msg:(Printf.sprintf "%s: byte %d = %d" name p v)
+          (reference ~cap (set_byte s p v))
+          (guarded ~cap (set_byte s p v))
+      done)
+    (List.tl tags)
+
+let boundaries =
+  let lead = Literal (noise 200) in
+  [
+    (* Two input bytes for four of output: the input runs out first, each
+       tag at its own distance from the end. The extra literal shifts the
+       distances by 3, an odd step over copies 2 bytes apart. *)
+    test "every tag near the end of the input" (fun () ->
+        let copies =
+          List.init 60 (fun _ -> Copy { kind = 1; offset = 3; length = 4 })
+        in
+        every_tag "input" (lead :: copies);
+        every_tag "input, shifted"
+          ((lead :: copies) @ [ Literal "ab" ]));
+    (* Two or three input bytes for one of output: the output runs out
+       first, with the input's room to spare, a tag at each byte of room. *)
+    test "every tag near the end of the output" (fun () ->
+        let tail =
+          List.init 80 (fun i ->
+              if i mod 2 = 0 then Literal "x"
+              else Copy { kind = 2; offset = 1; length = 1 })
+        in
+        every_tag "output" (lead :: tail));
+  ]
+
 (* A 10 MiB block of a literal and copies of 64 bytes from 1 back: 220 MB
    of output, with a preamble of [n]. *)
 let bomb n =
@@ -499,6 +708,7 @@ let () =
              xababab; preambles; literal_lengths; tag_63; far_offsets;
              larger_destination; after_block; law_blocks;
            ];
+         group "reference" (law_reference :: boundaries);
          group "round trips" [ law_round_trip; law_strings; empty; law_exact ];
          group "vendor" [ agreement "snappy" ];
          group "refusals"

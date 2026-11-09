@@ -6,9 +6,9 @@
    64 more bytes and the output has 64 bytes of room: it moves literals and
    copies in 16-byte stores that may run past the element's end but never
    past the preamble's length. Near either end, and for the elements the
-   fast loop declines (a literal longer than 60 bytes, an offset that is
-   zero or before the start), one element is decoded with every bound
-   checked, and the fast loop resumes.
+   fast loop declines (a literal longer than 60 bytes, a copy with a
+   4-byte offset, an offset that is zero or before the start), one element
+   is decoded with every bound checked, and the fast loop resumes.
 
    An error is at the first byte of what is wrong: the preamble's first
    byte for a preamble past 32 bits or above the destination, an element's
@@ -103,9 +103,9 @@ static inline void copy16(uint8_t *dst, const uint8_t *src) {
 static const uint16_t tags[256] = {TAG64(0), TAG64(64), TAG64(128),
                                    TAG64(192)};
 
-/* The bytes of a 4-byte load that [n] bytes after a tag hold. */
-static const uint32_t trailer_mask[5] = {0, 0xff, 0xffff, 0xffffff,
-                                         0xffffffff};
+/* The bytes of a 4-byte load that a copy's [n] offset bytes after a tag
+   hold (1 or 2: the fast loop declines the 4-byte form). */
+static const uint32_t trailer_mask[3] = {0, 0xff, 0xffff};
 
 /* The fast loop's slack: a tag and 64 bytes after it, read as a 4-byte
    trailer or as a literal of up to 60 bytes in 16-byte loads; and 64
@@ -221,19 +221,24 @@ enum lz_status lz_snappy_decode(struct lz_io *io, struct lz_error *err) {
   for (;;) {
     /* Elements with the slack around them, bounds unchecked. */
     while (ip < ip_fast && op < op_fast) {
-      uint32_t tag = ip[0], e = tags[tag];
-      size_t len = e & 0xff;
+      /* [ip] advances by the tag's bits, not through [tags]: the chain from
+         one tag to the next, its load then the advance, sets the loop's
+         rate, and a table load on the chain would lengthen it. */
+      uint32_t tag = ip[0];
       if (tag % 4 == LITERAL) {
-        if (len == 0) break;
+        if (tag >= SHORT_LITERAL << 2) break;
+        size_t len = (tag >> 2) + 1;
         copy64(op, ip + 1, len);
-        ip += 1 + len;
+        ip += len + 1;
         op += len;
         continue;
       }
-      size_t extra = e >> 11;
-      size_t off = (e & 0x700) + (le32(ip + 1) & trailer_mask[extra]);
+      if (tag % 4 == COPY_4) break;
+      uint32_t e = tags[tag];
+      size_t len = e & 0xff;
+      size_t off = (e & 0x700) + (le32(ip + 1) & trailer_mask[e >> 11]);
       if (off - 1 >= (size_t)(op - dst)) break;
-      ip += 1 + extra;
+      ip += (tag % 4) + 1;
       if (off >= 16)
         copy64(op, op - off, len);
       else
