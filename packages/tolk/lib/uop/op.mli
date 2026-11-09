@@ -34,8 +34,8 @@ type t =
   | Noop  (** Computes nothing. *)
   | Param
       (** A parameter of a function: a buffer or a scalar variable. Its first
-          source is its size. A view of storage has the storage's parameter
-          as a second source ({!Ops.whole}). *)
+          source is its size. A view of storage has the state of storage it
+          names as a second source ({!Ops.view_state}). *)
   | Refparam
       (** A buffer parameter passed by its address: its first source is its
           size, as a {!Param}'s, its second the address, a {!Dtype.Uint64}. *)

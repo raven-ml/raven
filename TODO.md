@@ -66,8 +66,8 @@ raven / llama.cpp b12048 Vulkan:
   are owed, and `Rig.cache_bytes` has not run on hardware for NV over PCI
 - `Cuda/cat-16-columns-of-exp-64x64`, the row that catches a lost mark on
   a concatenation, has no AMD baseline
-- a fixed run of an `After` state read inside a loop raises: lifting it
-  needs a view that names its state
+- a fixed run of an `After` state read inside a loop still raises where the
+  state is over a bitcast, or a join over other writes of its storage
 - one launch pass (ecdd3203f6), views naming their storage (de0bcf38d9)
   and per-trip loop reads (293eb3f70b) have not run on AMD or Metal
 

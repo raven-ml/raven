@@ -128,8 +128,8 @@ val run_rangeify : Ops.t -> Ops.t
     reads it through a copy, made each trip in a loop. In a loop
     ({!Ops.Axis_type.Loop}), a read of the state the call writes, or a later
     one, that the call takes as neither storage nor a state of it, nor a row
-    moving along it, raises unless it is a run of the storage itself
-    ({!Schedule.create_linear_with_vars}): a store would be made once, before
+    moving along it, raises unless it is a run of the storage or of a state
+    of it ({!Schedule.create_linear_with_vars}): a store would be made once, before
     the loop, and hold no trip's writes. A read of an older state reads it as
     it was. *)
 

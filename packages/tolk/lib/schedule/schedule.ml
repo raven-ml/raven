@@ -30,7 +30,7 @@ end
 (* Linearizing *)
 
 (* Whether the parameter [p] is a view of the storage {!Ops.whole} names. *)
-let is_view p = whole p != p
+let is_view p = view_state p != p
 
 (* The data source a kernel reads: a kernel's output or a buffer. *)
 let rec unwrap_src s =
@@ -44,16 +44,16 @@ let rec unwrap_src s =
 (* The state [s] reads, as {!value_state} gives it without the joins'
    dependencies. *)
 let rec state_of s =
-  let s = unwrap_src s in
-  if is_join s then state_of (nth s 0) else whole s
+  let s = view_state (unwrap_src s) in
+  if is_join s then state_of (nth s 0) else s
 
 let value_state s =
   let rec go deps s =
-    let s = unwrap_src s in
+    let s = view_state (unwrap_src s) in
     if is_join s then go (List.rev_append (List.tl (src s)) deps) (nth s 0)
     else
       match op s with
-      | Op.After | Op.Buffer | Op.Alloc | Op.Param -> (whole s, List.rev deps)
+      | Op.After | Op.Buffer | Op.Alloc | Op.Param -> (s, List.rev deps)
       | o ->
           invalid_arg
             (Format.asprintf "a kernel's input is a buffer state, not %a" Op.pp
@@ -505,8 +505,8 @@ let written_over u ks =
 
 (* The relation
 
-   A kernel reads the states its arguments name, a view of storage being its
-   storage's state, and writes the states the Afters that list it are over. It
+   A kernel reads the states its arguments name, a view of storage the state
+   its second source names ({!Ops.view_state}), and writes the states the Afters that list it are over. It
    runs after the kernels that write the states it reads, and before the
    kernels of every write over them of which it is no part, whichever elements
    each touches. Where these orders form a cycle, no order runs every kernel
@@ -1511,6 +1511,8 @@ type callify_ctx = {
   views : unit Tbl.t;
   mutable stores : t list; (* Last first. *)
   written : unit Tbl.t; (* The buffers the call's stores write. *)
+  listed : t list Tbl.t;
+      (* Each loop, and the states the {!Op.After}s listing it are over. *)
   params : t Tbl.t; (* The parameter of each storage. *)
 }
 
@@ -1521,66 +1523,121 @@ let callify_ctx () =
     views = Tbl.create 8;
     stores = [];
     written = Tbl.create 8;
+    listed = Tbl.create 8;
     params = Tbl.create 8;
   }
 
 let all_int shape =
   List.for_all (function Int _ -> true | Sym _ -> false) shape
 
-(* Movements and bitcasts of a buffer are a view of it when they select a
-   contiguous range of its elements. A loop's read is such a view whatever the
-   buffer's state ([loop_read]): it reads the buffer each trip. *)
-let view_of ?(loop_read = false) ctx c src =
+let replace_input_buffer ctx b =
+  ctx.replacements <- b :: ctx.replacements;
+  param_like b (List.length ctx.replacements - 1)
+
+(* The parameter for the storage [b] of the call, one per storage. *)
+let storage_param ctx b =
+  match Tbl.find_opt ctx.params b with
+  | Some p -> p
+  | None ->
+      let p = replace_input_buffer ctx b in
+      Tbl.replace ctx.params b p;
+      p
+
+(* The parameter for the view [b] of storage: its own slot, for the kernels'
+   programs to be one wherever the view starts, and a second source naming
+   what it views: its storage's parameter, so that every use names one storage
+   whichever view it goes through, or [state], the {!Op.After} of the storage
+   whose elements a loop's read of [b] takes. *)
+let view_param ?state ctx b =
+  let whole = storage_param ctx (storage_base b) in
+  let p = replace_input_buffer ctx b in
+  replace p ~src:(src p @ [ Option.value state ~default:whole ])
+
+(* The run of a buffer the movements and bitcasts [src] select, as [c] takes
+   it: a shrink of the buffer, whatever state it was read at. *)
+let run_of c src =
   if not (all_int (shape c)) then None
   else
-    let rec storage b =
-      if op b = Op.Bitcast then storage (base (nth b 0)) else b
+    (* A store's run may start at bound variables, which its call knows: its
+       kernel then knows the start modulo what they move it by. *)
+    let at = function
+      | Int _ -> true
+      | Sym _ -> op c = Op.Store
     in
-    let buf = storage (base src) in
-    (* A store's value that reads its buffer keeps the buffer's identity, by
-       which the kernel split stages it before the store. Its kernel reads
-       other storage at a stored state, an after, which ends the walk: each
-       store walks its own kernel's values, and a chain of outputs, each
-       reading the last, costs its length. *)
-    let reads_target () =
-      let walked u = op u <> Op.After || storage_base u == buf in
-      op c = Op.Store && reaches ~gate:walked ~calls:Skip (nth c 1) buf
-    in
-    (* A copy or a stage of a buffer the call writes reads the state it was
-       taken of, which a view, read when its reader runs, would not hold. *)
-    let overwritten () =
-      op c <> Op.Store && (not loop_read)
-      && match ctx with Some ctx -> Tbl.mem ctx.written buf | None -> false
-    in
-    if op buf <> Op.Buffer || reads_target () || overwritten () then None
-    else
-      (* A store's run may start at bound variables, which its call knows: its
-         kernel then knows the start modulo what they move it by. *)
-      let at = function
-        | Int _ -> true
-        | Sym _ -> op c = Op.Store
-      in
-      match Prepare.contiguous_view src with
-      | Some (buf, offset) when op buf = Op.Buffer && at offset ->
-          let n = max_numel src * element_size src / element_size buf in
-          let view =
-            bitcast
-              (shrink buf [ Some (offset, Sint.(offset + Int n)) ])
-              (dtype src)
-          in
-          Option.iter (fun ctx -> Tbl.replace ctx.views view ()) ctx;
-          let view = reshape view (shape c) in
-          if op c = Op.Copy || op c = Op.Store then
-            Some (replace c ~src:(view :: List.tl (Ops.src c)))
-          else Some view
-      | _ -> None
+    match Prepare.contiguous_view src with
+    | Some (buf, offset) when op buf = Op.Buffer && at offset ->
+        let n = max_numel src * element_size src / element_size buf in
+        Some
+          (bitcast
+             (shrink buf [ Some (offset, Sint.(offset + Int n)) ])
+             (dtype src))
+    | _ -> None
+
+(* What the movements and bitcasts [a] read: storage or a state of it. *)
+let rec named a =
+  let b = base a in
+  if op b = Op.Bitcast then named (nth b 0) else b
+
+(* Movements and bitcasts of a buffer are a view of it when they select a
+   contiguous range of its elements. *)
+let view_of ctx c src =
+  let buf = named src in
+  (* A store's value that reads its buffer keeps the buffer's identity, by
+     which the kernel split stages it before the store. Its kernel reads
+     other storage at a stored state, an after, which ends the walk: each
+     store walks its own kernel's values, and a chain of outputs, each
+     reading the last, costs its length. *)
+  let reads_target () =
+    let walked u = op u <> Op.After || storage_base u == buf in
+    op c = Op.Store && reaches ~gate:walked ~calls:Skip (nth c 1) buf
+  in
+  (* A copy or a stage of a buffer the call writes reads the state it was
+     taken of, which a view, read when its reader runs, would not hold. *)
+  let overwritten () =
+    op c <> Op.Store
+    && match ctx with Some ctx -> Tbl.mem ctx.written buf | None -> false
+  in
+  if op buf <> Op.Buffer || reads_target () || overwritten () then None
+  else
+    match run_of c src with
+    | None -> None
+    | Some view ->
+        Option.iter (fun ctx -> Tbl.replace ctx.views view ()) ctx;
+        let view = reshape view (shape c) in
+        if op c = Op.Copy || op c = Op.Store then
+          Some (replace c ~src:(view :: List.tl (Ops.src c)))
+        else Some view
 
 let contiguous_mops_to_view c src = view_of None c src
+
+(* [a], movements and bitcasts of storage or of states of it, with the states
+   gone: the same elements, named by the storage alone. *)
+let rec without_states a =
+  if op a = Op.After then without_states (nth a 0)
+  else if Op.Set.mem (op a) Op.Set.movement || op a = Op.Bitcast then
+    replace a ~src:(without_states (nth a 0) :: List.tl (src a))
+  else a
+
+(* The view [a], a run of storage or a state of it, is read as: one parameter
+   per argument node, naming the state its elements are read at, the storage
+   where that is the storage's first. *)
+let loop_view ctx a view =
+  match Tbl.find_opt ctx.params a with
+  | Some p -> p
+  | None ->
+      let state = named a in
+      let state = if op state = Op.After then Some state else None in
+      let p = view_param ?state ctx view in
+      Tbl.replace ctx.params a p;
+      p
 
 (* A fixed run of storage that the call of the loop [k] only reads and writes
    through another argument becomes a view of its own, read each trip: stored
    into storage instead, the run would be made once, before the loop. A run of
-   storage the loop does not write is stored once, which reads the same. *)
+   a state is such a view when the call writes that state or an earlier one; a
+   run of an older state shows no trip's writes, and is stored once. A run of
+   the storage's first state is a view whichever state the call writes: the
+   read relation copies it, once, where it is older. *)
 let loop_runs ctx k =
   let loops r = Axis_type.equal (axis_type r) Axis_type.Loop in
   let c = nth k 0 in
@@ -1590,14 +1647,38 @@ let loop_runs ctx k =
   match if op c = Op.Call && in_loop then written_positions c else None with
   | None -> None
   | Some written ->
+      let stale = Shape.reads_state_written c in
+      let listed = Option.value ~default:[] (Tbl.find_opt ctx.listed k) in
+      (* A read of a state older than the one the loop is listed over stays
+         stored: {!name_written_states} moves the write up, and the read is
+         of a state the trips do not write. *)
+      let older s =
+        let s = state_of s in
+        List.exists (fun l -> l != s && is_state_or_after s l) listed
+      in
+      (* A state of a bitcast of storage, or a join over other writes of its
+         storage, whose order against the loop's write the graph does not
+         state: its run stays refused ({!Indexing.run_rangeify}). *)
+      let rec unlifted s =
+        op s = Op.Bitcast
+        || (is_join s
+           && List.exists (fun d -> buf_uop d == buf_uop s) (List.tl (src s)))
+        || ((Op.Set.mem (op s) Op.Set.movement || op s = Op.After)
+           && unlifted (nth s 0))
+      in
       let run i a =
         let viewing = Op.Set.mem (op a) Op.Set.movement || op a = Op.Bitcast in
         let moves = List.exists loops (Nodes.to_list (ranges a)) in
         if
           List.mem i written || (not viewing) || moves
           || not (Shape.reads_storage_written c i)
+          || op (named a) = Op.After
+             && ((not (stale a)) || older (named a) || unlifted (named a))
         then a
-        else Option.value ~default:a (view_of ~loop_read:true (Some ctx) a a)
+        else
+          match run_of a (without_states a) with
+          | None -> a
+          | Some view -> reshape (loop_view ctx a view) (shape a)
       in
       let args = src_without_body c in
       let args' = List.mapi run args in
@@ -1672,9 +1753,6 @@ let pm_callify_ctx_collect =
                Upat.wild;
              ])
         (fun ctx m -> view_of (Some ctx) (m "c") (m "src"));
-      (* A fixed run a loop's call reads is a view too, read each trip. *)
-      rule_ctx (Upat.v ~op:(ops Op.[ End; Backedge ]) ~name:"k" ~allow_any_len:true ())
-        (fun ctx m -> loop_runs ctx (m "k"));
       (* Effects are collected after their sources are rewritten, without
          entering call bodies. *)
       rule_ctx (Upat.op Op.After ~name:"u") (fun ctx m ->
@@ -1696,28 +1774,6 @@ let canonicalize_alloc ctx b =
       (replace b
          ~arg:(Param { p with slot = -1 - List.length ctx.allocs.keys }));
   Ordered.find_opt ctx.allocs b
-
-let replace_input_buffer ctx b =
-  ctx.replacements <- b :: ctx.replacements;
-  param_like b (List.length ctx.replacements - 1)
-
-(* The parameter for the storage [b] of the call, one per storage. *)
-let storage_param ctx b =
-  match Tbl.find_opt ctx.params b with
-  | Some p -> p
-  | None ->
-      let p = replace_input_buffer ctx b in
-      Tbl.replace ctx.params b p;
-      p
-
-(* The parameter for the view [b] of storage: its own slot, for the kernels'
-   programs to be one wherever the view starts, and its storage's parameter
-   beside its size, so that every use names one storage whichever view it
-   goes through. *)
-let view_param ctx b =
-  let whole = storage_param ctx (storage_base b) in
-  let p = replace_input_buffer ctx b in
-  replace p ~src:(src p @ [ whole ])
 
 (* Bound variables become parameters without their value, so that different
    values hit the same cache entry, and a name bound to several values takes a
@@ -1815,11 +1871,35 @@ let transform_to_call big_sink =
   (* The stores are collected before these rewrites change node identities,
      and the buffers they write before any view is made. *)
   let ctx = callify_ctx () in
+  let nodes = toposort ~calls:Skip big_sink in
   List.iter
     (fun u ->
       if is_store_after u && not (is_join u) then
-        Tbl.replace ctx.written (storage_base u) ())
-    (toposort ~calls:Skip big_sink);
+        Tbl.replace ctx.written (storage_base u) ();
+      if op u = Op.After && not (is_join u) then
+        List.iter
+          (fun d ->
+            if is_loop d then
+              Tbl.replace ctx.listed d
+                (state_of (nth u 0)
+                :: Option.value ~default:[] (Tbl.find_opt ctx.listed d)))
+          (List.tl (src u)))
+    nodes;
+  (* A fixed run a loop's call reads is a view, read each trip. Made here, over
+     the graph the listing was taken of, so that a loop is the node the
+     {!Op.After}s listing it name; each loop's, earlier ones under its
+     arguments too. *)
+  let lifted =
+    List.filter_map
+      (fun k ->
+        if is_loop k then Option.map (fun r -> (k, r)) (loop_runs ctx k)
+        else None)
+      nodes
+  in
+  let big_sink =
+    if lifted = [] then big_sink
+    else substitute ~calls:Skip ~pass:Fixed_point big_sink lifted
+  in
   ignore
     (graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx big_sink
        (After_sources pm_callify_ctx_collect));

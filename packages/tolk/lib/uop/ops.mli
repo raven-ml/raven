@@ -946,10 +946,15 @@ val addrspace : t -> Dtype.addr_space option
     holds no memory and lives in [Alu]. *)
 
 val whole : t -> t
-(** [whole p] is the parameter of the storage the {!Op.Param} [p] views, its
-    second source, for a {e view}: a parameter of its own that a run of a
-    buffer takes where a call stores into it, so that the kernel's program does
-    not depend on where the run starts. Any other node is its own [whole]. *)
+(** [whole p] is the parameter of the storage the {!Op.Param} [p] views, for a
+    {e view}: a parameter of its own that a run of a buffer takes where a call
+    stores into it or a loop reads it, so that the kernel's program does not
+    depend on where the run starts. Any other node is its own [whole]. *)
+
+val view_state : t -> t
+(** [view_state p] is the state of storage the view [p] names, its second
+    source: its storage's parameter, or the {!Op.After} whose elements a read
+    of the run takes. Any other node is its own [view_state]. *)
 
 val buf_uop : t -> t
 (** [buf_uop u] is the storage node [u] accesses. *)

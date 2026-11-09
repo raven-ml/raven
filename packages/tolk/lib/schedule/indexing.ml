@@ -220,29 +220,10 @@ let refuse_stale_read e c =
   match Shape.written_params (nth c 0) with
   | Some w when in_loop ->
       let args = List.tl (src c) in
-      (* The state a written argument or a read names: joins hold the state
-         under them, and a view of storage names the storage. *)
-      let rec state n =
-        if is_join n then state (nth n 0)
-        else if Op.Set.mem (op n) storage then whole n
-        else if src n = [] then n
-        else state (nth n 0)
-      in
-      let written_states =
-        List.filter_map (fun j -> Option.map state (List.nth_opt args j)) w
-      in
-      let rec at_or_after o r =
-        r == o
-        || (op r = Op.After && (not (is_join r)) && at_or_after o (state (nth r 0)))
-      in
       (* A read of an older state reads it as it was, which a store before the
          loop holds. A state written before the loop ends the walk. *)
-      let stale n =
-        Op.Set.mem (op n) storage
-        && List.exists
-             (fun o -> buf_uop o == buf_uop (state n) && at_or_after o (state n))
-             written_states
-      in
+      let written = Shape.reads_state_written c in
+      let stale n = Op.Set.mem (op n) storage && written n in
       let seen = Tbl.create 8 in
       (* An {!Op.After} is a state: its dependencies are no part of the read. *)
       let rec reaches_stale n =
@@ -265,7 +246,8 @@ let refuse_stale_read e c =
                  "a call in a loop reads its argument %d, of shape %a, which \
                   reads storage the call writes and takes no view of it read \
                   each trip: a read of it would be stored once, before the \
-                  loop, and hold no trip's writes"
+                  loop, and hold no trip's writes; pass a run of the storage \
+                  and compute the value in the call's body"
                  i pp_shape (shape a)))
         args
   | _ -> ()

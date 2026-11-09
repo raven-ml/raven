@@ -564,6 +564,11 @@ val reads_storage_written : Ops.t -> int -> bool
     its writes ({!written_params}), only reads its argument [i] and writes the
     storage it holds ({!Ops.storage_base}, {!Ops.whole}) through another. *)
 
+val reads_state_written : Ops.t -> Ops.t -> bool
+(** [reads_state_written c n] is [true] iff the node [n], storage or a state or
+    view of it, names a state the call [c] writes through another argument or
+    a later one. *)
+
 val custom_kernel : Ops.t list -> (Ops.t list -> Ops.t) -> Ops.t list
 (** [custom_kernel args f] calls the kernel [f] builds on placeholders of
     [args], and is [args], each that the kernel writes ({!written_params})

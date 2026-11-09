@@ -8874,10 +8874,10 @@ reason and its pins.
   loop: scheduling makes the copy, per trip in a loop that writes the state, at
   the start new storage takes (`Shape.allocated_start`) where the state's own
   start does not fit the parameter, cycle or none
-  (`Schedule.copy_off_start_reads`). Any other read of the state a loop's call writes, or of a later one, a
-  strided or reversed view, a value computed from it, a run of an `After`
-  state, raises at `Indexing.run_rangeify`: it would be stored once before the
-  loop. A read of an older state, or of storage written before the loop, stays
+  (`Schedule.copy_off_start_reads`). A run of a state is such a view
+  (D432). Any other read of the state a loop's call writes, or of a later one,
+  a strided or reversed view, a value computed from it, raises at
+  `Indexing.run_rangeify`: it would be stored once before the loop. A read of an older state, or of storage written before the loop, stays
   stored once, as the graph names it.
   A fixed run of storage the loop does not write is stored once, as before.
 - **Reason:** (e): the loop read the run as it was before its first trip: a call
@@ -8992,3 +8992,38 @@ reason and its pins.
   conversions only. So Section 8.6's latitude does not reach tolk's casts.
 - **Pinned by:** `Rune.jit on a GPU › integers › an integer cast to a float
   gives eager's bits`, run on Metal, which holds the ties of every exponent.
+## D432. A view names the state it reads
+
+- **tinygrad:** `schedule/__init__.py` (`pm_replace_buf`) lifts a view for a
+  copy or a store only, of a buffer; tolk has views of a loop's fixed reads
+  (D428) and tinygrad renders no loop of a call.
+- **tolk:** `Ops.view_state`, `Schedule.loop_runs`, `Schedule.view_param`,
+  `Shape.reads_state_written`.
+- **Differs:** a view `Param` has as its second source the state it reads: the
+  storage's `Param`, or the `After` (a state or a join) a loop's call reads a
+  run of. `state_of` and `value_state` follow it, so reading through the view
+  is reading that state; `Ops.whole` stays the storage. The call's argument is
+  the run of the buffer, so the schedule key holds the run's start modulo its
+  alignment as for a view of plain storage: no offset enters it, and a lift is
+  decided from extents and states alone. A fixed contiguous run a loop's call
+  only reads, of the state it writes or a later one, is such a view; a run of
+  an older state is stored once, as it was. A run of a state over a bitcast of
+  storage, of a join over other writes of its storage, and a read of a state
+  older than the one the loop is listed over raise as before.
+- **Reason:** (e): `Ops.after` gives the read a meaning and it raised, after
+  having computed stale values: each trip reads the run as the trip starts.
+- **Pinned by:** `Tolk_engine › calls of views › a loop's fixed read of an
+  After state it writes is read each trip`, `› an After state's fixed run off
+  its parameter's start`, `› an After state's fixed runs at other offsets`,
+  `› an After state's fixed run under a back edge`, `› an After state's fixed
+  run through a join`, `› a fixed run of the state two stores deep`, `› two
+  fixed runs of an After state`, `› a loop named by an older state, a run of the
+  later`, `› a bitcast run of an After state read each trip`, `› older and
+  sibling states' runs stay as they were`, `› a loop's older run of storage
+  leaves the state before it`, `› a loop reading a state older than its listing
+  is refused`, `› a loop reading a run of a state of a bitcast is refused`, `› a
+  loop reading a join over other writes of its storage is refused`, `› two loops
+  in sequence read their runs`, `› a loop reads each run of an After state as its
+  trip starts`;
+  `Tolk.Schedule › cache › runs at other offsets of a loop's read are one
+  schedule`.

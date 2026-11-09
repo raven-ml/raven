@@ -570,6 +570,33 @@ let renumbered () =
   is_true ~msg:"the first is new" (List.mem "CACHE MISS" (verdicts (in_slot 0)));
   equal (list string) [ " cache hit"; " cache hit" ] (verdicts (in_slot 9))
 
+(* A loop's fixed read of its written [After] state is a view of a run whose
+   start stays out of the schedule's key: runs at other offsets of one
+   alignment, here 16 and 32 bytes, are one schedule. *)
+let loop_read_run_offsets_hit () =
+  let p4 slot = Shape.param ~shape:[ Int 4 ] ~device:"CPU" slot Float32 in
+  let program lo =
+    let b = Ops.new_buffer "CPU" 16 Float32 in
+    let b1 = Ops.after b [ Ops.store b Ops.O.(b * float 2.) ] in
+    let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+    let row =
+      Shape.shrink b1
+        [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 4)) ]
+    in
+    let run = Shape.shrink b1 [ Some (Int lo, Int (lo + 4)) ] in
+    let body = Ops.sink [ Ops.store (p4 0) Ops.O.(p4 1 + float 1.) ] in
+    let c = Ops.call ~precompile:true body [ row; run ] in
+    Ops.sink [ Ops.after b1 [ Ops.end_ c [ r ] ] ]
+  in
+  let verdicts lo =
+    with_settings ~debug:3 ~scache:1 (fun () ->
+        ignore (Schedule.create_linear_with_vars (program lo)));
+    List.map (fun (_, verdict, _) -> verdict) (reports ())
+  in
+  equal (list string) ~msg:"the first is new" [ "CACHE MISS" ]
+    (List.sort_uniq String.compare (verdicts 4));
+  equal (list string) [ " cache hit"; " cache hit" ] (verdicts 8)
+
 (* Storage that a builder numbers from the process's counter, such as a staged
    loop's carry, can sit in the body of a precompiled call, where it stays
    storage. [counted g] is precompiled_function [g] as such a body: its output a
@@ -754,6 +781,8 @@ let cache =
              ]);
       test "a body scheduled again is a hit under the key it missed on"
         miss_then_hit;
+      test "runs at other offsets of a loop's read are one schedule"
+        loop_read_run_offsets_hit;
       test "a hit is the schedule the miss made" hit_is_the_miss;
       test "with SCACHE=0 every schedule misses" uncached;
       test "two bodies miss under two keys" keys_differ;

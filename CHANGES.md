@@ -1148,6 +1148,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A loop's call reads a fixed run of an `After` state it writes, or a later one,
+  as each trip starts: the run raised "reads storage the call writes" in
+  `Schedule`. A run of a state over a bitcast or of a join over other writes of
+  its storage still raises; the error now says to compute the value in the
+  call's body.
 - On NVIDIA GPUs from `sm_80`, a dense product of 32 rows takes a staged tensor
   core when that core keeps its threads: a bfloat16 product of 16384 by 4096
   runs in 425 µs on an RTX 5000 Ada, 540 streamed.

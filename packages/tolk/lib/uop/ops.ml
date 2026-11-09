@@ -1882,7 +1882,7 @@ let invalid = const `Invalid
 
 (* Bounds *)
 
-let whole u = match (u.op, u.src) with Op.Param, [ _; w ] -> w | _ -> u
+let view_state u = match (u.op, u.src) with Op.Param, [ _; w ] -> w | _ -> u
 
 let rec buf_uop u =
   match u.op with
@@ -1900,6 +1900,8 @@ let rec buf_uop u =
           | _ -> s
         in
         down u
+
+let whole u = if view_state u != u then buf_uop (view_state u) else u
 
 (* The elements of a constant table read as [dt]. *)
 let table_values dt bytes : Dtype.value list =
