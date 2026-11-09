@@ -28,6 +28,11 @@
    [outputs] builds and schedules a program of 2000 outputs of one element,
    each reading an earlier one: its cost is linear in the outputs.
 
+   [chains] orders a kernel of one chain of 10,000 operations, whose steps tie
+   in the linear order all down the chain, and renders a flat sum of 8,000
+   loads, written as several functions: their costs grow with the chain, not
+   its square.
+
    [host] runs, on the host, kernels whose lanes the host's register budget and
    vector width decide, each with the hand-coded optimisations.
 
@@ -594,10 +599,48 @@ let outputs =
           Schedule.create_linear_with_vars ~capturing:true (chained 2000));
     ]
 
+(* [chains] orders and renders kernels of one chain, each step read once by
+   the next, for the host: [linearize] [chain_length] operations, a product
+   and a sum a step, whose steps tie in the linear order all down the chain,
+   and [render-sum] a sum of [summed_loads] loads, one flat expression in a
+   kernel long enough to be written as several functions. *)
+let chain_length = 10_000
+let summed_loads = 8_000
+
+let element slot n i =
+  Ops.index
+    (Shape.param ~shape:[ Int n ] slot Float32)
+    [ Ops.int ~dtype:Int32 i ]
+
+let kernel name r =
+  Ops.sink ~kernel:(Ops.kernel_info ~name ()) [ Ops.store (element 0 1 0) r ]
+
+let affine_chain () =
+  let a = Ops.load (element 2 1 0) [] and b = Ops.load (element 3 1 0) [] in
+  let step r _ = Ops.alu (Ops.alu r Mul [ a ]) Add [ b ] in
+  let steps = List.init (chain_length / 2) Fun.id in
+  kernel "affine" (List.fold_left step (Ops.load (element 1 1 0) []) steps)
+
+let summed () =
+  let n = summed_loads in
+  let x i = Ops.load (element 1 n i) [] in
+  let add r i = Ops.alu r Add [ x i ] in
+  Linearizer.linearize
+    (kernel "sum" (List.fold_left add (x 0) (List.init (n - 1) succ)))
+
+let chains =
+  let bench = Thumper.bench_with_setup in
+  Thumper.group "chains"
+    [
+      bench ~setup:affine_chain "linearize" Linearizer.linearize;
+      bench ~setup:summed "render-sum" (fun l -> renderer.render l);
+    ]
+
 let suite () =
   List.map (fun (name, _) -> program name) Programs.all
   @ [
       outputs;
+      chains;
       lorenz;
       host;
       gpt_oss ();
