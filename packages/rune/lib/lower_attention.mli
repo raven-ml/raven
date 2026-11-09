@@ -66,7 +66,16 @@ val linear :
 (** [linear ~device ~renderer spec ~transposed data args] is the nodes of
     {!Attention.linear}'s results, computed on [device] by kernels [renderer]
     renders, where it has them: transposed, dense keys, [o] of the query's
-    dtype, no load [spec.tangents] marks, keys and values of [1] to [64]
+    dtype, no load [spec.tangents] marks, keys and values of [1] to [128]
     dimensions, rows and keys, and a float16 or bfloat16 query on a tensor
     core that chains its accumulator, as {!lower}'s. Elsewhere it is
     [None], and the derivative computes as its default. *)
+
+(**/**)
+
+val derivative_tile : Tc.t -> wide:bool -> int
+(** [derivative_tile tc ~wide] is the keys or rows a tile of {!linear}'s
+    kernels holds on [tc], a whole number of steps of its [N] and [K]; [wide]
+    for keys or values past 64 dimensions. *)
+
+(**/**)

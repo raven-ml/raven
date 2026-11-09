@@ -402,6 +402,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` computes `Nx.attention`'s gradient on tensor cores for keys and
+  values of up to 128 dimensions, up from 64: on an RTX 5000 Ada, 8 heads of
+  2048 bfloat16 rows of 128 take about 1.3 ms against about 2.8.
 - `Rune.jit` on a GPU stores a contraction's result before a reduction
   reads it, past 2^21 products: its products otherwise run inside the
   reduction's loop nest, which no tile or tensor core takes. On an RTX 5000

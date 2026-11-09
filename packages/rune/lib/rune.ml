@@ -1396,6 +1396,8 @@ let jacrev' f x =
 module Lower = Lower
 module Lower_arith = Lower_arith
 
+let attention_tile = Lower_attention.derivative_tile
+
 let derivations = Program.derivations
 let evaluations = Compile.evaluations
 let variants = Compile.variants

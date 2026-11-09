@@ -76,7 +76,8 @@ val examples : Nx.Dtype.any list -> t list
     keys, a prefill of 300 rows under each mask, zero-size shapes; then, of
     [dts]'s bfloat16 and float16 where it has them, gpt-oss's decode step
     under captured positions over 200 keys, keys of 24 dimensions and
-    values of 72, 1000 faint weights on positive values, which fails the
+    values of 72, keys and values of 96 and 128 dimensions, 1000 faint
+    weights on positive values, which fails the
     bound where a product drops float16's subnormal weights, and rows and
     keys of 7 and 9 with a key head a query head; and of each dtype a
     prefill of 128 rows of sums of zeros. *)

@@ -172,6 +172,11 @@ let examples dtypes =
       (* Keys padded to a step of a tensor core's K, values past one chunk
          of columns. *)
       { b with dtype = named "float16"; dk = 24; dv = 72; tq = 40; tk = 100 };
+      (* Keys and values past 64 dimensions, one side and then both: the
+         derivative's kernels of wider heads. *)
+      { b with dtype = named "bfloat16"; dk = 128; dv = 128; tq = 40; tk = 64 };
+      { b with dtype = named "float16"; dk = 96; dv = 64; tq = 20; tk = 33 };
+      { b with dtype = named "bfloat16"; dk = 64; dv = 128; tq = 20; tk = 33; mask = Unmasked };
       (* Faint weights on positive values: the weights' mass below
          float16's smallest normal outweighs the bound but for the term of
          each such weight read. *)
@@ -577,7 +582,10 @@ let grad_law (module S : Nx.Devices) ~vmap c =
      run. *)
   cover "a narrow float of the kernels' shapes"
     (narrow && c.page = None && (not c.alibi) && c.tq > 0 && c.tk > 0
-     && c.dk <= 64 && c.dv > 0 && c.dv <= 64);
+     && c.dk <= 128 && c.dv > 0 && c.dv <= 128);
+  cover "heads of the kernels past 64 dimensions"
+    (narrow && c.page = None && (not c.alibi) && c.tq > 0 && c.tk > 0
+     && c.dk <= 128 && c.dv <= 128 && (c.dk > 64 || c.dv > 64));
   let lse_alone = c.seed mod 4 = 1 in
   cover "lse's cotangent alone" lse_alone;
   let { q; k; v; table; lengths; docs; positions; blocks; slopes; poisoned } =

@@ -1684,7 +1684,7 @@ val jit :
     from [lse] and sum their products by contractions and maps of the whole
     pair loop, each within its row above. Where the forward runs on a
     tensor core, reverse mode, for float16 and bfloat16 keys and values of
-    at most 64 dimensions, a float32 accumulator, [o] in the query's dtype,
+    at most 128 dimensions, a float32 accumulator, [o] in the query's dtype,
     no float capture and no page table, sums them in kernels of its own on
     that core instead: each weight and each score's cotangent rounds once to
     the operands' dtype before its product, which adds that dtype's unit
@@ -2059,6 +2059,10 @@ val jit' :
 
 module Lower = Lower
 module Lower_arith = Lower_arith
+
+val attention_tile : Tolk.Tc.t -> wide:bool -> int
+(** [attention_tile tc ~wide] is the keys or rows a tile of attention's
+    derivative kernels holds on the tensor core [tc], for the suites. *)
 
 val derivations : unit -> int
 (** [derivations ()] is the number of programs that transformations of compiled

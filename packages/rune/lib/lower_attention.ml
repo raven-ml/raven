@@ -1407,6 +1407,9 @@ type dcore = {
   qkeys : int;  (* [dq]'s keys a tile. *)
   kwarps : int;  (* [dkdv]'s warps, of [M] keys each. *)
   krows : int;  (* [dkdv]'s rows a tile. *)
+  wide : bool;
+      (* Keys or values past 64 dimensions: [dkdv]'s two sums each run in a
+         launch of its own, so that each has its own registers. *)
 }
 
 (* By rows: [q̄] of the rows a workgroup holds, over each tile of keys. A
@@ -1551,12 +1554,17 @@ let core_dq c a tr xs =
   let kernel = Ops.kernel_info ~name:"attention_dq" ~opts_to_apply:[] () in
   Ops.sink ~kernel [ Ops.end_ (Ops.group stores) at ]
 
+(* Which of [dkdv]'s outputs a launch computes. *)
+type part = Both | Keys | Values
+
 (* By keys: [k̄] and [v̄] of the keys a workgroup holds, over each tile of
    their group's rows. A warp holds [M] keys, their [K] and [V] operands in
    registers; the tile's query rows and their [ō] are staged in workgroup
    memory. Arguments: [k̄], [v̄], then {!dargs}'s. *)
-let core_dkdv c a tr xs =
-  let os, d = dargs a ~outs:2 xs in
+let core_dkdv ~(part : part) c a tr xs =
+  let want_k = part <> Values and want_v = part <> Keys in
+  let os, d = dargs a ~outs:(if part = Both then 2 else 1) xs in
+  let os = if part = Both then os else [| os.(0); os.(0) |] in
   let x = d.x in
   let tc = c.dtc and transposed = c.dtransposed and br = c.krows in
   let f = facts tc in
@@ -1595,7 +1603,8 @@ let core_dkdv c a tr xs =
                let col = int Stdlib.(kk * k_) + coord tc.frag_a Kb lane e in
                ld_gated buf ((at * int width) + col) (ok &&: (col < int width)))))
   in
-  let ka = operands x.k a.dk ksteps and va = operands x.v a.dv csteps in
+  let ka = operands x.k a.dk ksteps in
+  let va = if want_k then operands x.v a.dv csteps else [||] in
   let gk, gk_init = reg slot_acc Stdlib.(dtiles * f.ec) acc (fl acc 0.) ~at in
   let gv, gv_init = reg slot_sum Stdlib.(ctiles * f.ec) acc (fl acc 0.) ~at in
   let gk_j = Ops.after gk [ gk_init; jr ] and gv_j = Ops.after gv [ gv_init; jr ] in
@@ -1625,7 +1634,8 @@ let core_dkdv c a tr xs =
               ld buf ((rl * int Stdlib.(w + pad)) + int Stdlib.(kk * k_) + k))
             ~acc:(zeros_c f acc))
     in
-    let s = scores qs dkp ksteps ka and dp = scores dos dvp csteps va in
+    let s = scores qs dkp ksteps ka in
+    let dp = if want_k then scores dos dvp csteps va else [||] in
     let pairs =
       Array.init ntiles (fun nt ->
           Array.init f.ec (fun e ->
@@ -1637,9 +1647,11 @@ let core_dkdv c a tr xs =
                 pair_back a x ~tr ~inside ~b ~row:r ~key:ky ~ok (el s.(nt))
               in
               let lse = ld_gated (inside x.lse) r.index r.live in
-              let delta = ld_gated (inside d.delta) r.index r.live in
               let p = weight acc ~seen ~x2 ~lse in
-              (p, back (Ops.where seen (p * (el dp.(nt) - delta)) (fl acc 0.)))))
+              if not want_k then (p, p)
+              else
+                let delta = ld_gated (inside d.delta) r.index r.live in
+                (p, back (Ops.where seen (p * (el dp.(nt) - delta)) (fl acc 0.)))))
     in
     let p = Array.map (Array.map fst) pairs and rbar = Array.map (Array.map snd) pairs in
     (* v̄ += Pᵀ ō and k̄ += r̄ᵀ Q, the staged rows read along the rows. *)
@@ -1655,7 +1667,8 @@ let core_dkdv c a tr xs =
               ld buf ((rl * int Stdlib.(w + pad)) + int Stdlib.(t * n_) + n))
             ~acc:g0)
     in
-    let v1 = sums gv_j ctiles dos dvp p and k1 = sums gk_j dtiles qs dkp rbar in
+    let v1 = if want_v then sums gv_j ctiles dos dvp p else [||] in
+    let k1 = if want_k then sums gk_j dtiles qs dkp rbar else [||] in
     let put g_j tiles g1 =
       let g_w = inside g_j in
       List.concat
@@ -1663,7 +1676,8 @@ let core_dkdv c a tr xs =
              List.init f.ec (fun e ->
                  st g_w (int Stdlib.((t * f.ec) + e)) (Ops.index g1.(t) [ Ops.int ~dtype:Int32 e ]))))
     in
-    Ops.group (put gv_j ctiles v1 @ put gk_j dtiles k1)
+    Ops.group
+      ((if want_v then put gv_j ctiles v1 else []) @ (if want_k then put gk_j dtiles k1 else []))
   in
   let vote inside =
     vote a x ~inside ~b ~kh ~len ~over:[ warp; lane ]
@@ -1695,19 +1709,51 @@ let core_dkdv c a tr xs =
   Ops.sink ~kernel
     [
       Ops.end_
-        (Ops.group (stores os.(0) gk_out dtiles a.dk (Some a.scale) @ stores os.(1) gv_out ctiles a.dv None))
+        (Ops.group
+           ((if want_k then stores os.(0) gk_out dtiles a.dk (Some a.scale) else [])
+           @ if want_v then stores os.(1) gv_out ctiles a.dv None else []))
         at;
     ]
+
+(* The keys or rows a tile of the derivative's kernels holds on [tc]: 32, or
+   16 past 64 dimensions, and at least a whole step of the core's [N] and [K],
+   of which the kernels loop [tile / k] and [tile / n] times. Less would run
+   no product and leave every cotangent zero: CDNA 4's K is 32. *)
+let derivative_tile tc ~wide =
+  let n, _, k = Tc.dims tc in
+  max (if wide then 16 else 32) (max n k)
 
 (* [dplan renderer a] is the derivative's kernels' shape for [a] on
    [renderer]'s target, if it takes them: {!plan}'s core, dense keys, [o] of
    the query's dtype, no load whose cotangent is asked for, and keys and
-   values of at most 64 dimensions. A warp then holds its operands, its
+   values of at most 128 dimensions. To 64 a warp holds its operands, its
    accumulators and those of a tile of 32 keys or rows in registers, up to
    250 of them on sm_89 with no spill, and two workgroups of 4 warps share a
-   compute unit. On fudge's RTX 5000 Ada, tiles of 64 spilled and took up to
-   2.1 times as long, 8 warps 1.1 to 1.25 times, and keys of 128 dimensions
-   spilled and took twice as long as the derivative's default. *)
+   compute unit. Past 64, [k̄] and [v̄] take a launch each, so that each holds
+   one sum's accumulators and [v̄]'s none of [V]'s operands, and tiles of 16.
+   On fudge's RTX 5000 Ada, 8 heads of 2048 rows of 128 dimensions took 5.5
+   ms in one launch and tiles of 32, which spilled, 1.3 ms so split, and 2.8
+   ms in the derivative's default; at 256 dimensions, which spill so split
+   too, 7.1 ms against the default's 4.3 ms, so the default stays there. Tiles
+   of 64 at 64 dimensions spilled and took up to 2.1 times as long, 8 warps
+   1.1 to 1.25 times.
+
+   Elsewhere the default's contractions compute it. A page's keys sum over
+   every lead index that reads the page, and a float load's cotangent has any
+   of the pair loop's axes: each a sum across workgroups into storage no
+   workgroup owns, which a kernel takes an atomic or a further pass for.
+   At 8 heads of 2048 bfloat16 rows of 64 on the RTX 5000 Ada, paged keys take
+   3.55 ms and a differentiated capture 2.84 ms, against the kernels' 0.65 ms
+   and 0.79 ms with the capture constant.
+   float32 takes no core: {!plan} takes narrow floats, as the forward's kernels
+   do, and CUDA's float32 core rounds its inputs to tf32's ten mantissa bits,
+   outside float32's bound. A SIMT backward was not built: per pair it takes
+   two products and three sums where the forward's SIMT kernel, 1.6 ms at 8
+   heads of 2048 rows of 64 on the RTX 5000 Ada, takes two products and one
+   sum, against 2.7 ms for the default's five contractions. Forward mode takes
+   five products a tile; kernels of its own, in several launches as [dkdv]
+   past 64 dimensions, were not built, and the default takes 4.0 ms at those
+   shapes in bfloat16. *)
 let dplan (r : Renderer.t) a ~marked =
   let vt = Arith.dtype a.vt in
   match plan r a with
@@ -1715,17 +1761,20 @@ let dplan (r : Renderer.t) a ~marked =
     when Option.is_none a.paged
          && (not (Array.exists Fun.id marked))
          && Dtype.equal (Arith.dtype a.out) vt
-         && a.dk > 0 && a.dv > 0 && a.dk <= 64 && a.dv <= 64 ->
+         && a.dk > 0 && a.dv > 0 && a.dk <= 128 && a.dv <= 128 ->
       let _, m, _ = Tc.dims c.tc in
+      let wide = a.dk > 64 || a.dv > 64 in
+      let tile = derivative_tile c.tc ~wide in
       let warps n = max 1 (min 4 (ceil_div n m)) in
       Some
         {
           dtc = c.tc;
           dtransposed = c.transposed;
           qwarps = warps (grouped a);
-          qkeys = 32;
+          qkeys = tile;
           kwarps = warps a.tk;
-          krows = 32;
+          krows = tile;
+          wide;
         }
   | _ -> None
 
@@ -2026,14 +2075,22 @@ let linear ~device ~(renderer : Renderer.t) (spec : Attention.spec) ~transposed
         in
         let tr = Attention.score_transpose spec in
         let dq = Shape.custom_kernel (buf vt (rows * dk) :: call) (core_dq c a tr) in
-        let kv =
-          Shape.custom_kernel
-            ([ buf vt (nkeys * dk); buf vt (nkeys * dv) ] @ call)
-            (core_dkdv c a tr)
+        let bk, bv =
+          if c.wide then
+            let k =
+              Shape.custom_kernel ([ buf vt (nkeys * dk) ] @ call)
+                (core_dkdv ~part:Keys c a tr)
+            and v =
+              Shape.custom_kernel ([ buf vt (nkeys * dv) ] @ call)
+                (core_dkdv ~part:Values c a tr)
+            in
+            (List.hd k, List.hd v)
+          else
+            let kv =
+              Shape.custom_kernel
+                ([ buf vt (nkeys * dk); buf vt (nkeys * dv) ] @ call)
+                (core_dkdv ~part:Both c a tr)
+            in
+            (List.nth kv 0, List.nth kv 1)
         in
-        Some
-          [|
-            shaped vt sq (List.hd dq);
-            shaped vt sk (List.nth kv 0);
-            shaped vt sv (List.nth kv 1);
-          |]
+        Some [| shaped vt sq (List.hd dq); shaped vt sk bk; shaped vt sv bv |]

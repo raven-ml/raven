@@ -1237,13 +1237,15 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   runs where a workgroup's vote finds a visible pair. Few workgroups, or on the host
   few rows, split each row's keys into runs, folded in order by a second
   kernel; a host thread adds a vector of its row's columns at a time.
-  Reverse mode on such a core, for keys and values of at most 64
+  Reverse mode on such a core, for keys and values of at most 128
   dimensions with no float capture or page table, runs three kernels in
   place of tinygrad's differentiated composition, which stores the
   scores and the weights: [δ = ō·o - l̄se] by rows, [q̄] by query rows
   over their keys and [k̄] and [v̄] by keys over their group's rows, each
   weight recomputed from [lse], the weights and the scores' cotangents
-  rounded once to the operands' dtype for their products, no atomics.
+  rounded once to the operands' dtype for their products, no atomics;
+  past 64 dimensions [k̄] and [v̄] run in a launch each, so that each sum
+  keeps its accumulators in registers.
 - **nx:** `nx_kernel.mli` (attention: the pair program, visibility,
   [o] and [lse]), `nx.mli` (`attention`: the bound, the weights rounded
   once to [v]'s dtype for float16 and bfloat16, and a skipped hidden key's
@@ -1273,7 +1275,9 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   us. The gradient of a loss over 8 heads of 2048 bfloat16 rows,
   `Cuda/attention/jit-grad-bf16-8x2048x64-*`, six rounds against the
   differentiated composition: 2.31-2.56 ms to 548-567 us full and
-  2.27-2.34 ms to 415-417 us causal; kaun's
+  2.27-2.34 ms to 415-417 us causal; 128 dimensions, about 2.8 ms to
+  about 1.3 ms, three to five runs on a loaded machine (a quiet
+  measurement is pending); kaun's
   `Attention/causal-8x256x64-grad-compiled` on the host 2.31-2.53 to
   2.06-2.31 ms, 699 words a call in both.
 - **Pinned by:** `rune attention › jit within nx's bound of a float64

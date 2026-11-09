@@ -606,6 +606,33 @@ let test_past_length () =
   let ts = List.map (fun x -> Nx.ones_like x) xs in
   finite "tangent" (snd (Rune.jvp T.(list tensor) T.tensor loss xs ts))
 
+(* A tile of the derivative's kernels holds a whole number of steps of every
+   core's [N] and [K], as either operand order names them: the kernels loop
+   [tile / k] times, so a tile shorter than a step would run no product and
+   leave each cotangent zero. CDNA 4's K of 32 is the case no machine here
+   runs. *)
+let tile_steps () =
+  let open Tolk in
+  let cores =
+    List.concat
+      Tc.[ cuda_sm75; cuda_sm80; cuda_sm89; amd_rdna3; amd_rdna4; amd_cdna3; amd_cdna4; metal ]
+  in
+  let check tc =
+    let n, _, k = Tc.dims tc in
+    List.iter
+      (fun wide ->
+        let t = Rune.attention_tile tc ~wide in
+        at_least ~msg:"keys of a tile" Testable.int ~than:(if wide then 16 else 32) t;
+        equal ~msg:"whole steps of N" Testable.int 0 (t mod n);
+        equal ~msg:"whole steps of K" Testable.int 0 (t mod k))
+      [ false; true ]
+  in
+  List.iter
+    (fun tc ->
+      check tc;
+      check (Tc.transpose tc))
+    cores
+
 let () =
   let case = Gen.with_pp pp_case case in
   (* Each law in float32, in float64, and for a float32 query in a float64
@@ -657,6 +684,8 @@ let () =
            ];
          group "past a row's length"
            [ test "the derivative reads no key or value there" test_past_length ];
+         group "the derivative's tiles"
+           [ test "hold whole steps of each tensor core" tile_steps ];
          group "gradients by central differences"
            [
              test "float32" (grads Nx.float32 ~eps:1e-2 ~tol:2e-3);

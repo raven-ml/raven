@@ -1382,7 +1382,7 @@ let attention_call (type s) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~tk mask =
 
 (* Attention's gradient compiled: the query's, keys' and values' of
    [Σ w∘o] over {!attention_call}'s call, [w] drawn as the operands are. *)
-let attention_grad_call (type s) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~tk mask =
+let attention_grad_call (type s) ?(d = 64) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~tk mask =
   {
     at =
       (fun (type d) (at : d Nx.Placement.t) ->
@@ -1390,8 +1390,8 @@ let attention_grad_call (type s) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~tk mask
           Nx.place at
             (Nx.cast dt (Nx.Rng.normal ~key:(Nx.Rng.key i) f32 s))
         in
-        let q = draw 80 [| 1; hq; tq; 64 |] and w = draw 83 [| 1; hq; tq; 64 |] in
-        let k = draw 81 [| 1; hk; tk; 64 |] and v = draw 82 [| 1; hk; tk; 64 |] in
+        let q = draw 80 [| 1; hq; tq; d |] and w = draw 83 [| 1; hq; tq; d |] in
+        let k = draw 81 [| 1; hk; tk; d |] and v = draw 82 [| 1; hk; tk; d |] in
         let mask : (d Nx.pair -> d Nx.bool_t) option =
           match mask with Causal -> Some Nx.causal | _ -> None
         in
@@ -1854,6 +1854,8 @@ let gpu_rows g =
         (attention_grad_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
       on_gpu g "attention/jit-grad-bf16-8x2048x64-causal"
         (attention_grad_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Causal);
+      on_gpu g "attention/jit-grad-bf16-8x2048x128-full"
+        (attention_grad_call ~d:128 Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
       on_gpu g "attention/jit-jvp-bf16-8x2048x64-full"
         (attention_jvp_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048);
       on_gpu g "attention/jit-bf16-decode-8x4096x64"
