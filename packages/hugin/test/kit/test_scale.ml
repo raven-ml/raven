@@ -27,7 +27,8 @@ let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 
 let invalid f = raises_match (Exn.invalid_arg ?sub:None) f
 
-(* Floats ordered as IEEE 754 orders them, [-0.] equal to [0.]. *)
+(* Floats ordered as IEEE 754 orders them, [-0.] equal to [0.]. A monotone law
+   compares by it: [Scale.normalize] states no sign for a zero. *)
 let ieee = float Float.min_float
 
 let fscale : float Scale.t testable =
@@ -122,7 +123,16 @@ let gen_scale =
 let transform name (a, b) =
   let m = Float.max (Float.abs a) (Float.abs b) in
   let m = if m = 0. then 1. else m in
-  let sym c x = Float.copy_sign (Float.log1p (Float.abs x /. c)) x in
+  (* The .mli states [T] evaluated without overflow: past it, [log1p y] is
+     [log y] to the float. *)
+  let sym c x =
+    let y = Float.abs x /. c in
+    let v =
+      if Float.is_finite y then Float.log1p y
+      else Float.log (Float.abs x) -. Float.log c
+    in
+    Float.copy_sign v x
+  in
   let pow e x = Float.copy_sign (Float.pow (Float.abs (x /. m)) e) x in
   match name with
   | "linear" -> Fun.id
@@ -285,7 +295,7 @@ let monotone_law =
       let x, y = order (x, y) in
       let u = Scale.normalize s x and v = Scale.normalize s y in
       if not (Float.is_nan u || Float.is_nan v) then
-        at_most float_exact ~than:v u)
+        at_most ieee ~than:v u)
 
 let reverse_law =
   prop "a reversed scale normalises to 1 - N x" (Gen.pair gen_domain Gen.float)
