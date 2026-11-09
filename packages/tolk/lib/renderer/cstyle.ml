@@ -966,10 +966,14 @@ let held = Op.Set.of_list [ Op.Buffer; Op.Binary ]
 
 type shape = Plain | Opens | Closes | Held
 
-(* One statement of a program's body: its text, how it nests, the value it
-   declares with its name and type, the values of other statements it reads
-   (among the nodes it reads, through those written into it), and the
-   operations it computes, those written into it included. *)
+(* One line of a program's body: its text, how it nests, the node it renders
+   and the operations it computes, those written into it included. *)
+type line = { text : string; shape : shape; node : t; ops : int }
+
+(* A line as the cut of a long kernel reads it, with the value it declares
+   with its name and type, and the values of other statements it reads (among
+   the nodes it reads, through those written into it). Only a kernel that is
+   cut needs them, so they are found from its lines then. *)
 type statement = {
   text : string;
   shape : shape;
@@ -978,7 +982,7 @@ type statement = {
   ops : int;
 }
 
-let texts = List.map (fun s -> s.text)
+let texts = List.map (fun (s : line) -> s.text)
 let undeclared = Op.Set.of_list [ Op.Range; Op.Buffer; Op.Binary ]
 let always_inlined =
   Op.Set.of_list [ Op.Index; Op.Shrink; Op.Refparam ]
@@ -1165,27 +1169,42 @@ let render_uops l uops =
   and kernel = ref []
   and depth = ref 1
   and name = ref "test" in
-  (* The operations an inlined value computes, written into its reader, and the
-     values it reads through: an [After] reads its source's. *)
-  let inlined_ops = Tbl.create 256 and through = Tbl.create 256 in
-  let ops_of u =
-    List.fold_left
-      (fun a v -> a + Option.value (Tbl.find_opt inlined_ops v) ~default:0)
-      1 (src u)
+  (* The operations each value written into its reader computes, those written
+     into it included; an [After], which reads as its source, computes none. *)
+  let inlined_ops = Tbl.create 256 in
+  let add_ops a v =
+    if Tbl.mem inlined_ops v then a + Tbl.find inlined_ops v else a
   in
+  let ops_of u = List.fold_left add_ops 1 (src u) in
   let reads_of u =
     let seen = Tbl.create 8 and found = ref [] in
     let rec walk v =
-      match Tbl.find_opt through v with
-      | Some vs -> List.iter walk vs
-      | None ->
-          if not (Tbl.mem seen v) then begin
-            Tbl.replace seen v ();
-            found := v :: !found
-          end
+      if Tbl.mem inlined_ops v then
+        if is Op.After v then walk (nth v 0) else List.iter walk (src v)
+      else if not (Tbl.mem seen v) then begin
+        Tbl.replace seen v ();
+        found := v :: !found
+      end
     in
     List.iter walk (src u);
     !found
+  in
+  let ty u =
+    match Tbl.find_opt ctx.masks u with
+    | Some w -> render_dtype l (mask_dtype w) ~sz:(max_numel u)
+    | None -> render_type l u
+  in
+  let declares_of u =
+    let typed t = Some (u, ctx.%{u}, t) in
+    match op u with
+    | Op.Buffer -> typed (render_dtype l (dtype u) ^ "*")
+    | Op.Binary -> typed "const unsigned char*"
+    | _ when Dtype.equal (dtype u) Dtype.Void -> None
+    | Op.Range -> typed (render_scalar l (dtype u))
+    | _ -> typed (ty u)
+  in
+  let statement_of ({ text; shape; node; ops } : line) =
+    { text; shape; declares = declares_of node; reads = reads_of node; ops }
   in
   let shape_of o =
     if Op.Set.mem o opens then Opens
@@ -1228,7 +1247,7 @@ let render_uops l uops =
     | Op.After when Dtype.equal (dtype u) Dtype.Void -> ()
     | Op.After ->
         Tbl.replace r u ctx.%{nth u 0};
-        Tbl.replace through u [ nth u 0 ]
+        Tbl.replace inlined_ops u 0
     | Op.Sink -> (
         match arg u with Kernel k -> name := function_name k | _ -> ())
     | Op.Param ->
@@ -1267,7 +1286,6 @@ let render_uops l uops =
         if Op.Set.mem o closes then decr depth;
         if inlined u line then begin
           Tbl.replace inlined_ops u (ops_of u);
-          Tbl.replace through u (src u);
           if narrowed u then begin
             Tbl.replace ctx.narrowed u ();
             Tbl.replace r u
@@ -1280,15 +1298,10 @@ let render_uops l uops =
             (not (Op.Set.mem o undeclared))
             && not (Dtype.equal (dtype u) Dtype.Void)
           in
-          let ty () =
-            match Tbl.find_opt ctx.masks u with
-            | Some w -> render_dtype l (mask_dtype w) ~sz:(max_numel u)
-            | None -> render_type l u
-          in
           let line = write_out aside line in
           let line =
             if declared then
-              strf "%s %s = %s%s" (ty ()) ctx.%{u} line
+              strf "%s %s = %s%s" (ty u) ctx.%{u} line
                 (if Op.equal o Op.Special then "" else ";")
             else if Op.equal o Op.Cast then
               (* a discarded value renders as a bare statement *)
@@ -1300,19 +1313,9 @@ let render_uops l uops =
             String.concat "\n"
               (List.map indent (String.split_on_char '\n' line))
           in
-          let typed t = Some (u, ctx.%{u}, t) in
-          let declares =
-            if declared then typed (ty ())
-            else
-              match o with
-              | Op.Range when not (Dtype.equal (dtype u) Dtype.Void) ->
-                  typed (render_scalar l (dtype u))
-              | Op.Buffer -> typed (render_dtype l (dtype u) ^ "*")
-              | Op.Binary -> typed "const unsigned char*"
-              | _ -> None
+          let s : line =
+            { text; shape = shape_of o; node = u; ops = ops_of u }
           in
-          let reads = reads_of u and ops = ops_of u in
-          let s = { text; shape = shape_of o; declares; reads; ops } in
           kernel := s :: !kernel;
           (* if it was used, increment *)
           Option.iter (fun p -> Hashtbl.replace counts p (count p + 1)) prefix
@@ -1320,7 +1323,7 @@ let render_uops l uops =
         if Op.Set.mem o opens then incr depth
   in
   List.iter visit uops;
-  (!name, List.rev !kernel, List.rev !bufs)
+  (!name, List.rev !kernel, List.rev !bufs, statement_of)
 
 (* The external functions and the call bodies the instructions [uops] call, in
    the order a toposort of the program meets their calls, bodies included. *)
@@ -1358,8 +1361,8 @@ let outlined uops =
 
 (* The program's parts: a declaration of each external function it calls,
    which it links against, and a definition of each call body, after the
-   bodies it calls; the kernel's name, statements and parameters; and the
-   instructions its kernel and bodies hold. *)
+   bodies it calls; the kernel's name, lines, their statements' maker and
+   parameters; and the instructions its kernel and bodies hold. *)
 let program l uops =
   let callees = callees uops in
   let outlined = outlined uops in
@@ -1367,7 +1370,7 @@ let program l uops =
     match arg callee with
     | Custom_function f -> strf "extern void %s();" (user_text f.name)
     | _ ->
-        let _, statements, bufs = render_uops l (src callee) in
+        let _, lines, bufs, _ = render_uops l (src callee) in
         let params =
           List.map (fun (n, p) -> strf "%s %s" (param_type l p) n) bufs
         in
@@ -1378,20 +1381,21 @@ let program l uops =
         in
         strf "%s void %s(%s) {\n%s\n}" qualifiers (body_name callee)
           (String.concat ", " params)
-          (String.concat "\n" (texts statements))
+          (String.concat "\n" (texts lines))
   in
-  let name, kernel, bufs = render_uops l uops in
+  let name, kernel, bufs, statement = render_uops l uops in
   let bodies = List.filter (is Op.Linear) callees in
   ( List.map declare callees,
     name,
     kernel,
+    statement,
     bufs,
     List.concat_map src bodies @ uops )
 
 let prefix = function [] -> None | p -> Some p
 
 let render render_kernel l uops =
-  let parts, name, kernel, bufs, uops = program l uops in
+  let parts, name, kernel, _, bufs, uops = program l uops in
   render_kernel ?prefix:(prefix parts) l ~name (texts kernel) bufs uops
 
 (* Long kernels
@@ -1709,15 +1713,22 @@ let write_cut ~attrs ~name bufs held cut (known, read_at) =
   in
   (frame_def :: List.rev !parts, List.rev start @ declarations @ List.rev !body)
 
-(* [statements] as several functions of at most [piece] operations past [long],
-   or whole: the program's parts that define them, and the kernel's body.
-   [bufs] are the kernel's parameters with their nodes and C types. *)
-let cut_kernel ~piece ~long ~attrs ~name bufs statements =
-  let held, rest = List.partition (fun s -> s.shape = Held) statements in
-  if List.fold_left (fun a s -> a + s.ops) 0 rest <= long then ([], statements)
+(* [lines] as several functions of at most [piece] operations past [long], or
+   whole: the program's parts that define them, and the kernel's body's texts.
+   [bufs] are the kernel's parameters with their nodes and C types, and
+   [statement] makes a line's statement. *)
+let cut_kernel ~piece ~long ~attrs ~name ~statement bufs lines =
+  let count a (s : line) = if s.shape = Held then a else a + s.ops in
+  if List.fold_left count 0 lines <= long then ([], texts lines)
   else
+    let held, rest =
+      List.partition (fun s -> s.shape = Held) (List.map statement lines)
+    in
     let cut = pieces piece (tree rest) in
-    write_cut ~attrs ~name bufs held cut (declared_and_read bufs held cut)
+    let parts, body =
+      write_cut ~attrs ~name bufs held cut (declared_and_read bufs held cut)
+    in
+    (parts, List.map (fun s -> s.text) body)
 
 (* Clang *)
 
@@ -2104,13 +2115,14 @@ let clang_kernel ~cpu ?prefix l ~name kernel bufs uops =
 (* A program for the host, its kernel cut into functions of [piece] operations
    past [long]. *)
 let render_host ~piece ~long l uops =
-  let parts, name, kernel, bufs, uops = program l uops in
+  let parts, name, kernel, statement, bufs, uops = program l uops in
   let params = List.map (fun (n, u) -> (n, (u, param_type l u))) bufs in
   let pieces, kernel =
-    cut_kernel ~piece ~long ~attrs:(l.kernel_typedef 0) ~name params kernel
+    cut_kernel ~piece ~long ~attrs:(l.kernel_typedef 0) ~name ~statement params
+      kernel
   in
-  clang_kernel ~cpu:true ?prefix:(prefix (parts @ pieces)) l ~name
-    (texts kernel) bufs uops
+  clang_kernel ~cpu:true ?prefix:(prefix (parts @ pieces)) l ~name kernel bufs
+    uops
 
 let clang_cut ~piece ~long (target : Helpers.Target.t) =
   let arch = target.arch in
