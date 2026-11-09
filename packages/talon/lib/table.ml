@@ -107,7 +107,7 @@ let take indices t =
     invalid_arg (outside_rows (Nx.item [ Int64.to_int first ] indices) t.rows)
   end;
   let rows = Nx.dim 0 indices in
-  batch t.schema ~rows (Array.map (Column.gather indices) (columns (concat t)))
+  batch t.schema ~rows (Array.map (Column.take indices) (columns (concat t)))
 
 let numeric : type a. a Type.t -> bool = function
   | Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64

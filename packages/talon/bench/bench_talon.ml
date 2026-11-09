@@ -259,7 +259,7 @@ let streamed_moments t =
            Expr.[ "v" := var (Col.int "v"); "d" := std (Col.int "v") ])
 
 (* [filter th] keeps the rows whose [key] is below [th]: [th / 10] percent of
-   them. *)
+   those that are not null, which are 99% of the rows. *)
 let filter th =
   run Query.(of_table nulls |> filter Expr.(Col.int "key" < int th))
 
@@ -735,6 +735,7 @@ let () =
           Thumper.bench "Nulls/filter-1pct" (fun () -> filter 10);
           Thumper.bench "Nulls/filter-50pct" (fun () -> filter 500);
           Thumper.bench "Nulls/filter-90pct" (fun () -> filter 900);
+          Thumper.bench "Nulls/filter-99pct" (fun () -> filter 990);
           Thumper.bench "Nulls/kleene-and" (fun () ->
               kleene Expr.(Col.bool "a" && Col.bool "b"));
           Thumper.bench "Nulls/kleene-or" (fun () ->

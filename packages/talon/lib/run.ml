@@ -219,7 +219,7 @@ let filter q predicate input =
       if rows = n then b
       else
         Table.batch (Query.schema q) ~rows
-          (Array.map (Column.gather idx) (Table.columns b))
+          (Array.map (Column.take idx) (Table.columns b))
     in
     (out, f)
 

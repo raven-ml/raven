@@ -163,6 +163,10 @@ val gather : Nx.host Nx.int64_t -> t -> t
     {!restrict} over the gather reads a null there. Its count is not yet read.
 *)
 
+val take : Nx.host Nx.int64_t -> t -> t
+(** [take indices c] is {!gather} [indices c] for [indices] within [c]'s rows.
+    *)
+
 val permute : Nx.host Nx.int64_t -> t -> t
 (** [permute p c] is [gather p c] for a permutation [p] of [c]'s rows. Its null
     count is [c]'s, read or not. *)

@@ -846,6 +846,54 @@ and gather indices c =
     data = gather_data indices c;
   }
 
+(* Rows a run averages before copying runs costs less than gathering each row:
+   a run costs tens of instructions and then almost nothing per row, a gather
+   a few per row in each column. Counting instructions, the two cost the same
+   at about 16 rows a run. *)
+let run_rows = 16
+
+(* [runs_of positions] are the runs of consecutive rows that [positions], within
+   a column's rows, read one after the other, when they average at least
+   {!run_rows} rows. *)
+let runs_of positions =
+  let rows = Nx.dim 0 positions in
+  if rows = 0 then None
+  else
+    let next = Nx.slice [ R (1, rows) ] positions in
+    let breaks =
+      Nx.positions
+        (Nx.not_equal (Nx.sub_s next 1L)
+           (Nx.slice [ R (0, rows - 1) ] positions))
+    in
+    if (Nx.dim 0 breaks + 1) * run_rows > rows then None
+    else
+      let cuts = Nx.add_s breaks 1L in
+      let firsts = Nx.pad [| (1, 0) |] 0L cuts in
+      let ends = Nx.pad [| (0, 1) |] (Int64.of_int rows) cuts in
+      Some
+        {
+          starts = Nx.take ~axis:0 firsts positions;
+          ends;
+          total = rows;
+        }
+
+let take indices =
+  let n = Nx.dim 0 indices in
+  (* Two reads tell whether the rows span about as many as there are indices,
+     as those of a filter that kept most rows do: [n] increasing indices span
+     at least [n - 1]. Only those are worth cutting into runs, which would cost
+     a selective filter or a scattered take a second pass. *)
+  let dense =
+    n >= run_rows && (not (traced indices))
+    &&
+    let span = Int64.sub (Nx.item [ n - 1 ] indices) (Nx.item [ 0 ] indices) in
+    let span = Int64.to_int span in
+    n - 1 <= span && span < n + (n / run_rows)
+  in
+  match if dense then runs_of indices else None with
+  | Some r -> take_runs r
+  | None -> gather indices
+
 (* A permutation moves the nulls but keeps their number. *)
 let permute p c =
   let validity =

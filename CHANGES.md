@@ -4155,6 +4155,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Query.filter`, and a filter that a Parquet scan applies itself, copy whole
+  runs when the rows they keep lie in long runs, instead of gathering each row
+  of each column: a filter keeping 98% of its rows costs much less.
 - `Kit.longer` and `Kit.wider` reshape tables between wide and long, over the new
   `Expr.list` and `Expr.pivot`. `wider`'s columns are its key's dictionary, so its
   schema needs no data; a value in no cell, or two in one, is a data error.

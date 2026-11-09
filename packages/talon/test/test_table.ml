@@ -63,6 +63,104 @@ let take_of_split =
       at_most int ~than:1 (List.length (batches r));
       rows_are ty (Array.map (Array.get vs) idx) (column r "a"))
 
+(* A filter that keeps almost all rows copies whole runs of them, and must read
+   as a gather of each kept row does, for every column type. *)
+let filter_runs =
+  let gen =
+    Gen.bind G.sample (fun (G.Sample (_, vs) as s) ->
+        let n = Array.length vs in
+        Gen.bind (Gen.int_range 64 400) (fun rows ->
+            let drops =
+              if n = 0 then Gen.constant []
+              else
+                Gen.list
+                  ~size:(Gen.int_range 0 (rows / 32))
+                  (Gen.int_range 0 (rows - 1))
+            in
+            Gen.map (fun d -> (s, rows, d)) drops))
+    |> Gen.with_pp (fun ppf (s, rows, drops) ->
+           Format.fprintf ppf "@[<v>%a@,%d rows, dropped %a@]" G.pp_sample s rows
+             (Format.pp_print_list
+                ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ",")
+                Format.pp_print_int)
+             drops)
+  in
+  prop "a filter keeping long runs reads each row it keeps" gen
+    (fun (G.Sample (ty, vs), rows, drops) ->
+      let n = Array.length vs in
+      let rows = if n = 0 then 0 else rows in
+      let row i = vs.(i mod n) in
+      let dropped = Array.make rows false in
+      List.iter (fun d -> dropped.(d) <- true) drops;
+      let keep = Array.init rows (fun i -> not dropped.(i)) in
+      let kept = List.filter (fun i -> keep.(i)) (List.init rows Fun.id) in
+      let breaks =
+        List.length
+          (List.filter
+             (fun i -> keep.(i) <> keep.(i - 1))
+             (List.init (max 0 (rows - 1)) succ))
+      in
+      cover "runs long enough to copy whole"
+        (kept <> [] && List.length kept / (1 + (breaks / 2)) >= 16);
+      cover "a row dropped" (drops <> []);
+      cover "no row dropped" (drops = []);
+      let table =
+        v
+          [
+            ("a", Column.of_options ty (Array.init rows row));
+            ("k", Column.of_options Type.bool (Array.map Option.some keep));
+          ]
+      in
+      let r =
+        Error.get_ok
+          (Query.run (Query.filter (Col.bool "k") (Query.of_table table)))
+      in
+      rows_are ty (Array.of_list (List.map row kept)) (column r "a");
+      let positions =
+        Nx.create Nx.int64 [| List.length kept |]
+          (Array.of_list (List.map Int64.of_int kept))
+      in
+      rows_are ty
+        (Array.of_list (List.map row kept))
+        (column (take positions table) "a"))
+
+(* Indices that read runs of rows out of order take the rows at them. *)
+let take_runs =
+  let gen =
+    Gen.bind G.sample (fun (G.Sample (_, vs) as s) ->
+        let n = max 1 (Array.length vs) in
+        let run =
+          Gen.pair (Gen.int_range 0 (n - 1)) (Gen.int_range 1 (max 1 n))
+        in
+        Gen.map (fun r -> (s, r)) (Gen.list ~size:(Gen.int_range 1 8) run))
+    |> Gen.with_pp (fun ppf (s, _) -> G.pp_sample ppf s)
+  in
+  prop "take of runs of rows reads the rows at them" gen
+    (fun (G.Sample (ty, vs), runs) ->
+      let n = Array.length vs in
+      let at =
+        if n = 0 then []
+        else
+          List.concat_map
+            (fun (first, len) ->
+              List.init (min len (n - first)) (fun k -> first + k))
+            runs
+      in
+      cover "long enough to cut into runs" (List.length at >= 16);
+      let rec backwards = function
+        | a :: (b :: _ as rest) -> b <= a || backwards rest
+        | _ -> false
+      in
+      cover "indices that go backwards" (backwards at);
+      let t = one (Column.of_options ty vs) in
+      let positions =
+        Nx.create Nx.int64 [| List.length at |]
+          (Array.of_list (List.map Int64.of_int at))
+      in
+      rows_are ty
+        (Array.of_list (List.map (Array.get vs) at))
+        (column (take positions t) "a"))
+
 (* Equality *)
 
 (* Two rows of one type, the second's rows drawn from the first's. *)
@@ -369,6 +467,8 @@ let () =
            [
              prop "column reads the rows of every split" split column_of_split;
              take_of_split;
+             filter_runs;
+             take_runs;
              test "a table of rows without columns keeps them through a run"
                (fun () ->
                  let t = v ~rows:3 [] in
