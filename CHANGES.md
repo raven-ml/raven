@@ -1148,6 +1148,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Metal streams few outputs on 16384 threads (`Renderer.t.stream_threads`),
+  and rune's attention decode on Metal splits differently: a vector times a
+  16384 by 8192 matrix runs 1.74x faster, a decode key projection 1.38x slower.
 - `Renderer.t.core_threads` (new) floors a tensor core's splits per target:
   16384, and 32768 on Metal, fitted on an M1 Max. A float32 product of 1024
   squared runs 1.18x faster there; 11 other products swept run within noise.

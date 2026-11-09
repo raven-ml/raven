@@ -1836,8 +1836,10 @@ let metal_with compiler (target : Helpers.Target.t) =
   in
   (* Fitted on an M1 Max (Apple7, 32 GPU cores): a float32 product of 1024
      squared ran 1.18x faster keeping 32768 threads after its core's splits
-     than 16384. *)
+     than 16384, and a half vector times 16384 by 8192 1.74x faster
+     streaming with 16384 threads than 32768. *)
   Renderer.v ~name:"MetalRenderer" ~launch_locals:false ~core_threads:32768
+    ~stream_threads:16384
     ~tensor_cores:(if from 7 then Tc.metal else [])
     ~extra_matcher:metal_extra_matcher ~packed_args:true
     ~code_for_op:metal_lang.code_for_op

@@ -122,6 +122,7 @@ let renderer_of_row cell =
     ~registers:(fun () -> registers)
     ?per_byte_first:(optional "per_byte_first")
     ?core_threads:(optional "core_threads")
+    ?stream_threads:(optional "stream_threads")
     ~has_local:(bool_of_cell (cell "has_local"))
     ~has_shared:(bool_of_cell (cell "has_shared"))
     ~shared_max:(int_of_string (cell "shared_max"))

@@ -2467,11 +2467,11 @@ Withdrawn: multi-device is out of scope, see README.
     to 8, or 4 with rows held. When that range is a global axis (columns),
     after the reuse upcast it splits into 32 local threads and 2 upcast
     lanes, and the first contracted range into the threads, up to 32, that
-    make 32768 threads; with more than 32768 outputs the kernel takes the
-    other rules. `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW` and `MV_ROWS_PER_THREAD`
-    are gone;
+    make `stream_threads` threads; with more outputs than `stream_threads`
+    the kernel takes the other rules. `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW`
+    and `MV_ROWS_PER_THREAD` are gone;
   - few outputs (D110's part): when the outputs are too few for the columns
-    layout to run `stream_threads`, 32768 threads, a workgroup of 1024
+    layout to run `stream_threads` threads, a workgroup of 1024
     threads takes fewer threads across them, down to 8, and more along the
     reduce, so that more workgroups share the outputs. 8 threads of 2
     bfloat16 columns read a 32-byte sector. 32768 is the bound of sm_89's
@@ -2479,7 +2479,23 @@ Withdrawn: multi-device is out of scope, see README.
     and value projection (`gpt_oss_kv`, 2880 to 512, `stream/decode-kv`) is
     1.16x slower, its query projection (`gpt_oss_qkv`) 1.10x and `vecmat`
     1.52x, and from memory equal; 65536 changes the layout's shape, 8
-    threads across, and `vecmat` is 3.5x slower;
+    threads across, and `vecmat` is 3.5x slower. Metal takes 16384, a
+    bound fitted on an M1 Max (Apple7, 32 GPU cores); other Apple parts are
+    unmeasured. GPU time with D175's `core_threads` at Metal's 32768, the
+    two values measured together, in 3 ABBA rounds of 2 samples a value
+    under load 33-52 on 10 cores, where a kernel that does not change
+    reads up to 1.22x apart: a half vector times 16384 by 8192 runs 1.74x
+    faster (970 against 1684 us), and the decode step's key and value
+    projection, 2880 to 512, 1.38x slower (62.8 against 45.4 us). Within
+    that noise, a half vector times 4096 by 4096 reads 1.24x faster, and a
+    half attention of 64 query heads over 8 key heads, 1024 or 4096 keys,
+    the same. rune's float32 attention decode of 8 heads over 4096 keys,
+    whose splits `stream_threads` sizes, reads faster (939 against 2074 us),
+    with spreads of 576-1594 and 1481-2361 that show the direction only.
+    kaun's 15 `Quant/metal` decode products keep their kernels. rune's
+    scatter plan, which `stream_threads` also sizes, is untimed. The 12
+    products swept from 8192 to 131072 threads with `core_threads` at 16384
+    gave the same trade (geomean 0.956x of 32768's);
   - a group inside a reduce: a reduce axis whose reduction runs inside a
     serial reduce, a weak range that a reduction closes, splits into local
     threads, each iteration of the outer reduce storing and reading the shared
