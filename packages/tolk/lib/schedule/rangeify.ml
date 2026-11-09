@@ -18,6 +18,10 @@ let opts u =
   | Bufferize o -> o
   | _ -> invalid_arg "a stage needs its buffer's options"
 
+(* Whether the stage [b] stays as it is: no pass removes it or narrows it. *)
+let kept_whole b =
+  match (opts b).keep with Whole | Argument -> true | Removable | Broadcast -> false
+
 let sorted_ranges rs = List.sort_uniq compare_range_arg rs
 
 let rec zip l0 l1 =
@@ -31,7 +35,7 @@ let transcendental = ops Op.[ Exp2; Log2; Sin; Pow ]
 let cleanup_dead_axes b =
   let value = nth b 0 in
   (* An after is storage: its ranges say how consumers read it. *)
-  if (opts b).keep = Whole || op value = Op.After then None
+  if kept_whole b || op value = Op.After then None
   else
     let axes = zip (shape b) (List.tl (src b)) in
     let dead rng =
@@ -96,7 +100,7 @@ let collapses red =
       let index_function x =
         op x = Op.Index
         && op (nth x 0) = Op.Stage
-        && (opts (nth x 0)).keep <> Whole
+        && not (kept_whole (nth x 0))
         && not (storage (nth (nth x 0) 0))
       in
       let subs = Tbl.create 16 in
@@ -470,7 +474,7 @@ let remove_bufferize ~reads src buf idx =
          (List.tl (Ops.src buf)))
   then invalid_arg "a stage's ranges are ranges or constants";
   (* A user's materialisation is never removed. *)
-  if (opts buf).keep = Whole then None
+  if kept_whole buf then None
   else
     (* The cost: the buffers the value reads, and whether a reduction reads
        one. *)
@@ -850,14 +854,14 @@ let bufferize_to_store ctx x idx =
       | ends -> Some (v Op.After ~src:(buf :: ends) ~arg:(arg value))
   else
     match opts x with
-    | { addrspace = Dtype.Global; device; keep } ->
+    | { addrspace = Dtype.Global; device; _ } ->
         (* A value its kernels read widened from a narrower type is stored
            narrow, and each read widens it: the stores and reads move half the
            bytes of bfloat16 widened to float32, and a reader's float32 product
            of such values is one of bfloat16 values, which a tensor core
            multiplies. A value stored whole keeps its type. *)
         let value, dtype =
-          if keep <> Whole && widens value then
+          if (not (kept_whole x)) && widens value then
             (nth value 0, commit_dtype (nth value 0))
           else (value, dtype)
         in

@@ -3574,6 +3574,548 @@ let reads_after_bitcast_run () =
           28.; 30. |])
     (leaves1 b (Ops.sink [ Ops.after b1 [ Ops.end_ c [ r ] ] ]))
 
+
+(* A store through the node a call reads: the read takes a copy, the store
+   lands in the storage. *)
+let store_through_read_run_lands () =
+  let b = Ops.new_buffer "CPU" 8 Float32 and x = Ops.new_buffer "CPU" 4 Float32 in
+  let v = Shape.shrink b [ Some (Int 2, Int 6) ] in
+  let s1 = Ops.after b [ Ops.store v Ops.O.(v + float 2.) ] in
+  let c = Ops.call ~precompile:true add1_body [ x; v ] in
+  let got =
+    leaves
+      [ (b, Array.init 8 Float.of_int); (x, Array.make 4 0.) ]
+      (Ops.sink [ s1; Ops.after x [ c ] ])
+  in
+  equal (list values)
+    [ floats [| 0.; 1.; 4.; 5.; 6.; 7.; 6.; 7. |]; floats [| 3.; 4.; 5.; 6. |] ]
+    got
+
+(* The same through a reshape of the run: the view stored through hides the
+   node staged. *)
+let store_through_reshape_of_read_lands () =
+  let b = Ops.new_buffer "CPU" 8 Float32 and x = Ops.new_buffer "CPU" 4 Float32 in
+  let v = Shape.shrink b [ Some (Int 2, Int 6) ] in
+  let w = Shape.reshape v [ Int 2; Int 2 ] in
+  let s1 = Ops.after b [ Ops.store w Ops.O.(w + float 2.) ] in
+  let c = Ops.call ~precompile:true add1_body [ x; v ] in
+  let got =
+    leaves
+      [ (b, Array.init 8 Float.of_int); (x, Array.make 4 0.) ]
+      (Ops.sink [ s1; Ops.after x [ c ] ])
+  in
+  equal (list values)
+    [ floats [| 0.; 1.; 4.; 5.; 6.; 7.; 6.; 7. |]; floats [| 3.; 4.; 5.; 6. |] ]
+    got
+
+(* A loop reading the run a state stores through, of the state under the
+   store: the run stays as it was, and the store still lands. *)
+let loop_reads_store_target_older () =
+  let b = Ops.new_buffer "CPU" 16 Float32 in
+  let s0 = Ops.after b [ Ops.store b Ops.O.(b + float 1.) ] in
+  let v = Shape.shrink s0 [ Some (Int 2, Int 6) ] in
+  let s1 = Ops.after s0 [ Ops.store v Ops.O.(v + float 2.) ] in
+  let r = Ops.range ~axis_type:Loop (Int 2) [ 100 ] in
+  let row =
+    Shape.shrink s1
+      [ Some (Sym Ops.O.((r * int 4) + int 4), Sym Ops.O.((r * int 4) + int 8)) ]
+  in
+  let c = Ops.call ~precompile:true add1_body [ row; v ] in
+  equal values
+    (floats
+       [| 1.; 2.; 5.; 6.; 4.; 5.; 6.; 7.; 4.; 5.; 6.; 7.; 13.; 14.; 15.; 16. |])
+    (leaves1 b (Ops.sink [ Ops.after s1 [ Ops.end_ c [ r ] ] ]))
+
+(* A state over the whole of a buffer holds what its own stores leave: a store
+   of another After over a view of the state under it is no part of it. *)
+let sibling_whole_state () =
+  let b = Ops.new_buffer "CPU" 16 Float32 in
+  let half lo = Shape.shrink b [ Some (Int lo, Int (lo + 8)) ] in
+  let s1 = Ops.after b [ Ops.store (half 0) (Ops.float 5.) ] in
+  let s2 = Ops.after (half 8) [ Ops.store (half 8) (Ops.float 7.) ] in
+  (b, s1, s2)
+
+let sibling_read_of_a_whole_state () =
+  let b, s1, s2 = sibling_whole_state () in
+  let x = Ops.new_buffer "CPU" 4 Float32 in
+  let got =
+    leaves
+      [ (b, given16); (x, Array.make 4 0.) ]
+      (Ops.sink
+         [ s1; s2; Ops.after x [ Ops.store x (run_at 8 s1) ] ])
+  in
+  equal (list values)
+    [
+      floats
+        [| 5.; 5.; 5.; 5.; 5.; 5.; 5.; 5.; 7.; 7.; 7.; 7.; 7.; 7.; 7.; 7. |];
+      floats [| 8.; 9.; 10.; 11. |];
+    ]
+    got
+
+let sibling_loop_read_of_a_whole_state () =
+  let b, s1, s2 = sibling_whole_state () in
+  let r = Ops.range ~axis_type:Loop (Int 2) [ 100 ] in
+  let c = Ops.call ~precompile:true add1_body [ row4 s2 r; run_at 8 s1 ] in
+  equal values
+    (floats
+       [| 5.; 5.; 5.; 5.; 5.; 5.; 5.; 5.; 9.; 10.; 11.; 12.; 9.; 10.; 11.; 12. |])
+    (leaves1 b (Ops.sink [ s1; Ops.after s2 [ Ops.end_ c [ r ] ] ]))
+
+(* A later state over a whole state keeps out a sibling's store too. *)
+let sibling_read_of_a_later_state () =
+  let b = Ops.new_buffer "CPU" 16 Float32 and x = Ops.new_buffer "CPU" 4 Float32 in
+  let half lo = Shape.shrink b [ Some (Int lo, Int (lo + 8)) ] in
+  let s1 = Ops.after b [ Ops.store (half 0) (Ops.float 5.) ] in
+  let s2 = Ops.after (half 8) [ Ops.store (half 8) (Ops.float 7.) ] in
+  let s3 = Ops.after s1 [ Ops.store (run_at 0 s1) (Ops.float 6.) ] in
+  let got =
+    leaves
+      [ (b, given16); (x, Array.make 4 0.) ]
+      (Ops.sink
+         [ s3; s2; Ops.after x [ Ops.store x Ops.O.(run_at 8 s3 + run_at 0 s2) ] ])
+  in
+  equal (list values)
+    [
+      floats
+        [| 6.; 6.; 6.; 6.; 5.; 5.; 5.; 5.; 7.; 7.; 7.; 7.; 7.; 7.; 7.; 7. |];
+      floats [| 15.; 16.; 17.; 18. |];
+    ]
+    got
+
+(* A whole state's store that reads a sibling lands after it, and the state
+   holds it. *)
+let sibling_a_state_reads_is_part_of_it () =
+  let b = Ops.new_buffer "CPU" 16 Float32 and x = Ops.new_buffer "CPU" 4 Float32 in
+  let low = Shape.shrink b [ Some (Int 0, Int 8) ] in
+  let high = Shape.shrink b [ Some (Int 8, Int 16) ] in
+  let sa = Ops.after low [ Ops.store low (Ops.float 1.) ] in
+  let sb = Ops.after b [ Ops.store high sa ] in
+  let got =
+    leaves
+      [ (b, given16); (x, Array.make 4 0.) ]
+      (Ops.sink [ sb; Ops.after x [ Ops.store x (run_at 12 sb) ] ])
+  in
+  equal (list values) [ floats (Array.make 16 1.); floats (Array.make 4 1.) ] got
+
+(* A whole state listing a sibling state holds it. *)
+let sibling_listed_is_part_of_it () =
+  let b = Ops.new_buffer "CPU" 16 Float32 and x = Ops.new_buffer "CPU" 4 Float32 in
+  let half lo = Shape.shrink b [ Some (Int lo, Int (lo + 8)) ] in
+  let s2 = Ops.after (half 8) [ Ops.store (half 8) (Ops.float 7.) ] in
+  let s1 = Ops.after b [ Ops.store (half 0) (Ops.float 5.); s2 ] in
+  let got =
+    leaves
+      [ (b, given16); (x, Array.make 4 0.) ]
+      (Ops.sink [ s1; Ops.after x [ Ops.store x (run_at 8 s1) ] ])
+  in
+  equal (list values)
+    [
+      floats
+        [| 5.; 5.; 5.; 5.; 5.; 5.; 5.; 5.; 7.; 7.; 7.; 7.; 7.; 7.; 7.; 7. |];
+      floats (Array.make 4 7.);
+    ]
+    got
+
+(* A state above the first, its store following a sibling: the store runs
+   after the sibling, and the state holds it. *)
+let sibling_followed_above_the_first_state () =
+  let b = Ops.new_buffer "CPU" 16 Float32 and x = Ops.new_buffer "CPU" 4 Float32 in
+  let half lo = Shape.shrink b [ Some (Int lo, Int (lo + 8)) ] in
+  let s1 = Ops.after b [ Ops.store (half 0) (Ops.float 5.) ] in
+  let t = Ops.after (half 8) [ Ops.store (half 8) (Ops.float 7.) ] in
+  let s3 = Ops.after s1 [ Ops.store (run_at 0 s1) (Ops.float 6.); t ] in
+  let got =
+    leaves
+      [ (b, given16); (x, Array.make 4 0.) ]
+      (Ops.sink [ s3; Ops.after x [ Ops.store x (run_at 8 s3) ] ])
+  in
+  equal (list values)
+    [
+      floats
+        [| 6.; 6.; 6.; 6.; 5.; 5.; 5.; 5.; 7.; 7.; 7.; 7.; 7.; 7.; 7.; 7. |];
+      floats (Array.make 4 7.);
+    ]
+    got
+
+(* A store reading a sibling and the older state beside it: the older state
+   has no part of the sibling, and a copy holds it. *)
+let sibling_read_beside_older_state () =
+  let b = Ops.new_buffer "CPU" 16 Float32 in
+  let half lo = Shape.shrink b [ Some (Int lo, Int (lo + 8)) ] in
+  let s1 = Ops.after b [ Ops.store (half 0) (Ops.float 5.) ] in
+  let t = Ops.after (half 8) [ Ops.store (half 8) (Ops.float 7.) ] in
+  let v = run_at 0 s1 in
+  let s3 = Ops.after s1 [ Ops.store v Ops.O.(run_at 8 s1 + run_at 0 t) ] in
+  equal values
+    (floats
+       [| 15.; 16.; 17.; 18.; 5.; 5.; 5.; 5.; 7.; 7.; 7.; 7.; 7.; 7.; 7.; 7. |])
+    (leaves1 b (Ops.sink [ s3; t ]))
+
+(* A call loading through the argument it stores through reads the state it
+   is given, and no sibling's store. *)
+let sibling_read_through_written_argument () =
+  let b = Ops.new_buffer "CPU" 16 Float32 in
+  let half lo = Shape.shrink b [ Some (Int lo, Int (lo + 8)) ] in
+  let s1 = Ops.after b [ Ops.store (half 0) (Ops.float 5.) ] in
+  let t = Ops.after (half 8) [ Ops.store (half 8) (Ops.float 7.) ] in
+  let p = Shape.param ~shape:[ Int 16 ] ~device:"CPU" 0 Float32 in
+  let body =
+    Ops.sink
+      [ Ops.store (run_at 0 p) Ops.O.(run_at 8 p + float 1.) ]
+  in
+  let s3 = Ops.after s1 [ Ops.call ~precompile:true body [ s1 ] ] in
+  equal values
+    (floats
+       [| 9.; 10.; 11.; 12.; 5.; 5.; 5.; 5.; 7.; 7.; 7.; 7.; 7.; 7.; 7.; 7. |])
+    (leaves1 b (Ops.sink [ t; s3 ]))
+
+(* A call loading through what it stores through, beside a sibling it follows:
+   the state it writes holds the sibling's store. *)
+let sibling_followed_by_a_written_load () =
+  let setup () =
+    let b = Ops.new_buffer "CPU" 16 Float32 in
+    let half lo = Shape.shrink b [ Some (Int lo, Int (lo + 8)) ] in
+    let s1 = Ops.after b [ Ops.store (half 0) (Ops.float 5.) ] in
+    let t = Ops.after (half 8) [ Ops.store (half 8) (Ops.float 7.) ] in
+    (b, s1, t)
+  in
+  let p16 = Shape.param ~shape:[ Int 16 ] ~device:"CPU" 0 Float32 in
+  let body lo =
+    Ops.sink [ Ops.store (run_at 0 p16) Ops.O.(run_at lo p16 + p4 1) ]
+  in
+  let got lo =
+    let b, s1, t = setup () in
+    let k = Ops.call ~precompile:true (body lo) [ s1; run_at 0 t ] in
+    leaves1 b (Ops.sink [ t; Ops.after s1 [ k ] ])
+  in
+  let rest = [| 5.; 5.; 5.; 5.; 7.; 7.; 7.; 7.; 7.; 7.; 7.; 7. |] in
+  equal values (floats (Array.append (Array.make 4 12.) rest)) (got 4);
+  equal values (floats (Array.append (Array.make 4 14.) rest)) (got 8)
+
+(* A load through the written argument beside a sibling that reads storage
+   the call overwrites: the sibling reads a copy, whatever the sizes. *)
+let sibling_reads_what_a_written_load_overwrites () =
+  let run n =
+    let b = Ops.new_buffer "CPU" 16 Float32 in
+    let y = Ops.new_buffer "CPU" n Float32 in
+    let half lo = Shape.shrink b [ Some (Int lo, Int (lo + 8)) ] in
+    let s1 = Ops.after b [ Ops.store (half 0) (Ops.float 5.) ] in
+    let t =
+      Ops.after (half 8)
+        [
+          Ops.store (half 8)
+            Ops.O.(Shape.shrink y [ Some (Int 0, Int 8) ] + float 2.);
+        ]
+    in
+    let p16 = Shape.param ~shape:[ Int 16 ] ~device:"CPU" 0 Float32 in
+    let pn = Shape.param ~shape:[ Int n ] ~device:"CPU" 1 Float32 in
+    let body =
+      Ops.sink
+        [
+          Ops.store (run_at 0 p16) Ops.O.(run_at 8 p16 + float 1.);
+          Ops.store pn (Ops.float 3.);
+        ]
+    in
+    let k = Ops.call ~precompile:true body [ s1; y ] in
+    leaves
+      [ (b, given16); (y, Array.init n Float.of_int) ]
+      (Ops.sink [ t; Ops.after s1 [ k ]; Ops.after y [ k ] ])
+  in
+  let want n =
+    [
+      floats
+        [| 9.; 10.; 11.; 12.; 5.; 5.; 5.; 5.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |];
+      floats (Array.make n 3.);
+    ]
+  in
+  equal (list values) (want 8) (run 8);
+  equal (list values) (want 32) (run 32)
+
+(* A nested call that only stores through its argument loads nothing there. *)
+let sibling_nested_store_is_no_load () =
+  let b = Ops.new_buffer "CPU" 16 Float32 in
+  let half lo = Shape.shrink b [ Some (Int lo, Int (lo + 8)) ] in
+  let s1 = Ops.after b [ Ops.store (half 0) (Ops.float 5.) ] in
+  let t = Ops.after (half 8) [ Ops.store (half 8) (Ops.float 7.) ] in
+  let p16 = Shape.param ~shape:[ Int 16 ] ~device:"CPU" 0 Float32 in
+  let inner = Ops.sink [ Ops.store (run_at 0 p16) Ops.O.(p4 1 + float 1.) ] in
+  let outer =
+    Ops.v Op.Linear
+      ~src:[ Ops.call ~precompile:true inner [ p16; p4 1 ] ]
+  in
+  let k = Ops.call ~precompile:true outer [ s1; run_at 0 t ] in
+  equal values
+    (floats
+       [| 8.; 8.; 8.; 8.; 5.; 5.; 5.; 5.; 7.; 7.; 7.; 7.; 7.; 7.; 7.; 7. |])
+    (leaves1 b (Ops.sink [ t; Ops.after s1 [ k ] ]))
+
+let int_bits_of_10 = 0x41200000
+let int_bits_of_20 = 0x41A00000
+
+(* Afters over runs of a bitcast of one buffer stay Afters over views. *)
+let sibling_runs_of_a_bitcast () =
+  let b = Ops.new_buffer "CPU" 16 Float32 in
+  let c = Ops.bitcast b Int32 in
+  let run lo = Shape.shrink c [ Some (Int lo, Int (lo + 8)) ] in
+  let write lo bits =
+    Ops.after (run lo) [ Ops.store (run lo) (Ops.int ~dtype:Int32 bits) ]
+  in
+  equal values
+    (floats (Array.init 16 (fun i -> if i < 8 then 10. else 20.)))
+    (leaves1 b (Ops.sink [ write 0 int_bits_of_10; write 8 int_bits_of_20 ]))
+
+let store_through_run_of_a_bitcast_state () =
+  let b = Ops.new_buffer "CPU" 8 Float32 in
+  let s1 = Ops.after b [ Ops.store b Ops.O.(b + float 1.) ] in
+  let c = Ops.bitcast s1 Int32 in
+  let run = Shape.shrink c [ Some (Int 0, Int 4) ] in
+  let a = Ops.after c [ Ops.store run (Ops.int ~dtype:Int32 int_bits_of_10) ] in
+  equal values
+    (floats [| 10.; 10.; 10.; 10.; 5.; 6.; 7.; 8. |])
+    (List.hd
+       (leaves
+          [ (b, Array.init 8 Float.of_int) ]
+          (Ops.sink [ a ])))
+
+let weak_value_through_a_run_of_a_bitcast () =
+  let b = Ops.new_buffer "CPU" 8 Float32 in
+  let c = Ops.bitcast b Int32 in
+  let v = Shape.shrink c [ Some (Int 0, Int 4) ] in
+  let a = Ops.after v [ Ops.store v (Ops.int int_bits_of_10) ] in
+  equal values
+    (floats [| 10.; 10.; 10.; 10.; 4.; 5.; 6.; 7. |])
+    (List.hd (leaves [ (b, Array.init 8 Float.of_int) ] (Ops.sink [ a ])))
+
+(* One constant stored at two states of one storage, each through a bitcast:
+   the constant has no axis, and each store writes its own storage. *)
+let shared_constant_stores () =
+  let b0 = Ops.new_buffer "CPU" 32 Float32 and b1 = Ops.new_buffer "CPU" 32 Float32 in
+  let v = Ops.bitcast b1 Int32 in
+  let a = Ops.after v [ Ops.store v (Ops.int ~dtype:Int32 0x41200000) ] in
+  let s = Ops.bitcast a Float32 in
+  let v2 = Ops.bitcast s Int32 in
+  let a2 = Ops.after v2 [ Ops.store v2 (Ops.int ~dtype:Int32 0x41200000) ] in
+  let s2 = Ops.bitcast a2 Float32 in
+  let r = loop3 () in
+  let p slot dt = Shape.param ~shape:[ Int 4 ] ~device:"CPU" slot dt in
+  let body =
+    Ops.sink
+      [
+        Ops.store (p 0 Float32)
+          Ops.O.(float 2. + Ops.bitcast (p 1 Int32) Float32);
+      ]
+  in
+  let row =
+    Shape.shrink b0
+      [ Some (Sym Ops.O.((r * int 4) + int 16), Sym Ops.O.((r * int 4) + int 20)) ]
+  in
+  let z = Ops.new_buffer "CPU" 4 Float32 in
+  let c =
+    Ops.call ~precompile:true body
+      [ row; Ops.bitcast (Shape.shrink b1 [ Some (Int 7, Int 11) ]) Int32 ]
+  in
+  let e = Ops.end_ c [ r ] in
+  let got =
+    leaves
+      [
+        (b0, Array.init 32 Float.of_int);
+        (b1, Array.init 32 Float.of_int);
+        (z, Array.make 4 0.);
+      ]
+      (Ops.sink
+         [
+           Ops.after b0 [ e ];
+           s2;
+           Ops.after z [ Ops.store z (Shape.shrink b0 [ Some (Int 25, Int 29) ]) ];
+         ])
+  in
+  let rows = Array.concat [ Array.init 16 Float.of_int;
+    [| 9.; 10.; 11.; 12.; 9.; 10.; 11.; 12.; 9.; 10.; 11.; 12. |];
+    [| 28.; 29.; 30.; 31. |] ] in
+  equal (list values)
+    [ floats rows; floats (Array.make 32 10.); floats [| 25.; 26.; 27.; 28. |] ]
+    got
+
+(* One value stored whole into two storages of other sizes: each store writes
+   all of its own storage. *)
+let shared_value_stores_of_other_sizes () =
+  let b = Ops.new_buffer "CPU" 16 Float32 and x = Ops.new_buffer "CPU" 32 Float32 in
+  let run = Shape.shrink b [ Some (Int 0, Int 8) ] in
+  let three = Ops.cast (Ops.int 3) Float32 in
+  let got =
+    leaves
+      [ (b, given16); (x, Array.init 32 Float.of_int) ]
+      (Ops.sink
+         [
+           Ops.after b [ Ops.store run three ];
+           Ops.after x [ Ops.store x three ];
+         ])
+  in
+  equal (list values)
+    [
+      floats
+        [| 3.; 3.; 3.; 3.; 3.; 3.; 3.; 3.; 8.; 9.; 10.; 11.; 12.; 13.; 14.; 15. |];
+      floats (Array.make 32 3.);
+    ]
+    got
+
+(* A state of a bitcast of storage is that bitcast of a state of the storage. *)
+let bitcast_state () =
+  let b = Ops.new_buffer "CPU" 32 Float32 in
+  let v = Ops.bitcast b Int32 in
+  let a = Ops.after v [ Ops.store v (Ops.int ~dtype:Int32 0x41200000) ] in
+  (b, Ops.bitcast a Float32)
+
+let loop_over_a_bitcast_state_writes_an_older_name () =
+  let b, s = bitcast_state () in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let row =
+    Shape.shrink b
+      [ Some (Sym Ops.O.((r * int 4) + int 4), Sym Ops.O.((r * int 4) + int 8)) ]
+  in
+  let body = Ops.sink [ Ops.store (p4 1) Ops.O.(float 0. + p4 0) ] in
+  let c =
+    Ops.call ~precompile:true body
+      [ Shape.shrink b [ Some (Int 26, Int 30) ]; row ]
+  in
+  let want =
+    Array.concat
+      [
+        Array.make 4 10.;
+        [| 26.; 27.; 28.; 29.; 26.; 27.; 28.; 29.; 26.; 27.; 28.; 29. |];
+        Array.make 16 10.;
+      ]
+  in
+  equal values (floats want)
+    (List.hd
+       (leaves [ (b, Array.init 32 Float.of_int) ]
+          (Ops.sink [ Ops.after s [ Ops.end_ c [ r ] ] ])))
+
+let call_reads_states_of_bitcasts () =
+  let b1 = Ops.new_buffer "CPU" 32 Float32 and b0 = Ops.new_buffer "CPU" 32 Float32 in
+  let a1 = Ops.after b1 [ Ops.store b1 (Ops.float 4.) ] in
+  let v = Ops.bitcast a1 Int32 in
+  let a2 = Ops.after v [ Ops.store v (Ops.int ~dtype:Int32 0x41200000) ] in
+  let s = Ops.bitcast a2 Float32 in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let row = row4 b0 r in
+  let body = Ops.sink [ Ops.store (p4 2) Ops.O.(float 0. + p4 0 + p4 1) ] in
+  let c =
+    Ops.call ~precompile:true body
+      [
+        Shape.shrink a1 [ Some (Int 11, Int 15) ];
+        Shape.shrink s [ Some (Int 7, Int 11) ];
+        row;
+      ]
+  in
+  let z = Ops.new_buffer "CPU" 4 Float32 in
+  let got =
+    leaves
+      [
+        (b0, Array.init 32 Float.of_int);
+        (b1, Array.init 32 Float.of_int);
+        (z, Array.make 4 0.);
+      ]
+      (Ops.sink
+         [
+           Ops.after b0 [ Ops.end_ c [ r ] ];
+           s;
+           Ops.after z [ Ops.store z (Shape.shrink b1 [ Some (Int 15, Int 19) ]) ];
+         ])
+  in
+  let rows =
+    Array.concat
+      [ Array.make 12 14.; Array.init 20 (fun i -> Float.of_int (i + 12)) ]
+  in
+  equal (list values)
+    [ floats rows; floats (Array.make 32 10.); floats [| 15.; 16.; 17.; 18. |] ]
+    got
+
+(* A loop's fixed run of a later state beside another read of that state, the
+   state over a bitcast and the run read each trip. *)
+let later_state_over_bitcast_read_each_trip () =
+  let b0 = Ops.new_buffer "CPU" 32 Float32 and b1 = Ops.new_buffer "CPU" 32 Float32 in
+  let v = Shape.reshape (Shape.shrink b1 [ Some (Int 0, Int 16) ]) [ Int 4; Int 4 ] in
+  let a = Ops.after v [ Ops.store v Ops.O.(v + float 2.) ] in
+  let flat = Shape.reshape a [ Int 16 ] in
+  let w = Ops.bitcast flat Int32 in
+  let a2 = Ops.after w [ Ops.store w (Ops.int ~dtype:Int32 0x41200000) ] in
+  let s2 = Ops.bitcast a2 Float32 in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let move b lo =
+    Shape.shrink b
+      [ Some (Sym Ops.O.((r * int 4) + int lo), Sym Ops.O.((r * int 4) + int lo + int 4)) ]
+  in
+  let body =
+    Ops.sink
+      [
+        Ops.store (p4 1) Ops.O.(float 1. + p4 0);
+        Ops.store (p4 4) Ops.O.(p4 2 + p4 3);
+      ]
+  in
+  let fixed b lo = Shape.shrink b [ Some (Int lo, Int (lo + 4)) ] in
+  let c =
+    Ops.call ~precompile:true body
+      [ fixed s2 7; move b0 12; fixed b1 20; fixed b0 28; move flat 0 ]
+  in
+  let e = Ops.end_ c [ r ] in
+  let z = Ops.new_buffer "CPU" 4 Float32 in
+  let got =
+    leaves
+      [
+        (b0, Array.init 32 Float.of_int);
+        (b1, Array.init 32 Float.of_int);
+        (z, Array.make 4 0.);
+      ]
+      (Ops.sink
+         [
+           Ops.after b0 [ e ];
+           Ops.after s2 [ e ];
+           Ops.after z [ Ops.store z (fixed s2 3) ];
+         ])
+  in
+  let b0_want =
+    Array.concat
+      [
+        Array.init 12 Float.of_int;
+        [| 11.; 11.; 11.; 11.; 11.; 11.; 11.; 11.; 55.; 11.; 11.; 11. |];
+        Array.init 8 (fun i -> Float.of_int (i + 24));
+      ]
+  in
+  let b1_want =
+    Array.concat
+      [
+        [| 48.; 50.; 52.; 54.; 48.; 50.; 52.; 54.; 48.; 50.; 52.; 54. |];
+        Array.make 4 10.;
+        Array.init 16 (fun i -> Float.of_int (i + 16));
+      ]
+  in
+  equal (list values)
+    [ floats b0_want; floats b1_want; floats [| 10.; 10.; 10.; 10. |] ]
+    got
+
+(* The run of a state of a bitcast of a state the loop writes is read each
+   trip. *)
+let loop_reads_run_of_a_bitcast_state () =
+  let b = Ops.new_buffer "CPU" 16 Float32 in
+  let s1 = Ops.after b [ Ops.store b (Ops.float 4.) ] in
+  let bits = Ops.bitcast s1 Int32 in
+  let a =
+    Ops.after bits [ Ops.store bits (Ops.int ~dtype:Int32 0x41200000) ]
+  in
+  let s = Ops.bitcast a Float32 in
+  let r = Ops.range ~axis_type:Loop (Int 2) [ 100 ] in
+  let body = Ops.sink [ Ops.store (p4 0) Ops.O.(p4 1 + float 1.) ] in
+  let c =
+    Ops.call ~precompile:true body
+      [ row4 s1 r; Shape.shrink s [ Some (Int 3, Int 7) ] ]
+  in
+  equal values
+    (floats
+       [| 11.; 11.; 11.; 11.; 12.; 11.; 11.; 11.; 10.; 10.; 10.; 10.; 10.; 10.;
+          10.; 10. |])
+    (leaves1 b (Ops.sink [ Ops.after s [ Ops.end_ c [ r ] ] ]))
+
 (* A loop on a state, reading the run of the first state its store goes
    through: the read holds the run as it was, the store still lands. *)
 let loop_reads_older_plain_run () =
@@ -4387,25 +4929,50 @@ let calls_of_views =
             (fun () ->
               Schedule.create_linear_with_vars
                 (Ops.sink [ Ops.after x2 [ Ops.end_ c [ r ] ] ])));
-      test "a loop reading a run of a state of a bitcast is refused" (fun () ->
-          let b = Ops.new_buffer "CPU" 16 Float32 in
-          let s1 = Ops.after b [ Ops.store b (Ops.float 4.) ] in
-          let bits = Ops.bitcast s1 Int32 in
-          let a =
-            Ops.after bits [ Ops.store bits (Ops.int ~dtype:Int32 0x41200000) ]
-          in
-          let s = Ops.bitcast a Float32 in
-          let r = Ops.range ~axis_type:Loop (Int 2) [ 100 ] in
-          let body = Ops.sink [ Ops.store (p4 0) Ops.O.(p4 1 + float 1.) ] in
-          let c =
-            Ops.call ~precompile:true body
-              [ row4 s1 r; Shape.shrink s [ Some (Int 3, Int 7) ] ]
-          in
-          raises_match
-            (Exn.invalid_arg ~sub:"reads storage the call writes")
-            (fun () ->
-              Schedule.create_linear_with_vars
-                (Ops.sink [ Ops.after s [ Ops.end_ c [ r ] ] ])));
+      test "a store through a run a call reads lands" store_through_read_run_lands;
+      test "a store through a reshape of a run a call reads lands"
+        store_through_reshape_of_read_lands;
+      test "a loop reading a run of the state under a store through it keeps \
+            the store"
+        loop_reads_store_target_older;
+      test "a read of a whole state holds no store of a sibling After"
+        sibling_read_of_a_whole_state;
+      test "a loop's read of a whole state holds no store of a sibling After"
+        sibling_loop_read_of_a_whole_state;
+      test "a read of a later whole state holds no store of a sibling After"
+        sibling_read_of_a_later_state;
+      test "a whole state holds the sibling store its own store reads"
+        sibling_a_state_reads_is_part_of_it;
+      test "a whole state holds a sibling state it lists"
+        sibling_listed_is_part_of_it;
+      test "a state above the first holds the sibling its store follows"
+        sibling_followed_above_the_first_state;
+      test "a store reading a sibling and the older state beside it"
+        sibling_read_beside_older_state;
+      test "a call loading through what it stores through holds no sibling"
+        sibling_read_through_written_argument;
+      test "a written load following a sibling holds its store"
+        sibling_followed_by_a_written_load;
+      test "a sibling reading what a written load overwrites, any size"
+        sibling_reads_what_a_written_load_overwrites;
+      test "a nested call storing through a state loads nothing of it"
+        sibling_nested_store_is_no_load;
+      test "Afters over runs of a bitcast stay views" sibling_runs_of_a_bitcast;
+      test "a store through a run of a bitcast of a state"
+        store_through_run_of_a_bitcast_state;
+      test "a weak value through a run of a bitcast"
+        weak_value_through_a_run_of_a_bitcast;
+      test "one constant stored at two states through bitcasts" shared_constant_stores;
+      test "one value stored whole into storages of other sizes"
+        shared_value_stores_of_other_sizes;
+      test "a loop over a bitcast state writes an older name of its storage"
+        loop_over_a_bitcast_state_writes_an_older_name;
+      test "a call reads states of a bitcast and of its storage"
+        call_reads_states_of_bitcasts;
+      test "a later state over a bitcast is read each trip"
+        later_state_over_bitcast_read_each_trip;
+      test "a loop reads a run of a state of a bitcast each trip"
+        loop_reads_run_of_a_bitcast_state;
       test "a loop reading a join over other writes of its storage is refused"
         (fun () ->
           let b = Ops.new_buffer "CPU" 16 Float32 in

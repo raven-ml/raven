@@ -9057,9 +9057,9 @@ reason and its pins.
   alignment as for a view of plain storage: no offset enters it, and a lift is
   decided from extents and states alone. A fixed contiguous run a loop's call
   only reads, of the state it writes or a later one, is such a view; a run of
-  an older state is stored once, as it was. A run of a state over a bitcast of
-  storage, of a join over other writes of its storage, and a read of a state
-  older than the one the loop is listed over raise as before.
+  an older state is stored once, as it was. A run of a join over other writes
+  of its storage, and a read of a state older than the one the loop is listed
+  over raise as before.
 - **Reason:** (e): `Ops.after` gives the read a meaning and it raised, after
   having computed stale values: each trip reads the run as the trip starts.
 - **Pinned by:** `Tolk_engine › calls of views › a loop's fixed read of an
@@ -9071,8 +9071,8 @@ reason and its pins.
   later`, `› a bitcast run of an After state read each trip`, `› older and
   sibling states' runs stay as they were`, `› a loop's older run of storage
   leaves the state before it`, `› a loop reading a state older than its listing
-  is refused`, `› a loop reading a run of a state of a bitcast is refused`, `› a
-  loop reading a join over other writes of its storage is refused`, `› two loops
+  is refused`, `› a loop reading a join over other writes of its storage is
+  refused`, `› two loops
   in sequence read their runs`, `› a loop reads each run of an After state as its
   trip starts`;
   `Tolk.Schedule › cache › runs at other offsets of a loop's read are one
@@ -9154,3 +9154,103 @@ reason and its pins.
   anew, and replaced ›` truncated, holding no graph and of another value, and
   `nothing is kept ›` with `DEBUG` on, without the binary cache and with
   `SCACHE` at 1.
+
+## D465. A stage a call reads is no destination of a store
+
+- **tinygrad:** `schedule/rangeify.py` (`pm_remove_bufferize`): a store through
+  a view of a stage of `removable=False` writes the stage, a stage a user
+  materialises and one a custom kernel's argument makes alike.
+- **tolk:** `Ops.keep` (`Argument`), `Indexing.bufferize_and_index`,
+  `Rangeify.destination`.
+- **Differs:** a stage made because a custom kernel reads a view is
+  `Argument`: kept whole, as `Whole`, but a store through the same node of the
+  view writes the storage, the stage's own index inlined. A stage the user
+  materialises stays `Whole` and is written as asked. `Ops.repr` and the
+  serialized graph print both as `removable=False`, as tinygrad does; a graph
+  read back has no `Argument`, none surviving a schedule.
+- **Reason:** (e): `b1 = after b [store v (v + 2)]` beside a call reading the
+  same node `v` as its argument lost the store: the store's target was the
+  stage that holds the read, and `b` kept its old elements, a silent wrong
+  value. The call still reads `v` as it was, through the stage.
+- **Pinned by:** `Tolk_engine › calls of views › a store through a run a call
+  reads lands`, `› a store through a reshape of a run a call reads lands`, `› a
+  loop reading a run of the state under a store through it keeps the store`.
+
+## D434. A scalar value has no axis of its consumers, and stores join over what they write
+
+- **tinygrad:** `schedule/indexing.py` (`run_rangeify`): the ranges of a value's
+  consumers are its ranges, also for a store or a cast of a scalar, which
+  broadcasts it: consumers at other ranges realize the scalar, and the stage of
+  a shape `()` value is indexed by them, an index of a constant no pass folds.
+  Stores are not joined over shared values there (D-numbers of tolk's
+  `Indexing.share_loops`).
+- **tolk:** `Indexing.assign_ranges` (a scalar's consumer ranges),
+  `Indexing.joinable`.
+- **Differs:** a scalar value takes no ranges from a consumer that is no
+  broadcast of it. Two stores of one value join only over storage of one
+  shape, the shape stored into; a scalar value stored into two sizes stays two
+  kernels.
+- **Reason:** (e): one constant stored through bitcasts at two states of a
+  buffer reached the renderer as an index of the constant, `(1092616192)[i]`,
+  a Clang error on a valid graph. Keeping the value unstaged then joined its
+  stores across the two sizes, one store writing a fraction of its storage.
+- **Pinned by:** `Tolk_engine › calls of views › one constant stored at two
+  states through bitcasts`, `› one value stored whole into storages of other
+  sizes`.
+
+## D435. A reader of a state over the whole of its storage runs before its sibling stores
+
+- **tinygrad:** no states of a buffer: `AFTER`s over views of a buffer order
+  nothing against a reader of another (`schedule/__init__.py`).
+- **tolk:** `Schedule.sibling_edges`.
+- **Differs:** a state whose `After` is over the whole of its storage holds its
+  own kernels' stores, those of the states under it, and each store those
+  kernels run after, by reading it directly or through other storage or by
+  listing it. A reader of it runs before every other kernel written over one of
+  those states that the chain's kernels do not follow, so an element no store of the
+  chain writes reads as the state held it; the ordering is over states, as every
+  order of the relation (D426), and a cycle it closes is cut by a copy like any
+  other. A load through the argument a call stores through reads the state the
+  call writes, with each store it runs after, and takes no edge to one of them;
+  its edge to any other orders no read a copy can stand in for, so a cycle it
+  closes is cut at another read.
+- **Reason:** (e): `s1 = after b [store b[0:8] 5]` beside `s2 = after b[8:16]
+  [store b[8:16] 7]`: `s1[8:12]` read `7`s where `Ops.after` gives `b`'s elements,
+  a silent wrong value, directly, through a loop's fixed read and through a later
+  state over `s1`.
+- **Pinned by:** `Tolk_engine › calls of views › a read of a whole state holds
+  no store of a sibling After`, `› a loop's read of a whole state holds no store
+  of a sibling After`, `› a read of a later whole state holds no store of a
+  sibling After`, `› a sibling reading what a written load overwrites, any
+  size`, `› a whole state holds the sibling store its own store reads`,
+  `› a whole state holds a sibling state it lists`.
+
+## D436. A state of a bitcast is a bitcast of a state
+
+- **tinygrad:** `schedule/rangeify.py` (`pm_mops`): only movements move outside
+  an `AFTER`, and a bitcast of storage is not one.
+- **tolk:** `Schedule.through_bitcast`, `Schedule.under_bitcast`,
+  `Schedule.pm_state_of_bitcast`, `Schedule.view_param`.
+- **Differs:** an `After` whose first source is a bitcast of storage or of a
+  state, or a movement over one, becomes that bitcast of an `After` of the
+  storage, before the calls are made: a state's first source is storage or a
+  view of it, whatever type its readers take. A movement over a bitcast of
+  elements of one size moves under the bitcast, so it stays a view; one over a
+  bitcast that resizes them goes outside with the bitcast. A store through a
+  movement of a same-size bitcast stores the value bitcast into the movement of
+  the storage, a weak value first taken at the view's type, a copy keeping its
+  bitcast; one through a bitcast that resizes elements follows D433. A
+  view of a loop's read of a state names that state in the form the movement
+  rewrite leaves it, so the link stays a state through it.
+- **Reason:** (e): `Ops.after` gives such a program a meaning, and it raised
+  internal errors (a failed verification, a cycle detected, a Clang error) or
+  the refusal of a loop's fixed read of the state. Every read then is a read of
+  a state of the storage: the runs read each trip, and the older states read
+  as they were, need no case of their own.
+- **Pinned by:** `Tolk_engine › calls of views › a loop over a bitcast state
+  writes an older name of its storage`, `› a call reads states of a bitcast and
+  of its storage`, `› a later state over a bitcast is read each trip`, `› a loop
+  reads a run of a state of a bitcast each trip`, `› one constant stored at two
+  states through bitcasts`, `› Afters over runs of a bitcast stay views`, `› a
+  store through a run of a bitcast of a state`, `› a weak value through a run of
+  a bitcast`.

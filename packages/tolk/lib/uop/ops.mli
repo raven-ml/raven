@@ -261,8 +261,10 @@ type keep =
           its readers would compute again for each element of the ranges it
           does not vary along. *)
   | Whole
-      (** Nothing: a value the user materialises, or a custom kernel reads,
-          is stored as it is. *)
+      (** Nothing: a value the user materialises is stored as it is. *)
+  | Argument
+      (** As {!Whole}, for a value a custom kernel reads: a store through the
+          same view of storage writes that storage, not this buffer. *)
 
 type bufferize_opts = {
   device : device option;  (** Where the new buffer lives. *)
@@ -359,7 +361,7 @@ val pp_arg : Format.formatter -> arg -> unit
       params=(), ...)];
     - {!Bufferize}: [BufferizeOpts(device='CPU', addrspace=AddrSpace.GLOBAL,
       removable=True, broadcast=False)], [removable] [False] for {!Whole}
-      only and [broadcast] [True] for {!Broadcast} only;
+      and {!Argument} only and [broadcast] [True] for {!Broadcast} only;
     - {!Custom_function}: [CustomFunction(name='f', dtype=dtypes.i32,
       fmt=False)];
     - {!Call}: [CallInfo(None, 'f', False, False, False, None)].
@@ -813,11 +815,14 @@ val after : t -> t list -> t
     [deps] list calls, loops of calls or stores is the state those effects
     leave the storage in, after the state [u] names: they land in the order
     listed, each reading the states the graph names, older states as they were,
-    so a later store wins where stores overlap. A call loading through an
-    argument it stores through loads what the effects listed before it left
-    there. An element two {!Op.After}s of one state both write, which
+    so a later store wins where stores overlap. A call loading through an argument it stores through loads what the effects
+    listed before it left there, with each store the call runs after. An element two {!Op.After}s of one state both write, which
     {!Schedule.create_schedule} admits for views of the state, holds an
-    unspecified value. A store listed over a later state of its storage than
+    unspecified value. A state over the whole of its storage holds its own
+    effects, those of the states under it, and each store those effects run
+    after, by reading it directly or through other storage, or by listing it. A
+    store of an {!Op.After} over a view of one of those states that they do not
+    run after is no part of it. A store listed over a later state of its storage than
     its destination names stores into that later state. One listing only stores
     into other storage leaves [u]'s state as it is, read once they have landed.
     One whose

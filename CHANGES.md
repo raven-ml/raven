@@ -1177,6 +1177,17 @@ word comes from its lock and from samples the dashboard saw arrive.
   schedule whole from the disk cache (`Tolk_engine.compile`): it schedules
   nothing and reads no kernel, with a third fewer allocated words on
   gpt-oss's 12-token call.
+- A store through a view that a call also reads lands in the storage instead
+  of a copy, and a read of an `After` over the whole of a buffer holds only its
+  own stores, not those of an `After` over a view of the same state: both gave
+  silent wrong values.
+- An `After` of a bitcast of storage is that bitcast of a state of the storage
+  (`Ops.after`): programs storing and reading through bitcast states compile and
+  run instead of raising internal errors, and a loop's call reads a run of such
+  a state each trip.
+- A constant stored at several states no longer reaches Clang as an indexed
+  constant (a `subscripted value` error on a valid graph), and one value stored
+  into storages of different sizes is written whole into each.
 - Metal compiles run in worker processes, several at once, where a lock ran
   them in turn; a compiler crash or an MTLCompiler that won't load raises
   `Compile_error`. Off Linux a worker may run from the temporary directory.
@@ -1188,9 +1199,8 @@ word comes from its lock and from samples the dashboard saw arrive.
   squared runs 1.18x faster there; 11 other products swept run within noise.
 - A loop's call reads a fixed run of an `After` state it writes, or a later one,
   as each trip starts: the run raised "reads storage the call writes" in
-  `Schedule`. A run of a state over a bitcast or of a join over other writes of
-  its storage still raises; the error now says to compute the value in the
-  call's body.
+  `Schedule`. A run of a join over other writes of its storage still raises; the
+  error now says to compute the value in the call's body.
 - On NVIDIA GPUs from `sm_80`, a dense product of 32 rows takes a staged tensor
   core when that core keeps its threads: a bfloat16 product of 16384 by 4096
   runs in 425 µs on an RTX 5000 Ada, 540 streamed.

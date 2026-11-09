@@ -670,7 +670,8 @@ let bufferize_opts : Ops.bufferize_opts codec =
   |> field "device" (option device) (get (fun b -> b.device))
   |> field "addrspace" ~default:Dtype.Global addr_space
        (get (fun b -> b.addrspace))
-  |> field "removable" ~default:true bool (get (fun b -> b.keep <> Whole))
+  |> field "removable" ~default:true bool
+       (get (fun b -> b.keep = Removable || b.keep = Broadcast))
   |> field "broadcast" ~default:false bool (get (fun b -> b.keep = Broadcast))
   |> finish
 

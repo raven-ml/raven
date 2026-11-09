@@ -52,7 +52,7 @@ raven / llama.cpp b12048 Vulkan:
   (-2% instructions, 12 lines), and pruning rewrites by the operations a
   matcher rules on (no gain: the memo it needs costs what it saves)
 - a fixed run of an `After` state read inside a loop still raises where the
-  state is over a bitcast, or a join over other writes of its storage
+  state is a join over other writes of its storage
 - attention's backward (167d026789) has not run on AMD, and its CDNA 4
   tile rule on no GPU: none here is a CDNA 4
 

@@ -529,6 +529,8 @@ type war = { reader : t; state : t }
 
 let same_war a b = a.reader == b.reader && a.state == b.state
 
+let after_over_view u = op u = Op.After && is_view (unwrap_src (nth u 0))
+
 (* Whether the kernel [k] stores into the state [s]. *)
 let writes_state k s =
   List.exists
@@ -734,6 +736,175 @@ let reads_elsewhere k s =
       | None -> false
       | Some w -> List.exists (fun i -> not (List.mem i w)) (positions c s))
     (calls_of k)
+
+(* A state over the whole of its storage holds its own kernels' stores, those
+   of the states under it, and each store those kernels run after: no other
+   store over a view of a state on the way. So a reader of it runs before every
+   kernel written over one of those states that the kernels of its chain do not
+   follow. Each edge goes through the read it orders, which a copy can cut.
+   [children] holds the edges of reads after writes and of listings. *)
+let sibling_edges ~children ~writes ~add_child reads =
+  (* The kernels of the state [s] and the state they are written over, for a
+     state on a chain: a whole state with kernels. *)
+  let links = Tbl.create 16 in
+  let link s =
+    match Tbl.find_opt links s with
+    | Some l -> l
+    | None ->
+        let l =
+          if
+            op s <> Op.After || is_join s
+            || is_view (unwrap_src (nth s 0))
+          then None
+          else
+            match fst (split_after s) with
+            | [] -> None
+            | own -> Some (own, written_over s own)
+        in
+        Tbl.replace links s l;
+        l
+  in
+  (* The kernels written over each state of [s]'s chain other than that state's
+     own: almost always none. *)
+  let others = Tbl.create 16 in
+  let rec others_of s =
+    match link s with
+    | None -> []
+    | Some (own, prev) -> (
+        match Tbl.find_opt others s with
+        | Some ks -> ks
+        | None ->
+            let here =
+              List.filter
+                (fun t -> not (List.memq t own))
+                (Option.value (Tbl.find_opt writes prev) ~default:[])
+            in
+            let ks = here @ others_of prev in
+            Tbl.replace others s ks;
+            ks)
+  in
+  (* For each kernel the kernels it runs before, itself among them, along reads
+     after writes and listings, and which states' chains hold one of them. *)
+  let reach = Tbl.create 16 in
+  let reached t =
+    match Tbl.find_opt reach t with
+    | Some r -> r
+    | None ->
+        let kernels = Tbl.create 16 in
+        let rec go k =
+          if not (Tbl.mem kernels k) then begin
+            Tbl.replace kernels k ();
+            List.iter go (Option.value (Tbl.find_opt children k) ~default:[])
+          end
+        in
+        go t;
+        let r = (kernels, Tbl.create 16) in
+        Tbl.replace reach t r;
+        r
+  in
+  let rec on_chain ((kernels, seen) as r) s =
+    match link s with
+    | None -> false
+    | Some (own, prev) -> (
+        match Tbl.find_opt seen s with
+        | Some b -> b
+        | None ->
+            let b = List.exists (Tbl.mem kernels) own || on_chain r prev in
+            Tbl.replace seen s b;
+            b)
+  in
+  let memo = Tbl.create 16 in
+  let siblings s =
+    match Tbl.find_opt memo s with
+    | Some ks -> ks
+    | None ->
+        let ks =
+          match others_of s with
+          | [] -> []
+          | ks ->
+              List.filter
+                (fun t -> not (on_chain (reached t) s))
+                (dedup_nodes ks)
+        in
+        Tbl.replace memo s ks;
+        ks
+  in
+  (* The slots a body loads: in a store's value or index expressions, and at
+     a nested call the slots it loads or does not write. A body that does not
+     show its writes loads what it is given. *)
+  let rec loaded_slots body =
+    let slots = ref [] in
+    let add u =
+      if op u = Op.Param && addrspace u <> Some Dtype.Alu then
+        slots := (param_arg_of u).slot :: !slots
+    in
+    let reads u = List.iter add (toposort ~calls:Skip u) in
+    List.iter
+      (fun u ->
+        match op u with
+        | Op.Store ->
+            List.iter reads (List.tl (src u));
+            List.iter reads (List.tl (src (nth u 0)))
+        | Op.Call ->
+            let args = src_without_body u in
+            let wanted =
+              match written_params (nth u 0) with
+              | None -> fun _ -> true
+              | Some w ->
+                  let loaded = loaded_slots (nth u 0) in
+                  fun i -> (not (List.mem i w)) || List.mem i loaded
+            in
+            List.iteri (fun i a -> if wanted i then reads a) args
+        | _ -> ())
+      (toposort ~calls:Skip body);
+    !slots
+  in
+  (* The written positions of the kernel [k]'s calls that hold [s]: loaded, a
+     read of [s] no copy can stand in for. *)
+  let loaded_written k s =
+    List.exists
+      (fun c ->
+        match written_positions c with
+        | None -> false
+        | Some w ->
+            let loaded = loaded_slots (body c) in
+            List.exists
+              (fun i -> List.mem i w && List.mem i loaded)
+              (positions c s))
+      (calls_of k)
+  in
+  (* Whether the kernel [k] reads [s] other than where it writes it. *)
+  let read_elsewhere k s =
+    List.exists
+      (fun c ->
+        match written_positions c with
+        | None -> positions c s <> []
+        | Some w -> List.exists (fun i -> not (List.mem i w)) (positions c s))
+      (calls_of k)
+  in
+  (* The edge from [k], reading [s], to the sibling [t], and the read it
+     orders where a copy can stand in for it. A store through a state it does
+     not load through there reads no element of it. A load through the
+     argument [k] stores through reads the state the call writes, which holds
+     each store the call runs after: it needs no edge to one it follows, and
+     its edge to another orders no read a copy can take, as a listing's does
+     not. *)
+  let edge k s t =
+    if t == k then None
+    else if loaded_written k s then
+      if Tbl.mem (fst (reached t)) k then None else Some None
+    else if read_elsewhere k s then Some (Some { reader = k; state = s })
+    else None
+  in
+  let edges =
+    List.concat_map
+      (fun (k, s) ->
+        List.filter_map
+          (fun t -> Option.map (fun war -> (k, t, war)) (edge k s t))
+          (siblings s))
+      (List.rev reads)
+  in
+  List.iter (fun (k, t, war) -> add_child ?war k t) edges
 
 (* The Afters of [nodes] over a storage's state, with their kernels. *)
 let writes_of nodes =
@@ -966,7 +1137,8 @@ and kernels ~by_storage ~copies nodes sched_sink =
         (match prior with
         | None -> ()
         | Some prev ->
-            add_write ~whole:(not (is_view (unwrap_src (nth u 0)))) prev fresh;
+            let whole = not (is_view (unwrap_src (nth u 0))) in
+            add_write ~whole prev fresh;
             if is_disjoint u then marked := prev :: !marked);
         List.iter
           (fun k ->
@@ -1023,7 +1195,16 @@ and kernels ~by_storage ~copies nodes sched_sink =
      storing into [p] and [q] reads [q] as the store it makes there. Any other
      kernel of a write reads the state as a reader beside it does, before the
      write's other kernels. A kernel writing the state it reads through
-     another argument runs before itself, a cycle of one kernel. *)
+     another argument runs before itself, a cycle of one kernel.
+
+     A state over the whole of its storage holds what its own kernels leave,
+     no store of another After over a view of the state under it: a reader of
+     it runs before those stores, as the reader of the state under them
+     would. *)
+  if List.exists after_over_view nodes then
+    sibling_edges ~children ~writes
+      ~add_child:(fun ?war k t -> add_child ?war k t)
+      !reads;
   List.iter
     (fun (k, s) ->
       match Tbl.find_opt writes s with
@@ -1571,7 +1752,18 @@ let storage_param ctx b =
 let view_param ?state ctx b =
   let whole = storage_param ctx (storage_base b) in
   let p = replace_input_buffer ctx b in
-  replace p ~src:(src p @ [ Option.value state ~default:whole ])
+  (* The state a view reads, in the form the rewrite that moves a state's
+     movements outside it leaves it: states over storage or over states, all
+     the way down. *)
+  let rec state_after a =
+    let x = nth a 0 in
+    if Op.Set.mem (op x) Op.Set.movement then
+      state_after (replace a ~src:(nth x 0 :: List.tl (src a)))
+    else if op x = Op.After then
+      replace a ~src:(state_after x :: List.tl (src a))
+    else a
+  in
+  replace p ~src:(src p @ [ Option.fold ~none:whole ~some:state_after state ])
 
 (* The run of a buffer the movements and bitcasts [src] select, as [c] takes
    it: a shrink of the buffer, whatever state it was read at. *)
@@ -1676,13 +1868,12 @@ let loop_runs ctx k =
         let s = state_of s in
         List.exists (fun l -> l != s && is_state_or_after s l) listed
       in
-      (* A state of a bitcast of storage, or a join over other writes of its
-         storage, whose order against the loop's write the graph does not
-         state: its run stays refused ({!Indexing.run_rangeify}). *)
+      (* A join over other writes of its storage, whose order against the
+         loop's write the graph does not state: its run stays refused
+         ({!Indexing.run_rangeify}). *)
       let rec unlifted s =
-        op s = Op.Bitcast
-        || (is_join s
-           && List.exists (fun d -> buf_uop d == buf_uop s) (List.tl (src s)))
+        (is_join s
+        && List.exists (fun d -> buf_uop d == buf_uop s) (List.tl (src s)))
         || ((Op.Set.mem (op s) Op.Set.movement || op s = Op.After)
            && unlifted (nth s 0))
       in
@@ -1885,6 +2076,77 @@ let pm_replace_buf =
           if Tbl.mem ctx.views b then Some (view_param ctx b) else None);
     ])
 
+(* A state of a bitcast of storage is that bitcast of the state of the storage:
+   the stores land in the storage whichever type a reader views it at. The
+   bitcast goes outside the {!Op.After}, so that a state's first source is
+   storage or a view of it. A movement over a bitcast of elements of one size is
+   the bitcast of the movement; one over a bitcast that resizes them views
+   elements only the bitcast's type holds, and goes outside with it. A store
+   through a movement of a bitcast of one size stores the value bitcast into the
+   movement of the storage; a copy keeps its bitcast, which the copy's view
+   holds. A store through a bitcast that resizes elements is
+   {!Prepare.prepare_rangeify}'s, into the run of whole elements it covers. *)
+let rec through_bitcast s =
+  match op s with
+  | Op.Bitcast when Dtype.itemsize (dtype s) = Dtype.itemsize (dtype (nth s 0)) ->
+      Some (nth s 0, dtype s)
+  | o when Op.Set.mem o Op.Set.movement ->
+      Option.map
+        (fun (x, dt) -> (replace s ~src:(x :: List.tl (src s)), dt))
+        (through_bitcast (nth s 0))
+  | _ -> None
+
+let rec under_bitcast s =
+  match op s with
+  | Op.Bitcast -> Some (nth s 0, fun y -> bitcast y (dtype s))
+  | o when Op.Set.mem o Op.Set.movement -> (
+      match under_bitcast (nth s 0) with
+      | Some (x, f) ->
+          Some (x, fun y -> replace s ~src:(f y :: List.tl (src s)))
+      | None -> None)
+  | _ -> None
+
+let stored_through_bitcast u =
+  op u = Op.Store
+  && op (nth u 1) <> Op.Copy
+  && Op.Set.mem (op (nth u 0)) Op.Set.movement
+  && Option.is_some (through_bitcast (nth u 0))
+
+let pm_state_of_bitcast =
+  Pattern_matcher.v (fun () ->
+      [
+        rule (Upat.op Op.Store ~name:"s") (fun m ->
+            let s = m "s" in
+            if not (stored_through_bitcast s) then None
+            else
+              match through_bitcast (nth s 0) with
+              | Some (x, _) ->
+                  (* A weak value takes the view's type first: a bitcast
+                     reads its operand at a stated width. *)
+                  let value =
+                    let v = nth s 1 in
+                    if Dtype.mem (dtype v) Dtype.weaks then
+                      cast v (dtype (nth s 0))
+                    else v
+                  in
+                  Some
+                    (replace s
+                       ~src:
+                         (x :: bitcast value (dtype x)
+                         :: List.tl (List.tl (src s))))
+              | None -> None);
+        rule (Upat.op Op.After ~name:"a") (fun m ->
+            let a = m "a" in
+            match through_bitcast (nth a 0) with
+            | Some (x, dt) ->
+                Some (bitcast (replace a ~src:(x :: List.tl (src a))) dt)
+            | None ->
+                Option.map
+                  (fun (x, rebuild) ->
+                    rebuild (replace a ~src:(x :: List.tl (src a))))
+                  (under_bitcast (nth a 0)));
+      ])
+
 let transform_to_call big_sink =
   if setting Setting.spec <> 0 then
     Spec.type_verify ~calls:Skip Spec.tensor big_sink;
@@ -1892,6 +2154,21 @@ let transform_to_call big_sink =
      and the buffers they write before any view is made. *)
   let ctx = callify_ctx () in
   let nodes = toposort ~calls:Skip big_sink in
+  let big_sink, nodes =
+    if
+      List.exists
+        (fun u ->
+          stored_through_bitcast u
+          || (op u = Op.After && Option.is_some (under_bitcast (nth u 0))))
+        nodes
+    then
+      let s =
+        graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() big_sink
+          (After_sources pm_state_of_bitcast)
+      in
+      (s, toposort ~calls:Skip s)
+    else (big_sink, nodes)
+  in
   List.iter
     (fun u ->
       if is_store_after u && not (is_join u) then

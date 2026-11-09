@@ -147,7 +147,7 @@ type param_arg = {
   align : int;
 }
 
-type keep = Removable | Broadcast | Whole
+type keep = Removable | Broadcast | Whole | Argument
 
 type bufferize_opts = {
   device : device option;
@@ -842,7 +842,7 @@ let repr_bufferize_opts (b : bufferize_opts) =
   strf "BufferizeOpts(device=%s, addrspace=%s, removable=%s, broadcast=%s)"
     (repr_option repr_device b.device)
     (repr_addr_space b.addrspace)
-    (repr_bool (b.keep <> Whole))
+    (repr_bool (b.keep = Removable || b.keep = Broadcast))
     (repr_bool (b.keep = Broadcast))
 
 let repr_custom_function (f : custom_function) =

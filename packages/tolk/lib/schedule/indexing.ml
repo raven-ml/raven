@@ -347,8 +347,8 @@ let bufferize_and_index ctx ~indexed s src_rngs =
   else
     let closed = snd (Tbl.find ctx.range_map s) in
     let keep =
-      if Op.Set.mem (op s) always_contiguous || Tbl.mem ctx.non_removable s
-      then Whole
+      if Op.Set.mem (op s) always_contiguous then Whole
+      else if Tbl.mem ctx.non_removable s then Argument
       else if Tbl.mem ctx.broadcast s then Broadcast
       else Removable
     in
@@ -744,7 +744,7 @@ let joinable regions ~crossed slice a b =
     let sa = slice a and sb = slice b in
     reads sa b || reads sb a || waits_over sa sb || waits_over sb sa
   in
-  List.equal Sint.equal (shape (nth a 1)) (shape (nth b 1))
+  List.equal Sint.equal (shape (nth a 0)) (shape (nth b 0))
   && Option.equal String.equal (device (nth a 0)) (device (nth b 0))
   && base (nth a 0) != base (nth b 0)
   && within a b && within b a
@@ -1008,6 +1008,10 @@ let assign_ranges rctx ~consumer_map ~ending_ranges x =
                    else if j = 0 then [ rngs ]
                    else [ List.take (ndim x) rngs ])
                  (src c))
+        | Some _ when shape_opt x = Some [] ->
+            (* A scalar broadcast by a store or a cast has no axis of its
+               own: the consumer's ranges are not its. *)
+            [ [] ]
         | Some (rngs, _) -> [ broadcast_rngs c x rngs ])
       consumers
   in
