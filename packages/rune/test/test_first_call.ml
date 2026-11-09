@@ -176,6 +176,12 @@ let recovers damage () =
   let later = output "arithmetic" db in
   equal int ~msg:"rewritten, read back" 0 (programs later)
 
+(* The engine's sources are digested apart from tolk's: an entry depends on
+   both. *)
+let digests_apart () =
+  not_equal string ~msg:"engine against tolk" Tolk.Jit.source_digest
+    Tolk_engine.source_digest
+
 (* A process whose counters differ reads the entry another made, and gives each
    numbered node its own. *)
 let renumbered () =
@@ -233,6 +239,14 @@ let () =
           test "of another value"
             (recovers (Disk_cache.restated (fun v -> v ^ "garbage")));
           test "whose lengths wrap" (recovers wrapping);
+        ];
+      group "an entry of other sources is made anew, and replaced"
+        [
+          test "the engine's digest is its own" digests_apart;
+          test "of another engine"
+            (recovers (Disk_cache.of_other_sources Tolk_engine.source_digest));
+          test "of another tolk"
+            (recovers (Disk_cache.of_other_sources Tolk.Jit.source_digest));
         ];
       group "nothing is kept"
         [

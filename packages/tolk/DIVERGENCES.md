@@ -9119,7 +9119,7 @@ reason and its pins.
   on disk from `SCACHE=2`. A later process schedules and reads its programs
   again.
 - **tolk:** `Tolk_engine.compile`, which rune's `Compile.link` calls; `Schedule.numbered`,
-  `engine/dune`'s `source_digest.ml` rule and `Setting.scache`.
+  `engine/dune`'s `engine_digest.ml` rule and `Setting.scache`.
 - **Differs:** a later process that compiles an equal graph reads what
   `Jit.jit_lower` made from one disk entry (table `compiled`): it schedules
   nothing and compiles or reads no kernel. The key is the graph up to its
@@ -9148,9 +9148,10 @@ reason and its pins.
   later process's first call › compiles nothing, computes the same:
   arithmetic`, `a reduction` and `a scan`, `tells apart arguments in another
   order`, `reads this process's captured constants`, `a damaged entry is made
-  anew, and replaced ›` truncated, holding no graph and of another value, and
-  `nothing is kept ›` with `DEBUG` on, without the binary cache and with
-  `SCACHE` at 1.
+  anew, and replaced ›` truncated, holding no graph and of another value, `an
+  entry of other sources is made anew, and replaced ›` the engine's digest is
+  its own, of another engine and of another tolk, and `nothing is kept ›` with
+  `DEBUG` on, without the binary cache and with `SCACHE` at 1.
 
 ## D465. A stage a call reads is no destination of a store
 

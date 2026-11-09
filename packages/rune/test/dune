@@ -253,4 +253,4 @@
 (test
  (name test_first_call)
  (modules test_first_call)
- (libraries nx rune tolk tolk_test windtrap))
+ (libraries nx rune tolk tolk.engine tolk_test windtrap))

@@ -1462,6 +1462,8 @@ let time ?(vars = []) ?(scrub = []) t slots =
    gone, and its binary kept apart from the graph's text, where quoting would
    grow it several times. *)
 
+let source_digest = Engine_digest.digest
+
 let compiled_table = "compiled"
 let binary_index = function Ops.Bytes i -> int_of_string_opt i | _ -> None
 
@@ -1652,7 +1654,7 @@ let compile ?beam ?search ~devices ~by_storage ~held_bufs ~inputs sink =
       let positions l = List.map (fun u -> string_of_int (n.position u)) l in
       let key =
         String.concat "\n"
-          ([ Source_digest.digest; Jit.source_digest; n.key; string_of_bool by_storage ]
+          ([ source_digest; Jit.source_digest; n.key; string_of_bool by_storage ]
           @ devices
           @ [
               String.concat " " (positions inputs);

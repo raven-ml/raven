@@ -246,6 +246,10 @@ val time :
 
 (**/**)
 
+val source_digest : string
+(** [source_digest] is the digest of the engine's sources, as
+    {!Jit.source_digest} is of tolk's ({!compile}). For the suites. *)
+
 val blocks : extent:int -> ops:int -> bytes:int -> int * int
 (** [blocks ~extent ~ops ~bytes] is the number of blocks a host launch of a
     split loop of [extent] iterations runs in, the loop estimated to do [ops]
@@ -268,10 +272,11 @@ val compile :
     process that compiles an equal [sink], up to the numbers of its ranges and
     storage ({!Schedule.numbered}), with the same inputs and held buffers in
     the same places, the same settings that shape compilation ({!Jit.shaping}),
-    and devices of the same names, renderers and compilers, reads it from the
-    {!Helpers.Diskcache} (table ["compiled"]) instead, running no schedule and
-    no compiler. Its programs are then reduced to what {!link} reads: their
-    {!Op.Kernel} argument, parameters and binary.
+    devices of the same names, renderers and compilers, and the same sources of
+    tolk and of the engine ({!Jit.source_digest}, {!source_digest}), reads it
+    from the {!Helpers.Diskcache} (table ["compiled"]) instead, running no
+    schedule and no compiler. Its programs are then reduced to what {!link}
+    reads: their {!Op.Kernel} argument, parameters and binary.
 
     Nothing is kept for a call that asks for a beam search, for one under
     {!Setting.debug} or {!Setting.check_oob}, whose checks a hit would skip,

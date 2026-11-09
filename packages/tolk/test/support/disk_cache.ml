@@ -130,3 +130,23 @@ let restated f e =
 let of_another_build e =
   let key, v = parts e in
   entry (String.make 32 '0' ^ String.sub key 32 (String.length key - 32)) v
+
+let of_other_sources digest e =
+  let key, v = parts e in
+  let n = String.length digest in
+  let other = String.make n 'x' in
+  let b = Buffer.create (String.length key) in
+  let rec copy i found =
+    if i >= String.length key then found
+    else if i + n <= String.length key && String.sub key i n = digest then begin
+      Buffer.add_string b other;
+      copy (i + n) true
+    end
+    else begin
+      Buffer.add_char b key.[i];
+      copy (i + 1) found
+    end
+  in
+  if n = 0 || not (copy 0 false) then
+    invalid_arg "Disk_cache.of_other_sources: the key does not state the digest";
+  entry (Buffer.contents b) v

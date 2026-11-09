@@ -21,7 +21,7 @@
 ; is what this code reads of one.
 
 (rule
- (target source_digest.ml)
+ (target engine_digest.ml)
  (deps
   (sandbox always)
   (source_tree .))

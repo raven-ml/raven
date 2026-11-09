@@ -59,3 +59,9 @@ val restated : (string -> string) -> string -> string
 val of_another_build : string -> string
 (** [of_another_build e] is the entry [e] whole, its key's first 32 characters,
     the digest of the library's sources, replaced. *)
+
+val of_other_sources : string -> string -> string
+(** [of_other_sources digest e] is the entry [e] whole, each [digest] its key
+    states, the digest of some sources, replaced by another.
+
+    Raises [Invalid_argument] if [e]'s key does not state [digest]. *)
