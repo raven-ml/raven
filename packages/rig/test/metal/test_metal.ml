@@ -1363,6 +1363,102 @@ let arena () =
     (Array.init (2 * n) (fun w -> if w mod 2 = 0 then w / 2 else 1000 + (w / 2)))
     (words out)
 
+(* A launch crosses the arena's end while the work before it is in flight,
+   and every launch reads its own parameters. On a fresh device, launches of
+   12 KiB of parameters, which do not divide the 1 MiB arena, run in three
+   submissions: [a] behind one gate, then [b] behind a second, both held on
+   the GPU and filling the arena to 16 KiB short of its end. Once the first
+   gate opens and [a] completes, [c] takes the arena's last 12 KiB, then
+   crosses its end into the bytes [a] gave back, while [b] waits behind the
+   second gate. A device beside opens each gate. Even launches run [where],
+   which stores its parameters' address; odd ones [wide], which stores two
+   words of its own. *)
+let arena_crossing () =
+  S.with_ @@ fun s ->
+  let t = dev_of s and o = beside () in
+  let image = launch_image t.d in
+  let params = 12 * 1024 and a = 40 and b = 44 and c = 20 in
+  let page = H.pages H.page in
+  for w = 0 to 7 do
+    H.set32 (page + (4 * w)) 0
+  done;
+  let flag = require_some (Rig_metal.map_host t.g page H.page) in
+  let flag' = require_some (Rig_metal.map_host o.g page H.page) in
+  let args = alloc t (2 * args_bytes) and args' = alloc o (2 * args_bytes) in
+  let gate k =
+    let at = k * args_bytes in
+    set_args args ~at ~out:(gpu flag + (8 * k)) ~c:gate_rounds;
+    S.dispatch ~pipeline:(pipeline t "gate") ~offset:at args ~groups:1
+      ~threads:1
+  in
+  let opened = [| false; false |] in
+  let open_gate k =
+    if not opened.(k) then begin
+      opened.(k) <- true;
+      let at = k * args_bytes in
+      set_args args' ~at ~out:(gpu flag' + (8 * k)) ~c:1;
+      let unlock =
+        S.dispatch ~pipeline:(pipeline o "unlock") ~offset:at args'
+          ~groups:1 ~threads:1
+      in
+      wait o (submit o [| unlock |])
+    end
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      open_gate 0;
+      open_gate 1;
+      List.iter (Rig_metal.free o.g) [ flag'; args' ];
+      Rig.close o.d)
+  @@ fun () ->
+  let n = a + b + c in
+  let out = zeroed t.d (8 * n) in
+  let kernel i = if i mod 2 = 0 then "where" else "wide" in
+  (* The launches [first] to [first + count - 1], in one submission. *)
+  let launches first count =
+    let parts =
+      Array.init count (fun j ->
+          launch image (kernel (first + j)) ~params [ Sub.write 0 ~at:0 ])
+    in
+    let s = Sub.make t.d parts in
+    let run = Sub.take s in
+    for j = 0 to count - 1 do
+      let i = first + j and k = Sub.block s j in
+      set_grid run k one;
+      Run.int64 run k 0 (Int64.of_int (8 * i));
+      Run.int32 run k 4096 i;
+      Run.int32 run k 8188 (1000 + i)
+    done;
+    Rig.submit run ~buffers:[| out |]
+  in
+  ignore (submit t [| gate 0 |]);
+  let first = launches 0 a in
+  ignore (submit t [| gate 1 |]);
+  ignore (launches a b);
+  open_gate 0;
+  Rig.Point.wait first;
+  ignore (launches (a + b) c);
+  open_gate 1;
+  B.wait out Read;
+  equal ~msg:"the gates' writes: each saw its gate open" (pair int int)
+    (1, 1)
+    (H.get32 page, H.get32 (page + 8));
+  let w = words out in
+  let word i = w.(2 * i) lor (w.((2 * i) + 1) lsl 32) in
+  (* A [wide] launch's two words; a [where] launch's address modulo 256,
+     and whether it stored one. *)
+  let read i =
+    if kernel i = "wide" then (w.(2 * i), w.((2 * i) + 1))
+    else (word i mod 256, Bool.to_int (word i <> 0))
+  in
+  let own i = if kernel i = "wide" then (i, 1000 + i) else (0, 1) in
+  equal ~msg:"a launch of [c] crossed the arena's end" bool true
+    (word (a + b + 2) < word (a + b));
+  equal ~msg:"each launch's own words, or its address modulo 256"
+    (array (pair int int))
+    (Array.init n own) (Array.init n read);
+  List.iter (Rig_metal.free t.g) [ flag; args ]
+
 (* Two growths of the parameter arena beside each other keep the larger,
    whichever is made last: the rooms of a launch of 1 MiB and, on another
    domain, of one of 128 KiB answer RIG_GROW, then the 1 MiB launch's growth
@@ -1540,6 +1636,10 @@ let launches =
         "launches of 8 KiB of parameters each read their own as the arena's \
          bytes come back, wrap and grow"
         arena;
+      test
+        "a launch crosses the arena's end while the work before it runs, \
+         and every launch reads its own parameters"
+        arena_crossing;
       test "two growths of the parameter arena keep the larger"
         growths_keep_larger;
       test
