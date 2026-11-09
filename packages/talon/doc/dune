@@ -5,4 +5,6 @@
   (and
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
+ (deps
+  (glob_files data/*.csv))
  (libraries talon talon.csv talon.json talon.parquet talon.arrow bytesrw nx rig.disk unix))

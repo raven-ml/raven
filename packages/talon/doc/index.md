@@ -80,3 +80,14 @@ table 7 rows × 4 columns
 - [pandas Comparison](05-pandas-comparison.md): side-by-side reference
 - [Examples](../examples/01-tables/README.md): runnable programs, from a
   first table to a feature matrix
+
+Worked problems from four domains:
+
+- [Peri-Event Analysis](06-peri-event-analysis.md): spikes around trial events,
+  from a unit table to a tensor
+- [Station Resampling](07-station-resampling.md): daily readings to months,
+  with sentinels, quality flags and a completeness rule
+- [Point-in-Time Features](08-point-in-time-features.md): a training table
+  from an as-of join, with no leakage
+- [Catalogue Cut and Cross-Match](09-catalogue-cross-match.md): quality cuts
+  and a sky match on the sphere
