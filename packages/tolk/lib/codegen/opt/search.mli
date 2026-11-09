@@ -87,11 +87,11 @@ val beam_search :
 
     [time ~vars p] is the time in seconds of one run of the program [p] links,
     from cold caches where the device can, with each variable bound to its value
-    in [vars], the samples of the named variables. The search links each program it times once, and
-    times it once per sample. A program whose [link] or [time] raises [Failure]
-    is dropped; the search raises any other exception. The search limits neither
-    a compilation nor a run: a candidate whose compilation or run hangs hangs
-    the search, one more reason to run it offline.
+    in [vars], the samples of the named variables. The search links each program
+    it times once. A program whose [link] or [time] raises [Failure] when it is
+    first timed is dropped; the search raises any other exception. The search
+    limits neither a compilation nor a run: a candidate whose compilation or run
+    hangs hangs the search, one more reason to run it offline.
 
     A kernel is compiled for [k]'s renderer named ["test"]. It is first
     linearized
@@ -103,8 +103,9 @@ val beam_search :
     is one whose compilation raises another exception, unless
     {!Setting.beam_strict_mode} holds and the exception is raised.
 
-    A program is timed up to three times, stopping once its least time exceeds
-    an early stop. Its samples are the times measured.
+    A candidate is first timed up to three times, stopping once its least time
+    exceeds an early stop. Its samples are the times of this first timing; the
+    times a round takes again, below, are not samples.
 
     The beam holds up to [amt] kernels, and starts as [k], untimed, of an
     infinite time. Each round:
@@ -118,15 +119,30 @@ val beam_search :
       programs so far. Each other one is timed with an early stop of three times
       the least sample of the beam's first kernel.
     + The fastest candidate is the one of least sample, the first timed of ties.
-      The search ends if no candidate was timed, if the fastest took less than
-      {!Setting.beam_min_progress} microseconds, or if its least sample beats
-      the beam's first kernel's by less than that, or not at all. It then keeps
-      the fastest candidate alone if it is faster than the beam's first
-      kernel.
-      Otherwise the beam becomes the [amt] candidates of least sample, ties in
-      the order they were timed, and a new round starts.
+      The first round compares [k]'s infinite time with the fastest's least
+      sample. In a later round, the beam's first kernel and the fastest are
+      timed again in turn, three times each, starting with the beam's first, and
+      the round compares the least of each one's three times; a time that raises
+      [Failure] counts as infinite.
+    + The search ends if no candidate was timed, if the fastest took less than
+      {!Setting.beam_min_progress} microseconds, or if it beats the beam's first
+      kernel by less than that, or not at all. It then keeps the fastest
+      candidate alone if it is faster than the beam's first kernel. Otherwise
+      the beam becomes the [amt] candidates of least sample, ties in the order
+      they were timed, and a new round starts.
 
     The result is the beam's first kernel.
+
+    A round decides whether the search goes on, and what it keeps, by comparing
+    only times taken in that round. A device's clock follows its load, power and
+    temperature, as a GPU's boost and idle states and a host's turbo do, so
+    times taken rounds apart may have run at different clocks; the beam's first
+    kernel and the fastest, timed in turn, run at nearly the same. A clock that
+    moves within a round still shifts that round's samples against each other,
+    and the early stop, three times the beam's first kernel's least sample from
+    the round that kept it, can cut a candidate's samples short. A [time] that
+    holds its device's clocks removes both, and measures the device at the held
+    clocks.
 
     With [allow_test_size] (default {!Setting.beam_estimate}), a program
     launching more than [65536] workgroups is timed launching fewer: of its

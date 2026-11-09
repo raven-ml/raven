@@ -142,6 +142,49 @@ let search ?settings ?allow_test_size ~timing:(link, time) amt k =
   quietly ?settings (fun () ->
       Search.beam_search ~link ~time ?allow_test_size amt k)
 
+let least = List.fold_left Float.min infinity
+
+(* A search's samples as it takes them: each program's first timing, its samples
+   from its first until another program's, in order; and after each round that
+   compares two kernels timed again, the beam's first and the fastest, timed in
+   turn three times each, as their programs and least samples. *)
+type timings = {
+  first : (Ops.t * float list) list;
+  again : ((Ops.t * float) * (Ops.t * float)) list;
+}
+
+let timings calls =
+  let same c (p, _) = binary p = binary c.prg in
+  (* [open_]: the last sample was of the first timing at the head of [first]. *)
+  let step (first, again, open_) c =
+    match first with
+    | (p, ts) :: older when open_ && same c (p, ts) ->
+        ((p, ts @ [ c.time ]) :: older, again, true)
+    | _ when List.exists (same c) first -> (first, c :: again, false)
+    | _ -> ((c.prg, [ c.time ]) :: first, again, true)
+  in
+  let first, again, _ = List.fold_left step ([], [], true) calls in
+  let rec pairs = function
+    | [] -> []
+    | a1 :: b1 :: a2 :: b2 :: a3 :: b3 :: rest
+      when List.for_all (fun c -> binary c.prg = binary a1.prg) [ a2; a3 ]
+           && List.for_all (fun c -> binary c.prg = binary b1.prg) [ b2; b3 ]
+           && binary a1.prg <> binary b1.prg ->
+        ( (a1.prg, least [ a1.time; a2.time; a3.time ]),
+          (b1.prg, least [ b1.time; b2.time; b3.time ]) )
+        :: pairs rest
+    | c :: _ ->
+        failf "%a is timed again, but not in turn with another three times"
+          (Format.pp_print_list Opt.pp)
+          (kernel_info c.prg).applied_opts
+  in
+  { first = List.rev first; again = pairs (List.rev again) }
+
+(* How many samples the first timings took: the measurements of a search that
+   times nothing again. *)
+let first_samples calls =
+  List.fold_left (fun n (_, ts) -> n + List.length ts) 0 (timings calls).first
+
 (* The actions *)
 
 let recorded_actions file =
@@ -181,7 +224,7 @@ let searched cell =
   equal opts (Kernel_opts.opts_of_cell (cell "opts")) (K.applied_opts k);
   equal ~msg:"measurements" int
     (int_of_string (cell "measurements"))
-    (List.length (calls ()))
+    (first_samples (calls ()))
 
 let searches =
   let rows = Golden.rows "searches.golden" in
@@ -328,17 +371,14 @@ let by_depth times ~vars:_ prg =
 
 let depth c = List.length (kernel_info c.prg).applied_opts
 
-(* How many times each program of [n] optimisations was measured. *)
+(* How many samples the first timing of each program of [n] optimisations
+   took. *)
 let measured_times n calls =
-  let counts = Hashtbl.create 16 in
-  List.iter
-    (fun c ->
-      if depth c = n then
-        let b = binary c.prg in
-        Hashtbl.replace counts b
-          (1 + Option.value ~default:0 (Hashtbl.find_opt counts b)))
-    calls;
-  Hashtbl.fold (fun _ n l -> n :: l) counts []
+  List.filter_map
+    (fun (p, ts) ->
+      if List.length (kernel_info p).applied_opts = n then Some (List.length ts)
+      else None)
+    (timings calls).first
 
 let rounds =
   let min_progress = 0.01 /. 1e6 in
@@ -407,6 +447,68 @@ let chooses_the_fastest =
              in
              equal float_exact fastest (drawn seed (K.applied_opts chosen)))
 
+(* A device whose clock changes between rounds: a sample of a program takes
+   [time] of it times the [r]th of [clocks], or their last for more, where [r],
+   the round the search is in, is the most optimisations of a program it linked
+   so far. *)
+let between_rounds clocks time =
+  let round = ref 0 in
+  let link call =
+    let prg = Ops.body call in
+    round := max !round (List.length (kernel_info prg).applied_opts);
+    prg
+  in
+  let time ~vars prg =
+    let clock = List.nth clocks (min !round (List.length clocks - 1)) in
+    time ~vars prg *. clock
+  in
+  (link, time)
+
+let slower_round =
+  test "a search goes on past a round whose clock is half the round before's"
+    (fun () ->
+      let timing =
+        between_rounds [ 1.; 1.; 2. ] (by_depth [ 0.; 1e-3; 0.9e-3 ])
+      in
+      let k = search ~timing 1 (scheduled "sum_rows" "clang") in
+      equal int 2 (List.length (K.applied_opts k)))
+
+(* [drawn_time seed] with an optimum at two optimisations, so that most searches
+   reach their second round. *)
+let two_deep seed ~vars prg =
+  let depth = List.length (kernel_info prg).applied_opts in
+  drawn_time seed ~vars prg *. (1. +. (0.5 *. Float.of_int (abs (depth - 2))))
+
+let clock_between_rounds =
+  let pp ppf (kernel, amt, seed, (slower, later)) =
+    Format.fprintf ppf "%s, width %d, seed %d, second round %s, then %a" kernel
+      amt seed
+      (if slower then "slower" else "faster")
+      Format.(pp_print_list ~pp_sep:pp_print_space pp_print_float)
+      later
+  in
+  prop ~count:30
+    "a search chooses as at a steady clock when its device's clock changes \
+     between rounds"
+    Gen.(
+      with_pp pp
+        (quad
+           (of_list [ "add_small"; "sum_rows"; "variable_rows" ])
+           (int_range 1 3) nat
+           (pair bool (list ~size:(constant 6) (of_list [ 0.5; 1.; 1.5; 2. ])))))
+    (fun (kernel, amt, seed, (slower, later)) ->
+      let chosen clocks =
+        K.applied_opts
+          (search
+             ~timing:(between_rounds clocks (two_deep seed))
+             amt (scheduled kernel "clang"))
+      in
+      let steady = chosen [ 1. ] in
+      let second = if slower then 2. else 0.5 in
+      equal opts steady (chosen (1. :: 1. :: second :: later));
+      cover "a slower second round, where a steady search goes past the first"
+        (slower && List.length steady >= 2);
+      cover "a faster second round" (not slower))
 
 let midpoints =
   test "a search times with each variable at its bounds' middle" (fun () ->
@@ -483,20 +585,11 @@ let spread seed ~vars:_ prg i =
   let noise = 100 + (Hashtbl.seeded_hash seed (positions, i) mod 51) in
   1e-8 *. Float.of_int (base * noise)
 
-let least = List.fold_left Float.min infinity
+(* The first timings of each program linked, in order. *)
+let samples_of r = (timings r.calls).first
 
-(* The samples of each program linked, by binary, in order. *)
-let samples_of r =
-  List.map
-    (fun p ->
-      ( p,
-        List.filter_map
-          (fun c -> if binary c.prg = binary p then Some c.time else None)
-          r.calls ))
-    r.linked
-
-(* The least sample of a program of [depth] optimisations: the incumbent of the
-   round that times programs of one more. *)
+(* The least sample of a program of [depth] optimisations in its first timing:
+   the incumbent of the round that times programs of one more. *)
 let incumbent r depth =
   least
     (List.concat_map
@@ -509,8 +602,8 @@ let early_stops =
     Format.fprintf ppf "%s, width %d, seed %d" kernel amt seed
   in
   prop ~count:20
-    "each program is linked once and sampled until its least exceeds three \
-     times the incumbent's, three times at most"
+    "each program is linked once, and its first timing sampled until its least \
+     exceeds three times the incumbent's, three times at most"
     Gen.(
       with_pp pp
         (triple
@@ -576,6 +669,40 @@ let exceptions =
           equal opts [] (K.applied_opts chosen));
     ]
 
+(* A timing by [by_depth times] whose samples of a program of [depth]
+   optimisations, any if [None], raise [e] from its fourth on: the times a round
+   takes again. *)
+let raising_again ?depth e times =
+  fst
+    (sampling (fun ~vars prg i ->
+         let n = List.length (kernel_info prg).applied_opts in
+         if i >= 3 && Option.fold ~none:true ~some:(Int.equal n) depth then
+           raise e
+         else by_depth times ~vars prg))
+
+let raising_again_cases =
+  let chosen ?depth times =
+    let timing = raising_again ?depth (Failure "no device") times in
+    List.length
+      (K.applied_opts (search ~timing 1 (scheduled "sum_rows" "clang")))
+  in
+  group "a time taken again that raises"
+    [
+      test "Failure counts as infinite for the fastest, which is not kept"
+        (fun () -> equal int 1 (chosen ~depth:2 [ 0.; 1e-3; 0.9e-3 ]));
+      test
+        "Failure counts as infinite for the beam's first, which the fastest \
+         beats" (fun () -> equal int 2 (chosen ~depth:1 [ 0.; 1e-3; 1e-3 ]));
+      test "Failure for both ends the search on the beam's first" (fun () ->
+          equal int 1 (chosen [ 0.; 1e-3; 0.9e-3 ]));
+      test "Exit is raised by the search" (fun () ->
+          raises Exit (fun () ->
+              search
+                ~timing:(raising_again Exit [ 0.; 1e-3; 0.9e-3 ])
+                1
+                (scheduled "sum_rows" "clang")));
+    ]
+
 (* [out[i] = j^2] for each [j < x[0]] in turn, over 16 [i], [x] of
    int64: its estimated operations count [j] up to 2^63 - 1 times on each [i],
    which fits no int. *)
@@ -620,9 +747,12 @@ let rounds_law =
   let pp ppf (kernel, amt, seed) =
     Format.fprintf ppf "%s, width %d, seed %d" kernel amt seed
   in
+  let applied p = (kernel_info p).applied_opts in
   prop ~count:30
-    "a round goes on while its fastest beats the beam's first by \
-     BEAM_MIN_PROGRESS or more, and the last keeps its fastest if it beat it"
+    "after a round, the beam's first and its fastest are timed again in turn; \
+     the search goes on while the fastest beats the beam's first by \
+     BEAM_MIN_PROGRESS or more, and the last round keeps its fastest if it \
+     beat it"
     Gen.(
       with_pp pp
         (triple
@@ -631,32 +761,56 @@ let rounds_law =
     (fun (kernel, amt, seed) ->
       let timing, record = sampling (spread seed) in
       let chosen =
-        search ~allow_test_size:false ~timing amt (scheduled kernel "clang")
+        K.applied_opts
+          (search ~allow_test_size:false ~timing amt (scheduled kernel "clang"))
       in
       let r = record () in
-      let rounds = List.length (K.applied_opts chosen) in
-      for d = 1 to rounds do
+      let again = (timings r.calls).again in
+      (* The last round that timed a candidate, and its fastest. *)
+      let last =
+        List.fold_left
+          (fun n (p, _) -> max n (List.length (applied p)))
+          0 (samples_of r)
+      in
+      let fastest d =
+        match fastest r d with
+        | Some (p, ts) -> (p, least ts)
+        | None -> failf "round %d timed no candidate" d
+      in
+      equal int ~msg:"rounds timed again" (max 0 (last - 1)) (List.length again);
+      (* What round [d] compares: the beam's first's time and the fastest's. The
+         first round's beam is the kernel, untimed. *)
+      let compared d =
+        if d = 1 then (infinity, snd (fastest 1))
+        else
+          let (first, t_first), (fast, t_fast) = List.nth again (d - 2) in
+          let msg = Printf.sprintf "round %d" d in
+          equal opts ~msg (applied (fst (fastest (d - 1)))) (applied first);
+          equal opts ~msg (applied (fst (fastest d))) (applied fast);
+          (t_first, t_fast)
+      in
+      let goes_on (t_first, t_fast) =
+        t_fast >= min_progress && t_first -. t_fast >= min_progress
+      in
+      for d = 1 to last - 1 do
         let msg = Printf.sprintf "round %d" d in
-        less float_exact ~msg ~than:(incumbent r (d - 1)) (incumbent r d);
-        if d < rounds then begin
-          at_least float_exact ~msg ~than:min_progress (incumbent r d);
-          at_least float_exact ~msg ~than:min_progress
-            (incumbent r (d - 1) -. incumbent r d)
-        end
+        let t_first, t_fast = compared d in
+        at_least float_exact ~msg ~than:min_progress t_fast;
+        at_least float_exact ~msg ~than:min_progress (t_first -. t_fast)
       done;
-      (match fastest r (rounds + 1) with
-      | Some _ ->
-          at_least float_exact
-            ~msg:(Printf.sprintf "round %d" (rounds + 1))
-            ~than:(incumbent r rounds)
-            (incumbent r (rounds + 1))
-      | None -> ());
-      (match fastest r rounds with
-      | Some (p, _) ->
-          equal opts (kernel_info p).applied_opts (K.applied_opts chosen)
-      | None -> equal int 0 rounds);
-      cover "a round that progressed" (rounds > 0);
-      cover "a timed round that stopped" (fastest r (rounds + 1) <> None))
+      let expected =
+        if last = 0 then []
+        else
+          let t_first, t_fast = compared last in
+          if goes_on (t_first, t_fast) || t_fast < t_first then
+            applied (fst (fastest last))
+          else if last = 1 then []
+          else applied (fst (fastest (last - 1)))
+      in
+      equal opts expected chosen;
+      cover "a round timed again" (again <> []);
+      cover "a last round timed again that kept the beam's first"
+        (last >= 2 && List.length chosen < last))
 
 (* A candidate's program names no device: its call's storage names the
    renderer's device, which [link] places. *)
@@ -1159,7 +1313,7 @@ let under_environment =
                (K.applied_opts k);
              equal ~msg:"measurements" int
                (int_of_string (cell "measurements"))
-               (List.length (calls ())));
+               (first_samples (calls ())));
          test
            "a candidate of more than 1000 times the fewest operations of its \
             round so far is not measured" (fun () ->
@@ -1253,11 +1407,14 @@ let () =
          keeps_writes;
          keeps_writes_exhaustively;
          chooses_the_fastest;
+         slower_round;
+         clock_between_rounds;
          midpoints;
          positional;
          links_once;
          early_stops;
          exceptions;
+         raising_again_cases;
          test_size;
          width;
          cache;

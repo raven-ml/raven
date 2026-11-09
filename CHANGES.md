@@ -1091,6 +1091,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Search.beam_search` decides whether to go on, and what it keeps, by timing
+  the beam's first kernel and the round's fastest again, in turn, after each
+  round. Comparing times taken rounds apart, a GPU whose clock fell between
+  rounds stopped searches early: a 1024² float32 product on an AMD R9700 now
+  keeps a kernel of 137 us per call, where it kept one of 156-172 us.
 - An integer literal under an operation on a committed integer, or a cast to
   one, holds that type's value from construction (`Ops.v`): rules read the
   machine's value without knowing to wrap, and `x:i32 * 2^32` and `x & 2^32` no

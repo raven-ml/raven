@@ -98,8 +98,6 @@ raven / llama.cpp b12048 Vulkan:
 - whether memory-bound host kernels take lanes at all: no upcast ran 4-7%
   faster than 64-byte lanes in two of seven loaded fudge runs of a 4M
   float32 select-zero; decide on the scheduled quiet re-record
-- AMD beam search times 16-21% of candidates below 2 GHz: hold rig's stable
-  power state around a search, or ties within noise
 - device facts (762ad1c31): `core_threads = 16384` and `stream_threads =
   32768` are fudge's (sm_89, 100 SMs) and also the R9700's best, where
   D175's SMs x clock scaling put its window at 0.59x; a small part (an

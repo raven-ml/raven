@@ -120,6 +120,25 @@ let time_program ~time ~early_stop ~factor ~vars ?(cnt = 3) linked =
   in
   go [] cnt
 
+(* The least times of [a] and [b], each a linked program and the factor that
+   scales its times up, sampled three times each in turn, [a] first, so that
+   both run at the clocks of one moment. A sample whose time raises [Failure] is
+   infinite. *)
+let time_pair ~time ~vars (a, fa) (b, fb) =
+  let sample linked factor =
+    match time ~vars linked with
+    | t -> t *. factor
+    | exception Failure _ -> infinity
+  in
+  let rec go n ta tb =
+    if n = 0 then (ta, tb)
+    else
+      let ta = Float.min ta (sample a fa) in
+      let tb = Float.min tb (sample b fb) in
+      go (n - 1) ta tb
+  in
+  go 3 infinity infinity
+
 (* A kernel linearized, dropped past the cap, then compiled for [ren]: its
    program and compile time. *)
 let try_compile (ren : Renderer.t) k =
@@ -343,13 +362,14 @@ let beam_search ~link ~time ?allow_test_size amt s =
           (fun (i, k) r -> f i k r)
           (List.mapi (fun i k -> (i, k)) ks)
       in
-      (* [k]'s program linked and timed with an early stop, or [None] if its
-         linking or timing failed. *)
+      (* [k]'s program linked, with the factor that scales its times up, and its
+         samples with an early stop, or [None] if its linking or timing
+         failed. *)
       let sampled k prg ~early_stop =
         match
           let prg, factor = test_size ~allow_test_size ~value prg in
           let linked = link (timed_call ~value prg) in
-          (linked, time_program ~time ~vars ~early_stop ~factor linked)
+          ((linked, factor), time_program ~time ~vars ~early_stop ~factor linked)
         with
         | r -> Some r
         | exception e -> (
@@ -370,7 +390,9 @@ let beam_search ~link ~time ?allow_test_size amt s =
       if debug () >= 2 then
         Printf.printf "   0.00s:                from   1 ->   1 actions %s\n%!"
           (K.colored_shape s);
-      let rec search beam =
+      (* [first] is the beam's first kernel's linked program and factor, [None]
+         while the beam is [s], untimed. *)
+      let rec search beam first =
         let best = least (snd (List.hd beam)) in
         let candidates =
           List.concat_map
@@ -379,6 +401,9 @@ let beam_search ~link ~time ?allow_test_size amt s =
         in
         let n = List.length candidates in
         let timed = ref [] and least_compute_ops = ref infinity in
+        (* The fastest candidate so far, as [opts] orders them: its least sample
+           and its linked program, the only one kept past its samples. *)
+        let fastest = ref None in
         let consider i cand compiled =
           match compiled with
           | Some (prg, compile_et) when not (Hashtbl.mem seen_libs (binary prg))
@@ -401,8 +426,12 @@ let beam_search ~link ~time ?allow_test_size amt s =
                 Hashtbl.add seen_libs (binary prg) ();
                 match sampled cand prg ~early_stop:(best *. 3.) with
                 | None -> ()
-                | Some (_, samples) ->
+                | Some (linked, samples) ->
                     timed := (cand, samples) :: !timed;
+                    (match !fastest with
+                    | Some (t, _) when Float.compare t (least samples) <= 0 ->
+                        ()
+                    | _ -> fastest := Some (least samples, linked));
                     let tm = Helpers.time_to_str ~w:12 (least samples) in
                     let progress = List.length !timed in
                     if beam_debug > 1 then
@@ -426,19 +455,41 @@ let beam_search ~link ~time ?allow_test_size amt s =
             (fun (_, t0) (_, t1) -> Float.compare (least t0) (least t1))
             (List.rev !timed)
         in
+        (* The beam's first and the fastest, timed again in turn: a clock that
+           moved since the beam's first was timed, rounds ago, moves both. *)
+        let compared =
+          match (!fastest, first) with
+          | None, _ -> None
+          | Some (t, _), None -> Some (infinity, t)
+          | Some (t, linked), Some first ->
+              let again = time_pair ~time ~vars first linked in
+              if beam_debug > 0 then
+                Printf.printf
+                  "BEAM_SEARCH: the beam's first %s, %s before, against the \
+                   fastest %s, %s before\n\
+                   %!"
+                  (Helpers.time_to_str ~w:0 (fst again))
+                  (Helpers.time_to_str ~w:0 best)
+                  (Helpers.time_to_str ~w:0 (snd again))
+                  (Helpers.time_to_str ~w:0 t);
+              Some again
+        in
         (* The search ends when nothing was timed, when the fastest took less
-           than [min_progress], or when it beat the beam's first by less; it
-           then keeps the fastest alone if it beat the beam's first. *)
-        let exiting =
-          match opts with
-          | (_, t) :: _ ->
-              least t < min_progress || best -. least t < min_progress
-          | [] -> true
+           than [min_progress], or when it beat the beam's first by less, or not
+           at all, as two infinite times do; it then keeps the fastest alone if
+           it beat the beam's first. *)
+        let exiting, keep =
+          match compared with
+          | None -> (true, false)
+          | Some (incumbent, t) ->
+              let exiting =
+                t < min_progress || not (incumbent -. t >= min_progress)
+              in
+              (exiting, exiting && t < incumbent)
         in
         let beam =
           match opts with
-          | ((_, t) as fastest) :: _ when exiting && least t < best ->
-              [ fastest ]
+          | fastest :: _ when keep -> [ fastest ]
           | _ when exiting -> beam
           | _ -> List.filteri (fun i _ -> i < amt) opts
         in
@@ -449,10 +500,10 @@ let beam_search ~link ~time ?allow_test_size amt s =
              (if exiting then Helpers.colored Green tm else tm)
              n (List.length opts)
              (K.colored_shape (fst (List.hd beam))));
-        if exiting then beam else search beam
+        if exiting then beam else search beam (Option.map snd !fastest)
       in
       (* [s] starts the beam, untimed, of an infinite time. *)
-      let k, samples = List.hd (search [ (s, [ infinity ]) ]) in
+      let k, samples = List.hd (search [ (s, [ infinity ]) ] None) in
       Helpers.Diskcache.put ~table:"beam_search" key
         (encode_opts (K.applied_opts k));
       if beam_debug > 0 then

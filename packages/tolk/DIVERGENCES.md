@@ -3336,7 +3336,7 @@ cold processes, interleaved runs), and the
 kernel each search chose, replayed after a search over an empty cache, ran
 in 43, 61, 40 and 40 us against 104, 53, 55 and 36 us (medians of 11): no
 gain beyond the ranges. As tinygrad's
-`codegen/opt/search.py:114,163-166`, `Search.beam_search` starts from its
+`codegen/opt/search.py:114,164-166`, `Search.beam_search` starts from its
 kernel untimed, ends a round on no timing, a fastest time under
 `BEAM_MIN_PROGRESS` or a gain under it, and then keeps the fastest alone if it
 beat the beam's first.
@@ -8862,3 +8862,52 @@ reason and its pins.
   with a host-language exception.
 - **Pinned by:** `Tolk.Ops › exec_alu › exec_alu_values.golden`, whose `.tolk`
   holds each `op=Ops.FDIV` row's quotient.
+
+## D417. A round's stop compares two kernels timed again in turn
+
+- **tinygrad:** `codegen/opt/search.py:114,164-166` (`beam_search`: the beam
+  starts as `[(s, inf)]`, and a round ends when
+  `beam[0][1]-opts[0][1] < min_progress`, the fastest's time of this round
+  against the beam's first's from the round that kept it).
+- **tolk:** `Search.beam_search` (`time_pair`).
+- **Differs:** from the second round, once a round's candidates are timed,
+  the beam's first kernel and the round's fastest are timed again in turn,
+  three times each, and the stop and whether the fastest is kept alone
+  compare their least times. The early stop (three times the beam's first's
+  time), the ranking of the round and the next beam are tinygrad's. A time
+  taken again that raises `Failure` is infinite, and two infinite times end
+  the search, where tinygrad's `inf - inf < min_progress` goes on. The
+  round's fastest keeps its linked program through the round, and the beam's
+  first through the next. Each round from the second times six more runs.
+  `a search chooses what tinygrad's chooses` counts the first timings against
+  tinygrad's measurements.
+- **Reason:** (d), to re-measure on fudge. A device's clock follows its
+  load, and a GPU idles while a round compiles, so times taken rounds apart
+  ran at different clocks. On nonnormal's R9700 at the firmware's clocks,
+  searches of a 1024 by 1024 float32 product (`Rune.jit' ~beam:2
+  ~parallel:8`, 8 interleaved processes) stopped at round 5 in 4 of 4 under
+  tinygrad's rule, and reached round 7 in 4 of 4 under this one. The kernel
+  chosen took 156-172 us of GPU time per call against 136.8-137.7 us (medians
+  of 9 profiles of 200 calls), and the first call 0.97-1.06 s against
+  1.41-2.06 s, for the two more rounds. A row sum of 8192 by 2048 and a
+  softmax of 4096 by 1024 chose kernels of equal time under both rules
+  (37.7-40.5 and 68.1-74.1 us).
+  On fudge's RTX 5000 Ada (CUDA, and NV through the nvidia driver), the same
+  product's beam's first timed again agreed with its earlier samples within
+  3.5% from the third round, and 6.6% below them in the second, in 12
+  searches, which chose as tinygrad's rule did. Timing both in turn keeps a
+  near tie going on about half the time, as tinygrad's rule does between two
+  minima of a round, where timing the beam's first alone sets one time
+  against the least of a round's: on fudge's host, a first call of
+  `Rune.jit ~beam:2` of a 64 by 64 float32 product and its tanh took
+  1.36 s (0.57-2.29), against 1.25 s (1.03-1.99) with tinygrad's rule and
+  3.28 s (2.21-3.35) timing the beam's first alone, over 3, 3 and 4 rounds:
+  medians of 5 interleaved cold processes at a load of 7 to 9, so the 9% is
+  indicative. No row on fudge holds the choice: a near tie at round 4
+  decides between kernels of 161 and 122 us per call under either rule.
+- **Pinned by:** `Tolk.Search › a search goes on past a round whose clock is
+  half the round before's` and `› a search chooses as at a steady clock when
+  its device's clock changes between rounds`, which fail under tinygrad's
+  rule; `› after a round, the beam's first and its fastest are timed again in
+  turn; …`; `› a time taken again that raises ›` (`Failure` counts as
+  infinite, for one or both, and `Exit` is raised).
