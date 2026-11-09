@@ -35,8 +35,10 @@ minimize-lbfgs-rosenbrock-64/grad	alloc_words	exact	1427
 minimize-lm-exponential-200/compiled	alloc_words	exact	1427
 minimize-lm-exponential-200/eager	alloc_words	exact	882938
 minimize-lm-exponential-200/grad	alloc_words	exact	1427
-minimize-nelder-mead-rosenbrock-4/compiled	alloc_words	exact	1567
-minimize-nelder-mead-rosenbrock-4/eager	alloc_words	exact	9297414
+minimize-nelder-mead-rosenbrock-4/compiled	alloc_words	batch=8	n=20	1.584e+03	1.584e+03 1.584e+03 1.584e+03 1.584e+03 1.584e+03 1.584e+03 1.584e+03 1.584e+03 1.584e+03 1.584e+03 1.584e+03 1.584e+03 1.584e+03 1.584e+03 1.584e+03 1.584e+03 1.584e+03 1.584e+03 1.584e+03 1.584e+03
+minimize-nelder-mead-rosenbrock-4/compiled	wall_time	batch=8	n=20	7.509e-04	7.431e-04 7.435e-04 7.449e-04 7.459e-04 7.459e-04 7.462e-04 7.464e-04 7.479e-04 7.482e-04 7.501e-04 7.517e-04 7.520e-04 7.527e-04 7.528e-04 7.540e-04 7.594e-04 7.630e-04 7.673e-04 7.718e-04 7.746e-04
+minimize-nelder-mead-rosenbrock-4/eager	alloc_words	exact	11359927
+minimize-nelder-mead-rosenbrock-4/eager	wall_time	batch=1	n=20	5.693e-02	5.670e-02 5.670e-02 5.679e-02 5.679e-02 5.683e-02 5.684e-02 5.685e-02 5.693e-02 5.693e-02 5.693e-02 5.694e-02 5.702e-02 5.702e-02 5.704e-02 5.709e-02 5.716e-02 5.719e-02 5.728e-02 5.728e-02 5.732e-02
 minimize-newton-convex-16/compiled	alloc_words	exact	1427
 minimize-newton-convex-16/eager	alloc_words	exact	407218
 minimize-newton-convex-16/grad	alloc_words	exact	1427
