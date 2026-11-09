@@ -18,7 +18,7 @@
     [<name>.golden]. Every function here, given a file [<name>.golden], reads
     [<name>.tolk] when it exists. Its first line is
 
-    {v # tolk D81 D96 golden=<hash> v}
+    {v # tolk D24 D74 golden=<hash> v}
 
     and the rest is the golden's body format. The [D]-numbers are the entries of
     [DIVERGENCES.md] the difference belongs to, and [golden=] is the hash of the
@@ -90,7 +90,7 @@ val cases :
     so a stale [.tolk] does not stop the suite.
 
     [differs] states which rows of [file]'s {{!tolk}[.tolk]} differ from the
-    golden, as [("D81", ["op=Ops.ADD dtype=dtypes.f32"])]. A pattern is pairs
+    golden, as [("D24", ["op=Ops.ADD dtype=dtypes.f32"])]. A pattern is pairs
     [column=value] separated by spaces, all of which a row must hold; a word
     without [=] extends the value before it, as in [name=kernel with opts]. The
     [fst] is an entry of the [.tolk]'s header. [check] runs on the rows of the

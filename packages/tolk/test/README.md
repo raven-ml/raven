@@ -129,7 +129,7 @@ changes an output, the test that compares it states the difference in code and
 names the entry, and it is that entry's pinning test.
 
 Where tolk differs on purpose, `<name>.tolk` sits beside `<name>.golden`: the
-same body format under a first line `# tolk D81 D96 golden=<hash>`, naming the
+same body format under a first line `# tolk D24 D74 golden=<hash>`, naming the
 entries and the MD5 of the golden's body. A golden test reads the `.tolk` when
 it exists and fails if the hash no longer matches the golden, if the two bodies
 are equal, or if it names no entry. A suite lists `*.tolk` beside `*.golden`
@@ -342,7 +342,7 @@ golden tolk no longer matches is a port bug or a divergence to record.
 Where tolk differs from tinygrad on purpose, `x.tolk` sits beside `x.golden`:
 tolk's output, in the golden's body format, headed
 
-    # tolk D81 D96 golden=<hash>
+    # tolk D24 D74 golden=<hash>
 
 by the entries of `../DIVERGENCES.md` it belongs to and the hash of the body
 of `x.golden`. `Golden` reads `x.tolk` instead of `x.golden`, and fails if the

@@ -3415,7 +3415,7 @@ let program (n, statements) =
         List.map (fun (b, back, _) -> state b back) st.reads
       in
       let next =
-        (* Into a buffer as given, a half would be a view of it (D184), which
+        (* Into a buffer as given, a half would be a view of it (D182), which
            Kernel_graphs does not run. *)
         if st.kind = `Call then Ops.after cur [ adds cur states_read ]
         else if st.kind = `Loop then begin
@@ -3728,7 +3728,7 @@ let repros =
         let a = f32 1 in let b = doubled (Shape.permute (rows a) [ 1; 0 ]) in
         let a1 = assign a O.(a + k 1.) in
         [ out O.(b + Ops.contiguous O.(rows a1 * three)); a1 ]);
-    (* Into a written state, which a store indexes whole (D184). *)
+    (* Into a written state, which a store indexes whole (D182). *)
     c 1 "t2 view_assign" (fun () ->
         let a = f32 1 and v = f32 ~n:2 2 in let a0 = assign a O.(a + k 1.) in
         let b = doubled a0 in let a1 = into a0 0 2 v in

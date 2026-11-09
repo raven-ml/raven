@@ -42,7 +42,7 @@ runs that data on rig.
   hand: each is the output of unmodified tinygrad at the pin. A failing golden
   stays failing until the compiler is fixed.
 - Where tolk differs from tinygrad on purpose, `x.tolk` sits beside
-  `x.golden`: tolk's output, headed `# tolk D81 D96 golden=<hash>` by the
+  `x.golden`: tolk's output, headed `# tolk D24 D74 golden=<hash>` by the
   `DIVERGENCES.md` entries it belongs to and the hash of the golden's body.
   `Golden` prefers it and fails if the golden moved, if the two agree, or if it
   names no entry. It holds tolk's output on the golden's own input, and its

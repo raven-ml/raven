@@ -737,7 +737,7 @@ it check that each result is the machine's value instead, and name D13.
 | Source | Behaviour | Outcome |
 |---|---|---|
 | tinygrad: null/test_const_folding.py::TestWeakConstFolding (4 tests: all but test_nan_compare, below), TestBitcastConstFolding::test_out_of_range_source_value, test_scalar_bitcast | weak constants fold exactly; a bitcast of a constant folds | `S › tinygrad › tests.golden › <Class>.<test>` |
-| tinygrad: null/test_const_folding.py::TestWeakConstFolding::test_nan_compare | `nan != nan` folds to true | `S › tinygrad › tests.golden › TestWeakConstFolding.test_nan_compare`; `S › symbolic_simple › constants › NaN is unequal to itself when constants fold, as IEEE says` (D14 is withdrawn) |
+| tinygrad: null/test_const_folding.py::TestWeakConstFolding::test_nan_compare | `nan != nan` folds to true | `S › tinygrad › tests.golden › TestWeakConstFolding.test_nan_compare`; `S › symbolic_simple › constants › NaN is unequal to itself when constants fold, as IEEE says` |
 | tinygrad: null/test_const_folding.py::TestThreefryConstFolding::test_threefry | a threefry of constants folds once decomposed | `S › tinygrad › tests.golden › TestThreefryConstFolding.test_threefry` (the machine's value, D13) |
 | tinygrad: null/test_const_folding.py::TestBitcastConstFolding::test_vec_bitcast | a bitcast of a stack of constants | dropped here: the lanes fold after devectorizing, `full_rewrite`, Codegen's section (L4) |
 | tinygrad: null/test_const_folding.py::TestMovedConstFolding (5 tests), TestReduceOpsConstFolding::test_sum_output_dtype | constant folding in `Tensor` programs | dropped: `Tensor` surface, the frontend is nx |
@@ -898,8 +898,8 @@ with the variable set.
 | tinygrad: `null/test_simplify_valid_idx.py::TestImageSimplification` (16 tests), `test_drop_non_monotonic_window`, `test_drop_gate_committed_in_the_index_pass`, `TestImageStore::test_half_store_converts_lane_by_lane` | image indices, image valid dimensions and image stores | dropped: image paths are excluded (README) |
 | tinygrad: `null/test_simplify_valid_idx.py::TestDropTrueGate::test_drop_true_gate_on_index` | an index gated by `True` loses its gate | `C › indexing_simplify › indices.golden › case=true_gate`: `indexing_simplify` alone keeps the gate; `sym`, which tinygrad composes with it, drops it (Symbolic's section) |
 | tinygrad: `null/test_simplify_valid_idx.py::TestDropTrueGate::test_const_gate_clause_is_not_moved_to_load`, `TestRangeShrink` (8 tests) | `pm_move_where_on_load`, range shrinking | dropped here: Symbolic's and Simplify's sections |
-| tinygrad: `codegen/late/coalesce.py` `memory_coalescing`, lines 111-167 | the grouping key (op, buffer, base, gate, argument), the lengths per element type, `must_divide`, `DMC`; narrowed (D261): `ALLOW_HALF8` is the renderer's `half8`, for copies into local memory | `C › memory_coalescing › accesses` (58 cases, each against `accesses_coalesced`, `accesses_scalar` and `accesses_cuda`); `C › memory_coalescing › lengths`; `C › vectors of eight 16-bit floats`; `C › DMC` |
-| tinygrad: `codegen/late/coalesce.py` `memory_coalescing`, the DSP lengths (`:138`) | 128 down to 4 elements, unaligned | dropped: the DSP is excluded (README) |
+| tinygrad: `codegen/late/coalesce.py` `memory_coalescing` | the grouping key (op, buffer, base, gate, argument), the lengths per element type, `must_divide`, `DMC`; narrowed (D261): `ALLOW_HALF8` is the renderer's `half8`, for copies into local memory | `C › memory_coalescing › accesses` (58 cases, each against `accesses_coalesced`, `accesses_scalar` and `accesses_cuda`); `C › memory_coalescing › lengths`; `C › vectors of eight 16-bit floats`; `C › DMC` |
+| tinygrad: `codegen/late/coalesce.py` `memory_coalescing`, the DSP lengths | 128 down to 4 elements, unaligned | dropped: the DSP is excluded (README) |
 
 ## Postrange
 
@@ -953,7 +953,7 @@ the same kernels.
 | tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_multi_reduce` | the nine choices of axes of a convolution | `tc_metal_conv_0` to `_8` |
 | tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_unroll_phi`, `test_tensor_cores_unroll_casted_phi`, `test_tensor_cores_unroll_casted_phi_with_children` | an unroll after a tensor core | `tc_<renderer>_unroll`, `tc_<renderer>_unroll_relu`; where the accumulator lives is the expander's (L4, Codegen) |
 | tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_nan`, `test_tensor_cores_emulated_half`, `test_tensor_cores_partial_sum_in_accumulator` | values computed on a device | dropped here: execution (plan §4, slow, L5) |
-| tinygrad: `ALLOW_TF32` on CUDA (`postrange.py:158`) | a float tensor core only with TF32 allowed | `tc_cuda_5_basic` (allowed), `tc_cuda_float_without_tf32` (refused) |
+| tinygrad: `ALLOW_TF32` on CUDA (`postrange.py` `Scheduler._apply_tc_opt`) | a float tensor core only with TF32 allowed | `tc_cuda_5_basic` (allowed), `tc_cuda_float_without_tf32` (refused) |
 | tinygrad: `null/test_custom_kernel.py::test_gemm_group_refused`, `test_gemm_unroll_refused`, `test_loop_acc_gemm_tc_refused` | a serial loop cannot be grouped or upcast, and takes no tensor core | `custom_gemm_group`, `custom_gemm_unroll`, `tc_amd_loop_acc_tc` |
 | tinygrad: `null/test_postrange.py::TestReductionAxes::test_weak_reduction_membership` | a reduction's role comes from the reduction that closes its range, whatever its type or identity: axes, reduce ranges and upcastable axes of both roles | `axes.golden` (every row: `axis_types`, `reduce_axes`, `upcastable_dims`, `upcastable_reduce_dims`); `PR › apply_opts › hand-optimises a kernel that asks for nothing, after making its weak outputs global` |
 | tinygrad: `null/test_postrange.py::TestReductionAxes::test_reduction_bound_is_not_reduced` | a range a reduction's bound reads is not reduced, and padding it masks the read, not the reduction | `padto_reduction_bound` (its graph and `axes.golden` row) |
@@ -971,8 +971,8 @@ the same kernels.
 | tinygrad: `codegen/opt/postrange.py` `apply_opt` checks (no test) | each check's boundary | `split_axis_negative`, `split_axis_past_end`, `split_last_axis`, `padto_axis_past_end`, `swap_axis_past_end`, `split_amount_one`, `split_amount_negative`, `local_without_locals`, `unroll_over_32`/`unroll_32`, `upcast_over_16`/`upcast_16`, `upcast_reduce`, `unroll_global`, `split_not_dividing`, `group_over_shared_memory`/`group_at_shared_memory`, `local_after_group_over_shared_memory`, `unroll_without_reduce`, `padto_upcast_axis`, `padto_quadruple`/`padto_under_quadruple`, `padto_symbolic_axis`, `split_symbolic_axis`, `padto_warp_axis`, `swap_not_global`, `swap_on_cpu`, `tc_on_cpu`, `tc_not_first`, `tc_negative_axis`, `tc_select_*`, `tc_opt_out_of_range`, `tc_use_tc_*`, `tc_without_reduce`, `tc_on_max`, `tc_axis_out_of_choices` |
 | tinygrad: `codegen/opt/postrange.py` `split_targets`, `Scheduler.copy`, `shift_to`, `get_optimized_ast`, `apply_opts` (no test) | | `PR › split_targets`, `PR › Scheduler`, `PR › shift_to`, `PR › apply_opts`; a split by 1 stalls tinygrad's rewrite, and raises up front here: `PR › shift_to › raises Invalid_argument on an amount of 1` |
 | tinygrad: `codegen/opt/postrange.py` `args_from_ast`, BEAM search | device buffers for a search | ported as `Tolk_engine.slots`, of a linked schedule: `EN › timing › run takes the slots of a linked schedule`, `› a program whose buffers skip a slot links and runs on its slots`, `› a time allocates and loads nothing`; `apply_opts` takes the search as `~beam`, `PR › apply_opts › searches with beam instead, when given` |
-| tinygrad: `codegen/opt/postrange.py:93` the DSP upcast cap | | dropped: DSP is excluded (README) |
-| tinygrad: `postrange.py:95` a shared-memory check whose symbolic size cannot be decided raises `ValueError` | | `group_maybe_beyond_symbolic_shared_memory`, refused with `Invalid_argument`; `group_within_symbolic_shared_memory` fits |
+| tinygrad: `codegen/opt/postrange.py` `Scheduler.apply_opt` the DSP upcast cap | | dropped: DSP is excluded (README) |
+| tinygrad: `postrange.py` `Scheduler.apply_opt` a shared-memory check whose symbolic size cannot be decided raises `ValueError` | | `group_maybe_beyond_symbolic_shared_memory`, refused with `Invalid_argument`; `group_within_symbolic_shared_memory` fits |
 
 ## Heuristic
 
@@ -1131,10 +1131,10 @@ engine (`support/run.ml`), which compiles each kernel with rig's host entry
 | tinygrad: `renderer/cstyle.py` each `extra_matcher` | bfloat16 and float8 arithmetic through float, manual bfloat16 conversions (not on gfx950), double to half through float on Clang, Metal's bfloat16 transcendentals, CUDA's float8 to float8 conversions, HIP's float8 tensor-core operands as ulongs | `CS › extra_matcher › rewrites.golden` (25 inputs, each for the 7 targets) |
 | tinygrad: `renderer/cstyle.py` class attributes and `supported_dtypes` | launch limits, shared memory, tensor cores, native operations, data types, compiler cache key, per architecture | `CS › declarations › <field> › declarations.golden` (24 targets, 11 fields) |
 | tinygrad: `renderer/cstyle.py` each `code_for_op` | how each native operation is written, per data type | `CS › code_for_op › written.golden` (405 rows); law `CS › rendering › writes each native operation as code_for_op does` |
-| tinygrad: `renderer/cstyle.py:371`, `:428`, `:491`, `:515`, `ClangCompiler.__init__` | the architecture chooses tensor cores and data types, and a malformed one is refused | `CS › declarations`; `CS › architectures` (5 tests) |
-| tinygrad: `renderer/cstyle.py:71` `f.arg.name.format(...)` | code in the target's language, a call of a `fmt` custom function, is a `str.format` string | `CS › rendering › formats custom code as str.format does` (5 cases); `refuses custom code str.format refuses, naming it` (5 cases: an unmatched `{`, a single `}`, an index or a name that names no operand) |
-| tinygrad: `renderer/cstyle.py:256` `assert l is not None`, `:481`, `:578` (the `KeyError` and `IndexError` of a node the target cannot write) | an operation the target lacks, a tensor core product of a type without a core, a float8 conversion on a GPU without float8, are refused | `CS › rendering › raises Invalid_argument on an operation the target lacks` (4 renderers); `raises Invalid_argument on a kernel of another target it cannot write` (2 cases) |
-| tinygrad: `renderer/cstyle.py:218-273` `_render` | rendering is a function of the kernel alone | `CS › rendering › keeps no state from one kernel to the next`, `keeps no reference to the kernel it rendered`, `writes the same CUDA source for the CUDA and NV devices` |
+| tinygrad: `renderer/cstyle.py` `MetalRenderer.__init__`, `CUDARenderer.__init__`, `CUDARenderer.supported_dtypes`, `HIPRenderer.__init__`, `ClangCompiler.__init__` | the architecture chooses tensor cores and data types, and a malformed one is refused | `CS › declarations`; `CS › architectures` (5 tests) |
+| tinygrad: `renderer/cstyle.py` `base_rewrite` `f.arg.name.format(...)` | code in the target's language, a call of a `fmt` custom function, is a `str.format` string | `CS › rendering › formats custom code as str.format does` (5 cases); `refuses custom code str.format refuses, naming it` (5 cases: an unmatched `{`, a single `}`, an index or a name that names no operand) |
+| tinygrad: `renderer/cstyle.py` `CStyleLanguage._render` `assert l is not None`, `CUDARenderer.render_kernel`, `HIPRenderer.render_kernel` (the `KeyError` and `IndexError` of a node the target cannot write) | an operation the target lacks, a tensor core product of a type without a core, a float8 conversion on a GPU without float8, are refused | `CS › rendering › raises Invalid_argument on an operation the target lacks` (4 renderers); `raises Invalid_argument on a kernel of another target it cannot write` (2 cases) |
+| tinygrad: `renderer/cstyle.py` `_render` | rendering is a function of the kernel alone | `CS › rendering › keeps no state from one kernel to the next`, `keeps no reference to the kernel it rendered`, `writes the same CUDA source for the CUDA and NV devices` |
 | tinygrad: `null/test_renderer_failures.py::TestCStyleFailures::test_repeat_add`, `test_repeat_mul`, `test_repeat_xor`, `test_repeat_or`, `test_repeat_and`, `test_repeat_sub` | an associative chain is written without its operands' parentheses, a subtraction with them | `CS › parentheses › an associative chain is written flat › add`, `mul`, `xor`, `or`, `and`, `sub`; `sources › clang_chain_*` |
 | tinygrad: `null/test_renderer_failures.py::TestWGSLFailures::test_folded_packed_store` | a packed char access | the WGSL renderer is excluded; its kernel is `CS › sources › *_packed_cast`, `*_packed_bitcast`, and `CS › execution on the host › reads four chars as a uint through a cast of their address`, `... through a bitcast of their address` |
 | tinygrad: `runtime/test_renderer_failures.py::TestCStyleFailures::test_inline_const_alu` | `MAX` of a load and the int above the least | `CS › execution on the host › takes the maximum of a load and a literal`; `sources › *_inline_const_alu` |
@@ -1180,7 +1180,7 @@ engine (`support/run.ml`), which compiles each kernel with rig's host entry
 | tinygrad: `runtime/test_custom_kernel.py::TestCustomKernel::test_index_vector_bitcast_widen`, `test_index_vector_bitcast_narrow` | a bitcast of a value with a shape to a type of another size | `CG › hand-written kernels on the host › a bitcast of a loaded value to a wider type reads its lanes' bits`, `› a bitcast of a value to a narrower type reads its lanes' bits` |
 | tinygrad: `runtime/test_custom_kernel.py::TestCustomKernel::test_index_shaped_value_after_range`, `test_reduce_keeps_shaped_value_effect_count` | a value with a shape ordered after a range or a store | `CG › hand-written kernels on the host › a value with a shape ordered after a range is read at its lane`, `› a sum of a value with a shape after a store stores once a trip`; an upcast index offset ordered after a store, `› upcast lanes whose offset waits on a store read each lane after it` |
 | tinygrad: `null/test_custom_kernel.py::TestCustomKernel::test_index_wmma_after_range` | a tensor core product ordered after a range is one product | dropped: `AMDLLVMRenderer` is excluded (README); the index of a value after its effects is the rows above |
-| tinygrad: `runtime/test_after.py::TestAfterCounterexamples::test_older_dependency_preserves_selected_state`, `test_shared_readers_after_older_dependency` | a state after a kernel the state under it already follows reads every write under it | `after_older_write`, `readers_after_older_write`, `after_older_and_new_write`, `Tolk.Schedule`'s recorded graphs, schedules and values; `after_part_of_older_write`'s kernel graph alone (D184) |
+| tinygrad: `runtime/test_after.py::TestAfterCounterexamples::test_older_dependency_preserves_selected_state`, `test_shared_readers_after_older_dependency` | a state after a kernel the state under it already follows reads every write under it | `after_older_write`, `readers_after_older_write`, `after_older_and_new_write`, `Tolk.Schedule`'s recorded graphs, schedules and values; `after_part_of_older_write`'s kernel graph alone (D182) |
 | tinygrad: `runtime/test_after.py::TestAfterCounterexamples::test_sibling_afters_rejected` | two AFTERs over one state raise | `write_over_written`, `Tolk.Schedule`'s recorded graphs, schedules and values: tolk orders the second write over the state its kernel is given (D160) |
 | tinygrad: `runtime/test_custom_kernel.py::TestCustomKernel::test_reduce_device_range`, `test_reduce_device_range_not_copy` | a reduce over a device range is refused, and a kernel between devices that is no copy | dropped: `AxisType.DEVICE` is excluded (README) |
 | tinygrad: `null/test_uop_symbolic.py::TestSymbolic::test_bool_and_not_or_absorption` | `(!x \| y) & x` is `y & x` | `S › tinygrad › tests.golden › TestSymbolic.test_bool_and_not_or_absorption` |
@@ -1207,14 +1207,12 @@ engine (`support/run.ml`), which compiles each kernel with rig's host entry
 | tinygrad: `null/test_linearizer.py::TestLinearizerRenderers::test_upcast_with_locals_cpu` | Clang renders a kernel with a local split | dropped: an expected failure in tinygrad |
 | tinygrad: `runtime/test_arange.py` embedding backward tests, `runtime/test_linearizer.py::TestLinearizer::test_where_fold`, `null/test_tensor.py` index dtype tests, `null/test_device.py::TestDevice::test_compiler_autodetect_fallback` | renderer checks in skip conditions and whole programs | dropped: skip conditions and realizations, the engine's (L7) |
 | tinygrad: `renderer/cstyle.py` `ClangRenderer` (no test) | kernels run as their graph says | `CS › execution on the host` (18 tests on known values); slow law `every kernel the interpreter runs writes what it computes` (36 kernels, 10 random inputs each; the others excluded in the suite with their reasons) |
-| D17: `renderer/cstyle.py:259-265` C promotion of narrow operands | signed char, short and `__fp16` operations compute in int or float, and only the stored value narrows; tolk casts each inlined one back, where tinygrad computes the unsigned ones that wrap in unsigned int (`:84-86`) | `CS › narrowing › cases.golden` (every kernel's written kernel is `with_d17_casts` of it, and the sources it changes are tinygrad's for the kernel with those casts); `CS › execution on the host › rounds each operation on halves to a half`, `wraps each operation on unsigned chars`; slow law `a kernel over a narrow type wraps and rounds as the interpreter` (8 kernels, inputs over each type's whole range) |
-| D342: `renderer/cstyle.py:152-159` signed operators | a signed sum, difference, product, negation, shift or multiply-add that may overflow wraps, where C leaves it undefined and NVRTC folds `x + y < x` to `y < 0` | `Tolk_engine › kernels on the host › signed arithmetic wraps as the interpreter`, `› GPUs ›` each GPU's the same; the goldens of every kernel with such an operation |
-| D346: `renderer/cstyle.py:158-159` division and shift operators | a signed division of the least value by -1 wraps and its remainder is 0, and a shift by a count at or past the width is the exact shift wrapped, where C leaves both undefined and x86 traps on the division | `Tolk_engine › kernels on the host › divisions and shifts at the extremes compute as the interpreter`, `› a narrow type shifted by a uint32 count computes as the interpreter` and `› a shift by a literal or weak count of any size computes the shift`, `› an emulated 64-bit shift reads the whole of its count`, `› GPUs ›` each GPU's the same (the emulated one on the host); `Tolk.Symbolic › a shift of constants folds by its count, of any size`; the goldens of every kernel with such an operation |
-| D355: `renderer/cstyle.py:158` division operators, `uop/symbolic.py:136` `x//x`, `codegen/decomp/op.py:54-57` `floordiv_to_idiv` | an integer quotient by 0 is 0 and its remainder the dividend, where C leaves both undefined and x86 traps; `x // x` is 0 at 0 | `Tolk_engine › kernels on the host › divisions and shifts at the extremes compute as the interpreter`, `› GPUs ›` each GPU's the same; `Symbolic › symbolic_simple › identities › x // x is 1 where x's bounds hold no 0`; the goldens of every kernel with such a division |
-| D403: `uop/symbolic.py:167-168`, `uop/weak.py:17-20` a power's exponent | a weak exponent keeps its value past its base's type, where tinygrad wraps it: `0 ** 65536` at uint16 is 0, where it is 1 | `Tolk_engine › kernels on the host › a power by an exponent of any size computes the power`; `Tolk.Symbolic › symbolic_simple › constants › a power of constants folds by its exponent, of any size` |
-| D413: `mixin/elementwise.py:30`, `uop/weak.py:17-21` a literal under a committed operation | the literal holds the value its operation's type gives it from construction, where tinygrad reads it as written | `Ops › integer literals`; `Codegen › constants past the width` (every operation and type, the product and conjunction by 0 at the width, D346's weak count); the pins moved from D161 and D162 |
-| tinygrad: `runtime/test_dtype.py::TestBFloat16DType::test_bf16_floor` | a bfloat16 floor, which lowers to a trunc, on a device | `CS › bfloat16 truncation on Metal › truncates a bfloat16 in float32`, `leaves it to CUDA, which truncates a bfloat16 with htrunc`; slow: `compiles a kernel that truncates a bfloat16` (skipped without MTLCompiler); `CS › sources › by default › metal_transcendental_bf16` (D18 is withdrawn) |
-| tinygrad: `renderer/cstyle.py:25-26,33,40` a float8 conversion on CUDA saturates | a value or constant converts with the saturating constructor, an infinity to its format's greatest finite value | `CS › sources › by default › cuda_dtype_fp8*`, `cuda_inf_nan_fp8*`; NVRTC: slow, `CS › every GPU kernel compiles with its target's toolchain › cuda_*` (D16 is withdrawn) |
+| D17: `renderer/cstyle.py` `CStyleLanguage._render` C promotion of narrow operands | signed char, short and `__fp16` operations compute in int or float, and only the stored value narrows; tolk casts each inlined one back, where tinygrad computes the unsigned ones that wrap in unsigned int (`pm_narrow_uint`) | `CS › narrowing › cases.golden` (every kernel's written kernel is `with_d17_casts` of it, and the sources it changes are tinygrad's for the kernel with those casts); `CS › execution on the host › rounds each operation on halves to a half`, `wraps each operation on unsigned chars`; slow law `a kernel over a narrow type wraps and rounds as the interpreter` (8 kernels, inputs over each type's whole range) |
+| D342: `renderer/cstyle.py` `CStyleLanguage.code_for_op` signed, division and shift operators, `uop/symbolic.py` `symbolic_simple` `x//x`, `codegen/decomp/op.py` `floordiv_to_idiv` | a signed sum, difference, product, negation, shift or multiply-add that may overflow wraps, where C leaves it undefined and NVRTC folds `x + y < x` to `y < 0`; a signed division of the least value by -1 wraps and its remainder is 0, and a shift by a count at or past the width is the exact shift wrapped, where C leaves both undefined and x86 traps on the division; an integer quotient by 0 is 0 and its remainder the dividend, where C leaves both undefined and x86 traps; `x // x` is 0 at 0 | `Tolk_engine › kernels on the host › signed arithmetic wraps as the interpreter`, `› GPUs ›` each GPU's the same; the goldens of every kernel with such an operation; `Tolk_engine › kernels on the host › divisions and shifts at the extremes compute as the interpreter`, `› a narrow type shifted by a uint32 count computes as the interpreter` and `› a shift by a literal or weak count of any size computes the shift`, `› an emulated 64-bit shift reads the whole of its count`, `› GPUs ›` each GPU's the same (the emulated one on the host); `Tolk.Symbolic › a shift of constants folds by its count, of any size`; the goldens of every kernel with such an operation; `Symbolic › symbolic_simple › identities › x // x is 1 where x's bounds hold no 0`; the goldens of every kernel with such a division |
+| D403: `uop/symbolic.py` `symbolic_simple`, `uop/weak.py` `commit_srcs_at` a power's exponent | a weak exponent keeps its value past its base's type, where tinygrad wraps it: `0 ** 65536` at uint16 is 0, where it is 1 | `Tolk_engine › kernels on the host › a power by an exponent of any size computes the power`; `Tolk.Symbolic › symbolic_simple › constants › a power of constants folds by its exponent, of any size` |
+| D413: `mixin/elementwise.py` `_broadcasted`, `uop/weak.py` `commit_srcs_at` a literal under a committed operation | the literal holds the value its operation's type gives it from construction, where tinygrad reads it as written | `Ops › integer literals`; `Codegen › constants past the width` (every operation and type, the product and conjunction by 0 at the width, D342's weak count) |
+| tinygrad: `runtime/test_dtype.py::TestBFloat16DType::test_bf16_floor` | a bfloat16 floor, which lowers to a trunc, on a device | `CS › bfloat16 truncation on Metal › truncates a bfloat16 in float32`, `leaves it to CUDA, which truncates a bfloat16 with htrunc`; slow: `compiles a kernel that truncates a bfloat16` (skipped without MTLCompiler); `CS › sources › by default › metal_transcendental_bf16` |
+| tinygrad: `renderer/cstyle.py` `base_rewrite` a float8 conversion on CUDA saturates | a value or constant converts with the saturating constructor, an infinity to its format's greatest finite value | `CS › sources › by default › cuda_dtype_fp8*`, `cuda_inf_nan_fp8*`; NVRTC: slow, `CS › every GPU kernel compiles with its target's toolchain › cuda_*` |
 
 ## C
 
@@ -1296,7 +1294,7 @@ are slow and skip without it; no machine here has ROCm, so they have not run.
 | tinygrad: `runtime/support/compiler_amd.py` `disassemble` | `llvm-objdump` of the code object | slow: `AMD › comgr › disassembles a code object` |
 | tinygrad: `runtime/support/compiler_amd.py` `HIPCompiler.__init__` | making the compiler without comgr fails | `AMD › without comgr on the machine › making a compiler raises Failure naming comgr and COMGR_PATH` |
 | D5 | compiles in processes of their own, which load the library and serve in turn: a library found that does not load is a `Compile_error` at each compile, a crash is a `Compile_error` naming LLVM's error and fails that compile only, a rejected source or another architecture leaves the next compile its own, a killed idle process is replaced | `AMD › a library that does not load` (5 tests); slow: `AMD › compiles in processes of their own` (every test) |
-| tinygrad: `external/external_test_hip_compile.py`, `external/external_benchmark_hip_compile.py` | compile time against a reference | dropped: benchmarks |
+| tinygrad: `external/external_test_hip_compile.py` | compile time against a reference | dropped: benchmarks |
 | tinygrad: `amd/hw/*` (`HIPCompiler` through `amd/hw/helpers.py`) | instructions on AMD hardware | dropped: they run on the device, the executor's |
 | tinygrad: `device/amd/test_llvm.py` | `AMDLLVMCompiler` | dropped: the LLVM compilers are excluded (README) |
 
@@ -1374,7 +1372,7 @@ reason.
 | Source | Behaviour | Outcome |
 |---|---|---|
 | tinygrad: null/test_allreduce.py::TestRingAllReduce::test_schedule_ring, test_schedule_naive | the copies of a ring and a naive allreduce | dropped: the multi-device rewrite is excluded (README) |
-| tinygrad: schedule/allreduce.py, the hierarchical branch of `handle_allreduce` (no upstream test) | a hierarchical allreduce to one device | dropped: the multi-device rewrite is excluded (README); D19 is withdrawn |
+| tinygrad: schedule/allreduce.py, the hierarchical branch of `handle_allreduce` (no upstream test) | a hierarchical allreduce to one device | dropped: the multi-device rewrite is excluded (README) |
 | tinygrad: null/test_allreduce.py::TestAllreduceCast (3 tests) | `ALLREDUCE_CAST` keeps 16-bit copies | dropped: the multi-device rewrite is excluded (README) |
 | tinygrad: null/test_multitensor.py::TestMultiRamUsage::test_multi_layer_allreduce, test_allreduce_cast_dtype_memory | memory of allreduces | dropped: the multi-device rewrite is excluded (README) |
 
@@ -1466,7 +1464,7 @@ mutation testing, which forks.
 | tinygrad: null/test_device.py::TestRunAsModule::test_module_runs | `enumerate_devices_str` | dropped: not ported (README exclusions) |
 | tinygrad: uop/ops.py `to_elf` (read by ops_cpu, ops_cuda, ops_metal, ops_nv, ops_qcom, realize) | a compiled program as its binary, name and signature, buffers compacted in globals order, then variables | dropped: the engine reads a program's binary and name from the program itself (README exclusions); the order of its parameters is `DV › Shape.kernel_params › takes every parameter in slot order, buffers and scalars` |
 | tinygrad: device.py `TinyELF.iter_sig` (read by ops_cpu, ops_hip, hcq2) | values packed from an offset, each aligned to its size | `DV › Tiny_elf.iter_sig › packs a signature as tinygrad's iter_sig does › layouts.golden` (offsets 0, 3 and 8); `packs each value at the next offset aligned to its size` |
-| tinygrad: test/helpers.py:146, test/amd/hw/*.py (`dev.runtime(prg.to_elf())`, hand-made `TinyELF`) | loading a program | dropped: loading is rig's (D3) |
+| tinygrad: `test/helpers.py` `eval_uop`, test/amd/hw/*.py (`dev.runtime(prg.to_elf())`, hand-made `TinyELF`) | loading a program | dropped: loading is rig's (D3) |
 
 ### Rows other sections left to Device's
 
@@ -1499,16 +1497,15 @@ calls never return fail. One mutant survives, equivalent: `j < i` as `<=` in
 | tinygrad: engine/worker.py `get_worker_pool` (no test) | a daemon worker makes no pool of its own | `WK › nesting › a call from f while the outer call holds every domain stays on f's`, `calls from f compute List.map and share the budget` |
 | tinygrad: engine/worker.py `Pool(PARALLEL.value, ...)` (no test) | at most PARALLEL workers | `WK › domains › runs at most PARALLEL applications at once under`, `shares PARALLEL - 1 domains between concurrent calls`, `works on the calling domain alone when no domain is free`, `holds at most one domain fewer than its elements`, `gives its domains back when it returns or raises`, `computes List.map with PARALLEL above the runtime's domain limit` |
 | tinygrad: engine/worker.py `_init_worker`, `_without_main`, `_spawnv_passfds`, `BEAM_MAX_TASKS_PER_CHILD`, `terminate_worker_pool` (no test) | worker processes' context, SIGINT, recycling and teardown | dropped: compilation workers are domains that live for one call (D5) |
-| tinygrad: engine/realize.py:250-253, codegen/opt/search.py:118-172 (`pool.imap_unordered` over indexed tasks) | results placed by task index | `WK › law › map f l is List.map f l`, `keeps the order of l when later elements finish first`, `applies f once to each element under`; `WK › compiling › compiles Clang kernels to the binaries of a serial compilation` |
-| tinygrad: a worker process's `Context` (helpers.py:166-183) | a worker's overrides stay in its process | `WK › settings › a setting bound in an application is seen by it alone`, `applications building nodes keep their own CHECK_OOB` |
-| tinygrad: null/test_schedule.py:2053, null/test_viz.py:47 (`PARALLEL=0`) | their suites compile in process | dropped: they pin nothing of the pool |
+| tinygrad: `engine/realize.py` `lower_and_compile`, `codegen/opt/search.py` `beam_search` (`pool.imap_unordered` over indexed tasks) | results placed by task index | `WK › law › map f l is List.map f l`, `keeps the order of l when later elements finish first`, `applies f once to each element under`; `WK › compiling › compiles Clang kernels to the binaries of a serial compilation` |
+| tinygrad: a worker process's `Context` (`helpers.py` `Context`) | a worker's overrides stay in its process | `WK › settings › a setting bound in an application is seen by it alone`, `applications building nodes keep their own CHECK_OOB` |
+| tinygrad: `null/test_viz.py` `save_viz` (`PARALLEL=0`) | their suites compile in process | dropped: they pin nothing of the pool |
 
 ## Multi
 
 No module: `schedule/multi.py` is the multi-device rewrite, which the README's
 Exclusions leave out (no consumer), with the in-kernel shards that codegen
-resolves with it. Every row is dropped for that reason; D21, D23, D35, D61, D82,
-D83 and D87 are withdrawn, and D73 keeps no sharded clause.
+resolves with it. Every row is dropped for that reason; D73 keeps no sharded clause.
 
 ### tinygrad
 
@@ -1517,7 +1514,7 @@ D83 and D87 are withdrawn, and D73 keeps no sharded clause.
 | tinygrad: null/test_multitensor.py (every class) | sharding, operations on shards, copies across devices, allreduces, memory per device | dropped: the multi-device rewrite is excluded (README) |
 | tinygrad: runtime/test_multitensor.py (every class) | the same, run on CPU devices | dropped: the multi-device rewrite is excluded (README) |
 | tinygrad: null/test_allreduce.py::TestAllreduceCast (3 tests) | a sum of a half or bfloat16 cast up crosses the devices in 16 bits | dropped: the multi-device rewrite is excluded (README) |
-| tinygrad: schedule/multi.py `lower_broadcast_copy`, `reshape_multi`, `replace_allreduce`, `stack_multi`, `store_value_multi`, `copy_multi`, `index_multi` (no upstream test) | the departures D21, D23, D35, D61, D82, D83 and D87 recorded | dropped: the multi-device rewrite is excluded (README); the entries are withdrawn |
+| tinygrad: schedule/multi.py `lower_broadcast_copy`, `reshape_multi`, `replace_allreduce`, `stack_multi`, `store_value_multi`, `copy_multi`, `index_multi` (no upstream test) | departures of the multi-device rewrite | dropped: the multi-device rewrite is excluded (README) |
 | tinygrad: runtime/test_custom_kernel.py::TestUnshardIndex, TestUnshardAlu, TestUnshardStore | in-kernel shards of a hand-written kernel | dropped: the multi-device rewrite, which resolves them, is excluded (README) |
 | tinygrad: runtime/test_custom_kernel.py::test_simple_sharded, test_sharded_add_one; runtime/test_function.py multi-device custom kernels | a custom kernel on shards | dropped: the multi-device rewrite is excluded (README) |
 | tinygrad: runtime/test_assign.py::TestMultiAssign (12 tests) | stores into sharded values | dropped: the multi-device rewrite is excluded (README) |
@@ -1578,9 +1575,9 @@ lasts only while the index carries it, and a caller masks padded values.
 | tinygrad: schedule/prepare.py `pm_mops` on a padded view (no upstream test) | an index through a pad, then a reshape to an axis of one element, an expand, or a shrink onto an axis of one element, loses the pad's gate | `PR › pm_mops › pads` (3 tests), as tinygrad HEAD for an upstream report: `graph_rewrite(p._mop(Ops.RESHAPE,(1,)).pad(((0,1),)).index(r), pm_mops)` with `p` a 1-element param is `INDEX(p, 0)`; a 6-element param reshaped (3,2), padded `((0,3),(2,6))` and shrunk `((0,1),(0,3))`, indexed by two ranges, is `INDEX(p, 0)`; a 2-element param expanded by `(2,)` and padded `((1,3),(0,2))` is `INDEX(p, r1)` |
 | tinygrad: schedule/prepare.py `pm_fold_moved_after`, `OPENPILOT_HACKS`, `FLOAT16` | | dropped: excluded (README) |
 | tinygrad: uop/ops.py `contiguous_view` on CL and WEBGPU | no view | dropped: excluded (README) |
-| tinygrad: uop/ops.py:896 `contiguous_view` on flips that cancel across a reshape (no upstream test) | a run it does not find: tinygrad HEAD gives `None` for a `(2, 1, 16)` view flipped on axis 0, reshaped to `(2, 16)` and flipped on axis 0 again, which is the identity | `PR › contiguous_view › flips that cancel across a reshape are not found` |
-| tinygrad: uop/ops.py:896 `contiguous_view` on a read within one copy of an expanded value (no upstream test) | a run it does not find: tinygrad HEAD gives `None` for a `(1, 2, 4, 2)` view expanded to `(2, 2, 4, 2)`, reshaped to `(32,)` and shrunk to `(6, 9)`, elements 6 to 8 of the storage | `PR › contiguous_view › a read within one copy of an expanded value is not found` |
-| tinygrad: uop/ops.py:896 `contiguous_view` on a shrink of a reshape of a shrink (no upstream test) | a run it does not find: tinygrad HEAD gives `None` for a `(3, 3, 3)` view shrunk to `((0, 2), (0, 3), (0, 3))`, reshaped to `(18,)` and shrunk to `(6, 10)`, elements 6 to 9 of the storage | `PR › contiguous_view › a shrink of a reshape of a shrink is not found` |
+| tinygrad: `uop/ops.py` `UOp.contiguous_view` on flips that cancel across a reshape (no upstream test) | a run it does not find: tinygrad HEAD gives `None` for a `(2, 1, 16)` view flipped on axis 0, reshaped to `(2, 16)` and flipped on axis 0 again, which is the identity | `PR › contiguous_view › flips that cancel across a reshape are not found` |
+| tinygrad: `uop/ops.py` `UOp.contiguous_view` on a read within one copy of an expanded value (no upstream test) | a run it does not find: tinygrad HEAD gives `None` for a `(1, 2, 4, 2)` view expanded to `(2, 2, 4, 2)`, reshaped to `(32,)` and shrunk to `(6, 9)`, elements 6 to 8 of the storage | `PR › contiguous_view › a read within one copy of an expanded value is not found` |
+| tinygrad: `uop/ops.py` `UOp.contiguous_view` on a shrink of a reshape of a shrink (no upstream test) | a run it does not find: tinygrad HEAD gives `None` for a `(3, 3, 3)` view shrunk to `((0, 2), (0, 3), (0, 3))`, reshaped to `(18,)` and shrunk to `(6, 10)`, elements 6 to 9 of the storage | `PR › contiguous_view › a shrink of a reshape of a shrink is not found` |
 
 ## Rangeify
 
@@ -1612,20 +1609,20 @@ the file.
 Of the mutants the suite reaches, 46 are killed and 15 survive, none of them
 observable in a kernel graph of any program or hand-built graph tried:
 
-- `:615`, `1 + max` as `1 - max`, and `:289`, a device range renumbered by the
+- `1 + max` as `1 - max`, and a device range renumbered by the
   buffer limit: the fresh ranges must not collide with live ones, since equal
   ranges are one node, but where they collide (`many_matrices_limited`, whose
   greatest range is 1) the stage they make is indexed by its own ranges and
   the kernel graph is the same. The other mutants of the buffer limit are
   killed by `many_matrices_limited` and `many_cubes_limited`;
-- `:15`, `:48`, `:374-375`, `:486`: tinygrad's guards on symbolic ranges and
+- tinygrad's guards on symbolic ranges and
   its shrinks to symbolic sizes, reached by `variable_*` and `symbolic_*`, whose
   shrinks simplify away;
-- `:40`, `:46`, `:49`: the dead-axis cleanup of a stage: run_rangeify already
+- the dead-axis cleanup of a stage: run_rangeify already
   stages a value over the ranges it varies along, as `expand_kept`'s buffer of
   4 elements shows with or without it;
-- `:120`, the exclusion of constant and invalid indices when a stage is
-  inlined; `:139`, the size check of an all-invalid read; `:636`, the spec
+- the exclusion of constant and invalid indices when a stage is
+  inlined; the size check of an all-invalid read; the spec
   check, which only fails on a graph the pass would build wrongly.
 
 ### tinygrad
@@ -1696,14 +1693,13 @@ The domain tests spawn domains, and OCaml refuses `fork` after that, so mutation
 runs with `-e domains`. Of the 72 mutants reached, 69 are killed and 3
 survive:
 
-- `:227`, `op x = Param && addrspace x = Some Alu` as `||`: it also binds a
+- `op x = Param && addrspace x = Some Alu` as `||`: it also binds a
   nested call's buffer arguments by position. That is observable only when a
   nested call inherits an enclosing scalar at a slot where it passes a buffer,
   which no program tried makes (`precompiled_scalar` passes its scalar).
-- `:290` and `:551`, the `SPEC` checks turned on by default and off under
+- the `SPEC` checks turned on by default and off under
   `SPEC=1`: every graph the pipeline builds passes `Spec.tensor`
-  (`SC › create_linear_with_vars › spec`), so the checks are inert, as
-  Rangeify's `:640` is.
+  (`SC › create_linear_with_vars › spec`), so the checks are inert, as Rangeify's is.
 
 ### tinygrad
 
@@ -1722,7 +1718,7 @@ survive:
 | tinygrad: schedule/__init__.py `assert_all_same_devices` | | `SC › create_linear_with_vars › rules › a kernel on buffers of two devices is refused` |
 | tinygrad: schedule/__init__.py `create_linear_with_vars`'s bind mismatch | two values of one name are each passed by the calls that read them (D177) | `SC › create_linear_with_vars › rules ›` "two variables of one name bound to two values are passed by the calls that read them", "… to one value are one"; `Tolk_engine › link and run › one program launched on several devices computes each device's window at its start` |
 | tinygrad: schedule/__init__.py `pm_copy_from_store` | copy kernels become stores | `copy`, `copy_one`, `copy_view`, `disk_to`, `disk_view_to`, `disk_store`: their linears |
-| tinygrad: schedule/__init__.py `create_schedule`'s linearize (no test pins the order) | ready kernels run breadth first | kept: every recorded schedule, and `SC › create_schedule › order by storage › without it, ready kernels run as they become ready`; in a schedule made per run, replaced (D183, D185): ready kernels run by their number, one that only frees first, then one that frees what it makes, the other 3 tests of `SC › create_schedule › order by storage` |
+| tinygrad: schedule/__init__.py `create_schedule`'s linearize (no test pins the order) | ready kernels run breadth first | kept: every recorded schedule, and `SC › create_schedule › order by storage › without it, ready kernels run as they become ready`; in a schedule made per run, replaced (D183): ready kernels run by their number, one that only frees first, then one that frees what it makes, the other 3 tests of `SC › create_schedule › order by storage` |
 | tinygrad: schedule/prepare.py, a copy stored into storage on its device (no test) | the copy is the store where the destination is the storage whole | widened (D182) to a run of the storage that shrinks and reshapes view: `SC › copies into runs` (5 tests), `EN › link and run › a copy stored into rows of a buffer writes them alone` |
 | tinygrad: schedule/__init__.py `lower_sink_to_linear`'s `DEBUG` print | | `SC › … › cache ›` "DEBUG=1 prints only schedules of several kernels", "DEBUG=0 prints nothing", "the time printed is the time scheduling took"; the caller's frame and the node count are the README's row on the `DEBUG` print |
 | tinygrad: schedule/__init__.py `SCACHE=2` | the disk cache | dropped: the README's row on the disk half of `SCACHE=2` |
@@ -1761,7 +1757,7 @@ returns, and `calls.golden`, each call's reading by `get_call_*`,
 | tinygrad: runtime/test_call.py (TestCall, TestCallSchedule, TestArgOrder, TestCallMultiSharded) | precompiled calls realized | `precompiled_scalar.golden`; scheduling is Schedule's section, the values the `Tensor` surface |
 | tinygrad: runtime/test_after.py (12 tests) | ordering of assigns and their gradients | dropped here: Schedule's ordering (its section) and gradients (L8) |
 | tinygrad: runtime/test_wait_loop.py::TestWaitLoop (7 tests) | loops without bounds, rendered and run | dropped here: Codegen's and Cstyle's (`Ops.loop`, `backedge`) |
-| tinygrad: runtime/test_wait_loop.py::TestVolatileLoops::test_async_wait_ext | a kernel spinning on a word another thread writes | dropped: the device runtime's; D1 removed the host program's spin |
+| tinygrad: runtime/test_wait_loop.py::TestVolatileLoops::test_async_wait_ext | a kernel spinning on a word another thread writes | dropped: the device runtime's; tolk encodes no queue (D146) |
 
 ## Engine
 

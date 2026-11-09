@@ -22,7 +22,7 @@ let golden_body file =
    Its first line names the divergences it belongs to and the hash of the body
    of [x.golden] it was recorded against:
 
-     # tolk D81 D96 golden=<hash>
+     # tolk D24 D74 golden=<hash>
 
    and the rest is the golden's body format. A [.tolk] with no [.golden] is an
    output with no upstream answer, and carries no hash. *)
@@ -100,7 +100,7 @@ let check_tolk file tolk { entries; hash } body =
     failwith
       (tolk
      ^ ": it names no entry: add the DIVERGENCES.md number of this difference \
-        to its header, as # tolk D81 golden=<hash>");
+        to its header, as # tolk D24 golden=<hash>");
   match (exists file, hash) with
   | false, None -> ()
   | false, Some h ->
