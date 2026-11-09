@@ -157,11 +157,10 @@ val tc_select : int t
     [n] uses only the [n]-th. Defaults to [-1]. *)
 
 val tc_opt : int t
-(** [tc_opt] is which kernels hand-coded optimizations ([Heuristic]) let use
-    tensor cores, from [TC_OPT]. [0] admits kernels with a single reduce axis
-    multiplying loaded values, [1] also kernels with several reduce axes and
-    casted operands, [2] also kernels whose axes must be padded to the tensor
-    core's dimensions. Defaults to [0]. *)
+(** [tc_opt] is how hand-coded optimizations ([Heuristic]) fit a kernel to a
+    tensor core, from [TC_OPT]: [2] pads the kernel's axes to the core's
+    dimensions, [0] and [1] take only kernels those dimensions divide. Defaults
+    to [0]. *)
 
 val tc_min_globals : int t
 (** [tc_min_globals] is the number of global axes below which tensor core

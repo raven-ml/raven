@@ -429,6 +429,81 @@ let exact p a b =
       done;
       `Float !s)
 
+(* A core under another sum
+
+   [c[i, j] = Σ_h Σ_r a[i, r] · b'[h, r, j]], [b'] the bfloat16 of
+   [b[h, r, j] · s[h]] computed in the kernel: [a]'s tile reads [i] and [r]
+   alone, [b'] has no tile, and the core's loop [r] runs inside the sum over
+   [h], in two stages. A first tile copied once, outside [h], would leave slot
+   [0] holding a chunk of [r]'s last trips at [h]'s second trip. Integers from -2 to 2 times
+   scales of [1] or [2]: every sum is exact. *)
+let outer = (64, 4, 64, 64)
+
+let outer_kernel ?opts_to_apply () =
+  let m, h, k, n = outer in
+  let c = Shape.param ~shape:[ Ops.Int (m * n) ] 0 Float32
+  and a = Shape.param ~shape:[ Ops.Int (m * k) ] 1 Dtype.Bfloat16
+  and b = Shape.param ~shape:[ Ops.Int (h * k * n) ] 2 Dtype.Bfloat16
+  and s = Shape.param ~shape:[ Ops.Int h ] 3 Float32 in
+  let kn = k * n in
+  let open Ops.O in
+  let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ]
+  and g = Ops.range ~axis_type:Weak (Int h) [ 2 ]
+  and r = Ops.range ~axis_type:Weak (Int k) [ 3 ] in
+  let at x idx = Ops.cast (Ops.index x [ idx ]) Float32 in
+  let scaled =
+    Ops.cast
+      (Ops.cast
+         (at b ((g * int kn) + (r * int n) + j) * Ops.index s [ g ])
+         Dtype.Bfloat16)
+      Float32
+  in
+  let sum = Ops.reduce (at a ((i * int k) + r) * scaled) Add [ g; r ] in
+  let store = Ops.store (Ops.index c [ (i * int n) + j ]) sum in
+  Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply ())
+    [ Ops.end_ store [ i; j ] ]
+
+let outer_exact a b sc =
+  let m, h, k, n = outer in
+  let v = function `Float f -> f | _ -> 0. in
+  Array.init (m * n) (fun e ->
+      let i = e / n and j = e mod n in
+      let t = ref 0. in
+      for g = 0 to h - 1 do
+        for q = 0 to k - 1 do
+          t :=
+            !t
+            +. v a.((i * k) + q)
+               *. (v b.((g * k * n) + (q * n) + j) *. v sc.(g))
+        done
+      done;
+      `Float !t)
+
+let core_under_a_sum () =
+  let d, r = on_cuda () in
+  let opts =
+    Setting.context
+      Setting.[ B (stage, true) ]
+      (fun () ->
+        let s = Postrange.Scheduler.v (outer_kernel ()) r in
+        Postrange.Scheduler.convert_loop_to_global s;
+        Postrange.Scheduler.applied_opts
+          (Heuristic.hand_coded_optimizations s))
+  in
+  let prg = compiled r (outer_kernel ~opts_to_apply:opts ()) in
+  let src = source prg in
+  equal ~msg:"a core" bool true (says "mma.sync" src);
+  equal ~msg:"a's tile staged" int 1 (List.length (locals (Ops.nth prg 1)));
+  (* Two stages: the first trip's copy and the next trip's, beside the
+     definition of the copy. *)
+  equal ~msg:"two stages" int 3 (count "tg_cp_async(" src);
+  let m, h, k, n = outer in
+  let a = small 1 (m * k) and b = small 2 (h * k * n) in
+  let sc = Array.init h (fun g -> `Float (Float.of_int (1 + (g mod 2)))) in
+  equal (array Dtypes.value) (outer_exact a b sc)
+    (List.assoc 0 (Run.on d prg [ (1, a); (2, b); (3, sc) ]))
+
 let cube =
   { dt = Bfloat16; batch = 1; m = 128; k = 128; n = 128; layout = Kn;
     toeplitz = false }
@@ -1172,6 +1247,10 @@ let () =
          group "serial ranges" [ serial ];
          layout;
          group "stages" [ stages; test "none when staging is off" stage_off ];
+         test
+           "a core under another sum whose tile does not read it is the exact \
+            product"
+           core_under_a_sum;
          staged_tiles;
          sources;
          group "decoded panels"

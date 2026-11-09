@@ -641,17 +641,25 @@ module Scheduler = struct
   (* [tc_operand tc u] is what the core [tc] multiplies for the operand [u]: [u]
      at the core's input type, or the narrow float that [u] widens to float32
      when the core adds float32 products, since it multiplies two narrow floats
-     exactly, as float32 does. *)
+     exactly, as float32 does. An integer widened to float32 that [dtype_in]
+     holds exactly, as a Q8_0 code in bfloat16, enters at that type: the cast
+     through the narrow float keeps every value, and tolk's folds drop it. *)
   let tc_operand (tc : Tc.t) u =
-    if Dtype.equal (dtype u) tc.dtype_in then Some u
-    else if
+    let widened =
       op u = Op.Cast
-      && Dtype.equal (dtype (nth u 0)) tc.dtype_in
       && Dtype.is_float tc.dtype_in
       && Dtype.itemsize tc.dtype_in < 4
       && Dtype.equal (dtype u) Dtype.Float32
       && Dtype.equal tc.dtype_out Dtype.Float32
-    then Some (nth u 0)
+    in
+    if Dtype.equal (dtype u) tc.dtype_in then Some u
+    else if widened && Dtype.equal (dtype (nth u 0)) tc.dtype_in then
+      Some (nth u 0)
+    else if
+      widened
+      && Dtype.is_int (dtype (nth u 0))
+      && Dtype.can_lossless_cast (dtype (nth u 0)) tc.dtype_in
+    then Some (cast (nth u 0) tc.dtype_in)
     else None
 
   (* Whether [u] reads the range [r] only in whole tiles of [dim]: as [r / d]

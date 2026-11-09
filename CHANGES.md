@@ -1164,6 +1164,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Tensor cores are tried on a kernel of any number of reduce axes, as
+  `TC_OPT=1` allowed; `TC_OPT` keeps only padding. gpt-oss's attention out
+  projection now runs on them. On AMD and Metal, unmeasured.
+- A float32 cast of an integer that a narrow core input holds exactly enters a
+  tensor core, so an `int8` times a `bfloat16` sums on one.
 - A store through movements and bitcasts of storage, or of a state of it
   (`Ops.after`), whose target is a run of whole elements writes the value's
   bits into them. Through a bitcast that changes the element size, code

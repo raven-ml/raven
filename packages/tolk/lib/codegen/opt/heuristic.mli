@@ -30,8 +30,8 @@
       two stages ({!Stage.tile}) keeps its threads, since the operand is then
       read in several passes;
     - a {{!section-cores}tensor core}, when the setting {!Setting.use_tc} is
-      positive and the kernel reduces over one axis, {!Setting.tc_opt} admits
-      more, or it sums a product with a decoded operand;
+      positive, on any number of reduce axes: the core takes one of them, and
+      the others stay loops around it;
     - streaming, when the reuse is at most 32 or the streamed operand is
       decoded, whatever its reuse;
     - the {{!section-general}general rules}, preceded on the host by the
@@ -217,6 +217,26 @@
 val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
 (** [hand_coded_optimizations k] is a copy of [k] with the optimisations these
     rules pick; [k] itself is left as it is. *)
+
+val core_fits :
+  Renderer.t ->
+  dtype_in:Dtype.t ->
+  dtype_out:Dtype.t ->
+  rows:int ->
+  outputs:int ->
+  block:int ->
+  bool
+(** [core_fits ren ~dtype_in ~dtype_out ~rows ~outputs ~block] is [true] iff a
+    contraction of [dtype_in] operands of one free axis each, of extents [rows]
+    and [outputs], accumulated in [dtype_out] and summed over [block] of them
+    at a time, leaves streaming ({!section-streaming}) to take a tensor core of
+    [ren]: the lesser of [rows] and [outputs] is past the reuse that streams
+    first, {!Setting.use_tc} is [1], and a core of those dtypes, the one
+    {!Setting.tc_select} names if any (none where [ren] has no such core), a
+    float32 core of CUDA only under {!Setting.allow_tf32}, has its [K] dividing
+    [block] and its [M] and [N] dividing [rows] and [outputs], in either role.
+    A caller that writes a contraction asks it to choose a form for the layout
+    the kernel will take. *)
 
 val held_registers : Postrange.Scheduler.t -> Renderer.registers -> int
 (** [held_registers k file] is the registers of [file] that [k]'s reduces'

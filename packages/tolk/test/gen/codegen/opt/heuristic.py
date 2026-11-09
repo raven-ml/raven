@@ -163,6 +163,15 @@ KERNELS = {
     "projection_of_stored": lambda: last((empty(4, 64, 16, dtype=dtypes.bfloat16).float() @ empty(4, 16, 16, dtype=dtypes.bfloat16).float())
                                          .cast(dtypes.bfloat16).permute(1, 0, 2).reshape(64, 64).float()
                                          @ empty(64, 64, dtype=dtypes.bfloat16).float()),
+    # a bfloat16 projection of a value scaled per head and row: attention's output with sinks, its two contracted axes read apart
+    "projection_two_axes": lambda: last(((empty(4, 64, 16, dtype=dtypes.bfloat16).float()
+                                          * empty(64, 4).permute(1, 0).reshape(4, 64, 1)).cast(dtypes.bfloat16)
+                                         .permute(1, 0, 2).reshape(64, 64).float() @ empty(64, 64, dtype=dtypes.bfloat16).float())),
+    # blocks of 32 int8 codes against a bfloat16 matrix, each block's sum scaled: a core under the reduce of its blocks
+    "q8_0_partial": lambda: last(((empty(64, 1, 8, 32, dtype=dtypes.bfloat16).float() * empty(1, 64, 8, 32, dtype=dtypes.char).float()).sum(-1)
+                                  * empty(1, 64, 8)).sum(-1)),
+    # int8 codes against a bfloat16 matrix, each widened to float32
+    "rows_codes": lambda: last(empty(64, 64, dtype=dtypes.bfloat16).float() @ empty(64, 64, dtype=dtypes.char).float()),
     # attention's scores, 8 query heads sharing 2 key heads: an operand read through h // 4 that one buffer holds
     "shared_keys": lambda: last(empty(8, 1, 64) @ empty(2, 1, 64, 16).expand(2, 4, 64, 16).reshape(8, 64, 16)),
     "experts_down": lambda: last(((empty(2, 1, 32) @ empty(2, 16, 32).transpose(1, 2)).relu() * empty(2, 1, 1)).sum(0)),

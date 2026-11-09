@@ -2437,6 +2437,67 @@ let sums_gen =
        (Gen.of_list [ Dtype.Float16; Dtype.Bfloat16 ])
        (Gen.int_range 1 4) (Gen.int_range 0 1_000_000))
 
+(* A 3 by 3 convolution of [c] channels into [o], over a [w + 2] square input
+   padded by hand: its window reads [y + ky] and [x + kx], so it reduces over
+   three axes, a core taking one. The optimisations are the hand-coded rules'
+   for [r]. *)
+let conv_kernel ?opts_to_apply dt (c, o, w) =
+  let p = w + 2 in
+  let out = Shape.param ~shape:[ Ops.Int (o * w * w) ] 0 Float32
+  and x = Shape.param ~shape:[ Ops.Int (c * p * p) ] 1 dt
+  and f = Shape.param ~shape:[ Ops.Int (o * c * 9) ] 2 dt in
+  let pp = p * p and ww = w * w and c9 = c * 9 in
+  let open Ops.O in
+  let oc = Ops.range ~axis_type:Weak (Int o) [ 0 ]
+  and y = Ops.range ~axis_type:Weak (Int w) [ 1 ]
+  and xx = Ops.range ~axis_type:Weak (Int w) [ 2 ]
+  and ci = Ops.range ~axis_type:Weak (Int c) [ 3 ]
+  and ky = Ops.range ~axis_type:Weak (Int 3) [ 4 ]
+  and kx = Ops.range ~axis_type:Weak (Int 3) [ 5 ] in
+  let at b idx = Ops.cast (Ops.index b [ idx ]) Float32 in
+  let sum =
+    Ops.reduce
+      (at x ((ci * int pp) + ((y + ky) * int p) + xx + kx)
+      * at f ((oc * int c9) + (ci * int 9) + (ky * int 3) + kx))
+      Add [ ci; ky; kx ]
+  in
+  let store = Ops.store (Ops.index out [ (oc * int ww) + (y * int w) + xx ]) sum in
+  Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply ())
+    [ Ops.end_ store [ oc; y; xx ] ]
+
+let conv_on_cuda dt =
+  let d, r = on_cuda () in
+  let c, o, w = (16, 32, 32) in
+  let p = w + 2 in
+  let opts =
+    let s = Postrange.Scheduler.v (conv_kernel dt (c, o, w)) r in
+    Postrange.Scheduler.convert_loop_to_global s;
+    Postrange.Scheduler.applied_opts (Heuristic.hand_coded_optimizations s)
+  in
+  let x = small_integers 1 (c * p * p) and f = small_integers 2 (o * c * 9) in
+  let exact =
+    Array.init (o * w * w) (fun e ->
+        let oc = e / (w * w) and y = e / w mod w and xx = e mod w in
+        let t = ref 0 in
+        for ci = 0 to c - 1 do
+          for ky = 0 to 2 do
+            for kx = 0 to 2 do
+              t :=
+                !t
+                + x.((ci * p * p) + ((y + ky) * p) + xx + kx)
+                  * f.((oc * c * 9) + (ci * 9) + (ky * 3) + kx)
+            done
+          done
+        done;
+        `Float (Float.of_int !t))
+  in
+  let values v = Array.map (fun i -> `Float (Float.of_int i)) v in
+  let prg = compiled_for r (conv_kernel ~opts_to_apply:opts dt (c, o, w)) in
+  let wmmas = List.filter (is Wmma) (Ops.src (Ops.nth prg 1)) in
+  less ~msg:"tensor cores" int ~than:(List.length wmmas) 0;
+  equal (array Dtypes.value) exact
+    (List.assoc 0 (Run.on d prg [ (1, values x); (2, values f) ]))
+
 let tensor_cores_on_cuda =
   group "tensor cores on CUDA"
     [
@@ -2464,6 +2525,11 @@ let tensor_cores_on_cuda =
         "a product summed in float32 has the same bits whether the core \
          takes one or two steps of K a trip"
         sums_gen sum_bits;
+      cases
+        "a convolution of three reduce axes takes a core and is the exact \
+         result"
+        ~id:(Format.asprintf "%a" Dtype.pp) [ Dtype.Float16; Dtype.Bfloat16 ]
+        conv_on_cuda;
     ]
 
 (* Tensor cores written by hand

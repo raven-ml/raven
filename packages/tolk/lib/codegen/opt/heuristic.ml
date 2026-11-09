@@ -33,20 +33,6 @@ let index_of x l =
 let ranges_of ?reduce k types =
   List.map (List.nth (K.rngs k)) (K.axes_of ?reduce k types)
 
-(* Whether [k] sums a product with a decoded operand. Decoding packed values
-   splits the reduce into a range over the bytes and one over a byte's values,
-   and the tensor cores take the bytes. *)
-let decoded_product k =
-  match K.reduceop k with
-  | Some r -> (
-      let m = nth r 0 in
-      let m = if op m = Op.Cast then nth m 0 else m in
-      match arg r with
-      | Reduce { op = Op.Add; _ } when op m = Op.Mul ->
-          List.exists Stage.decoded (src m)
-      | _ -> false)
-  | None -> false
-
 (* The rows of the range [m] that read one value of an operand of [k]'s
    product: the gcd of the runs of the operands that read [m] only as
    [m / d], as a block's rows read their owner's matrix at [owner[r / c]], or
@@ -147,11 +133,7 @@ let tensor_cores ~core_threads k =
   let tc_opt = setting Setting.tc_opt in
   let tc_select = setting Setting.tc_select in
   let min_globals = setting Setting.tc_min_globals in
-  if
-    use_tc > 0
-    && (List.length (K.axes_of ~reduce:true k []) = 1
-       || tc_opt >= 1 || decoded_product k)
-  then
+  if use_tc > 0 then
     List.find_map
       (fun axis ->
         let tk = K.copy k in
@@ -1140,5 +1122,33 @@ let hand_coded_with ~core_threads k =
 let hand_coded_optimizations k =
   hand_coded_with ~core_threads:(K.ren k).core_threads k
 
-let held_registers = held_registers
+let core_fits (ren : Renderer.t) ~dtype_in ~dtype_out ~rows ~outputs ~block =
+  let device = ren.target.device in
+  (* TF32 rounds float32's inputs: {!Opt.Tc} takes it only when allowed. *)
+  let tf32 (tc : Tc.t) =
+    (device = "CUDA" || device = "NV")
+    && Dtype.equal tc.dtype_in Dtype.Float32
+    && not (setting Setting.allow_tf32)
+  in
+  let fits (tc : Tc.t) =
+    let n, m, k = Tc.dims tc in
+    (not (tf32 tc))
+    && Dtype.equal tc.dtype_in dtype_in
+    && Dtype.equal tc.dtype_out dtype_out
+    && block mod k = 0
+    && ((rows mod m = 0 && outputs mod n = 0)
+       || (rows mod n = 0 && outputs mod m = 0))
+  in
+  (* A selected core the target lacks is none, as {!Opt.Tc} refuses it. *)
+  let cores =
+    match setting Setting.tc_select with
+    | -1 -> ren.tensor_cores
+    | n when n >= 0 -> Option.to_list (List.nth_opt ren.tensor_cores n)
+    | _ -> []
+  in
+  (* [TC=2] lays out a core's shape without its instruction. *)
+  setting Setting.use_tc = 1
+  && min rows outputs > stream_first
+  && List.exists fits cores
 
+let held_registers = held_registers

@@ -2179,11 +2179,60 @@ let fastest_threads_coalesce =
           mem ~msg:"the loads' strides along it" (option bigint)
             (Some Bigint.one) strides)
 
+(* [core_fits]
+
+   The form of a contraction the lowering writes depends on the core it will
+   take: past the reuse that streams first, a core of the operand's dtypes
+   whose M and N each divide one extent and whose K divides the block. *)
+let core_fits_cases =
+  let fits ?(ren = "cuda") ?(rows = 64) ?(outputs = 64) ?(block = 32)
+      ?(dtype_in = Dtype.Bfloat16) ?(dtype_out = Dtype.Float32) () =
+    Heuristic.core_fits (renderer ren) ~dtype_in ~dtype_out ~rows ~outputs
+      ~block
+  in
+  cases "core_fits names the contractions a core takes" ~id:fst
+    [
+      ("bfloat16 past 32 outputs", (fits (), true));
+      ("rows at the reuse that streams", (fits ~rows:32 (), false));
+      ("outputs at the reuse that streams", (fits ~outputs:32 (), false));
+      ("a block K does not divide", (fits ~block:17 (), false));
+      ("rows M and N do not divide", (fits ~rows:33 (), false));
+      ("float32 accumulates float16", (fits ~dtype_in:Dtype.Float16 (), true));
+      ( "float32 operands without TF32 allowed",
+        (fits ~dtype_in:Dtype.Float32 (), false) );
+      ("no bfloat16 sum into bfloat16", (fits ~dtype_out:Dtype.Bfloat16 (), false));
+      ("the host has no core", (fits ~ren:"cpu" (), false));
+      ("Metal's core takes bfloat16", (fits ~ren:"metal" (), true));
+    ]
+    (fun (_, (actual, want)) -> equal bool want actual)
+
+let core_fits_settings =
+  test "core_fits reads the core settings" (fun () ->
+      let fits () =
+        Heuristic.core_fits (renderer "cuda") ~dtype_in:Dtype.Bfloat16
+          ~dtype_out:Dtype.Float32 ~rows:64 ~outputs:64 ~block:32
+      in
+      equal bool ~msg:"cores off" false
+        (Setting.context [ Setting.B (Setting.use_tc, 0) ] fits);
+      equal bool ~msg:"a core's shape without its instruction" false
+        (Setting.context [ Setting.B (Setting.use_tc, 2) ] fits);
+      let selected ren n =
+        Setting.context
+          [ Setting.B (Setting.tc_select, n) ]
+          (fun () ->
+            Heuristic.core_fits (renderer ren) ~dtype_in:Dtype.Bfloat16
+              ~dtype_out:Dtype.Float32 ~rows:64 ~outputs:64 ~block:32)
+      in
+      equal bool ~msg:"a selected core the host lacks" false (selected "cpu" 0);
+      equal bool ~msg:"a selected core past CUDA's" false (selected "cuda" 99))
+
 let () =
   exit
     (Windtrap.run "Tolk.Heuristic"
        [
          chosen;
+         core_fits_cases;
+         core_fits_settings;
          leaves_its_argument;
          blocks;
          keeps_kernel_writes;

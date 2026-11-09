@@ -1215,8 +1215,9 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   about `2881.5u`. A core shown to exceed the bound is disabled. A core with
   a narrow output still takes no widened operand, since its sum rounds to the
   narrow type. A `float32` operand that is not such a cast takes no core, and
-  tolk never narrows one by a cast of its own: a `bfloat16` core would round
-  a value the program did not round, outside `Nx.contract`'s bound for
+  tolk never narrows one by a cast that rounds (an integer the narrow type
+  holds exactly enters at it, D451): a `bfloat16` core would round a value
+  the program did not round, outside `Nx.contract`'s bound for
   `float32`'s `u`. Attention's values, `float32` weights by `bfloat16` values,
   so run without a core; they are bound by reading the weights (at 2048 slots
   of 8 heads, 128 MiB, 233 us at fudge's 576 GB/s), not by arithmetic. A
@@ -3032,15 +3033,13 @@ the expand, as there.
   operands), and `codegen/opt/heuristic.py` (`hand_coded_optimizations` tries
   the cores on a kernel of one reduce axis only, below `TC_OPT=1`).
 - **tolk:** `Postrange.Scheduler.in_tiles`, `Postrange.Scheduler.try_core`'s
-  `roles` and `Postrange.Scheduler.use_wmma`'s `own`;
-  `Heuristic.decoded_product` and `Heuristic.tensor_cores`.
+  `roles` and `Postrange.Scheduler.use_wmma`'s `own`.
 - **Differs:** a range both operands read is the core's M (or N) range of one
   of them when the other reads it only as `r / d`, `d` a multiple of the
   core's M (or N): that operand reads one value over each tile of the core,
   and the core reads its bits of the range at 0. Either operand may be the
   core's A: the choices with `in0` as A come first, as tinygrad orders them,
-  then those with `in1`. A summed product with a decoded operand
-  (`Heuristic.decoded_product`) tries the cores whatever its number of reduce axes.
+  then those with `in1`. D450 tries the cores on any number of reduce axes.
 - **Reason:** (d): `Nx.map_segments` over `Nx_quant.apply` on a prompt, which
   sorts positions by expert into blocks of up to 16 rows, each multiplying its
   expert's matrix, `W[owner[row / 16]]`. The rows read the row axis and the
@@ -9328,3 +9327,46 @@ reason and its pins.
   once`, `› keeps two loops whose indices render as one name` and `› cut into
   pieces, writes what it writes whole`, whose cases include `keeps a value
   read early in a loop for its next trip`.
+
+## D450. A tensor core is tried on any number of reduce axes
+
+- **tinygrad:** `codegen/opt/heuristic.py` (`hand_coded_optimizations`: the
+  cores only on a kernel of one reduce axis, below `TC_OPT=1`; its docstring
+  gives no reason).
+- **tolk:** `Heuristic.tensor_cores`.
+- **Differs:** `TC` positive tries the cores, whatever the kernel's reduce axes:
+  the core takes one and the others stay loops around it (`use_wmma`'s extra
+  reduces). `TC_OPT` keeps only level 2's padding. A convolution of tinygrad's
+  shape moves onto a core: the `conv_half` and `conv` rows; rune's own `Nx.conv`
+  of float16, measured at two sizes on fudge's CUDA, compiles the same kernels
+  at `TC_OPT` 0 and 1.
+- **Reason:** (d): attention's output with sinks, scaled per head and row,
+  is read apart along head and head dimension, so the out projection's two
+  reduce axes cannot merge; only this gate kept it off the cores. On an RTX
+  5000 Ada a 512-token prefill of 24 blocks, on the bench's random weights,
+  takes 96.4-101.8 ms against 124.0-136.1 (3 interleaved rounds under the
+  timing and GPU locks, load 5-15), decode steps within noise (9.36-9.56
+  against 9.35-9.38 ms). Kernels of a tinygrad-shaped
+  convolution are unmeasured.
+- **Pinned by:** the Heuristic suite's `projection_two_axes_{metal,cuda,amd}`,
+  `q8_0_partial_{metal,cuda,amd}` and `conv_half_{metal,cuda,amd}`,
+  `conv_metal`; kaun's `GptOss/prefill-512`; the Stage suite's `a core under
+  another sum whose tile does not read it is the exact product` (a core under
+  a sum its loop runs in copies its first tile at each trip of that sum,
+  D262); the Codegen suite's `tensor cores on CUDA › a convolution of
+  three reduce axes takes a core and is the exact result`.
+
+## D451. A float32 cast of an integer enters a narrow core
+
+- **tinygrad:** `codegen/opt/postrange.py` (`_apply_tc_opt`: an operand is its
+  own value, of the core's input type, or tolk's float32 cast of it, D105).
+- **tolk:** `Postrange.Scheduler.tc_operand`.
+- **Differs:** a float32 cast of an integer that the core's narrow input holds
+  exactly (`Dtype.can_lossless_cast`, so `fp8` is refused) enters the core at
+  that input. The cast through the narrow float is what a fold removed:
+  `Cast(float32, Cast(bfloat16, int8))` is `Cast(float32, int8)`.
+- **Reason:** (d): a Q8_0 product's codes (rune's L9). An `int8` times a
+  `bfloat16` is exact in float32 barring overflow, as the float32 product of
+  the program is.
+- **Pinned by:** the Heuristic suite's `rows_codes_{metal,cuda,amd}`,
+  `q8_0_partial_{metal,cuda,amd}`; rune's `Jit_gpu › quantised products`.
