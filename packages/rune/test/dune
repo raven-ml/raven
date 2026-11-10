@@ -22,7 +22,8 @@
   test_attention
   test_ranges
   test_range_folds
-  test_spread)
+  test_spread
+  test_norm)
  (modules
   compose
   test_jit
@@ -45,7 +46,8 @@
   test_attention
   test_ranges
   test_range_folds
-  test_spread)
+  test_spread
+  test_norm)
  (libraries
   nx
   nx_array

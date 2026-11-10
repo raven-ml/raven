@@ -676,6 +676,15 @@ let narrow name
 (* Rows of 16, so that a NaN code spoils its own row alone. *)
 let in_rows x = Nx.reshape [| Nx.numel x / 16; 16 |] x
 
+(* A row of 16 affine values at [x]'s dtype, which every format holds. *)
+let row_of x vs = Nx.cast (Nx.dtype x) (Nx.create Nx.float32 [| 16 |] vs)
+
+let gains =
+  [| 1.; -1.; 0.5; 1.5; 2.; -3.; 4.; 6.; 1.; 0.5; -0.5; 3.; -2.; 1.; 0.; 1. |]
+
+let offsets =
+  [| 0.; 0.5; -1.; 2.; -0.5; 1.; 0.; -2.; 3.; 0.; 1.5; -1.5; 0.; 6.; -6.; 4. |]
+
 let values f xs = Nx.to_array (f (Nx.create Nx.float64 [| Array.length xs |] xs))
 
 let specials () =
@@ -982,12 +991,44 @@ let fast_two_sum a b =
   let s = a +. b in
   (s, b -. (s -. a))
 
+(* [(hi + lo) b] as a pair, within about [2^-104] of it, relatively; an
+   infinite or NaN product alone. *)
+let dd_mul_float (hi, lo) b =
+  let p = hi *. b in
+  if not (Float.is_finite p) then (p, 0.)
+  else fast_two_sum p (Float.fma hi b (-.p) +. (lo *. b))
+
+(* Values of a lane's scale or shift that every float format holds. *)
+let affine_value =
+  Gen.of_list ~pp:float_pp [ 1.; -1.; 0.5; -0.5; 1.5; 2.; -3.; 4.; 6.; 0. ]
+
+(* [xs] times the power of two that brings its greatest magnitude into
+   [[1, 2)]: at [eps = 0], a lane's normalisation is that of the scaled
+   lane, whose squares do not underflow. *)
+let unit_scale xs =
+  let m = Array.fold_left (fun a x -> Float.max a (Float.abs x)) 0. xs in
+  if m = 0. || not (Float.is_finite m) then xs
+  else
+    let _, e = Float.frexp m in
+    Array.map (fun x -> Float.ldexp x (1 - e)) xs
+
+(* The power of two a case of small lanes takes at [dt], whose lanes are
+   then subnormal. *)
+let small_scale (type s) (dt : (float, s) D.t) =
+  match dt with D.Float32 -> 0x1p-140 | _ -> 0x1p-1060
+
+(* Whether [x] is subnormal at [dt]. *)
+let subnormal (type s) (dt : (float, s) D.t) x =
+  let least_normal = match dt with D.Float32 -> 0x1p-126 | _ -> 0x1p-1022 in
+  x <> 0. && Float.abs x < least_normal
+
 (* A lane of [n] values by the definition, each a pair [hi + lo] within
    about [n² 2^-106] of the exact value, relatively, far below either
    format's tolerance: the squares and their sum compensated, then the
    mean, [eps], the root and the quotient carried to twice float64's
    digits. *)
 let lane_rms eps xs =
+  let xs = if eps = 0. then unit_scale xs else xs in
   let n = Float.of_int (Array.length xs) in
   let hi = ref 0. and lo = ref 0. in
   Array.iter
@@ -1035,47 +1076,88 @@ let rms_case =
   in
   let n = Array.fold_left ( * ) 1 s in
   let* xs = values_within 100. n in
-  let+ eps = of_list [ 1e-6; 0.; 0.5 ] in
-  (s, xs, eps)
+  let* eps = of_list [ 1e-6; 0.; 0.5 ] in
+  (* A fifth of the cases, subnormal lanes, at [eps = 0]. *)
+  let* small = frequency [ (1, constant true); (4, constant false) ] in
+  let eps = if small then 0. else eps in
+  let k = s.(Array.length s - 1) in
+  let+ g = option (array ~size:(constant k) affine_value) in
+  (s, xs, eps, g, small)
 
-let covers_rms dt (s, _, eps) =
+(* [xs] at [dt], subnormal for a case of small lanes. *)
+let drawn (type s) (dt : (float, s) D.t) small xs =
+  let at = if small then small_scale dt else 1. in
+  Array.map (fun x -> D.of_float dt (x *. at)) xs
+
+let covers_rms dt (s, _, eps, g, small) =
   let k = s.(Array.length s - 1) in
   cover "one term a lane" (k = 1);
   covers_blocks dt s k;
-  cover "no eps" (eps = 0.)
+  cover "no eps" (eps = 0.);
+  cover "a scale" (Option.is_some g);
+  cover "subnormal lanes" small
+
+(* [g], the values of a lane's affine operand, at [dt] along the last axis
+   of [x]. *)
+let affine_of (type s) (dt : (float, s) D.t) g =
+  Option.map
+    (fun g -> value dt [| Array.length g |] (Array.map (D.of_float dt) g))
+    g
 
 (* Within [k u / (1 - 4 k u)] of the definition, relatively, for
-   [k = (n + 8) / 2], as its doc states; NaN exactly where the definition
-   is. *)
-let law_rms (type s) (dt : (float, s) D.t) u tiny ((s, xs, eps) as c) =
+   [k = (n + 8) / 2], or [(n + 10) / 2] with a scale, as its doc states,
+   and a subnormal's rounding, which a scale [g] carries to [|g| + 1] of
+   the least subnormal; NaN exactly where the definition is. *)
+let law_rms (type s) (dt : (float, s) D.t) u tiny ((s, xs, eps, g, small) as c)
+    =
   covers_rms dt c;
-  let xs = Array.map (D.of_float dt) xs in
-  let y = Nx.to_array (Nx.rms_norm ~eps (value dt s xs)) in
+  let xs = drawn dt small xs in
+  let scale = affine_of dt g in
+  let y = Nx.to_array (Nx.rms_norm ~eps ?scale (value dt s xs)) in
+  let g = Option.map (Array.map (D.of_float dt)) g in
   let n = s.(Array.length s - 1) in
-  let k = Float.of_int (n + 8) /. 2. in
+  let k = Float.of_int (n + if Option.is_some g then 10 else 8) /. 2. in
   let tol = k *. u /. (1. -. (4. *. k *. u)) in
-  let off y (hi, lo) =
+  let off gj y (hi, lo) =
+    let sub = (Float.abs gj +. 1.) *. tiny in
     if Float.is_nan y || Float.is_nan hi then Float.is_nan y <> Float.is_nan hi
-    else y <> hi && Float.abs (y -. hi -. lo) > (tol *. Float.abs hi) +. tiny
+    else y <> hi && Float.abs (y -. hi -. lo) > (tol *. Float.abs hi) +. sub
   in
   List.iter
     (fun lane ->
       let want = lane_rms eps (Array.map (fun i -> xs.(i)) lane) in
+      let want =
+        match g with
+        | None -> want
+        | Some g -> Array.mapi (fun j w -> dd_mul_float w g.(j)) want
+      in
       Array.iteri
         (fun j i ->
-          if off y.(i) want.(j) then
+          let gj = match g with Some g -> g.(j) | None -> 1. in
+          if off gj y.(i) want.(j) then
             failf "rms_norm at %d: %h, by definition %h" i y.(i)
               (fst want.(j)))
         lane)
     (lanes s)
 
-(* At float32 and float64, the bits of the composition its doc names. *)
-let law_rms_composed (type s) (dt : (float, s) D.t) ((s, xs, eps) as c) =
-  covers_rms dt c;
-  let x = value dt s (Array.map (D.of_float dt) xs) in
+(* At float32 and float64, the bits of the composition its doc names, on
+   lanes whose squares neither overflow nor, at [eps = 0], sum to [0]: at
+   [eps = 0], each lane is zeros or its greatest square normal. *)
+let law_rms_composed (type s) (dt : (float, s) D.t) (s, xs, eps, g, small) =
+  let xs = drawn dt small xs in
+  let least = match dt with D.Float32 -> 0x1p-63 | _ -> 0x1p-511 in
+  let kept lane =
+    let big m i = Float.max m (Float.abs xs.(i)) in
+    let m = Array.fold_left big 0. lane in
+    m = 0. || m >= least
+  in
+  assume (eps > 0. || List.for_all kept (lanes s));
+  let x = value dt s xs in
+  let scale = affine_of dt g in
   let ms = Nx.mean ~axes:[ -1 ] ~keepdims:true (Nx.square x) in
   let want = Nx.mul x (Nx.rsqrt (Nx.add_s ms eps)) in
-  equal same_bits (Nx.to_array want) (Nx.to_array (Nx.rms_norm ~eps x))
+  let want = match scale with None -> want | Some g -> Nx.mul want g in
+  equal same_bits (Nx.to_array want) (Nx.to_array (Nx.rms_norm ~eps ?scale x))
 
 let test_rms_cases () =
   let f32 xs = Nx.create Nx.float32 [| Array.length xs |] xs in
@@ -1088,8 +1170,14 @@ let test_rms_cases () =
     (Nx.to_array (Nx.rms_norm ~eps:0. (f32 [| 3.; -3. |])));
   equal same_bits [| nan; nan |]
     (Nx.to_array (Nx.rms_norm ~eps:0. (f32 [| 0.; 0. |])));
-  equal same_bits [| infinity |]
+  equal same_bits [| 1. |]
     (Nx.to_array (Nx.rms_norm ~eps:0. (f32 [| 1e-30 |])));
+  equal same_bits [| 1.; -1. |]
+    (Nx.to_array (Nx.rms_norm ~eps:0. (f32 [| 0x1p-140; -0x1p-140 |])));
+  equal same_bits [| 1.; -1. |]
+    (Nx.to_array
+       (Nx.rms_norm ~eps:0.
+          (Nx.create Nx.float64 [| 2 |] [| 0x1p-1060; -0x1p-1060 |])));
   equal (array int) [| 0; 3 |]
     (Nx.shape (Nx.rms_norm (Nx.zeros Nx.float32 [| 0; 3 |])));
   let x =
@@ -1104,6 +1192,317 @@ let test_rms_cases () =
   invalid ~by:"Nx.rms_norm" (fun () -> Nx.rms_norm ~axes:[ 1 ] (f32 [| 1. |]));
   invalid ~by:"Nx.rms_norm" (fun () -> Nx.rms_norm ~eps:(-1.) (f32 [| 1. |]));
   invalid ~by:"Nx.rms_norm" (fun () -> Nx.rms_norm ~eps:nan (f32 [| 1. |]))
+
+(* Layer norm *)
+
+(* Pairs [hi + lo] of twice float64's digits: a sum and a product within
+   about [2^-104] of the exact one, relatively, a quotient and a root a
+   little more. *)
+let dd_add (ah, al) (bh, bl) =
+  let s, e = two_sum ah bh in
+  fast_two_sum s (e +. al +. bl)
+
+let dd_mul (ah, al) (bh, bl) =
+  let p = ah *. bh in
+  fast_two_sum p (Float.fma ah bh (-.p) +. (ah *. bl) +. (al *. bh))
+
+let dd_div (ah, al) (bh, bl) =
+  let q = ah /. bh in
+  fast_two_sum q ((Float.fma (-.q) bh ah +. al -. (q *. bl)) /. bh)
+
+let dd_sqrt (ah, al) =
+  if ah = 0. then (0., 0.)
+  else
+    let r = Float.sqrt ah in
+    fast_two_sum r ((Float.fma (-.r) r ah +. al) /. (2. *. r))
+
+(* A lane by the definition, [(x - μ) / sqrt (V + eps)], each element a pair
+   far within either format's tolerance, with the lane's exact mean [μ],
+   variance [V], mean absolute deviation and mean magnitude, to the
+   precision a bound needs. *)
+let lane_ln eps xs =
+  let xs = if eps = 0. then unit_scale xs else xs in
+  let n = (Float.of_int (Array.length xs), 0.) in
+  let sum = Array.fold_left (fun a x -> dd_add a (x, 0.)) (0., 0.) xs in
+  let mu = dd_div sum n in
+  let ds = Array.map (fun x -> dd_add (x, 0.) (-.fst mu, -.snd mu)) xs in
+  let sq = Array.fold_left (fun a d -> dd_add a (dd_mul d d)) (0., 0.) ds in
+  let v = dd_div sq n in
+  let root = dd_sqrt (dd_add v (eps, 0.)) in
+  let y =
+    Array.map
+      (fun d -> if fst root = 0. then (fst d /. 0., 0.) else dd_div d root)
+      ds
+  in
+  let mean f = Array.fold_left (fun a x -> a +. f x) 0. xs /. fst n in
+  let dev = mean (fun x -> Float.abs (x -. fst mu)) in
+  (y, fst mu, fst v, dev, mean Float.abs)
+
+(* nx.cpu's [L] and [D] for a lane of [n] terms. *)
+let terms n =
+  let l = ((Stdlib.min n 1024 + 15) / 16) + 3 in
+  let rec depth b d = if b <= 1 then d else depth ((b + 1) / 2) (d + 1) in
+  (Float.of_int l, Float.of_int (depth ((n + 1023) / 1024) 0))
+
+(* The bound [layer_norm]'s doc states for an element of exact value [y]
+   of a lane of [n] terms, before the narrow rounding and the affine:
+   [(F / 2s + 11u/2) |y| + (L + D + 1) u A / √s]. *)
+let ln_bound u n eps (mu, v, dev, mag) y =
+  let l, d = terms n in
+  let e = ((l +. d) *. u *. mag) +. (u *. Float.abs mu) in
+  let f =
+    ((l +. d +. 5.) *. u *. v)
+    +. (2. *. (l +. d +. 1.) *. u *. e *. Float.sqrt v)
+    +. (((3. *. l) +. (3. *. d) +. 7.) *. u *. e *. e)
+  in
+  let s = v +. eps in
+  (((f /. (2. *. s)) +. (5.5 *. u)) *. Float.abs y)
+  +. ((l +. d +. 1.) *. u *. dev /. Float.sqrt s)
+
+(* Lanes of a few to several blocks, drawn about a mean far from their
+   spread or none, constant ones among them; an affine half the time. *)
+let ln_case =
+  let open Gen in
+  let* s =
+    frequency
+      [
+        (2, array ~size:(int_range 1 3) (int_range 1 5));
+        ( 3,
+          let* r = int_range 1 3 in
+          let+ k =
+            of_list ~pp:Format.pp_print_int
+              [ 1; 2; 16; 17; 768; 1024; 1025; 3000; 5000 ]
+          in
+          [| r; k |] );
+        (1, wide_rows);
+      ]
+  in
+  let n = Array.fold_left ( * ) 1 s and k = s.(Array.length s - 1) in
+  let* mu = of_list ~pp:float_pp [ 0.; 64.; -1000.; 1e4; 3e5 ] in
+  let* sigma = of_list ~pp:float_pp [ 1.; 1e-3; 100.; 0. ] in
+  let* zs = values_within 3. n in
+  (* Deviations of [2^-10] spreads at least: the bound holds barring
+     underflow, which a drawn [z] near zero would reach. *)
+  let grid z = Float.round (z *. 1024.) /. 1024. in
+  let at z = if mu = 0. then sigma *. grid z else mu +. (sigma *. grid z) in
+  (* An eighth of the cases, lanes of zeros of both signs. *)
+  let* zeros = frequency [ (1, constant true); (7, constant false) ] in
+  (* A fifth, subnormal lanes at [eps = 0], their spread their size. *)
+  let* small = frequency [ (1, constant true); (4, constant false) ] in
+  let xs =
+    Array.map
+      (if zeros then fun z -> 0. *. z else if small then grid else at)
+      zs
+  in
+  let* eps = of_list [ 1e-5; 0.; 0.5 ] in
+  let eps = if small then 0. else eps in
+  let* g = option (array ~size:(constant k) affine_value) in
+  let+ b = option (array ~size:(constant k) affine_value) in
+  (s, xs, eps, g, b, small)
+
+(* Within the bound its doc states of the definition, the affine's
+   [|g|] times it plus [u |g y|] and [u |g y + b|], and a subnormal's
+   rounding carried by [g]; a lane of no spread,
+   [-0.] among its elements or not, is the affine of [+0.] exactly, at
+   every [eps]. *)
+let law_ln (type s) (dt : (float, s) D.t) u tiny (s, xs, eps, g, b, small) =
+  let k = s.(Array.length s - 1) in
+  cover "one term a lane" (k = 1);
+  covers_blocks dt s k;
+  cover "no eps" (eps = 0.);
+  cover "a scale and a shift" (Option.is_some g && Option.is_some b);
+  let xs = drawn dt small xs in
+  cover "a subnormal lane" (Array.exists (subnormal dt) xs);
+  let y =
+    Nx.to_array
+      (Nx.layer_norm ~eps ?scale:(affine_of dt g) ?shift:(affine_of dt b)
+         (value dt s xs))
+  in
+  let lane_g = Option.value g ~default:(Array.make k 1.) in
+  let lane_b = Option.value b ~default:(Array.make k 0.) in
+  List.iter
+    (fun lane ->
+      let lx = Array.map (fun i -> xs.(i)) lane in
+      let want, mu, v, dev, mag = lane_ln eps lx in
+      let constant = Array.for_all (fun x -> x = lx.(0)) lx in
+      cover "a constant lane" constant;
+      cover "a -0. in a constant lane"
+        (constant && Array.exists (fun x -> same x (-0.)) lx);
+      cover "a lane far from its mean" (dev > 0. && Float.abs mu > 1e3 *. dev);
+      Array.iteri
+        (fun j i ->
+          let yr, yl = want.(j) and got = y.(i) in
+          let gj = lane_g.(j) and bj = lane_b.(j) in
+          if v = 0. then begin
+            let want = Option.fold ~none:0. ~some:(fun g -> 0. *. g.(j)) g in
+            let want = Option.fold ~none:want ~some:(fun b -> want +. b.(j)) b in
+            if not (same got want) then
+              failf "layer_norm at %d of a lane of no spread: %h, not %h, lane %a"
+                i got want
+                Format.(pp_print_array ~pp_sep:pp_print_space float_pp)
+                lx
+          end
+          else
+            let zh, zl = dd_add (dd_mul_float (yr, yl) gj) (bj, 0.) in
+            let tol =
+              (Float.abs gj *. ln_bound u k eps (mu, v, dev, mag) yr)
+              +. (u *. (Float.abs (gj *. yr) +. Float.abs zh))
+              +. ((Float.abs gj +. 1.) *. tiny)
+            in
+            let off = Float.abs (got -. zh -. zl) in
+            if off > tol then
+              failf "layer_norm at %d: %h, by definition %h, %.2f bounds" i
+                got zh (off /. tol))
+        lane)
+    (lanes s)
+
+(* At float32 and float64, the bits of the composition its doc names. *)
+let law_ln_composed (type s) (dt : (float, s) D.t) (s, xs, eps, g, b, small)
+    =
+  let x = value dt s (drawn dt small xs) in
+  let scale = affine_of dt g and shift = affine_of dt b in
+  let want = Nx.layer_norm ~eps x in
+  let want = match scale with None -> want | Some g -> Nx.mul want g in
+  let want = match shift with None -> want | Some b -> Nx.add want b in
+  equal same_bits (Nx.to_array want)
+    (Nx.to_array (Nx.layer_norm ~eps ?scale ?shift x))
+
+(* A lane of equal elements is [+0.], whatever their mean's rounding, up to
+   [2^17] of them at float32: the old composition gave [0.21] for [1000.1]. *)
+let test_ln_constant () =
+  let at (type s) (dt : (float, s) D.t) xs =
+    let n = Array.length xs in
+    List.iter
+      (fun eps ->
+        let x = Nx.create dt [| 1; n |] (Array.map (D.of_float dt) xs) in
+        Array.iteri
+          (fun i y ->
+            if not (same y 0.) then
+              failf "%s, %d of %h, eps %g: %h at %d" (D.name dt) n xs.(0) eps
+                y i)
+          (Nx.to_array (Nx.layer_norm ~eps x)))
+      [ 1e-5; 0. ]
+  in
+  List.iter
+    (fun xs ->
+      at D.Float32 xs;
+      at D.Float64 xs;
+      at D.Bfloat16 xs)
+    [
+      Array.make 1024 1000.1; Array.make 768 1000.1; Array.make 4096 0.1;
+      Array.make 5000 (-3.3); [| 7. |]; Array.make 3000 1e-30;
+      Array.make 0x20000 12345.678; Array.make 0x20000 0.1; Array.make 4 0.;
+      [| -0.; -0. |]; [| 0.; -0. |]; [| -0. |]; Array.make 1025 (-0.);
+      [| 1e30; 1e30 |];
+    ]
+
+let test_ln_cases () =
+  let f32 xs = Nx.create Nx.float32 [| Array.length xs |] xs in
+  let f16 xs = Nx.create Nx.float16 [| Array.length xs |] xs in
+  equal same_bits [| nan; nan; nan |]
+    (Nx.to_array (Nx.layer_norm (f32 [| 1.; nan; 2. |])));
+  equal same_bits [| nan; nan; nan |]
+    (Nx.to_array (Nx.layer_norm (f32 [| 1.; infinity; 2. |])));
+  equal same_bits [| nan; nan |]
+    (Nx.to_array (Nx.layer_norm (f32 [| neg_infinity; neg_infinity |])));
+  (* A float16 lane whose variance passes float16's greatest value. *)
+  equal same_bits [| -1.; 1.; -1.; 1. |]
+    (Nx.to_array (Nx.layer_norm (f16 [| -300.; 300.; -300.; 300. |])));
+  equal same_bits [| -1.; 1. |]
+    (Nx.to_array (Nx.layer_norm ~eps:0. (f32 [| 3.; 5. |])));
+  equal same_bits [| 0.; 0. |]
+    (Nx.to_array (Nx.layer_norm ~eps:0. (f32 [| 2.; 2. |])));
+  (* Squares that underflow at [eps = 0.], beside a lane of zeros. *)
+  equal same_bits [| 1.; -1.; 0.; 0. |]
+    (Nx.to_array
+       (Nx.layer_norm ~eps:0.
+          (Nx.create Nx.float32 [| 2; 2 |]
+             [| 0x1p-140; -0x1p-140; 0.; -0. |])));
+  equal same_bits [| 1.; -1. |]
+    (Nx.to_array
+       (Nx.layer_norm ~eps:0.
+          (Nx.create Nx.float64 [| 2 |] [| 0x1p-1060; -0x1p-1060 |])));
+  equal same_bits [| 1.; -1. |]
+    (Nx.to_array
+       (Nx.layer_norm ~eps:0.
+          (Nx.create Nx.bfloat16 [| 2 |] [| 0x1p-130; -0x1p-130 |])));
+  (* Squared deviations past the format's greatest value, beside a lane
+     that keeps its own bits. *)
+  let wide = Nx.create Nx.float32 [| 2; 2 |] [| -3e19; 3e19; 3.; 5. |] in
+  equal same_bits
+    (Array.append [| -1.; 1. |] (Nx.to_array (Nx.layer_norm (f32 [| 3.; 5. |]))))
+    (Nx.to_array (Nx.layer_norm wide));
+  equal same_bits [| 1.; -1. |]
+    (Nx.to_array (Nx.layer_norm (f32 [| 1e38; -1e38 |])));
+  equal same_bits [| 1.; -1. |]
+    (Nx.to_array
+       (Nx.layer_norm (Nx.create Nx.float64 [| 2 |] [| 1e300; -1e300 |])));
+  equal same_bits [| 1.; -1. |]
+    (Nx.to_array
+       (Nx.layer_norm (Nx.create Nx.bfloat16 [| 2 |] [| 1e30; -1e30 |])));
+  equal same_bits [| 1.; -1. |]
+    (Nx.to_array (Nx.rms_norm (f32 [| 1e20; -1e20 |])));
+  equal same_bits
+    (Nx.to_array (Nx.rms_norm (f32 [| 3.; 5. |])))
+    (Array.sub
+       (Nx.to_array
+          (Nx.rms_norm (Nx.create Nx.float32 [| 2; 2 |] [| 3.; 5.; 1e30; 1e30 |])))
+       0 2);
+  (* [+0.] before the affine. *)
+  equal same_bits [| -0.; 0. |]
+    (Nx.to_array (Nx.layer_norm ~scale:(f32 [| -1.; 1. |]) (f32 [| 4.; 4. |])));
+  equal same_bits [| 0.5; -1.5 |]
+    (Nx.to_array
+       (Nx.layer_norm ~scale:(f32 [| 2.; -1. |]) ~shift:(f32 [| 0.5; -1.5 |])
+          (f32 [| 4.; 4. |])));
+  equal (array int) [| 0; 3 |]
+    (Nx.shape (Nx.layer_norm (Nx.zeros Nx.float32 [| 0; 3 |])));
+  equal (array int) [| 3; 0 |]
+    (Nx.shape (Nx.layer_norm (Nx.zeros Nx.float32 [| 3; 0 |])));
+  let x =
+    Nx.create Nx.float64 [| 2; 3; 2 |]
+      (Array.init 12 (fun i -> Float.of_int ((i * 7) mod 5)))
+  in
+  let moved = Nx.reshape [| 3; 4 |] (Nx.transpose ~axes:[ 1; 0; 2 ] x) in
+  let back y = Nx.transpose ~axes:[ 1; 0; 2 ] (Nx.reshape [| 3; 2; 2 |] y) in
+  equal same_bits
+    (Nx.to_array (back (Nx.layer_norm moved)))
+    (Nx.to_array (Nx.layer_norm ~axes:[ 0; 2 ] x));
+  invalid ~by:"Nx.layer_norm" (fun () ->
+      Nx.layer_norm ~axes:[ 1 ] (f32 [| 1. |]));
+  invalid ~by:"Nx.layer_norm" (fun () ->
+      Nx.layer_norm ~axes:[ 0; 0 ] (f32 [| 1. |]));
+  invalid ~by:"Nx.layer_norm" (fun () ->
+      Nx.layer_norm ~eps:(-1.) (f32 [| 1. |]));
+  invalid ~by:"Nx.layer_norm" (fun () -> Nx.layer_norm ~eps:nan (f32 [| 1. |]));
+  invalid ~by:"Nx.layer_norm" (fun () ->
+      Nx.layer_norm ~scale:(f32 [| 1.; 2. |]) (f32 [| 1.; 2.; 3. |]));
+  invalid ~by:"Nx.layer_norm" (fun () ->
+      Nx.layer_norm ~shift:(f32 [| 1.; 2. |]) (f32 [| 1.; 2.; 3. |]));
+  invalid ~by:"Nx.rms_norm" (fun () ->
+      Nx.rms_norm ~scale:(f32 [| 1.; 2. |]) (f32 [| 1.; 2.; 3. |]))
+
+(* Over a strided or broadcast view, and with a broadcast scale and shift,
+   the bits of the same values contiguous. *)
+let test_ln_views () =
+  let x =
+    Nx.create Nx.float32 [| 4; 6 |]
+      (Array.init 24 (fun i -> 100. +. Float.of_int ((i * 7) mod 11) /. 4.))
+  in
+  let g = Nx.create Nx.float32 [| 3 |] [| 1.5; -0.5; 2. |] in
+  let b = Nx.create Nx.float32 [| 3 |] [| 0.25; 1.; -1. |] in
+  let strided = Nx.slice [ Rs (0, 4, 2); Rs (1, 6, 2) ] x in
+  let wide v = Nx.copy (Nx.broadcast_to [| 2; 3 |] v) in
+  equal same_bits
+    (Nx.to_array
+       (Nx.layer_norm ~scale:(wide g) ~shift:(wide b) (Nx.copy strided)))
+    (Nx.to_array (Nx.layer_norm ~scale:g ~shift:b strided));
+  let row = Nx.slice [ R (1, 2) ] x in
+  let rows = Nx.broadcast_to [| 3; 6 |] row in
+  let one = Nx.to_array (Nx.layer_norm row) in
+  equal same_bits
+    (Array.concat [ one; one; one ])
+    (Nx.to_array (Nx.layer_norm rows))
 
 (* Moving average *)
 
@@ -1232,6 +1631,26 @@ let () =
                (law_rms_composed D.Float64);
              test "cases" test_rms_cases;
              narrow "rms_norm" (fun x -> Nx.rms_norm (in_rows x));
+             narrow "rms_norm with a scale" (fun x ->
+                 Nx.rms_norm ~scale:(row_of x gains) (in_rows x));
+           ];
+         group "layer_norm"
+           [
+             prop "float64 within its bound" ln_case
+               (law_ln D.Float64 0x1p-53 0x1p-1074);
+             prop "float32 within its bound" ln_case
+               (law_ln D.Float32 0x1p-24 0x1p-149);
+             prop "float32's bits are its composition's" ln_case
+               (law_ln_composed D.Float32);
+             prop "float64's bits are its composition's" ln_case
+               (law_ln_composed D.Float64);
+             test "a lane of equal elements is zero" test_ln_constant;
+             test "cases" test_ln_cases;
+             test "views" test_ln_views;
+             narrow "layer_norm" (fun x -> Nx.layer_norm (in_rows x));
+             narrow "layer_norm with a scale and a shift" (fun x ->
+                 Nx.layer_norm ~scale:(row_of x gains) ~shift:(row_of x offsets)
+                   (in_rows x));
            ];
          group "ewma"
            [

@@ -2409,28 +2409,80 @@ val log_softmax :
     {!softmax} otherwise. *)
 
 val rms_norm :
-  ?axes:int list -> ?eps:float -> (float, 's, 'd) t -> (float, 's, 'd) t
-(** [rms_norm ~axes ~eps x] is [x / sqrt (mean x² + eps)], the mean along
-    [axes], [[-1]] by default; [eps] defaults to [1e-6]. It computes
-    [x · (1 / sqrt (Σ x² / n + eps))] for the [n] elements of each lane:
-    the squares summed as {!sum} sums them, each later step rounded once.
-    At [float32] and [float64] these are the bits of
-    [mul x (rsqrt (add_s (mean ~axes ~keepdims:true (square x)) eps))].
+  ?axes:int list ->
+  ?eps:float ->
+  ?scale:(float, 's, 'd) t ->
+  (float, 's, 'd) t ->
+  (float, 's, 'd) t
+(** [rms_norm ~axes ~eps ~scale x] is [x / sqrt (mean x² + eps) · scale],
+    the mean along [axes], [[-1]] by default; [eps] defaults to [1e-6], and
+    [scale], broadcast to [x]'s shape, to [1], which multiplies nothing. It
+    computes [(x · (1 / sqrt (Σ x² / n + eps))) · scale] for the [n]
+    elements of each lane: the squares summed as {!sum} sums them, each
+    later step rounded once. At [float32] and [float64], on a lane whose
+    squares sum below the greatest float, and above [0] at [eps = 0],
+    these are the bits of
+    [mul (mul x (rsqrt (add_s (mean ~axes ~keepdims:true (square x))
+    eps))) scale].
 
     Barring overflow and underflow, and for [k u < 1/4], it is within
     [k u / (1 - 4 k u)] of the exact value, relatively, where
-    [k = (n + 8) / 2] and [u] is the unit roundoff of the format it computes
-    in, before a narrow float's rounding: the squares and their sum take [n]
-    roundings, the mean and [eps] two more, which the root halves, and the
-    root, the reciprocal and the product one each.
+    [k = (n + 8) / 2], or [(n + 10) / 2] with [scale], and [u] is the unit
+    roundoff of the format it computes in, before a narrow float's
+    rounding: the squares and their sum take [n] roundings, the mean and
+    [eps] two more, which the root halves, and the root, the reciprocal,
+    the product and [scale]'s one each.
 
-    A lane whose sum of squares overflows is [x · 0]: zeros, NaN at an
-    infinity. With [~eps:0.], a lane whose squares sum to [0] is [x · ∞]:
-    [[nan; nan]] of [[0.; 0.]], and [[inf]] of a [float32] [[1e-30]], whose
-    square underflows. A lane holding a NaN is NaN.
+    A lane whose squares would overflow, or with [~eps:0.] underflow to
+    [0], is normalised as its elements times a power of two, [eps] scaled
+    with them: [[1e-30]] at [float32] is [[1.]]. A lane holding an infinity
+    is [x · 0]: zeros, NaN at the infinity. With [~eps:0.], a lane of zeros
+    is [x · ∞]: [[nan; nan]] of [[0.; 0.]]. A lane holding a NaN is NaN.
 
     Raises [Invalid_argument] naming itself for an axis outside [x]'s rank
-    or repeated, or if [eps] is negative or NaN. *)
+    or repeated, if [eps] is negative or NaN, or for a [scale] that does
+    not broadcast to [x]'s shape. *)
+
+val layer_norm :
+  ?axes:int list ->
+  ?eps:float ->
+  ?scale:(float, 's, 'd) t ->
+  ?shift:(float, 's, 'd) t ->
+  (float, 's, 'd) t ->
+  (float, 's, 'd) t
+(** [layer_norm ~axes ~eps ~scale ~shift x] is
+    [(x - m) / sqrt (v + eps) · scale + shift], [m] and [v] the mean and
+    the population variance of each lane along [axes], [[-1]] by default;
+    [eps] defaults to [1e-5]. [scale] and [shift], broadcast to [x]'s
+    shape, default to [1] and [0], which add no step. Along a batch's axes
+    it is batch normalisation.
+
+    For a lane of [n] elements it takes [c = Σ x / n], then in one pass the
+    sums [s₁] of [d = x - c] and [s₂] of [d²], each as {!sum} sums,
+    [c₂ = s₁ / n] and [v = (s₂ - s₁ c₂) / n] as the kernels' moments do,
+    and [((d - c₂) · (1 / sqrt (v + eps))) · scale + shift], each step
+    rounded once. At [float32] and [float64] the affine has the bits of
+    [add (mul (layer_norm ~axes ~eps x) scale) shift]. Where [d = c₂] the
+    result is [+0.] before the affine, at every [eps]: so is every element
+    of a lane of equal elements, up to [2{^17}] of them at [float32] and
+    [2{^46}] at [float64].
+
+    Barring overflow and underflow, to first order in the unit roundoff [u]
+    and before a narrow float's rounding, an element of exact value [y] is
+    within [(F / 2s + 11u/2) |y| + (L + D + 1) u A / √s], [s] the exact
+    [v + eps], [A] the lane's mean absolute deviation, and [F], [L] and [D]
+    nx.cpu's for its moments ({!Nx_cpu.section-states}), or as {!var}
+    states them over cut axes. [scale] multiplies that by [|scale|], and
+    the affine adds [u |scale · y|] and [u |scale · y + shift|].
+
+    A lane whose squares would overflow, or with [~eps:0.] underflow to
+    [0], is normalised as its elements times a power of two, [eps] scaled
+    with them: [[1e-40; -1e-40]] at [float32] is [[1.; -1.]]. A lane
+    holding a NaN or an infinity is NaN.
+
+    Raises [Invalid_argument] naming itself for an axis outside [x]'s rank
+    or repeated, if [eps] is negative or NaN, or for a [scale] or [shift]
+    that does not broadcast to [x]'s shape. *)
 
 (** {2:conversion Conversion} *)
 

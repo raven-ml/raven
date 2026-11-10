@@ -1658,6 +1658,8 @@ val jit :
       Nx.logsumexp r       (1.37 (n - 1) + 2E + 1 + (2L + 1) ln n) u + u|r|
       Nx.logcumsumexp r    ((2E + 3) D + (2L + 2) ln n) u + u|r|
       Nx.var V             (n + 4) u V + 2 n u B √V + 3 (n + 2) u B²
+      Nx.layer_norm y      (F / 2s + 11u/2) |y| + n u A / √s
+      Nx.rms_norm          relative k u / (1 - 4 k u)
     v}
 
     A cumulative output's [n] counts the terms up to it, a contraction's its
@@ -1668,7 +1670,8 @@ val jit :
     [D = max 0 (2⌈log₂ n⌉ - 1)], [B = (n + 1) u M] for [M] the mean of the
     terms' magnitudes. {!Nx.logcumsumexp}'s bound needs [n] exact in the
     accumulator, and {!Nx.var}'s [V] precedes its [ddof] scale, which rounds
-    once more. A product asked for its sum ([~sum:true],
+    once more. {!Nx.layer_norm}'s [F] is {!Nx.var}'s bound, and its [s], [A]
+    and affine terms and {!Nx.rms_norm}'s [k] are as their docs state. A product asked for its sum ([~sum:true],
     {!Nx.section-contraction}) rounds each of its [t] terms into its dtype,
     and its closing adds them there: closed, it is within the contraction's
     bound plus [γ(t, v) Σ|term|], [v] the dtype's unit roundoff, as eager

@@ -1990,13 +1990,14 @@ let reduced_axes ~by x l =
   | None -> Iarray.init (ndim x) Fun.id
   | Some l -> Iarray.of_list (List.sort Int.compare (axes ~by x l))
 
-(* The reductions [rs] along [axes] of [out] over [xs], each of shape [s]: its
-   operand [k] reads [xs]' element [k]. *)
-let reduce_by ~by s axes xs rs out =
+(* The reductions [rs] along [axes] of the outputs [outs] over [xs], each of
+   shape [s]: operand [k] reads [xs]' element [k], and a reduction of output
+   [o] reduces [outs.(o)]. *)
+let reduce_outs ~by s axes xs rs outs =
   let ins =
     Iarray.of_list (List.map (fun (Value.Any x) -> D.Any (dtype x)) xs)
   in
-  let prog = P.of_exprs ~ins [| E.any out |] in
+  let prog = P.of_exprs ~ins outs in
   let load (Value.Any x) = Value.Plain x in
   Eval.eval ~by
     (Value.Reduce
@@ -2007,6 +2008,10 @@ let reduce_by ~by s axes xs rs out =
          reductions = rs;
          loads = Iarray.of_list (List.map load xs);
        })
+
+(* The reductions [rs] along [axes] of [out] over [xs], as [reduce_outs]. *)
+let reduce_by ~by s axes xs rs out =
+  reduce_outs ~by s axes xs rs [| E.any out |]
 
 (* The one-operand reduction [r] of [x] along [axes]: of its one load, by the
    identity program, kept. *)
@@ -3024,32 +3029,216 @@ let log_softmax (type s d) ?(axes = [ -1 ]) ?(scale = 1.) ?where
       (masked c [ Value.Any x; Any m; Any sum ])
       (E.cast dt (outside c 3 w lowest E.(shifted - log (operand 2 sum))))
 
+(* [v], an affine operand of a lane normalisation, broadcast to [s]. *)
+let affine_operand ~by s v =
+  Option.map (fun v -> Eval.broadcast ~by s (Donate.read ~by v)) v
+
+(* [y] in [w], times [g] where given, plus [b] where given, over the loads
+   [xs], [g] and [b] read after them, rounded once to [dt]. *)
+let affine (type v s) ~by (dt : (float, v) D.t) (w : (float, s) D.t) xs
+    (y : (float, s) E.t) g b =
+  let k = List.length xs in
+  let y, xs, k =
+    match g with
+    | None -> (y, xs, k)
+    | Some g -> (E.(y * at w (operand k g)), xs @ [ Value.Any g ], k + 1)
+  in
+  let y, xs =
+    match b with
+    | None -> (y, xs)
+    | Some b -> (E.(y + at w (operand k b)), xs @ [ Value.Any b ])
+  in
+  elementwise ~by dt xs (at dt y)
+
+(* A lane normalisation of [x] in [w] as [run down] computes it, [r_of]
+   reading its lane scale [r]. A lane whose squares overflow, or underflow
+   so that nothing is left to normalise, is taken of its elements times
+   [down], a power of two near the reciprocal of its greatest magnitude,
+   which rounds nothing barring underflow, with [eps] times [down²]: a
+   normalisation of [x down] is that of [x]. [down] is [1] for a lane
+   within [spread_band]'s [lo] and [hi], whose bits are then the unscaled
+   ones, and for a lane of zeros. It rises at most to [up], which keeps
+   [eps down²] at most [1].
+
+   Eager, the unscaled run comes first, and the lanes are rescued only where
+   its [r] says a square overflowed or [v + eps] is [0] ([r] is [0], NaN or
+   [∞]), then a magnitude says a scale can help, since a scale costs a [Max]
+   pass and the run again. A traced call scales every lane, as {!spread}
+   does. *)
+let normalised (type s d) ~by w axes ~eps (x : (float, s, d) t) run r_of =
+  let s = shape x in
+  let lo, hi, _, _, cap = spread_band w in
+  let up =
+    if eps = 0. then cap
+    else
+      let _, e = Float.frexp (1. /. Float.sqrt eps) in
+      Float.min cap (Float.max 1. (Float.ldexp 1. (e - 1)))
+  in
+  let lit = E.const w in
+  let scaled ~traced =
+    let m, () =
+      reduce_by ~by s axes
+        [ Value.Any (untracked ~by x) ]
+        Value.[ Monoid (Max, 0, w) ]
+        E.(abs (at w (operand 0 x)))
+    in
+    let t = operand 0 m in
+    let extreme = E.((lit 0. < t && t < lit lo) || lit hi < t) in
+    if (not traced) && not (holds ~by m extreme) then None
+    else
+      let q = E.minimum (exponent_power w t) (lit cap) in
+      let down =
+        E.(
+          where extreme
+            (where (lit 0. < q) (minimum (lit 1. / q) (lit up)) (lit up))
+            (lit 1.))
+      in
+      Some (run (Some (elementwise ~by w [ Any m ] down)))
+  in
+  let always () = Option.get (scaled ~traced:true) in
+  match x with
+  | Value.Traced _ -> always ()
+  | _ -> (
+      let plain = run None in
+      match r_of plain with
+      | Value.Traced _ -> always ()
+      | r ->
+          let t = operand 0 r in
+          let suspect = E.(t = lit 0. || t <> t || t = lit Float.infinity) in
+          if not (holds ~by r suspect) then plain
+          else Option.value (scaled ~traced:false) ~default:plain)
+
 (* One reduction of the squares, a map of each lane's scale, then one map
-   of [x] by its lane's scale: no array of [x]'s size but the result. *)
-let rms_norm (type s d) ?(axes = [ -1 ]) ?(eps = 1e-6) (x : (float, s, d) t) :
-    (float, s, d) t =
+   of [x] by its lane's scale and [scale]: no array of [x]'s size but the
+   result, as [normalised] runs it. *)
+let rms_norm (type s d) ?(axes = [ -1 ]) ?(eps = 1e-6) ?scale
+    (x : (float, s, d) t) : (float, s, d) t =
   let by = "Nx.rms_norm" in
   let x = Donate.read ~by x in
   let s = shape x and dt = dtype x in
   let axes = reduced_axes ~by x (Some axes) in
   if Float.is_nan eps || eps < 0. then
     invalid_argf "%s: eps %a is negative or NaN" by pp_float eps;
+  let g = affine_operand ~by s scale in
   if numel x = 0 then x
   else
     let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
     let n = Float.of_int (reduced_count s axes) in
-    let wide = at w (operand 0 x) in
-    let sum, () =
-      reduce_by ~by s axes [ Any x ] Value.[ Monoid (Sum, 0, w) ]
-        E.(wide * wide)
-    in
     let lit = E.const w in
-    let scale =
-      elementwise ~by w [ Any sum ]
-        E.(recip (sqrt ((operand 0 sum / lit n) + lit eps)))
+    let lanes y = Eval.broadcast ~by s (kept ~by ~keepdims:true s axes y) in
+    (* [x] at [w], times its lane's [down] as operand 1 where given. *)
+    let run down =
+      let xs, loads =
+        match down with
+        | None -> (at w (operand 0 x), [ Value.Any x ])
+        | Some dn ->
+            let dl = lanes dn in
+            (E.(at w (operand 0 x) * operand 1 dl), [ Value.Any x; Any dl ])
+      in
+      let sum, () =
+        reduce_by ~by s axes loads Value.[ Monoid (Sum, 0, w) ] E.(xs * xs)
+      in
+      let r =
+        match down with
+        | None ->
+            elementwise ~by w [ Any sum ]
+              E.(recip (sqrt ((operand 0 sum / lit n) + lit eps)))
+        | Some dn ->
+            elementwise ~by w [ Any sum; Any dn ]
+              E.(
+                let dn = operand 1 dn in
+                recip (sqrt ((operand 0 sum / lit n) + (lit eps * dn * dn))))
+      in
+      (xs, loads, r)
     in
-    let scale = Eval.broadcast ~by s (kept ~by ~keepdims:true s axes scale) in
-    elementwise ~by dt [ Any x; Any scale ] (at dt E.(wide * operand 1 scale))
+    let xs, loads, r =
+      normalised ~by w axes ~eps x run (fun (_, _, r) -> r)
+    in
+    let k = List.length loads in
+    let r = lanes r in
+    affine ~by dt w (loads @ [ Any r ]) E.(xs * operand k r) g None
+
+(* Three passes over [x], each lane's statistics between them as maps of
+   its sums: a sum for the mean [c]; one loop of the two sums of
+   [d = x - c] and [d²], whose first corrects [c] by [c₂ = Σ d / n] and
+   whose second gives the variance as the kernels' moments do; then one map
+   of [((d - c₂) · r) · scale + shift], [r] the lane's [1 / sqrt (v + eps)].
+   Correcting the output as well as the variance keeps the error of each
+   element in proportion to the lane's spread, whatever its mean: a lane of
+   equal elements has [d] equal to [c₂]. Where [d - c₂] is [±0] the result
+   is [+0] before the affine, [r] taken as [0] where it is [∞], with the
+   tangent of [(d - c₂) · r]. [normalised] runs the statistics. *)
+let layer_norm (type s d) ?(axes = [ -1 ]) ?(eps = 1e-5) ?scale ?shift
+    (x : (float, s, d) t) : (float, s, d) t =
+  let by = "Nx.layer_norm" in
+  let x = Donate.read ~by x in
+  let s = shape x and dt = dtype x in
+  let axes = reduced_axes ~by x (Some axes) in
+  if Float.is_nan eps || eps < 0. then
+    invalid_argf "%s: eps %a is negative or NaN" by pp_float eps;
+  let g = affine_operand ~by s scale and b = affine_operand ~by s shift in
+  if numel x = 0 then x
+  else
+    let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
+    let n = Float.of_int (reduced_count s axes) in
+    let lit = E.const w in
+    let lanes y = Eval.broadcast ~by s (kept ~by ~keepdims:true s axes y) in
+    (* [x] at [w], times its lane's [down] as operand 1 where given; the
+       lane statistics' loads follow. *)
+    let run down =
+      let xs, loads =
+        match down with
+        | None -> (at w (operand 0 x), [ Value.Any x ])
+        | Some dn ->
+            let dl = lanes dn in
+            (E.(at w (operand 0 x) * operand 1 dl), [ Value.Any x; Any dl ])
+      in
+      let k = List.length loads in
+      let sum, () =
+        reduce_by ~by s axes loads Value.[ Monoid (Sum, 0, w) ] xs
+      in
+      let c = lanes (elementwise ~by w [ Any sum ] E.(operand 0 sum / lit n)) in
+      let d = E.(xs - operand k c) in
+      let s1, (s2, ()) =
+        reduce_outs ~by s axes (loads @ [ Any c ])
+          Value.[ Monoid (Sum, 0, w); Monoid (Sum, 1, w) ]
+          [| E.any d; E.any E.(d * d) |]
+      in
+      let c2 = elementwise ~by w [ Any s1 ] E.(operand 0 s1 / lit n) in
+      let variance =
+        E.(
+          let sq = operand 1 s2 in
+          let v = (sq - (operand 0 s1 * operand 2 c2)) / lit n in
+          let v = where (v < lit 0.) (lit 0.) v in
+          where (sq = lit Float.infinity) sq v)
+      in
+      let r =
+        match down with
+        | None ->
+            elementwise ~by w [ Any s1; Any s2; Any c2 ]
+              E.(recip (sqrt (variance + lit eps)))
+        | Some dn ->
+            elementwise ~by w [ Any s1; Any s2; Any c2; Any dn ]
+              E.(
+                let dn = operand 3 dn in
+                recip (sqrt (variance + (lit eps * dn * dn))))
+      in
+      (d, loads, c, c2, r)
+    in
+    let d, loads, c, c2, r =
+      normalised ~by w axes ~eps x run (fun (_, _, _, _, r) -> r)
+    in
+    let k = List.length loads in
+    let c2 = lanes c2 and r = lanes r in
+    let c2_at = k + 1 and r_at = k + 2 in
+    let q = E.(d - operand c2_at c2) in
+    let y =
+      E.(
+        let r = operand r_at r in
+        let finite = where (r = lit Float.infinity) (lit 0.) r in
+        where (q = lit 0.) ((q * finite) + lit 0.) (q * r))
+    in
+    affine ~by dt w (loads @ [ Any c; Any c2; Any r ]) y g b
 
 (* Complex parts *)
 

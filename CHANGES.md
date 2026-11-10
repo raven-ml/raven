@@ -2726,6 +2726,13 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Add `Nx.layer_norm ?axes ?eps ?scale ?shift`: the biased variance, `eps`
+  inside the root, computed at float32 for narrow floats and rounded once,
+  the affine included. Its error follows the lane's spread, whatever its
+  mean, and a lane of equal elements is exactly `+0.` before the affine.
+- `Nx.rms_norm` takes `?scale`, applied before its one rounding, and
+  normalises a lane whose squares overflow or underflow at a power-of-two
+  scale, where it gave zeros or infinities.
 - Add `nx.cuda` (`Nx_cuda`), kernels of `Nx_kernel.S` for NVIDIA `sm_89`
   GPUs. A set made by `Nx.devices ~kernels:(module Nx_cuda)` computes on
   the GPU without `Rune.jit`.
