@@ -29,6 +29,11 @@ An item leaves when its library fixes it, or when a design decides it stays.
   dtype), or a draw on the host placed over, which doubles host memory
   (8 GB of q, k, v at large's T = 256). Wanted: draws at a kernel-less
   placement, as creations already work.
+- nx.cpu's bound on how long a kernel holds a domain's lock (`nx_cpu.mli`)
+  is broken by memory-mapped operands: a small gather holds it through page
+  faults of ~170 µs each. Found by the streaming-data skeptic; decided with
+  part 2 of that design (where a batch's read depth lives), which needs the
+  same fact that an operand is file pages.
 - Floats narrower than float32 compute in float32 on the CPU, and nothing at
   the call says so: bf16 rows on the CPU time f32 kernels plus conversions.
 - `Nx.split` returns a list, so taking a GRU's three gates needs a
