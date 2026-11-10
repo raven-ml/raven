@@ -2764,6 +2764,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_io.load_pytorch` and `Nx_io.load_npz` read a data descriptor whose
+  sizes take 4 or 8 bytes each, whichever agrees with the central directory,
+  and failed before with an error naming the descriptor on the 8-byte ones
+  torch writes past 4 GiB and Java writes from 0xFFFFFFFF bytes on.
 - Add `Nx.layer_norm ?axes ?eps ?scale ?shift`: the biased variance, `eps`
   inside the root, computed at float32 for narrow floats and rounded once,
   the affine included. Its error follows the lane's spread, whatever its

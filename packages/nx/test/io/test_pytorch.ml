@@ -5,8 +5,9 @@
 
 (* PyTorch checkpoints. Files torch 2.15 wrote load as they mean: every dtype,
    views, shared storages and tied weights, protocols 1 to 5, the legacy format,
-   a big-endian and a compressed file; pickles written here byte by byte load as
-   pickletools defines their opcodes, or are refused by the rules
+   a big-endian and a compressed file; so do zip entries whose sizes follow
+   their data as APPNOTE lays them out; pickles written here byte by byte load
+   as pickletools defines their opcodes, or are refused by the rules
    [Nx_io.load_pytorch] states; [Nx_io.Pytorch.tensors] names tensors by their
    paths and refuses what has none. The pt_*.pt files hold the bytes [pattern n
    seed] or small ranges, so their values are stated here. *)
@@ -107,36 +108,66 @@ let rebuild ?(cls = "FloatStorage") ?(hooks = odict) ?(meta = "") key n =
 
 (* Zip archives as torch writes them *)
 
+(* Where [zip] states an entry's CRC-32 and sizes: in its local header, or after
+   its data in a descriptor, [signed] or not (APPNOTE 4.3.9.3), with sizes of
+   [width] bytes each, as torch streams them. A [zip64] entry's records have a
+   ZIP64 field holding the local header's offset, as torch writes them past
+   4 GiB with 8-byte sizes (4.3.9.2). *)
+type sizes =
+  | In_header
+  | In_descriptor of { zip64 : bool; width : int; signed : bool }
+
+let zip64_field off = le 2 0x0001 ^ le 2 8 ^ le 8 off
+
 (* [zip entries] is a zip archive of [entries], each stored with its data at a
    multiple of 64 bytes, padded by an extra field as torch pads them. [crc]
    gives each entry's stated CRC-32 from its true one. *)
-let zip ?(crc = fun _ c -> c) entries =
+let zip ?(crc = fun _ c -> c) ?(sizes = In_header) entries =
   let buf = Buffer.create 4096 in
   let central = Buffer.create 1024 in
   List.iter
     (fun (name, data) ->
       let off = Buffer.length buf in
-      let used = off + 30 + String.length name in
+      let c = crc name (Lz.Crc32.string data) in
+      let n = String.length data in
+      let zip64 =
+        match sizes with In_descriptor d -> d.zip64 | In_header -> false
+      in
+      let zip64_extra = if zip64 then zip64_field off else "" in
+      let used = off + 30 + String.length name + String.length zip64_extra in
       let pad = (64 - (used mod 64)) mod 64 in
       let pad = if pad > 0 && pad < 4 then pad + 64 else pad in
       let extra =
-        if pad = 0 then ""
-        else le 2 0x4246 ^ le 2 (pad - 4) ^ String.make (pad - 4) '\000'
+        if pad = 0 then zip64_extra
+        else
+          zip64_extra ^ le 2 0x4246 ^ le 2 (pad - 4)
+          ^ String.make (pad - 4) '\000'
       in
-      let c = crc name (Lz.Crc32.string data) in
-      let common =
-        le 2 20 ^ le 2 0 ^ le 2 0 ^ le 2 0 ^ le 2 0 ^ le 4 c
-        ^ le 4 (String.length data)
-        ^ le 4 (String.length data)
+      let flags, local_crc, local_n, descriptor =
+        match sizes with
+        | In_header -> (0, c, n, "")
+        | In_descriptor { width; signed; _ } ->
+            ( 0x0808,
+              0,
+              0,
+              (if signed then "PK\007\008" else "")
+              ^ le 4 c ^ le width n ^ le width n )
+      in
+      let common c n =
+        le 2 20 ^ le 2 flags ^ le 2 0 ^ le 2 0 ^ le 2 0 ^ le 4 c ^ le 4 n
+        ^ le 4 n
         ^ le 2 (String.length name)
       in
       Buffer.add_string buf
-        ("PK\003\004" ^ common
+        ("PK\003\004" ^ common local_crc local_n
         ^ le 2 (String.length extra)
-        ^ name ^ extra ^ data);
+        ^ name ^ extra ^ data ^ descriptor);
       Buffer.add_string central
-        ("PK\001\002" ^ le 2 20 ^ common ^ le 2 0 ^ le 2 0 ^ le 2 0 ^ le 2 0
-       ^ le 4 0 ^ le 4 off ^ name))
+        ("PK\001\002" ^ le 2 20 ^ common c n
+        ^ le 2 (String.length zip64_extra)
+        ^ le 2 0 ^ le 2 0 ^ le 2 0 ^ le 4 0
+        ^ le 4 (if zip64 then 0xffffffff else off)
+        ^ name ^ zip64_extra))
     entries;
   let cd = Buffer.length buf in
   Buffer.add_buffer buf central;
@@ -149,8 +180,8 @@ let zip ?(crc = fun _ c -> c) entries =
 
 (* [checkpoint p storages] is a torch zip of the pickle [p] and [storages], each
    a key and its bytes. *)
-let checkpoint ?crc ?byteorder p storages =
-  zip ?crc
+let checkpoint ?crc ?sizes ?byteorder p storages =
+  zip ?crc ?sizes
     (("archive/data.pkl", p)
      ::
      (match byteorder with
@@ -1144,6 +1175,62 @@ let legacy_views =
                [ "0" ] [ base ]));
     ]
 
+(* Data descriptors *)
+
+let descriptors =
+  (* An empty storage's 8-byte descriptor, read at 4 bytes, states its sizes
+     too. *)
+  let ckpt sizes =
+    checkpoint ~sizes
+      (pickle (dict [ (str "w", rebuild "0" 4); (str "e", rebuild "1" 0) ]))
+      (four @ [ ("1", "") ])
+  in
+  let w =
+    Pt.Dict
+      [
+        (String "w", f32 [| 4 |] [| 1.; 2.; 3.; 4. |]);
+        (String "e", f32 [| 0 |] [||]);
+      ]
+  in
+  let layouts =
+    List.concat_map
+      (fun (zip64, width) ->
+        List.map
+          (fun signed ->
+            ( Printf.sprintf "%s ZIP64 field, %d-byte sizes, %s"
+                (if zip64 then "a" else "no")
+                width
+                (if signed then "signed" else "unsigned"),
+              In_descriptor { zip64; width; signed } ))
+          [ true; false ])
+      [ (true, 8); (false, 4); (false, 8); (true, 4) ]
+  in
+  group "data descriptors"
+    [
+      cases
+        "sizes after an entry's data load at 4 or 8 bytes each, whether or not \
+         its records have a ZIP64 field, with or without the descriptor's \
+         signature"
+        ~id:fst layouts
+        (fun (_, sizes) -> equal value w (load (ckpt sizes)));
+      cases "a descriptor that disagrees with the central directory is refused"
+        ~id:fst
+        [ ("8-byte sizes", (true, 8)); ("4-byte sizes", (false, 4)) ]
+        (fun (_, (zip64, width)) ->
+          let b =
+            Bytes.of_string
+              (ckpt (In_descriptor { zip64; width; signed = true }))
+          in
+          (* The compressed size in the first entry's descriptor, off by one. *)
+          let rec size i =
+            if Bytes.sub_string b i 4 = "PK\007\008" then i + 8
+            else size (i + 1)
+          in
+          let i = size 0 in
+          Bytes.set_uint8 b i (Bytes.get_uint8 b i lxor 1);
+          refused ~naming:"descriptor" (Bytes.to_string b));
+    ]
+
 let () =
   exit
     (run "nx.io PyTorch"
@@ -1156,4 +1243,5 @@ let () =
          laws;
          review;
          legacy_views;
+         descriptors;
        ])

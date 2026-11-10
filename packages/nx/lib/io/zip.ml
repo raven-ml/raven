@@ -302,41 +302,35 @@ let validate_local_entry data ~central_offset entry =
       Fail.failf "ZIP local metadata disagrees with central entry %S" entry.name;
     (payload, data_end))
   else
-    let zip64 =
-      compressed32 = marker32 || uncompressed32 = marker32
-      || entry.compressed_size > marker32
-      || entry.uncompressed_size > marker32
-    in
-    let size_bytes = if zip64 then 16 else 8 in
-    let descriptor_at descriptor =
+    (* A descriptor's sizes take 4 or 8 bytes each (4.3.9.2), and writers differ
+       on which: torch writes 8 whenever the local header has a ZIP64 field,
+       Java from 0xFFFFFFFF bytes on and Go past them, with no field. So each
+       width is tried, after the signature and without it (4.3.9.3), and the
+       descriptor is the first reading that states the central record's
+       CRC-32 and sizes. A reading at the wrong width agrees only where it
+       states the same sizes, as for an empty entry: the data stays where it
+       is, and only the record's end moves. *)
+    let descriptor at width =
+      let finish = at + 4 + (2 * width) in
+      let size off v =
+        if width = 4 then u32 data off = v
+        else u32 data off = v land marker32 && u32 data (off + 4) = v lsr 32
+      in
       if
-        descriptor > central_offset - 4
-        || size_bytes > central_offset - descriptor - 4
-      then None
-      else
-        let crc = u32 data descriptor in
-        let compressed, uncompressed =
-          if zip64 then (u64 data (descriptor + 4), u64 data (descriptor + 12))
-          else (u32 data (descriptor + 4), u32 data (descriptor + 8))
-        in
-        if
-          crc = entry.crc32
-          && compressed = entry.compressed_size
-          && uncompressed = entry.uncompressed_size
-        then Some (descriptor + 4 + size_bytes)
-        else None
+        finish <= central_offset
+        && u32 data at = entry.crc32
+        && size (at + 4) entry.compressed_size
+        && size (at + 4 + width) entry.uncompressed_size
+      then Some finish
+      else None
     in
-    let finish =
-      if
-        data_end <= central_offset - 4
-        && u32 data data_end = descriptor_signature
-      then
-        match descriptor_at (data_end + 4) with
-        | Some finish -> Some finish
-        | None -> descriptor_at data_end
-      else descriptor_at data_end
+    let signed =
+      data_end <= central_offset - 4
+      && u32 data data_end = descriptor_signature
     in
-    match finish with
+    let starts = if signed then [ data_end + 4; data_end ] else [ data_end ] in
+    let readings = List.concat_map (fun at -> [ (at, 8); (at, 4) ]) starts in
+    match List.find_map (fun (at, width) -> descriptor at width) readings with
     | Some finish -> (payload, finish)
     | None -> Fail.failf "invalid ZIP data descriptor for %S" entry.name
 

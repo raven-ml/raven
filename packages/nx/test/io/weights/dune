@@ -1,11 +1,23 @@
-; TESSERA's medium student (84 MB) against torch.load's reading of it. Outside
-; runtest: a test run cannot hold a real model's weights. Run it with
+; Outside runtest: a test run cannot hold a real model's weights or a 4 GiB
+; file.
+;
+; TESSERA's medium student (84 MB) against torch.load's reading of it. Run it
+; with
 ;   NX_IO_PT_CKPT=student_medium.pt NX_IO_PT_REF=reference.npz \
 ;   dune exec packages/nx/test/io/weights/test_pytorch_weights.exe
 ; where reference.npz holds, for each tensor torch.load reads under a path of
 ; string keys and indices, its bytes at uint8 with a last axis of its element's
 ; bytes, named by the path, and its dtype's name under the path and ".dtype".
+;
+; TESSERA's 2B teacher (8.26 GB), whose entries past 4 GiB have ZIP64 data
+; descriptors. Run it with
+;   NX_IO_PT_TEACHER=tessera_v2_2B_teacher.pt \
+;   dune exec packages/nx/test/io/weights/test_pytorch_teacher.exe
+;
+; Zip entries of 0xFFFFFFFF bytes in sparse 4 GiB files, which take that much
+; address space and no disk. Run it with
+;   dune exec packages/nx/test/io/weights/test_zip_boundary.exe
 
-(executable
- (name test_pytorch_weights)
- (libraries nx nx_io windtrap))
+(executables
+ (names test_pytorch_weights test_pytorch_teacher test_zip_boundary)
+ (libraries nx nx_io unix windtrap))
