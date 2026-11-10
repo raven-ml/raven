@@ -15,19 +15,8 @@ let make ~dim dtype at =
 
 let init ~dim at = make ~dim Nx.float32 at
 
-(* Half and quarter precision floats are too coarse for the mean square: the
-   normalization runs in a float32 island, as in [Layer_norm]. *)
-let low_precision : type b. (float, b) Nx.dtype -> bool = function
-  | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn -> true
-  | Float32 | Float64 -> false
-
-let normalize ~eps x =
-  let axes = [ Array.length (Nx.shape x) - 1 ] in
-  let ms = Nx.mean ~axes ~keepdims:true (Nx.mul x x) in
-  Nx.div x (Nx.sqrt (Nx.add_s ms eps))
-
 let apply ?(eps = 1e-6) { gamma } x =
-  if eps < 0.0 then
+  if not (eps >= 0.0) then
     Format.kasprintf invalid_arg "Rms_norm.apply: eps must be >= 0, got %a"
       (Nx.Dtype.pp_value Nx.float64)
       eps;
@@ -41,9 +30,4 @@ let apply ?(eps = 1e-6) { gamma } x =
        features"
       shape.(rank - 1)
       dim;
-  let dt = Nx.dtype x in
-  let normalized =
-    if low_precision dt then Nx.cast dt (normalize ~eps (Nx.cast Nx.float32 x))
-    else normalize ~eps x
-  in
-  Nx.mul normalized gamma
+  Nx.rms_norm ~eps ~scale:gamma x

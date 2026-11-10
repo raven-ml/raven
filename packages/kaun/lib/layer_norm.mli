@@ -10,7 +10,8 @@
     ([gamma]) and shift ([beta]). Unlike batch normalization it is stateless and
     independent of the batch: the same function at training and inference time.
     Construct parameters with {!init} or {!make} and normalize with {!apply};
-    {!walk} makes it a structure. *)
+    {!walk} makes it a structure. Normalization without learned parameters is
+    {!Nx.layer_norm} alone. *)
 
 (** {1:types Types} *)
 
@@ -47,17 +48,17 @@ val apply :
 
     where [mean] and [var] (the biased variance) are taken along the last axis;
     every other axis is treated as a batch axis. [eps] keeps the division finite
-    for constant vectors — a constant vector maps to [beta] — and defaults to
-    [1e-5]. The result has [x]'s shape. Differentiable through Rune.
+    for constant vectors and defaults to [1e-5]. The result has [x]'s shape.
+    Differentiable through Rune.
 
-    For narrow inputs (float16, bfloat16, float8, float4) the statistics and
-    normalization are computed in a float32 island: [x] is upcast, normalized at
-    float32, and the normalized values are cast back to [x]'s dtype before the
-    [gamma]/[beta] affine transform. Float32 and float64 inputs use their own
-    dtype throughout, exactly as if the island were absent.
+    It is [Nx.layer_norm ~eps ~scale:gamma ~shift:beta x], whose doc states its
+    algorithm and error bound: the affine transform is applied before the one
+    rounding to [x]'s dtype, so a narrow [x] (float16, bfloat16, float8, float4)
+    is normalized and rescaled at float32 and rounded once, and a constant
+    vector of up to [2{^17}] features maps to [beta].
 
     Raises [Invalid_argument] if [x] is a scalar, if [x]'s last axis does not
-    have size [dim], or if [eps] is negative. *)
+    have size [dim], or if [eps] is negative or NaN. *)
 
 (** {1:structure Structure} *)
 

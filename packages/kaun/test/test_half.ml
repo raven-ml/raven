@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* Mixed precision through the kaun layers: per-layer [map (Nx.cast dt)], the
-   float32 islands (attention scores and normalization statistics), the
+   float32 islands (attention scores, normalizations rounded once), the
    astype-sandwich gradient, and a jitted float16 training loop with Vega's loss
    scaling.
 
@@ -116,8 +116,9 @@ let test_conv_apply () =
 
 (* ───── float32 islands ───── *)
 
-let test_layer_norm_island (type b) name (dt : (float, b) Nx.dtype) ~tol () =
-  ignore name;
+(* A narrow layer norm is the float32 one of the same values rounded once,
+   its affine transform included. *)
+let test_layer_norm_island (type b) (dt : (float, b) Nx.dtype) () =
   (* A large common offset: the statistics must be taken at float32 for the
      centered values to survive half precision. *)
   let x =
@@ -132,10 +133,9 @@ let test_layer_norm_island (type b) name (dt : (float, b) Nx.dtype) ~tol () =
   (* bfloat16 spaces by 0.5 near 100, so the offsets round on input; the
      reference is the float32 computation on the same rounded values. *)
   let xh = Nx.cast dt x in
-  let expected = Layer_norm.apply p (Nx.cast f32 xh) in
+  let expected = Nx.cast dt (Layer_norm.apply p (Nx.cast f32 xh)) in
   let actual = Layer_norm.apply (Nx.Ptree.cast (module Layer_norm) dt p) xh in
-  is_true ~msg:"all finite" (Nx.item [] (Nx.all (Nx.isfinite actual)));
-  close ~tol expected actual
+  close ~tol:0. expected actual
 
 let test_attention_score_island (type b) name (dt : (float, b) Nx.dtype) ~tol ()
     =
@@ -195,8 +195,9 @@ let test_attention_apply_half () =
   in
   close ~msg:"multi-head causal at float16" ~tol:0.01 expected actual
 
-let test_rms_norm_island (type b) name (dt : (float, b) Nx.dtype) ~tol () =
-  ignore name;
+(* A narrow RMS norm is the float32 one of the same values rounded once,
+   its scale included. *)
+let test_rms_norm_island (type b) (dt : (float, b) Nx.dtype) () =
   (* Large entries: their squares overflow float16 and starve bfloat16, so the
      mean square must be taken at float32. *)
   let x =
@@ -204,10 +205,9 @@ let test_rms_norm_island (type b) name (dt : (float, b) Nx.dtype) ~tol () =
   in
   let p = { Rms_norm.gamma = vec f32 [| 1.0; 2.0; 0.5; 1.0 |] } in
   let xh = Nx.cast dt x in
-  let expected = Rms_norm.apply p (Nx.cast f32 xh) in
+  let expected = Nx.cast dt (Rms_norm.apply p (Nx.cast f32 xh)) in
   let actual = Rms_norm.apply (Nx.Ptree.cast (module Rms_norm) dt p) xh in
-  is_true ~msg:"all finite" (Nx.item [] (Nx.all (Nx.isfinite actual)));
-  close ~tol expected actual
+  close ~tol:0. expected actual
 
 (* Cached attention with grouped keys and rotary positions at half precision:
    the float32 path is the reference, and a prompt fed in chunks still agrees
@@ -313,26 +313,32 @@ let test_batch_norm_island () =
         50.5;
       |]
   in
-  let p, stats = Batch_norm.init ~features:3 Nx.Host.on in
+  let _, stats = Batch_norm.init ~features:3 Nx.Host.on in
+  let p =
+    {
+      Batch_norm.gamma = vec f32 [| 1.5; -0.5; 2.0 |];
+      beta = vec f32 [| 0.25; 1.0; -1.0 |];
+    }
+  in
+  let half = Nx.Ptree.cast (module Batch_norm) f16 p in
+  let half_stats s = Nx.Ptree.cast (module Batch_norm.Stats) f16 s in
+  let back s = Nx.Ptree.cast (module Batch_norm.Stats) f32 s in
+  (* Training: the float32 normalization of the same values rounded once. *)
   let expected, estats = Batch_norm.apply p stats ~training:true x in
   let actual, astats =
-    Batch_norm.apply
-      (Nx.Ptree.cast (module Batch_norm) f16 p)
-      (Nx.Ptree.cast (module Batch_norm.Stats) f16 stats)
-      ~training:true (Nx.cast f16 x)
+    Batch_norm.apply half (half_stats stats) ~training:true (Nx.cast f16 x)
   in
-  is_true ~msg:"all finite" (Nx.item [] (Nx.all (Nx.isfinite actual)));
-  close ~msg:"training normalization" ~tol:0.02 expected actual;
+  close ~msg:"training normalization" ~tol:0. (Nx.cast f16 expected) actual;
   close ~msg:"running mean" ~tol:0.05 estats.Batch_norm.Stats.mean
     astats.Batch_norm.Stats.mean;
-  let expected_eval, _ = Batch_norm.apply p estats ~training:false x in
+  (* Eval: the float32 affine of the same statistics rounded once. *)
+  let s16 = half_stats estats in
+  let expected_eval, _ = Batch_norm.apply p (back s16) ~training:false x in
   let actual_eval, _ =
-    Batch_norm.apply
-      (Nx.Ptree.cast (module Batch_norm) f16 p)
-      (Nx.Ptree.cast (module Batch_norm.Stats) f16 estats)
-      ~training:false (Nx.cast f16 x)
+    Batch_norm.apply half s16 ~training:false (Nx.cast f16 x)
   in
-  close ~msg:"eval normalization" ~tol:0.05 expected_eval actual_eval
+  close ~msg:"eval normalization" ~tol:0. (Nx.cast f16 expected_eval)
+    actual_eval
 
 (* ───── The astype-sandwich gradient ───── *)
 
@@ -467,12 +473,10 @@ let tests =
       ];
     group "float32 islands"
       [
-        test "layer norm float16"
-          (test_layer_norm_island "float16" f16 ~tol:0.02);
-        test "layer norm bfloat16"
-          (test_layer_norm_island "bfloat16" bf16 ~tol:0.1);
-        test "rms norm float16" (test_rms_norm_island "float16" f16 ~tol:0.02);
-        test "rms norm bfloat16" (test_rms_norm_island "bfloat16" bf16 ~tol:0.1);
+        test "layer norm float16" (test_layer_norm_island f16);
+        test "layer norm bfloat16" (test_layer_norm_island bf16);
+        test "rms norm float16" (test_rms_norm_island f16);
+        test "rms norm bfloat16" (test_rms_norm_island bf16);
         test "cached attention float16"
           (test_cached_attention_half "float16" f16 ~tol:0.01);
         test "cached attention bfloat16"

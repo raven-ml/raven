@@ -3384,6 +3384,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- **Breaking:** `Layer_norm.apply` is `Nx.layer_norm` and `Rms_norm.apply` is
+  `Nx.rms_norm`, their affine applied before the one rounding to the input's
+  dtype. Results change at every dtype; a constant vector now maps to `beta`
+  whatever its float32 mean, and a NaN `eps` raises. `Batch_norm.apply`
+  trains through `Nx.layer_norm` over the batch's axes, and its eval mode
+  applies `gamma` and `beta` before its one rounding at a narrow dtype.
 - `Kaun.Cache_index.window`'s size is a tensor of the index: windows of any
   size share one compiled program, so gpt-oss's cold first call takes 0.87 s
   against 1.25 s on an RTX 5000 Ada. Full layers, `window max_int`, pay a

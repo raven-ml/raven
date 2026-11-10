@@ -44,6 +44,20 @@ let test_bn_affine_after_normalization () =
   check_arr ~eps:1e-2 ~msg:"variance is gamma^2" [| 4.0; 0.25 |]
     (Nx.var ~axes:[ 0 ] y)
 
+(* A constant feature maps to beta exactly in training, whatever its float32
+   mean: its batch's mean of 1000.1 is not exact. *)
+let test_bn_constant_feature () =
+  let params, stats = Batch_norm.init ~features:2 Nx.Host.on in
+  let params = { params with Batch_norm.beta = vec [| 0.5; -2.0 |] } in
+  let x =
+    t32 [| 768; 2 |]
+      (Array.init 1536 (fun i -> if i mod 2 = 0 then 1000.1 else 3.))
+  in
+  let y, _ = Batch_norm.apply params stats ~training:true x in
+  check_arr ~eps:0. ~msg:"beta"
+    (Array.init 1536 (fun i -> if i mod 2 = 0 then 0.5 else -2.0))
+    y
+
 let test_bn_running_stats_one_step () =
   let params, stats = Batch_norm.init ~features:2 Nx.Host.on in
   let x = Lazy.force bn_x in
@@ -613,6 +627,7 @@ let tests =
           test_bn_normalizes_batch;
         test "gamma and beta apply after normalization"
           test_bn_affine_after_normalization;
+        test "a constant feature maps to beta" test_bn_constant_feature;
         test "one step blends running stats with momentum"
           test_bn_running_stats_one_step;
         test "running stats converge to the batch statistics"

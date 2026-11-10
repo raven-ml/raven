@@ -22,26 +22,8 @@ let make ~dim dtype at =
 
 let init ~dim at = make ~dim Nx.float32 at
 
-(* Half and quarter precision floats are too coarse for the statistics: their
-   normalization runs in a float32 island. Wider dtypes keep their own
-   arithmetic, so the float32 and float64 graphs are exactly the pre-island
-   ones. *)
-let low_precision : type b. (float, b) Nx.dtype -> bool = function
-  | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn -> true
-  | Float32 | Float64 -> false
-
-(* [(x - mean x) / sqrt (var x + eps)] along the last axis. Biased variance of
-   the centered values: mean((x - mu)^2). Centering before squaring keeps the
-   computation stable for large offsets. *)
-let normalize ~eps x =
-  let axes = [ Array.length (Nx.shape x) - 1 ] in
-  let mu = Nx.mean ~axes ~keepdims:true x in
-  let xc = Nx.sub x mu in
-  let var = Nx.mean ~axes ~keepdims:true (Nx.mul xc xc) in
-  Nx.div xc (Nx.sqrt (Nx.add_s var eps))
-
 let apply ?(eps = 1e-5) { gamma; beta } x =
-  if eps < 0.0 then
+  if not (eps >= 0.0) then
     Format.kasprintf invalid_arg "Layer_norm.apply: eps must be >= 0, got %a"
       (Nx.Dtype.pp_value Nx.float64)
       eps;
@@ -55,9 +37,4 @@ let apply ?(eps = 1e-5) { gamma; beta } x =
        features"
       shape.(rank - 1)
       dim;
-  let dt = Nx.dtype x in
-  let normalized =
-    if low_precision dt then Nx.cast dt (normalize ~eps (Nx.cast Nx.float32 x))
-    else normalize ~eps x
-  in
-  Nx.add (Nx.mul normalized gamma) beta
+  Nx.layer_norm ~eps ~scale:gamma ~shift:beta x

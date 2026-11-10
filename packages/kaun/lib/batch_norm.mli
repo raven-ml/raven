@@ -125,12 +125,14 @@ val apply :
 
     With [training = false], [mean] and [var] are [stats] and [stats' == stats].
 
-    For narrow inputs (float16, bfloat16, float8, float4) the statistics and
-    normalization are computed in a float32 island: [x] (and, in eval mode,
-    [stats]) are upcast, normalized at float32, and the normalized values are
-    cast back to [x]'s dtype before the [gamma]/[beta] affine transform. Float32
-    and float64 inputs use their own dtype throughout, exactly as if the island
-    were absent.
+    In training, [y] is [Nx.layer_norm] over the other axes with [gamma] and
+    [beta] as its scale and shift, whose doc states its algorithm and error
+    bound, and the batch statistics are [Nx.mean] and [Nx.var] at [x]'s dtype.
+    In eval mode, a narrow [x] (float16, bfloat16, float8, float4) is
+    normalized and rescaled in a float32 island, [x], [stats], [gamma] and
+    [beta] upcast, and rounded once to [x]'s dtype; float32 and float64 inputs
+    use their own dtype throughout. So at every dtype the affine transform is
+    applied before the one rounding.
 
     [momentum] defaults to [0.99] (per training step; unused in eval mode) and
     [eps] to [1e-5].

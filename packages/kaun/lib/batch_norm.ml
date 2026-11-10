@@ -31,10 +31,9 @@ let init ~features at =
   ( { gamma = ones (); beta = zeros () },
     { Stats.mean = zeros (); var = ones () } )
 
-(* Half and quarter precision floats are too coarse for the statistics: their
-   normalization runs in a float32 island (see [apply]). Wider dtypes keep their
-   own arithmetic, so the float32 and float64 graphs are exactly the pre-island
-   ones. *)
+(* Half and quarter precision floats are too coarse for eval mode's affine
+   from running statistics: it runs in a float32 island and rounds once.
+   Wider dtypes keep their own arithmetic. *)
 let low_precision : type b. (float, b) Nx.dtype -> bool = function
   | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn -> true
   | Float32 | Float64 -> false
@@ -70,36 +69,29 @@ let apply ?(axis = -1) ?(momentum = 0.99) ?(eps = 1e-5) p (stats : _ Stats.t)
   pshape.(axis) <- features;
   let broadcast v = Nx.reshape pshape v in
   let axes = List.filter (fun i -> i <> axis) (List.init ndim Fun.id) in
-  (* Batch statistics and normalization, generically in the dtype of [xs] and
-     [stats]. Returns the normalized values and the batch statistics used
-     (broadcast shape) so training can fold them into the running averages. *)
-  let normalize xs stats_mean stats_var =
-    let mean, var =
-      if training then
-        (Nx.mean ~axes ~keepdims:true xs, Nx.var ~axes ~keepdims:true xs)
-      else (broadcast stats_mean, broadcast stats_var)
-    in
-    (Nx.mul (Nx.sub xs mean) (Nx.rsqrt (Nx.add_s var eps)), mean, var)
-  in
-  let dt = Nx.dtype x in
-  let normalized, mean, var =
-    if low_precision dt then begin
-      let normalized, mean, var =
-        normalize (Nx.cast Nx.float32 x)
-          (Nx.cast Nx.float32 stats.Stats.mean)
-          (Nx.cast Nx.float32 stats.var)
-      in
-      (Nx.cast dt normalized, Nx.cast dt mean, Nx.cast dt var)
-    end
-    else normalize x stats.Stats.mean stats.var
-  in
-  let y = Nx.add (Nx.mul normalized (broadcast p.gamma)) (broadcast p.beta) in
-  if not training then (y, stats)
-  else
+  let gamma = broadcast p.gamma and beta = broadcast p.beta in
+  if training then
+    let y = Nx.layer_norm ~axes ~eps ~scale:gamma ~shift:beta x in
     let update old batch =
       let batch = Nx.reshape [| features |] batch in
       Nx.add (Nx.mul_s old momentum) (Nx.mul_s batch (1.0 -. momentum))
     in
     ( y,
-      { Stats.mean = update stats.Stats.mean mean; var = update stats.var var }
-    )
+      {
+        Stats.mean = update stats.Stats.mean (Nx.mean ~axes x);
+        var = update stats.var (Nx.var ~axes x);
+      } )
+  else
+    (* [(x - mean) · rsqrt (var + eps) · gamma + beta] from the running
+       statistics. *)
+    let affine x mean var gamma beta =
+      let n = Nx.mul (Nx.sub x mean) (Nx.rsqrt (Nx.add_s var eps)) in
+      Nx.add (Nx.mul n gamma) beta
+    in
+    let mean = broadcast stats.Stats.mean and var = broadcast stats.var in
+    let dt = Nx.dtype x in
+    if not (low_precision dt) then (affine x mean var gamma beta, stats)
+    else
+      let up = Nx.cast Nx.float32 in
+      ( Nx.cast dt (affine (up x) (up mean) (up var) (up gamma) (up beta)),
+        stats )

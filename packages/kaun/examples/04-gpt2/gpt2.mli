@@ -53,8 +53,8 @@ module Params : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) params
     [Nx.Ptree.cast (module Params) dt p] converts precision: for half precision
     inference, cast float32 parameters once; for mixed-precision training, cast
     inside the loss function so the float32 parameters receive float32
-    gradients. The kaun layers keep their attention-score and layer-norm
-    statistics in float32 islands whatever [dt]. *)
+    gradients. The kaun layers compute their attention scores and layer norms
+    at float32 or wider whatever [dt]. *)
 
 val make : key:'d Nx.Rng.key -> config -> 'd t
 (** [make ~key cfg] is a zero-initialized model where [key] lies, the [~like]

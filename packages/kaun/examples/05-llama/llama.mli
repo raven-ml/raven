@@ -59,7 +59,8 @@ module Params : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) params
     the transformations, the optimisers and {!Nx_io.Archive.of_value} take.
     Leaves are at [tok.table], [blocks.0.attn.q.w], [norm.gamma], [head.w], ...,
     their names in a saved file. [Nx.Ptree.cast (module Params) dt p] converts
-    precision; the layers keep their float32 islands whatever [dt]. *)
+    precision; the layers compute their attention scores and norms at
+    float32 or wider whatever [dt]. *)
 
 val make : key:'d Nx.Rng.key -> 'e config -> 'd t
 (** [make ~key cfg] is a zero-initialized float32 model where [key] lies: the

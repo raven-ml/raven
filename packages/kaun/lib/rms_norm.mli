@@ -48,12 +48,13 @@ val apply :
     [eps] keeps the division finite for a zero vector and defaults to [1e-6].
     The result has [x]'s shape. Differentiable through Rune.
 
-    For narrow inputs (float16, bfloat16, float8, float4) the mean square and
-    the division run in a float32 island and the normalized values are cast back
-    to [x]'s dtype before the [gamma] scale, as in {!Layer_norm.apply}.
+    It is [Nx.rms_norm ~eps ~scale:gamma x], whose doc states its algorithm and
+    error bound: the [gamma] scale is applied before the one rounding to [x]'s
+    dtype, so a narrow [x] (float16, bfloat16, float8, float4) is normalized and
+    rescaled at float32 and rounded once.
 
     Raises [Invalid_argument] if [x] is a scalar, if [x]'s last axis does not
-    have size [dim], or if [eps] is negative. *)
+    have size [dim], or if [eps] is negative or NaN. *)
 
 (** {1:structure Structure} *)
 

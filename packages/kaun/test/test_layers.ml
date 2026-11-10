@@ -255,10 +255,21 @@ let test_layer_norm_standardizes () =
     row_vars
 
 let test_layer_norm_constant_input () =
-  let p = Layer_norm.init ~dim:4 Nx.Host.on in
-  let x = Nx.full Nx.float32 [| 2; 4 |] 5.0 in
-  values_are ~msg:"constant vectors map to beta" ~tol:0.0 (Array.make 8 0.0)
-    (Layer_norm.apply p x)
+  (* 1000.1 has no exact float32 mean over 768 terms: beta all the same. *)
+  let dim = 768 in
+  let beta = Array.init dim (fun i -> Float.of_int (i mod 7) -. 3.) in
+  let p =
+    {
+      Layer_norm.gamma = Nx.full Nx.float32 [| dim |] 1.5;
+      beta = Nx.create Nx.float32 [| dim |] beta;
+    }
+  in
+  List.iter
+    (fun v ->
+      let x = Nx.full Nx.float32 [| 2; dim |] v in
+      values_are ~msg:"constant vectors map to beta" ~tol:0.0
+        (Array.append beta beta) (Layer_norm.apply p x))
+    [ 5.0; 1000.1; -0.3 ]
 
 let test_layer_norm_eps () =
   (* With eps = 3, the row [0; 2] has variance 1 and normalizes by sqrt (1 + 3)
@@ -292,6 +303,8 @@ let test_layer_norm_rejects_bad_input () =
       Layer_norm.apply p (Nx.zeros Nx.float32 [| 2; 3 |]));
   raises (Invalid_argument "Layer_norm.apply: eps must be >= 0, got -1")
     (fun () -> Layer_norm.apply ~eps:(-1.0) p (Nx.zeros Nx.float32 [| 2; 4 |]));
+  raises (Invalid_argument "Layer_norm.apply: eps must be >= 0, got nan")
+    (fun () -> Layer_norm.apply ~eps:nan p (Nx.zeros Nx.float32 [| 2; 4 |]));
   raises (Invalid_argument "Layer_norm.make: dim must be positive, got 0")
     (fun () -> Layer_norm.make ~dim:0 Nx.float32 Nx.Host.on)
 

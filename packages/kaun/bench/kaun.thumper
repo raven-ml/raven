@@ -8,7 +8,7 @@
 
 Conv/conv-train-step	alloc_words	exact	39267
 Forward/apply	alloc_words	exact	1493
-LayerNorm/layer-norm-8x512x512	alloc_words	exact	1213
+LayerNorm/layer-norm-8x512x512	alloc_words	exact	3260
 Linear/linear-fwd	alloc_words	exact	261
 Linear/linear-fwd-bwd	alloc_words	exact	3389
 TrainStep/sgd-train-step	alloc_words	exact	19639
