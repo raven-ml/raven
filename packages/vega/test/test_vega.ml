@@ -280,24 +280,35 @@ let test_adam_step_is_pure () =
 
 (* AdamW *)
 
+(* Zero gradients isolate the decay: p_k = p_0 (1 - lr wd)^k. A coupled (L2)
+   decay would instead be distorted by the adaptive scaling. [wd = 0.1] is
+   not a float32 value, so the tolerance, far below float32's gap at [0.1],
+   tells a float64 decay from [Vega.rate]'s float32 one. *)
 let test_adamw_decays_weights () =
-  (* Zero gradients isolate the decay: p_k = p_0 (1 - lr wd)^k. A coupled (L2)
-     decay would instead be distorted by the adaptive scaling. *)
-  let lr = 0.1 and wd = 0.5 in
+  let lr = 0.1 and wd = 0.1 in
   let p0 = [| 2.0; -4.0 |] in
-  let params = ref (vec p0) in
-  let st = ref (Vega.adamw_init Vec.ptree !params) in
-  for _ = 1 to 3 do
-    let params', st' =
-      Vega.adamw_step Vec.ptree ~lr:(rate64 lr) ~weight_decay:(rate64 wd) !st
-        ~params:!params
-        ~grads:(vec [| 0.0; 0.0 |])
-    in
-    params := params';
-    st := st'
-  done;
-  let c = (1.0 -. (lr *. wd)) ** 3.0 in
-  check_vec (Array.map (fun p -> p *. c) p0) !params
+  let run weight_decay =
+    let params = ref (vec p0) in
+    let st = ref (Vega.adamw_init Vec.ptree !params) in
+    for _ = 1 to 3 do
+      let params', st' =
+        Vega.adamw_step Vec.ptree ~lr:(rate64 lr) ~weight_decay !st
+          ~params:!params
+          ~grads:(vec [| 0.0; 0.0 |])
+      in
+      params := params';
+      st := st'
+    done;
+    !params
+  in
+  let decayed wd =
+    let c = (1.0 -. (lr *. wd)) ** 3.0 in
+    Array.map (fun p -> p *. c) p0
+  in
+  check_vec ~eps:1e-14 ~msg:"a float64 decay" (decayed wd) (run (rate64 wd));
+  check_vec ~eps:1e-14 ~msg:"a float32 constant"
+    (decayed (Int32.float_of_bits (Int32.bits_of_float wd)))
+    (run (Vega.rate wd))
 
 let test_adamw_converges () =
   let params = Lazy.force bowl_start in
@@ -1480,7 +1491,8 @@ let by_path s x =
 let leaves_equal = list (Windtrap.pair string (array float_exact))
 
 (* Each step that decays, from its initial state at the counter [c], as the
-   float leaves of the parameters and the state it returns. *)
+   float leaves of the parameters and the state it returns. [weight_decay] is
+   [None] for the step's default. *)
 let decaying ?decays () =
   let p = Mixed.ptree and lr = Vega.rate 0.01 in
   let floats_of state x = by_path (Nx.Ptree.pair p (state p)) x in
@@ -1489,23 +1501,23 @@ let decaying ?decays () =
       fun weight_decay c x g ->
         let st = { (Vega.lars_init p x) with step = at_counter c } in
         floats_of Vega.sgd_ptree
-          (Vega.lars_step p ~lr ~weight_decay ?decays st ~params:x ~grads:g) );
+          (Vega.lars_step p ~lr ?weight_decay ?decays st ~params:x ~grads:g) );
     ( "adamw",
       fun weight_decay c x g ->
         let st = { (Vega.adamw_init p x) with step = at_counter c } in
         floats_of Vega.adam_ptree
-          (Vega.adamw_step p ~lr ~weight_decay ?decays st ~params:x ~grads:g)
+          (Vega.adamw_step p ~lr ?weight_decay ?decays st ~params:x ~grads:g)
     );
     ( "lamb",
       fun weight_decay c x g ->
         let st = { (Vega.lamb_init p x) with step = at_counter c } in
         floats_of Vega.adam_ptree
-          (Vega.lamb_step p ~lr ~weight_decay ?decays st ~params:x ~grads:g) );
+          (Vega.lamb_step p ~lr ?weight_decay ?decays st ~params:x ~grads:g) );
     ( "adan",
       fun weight_decay c x g ->
         let st = { (Vega.adan_init p x) with step = at_counter c } in
         floats_of Vega.adan_ptree
-          (Vega.adan_step p ~lr ~weight_decay ?decays st ~params:x ~grads:g) );
+          (Vega.adan_step p ~lr ?weight_decay ?decays st ~params:x ~grads:g) );
   ]
 
 (* A decay that rises over training, from 0.04 to 0.4 in 1000 steps. *)
@@ -1526,9 +1538,35 @@ let scheduled_decay =
       let constant = Vega.rate (Vega.Schedule.eval rising c) in
       List.iter
         (fun (name, step) ->
-          equal ~msg:name leaves_equal (step constant c x g)
-            (step rising c x g))
+          equal ~msg:name leaves_equal
+            (step (Some constant) c x g)
+            (step (Some rising) c x g))
         (decaying ()))
+
+(* Each step decays by the rate it is passed: at the counter 500, the rising
+   schedule's [0.22] moves the leaves apart from its start, [0.04], and a
+   passed [0.3] apart from the default. *)
+let passed_decay =
+  let x =
+    let xs = [| 1.5; -2.0; 0.75 |] in
+    let v dt = Nx.create dt [| 3 |] xs in
+    let z = Array.map (fun re -> { Complex.re; im = -.re }) xs in
+    {
+      Mixed.h = v Nx.bfloat16;
+      s = v Nx.float32;
+      d = v Nx.float64;
+      z = Nx.create Nx.complex64 [| 3 |] z;
+    }
+  in
+  let g = Nx.Ptree.map Mixed.ptree (fun _ a -> Nx.add a a) x in
+  cases "each step decays by the rate it is passed" ~id:fst (decaying ())
+    (fun (name, step) ->
+      not_equal ~msg:(name ^ ": a schedule against its start") leaves_equal
+        (step (Some (Vega.rate 0.04)) 500 x g)
+        (step (Some rising) 500 x g);
+      not_equal ~msg:(name ^ ": a passed decay against the default")
+        leaves_equal (step None 500 x g)
+        (step (Some (Vega.rate 0.3)) 500 x g))
 
 let mixed_step =
   let open Gen in
@@ -1560,8 +1598,8 @@ let rejected_ignores_the_decay =
       List.iter
         (fun (name, step) ->
           equal ~msg:name leaves_equal
-            (step (Vega.rate 0.3) c x g)
-            (step rising c x g))
+            (step (Some (Vega.rate 0.3)) c x g)
+            (step (Some rising) c x g))
         (decaying ~decays:rejects ()))
 
 (* Under a rule that picks some of the leaves by name, each leaf of the
@@ -1585,11 +1623,16 @@ let mixed_rule =
           (fun ((path, _) as a) b -> if chosen path then a else b)
           all none
       in
+      let bits =
+        List.map (fun (p, a) -> (p, Array.map Int64.bits_of_float a))
+      in
       List.iter2
         (fun (name, mixed) ((_, all), (_, none)) ->
-          equal ~msg:name leaves_equal
-            (expected (all rising c x g) (none rising c x g))
-            (mixed rising c x g))
+          let all = all (Some rising) c x g
+          and none = none (Some rising) c x g in
+          cover (name ^ ": the decay moves a leaf") (bits all <> bits none);
+          equal ~msg:name leaves_equal (expected all none)
+            (mixed (Some rising) c x g))
         (decaying ~decays ())
         (List.combine
            (decaying ~decays:(fun _ _ -> true) ())
@@ -1756,6 +1799,7 @@ let tests =
     group "weight decay"
       [
         scheduled_decay;
+        passed_decay;
         rejected_is_adam;
         rejected_ignores_the_decay;
         mixed_rule;
