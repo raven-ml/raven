@@ -133,6 +133,18 @@ val gpu : ?measure:Rig_amd.measure -> int -> Rig_amd.t Rig_edge.opener
     interrupt, which that one takes, and wait out rig's still interval,
     200 ms, before it looks again.
 
+    {b Child processes.} On Linux before 6.17, each child that the process
+    starts after its first open of an AMD GPU holds up the process's work on
+    its AMD GPUs for about 100 ms. The child inherits the descriptor of the
+    GPU's render node, which the process keeps open until it exits. However
+    the child is started, it closes that copy at its exec, or at its exit if
+    it does not exec, and the close makes the kernel driver take all the
+    process's queues off the GPUs for that time. A program avoids the stall
+    by starting its children before its first open of a GPU through this
+    path, or by running on Linux 6.17 or later, or on a 6.16 stable release
+    that carries the kernel driver's fix. The stable releases of 6.12 lack
+    it.
+
     {b Faults.} The kernel driver reports a fault of the GPU's work, a page
     fault or a hardware exception such as a reset, with its address or
     cause, and {!Rig_amd.val-sleep} raises it. The kernel driver bounds no

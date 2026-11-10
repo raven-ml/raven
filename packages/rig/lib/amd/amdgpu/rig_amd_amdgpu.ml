@@ -282,7 +282,17 @@ let acquired : gpu Ids.t ref = ref Ids.empty
    and through another with EBUSY (kfd_chardev.c, kfd_ioctl_acquire_vm:
    [pdd->drm_file == drm_file ? 0 : -EBUSY]), so the file stays open for the
    process once ACQUIRE_VM answered, and an open after one that failed past
-   it takes the file and makes no second ACQUIRE_VM. *)
+   it takes the file and makes no second ACQUIRE_VM.
+
+   Every close of a copy of that file, such as a child's at exec or exit,
+   runs the render node's flush (amdgpu_drv.c, amdgpu_flush), whose
+   amdgpu_vm_wait_idle waits on the fences of the VM root, KFD's eviction
+   fence among them (amdgpu_amdkfd_gpuvm.c, init_kfd_vm). The wait enables
+   that fence's signaling, which evicts the process's queues and restores
+   them after PROCESS_RESTORE_TIME_MS, 100 ms (kfd_process.c,
+   evict_process_worker). Mainline 1f02f2044bda ("drm/amdgpu: Avoid extra
+   evict-restore process") makes the flush wait on the VM's scheduler
+   entities instead; 6.12.y reverted it. *)
 let vms : int Ids.t ref = ref Ids.empty
 
 (* The process's event page: its handle, host address and GPU, offered to KFD

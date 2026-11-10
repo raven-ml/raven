@@ -35,12 +35,6 @@ raven / llama.cpp b12048 Vulkan:
   traced launch test runs only over PCI. The paths left are PCI and an
   amdgpu DRM submission, which holds its VMID and memory for the job
   (_plans/todo-campaign/sqtt/)
-- spawning any process stalls a rig AMD program's GPU work about 100 ms on
-  Linux before 6.16 (nonnormal, 6.12): a child's close of its copy of the
-  render node, at exec or exit, runs amdgpu_flush, which waits on KFD's
-  eviction fence and so evicts the process for 100 ms. rig could hold no
-  descriptor on the acquired render node, mapping through dma-bufs
-  (_plans/todo-campaign/spawn-stall/findings.md)
 
 ## talon, hugin, brot, munin, quill
 
