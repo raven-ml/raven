@@ -476,6 +476,13 @@ steady clocks and shader engines, once per process under a lock, so that two
 threads cannot both create a context and ask
 (`lib/amd/amdgpu/rig_amd_amdgpu.ml`, `stable_power`).
 
+A context that asks for the level already set gets success and holds
+nothing, and a write to `power_dpm_force_performance_level` leaves its level
+held by no context. A `profile_standard` written there would let every
+process's ask succeed, none of them exclusive. The driver therefore reads the
+level first (`AMDGPU_CTX_OP_GET_STABLE_PSTATE`) and refuses a profile it did
+not set.
+
 ### A GFX12 compute queue's 64-bit wait compares all 64 bits
 
 `WAIT_REG_MEM64`, which the kernel's headers name but do not lay out (PAL's

@@ -153,8 +153,9 @@ val gpu : ?measure:Rig_amd.measure -> int -> Rig_amd.t Rig_edge.opener
     made no progress for that long.
 
     {b Tracing.} A device's first thread trace takes the GPU's stable power
-    state ({!section-stable}), and fails while another process holds it.
-    On a GFX 9 GPU, traces take no power state.
+    state ({!section-stable}), and fails while another process holds it or
+    a level no process holds keeps it from being taken. On a GFX 9 GPU,
+    traces take no power state.
 
     {2:stable The stable power state}
 
@@ -162,7 +163,8 @@ val gpu : ?measure:Rig_amd.measure -> int -> Rig_amd.t Rig_edge.opener
     the GPU that measures counters takes it at open, and a traced one at
     its first trace. The process holds it while any device of the GPU that
     took it is open, and gives it back when the last of them stops, which
-    restores the level the GPU had before.
+    sets the GPU's level to [auto]: a level the GPU had before, such as
+    [manual] or [high], is not restored.
 
     One process holds the state at a time: another process's open or trace
     that needs it fails meanwhile. A process that exits without stopping
@@ -170,7 +172,17 @@ val gpu : ?measure:Rig_amd.measure -> int -> Rig_amd.t Rig_edge.opener
     driver frees what the process held, so an open just after may still
     fail. A kernel driver older than its fix of the state's handling may
     keep it held by a process that exited, which writing [auto] to the
-    GPU's [power_dpm_force_performance_level], as root, frees. *)
+    GPU's [power_dpm_force_performance_level], as root, frees.
+
+    The kernel driver gives a process no hold of a level already set, so
+    the state is taken only from a level outside the profiles, such as
+    [auto]. A write to [power_dpm_force_performance_level] leaves its level
+    held by no process, and takes it from a process that held it. That
+    process is not told: until the last of its devices that took the state
+    stops, its opens and traces succeed at the level written. Any other
+    open or trace that needs the state fails while that level is a profile,
+    such as [profile_standard], naming the level, until [auto] is written
+    there, as root. *)
 
 (**/**)
 

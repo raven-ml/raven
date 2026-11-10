@@ -375,24 +375,52 @@ value caml_rig_amd_amdgpu_device_info(value v_drm) {
   CAMLreturn(t);
 }
 
-/* Holds the GPU in its stable power state with a new context on the render
-   node [v_drm], until the context is freed: its id. */
-value caml_rig_amd_amdgpu_stable_pstate(value v_drm) {
-  int drm = Int_val(v_drm);
+/* A new context on the render node [v_drm]: its id. */
+value caml_rig_amd_amdgpu_new_ctx(value v_drm) {
   union drm_amdgpu_ctx c = {.in = {.op = AMDGPU_CTX_OP_ALLOC_CTX}};
-  check(call(drm, DRM_IOCTL_AMDGPU_CTX, &c));
-  uint32_t id = c.out.alloc.ctx_id;
-  c = (union drm_amdgpu_ctx){.in = {.op = AMDGPU_CTX_OP_SET_STABLE_PSTATE,
-                                    .flags = AMDGPU_CTX_STABLE_PSTATE_STANDARD,
-                                    .ctx_id = id}};
-  int e = call(drm, DRM_IOCTL_AMDGPU_CTX, &c);
-  if (e < 0) {
-    c = (union drm_amdgpu_ctx){
-        .in = {.op = AMDGPU_CTX_OP_FREE_CTX, .ctx_id = id}};
-    call(drm, DRM_IOCTL_AMDGPU_CTX, &c);
-  }
-  check(e);
-  return Val_long(id);
+  check(call(Int_val(v_drm), DRM_IOCTL_AMDGPU_CTX, &c));
+  return Val_long(c.out.alloc.ctx_id);
+}
+
+/* The profiles, in the order of the constructors of the OCaml type
+   [profile]. */
+static const uint32_t profiles[] = {
+    AMDGPU_CTX_STABLE_PSTATE_STANDARD, AMDGPU_CTX_STABLE_PSTATE_MIN_SCLK,
+    AMDGPU_CTX_STABLE_PSTATE_MIN_MCLK, AMDGPU_CTX_STABLE_PSTATE_PEAK};
+
+/* The GPU's profile, as the context [v_id] of the render node [v_drm] reads
+   it: [Some p], or [None] for any level outside the profiles. The kernel
+   driver answers NONE or one of [profiles] (amdgpu_ctx.c,
+   amdgpu_ctx_get_stable_pstate); any other answer raises EPROTO. */
+value caml_rig_amd_amdgpu_get_pstate(value v_drm, value v_id) {
+  union drm_amdgpu_ctx c = {.in = {.op = AMDGPU_CTX_OP_GET_STABLE_PSTATE,
+                                   .ctx_id = (uint32_t)Long_val(v_id)}};
+  check(call(Int_val(v_drm), DRM_IOCTL_AMDGPU_CTX, &c));
+  uint32_t level = c.out.pstate.flags;
+  if (level == AMDGPU_CTX_STABLE_PSTATE_NONE) return Val_none;
+  for (size_t i = 0; i < sizeof profiles / sizeof profiles[0]; i++)
+    if (level == profiles[i]) return caml_alloc_some(Val_int(i));
+  caml_unix_error(EPROTO, "ioctl", Nothing);
+}
+
+/* Asks the context [v_id] of the render node [v_drm] for the level
+   [level]. */
+static void ask(value v_drm, value v_id, uint32_t level) {
+  union drm_amdgpu_ctx c = {.in = {.op = AMDGPU_CTX_OP_SET_STABLE_PSTATE,
+                                   .flags = level,
+                                   .ctx_id = (uint32_t)Long_val(v_id)}};
+  check(call(Int_val(v_drm), DRM_IOCTL_AMDGPU_CTX, &c));
+}
+
+value caml_rig_amd_amdgpu_set_standard(value v_drm, value v_id) {
+  ask(v_drm, v_id, AMDGPU_CTX_STABLE_PSTATE_STANDARD);
+  return Val_unit;
+}
+
+value caml_rig_amd_amdgpu_set_pstate(value v_drm, value v_id,
+                                     value v_profile) {
+  ask(v_drm, v_id, profiles[Int_val(v_profile)]);
+  return Val_unit;
 }
 
 /* Frees the context [v_id] of the render node [v_drm]. The kernel driver
@@ -526,7 +554,10 @@ NONE(wait, value a UNUSED, value b UNUSED, value c UNUSED, value d UNUSED)
 NONE(sleep, value a UNUSED, value b UNUSED, value c UNUSED, value d UNUSED,
      value e UNUSED)
 NONE(device_info, value a UNUSED)
-NONE(stable_pstate, value a UNUSED)
+NONE(new_ctx, value a UNUSED)
+NONE(get_pstate, value a UNUSED, value b UNUSED)
+NONE(set_standard, value a UNUSED, value b UNUSED)
+NONE(set_pstate, value a UNUSED, value b UNUSED, value c UNUSED)
 NONE(free_ctx, value a UNUSED, value b UNUSED)
 NONE(reserve, value a UNUSED)
 NONE(map, value a UNUSED, value b UNUSED, value c UNUSED, value d UNUSED)

@@ -2583,10 +2583,31 @@ let level () =
         (try Some (In_channel.with_open_text file In_channel.input_all)
          with Sys_error _ -> None)
 
+let contains ~sub s =
+  let n = String.length sub in
+  let rec go i =
+    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
+  in
+  go 0
+
 (* What a trace answers while another process holds the GPU's stable power
-   state ([Rig_amd_amdgpu]'s tracing), which the machine, not the device,
-   decides. *)
+   state, and while a profile no process holds keeps the state from being
+   taken ([Rig_amd_amdgpu]'s stable power state). The machine, not the
+   device, decides both. rig reads the level it names in the second, so the
+   test skips on it only while amdgpu's file reads a profile too, and fails
+   otherwise: a misread level would skip every test that counts. *)
 let held = "another process holds the GPU's stable power state"
+let unheld = "and no process holds it"
+
+let machine_decides why =
+  if contains ~sub:held why then true
+  else if not (contains ~sub:unheld why) then false
+  else
+    match level () with
+    | Some l when String.starts_with ~prefix:"profile_" l -> true
+    | l ->
+        failf "%s; power_dpm_force_performance_level reads %s" why
+          (Option.value l ~default:"nothing")
 
 let traces =
   group ~timeout:60. "traces"
@@ -2610,8 +2631,7 @@ let traces =
                 equal (option string) ~msg:"the GPU's clocks"
                   (Some "profile_standard") (level ())
           | Error why, _ | _, Error why ->
-              if String.starts_with ~prefix:held why then skip ~reason:why ()
-              else fail why);
+              if machine_decides why then skip ~reason:why () else fail why);
     ]
 
 (* Counters and traces of a launch, as words around it *)
@@ -2638,9 +2658,7 @@ let gfx1201_only (t : gpu) =
 let steady (t : gpu) =
   match (A.capability t.g).trace () with
   | Ok tr -> tr
-  | Error why ->
-      if String.starts_with ~prefix:held why then skip ~reason:why ()
-      else fail why
+  | Error why -> if machine_decides why then skip ~reason:why () else fail why
 
 (* The VMID of this process on [t]'s GPU, bits 27 to 24 of the HW_ID2 that a
    wave of [hw_id2] stores. *)
@@ -2990,13 +3008,6 @@ let counters =
 module Prof = Rig.Profile
 module G = Rig_program
 
-let contains ~sub s =
-  let n = String.length sub in
-  let rec go i =
-    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
-  in
-  go 0
-
 (* GPU 0 through amdgpu, if it is a gfx1201: the measured suites need one. *)
 let measured_gpu () =
   if S.driverless () || S.gpus () = 0 then
@@ -3025,13 +3036,13 @@ let open_measured counters =
   in
   Result.map (fun d -> { d; g = Option.get !raw }) (Rig.open_ { o with make })
 
-(* [f] of GPU 0 opened to measure [counters], skipped while another process
-   holds the GPU's stable power state. *)
+(* [f] of GPU 0 opened to measure [counters], skipped while the machine keeps
+   the GPU's stable power state from the process. *)
 let measuring ?(counters = measured) f =
   ignore (measured_gpu ());
   match open_measured counters with
   | Ok t -> Fun.protect ~finally:(fun () -> Rig.close t.d) (fun () -> f t)
-  | Error why when contains ~sub:held why -> skip ~reason:why ()
+  | Error why when machine_decides why -> skip ~reason:why ()
   | Error why -> fail why
 
 (* Submits a launch of [valu] for each [(groups, k)], in one submission. *)
@@ -3462,14 +3473,14 @@ let await child =
 (* 10. The stable power state, given back as the last device that holds it
    stops: a measuring device's or a traced one's stop, an open just after a
    stop in this process, and one just after a child process stopped its
-   device and exited. Giving it back restores the level read before. *)
+   device and exited. Giving it back sets the level to auto, where amdgpu's
+   file can be read. *)
 let reopened () =
   ignore (measured_gpu ());
   let before = level () in
   let level_is msg =
-    match before with
-    | Some l -> equal (option string) ~msg (Some l) (level ())
-    | None -> ()
+    if Option.is_some before then
+      equal (option string) ~msg (Some "auto") (level ())
   in
   measuring (fun _ -> ());
   level_is "the level once the measuring device stopped";
@@ -3481,7 +3492,7 @@ let reopened () =
         | Ok _ -> g
         | Error why ->
             A.stop g ~fault:None;
-            if contains ~sub:held why then skip ~reason:why () else fail why)
+            if machine_decides why then skip ~reason:why () else fail why)
   in
   let first = traced () in
   let stopped = ref false in

@@ -186,10 +186,26 @@ external device_info : int -> int * int array * int * int
 let cache_bytes ~l2_kib ~mall =
   if l2_kib > 0 then Some ((l2_kib * 1024) + mall) else None
 
-(* [stable_pstate drm] holds the GPU in its stable power state with a new
-   context of [drm], until [free_ctx drm] of its id, which it answers, or
-   the process ends. *)
-external stable_pstate : int -> int = "caml_rig_amd_amdgpu_stable_pstate"
+(* The profiles among the GPU's power levels, which a context of its render
+   node reads as AMDGPU_CTX_STABLE_PSTATE_ values (amdgpu_drm.h). Only the
+   stubs build one. *)
+type profile = private Standard | Min_sclk | Min_mclk | Peak
+
+(* [new_ctx drm] is a new context of [drm], until [free_ctx drm] of its id or
+   the process's end. Through the context [id]: [get_pstate drm id] is the
+   GPU's profile, or [None] for any other level, auto among them
+   (amdgpu_ctx.c, amdgpu_ctx_get_stable_pstate); [set_standard drm id] asks
+   for profile_standard, and [set_pstate drm id p] for [p]. *)
+external new_ctx : int -> int = "caml_rig_amd_amdgpu_new_ctx"
+
+external get_pstate : int -> int -> profile option
+  = "caml_rig_amd_amdgpu_get_pstate"
+
+external set_standard : int -> int -> unit
+  = "caml_rig_amd_amdgpu_set_standard"
+
+external set_pstate : int -> int -> profile -> unit
+  = "caml_rig_amd_amdgpu_set_pstate"
 
 external free_ctx : int -> int -> unit = "caml_rig_amd_amdgpu_free_ctx"
 
@@ -882,10 +898,11 @@ type device = {
 }
 
 (* [d]'s hold of the stable power state ended, under [opening]. The last
-   hold's end frees the context that holds the state, which restores the
-   level at once; the render node stays open for the process, and KFD closes
-   it only as it releases the process, some time after the process ends. A
-   free the kernel driver refuses leaves the state held until then. *)
+   hold's end frees the context that holds the state, which sets the level
+   back to auto at once (the stable power state); the render node stays
+   open for the process, and KFD closes it only as it releases the process,
+   some time after the process ends. A free the kernel driver refuses leaves
+   the state held until then. *)
 let let_go d =
   let g = d.gpu in
   if d.holds_stable then begin
@@ -1084,17 +1101,77 @@ let poll_faults fd g =
         | None | (exception Unix.Unix_error _) -> ())
     g.live
 
-(* The kernel driver answers EBUSY while a context other than the caller's
-   owns the state (amdgpu_ctx.c, amdgpu_ctx_set_stable_pstate). A process
-   that ends holding it holds it until KFD releases the process, which
-   closes the render node from a work queue (kfd_process.c,
+(* The stable power state
+
+   A context that asks for a level holds it, and records the level it found
+   as a profile, or as NONE for any other level (amdgpu_ctx.c,
+   amdgpu_ctx_get_stable_pstate). Its free asks for that record again, NONE
+   being auto, so the GPU comes back from manual, low, high or
+   perf_determinism at auto. The kernel driver answers EBUSY while another
+   context holds the level, and asking for the level already set changes
+   nothing and holds nothing (amdgpu_ctx.c, __amdgpu_ctx_set_stable_pstate).
+   A write to power_dpm_force_performance_level leaves its level held by no
+   context (amdgpu_pm.c, amdgpu_set_power_dpm_force_performance_level).
+
+   So the path asks for profile_standard only from a level outside the
+   profiles. At a profile_standard no context holds, the ask would succeed
+   and hold nothing: another process could change the level or count beside
+   this one, and a runtime resume of the GPU keeps the level but restores
+   only the perfmon clock behind it (amdgpu_drv.c,
+   amdgpu_restore_umd_profile_pstate_after_runpm). At another profile, the
+   ask would change a level the file set. From a profile, the path asks for
+   that same profile, which changes nothing, to learn whether a context
+   holds it, and refuses either way. A write to the file between the read
+   and the ask still passes as held.
+
+   A process that ends holding the state holds it until KFD releases the
+   process, which closes the render node from a work queue (kfd_process.c,
    kfd_process_wq_release), shortly after the end. Before Linux
    1b5e413713c0 ("drm/amdgpu: Fix context pstate override handling"), a
    context that ends after the level changed forces the level saved when it
    was made, takes ownership if that is a profile, and is freed, so the state
-   stays owned until a write to power_dpm_force_performance_level, which
-   clears the owner (amdgpu_pm.c,
-   amdgpu_set_power_dpm_force_performance_level). *)
+   stays held until a write to the file. *)
+
+let held =
+  "another process holds the GPU's stable power state, or one that exited \
+   holds it still: the kernel driver releases it shortly after the exit, or, \
+   before its fix, keeps it until auto is written to the GPU's \
+   power_dpm_force_performance_level, as root"
+
+let refused e =
+  strf "the amdgpu driver refused the GPU's stable power state: %s" (message e)
+
+(* The profile's name, as power_dpm_force_performance_level shows it
+   (amdgpu_pm.c, amdgpu_get_power_dpm_force_performance_level). *)
+let profile_name = function
+  | Standard -> "profile_standard"
+  | Min_sclk -> "profile_min_sclk"
+  | Min_mclk -> "profile_min_mclk"
+  | Peak -> "profile_peak"
+
+let unheld p =
+  strf
+    "the GPU's power level is %s and no process holds it, as a write to the \
+     GPU's power_dpm_force_performance_level leaves it: writing auto to that \
+     file, as root, lets a process hold the stable power state"
+    (profile_name p)
+
+(* [asked f] is the answer to the ask [f ()]. *)
+let asked f =
+  match f () with
+  | () -> Ok ()
+  | exception Unix.Unix_error (EBUSY, _, _) -> Error held
+  | exception Unix.Unix_error (e, _, _) -> Error (refused e)
+
+(* [take drm ctx] makes [ctx] hold the stable power state. *)
+let take drm ctx =
+  match get_pstate drm ctx with
+  | exception Unix.Unix_error (e, _, _) -> Error (refused e)
+  | None -> asked (fun () -> set_standard drm ctx)
+  | Some p ->
+      let* () = asked (fun () -> set_pstate drm ctx p) in
+      Error (unheld p)
+
 let stable_power d () =
   Amd.Lock.protect opening @@ fun () ->
   let g = d.gpu in
@@ -1109,20 +1186,19 @@ let stable_power d () =
   | 9, _, _ -> Ok ()
   | _ when Option.is_some g.stable -> hold ()
   | _ -> (
-      match stable_pstate g.drm with
-      | ctx ->
-          g.stable <- Some ctx;
-          hold ()
-      | exception Unix.Unix_error (EBUSY, _, _) ->
-          Error
-            "another process holds the GPU's stable power state, or one that \
-             exited holds it still: the kernel driver releases it shortly \
-             after the exit, or, before its fix, keeps it until auto is \
-             written to the GPU's power_dpm_force_performance_level, as root"
-      | exception Unix.Unix_error (e, _, _) ->
-          Error
-            (strf "the amdgpu driver refused the GPU's stable power state: %s"
-               (message e)))
+      match new_ctx g.drm with
+      | exception Unix.Unix_error (e, _, _) -> Error (refused e)
+      | ctx -> (
+          match take g.drm ctx with
+          | Ok () ->
+              g.stable <- Some ctx;
+              hold ()
+          | Error _ as e ->
+              (* A level the ask set, as the level changed between the read
+                 and the ask, is undone as the context is freed, as far as
+                 the context recorded the level it found. *)
+              quietly (fun () -> free_ctx g.drm ctx);
+              e))
 
 (* Each queue destroyed, and the memory of those destroyed given back. A queue
    the kernel driver kept may still run and raise the device's interrupt, so its
