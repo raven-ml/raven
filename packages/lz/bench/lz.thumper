@@ -4,6 +4,7 @@
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
+# pending: wall_time of text/decode-lzw columns/decode-lzw random/decode-lzw, to record on a quiet machine
 
 checksums/adler32-of-4-KiB	alloc_words	exact	3
 checksums/adler32-of-4-KiB	wall_time	batch=262144	n=20	3.731e-08	3.726e-08 3.727e-08 3.728e-08 3.728e-08 3.728e-08 3.729e-08 3.729e-08 3.729e-08 3.729e-08 3.730e-08 3.731e-08 3.733e-08 3.733e-08 3.733e-08 3.733e-08 3.735e-08 3.736e-08 3.737e-08 3.740e-08 3.752e-08
@@ -31,6 +32,7 @@ columns/decode-lz4b	alloc_words	exact	5
 columns/decode-lz4b	wall_time	batch=2	n=20	2.815e-03	2.805e-03 2.806e-03 2.807e-03 2.808e-03 2.808e-03 2.810e-03 2.812e-03 2.812e-03 2.813e-03 2.814e-03 2.815e-03 2.815e-03 2.820e-03 2.820e-03 2.820e-03 2.833e-03 2.862e-03 2.865e-03 2.895e-03 2.909e-03
 columns/decode-lz4f	alloc_words	exact	5
 columns/decode-lz4f	wall_time	batch=2	n=20	3.526e-03	3.519e-03 3.520e-03 3.521e-03 3.521e-03 3.521e-03 3.522e-03 3.522e-03 3.522e-03 3.525e-03 3.526e-03 3.526e-03 3.526e-03 3.527e-03 3.529e-03 3.530e-03 3.534e-03 3.534e-03 3.539e-03 3.543e-03 3.594e-03
+columns/decode-lzw	alloc_words	exact	5
 columns/decode-snappy	alloc_words	exact	5
 columns/decode-snappy	wall_time	batch=2	n=20	3.552e-03	3.535e-03 3.536e-03 3.536e-03 3.536e-03 3.537e-03 3.538e-03 3.539e-03 3.542e-03 3.545e-03 3.551e-03 3.553e-03 3.555e-03 3.564e-03 3.567e-03 3.577e-03 3.635e-03 3.686e-03 3.715e-03 3.756e-03 3.756e-03
 columns/decode-zlib6	alloc_words	exact	5
@@ -83,6 +85,7 @@ random/decode-lz4b	alloc_words	exact	5
 random/decode-lz4b	wall_time	batch=16	n=20	3.806e-04	3.802e-04 3.803e-04 3.803e-04 3.804e-04 3.805e-04 3.805e-04 3.806e-04 3.806e-04 3.806e-04 3.806e-04 3.807e-04 3.807e-04 3.807e-04 3.808e-04 3.809e-04 3.809e-04 3.809e-04 3.815e-04 3.821e-04 3.828e-04
 random/decode-lz4f	alloc_words	exact	5
 random/decode-lz4f	wall_time	batch=8	n=20	1.081e-03	1.078e-03 1.079e-03 1.079e-03 1.079e-03 1.079e-03 1.079e-03 1.079e-03 1.080e-03 1.081e-03 1.081e-03 1.081e-03 1.081e-03 1.081e-03 1.081e-03 1.081e-03 1.085e-03 1.086e-03 1.088e-03 1.089e-03 1.094e-03
+random/decode-lzw	alloc_words	exact	5
 random/decode-snappy	alloc_words	exact	5
 random/decode-snappy	wall_time	batch=16	n=20	3.665e-04	3.661e-04 3.662e-04 3.663e-04 3.664e-04 3.664e-04 3.664e-04 3.665e-04 3.665e-04 3.665e-04 3.665e-04 3.666e-04 3.666e-04 3.667e-04 3.668e-04 3.670e-04 3.670e-04 3.680e-04 3.681e-04 3.750e-04 3.772e-04
 random/decode-zlib6	alloc_words	exact	5
@@ -135,6 +138,7 @@ text/decode-lz4b	alloc_words	exact	5
 text/decode-lz4b	wall_time	batch=4	n=20	2.217e-03	2.206e-03 2.210e-03 2.210e-03 2.215e-03 2.215e-03 2.216e-03 2.217e-03 2.217e-03 2.217e-03 2.217e-03 2.217e-03 2.217e-03 2.217e-03 2.217e-03 2.218e-03 2.219e-03 2.219e-03 2.220e-03 2.220e-03 2.221e-03
 text/decode-lz4f	alloc_words	exact	5
 text/decode-lz4f	wall_time	batch=2	n=20	2.925e-03	2.916e-03 2.921e-03 2.922e-03 2.922e-03 2.923e-03 2.923e-03 2.924e-03 2.924e-03 2.925e-03 2.925e-03 2.925e-03 2.925e-03 2.926e-03 2.926e-03 2.929e-03 2.932e-03 2.932e-03 2.933e-03 2.933e-03 2.939e-03
+text/decode-lzw	alloc_words	exact	5
 text/decode-snappy	alloc_words	exact	5
 text/decode-snappy	wall_time	batch=2	n=20	4.221e-03	4.215e-03 4.216e-03 4.216e-03 4.216e-03 4.216e-03 4.216e-03 4.217e-03 4.218e-03 4.218e-03 4.220e-03 4.221e-03 4.223e-03 4.223e-03 4.224e-03 4.227e-03 4.231e-03 4.234e-03 4.236e-03 4.238e-03 4.240e-03
 text/decode-zlib6	alloc_words	exact	5

@@ -1,7 +1,8 @@
 (* lz's codecs on three 8 MiB corpora, built as the tests build them
-   (Lz_support.corpus): the decoders on lz's own encodings, the encoders
-   and checksums on the raw bytes. Every decode row first checks its output
-   against the raw corpus, so a row never times a wrong answer. *)
+   (Lz_support.corpus): the decoders on lz's own encodings, LZW's on
+   Lz_support's, the encoders and checksums on the raw bytes. Every decode
+   row first checks its output against the raw corpus, so a row never
+   times a wrong answer. *)
 
 open Bigarray
 
@@ -22,6 +23,12 @@ let encoded bound encode raw =
 
 let zstd3 = encoded Lz.Zstd.bound (Lz.Zstd.encode ~level:3)
 
+(* lz has no LZW encoder: Lz_support's, written from TIFF 6.0's. *)
+let lzw raw =
+  let n = Array1.dim raw in
+  let s = String.init n (fun i -> Char.chr (Array1.get raw i)) in
+  Lz_support.of_string (Lz_support.lzw s)
+
 (* Decoders: a suffix naming the format and level, lz's encoder of the
    input and the decode that reads it. *)
 let decoders =
@@ -37,6 +44,7 @@ let decoders =
     ("lz4b", encoded Lz.Lz4.Block.bound Lz.Lz4.Block.encode, Lz.Lz4.Block.decode);
     ("lz4f", encoded Lz.Lz4.Frame.bound Lz.Lz4.Frame.encode, Lz.Lz4.Frame.decode);
     ("snappy", encoded Lz.Snappy.bound Lz.Snappy.encode, Lz.Snappy.decode);
+    ("lzw", lzw, Lz.Lzw.decode);
   ]
 
 let check name raw dst = function
