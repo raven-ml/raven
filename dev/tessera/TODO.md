@@ -123,6 +123,13 @@ An item leaves when its library fixes it, or when a design decides it stays.
   with cuBLAS.
 - LayerNorm is ~2× PyTorch's on CUDA and 2-3.5× on CPU (M0); see the next
   item for the compiled reads.
+- tolk's `Heuristic.block` trusts the upcast indices `upcast_more` recorded;
+  when an upcast consumes a whole axis (TESSERA's dense attention scores at
+  [64; 4; 256; 256]: the 4 heads), the index shifts onto an UPCAST range and
+  compiling raises "UPCAST axis comes from GLOBAL/LOCAL/WEAK", or silently
+  blocks the wrong axis. It blocks training with dropout and f32 gradients
+  on CUDA. Diagnosed; being fixed within the M2 GEMM track, which edits the
+  same heuristic.
 - tolk compiles reductions that read the same operand over the same axes
   as separate kernels: compiled `Nx.standardize` reads its input five times
   (Max for the overflow rescue, Σx, Σd, Σd², then the map) where nx.cpu reads
