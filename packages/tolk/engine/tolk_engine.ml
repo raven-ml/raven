@@ -926,6 +926,12 @@ type t = {
   made : made array;
   calls : int;
   kernels : kernel list;
+  launches : (Rig.t * string list) array;
+      (* for each element of the frame's [step_points], its submission's
+         device and the kernels it launches *)
+  unreached : Rig.Point.t option;
+      (* the point every element of [step_points] holds after a run that does
+         not reach its step, [None] for a program of no [Submit] step *)
 }
 
 (* The program of the calls [entries] that [b] links. *)
@@ -1042,6 +1048,24 @@ let per_run_storage ~named bound linear =
   ( Ops.substitute ~calls:Skip ~pass:Once linear (List.map param made),
     Array.of_list (List.map snd made) )
 
+(* For each [Submit] step that [b] assembled, in the order of a frame's
+   [step_points], its device and the names of the kernels it launches. *)
+let launches (b : builder) =
+  let names parts =
+    Iarray.fold_right
+      (fun (p : Rig_program.part) names ->
+        match p with Launch { name; _ } -> name :: names | _ -> names)
+      parts []
+  in
+  let rec step acc (s : Rig_program.step) =
+    match s with
+    | Submit { device; parts; _ } ->
+        (Dynarray.get b.rigs device, names parts) :: acc
+    | Move _ -> acc
+    | Loop { body; _ } -> Iarray.fold_left step acc body
+  in
+  Array.of_list (List.rev (List.fold_left step [] (List.rev b.steps)))
+
 let link_with ~separate ~devices ?(bound = []) ?(storage = Linked) linear =
   let fn = "Tolk_engine.link" in
   if Ops.op linear <> Op.Linear then fail fn "not a compiled schedule";
@@ -1086,6 +1110,7 @@ let link_with ~separate ~devices ?(bound = []) ?(storage = Linked) linear =
       let inputs = Array.of_list (List.map fst (Dynarray.to_list b.inputs)) in
       let n = Hashtbl.length b.cells in
       let idle = Rig.Buffer.of_string "" in
+      let step_points = Rig_program.step_points loaded in
       {
         lock = Mutex.create ();
         loaded;
@@ -1099,13 +1124,17 @@ let link_with ~separate ~devices ?(bound = []) ?(storage = Linked) linear =
           {
             inputs = Array.make (Array.length inputs) idle;
             ints = Array.make (Dynarray.length b.words) 0;
-            step_points = Rig_program.step_points loaded;
+            step_points;
           };
         idle;
         width;
         made;
         calls;
         kernels = List.rev b.kernels;
+        launches = launches b;
+        unreached =
+          (if Array.length step_points = 0 then None
+           else Some step_points.(0));
       }
 
 let link ~devices ?bound ?storage linear =
@@ -1410,21 +1439,51 @@ let scrub t =
     (fun d -> Option.map (device_scrub d) (cache_bytes d))
     (timed_devices t)
 
-(* Whether the work [w] runs a kernel of [t]: its name lists the kernels of its
-   submission, joined by [", "]. A submission of copies alone names none. *)
-let runs_kernel t (w : Rig.Profile.event) =
-  match w with
-  | Work { device; name; _ } ->
-      let names = List.map String.trim (String.split_on_char ',' name) in
-      List.exists
-        (fun (k : kernel) -> Rig.equal k.device device && List.mem k.name names)
-        t.kernels
-  | _ -> false
+(* Whether a run reached the step whose point it reported as [p]. *)
+let reached t p = match t.unreached with Some u -> p <> u | None -> true
+
+(* The steps of [points], a run's [step_points], that the run reached and that
+   launch a kernel, each as its index and its point. *)
+let kernel_steps t points =
+  let steps = ref [] in
+  Array.iteri
+    (fun i p ->
+      if snd t.launches.(i) <> [] && reached t p then
+        steps := (i, p) :: !steps)
+    points;
+  !steps
+
+(* Refuses a schedule with a kernel on another machine's device: its work is
+   timed there, and no time of it comes back ({!Rig.Profile.Work}). *)
+let check_local t =
+  match
+    List.find_opt
+      (fun (k : kernel) -> not (Rig.equal (Rig.host_of k.device) Rig.host))
+      t.kernels
+  with
+  | Some k ->
+      fail "Tolk_engine.time"
+        "%s is a device of another machine, which times no work here"
+        (Rig.name k.device)
+  | None -> ()
+
+(* Raises for the step [i], whose work the profile holds none of: a sum
+   without it would be short. A device drops a sample whose times its driver
+   finds outside the host's window, so a [Failure], which a search takes as
+   the failure of that sample or that candidate, never of the search. *)
+let untimed t i =
+  let device, kernels = t.launches.(i) in
+  failwith
+    (Printf.sprintf "Tolk_engine.time: %s recorded no work for %s"
+       (Rig.name device)
+       (String.concat ", " kernels))
 
 (* The run's work in a profile is the [Work] whose point a step of the run
-   reported in the frame, which the lock keeps the run's until it is copied:
-   another domain's work of the same kernels has other points. *)
+   that launches a kernel reported in the frame, which the lock keeps the
+   run's until it is copied: another domain's work of the same kernels has
+   other points. *)
 let time ?(vars = []) ?(scrub = []) t slots =
+  check_local t;
   check_slots t slots;
   List.iter
     (fun s ->
@@ -1440,11 +1499,16 @@ let time ?(vars = []) ?(scrub = []) t slots =
     List.iter (Array.iter Rig.Point.wait) !ends
   in
   let (), events = Rig.Profile.take run in
+  let launched = List.concat_map (kernel_steps t) !steps in
+  let at p (_, q) = p = q in
+  let works p = function Rig.Profile.Work w -> w.point = p | _ -> false in
+  List.iter
+    (fun (i, p) -> if not (List.exists (works p) events) then untimed t i)
+    launched;
   let ns = ref 0 in
   List.iter
     (function
-      | Rig.Profile.Work w as e
-        when List.exists (Array.mem w.point) !steps && runs_kernel t e ->
+      | Rig.Profile.Work w when List.exists (at w.point) launched ->
           ns := !ns + (w.stop - w.start)
       | _ -> ())
     events;

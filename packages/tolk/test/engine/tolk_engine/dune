@@ -3,6 +3,7 @@
 
 (test
  (name test_tolk_engine)
+ (modules test_tolk_engine)
  (package tolk)
  (libraries
   windtrap
@@ -41,3 +42,13 @@
    MTL_DEBUG_LAYER
    1
    (run %{exe:test_tolk_engine.exe} -f Metal))))
+
+; Timing on another machine's host, served by rig's test agent over the
+; loopback.
+
+(test
+ (name test_tolk_engine_remote)
+ (modules test_tolk_engine_remote)
+ (package tolk)
+ (deps support/agent.exe)
+ (libraries windtrap tolk tolk.engine rig rig_remote rig_remote_job))

@@ -408,6 +408,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit ~beam` raises `Invalid_argument` for a kernel on another
+  machine's device before its search's first round: it searched on times of
+  zero.
 - `Rune.jit`'s attention skips a mask that reads an array in tiles of keys it
   shows whole: a causal window wider than every key costs what no window
   costs (22.2 against 24.2 ms at 16384 keys on an RTX 5000 Ada).
@@ -1171,6 +1174,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Tolk_engine.time` raises `Invalid_argument` for a schedule with a kernel
+  on another machine's device, and `Failure` where a device recorded no work
+  for a kernel's submission. It summed what it found, so `Rune.jit ~beam` on
+  another machine's host searched on times of zero; that search now raises.
 - `Ops.key`, `Graph` and the program, search and schedule cache keys tell every
   argument and target apart (`Helpers.Target.key`): graphs differing only in a
   NaN's bits, an `Argument` stage or a target's fields could share a schedule.

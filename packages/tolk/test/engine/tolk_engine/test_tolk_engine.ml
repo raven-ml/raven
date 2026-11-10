@@ -2435,8 +2435,9 @@ let flag_from d f linear =
 (* A loop of at most [max] trips on the device [d] around a call that adds one
    to a carry [c], from zero, stores the carry it read into its row of [ys], 16
    bytes apart, and stores into the flag [f] whether the new carry is below
-   [limit]. The flag starts as [0 < limit]. *)
-let loops_while_a_flag_holds ?(devices = devices) d (limit, max) =
+   [limit]. The flag starts as [0 < limit]. Is the schedule linked, with its
+   carry and its rows. *)
+let flag_loop ?(devices = devices) d (limit, max) =
   let at = d in
   let p slot dt = Shape.param ~shape:[ Int 1 ] ~device:at slot dt in
   let next = Ops.O.(p 0 Float32 + float 1.) in
@@ -2474,6 +2475,12 @@ let loops_while_a_flag_holds ?(devices = devices) d (limit, max) =
       ~bound:[ (c, c_buffer); (init, f_buffer); (ys, ys_buffer) ]
       compiled
   in
+  (s, c_buffer, ys_buffer)
+
+(* A run of [flag_loop] makes [min max limit] trips, none for a limit of [0]
+   or below. *)
+let loops_while_a_flag_holds ?devices d (limit, max) =
+  let s, c_buffer, ys_buffer = flag_loop ?devices d (limit, max) in
   Engine.run s [||];
   let trips = Int.min max (Int.max limit 0) in
   equal values ~msg:"the carry"
@@ -6688,6 +6695,30 @@ let counts_grouped_kernels () =
   let ns = List.fold_left (fun ns (_, d) -> ns + d) 0 works in
   equal ~msg:"the time" (float 1e-12) (Float.of_int ns *. 1e-9) t
 
+(* A loop of [limit] trips, at most one, around a kernel on the host: a time
+   is the duration of the run's host work that runs a kernel. A loop of no
+   trip leaves its kernel's step unreached, which adds nothing and raises
+   nothing. *)
+let times_a_loop limit () =
+  let s, _, _ = flag_loop "CPU" (limit, 1) in
+  let before = Rig.submitted host in
+  let t, _, events = profiled (fun () -> Engine.time s [||]) in
+  let after = Rig.submitted host in
+  let ns =
+    List.fold_left
+      (fun ns -> function
+        | Rig.Profile.Work w
+          when Rig.equal w.device host
+               && Rig.Point.value w.point > before
+               && Rig.Point.value w.point <= after
+               && not (List.mem w.name [ "copies"; "fills"; "words" ]) ->
+            ns + (w.stop - w.start)
+        | _ -> ns)
+      0 events
+  in
+  equal ~msg:"the time" (float 1e-12) (Float.of_int ns *. 1e-9) t;
+  if limit = 0 then equal ~msg:"no trip" float_exact 0. t
+
 let positive name =
   let s, slots = timed name in
   let t = Engine.time ~vars:n_bound s slots in
@@ -6841,6 +6872,9 @@ let timing =
       group "a time is positive, under a second" [ on positive ];
       test "a time counts a submission of several kernels"
         counts_grouped_kernels;
+      test "a time of a loop of no trip is 0" (times_a_loop 0);
+      test "a time of a loop of one trip is its kernel's work"
+        (times_a_loop 1);
       group "a time under a profile leaves the profile taken"
         [ on leaves_the_profile ];
       group "each time runs its program once" [ on runs_once ];

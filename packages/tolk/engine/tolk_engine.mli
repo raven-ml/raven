@@ -239,9 +239,16 @@ val time :
     caches hold. A read of twice a cache of 64 MiB takes about 0.25 ms on a
     GPU of 576 GB/s.
 
-    Raises as {!run} does, and {!Rig.Lost} if a device that runs a kernel of [s]
-    is lost during the run, or if another domain's device whose work the
-    run's profile recorded is lost before the profile reads it
+    Raises [Invalid_argument] naming the device, before the scrub and the
+    run, if a kernel of [s] runs on another machine's device ({!Rig.host_of}),
+    whose work no profile here records; [Failure] naming the device and the
+    kernels if the profile holds no work of a submission of the run that runs
+    a kernel of [s], which a device's driver drops where it cannot time it,
+    such as a sample its driver finds outside the host's window: a caller
+    that samples several times can take the sample as lost. Raises as {!run}
+    does, and {!Rig.Lost} if a device that runs a kernel of [s] is lost
+    during the run, or if another domain's device whose work the run's
+    profile recorded is lost before the profile reads it
     ({!Rig.Profile.take}). *)
 
 (**/**)

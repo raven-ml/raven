@@ -2770,6 +2770,12 @@ let search rigs ~parallel width k =
           (Format.asprintf "Rune.jit: no device of target %a"
              Tolk.Helpers.Target.pp target)
   in
+  (* Another machine's device times its work there, and no time of it comes
+     back: a search there would rank its candidates on nothing. *)
+  if not (Rig.equal (Rig.host_of rig) Rig.host) then
+    invalid_arg
+      ("Rune.jit: cannot search a kernel on " ^ Rig.name rig
+     ^ ", a device of another machine");
   let slots = ref None in
   let link call = Engine.link_call ~devices:(fun _ -> rig) call in
   (* Each sample starts from a cold cache, where a device's memory holds the

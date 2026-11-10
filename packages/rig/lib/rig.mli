@@ -2562,7 +2562,8 @@ module Profile : sig
             ["words"]. A device whose driver cannot time a submission's work
             records none of it, nor does one whose driver finds the work's
             converted times outside the host's window around it, from the
-            submit to their conversion, by more than the driver states.
+            submit to their conversion, by more than the driver states. A
+            device of another machine ({!host_of}) records none.
 
             Its driver converts the device's clock to the host's through
             measures of one against the other. A time's error is the

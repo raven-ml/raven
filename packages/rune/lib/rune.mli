@@ -1477,7 +1477,10 @@ val jit :
     makes the first call of a variant much longer; [0] searches none. A kernel
     with a loop whose trip count is read from memory is not searched, since its
     time depends on the values it reads, and takes the default optimisations.
-    [parallel]
+    A search times the candidates on the first of the call's devices that
+    compiles for the kernel's target. Where that is another machine's device
+    ({!Rig.host_of}), whose work no time here measures, the call raises
+    [Invalid_argument] before the search's first round. [parallel]
     compiles the candidates on at most that many domains, and on one where it is
     below [2]. An explicit [beam] stands for the [BEAM] and [JITBEAM] settings,
     and [parallel] for the [PARALLEL] setting, which decide otherwise: a change
