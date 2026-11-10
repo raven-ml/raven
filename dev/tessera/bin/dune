@@ -1,0 +1,18 @@
+; main.exe: TESSERA v2's embeddings of tiles (encode), and their check
+; against the upstream reference's fixtures (validate). [validate] needs the
+; released weights and the fixtures, which the repository does not hold, so
+; no test runs it.
+
+(executable
+ (name main)
+ (libraries
+  tessera
+  nx
+  nx.io
+  nx.ragged
+  rig
+  rig.cuda
+  rig.nv.nvidia
+  rig.amd.amdgpu
+  rig.metal
+  rune))
