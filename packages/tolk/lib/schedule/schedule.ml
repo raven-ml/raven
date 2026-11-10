@@ -1111,10 +1111,13 @@ let lower_sink_to_linear ~by_storage call =
       in
       (* Whether neither memory nor disk had the schedule. *)
       let made = ref false in
+      (* Its effects are sequenced before the check of its form, as at the
+         top level, so that a mistake of its maker is refused as there. *)
       let make () =
         made := true;
-        if setting Setting.spec <> 0 then
-          Spec.type_verify ~calls:Skip Spec.tensor fn;
+        if setting Setting.spec <> 0 then (
+          ignore (Prepare.sequence fn);
+          Spec.type_verify ~calls:Skip Spec.tensor fn);
         numbering.place
           (schedule ~by_storage ~copies:true
              (Rangeify.get_kernel_graph (Prepare.prepare_rangeify fn)))

@@ -2024,9 +2024,101 @@ let own_loops () =
   equal (list (list int)) ~msg:"none of the first's" []
     (List.filter (fun a -> List.mem a [ [ 7 ]; [ 8 ] ]) held)
 
+(* Loops outside a kernel that run anything but one call, or that run one over
+   a range of another axis type than Loop, each over 16 floats [b], at the top
+   level and in the body of a precompiled or an inlined call. The call adds
+   one to elements 0 to 3 of [b], from its elements 12 to 15. *)
+let refused_loops =
+  let p slot = Shape.param ~shape:[ Int 4 ] ~device:cpu slot Float32 in
+  let add1 = Ops.sink [ Ops.store (p 0) Ops.O.(p 1 + float 1.) ] in
+  let run b lo = Shape.shrink b [ Some (Ops.Int lo, Ops.Int (lo + 4)) ] in
+  let call ?(precompile = true) b =
+    Ops.call ~precompile add1 [ run b 0; run b 12 ]
+  in
+  let range axis_type = Ops.range ~axis_type (Int 3) [ 100 ] in
+  let flag () =
+    let f = Ops.new_buffer cpu 1 Bool in
+    Ops.after f [ Ops.store f (Ops.const ~dtype:Bool (`Bool true)) ]
+  in
+  let repeat u = Ops.backedge u ~loop:(range Loop) ~cond:(flag ()) in
+  let runs what =
+    Printf.sprintf
+      "a loop outside a kernel runs one call each trip, and this %s: make it \
+       the body of a call (Ops.call), and loop that call"
+      what
+  in
+  let weak =
+    "a loop of a call runs over ranges of axis type AxisType.LOOP, and its \
+     range 100 is AxisType.WEAK: make the range with ~axis_type:Loop"
+  in
+  let linear b = Ops.v Op.Linear ~src:[ call b ] in
+  [
+    ( "an end of a back edge",
+      (fun b -> Ops.end_ (repeat (call b)) [ range Loop ]),
+      runs "end runs a back edge" );
+    ( "a back edge of an end",
+      (fun b -> repeat (Ops.end_ (call b) [ range Loop ])),
+      runs "back edge runs an end" );
+    ( "an end of a call over a weak range",
+      (fun b -> Ops.end_ (call b) [ range Weak ]),
+      weak );
+    ( "an end of an inline call over a weak range",
+      (fun b -> Ops.end_ (call ~precompile:false b) [ range Weak ]),
+      weak );
+    ( "an end of a group of calls",
+      (fun b -> Ops.end_ (Ops.group [ call b; call b ]) [ range Loop ]),
+      runs "end runs a group of effects" );
+    ( "an end of a linear of calls",
+      (fun b -> Ops.end_ (linear b) [ range Loop ]),
+      runs "end runs a linear of calls" );
+    ( "a back edge of a linear of calls",
+      (fun b -> repeat (linear b)),
+      runs "back edge runs a linear of calls" );
+    ( "a back edge of a store",
+      (fun b -> repeat (Ops.store (run b 0) Ops.O.(run b 12 + float 1.))),
+      runs "back edge runs a store" );
+  ]
+
+(* An end of stores outside a kernel is a kernel's, however its ends nest:
+   rows [2i + j] of [b] take [y + 1]. *)
+let nested_store_ends () =
+  let b = Ops.new_buffer cpu 16 Float32 and y = Ops.new_buffer cpu 4 Float32 in
+  let i = Ops.range ~axis_type:Loop (Int 2) [ 100 ]
+  and j = Ops.range ~axis_type:Loop (Int 2) [ 101 ] in
+  let row =
+    let r = Ops.O.((i * int 2) + j) in
+    Shape.shrink b [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 4)) ]
+  in
+  let rows = Ops.store row Ops.O.(y + float 1.) in
+  computes (Ops.sink [ Ops.after b [ Ops.end_ (Ops.end_ rows [ j ]) [ i ] ] ])
+
+(* Each refused at the top level and in the body of a call, precompiled or
+   inlined. *)
+let refuses_loop (name, loop, message) =
+  test (name ^ " is refused, naming what it runs") (fun () ->
+      let top () =
+        let b = Ops.new_buffer cpu 16 Float32 in
+        Ops.sink [ Ops.after b [ loop b ] ]
+      in
+      let in_body precompile () =
+        let p = Shape.param ~shape:[ Int 16 ] ~device:cpu 0 Float32 in
+        let body = Ops.sink [ Ops.after p [ loop p ] ] in
+        let b = Ops.new_buffer cpu 16 Float32 in
+        Ops.sink [ Ops.after b [ Ops.call ~precompile body [ b ] ] ]
+      in
+      List.iter
+        (fun (where, sink) ->
+          raises ~msg:where (Invalid_argument message) (fun () ->
+              Schedule.create_linear_with_vars (sink ())))
+        [
+          ("at the top level", top);
+          ("in a precompiled body", in_body true);
+          ("in an inlined body", in_body false);
+        ])
+
 let loops =
   group "create_linear_with_vars › loops of calls"
-    [
+    ([
       test "a loop of a precompiled call is a loop of its body's calls"
         scan_linear;
       test "a loop's call passes its kernel the trip as a scalar argument"
@@ -2044,6 +2136,11 @@ let loops =
       test "a body whose loops trade numbers is the same body" renumbered_loops;
       test "a body that hits under other numbers keeps its own loops" own_loops;
     ]
+    @ List.map refuses_loop refused_loops
+    @ [
+        test "an end of an end of stores outside a kernel computes"
+          nested_store_ends;
+      ])
 
 (* Schedules on disk
 

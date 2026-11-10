@@ -191,9 +191,11 @@ val create_linear_with_vars :
     the calls pass, each name bound to one value.
 
     Raises [Invalid_argument] if a kernel that is not a copy accesses buffers
-    on several devices, on two writes over one state or an effect listed over
-    a state that needs it ({!Prepare.sequence}), or as {!create_schedule}
-    does. *)
+    on several devices, on two writes over one state, an effect listed over a
+    state that needs it or a loop that runs anything but one call
+    ({!Prepare.sequence}), on a store through a bitcast into bytes that are
+    no run of its storage ({!Prepare.prepare_rangeify}), or as
+    {!create_schedule} does. *)
 
 (**/**)
 

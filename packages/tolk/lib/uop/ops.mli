@@ -809,7 +809,12 @@ val store : ?gate:t -> t -> t -> t
 (** [store p x] is the {!Op.Store} of [x] through [p], guarded by [gate]. A
     tensor graph that stores through a broadcast is refused when it is
     prepared ({!Prepare.prepare_rangeify}). Outside a kernel, {!after} says
-    which state of its storage a store is over. *)
+    which state of its storage a store is over. A store through a bitcast to
+    a type of another size writes the bytes it views. Unless that bitcast is
+    the outermost and the only one that resizes, they are one run of the
+    storage's bytes, which begins and ends on whole elements of the storage
+    where a bound variable places either end, or the store is refused when it
+    is prepared ({!Prepare.prepare_rangeify}). *)
 
 val end_ : t -> t list -> t
 (** [end_ u rs] is the {!Op.End} of the ranges [rs] around [u], or [u] if [rs]
@@ -819,17 +824,24 @@ val end_ : t -> t list -> t
     {!Axis_type.Loop} ranges, and the call runs whole once for each value of
     them, the first varying slowest, whether or not it is compiled on its own.
     An end of such an end is one loop over the outer end's ranges and the
-    inner's, the outer's varying slowest. *)
+    inner's, the outer's varying slowest. A loop runs one call: outside a
+    kernel, an end of a call over a range of another type, or an end around
+    calls or loops in any other form ({!group}, {!backedge}, {!Op.Linear}), is
+    refused when the graph is scheduled ({!Prepare.sequence}). Several calls,
+    or a loop, run in a loop as the call of a body that runs them. *)
 
 val backedge : t -> loop:t -> cond:t -> t
 (** In a kernel, [backedge u ~loop ~cond] runs [u], then repeats [loop] while
     [cond] holds.
 
-    Around a call of a schedule, or an {!Op.Linear} of calls, it tests [cond]
-    before each trip: [loop] is a {!Axis_type.Loop} range, or the [0] that a
-    range of one trip simplifies to, [cond] is storage of one boolean, and the
-    calls run in order once per trip of [loop] while [cond] holds, so they may
-    run no trip, each whole, whether or not it is compiled on its own. *)
+    Around a call outside a kernel, or around an {!Op.Linear} of calls in a
+    schedule ({!Schedule.create_schedule}), it tests [cond] before each trip:
+    [loop] is a {!Axis_type.Loop} range, or the [0] that a range of one trip
+    simplifies to, [cond] is storage of one boolean, and the calls run in
+    order once per trip of [loop] while [cond] holds, so they may run no trip,
+    each whole, whether or not it is compiled on its own. Outside a kernel, a
+    back edge around anything but a call is refused when the graph is
+    scheduled ({!Prepare.sequence}), as {!end_} says. *)
 
 val after : t -> t list -> t
 (** [after u deps] is [u] ordered after [deps], or [u] if [deps] is empty.
@@ -877,7 +889,9 @@ val after_disjoint : t -> t list -> t
     ({!Schedule.create_linear_with_vars}).
 
     Stores that break the promise give undefined values: a {!after} of them,
-    unmarked, runs them in the order listed. *)
+    unmarked, runs them in the order listed. Elements are the storage's: two
+    stores into bytes of one element through a narrower type ({!store}) each
+    write that element whole. *)
 
 val is_disjoint : t -> bool
 (** [is_disjoint u] is [true] iff [u] is the {!Op.After} of an

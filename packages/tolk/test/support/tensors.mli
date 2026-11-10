@@ -26,7 +26,9 @@
 
     Graphs have effects on memory. A {!Tolk.Op.Store} writes its value,
     broadcast to its destination's shape, into the memory its destination
-    views. Storage is read as the memory held before any store. An
+    views; through a bit reinterpretation, the value's bytes into the bytes of
+    storage it views, each element of storage keeping its other bytes.
+    Storage is read as the memory held before any store. An
     {!Tolk.Op.After} runs its first source, then its other sources, and holds
     the latest of the state its first source names, the states its sources'
     writes of its storage leave and the states of its storage they read, as
@@ -44,7 +46,10 @@
     call writes ({!Tolk.Shape.written_params}) or, where its body does not
     show it, that of the {!Tolk.Op.After}s that list it, as the trips before
     left it, where the
-    call is given the latest state of it, and an older state as it was. Each
+    call is given the latest state of it, and an older state as it was. An
+    end of stores, or of a group of them, runs them the same way, each trip
+    reading the states its stores name, as memory held them before the loop:
+    its value holds for trips that read no element another trip writes. Each
     node runs once. *)
 
 open Tolk

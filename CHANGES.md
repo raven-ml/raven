@@ -1194,6 +1194,16 @@ word comes from its lock and from samples the dashboard saw arrive.
 - `Ops.key`, `Graph` and the program, search and schedule cache keys tell every
   argument and target apart (`Helpers.Target.key`): graphs differing only in a
   NaN's bits, an `Argument` stage or a target's fields could share a schedule.
+- A store through a run of bytes viewed as a narrower type, from a constant
+  start, writes those bytes where the run begins or ends inside an element:
+  it failed verification. A store through other bytes that are no run of its
+  storage, below a bitcast that resizes, raises `Invalid_argument` naming the
+  mistake.
+- A loop outside a kernel that runs anything but one call (an `Ops.end_` of
+  an `Ops.backedge`, of a group or of an `Op.Linear`, a back edge of an end
+  or a store), or a call over a range that is no `Axis_type.Loop`, raises
+  `Invalid_argument` when scheduled, naming what it runs: it raised
+  `Not_found` or a verification failure, or dropped the loop.
 - A loop of an inlined call, an `Ops.end_` or `Ops.backedge` around it, and an
   end of an end of a call run the call once per trip: they raised a
   verification failure.

@@ -101,7 +101,11 @@ val prepare_rangeify : Ops.t -> Ops.t
           the value bitcast to the storage's type; any other store through
           movements and bitcasts whose elements are a run of whole elements
           of storage or of a state of it ({!contiguous_view}) stores the
-          value's bits into that run;
+          value's bits into that run; one whose elements are a run from a
+          constant start that begins or ends inside an element of the
+          storage stores the elements it touches, its bytes from the value
+          and their others as they were; and any other through a bitcast to a
+          type of another size is refused;
         - a bitcast between types of different sizes is shifts and masks on
           unsigned integers, except on a disk;
         - a reduction of an empty axis to a non-empty result is the operation's
@@ -166,5 +170,7 @@ val sequence : Ops.t -> Ops.t
     nothing another order would not.
 
     Raises [Invalid_argument] on two writes over one state, neither reading
-    what the other left nor ordered after it, naming both, and if an effect is
-    listed over a state that needs it. *)
+    what the other left nor ordered after it, naming both, if an effect is
+    listed over a state that needs it, and on a loop that runs anything but
+    one call, or a call over a range that is no {!Ops.Axis_type.Loop}
+    ({!Ops.end_}, {!Ops.backedge}). *)

@@ -5173,9 +5173,115 @@ let byte_views ?devices d =
       cover "through uint8" (s.via = Uint8);
       stores_through_bytes ?devices d s)
 
-(* A store through whole elements of bytes that are no run of the storage,
-   such as columns of its bytes or its bytes reversed, is refused. [x] holds
-   16 floats, as 4 rows of 16 bytes. *)
+(* The law of stores through runs of bytes that cut elements: a store into
+   float32 storage, or into a state of it, through a run of its bytes viewed
+   as a narrower type, from a constant start that may start or end inside an
+   element, writes the value's bytes into the run and leaves every other byte,
+   as [Tensors] computes. Its value is a constant, or the run reversed, which
+   reads the bytes it overwrites. *)
+let stores_through_cut_bytes ?(devices = devices) d r =
+  let n = byte_elements in
+  let via = if Random.State.bool r then Dtype.Uint8 else Float16 in
+  let per = 4 / Dtype.itemsize via in
+  let count = 1 + Random.State.int r (2 * per) in
+  let first = Random.State.int r ((n * per) - count + 1) in
+  let of_state = Random.State.bool r and reverse = Random.State.bool r in
+  let x = Ops.new_buffer d n Float32 in
+  let st =
+    if of_state then Ops.after x [ Ops.store x Ops.O.(x + float 1.) ] else x
+  in
+  let target =
+    Shape.shrink (Ops.bitcast st via) [ Some (Int first, Int (first + count)) ]
+  in
+  let value =
+    if reverse then Shape.flip target [ 0 ]
+    else
+      Ops.const ~dtype:via (`Float 1.5)
+  in
+  let sink = Ops.sink [ Ops.after st [ Ops.store target value ] ] in
+  let given = Array.init n Float.of_int in
+  let slot = (Ops.param_arg_of x).slot in
+  let want = Array.map (fun v -> `Float v) given in
+  List.iter
+    (fun (s, i, v) -> if s = slot then want.(i) <- v)
+    (Tensors.writes ~buffers:[ (slot, Array.copy want) ] sink);
+  let bits = function
+    | `Float v -> `Int (Bigint.of_int32 (Int32.bits_of_float v))
+    | v -> v
+  in
+  let linear, vars = Schedule.create_linear_with_vars sink in
+  let buffer = Run.buffer (devices d) Float32 (floats given) in
+  Engine.run ~vars
+    (Engine.link ~devices ~bound:[ (x, buffer) ] (compile ~devices linear))
+    [||];
+  let msg =
+    Format.asprintf "%s through %a, elements %d..%d, %s"
+      (if of_state then "state" else "storage")
+      Dtype.pp via first (first + count - 1)
+      (if reverse then "reversed" else "a constant")
+  in
+  ((first mod per <> 0, (first + count) mod per <> 0), fun () ->
+    equal values ~msg (Array.map bits want) (Run.values Int32 buffer))
+
+let cut_byte_views ?devices d =
+  prop ~count:100
+    "a store through a run of bytes that cuts elements writes the value's \
+     bytes into it, the others kept"
+    (Gen.int_range 1 1_000_000)
+    (fun seed ->
+      let (cuts_start, cuts_end), check =
+        stores_through_cut_bytes ?devices d (Random.State.make [| seed |])
+      in
+      cover "a start inside an element" cuts_start;
+      cover "an end inside an element" cuts_end;
+      cover "whole elements" ((not cuts_start) && not cuts_end);
+      check ())
+
+(* A store through a bitcast of a view of float32 storage that is no run, its
+   elements reversed or a column of rows, writes the value's bits through the
+   view, as [Tensors] computes: the bitcast moves to the value. *)
+let stores_through_bitcast_views () =
+  let x = Ops.new_buffer "CPU" 16 Float32 in
+  let y = Ops.new_buffer "CPU" 16 Float32 in
+  let columns u =
+    Shape.shrink (Shape.reshape u [ Int 4; Int 4 ]) [ None; Some (Int 0, Int 2) ]
+  in
+  let given = Array.init 16 Float.of_int
+  and ys = Array.init 16 (fun k -> 100. +. Float.of_int k) in
+  let bits = function
+    | `Float v -> `Int (Bigint.of_int32 (Int32.bits_of_float v))
+    | v -> v
+  in
+  List.iter
+    (fun (msg, view) ->
+      let sink =
+        Ops.sink
+          [
+            Ops.after x
+              [ Ops.store (Ops.bitcast (view x) Uint8) (Ops.bitcast (view y) Uint8) ];
+          ]
+      in
+      let slot b = (Ops.param_arg_of b).slot in
+      let want = Array.map (fun v -> `Float v) given in
+      List.iter
+        (fun (s, i, v) -> if s = slot x then want.(i) <- v)
+        (Tensors.writes
+           ~buffers:
+             [ (slot x, Array.copy want); (slot y, Array.map (fun v -> `Float v) ys) ]
+           sink);
+      let linear, vars = Schedule.create_linear_with_vars sink in
+      let bx = Run.buffer (device "CPU") Float32 (floats given)
+      and by = Run.buffer (device "CPU") Float32 (floats ys) in
+      Engine.run ~vars
+        (Engine.link ~devices ~bound:[ (x, bx); (y, by) ] (compile linear))
+        [||];
+      equal values ~msg (Array.map bits want) (Run.values Int32 bx))
+    [ ("reversed", fun u -> Shape.flip u [ 0 ]); ("columns", columns) ]
+
+(* A store through bytes that are no run of the storage, such as columns of
+   its bytes or its bytes reversed, or a run whose bound start or end may
+   lie inside an element, is refused. [x] holds 16 floats, as 4 rows of 16
+   bytes. *)
 let refuses_byte_columns () =
   let x = Ops.new_buffer "CPU" 16 Float32 in
   let fill c shape =
@@ -5200,21 +5306,42 @@ let refuses_byte_columns () =
     ( Ops.bitcast (Shape.flip (Ops.bitcast x Uint8) [ 0 ]) Float32,
       fill (Ops.cast (Ops.float 2.5) Float32) [ Int 16 ] )
   in
+  let bytes_from_bound =
+    let v =
+      Shape.bind
+        (Ops.variable "first" (`Int Bigint.zero) (`Int (Bigint.of_int 60)))
+        (`Int (Bigint.of_int 2))
+    in
+    ( Shape.shrink (Ops.bitcast x Uint8)
+        [ Some (Ops.Sym v, Ops.Sym Ops.O.(v + int 4)) ],
+      fill (Ops.const ~dtype:Uint8 (`Int (Bigint.of_int 7))) [ Int 4 ] )
+  in
+  let bytes_to_bound =
+    let v =
+      Shape.bind
+        (Ops.variable "last" (`Int (Bigint.of_int 2)) (`Int (Bigint.of_int 60)))
+        (`Int (Bigint.of_int 4))
+    in
+    ( Shape.shrink (Ops.bitcast x Uint8) [ Some (Ops.Int 1, Ops.Sym v) ],
+      Ops.const ~dtype:Uint8 (`Int (Bigint.of_int 7)) )
+  in
   List.iter
     (fun (target, value) ->
       let sink = Ops.sink [ Ops.after x [ Ops.store target value ] ] in
-      raises_match
-        (function
-          | Invalid_argument m ->
-              String.starts_with ~prefix:"UOp verification failed" m
-              && List.exists
-                   (String.equal "Ops.STORE")
-                   (String.split_on_char ' ' m)
-          | _ -> false)
-        (fun () ->
-          let linear, _ = Schedule.create_linear_with_vars sink in
-          compile linear))
-    [ floats_of_columns; bytes_of_columns; floats_of_reversed ]
+      raises
+        (Invalid_argument
+           "a store through a bitcast to a type of another size writes a run \
+            of its storage's bytes, which begins and ends on whole elements \
+            of the storage where a bound variable places either end; these \
+            bytes are no such run: store each run apart, or whole elements")
+        (fun () -> Schedule.create_linear_with_vars sink))
+    [
+      floats_of_columns;
+      bytes_of_columns;
+      floats_of_reversed;
+      bytes_from_bound;
+      bytes_to_bound;
+    ]
 
 (* Calls of views
 
@@ -7344,6 +7471,7 @@ let on_a_gpu kind =
       loop_reads_law ~devices "CPU:1";
       loop_states_law ~devices "CPU:1";
       byte_views ~devices "CPU:1";
+      cut_byte_views ~devices "CPU:1";
       test "a scan's merged calls carry in place as its calls apart do"
         (carries_merged ~devices "CPU:1");
       test "a scan's calls that read one name at two values carry each its own"
@@ -7379,9 +7507,14 @@ let () =
          gathered_stores;
          group "a store through a shrink" [ valid_slot_store ];
          byte_views "CPU";
+         cut_byte_views "CPU";
          test
-           "a store through whole elements of bytes that are no run is \
-            refused"
+           "a store through a bitcast of a view that is no run writes the \
+            value's bits through the view"
+           stores_through_bitcast_views;
+         test
+           "a store through bytes that are no run, or that may cut elements \
+            where a bound variable places an end, is refused"
            refuses_byte_columns;
          calls_of_views;
          group "aranges" [ arange_windows "CPU" ];

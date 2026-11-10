@@ -135,6 +135,34 @@ let effects =
           equal write
             [ (0, 0, z 2); (0, 1, z 1); (0, 2, z 0) ]
             (writes (Ops.sink [ Ops.store (Shape.flip out [ 0 ]) (p 1 3) ])));
+      test
+        "a store through a bit reinterpretation writes its bytes, the other \
+         bytes of each element kept" (fun () ->
+          let bytes =
+            Shape.shrink (Ops.bitcast out Uint8) [ Some (Int 2, Int 6) ]
+          in
+          equal write ~msg:"bytes 2 to 5"
+            [ (0, 0, z (Int32.to_int 0xAAAA0000l)); (0, 1, z 0xAAAA) ]
+            (writes
+               (Ops.sink
+                  [ Ops.store bytes (Ops.const ~dtype:Uint8 (z 0xAA)) ]));
+          let one =
+            Shape.shrink (Ops.bitcast out Float32) [ Some (Int 1, Int 2) ]
+          in
+          equal write ~msg:"a float of one size"
+            [ (0, 1, z 0x3F800000) ]
+            (writes (Ops.sink [ Ops.store one (Ops.float ~dtype:Float32 1.) ]));
+          let wide =
+            Ops.bitcast (Shape.shrink (p 1 6) [ Some (Int 2, Int 6) ]) Int64
+          in
+          equal write ~msg:"two elements an int64"
+            [ (1, 2, z 5); (1, 3, z 1); (1, 4, z 5); (1, 5, z 1) ]
+            (writes
+               (Ops.sink
+                  [
+                    Ops.store wide
+                      (Ops.const ~dtype:Int64 (z ((1 lsl 32) + 5)));
+                  ])));
       test "storage reads memory before any store, and an after once they ran"
         (fun () ->
           let reversed = Shape.flip out [ 0 ] in

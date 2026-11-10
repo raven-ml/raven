@@ -1719,8 +1719,8 @@ kernel at NVRTC, Metal and the host compute it. `Spec.program` is
   of that kernel), `schedule/__init__.py` (`create_schedule`, which
   schedules the call of an end and drops the end), and `uop/spec.py`
   (`spec_kernel_graph`, which admits device ranges only, and no end).
-- **tolk:** `Prepare.pm_loop_calls`, `Rangeify.loop_range`,
-  `Rangeify.pm_no_views` (which keeps a view
+- **tolk:** `Prepare.pm_loop_calls`, `Prepare.check_loop`,
+  `Rangeify.loop_range`, `Rangeify.pm_no_views` (which keeps a view
   that moves with a loop's range) and `Rangeify.split_store`;
   `Schedule.create_schedule` (`loops`, `argument` and the kept end);
   `Spec.loop`, `Spec.loop_bound` and `Spec.kernel_graph`.
@@ -1732,7 +1732,13 @@ kernel at NVRTC, Metal and the host compute it. `Spec.program` is
   `split_store` makes one kernel of, each store run once over all trips;
   and an end of an end of a call is one end over the outer ranges, then
   the inner, where tinygrad's `create_schedule` asserts that an end's
-  source is a call. The arguments that move with `r` stay
+  source is a call. Any other loop outside a kernel is refused when
+  `Prepare.sequence` meets it, naming what it runs: an end of a call over a
+  range of another kind, an end around a back edge, a group of effects or a
+  linear of calls, and a back edge around anything but a call; tinygrad
+  asserts in `create_schedule`, or fails its spec, or drops the loop. The
+  calls a loop runs, or an inner loop, are the body of a call it runs. The
+  arguments that move with `r` stay
   views, `r` keeps its number, since `split_store` renumbers only the
   ranges of the kernel it makes, and `create_schedule` keeps the end around
   the call, ordered by the call's reads and writes.
@@ -1759,8 +1765,10 @@ kernel at NVRTC, Metal and the host compute it. `Spec.program` is
   of a call over a loop schedules the call in its loop`, `› a loop runs after
   the call that writes what it reads`, `› a loop runs before the call that
   overwrites what it reads`, and `create_linear_with_vars › loops of calls › a
-  loop of a precompiled call is a loop of its body's calls` and `› a loop inside
-  a loop's body keeps its own end`; and the `Tolk_engine` suite
+  loop of a precompiled call is a loop of its body's calls`, `› a loop inside
+  a loop's body keeps its own end`, and `› an end of a back edge is refused,
+  naming what it runs` with the seven refusals beside it, each at the top
+  level and in a precompiled and an inlined body; and the `Tolk_engine` suite
   (`test/engine/tolk_engine`): `link and run › a scan runs its body once per
   trip, carrying in place`, against the unrolled loop on the host, and `› a
   scan's merged calls carry in place as its calls apart do` (D404), on the host
@@ -9111,7 +9119,8 @@ a view names its storage again (D426).
   strips the outermost bitcast only; `expand_bitcast` then rewrites any other
   bitcast between types of different sizes as shifts. `UOp.contiguous_view`
   reads a run through a bitcast at a constant offset only.
-- **tolk:** `Prepare.store_into_run`, `Prepare.contiguous_view`.
+- **tolk:** `Prepare.store_into_run`, `Prepare.store_into_cut`,
+  `Prepare.contiguous_view`.
 - **Differs:** a store whose target is movements and bitcasts of storage, or of
   a state of it, whose elements are a run of whole elements of the storage
   (`Prepare.contiguous_view`), stores the value, flattened and bitcast to the
@@ -9123,11 +9132,16 @@ a view names its storage again (D426).
   is a run of the source where it starts and ends on whole elements at every
   value of them; in a call's body, a scalar parameter counts as such a
   variable. A store into a bitcast of storage itself takes tinygrad's
-  rule. A target that is not a run of whole elements still reaches
-  `expand_bitcast` and fails verification ("UOp verification failed ...
-  Ops.STORE ... CAST u8"): a run that cuts an element, strided or reversed
-  bytes such as columns of the storage's bytes, or a reshape over a bitcast
-  of strided elements.
+  rule. A run from a constant start that begins or ends inside an element of
+  the storage stores the whole elements it touches, their bytes the run
+  covers from the value and the others loaded from the target:
+  `x as int32 words 1..5 <- 7`, `x` four float64s, stores elements 0 to 2.
+  A target whose only resizing bitcast is the outermost takes tinygrad's
+  rule too, the bitcast moved to the value. Any other target through a
+  bitcast to a type of another size is refused with a message: strided or
+  reversed bytes such as columns of the storage's bytes, a reshape over a
+  bitcast of strided elements, or a run whose end a bound variable places
+  that may cut an element.
 - **Reason:** (e), as D473: `Ops.store` through a view of storage and
   `Ops.bitcast` give the graph a meaning, and tinygrad raises an internal
   error on it ("UOp verification failed ... STORE [CAST u8, CAST u8]") once
@@ -9135,10 +9149,14 @@ a view names its storage again (D426).
   dtypes.uint8)[4:16].bitcast(dtypes.float32).assign(v)` raises it on a
   realized buffer and on a state. No raven consumer emits such a store.
 - **Pinned by:** `Tolk_engine › a store through whole elements of bytes viewed
-  as another type writes the value's bits into them`, on the host and in each
-  GPU group; `Tolk_engine › a store through whole elements of bytes that are
-  no run is refused`; `Tolk.Launch_law › compiled` and `› GPUs`, whose
-  programs store through bytes of states.
+  as another type writes the value's bits into them` and `› a store through a
+  run of bytes that cuts elements writes the value's bytes into it, the others
+  kept`, against `Tensors`, on the host and in each GPU group;
+  `Tolk_engine › a store through a bitcast of a view that is no run writes
+  the value's bits through the view` and `› a store through bytes that are
+  no run, or that may cut elements where a bound variable places an end, is
+  refused`; `Tolk.Launch_law › compiled` and `› GPUs`, whose programs store
+  through bytes of states.
 
 ## D460. A compiled schedule is kept on disk whole
 

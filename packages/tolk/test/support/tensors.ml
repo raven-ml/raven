@@ -1,10 +1,13 @@
 open Tolk
 
 (* An element carries the memory it views, if any, so that a store through a
-   movement of storage knows where it writes. Call-local storage numbers its
-   slots apart from parameters and buffers. *)
+   movement of storage knows where it writes: an element of storage, or, read
+   through a bit reinterpretation, bytes of elements of storage, low first,
+   each with its element's type and its byte there. Call-local storage numbers
+   its slots apart from parameters and buffers. *)
 type place = { scratch : bool; slot : int; index : int }
-type cell = { value : Dtype.const; at : place option }
+type at = Nowhere | Element of place | Bytes of (place * Dtype.t * int) array
+type cell = { value : Dtype.const; at : at }
 type tensor = { shape : int list; cells : cell array }
 
 let fail fmt = Format.kasprintf invalid_arg fmt
@@ -42,7 +45,7 @@ let gather ?fill shape t f =
   let cell k =
     match (f (coords shape k), fill) with
     | Some idx, _ -> t.cells.(offset t.shape idx)
-    | None, Some value -> { value; at = None }
+    | None, Some value -> { value; at = Nowhere }
     | None, None -> fail "an element has no source"
   in
   { shape; cells = Array.init (size shape) cell }
@@ -143,7 +146,10 @@ let elementwise u ts =
   let shape = concrete u in
   let ts = List.map (broadcast shape) ts in
   let cell k =
-    { value = element u (List.map (fun t -> t.cells.(k).value) ts); at = None }
+    {
+      value = element u (List.map (fun t -> t.cells.(k).value) ts);
+      at = Nowhere;
+    }
   in
   { shape; cells = Array.init (size shape) cell }
 
@@ -160,7 +166,7 @@ let reduce u op axes t =
   let n = size (List.filteri (fun a _ -> a < axes) t.shape) in
   let cell k =
     let values = List.init n (fun j -> t.cells.((j * size kept) + k).value) in
-    { value = fold op (Ops.dtype u) values; at = None }
+    { value = fold op (Ops.dtype u) values; at = Nowhere }
   in
   { shape; cells = Array.init (size shape) cell }
 
@@ -187,6 +193,13 @@ let bits dt : Dtype.const -> Bigint.t option = function
       match Dtype.bitcast dt (unsigned dt) v with
       | `Int z -> Some z
       | _ -> fail "the bits of a %a" Dtype.pp dt)
+
+(* The bytes of [c], an element of type [dt], where it views storage. *)
+let bytes_of dt c =
+  match c.at with
+  | Nowhere -> None
+  | Element p -> Some (Array.init (Dtype.itemsize dt) (fun i -> (p, dt, i)))
+  | Bytes b -> Some b
 
 let rebytes u t =
   let from = Ops.dtype (Ops.nth u 0) and dt = Ops.dtype u in
@@ -217,12 +230,20 @@ let rebytes u t =
       | Some z -> (Dtype.bitcast (unsigned dt) dt (`Int z) :> Dtype.const)
       | None -> `Invalid
     in
-    { value; at = None }
+    let viewed i =
+      let b = (at * ns) + i in
+      Option.map
+        (fun bytes -> bytes.(b mod os))
+        (bytes_of from t.cells.((row * row_in) + (b / os)))
+    in
+    let bytes = Array.init ns viewed in
+    if Array.exists Option.is_none bytes then { value; at = Nowhere }
+    else { value; at = Bytes (Array.map Option.get bytes) }
   in
   { shape; cells = Array.init (size shape) cell }
 
 let fresh t =
-  { t with cells = Array.map (fun c -> { c with at = None }) t.cells }
+  { t with cells = Array.map (fun c -> { c with at = Nowhere }) t.cells }
 
 (* Memory *)
 
@@ -263,29 +284,88 @@ let storage m u =
   | Param { slot; addrspace; _ } when addrspace <> Alu ->
       let cell index =
         let at = { scratch = Ops.op u = Alloc; slot; index } in
-        { value = initial m at; at = Some at }
+        { value = initial m at; at = Element at }
       in
       { shape = concrete u; cells = Array.init (Shape.max_numel u) cell }
   | _ -> fail "cannot evaluate a variable"
 
-let store m dst value =
+(* A store of [dt] values through bytes writes each element of storage it
+   covers once: its bytes the store covers from the value, the others as
+   memory holds them, an element Invalid where a byte it keeps or writes is. *)
+let store m dt dst value =
   let value = broadcast dst.shape value in
+  let bytes = Hashtbl.create 8 in
   Array.iteri
     (fun k c ->
+      let v = value.cells.(k).value in
       match (c.at, c.value) with
-      | Some at, _ ->
-          m.written <- Written.add (key at) value.cells.(k).value m.written
-      | None, `Invalid -> ()
-      | None, _ -> fail "a store's destination is not storage")
+      | Element at, _ -> m.written <- Written.add (key at) v m.written
+      | Bytes b, _ ->
+          Array.iteri
+            (fun i (at, sdt, j) ->
+              let byte =
+                Option.map (fun z -> Bigint.extract z (8 * i) 8) (bits dt v)
+              in
+              let known =
+                match Hashtbl.find_opt bytes at with
+                | Some (_, w) -> w
+                | None -> []
+              in
+              Hashtbl.replace bytes at (sdt, (j, byte) :: known))
+            b
+      | Nowhere, `Invalid -> ()
+      | Nowhere, _ -> fail "a store's destination is not storage")
     dst.cells;
+  Hashtbl.iter
+    (fun at (sdt, written) ->
+      let kept = bits sdt (current m m.written at) in
+      let rec join j acc =
+        if j = Dtype.itemsize sdt then Some acc
+        else
+          let byte =
+            match List.assoc_opt j written with
+            | Some byte -> byte
+            | None -> Option.map (fun z -> Bigint.extract z (8 * j) 8) kept
+          in
+          match byte with
+          | Some b ->
+              join (j + 1) (Bigint.logor acc (Bigint.shift_left b (8 * j)))
+          | None -> None
+      in
+      let v : Dtype.const =
+        match join 0 Bigint.zero with
+        | Some z -> (Dtype.bitcast (unsigned sdt) sdt (`Int z) :> Dtype.const)
+        | None -> `Invalid
+      in
+      m.written <- Written.add (key at) v m.written)
+    bytes;
   m.clock <- m.clock + 1
 
-(* [reread m written t] is [t] as memory [written] holds it. *)
-let reread m written t =
+(* [reread m written dt t] is [t], of type [dt], as memory [written] holds
+   it. *)
+let reread m written dt t =
+  let byte (at, sdt, j) =
+    Option.map
+      (fun z -> Bigint.extract z (8 * j) 8)
+      (bits sdt (current m written at))
+  in
+  let join b =
+    let rec go i acc =
+      if i = Array.length b then Some acc
+      else
+        match byte b.(i) with
+        | Some v -> go (i + 1) (Bigint.logor acc (Bigint.shift_left v (8 * i)))
+        | None -> None
+    in
+    match go 0 Bigint.zero with
+    | Some z -> (Dtype.bitcast (unsigned dt) dt (`Int z) :> Dtype.const)
+    | None -> `Invalid
+  in
   let cell c =
     match c.at with
-    | Some at -> { c with value = current m written at }
-    | None -> c
+    | Element at -> { c with value = current m written at }
+    | Bytes b -> { c with value = join b }
+    | Nowhere -> c
   in
   { t with cells = Array.map cell t.cells }
 
@@ -420,17 +500,24 @@ let rec run m params u =
     let written =
       Option.value (Shape.written_params (Ops.body c)) ~default:[]
     in
-    let args = List.map read (Ops.src_without_body c) in
-    let arg k a = (k, if List.mem k written then reread m m.written a else a) in
+    let nodes = Ops.src_without_body c in
+    let args = List.combine nodes (List.map read nodes) in
+    let arg k (a, t) =
+      (k, if List.mem k written then reread m m.written (Ops.dtype a) t else t)
+    in
     ignore (run m (List.mapi arg args) (Ops.body c))
   and compute u =
     let src = Ops.src u in
     match (Ops.op u, Ops.arg u) with
-    | Const, Const c -> { shape = []; cells = [| { value = c; at = None } |] }
+    | Const, Const c ->
+        { shape = []; cells = [| { value = c; at = Nowhere } |] }
     | Param, Param { slot; _ } when List.mem_assoc slot params ->
         { (List.assoc slot params) with shape = concrete u }
     | Param, Param { bound = Some v; _ } ->
-        { shape = []; cells = [| { value = (v :> Dtype.const); at = None } |] }
+        {
+          shape = [];
+          cells = [| { value = (v :> Dtype.const); at = Nowhere } |];
+        }
     | (Param | Buffer | Alloc), _ -> storage m u
     | (Reshape | Expand | Pad | Shrink | Permute), _ ->
         movement u (value (List.hd src))
@@ -446,7 +533,7 @@ let rec run m params u =
     | Store, _ -> (
         match src with
         | dst :: v :: _ ->
-            store m (value dst) (value v);
+            store m (Ops.dtype dst) (value dst) (value v);
             none
         | _ -> fail "a store has a destination and a value")
     | After, _ -> (
@@ -492,7 +579,7 @@ let rec run m params u =
         | None -> under
         | Some ((_, written) as l) ->
             Ops.Tbl.replace left u l;
-            reread m written under)
+            reread m written (Ops.dtype u) under)
     | Sink, _ ->
         List.iter (fun s -> ignore (value s)) src;
         none
@@ -566,7 +653,8 @@ let rec run m params u =
                           | Some v -> v
                           | None -> value n
                         in
-                        Ops.Tbl.replace trip n (reread m m.written v)
+                        Ops.Tbl.replace trip n
+                          (reread m m.written (Ops.dtype n) v)
                     | After | Buffer | Param | Alloc | Const -> ()
                     | _ ->
                         Ops.Tbl.remove trip n;
@@ -580,12 +668,40 @@ let rec run m params u =
             values := saved;
             none
         | None ->
-            fail "cannot evaluate an end of a %a" Op.pp (Ops.op (List.hd src)))
+            (* An end of stores runs them once for each value of its ranges,
+               and of its inner ends', the outer varying slowest. *)
+            let rec inner e = if Ops.op e = End then inner (Ops.nth e 0) else e in
+            let body = inner u in
+            if Ops.op body <> Store && not (Ops.is_group body) then
+              fail "cannot evaluate an end of a %a" Op.pp (Ops.op body);
+            let rec trips at = function
+              | r :: rs ->
+                  let bound = Ops.substitute ~calls:Skip ~pass:Fixed_point r at in
+                  for k = 0 to count bound - 1 do
+                    trips ((r, Ops.int k) :: at) rs
+                  done
+              | [] ->
+                  ignore
+                    (value (Ops.substitute ~calls:Skip ~pass:Fixed_point body at))
+            in
+            trips [] (loop_ranges u);
+            none)
     | Bitcast, _
       when Dtype.itemsize (Ops.dtype u)
            <> Dtype.itemsize (Ops.dtype (List.hd src)) ->
         rebytes u (value (List.hd src))
-    | op, _ when Op.Set.mem op Op.Set.alu || op = Cast || op = Bitcast ->
+    | Bitcast, _ ->
+        (* Of one size, an element keeps the bytes of storage it views. *)
+        let x = List.hd src in
+        let from = Ops.dtype x and t = value x in
+        let v = elementwise u [ t ] in
+        let at k =
+          match bytes_of from t.cells.(k) with
+          | Some b -> Bytes b
+          | None -> Nowhere
+        in
+        { v with cells = Array.mapi (fun k c -> { c with at = at k }) v.cells }
+    | op, _ when Op.Set.mem op Op.Set.alu || op = Cast ->
         elementwise u (List.map value src)
     | op, _ -> fail "cannot evaluate a %a" Op.pp op
   in

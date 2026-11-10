@@ -514,29 +514,86 @@ let rec contiguous_view u =
       | Int offset when op b <> Op.Bitcast -> Some (b, Int offset)
       | Int offset -> of_source ~cut:(Some (b, Int offset)) (Int offset)
 
+(* A run of [n] elements of the bitcast [bc] from [first] that starts or ends
+   inside an element of [bc]'s source: a store of [x] into it stores the
+   source's elements it touches, their bytes the run covers from [x] and the
+   others as they were. *)
+let store_into_cut bc first n x =
+  let src0 = nth bc 0 in
+  let per = element_size src0 / element_size bc in
+  let start = first / per and stop = (first + n + per - 1) / per in
+  let whole = shrink (flatten src0) [ Some (Int start, Int stop) ] in
+  let word = uint_of_bytes (element_size bc) in
+  let words = bitcast whole word in
+  let lo = first - (start * per) and m = (stop - start) * per in
+  let kept a b =
+    if a = b then [] else [ shrink words [ Some (Int a, Int b) ] ]
+  in
+  let parts = kept 0 lo @ [ bitcast x word ] @ kept (lo + n) m in
+  store whole (bitcast (cat (List.hd parts) (List.tl parts)) (dtype src0))
+
 (* A store through movements and bitcasts of storage, or of a state of it,
    whose elements are a run of whole elements of the storage stores the
    value's bits into that run: indexed through a bitcast that changes the
-   element size, the target would be shifts of loaded values. A store into a
-   bitcast of the storage itself is left to the rule that bitcasts its
-   value. *)
+   element size, the target would be shifts of loaded values. A run at a
+   constant start that cuts elements of the storage stores the whole elements
+   it touches. A store into a bitcast of the storage itself is left to the rule
+   that bitcasts its value, as is one whose only bitcast that changes the
+   element size is the outermost. Any other target of storage through such a
+   bitcast is refused. *)
 let store_into_run dst x =
   let rec through_bitcast u =
     op u = Op.Bitcast
     || (Op.Set.mem (op u) Op.Set.movement && through_bitcast (nth u 0))
   in
+  let rec resizes u =
+    match op u with
+    | Op.Bitcast ->
+        element_size u <> element_size (nth u 0) || resizes (nth u 0)
+    | o when Op.Set.mem o Op.Set.movement -> resizes (nth u 0)
+    | _ -> false
+  in
   let of_storage u = has_buffer_identity ~after_ok:true u in
   if not (through_bitcast dst) then None
   else if op dst = Op.Bitcast && of_storage (nth dst 0) then None
   else
+    let n b =
+      Sint.(numel dst * Int (element_size dst) // Int (element_size b))
+    in
+    (* The value's elements, broadcast to the target's, as [b]'s type. *)
+    let value b =
+      let x =
+        if equal_shape (shape x) (shape dst) then x
+        else
+          let ones = List.init (ndim dst - ndim x) (fun _ -> Int 1) in
+          expand (reshape x (ones @ shape x)) (shape dst)
+      in
+      bitcast (flatten x) (dtype b)
+    in
+    (* A bitcast left once the outermost moves to the value. *)
+    let left = if op dst = Op.Bitcast then nth dst 0 else dst in
+    let refused () =
+      if
+        resizes left
+        && has_buffer_identity (storage_base dst)
+        && not (on_disk dst)
+      then
+        invalid_arg
+          "a store through a bitcast to a type of another size writes a run \
+           of its storage's bytes, which begins and ends on whole elements \
+           of the storage where a bound variable places either end; these \
+           bytes are no such run: store each run apart, or whole elements"
+      else None
+    in
     match contiguous_view dst with
     | Some (b, first) when of_storage b ->
-        let n =
-          Sint.(numel dst * Int (element_size dst) // Int (element_size b))
-        in
-        let run = shrink (flatten b) [ Some (first, Sint.(first + n)) ] in
-        Some (store run (bitcast (flatten x) (dtype b)))
-    | _ -> None
+        let run = shrink (flatten b) [ Some (first, Sint.(first + n b)) ] in
+        Some (store run (value b))
+    | Some (b, Int first) when op b = Op.Bitcast -> (
+        match n b with
+        | Int n -> Some (store_into_cut b first n (value b))
+        | Sym _ -> refused ())
+    | _ -> refused ()
 
 (* Whether [u] is storage, or a run of its elements ({!contiguous_view}) that
    shrinks and reshapes view: a copy kernel then indexes the storage at its
@@ -932,6 +989,51 @@ let chained ~key nodes sink =
   List.for_all plain nodes
   && not (List.exists runs (List.concat_map listed_effects (src sink)))
 
+(* A loop outside a kernel runs one call each trip: an end of a call over
+   loop ranges, an end of such an end, or a back edge of a call over a loop
+   range. An end of stores alone is a kernel's. *)
+let check_loop e =
+  let rec innermost u = if op u = Op.End then innermost (nth u 0) else u in
+  let rec runs u =
+    match op u with
+    | Op.Call | Op.Backedge | Op.Linear -> true
+    | Op.End -> runs (innermost u)
+    | Op.Sink -> List.exists runs (src u)
+    | _ -> is_group u && List.exists runs (List.tl (src u))
+  in
+  let x = nth e 0 in
+  let ranges = if op e = Op.End then List.tl (src e) else [ nth e 1 ] in
+  let name u =
+    match op u with
+    | Op.Backedge -> "a back edge"
+    | Op.End -> "an end"
+    | Op.Linear -> "a linear of calls"
+    | Op.Store -> "a store"
+    | _ when is_group u -> "a group of effects"
+    | o -> Format.asprintf "%a" Op.pp o
+  in
+  let calls = op (innermost x) = Op.Call && (op e = Op.End || op x = Op.Call) in
+  if (not calls) && (op e = Op.Backedge || runs x) then
+    invalid_arg
+      (Printf.sprintf
+         "a loop outside a kernel runs one call each trip, and this %s runs \
+          %s: make it the body of a call (Ops.call), and loop that call"
+         (if op e = Op.End then "end" else "back edge")
+         (name (if op e = Op.End then innermost x else x)));
+  let other r =
+    op r = Op.Range && not (Axis_type.equal (axis_type r) Axis_type.Loop)
+  in
+  match List.find_opt other ranges with
+  | Some r when calls ->
+      invalid_arg
+        (Format.asprintf
+           "a loop of a call runs over ranges of axis type %a, and its range \
+            %s is %a: make the range with ~axis_type:Loop"
+           Axis_type.pp Axis_type.Loop
+           (String.concat "," (List.map string_of_int (axis_id r)))
+           Axis_type.pp (axis_type r))
+  | _ -> ()
+
 let sequence sink =
   let nodes = toposort ~calls:Skip sink in
   let by_slot = Hashtbl.create 1 in
@@ -962,7 +1064,10 @@ let sequence sink =
     | _ -> ()
   in
   List.iter
-    (fun u -> if op u = Op.End || op u = Op.Backedge then mark_inner (nth u 0))
+    (fun u ->
+      if op u = Op.End || op u = Op.Backedge then (
+        check_loop u;
+        mark_inner (nth u 0)))
     nodes;
   let is_effect u =
     (not (Tbl.mem inner u))
