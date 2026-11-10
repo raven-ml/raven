@@ -1,0 +1,71 @@
+# tolk D473 golden=1245f84ad0d164e131a26c39e4e237f9
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.PARAM dtypes.i64 [0] ParamArg(slot=1, dtype=dtypes.i64, device="CPU")
+2 Ops.PARAM dtypes.i64 [0] ParamArg(slot=2, dtype=dtypes.i64, device="CPU")
+3 Ops.ADD dtypes.i64 [2, 0]
+4 Ops.STORE dtypes.void [1, 3]
+5 Ops.AFTER dtypes.i64 [1, 4]
+6 Ops.PARAM dtypes.i64 [0] ParamArg(slot=3, dtype=dtypes.i64, device="CPU")
+7 Ops.CONST dtypes.weakint [] 8
+8 Ops.PARAM dtypes.u8 [7] ParamArg(slot=0, dtype=dtypes.u8, device="CPU")
+9 Ops.STACK dtypes.weakint [0, 7]
+10 Ops.RESHAPE dtypes.u8 [8, 9]
+11 Ops.CONST dtypes.weakint [] 0
+12 Ops.STACK dtypes.weakint [11, 11]
+13 Ops.STACK dtypes.weakint [0, 0]
+14 Ops.SHRINK dtypes.u8 [10, 12, 13]
+15 Ops.CAST dtypes.u64 [14] dtypes.u64
+16 Ops.SHL dtypes.u64 [15, 11]
+17 Ops.STACK dtypes.weakint [11, 0]
+18 Ops.SHRINK dtypes.u8 [10, 17, 13]
+19 Ops.CAST dtypes.u64 [18] dtypes.u64
+20 Ops.SHL dtypes.u64 [19, 7]
+21 Ops.ADD dtypes.u64 [16, 20]
+22 Ops.CONST dtypes.weakint [] 2
+23 Ops.STACK dtypes.weakint [11, 22]
+24 Ops.SHRINK dtypes.u8 [10, 23, 13]
+25 Ops.CAST dtypes.u64 [24] dtypes.u64
+26 Ops.CONST dtypes.weakint [] 16
+27 Ops.SHL dtypes.u64 [25, 26]
+28 Ops.ADD dtypes.u64 [21, 27]
+29 Ops.CONST dtypes.weakint [] 3
+30 Ops.STACK dtypes.weakint [11, 29]
+31 Ops.SHRINK dtypes.u8 [10, 30, 13]
+32 Ops.CAST dtypes.u64 [31] dtypes.u64
+33 Ops.CONST dtypes.weakint [] 24
+34 Ops.SHL dtypes.u64 [32, 33]
+35 Ops.ADD dtypes.u64 [28, 34]
+36 Ops.CONST dtypes.weakint [] 4
+37 Ops.STACK dtypes.weakint [11, 36]
+38 Ops.SHRINK dtypes.u8 [10, 37, 13]
+39 Ops.CAST dtypes.u64 [38] dtypes.u64
+40 Ops.CONST dtypes.weakint [] 32
+41 Ops.SHL dtypes.u64 [39, 40]
+42 Ops.ADD dtypes.u64 [35, 41]
+43 Ops.CONST dtypes.weakint [] 5
+44 Ops.STACK dtypes.weakint [11, 43]
+45 Ops.SHRINK dtypes.u8 [10, 44, 13]
+46 Ops.CAST dtypes.u64 [45] dtypes.u64
+47 Ops.CONST dtypes.weakint [] 40
+48 Ops.SHL dtypes.u64 [46, 47]
+49 Ops.ADD dtypes.u64 [42, 48]
+50 Ops.CONST dtypes.weakint [] 6
+51 Ops.STACK dtypes.weakint [11, 50]
+52 Ops.SHRINK dtypes.u8 [10, 51, 13]
+53 Ops.CAST dtypes.u64 [52] dtypes.u64
+54 Ops.CONST dtypes.weakint [] 48
+55 Ops.SHL dtypes.u64 [53, 54]
+56 Ops.ADD dtypes.u64 [49, 55]
+57 Ops.CONST dtypes.weakint [] 7
+58 Ops.STACK dtypes.weakint [11, 57]
+59 Ops.SHRINK dtypes.u8 [10, 58, 13]
+60 Ops.CAST dtypes.u64 [59] dtypes.u64
+61 Ops.CONST dtypes.weakint [] 56
+62 Ops.SHL dtypes.u64 [60, 61]
+63 Ops.ADD dtypes.u64 [56, 62]
+64 Ops.RESHAPE dtypes.u64 [63, 0]
+65 Ops.BITCAST dtypes.i64 [64] dtypes.i64
+66 Ops.STORE dtypes.void [6, 65]
+67 Ops.AFTER dtypes.i64 [6, 66]
+68 Ops.SINK dtypes.void [5, 67]
+

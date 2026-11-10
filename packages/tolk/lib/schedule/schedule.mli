@@ -37,30 +37,22 @@ val create_schedule : ?by_storage:bool -> Ops.t -> Ops.t
     it makes as each trip starts and the call, and a back edge of a call
     ({!Ops.backedge}) stays a back edge, its condition the storage it reads.
 
-    A kernel reads the states its arguments name, a join ({!Ops.is_join})
-    being the state under it and a view of a storage ({!Ops.whole}) being that
-    storage's state; a view the kernel only stores through names the storage
-    and no state, so that a load through it reads the state the write is over.
-    A kernel writes the states the {!Op.After}s that list it are over. It runs
-    after the kernels that write the states it reads and those the joins it
-    reads through wait for, after the writers of the state it writes over where
-    it stores through a view and is not given that state, and before the
-    kernels of every write over a state it reads of which it is no part,
-    whichever elements each touches. A call that writes a state through an
-    argument its body writes ({!Shape.written_params}) and reads it through
-    another reads it as it was before the call.
-
-    The kernels of a write marked disjoint ({!Ops.after_disjoint}) run in any
-    order, whichever {!Op.After}s list each. An unmarked {!Op.After} lands its
-    stores in the order listed, a kernel listed twice at its last place, each
-    reading the states the graph names, older states as they were, so a later
-    store wins where stores overlap. A call loading through an argument it
-    stores through loads what the kernels listed before it left there: load and
-    store are one parameter, which no copy can part. {!Op.After}s of one state
-    over views of it are one write, and at most one {!Op.After} of a state may
-    be over no view, as one over a run {!contiguous_mops_to_view} made no view
-    of is; an element two {!Op.After}s of one state both write holds an
-    unspecified value.
+    Each storage's states form a chain: an {!Op.After} of a state lists the
+    kernels of the one write over it, which make the next state; a kernel
+    listed again by an {!Op.After} of a later state of the same storage is no
+    part of that write. A kernel reads the states its arguments name, a join
+    ({!Ops.is_join}) being the state under it and a view of a storage
+    ({!Ops.whole}) being that storage's state; through an argument it writes,
+    it reads the state its write is over, and a view it stores through names
+    the storage and no state. It runs after the kernels that write the states
+    it reads and those the joins it reads through wait for, after the kernels
+    of the write that made the state it writes over, and before every other
+    kernel of each write over a state it reads, whichever elements each
+    touches. A call that writes a state through an argument its body writes
+    ({!Shape.written_params}) and reads it through another reads it as it was
+    before the call. The kernels of a write marked disjoint
+    ({!Ops.after_disjoint}) run in any order, whichever {!Op.After}s list
+    each, none ordered before another by reading the state they write.
 
     Where these orders form a cycle, one read on the cycle reads instead a copy
     of its whole state, or of its own run for a view of the state, into
@@ -75,21 +67,15 @@ val create_schedule : ?by_storage:bool -> Ops.t -> Ops.t
     where new storage starts ({!Shape.allocated_start}) for a parameter its
     state's storage starts off: a call reads storage it writes off its
     parameter's start through a copy, made whether or not its orders form a
-    cycle. An argument a kernel stores through that names a state older than
-    the state the earliest {!Op.After} listing the kernel is over names that
-    state, unless an {!Op.After} of the older state lists the kernel too. A write's prior state is the latest state of
-    the {!Op.After}'s storage its call is given, and the state the {!Op.After}
-    is after where it is given none: a loop after its carry's storage, given
-    the carry's first state, writes over that state. A graph whose kernels form
-    no cycle gets no copy.
+    cycle. A copy of storage of no device, a function's parameter, is
+    call-local storage of no device, placed with the call's arguments. A graph
+    whose kernels form no cycle gets no copy.
 
-    Raises [Invalid_argument] if two {!Op.After}s of one state over no view of
-    it list different kernels, which no storage holds both successors of, if a
-    call whose body
-    does not show its writes takes one state at two arguments and writes it,
-    if a state a kernel reads a copy of has no device, if a cut graph still
-    has a cycle, or if an effect is not a call, a loop of a call, a store or an
-    {!Op.After}. *)
+    Raises [Invalid_argument] if two {!Op.After}s of one state list different
+    kernels (two writes over one state), if a call whose body does not show
+    its writes takes one state at two arguments and writes it, if a cut graph
+    still has a cycle, or if an effect is not a call, a loop of a call, a store
+    or an {!Op.After}. *)
 
 val pm_flatten_linear : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_flatten_linear] inlines each {!Op.Linear} among the sources of an
@@ -103,10 +89,12 @@ val contiguous_mops_to_view : Ops.t -> Ops.t -> Ops.t option
     elements ({!Prepare.contiguous_view}) when they are contiguous, and that
     view for any other [c]; [None] when they are not contiguous or [src]'s shape
     is symbolic, for a copy or a stage when the elements start at bound
-    variables, and for a store into a buffer's state after earlier stores or
-    of a value that reads the buffer short of the stored states of other
-    storage, which the kernel split then stages. The view is the buffer shrunk
-    to the elements and bitcast to [src]'s type, reshaped to [c]'s shape. *)
+    variables, and for a store of a value that reads the buffer short of the
+    stored states of other storage, which the kernel split then stages. A
+    store's [src] views the buffer through whichever of its states it names:
+    the states order the store, and the store writes the buffer as it runs.
+    The view is the buffer shrunk to the elements and bitcast to [src]'s type,
+    reshaped to [c]'s shape. *)
 
 val is_store_after : Ops.t -> bool
 (** [is_store_after u] is [true] iff [u] is an {!Op.After} that orders a store
@@ -202,8 +190,10 @@ val create_linear_with_vars :
     The values are those of the bound variables the kernels read by name or
     the calls pass, each name bound to one value.
 
-    Raises [Invalid_argument] if a kernel that is not a copy accesses buffers on several devices,
-    or as {!create_schedule} does. *)
+    Raises [Invalid_argument] if a kernel that is not a copy accesses buffers
+    on several devices, on two writes over one state or an effect listed over
+    a state that needs it ({!Prepare.sequence}), or as {!create_schedule}
+    does. *)
 
 (**/**)
 

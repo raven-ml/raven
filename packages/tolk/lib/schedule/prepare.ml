@@ -193,8 +193,8 @@ let pm_mops = mops mop_index
 
 (* In a tensor graph, an index with a shape is a gather's, which would multiply
    its shape if it moved through the movement: the gather is left whole. *)
-let pm_tensor_mops =
-  mops (fun r idx -> if Indexing.is_gather idx then None else mop_index r idx)
+let tensor_mop r idx = if Indexing.is_gather idx then None else mop_index r idx
+let pm_tensor_mops = mops tensor_mop
 
 (* Cleanups *)
 
@@ -573,6 +573,12 @@ let run_from_start a =
         Some b
     | _ -> None
 
+(* Whether [u] moves with a serial loop: a range it varies with is one. *)
+let moves_with_loop u =
+  List.exists
+    (fun r -> Axis_type.equal (axis_type r) Axis_type.Loop)
+    (Nodes.to_list (ranges u))
+
 (* Storage, or a state of it, that a call only reads outside loops, and that
    starts elsewhere than its parameter assumes, stored into new storage, which
    starts on a 16-byte boundary: rune's jit makes storage at its inputs' phases,
@@ -585,14 +591,10 @@ let copy_off_start c i a =
     | Some w -> not (List.mem i w)
     | None -> false
   in
-  let loops =
-    List.exists
-      (fun r -> Axis_type.equal (axis_type r) Axis_type.Loop)
-      (Nodes.to_list (ranges a))
-  in
   match Shape.param_start (body c) i with
   | Some param
-    when reads && (not loops)
+    when reads
+         && (not (moves_with_loop a))
          && has_buffer_identity ~after_ok:true a
          && (not (fits_start ~param (storage_phase a)))
          && fits_start ~param allocated_start
@@ -661,65 +663,10 @@ let kept_stage u =
   | Op.Stage, Bufferize { keep = Whole; _ } -> true
   | _ -> false
 
-(* An unmarked After lands its stores in the order it lists them, each reading
-   the states the graph names, older states as they were. A store listed twice
-   lands at its last place. A store that reads a state of the storage it writes,
-   where an earlier effect of the listing writes that storage, reads a stage of
-   its value, made before the write begins, so that what landed before it does
-   not show through. An effect other than a store writes the After's storage.
-   Nothing removes that stage: a store of a storage's elements into themselves
-   restores what an earlier store overwrote. *)
-let stage_listed u =
-  match src u with
-  | b :: (_ :: _ :: _ as deps)
-    when (not (is_disjoint u)) && List.exists (fun s -> op s = Op.Store) deps
-    -> (
-      let storage_of s = whole (storage_base (nth s 0)) in
-      let written s = if op s = Op.Store then storage_of s else storage_of u in
-      let reads_storage s =
-        let storage = storage_of s in
-        let walked r = op r <> Op.After || whole (storage_base r) == storage in
-        Ops.reaches ~gate:walked ~calls:Skip (nth s 1) storage
-      in
-      let stage earlier s =
-        if op s <> Op.Store then s
-        else
-          let value = nth s 1 in
-          if
-            kept_stage value
-            || (not (List.memq (storage_of s) earlier))
-            || not (reads_storage s)
-          then s
-          else
-            let opts =
-              { device = device value; addrspace = Dtype.Global; keep = Whole }
-            in
-            let staged = v Op.Stage ~src:[ value ] ~arg:(Bufferize opts) in
-            replace s ~src:(nth s 0 :: staged :: List.tl (List.tl (src s)))
-      in
-      match List.rev (dedup_nodes (List.rev deps)) with
-      | first :: later ->
-          let earlier = ref [ written first ] in
-          let staged s =
-            let s' = stage !earlier s in
-            earlier := written s :: !earlier;
-            s'
-          in
-          let deps' = first :: List.map staged later in
-          if List.equal ( == ) deps deps' then None
-          else Some (replace u ~src:(b :: deps'))
-      | [] -> None)
-  | _ -> None
-
 let pm_inline_calls =
   Pattern_matcher.v
     (fun () -> [
       rule (Upat.op Op.Call ~name:"c") (fun m -> resolve_function (m "c"));
-      rule
-        (Upat.op Op.After ~allow_any_len:true
-           ~src:[ Upat.var "r"; Upat.op Op.Sink ~name:"t" ])
-        (fun m -> resolve_returned_after (m "r") (m "t"));
-      rule (Upat.op Op.After ~name:"u") (fun m -> stage_listed (m "u"));
     ])
 
 let pm_disk_copy =
@@ -877,6 +824,482 @@ let earliest_rewrites =
              Some (replace s ~src:(nth s 0 :: List.map walk_mop kept)));
        ]))
 
+(* Sequencing
+
+   A graph's effects run once each, ordered by the states they name
+   ({!Ops.after}). [sequence] states that order in the graph: each storage's
+   states become one chain, each state over the one before, listing the one
+   effect (or the stores of one disjoint write) that makes it; every read
+   names the state of the chain it reads, and every effect the state it
+   writes over. Joins and writes over one state disappear: the schedule
+   orders a chain. *)
+
+let is_storage u =
+  match op u with
+  | Op.Buffer | Op.Alloc -> true
+  | Op.Param -> addrspace u <> Some Dtype.Alu
+  | _ -> false
+
+let rec state_node u =
+  if is_storage u then Some u
+  else
+    match op u with
+    | Op.After when is_join u -> state_node (nth u 0)
+    | Op.After -> Some u
+    | Op.Bitcast | Op.Index -> state_node (nth u 0)
+    | o when Op.Set.mem o Op.Set.movement -> state_node (nth u 0)
+    | _ -> None
+
+(* [s], movements of a bitcast of one element size, as the same movements
+   of the bitcast's source. *)
+let rec same_size_bitcast s =
+  match op s with
+  | Op.Bitcast when Dtype.itemsize (dtype s) = Dtype.itemsize (dtype (nth s 0))
+    ->
+      Some (nth s 0)
+  | o when Op.Set.mem o Op.Set.movement ->
+      Option.map
+        (fun x -> replace s ~src:(x :: List.tl (src s)))
+        (same_size_bitcast (nth s 0))
+  | _ -> None
+
+(* Storage and effects as a refusal names them. *)
+let pp_storage ppf s =
+  Format.fprintf ppf "the storage in slot %d" (param_arg_of s).slot
+
+let describe e =
+  match (op e, arg e) with
+  | Op.Store, _ -> (
+      let dst = nth e 0 in
+      match contiguous_view dst with
+      | Some (b, Int lo) when Dtype.equal (dtype b) (dtype dst) ->
+          Printf.sprintf "the store into elements %d to %d" lo
+            (lo + max_numel dst - 1)
+      | _ -> Format.asprintf "a store of shape %a" pp_shape (shape dst))
+  | Op.Call, Call { name = Some n; _ } -> "a call of " ^ n
+  | Op.Call, _ -> "a call"
+  | _ -> "a loop"
+
+(* An inlined body lists its effects in a sink. *)
+let rec listed_effects d =
+  if op d = Op.Sink then List.concat_map listed_effects (src d) else [ d ]
+
+(* Whether the effects of [sink], of nodes [nodes], are one chain per storage
+   already, which [sequence] leaves as it is: each is a store into storage, or
+   a view of it, listed alone by an After over that storage, the only write
+   of the storage that [key] names; no join, no value ordered after effects,
+   and the sink, or a sink it lists, lists no effect. *)
+let chained ~key nodes sink =
+  let written = Tbl.create 4 in
+  let rec viewed u =
+    if Op.Set.mem (op u) Op.Set.movement then viewed (nth u 0) else u
+  in
+  let plain u =
+    match (op u, src u) with
+    | Op.After, [ x; d ] -> (
+        op d = Op.Store && is_storage x
+        && viewed (nth d 0) == x
+        &&
+        match key u with
+        | Some s when not (Tbl.mem written s) ->
+            Tbl.replace written s ();
+            true
+        | _ -> false)
+    | (Op.After | Op.Call | Op.End | Op.Backedge | Op.Linear), _ -> false
+    | _ -> true
+  in
+  let runs x = Op.Set.mem (op x) (ops Op.[ Store; Call; End; Backedge; Linear ]) in
+  List.for_all plain nodes
+  && not (List.exists runs (List.concat_map listed_effects (src sink)))
+
+let sequence sink =
+  let nodes = toposort ~calls:Skip sink in
+  let by_slot = Hashtbl.create 1 in
+  let key u =
+    match state_node u with
+    | None -> None
+    | Some st ->
+        let s = whole (storage_base st) in
+        if not (is_storage s) then None
+        else if op s = Op.Param then (
+          let slot = (param_arg_of s).slot in
+          match Hashtbl.find_opt by_slot slot with
+          | Some c -> Some c
+          | None ->
+              Hashtbl.replace by_slot slot s;
+              Some s)
+        else Some s
+  in
+  if chained ~key nodes sink then sink
+  else
+  (* The nodes a loop runs, which are no effects of their own. *)
+  let inner = Tbl.create 4 in
+  let rec mark_inner u =
+    Tbl.replace inner u ();
+    match op u with
+    | Op.Linear | Op.End | Op.Backedge -> mark_inner (nth u 0);
+        if op u = Op.Linear then List.iter mark_inner (src u)
+    | _ -> ()
+  in
+  List.iter
+    (fun u -> if op u = Op.End || op u = Op.Backedge then mark_inner (nth u 0))
+    nodes;
+  let is_effect u =
+    (not (Tbl.mem inner u))
+    && match op u with
+       | Op.Store | Op.Call -> true
+       | Op.End | Op.Backedge -> (
+           match op (nth u 0) with
+           | Op.Call | Op.Linear | Op.Store | Op.End -> true
+           | _ -> false)
+       | _ -> false
+  in
+  (* Each listing of an effect: the storage of the After, the After, and the
+     effects listed before it there, which make later states the listing
+     names; and the marked After listing it. An effect runs after the state
+     each After listing it is over, where it writes that After's storage:
+     [after x1 [k]] puts [k] over [x1], wherever the walk first reaches [k].
+     A state that already holds [k] (a listing again on a later state) orders
+     nothing. *)
+  let over = Tbl.create 4 and marked = Tbl.create 4 in
+  List.iter
+    (fun u ->
+      if op u = Op.After && not (is_join u) then
+        let listed = List.concat_map listed_effects (List.tl (src u)) in
+        if is_disjoint u then List.iter (fun d -> Tbl.replace marked d u) listed;
+        match key u with
+        | None -> ()
+        | Some s ->
+            ignore
+              (List.fold_left
+                 (fun earlier d ->
+                   Tbl.replace over d
+                     ((s, u, earlier)
+                     :: Option.value ~default:[] (Tbl.find_opt over d));
+                   d :: earlier)
+                 [] listed))
+    nodes;
+  (* The accesses of an effect: each call it runs, or its store. *)
+  let rec parts u =
+    match op u with
+    | Op.Store | Op.Call -> [ u ]
+    | Op.Linear -> List.concat_map parts (src u)
+    | Op.End | Op.Backedge -> parts (nth u 0)
+    | _ -> []
+  in
+  let written_args c =
+    match op c with
+    | Op.Store -> Some [ nth c 0 ]
+    | _ -> (
+        match Shape.written_params (body c) with
+        | None -> None
+        | Some w ->
+            Some
+              (List.filteri
+                 (fun i _ -> List.mem i w)
+                 (src_without_body c)))
+  in
+  (* An effect writes its destinations, or, where its body shows none, the
+     storage of the Afters that list it. *)
+  let writes e =
+    let from_parts =
+      List.concat_map
+        (fun c ->
+          Option.fold ~none:[] ~some:(List.filter_map key) (written_args c))
+        (parts e)
+    in
+    if from_parts <> [] then dedup_nodes from_parts
+    else
+      dedup_nodes
+        (List.map
+           (fun (s, _, _) -> s)
+           (Option.value ~default:[] (Tbl.find_opt over e)))
+  in
+  (* Whether [a] runs after [b]: [b] is among what [a] reads or waits for. *)
+  let depends a b = Nodes.mem b (backward_slice ~calls:Skip a) in
+  (* Whether [p], a state, has the effect [e] in its chain: a listing of [e]
+     again on a later state, which orders nothing. *)
+  let rec in_chain p e =
+    match state_node p with
+    | Some x when op x = Op.After ->
+        List.memq e (List.concat_map listed_effects (List.tl (src x)))
+        || in_chain (nth x 0) e
+    | _ -> false
+  in
+  (* The walk: sources in order, an effect after the state each listing it is
+     over and the effects listed before its first place there, so that no item
+     of the sink, group or value reached first decides its place. *)
+  let nodes =
+    let mark = Tbl.create 4 and out = ref [] in
+    let rec visit u =
+      match Tbl.find_opt mark u with
+      | Some true -> ()
+      | Some false ->
+          invalid_arg "an effect is listed over a state that needs it"
+      | None ->
+          Tbl.replace mark u false;
+          (if (not (Tbl.mem inner u)) && is_effect u then
+             let w = writes u in
+             List.iter
+               (fun (s, listing, earlier) ->
+                 let p = nth listing 0 in
+                 if
+                   List.memq s w
+                   && (not (in_chain p u))
+                   && not (List.memq u earlier)
+                 then (
+                   visit p;
+                   List.iter
+                     (fun d ->
+                       if Tbl.find_opt mark d <> Some true && List.memq s (writes d)
+                       then visit d)
+                     (List.rev earlier)))
+               (List.rev (Option.value ~default:[] (Tbl.find_opt over u))));
+          List.iter visit (if op u = Op.Call then List.tl (src u) else src u);
+          Tbl.replace mark u true;
+          out := u :: !out
+    in
+    visit sink;
+    List.rev !out
+  in
+  let bare = ref [] in
+  let map = Tbl.create 4 in
+  let m x = Option.value (Tbl.find_opt map x) ~default:x in
+  let current = Tbl.create 4 in
+  let order = ref [] in
+  let cur s = Option.value (Tbl.find_opt current s) ~default:s in
+  let opened = Tbl.create 4 in
+  (* The states each effect makes, and the effect that makes each state. *)
+  let made = Tbl.create 4 and maker = Tbl.create 4 in
+  (* Each state's place in its chain. *)
+  let stamp = Tbl.create 4 in
+  (* [x], movements of a state, over the state [st] instead. *)
+  let rec reroot x st =
+    if is_storage x then
+      (* A view of the storage, as a body's parameter of a run, stays. *)
+      if shape_opt x = shape_opt st && Dtype.equal (dtype x) (dtype st) then st
+      else x
+    else
+      match op x with
+      | Op.After -> reroot (nth x 0) st
+      | o when Op.Set.mem o Op.Set.movement || o = Op.Bitcast ->
+          replace x ~src:(reroot (nth x 0) st :: List.tl (src x))
+      | _ -> m x
+  in
+  let run_effect e =
+    let w = writes e in
+    let group s =
+      match (Tbl.find_opt marked e, Tbl.find_opt opened s) with
+      | Some u, Some (u', prev, es) when u == u' -> Some (u, prev, es)
+      | _ -> None
+    in
+    let target s =
+      match group s with Some (_, prev, _) -> prev | None -> cur s
+    in
+    (* Two writes over one state: [e] writes [s] over [target s], which each
+       listing of [e] must name, through the state it is over, through an
+       effect listed before [e], or through [e]'s written arguments, unless
+       [e] reads what the write that made it left. A listing that names an
+       older state otherwise lists [e] beside that write, and which of the two
+       lands last would be the walk's choice. *)
+    let names s t x =
+      match state_node (m x) with
+      | Some x -> (if is_storage x then s else x) == t
+      | None -> false
+    in
+    let written_names s t c =
+      match written_args c with
+      | Some l ->
+          List.exists
+            (fun a ->
+              match key a with Some k -> k == s && names s t a | None -> false)
+            l
+      | None -> false
+    in
+    let refuse s t =
+      invalid_arg
+        (Format.asprintf
+           "two writes over one state of %a: %s and %s are each over it; list \
+            one over the After of the other, or list both in one After"
+           pp_storage s (describe e) (describe (Tbl.find maker t)))
+    in
+    let refuse_siblings (s, u, earlier) =
+      let p = nth u 0 and t = target s in
+      let made_it d =
+        match Tbl.find_opt made d with
+        | Some l -> List.exists (fun (s', st) -> s' == s && st == t) l
+        | None -> false
+      in
+      if
+        List.memq s w && group s = None
+        && not
+             (names s t p
+             || List.exists made_it earlier
+             || List.exists (written_names s t) (parts e)
+             || in_chain p e
+             || depends e (Tbl.find maker t))
+      then refuse s t
+    in
+    let listings = Option.value ~default:[] (Tbl.find_opt over e) in
+    List.iter refuse_siblings listings;
+    (* A write no After of its storage lists is over the state its
+       destination names, a sibling of any other write over that state. *)
+    List.iter
+      (fun s ->
+        let t = target s in
+        if
+          t != s
+          && (not (List.exists (fun (s', _, _) -> s' == s) listings))
+          && not
+               (List.exists (written_names s t) (parts e)
+               || depends e (Tbl.find maker t))
+        then refuse s t)
+      w;
+    (* A destination, or an argument a call writes, is the storage as the
+       effect runs: the state its write is over. *)
+    let access ~written a =
+      match key a with
+      | Some s when written && List.memq s w -> reroot a (target s)
+      | _ -> m a
+    in
+    let rec build u =
+      match op u with
+      | Op.Store -> (
+          let dst = access ~written:true (nth u 0) in
+          let rest = List.map m (List.tl (src u)) in
+          (* A store through a bitcast of a state, of one element size, stores
+             the value's bits into the state. *)
+          match (same_size_bitcast dst, rest) with
+          | Some x, v :: gate when op v <> Op.Copy ->
+              (* A weak value takes the view's type first: a bitcast reads
+                 its operand at a stated width. *)
+              let v =
+                if Dtype.mem (dtype v) Dtype.weaks then cast v (dtype dst)
+                else v
+              in
+              replace u ~src:(x :: bitcast v (dtype x) :: gate)
+          | _ -> replace u ~src:(dst :: rest))
+      | Op.Call ->
+          let w =
+            match Shape.written_params (body u) with Some w -> w | None -> []
+          in
+          replace u
+            ~src:
+              (body u
+              :: List.mapi
+                   (fun i a -> access ~written:(List.mem i w) a)
+                   (src_without_body u))
+      | Op.Linear -> replace u ~src:(List.map build (src u))
+      | Op.End | Op.Backedge ->
+          replace u ~src:(build (nth u 0) :: List.map m (List.tl (src u)))
+      | _ -> m u
+    in
+    let e' = build e in
+    Tbl.replace map e e';
+    if w = [] then bare := e' :: !bare;
+    List.iter
+      (fun s ->
+        if not (Tbl.mem current s) then order := s :: !order;
+        let st =
+          match group s with
+          | Some (u, prev, es) ->
+              let es = es @ [ e' ] in
+              Tbl.replace opened s (u, prev, es);
+              after_disjoint prev es
+          | None -> (
+              let prev = cur s in
+              match Tbl.find_opt marked e with
+              | Some u ->
+                  Tbl.replace opened s (u, prev, [ e' ]);
+                  after_disjoint prev [ e' ]
+              | None ->
+                  Tbl.remove opened s;
+                  after prev [ e' ])
+        in
+        Tbl.replace current s st;
+        Tbl.replace made e
+          ((s, st) :: Option.value ~default:[] (Tbl.find_opt made e));
+        Tbl.replace maker st e;
+        Tbl.replace stamp st (Tbl.length stamp))
+      w
+  in
+  List.iter
+    (fun u ->
+      if Tbl.mem inner u then ()
+      else if is_effect u then run_effect u
+      else
+        match op u with
+        | Op.After when is_join u -> Tbl.replace map u (m (nth u 0))
+        | Op.After -> (
+            (* The latest of the state under it, the states the writes it
+               lists of its storage make, and the states of its storage the
+               effects it lists read: they leave it no older. *)
+            let stamped x =
+              match state_node (m x) with
+              | Some st when Tbl.mem stamp st -> Some st
+              | _ -> None
+            in
+            let later best st =
+              match best with
+              | Some b when Tbl.find stamp b >= Tbl.find stamp st -> best
+              | _ -> Some st
+            in
+            let listed = List.concat_map listed_effects (List.tl (src u)) in
+            let latest s =
+              let best =
+                List.fold_left
+                  (fun best d ->
+                    match Option.bind (Tbl.find_opt made d) (List.assq_opt s) with
+                    | Some st -> later best st
+                    | None -> best)
+                  (stamped (nth u 0)) listed
+              in
+              (* Only a state older than the chain's last can be passed by
+                 one the effects read. *)
+              if Option.fold ~none:(cur s == s) ~some:(( == ) (cur s)) best
+              then best
+              else
+                let read x best =
+                  if op x <> Op.After || is_join x then best
+                  else
+                    match (key x, stamped x) with
+                    | Some k, Some st when k == s -> later best st
+                    | _ -> best
+                in
+                List.fold_left
+                  (fun best d -> Nodes.fold read (backward_slice ~calls:Skip d) best)
+                  best listed
+            in
+            match Option.bind (key u) latest with
+            | Some st -> Tbl.replace map u (reroot (nth u 0) st)
+            | None -> Tbl.replace map u (m (nth u 0)))
+        | _ when u == sink -> ()
+        | _ ->
+            (* A node none of whose sources changed stays. *)
+            let s = src u in
+            if List.exists (fun x -> Tbl.mem map x) s then
+              let s' = List.map m s in
+              if not (List.for_all2 ( == ) s s') then
+                Tbl.replace map u (replace u ~src:s'))
+    nodes;
+  let ends = List.rev_map cur !order in
+  let kept =
+    List.filter_map
+      (fun x ->
+        if is_effect x || op x = Op.After || op x = Op.Store then None
+        else Some (m x))
+      (List.concat_map listed_effects (src sink))
+  in
+  (* A chain's last state that a kept source views is listed by it. *)
+  let kept_views e =
+    List.exists
+      (fun k -> Option.fold ~none:false ~some:(( == ) e) (state_node k))
+      kept
+  in
+  let ends = List.filter (fun e -> not (kept_views e)) ends in
+  let src' = dedup_nodes (ends @ List.rev !bare @ kept) in
+  if List.equal ( == ) src' (src sink) then sink else replace sink ~src:src'
+
 let prepare_rangeify sink =
   let tsink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
@@ -885,5 +1308,6 @@ let prepare_rangeify sink =
          (Pattern_matcher.concat
             [ pm_tensor_mops; pm_inline_calls; pm_disk_copy ]))
   in
+  let tsink = sequence tsink in
   graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink
     (Before_sources (Pattern_matcher.append pm_tensor_mops earliest_rewrites))

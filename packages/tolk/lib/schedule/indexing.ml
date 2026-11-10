@@ -681,7 +681,7 @@ let waits_over sa sb =
 let checks = Atomic.make 0
 let store_checks () = Atomic.get checks
 
-let joinable regions ~crossed slice a b =
+let joinable regions ~crossed ~reads_over slice a b =
   Atomic.incr checks;
   let reductions s =
     List.filter (fun u -> op u = Op.Reduce) (Tbl.find regions s)
@@ -691,7 +691,8 @@ let joinable regions ~crossed slice a b =
   in
   let apart () =
     let sa = slice a and sb = slice b in
-    reads sa b || reads sb a || waits_over sa sb || waits_over sb sa
+    reads sa b || reads sb a || reads_over a b || reads_over b a
+    || waits_over sa sb || waits_over sb sa
   in
   List.equal Sint.equal (shape (nth a 0)) (shape (nth b 0))
   && Option.equal String.equal (device (nth a 0)) (device (nth b 0))
@@ -742,32 +743,57 @@ let share_loops rctx topo =
         | None -> false)
       va false
   in
-  (* Each store's backward slice, made once. *)
+  (* The state each store is listed over: the stores that made it run
+     before, as the store's own reads do. *)
+  let prior = Tbl.create 16 in
+  let rec list_over p d =
+    match op d with
+    | Op.Store -> Tbl.replace prior d p
+    | Op.End -> list_over p (nth d 0)
+    | _ -> ()
+  in
+  List.iter
+    (fun u ->
+      if op u = Op.After && not (is_join u) then
+        List.iter (list_over (nth u 0)) (List.tl (src u)))
+    topo;
+  (* Each store's backward slice, with the state it is listed over, made
+     once. *)
   let slices = Tbl.create 16 in
   let slice s =
     match Tbl.find_opt slices s with
     | Some sl -> sl
     | None ->
-        let sl = backward_slice ~calls:Skip s in
+        let root =
+          match Tbl.find_opt prior s with
+          | Some p -> sink [ s; p ]
+          | None -> s
+        in
+        let sl = backward_slice ~calls:Skip root in
         Tbl.replace slices s sl;
         sl
   in
-  (* The stores each store follows in an unmarked After's listing: those land
-     before it, so a group holding both would run neither first. *)
-  let listed = Tbl.create 1 in
-  List.iter
-    (fun u ->
-      if op u = Op.After && not (is_disjoint u) then
-        ignore
-          (List.fold_left
-             (fun earlier s ->
-               if op s <> Op.Store then earlier
-               else begin
-                 if earlier <> [] then Tbl.replace listed s earlier;
-                 s :: earlier
-               end)
-             [] (List.tl (src u))))
-    topo;
+  (* Whether [a] reads the state [b] is listed over, which [b] writes as it
+     runs: a store into a view of storage names no state of it. A store
+     listed over that state too reads it through its listing alone. *)
+  let own = Tbl.create 4 in
+  let reads_over a b =
+    match Tbl.find_opt prior b with
+    | None -> false
+    | Some p ->
+        (match Tbl.find_opt prior a with Some q -> q != p | None -> true)
+        && Nodes.mem p (slice a)
+        &&
+        let sl =
+          match Tbl.find_opt own a with
+          | Some sl -> sl
+          | None ->
+              let sl = backward_slice ~calls:Skip a in
+              Tbl.replace own a sl;
+              sl
+        in
+        Nodes.mem p sl
+  in
   (* The stores each store reads through anything. *)
   let reads_of = Tbl.create 16 in
   let read s =
@@ -775,15 +801,7 @@ let share_loops rctx topo =
     | Some r -> r
     | None ->
         let sl = slice s in
-        let earlier = Option.value (Tbl.find_opt listed s) ~default:[] in
-        let earlier_slices = List.map slice earlier in
-        let r =
-          List.filter
-            (fun t ->
-              Nodes.mem t sl || List.memq t earlier
-              || List.exists (Nodes.mem t) earlier_slices)
-            stores
-        in
+        let r = List.filter (fun t -> Nodes.mem t sl) stores in
         Tbl.replace reads_of s r;
         r
   in
@@ -837,7 +855,8 @@ let share_loops rctx topo =
       let ga = Tbl.find groups fa and gb = Tbl.find groups fb in
       if
         List.for_all
-          (fun s -> List.for_all (joinable regions ~crossed slice s) gb)
+          (fun s ->
+            List.for_all (joinable regions ~crossed ~reads_over slice s) gb)
           ga
         && not (reaches fa fb || reaches fb fa)
       then begin

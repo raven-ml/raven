@@ -12,7 +12,8 @@
    listed.
 
    Its oracle (spec) applies the graph's writes one by one: each write
-   computes its stores from the states named, then lands them. The schedule
+   computes its stores from the states named, then lands them, a store listed
+   twice at its first place. The schedule
    is interpreted, and compiled and run on the host and on each GPU
    present. *)
 
@@ -471,8 +472,30 @@ let spec p =
             x s.v.ops)
         sum
   in
+  (* A store listed twice in one write is one store, which lands at its first
+     place: views of the same elements of the latest state, of one shape, and
+     the same reads of the same states make the same node. *)
+  let same a b =
+    let named (r : read) =
+      ( r.buf,
+        min r.older (List.length states.(r.buf) - 1),
+        indices p.sizes.(r.buf) r.rv,
+        (match r.rv with Bit _ | Bytes _ -> true | _ -> false) )
+    in
+    let n = p.sizes.(a.dst) in
+    a.dst = b.dst
+    && dims_of n a.view = dims_of n b.view
+    && indices n a.view = indices n b.view
+    && a.v.const = b.v.const
+    && a.v.ops = b.v.ops
+    && List.map named a.v.reads = List.map named b.v.reads
+  in
+  let rec once = function
+    | [] -> []
+    | s :: rest -> s :: once (List.filter (fun t -> not (same s t)) rest)
+  in
   let apply ss =
-    let vs = List.map (fun s -> (s, value s)) ss in
+    let vs = List.map (fun s -> (s, value s)) (once ss) in
     List.iter
       (fun (s, v) ->
         Array.iteri
@@ -581,7 +604,12 @@ let run_linear ~base ~vars linear =
         | None -> failwith "a write through no storage")
       (Interpreter.writes ~vars ~params ~buffers (Ops.nth call 0))
   in
-  let apply (pl, i, v) = (values_of pl).(pl.off + i) <- v in
+  (* Memory holds float32: a store of a bitcast's integer leaves its bits. *)
+  let as_float : Dtype.value -> Dtype.value = function
+    | `Int z -> `Float (Int32.float_of_bits (Int32.of_int (Bigint.to_int z)))
+    | v -> v
+  in
+  let apply (pl, i, v) = (values_of pl).(pl.off + i) <- as_float v in
   let snapshot () =
     Ops.Tbl.fold (fun k v acc -> (k, Array.copy v) :: acc) memory []
   in
@@ -936,7 +964,7 @@ let () =
     [
       group "launches"
         [
-          prop ~count:1500
+          prop ~count:1500 ~examples:[ 323170; 267777; 160398; 401830; 879636 ]
             "a schedule's launches write what its graph states, in either \
              order of their members"
             (Gen.int_range 1 1_000_000) order_independent;

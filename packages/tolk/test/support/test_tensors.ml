@@ -152,6 +152,18 @@ let effects =
                   [
                     Ops.store (p 1 3) (Ops.after out [ Ops.store out reversed ]);
                   ])));
+      test "an effect lands after those listed before it, whichever the sink \
+            reaches first" (fun () ->
+          let e = Ops.store out (p 1 3) in
+          let a =
+            Ops.after out [ Ops.store out (Shape.flip (p 1 3) [ 0 ]); e ]
+          in
+          equal write
+            [ (0, 0, z 0); (0, 1, z 1); (0, 2, z 2) ]
+            (writes (Ops.sink [ a ]));
+          equal write (writes (Ops.sink [ a ])) (writes (Ops.sink [ e; a ]));
+          equal write (writes (Ops.sink [ a ]))
+            (writes (Ops.sink [ Ops.group [ e ]; a ])));
       test "call-local storage is memory of its own, and scratch" (fun () ->
           let scratch = Shape.alloc ~slot:1 ~device:cpu [ Int 3 ] Int32 in
           let staged = Ops.after scratch [ Ops.store scratch (p 1 3) ] in
@@ -170,6 +182,56 @@ let effects =
           equal write
             [ (0, 0, z 0); (0, 1, z 1); (0, 2, z 2) ]
             (writes (Ops.sink [ Ops.call body [ out; p 1 3 ] ])));
+      test "an argument a call writes is its storage as the call runs"
+        (fun () ->
+          let x = Shape.param ~shape:[ Int 3 ] 0 Int32
+          and y = Shape.param ~shape:[ Int 3 ] 1 Int32 in
+          let body = Ops.sink [ Ops.store x Ops.O.(y + x) ] in
+          let twos = Ops.after out [ Ops.store out (Ops.int ~dtype:Int32 2) ] in
+          let three = Ops.int ~dtype:Int32 3 in
+          (* [out] names the state before the store, the call runs after it. *)
+          let c = Ops.call body [ out; Ops.O.(three + twos) ] in
+          equal write
+            [ (0, 0, z 7); (0, 1, z 7); (0, 2, z 7) ]
+            (writes (Ops.sink [ Ops.after out [ c ] ])));
+      test
+        "an after holds the latest of the state under it, the states its \
+         writes of its storage leave and those its effects read, in either \
+         order of a sink"
+        (fun () ->
+          let y = p 1 3 and o1 = p 2 3 and o2 = p 3 3 and o3 = p 4 3 in
+          let w = p 5 3 in
+          let int n = Ops.int ~dtype:Int32 n in
+          let first = Ops.store out (int 1) in
+          let ones = Ops.after out [ first ] in
+          let twos = Ops.after ones [ Ops.store ones Ops.O.(ones + int 1) ] in
+          (* A write of other storage leaves [out] in the state under it. *)
+          let other = Ops.after ones [ Ops.store y (int 5) ] in
+          (* A write listed again names the state it left. *)
+          let again = Ops.after out [ first; Ops.store y (int 5) ] in
+          (* A write of other storage that reads a state of [out] leaves
+             [out] in that state. *)
+          let read = Ops.after out [ Ops.store w Ops.O.(ones + int 4) ] in
+          let outputs =
+            [
+              twos;
+              Ops.after o1 [ Ops.store o1 other ];
+              Ops.after o2 [ Ops.store o2 again ];
+              Ops.after o3 [ Ops.store o3 read ];
+            ]
+          in
+          let into_outputs u =
+            List.filter
+              (fun (s, _, _) -> List.mem s [ 2; 3; 4 ])
+              (writes (Ops.sink u))
+          in
+          let expected =
+            List.concat_map
+              (fun s -> List.init 3 (fun i -> (s, i, z 1)))
+              [ 2; 3; 4 ]
+          in
+          equal write expected (into_outputs outputs);
+          equal write expected (into_outputs (List.rev outputs)));
       test
         "a loop calls its body once a trip, each reading the last's stores \
          into the storage its after names"
@@ -182,6 +244,20 @@ let effects =
             (writes
                (Ops.sink
                   [ Ops.after out [ Ops.end_ (Ops.call body [ out ]) [ trips ] ] ])));
+      test
+        "a loop no after lists reads the storage its call writes as the last \
+         trip left it"
+        (fun () ->
+          let row = Shape.param ~shape:[ Int 2 ] 0 Int32
+          and first = Shape.param ~shape:[ Int 2 ] 1 Int32 in
+          let body = Ops.sink [ Ops.store row Ops.O.(first + int 1) ] in
+          let r = Ops.range ~axis_type:Loop (Int 3) [ 0 ] in
+          let y = p 1 6 in
+          let rows = Shape.shrink y [ Some (Sym Ops.O.(r * int 2), Sym Ops.O.((r * int 2) + int 2)) ] in
+          let call = Ops.call body [ rows; Shape.shrink y [ Some (Int 0, Int 2) ] ] in
+          equal write
+            [ (1, 0, z 1); (1, 1, z 2); (1, 2, z 2); (1, 3, z 3); (1, 4, z 2); (1, 5, z 3) ]
+            (writes (Ops.sink [ Ops.end_ call [ r ] ])));
       test "a symbolic shape is refused" (fun () ->
           let n = Ops.variable "n" (z 1) (z 3) in
           rejects (fun () -> eval (Shape.shrink (p 1 6) [ Some (Int 0, Sym n) ])));

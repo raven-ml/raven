@@ -11,6 +11,16 @@ let rec storage_of u =
       Some (Ops.op u = Alloc, p, Shape.max_numel u)
   | _ -> None
 
+(* A view of storage, in a schedule: the storage and the element its run
+   starts at, for a run of elements of the storage's own type. *)
+let view_of a =
+  match Prepare.contiguous_view a with
+  | Some (b, offset) when Dtype.equal (Ops.dtype a) (Ops.dtype b) -> (
+      match (storage_of b, offset) with
+      | Some _, Int n -> Some (b, n)
+      | _ -> None)
+  | _ -> None
+
 let same (s0, (p0 : Ops.param_arg), _) (s1, (p1 : Ops.param_arg), _) =
   s0 = s1 && p0.slot = p1.slot
 
@@ -44,6 +54,7 @@ let kernel_writes ~vars ~params:enclosing values_of call =
   let bind (buffers, params) (k, a) =
     match (storage_of a, Ops.arg a) with
     | Some _, _ -> ((k, values_of a) :: buffers, params)
+    | None, _ when Option.is_some (view_of a) -> ((k, values_of a) :: buffers, params)
     | None, Param { bound = Some v; _ } -> (buffers, (k, v) :: params)
     | None, Param { name = Some n; _ } when List.mem_assoc n vars ->
         (buffers, (k, List.assoc n vars) :: params)
@@ -126,8 +137,14 @@ let writes ?(vars = []) ?(params = []) ?(buffers = []) sink =
 
 let linear_writes ?(vars = []) ?(params = []) ?(buffers = []) linear =
   let memory = Hashtbl.create 16 and written = Hashtbl.create 64 in
-  let storage a = Option.get (storage_of a) in
-  let values_of a =
+  (* An argument is storage, or a run of it from an element on. *)
+  let run a =
+    match storage_of a with
+    | Some _ -> (a, 0)
+    | None -> Option.get (view_of a)
+  in
+  let storage a = Option.get (storage_of (fst (run a))) in
+  let memory_of a =
     let ((scratch, p, _) as st) = storage a in
     match Hashtbl.find_opt memory (scratch, p.slot) with
     | Some v -> v
@@ -135,6 +152,11 @@ let linear_writes ?(vars = []) ?(params = []) ?(buffers = []) linear =
         let v = initial buffers st in
         Hashtbl.replace memory (scratch, p.slot) v;
         v
+  in
+  let values_of a =
+    match storage_of a with
+    | Some _ -> memory_of a
+    | None -> Array.sub (memory_of a) (snd (run a)) (Shape.max_numel a)
   in
   let writes_of call =
     if not (is_kernel_call call) then
@@ -146,7 +168,8 @@ let linear_writes ?(vars = []) ?(params = []) ?(buffers = []) linear =
       (kernel_writes ~vars ~params values_of call)
   in
   let apply (a, i, v) =
-    (values_of a).(i) <- v;
+    let i = i + snd (run a) in
+    (memory_of a).(i) <- v;
     match storage a with
     | false, p, _ -> Hashtbl.replace written (p.slot, i) v
     | true, _, _ -> ()

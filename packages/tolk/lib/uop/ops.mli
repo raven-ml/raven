@@ -779,7 +779,8 @@ val cconst : Dtype.t -> Dtype.const -> t
 
 val sink : ?kernel:kernel_info -> t list -> t
 (** [sink ~kernel us] is the {!Op.Sink} of [us], the root of the kernel [kernel]
-    if given. *)
+    if given. Outside a kernel, [us] are what a graph computes; their order
+    orders no effect ({!after}). *)
 
 val group : t list -> t
 (** [group us] is the empty {!Op.Stack} ordered after [us] ({!after}): the
@@ -804,7 +805,8 @@ val load : t -> t list -> t
 val store : ?gate:t -> t -> t -> t
 (** [store p x] is the {!Op.Store} of [x] through [p], guarded by [gate]. A
     tensor graph that stores through a broadcast is refused when it is
-    prepared ({!Prepare.prepare_rangeify}). *)
+    prepared ({!Prepare.prepare_rangeify}). Outside a kernel, {!after} says
+    which state of its storage a store is over. *)
 
 val end_ : t -> t list -> t
 (** [end_ u rs] is the {!Op.End} of the ranges [rs] around [u], or [u] if [rs]
@@ -823,24 +825,39 @@ val backedge : t -> loop:t -> cond:t -> t
 val after : t -> t list -> t
 (** [after u deps] is [u] ordered after [deps], or [u] if [deps] is empty.
 
-    Outside a kernel, an {!Op.After} of storage names a state of it. One whose
-    [deps] list calls, loops of calls or stores is the state those effects
-    leave the storage in, after the state [u] names: they land in the order
-    listed, each reading the states the graph names, older states as they were,
-    so a later store wins where stores overlap. A call loading through an argument it stores through loads what the effects
-    listed before it left there, with each store the call runs after. An element two {!Op.After}s of one state both write, which
-    {!Schedule.create_schedule} admits for views of the state, holds an
-    unspecified value. A state over the whole of its storage holds its own
-    effects, those of the states under it, and each store those effects run
-    after, by reading it directly or through other storage, or by listing it. A
-    store of an {!Op.After} over a view of one of those states that they do not
-    run after is no part of it. A store listed over a later state of its storage than
-    its destination names stores into that later state. One listing only stores
-    into other storage leaves [u]'s state as it is, read once they have landed.
-    One whose
-    [deps] are all {!Op.After}s is a join ({!is_join}): it names no state of
-    its own, holds the value of the state [u] names, and is read once the
-    states [deps] name are reached. *)
+    Outside a kernel, a graph's stores, calls and loops of calls are its
+    effects, each run once. An {!Op.After} of storage whose [deps] list effects
+    names a state of it: the latest of the state [u] names, the states its
+    effects leave the storage in, and the states of the storage its effects
+    read or run after. The effects land in the order listed, the first over
+    the state [u] names, or over a later one it reads or runs after, each
+    reading the states the graph names, older states as they were, so a later
+    store wins where stores overlap. An effect runs after the state of each
+    {!Op.After} that lists it and whose storage it writes, after the effects
+    listed before its first place there, and after the effects whose states
+    it reads; nothing else orders effects, neither the order of a {!sink}'s
+    items nor where a walk of the graph first meets an effect. An effect
+    listed again over a state that already holds it adds no order: it lands
+    at its first place. A destination, and an argument a call writes, writes
+    the storage as the effect runs; the state it names decides which state an
+    unlisted write is over, below.
+
+    Each state has at most one successor. A write is over the state of the
+    {!Op.After} of its storage that lists it; a write no {!Op.After} of its
+    storage lists is over the state its destination names. Two writes over one state (an
+    {!Op.After} over a view of a state is a write over that state) leave
+    undecided which lands last, unless one runs after the other, reading a
+    state the other made or a value ordered after it: such writes are
+    refused when the graph is scheduled
+    ({!Schedule.create_linear_with_vars}). List them in one {!Op.After}, in
+    the order they land, or one over the {!Op.After} of the other; stores of
+    disjoint elements, in one {!after_disjoint}. An effect listed over a state
+    that needs it, which would then run before itself, is refused too.
+
+    One whose [deps] are all {!Op.After}s, or whose [u] is no storage nor a
+    state of it, names no state of its own: it holds [u]'s value, and an effect
+    that reads it runs after the effects [deps] reach, which run whether read
+    or not. One whose [deps] are all {!Op.After}s is a join ({!is_join}). *)
 
 val after_disjoint : t -> t list -> t
 (** [after_disjoint u stores] is {!after} [u stores] with a promise from its
@@ -859,8 +876,8 @@ val is_disjoint : t -> bool
 
 val is_join : t -> bool
 (** [is_join u] is [true] iff [u] is an {!Op.After} whose dependencies are all
-    {!Op.After}s: a join, which orders a read of its first source after them
-    and writes nothing. *)
+    {!Op.After}s: a join, which holds the value of its first source, read
+    after them, and writes nothing ({!after}). *)
 
 val without_after : t -> t
 (** [without_after u] is [u] without its {!Op.After}s. *)
@@ -963,15 +980,10 @@ val addrspace : t -> Dtype.addr_space option
     holds no memory and lives in [Alu]. *)
 
 val whole : t -> t
-(** [whole p] is the parameter of the storage the {!Op.Param} [p] views, for a
-    {e view}: a parameter of its own that a run of a buffer takes where a call
-    stores into it or a loop reads it, so that the kernel's program does not
-    depend on where the run starts. Any other node is its own [whole]. *)
-
-val view_state : t -> t
-(** [view_state p] is the state of storage the view [p] names, its second
-    source: its storage's parameter, or the {!Op.After} whose elements a read
-    of the run takes. Any other node is its own [view_state]. *)
+(** [whole p] is the parameter of the storage the {!Op.Param} [p] views, its
+    second source, for a {e view}: a parameter of its own that a run of a
+    buffer takes where a store stores into it or a copy or a stage reads it,
+    so that the kernel's program does not depend on where the run starts. Any other node is its own [whole]. *)
 
 val buf_uop : t -> t
 (** [buf_uop u] is the storage node [u] accesses. *)
@@ -1512,11 +1524,6 @@ val pm_substitute : (t Tbl.t, t) Pattern_matcher.t
 
 val pm_drop_after : (unit, t) Pattern_matcher.t
 (** [pm_drop_after] replaces each {!Op.After} with its first source. *)
-
-val resolve_returned_after : t -> t -> t option
-(** [resolve_returned_after r effects] is the value stored into the output [r]
-    by the one store of [effects] into [r]'s storage: [r] after that store if
-    [r] is a parameter of the enclosing function. *)
 
 val gate_kernel_sink : t -> bool
 (** [gate_kernel_sink u] is [false] for a linear program and a kernel's sink, so

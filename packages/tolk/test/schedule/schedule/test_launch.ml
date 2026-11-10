@@ -767,12 +767,14 @@ let read_view_waiting () =
     [ 0.; 7.; 7.; 7.; 7.; 7.; 6.; 7.; 8.; 9.; 10.; 11.; 12. ];
   at_least int ~msg:"copies" ~than:(copies + 1) (Schedule.copies ())
 
-(* Each store reads only its own elements. *)
+(* Each store reads only its own elements, as the state under the write was.
+   Marked disjoint, the stores are one write over that state, which neither
+   overwrites before the other reads it. *)
 let own_elements () =
   let x = f32 ~n:4 0 in
   let bump lo hi = Ops.store (part lo hi x) Ops.O.(part lo hi x + fl 1.) in
   let copies = Schedule.copies () in
-  holds [ Ops.after x [ bump 0 2; bump 2 4 ] ] [ 1.; 2.; 3.; 4. ];
+  holds [ Ops.after_disjoint x [ bump 0 2; bump 2 4 ] ] [ 1.; 2.; 3.; 4. ];
   equal int ~msg:"copies" copies (Schedule.copies ())
 
 (* Each store reads the elements the other writes. *)
@@ -903,12 +905,13 @@ let listed_reads_earlier () =
     ]
     [ 5.; 1.; 2.; 3.; 4.; 5.; 6.; 7. ]
 
-(* A store listed twice lands at its last place. *)
+(* A store listed twice lands at its first place: listed again, it is a store
+   the state already holds. *)
 let listed_twice () =
   let x = f32 ~n:8 0 in
   let a = Ops.store (part 0 6 x) (fl 1.) in
   let b = Ops.store (part 2 8 x) (fl 2.) in
-  holds [ Ops.after x [ a; b; a ] ] [ 1.; 1.; 1.; 1.; 1.; 1.; 2.; 2. ]
+  holds [ Ops.after x [ a; b; a ] ] [ 1.; 1.; 2.; 2.; 2.; 2.; 2.; 2. ]
 
 (* A body that lists overlapping stores of its parameter. *)
 let listing_body ?device () =
@@ -948,20 +951,16 @@ let call_after_store () =
     ]
     [ 18.; 18.; 18.; 18.; 8.; 10.; 12.; 14. ]
 
-(* An After over the whole of [x] and one over a view of it are one write in
-   either listing: elements outside the view hold the whole store. *)
+(* An After over the whole of [x] and one over a view of it are two writes
+   over one state, in either listing: which lands last would be the listing's
+   choice. *)
 let whole_and_view order () =
   let x = f32 ~n:8 0 in
   let v = part 2 6 x in
   let w = Ops.after x [ Ops.store x (fl 1.) ] in
   let u = Ops.after v [ Ops.store v (fl 2.) ] in
-  let got =
-    List.map
-      (function `Float x -> x | _ -> failf "a float")
-      (finals (Ops.sink (order [ w; u ])))
-  in
-  equal (list close) [ 1.; 1.; 1.; 1. ]
-    (List.filteri (fun i _ -> i < 2 || i >= 6) got)
+  raises_match (Exn.invalid_arg ~sub:"two writes over one state") (fun () ->
+      ignore (finals (Ops.sink (order [ w; u ]))))
 
 let listed_in_loop () =
   let x = f32 ~n:8 0 in
@@ -1005,7 +1004,9 @@ let as_it_was =
         reversed_then_stored;
       test "a reader of a run that waits for the store into it reads a copy"
         read_view_waiting;
-      test "stores reading only the elements they write take no copy"
+      test
+        "stores of a disjoint write reading only the elements they write take \
+         no copy"
         own_elements;
       test "stores of one write reading each other's elements read them as \
             they were"
@@ -1037,7 +1038,7 @@ let listed =
       test "each store reads its own elements as they were" listed_overlap;
       test "a later store reads what an earlier one wrote as it was"
         listed_reads_earlier;
-      test "a store listed twice lands at its last place" listed_twice;
+      test "a store listed twice lands at its first place" listed_twice;
       test "the listing holds in a function's body, parameters of a device"
         (listed_in_call ~device:"CPU");
       test "the listing holds in a function's body, parameters of none"
@@ -1046,9 +1047,9 @@ let listed =
       test "the listing holds in a body a loop runs" listed_in_loop;
       test "a call loading through what it stores doubles what was listed before"
         call_after_store;
-      test "an After of a state and one of a view of it, whole first"
+      test "an After of a state and one of a view of it raise, whole first"
         (whole_and_view Fun.id);
-      test "an After of a state and one of a view of it, view first"
+      test "an After of a state and one of a view of it raise, view first"
         (whole_and_view List.rev);
       test "two writes over the whole of a state raise, whole first"
         (two_whole Fun.id);

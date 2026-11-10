@@ -1639,21 +1639,6 @@ let module_matchers =
             (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
                Ops.O.(Ops.after p [ st ] + float 1.)
                (After_sources Ops.pm_drop_after)));
-      test "resolve_returned_after finds the one store into an output"
-        (fun () ->
-          let v = Ops.O.(Shape.param ~shape:(ints [ 4 ]) 1 Float32 + float 1.) in
-          let st = Ops.store p v in
-          equal (option uop)
-            (Some (Ops.after p [ st ]))
-            (Ops.resolve_returned_after p (Ops.sink [ st ]));
-          let out = Shape.alloc ~slot:3 (ints [ 4 ]) Float32 in
-          equal (option uop) (Some v)
-            (Ops.resolve_returned_after out (Ops.sink [ Ops.store out v ]));
-          equal (option uop) None
-            (Ops.resolve_returned_after out (Ops.sink [ st ]));
-          equal (option uop) None
-            (Ops.resolve_returned_after p
-               (Ops.sink [ st; Ops.store p (Ops.float ~dtype:Float32 2.) ])));
       test "gate_kernel_sink stops at a linear program and a kernel's sink"
         (fun () ->
           is_false (Ops.gate_kernel_sink (Ops.v Op.Linear));

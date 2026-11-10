@@ -26,15 +26,22 @@
 
     Graphs have effects on memory. A {!Tolk.Op.Store} writes its value,
     broadcast to its destination's shape, into the memory its destination
-    views. Storage is read as the memory held before any store; an
-    {!Tolk.Op.After} runs its first source, then its other sources, and reads
-    the first's memory once they have run, and a join ({!Tolk.Ops.is_join})
-    holds the value its first source has. A
-    {!Tolk.Op.Call} runs its body with each parameter of slot [k] standing for
-    the call's [k]th argument, reshaped to the parameter's shape. An
+    views. Storage is read as the memory held before any store. An
+    {!Tolk.Op.After} runs its first source, then its other sources, and holds
+    the latest of the state its first source names, the states its sources'
+    writes of its storage leave and the states of its storage they read, as
+    memory was then; a join
+    ({!Tolk.Ops.is_join}) holds the value its first source has. An effect runs
+    after the state of each {!Tolk.Op.After} that lists it and whose storage
+    it writes, unless that state lists it already. A {!Tolk.Op.Call} runs its
+    body with each parameter of slot [k] standing for the call's [k]th
+    argument, reshaped to the parameter's shape; an argument it writes is
+    memory as it is once every argument has run. An
     {!Tolk.Op.End} of a call over a range runs the call once for each of the
-    range's values, each trip reading the storage the loop writes, that of the
-    {!Tolk.Op.After}s that list it, as the trips before left it, where the
+    range's values, each trip reading the storage the loop writes, that its
+    call writes ({!Tolk.Shape.written_params}) or, where its body does not
+    show it, that of the {!Tolk.Op.After}s that list it, as the trips before
+    left it, where the
     call is given the latest state of it, and an older state as it was. Each
     node runs once. *)
 

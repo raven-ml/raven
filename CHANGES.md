@@ -1168,6 +1168,15 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A precompiled body that calls an inlined body writes what the inlined body
+  writes: the write was dropped, or raised a verification failure.
+- Two writes over one state of storage, neither of which runs after the
+  other, raise `Invalid_argument` when scheduled, naming both; a store no
+  `After` lists is over the state its destination names. Results no longer
+  depend on a sink's order; a store listed twice lands at its first place.
+- A loop in the body of a call, precompiled or inlined, reads the runs and
+  values of its parameters as each trip starts: it read them once, before the
+  first trip.
 - A reduction of 2^21 terms or more, and of more than 32 an element, that
   another reduction reads inside the ranges it reduces is stored: inlined,
   its terms ran inside the other's loop, which no thread split, tile or

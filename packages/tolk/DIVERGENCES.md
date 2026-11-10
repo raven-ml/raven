@@ -4486,7 +4486,7 @@ rule, its reason and its pins.
   c00c9ada9).
 - **tolk:** `Schedule.schedule`, `Schedule.cuts`, `Schedule.copy_call`,
   `Schedule.copy_before_overwrites` and `Schedule.aliases`;
-  `Schedule.written_over`; `Rangeify.stand_in`; `Shape.written_params` and
+  `Prepare.sequence`; `Rangeify.stand_in`; `Shape.written_params` and
   `Shape.custom_kernel`.
 - **Differs:** one relation orders every kernel of the graph, a call of a
   kernel, of a copy, of a precompiled body or a custom kernel, and a loop of a
@@ -4494,12 +4494,14 @@ rule, its reason and its pins.
   under it (D202), and writes the states the Afters that list it are over, but
   for a kernel already on an earlier state of that storage, which orders the
   state and writes nothing over it, as tinygrad's (`create_schedule`,
-  3bdafaedf). It runs after the kernels that write the states it reads, and what
-  the states under them wait for, as tinygrad orders a state after the state
-  under it (413ecebe6): a kernel listed after a state its own arguments do not
-  reach, as `first` in `x.after(second).after(first)`, would otherwise let a
-  reader run before `second`. It runs before the kernels of every write over
-  them of which it is no part (D330), whichever elements each touches. Where
+  3bdafaedf). It runs after the kernels that write the states it reads, and
+  after the kernels of the write that made the state it writes over, so a
+  reader of a state runs after every write under it, as tinygrad orders a
+  state after the state under it (413ecebe6): a kernel listed after a state
+  its own arguments do not reach, as `first` in
+  `x.after(second).after(first)`, would otherwise let a reader run before
+  `second`. It runs before every other kernel of each write over a state it
+  reads (D330), whichever elements each touches. Where
   these orders form a cycle, the cycle is cut: one read on it reads a copy of
   its whole state, which a kernel of its own makes into call-local storage
   before the state's overwrite, and the schedule is made again from the graph
@@ -4519,20 +4521,20 @@ rule, its reason and its pins.
   (`Shape.written_params`, at any depth through the calls the body makes); in a
   loop, the copy is made in the loop as each trip starts. A custom kernel orders
   after it only the arguments its body writes. A write's prior state is the
-  latest state of the After's storage its calls are given, else the state the
-  After is after: rune's loops name their carry's storage after the loop and
-  pass the carry's first state: beside `a = x.after(x.store(1))`,
-  `x.after(a.store(2))` writes over `a`, where tinygrad raises on two AFTERs
-  named after `x`. Two writes over one state, which no storage holds, raise
-  `Invalid_argument` naming the storage, and so does a call whose body does not
-  show its writes given one state twice. A partial overwrite of elements a
+  state before it on its storage's chain (`Prepare.sequence`, D473): rune's
+  loops name their carry's storage after the loop and pass the carry's first
+  state, and beside `a = x.after(x.store(1))`, `x.after(a.store(2))` writes
+  over `a` (D474). Two writes over one state, which no storage holds, raise
+  `Invalid_argument` (D474), and so does a call whose body does not show its
+  writes given one state twice. A partial overwrite of elements a
   kernel does not read copies too, at a kernel and the state's size in storage.
   The relation costs allocation in every schedule, cycle or not: an edge list, 7
   words an edge, beside the order's own children, and tables of the kernels met
-  and of the joins' waits. Measured in exact words on fudge, `matmul/schedule`
-  allocates 780 words where it allocated 613, and `gpt_oss_decode/schedule`
-  about a third more (15.4 thousand against 11.6); the `*/kernel_graph` rows are
-  unchanged within 1%. Waiting on the state under a state and listing each
+  and of the joins' waits. Measured in words on fudge, `matmul/schedule`
+  allocates 738 words where it allocated 613 without the relation, and
+  `gpt_oss_decode/schedule` about 13.1 thousand against 11.6; the chains of
+  `Prepare.sequence` (D473) left the `*/schedule` rows within 3% of the rules
+  they replaced, and the kernel graphs unchanged. Waiting on the state under a state and listing each
   kernel per storage (413ecebe6, 3bdafaedf) add 3-7% to these rows:
   `matmul/schedule` 707 words against 684. Cheaper shapes were tried and kept:
   the order runs first and the cut's parent tables are built only where it finds
@@ -4555,9 +4557,9 @@ rule, its reason and its pins.
   copies, a copy of a state a rebuilt kernel writes and the copy's phase; the
   programs `read_overwritten_through`, `read_beside_overwrite`,
   `swap_through_values`, `call_given_one_state_twice`, `after_older_write`,
-  `readers_after_older_write`, `after_older_and_new_write` and
-  `write_over_written`, whose recorded schedules and linears and whose values
-  (`create_linear_with_vars › values`); the kernel graph of
+  `readers_after_older_write` and `after_older_and_new_write`, whose recorded
+  schedules and linears and whose values (`create_linear_with_vars › values`);
+  `write_over_written`'s linear and values; the kernel graph of
   `after_part_of_older_write`, whose schedule and linear differ by D184; and the
   `Tolk.Rangeify` suite's `get_kernel_graph › buffer states`.
 
@@ -5798,10 +5800,11 @@ and an initial value is added after it (D260).
   takes the run as its buffer, and a copy stored there is a copy into it
   (`Prepare`'s rule for a copy stored into storage on its device). Stores of
   one shape into runs of one buffer at other offsets are one program. A store
-  into a buffer's state after earlier stores keeps indexing it, since a view
-  of the buffer would not be ordered after them, and so does a store whose
-  value reads the buffer in its own kernel, short of the stored states of
-  other storage, which the kernel split stages by the buffer's identity. A copy or a stage of a run of a buffer that a
+  into a run of a state of the buffer stores into a view of the run too: the
+  states order the store (D473), and it writes the buffer as it runs. A store
+  whose value reads the buffer in its own kernel, short of the stored states
+  of other storage, keeps indexing it, which the kernel split stages by the
+  buffer's identity. A copy or a stage of a run of a buffer that a
   store of the call writes keeps reading the run itself, which the kernel
   split stages: a view, a parameter of its own in the call's body that
   nothing writes, would be read when its reader runs, in whatever state the
@@ -5834,20 +5837,21 @@ and an initial value is added after it (D260).
   element each of one buffer, is recorded as a kernel graph alone: its linear
   here is one launch (D404) over two one-element views of the buffer, where
   tinygrad's indexes the whole buffer in a kernel per store.
-- **Pinned by:** `Tolk.Schedule › contiguous_mops_to_view › stores into runs
-  of a buffer at a bound start store into views of one alignment, whatever
-  the start`, `› stores of one shape into two runs of a buffer share a
-  kernel`, `› a store into contiguous rows of a buffer stores into a view of
-  them`, `› a store into rows of a buffer after a store has no view`, `› a
-  store into rows of a buffer of a value that reads it has no view`, `› a
-  store into rows of a buffer of a value that reads it through other storage
-  stores into a view` and `› a store into columns of storage has no view`;
-  `Tolk_engine › link and run › a store into rows of a buffer of a value
-  read through other storage writes what it computes`; `Tolk.Schedule ›
-  create_linear_with_vars › merged calls › the work on a schedule of many
-  outputs is linear in their number` and `› views of written buffers › a
-  stage of a run of a buffer the call overwrites reads it as it was` and
-  `› halves of a buffer swapped through stages swap`, and the programs
+- **Pinned by:** `Tolk.Schedule › contiguous_mops_to_view › stores into runs of
+  a buffer at a bound start store into views of one alignment, whatever the
+  start`, `› stores of one shape into two runs of a buffer share a kernel`, `› a
+  store into contiguous rows of a buffer stores into a view of them`, `› a store
+  into rows of a buffer after a store stores into a run of that state`, `› a
+  store repeated over a later state stores again`, `› a read of the run a store
+  stores into reads the state`, `› a store into rows of a buffer of a value that
+  reads it has no view`, `› a store into rows of a buffer of a value that reads
+  it through other storage stores into a view` and `› a store into columns of
+  storage has no view`; `Tolk_engine › link and run › a store into rows of a
+  buffer of a value read through other storage writes what it computes`;
+  `Tolk.Schedule › create_linear_with_vars › merged calls › the work on a
+  schedule of many outputs is linear in their number` and `› views of written
+  buffers › a stage of a run of a buffer the call overwrites reads it as it was`
+  and `› halves of a buffer swapped through stages swap`, and the programs
   `stage_of_overwritten` and `copy_of_overwritten`; rune's `Rune.jit over
   several devices › programs` and `› maps over a cut axis › partials give
   eager's bits, their programs do not grow`, and `rune jit › fully sharded`.
@@ -6812,18 +6816,24 @@ D199 fused independent calls of one domain into one kernel. A launch of bodies (
   register initialisation (`b8a9cce78`, `d1e2c393f`), and no commit states a
   reason for the graph of kernels.
 - **tolk:** `Shape.symbolic`'s ordering rule; `Ops.is_join`;
-  `Schedule.value_state`, `Schedule.swap` and the waits of
-  `Schedule.schedule`; `Rangeify.unjoin` and `Rangeify.handle_after`.
+  `Prepare.sequence`; `Schedule.value_state`, `Schedule.swap` and the waits
+  of `Schedule.schedule`; `Rangeify.unjoin` and `Rangeify.handle_after`.
 - **Differs:** an `AFTER` of global storage stays among an `AFTER`'s
   dependencies. An `AFTER` whose dependencies are all `AFTER`s is a join:
-  it names no state of its own. A source read through joins reads the
-  state under them, and its reader waits for that state's writers and for
-  what each join waits for; a write over a join is a write over that
-  state; the copy of a read through a join goes under the join, which keeps
-  its waits; a kernel's parameter for storage read through a join is the
-  state's, its call's argument waiting for the join's dependencies. Afters
-  of registers and local memory still flatten, so no kernel's source
-  changes: the goldens of every module regenerate unchanged.
+  it names no state of its own and holds the value of the state under it.
+  `Prepare.sequence` replaces a join by that state (D473): its reader reads
+  the state and waits for the state's writers, and the effects the join's
+  dependencies reach still run, where the states they name order them, and
+  an effect that reads the join runs after them, so it is no second write
+  over a state they made (D474). A write over a join is a write over
+  that state. In a kernel graph `Schedule.create_schedule` is given, a
+  source read through joins reads the state under them, and its reader
+  waits for that state's writers and for what each join waits for; the copy
+  of a read through a join goes under the join, which keeps its waits; a
+  kernel's parameter for storage read through a join is the state's, its
+  call's argument waiting for the join's dependencies. Afters of registers
+  and local memory still flatten, so no kernel's source changes: the
+  goldens of every module regenerate unchanged.
 - **Reason:** (e). Flattened, a reader of `x` once assigned, joined after
   `y`'s assign, did not wait for `x`'s assign and read `x` before it; a
   reader of `x` as it was, joined after a kernel that reads `x` once
@@ -7781,17 +7791,17 @@ rule, its reason and its pins.
   (`schedule/rangeify.py` `split_store`) lists each kernel under
   one `AFTER`, so its stores never meet the case.
 - **tolk:** `Schedule.schedule`.
-- **Differs:** a kernel reading a state runs before the kernels of every
-  write over it of which it is no part. A kernel of a write marked disjoint
-  (D405) that two `AFTER`s list, as one whose stores share their loops (D137)
-  into `p` and `q`, reads `q` as the store it makes there, beside the other
-  kernels of `q`'s write, and is ordered before none of them, as it would be
-  listed under that write alone. tinygrad orders it, through its read listed
-  under `p`'s write, before them. A kernel of an unmarked write keeps that
-  exemption only if it stores into the state and reads it through no other
-  argument: one reading the state elsewhere is an ordinary reader, before the
-  write's other kernels (D427). A launch of the kernels of one write holds
-  them apart unless the write is marked disjoint (D405).
+- **Differs:** a kernel reading a state runs before every other kernel of
+  each write over it. A kernel of a write marked disjoint (D405) that two
+  `AFTER`s list, as one whose stores share their loops (D137) into `p` and
+  `q`, reads `q` as the store it makes there, beside the other kernels of
+  `q`'s write, and is ordered before none of them, as it would be listed
+  under that write alone. tinygrad orders it, through its read listed under
+  `p`'s write, before them. A kernel of an unmarked write has no such
+  exemption: through an argument it does not write it reads the state before
+  the write's other kernels, where tinygrad skips every read listed under the
+  write. A launch of the kernels of one write holds them apart unless the
+  write is marked disjoint (D405).
 - **Reason:** (b): rune's split program `[a; b] - [b; a]`, two assemblies of
   the same computed pieces stored into their regions of two buffers, makes
   two kernels, each storing a column of both. Each was ordered before the
@@ -8878,32 +8888,32 @@ reason and its pins.
   the buffer alone, so a kernel reading a run and a kernel storing through it
   are not related.
 - **tolk:** `Ops.whole`, `Schedule.view_param`, `Schedule.state_of`,
-  `Schedule.value_state`, `Schedule.written_over`, the view filter of
-  `Schedule.schedule`'s reads, `Spec.shared` and `Spec.kernel_graph`.
+  `Schedule.value_state`, the view filter of `Schedule.schedule`'s reads,
+  `Spec.shared` and `Spec.kernel_graph`.
 - **Differs:** a run of a buffer a store writes keeps a parameter of its own,
   which names its storage's parameter as a second source (`Ops.whole`). The
-  link enters the schedule key by structure; offsets stay out. A kernel reading
+  link enters the schedule key by structure; a view's offset stays out, but a
+  loop's read of a run is a value of its wrapper body (D437), whose offset is
+  part of that body. A kernel reading
   through a view reads its storage's state, and a view it stores through names
   the storage and no state, so a load through it reads the state the write is
-  over. A kernel of a write storing through a view and not given the state it
-  writes over follows that state's writers. `After`s of one state over views of
-  it are one write; two over no view raise in any listing, and an `After` over a
-  run `view_of` lifted no view of (rows through a reshape, a store reading its
-  own buffer, any run inside a body) counts as over no view.
-  A cut reads a copy of the view's own run; the per-trip copy of a loop is for
+  over. A kernel of a write follows the writers of the state it writes over,
+  whatever it is given (D160). An `After` over a view of a state is a write
+  over that state, so two such `After`s are two writes over it, refused as
+  tinygrad refuses them unless one reads what the other left (D474). A cut
+  reads a copy of the view's own run; the per-trip copy of a loop is for
   a state the loop itself writes. Regions stay in the launch scan; ordering is
   over whole states. `Indexing.joinable` keeps its base check: a kernel's slice
   now reaches the storage through the link, so a window store and a reader of a
   later state that share a value split into one more kernel, values equal. On
   rune's suite the kernels and copies are the same as without the link.
 - **Reason:** (e): `x[1:6] = 7` beside `y[:5] = x[1:6]` read 7 in `y`: the
-  reader of a run and the store through it were not ordered, and neither were
-  two stores of runs of one state. A schedule key holds a run's start only
-  modulo its alignment, so a relation over regions is unsound on a cache hit;
-  the relation is over whole states and regions stay in the launch scan.
-  tinygrad makes the same lift without the link. Cost on tolk's bench rows:
-  `*/schedule` words +1.7%, instructions +4.1% (`adam_mlp`) and +3.2%
-  (`gpt_oss_decode`), a small part of a compile; `*/kernel_graph` +0.04%,
+  reader of a run and the store through it were not ordered. A schedule key
+  holds a run's start only modulo its alignment, so a relation over regions is
+  unsound on a cache hit; the relation is over whole states and regions stay in
+  the launch scan. tinygrad makes the same lift without the link. Cost on tolk's
+  bench rows: `*/schedule` words +1.7%, instructions +4.1% (`adam_mlp`) and
+  +3.2% (`gpt_oss_decode`), a small part of a compile; `*/kernel_graph` +0.04%,
   `*/prepare` +0.09%. rune's suite is unchanged: 70,424 kernels and 8 copies
   over 9,408 schedules at one seed on both sides.
 - **Pinned by:** `Tolk.Launch › states read as they were`, among them `a reader
@@ -8916,31 +8926,28 @@ reason and its pins.
 - **tinygrad:** `schedule/__init__.py` (`create_schedule`): the stores of one
   `AFTER` are kernels in no order, and stores that overlap land in whichever
   order the kernels run.
-- **tolk:** `Schedule.schedule` (`landing`, the order edges and the narrowed
-  exemption, D330), `Prepare.stage_listed`, `Indexing.share_loops`,
-  `Shape.symbolic`'s `AFTER` cleanup.
-- **Differs:** an unmarked `AFTER` lists its stores in the order they land, a
-  store listed twice at its last place, each reading the states the graph
-  names, older states as they were, so a later store wins where stores
-  overlap. Each kernel of the listing runs before the next one (no copy can
-  cut these edges); a store past the first that reads a state of its storage
-  stores a stage of its value, kept whole, made before the write begins; a
-  kernel of the listing that reads its state elsewhere than through the
-  argument it stores through is an ordinary reader of it; a kernel join honours
-  the listing. A call or loop loading through an argument it stores through
-  loads what the kernels listed before it left there: load and store are one
-  parameter, which no stage or copy can part. An element two `AFTER`s over views of one state both write stays
-  unspecified: those are one write with no order among them (D426).
+- **tolk:** `Prepare.sequence`, `Schedule.schedule` and `Schedule.cuts`,
+  `Indexing.share_loops`.
+- **Differs:** an unmarked `AFTER` lists its effects in the order they land,
+  the first over the state the `AFTER` names, an effect listed twice at its
+  first place, each reading the states the graph names, older states as they
+  were, so a later store wins where stores overlap. `Prepare.sequence` makes
+  each listed effect a state of its own on its storage's chain (D473), so
+  each kernel runs after the one listed before it; a store past the first
+  that reads a state an earlier one overwrites reads it through a copy, made
+  where those orders form a cycle (D160). Stores that share their loops
+  (`Indexing.share_loops`) keep the listing. A call or loop loading through
+  an argument it stores through loads what the kernels listed before it left
+  there: load and store are one parameter, which no copy can part.
 - **Reason:** (e): overlapping stores of one `AFTER` landed in an unspecified
   order, so `after x [store (x 0..6) f(x); store (x 2..8) g(x)]` could read
-  `g(f(x))` at 2..6, a wrong value with a meaning under value semantics. rune and
-  jera emit no unmarked `AFTER` of several stores (0 edges, 0 stages over 451
-  test processes), so the cost is one rule in the schedule stage: `*/schedule`
-  words +0.10%, and only programs that list overlapping stores pay a stage or a
-  kernel.
+  `g(f(x))` at 2..6, a wrong value with a meaning under value semantics. rune
+  and jera emit no unmarked `AFTER` of several stores (0 edges, 0 stages over
+  451 test processes), so only programs that list overlapping stores pay a
+  copy or a kernel; the pass that orders them is D473's cost.
 - **Pinned by:** `Tolk.Launch › an After lists its stores in the order they
-  land`, `Tolk.Launch_law › a schedule's launches write what its graph states`,
-  `Tolk.Schedule › create_schedule › a write's listing`.
+  land`, among them `› a store listed twice lands at its first place`;
+  `Tolk.Launch_law › a schedule's launches write what its graph states`.
 
 
 ## D428. A loop's call reads a fixed run of storage it writes each trip
@@ -8949,67 +8956,55 @@ reason and its pins.
   the call (`uop/ops.py`, `call_with_outputs`) and render no loop of a call;
   `schedule/__init__.py` (`pm_replace_buf`) lifts a view for a copy or a store
   only.
-- **tolk:** `Schedule.loop_runs` (`view_of`'s loop read), `Schedule.copy_start`,
+- **tolk:** `Prepare.trip_reads`, `Schedule.copy_start`,
   `Prepare.copy_off_start`, `Indexing.realize_custom_kernel_srcs`,
   `Shape.reads_storage_written`, `Spec.args_fit`.
 - **Differs:** a contiguous run at a constant offset that a loop's call only
-  reads, of storage the call writes through another argument, becomes a view
-  parameter (D426) of the loop's call, so each trip reads the run as the trip
-  starts; it is copied each trip beside the call that writes the storage, as a
-  loop's whole-state read is (D160's per-trip copy). An argument off its
+  reads, of the state the call writes through another argument, is a value
+  the call computes each trip (D437), in every scope: the call's wrapper takes
+  the state whole, which is copied each trip beside the call that writes it,
+  as a loop's whole-state read is (D160's per-trip copy). An argument off its
   parameter's start (D54) of storage the call writes takes no copy before the
   loop: scheduling makes the copy, per trip in a loop that writes the state, at
   the start new storage takes (`Shape.allocated_start`) where the state's own
   start does not fit the parameter, cycle or none
-  (`Schedule.copy_off_start_reads`). A run of a state is such a view
-  (D432). Any other read of the state a loop's call writes, or of a later one,
-  moves into the call's body (D437). A read of an older state, or of storage written before the loop, stays
+  (`Schedule.copy_off_start_reads`). A read of an older state, or of storage
+  written before the loop, stays
   stored once, as the graph names it.
   A fixed run of storage the loop does not write is stored once, as before.
 - **Reason:** (e): the loop read the run as it was before its first trip: a call
   storing row 1 of a buffer, plus one, into row `r` left `5,6,7,8` in row 2 where
-  the trips compute `6,7,8,9`. A stage cannot be made inside a loop's call, so
-  a read no view can hold is refused rather than computed with stale values.
-  rune and jera emit no read of this shape: 0 firings of a read of written
-  storage over their suites (rune read 1,211 fixed runs, jera 130, of storage
-  the loop does not write, stored once as before).
+  the trips compute `6,7,8,9`. A stage made before the loop holds no trip's
+  writes, so the run is computed in the call's wrapper each trip. rune and
+  jera emit no read of this shape: their suites' schedules are the same with
+  and without the rule (rune read 1,211 fixed runs, jera 130, of storage the
+  loop does not write, stored once as before).
 - **Pinned by:** the `Tolk_engine` suite's `calls of views › a call's fixed read
   sees what its loop wrote`, `› a loop's fixed read off its parameter's start is
   read each trip`, `› a back edge's fixed read sees what its loop wrote`,
   `› a loop reads a flip of its written storage each trip`, `› a loop reads
   earlier states as they were`, `› a call reads storage it writes off its
   parameter's start, no after listing the storage`, `› a loop reads each run
-  as its trip starts`.
+  as its trip starts`, `› a loop's fixed read of an After state it writes is
+  read each trip`, `› an After state's fixed run off its parameter's start`,
+  `› an After state's fixed run under a back edge`, `› a fixed run of the
+  state two stores deep`, `› a loop reads each run of an After state as its
+  trip starts`, `› an After state's fixed runs at other offsets`, `› two fixed
+  runs of an After state`, `› an After state's fixed run through a join`, `› a
+  loop named by an older state, a run of the later`, `› a bitcast run of an
+  After state read each trip`, `› older and sibling states' runs stay as they
+  were`, `› two loops in sequence read their runs`, `› a loop's older run of
+  storage leaves the state before it`.
 
-## D429. A store listed over a later state of its storage writes that state
+## D429. Withdrawn
 
-- **tinygrad:** `schedule/__init__.py` (`create_schedule`), where an `AFTER`'s
-  kernels supersede the `AFTER`'s own source; tolk takes the prior state from
-  the calls' arguments (D160).
-- **tolk:** `Schedule.name_written_states`, `Schedule.join_foreign_stores`.
-- **Differs:** before the read and write relation is built, an argument a
-  kernel stores through that names a state older than the state the earliest
-  `After` listing the kernel is over names that state, unless an `After` of the
-  older state lists the kernel too. `after x1 [store (x 2..4) (x1[0:2] + 1)]`
-  raised "two writes over one state" and runs; a call given `x` to write and
-  `x1` to read, listed over `x1`, reads `x1` as `memmove` reads its source. An
-  `After` of storage listing only stores into other storage is a join after
-  one write of each storage, its stores in the order listed and marked as the
-  `After` is, on the graph as it enters scheduling, where a store
-  names the storage it writes: `after x [store y v]` is `x` as it was, read once
-  the store has landed; it failed verification, a range left open. A store of
-  other storage beside one of its own stays, as tinygrad's goldens hold
-  (`store_ordered_before`).
-- **Reason:** (e): `Ops.after` gives both programs a meaning and each raised
-  an internal error.
-- **Pinned by:** `Tolk.Schedule › create_linear_with_vars › joins › a store
-  naming an older state, listed over a later one`, `› a store through a run of
-  a join`, `› an after listing only a store into other storage is that state`,
-  `› stores into one other storage land as listed`;
-  `Tolk_engine › calls of views › a call given an older state to write and a
-  later to read reads it before the call`, `› a kernel listed over two
-  storages names the later state in either listing`, `› runs of one other
-  storage land as listed in an after`.
+A store listed over a later state of its storage than its destination names
+wrote that later state (`Schedule.name_written_states`), and an `After` listing
+only stores into other storage was a join after them
+(`Schedule.join_foreign_stores`). Merged into D473, where an effect runs after
+the state of each `After` listing it whose storage it writes, and an `After`
+listing no write of its storage names the latest state of it its effects
+read or run after; D473 keeps this entry's reason and pins.
 
 ## D430. Conversions of bfloat16 on their bits, on HIP and with another formula
 
@@ -9077,41 +9072,12 @@ reason and its pins.
   conversions only. So Section 8.6's latitude does not reach tolk's casts.
 - **Pinned by:** `Rune.jit on a GPU › integers › an integer cast to a float
   gives eager's bits`, run on Metal, which holds the ties of every exponent.
-## D432. A view names the state it reads
+## D432. Withdrawn
 
-- **tinygrad:** `schedule/__init__.py` (`pm_replace_buf`) lifts a view for a
-  copy or a store only, of a buffer; tolk has views of a loop's fixed reads
-  (D428) and tinygrad renders no loop of a call.
-- **tolk:** `Ops.view_state`, `Schedule.loop_runs`, `Schedule.view_param`,
-  `Shape.reads_state_written`.
-- **Differs:** a view `Param` has as its second source the state it reads: the
-  storage's `Param`, or the `After` (a state or a join) a loop's call reads a
-  run of. `state_of` and `value_state` follow it, so reading through the view
-  is reading that state; `Ops.whole` stays the storage. The call's argument is
-  the run of the buffer, so the schedule key holds the run's start modulo its
-  alignment as for a view of plain storage: no offset enters it, and a lift is
-  decided from extents and states alone. A fixed contiguous run a loop's call
-  only reads, of the state it writes or a later one, is such a view; a run of
-  an older state is stored once, as it was, as is a read of a state older than
-  the one the loop is listed over. A run of a join over other writes of its
-  storage raises.
-- **Reason:** (e): `Ops.after` gives the read a meaning and it raised, after
-  having computed stale values: each trip reads the run as the trip starts.
-- **Pinned by:** `Tolk_engine › calls of views › a loop's fixed read of an
-  After state it writes is read each trip`, `› an After state's fixed run off
-  its parameter's start`, `› an After state's fixed runs at other offsets`,
-  `› an After state's fixed run under a back edge`, `› an After state's fixed
-  run through a join`, `› a fixed run of the state two stores deep`, `› two
-  fixed runs of an After state`, `› a loop named by an older state, a run of the
-  later`, `› a bitcast run of an After state read each trip`, `› older and
-  sibling states' runs stay as they were`, `› a loop's older run of storage
-  leaves the state before it`, `› a loop reading a state older than its listing
-  reads it as it was`, `› a loop reading a join over other writes of its
-  storage is refused`, `› two loops
-  in sequence read their runs`, `› a loop reads each run of an After state as its
-  trip starts`;
-  `Tolk.Schedule › cache › runs at other offsets of a loop's read are one
-  schedule`.
+A view `Param` named the state a loop's call read a run of, so that a run of
+a written state was read each trip with no offset in the schedule's key. That
+read is now a value the loop's call computes each trip in every scope (D437):
+a view names its storage again (D426).
 
 ## D433. A store through a bitcast of storage stores into the run its bytes cover
 
@@ -9137,7 +9103,7 @@ reason and its pins.
   Ops.STORE ... CAST u8"): a run that cuts an element, strided or reversed
   bytes such as columns of the storage's bytes, or a reshape over a bitcast
   of strided elements.
-- **Reason:** (e), as D429: `Ops.store` through a view of storage and
+- **Reason:** (e), as D473: `Ops.store` through a view of storage and
   `Ops.bitcast` give the graph a meaning, and tinygrad raises an internal
   error on it ("UOp verification failed ... STORE [CAST u8, CAST u8]") once
   `expand_bitcast` has made the target a value: at the pin, `x.bitcast(
@@ -9234,50 +9200,29 @@ reason and its pins.
   states through bitcasts`, `› one value stored whole into storages of other
   sizes`.
 
-## D435. A reader of a state over the whole of its storage runs before its sibling stores
+## D435. Withdrawn
 
-- **tinygrad:** no states of a buffer: `AFTER`s over views of a buffer order
-  nothing against a reader of another (`schedule/__init__.py`).
-- **tolk:** `Schedule.sibling_edges`.
-- **Differs:** a state whose `After` is over the whole of its storage holds its
-  own kernels' stores, those of the states under it, and each store those
-  kernels run after, by reading it directly or through other storage or by
-  listing it. A reader of it runs before every other kernel written over one of
-  those states that the chain's kernels do not follow, so an element no store of the
-  chain writes reads as the state held it; the ordering is over states, as every
-  order of the relation (D426), and a cycle it closes is cut by a copy like any
-  other. A load through the argument a call stores through reads the state the
-  call writes, with each store it runs after, and takes no edge to one of them;
-  its edge to any other orders no read a copy can stand in for, so a cycle it
-  closes is cut at another read.
-- **Reason:** (e): `s1 = after b [store b[0:8] 5]` beside `s2 = after b[8:16]
-  [store b[8:16] 7]`: `s1[8:12]` read `7`s where `Ops.after` gives `b`'s elements,
-  a silent wrong value, directly, through a loop's fixed read and through a later
-  state over `s1`.
-- **Pinned by:** `Tolk_engine › calls of views › a read of a whole state holds
-  no store of a sibling After`, `› a loop's read of a whole state holds no store
-  of a sibling After`, `› a read of a later whole state holds no store of a
-  sibling After`, `› a sibling reading what a written load overwrites, any
-  size`, `› a whole state holds the sibling store its own store reads`,
-  `› a whole state holds a sibling state it lists`.
+A reader of a state over the whole of its storage ran before the stores of a
+sibling `After` over a view of the state under it (`Schedule.sibling_edges`).
+Two writes over one state are refused now, as tinygrad refuses them, unless
+one reads what the other left, and then they form a chain (D474).
 
 ## D436. A state of a bitcast is a bitcast of a state
 
 - **tinygrad:** `schedule/rangeify.py` (`pm_mops`): only movements move outside
   an `AFTER`, and a bitcast of storage is not one.
-- **tolk:** `Schedule.through_bitcast`, `Schedule.under_bitcast`,
-  `Schedule.pm_state_of_bitcast`, `Schedule.view_param`.
+- **tolk:** `Prepare.sequence`, `Prepare.same_size_bitcast`,
+  `Schedule.view_param`.
 - **Differs:** an `After` whose first source is a bitcast of storage or of a
-  state, or a movement over one, becomes that bitcast of an `After` of the
-  storage, before the calls are made: a state's first source is storage or a
-  view of it, whatever type its readers take. A movement over a bitcast of
-  elements of one size moves under the bitcast, so it stays a view; one over a
-  bitcast that resizes them goes outside with the bitcast. A store through a
-  movement of a same-size bitcast stores the value bitcast into the movement of
-  the storage, a weak value first taken at the view's type, a copy keeping its
-  bitcast; one through a bitcast that resizes elements follows D433. A
-  view of a loop's read of a state names that state in the form the movement
-  rewrite leaves it, so the link stays a state through it.
+  state, or a movement over one, becomes that bitcast, and those movements,
+  of a state of the storage on its chain, when the graph's effects are
+  sequenced (D473): a state's first source is storage or a view of it,
+  whatever type its readers take. A store through a movement of a same-size
+  bitcast stores the value bitcast into the movement of the state, a weak
+  value first taken at the view's type, a copy keeping its bitcast; one
+  through a bitcast that resizes elements follows D433. A view of a loop's
+  read of a state names that state in the form the movement rewrite leaves
+  it, so the link stays a state through it.
 - **Reason:** (e): `Ops.after` gives such a program a meaning, and it raised
   internal errors (a failed verification, a cycle detected, a Clang error) or
   the refusal of a loop's fixed read of the state. Every read then is a read of
@@ -9287,32 +9232,29 @@ reason and its pins.
   writes an older name of its storage`, `› a call reads states of a bitcast and
   of its storage`, `› a later state over a bitcast is read each trip`, `› a loop
   reads a run of a state of a bitcast each trip`, `› one constant stored at two
-  states through bitcasts`, `› Afters over runs of a bitcast stay views`, `› a
-  store through a run of a bitcast of a state`, `› a weak value through a run of
-  a bitcast`.
+  states through bitcasts`, `› a store through a run of a bitcast of a
+  state`, `› a weak value through a run of a bitcast`.
 
-## D437. A loop's read that is no run moves into the call's body
+## D437. A loop's read of a value of its state moves into the call's body
 
 - **tinygrad:** tinygrad renders no loop of a call; a precompiled function
   copies its arguments once (`uop/ops.py`, `call_with_outputs`).
-- **tolk:** `Schedule.absorb`, `Schedule.loop_runs`,
-  `Indexing.realize_custom_kernel_srcs`.
-- **Differs:** an argument of a loop's call the call only reads, reading a state
-  the trips write or a later one, that the call cannot take as it is (a flip, a
-  strided or reshaped view, a value computed from one or more reads, a state over
-  a view that is no run) is computed inside a wrapper body each trip. Each read
-  in it becomes an argument of the wrapper and is decided by itself: a run or row
-  read each trip, an older state or one older than the loop's listing stored
-  once. A plain body inlines into the wrapper, so the value fuses with its
-  kernel; a kernel body is called with a stored value each trip. A run of a join
-  over other writes of the storage the call writes (a same-storage
-  dependency that is neither the join's state nor one under it), a value that moves with the
-  loop and is no row, and a stage of a moving value stay refused.
+- **tolk:** `Prepare.trip_reads`, `Indexing.realize_custom_kernel_srcs`.
+- **Differs:** an argument of a loop's call the call only reads, reading the
+  state its write is over, that the call cannot take as it is (a run, a flip, a
+  strided or reshaped view, a value computed from one or more reads) is
+  computed inside a wrapper body each trip, in every scope: the schedule's and
+  each body's, precompiled or inlined, before any body is scheduled. The
+  wrapper takes that state whole, a row the loop moves as it is, and every
+  other read as an argument decided by itself: an older state, or one older
+  than the loop's listing, stored once. A plain body inlines into the wrapper,
+  so the value fuses with its kernel; a kernel body is called with a stored
+  value each trip. A run's offset is part of the wrapper, so runs at other
+  offsets are other schedules. A value that
+  moves with the loop and is no row, and a stage of a moving value, stay
+  refused.
 - **Reason:** (e): `Ops.after` gives these programs a meaning and they raised
-  "reads storage the call writes". A join over other writes stays refused because
-  the loop runs after those writes: the read is either the join's value, which no
-  storage holds without a second store of every write the caller did not ask for,
-  or storage as the trip starts, which is not the state the join names.
+  "reads storage the call writes".
 - **Pinned by:** `Tolk_engine › calls of views › a loop's value of a state it
   writes is computed each trip`, `› a loop reads a value of several states each
   trip`, `› a loop's value read twice in the body, or sharing a leaf`, `› a loop's
@@ -9321,8 +9263,9 @@ reason and its pins.
   value is computed each trip`, `› a contiguous value of a written read is read
   each trip`, `› a value moving with a loop in a call is refused`, `› a loop
   reading a state older than its listing reads it as it was`, `› a loop reads a
-  join of its own states each trip`, `› a loop reading a join over other writes of
-  its storage is refused`.
+  join of its own states each trip`, `› a loop in a body reads its parameter's
+  run each trip`, `› a loop in a body reads its parameters as each trip
+  starts`.
 
 ## D466. A long host kernel is written as several functions
 
@@ -9657,3 +9600,144 @@ kept in ordered sets, change no source and belong to D466.
   that reads it`, `› of 32 terms an element stays inside the one that reads
   it`, `› holds its bound`, `› over a broadcast stores no broadcast`; the rows
   above and kaun's `GptOss/prefill-512-Q8_0`.
+
+## D473. Effects are ordered by the states they name
+
+- **tinygrad:** `schedule/prepare.py` (`prepare_rangeify`), which keeps the
+  program's `AFTER`s as written, but for `pm_inline_calls`'s rule
+  (`uop/ops.py` `resolve_returned_after`) that makes an `AFTER` of a call's
+  output over the call's stores that output's stored value;
+  `schedule/__init__.py` (`create_schedule`), which orders a kernel after the
+  states its arguments name, and an `AFTER` after its prior state, its joins
+  and its kernels, a kernel already on an earlier state of the storage being
+  no write of a later one.
+- **tolk:** `Prepare.sequence`, run in `Prepare.prepare_rangeify` after the
+  calls are inlined and in `Schedule.create_linear_with_vars` before
+  `Schedule.transform_to_call`; `Prepare.pm_inline_calls`, which has no
+  `resolve_returned_after` rule; `Schedule.view_of`; `Schedule.schedule`;
+  `Ops.after` and `Ops.sink`.
+- **Differs:** a graph's stores, calls and loops of calls are its effects,
+  each run once, ordered by the states they name alone: an effect runs after
+  the state of each `After` listing it whose storage it writes, and after the
+  effects whose states it reads. The order of a sink's items orders nothing.
+  `Prepare.sequence` states that order in the graph. Each storage's states
+  become one chain, each state listing the one effect, or the stores of one
+  write marked disjoint, that makes it over the state before; every read
+  names the state of the chain it reads; a destination, and an argument a
+  call writes, names the state its write is over. A join, and a value ordered
+  after effects, becomes the value under it (D202, D475), the effects it
+  lists still run; an effect listed again over a state that already holds it
+  lands at its first place (D427); an `After` listing no write of its storage
+  names the latest state of it its effects read or run after (`Ops.after`),
+  and orders nothing. The sink lists each chain's
+  last state, the effects that write no storage, and its other items. Effects
+  that no state orders keep the order a walk of the graph reaches them, which
+  writes what any other order would, since two writes over one state are
+  refused (D474): values and refusals do not depend on the order of a sink's
+  items. Which kernels share a launch (D404) and which read a cut's copy
+  (D160) follow that walk, so a sink listed in another order can group the
+  same kernels into other launches. A store's destination is its storage as the store runs
+  (`Schedule.view_of` drops its states), so a store into a run of a state
+  stores into a view (D182); `create_schedule` orders the kernels along the
+  chains (D160). `after x1 [store (x 2..4) (x1[0:2] + 1)]` stores over `x1`,
+  and a call given `x` to write and `x1` to read, listed over `x1`, reads `x1`
+  as `memmove` reads its source; `after x [store y v]` is `x` as it was.
+  tinygrad's recorded `*_prepared` graphs differ wherever `sequence` changes
+  a graph: chains where an `AFTER` lists several effects, an inlined call's
+  stores as a chain where `resolve_returned_after` takes the stored value,
+  and the sink listing the chains' ends. A program whose every effect is a store
+  listed alone by an `After` over its storage, the only write of it, is left
+  as it is, which `sequence` checks in one pass over the graph's nodes
+  (`Prepare.chained`); any other pays the walk that sequences it.
+- **Reason:** (b) and (e). rune's loops (`Loop`) pass a carry's first state
+  to the call a loop runs and list the loop over the carry's storage, which
+  needs an order taken from the states the program names (D474). tolk's own
+  rules ordered a kernel listed over a later state than its arguments name by
+  where a walk of the sink first met it, so a kernel writing `x` and `y`, listed by
+  `after y [k]` and `after x1 [k]`, left `0 2 4 6` or `1 3 5 7` in `x` by the
+  order of the sink's two items, and `after x1 [store (x 2..4) …]` and
+  `after x [store y v]`, which `Ops.after` gives a meaning, raised internal
+  errors.
+- **Pinned by:** the `Tolk.Schedule` suite: `create_linear_with_vars › laws ›
+  the order of a sink's items changes no result` and `› a schedule writes
+  what its tensors compute`; `create_linear_with_vars › two writes over one
+  state › an effect listed after another lands after it, whichever the sink
+  reaches first`; `create_linear_with_vars › joins › a store
+  naming an older state, listed over a later one`, `› a store through a run
+  of a join`, `› an after listing only a store into other storage is that
+  state` and `› stores into one other storage land as listed`; the
+  `Tolk_engine` suite's `calls of views › a call given an older state to
+  write and a later to read reads it before the call`, `› a kernel listed
+  over two storages names the later state in either listing` and `› runs of
+  one other storage land as listed in an after`; `Tolk.Launch › an After
+  lists its stores in the order they land › a store listed twice lands at
+  its first place`; the `Tolk.Prepare` suite's recorded `*_prepared` graphs
+  that `sequence` changes, whose `.tolk` files name this entry.
+
+## D474. Two writes over one state are refused unless one runs after the other
+
+- **tinygrad:** `schedule/__init__.py` (`create_schedule`), which raises
+  "sibling AFTERs detected in assign graph" at a second `AFTER` over one
+  state, the state `_unwrap_src` reaches through movements, so that `AFTER`s
+  over views of one state count (c00c9ada9);
+  `test/runtime/test_after.py::TestAfterCounterexamples::test_sibling_afters_rejected`.
+- **tolk:** `Prepare.sequence`; `Schedule.schedule`; `Ops.after`.
+- **Differs:** tolk follows tinygrad's refusal: two writes over one state, an
+  `After` over a view of a state being a write over that state, raise
+  `Invalid_argument` when the graph is prepared or scheduled, naming the
+  storage's slot, both writes and the two ways to order them ("list one over
+  the After of the other, or list both in one After"), whichever order the
+  sink lists them in. `create_schedule` refuses a kernel graph whose two
+  `After`s of one state list different kernels. A write no `After` of its
+  storage lists is over the state its destination names, so two such stores
+  into one storage are two writes over one state, refused in either order. In
+  a program, a write is no second write over a state where it reads what the
+  write that made the state left, or a value ordered after that write, where
+  its destination or an argument it writes names that state, where an effect
+  listed before it in its `After` made it, or where that state holds it
+  already: `sequence` puts it over that state, a chain. tinygrad refuses
+  these: its test's `x.after(a.store(2))` beside `a = x.after(x.store(1))`
+  raises, where tolk stores `2` over `a`.
+- **Reason:** (b): each carry of a rune loop (`Loop`) is stored first as
+  `first = s.after(s.store init)`, passed as the argument the loop's call
+  writes, and named after the loop as `s.after(loop)`: two `AFTER`s over `s`,
+  which tinygrad refuses, in every program with a loop.
+- **Pinned by:** the `Tolk.Schedule` suite: `create_linear_with_vars › two
+  writes over one state` (overlapping runs refused in either order, a read
+  beside another write, the message, the same writes listed in one `After`, a
+  write over a state beside one it reads the result of, writes no `After`
+  lists refused, a write no `After` lists over the state its destination
+  names, a kernel graph refused), and `› laws › the order of a sink's items changes no result`,
+  which covers refused and computed programs; the program
+  `write_over_written`, tinygrad's test, whose linear and values tolk
+  computes; `Tolk.Launch › an After lists its stores in the order they land ›
+  an After of a state and one of a view of it raise, whole first` and `› …
+  view first`; the `Tolk_engine` suite's `calls of views › a whole state
+  holds the sibling store its own store reads`, and the refusals beside it:
+  `› a read of a whole state beside a sibling After is refused`, `› a value
+  reading a join of sibling writes is refused`, `› a loop reading a join of
+  sibling writes is refused`, `› a loop reading a sibling state's run is
+  refused` and `› Afters over runs of a bitcast of one state are
+  refused`; rune's suites, whose loops write over their carries' first
+  states.
+
+## D475. A value ordered after effects is the value
+
+- **tinygrad:** `schedule/rangeify.py` (`handle_after`), which raises
+  "kernel boundary requires storage" at an `AFTER` of a value held by no
+  storage; `test/runtime/test_schedule.py::TestSchedule::test_value_order_dependency_requires_storage`.
+- **tolk:** `Prepare.sequence`, which replaces such an `After` by its value
+  before `Rangeify.handle_after`, whose refusal a sequenced graph does not
+  reach; `Ops.after`.
+- **Differs:** an `After` whose first source is no storage nor a state of
+  it names no state: it holds that value, and the effects it lists run where
+  the states they name order them (D473), and an effect that reads the
+  value runs after them, so it is no second write over a state they made
+  (D474). `UOp.const(1).after(c[0].store(5))` is `1`, and the store runs.
+- **Reason:** (e), as D473: `Ops.after` gives the program a meaning, and
+  tinygrad refuses it. No raven consumer emits it.
+- **Pinned by:** the `Tolk.Schedule` suite's `create_linear_with_vars ›
+  boundaries › a constant ordered after a store is the constant, and the
+  store runs`; the `Tolk_engine` suite's `calls of views › a value ordered
+  after effects is the value` and `› a state over a view a loop moves,
+  ordered after effects, is read each trip`.

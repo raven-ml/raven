@@ -1,0 +1,61 @@
+# tolk D473 golden=ca6f4b112466dad7c8e7616d98ea2ffe
+0 Ops.CONST dtypes.weakint [] 2
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CONST dtypes.weakint [] 1
+4 Ops.SHRINK dtypes.f32 [1, 2, 3]
+5 Ops.STACK dtypes.void []
+6 Ops.RESHAPE dtypes.f32 [4, 5]
+7 Ops.CONST dtypes.weakfloat [] 1.0
+8 Ops.ADD dtypes.f32 [6, 7]
+9 Ops.STORE dtypes.void [6, 8]
+10 Ops.AFTER dtypes.f32 [1, 9]
+11 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+12 Ops.CAST dtypes.i32 [3] dtypes.i32
+13 Ops.EXPAND dtypes.i32 [12, 0]
+14 Ops.CONST dtypes.weakint [] 3
+15 Ops.PAD dtypes.i32 [13, 3, 14]
+16 Ops.EXPAND dtypes.i32 [15, 14]
+17 Ops.CONST dtypes.weakint [] 9
+18 Ops.RESHAPE dtypes.i32 [16, 17]
+19 Ops.CONST dtypes.weakint [] 8
+20 Ops.SHRINK dtypes.i32 [18, 2, 19]
+21 Ops.CONST dtypes.weakint [] 4
+22 Ops.STACK dtypes.weakint [0, 21]
+23 Ops.RESHAPE dtypes.i32 [20, 22]
+24 Ops.STACK dtypes.weakint [2, 2]
+25 Ops.STACK dtypes.weakint [0, 0]
+26 Ops.SHRINK dtypes.i32 [23, 24, 25]
+27 Ops.REDUCE dtypes.i32 [26] (Ops.ADD, 1)
+28 Ops.CONST dtypes.weakint [] -1
+29 Ops.ADD dtypes.i32 [27, 28]
+30 Ops.CMPLT dtypes.bool [29, 2]
+31 Ops.CONST dtypes.bool [] False
+32 Ops.CMPEQ dtypes.bool [30, 31]
+33 Ops.CMPLT dtypes.bool [29, 3]
+34 Ops.AND dtypes.bool [32, 33]
+35 Ops.MUL dtypes.weakint [2, 28]
+36 Ops.ADD dtypes.i32 [29, 35]
+37 Ops.MOD dtypes.i32 [36, 3]
+38 Ops.CMPEQ dtypes.bool [37, 2]
+39 Ops.AND dtypes.bool [34, 38]
+40 Ops.SHRINK dtypes.f32 [10, 2, 3]
+41 Ops.PAD dtypes.f32 [40, 2, 0]
+42 Ops.WHERE dtypes.f32 [39, 41, 10]
+43 Ops.STORE dtypes.void [11, 42]
+44 Ops.AFTER dtypes.f32 [11, 43]
+45 Ops.SHRINK dtypes.f32 [44, 2, 3]
+46 Ops.RESHAPE dtypes.f32 [45, 5]
+47 Ops.SHRINK dtypes.f32 [42, 2, 3]
+48 Ops.RESHAPE dtypes.f32 [47, 5]
+49 Ops.ADD dtypes.f32 [48, 7]
+50 Ops.STORE dtypes.void [46, 49]
+51 Ops.AFTER dtypes.f32 [44, 50]
+52 Ops.PARAM dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+53 Ops.SHRINK dtypes.f32 [51, 2, 3]
+54 Ops.PAD dtypes.f32 [53, 2, 0]
+55 Ops.WHERE dtypes.f32 [39, 54, 51]
+56 Ops.STORE dtypes.void [52, 55]
+57 Ops.AFTER dtypes.f32 [52, 56]
+58 Ops.SINK dtypes.void [10, 51, 57]
+

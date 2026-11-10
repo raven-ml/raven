@@ -2997,13 +2997,8 @@ let symbolic =
                    [ end_ (after (v Op.Noop) [ nth y 0 ]) (List.tl (src y)) ]
                  else src y
                in
-               let all = List.concat_map deps (List.tl (src x)) in
-               (* A store listed twice lands at its last place. *)
-               let kept =
-                 if List.exists (fun y -> op y = Op.Store) all then
-                   List.rev (dedup_nodes (List.rev all))
-                 else dedup_nodes all
-               in
+               (* An effect listed twice lands at its first place. *)
+               let kept = dedup_nodes (List.concat_map deps (List.tl (src x))) in
                Some (replace x ~src:(nth x 0 :: kept)));
            (* after/end with 1 src is just src[0] *)
            rule
@@ -3503,31 +3498,6 @@ let reads_storage_written c i =
       List.exists
         (fun j -> j < List.length args && storage (List.nth args j) == read)
         w
-
-let rec named_state n =
-  if is_join n then named_state (nth n 0)
-  else if Op.Set.mem (op n) Op.Set.defines || op n = Op.After then
-    let w = view_state n in
-    if w == n then n else named_state w
-  else if src n = [] then n
-  else named_state (nth n 0)
-
-let reads_state_written c =
-  match written_params (body c) with
-  | None -> fun _ -> false
-  | Some w ->
-      let args = src_without_body c in
-      let written =
-        List.filter_map (fun j -> Option.map named_state (List.nth_opt args j)) w
-      in
-      let rec at_or_after o r =
-        r == o
-        || op r = Op.After && (not (is_join r))
-           && at_or_after o (named_state (nth r 0))
-      in
-      fun n ->
-        let s = named_state n in
-        List.exists (fun o -> buf_uop o == buf_uop s && at_or_after o s) written
 
 let is_kernel_sink u =
   op u = Op.Sink && match arg u with Kernel _ -> true | _ -> false

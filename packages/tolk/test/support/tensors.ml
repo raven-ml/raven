@@ -226,19 +226,22 @@ let fresh t =
 
 (* Memory *)
 
-(* What stores wrote, by place: scratch or not, slot and index. *)
-module Written = Hashtbl.Make (struct
+(* What stores wrote, by place: scratch or not, slot and index. A map, so
+   that a state keeps the memory it was left in while later stores run. *)
+module Written = Map.Make (struct
   type t = bool * int * int
 
-  let equal (s0, l0, i0) (s1, l1, i1) =
-    Bool.equal s0 s1 && Int.equal l0 l1 && Int.equal i0 i1
-
-  let hash (s, l, i) = (((i * 65599) + l) * 2) + Bool.to_int s
+  let compare (s0, l0, i0) (s1, l1, i1) =
+    match Bool.compare s0 s1 with
+    | 0 -> ( match Int.compare l0 l1 with 0 -> Int.compare i0 i1 | c -> c)
+    | c -> c
 end)
 
+(* [clock] counts the stores run, the time of a state. *)
 type memory = {
   buffers : (int * Dtype.value array) list;
-  written : Dtype.const Written.t;
+  mutable written : Dtype.const Written.t;
+  mutable clock : int;
 }
 
 let initial m at : Dtype.const =
@@ -250,8 +253,8 @@ let initial m at : Dtype.const =
 
 let key at = (at.scratch, at.slot, at.index)
 
-let current m at =
-  match Written.find_opt m.written (key at) with
+let current m written at =
+  match Written.find_opt (key at) written with
   | Some v -> v
   | None -> initial m at
 
@@ -270,14 +273,19 @@ let store m dst value =
   Array.iteri
     (fun k c ->
       match (c.at, c.value) with
-      | Some at, _ -> Written.replace m.written (key at) value.cells.(k).value
+      | Some at, _ ->
+          m.written <- Written.add (key at) value.cells.(k).value m.written
       | None, `Invalid -> ()
       | None, _ -> fail "a store's destination is not storage")
-    dst.cells
+    dst.cells;
+  m.clock <- m.clock + 1
 
-let reread m t =
+(* [reread m written t] is [t] as memory [written] holds it. *)
+let reread m written t =
   let cell c =
-    match c.at with Some at -> { c with value = current m at } | None -> c
+    match c.at with
+    | Some at -> { c with value = current m written at }
+    | None -> c
   in
   { t with cells = Array.map cell t.cells }
 
@@ -287,7 +295,7 @@ let none = { shape = []; cells = [||] }
 (* [run m params u] is the value of [u], each parameter of slot [k] standing for
    the value [params] gives [k], if any. *)
 let rec run m params u =
-  let values = Ops.Tbl.create 64 in
+  let values = ref (Ops.Tbl.create 64) in
   (* The storage each loop writes: that of the Afters that list it. *)
   let loops = Ops.Tbl.create 8 in
   List.iter
@@ -301,18 +309,108 @@ let rec run m params u =
                 :: Option.value (Ops.Tbl.find_opt loops e) ~default:[]))
           (List.tl (Ops.src a)))
     (Ops.toposort ~calls:Skip u);
+  (* The states the Afters listing an effect are over, with their storage and
+     the effects listed before it there. *)
+  let over = Ops.Tbl.create 8 in
+  let rec listed d =
+    if Ops.op d = Sink then List.concat_map listed (Ops.src d) else [ d ]
+  in
+  List.iter
+    (fun a ->
+      if Ops.op a = After && not (Ops.is_join a) then
+        ignore
+          (List.fold_left
+             (fun earlier e ->
+               Ops.Tbl.replace over e
+                 ((Ops.storage_base a, List.hd (Ops.src a), earlier)
+                 :: Option.value (Ops.Tbl.find_opt over e) ~default:[]);
+               e :: earlier)
+             []
+             (List.concat_map listed (List.tl (Ops.src a)))))
+    (Ops.toposort ~calls:Skip u);
+  let same a b =
+    a == b
+    ||
+    match (Ops.arg a, Ops.arg b) with
+    | Param { slot = s; _ }, Param { slot = t; _ } ->
+        Ops.op a = Param && Ops.op b = Param && s = t
+    | _ -> false
+  in
+  let writes_into e s =
+    let call_writes c =
+      match Shape.written_params (Ops.body c) with
+      | None -> true
+      | Some w ->
+          List.exists
+            (fun i ->
+              same (Ops.storage_base (List.nth (Ops.src_without_body c) i)) s)
+            w
+    in
+    match Ops.op e with
+    | Store -> same (Ops.storage_base (List.hd (Ops.src e))) s
+    | Call -> call_writes e
+    | End when Ops.op (List.hd (Ops.src e)) = Call ->
+        call_writes (List.hd (Ops.src e))
+    | _ -> true
+  in
+  (* The state an argument names: through movements and joins. *)
+  let rec state a =
+    match Ops.op a with
+    | After when Ops.is_join a -> state (Ops.nth a 0)
+    | After | Buffer | Param | Alloc -> a
+    | _ -> ( match Ops.src a with x :: _ -> state x | [] -> a)
+  in
+  (* Whether the state [p] has the effect [e] in its chain: a listing of [e]
+     again on a later state, which orders nothing. *)
+  let rec in_chain p e =
+    let x = state p in
+    Ops.op x = After
+    && (List.memq e (List.concat_map listed (List.tl (Ops.src x)))
+       || in_chain (Ops.nth x 0) e)
+  in
+  (* The time and memory each effect left, and each state that a write left
+     or holds. Storage before any store has none. *)
+  let left = Ops.Tbl.create 64 in
+  let is_effect e = List.mem (Ops.op e) Op.[ Store; Call; End ] in
+  let active = Ops.Tbl.create 64 in
   let rec value u =
-    match Ops.Tbl.find_opt values u with
+    match Ops.Tbl.find_opt !values u with
     | Some v -> v
     | None ->
+        if Ops.Tbl.mem active u then
+          fail "an effect is listed over a state that needs it";
+        Ops.Tbl.replace active u ();
+        (* An effect runs after the state each After listing it is over, and
+           the effects listed before its first place there, where it writes
+           that After's storage, unless that state holds it. *)
+        List.iter
+          (fun (s, p, earlier) ->
+            if
+              writes_into u s
+              && (not (in_chain p u))
+              && not (List.memq u earlier)
+            then (
+              ignore (value p);
+              List.iter
+                (fun d -> if writes_into d s then ignore (value d))
+                (List.rev earlier)))
+          (List.rev (Option.value (Ops.Tbl.find_opt over u) ~default:[]));
         let v = compute u in
-        Ops.Tbl.replace values u v;
+        if is_effect u then Ops.Tbl.replace left u (m.clock, m.written);
+        Ops.Tbl.remove active u;
+        Ops.Tbl.replace !values u v;
         v
   (* [call read c] runs the body of the call [c] on its arguments, as [read]
      gives them. *)
   and call read c =
-    let args = List.mapi (fun k a -> (k, read a)) (Ops.src_without_body c) in
-    ignore (run m args (Ops.body c))
+    (* An argument the call writes is the storage as the call runs, once
+       every argument has run. *)
+    let written =
+      Option.value (Shape.written_params (Ops.body c)) ~default:[]
+    in
+    let args = List.map read (Ops.src_without_body c) in
+    let arg k a = (k, if List.mem k written then reread m m.written a else a) in
+    ignore (run m (List.mapi arg args) (Ops.body c))
   and compute u =
     let src = Ops.src u in
     match (Ops.op u, Ops.arg u) with
@@ -339,12 +437,50 @@ let rec run m params u =
             store m (value dst) (value v);
             none
         | _ -> fail "a store has a destination and a value")
-    | After, _ ->
-        (* A state lands after the state it is over. A join holds the value of
-           the state under it, read once its other sources have run. *)
+    | After, _ -> (
+        (* A state lands after the state it is over, and holds the latest of
+           that state, those its writes of its storage leave and those of its
+           storage its effects read. A join holds
+           the value of the state under it, read once its other sources have
+           run. *)
         let under = value (List.hd src) in
         List.iter (fun s -> ignore (value s)) (List.tl src);
-        if Ops.is_join u then under else reread m under
+        let s = Ops.storage_base u in
+        let latest best d =
+          match Ops.Tbl.find_opt left d with
+          | Some (t, _) as l when is_effect d && writes_into d s -> (
+              match best with Some (b, _) when b >= t -> best | _ -> l)
+          | _ -> best
+        in
+        (* A state of its storage that a listed effect reads leaves the
+           storage no older. *)
+        let read best d =
+          Ops.Nodes.fold
+            (fun x best ->
+              match Ops.Tbl.find_opt left x with
+              | Some (t, _) as l
+                when Ops.op x = After
+                     && (not (Ops.is_join x))
+                     && same (Ops.storage_base x) s -> (
+                  match best with Some (b, _) when b >= t -> best | _ -> l)
+              | _ -> best)
+            (Ops.backward_slice ~calls:Skip d)
+            best
+        in
+        let effects = List.concat_map listed (List.tl src) in
+        let named =
+          List.fold_left read
+            (List.fold_left latest
+               (Ops.Tbl.find_opt left (state (List.hd src)))
+               effects)
+            effects
+        in
+        match named with
+        | _ when Ops.is_join u -> under
+        | None -> under
+        | Some ((_, written) as l) ->
+            Ops.Tbl.replace left u l;
+            reread m written under)
     | Sink, _ ->
         List.iter (fun s -> ignore (value s)) src;
         none
@@ -357,38 +493,74 @@ let rec run m params u =
            storage it reads in the state its argument names. *)
         match src with
         | [ c; r ] when Ops.op c = Call ->
+            let args = Ops.src_without_body c in
+            (* The storage the loop writes: its call's written arguments', or,
+               where its body does not show them, that of the Afters listing
+               it. *)
             let written =
-              Option.value (Ops.Tbl.find_opt loops u) ~default:[]
-            in
-            (* The state an argument names: through movements and joins. *)
-            let rec state a =
-              match Ops.op a with
-              | After when Ops.is_join a -> state (Ops.nth a 0)
-              | After | Buffer | Param | Alloc -> a
-              | _ -> ( match Ops.src a with x :: _ -> state x | [] -> a)
+              match Shape.written_params (Ops.body c) with
+              | Some w -> List.map (fun i -> Ops.storage_base (List.nth args i)) w
+              | None -> Option.value (Ops.Tbl.find_opt loops u) ~default:[]
             in
             let rec before o s =
-              s != o && Ops.op s = After && (Ops.nth s 0 == o || before o (state (Ops.nth s 0)))
+              s != o && Ops.op s = After
+              && (state (Ops.nth s 0) == o || before o (state (Ops.nth s 0)))
             in
-            let args = Ops.src_without_body c in
-            (* A carry: an argument of storage the loop writes, in the latest
-               state of it the call is given; an older state is read as it
-               was. *)
-            let carried a =
-              List.memq (Ops.storage_base a) written
+            (* A state of the storage the loop writes, not older than one
+               another argument names, is read as the trips before left it,
+               and so is each value computed from it. *)
+            let over =
+              List.filter_map
+                (fun (s, p, _) -> if Ops.op u = End then Some (s, p) else None)
+                (Option.value (Ops.Tbl.find_opt over u) ~default:[])
+            in
+            let live n =
+              List.exists (same (Ops.storage_base n)) written
               && not
                    (List.exists
                       (fun b ->
-                        Ops.storage_base b == Ops.storage_base a
-                        && before (state a) (state b))
-                      args)
+                        Ops.storage_base b == Ops.storage_base n
+                        && before (state n) (state b))
+                      (args @ List.filter_map
+                                (fun (s, p) ->
+                                  if s == Ops.storage_base n then Some p else None)
+                                over))
             in
+            (* The states the arguments read, and the effects under them,
+               run once, before the first trip. *)
+            let rec states n =
+              match Ops.op n with
+              | After when Ops.is_join n -> List.iter states (Ops.src n)
+              | After | Buffer | Param | Alloc -> ignore (value n)
+              | _ -> List.iter states (Ops.src n)
+            in
+            List.iter states args;
+            let saved = Ops.Tbl.copy !values in
             for k = 0 to count r - 1 do
-              call
-                (fun a -> if carried a then reread m (value a) else value a)
-                (Ops.substitute ~calls:Skip ~pass:Fixed_point c
-                   [ (r, Ops.int k) ])
+              let c =
+                Ops.substitute ~calls:Skip ~pass:Fixed_point c
+                  [ (r, Ops.int k) ]
+              in
+              let trip = Ops.Tbl.copy saved in
+              let rec retrip n =
+                match Ops.op n with
+                | (After | Buffer | Param | Alloc) when live n ->
+                    let v =
+                      match Ops.Tbl.find_opt saved n with
+                      | Some v -> v
+                      | None -> value n
+                    in
+                    Ops.Tbl.replace trip n (reread m m.written v)
+                | After | Buffer | Param | Alloc | Const -> ()
+                | _ ->
+                    Ops.Tbl.remove trip n;
+                    List.iter retrip (Ops.src n)
+              in
+              List.iter retrip (Ops.src_without_body c);
+              values := trip;
+              call value c
             done;
+            values := saved;
             none
         | _ -> fail "cannot evaluate an end of %d sources" (List.length src))
     | Bitcast, _
@@ -404,10 +576,10 @@ let rec run m params u =
 let elements t = Array.map (fun c -> c.value) t.cells
 
 let eval ?(buffers = []) u =
-  elements (run { buffers; written = Written.create 64 } [] u)
+  elements (run { buffers; written = Written.empty; clock = 0 } [] u)
 
 let writes ?(buffers = []) u =
-  let m = { buffers; written = Written.create 64 } in
+  let m = { buffers; written = Written.empty; clock = 0 } in
   ignore (run m [] u);
   Written.fold
     (fun (scratch, s, i) v acc ->

@@ -54,10 +54,10 @@ val prepare_rangeify : Ops.t -> Ops.t
         index by a value with axes ({!Indexing.is_gather}), is left whole; each
         call to a function without its own compilation ({!Ops.is_inline_call})
         is replaced by its body, its parameters bound to its arguments viewed as
-        flat storage and its local storage renamed; a value ordered after a
-        call's stores into one of its outputs is that output's value
-        ({!Ops.resolve_returned_after}); and the movements and bitcasts of a
-        copy from a disk move to the copy's result;
+        flat storage and its local storage renamed; and the movements and
+        bitcasts of a copy from a disk move to the copy's result;
+     }
+     {- the graph's effects are sequenced ({!sequence});
      }
      {- from the leaves up, with {!Shape.mop_cleanup} and {!pm_mops}, gathers
         left whole:
@@ -142,3 +142,25 @@ val contiguous_view : Ops.t -> (Ops.t * Ops.sint) option
     to 9, whose index keeps divisions the simplifier does not recombine; flips
     that cancel across a reshape; and a read within one copy of an expanded
     value. A caller then treats [u] as a value of its own. *)
+
+val sequence : Ops.t -> Ops.t
+(** [sequence sink] is [sink] with each storage's states one chain, which
+    holds what {!Ops.after} says the graph means. Each effect writes the
+    states of its destinations, or, where its body shows none, of the
+    {!Op.After}s that list it; it runs after the state of each {!Op.After}
+    listing it whose storage it writes, and the effects listed before its first
+    place there. A write is over the state {!Ops.after} says. Each state of the chain lists the one
+    effect, or the stores of one disjoint write ({!Ops.after_disjoint}), that
+    makes it, over the state before; every read names the state of the chain
+    it reads, a join or a value ordered after effects the value under it; a
+    destination, and an argument a call writes, names the state its write is
+    over; a store through a bitcast of one element size stores the value's
+    bits into the state. [sink] lists each chain's last state, the effects
+    that write no storage, and its items that are no effect and no state.
+    Effects whose order no state decides keep the order a walk from [sink]
+    reaches them: two writes over one state are refused, so that order writes
+    nothing another order would not.
+
+    Raises [Invalid_argument] on two writes over one state, neither reading
+    what the other left nor ordered after it, naming both, and if an effect is
+    listed over a state that needs it. *)

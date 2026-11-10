@@ -181,7 +181,6 @@ let kernel_graphs =
     "variable_shrink_kernels";
     "variable_two_kernels";
     "variable_unused_kernels";
-    "write_over_written_kernels";
   ]
 
 (* The kernel graph [<p>_kernels<n>] of the program [<p>] is recorded with the
@@ -570,33 +569,6 @@ let renumbered () =
   is_true ~msg:"the first is new" (List.mem "CACHE MISS" (verdicts (in_slot 0)));
   equal (list string) [ " cache hit"; " cache hit" ] (verdicts (in_slot 9))
 
-(* A loop's fixed read of its written [After] state is a view of a run whose
-   start stays out of the schedule's key: runs at other offsets of one
-   alignment, here 16 and 32 bytes, are one schedule. *)
-let loop_read_run_offsets_hit () =
-  let p4 slot = Shape.param ~shape:[ Int 4 ] ~device:"CPU" slot Float32 in
-  let program lo =
-    let b = Ops.new_buffer "CPU" 16 Float32 in
-    let b1 = Ops.after b [ Ops.store b Ops.O.(b * float 2.) ] in
-    let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
-    let row =
-      Shape.shrink b1
-        [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 4)) ]
-    in
-    let run = Shape.shrink b1 [ Some (Int lo, Int (lo + 4)) ] in
-    let body = Ops.sink [ Ops.store (p4 0) Ops.O.(p4 1 + float 1.) ] in
-    let c = Ops.call ~precompile:true body [ row; run ] in
-    Ops.sink [ Ops.after b1 [ Ops.end_ c [ r ] ] ]
-  in
-  let verdicts lo =
-    with_settings ~debug:3 ~scache:1 (fun () ->
-        ignore (Schedule.create_linear_with_vars (program lo)));
-    List.map (fun (_, verdict, _) -> verdict) (reports ())
-  in
-  equal (list string) ~msg:"the first is new" [ "CACHE MISS" ]
-    (List.sort_uniq String.compare (verdicts 4));
-  equal (list string) [ " cache hit"; " cache hit" ] (verdicts 8)
-
 (* Storage that a builder numbers from the process's counter, such as a staged
    loop's carry, can sit in the body of a precompiled call, where it stays
    storage. [counted g] is precompiled_function [g] as such a body: its output a
@@ -781,8 +753,6 @@ let cache =
              ]);
       test "a body scheduled again is a hit under the key it missed on"
         miss_then_hit;
-      test "runs at other offsets of a loop's read are one schedule"
-        loop_read_run_offsets_hit;
       test "a hit is the schedule the miss made" hit_is_the_miss;
       test "with SCACHE=0 every schedule misses" uncached;
       test "two bodies miss under two keys" keys_differ;
@@ -1235,6 +1205,12 @@ let rec through_buffer view =
 
 let values = array Dtypes.const
 
+(* [n] float32s of [c]. *)
+let full n c =
+  Shape.expand
+    (Shape.reshape (Ops.cast (Ops.float c) Float32) [ Int 1 ])
+    [ Int n ]
+
 let copies_a_view c =
   let viewed =
     require_some (Schedule.contiguous_mops_to_view c (Ops.nth c 0))
@@ -1416,7 +1392,8 @@ let views =
                   equal uop ~msg:"the kernels" (Ops.nth a 0) (Ops.nth b 0)
               | ms -> failf "%d members, not 2" (List.length ms))
           | es -> failf "%d entries, not one launch" (List.length es));
-      test "a store into rows of a buffer after a store has no view" (fun () ->
+      test "a store into rows of a buffer after a store stores into a run of \
+            that state" (fun () ->
           let buffer = Ops.new_buffer ~slot:3 cpu 64 Float32 in
           let first = Ops.new_buffer ~slot:4 cpu 64 Float32 in
           let state = Ops.after buffer [ Ops.store buffer first ] in
@@ -1427,7 +1404,64 @@ let views =
           in
           let value = Ops.new_buffer ~slot:5 cpu 32 Float32 in
           let c = Ops.store rows (Shape.reshape value [ Int 4; Int 8 ]) in
-          equal (option uop) None (Schedule.contiguous_mops_to_view c rows));
+          let viewed =
+            require_some (Schedule.contiguous_mops_to_view c rows)
+          in
+          let rec named v =
+            match Ops.op v with
+            | Reshape | Shrink | Bitcast -> named (Ops.nth v 0)
+            | _ -> v
+          in
+          let view = Ops.nth viewed 0 in
+          equal uop ~msg:"the state" state (named view);
+          let buffers = filled c in
+          equal values
+            (Tensors.eval ~buffers rows)
+            (Tensors.eval ~buffers view));
+      (* The first and the last store are of one value into one run, over
+         two states: each is a store of its own, the last landing over the
+         second's value. *)
+      test "a store repeated over a later state stores again" (fun () ->
+          let buffer = Ops.new_buffer ~slot:3 cpu 8 Float32 in
+          let write state c =
+            let run = Shape.shrink state [ Some (Int 6, Int 8) ] in
+            Ops.after state [ Ops.store run (full 2 c) ]
+          in
+          computes (Ops.sink [ write (write (write buffer 3.5) 1.) 3.5 ]));
+      (* A copy of a run of a state, then a store into that run: the copy
+         reads the state, not the storage under it. *)
+      test "a read of the run a store stores into reads the state" (fun () ->
+          let buffer = Ops.new_buffer ~slot:3 cpu 8 Float32 in
+          let other = Ops.new_buffer ~slot:4 cpu 4 Float32 in
+          let state = Ops.after buffer [ Ops.store buffer (full 8 2.) ] in
+          let run = Shape.shrink state [ Some (Int 4, Int 8) ] in
+          computes
+            (Ops.sink
+               [
+                 Ops.after state [ Ops.store run (full 4 5.) ];
+                 Ops.after other [ Ops.store other run ];
+               ]));
+      (* A store that reads a state shares a value with a store of a marked
+         write over that state: one kernel of both would read the elements
+         the write's other store writes, whichever runs first. *)
+      test "a store of a value a write over its read state shares runs first"
+        (fun () ->
+          let buffer = Ops.new_buffer ~slot:3 cpu 8 Float32 in
+          let other = Ops.new_buffer ~slot:4 cpu 4 Float32 in
+          let w = Ops.new_buffer ~slot:5 cpu 4 Float32 in
+          let state = Ops.after buffer [ Ops.store buffer (full 8 1.) ] in
+          let run a = Shape.shrink state [ Some (Int a, Int (a + 4)) ] in
+          let shared = Ops.O.(w * w) in
+          computes
+            (Ops.sink
+               [
+                 Ops.after_disjoint state
+                   [
+                     Ops.store (run 0) (full 4 5.);
+                     Ops.store (run 4) shared;
+                   ];
+                 Ops.after other [ Ops.store other Ops.O.(run 2 + shared) ];
+               ]));
       test "a store into rows of a buffer of a value that reads it has no view"
         (fun () ->
           let buffer = Ops.new_buffer ~slot:9 cpu 16 Float32 in
@@ -2679,8 +2713,11 @@ let merged_calls =
           let big =
             Ops.sink
               [
-                into (at 0) Ops.O.(x * float 2.);
-                into (at 1) Ops.O.(y + float 1.);
+                Ops.after o
+                  [
+                    Ops.store (at 0) Ops.O.(x * float 2.);
+                    Ops.store (at 1) Ops.O.(y + float 1.);
+                  ];
               ]
           in
           equal int 1 (List.length (calls_of big)));
@@ -3388,12 +3425,20 @@ type statement = {
          trips of a loop. *)
   target : int;
   half : bool; (* Into the first half, of an even size, once written. *)
+  older : bool;
+      (* Over the state before the target's current one, beside the write
+         that made the current one. *)
   constant : int;
   reads : (int * int * [ `Plain | `Flip | `Sum | `Stage | `Join of int ]) list;
       (* Each read: a buffer, how many states back, and how. *)
+  bare : bool;
+      (* A store no After lists, which the sink lists itself: it names no
+         state, and the statements after it read the state it is over. *)
+  pair : bool;
+      (* A store listed with a second, of the value plus one, after it. *)
 }
 
-let gen_program =
+let gen_program ?(siblings = false) () =
   let open Gen in
   let gen_read =
     let* b = int_range 0 2 in
@@ -3408,15 +3453,26 @@ let gen_program =
     (b, back, how)
   in
   let gen_statement =
+    let some ?(always = false) k =
+      if siblings || always then
+        frequency [ (k, constant false); (1, constant true) ]
+      else constant false
+    in
     let* kind =
       frequency
         [ (3, constant `Store); (1, constant `Call); (1, constant `Loop) ]
     in
     let* target = int_range 0 2 in
     let* half = bool in
+    let* older =
+      if siblings then frequency [ (3, constant false); (1, constant true) ]
+      else constant false
+    in
     let* constant = int_range 1 2 in
-    let+ reads = list ~size:(int_range 1 3) gen_read in
-    { kind; target; half; constant; reads }
+    let* reads = list ~size:(int_range 1 3) gen_read in
+    let* bare = some 4 in
+    let+ pair = some ~always:true 3 in
+    { kind; target; half; older; constant; reads; bare; pair }
   in
   let* n = int_range 1 5 in
   let* first = gen_statement in
@@ -3439,10 +3495,12 @@ let pp_program ppf (n, statements) =
   Format.fprintf ppf "%d elements:" n;
   List.iter
     (fun s ->
-      Format.fprintf ppf "@ %s%d%s := %d + %s;"
+      Format.fprintf ppf "@ %s%s%d%s%s := %d + %s;"
+        (if s.bare then "bare " else if s.pair then "pair " else "")
         (match s.kind with `Store -> "" | `Call -> "call " | `Loop -> "loop ")
         s.target
         (if s.half then "[half]" else "")
+        (if s.older then "@-1" else "")
         s.constant
         (String.concat " + "
            (List.map
@@ -3452,7 +3510,9 @@ let pp_program ppf (n, statements) =
 
 (* The program's outputs, whether it reads an older state, through a join or
    not, whether a call or a loop is given its target's state twice, and whether
-   a store stores the value the store before it stored into its storage. *)
+   a store stores the value the store before it stored into its storage. A
+   write over an older state keeps the state it is beside among the
+   outputs. *)
 let program (n, statements) =
   let bufs = Array.init 3 (fun i -> f32 ~n (i + 1)) in
   (* Each buffer's states, newest first. *)
@@ -3492,9 +3552,17 @@ let program (n, statements) =
         end
         else s
   in
+  let beside = ref [] and bares = ref [] in
   List.iter
     (fun st ->
-      let cur = List.hd states.(st.target) in
+      let cur =
+        match states.(st.target) with
+        | latest :: prior :: _ when st.older ->
+            beside := latest :: !beside;
+            prior
+        | latest :: _ -> latest
+        | [] -> assert false
+      in
       let value =
         List.fold_left
           (fun acc r -> Ops.O.(acc + read r))
@@ -3516,6 +3584,13 @@ let program (n, statements) =
         else if st.half && n mod 2 = 0 && Ops.op cur = After then
           let h u = Shape.shrink u [ Some (Int 0, Int (n / 2)) ] in
           Ops.after cur [ Ops.store (h cur) (h value) ]
+        else if st.bare then begin
+          bares := Ops.store cur value :: !bares;
+          cur
+        end
+        else if st.pair then
+          Ops.after cur
+            [ Ops.store cur value; Ops.store cur Ops.O.(value + fl 1.) ]
         else begin
           (match Ops.src cur with
           | [ _; s ] when Ops.op cur = After && Ops.op s = Store ->
@@ -3524,10 +3599,11 @@ let program (n, statements) =
           assign cur value
         end
       in
-      states.(st.target) <- next :: states.(st.target))
+      if next != cur then states.(st.target) <- next :: states.(st.target))
     statements;
   let kinds = List.map (fun st -> st.kind) statements in
-  ( Array.to_list (Array.map List.hd states),
+  ( Array.to_list (Array.map List.hd states)
+    @ List.rev !beside @ List.rev !bares,
     !old,
     !joined,
     !aliased,
@@ -3536,7 +3612,7 @@ let program (n, statements) =
 
 let values_law =
   prop "a schedule writes what its tensors compute"
-    (Gen.with_pp pp_program gen_program)
+    (Gen.with_pp pp_program (gen_program ()))
     (fun p ->
       let outputs, old, joined, aliased, again, kinds = program p in
       let _, made =
@@ -3551,6 +3627,56 @@ let values_law =
       cover "a copy" (made > 0);
       cover "no copy" (made = 0))
 
+(* The order of a sink's items orders nothing: a program whose outputs are
+   listed the other way round, or with a group listing one of its writes first
+   or last, writes what it writes, or all are refused as two writes over one
+   state, which their order would otherwise decide. A write no After lists is
+   over the state its destination names. *)
+
+let outcome outputs =
+  let big = Ops.sink outputs in
+  let buffers = filled big in
+  let slots = List.map (fun (_, (p : Ops.param_arg)) -> p.slot) (given big) in
+  let into_given = List.filter (fun (s, _, _) -> List.mem s slots) in
+  match with_settings ~debug:0 ~scache:0 (fun () -> unplanned big) with
+  | linear -> Some (into_given (Kernel_graphs.linear_writes ~buffers linear))
+  | exception Invalid_argument m
+    when String.starts_with ~prefix:"two writes over one state" m ->
+      None
+
+let sink_order_law =
+  prop "the order of a sink's items changes no result"
+    (Gen.with_pp pp_program (gen_program ~siblings:true ()))
+    (fun p ->
+      let outputs, _, joined, _, _, kinds = program p in
+      let got = outcome outputs in
+      cover "two writes over one state" (got = None);
+      cover "computed" (got <> None);
+      cover "a write over an older state computed"
+        (got <> None && List.exists (fun (st : statement) -> st.older) (snd p));
+      cover "a join read" joined;
+      cover "a call" (List.mem `Call kinds);
+      let statements = snd p in
+      cover "a write no After lists computed"
+        (got <> None && List.exists (fun (st : statement) -> st.bare) statements);
+      cover "a write listed second computed"
+        (got <> None && List.exists (fun (st : statement) -> st.pair) statements);
+      equal (option (list write)) got (outcome (List.rev outputs));
+      (* A group listing a write orders nothing, wherever the sink has it: the
+         first write an output lists, and the last one. *)
+      match List.find_opt (fun o -> Ops.op o = After) outputs with
+      | Some o ->
+          List.iter
+            (fun d ->
+              let g = Ops.group [ d ] in
+              equal (option (list write)) got (outcome (g :: outputs));
+              equal (option (list write)) got (outcome (outputs @ [ g ])))
+            (let first = Ops.nth o 1
+             and last = List.nth (Ops.src o) (List.length (Ops.src o) - 1) in
+             cover "a group of a write listed second" (first != last);
+             if first == last then [ first ] else [ first; last ])
+      | None -> ())
+
 (* Kernel graphs drawn over four storages of four floats. Each write overwrites
    the current states of one storage or two with one kernel, which copies a
    state into each, or with two, which copy one into each half: the Afters of
@@ -3558,9 +3684,9 @@ let values_law =
    possibly older or read through a join, and is passed one more such state
    beside. A copy is made exactly when the kernels, related as below, form a
    cycle: a kernel follows the writers of the states it is given and what the
-   joins it reads through wait for, and precedes the kernels of every write
-   over a state it reads of which it is no part; a kernel writing a state that
-   it reads through another argument precedes itself. *)
+   joins it reads through wait for, and precedes every other kernel of each
+   write over a state it reads; a kernel writing a state that it reads
+   through another argument precedes itself. *)
 
 let gen_graph =
   let open Gen in
@@ -3678,15 +3804,6 @@ let graph ws =
      else [])
     @ if Ops.is_join s then List.concat_map waits (Ops.src s) else []
   in
-  (* The kernel listed next after [k] in its write, whichever Afters list it:
-     a write lands its kernels in the order listed. *)
-  let listed_next k =
-    let rec next = function
-      | a :: (b :: _ as rest) -> if a == k then [ b ] else next rest
-      | _ -> []
-    in
-    List.concat_map (fun (made, _) -> next made) !writes
-  in
   (* Edges from a kernel to those that must run after it. *)
   let succ (k, curs, read) =
     let war =
@@ -3694,7 +3811,8 @@ let graph ws =
         (fun s ->
           List.concat_map
             (fun (made, curs') ->
-              if List.memq (value s) curs' && not (List.memq k made) then made
+              if List.memq (value s) curs' then
+                List.filter (fun t -> t != k) made
               else [])
             !writes)
         read
@@ -3702,7 +3820,6 @@ let graph ws =
     let own = List.exists (fun s -> List.memq (value s) curs) read in
     war
     @ (if own then [ k ] else [])
-    @ listed_next k
     @ List.filter_map
         (fun (t, curs', read') ->
           if List.exists (fun s -> List.memq k (waits s)) (curs' @ read') then
@@ -3737,30 +3854,6 @@ let copy_iff_cycle =
            ws);
       equal bool ~msg:"a copy" cycle (allocs <> []);
       keeps kg)
-
-(* A write's listing makes a cycle no other edge does: the first kernel listed
-   waits for the overwrite of a state the second reads. The law's generator
-   makes this shape about once in 9,000 graphs, so this case pins it: every
-   other cycle through a listing already has an edge from the first kernel
-   past the second, since a reader of the write's state waits for all its
-   kernels, and a kernel reading its own target is a cycle of one. *)
-let listing_cycle () =
-  let kg, cycle =
-    graph
-      [
-        ([ 2 ], [ ((1, 0, None), None) ]);
-        ( [ 0 ],
-          [ ((1, 0, Some 2), Some (1, 0, None)); ((2, 1, None), None) ] );
-      ]
-  in
-  let allocs =
-    List.filter
-      (fun n -> Ops.op n = Alloc)
-      (Ops.toposort ~calls:Skip (Schedule.create_schedule kg))
-  in
-  equal bool ~msg:"a cycle" true cycle;
-  equal bool ~msg:"a copy" true (allocs <> []);
-  keeps kg
 
 (* Repros
 
@@ -4001,7 +4094,7 @@ let repros =
         let x = f32 1 and y = Ops.new_buffer ~slot:2 "CPU:1" 4 Float32 in
         let y1 = assign y (doubled y) and x1 = assign x O.(x + k 1.) in
         [ out O.(Ops.after x1 [ y1 ] + k 0.); y1 ]);
-    c 1 "s6 nested joins over an old state" (fun () ->
+    c 0 "s6 nested joins over an old state" (fun () ->
         let x, y, z = three_bufs () in let x1 = assign x O.(x + k 1.) in
         let y1 = assign y O.(y + x1) in let z1 = assign z O.(z + y1) in
         [ out O.(Ops.after (Ops.after x [ y1 ]) [ z1 ] * k 1.); x1; y1; z1 ]);
@@ -4012,7 +4105,7 @@ let repros =
     c 0 "s2 a join staged" (fun () ->
         let x, y = two () in let y1 = assign y (doubled y) and x1 = assign x O.(x + k 1.) in
         [ out O.(Ops.contiguous (Ops.after x1 [ y1 ]) + k 0.); y1 ]);
-    c 1 "s2 a join over an old state, staged" (fun () ->
+    c 0 "s2 a join over an old state, staged" (fun () ->
         let x, y = two () in let x1 = assign x O.(x + k 1.) in let y1 = assign y O.(y + x1) in
         [ out O.(Ops.contiguous (Ops.after x [ y1 ]) * k 1.); x1; y1 ]);
     (* Disjoint partial overwrites. *)
@@ -4080,7 +4173,7 @@ let mixed_after read_old =
 let mixed =
   [
     c_ 0 "s7 an after of a call and a join, read" (fun () -> mixed_after false);
-    c_ 1 "s7 an after of a call and a join, read beside y as it was" (fun () ->
+    c_ 0 "s7 an after of a call and a join, read beside y as it was" (fun () ->
         mixed_after true);
   ]
 
@@ -4161,13 +4254,13 @@ let repro_tests =
           backedge_aliases;
       ])
 
-(* A value ordered after a store but held by no storage: the kernel that reads
-   it has nothing to wait on for it, so it is refused (runtime/test_schedule.py,
-   test_value_order_dependency_requires_storage). *)
+(* A value ordered after a store but held by no storage: the store runs, and
+   the value is what it names, whatever ran before its reader
+   (runtime/test_schedule.py, test_value_order_dependency_requires_storage). *)
 let boundary =
   group "create_linear_with_vars › boundaries"
     [
-      test "a constant ordered after a store has no storage to wait on"
+      test "a constant ordered after a store is the constant, and the store runs"
         (fun () ->
           let c = Ops.new_buffer ~slot:1 cpu 1 Int32
           and o = Ops.new_buffer ~slot:2 cpu 1 Int32 in
@@ -4178,9 +4271,246 @@ let boundary =
           let big =
             Ops.sink [ Ops.after o [ Ops.store o (Shape.reshape v [ Int 1 ]) ] ]
           in
+          computes big);
+    ]
+
+(* Two writes over one state
+
+   Two writes over one state, neither listed over the state the other makes
+   nor reading what the other left, are refused: which lands last would be
+   the order of the sink's items. Listed in one After, or one over the After
+   of the other, they are ordered. *)
+
+let run_of x lo hi = Shape.shrink x [ Some (Int lo, Int hi) ]
+
+let siblings =
+  let refused big =
+    raises_match
+      (Exn.invalid_arg ~sub:"two writes over one state")
+      (fun () -> Schedule.create_linear_with_vars big)
+  in
+  group "create_linear_with_vars › two writes over one state"
+    [
+      test "Afters over overlapping runs of one state are refused" (fun () ->
+          let x = f32 ~n:8 1 in
+          let over lo hi v =
+            Ops.after (run_of x lo hi) [ Ops.store (run_of x lo hi) (fl v) ]
+          in
+          refused (Ops.sink [ over 0 6 1.; over 2 8 2. ]);
+          refused (Ops.sink [ over 2 8 2.; over 0 6 1. ]));
+      test "a read of a state beside another write over the state under it is \
+            refused" (fun () ->
+          let x = f32 ~n:8 1 and y = f32 ~n:8 2 in
+          let a = Ops.after x [ Ops.store (run_of x 0 4) (fl 1.) ] in
+          let b =
+            Ops.after (run_of x 4 8) [ Ops.store (run_of x 4 8) (fl 2.) ]
+          in
+          refused (Ops.sink [ b; assign y Ops.O.(a + fl 10.) ]);
+          refused (Ops.sink [ assign y Ops.O.(a + fl 10.); b ]));
+      test "the refusal names both writes and how to order them" (fun () ->
+          let x = f32 ~n:8 1 in
+          raises
+            (Invalid_argument
+               "two writes over one state of the storage in slot 1: the \
+                store into elements 0 to 3 and the store into elements 0 to 7 \
+                are each over it; list one over the After of the other, or \
+                list both in one After")
+            (fun () ->
+              Schedule.create_linear_with_vars
+                (Ops.sink
+                   [
+                     assign x (fl 1.);
+                     Ops.after x [ Ops.store (run_of x 0 4) (fl 2.) ];
+                   ])));
+      test "the same writes listed in one After are ordered as listed"
+        (fun () ->
+          let x = f32 ~n:8 1 and y = f32 ~n:8 2 in
+          let a =
+            Ops.after x
+              [
+                Ops.store (run_of x 0 4) (fl 1.);
+                Ops.store (run_of x 4 8) (fl 2.);
+              ]
+          in
+          computes (Ops.sink [ assign y Ops.O.(a + fl 10.) ]));
+      test "a write over a state beside one it reads the result of is ordered"
+        (fun () ->
+          let x = f32 ~n:8 1 and y = f32 ~n:8 2 in
+          let a = assign (run_of x 0 8) (fl 1.) in
+          let y1 = assign y Ops.O.(a + fl 1.) in
+          computes
+            (Ops.sink [ a; Ops.after x [ Ops.store x Ops.O.(y1 * fl 2.) ] ]));
+      test "a write a group or a value lists is ordered by its states alone"
+        (fun () ->
+          let x = f32 ~n:4 1 and y = f32 ~n:4 2 and z = f32 ~n:4 3 in
+          let x1 = assign x (fl 1.) in
+          let k = Ops.store x (fl 2.) in
+          let x2 = Ops.after x1 [ k ] in
+          let y1 = assign y (Ops.after (fl 3.) [ k ]) in
+          let g = Ops.group [ k; Ops.store z (fl 5.) ] in
+          List.iter
+            (fun items ->
+              let got = outcome items in
+              equal bool ~msg:"computed" true (got <> None);
+              equal (option (list write)) got (outcome (List.rev items)))
+            [ [ x2; y1 ]; [ x2; g ] ]);
+      test "an effect listed after another lands after it, whichever the sink \
+            reaches first" (fun () ->
+          let x = f32 1 and y = f32 2 in
+          let e = Ops.store x (fl 2.) in
+          let a = Ops.after x [ Ops.store x (fl 1.); e ] in
+          let g = Ops.group [ e; Ops.store y (fl 5.) ] in
+          let twos = Some (List.init 4 (fun i -> (1, i, `Float 2.))) in
+          equal (option (list write)) twos (outcome [ a ]);
+          equal (option (list write)) (outcome [ a ]) (outcome [ e; a ]);
+          List.iter
+            (fun items ->
+              let got = outcome items in
+              equal bool ~msg:"computed" true (got <> None);
+              equal (option (list write)) got (outcome (List.rev items)))
+            [ [ a; g ]; [ a; e ] ]);
+      test "writes no After lists, over one state, are refused" (fun () ->
+          let x = f32 1 in
+          let a = assign x (fl 1.) in
+          refused (Ops.sink [ Ops.store x (fl 1.); Ops.store x (fl 2.) ]);
+          refused (Ops.sink [ Ops.store x (fl 2.); Ops.store x (fl 1.) ]);
+          refused (Ops.sink [ a; Ops.store x (fl 2.) ]);
+          refused (Ops.sink [ Ops.store x (fl 2.); a ]));
+      test "a write no After lists is over the state its destination names"
+        (fun () ->
+          let x = f32 1 and y = f32 2 in
+          let a = assign x (fl 1.) in
+          let twos = Some (List.init 4 (fun i -> (1, i, `Float 2.))) in
+          equal (option (list write)) twos
+            (outcome [ a; Ops.store a Ops.O.(a + fl 1.) ]);
+          equal (option (list write)) twos
+            (outcome [ a; Ops.store x Ops.O.(a + fl 1.) ]);
+          List.iter
+            (fun items ->
+              let big = Ops.sink items in
+              computes big;
+              equal (option (list write)) (outcome items)
+                (outcome (List.rev items)))
+            [
+              [ a; Ops.store a Ops.O.(a + fl 1.) ];
+              [ a; Ops.store x Ops.O.(a + fl 1.) ];
+              [ Ops.store x (fl 1.); Ops.store y (fl 2.) ];
+            ]);
+      test "an After listing a write of other storage names its own state"
+        (fun () ->
+          let x = f32 ~n:4 1 and y = f32 ~n:4 2 and out = f32 ~n:4 3 in
+          let x1 = assign x (fl 1.) in
+          let x2 = assign x1 Ops.O.(x1 + fl 1.) in
+          let r = Ops.after x1 [ Ops.store y (fl 5.) ] in
+          let o = assign out Ops.O.(r + fl 0.) in
+          let into_out items =
+            match outcome items with
+            | Some w -> List.filter (fun (s, _, _) -> s = 3) w
+            | None -> failf "refused"
+          in
+          let ones = List.init 4 (fun i -> (3, i, `Float 1.)) in
+          equal (list write) ones (into_out [ x2; o ]);
+          equal (list write) ones (into_out [ o; x2 ]));
+      test "an After over storage names the states its listed effects read"
+        (fun () ->
+          (* A loop's carry: its storage written before the loop, the loop
+             listed over the storage itself. *)
+          let x = f32 ~n:4 1 and y = f32 ~n:4 2 and out = f32 ~n:4 3 in
+          let x1 = assign x (fl 1.) in
+          let r = Ops.after x [ Ops.store y Ops.O.(x1 + fl 4.) ] in
+          let o = assign out Ops.O.(r + fl 0.) in
+          let items = [ o ] in
+          computes (Ops.sink items);
+          let ones = List.init 4 (fun i -> (3, i, `Float 1.)) in
+          match outcome items with
+          | Some w ->
+              equal (list write) ones (List.filter (fun (s, _, _) -> s = 3) w)
+          | None -> failf "refused");
+      test "a write ordered after another through a value lands after it"
+        (fun () ->
+          let x = f32 ~n:4 1 and y = f32 ~n:4 2 in
+          let m = Ops.store x (fl 3.) in
+          let v = Ops.after y [ m ] in
+          let items =
+            [ Ops.after x [ m ]; Ops.after x [ Ops.store x Ops.O.(v + fl 1.) ] ]
+          in
+          computes (Ops.sink items);
+          equal (option (list write)) (outcome items) (outcome (List.rev items)));
+      test "a write listed over a state ordered after it is refused" (fun () ->
+          let x = f32 ~n:4 1 and y = f32 ~n:4 2 in
+          let e = Ops.store x (fl 1.) in
+          let p = Ops.after x [ Ops.store x Ops.O.(Ops.after y [ e ] + fl 1.) ] in
           raises_match
-            (Exn.invalid_arg ~sub:"a value ordered after effects")
-            (fun () -> Schedule.create_linear_with_vars big));
+            (Exn.invalid_arg ~sub:"an effect is listed over a state that needs it")
+            (fun () ->
+              Schedule.create_linear_with_vars (Ops.sink [ Ops.after p [ e ] ])));
+      test "a kernel graph with two writes over one state is refused"
+        (fun () ->
+          raises_match
+            (Exn.invalid_arg ~sub:"two writes over one state")
+            (fun () ->
+              Schedule.create_schedule
+                (Golden.sink "write_over_written_kernels.golden")));
+    ]
+
+(* Calls of bodies precompiled or inlined, at any depth. *)
+let call_writes =
+  let param n slot = Shape.param ~shape:[ Int n ] ~device:cpu slot Float32 in
+  let x = f32 ~n:8 1 and y = f32 ~n:8 2 in
+  group "create_linear_with_vars › calls' writes"
+    [
+      test "an argument a call writes is its storage as the call runs"
+        (fun () ->
+          let body =
+            Ops.sink [ Ops.store (param 8 0) Ops.O.(param 8 1 + param 8 0) ]
+          in
+          let twos = assign x (fl 2.) in
+          List.iter
+            (fun precompile ->
+              (* [x] names the state before the store, the call runs after
+                 it. *)
+              let c = Ops.call ~precompile body [ x; Ops.O.(fl 3. + twos) ] in
+              let items = [ Ops.after x [ c ] ] in
+              computes (Ops.sink items);
+              equal (option (list write))
+                (Some (List.init 8 (fun i -> (1, i, `Float 7.))))
+                (outcome items))
+            [ false; true ]);
+      test "a body that inlines a call writes what the call writes" (fun () ->
+          let inner =
+            Ops.sink [ Ops.store (param 4 0) Ops.O.(param 4 1 + fl 1.) ]
+          in
+          let run lo slot = Shape.shrink (param 8 slot) [ Some (Int lo, Int (lo + 4)) ] in
+          let outer = Ops.sink [ Ops.call ~precompile:false inner [ run 4 0; run 0 1 ] ] in
+          (* [y] holds 3, -1, 6, 2 first ([filled]). *)
+          let fours = List.mapi (fun i v -> (1, 4 + i, `Float v)) [ 4.; 0.; 7.; 3. ] in
+          List.iter
+            (fun precompile ->
+              let items =
+                [ Ops.after x [ Ops.call ~precompile outer [ x; y ] ] ]
+              in
+              computes (Ops.sink items);
+              equal (option (list write)) (Some fours) (outcome items))
+            [ false; true ]);
+      test "a loop of a call in a body reads its rows as each trip starts" (fun () ->
+          let b = f32 ~n:16 3 in
+          let add1 =
+            Ops.sink [ Ops.store (param 4 0) Ops.O.(param 4 1 + fl 1.) ]
+          in
+          let whole = param 16 0 in
+          let r = Ops.range ~axis_type:Loop (Int 4) [ 100 ] in
+          let row =
+            Shape.shrink whole
+              [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 4)) ]
+          in
+          let flipped = Shape.flip (Shape.shrink whole [ Some (Int 4, Int 8) ]) [ 0 ] in
+          let c = Ops.call ~precompile:true add1 [ row; flipped ] in
+          let body = Ops.sink [ Ops.after whole [ Ops.end_ c [ r ] ] ] in
+          List.iter
+            (fun precompile ->
+              computes
+                (Ops.sink [ Ops.after b [ Ops.call ~precompile body [ b ] ] ]))
+            [ true; false ]);
     ]
 
 let () =
@@ -4211,12 +4541,9 @@ let () =
          relation;
          writes;
          boundary;
-         group "create_linear_with_vars › laws" [ values_law ];
+         siblings;
+         call_writes;
+         group "create_linear_with_vars › laws" [ values_law; sink_order_law ];
          group "create_schedule › laws" [ copy_iff_cycle ];
-         group "create_schedule › a write's listing"
-           [
-             test "the order of a write's kernels can force a copy"
-               listing_cycle;
-           ];
          repro_tests;
        ])

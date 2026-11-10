@@ -2021,8 +2021,6 @@ let invalid = const `Invalid
 
 (* Bounds *)
 
-let view_state u = match (u.op, u.src) with Op.Param, [ _; w ] -> w | _ -> u
-
 let rec buf_uop u =
   match u.op with
   | op when Op.Set.mem op Op.Set.defines -> u
@@ -2040,7 +2038,7 @@ let rec buf_uop u =
         in
         down u
 
-let whole u = if view_state u != u then buf_uop (view_state u) else u
+let whole u = match (u.op, u.src) with Op.Param, [ _; w ] -> w | _ -> u
 
 (* The elements of a constant table read as [dt]. *)
 let table_values dt bytes : Dtype.value list =
@@ -4632,16 +4630,6 @@ let assuming u subs =
 let pm_drop_after =
   Pattern_matcher.(
     v (fun () -> [ rule (Upat.op Op.After ~name:"a") (fun m -> Some (nth (m "a") 0)) ]))
-
-let resolve_returned_after r effects =
-  let target = base r in
-  match
-    List.filter
-      (fun st -> st.op = Op.Store && base (nth st 0) == target)
-      effects.src
-  with
-  | [ st ] -> Some (if target.op = Op.Param then after r [ st ] else nth st 1)
-  | _ -> None
 
 let gate_kernel_sink u =
   match (u.op, u.arg) with

@@ -1200,6 +1200,34 @@ let cost =
           less float_exact ~than:(2.2 *. short) long);
     ]
 
+(* Two writes over one state *)
+
+(* Views of one parameter, each the parameter of a run of its storage, are
+   that storage: two Afters over them are two writes over its first state. *)
+let views_of_one_storage =
+  test "Afters over two views of one parameter are two writes over one state"
+    (fun () ->
+      let w = Shape.param ~shape:[ Int 8 ] ~device:"CPU" 0 Float32 in
+      let view slot =
+        let p = Shape.param ~shape:[ Int 4 ] ~device:"CPU" slot Float32 in
+        Ops.replace p ~src:(Ops.src p @ [ w ])
+      in
+      let v1 = view 1 and v2 = view 2 in
+      let const c =
+        Shape.expand
+          (Shape.reshape (Ops.cast (Ops.float c) Float32) [ Int 1 ])
+          [ Int 4 ]
+      in
+      raises_match
+        (Exn.invalid_arg ~sub:"two writes over one state")
+        (fun () ->
+          prepare
+            (Ops.sink
+               [
+                 Ops.after v1 [ Ops.store v1 (const 1.) ];
+                 Ops.after v2 [ Ops.store v2 (const 2.) ];
+               ])))
+
 let () =
   exit
     (run "Tolk.Prepare"
@@ -1217,4 +1245,6 @@ let () =
          calls_on_their_own;
          earliest;
          cost;
+         group "prepare_rangeify › two writes over one state"
+           [ views_of_one_storage ];
        ])
