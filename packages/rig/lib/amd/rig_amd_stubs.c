@@ -532,7 +532,8 @@ static int program_of(struct rig_amd_program *p, value v_words,
    filter kernel's launch [v_filter], which it copies; in [v_programs] the
    words and holes of the start and stop programs around a launch, then
    of the drain's; and in [v_values] the 8-byte values of a launch's
-   samples, of a drain's, and of SQ_WAVES, the samples' first. */
+   samples, of a drain's, of SQ_WAVES, the samples' first, and of
+   SQ_WAVES_SAVED, the next. */
 value caml_rig_amd_counting(value v_self, value v_filter, value v_programs,
                             value v_values) {
   CAMLparam4(v_self, v_filter, v_programs, v_values);
@@ -556,6 +557,7 @@ value caml_rig_amd_counting(value v_self, value v_filter, value v_programs,
   c->values = (uint64_t)at(v_values, 0);
   c->drain_values = (uint64_t)at(v_values, 1);
   c->waves = (uint64_t)at(v_values, 2);
+  c->saved = (uint64_t)at(v_values, 3);
   atomic_init(&c->forced, -1);
   if (!made || c->scratch == NULL) {
     d->counting = NULL;

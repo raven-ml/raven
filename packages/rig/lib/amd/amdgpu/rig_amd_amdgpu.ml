@@ -1400,9 +1400,12 @@ let gpu_under ?measure ~root i : Rig_amd.t Rig_edge.opener =
           (* The request is in the name: [Rig.open_] answers the open device
              of a name without [make], so another request must name
              another device, which [admit] then refuses. *)
-          let rest = List.filter (( <> ) "SQ_WAVES") m.Amd.counters in
+          let first = [ "SQ_WAVES"; "SQ_WAVES_SAVED" ] in
+          let rest =
+            List.filter (fun n -> not (List.mem n first)) m.Amd.counters
+          in
           strf "%s measuring %s" (device_name i)
-            (String.concat "," ("SQ_WAVES" :: rest)));
+            (String.concat "," (first @ rest)));
     driver = (module Rig_amd);
     make = (fun ~word -> open_ ?measure ~root ~word i);
   }

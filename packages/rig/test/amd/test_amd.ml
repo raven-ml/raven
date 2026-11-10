@@ -128,6 +128,16 @@ let gpus =
           raises_match
             (Exn.invalid_arg ~sub:("Rig_amd.make: the GPU's " ^ field))
             (fun () -> A.make ~word:(H.word ()) (path_of gpu)));
+      (* SQ_WAVES and SQ_WAVES_SAVED, which a device counts whether listed or
+         not, and a counter it counts only when listed. *)
+      cases "listed twice"
+        ~id:(strf "make refuses to measure %s listed twice")
+        [ "SQ_WAVES"; "SQ_WAVES_SAVED"; "SQ_INSTS_VALU" ]
+        (fun n ->
+          let measure = { A.counters = [ n; n ] } in
+          match A.make ~measure ~word:(H.word ()) (path_of gfx1201) with
+          | Ok _ -> failf "make measured %s listed twice" n
+          | Error why -> contains ~sub:(n ^ " is listed twice") why);
       test "AMD's display controllers and accelerators are GPUs" (fun () ->
           equal bool ~msg:"display" true
             (A.is_gpu ~vendor:0x1002 ~class_:0x030000);
@@ -3228,7 +3238,11 @@ let measures events =
    unmeasured)
 
 let exact ~groups ~k =
-  [ ("SQ_WAVES", 2 * groups); ("SQ_INSTS_VALU", 2 * groups * 16 * k) ]
+  [
+    ("SQ_WAVES", 2 * groups);
+    ("SQ_WAVES_SAVED", 0);
+    ("SQ_INSTS_VALU", 2 * groups * 16 * k);
+  ]
 
 let counts = list (pair string int)
 
@@ -3527,18 +3541,23 @@ let refused_opens () =
     | Ok { counters = [ c ]; _ } -> c.block
     | _ -> ""
   in
-  let sq = List.filter (fun n -> block n = "SQ" && n <> "SQ_WAVES") names in
+  let always = [ "SQ_WAVES"; "SQ_WAVES_SAVED" ] in
+  let sq =
+    List.filter (fun n -> block n = "SQ" && not (List.mem n always)) names
+  in
   let gl2c = List.find (fun n -> block n = "GL2C") names in
   let says msg sub why =
     equal bool ~msg:(strf "%s: %s" msg why) true (contains ~sub why)
   in
   says "an unknown counter" "SQ_FOO" (refused [ "SQ_FOO" ]);
   says "a GL2C counter" gl2c (refused [ gl2c ]);
-  says "more than 4 SQ counters, SQ_WAVES one of them" "at most 4"
-    (refused (List.filteri (fun i _ -> i < 4) sq));
-  (match open_measured (List.filteri (fun i _ -> i < 3) sq) with
+  says "more than 4 SQ counters, SQ_WAVES and SQ_WAVES_SAVED two of them"
+    "at most 4"
+    (refused (List.filteri (fun i _ -> i < 3) sq));
+  (match open_measured (List.filteri (fun i _ -> i < 2) sq) with
   | Ok t -> Rig.close t.d
-  | Error why -> failf "4 SQ counters, SQ_WAVES one of them: %s" why);
+  | Error why ->
+      failf "4 SQ counters, SQ_WAVES and SQ_WAVES_SAVED two of them: %s" why);
   (S.with_ @@ fun _ ->
    says "beside a plain device" "another device" (refused measured));
   (measuring @@ fun _ ->
@@ -3789,6 +3808,22 @@ let drain_moved () =
     ([ exact ~groups:64 ~k:10 ], 0)
     (clean 50)
 
+(* 13. Launches measured while another process keeps [busy_devices] compute
+   queues busy: the GPU preempts them, and each is unmeasured or exact. *)
+let measured_preempted () =
+  measuring @@ fun t ->
+  let p = image ~of_:counts_code t in
+  let _, end_child = busy_beside ~devices:busy_devices in
+  Fun.protect ~finally:end_child @@ fun () ->
+  let groups = 8192 and k = preempted_k in
+  let counted, unmeasured =
+    measures
+      (profiled (fun () ->
+           submit_valu t p (List.init reps (fun _ -> (groups, k)))))
+  in
+  List.iter (equal counts ~msg:"a measured launch" (exact ~groups ~k)) counted;
+  greater int ~msg:"unmeasured launches" ~than:0 unmeasured
+
 let measures_group =
   group ~timeout:300. "measures"
     [
@@ -3833,6 +3868,10 @@ let measures_group =
       test
         "a launch during which another process counts is unmeasured"
         counting_beside;
+      test
+        "launches the GPU preempts beside another process's busy queues are \
+         each exact or unmeasured, and some are unmeasured"
+        measured_preempted;
     ]
 
 let () =

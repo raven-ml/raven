@@ -392,6 +392,7 @@ struct rig_amd_counting {
   struct rig_amd_program start, stop, drain_start, drain_stop;
   uint64_t values, drain_values; /* the samples' 8-byte values */
   uint64_t waves;                /* SQ_WAVES's values, the samples' first */
+  uint64_t saved;                /* SQ_WAVES_SAVED's values, the next */
   uint32_t *scratch;             /* a program's words, filled */
   /* a filter word the next bracket stores in place of its filter wave's,
      or -1 (Rig_amd.stale_filter) */

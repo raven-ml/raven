@@ -1251,6 +1251,11 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
      restore added its handler's waves, the GPU counted foreign waves under
      our filter, or another process started, reset or stopped counting
      while our waves started;
+   - SQ_WAVES_SAVED, summed, is 0, else the GPU preempted the launch and
+     saved its waves. Each restore under the filter adds a wave and its
+     handler's instructions, and a VMID that moved and moved back between
+     the two filter words lost the waves launched under the other VMID. In
+     SQ_WAVES the gains may then cancel the losses, and the words are equal;
    - no value reads 2^32 - 1, at which a counter saturates;
    - its filter word is the next launch's, or the tail's for the last: if
      not, the VMID moved during or after its bracket, and the GPU may have
@@ -1348,15 +1353,16 @@ static void copy_one(struct rig_amd *d, struct rig_amd_counted *k) {
     uint64_t start = word64(r + RIG_AMD_RECORD_START);
     uint64_t end = word64(r + RIG_AMD_RECORD_END);
     if (stale || moved || start == 0 || end == 0) continue;
-    uint64_t *o = k->rows + (size_t)i * row, waves = 0;
+    uint64_t *o = k->rows + (size_t)i * row, waves = 0, saved = 0;
     int whole = 1;
     for (uint64_t j = 0; j < c->values; j++) {
       uint64_t x = sample(r, j);
       whole &= x != UINT32_MAX;
       if (j < c->waves) waves += x;
+      else if (j < c->waves + c->saved) saved += x;
       o[3 + j] = x;
     }
-    if (!whole || waves != k->waves[i]) {
+    if (!whole || waves != k->waves[i] || saved != 0) {
       memset(o, 0, 8 * row);
       continue;
     }

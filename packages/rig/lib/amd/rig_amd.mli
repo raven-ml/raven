@@ -446,8 +446,8 @@ val capability : t -> Rig_amd_abi.Capability.t
     state ([stable_power] of {!type-path}) and holds it as its path states,
     so every process's work on the GPU runs at its stable clocks
     meanwhile. Of the 8 SQ counters a GFX12 SQ counts at once, it counts at
-    most 4, ["SQ_WAVES"] one of them, which it counts whether listed or
-    not.
+    most 4, ["SQ_WAVES"] and ["SQ_WAVES_SAVED"] two of them, which it counts
+    whether listed or not.
 
     A measured launch starts once the work before it has completed, and
     the work after it on the compute queue starts once its counters are
@@ -462,14 +462,20 @@ val capability : t -> Rig_amd_abi.Capability.t
     are the launch's alone and exact unless another process counts on the
     GPU, or waves started under another process's counting still run. A
     launch records no [Counters], and counts in an [Unmeasured] event, if
-    ["SQ_WAVES"] differs from its grid's waves, if a value reads
-    [2{^32} - 1], if the host had no memory for its records, or once the
-    device's VMID is seen to have moved, until a count with no launch reads
-    nothing under the filter of the launch after it: the GPU may then have
-    counted another process's waves as the device's.
+    ["SQ_WAVES"] differs from its grid's waves, if ["SQ_WAVES_SAVED"] is not
+    [0], if a value reads [2{^32} - 1], if the host had no memory for its
+    records, or once the device's VMID is seen to have moved, until a count
+    with no launch reads nothing under the filter of the launch after it:
+    the GPU may then have counted another process's waves as the device's.
+    ["SQ_WAVES_SAVED"] is not [0] when the GPU preempted the launch and
+    saved its waves ({!Rig_amd_abi.Counter.section-counting}), as it does
+    when more compute queues of all processes have work than it runs at
+    once. A [Counters] event's ["SQ_WAVES_SAVED"] values are therefore
+    [0].
 
-    The device's facts list the counters, ["SQ_WAVES"] first, each with
-    one value per place {!Rig_amd_abi.Counter.t} counts it in. *)
+    The device's facts list the counters, ["SQ_WAVES"] and
+    ["SQ_WAVES_SAVED"] first, each with one value per place
+    {!Rig_amd_abi.Counter.t} counts it in. *)
 
 type measure = { counters : string list }
 (** The type for the counters a device measures, by their names in
@@ -703,7 +709,8 @@ val make : ?measure:measure -> word:nativeint -> 'm path -> (t, string) result
        the GPU writes no stamp of its clock within a second;}
     {- with [measure], if the GPU is not a GFX12 GPU of one die, if a
        counter is unknown, listed twice or not an SQ counter, or if they
-       are more than 4 with ["SQ_WAVES"], naming why, or with
+       are more than 4 with ["SQ_WAVES"] and ["SQ_WAVES_SAVED"], naming
+       why, or with
        [stable_power]'s message.}}
 
     It takes its first measure of the GPU's clock as [p.clock] says.

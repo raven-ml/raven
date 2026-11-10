@@ -1200,38 +1200,53 @@ type measure = { counters : string list }
    resident wave, which counts a wave that issues none. *)
 let drained = [ "SQ_INSTS_VALU"; "SQ_WAVE_CYCLES" ]
 
-(* The SQ counters a device measures at most, SQ_WAVES one of them: those
-   whose registers have run from a KFD user queue (SQ_PERFCOUNTER0-3_LO and
-   their selects). GFX12's SQ counts 8 at once, through 16 select
-   registers, but a register a user queue may not reach costs a reset of
-   the GPU, so the others wait for a run. *)
+(* The SQ counters a device measures at most, SQ_WAVES and SQ_WAVES_SAVED
+   two of them: those whose registers have run from a KFD user queue
+   (SQ_PERFCOUNTER0-3_LO and their selects). GFX12's SQ counts 8 at once,
+   through 16 select registers, but a register a user queue may not reach
+   costs a reset of the GPU, so the others wait for a run. *)
 let most_counters = 4
 
+(* What a device counts around every launch, first: the waves the guard
+   compares with the grid's, and the waves a preemption saved, which the
+   guard requires to be none (rig_amd_ring.c's Counters). *)
+let guarded = [ "SQ_WAVES"; "SQ_WAVES_SAVED" ]
+
+(* The first name [names] lists twice, if any. *)
+let rec twice = function
+  | [] -> None
+  | n :: rest -> if List.mem n rest then Some n else twice rest
+
 (* The layouts of what a device that measures [m] counts on [gpu]: around a
-   launch, SQ_WAVES first, and around a drain. *)
+   launch, [guarded] first, and around a drain. Each of [guarded]'s names
+   leaves [m]'s list with its repeats, so a repeat is refused first. *)
 let layouts (gpu : Abi.Gpu.t) m =
   let refuse fmt = Printf.ksprintf (fun s -> Error ("measuring: " ^ s)) fmt in
   match gpu.target with
   | 12, _, _ when gpu.xccs = 1 -> (
-      let names = "SQ_WAVES" :: List.filter (( <> ) "SQ_WAVES") m.counters in
+      let names =
+        guarded @ List.filter (fun n -> not (List.mem n guarded)) m.counters
+      in
       let sq (c : Abi.Counter.t) = c.block = "SQ" in
-      if List.length names > most_counters then
-        refuse
-          "a device measures at most %d SQ counters, SQ_WAVES one of them, \
-           of the 8 %s's SQ counts"
-          most_counters (Abi.Gpu.processor gpu)
-      else
-        match Abi.Counter.layout gpu names with
-        | Error why -> refuse "%s" why
-        | Ok l -> (
-            match List.find_opt (Fun.negate sq) l.counters with
-            | Some c ->
-                refuse "%s is a %s counter; a device measures SQ counters"
-                  c.name c.block
-            | None -> (
-                match Abi.Counter.layout gpu drained with
-                | Ok d -> Ok (l, d)
-                | Error why -> refuse "%s" why)))
+      match twice m.counters with
+      | Some n -> refuse "%s is listed twice" n
+      | None when List.length names > most_counters ->
+          refuse
+            "a device measures at most %d SQ counters, SQ_WAVES and \
+             SQ_WAVES_SAVED two of them, of the 8 %s's SQ counts"
+            most_counters (Abi.Gpu.processor gpu)
+      | None -> (
+          match Abi.Counter.layout gpu names with
+          | Error why -> refuse "%s" why
+          | Ok l -> (
+              match List.find_opt (Fun.negate sq) l.counters with
+              | Some c ->
+                  refuse "%s is a %s counter; a device measures SQ counters"
+                    c.name c.block
+              | None -> (
+                  match Abi.Counter.layout gpu drained with
+                  | Ok d -> Ok (l, d)
+                  | Error why -> refuse "%s" why))))
   | _ ->
       refuse "%s is not a GFX12 GPU of one die" (Abi.Gpu.processor gpu)
 
@@ -1445,12 +1460,16 @@ let make (type m) ?measure ~word (p : m path) =
         let launch =
           c_launch_of p.gpu k ~base:(mem_address code) ~lds:p.lds "filter"
         in
+        (* The samples start with SQ_WAVES's values, then SQ_WAVES_SAVED's
+           ([guarded]). *)
+        let waves = places (List.nth l.counters 0)
+        and saved = places (List.nth l.counters 1) in
         Fun.protect
           ~finally:(fun () -> free_launch launch)
           (fun () ->
             set_counting self launch
               (programs p.gpu ~wgps:p.wgps l d)
-              [| values l; values d; places (List.hd l.counters) |])
+              [| values l; values d; waves; saved |])
     | _ -> ());
     let ring q kind host bell id =
       set_ring self q host (first_ring kind) (p.most_ring kind)

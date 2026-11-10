@@ -57,15 +57,16 @@ val gpu : ?measure:Rig_amd.measure -> int -> Rig_amd.t Rig_edge.opener
     otherwise. Each [make ()] opens a new device of the GPU with queues of
     its own, also while other devices of the GPU are open, but for one
     opened with [measure]. With [measure], the opener is named as without,
-    followed by [" measuring "] and the counters, ["SQ_WAVES"] first and
-    the others in their order, separated by commas, such as
-    ["AMD measuring SQ_WAVES,SQ_INSTS_VALU"], and its device measures
-    counters ({!Rig_amd.section-measures}). While it is open no other device
-    of its GPU opens in the process, an open with other counters included,
-    and it opens only if none is open. Its device holds the GPU's stable
-    power state ({!section-stable}). The process reads the list of GPUs at
-    the first [make] that can read it, and keeps it, so after a GPU is
-    plugged in or removed it may differ from {!buses}.
+    followed by [" measuring "] and the counters, ["SQ_WAVES"] and
+    ["SQ_WAVES_SAVED"] first and the others in their order, separated by
+    commas, such as ["AMD measuring SQ_WAVES,SQ_WAVES_SAVED,SQ_INSTS_VALU"],
+    and its device measures counters ({!Rig_amd.section-measures}). While
+    it is open no other device of its GPU opens in the process, an open
+    with other counters included, and it opens only if none is open. Its
+    device holds the GPU's stable power state ({!section-stable}). The
+    process reads the list of GPUs at the first [make] that can read it, and
+    keeps it, so after a GPU is plugged in or removed it may differ from
+    {!buses}.
 
     [make ()] returns [Error msg]:
     {ul
