@@ -119,5 +119,6 @@ Transformations of the gradients are functions applied before the step.
 | State type | Pytree of arrays | A record per optimizer (`adam_state`, ...) with its structure (`adam_ptree`, ...) |
 | Learning rate | Float or schedule | A schedule `~lr`, which the step applies to its counter: `Vega.rate v` for a constant |
 | Weight decay | Float or schedule | A schedule `~weight_decay`, as `~lr` |
+| Weight decay mask | `mask`, a tree of booleans or a function of the parameters | `~decays`, a function of each leaf's path and shape |
 | Parameter trees | Built-in (JAX pytrees) | Any structure, an `Nx.Ptree.t` |
 | Complex parameters | Second moments of `abs_sq(g)`, the squared magnitude | Each part a real coordinate with its own moments, the step along the conjugate of `Rune.grad` |

@@ -117,14 +117,14 @@ advances it. Several share a state type.
 | Step | Description | State | Key Parameters |
 |------|-------------|-------|----------------|
 | `sgd_step` | Stochastic gradient descent | `sgd_state` | `~momentum` |
-| `lars_step` | SGD scaled per leaf by a trust ratio, for large batches | `sgd_state` | `~momentum`, `~weight_decay`, `~nesterov` |
+| `lars_step` | SGD scaled per leaf by a trust ratio, for large batches | `sgd_state` | `~momentum`, `~weight_decay`, `~decays`, `~nesterov` |
 | `adam_step` | Adam with bias correction | `adam_state` | `~b1`, `~b2`, `~eps` |
-| `adamw_step` | Adam with decoupled weight decay | `adam_state` | `~b1`, `~b2`, `~eps`, `~weight_decay` |
+| `adamw_step` | Adam with decoupled weight decay | `adam_state` | `~b1`, `~b2`, `~eps`, `~weight_decay`, `~decays` |
 | `radam_step` | Rectified Adam | `adam_state` | `~b1`, `~b2`, `~eps` |
-| `lamb_step` | AdamW scaled per leaf by a trust ratio, for large batches | `adam_state` | `~b1`, `~b2`, `~eps`, `~weight_decay` |
+| `lamb_step` | AdamW scaled per leaf by a trust ratio, for large batches | `adam_state` | `~b1`, `~b2`, `~eps`, `~weight_decay`, `~decays` |
 | `rmsprop_step` | RMSprop | `rmsprop_state` | `~decay`, `~eps`, `~momentum` |
 | `adagrad_step` | Adagrad | `adagrad_state` | `~eps` |
-| `adan_step` | Adan, an adaptive Nesterov momentum | `adan_state` | `~b1`, `~b2`, `~b3`, `~eps`, `~weight_decay` |
+| `adan_step` | Adan, an adaptive Nesterov momentum | `adan_state` | `~b1`, `~b2`, `~b3`, `~eps`, `~weight_decay`, `~decays` |
 | `lion_step` | Evolved sign momentum | `lion_state` | `~b1`, `~b2` |
 | `adafactor_step` | Factored second moments, for memory | `adafactor_state` | `~decay_rate`, `~eps`, `~clipping_threshold` |
 | `lbfgs_step` | L-BFGS at a fixed rate | `lbfgs_state` | `~history` (on `lbfgs_init`) |

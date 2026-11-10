@@ -268,6 +268,9 @@ All notable changes to this project will be documented in this file.
 
 ### Vega (new)
 
+- `lars_step`, `adamw_step`, `lamb_step` and `adan_step` take `~decays`, a
+  rule on each leaf's path and shape, to leave biases and normalisation
+  parameters undecayed. A leaf it rejects steps as under `adam_step` for AdamW.
 - **Breaking:** the `~weight_decay` of `lars_step`, `adamw_step`, `lamb_step`
   and `adan_step` is a function of the counter, as `~lr` is, so a scheduled
   decay is computed inside the step and a bfloat16 parameter decays under it.

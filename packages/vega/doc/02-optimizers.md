@@ -76,7 +76,25 @@ let centralize p grads =
 
 Weight decay in `adamw_step`, `lamb_step`, `lars_step` and `adan_step` is
 decoupled: it is added to the update, where the adaptive scaling does not
-touch it, and applies to every float leaf.
+touch it. It applies to every float leaf that `~decays` accepts, a function of
+the leaf's path and shape, by default every leaf. Biases and normalisation
+parameters are commonly left out by their field names:
+
+<!-- $MDX skip -->
+```ocaml
+let decays path _ =
+  match List.rev (Nx.Ptree.Path.segments path) with
+  | Nx.Ptree.Path.Field ("w" | "table") :: _ -> true
+  | _ -> false
+
+let params, st =
+  Vega.adamw_step model ~lr:sched ~weight_decay:(Vega.rate 0.05) ~decays st
+    ~params ~grads
+```
+
+A leaf the rule rejects steps as the step without decay steps it. The Weight
+Decay section of [`vega.mli`](../lib/vega.mli) says why a rule on the leaf's
+rank fails for a model that stacks its blocks.
 
 ## States are structures
 

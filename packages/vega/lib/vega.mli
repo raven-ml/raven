@@ -327,7 +327,40 @@ val rate : float -> 'd Schedule.t
     [lr t * weight_decay t * p], so a learning rate that falls over training
     lowers the decay with it. Loshchilov and Hutter's decay [λ] is
     multiplied by the schedule's multiplier [η_t] alone, of a rate
-    [lr = η_t α], so their [λ] is [weight_decay * α]. *)
+    [lr = η_t α], so their [λ] is [weight_decay * α].
+
+    [~decays path shape] says whether the leaf at [path], of shape [shape],
+    decays; by default every leaf does. A step asks it on the host while the
+    step is built, once for each float or complex leaf, with the parameter's
+    own shape, so under [Rune.jit] its answers are constants of the program
+    as [b1] is. A leaf it rejects leaves the term out of its direction, so
+    it steps as it would with no decay. Under {!adamw_step} it steps as
+    {!adam_step} steps it, bit for bit. The state is the same whatever the
+    rule, so a checkpoint resumes under another rule.
+
+    A layer's weights, its matrices and embeddings, are commonly decayed,
+    and its shifts and scales are not. Which leaf is which is its role, and
+    a model's field names hold it. For layers that name their weights [w]
+    and [table], and their biases and normalisation parameters [b], [gamma]
+    and [beta]:
+
+    {[
+    let decays path _ =
+      match List.rev (Nx.Ptree.Path.segments path) with
+      | Nx.Ptree.Path.Field ("w" | "table") :: _ -> true
+      | _ -> false
+
+    let params, opt =
+      Vega.adamw_step model ~lr ~weight_decay:(Vega.rate 1e-6) ~decays opt
+        ~params ~grads
+    ]}
+
+    A rule on the leaf's rank, [Array.length shape >= 2], selects the same
+    leaves only while each layer's parameters are leaves of their own. A
+    model that stacks its blocks along a new first axis, to scan over them,
+    holds each bias and each normalisation scale as a matrix, which that
+    rule decays. Nothing checks a rule against the model, so a name the
+    model does not use matches no leaf, silently. *)
 
 (** {1:sgd Stochastic Gradient Descent} *)
 
@@ -394,6 +427,7 @@ val lars_step :
   lr:('d Nx.int32_t -> (float, 'b, 'd) Nx.t) ->
   ?momentum:float ->
   ?weight_decay:('d Nx.int32_t -> (float, 'c, 'd) Nx.t) ->
+  ?decays:(Nx.Ptree.Path.t -> int array -> bool) ->
   ?nesterov:bool ->
   ('p, 'd) sgd_state ->
   params:'p ->
@@ -412,7 +446,8 @@ val lars_step :
     v}
 
     With [nesterov], the last line is [p' = p - lr * (r * u + momentum * v')].
-    [wd] is the weight decay at the counter ({!section-decay}). [momentum]
+    [wd] is the weight decay at the counter ({!section-decay}); a leaf that
+    does not decay takes [u = g], in the ratio as in the step. [momentum]
     defaults to [0.9], [weight_decay] to [Vega.rate 0.01], [nesterov] to
     [false]. The learning rate scales the velocity rather than entering it, as
     in {!sgd_step}, and the paper's trust coefficient is folded into [lr].
@@ -494,16 +529,19 @@ val adamw_step :
   ?b2:float ->
   ?eps:float ->
   ?weight_decay:('d Nx.int32_t -> (float, 'c, 'd) Nx.t) ->
+  ?decays:(Nx.Ptree.Path.t -> int array -> bool) ->
   ('p, 'd) adam_state ->
   params:'p ->
   grads:'p ->
   'p * ('p, 'd) adam_state
 (** [adamw_step p ~lr st ~params ~grads] is like {!adam_step} with decoupled
     weight decay ({!section-decay}): with [d] Adam's bias-corrected direction
-    and [wd] the weight decay at the counter, the parameter update becomes
+    and [wd] the weight decay at the counter, the update of a leaf that
+    decays becomes
 
     {v p' = p - lr * (d + wd * p) v}
 
+    and a leaf that does not decay steps as {!adam_step} steps it.
     [weight_decay] defaults to [Vega.rate 0.01].
 
     Raises [Invalid_argument] as {!adam_step} does. *)
@@ -561,6 +599,7 @@ val lamb_step :
   ?b2:float ->
   ?eps:float ->
   ?weight_decay:('d Nx.int32_t -> (float, 'c, 'd) Nx.t) ->
+  ?decays:(Nx.Ptree.Path.t -> int array -> bool) ->
   ('p, 'd) adam_state ->
   params:'p ->
   grads:'p ->
@@ -576,7 +615,8 @@ val lamb_step :
     p' = p - lr * r * u
     v}
 
-    [wd] is the weight decay at the counter ({!section-decay}). Defaults are
+    [wd] is the weight decay at the counter ({!section-decay}); a leaf that
+    does not decay takes [u = d], in the ratio as in the step. Defaults are
     {!adam_step}'s, and [weight_decay] defaults to [Vega.rate 0.01].
 
     Raises [Invalid_argument] as {!adam_step} does. *)
@@ -704,6 +744,7 @@ val adan_step :
   ?b3:float ->
   ?eps:float ->
   ?weight_decay:('d Nx.int32_t -> (float, 'c, 'd) Nx.t) ->
+  ?decays:(Nx.Ptree.Path.t -> int array -> bool) ->
   ('p, 'd) adan_state ->
   params:'p ->
   grads:'p ->
@@ -721,7 +762,8 @@ val adan_step :
     v}
 
     and [prev_grads' = g], with [wd] the weight decay at the counter
-    ({!section-decay}). There is no bias correction. [b1] defaults to [0.98],
+    ({!section-decay}); a leaf that does not decay leaves [wd * p] out of
+    [d]. There is no bias correction. [b1] defaults to [0.98],
     [b2] to [0.92], [b3] to [0.99], [eps] to [1e-8], [weight_decay] to
     [Vega.rate 0.02].
 

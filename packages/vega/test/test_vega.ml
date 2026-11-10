@@ -1468,33 +1468,44 @@ let mixed n =
 
 let at_counter c = Nx.scalar Nx.int32 (Int32.of_int c)
 
+(* The float leaves of [x], by path, a complex one's as its coordinates. *)
+let by_path s x =
+  let add path a acc =
+    match floats_of a with
+    | Some f -> (Nx.Ptree.Path.to_string path, f) :: acc
+    | None -> acc
+  in
+  List.rev (Nx.Ptree.fold s add x [])
+
+let leaves_equal = list (Windtrap.pair string (array float_exact))
+
 (* Each step that decays, from its initial state at the counter [c], as the
-   floats of the parameters and the state it returns. *)
-let decaying () =
+   float leaves of the parameters and the state it returns. *)
+let decaying ?decays () =
   let p = Mixed.ptree and lr = Vega.rate 0.01 in
-  let floats_of state x = floats (Nx.Ptree.pair p (state p)) x in
+  let floats_of state x = by_path (Nx.Ptree.pair p (state p)) x in
   [
     ( "lars",
       fun weight_decay c x g ->
         let st = { (Vega.lars_init p x) with step = at_counter c } in
         floats_of Vega.sgd_ptree
-          (Vega.lars_step p ~lr ~weight_decay st ~params:x ~grads:g) );
+          (Vega.lars_step p ~lr ~weight_decay ?decays st ~params:x ~grads:g) );
     ( "adamw",
       fun weight_decay c x g ->
         let st = { (Vega.adamw_init p x) with step = at_counter c } in
         floats_of Vega.adam_ptree
-          (Vega.adamw_step p ~lr ~weight_decay st ~params:x ~grads:g)
+          (Vega.adamw_step p ~lr ~weight_decay ?decays st ~params:x ~grads:g)
     );
     ( "lamb",
       fun weight_decay c x g ->
         let st = { (Vega.lamb_init p x) with step = at_counter c } in
         floats_of Vega.adam_ptree
-          (Vega.lamb_step p ~lr ~weight_decay st ~params:x ~grads:g) );
+          (Vega.lamb_step p ~lr ~weight_decay ?decays st ~params:x ~grads:g) );
     ( "adan",
       fun weight_decay c x g ->
         let st = { (Vega.adan_init p x) with step = at_counter c } in
         floats_of Vega.adan_ptree
-          (Vega.adan_step p ~lr ~weight_decay st ~params:x ~grads:g) );
+          (Vega.adan_step p ~lr ~weight_decay ?decays st ~params:x ~grads:g) );
   ]
 
 (* A decay that rises over training, from 0.04 to 0.4 in 1000 steps. *)
@@ -1515,9 +1526,109 @@ let scheduled_decay =
       let constant = Vega.rate (Vega.Schedule.eval rising c) in
       List.iter
         (fun (name, step) ->
-          equal ~msg:name (list (array float_exact))
-            (step constant c x g) (step rising c x g))
+          equal ~msg:name leaves_equal (step constant c x g)
+            (step rising c x g))
         (decaying ()))
+
+let mixed_step =
+  let open Gen in
+  let* n = int_range 0 4 in
+  triple (mixed n) (mixed n) (int_range 0 1200)
+
+let rejects _ _ = false
+
+(* A leaf the rule rejects steps under AdamW as under Adam, bit for bit, an
+   infinite parameter included. *)
+let rejected_is_adam =
+  prop "a leaf that does not decay steps as adam" mixed_step (fun (x, g, c) ->
+      let infinite a = Array.exists (fun v -> Float.abs v = infinity) a in
+      cover "an infinite parameter"
+        (List.exists (fun (_, a) -> infinite a) (by_path Mixed.ptree x));
+      let p = Mixed.ptree and lr = Vega.rate 0.01 in
+      let st = { (Vega.adam_init p x) with step = at_counter c } in
+      let both = Nx.Ptree.pair p (Vega.adam_ptree p) in
+      equal leaves_equal
+        (by_path both (Vega.adam_step p ~lr st ~params:x ~grads:g))
+        (by_path both
+           (Vega.adamw_step p ~lr ~weight_decay:rising ~decays:rejects st
+              ~params:x ~grads:g)))
+
+(* A leaf the rule rejects does not see the decay, in a trust ratio either. *)
+let rejected_ignores_the_decay =
+  prop "a leaf that does not decay steps alike under any decay" mixed_step
+    (fun (x, g, c) ->
+      List.iter
+        (fun (name, step) ->
+          equal ~msg:name leaves_equal
+            (step (Vega.rate 0.3) c x g)
+            (step rising c x g))
+        (decaying ~decays:rejects ()))
+
+(* Under a rule that picks some of the leaves by name, each leaf of the
+   parameters and the state is the leaf of the step where every leaf decays,
+   or of the step where none does: the rule's answer for its parameter. The
+   last field of a path names the parameter, [step] the counter. *)
+let mixed_rule =
+  let gen = Gen.(pair mixed_step (array ~size:(constant 4) bool)) in
+  prop "a rule decays the leaves it picks" gen (fun ((x, g, c), picked) ->
+      cover "some leaves decay and some do not"
+        (Array.exists Fun.id picked && Array.exists not picked);
+      let picks = List.combine [ "h"; "s"; "d"; "z" ] (Array.to_list picked) in
+      let chosen path =
+        match List.rev (String.split_on_char '.' path) with
+        | name :: _ -> Option.value ~default:false (List.assoc_opt name picks)
+        | [] -> false
+      in
+      let decays path _ = chosen (Nx.Ptree.Path.to_string path) in
+      let expected all none =
+        List.map2
+          (fun ((path, _) as a) b -> if chosen path then a else b)
+          all none
+      in
+      List.iter2
+        (fun (name, mixed) ((_, all), (_, none)) ->
+          equal ~msg:name leaves_equal
+            (expected (all rising c x g) (none rising c x g))
+            (mixed rising c x g))
+        (decaying ~decays ())
+        (List.combine
+           (decaying ~decays:(fun _ _ -> true) ())
+           (decaying ~decays:rejects ())))
+
+(* The rule is asked once per float or complex leaf, with the parameter's
+   own shape, and never for an integer leaf. *)
+let test_decays_is_asked () =
+  let x =
+    ( {
+        Mixed.h = Nx.ones Nx.bfloat16 [| 3 |];
+        s = Nx.ones Nx.float32 [| 2; 3 |];
+        d = Nx.ones Nx.float64 [||];
+        z = Nx.ones Nx.complex64 [| 3 |];
+      },
+      Nx.zeros Nx.int32 [| 4 |] )
+  in
+  let p = Nx.Ptree.pair Mixed.ptree Nx.Ptree.tensor in
+  let asked = ref [] in
+  let decays path shape =
+    asked := (Nx.Ptree.Path.to_string path, Array.to_list shape) :: !asked;
+    true
+  in
+  let expected =
+    [ ("0.d", []); ("0.h", [ 3 ]); ("0.s", [ 2; 3 ]); ("0.z", [ 3 ]) ]
+  in
+  let check name =
+    equal ~msg:name
+      (list (Windtrap.pair string (list int)))
+      expected
+      (List.sort compare !asked);
+    asked := []
+  in
+  let lr = Vega.rate 0.1 in
+  let adamw = Vega.adamw_step p ~lr ~decays (Vega.adamw_init p x) in
+  ignore (adamw ~params:x ~grads:x);
+  check "adamw";
+  ignore (Vega.lars_step p ~lr ~decays (Vega.lars_init p x) ~params:x ~grads:x);
+  check "lars"
 
 (* Two leaves each alone on its own device of one set: every per-leaf step
    reads its scalars beside both, and gives the host's values. *)
@@ -1642,7 +1753,15 @@ let tests =
         test "clip by value clips each part" test_complex_clip_by_value;
         test "a structure of no array" test_empty_structures;
       ];
-    group "weight decay" [ scheduled_decay ];
+    group "weight decay"
+      [
+        scheduled_decay;
+        rejected_is_adam;
+        rejected_ignores_the_decay;
+        mixed_rule;
+        test "the rule is asked once per float leaf, with its shape"
+          test_decays_is_asked;
+      ];
     group "placement"
       [
         test "leaves alone on two devices of one set" test_leaves_on_two_devices;

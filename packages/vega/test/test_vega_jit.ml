@@ -86,6 +86,12 @@ let tests =
              Vega.Schedule.cosine_decay ~init_value:0.4 ~decay_steps:4 ()
            in
            Vega.adamw_step Wb.ptree ~lr ~weight_decay st));
+    (* The rule's answers are constants of the program. *)
+    test "lamb under a rule that decays [w] alone"
+      (compiles Vega.adam_ptree ~init:Vega.lamb_init ~step:(fun st ->
+           let decays path _ = Nx.Ptree.Path.to_string path = "w" in
+           let weight_decay = Vega.rate 0.1 in
+           Vega.lamb_step Wb.ptree ~lr ~weight_decay ~decays st));
     test "lamb"
       (compiles Vega.adam_ptree ~init:Vega.lamb_init ~step:(fun st ->
            Vega.lamb_step Wb.ptree ~lr st));
