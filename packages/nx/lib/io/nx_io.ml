@@ -184,3 +184,9 @@ let save_jpeg path x =
   in
   Save.write path (fun fd -> Save.bytes fd file)
 
+(* PyTorch *)
+
+module Pytorch = Pytorch
+
+let load_pytorch path =
+  Fail.file path @@ fun () -> Pytorch.load (Storage.open_file path)

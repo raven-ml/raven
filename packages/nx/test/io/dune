@@ -11,7 +11,8 @@
   test_safetensors
   test_gguf
   test_txt
-  test_image)
+  test_image
+  test_pytorch)
  (modules
   test_save
   test_archive
@@ -20,6 +21,7 @@
   test_gguf
   test_txt
   test_image
+  test_pytorch
   io_support)
  (libraries nx nx_array nx_io nx_support rig unix lz windtrap)
  (deps

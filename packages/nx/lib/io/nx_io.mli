@@ -7,15 +7,17 @@
 
     A file holds one array, as npy and text files do, or several arrays under
     names, as npz, SafeTensors and GGUF files do. A name and its array are an
-    {e entry}. Entries are read and written as an {!Archive.t}.
+    {e entry}. Entries are read and written as an {!Archive.t}. A PyTorch
+    checkpoint holds a Python value, whose arrays {!Pytorch.tensors} names.
 
     An {e image} is a [uint8] array of shape [[|h; w; c|]], first row at the
     top, with [c] 1 for grey, 2 for grey and alpha, 3 for RGB and 4 for RGBA.
 
     {b Loading.} A load returns host values ({!Nx.Host}). Where the system can
     map the file, a load returns each array whose elements lie in the file in
-    the host's byte order and in C order (or Fortran order, for npy), at an
-    offset that is a multiple of their alignment, as a value over the file's
+    the host's byte order and in C order (or Fortran order, for npy, or at any
+    strides, for a PyTorch checkpoint), at an offset that is a multiple of their
+    alignment, as a value over the file's
     pages, a {e mapped} value. {!Nx.place} shares the pages with a device that
     addresses host memory and copies them to any other ({!Rig.reaches}). A
     donation of a mapped value writes its result to new memory ({!Nx.donate}).
@@ -28,12 +30,12 @@
     nx lacks loads as its bytes at [uint8], at the shape its format's section
     states, and an entry with no elements is an empty array of that shape.
 
-    An npz file is a zip archive. A load checks each zip entry it reads against
-    the CRC-32 the archive states for it, as
+    An npz file and a PyTorch checkpoint are zip archives. A load checks each
+    zip entry it reads against the CRC-32 the archive states for it, as
     {{:https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT}APPNOTE}
     4.1.5 requires, mapped entries included, so it reads the bytes of each such
-    entry once. An entry whose stated CRC-32 is 0 is read unchecked, since a
-    writer such as PyTorch's states 0 when told to compute none.
+    entry once. An entry whose stated CRC-32 is 0 is read unchecked, since
+    PyTorch states 0 when told to compute none.
 
     A mapped value keeps its file mapped while it is reachable, and reads the
     file that was opened, so a save to its path leaves it its elements.
@@ -392,6 +394,172 @@ val load_gguf : string -> Gguf.t
       row that is not a whole number of blocks, or a position that is not a
       multiple of the alignment;
     - if the file ends before an array's data. *)
+
+(** {1:pytorch PyTorch checkpoints} *)
+
+(** PyTorch checkpoints.
+
+    A PyTorch checkpoint is the file [torch.save] writes. It holds one Python
+    value, often a dict of arrays, PyTorch's {e tensors}, with data beside
+    them such as hyperparameters. The value is a {e pickle}, a program for
+    Python's unpickling machine that
+    {{:https://github.com/python/cpython/blob/main/Lib/pickletools.py}
+     pickletools} documents. The machine has no loops, tests or arithmetic.
+    Its only code is its {e calls}: a {e global}, an object the pickle names
+    by module and name, applied to arguments, after which the machine may set
+    the result's state and add items and entries to it, as
+    {{:https://peps.python.org/pep-0307/}PEP 307} defines. A tensor's
+    elements lie in a {e storage}, a run of elements of one dtype that several
+    tensors may view at their own offsets, shapes and strides.
+
+    Since PyTorch 1.6 the file is a zip archive whose entries lie under the
+    directory of the first: the pickle [data.pkl], storage [k] as [data/k],
+    and [byteorder], [little] or [big], little-endian without it, as
+    {{:https://docs.pytorch.org/docs/stable/notes/serialization.html}PyTorch's
+     serialization notes} lay out. Before, and with
+    [_use_new_zipfile_serialization=False], it is the {e legacy} format: a
+    stream of pickles, then the storages in the order their keys list them. A
+    load recognises either by its contents, and refuses a TorchScript archive,
+    which [torch.jit.load] reads, and the tar archive of PyTorch before 0.1.10.
+
+    A pickle may use pickletools' opcodes of protocols 1 to 5. It may not use
+    [POP], [POP_MARK] and [DUP], which discard or copy a value, [EXT1], [EXT2]
+    and [EXT4], which index the writer's registry, [NEXT_BUFFER], whose buffer
+    lies outside the file, [INST], [OBJ], or protocol 0's text opcodes, which
+    PyTorch cannot read a tensor with either. [INT] and [LONG], which protocol
+    1 writes bools and large ints with, are read, [LONG] up to the 4300 digits
+    {{:https://docs.python.org/3/library/stdtypes.html#int-max-str-digits}
+     Python reads}. A value may not gain a state, items or entries once
+    another holds it, so none is cyclic.
+
+    A load runs nothing. It reads a closed set of calls, the
+    {e vocabulary}, as the values they build: [collections.OrderedDict] and
+    [Counter] as dicts, [builtins.set] and [frozenset] as sets, [complex],
+    [_codecs.encode], [bytes] and [bytearray], and [torch.Size] as a tuple;
+    and [torch._utils._rebuild_tensor], [_v2], [_v3] and [_rebuild_parameter]
+    as tensors, with empty [backward_hooks] and [metadata]. A call of the
+    vocabulary given anything else is refused. Any other call is an
+    {e opaque} value, {!Pytorch.Object}, which keeps its callable's name.
+    Globals read as Python 3 reads them, Python 2's [__builtin__] and
+    [copy_reg] as [builtins] and [copyreg].
+
+    {b What a load returns.} Each tensor is exactly what its call and storage
+    describe. Running an opaque call could change other values, as code that
+    replaced PyTorch's own functions would. A load assumes that such a call
+    builds a new object from what it is given and changes nothing else, no
+    global included, and refuses a file where it could change a value it was
+    not given: a dict, list, set, object, tensor or storage given to it, or
+    given as a state, must be reachable only through it.
+
+    {b Tensors.} A tensor is a view of its storage. A storage's persistent ids
+    must state one dtype and its entry's length, unless it is empty. It loads
+    once, and its tensors share it: mapped when its entry is stored in the
+    host's byte order at a multiple of its elements' alignment, as PyTorch
+    aligns entries since 1.6, and otherwise read into memory of its own,
+    which a tensor's donation may write only if no other value reads it
+    ({!Nx.donate}). Storages of float64, float32, float16, bfloat16,
+    float8_e4m3fn, float8_e5m2, the integers of 8 to 64 bits, complex and bool
+    load at that dtype, and other dtypes as bytes at [uint8], with a last axis
+    of an element's bytes when wider than one. A tensor's [requires_grad],
+    [Parameter] class and device are not kept.
+
+    This reads a checkpoint [{"model": state_dict, "args": {"dim": 512}}]:
+    {[
+    let ckpt = Nx_io.load_pytorch "student.pt" in
+    let field k = function
+      | Nx_io.Pytorch.Dict kvs -> List.assoc (Nx_io.Pytorch.String k) kvs
+      | _ -> failwith "student.pt: no dict" in
+    let dim =
+      match field "dim" (field "args" ckpt) with
+      | Nx_io.Pytorch.Int d -> d
+      | _ -> failwith "student.pt: args.dim" in
+    Nx_io.Archive.float ~shape:[| dim; dim |] Nx.float32 "layers.0.weight"
+      (Nx_io.Pytorch.tensors (field "model" ckpt))
+    ]} *)
+module Pytorch : sig
+  (** The type for Python values. A value holds once each tuple, list, set or
+      dict that the file holds in two values, or twice in one, so a walk that
+      does not expand a {!Ref} takes time linear in the file's length. A
+      dict's keys and a set's elements are [Null], bools, numbers, strings,
+      bytes, globals and tuples of these, pairwise unequal as Python compares
+      them, so [1], [1.0], [True] and [1+0j] are one key. *)
+  type value =
+    | Null  (** [None]. *)
+    | Bool of bool
+    | Int of int  (** An [int] within OCaml's [int] range. *)
+    | Long of string
+        (** An [int] outside OCaml's [int] range: the fewest bytes of its
+            two's complement, little-endian, as the pickle's [LONG1] holds
+            it. *)
+    | Float of float
+    | Complex of Complex.t
+    | String of string
+        (** A [str], in UTF-8, which may hold the encodings of surrogate code
+            points, as Python writes a lone one. *)
+    | Bytes of string  (** A [bytes] or a [bytearray]. *)
+    | Tuple of value list
+    | List of value list
+    | Set of value list  (** A [set] or a [frozenset], in the file's order. *)
+    | Dict of (value * value) list
+        (** A dict, an [OrderedDict] or a [Counter], in insertion order. An
+            [OrderedDict]'s attributes, such as a state dict's [_metadata],
+            are not kept. *)
+    | Tensor of Nx.host Nx.packed
+    | Global of string
+        (** A global no call applies, by its dotted name, as
+            ["torch.float32"]. *)
+    | Object of string
+        (** An opaque value, by the dotted name of the global its call
+            applies, as ["argparse.Namespace"], or of the call that made its
+            callable. An object the pickle's [NEWOBJ] makes is named by its
+            class. *)
+    | Shared of int * value
+        (** A tuple, list, set or dict that the file holds in two values, or
+            twice in one, where a depth-first walk of the value first meets
+            it, a dict's key before its value. The numbers count from 0 in
+            that order. *)
+    | Ref of int
+        (** The {!Shared} value of this number, at each later place that
+            holds it. *)
+
+  val tensors : value -> Nx.host Archive.t
+  (** [tensors v] is the archive of [v]'s tensors, each named by its path from
+      [v]: a dict's string or [Int] key, or a list's or a tuple's index in
+      decimal, joined by dots, as ["model.layers.0.weight"]. A tensor the file
+      shares is under each of its paths. Nothing is copied. It takes time
+      linear in [v]'s size, its {!Ref}s unexpanded, and in its names' total
+      length, which may be quadratic in the file's.
+
+      Raises [Failure] naming the path:
+      - if [v] holds an {!Object}, whether or not its call was given a
+        tensor, since an [Object] keeps only its name: apply [tensors] to the
+        value that holds the weights, such as a state dict;
+      - if a {!Ref} refers to a {!Shared} that holds a tensor, which would
+        have two names, or to one [v] does not hold;
+      - if a tensor lies under a key that is not a string or an [Int], or in a
+        set;
+      - if two tensors have one name, as ["a.b"] for
+        [{"a.b": x, "a": {"b": y}}], or a tensor has the empty name, as [v]
+        itself does. *)
+end
+
+val load_pytorch : string -> Pytorch.value
+(** [load_pytorch path] is the value of the PyTorch checkpoint [path], as
+    {!Pytorch} states.
+
+    Raises [Failure] as {!section-errors} states, naming the entry and the
+    pickle's byte where it applies, as
+    ["w.pt: data.pkl: byte 1874: POP discards a value"]:
+    - if the file is neither format, or is a TorchScript or tar archive;
+    - if a pickle is malformed, uses an opcode it may not, adds to a value
+      another holds, or holds a key that {!Pytorch.type-value} does not admit
+      or that equals another;
+    - if a call of the vocabulary is given what it does not take, or a value
+      given to an opaque call or as a state is reachable elsewhere;
+    - if a storage's ids, entry, length, dtype or byte order are not as
+      {!Pytorch} states, a legacy view's key names two views or a storage,
+      or a tensor's view reaches past its storage;
+    - if a checksum does not match its entry. *)
 
 (** {1:text Text}
 

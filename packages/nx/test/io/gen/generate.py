@@ -7,8 +7,12 @@
 """Generate nx.io's test fixtures: files other tools write.
 
 numpy writes the NPY, NPZ and text files and the float16 SafeTensors file,
-torch the other SafeTensors files, and zipfile the NPZ files numpy would not
-write. The PNG files come from the minimal writer below, which chooses the row
+torch the other SafeTensors files and the PyTorch checkpoints pt_*.pt, and
+zipfile the NPZ files numpy would not write. A checkpoint's tensors hold the
+bytes io_support.ml's [pattern n seed] gives, or small ranges, and torch
+reads each file back as what it saved; pt_big.pt and pt_deflated.pt are
+torch's files rewritten, and the legacy file's storage keys, which torch
+takes from memory addresses, are renamed in place to fixed ones. The PNG files come from the minimal writer below, which chooses the row
 filters, sample depths and interlacing that an encoder picks on its own, except
 png_rgba.png and png_la.png, which Pillow writes as it writes the JPEG files. Each image has a
 sibling .npy of the pixels Pillow decodes from it, of shape (h, w, c), except
@@ -35,8 +39,10 @@ import argparse
 import filecmp
 import io
 import os
+import pickle
 import random
 import struct
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -485,6 +491,183 @@ def image_fixtures():
     reference("jpeg_table16_coarse.jpg", "L")
 
 
+def pt_pattern(n, seed):
+    return bytes(((37 * i) + seed) & 255 for i in range(n))
+
+
+def pt_tensor(dtype, shape, seed):
+    n = 1
+    for d in shape:
+        n *= d
+    b = bytearray(pt_pattern(n * dtype.itemsize, seed))
+    if dtype == torch.bool:
+        b = bytearray(x & 1 for x in b)
+    return torch.frombuffer(b, dtype=torch.uint8).clone().view(dtype).reshape(shape)
+
+
+def pt_rewrite(src, dst, edit, compress=lambda name: zipfile.ZIP_STORED):
+    # Rewrites a checkpoint's entries through zipfile, each edited.
+    with zipfile.ZipFile(src) as z, zipfile.ZipFile(dst, "w") as w:
+        for info in z.infolist():
+            data = edit(info.filename, z.read(info.filename))
+            w.writestr(zipfile.ZipInfo(info.filename), data,
+                       compress_type=compress(info.filename))
+
+
+def pt_same(a, b):
+    if isinstance(a, torch.Tensor):
+        if a.dtype != b.dtype or a.shape != b.shape or a.stride() != b.stride():
+            return False
+        flat = lambda t: bytes(t.contiguous().reshape(-1).view(torch.uint8).numpy())
+        return a.numel() == 0 or flat(a) == flat(b)
+    if isinstance(a, dict):
+        return a.keys() == b.keys() and all(pt_same(a[k], b[k]) for k in a)
+    if isinstance(a, (list, tuple)):
+        return len(a) == len(b) and all(map(pt_same, a, b))
+    return True
+
+
+def pytorch_fixtures():
+    import argparse as ap
+    import collections
+    import pickletools
+    # Every dtype a storage holds, at shape (2, 3), seeded by its index.
+    names = ["float64", "float32", "float16", "bfloat16", "int64", "int32",
+             "int16", "int8", "uint8", "bool", "complex128", "complex64",
+             "uint16", "uint32", "uint64", "float8_e4m3fn", "float8_e5m2",
+             "float8_e4m3fnuz", "float8_e5m2fnuz", "float8_e8m0fnu",
+             "float4_e2m1fn_x2", "complex32", "bits8", "bits16", "bits1x8",
+             "bits2x4", "bits4x2"]
+    dtypes = {n: pt_tensor(getattr(torch, n), (2, 3), i) for i, n in enumerate(names)}
+    torch.save(dtypes, "pt_dtypes.pt")
+    # Views of one float32 storage of 0..23.
+    base = torch.arange(24, dtype=torch.float32)
+    shared = torch.arange(2, dtype=torch.int64)
+    views = {
+        "base": base.view(4, 6), "offset": base[5:11],
+        "transposed": base.view(4, 6).t(), "strided": base[1::3],
+        "tied": base.view(6, 4),
+        "expanded": torch.arange(3, dtype=torch.float32).expand(4, 3),
+        "empty": torch.empty(0, 3), "scalar": torch.tensor(2.5),
+        "param": torch.nn.Parameter(torch.ones(2)), "shared": [shared, shared],
+    }
+    torch.save(views, "pt_views.pt")
+    # Python's data at each protocol.
+    meta = {
+        "none": None, "true": True, "false": False, "int": 7, "neg": -(2 ** 40),
+        "big": 2 ** 70, "negbig": -(2 ** 70), "float": 1.5,
+        "inf": float("inf"), "negzero": -0.0, "complex": complex(1, -2),
+        "str": "\u00e9\u65e5", "bytes": b"\x00\xff", "bytearray": bytearray(b"ab"),
+        "empty_bytes": b"", "tuple": (1, "a"), "list": [1, 2], "set": {3, 4},
+        "frozenset": frozenset([5]), "odict": collections.OrderedDict([("a", 1)]),
+        "counter": collections.Counter({"x": 2}), "size": torch.Size([2, 3]),
+        "dtype": torch.float32, "namespace": ap.Namespace(a=1),
+        "keys": {0: "zero", 1.5: "half", (1, 2): "pair"},
+    }
+    with_meta = {"w": torch.arange(4, dtype=torch.float32), "meta": meta}
+    for p in [1, 2, 3, 4, 5]:
+        torch.save(with_meta, f"pt_protocol{p}.pt", pickle_protocol=p)
+    # The legacy format: views of one storage, and one of its own. torch names
+    # storages by memory address and writes them in their names' order, so
+    # each is renamed by the order the value names it in, as 0, 1, ..., and
+    # the keys and storages are written again in that order.
+    legacy = {"w": base.view(4, 6), "t": base.view(4, 6).t(), "o": base[5:11],
+              "own": torch.arange(3, dtype=torch.int64)}
+    torch.save(legacy, "pt_legacy.pt", _use_new_zipfile_serialization=False)
+    with open("pt_legacy.pt", "rb") as f:
+        data = f.read()
+    stream = io.BytesIO(data)
+    for _ in range(3):
+        pickletools.dis(stream, out=io.StringIO())
+    value_ops = list(pickletools.genops(stream))
+    keys_at = stream.tell()
+    keys = [a for op, a, _ in pickletools.genops(stream) if op.name == "BINUNICODE"]
+    storages_at = stream.tell()
+    # Each key's element size, from the storage class its persistent id
+    # names just before it, written or fetched from the memo.
+    size, last, memo = {}, None, {}
+    for op, arg, _ in value_ops:
+        if op.name in ("GLOBAL", "BINUNICODE"):
+            if op.name == "BINUNICODE" and arg in keys and last.endswith("Storage"):
+                size.setdefault(arg, torch.storage._get_dtype_from_pickle_storage_type(
+                    last.split()[1]).itemsize)
+            last = arg
+        elif op.name == "BINPUT":
+            memo[arg] = last
+        elif op.name == "BINGET":
+            last = memo.get(arg)
+    named = [k for k in dict.fromkeys(a for op, a, _ in value_ops if op.name == "BINUNICODE") if k in keys]
+    rename = {k: str(i) for i, k in enumerate(named)}
+    records, pos = {}, storages_at
+    for k in keys:
+        n = struct.unpack("<q", data[pos:pos + 8])[0]
+        records[k] = data[pos:pos + 8 + n * size[k]]
+        pos += 8 + n * size[k]
+    head = data[:keys_at]
+    unicode = lambda k: b"X" + struct.pack("<I", len(k)) + k.encode()
+    for k, new in rename.items():
+        head = head.replace(unicode(k), unicode(new))
+    with open("pt_legacy.pt", "wb") as f:
+        f.write(head)
+        pickle.dump(sorted(rename.values()), f, protocol=2)
+        for k in sorted(keys, key=rename.get):
+            f.write(records[k])
+    # A whole module, its tensors inside its object.
+    torch.manual_seed(0)
+    torch.save(torch.nn.Linear(2, 3), "pt_module.pt")
+    # A tensor saved with its conjugate bit set.
+    torch.save({"c": torch.tensor([1 + 2j], dtype=torch.complex64).conj()},
+               "pt_conj.pt")
+    # CRCs off.
+    torch.serialization.set_crc32_options(False)
+    torch.save({"w": torch.arange(4, dtype=torch.float32)}, "pt_nocrc.pt")
+    torch.serialization.set_crc32_options(True)
+    # A TorchScript archive, its random serialization id zeroed. Its code lists
+    # attributes in the order of a set of strings, so it is written under a
+    # fixed hash seed.
+    subprocess.run(
+        [sys.executable, "-c",
+         "import torch; torch.manual_seed(0); "
+         "torch.jit.save(torch.jit.script(torch.nn.Linear(2, 2)), 'script.tmp')"],
+        env={**os.environ, "PYTHONHASHSEED": "0"}, check=True,
+        stderr=subprocess.DEVNULL)
+    # Its debug records hold the absolute path of torch's sources, which
+    # differs between environments: they are blanked.
+    def script(name, data):
+        if name.endswith("serialization_id"):
+            return b"0" * len(data)
+        return b"" if name.endswith(".debug_pkl") else data
+    pt_rewrite("script.tmp", "pt_script.pt", script)
+    os.remove("script.tmp")
+    # A big-endian file: a big-endian host's torch writes "big" and each
+    # element's bytes reversed. Storages 0, 1 and 2 hold f, c and i, of
+    # components of 4, 4 and 2 bytes.
+    big = {"f": torch.tensor([1.5, -2.0], dtype=torch.float32),
+           "c": torch.tensor([1 + 2j], dtype=torch.complex64),
+           "i": torch.tensor([1, -2], dtype=torch.int16)}
+    torch.save(big, "big.tmp")
+    width = {"0": 4, "1": 4, "2": 2}
+
+    def swap(name, data):
+        if name.endswith("/byteorder"):
+            return b"big"
+        if "/data/" in name:
+            k = width[name.rsplit("/", 1)[1]]
+            return b"".join(data[i:i + k][::-1] for i in range(0, len(data), k))
+        return data
+    pt_rewrite("big.tmp", "pt_big.pt", swap)
+    os.remove("big.tmp")
+    # The views' storages compressed.
+    pt_rewrite("pt_views.pt", "pt_deflated.pt", lambda n, d: d,
+               compress=lambda n: zipfile.ZIP_DEFLATED if "/data/" in n
+               else zipfile.ZIP_STORED)
+    for name, obj in [("pt_dtypes.pt", dtypes), ("pt_views.pt", views),
+                      ("pt_legacy.pt", legacy), ("pt_big.pt", big),
+                      ("pt_deflated.pt", views)] + \
+            [(f"pt_protocol{p}.pt", with_meta) for p in [1, 2, 3, 4, 5]]:
+        assert pt_same(obj, torch.load(name, weights_only=False)), name
+
+
 SUPPORT = Path(__file__).resolve().parent.parent / "support"
 
 
@@ -497,6 +680,7 @@ def generate():
     skipped_entries_npz()
     stored_block_npz()
     image_fixtures()
+    pytorch_fixtures()
 
 
 def main():

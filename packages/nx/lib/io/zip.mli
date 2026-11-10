@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Zip archives, as npz files hold them. *)
+(** Zip archives, as npz files and PyTorch checkpoints hold them. *)
 
 (** {1:reading Reading}
 
