@@ -55,9 +55,9 @@ type part =
   | Set of { dst : side; byte : char }
   | Launch of { fn : func; params : int; refs : ref array }
 
-(* The most parameter bytes of a launch or a fill: a block counts 16 bytes
-   plus its parameters rounded up to 16 against the [2^31 - 1] bytes a run
-   holds. *)
+(* The most parameter bytes of a launch or a fill: a block of 32 bytes and
+   twice its parameters rounded up to 16 ([rig_block_bytes]) within the
+   [2^32 - 1] bytes a run holds. *)
 let most_params = (1 lsl 31) - 32
 
 (* Refuses a part's parameters outside 0 to [most_params], and refs that share

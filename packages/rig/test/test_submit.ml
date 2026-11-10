@@ -1202,13 +1202,13 @@ let test_part_word () =
         (fun () -> Sub.words (B.create Rig.host n)))
     [ 1; 6; 7 ]
 
-(* Fills of 4,096 bytes of parameters: as many as a run holds, each counting
-   16 bytes plus its parameters against 2^31 - 1, are made, and one more is
-   refused. *)
+(* Fills of 4,096 bytes of parameters: as many as a run holds, each a block
+   of 32 bytes and twice its parameters against 2^32 - 1, are made, and one
+   more is refused. *)
 let test_blocks_bound () =
   let d, _ = P.open_ "submit:blocks-bound" in
   let params = 4096 in
-  let most = ((1 lsl 31) - 1) / (16 + params) in
+  let most = ((1 lsl 32) - 1) / (32 + (2 * params)) in
   let fills n = Array.make n (Sub.fill Support.noop ~params) in
   ignore (Sub.make d (fills most));
   raises_match (Exn.invalid_arg ~sub:"take more than a run holds") (fun () ->

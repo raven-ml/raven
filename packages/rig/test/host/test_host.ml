@@ -196,9 +196,9 @@ let test_wide () =
     (Int64.(to_int (logand out.{0} 0xffff_ffffL), to_int (shift_right_logical out.{0} 32)))
 
 (* The host bounds a launch's parameters only by what a run holds: one
-   launch counts 16 bytes plus its parameters rounded up to 16 against
-   2^31 - 1, so a launch of 2^31 - 32 bytes is made and one of 2^31 - 31
-   refused. *)
+   launch's block of 32 bytes and twice its parameters rounded up to 16 must
+   fit 2^32 - 1 bytes, so a launch of 2^31 - 32 bytes is made and one of
+   2^31 - 31 refused. *)
 let test_run_bound () =
   let wide = require_some (Rig.Image.resolve (load "wide") "wide") in
   let make n = Sub.make Rig.host [| Sub.launch wide ~params:n |] in

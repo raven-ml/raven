@@ -392,8 +392,8 @@ let test_make_refusals () =
 
 (* Each constructor of a ref or a part refuses what its arguments show,
    naming itself, before a submission is made of it. Polled's fill reads 16
-   bytes of parameters, and a launch counts 16 bytes plus its parameters
-   rounded up to 16 against the 2^31 - 1 bytes a run holds. *)
+   bytes of parameters, and a launch's block of 32 bytes and twice its
+   parameters rounded up to 16 must fit the 2^32 - 1 bytes a run holds. *)
 let test_constructor_refusals () =
   let d, _ = P.open_ ~host_visible:false (strf "launch:constructors") in
   let image = functions d in

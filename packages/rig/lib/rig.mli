@@ -2254,10 +2254,10 @@ end
     exclusive by no {!Claim.with_}, and on the device, but as
     {!Submission.copy} admits; no fixed buffer it writes admits only [Read];
     every slot below the highest is named, and none by both an
-    {!Submission.unordered} ref and an ordered use; and its launches and
-    fills fit a run: [2{^31} - 1] bytes, each counting 16 bytes plus its
-    parameters rounded up to a multiple of 16. {!Submission.make} raises for
-    each.
+    {!Submission.unordered} ref and an ordered use; and the blocks of its
+    launches and fills fit a run of [2{^32} - 1] bytes, each block 32 bytes
+    and twice its parameters rounded up to a multiple of 16.
+    {!Submission.make} raises for each.
 
     A submit is valid when it passes one buffer per slot; no buffer its work
     uses is dead or held exclusive ({!Claim}); each buffer is on the device
