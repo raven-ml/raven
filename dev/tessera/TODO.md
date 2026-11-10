@@ -51,6 +51,11 @@ An item leaves when its library fixes it, or when a design decides it stays.
   infinite parameter it gives NaN (`0 × ∞`). Being decided with the per-leaf
   decay design (omitting the term makes it true by construction).
 
+- LARS's trust ratio is not eq. 6 of You, Gitman & Ginsburg, "Large Batch
+  Training of Convolutional Networks" (2017), found by the per-leaf decay
+  skeptic: a pass of its own decides whether vega's form is a stated
+  deviation or a defect.
+
 ## rune
 
 - Running one body eagerly on the host and compiled on a GPU means writing
