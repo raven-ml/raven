@@ -244,6 +244,15 @@ let kernel_nodes =
       test "sink keeps its sources in order" (fun () ->
           let b = var "b" 0 1 in
           equal uops [ b; a; b ] (Ops.src (Ops.sink [ b; a; b ])));
+      test "nth is the source at a position, and rejects any other position"
+        (fun () ->
+          let b = var "b" 0 1 and c = var "c" 0 1 in
+          let s = Ops.sink [ a; b; c ] in
+          equal uops [ a; b; c ] (List.map (Ops.nth s) [ 0; 1; 2 ]);
+          List.iter
+            (fun i -> rejects (fun () -> Ops.nth s i))
+            [ -1; 3; max_int; min_int ];
+          rejects (fun () -> Ops.nth (Ops.sink []) 0));
       test "contract rejects a range that is not upcast" (fun () ->
           let r = Ops.range ~axis_type:Weak (Int 2) [ 0 ] in
           rejects (fun () -> Shape.contract Ops.O.(r + int 1) [ r ]));

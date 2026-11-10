@@ -753,10 +753,13 @@ let dtype u = u.dtype
 let src u = u.src
 let arg u = u.arg
 
-let nth u i =
-  match List.nth_opt u.src i with
-  | Some s -> s
-  | None -> invalid_argf "%s has no source %d" (Op.name u.op) i
+(* The walk returns the source itself: [List.nth_opt]'s option is an
+   allocation at every read of a source by its position. *)
+let rec nth_from u i j = function
+  | s :: rest -> if j = i then s else nth_from u i (j + 1) rest
+  | [] -> invalid_argf "%s has no source %d" (Op.name u.op) i
+
+let nth u i = nth_from u i 0 u.src
 
 let replace ?op ?src ?arg u =
   let op = Option.value op ~default:u.op
