@@ -2705,6 +2705,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Add `nx.cuda` (`Nx_cuda`), kernels of `Nx_kernel.S` for NVIDIA `sm_89`
+  GPUs. A set made by `Nx.devices ~kernels:(module Nx_cuda)` computes on
+  the GPU without `Rune.jit`.
+- nx.cuda's results depend on its operands' values and extents, never on
+  their layouts, and its `Sum` and `Prod` reductions associate as nx.cpu's.
+  `nx_cuda.mli` states each kernel's association, bound and GPU memory.
 - **Breaking:** `Nx_cpu` no longer promises `Wrong_dtype` or
   `Shape_mismatch` for a call that does not fit, only some refusal.
 - `Nx_kernel.S`'s caller must pass a call that fits; for one that does

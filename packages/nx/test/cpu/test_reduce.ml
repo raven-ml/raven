@@ -428,9 +428,7 @@ let law_complex (b : Support.backend) (c : case) =
   List.iter
     (fun v -> cover v (List.mem v c.views))
     [ "permuted"; "stepped"; "reversed"; "broadcast" ];
-  match run b c with
-  | None -> failf "%s declined a complex %s" b.name (monoid_name c.monoid)
-  | Some y -> equal (list string) [] (zdiffer (zexpected c) (zterms y))
+  equal (list string) [] (zdiffer (zexpected c) (zterms (run b c)))
 
 let complex_case =
   Gen.with_pp pp_case
@@ -549,13 +547,11 @@ let plain2 =
 let law_order (b : Support.backend) c =
   covers c;
   cover "a NaN made from numbers" (makes_nan c);
-  match run b c with
-  | None -> failf "%s declined a case nx_cpu.mli says it computes" b.name
-  | Some y -> equal (list string) [] (differ (expected c) y)
+  equal (list string) [] (differ (expected c) (run b c))
 
 let law_computes b (c : case) =
   cover "narrow" (staged (dtype_of c.x));
-  equal ~msg:"computed" bool true (Option.is_some (run b c))
+  ignore (run b c)
 
 (* Narrow dtypes and destinations of another dtype *)
 

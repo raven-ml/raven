@@ -38,15 +38,9 @@ let cast_to (D.Any dt) x =
   cast_into d x;
   A.Any d
 
-(* [x] where the host reads it: [x] itself on the host, a copy elsewhere. *)
-let host (A.Any x as a) =
-  if Rig.equal (A.device x) Rig.host then a
-  else A.Any (A.to_device Rig.host x)
-
-(* [x] on [b]'s device, its layout kept. *)
-let on (b : Support.backend) (A.Any x as a) =
-  if Rig.equal (A.device x) b.device then a
-  else A.Any (A.to_device b.device x)
+(* {!Support.host} and {!Support.on} of any array. *)
+let host (A.Any x) = A.Any (Support.host x)
+let on b (A.Any x) = A.Any (Support.on b x)
 
 (* [x] as float64: every value of a dtype a contraction takes is one of
    float64's. *)

@@ -24,23 +24,9 @@ let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = )
 (* Elements as bits *)
 
 (* [x]'s elements in C order of indices, each as its bytes in the host's order,
-   a sub-byte element as its code in one byte. *)
-let elements (A.Any x) =
-  let bytes (type v s) (c : (v, s) A.t) =
-    match A.dtype c with
-    | D.Bit -> Array.map (fun b -> if b then "\001" else "\000") (A.to_array c)
-    | dt when D.bits dt = 4 ->
-        Array.map
-          (fun v -> String.make 1 (Char.chr v))
-          (A.to_array (Option.get (A.bitcast D.Uint4 c)))
-    | dt ->
-        let w = D.bits dt / 8 in
-        let b = A.to_array (Option.get (A.bitcast D.Uint8 c)) in
-        Array.init
-          (Array.length b / w)
-          (fun i -> String.init w (fun j -> Char.chr b.((w * i) + j)))
-  in
-  bytes (A.copy x)
+   a sub-byte element as its code in one byte, read where the host reads them
+   whatever [x]'s device. *)
+let elements = Nx_kernels_support.elements
 
 (* A fresh C-contiguous array of [dt] and shape [s] holding [es]. *)
 let of_elements (D.Any dt) s es =
@@ -301,7 +287,8 @@ let int64s s v f =
       Bytes.set_int64_le b 0 (f ());
       Bytes.to_string b)
 
-let positions (A.Any p) = A.to_array (A.expect D.Int64 (A.Any p))
+let positions (A.Any p) =
+  A.to_array (Nx_kernels_support.host (A.expect D.Int64 (A.Any p)))
 
 (* Indices in C order *)
 
@@ -438,6 +425,51 @@ let same (D.Any dt as d) =
   in
   let equal = if D.is D.Complex dt then parts else blind d in
   Testable.make ~pp:(Testable.pp Testable.string) ~equal
+
+(* Agreement *)
+
+(* Each destination of [got] holds its partner's elements in [want], each
+   pair [equal] at the destination's dtype: the first differing elements
+   shown where one differs. *)
+let matching equal want got =
+  Array.iteri
+    (fun k w ->
+      if not (Nx_kernels_support.same_bytes w got.(k)) then begin
+        let eq = equal (dtype_of w) in
+        let w' = elements w and g = elements got.(k) in
+        let n = Array.length w' and m = Array.length g in
+        let rec first i =
+          if i = n then if m = n then -1 else i
+          else if i < m && eq w'.(i) g.(i) then first (i + 1)
+          else i
+        in
+        let i = first 0 in
+        let hex e =
+          String.concat ""
+            (List.map
+               (fun c -> Printf.sprintf "%02x" (Char.code c))
+               (List.of_seq (String.to_seq e)))
+        in
+        let at a = if i < Array.length a then hex a.(i) else "none" in
+        if i >= 0 then
+          failf "destination %d, element %d of %d: %s, expected %s" k i n
+            (at g) (at w')
+      end)
+    want
+
+(* [call first] and [call second] give the same destinations, an element
+   the same bits or both NaN, as {!same} says, since a computed NaN's sign
+   and payload are unspecified: [call b] makes its calls on [b]'s device
+   and answers their destinations. *)
+let agree (first : Nx_kernels_support.backend) second call =
+  let want = call first in
+  matching (fun d -> Testable.equal (same d)) want (call second)
+
+(* [agree] bit for bit, NaNs included, for the moves whose contract keeps
+   an element's bits. *)
+let agree_bits (first : Nx_kernels_support.backend) second call =
+  let want = call first in
+  matching (fun _ -> String.equal) want (call second)
 
 (* Shapes near a fit *)
 

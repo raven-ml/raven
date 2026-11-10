@@ -133,6 +133,7 @@ let examples =
     example Tied [| 40; 2 |] ~view:{ (plain 2) with perm = [| 1; 0 |] };
     example Spread [| 9; 1 |] ~m:4;
     example Spread [| 9; 3 |] ~m:12 ~view:{ (plain 2) with perm = [| 1; 0 |] };
+    example Tied [| 200; 10 |] ~m:50;
     example Collide [| 30; 2 |];
     example Collide [| 2000; 2 |] ~m:5;
     example Narrow [| 30; 2 |] ~view:{ (plain 2) with reversed = Some 0 };
@@ -143,15 +144,20 @@ let unique_on (b : Support.backend) c =
   let module K = (val b.kernels) in
   let s = shape_of c.keys in
   let (A.Any keys) = c.keys in
-  let keys = A.expect D.Int64 (A.Any keys) in
-  let make n = A.create Rig.host D.Int64 (Iarray.of_array n) in
+  let keys = Support.on b (A.expect D.Int64 (A.Any keys)) in
+  let make n = A.create b.device D.Int64 (Iarray.of_array n) in
   let ids = make [| s.(0) |] and first = make [| c.m |] in
   let counts = make [| c.m |] and count = make [||] in
+  (* Destinations start as 0xA5 bytes, not zeros: an entry the kernels do
+     not store differs from the reference, which holds no such entry. *)
+  List.iter
+    (fun a -> Rig.Buffer.fill (A.buffer a) '\xA5')
+    [ ids; first; counts; count ];
   match K.unique ~ids ~first ~counts ~count keys with
   | A.Done ->
-      let get = A.to_array in
-      Some (get ids, get first, get counts, A.get count [||])
-  | A.Declined -> None
+      let get a = A.to_array (Support.host a) in
+      Some (get ids, get first, get counts, (get count).(0))
+  | A.Declined -> failf "%s declined a numbering" b.name
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
 (* The rows numbered as they are first met: each row's number, and each
@@ -179,7 +185,7 @@ let expected c =
 
 let agrees (b : Support.backend) c =
   match unique_on b c with
-  | None -> failf "%s declined a numbering" b.name
+  | None -> ()
   | Some (ids, first, counts, count) ->
       let n = (shape_of c.keys).(0) in
       let eids, keys = expected c in
@@ -421,12 +427,87 @@ let law_threads (b : Support.backend) c =
       equal ~msg:"count" int64 k1 k
   | _ -> failf "%s declined a numbering" b.name
 
+(* Many rows: of one word, sorted then numbered whole, and of several, through
+   views, with first and counts cut or past the keys. *)
+let many =
+  [
+    example Spread [| 70_000; 1 |] ~m:100;
+    example Dense [| 60_000; 1 |] ~m:70_000;
+    example Tied [| 50_000; 3 |] ~m:5
+      ~view:{ (plain 2) with perm = [| 1; 0 |] };
+    example Narrow [| 40_000; 2 |] ~view:{ (plain 2) with reversed = Some 0 };
+    example Spread [| 30_000; 0 |] ~m:2;
+  ]
+
+let law_many (b : Support.backend) c =
+  let s = shape_of c.keys in
+  let _, keys = expected c in
+  let k = Array.length keys in
+  cover "one word" (s.(1) = 1);
+  cover "several words" (s.(1) > 1);
+  cover "first and counts cut" (c.m < k);
+  cover "first and counts past the keys" (c.m > k);
+  agrees b c
+
+(* nx.cuda: keys whose sorts span several submissions of two columns' sorts
+   each, the cut nx_cuda.mli states past 8 columns. *)
+let spanned =
+  [
+    example Tied [| 3000; 3 |];
+    example Spread [| 5000; 5 |] ~m:7
+      ~view:{ (plain 2) with perm = [| 1; 0 |] };
+    example Narrow [| 40; 6 |] ~view:{ (plain 2) with reversed = Some 0 };
+  ]
+
+(* The columns of its keys a numbering's submission sorts without
+   Nx_cuda.numbering_words: 8, the most it takes. *)
+let run_words = 8
+
+let law_spanned (b : Support.backend) c =
+  Fun.protect
+    ~finally:(fun () -> Nx_cuda.numbering_words run_words)
+    (fun () ->
+      Nx_cuda.numbering_words 2;
+      agrees b c)
+
+(* nx_cuda.mli: a numbering takes a workspace of at most 75 bytes a row
+   and a few kilobytes. One whose sorts span several submissions takes one
+   of its own. *)
+let test_loop_workspace (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let module A = Nx_array in
+  let n = 1024 and d = b.device in
+  let index s = A.create d A.Dtype.Int64 s in
+  let keys = index [| n; 4 |] in
+  let ids = index [| n |] and first = index [| n |] and counts = index [| n |] in
+  let count = index [||] in
+  Fun.protect
+    ~finally:(fun () -> Nx_cuda.numbering_words run_words)
+    (fun () ->
+      Nx_cuda.numbering_words 1;
+      Kernels_cases.loop_held b ~bound:((75 * n) + 65536) (fun () ->
+          equal answer A.Done (K.unique ~ids ~first ~counts ~count keys);
+          Rig.Buffer.wait (A.buffer count) Read_write))
+
+let cuda (b : Support.backend) =
+  let run f x = b.around (fun () -> f x) in
+  group ("nx.cuda " ^ b.name)
+    [
+      test "numbers keys whose sorts span several submissions" (fun () ->
+          List.iter (run (law_spanned b)) spanned);
+      test "numberings in a loop hold one numbering's workspace" (fun () ->
+          b.around (test_loop_workspace b));
+    ]
+
 let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group b.name
     [
       prop ~examples "numbers rows in order of first appearance" cases
         (run (law_reference b));
+      prop ~count:4 ~examples:many
+        "numbers many rows in order of first appearance" threaded
+        (run (law_many b));
       prop
         "a call of shapes Nx_kernel.Shape refuses is not Done and writes \
          nothing outside its destinations"
@@ -449,7 +530,44 @@ let cpu (b : Support.backend) =
         (run (law_large b));
     ]
 
+(* rig.nv *)
+
+(* The numbering's destinations, as arrays. *)
+let numbered b c =
+  let ints a = A.Any (A.of_array D.Int64 (Iarray.of_array [| Array.length a |]) a) in
+  match unique_on b c with
+  | Some (ids, first, counts, count) -> [| ints ids; ints first; ints counts; ints [| count |] |]
+  | None -> [||]
+
+(* rig.nv loads the cubin CUDA loads, so a numbering through it has CUDA's
+   bits: what it can get wrong, its launches, memory and order, shows in
+   them. Each case runs through CUDA, then through rig.nv. *)
+let nv_laws (first : Support.backend) (nv : Support.backend) =
+  let agree call = Elements.agree first nv call in
+  group nv.name
+    [
+      group "bits are cuda's"
+        [
+          prop ~examples "of numberings" cases (fun c ->
+              agree (fun b -> numbered b c));
+          test "of numberings whose sorts span several submissions" (fun () ->
+              Fun.protect
+                ~finally:(fun () -> Nx_cuda.numbering_words run_words)
+                (fun () ->
+                  Nx_cuda.numbering_words 2;
+                  List.iter (fun c -> agree (fun b -> numbered b c)) spanned));
+        ];
+    ]
+
 let () =
+  let nv =
+    match (Support.gpus (), Support.nv ()) with
+    | first :: _, Some nv -> [ nv_laws first nv ]
+    | _ -> []
+  in
   exit
     (Windtrap.run "nx_kernel.unique"
-       (List.map laws Support.backends @ [ cpu Support.cpu ]))
+       (List.map laws (Support.backends ())
+       @ [ cpu Support.cpu ]
+       @ List.map cuda (Support.gpus ())
+       @ nv))

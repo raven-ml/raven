@@ -1,0 +1,21 @@
+; nx.cuda: nx's kernels for NVIDIA GPUs, compiled ahead of time into
+; cubins (kernels/) and embedded, planned in OCaml and launched as rig's
+; Launch parts. kernels/gen.py writes kernels.ml from kernels.h, which the
+; device code reads. nx_cuda_fft_stubs.c makes the transforms' tables on the
+; host in double-double arithmetic, without contraction, so that they have
+; the same bits on every host.
+
+(library
+ (name nx_cuda)
+ (public_name nx.cuda)
+ (libraries nx_array nx_kernel rig)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../kernel)
+  (extra_deps kernels/embedded.cubin kernels.h ../kernel/nx_kernel.h)
+  (flags :standard -DNX_CUDA_CUBIN=kernels/embedded.cubin)
+  (names nx_cuda_stubs))
+ (foreign_stubs
+  (language c)
+  (flags :standard -ffp-contract=off)
+  (names nx_cuda_fft_stubs)))

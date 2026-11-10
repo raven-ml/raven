@@ -157,9 +157,10 @@ let fold_on (b : Support.backend) c =
     A.expect (A.dtype x)
       (operand d c.shape (plain (Array.length c.shape)) (fun _ -> element d rs))
   in
+  let x = Support.on b x and dst = Support.on b dst in
   match K.fold c.pad ~dst x with
   | A.Done -> Some (A.Any dst)
-  | A.Declined -> None
+  | A.Declined -> failf "%s declined a fold" b.name
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
 (* The result element each operand element lands on, or [None] for one the load
@@ -399,7 +400,10 @@ let law_load (b : Support.backend) = function
       let (A.Any x) = c.x in
       let dt = A.dtype x and d = dtype_of c.x in
       let rs = Random.State.make [| 7 |] in
-      let a = A.expect dt (operand d c.shape c.load (fun _ -> element d rs)) in
+      let a =
+        Support.on b
+          (A.expect dt (operand d c.shape c.load (fun _ -> element d rs)))
+      in
       let drawn = Rig.Buffer.of_string (element d rs) in
       let fill = A.get (A.v dt (L.contiguous [||]) drawn) [||] in
       let fill_bits = Nx_kernel.Prog.bits dt fill in
@@ -430,7 +434,7 @@ let law_load (b : Support.backend) = function
       in
       List.iter
         (fun p ->
-          let dst = A.create Rig.host dt (Iarray.of_array xs) in
+          let dst = A.create b.device dt (Iarray.of_array xs) in
           match K.map p ~dsts:[| A.Any dst |] [| load |] with
           | A.Declined -> failf "%s declined a padded map" b.name
           | A.Done -> equal (array string) want (elements (A.Any dst))
@@ -604,10 +608,45 @@ let suite (b : Support.backend) =
         "a call of shapes, pads or dtypes that do not fit is not Done and \
          writes nothing outside its destination"
         (fun () -> b.around (test_misfits b));
+    ]
+
+(* Guard pages lie on host memory. *)
+let cpu (b : Support.backend) =
+  let run f x = b.around (fun () -> f x) in
+  group ("nx.cpu " ^ b.name)
+    [
       prop ~count:300
         "reads and writes no byte past the operand and dst, whatever pages lie \
          beside them"
         guard_cases (run (law_guards b));
     ]
 
-let () = exit (Windtrap.run "nx_kernel.fold" (List.map suite Support.backends))
+(* rig.nv *)
+
+(* rig.nv loads the cubin CUDA loads, so a fold through it has CUDA's
+   bits: what it can get wrong, its launches, memory and order, shows in
+   them. Each case runs through CUDA, then through rig.nv. A NaN agrees
+   with any NaN: nx_cuda.mli leaves a NaN result's sign and payload
+   unspecified. *)
+let nv_laws (first : Support.backend) (nv : Support.backend) =
+  let agree call = Elements.agree first nv call in
+  let some = function Some y -> [| y |] | None -> [||] in
+  group nv.name
+    [
+      group "bits are cuda's, any NaN for a NaN"
+        [
+          prop "of folds at every dtype they take" cases (function
+            | None -> ()
+            | Some c -> agree (fun b -> some (fold_on b c)));
+        ];
+    ]
+
+let () =
+  let nv =
+    match (Support.gpus (), Support.nv ()) with
+    | first :: _, Some nv -> [ nv_laws first nv ]
+    | _ -> []
+  in
+  exit
+    (Windtrap.run "nx_kernel.fold"
+       (List.map suite (Support.backends ()) @ [ cpu Support.cpu ] @ nv))

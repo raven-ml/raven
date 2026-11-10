@@ -136,19 +136,20 @@ let case_gen ?(dtypes = D.all) ?(shapes = small) () =
 let assemble_on (b : Support.backend) ?(in_place = false) c =
   let module K = (val b.kernels) in
   let (D.Any dt) = c.dtype in
-  let pieces = Array.map (A.expect dt) c.pieces in
+  let pieces = Array.map (fun x -> Support.on b (A.expect dt x)) c.pieces in
   let dst, pieces =
     if in_place then
-      let p = A.copy pieces.(0) in
+      (* Copied where the host addresses it: sub-byte copies need it. *)
+      let p = Support.on b (A.copy (Support.host pieces.(0))) in
       (p, Array.mapi (fun j x -> if j = 0 then p else x) pieces)
-    else (A.create Rig.host dt (Iarray.of_array c.shape), pieces)
+    else (A.create b.device dt (Iarray.of_array c.shape), pieces)
   in
   let pieces =
     Array.map2 (fun r x -> (Iarray.of_array r, x)) c.regions pieces
   in
   match K.assemble ~fill:(value dt c.fill) ~dst (Iarray.of_array pieces) with
   | A.Done -> Some (A.Any dst)
-  | A.Declined -> None
+  | A.Declined -> failf "%s declined an assembly" b.name
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
 let expected c =
@@ -173,7 +174,7 @@ let law_reference (b : Support.backend) c =
   cover "more pieces than operands a call reads at once"
     (Array.length c.pieces + 1 > A.max_operands);
   match assemble_on b c with
-  | None -> failf "%s declined an assembly" b.name
+  | None -> ()
   | Some y -> equal (array string) (expected c) (elements y)
 
 (* A first piece that is the destination over the whole result gives the fresh
@@ -290,7 +291,8 @@ let misfits =
 let law_refuses (b : Support.backend) c =
   let module K = (val b.kernels) in
   let zeros s =
-    A.of_array D.Float32 (Iarray.of_array s) (Array.make (total s) 0.)
+    Support.on b
+      (A.of_array D.Float32 (Iarray.of_array s) (Array.make (total s) 0.))
   in
   let want =
     Nx_kernel.Shape.assemble c.into
@@ -320,8 +322,10 @@ let test_late_refusals (b : Support.backend) () =
   let n = 3 * A.max_operands in
   let one i : _ iarray = [| { M.start = i; count = 1; step = 1 } |] in
   let refused ~msg ?want last =
-    let dst = A.create Rig.host D.Float32 [| n |] in
-    let xs = Array.init (n - 1) (fun _ -> A.create Rig.host D.Float32 [| 1 |]) in
+    let dst = A.create b.device D.Float32 [| n |] in
+    let xs =
+      Array.init (n - 1) (fun _ -> A.create b.device D.Float32 [| 1 |])
+    in
     let pieces =
       Array.append
         (Array.mapi (fun i x -> (one i, x)) xs)
@@ -337,7 +341,7 @@ let test_late_refusals (b : Support.backend) () =
       (Array.append [| dst |] xs)
   in
   refused ~msg:"a last piece off its region" (fun _ ->
-      A.create Rig.host D.Float32 [| 2 |]);
+      A.create b.device D.Float32 [| 2 |]);
   refused ~msg:"a last piece over the destination's bytes" ~want:A.Overlapping
     (fun dst ->
       A.v D.Float32 (L.v ~offset:1 ~strides:[| 1 |] [| 1 |]) (A.buffer dst))
@@ -433,20 +437,20 @@ let laws (b : Support.backend) =
     [
       prop "a first piece that is the destination gives the fresh result" cases
         (run (law_in_place b));
+      prop ~examples
+        "the last piece holding an element wins, the fill elsewhere" cases
+        (run (law_reference b));
+      prop
+        "computes what Nx_kernel.Shape fits; another shape is not Done and \
+         writes nothing outside its destination"
+        misfits (run (law_refuses b));
     ]
 
 let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
     [
-      prop ~examples
-        "the last piece holding an element wins, the fill elsewhere" cases
-        (run (law_reference b));
       test "fills on the job's threads" (fun () -> b.around (test_threads b));
-      prop
-        "computes what Nx_kernel.Shape fits; another shape is not Done and \
-         writes nothing outside its destination"
-        misfits (run (law_refuses b));
       test "a refusal in a later run of reads leaves no claim" (fun () ->
           b.around (test_late_refusals b));
       prop ~count:300
@@ -456,7 +460,29 @@ let cpu (b : Support.backend) =
         (run (law_guards b));
     ]
 
+(* rig.nv *)
+
+(* rig.nv loads the cubin CUDA loads, so an assembly through it has CUDA's
+   bits: what it can get wrong, its launches, memory and order, shows in
+   them. Each case runs through CUDA, then through rig.nv. *)
+let nv_laws (first : Support.backend) (nv : Support.backend) =
+  let agree call = Elements.agree_bits first nv call in
+  let some = function Some y -> [| y |] | None -> [||] in
+  group nv.name
+    [
+      group "bits are cuda's"
+        [
+          prop ~examples "of assemblies" cases (fun c ->
+              agree (fun b -> some (assemble_on b c)));
+        ];
+    ]
+
 let () =
+  let nv =
+    match (Support.gpus (), Support.nv ()) with
+    | first :: _, Some nv -> [ nv_laws first nv ]
+    | _ -> []
+  in
   exit
     (Windtrap.run "nx_kernel.assemble"
-       (List.map laws Support.backends @ [ cpu Support.cpu ]))
+       (List.map laws (Support.backends ()) @ [ cpu Support.cpu ] @ nv))

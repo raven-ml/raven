@@ -93,15 +93,9 @@ let result_shape c =
     Array.of_list
       (List.filteri (fun i _ -> not (Array.mem i c.axes)) (Array.to_list s))
 
-(* [x] where the host reads it: [x] itself on the host, a copy elsewhere. *)
-let host (A.Any x as a) =
-  if Rig.equal (A.device x) Rig.host then a
-  else A.Any (A.to_device Rig.host x)
-
-(* [x] on [b]'s device, its layout kept. *)
-let on (b : Support.backend) (A.Any x as a) =
-  if Rig.equal (A.device x) b.device then a
-  else A.Any (A.to_device b.device x)
+(* {!Support.host} and {!Support.on} of any array. *)
+let host (A.Any x) = A.Any (Support.host x)
+let on b (A.Any x) = A.Any (Support.on b x)
 
 (* [c] by [b]'s kernels into [dst], on [b]'s device. *)
 let call (b : Support.backend) c dst =
@@ -110,14 +104,14 @@ let call (b : Support.backend) c dst =
     [| plain_of x |]
 
 (* The kernels' result into a fresh destination, read where the host reads
-   it; [None] if they declined. *)
+   it. Every kernel library computes every reduction and scan: a decline
+   fails. *)
 let run (b : Support.backend) c =
   let (A.Any x) = c.x in
   let ys = Iarray.of_array (result_shape c) in
   let dst = A.Any (A.create b.device (A.dtype x) ys) in
   match call b c dst with
-  | A.Done -> Some (host dst)
-  | A.Declined -> None
+  | A.Done -> host dst
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
 (* Values *)

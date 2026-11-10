@@ -8,7 +8,6 @@
   test_contract
   test_index
   test_linalg
-  test_fft
   test_release
   test_floor)
  (libraries

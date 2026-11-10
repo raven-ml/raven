@@ -1,0 +1,74 @@
+; Correctness on the NVIDIA GPU 0, through CUDA and again through rig.nv,
+; skipping without one. The suites run in one action under the lock GPU
+; tests share, so that among a runtest's other tests they wait once for a
+; job rather than once a suite. The longer ones run their tests in 3
+; processes at once, which together hold at most 13 GiB of the GPU:
+; test_cuda's extents past 2^30 and 2^31.
+
+(executable
+ (name test_cuda)
+ (modules test_cuda)
+ (libraries
+  nx_array
+  nx_kernel
+  nx_cuda
+  nx_cuda_support
+  nx_gpu_ref
+  rig
+  windtrap))
+
+; The matrix routines' laws against nx_cuda.mli's bounds through CUDA, and
+; rig.nv's results as CUDA's bits.
+
+(executable
+ (name test_cuda_linalg)
+ (modules test_cuda_linalg)
+ (libraries
+  nx_array
+  nx_cpu
+  nx_kernel
+  nx_kernel_cases
+  nx_kernels_support
+  rig
+  windtrap))
+
+; nx.cuda's scatter Add as nx_cuda.mli states it, through each rig driver.
+
+(executable
+ (name test_cuda_moves)
+ (modules test_cuda_moves)
+ (libraries
+  nx_array
+  nx_array_support
+  nx_kernel
+  nx_kernel_cases
+  nx_kernels_support
+  rig
+  windtrap))
+
+; nx's operations on a set of nx.cuda's kernels.
+
+(executable
+ (name test_cuda_nx)
+ (modules test_cuda_nx)
+ (libraries nx nx_array nx_cuda rig rig.cuda windtrap))
+
+(executable
+ (name test_cuda_place)
+ (modules test_cuda_place)
+ (libraries nx nx_array nx_cuda_support rig rig.cuda windtrap))
+
+(rule
+ (alias runtest)
+ (locks %{workspace_root}/gpu)
+ (action
+  (progn
+   (run %{exe:test_cuda.exe} -j 3)
+   (setenv
+    NX_CUDA_RIG
+    nv
+    (run %{exe:test_cuda.exe} -j 3))
+   (run %{exe:test_cuda_linalg.exe} -j 3)
+   (run %{exe:test_cuda_moves.exe} -j 3)
+   (run %{exe:test_cuda_nx.exe})
+   (run %{exe:test_cuda_place.exe}))))

@@ -387,5 +387,84 @@ let laws (b : Support.backend) =
           b.around (test_overflowing_modulus b));
     ]
 
+(* Memory of calls in a loop
+
+   nx_cuda.mli's memory of the matrix routines, held by calls in a loop:
+   float32 elements of 4 bytes. *)
+
+let wait (A.Any x) = Rig.Buffer.wait (A.buffer x) Read_write
+
+(* A solve whose [a]'s batch axes do not form one run of strides copies
+   [a]: [batch n²] elements. *)
+let test_loop_solve (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let n = 8 and d = b.device in
+  let base = A.create d D.Float32 [| 3; 2; n; n |] in
+  let a =
+    A.v D.Float32
+      (A.Layout.v ~strides:[| n * n; 2 * n * n; n; 1 |] [| 2; 3; n; n |])
+      (A.buffer base)
+  in
+  let rhs = A.create d D.Float32 [| 2; 3; n; 4 |] in
+  let dst = A.create d D.Float32 [| 2; 3; n; 4 |] in
+  Kernels_cases.loop_held b ~bound:(6 * n * n * 4) (fun () ->
+      equal answer A.Done
+        (K.solve_triangular Lower ~adjoint:false ~unit_diagonal:false ~dst a rhs);
+      wait (A.Any dst))
+
+(* A qr of 64 columns copies [a], [m n] elements, and takes
+   [m b + 2 b max(n, c) + b² ⌈k / b⌉] more, [b = min k 128]; each piece
+   from aligned bytes. *)
+let test_loop_qr (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let m = 256 and n = 64 and d = b.device in
+  let a = A.create d D.Float32 [| m; n |] in
+  let q = A.create d D.Float32 [| m; n |] and r = A.create d D.Float32 [| n; n |] in
+  let k = n and c = n in
+  let bk = Int.min k 128 in
+  let elements = (m * n) + (m * bk) + (2 * bk * Int.max n c) + (bk * bk * ((k + bk - 1) / bk)) in
+  Kernels_cases.loop_held b ~bound:((4 * elements) + 1024) (fun () ->
+      equal answer A.Done (K.qr ~q ~r a);
+      wait (A.Any r))
+
+(* An eigh with [v] of order [n] takes [2n² + 97 n + 2048] elements,
+   [3 n² + 78 n - 2 l (32 - l)] reals and [24 n + 32] bytes, [l] its last
+   leaf's order, and at most 512 bytes of alignment a matrix and 2 KiB a
+   call; and [n²] elements more where [a] is transposed, which it copies. *)
+let test_loop_eigh ~n ~transposed (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let d = b.device in
+  let base = A.create d D.Float32 [| n; n |] in
+  let a =
+    if transposed then
+      A.v D.Float32 (A.Layout.v ~strides:[| 1; n |] [| n; n |]) (A.buffer base)
+    else base
+  in
+  let w = A.create d D.Float32 [| n |] and v = A.create d D.Float32 [| n; n |] in
+  let l = n - (32 * (((n + 31) / 32) - 1)) in
+  let copy = if transposed then n * n else 0 in
+  let elements = (2 * n * n) + (97 * n) + 2048 + copy in
+  let reals = (3 * n * n) + (78 * n) - (2 * l * (32 - l)) in
+  let bytes = (4 * (elements + reals)) + (24 * n) + 32 + 512 + 2048 in
+  Kernels_cases.loop_held b ~bound:bytes (fun () ->
+      equal answer A.Done (K.eigh ~w ~v a);
+      wait (A.Any v))
+
+let cuda (b : Support.backend) =
+  let test name f = test name (fun () -> b.around (f b)) in
+  group ("nx.cuda " ^ b.name)
+    [
+      test "solves in a loop hold one solve's copy" test_loop_solve;
+      test "qrs in a loop hold one qr's memory" test_loop_qr;
+      test "eighs in a loop hold one eigh's memory"
+        (test_loop_eigh ~n:64 ~transposed:false);
+      test "eighs of a copied operand in a loop hold one eigh's memory"
+        (test_loop_eigh ~n:80 ~transposed:true);
+    ]
+
+let backends = Support.cpus @ Support.gpus ()
+
 let () =
-  exit (Windtrap.run "nx_kernel.linalg" (List.map laws Support.cpus))
+  exit
+    (Windtrap.run "nx_kernel.linalg"
+       (List.map laws backends @ List.map cuda (Support.gpus ())))

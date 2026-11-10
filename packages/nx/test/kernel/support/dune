@@ -27,13 +27,21 @@
    (:include %{lib:nx.cpu:avx2_flags.sexp}))
   (names nx_kinds_support_loops)))
 
-; The kernel libraries the suite runs its laws through, and nx.cpu's target
-; tables.
+; The kernel libraries the suite runs its laws through, nx.cuda's on the
+; machine's NVIDIA GPU among them, and nx.cpu's target tables.
 
 (library
  (name nx_kernels_support)
  (modules nx_kernels_support)
- (libraries nx_array nx_kernel nx_cpu rig rig.pool)
+ (libraries
+  nx_array
+  nx_kernel
+  nx_cpu
+  nx_cuda
+  rig
+  rig.pool
+  rig.cuda
+  rig.nv.nvidia)
  (foreign_stubs
   (language c)
   (names nx_kernels_support_stubs)))
@@ -53,6 +61,7 @@
   contract_cases
   index_cases
   linalg_cases
+  linalg_laws
   exact
   misfit)
  (libraries

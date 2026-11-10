@@ -1,0 +1,35 @@
+; What the CUDA suite and bench share: the harness's kernels, their runs as
+; launches, device time, and operands. gen.py compiles the harness to the
+; committed sm_89.cubin, and its --check holds the cubin to its sources.
+
+(library
+ (name nx_cuda_support)
+ (modules nx_cuda_support)
+ (libraries
+  nx_array
+  nx_kernel
+  nx_cuda
+  rig
+  rig.cuda
+  rig.cuda.abi
+  rig.nv
+  rig.nv.abi
+  rig.nv.nvidia
+  windtrap)
+ (foreign_stubs
+  (language c)
+  (extra_deps sm_89.cubin harness.h)
+  (flags :standard -DNX_HARNESS_CUBIN=sm_89.cubin)
+  (names nx_cuda_support_stubs)))
+
+; The host reference the CUDA suite and bench check results against.
+
+(library
+ (name nx_gpu_ref)
+ (modules nx_gpu_ref)
+ (libraries nx_array)
+ (foreign_stubs
+  (language c)
+  (include_dirs
+   (lib nx.array))
+  (names ref nx_gpu_ref_stubs)))

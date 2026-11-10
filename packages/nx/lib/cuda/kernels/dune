@@ -1,0 +1,43 @@
+(executable
+ (name fresh))
+
+; Check the committed cubin, which gen.py compiles from src/, in every tree,
+; including trees without a CUDA toolkit.
+
+(rule
+ (target embedded.cubin)
+ (action
+  (progn
+   (chdir
+    %{workspace_root}
+    (run
+     %{exe:fresh.exe}
+     %{dep:sm_89.cubin}
+     %{dep:gen.py}
+     %{dep:../kernels.h}
+     %{dep:../../array/nx_dtype.h}
+     %{dep:../../kernel/nx_kernel.h}
+     %{dep:../../kernel/nx_kinds.h}
+     %{dep:../../kernel/nx_kinds_real.h}
+     %{dep:../../kernel/nx_kinds_complex.h}
+     %{dep:src/kernels.cu}
+     %{dep:src/contract.cu}
+     %{dep:src/combine.cuh}
+     %{dep:src/mma.cuh}
+     %{dep:src/kinds.cuh}
+     %{dep:src/words.cuh}
+     %{dep:src/loop.cu}
+     %{dep:src/factor.cu}
+     %{dep:src/spectral.cu}
+     %{dep:src/sp_common.cuh}
+     %{dep:src/sp_block.cuh}
+     %{dep:src/sp_jacobi.cuh}
+     %{dep:src/sp_tridiag.cuh}
+     %{dep:src/sp_stedc.cuh}
+     %{dep:src/sp_bd.cuh}
+     %{dep:src/sp_eig.cuh}
+     %{dep:src/moves.cu}
+     %{dep:src/sort.cu}
+     %{dep:src/fft.cu}
+     %{dep:src/attention.cu}))
+   (copy sm_89.cubin embedded.cubin))))

@@ -16,13 +16,8 @@ module Support = Nx_kernels_support
 
 let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = )
 
-(* [a] where the host reads it: [a] itself on the host, a copy elsewhere. *)
-let host a =
-  if Rig.equal (A.device a) Rig.host then a else A.to_device Rig.host a
-
-(* [a] on [b]'s device, its layout kept. *)
-let on (b : Support.backend) a =
-  if Rig.equal (A.device a) b.device then a else A.to_device b.device a
+let host = Support.host
+let on = Support.on
 
 (* Fails if [b] declines [k] at [dt], a case it states it computes. *)
 let check_declined (b : Support.backend) k (D.Any dt as d) =
@@ -717,8 +712,11 @@ let large_pairs =
    no program, or one whose result is not of [dt]. *)
 let answers (b : Support.backend) kind (D.Any at) (D.Any dt) shape ~accepted
     ~want (into : 'v 's. ('v, 's) A.t -> A.answer) =
-  let dst = on b (seeded dt shape 99) in
-  let before = bits_of (host dst) in
+  (* The seeded bits, read on the host before [dst] goes to [b]'s device:
+     a read back would cost a round trip per kind. *)
+  let seed = seeded dt shape 99 in
+  let before = bits_of seed in
+  let dst = on b seed in
   match into dst with
   | A.Done ->
       cover "computed" true;
@@ -1068,9 +1066,10 @@ let unpadded (type v s) (x : (v, s) A.t) =
    exactly; a declined map writes nothing. With [declines], a map that
    declines a program [declines] does not accept fails. [length] bounds the
    program's nodes past its loads. *)
-let law_map_split ?declines ?(labels = true) ?length ?(padded = false)
-    (b : Support.backend) (Pair (x, y), seed) =
-  let module K = (val b.kernels) in
+(* The pair's program drawn from [seed], its node dtypes, its operands on
+   [b]'s device and their loads, padded by nothing with [padded]. *)
+let split_program ?length ?(padded = false) (b : Support.backend)
+    (Pair (x, y), seed) =
   let st = Random.State.make [| seed |] in
   let dt = D.Any (A.dtype x) and shape = L.shape (A.layout x) in
   let x = on b x and y = on b y in
@@ -1083,7 +1082,14 @@ let law_map_split ?declines ?(labels = true) ?length ?(padded = false)
   let rank = Iarray.length shape in
   let p, types = program ?length st ins ~room:16 ~rank in
   let load (A.Any x) = if padded then unpadded x else Nx_kernel.Plain x in
-  let loads = Array.map load ops in
+  (p, types, ops, Array.map load ops)
+
+let law_map_split ?declines ?(labels = true) ?length ?(padded = false)
+    (b : Support.backend) ((Pair (x, _) as pair), seed) =
+  let module K = (val b.kernels) in
+  let shape = L.shape (A.layout x) in
+  let p, types, ops, loads = split_program ?length ~padded b (pair, seed) in
+  let ins = Array.map (fun (A.Any x) -> D.Any (A.dtype x)) ops in
   match split b p types shape ops with
   | exception Skip -> cover "a node declined" true
   | values -> (
@@ -1160,6 +1166,26 @@ let split_cases =
     Gen.int
     (Gen.frequency
        [ (3, Gen.constant Plain); (1, Gen.constant Padded); (1, Gen.constant Long) ])
+
+(* The map of {!split_cases}' case on [b]: its destinations, or none
+   where [b] declines it. *)
+let split_map (b : Support.backend) ((Pair (x, _) as pair), seed, mode) =
+  let module K = (val b.kernels) in
+  let shape = L.shape (A.layout x) in
+  let length = if mode = Long then Some 400 else None in
+  let p, types, _, loads =
+    split_program ?length ~padded:(mode = Padded) b (pair, seed)
+  in
+  let dsts =
+    Array.map
+      (fun o ->
+        let (D.Any d) = types.(o) in
+        A.Any (A.create b.device d shape))
+      (Iarray.to_array p.outs)
+  in
+  match K.map p ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads) with
+  | A.Done -> dsts
+  | _ -> [||]
 
 (* {!law_map_split} over the pair's loads read as [mode] says. *)
 let law_split ?declines b ((Pair (x, _) as p), seed, mode) =
@@ -1446,3 +1472,184 @@ module Narrow_fma = struct
         else Some (strf "%h * %h + %h is %h, not %h" a.(i) b.(i) c.(i) got.(i) want))
       (List.init (Array.length a) Fun.id)
 end
+
+(* Wide calls *)
+
+(* What makes a wide call too wide for a launch of nx.cuda's loop, whose
+   parameters hold 4 KiB and whose values held at once 99 KiB of shared
+   memory (loop.ml): its loads' descriptors, its values held at once, or
+   its outputs' instructions or reductions' destinations. *)
+type wide_mode = Loads | Held | Outputs
+
+(* A wide call of [mode] over operands of [dt], a load padded where
+   [padded], a destination identical to load 0 where [aliased]. *)
+type wide = {
+  mode : wide_mode;
+  dt : D.any;
+  padded : bool;
+  aliased : bool;
+  seed : int;
+}
+
+let pp_wide ppf c =
+  Format.fprintf ppf "%s over %a%s%s, seed %d"
+    (match c.mode with Loads -> "loads" | Held -> "held" | Outputs -> "outputs")
+    pp_dtype c.dt
+    (if c.padded then ", padded" else "")
+    (if c.aliased then ", aliased" else "")
+    c.seed
+
+let wide_cases =
+  let open Gen in
+  let* mode = of_list [ Loads; Held; Outputs ] in
+  let* dt =
+    of_list ~pp:pp_dtype
+      D.[ Any Float32; Any Float64; Any Bfloat16; Any Int32; Any Uint8 ]
+  in
+  let* padded = bool in
+  let* aliased = bool in
+  let+ seed = int in
+  { mode; dt; padded; aliased; seed }
+
+(* The loop's shape: of 24 axes where the loads are padded, so that a node
+   of three padded loads reads more descriptor words than a launch holds,
+   and its first load is copied out on its own. Its innermost axis of more
+   than one element has 40, past the 32 terms whose sums nx.cuda's scans
+   associate as a fold in order. *)
+let wide_shape c =
+  if c.padded then Array.append [| 2; 40 |] (Array.make 22 1) else [| 2; 3; 40 |]
+
+(* The program of [c] and its loads' count. [Loads]: 130 loads summed, the
+   first three by a fused multiply-add. [Held]: 130 multiples of one load
+   held at once, then summed from the last. [Outputs]: 40 outputs, each a
+   constant then 20 additions of one load. *)
+let wide_program c =
+  let n = 130 in
+  match c.mode with
+  | Loads ->
+      let nodes =
+        Array.concat
+          [
+            Array.init n (fun k -> P.In k);
+            [| P.Op3 (Fma, 0, 1, 2) |];
+            Array.init (n - 3) (fun j -> P.Op2 (Binary Add, n + j, j + 3));
+          ]
+      in
+      (P.v ~ins:(Iarray.init n (fun _ -> c.dt)) (Iarray.of_array nodes)
+         ~outs:(Iarray.of_list [ Array.length nodes - 1 ]), n)
+  | Held ->
+      let nodes =
+        Array.concat
+          [
+            [| P.In 0; P.Op2 (Binary Add, 0, 0) |];
+            Array.init (n - 1) (fun j -> P.Op2 (Binary Add, j + 1, 0));
+            Array.init (n - 1) (fun j ->
+                P.Op2 (Binary Add, (if j = 0 then n else n + j), n - 1 - j));
+          ]
+      in
+      (P.v ~ins:(Iarray.of_list [ c.dt ]) (Iarray.of_array nodes)
+         ~outs:(Iarray.of_list [ Array.length nodes - 1 ]), 1)
+  | Outputs ->
+      let (D.Any d) = c.dt in
+      let st = Random.State.make [| c.seed |] in
+      let nodes = ref [ P.In 0 ] and outs = ref [] in
+      let push nd = nodes := nd :: !nodes; List.length !nodes - 1 in
+      for _ = 1 to 40 do
+        let e = bits_of (seeded d [| 1 |] (Random.State.bits st)) in
+        let k = push (P.Const (c.dt, String.init (Array.length e) (fun i -> Char.chr e.(i)))) in
+        let a = ref (push (P.Op2 (Binary Add, k, 0))) in
+        for _ = 1 to 20 do a := push (P.Op2 (Binary Add, !a, 0)) done;
+        outs := !a :: !outs
+      done;
+      (P.v ~ins:(Iarray.of_list [ c.dt ]) (Iarray.of_list (List.rev !nodes))
+         ~outs:(Iarray.of_list (List.rev !outs)), 1)
+
+(* [c]'s loads on [b]'s device and the arrays they read: drawn values,
+   padded by nothing where [c.padded] (every load in [Loads], load 0
+   otherwise), so that each reads its array's elements. *)
+let wide_loads (b : Support.backend) c n =
+  let (D.Any d) = c.dt in
+  let shape = Iarray.of_array (wide_shape c) in
+  let st = Random.State.make [| c.seed |] in
+  let xs = Array.init n (fun _ -> on b (seeded d shape (Random.State.bits st))) in
+  let load k =
+    if c.padded && (c.mode = Loads || k = 0) then unpadded xs.(k)
+    else Nx_kernel.Plain xs.(k)
+  in
+  (Array.init n load, Array.map (fun x -> A.Any x) xs)
+
+(* [c]'s map on [b], its destinations fresh but for one identical to load
+   0 where [c] says: the destinations. *)
+let wide_map (b : Support.backend) c =
+  let module K = (val b.kernels) in
+  let p, n = wide_program c in
+  let shape = Iarray.of_array (wide_shape c) in
+  let loads, xs = wide_loads b c n in
+  let aliased = c.aliased && not c.padded in
+  let dsts =
+    Array.mapi
+      (fun k o ->
+        if aliased && k = 0 then xs.(0)
+        else
+          let (D.Any d) = P.dtype p o in
+          A.Any (A.create b.device d shape))
+      (Iarray.to_array p.outs)
+  in
+  equal answer A.Done
+    (K.map p ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads));
+  dsts
+
+(* A map too wide for one of nx.cuda's launches gives each output the
+   bits of its nodes run one by one, any NaN for a NaN, and a destination
+   identical to a [Plain] load receives what a fresh one would. *)
+let law_wide_map (b : Support.backend) c =
+  let module K = (val b.kernels) in
+  let p, n = wide_program c in
+  let shape = wide_shape c in
+  let loads, xs = wide_loads b c n in
+  let types = Array.init (Iarray.length p.nodes) (P.dtype p) in
+  let values = split b p types (Iarray.of_array shape) xs in
+  let want =
+    Array.map
+      (fun o ->
+        let (A.Any v) = values.(o) in
+        (D.Any (A.dtype v), bits_of (host v)))
+      (Iarray.to_array p.outs)
+  in
+  let aliased = c.aliased && not c.padded in
+  let dsts =
+    Array.mapi
+      (fun k o ->
+        if aliased && k = 0 then xs.(0)
+        else
+          let (D.Any d) = types.(o) in
+          A.Any (A.create b.device d (Iarray.of_array shape)))
+      (Iarray.to_array p.outs)
+  in
+  cover "past a launch's loads" (c.mode = Loads);
+  cover "past a launch's values held" (c.mode = Held);
+  cover "past a launch's outputs" (c.mode = Outputs);
+  cover "a padded load copied out" (c.mode = Loads && c.padded);
+  cover "a destination identical to a load" aliased;
+  equal answer A.Done
+    (K.map p ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads));
+  Array.iteri
+    (fun k (A.Any y) ->
+      let d, w = want.(k) in
+      equal ~msg:(strf "output %d" k) (same_values d) w (bits_of (host y)))
+    dsts
+
+(* Device memory held in a loop *)
+
+(* nx_cuda.mli: a call's workspace returns once its work is done, so calls
+   in a loop hold one call's. [f], a call that waits for its work, run
+   [calls] times after an uncounted one: the bytes [b]'s device holds after
+   the first are at most [bound], the family's stated bytes, and after each
+   later one at most the first's. *)
+let loop_held ?(calls = 4) (b : Support.backend) ~bound f =
+  let held = Support.loop_bytes b.device calls f in
+  at_most ~msg:"bytes held after the first call" int ~than:bound held.(0);
+  Array.iteri
+    (fun i x ->
+      at_most ~msg:(strf "bytes held after call %d" (i + 1)) int ~than:held.(0) x)
+    held

@@ -50,10 +50,10 @@ let of_values (D.Any dt) shape (v : Complex.t array) =
 let values (A.Any x) : Complex.t array =
   let re (v : float array) = Array.map (fun re -> { Complex.re; im = 0. }) v in
   match A.dtype x with
-  | D.Float32 -> re (A.to_array x)
-  | D.Float64 -> re (A.to_array x)
-  | D.Complex64 -> A.to_array x
-  | D.Complex128 -> A.to_array x
+  | D.Float32 -> re (A.to_array (Support.host x))
+  | D.Float64 -> re (A.to_array (Support.host x))
+  | D.Complex64 -> A.to_array (Support.host x)
+  | D.Complex128 -> A.to_array (Support.host x)
   | _ -> invalid_arg "values"
 
 (* The values' parts, a complex number's real then imaginary one, as
@@ -65,10 +65,10 @@ let bits (A.Any x) : float array =
         if k land 1 = 0 then v.(k / 2).re else v.(k / 2).im)
   in
   match A.dtype x with
-  | D.Float32 -> A.to_array x
-  | D.Float64 -> A.to_array x
-  | D.Complex64 -> parts (A.to_array x)
-  | D.Complex128 -> parts (A.to_array x)
+  | D.Float32 -> A.to_array (Support.host x)
+  | D.Float64 -> A.to_array (Support.host x)
+  | D.Complex64 -> parts (A.to_array (Support.host x))
+  | D.Complex128 -> parts (A.to_array (Support.host x))
   | _ -> invalid_arg "bits"
 
 let same_bits =
@@ -253,16 +253,17 @@ type routine =
       unit_diagonal : bool;
     }
 
-let fresh (D.Any dt) s = A.Any (A.create Rig.host dt (Iarray.of_array s))
+let fresh d (D.Any dt) s = A.Any (A.create d dt (Iarray.of_array s))
 
-(* [b]'s results of [r] on [ops], or [None] if it declined: Lu's positions
-   int64, eig's results complex of a's precision, svd's and eigh's values
-   floats of a's precision, every other result of a's dtype, of the shapes
-   Nx_kernel.Shape gives, made by [alloc] (defaults to fresh arrays on the
-   host). *)
-let run ?(alloc = fresh) (b : Support.backend) r ops =
+(* [b]'s results of [r] on [ops], on [b]'s device: Lu's positions int64, eig's results complex of a's precision,
+   svd's and eigh's values floats of a's precision, every other result of a's
+   dtype, of the shapes Nx_kernel.Shape gives, made by [alloc] (defaults to
+   fresh arrays on [b]'s device). *)
+let run ?alloc (b : Support.backend) r ops =
   let module K = (val b.kernels) in
   let module Shape = Nx_kernel.Shape in
+  let alloc = Option.value alloc ~default:(fresh b.device) in
+  let ops = Array.map (fun (A.Any x) -> A.Any (Support.on b x)) ops in
   let (A.Any a) = ops.(0) in
   let dt = A.dtype a in
   let shape (A.Any x) = Iarray.to_array (L.shape (A.layout x)) in
@@ -325,7 +326,7 @@ let run ?(alloc = fresh) (b : Support.backend) r ops =
   in
   match answer with
   | A.Done -> Some dsts
-  | A.Declined -> None
+  | A.Declined -> failf "%s declined a routine" b.name
   | e -> failf "the kernels answered %a" pp_answer e
 
 let solve c =
@@ -458,7 +459,7 @@ let svd_operand c =
 
 let int64s (A.Any x) =
   match A.dtype x with
-  | D.Int64 -> Array.map Int64.to_int (A.to_array x)
+  | D.Int64 -> Array.map Int64.to_int (A.to_array (Support.host x))
   | _ -> invalid_arg "int64s"
 
 let factors c = if c.seed mod 2 = 0 then Nx_kernel.Reduced else Nx_kernel.Complete

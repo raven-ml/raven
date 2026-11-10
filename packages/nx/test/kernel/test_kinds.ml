@@ -388,28 +388,27 @@ let narrow_floats =
 
 let signed_zeros = [ (0., 0.); (0., -0.); (-0., 0.); (-0., -0.) ]
 
-let test_narrow_zeros =
+let test_narrow_zeros (b : Support.backend) =
   let kinds =
     Nx_kernel.Prog.
       [ ("add", Add); ("sub", Sub); ("maximum", Maximum); ("minimum", Minimum) ]
   in
   let rows =
     List.concat_map
-      (fun (b : Support.backend) ->
+      (fun dt ->
         List.concat_map
-          (fun dt ->
-            List.concat_map
-              (fun (name, k) ->
-                List.map (fun z -> (b, dt, name, k, z)) signed_zeros)
-              kinds)
-          narrow_floats)
-      Support.backends
+          (fun (name, k) ->
+            let (Narrow d) = dt in
+            if not (b.computes (K2 (Binary k)) (D.Any d)) then []
+            else List.map (fun z -> (dt, name, k, z)) signed_zeros)
+          kinds)
+      narrow_floats
   in
   cases "signed zeros at the narrow floats"
-    ~id:(fun ((b : Support.backend), Narrow dt, name, _, (a, c)) ->
-      strf "%s %s %s %h %h" b.name (D.name dt) name a c)
+    ~id:(fun (Narrow dt, name, _, (a, c)) ->
+      strf "%s %s %h %h" (D.name dt) name a c)
     rows
-    (fun (b, Narrow dt, name, k, (a, c)) ->
+    (fun (Narrow dt, name, k, (a, c)) ->
       let module K' = (val b.kernels) in
       let want = D.of_float dt (f (K.f32 name [| bits32 a; bits32 c |])) in
       let one v = C.on b (A.of_array dt [| 1 |] [| v |]) in
@@ -439,16 +438,13 @@ let transcendentals =
   List.filter (fun (_, name) -> List.mem name names) C.unaries
 
 (* Every code of each format is one operand, so the law draws nothing. *)
-let test_narrow_transcendentals =
+let test_narrow_transcendentals b =
   prop ~count:1 "transcendental kinds at every code of the narrow floats"
     Gen.unit (fun () ->
       List.iter
-        (fun (b : Support.backend) ->
-          List.iter
-            (fun (Narrow dt) ->
-              C.law_map1 ~kinds:transcendentals b (C.Case (every_code dt)))
-            narrow_floats)
-        Support.backends)
+        (fun (Narrow dt) ->
+          C.law_map1 ~kinds:transcendentals b (C.Case (every_code dt)))
+        narrow_floats)
 
 (* [x]'s partners for pow in [dt], from [seed]: for a finite [x] off 1,
    [y] with [y log2 |x|] within the format's exponents, give or take 2, an
@@ -471,16 +467,11 @@ let pow_partners (type s) (dt : (float, s) D.t) (x : (float, s) A.t) seed =
   in
   A.of_array dt [| n |] (Array.init n partner)
 
-let test_narrow_pairs =
+let test_narrow_pairs b =
   let binaries = Nx_kernel.Prog.[ Binary Pow; Binary Atan2 ] in
-  let rows =
-    List.concat_map
-      (fun b -> List.map (fun dt -> (b, dt)) narrow_floats)
-      Support.backends
-  in
   prop ~count:3 "pow and atan2 at the narrow floats' pairs" Gen.nat (fun seed ->
       List.iter
-        (fun ((b : Support.backend), Narrow dt) ->
+        (fun (Narrow dt) ->
           let x = every_code dt in
           let n = L.numel (A.layout x) in
           if n <= 256 then begin
@@ -493,7 +484,13 @@ let test_narrow_pairs =
             C.law_map2 ~kinds:binaries b (C.Pair (x, C.seeded dt [| n |] seed));
             C.law_map2 ~kinds:[ Binary Pow ] b (C.Pair (x, pow_partners dt x seed))
           end)
-        rows)
+        narrow_floats)
+
+(* The narrow floats' laws on [b], a group named for it. *)
+let narrow (b : Support.backend) =
+  group ~timeout:60.
+    (b.name ^ " narrow floats compute in f32 and round once")
+    [ test_narrow_zeros b; test_narrow_transcendentals b; test_narrow_pairs b ]
 
 (* Integer kinds
 
@@ -1539,14 +1536,12 @@ let test_digests =
 let () =
   exit
   @@ run "nx_array.kinds"
-       [
+       ([
          group ~timeout:10. "exact kinds give IEEE results"
            (test_binary32
            @ [ test_fma32; test_where32 ]
            @ test_unary32 @ test_f64_exact
-           @ [ test_narrow_zeros; test_exact_points ]);
-         group ~timeout:60. "narrow floats compute in f32 and round once"
-           [ test_narrow_transcendentals; test_narrow_pairs ];
+           @ [ test_exact_points ]);
          group ~timeout:10. "integer kinds are modular" test_ints;
          group ~timeout:10. "threefry's known answers" [ test_threefry ];
          group ~timeout:10. "Annex F's special values" [ test_annex_f ];
@@ -1563,3 +1558,4 @@ let () =
            @ test_complex_conj @ test_complex_parity @ test_complex_real_axis
            @ test_complex_identities);
        ]
+       @ List.map narrow (Support.backends ()))

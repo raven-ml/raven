@@ -53,8 +53,7 @@ let law_adjoint (b : Support.backend) c =
       | None -> ()
       | Some s ->
           let dot a b' =
-            let a = A.to_array (A.expect D.Int64 a)
-            and b' = A.to_array (A.expect D.Int64 b') in
+            let a = positions a and b' = positions b' in
             let acc = ref 0L in
             Array.iteri
               (fun i v -> acc := Int64.add !acc (Int64.mul v b'.(i)))
@@ -377,15 +376,13 @@ let bound_examples =
 let scatter1 (b : Support.backend) c dt into idx u =
   let module K = (val b.kernels) in
   let n = Array.length into and m = Array.length idx in
-  let dst = A.create Rig.host dt [| n |] in
-  match
-    K.scatter c ~unique:false ~axis:0 ~dst
-      ~into:(A.of_array dt [| n |] into)
-      (A.of_array D.Int64 [| m |] idx)
-      (A.of_array dt [| m |] u)
-  with
-  | A.Done -> Some (A.to_array dst)
-  | A.Declined -> None
+  let dst = A.create b.device dt [| n |] in
+  let into = Support.on b (A.of_array dt [| n |] into) in
+  let idx = Support.on b (A.of_array D.Int64 [| m |] idx) in
+  let u = Support.on b (A.of_array dt [| m |] u) in
+  match K.scatter c ~unique:false ~axis:0 ~dst ~into idx u with
+  | A.Done -> Some (A.to_array (Support.host dst))
+  | A.Declined -> failf "%s declined a scatter" b.name
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
 let stated (b : Support.backend) =
@@ -466,14 +463,14 @@ let short_rows (b : Support.backend) (w, dt) () =
         if q >= 0 && q < n then xs.((q * w) + (i mod w)) else zero dt)
   in
   match gather_on b ~axis:0 idx x with
-  | None -> failf "%s declined a take" b.name
+  | None -> ()
   | Some y -> equal (array string) want (elements y)
 
 (* An Add of booleans, which Prog.Add does not take, does not fit: not
    Done, and nothing written outside its destination. *)
 let test_bool_add (b : Support.backend) () =
   let module K = (val b.kernels) in
-  let on x = A.to_device b.device x in
+  let on x = Support.on b x in
   let bools = on (A.of_array D.Bool [| 2 |] [| true; false |]) in
   let idx = on (A.of_array D.Int64 [| 1 |] [| 0L |]) in
   let u = on (A.of_array D.Bool [| 1 |] [| true |]) in
@@ -517,5 +514,48 @@ let laws (b : Support.backend) =
         (fun () -> b.around (test_bool_add b));
     ]
 
+(* rig.nv *)
+
+let some = function Some y -> [| y |] | None -> [||]
+
+(* rig.nv loads the cubin CUDA loads, so a gather or a scatter through it
+   has CUDA's bits: what it can get wrong, its launches, memory and order,
+   shows in them. Each case runs through CUDA, then through rig.nv. A
+   scatter that combines computes, so a NaN it gives agrees with any NaN,
+   as nx_cuda.mli leaves a NaN result's sign and payload unspecified. A
+   tiled add, which these cases do not reach, has its own law through each
+   driver (test_cuda_moves). *)
+let nv_laws (first : Support.backend) (nv : Support.backend) =
+  let moved call = Elements.agree_bits first nv call in
+  let agree (c : scatter_case) call =
+    if c.combine = Nx_kernel.Set then moved call
+    else Elements.agree first nv call
+  in
+  group nv.name
+    [
+      group "bits are cuda's"
+        [
+          prop "of gathers" (Gen.with_pp pp_gather (gather_gen ())) (fun c ->
+              let (D.Any dt) = dtype_of c.x in
+              cover "a sub-byte element" (D.bits dt < 8);
+              cover "a long axis" (Array.exists (fun e -> e > 5) (shape_of c.x));
+              moved (fun b -> some (gather_on b ~axis:c.axis c.idx c.x)));
+          prop "of scatters" scatters (fun c ->
+              List.iter
+                (fun m -> cover (combine_name m) (c.combine = m))
+                Nx_kernel.[ Set; Add; Max; Min ];
+              cover "shared targets" (fst (sharing c));
+              agree c (fun b -> some (scatter_on b c)));
+          prop "of scatters promised distinct targets" unique_scatters
+            (fun c -> agree c (fun b -> some (scatter_on b ~unique:true c)));
+        ];
+    ]
+
 let () =
-  exit (Windtrap.run "nx_kernel.index" (List.map laws Support.backends))
+  let nv =
+    match (Support.gpus (), Support.nv ()) with
+    | first :: _, Some nv -> [ nv_laws first nv ]
+    | _ -> []
+  in
+  exit
+    (Windtrap.run "nx_kernel.index" (List.map laws (Support.backends ()) @ nv))

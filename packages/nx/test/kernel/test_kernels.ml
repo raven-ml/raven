@@ -482,13 +482,165 @@ let test_map_identical_view (b : Support.backend) () =
       ~outs:[| 1; 2 |]
   in
   match K.map p ~dsts:[| A.Any neg; A.Any sum |] [| Nx_kernel.Plain x |] with
-  | A.Declined -> ()
   | A.Done ->
       equal ~msg:"neg" (array float_exact) [| -1.; -2.; -3.; -4.; -5. |]
         (A.to_array (host neg));
       equal ~msg:"add" (array float_exact) [| 2.; 4.; 6.; 8.; 10. |]
         (A.to_array (host sum))
   | r -> failf "map answered %a" Nx_array_support.pp_answer r
+
+(* A map of 100 outputs, each into the load it reads: too wide for one of
+   nx.cuda's launches, as is the copy, into the destinations, of the
+   temporaries that nx_cuda.mli's loop section says such outputs go
+   through. Output [k] is load [k] plus [k]. *)
+let test_wide_in_place (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let n = 100 and m = 5 and i64 = D.Any D.Int64 in
+  let xs =
+    Array.init n (fun k ->
+        on b
+          (A.of_array D.Int64 [| m |]
+             (Array.init m (fun i -> Int64.of_int (k * i)))))
+  in
+  let p =
+    P.v ~ins:(Iarray.init n (fun _ -> i64))
+      (Iarray.of_array
+         (Array.concat
+            [
+              Array.init n (fun k -> P.In k);
+              Array.init n (fun k ->
+                  P.Const (i64, P.bits D.Int64 (Int64.of_int k)));
+              Array.init n (fun k -> P.Op2 (Binary Add, k, n + k));
+            ]))
+      ~outs:(Iarray.init n (fun k -> (2 * n) + k))
+  in
+  equal answer A.Done
+    (K.map p
+       ~dsts:(Iarray.of_array (Array.map (fun x -> A.Any x) xs))
+       (Iarray.of_array (Array.map (fun x -> Nx_kernel.Plain x) xs)));
+  Array.iteri
+    (fun k x ->
+      equal ~msg:(strf "output %d" k) (array int64)
+        (Array.init m (fun i -> Int64.of_int ((k * i) + k)))
+        (A.to_array (host x)))
+    xs
+
+(* The memory of a map too wide for a launch
+
+   nx_cuda.mli: such a map takes, until its work is done, at most a
+   temporary for each node of its program, an element of the node's dtype at
+   each index of the loop's axes along which its leaves vary. *)
+
+let held_rows = 64
+let held_cols = 4096
+let held_keys = 130
+
+(* [held_keys] values [key + i] held at once, summed from the last, plus
+   the row: [n key + n (n - 1) / 2 + row] at [row, key]. The values and
+   their sums vary along the keys alone. *)
+let held_program =
+  let n = held_keys in
+  let i64 = D.Any D.Int64 in
+  let value i = 3 + (2 * i) in
+  let nodes =
+    Array.concat
+      [
+        [| P.Coord 1; P.Coord 0 |];
+        Array.concat
+          (List.init n (fun i ->
+               [| P.Const (i64, P.bits D.Int64 (Int64.of_int i));
+                  P.Op2 (Binary Add, 0, value i - 1) |]));
+        [| P.Op2 (Binary Add, value (n - 1), value (n - 2)) |];
+        Array.init (n - 2) (fun j ->
+            P.Op2 (Binary Add, (2 * n) + 2 + j, value (n - 3 - j)));
+      ]
+  in
+  let sum = Array.length nodes - 1 in
+  P.v ~ins:[||]
+    (Iarray.of_array (Array.append nodes [| P.Op2 (Binary Add, sum, 1) |]))
+    ~outs:[| sum + 1 |]
+
+(* The bytes nx_cuda.mli states the map of [held_program] takes at most:
+   its [2n - 1] values and sums along the keys, its output along both axes,
+   each from 16-byte aligned bytes. *)
+let held_bytes =
+  let aligned n = (n + 15) / 16 * 16 in
+  ((2 * held_keys) - 1) * aligned (8 * held_cols)
+  + aligned (8 * held_rows * held_cols)
+
+(* [held_program]'s map on [b] into a fresh destination, and the map,
+   called once to load the library's code on the device. *)
+let held_map (b : Support.backend) =
+  let module K = (val b.kernels) in
+  let dst = A.create b.device D.Int64 [| held_rows; held_cols |] in
+  let map () =
+    equal answer A.Done (K.map held_program ~dsts:[| A.Any dst |] [||]);
+    Rig.Buffer.wait (A.buffer dst) Read_write
+  in
+  map ();
+  (dst, map)
+
+let test_held_memory (b : Support.backend) () =
+  let n = held_keys and d = b.device in
+  let dst, map = held_map b in
+  let budget = Rig.budget d in
+  Rig.set_budget d (Support.settled d + held_bytes);
+  Fun.protect ~finally:(fun () -> Rig.set_budget d budget) map;
+  let want =
+    Array.init (held_rows * held_cols) (fun i ->
+        let row = i / held_cols and key = i mod held_cols in
+        Int64.of_int ((n * key) + (n * (n - 1) / 2) + row))
+  in
+  equal (array int64) want (A.to_array (host dst))
+
+let test_held_loop (b : Support.backend) () =
+  let _, map = held_map b in
+  loop_held b ~calls:32 ~bound:held_bytes map
+
+(* A map with a destination identical to its load, and a scan in nx.cuda's
+   own order, of [wide_program]'s 130 int64 values held at once: each call
+   is too wide for a launch whole and after each part it plans, and is
+   tried again after each. nx_cuda.mli bounds its bytes by a temporary
+   for each node and an array of the loop's shape, for the destination or
+   the scan's terms; each node varies along both axes. *)
+
+let retried =
+  { mode = Held; dt = D.Any D.Int64; padded = false; aliased = true; seed = 7 }
+
+let retried_shape = Iarray.of_list [ 16; 1024 ]
+
+let retried_bytes =
+  let p, _ = wide_program retried in
+  (Iarray.length p.nodes + 1) * 8 * Iarray.fold_left ( * ) 1 retried_shape
+
+(* [k p x y] on [b], [p] [wide_program]'s, [x] a fresh load of
+   [retried_shape] and [y] a fresh destination, run once: the call, which
+   waits for its work. *)
+let retried_call (b : Support.backend) k =
+  let p, _ = wide_program retried in
+  let x = on b (seeded D.Int64 retried_shape 7) in
+  let y = A.create b.device D.Int64 retried_shape in
+  let call () =
+    equal answer A.Done (k p x y);
+    Rig.Buffer.wait (A.buffer x) Read_write;
+    Rig.Buffer.wait (A.buffer y) Read_write
+  in
+  call ();
+  call
+
+let test_retried_map (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  loop_held b ~bound:retried_bytes
+    (retried_call b (fun p x y ->
+         let p = P.v ~ins:p.ins p.nodes ~outs:[| Iarray.get p.outs 0; 0 |] in
+         K.map p ~dsts:[| A.Any x; A.Any y |] [| Nx_kernel.Plain x |]))
+
+let test_retried_scan (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  loop_held b ~bound:retried_bytes
+    (retried_call b (fun p x y ->
+         K.scan p ~axis:1 (Monoid Sum, 0) ~dsts:[| A.Any y |]
+           [| Nx_kernel.Plain x |]))
 
 (* Programs *)
 
@@ -512,7 +664,6 @@ let test_padded_coordinate (b : Support.backend) () =
   let dst = A.create b.device D.Int64 [| rows; cols |] in
   let run () = K.map p ~dsts:[| A.Any dst |] [| unpadded x |] in
   match Domain.join (Domain.spawn run) with
-  | A.Declined -> ()
   | A.Done ->
       equal (array int)
         (Array.init (rows * cols) (fun i -> i + (i mod cols)))
@@ -522,61 +673,87 @@ let test_padded_coordinate (b : Support.backend) () =
 (* In place *)
 
 (* [k dst a] into a fresh destination, then into [a] itself as a C-contiguous
-   copy, [a] being an operand [k] reads only at the result's own index: one
-   answer, and on [Done] the same bits, any NaN for a NaN with [any_nan]. *)
-let in_place ?any_nan ~msg (b : Support.backend) a k =
+   copy of [a0], [a]'s elements on the host, [a] being an operand [k] reads
+   only at the result's own index; then the check that both give one answer,
+   and on [Done] the same bits, any NaN for a NaN with [any_nan]. A law makes
+   all its calls before it checks any, so that the device runs them without
+   a round trip between. *)
+let in_place ?any_nan ~msg (b : Support.backend) (a, a0) k =
   let fresh = A.create b.device (A.dtype a) (L.shape (A.layout a)) in
   let want = k fresh a in
-  let alias = on b (A.copy (host a)) in
-  equal ~msg answer want (k alias alias);
-  if want = A.Done then begin
-    cover "computed" true;
-    equal ~msg (list string) [] (differ ?any_nan (host fresh) (host alias))
-  end
+  let alias = on b (A.copy a0) in
+  let got = k alias alias in
+  fun () ->
+    equal ~msg answer want got;
+    if want = A.Done then begin
+      cover "computed" true;
+      equal ~msg (list string) [] (differ ?any_nan (host fresh) (host alias))
+    end
 
 let binaries = List.filter (function P.Binary _ -> true | _ -> false) op2s
 
 (* A [Plain] load of [map], of one node or more, may be the destination
    itself: the kernels read each index before they write it. *)
-let law_in_place (b : Support.backend) (Pair (x, y), seed) =
+let law_in_place (b : Support.backend) (Pair (x0, y0), seed) =
   let module K = (val b.kernels) in
-  let dt = A.dtype x and shape = L.shape (A.layout x) in
-  let x = on b x and y = on b y in
-  List.iter
-    (fun op ->
-      in_place ~any_nan:(any_nan (K1 op)) ~msg:"one operand into itself" b x
-        (fun dst x -> Support.map1 (module K) op ~dst x))
-    (List.filter (fun op -> P.accepts1 op dt dt) op1s);
-  let map2 k ~dst x y = Support.map2 (module K) k ~dst x y in
-  List.iter
-    (fun k ->
-      let msg into = strf "%s into %s" (name2 k) into in
-      let blind = any_nan (K2 k) in
-      in_place ~any_nan:blind ~msg:(msg "the first") b x (fun dst x ->
-          map2 k ~dst x y);
-      in_place ~any_nan:blind ~msg:(msg "the second") b y (fun dst y ->
-          map2 k ~dst x y);
-      in_place ~any_nan:blind ~msg:(msg "both") b x (fun dst x ->
-          map2 k ~dst x x))
-    (List.filter (fun k -> P.accepts2 k dt) binaries);
+  let dt = A.dtype x0 and shape = L.shape (A.layout x0) in
+  let x = on b x0 and y = on b y0 in
+  let z0 = seeded dt shape (seed + 1) in
+  let z = on b z0 in
   let c = on b (seeded D.Bool shape seed) in
-  let z = on b (seeded dt shape (seed + 1)) in
-  in_place ~msg:"where into the second" b x (fun dst x ->
-      Support.map3 (module K) Where ~dst c x y);
-  in_place ~msg:"where into the third" b y (fun dst y ->
-      Support.map3 (module K) Where ~dst c x y);
-  if P.accepts3 Fma dt dt then
-    in_place ~any_nan:true ~msg:"fma into the addend" b z (fun dst z ->
-        Support.map3 (module K) Fma ~dst x y z);
-  if P.accepts2 (Binary Add) dt then begin
-    let p =
-      P.v ~ins:[| D.Any dt; D.Any dt |]
-        [| P.In 0; In 1; Op2 (Binary Add, 0, 1) |]
-        ~outs:[| 2 |]
-    in
-    in_place ~any_nan:true ~msg:"map into a load" b x (fun dst x ->
-        K.map p ~dsts:[| A.Any dst |] Nx_kernel.[| Plain x; Plain y |])
-  end
+  let map2 k ~dst x y = Support.map2 (module K) k ~dst x y in
+  let ones =
+    List.map
+      (fun op ->
+        in_place ~any_nan:(any_nan (K1 op)) ~msg:"one operand into itself" b
+          (x, x0) (fun dst x -> Support.map1 (module K) op ~dst x))
+      (List.filter (fun op -> P.accepts1 op dt dt) op1s)
+  in
+  let twos =
+    List.concat_map
+      (fun k ->
+        let msg into = strf "%s into %s" (name2 k) into in
+        let blind = any_nan (K2 k) in
+        [
+          in_place ~any_nan:blind ~msg:(msg "the first") b (x, x0)
+            (fun dst x -> map2 k ~dst x y);
+          in_place ~any_nan:blind ~msg:(msg "the second") b (y, y0)
+            (fun dst y -> map2 k ~dst x y);
+          in_place ~any_nan:blind ~msg:(msg "both") b (x, x0) (fun dst x ->
+              map2 k ~dst x x);
+        ])
+      (List.filter (fun k -> P.accepts2 k dt) binaries)
+  in
+  let wheres =
+    [
+      in_place ~msg:"where into the second" b (x, x0) (fun dst x ->
+          Support.map3 (module K) Where ~dst c x y);
+      in_place ~msg:"where into the third" b (y, y0) (fun dst y ->
+          Support.map3 (module K) Where ~dst c x y);
+    ]
+  in
+  let fma =
+    if not (P.accepts3 Fma dt dt) then []
+    else
+      [
+        in_place ~any_nan:true ~msg:"fma into the addend" b (z, z0)
+          (fun dst z -> Support.map3 (module K) Fma ~dst x y z);
+      ]
+  in
+  let load =
+    if not (P.accepts2 (Binary Add) dt) then []
+    else
+      let p =
+        P.v ~ins:[| D.Any dt; D.Any dt |]
+          [| P.In 0; In 1; Op2 (Binary Add, 0, 1) |]
+          ~outs:[| 2 |]
+      in
+      [
+        in_place ~any_nan:true ~msg:"map into a load" b (x, x0) (fun dst x ->
+            K.map p ~dsts:[| A.Any dst |] Nx_kernel.[| Plain x; Plain y |]);
+      ]
+  in
+  List.iter (fun check -> check ()) (ones @ twos @ wheres @ fma @ load)
 
 (* A drawn program of several nodes whose first output, its last node cast
    to its loads' dtype, is written over one of its loads, as a donated
@@ -1376,8 +1553,13 @@ let laws (b : Support.backend) =
         "a map that does not fit is not Done and writes nothing outside its \
          destinations; the loops' rule names its refusal"
         (map_misfits b) (check_map_misfit b);
+      prop ~count:45
+        "a map too wide for a launch gives its nodes' bits, into a load too"
+        (Gen.with_pp pp_wide wide_cases) (run (law_wide_map b));
       test "a map reads a load identical to a destination before writing it"
         (unit (test_map_identical_view b));
+      test "a map of outputs too many for a launch may write over its loads"
+        (unit (test_wide_in_place b));
       test "a map of a padded load reads its coordinates"
         (unit (test_padded_coordinate b));
       prop ~count:200
@@ -1388,9 +1570,8 @@ let laws (b : Support.backend) =
          in twenty-five: 400 cases reach each in every run. *)
       prop ~count:400
         ~examples:(List.map (fun p -> (p, 1, Plain)) large_view_pairs)
-        "a map gives the bits of its nodes run one by one, or declines and \
-         writes nothing"
-        split_cases (run (law_split b));
+        "a map gives the bits of its nodes run one by one"
+        split_cases (run (law_split ~declines:(fun _ _ -> false) b));
       prop ~examples:(List.map (fun p -> (p, 1)) (erf_pair :: nan_pairs))
         "an operand read at the result's own index may be the destination"
         (Gen.pair (Gen.frequency [ (9, pairs); (1, large_pairs) ]) Gen.nat)
@@ -1432,4 +1613,91 @@ let laws (b : Support.backend) =
         (run (law_complex_arith b));
     ]
 
-let () = exit (run "nx_kernel.kernels" (List.map laws Support.backends))
+(* nx_cuda.mli's memory of a map too wide for a launch. *)
+let memory_laws (b : Support.backend) =
+  group (b.name ^ " memory")
+    [
+      test
+        "a map too wide for a launch takes temporaries of the axes its \
+         values vary along"
+        (test_held_memory b);
+      test "maps too wide for a launch in a loop hold one call's temporaries"
+        (test_held_loop b);
+      test
+        "maps over their load tried again after each part, in a loop, hold \
+         one call's temporaries"
+        (test_retried_map b);
+      test
+        "scans tried again after each part, in a loop, hold one call's \
+         temporaries"
+        (test_retried_scan b);
+    ]
+
+(* rig.nv *)
+
+(* A map of [2^31 + 512] elements into a uint16 destination of 4 GiB and
+   1 KiB, each element its coordinate modulo 2^16, as [Cast] stores it:
+   1024 elements read back from its start, across its byte 2^32 and from
+   its end. *)
+let past_4_gib (b : Support.backend) =
+  let module K = (val b.kernels) in
+  let n = (1 lsl 31) + 512 and m = 1024 in
+  let y = A.create b.device D.Uint16 (Iarray.of_list [ n ]) in
+  let p =
+    P.v ~ins:(Iarray.of_list [])
+      (Iarray.of_list [ P.Coord 0; P.Op1 (Cast, D.Any D.Uint16, 0) ])
+      ~outs:(Iarray.of_list [ 1 ])
+  in
+  equal Elements.answer A.Done
+    (K.map p ~dsts:(Iarray.of_list [ A.Any y ]) (Iarray.of_list []));
+  let read at =
+    let l =
+      L.v ~offset:at ~strides:(Iarray.of_list [ 1 ]) (Iarray.of_list [ m ])
+    in
+    let x = host (A.v D.Uint16 l (A.buffer y)) in
+    equal ~msg:(strf "from %d" at) (array int)
+      (Array.init m (fun i -> (at + i) land 0xffff))
+      (A.to_array x);
+    A.Any x
+  in
+  [| read 0; read ((1 lsl 31) - (m / 2)); read (n - m) |]
+
+(* rig.nv loads the cubin CUDA loads, so a map through it has CUDA's
+   bits: what it can get wrong, its launches, memory and order, shows in
+   them. Each case's map runs through CUDA, then through rig.nv. A NaN
+   agrees with any NaN: nx_cuda.mli leaves a NaN result's sign and
+   payload unspecified. *)
+let nv_laws (first : Support.backend) (nv : Support.backend) =
+  group nv.name
+    [
+      group "bits are cuda's, any NaN for a NaN"
+        [
+          prop ~count:200 "of maps of programs, over padded loads too"
+            split_cases (fun ((Pair (x, _) as pair), seed, mode) ->
+              covers (Case x);
+              cover "padded loads" (mode = Padded);
+              cover "a program of hundreds of nodes" (mode = Long);
+              Elements.agree first nv (fun b -> split_map b (pair, seed, mode)));
+          prop ~count:45 "of maps too wide for a launch"
+            (Gen.with_pp pp_wide wide_cases) (fun c ->
+              cover "past a launch's loads" (c.mode = Loads);
+              cover "past a launch's values held" (c.mode = Held);
+              cover "past a launch's outputs" (c.mode = Outputs);
+              cover "a padded load copied out" (c.mode = Loads && c.padded);
+              Elements.agree first nv (fun b -> wide_map b c));
+          test "of a map into a buffer past 4 GiB" (fun () ->
+              Elements.agree first nv past_4_gib);
+        ];
+    ]
+
+let () =
+  let nv =
+    match (Support.gpus (), Support.nv ()) with
+    | first :: _, Some nv -> [ nv_laws first nv ]
+    | _ -> []
+  in
+  exit
+    (run "nx_kernel.kernels"
+       (List.map laws (Support.backends ())
+       @ List.map memory_laws (Support.gpus () @ Option.to_list (Support.nv ()))
+       @ nv))

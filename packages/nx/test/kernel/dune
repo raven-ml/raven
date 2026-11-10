@@ -1,11 +1,44 @@
+; nx.kernel's suites through every kernel library the host runs. Their
+; nx.cpu groups run here, beside other suites; their nx.cuda groups, on the
+; machine's NVIDIA GPU, run below under the lock GPU tests share. Each
+; suite runs its tests in 3 processes at once, which together hold at most
+; 12 GiB of the GPU: test_fft's transform past 2^31 elements takes 8 GiB.
+
 (tests
- (names test_kinds test_prog test_shape test_kernels test_contract test_reduce test_index test_ranges test_sort test_unique test_fold test_assemble test_linalg test_attention)
- (modules test_kinds test_prog test_shape test_kernels test_contract test_reduce test_index test_ranges test_sort test_unique test_fold test_assemble test_linalg test_attention)
+ (names
+  test_kinds
+  test_kernels
+  test_contract
+  test_reduce
+  test_index
+  test_ranges
+  test_sort
+  test_unique
+  test_fold
+  test_assemble
+  test_linalg
+  test_attention
+  test_fft)
+ (modules
+  test_kinds
+  test_kernels
+  test_contract
+  test_reduce
+  test_index
+  test_ranges
+  test_sort
+  test_unique
+  test_fold
+  test_assemble
+  test_linalg
+  test_attention
+  test_fft)
  (libraries
   nx_array
   nx_array_gen
   nx_array_support
   nx_cpu
+  nx_cuda
   nx_kernel
   nx_kernel_cases
   nx_kernels_support
@@ -13,4 +46,48 @@
   rig
   windtrap)
  (deps
-  (glob_files golden/kinds/*.golden)))
+  (glob_files golden/kinds/*.golden))
+ (action
+  (setenv
+   NX_KERNELS
+   cpu
+   (run %{test}))))
+
+(rule
+ (alias runtest)
+ (locks %{workspace_root}/gpu)
+ (deps
+  (glob_files golden/kinds/*.golden))
+ (action
+  (setenv
+   WINDTRAP_FILTER
+   cuda
+   (progn
+    (run %{exe:test_kinds.exe} -j 3)
+    (run %{exe:test_kernels.exe} -j 3)
+    (run %{exe:test_contract.exe} -j 3)
+    (run %{exe:test_reduce.exe} -j 3)
+    (run %{exe:test_index.exe} -j 3)
+    (run %{exe:test_ranges.exe} -j 3)
+    (run %{exe:test_sort.exe} -j 3)
+    (run %{exe:test_unique.exe} -j 3)
+    (run %{exe:test_fold.exe} -j 3)
+    (run %{exe:test_assemble.exe} -j 3)
+    (run %{exe:test_linalg.exe} -j 3)
+    (run %{exe:test_attention.exe} -j 3)
+    (run %{exe:test_fft.exe} -j 3)))))
+
+; Programs and shapes, through nx.cpu alone.
+
+(tests
+ (names test_prog test_shape)
+ (modules test_prog test_shape)
+ (libraries
+  nx_array
+  nx_array_gen
+  nx_array_support
+  nx_cpu
+  nx_kernel
+  nx_kernel_cases
+  rig
+  windtrap))

@@ -370,9 +370,7 @@ let law_bound (b : Support.backend) (c : case) =
   let (A.Any x) = c.x in
   let complex = D.is D.Complex (A.dtype x) in
   let pr = precision (D.Any (A.dtype x)) in
-  match run b c with
-  | None -> cover "declined" true
-  | Some y ->
+  let y = run b c in
       let ts = zvalues c.x and gs = zvalues y in
       let fresh () = reference ~complex pr c.monoid in
       let vs =
@@ -430,31 +428,9 @@ let prefix a m (A.Any x) =
 let law_prefix (b : Support.backend) (c : case) =
   let s = shape_of c.x and a = c.axes.(0) in
   let m = s.(a) / 2 in
-  match (run b c, run b { c with x = prefix a m c.x }) with
-  | Some y, Some y' ->
-      cover "a prefix past 4096 terms" (m > 4096);
-      equal (list string) [] (differ (got (prefix a m y)) y')
-  | None, None -> cover "declined" true
-  | _ -> failf "a scan and its prefix were not both computed"
-
-(* A kernel that declines writes nothing: the destination's bytes, drawn,
-   are as they were. *)
-let law_declined (b : Support.backend) (c : case) =
-  let (A.Any x) = c.x in
-  let d = D.Any (A.dtype x) and ys = result_shape c in
-  let r = Random.State.make [| 3 |] in
-  let dst =
-    on b
-      (Elements.of_elements d ys
-         (Array.init (total ys) (fun _ -> Elements.element d r)))
-  in
-  let before = Elements.elements (host dst) in
-  match call b c dst with
-  | A.Declined ->
-      cover "declined" true;
-      equal (array string) before (Elements.elements (host dst))
-  | A.Done -> cover "computed" true
-  | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
+  let y = run b c and y' = run b { c with x = prefix a m c.x } in
+  cover "a prefix past 4096 terms" (m > 4096);
+  equal (list string) [] (differ (got (prefix a m y)) y')
 
 (* Carries *)
 
@@ -1042,11 +1018,24 @@ let special_case =
          (match r with Arg _ -> floats @ floats @ floats @ ints | _ -> floats)
      in
      let small = array ~size:(int_range 0 3) (int_range 0 5) in
-     let* s = frequency [ (6, small); (1, long) ] in
+     (* Rows of 128 terms or more, reduced or scanned along them: few
+        outputs whose lanes nx.cuda spreads over its threads. *)
+     let rows =
+       let* r = int_range 1 40 in
+       let+ k = of_list ~pp:Format.pp_print_int [ 130; 300; 1025 ] in
+       [| r; k |]
+     in
+     let* s, along =
+       frequency
+         [ (6, map (fun s -> (s, false)) small);
+           (1, map (fun s -> (s, false)) long);
+           (2, map (fun s -> (s, true)) rows) ]
+     in
      let s = if scanned && Array.length s = 0 then [| 3 |] else s in
      let rank = Array.length s in
      let* axes =
-       if scanned then map (fun a -> [| a |]) (int_range 0 (rank - 1))
+       if along then constant [| 1 |]
+       else if scanned then map (fun a -> [| a |]) (int_range 0 (rank - 1))
        else
          let+ keep = array ~size:(constant rank) bool in
          Array.of_list (List.filter (fun i -> keep.(i)) (List.init rank Fun.id))
@@ -1219,7 +1208,7 @@ let show_klass = function
   | Not_negative -> "a finite number not negative"
 
 (* [c] by [b]'s kernels, on its device, into fresh destinations, their
-   terms; [None] if declined. *)
+   terms. *)
 let run_special (b : Support.backend) c =
   let (module K : Nx_kernel.S) = b.kernels in
   let st = c.stat in
@@ -1242,8 +1231,7 @@ let run_special (b : Support.backend) c =
         ~axes:(Iarray.of_array st.axes) [| (st.r, 0) |] ~dsts loads
   in
   match answer with
-  | A.Done -> Some (Array.map (fun d -> terms (host d)) (Iarray.to_array dsts))
-  | A.Declined -> None
+  | A.Done -> Array.map (fun d -> terms (host d)) (Iarray.to_array dsts)
   | a -> failf "the kernels answered %a" Nx_array_support.pp_answer a
 
 (* Logsumexp is -∞ for no term or terms all -∞, +∞ where a term is +∞ and
@@ -1283,58 +1271,569 @@ let law_special (b : Support.backend) c =
         outs
   | _ -> ());
   List.iter (fun l -> cover l (Hashtbl.mem seen l)) special_labels;
-  match run_special b c with
-  | None -> cover "declined" true
-  | Some got ->
+  let got = run_special b c in
+  Array.iteri
+    (fun k g ->
+      let bad = ref [] in
       Array.iteri
-        (fun k g ->
-          let bad = ref [] in
-          Array.iteri
-            (fun i (_, ks) ->
-              if (not (fits ks.(k) g.(i))) && List.length !bad < 8 then
-                bad :=
-                  Printf.sprintf "result %d: %Lx, expected %s" i (bits_of g.(i))
-                    (show_klass ks.(k))
-                  :: !bad)
-            want;
-          equal ~msg:(Printf.sprintf "destination %d" k) (list string) []
-            (List.rev !bad))
-        got
+        (fun i (_, ks) ->
+          if (not (fits ks.(k) g.(i))) && List.length !bad < 8 then
+            bad :=
+              Printf.sprintf "result %d: %Lx, expected %s" i (bits_of g.(i))
+                (show_klass ks.(k))
+              :: !bad)
+        want;
+      equal ~msg:(Printf.sprintf "destination %d" k) (list string) []
+        (List.rev !bad))
+    got
+
+(* Programs reduced and scanned *)
+
+(* A reduction along [axes], or a scan along [axes.(0)], of a program drawn
+   from [seed] over a loop of [shape], its operands of [dts], its first
+   load padded where [padded], of hundreds of nodes where [long]. *)
+type programmed = {
+  scanned : bool;
+  summed : bool;
+  shape : int array;
+  axes : int array;
+  dts : D.any array;
+  padded : bool;
+  long : bool;
+  seed : int;
+}
+
+let pp_programmed ppf c =
+  Format.fprintf ppf "%s along %a of a loop of %a over %a%s%s, seed %d"
+    (if c.summed then "float sum scan"
+     else if c.scanned then "scan"
+     else "reduce")
+    pp_ints c.axes pp_ints c.shape
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_dtype)
+    (Array.to_list c.dts)
+    (if c.padded then ", padded" else "")
+    (if c.long then ", long" else "")
+    c.seed
+
+(* Every dtype a program reads: the narrow floats and integers and [bit]
+   among them. *)
+let narrows =
+  base @ complexes
+  @ D.
+      [
+        Any Float16; Any Bfloat16; Any Float8_e4m3fn; Any Float8_e5m2;
+        Any Float4_e2m1fn; Any Int4; Any Uint4; Any Bit;
+      ]
+
+(* Loops of small extents, rows, and one or two rows past 64 blocks of
+   terms, the long axis reduced or scanned. *)
+let programmed =
+  let open Gen in
+  let small = array ~size:(int_range 1 4) (int_range 1 5) in
+  let rows =
+    let* r = int_range 1 40 in
+    let+ k = of_list ~pp:Format.pp_print_int [ 3; 64; 1025; 5000 ] in
+    [| r; k |]
+  in
+  let long =
+    let* n = int_range 66_000 140_000 in
+    let+ r = int_range 1 2 in
+    if r = 1 then [| n |] else [| r; n |]
+  in
+  let* scanned = bool in
+  let* summed = if scanned then bool else constant false in
+  let* shape = frequency [ (3, small); (3, rows); (2, long) ] in
+  let r = Array.length shape in
+  let last = r - 1 in
+  let* axes =
+    if shape.(last) > 1000 then constant [| last |]
+    else if scanned then map (fun a -> [| a |]) (int_range 0 last)
+    else
+      let+ keep = array ~size:(constant r) bool in
+      Array.of_list (List.filter (fun i -> keep.(i)) (List.init r Fun.id))
+  in
+  let* dts = array ~size:(int_range 1 3) (of_list ~pp:pp_dtype narrows) in
+  let* padded = bool in
+  let* long = frequency [ (2, constant false); (1, constant true) ] in
+  let+ seed = int in
+  { scanned; summed; shape; axes; dts; padded; long; seed }
+
+(* A load of [dt] whose loop has [shape]: through a drawn view, or, with
+   [padded], padded by up to two elements at each end and one between
+   neighbours with a drawn fill. *)
+let programmed_load st (D.Any dt) shape ~padded =
+  let seed = Random.State.bits st in
+  let pick n = Random.State.int st n in
+  if not padded then
+    let v =
+      {
+        perm = Array.init (Array.length shape) Fun.id;
+        stepped = pick 2 = 0;
+        reversed = (if pick 2 = 0 then Some (pick (Array.length shape)) else None);
+        broadcast = pick 4 = 0;
+      }
+    in
+    let (A.Any x) = operand (D.Any dt) shape v ~specials:500 seed in
+    Nx_kernel.Plain x
+  else
+    let fit e =
+      let lo = pick 3 and hi = pick 3 and interior = pick 2 in
+      let d = e - lo - hi + interior in
+      if d >= 1 && d mod (interior + 1) = 0 then (lo, hi, interior, d / (interior + 1))
+      else (0, 0, 0, e)
+    in
+    let axes = Array.map fit shape in
+    let get f = Iarray.of_array (Array.map f axes) in
+    let pad =
+      {
+        Nx_kernel.lo = get (fun (l, _, _, _) -> l);
+        hi = get (fun (_, h, _, _) -> h);
+        interior = get (fun (_, _, i, _) -> i);
+        windows = [||];
+      }
+    in
+    let x = elements dt (total (Array.map (fun (_, _, _, d) -> d) axes)) ~specials:500 seed in
+    let x =
+      Option.get (A.move (M.Reshape (Array.map (fun (_, _, _, d) -> d) axes |> Iarray.of_array)) x)
+    in
+    let fill = A.get (elements dt 1 ~specials:3 (seed + 1)) [| 0 |] in
+    Nx_kernel.Padded { x; fill; pad }
+
+(* [l] on [b]'s device. *)
+let load_on b : Nx_kernel.load -> Nx_kernel.load = function
+  | Plain x -> Plain (Support.on b x)
+  | Padded p -> Padded { p with x = Support.on b p.x }
+
+let reductions_all : Nx_kernel.reduction list =
+  [ Monoid Sum; Monoid Prod; Monoid Max; Monoid Min; Logsumexp; Moments;
+    Arg Max; Arg Min ]
+
+(* One to three reductions of [p]'s outputs, each of a dtype it takes;
+   one with [scanned]. *)
+let programmed_reductions st (p : P.t) ~scanned =
+  let outs = Iarray.length p.outs in
+  let one () =
+    let k = Random.State.int st outs in
+    let (D.Any dt) = P.dtype p (Iarray.get p.outs k) in
+    let ok = List.filter (fun r -> Nx_kernel.accepts r dt) reductions_all in
+    (List.nth ok (Random.State.int st (List.length ok)), k)
+  in
+  Array.init (if scanned then 1 else 1 + Random.State.int st 3) (fun _ -> one ())
+
+(* [p], of node dtypes [types], with its first output cast to float32 or
+   float64 as its one output, where a cast takes it. *)
+let cast_out st (p : P.t) types =
+  let o = Iarray.get p.outs 0 in
+  let (D.Any x) = types.(o) in
+  let (D.Any y as dt) =
+    if Random.State.bool st then D.Any D.Float32 else D.Any D.Float64
+  in
+  if not (P.accepts1 Cast x y) then None
+  else
+    let n = Iarray.length p.nodes in
+    let nodes = Iarray.append p.nodes (Iarray.of_list [ P.Op1 (Cast, dt, o) ]) in
+    Some (P.v ~ins:p.ins nodes ~outs:(Iarray.of_list [ n ]), Array.append types [| dt |])
+
+(* Fresh destinations for [rs] of [p], of shape [s] on [b]'s device: each
+   in its output's dtype, an Arg's position in int64. *)
+let programmed_dsts (b : Support.backend) (p : P.t) rs s =
+  Array.concat
+    (List.map
+       (fun ((r : Nx_kernel.reduction), k) ->
+         let (D.Any dt) = P.dtype p (Iarray.get p.outs k) in
+         let y () = A.Any (A.create b.device dt (Iarray.of_array s)) in
+         match r with
+         | Arg _ -> [| y (); A.Any (A.create b.device D.Int64 (Iarray.of_array s)) |]
+         | Moments -> [| y (); y () |]
+         | Monoid _ | Logsumexp -> [| y () |])
+       (Array.to_list rs))
+
+(* A reduction or a scan of a program's outputs has the bits of the same
+   reduction or scan of those outputs mapped into arrays first, any NaN for
+   a NaN, in a library whose association follows the loop's extents, the
+   dtypes and the scanned axis alone, whatever reads its terms: nx_cpu.mli's
+   sums and products and nx_cuda.mli's loops state it. *)
+(* [c]'s program, loads, reductions and their shape on [b]'s device, drawn
+   from its seed: where [c.summed], a float sum scan of its first output
+   cast to float32 or float64. *)
+let programmed_parts (b : Support.backend) c =
+  let st = Random.State.make [| c.seed |] in
+  let rank = Array.length c.shape in
+  let length = if c.long then 400 else 6 in
+  let p, types = Kernels_cases.program ~length st c.dts ~room:16 ~rank in
+  let loads =
+    Array.mapi
+      (fun i dt ->
+        let padded = c.padded && i = 0 in
+        load_on b (programmed_load st dt c.shape ~padded))
+      c.dts
+  in
+  let summed = if c.summed then cast_out st p types else None in
+  let p, types = Option.value summed ~default:(p, types) in
+  let rs =
+    if Option.is_some summed then [| (Nx_kernel.Monoid Sum, 0) |]
+    else programmed_reductions st p ~scanned:c.scanned
+  in
+  let ys =
+    if c.scanned then c.shape
+    else
+      Result.get_ok
+        (Nx_kernel.Shape.reduce ~axes:(Iarray.of_array c.axes)
+           (Array.map fst rs) c.shape)
+  in
+  (p, types, loads, rs, ys)
+
+let programmed_done what = function
+  | A.Done -> ()
+  | r -> failf "%s answered %a" what Nx_array_support.pp_answer r
+
+(* [c]'s reduction or scan of [p] over [loads] into fresh destinations on
+   [b]'s device. *)
+let programmed_call (b : Support.backend) c (p, _, loads, rs, ys) =
+  let module K = (val b.kernels) in
+  let dsts = programmed_dsts b p rs ys in
+  let ds = Iarray.of_array dsts and loads = Iarray.of_array loads in
+  programmed_done "the call"
+    (if c.scanned then K.scan p ~axis:c.axes.(0) rs.(0) ~dsts:ds loads
+     else
+       K.reduce p ~shape:(Iarray.of_array c.shape)
+         ~axes:(Iarray.of_array c.axes) (Iarray.of_array rs) ~dsts:ds loads);
+  dsts
+
+let law_programmed (b : Support.backend) c =
+  let module K = (val b.kernels) in
+  let ((p, types, loads, rs, ys) as parts) = programmed_parts b c in
+  let call p ~dsts loads =
+    let dsts = Iarray.of_array dsts and loads = Iarray.of_array loads in
+    if c.scanned then K.scan p ~axis:c.axes.(0) rs.(0) ~dsts loads
+    else
+      K.reduce p ~shape:(Iarray.of_array c.shape)
+        ~axes:(Iarray.of_array c.axes) (Iarray.of_array rs) ~dsts loads
+  in
+  let done_ = programmed_done in
+  let got = programmed_call b c parts in
+  let outs = Iarray.to_array p.outs in
+  let mapped =
+    Array.map
+      (fun o ->
+        let (D.Any dt) = types.(o) in
+        A.Any (A.create b.device dt (Iarray.of_array c.shape)))
+      outs
+  in
+  done_ "the map"
+    (K.map p ~dsts:(Iarray.of_array mapped) (Iarray.of_array loads));
+  let identities =
+    P.v ~ins:(Iarray.of_array (Array.map (fun o -> types.(o)) outs))
+      (Iarray.init (Array.length outs) (fun k -> P.In k))
+      ~outs:(Iarray.init (Array.length outs) Fun.id)
+  in
+  let want = programmed_dsts b p rs ys in
+  done_ "the call of the mapped outputs"
+    (call identities ~dsts:want (Array.map plain_of mapped));
+  let terms =
+    if c.scanned then c.shape.(c.axes.(0))
+    else Array.fold_left (fun n a -> n * c.shape.(a)) 1 c.axes
+  in
+  let has f = Iarray.exists f p.nodes in
+  let innermost =
+    c.scanned
+    && Array.for_all (( = ) 1)
+         (Array.sub c.shape (c.axes.(0) + 1) (Array.length c.shape - c.axes.(0) - 1))
+  in
+  let summed = c.summed && rs = [| (Nx_kernel.Monoid Sum, 0) |] in
+  cover "a float sum scan of the innermost axis past 32 terms"
+    (summed && innermost && terms > 32);
+  cover "a scan of another axis" (c.scanned && not innermost);
+  cover "padded loads" c.padded;
+  cover "a long program over a padded load" (c.padded && c.long);
+  cover "a coordinate" (has (function P.Coord _ -> true | _ -> false));
+  cover "several loads" (Array.length c.dts > 1);
+  cover "more than eight values held" (Kernels_cases.held p > 8);
+  cover "several reductions" (Array.length rs > 1);
+  cover "Logsumexp or Moments"
+    (Array.exists (fun (r, _) -> r = Nx_kernel.Logsumexp || r = Moments) rs);
+  cover "an Arg" (Array.exists (function Nx_kernel.Arg _, _ -> true | _ -> false) rs);
+  cover "an output of more than 16 blocks of terms" ((not c.scanned) && terms > 16 * 1024);
+  cover "an output of more than 64 blocks of terms" ((not c.scanned) && terms > 64 * 1024);
+  cover "a scan past one chunk" (c.scanned && terms > 4096);
+  Array.iteri
+    (fun k (A.Any w) ->
+      let (A.Any g) = got.(k) in
+      equal
+        ~msg:(Printf.sprintf "destination %d of %s" k (Kernels_cases.describe p))
+        (Kernels_cases.same_values (D.Any (A.dtype w)))
+        (Kernels_cases.bits_of (Support.host w))
+        (Kernels_cases.bits_of (Support.host g)))
+    want
+
+(* Calls too wide for a launch *)
+
+let wide_reductions : Nx_kernel.reduction list =
+  [ Monoid Sum; Monoid Max; Arg Min; Logsumexp; Moments; Monoid Prod ]
+
+(* A reduction or a scan too wide for one of nx.cuda's launches, by its
+   loads, its values held at once or its reductions, has nx.cpu's bits,
+   any NaN for a NaN, in a library that states nx.cpu's association; a
+   scan in one that states its own, the bits of its output mapped, then
+   scanned. A scan scans along the innermost axis of more than one
+   element; a reduction reduces axes 0 and 1. *)
+let wide_call (c : Kernels_cases.wide) scanned =
+  let p, n = Kernels_cases.wide_program c in
+  let shape = Kernels_cases.wide_shape c in
+  let scanned = scanned && c.mode <> Outputs in
+  let axis = if c.padded then 1 else 2 in
+  let (D.Any d) = c.dt in
+  let ok = List.filter (fun r -> Nx_kernel.accepts r d) wide_reductions in
+  let rs =
+    let outs = Iarray.length p.outs in
+    let count = if c.mode = Outputs then 500 else if scanned then 1 else 2 in
+    Array.init count (fun i ->
+        (List.nth ok (i mod List.length ok), i mod outs))
+  in
+  let axes = Iarray.of_list [ 0; 1 ] in
+  let ys =
+    if scanned then shape
+    else Result.get_ok (Nx_kernel.Shape.reduce ~axes (Array.map fst rs) shape)
+  in
+  let call (b : Support.backend) =
+    let module K = (val b.kernels) in
+    let loads, _ = Kernels_cases.wide_loads b c n in
+    let dsts = programmed_dsts b p rs ys in
+    let ds = Iarray.of_array dsts and loads = Iarray.of_array loads in
+    let answer =
+      if scanned then K.scan p ~axis rs.(0) ~dsts:ds loads
+      else
+        K.reduce p ~shape:(Iarray.of_array shape) ~axes (Iarray.of_array rs)
+          ~dsts:ds loads
+    in
+    equal Kernels_cases.answer A.Done answer;
+    dsts
+  in
+  let mapped (b : Support.backend) =
+    let module K = (val b.kernels) in
+    let loads, _ = Kernels_cases.wide_loads b c n in
+    let dt = P.dtype p (Iarray.get p.outs 0) in
+    let (D.Any d) = dt in
+    let y = A.Any (A.create b.device d (Iarray.of_array shape)) in
+    equal Kernels_cases.answer A.Done
+      (K.map p ~dsts:[| y |] (Iarray.of_array loads));
+    let id = identity dt in
+    let dsts = programmed_dsts b id rs ys in
+    equal Kernels_cases.answer A.Done
+      (K.scan id ~axis rs.(0) ~dsts:(Iarray.of_array dsts) [| plain_of y |]);
+    dsts
+  in
+  (scanned, call, mapped)
+
+let law_wide (b : Support.backend) ((c : Kernels_cases.wide), scanned) =
+  let scanned, call, mapped = wide_call c scanned in
+  let want =
+    if scanned && not b.scan_order then mapped b
+    else Support.cpu.around (fun () -> call Support.cpu)
+  in
+  let got = call b in
+  cover "past a launch's loads" (c.mode = Loads);
+  cover "past a launch's values held" (c.mode = Held);
+  cover "past a launch's reductions" (c.mode = Outputs);
+  cover "a padded load copied out" (c.mode = Loads && c.padded);
+  cover "a scan" scanned;
+  Array.iteri
+    (fun k (A.Any w) ->
+      let (A.Any g) = got.(k) in
+      equal
+        ~msg:(Printf.sprintf "destination %d" k)
+        (Kernels_cases.same_values (D.Any (A.dtype w)))
+        (Kernels_cases.bits_of (Support.host w))
+        (Kernels_cases.bits_of (Support.host g)))
+    want
+
+(* nx.cpu's bits *)
+
+(* Float and complex sums and products of every float dtype, narrow ones
+   included, reduced, and scanned where [scans]. *)
+let associated ~scans =
+  Gen.with_pp pp_case
+    (case_of
+       ~scan:(if scans then Gen.bool else Gen.constant false)
+       ~monoids:[ Sum; Prod ]
+       (D.
+          [
+            Any Float16; Any Bfloat16; Any Float8_e4m3fn; Any Float8_e5m2;
+            Any Float4_e2m1fn;
+          ]
+       @ floats @ complexes))
+
+(* A library that keeps nx.cpu's lane order and chunks gives nx.cpu's
+   bits: a float or complex sum's or product's results, reduced or scanned,
+   are nx.cpu's, any NaN for a NaN. *)
+let law_cpu_bits (b : Support.backend) (c : case) =
+  if b.scan_order then cover "a scan" c.scan;
+  let terms = total (shape_of c.x) / Int.max 1 (total (result_shape c)) in
+  cover "past one block of terms" (terms > 1024);
+  cover "past 64 blocks, several groups an output"
+    ((not c.scan) && terms > 64 * 1024);
+  let (A.Any w) = Support.cpu.around (fun () -> run Support.cpu c) in
+  let (A.Any g) = run b c in
+  equal
+    (Kernels_cases.same_values (D.Any (A.dtype w)))
+    (Kernels_cases.bits_of w) (Kernels_cases.bits_of g)
+
+(* So do Logsumexp's and Moments' results, reduced or scanned, and Arg's. *)
+let law_cpu_special (b : Support.backend) (c : special) =
+  let want = Support.cpu.around (fun () -> run_special Support.cpu c) in
+  let got = run_special b c in
+  let s = shape_of c.stat.x in
+  cover "a scan" c.scanned;
+  cover "a reduction along rows of 128 terms or more"
+    ((not c.scanned) && c.stat.axes = [| 1 |] && Array.length s = 2
+     && s.(1) >= 128);
+  Array.iteri
+    (fun k w ->
+      let bad = ref [] in
+      Array.iteri
+        (fun i t ->
+          let g = got.(k).(i) in
+          let ok = if is_nan t then is_nan g else bits_of g = bits_of t in
+          if (not ok) && List.length !bad < 8 then
+            bad :=
+              Printf.sprintf "result %d: %Lx, expected %Lx" i (bits_of g)
+                (bits_of t)
+              :: !bad)
+        w;
+      equal ~msg:(Printf.sprintf "destination %d" k) (list string) []
+        (List.rev !bad))
+    want
 
 (* The suite *)
 
 let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group b.name
-    [
+    ([
       prop ~examples:bound_examples
         "a float or complex sum or product is within its bound of the exact \
          one"
         bounded (run (law_bound b));
       prop ~examples:scan_examples "a scan of a prefix is the prefix of the scan"
         scans (run (law_prefix b));
-      prop ~examples:any_examples "a declined case writes nothing" any_case
-        (run (law_declined b));
-      prop "an exact scan from a carry continues the scan whose terms it \
-            carries"
-        (carry_case Exact) (run (law_carry b));
-      prop
-        "a float or complex sum or product from a carry is within the bound \
-         of the carry's and the terms' reduction"
-        (carry_case Inexact) (run (law_carry_bound b));
       prop ~count:300 ~examples:special_examples
         "Logsumexp, Moments and Arg give the special values their terms make"
         special_case (run (law_special b));
-      test "a carry of the carrier is taken" (fun () ->
-          b.around (test_carrier_carry b));
       cases
         ~id:(fun (msg, _, _, _) -> msg)
         "a reduction or scan that does not fit is not Done and writes \
          nothing outside its destinations; nx's rules name its refusal"
         (loop_misfits b) (check_misfit b);
+      prop
+        "an exact scan from a carry continues the scan whose terms it carries"
+        (carry_case Exact) (run (law_carry b));
+      prop
+        "a float or complex sum or product from a carry is within the bound \
+         of the carry's and the terms' reduction"
+        (carry_case Inexact) (run (law_carry_bound b));
+      test "a carry of the carrier is taken" (fun () ->
+          b.around (test_carrier_carry b));
       test "an extreme's carry its destination aliases" (fun () ->
           b.around (test_aliased_carry b));
     ]
+    @ (if not b.lane_order then []
+       else
+         [
+           prop ~count:200
+             "a reduction or a scan of a program has the bits of its outputs \
+              mapped, then reduced or scanned"
+             (Gen.with_pp pp_programmed programmed)
+             (run (law_programmed b));
+         ])
+    @
+    if b == Support.cpu || not b.lane_order then []
+    else
+      [
+        prop ~count:45
+          "a reduction or a scan too wide for a launch has nx.cpu's bits"
+          (Gen.pair (Gen.with_pp Kernels_cases.pp_wide Kernels_cases.wide_cases)
+             Gen.bool)
+          (run (law_wide b));
+        prop
+          ~examples:
+            [
+              example Sum f32 [| 70_001 |] [| 0 |];
+              example Prod f64 [| 2; 66_000 |] [| 1 |];
+            ]
+          "float sums and products have nx.cpu's bits"
+          (associated ~scans:b.scan_order)
+          (run (law_cpu_bits b));
+        prop ~count:300
+          "Logsumexp, Moments and Arg have nx.cpu's bits" special_case
+          (run (law_cpu_special b));
+      ])
+
+(* rig.nv *)
+
+(* rig.nv loads the cubin CUDA loads, so a call through it has CUDA's
+   bits: what it can get wrong, its launches, memory and order, shows in
+   them. Each case's calls run through CUDA, then through rig.nv. A NaN
+   agrees with any NaN: nx_cuda.mli leaves a NaN result's sign and
+   payload unspecified. *)
+let nv_laws (first : Support.backend) (nv : Support.backend) =
+  let agree call = Elements.agree first nv call in
+  group nv.name
+    [
+      group "bits are cuda's, any NaN for a NaN"
+        [
+          prop "of reductions and scans of every dtype" any_case (fun c ->
+              let (D.Any dt) = dtype_of c.x in
+              cover "a scan" c.scan;
+              cover "a reduction" (not c.scan);
+              cover "a float" (D.is D.Float dt);
+              cover "a complex number" (D.is D.Complex dt);
+              cover "an integer" (D.is D.Signed dt || D.is D.Unsigned dt);
+              cover "a narrow element" (D.bits dt < 16);
+              List.iter (fun m -> cover (monoid_name m) (c.monoid = m)) monoids;
+              agree (fun b -> [| run b c |]));
+          prop "of programs' reductions and scans, over padded loads too"
+            (Gen.with_pp pp_programmed programmed) (fun c ->
+              cover "a scan" c.scanned;
+              cover "padded loads" c.padded;
+              cover "a long program" c.long;
+              cover "several loads" (Array.length c.dts > 1);
+              cover "a long axis" (Array.exists (fun e -> e > 60_000) c.shape);
+              agree (fun b -> programmed_call b c (programmed_parts b c)));
+          prop ~count:45 "of calls too wide for a launch"
+            (Gen.pair (Gen.with_pp Kernels_cases.pp_wide Kernels_cases.wide_cases)
+               Gen.bool) (fun ((c : Kernels_cases.wide), scanned) ->
+              let scanned, call, _ = wide_call c scanned in
+              cover "past a launch's loads" (c.mode = Loads);
+              cover "past a launch's values held" (c.mode = Held);
+              cover "past a launch's reductions" (c.mode = Outputs);
+              cover "a scan" scanned;
+              agree call);
+          prop "of Logsumexp, Moments and Arg" special_case (fun c ->
+              cover "a scan" c.scanned;
+              agree (fun b ->
+                  let ys = run_special b c in
+                  Array.map
+                    (fun t ->
+                      A.Any
+                        (A.of_array D.Int64
+                           (Iarray.of_array [| Array.length t |])
+                           (Array.map bits_of t)))
+                    ys));
+          prop "of scans from a carry" (carry_case Inexact) (fun c ->
+              let (Carried (dt, _)) = c.kind in
+              covers_carry c;
+              agree (fun b ->
+                  let z, carry = carry_of b c in
+                  [| carry_scan b c (D.Any dt) ~carry dt (along1 z c.p c.m) |]));
+        ];
+    ]
 
 let () =
-  exit (Windtrap.run "nx_kernel.reduce" (List.map laws Support.backends))
+  let nv =
+    match (Support.gpus (), Support.nv ()) with
+    | first :: _, Some nv -> [ nv_laws first nv ]
+    | _ -> []
+  in
+  exit
+    (Windtrap.run "nx_kernel.reduce"
+       (List.map laws (Support.backends ()) @ nv))

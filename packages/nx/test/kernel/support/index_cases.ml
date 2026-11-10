@@ -79,14 +79,16 @@ let gather_gen ?(dtypes = all_dtypes) ?(shapes = shape_gen) ?axis
 
 (* Gathers *)
 
+(* The gather by [b]'s kernels, on its device, into a fresh destination;
+   [None] where [b] may decline it. *)
 let gather_on (b : Support.backend) ~axis idx x =
   let module K = (val b.kernels) in
   let (A.Any x) = x in
-  let idx = A.expect D.Int64 idx in
-  let dst = A.create Rig.host (A.dtype x) (L.shape (A.layout idx)) in
+  let x = Support.on b x and idx = Support.on b (A.expect D.Int64 idx) in
+  let dst = A.create b.device (A.dtype x) (L.shape (A.layout idx)) in
   match K.gather ~axis ~dst idx x with
   | A.Done -> Some (A.Any dst)
-  | A.Declined -> None
+  | A.Declined -> failf "%s declined a gather" b.name
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
 (* Scatters *)
@@ -167,20 +169,25 @@ let scatter_gen ?(dtypes = all_dtypes) ?combines ?(draw = element)
       @ List.map (( ^ ) "idx ") (view_names iv);
   }
 
+(* The scatter by [b]'s kernels, on its device, into a fresh destination or,
+   [in_place], into a copy of [into] it also reads; [None] where [b] may
+   decline it. *)
 let scatter_on (b : Support.backend) ?(in_place = false) ?(unique = false) c =
   let module K = (val b.kernels) in
   let (A.Any into) = c.into in
-  let u = A.expect (A.dtype into) c.updates in
-  let idx = A.expect D.Int64 c.sidx in
+  let into = Support.on b into in
+  let u = Support.on b (A.expect (A.dtype into) c.updates) in
+  let idx = Support.on b (A.expect D.Int64 c.sidx) in
   let dst, into =
     if in_place then
-      let d = A.copy into in
+      (* Copied where the host addresses it: sub-byte copies need it. *)
+      let d = Support.on b (A.copy (Support.host into)) in
       (d, d)
-    else (A.create Rig.host (A.dtype into) (L.shape (A.layout into)), into)
+    else (A.create b.device (A.dtype into) (L.shape (A.layout into)), into)
   in
   match K.scatter c.combine ~unique ~axis:c.saxis ~dst ~into idx u with
   | A.Done -> Some (A.Any dst)
-  | A.Declined -> None
+  | A.Declined -> failf "%s declined a scatter" b.name
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
 (* Whether an extreme of a and b keeps a: a NaN, else the greater (lesser), a

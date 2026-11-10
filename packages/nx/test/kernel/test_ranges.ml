@@ -101,7 +101,13 @@ let case_gen =
       ]
   in
   let* k =
-    frequency [ (2, constant 0); (6, int_range 1 6); (1, int_range 7 40) ]
+    frequency
+      [
+        (2, constant 0);
+        (6, int_range 1 6);
+        (1, int_range 7 40);
+        (1, int_range 4097 9000);
+      ]
   in
   let* n =
     frequency [ (1, constant 0); (6, int_range 1 9); (1, int_range 60 300) ]
@@ -292,11 +298,13 @@ let ranges_on (b : Support.backend) c =
   let xs = shape_of c.x and a = Array.length (shape_of c.starts) - 1 in
   let ys = Array.copy xs in
   ys.(a) <- c.size;
-  let dst = A.create Rig.host (A.dtype x) (Iarray.of_array ys) in
-  let starts = A.expect D.Int64 c.starts and ends = A.expect D.Int64 c.ends in
+  let dst = A.create b.device (A.dtype x) (Iarray.of_array ys) in
+  let x = Support.on b x in
+  let starts = Support.on b (A.expect D.Int64 c.starts) in
+  let ends = Support.on b (A.expect D.Int64 c.ends) in
   match K.gather_ranges ~dst ~starts ~ends x with
   | A.Done -> Some (A.Any dst)
-  | A.Declined -> None
+  | A.Declined -> failf "%s declined a range gather" b.name
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
 (* Laws *)
@@ -318,6 +326,7 @@ let law_gather (b : Support.backend) c =
   in
   let views prefix = List.exists (String.starts_with ~prefix) c.views in
   cover "no run" (k = 0);
+  cover "rows of more than 4096 runs" (k > 4096);
   cover "an empty axis" (n = 0);
   cover "a size of 0" (c.size = 0);
   cover "no lead axis" (a = 0);
@@ -369,7 +378,7 @@ let law_gather (b : Support.backend) c =
   | Some y -> (
       let idx = broadcast_cells c pos in
       match gather_on b ~axis:a idx c.x with
-      | None -> failf "%s declined a gather" b.name
+      | None -> failf "%s computed a range gather, declined a gather" b.name
       | Some g -> equal (array string) (elements g) (elements y))
 
 (* nx.cpu: one thread and many *)
@@ -431,7 +440,7 @@ let test_threads (_, c) =
 let misfits (b : Support.backend) =
   let module K = (val b.kernels) in
   let make dt zero s =
-    A.of_array dt (Iarray.of_array s) (Array.make (total s) zero)
+    Support.on b (A.of_array dt (Iarray.of_array s) (Array.make (total s) zero))
   in
   let ints = make D.Int64 0L and floats = make D.Float32 0. in
   let call ~dst ~runs:(s, e) x =
@@ -484,11 +493,34 @@ let laws (b : Support.backend) =
         (fun (_, f) -> b.around f);
     ]
 
+(* rig.nv *)
+
+(* rig.nv loads the cubin CUDA loads, so a range gather through it has CUDA's
+   bits: what it can get wrong, its launches, memory and order, shows in
+   them. Each case runs through CUDA, then through rig.nv. *)
+let nv_laws (first : Support.backend) (nv : Support.backend) =
+  let agree call = Elements.agree_bits first nv call in
+  let some = function Some y -> [| y |] | None -> [||] in
+  group nv.name
+    [
+      group "bits are cuda's"
+        [
+          prop ~count:300 "of range gathers" drawn (fun c ->
+              agree (fun b -> some (ranges_on b c)));
+        ];
+    ]
+
 let () =
+  let nv =
+    match (Support.gpus (), Support.nv ()) with
+    | first :: _, Some nv -> [ nv_laws first nv ]
+    | _ -> []
+  in
   exit
     (Windtrap.run "nx_kernel.ranges"
-       (List.map laws Support.backends
+       (List.map laws (Support.backends ())
        @ [
            cases "nx.cpu gives one thread's bits on many" ~id:fst split_cases
              test_threads;
-         ]))
+         ]
+       @ nv))

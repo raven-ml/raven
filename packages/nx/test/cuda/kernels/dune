@@ -1,0 +1,4 @@
+; fresh.exe, which checks that a cubin was built from the sources it names.
+
+(cram
+ (deps ../../../lib/cuda/kernels/fresh.exe))
