@@ -1,4 +1,4 @@
 (tests
- (names test_pixels)
- (modules test_pixels)
- (libraries tessera nx nx.io nx.ragged windtrap))
+ (names test_pixels test_batch)
+ (modules test_pixels test_batch)
+ (libraries tessera synth nx nx.io nx.ragged windtrap))
