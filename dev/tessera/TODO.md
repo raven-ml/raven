@@ -1,7 +1,9 @@
 # tessera: what raven lacks
 
-Friction met while building tessera, by the library that owns the fix. An
-item leaves when its library fixes it, or when a design decides it stays.
+Friction met while building tessera, and defects its design reviews found,
+by the library that owns the fix. Each is fixed by a change that simplifies
+where it can, with a design pass when it touches an interface, and a review.
+An item leaves when its library fixes it, or when a design decides it stays.
 
 ## thumper
 
@@ -31,6 +33,23 @@ item leaves when its library fixes it, or when a design decides it stays.
   the call says so: bf16 rows on the CPU time f32 kernels plus conversions.
 - `Nx.split` returns a list, so taking a GRU's three gates needs a
   non-exhaustive match or slices.
+
+- `nx.mli` (the `Ptree.Walk.under` example) calls a layer whose positions
+  are fixed arrays "frozen", but vega steps fixed arrays and rune
+  differentiates them. Either the wording is wrong or fixed arrays should
+  mean what it says: a design pass decides which is the simpler rule.
+
+## vega
+
+- `doc/03-schedules.md` teaches a scheduled weight decay applied after the
+  step, which does nothing to bfloat16 parameters (0 of 1000 weights moved
+  over 1000 steps where the exact factor is 0.990): the step's single
+  stochastic rounding has already happened. It exists because
+  `~weight_decay` is a float while `~lr` is a schedule. Being decided with
+  the per-leaf decay design.
+- `vega.mli` says AdamW at `weight_decay = 0.` is exactly Adam; for an
+  infinite parameter it gives NaN (`0 × ∞`). Being decided with the per-leaf
+  decay design (omitting the term makes it true by construction).
 
 ## rune
 
