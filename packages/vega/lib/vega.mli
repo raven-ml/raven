@@ -362,6 +362,47 @@ val rate : float -> 'd Schedule.t
     rule decays. Nothing checks a rule against the model, so a name the
     model does not use matches no leaf, silently. *)
 
+(** {1:parts Settings that differ across parameters}
+
+    A part of the model that takes its own rate, its own optimizer or no step
+    at all is a part of the value, such as a record field or a list element.
+    Each part is stepped by a call of its own, with its own description and
+    state. A part's description made with [Nx.Ptree.v] and
+    {!Nx.Ptree.Walk.structure} keeps each leaf's path from the root of the
+    model, such as [trunk.fc.w], so the part's half-precision draws
+    ({!section-half}) are those of an unsplit step at equal counters, and two
+    parts with equal paths inside them draw apart. The gradient is clipped
+    whole, before it is split, so that its norm spans every part:
+
+    {[
+    let part name p =
+      Nx.Ptree.v (fun c x -> Nx.Ptree.Walk.(field c name (structure p)) x)
+
+    let trunk = part "trunk" trunk_p and head = part "head" head_p
+    let state = Nx.Ptree.pair (Vega.adam_ptree trunk) (Vega.adam_ptree head)
+
+    let update (params, (st_t, st_h)) grads =
+      let grads = Vega.clip_by_global_norm model ~max_norm:1.0 grads in
+      let slow step = Nx.mul_s (sched step) 0.1 in
+      let trunk', st_t =
+        Vega.adamw_step trunk ~lr:slow st_t ~params:params.trunk
+          ~grads:grads.trunk
+      in
+      let head', st_h =
+        Vega.adamw_step head ~lr:sched st_h ~params:params.head
+          ~grads:grads.head
+      in
+      ({ trunk = trunk'; head = head' }, (st_t, st_h))
+    ]}
+
+    The decay is scaled by the learning rate ({!section-decay}), so the trunk,
+    stepped at a tenth of the rate, also decays at a tenth. A frozen part is
+    left out of what is differentiated and stepped. The objective takes the
+    trainable part and reads the frozen one as a value it is given, as in
+    [Rune.grad head (fun h -> loss { params with head = h }) params.head]. A
+    setting that differs by the kind of leaf across every layer, such as
+    which leaves decay, is a rule on the leaf ({!section-decay}). *)
+
 (** {1:sgd Stochastic Gradient Descent} *)
 
 type ('p, 'd) sgd_state = { velocity : 'p; step : 'd Nx.int32_t }

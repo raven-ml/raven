@@ -6,9 +6,10 @@
 (** Dense (fully connected) layers.
 
     A linear layer is a record of parameters with a payload hole. Filled with
-    tensors it is the layer itself; filled with floats, a per-leaf learning
-    rate. Construct one with {!init} or {!make}, transform inputs with {!apply},
-    and compose layers into models by nesting records. A model is a structure
+    tensors it is the layer itself; filled with other values it holds one per
+    parameter, such as each one's size ({!Nx.Ptree.Payload}). Construct one
+    with {!init} or {!make}, transform inputs with {!apply}, and compose layers
+    into models by nesting records. A model is a structure
     with one {!walk}, one line per field, and [Nx.Ptree.instantiate] turns it
     into the {!Nx.Ptree.t} the transformations take:
 

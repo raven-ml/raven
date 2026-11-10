@@ -4280,8 +4280,8 @@ module Ptree : sig
         [(('a, 'd) V.t, 'd) U.t] as a structure's [walk], and {!place} moves
         every array it walks.
 
-        A frozen layer is [Linear] ({!Ptree}) with a fixed array at each
-        position:
+        A layer of fixed arrays is [Linear] ({!Ptree}) with a fixed array at
+        each position:
 
         {[
         type ('a, 'd) tuned = {
@@ -4301,7 +4301,11 @@ module Ptree : sig
         ]}
 
         [Nx.Ptree.place (module Tuned) Gpu.on x] places [head] and [base], and
-        [Nx.Ptree.cast (module Tuned) dt x] casts [head] alone. *)
+        [Nx.Ptree.cast (module Tuned) dt x] casts [head] alone. Maps and folds
+        pass [base]'s arrays as they pass the others ({!section-derived}), so
+        a gradient or an optimizer's step over [Tuned] changes [base] too. To
+        hold [base] fixed through training, differentiate and step a function
+        of [head] alone, with [head]'s description. *)
 
     val structure : ('s, 'd) t -> ('a, 'b, 'd, 'd) cursor -> 's -> 's
     (** [structure s c x] walks [x], a value of the description [s], at [c]'s
@@ -4509,10 +4513,10 @@ module Ptree : sig
   (** [cast (module U) dt x] is [x] with each array at a position of [U]'s
       parameter cast to [dt], as {!Nx.cast}. Fixed arrays are kept. *)
 
-  (** Maps and folds at any payload: a mask, a learning rate per array, a plan,
-      dimensions. The positions of the parameter hold the payloads; fixed
-      arrays, and those of parts walked with {!Walk.structure}, are kept from
-      the first value, and neither passed nor compared. *)
+  (** Maps and folds at any payload: a mask, a plan, dimensions. The positions
+      of the parameter hold the payloads; fixed arrays, and those of parts
+      walked with {!Walk.structure}, are kept from the first value, and
+      neither passed nor compared. *)
   module Payload : sig
     val map :
       (module U : S) -> (Path.t -> 'a -> 'b) -> ('a, 'd) U.t -> ('b, 'd) U.t
