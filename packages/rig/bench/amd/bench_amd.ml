@@ -136,13 +136,34 @@ let asked f =
       | WEXITED 1 -> false
       | _ -> failwith "a question asked of GPU 0 failed")
 
+(* Gives [b] to its device's own PCI function: [Error why] where that
+   function cannot reach the memory. *)
+let give b =
+  match B.dma b ~fn:(Option.get (Rig.bus (B.device b))) with
+  | Ok (Bus _) -> Ok ()
+  | Ok (Dmabuf { fd; _ }) ->
+      Rig_gpu_support.Dmabuf.close fd;
+      Ok ()
+  | Error why -> Error why
+
+(* Whether GPU 0 gives its Device memory to its own function, which the
+   route from the function to the memory BAR decides, a refusal naming the
+   BAR. Any other refusal fails the suite. *)
+let gives_device () =
+  asked @@ fun () ->
+  match give (B.create (dev ()).d 4096) with
+  | Ok () -> Ok true
+  | Error why when Rig_gpu_support.has ~sub:"memory BAR" why -> Ok false
+  | Error why -> Error why
+
 (* Whether GPU 0 makes Mapped memory. *)
 let makes_mapped () = asked @@ fun () -> Ok (Rig.offers (dev ()).d Mapped)
 
 (* Rows *)
 
-(* The rows of releases, with [mapped] where GPU 0 makes Mapped memory. *)
-let release_rows ~mapped =
+(* The rows of releases, with [mapped] where GPU 0 makes Mapped memory and
+   [dma] where it gives its Device memory to its own function. *)
+let release_rows ~mapped ~dma =
   let empty () =
     let t = dev () in
     (t, prepare t [||])
@@ -162,6 +183,17 @@ let release_rows ~mapped =
     let t = dev () in
     (t, B.create ~memory:Mapped t.d 4096, prepare t [||])
   in
+  (* Empty submissions of a device that gave its Device memory to a PCI
+     function, its own GPU's, whose writes pass the GPU's host data path:
+     each flushes that path, for the device's life. The region stays with
+     the row. *)
+  let given () =
+    let t = dev () in
+    let b = B.create t.d 4096 in
+    match give b with
+    | Ok () -> (t, b, prepare t [||])
+    | Error why -> failwith why
+  in
   Thumper.group "release"
     ([
        row "driver" empty (fun (t, s) -> run t s);
@@ -174,8 +206,9 @@ let release_rows ~mapped =
            done;
            wait t);
      ]
-    @ if mapped then [ row "mapped" holding (fun (t, _, s) -> run t s) ]
-      else [])
+    @ (if mapped then [ row "mapped" holding (fun (t, _, s) -> run t s) ]
+       else [])
+    @ if dma then [ row "dma" given (fun (t, _, s) -> run t s) ] else [])
 
 (* The rows of launches, with [1-mapped-args] where GPU 0 makes Mapped
    memory. *)
@@ -423,7 +456,7 @@ let () =
       else Thumper.Config.default
     in
     let mapped = makes_mapped () in
-    let release_rows = release_rows ~mapped in
+    let release_rows = release_rows ~mapped ~dma:(gives_device ()) in
     let launch_rows = launch_rows ~mapped in
     exit
     @@ Thumper.run ~config "rig_amd"
