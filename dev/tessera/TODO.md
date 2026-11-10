@@ -99,6 +99,14 @@ An item leaves when its library fixes it, or when a design decides it stays.
 
 ## tolk
 
+- On fudge's RTX 5000, float32 products whose output is 440 wide, the
+  medium student's width, run at 4.6-6.6 TFLOP/s (bench op rows
+  `medium/{embed2,out_proj,ffn2}`), while medium's `ffn1`, 440 wide on its
+  input, runs at 17.3-17.6, and large's products of width 640 at 17-18.
+  End to end medium embeds 2,993 px/s against large's 3,172, though large
+  computes twice its FLOPs (bench `e2e/*/encode`; PyTorch's reference
+  5,039 and 3,472). The cause is tolk's to find, beside f32 GEMM parity
+  with cuBLAS.
 - tolk compiles reductions that read the same operand over the same axes
   as separate kernels: compiled `Nx.standardize` reads its input five times
   (Max for the overflow rescue, Σx, Σd, Σd², then the map) where nx.cpu reads
