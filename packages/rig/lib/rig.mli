@@ -2529,11 +2529,14 @@ end
 
     A profile of every device is taken while a function runs
     ({!Profile.take}). Profiles nest and overlap, in any domains, and each
-    holds the events recorded while it is taken. Every time is on the host
-    clock ({!Profile.now}). When no profile is being taken, recording costs
-    one atomic read and allocates nothing. Taking a profile may slow the
-    submits of a device whose driver times its work, as the driver's
-    interface states. *)
+    holds the events recorded while it is taken. An operation that takes
+    time, a submit or a copy, is recorded in the profiles being taken when
+    it is asked that are still taken when it is recorded, and in none
+    started after it was asked.
+    Every time is on the host clock ({!Profile.now}). When no profile is
+    being taken, recording costs one atomic read and allocates nothing.
+    Taking a profile may slow the submits of a device whose driver times its
+    work, as the driver's interface states. *)
 module Profile : sig
   type device := t
 

@@ -634,6 +634,31 @@ let test_copy () =
     (list (option point))
     [ None ] (copy_points events)
 
+(* A copy is recorded in the profiles taken when it is asked: a host copy that
+   waits for a device's write while another domain starts a profile is in
+   the profile around the copy, and not in the later one. *)
+let test_copy_asked () =
+  let d, p = P.open_ "profile:copy-asked" in
+  let n = 1 lsl 16 in
+  let src = B.create Rig.host n and dst = B.create Rig.host n in
+  P.gate p;
+  ignore (submit_parts ~buffers:[| src |] d [| bump |]);
+  let copier =
+    Domain.spawn (fun () -> Prof.take (fun () -> B.copy ~src ~dst))
+  in
+  Support.await "the copy's wait" (fun () -> P.sleepers p = 1);
+  let ((), around), later =
+    Prof.take (fun () ->
+        P.open_gate p;
+        Domain.join copier)
+  in
+  equal ~msg:"the profile around it"
+    (list (triple string string int))
+    [ ("CPU", "CPU", n) ]
+    (copies around);
+  equal ~msg:"the later profile" (list (triple string string int)) []
+    (copies later)
+
 (* A copy through the staging memory, between devices that map none of each
    other's memory, records its copies into and out of it and no event of its
    own: each transfer that ran is one event. *)
@@ -978,6 +1003,8 @@ let tests =
     group ~timeout "copies"
       [
         test "a copy records the bytes it moved" test_copy;
+        test "a copy is in the profiles taken when it is asked"
+          test_copy_asked;
         test "a staged copy records only its copies into and out of staging"
           test_staged_copy;
         test "a copy through a device's staging names the host as its side"

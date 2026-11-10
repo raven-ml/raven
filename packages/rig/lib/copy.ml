@@ -27,21 +27,31 @@ let host_address b = b.mem.host + b.offset
    own: it reaches the host's only from a side the host moves ([hosted]). *)
 let far d = (not (Dev.same_machine d Dev.host)) && not (Dev.is_io d)
 
-(* Records the host's transfer of [bytes] from [src] to [dst] asked at [start],
-   which it sees done now, between the devices their memory counts in, as a
-   submit records a copy part. *)
-let record src dst bytes start =
-  if Profile.enabled () then
-    Profile.record
-      (Copy
-         {
-           src = Memory.account src.mem.alloc;
-           dst = Memory.account dst.mem.alloc;
-           bytes;
-           point = None;
-           start;
-           stop = Profile.now ();
-         })
+(* The profiles a copy asked now is recorded in, as a submit is: those taken
+   when it is asked. With none, the copy reads no clock. *)
+let asking () = if Profile.enabled () then Profile.active () else []
+
+(* The host clock when a copy recorded in [ps] is asked, and [0] for one that
+   no profile records. *)
+let asked ps = match ps with [] -> 0 | _ -> Profile.now ()
+
+(* Records in [ps] the host's transfer of [bytes] from [src] to [dst] asked at
+   [start], which it sees done now, between the devices their memory counts
+   in, as a submit records a copy part. *)
+let record ps src dst bytes start =
+  match ps with
+  | [] -> ()
+  | ps ->
+      Profile.add ps
+        (Copy
+           {
+             src = Memory.account src.mem.alloc;
+             dst = Memory.account dst.mem.alloc;
+             bytes;
+             point = None;
+             start;
+             stop = Profile.now ();
+           })
 
 (* The points of [waits], waited for on the host. *)
 let wait_all waits =
@@ -187,22 +197,25 @@ let host_waits ~waits ~into_half src dst =
   Buffer.wait_points src Buffer.Read;
   if not into_half then Buffer.wait_points dst Buffer.Read_write
 
-(* The host's copy of [boxes] from [src] to [dst], after [host_waits],
-   asked at [start]. *)
-let on_host fn ~waits ~into_half transfer src dst boxes start =
+(* The host's copy of [boxes] from [src] to [dst], after [host_waits]. *)
+let on_host fn ~waits ~into_half transfer src dst boxes =
+  let ps = asking () in
+  let start = asked ps in
   host_waits ~waits ~into_half src dst;
   for i = 0 to Array.length boxes - 1 do
     move_box fn transfer src dst (Array.unsafe_get boxes i)
   done;
-  record src dst (total boxes) start;
+  record ps src dst (total boxes) start;
   on_host_done
 
 (* [on_host] of the run of [n] bytes from byte [s] of [src] to byte [t] of
    [dst]. *)
-let on_host_run fn ~waits ~into_half transfer src s dst t n start =
+let on_host_run fn ~waits ~into_half transfer src s dst t n =
+  let ps = asking () in
+  let start = asked ps in
   host_waits ~waits ~into_half src dst;
   move_run fn transfer src s dst t n;
-  record src dst n start;
+  record ps src dst n start;
   on_host_done
 
 (* [m] as [d]'s copy engine takes it, or [None] for a copy through staging
@@ -292,9 +305,8 @@ let queue_side src dst = if local src.mem then dst else src
    transfer, a submit a queued one. Is the transfer's point, [0] for the
    host's, or [None] where no transfer runs it. *)
 let direct fn ~waits ~into_half src dst boxes =
-  let start = Profile.now () in
   match transfer src dst with
-  | Host t -> on_host fn ~waits ~into_half t src dst boxes start
+  | Host t -> on_host fn ~waits ~into_half t src dst boxes
   | Staged -> None
   | Queued ->
       let d = runner (queue_side src dst) in
@@ -303,9 +315,8 @@ let direct fn ~waits ~into_half src dst boxes =
 (* [direct] of the run of [n] bytes from byte [s] of [src] to byte [t] of
    [dst], which builds no box. *)
 let direct_run fn ~waits ~into_half src s dst t n =
-  let start = Profile.now () in
   match transfer src dst with
-  | Host h -> on_host_run fn ~waits ~into_half h src s dst t n start
+  | Host h -> on_host_run fn ~waits ~into_half h src s dst t n
   | Staged -> None
   | Queued ->
       let d = runner (queue_side src dst) in
@@ -973,11 +984,12 @@ let copied src dst n =
   if n > 0 then
     match transfer src dst with
     | Host t ->
-        let start = Profile.now () in
+        let ps = asking () in
+        let start = asked ps in
         Buffer.wait_points src Buffer.Read;
         Buffer.wait_points dst Buffer.Read_write;
         move_run fn t src 0 dst 0 n;
-        record src dst n start
+        record ps src dst n start
     | Queued ->
         let d = runner (queue_side src dst) in
         let p =
