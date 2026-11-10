@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = ["numpy==2.5.4", "safetensors==0.8.0", "torch==2.15.0",
-#                 "pillow==13.0.0"]
+#                 "pillow==13.0.0", "rasterio==1.5.2"]
 # ///
 """Generate nx.io's test fixtures: files other tools write.
 
@@ -24,7 +24,9 @@ literal of floats.txt. The JPEG files that break T.81's rules are written
 byte by byte below, or cut from Pillow's files, and have no sibling, except
 jpeg_table16_coarse.jpg, whose 16-bit table Pillow writes and decodes. Nor
 have jpeg_zrl_progressive.jpg and jpeg_zrl_baseline.jpg, which decode to the
-same pixels.
+same pixels. GDAL 3.12, which the rasterio wheel bundles with its libtiff,
+writes the tiff_*.tif files, each with a sibling .npy of the array of shape
+(h, w, c) it was given, and reads each back as that array.
 
 The fixtures are written into ../support. Pillow 13.0.0 encodes JPEG with
 the libjpeg-turbo its wheel bundles, and every fixture reproduces byte for
@@ -668,6 +670,49 @@ def pytorch_fixtures():
         assert pt_same(obj, torch.load(name, weights_only=False)), name
 
 
+def tiff_fixtures():
+    import rasterio
+    import warnings
+    from rasterio.errors import NotGeoreferencedWarning
+
+    def ramp(dtype, shape, scale):
+        # A smooth ramp across rows, columns and samples, plus noise, so that
+        # the predictors and the codecs have runs to find and bits to keep.
+        h, w, c = shape
+        i, j, k = np.meshgrid(np.arange(h), np.arange(w), np.arange(c), indexing="ij")
+        noise = xorshift(h * w * c).reshape(shape).astype(np.float64)
+        return ((i * 3 + j * 2 + k * 50) * scale + noise).astype(dtype)
+
+    f32 = ramp(np.float32, (29, 41, 1), 0.25)
+    f32[0, 0, 0], f32[1, 2, 0], f32[3, 4, 0], f32[5, 6, 0] = np.nan, np.inf, -np.inf, -0.0
+    f64 = ramp(np.float64, (23, 19, 3), -1e-3)
+    f64[2, 3, 1] = np.finfo(np.float64).tiny / 4
+    cases = [
+        ("tiff_lzw_u16_tiles", ramp(np.uint16, (37, 53, 2), 97),
+         dict(compress="lzw", predictor=2, tiled=True, blockxsize=16, blockysize=16)),
+        ("tiff_deflate_f32_bigtiff_mm", f32,
+         dict(compress="deflate", predictor=3, bigtiff="YES", endianness="BIG", blockysize=4)),
+        ("tiff_lzw_f64_strips", f64, dict(compress="lzw", predictor=3, blockysize=5)),
+        ("tiff_deflate_i16_mm_tiles", ramp(np.int16, (40, 33, 1), -251),
+         dict(compress="deflate", predictor=2, tiled=True, blockxsize=32, blockysize=16,
+              endianness="BIG")),
+        ("tiff_none_u32", ramp(np.uint32, (17, 13, 1), 1 << 20), dict(compress="none")),
+        ("tiff_lzw_i32", ramp(np.int32, (11, 300, 1), -(1 << 18)), dict(compress="lzw", predictor=2)),
+        ("tiff_lzw_u8_rgb", ramp(np.uint8, (31, 47, 3), 1), dict(compress="lzw")),
+    ]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", NotGeoreferencedWarning)
+        for name, a, opts in cases:
+            h, w, c = a.shape
+            with rasterio.open(name + ".tif", "w", driver="GTiff", width=w, height=h,
+                               count=c, dtype=a.dtype, **opts) as dst:
+                dst.write(np.moveaxis(a, -1, 0))
+            np.save(name + ".npy", a)
+            with rasterio.open(name + ".tif") as src:
+                back = np.moveaxis(src.read(), 0, -1)
+            assert back.dtype == a.dtype and back.tobytes() == a.tobytes(), name
+
+
 SUPPORT = Path(__file__).resolve().parent.parent / "support"
 
 
@@ -681,6 +726,7 @@ def generate():
     stored_block_npz()
     image_fixtures()
     pytorch_fixtures()
+    tiff_fixtures()
 
 
 def main():

@@ -1,7 +1,8 @@
 ; nx.io's suites. They read files of the formats written by numpy, torch,
-; Python's zipfile, Pillow and a minimal PNG writer, with each image's pixels
-; as an npy file, as Pillow decodes it, or as PNG-3 states it where Pillow
-; differs, which gen/generate.py writes into support/.
+; Python's zipfile, Pillow, GDAL and a minimal PNG writer, with each image's
+; pixels as an npy file, as Pillow decodes it, or as PNG-3 states it where
+; Pillow differs, and each TIFF raster as the array GDAL was given, which
+; gen/generate.py writes into support/.
 
 (tests
  (names
@@ -12,7 +13,8 @@
   test_gguf
   test_txt
   test_image
-  test_pytorch)
+  test_pytorch
+  test_tiff)
  (modules
   test_save
   test_archive
@@ -22,6 +24,7 @@
   test_txt
   test_image
   test_pytorch
+  test_tiff
   io_support)
  (libraries nx nx_array nx_io nx_support rig unix lz windtrap)
  (deps

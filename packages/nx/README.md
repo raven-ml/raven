@@ -21,8 +21,8 @@ device sets apart.
 - Random numbers from explicit keys
 - Host computation by C kernels, and NVIDIA GPUs of sm_89 by `nx.cuda`'s;
   arrays on device sets, each operation computing where its operands lie
-- I/O support: images (PNG, JPEG), NumPy files (.npy, .npz), SafeTensors and
-  GGUF
+- I/O support: images (PNG, JPEG), TIFF, NumPy files (.npy, .npz),
+  SafeTensors and GGUF
 - Integration with the Raven ecosystem: `rune`, `kaun`, `hugin`, `quill`, etc.
 
 ## Quick Start

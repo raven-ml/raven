@@ -2780,6 +2780,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Add TIFF to `Nx_io`: `load_tiff` reads a file's IFDs, `Nx_io.Tiff.tags`
+  each one's tags as `Nx_io.Tiff.value`s and `Nx_io.Tiff.samples` its
+  raster, from classic TIFF or BigTIFF, strips or tiles, compressed with
+  LZW or Deflate after any of TIFF's three predictors, in seven sample
+  types. Any other value is refused, naming its tag. `save_tiff` writes a
+  raster in strips or tiles, uncompressed or Deflate, with extra tags.
 - `Nx_io.load_pytorch` and `Nx_io.load_npz` read a data descriptor whose
   sizes take 4 or 8 bytes each, whichever agrees with the central directory,
   and failed before with an error naming the descriptor on the 8-byte ones

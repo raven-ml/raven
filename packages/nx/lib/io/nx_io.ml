@@ -225,6 +225,15 @@ let save_jpeg path x =
   in
   Save.write path (fun fd -> Save.bytes fd file)
 
+(* TIFF *)
+
+module Tiff = Tiff
+
+let load_tiff path =
+  Fail.file path @@ fun () -> Tiff.read path (Storage.open_file path)
+
+let save_tiff = Tiff.save
+
 (* PyTorch *)
 
 module Pytorch = Pytorch

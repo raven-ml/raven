@@ -8,7 +8,8 @@
     A file holds one array, as npy and text files do, or several arrays under
     names, as npz, SafeTensors and GGUF files do. A name and its array are an
     {e entry}. Entries are read and written as an {!Archive.t}. A PyTorch
-    checkpoint holds a Python value, whose arrays {!Pytorch.tensors} names.
+    checkpoint holds a Python value, whose arrays {!Pytorch.tensors} names,
+    and a TIFF file a chain of rasters, each with its tags ({!Tiff}).
 
     An {e image} is a [uint8] array of shape [[|h; w; c|]], first row at the
     top, with [c] 1 for grey, 2 for grey and alpha, 3 for RGB and 4 for RGBA.
@@ -69,7 +70,9 @@
     On POSIX systems the new file has the permissions [0o666] less the umask.
 
     {b Defaults.} A load blocks until it has read the file's header and the
-    elements of each value it returns that is not mapped. A save blocks until
+    elements of each value it returns that is not mapped. {!Tiff.samples}
+    blocks until it has read its IFD's chunks, from the file {!load_tiff}
+    opened. A save blocks until
     the value's set has computed it and the new file is at its path. Domains may
     load one path concurrently. Concurrent saves to one path each write a whole
     file, and the last rename wins.
@@ -727,6 +730,163 @@ val encode_png : ?dpi:float -> ?srgb:bool -> 'd Nx.uint8_t -> string
     the file system.
 
     Raises [Invalid_argument] as {!save_png} does. *)
+
+(** {1:tiff TIFF}
+
+    A TIFF file holds one or more {e IFDs} (image file directories), each a
+    raster and the {e tags} that describe it: numbered fields of typed
+    values, such as ImageWidth (256), or the GeoTIFF tags that place a
+    raster on the Earth, which this module reads as any other. A raster is
+    [h] rows of [w] pixels of [c] samples. A file cuts it into {e chunks}:
+    strips of rows, or tiles of one size, padded past the raster's right
+    and bottom edges. Each chunk is stored as it is or compressed, after a
+    {e predictor} that replaces samples by their differences from the
+    pixel before.
+
+    The format is
+    {{:https://www.itu.int/itudoc/itu-t/com16/tiff-fx/docs/tiff6.pdf}TIFF
+     6.0}, with the 64-bit offsets of
+    {{:https://libtiff.gitlab.io/libtiff/specification/bigtiff.html}
+     BigTIFF}, the Deflate compression of
+    {{:https://www.alternatiff.com/resources/TIFFphotoshop.pdf}Adobe's TIFF
+     technical notes} and the floating point predictor of
+    {{:http://chriscox.org/TIFFTN3d1.pdf}Adobe's technical note 3}.
+
+    {!load_tiff} reads the tags of every IFD of a classic TIFF or BigTIFF
+    file of either byte order, and {!Tiff.samples} the raster of one whose
+    tags state:
+    {ul
+    {- Compression (259) 1 (none), 5 (LZW, as {!Lz.Lzw} decodes it), or 8
+       or its obsolete code 32946 (Deflate, a zlib stream a chunk);}
+    {- Predictor (317) 1 (none), 2 (horizontal differencing) or, for float
+       samples, 3 (floating point), and 1 with Compression 1;}
+    {- BitsPerSample (258) and SampleFormat (339), the same for every
+       sample, of [uint8], [uint16] or [uint32] (SampleFormat 1, unsigned),
+       [int16] or [int32] (2, signed), or [float32] or [float64] (3, IEEE
+       floating point);}
+    {- PlanarConfiguration (284) 1, a pixel's samples together, or 2 with
+       one sample a pixel;}
+    {- FillOrder (266) 1, and a Photometric (262) other than 6 (YCbCr),
+       whose samples may be subsampled;}
+    {- strips, with StripOffsets (273), StripByteCounts (279) and
+       RowsPerStrip (278), or tiles, with TileWidth (322), TileLength (323),
+       TileOffsets (324) and TileByteCounts (325), each chunk of a byte or
+       more.}}
+    Any other value of these tags is refused, naming the tag. A field of a
+    type {!Tiff.type-value} lacks is skipped, as TIFF 6.0 tells readers to.
+    Every other tag is data, Orientation (274) among them, so a raster's
+    first row is its file's first.
+
+    A file's IFDs and the values that do not fit their entries must take
+    no more bytes in all than the file holds, and so must each IFD's
+    chunks, so that a load's tags take memory linear in the file's length,
+    and a raster at most 2560 times its bytes.
+
+    {!save_tiff} writes a raster of a sample or more, at most 65535
+    samples a pixel and sides below 2{^32}, with its own tags: ImageWidth,
+    ImageLength, BitsPerSample, Compression, SamplesPerPixel,
+    PlanarConfiguration 1, SampleFormat, Predictor with [Deflate], and the
+    strips' or the tiles' tags. Unless the tags it is given hold
+    Photometric (262), it adds Photometric 1 (BlackIsZero) and, for more
+    than one sample a pixel and unless they hold ExtraSamples (338),
+    ExtraSamples of zeros (unspecified data). Its file is BigTIFF when a
+    tag is LONG8 or SLONG8, or when the largest file it could write, each
+    chunk of its bytes or their {!Lz.Zlib.bound}, passes 4 GiB, and classic
+    TIFF otherwise. *)
+
+(** TIFF IFDs and their tags. *)
+module Tiff : sig
+  (** The type for tag values, one case per TIFF field type, each the
+      field's values in order. *)
+  type value =
+    | Byte of int array  (** BYTE (1): unsigned 8-bit integers. *)
+    | Ascii of string
+        (** ASCII (2): the field's bytes without its last NUL. A field of
+            several strings keeps the NULs between them. *)
+    | Short of int array  (** SHORT (3): unsigned 16-bit integers. *)
+    | Long of int array  (** LONG (4): unsigned 32-bit integers. *)
+    | Rational of (int * int) array
+        (** RATIONAL (5): fractions, each a numerator and a denominator
+            LONG. *)
+    | Sbyte of int array  (** SBYTE (6): signed 8-bit integers. *)
+    | Undefined of string  (** UNDEFINED (7): bytes. *)
+    | Sshort of int array  (** SSHORT (8): signed 16-bit integers. *)
+    | Slong of int array  (** SLONG (9): signed 32-bit integers. *)
+    | Srational of (int * int) array
+        (** SRATIONAL (10): fractions of two SLONGs. *)
+    | Float of float array  (** FLOAT (11): binary32 floats. *)
+    | Double of float array  (** DOUBLE (12): binary64 floats. *)
+    | Long8 of int64 array
+        (** LONG8 (16), BigTIFF's: unsigned 64-bit integers, held in
+            [int64] by their bits. *)
+    | Slong8 of int64 array
+        (** SLONG8 (17), BigTIFF's: signed 64-bit integers. *)
+
+  type t
+  (** The type for one IFD of a TIFF file. It keeps the file it was read
+      from, as a mapped value does, and {b the file must not change in
+      place while it is reachable}. *)
+
+  val tags : t -> (int * value) list
+  (** [tags d] is [d]'s tags, each by its number, in file order. *)
+
+  val samples : t -> Nx.host Nx.packed
+  (** [samples d] is [d]'s raster, of shape [[|h; w; c|]] for [h] its
+      ImageLength (257), [w] its ImageWidth (256) and [c] its
+      SamplesPerPixel (277), at its samples' dtype. It is a mapped value
+      where the raster lies in the file as one array in C order:
+      uncompressed, in the host's byte order, in chunks as wide as the
+      raster that follow each other from a multiple of a sample's bytes.
+      Otherwise each call reads the file again, into memory of its own.
+
+      Raises [Failure] as {!section-errors} states, naming the tag, if a
+      tag the section lists is missing, of another type, or of a value or
+      count the section does not read, or if a chunk lies past the file's
+      end, has too few bytes or does not decode to its rows, as in
+      ["l.tif: Compression (259) 5: tile 3 at byte 1024: malformed at
+       byte 7: invalid code"]. *)
+
+  (** The type for how {!save_tiff} stores chunks. *)
+  type compression =
+    | Uncompressed
+    | Deflate
+        (** Each chunk is a zlib stream ({!Lz.Zlib.encode}) after horizontal
+            differencing for integer samples (Predictor 2), and after the
+            floating point predictor for float samples (3). *)
+end
+
+val load_tiff : string -> Tiff.t list
+(** [load_tiff path] is the IFDs of the TIFF file [path], in the order the
+    file chains them, with their tags. It reads no sample.
+
+    Raises [Failure] as {!section-errors} states, and if the file starts
+    with no TIFF or BigTIFF header or names no IFD, if an IFD or a value
+    lies past its end, if an IFD holds a tag twice, or if the chain comes
+    back to an IFD. *)
+
+val save_tiff :
+  ?tile:int * int ->
+  ?compression:Tiff.compression ->
+  ?tags:(int * Tiff.value) list ->
+  string ->
+  ('v, 's, 'd) Nx.t ->
+  unit
+(** [save_tiff path x] writes [x], of shape [[|h; w; c|]] and a dtype
+    {!Tiff.samples} reads, to [path] as a little-endian TIFF file of one
+    IFD, its tags first and its chunks after them.
+    - [tile] is the rows and the columns of a tile. Without it, the raster
+      is cut into strips of about 8 KiB and at least a row, as TIFF 6.0
+      recommends.
+    - [compression] defaults to [Uncompressed], whose strips
+      {!Tiff.samples} reads back as a mapped value.
+    - [tags] are written beside the save's own ({!section-tiff}). A tag
+      whose value is an offset into its file, such as SubIFDs (330),
+      points nowhere in the new one.
+
+    Raises [Invalid_argument] if TIFF does not store [x]'s dtype or shape,
+    or a tile's side is not a positive multiple of 16, and naming the tag
+    if a tag is not a SHORT, is the save's own or is given twice, or holds
+    no value or one its type does not, such as a [Float] of 0.1. *)
 
 (** {1:errors Errors}
 

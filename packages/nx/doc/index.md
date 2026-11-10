@@ -15,7 +15,8 @@ the Raven ecosystem.
 - **FFT**: complex, real and Hermitian transforms, cosine and sine transforms
 - **Signal processing**: convolution, correlation, short-time transforms
 - **Random numbers**: samplers that draw from explicit keys or a scope's key
-- **I/O**: images (PNG, JPEG), NumPy files (.npy, .npz), SafeTensors and GGUF
+- **I/O**: images (PNG, JPEG), TIFF, NumPy files (.npy, .npz), SafeTensors
+  and GGUF
 - **Devices**: arrays lie on the host or on a set of devices, and an operation
   computes where its operands lie: on the host by C kernels, on NVIDIA GPUs
   of sm_89 by `nx.cuda`'s
