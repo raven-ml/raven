@@ -23,6 +23,8 @@ let cache_bytes d = d.cache_bytes
 let reaches = Dev.reaches
 let budget d = d.budget
 let allocated = Memory.allocated
+let allocation = Memory.allocation
+let charged = Memory.budget_device
 let set_budget = Memory.set_budget
 let free_cache = Memory.free_cache
 

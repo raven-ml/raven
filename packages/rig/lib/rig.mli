@@ -951,6 +951,23 @@ val allocated : t -> int
 (** [allocated d] is the bytes that [d] holds now of the memory that counts
     in its budget ({!section-reclaim}). *)
 
+val charged : ?memory:Rig_edge.memory -> t -> t
+(** [charged ~memory d] is the device in whose budget a buffer of [d]'s
+    memory of kind [memory] (default [Device], {!Buffer.kind}) counts, as
+    {!section-reclaim} states: [d] for its [Device] and [Mapped] memory, and
+    for [Pinned] memory where the host addresses [d]'s memory; {!host} for
+    other [Pinned] memory. [Mapped] memory that [d]'s window or budget cannot
+    hold falls back at {!Buffer.create} to [Pinned] memory, or to [d]'s own,
+    which [charged] does not foresee. *)
+
+val allocation : t -> int -> int
+(** [allocation d n] is the bytes a buffer of [n] bytes made on [d]
+    ({!Buffer.create}) counts in the budget of {!charged}: on {!host}, the
+    bytes it takes of the C library's memory, its whole words and those its
+    start takes; on any other device, of any kind, its whole words.
+
+    Raises [Invalid_argument] if [n < 0]. *)
+
 val set_budget : t -> int -> unit
 (** [set_budget d n] sets [d]'s budget to [n], then frees cached memory
     ({!free_cache}) until [d] holds at most [n] bytes or its cache is empty.

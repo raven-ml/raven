@@ -462,6 +462,21 @@ let word = 4
    budget counts. [alloc_entry] refuses an [n] within a word of [max_int]. *)
 let whole n = (n + word - 1) land -word
 
+(* The device whose budget [d]'s memory of [kind] counts in, and the bytes a
+   buffer of [n] bytes of it counts there: on the host, what the heap takes
+   ([heap_reserved]); in a device's or the host's budget, whole words
+   ([take_room]). *)
+let budget_device ?(memory = Device) d =
+  if d == Dev.host then d
+  else
+    match budget_of d memory with
+    | Host_budget -> Dev.host
+    | Device_budget | No_budget -> d
+
+let allocation d n =
+  if n < 0 then invalid_argf "Rig.allocation: %d bytes is negative" n;
+  if d == Dev.host then heap_footprint n else whole n
+
 let take_device_room (d, n) =
   let l = d.live in
   l.used + n <= d.budget

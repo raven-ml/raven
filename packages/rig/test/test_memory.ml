@@ -75,6 +75,49 @@ let test_host_allocated () =
   at_most ~msg:"once collected" int ~than:(before + kib)
     (Rig.allocated Rig.host)
 
+(* A buffer adds {!Rig.allocation}'s bytes to its device's allocated bytes,
+   at sizes around a word, a line and the host's kept size, on the host and
+   on a memory device; a negative size raises. *)
+let test_allocation () =
+  let memory = Result.get_ok (Rig.memory_device "allocation") in
+  let settled d =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      ignore (B.create d 0);
+      Rig.free_cache d
+    done;
+    Rig.allocated d
+  in
+  List.iter
+    (fun d ->
+      List.iter
+        (fun n ->
+          let before = settled d in
+          let b = B.create d n in
+          let added = settled d - before in
+          ignore (Sys.opaque_identity b);
+          equal
+            ~msg:(Printf.sprintf "%s, %d bytes" (Rig.name d) n)
+            int (Rig.allocation d n) added)
+        [ 0; 1; 3; 4; 5; 127; 128; 129; 256; 4095; 4096; 32768; 1 lsl 20 ])
+    [ Rig.host; memory ];
+  (* A device the host addresses counts each kind in its own budget: its
+     Mapped memory is its own, which has no Pinned memory to make. *)
+  List.iter
+    (fun kind ->
+      equal ~msg:"its budget" string (Rig.name memory)
+        (Rig.name (Rig.charged ~memory:kind memory)))
+    [ B.Device; B.Pinned; B.Mapped ];
+  let before = settled memory in
+  let b = B.create ~memory:B.Mapped memory 200 in
+  let added = settled memory - before in
+  ignore (Sys.opaque_identity b);
+  equal ~msg:"mapped memory's bytes" int (Rig.allocation memory 200) added;
+  equal ~msg:"the host's budget" string (Rig.name Rig.host)
+    (Rig.name (Rig.charged ~memory:B.Pinned Rig.host));
+  raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
+      Rig.allocation Rig.host (-1))
+
 (* An array {!B.export} made keeps its buffer's memory, which counts in the
    host's allocated bytes while the array is reachable, once its buffer is
    collected too, and leaves once the array is collected. *)
@@ -1659,6 +1702,8 @@ let tests =
       [
         test "the host's allocated bytes count its buffers"
           test_host_allocated;
+        test "a buffer adds its allocation to its device's bytes"
+          test_allocation;
         test "an exported array's memory counts until it is collected"
           test_host_exported;
         test "an allocation over the budget raises at once and keeps the cache"

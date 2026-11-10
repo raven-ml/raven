@@ -40,6 +40,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- Add `Rig.charged ~memory d`, the device whose budget a buffer of `d`'s
+  memory of that kind counts in, and `Rig.allocation d n`, the bytes it
+  counts there: on the host a buffer of a line or more takes up to 112
+  bytes more to start on one.
 - `Rig_disk.of_file` and `create_file` return a `Rig_disk.file`, whose bytes
   `Rig_disk.buffer` gives and which `Rig_disk.barrier` takes. `Rig_edge.Io`
   is `free`, `read`, `write`, `pages` and `prefetch` over regions alone: an

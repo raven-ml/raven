@@ -200,6 +200,12 @@ val made : region -> bool
 val allocated : device -> int
 (** [allocated d] is {!Rig.allocated}[ d]. *)
 
+val budget_device : ?memory:Rig_edge.memory -> device -> device
+(** [budget_device ~memory d] is {!Rig.charged}[ ~memory d]. *)
+
+val allocation : device -> int -> int
+(** [allocation d n] is {!Rig.allocation}[ d n]. *)
+
 val account : alloc -> device
 (** [account a] is the device in whose {!allocated} count [a]'s memory lies,
     or [a]'s owner for memory that counts in none, as a profile's copy names
