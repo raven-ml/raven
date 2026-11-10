@@ -62,11 +62,6 @@ An item leaves when its library fixes it, or when a design decides it stays.
   `if jit then Rune.jit spec f else f` with an explicit signature at every
   call, even for `Nx.matmul`, and threading data the body uses (an
   attention bias) through the signature.
-- A scan over a strided stack of weights (layers stacked on one axis,
-  scanned one layer a step) copies the whole stack, forward pass included:
-  +524,288 B in the remat audit's 8-layer probe, so a layer-scanned model
-  holds its weights twice. Found by the remat design audit; to fix with
-  that design or on its own, after a check of where the copy is made.
 - Under `Rune.jit`, a remat inside a scan step whose body contains a `grad`
   saves nothing (identical bytes with and without it), and a loop's storage
   is never reused within a trip (4 chunks hold 1.24 MB against 0.59 MB for
