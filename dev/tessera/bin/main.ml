@@ -21,6 +21,8 @@ encode options:
   --device D    cpu (eager, the default), cpu-jit, cuda, nv, amd or metal
   --dims K      write the Matryoshka prefix of K values (students only)
   --int8        write GeoTessera's int8 codes and scales
+  --landmask F  write NAME.tiff, GeoTessera's float32 GeoTIFF, on the grid of
+                the tile's landmask F, in place of the npy files
   --bf16        compute the linear layers and attention in bfloat16
   --pixels N    pixels per batch (default 4096)
   --slots S     pixels per row at most (default 32)
@@ -116,6 +118,18 @@ let bf16 m = Nx.Ptree.cast (module Model) Nx.bfloat16 m
 
 (* encode *)
 
+(* The tile's grid, from its landmask's tags, as GeoTessera takes it. A tile of
+   another shape is refused here, before it is embedded, as save_geotiff would
+   refuse it after. *)
+let landmask ~tile:(h, w) file =
+  let tags = Nx_io.Tiff.tags (List.hd (Nx_io.load_tiff file)) in
+  match Jord.Geotiff.grid tags with
+  | Error e -> die "%s: %s" file e
+  | Ok (g : Jord.Grid.t) when g.rows <> h || g.cols <> w ->
+      die "%s: a grid of %d × %d, and the tile is %d × %d" file g.rows g.cols h
+        w
+  | Ok g -> g
+
 let encode opts =
   let file = req opts "--model" and tile = req opts "--tile" in
   let out = req opts "--out" in
@@ -136,7 +150,10 @@ let encode opts =
             die "--dims %s: the model's prefixes are [%s]" k
               (String.concat "; " (List.map string_of_int m.prefixes)))
   in
-  let px, grid = Pixels.of_tile tile in
+  let px, (h, w) = Pixels.of_tile tile in
+  let geotiff = Option.map (landmask ~tile:(h, w)) (opt opts "--landmask") in
+  if flag opts "--int8" && Option.is_some geotiff then
+    die "--int8 and --landmask: GeoTessera's GeoTIFFs hold float32";
   let embed t =
     if flag opts "--bf16" then
       Embedding.encode ~shape t.at (forward t (place t (bf16 m))) px
@@ -147,9 +164,12 @@ let encode opts =
       run =
         (fun t ->
           let e = embed t in
-          let e = Nx.slice [ Nx.A; Nx.R (0, dims) ] e in
-          if flag opts "--int8" then Embedding.save_int8 out ~grid e
-          else Embedding.save out ~grid e);
+          let e = Nx.reshape [| h; w; -1 |] e in
+          let e = Nx.slice [ Nx.A; Nx.A; Nx.R (0, dims) ] e in
+          match geotiff with
+          | Some grid -> Embedding.save_geotiff out ~grid e
+          | None when flag opts "--int8" -> Embedding.save_int8 out e
+          | None -> Embedding.save out e);
     }
 
 (* validate *)
@@ -537,6 +557,7 @@ let () =
                "--model";
                "--tile";
                "--out";
+               "--landmask";
                "--device";
                "--dims";
                "--pixels";

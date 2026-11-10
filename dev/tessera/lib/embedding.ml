@@ -68,20 +68,50 @@ let quantize e =
 
 (* Files *)
 
-let grid_shape name (h, w) e =
-  if Nx.ndim e <> 2 || Nx.dim 0 e <> h * w then
+let check_tile name e =
+  if Nx.ndim e <> 3 then
     invalid_arg
-      (Printf.sprintf "Tessera.Embedding.%s: %d rows, %d × %d expected" name
-         (Nx.dim 0 e) h w);
-  [| h; w; Nx.dim 1 e |]
+      (Printf.sprintf "Tessera.Embedding.%s: rank %d, [h; w; dims] expected"
+         name (Nx.ndim e))
 
-let save name ~grid e =
-  let shape = grid_shape "save" grid e in
-  Nx_io.save_npy (name ^ ".npy") (Nx.reshape shape e)
+let save name e =
+  check_tile "save" e;
+  Nx_io.save_npy (name ^ ".npy") e
 
-let save_int8 name ~grid e =
-  let shape = grid_shape "save_int8" grid e in
+let save_int8 name e =
+  check_tile "save_int8" e;
   let codes, scales = quantize e in
-  Nx_io.save_npy (name ^ ".npy") (Nx.reshape shape codes);
-  Nx_io.save_npy (name ^ "_scales.npy")
-    (Nx.reshape [| shape.(0); shape.(1) |] scales)
+  Nx_io.save_npy (name ^ ".npy") codes;
+  Nx_io.save_npy (name ^ "_scales.npy") scales
+
+(* GeoTessera's GeoTIFF (geotessera core.py:1313-1361, at 2814c5b): a band per
+   value, tiled 256 × 256, nodata NaN, described in GDAL_METADATA in the text
+   GDAL writes. GeoTessera compresses by LZW, which nx.io does not write. *)
+let gdal_metadata = 42112
+let geotiff_tile = (256, 256)
+
+let descriptions dims =
+  let b = Buffer.create (80 * (dims + 1)) in
+  Buffer.add_string b "<GDALMetadata>\n";
+  for k = 0 to dims - 1 do
+    Printf.bprintf b
+      "  <Item name=\"DESCRIPTION\" sample=\"%d\" \
+       role=\"description\">Tessera_Band_%d</Item>\n"
+      k k
+  done;
+  Buffer.add_string b "</GDALMetadata>\n";
+  Buffer.contents b
+
+let save_geotiff name ~(grid : Jord.Grid.t) e =
+  check_tile "save_geotiff" e;
+  if Nx.dim 0 e <> grid.rows || Nx.dim 1 e <> grid.cols then
+    invalid_arg
+      (Printf.sprintf
+         "Tessera.Embedding.save_geotiff: a tile of %d × %d, a grid of %d × %d"
+         (Nx.dim 0 e) (Nx.dim 1 e) grid.rows grid.cols);
+  let tags =
+    (gdal_metadata, Nx_io.Tiff.Ascii (descriptions (Nx.dim 2 e)))
+    :: Jord.Geotiff.tags ~nodata:Float.nan grid
+  in
+  Nx_io.save_tiff ~tile:geotiff_tile ~compression:Nx_io.Tiff.Deflate ~tags
+    (name ^ ".tiff") e

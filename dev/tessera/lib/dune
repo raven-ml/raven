@@ -3,4 +3,4 @@
 (library
  (name tessera)
  (private_modules flat)
- (libraries nx nx.array nx.io nx.ragged kaun))
+ (libraries nx nx.array nx.io nx.ragged kaun jord))
