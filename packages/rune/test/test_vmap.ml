@@ -1228,9 +1228,9 @@ let batch_of_one =
   |> with_pp (fun ppf (l, f) -> Format.fprintf ppf "%a, f = %d" pp_lane l f)
 
 (* A set no kernel library computes on, as a GPU set is outside a compiler:
-   a memory device and an io device, which does not run on the host. *)
+   a memory device and a device that does not run on the host. *)
 module Bare =
-  (val Nx.devices [ Nx_support.memory 3; Nx_array_support.io_device () ])
+  (val Nx.devices [ Nx_support.memory 3; Nx_array_support.off_host () ])
 
 (* A creation in a lane reads no lane, so the map computes it now: on a set
    without kernels the host makes it, and every lane holds it. *)

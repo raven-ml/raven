@@ -1322,10 +1322,10 @@ let test_constant_result () =
   equal bits_t (bits (v [| 0.5; -2. |])) (bits d)
 
 (* A set no kernel library computes on, as a GPU set is outside a compiler:
-   a memory device and an io device, which does not run on the host. *)
-let io = Nx_array_support.io_device ()
+   a memory device and a device that does not run on the host. *)
+let off = Nx_array_support.off_host ()
 
-module Bare = (val Nx.devices [ Nx_support.memory 3; io ])
+module Bare = (val Nx.devices [ Nx_support.memory 3; off ])
 
 (* A constant result on the sibling of the device a program computes on, in a
    set without kernels: the call compiles, the result is the constant's values
@@ -1333,7 +1333,7 @@ module Bare = (val Nx.devices [ Nx_support.memory 3; io ])
    device. *)
 let test_sibling_constant () =
   let on r x = Nx.place (Nx.Placement.device Bare.v r) x in
-  let c = on io (v [| 0.5; -2. |]) in
+  let c = on off (v [| 0.5; -2. |]) in
   let x = on (Nx_support.memory 3) (v [| 1.; 2. |]) in
   let memory y = Nx_array.buffer (Option.get (Nx.Repr.array y)) in
   let apart msg a b =
@@ -1362,7 +1362,7 @@ let test_sibling_constant () =
   let offset (type v s) msg (dt : (v, s) Nx.dtype) (e : v array) k =
     let made = Nx.create dt [| Array.length e |] e in
     let tail y = Nx.slice [ Rs (k, Array.length e, 1) ] y in
-    let c = tail (on io made) and want = tail made in
+    let c = tail (on off made) and want = tail made in
     let calls = Rune.evaluations () in
     let _, d =
       Rune.jit

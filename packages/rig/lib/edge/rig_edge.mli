@@ -12,9 +12,8 @@
     that declares the record its compiled code reads ({!type-capability}),
     link this library and never [rig]. [rig], which every program that opens
     a device links, defines the C function [rig_code_sync] that
-    [rig_edge.h] declares. A library for a device whose memory the host
-    reads and writes through calls, such as files, implements {!Io}
-    instead.
+    [rig_edge.h] declares. A library of memory that the host reads and
+    writes through calls, such as files, implements {!Io} instead.
 
     rig reads a device's {!type-facts} once, when the device opens. It then
     calls the driver's OCaml functions to allocate and map memory, to load
@@ -694,93 +693,65 @@ module type Driver = sig
       of this driver, and must touch nothing of the new device. *)
 end
 
-(** Devices of memory that the host reads and writes through calls.
+(** Memory that the host reads and writes through calls.
 
-    An io device holds memory that the host does not address, such as a
-    file, and runs no work. Its reads and writes are synchronous, in the
-    caller. Of the exceptions its library raises, only {!Io.Fault} loses the
-    device. Any other reaches the caller, since no work of the device can
-    see a change it left half done. The library must leave each region it
-    made readable, writable and freeable after an exception escapes any of
-    its calls.
+    An io library holds memory that the host does not address, such as a
+    file, in {e regions} of its own making. It gives each to rig as a buffer
+    of an io device ([Rig.open_io], [Rig.Buffer.of_io]), a device that runs
+    no work and makes no memory. rig calls the library's functions on the
+    region, synchronously, in the caller. An exception they raise reaches
+    the caller and loses nothing, since no work of the device can see a
+    change it left half done. The library must leave each region readable,
+    writable and freeable after an exception escapes any of its calls.
 
     The library must count its locks, check its own functions and give back
     its locks as a driver does ({!section-drivers}). *)
 module type Io = sig
-  type t
-  (** The type for open io devices. *)
-
   type region
-  (** The type for memory of an io device. *)
+  (** The type for the library's memory. *)
 
-  exception Fault of string
-  (** [Fault why] reports that the device failed, such as a closed
-      connection. *)
+  val free : region -> unit
+  (** [free r] gives [r] back. rig calls it once [r]'s buffers are
+      unreachable. *)
 
-  val region_key : region Type.Id.t
-  (** [region_key] identifies the io library and its regions.
-      [Rig.Buffer.of_io] and [Rig.Buffer.io] cast regions by it, and a
-      device's name stays with the library that opened it. *)
-
-  val budget : t -> int
-  (** [budget d] is the bytes [d] should hold at most. *)
-
-  val alloc : t -> int -> region option
-  (** [alloc d n] is [n] new bytes of [d]'s memory, or [None] if [d] has no
-      room. [n] is positive and a multiple of 4, [Rig.word].
-
-      Raises [Invalid_argument] if [d]'s memory is only what its library
-      opens and hands to [Rig.Buffer.of_io], such as a disk's files.
-      [Rig.Buffer.create] raises it in turn. *)
-
-  val free : t -> region -> unit
-  (** [free d r] gives [r] back. *)
-
-  val read : t -> region -> at:int -> dst:int -> len:int -> unit
-  (** [read d r ~at ~dst ~len] reads the [len] bytes at [at] in [r] into host
+  val read : region -> at:int -> dst:int -> len:int -> unit
+  (** [read r ~at ~dst ~len] reads the [len] bytes at [at] in [r] into host
       memory at [dst].
 
-      Raises [Sys_error] for a failure of the memory alone, such as a file
-      truncated since it was opened, which loses nothing, and {!Fault}, which
-      loses [d]. *)
+      Raises [Sys_error] for a failure of the memory, such as a file
+      truncated since it was opened. *)
 
-  val write : t -> region -> at:int -> src:int -> len:int -> unit
-  (** [write d r ~at ~src ~len] writes the [len] bytes of host memory at
-      [src] at [at] in [r].
+  val write : region -> at:int -> src:int -> len:int -> unit
+  (** [write r ~at ~src ~len] writes the [len] bytes of host memory at [src]
+      at [at] in [r].
 
       Raises as {!read}. *)
 
   val pages :
-    t ->
     region ->
     (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
     option
-  (** [pages d r] is [r]'s bytes as host memory, or [None] if [d] maps none.
-      The mapping is [r]'s memory, so {!read} and {!write} see writes through
-      it, and it sees theirs. For [r] that [d] holds for reading
+  (** [pages r] is [r]'s bytes as host memory, or [None] if the library never
+      maps them. The mapping is [r]'s memory, so {!read} and {!write} see
+      writes through it, and it sees theirs. For [r] given for reading
       ([Rig.Buffer.access]), a write through the mapping must not reach [r].
-      rig asks once per allocation, at its first borrow that gets a result,
-      and keeps the result.
+      rig asks once per region, at its first borrow that gets a result, and
+      keeps the result.
 
       A device other than the host maps the pages where its driver maps host
       memory ({!Driver.map_host}). Some drivers refuse pages mapped
-      read-only, so a library maps a region it holds for reading as the
+      read-only, so a library maps a region given for reading as the
       process's own copy, as a private mapping of a file is. Some refuse a
       shared mapping of a file, and their devices then copy through staging
       memory.
 
-      Raises [Sys_error] for a transient failure of the memory alone, such as
-      too many open files, which loses nothing. The borrow raises it,
-      and the next borrow asks again. Raises {!Fault}, which loses [d]. *)
+      Raises [Sys_error] for a transient failure, such as too many open
+      files. The borrow raises it, and the next borrow asks again. *)
 
-  val prefetch : t -> region -> at:int -> len:int -> unit
-  (** [prefetch d r ~at ~len] asks [d] to read the [len] bytes at [at] in [r]
-      ahead, before a device other than the host reaches them through
+  val prefetch : region -> at:int -> len:int -> unit
+  (** [prefetch r ~at ~len] asks the library to read the [len] bytes at [at]
+      in [r] ahead, before a device other than the host reaches them through
       {!pages}. It is a hint, and must raise nothing. *)
-
-  val stop : t -> unit
-  (** [stop d] ends [d]. rig calls it at [d]'s close, or at an open of its
-      name once [d] is lost. *)
 end
 
 (** {1:opening Opening} *)
@@ -809,12 +780,3 @@ type 'a opener = {
     earlier one is not stopped. A [make] that may take a lock must raise
     [Invalid_argument], having opened nothing, while its thread holds one
     ({!section-drivers}). *)
-
-type 'a io_opener = {
-  name : string;  (** The device's name, without a machine suffix. *)
-  io : (module Io with type t = 'a);  (** The device's io library. *)
-  make : unit -> ('a, string) result;  (** Opens a new io device handle. *)
-}
-(** The type for openers of named io devices. [Rig.open_io] calls [make] and
-    owns its handles as [Rig.open_] does for an {!opener}. A caller that calls
-    [make] itself owns the handle and must call its [stop] ({!Io}). *)

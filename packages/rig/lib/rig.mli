@@ -9,9 +9,9 @@
     it. The {!host} is this process's device. A driver's device, such as a
     GPU, runs the work its driver places on the device's queues, and a
     program opens it with the opener the driver supplies ({!open_}). An
-    {e io device}, such as a file, holds memory that the host reads and
-    writes through its library's calls ({!open_io}). A program uses the
-    devices of another machine through that machine's host
+    {e io device} holds memory that the host reads and writes through the
+    calls of an io library, such as files ({!open_io}, {!Buffer.of_io}). A
+    program uses the devices of another machine through that machine's host
     ({!section-machines}).
 
     Most programs need only {!open_}, {!Buffer} and {!Buffer.copy}. {!Image},
@@ -150,8 +150,17 @@ val open_ : ?machine:t -> 'a Rig_edge.opener -> (t, string) result
     called on the thread that runs an open of that name, from the opener's
     [make] or a callback inside that open ({!section-domains}). *)
 
-val open_io : ?machine:t -> 'a Rig_edge.io_opener -> (t, string) result
-(** [open_io ~machine o] is {!open_} for an io device ({!Rig_edge.Io}). *)
+val open_io : ?machine:t -> string -> (t, string) result
+(** [open_io ~machine name] is the open io device named [name] on
+    [machine]'s machine (defaults to this machine), or a new one if none is
+    open there: two opens of one name, by any io libraries, answer the same
+    device. An io device runs no work and makes no memory. Its memory is the
+    regions that io libraries give it ({!Buffer.of_io}), each with its
+    library's functions. It is [Error why] where {!open_} is.
+
+    Raises [Invalid_argument] if a driver's device is open under [name], or
+    if called on the thread that runs an open of that name, from a callback
+    inside that open ({!section-domains}). *)
 
 val memory_device : string -> (t, string) result
 (** [memory_device name] is {!open_} of the {e memory device} named [name] on
@@ -262,8 +271,8 @@ val alignment : t -> int
 (** [alignment d] is the power of two that the first byte of every non-empty
     buffer {!Buffer.create} makes on [d] starts on, whatever its kind and
     size, as [d]'s driver states it from its allocator
-    ({!Rig_edge.type-facts}): [16] for {!host}, [64] for a {!memory_device},
-    and [1] for an io device. {!Buffer.create} starts a host buffer of 128
+    ({!Rig_edge.type-facts}): [16] for {!host} and [64] for a
+    {!memory_device}. {!Buffer.create} starts a host buffer of 128
     bytes or more on 128 bytes or a page, multiples of this alignment that
     hold for those sizes only. For a device of another machine, it is that
     machine's device's. *)
@@ -694,13 +703,13 @@ val word : int
     {!host} returns as in any process, so one kept after work a thread of
     the parent was submitting on {!host} at the fork stays until the
     child's next submit on {!host}. rig leaves a live io device as it was,
-    and its library decides what a fork does to it, as a child of [fork]
-    keeps the open files of its parent. An io device whose stop has not
-    returned at the fork, owed or under way, stays lost in the child, which
-    runs no stop of it and frees none of its memory, since that stop is the
-    parent's. The host's staging memory that a thread of the parent was
-    copying through at the fork ({!Buffer.section-copying}) stays in the
-    child for good. A device the child opens is its own. *)
+    and each io library decides what a fork does to its regions, as a child
+    of [fork] keeps the open files of its parent. An io device whose stop
+    has not returned at the fork, owed or under way, stays lost in the
+    child, which runs no stop of it and frees none of its memory, since that
+    stop is the parent's. The host's staging memory that a thread of the
+    parent was copying through at the fork ({!Buffer.section-copying}) stays
+    in the child for good. A device the child opens is its own. *)
 
 (** {2:errors Errors and failure}
 
@@ -764,7 +773,7 @@ val word : int
     asynchronous exception from any of these calls may therefore lose a
     device. Every other exception leaves the device serving later calls,
     such as one that interrupts a wait ({!section-domains}), one from an io
-    device's call, the [Invalid_argument] of a function the device cannot
+    library's call, the [Invalid_argument] of a function the device cannot
     run ({!Image.resolve}), and that of a call made inside a lock
     ({!section-domains}). *)
 
@@ -906,9 +915,8 @@ val failure : unit -> string option
        over the collector's current and previous major cycles. Pages of a
        host buffer that reuses none fault in at their first write, in the
        call that writes them.}
-    {- On a driver's or an io device, an allocation larger than the budget it
-       counts in raises {!Out_of_memory} immediately, without freeing the
-       cache.}
+    {- On a driver's device, an allocation larger than the budget it counts
+       in raises {!Out_of_memory} immediately, without freeing the cache.}
     {- An allocation that its budget or its driver refuses first reclaims.
        rig frees the cached memory charged to that budget, waits for the work
        that holds back other collected memory, from the second round on
@@ -936,8 +944,8 @@ val failure : unit -> string option
 
 val budget : t -> int
 (** [budget d] is [d]'s budget ({!section-reclaim}). It starts at [max_int]
-    for {!host}, at its driver's [budget] ({!Rig_edge.type-facts}) for a
-    driver's device, and at {!Rig_edge.Io.budget} for an io device. *)
+    for {!host} and an io device, and at its driver's [budget]
+    ({!Rig_edge.type-facts}) for a driver's device. *)
 
 val allocated : t -> int
 (** [allocated d] is the bytes that [d] holds now of the memory that counts
@@ -1051,12 +1059,11 @@ module Buffer : sig
       devices can {!borrow} it; a smaller one of at least 128 bytes starts on
       128 bytes, so threads that write it in pieces of whole 128-byte blocks
       share no cache line, on Apple silicon's 128-byte lines or x86's 64-byte
-      ones. On an io device the memory is what {!Rig_edge.Io.alloc} makes,
-      whatever [memory].
+      ones.
 
       Raises [Invalid_argument] if [n < 0], if [memory] is [Pinned] and the
-      host addresses [d]'s memory, or if [n > 0], [d] is an io device and
-      its {!Rig_edge.Io.alloc} raises it, and {!Lost} if [d] is lost or its
+      host addresses [d]'s memory, or if [n > 0] and [d] is an io device,
+      which makes no memory ({!of_io}), and {!Lost} if [d] is lost or its
       driver faults during the allocation. *)
 
   val of_string : string -> t
@@ -1071,17 +1078,23 @@ module Buffer : sig
       one such buffer with work through the other. Wrap an array once and
       share the buffer through {!view} and {!borrow}. *)
 
-  val of_io : device -> 'r Type.Id.t -> 'r -> access:access -> int -> t
-  (** [of_io d k r ~access n] is a buffer over the [n] bytes of [r], a
-      {e region} of the io device [d]. A region is memory as [d]'s library
-      represents it, and the library declares its type under [k]
-      ({!Rig_edge.Io.region_key}). Its memory admits [access], which is
-      [Read] for a region [d] holds for reading, such as a file opened
-      read-only. Its memory is outside the claims ({!Claim}), and [r] returns
-      to {!Rig_edge.Io.free} once unreachable.
+  val of_io :
+    device ->
+    (module Rig_edge.Io with type region = 'r) ->
+    'r ->
+    access:access ->
+    int ->
+    t
+  (** [of_io d (module I) r ~access n] is a buffer of the io device [d] over
+      the [n] bytes of [r], a {e region} of the io library [I]. A region is
+      memory as its library represents it, such as an open file. Its memory
+      admits [access], which is [Read] for a region given for reading, such
+      as a file opened read-only. Its memory is outside the claims
+      ({!Claim}), and [r] returns to [I.free] ({!Rig_edge.Io.free}) once
+      unreachable.
 
-      Raises [Invalid_argument] if [d] is not an io device, its library's key
-      is not [k], or [n < 0], and {!Lost} if [d] is lost or closed. *)
+      Raises [Invalid_argument] if [d] is not an io device or [n < 0], and
+      {!Lost} if [d] is lost or closed. *)
 
   val view : t -> first:int -> length:int -> t
   (** [view b ~first ~length] is the [length] bytes of [b] from its byte
@@ -1104,7 +1117,7 @@ module Buffer : sig
       [b]'s, a {!Claim.with_} holds its memory exclusive; {!Lost} if [d] is
       lost or its driver faults during the borrow; {!Rig.Out_of_memory} if
       [d]'s driver has no room for the mapping ({!Rig.section-reclaim}); and
-      [Sys_error] if asking an io device for [b]'s pages fails transiently
+      [Sys_error] if asking an io library for [b]'s pages fails transiently
       ({!Rig_edge.Io.pages}). *)
 
   val free : ?why:string -> t -> bool
@@ -1305,13 +1318,13 @@ module Buffer : sig
       copies.
 
       A borrow of an io device's memory is its pages, whose reads by the
-      host or by work are as the io device states once the object behind
+      host or by work are as its io library states once the object behind
       them changes, such as a file that a truncation cut short ([Rig_disk]).
       Memory an io device owns, its own or a borrow of its pages
-      ({!borrow}), moves only through that io device's read or write. A
+      ({!borrow}), moves only through its io library's read or write. A
       copy from or into it never reads or writes the pages, and no device
       maps them for it, so a copy from a file cut short raises what the io
-      device's read raises. Two allocations of one object, such as two
+      library's read raises. Two allocations of one object, such as two
       opens of one file, are two memories that share no byte ({!overlaps}).
       A program must not copy between bytes of the object that both name,
       whose result is unspecified.
@@ -1384,7 +1397,7 @@ module Buffer : sig
       and no io device owns its memory, the host copies or sets the bytes
       once the work the copy follows is done. Otherwise the blits' bytes pass
       through staging memory, and a device copies them to or from the buffer
-      as {!copy} does. A fill of memory an io device owns is the io device's
+      as {!copy} does. A fill of memory an io device owns is its io library's
       writes from host memory that holds the byte. Any other fill runs on the
       copy engine of the buffer's device, or, for a borrow on a device that
       runs no copy, of the device whose memory it borrows, and reads no
@@ -1472,7 +1485,7 @@ module Buffer : sig
       {!Out_of_memory} if staging memory cannot be allocated or mapped
       ({!Rig.section-reclaim}), or
       the device's queues must grow for a submission and it has no memory
-      for the growth ({!Rig.submit}); and what an io device's read or write
+      for the growth ({!Rig.submit}); and what an io library's read or write
       raises. Where it raises after it queued some of the copy's
       submissions, those still run, so [dst] may hold some of the copy's
       bytes. *)
@@ -1513,7 +1526,7 @@ module Buffer : sig
       Raises [Invalid_argument] if [b] is dead or admits only [Read], its
       memory is held exclusive, or [b] has bytes, the host does not address
       it and no device sets them. Raises {!Lost} as {!submit_copy} does, and
-      what an io device's write raises. *)
+      what an io library's write raises. *)
 
   val fill : t -> char -> unit
   (** [fill b c] sets every byte of [b] to [c] and returns once they are
@@ -1534,12 +1547,6 @@ module Buffer : sig
 
       Memory is {e handle-only} when its driver names it by a handle and
       gives it no address ({!Rig_edge.location}). *)
-
-  val io : t -> 'r Type.Id.t -> 'r option
-  (** [io b k] is the region [b]'s memory lies in, if it is an io device's
-      memory of a library whose key is [k], and [None] otherwise.
-
-      Raises [Invalid_argument] if [b] is dead. *)
 
   val aligned : t -> at:int -> int -> bool
   (** [aligned b ~at n] is [true] iff the address [at] bytes past [b]'s first

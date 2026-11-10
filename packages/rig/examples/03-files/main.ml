@@ -31,16 +31,16 @@ let () =
   Printf.printf "%s computes: %b\n\n" (name Rig_disk.device)
     (computes Rig_disk.device);
 
-  (* Write: a new file is a buffer of the disk, which a copy fills. [barrier]
-     orders those writes before later changes to the file system. *)
+  (* Write: a new file's buffer is a buffer of the disk, which a copy fills.
+     [barrier] orders those writes before later changes to the file system. *)
   let file = Result.get_ok (Rig_disk.create_file path 16) in
   let numbers = Buffer.of_bigarray (int32s [ 10l; 20l; 30l; 40l ]) in
-  Buffer.copy ~src:numbers ~dst:file;
+  Buffer.copy ~src:numbers ~dst:(Rig_disk.buffer file);
   Rig_disk.barrier file;
 
   (* Read: a view of a file is a range of its bytes, and a copy reads just
      those. *)
-  let opened = Result.get_ok (Rig_disk.of_file path) in
+  let opened = Rig_disk.buffer (Result.get_ok (Rig_disk.of_file path)) in
   Printf.printf "%s holds %d bytes\n" path (Buffer.length opened);
   let middle = Buffer.create host 8 in
   Buffer.copy ~src:(Buffer.view opened ~first:4 ~length:8) ~dst:middle;

@@ -6,12 +6,12 @@
 (** Files as an io device.
 
     The {e disk} is this machine's io device whose memory is files
-    ({!device}). {!of_file} and {!create_file} each make one allocation, over
-    the bytes of one file. Its buffers and their views ({!Rig.Buffer.view})
-    are ranges of those bytes, at any offset. The disk runs no work and has
-    no timeline. A program reaches a file's bytes through
-    {!Rig.Buffer.copy} and {!Rig.Buffer.borrow}, which return when done
-    ({!copies}).
+    ({!device}). {!of_file} and {!create_file} each open a {!type-file}, whose
+    {!val-buffer} is one allocation over the bytes of the file. Its views
+    ({!Rig.Buffer.view}) are ranges of those bytes, at any offset. The disk
+    runs no work and has no timeline. A program reaches a file's bytes
+    through {!Rig.Buffer.copy} and {!Rig.Buffer.borrow}, which return when
+    done ({!copies}).
 
     The life of a file's buffer goes like this:
     {ol
@@ -32,7 +32,7 @@
       match Rig_disk.create_file tmp (Rig.Buffer.length b) with
       | Error e -> failwith e
       | Ok f ->
-          Rig.Buffer.copy ~src:b ~dst:f;
+          Rig.Buffer.copy ~src:b ~dst:(Rig_disk.buffer f);
           Rig_disk.barrier f;
           Sys.rename tmp path
     ]}
@@ -57,11 +57,11 @@
 (** {1:disk The disk} *)
 
 val device : Rig.t
-(** [device] is this machine's disk, named ["DISK"]. Its {!Rig.budget} is
-    [max_int] and its {!Rig.arch} is [""]. It neither computes nor reaches
-    other devices' memory ({!Rig.computes}, {!Rig.reaches}).
-    {!Rig.Buffer.create} of one byte or more raises [Invalid_argument] on it,
-    since its buffers are files. *)
+(** [device] is this machine's disk, the io device named ["DISK"]
+    ({!Rig.open_io}). Its {!Rig.budget} is [max_int] and its {!Rig.arch} is
+    [""]. It neither computes nor reaches other devices' memory
+    ({!Rig.computes}, {!Rig.reaches}). {!Rig.Buffer.create} of one byte or
+    more raises [Invalid_argument] on it, since its buffers are files. *)
 
 (** {1:files Files}
 
@@ -69,9 +69,15 @@ val device : Rig.t
     [0o666] less the process's umask. On Windows it has those its directory
     gives new files. *)
 
-val of_file : string -> (Rig.Buffer.t, string) result
-(** [of_file path] is the bytes of the regular file [path] on {!device}, for
-    reading only ({!Rig.Buffer.val-access}), as long as the file was when
+type file
+(** The type for open files. *)
+
+val buffer : file -> Rig.Buffer.t
+(** [buffer f] is [f]'s bytes, as a buffer on {!device}. *)
+
+val of_file : string -> (file, string) result
+(** [of_file path] is the regular file [path], whose buffer holds its bytes
+    for reading only ({!Rig.Buffer.val-access}), as long as the file was when
     opened. Each call makes an allocation of its own, so two opens of one
     file do not overlap ({!Rig.Buffer.overlaps}).
 
@@ -82,9 +88,9 @@ val of_file : string -> (Rig.Buffer.t, string) result
     Raises [Invalid_argument] from a callback inside a lock
     ({!descriptors}). *)
 
-val create_file : string -> int -> (Rig.Buffer.t, string) result
-(** [create_file path n] is a new file at [path] of [n] zero bytes, as a
-    buffer on {!device} for reading and writing.
+val create_file : string -> int -> (file, string) result
+(** [create_file path n] is a new file at [path] of [n] zero bytes, whose
+    buffer holds them for reading and writing.
     [create_file] never replaces what [path] names and never follows a link
     at [path].
 
@@ -122,20 +128,19 @@ val create_file : string -> int -> (Rig.Buffer.t, string) result
     Where the file system offers no barrier and no flush of the drive's cache
     to its medium, such as some network file systems on macOS, {!barrier} is
     the system's [fsync] and the ordering is the file system's own.
-    {!barrier} returns immediately on a file {!of_file} opened, an empty
-    file, or a buffer with no file ({!Rig.Buffer.create} of no bytes), since
-    nothing writes them.
+    {!barrier} returns immediately on a file {!of_file} opened and an empty
+    file, since nothing writes them.
 
     A copy also raises [Sys_error] on a read past the end of a file that
     something outside the process cut short. The bytes a failed copy was to
     write, in the file or in memory, are then unspecified, and nothing else
     changes. *)
 
-val barrier : Rig.Buffer.t -> unit
-(** [barrier b] returns once the bytes written to [b]'s file before it, by
-    copies or through a borrow, are ordered before every later change to the
-    file system ({!copies}). It first waits for the device work that writes
-    [b] through a borrow ({!Rig.Buffer.wait}). A barrier on a file
+val barrier : file -> unit
+(** [barrier f] returns once the bytes written to [f] before it, by copies or
+    through a borrow, are ordered before every later change to the file
+    system ({!copies}). It first waits for the device work that writes [f]'s
+    buffer through a borrow ({!Rig.Buffer.wait}). A barrier on a file
     {!create_file} made and nothing wrote returns without ordering the file's
     creation or size.
 
@@ -144,14 +149,14 @@ val barrier : Rig.Buffer.t -> unit
     it closes the descriptor of a file copies wrote since its last sync
     ({!descriptors}). Once the system reports that it could not store bytes
     already written to the file, the file's next barrier raises [Sys_error],
-    and so does every later one on its buffers. The system reports such a
-    failure once, and the bytes it could not store may be lost.
+    and so does every later one. The system reports such a failure once, and
+    the bytes it could not store may be lost.
 
-    Raises [Invalid_argument] if [b] is dead or is neither a buffer of
-    {!device} nor a borrow of one, or from a callback inside a lock
-    ({!descriptors}). Raises [Sys_error] for a failure to store the file's
-    bytes, as above, or if the file cannot be reopened ({!descriptors}), and
-    {!Rig.Lost} if work it waits for is on a lost device. *)
+    Raises [Invalid_argument] if [f]'s buffer is dead ({!Rig.Buffer.dead}),
+    or from a callback inside a lock ({!descriptors}). Raises [Sys_error]
+    for a failure to store the file's bytes, as above, or if the file cannot
+    be reopened ({!descriptors}), and {!Rig.Lost} if work it waits for is on
+    a lost device. *)
 
 (** {1:borrows Borrows}
 

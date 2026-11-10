@@ -183,12 +183,16 @@ let make_file ?(path = new_path ()) s =
   register path;
   path
 
-let create path n =
-  let b = require_ok ~pp:Format.pp_print_string (Rig_disk.create_file path n) in
+let create_file path n =
+  let f = require_ok ~pp:Format.pp_print_string (Rig_disk.create_file path n) in
   register path;
-  b
+  f
 
-let of_file path = require_ok ~pp:Format.pp_print_string (Rig_disk.of_file path)
+let open_file path =
+  require_ok ~pp:Format.pp_print_string (Rig_disk.of_file path)
+
+let create path n = Rig_disk.buffer (create_file path n)
+let of_file path = Rig_disk.buffer (open_file path)
 
 (* [open_where ours] is the number of this process's descriptors whose /dev/fd
    entry [ours] holds. *)
@@ -901,14 +905,15 @@ let test_replaced (kind, how, k, op) =
   let path = new_path () in
   removing [ path ] @@ fun () ->
   ignore (others ());
-  let file =
+  let f =
     match kind with
-    | Opened -> of_file (make_file ~path s)
+    | Opened -> open_file (make_file ~path s)
     | Created ->
-        let b = create path 64 in
-        write b s;
-        b
+        let f = create_file path 64 in
+        write (Rig_disk.buffer f) s;
+        f
   in
+  let file = Rig_disk.buffer f in
   equal octets ~msg:"before" s (read file);
   equal (list int) ~msg:"other files that read wrong" [] (use_others k);
   replace path how;
@@ -922,7 +927,7 @@ let test_replaced (kind, how, k, op) =
       | got -> equal octets ~msg:"its own bytes" s got
       | exception Sys_error m -> equal string names_file (naming path m))
   | Barrier -> (
-      match Rig_disk.barrier file with
+      match Rig_disk.barrier f with
       | () -> ()
       | exception Sys_error m -> equal string names_file (naming path m))
 
@@ -940,13 +945,14 @@ let test_own_writes () =
 let test_borrow_writes () =
   let path = new_path () in
   removing [ path ] @@ fun () ->
-  let file = create path 8 in
+  let f = create_file path 8 in
+  let file = Rig_disk.buffer f in
   let pages = require_some (B.borrow host file) in
   after_tick path;
   poke pages 2 'x';
   use_all_others ();
   poke pages 3 'y';
-  Rig_disk.barrier file;
+  Rig_disk.barrier f;
   let expected = "\000\000xy\000\000\000\000" in
   equal octets ~msg:"read" expected (read file);
   equal octets ~msg:"its path" expected (contents path)
@@ -954,10 +960,11 @@ let test_borrow_writes () =
 let test_mapped_barrier () =
   let path = new_path () in
   removing [ path ] @@ fun () ->
-  let file = create path 8 in
+  let f = create_file path 8 in
+  let file = Rig_disk.buffer f in
   write file "abcdefgh";
   ignore (require_some (B.borrow host file));
-  Rig_disk.barrier file;
+  Rig_disk.barrier f;
   use_all_others ();
   equal octets "abcdefgh" (read file)
 
@@ -1225,13 +1232,14 @@ let descriptors =
 let test_barrier_dead () =
   let path = new_path () in
   removing [ path ] @@ fun () ->
-  let file = create path 4 in
+  let f = create_file path 4 in
+  let file = Rig_disk.buffer f in
   ignore
     (Rig.Claim.with_ ~read:[ file ] ~donate:[] (fun c ->
          Rig.Claim.consume c ~why:"gone" file));
   raises_match
     (Exn.invalid_arg ~sub:"Rig_disk.barrier: the buffer is dead: gone")
-    (fun () -> Rig_disk.barrier file)
+    (fun () -> Rig_disk.barrier f)
 
 (* A barrier first waits for the work that writes the file through a borrow:
    work of a Polled device, unrun, which the device's loss drops. The barrier
@@ -1239,9 +1247,9 @@ let test_barrier_dead () =
 let test_barrier_lost () =
   let path = new_path () in
   removing [ path ] @@ fun () ->
-  let file = create path 64 in
+  let f = create_file path 64 in
   let d, p = Rig_support.Polled.open_ "DISK-TEST-LOST" in
-  let on_d = require_some (B.borrow d file) in
+  let on_d = require_some (B.borrow d (Rig_disk.buffer f)) in
   let s =
     Rig.Submission.make d [| Rig_support.touching [| Rig.Submission.write |] |]
   in
@@ -1249,7 +1257,7 @@ let test_barrier_lost () =
   Rig_support.Polled.fault p "the device fell off the bus";
   let lost = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false in
   raises_match ~msg:"an allocation" lost (fun () -> B.create d 8);
-  raises_match ~msg:"the barrier" lost (fun () -> Rig_disk.barrier file);
+  raises_match ~msg:"the barrier" lost (fun () -> Rig_disk.barrier f);
   is_none ~msg:"the disk's loss" (Rig.lost disk)
 
 (* A failing device
@@ -1388,10 +1396,10 @@ let failing_file d =
   let file =
     require_ok ~pp:Format.pp_print_string (Rig_disk.create_file path 8)
   in
-  write file "abcdefgh";
+  write (Rig_disk.buffer file) "abcdefgh";
   Rig_disk.barrier file;
   fail_block d path;
-  write file "ABCDEFGH";
+  write (Rig_disk.buffer file) "ABCDEFGH";
   (path, file)
 
 let barrier_fails ~msg path file =
@@ -1407,7 +1415,7 @@ let test_failed_barrier () =
     require_ok ~pp:Format.pp_print_string
       (Rig_disk.create_file (Filename.concat d.mount "fine") 8)
   in
-  write fine "abcdefgh";
+  write (Rig_disk.buffer fine) "abcdefgh";
   barrier_fails ~msg:"the failed barrier" path file;
   heal d;
   barrier_fails ~msg:"the next barrier" path file;
@@ -1432,16 +1440,7 @@ let barriers =
     [
       test "barrier returns on a file opened for reading" (fun () ->
           let path = make_file "abc" in
-          removing [ path ] @@ fun () -> Rig_disk.barrier (of_file path));
-      cases "barrier refuses a buffer of another device" ~id:fst
-        [
-          ("the host", fun () -> B.create host 4);
-          ("a memory device", fun () -> B.create (Lazy.force memory_device) 4);
-        ]
-        (fun (_, b) ->
-          let b = b () in
-          raises_match (Exn.invalid_arg ~sub:"Rig_disk.barrier: ") (fun () ->
-              Rig_disk.barrier b));
+          removing [ path ] @@ fun () -> Rig_disk.barrier (open_file path));
       test "barrier refuses a dead buffer" test_barrier_dead;
       test "barrier raises the loss of a device whose work writes the file"
         test_barrier_lost;
@@ -1451,26 +1450,25 @@ let barriers =
         "a barrier raises a failure to write the file met as its descriptor \
          closed"
         test_failed_close;
-      test "barrier returns on an empty buffer of the disk" (fun () ->
-          Rig_disk.barrier (B.create disk 0));
-      test "barrier returns on a lost device's borrow of an empty file"
+      test "barrier returns on an empty file a lost device borrowed"
         (fun () ->
           let path = new_path () in
           removing [ path ] @@ fun () ->
-          let file = create path 0 in
+          let f = create_file path 0 in
           let d = Result.get_ok (Rig.memory_device "DISK-TEST-CLOSED") in
-          let on_device = require_some (B.borrow d file) in
+          ignore (require_some (B.borrow d (Rig_disk.buffer f)));
           Rig.close d;
-          Rig_disk.barrier on_device);
+          Rig_disk.barrier f);
       test "barrier orders a created file through a borrow of it" (fun () ->
           let path = new_path () in
           removing [ path ] @@ fun () ->
-          let file = create path 4 in
+          let f = create_file path 4 in
           let on_device =
-            require_some (B.borrow (Lazy.force memory_device) file)
+            require_some
+              (B.borrow (Lazy.force memory_device) (Rig_disk.buffer f))
           in
           write on_device "wxyz";
-          Rig_disk.barrier on_device;
+          Rig_disk.barrier f;
           equal octets "wxyz" (contents path));
     ]
 
@@ -1487,7 +1485,7 @@ type model = {
   mutable after_others : bool;
 }
 
-type file = { path : string; buf : B.t }
+type file = { path : string; disk : Rig_disk.file; buf : B.t }
 
 let model kind bytes = { kind; bytes; replaced = false; after_others = false }
 let file = abstract "f" ~release:(fun f -> remove f.path)
@@ -1514,13 +1512,15 @@ let model_commands =
       (fun (seed, n) -> model Opened (Bytes.of_string (pattern seed n)))
       (fun (seed, n) ->
         let path = make_file (pattern seed n) in
-        { path; buf = of_file path });
+        let disk = open_file path in
+        { path; disk; buf = Rig_disk.buffer disk });
     command "create_file"
       (sizes @-> makes file)
       (fun n -> model Created (Bytes.make n '\000'))
       (fun n ->
         let path = new_path () in
-        { path; buf = create path n });
+        let disk = create_file path n in
+        { path; disk; buf = Rig_disk.buffer disk });
     command "copy into"
       (file ^-> ranges @-> letters @-> judges (result unit string))
       (fun m r c outcome ->
@@ -1576,7 +1576,7 @@ let model_commands =
     command "barrier"
       (file ^-> judges (result unit string))
       (fun m outcome -> judged m outcome Fun.id)
-      (fun f -> sys_result f (fun () -> Rig_disk.barrier f.buf));
+      (fun f -> sys_result f (fun () -> Rig_disk.barrier f.disk));
     command "replace its path"
       ~pre:(fun m _ -> not m.replaced)
       (file ^-> Gen.of_list ~pp:pp_how hows @-> returns unit)
@@ -1631,9 +1631,10 @@ let shelf =
          (fun i n ->
            let s = pattern (i + 10) n in
            let path = new_path () in
-           let buf = create path n in
+           let disk = create_file path n in
+           let buf = Rig_disk.buffer disk in
            write buf s;
-           ({ path; buf }, s))
+           ({ path; disk; buf }, s))
          sizes)
   in
   { opened; written }
@@ -1777,7 +1778,10 @@ let open_files_child () =
         make_file ~path:(Filename.concat dir (strf "f%d" i)) (strf "f%d" i))
   in
   limit_open_files ();
-  let said = function Ok b -> read b | Error why -> "Error " ^ why in
+  let said = function
+    | Ok f -> read (Rig_disk.buffer f)
+    | Error why -> "Error " ^ why
+  in
   let opened = Array.init 8 (fun i -> Rig_disk.of_file paths.(i)) in
   Array.iter (fun b -> ignore (said b)) opened;
   without_descriptors (fun () ->
@@ -1796,9 +1800,9 @@ let fork_child path out =
         let created =
           Result.get_ok (Rig_disk.create_file out (String.length s))
         in
-        B.copy ~src:opened ~dst:created;
+        B.copy ~src:opened ~dst:(Rig_disk.buffer created);
         Rig_disk.barrier created;
-        read (Result.get_ok (Rig_disk.of_file out)) = s
+        read (Rig_disk.buffer (Result.get_ok (Rig_disk.of_file out))) = s
       in
       Unix._exit
         (match copied () with true -> 0 | false -> 1 | exception _ -> 2)

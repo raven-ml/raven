@@ -11,10 +11,10 @@ open Nx_support
 module A = Nx_array
 module M = Nx_array.Move
 
-(* Three memory devices, whose memory is the host's, and an io device, whose
+(* Three memory devices, whose memory is the host's, and a device whose
    memory the host does not address: its windows copy through
    Rig.Buffer.copy. *)
-let m d = if d = 3 then Nx_array_support.io_device () else Nx_support.memory d
+let m d = if d = 3 then Nx_array_support.off_host () else Nx_support.memory d
 
 module S4 = (val Nx.devices [ m 0; m 1; m 2; m 3 ])
 module One = (val Nx.devices [ m 2 ])
@@ -212,9 +212,9 @@ let split = function
   | Split _ | Cuts _ | Major _ | Minor _ -> true
   | Host | One | On -> false
 
-(* Whether the io device's window of [a], of shape [s], at [w] reaches more of
-   [a]'s elements than it holds: placing then packs its elements into memory the
-   host does not address. *)
+(* Whether the fourth device's window of [a], of shape [s], at [w] reaches
+   more of [a]'s elements than it holds: placing then packs its elements into
+   memory the host does not address. *)
 let packed a s w =
   match windows w s with
   | [ _; _; _; (_, b) ] ->
@@ -291,11 +291,11 @@ let laws =
 
 (* Reading one element *)
 
-(* The io device alone: a set whose memory the host does not address. *)
-module Io = (val Nx.devices [ m 3 ])
+(* The fourth device alone: a set whose memory the host does not address. *)
+module Off = (val Nx.devices [ m 3 ])
 
-(* Where a value read by {!Nx.item} lies: a placement of [where], or the io
-   device alone. *)
+(* Where a value read by {!Nx.item} lies: a placement of [where], or the
+   fourth device alone. *)
 type reading = Placed of where | Off_host
 
 let item_case =
@@ -305,7 +305,7 @@ let item_case =
         (String.concat "; " (Array.to_list (Array.map string_of_int s)))
         (fun ppf -> function
           | Placed w -> Format.fprintf ppf "at %a" pp_where w
-          | Off_host -> Format.pp_print_string ppf "on the io device")
+          | Off_host -> Format.pp_print_string ppf "off the host")
         r
         (if donated then ", donated" else ""))
     (Gen.bind (Gen.int_range 1 3) (fun rank ->
@@ -339,7 +339,7 @@ let law_item (s, l, r, donated) =
     | Placed w -> place w x
     | Off_host ->
         let (V x) = x in
-        V (Nx.place Io.on x)
+        V (Nx.place Off.on x)
   in
   (match r with
   | Placed w ->

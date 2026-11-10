@@ -69,11 +69,8 @@ val of_memory : Def.memory -> int -> t
 val create : ?memory:kind -> device -> int -> t
 (** [create ?memory d n] is {!Rig.Buffer.create}[ ?memory d n]. *)
 
-val of_io : device -> 'r Type.Id.t -> 'r -> access:access -> int -> t
-(** [of_io d k r ~access n] is {!Rig.Buffer.of_io}[ d k r ~access n]. *)
-
-val io : t -> 'r Type.Id.t -> 'r option
-(** [io b k] is {!Rig.Buffer.io}[ b k]. *)
+val of_io : device -> 'r im -> 'r -> access:access -> int -> t
+(** [of_io d m r ~access n] is {!Rig.Buffer.of_io}[ d m r ~access n]. *)
 
 val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> t
 (** [of_bigarray a] is {!Rig.Buffer.of_bigarray}[ a]. Its memory starts

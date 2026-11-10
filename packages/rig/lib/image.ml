@@ -118,7 +118,7 @@ let loaded d binary =
       match Host_code.link binary with
       | Ok c -> Ok (Linked c, image_token d (Linked c) 0)
       | Error why -> Error (strf "%s: %s" d.name why))
-  | Io _ -> invalid_argf "Rig.Image.load: %s loads no code" d.name
+  | Io -> invalid_argf "Rig.Image.load: %s loads no code" d.name
 
 let load d binary =
   Dev.check_held "Image.load";

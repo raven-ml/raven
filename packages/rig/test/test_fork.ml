@@ -90,63 +90,54 @@ let test_child () =
 
 let page_bytes = 1 lsl 16
 
-(* An io device whose memory is host bytes on a page, whose state its library
-   holds, and which counts the regions it holds and its stops. Its reads fault
-   while [faulty] is set, and wait while [parked] is. Each application is a
+(* An io library whose regions are host bytes on a page, and which counts the
+   regions it holds. Its reads wait while [parked] is set. Each application is a
    library of its own, with counts of its own. *)
 module Make () = struct
-  type t = unit
-
   (* A host buffer of at least a page, which starts on one. *)
   type region = B.t
 
-  exception Fault of string
-
   let held = Atomic.make 0
-  let stops = Atomic.make 0
-  let faulty = Atomic.make false
   let parked = Atomic.make false
   let inside = Atomic.make 0
-  let region_key : region Type.Id.t = Type.Id.make ()
-  let budget () = max_int
 
-  let alloc () n =
+  let make n =
     Atomic.incr held;
-    Some (B.create Rig.host (Int.max n page_bytes))
+    B.create Rig.host (Int.max n page_bytes)
 
-  let free () _ = Atomic.decr held
+  let free _ = Atomic.decr held
 
-  let read () _ ~at:_ ~dst:_ ~len:_ =
-    if Atomic.get faulty then raise (Fault "a read fault");
+  let read _ ~at:_ ~dst:_ ~len:_ =
     Atomic.incr inside;
     while Atomic.get parked do
       Thread.yield ()
     done;
     Atomic.decr inside
 
-  let write () _ ~at:_ ~src:_ ~len:_ = ()
-  let pages () r = Some (B.export r Bigarray.char)
-  let prefetch () _ ~at:_ ~len:_ = ()
-  let stop () = Atomic.incr stops
+  let write _ ~at:_ ~src:_ ~len:_ = ()
+  let pages r = Some (B.export r Bigarray.char)
+  let prefetch _ ~at:_ ~len:_ = ()
 end
 
 module Store = Make ()
 
-let open_store name =
-  require_ok ~pp:Format.pp_print_string
-    (Rig.open_io { name; io = (module Store); make = (fun () -> Ok ()) })
+let open_io name = require_ok ~pp:Format.pp_print_string (Rig.open_io name)
 
-(* An io device's state is its library's, which decides what a fork does to it:
-   rig leaves it usable in the child, where a driver's device is lost. *)
+(* A buffer of [io] over [n] bytes of a new region of [Store]. *)
+let store io n = B.of_io io (module Store) (Store.make n) ~access:Read_write n
+
+(* An io device's memory is its library's, which decides what a fork does to it:
+   rig leaves the device usable in the child, where a driver's device is
+   lost. *)
 let test_io_child () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
-  let io = open_store "fork:io" in
+  let io = open_io "fork:io" in
   let d, _ = P.open_ "fork:beside-io" in
   let lines, ended =
     in_child (fun () ->
         [
           Option.value ~default:"not lost" (Rig.lost io);
-          Printf.sprintf "bytes made: %d" (B.length (B.create io 8));
+          Printf.sprintf "bytes made: %d" (B.length (store io 8));
           Option.value ~default:"not lost" (Rig.lost d);
         ])
   in
@@ -157,12 +148,12 @@ let test_io_child () =
    makes and drops io buffers in a loop holds a bounded number of them. *)
 let test_io_loop () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
-  let io = open_store "fork:io-loop" in
+  let io = open_io "fork:io-loop" in
   let lines, ended =
     in_child (fun () ->
         let base = Atomic.get Store.held and most = ref 0 in
         for _ = 1 to 100 do
-          ignore (Sys.opaque_identity (B.create io 8));
+          ignore (Sys.opaque_identity (store io 8));
           Gc.full_major ();
           most := Int.max !most (Atomic.get Store.held - base)
         done;
@@ -175,9 +166,9 @@ let test_io_loop () =
    its own copy once dropped, whatever work the device still has on it. *)
 let test_io_used () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
-  let io = open_store "fork:io-used" in
+  let io = open_io "fork:io-used" in
   let d, p = P.open_ "fork:io-user" in
-  let m = ref (Some (B.create io page_bytes)) in
+  let m = ref (Some (store io page_bytes)) in
   let s = Sub.make d [| Support.touching [| Sub.read |] |] in
   ignore (submit s ~buffers:[| require_some (B.borrow d (Option.get !m)) |]);
   let before = Atomic.get Store.held in
@@ -199,8 +190,8 @@ let test_io_used () =
    device's free_cache, as its parent would. *)
 let test_io_closed () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
-  let io = open_store "fork:io-closed" in
-  let m = ref (Some (B.create io 8)) in
+  let io = open_io "fork:io-closed" in
+  let m = ref (Some (store io 8)) in
   Rig.close io;
   let lines, ended =
     in_child (fun () ->
@@ -215,29 +206,25 @@ let test_io_closed () =
   equal (list string) [ "freed: 1" ] lines;
   ignore (Sys.opaque_identity !m)
 
-(* An io device lost while a thread of the parent is inside a call of it, so
+(* An io device closed while a thread of the parent is inside a call of it, so
    that its stop is owed at the fork: the child runs no stop of it, in a close
    or a fail, and frees none of its memory, since the stop is the parent's,
-   which the thread runs once its call returns. *)
+   which the closing thread runs once the call returns. *)
 let test_io_owed () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   let module Store = Make () in
-  let io =
-    require_ok ~pp:Format.pp_print_string
-      (Rig.open_io
-         { name = "fork:io-owed"; io = (module Store); make = (fun () -> Ok ()) })
+  let io = open_io "fork:io-owed" in
+  let buffer n =
+    B.of_io io (module Store) (Store.make n) ~access:Read_write n
   in
-  let m = B.create io 8 and other = ref (Some (B.create io 8)) in
-  let stops = Atomic.get Store.stops in
+  let m = buffer 8 and other = ref (Some (buffer 8)) in
   let read b () = B.copy ~src:b ~dst:(B.create Rig.host 8) in
   Atomic.set Store.parked true;
-  let reader = Thread.create (fun () -> ignore (raises_lost (read m))) () in
+  let reader = Thread.create (read m) () in
   Support.await "a read inside the device" (fun () ->
       Atomic.get Store.inside = 1);
-  Atomic.set Store.faulty true;
-  let copy = raises_lost (read (Option.get !other)) in
-  Atomic.set Store.faulty false;
-  let before = Atomic.get Store.stops - stops in
+  let closer = Thread.create Rig.close io in
+  Support.await "the close's loss" (fun () -> Rig.lost io <> None);
   let held = Atomic.get Store.held in
   let lines, ended =
     in_child (fun () ->
@@ -245,19 +232,16 @@ let test_io_owed () =
         Gc.full_major ();
         Rig.close io;
         Rig.fail "the child fails";
-        [
-          Printf.sprintf "stops: %d" (Atomic.get Store.stops - stops);
-          Printf.sprintf "freed: %d" (held - Atomic.get Store.held);
-        ])
+        [ Printf.sprintf "freed: %d" (held - Atomic.get Store.held) ])
   in
   Atomic.set Store.parked false;
   Thread.join reader;
-  equal ~msg:"the faulting copy raised Lost" bool true copy;
-  equal ~msg:"the stops before the fork" int 0 before;
+  Thread.join closer;
   equal string "exited 0" (status ended);
-  equal (list string) [ "stops: 0"; "freed: 0" ] lines;
-  Rig.close io;
-  equal ~msg:"the parent's stop" int 1 (Atomic.get Store.stops - stops)
+  equal (list string) [ "freed: 0" ] lines;
+  equal ~msg:"the parent's close" (option string) (Some "closed")
+    (Rig.lost io);
+  ignore (Sys.opaque_identity !other)
 
 (* A device that takes the slot a closed io device left is a driver's device:
    a forked child sees it lost. A memory device's last value, which the io
@@ -270,7 +254,7 @@ let test_slot_of_io () =
   Rig.Point.wait p;
   Rig.close m;
   Rig.free_cache m;
-  let io = open_store "fork:io-slot" in
+  let io = open_io "fork:io-slot" in
   Rig.close io;
   Rig.free_cache io;
   let d, _ = P.open_ "fork:after-io" in
@@ -329,7 +313,7 @@ let submit_part s =
    alarm. *)
 let test_locks () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
-  let io = open_store "fork:io-locked" in
+  let io = open_io "fork:io-locked" in
   let d, p = P.open_ ~capacity:1 ~may_block:true "fork:blocked" in
   let s = one_part d in
   ignore (submit_part s);
@@ -343,7 +327,7 @@ let test_locks () =
     in_child (fun () ->
         Sys.set_signal Sys.sigalrm Sys.Signal_default;
         ignore (Unix.alarm 5);
-        let made = B.length (B.create io 8) in
+        let made = B.length (store io 8) in
         let e, _ = P.open_ ~capacity:1 ~may_block:true "fork:opened-in-child" in
         let v = Rig.Point.value (submit_part (one_part e)) in
         Rig.Profile.span "child" (fun () -> ());
@@ -557,7 +541,7 @@ let tests =
     group ~timeout "fork"
       [
         test "a forked child's devices are lost for good" test_child;
-        test "a forked child's io devices stay its library's" test_io_child;
+        test "a forked child's io devices stay usable" test_io_child;
         test "a forked child loses a device on a closed io device's slot"
           test_slot_of_io;
         test "a forked child frees the io memory it drops" test_io_loop;

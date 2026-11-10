@@ -276,7 +276,7 @@ let of_string ~at ~name s =
 let read ~at path =
   match Rig_disk.of_file path with
   | Error e -> Error e
-  | Ok b -> catch (fun () -> read_buffer ~file:path ~at b)
+  | Ok f -> catch (fun () -> read_buffer ~file:path ~at (Rig_disk.buffer f))
 
 (* Evaluating *)
 

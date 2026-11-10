@@ -78,26 +78,34 @@ val int16_at :
     if [k] is odd. Every call shares the same memory. *)
 
 val io_device : unit -> Rig.t
-(** [io_device ()] is an io device over bigarrays: memory the host does not
-    address. *)
-
-val mapped_io_device : unit -> Rig.t
-(** [mapped_io_device ()] is {!io_device} with pages: a borrow on {!Rig.host}
-    maps its memory's bytes, which then also lie at a host address. *)
-
-val mapped_pages :
-  Rig.Buffer.t ->
-  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-(** [mapped_pages b] is the pages of [b]'s memory, of {!mapped_io_device}: the
-    bigarray its memory lies in, which a borrow maps. *)
+(** [io_device ()] is an io device whose regions are bigarrays: memory the
+    host does not address. It makes no memory: its buffers are regions given
+    to it ({!Rig.Buffer.of_io}). *)
 
 val read_only : int -> Rig.Buffer.t
-(** [read_only n] is a buffer of [n] bytes on {!io_device} whose memory is
-    [Read]. *)
+(** [read_only n] is a buffer of [n] zero bytes on {!io_device} whose memory
+    is [Read]. *)
 
-val io_allocations : unit -> int
-(** [io_allocations ()] is the number of allocations {!io_device}'s memory has
-    made so far. *)
+val on_io : ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t
+(** [on_io a] is an array of [a]'s dtype and layout on {!io_device}, over a
+    copy of the bytes of [a]'s buffer, whose memory admits writes. *)
+
+val mapped_region :
+  int ->
+  Rig.Buffer.t
+  * (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+(** [mapped_region n] is a buffer of [n] zero bytes on {!io_device} over a
+    region whose pages the host maps, and that region: the bigarray its
+    memory lies in, which a borrow maps. *)
+
+val off_host : unit -> Rig.t
+(** [off_host ()] is a device whose memory the host does not address and
+    which runs its own work as it arrives ({!Rig_support.Polled}, without
+    [host_visible], with [runs] [`Itself]). *)
+
+val off_host_allocations : unit -> int
+(** [off_host_allocations ()] is the number of allocations asked of
+    {!off_host}'s driver so far. *)
 
 (** A device over host memory whose work runs only when a wait sleeps on it, as
     a device still running work does until the host waits for it. A submit

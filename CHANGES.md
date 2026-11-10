@@ -40,6 +40,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- `Rig_disk.of_file` and `create_file` return a `Rig_disk.file`, whose bytes
+  `Rig_disk.buffer` gives and which `Rig_disk.barrier` takes. `Rig_edge.Io`
+  is `free`, `read`, `write`, `pages` and `prefetch` over regions alone: an
+  io device holds no library, `Rig.open_io` takes a name, `Rig.Buffer.of_io`
+  takes the library with its region, `Rig.Buffer.create` of one byte or more
+  on an io device raises, and `Rig.Buffer.io` is gone.
 - An exception raised during a device memory allocation on NVIDIA's kernel
   driver no longer leaves its range taken, and a free raises when the driver
   keeps an object it named.

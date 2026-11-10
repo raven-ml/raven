@@ -2208,7 +2208,7 @@ let test_read_only_input () =
   let path = Filename.temp_file "rig-program" ".bin" in
   Fun.protect ~finally:(fun () -> Sys.remove path) @@ fun () ->
   Out_channel.with_open_bin path (fun oc -> output_string oc (le64 5));
-  let file = Result.get_ok (Rig_disk.of_file path) in
+  let file = Rig_disk.buffer (Result.get_ok (Rig_disk.of_file path)) in
   let x = Option.get (B.borrow Rig.host file) in
   let t =
     {
@@ -2234,7 +2234,7 @@ let test_read_only_copy () =
   let path = Filename.temp_file "rig-program" ".bin" in
   Fun.protect ~finally:(fun () -> Sys.remove path) @@ fun () ->
   Out_channel.with_open_bin path (fun oc -> output_string oc (le64 5));
-  let file = Result.get_ok (Rig_disk.of_file path) in
+  let file = Rig_disk.buffer (Result.get_ok (Rig_disk.of_file path)) in
   let x = require_some (B.borrow d file) in
   let t =
     {

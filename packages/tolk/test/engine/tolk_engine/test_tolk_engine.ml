@@ -1417,10 +1417,11 @@ let buffer d dt values =
   if not (Rig.equal d Rig_disk.device) then Run.buffer d dt values
   else
     let file =
-      Result.get_ok
-        (Rig_disk.create_file
-           (Filename.concat (temp_dir ()) "file")
-           (Array.length values * Dtype.itemsize dt))
+      Rig_disk.buffer
+        (Result.get_ok
+           (Rig_disk.create_file
+              (Filename.concat (temp_dir ()) "file")
+              (Array.length values * Dtype.itemsize dt)))
     in
     Buffer.copy ~src:(Run.buffer host dt values) ~dst:file;
     file

@@ -25,9 +25,10 @@ It writes `numbers.bin` in the directory it runs in.
 
 | Function                   | Purpose                                                    |
 | -------------------------- | ---------------------------------------------------------- |
-| `Rig_disk.create_file p n` | A new file of `n` bytes, as a buffer                       |
-| `Rig_disk.of_file p`       | An existing file's bytes, for reading                      |
-| `Rig_disk.barrier b`       | Order `b`'s writes before later changes to the file system |
+| `Rig_disk.create_file p n` | A new file of `n` bytes                                    |
+| `Rig_disk.of_file p`       | An existing file, for reading                              |
+| `Rig_disk.buffer f`        | `f`'s bytes, as a buffer                                   |
+| `Rig_disk.barrier f`       | Order `f`'s writes before later changes to the file system |
 | `Buffer.borrow Rig.host b` | `b`'s pages as host memory                                 |
 
 ## Next Steps

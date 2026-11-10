@@ -732,40 +732,12 @@ let test_close_fault () =
 let test_close_host () =
   raises_match Exn.invalid_arg (fun () -> Rig.close Rig.host)
 
-(* An io device whose stops are counted. *)
-module Store = struct
-  type t = int Atomic.t
-  type region = unit
-
-  exception Fault of string
-
-  let region_key : region Type.Id.t = Type.Id.make ()
-  let budget _ = max_int
-  let alloc _ _ = Some ()
-  let free _ () = ()
-  let read _ () ~at:_ ~dst:_ ~len:_ = ()
-  let write _ () ~at:_ ~src:_ ~len:_ = ()
-  let pages _ () = None
-  let prefetch _ () ~at:_ ~len:_ = ()
-  let stop stops = Atomic.incr stops
-end
-
 (* An io device's close ends it at once: its work is the caller's. *)
 let test_close_io () =
-  let stops = Atomic.make 0 in
-  let io =
-    require_ok ~pp:Format.pp_print_string
-      (Rig.open_io
-         {
-           name = "loss:close-io";
-           io = (module Store);
-           make = (fun () -> Ok stops);
-         })
-  in
-  let b = B.create io 8 in
+  let io = Support.io "loss:close-io" in
+  let b = Support.io_buffer io 8 in
   Rig.close io;
   equal (option string) (Some "closed") (Rig.lost io);
-  equal int 1 (Atomic.get stops);
   raises_match (lost io) (fun () -> B.copy ~src:b ~dst:(B.create Rig.host 8))
 
 (* A device that maps a host buffer and has stopped, with no drain since: an

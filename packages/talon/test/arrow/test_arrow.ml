@@ -16,6 +16,9 @@ let is_float (type a) (t : a Type.t) =
 let hex s = String.concat "" (List.map (fun c -> Printf.sprintf "%02x" (Char.code c)) (List.of_seq (String.to_seq s)))
 let or_e s = if s = "" then "e" else s
 
+(* The buffer of the file at [path]. *)
+let opened path = Rig_disk.buffer (Result.get_ok (Rig_disk.of_file path))
+
 let validity_at v n =
   match v with
   | None -> Array.make n true
@@ -210,7 +213,7 @@ let zero_width_type =
   test "a zero-width column reads as a tensor, and not as a list" @@ fun () ->
   let f =
     Error.get_ok
-      (A.sniff (Result.get_ok (Rig_disk.of_file "support/zero_width.arrow")))
+      (A.sniff (opened "support/zero_width.arrow"))
   in
   raises_match ~msg:"elements that take no bytes"
     (Exn.invalid_arg ~sub:"not as")
@@ -231,7 +234,7 @@ let zero_ext =
 
 let zero_null =
   test "a null element of a zero-width cell fails with its row" @@ fun () ->
-  let b = Result.get_ok (Rig_disk.of_file "support/refused_zero_null.arrows") in
+  let b = opened "support/refused_zero_null.arrows" in
   let f = Error.get_ok (A.sniff b) in
   let e = Result.get_error (Query.run (Query.of_source (A.source f b))) in
   contains ~sub:"row 0" (Format.asprintf "%a" Error.pp e)
@@ -244,7 +247,7 @@ let late_dictionary =
 
 let dict_index =
   test "an index past its dictionary fails with its row" @@ fun () ->
-  let b = Result.get_ok (Rig_disk.of_file "support/refused_dict_index.arrow") in
+  let b = opened "support/refused_dict_index.arrow" in
   let f = Error.get_ok (A.sniff b) in
   let e = Result.get_error (Query.run (Query.of_source (A.source f b))) in
   contains ~sub:"row 1" (Format.asprintf "%a" Error.pp e)
@@ -257,7 +260,7 @@ let date64_floor =
 
 let date_range =
   test "a date past int32 days fails with its row" @@ fun () ->
-  let b = Result.get_ok (Rig_disk.of_file "support/refused_date_range.arrow") in
+  let b = opened "support/refused_date_range.arrow" in
   let f = Error.get_ok (A.sniff b) in
   let e = Result.get_error (Query.run (Query.of_source (A.source f b))) in
   contains ~sub:"row 0" (Format.asprintf "%a" Error.pp e)
@@ -293,7 +296,7 @@ let flat_format =
 
 let metadata_kept =
   test "custom metadata reads and writes" @@ fun () ->
-  let f = Error.get_ok (Result.bind (Rig_disk.of_file "support/metadata.arrow" |> Result.map_error Error.v) A.sniff) in
+  let f = Error.get_ok (A.sniff (opened "support/metadata.arrow")) in
   equal (list (pair string string)) ~msg:"schema"
     [ ("schema key", "schema value"); ("ARROW:x", "reserved") ]
     (A.metadata f);
@@ -317,7 +320,7 @@ let metadata_kept =
 
 let tensor_as_list =
   test "with_type reads a fixed-size list as a list, and nothing else" @@ fun () ->
-  let b = Result.get_ok (Rig_disk.of_file "support/nested.arrow") in
+  let b = opened "support/nested.arrow" in
   let f = Error.get_ok (A.sniff b) in
   let f = A.with_type "fixed_list" (Any (Type.list Type.int32)) f in
   let t = Error.get_ok (Query.run (Query.of_source (A.source f b))) in
@@ -391,7 +394,7 @@ let tensor_round_trip =
 
 let support_path = Filename.concat "support"
 
-let sniffed path = Error.get_ok (A.sniff (Result.get_ok (Rig_disk.of_file path)))
+let sniffed path = Error.get_ok (A.sniff (opened path))
 
 let declared_type : string -> Type.any = function
   | "float64" -> Any Type.float64
@@ -426,7 +429,7 @@ let decimal_corpus =
       (fun (name, ty, values) ->
         test (Printf.sprintf "%s %s as %s" file name ty) @@ fun () ->
         let f = A.with_type name (declared_type ty) (base ()) in
-        let b = Result.get_ok (Rig_disk.of_file path) in
+        let b = opened path in
         let t = Error.get_ok (Query.run (Query.of_source (A.source f b))) in
         let c = column t name in
         equal ~msg:name string ty (type_text (Column.type_ c));
@@ -458,7 +461,7 @@ let undeclared_decimals =
         (fun () ->
           let f = sniffed (support_path "decimals.arrow") in
           let buffer =
-            Result.get_ok (Rig_disk.of_file (support_path "decimals.arrow"))
+            opened (support_path "decimals.arrow")
           in
           equal string
             {|Talon_arrow.source: column "d32_1_0" (decimal32(1, 0)) is a decimal, which reads as float64, or as its unscaled int64 integers up to 18 digits. Declare one with with_type.|}
@@ -494,7 +497,7 @@ let undeclared_decimals =
         (fun () ->
           let path = support_path "refused_decimal_range.arrow" in
           let f = A.with_type "d" (Any Type.int64) (sniffed path) in
-          let b = Result.get_ok (Rig_disk.of_file path) in
+          let b = opened path in
           let e = require_error (Query.run (Query.of_source (A.source f b))) in
           contains
             ~sub:{|column "d": row 0: a decimal value is outside the range of int64|}
@@ -505,7 +508,7 @@ let undeclared_decimals =
           and scale_4 = support_path "decimals_other_scale.arrow"
           and plain = support_path "decimals_plain.arrow" in
           let run f path =
-            let b = Result.get_ok (Rig_disk.of_file path) in
+            let b = opened path in
             Query.run (Query.of_source (A.source f b))
           in
           let refused f path =

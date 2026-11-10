@@ -173,24 +173,6 @@ let escapes =
         returning d );
   ]
 
-(* An io library whose memory holds nothing. *)
-module Nothing = struct
-  type t = unit
-  type region = unit
-
-  exception Fault of string
-
-  let region_key : region Type.Id.t = Type.Id.make ()
-  let budget () = max_int
-  let alloc () _ = Some ()
-  let free () () = ()
-  let read () () ~at:_ ~dst:_ ~len:_ = ()
-  let write () () ~at:_ ~src:_ ~len:_ = ()
-  let pages () () = None
-  let prefetch () () ~at:_ ~len:_ = ()
-  let stop () = ()
-end
-
 (* A fail loses every device but the host, and runs no stop: each device's
    runs once, at its close; a device already lost keeps its reason; the
    host's memory goes on; an open afterwards answers the reason without
@@ -235,11 +217,7 @@ let test_fail =
     | Error why -> "Error " ^ why
   in
   let open_io name =
-    let make () =
-      incr calls;
-      Ok ()
-    in
-    match Rig.open_io { name; io = (module Nothing); make } with
+    match Rig.open_io name with
     | Ok _ -> "Ok"
     | Error why -> "Error " ^ why
   in

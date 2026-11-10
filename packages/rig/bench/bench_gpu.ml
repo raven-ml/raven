@@ -83,7 +83,7 @@ let load ~cold (p, dst) =
   ignore (B.create (B.device dst) 0);
   Gc.full_major ();
   if cold then evicted p;
-  B.copy ~src:(ok (Rig_disk.of_file p)) ~dst
+  B.copy ~src:(Rig_disk.buffer (ok (Rig_disk.of_file p))) ~dst
 
 (* Copies: 256 MiB between a GPU's memory and the host's, both ways. A copy maps
    no host memory it does not name through a borrow, so the bytes of a host
@@ -225,7 +225,8 @@ let gpu_rows ?graph v ~opened ~kernel =
   in
   let to_device () =
     let g, _ = opened () in
-    (ok (Rig_disk.of_file (data "file" file_bytes)), B.create g file_bytes)
+    ( Rig_disk.buffer (ok (Rig_disk.of_file (data "file" file_bytes))),
+      B.create g file_bytes )
   in
   let loading () =
     let g, _ = opened () in
@@ -235,7 +236,8 @@ let gpu_rows ?graph v ~opened ~kernel =
     let g, _ = opened () in
     let p = path (strf "out-%s" v) in
     if Sys.file_exists p then Sys.remove p;
-    (B.create g file_bytes, ok (Rig_disk.create_file p file_bytes))
+    ( B.create g file_bytes,
+      Rig_disk.buffer (ok (Rig_disk.create_file p file_bytes)) )
   in
   (* Host memory and a borrow on the GPU of other host memory: the host copies
      between them, as between any memory it addresses. *)

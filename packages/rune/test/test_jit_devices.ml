@@ -1369,8 +1369,9 @@ let others =
 
 module Other = (val Nx.devices (Array.to_list others))
 
-(* A set no kernel library computes on: a memory device and an io device. *)
-module Bare = (val Nx.devices [ m 3; Nx_array_support.io_device () ])
+(* A set no kernel library computes on: a memory device and a device that does
+   not run on the host. *)
+module Bare = (val Nx.devices [ m 3; Nx_array_support.off_host () ])
 
 (* An offload: weights on one device placed whole on each device of the other
    set; and a value cut across it. *)
@@ -2615,7 +2616,7 @@ let on_disk (type d) (set : d Nx.Devices.t) xs =
   Sys.remove path;
   let b =
     match Rig_disk.create_file path (n * 4) with
-    | Ok b -> b
+    | Ok f -> Rig_disk.buffer f
     | Error why -> failf "create_file: %s" why
   in
   Sys.remove path;

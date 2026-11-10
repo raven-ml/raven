@@ -320,8 +320,8 @@ let claim_word keep (e : entry) =
     | Bigarray _ -> true
     | Nothing | Heap _ -> (
         match e.backing with
-        | Io_memory { origin = Given; _ } -> true
-        | Io_memory { origin = Made; _ } | Driver_memory _ | Kept _ -> false)
+        | Io_memory _ -> true
+        | Driver_memory _ | Kept _ -> false)
   in
   (if reached then outside else 0)
   lor if e.access = Read then read_only else 0
@@ -383,8 +383,6 @@ let made (Region { r; mapped; _ }) =
   | Some _, _ | None, Maps _ -> true
   | None, (Never | No_room) -> false
 
-let io_made (Io_region { r; _ }) = Option.is_some r
-
 (* Allocation events *)
 
 (* The host's buffers reserve against its budget in the heap, which counts
@@ -411,12 +409,10 @@ let free_region d (Region { m; h; r; mapped; _ }) =
       let module D = (val m) in
       Dev.give d Dev.Any D.free h r
 
-let free_io d (Io_region { m; h; r }) =
-  match r with
-  | None -> Dev.Given
-  | Some r ->
-      let module I = (val m) in
-      Dev.give d Dev.Faults I.free h r
+(* [give] calls [Fun.id I.free r], which is [I.free r], with no closure. *)
+let free_io d (Io_region (m, r)) =
+  let module I = (val m) in
+  Dev.give d Dev.Faults Fun.id I.free r
 
 (* The image the driver's calls returned into [l], if any. *)
 let image_of l =
@@ -442,14 +438,13 @@ let budget_of d = function
   | Device | Mapped -> Device_budget
   | Pinned -> if Dev.reaches Dev.host d then Device_budget else Host_budget
 
-(* The budget [e] counts in: io memory its device made counts in the device's,
-   memory a library or a keeper frees in none, and memory its driver did not
-   make in none, since its allocation gave its room back. *)
+(* The budget [e] counts in: memory a library or a keeper frees counts in
+   none, and memory its driver did not make in none, since its allocation gave
+   its room back. *)
 let entry_budget (e : entry) =
   match e.backing with
   | Driver_memory { memory; region; _ } when made region ->
       budget_of e.owner memory
-  | Io_memory { origin = Made; region } when io_made region -> Device_budget
   | Driver_memory _ | Io_memory _ | Kept _ -> No_budget
 
 let owns (e : entry) = entry_budget e = Device_budget
@@ -583,8 +578,7 @@ let fresh_entry d (kind : memory_kind) n =
             region = Region { m; h; rid; r = None; mapped = Never };
             location = { address = None; host = None; handle = 0n };
           }
-    | Io { m; h } ->
-        Io_memory { origin = Made; region = Io_region { m; h; r = None } }
+    | Io -> invalid_arg "Rig: an io device makes no memory"
     | Host -> invalid_arg "Rig: the host's memory has no driver"
   in
   entry d backing n (stamps_new ())
@@ -594,8 +588,7 @@ let fresh_entry d (kind : memory_kind) n =
 let made_memory (e : entry) =
   match e.backing with
   | Driver_memory { region; _ } -> made region
-  | Io_memory { region; _ } -> io_made region
-  | Kept _ -> true
+  | Io_memory _ | Kept _ -> true
 
 (* The driver's call that makes the memory of the new entry [e]. It stores
    the driver's answer in [e]'s record as it is, allocating nothing, then
@@ -617,10 +610,7 @@ let make_region (e : entry) =
               c.r <- None;
               D.free c.h r;
               raise (D.Fault why)))
-  | Io_memory { region = Io_region c; _ } ->
-      let module I = (val c.m) in
-      c.r <- I.alloc c.h (whole e.bytes)
-  | Kept _ -> ()
+  | Io_memory _ | Kept _ -> ()
 
 (* Makes the memory of [d]'s new entry [e] in a counted call, so an exception
    once the driver's call returned leaves the memory recorded where [e]'s free
@@ -629,8 +619,7 @@ let make_region (e : entry) =
 let make_memory d (e : entry) =
   match e.backing with
   | Driver_memory _ -> Dev.counted d Dev.Any make_region e
-  | Io_memory _ -> Dev.counted d Dev.Faults make_region e
-  | Kept _ -> ()
+  | Io_memory _ | Kept _ -> ()
 
 let drop_stamps (e : entry) = if e.stamps <> 0 then stamps_unref e.stamps
 
@@ -763,7 +752,7 @@ let give_back (e : entry) : Dev.given =
   let given =
     match e.backing with
     | Driver_memory { region; _ } -> free_region d region
-    | Io_memory { region; _ } -> free_io d region
+    | Io_memory region -> free_io d region
     | Kept _ ->
         let_go ();
         Dev.Given
@@ -1805,7 +1794,7 @@ let grow_queues d ~round ~lacked ~seen =
           let seen = reclaim_round d round seen in
           let seen = reclaim_round Dev.host round seen in
           (round + 1, n, seen))
-  | Io _ | Host -> invalid_argf "Rig: %s has no queues to grow" d.name
+  | Io | Host -> invalid_argf "Rig: %s has no queues to grow" d.name
 
 (* Allocation *)
 
@@ -1840,7 +1829,7 @@ let try_token d kind n r =
       (Int.max 0 (Dev.host.budget - heap_held ()), heap_live ())
     else
       let shared = kind <> Device || d.host_addresses in
-      (room d, if shared && not (Dev.is_io d) then l.used else -1)
+      (room d, if shared then l.used else -1)
   in
   let t = token l.release (Memory r) n room live in
   if t == no_token then Dev.raise_lost d;
@@ -2149,7 +2138,7 @@ let host_making d p n =
       let c = { m; h; rid; r = None; mapped = Never } in
       let map () = c.mapped <- D.map_host h p n in
       Some { region = Region c; make = Dev.counted d Dev.Any map }
-  | Driver _ | Host | Io _ -> None
+  | Driver _ | Host | Io -> None
 
 (* The region's module types the mapping; the keys' equality types [d]'s
    handle. *)
@@ -2164,7 +2153,7 @@ let peer_making d (Region { m = om; h = oh; r; rid; _ }) =
           let map () = c.mapped <- O.map_peer h oh r in
           Some { region = Region c; make = Dev.counted d Dev.Any map }
       | None -> None)
-  | (Driver _ | Host | Io _), _ -> None
+  | (Driver _ | Host | Io), _ -> None
 
 let peer_of d (a : alloc) =
   match a.entry.backing with
@@ -2176,7 +2165,7 @@ let peer_of d (a : alloc) =
 let peer_memory d (a : alloc) =
   match a.owner.kind with
   | Driver _ -> a.owner.key = d.key
-  | Host | Io _ -> false
+  | Host | Io -> false
 
 (* Takes [d]'s mapping [mp] of [e] out of [e] and [d], and gives it back if
    [e] still held it: a refused mapping, or one that lost the race. *)
@@ -2268,15 +2257,15 @@ let pages (a : alloc) =
   (match e.pages with
   | Unasked -> (
       match e.backing with
-      | Io_memory { region = Io_region { m = im; h; r = Some r }; _ } ->
+      | Io_memory (Io_region (im, r)) ->
           let module I = (val im) in
           let got =
-            match Dev.counted a.owner Dev.Faults (fun () -> I.pages h r) () with
+            match Dev.counted a.owner Dev.Faults I.pages r with
             | Some ba -> Pages ba
             | None -> No_pages
           in
           Dev.protect a.owner set_pages (e, got)
-      | Io_memory _ | Driver_memory _ | Kept _ -> ())
+      | Driver_memory _ | Kept _ -> ())
   | Pages _ | No_pages -> ());
   match e.pages with Pages ba -> ba_address ba | Unasked | No_pages -> -1
 
@@ -2448,22 +2437,20 @@ let staging d m = kept_reach d m ~ladder:true
    device's, which it allocates from the host's. *)
 let paged (a : alloc) = Dev.is_host a.owner || a.owner.memory_device
 
-(* Asks an io device to read ahead the bytes that a borrow on [d], a device
+(* Asks an io library to read ahead the bytes that a borrow on [d], a device
    other than the host, reaches through its pages. It is a hint, so its
-   faults and system errors are dropped. *)
+   system errors are dropped. *)
 let prefetch d (m : memory) ~at ~len =
   match m.alloc.entry.backing with
-  | Io_memory { region = Io_region { m = im; h; r = Some r }; _ }
-    when not (Dev.is_host d) -> (
+  | Io_memory (Io_region (im, r)) when not (Dev.is_host d) -> (
       let module I = (val im) in
-      try Dev.masked (fun () -> I.prefetch h r ~at ~len)
-      with I.Fault _ | Sys_error _ -> ())
+      try Dev.masked (fun () -> I.prefetch r ~at ~len) with Sys_error _ -> ())
   | _ -> ()
 
 let of_io d r ~access n =
   if Dev.is_lost d then Dev.raise_lost d;
   drain d;
-  let e = entry ~access d (Io_memory { origin = Given; region = r }) n (stamps_new ()) in
+  let e = entry ~access d (Io_memory r) n (stamps_new ()) in
   let m = make d e in
   m.alloc.token <- token d.live.release (Memory (ref e)) n max_int (-1);
   if m.alloc.token == no_token then begin

@@ -729,6 +729,7 @@ and smem = {
   claims : int Atomic.t;
       (** Read claims the program took from C and has not released: a release
           from C ends one only where the caller holds it. *)
+  file : Rig_disk.file option;  (** The file whose bytes it is. *)
 }
 
 and sbuf = { b : B.t; m : smem }
@@ -763,12 +764,13 @@ let guard w f =
       raise (Lost_at (index w d, strf "%s lost: %s" (Rig.name d) why))
   | Rig.Out_of_memory (d, _) -> raise (Oom_at (index w d))
 
-let new_smem ?(driver = false) w =
+let new_smem ?(driver = false) ?file w =
   {
     lock = Mutex.create ();
     sid = Atomic.fetch_and_add w.mems 1;
     driver;
     claims = Atomic.make 0;
+    file;
   }
 
 let get c = match Atomic.get c.cell with Some sb -> sb | None -> raise Empty
@@ -1166,16 +1168,16 @@ let file_ref (v : rdevv) n seed writable c outcome =
 
 let file_sys (_, w) n seed writable c =
   let path = file_path () in
-  let b =
+  let f =
     if writable then
-      match Rig_disk.create_file path n with Ok b -> b | Error e -> failwith e
+      match Rig_disk.create_file path n with Ok f -> f | Error e -> failwith e
     else begin
       Out_channel.with_open_bin path (fun oc ->
           Out_channel.output_bytes oc (pattern seed n));
-      match Rig_disk.of_file path with Ok b -> b | Error e -> failwith e
+      match Rig_disk.of_file path with Ok f -> f | Error e -> failwith e
     end
   in
-  Atomic.set c.cell (Some { b; m = new_smem w })
+  Atomic.set c.cell (Some { b = Rig_disk.buffer f; m = new_smem ~file:f w })
 
 (* Borrows *)
 
@@ -1526,7 +1528,7 @@ let transfer_sys ((s : sdev), w) ((s' : sdev), _) n seed =
   let make (d : sdev) =
     if d.skind = Disk then
       match Rig_disk.create_file (file_path ()) n with
-      | Ok b -> b
+      | Ok f -> Rig_disk.buffer f
       | Error e -> failwith e
     else B.create d.d n
   in
@@ -2031,10 +2033,19 @@ let free_cache_ref (v : rdevv) outcome =
 
 let free_cache_sys ((s : sdev), w) = guard w @@ fun () -> Rig.free_cache s.d
 
+(* Whether a cell holds a buffer of a file's memory, or nothing, so that a
+   barrier of its file can be called. *)
+let on_file c =
+  match c.rb with
+  | Some b -> ( match b.mem.mkind with File _ -> true | _ -> false)
+  | None -> true
+
+(* A barrier of the file whose memory the cell holds: a view or a borrow of a
+   file's buffer reaches its file. *)
 let barrier_ref last c outcome =
   with_buf c outcome @@ fun b ->
   let vd = verdict () in
-  invalid_if vd (dead b || b.mem.owner.kind <> Disk);
+  invalid_if vd (dead b);
   (* A barrier returns at once on a file opened for reading or of no bytes
      (rig_disk.mli). *)
   if not (read_only b.mem || Bytes.length b.mem.data = 0) then begin
@@ -2046,7 +2057,7 @@ let barrier_ref last c outcome =
 
 let barrier_sys last c =
   let sb = take ~last c in
-  guard c.sw @@ fun () -> Rig_disk.barrier sb.b
+  guard c.sw @@ fun () -> Rig_disk.barrier (Option.get sb.m.file)
 
 (* The command list *)
 
@@ -2093,7 +2104,7 @@ let file_reads seed =
   let n = long_file in
   let f =
     match Rig_disk.create_file (file_path ()) n with
-    | Ok f -> f
+    | Ok f -> Rig_disk.buffer f
     | Error e -> failwith e
   in
   B.copy ~src:(host_pattern seed n) ~dst:f;
@@ -2623,6 +2634,7 @@ let commands ~two ~fork =
   in
   let barrier =
     command "barrier"
+      ~pre:(fun _ c -> on_file c)
       (last @-> cell ^-> judges unit)
       barrier_ref
       (fun l c -> one c (fun () -> barrier_sys l c))

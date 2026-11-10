@@ -603,7 +603,8 @@ let source f b = make "source" f b
 let file ?format path =
   match Rig_disk.of_file path with
   | Error why -> Error (Error.v why)
-  | Ok b ->
+  | Ok f ->
+      let b = Rig_disk.buffer f in
       with_bytes ~file:path b (fun bytes ->
           let m, schema = open_ bytes in
           let f = match format with Some f -> f | None -> sniffed schema in

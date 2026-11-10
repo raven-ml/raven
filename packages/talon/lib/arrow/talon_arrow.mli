@@ -22,12 +22,13 @@
     custom metadata of the schema and of each field, and the framing,
     compression and batch size {!encode} writes with. {!pp_format} prints it.
 
-    A read has three steps. Map the bytes with {!Rig_disk.of_file}, or take a
-    buffer on the host. {!sniff} them into a format and, where a column should
-    read otherwise, change it with {!with_type}. Read the rows with {!source},
-    a {!Talon.Source.t}, or with {!file} from a path. A write states a format
-    for a query's schema with {!val-format}, and {!encode} writes the query's
-    rows as that format says.
+    A read has three steps. Open the file with {!Rig_disk.of_file} and take
+    its buffer ({!Rig_disk.buffer}), or take a buffer on the host. {!sniff}
+    the bytes into a format and, where a column should read otherwise, change
+    it with {!with_type}. Read the rows with {!source}, a {!Talon.Source.t},
+    or with {!file} from a path. A write states a format for a query's schema
+    with {!val-format}, and {!encode} writes the query's rows as that format
+    says.
 
     Unless a value's doc says otherwise, a function that reads bytes returns
     [Error] for bytes it cannot read, and a function given a format or a name
@@ -142,8 +143,8 @@ val sniff : Rig.Buffer.t -> (format, Talon.Error.t) result
     reads the footer, the headers of the messages and the dictionary batches,
     and no record batch.
 
-    [b] must be a buffer of the disk ({!Rig_disk.of_file}), which [sniff] maps
-    into host memory, or one the host addresses. [Error e] if [b] cannot be
+    [b] must be a file's buffer ({!Rig_disk.buffer}), which [sniff] maps into
+    host memory, or one the host addresses. [Error e] if [b] cannot be
     borrowed on the host, or is {{!refusals}refused}. *)
 
 val with_type : string -> Talon.Type.any -> format -> format

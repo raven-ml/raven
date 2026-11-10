@@ -66,61 +66,61 @@ external blit_out : bytes -> int -> int -> int -> unit
 [@@noalloc]
 
 module Io = struct
-  type t = unit
   type region = bytes
 
-  exception Fault of string
-
-  let region_key : region Type.Id.t = Type.Id.make ()
-  let budget () = max_int
-  let allocations = Atomic.make 0
-
-  let alloc () n =
-    Atomic.incr allocations;
-    Some (Bigarray.Array1.create Bigarray.char Bigarray.c_layout n)
-
-  let free () (_ : region) = ()
-  let read () r ~at ~dst ~len = blit_out r at dst len
-  let write () r ~at ~src ~len = blit_in r at src len
-  let pages () (_ : region) = None
-  let prefetch () (_ : region) ~at:(_ : int) ~len:(_ : int) = ()
-  let stop () = ()
+  let free (_ : region) = ()
+  let read r ~at ~dst ~len = blit_out r at dst len
+  let write r ~at ~src ~len = blit_in r at src len
+  let pages (_ : region) = None
+  let prefetch (_ : region) ~at:(_ : int) ~len:(_ : int) = ()
 end
 
-let io =
-  lazy
-    (match
-       Rig.open_io
-         { name = "nx-io"; io = (module Io); make = (fun () -> Ok ()) }
-     with
-    | Ok d -> d
-    | Error e -> failwith e)
-
-let io_device () = Lazy.force io
-
-(* The io device's memory, its pages mapped by the host as its bigarray. *)
+(* Regions whose pages the host maps: the bigarray they are. *)
 module Mapped = struct
   include Io
 
-  let pages () (r : region) = Some r
+  let pages (r : region) = Some r
 end
 
-let mapped =
-  lazy
-    (match
-       Rig.open_io
-         { name = "nx-io-mapped"; io = (module Mapped); make = (fun () -> Ok ()) }
-     with
-    | Ok d -> d
-    | Error e -> failwith e)
+let io =
+  lazy (match Rig.open_io "nx-io" with Ok d -> d | Error e -> failwith e)
 
-let mapped_io_device () = Lazy.force mapped
-let mapped_pages b = Option.get (Rig.Buffer.io b Io.region_key)
-let io_allocations () = Atomic.get Io.allocations
+let io_device () = Lazy.force io
+
+let region n =
+  let r = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n in
+  Bigarray.Array1.fill r '\000';
+  r
 
 let read_only n =
-  let region = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n in
-  Rig.Buffer.of_io (io_device ()) Io.region_key region ~access:Read n
+  Rig.Buffer.of_io (io_device ()) (module Io) (region n) ~access:Read n
+
+let on_io (type v s) (a : (v, s) Nx_array.t) =
+  let src = Nx_array.buffer a in
+  let n = Rig.Buffer.length src in
+  let b =
+    Rig.Buffer.of_io (io_device ()) (module Io) (region n) ~access:Read_write n
+  in
+  Rig.Buffer.copy ~src ~dst:b;
+  Nx_array.v (Nx_array.dtype a) (Nx_array.layout a) b
+
+let mapped_region n =
+  let r = region n in
+  let b =
+    Rig.Buffer.of_io (io_device ()) (module Mapped) r ~access:Read_write n
+  in
+  (b, r)
+
+(* A device whose memory the host does not address *)
+
+let off_host_polled =
+  lazy
+    (Rig_support.Polled.open_ ~host_visible:false ~runs:`Itself "nx-off-host")
+
+let off_host () = fst (Lazy.force off_host_polled)
+
+let off_host_allocations () =
+  List.length (Rig_support.Polled.allocs (snd (Lazy.force off_host_polled)))
 
 (* Late, a device over host memory whose work runs only when a wait sleeps on
    it: its submit queues the work, its sleep and its stop run it. *)

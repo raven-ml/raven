@@ -708,10 +708,10 @@ let like =
 (* Without kernels *)
 
 (* A set no kernel library computes on, as a GPU set is outside a compiler:
-   a memory device and an io device, which does not run on the host. *)
-let io = Nx_array_support.io_device ()
+   a memory device and a device that does not run on the host. *)
+let off = Nx_array_support.off_host ()
 
-module Bare = (val Nx.devices [ m 3; io ])
+module Bare = (val Nx.devices [ m 3; off ])
 
 (* [Bare]'s placements: whole on each device, cut along an axis, and each
    device alone. *)
@@ -720,7 +720,7 @@ let bare_placements =
     ("on", Bare.on);
     ("split ~axis:0", Bare.split ~axis:0);
     ("memory device", Nx.Placement.device Bare.v (m 3));
-    ("io device", Nx.Placement.device Bare.v io);
+    ("off the host", Nx.Placement.device Bare.v off);
   ]
 
 (* Each device's window of [x], as its array's shape. *)
@@ -985,7 +985,8 @@ let bare =
           [
             (("split ~axis:1", Bare.split ~axis:1), (D.Any D.Float32, [| 3 |]));
             (("on", Bare.on), (D.Any D.Int4, [| 2; 0 |]));
-            (("io device", Nx.Placement.device Bare.v io), (D.Any D.Bit, [||]));
+            ( ("off the host", Nx.Placement.device Bare.v off),
+              (D.Any D.Bit, [||]) );
             (("split ~axis:0", Bare.split ~axis:0), (D.Any D.Uint8, [| 3 |]));
             (("split ~axis:0", Bare.split ~axis:0), (D.Any D.Bool, [| 1; 2 |]));
           ]

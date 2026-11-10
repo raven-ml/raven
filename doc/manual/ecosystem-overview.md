@@ -103,7 +103,7 @@ as devices too.
 <!-- $MDX skip -->
 ```ocaml
 let gpu = Result.get_ok (Rig.open_ (Rig_metal.gpu 0))
-let file = Result.get_ok (Rig_disk.of_file "weights.bin")
+let file = Rig_disk.buffer (Result.get_ok (Rig_disk.of_file "weights.bin"))
 let weights = Rig.Buffer.create gpu (Rig.Buffer.length file)
 let () = Rig.Buffer.copy ~src:file ~dst:weights
 ```

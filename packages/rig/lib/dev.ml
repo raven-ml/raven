@@ -271,7 +271,7 @@ let () =
 (* Facts *)
 
 let is_host d = match d.kind with Host -> true | _ -> false
-let is_io d = match d.kind with Io _ -> true | _ -> false
+let is_io d = match d.kind with Io -> true | _ -> false
 
 (* Whether [d] is lost. The host is never lost: a use of its memory reads no C
    record. *)
@@ -550,14 +550,7 @@ let stop_handle d fault =
       | () -> Rig_edge_primitives.unmask ()
       | exception D.Fault _ -> Rig_edge_primitives.unmask ()
       | exception e -> unmask_raise e)
-  | Io { m; h } -> (
-      let module I = (val m) in
-      Rig_edge_primitives.mask ();
-      match I.stop h with
-      | () -> Rig_edge_primitives.unmask ()
-      | exception I.Fault _ -> Rig_edge_primitives.unmask ()
-      | exception e -> unmask_raise e)
-  | Host -> ()
+  | Io | Host -> ()
 
 (* Moves the state on after the driver's stop. Its values and its names go
    first, so a close, which waits for the state, returns after them, and the
@@ -1273,43 +1266,27 @@ let open_driver (type a) ?(memory_device = false)
           stop_once h None;
           reraise e)
 
-let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
-    make =
-  let key = Type.Id.uid I.region_key in
-  open_named ~fn:"open_io" ~machine ~name ~key
+(* The key every io device shares: an io device holds no library of its own,
+   so an io open of a name answers the io device open under it, and only a
+   driver's device refuses it. *)
+let io_key = Type.Id.uid (Type.Id.make () : unit Type.Id.t)
+
+let open_io ~machine name =
+  open_named ~fn:"open_io" ~machine ~name ~key:io_key
   @@ fun ~index ~slot ~opened ~name:full ->
   masked @@ fun () ->
-  match make () with
-  | Error e -> Error e
-  | Ok h -> (
-      (* As for a driver's device. *)
-      match
-        let budget = I.budget h in
-        let c = c_io_new index full opened in
-        let d =
-          make_device ~index ~name:full ~machine
-            ~kind:(Io { m = (module I); h })
-            ~c ~arch:"" ~bus:None ~queues:[||] ~copy_engine:None
-            ~completion:Rig_edge.Host ~waits:no_waits ~hang_ms:None
-            ~maps_host:false ~alignment:1 ~cache_bytes:None
-            ~host_addresses:false ~word:0
-            ~word_region:None ~key ~memory_device:false
-            ~fault:[%extension_constructor I.Fault] ~capability:None
-            ~counters:[] ~budget ~opened
-        in
-        register d;
-        d
-      with
-      | d ->
-          publish d slot;
-          Ok d
-      | exception I.Fault why ->
-          (try I.stop h with I.Fault _ -> ());
-          Error (strf "%s: %s" full why)
-      | exception e ->
-          let bt = Printexc.get_raw_backtrace () in
-          (try I.stop h with I.Fault _ -> ());
-          Printexc.raise_with_backtrace e bt)
+  let c = c_io_new index full opened in
+  let d =
+    make_device ~index ~name:full ~machine ~kind:Io ~c ~arch:""
+      ~bus:None ~queues:[||] ~copy_engine:None ~completion:Rig_edge.Host
+      ~waits:no_waits ~hang_ms:None ~maps_host:false ~alignment:1
+      ~cache_bytes:None ~host_addresses:false ~word:0 ~word_region:None
+      ~key:io_key ~memory_device:false ~fault:[%extension_constructor No_fault]
+      ~capability:None ~counters:[] ~budget:max_int ~opened
+  in
+  register d;
+  publish d slot;
+  Ok d
 
 (* Closing *)
 
@@ -1393,7 +1370,7 @@ let reaches d d' =
   || same_machine d d'
      &&
      match (d.kind, d'.kind) with
-     | Io _, _ | _, Io _ -> false
+     | Io, _ | _, Io -> false
      | Host, Host -> false
      | Host, Driver _ -> d'.host_addresses
      | Driver _, Host -> d.maps_host

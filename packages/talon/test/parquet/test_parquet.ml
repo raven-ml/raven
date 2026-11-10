@@ -15,7 +15,7 @@ let path name = "support/" ^ name
 
 let buffer name =
   match Rig_disk.of_file (path name) with
-  | Ok b -> b
+  | Ok f -> Rig_disk.buffer f
   | Error why -> failwith why
 
 let file_bytes name = In_channel.with_open_bin (path name) In_channel.input_all

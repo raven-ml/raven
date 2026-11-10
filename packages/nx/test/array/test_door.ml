@@ -105,10 +105,10 @@ let test_door_buffers () =
   let z = at 0 and y = at 1 in
   kill b;
   equal ~msg:"dead and overlapping" answer A.Dead_buffer (S.add z x y);
-  let io = A.to_device (S.io_device ()) x in
+  let off = A.to_device (S.off_host ()) x in
   let z = zeros [| 2 |] in
-  equal ~msg:"io" answer A.Off_host (S.add z x io);
-  released [| A.Any z; A.Any x; A.Any io |];
+  equal ~msg:"off the host" answer A.Off_host (S.add z x off);
+  released [| A.Any z; A.Any x; A.Any off |];
   let held = zeros [| 2 |] in
   Rig.Claim.with_ ~read:[]
     ~donate:[ A.buffer held ]
@@ -155,8 +155,8 @@ let test_door_reasons () =
   let d = zeros [| 2 |] in
   kill (A.buffer d);
   reason ~sub:"dead" (S.add (zeros [| 2 |]) x d);
-  let io = A.to_device (S.io_device ()) x in
-  reason ~sub:"host does not address" (S.add (zeros [| 2 |]) x io);
+  let off = A.to_device (S.off_host ()) x in
+  reason ~sub:"host does not address" (S.add (zeros [| 2 |]) x off);
   let held = zeros [| 2 |] in
   Rig.Claim.with_ ~read:[]
     ~donate:[ A.buffer held ]
@@ -172,10 +172,11 @@ let test_door_reasons () =
 let test_door_empty () =
   let host = zeros [| 0; 2 |] in
   let off = Option.get (A.move (M.Permute [| 1; 0 |]) (zeros [| 2; 0 |])) in
-  let io = A.to_device (S.io_device ()) host in
+  let elsewhere = A.to_device (S.off_host ()) host in
   equal ~msg:"host" answer A.Done (S.add (zeros [| 0; 2 |]) host host);
   equal ~msg:"a view" answer A.Done (S.add (zeros [| 0; 2 |]) off host);
-  equal ~msg:"off the host" answer A.Done (S.add (zeros [| 0; 2 |]) io io)
+  equal ~msg:"off the host" answer A.Done
+    (S.add (zeros [| 0; 2 |]) elsewhere elsewhere)
 
 let test_door_releases () =
   let z = zeros [| 2 |] and x = floats32 [| 2 |] [| 1.; 2. |] in
@@ -410,8 +411,7 @@ let test_ocaml_door_identical () =
   released [| x; bytes; A.Any sq |]
 
 let test_ocaml_door_off_host () =
-  let io = S.io_device () in
-  let b = A.buffer (A.to_device io (zeros [| 8 |])) in
+  let b = A.buffer (A.to_device (S.off_host ()) (zeros [| 8 |])) in
   let at offset = A.Any (A.v f32 (L.v ~offset ~strides:[| 1 |] [| 3 |]) b) in
   equal ~msg:"overlap" (pair answer (option bool)) (A.Overlapping, None)
     (ocaml_door [| at 0 |] [| at 2 |]);
@@ -435,13 +435,12 @@ let test_ocaml_door_bigarrays () =
   equal ~msg:"beside" (pair answer (option bool)) (A.Done, Some true)
     (ocaml_door [| head (over 0) |] [| head (over 2) |])
 
-(* An io memory of 32 bytes on the mapped io device, a host borrow of it,
-   whose bytes are its pages, and those pages as a bigarray. *)
+(* An io memory of 32 bytes, given by a library whose regions the host maps, a
+   host borrow of it, whose bytes are its pages, and those pages as a
+   bigarray. *)
 let mapped_io () =
-  let bytes = A.of_array D.Uint8 [| 32 |] (Array.make 32 0) in
-  let io = A.to_device (S.mapped_io_device ()) bytes in
-  let host = Option.get (A.borrow Rig.host io) in
-  (A.buffer io, A.buffer host, S.mapped_pages (A.buffer io))
+  let io, pages = S.mapped_region 32 in
+  (io, Option.get (B.borrow Rig.host io), pages)
 
 (* An array of [dt] over [count] elements of [b] from element [offset]. *)
 let view dt b offset count =

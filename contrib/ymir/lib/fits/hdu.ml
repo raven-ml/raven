@@ -310,7 +310,7 @@ let walk ~name src =
 let read path =
   match Rig_disk.of_file path with
   | Error e -> Error e
-  | Ok src -> catch (fun () -> walk ~name:path src)
+  | Ok f -> catch (fun () -> walk ~name:path (Rig_disk.buffer f))
 
 let of_bytes ~name t = catch (fun () -> walk ~name (bytes t))
 

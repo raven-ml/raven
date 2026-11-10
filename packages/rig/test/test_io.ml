@@ -19,8 +19,8 @@ let timeout = 60.
 let page_bytes = 1 lsl 16
 
 module Pages = struct
-  (* [during] runs as a read or a write starts; [mapped] is how [pages]
-     answers. *)
+  (* The log of a region's calls: [during] runs as a read or a write starts;
+     [mapped] is how [pages] answers. *)
   type t = {
     lock : Mutex.t;
     mutable calls : string list;
@@ -28,47 +28,41 @@ module Pages = struct
     mutable mapped : [ `Pages | `None | `Fails ];
   }
 
-  (* Its bytes, and the host buffer that holds them on a page. *)
+  (* Its bytes, the host buffer that holds them on a page, and its log. *)
   type region = {
     bytes :
       (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t;
     keep : B.t;
+    log : t;
   }
 
-  exception Fault of string
-
-  let region_key : region Type.Id.t = Type.Id.make ()
   let note t call = Mutex.protect t.lock (fun () -> t.calls <- call :: t.calls)
-  let budget _ = max_int
 
-  let alloc t n =
-    note t "alloc";
+  let make log n =
     let keep = B.create Rig.host (Int.max n page_bytes) in
-    Some
-      { bytes = Bigarray.Array1.sub (B.export keep Bigarray.char) 0 n; keep }
+    { bytes = Bigarray.Array1.sub (B.export keep Bigarray.char) 0 n; keep; log }
 
-  let free t _ = note t "free"
+  let free r = note r.log "free"
   let base r = Support.Reader.host r.keep
 
-  let read t r ~at ~dst ~len =
-    note t "read";
-    t.during ();
+  let read r ~at ~dst ~len =
+    note r.log "read";
+    r.log.during ();
     Support.move ~dst ~src:(base r + at) len
 
-  let write t r ~at ~src ~len =
-    note t "write";
-    t.during ();
+  let write r ~at ~src ~len =
+    note r.log "write";
+    r.log.during ();
     Support.move ~dst:(base r + at) ~src len
 
-  let pages t r =
-    note t "pages";
-    match t.mapped with
+  let pages r =
+    note r.log "pages";
+    match r.log.mapped with
     | `Pages -> Some r.bytes
     | `None -> None
     | `Fails -> raise (Sys_error "too many open files")
 
-  let prefetch t _ ~at:_ ~len:_ = note t "prefetch"
-  let stop _ = ()
+  let prefetch r ~at:_ ~len:_ = note r.log "prefetch"
 end
 
 let opened = Atomic.make 0
@@ -82,13 +76,12 @@ let pages () =
   }
 
 let open_pages () =
-  let t = pages () in
   let name = Printf.sprintf "io:pages-%d" (Atomic.fetch_and_add opened 1) in
-  let io =
-    require_ok ~pp:Format.pp_print_string
-      (Rig.open_io { name; io = (module Pages); make = (fun () -> Ok t) })
-  in
-  (io, t)
+  (require_ok ~pp:Format.pp_print_string (Rig.open_io name), pages ())
+
+(* A buffer of [io] over [n] new bytes of a region that logs to [t]. *)
+let create ?(access = Rig.Read_write) io t n =
+  B.of_io io (module Pages) (Pages.make t n) ~access n
 
 let count call (t : Pages.t) =
   Mutex.protect t.lock (fun () ->
@@ -115,7 +108,7 @@ let queued_copy d ~src ~dst =
 let test_borrow () =
   let io, t = open_pages () in
   let d, p = P.open_ "io:borrower" in
-  let m = B.create io page_bytes in
+  let m = create io t page_bytes in
   for _ = 1 to 3 do
     ignore (require_some (B.borrow d m))
   done;
@@ -126,7 +119,7 @@ let test_borrow () =
    and bigarrays over its pages share the same byte ranges. *)
 let test_overlaps () =
   let io, t = open_pages () in
-  let m = B.create io page_bytes and other = B.create Rig.host 32 in
+  let m = create io t page_bytes and other = B.create Rig.host 32 in
   equal ~msg:"before any borrow" (pair bool bool) (false, false)
     (B.overlaps m other, B.overlaps other m);
   equal ~msg:"inspection maps no pages" int 0 (count "pages" t);
@@ -163,9 +156,9 @@ let freed_at = 9
    memory's buffers at [io_family], the dead one at [freed_at]. *)
 let universe =
   lazy
-    (let io, _ = open_pages () in
+    (let io, t = open_pages () in
      let d, _ = P.open_ "io:overlap" in
-     let h = B.create Rig.host page_bytes and m = B.create io page_bytes in
+     let h = B.create Rig.host page_bytes and m = create io t page_bytes in
      let mapped = require_some (B.borrow Rig.host m) in
      let pages = B.read mapped Bigarray.char Fun.id in
      let freed = B.create Rig.host 64 in
@@ -318,7 +311,7 @@ let test_overlap_bounds () =
    by an overlap check. Views retain their offsets in the same space. *)
 let test_span_stable () =
   let io, t = open_pages () in
-  let m = B.create io page_bytes in
+  let m = create io t page_bytes in
   let space, first = Support.Reader.span m in
   let host = require_some (B.borrow Rig.host m) in
   let view = B.view m ~first:12 ~length:8 in
@@ -334,8 +327,8 @@ let test_span_stable () =
 (* A borrow back on the io device is its memory: no driver object, no host or
    device address, not borrowed, in the memory's span. *)
 let test_borrow_back () =
-  let io, _ = open_pages () in
-  let m = B.create io page_bytes in
+  let io, t = open_pages () in
+  let m = create io t page_bytes in
   let back = require_some (B.borrow io (require_some (B.borrow Rig.host m))) in
   let answer f = try Some (f ()) with Invalid_argument _ -> None in
   let coordinates b =
@@ -353,7 +346,7 @@ let test_borrow_back () =
    as well as the host range through which a bigarray aliases it. *)
 let test_sorted_overlaps () =
   let io, t = open_pages () in
-  let memories = List.init 9 (fun _ -> B.create io page_bytes) in
+  let memories = List.init 9 (fun _ -> create io t page_bytes) in
   let target = List.hd memories in
   let host = require_some (B.borrow Rig.host target) in
   let ba = B.read host Bigarray.char Fun.id in
@@ -367,8 +360,8 @@ let test_sorted_overlaps () =
 
 let test_empty_host_borrow () =
   let io, t = open_pages () in
-  let region = require_some (Pages.alloc t 0) in
-  let m = B.of_io io Pages.region_key region ~access:Read_write 0 in
+  let region = Pages.make t 0 in
+  let m = B.of_io io (module Pages) region ~access:Read_write 0 in
   let host = require_some (B.borrow Rig.host m) in
   not_equal ~msg:"the empty host borrow keeps a host address" int 0
     (Support.Reader.host host);
@@ -380,7 +373,7 @@ let test_no_pages () =
   let io, t = open_pages () in
   t.mapped <- `None;
   let d, _ = P.open_ "io:pageless" in
-  let m = B.create io page_bytes in
+  let m = create io t page_bytes in
   equal ~msg:"a first borrow" bool true (Option.is_none (B.borrow d m));
   equal ~msg:"a second borrow" bool true (Option.is_none (B.borrow d m));
   equal ~msg:"pages asked" int 1 (count "pages" t)
@@ -391,7 +384,7 @@ let test_pages_fail () =
   let io, t = open_pages () in
   t.mapped <- `Fails;
   let d, _ = P.open_ "io:pages-fail" in
-  let m = B.create io page_bytes in
+  let m = create io t page_bytes in
   raises_match
     (function Sys_error _ -> true | _ -> false)
     (fun () -> B.borrow d m);
@@ -405,7 +398,7 @@ let test_pages_fail () =
 let test_prefetch () =
   let io, t = open_pages () in
   let d, _ = P.open_ "io:prefetcher" in
-  let m = B.create io page_bytes in
+  let m = create io t page_bytes in
   ignore (require_some (B.borrow Rig.host m));
   equal ~msg:"after the host's borrow" int 0 (count "prefetch" t);
   ignore (require_some (B.borrow d m));
@@ -414,9 +407,9 @@ let test_prefetch () =
 (* A copy out of io memory follows a device's write through its pages, and a
    copy into it follows a device's read of it. *)
 let test_copy_order () =
-  let io, _ = open_pages () in
+  let io, t = open_pages () in
   let d, p = P.open_ "io:copier" in
-  let m = B.create io page_bytes in
+  let m = create io t page_bytes in
   let on_d = require_some (B.borrow d m) in
   let staged = B.create d page_bytes in
   B.copy ~src:(filled page_bytes 'w') ~dst:staged;
@@ -438,9 +431,9 @@ let test_copy_order () =
 (* A host access of io memory waits for the work of a device that borrowed its
    pages. *)
 let test_wait () =
-  let io, _ = open_pages () in
+  let io, t = open_pages () in
   let d, p = P.open_ "io:waiter" in
-  let m = B.create io page_bytes in
+  let m = create io t page_bytes in
   let staged = B.create d page_bytes in
   queued_copy d ~src:staged ~dst:(require_some (B.borrow d m));
   equal ~msg:"queued" int 1 (P.queued p);
@@ -452,7 +445,7 @@ let test_free () =
   let io, t = open_pages () in
   let d, p = P.open_ "io:user" in
   (fun () ->
-    let m = B.create io page_bytes in
+    let m = create io t page_bytes in
     let s = Sub.make d [| Support.touching [| Sub.read |] |] in
     ignore (submit s ~buffers:[| require_some (B.borrow d m) |]))
     ();
@@ -504,7 +497,7 @@ let test_staged_device () =
       for i = 0 to n - 1 do
         Bigarray.Array1.unsafe_set ba i (byte i)
       done);
-  let m = B.create io n and dev = B.create d n and back = B.create io n in
+  let m = create io t n and dev = B.create d n and back = create io t n in
   B.copy ~src:h ~dst:m;
   B.copy ~src:m ~dst:dev;
   B.copy ~src:dev ~dst:back;
@@ -520,9 +513,9 @@ let test_staged_device () =
 (* No device's work reaches io memory itself, only a borrow of its pages: a run
    refuses an io device's buffer and takes the borrow. *)
 let test_run_borrows () =
-  let io, _ = open_pages () in
+  let io, t = open_pages () in
   let d, _ = P.open_ "io:slots" in
-  let m = B.create io page_bytes in
+  let m = create io t page_bytes in
   let s = Sub.make d [| Support.touching [| Sub.read; Sub.write |] |] in
   let own = B.create d 8 and borrowed = require_some (B.borrow d m) in
   raises_match Exn.invalid_arg (fun () ->
@@ -545,7 +538,7 @@ let test_release_words () =
   drain ();
   let idle = minor_words drain in
   let[@inline never] dropped () =
-    ignore (Sys.opaque_identity (B.create io 64))
+    ignore (Sys.opaque_identity (create io t 64))
   in
   dropped ();
   Gc.full_major ();
@@ -560,14 +553,14 @@ let test_write_keeps () =
   let io, t = open_pages () in
   let collected = ref false and seen = ref [] in
   collecting t io collected seen;
-  B.copy ~src:(watched collected page_bytes 'k') ~dst:(B.create io page_bytes);
+  B.copy ~src:(watched collected page_bytes 'k') ~dst:(create io t page_bytes);
   equal (list string) [ "collected: false"; "frees: 0" ] !seen
 
 (* A copy from io memory keeps both buffers until the read returned. *)
 let test_read_keeps () =
   let io, t = open_pages () in
   let collected = ref false and seen = ref [] in
-  let src = B.create io page_bytes in
+  let src = create io t page_bytes in
   B.copy ~src:(filled page_bytes 'k') ~dst:src;
   collecting t io collected seen;
   B.copy ~src ~dst:(watched collected page_bytes 'x');
@@ -578,21 +571,18 @@ let test_read_keeps () =
 
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 
-(* A fault an io read raises loses the io device; a failure of the memory alone,
-   such as a file truncated since it was opened, reaches the caller and loses
-   nothing. *)
-let test_faults () =
+(* A failure an io read or write raises, such as a file truncated since it was
+   opened, reaches the caller and loses nothing. *)
+let test_failures () =
   let io, t = open_pages () in
-  let m = B.create io page_bytes and out = filled page_bytes '0' in
+  let m = create io t page_bytes and out = filled page_bytes '0' in
   t.during <- (fun () -> raise (Sys_error "truncated"));
   raises (Sys_error "truncated") (fun () -> B.copy ~src:m ~dst:out);
-  equal ~msg:"after Sys_error" (option string) None (Rig.lost io);
+  raises (Sys_error "truncated") (fun () -> B.copy ~src:out ~dst:m);
+  equal ~msg:"the io device" (option string) None (Rig.lost io);
   t.during <- (fun () -> ());
   B.copy ~src:m ~dst:out;
-  t.during <- (fun () -> raise (Pages.Fault "the link went down"));
-  raises_match (lost io) (fun () -> B.copy ~src:out ~dst:m);
-  equal ~msg:"after Fault" (option string) (Some "the link went down")
-    (Rig.lost io)
+  B.copy ~src:out ~dst:m
 
 (* A copy from or into a borrow of io memory's pages goes through the io
    library's read or write, never the pages: toward host memory, toward a
@@ -602,7 +592,7 @@ let test_faults () =
 let test_borrow_copies () =
   let io, t = open_pages () in
   let d, p = P.open_ ~host_visible:false "io:borrow-copies" in
-  let m = B.create io page_bytes in
+  let m = create io t page_bytes in
   let hb = require_some (B.borrow Rig.host m) in
   let calls () = (count "read" t, count "write" t) in
   let calls_of f =
@@ -660,7 +650,7 @@ let test_far_copies () =
                Ok (P.bind ~word (P.make ~host_visible:false ~peers:false ())));
          })
   in
-  let m = B.create io page_bytes in
+  let m = create io t page_bytes in
   let hb = require_some (B.borrow Rig.host m) in
   let on_far = B.create far page_bytes in
   let reads = count "read" t and writes = count "write" t in
@@ -681,32 +671,29 @@ let test_far_copies () =
   equal ~msg:"reads and writes of the io library" (pair int int) (2, 3)
     (count "read" t - reads, count "write" t - writes)
 
-(* A fault of an io read under a copy from a borrow of its pages loses the io
-   device, which owns the memory, and leaves the host. *)
-let test_borrow_fault () =
+(* A failure of an io read under a copy from a borrow of its pages reaches the
+   caller and loses neither the io device, which owns the memory, nor the
+   host. *)
+let test_borrow_failure () =
   let io, t = open_pages () in
-  let hb = require_some (B.borrow Rig.host (B.create io page_bytes)) in
-  t.during <- (fun () -> raise (Pages.Fault "the link went down"));
-  raises_match (lost io) (fun () ->
+  let hb = require_some (B.borrow Rig.host (create io t page_bytes)) in
+  t.during <- (fun () -> raise (Sys_error "truncated"));
+  raises (Sys_error "truncated") (fun () ->
       B.copy ~src:hb ~dst:(filled page_bytes '0'));
-  equal ~msg:"the io device" (option string) (Some "the link went down")
-    (Rig.lost io);
+  equal ~msg:"the io device" (option string) None (Rig.lost io);
   equal ~msg:"the host" (option string) None (Rig.lost Rig.host)
 
-(* A region an io library made is a buffer of its io device only, by its
-   library's key, never exclusive. *)
+(* A region an io library made is a buffer of an io device only, never
+   exclusive. *)
 let test_of_io () =
   let io, t = open_pages () in
   let d, _ = P.open_ "io:not-io" in
-  let r = Option.get (Pages.alloc t page_bytes) in
-  let other : Pages.region Type.Id.t = Type.Id.make () in
+  let r = Pages.make t page_bytes in
   raises_match Exn.invalid_arg (fun () ->
-      B.of_io d Pages.region_key r ~access:Read_write 8);
+      B.of_io d (module Pages) r ~access:Read_write 8);
   raises_match Exn.invalid_arg (fun () ->
-      B.of_io io other r ~access:Read_write 8);
-  raises_match Exn.invalid_arg (fun () ->
-      B.of_io io Pages.region_key r ~access:Read_write (-1));
-  let b = B.of_io io Pages.region_key r ~access:Read_write page_bytes in
+      B.of_io io (module Pages) r ~access:Read_write (-1));
+  let b = B.of_io io (module Pages) r ~access:Read_write page_bytes in
   Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
       equal bool false (Rig.Claim.exclusive c b))
 
@@ -724,20 +711,24 @@ let test_of_io_closed () =
   Rig.close m;
   Rig.free_cache m;
   let io, t = open_pages () in
-  let r = Option.get (Pages.alloc t page_bytes) in
+  let r = Pages.make t page_bytes in
   Rig.close io;
   Rig.free_cache io;
   let later, _ = P.open_ "io:after-closed" in
   equal ~msg:"the slot passed on" int (Rig.Point.value p) (Rig.submitted later);
   raises_match (lost io) (fun () ->
-      B.of_io io Pages.region_key r ~access:Read_write page_bytes);
+      B.of_io io (module Pages) r ~access:Read_write page_bytes);
   Gc.full_major ();
   Rig.close later
 
-(* Io memory has no address or object of a driver, and loads no code. *)
+(* An io device makes no memory but an empty buffer. Io memory has no address
+   or object of a driver, and loads no code. *)
 let test_io_refusals () =
-  let io, _ = open_pages () in
-  let m = B.create io 8 in
+  let io, t = open_pages () in
+  raises_match ~msg:"a buffer of a byte" Exn.invalid_arg (fun () ->
+      B.create io 1);
+  equal ~msg:"an empty buffer" int 0 (B.length (B.create io 0));
+  let m = create io t 8 in
   raises_match Exn.invalid_arg (fun () -> B.aligned m ~at:0 8);
   raises_match Exn.invalid_arg (fun () -> B.handle m);
   raises_match Exn.invalid_arg (fun () -> Rig.Image.load io "code:8")
@@ -754,8 +745,8 @@ let access = Testable.make ~pp:pp_access ~equal:( = )
 let test_read_runs () =
   let io, t = open_pages () in
   let d, _ = P.open_ ~host_visible:false "io:read-runs" in
-  let r = Option.get (Pages.alloc t page_bytes) in
-  let m = B.of_io io Pages.region_key r ~access:Read page_bytes in
+  let r = Pages.make t page_bytes in
+  let m = B.of_io io (module Pages) r ~access:Read page_bytes in
   let on_d = require_some (B.borrow d m) and own = B.create d page_bytes in
   let s = Sub.make d [| Support.touching [| Sub.read; Sub.write |] |] in
   ignore (submit s ~buffers:[| on_d; own |]);
@@ -785,8 +776,8 @@ let test_read_claims () =
   let module R = Support.Reader in
   let answer = Testable.make ~pp:R.pp_answer ~equal:( = ) in
   let io, t = open_pages () in
-  let r = Option.get (Pages.alloc t page_bytes) in
-  let m = B.of_io io Pages.region_key r ~access:Read page_bytes in
+  let r = Pages.make t page_bytes in
+  let m = B.of_io io (module Pages) r ~access:Read page_bytes in
   equal ~msg:"for writing" answer R.Read_only (R.claim m Read_write);
   equal ~msg:"for reading" answer R.Claimed (R.claim m Read);
   R.release m
@@ -795,8 +786,8 @@ let test_read_claims () =
    the offset of their view: the region holds what they wrote. *)
 let test_blits () =
   let io, t = open_pages () in
-  let r = Option.get (Pages.alloc t 8) in
-  let m = B.of_io io Pages.region_key r ~access:Read_write 8 in
+  let r = Pages.make t 8 in
+  let m = B.of_io io (module Pages) r ~access:Read_write 8 in
   let region () = String.init 8 (Bigarray.Array1.get r.bytes) in
   B.blit_from_string "abcdefgh" 0 m 0 8;
   equal ~msg:"a blit into it" string "abcdefgh" (region ());
@@ -812,9 +803,9 @@ let test_blits () =
 let test_large_fill () =
   let io, t = open_pages () in
   let n = (2 lsl 20) + 7 in
-  let r = Option.get (Pages.alloc t (n + 6)) in
+  let r = Pages.make t (n + 6) in
   Bigarray.Array1.fill r.bytes 'r';
-  let m = B.of_io io Pages.region_key r ~access:Read_write (n + 6) in
+  let m = B.of_io io (module Pages) r ~access:Read_write (n + 6) in
   B.fill (B.view m ~first:3 ~length:n) 'f';
   let expected = "rrr" ^ String.make n 'f' ^ "rrr" in
   let got = String.init (n + 6) (Bigarray.Array1.get r.bytes) in
@@ -828,9 +819,9 @@ let test_large_fill () =
    reads it. *)
 let test_read_blits () =
   let io, t = open_pages () in
-  let r = Option.get (Pages.alloc t page_bytes) in
+  let r = Pages.make t page_bytes in
   Bigarray.Array1.fill r.bytes 'r';
-  let m = B.of_io io Pages.region_key r ~access:Read page_bytes in
+  let m = B.of_io io (module Pages) r ~access:Read page_bytes in
   let on_host = require_some (B.borrow Rig.host m) in
   raises_match Exn.invalid_arg (fun () -> B.blit_from_string "w" 0 on_host 0 1);
   let got = Bytes.create 2 in
@@ -843,18 +834,18 @@ let test_read_blits () =
 let test_read_memory () =
   let io, t = open_pages () in
   let d, _ = P.open_ ~host_visible:false "io:read" in
-  let r = Option.get (Pages.alloc t page_bytes) in
+  let r = Pages.make t page_bytes in
   Bigarray.Array1.fill r.bytes 'r';
-  let m = B.of_io io Pages.region_key r ~access:Read page_bytes in
+  let m = B.of_io io (module Pages) r ~access:Read page_bytes in
   let on_d = require_some (B.borrow d m) in
   equal ~msg:"made, viewed, borrowed" (list access) [ Read; Read; Read ]
     [ B.access m; B.access (B.view m ~first:1 ~length:2); B.access on_d ];
   equal ~msg:"created, of a bigarray, of a writable region" (list access)
     [ Read_write; Read_write; Read_write ]
     [
-      B.access (B.create io 8);
+      B.access (B.create Rig.host 8);
       B.access (B.of_bigarray (B.export (B.create Rig.host 8) Bigarray.char));
-      B.access (B.of_io io Pages.region_key r ~access:Read_write page_bytes);
+      B.access (B.of_io io (module Pages) r ~access:Read_write page_bytes);
     ];
   let from_d = B.create d page_bytes in
   B.copy ~src:(filled page_bytes 'd') ~dst:from_d;
@@ -872,37 +863,12 @@ let test_read_memory () =
   equal ~msg:"read and written" (pair int int) (0, 0)
     (count "read" t, count "write" t)
 
-(* Pages whose device faults as rig reads its budget. *)
-module Budgetless = struct
-  include Pages
-
-  let budget _ = raise (Fault "the link is down")
-  let stop t = note t "stop"
-end
-
-(* A fault reading an io device's budget is the open's [Error], naming the
-   device: its handle is stopped, and the name opens again. *)
-let test_budget_fault () =
-  let name = "io:budget-fault" and t = pages () in
-  equal
-    (result unit string)
-    (Error "io:budget-fault: the link is down")
-    (Result.map ignore
-       (Rig.open_io
-          { name; io = (module Budgetless); make = (fun () -> Ok t) }));
-  equal ~msg:"stops" int 1 (count "stop" t);
-  is_ok
-    (Rig.open_io
-       { name; io = (module Pages); make = (fun () -> Ok (pages ())) })
-
 let tests =
   [
     group ~timeout "io memory"
       [
         test "a device borrows io memory through its pages, mapped once"
           test_borrow;
-        test "a fault reading an io device's budget is the open's Error"
-          test_budget_fault;
         test "overlaps uses cached io pages without mapping" test_overlaps;
         test "an io span stays stable when its pages are published"
           test_span_stable;
@@ -931,21 +897,23 @@ let tests =
           test_run_borrows;
         test "io memory and a device's memory copy through staging, both ways"
           test_staged_device;
-        test "a fault of io loses its device, a failure of its memory nothing"
-          test_faults;
+        test "a failure of io memory reaches the caller and loses nothing"
+          test_failures;
         test
           "a copy from or into a borrow of io memory goes through its io \
            library"
           test_borrow_copies;
-        test "a fault under a copy from a borrow loses the io device"
-          test_borrow_fault;
+        test "a failure under a copy from a borrow loses nothing"
+          test_borrow_failure;
         test
           "io memory and a borrow of it copy with another machine's device"
           test_far_copies;
-        test "a region an io library made is a buffer of its device alone"
+        test "a region an io library made is a buffer of an io device alone"
           test_of_io;
         test "a closed io device makes no buffer" test_of_io_closed;
-        test "io memory has no driver address or object and loads no code"
+        test
+          "an io device makes no memory, has no driver address or object and \
+           loads no code"
           test_io_refusals;
         test "a copy into io memory keeps its buffers until written"
           test_write_keeps;

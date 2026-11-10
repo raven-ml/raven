@@ -1752,10 +1752,13 @@ let with_path f =
 
 let write_file p s = Out_channel.with_open_bin p (fun oc -> output_string oc s)
 let read_file p = In_channel.with_open_bin p In_channel.input_all
-let of_file p = require_ok ~pp:Format.pp_print_string (Rig_disk.of_file p)
+(* The buffers of the file [p] opened, and of a file made at [p]. *)
+let of_file p =
+  Rig_disk.buffer (require_ok ~pp:Format.pp_print_string (Rig_disk.of_file p))
 
 let create_file p n =
-  require_ok ~pp:Format.pp_print_string (Rig_disk.create_file p n)
+  Rig_disk.buffer
+    (require_ok ~pp:Format.pp_print_string (Rig_disk.create_file p n))
 
 (* Work on [t]'s device that adds 1 to each byte of [b], a buffer on it that the
    run writes; it returns once the work is done. *)

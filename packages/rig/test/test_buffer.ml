@@ -93,7 +93,7 @@ let test_aligned_refusals () =
   raises_match ~msg:"0" Exn.invalid_arg (fun () -> B.aligned b ~at:0 0);
   raises_match ~msg:"3" Exn.invalid_arg (fun () -> B.aligned b ~at:0 3);
   raises_match ~msg:"io memory" Exn.invalid_arg (fun () ->
-      B.aligned (B.create (Support.io "buffer:aligned-io") 8) ~at:0 16)
+      B.aligned (Support.io_buffer (Support.io "buffer:aligned-io") 8) ~at:0 16)
 
 (* Copies *)
 
@@ -1432,38 +1432,25 @@ let test_staging_after_loss () =
   B.copy ~src:(on f 'k') ~dst;
   equal string (String.make 64 'k') (contents dst)
 
-(* An io device whose memory reads succeed [reads] times, then raise
-   [Sys_error], as a file cut short does. *)
+(* An io library whose region's reads succeed as many times as it counts, then
+   raise [Sys_error], as a file cut short does. *)
 module Cut = struct
-  type t = int Atomic.t
-  type region = unit
+  type region = int Atomic.t
 
-  exception Fault of string
+  let free _ = ()
 
-  let region_key : region Type.Id.t = Type.Id.make ()
-  let budget _ = max_int
-  let alloc _ _ = Some ()
-  let free _ () = ()
-
-  let read reads () ~at:_ ~dst:_ ~len:_ =
+  let read reads ~at:_ ~dst:_ ~len:_ =
     if Atomic.fetch_and_add reads (-1) <= 0 then raise (Sys_error "cut short")
 
-  let write _ () ~at:_ ~src:_ ~len:_ = ()
-  let pages _ () = None
-  let prefetch _ () ~at:_ ~len:_ = ()
-  let stop _ = ()
+  let write _ ~at:_ ~src:_ ~len:_ = ()
+  let pages _ = None
+  let prefetch _ ~at:_ ~len:_ = ()
 end
 
-let cuts = Atomic.make 0
-
-let cut reads =
-  let name = Printf.sprintf "buffer:cut-%d" (Atomic.fetch_and_add cuts 1) in
-  match
-    Rig.open_io
-      { name; io = (module Cut); make = (fun () -> Ok (Atomic.make reads)) }
-  with
-  | Ok d -> d
-  | Error e -> failwith e
+(* [n] bytes of io memory whose reads succeed [reads] times. *)
+let cut reads n =
+  B.of_io (Support.io "buffer:cut") (module Cut) (Atomic.make reads)
+    ~access:Read_write n
 
 (* Windtrap's [raises] lets [Sys.Break] through, as it ends a run. *)
 let breaks f =
@@ -1488,7 +1475,7 @@ let test_staging_gives_back () =
          (P.allocs p))
   in
   let n = (2 * 32 * 1024 * 1024) + 8 in
-  let copy reads dst = B.copy ~src:(B.create (cut reads) n) ~dst in
+  let copy reads dst = B.copy ~src:(cut reads n) ~dst in
   for i = 1 to 2 do
     P.interrupt p;
     let dst = B.create d n in
@@ -1510,31 +1497,28 @@ let test_staging_gives_back () =
   Domain.join third;
   equal ~msg:"staging halves made" int 2 (halves ())
 
-(* An io device whose memory's reads each run the next of the functions in
-   its [t], as a callback inside a read does. *)
+(* An io library whose region's reads each run the next of the functions it
+   holds, as a callback inside a read does. *)
 module Hooked = struct
-  type t = (unit -> unit) list Atomic.t
-  type region = unit
+  type region = (unit -> unit) list Atomic.t
 
-  exception Fault of string
+  let free _ = ()
 
-  let region_key : region Type.Id.t = Type.Id.make ()
-  let budget _ = max_int
-  let alloc _ _ = Some ()
-  let free _ () = ()
-
-  let rec read hooks () ~at ~dst ~len =
+  let rec read hooks ~at ~dst ~len =
     match Atomic.get hooks with
     | [] -> ()
     | f :: rest as all ->
         if Atomic.compare_and_set hooks all rest then f ()
-        else read hooks () ~at ~dst ~len
+        else read hooks ~at ~dst ~len
 
-  let write _ () ~at:_ ~src:_ ~len:_ = ()
-  let pages _ () = None
-  let prefetch _ () ~at:_ ~len:_ = ()
-  let stop _ = ()
+  let write _ ~at:_ ~src:_ ~len:_ = ()
+  let pages _ = None
+  let prefetch _ ~at:_ ~len:_ = ()
 end
+
+(* [n] bytes of io memory whose reads run [hooks]. *)
+let hooked name hooks n =
+  B.of_io (Support.io name) (module Hooked) hooks ~access:Read_write n
 
 (* A staged copy from a callback inside a copy inside a copy, on the thread
    that holds two halves of the staging memory, makes a third and lands, and
@@ -1542,19 +1526,7 @@ end
 let test_staging_held () =
   let d, _ = P.open_ ~host_visible:false "buffer:staging-held" in
   let hooks = Atomic.make [] in
-  let io =
-    match
-      Rig.open_io
-        {
-          name = "buffer:staging-held-io";
-          io = (module Hooked);
-          make = (fun () -> Ok hooks);
-        }
-    with
-    | Ok io -> io
-    | Error e -> failwith e
-  in
-  let src = B.create io 64 in
+  let src = hooked "buffer:staging-held-io" hooks 64 in
   let dst () = B.create d 64 in
   let first = dst () and second = dst () and third = dst () in
   let copied = ref [] in
@@ -1574,19 +1546,7 @@ let test_staging_held () =
 let test_staging_nested_reads () =
   let d, _ = staging_device "buffer:staging-nested" in
   let hooks = Atomic.make [] in
-  let io =
-    match
-      Rig.open_io
-        {
-          name = "buffer:staging-nested-io";
-          io = (module Hooked);
-          make = (fun () -> Ok hooks);
-        }
-    with
-    | Ok io -> io
-    | Error e -> failwith e
-  in
-  let src = B.create io 64 in
+  let src = hooked "buffer:staging-nested-io" hooks 64 in
   let inside = Atomic.make 0 and landed = Atomic.make 0 in
   let copy () =
     B.copy ~src ~dst:(B.create d 64);
@@ -1966,7 +1926,8 @@ let unaddressed_memory name =
   in
   [
     ("a device's", B.create d 8);
-    ("an io device's", B.create (Support.io ("buffer:" ^ name ^ "-io")) 8);
+    ( "an io device's",
+      Support.io_buffer (Support.io ("buffer:" ^ name ^ "-io")) 8 );
     ("another machine's", B.create far 8);
   ]
 
@@ -2224,7 +2185,8 @@ let dma_refusals =
   [
     ("the host's memory", fun () -> B.create Rig.host 64);
     ("a memory device's", fun () -> B.create (memory "buffer:dma-memory") 64);
-    ("an io device's", fun () -> B.create (Support.io "buffer:dma-io") 64);
+    ( "an io device's",
+      fun () -> Support.io_buffer (Support.io "buffer:dma-io") 64 );
     ("an empty buffer", fun () -> B.create (polled "buffer:dma-empty") 0);
     ( "a dead buffer",
       fun () ->

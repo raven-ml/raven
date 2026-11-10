@@ -1050,26 +1050,17 @@ let donated b =
 (* Io devices and machines *)
 
 module Empty = struct
-  type t = unit
   type region = unit
 
-  exception Fault of string
-
-  let region_key : region Type.Id.t = Type.Id.make ()
-  let budget () = max_int
-  let alloc () _ = Some ()
-  let free () () = ()
-  let read () () ~at:_ ~dst:_ ~len:_ = ()
-  let write () () ~at:_ ~src:_ ~len:_ = ()
-  let pages () () = None
-  let prefetch () () ~at:_ ~len:_ = ()
-  let stop () = ()
+  let free () = ()
+  let read () ~at:_ ~dst:_ ~len:_ = ()
+  let write () ~at:_ ~src:_ ~len:_ = ()
+  let pages () = None
+  let prefetch () ~at:_ ~len:_ = ()
 end
 
-let io name =
-  match Rig.open_io { name; io = (module Empty); make = (fun () -> Ok ()) } with
-  | Ok d -> d
-  | Error e -> failwith e
+let io name = match Rig.open_io name with Ok d -> d | Error e -> failwith e
+let io_buffer d n = Rig.Buffer.of_io d (module Empty) () ~access:Read_write n
 
 let machine m =
   let make ~word =

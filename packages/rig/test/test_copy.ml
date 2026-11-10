@@ -273,22 +273,20 @@ let pp_box ppf (x : B.box) =
 (* An io library over host memory whose pages it never gives, so the io
    device's reads and writes move every byte. *)
 module Store = struct
-  type t = unit
   type region = B.t
 
-  exception Fault of string
-
-  let region_key : region Type.Id.t = Type.Id.make ()
-  let budget _ = max_int
-  let alloc () n = Some (B.create Rig.host (Int.max n (1 lsl 16)))
-  let free () _ = ()
+  let free _ = ()
   let base r = Support.Reader.host r
-  let read () r ~at ~dst ~len = Support.move ~dst ~src:(base r + at) len
-  let write () r ~at ~src ~len = Support.move ~dst:(base r + at) ~src len
-  let pages () _ = None
-  let prefetch () _ ~at:_ ~len:_ = ()
-  let stop () = ()
+  let read r ~at ~dst ~len = Support.move ~dst ~src:(base r + at) len
+  let write r ~at ~src ~len = Support.move ~dst:(base r + at) ~src len
+  let pages _ = None
+  let prefetch _ ~at:_ ~len:_ = ()
 end
+
+(* A buffer of [io] over [n] bytes of a new region of [Store]. *)
+let stored io n =
+  let r = B.create Rig.host (Int.max n (1 lsl 16)) in
+  B.of_io io (module Store) r ~access:Read_write n
 
 (* The routes a copy takes, each with how it makes its two buffers. *)
 type route = { name : string; make : unit -> B.t * B.t }
@@ -301,11 +299,7 @@ let routes =
      let own name = P.open_ ~maps_host:false ~peers:false ~host_visible:false name in
      let g, _ = own "copy:box-own" and h, _ = own "copy:box-own-2" in
      let m = Result.get_ok (Rig.memory_device "copy:box-memory") in
-     let io =
-       require_ok ~pp:Format.pp_print_string
-         (Rig.open_io
-            { name = "copy:box-io"; io = (module Store); make = (fun () -> Ok ()) })
-     in
+     let io = Support.io "copy:box-io" in
      let on a b () = (B.create a side, B.create b side) in
      [
        { name = "host"; make = on Rig.host Rig.host };
@@ -315,8 +309,14 @@ let routes =
        { name = "staged out of a device"; make = on d Rig.host };
        { name = "staged between two devices"; make = on e f };
        { name = "between two devices' own staging"; make = on g h };
-       { name = "out of an io device"; make = on io Rig.host };
-       { name = "into an io device"; make = on Rig.host io };
+       {
+         name = "out of an io device";
+         make = (fun () -> (stored io side, B.create Rig.host side));
+       };
+       {
+         name = "into an io device";
+         make = (fun () -> (B.create Rig.host side, stored io side));
+       };
      ])
 
 let case =

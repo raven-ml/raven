@@ -241,9 +241,9 @@ let test_outlined_rule () =
     (Nx.item [] (g (scalar 1.)))
 
 (* A set no kernel library computes on, as a GPU set is outside a compiler: a
-   memory device and an io device. *)
+   memory device and a device that does not run on the host. *)
 module Bare =
-  (val Nx.devices [ Nx_support.memory 3; Nx_array_support.io_device () ])
+  (val Nx.devices [ Nx_support.memory 3; Nx_array_support.off_host () ])
 
 (* On such a set the stretches compile, and the function receives its operands
    where they lie and places them itself. *)

@@ -255,11 +255,14 @@ let test_donations_overlap () =
       equal ~msg:"apart, neither spans" (pair bool bool) (false, false)
         (Claim.exclusive c (view 0 8), Claim.exclusive c (view 8 8)))
 
-(* Memories of one device that has no address of them share no byte: two io
-   memories are donated together, and views of one that overlap are refused. *)
-let test_io_spans () =
-  let io = Rig_support.io "claim:io" in
-  let a = B.create io 64 and b = B.create io 64 in
+(* Memories of one device that has no address of them share no byte: two are
+   donated together, and views of one that overlap are refused. *)
+let test_no_address_spans () =
+  let d, _ =
+    P.open_ ~addresses:false ~host_visible:false "claim:no-address"
+  in
+  equal ~msg:"the host addresses none" bool false (Rig.reaches Rig.host d);
+  let a = B.create d 64 and b = B.create d 64 in
   Claim.with_ ~read:[] ~donate:[ a; b ] (fun cl ->
       equal ~msg:"both" (pair bool bool) (true, true)
         (Claim.exclusive cl a, Claim.exclusive cl b));
@@ -1907,7 +1910,8 @@ let tests =
           law;
         test "donations that overlap each other are refused"
           test_donations_overlap;
-        test "memories with no address are claimed apart" test_io_spans;
+        test "memories with no address are claimed apart"
+          test_no_address_spans;
         test "readers share a memory, an exclusive claim excludes them"
           test_claims;
         test "a donor uses memory it holds exclusive once it consumes it"

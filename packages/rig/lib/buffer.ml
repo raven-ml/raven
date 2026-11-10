@@ -40,8 +40,8 @@ let of_memory mem length =
 (* Whether its machine's host addresses all of [d]'s memory, which so has no
    [Pinned] memory: the host's own, a memory device's, a driver's that
    declares [host_addresses], and on another machine one its host reaches
-   there, as that machine's agent accounts it. An io device's memory is what
-   its library allocates, whatever the kind. *)
+   there, as that machine's agent accounts it. An io device's memory is its
+   libraries' regions, of no kind. *)
 let host_addresses d =
   (not (Dev.is_io d))
   &&
@@ -57,6 +57,11 @@ let create ?(memory = Device) d n =
       "Rig.Buffer.create: the host addresses %s's memory, so it has no \
        Pinned memory; borrow host memory instead (Buffer.borrow)"
       d.name;
+  if n > 0 && Dev.is_io d then
+    invalid_argf
+      "Rig.Buffer.create: %s makes no memory; its library gives its buffers \
+       (Buffer.of_io)"
+      d.name;
   if Dev.is_host d then Memory.host_buffer n
   else begin
     if Dev.is_lost d then begin
@@ -70,36 +75,17 @@ let create ?(memory = Device) d n =
         Memory.drain d;
         Memory.make ~address:0 d Memory.no_entry
       end
-      else if Dev.is_io d then Memory.alloc d Device n
       else Memory.alloc d memory n
     in
     of_memory mem n
   end
 
-let of_io (type r) d (k : r Type.Id.t) (r : r) ~access n =
+let of_io d m r ~access n =
   Dev.check_held "Buffer.of_io";
   if n < 0 then invalid_argf "Rig.Buffer.of_io: %d bytes is negative" n;
-  match d.kind with
-  | Io { m; h } -> (
-      let module I = (val m) in
-      match Type.Id.provably_equal I.region_key k with
-      | Some Type.Equal ->
-          let region = Io_region { m; h; r = Some r } in
-          of_memory (Memory.of_io d region ~access n) n
-      | None ->
-          invalid_argf "Rig.Buffer.of_io: %s is another io library's device"
-            d.name)
-  | _ -> invalid_argf "Rig.Buffer.of_io: %s is no io device" d.name
-
-let io (type r) b (k : r Type.Id.t) : r option =
-  check_live "Buffer.io" b;
-  match b.mem.alloc.entry.backing with
-  | Io_memory { region = Io_region { m; r; _ }; _ } -> (
-      let module I = (val m) in
-      match Type.Id.provably_equal I.region_key k with
-      | Some Type.Equal -> r
-      | None -> None)
-  | Driver_memory _ | Kept _ -> None
+  if not (Dev.is_io d) then
+    invalid_argf "Rig.Buffer.of_io: %s is no io device" d.name;
+  of_memory (Memory.of_io d (Io_region (m, r)) ~access n) n
 
 let of_bigarray ba =
   let n = Bigarray.Array1.size_in_bytes ba in
@@ -394,6 +380,6 @@ let handle b =
   check_live "Buffer.handle" b;
   match b.mem.dev.kind with
   | Driver _ -> b.mem.handle
-  | Host | Io _ ->
+  | Host | Io ->
       invalid_argf "Rig.Buffer.handle: no driver object names %s's memory"
         b.mem.dev.name

@@ -313,9 +313,9 @@ let test_capture () =
   equal bits_t (bits (g false)) (bits (g true))
 
 (* A set no kernel library computes on, as a GPU set is outside a compiler:
-   a memory device and an io device, which does not run on the host. *)
+   a memory device and a device that does not run on the host. *)
 module Bare =
-  (val Nx.devices [ Nx_support.memory 3; Nx_array_support.io_device () ])
+  (val Nx.devices [ Nx_support.memory 3; Nx_array_support.off_host () ])
 
 (* A remat's program, evaluated now, makes each creation on a set without
    kernels as the host does: its host form placed there. *)

@@ -18,12 +18,12 @@
     writes with. A format describes columns only, so one format reads any file
     with those columns. {!pp_format} prints it.
 
-    A read has three steps. Map the file with {!Rig_disk.of_file}, or take a
-    buffer on the host. {!sniff} its footer into a format and declare what the
-    file leaves open with {!with_type}. Read the rows with {!source}, a
-    {!Talon.Source.t}, or with {!file} from a path. A write states a format for
-    a query's schema with {!val-format}, and {!encode} writes the query's rows
-    as that format says.
+    A read has three steps. Open the file with {!Rig_disk.of_file} and take
+    its buffer ({!Rig_disk.buffer}), or take a buffer on the host. {!sniff}
+    its footer into a format and declare what the file leaves open with
+    {!with_type}. Read the rows with {!source}, a {!Talon.Source.t}, or with
+    {!file} from a path. A write states a format for a query's schema with
+    {!val-format}, and {!encode} writes the query's rows as that format says.
 
     Unless a value's doc says otherwise, a function that reads bytes returns
     [Error] for bytes it cannot read, and a function given a format or a name
@@ -131,7 +131,7 @@ val sniff : Rig.Buffer.t -> (format, Talon.Error.t) result
     {{!types}its Parquet type} says.
 
     [b] must be a buffer of the disk ({!Rig_disk.device}), as
-    {!Rig_disk.of_file} makes, which [sniff] maps into host memory
+    {!Rig_disk.buffer} gives, which [sniff] maps into host memory
     ({!Rig.Buffer.borrow}), or a buffer the host addresses, as
     {!Rig.Buffer.of_bigarray} makes.
 

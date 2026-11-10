@@ -180,12 +180,13 @@ Each Parquet column reads as the talon type that holds its values:
 `TIMESTAMP` as `datetime` of its unit (in `UTC` when adjusted to UTC),
 strings as `string`, and other byte arrays as `binary`.
 `Talon_parquet.sniff` reads the format from a file's bytes, which
-`Rig_disk.of_file` opens:
+`Rig_disk.of_file` opens and `Rig_disk.buffer` gives:
 
 ```ocaml
 let carriers () =
   let path = "carriers.parquet" in
-  let* bytes = Rig_disk.of_file path |> Result.map_error (Error.v ~file:path) in
+  let* file = Rig_disk.of_file path |> Result.map_error (Error.v ~file:path) in
+  let bytes = Rig_disk.buffer file in
   let* format = Talon_parquet.sniff bytes in
   Format.printf "%a@." Talon_parquet.pp_format format;
   Ok (Talon_parquet.source format bytes)

@@ -398,11 +398,12 @@ static char no_memory_why[] = "out of memory";
    forgotten. A driver's device the child inherits is orphaned, lost with
    the reason "forked" unless it was lost: freeing would call a driver, and
    a word may be a page the child shares with its parent, or does not map.
-   An io device's state is its io library's, which decides what a fork does
-   to it: rig leaves a live one as it was, as POSIX leaves a child its
-   parent's open files. One whose stop has not returned is orphaned, since
-   that stop, owed or under way, is the parent's: the child would end state
-   that the parent's thread is still using. One whose stop returned stays
+   An io device's memory is its io libraries' regions, and each library
+   decides what a fork does to them: rig leaves a live io device as it was,
+   as POSIX leaves a child its parent's open files. One whose stop has not
+   returned is orphaned, since that stop, owed or under way, is the
+   parent's: the child would end state that the parent's thread is still
+   using. One whose stop returned stays
    as it is, and the child frees its memory as any process does. An
    orphaned device's list is ended, as a stopped one's: the child makes no
    call on it, so any drain routes what is collected onto it. A device the
@@ -644,8 +645,8 @@ value caml_rig_edge_measures(value v_edge) {
   return Val_bool(r != NULL && r->measures != NULL);
 }
 
-/* An io device of index [v_index]: no queue and no word; its state is its
-   io library's. */
+/* An io device of index [v_index]: no queue and no word; its memory is its
+   io libraries' regions. */
 value caml_rig_io_new(value v_index, value v_name, value v_opened) {
   CAMLparam3(v_index, v_name, v_opened);
   CAMLlocal1(v);

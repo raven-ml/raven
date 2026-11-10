@@ -110,15 +110,9 @@ val open_driver :
     {!Rig.runs_on_host} is [true] of the device, and misuse raises under
     {!Rig.memory_device}'s name. *)
 
-val open_io :
-  (module Rig_edge.Io with type t = 'a) ->
-  machine:machine ->
-  name:string ->
-  (unit -> ('a, string) result) ->
-  (device, string) result
-(** [open_io (module I) ~machine ~name make] is {!Rig.open_io} on
-    [machine]. Concurrent opens of one name wait for the first. A fault
-    while the device's budget is read stops the handle and is [Error]. *)
+val open_io : machine:machine -> string -> (device, string) result
+(** [open_io ~machine name] is {!Rig.open_io} on [machine]. Concurrent opens
+    of one name wait for the first. *)
 
 (** {1:local Values per device} *)
 

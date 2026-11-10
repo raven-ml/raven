@@ -120,7 +120,7 @@ let load device paths =
   let started = Profile.now () in
   let loaded =
     List.map (fun path ->
-        let source = get (Rig_disk.of_file path) in
+        let source = Rig_disk.buffer (get (Rig_disk.of_file path)) in
         let destination = Buffer.create device (Buffer.length source) in
         Buffer.copy ~src:source ~dst:destination;
         (source, destination))

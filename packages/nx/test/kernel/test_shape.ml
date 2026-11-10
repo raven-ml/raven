@@ -975,14 +975,13 @@ let test_full_precision () =
 (* Libraries *)
 
 (* nx.cpu computes on the memory the host reaches: its own and a memory
-   device's, and not an io device's, even one whose pages the host maps. *)
+   device's, and not an io device's. *)
 let devices =
   let memory = Result.get_ok (Rig.memory_device "nx-kernel-computes-on") in
   [
     ("the host", Rig.host, true);
     ("a memory device", memory, true);
     ("an io device", Nx_array_support.io_device (), false);
-    ("a mapped io device", Nx_array_support.mapped_io_device (), false);
   ]
 
 let test_computes_on (_, d, want) =

@@ -15,7 +15,7 @@ type bytes =
 
 let open_file path =
   match Rig_disk.of_file path with
-  | Ok f -> f
+  | Ok f -> Rig_disk.buffer f
   | Error why -> raise (Sys_error why)
 
 let string b ~pos n =

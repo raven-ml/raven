@@ -110,34 +110,27 @@ let test_reach_addresses () =
     bools;
   check ~msg:"a memory device" (memory "open:reach-addresses-memory")
 
-(* An io device whose memory is bytes that nothing reads, as host pages. *)
+(* An io library whose memory is bytes that nothing reads, as host pages. *)
 module Store = struct
-  type t = unit
-
   type region =
     (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
-  exception Fault of string
-
-  let region_key : region Type.Id.t = Type.Id.make ()
-  let budget () = max_int
-
-  let alloc () n =
-    Some (Bigarray.Array1.create Bigarray.char Bigarray.c_layout n)
-
-  let free () _ = ()
-  let read () _ ~at:_ ~dst:_ ~len:_ = ()
-  let write () _ ~at:_ ~src:_ ~len:_ = ()
-  let pages () r = Some r
-  let prefetch () _ ~at:_ ~len:_ = ()
-  let stop () = ()
+  let free _ = ()
+  let read _ ~at:_ ~dst:_ ~len:_ = ()
+  let write _ ~at:_ ~src:_ ~len:_ = ()
+  let pages r = Some r
+  let prefetch _ ~at:_ ~len:_ = ()
 end
 
-(* Another io library, of the same shape. *)
+(* Another io library, whose regions are no bigarrays. *)
 module Other = struct
-  include Store
+  type region = unit
 
-  let region_key : region Type.Id.t = Type.Id.make ()
+  let free () = ()
+  let read () ~at:_ ~dst:_ ~len:_ = ()
+  let write () ~at:_ ~src:_ ~len:_ = ()
+  let pages () = None
+  let prefetch () ~at:_ ~len:_ = ()
 end
 
 (* Polled whose queues are named ["Q0"], ["Q1"]. *)
@@ -327,9 +320,7 @@ let test_edge_refused () =
       ("open:driverless", (module Driverless));
     ]
 
-let open_store name =
-  require_ok ~pp:Format.pp_print_string
-    (Rig.open_io { name; io = (module Store); make = (fun () -> Ok ()) })
+let open_store name = require_ok ~pp:Format.pp_print_string (Rig.open_io name)
 
 (* Opens [machine]'s host [name], a driver's device. *)
 let open_host machine name =
@@ -514,37 +505,42 @@ let test_io () =
   let io = open_store "open:io" in
   equal string "" (Rig.arch io);
   equal bool false (Rig.computes io);
+  equal int max_int (Rig.budget io);
   equal (list bool) [ false; false ]
     [ Rig.reaches io Rig.host; Rig.reaches Rig.host io ];
-  equal int 8 (Rig.Buffer.length (Rig.Buffer.create io 8))
+  equal ~msg:"an empty buffer" int 0
+    (Rig.Buffer.length (Rig.Buffer.create io 0))
 
-(* A name an io library opened stays that library's: another's open of it
-   raises. *)
-let test_io_key () =
-  ignore (open_store "open:io-key");
-  raises_match Exn.invalid_arg (fun () ->
-      Rig.open_io
-        { name = "open:io-key"; io = (module Other); make = (fun () -> Ok ()) })
+(* An io open of a name answers the io device open under it, and a name a
+   driver's device holds refuses it, as a driver's open of an io device's name
+   is refused. *)
+let test_io_name () =
+  let io = open_store "open:io-name" in
+  equal ~msg:"the device open" bool true
+    (Rig.equal io (open_store "open:io-name"));
+  let _ = P.open_ "open:io-driver" in
+  raises_match ~msg:"a driver's name" Exn.invalid_arg (fun () ->
+      Rig.open_io "open:io-driver");
+  raises_match ~msg:"an io device's name" Exn.invalid_arg (fun () ->
+      Rig.open_
+        {
+          name = "open:io-name";
+          driver = (module P);
+          make = (fun ~word -> Ok (P.bind (P.make ()) ~word));
+        })
 
-(* A region an io library gave is a buffer of its device, which gives it back by
-   the library's key alone, and borrows on the host through its pages. *)
+(* A region an io library gave is a buffer of its device, beside another
+   library's on the same device, and borrows on the host through its pages. *)
 let test_of_io () =
   let io = open_store "open:of-io" in
   let r = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 16 in
   Bigarray.Array1.fill r 'p';
-  let b = Rig.Buffer.of_io io Store.region_key r ~access:Read_write 16 in
-  equal ~msg:"the region given" bool true
-    (match Rig.Buffer.io b Store.region_key with
-    | Some r' -> r' == r
-    | None -> false);
-  is_none (Rig.Buffer.io b Other.region_key);
-  raises_match Exn.invalid_arg (fun () ->
-      Rig.Buffer.of_io io Other.region_key r ~access:Read_write 16);
-  let dead = Rig.Buffer.of_io io Store.region_key r ~access:Read_write 16 in
-  Rig.Claim.with_ ~read:[ dead ] ~donate:[] (fun c ->
-      ignore (Rig.Claim.consume c ~why:"consumed" dead));
-  raises_match (Exn.invalid_arg ~sub:"consumed") (fun () ->
-      Rig.Buffer.io dead Store.region_key);
+  let b = Rig.Buffer.of_io io (module Store) r ~access:Read_write 16 in
+  let other = Rig.Buffer.of_io io (module Other) () ~access:Read_write 16 in
+  equal ~msg:"the devices" (pair bool bool) (true, true)
+    ( Rig.equal io (Rig.Buffer.device b),
+      Rig.equal io (Rig.Buffer.device other) );
+  is_none ~msg:"another library's borrow" (Rig.Buffer.borrow Rig.host other);
   let h = require_some (Rig.Buffer.borrow Rig.host b) in
   equal string (String.make 16 'p')
     (Rig.Buffer.read h Bigarray.char (fun a ->
@@ -765,34 +761,15 @@ let raising_at n armed =
   in
   { Gc.Memprof.null_tracker with alloc_minor = alloc; alloc_major = alloc }
 
-(* An io library whose handle counts its stops. *)
-module Stops = struct
-  type t = int ref
-  type region = unit
-
-  exception Fault of string
-
-  let region_key : region Type.Id.t = Type.Id.make ()
-  let budget _ = max_int
-  let alloc _ _ = Some ()
-  let free _ () = ()
-  let read _ () ~at:_ ~dst:_ ~len:_ = ()
-  let write _ () ~at:_ ~src:_ ~len:_ = ()
-  let pages _ () = None
-  let prefetch _ () ~at:_ ~len:_ = ()
-  let stop stops = incr stops
-end
-
 (* [raise_anywhere what handle bind stops opens] opens names with [opens name
    make] over handles of [handle ()], whose stops [stops] counts. [make word]
-   hands the handle, bound with [bind] to the word of a driver's opener, which
-   [opens] passes it. *)
+   hands the handle, bound with [bind] to the word of the driver's opener. *)
 let raise_anywhere what handle bind stops opens () =
   let rec from n =
     let name = Printf.sprintf "open:raise-%s-%d" what n in
     let h = handle () and handed = ref false in
     let make word =
-      let r = Ok (match word with Some word -> bind h ~word | None -> h) in
+      let r = Ok (bind h ~word) in
       handed := true;
       r
     in
@@ -843,16 +820,42 @@ let test_driver_raise_anywhere =
     (fun p ~word -> P.bind p ~word)
     (fun p -> List.length (List.filter (( = ) "stop") (P.log p)))
     (fun name make ->
-      Rig.open_
-        { name; driver = (module P); make = (fun ~word -> make (Some word)) })
+      Rig.open_ { name; driver = (module P); make = (fun ~word -> make word) })
 
-let test_io_raise_anywhere =
-  raise_anywhere "io"
-    (fun () -> ref 0)
-    (fun stops ~word:_ -> stops)
-    ( ! )
-    (fun name make ->
-      Rig.open_io { name; io = (module Stops); make = (fun () -> make None) })
+(* An io open has no handle: an exception at any of its allocations leaves the
+   name free, or open with the device the open published. *)
+let test_io_raise_anywhere () =
+  let rec from n =
+    let name = Printf.sprintf "open:raise-io-%d" n in
+    let armed = ref false in
+    let profile = Gc.Memprof.start ~sampling_rate:1. (raising_at n armed) in
+    let stop () =
+      armed := false;
+      Gc.Memprof.stop ();
+      Gc.Memprof.discard profile
+    in
+    let opened =
+      Fun.protect ~finally:stop (fun () ->
+          armed := true;
+          match Rig.open_io name with
+          | r ->
+              armed := false;
+              Some r
+          | exception Injected -> None)
+    in
+    match opened with
+    | Some r ->
+        Rig.close (require_ok ~pp:Format.pp_print_string r);
+        greater ~msg:"allocations that raised" int ~than:1 n
+    | None ->
+        let d = require_ok ~pp:Format.pp_print_string (Rig.open_io name) in
+        equal
+          ~msg:(Printf.sprintf "raised at allocation %d" n)
+          (option string) None (Rig.lost d);
+        Rig.close d;
+        from (n + 1)
+  in
+  from 1
 
 (* An open that waits for another open of its name returns to OCaml at least
    every 200 ms, where a pending signal's handler runs. The other opener parks
@@ -1639,7 +1642,8 @@ let tests =
       test "where the host reaches a device, its buffers have host addresses"
         test_reach_addresses;
       test "an io device computes nothing and reaches nothing" test_io;
-      test "a name stays with the io library that opened it" test_io_key;
+      test "an io open answers its name's io device and refuses a driver's"
+        test_io_name;
       test "a region an io library gave is a buffer of its device" test_of_io;
       test "a device of another machine is named after it, its host the io's"
         test_machine;
@@ -1658,7 +1662,7 @@ let tests =
         test_opener_raises;
       test "an exception at any allocation of an open stops what it was handed"
         test_driver_raise_anywhere;
-      test "an exception at any allocation of an io open stops its handle"
+      test "an exception at any allocation of an io open leaves its name"
         test_io_raise_anywhere;
       test "a lost device's name opens again only once its stop returned"
         test_reopen_early;

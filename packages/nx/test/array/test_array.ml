@@ -523,8 +523,8 @@ let test_set_refuses () =
   raises_match Exn.invalid_arg (fun () ->
       A.of_array D.Uint16 [| 2 |] [| 1; 65536 |])
 
-let test_io_refuses () =
-  let d = S.io_device () in
+let test_off_host_refuses () =
+  let d = S.off_host () in
   let a = A.to_device d (floats32 [| 2 |] [| 1.; 2. |]) in
   let fails f = raises_match (Exn.invalid_arg ~sub:"host") f in
   fails (fun () -> A.get a [| 0 |]);
@@ -569,7 +569,7 @@ let test_exclusive () =
       fails "bigarray" (fun () -> A.bigarray a))
 
 let test_dead_bigarray () =
-  let a = A.to_device (S.io_device ()) (floats32 [| 2 |] [| 1.; 2. |]) in
+  let a = A.to_device (S.off_host ()) (floats32 [| 2 |] [| 1.; 2. |]) in
   kill (A.buffer a);
   raises_match (Exn.invalid_arg ~sub:"dead") (fun () ->
       A.bigarray a)
@@ -583,9 +583,9 @@ let test_dead_empty () =
       A.to_array a)
 
 (* A copy of memory the host does not address is a fresh array on its device:
-   a transposed view on an io device, copied there. *)
+   a transposed view on such a device, copied there. *)
 let test_copy_off_host () =
-  let d = S.io_device () in
+  let d = S.off_host () in
   let m = A.to_device d (floats32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |]) in
   let t = Option.get (A.move (M.Permute [| 1; 0 |]) m) in
   let c = A.copy t in
@@ -837,15 +837,41 @@ let windows =
   in
   (first, first', n)
 
+(* Where an array's memory lies: on the host, on a device whose memory the
+   host does not address, or in an io library's region, which the host reads
+   and writes through the library's calls. *)
+type lies = Host_memory | Off_host_memory | Io_memory
+
+let lies =
+  Gen.of_list
+    ~pp:(fun ppf l ->
+      Format.pp_print_string ppf
+        (match l with
+        | Host_memory -> "host memory"
+        | Off_host_memory -> "off the host"
+        | Io_memory -> "io memory"))
+    [ Host_memory; Off_host_memory; Io_memory ]
+
+(* An array of [a]'s elements and layout whose memory lies as [l] says. *)
+let lying l a =
+  match l with
+  | Host_memory -> a
+  | Off_host_memory -> A.to_device (S.off_host ()) a
+  | Io_memory -> S.on_io a
+
+(* [x], or its elements moved to the host if the host does not address it. *)
+let on_host x =
+  if Rig.reaches Rig.host (A.device x) then x else A.to_device Rig.host x
+
 (* [transfer] between two windows of one array that share no byte stores the
    source's elements into the destination, and leaves every other element:
-   windows that share a word of their memory and no byte included, on the
-   host and on an io device, whose memory the host does not address. *)
-let law_transfer_windows ((first, first', n), on_io) =
+   windows that share a word of their memory and no byte included, wherever
+   the array's memory lies. *)
+let law_transfer_windows ((first, first', n), l) =
   let bytes = Array.init 16 (fun i -> i + 1) in
-  let base = A.of_array D.Uint8 [| 16 |] bytes in
-  let base = if on_io then A.to_device (S.io_device ()) base else base in
-  let on_host x = if on_io then A.to_device Rig.host x else x in
+  let base = lying l (A.of_array D.Uint8 [| 16 |] bytes) in
+  cover "in io memory" (l = Io_memory);
+  cover "off the host" (l = Off_host_memory);
   let window first =
     Option.get
       (A.move (M.Slice [| { start = first; count = n; step = 1 } |]) base)
@@ -1232,14 +1258,10 @@ let test_to_device_layouts () =
     (L.v ~strides:[| 4; 1; 1 |] [| 2; 2; 2 |])
     (A.v f32 (L.v ~offset:9 ~strides:[| 4; 1; 1 |] [| 2; 2; 2 |]) (A.buffer m))
 
-(* transfer stores its source's elements, on the host or an io device, into the
-   elements at odd indices of an array on either, and no other element; a
-   sub-byte destination the host does not address raises. *)
-let law_transfer (Case (a, m), (io_src, io_dst)) =
-  let io = S.io_device () in
-  let on_host x =
-    if Rig.reaches Rig.host (A.device x) then x else A.to_device Rig.host x
-  in
+(* transfer stores its source's elements, wherever its memory lies, into the
+   elements at odd indices of an array whose memory lies anywhere, and no
+   other element; a sub-byte destination off the host raises. *)
+let law_transfer (Case (a, m), (src_lies, dst_lies)) =
   let check : type v s. (v, s) A.t -> unit =
    fun src ->
     let dt = A.dtype src and s = L.shape (A.layout src) in
@@ -1249,11 +1271,13 @@ let law_transfer (Case (a, m), (io_src, io_dst)) =
       A.of_array dt wide
         (Array.init n (fun k -> D.of_float dt (float_of_int (k mod 5))))
     in
-    let big = if io_dst then A.to_device io before else A.copy before in
+    let big = lying dst_lies (A.copy before) in
     let dst = slice (Iarray.to_list (Iarray.map (fun d -> (1, d, 2)) s)) big in
-    cover "from an io device" io_src;
-    cover "into an io device" io_dst;
-    if D.bits dt < 8 && io_dst then
+    cover "from off the host" (src_lies = Off_host_memory);
+    cover "from io memory" (src_lies = Io_memory);
+    cover "into off the host" (dst_lies = Off_host_memory);
+    cover "into io memory" (dst_lies = Io_memory);
+    if D.bits dt < 8 && dst_lies <> Host_memory then
       raises_match (Exn.invalid_arg ~sub:"host") (fun () ->
           A.transfer ~src ~dst)
     else begin
@@ -1277,7 +1301,7 @@ let law_transfer (Case (a, m), (io_src, io_dst)) =
         (others (A.to_array (on_host big)))
     end
   in
-  let base = if io_src then A.to_device io a else a in
+  let base = lying src_lies a in
   match Option.bind m (fun m -> A.move m base) with
   | Some b -> check b
   | None -> check base
@@ -1518,7 +1542,7 @@ let test_transfer_refusals () =
       fails (where ^ ": a broadcast destination") "twice" (fun () ->
           let one = A.create d f32 [| 1 |] in
           A.transfer ~src:a ~dst:(Option.get (A.move (M.Broadcast [| 2 |]) one))))
-    [ ("host", Rig.host); ("io", S.io_device ()) ];
+    [ ("host", Rig.host); ("off the host", S.off_host ()) ];
   let dead = A.create Rig.host f32 [| 2 |] in
   kill (A.buffer dead);
   fails "a dead destination" "consumed by the test" (fun () ->
@@ -1582,34 +1606,35 @@ let test_bitcast_devices () =
   let want = bytes_of x in
   let bitcast d =
     let a = A.to_device d x in
-    let before = S.io_allocations () in
+    let before = S.off_host_allocations () in
     let u = Option.get (A.bitcast D.Uint8 a) in
-    equal ~msg:"allocations" int before (S.io_allocations ());
+    equal ~msg:"allocations" int before (S.off_host_allocations ());
     equal ~msg:"buffer" bool true (A.buffer u == A.buffer a);
     equal ~msg:"device" bool true (Rig.equal d (A.device u));
     u
   in
   equal ~msg:"memory device" (array int) want
     (A.to_array (bitcast (Lazy.force memory)));
-  equal ~msg:"io device" (array int) want
-    (A.to_array (A.to_device Rig.host (bitcast (S.io_device ()))))
+  equal ~msg:"off the host" (array int) want
+    (A.to_array (A.to_device Rig.host (bitcast (S.off_host ()))))
 
+(* A sub-byte view of an io device's array moves to the host. *)
 let test_to_device_io () =
-  let d = S.io_device () in
-  let a = A.of_array D.Int4 [| 7 |] [| 1; -2; 3; -4; 5; -6; 7 |] in
+  let a = S.on_io (A.of_array D.Int4 [| 7 |] [| 1; -2; 3; -4; 5; -6; 7 |]) in
   let s =
     Option.get (A.move (M.Slice [| { start = 5; count = 3; step = -2 } |]) a)
   in
-  let back = A.to_device Rig.host (A.to_device d s) in
+  let back = A.to_device Rig.host s in
   equal bool true (Rig.equal Rig.host (A.device back));
   equal (array int) [| -6; -4; -2 |] (A.to_array back);
   equal layout (L.v ~offset:2 ~strides:[| -1 |] [| 3 |]) (A.layout back)
 
-(* Views of an io device's array move through the host, to the host and to
-   another io device, as does a sub-byte view off a memory device. *)
+(* Views of an io device's array move through the host, to the host and to a
+   device whose memory the host does not address, as does a sub-byte view off a
+   memory device. *)
 let test_to_device_io_views () =
-  let io = S.io_device () in
-  let m = A.to_device io (iota f32 [| 6; 5 |]) in
+  let off = S.off_host () in
+  let m = S.on_io (iota f32 [| 6; 5 |]) in
   let views =
     [
       ("column", slice [ (0, 6, 1); (2, 1, 1) ] m);
@@ -1622,15 +1647,15 @@ let test_to_device_io_views () =
   List.iter
     (fun (name, v) ->
       ignore (check_moved ~msg:(name ^ " to the host: ") Rig.host v);
-      ignore (check_moved ~msg:(name ^ " to an io device: ") io v))
+      ignore (check_moved ~msg:(name ^ " off the host: ") off v))
     views;
-  let q = A.to_device io (iota D.Int4 [| 5; 3 |]) in
+  let q = S.on_io (iota D.Int4 [| 5; 3 |]) in
   ignore
     (check_moved ~msg:"int4 column: " Rig.host
        (slice [ (0, 5, 1); (1, 1, 1) ] q));
   let mem = A.to_device (Lazy.force memory) (iota D.Int4 [| 5; 3 |]) in
   ignore
-    (check_moved ~msg:"int4 column to an io device: " io
+    (check_moved ~msg:"int4 column off the host: " off
        (slice [ (0, 5, 1); (1, 1, 1) ] mem))
 
 (* Bigarrays *)
@@ -1874,7 +1899,7 @@ let test_read_claim () =
   equal ~msg:"released after a raise" bool true (unclaimed (A.buffer a))
 
 let test_read_refuses () =
-  let off = A.to_device (S.io_device ()) (floats32 [| 2 |] [| 1.; 2. |]) in
+  let off = A.to_device (S.off_host ()) (floats32 [| 2 |] [| 1.; 2. |]) in
   read_fails ~msg:"off the host" "host" (fun () ->
       A.read off ignore);
   let dead = floats32 [| 2 |] [| 1.; 2. |] in
@@ -1900,7 +1925,7 @@ let test_read_empty () =
   equal ~msg:"on the host" ints [| 2; 0 |]
     (dims (A.create Rig.host f32 [| 2; 0 |]));
   equal ~msg:"off the host" ints [| 0 |]
-    (dims (A.create (S.io_device ()) f32 [| 0 |]))
+    (dims (A.create (S.off_host ()) f32 [| 0 |]))
 
 let test_wait_read () =
   let d, _ = late () in
@@ -1975,7 +2000,8 @@ let tests =
         group "an int outside its dtype's range is refused" ranges;
         test "of_array refuses a count other than the shape's"
           test_of_array_refuses;
-        test "memory the host does not address is refused" test_io_refuses;
+        test "memory the host does not address is refused"
+          test_off_host_refuses;
         test "a dead buffer is refused" test_dead_access;
         test "memory held exclusive is refused" test_exclusive;
         test "bigarray refuses a dead buffer off the host" test_dead_bigarray;
@@ -2022,7 +2048,7 @@ let tests =
         prop
           "transfer between windows of one array that share no byte stores \
            the source"
-          (Gen.pair windows Gen.bool) law_transfer_windows;
+          (Gen.pair windows lies) law_transfer_windows;
         prop "a bool reads true iff its byte is not zero"
           (raw_of [ D.Any D.Bool ]) law_bool_bytes;
         prop ~count:300
@@ -2033,8 +2059,8 @@ let tests =
           "to_device copies the elements, keeping a layout that fits them"
           to_place law_to_device;
         test "to_device moves a column's elements alone" test_to_device_column;
-        prop "transfer stores the elements alone, on the host or an io device"
-          (Gen.pair case (Gen.pair Gen.bool Gen.bool))
+        prop "transfer stores the elements alone, wherever they lie"
+          (Gen.pair case (Gen.pair lies lies))
           law_transfer;
         test "transfer refuses what it cannot store, naming itself"
           test_transfer_refusals;
@@ -2045,11 +2071,11 @@ let tests =
         test "create on a held device leaves its tail's fill queued"
           test_create_fill_queued;
         test "to_device packs in stride order" test_to_device_layouts;
-        test "to_device moves sub-byte views through an io device"
+        test "to_device moves a sub-byte view of an io device to the host"
           test_to_device_io;
         test "to_device packs views of io and memory devices on the host"
           test_to_device_io_views;
-        test "bitcast is a view on a memory device and an io device"
+        test "bitcast is a view on a memory device and off the host"
           test_bitcast_devices;
         prop "borrow shares memory and keeps the layout" case law_borrow;
         test "borrow is the array on its device, writes show, dead and lost \

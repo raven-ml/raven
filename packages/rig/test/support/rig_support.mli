@@ -700,8 +700,11 @@ val donated : Rig.Buffer.t -> Rig.Buffer.t option
     exclusive, and [None], changing nothing, otherwise. *)
 
 val io : string -> Rig.t
-(** [io name] is the io device named [name], whose memory holds nothing, opened
-    unless it is open. *)
+(** [io name] is the io device named [name], opened unless it is open. *)
+
+val io_buffer : Rig.t -> int -> Rig.Buffer.t
+(** [io_buffer d n] is a buffer of [n] bytes on the io device [d], over a
+    region of an io library whose memory holds nothing. *)
 
 val machine : string -> Rig.t
 (** [machine m] is the host of the machine named [m], a {!Polled} device whose

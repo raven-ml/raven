@@ -16,7 +16,7 @@ let arch d = d.arch
 let instruction_set d = Cpu.instruction_set d.arch
 let bus d = d.bus
 let computes d =
-  match d.kind with Host | Driver _ -> true | Io _ -> false
+  match d.kind with Host | Driver _ -> true | Io -> false
 let runs_on_host d = Dev.is_host d || d.memory_device
 let alignment d = d.alignment
 let cache_bytes d = d.cache_bytes
@@ -126,8 +126,7 @@ let open_ ?machine (o : 'a Rig_edge.opener) =
 let open_host ~machine (o : 'a Rig_edge.opener) =
   Dev.open_driver o.driver ~machine:(Hosts machine) ~name:o.name o.make
 
-let open_io ?machine (o : 'a Rig_edge.io_opener) =
-  Dev.open_io o.io ~machine:(Dev.machine_of machine) ~name:o.name o.make
+let open_io ?machine name = Dev.open_io ~machine:(Dev.machine_of machine) name
 
 let memory_device = Memory_device.open_
 

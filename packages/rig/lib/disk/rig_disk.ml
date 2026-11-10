@@ -144,17 +144,18 @@ let not_regular = -1
    though they are lost. It may also forget the failure once no descriptor holds
    the file, so a descriptor closed for others' sake syncs the copies' writes
    first ([evict]). Syncs of one file take turns under its sync lock
-   ([sync_file]): the system reports the failure to the first only. *)
-type file = {
+   ([sync_file]): the system reports the failure to the first only. A file's
+   record is the region the disk gives rig. *)
+type region = {
   path : string;
   writable : bool;
   size : int;
   identity : string;
   mutable fd : int; [@atomic] (* [-1] while closed *)
   mutable users : int; [@atomic] (* copies using [fd], [-1] while it closes *)
-  mutable newer : file; [@atomic]
+  mutable newer : region; [@atomic]
       (* links in the table's ring, [f] itself out of it *)
-  mutable older : file;
+  mutable older : region;
   mutable pages : pages option; (* its mapping, once a borrow made it *)
   mutable unsynced : bool; [@atomic] (* written since its last sync *)
   mutable failure : exn; [@atomic]
@@ -431,26 +432,15 @@ let moved f transfer at addr len =
       unpin f;
       Printexc.raise_with_backtrace e bt
 
-(* The disk as an io device *)
+(* Files as an io library *)
 
 module Io = struct
-  type t = unit
-  type region = file
-
-  exception Fault of string
-
-  let region_key : file Type.Id.t = Type.Id.make ()
-  let budget () = max_int
-
-  let alloc () _ =
-    invalid_arg
-      "Rig.Buffer.create: DISK makes no memory; open a file with \
-       Rig_disk.of_file or Rig_disk.create_file"
+  type nonrec region = region
 
   (* Nothing reaches [f]: no pin is held. *)
-  let free () f = locked close_fd f
+  let free f = locked close_fd f
 
-  let read () f ~at ~dst ~len =
+  let read f ~at ~dst ~len =
     let k =
       try moved f pread at dst len
       with Unix.Unix_error (e, _, _) -> unix_error f e
@@ -463,7 +453,7 @@ module Io = struct
      ([Rig.Buffer.access]). The write marks [f] unsynced while it pins the
      descriptor, so an eviction after it syncs it, and a barrier's sync that
      began before it leaves it marked. *)
-  let write () f ~at ~src ~len =
+  let write f ~at ~src ~len =
     let fd = pin f in
     match pwrite fd at src len with
     | (_ : int) ->
@@ -498,7 +488,7 @@ module Io = struct
 
   (* A failure that may pass, such as a file that cannot be reopened for the
      moment, raises; [None] says the file system can never map the file. *)
-  let pages () f =
+  let pages f =
     match using f (map f) with
     | pages ->
         f.pages <- Some (Bigarray.array1_of_genarray pages);
@@ -508,10 +498,8 @@ module Io = struct
 
   (* A file that cannot be reopened gets no advice; its pages, mapped already,
      stay valid. *)
-  let prefetch () f ~at ~len =
+  let prefetch f ~at ~len =
     try using f (fun fd -> advise fd f.pages at len) with Sys_error _ -> ()
-
-  let stop () = ()
 end
 
 (* The disk *)
@@ -519,11 +507,16 @@ end
 (* The first open of its name, as the library starts: it answers [Error] only in
    a process that failed before ([Rig.fail]). *)
 let device =
-  match
-    Rig.open_io { name = "DISK"; io = (module Io); make = (fun () -> Ok ()) }
-  with
+  match Rig.open_io "DISK" with
   | Ok d -> d
   | Error why -> failwith (strf "Rig_disk.device: cannot open DISK: %s" why)
+
+(* A file as the disk hands it out: its region, which the descriptor table
+   holds, and its buffer, which the table must not hold, so that collecting the
+   buffer closes the descriptor. *)
+type file = { region : region; buffer : Rig.Buffer.t }
+
+let buffer h = h.buffer
 
 let open_file path mode n =
   if String.contains path '\000' then
@@ -558,7 +551,8 @@ let open_file path mode n =
             trim ()
           in
           locked admitted ();
-          Ok (Rig.Buffer.of_io device Io.region_key f ~access size)
+          let buffer = Rig.Buffer.of_io device (module Io) f ~access size in
+          Ok { region = f; buffer }
         with
         | b -> b
         | exception e ->
@@ -603,27 +597,23 @@ let synced f =
 let sync_due f = if f.unsynced || Option.is_some f.pages then synced f
 let sync_file f = protect (sync_lock f) sync_due f
 
-let sync_buffer b () =
+let sync_handle h () =
   (* The message is formatted only on failure: a partial application of a format
      builds its closure at every call. *)
-  (match Rig.Buffer.dead b with
+  (match Rig.Buffer.dead h.buffer with
   | Some why -> invalid_argf "Rig_disk.barrier: the buffer is dead: %s" why
   | None -> ());
-  match Rig.Buffer.io b Io.region_key with
-  | None when Rig.equal (Rig.Buffer.device b) device ->
-      (* A buffer of no bytes, which no file holds. *)
-      ()
-  | None -> invalid_arg "Rig_disk.barrier: the buffer is not on DISK"
-  | Some f when (not f.writable) || f.size = 0 ->
-      (* Nothing writes a file opened for reading or a file of no bytes. *)
-      ()
-  | Some f ->
-      (* A device's work writing through a borrow writes the file once done: the
-         barrier orders after it, as a copy reading [b] would. *)
-      Rig.Buffer.wait b Read;
-      sync_file f;
-      (* Until the descriptor is unpinned: collecting [b] would close it. *)
-      ignore (Sys.opaque_identity b);
-      match f.failure with Unix.Unix_error (e, _, _) -> unix_error f e | _ -> ()
+  let f = h.region in
+  (* Nothing writes a file opened for reading or a file of no bytes. *)
+  if f.writable && f.size > 0 then begin
+    (* A device's work writing through a borrow writes the file once done: the
+       barrier orders after it, as a copy reading the buffer would. *)
+    Rig.Buffer.wait h.buffer Read;
+    sync_file f;
+    (* Until the descriptor is unpinned: collecting the buffer would close
+       it. *)
+    ignore (Sys.opaque_identity h);
+    match f.failure with Unix.Unix_error (e, _, _) -> unix_error f e | _ -> ()
+  end
 
-let barrier b = guarded "barrier" sync_buffer b ()
+let barrier h = guarded "barrier" sync_handle h ()

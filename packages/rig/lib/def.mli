@@ -27,8 +27,8 @@ type ('a, 'r, 'i) dm =
       and type region = 'r
       and type image = 'i)
 
-(** The type for an io library's module with its types exposed. *)
-type ('a, 'r) im = (module Rig_edge.Io with type t = 'a and type region = 'r)
+(** The type for an io library's module with its region type exposed. *)
+type 'r im = (module Rig_edge.Io with type region = 'r)
 
 (** The type for rig's record of a region of a driver: the module and the
     device that hold it, the witness of its type, which equates the regions
@@ -50,24 +50,21 @@ type ('a, 'r, 'i) cell = {
 (** The type for a region of a driver, of any driver. *)
 type region = Region : ('a, 'r, 'i) cell -> region
 
-(** The type for rig's record of a region of an io library, with the module
-    and the device that hold it, made as a driver's {!cell} is. *)
-type ('a, 'r) io_cell = { m : ('a, 'r) im; h : 'a; mutable r : 'r option }
-
-(** The type for a region of an io library, of any library. *)
-type io_region = Io_region : ('a, 'r) io_cell -> io_region
+(** The type for a region of an io library, of any library, with the
+    library's module. *)
+type io_region = Io_region : 'r im * 'r -> io_region
 
 type token
 (** The type for custom blocks whose collection puts a release record on a
     release list ({!Memory.token}). *)
 
 (** The type for what a device is: the host, a driver's device with its
-    module, handle and region witness, or an io device with its module and
-    handle. *)
+    module, handle and region witness, or an io device, whose regions carry
+    their library's module. *)
 type kind =
   | Host
   | Driver : { m : ('a, 'r, 'i) dm; h : 'a; rid : 'r Type.Id.t } -> kind
-  | Io : { m : ('a, 'r) im; h : 'a } -> kind
+  | Io
 
 (** {!Rig.Buffer.access}. *)
 type access = Read | Read_write
@@ -92,9 +89,6 @@ type keep =
       (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
   | Bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> keep
 
-(** The type for who made an io allocation: its device, or its library. *)
-type origin = Made | Given
-
 (** The type for what an allocation's bytes are: a driver's region of
     memory of some {!Rig.Buffer.kind}, with where the region lies as the
     driver's call that made it located it, once, before the entry leaves that
@@ -106,7 +100,7 @@ type backing =
       region : region;
       mutable location : Rig_edge.location;
     }
-  | Io_memory of { origin : origin; region : io_region }
+  | Io_memory of io_region
   | Kept of keep
 
 (** The type for the word as a wait under a hang bound last saw it: its
@@ -145,8 +139,8 @@ type device = {
   cache_bytes : int option;  (** {!Rig.cache_bytes}. *)
   host_addresses : bool;  (** Whether the host addresses all its regions. *)
   key : int;
-      (** The uid of its driver's key or its io library's region key, [-1]
-          for the host. *)
+      (** The uid of its driver's key, of rig's io key for an io device, and
+          [-1] for the host. *)
   memory_device : bool;  (** Whether it is a memory device. *)
   capability : Rig_edge.capability option;
       (** What compiled code needs of it. *)
@@ -191,7 +185,8 @@ and live = {
           driver at the first drain after [0] ({!Memory.section-words}).
           Raised only from a positive count. *)
   fault : Obj.Extension_constructor.t;
-      (** The constructor of its driver's or io library's [Fault]. *)
+      (** The constructor of its driver's [Fault], and of one that nothing
+          raises for the host and an io device. *)
   release : int;  (** Its C release list, in its C record. *)
   lock : Lock.t;
       (** Guards the mutable fields after it. The atomic ones among them are

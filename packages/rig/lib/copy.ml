@@ -109,30 +109,29 @@ let sub b m at n =
 
 (* Transfers *)
 
-(* An io device's read or write of memory it owns, a borrow of its pages
-   included, is a counted call of that device, so its fault loses the io
-   device. Each moves [n] bytes between byte [s] of [src] and byte [t] of
-   [dst]. *)
+(* An io library's read or write of memory its device owns, a borrow of its
+   pages included, is a counted call of that device, which a close waits for.
+   Each moves [n] bytes between byte [s] of [src] and byte [t] of [dst]. *)
 let io_read fn src s dst t n =
   match src.mem.alloc.entry.backing with
-  | Io_memory { region = Io_region { m; h; r = Some r }; _ } ->
+  | Io_memory (Io_region (m, r)) ->
       let module I = (val m) in
       Dev.counted src.mem.alloc.owner Dev.Faults
         (fun () ->
-          I.read h r ~at:(src.offset + s) ~dst:(host_address dst + t) ~len:n)
+          I.read r ~at:(src.offset + s) ~dst:(host_address dst + t) ~len:n)
         ()
-  | Io_memory _ | Driver_memory _ | Kept _ ->
+  | Driver_memory _ | Kept _ ->
       invalid_argf "Rig.%s: the source is no io memory" fn
 
 let io_write fn src s dst t n =
   match dst.mem.alloc.entry.backing with
-  | Io_memory { region = Io_region { m; h; r = Some r }; _ } ->
+  | Io_memory (Io_region (m, r)) ->
       let module I = (val m) in
       Dev.counted dst.mem.alloc.owner Dev.Faults
         (fun () ->
-          I.write h r ~at:(dst.offset + t) ~src:(host_address src + s) ~len:n)
+          I.write r ~at:(dst.offset + t) ~src:(host_address src + s) ~len:n)
         ()
-  | Io_memory _ | Driver_memory _ | Kept _ ->
+  | Driver_memory _ | Kept _ ->
       invalid_argf "Rig.%s: the destination is no io memory" fn
 
 (* How the host moves bytes: between memory it addresses, or by an io device's

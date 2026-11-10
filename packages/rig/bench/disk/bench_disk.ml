@@ -120,7 +120,8 @@ let sizes = [ 4 * kib; mib; 64 * mib; gib ]
 
 let read_rows =
   let reading n () =
-    (ok (Rig_disk.of_file (data (strf "read-%s" (size n)) n)), host n)
+    let p = data (strf "read-%s" (size n)) n in
+    (Rig_disk.buffer (ok (Rig_disk.of_file p)), host n)
   in
   let floor n () =
     let h = opened (data (strf "read-%s" (size n)) n) ~writable:false in
@@ -159,7 +160,9 @@ let write_rows =
           opened (data (strf "write-floor-many-%d" i) small) ~writable:true) )
   in
   let writing n () =
-    (host n, ok (Rig_disk.create_file (fresh (strf "write-%s" (size n))) n))
+    ( host n,
+      Rig_disk.buffer
+        (ok (Rig_disk.create_file (fresh (strf "write-%s" (size n))) n)) )
   in
   let floor n () =
     let h = opened (data (strf "write-floor-%s" (size n)) n) ~writable:true in
@@ -178,7 +181,7 @@ let write_rows =
        sizes
     @ [
         row "many-128" writings (fun (h, files) ->
-            Array.iter (fun file -> B.copy ~src:h ~dst:file) files;
+            Array.iter (fun f -> B.copy ~src:h ~dst:(Rig_disk.buffer f)) files;
             Array.iter Rig_disk.barrier files);
         row "floor-many-128" floors (fun ((_, a), hs) ->
             Array.iter (fun h -> moved "pwrite" small (pwrite h 0 a small)) hs;
@@ -205,7 +208,7 @@ let cold_rows =
          row "cold-64M"
            (fun () ->
              let p, h = cold () in
-             (h, ok (Rig_disk.of_file p), host n))
+             (h, Rig_disk.buffer (ok (Rig_disk.of_file p)), host n))
            (fun (h, file, dst) ->
              dropped h;
              B.copy ~src:file ~dst);
@@ -241,7 +244,8 @@ let borrow_rows =
     }
   in
   let pages t =
-    Option.get (B.borrow Rig.host (ok (Rig_disk.of_file (next t))))
+    let file = Rig_disk.buffer (ok (Rig_disk.of_file (next t))) in
+    Option.get (B.borrow Rig.host file)
   in
   let into () = (turn (), B.export (host borrowed) Bigarray.char) in
   let floor dst t =
@@ -287,7 +291,7 @@ let borrow_rows =
         row "cold-read-64M"
           (fun () -> (cold (), B.export (host borrowed) Bigarray.char))
           (fun (c, dst) ->
-            let file = ok (Rig_disk.of_file (dropped c)) in
+            let file = Rig_disk.buffer (ok (Rig_disk.of_file (dropped c))) in
             let pages = Option.get (B.borrow Rig.host file) in
             B.read pages Bigarray.char (fun a -> Bigarray.Array1.blit a dst));
         row "floor-cold-read-64M"
@@ -351,7 +355,7 @@ let barrier_rows =
       row "1M"
         (fun () -> (host n, ok (Rig_disk.create_file (fresh "barrier") n)))
         (fun (h, file) ->
-          B.copy ~src:h ~dst:file;
+          B.copy ~src:h ~dst:(Rig_disk.buffer file);
           Rig_disk.barrier file);
       row "floor-1M"
         (fun () -> (opened (data "barrier-floor" n) ~writable:true, memory n))
@@ -422,7 +426,7 @@ let part p =
 let parallel_rows =
   let small () = data "read-4K" (4 * kib) and large () = data "read-1G" gib in
   let disk_read p n () =
-    let file = ok (Rig_disk.of_file p) and h = host n in
+    let file = Rig_disk.buffer (ok (Rig_disk.of_file p)) and h = host n in
     fun () -> B.copy ~src:file ~dst:h
   in
   let floor_read p n () =

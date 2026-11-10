@@ -107,7 +107,9 @@ let interrupt ?landing n =
   in_child at (fun () ->
       let base = descriptors () in
       let files = List.map Rig_disk.of_file (Lazy.force paths) in
-      let files = List.map Result.get_ok files in
+      let files =
+        List.map (fun f -> Rig_disk.buffer (Result.get_ok f)) files
+      in
       List.iter (fun b -> ignore (read b)) files;
       let full = descriptors () in
       equal ~msg:"descriptors kept" int (base + max_descriptors) full;
@@ -147,8 +149,8 @@ let interrupt_barrier n =
       let other =
         Result.get_ok (Rig_disk.of_file (List.hd (Lazy.force paths)))
       in
-      B.copy ~src:(B.of_string "barriers") ~dst:b;
-      ignore (read other);
+      B.copy ~src:(B.of_string "barriers") ~dst:(Rig_disk.buffer b);
+      ignore (read (Rig_disk.buffer other));
       let reached = Rig_support.interrupted n (fun () -> Rig_disk.barrier b) in
       equal ~msg:"locks held after" int 0 (Rig_edge_primitives.holds ());
       Rig_disk.barrier b;
@@ -166,7 +168,7 @@ let test_interrupt_barrier () =
 (* Creates *)
 
 (* What a create answers until it returns. *)
-let not_returned : (B.t, string) result = Error "not returned"
+let not_returned : (Rig_disk.file, string) result = Error "not returned"
 
 (* [create_cut n] creates a file, interrupted from its [n]-th allocation. A
    create that raised leaves no file at its path, so a create of the path
@@ -236,11 +238,13 @@ let called n =
   in_child at (fun () ->
       let base = descriptors () in
       let files = List.map Rig_disk.of_file (Lazy.force paths) in
-      let files = List.map Result.get_ok files in
+      let files =
+        List.map (fun f -> Rig_disk.buffer (Result.get_ok f)) files
+      in
       if Sys.file_exists (path "written") then Sys.remove (path "written");
       let written = Result.get_ok (Rig_disk.create_file (path "written") 8) in
       List.iter (fun b -> ignore (read b)) files;
-      B.copy ~src:(B.of_string "written!") ~dst:written;
+      B.copy ~src:(B.of_string "written!") ~dst:(Rig_disk.buffer written);
       let dropped = ref (Rig_disk.of_file (path "dropped")) in
       let third = List.nth files 2 in
       let rewritten = ref false and held = ref false and answers = ref [] in
@@ -251,7 +255,8 @@ let called n =
           );
           ( "a write",
             fun () ->
-              B.copy ~src:(B.of_string "callback") ~dst:written;
+              B.copy ~src:(B.of_string "callback")
+                ~dst:(Rig_disk.buffer written);
               rewritten := true );
           ("a barrier", fun () -> Rig_disk.barrier written);
           ( "an open",
@@ -288,12 +293,14 @@ let called n =
         (fun i b -> equal ~msg:(strf "file %d" i) string (bytes i) (read b))
         files;
       Option.iter
-        (fun b -> equal ~msg:"the opened file" string "opened" (read b))
+        (fun f ->
+          equal ~msg:"the opened file" string "opened"
+            (read (Rig_disk.buffer f)))
         !opened;
       Rig_disk.barrier written;
       equal ~msg:"the written file" string
         (if !rewritten then "callback" else "written!")
-        (read written);
+        (read (Rig_disk.buffer written));
       ignore (Sys.opaque_identity (files, written, !opened));
       opened := None;
       collect ();

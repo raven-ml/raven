@@ -831,10 +831,10 @@ let received p f =
   (x, List.rev !seen)
 
 (* A set no kernel library computes on, as a GPU set is outside a compiler:
-   a memory device and an io device, which does not run on the host. *)
-let io = Nx_array_support.io_device ()
+   a memory device and a device that does not run on the host. *)
+let off = Nx_array_support.off_host ()
 
-module Bare = (val Nx.devices [ m 2; io ])
+module Bare = (val Nx.devices [ m 2; off ])
 
 let bare_placements =
   Gen.of_list
@@ -843,7 +843,7 @@ let bare_placements =
       ("on", Bare.on);
       ("split ~axis:0", Bare.split ~axis:0);
       ("memory device", Nx.Placement.device Bare.v (m 2));
-      ("io device", Nx.Placement.device Bare.v io);
+      ("off the host", Nx.Placement.device Bare.v off);
     ]
 
 (* [f ()] under an interpretation of [reach] whose rule computes what it
@@ -2671,10 +2671,10 @@ let derivations : (string * (Bare.d Rng.key -> Bare.d Rng.key list)) list =
         [ Rng.fold_in_tensor k (Nx.scalar_at p Nx.int32 5l) ] );
   ]
 
-(* A key's placements on [Bare]: copies on both its devices, and its io
-   device alone. *)
+(* A key's placements on [Bare]: copies on both its devices, and the one off
+   the host alone. *)
 let bare_key_placements =
-  [ ("on", Bare.on); ("io device", Nx.Placement.device Bare.v io) ]
+  [ ("on", Bare.on); ("off the host", Nx.Placement.device Bare.v off) ]
 
 let bare_rows =
   List.concat_map

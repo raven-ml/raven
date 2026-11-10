@@ -446,9 +446,9 @@ val paged : alloc -> bool
     memory device's. *)
 
 val prefetch : device -> memory -> at:int -> len:int -> unit
-(** [prefetch d m ~at ~len] asks the io device of [m] to read [len] bytes of
-    it from [at] ahead, unless [d] is the host. It drops the io library's
-    faults and [Sys_error]. *)
+(** [prefetch d m ~at ~len] asks the io library of [m] to read [len] bytes of
+    it from [at] ahead, unless [d] is the host. It drops the library's
+    [Sys_error]. *)
 
 val of_io : device -> io_region -> access:access -> int -> memory
 (** [of_io d r ~access n] is a memory record over [n] bytes of the region [r]

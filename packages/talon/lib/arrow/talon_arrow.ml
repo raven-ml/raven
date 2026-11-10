@@ -1386,7 +1386,8 @@ let source f b = make "source" f b
 let file ?format path =
   match Rig_disk.of_file path with
   | Error why -> Error (Error.v why)
-  | Ok b ->
+  | Ok f ->
+      let b = Rig_disk.buffer f in
       (* [make] raises for an undeclared decimal: outside [opened], which turns
          [Invalid_argument] from malformed bytes into [Error]. *)
       Result.map
