@@ -39,11 +39,6 @@ raven / llama.cpp b12048 Vulkan:
   eviction fence and so evicts the process for 100 ms. rig could hold no
   descriptor on the acquired render node, mapping through dma-bufs
   (_plans/todo-campaign/spawn-stall/findings.md)
-- not yet run on AMD: attention's backward (167d026789), stores and reads
-  through views and bitcasts (1132c5b84d), a loop's non-run reads each trip
-  (ecfd400a58) and cores on several reduce axes (02e163a27d); each but the
-  first has run on Metal. The backward's CDNA 4 tile rule has run on no GPU:
-  none here is a CDNA 4
 
 ## talon, hugin, brot, munin, quill
 
