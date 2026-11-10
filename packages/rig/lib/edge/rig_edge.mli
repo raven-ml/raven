@@ -10,10 +10,12 @@
     queues. A vendor library implements {!Driver} and supplies an {!opener},
     which a program passes to [Rig.open_]. The driver, and its ABI library
     that declares the record its compiled code reads ({!type-capability}),
-    link this library and never [rig]. [rig], which every program that opens
-    a device links, defines the C function [rig_code_sync] that
-    [rig_edge.h] declares. A library of memory that the host reads and
-    writes through calls, such as files, implements {!Io} instead.
+    link this library and never [rig]. Their OCaml reads the host's clock
+    and the timeline words, counts its locks and blocks signals through
+    [rig.edge.primitive]. [rig], which every program that opens a device
+    links, defines the C function [rig_code_sync] that [rig_edge.h]
+    declares. A library of memory that the host reads and writes through
+    calls, such as files, implements {!Io} instead.
 
     rig reads a device's {!type-facts} once, when the device opens. It then
     calls the driver's OCaml functions to allocate and map memory, to load
@@ -481,7 +483,7 @@ type grown =
     has no signal masks, none of these block a signal: its handler runs at
     any allocation or poll point of a driver's function, finaliser or exit
     handler. A driver's OCaml code counts its locks and blocks signals
-    through {!Rig_edge_primitives}.
+    through [Rig_edge_primitive].
 
     rig guarantees these properties, so that a driver checks none of them:
     {ul

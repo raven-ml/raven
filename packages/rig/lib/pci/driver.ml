@@ -284,11 +284,11 @@ let stop_held g =
 let register_exit g =
   if not g.exits then begin
     Stdlib.at_exit (fun () ->
-        Rig_edge_primitives.shield ();
+        Rig_edge_primitive.shield ();
         match stop_held g with
-        | () -> Rig_edge_primitives.unshield ()
+        | () -> Rig_edge_primitive.unshield ()
         | exception e ->
-            Rig_edge_primitives.unshield ();
+            Rig_edge_primitive.unshield ();
             reraise e);
     g.exits <- true
   end

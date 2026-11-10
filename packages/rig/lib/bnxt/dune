@@ -3,5 +3,5 @@
 (library
  (name rig_bnxt)
  (public_name rig.bnxt)
- (libraries rig_edge rig_pci)
+ (libraries rig_edge_primitive rig_pci)
  (private_modules defs))

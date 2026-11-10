@@ -2542,7 +2542,7 @@ let two_in_array () =
       (Rig.open_ { name = "AMD:second-in-array"; driver = (module A); make })
   in
   let t' = { d = d'; g = Option.get !raw } in
-  let start, bytes = Rig_edge_primitives.words () in
+  let start, bytes = Rig_edge_primitive.words () in
   let in_array g =
     match (A.locate (A.facts g).word).host with
     | Some a -> a >= start && a + 8 <= start + bytes

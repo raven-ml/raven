@@ -43,11 +43,11 @@ external reraise : exn -> 'a = "%reraise"
    thread that holds [m], which only a call that skipped its check makes and
    which raises [Invalid_argument]. *)
 let take m =
-  Rig_edge_primitives.hold ();
+  Rig_edge_primitive.hold ();
   match Mutex.lock m with
   | () -> ()
   | exception e -> (
-      Rig_edge_primitives.unhold ();
+      Rig_edge_primitive.unhold ();
       match e with
       | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
           invalid_arg
@@ -59,7 +59,7 @@ let take m =
    polls. *)
 let give m =
   Mutex.unlock m;
-  Rig_edge_primitives.unhold ()
+  Rig_edge_primitive.unhold ()
 
 (* [protect m f] is [f ()] holding [m], taken as the last step before the
    handler and given back as the first step of both exits, where nothing
@@ -83,18 +83,18 @@ let protect m f =
    blocked ([rig_mask] and [rig_unmask] in [rig_edge.h]), which only the
    driver's waits unblock. *)
 let guarded fn f =
-  if Rig_edge_primitives.holds () <> 0 then
+  if Rig_edge_primitive.holds () <> 0 then
     invalid_arg
       (fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
         inside a lock of the calling thread's");
-  Rig_edge_primitives.mask ();
+  Rig_edge_primitive.mask ();
   match f () with
   | r ->
-      Rig_edge_primitives.unmask ();
+      Rig_edge_primitive.unmask ();
       r
   | exception e ->
-      Rig_edge_primitives.unmask ();
+      Rig_edge_primitive.unmask ();
       reraise e
 
 (* The CUDA library. A stub with a numeric result returns it as a non-negative
@@ -573,7 +573,7 @@ let owed = Atomic.make false
    past the release of the lock. *)
 let rec end_owed () =
   if Atomic.get owed then begin
-    Rig_edge_primitives.hold ();
+    Rig_edge_primitive.hold ();
     if Mutex.try_lock registry_lock then begin
       Atomic.set owed false;
       (match end_freed !registry with
@@ -583,7 +583,7 @@ let rec end_owed () =
           reraise e);
       end_owed ()
     end
-    else Rig_edge_primitives.unhold ()
+    else Rig_edge_primitive.unhold ()
   end
 
 (* [protect registry_lock f], then [end_owed ()]. *)
@@ -600,7 +600,7 @@ let registered f =
    that opened made and the process keeps: a range [map_host] maps inside it
    counts against it, and it is never given back. *)
 let note_words () =
-  let start, bytes = Rig_edge_primitives.words () in
+  let start, bytes = Rig_edge_primitive.words () in
   registered @@ fun () ->
   if not (List.exists (fun e -> e.start = start) !registry) then
     registry :=
@@ -649,7 +649,7 @@ let open_ ~word i =
         | Error why -> Error why
         | Ok () -> (
             match
-              let start, bytes = Rig_edge_primitives.words () in
+              let start, bytes = Rig_edge_primitive.words () in
               let w = Nativeint.to_int word in
               let own = registers = 0 || w < start || w + 8 > start + bytes in
               let self = open_device d word own in
@@ -1109,19 +1109,19 @@ let nap_s = 0.001
 (* A nap with the thread's signals unblocked, so that a signal's handler runs
    there. *)
 let nap () =
-  Rig_edge_primitives.unblock ();
+  Rig_edge_primitive.unblock ();
   match Unix.sleepf nap_s with
-  | () -> Rig_edge_primitives.block ()
+  | () -> Rig_edge_primitive.block ()
   | exception e ->
-      Rig_edge_primitives.block ();
+      Rig_edge_primitive.block ();
       reraise e
 
 let sleep g ~seen ~still_ms =
-  let until = Rig_edge_primitives.now () + (still_ms * 1_000_000) in
+  let until = Rig_edge_primitive.now () + (still_ms * 1_000_000) in
   let status = ref 0 and more = ref true in
   while !more && signaled g = seen do
     status := failed g.self;
-    if !status <> 0 || Rig_edge_primitives.now () >= until then more := false
+    if !status <> 0 || Rig_edge_primitive.now () >= until then more := false
     else nap ()
   done;
   if !status <> 0 then fault "the GPU's work failed" !status

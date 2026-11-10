@@ -66,7 +66,7 @@ let inside_lock f =
   | exception Invalid_argument why -> why
 
 let test_inside_lock () =
-  let before = Rig_edge_primitives.holds () in
+  let before = Rig_edge_primitive.holds () in
   List.iter
     (fun (what, f) ->
       starts_with ~msg:what
@@ -77,7 +77,7 @@ let test_inside_lock () =
       ("detach", fun () -> ignore (B.detach 0));
       ("attach", fun () -> ignore (B.attach 0));
     ];
-  equal ~msg:"locks held" int before (Rig_edge_primitives.holds ());
+  equal ~msg:"locks held" int before (Rig_edge_primitive.holds ());
   match B.open_ (require_ok (B.count ())) with
   | Ok _ -> fail "opened a NIC past the last"
   | Error e -> contains ~msg:"an open outside a lock" ~sub:"no such function" e

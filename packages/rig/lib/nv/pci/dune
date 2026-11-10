@@ -11,5 +11,5 @@
 (library
  (name rig_nv_pci)
  (public_name rig.nv.pci)
- (libraries rig_edge rig_nv rig_pci rig_elf unix)
+ (libraries rig_edge rig_edge_primitive rig_nv rig_pci rig_elf unix)
  (private_modules chip defs falcon field gsp gsp_defs held images mmu msgq vbios))

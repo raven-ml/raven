@@ -18,11 +18,11 @@ external reraise : exn -> 'a = "%reraise"
    waits included ([rig_shield] and [rig_unshield] in [rig_edge.h]), so that
    no signal's exception escapes it into the code it interrupted. *)
 let collected collect _ =
-  Rig_edge_primitives.shield ();
+  Rig_edge_primitive.shield ();
   match collect () with
-  | () -> Rig_edge_primitives.unshield ()
+  | () -> Rig_edge_primitive.unshield ()
   | exception e ->
-      Rig_edge_primitives.unshield ();
+      Rig_edge_primitive.unshield ();
       reraise e
 
 let icb ~handle ~commands ~collect =

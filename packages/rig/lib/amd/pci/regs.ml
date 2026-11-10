@@ -218,11 +218,11 @@ external reraise : exn -> 'a = "%reraise"
    signal's handler runs there ([rig_unblock] and [rig_block] in
    [rig_edge.h]). *)
 let nap s =
-  Rig_edge_primitives.unblock ();
+  Rig_edge_primitive.unblock ();
   match Unix.sleepf s with
-  | () -> Rig_edge_primitives.block ()
+  | () -> Rig_edge_primitive.block ()
   | exception e ->
-      Rig_edge_primitives.block ();
+      Rig_edge_primitive.block ();
       reraise e
 
 let pause us = nap (float us /. 1e6)

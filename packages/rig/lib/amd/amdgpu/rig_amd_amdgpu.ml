@@ -160,13 +160,13 @@ external reraise : exn -> 'a = "%reraise"
 (* [kfd_sleep] with the thread's signals unblocked, so that a signal's
    handler runs in its wait. *)
 let kfd_nap fd events ms gpu after =
-  Rig_edge_primitives.unblock ();
+  Rig_edge_primitive.unblock ();
   match kfd_sleep fd events ms gpu after with
   | age ->
-      Rig_edge_primitives.block ();
+      Rig_edge_primitive.block ();
       age
   | exception e ->
-      Rig_edge_primitives.block ();
+      Rig_edge_primitive.block ();
       reraise e
 
 (* The render node *)

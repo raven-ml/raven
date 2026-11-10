@@ -86,13 +86,13 @@ let refused () =
    raised, gives the count back first. *)
 let take_lock l =
   if held_rank () >= l.rank then refused ();
-  Rig_edge_primitives.hold ();
+  Rig_edge_primitive.hold ();
   match Mutex.lock l.mutex with
   | () ->
       l.below <- held_rank ();
       set_rank l.rank
   | exception e ->
-      Rig_edge_primitives.unhold ();
+      Rig_edge_primitive.unhold ();
       reraise e
 
 (* Gives [l] back, then its count, with nothing between that allocates or
@@ -100,7 +100,7 @@ let take_lock l =
 let give_lock l =
   set_rank l.below;
   Mutex.unlock l.mutex;
-  Rig_edge_primitives.unhold ()
+  Rig_edge_primitive.unhold ()
 
 (* [l] is taken as the last step before the handler and given back as the
    first step of both exits, where nothing allocates or polls, so an
@@ -121,13 +121,13 @@ let protect l f =
 let try_protect l f =
   if held_rank () >= l.rank then false
   else begin
-    Rig_edge_primitives.hold ();
+    Rig_edge_primitive.hold ();
     match Mutex.try_lock l.mutex with
     | false ->
-        Rig_edge_primitives.unhold ();
+        Rig_edge_primitive.unhold ();
         false
     | exception e ->
-        Rig_edge_primitives.unhold ();
+        Rig_edge_primitive.unhold ();
         reraise e
     | true -> (
         l.below <- held_rank ();
@@ -146,18 +146,18 @@ let try_protect l f =
    it runs [f] with the thread's signals blocked, which only the driver's
    waits unblock. *)
 let guarded fn f =
-  if Rig_edge_primitives.holds () <> 0 then
+  if Rig_edge_primitive.holds () <> 0 then
     invalid_arg
       (fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
         inside a lock of the calling thread's");
-  Rig_edge_primitives.mask ();
+  Rig_edge_primitive.mask ();
   match f () with
   | r ->
-      Rig_edge_primitives.unmask ();
+      Rig_edge_primitive.unmask ();
       r
   | exception e ->
-      Rig_edge_primitives.unmask ();
+      Rig_edge_primitive.unmask ();
       reraise e
 
 module Lock = struct
@@ -1160,7 +1160,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
      the device's own, started at the given word's value. *)
   let word = Nativeint.to_int word in
   let at = word land lnot (chunk - 1) in
-  let start, bytes = Rig_edge_primitives.words () in
+  let start, bytes = Rig_edge_primitive.words () in
   let mapped =
     match p.map_host with
     | None -> None
@@ -1849,11 +1849,11 @@ let nap_s = 0.001
 (* A nap with the thread's signals unblocked, so that a signal's handler runs
    there. *)
 let nap () =
-  Rig_edge_primitives.unblock ();
+  Rig_edge_primitive.unblock ();
   match Unix.sleepf nap_s with
-  | () -> Rig_edge_primitives.block ()
+  | () -> Rig_edge_primitive.block ()
   | exception e ->
-      Rig_edge_primitives.block ();
+      Rig_edge_primitive.block ();
       reraise e
 
 (* The RM is asked only once a notifier holds an error: it answers under a
@@ -1862,10 +1862,10 @@ let nap () =
 let sleep (T d) ~seen ~still_ms =
   if read_word d.self = seen then begin
     (live d).path.check ();
-    let until = Rig_edge_primitives.now () + (still_ms * 1_000_000) in
+    let until = Rig_edge_primitive.now () + (still_ms * 1_000_000) in
     let more = ref true in
     while !more && read_word d.self = seen && not (notified d) do
-      if Rig_edge_primitives.now () >= until then more := false else nap ()
+      if Rig_edge_primitive.now () >= until then more := false else nap ()
     done;
     if notified d then check_faults d
   end

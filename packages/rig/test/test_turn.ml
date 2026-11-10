@@ -350,12 +350,12 @@ let test_break_in_shielded_wait () =
   equal int (base + 1) (Rig.Point.value first);
   let finished = ref false in
   P.before p "alloc" (fun () ->
-      Rig_edge_primitives.shield ();
-      Rig_edge_primitives.unblock ();
+      Rig_edge_primitive.shield ();
+      Rig_edge_primitive.unblock ();
       Support.interrupt ();
       Thread.delay 0.;
-      Rig_edge_primitives.block ();
-      Rig_edge_primitives.unshield ();
+      Rig_edge_primitive.block ();
+      Rig_edge_primitive.unshield ();
       finished := true);
   equal ~msg:"the call" bool true (breaks (fun () -> B.create d 8));
   ended_call d p ~finished:!finished ~last:first

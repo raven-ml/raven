@@ -4,7 +4,7 @@
 (library
  (name rig_support)
  (modules rig_support)
- (libraries rig rig_edge threads.posix unix windtrap)
+ (libraries rig rig_edge rig_edge_primitive threads.posix unix windtrap)
  (foreign_stubs
   (language c)
   (names rig_support_stubs)))

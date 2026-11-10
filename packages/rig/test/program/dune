@@ -4,7 +4,7 @@
  (libraries
   rig
   rig_disk
-  rig_edge
+  rig_edge_primitive
   rig_program
   rig_remote_abi
   rig_support

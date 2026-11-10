@@ -318,14 +318,14 @@ let protect d f x = Lock.protect d.live.lock f x
 (* Gives the thread its mask back and raises [e] again. *)
 let unmask_raise e =
   let bt = Printexc.get_raw_backtrace () in
-  Rig_edge_primitives.unmask ();
+  Rig_edge_primitive.unmask ();
   Printexc.raise_with_backtrace e bt
 
 let masked f =
-  Rig_edge_primitives.mask ();
+  Rig_edge_primitive.mask ();
   match f () with
   | r ->
-      Rig_edge_primitives.unmask ();
+      Rig_edge_primitive.unmask ();
       r
   | exception e -> unmask_raise e
 
@@ -339,14 +339,14 @@ let rec steps step x v ~stop n =
 
 let rec batch step x v ~stop =
   if v != stop then begin
-    Rig_edge_primitives.mask ();
+    Rig_edge_primitive.mask ();
     match steps step x v ~stop batch_steps with
-    | v when v == stop -> Rig_edge_primitives.unmask ()
+    | v when v == stop -> Rig_edge_primitive.unmask ()
     | v ->
-        Rig_edge_primitives.unmask ();
+        Rig_edge_primitive.unmask ();
         (* Outside every pair, [block] blocks nothing: it runs what a poll
            point runs, the handlers of the signals pending included. *)
-        Rig_edge_primitives.block ();
+        Rig_edge_primitive.block ();
         batch step x v ~stop
     | exception e -> unmask_raise e
   end
@@ -358,7 +358,7 @@ let refuse_held fn =
       inside a lock of the calling thread's")
 
 let[@inline] check_held fn =
-  if Rig_edge_primitives.holds () <> 0 then refuse_held fn
+  if Rig_edge_primitive.holds () <> 0 then refuse_held fn
 
 (* The host of each other machine named so far: a machine has one for its
    life. *)
@@ -545,10 +545,10 @@ let stop_handle d fault =
   match d.kind with
   | Driver { m; h; _ } -> (
       let module D = (val m) in
-      Rig_edge_primitives.mask ();
+      Rig_edge_primitive.mask ();
       match D.stop h ~fault with
-      | () -> Rig_edge_primitives.unmask ()
-      | exception D.Fault _ -> Rig_edge_primitives.unmask ()
+      | () -> Rig_edge_primitive.unmask ()
+      | exception D.Fault _ -> Rig_edge_primitive.unmask ()
       | exception e -> unmask_raise e)
   | Io | Host -> ()
 
@@ -613,7 +613,7 @@ let lose d why =
 let raised d scope e =
   let fault = c_raised d.live.c e d.live.fault scope in
   let bt = Printexc.get_raw_backtrace () in
-  Rig_edge_primitives.unmask ();
+  Rig_edge_primitive.unmask ();
   if not fault then Printexc.raise_with_backtrace e bt
 
 (* A wait's fault loses [d], and another exception passes through. *)
@@ -627,17 +627,17 @@ let wait_raised d e =
 let slept d e =
   let fault = c_raised d.live.c e d.live.fault Faults in
   let bt = Printexc.get_raw_backtrace () in
-  Rig_edge_primitives.unmask ();
+  Rig_edge_primitive.unmask ();
   if fault then raise_lost d else Printexc.raise_with_backtrace e bt
 
 let counted d scope f x =
   match c_enter d.live.c with
   | 0 -> (
-      Rig_edge_primitives.mask ();
+      Rig_edge_primitive.mask ();
       match f x with
       | r ->
           c_exit d.live.c;
-          Rig_edge_primitives.unmask ();
+          Rig_edge_primitive.unmask ();
           r
       | exception e ->
           raised d scope e;
@@ -655,26 +655,26 @@ type given = Given | Later
 let give d scope f x y =
   if orphaned d then Given
   else if stopped d then begin
-    Rig_edge_primitives.mask ();
+    Rig_edge_primitive.mask ();
     match f x y with
     | () ->
-        Rig_edge_primitives.unmask ();
+        Rig_edge_primitive.unmask ();
         Given
     | exception Sys_error _ ->
-        Rig_edge_primitives.unmask ();
+        Rig_edge_primitive.unmask ();
         Given
     | exception e when Obj.Extension_constructor.of_val e == d.live.fault ->
-        Rig_edge_primitives.unmask ();
+        Rig_edge_primitive.unmask ();
         Given
     | exception e -> unmask_raise e
   end
   else if c_enter d.live.c <> 0 then Later
   else begin
-    Rig_edge_primitives.mask ();
+    Rig_edge_primitive.mask ();
     match f x y with
     | () ->
         c_exit d.live.c;
-        Rig_edge_primitives.unmask ();
+        Rig_edge_primitive.unmask ();
         Given
     | exception e ->
         raised d scope e;
@@ -713,7 +713,7 @@ let word d =
         w
     | _ -> slot_word d
 
-let now_ms () = Rig_edge_primitives.now () / 1_000_000
+let now_ms () = Rig_edge_primitive.now () / 1_000_000
 
 (* How long a sleep may watch the word [w] under [d]'s hang bound [hang], or a
    loss of [d] once the bound passed. The clock restarts when the word moved or
@@ -750,11 +750,11 @@ let sleep d ~seen ~still_ms =
         | Some hang -> bounded d seen ~still_ms hang
       in
       if c_enter l.c <> 0 then raise_lost d;
-      Rig_edge_primitives.mask ();
+      Rig_edge_primitive.mask ();
       match D.sleep h ~seen ~still_ms with
       | () ->
           c_exit l.c;
-          Rig_edge_primitives.unmask ()
+          Rig_edge_primitive.unmask ()
       | exception e -> slept d e)
   | _ -> ()
 
@@ -797,7 +797,7 @@ let rec forget_measures d v =
 let signaled d =
   if d.live.word <> 0 || not (is_lost d) then word d
   else begin
-    if Rig_edge_primitives.holds () = 0 && state d = ended_state then refresh d;
+    if Rig_edge_primitive.holds () = 0 && state d = ended_state then refresh d;
     slot_word d
   end
 
@@ -822,7 +822,7 @@ let look_at_producers d =
 (* Reads [d]'s word until it reaches [v] or the clock [until]: the word. *)
 let rec spin_held (d : device) v until =
   let w = slot_word d in
-  if w >= v || Rig_edge_primitives.now () >= until then w
+  if w >= v || Rig_edge_primitive.now () >= until then w
   else begin
     Domain.cpu_relax ();
     spin_held d v until
@@ -849,7 +849,7 @@ let rec wait_from d v seen since =
         look_at_producers d;
         sleep d ~seen:w ~still_ms
     | Store ->
-        if spin_held d v (Rig_edge_primitives.now () + held_ns) < v then
+        if spin_held d v (Rig_edge_primitive.now () + held_ns) < v then
           ignore (c_spin l.c v (still_ms - still)));
     wait_from d v w since
   end

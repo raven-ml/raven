@@ -204,11 +204,11 @@ external reraise : exn -> 'a = "%reraise"
    thread that holds [m], which only a call that skipped its check makes and
    which raises [Invalid_argument]. *)
 let take m =
-  Rig_edge_primitives.hold ();
+  Rig_edge_primitive.hold ();
   match Mutex.lock m with
   | () -> ()
   | exception e -> (
-      Rig_edge_primitives.unhold ();
+      Rig_edge_primitive.unhold ();
       match e with
       | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
           invalid_arg
@@ -220,7 +220,7 @@ let take m =
    polls. *)
 let give m =
   Mutex.unlock m;
-  Rig_edge_primitives.unhold ()
+  Rig_edge_primitive.unhold ()
 
 (* [with_lock nic f] is [f ()] holding [nic]'s lock, taken as the last step
    before the handler and given back as the first step of both exits, where
@@ -244,18 +244,18 @@ let with_lock nic f =
    blocked ([rig_mask] and [rig_unmask] in [rig_edge.h]), which only the
    driver's waits unblock. *)
 let guarded fn f =
-  if Rig_edge_primitives.holds () <> 0 then
+  if Rig_edge_primitive.holds () <> 0 then
     invalid_arg
       ("Rig_mlx5." ^ fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
         inside a lock of the calling thread's");
-  Rig_edge_primitives.mask ();
+  Rig_edge_primitive.mask ();
   match f () with
   | r ->
-      Rig_edge_primitives.unmask ();
+      Rig_edge_primitive.unmask ();
       r
   | exception e ->
-      Rig_edge_primitives.unmask ();
+      Rig_edge_primitive.unmask ();
       reraise e
 
 let alive fn nic =
@@ -1024,10 +1024,10 @@ let wait nic ~ms =
      on until one of the NIC's, or the end of its time. The path keeps the
      events until [reported], the last step before the return, so an
      exception anywhere before leaves them to the next wait. *)
-  let deadline = Rig_edge_primitives.now () + (ms * 1_000_000) in
+  let deadline = Rig_edge_primitive.now () + (ms * 1_000_000) in
   let rec go () =
     let left =
-      max 0 ((deadline - Rig_edge_primitives.now () + 999_999) / 1_000_000)
+      max 0 ((deadline - Rig_edge_primitive.now () + 999_999) / 1_000_000)
     in
     match List.filter_map event (nic.path.wait left) with
     | [] when left > 0 ->

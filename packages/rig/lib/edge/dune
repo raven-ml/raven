@@ -2,16 +2,12 @@
 ; hands work to a driver (rig_edge.h), the OCaml facts and signature a
 ; driver matches (rig_edge.mli), and the host's clock, the timeline
 ; words, the count of the locks a thread holds and its signal mask, which
-; they share, with the OCaml primitives that reach them
-; (rig_edge_primitives.mli). The library is unwrapped, so that a call of a
-; primitive requires the unit that declares it and no other, whatever the
-; caller's compiler flags.
+; they share.
 
 (library
  (name rig_edge)
  (public_name rig.edge)
- (wrapped false)
- (modules rig_edge rig_edge_primitives)
+ (modules rig_edge)
  (modules_without_implementation rig_edge)
  (install_c_headers rig_edge)
  (foreign_stubs

@@ -5,6 +5,7 @@
  (libraries
   rig
   rig_edge
+  rig_edge_primitive
   rig_gpu_support
   rig_nv
   rig_nv_abi

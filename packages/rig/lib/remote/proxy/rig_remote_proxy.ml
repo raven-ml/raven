@@ -191,14 +191,14 @@ let fault d =
    ([rig_unblock] and [rig_block] in [rig_edge.h]), so that a signal's
    handler runs there. *)
 let sleep d ~seen ~still_ms =
-  Rig_edge_primitives.unblock ();
+  Rig_edge_primitive.unblock ();
   let failed =
     match sleep_c d.c seen still_ms with
     | failed ->
-        Rig_edge_primitives.block ();
+        Rig_edge_primitive.block ();
         failed
     | exception e ->
-        Rig_edge_primitives.block ();
+        Rig_edge_primitive.block ();
         reraise e
   in
   if failed then raise (fault d)

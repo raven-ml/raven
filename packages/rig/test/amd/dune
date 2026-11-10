@@ -15,6 +15,7 @@
   rig_amd_amdgpu
   rig_amd_support
   rig_edge
+  rig_edge_primitive
   rig_gpu_support
   rig_support
   unix
@@ -35,6 +36,7 @@
   rig_amd_amdgpu
   rig_amd_support
   rig_edge
+  rig_edge_primitive
   rig_gpu_support
   rig_support
   unix

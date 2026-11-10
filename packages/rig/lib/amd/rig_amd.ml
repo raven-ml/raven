@@ -53,11 +53,11 @@ module Lock = struct
      thread that holds [m], which only a call that skipped its check makes and
      which raises [Invalid_argument]. *)
   let take m =
-    Rig_edge_primitives.hold ();
+    Rig_edge_primitive.hold ();
     match Mutex.lock m with
     | () -> ()
     | exception e -> (
-        Rig_edge_primitives.unhold ();
+        Rig_edge_primitive.unhold ();
         match e with
         | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
             invalid_arg
@@ -69,7 +69,7 @@ module Lock = struct
      polls. *)
   let give m =
     Mutex.unlock m;
-    Rig_edge_primitives.unhold ()
+    Rig_edge_primitive.unhold ()
 
   (* [protect m f] is [f ()] holding [m], taken as the last step before the
      handler and given back as the first step of both exits, where nothing
@@ -91,18 +91,18 @@ module Lock = struct
      runs [f] with the thread's signals blocked, which only the driver's
      waits unblock. *)
   let guarded fn f =
-    if Rig_edge_primitives.holds () <> 0 then
+    if Rig_edge_primitive.holds () <> 0 then
       invalid_arg
         (fn
        ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
           inside a lock of the calling thread's");
-    Rig_edge_primitives.mask ();
+    Rig_edge_primitive.mask ();
     match f () with
     | x ->
-        Rig_edge_primitives.unmask ();
+        Rig_edge_primitive.unmask ();
         x
     | exception e ->
-        Rig_edge_primitives.unmask ();
+        Rig_edge_primitive.unmask ();
         reraise e
 end
 
@@ -1371,7 +1371,7 @@ let make (type m) ?measure ~word (p : m path) =
        own, started at the given word's value, which rig frees once no
        queue waits on it. *)
     let word = Nativeint.to_int word in
-    let start, bytes = Rig_edge_primitives.words () in
+    let start, bytes = Rig_edge_primitive.words () in
     let in_array = word >= start && word + 8 <= start + bytes in
     let mapped =
       match ops.map_host with

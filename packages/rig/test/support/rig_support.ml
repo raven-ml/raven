@@ -144,11 +144,11 @@ module Driver = struct
      thread that holds [m], which only a call that skipped its check makes and
      which raises [Invalid_argument]. *)
   let take m =
-    Rig_edge_primitives.hold ();
+    Rig_edge_primitive.hold ();
     match Mutex.lock m with
     | () -> ()
     | exception e -> (
-        Rig_edge_primitives.unhold ();
+        Rig_edge_primitive.unhold ();
         match e with
         | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
             invalid_arg
@@ -160,7 +160,7 @@ module Driver = struct
      polls. *)
   let give m =
     Mutex.unlock m;
-    Rig_edge_primitives.unhold ()
+    Rig_edge_primitive.unhold ()
 
   let protect m f =
     take m;
@@ -574,14 +574,14 @@ module Driver = struct
     | `Interrupt -> (
         (* The signal comes inside the sleep's wait, whose nap runs its
            handler, as a Ctrl-C does in a driver's wait. *)
-        Rig_edge_primitives.unblock ();
+        Rig_edge_primitive.unblock ();
         match
           interrupt ();
           Thread.delay 0.
         with
-        | () -> Rig_edge_primitives.block ()
+        | () -> Rig_edge_primitive.block ()
         | exception e ->
-            Rig_edge_primitives.block ();
+            Rig_edge_primitive.block ();
             Atomic.incr d.broken_sleeps;
             raise e)
     | `Stall -> Thread.delay (float still_ms /. 1000.)
@@ -961,8 +961,8 @@ let interrupted ?(from = fun _ -> true) ?(landing = Raise) n f =
 (* Calls inside a lock *)
 
 let inside_lock f =
-  Rig_edge_primitives.hold ();
-  Fun.protect ~finally:Rig_edge_primitives.unhold f
+  Rig_edge_primitive.hold ();
+  Fun.protect ~finally:Rig_edge_primitive.unhold f
 
 type seen = { mutable inside : int; mutable between : int }
 
@@ -975,7 +975,7 @@ type landed = (bool * string * int) option ref
 let landing seen prefix call =
   let landed = ref None in
   let call () =
-    let before = Rig_edge_primitives.holds () in
+    let before = Rig_edge_primitive.holds () in
     if before > 0 then seen.inside <- seen.inside + 1
     else seen.between <- seen.between + 1;
     let got =
@@ -985,7 +985,7 @@ let landing seen prefix call =
           "refused"
       | exception e -> Printexc.to_string e
     in
-    landed := Some (before > 0, got, Rig_edge_primitives.holds () - before)
+    landed := Some (before > 0, got, Rig_edge_primitive.holds () - before)
   in
   (Call call, landed)
 

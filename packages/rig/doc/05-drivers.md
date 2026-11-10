@@ -9,9 +9,11 @@ keeps, and the counted calls that its stop never overlaps.
 
 ## The shape of a driver
 
-A driver is a library that links `rig.edge` and never `rig`, as the preamble of
-[`rig_edge.mli`](../lib/edge/rig_edge.mli) states. It allocates a device's
-memory, loads code on it, and places work on its queues. rig reads the
+A driver is a library that links `rig.edge` and `rig.edge.primitive` and never
+`rig`, as the preamble of [`rig_edge.mli`](../lib/edge/rig_edge.mli) states.
+Through `rig.edge.primitive` its OCaml reads the host's clock and the timeline
+words, counts its locks and blocks signals. It allocates a device's memory,
+loads code on it, and places work on its queues. rig reads the
 device's facts once, when it opens, and calls five C functions of the
 driver to run work and read its times, with the OCaml runtime released. Below, `submit` alone
 names the driver's C function, and `Rig.submit` the OCaml call.

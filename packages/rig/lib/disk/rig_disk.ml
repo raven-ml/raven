@@ -73,18 +73,18 @@ external reraise : exn -> 'a = "%reraise"
    the driver's waits unblock. [g] is a toplevel function, so a call makes
    no closure. *)
 let guarded fn g x y =
-  if Rig_edge_primitives.holds () <> 0 then
+  if Rig_edge_primitive.holds () <> 0 then
     invalid_arg
       ("Rig_disk." ^ fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
         inside a lock of the calling thread's");
-  Rig_edge_primitives.mask ();
+  Rig_edge_primitive.mask ();
   match g x y with
   | r ->
-      Rig_edge_primitives.unmask ();
+      Rig_edge_primitive.unmask ();
       r
   | exception e ->
-      Rig_edge_primitives.unmask ();
+      Rig_edge_primitive.unmask ();
       reraise e
 
 (* [take m] takes [m], counted from before the take, so that a signal handler
@@ -94,11 +94,11 @@ let guarded fn g x y =
    thread that holds [m], which only a call that skipped its check makes and
    which raises [Invalid_argument]. *)
 let take m =
-  Rig_edge_primitives.hold ();
+  Rig_edge_primitive.hold ();
   match Mutex.lock m with
   | () -> ()
   | exception e -> (
-      Rig_edge_primitives.unhold ();
+      Rig_edge_primitive.unhold ();
       match e with
       | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
           invalid_arg
@@ -110,7 +110,7 @@ let take m =
    polls. *)
 let give m =
   Mutex.unlock m;
-  Rig_edge_primitives.unhold ()
+  Rig_edge_primitive.unhold ()
 
 (* [protect m g x] is [g x] holding [m], taken as the last step before the
    handler and given back as the first step of both exits. [g] is a toplevel

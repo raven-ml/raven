@@ -1,0 +1,7 @@
+(library
+ (name rig_edge_primitive)
+ (public_name rig.edge.primitive)
+ (libraries rig_edge)
+ (foreign_stubs
+  (language c)
+  (names rig_edge_primitive_stubs)))

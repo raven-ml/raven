@@ -17,8 +17,9 @@
 
     rig.remote opens proxies with [Rig.open_], one per device the agent
     opened, and uses this library's {!Wire} and {!Link} for the job's
-    connections. The library links [rig.edge], [rig.remote.abi] and [unix],
-    and this module matches {!Rig_edge.Driver}.
+    connections. The library links [rig.edge], [rig.edge.primitive],
+    [rig.remote.abi] and [unix], and this module matches
+    {!Rig_edge.Driver}.
 
     Every value may be called from several domains in parallel, except the
     driver's [room] and [submit] for one proxy, which rig calls one at a time

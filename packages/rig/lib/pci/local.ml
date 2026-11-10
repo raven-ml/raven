@@ -290,11 +290,11 @@ let release_all () =
    whose exception would skip the exit handlers after this one. *)
 let () =
   at_exit (fun () ->
-      Rig_edge_primitives.shield ();
+      Rig_edge_primitive.shield ();
       match release_all () with
-      | () -> Rig_edge_primitives.unshield ()
+      | () -> Rig_edge_primitive.unshield ()
       | exception e ->
-          Rig_edge_primitives.unshield ();
+          Rig_edge_primitive.unshield ();
           reraise e)
 
 (* mmap maps whole pages from an offset on a page: the pages that hold the [n]

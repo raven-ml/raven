@@ -12,7 +12,7 @@
 (library
  (name rig_mlx5)
  (public_name rig.mlx5)
- (libraries rig_edge rig_mlx5_abi unix)
+ (libraries rig_edge rig_edge_primitive rig_mlx5_abi unix)
  (modules_without_implementation path)
  (private_modules defs path uverbs)
  (foreign_stubs

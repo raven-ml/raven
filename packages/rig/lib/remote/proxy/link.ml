@@ -340,13 +340,13 @@ external reraise : exn -> 'a = "%reraise"
 (* [unblocked f x] is [f x], a call that waits, with the thread's signals
    unblocked. *)
 let unblocked f x =
-  Rig_edge_primitives.unblock ();
+  Rig_edge_primitive.unblock ();
   match f x with
   | r ->
-      Rig_edge_primitives.block ();
+      Rig_edge_primitive.block ();
       r
   | exception e ->
-      Rig_edge_primitives.block ();
+      Rig_edge_primitive.block ();
       reraise e
 
 (* A close waits at most 200 ms at a time, then returns to OCaml, where a
@@ -419,18 +419,18 @@ external release_rail_c : nativeint -> int -> unit
    blocked ([rig_mask] and [rig_unmask] in [rig_edge.h]), which only the
    driver's waits unblock. *)
 let guarded fn f =
-  if Rig_edge_primitives.holds () <> 0 then
+  if Rig_edge_primitive.holds () <> 0 then
     invalid_arg
       ("Rig_remote_proxy.Link." ^ fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
         inside a lock of the calling thread's");
-  Rig_edge_primitives.mask ();
+  Rig_edge_primitive.mask ();
   match f () with
   | r ->
-      Rig_edge_primitives.unmask ();
+      Rig_edge_primitive.unmask ();
       r
   | exception e ->
-      Rig_edge_primitives.unmask ();
+      Rig_edge_primitive.unmask ();
       reraise e
 
 (* [take m] takes [m], counted from before the take, so that a signal handler
@@ -440,11 +440,11 @@ let guarded fn f =
    thread that holds [m], which only a call that skipped its check makes and
    which raises [Invalid_argument]. *)
 let take m =
-  Rig_edge_primitives.hold ();
+  Rig_edge_primitive.hold ();
   match Mutex.lock m with
   | () -> ()
   | exception e -> (
-      Rig_edge_primitives.unhold ();
+      Rig_edge_primitive.unhold ();
       match e with
       | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
           invalid_arg
@@ -456,7 +456,7 @@ let take m =
    polls. *)
 let give m =
   Mutex.unlock m;
-  Rig_edge_primitives.unhold ()
+  Rig_edge_primitive.unhold ()
 
 (* [protect m f] is [f ()] holding [m], taken as the last step before the
    handler and given back as the first step of both exits, where nothing

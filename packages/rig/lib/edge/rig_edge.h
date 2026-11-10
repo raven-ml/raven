@@ -284,7 +284,7 @@ static inline uint8_t *rig_place(const struct rig_args *a, uint8_t *args) {
 RIG_EDGE_EXTERN _Atomic uint64_t *rig_words(void);
 
 /* OCaml reads the array's address and RIG_WORDS_BYTES through
-   Rig_edge_primitives.words, for code that maps it whole. */
+   Rig_edge_primitive.words, for code that maps it whole. */
 
 /* rig_now_ns () is the host's clock: nanoseconds of the system's monotonic
    clock from an unspecified start (CLOCK_MONOTONIC on Linux,
@@ -292,7 +292,7 @@ RIG_EDGE_EXTERN _Atomic uint64_t *rig_words(void);
    (CLOCK_UPTIME_RAW), the time base of Metal's command buffer times. It is
    the clock of [Rig.Profile.now]. A driver writes a value's times and
    measures its waits on it (Rig_edge's calls section). OCaml reads it
-   through Rig_edge_primitives.now. */
+   through Rig_edge_primitive.now. */
 RIG_EDGE_EXTERN uint64_t rig_now_ns(void);
 
 /* Locks
@@ -303,7 +303,7 @@ RIG_EDGE_EXTERN uint64_t rig_now_ns(void);
    from before its take, and answers the count before it; rig_unhold ()
    counts its give, after it. rig_edge.mli's Drivers section states which
    locks a driver counts and which of its functions must check the count
-   as they start. OCaml calls them through Rig_edge_primitives. */
+   as they start. OCaml calls them through Rig_edge_primitive. */
 RIG_EDGE_EXTERN int rig_holds(void);
 RIG_EDGE_EXTERN int rig_hold(void);
 RIG_EDGE_EXTERN void rig_unhold(void);
@@ -313,33 +313,35 @@ RIG_EDGE_EXTERN void rig_unhold(void);
    rig_mask () blocks on the calling thread every signal but those a fault
    raises (SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGTRAP, SIGABRT and SIGSYS), and
    rig_unmask () ends it. Pairs nest: the outermost rig_unmask () gives the
-   thread back the mask it had before the outermost rig_mask (). Inside a
-   pair, rig_unblock () gives that mask back for a wait, and rig_block ()
-   blocks again: a wait calls rig_unblock () right before the step that
-   blocks and rig_block () right after it, whether the step returns or
-   raises. The step releases the OCaml runtime while it blocks
-   (caml_enter_blocking_section or caml_release_runtime_system), as any
-   blocking stub does: a signal the runtime recorded while the thread blocked
-   it runs its handler as the step takes the runtime back. A pair that starts
-   inside a wait, from a handler or a callback that runs there, blocks again,
-   and its end opens the wait again unless the pair waited itself, which
-   leaves the rest of the outer wait blocked. rig_shield () and
-   rig_unshield () are a pair inside which rig_unblock () gives nothing back,
-   for code that must take no signal even in its waits, such as a finaliser
-   or an exit handler. Outside every pair rig_unblock () and rig_block ()
-   change nothing. A signal that came while the thread blocked it runs its
-   OCaml handler at the thread's first poll point once the OCaml unmask or
-   unshield has ended the outermost pair, or inside the wait once
+   thread back the mask it had before the outermost rig_mask (), and answers
+   nonzero; an inner one answers 0. Inside a pair, rig_unblock () gives that
+   mask back for a wait, and rig_block () blocks again: a wait calls
+   rig_unblock () right before the step that blocks and rig_block () right
+   after it, whether the step returns or raises. The step releases the
+   OCaml runtime while it blocks (caml_enter_blocking_section or
+   caml_release_runtime_system), as any blocking stub does: a signal the
+   runtime recorded while the thread blocked it runs its handler as the step
+   takes the runtime back. A pair that starts inside a wait, from a handler
+   or a callback that runs there, blocks again, and its end opens the wait
+   again unless the pair waited itself, which leaves the rest of the outer
+   wait blocked. rig_shield () and rig_unshield () are a pair inside which
+   rig_unblock () gives nothing back, for code that must take no signal even
+   in its waits, such as a finaliser or an exit handler, and rig_unshield ()
+   answers as rig_unmask () does. Outside every pair rig_unblock () and
+   rig_block () change nothing. A signal that came while the thread blocked
+   it runs its OCaml handler at the thread's first poll point once the OCaml
+   unmask or unshield has ended the outermost pair, or inside the wait once
    rig_unblock () has given the mask back (rig_edge.mli's Drivers section).
    Each is called from a thread that holds the OCaml runtime. OCaml calls
-   them through Rig_edge_primitives, whose unmask, unshield and block also
+   them through Rig_edge_primitive, whose unmask, unshield and block also
    re-arm the runtime or run what a poll point runs. The C functions
    rig_unmask () and rig_unshield () release nothing: a C caller runs no
-   poll point inside its pair. On Windows they block nothing. */
+   poll point inside its pair. On Windows they block nothing, and
+   rig_unmask () and rig_unshield () answer 0. */
 RIG_EDGE_EXTERN void rig_mask(void);
-RIG_EDGE_EXTERN void rig_unmask(void);
+RIG_EDGE_EXTERN int rig_unmask(void);
 RIG_EDGE_EXTERN void rig_shield(void);
-RIG_EDGE_EXTERN void rig_unshield(void);
+RIG_EDGE_EXTERN int rig_unshield(void);
 RIG_EDGE_EXTERN void rig_unblock(void);
 RIG_EDGE_EXTERN void rig_block(void);
 

@@ -6,7 +6,7 @@
 external reraise : exn -> 'a = "%reraise"
 
 let check fn =
-  if Rig_edge_primitives.holds () <> 0 then
+  if Rig_edge_primitive.holds () <> 0 then
     invalid_arg
       ("Rig_pci." ^ fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
@@ -23,11 +23,11 @@ let create = Mutex.create
    thread that holds [m], which only a call that skipped its check makes and
    which raises [Invalid_argument]. *)
 let take m =
-  Rig_edge_primitives.hold ();
+  Rig_edge_primitive.hold ();
   match Mutex.lock m with
   | () -> ()
   | exception e -> (
-      Rig_edge_primitives.unhold ();
+      Rig_edge_primitive.unhold ();
       match e with
       | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
           invalid_arg
@@ -38,21 +38,21 @@ let take m =
 (* [try_take m] takes [m] as [take] does if it is free, and is whether it
    took it. *)
 let try_take m =
-  Rig_edge_primitives.hold ();
+  Rig_edge_primitive.hold ();
   match Mutex.try_lock m with
   | true -> true
   | false ->
-      Rig_edge_primitives.unhold ();
+      Rig_edge_primitive.unhold ();
       false
   | exception e ->
-      Rig_edge_primitives.unhold ();
+      Rig_edge_primitive.unhold ();
       reraise e
 
 (* Gives [m] back, then its count, with nothing between that allocates or
    polls. *)
 let give m =
   Mutex.unlock m;
-  Rig_edge_primitives.unhold ()
+  Rig_edge_primitive.unhold ()
 
 (* [protect m f] is [f ()] holding [m], taken as the last step before the
    handler and given back as the first step of both exits, where nothing

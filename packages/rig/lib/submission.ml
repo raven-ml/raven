@@ -1123,7 +1123,7 @@ let host_wait = -1
 
 (* rig's array of timeline words, where every device's word lies, but for a
    word of a driver's own ([Def.live]'s [word] [0]). *)
-let words_start, words_bytes = Rig_edge_primitives.words ()
+let words_start, words_bytes = Rig_edge_primitive.words ()
 
 (* Under [d]'s lock: records [r], [d]'s mapping of the array about to be
    made, among its mappings of the array, which go back once [d] is

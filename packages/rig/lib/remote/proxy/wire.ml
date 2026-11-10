@@ -86,11 +86,11 @@ external send_c : Unix.file_descr -> string -> unit
   = "caml_rig_remote_wire_send"
 
 let send fd s =
-  Rig_edge_primitives.unblock ();
+  Rig_edge_primitive.unblock ();
   match send_c fd s with
-  | () -> Rig_edge_primitives.block ()
+  | () -> Rig_edge_primitive.block ()
   | exception e ->
-      Rig_edge_primitives.block ();
+      Rig_edge_primitive.block ();
       reraise e
 external nonce : unit -> string = "caml_rig_remote_wire_nonce"
 
@@ -120,14 +120,14 @@ let ready fds dir s =
     if s < 0. then -1
     else Float.to_int (Float.min (Float.ceil (s *. 1e3)) (Float.of_int most_ms))
   in
-  Rig_edge_primitives.unblock ();
+  Rig_edge_primitive.unblock ();
   let i =
     match wait fds (dir = `Write) ms with
     | i ->
-        Rig_edge_primitives.block ();
+        Rig_edge_primitive.block ();
         i
     | exception e ->
-        Rig_edge_primitives.block ();
+        Rig_edge_primitive.block ();
         reraise e
   in
   if i = -1 then None else Some fds.(i)

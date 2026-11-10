@@ -131,11 +131,11 @@ let take_locked m l =
 external reraise : exn -> 'a = "%reraise"
 
 let nap s =
-  Rig_edge_primitives.unblock ();
+  Rig_edge_primitive.unblock ();
   match Unix.sleepf s with
-  | () -> Rig_edge_primitives.block ()
+  | () -> Rig_edge_primitive.block ()
   | exception e ->
-      Rig_edge_primitives.block ();
+      Rig_edge_primitive.block ();
       reraise e
 
 (* A wait spins for [spin_ns], where devices mostly answer, then naps [nap_s]
@@ -145,13 +145,13 @@ let spin_ns = 1_000_000
 let nap_s = 0.0001
 
 let wait m ~us f =
-  let start = Rig_edge_primitives.now () in
+  let start = Rig_edge_primitive.now () in
   let rec go () =
     let holds = f () in
     if Option.is_some (failed m) then false
     else if holds then true
     else
-      let elapsed = Rig_edge_primitives.now () - start in
+      let elapsed = Rig_edge_primitive.now () - start in
       if elapsed / 1_000 >= us then false
       else begin
         if elapsed < spin_ns then Domain.cpu_relax () else nap nap_s;

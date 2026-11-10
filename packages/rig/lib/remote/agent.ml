@@ -29,33 +29,33 @@ let join_s = 10.
 external reraise : exn -> 'a = "%reraise"
 
 let masked f =
-  Rig_edge_primitives.mask ();
+  Rig_edge_primitive.mask ();
   match f () with
   | r ->
-      Rig_edge_primitives.unmask ();
+      Rig_edge_primitive.unmask ();
       r
   | exception e ->
-      Rig_edge_primitives.unmask ();
+      Rig_edge_primitive.unmask ();
       reraise e
 
 let shielded f =
-  Rig_edge_primitives.shield ();
+  Rig_edge_primitive.shield ();
   match f () with
   | r ->
-      Rig_edge_primitives.unshield ();
+      Rig_edge_primitive.unshield ();
       r
   | exception e ->
-      Rig_edge_primitives.unshield ();
+      Rig_edge_primitive.unshield ();
       reraise e
 
 let unblocked f x =
-  Rig_edge_primitives.unblock ();
+  Rig_edge_primitive.unblock ();
   match f x with
   | r ->
-      Rig_edge_primitives.block ();
+      Rig_edge_primitive.block ();
       r
   | exception e ->
-      Rig_edge_primitives.block ();
+      Rig_edge_primitive.block ();
       reraise e
 
 let spawn f x = masked (fun () -> Thread.create f x)
@@ -707,7 +707,7 @@ let join_acceptor h () = Thread.join h.acceptor
 let release a h =
   if not h.released then begin
     h.released <- true;
-    Rig_edge_primitives.shield ();
+    Rig_edge_primitive.shield ();
     match
       let accepted = settled stop a () in
       if h.accepting then begin
@@ -722,10 +722,10 @@ let release a h =
       accepted
     with
     | accepted ->
-        Rig_edge_primitives.unshield ();
+        Rig_edge_primitive.unshield ();
         Ids.iter (fun _ fd -> close_quietly fd) accepted
     | exception e ->
-        Rig_edge_primitives.unshield ();
+        Rig_edge_primitive.unshield ();
         reraise e
   end
 
@@ -1201,13 +1201,13 @@ let job a =
    [serve]'s pair across [f] and takes it again after, where [unblocked]
    would open a window that the first wait inside [f] closes. *)
 let unmasked f x =
-  Rig_edge_primitives.unmask ();
+  Rig_edge_primitive.unmask ();
   match f x with
   | r ->
-      Rig_edge_primitives.mask ();
+      Rig_edge_primitive.mask ();
       r
   | exception e ->
-      Rig_edge_primitives.mask ();
+      Rig_edge_primitive.mask ();
       reraise e
 
 (* Why a job fails when an exception ends [serve] other than its commands'. *)

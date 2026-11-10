@@ -40,13 +40,13 @@ external reraise : exn -> 'a = "%reraise"
 (* [poll] with the thread's signals unblocked, so that a signal's handler
    runs in its wait. *)
 let poll_unblocked async channel ms =
-  Rig_edge_primitives.unblock ();
+  Rig_edge_primitive.unblock ();
   match poll async channel ms with
   | r ->
-      Rig_edge_primitives.block ();
+      Rig_edge_primitive.block ();
       r
   | exception e ->
-      Rig_edge_primitives.block ();
+      Rig_edge_primitive.block ();
       reraise e
 
 external take : int -> Bytes.t -> int -> int -> int

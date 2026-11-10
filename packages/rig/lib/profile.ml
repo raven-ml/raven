@@ -69,7 +69,7 @@ and pending = {
   drop : unit -> unit;
 }
 
-let now = Rig_edge_primitives.now
+let now = Rig_edge_primitive.now
 
 let profiles : t list Atomic.t = Atomic.make []
 let numbers = Atomic.make 0
@@ -298,9 +298,9 @@ let span name f =
   | [] -> f ()
   | ps ->
       let lane = strf "domain %d" (Domain.self () :> int) in
-      let start = Rig_edge_primitives.now () in
+      let start = Rig_edge_primitive.now () in
       let finish () =
-        let stop = Rig_edge_primitives.now () in
+        let stop = Rig_edge_primitive.now () in
         add ps (Span { device = Dev.host; lane; name; start; stop })
       in
       Fun.protect ~finally:finish f

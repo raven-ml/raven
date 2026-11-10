@@ -1,4 +1,4 @@
 (library
  (name rig_cuda_abi)
  (public_name rig.cuda.abi)
- (libraries rig_edge))
+ (libraries rig_edge rig_edge_primitive))

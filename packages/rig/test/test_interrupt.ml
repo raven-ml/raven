@@ -535,7 +535,7 @@ let test_release_signaled ?budget ~cache release () =
    thread until it is given back, and changes nothing meanwhile. *)
 let test_counted () =
   let d = Result.get_ok (Rig.memory_device (fresh "counted")) in
-  let before = Rig_edge_primitives.holds () in
+  let before = Rig_edge_primitive.holds () in
   let held, refused, allocated =
     S.inside_lock @@ fun () ->
     let refused =
@@ -545,13 +545,13 @@ let test_counted () =
         when String.starts_with ~prefix:"Rig.Buffer.create: " why ->
           "refused"
     in
-    (Rig_edge_primitives.holds (), refused, Rig.allocated d)
+    (Rig_edge_primitive.holds (), refused, Rig.allocated d)
   in
   equal ~msg:"the count while held" int (before + 1) held;
   equal ~msg:"a create while held" string "refused" refused;
   equal ~msg:"bytes held after the refusal" int 0 allocated;
   equal ~msg:"the count once given back" int before
-    (Rig_edge_primitives.holds ());
+    (Rig_edge_primitive.holds ());
   equal ~msg:"a create once given back" int 8
     (Rig.Buffer.length (Rig.Buffer.create d 8))
 
@@ -678,7 +678,7 @@ let reenter f n =
       let probes, state = probes () in
       let held = ref false and answers = ref [] and changed = ref None in
       let call () =
-        held := Rig_edge_primitives.holds () > 0;
+        held := Rig_edge_primitive.holds () > 0;
         let before = state () in
         answers := List.map (fun p -> (p.what, answer p)) probes;
         if !held && state () <> before then changed := Some ()
@@ -735,7 +735,7 @@ let fail_in n =
       let d, p = P.open_ (fresh "fail-in:polled") in
       let held = ref false and stops = ref (-1) in
       let call () =
-        held := Rig_edge_primitives.holds () > 0;
+        held := Rig_edge_primitive.holds () > 0;
         Rig.fail "failed in a callback";
         stops := P.stops p
       in

@@ -10,13 +10,6 @@
 
 #include <stdint.h>
 
-#define CAML_NAME_SPACE
-#include <caml/alloc.h>
-#include <caml/fail.h>
-#include <caml/memory.h>
-#include <caml/mlvalues.h>
-#include <caml/signals.h>
-
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -43,15 +36,6 @@ uint64_t rig_now_ns(void) {
 #endif
 }
 
-intnat caml_rig_edge_now(value unit) {
-  (void)unit;
-  return (intnat)rig_now_ns();
-}
-
-value caml_rig_edge_now_byte(value unit) {
-  return Val_long(caml_rig_edge_now(unit));
-}
-
 /* The largest page a host has: the array starts on one, so that its pages
    hold nothing else whatever the host's page. */
 #define MOST_PAGE ((uintptr_t)1 << 16)
@@ -64,16 +48,6 @@ _Atomic uint64_t *rig_words(void) {
                               ~(MOST_PAGE - 1));
 }
 
-/* rig's array of words: its address and its bytes. */
-value caml_rig_edge_words(value unit) {
-  CAMLparam1(unit);
-  CAMLlocal1(v);
-  v = caml_alloc_tuple(2);
-  Store_field(v, 0, Val_long((intnat)rig_words()));
-  Store_field(v, 1, Val_long((intnat)RIG_WORDS_BYTES));
-  CAMLreturn(v);
-}
-
 /* Locks */
 
 static _Thread_local int holds;
@@ -83,27 +57,6 @@ int rig_holds(void) { return holds; }
 int rig_hold(void) { return holds++; }
 
 void rig_unhold(void) { holds--; }
-
-intnat caml_rig_edge_holds(value unit) {
-  (void)unit;
-  return holds;
-}
-
-value caml_rig_edge_holds_byte(value unit) {
-  return Val_long(caml_rig_edge_holds(unit));
-}
-
-value caml_rig_edge_hold(value unit) {
-  (void)unit;
-  rig_hold();
-  return Val_unit;
-}
-
-value caml_rig_edge_unhold(value unit) {
-  (void)unit;
-  rig_unhold();
-  return Val_unit;
-}
 
 /* Signals */
 
@@ -146,8 +99,7 @@ void rig_mask(void) {
   else if (window > 0) block_all(NULL);
 }
 
-/* Ends a pair: whether it was the outermost. */
-static int unmasked(void) {
+int rig_unmask(void) {
   if (--masks == 0) {
     window = 0;
     give_back();
@@ -157,19 +109,15 @@ static int unmasked(void) {
   return 0;
 }
 
-void rig_unmask(void) { (void)unmasked(); }
-
 void rig_shield(void) {
   rig_mask();
   shields++;
 }
 
-static int unshielded(void) {
+int rig_unshield(void) {
   shields--;
-  return unmasked();
+  return rig_unmask();
 }
-
-void rig_unshield(void) { (void)unshielded(); }
 
 void rig_unblock(void) {
   if (masks == 0 || shields > 0) return;
@@ -185,64 +133,11 @@ void rig_block(void) {
 
 #else
 
-static int unmasked(void) { return 0; }
-static int unshielded(void) { return 0; }
 void rig_mask(void) {}
-void rig_unmask(void) {}
+int rig_unmask(void) { return 0; }
 void rig_shield(void) {}
-void rig_unshield(void) {}
+int rig_unshield(void) { return 0; }
 void rig_unblock(void) {}
 void rig_block(void) {}
 
 #endif
-
-value caml_rig_edge_mask(value unit) {
-  (void)unit;
-  rig_mask();
-  return Val_unit;
-}
-
-/* The outermost end also leaves a blocking section, as Unix.sigprocmask
-   does: a signal the runtime recorded while the thread blocked it was
-   skipped by the poll points since, each clearing what makes the next one
-   look, and the leave sets that again while any is recorded. The external
-   is not noalloc, so its return arms the next poll point to run the
-   handler. A wait's end needs none of this: its blocking step leaves a
-   blocking section, and caml_rig_edge_block runs the handlers. */
-static void rearm(void) {
-  caml_enter_blocking_section_no_pending();
-  caml_leave_blocking_section();
-}
-
-value caml_rig_edge_unmask(value unit) {
-  (void)unit;
-  if (unmasked()) rearm();
-  return Val_unit;
-}
-
-value caml_rig_edge_unblock(value unit) {
-  (void)unit;
-  rig_unblock();
-  return Val_unit;
-}
-
-/* A wait's end runs the handlers of the signals that came during it, before
-   it blocks them again, so that their exceptions end the wait. */
-value caml_rig_edge_block(value unit) {
-  (void)unit;
-  caml_result r = caml_process_pending_actions_res();
-  rig_block();
-  return caml_get_value_or_raise(r);
-}
-
-value caml_rig_edge_shield(value unit) {
-  (void)unit;
-  rig_shield();
-  return Val_unit;
-}
-
-value caml_rig_edge_unshield(value unit) {
-  (void)unit;
-  if (unshielded()) rearm();
-  return Val_unit;
-}

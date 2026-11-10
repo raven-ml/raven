@@ -2186,7 +2186,7 @@ let run_steps ~waits (p : here) (f : frame) =
    any code does. *)
 
 let check_held fn =
-  if Rig_edge_primitives.holds () <> 0 then
+  if Rig_edge_primitive.holds () <> 0 then
     invalid_arg
       ("Rig_program." ^ fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \

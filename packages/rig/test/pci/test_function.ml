@@ -2130,7 +2130,7 @@ let test_release_inside () =
     List.iter (fun i -> ignore (map ~length:4096 f i : Window.t)) [ 0; 2; 5 ];
     let finished = ref None in
     let inside () =
-      let held = Rig_edge_primitives.holds () <> 0 in
+      let held = Rig_edge_primitive.holds () <> 0 in
       Function.release f;
       finished :=
         Some
@@ -2588,12 +2588,12 @@ let test_finish_interrupted () =
   equal ~msg:"taken while the use runs" bool true (taken ());
   Sys.catch_break true;
   Rig_support.interrupt_after 0.05;
-  Rig_edge_primitives.mask ();
+  Rig_edge_primitive.mask ();
   let finished =
     Fun.protect ~finally:(fun () ->
         (* A SIGINT the finish did not take lands here. *)
         (try
-           Rig_edge_primitives.unmask ();
+           Rig_edge_primitive.unmask ();
            Rig_support.interrupt_join ()
          with Sys.Break -> ());
         Sys.catch_break false)

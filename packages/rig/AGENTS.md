@@ -10,7 +10,7 @@ writes, so a program never names an event or a fence.
   `rig.mlx5`, `rig.bnxt`, `rig.pci`, `rig.disk`, `rig.remote`. When two need
   the same shape, each implements it. Never propose a module or helper
   shared between drivers.
-- Drivers depend on `rig.edge`, never on `rig`.
+- Drivers depend on `rig.edge` and `rig.edge.primitive`, never on `rig`.
 - rig exists to run work on the hardware a user has, from OCaml, with
   nothing else installed. Each capability reaches hardware or a setting
   that no other path reaches: GPUs with no vendor driver installed, RDMA

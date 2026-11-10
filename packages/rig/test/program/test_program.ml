@@ -850,7 +850,7 @@ let reenter n =
   let held = ref false and ran = ref "" and loaded = ref "" in
   let allocated = ref 0 in
   let call () =
-    held := Rig_edge_primitives.holds () > 0;
+    held := Rig_edge_primitive.holds () > 0;
     let before = Rig.allocated d in
     (loaded :=
        match G.load t (Iarray.of_list [ d ]) with
@@ -906,7 +906,7 @@ let interrupt_run n =
   in
   equal
     ~msg:(strf "from allocation %d, locks held after" n)
-    int 0 (Rig_edge_primitives.holds ());
+    int 0 (Rig_edge_primitive.holds ());
   (match G.run p empty with
   | points -> Array.iter Rig.Point.wait points
   | exception Rig.Lost _ when Option.is_some (Rig.lost d) -> ());

@@ -5,7 +5,7 @@
  (public_name rig.pci)
  (private_modules tlsf sysmem bus_address ops sysfs vfio local fail lock)
  (modules_without_implementation ops)
- (libraries rig_edge unix)
+ (libraries rig_edge rig_edge_primitive unix)
  (install_c_headers rig_pci)
  (foreign_stubs
   (language c)
