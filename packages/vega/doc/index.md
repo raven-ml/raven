@@ -22,7 +22,7 @@ let () =
   for i = 1 to 100 do
     (* For f(x) = 0.5 * ||x||², the gradient is x *)
     let params', st' =
-      Vega.adam_step p ~lr:(Vega.lr 0.01) !st ~params:!params ~grads:!params
+      Vega.adam_step p ~lr:(Vega.rate 0.01) !st ~params:!params ~grads:!params
     in
     params := params';
     st := st';
@@ -39,9 +39,9 @@ The optimizers take the parameters' structure, an `Nx.Ptree.t` that
 `Nx.Ptree.instantiate` builds from the model's module. A state's structure is
 built from it: `Vega.adam_ptree model` is the structure of an Adam state over
 `model`, with leaf paths `mu.…`, `nu.…` and `step`. Everything that changes
-across steps (the moments, the step counter, the learning rate) is a tensor
-leaf or derived from one. Everything fixed (`b1`, `b2`, `eps`, `weight_decay`)
-is a float the compiler captures as a constant. So the forward pass, the
+across steps (the moments, the step counter, the learning rate and the weight
+decay) is a tensor leaf or derived from one. Everything fixed (`b1`, `b2`,
+`eps`) is a float the compiler captures as a constant. So the forward pass, the
 backward pass and the update compile into one program.
 
 The example below is a fragment: `Model`, `objective`, `inputs` and `targets`

@@ -70,21 +70,21 @@ let train name init step =
   !st
 
 let () =
-  let lr = Vega.lr 0.05 in
+  let lr = Vega.rate 0.05 in
 
   (* 1-2. The same loop drives every optimizer. AdamW, RAdam and LAMB share
      Adam's state; Lion moves every element by exactly its rate. *)
   Printf.printf "--- 300 clipped steps ---\n";
   let st =
     train "adamw" Vega.adamw_init (fun st ->
-        Vega.adamw_step model ~lr ~weight_decay:1e-4 st)
+        Vega.adamw_step model ~lr ~weight_decay:(Vega.rate 1e-4) st)
   in
   ignore
     (train "radam" Vega.radam_init (fun st -> Vega.radam_step model ~lr st));
   ignore (train "lamb" Vega.lamb_init (fun st -> Vega.lamb_step model ~lr st));
   ignore
     (train "lion" Vega.lion_init (fun st ->
-         Vega.lion_step model ~lr:(Vega.lr 0.02) st));
+         Vega.lion_step model ~lr:(Vega.rate 0.02) st));
   ignore
     (train "sgd" Vega.sgd_init (fun st ->
          Vega.sgd_step model ~lr ~momentum:0.9 st));

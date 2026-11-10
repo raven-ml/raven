@@ -3,19 +3,20 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Learning-rate schedules.
+(** Schedules of rates.
 
-    A schedule maps a step counter to a learning rate. The counter is a scalar
-    [int32] tensor and the result a scalar [float32] tensor, so a schedule is
-    ordinary tensor arithmetic: applied to an optimizer state's own [step] leaf
-    inside a compiled training step ([Rune.jit]), the rate is derived inside the
-    program and tracks the state across calls; applied eagerly, it computes the
-    same value. One family serves both worlds — there is no separate host-side
-    variant, only {!eval} to read a schedule at a host counter for logging or
-    for loops that keep their own count.
+    A schedule maps a step counter to a rate, a step's learning rate or its
+    weight decay. The counter is a scalar [int32] tensor and the result a
+    scalar [float32] tensor, so a schedule is ordinary tensor arithmetic:
+    applied to an optimizer state's own [step] leaf inside a compiled training
+    step ([Rune.jit]), the rate is derived inside the program and tracks the
+    state across calls; applied eagerly, it computes the same value. One
+    family serves both worlds — there is no separate host-side variant, only
+    {!eval} to read a schedule at a host counter for logging or for loops that
+    keep their own count.
 
-    Optimizer steps take a schedule as their [~lr] and apply it to their
-    state's counter:
+    Optimizer steps take a schedule as their [~lr], and the steps that decay
+    as their [~weight_decay], and apply it to their state's counter:
 
     {[
       let sched =
@@ -27,13 +28,13 @@
     ]} *)
 
 type 'd t = 'd Nx.int32_t -> 'd Nx.float32_t
-(** The type for learning-rate schedules.
+(** The type for schedules.
 
-    [s step] is the learning rate at the scalar counter [step], as a scalar
-    [float32] tensor at [step]'s placement. Schedules are defined for
-    [step >= 0] and constructors are at their initial value at [step = 0]. An
-    optimizer step evaluates its schedule at the state's number of completed
-    steps, starting at [0]. *)
+    [s step] is the rate at the scalar counter [step], as a scalar [float32]
+    tensor at [step]'s placement. Schedules are defined for [step >= 0] and
+    constructors are at their initial value at [step = 0]. An optimizer step
+    evaluates its schedule at the state's number of completed steps, starting
+    at [0]. *)
 
 val eval : Nx.host t -> int -> float
 (** [eval s step] is the schedule's value at the host counter [step], as an
@@ -43,7 +44,7 @@ val eval : Nx.host t -> int -> float
 (** {1:basic Basic} *)
 
 val constant : float -> 'd t
-(** [constant lr] is the schedule that always returns [lr]. *)
+(** [constant v] is the schedule that always returns [v]. *)
 
 val linear : init_value:float -> end_value:float -> steps:int -> 'd t
 (** [linear ~init_value ~end_value ~steps] interpolates linearly from

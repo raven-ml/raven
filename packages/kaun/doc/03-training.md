@@ -31,7 +31,7 @@ let step (params, ostate) (x, y) =
   let loss p = Loss.softmax_cross_entropy_sparse (Mlp.apply p x) y in
   let l, grads = Rune.value_and_grad mlp loss params in
   let params, ostate =
-    Vega.adamw_step mlp ~lr:(Vega.lr 1e-3) ostate ~params ~grads
+    Vega.adamw_step mlp ~lr:(Vega.rate 1e-3) ostate ~params ~grads
   in
   ((params, ostate), Nx.item [] l)
 ```
@@ -67,7 +67,7 @@ Vega's structural optimizers step whole parameter structures. Each keeps its sta
 | Adam | `Vega.adam_init` | `Vega.adam_step ~lr ?b1 ?b2 ?eps` | `{ mu; nu; step }` |
 | AdamW | `Vega.adamw_init` | `Vega.adamw_step ~lr ... ?weight_decay` | `{ mu; nu; step }` |
 
-Steps are pure: they consume a state and return `(params', state')`. AdamW's `weight_decay` defaults to `0.01` and is decoupled — applied to the parameters directly rather than through the adaptive scaling.
+Steps are pure: they consume a state and return `(params', state')`. AdamW's `weight_decay` defaults to `Vega.rate 0.01` and is decoupled — applied to the parameters directly rather than through the adaptive scaling.
 
 ```ocaml
 let () =

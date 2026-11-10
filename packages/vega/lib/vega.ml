@@ -445,9 +445,11 @@ module Loss_scale = struct
     (x, adjust ~growth_interval ~growth_factor ~backoff_factor t ~finite)
 end
 
-(* Learning rates *)
+(* Rates *)
 
-let lr = Schedule.constant
+let rate v =
+  validate_non_negative "Vega.rate" "v" v;
+  Schedule.constant v
 
 (* Shared arithmetic of the steps *)
 
@@ -456,6 +458,22 @@ let zeros p x = Nx.Ptree.map p (fun _ t -> Nx.zeros_like t) x
 
 (* [descend ~lr x d] is [x - lr * d], the rate cast to [x]'s dtype. *)
 let descend ~lr x d = Nx.sub x (Nx.mul d (Nx.cast (Nx.dtype x) lr))
+
+(* [decay_at ~default weight_decay counter] is the weight decay at the
+   counter, [rate default] when the step was given none, at each compute
+   dtype. *)
+let decay_at ~default weight_decay counter =
+  match weight_decay with
+  | Some wd ->
+      let r = wd counter in
+      counted (fun dt -> Nx.cast dt r)
+  | None ->
+      let r = rate default counter in
+      counted (fun dt -> Nx.cast dt r)
+
+(* [decayed wd w x u] is [u + wd * x], the decay term added to the direction
+   [u] of the leaf [x] at the compute dtype [w]. *)
+let decayed wd w x u = Nx.add u (Nx.mul x (at wd w))
 
 (* [ema b m x] is [b * m + (1 - b) * x]: the moving average [m] after [x]. *)
 let ema b m x = Nx.add (Nx.mul_s m b) (Nx.mul_s x (1.0 -. b))
@@ -521,14 +539,14 @@ let sgd_step p ~lr ?(momentum = 0.0) st ~params ~grads =
 
 let lars_init p params = velocity_init "Vega.lars_init" p params
 
-let lars_step p ~lr ?(momentum = 0.9) ?(weight_decay = 0.01) ?(nesterov = false)
-    st ~params ~grads =
+let lars_step p ~lr ?(momentum = 0.9) ?weight_decay ?(nesterov = false) st
+    ~params ~grads =
   let fn = "Vega.lars_step" in
   let lr = lr st.step in
+  let wd = decay_at ~default:0.01 weight_decay st.step in
   validate_unit_interval fn "momentum" momentum;
-  validate_non_negative fn "weight_decay" weight_decay;
-  let f _ x g s =
-    let u = Nx.add g (Nx.mul_s x weight_decay) in
+  let f w x g s =
+    let u = decayed wd w x g in
     let u = Nx.mul u (trust_ratio x u) in
     let v = Nx.add (Nx.mul_s s.(0) momentum) u in
     let d = if nesterov then Nx.add u (Nx.mul_s v momentum) else v in
@@ -617,15 +635,14 @@ let adam_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) st ~params ~grads =
 
 let adamw_init p params = moments_init "Vega.adamw_init" p params
 
-let adamw_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8)
-    ?(weight_decay = 0.01) st ~params ~grads =
+let adamw_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) ?weight_decay st
+    ~params ~grads =
   let fn = "Vega.adamw_step" in
   let lr = lr st.step in
+  let wd = decay_at ~default:0.01 weight_decay st.step in
   validate_adam fn ~b1 ~b2 ~eps;
-  validate_non_negative fn "weight_decay" weight_decay;
-  let apply _ x mu_hat nu_hat =
-    let d = adam_direction ~eps mu_hat nu_hat in
-    descend ~lr x (Nx.add d (Nx.mul_s x weight_decay))
+  let apply w x mu_hat nu_hat =
+    descend ~lr x (decayed wd w x (adam_direction ~eps mu_hat nu_hat))
   in
   adam_update fn p ~b1 ~b2 ~apply st ~params ~grads
 
@@ -678,15 +695,14 @@ let radam_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) st ~params ~grads =
 
 let lamb_init p params = moments_init "Vega.lamb_init" p params
 
-let lamb_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8)
-    ?(weight_decay = 0.01) st ~params ~grads =
+let lamb_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) ?weight_decay st
+    ~params ~grads =
   let fn = "Vega.lamb_step" in
   let lr = lr st.step in
+  let wd = decay_at ~default:0.01 weight_decay st.step in
   validate_adam fn ~b1 ~b2 ~eps;
-  validate_non_negative fn "weight_decay" weight_decay;
-  let apply _ x mu_hat nu_hat =
-    let d = adam_direction ~eps mu_hat nu_hat in
-    let u = Nx.add d (Nx.mul_s x weight_decay) in
+  let apply w x mu_hat nu_hat =
+    let u = decayed wd w x (adam_direction ~eps mu_hat nu_hat) in
     descend ~lr x (Nx.mul u (trust_ratio x u))
   in
   adam_update fn p ~b1 ~b2 ~apply st ~params ~grads
@@ -808,15 +824,15 @@ let adan_init p params =
   }
 
 let adan_step p ~lr ?(b1 = 0.98) ?(b2 = 0.92) ?(b3 = 0.99) ?(eps = 1e-8)
-    ?(weight_decay = 0.02) st ~params ~grads =
+    ?weight_decay st ~params ~grads =
   let fn = "Vega.adan_step" in
   let lr = lr st.step in
+  let wd = decay_at ~default:0.02 weight_decay st.step in
   validate_unit_interval fn "b1" b1;
   validate_unit_interval fn "b2" b2;
   validate_unit_interval fn "b3" b3;
   validate_positive fn "eps" eps;
-  validate_non_negative fn "weight_decay" weight_decay;
-  let f _ x g s =
+  let f w x g s =
     let dg = Nx.sub g s.(3) in
     let mu = ema b1 s.(0) g and delta = ema b2 s.(1) dg in
     let ahead = Nx.add g (Nx.mul_s dg b2) in
@@ -826,8 +842,7 @@ let adan_step p ~lr ?(b1 = 0.98) ?(b2 = 0.92) ?(b3 = 0.99) ?(eps = 1e-8)
         (Nx.add mu (Nx.mul_s delta b2))
         (Nx.add_s (Nx.sqrt nu) eps)
     in
-    let d = Nx.add d (Nx.mul_s x weight_decay) in
-    (descend ~lr x d, [| mu; delta; nu; g |])
+    (descend ~lr x (decayed wd w x d), [| mu; delta; nu; g |])
   in
   let parts =
     [

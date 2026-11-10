@@ -12,7 +12,7 @@ dune exec packages/vega/examples/01-basic-optimizers/main.exe
 - Naming the parameters' structure: `Nx.Ptree.tensor` for a single tensor
 - Creating an optimizer's state with `Vega.sgd_init`, `adam_init`, `adamw_init`
 - Running optimization steps with `Vega.sgd_step`, `adam_step`, `adamw_step`
-- Passing a constant learning rate with `Vega.lr`
+- Passing a constant learning rate with `Vega.rate`
 - How different optimizers converge at different rates
 
 ## Key Functions

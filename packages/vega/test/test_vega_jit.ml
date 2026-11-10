@@ -62,7 +62,7 @@ let compiles state ~init ~step () =
          x)
        eager compiled)
 
-let lr = Vega.lr 0.01
+let lr = Vega.rate 0.01
 
 let tests =
   [
@@ -79,6 +79,13 @@ let tests =
     test "radam"
       (compiles Vega.adam_ptree ~init:Vega.radam_init ~step:(fun st ->
            Vega.radam_step Wb.ptree ~lr ~b2:0.99 st));
+    (* The decay at the counter is computed inside the program. *)
+    test "adamw under a scheduled decay"
+      (compiles Vega.adam_ptree ~init:Vega.adamw_init ~step:(fun st ->
+           let weight_decay =
+             Vega.Schedule.cosine_decay ~init_value:0.4 ~decay_steps:4 ()
+           in
+           Vega.adamw_step Wb.ptree ~lr ~weight_decay st));
     test "lamb"
       (compiles Vega.adam_ptree ~init:Vega.lamb_init ~step:(fun st ->
            Vega.lamb_step Wb.ptree ~lr st));
@@ -165,7 +172,7 @@ let test_radam_compiled_rectification () =
   let p = Nx.Ptree.tensor in
   let step target (params, st) =
     let grads = Nx.mul_s (Nx.sub params target) 2.0 in
-    Vega.radam_step p ~lr:(Vega.lr 0.1) ~b2:0.9999 st ~params ~grads
+    Vega.radam_step p ~lr:(Vega.rate 0.1) ~b2:0.9999 st ~params ~grads
   in
   let path f params =
     let rec go k x acc =
@@ -248,7 +255,7 @@ let half_agrees state ~init ~step () =
 
 (* The states start at the counter 7. *)
 let seven = Nx.scalar Nx.int32 7l
-let lr2 = Vega.lr 0x1p-9
+let lr2 = Vega.rate 0x1p-9
 
 let half_tests =
   let p = Nx.Ptree.tensor in

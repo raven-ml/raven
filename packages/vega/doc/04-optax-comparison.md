@@ -15,18 +15,18 @@ the step, as `~lr`.
 
 | Optax (Python) | Vega (OCaml) |
 |----------------|--------------|
-| `optax.sgd(0.1)` | `Vega.sgd_step p ~lr:(Vega.lr 0.1)` |
-| `optax.sgd(0.1, momentum=0.9)` | `Vega.sgd_step p ~lr:(Vega.lr 0.1) ~momentum:0.9` |
-| `optax.adam(1e-3)` | `Vega.adam_step p ~lr:(Vega.lr 1e-3)` |
-| `optax.adamw(1e-3, weight_decay=0.01)` | `Vega.adamw_step p ~lr:(Vega.lr 1e-3) ~weight_decay:0.01` |
-| `optax.radam(1e-3)` | `Vega.radam_step p ~lr:(Vega.lr 1e-3)` |
-| `optax.lamb(1e-3)` | `Vega.lamb_step p ~lr:(Vega.lr 1e-3)` |
-| `optax.lars(0.1)` | `Vega.lars_step p ~lr:(Vega.lr 1e-4)` |
-| `optax.rmsprop(1e-3)` | `Vega.rmsprop_step p ~lr:(Vega.lr 1e-3)` |
-| `optax.adagrad(0.01)` | `Vega.adagrad_step p ~lr:(Vega.lr 0.01)` |
-| `optax.adan(1e-3)` | `Vega.adan_step p ~lr:(Vega.lr 1e-3)` |
-| `optax.lion(1e-4)` | `Vega.lion_step p ~lr:(Vega.lr 1e-4)` |
-| `optax.adafactor(1e-3)` | `Vega.adafactor_step p ~lr:(Vega.lr 1e-3)` |
+| `optax.sgd(0.1)` | `Vega.sgd_step p ~lr:(Vega.rate 0.1)` |
+| `optax.sgd(0.1, momentum=0.9)` | `Vega.sgd_step p ~lr:(Vega.rate 0.1) ~momentum:0.9` |
+| `optax.adam(1e-3)` | `Vega.adam_step p ~lr:(Vega.rate 1e-3)` |
+| `optax.adamw(1e-3, weight_decay=0.01)` | `Vega.adamw_step p ~lr:(Vega.rate 1e-3) ~weight_decay:(Vega.rate 0.01)` |
+| `optax.radam(1e-3)` | `Vega.radam_step p ~lr:(Vega.rate 1e-3)` |
+| `optax.lamb(1e-3)` | `Vega.lamb_step p ~lr:(Vega.rate 1e-3)` |
+| `optax.lars(0.1)` | `Vega.lars_step p ~lr:(Vega.rate 1e-4)` |
+| `optax.rmsprop(1e-3)` | `Vega.rmsprop_step p ~lr:(Vega.rate 1e-3)` |
+| `optax.adagrad(0.01)` | `Vega.adagrad_step p ~lr:(Vega.rate 0.01)` |
+| `optax.adan(1e-3)` | `Vega.adan_step p ~lr:(Vega.rate 1e-3)` |
+| `optax.lion(1e-4)` | `Vega.lion_step p ~lr:(Vega.rate 1e-4)` |
+| `optax.adafactor(1e-3)` | `Vega.adafactor_step p ~lr:(Vega.rate 1e-3)` |
 
 Defaults can differ. Vega's `lars_step` and `lamb_step` default to a weight
 decay of `0.01` and its `adan_step` to `0.02`, where Optax's default to none.
@@ -55,7 +55,7 @@ params = optax.apply_updates(params, updates)
 ```ocaml
 let state = Vega.adam_init model params in
 let params, state =
-  Vega.adam_step model ~lr:(Vega.lr 1e-3) state ~params ~grads
+  Vega.adam_step model ~lr:(Vega.rate 1e-3) state ~params ~grads
 ```
 
 `model` is the parameters' structure, an `Nx.Ptree.t`, the counterpart of the
@@ -79,7 +79,8 @@ tx = optax.chain(
 ```ocaml
 let step (params, st) grads =
   let grads = Vega.clip_by_global_norm model ~max_norm:1.0 grads in
-  Vega.adamw_step model ~lr:(Vega.lr 1e-3) ~weight_decay:0.01 st ~params ~grads
+  Vega.adamw_step model ~lr:(Vega.rate 1e-3) ~weight_decay:(Vega.rate 0.01) st
+    ~params ~grads
 ```
 
 Transformations of the gradients are functions applied before the step.
@@ -116,6 +117,7 @@ Transformations of the gradients are functions applied before the step.
 | Optimizer | A `GradientTransformation` of `init` and `update` | An `*_init` and a `*_step` function |
 | Composition | `optax.chain` | Function application |
 | State type | Pytree of arrays | A record per optimizer (`adam_state`, ...) with its structure (`adam_ptree`, ...) |
-| Learning rate | Float or schedule | A schedule `~lr`, which the step applies to its counter: `Vega.lr v` for a constant |
+| Learning rate | Float or schedule | A schedule `~lr`, which the step applies to its counter: `Vega.rate v` for a constant |
+| Weight decay | Float or schedule | A schedule `~weight_decay`, as `~lr` |
 | Parameter trees | Built-in (JAX pytrees) | Any structure, an `Nx.Ptree.t` |
 | Complex parameters | Second moments of `abs_sq(g)`, the squared magnitude | Each part a real coordinate with its own moments, the step along the conjugate of `Rune.grad` |

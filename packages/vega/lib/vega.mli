@@ -46,10 +46,10 @@
     ]}
 
     Hyperparameters that do not change across steps ([b1], [b2], [eps],
-    [weight_decay], [max_norm]) are compile-time constants. Everything that does
-    (the moments, the step counter, the learning rate) is a tensor leaf or
-    derived from one, so the compiled program replays correctly on every call:
-    no data transfers, no retracing. A caller that donates the state
+    [max_norm]) are compile-time constants. Everything that does (the moments,
+    the step counter, the learning rate and the weight decay) is a tensor leaf
+    or derived from one, so the compiled program replays correctly on every
+    call: no data transfers, no retracing. A caller that donates the state
     ({!Nx.Ptree.donate}) lets the step write the next one into its memory.
 
     Every function over parameters takes their structure first, a
@@ -159,13 +159,13 @@
     let objective p = loss (Nx.Ptree.cast (module Model) Nx.bfloat16 p)
     ]} *)
 
-(** {1:schedules Learning-Rate Schedules}
+(** {1:schedules Schedules}
 
-    A schedule maps a step counter to a learning rate; it is a plain function
-    from a scalar [int32] step tensor to a scalar [float32] rate tensor beside
-    it. A step takes a schedule as [~lr] and applies it to its state's counter
-    — tensor arithmetic, so the same code runs eagerly and inside a compiled
-    step. *)
+    A schedule maps a step counter to a rate ({!section-rates}); it is a plain
+    function from a scalar [int32] step tensor to a scalar [float32] rate
+    tensor beside it. A step takes a schedule as [~lr], or as [~weight_decay]
+    for a step that decays, and applies it to its state's counter — tensor
+    arithmetic, so the same code runs eagerly and inside a compiled step. *)
 
 module Schedule = Schedule
 
@@ -290,20 +290,44 @@ module Loss_scale : sig
       with [Nx.Ptree.Walk.field c "loss_scale" Vega.Loss_scale.walk]. *)
 end
 
-(** {1:lr Learning Rates}
+(** {1:rates Rates}
 
-    A step's [~lr] is a function of the step counter, as a {!Schedule} is:
-    the step applies it to its state's counter of completed steps and casts
-    the scalar float tensor it gives to the dtype each leaf computes at
-    ({!section-structures}). A constant rate is {!val-lr}; a rate exact at
+    A step's [~lr], and the [~weight_decay] of a step that decays
+    ({!section-decay}), is a function of the step counter, as a {!Schedule}
+    is: the step applies it to its state's counter of completed steps and
+    casts the scalar float tensor it gives to the dtype each leaf computes at
+    ({!section-structures}). A constant rate is {!val-rate}; a rate exact at
     float64 is one at that dtype beside the counter,
     [fun step -> Nx.scalar_at (Nx.placement step) Nx.float64 0.1].
     Either is tensor arithmetic beside the counter, which is what makes the
     rate track correctly under [Rune.jit]. *)
 
-val lr : float -> 'd Schedule.t
-(** [lr v] is the constant rate [v], {!Schedule.constant}[ v], which serves
-    any parameter dtype and set: [Vega.adam_step p ~lr:(Vega.lr 1e-3)]. *)
+val rate : float -> 'd Schedule.t
+(** [rate v] is the constant rate [v], {!Schedule.constant}[ v], which serves
+    any parameter dtype and set, as a learning rate or as a weight decay:
+    [Vega.adamw_step p ~lr:(Vega.rate 1e-3) ~weight_decay:(Vega.rate 0.01)].
+
+    Raises [Invalid_argument] if [v] is negative. *)
+
+(** {1:decay Weight Decay}
+
+    {!lars_step}, {!adamw_step}, {!lamb_step} and {!adan_step} decay the
+    parameters. A step adds [wd * p] to a leaf's direction before its rate
+    scales it, as each step's formula shows, where [wd] is the
+    [~weight_decay] rate at the state's counter ({!section-rates}). The decay
+    is decoupled (Loshchilov and Hutter, 2019). It acts on the parameters
+    directly rather than through the gradient, so an adaptive step does not
+    rescale it by the gradient history. It is computed inside the step, with
+    the update, so a half-precision leaf stores both in its one rounding
+    ({!section-half}) and a decay below half a spacing still moves it on
+    average.
+
+    The decay is scaled by the whole learning rate, with the rest of the
+    direction. At counter [t], {!adamw_step} decays a leaf [p] by
+    [lr t * weight_decay t * p], so a learning rate that falls over training
+    lowers the decay with it. Loshchilov and Hutter's decay [λ] is
+    multiplied by the schedule's multiplier [η_t] alone, of a rate
+    [lr = η_t α], so their [λ] is [weight_decay * α]. *)
 
 (** {1:sgd Stochastic Gradient Descent} *)
 
@@ -349,9 +373,9 @@ val sgd_step :
     p' = p - lr * v'
     v}
 
-    [lr] gives the rate at the counter ({!section-lr}); [momentum] defaults to
-    [0.], plain gradient descent: the velocity is then the last gradient, and
-    the input velocity is not read at all. The counter is read, for the rate
+    [lr] gives the rate at the counter ({!section-rates}); [momentum] defaults
+    to [0.], plain gradient descent: the velocity is then the last gradient,
+    and the input velocity is not read at all. The counter is read, for the rate
     and for the draws of half-precision leaves ({!section-half}), and advances
     by one. The whole step is tensor arithmetic over [(params, st)], so it
     traces under [Rune.jit].
@@ -369,7 +393,7 @@ val lars_step :
   ('p, 'd) Nx.Ptree.t ->
   lr:('d Nx.int32_t -> (float, 'b, 'd) Nx.t) ->
   ?momentum:float ->
-  ?weight_decay:float ->
+  ?weight_decay:('d Nx.int32_t -> (float, 'c, 'd) Nx.t) ->
   ?nesterov:bool ->
   ('p, 'd) sgd_state ->
   params:'p ->
@@ -381,20 +405,21 @@ val lars_step :
     Per leaf, with [|x|] the L2 norm over the leaf's elements:
 
     {v
-    u  = g + weight_decay * p
+    u  = g + wd * p
     r  = |p| / (|u| + 1e-6), or 1 if |p| = 0 or |u| = 0
     v' = momentum * v + r * u
     p' = p - lr * v'
     v}
 
     With [nesterov], the last line is [p' = p - lr * (r * u + momentum * v')].
-    [momentum] defaults to [0.9], [weight_decay] to [0.01], [nesterov] to
+    [wd] is the weight decay at the counter ({!section-decay}). [momentum]
+    defaults to [0.9], [weight_decay] to [Vega.rate 0.01], [nesterov] to
     [false]. The learning rate scales the velocity rather than entering it, as
     in {!sgd_step}, and the paper's trust coefficient is folded into [lr].
 
-    Raises [Invalid_argument] if [momentum] is outside \[[0];[1]\) or
-    [weight_decay] is negative, or as {!section-structures} states if [grads] or
-    [st.velocity] does not have [params]' skeleton. *)
+    Raises [Invalid_argument] if [momentum] is outside \[[0];[1]\), or as
+    {!section-structures} states if [grads] or [st.velocity] does not have
+    [params]' skeleton. *)
 
 (** {1:adam Adam and AdamW} *)
 
@@ -447,7 +472,7 @@ val adam_step :
     p'  = p - lr * d
     v}
 
-    [lr] gives the rate at the counter ({!section-lr}). [b1] defaults to
+    [lr] gives the rate at the counter ({!section-rates}). [b1] defaults to
     [0.9], [b2] to [0.999], [eps] to [1e-8]; they are compile-time constants,
     safe captures under [Rune.jit]. The bias corrections are derived from the
     state's counter in tensor arithmetic (see {!section-structures} for their
@@ -468,24 +493,20 @@ val adamw_step :
   ?b1:float ->
   ?b2:float ->
   ?eps:float ->
-  ?weight_decay:float ->
+  ?weight_decay:('d Nx.int32_t -> (float, 'c, 'd) Nx.t) ->
   ('p, 'd) adam_state ->
   params:'p ->
   grads:'p ->
   'p * ('p, 'd) adam_state
 (** [adamw_step p ~lr st ~params ~grads] is like {!adam_step} with decoupled
-    weight decay (Loshchilov and Hutter, 2019): with [d] Adam's bias-corrected
-    direction, the parameter update becomes
+    weight decay ({!section-decay}): with [d] Adam's bias-corrected direction
+    and [wd] the weight decay at the counter, the parameter update becomes
 
-    {v p' = p - lr * (d + weight_decay * p) v}
+    {v p' = p - lr * (d + wd * p) v}
 
-    The decay applies to the parameters directly rather than through the
-    adaptive scaling, so its effective strength does not depend on the gradient
-    history. [weight_decay] defaults to [0.01]; with [weight_decay = 0.] the
-    step is exactly {!adam_step}.
+    [weight_decay] defaults to [Vega.rate 0.01].
 
-    Raises [Invalid_argument] if [weight_decay] is negative, or as {!adam_step}
-    does. *)
+    Raises [Invalid_argument] as {!adam_step} does. *)
 
 (** {1:radam RAdam} *)
 
@@ -539,7 +560,7 @@ val lamb_step :
   ?b1:float ->
   ?b2:float ->
   ?eps:float ->
-  ?weight_decay:float ->
+  ?weight_decay:('d Nx.int32_t -> (float, 'c, 'd) Nx.t) ->
   ('p, 'd) adam_state ->
   params:'p ->
   grads:'p ->
@@ -550,14 +571,15 @@ val lamb_step :
     bias-corrected direction:
 
     {v
-    u  = d + weight_decay * p
+    u  = d + wd * p
     r  = |p| / (|u| + 1e-6), or 1 if |p| = 0 or |u| = 0
     p' = p - lr * r * u
     v}
 
-    Defaults are {!adam_step}'s, and [weight_decay] defaults to [0.01].
+    [wd] is the weight decay at the counter ({!section-decay}). Defaults are
+    {!adam_step}'s, and [weight_decay] defaults to [Vega.rate 0.01].
 
-    Raises [Invalid_argument] as {!adamw_step} does. *)
+    Raises [Invalid_argument] as {!adam_step} does. *)
 
 (** {1:rmsprop RMSprop} *)
 
@@ -681,7 +703,7 @@ val adan_step :
   ?b2:float ->
   ?b3:float ->
   ?eps:float ->
-  ?weight_decay:float ->
+  ?weight_decay:('d Nx.int32_t -> (float, 'c, 'd) Nx.t) ->
   ('p, 'd) adan_state ->
   params:'p ->
   grads:'p ->
@@ -694,16 +716,17 @@ val adan_step :
     mu'    = b1 * mu + (1 - b1) * g
     delta' = b2 * delta + (1 - b2) * dg
     nu'    = b3 * nu + (1 - b3) * (g + b2 * dg)^2
-    d      = (mu' + b2 * delta') / (sqrt nu' + eps) + weight_decay * p
+    d      = (mu' + b2 * delta') / (sqrt nu' + eps) + wd * p
     p'     = p - lr * d
     v}
 
-    and [prev_grads' = g]. There is no bias correction. [b1] defaults to [0.98],
-    [b2] to [0.92], [b3] to [0.99], [eps] to [1e-8], [weight_decay] to [0.02];
-    the weight decay is decoupled, as {!adamw_step}'s.
+    and [prev_grads' = g], with [wd] the weight decay at the counter
+    ({!section-decay}). There is no bias correction. [b1] defaults to [0.98],
+    [b2] to [0.92], [b3] to [0.99], [eps] to [1e-8], [weight_decay] to
+    [Vega.rate 0.02].
 
     Raises [Invalid_argument] if [b1], [b2] or [b3] is outside \[[0];[1]\),
-    [eps] is not positive or [weight_decay] is negative, on a float16 leaf
+    [eps] is not positive, on a float16 leaf
     ({!section-half}), or as {!section-structures} states if [grads] or a part
     of [st] other than [step] does not have [params]' skeleton. *)
 
@@ -854,7 +877,7 @@ val adafactor_step :
     {[
     let st = Vega.lbfgs_init model params in
     let st =
-      Vega.lbfgs_step model ~lr:(Vega.lr 0.1)
+      Vega.lbfgs_step model ~lr:(Vega.rate 0.1)
         (Rune.grad model loss st.params)
         st
     in

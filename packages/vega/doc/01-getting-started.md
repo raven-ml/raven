@@ -48,7 +48,7 @@ let () =
     (* A step takes the state, the parameters and the gradients, and returns
        the new parameters and the next state *)
     let params', st' =
-      Vega.sgd_step p ~lr:(Vega.lr 0.1) !st ~params:!params ~grads:!params
+      Vega.sgd_step p ~lr:(Vega.rate 0.1) !st ~params:!params ~grads:!params
     in
     params := params';
     st := st';
@@ -62,7 +62,7 @@ Key points:
   `Nx.Ptree.tensor`
 - `sgd_init p params` creates the state: a zero velocity shaped like the
   parameters, and a step counter
-- `Vega.lr 0.1` is the constant rate 0.1; a step takes its rate as a function
+- `Vega.rate 0.1` is the constant rate 0.1; a step takes its rate as a function
   of its state's step counter, as a schedule is
 - The step returns both the updated parameters and the new state; the loop
   threads them
@@ -102,7 +102,7 @@ step size per element using running moment estimates:
 <!-- $MDX skip -->
 ```ocaml
 let st = Vega.adam_init model params in
-let params, st = Vega.adam_step model ~lr:(Vega.lr 1e-3) st ~params ~grads
+let params, st = Vega.adam_step model ~lr:(Vega.rate 1e-3) st ~params ~grads
 ```
 
 `adam_step` takes optional `~b1` (default 0.9), `~b2` (default 0.999), and

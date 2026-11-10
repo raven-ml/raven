@@ -71,7 +71,7 @@ let test_scale_half_dtype () =
    gradient of the scaled loss through [Ls.step], [plain] with the gradient
    itself. *)
 let both = Nx.Ptree.pair Pair.ptree (Vega.adam_ptree Pair.ptree)
-let lr = Vega.lr 0.1
+let lr = Vega.rate 0.1
 
 let grads (x : Pair.t) (t : Pair.t) =
   { Pair.a = Nx.sub x.a t.a; b = Nx.sub x.b t.b }

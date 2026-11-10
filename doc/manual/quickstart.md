@@ -117,7 +117,7 @@ let () =
   let step (params, ostate) =
     let l, grads = Rune.value_and_grad mlp loss params in
     let params, ostate =
-      Vega.adam_step mlp ~lr:(Vega.lr 0.05) ostate ~params ~grads
+      Vega.adam_step mlp ~lr:(Vega.rate 0.05) ostate ~params ~grads
     in
     ((params, ostate), Nx.item [] l)
   in
@@ -152,7 +152,7 @@ let () =
       (fun (params, ostate) ->
         let l, grads = Rune.value_and_grad mlp loss params in
         let params, ostate =
-          Vega.adam_step mlp ~lr:(Vega.lr 0.05) ostate ~params ~grads
+          Vega.adam_step mlp ~lr:(Vega.rate 0.05) ostate ~params ~grads
         in
         ((params, ostate), l))
   in

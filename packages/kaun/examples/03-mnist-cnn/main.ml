@@ -98,7 +98,7 @@ let () =
         in
         let l, grads = Rune.value_and_grad cnn loss params in
         let params, ostate =
-          Vega.adamw_step cnn ~lr:(Vega.lr lr) ostate ~params ~grads
+          Vega.adamw_step cnn ~lr:(Vega.rate lr) ostate ~params ~grads
         in
         ((params, ostate), Nx.item [] l)
       in

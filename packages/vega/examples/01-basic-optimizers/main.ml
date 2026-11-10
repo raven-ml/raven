@@ -28,8 +28,8 @@ let run name init step =
 
 let () =
   run "SGD (lr=0.1)" Vega.sgd_init (fun st ->
-      Vega.sgd_step p ~lr:(Vega.lr 0.1) st);
+      Vega.sgd_step p ~lr:(Vega.rate 0.1) st);
   run "Adam (lr=0.01)" Vega.adam_init (fun st ->
-      Vega.adam_step p ~lr:(Vega.lr 0.01) st);
+      Vega.adam_step p ~lr:(Vega.rate 0.01) st);
   run "AdamW (lr=0.01, wd=0.01)" Vega.adamw_init (fun st ->
-      Vega.adamw_step p ~lr:(Vega.lr 0.01) ~weight_decay:0.01 st)
+      Vega.adamw_step p ~lr:(Vega.rate 0.01) ~weight_decay:(Vega.rate 0.01) st)

@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 let p = Nx.Ptree.tensor
-let lr = Vega.lr 1e-3
+let lr = Vega.rate 1e-3
 let shapes = [ ("256", [| 256; 256 |]); ("1024", [| 1024; 1024 |]) ]
 
 let make_step_bench (type b) (dtype : (float, b) Nx.dtype) name init step

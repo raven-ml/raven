@@ -123,7 +123,7 @@ let step_signature model =
 let train_step model ~momentum { m; opt } x tgt =
   let loss, grads = Rune.value_and_grad model (loss_fn x tgt) m in
   let m, opt =
-    Vega.sgd_step model ~lr:(Vega.lr lr) ~momentum opt ~params:m ~grads
+    Vega.sgd_step model ~lr:(Vega.rate lr) ~momentum opt ~params:m ~grads
   in
   ({ m; opt }, loss)
 

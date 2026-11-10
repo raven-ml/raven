@@ -205,7 +205,7 @@ let lbfgs_signature =
 
 let lbfgs_step (st : (Nx.host model, Nx.host) Vega.lbfgs_state) x y =
   let loss, grads = Rune.value_and_grad model (loss_fn x y) st.params in
-  (loss, Vega.lbfgs_step model ~lr:(Vega.lr 0.1) grads st)
+  (loss, Vega.lbfgs_step model ~lr:(Vega.rate 0.1) grads st)
 
 let lbfgs_init () = Vega.lbfgs_init model ~history:4 (model_init Nx.Host.on)
 

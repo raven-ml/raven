@@ -34,7 +34,7 @@ let p = Nx.Ptree.tensor in
 let st = ref (Vega.adam_init p !params) in
 for _ = 1 to steps do
   let params', st' =
-    Vega.adam_step p ~lr:(Vega.lr 0.01) !st ~params:!params ~grads
+    Vega.adam_step p ~lr:(Vega.rate 0.01) !st ~params:!params ~grads
   in
   params := params';
   st := st'
@@ -46,7 +46,8 @@ done
 ```ocaml
 let step (params, st) =
   let grads = Vega.clip_by_global_norm model ~max_norm:1.0 (gradients params) in
-  Vega.adamw_step model ~lr:(Vega.lr 1e-3) ~weight_decay:0.01 st ~params ~grads
+  Vega.adamw_step model ~lr:(Vega.rate 1e-3) ~weight_decay:(Vega.rate 0.01) st
+    ~params ~grads
 ```
 
 ### Learning Rate Schedule

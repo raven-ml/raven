@@ -20,7 +20,7 @@ let () =
   for i = 1 to 50 do
     (* For f(x) = 0.5 * ||x||^2, the gradient is x *)
     let params', st' =
-      Vega.adam_step p ~lr:(Vega.lr 0.01) !st ~params:!params ~grads:!params
+      Vega.adam_step p ~lr:(Vega.rate 0.01) !st ~params:!params ~grads:!params
     in
     params := params';
     st := st';

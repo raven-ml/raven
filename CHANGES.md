@@ -268,6 +268,13 @@ All notable changes to this project will be documented in this file.
 
 ### Vega (new)
 
+- **Breaking:** the `~weight_decay` of `lars_step`, `adamw_step`, `lamb_step`
+  and `adan_step` is a function of the counter, as `~lr` is, so a scheduled
+  decay is computed inside the step and a bfloat16 parameter decays under it.
+  The decay applied after the step that the schedules guide taught moved none.
+- **Breaking:** `Vega.lr` is `Vega.rate`, the constant for a learning rate or a
+  weight decay, and raises on a negative value. A float64 leaf decays by the
+  float32 constant, as it steps by the float32 rate.
 - Vega's argument errors write each float as the shortest decimal that reads
   back, the same text on every system: `got -1000000` where they wrote
   `got -1e+06`, or `-1e+006` under Windows.

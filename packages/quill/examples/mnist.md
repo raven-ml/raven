@@ -110,7 +110,7 @@ let () =
             (fun p -> Loss.softmax_cross_entropy_sparse (Model.apply p x) y)
             params
         in
-        st := Vega.adam_step model ~lr:(Vega.lr 0.001) ostate ~params ~grads;
+        st := Vega.adam_step model ~lr:(Vega.rate 0.001) ostate ~params ~grads;
         incr step;
         Printf.printf "\r  epoch %d  batch %d/%d  loss: %.4f%!" epoch !step
           num_batches (Nx.item [] loss));

@@ -135,7 +135,7 @@ let train_step model spec inputs targets (params, opt) =
   let objective p = loss spec p inputs targets in
   let l, grads = Rune.value_and_grad model objective params in
   let state =
-    Vega.sgd_step model ~lr:(Vega.lr spec.lr) ~momentum:spec.momentum opt
+    Vega.sgd_step model ~lr:(Vega.rate spec.lr) ~momentum:spec.momentum opt
       ~params ~grads
   in
   (l, state)

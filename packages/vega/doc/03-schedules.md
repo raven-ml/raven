@@ -207,28 +207,29 @@ let sched =
 in
 let step (params, st) =
   let grads = gradients params in
-  Vega.adamw_step model ~lr:sched ~weight_decay:0.01 st ~params ~grads
+  Vega.adamw_step model ~lr:sched ~weight_decay:(Vega.rate 0.01) st ~params
+    ~grads
 ```
 
 The counter is a tensor leaf of the state, so under `Rune.jit` the rate is
 computed inside the compiled program and follows the state from call to call.
 
-Any other scalar a step should vary over training is a tensor derived the same
-way. A step's `~weight_decay` is a float fixed for the program, so a scheduled
-decay is applied after the step, decoupled from the adaptive scaling as
-`adamw_step` applies its own:
+A step that decays takes its weight decay the same way, as `~weight_decay`, a
+function of the counter. Here the decay rises from 0.04 to 0.4 over training:
 
 <!-- $MDX skip -->
 ```ocaml
-let wd = Vega.Schedule.cosine_decay ~init_value:0.01 ~decay_steps:10000 () in
-let lr = sched st.step in
-let params', st' = Vega.adam_step model ~lr:sched st ~params ~grads in
-let decay = Nx.mul lr (wd st.step) in
-let params' =
-  Nx.Ptree.map2 model
-    (fun _ p' p -> Nx.sub p' (Nx.mul p (Nx.cast (Nx.dtype p) decay)))
-    params' params
+let wd = Vega.Schedule.linear ~init_value:0.04 ~end_value:0.4 ~steps:10000 in
+let step (params, st) =
+  let grads = gradients params in
+  Vega.adamw_step model ~lr:sched ~weight_decay:wd st ~params ~grads
 ```
+
+The step computes the decay with the update, so a bfloat16 parameter stores
+both in its one stochastic rounding, and a decay below half a spacing still
+moves it on average. The decay is multiplied by the learning rate: at counter
+`t` a parameter `p` decays by `sched t * wd t * p`, as the Weight Decay section
+of [`vega.mli`](../lib/vega.mli) states.
 
 ## Next steps
 

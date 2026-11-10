@@ -17,8 +17,8 @@ let step (params, st) =
   let loss, grads = Rune.value_and_grad model objective params in
   let grads = Vega.clip_by_global_norm model ~max_norm:1.0 grads in
   let params, st =
-    Vega.adamw_step model ~lr:sched ~weight_decay:0.01 st ~params
-      ~grads
+    Vega.adamw_step model ~lr:sched ~weight_decay:(Vega.rate 0.01) st
+      ~params ~grads
   in
   (loss, (params, st))
 ```

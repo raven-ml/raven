@@ -199,7 +199,7 @@ let test_bn_train_step_roundtrip () =
         objective params
     in
     let params, ostate =
-      Vega.adam_step model ~lr:(Vega.lr 0.02) ostate ~params ~grads
+      Vega.adam_step model ~lr:(Vega.rate 0.02) ostate ~params ~grads
     in
     ((params, stats', ostate), Nx.item [] loss)
   in

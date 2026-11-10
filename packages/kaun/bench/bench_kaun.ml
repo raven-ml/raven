@@ -109,14 +109,14 @@ let () =
   let adam_step () =
     let l, grads = Rune.value_and_grad mlp loss params in
     let params', state' =
-      Vega.adam_step mlp ~lr:(Vega.lr lr) adam_state ~params ~grads
+      Vega.adam_step mlp ~lr:(Vega.rate lr) adam_state ~params ~grads
     in
     (l, params', state')
   in
   let sgd_step () =
     let l, grads = Rune.value_and_grad mlp loss params in
     let params', state' =
-      Vega.sgd_step mlp ~lr:(Vega.lr lr) sgd_state ~params ~grads
+      Vega.sgd_step mlp ~lr:(Vega.rate lr) sgd_state ~params ~grads
     in
     (l, params', state')
   in
@@ -142,7 +142,7 @@ let () =
   let cnn_step () =
     let l, grads = Rune.value_and_grad cnn cnn_loss cnn_params in
     let params', state' =
-      Vega.adam_step cnn ~lr:(Vega.lr lr) cnn_state ~params:cnn_params ~grads
+      Vega.adam_step cnn ~lr:(Vega.rate lr) cnn_state ~params:cnn_params ~grads
     in
     (l, params', state')
   in

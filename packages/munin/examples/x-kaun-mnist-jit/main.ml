@@ -165,7 +165,7 @@ let () =
     let loss_fn p = Loss.softmax_cross_entropy_sparse (Cnn.apply p x) y in
     let loss, grads = Rune.value_and_grad cnn loss_fn params in
     let st = { (Vega.sgd_init cnn params) with step } in
-    let params, st = Vega.sgd_step cnn ~lr:(Vega.lr !lr) st ~params ~grads in
+    let params, st = Vega.sgd_step cnn ~lr:(Vega.rate !lr) st ~params ~grads in
     (loss, (params, st.step))
   in
   let step =

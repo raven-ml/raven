@@ -166,7 +166,9 @@ let loss_fn_half compute inputs targets ?dropout params =
    alive between steps. *)
 let sgd gpt2_tree step ~params ~grads =
   let st = { (Vega.sgd_init gpt2_tree params) with step } in
-  let params, st = Vega.sgd_step gpt2_tree ~lr:(Vega.lr lr) st ~params ~grads in
+  let params, st =
+    Vega.sgd_step gpt2_tree ~lr:(Vega.rate lr) st ~params ~grads
+  in
   (params, st.step)
 
 (* A step returns the pre-update loss and the updated parameters and

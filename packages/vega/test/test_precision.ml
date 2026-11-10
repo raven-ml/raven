@@ -165,7 +165,7 @@ let sgd_brackets (type b) (dt : (float, b) Nx.dtype) =
       let wide = Nx.cast Nx.float32 in
       let step params grads =
         let st = { (Vega.sgd_init p params) with step = counter c } in
-        fst (Vega.sgd_step p ~lr:(Vega.lr lr) st ~params ~grads)
+        fst (Vega.sgd_step p ~lr:(Vega.rate lr) st ~params ~grads)
       in
       let x32 = step (wide params) (wide grads) in
       cover_stores f ~x0:(floats params) [ floats x32 ];
@@ -189,7 +189,7 @@ let lion_brackets (type b) (dt : (float, b) Nx.dtype) =
       let mu = Nx.create dt n (Array.sub m 0 (Array.length x)) in
       let wide = Nx.cast Nx.float32 in
       let step params grads mu =
-        Vega.lion_step p ~lr:(Vega.lr lr) { mu; step = counter c } ~params
+        Vega.lion_step p ~lr:(Vega.rate lr) { mu; step = counter c } ~params
           ~grads
       in
       let x32, st32 = step (wide params) (wide grads) (wide mu) in
@@ -224,7 +224,7 @@ let adam_brackets =
       and nu = Nx.create dt n (Array.sub v 0 k) in
       let wide = Nx.cast Nx.float32 in
       let step params grads mu nu =
-        Vega.adam_step p ~lr:(Vega.lr lr)
+        Vega.adam_step p ~lr:(Vega.rate lr)
           { mu; nu; step = counter c }
           ~params ~grads
       in
@@ -311,7 +311,7 @@ let lbfgs_brackets (type b) (dt : (float, b) Nx.dtype) =
       cover "a NaN" (any Float.is_nan);
       cover "an extreme of float16 or bfloat16"
         (any (fun v -> List.mem v half_extremes));
-      let lr = Vega.lr 0.1 in
+      let lr = Vega.rate 0.1 in
       let wide =
         Vega.lbfgs_step p32 ~lr (widen grads)
           {
@@ -353,13 +353,13 @@ let unbiased (type b) (dt : (float, b) Nx.dtype) rows =
       let n = 1 lsl 14 in
       let params = Nx.full dt [| n |] x and grads = Nx.full dt [| n |] g in
       let st = Vega.sgd_init p params in
-      let params', _ = Vega.sgd_step p ~lr:(Vega.lr lr) st ~params ~grads in
+      let params', _ = Vega.sgd_step p ~lr:(Vega.rate lr) st ~params ~grads in
       let q = lr /. spacing in
       let se = spacing *. sqrt (q *. (1.0 -. q) /. Float.of_int n) in
       equal (float (6.0 *. se)) (x -. (lr *. g))
         (Nx.item [] (Nx.mean (Nx.cast Nx.float64 params'))))
 
-(* A float32 rate, as [Vega.lr] holds it. *)
+(* A float32 rate, as [Vega.rate] holds it. *)
 let f32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
 let unbiased_rows ~below_one ~least ~sub =
@@ -389,7 +389,7 @@ let test_moments_decay () =
   for t = 1 to List.fold_left max 0 marks do
     let grads = if t <= rise then one else zero in
     let w', st' =
-      Vega.adam_step p ~lr:(Vega.lr 1e-9) ~b2 !st ~params:!w ~grads
+      Vega.adam_step p ~lr:(Vega.rate 1e-9) ~b2 !st ~params:!w ~grads
     in
     w := w';
     st := st';
@@ -418,7 +418,7 @@ let test_tracks_a_constant_gradient () =
   let st = ref (Vega.adam_init p !w) in
   let grads = Nx.ones Nx.bfloat16 [| n |] in
   for _ = 1 to steps do
-    let w', st' = Vega.adam_step p ~lr:(Vega.lr lr) !st ~params:!w ~grads in
+    let w', st' = Vega.adam_step p ~lr:(Vega.rate lr) !st ~params:!w ~grads in
     w := w';
     st := st'
   done;
@@ -442,7 +442,7 @@ let test_tracks_a_noisy_quadratic () =
       (Nx.Rng.normal ~key:(Nx.Rng.fold_in keys.(2) i) Nx.float32 [| n |])
       0.1
   in
-  let lr = Vega.lr 1e-3 in
+  let lr = Vega.rate 1e-3 in
   let run (type b) (dt : (float, b) Nx.dtype) =
     let w = ref (Nx.cast dt w0) in
     let st = ref (Vega.adam_init p !w) in
@@ -460,6 +460,36 @@ let test_tracks_a_noisy_quadratic () =
   less ~msg:"mean |w - reference|" float_exact ~than:0.02
     (mean (Nx.abs (Nx.sub half reference)))
 
+(* AdamW under zero gradients, whose direction is zero, at [lr = 0.01] and a
+   decay falling from [0.2] to [0] over 100 steps: each step scales a weight
+   [w] by [1 - lr wd(t)]. From [w = 1.5], a step moves it by at most [3e-3],
+   below half bfloat16's spacing in [1, 2), [2^-8], so rounding to nearest
+   would keep every weight. Each store's error has a deviation of at most
+   [2^-8], an element's walk over 100 stores at most [10 * 2^-8], and the mean
+   of 4096 elements at most [10 * 2^-8 / 64]: it lies within six of those of
+   [1.5] times the product of the factors. *)
+let test_decays_under_a_schedule () =
+  let n = 4096 and steps = 100 and w0 = 1.5 in
+  let wd = Vega.Schedule.linear ~init_value:0.2 ~end_value:0.0 ~steps in
+  let lr = f32 0.01 in
+  let w = ref (Nx.full Nx.bfloat16 [| n |] w0) in
+  let st = ref (Vega.adamw_init p !w) in
+  let grads = Nx.zeros Nx.bfloat16 [| n |] in
+  let factor = ref 1.0 in
+  for t = 0 to steps - 1 do
+    factor := !factor *. (1.0 -. (lr *. Vega.Schedule.eval wd t));
+    let w', st' =
+      Vega.adamw_step p ~lr:(Vega.rate lr) ~weight_decay:wd !st ~params:!w
+        ~grads
+    in
+    w := w';
+    st := st'
+  done;
+  equal ~msg:"mean weight"
+    (float (6.0 *. 0x1p-8 /. 64.0 *. 10.0))
+    (w0 *. !factor)
+    (mean (Nx.cast Nx.float64 !w))
+
 (* Law 5: a step is deterministic *)
 
 (* Two leaves, a bfloat16 one under Adam's three stores and a float16 one
@@ -471,7 +501,7 @@ let adam_run k (w, st) =
     if k = 0 then (w, st)
     else
       let grads = Nx.sub_s w target in
-      go (k - 1) (Vega.adam_step p ~lr:(Vega.lr 0.01) st ~params:w ~grads)
+      go (k - 1) (Vega.adam_step p ~lr:(Vega.rate 0.01) st ~params:w ~grads)
   in
   go k (w, st)
 
@@ -481,7 +511,7 @@ let sgd_run k (w, st) =
     else
       let grads = Nx.sub_s w target in
       go (k - 1)
-        (Vega.sgd_step p ~lr:(Vega.lr 0.01) ~momentum:0.9 st ~params:w ~grads)
+        (Vega.sgd_step p ~lr:(Vega.rate 0.01) ~momentum:0.9 st ~params:w ~grads)
   in
   go k (w, st)
 
@@ -537,7 +567,7 @@ let midway = 0x1p-9
 let sgd_at c params =
   let grads = Nx.ones_like params in
   let st = { (Vega.sgd_init p params) with step = counter c } in
-  fst (Vega.sgd_step p ~lr:(Vega.lr midway) st ~params ~grads)
+  fst (Vega.sgd_step p ~lr:(Vega.rate midway) st ~params ~grads)
 
 let test_counter_keys () =
   let params = Nx.ones Nx.bfloat16 [| n_half |] in
@@ -559,7 +589,7 @@ let stores_draw_apart =
       let grads = Nx.full Nx.bfloat16 shape (1.0 +. 0x1p-7) in
       let st = { Vega.mu = Nx.ones Nx.bfloat16 shape; step = counter 3 } in
       let params', st' =
-        Vega.lion_step p ~lr:(Vega.lr midway) ~b2:0.5 st ~params ~grads
+        Vega.lion_step p ~lr:(Vega.rate midway) ~b2:0.5 st ~params ~grads
       in
       let up = Array.map (fun v -> v > 0.999) (floats params')
       and mu_up = Array.map (fun v -> v > 1.003) (floats st'.mu) in
@@ -602,7 +632,7 @@ end
 
 let step2 ptree params grads =
   let st = Vega.adam_init ptree params in
-  Vega.adam_step ptree ~lr:(Vega.lr midway) st ~params ~grads
+  Vega.adam_step ptree ~lr:(Vega.rate midway) st ~params ~grads
 
 let test_path_keys () =
   let ones () = Nx.ones Nx.bfloat16 [| n_half |] in
@@ -633,7 +663,7 @@ let test_placement () =
   let module S = (val Nx.devices [ d0; d1 ]) in
   let step x =
     let p = Nx.Ptree.tensor in
-    let st = Vega.sgd_init p x and lr = Vega.lr midway in
+    let st = Vega.sgd_init p x and lr = Vega.rate midway in
     fst (Vega.sgd_step p ~lr ~momentum:0.9 st ~params:x ~grads:x)
   in
   let flat x = Nx.reshape [| -1 |] (Nx.place Nx.Host.on x) in
@@ -652,7 +682,7 @@ let test_placement () =
 (* Each step that averages squared gradients, by name, from its initial
    state at [x]. *)
 let float16_steps =
-  let lr = Vega.lr 0.1 in
+  let lr = Vega.rate 0.1 in
   let step name init step = (name, fun x -> ignore (step (init x) x)) in
   [
     step "Vega.adam_step" (Vega.adam_init p) (fun st x ->
@@ -686,7 +716,7 @@ let float16_refused =
         (fun () -> step (Nx.ones Nx.float16 [| 3 |])))
 
 let test_float16_accepted () =
-  let x = Nx.ones Nx.float16 [| 3 |] and lr = Vega.lr 0.1 in
+  let x = Nx.ones Nx.float16 [| 3 |] and lr = Vega.rate 0.1 in
   let moved name w =
     less ~msg:name float_exact ~than:1.0 (Nx.item [ 0 ] (Nx.cast Nx.float64 w))
   in
@@ -704,7 +734,7 @@ let test_float16_accepted () =
    of the code before half stores rounded stochastically, which they must not
    change. *)
 let test_wide_leaves_unchanged () =
-  let lr = Vega.lr 0.05 in
+  let lr = Vega.rate 0.05 in
   let show name x =
     let xs = List.map (Printf.sprintf "%h") (Array.to_list (floats x)) in
     Printf.printf "%s %s\n" name (String.concat " " xs)
@@ -780,6 +810,8 @@ let tests =
           test_tracks_a_constant_gradient;
         test "bfloat16 adam tracks a noisy quadratic"
           test_tracks_a_noisy_quadratic;
+        test "bfloat16 weights decay under a scheduled decay"
+          test_decays_under_a_schedule;
       ];
     group "draws"
       [
