@@ -54,6 +54,11 @@ An item leaves when its library fixes it, or when a design decides it stays.
   skeptic: a pass of its own decides whether vega's form is a stated
   deviation or a defect.
 
+- nx's ragged suite has a flaky cover ("a text of 9 bytes"): windtrap draws
+  a random root seed each run and some seeds never reach the case. A cover
+  some seeds miss is a flaky test (AGENTS.md); found by the streaming-data
+  review, independent of that change.
+
 ## rune
 
 - Running one body eagerly on the host and compiled on a GPU means writing
@@ -69,6 +74,10 @@ An item leaves when its library fixes it, or when a design decides it stays.
   saves nothing (identical bytes with and without it), and a loop's storage
   is never reused within a trip (4 chunks hold 1.24 MB against 0.59 MB for
   the whole batch). Being decided by the remat design campaign.
+- `Nx.Rng.permute` compiles in about 37 ms per round under `Rune.jit` (about
+  2 s at 60 rounds, 9 s at 240), once per n: about 7 s once per TESSERA run.
+  Acceptable for now; the cause is in tolk (found by the streaming-data
+  review).
 - Each new pixel count or sequence length compiles again: 191 small cases
   took 100 s cold on the host (Clang, one process per kernel), and the
   port's length buckets will meet the same cost.
@@ -90,6 +99,11 @@ An item leaves when its library fixes it, or when a design decides it stays.
   scope or another consumer.
 - `Layer_norm.apply` takes `?eps`, so it must be eta-expanded to pass to
   `Rune.jit`.
+
+## sowilo
+
+- Its docs show a `Kaun.Data.prepare ~shuffle` that does not exist (found by
+  the streaming-data review).
 
 ## Repository
 
