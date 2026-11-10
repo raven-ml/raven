@@ -929,7 +929,9 @@ let draws =
           Array.iter
             (fun x ->
               if compare x lo < 0 || compare x hi >= 0 then
-                failf "%s: a draw outside its bounds" (A.Dtype.name dt))
+                let pp = A.Dtype.pp_value dt in
+                failf "%s: the draw %a outside [%a, %a)" (A.Dtype.name dt) pp x
+                  pp lo pp hi)
             xs);
       prop "bernoulli is a 53-bit draw below p"
         (Gen.triple keys wide
