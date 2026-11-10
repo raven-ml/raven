@@ -146,6 +146,12 @@ let index ~root =
     compare (String.lowercase_ascii a.name, String.lowercase_ascii a.qualified) (String.lowercase_ascii b.name, String.lowercase_ascii b.qualified)
   in
   let entries = List.sort compare_entries entries in
+  (* What a library is for, so that "dataframe join" finds talon's joins. *)
+  let topic lib =
+    match List.find_opt (fun (r : Registry.entry) -> r.name = lib) (List.concat_map snd Registry.groups) with
+    | Some r -> r.like ^ " " ^ r.about
+    | None -> ""
+  in
   let item (e : Docs.entry) =
     let lib = match e.lib with Some l -> l.name | None -> "" in
     let path, last =
@@ -156,7 +162,7 @@ let index ~root =
     sprintf
       {|<li data-n="%s" data-k="%s"><a href="%s" class="azitem"><span class="azglyph">%s</span><span class="stack" style="gap: 2px; min-width: 0"><span class="mono-ui az-name"><span class="az-path">%s</span>%s</span>%s<span class="caption">%s%s</span></span></a></li>|}
       (esc (String.lowercase_ascii e.name))
-      (esc (String.lowercase_ascii (String.concat " " [ e.qualified; e.kind; lib; e.about ])))
+      (esc (String.lowercase_ascii (String.concat " " [ e.qualified; e.kind; lib; topic lib; e.about ])))
       (esc e.url)
       (match e.lib with Some l -> l.glyph | None -> {|<span class="glyph" aria-hidden="true"></span>|})
       (esc path) (esc last)

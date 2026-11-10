@@ -256,7 +256,7 @@ let render_index ~root ~exists p =
     summary = sprintf "The libraries and modules of %s." p.pkg;
     crumbs = [ ("api", None) ];
     body =
-      sprintf {|<ul class="rows apirows" aria-label="Modules"><li class="apirow apihead" aria-hidden="true"><span class="caption">library</span><span class="caption">module</span><span></span></li>%s</ul>|}
+      sprintf {|<ul class="rows apirows" aria-label="Modules"><li class="apirow apihead" aria-hidden="true"><span class="caption">library</span><span class="caption">module</span><span class="caption">about</span></li>%s</ul>|}
         (concat_map row (List.concat_map (fun (l, ms) -> List.map (fun m -> (l, m)) ms) libraries));
     contents = [];
   }

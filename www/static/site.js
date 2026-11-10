@@ -65,8 +65,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // The index, A to Z: the query filters it. Matches show ranked, best
-  // first: a name that is the query, then one that starts with it, then
-  // one that contains it, then any entry that mentions it.
+  // first: entries that mention every word of the query before those that
+  // mention only some, and among them a name that is a word, then one that
+  // starts with it, then one that contains it, then any entry that
+  // mentions it.
   const index = document.querySelector('[data-index]');
   const field = document.getElementById('sq');
   if (index && field) {
@@ -75,12 +77,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const none = document.getElementById('az-none');
     const items = [...index.querySelectorAll('li[data-k]')].map((li) => ({ li, n: li.dataset.n, k: li.dataset.k }));
     const score = (it, words) => {
-      let s = 0;
+      let s = 0, missed = 0;
       for (const w of words) {
-        if (!it.k.includes(w)) return -1;
+        if (!it.k.includes(w)) { missed++; continue; }
         s += it.n === w ? 0 : it.n.startsWith(w) ? 1 : it.n.includes(w) ? 2 : 3;
       }
-      return s;
+      return missed === words.length ? -1 : missed * 4 * words.length + s;
     };
     const run = () => {
       const q = field.value.trim().toLowerCase();

@@ -24,7 +24,8 @@ let late_by_carrier () =
     |> filter Expr.(delay > int 15)
     |> aggregate ~by:[ "carrier" ]
          Expr.[ "mean_delay" := mean delay; "flights" := rows ]
-    |> join ~on:(Join.keys [ "carrier" ]) ~each_left:One (of_source carriers)
+    |> join ~on:(Join.keys [ "carrier" ]) ~each_left:One
+         (of_source carriers)
     |> sort [ Order.desc "mean_delay" ]
     |> run)
 ```

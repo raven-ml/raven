@@ -198,7 +198,9 @@ let ptabs l ~at =
 
 (* A page of the docs: [main] between the sidebar and the rail, in the
    head, header and footer of [layout]. *)
-let frame ~layout ~pages ~name ~lib ~url ~title ~description ~crumbs ~main ~rail =
+(* [toc] is also offered on phones, where the rail is hidden, in a menu
+   under the docs menu. *)
+let frame ~layout ~pages ~name ~lib ~url ~title ~description ~crumbs ~main ~toc ~rail =
   let html =
     sprintf
       {|<div class="docs">
@@ -206,14 +208,16 @@ let frame ~layout ~pages ~name ~lib ~url ~title ~description ~crumbs ~main ~rail
 <main id="content" class="article prose md">
 %s
 <details class="docmenu"><summary>docs menu</summary>%s</details>
-%s
+%s%s
 </main>
 <aside class="rail" aria-label="On this page">%s</aside>
 </div>|}
       (sidebar ~aria:"Documentation" ~pages ~name ~lib ~url)
       crumbs
       (sidebar ~aria:"Documentation, menu" ~pages ~name ~lib ~url)
-      main rail
+      (match toc with "" -> "" | toc -> sprintf {|<details class="docmenu pagemenu"><summary>on this page</summary>%s</details>
+|} toc)
+      main (toc ^ rail)
   in
   Page.with_main layout ~title:(title ^ " — raven") ~description (`Around html)
 
@@ -295,7 +299,7 @@ let build ~root ~layout ~pages env =
     ( p,
       frame ~layout ~pages ~name ~lib ~url:p.url ~title ~description:md.summary ~crumbs
         ~main:(String.concat "\n" [ header; md.body ^ extra; pager p; editline ])
-        ~rail:(toc contents ^ rail_extra),
+        ~toc:(toc contents) ~rail:rail_extra,
       md )
   in
   List.map render pages
@@ -320,7 +324,7 @@ let build_api ~root ~layout ~pages =
               ~crumbs:(crumbs ((l.name, Some (sprintf "/docs/%s/" l.name)) :: r.crumbs))
               ~main:(header ^ sprintf {|
 <div class="api">%s</div>|} r.body)
-              ~rail:(toc r.contents) ))
+              ~toc:(toc r.contents) ~rail:"" ))
         (Api.render root ~shown:(List.map (fun l -> l.name) libs) l.name))
     libs
 

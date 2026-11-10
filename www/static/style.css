@@ -214,6 +214,8 @@ a.card:hover .h3,a.card:hover .h4{text-decoration:underline;text-decoration-thic
   .docmenu{display:block;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--surface)}
   .docmenu summary{min-height:44px;display:flex;align-items:center;padding:0 16px;font-family:var(--mono);font-size:14px;color:var(--text-1);cursor:pointer}
   .docmenu .sidebar{position:static;padding:4px 16px 16px}
+  .pagemenu .toc{margin:4px 16px 16px;max-height:60vh;overflow-y:auto}
+  .pagemenu .toc > .label{display:none}
   .cells > *{padding:24px}
 }
 @media (max-width:600px){
@@ -251,8 +253,8 @@ p{margin:0}
 .hero-split{display:flex;flex-wrap:wrap;gap:48px 56px;align-items:center;padding-top:clamp(32px,4vw,56px);padding-bottom:clamp(40px,4.5vw,64px)}
 /* Without JS the code panels stack, taller than the screen: the text stays at the top beside them. */
 html:not(.js) .hero-split{align-items:flex-start}
-.hero-text{display:flex;flex-direction:column;flex:1.1 1 500px;min-width:0;gap:24px}
-.hero-text .display{font-size:clamp(40px,4.3vw,60px)}
+.hero-text{display:flex;flex-direction:column;flex:1 1 440px;min-width:0;gap:24px}
+.hero-text .display{font-size:clamp(40px,3.7vw,52px)}
 .install-row{display:flex;flex-wrap:wrap;align-items:center;gap:12px 24px}
 .install{display:flex;align-items:center;gap:4px;min-height:48px;padding:0 6px 0 18px;background:var(--surface);border:1px solid var(--line-3);border-radius:var(--r-sm);font-family:var(--mono);font-size:15px}
 .install .dim{margin-right:8px}
@@ -262,7 +264,7 @@ html:not(.js) .hero-split{align-items:flex-start}
 
 /* code tabs: a card with the tab list on top and a caption below. Without
    JS, each panel shows under its own heading. */
-.tabs{flex:1 1 480px;min-width:0;background:var(--surface);border:1px solid var(--line-2);border-radius:var(--r-md);overflow:hidden}
+.tabs{flex:1.3 1 480px;min-width:0;background:var(--surface);border:1px solid var(--line-2);border-radius:var(--r-md);overflow:hidden}
 [role=tablist]{display:flex;overflow-x:auto;border-bottom:1px solid var(--line-2);padding:0 8px}
 [role=tab]{display:flex;align-items:center;gap:7px;min-height:46px;padding:0 10px;background:none;border:0;color:var(--dim);font-family:var(--mono);font-size:14px;cursor:pointer;white-space:nowrap}
 [role=tab][aria-selected=true]{box-shadow:inset 0 -2px 0 var(--text-1);color:var(--text-0)}
@@ -271,10 +273,10 @@ html:not(.js) .hero-split{align-items:flex-start}
 .panel + .panel{border-top:1px solid var(--line-2)}
 .js .panel + .panel{border-top:0}
 .panel-h{display:flex;align-items:center;gap:8px;min-height:46px;margin:0;padding:0 22px;border-bottom:1px solid var(--line-2);font-family:var(--mono);font-size:14px;font-weight:400;color:var(--text-0)}
-.panel-code{padding:24px 28px;max-height:380px;overflow:auto;font-size:13.5px;line-height:1.7;color:var(--text-2)}
+.panel-code{padding:22px 20px;max-height:380px;overflow:auto;font-size:12.5px;line-height:1.7;color:var(--text-2)}
 .js .panel-code{min-height:280px}
 .panel-code:focus-visible{outline-offset:-2px}
-.panel-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 28px;border-top:1px solid var(--line-1)}
+.panel-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 20px;border-top:1px solid var(--line-1)}
 .panel-foot a{color:var(--text-3);white-space:nowrap}
 .js .panel.off{display:none}
 
