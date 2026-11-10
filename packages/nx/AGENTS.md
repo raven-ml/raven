@@ -11,9 +11,12 @@ raven exchanges `Nx.t` values and `Nx.Ptree` structures.
   and arrays over rig buffers, with the door of `nx_array.h` through which
   C kernels claim arrays. `nx.kernel` holds `Nx_kernel.S`, the contract a
   kernel library implements, its programs (`Prog`) and `nx_kinds.h`.
-- `nx.cpu` is the only kernel library. It computes on memory the host
-  addresses. There is no eager GPU kernel library: a GPU set computes
-  under `Rune.jit`.
+- `nx.cpu` computes on memory the host addresses and `nx.cuda` on NVIDIA
+  GPUs of sm_89. Neither kernel library uses the other's code. Other GPUs
+  have no eager kernel library: their sets compute under `Rune.jit`.
+- `nx.cuda`'s device code is compiled into committed sm_89 cubins:
+  regenerate them with `uv run packages/nx/lib/cuda/kernels/gen.py`, check
+  them with `--check`.
 - `nx.quant`, `nx.ragged` and `nx.wide` build on `Nx` and `nx.array`
   alone, `Nx.Prim` included, with no C and no kernels. `nx.io` reads files
   into host values and writes values of any set.

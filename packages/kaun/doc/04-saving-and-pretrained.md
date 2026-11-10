@@ -159,7 +159,7 @@ Each name is written at the field it fills. A rename is a different string at th
 
 ## Placing weights on a device
 
-A loaded archive holds host values. `Nx.place p x` is `x` at the placement `p` of a device set, a value with the same elements; the source is unchanged. A set is minted from rig devices with `Nx.devices`, as `module Gpu = (val Nx.devices [ gpu ])` for the GPU `Rig.open_ (Rig_metal.gpu 0)` opens, and its brand types every value placed there, so a model on the GPU cannot be mixed with host values by mistake. A GPU set computes under `Rune.jit`: prefill, decode and any other compiled function over the placed model read its arrays in place and share one copy. An importer places each leaf as it builds it:
+A loaded archive holds host values. `Nx.place p x` is `x` at the placement `p` of a device set, a value with the same elements; the source is unchanged. A set is minted from rig devices with `Nx.devices`, as `module Gpu = (val Nx.devices [ gpu ])` for the GPU `Rig.open_ (Rig_metal.gpu 0)` opens, and its brand types every value placed there, so a model on the GPU cannot be mixed with host values by mistake. A GPU set computes under `Rune.jit`: prefill, decode and any other compiled function over the placed model read its arrays in place and share one copy. A set of NVIDIA GPUs of sm_89 minted with `~kernels:(module Nx_cuda)` also computes outside a compiled function. An importer places each leaf as it builds it:
 
 ```ocaml
 let mlp_of_file at dt weights =
@@ -180,7 +180,7 @@ let mlp_of_file at dt weights =
   }
 ```
 
-Each leaf is read, cast if asked, transposed and placed before the next is touched, so the host holds at most one leaf's cast at a time and the model ends up as one copy, on the device. Placing on the GPU set is `mlp_of_file Gpu.on dt weights`, and keeping it on the host `mlp_of_file Nx.Host.on dt weights`. The examples' importers take the placement as a function of each leaf's role (a column or row projection, or experts) and of the axis that role's cut runs along in the leaf, so a placement that splits a model over several devices can cut each weight where it belongs. One device is `fun _ ~axis:_ -> p`. Their cache builders take the same function, with a `Kv_heads` role for the pools. Outside a compiled function, a GPU set without kernels computes nothing, so transpose and cast each leaf on the host and place its final form.
+Each leaf is read, cast if asked, transposed and placed before the next is touched, so the host holds at most one leaf's cast at a time and the model ends up as one copy, on the device. Placing on the GPU set is `mlp_of_file Gpu.on dt weights`, and keeping it on the host `mlp_of_file Nx.Host.on dt weights`. The examples' importers take the placement as a function of each leaf's role (a column or row projection, or experts) and of the axis that role's cut runs along in the leaf, so a placement that splits a model over several devices can cut each weight where it belongs. One device is `fun _ ~axis:_ -> p`. Their cache builders take the same function, with a `Kv_heads` role for the pools. Outside a compiled function, a GPU set without kernels computes nothing, so transpose and cast each leaf on the host and place its final form, or mint the set with kernels where its GPUs have them.
 
 ## Fetching from the Hub: kaun.hf
 

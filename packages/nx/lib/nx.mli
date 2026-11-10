@@ -322,6 +322,8 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     brand no other set has, computed eagerly by [kernels]. Without [kernels], a
     set whose every device runs on the host ({!Rig.runs_on_host}) is computed by
     nx.cpu, and any other set by none, as a GPU set is outside a compiler.
+    [~kernels:(module Nx_cuda)], from the library [nx.cuda], computes a set
+    of NVIDIA GPUs of [sm_89].
     On a set without kernels, a creation ({!section-creation}), a value whose
     elements come from numbers, is made on the host and placed at the
     placement the call names as {!place} places it. Every operation other
