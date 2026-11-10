@@ -113,6 +113,31 @@ An item leaves when its library fixes it, or when a design decides it stays.
 
 ## tolk
 
+- Compiling a distillation step's gradient for CUDA raises
+  `Invalid_argument "a AxisType.UPCAST axis comes from a AxisType.GLOBAL,
+  AxisType.LOCAL, AxisType.WEAK axis, not a AxisType.UPCAST one"` in
+  `Heuristic.block` (`codegen/opt/heuristic.ml:970`, from
+  `Postrange.apply_opts`; the 8-by-8 blocking of d35db2e8d0), wherever the
+  step takes the dense attention path (dropout above 0): in float32 at
+  `gen/grads.py init`'s student (d 64), in bfloat16 at nano's 4096 pixels
+  and medium's 2048 a group. The same student in bfloat16 compiles, and
+  so do nano's and medium's steps on the fused path (dropout 0 at the
+  layers). Reproduce:
+  `main.exe validate --training DIR --tile DIR --device cuda`. It blocks
+  training with v2's dropout on CUDA. Found by the M4 distillation track.
+- A distillation step end to end (medium, 4096 pixels in 4 groups, bf16,
+  fused attention) takes 8.04 s on fudge's RTX 5000 against PyTorch's
+  1.744 s (m0-baselines.md §2.3, which drops out at 0.1); unprofiled. The
+  bf16 training products (3.6-17× PyTorch's) and the missing attention
+  derivative kernels (rune) are the suspects. Found by the M4 distillation
+  track.
+- Compiled on the host (`cpu-jit`), that float32 gradient lies further from
+  float64 than PyTorch's float32 does: the queries' and keys' weights at a
+  relative 1.9-2.3e-6 against PyTorch's 5.0-6.0e-7 (up to 2.2 times the
+  validation's bound of twice PyTorch's), the heads' at 4.6-6.0e-7 against
+  2.3-2.4e-7; eager nx.cpu meets the bound (0.95 of it at worst). The cause
+  (the compiled exp, the sums' order) is unexamined.
+
 - On fudge's RTX 5000, float32 products whose output is 440 wide, the
   medium student's width, run at 4.6-6.6 TFLOP/s (bench op rows
   `medium/{embed2,out_proj,ffn2}`), while medium's `ffn1`, 440 wide on its
@@ -158,7 +183,8 @@ An item leaves when its library fixes it, or when a design decides it stays.
 - `Kaun.Linear.apply` rounds twice at bfloat16: the product, then the bias
   added to it, where a product rounding its sum plus bias once is what
   PyTorch's autocast linear computes (`Nx.contract ~init` can). The fix
-  changes float32 bits slightly too. Found by the M4 training design.
+  changes float32 bits slightly too. tessera rounds once in its private
+  `Product` meanwhile, its one copy. Found by the M4 training design.
 
 - No GRU in kaun. TESSERA's v1.0 and v1.1 checkpoints hold tessera-util's
   `CustomGRUCell` (Chung et al.'s form, reset gate applied before the
