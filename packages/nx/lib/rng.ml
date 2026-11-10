@@ -782,12 +782,27 @@ let randint_prog dt ~low =
       let lo, hi = if low then (wide 0, wide 1) else (u64 0L, wide 0) in
       E.cast dt E.(lo + below_at ~key j (hi - lo)))
 
+(* Whether [high] is above [low], or above 0 for the bounds of a draw from
+   0: a program per dtype, as a sampler's is. *)
+let above_programs = programs ()
+let above_zero_programs = programs ()
+
+let above dt ~low =
+  let table = if low then above_programs else above_zero_programs in
+  cached table dt (fun () ->
+      let ins = if low then [| D.Any dt; D.Any dt |] else [| D.Any dt |] in
+      let lo = if low then E.input 0 dt else E.const dt (D.zero dt) in
+      let hi = E.input (if low then 1 else 0) dt in
+      P.of_exprs ~ins:(Iarray.of_array ins) [| E.any E.(lo < hi) |])
+
 (* Raises, at the check, naming the first element of the bounds' broadcast
    shape [s] where [high] is not above [low], [0] where [low] is [None]. *)
 let require_range (type v r) ~by s (low : (v, r, 'd) Value.t option)
     (high : (v, r, 'd) Value.t) =
   let dt = Prim.dtype high in
-  let show = Format.asprintf "%a" (D.pp_value dt) in
+  (* Applied to its format alone, [asprintf] makes its buffer at once: the
+     printer makes it only for a failure. *)
+  let show v = Format.asprintf "%a" (D.pp_value dt) v in
   let high = Eval.broadcast ~by s high in
   let fail i lo hi =
     Invalid_argument
@@ -796,15 +811,13 @@ let require_range (type v r) ~by s (low : (v, r, 'd) Value.t option)
   in
   match low with
   | None ->
-      let above = E.(const dt (D.zero dt) < input 0 dt) in
-      let prog = P.of_exprs ~ins:[| D.Any dt |] [| E.any above |] in
+      let prog = above dt ~low:false in
       let ok = map dispatched ~by s prog D.Bool [| Value.Any high |] in
       let fail i (hi, ()) = fail i (show (D.zero dt)) hi in
       Eval.eval ~by (Value.Check { ok; data = [ high ]; fail })
   | Some low ->
       let low = Eval.broadcast ~by s low in
-      let above = E.(input 0 dt < input 1 dt) in
-      let prog = P.of_exprs ~ins:[| D.Any dt; D.Any dt |] [| E.any above |] in
+      let prog = above dt ~low:true in
       let loads = [| Value.Any low; Value.Any high |] in
       let ok = map dispatched ~by s prog D.Bool loads in
       let fail i (lo, (hi, ())) = fail i (show lo) hi in
@@ -839,8 +852,8 @@ let randint ?key ?low high =
    pair's larger element is 1. Both elements of a pair read that one bit, so
    the round is an involution. [K] comes from the key's first split key and
    the bits from its second, so that no bit reads a block [K] read. There is
-   a program per round count, [n] bound in at each call. [n] is below 2^62,
-   so [K + n] fits. *)
+   a program per round count, which reads the key and [n] as operands. [n] is
+   below 2^62, so [K + n] fits. *)
 let permute_programs = Array.init 64 (fun _ -> Atomic.make None)
 
 (* [6 ⌈log2 n⌉], [⌈log2 n⌉] being the bit length of [n - 1]. *)
@@ -868,6 +881,13 @@ let permute_prog r =
       P.of_exprs ~ins:(Iarray.of_array ins)
         [| E.any (E.bitcast D.Int64 !x) |])
 
+(* The 0-d uint64 [v], whole on each device of [p]: a creation that reads
+   nothing, so that a program reads [v] as an operand. A constant bound into
+   [permute]'s program would copy its thousands of nodes at each call. *)
+let word_at ~by p v =
+  let prog = P.of_exprs ~ins:[||] [| E.any (u64 v) |] in
+  map dispatched ~by ~at:(Devices.uncut p) [||] prog D.Uint64 [||]
+
 let permute ?key ~n i =
   let by = "Nx.Rng.permute" in
   if n < 1 then invalid_argf "%s: n is %d, not at least 1" by n;
@@ -876,16 +896,21 @@ let permute ?key ~n i =
     (Printf.sprintf "[0, %d)" n)
     ~show:Int64.to_string i
     (fun x -> E.(const D.Int64 0L <= x && x < const D.Int64 (Int64.of_int n)));
-  let prog = bind (permute_prog (rounds n)) 2 (E.any (uint n)) in
-  match resolve ~by (Prim.placement i) key with
-  | Words w ->
-      let prog = bind prog 0 (E.any (u64 w)) in
-      map dispatched ~by (Prim.shape i) prog D.Int64 [| Value.Any i |]
-  | Key k ->
-      let shape = Prim.broadcast_shape ~by (batch k) (Prim.shape i) in
-      let w = Eval.broadcast ~by shape (pack dispatched ~by k) in
-      let i = Eval.broadcast ~by shape i in
-      map dispatched ~by shape prog D.Int64 [| Value.Any w; Value.Any i |]
+  let prog = permute_prog (rounds n) in
+  let at = Prim.placement i in
+  let words, batch =
+    match resolve ~by at key with
+    | Words w -> (word_at ~by at w, [||])
+    | Key k -> (pack dispatched ~by k, batch k)
+  in
+  let shape = Prim.broadcast_shape ~by batch (Prim.shape i) in
+  let n = word_at ~by at (Int64.of_int n) in
+  let loads =
+    Array.map
+      (fun (Value.Any x) -> Value.Any (Eval.broadcast ~by shape x))
+      [| Value.Any words; Value.Any i; Value.Any n |]
+  in
+  map dispatched ~by shape prog D.Int64 loads
 
 (* Rejection *)
 
