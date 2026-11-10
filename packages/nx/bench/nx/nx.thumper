@@ -27,6 +27,7 @@
 # forced: blessed order/positions-bool-1M order/positions-i64-1M-counts under load 14.3 on 14 cores
 # forced: blessed statistics/var-f32-1M statistics/std-f32-1024x1024-rows statistics/var-f32-8192x4096-rows statistics/var-bf16-8192x4096-rows statistics/var-f32-1024x1024-cols statistics/var-bf16-1M statistics/var-f64-1M-top statistics/std-f64-1M-tiny statistics/std-f32-1024x1024-rows-constant under load 37.5 on 14 cores
 # forced: blessed rng/permute-16K-of-1.4e10 under load 14.3 on 14 cores
+# pending: wall_time of io/load-tiff-1024x1024-u16-deflate-tiles, to record on a quiet machine
 
 attention/decode-f32-64x8x4096x64	alloc_words	exact	902
 attention/decode-f32-64x8x4096x64	wall_time	batch=1	n=20	1.364e-03	9.401e-04 9.802e-04 9.986e-04 9.990e-04 1.039e-03 1.198e-03 1.219e-03 1.260e-03 1.295e-03 1.346e-03 1.383e-03 1.600e-03 1.727e-03 2.126e-03 2.527e-03 3.246e-03 3.993e-03 3.993e-03 5.491e-03 1.163e-02
@@ -225,6 +226,7 @@ interp/add-1-100-fiber-beside-extent	alloc_words	exact	9900
 interp/add-1-100-under-values	alloc_words	exact	5047
 interp/traced-add-1-100	alloc_words	exact	6959
 interp/traced-add-1-100-under-inner-extent	alloc_words	exact	9412
+io/load-tiff-1024x1024-u16-deflate-tiles	alloc_words	exact	1685
 io/save-npz-1024-one-element-entries	alloc_words	exact	1014268
 move/broadcast-shapes-1K	alloc_words	exact	30726
 move/copy-1M	alloc_words	exact	86

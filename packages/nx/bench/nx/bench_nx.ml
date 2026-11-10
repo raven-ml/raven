@@ -7,7 +7,7 @@
    operation on one-element host values, its kernel called as nx calls it and
    directly, a decode step's cache update, a view, creations, an operation
    over two devices, reading a value's shape, placing, operations beside and
-   under interpretations, and an npz save.
+   under interpretations, an npz save and a TIFF load.
 
    Each row builds its inputs in its setup, in the worker that times it, so
    that a worker holds one row's inputs. *)
@@ -1783,12 +1783,31 @@ let npz () =
   ( Filename.temp_file "bench_nx" ".npz",
     Nx_io.Archive.of_list (List.init 1024 (fun i -> (string_of_int i, one))) )
 
+(* A TIFF raster of 1024 by 1024 uint16 samples in 16 tiles of 256 by 256,
+   each a zlib stream after horizontal differencing, read whole: a load's
+   tags, then each tile's decode, predictor and copy into place. *)
+let tiff () =
+  let path = Filename.temp_file "bench_nx" ".tif" in
+  let x =
+    Nx.init D.Uint16 [| 1024; 1024; 1 |] (fun i ->
+        ((i.(0) * 7) + (i.(1) * 3) + (i.(0) * i.(1) mod 17)) land 0xffff)
+  in
+  Nx_io.save_tiff ~tile:(256, 256) ~compression:Deflate path x;
+  path
+
+let load_tiff path =
+  match Nx_io.load_tiff path with
+  | [ d ] -> Nx_io.Tiff.samples d
+  | _ -> failwith "bench_nx: one IFD"
+
 let io_rows =
   Thumper.group "io"
     [
       Thumper.bench_with_setup "save-npz-1024-one-element-entries" ~setup:npz
         ~teardown:(fun (path, _) -> Sys.remove path)
         (fun (path, a) -> Nx_io.save_npz path a);
+      Thumper.bench_with_setup "load-tiff-1024x1024-u16-deflate-tiles"
+        ~setup:tiff ~teardown:Sys.remove load_tiff;
     ]
 
 let () =
