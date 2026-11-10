@@ -988,6 +988,52 @@ let test_wait_lost () =
   P.fault pd "the engine hung";
   raises_match (lost d "the engine hung") (fun () -> G.run p f)
 
+(* Footprint *)
+
+(* A load makes what {!G.footprint} counts on each device: memory of one
+   copy and of two, host memory a move names at a page, and the run's ints
+   twice, a page each where a move names them. *)
+let test_footprint () =
+  let d = Result.get_ok (Rig.memory_device "footprint") in
+  let settled () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      List.iter
+        (fun r ->
+          ignore (B.create r 0);
+          Rig.free_cache r)
+        [ d; Rig.host ]
+    done;
+    (Rig.allocated d, Rig.allocated Rig.host)
+  in
+  let case msg ~ints ~memory ~steps =
+    let t =
+      {
+        G.devices = [| Rig.arch d; Rig.arch Rig.host |];
+        ints;
+        memory;
+        images = [||];
+        inputs = [| { G.device = 0; bytes = 64 } |];
+        steps;
+      }
+    in
+    let devices = Iarray.of_list [ d; Rig.host ] in
+    let want = G.footprint t devices in
+    let d0, h0 = settled () in
+    let p = load_ok t [ d; Rig.host ] in
+    let d1, h1 = settled () in
+    ignore (Sys.opaque_identity p);
+    equal ~msg (list (pair string int))
+      (List.map (fun (r, n) -> (Rig.name r, n)) want)
+      [ (Rig.name d, d1 - d0); (Rig.name Rig.host, h1 - h0) ]
+  in
+  case "memory" ~ints:3
+    ~memory:[| alloc 0 200; alloc ~copies:G.Two 0 64; alloc 1 300 |]
+    ~steps:[||];
+  case "moved host memory and ints" ~ints:2
+    ~memory:[| alloc 1 64 |]
+    ~steps:[| move (Input 0) (all 0) 64; move (all 0) Ints 8 |]
+
 (* Refusals *)
 
 let base d =
@@ -4075,6 +4121,7 @@ let tests =
           test_init_address;
         test "an init Entry keeps its host function through queued work"
           test_init_code_kept;
+        test "a load makes what its footprint counts" test_footprint;
       ];
   ]
 

@@ -40,6 +40,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- Add `Rig_program.footprint t devices`: the bytes a load of `t` makes on
+  each device and the host, counted as `Rig.allocation` counts them,
+  without loading.
 - Add `Rig.charged ~memory d`, the device whose budget a buffer of `d`'s
   memory of that kind counts in, and `Rig.allocation d n`, the bytes it
   counts there: on the host a buffer of a line or more takes up to 112

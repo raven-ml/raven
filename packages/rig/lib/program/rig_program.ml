@@ -1669,19 +1669,26 @@ let rec names_memory m = function
       is src || is dst
   | Loop { body; _ } -> Iarray.exists (names_memory m) body
 
-(* Memory [m] of [t]: on the host and named by a move, a view of a buffer a
-   device can borrow, as the ints are. *)
+(* The bytes of the buffer made for each copy of memory [m] of [t] on its
+   device [d]: on the host and named by a move, a page's worth at least, so
+   that a device can borrow it, as the ints are. *)
+let memory_bytes (t : t) d m bytes =
+  if Rig.equal d Rig.host && Iarray.exists (names_memory m) t.steps then
+    max bytes page_bytes
+  else bytes
+
+let copies_of = function One -> 1 | Two -> 2
+
+(* Memory [m] of [t]: a view of its {!memory_bytes}. *)
 let make_memory (t : t) devices rails m = function
   | Alloc { device; kind; bytes; copies; _ } ->
-      let n = match copies with One -> 1 | Two -> 2 in
       let d = devices.(device) in
       let make () =
-        if Rig.equal d Rig.host && Iarray.exists (names_memory m) t.steps then
-          B.view (B.create ~memory:kind d (max bytes page_bytes)) ~first:0
-            ~length:bytes
-        else B.create ~memory:kind d bytes
+        let n = memory_bytes t d m bytes in
+        if n = bytes then B.create ~memory:kind d bytes
+        else B.view (B.create ~memory:kind d n) ~first:0 ~length:bytes
       in
-      Array.init n (fun _ -> make ())
+      Array.init (copies_of copies) (fun _ -> make ())
   | Rail { rail; area } ->
       [| B.of_bigarray (rail_area (rail_end rails rail) area) |]
 
@@ -1704,13 +1711,42 @@ let words b =
   if B.length b = 0 then Bigarray.(Array1.create int64 c_layout 0)
   else B.export b Bigarray.int64
 
-(* One copy of the run's ints: a view of a buffer a device can borrow where a
-   step names them. *)
-let make_ints (t : t) =
+(* The bytes of the host buffer made for each of the two copies of the run's
+   ints: a page's worth at least where a step names them, so that a device
+   can borrow it. *)
+let ints_bytes (t : t) =
   let n = 8 * t.ints in
-  if Iarray.exists names_ints t.steps then
-    B.view (B.create Rig.host (max n page_bytes)) ~first:0 ~length:n
-  else B.create Rig.host n
+  if Iarray.exists names_ints t.steps then max n page_bytes else n
+
+(* One copy of the run's ints: a view of its {!ints_bytes}. *)
+let make_ints (t : t) =
+  let n = 8 * t.ints and m = ints_bytes t in
+  if m = n then B.create Rig.host n
+  else B.view (B.create Rig.host m) ~first:0 ~length:n
+
+let footprint t devices =
+  let devices = Iarray.to_list devices in
+  let held = List.map (fun d -> (d, ref 0)) devices in
+  let held =
+    if List.exists (fun d -> Rig.equal d Rig.host) devices then held
+    else held @ [ (Rig.host, ref 0) ]
+  in
+  let add d n =
+    let total = snd (List.find (fun (d', _) -> Rig.equal d d') held) in
+    total := !total + n
+  in
+  Iarray.iteri
+    (fun m -> function
+      | Alloc { device; kind; bytes; copies; _ } ->
+          let d = List.nth devices device in
+          let n = memory_bytes t d m bytes in
+          add
+            (Rig.charged ~memory:kind d)
+            (copies_of copies * Rig.allocation d n)
+      | Rail _ -> ())
+    t.memory;
+  add Rig.host (2 * Rig.allocation Rig.host (ints_bytes t));
+  List.map (fun (d, n) -> (d, !n)) held
 
 (* The point every fresh array of points starts at, for the process: an empty
    submission's on the host, made at the first need and reached once its submit
