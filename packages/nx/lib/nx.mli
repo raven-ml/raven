@@ -4960,6 +4960,17 @@ module Rng : sig
       parameters draw [b] followed by the parameters' shape, one draw per
       key.
 
+      Keys align with the parameters' last axes. So a key per row of bounds
+      of shape [[b; 80]] has batch shape [[b; 1]]. This draws, for each of
+      [b] examples at the positions [p] ([[b]], int64), 80 indices below its
+      count in [counts] ([[b; 1]]), each row from its position's key alone:
+      {[
+      let keys = Nx.Rng.fold_in_tensor key (Nx.reshape [| b; 1 |] p) in
+      Nx.Rng.randint ~key:keys (Nx.broadcast_to [| b; 80 |] counts)
+      ]}
+      Keys of shape [[b]] would pair with the last axis instead: they raise
+      unless [b] is 80, and then give a key per column.
+
       A donated key reaching a sampler is lent ({!Nx.section-moving}), and
       lives on.
 
