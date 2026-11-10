@@ -929,9 +929,7 @@ type t = {
   launches : (Rig.t * string list) array;
       (* for each element of the frame's [step_points], its submission's
          device and the kernels it launches *)
-  unreached : Rig.Point.t option;
-      (* the point every element of [step_points] holds after a run that does
-         not reach its step, [None] for a program of no [Submit] step *)
+  looped : bool; (* whether a step of the program is a [Loop] *)
 }
 
 (* The program of the calls [entries] that [b] links. *)
@@ -1048,6 +1046,10 @@ let per_run_storage ~named bound linear =
   ( Ops.substitute ~calls:Skip ~pass:Once linear (List.map param made),
     Array.of_list (List.map snd made) )
 
+let is_loop : Rig_program.step -> bool = function
+  | Loop _ -> true
+  | Submit _ | Move _ -> false
+
 (* For each [Submit] step that [b] assembled, in the order of a frame's
    [step_points], its device and the names of the kernels it launches. *)
 let launches (b : builder) =
@@ -1110,7 +1112,6 @@ let link_with ~separate ~devices ?(bound = []) ?(storage = Linked) linear =
       let inputs = Array.of_list (List.map fst (Dynarray.to_list b.inputs)) in
       let n = Hashtbl.length b.cells in
       let idle = Rig.Buffer.of_string "" in
-      let step_points = Rig_program.step_points loaded in
       {
         lock = Mutex.create ();
         loaded;
@@ -1124,7 +1125,7 @@ let link_with ~separate ~devices ?(bound = []) ?(storage = Linked) linear =
           {
             inputs = Array.make (Array.length inputs) idle;
             ints = Array.make (Dynarray.length b.words) 0;
-            step_points;
+            step_points = Rig_program.step_points loaded;
           };
         idle;
         width;
@@ -1132,9 +1133,7 @@ let link_with ~separate ~devices ?(bound = []) ?(storage = Linked) linear =
         calls;
         kernels = List.rev b.kernels;
         launches = launches b;
-        unreached =
-          (if Array.length step_points = 0 then None
-           else Some step_points.(0));
+        looped = List.exists is_loop b.steps;
       }
 
 let link ~devices ?bound ?storage linear =
@@ -1439,19 +1438,22 @@ let scrub t =
     (fun d -> Option.map (device_scrub d) (cache_bytes d))
     (timed_devices t)
 
-(* Whether a run reached the step whose point it reported as [p]. *)
-let reached t p = match t.unreached with Some u -> p <> u | None -> true
-
-(* The steps of [points], a run's [step_points], that the run reached and that
-   launch a kernel, each as its index and its point. *)
+(* The steps of [points], a run's [step_points], that launch a kernel, each
+   as its index and its point. With no loop, a run reaches every step. *)
 let kernel_steps t points =
   let steps = ref [] in
   Array.iteri
-    (fun i p ->
-      if snd t.launches.(i) <> [] && reached t p then
-        steps := (i, p) :: !steps)
+    (fun i p -> if snd t.launches.(i) <> [] then steps := (i, p) :: !steps)
     points;
   !steps
+
+(* Refuses a schedule with a loop: a run reports the point of a looped step's
+   last submit alone, so a sum over the reported points would count one
+   trip. *)
+let check_unlooped t =
+  if t.looped then
+    fail "Tolk_engine.time"
+      "a schedule with a loop: a run reports one trip of each looped step"
 
 (* Refuses a schedule with a kernel on another machine's device: its work is
    timed there, and no time of it comes back ({!Rig.Profile.Work}). *)
@@ -1483,6 +1485,7 @@ let untimed t i =
    run's until it is copied: another domain's work of the same kernels has
    other points. *)
 let time ?(vars = []) ?(scrub = []) t slots =
+  check_unlooped t;
   check_local t;
   check_slots t slots;
   List.iter

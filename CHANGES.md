@@ -1178,6 +1178,8 @@ word comes from its lock and from samples the dashboard saw arrive.
   on another machine's device, and `Failure` where a device recorded no work
   for a kernel's submission. It summed what it found, so `Rune.jit ~beam` on
   another machine's host searched on times of zero; that search now raises.
+- `Tolk_engine.time` raises `Invalid_argument` for a schedule with a loop,
+  where it returned the time of one trip.
 - `Ops.key`, `Graph` and the program, search and schedule cache keys tell every
   argument and target apart (`Helpers.Target.key`): graphs differing only in a
   NaN's bits, an `Argument` stage or a target's fields could share a schedule.

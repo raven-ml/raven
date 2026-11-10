@@ -6695,29 +6695,15 @@ let counts_grouped_kernels () =
   let ns = List.fold_left (fun ns (_, d) -> ns + d) 0 works in
   equal ~msg:"the time" (float 1e-12) (Float.of_int ns *. 1e-9) t
 
-(* A loop of [limit] trips, at most one, around a kernel on the host: a time
-   is the duration of the run's host work that runs a kernel. A loop of no
-   trip leaves its kernel's step unreached, which adds nothing and raises
-   nothing. *)
-let times_a_loop limit () =
-  let s, _, _ = flag_loop "CPU" (limit, 1) in
-  let before = Rig.submitted host in
-  let t, _, events = profiled (fun () -> Engine.time s [||]) in
-  let after = Rig.submitted host in
-  let ns =
-    List.fold_left
-      (fun ns -> function
-        | Rig.Profile.Work w
-          when Rig.equal w.device host
-               && Rig.Point.value w.point > before
-               && Rig.Point.value w.point <= after
-               && not (List.mem w.name [ "copies"; "fills"; "words" ]) ->
-            ns + (w.stop - w.start)
-        | _ -> ns)
-      0 events
-  in
-  equal ~msg:"the time" (float 1e-12) (Float.of_int ns *. 1e-9) t;
-  if limit = 0 then equal ~msg:"no trip" float_exact 0. t
+(* A run reports one trip of a loop's steps, so a time refuses a schedule
+   with a loop, before its run, whatever its trips: none, one or more. *)
+let refuses_a_loop limit () =
+  let s, c, _ = flag_loop "CPU" (limit, 2) in
+  raises_match
+    (Exn.invalid_arg ~sub:"Tolk_engine.time: a schedule with a loop")
+    (fun () -> Engine.time s [||]);
+  equal ~msg:"the carry, untouched" values (floats [| 0. |])
+    (Run.values Float32 c)
 
 let positive name =
   let s, slots = timed name in
@@ -6872,9 +6858,8 @@ let timing =
       group "a time is positive, under a second" [ on positive ];
       test "a time counts a submission of several kernels"
         counts_grouped_kernels;
-      test "a time of a loop of no trip is 0" (times_a_loop 0);
-      test "a time of a loop of one trip is its kernel's work"
-        (times_a_loop 1);
+      cases "a time refuses a loop of any trips" ~id:string_of_int [ 0; 1; 2 ]
+        (fun limit -> refuses_a_loop limit ());
       group "a time under a profile leaves the profile taken"
         [ on leaves_the_profile ];
       group "each time runs its program once" [ on runs_once ];
