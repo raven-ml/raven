@@ -1279,7 +1279,8 @@ let test_draws () =
     (Nx.to_array (Nx.get [ 2 ] y));
   let a = Rune.axis () and k = Nx.Rng.key 7 in
   let own () =
-    Nx.Rng.fold_in_tensor k (Rune.lane_index a (Nx.Rng.to_tensor k))
+    Nx.Rng.fold_in_tensor k
+      (Nx.cast Nx.int64 (Rune.lane_index a (Nx.Rng.to_tensor k)))
   in
   let y =
     Rune.vmap' ~axis:a

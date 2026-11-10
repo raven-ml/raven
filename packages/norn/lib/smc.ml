@@ -163,7 +163,7 @@ let slice_moves context u ~prior ~likelihood keys g ~m moves tempered x0 pl0 ll0
     let ks =
       Rune.vmap
         P.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
-        (fun k -> Nx.Rng.fold_in_tensor k j)
+        (fun k -> Nx.Rng.fold_in_tensor k (Nx.cast Nx.int64 j))
         keys
     in
     let x, lp, aux, _ =
@@ -215,7 +215,7 @@ let hamiltonian_moves context u ~prior ~likelihood keys g moves tempered x0
   let move ((x, (lp, grad)), chees) j =
     let t =
       Hamiltonian.transition context u density
-        (Nx.Rng.fold_in_tensor keys j)
+        (Nx.Rng.fold_in_tensor keys (Nx.cast Nx.int64 j))
         g ~step_size ~length x lp grad
     in
     let chees =
@@ -372,7 +372,9 @@ let run u ?move ?resampled ~budget ~prior ~likelihood k start =
       ~until:(fun s ->
         Nx.logical_or (finished s)
           (Nx.greater_equal_s s.steps (Int32.of_int budget)))
-      (fun s -> step u ~prior ~likelihood (Nx.Rng.fold_in_tensor k s.steps) s)
+      (fun s ->
+        let k = Nx.Rng.fold_in_tensor k (Nx.cast Nx.int64 s.steps) in
+        step u ~prior ~likelihood k s)
       s
   in
   evidence s

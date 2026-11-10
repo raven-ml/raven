@@ -2472,7 +2472,7 @@ let rng =
           shown_key (Nx.Rng.split_batch ~n:3 (key d 0)));
       c "Rng.fold_in" 1 (fun d -> shown_key (Nx.Rng.fold_in (key d 0) 5));
       c "Rng.fold_in_tensor" 2 (fun d ->
-          shown_key (Nx.Rng.fold_in_tensor (key d 0) (d 1 (int32s [| 1; 2 |]))));
+          shown_key (Nx.Rng.fold_in_tensor (key d 0) (d 1 (ints [| 1; 2 |]))));
       c "Rng.place" 1 (fun d -> shown_key (Nx.Rng.place Nx.Host.on (key d 0)));
       c "Rng.bits" 1 (fun d -> show (Nx.Rng.bits ~key:(key d 0) [| 3 |]));
       c "Rng.uniform" 1 (fun d ->

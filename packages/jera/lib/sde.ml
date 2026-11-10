@@ -78,13 +78,13 @@ module Brownian = struct
     let dtype = Nx.dtype w.t0 in
     let span = Nx.sub w.t1 w.t0 in
     let at = Nx.beside w.t0 in
-    let z1, z2 = draws w (Nx.scalar_at at Nx.int32 0l) in
+    let z1, z2 = draws w (Nx.scalar_at at Nx.int64 0L) in
     let a = ref w.t0 and h = ref span in
     let wa = ref (Nx.zeros_at at dtype w.shape)
     and ia = ref (Nx.zeros_at at dtype w.shape) in
     let inc = ref (Nx.mul z1 (Nx.sqrt span)) in
     let area = ref (Nx.mul z2 (Nx.sqrt (Nx.div_s span 12.))) in
-    let id = ref (Nx.scalar_at at Nx.int32 1l) in
+    let id = ref (Nx.scalar_at at Nx.int64 1L) in
     for _ = 1 to w.depth do
       let z, n = draws w !id in
       let half = Nx.div_s !h 2. in
@@ -105,7 +105,7 @@ module Brownian = struct
       wa := pick (Nx.add !wa w1) !wa;
       inc := pick w2 w1;
       area := pick h2 h1;
-      id := Nx.add (Nx.mul_s !id 2l) (Nx.cast Nx.int32 right);
+      id := Nx.add (Nx.mul_s !id 2L) (Nx.cast Nx.int64 right);
       h := half
     done;
     let x = Nx.div (Nx.sub tau !a) !h in

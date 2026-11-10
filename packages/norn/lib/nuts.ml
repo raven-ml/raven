@@ -81,10 +81,11 @@ let uniforms (type f) dt keys j ids : (float, f, 'd) Nx.t =
   Rune.vmap
     P.(Nx.Rng.ptree @-> returns tensor)
     (fun k ->
-      let k = Nx.Rng.fold_in_tensor (Nx.Rng.fold_in k 1) j in
+      let k = Nx.Rng.fold_in_tensor (Nx.Rng.fold_in k 1) (Nx.cast Nx.int64 j) in
       Rune.vmap
         P.(tensor @-> returns tensor)
-        (fun id -> Noise.uniform (Nx.Rng.fold_in_tensor k id) dt [||])
+        (fun id ->
+          Noise.uniform (Nx.Rng.fold_in_tensor k (Nx.cast Nx.int64 id)) dt [||])
         ids)
     keys
 
@@ -668,7 +669,8 @@ let sample u lp k ~draws (s : (_, _, 'd) state) =
     Rune.scan sp P.tensor
       P.(pair u st)
       (fun (s : (_, _, 'd) state) _ ->
-        let s = step u lp (Nx.Rng.fold_in_tensor k s.draw) s in
+        let k = Nx.Rng.fold_in_tensor k (Nx.cast Nx.int64 s.draw) in
+        let s = step u lp k s in
         (s, (s.position, s.stats)))
       ~init:s
       (Nx.zeros_at (Nx.beside s.lp) Nx.int32 [| draws |])
@@ -727,7 +729,9 @@ let warmup u lp k ~steps (s : (_, _, 'd) state) =
     let longest = List.fold_left (fun m (n, _) -> max m n) 0 schedule in
     (* A low-rank fit reads the window's draws; a diagonal one their sums. *)
     let buffer = if rank = 0 then 0 else longest in
-    let key (st : (_, _, 'd) state) = Nx.Rng.fold_in_tensor k st.draw in
+    let key (st : (_, _, 'd) state) =
+      Nx.Rng.fold_in_tensor k (Nx.cast Nx.int64 st.draw)
+    in
     let s0 = { s with step_size = init_step_size u lp (key s) s } in
     let a0 =
       {

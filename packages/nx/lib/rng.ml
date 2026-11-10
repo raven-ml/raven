@@ -412,16 +412,16 @@ let fold_in_by ev ~by (k : 'd key) data : 'd key =
 
 let fold_in k data = fold_in_by dispatched ~by:"Nx.Rng.fold_in" k data
 
-(* [fold_in] of an index held in data: [i]'s words [(i asr 32, i)] as the
-   sign-extended [i] gives them. A batch of indices gives a batch of keys. *)
-let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
+(* [fold_in] of an index held in data: [i]'s words [(i asr 32, i)]. A batch
+   of indices gives a batch of keys. *)
+let fold_in_tensor (k : 'd key) (i : (int64, D.int64_elt, 'd) Value.t) : 'd key
     =
   let by = "Nx.Rng.fold_in_tensor" in
   let shape = Prim.broadcast_shape ~by (batch k) (Prim.shape i) in
   if Option.is_none (Eval.owner i) then bare_key ~by k;
   let w = pack dispatched ~by k in
-  let ins : D.any iarray = [| D.Any D.Uint64; D.Any D.Int32 |] in
-  let v = E.(bitcast D.Uint64 (cast D.Int64 (input 1 D.Int32))) in
+  let ins : D.any iarray = [| D.Any D.Uint64; D.Any D.Int64 |] in
+  let v = E.(bitcast D.Uint64 (input 1 D.Int64)) in
   let out = E.threefry (counter v) (E.input 0 D.Uint64) in
   let loads =
     [|

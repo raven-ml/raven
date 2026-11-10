@@ -4916,10 +4916,11 @@ module Rng : sig
   (** [fold_in k i] is the key of [k] indexed by [i]: distinct [i] give
       independent keys. A batch of keys gives a batch. *)
 
-  val fold_in_tensor : 'd key -> 'd int32_t -> 'd key
+  val fold_in_tensor : 'd key -> 'd int64_t -> 'd key
   (** [fold_in_tensor k i] is [fold_in k] of the indices held in [i], for an
-      index known only as data. Its shape is [k]'s batch broadcast with [i]'s,
-      then [2]; where [i] holds [n] it is [fold_in k n]. It lies at the union
+      index known only as data, such as a count of examples past [2{^31}].
+      Its shape is [k]'s batch broadcast with [i]'s, then [2]; where [i] holds
+      [n] it is [fold_in k n]. It lies at the union
       of [k]'s and [i]'s placements, each key whole on its device
       ({!Nx.section-routing}).
 

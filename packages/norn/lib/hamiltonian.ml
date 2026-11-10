@@ -68,7 +68,8 @@ let search (type f) context u lp_z ~reduce keys start (eps : (float, f, 'd) Nx.t
     let keys =
       Rune.vmap
         P.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
-        (fun k -> Nx.Rng.fold_in_tensor (Nx.Rng.fold_in k 2) i)
+        (fun k ->
+          Nx.Rng.fold_in_tensor (Nx.Rng.fold_in k 2) (Nx.cast Nx.int64 i))
         keys
     in
     let p = momentum u keys start.z in

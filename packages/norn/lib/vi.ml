@@ -149,7 +149,8 @@ let ascend u lp like ~draws ~steps eta keys p =
   let finite x = Nx.all ~axes:[ 1 ] (Nx.reshape [| c; -1 |] (Nx.isfinite x)) in
   let step (p, s) i =
     let p = unpack p and s = unpack s in
-    let z = noise dt (Nx.Rng.fold_in_tensor keys i) ~m:draws ~r ~d in
+    let keys_i = Nx.Rng.fold_in_tensor keys (Nx.cast Nx.int64 i) in
+    let z = noise dt keys_i ~m:draws ~r ~d in
     let elbo, g = bounds u lp like p z in
     let first = Nx.equal_s i 0l in
     let n = Nx.add_s (Nx.cast dt i) 1. in

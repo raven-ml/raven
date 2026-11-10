@@ -29,7 +29,7 @@ val split_batch : n:int -> 'd key -> 'd key
 val fold_in : 'd key -> int -> 'd key
 
 val fold_in_tensor :
-  'd key -> (int32, Nx_array.Dtype.int32_elt, 'd) Value.t -> 'd key
+  'd key -> (int64, Nx_array.Dtype.int64_elt, 'd) Value.t -> 'd key
 
 val bits :
   ?key:Devices.host key ->

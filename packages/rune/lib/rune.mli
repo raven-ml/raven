@@ -769,8 +769,8 @@ val check_transpose :
     are stacked along a new axis 0. A value it captures is the same in every
     lane, and so is a draw without [~key]. Lanes draw apart from a key that
     differs per lane: a row of [Nx.Rng.split_batch], or
-    [Nx.Rng.fold_in_tensor k (lane_index a x)]. A lane's values have no
-    elements to read: {!Nx.item} of one raises
+    [Nx.Rng.fold_in_tensor k (Nx.cast Nx.int64 (lane_index a x))]. A lane's
+    values have no elements to read: {!Nx.item} of one raises
     ([Nx.item: the value is traced by Rune.vmap]), so an OCaml [if] cannot take
     one branch per lane: {!switch} does, and {!Nx.where} selects per lane.
 
@@ -1020,10 +1020,10 @@ end
     {b Draws.} A key the step captures is the same at every step, and so are
     its draws. Fresh draws come from a key that differs per step: a row of
     [Nx.Rng.split_batch ~n k] among the rows, or [Nx.Rng.fold_in_tensor k i]
-    for a step index [i], a row of [Nx.arange] in a {!scan} and a count in
-    an {!iterate}'s carry. A key kept with its row goes with it, so a scan
-    of rows in reverse draws each row's values in reverse. Code that draws
-    without [~key] runs in a scope the step opens:
+    for an [int64] step index [i], a row of [Nx.arange] in a {!scan} and a
+    count in an {!iterate}'s carry. A key kept with its row goes with it, so
+    a scan of rows in reverse draws each row's values in reverse. Code that
+    draws without [~key] runs in a scope the step opens:
 
     {[
     let walk k x0 n =
@@ -1033,7 +1033,7 @@ end
               let x = Nx.add x (Nx.Rng.normal Nx.float32 [| 3 |]) in
               (x, x)))
         ~init:x0
-        (Nx.arange Nx.int32 0 n 1)
+        (Nx.arange Nx.int64 0 n 1)
     ]}
 
     Step [i] of [walk k] draws what the step's code draws in

@@ -49,7 +49,8 @@ let simulate a b f k d =
   let one x =
     let at = Nx.Rng.to_tensor k in
     let i = Rune.lane_index chain at and j = Rune.lane_index draw at in
-    let idx = Nx.add (Nx.mul_s i (Int32.of_int n)) j in
+    let wide = Nx.cast Nx.int64 in
+    let idx = Nx.add (Nx.mul_s (wide i) (Int64.of_int n)) (wide j) in
     f (Nx.Rng.fold_in_tensor k idx) x
   in
   Rune.vmap ~axis:chain s (Rune.vmap ~axis:draw s one) d

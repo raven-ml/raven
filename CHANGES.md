@@ -2744,6 +2744,9 @@ word comes from its lock and from samples the dashboard saw arrive.
   `Nx_io.Pytorch.tensors` names them by their state dict's keys.
 - `Nx_io.load_npz` loads an entry whose stated CRC-32 is 0 unchecked, as
   writers told to compute no checksum state it, and refused it before.
+- **Breaking:** `Nx.Rng.fold_in_tensor` takes its indices as `int64`, so a
+  count of examples past 2^31 folds into a key. An index below 2^31 gives
+  the key it gave as `int32`.
 - **Breaking:** `Nx_cpu` no longer promises `Wrong_dtype` or
   `Shape_mismatch` for a call that does not fit, only some refusal.
 - `Nx_kernel.S`'s caller must pass a call that fits; for one that does

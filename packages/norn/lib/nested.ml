@@ -218,7 +218,8 @@ let step (type f) u ~prior ~likelihood k (s : (_, f, 'd) state) =
     let ks =
       Rune.vmap
         P.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
-        (fun k -> Nx.Rng.fold_in_tensor (Nx.Rng.fold_in k 1) j)
+        (fun k ->
+          Nx.Rng.fold_in_tensor (Nx.Rng.fold_in k 1) (Nx.cast Nx.int64 j))
         keys
     in
     let x, lp, aux_v, _ =
@@ -465,7 +466,8 @@ let run u ?batch ?tolerance ~budget ~prior ~likelihood k live =
           (Nx.greater_equal_s s.steps (Int32.of_int budget)))
       (fun s ->
         step u ~prior ~likelihood
-          (Nx.Rng.fold_in_tensor (Nx.Rng.fold_in k 0) s.steps)
+          (Nx.Rng.fold_in_tensor (Nx.Rng.fold_in k 0)
+             (Nx.cast Nx.int64 s.steps))
           s)
       s
   in

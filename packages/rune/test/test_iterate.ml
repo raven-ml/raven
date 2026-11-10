@@ -1112,7 +1112,8 @@ let keyed_cases =
         (String.concat "; " (Array.to_list (Array.map string_of_int trips))))
 
 let keyed_step (x, (key, k)) =
-  let key' = Nx.Rng.fold_in_tensor (Nx.Rng.of_tensor key) k in
+  let k64 = Nx.cast Nx.int64 k in
+  let key' = Nx.Rng.fold_in_tensor (Nx.Rng.of_tensor key) k64 in
   (Nx.mul x (Nx.Rng.uniform ~key:key' f64 [| 2 |]), (key, tick k))
 
 let keyed ~loop trips (x, key) =
@@ -1168,7 +1169,8 @@ let scoped_cases =
         (String.concat "; " (Array.to_list (Array.map string_of_int trips))))
 
 let scoped_step (x, (key, k)) =
-  let key' = Nx.Rng.fold_in_tensor (Nx.Rng.of_tensor key) k in
+  let k64 = Nx.cast Nx.int64 k in
+  let key' = Nx.Rng.fold_in_tensor (Nx.Rng.of_tensor key) k64 in
   Nx.Rng.with_key key' (fun () ->
       (Nx.mul x (Nx.Rng.uniform f64 [| 2 |]), (key, tick k)))
 

@@ -56,6 +56,14 @@ let shapes =
 
 let seeds = Gen.int
 
+(* Indices [fold_in] takes, int32's and the wider: an OCaml [int]. *)
+let indices =
+  Gen.one_of
+    [
+      Gen.map Int64.of_int32 Gen.int32;
+      Gen.int64_range (Int64.of_int min_int) (Int64.of_int max_int);
+    ]
+
 (* The key of any two words. *)
 let keys =
   Gen.map
@@ -208,25 +216,33 @@ let keys_group =
         (fun (k, i, i') ->
           assume (i <> i');
           uncorrelated (Rng.fold_in k i) (Rng.fold_in k i'));
-      prop "fold_in_tensor of [n] is fold_in of n"
-        (Gen.pair keys (Gen.int32_range Int32.min_int Int32.max_int))
+      prop "fold_in_tensor of [n] is fold_in of n" (Gen.pair keys indices)
         (fun (k, n) ->
-          let i = host_of A.Dtype.Int32 [||] [| n |] in
+          cover "past int32" (Int64.of_int32 (Int64.to_int32 n) <> n);
+          let i = host_of A.Dtype.Int64 [||] [| n |] in
           equal (array int32)
-            (words (Rng.fold_in k (Int32.to_int n)))
+            (words (Rng.fold_in k (Int64.to_int n)))
             (words (Rng.fold_in_tensor k i)));
       prop "fold_in_tensor of a 0-d host index is fold_in of it"
         ~examples:
-          [ (3, Int32.min_int); (3, -1l); (3, 0l); (3, Int32.max_int) ]
-        (Gen.pair seeds (Gen.int32_range Int32.min_int Int32.max_int))
+          [
+            (3, Int64.of_int min_int);
+            (3, Int64.of_int32 Int32.min_int);
+            (3, -1L);
+            (3, 0L);
+            (3, Int64.of_int32 Int32.max_int);
+            (3, 0x8000_0000L);
+            (3, Int64.of_int max_int);
+          ]
+        (Gen.pair seeds indices)
         (fun (seed, n) ->
           let k = Rng.key seed in
           equal (array int32)
-            (words (Rng.fold_in k (Int32.to_int n)))
-            (words (Rng.fold_in_tensor k (Nx.scalar Nx.int32 n))));
+            (words (Rng.fold_in k (Int64.to_int n)))
+            (words (Rng.fold_in_tensor k (Nx.scalar Nx.int64 n))));
       test "fold_in_tensor of a batch of indices is a batch of keys" (fun () ->
           let k = Rng.key 5 in
-          let i = host_of A.Dtype.Int32 [| 3 |] [| 0l; 1l; -4l |] in
+          let i = host_of A.Dtype.Int64 [| 3 |] [| 0L; 1L; -4L |] in
           let each =
             Array.concat
               (List.map (fun n -> words (Rng.fold_in k n)) [ 0; 1; -4 ])
@@ -240,7 +256,7 @@ let keys_group =
               (Nx.reshape [| 2; 1; 2 |]
                  (Rng.to_tensor (Rng.split_batch ~n:2 (Rng.key 5))))
           in
-          let i = host_of A.Dtype.Int32 [| 3 |] [| 0l; 7l; -4l |] in
+          let i = host_of A.Dtype.Int64 [| 3 |] [| 0L; 7L; -4L |] in
           let each =
             Array.concat
               (List.concat_map
@@ -279,7 +295,7 @@ let keys_group =
         (fun () ->
           let half = Nx.full_at Count.on Nx.float32 [| 4 |] 0.5 in
           let draw k = Rng.bernoulli ~key:(Rng.place Count.on k) half in
-          let seven = Nx.scalar Nx.int32 7l in
+          let seven = Nx.scalar Nx.int64 7L in
           let rec carried n k =
             if n = 0 then k else carried (n - 1) (Rng.fold_in_tensor k seven)
           in
@@ -358,11 +374,9 @@ let keys_group =
       prop
         "fold_in_tensor of a cut index lies cut as the index, each key whole, \
          and its words walk back to it"
-        (Gen.pair keys
-           (Gen.array ~size:(Gen.int_range 2 5)
-              (Gen.int32_range Int32.min_int Int32.max_int)))
+        (Gen.pair keys (Gen.array ~size:(Gen.int_range 2 5) indices))
         (fun (k, ns) ->
-          let i = host_of A.Dtype.Int32 [| Array.length ns |] ns in
+          let i = host_of A.Dtype.Int64 [| Array.length ns |] ns in
           let at = S2.split ~axis:0 in
           let y = Rng.fold_in_tensor (Rng.place S2.on k) (Nx.place at i) in
           let each = words (Rng.fold_in_tensor k i) in
@@ -2668,7 +2682,7 @@ let derivations : (string * (Bare.d Rng.key -> Bare.d Rng.key list)) list =
     ( "Nx.Rng.fold_in_tensor",
       fun k ->
         let p = Nx.placement (Rng.to_tensor k) in
-        [ Rng.fold_in_tensor k (Nx.scalar_at p Nx.int32 5l) ] );
+        [ Rng.fold_in_tensor k (Nx.scalar_at p Nx.int64 5L) ] );
   ]
 
 (* A key's placements on [Bare]: copies on both its devices, and the one off

@@ -170,7 +170,7 @@ let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f, 'd) Nx.t
       Rune.vmap
         P.(Nx.Rng.ptree @-> returns (pair tensor Nx.Rng.ptree))
         (fun k ->
-          let k = Nx.Rng.fold_in_tensor k w.trip in
+          let k = Nx.Rng.fold_in_tensor k (Nx.cast Nx.int64 w.trip) in
           (Noise.uniform (Nx.Rng.fold_in k 0) dt [||], Nx.Rng.fold_in k 1))
         trip_keys
     in

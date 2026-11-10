@@ -382,7 +382,7 @@ let scoped_scan k draws c0 n =
       Nx.Rng.with_key (Nx.Rng.fold_in_tensor k i) (fun () ->
           let c = drawn draws c in
           (c, c)))
-    ~init:c0 (Nx.arange Nx.int32 0 n 1)
+    ~init:c0 (Nx.arange Nx.int64 0 n 1)
 
 (* The fold written out: step [i] in a scope at [fold_in k i]. *)
 let scoped_fold k draws c0 n =
