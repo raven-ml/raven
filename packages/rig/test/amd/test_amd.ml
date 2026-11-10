@@ -2642,11 +2642,27 @@ module Thread_trace = Abi.Thread_trace
 let counts_code = code_of (lazy (read_fixture "counts_gfx1201.hsaco"))
 
 (* [valu]'s groups of 64 work-items run two waves of 32, each of [16 * k] VALU
-   instructions (fixtures/README.md). *)
+   instructions (fixtures/README.md). An undisturbed count saves none of its
+   waves (Counter's counting). *)
 let threads = 64
-let expected ~groups ~k = [ 2 * groups; 2 * groups * 16 * k ]
-let counted = [ "SQ_WAVES"; "SQ_INSTS_VALU" ]
+let expected ~groups ~k = [ 2 * groups; 2 * groups * 16 * k; 0 ]
+let counted = [ "SQ_WAVES"; "SQ_INSTS_VALU"; "SQ_WAVES_SAVED" ]
 let sums = List.map (List.fold_left ( + ) 0)
+
+(* Skips a count of which the GPU saved [saved] waves: it preempted the
+   count, which no process can prevent (Counter's counting). *)
+let unpreempted saved =
+  if saved > 0 then
+    skip
+      ~reason:
+        (strf "the GPU preempted the count and saved %d of its waves" saved)
+      ()
+
+(* The sums of a count's values, once [unpreempted]. *)
+let undisturbed (values, _) =
+  let s = sums values in
+  unpreempted (List.nth s 2);
+  s
 
 let gfx1201_only (t : gpu) =
   let c = A.capability t.g in
@@ -2695,9 +2711,9 @@ let padded w =
    [vmid], the host storing [vmid]'s; then Counter.start, the launch,
    Counter.stop and, without [vmid], [filter] again. The counts are exact only
    while the word holds the process's VMID (Counter's counting), which another
-   process's queue may move: a word that differs after the stop fails with
-   that cause, not as a short count. The values of each counter, one per
-   place, and the filter word. *)
+   process's queue may move. A word that differs after the stop skips the
+   count, naming that cause, since no process can prevent it. The values of
+   each counter, one per place, and the filter word. *)
 let count (t : gpu) p ?vmid ~groups ~k () =
   let c = A.capability t.g in
   let l = require_ok ~msg:"layout" (Counter.layout c.gpu counted) in
@@ -2759,10 +2775,13 @@ let count (t : gpu) p ?vmid ~groups ~k () =
   let read b = Int32.to_int (String.get_int32_le (get b) 0) land 0xffff_ffff in
   let before = read word in
   if filter <> [] && read after <> before then
-    failf
-      "the process's VMID moved during the count: filter word %08x before \
-       Counter.start, %08x after Counter.stop"
-      before (read after);
+    skip
+      ~reason:
+        (strf
+           "the process's VMID moved during the count: filter word %08x \
+            before Counter.start, %08x after Counter.stop"
+           before (read after))
+      ();
   (List.map values l.counters, before)
 
 let sizes = [ (1, 1); (7, 3); (64, 10); (1024, 100); (8192, 1000) ]
@@ -2781,14 +2800,14 @@ let counts_idle () =
     word;
   equal (list int) ~msg:"the filter word the host stores"
     (expected ~groups:1024 ~k:100)
-    (sums (fst (count t p ~vmid:own ~groups:1024 ~k:100 ())));
+    (undisturbed (count t p ~vmid:own ~groups:1024 ~k:100 ()));
   List.iter
     (fun (groups, k) ->
       for i = 1 to reps do
         equal (list int)
           ~msg:(strf "%d groups, k %d, run %d" groups k i)
           (expected ~groups ~k)
-          (sums (fst (count t p ~groups ~k ())))
+          (undisturbed (count t p ~groups ~k ()))
       done)
     sizes
 
@@ -2811,35 +2830,55 @@ let saturates () =
   let groups = 8192 in
   let k = 5 * places * (1 lsl 32) / 4 / (2 * groups * 16) in
   match fst (count t p ~groups ~k ()) with
-  | [ waves; valu ] ->
+  | [ waves; valu; saved ] ->
+      unpreempted (List.fold_left ( + ) 0 saved);
       equal int ~msg:"SQ_WAVES" (2 * groups) (List.fold_left ( + ) 0 waves);
       equal (list int)
         ~msg:(strf "SQ_INSTS_VALU, k %d" k)
         (List.map (fun w -> min (w * 16 * k) most) waves)
         valu;
       equal bool ~msg:"a processor saturated" true (List.mem most valu)
-  | _ -> fail "two counters"
+  | _ -> fail "three counters"
 
-(* The child of [counts_beside]. It says "ready" and its VMID, then, on "go",
-   launches [valu] over 8192 groups, two launches in flight at once, until
-   SIGTERM, the end of its input or 60 s. It says "busy" once its first launch
-   has completed and its second is queued. *)
+(* The child of [counts_beside] and [counts_preempted], given a number [n] of
+   devices of GPU 0. It says "ready" and its VMID, then, on "go", launches
+   [valu] over 8192 groups on each device, two launches in flight on each,
+   until SIGTERM, the end of its input or 60 s. It says "busy" once each
+   device's first launch has completed and its second is queued. *)
 let busy_child = "--busy-gpu"
 let busy_seconds = 60.
 
-let busy () =
+let busy n =
   let stop = ref false in
   Sys.set_signal Sys.sigterm (Sys.Signal_handle (fun _ -> stop := true));
   S.with_ @@ fun t ->
-  let p = image ~of_:counts_code t in
-  let fn = Option.get (Rig.Image.resolve p "valu") in
-  let s = Sub.make t.d [| Sub.launch fn ~params:8 |] in
+  (* [Rig.open_] answers the open device of a name, so each other device
+     takes a name of its own. *)
+  let o = S.gpu () in
+  let others =
+    List.init (n - 1) (fun i ->
+        match Rig.open_ { o with name = strf "%s:busy%d" o.name i } with
+        | Ok d -> d
+        | Error why -> failwith why)
+  in
+  Fun.protect ~finally:(fun () -> List.iter Rig.close others) @@ fun () ->
+  let load d =
+    match Rig.Image.load d (Lazy.force counts_code).binary with
+    | Ok p -> p
+    | Error why -> failwith why
+  in
+  let valu d p =
+    let fn = Option.get (Rig.Image.resolve p "valu") in
+    Sub.make d [| Sub.launch fn ~params:8 |]
+  in
+  let p = load t.d in
+  let subs = valu t.d p :: List.map (fun d -> valu d (load d)) others in
   print_endline (strf "ready %d" (vmid t p));
   match input_line stdin with
   | exception End_of_file -> ()
   | line when line <> "go" -> ()
   | _ ->
-      let submit () =
+      let submit s =
         let run = Sub.take s and b = Sub.block s 0 in
         Sub.Run.groups run b 8192 1 1;
         Sub.Run.threads run b threads 1 1;
@@ -2847,15 +2886,16 @@ let busy () =
         Rig.submit run ~buffers:[||]
       in
       let deadline = Unix.gettimeofday () +. busy_seconds in
-      let first = submit () in
-      let second = submit () in
-      Rig.Point.wait first;
+      let first = List.map submit subs in
+      let second = List.map submit subs in
+      List.iter Rig.Point.wait first;
       print_endline "busy";
       let rec go prev =
-        if !stop || Unix.gettimeofday () > deadline then Rig.Point.wait prev
+        if !stop || Unix.gettimeofday () > deadline then
+          List.iter Rig.Point.wait prev
         else begin
-          let next = submit () in
-          Rig.Point.wait prev;
+          let next = List.map submit subs in
+          List.iter Rig.Point.wait prev;
           go next
         end
       in
@@ -2892,7 +2932,7 @@ let counts_beside () =
   and from_child, child_out = Unix.pipe ~cloexec:true () in
   let child =
     Unix.create_process Sys.executable_name
-      [| Sys.executable_name; busy_child |]
+      [| Sys.executable_name; busy_child; "1" |]
       child_in child_out Unix.stderr
   in
   Unix.close child_in;
@@ -2920,8 +2960,9 @@ let counts_beside () =
     | exception (End_of_file | Scanf.Scan_failure _ | Failure _) ->
         fail "the child did not say ready"
   in
-  equal (list int) ~msg:"the child's VMID, while it runs nothing" [ 0; 0 ]
-    (sums (fst (count t p ~vmid:theirs ~groups:64 ~k:10 ())));
+  equal (list int) ~msg:"the child's VMID, while it runs nothing"
+    [ 0; 0; 0 ]
+    (undisturbed (count t p ~vmid:theirs ~groups:64 ~k:10 ()));
   output_string oc "go\n";
   flush oc;
   (match input_line ic with
@@ -2934,7 +2975,7 @@ let counts_beside () =
         List.init reps (fun i ->
             ( strf "%d groups, k %d, run %d" groups k (i + 1),
               expected ~groups ~k,
-              sums (fst (count t p ~groups ~k ())) )))
+              undisturbed (count t p ~groups ~k ()) )))
       [ (64, 10); (1024, 100); (8192, 1000) ]
   in
   let running =
@@ -2951,6 +2992,80 @@ let counts_beside () =
   | WEXITED 0 -> ()
   | WEXITED c -> failf "the child exited %d" c
   | WSIGNALED n | WSTOPPED n -> failf "the child stopped on signal %d" n
+
+(* The busy child on [devices] devices, started and busy: its VMID, and its
+   end. *)
+let busy_beside ~devices =
+  let child_in, to_child = Unix.pipe ~cloexec:true ()
+  and from_child, child_out = Unix.pipe ~cloexec:true () in
+  let child =
+    Unix.create_process Sys.executable_name
+      [| Sys.executable_name; busy_child; string_of_int devices |]
+      child_in child_out Unix.stderr
+  in
+  Unix.close child_in;
+  Unix.close child_out;
+  let ic = Unix.in_channel_of_descr from_child
+  and oc = Unix.out_channel_of_descr to_child in
+  let ended = ref false in
+  let end_child () =
+    if not !ended then begin
+      ended := true;
+      close_out_noerr oc;
+      ignore (reap child);
+      close_in_noerr ic
+    end
+  in
+  match Scanf.sscanf (input_line ic) "ready %d" Fun.id with
+  | vmid ->
+      output_string oc "go\n";
+      flush oc;
+      (match input_line ic with
+      | "busy" -> ()
+      | line ->
+          end_child ();
+          failf "the child said %S" line
+      | exception End_of_file ->
+          end_child ();
+          fail "the child did not say busy");
+      (vmid, end_child)
+  | exception (End_of_file | Scanf.Scan_failure _ | Failure _) ->
+      end_child ();
+      fail "the child did not say ready"
+
+(* A load that preempts a counting queue. Through amdgpu on Linux 6.12 a
+   gfx1201 runs 4 compute queues of all processes at once, and the busy
+   child's, with the one that counts, are 5 with work. A launch of [valu]
+   over 8192 groups at [preempted_k] takes about a second beside them. Where
+   the GPU runs more queues at once, [counts_preempted] fails as it would if
+   SQ_WAVES_SAVED counted nothing. *)
+let busy_devices = 4
+let preempted_k = 262_144
+
+(* Counts while another process keeps [busy_devices] compute queues busy:
+   the GPU preempts each count and saves some of its waves, which
+   SQ_WAVES_SAVED counts and SQ_WAVES counts again as their restores
+   start. *)
+let counts_preempted () =
+  if S.driverless () then skip ~reason:"amdgpu does not hold the GPU" ();
+  S.with_ @@ fun t ->
+  gfx1201_only t;
+  ignore (steady t);
+  let p = image ~of_:counts_code t in
+  let _, end_child = busy_beside ~devices:busy_devices in
+  Fun.protect ~finally:end_child @@ fun () ->
+  let groups = 8192 in
+  for i = 1 to reps do
+    match sums (fst (count t p ~groups ~k:preempted_k ())) with
+    | [ waves; _; saved ] ->
+        let msg = strf "run %d" i in
+        greater int ~msg:(msg ^ ": SQ_WAVES_SAVED") ~than:0 saved;
+        equal int
+          ~msg:(msg ^ ": SQ_WAVES, the waves launched and those restored")
+          ((2 * groups) + saved)
+          waves
+    | _ -> fail "three counters"
+  done
 
 (* A trace of each engine that runs work, around a launch of [valu]: its length
    within the window, its waves and its clock.
@@ -3017,6 +3132,10 @@ let counters =
         "another process's VMID counts none of this process's waves, and this \
          process's counts stay exact while that process keeps the GPU busy"
         counts_beside;
+      test
+        "a count the GPU preempts beside another process's busy queues \
+         counts its saved waves, and their restores as waves"
+        counts_preempted;
       test
         "a launch between Thread_trace.start and stop traces each engine that \
          runs work"
@@ -3178,52 +3297,13 @@ let saturated () =
   equal (list counts) ~msg:"counts" [] counted;
   equal int ~msg:"unmeasured runs" 1 unmeasured
 
-(* The busy child of [counts_beside], started: its VMID, and its end. *)
-let busy_beside () =
-  let child_in, to_child = Unix.pipe ~cloexec:true ()
-  and from_child, child_out = Unix.pipe ~cloexec:true () in
-  let child =
-    Unix.create_process Sys.executable_name
-      [| Sys.executable_name; busy_child |]
-      child_in child_out Unix.stderr
-  in
-  Unix.close child_in;
-  Unix.close child_out;
-  let ic = Unix.in_channel_of_descr from_child
-  and oc = Unix.out_channel_of_descr to_child in
-  let ended = ref false in
-  let end_child () =
-    if not !ended then begin
-      ended := true;
-      close_out_noerr oc;
-      ignore (reap child);
-      close_in_noerr ic
-    end
-  in
-  match Scanf.sscanf (input_line ic) "ready %d" Fun.id with
-  | vmid ->
-      output_string oc "go\n";
-      flush oc;
-      (match input_line ic with
-      | "busy" -> ()
-      | line ->
-          end_child ();
-          failf "the child said %S" line
-      | exception End_of_file ->
-          end_child ();
-          fail "the child did not say busy");
-      (vmid, end_child)
-  | exception (End_of_file | Scanf.Scan_failure _ | Failure _) ->
-      end_child ();
-      fail "the child did not say ready"
-
 (* 3. A bracket that loads another process's filter, as after a move of the
    VMID: the GPU counts that process's waves that start under it. *)
 let stale_filter () =
   measuring @@ fun t ->
   let p = image ~of_:counts_code t in
   let c = A.capability t.g in
-  let theirs, end_child = busy_beside () in
+  let theirs, end_child = busy_beside ~devices:1 in
   Fun.protect ~finally:end_child @@ fun () ->
   let small = (64, 10) in
   let each launches =
@@ -3756,8 +3836,8 @@ let measures_group =
     ]
 
 let () =
-  if Array.length Sys.argv = 2 && Sys.argv.(1) = busy_child then begin
-    busy ();
+  if Array.length Sys.argv = 3 && Sys.argv.(1) = busy_child then begin
+    busy (int_of_string Sys.argv.(2));
     exit 0
   end;
   if Array.length Sys.argv = 2 && Sys.argv.(1) = measure_open_child then begin

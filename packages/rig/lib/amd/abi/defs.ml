@@ -4498,6 +4498,7 @@ let counters = function
         ("SQ_WAVE32_INSTS", "SQ", 70);
         ("SQ_WAVE64_INSTS", "SQ", 71);
         ("SQ_WAVES", "SQ", 4);
+        ("SQ_WAVES_SAVED", "SQ", 20);
         ("SQ_WAVE_CYCLES", "SQ", 24);
       |]
   | _ -> [||]

@@ -373,6 +373,10 @@ RST_TABLES = ["amdgpu-ef-amdgpu-mach-table", "amdgpu-generic-processor-table"]
 COUNTERS = "rocm/counter_defs.yaml"
 COUNTER_BLOCKS = ["GRBM", "GL2C", "TCC", "SQ"]
 COUNTER_PROCESSORS = ["gfx942", "gfx950", "gfx11", "gfx12"]
+# The counters a processor counts that rocprofiler's table lacks, from the SOC
+# enumeration of its block's events: (processor, excerpt, name, block,
+# enumerator). The script fails once rocprofiler's table defines one.
+SOC_COUNTERS = [("gfx12", "rocm/soc24_enum.h", "SQ_WAVES_SAVED", "SQ", "SQ_PERF_SEL_WAVES_SAVED")]
 
 # rig_amd_pci
 
@@ -1360,6 +1364,8 @@ def abi_wanted():
         w[h]["optional"] |= set(GC_SEGMENTS)
     for h in SOCS:
         w[h]["optional"] |= {*SOC_EVENTS, *SOC_TRACE}
+    for _, h, _, _, e in SOC_COUNTERS:
+        w[h]["enums"].add(e)
     w["rocm/vega10_enum.h"]["enums"] |= {f"SQ_THREAD_TRACE_TOKEN_{t}" for t in GFX9_TOKENS}
     w[HSA]["enums"] |= set(HSA_CONSTANTS)
     w[HSA]["structs"] |= {DISPATCH, "hsa_signal_s"}
@@ -1923,6 +1929,10 @@ def generate_abi(h, laid):
 
     # Performance counters
     counters, _ = counter_defs(h[COUNTERS])
+    for proc, enum, name, block, e in SOC_COUNTERS:
+        if any(n == name and proc in ps for n, _, _, ps in counters):
+            sys.exit(f"{COUNTERS} defines {name} for {proc}: take it from there")
+        counters.append((name, block, constants(h[enum], [e])[e], [proc]))
     out += ["(* The performance counters of the processor named [p], such as",
             "   [\"gfx942\"], as (name, block, event), or [[||]] for another",
             "   processor. *)", "", "let counters = function"]

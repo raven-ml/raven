@@ -16,7 +16,9 @@
     reads.
 
     The counters are rocprofiler's for gfx942, gfx950, and GFX11 and GFX12
-    GPUs. A GPU of another processor counts none. *)
+    GPUs. GFX12 GPUs also count ["SQ_WAVES_SAVED"], which rocprofiler's
+    table lacks, as their SOC enumeration defines it. A GPU of another
+    processor counts none. *)
 
 type t = {
   name : string;  (** Its name, such as ["SQ_WAVES"]. *)
@@ -74,12 +76,22 @@ val layout : Gpu.t -> string list -> (layout, string) result
     every queue of the process whose VMID it holds. Whether a wave counts is
     decided when it starts, and holds for its life.
 
-    The counts are exact when the filter word holds the process's VMID while
-    it counts, the process's other queues run nothing while it counts, and
-    no other process counts on the GPU. A preemption of the
-    queue while it counts adds the waves its restore relaunches and the
-    instructions of their trap handler, so ["SQ_WAVES"] exceeds the waves
-    the queue launched.
+    The counts are exact when nothing disturbs the queue while it counts,
+    in the sense that the filter word holds the process's VMID, the
+    process's other queues run nothing, no other process counts on the GPU,
+    and the GPU saves none of the queue's waves. The GPU saves a queue's
+    waves when it preempts the queue, as it does when more compute queues
+    of all processes have work than it runs at once, and when the kernel
+    driver evicts the process's memory. No process can prevent either.
+    ["SQ_WAVES_SAVED"] counts the saved waves. A saved wave's restore starts
+    it again as a new wave. While the VMID holds, ["SQ_WAVES"] is the waves
+    the queue launched plus ["SQ_WAVES_SAVED"], and the instruction counters
+    include those of the trap handler that saves and restores them. A
+    preemption may also move the VMID, and then no wave launched after the
+    move counts until the VMID moves back. A count is undisturbed when
+    ["SQ_WAVES_SAVED"] is [0], ["SQ_WAVES"] is the waves the queue launched,
+    and the filter word the process computes after {!val-stop} is the one it
+    computed before {!val-start}.
 
     Each work-group processor's value saturates at [2{^32} - 1], so a value
     of [2{^32} - 1] means at least that many.

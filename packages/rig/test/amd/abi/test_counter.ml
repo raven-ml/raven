@@ -4,8 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Counters of rocprofiler's counter_defs.yaml
-   (lib/amd/gen/headers/rocm/counter_defs.yaml) and the layout of a run's
-   samples, as counter.mli states it. *)
+   (lib/amd/gen/headers/rocm/counter_defs.yaml) and of GFX12's SOC
+   enumeration (lib/amd/gen/headers/rocm/soc24_enum.h), and the layout of a
+   run's samples, as counter.mli states it. *)
 
 open Windtrap
 open Rig_amd_abi
@@ -188,6 +189,23 @@ let cases =
                  bytes = 256 + (8 * 8 * 16);
                })
             (Counter.layout gfx942 [ "SQ_WAVES"; "TCC_HIT" ]));
+      test
+        "a GFX12 GPU counts SQ_WAVES_SAVED, select 0x14 of soc24_enum.h's \
+         SQ_PERF_SEL, and a GFX11 one does not" (fun () ->
+          equal layout
+            (Ok
+               {
+                 counters =
+                   [
+                     c "SQ_WAVES" "SQ" 4 0 (1, 4, 2, 4) 0;
+                     c "SQ_WAVES_SAVED" "SQ" 0x14 1 (1, 4, 2, 4) 256;
+                   ];
+                 bytes = 512;
+               })
+            (Counter.layout gfx12 [ "SQ_WAVES"; "SQ_WAVES_SAVED" ]);
+          equal layout
+            (Error (Gpu.processor gfx11 ^ " counts no SQ_WAVES_SAVED"))
+            (Counter.layout gfx11 [ "SQ_WAVES_SAVED" ]));
       test "a counter the GPU lacks is refused, naming it" (fun () ->
           equal layout (Error "gfx1201 counts no SQ_FOO")
             (Counter.layout gfx12 [ "SQ_WAVES"; "SQ_FOO" ]));

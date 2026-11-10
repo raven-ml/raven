@@ -19,8 +19,10 @@ type t = {
 
 type layout = { counters : t list; bytes : int }
 
-(* The table rocprofiler defines for the GPU's processor: GFX11 and GFX12 GPUs
-   share theirs. *)
+(* The counters of the GPU's processor: the table rocprofiler defines for it,
+   where GFX11 GPUs share one and GFX12 GPUs another, and for GFX12 GPUs
+   SQ_WAVES_SAVED, which that table lacks, from SQ_PERF_SEL_WAVES_SAVED
+   (0x14) of the SOC enumeration soc24_enum.h (gen.py's SOC_COUNTERS). *)
 let table (g : Gpu.t) =
   match g.target with
   | 9, 4, 2 -> Defs.counters "gfx942"
