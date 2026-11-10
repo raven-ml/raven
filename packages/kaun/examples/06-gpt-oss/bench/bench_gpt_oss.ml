@@ -13,7 +13,8 @@
    for its rows. 536 tokens fill 65 blocks of 64 rows, a
    count 5 divides, where a warp of 5 tiles of rows would cross two blocks.
    [first call 12] times a later process's first 12-token call over a warm
-   disk cache ([first_config]).
+   disk cache ([first_config]), and the cold rows a first call that compiles
+   every kernel.
 
    The weights are the checkpoint's entries, named, shaped and laid out as
    gpt-oss-20b's safetensors files hold them, read by the example's loader
@@ -296,9 +297,10 @@ let experts prompt =
 (* A later process's first call: a sample has a process that holds a small
    gpt-oss on the GPU make the 12-token call of the full model's programs over
    a disk cache one call filled, and nothing but its own programs' reads is
-   timed. Each kind of layer compiles once, so the two layers here cost as the
-   24 of the model would and its zero weights take the place of 13.8 GB; the
-   programs read the [dim] of the full model, on a smaller vocabulary. *)
+   timed. Both kinds of layer run one block program, so the two layers here
+   cost as the 24 of the model would and its zero weights take the place of
+   13.8 GB; the programs read the [dim] of the full model, on a smaller
+   vocabulary. *)
 let first_config =
   {
     config with
@@ -334,13 +336,11 @@ let prepare_first () =
 
 type ready = { pid : int; go : out_channel; said : in_channel }
 
-let start_ready dir =
+(* A process that has prepared its first call, with [env] before its own
+   environment. *)
+let start_ready env =
   let exe = Sys.executable_name in
-  let env =
-    Array.append
-      [| "CACHEDB=" ^ Filename.concat dir "cache.db" |]
-      (Unix.environment ())
-  in
+  let env = Array.append (Array.of_list env) (Unix.environment ()) in
   let child_in, go = Unix.pipe ~cloexec:true () in
   let said, child_out = Unix.pipe ~cloexec:true () in
   let pid =
@@ -380,19 +380,36 @@ let ready_processes = 10
 
 let no_process_left =
   Printf.sprintf
-    "bench_gpt_oss: first call 12 holds a process for each call, %d a trial, \
-     enough for its 3 samples: run it without --quick or --precise"
+    "bench_gpt_oss: a first call row holds a process for each call, %d a \
+     trial, enough for its 3 samples: run it without --quick or --precise"
     ready_processes
 
-let first_call =
-  Thumper.bench_with_setup "first call 12"
+(* [first_call name ~cold env] times a first call made with [env]. Its
+   processes share a disk cache that one call filled, or under [cold] each
+   has an empty tolk cache and CUDA driver cache of its own, so a sample
+   compiles every kernel. *)
+let first_call name ~cold env =
+  Thumper.bench_with_setup name
     ~setup:(fun () ->
       let dir = Filename.temp_dir "bench-gpt-oss" "" in
-      let fill = start_ready dir in
-      expect fill "ready";
-      finish fill;
-      stop fill;
-      let all = List.init ready_processes (fun _ -> start_ready dir) in
+      let start i =
+        if not cold then
+          start_ready (("CACHEDB=" ^ Filename.concat dir "cache.db") :: env)
+        else
+          let own = Filename.concat dir (string_of_int i) in
+          Unix.mkdir own 0o700;
+          start_ready
+            (("CACHEDB=" ^ Filename.concat own "cache.db")
+            :: ("CUDA_CACHE_PATH=" ^ Filename.concat own "cuda")
+            :: env)
+      in
+      if not cold then begin
+        let fill = start 0 in
+        expect fill "ready";
+        finish fill;
+        stop fill
+      end;
+      let all = List.init ready_processes start in
       List.iter (fun r -> expect r "ready") all;
       (dir, all, Queue.of_seq (List.to_seq all)))
     ~teardown:(fun (dir, all, _) ->
@@ -480,6 +497,9 @@ let () =
           ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
           [ Thumper.group "GptOss" (List.map case kinds) ]
       in
+      (* Under PARALLEL=1 one domain renders and one compiler process compiles,
+         so the serial row's wall is the compile work, which the parallel row
+         does not time where it is off the longest chain of compiles. *)
       let first =
         Thumper.run "gpt_oss_first"
           ~config:
@@ -487,6 +507,14 @@ let () =
               default |> samples 3 |> warmup 0. |> deadline 120.
               |> metrics [ Thumper.Metric.wall_time ])
           ~budgets:[ Thumper.Budget.no_slower_than 0.1 ]
-          [ Thumper.group "GptOss" [ first_call ] ]
+          [
+            Thumper.group "GptOss"
+              [
+                first_call "first call 12" ~cold:false [];
+                first_call "first call 12, cold" ~cold:true [];
+                first_call "first call 12, cold, serial" ~cold:true
+                  [ "PARALLEL=1" ];
+              ];
+          ]
       in
       exit (max code first)

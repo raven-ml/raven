@@ -1024,7 +1024,14 @@ let test_index_window () =
         (fun _ a _ -> a)
         windowed index);
   raises (Invalid_argument "Cache_index.window: window must be positive, got 0")
-    (fun () -> Cache_index.window 0 index)
+    (fun () -> Cache_index.window 0 index);
+  let mapped =
+    Rune.vmap
+      Nx.Ptree.(v Cache_index.walk @-> returns tensor)
+      Cache_index.positions
+  in
+  raises (Invalid_argument "Rune.vmap: 0.window is 0-d") (fun () ->
+      mapped windowed)
 
 (* Selections. A value is its position plus one, so what a column reads names
    the position it holds. *)
@@ -2015,9 +2022,9 @@ let test_cached_step_jits_once () =
     (Attention.apply ~head_dim ~mask:Nx.causal ~rope p x)
     jitted
 
-(* A compiled step keys its programs on the index's reports: another window
-   compiles a second program, and an equal one replays. *)
-let test_a_changed_window_compiles_again () =
+(* A window's size is a value of the index: a compiled step lowers once, and
+   another window replays its program and reads its own size. *)
+let test_another_window_shares_the_program () =
   Nx.Rng.with_key (Nx.Rng.key 27) @@ fun () ->
   let p = layer Nx.float32 in
   let x = Nx.Rng.normal Nx.float32 [| 1; 1; 8 |] in
@@ -2041,12 +2048,10 @@ let test_a_changed_window_compiles_again () =
       (fst (step x index (cache 4)))
   in
   check 2;
-  check 2;
-  equal ~msg:"an equal window replays" int 1 !traces;
-  check 1;
-  equal ~msg:"another window compiles a second program" int 2 !traces;
-  check 2;
-  equal ~msg:"and the first window replays its own" int 2 !traces
+  let lowered = Rune.lowerings () in
+  List.iter check [ 1; 3; max_int; 2 ];
+  equal ~msg:"every window shares one trace" int 1 !traces;
+  equal ~msg:"and lowers nothing more" int lowered (Rune.lowerings ())
 
 (* Two cache leaves that hold one tensor, donated to a compiled call: the call
    reads each as the tensor was when called, and the tensor dies once. *)
@@ -2668,6 +2673,100 @@ let test_visible_is_mask () =
       ("a selection", selected);
     ]
 
+(* A window wider than every position hides nothing: under such a window an
+   index masks, reads and attends to the bits it gives without one, eager and
+   compiled, and compiled it gives eager's outputs. Positions from [-1] (left
+   padding, a lane of padding alone), blocks, a decode step, whole and packed
+   lanes, a draft and a selection; widths from one past the largest position
+   to [max_int]. *)
+let widest_cases =
+  let rows = Cache_index.rows ~every:[ 2 ] ~context:6 [| 4; 2 |] in
+  [|
+    ("rows", rows);
+    ("a lane of padding", Cache_index.rows ~context:6 [| 4; 0 |]);
+    ("rows in blocks", Cache_index.every 2 rows);
+    ("an advanced index", Cache_index.advance rows);
+    ( "a padded whole index",
+      Cache_index.whole ~lens:[| 3; 5 |] ~batch:2 ~seq:5 () );
+    ("a packed index", Cache_index.packed ~seq:6 [| [| 2; 3 |]; [| 6 |] |]);
+    ( "a draft",
+      Cache_index.draft
+        ~slots:(int64s [| 1; 3 |] [| 19; 18; 17 |])
+        ~sees:(tree_sees [| -1; 0; 0 |])
+        (index_at ~pos:[| [| 2; 3; 3 |] |] ~slots:[| draft_table |]) );
+    ( "a selection",
+      Cache_index.select
+        (int64s [| 1; 2; 3 |] [| 1; 3; 0; 4; 2; 0 |])
+        (index_at ~pos:[| [| 2; 4 |] |] ~slots:[| [| 3; 0; 4; -1; 2; 1 |] |])
+    );
+  |]
+
+(* A case and how far past its largest position the window reaches. *)
+let widest_gen =
+  let open Gen in
+  pair
+    (int_range 0 (Array.length widest_cases - 1))
+    (frequency
+       [
+         (2, int_range 0 3);
+         (1, int_range 0 (max_int / 2));
+         (1, constant max_int);
+       ])
+
+let widest_attend =
+  Rune.jit
+    Nx.Ptree.(
+      v Cache_index.walk @-> tensor @-> tensor @-> tensor @-> returns tensor)
+    (fun index q k v ->
+      Attention.attend ~mask:(Cache_index.visible index) q k v)
+
+let widest_extend =
+  Rune.jit
+    Nx.Ptree.(
+      v Cache_index.walk @-> tensor @-> tensor @-> returns (pair tensor tensor))
+    Cache_index.extend
+
+let test_widest_window (case, past) =
+  Nx.Rng.with_key (Nx.Rng.key (49 + case)) @@ fun () ->
+  let name, index = widest_cases.(case) in
+  let largest =
+    Int64.to_int (Nx.item [] (Nx.max (Cache_index.positions index)))
+  in
+  let w = if past >= max_int - largest then max_int else largest + 1 + past in
+  cover "one past the largest position" (past = 0);
+  cover "max_int" (w = max_int);
+  cover "a draft" (name = "a draft");
+  let widest = Cache_index.window w index in
+  let batch = Cache_index.batch index and seq = Cache_index.seq index in
+  equal ~msg:(name ^ ": mask") (list bool)
+    (bools (Cache_index.mask index))
+    (bools (Cache_index.mask widest));
+  let columns = Nx.dim 2 (Cache_index.mask index) in
+  let q = Nx.Rng.normal Nx.float32 [| batch; 4; seq; 2 |] in
+  let k = Nx.Rng.normal Nx.float32 [| batch; 2; columns; 2 |] in
+  let v = Nx.Rng.normal Nx.float32 [| batch; 2; columns; 3 |] in
+  let values = Nx.Rng.normal Nx.float32 [| batch; seq; 3 |] in
+  let pool = Nx.Rng.normal Nx.float32 [| 20; 3 |] in
+  let eager index =
+    let seen, pool = Cache_index.extend index values pool in
+    [
+      flat (Attention.attend ~mask:(Cache_index.visible index) q k v);
+      flat seen;
+      flat pool;
+    ]
+  in
+  let compiled index =
+    let seen, pool = widest_extend index values pool in
+    [ flat (widest_attend index q k v); flat seen; flat pool ]
+  in
+  equal ~msg:(name ^ ": eager") (list (array float_exact)) (eager index)
+    (eager widest);
+  equal ~msg:(name ^ ": compiled") (list (array float_exact)) (compiled index)
+    (compiled widest);
+  equal ~msg:(name ^ ": compiled = eager")
+    (list (array (float 1e-5)))
+    (eager widest) (compiled widest)
+
 (* [visible]'s law against the reference it answers: which keys a query sees.
    A state's columns stand at [(j + 1) m - 1] (a whole index at stride 1
    instead has its tokens as columns, which see their own sequence); a query
@@ -3129,6 +3228,8 @@ let () =
              test "a whole prompt matches causal apply"
                test_cached_prefill_matches_apply;
              test "visible is the mask read at each pair" test_visible_is_mask;
+             prop ~count:200 "a window wider than every position hides nothing"
+               widest_gen test_widest_window;
              prop ~count:300 "visible is which keys a query sees"
                (Gen.with_pp pp_state state_gen)
                test_visible_law;
@@ -3185,8 +3286,8 @@ let () =
                test_cached_windowed_columns_are_zero;
              test "one jitted step serves every position and slot map"
                test_cached_step_jits_once;
-             test "a changed window compiles again"
-               test_a_changed_window_compiles_again;
+             test "another window shares the program"
+               test_another_window_shares_the_program;
              test "two leaves over one tensor read it as two values"
                test_one_storage_behind_two_caches;
              test "eager and compiled runs agree on what addresses nothing"

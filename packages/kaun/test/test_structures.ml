@@ -165,7 +165,7 @@ let test_index_tabled () =
       "tokens.blocks.1: a leaf";
       "every: int 4";
       "window: Some";
-      "window: int 2";
+      "window: a leaf";
       "columns: None";
       "draft: None";
     ]
@@ -218,9 +218,9 @@ let test_index_keys () =
       <> visits (Nx.Ptree.v Cache_index.walk) b)
   in
   differ ~msg:"a window" index (Cache_index.window 2 index);
-  differ ~msg:"another window"
-    (Cache_index.window 2 index)
-    (Cache_index.window 3 index);
+  equal ~msg:"another window's size is a value of the index" (list string)
+    (visits (Nx.Ptree.v Cache_index.walk) (Cache_index.window 2 index))
+    (visits (Nx.Ptree.v Cache_index.walk) (Cache_index.window 3 index));
   differ ~msg:"the blocks read" index (Cache_index.every 4 index);
   differ ~msg:"a block size"
     (Cache_index.rows ~every:[ 4 ] ~context:8 [| 3; 2 |])

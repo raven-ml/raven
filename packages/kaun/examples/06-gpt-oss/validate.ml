@@ -441,10 +441,13 @@ let model (type b d) ~jit (s : d Nx.Devices.t) ~tol ~exact ~label fx case
           Attention.Cache.make ~slots:0 ~kv_heads:cfg.n_kv_heads
             ~head_dim:cfg.head_dim dt at
         in
+        let index =
+          Cache_index.place at (Cache_index.whole ~batch:1 ~seq:n ())
+        in
         to32
           (fst
-             (Gpt_oss.attention cfg layer b cache
-                (Cache_index.place at (Cache_index.whole ~batch:1 ~seq:n ()))
+             (Gpt_oss.attention cfg b cache
+                (Gpt_oss.windows cfg index layer)
                 (Nx.cast dt x)))
       in
       let x = float32 [| 1; n; cfg.dim |] (floats (mem "input" recorded)) in
@@ -566,7 +569,7 @@ let model (type b d) ~jit (s : d Nx.Devices.t) ~tol ~exact ~label fx case
   if jit then begin
     let whole = compiled_cached cfg p in
     close ~tol:1e-6
-      (name "one program per layer kind is the whole-model program")
+      (name "one block program is the whole-model program")
       (flat (chunked whole))
       (flat (chunked (Layer_loop.cached ~placement:on cfg p)))
   end;

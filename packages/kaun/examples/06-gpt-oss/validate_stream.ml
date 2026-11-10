@@ -251,12 +251,12 @@ let run (type c d) ~tol ~logits_tol ~exact ~blocks ~only
           let b' = List.hd m.blocks in
           let x3 = Nx.reshape [| 1; tokens; dim |] !x in
           let attended, _ =
-            Gpt_oss.attention cfg layer b'
+            Gpt_oss.attention cfg b'
               (List.hd
                  (Gpt_oss.cache
                     ~placement:(fun _ ~axis:_ -> Nx.Host.on)
                     one ~slots:0 dt))
-              index
+              (Gpt_oss.windows cfg index layer)
               (Rms_norm.apply ~eps:cfg.norm_eps b'.attn_norm x3)
           in
           let middle = Nx.add x3 attended in

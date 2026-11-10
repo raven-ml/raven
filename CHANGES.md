@@ -3336,6 +3336,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun.Cache_index.window`'s size is a tensor of the index: windows of any
+  size share one compiled program, so gpt-oss's cold first call takes 0.87 s
+  against 1.25 s on an RTX 5000 Ada. Full layers, `window max_int`, pay a
+  comparison per key: prefill +1.6% at 16,384 tokens (about +5% estimated at
+  131,072), +3% words per step. `Rune.vmap` refuses a windowed index.
 - `Cache_index.visible` reads each key's column from the attention's pair,
   so a compiled attention skips the tiles a cache's causal mask hides: an
   8-head, 4096-token prefill's attention takes 278 us on an RTX 5000 Ada,

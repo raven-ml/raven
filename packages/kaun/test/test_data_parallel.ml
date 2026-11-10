@@ -213,9 +213,21 @@ let test_moved_whole () =
   equal ~msg:"a rotation by a placed schedule lies whole on each device"
     placement Two.on
     (at_of (Rope.apply rope ~pos x));
-  let index = Cache_index.place cut (Cache_index.rows ~context:4 [| 2; 2 |]) in
+  let rows = Cache_index.rows ~context:4 [| 2; 2 |] in
+  let index = Cache_index.place cut rows in
   equal ~msg:"Cache_index.positions" placement Two.on
-    (at_of (Cache_index.positions index))
+    (at_of (Cache_index.positions index));
+  (* A window is a tensor of the index: placed with it, and made beside the
+     positions of an index placed first. *)
+  let whole_on_each ~msg index =
+    List.iter
+      (fun (Nx.P x) -> equal ~msg placement Two.on (at_of x))
+      (fst (Nx.Ptree.flatten (Nx.Ptree.v Cache_index.walk) index))
+  in
+  whole_on_each ~msg:"a placed window"
+    (Cache_index.place cut (Cache_index.window 2 rows));
+  whole_on_each ~msg:"the window of a placed index"
+    (Cache_index.window 2 index)
 
 let tests =
   [

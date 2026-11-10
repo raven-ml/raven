@@ -4,14 +4,15 @@
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
-# forced: blessed under load 33.0 on 14 cores
+# forced: blessed under load 10.2 on 14 cores
 
-GptOss/decode-step-Q8_0-cache-1024	alloc_words	exact	124544
-GptOss/decode-step-cache-1024	alloc_words	batch=1	n=20	1.219e+05	1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.220e+05 1.220e+05
+GptOss/decode-step-Q8_0-cache-1024	alloc_words	exact	128008
+GptOss/decode-step-cache-1024	alloc_words	exact	125128
 GptOss/experts-at-prefill-512	alloc_words	exact	1215
 GptOss/experts-at-prefill-536	alloc_words	exact	1215
-GptOss/prefill-12	alloc_words	batch=1	n=20	1.218e+05	1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.218e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05 1.219e+05
-GptOss/prefill-512	alloc_words	exact	121747
+GptOss/prefill-12	alloc_words	exact	125041
+GptOss/prefill-512	alloc_words	exact	125041
+GptOss/prefill-512-Q8_0	alloc_words	exact	127921
 
 # machine: baccbeca132e3ae9
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux

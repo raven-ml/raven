@@ -135,12 +135,12 @@ let merge p y =
   let seq = Nx.dim 2 y and d = Nx.dim 3 y in
   project p (Nx.reshape [| batch; seq; heads * d |] (Nx.swapaxes 1 2 y))
 
-let attention cfg layer b cache index x =
-  let index =
-    match layer with
-    | Sliding -> Cache_index.window cfg.window index
-    | Full -> index
-  in
+let windows cfg index =
+  let sliding = Cache_index.window cfg.window index
+  and full = Cache_index.window max_int index in
+  function Sliding -> sliding | Full -> full
+
+let attention cfg b cache index x =
   let head_dim = cfg.head_dim and pos = Cache_index.positions index in
   let q = Rope.apply cfg.rope ~pos (split ~head_dim b.attn.q x) in
   let k = Rope.apply cfg.rope ~pos (split ~head_dim b.attn.k x) in
@@ -160,10 +160,10 @@ let attention cfg layer b cache index x =
    device it is [x]. *)
 let close x = Nx.place (Nx.Placement.closed (Nx.placement x)) x
 
-let block cfg layer b cache index x =
+let block cfg b cache index x =
   let eps = cfg.norm_eps in
   let a, cache =
-    attention cfg layer b cache index (Rms_norm.apply ~eps b.attn_norm x)
+    attention cfg b cache index (Rms_norm.apply ~eps b.attn_norm x)
   in
   let x = close (Nx.add x a) in
   let h = Rms_norm.apply ~eps b.ffn_norm x in
@@ -181,11 +181,12 @@ let cache ~placement cfg ~slots dtype =
     cfg.layers
 
 let cached cfg p caches index ids =
+  let index = windows cfg index in
   let rec go x rev layers blocks caches =
     match (layers, blocks, caches) with
     | [], [], [] -> (x, List.rev rev)
     | layer :: layers, b :: blocks, c :: caches ->
-        let x, c = block cfg layer b c index x in
+        let x, c = block cfg b c (index layer) x in
         go x (c :: rev) layers blocks caches
     | _ ->
         invalid_arg

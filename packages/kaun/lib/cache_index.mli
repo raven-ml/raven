@@ -69,9 +69,10 @@
       index's, so a layer cannot zero with one and mask with another. Under a
       selection ({!select}) this holds per chosen column, and a column the token
       did not choose is not read.
-    + {b Values vary, shapes do not.} Positions and tables, the tables of blocks
-      included, are tensors: under [Rune.jit] they are inputs of the step, and
-      one compiled program serves every position and every allocation. *)
+    + {b Values vary, shapes do not.} Positions, tables, the tables of blocks
+      included, and the size of a {!window} are tensors: under [Rune.jit] they
+      are inputs of the step, and one compiled program serves every position,
+      every allocation and every window's size. *)
 
 type 'd t
 (** The type for cache indices of [batch] lanes of [seq] tokens each, on the set
@@ -155,9 +156,16 @@ val packed : seq:int -> int array array -> Nx.host t
 val window : int -> 'd t -> 'd t
 (** [window w index] is [index] whose tokens see only the last [w] positions at
     or before their own, themselves included. It replaces the window [index]
-    had. An index is built without a window; a model whose layers differ passes
-    [window w index] to the sliding ones and [index] to the others, over the
-    same pools' slots.
+    had. A window wider than every position hides nothing: [window max_int
+    index] masks, reads and attends to the bits [index] does.
+
+    An index is built without a window. The size is a scalar tensor of the
+    index, made beside its positions ({!Nx.beside}), so a model whose layers
+    differ in their window alone passes [window w index] to the sliding ones
+    and [window max_int index] to the others, over the same pools' slots, and
+    compiles one program for both. A window made inside a traced function is a
+    constant of that trace. The scalar has no axis to map, so [Rune.vmap]
+    refuses an index with a window as an argument.
 
     Raises [Invalid_argument] if [w] is not positive. *)
 
@@ -346,8 +354,9 @@ val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'd t -> 'e t
 (** [walk c index] walks an index at [c]'s path: [Nx.Ptree.v walk] is its
     structure, for the signature of a compiled step and for {!Nx.Ptree.map} over
     its tensors. Its leaves are the index's tensors, its tables of blocks, its
-    selection and its draft included: int64, and bool for a draft's [sees]. It
-    reports what a compiled program depends on beyond them. In walk order:
+    window's size, its selection and its draft included: int64, and bool for a
+    draft's [sees]. It reports what a compiled program depends on beyond them.
+    In walk order:
     - [tokens] reports case ["whole"] for an index built by {!whole}, or
       ["packed"] for one built by {!packed}, then walks its positions at
       [tokens.pos]; or case ["tabled"], then whether [row] is present and, if it
@@ -356,13 +365,15 @@ val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'd t -> 'e t
       each reporting its block size before its table at [tokens.blocks.]{e i};
     - [every] reports the block size the index reads in ({!val-every}), [1] when
       it reads positions;
-    - [window] reports whether a {!window} is set and its size;
+    - [window] reports whether a {!window} is set and, if it is, walks its size
+      at [window];
     - [columns] reports whether a selection ({!select}) is present and walks it;
     - [draft] reports whether a {!draft} is present and walks its slots at
       [draft.slots] and its [sees] at [draft.sees].
 
     Two indices share a compiled program only if they agree on all of these
-    reports; one that differs, such as another window, compiles its own. *)
+    reports; one that differs, such as one with a window and one without,
+    compiles its own. *)
 
 val place : 'e Nx.Placement.t -> 'd t -> 'e t
 (** [place at index] is [index] with its tensors whole on each device of [at]

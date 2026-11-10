@@ -18,12 +18,12 @@ type 'd tokens =
 type 'd draft = { slots : 'd Nx.int64_t; sees : 'd Nx.bool_t }
 
 (* [every] is how many positions a column holds: [1], or an [m] of the tokens'
-   [blocks]. [columns] is the selection, the columns each token reads: [batch;
-   seq; k]. *)
+   [blocks]. [window] is a scalar beside the positions. [columns] is the
+   selection, the columns each token reads: [batch; seq; k]. *)
 type 'd t = {
   tokens : 'd tokens;
   every : int;
-  window : int option;
+  window : 'd Nx.int64_t option;
   columns : 'd Nx.int64_t option;
   draft : 'd draft option;
 }
@@ -149,12 +149,13 @@ let make ?row ?(every = []) ~pos ~table () =
     every;
   of_tokens (Tabled { row; pos; table; blocks = every })
 
-let window w index =
-  if w <= 0 then invalid "Cache_index.window: window must be positive, got %d" w;
-  { index with window = Some w }
-
 let raw index =
   match index.tokens with Whole pos | Packed pos | Tabled { pos; _ } -> pos
+
+let window w index =
+  if w <= 0 then invalid "Cache_index.window: window must be positive, got %d" w;
+  let at = Nx.beside (raw index) in
+  { index with window = Some (Nx.scalar_at at Nx.int64 (Int64.of_int w)) }
 
 let batch index = Nx.dim 0 (raw index)
 let seq index = Nx.dim 1 (raw index)
@@ -275,13 +276,14 @@ let lanes ~row table =
 
 (* Whether a query at [query] sees a key at [keys]: at or before it, and under
    [window] among its last [window]. Elementwise, so it also runs over an
-   attention's pairs ({!visible}). *)
+   attention's pairs ({!visible}). [query - window] wraps only when [query] is
+   below every key, which the causal test hides already, so a window wider
+   than every position hides nothing. *)
 let within ?window ~keys query =
   let causal = Nx.less_equal keys query in
   match window with
   | None -> causal
-  | Some w ->
-      Nx.logical_and causal (Nx.greater keys (Nx.sub_s query (Int64.of_int w)))
+  | Some w -> Nx.logical_and causal (Nx.greater keys (Nx.sub query w))
 
 (* [keys] broadcasts against [batch; seq; 1]: the position each key holds. *)
 let sees ?window ~keys pos =
@@ -462,9 +464,7 @@ let read ?window ~every ~upto ~pos ~table pool =
     let upto = Nx.less_equal column upto in
     match window with
     | None -> upto
-    | Some w ->
-        Nx.logical_and upto
-          (Nx.greater column (Nx.sub_s (least pos) (Int64.of_int w)))
+    | Some w -> Nx.logical_and upto (Nx.greater column (Nx.sub (least pos) w))
   in
   let live = Nx.reshape (Array.append [| batch; context |] (ones tail)) seen in
   let gathered = Nx.take ~axis:0 table pool in
@@ -601,7 +601,7 @@ module Walked = struct
     let open Nx.Ptree.Walk in
     let tokens = field c "tokens" tokens x.tokens in
     let every = field c "every" int x.every in
-    let window = field c "window" (option int) x.window in
+    let window = field c "window" (option tensor) x.window in
     let columns = field c "columns" (option tensor) x.columns in
     let draft = field c "draft" (option draft) x.draft in
     { tokens; every; window; columns; draft }

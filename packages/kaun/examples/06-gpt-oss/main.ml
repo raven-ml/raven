@@ -7,9 +7,9 @@
    loop and times it: one step function serves the prefill and every
    single-token step. Without [--devices] the step runs eagerly on the host.
    Under [--devices LIST] the model is placed on those devices and the step is
-   {!Layer_loop.greedy} compiled: each layer kind is compiled once per call
-   shape and the host calls it once per layer, so the whole prompt goes through
-   in one call. Over several devices it runs expert-parallel: each device holds
+   {!Layer_loop.greedy} compiled: the block is compiled once per call shape
+   and the host calls it once per layer, so the whole prompt goes through in
+   one call. Over several devices it runs expert-parallel: each device holds
    an equal share of the experts and multiplies the rows routed to them.
 
    With [--prompt TEXT] the text becomes the user's turn of a harmony

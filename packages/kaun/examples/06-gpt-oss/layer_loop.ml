@@ -9,27 +9,21 @@ let cached ~placement cfg (p : ((float, 'b, 'd) Nx.t, 'd) Gpt_oss.params) =
   let block = Nx.Ptree.instantiate (module Gpt_oss.Block)
   and cache = Nx.Ptree.instantiate (module Attention.Cache)
   and index = Nx.Ptree.v Cache_index.walk in
-  let compile kind =
-    let f =
-      Rune.jit
-        Nx.Ptree.(
-          block @-> cache @-> index @-> tensor @-> returns (pair tensor cache))
-        (Gpt_oss.block cfg kind)
-    in
-    fun b c index x -> f b (Nx.Ptree.donate cache c) index (Nx.donate x)
+  let f =
+    Rune.jit
+      Nx.Ptree.(
+        block @-> cache @-> index @-> tensor @-> returns (pair tensor cache))
+      (Gpt_oss.block cfg)
   in
-  let sliding = compile Gpt_oss.Sliding and full = compile Gpt_oss.Full in
+  let block b c index x = f b (Nx.Ptree.donate cache c) index (Nx.donate x) in
   let embed = Rune.jit' (Embedding.apply p.tok) in
   fun caches index ids ->
-    let index = Cache_index.place placement index in
+    let index = Gpt_oss.windows cfg (Cache_index.place placement index) in
     let rec go x rev layers blocks caches =
       match (layers, blocks, caches) with
       | [], [], [] -> (x, List.rev rev)
-      | kind :: layers, b :: blocks, cache :: caches ->
-          let block =
-            match kind with Gpt_oss.Sliding -> sliding | Full -> full
-          in
-          let x, cache = block b cache index x in
+      | layer :: layers, b :: blocks, cache :: caches ->
+          let x, cache = block b cache (index layer) x in
           go x (cache :: rev) layers blocks caches
       | _ ->
           invalid_arg

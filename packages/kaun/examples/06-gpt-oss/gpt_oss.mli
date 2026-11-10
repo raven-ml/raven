@@ -147,21 +147,28 @@ val expert_parallel : 'd Nx.Devices.t -> role -> axis:int -> 'd Nx.Placement.t
 
 (** {1:attention Attention} *)
 
+val windows :
+  'd config -> 'e Kaun.Cache_index.t -> layer -> 'e Kaun.Cache_index.t
+(** [windows cfg index layer] is [index] under a layer of kind [layer]'s window
+    ({!Kaun.Cache_index.window}): the last [cfg.window] positions for a
+    {!Sliding} layer, and for a {!Full} one a window wider than every position,
+    which hides nothing. The two differ in their window's size alone, so one
+    compiled block serves both. Apply it to [cfg index] once per call: the
+    partial application holds both indices. *)
+
 val attention :
   'd config ->
-  layer ->
   ((float, 'b, 'd) Nx.t, 'd) block ->
   ((float, 'b, 'd) Nx.t, 'd) Kaun.Attention.Cache.t ->
   'd Kaun.Cache_index.t ->
   (float, 'b, 'd) Nx.t ->
   (float, 'b, 'd) Nx.t * ((float, 'b, 'd) Nx.t, 'd) Kaun.Attention.Cache.t
-(** [attention cfg layer b cache index x] is causal self-attention of the
-    normalised tokens [x], of shape [[| batch; seq; dim |]], through [cache],
-    and the cache with their keys and values written: {!Kaun.Attention.cached}
+(** [attention cfg b cache index x] is causal self-attention of the normalised
+    tokens [x], of shape [[| batch; seq; dim |]], through [cache], and the
+    cache with their keys and values written: {!Kaun.Attention.cached}
     composed from its pieces over {!project}, with [b.sinks] and
-    [cfg.attention_scale] given to {!Kaun.Attention.attend}. A {!Sliding}
-    layer sees the last [cfg.window] positions, through
-    {!Kaun.Cache_index.window}. *)
+    [cfg.attention_scale] given to {!Kaun.Attention.attend}. [index] carries
+    the layer's window ({!windows}). *)
 
 (** {1:forward Forward passes}
 
@@ -171,17 +178,16 @@ val attention :
 
 val block :
   'd config ->
-  layer ->
   ((float, 'b, 'd) Nx.t, 'd) block ->
   ((float, 'b, 'd) Nx.t, 'd) Kaun.Attention.Cache.t ->
   'd Kaun.Cache_index.t ->
   (float, 'b, 'd) Nx.t ->
   (float, 'b, 'd) Nx.t * ((float, 'b, 'd) Nx.t, 'd) Kaun.Attention.Cache.t
-(** [block cfg layer b cache index x] is one pre-norm block of kind [layer]
-    applied to the residual stream [x], of shape [[| batch; seq; dim |]],
-    through [cache], and the cache with the tokens' keys and values written.
-    {!cached} folds it over the blocks; a driver that runs each block as its own
-    compiled program calls it directly. *)
+(** [block cfg b cache index x] is one pre-norm block applied to the residual
+    stream [x], of shape [[| batch; seq; dim |]], through [cache], and the
+    cache with the tokens' keys and values written. [index] carries the
+    block's window ({!windows}). {!cached} folds it over the blocks; a driver
+    that runs each block as its own compiled program calls it directly. *)
 
 val hidden :
   'd config ->
@@ -215,8 +221,9 @@ val cached :
   'd Nx.int64_t ->
   (float, 'b, 'd) Nx.t * ((float, 'b, 'd) Nx.t, 'd) Kaun.Attention.Cache.t list
 (** [cached cfg p caches index ids] is the residual stream of the tokens [ids],
-    which sit where [index] says and attend through [caches], and the caches
-    with their keys and values written. See {!Kaun.Attention.cached}. *)
+    which sit where [index] says and attend through [caches], each layer under
+    its window ({!windows}), and the caches with their keys and values written.
+    See {!Kaun.Attention.cached}. *)
 
 val logits :
   'e config ->

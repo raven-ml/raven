@@ -221,6 +221,30 @@ let test_q8_0 () =
     (compiled (snd got) index token);
   equal ~msg:"no program is evaluated" int evaluated (Rune.evaluations ())
 
+(* The layer kinds differ in their window's size alone, so a loop over both
+   lowers what a loop over sliding layers alone does: one block program. *)
+let test_one_program () =
+  let lowered layers =
+    let cfg = { cfg with Gpt_oss.layers } in
+    let p = params () in
+    let p = { p with blocks = List.filteri (fun i _ -> i < 2) p.blocks } in
+    let caches =
+      Gpt_oss.cache ~placement:(fun _ ~axis:_ -> cpu1) cfg ~slots:4 Nx.float32
+    in
+    let cached =
+      Layer_loop.cached ~placement:cpu1 (Gpt_oss.place_config cpu1 cfg) p
+    in
+    let before = Rune.lowerings () in
+    ignore
+      (cached caches
+         (Cache_index.rows ~context:4 [| 2 |])
+         (Nx.create Nx.int64 [| 1; 2 |] [| 1L; 2L |]));
+    Rune.lowerings () - before
+  in
+  equal ~msg:"sliding then full lowers as two sliding layers" int
+    (lowered [ Gpt_oss.Sliding; Gpt_oss.Sliding ])
+    (lowered [ Gpt_oss.Sliding; Gpt_oss.Full ])
+
 let () =
   exit
     (run "gpt-oss layer loop"
@@ -235,5 +259,6 @@ let () =
                (test_blocks No_copy);
              test "Q8_0 projections compile to the eager model's logits"
                test_q8_0;
+             test "both layer kinds run one block program" test_one_program;
            ];
        ])

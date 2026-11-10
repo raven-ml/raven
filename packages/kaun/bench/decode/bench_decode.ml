@@ -514,8 +514,12 @@ let experts_layer =
    shows runs without voting: the ranges of the positions along the rows of a
    tile and of the columns along its keys class the causal mask, as for
    [Nx.causal]. A regression that stops classing a mask, by reading a column
-   as data or a position as an unknown, makes the hidden half vote. *)
-let prefill ~hq ~n =
+   as data or a position as an unknown, makes the hidden half vote. Under
+   [window], a size the index carries as a tensor, every pair of a tile that
+   runs also compares its key with the query's position less the window: at
+   [max_int], the full layers of a model whose layers mix windows, that is
+   what such a layer pays over a windowless one. *)
+let prefill ?window ~hq ~n () =
   let setup () =
     let module D = (val Nx.devices [ Lazy.force gpu ]) in
     let at = D.on in
@@ -527,7 +531,11 @@ let prefill ~hq ~n =
     let q = draw 1 [| 1; hq; n; 64 |]
     and k = draw 2 [| 1; 8; n; 64 |]
     and v = draw 3 [| 1; 8; n; 64 |] in
-    let index = Cache_index.place at (Cache_index.rows ~context:n [| n |]) in
+    let index = Cache_index.rows ~context:n [| n |] in
+    let index =
+      Option.fold ~none:index ~some:(fun w -> Cache_index.window w index) window
+    in
+    let index = Cache_index.place at index in
     let f =
       Rune.jit
         Nx.Ptree.(
@@ -541,7 +549,9 @@ let prefill ~hq ~n =
     call
   in
   {
-    name = Printf.sprintf "visible attention, %d/8 heads, %d tokens" hq n;
+    name =
+      Printf.sprintf "visible attention, %d/8 heads, %d tokens%s" hq n
+        (if window = None then "" else ", widest window");
     setup;
   }
 
@@ -552,9 +562,10 @@ let prefills () =
       [
         ( vendor,
           [
-            prefill ~hq:8 ~n:2048;
-            prefill ~hq:8 ~n:4096;
-            prefill ~hq:64 ~n:512;
+            prefill ~hq:8 ~n:2048 ();
+            prefill ~hq:8 ~n:4096 ();
+            prefill ~window:max_int ~hq:8 ~n:4096 ();
+            prefill ~hq:64 ~n:512 ();
           ] );
       ]
 
