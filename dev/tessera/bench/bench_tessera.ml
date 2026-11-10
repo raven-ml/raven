@@ -4,15 +4,18 @@
   ---------------------------------------------------------------------------*)
 
 (* raven's operations at TESSERA's shapes: every product of the four v2 students
-   and of the 2B teacher, their attention, layer norm and softmax pooling. A
-   pixel is a sequence of T observations, so a product has pixels × T rows. The
-   students run in float32, the teacher in bfloat16.
+   and of the 2B teacher, their attention, layer norm and softmax pooling, and
+   the products, attention and GRU pooling of a training step. A pixel is a
+   sequence of T observations, so a product has pixels × T rows. The students
+   run in float32, the teacher in bfloat16; a training case runs the forward
+   pass and the backward one, a pullback of a drawn cotangent.
 
    A case runs on the device TESSERA_DEVICE names: the host's eager kernels
    (cpu), or compiled by [Rune.jit] on the host (cpu-jit), a CUDA, NV, AMD or
    Metal GPU. Its inputs are normal draws made where it computes, and each call
    waits for its results. [rates] reports each case's time per call with its
-   rate in TFLOP/s and GB/s, its bytes those of the arrays it reads and writes
+   rate in TFLOP/s and GB/s. A forward and backward pass counts three forward
+   passes of FLOPs, and its bytes are those of the arrays it reads and writes
    once. *)
 
 let f32 = Nx.float32
@@ -32,6 +35,8 @@ let draw t dt seed shape =
   let normal key = Nx.Rng.normal_at t.at ~key dt shape in
   compile t Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) normal key
 
+let wait s y = Nx.Ptree.fold s (fun _ x () -> Nx.sync x) y ()
+
 (* A case's call at any target, made from its inputs. *)
 type make = { make : 'd. 'd target -> unit -> unit }
 
@@ -45,35 +50,72 @@ type case = {
 
 (* Precisions *)
 
-type precision = F32 | Bf16
+(* Tf32 stores float32 and lets products round their operands to TF32 on
+   NVIDIA's tensor cores, a tolk setting. *)
+type precision = F32 | Tf32 | Bf16
+type pass = Fwd | Fwd_bwd
 
-let precision_name = function F32 -> "f32" | Bf16 -> "bf16"
-let size = function F32 -> 4. | Bf16 -> 2.
+let precision_name = function F32 -> "f32" | Tf32 -> "tf32" | Bf16 -> "bf16"
+let pass_name = function Fwd -> "fwd" | Fwd_bwd -> "fwd+bwd"
+let size = function F32 | Tf32 -> 4. | Bf16 -> 2.
+let passes = function Fwd -> 1. | Fwd_bwd -> 3.
+
+(* The backward pass reads and writes as many arrays as the forward one. *)
+let traffic = function Fwd -> 1. | Fwd_bwd -> 2.
+
+let precise p (m : make) =
+  match p with
+  | F32 | Bf16 -> m
+  | Tf32 ->
+      let make t =
+        let call = m.make t in
+        fun () -> Tolk.Setting.(context [ B (allow_tf32, true) ] call)
+      in
+      { make }
 
 (* Products *)
 
-let product (type s) (dt : (float, s) Nx.dtype) ~m ~k ~n =
+let product (type s) (dt : (float, s) Nx.dtype) ~m ~k ~n pass =
   let make t =
     let x = draw t dt 1 [| m; k |] and w = draw t dt 2 [| k; n |] in
-    let f =
-      compile t Nx.Ptree.(tensor @-> tensor @-> returns tensor) Nx.matmul
-    in
-    fun () -> Nx.sync (f x w)
+    match pass with
+    | Fwd ->
+        let f =
+          compile t Nx.Ptree.(tensor @-> tensor @-> returns tensor) Nx.matmul
+        in
+        fun () -> Nx.sync (f x w)
+    | Fwd_bwd ->
+        let g = draw t dt 3 [| m; n |] in
+        let step x w g =
+          let mm (x, w) = Nx.matmul x w in
+          let y, back =
+            Rune.vjp Nx.Ptree.(pair tensor tensor) Nx.Ptree.tensor mm (x, w)
+          in
+          let dx, dw = back g in
+          (y, dx, dw)
+        in
+        let r = Nx.Ptree.(triple tensor tensor tensor) in
+        let f =
+          compile t Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns r) step
+        in
+        fun () -> wait r (f x w g)
   in
   { make }
 
-let gemm name ~m ~k ~n p =
+let gemm name ~m ~k ~n ?(pass = Fwd) p =
   let make =
-    match p with F32 -> product f32 ~m ~k ~n | Bf16 -> product bf16 ~m ~k ~n
+    match p with
+    | F32 | Tf32 -> product f32 ~m ~k ~n pass
+    | Bf16 -> product bf16 ~m ~k ~n pass
   in
   {
     name;
     shape =
-      Printf.sprintf "op=gemm M=%d K=%d N=%d dtype=%s pass=fwd" m k n
-        (precision_name p);
-    flops = 2. *. fl m *. fl k *. fl n;
-    bytes = size p *. fl ((m * k) + (k * n) + (m * n));
-    call = make;
+      Printf.sprintf "op=gemm M=%d K=%d N=%d dtype=%s pass=%s" m k n
+        (precision_name p) (pass_name pass);
+    flops = 2. *. fl m *. fl k *. fl n *. passes pass;
+    bytes = size p *. fl ((m * k) + (k * n) + (m * n)) *. traffic pass;
+    call = precise p make;
   }
 
 (* Attention *)
@@ -82,7 +124,7 @@ let gemm name ~m ~k ~n p =
    key's score gains a value of its own, standing for the log of its
    multiplicity when duplicated observations are computed once. *)
 let attend (type s) (dt : (float, s) Nx.dtype) ~batch ~heads ~len ~head_dim
-    ~bias =
+    ~bias pass =
   let make t =
     let shape = [| batch; heads; len; head_dim |] in
     let q = draw t dt 1 shape
@@ -94,18 +136,32 @@ let attend (type s) (dt : (float, s) Nx.dtype) ~batch ~heads ~len ~head_dim
       fst (Nx.attention ?score ~acc:f32 ~kv:(Nx.Dense { k; v }) q)
     in
     let qkv = Nx.Ptree.(triple tensor tensor tensor) in
-    let f = compile t Nx.Ptree.(tensor @-> qkv @-> returns tensor) out in
-    fun () -> Nx.sync (f m (q, k, v))
+    match pass with
+    | Fwd ->
+        let s = Nx.Ptree.(tensor @-> qkv @-> returns tensor) in
+        let f = compile t s out in
+        fun () -> Nx.sync (f m (q, k, v))
+    | Fwd_bwd ->
+        let g = draw t dt 5 shape in
+        let step m qkv' g =
+          let o, back = Rune.vjp qkv Nx.Ptree.tensor (out m) qkv' in
+          (o, back g)
+        in
+        let r = Nx.Ptree.(pair tensor qkv) in
+        let f =
+          compile t Nx.Ptree.(tensor @-> qkv @-> tensor @-> returns r) step
+        in
+        fun () -> wait r (f m (q, k, v) g)
   in
   { make }
 
 let heads = 4
 
-let attention name ~batch ~len ~head_dim ?(bias = false) p =
+let attention name ~batch ~len ~head_dim ?(bias = false) ?(pass = Fwd) p =
   let make =
     match p with
-    | F32 -> attend f32 ~batch ~heads ~len ~head_dim ~bias
-    | Bf16 -> attend bf16 ~batch ~heads ~len ~head_dim ~bias
+    | F32 | Tf32 -> attend f32 ~batch ~heads ~len ~head_dim ~bias pass
+    | Bf16 -> attend bf16 ~batch ~heads ~len ~head_dim ~bias pass
   in
   (* The elements of q, k, v and o; [q kᵀ] and its product with [v] take
      [2 len] FLOPs for each element of q and of o. *)
@@ -115,11 +171,11 @@ let attention name ~batch ~len ~head_dim ?(bias = false) p =
     shape =
       Printf.sprintf
         "op=attention batch=%d heads=%d T=%d head_dim=%d bias=%b dtype=%s \
-         pass=fwd"
-        batch heads len head_dim bias (precision_name p);
-    flops = fl qkvo *. fl len;
-    bytes = (size p *. fl qkvo) +. (4. *. fl (batch * len));
-    call = make;
+         pass=%s"
+        batch heads len head_dim bias (precision_name p) (pass_name pass);
+    flops = fl qkvo *. fl len *. passes pass;
+    bytes = ((size p *. fl qkvo) +. (4. *. fl (batch * len))) *. traffic pass;
+    call = precise p make;
   }
 
 (* Norms and pooling *)
@@ -161,6 +217,92 @@ let softmax_pool name ~batch ~len ~d =
         batch len d;
     flops = 0.;
     bytes = 4. *. fl ((batch * len * (d + 1)) + (batch * d));
+    call = { make };
+  }
+
+(* v1's pooling: a GRU runs over the steps of the encoder's output [x], of
+   shape [[batch; len; d]]. Its reset gate applies before the candidate's
+   product: [tanh (W_ih x + W_hh (r ∘ h) + b_h)]. Its states, normalised,
+   score each step, and the softmax of the scores weighs [x]. The input
+   products of the three gates are one product over every step, the hidden
+   products of the reset and update gates one per step. *)
+module Gru_pool = struct
+  type ('a, 'd) t = {
+    input : ('a, 'd) Kaun.Linear.t;
+    hidden : ('a, 'd) Kaun.Linear.t;
+    candidate : ('a, 'd) Kaun.Linear.t;
+    norm : ('a, 'd) Kaun.Layer_norm.t;
+    query : ('a, 'd) Kaun.Linear.t;
+  }
+
+  let walk c p =
+    let open Nx.Ptree.Walk in
+    let input = field c "input" Kaun.Linear.walk p.input in
+    let hidden = field c "hidden" Kaun.Linear.walk p.hidden in
+    let candidate = field c "candidate" Kaun.Linear.walk p.candidate in
+    let norm = field c "norm" Kaun.Layer_norm.walk p.norm in
+    let query = field c "query" Kaun.Linear.walk p.query in
+    { input; hidden; candidate; norm; query }
+
+  let init d =
+    let key = Nx.Rng.split ~n:4 (Nx.Rng.key 6) in
+    let linear ?bias i o =
+      Kaun.Linear.make ?bias ~key:key.(i) ~inputs:d ~outputs:o f32
+    in
+    {
+      input = linear 0 (3 * d);
+      hidden = linear ~bias:false 1 (2 * d);
+      candidate = linear ~bias:false 2 d;
+      norm = Kaun.Layer_norm.init ~dim:d Nx.Host.on;
+      query = linear 3 1;
+    }
+
+  let apply p x =
+    let open Kaun in
+    let d = (Nx.shape x).(2) in
+    let gates i j g = Nx.slice [ Nx.A; Nx.R (i * d, j * d) ] g in
+    let step h g =
+      let rz = Nx.sigmoid (Nx.add (gates 0 2 g) (Linear.apply p.hidden h)) in
+      let r = gates 0 1 rz and z = gates 1 2 rz in
+      let c = Linear.apply p.candidate (Nx.mul r h) in
+      let h = Nx.lerp h (Nx.tanh (Nx.add (gates 2 3 g) c)) z in
+      (h, h)
+    in
+    let gs = Nx.moveaxis 1 0 (Linear.apply p.input x) in
+    let h0 = Nx.zeros_at (Nx.placement x) f32 [| (Nx.shape x).(0); d |] in
+    let _, hs = Rune.scan' step ~init:h0 gs in
+    let s =
+      Linear.apply p.query (Layer_norm.apply p.norm (Nx.moveaxis 0 1 hs))
+    in
+    Nx.sum ~axes:[ 1 ] (Nx.mul (Nx.softmax ~axes:[ 1 ] s) x)
+end
+
+let gru_pool name ~batch ~len ~d =
+  let make (type d) (t : d target) =
+    let x = draw t f32 1 [| batch; len; d |]
+    and g = draw t f32 2 [| batch; d |] in
+    let gru = Nx.Ptree.instantiate (module Gru_pool) in
+    let p = Nx.Ptree.place (module Gru_pool) t.at (Gru_pool.init d) in
+    let step x p g =
+      let apply (x, p) = Gru_pool.apply p x in
+      let y, back =
+        Rune.vjp Nx.Ptree.(pair tensor gru) Nx.Ptree.tensor apply (x, p)
+      in
+      (y, back g)
+    in
+    let r = Nx.Ptree.(pair tensor (pair tensor gru)) in
+    let f = compile t Nx.Ptree.(tensor @-> gru @-> tensor @-> returns r) step in
+    fun () -> wait r (f x p g)
+  in
+  {
+    name;
+    shape =
+      Printf.sprintf
+        "op=gru_pool batch=%d T=%d input=%d hidden=%d dtype=f32 pass=fwd+bwd"
+        batch len d d;
+    (* The six d × d products a step, on each step of each pixel. *)
+    flops = 12. *. fl (d * d) *. fl (batch * len) *. passes Fwd_bwd;
+    bytes = 4. *. fl ((batch * len * d) + (batch * d)) *. traffic Fwd_bwd;
     call = { make };
   }
 
@@ -236,11 +378,47 @@ let teacher ~pixels =
       gemm "teacher/reduce2" ~m:pixels ~k:(4 * d) ~n:1024 Bf16;
     ]
 
+(* A training step's products, forward and backward, at each precision. *)
+let trained name ~m ~k ~n ps =
+  List.map
+    (fun p -> gemm (name ^ "/" ^ precision_name p) ~m ~k ~n ~pass:Fwd_bwd p)
+    ps
+
+(* Distilling the medium student: 4096 pixels of 40 steps. *)
+let distillation ~pixels =
+  let m = pixels * 40 and d = 440 and ffn = 1792 and ps = [ Bf16; F32 ] in
+  trained "train/medium/in_proj/T40" ~m ~k:d ~n:(3 * d) ps
+  @ trained "train/medium/ffn1/T40" ~m ~k:d ~n:ffn ps
+  @ trained "train/medium/ffn2/T40" ~m ~k:ffn ~n:d ps
+  @ [
+      attention "train/medium/attention/T40/bf16" ~batch:pixels ~len:40
+        ~head_dim:(d / heads) ~bias:true ~pass:Fwd_bwd Bf16;
+    ]
+
+(* v1.0's Barlow Twins step on one GPU: 2048 pixels of 40 steps, d 512, FFN
+   4096, the 128-d representation projected to 16384 and through 16384 × 16384
+   layers. *)
+let barlow_twins ~pixels =
+  let m = pixels * 40 and d = 512 and ffn = 4096 and wide = 16384 in
+  let ps = [ F32; Tf32; Bf16 ] in
+  trained "train/v1/in_proj/T40" ~m ~k:d ~n:(3 * d) ps
+  @ trained "train/v1/ffn1/T40" ~m ~k:d ~n:ffn ps
+  @ trained "train/v1/ffn2/T40" ~m ~k:ffn ~n:d ps
+  @ trained "train/v1/projector_in" ~m:pixels ~k:128 ~n:wide ps
+  @ trained "train/v1/projector_hidden" ~m:pixels ~k:wide ~n:wide ps
+  @ [
+      attention "train/v1/attention/T40/bf16" ~batch:pixels ~len:40
+        ~head_dim:(d / heads) ~pass:Fwd_bwd Bf16;
+      gru_pool "train/v1/gru_pool/T40" ~batch:pixels ~len:40 ~d;
+    ]
+
 (* Every case, with each count of pixels divided by [shrink]. *)
 let cases ~shrink =
   let pixels n = max 1 (n / shrink) in
   List.concat_map (student ~pixels:(pixels 4096)) students
   @ teacher ~pixels:(pixels 512)
+  @ distillation ~pixels:(pixels 4096)
+  @ barlow_twins ~pixels:(pixels 2048)
 
 (* Devices *)
 
