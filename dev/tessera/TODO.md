@@ -111,6 +111,8 @@ An item leaves when its library fixes it, or when a design decides it stays.
   computes twice its FLOPs (bench `e2e/*/encode`; PyTorch's reference
   5,039 and 3,472). The cause is tolk's to find, beside f32 GEMM parity
   with cuBLAS.
+- LayerNorm is ~2× PyTorch's on CUDA and 2-3.5× on CPU (M0); see the next
+  item for the compiled reads.
 - tolk compiles reductions that read the same operand over the same axes
   as separate kernels: compiled `Nx.standardize` reads its input five times
   (Max for the overflow rescue, Σx, Σd, Σd², then the map) where nx.cpu reads
@@ -119,6 +121,16 @@ An item leaves when its library fixes it, or when a design decides it stays.
   LAPACK's dnrm2.f90 after Anderson, ACM TOMS 2017) drop the Max pass from
   standardize, rms_norm, var and std together. GPU wall time unmeasured
   (found by the layer-norm review).
+- CUDA f32 GEMM shape coverage (M0, m0-baselines.md): products whose N is
+  divisible by 3 (every fused QKV projection: N = 432, 768, 1320, 1920) and
+  those at TESSERA's d = 144 and 440 run at ~5 TFLOP/s, against 16-20 for
+  well-factored N, 3.8-4.4× cuBLAS; well-factored N are 1.3-1.45×. Together
+  they are most of the students' 1.8-2.8× forward gap on CUDA. NV's
+  well-factored GEMMs run at ~10 TFLOP/s against CUDA's ~17. bf16 training
+  products at medium's shapes are 3.6-17× PyTorch's.
+- Compiling the teacher's attention (head dim 1024) takes about 10 minutes of
+  NVRTC on CUDA and NV, and runs 7-11× PyTorch's; head dims 36, 64 and 160
+  are 1.6-3× PyTorch's memory-efficient kernel (M0).
 - TF32 is reached from user code as a compiler setting
   (`Tolk.Setting.context [B (allow_tf32, true)]`), NVIDIA only, and silently
   ignored elsewhere: a `tf32` row on AMD or the CPU measures f32. Wanted: a
