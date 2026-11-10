@@ -1208,6 +1208,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Add `Tolk_engine.footprint`, the bytes a link of a compiled schedule and
+  its runs make on each device, without linking.
 - **Breaking:** `Schedule.create_schedule`, `create_linear_with_vars` and
   `Tolk_engine.compile` lose `~by_storage`: every schedule runs ready kernels
   by their number, one that frees storage first.

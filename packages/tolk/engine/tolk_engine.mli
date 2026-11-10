@@ -177,6 +177,20 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> unit
     times the runs of each on them ({!time}), each from a clean, cold cache
     ({!val-scrub}). *)
 
+val footprint :
+  devices:(string -> Rig.t) ->
+  ?bound:(Ops.t * Rig.Buffer.t) list ->
+  ?storage:storage ->
+  Ops.t ->
+  (Rig.t * int) list
+(** [footprint ~devices ~bound ~storage linear] is, for each device of the
+    compiled schedule [linear] and the host, the bytes {!link} with the same
+    arguments makes there, and for {!Per_run} each run beside them, as
+    {!Rig.allocation} counts them: the program's memory and the words of its
+    runs ({!Rig_program.footprint}), and the storage a run makes. It links
+    nothing, makes no memory and loads no image; images' code is not
+    counted. It raises as {!link} does. *)
+
 val link_call : devices:(string -> Rig.t) -> Ops.t -> t
 (** [link_call ~devices call] is the call [call] of a compiled program
     ({!Tolk.Op.Program}) linked as a schedule of one call, whose kernel is a

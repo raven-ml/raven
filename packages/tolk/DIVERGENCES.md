@@ -5901,7 +5901,8 @@ and an initial value is added after it (D260).
 - **tolk:** `Schedule.storage_order`, the one order of `create_schedule`
   and `create_linear_with_vars`, and the storage `Schedule.schedule` sees
   written; `Memory.taken`, the storage an entry takes as the memory plan
-  counts it.
+  counts it; `Tolk_engine.footprint`, which counts what a link of the
+  order makes.
 - **Differs:** a ready kernel runs by its number, its place in the order
   `Ops.toposort` of the kernel graph meets it (each kernel after what it
   reads), so where the walk reaches a value's readers right after it, the
@@ -5922,7 +5923,8 @@ and an initial value is added after it (D260).
   gathered weights, and starts every independent chain before any ends.
   Picking costs one pass over each ready kernel's storage, so a schedule of
   `k` kernels costs `O(k²)` at worst. Every schedule takes this order, linked
-  once or made per run.
+  once or made per run: one order is what `Rune.footprint` plans and what a
+  run allocates.
 - **Reason:** (b): rune's fully sharded training (RFC 0005's memory bound),
   whose split programs' storage is planned by each buffer's life (D173).
   With the split assembly as storage and copies landing in place (D182),

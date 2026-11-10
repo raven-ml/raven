@@ -116,12 +116,16 @@ let starts_at buf (align, p) =
 (* [n] bytes of [d] that start where storage of alignment [align] and phase [p]
    does: a buffer of its own where [d] starts one there ([Rig.alignment]), and
    else a view into [align - 1] more bytes, with the buffer it views. *)
-let made_at d n (align, p) =
-  if p = 0 && Rig.alignment d >= align then
+let made_bytes d n (align, p) =
+  if p = 0 && Rig.alignment d >= align then n else n + align - 1
+
+let made_at d n ((align, p) as start) =
+  let m = made_bytes d n start in
+  if m = n then
     let buf = Rig.Buffer.create d n in
     (buf, buf)
   else
-    let buf = Rig.Buffer.create d (n + align - 1) in
+    let buf = Rig.Buffer.create d m in
     let first = (p - phase buf align + align) mod align in
     (buf, Rig.Buffer.view buf ~first ~length:n)
 
@@ -932,8 +936,9 @@ type t = {
   looped : bool; (* whether a step of the program is a [Loop] *)
 }
 
-(* The program of the calls [entries] that [b] links. *)
-let assemble b entries =
+(* The description of the program of the calls [entries] that [b] links, and
+   its devices. *)
+let describe b entries =
   List.iter (entry b) entries;
   flush b;
   let rigs = Dynarray.to_list b.rigs in
@@ -947,7 +952,12 @@ let assemble b entries =
       steps = Iarray.of_list (List.rev b.steps);
     }
   in
-  match Rig_program.load desc (Iarray.of_list rigs) with
+  (desc, Iarray.of_list rigs)
+
+(* The program of the calls [entries] that [b] links. *)
+let assemble b entries =
+  let desc, rigs = describe b entries in
+  match Rig_program.load desc rigs with
   | Ok l -> l
   | Error why -> failwith (b.fn ^ ": " ^ why)
 
@@ -1068,8 +1078,9 @@ let launches (b : builder) =
   in
   Array.of_list (List.rev (List.fold_left step [] (List.rev b.steps)))
 
-let link_with ~separate ~devices ?(bound = []) ?(storage = Linked) linear =
-  let fn = "Tolk_engine.link" in
+(* The storage nodes [bound] binds, checked against [devices], and the
+   schedule a link of [linear] runs, with the storage each run makes. *)
+let prepared ~fn ~devices ~bound ~storage linear =
   if Ops.op linear <> Op.Linear then fail fn "not a compiled schedule";
   let tbl = Ops.Tbl.create 16 in
   List.iter
@@ -1083,12 +1094,17 @@ let link_with ~separate ~devices ?(bound = []) ?(storage = Linked) linear =
       then fail fn "a storage node is not bound to %d bytes of %s" (bytes u) n;
       Ops.Tbl.replace tbl u buf)
     bound;
-  let calls = List.length (Ops.src linear) in
   let linear, made =
     match storage with
     | Linked -> (linear, [||])
     | Per_run -> per_run_storage ~named:devices tbl linear
   in
+  (tbl, linear, made)
+
+let link_with ~separate ~devices ?(bound = []) ?(storage = Linked) linear =
+  let fn = "Tolk_engine.link" in
+  let calls = List.length (Ops.src linear) in
+  let tbl, linear, made = prepared ~fn ~devices ~bound ~storage linear in
   let b = builder ~fn ~separate ~devices tbl in
   match assemble b (Ops.src linear) with
   | exception e ->
@@ -1140,6 +1156,29 @@ let link ~devices ?bound ?storage linear =
   link_with
     ~separate:(Setting.value Setting.debug >= 2)
     ~devices ?bound ?storage linear
+
+let footprint ~devices ?(bound = []) ?(storage = Linked) linear =
+  let fn = "Tolk_engine.footprint" in
+  let tbl, linear, made = prepared ~fn ~devices ~bound ~storage linear in
+  let b =
+    builder ~fn ~separate:(Setting.value Setting.debug >= 2) ~devices tbl
+  in
+  let desc, rigs =
+    Fun.protect
+      ~finally:(fun () -> release_bound b)
+      (fun () -> describe b (Ops.src linear))
+  in
+  let counted =
+    List.map (fun (d, n) -> (d, ref n)) (Rig_program.footprint desc rigs)
+  in
+  Array.iter
+    (fun m ->
+      let n = Rig.allocation m.device (made_bytes m.device m.bytes m.at) in
+      match List.find_opt (fun (d, _) -> Rig.equal d m.device) counted with
+      | Some (_, total) -> total := !total + n
+      | None -> ())
+    made;
+  List.map (fun (d, n) -> (d, !n)) counted
 
 (* The buffer [slots] binds to [slot], which [check_slots] found. *)
 let slot_buffer slots slot = Option.get slots.(slot)
