@@ -15,7 +15,7 @@
     A {e run} is one execution of a program. The program opens a
     {!Session}, the run's one writer, declares its metrics and logs samples
     into them, and finishes the session at the end. Readers list runs
-    ({!Store.runs}), each a {!Run} as its first and last records state it,
+    ({!Store.val-runs}), each a {!Run} as its first and last records state it,
     and fold a run's log into its {!History}: series, statistics and best
     values ({!Metric}). An {e artifact} is a name with immutable versions that
     a run publishes and other runs use ({!Artifact}). {!Value} and

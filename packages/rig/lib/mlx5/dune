@@ -1,6 +1,14 @@
 ; ConnectX NICs of this machine, opened through Linux's RDMA subsystem and
 ; driven once open: regions, completion queues and queue pairs.
 
+; The record below the interface's stop comment, (**/**), has fields whose
+; types are hidden there too, and odoc 3 warns for it although the record is
+; hidden as well. Its warnings are not errors here; see the root dune.
+(env
+ (_
+  (odoc
+   (warnings nonfatal))))
+
 (library
  (name rig_mlx5)
  (public_name rig.mlx5)

@@ -7,10 +7,10 @@
 
     A {e sample} is a step, a time and a float that a run logged under a
     key, as a metric's sample or a reading's ({!Store_format.section-log}).
-    A reader gets a key's samples that are not orphans as a {!series}, and
-    their statistics as {!stats} ({!History.series}, {!History.stats}). A
-    program declares a metric and logs its samples through a session
-    ({!Session.metric}).
+    A reader gets a key's samples that are not orphans as a {!type-series}, and
+    their statistics as {!type-stats} ({!History.series},
+    {!History.val-stats}). A program declares a metric and logs its samples
+    through a session ({!Session.val-metric}).
 
     A sample is {e finite} when its value is neither NaN nor infinite.
     Statistics that compare or add values range over finite samples alone,

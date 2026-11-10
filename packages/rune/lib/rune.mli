@@ -21,13 +21,13 @@
     runs inside it, as the function of a transformation runs inside the
     transformation. Transformations nest ({!section-derivatives}).
 
-    A {e construct} ({!scan}, {!iterate}, {!switch}, {!root}, {!remat} and
-    {!jit}) {e traces} its functions. Their OCaml code runs over {e stand-ins},
+    A {e construct} ({!scan}, {!iterate}, {!switch}, {!root}, {!val-remat} and
+    {!val-jit}) {e traces} its functions. Their OCaml code runs over {e stand-ins},
     values with a dtype, a shape and a placement but no elements. What they
     compute from them is recorded as a {e program}, which the construct then
-    runs ({!section-tracing}). {!linear_transpose}, {!program} and {!eval_shape}
+    runs ({!section-tracing}). {!linear_transpose}, {!val-program} and {!eval_shape}
     trace their function too. A transformation of a loop, a {!switch}, a
-    {!remat} or a {!jit} is that construct over the transformation of its
+    {!val-remat} or a {!val-jit} is that construct over the transformation of its
     program: the derivative of a {!scan} is a scan of its step's derivative. A
     custom rule and a {!root} have the derivatives their sections state. A
     {!callback}'s function is never traced. It runs on values, once each time
@@ -37,8 +37,8 @@
     except for what nx's NaN rule leaves unspecified
     ({!Nx.Dtype.section-stores}): a NaN's sign and payload, and whether a NaN
     made from a signalling NaN is signalling. Outside every transformation a
-    construct other than {!jit} agrees bit for bit with its functions applied
-    eagerly: a {!scan} is the fold of its step. A {!jit}
+    construct other than {!val-jit} agrees bit for bit with its functions applied
+    eagerly: a {!scan} is the fold of its step. A {!val-jit}
     computes to the accuracy {!section-numerics} states. A value rune makes
     lies where nx places it ({!Nx.section-routing}): a zero beside an array lies
     at that array's placement, an operation's result where nx routes it, and a
@@ -77,10 +77,10 @@
 
 (** {1:tracing Tracing}
 
-    A construct other than {!jit} traces its functions each time it is called:
-    at each call outside a {!jit}, and inside one at each trace of the {!jit}. A
+    A construct other than {!val-jit} traces its functions each time it is called:
+    at each call outside a {!val-jit}, and inside one at each trace of the {!val-jit}. A
     custom rule's functions run on values where {!section-custom} says so, and
-    are traced elsewhere. A {!jit} itself traces once per key. A loop's step is
+    are traced elsewhere. A {!val-jit} itself traces once per key. A loop's step is
     traced once per trace of the loop, whatever its number of steps, so its code
     and its side effects run once per trace too. Inside a traced function
     {!Nx.item} of a stand-in, or of a value computed from one, raises, naming
@@ -92,14 +92,14 @@
     [~key] or inside a scope it opens at that key ({!Nx.Rng.with_key}).
 
     An operation that reads no stand-in computes once, at the call, except in
-    {!switch}, {!remat}, a {!root}'s [solve] and {!jit}. These {e stage} every
+    {!switch}, {!val-remat}, a {!root}'s [solve] and {!val-jit}. These {e stage} every
     operation their functions apply: they record it in the program, operations
     on captured values included. A traced function reads what it captures when
-    it is traced, so it sees a [ref]'s contents at the trace: under {!jit}, at
+    it is traced, so it sees a [ref]'s contents at the trace: under {!val-jit}, at
     the first call of each key. So does any state it reads other than its
     arguments and rune's own extents: a mutable value, a handler of the caller's
     own effect, domain-local state. Whether a map, a {!Total.collect} or a
-    {!Probe.collect} is around is rune's, and a {!jit} keys its programs on what
+    {!Probe.collect} is around is rune's, and a {!val-jit} keys its programs on what
     its trace asked of them; a function that must act otherwise inside a map
     asks {!lane_count}.
 
@@ -129,9 +129,9 @@
 
     A failure that depends on the values, as an {!iterate} still running after
     [max] steps or a {!switch} index out of range, raises at the call, and under
-    a {!jit} as the call's check does ({!section-checks}). A later operation on
-    an argument a {!jit} consumed raises in nx, naming the entry point that
-    consumed it ({!section-donation}). A {!jit} whose trace raises keeps no
+    a {!val-jit} as the call's check does ({!section-checks}). A later operation on
+    an argument a {!val-jit} consumed raises in nx, naming the entry point that
+    consumed it ({!section-donation}). A {!val-jit} whose trace raises keeps no
     program for the key. *)
 
 (** {1:derivatives Derivatives}
@@ -519,7 +519,7 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     {b Values.} A {!custom_jvp} or {!custom_vjp} runs its rule {e on values},
     its arguments' or their primals', in two cases, so the rule may read them
     with {!Nx.item}, as an iteration tests its tolerance. Where no argument
-    belongs to any code and no construct stages the call ({!jit}, {!remat},
+    belongs to any code and no construct stages the call ({!val-jit}, {!val-remat},
     {!switch}, a {!root}'s [solve]), the call is [fst (rule args)] and the
     derivative never runs. Under one differentiation that tracks an argument,
     where the arguments' primals belong to no other code and no transformation
@@ -608,7 +608,7 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     inside the map, which batches the operations it applies to the lanes it
     captures, and its results are values every lane shares. So a {!switch} on
     the result of a rule that reads the lanes may take one branch eagerly and
-    run per lane under {!jit}, which traces the rule. One over an argument that
+    run per lane under {!val-jit}, which traces the rule. One over an argument that
     a differentiation outside the map tracks is traced, as {b Traced rules}
     says.
 
@@ -835,7 +835,7 @@ val lane_index : axis -> ('v, 's, 'd) Nx.t -> 'd Nx.int32_t
     each of [x]'s devices. Where [x] is a lane of the map, the lanes' indices,
     stacked, are cut as [x]'s rows are along axis 0, so that each lane's index
     lies where its row does. Where [x] is a value that a function traced by a
-    construct other than {!jit} computes, such as a loop's carry inside its
+    construct other than {!val-jit} computes, such as a loop's carry inside its
     step, or a tangent under reverse mode, they are whole on each device.
 
     Raises [Invalid_argument] with no map named [a] around the call. *)
@@ -844,7 +844,7 @@ val lane_count : axis -> int option
 (** [lane_count a] is [Some n] inside the map named [a] of [n] lanes, and [None]
     with no map named [a] around the call, as where {!lanes} raises. It reads no
     value, so it is the same in every lane, a held one's included, and a traced
-    function reads it as it is traced: a {!jit} keys its programs on it
+    function reads it as it is traced: a {!val-jit} keys its programs on it
     ({!section-keys}). A custom rule's tangent map that gathers a map's lanes
     asks first, since it is traced wherever the rule is ({!section-custom}).
     [mark y] below adds every lane's tangent of [y] to the total [t] inside the
@@ -872,14 +872,14 @@ val lane_count : axis -> int option
     call, once per execution of the code that makes it. A [collect]'s
     {e running value} is its [init] plus the additions that have reached it so
     far. The additions a traced function makes reach it when the construct that
-    traced the function returns, so a construct that raises adds none: a {!jit}
+    traced the function returns, so a construct that raises adds none: a {!val-jit}
     adds its function's additions once per call, as the call returns. An
     addition of another shape than its [collect]'s [init], or on another device
     set, raises where it is made, inside a traced function as the function is
     traced. A step of {!scan} or {!iterate}, and an [until] once per test, makes
     its additions once per step. A construct adds its additions to the running
     value in the order they are made, at any depth: a loop inside another loop's
-    step, a {!remat} or a custom rule in a step, and a {!jit}, which computes
+    step, a {!val-remat} or a custom rule in a step, and a {!val-jit}, which computes
     the sums in its program. So the total equals the sum of the same additions
     made one after another, under every differentiation too, but for a
     {!custom_jvp} tangent map's, which that function states. Under a
@@ -893,7 +893,7 @@ val lane_count : axis -> int option
     [collect] inside the map receives its lane's. One outside it receives the
     additions one after another, in the order the map makes them, and each
     addition's lanes in turn, in C order of their indices, an outer map's
-    varying slowest. A loop, a {!jit}, a {!remat} or a custom rule's function
+    varying slowest. A loop, a {!val-jit}, a {!val-remat} or a custom rule's function
     inside the map adds each of its additions to the running value around the
     map as it is made. Where an {!iterate}'s lanes stop apart, each step adds
     the lanes still running; where a {!switch}'s lanes take different branches,
@@ -955,7 +955,7 @@ end
 
     {b Differentiation.} Emissions offer primals, once per execution: under
     reverse mode those of the forward pass. A backward pass, a transpose, a
-    {!remat}'s computing again, a {!root}'s derivative, and a custom rule's
+    {!val-remat}'s computing again, a {!root}'s derivative, and a custom rule's
     function derived again or applied to tangents offer nothing. A {!custom_jvp}
     tangent map's emissions are offered under forward mode. *)
 module Probe : sig
@@ -1053,7 +1053,7 @@ end
     {b Iterates.} The derivative of an {!iterate} is that of the steps taken;
     its test has none. Where the loop runs at the call and reads no value of
     another transformation, reverse mode keeps the steps taken. Inside a traced
-    function ({!jit}, a {!scan}'s step, a {!remat}), a map, or forward mode
+    function ({!val-jit}, a {!scan}'s step, a {!val-remat}), a map, or forward mode
     around it, it keeps room for [max] steps and transposes only the steps
     taken, but a value the step captures receives a zero cotangent where the
     loop takes no step, NaN where that zero meets an infinite partial
@@ -1177,7 +1177,7 @@ val cond :
     fills in with [J], and reverse mode with [J]'s transpose: the solve is
     linear in [b], and its transpose solves the transposed system. It may apply
     [op] under {!jvp}, {!grad} or {!val-vmap} opened inside it, as in
-    [Nx.solve (Rune.jacfwd' op b) b], but not under a {!jit}, whose function
+    [Nx.solve (Rune.jacfwd' op b) b], but not under a {!val-jit}, whose function
     may not capture [op]'s stand-ins. Without it, a derivative builds [J]'s
     matrix, its columns [J] of the unit vectors in one map, and solves it with
     {!Nx.solve}, which suits small systems; the arrays of [x] must then share a
@@ -1225,8 +1225,8 @@ val root :
     ["Rune.root: 0: shape [3] in the residual's result, [4] in the solution"];
     without [linear_solve], if [x]'s arrays differ in dtype; if [residual] reads
     the {!lanes} of a map, which joins the lanes' systems; if [linear_solve]
-    applies [op] after it returned; and, naming the {!jit}'s entry point, if it
-    applies [op] inside a {!jit}. *)
+    applies [op] after it returned; and, naming the {!val-jit}'s entry point, if it
+    applies [op] inside a {!val-jit}. *)
 
 (** {1:callbacks Callbacks}
 
@@ -1262,10 +1262,10 @@ val root :
       pullback's on the cotangents too;
     - in a {!root}'s [solve], as the code around the root does, and in its
       [linear_solve], once per run a derivative makes;
-    - in a {!remat}, as {!remat} states;
-    - under {!jit}, once per call of the compiled function, never at a trace or
+    - in a {!val-remat}, as {!val-remat} states;
+    - under {!val-jit}, once per call of the compiled function, never at a trace or
       a compile ({!section-evaluated});
-    - in {!eval_shape} and {!program}, never. *)
+    - in {!eval_shape} and {!val-program}, never. *)
 
 (** {3:callback_lanes Lanes}
 
@@ -1295,7 +1295,7 @@ val callback :
 (** {1:remat Rematerialization} *)
 
 val remat : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
-(** [remat s f] is [f], [s] its signature as for {!jit}, whose reverse mode
+(** [remat s f] is [f], [s] its signature as for {!val-jit}, whose reverse mode
     keeps [f]'s arguments and the values it captures, and computes [f]'s
     intermediate values again in the backward pass: it trades computation for
     memory. [f] is traced at each call over stand-ins of its arguments' arrays,
@@ -1304,7 +1304,7 @@ val remat : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     [f x], bit for bit. Every transformation sees [remat s f] as it sees [f]:
     its derivatives in either mode, and its map, are [f]'s. An addition to a
     {!Total} that [f] makes counts once, however often the backward pass
-    computes [f] again. Inside a {!jit}, the backward pass computes again each
+    computes [f] again. Inside a {!val-jit}, the backward pass computes again each
     of [f]'s intermediate values that reads a value the program computes, among
     [f]'s arguments and captures, once the cotangents of [f]'s results are
     computed, so the program keeps none of them from one pass to the other. A
@@ -1454,7 +1454,7 @@ val jit :
     within a set: the program computes on the devices of every set it
     reaches, in kernels compiled for each one's target, and a value on the
     other set computes there as it would on its own, a set without kernels
-    ({!Nx.devices}) included.
+    ({!Nx.val-devices}) included.
 
     A map over an axis cut one row per device is per-device code: each device
     computes its lane, {!lanes} gathers every device's row onto each device, a
@@ -1682,12 +1682,12 @@ val jit :
     and a zero sum after an [init] of [-0.] may be [-0.] where eager gives
     [+0.].
 
-    {b Attention.} A compiled {!Nx.attention} folds each query row over its
+    {b Attention.} A compiled {!Nx.val-attention} folds each query row over its
     keys in tiles, with a running maximum, sum and accumulator, so its
-    results hold {!Nx.attention}'s bound with [ε] the bound of a compiled
+    results hold {!Nx.val-attention}'s bound with [ε] the bound of a compiled
     {!Nx.logsumexp} of [tk] terms above. On a tensor core, float16 and
     bfloat16 weights are rounded once to [v]'s dtype for the value product,
-    as {!Nx.attention} allows. Its derivatives recompute each pair's weight
+    as {!Nx.val-attention} allows. Its derivatives recompute each pair's weight
     from [lse] and sum their products by contractions and maps of the whole
     pair loop, each within its row above. Where the forward runs on a
     tensor core, reverse mode, for float16 and bfloat16 keys and values of
@@ -1786,7 +1786,7 @@ val jit :
 
     Inside an enclosing [jit], a call is inlined: its program's operations, or
     its derived program's, are staged there. Inside a {!scan}'s or an
-    {!iterate}'s step, a {!remat}'s function or a custom rule, the call stays a
+    {!iterate}'s step, a {!val-remat}'s function or a custom rule, the call stays a
     compiled call of its own, which computes the bits it computes outside the
     construct. *)
 
@@ -1821,7 +1821,7 @@ val jit :
     so that the call waits there for the work the flag depends on, a blocking
     read per branch per call. Over several devices the index is the copy on
     the program's device, its first argument's, the element copied there
-    where it lies whole on another. A {!remat}, a {!custom_jvp}, a
+    where it lies whole on another. A {!val-remat}, a {!custom_jvp}, a
     {!custom_vjp} and a {!custom_transpose} compile as their function's
     operations, the program's own. So does a {!root}'s solve, and its derivative
     compiles as its linear solve's operations, each application of the operator
@@ -1831,7 +1831,7 @@ val jit :
 
     A call offers its function's emissions ({!Probe}) once it returns. A
     compiled program returns them as more results: those its function makes, and
-    those of a {!scan}'s step, a call, a {!remat} and a custom rule inside it, a
+    those of a {!scan}'s step, a call, a {!val-remat} and a custom rule inside it, a
     scan's stacked over its rows. A program whose emissions lie in another
     construct, or that both emits and checks on the host, is evaluated, so that
     a failing check keeps the offers made before it. Off the host the call's
@@ -1861,7 +1861,7 @@ val jit :
       each call copies it into fresh memory of its own device.
 
     Over several devices a program's {!Nx.check}s, additions to a {!Total},
-    {!switch}es, {!remat}s, custom rules and calls compile, each as on one
+    {!switch}es, {!val-remat}s, custom rules and calls compile, each as on one
     device, over its values' pieces. It declines a program that holds another
     construct than {!detach}, a {!scan} or an {!iterate}; a scan over rows
     cut along axis 0, an iterate that stacks its steps, and a loop whose step
@@ -1871,7 +1871,7 @@ val jit :
     running value. An emission compiles as on one device
     ({!section-emissions}). It also declines a
     program with a value on a device that computes nothing ({!Rig.computes}).
-    On a set without kernels ({!Nx.devices}), nothing evaluates a declined
+    On a set without kernels ({!Nx.val-devices}), nothing evaluates a declined
     program: it raises [Invalid_argument] at the call, naming what the compiler
     declines, as does each stretch of a program split around a callback.
     It declines nothing else: a compiler that fails on a program it takes, as
@@ -1897,13 +1897,13 @@ val jit :
     total is a compiled call of its own, compiled once per variant as a program
     is, which computes as a compiled call does ({!section-numerics}). The
     callbacks and additions between the stretches are evaluated. A loop, a
-    switch, a {!remat} or a custom rule whose function runs a callback is
+    switch, a {!val-remat} or a custom rule whose function runs a callback is
     evaluated, its step, branch or function split alike. A result that no
     stretch computes, that repeats an earlier result or that a callback receives
     passes through one more compiled call, which returns it in fresh memory.
     Each compiled call costs a dispatch, a loop holding a callback runs step by
     step, and a switch holding one reads its index on the host. A stretch the
-    compiler declines raises on a set without kernels ({!Nx.devices}), as a
+    compiler declines raises on a set without kernels ({!Nx.val-devices}), as a
     declined program does, and is evaluated elsewhere, and on a set without
     kernels a call with donated arguments and a loop holding a callback whose
     outputs it stacks raise too, since nx stacks the rows.
@@ -1941,14 +1941,14 @@ type program
 
 val program :
   ('a, 'd) Nx.Ptree.t -> ('b, 'd) Nx.Ptree.t -> ('a -> 'b) -> 'a -> program
-(** [program a b f x] is the program that {!jit} traces of [f], a function of
+(** [program a b f x] is the program that {!val-jit} traces of [f], a function of
     structure [a] to structure [b], at a call over [x], without compiling or
     computing it: [f] runs once, over stand-ins of [x]'s arrays in C order. The
     program holds what [f] stages, from {!jvp}, a {!scan}'s step or another
     construct, every construct with the programs it carries. [program] is for
     reading what a function computes.
 
-    Raises what {!jit} raises at a call that traces. *)
+    Raises what {!val-jit} raises at a call that traces. *)
 
 val pp_program : Format.formatter -> program -> unit
 (** [pp_program] formats a program: the dtype, shape and placement of each
@@ -1961,12 +1961,12 @@ val pp_program : Format.formatter -> program -> unit
 val eval_shape :
   ('a, 'd) Nx.Ptree.t -> ('b, 'd) Nx.Ptree.t -> ('a -> 'b) -> 'a -> 'b
 (** [eval_shape a b f x] is [f x]'s structure with each array a stand-in of its
-    dtype, shape and placement, as {!jit} traces it, computing nothing:
-    {!Nx.shape}, {!Nx.dtype} and {!Nx.placement} work on it, and an operation on
+    dtype, shape and placement, as {!val-jit} traces it, computing nothing:
+    {!Nx.shape}, {!Nx.val-dtype} and {!Nx.placement} work on it, and an operation on
     it or a read raises [Invalid_argument]. An array [f] captured and returns
     unchanged is that array.
 
-    Raises what {!jit} raises at a call that traces. *)
+    Raises what {!val-jit} raises at a call that traces. *)
 
 (** {1:one Functions of one array} *)
 
@@ -2058,7 +2058,7 @@ val jit' :
   (('v, 's, 'd) Nx.t -> ('w, 'r, 'd) Nx.t) ->
   ('v, 's, 'd) Nx.t ->
   ('w, 'r, 'd) Nx.t
-(** [jit' ~beam ~parallel f] is {!jit} of a function of one array. *)
+(** [jit' ~beam ~parallel f] is {!val-jit} of a function of one array. *)
 
 (**/**)
 

@@ -28,7 +28,8 @@
 ; stanza whose libraries hold C is still off under sanitize and tsan: no run
 ; has shown it passes there on Linux.
 ;
-; An odoc warning is an error in every profile.
+; An odoc warning is an error in every profile, except in rig_amd_pci,
+; rig_nv_pci and rig_mlx5, whose dune files say why.
 ;
 ; WINDTRAP_TIMEOUT bounds each test that sets no ~timeout, so a hung test
 ; cannot block a shared watch server. Under tsan it is 15 times longer,

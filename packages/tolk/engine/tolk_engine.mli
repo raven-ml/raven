@@ -86,8 +86,8 @@ val link :
       (default [[]]), of its device, and is made otherwise as [storage]
       (default {!Linked}) says, starting at its phase ({!run}). The schedule
       holds the memory of every bound buffer a kernel or copy accesses
-      ({!Rig.Claim.hold}) while it is reachable, so no call consumes it. A link
-      that raises holds none of them.
+      ({!Rig.Claim.val-hold}) while it is reachable, so no call consumes it. A
+      link that raises holds none of them.
     - A kernel is launched on the device of its first argument. A host program
       is launched on its device's host, which splits its loop over its cores
       where the program splits one ({!Tolk.Ops.kernel_info.split}), by the
@@ -175,7 +175,7 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> unit
     A search times many programs of one kernel, each a few times: it links each
     call ({!link_call}), allocates slots once, for the first ({!slots}), and
     times the runs of each on them ({!time}), each from a clean, cold cache
-    ({!scrub}). *)
+    ({!val-scrub}). *)
 
 val link_call : devices:(string -> Rig.t) -> Ops.t -> t
 (** [link_call ~devices call] is the call [call] of a compiled program
@@ -248,7 +248,7 @@ val time :
 
 val source_digest : string
 (** [source_digest] is the digest of the engine's sources, as
-    {!Jit.source_digest} is of tolk's ({!compile}). For the suites. *)
+    {!Tolk.Jit.source_digest} is of tolk's ({!compile}). For the suites. *)
 
 val blocks : extent:int -> ops:int -> bytes:int -> int * int
 (** [blocks ~extent ~ops ~bytes] is the number of blocks a host launch of a
@@ -266,24 +266,27 @@ val compile :
   Ops.t ->
   Ops.t * (string * int) list
 (** [compile ~beam ~search ~devices ~by_storage ~held_bufs ~inputs sink] is the
-    schedule {!link} takes: what {!Jit.jit_lower} makes of [sink]'s schedule
-    ({!Schedule.create_linear_with_vars} [~capturing:true ~by_storage]), and the
-    variables of its capture, compiled for each device name's device. A later
-    process that compiles an equal [sink], up to the numbers of its ranges and
-    storage ({!Schedule.numbered}), with the same inputs and held buffers in
-    the same places, the same settings that shape compilation ({!Jit.shaping}),
-    devices of the same names, renderers and compilers, and the same sources of
-    tolk and of the engine ({!Jit.source_digest}, {!source_digest}), reads it
-    from the {!Helpers.Diskcache} (table ["compiled"]) instead, running no
-    schedule and no compiler. Its programs are then reduced to what {!link}
-    reads: their {!Op.Kernel} argument, parameters and binary.
+    schedule {!link} takes: what {!Tolk.Jit.jit_lower} makes of [sink]'s
+    schedule ({!Tolk.Schedule.create_linear_with_vars}
+    [~capturing:true ~by_storage]), and the variables of its capture, compiled
+    for each device name's device. A later process that compiles an equal
+    [sink], up to the numbers of its ranges and storage
+    ({!Tolk.Schedule.numbered}), with the same inputs and held buffers in the
+    same places, the same settings that shape compilation
+    ({!Tolk.Jit.shaping}), devices of the same names, renderers and compilers,
+    and the same sources of tolk and of the engine ({!Tolk.Jit.source_digest},
+    {!source_digest}), reads it from the {!Tolk.Helpers.Diskcache} (table
+    ["compiled"]) instead, running no schedule and no compiler. Its programs
+    are then reduced to what {!link} reads: their
+    {{!Tolk.Ops.type-arg}[Kernel]} argument, parameters and binary.
 
     Nothing is kept for a call that asks for a beam search, for one under
-    {!Setting.debug} or {!Setting.check_oob}, whose checks a hit would skip,
-    while {!Realize.kernels} collects, with {!Setting.ccache}
-    off or {!Setting.scache} below [2], or for a device without a renderer or
-    a compiler that names itself. An entry that does not read back is made
-    anew and replaced.
+    {!Tolk.Setting.debug} or {!Tolk.Setting.check_oob}, whose checks a hit
+    would skip, while {!Tolk.Realize.kernels} collects, with
+    {!Tolk.Setting.ccache} off or {!Tolk.Setting.scache} below [2], or for a
+    device without a renderer or a compiler that names itself. An entry that
+    does not read back is made anew and replaced.
 
-    Raises as {!Schedule.create_linear_with_vars} and {!Jit.jit_lower} do, and
-    [Sys_error] if the entry cannot be written. *)
+    Raises as {!Tolk.Schedule.create_linear_with_vars} and
+    {!Tolk.Jit.jit_lower} do, and [Sys_error] if the entry cannot be
+    written. *)

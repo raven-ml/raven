@@ -298,7 +298,7 @@ val capability : t -> Rig_amd_abi.Capability.t
     {- on ["COPY:0"], a copy between two GPU addresses, its handles, whose
        ranges do not overlap. A box of two rows or more whose pitches are
        multiples of 4 bytes is sub-window copies
-       ({!Rig_amd_abi.Sdma.window}) of up to [most_rows] rows each, in the
+       ({!Rig_amd_abi.Sdma.val-window}) of up to [most_rows] rows each, in the
        largest element of up to 16 bytes that divides its width, its
        pitches and each side's address modulo 4, if its width and pitches
        fit the packet in those elements and each side's address modulo 4

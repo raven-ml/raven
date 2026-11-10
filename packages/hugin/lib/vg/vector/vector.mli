@@ -58,8 +58,9 @@ val is_axial : Affine.t -> bool
 (** {1:paths Paths and leaves}
 
     A frame's {e cut} is the box its geometry is cut at: on the page, a margin
-    around it; in a stamp's definition, {!Instances.everywhere}. Coordinates
-    mapped beyond [1e15] are taken at [1e15]. *)
+    around it; in a stamp's definition,
+    {!Hugin_vg_instances.Instances.everywhere}. Coordinates mapped beyond
+    [1e15] are taken at [1e15]. *)
 
 type sink = {
   move : float -> float -> unit;
@@ -231,5 +232,6 @@ val walk : ('b, 'd) target -> ctx -> 'b -> Picture.t -> unit
     [t.carry] does not carry, and all of them if they scale and the picture
     holds a scaling stamp or strokes of differing pens: those are drawn in full.
     An instance at a position or scale that is not finite, or of scale [0.],
-    paints nothing, and so does one that {!Instances.shows} does not show within
-    [ctx.cut], with the pens it keeps. *)
+    paints nothing, and so does one that
+    {!Hugin_vg_instances.Instances.shows} does not show within [ctx.cut], with
+    the pens it keeps. *)

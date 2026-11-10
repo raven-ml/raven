@@ -330,7 +330,7 @@ val mask : 'd t -> 'd Nx.bool_t
     which of its chosen columns each token sees. *)
 
 val visible : 'd t -> 'd Nx.pair -> 'd Nx.bool_t
-(** [visible index] is {!mask} as the mask of {!Nx.attention} over
+(** [visible index] is {!mask} as the mask of {!Nx.val-attention} over
     [[| batch; heads; seq; context |]], [k] in place of [context] under a
     selection: at a pair it holds where [mask index] holds at the pair's
     lane, token and column, whatever the heads. {!Attention.cached} attends

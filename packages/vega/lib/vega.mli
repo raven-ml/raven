@@ -80,11 +80,11 @@
       raises at its leaf. The other functions that take two values raise as
       {!Nx.Ptree.map2} does.
     - {b Non-parameter leaves.} A structure may carry tensors that are not
-      parameters: an {!Nx.Rng.key} threaded through a compiled step, a counter,
-      a batch of indices. [Rune.grad] does not differentiate them, and a step
-      passes every leaf whose dtype is neither a float nor a complex one
-      through unchanged, in the parameters and in the state. So one structure
-      serves the objective, the gradient and the update.
+      parameters: an {!Nx.Rng.type-key} threaded through a compiled step, a
+      counter, a batch of indices. [Rune.grad] does not differentiate them,
+      and a step passes every leaf whose dtype is neither a float nor a
+      complex one through unchanged, in the parameters and in the state. So
+      one structure serves the objective, the gradient and the update.
     - {b Complex leaves.} A complex parameter is two real coordinates per
       element, its real and imaginary parts, and a step moves them as it moves
       real parameters, each part with its own state: Adam's second moment of

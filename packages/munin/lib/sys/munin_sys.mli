@@ -82,7 +82,7 @@ val process : unit -> unit -> (string * float) list
 (** {1:devices Devices}
 
     munin reads no device. A program builds a device's reading from what
-    the device's library reports, through {!device}, which fixes the keys
+    the device's library reports, through {!val-device}, which fixes the keys
     the run records and a reader looks for. Each field holds one quantity
     under one key, whichever vendor made the device. rig reports
     [allocated] and [budget] of every device ([Rig.allocated],
@@ -148,8 +148,8 @@ type disk = {
 
 val disk_rates :
   dt:float -> prev:disk list -> disk list -> (string * float) list
-(** [disk_rates ~dt ~prev next] are the disk pairs of {!host} for a window of
-    [dt > 0.] seconds from the disks [prev] to the disks [next]. *)
+(** [disk_rates ~dt ~prev next] are the disk pairs of {!val-host} for a window
+    of [dt > 0.] seconds from the disks [prev] to the disks [next]. *)
 
 val proc_stat_busy : string -> string -> float option
 (** [proc_stat_busy prev next] is [sys/cpu_busy_pct] between two texts of

@@ -31,7 +31,7 @@ val decode_before : buf -> int -> int -> int
     [j] of [v], [j] past [first]. *)
 
 val blit : buf -> int -> buf -> int -> int -> unit
-(** [blit src lo dst at len] copies the bytes [lo, lo + len) of [src] to [dst]
+(** [blit src lo dst at len] copies the bytes \[lo, lo + len) of [src] to [dst]
     from [at]. *)
 
 val within : int array -> int -> int -> int -> bool

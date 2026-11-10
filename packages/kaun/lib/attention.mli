@@ -78,8 +78,8 @@ val apply :
 
     - [head_dim], the feature width of one head. It must divide the projection
       widths.
-    - [mask], which keys each query may see: the mask of {!Nx.attention} over
-      [[| batch; heads; seq; seq |]], [batch] the product of [x]'s batch
+    - [mask], which keys each query may see: the mask of {!Nx.val-attention}
+      over [[| batch; heads; seq; seq |]], [batch] the product of [x]'s batch
       axes. Under {!Nx.causal} token [i] sees tokens [j <= i]. A boolean
       array [b] shared by the lanes, of shape [[| seq; seq |]], is the mask
       [fun _ -> b]; one per lane, [[| batch; seq; seq |]], takes a heads axis,
@@ -284,7 +284,7 @@ val attend :
     [h * groups + groups - 1], where [groups] is [heads / kv_heads]. No key is
     repeated. With:
 
-    - [mask], the mask of {!Nx.attention} over [[| batch; heads; n; m |]],
+    - [mask], the mask of {!Nx.val-attention} over [[| batch; heads; n; m |]],
       such as {!Nx.causal} or {!Cache_index.visible}. A boolean array [b] of
       shape [[| n; m |]] is [fun _ -> b]; one of [[| batch; n; m |]], such
       as {!Cache_index.mask}, takes a heads axis,
@@ -294,7 +294,7 @@ val attend :
     - [sinks], of shape [[| heads |]]: one attention-sink logit per query head,
       as for {!scaled_dot_product_attention}.
 
-    It is {!Nx.attention} of [q] over [k] and [v], with sinks as
+    It is {!Nx.val-attention} of [q] over [k] and [v], with sinks as
     {!scaled_dot_product_attention} adds them, and shares that function's
     dtypes, precision and totality.
 
@@ -335,24 +335,24 @@ val scaled_dot_product_attention :
     [q] has shape [[| ...; n; d |]], [k] shape [[| ...; m; d |]] and [v] shape
     [[| ...; m; dv |]]; the result has shape [[| ...; n; dv |]]. Leading axes
     are batch axes and broadcast, so stacked attention heads are just a batch
-    axis. It is {!Nx.attention} over the broadcast batch axes, the last of them
-    its heads: the result's precision, its error bound and what a value at a
-    hidden key does are that function's. Differentiable through Rune.
+    axis. It is {!Nx.val-attention} over the broadcast batch axes, the last of
+    them its heads: the result's precision, its error bound and what a value
+    at a hidden key does are that function's. Differentiable through Rune.
 
     [q], [k] and [v] are float16, bfloat16, float32 or float64; cast a
     narrower float first. The scores, their softmax and the sinks compute in
-    {!Nx.attention}'s accumulator, float64 for float64 inputs and float32
+    {!Nx.val-attention}'s accumulator, float64 for float64 inputs and float32
     otherwise, and the result rounds to [q]'s dtype: once, and with [sinks]
     once more.
 
-    [mask], when given, says which keys each query sees, as {!Nx.attention}'s
-    [mask]: Nx code over the coordinates of one query-key pair, whose results
-    and captured arrays broadcast to [[| ...; n; m |]]. A boolean array [b]
-    of that shape is the mask [fun _ -> b]; a mask computed from the
-    coordinates, such as {!Nx.causal}, stores no array of that shape. Weights
-    are exactly [0] at hidden keys. The function is total: a query row whose
-    mask hides every key has zero weights, so its output is zero, and its
-    gradients are zero.
+    [mask], when given, says which keys each query sees, as
+    {!Nx.val-attention}'s [mask]: Nx code over the coordinates of one
+    query-key pair, whose results and captured arrays broadcast to
+    [[| ...; n; m |]]. A boolean array [b] of that shape is the mask
+    [fun _ -> b]; a mask computed from the coordinates, such as {!Nx.causal},
+    stores no array of that shape. Weights are exactly [0] at hidden keys.
+    The function is total: a query row whose mask hides every key has zero
+    weights, so its output is zero, and its gradients are zero.
 
     [sinks], when given, are attention sinks (Xiao et al., 2023, as gpt-oss uses
     them): learned logits that take part of a query's weight and carry no value.

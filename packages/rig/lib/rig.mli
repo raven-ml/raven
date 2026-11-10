@@ -550,12 +550,12 @@ val word : int
     {!computes}, {!runs_on_host}, {!alignment}, {!cache_bytes},
     {!capability},
     {!host_of}, {!reaches}, {!submitted}, {!lost}, {!failure},
-    {!budget}, {!allocated}, {!Point.device}, {!Point.value},
+    {!budget}, {!allocated}, {!Point.val-device}, {!Point.value},
     {!Point.reached}, {!Point.pp}, the properties and low-level values of
     {!Buffer}, {!Buffer.view}, {!Buffer.reached}, {!Buffer.of_bigarray},
-    {!Image.device}, {!Image.name}, {!Image.image}, {!Image.params},
+    {!Image.val-device}, {!Image.name}, {!Image.image}, {!Image.params},
     {!Image.threads}, {!Image.entry}, {!Submission}'s refs and parts,
-    {!Submission.block}, {!Submission.address}, {!Submission.Run},
+    {!Submission.val-block}, {!Submission.address}, {!Submission.Run},
     {!Claim}, {!Profile} but {!Profile.take}, {!Local.new_key}, and
     {!Local.get} of a value already made for the device. Nor do
     {!signaled} and {!fail}.
@@ -840,7 +840,7 @@ val failure : unit -> string option
     is done, also when they then raise {!Lost}. {!free_cache} moves memory
     on its device, reclamation on every device, and a lost device's stop on
     its own. Each of these moves first releases the holds collected on any
-    device ({!Claim.hold}), and moves the memory and lets go of the kept
+    device ({!Claim.val-hold}), and moves the memory and lets go of the kept
     values collected on any device whose stop returned, such as a closed
     one. Memory collected while a domain blocks returns through other
     domains' calls. A device reports its values up to [k] values late
@@ -864,7 +864,7 @@ val failure : unit -> string option
     {- A dropped host buffer holds its memory until a collection frees it:
        a minor one for a buffer the minor heap still holds, and a major cycle
        otherwise. A buffer starts in the minor heap, unless it holds more than
-       [custom_minor_max_size] ({!Gc.control}) bytes and is as large as the
+       [custom_minor_max_size] ([Gc.control]) bytes and is as large as the
        bound below, or that parameter is 0. Once the bytes of host buffers
        that reached the major heap since the last cycle reach a bound, they
        complete one cycle's work of the collector. A buffer that starts young
@@ -1126,7 +1126,7 @@ module Buffer : sig
       changing nothing, if a claim or a hold through the borrow or one of
       its views keeps it, such as a host access or a submit through it on
       another domain, or a prepared submission that names it
-      ({!Claim.hold}). Otherwise every buffer of the borrow,
+      ({!Claim.val-hold}). Otherwise every buffer of the borrow,
       its views included, is dead with the reason [why] (["unborrowed"] by
       default), which {!dead} then answers, the memory and its other
       buffers live on, the borrow's hold of its mapping ends as at its
@@ -1562,7 +1562,7 @@ module Buffer : sig
       byte. *)
 
   (** The type for how another PCI function of a buffer's machine, such as a
-      network adapter, reaches its memory by DMA ({!dma}). *)
+      network adapter, reaches its memory by DMA ({!val-dma}). *)
   type dma = Rig_edge.dma =
     | Bus of (int * int) list
         (** The memory's bus addresses on its machine, as (address, bytes)
@@ -1957,7 +1957,7 @@ end
     [keep] for its image, since an image unloads only once the work
     submitted before the image became unreachable is done ({!Image.load}).
     Every run reads its fixed memory and the buffers its parts name, so it
-    holds them for its life as {!Claim.hold} does: no donation writes them
+    holds them for its life as {!Claim.val-hold} does: no donation writes them
     and no consumption ends them. {!Rig.section-claims} says when it claims
     the buffers of a run. *)
 module Submission : sig
@@ -2110,7 +2110,7 @@ module Submission : sig
       launches and fills lie one after the other, in the order of its
       parts.
 
-      Raises [Invalid_argument] if [s] has no part [i], or it is a {!words}
+      Raises [Invalid_argument] if [s] has no part [i], or it is a {!val-words}
       or a {!copy} part. *)
 
   val address : t -> Buffer.t -> int
@@ -2363,7 +2363,7 @@ end
     {ul
     {- A {e read claim} marks an allocation as being read. The host holds
        one during {!Buffer.read} and {!Buffer.write}, and {!Claim.with_} on
-       every buffer it is given. A {e hold} ({!Claim.hold}) is a read claim
+       every buffer it is given. A {e hold} ({!Claim.val-hold}) is a read claim
        that lasts until {!Claim.release} ends it or its value is
        unreachable, and that no consumption ends. {!submit} holds one on
        every allocation the work uses until it returns, and a copy, blit or
@@ -2377,7 +2377,7 @@ end
        {e outside the claims}
        and never exclusive. This holds for memory {!Buffer.of_bigarray} and
        {!Buffer.of_io} make, memory {!Buffer.export} exported, memory
-       {!Buffer.dma} described or refused, and memory {!Claim.share}
+       {!Buffer.val-dma} described or refused, and memory {!Claim.share}
        marked. Memory that admits only [Read]
        ({!Buffer.val-access}) is never exclusive either.}
     {- {!Claim.consume} consumes an allocation. A call that uses a dead
@@ -2416,7 +2416,7 @@ end
     only while a submit runs. A donation between two submits can consume one
     of them, and the next submit with it then raises [Invalid_argument] for
     the dead buffer. A library that keeps buffers it does not own over its
-    submits holds them ({!Claim.hold}) for as long as it keeps them, or
+    submits holds them ({!Claim.val-hold}) for as long as it keeps them, or
     passes their memory to {!Claim.share}.
 
     A donor takes its inputs with {!Claim.with_}. It consumes an input it
@@ -2484,11 +2484,11 @@ module Claim : sig
 
       Raises [Invalid_argument] if [c]'s {!with_} has returned or raised, [c]
       does not claim [b]'s memory, [b] is dead or does not {!Buffer.spans}
-      its memory, or a {!hold} holds the memory. *)
+      its memory, or a {!val-hold} holds the memory. *)
 
   val consumable : t -> Buffer.t -> bool
   (** [consumable c b] is [true] iff [c]'s {!with_} is running, [c] claims
-      [b]'s memory, [b] is live and {!Buffer.spans} it, and no {!hold} holds
+      [b]'s memory, [b] is live and {!Buffer.spans} it, and no {!val-hold} holds
       it: {!consume}[ c b] then succeeds, unless another domain holds the
       memory meanwhile. *)
 

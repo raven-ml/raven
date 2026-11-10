@@ -57,7 +57,7 @@ type buffer =
 (** The type for a queue pair's rings. *)
 type ring =
   | Send  (** The send ring, of work entries ({!Entry}). *)
-  | Receive  (** The receive ring, of receive entries ({!Receive}). *)
+  | Receive  (** The receive ring, of receive entries ({!module-Receive}). *)
 
 (** A work entry is one operation of a queue pair's send ring.
 

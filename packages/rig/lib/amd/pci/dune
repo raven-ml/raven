@@ -1,5 +1,13 @@
 ; AMD GPUs booted over PCI, with no kernel driver.
 
+; The record below the interface's stop comment, (**/**), has fields whose
+; types are hidden there too, and odoc 3 warns for it although the record is
+; hidden as well. Its warnings are not errors here; see the root dune.
+(env
+ (_
+  (odoc
+   (warnings nonfatal))))
+
 (library
  (name rig_amd_pci)
  (public_name rig.amd.pci)

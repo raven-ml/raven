@@ -491,9 +491,9 @@ val attention_refusal :
   'l ->
   (Nx_array.answer * string) option
 (** [attention_refusal p ~q ~rank ~o ~acc ~loads:v loads] is as
-    {!map_refusal} for {!S.attention}'s program [p] over [loads], read by
+    {!map_refusal} for {!S.val-attention}'s program [p] over [loads], read by
     [v], a query of dtype [q] and rank [rank], [o] of dtype [o] and [lse]
-    of dtype [acc]. It reads no shape but the rank: {!Shape.attention}
+    of dtype [acc]. It reads no shape but the rank: {!Shape.val-attention}
     gives the shapes. *)
 
 (** {1:shapes Shapes} *)
@@ -684,17 +684,18 @@ module type S = sig
       [shape]. A loop reads load [i] as the program's operand [i]. Its loads
       are one per operand of the program, each of that operand's dtype, and
       each has the loop's shape once loaded, a [Plain] load its array's and
-      a [Padded] one the shape {!Shape.padded} gives. A loop without loads
-      runs over its shape alone. Its [Coord] nodes read axes of that shape,
-      below its rank. A reduction or a scan computes in its program output's
-      carrier ({!carrier}), in the association and within the bounds
-      {!section-reductions}, {!section-bounds} and {!section-scans} state.
-      Its destinations are of any dtype but an [Arg]'s position, an
-      [int64], and each result rounds once into its own, as {!Prog.Cast}
-      stores it. Each reduction is of an output of the program, of a dtype
-      {!accepts} takes for it, and a [reduce] has at least one.
-      {!map_refusal}, {!reduce_refusal} and {!scan_refusal} decide whether a
-      loop fits; {!Shape} gives the shapes.
+      a [Padded] one the shape {!Nx_kernel.Shape.padded} gives. A loop without
+      loads runs over its shape alone. Its [Coord] nodes read axes of that
+      shape, below its rank. A reduction or a scan computes in its program
+      output's carrier ({!Nx_kernel.carrier}), in the association and within the
+      bounds {!Nx_kernel.section-reductions}, {!Nx_kernel.section-bounds} and
+      {!Nx_kernel.section-scans} state. Its destinations are of any dtype but an
+      [Arg]'s position, an [int64], and each result rounds once into its own, as
+      {!Nx_kernel.Prog.Cast} stores it. Each reduction is of an output of the
+      program, of a dtype {!Nx_kernel.accepts} takes for it, and a [reduce] has
+      at least one. {!Nx_kernel.map_refusal}, {!Nx_kernel.reduce_refusal} and
+      {!Nx_kernel.scan_refusal} decide whether a loop fits; {!Nx_kernel.Shape}
+      gives the shapes.
 
       A library declines a loop for its number of loads, program outputs or
       reductions only past a bound its device imposes, which its doc states,
@@ -706,8 +707,8 @@ module type S = sig
   (** [map p ~dsts loads] stores [p]'s output [k] at each index into
       [dsts.(k)], of that output's dtype. It is the one elementwise kernel.
       One kind over operands comes as the program of one node that
-      {!Prog.of_node} makes, which {!Prog.single} and {!Prog.is_single}
-      recognise. *)
+      {!Nx_kernel.Prog.of_node} makes, which {!Nx_kernel.Prog.single} and
+      {!Nx_kernel.Prog.is_single} recognise. *)
 
   val reduce :
     Prog.t ->
@@ -722,7 +723,7 @@ module type S = sig
       [r]. Its destinations follow [rs]: one for a [Monoid] or a
       [Logsumexp], the mean then the variance for [Moments], the extreme
       then its [int64] position for [Arg]. Each has the shape
-      {!Shape.reduce} gives of [shape]. *)
+      {!Nx_kernel.Shape.reduce} gives of [shape]. *)
 
   val scan :
     ?carry:any ->
@@ -734,16 +735,16 @@ module type S = sig
     answer
   (** [scan ?carry p ~axis (r, k) ~dsts loads] stores at each index the
       reduction [r] of output [k] of [p] over the indices along [axis] up to
-      that index's, inclusive ({!section-scans}). Its destinations are as
-      {!reduce}'s, each of the loop's shape ({!Shape.scan}).
+      that index's, inclusive ({!Nx_kernel.section-scans}). Its destinations are
+      as {!reduce}'s, each of the loop's shape ({!Nx_kernel.Shape.scan}).
 
-      With [carry], an array of the shape {!Shape.carry} gives, of the
+      With [carry], an array of the shape {!Nx_kernel.Shape.carry} gives, of the
       output's carrier, a [Monoid] scan of each slice
       continues from the slice's element of [carry]. Each result is that
       element combined with the terms up to it, and a float or complex one
       is within the bound of a reduction of the element and those terms
-      ({!section-bounds}). A NaN carry makes every result a NaN. Only a
-      [Monoid] scan takes a carry. *)
+      ({!Nx_kernel.section-bounds}). A NaN carry makes every result a NaN. Only
+      a [Monoid] scan takes a carry. *)
 
   (** {1:index Gathers and scatters}
 
@@ -752,18 +753,18 @@ module type S = sig
       [Set] are moves. Where the updates [u1], …, [un], in C order of their
       indices, land on one element [x], a scatter stores there:
       - for [Set], [un];
-      - for [Add], the sum by {!Prog.Add} of [x] and [u1] to [un], with no
-        [+0] before [x], so that a [-0] target and [-0] updates sum to
+      - for [Add], the sum by {!Nx_kernel.Prog.Add} of [x] and [u1] to [un],
+        with no [+0] before [x], so that a [-0] target and [-0] updates sum to
         [-0], in the association its library states, a narrow float's sum
         computed in [float32] and rounded once. A sum has the same bits on
         every run. For finite operands, barring overflow, a float sum is
         within [γ(n + 1) (|x| + Σ |ui|)] of the exact one before a narrow
-        float's rounding, with [γ] as {!section-bounds} defines it and [u]
-        the unit roundoff of [float32] for a narrow float, else of the
+        float's rounding, with [γ] as {!Nx_kernel.section-bounds} defines it and
+        [u] the unit roundoff of [float32] for a narrow float, else of the
         dtype's parts;
-      - for [Max] and [Min], {!Prog.Maximum} and {!Prog.Minimum} of [x],
-        [u1], …, [un], a NaN where one of them is
-        ({!section-reductions}). *)
+      - for [Max] and [Min], {!Nx_kernel.Prog.Maximum} and
+        {!Nx_kernel.Prog.Minimum} of [x], [u1], …, [un], a NaN where one of them
+        is ({!Nx_kernel.section-reductions}). *)
 
   val gather : axis:int -> dst:('v, 's) a -> index -> ('v, 's) a -> answer
   (** [gather ~axis ~dst idx x] stores into [dst] at each index [j] [x]'s
@@ -776,9 +777,9 @@ module type S = sig
   (** [gather_ranges ~dst ~starts ~ends x] packs runs of [x] along its axis
       [a = rank starts - 1] into [dst]. [starts] and [ends] are
       [[lead…; k]], [x] is [[lead…; n; cells…]] and [dst]
-      [[lead…; size; cells…]] ({!Shape.gather_ranges}). At each lead index,
-      position [p] of [dst] along [a] belongs to the first run [j] whose end
-      [ends.{j}] exceeds [p], and reads [x] at [starts.{j} + p - e], [e]
+      [[lead…; size; cells…]] ({!Nx_kernel.Shape.gather_ranges}). At each lead
+      index, position [p] of [dst] along [a] belongs to the first run [j] whose
+      end [ends.{j}] exceeds [p], and reads [x] at [starts.{j} + p - e], [e]
       being [ends.{j - 1}], or [0] for [j = 0], computed in [int64] modulo
       [2{^64}]: it reads what the exact sum would, but where [starts.{j}]
       and [e] lie near opposite extremes of [int64]. A position past every
@@ -806,7 +807,7 @@ module type S = sig
 
       Under [unique], the caller promises each target at most one update,
       which a library may rely on: where two share one, the result there is
-      unspecified. [Add] takes the dtypes {!Prog.Add} takes. *)
+      unspecified. [Add] takes the dtypes {!Nx_kernel.Prog.Add} takes. *)
 
   (** {1:sorts Sorts} *)
 
@@ -821,9 +822,9 @@ module type S = sig
       along [axis], stably, into [values], bits unchanged, and their [int64]
       positions along [axis] into [positions]. Where [values] is shorter than
       [x] along [axis], it keeps the first elements of the sorted order. The
-      order is the one {!Prog}'s domains state, [-0] below [+0], with every
-      NaN, and every complex number with a NaN part, above [+∞] and equal to
-      each other: [-∞ < … < -0 < +0 < … < +∞ < NaN]. [descending] reverses
+      order is the one {!Nx_kernel.Prog}'s domains state, [-0] below [+0], with
+      every NaN, and every complex number with a NaN part, above [+∞] and equal
+      to each other: [-∞ < … < -0 < +0 < … < +∞ < NaN]. [descending] reverses
       the order and keeps equal elements in increasing position. *)
 
   (** {1:numbering Numbering} *)
@@ -856,19 +857,19 @@ module type S = sig
   (** [assemble ~fill ~dst pieces] stores into [dst], at each index, the
       element at that index of the last piece whose region holds it, or [fill]
       where none does. Each piece has the shape of its region
-      ({!Shape.assemble}). Bits are copied, NaN payloads included. *)
+      ({!Nx_kernel.Shape.assemble}). Bits are copied, NaN payloads included. *)
 
   val fold : pad -> dst:('v, 's) a -> ('v, 's) a -> answer
   (** [fold p ~dst x] stores into [dst] the adjoint of a [Padded] load by
       [p] of [dst]'s shape, where [x] has the shape that load gives.
-      [dst]'s element at an index is the sum by {!Prog.Add} of its terms,
-      the elements of [x] the load reads from that index, with no [+0]
+      [dst]'s element at an index is the sum by {!Nx_kernel.Prog.Add} of its
+      terms, the elements of [x] the load reads from that index, with no [+0]
       before the first, so that a single [-0] keeps its sign, and [+0]
       where it reads none; in the association its library states and
-      within the bound {!section-bounds} states, each part of a complex
-      sum such a sum. The library states whether a narrow float's sum
+      within the bound {!Nx_kernel.section-bounds} states, each part of a
+      complex sum such a sum. The library states whether a narrow float's sum
       rounds at each addition or once from [float32]. It takes the dtypes
-      {!Prog.Add} takes. *)
+      {!Nx_kernel.Prog.Add} takes. *)
 
   (** {1:contraction Contraction}
 
@@ -878,10 +879,10 @@ module type S = sig
       segmented call's ids never enter it, so an output's bits do not
       depend on which groups the other indices are in. A box of [dst]'s
       indices computed alone, or a part of the contracted extent, keeps the
-      bound {!section-bounds} states; its bits may differ from the whole
-      call's. The library states which a scale ({!type-scale}) multiplies:
-      each element, rounded once into the accumulator; each product; or the
-      partial sum of a scale block that is whole along the contracted
+      bound {!Nx_kernel.section-bounds} states; its bits may differ from the
+      whole call's. The library states which a scale ({!Nx_kernel.type-scale})
+      multiplies: each element, rounded once into the accumulator; each product;
+      or the partial sum of a scale block that is whole along the contracted
       extent. It also states the roundings its scaling adds to the bound,
       barring overflow of what it scales. A [Value] or code that is NaN
       makes its scale block's terms NaN. *)
@@ -898,19 +899,19 @@ module type S = sig
     answer
   (** [contract ~batch ~contracting ~segments ~acc ~dst ~init a b]
       stores into [dst] the contraction of [a] with [b], of the shape
-      {!Shape.contract} gives:
+      {!Nx_kernel.Shape.contract} gives:
       {[
       dst[B, I, J] = init[B, I, J] + Σ_K a[B, I, K] · b[B, K, J]
       ]}
       computed in [acc], summed in the library's order and rounded once
       into [dst], each operand's elements times their scales, each group of
-      [segments] as {!type-segments} states. [init] has [dst]'s shape and
-      is one term of the sum, in the library's association; without
+      [segments] as {!Nx_kernel.type-segments} states. [init] has [dst]'s shape
+      and is one term of the sum, in the library's association; without
       [init] the sum starts from [+0]. An output without products is as
       {!Nx_kernel.section-contraction} states. Integers wrap in [acc].
       [a], [b], [init] and [dst] may be of any dtypes: an element enters
-      [acc], and the sum enters [dst], as {!Prog.Cast} stores it. It takes
-      an [acc] that {!accumulates} accepts. *)
+      [acc], and the sum enters [dst], as {!Nx_kernel.Prog.Cast} stores it. It
+      takes an [acc] that {!Nx_kernel.accumulates} accepts. *)
 
   (** {1:fft Fourier transforms}
 
@@ -926,7 +927,7 @@ module type S = sig
   (** [r2c ~axes ~dst x] stores the [Forward] transform of [x], bins [0] to
       [n/2] along the last of [axes], [n] [x]'s extent there. For [n = 0] it
       is one bin of [+0]. [x] and [dst] are of one precision
-      ({!same_precision}). *)
+      ({!Nx_kernel.same_precision}). *)
 
   val c2r : axes:int iarray -> dst:(float, 'r) a -> (Complex.t, 'c) a -> answer
   (** [c2r ~axes ~dst x] reads [n/2 + 1] bins [X] along the last of [axes], [n]
@@ -935,20 +936,20 @@ module type S = sig
       transform of [X'], [X'[k]] [X[k]] for [k <= n/2] and [conj X[n - k]]
       above. The imaginary parts of bin [0] and, for an even [n], of bin [n/2]
       never contribute. It is this linear map for every operand, Hermitian or
-      not. [dst] and [x] are of one precision ({!same_precision}). *)
+      not. [dst] and [x] are of one precision ({!Nx_kernel.same_precision}). *)
 
   (** {1:linalg Matrices}
 
-      Each routine computes on each matrix of [a] ({!section-matrices}),
-      takes the {!full_precision} dtypes and leaves open the choices
-      {!section-matrices} lists. [aᴴ] is the conjugate transpose. The
-      routine's other axes, its batch, lead every operand and destination.
-      Each matrix is computed on its own, and one that fails is NaN in its
-      own results alone. [svd]'s singular values and [eigh]'s eigenvalues
-      are floats, and [eig]'s results complex numbers, of [a]'s precision
-      ({!same_precision}), for a real or complex [a]. [qr] and [svd] compute
-      reduced or complete factors as their destinations' shapes state
-      ({!type-factors}). *)
+      Each routine computes on each matrix of [a]
+      ({!Nx_kernel.section-matrices}), takes the {!Nx_kernel.full_precision}
+      dtypes and leaves open the choices {!Nx_kernel.section-matrices} lists.
+      [aᴴ] is the conjugate transpose. The routine's other axes, its batch, lead
+      every operand and destination. Each matrix is computed on its own, and one
+      that fails is NaN in its own results alone. [svd]'s singular values and
+      [eigh]'s eigenvalues are floats, and [eig]'s results complex numbers, of
+      [a]'s precision ({!Nx_kernel.same_precision}), for a real or complex [a].
+      [qr] and [svd] compute reduced or complete factors as their destinations'
+      shapes state ({!Nx_kernel.type-factors}). *)
 
   val cholesky : triangle -> dst:('v, 's) a -> ('v, 's) a -> answer
   (** [cholesky t ~dst a] stores [L] with [a = L Lᴴ] under [Lower], or
@@ -981,21 +982,22 @@ module type S = sig
       and not negative, a zero one [+0]. Without [vectors] it stores [s]
       alone. A matrix that holds NaN or an infinity, or on which the
       iteration does not converge, is NaN in every result. [s] is of [a]'s
-      precision ({!same_precision}). *)
+      precision ({!Nx_kernel.same_precision}). *)
 
   val eigh : w:(float, 'r) a -> ?v:('v, 's) a -> ('v, 's) a -> answer
   (** [eigh ~w ~v a] stores the eigenvalues of [a], square and Hermitian as
       its lower triangle and the real parts of its diagonal name it, which
       alone are read, ascending into [w], and orthonormal columns [v] with
       [a v = v diag w]. Without [v] it stores [w] alone. NaN as for [svd],
-      over what is read. [w] is of [a]'s precision ({!same_precision}). *)
+      over what is read. [w] is of [a]'s precision
+      ({!Nx_kernel.same_precision}). *)
 
   val eig :
     w:(Complex.t, 'c) a -> ?v:(Complex.t, 'c) a -> ('v, 's) a -> answer
   (** [eig ~w ~v a] stores the eigenvalues of [a], square, into [w], and
       columns [v] of unit norm with [a v = v diag w]. Without [v] it stores
       [w] alone. NaN as for [svd]. [w] and [v] are of [a]'s precision
-      ({!same_precision}). *)
+      ({!Nx_kernel.same_precision}). *)
 
   val solve_triangular :
     triangle ->
@@ -1023,13 +1025,13 @@ module type S = sig
     any iarray ->
     answer
   (** [attention p ~scale ~o ~lse ?lengths q kv loads] stores the attention
-      of [q]'s rows over [kv] ({!section-attention}), [p] the pair's
+      of [q]'s rows over [kv] ({!Nx_kernel.section-attention}), [p] the pair's
       program over its loads [loads], into [o] and [lse], whose dtype is
       the accumulator. [lengths], [[lead…]], bounds each lead index's
       keys. The scores, their maxima and sums, the weights and [lse]
       compute in the accumulator, save a weight applied through a rounding
-      to the values' dtype ({!section-attention}), and each element of [o]
-      rounds once into [o]'s dtype.
+      to the values' dtype ({!Nx_kernel.section-attention}), and each element of
+      [o] rounds once into [o]'s dtype.
 
       [q], [k] and [v] are of one dtype, [float16], [bfloat16], [float32]
       or [float64], no wider than the accumulator, [o] is of the
@@ -1037,6 +1039,6 @@ module type S = sig
       dtype. [p] has one operand more than [loads] and two outputs, its
       operand [0] and output [1] are in the accumulator, its output [0] is
       a [bool] that does not read operand [0], and its [Coord] nodes read
-      axes below [q]'s rank. {!attention_refusal} decides whether these
-      fit. Each library states its orders and its bounds. *)
+      axes below [q]'s rank. {!Nx_kernel.attention_refusal} decides whether
+      these fit. Each library states its orders and its bounds. *)
 end

@@ -9,7 +9,7 @@
     and artifacts as plain files: JSON (RFC 8259), JSON Lines and UTF-8
     text. This module specifies every file, so that a program that follows
     it reads a store without munin, with [cat], [jq] or [tail -f]. The rest
-    of this library is one writer and reader of the files, and {!version}
+    of this library is one writer and reader of the files, and {!val-version}
     is the format it reads and writes.
 
     A {e run} is one execution of a program that records what it does. Its
@@ -100,7 +100,7 @@ v}
     feed. Every record has a member [type], which names its kind, and a
     member [time]. The first record is a [start]. The kinds are:
 
-    - [start]: [format], the {!version} of the run's files; [experiment], a
+    - [start]: [format], the {!val-version} of the run's files; [experiment], a
       text; [name], a text, and [parent], the id of another run of the
       store, when given; [steps], the largest step the run will log, when
       declared; [params], an object of values; and [provenance], below.
@@ -169,7 +169,7 @@ v}
     that a record's kind does not define are ignored. A sample of a key
     that an earlier record gave the other kind ({!section-log}) is damaged
     too, and so is the record that holds it. A run whose [start]
-    holds a [format] other than {!version} is unreadable to this library.
+    holds a [format] other than {!val-version} is unreadable to this library.
 
     A sample of a [metrics] record, or a [file] record, is an {e orphan}
     when a [resume] record after it names a step below its step. The run
@@ -352,7 +352,7 @@ v}
     replaces notes ({!section-annotations}). A resumed writer computes them
     again from the log it reads ({!section-resume}). A crashed run has no
     hint. A reader uses the hint only when it parses, its [format] equals
-    {!version}, its [rules] equals {!rules} and its [length] equals the
+    {!val-version}, its [rules] equals {!rules} and its [length] equals the
     log's length, and otherwise ignores it and folds the log. If the
     writer cannot write the hint after the [end] is synced, the run has
     ended all the same, and readers fold its log.
@@ -488,4 +488,4 @@ val version : int
 val rules : int
 (** [rules] is the version of the statistics rules this library computes
     and reads in a statistics hint ({!section-stats}), [2]. It changes
-    when a rule that picks a statistic changes, whatever {!version} is. *)
+    when a rule that picks a statistic changes, whatever {!val-version} is. *)

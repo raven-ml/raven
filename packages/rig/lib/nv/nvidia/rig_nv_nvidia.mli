@@ -24,7 +24,7 @@
     ]}
 
     A device's life goes in four steps:
-    + The first open, or {!usage}, that succeeds in creating the process's
+    + The first open, or {!val-usage}, that succeeds in creating the process's
       client of the kernel driver keeps it for the process: the control
       file and the RM's client. The first open that succeeds in creating the
       process's unified memory keeps it too: two files of the unified memory
@@ -74,7 +74,7 @@
     cross only the switch. The device's facts name the GPU's function as
     [bus].
 
-    {!buses}, {!count}, {!usage} and an opener's [make] read the machine's
+    {!buses}, {!count}, {!val-usage} and an opener's [make] read the machine's
     files: its PCI functions under [/sys/bus/pci], and the kernel driver's
     files under [/dev]. Listing GPUs changes nothing on the machine.
 
@@ -124,7 +124,7 @@ type usage = {
   busy : float option;
       (** How busy the GPU's graphics and compute engine was, from [0.0] to
           [100.0]: the mean of the RM's samples of it taken in the window
-          {!usage} reads, by the GPU's own clock. [None] if the RM took none
+          {!val-usage} reads, by the GPU's own clock. [None] if the RM took none
           in that time, or takes none on this GPU. *)
 }
 (** The type for what a GPU's RM reports of its use, by every process. *)

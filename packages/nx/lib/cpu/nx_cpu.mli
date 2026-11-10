@@ -286,7 +286,7 @@
     narrow float's or a sub-byte dtype's fold rounds each addition to its
     dtype, as {!Nx_kernel.Prog.Add} does. *)
 
-(** {1:numbering Numbering}
+(** {1:cpu_numbering Numbering}
 
     [unique] declines keys of [2{^40} - 1] rows or more. Its
     [k] keys of [w] words each find their number in a hash table of linear
@@ -343,7 +343,7 @@
       [e(n/2) + 8] in place of [e(n)]: its lines compute through complex
       ones of [n/2] points. *)
 
-(** {1:attention Attention}
+(** {1:cpu_attention Attention}
 
     [attention] computes every case of [q], [k] and [v] of float16,
     bfloat16, float32 or float64 in an accumulator, [lse]'s dtype, of
@@ -384,7 +384,7 @@
     consecutive query heads of its group, [h] the lesser of the group's
     size and 64, and [⌊64 / h⌋] consecutive rows of each. Before a unit
     reads its blocks, it runs the ranges of output 0
-    ({!Nx_kernel.Prog.ranges}) over each block's box: the unit's lead
+    ({!Nx_kernel.Prog.val-ranges}) over each block's box: the unit's lead
     index, heads and rows, the block's 64 keys, and each load's least and
     greatest element over them, a load of fewer than 8 bits taking its
     dtype's ends. A block whose ranges hide every pair is skipped, and one

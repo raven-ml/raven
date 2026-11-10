@@ -427,8 +427,8 @@ type frame = {
     counted once. {!run} stores into each element the point of its step's
     last submit in the run. A step the run does not reach, such as the body
     of a loop of zero trips, holds after that run the shared reached point
-    of {!Rig.host} that {!step_points} starts each element at, so no element
-    ever holds an earlier run's point. *)
+    of {!Rig.host} that {!val-step_points} starts each element at, so no
+    element ever holds an earlier run's point. *)
 
 val step_points : loaded -> Rig.Point.t array
 (** [step_points p] is a fresh array for the [step_points] of [p]'s frames,

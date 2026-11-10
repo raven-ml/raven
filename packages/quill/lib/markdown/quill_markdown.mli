@@ -128,8 +128,8 @@ val stamp : string -> stamp option
 val save : figures -> string -> Quill.Doc.t -> (stamp, string) result
 (** [save figures path doc] writes [doc] with its outputs to the file [path]
     names, through a link too, storing its images as [figures] says, and is the
-    stamp of the notebook it wrote. A caller compares it with {!stamp} to tell
-    whether the file changed since.
+    stamp of the notebook it wrote. A caller compares it with {!val-stamp} to
+    tell whether the file changed since.
 
     Each file is written to a temporary file beside it, synced and renamed over
     it, so a crash leaves the old file or the new one, and may leave the

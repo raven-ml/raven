@@ -1,5 +1,13 @@
 ; NVIDIA GPUs driven over PCI, through the resource manager in their GSP.
 
+; The record below the interface's stop comment, (**/**), has fields whose
+; types are hidden there too, and odoc 3 warns for it although the record is
+; hidden as well. Its warnings are not errors here; see the root dune.
+(env
+ (_
+  (odoc
+   (warnings nonfatal))))
+
 (library
  (name rig_nv_pci)
  (public_name rig.nv.pci)

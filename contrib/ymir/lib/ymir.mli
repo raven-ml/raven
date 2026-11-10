@@ -176,7 +176,7 @@ module Time : sig
 
       Raises [Invalid_argument] if [second] is not a time, or where it is
       infinite or outside \[0, the day's length), as in
-      ["Time.v: second 86400.5 at [2] is outside [0, 86400) of utc day
+      ["Time.v: second 86400.5 at [2] is outside \[0, 86400) of utc day
        57000"], or where a day is past 2⁵³ days from MJD 0 or a UTC day
       precedes 1961-01-01. *)
 
@@ -318,10 +318,10 @@ end
     of 1 s in UT1 turns the Earth by 15″, so an orientation takes one of
     the two from its caller ({!Earth.of_utc}, {!Earth.of_tt}).
 
-    A {!t} holds a batch of instants as TT and UT1. Its functions work on
-    each instant alone and carry their derivative in the seconds and the
-    offset. {!Frame.matrix_at} and {!Direction.convert} take an orientation
-    to place the geocentric frames.
+    A {{!Earth.type-t}[t]} holds a batch of instants as TT and UT1. Its
+    functions work on each instant alone and carry their derivative in the
+    seconds and the offset. {!Frame.matrix_at} and {!Direction.convert} take
+    an orientation to place the geocentric frames.
 
     The Earth's {e ephemeris}, its position and velocity about the Sun and
     the barycentre of the solar system, is the IAU SOFA library's analytic
@@ -815,7 +815,7 @@ module Healpix : sig
       [pixels h]). *)
 
   val corners : 'f t -> 'd Nx.int64_t -> ('f, 'd) Direction.t
-  (** [corners h p] is each pixel's four corners, [p]'s shape @ [[4; 3]],
+  (** [corners h p] is each pixel's four corners, [p]'s shape \@ [[4; 3]],
       north, west, south and east, counter-clockwise seen from outside the
       sphere and within 2e-15 radians as {!centre}; NaN rows for -1. The
       edges between them are the curves [z = a + b φ] between the caps and [z
@@ -824,7 +824,7 @@ module Healpix : sig
       Raises [Invalid_argument] as {!centre} does. *)
 
   val neighbours : 'f t -> 'd Nx.int64_t -> 'd Nx.int64_t
-  (** [neighbours h p] is each pixel's eight neighbours, [p]'s shape @ [[8]]:
+  (** [neighbours h p] is each pixel's eight neighbours, [p]'s shape \@ [[8]]:
       south-west, west, north-west, north, north-east, east, south-east and
       south, as the HEALPix library orders them. Where three base pixels
       meet, at the eight points at |z| = 2/3, a pixel with a corner there has

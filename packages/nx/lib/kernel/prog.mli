@@ -13,7 +13,7 @@
     computes from its operands' values, in its dtype's {e compute type}
     ({!section-results}), the type its arithmetic runs in before it rounds
     to the dtype. The dtypes a kind takes are its
-    {e domain} ({!section-domains}). Each node has a dtype ({!dtype}), and
+    {e domain} ({!section-domains}). Each node has a dtype ({!val-dtype}), and
     its value is its kind's result in that dtype, exact or within a bound
     as the next paragraph states, a float rounded as
     {!Nx_array.Dtype.of_float} rounds it. A loop of a kernel library
@@ -363,7 +363,7 @@ val v :
     Raises [Invalid_argument] unless every reference names an earlier node,
     every [In] an operand and every [Coord] an axis below
     {!Nx_array.Layout.max_rank}; every node's kind takes its operands'
-    dtypes ({!dtype}): [Op1 (k, y, i)] where {!accepts1}[ k x y], [x] node
+    dtypes ({!val-dtype}): [Op1 (k, y, i)] where {!accepts1}[ k x y], [x] node
     [i]'s; [Op2 (k, i, j)] where nodes [i] and [j] are of one dtype [x] and
     {!accepts2}[ k x]; [Op3 (k, i, j, l)] where nodes [j] and [l] are of one
     dtype [x] and {!accepts3}[ k c x], [c] node [i]'s; every [Const]'s bits
@@ -463,7 +463,7 @@ module E : sig
       [op1 (Unary Sqrt) (dtype x) x], [rem x y] is [binary Mod x y],
       [less x y] is [compare Less x y], [cast dt x] is [op1 Cast dt x] and
       [where c x y] is [op3 Where c x y]; but [cast dt x] is [x] itself
-      where [dt] is {!dtype}[ x], a cast that computes nothing. *)
+      where [dt] is {!val-dtype}[ x], a cast that computes nothing. *)
 
   val neg : ('v, 's) t -> ('v, 's) t
   val recip : ('v, 's) t -> ('v, 's) t
@@ -622,7 +622,8 @@ val subst :
 (** {1:ranges Ranges}
 
     For kernel libraries that skip work a program's output rules out, as
-    attention's tiles of pairs that its mask hides ({!Nx_kernel.S.attention}).
+    attention's tiles of pairs that its mask hides
+    ({!Nx_kernel.S.val-attention}).
 
     A {e box} bounds a program's leaves: a least and a greatest value for
     each operand's elements and for each coordinate. Over a box, a

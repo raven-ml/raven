@@ -23,18 +23,18 @@
     they pass its limit.
 
     Unless a value's doc says otherwise, a filter follows bytesrw's
-    conventions for filters ({!Bytesrw.Bytes.Reader.filter},
-    {!Bytesrw.Bytes.Writer.filter}):
+    conventions for filters ([Bytesrw.Bytes.Reader.filter],
+    [Bytesrw.Bytes.Writer.filter]):
     {ul
     {- The filtering reader's or writer's position, the count of bytes
-       read from or written on it ({!Bytesrw.Bytes.Reader.pos}), starts at
+       read from or written on it ([Bytesrw.Bytes.Reader.pos]), starts at
        [pos] (default 0).}
     {- A filtering reader returns slices of at most its [slice_length],
        the hint on its slices' length
-       ({!Bytesrw.Bytes.Reader.slice_length}), which defaults to [r]'s.}
+       ([Bytesrw.Bytes.Reader.slice_length]), which defaults to [r]'s.}
     {- A filtering writer's [slice_length] hint defaults to [w]'s, and it
        writes slices of at most [w]'s slice length on [w]. It writes
-       {!Bytesrw.Bytes.Slice.eod}, the slice that ends the data, on [w]
+       [Bytesrw.Bytes.Slice.eod], the slice that ends the data, on [w]
        after the stream's end if and only if [~eod:true].}
     {- A filter applied to a reader or a writer raises
        [Invalid_argument] if [level] or [window] is outside the range its

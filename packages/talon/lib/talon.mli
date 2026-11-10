@@ -1929,28 +1929,29 @@ module Expr : sig
         {3 The language}
 
         {v
-Construct                Meaning
-any non-metacharacter    that scalar value
-.                        any scalar but U+000A; with (?s), any scalar
-[abc] [^abc] [a-z]       classes of scalars; a first ] or - is literal
-\d \D \w \W \s \S      Annex C: Nd; Alphabetic, Mark, Nd, Pc, Join_Control;
-                         White_Space, the set Str.trim trims
-\pN \p{Name} \P{Name}   a General_Category, Script or binary property;
-\p{Name=Value}          names as UAX #44 loose matching reads them
-\xHH \x{H..}            a code point in hex
-\n \t \r \f \v \a \e   the character; \ before punctuation is that
-                         punctuation
-^ $                      the start and end of the row; with (?m), also after
-                         and before U+000A
-\A \z                   the start and end of the row in every mode
-\b \B                   between a \w and a non-\w scalar, or not
-xy x|y                   sequence; the first branch wins
-x* x+ x? x{n} x{n,} x{n,m}  repetition, greedy; with a following ?, lazy
-(x) (?:x)                capture and non-capture
-(?<name>x) (?P<name>x)   a named capture
-(?flags) (?flags:x)      flags i m s, and negation with -, to the end of
-                         the group or within x
-v}
+        Construct                Meaning
+        any non-metacharacter    that scalar value
+        .                        any scalar but U+000A; with (?s), any scalar
+        [abc] [^abc] [a-z]       classes of scalars; a first ] or - is literal
+        \d \D \w \W \s \S      Annex C: Nd; Alphabetic, Mark, Nd, Pc,
+                                 Join_Control; White_Space, the set Str.trim
+                                 trims
+        \pN \p{Name} \P{Name}   a General_Category, Script or binary property;
+        \p{Name=Value}          names as UAX #44 loose matching reads them
+        \xHH \x{H..}            a code point in hex
+        \n \t \r \f \v \a \e   the character; \ before punctuation is that
+                                 punctuation
+        ^ $                      the start and end of the row; with (?m), also
+                                 after and before U+000A
+        \A \z                   the start and end of the row in every mode
+        \b \B                   between a \w and a non-\w scalar, or not
+        xy x|y                   sequence; the first branch wins
+        x* x+ x? x{n} x{n,} x{n,m}  repetition, greedy; with a following ?, lazy
+        (x) (?:x)                capture and non-capture
+        (?<name>x) (?P<name>x)   a named capture
+        (?flags) (?flags:x)      flags i m s, and negation with -, to the end of
+                                 the group or within x
+        v}
 
         [\\d] is Unicode's Decimal_Number; [\\w] and [\\s] are the Standard
         Recommendation columns of Annex C. [(?i)] applies simple case folding,
@@ -1966,9 +1967,12 @@ v}
   (** Temporal values.
 
       A datetime column holds instants or wall clocks ({!Time.section-stamps}),
-      and a zone is an argument only of the conversions {!wall} and {!localize}.
-      {!field}, and {!floor} or {!offset} by a calendar step, read a wall clock
-      as it is; on an instant they are a problem that names {!wall}.
+      and a zone is an argument only of the conversions
+      {{!Temporal.val-wall}[wall]} and {{!Temporal.val-localize}[localize]}.
+      {{!Temporal.val-field}[field]}, and {{!Temporal.val-floor}[floor]} or
+      {{!Temporal.val-offset}[offset]} by a calendar step, read a wall clock as
+      it is; on an instant they are a problem that names
+      {{!Temporal.val-wall}[wall]}.
 
       A zone's clock can repeat or skip a reading. The readings of a {e fold}
       occur twice, on the offset before the change and then on the one after,
@@ -2056,12 +2060,12 @@ v}
       (Time.wall, 's) t ->
       (Time.instant, 's) t
     (** [localize z ~ambiguous ~gap a] is the instant at which [z]'s wall clock
-        reads [a], in [a]'s unit: [a - o] for the offset [o] of {!Tz.local}'s
-        [Unique o]. A reading that [z] repeats follows [ambiguous], and one it
-        skips [gap]. On a gap, [`Later] is [a - before] and [`Earlier] is
-        [a - after] in {!Tz.local}'s terms. [localize z ~ambiguous ~gap
-        (wall z a)] is [a] where [z] repeats no reading. An instant out of range
-        is a data error. *)
+        reads [a], in [a]'s unit: [a - o] for the offset [o] of
+        {!Tz.type-local}'s [Unique o]. A reading that [z] repeats follows
+        [ambiguous], and one it skips [gap]. On a gap, [`Later] is
+        [a - before] and [`Earlier] is [a - after] in {!Tz.type-local}'s
+        terms. [localize z ~ambiguous ~gap (wall z a)] is [a] where [z] repeats
+        no reading. An instant out of range is a data error. *)
 
     val localize_ordered :
       Tz.zone ->

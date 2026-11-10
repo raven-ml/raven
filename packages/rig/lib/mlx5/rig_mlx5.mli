@@ -204,7 +204,7 @@ module Region : sig
             driver exported. The kernel keeps the dma-buf while it is
             registered, so [fd] may be closed once {!val-register} returns. *)
 
-  (** The type for what peers may do: to a region ({!register}), and through
+  (** The type for what peers may do: to a region ({!val-register}), and through
       a queue pair ({!Qp.connect}). A peer reads or writes a region only
       through a queue pair whose access allows it, and only if the region's
       access allows it too. Whatever the access, the NIC reads a region for
@@ -306,7 +306,7 @@ end
 (** A queue pair is a send ring, and a receive ring if it was made with one,
     connected to one queue pair of a peer.
 
-    A {e send} ({!Rig_mlx5_abi.Entry.op}'s [Send]) lands its bytes in the
+    A {e send} ({!Rig_mlx5_abi.Entry.type-op}'s [Send]) lands its bytes in the
     oldest receive the peer posted and has not filled. A send that finds none
     is retried without end, and lands once the peer posts one. A queue pair
     of this library asks its peer to retry 0.64 ms later. A message longer

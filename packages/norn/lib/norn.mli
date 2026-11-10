@@ -468,7 +468,8 @@ module Diag : sig
         (** [elpd_i], the estimate of [log p(y_i | y_-i)] of each point given
             the others, on the points' axes. *)
     khat : (float, 'f, 'd) Nx.t;
-        (** The [k̂] of each point's ratios ({!psis}), on the points' axes. *)
+        (** The [k̂] of each point's ratios ({!val-psis}), on the points'
+            axes. *)
   }
   (** The type for leave-one-out cross-validations. *)
 
@@ -481,7 +482,7 @@ module Diag : sig
 
       The draws are importance draws of each posterior that leaves one point
       out, the points independent given [θ]: point [i]'s ratios
-      [1 / p(y_i | θ_s)] are smoothed as {!psis} does into [w_s], and
+      [1 / p(y_i | θ_s)] are smoothed as {!val-psis} does into [w_s], and
       [elpd_i = log (Σ_s w_s p(y_i | θ_s) / Σ_s w_s)]. Autocorrelated chains
       widen the tail to [M = floor (min (S / 5, 3 sqrt (S / r)))], [r] the
       ratios' bulk effective sample size ({!ess_bulk}) over [S], or [1] where
@@ -539,7 +540,7 @@ module Summary : sig
     | Ebfmi_low of { chain : int; ebfmi : float }
         (** A chain's E-BFMI is below [0.3]. *)
     | Pareto_k of { khat : float; threshold : float }
-        (** The [k̂] of the raw weights ({!Norn.Diag.psis}) is above
+        (** The [k̂] of the raw weights ({!Norn.Diag.val-psis}) is above
             [threshold], [min (1 - 1 / log10 S, 0.7)] for [S] draws, or NaN,
             so that estimates from them are unreliable or cannot be judged. *)
 
@@ -567,8 +568,8 @@ module Summary : sig
 
   val of_weighted : ('u, 'd) Nx.Ptree.t -> ('u, 'f, 'd) Weighted.t -> t
   (** [of_weighted u w] summarises the weighted draws [w] of [u], their log
-      weights raw: it smooths them as {!Norn.Diag.psis} does, and judges them
-      by the raw weights' [k̂]. With [x_s] an element's draws and [w̃_s] the
+      weights raw: it smooths them as {!Norn.Diag.val-psis} does, and judges
+      them by the raw weights' [k̂]. With [x_s] an element's draws and [w̃_s] the
       smoothed weights normalised, its columns are the mean
       [μ = Σ w̃_s x_s], the standard deviation [sqrt (Σ w̃_s (x_s - μ)²)], the
       5%, 50% and 95% quantiles, the Monte Carlo standard error of the mean
@@ -1022,9 +1023,9 @@ module Dist : sig
   val support : ('x, 'f, 'd) t -> Support.t
   (** [support d] is the set of [d]'s values. Bounds given by parameters are
       read on the host, as the interval holding every element's support. Inside
-      a function {!Rune.jit} compiles, reading one raises [Invalid_argument],
-      and inside a mapped function, reading one that depends on the function's
-      arguments does. {!bounds} reads nothing. *)
+      a function {!Rune.val-jit} compiles, reading one raises
+      [Invalid_argument], and inside a mapped function, reading one that
+      depends on the function's arguments does. {!bounds} reads nothing. *)
 
   val bounds : ('x, 'f, 'd) t -> (float, 'f, 'd) Nx.t * (float, 'f, 'd) Nx.t
   (** [bounds d] is the least and greatest value each element of [d]'s values
@@ -1130,7 +1131,7 @@ module Gaussian : sig
       as a diagonal one of a correlated [p], has the variances of [p]'s
       conditionals, not of its marginals, and misses heavier tails. The bound
       says nothing of how close: {!importance} weighs [q]'s draws for [lp],
-      and {!Diag.psis}'s [k̂] of their weights judges [q] (Yao, Vehtari,
+      and {!Diag.val-psis}'s [k̂] of their weights judges [q] (Yao, Vehtari,
       Simpson and Gelman 2018).
 
       A fit takes a start of [c] chains and fits each on its own: chain [i]
@@ -1240,8 +1241,8 @@ module Gaussian : sig
       draws come from the Gaussians' equal mixture (Zhang et al. 2022,
       section 2.2).
 
-      The weights' [k̂] ({!Diag.psis}) below [0.5] means [g] is close to
-      [lp] (Yao et al. 2018); above {!Diag.psis}'s threshold the draws'
+      The weights' [k̂] ({!Diag.val-psis}) below [0.5] means [g] is close to
+      [lp] (Yao et al. 2018); above {!Diag.val-psis}'s threshold the draws'
       estimates are unreliable. {!Summary.of_weighted} reports it, and
       {!Weighted.resample} of the smoothed draws completes multi-path
       Pathfinder:

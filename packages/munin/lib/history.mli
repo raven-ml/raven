@@ -86,7 +86,7 @@ val restarted : t -> bool
 
 val metrics : t -> string list
 (** [metrics h] is the keys of the run's metrics that have a sample that is
-    not an orphan, sorted: the metrics whose {!stats} is [Some]. A key whose
+    not an orphan, sorted: the metrics whose {!val-stats} is [Some]. A key whose
     every sample is an orphan is left out; {!orphans} still gives them. *)
 
 val readings : t -> string list
@@ -168,7 +168,7 @@ type key_stats = {
 
 val stats_of : Run.t -> (string * key_stats) list
 (** [stats_of run] is the statistics of each key of [run] that has a
-    sample, sorted by key, equal to what {!stats} gives for the run's
+    sample, sorted by key, equal to what {!val-stats} gives for the run's
     history. When [run] has a hint whose rules and length match
     ({!Store_format.section-stats}), it reads the hint alone; otherwise
     it folds the log as {!read}[ ~series:[]] does, at the cost of the

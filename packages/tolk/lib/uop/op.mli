@@ -120,7 +120,7 @@ type t =
       (** A loop variable counting from 0 to its source, exclusive, or an
           unbounded loop when its type is void. A range of at most one trip is
           a conditional: a node runs inside it only when it depends on it
-          ({!Ops.ranges}) or reads through an {!After} of it. *)
+          ({!Ops.val-ranges}) or reads through an {!After} of it. *)
   | If  (** Runs the operations it guards only when its condition holds. *)
   | End  (** Closes the loops of its range sources around an effect. *)
   | Endif  (** Closes an {!If}. *)

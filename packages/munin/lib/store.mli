@@ -60,7 +60,7 @@ val runs : ?prev:Run.t list -> t -> Run.t list
     an end an open, a probe and a read of its last record. *)
 
 val run : t -> string -> Run.t option
-(** [run s id] is the run [id] of [s], read as {!runs} reads it, or [None]
+(** [run s id] is the run [id] of [s], read as {!val-runs} reads it, or [None]
     if [s] has no run [id].
 
     Raises [Failure] if [id]'s log does not start as a run of this
@@ -113,7 +113,7 @@ val delete_run : t -> string -> unit
     finds no run.
 
     Raises [Failure] if another writer holds the run's lock, if the run is
-    [`Silent] ({!Run.status}), or if it does not exist, as when another
+    [`Silent] ({!Run.type-status}), or if it does not exist, as when another
     deletion removed it. On Windows, it blocks briefly while another handle
     holds the log, and raises [Sys_error] if the handle outlasts the wait. *)
 

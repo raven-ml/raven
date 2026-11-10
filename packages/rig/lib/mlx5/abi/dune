@@ -1,6 +1,13 @@
 ; ConnectX NICs' formats: work entries, completions, doorbell records and
 ; access regions.
 
+; mlx5/dune makes odoc warnings not errors for rig_mlx5; here they are errors
+; again, as in the rest of the repository.
+(env
+ (_
+  (odoc
+   (warnings fatal))))
+
 (library
  (name rig_mlx5_abi)
  (public_name rig.mlx5.abi)

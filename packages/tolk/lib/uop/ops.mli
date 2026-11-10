@@ -297,7 +297,7 @@ type call_info = {
           kernel of, each as the write's number in its schedule and the
           position, among the call's arguments, of the state it writes. A
           schedule sets it and reads it alone: a program's key and the call's
-          {!repr} leave it out. *)
+          printed form ({!pp_arg}) leave it out. *)
 }
 (** The type for the arguments of {!Op.Call}. *)
 
@@ -391,7 +391,7 @@ val v : ?src:t list -> ?arg:arg -> Op.t -> t
     Raises [Invalid_argument] if no type can be derived, as for a {!Op.Where}
     whose condition is not boolean.
 
-    An exception raised asynchronously inside [v], as {!Sys.Break} on Ctrl-C or
+    An exception raised asynchronously inside [v], as [Sys.Break] on Ctrl-C or
     a test runner's timeout is, passes through it: later calls on any domain
     find each node built before. *)
 
@@ -526,7 +526,7 @@ val identity_element : Op.t -> Dtype.t -> Dtype.const
 
     A walk of a graph, by {!toposort}, {!topovisit}, {!graph_rewrite} or a
     function built on them, that an exception ends, one raised asynchronously
-    as {!Sys.Break} is included, leaves later walks on any domain their
+    as [Sys.Break] is included, leaves later walks on any domain their
     results. *)
 
 (** The type for how a walk of a graph treats a call ({!Op.Call}), whose first

@@ -94,7 +94,7 @@
     ({!Picture.image}): a value on another device set is given as
     [Nx.place Nx.Host.on x]. A function that keeps no tensor takes a value of
     any set: {!Hugin_gg_kit.Field2.v} reads its tensor to the host once, and
-    {!Stats.histogram} and {!Scale.missing} compute where their data lies.
+    {!Stats.histogram} and {!Scale.val-missing} compute where their data lies.
 
     {2:missing Missing values}
 

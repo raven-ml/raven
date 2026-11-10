@@ -12,9 +12,9 @@
     and a probe of its lock. Everything else the run logged is its
     {!History}.
 
-    {!Store.runs} and {!Store.run} read runs, and {!History.run} is a run
-    as its history last read it. A value does no I/O: its accessors give
-    what was read. *)
+    {!Store.val-runs} and {!Store.val-run} read runs, and {!History.val-run}
+    is a run as its history last read it. A value does no I/O: its accessors
+    give what was read. *)
 
 type status =
   [ `Running

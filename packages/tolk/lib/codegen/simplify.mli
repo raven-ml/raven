@@ -57,9 +57,9 @@ val pm_split_ranges : (Ops.t Ops.Tbl.t, Ops.t) Ops.Pattern_matcher.t
 val pin_effects : Ops.t -> Ops.t
 (** [pin_effects sink] is the kernel [sink] with each effect bound to the
     ranges it runs inside. An effect runs once per step of the ranges
-    ({!Ops.ranges}) it depends on, and a rewrite that keeps every value may
-    drop a range from what it reads: [r / 8] over a range [r] of size [8] is
-    [0] at every step. An effect's index is a {!Op.Store}'s destination, or
+    ({!Ops.val-ranges}) it depends on, and a rewrite that keeps every value
+    may drop a range from what it reads: [r / 8] over a range [r] of size [8]
+    is [0] at every step. An effect's index is a {!Op.Store}'s destination, or
     the first {!Op.Index} a {!Op.Call} takes. Each
     {!Op.Index} of storage that any {!Op.Index} an effect takes reads
     ({!Ops.buf_uop}) reads it through an

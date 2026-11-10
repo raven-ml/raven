@@ -529,8 +529,8 @@ module type Driver = sig
   val free : t -> region -> unit
   (** [free d r] gives back [r], which is a region {!val-alloc} made, a
       mapping {!val-map_peer} or {!val-map_host} made, or [d]'s word of the
-      driver's own ({!type-facts}). rig frees [r] once no work of [d] that
-      uses it can run, and may free it after {!val-stop}. *)
+      driver's own ({!Rig_edge.type-facts}). rig frees [r] once no work of
+      [d] that uses it can run, and may free it after {!val-stop}. *)
 
   val locate : region -> location
   (** [locate r] is where [r] lies. *)
@@ -615,8 +615,8 @@ module type Driver = sig
   val grow : t -> grown
   (** [grow d] makes what [d]'s queues need to hold the parts of the
       submission whose [room] last answered [RIG_GROW] on the calling thread
-      ({!section-calls}). It changes nothing the C functions read: a later
-      [room] puts what it made into the queues. Once it has answered
+      ({!Rig_edge.section-calls}). It changes nothing the C functions read:
+      a later [room] puts what it made into the queues. Once it has answered
       [Grown], [room] must not answer [RIG_GROW] for those parts again,
       whatever other submissions' growths answer.
 
@@ -637,10 +637,11 @@ module type Driver = sig
 
   val signaled : t -> int
   (** [signaled d] is the value in [d]'s word, read with acquire order. rig
-      calls it only for a word of the driver's own ({!type-facts}), also
-      after {!val-stop}, until it frees that word. Counted until
-      {!val-stop}. After it, rig drops its faults. rig may call it while it
-      holds a lock of its own, so it must not block or call rig. *)
+      calls it only for a word of the driver's own
+      ({!Rig_edge.type-facts}), also after {!val-stop}, until it frees that
+      word. Counted until {!val-stop}. After it, rig drops its faults. rig
+      may call it while it holds a lock of its own, so it must not block or
+      call rig. *)
 
   val sleep : t -> seen:int -> still_ms:int -> unit
   (** [sleep d ~seen ~still_ms] blocks on the device's events until the word
@@ -652,9 +653,9 @@ module type Driver = sig
       [submit] or [commit] runs. Counted.
 
       An exception other than {!Fault} that escapes [sleep] loses nothing
-      ({!section-drivers}). The driver must record each event it consumes,
-      such as a fault's report, before it consumes it, so that the next
-      call of [sleep] still raises {!Fault} for it.
+      ({!Rig_edge.section-drivers}). The driver must record each event it
+      consumes, such as a fault's report, before it consumes it, so that the
+      next call of [sleep] still raises {!Fault} for it.
 
       Raises {!Fault} once the device has faulted. *)
 

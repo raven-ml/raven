@@ -116,7 +116,8 @@ val buses : t -> Machine.t -> (string list, string) result
 (** [buses d m] is the bus addresses of [d]'s functions on [m], in bus order.
     Function [i] is the [i]th.
 
-    [Error why] if [m]'s functions cannot be listed ({!Machine.functions}). *)
+    [Error why] if [m]'s functions cannot be listed
+    ({!Machine.val-functions}). *)
 
 (** {1:holds Opening}
 
@@ -139,7 +140,7 @@ val buses : t -> Machine.t -> (string list, string) result
     [Invalid_argument], printed as above, and leaves its function as a killed
     process does, for its next open to renew.
 
-    A stop that an exception, such as an asynchronous one ({!Sys.Break}), cut
+    A stop that an exception, such as an asynchronous one ([Sys.Break]), cut
     before it released the function, and an open that one cut before it
     returned, are ended as a failed open is by the next {!open_}, {!reset},
     {!detach} or {!attach} of the driver in this process, which leaves a stop

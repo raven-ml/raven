@@ -236,7 +236,7 @@ val threads_fixed : Ops.t -> bool
 
 val misses : Ops.t -> Ops.t -> bool
 (** [misses r e] is [true] iff the effect [e] does not depend on the range
-    [r]: [r] is none of the ranges ({!Ops.ranges}) of [e]'s index, its
+    [r]: [r] is none of the ranges ({!Ops.val-ranges}) of [e]'s index, its
     validity included, if [e] is a store, or of [e]'s sources, but a call's
     body, if [e] is a call ({!Ops.call}). Such an effect runs once for all of
     [r]'s steps. *)

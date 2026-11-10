@@ -2910,7 +2910,7 @@ val attention :
 
     It is one operation, {!Prim.Attention}, whose [mask] and [score] are
     one program of two outputs over a pair. The set's kernel library
-    computes it ({!Nx_kernel.S.attention}), reading paged keys and values
+    computes it ({!Nx_kernel.S.val-attention}), reading paged keys and values
     in place; nx.cpu stores no array of [[lead…; hq; tq; tk]]. An
     interpretation receives it whole.
 
@@ -3723,7 +3723,7 @@ val histogram : ((float, 's, 'd) t * (float, 's, 'd) t) list -> 'd int64_t
     the coordinates, which share one shape. The result has one axis per
     dimension, of [dim 0 ek - 1] bins; cell [(j1, …, jd)] counts the points
     whose coordinate [xk] is in bin [jk] of [ek] for every [k], exactly, as
-    {!count} does.
+    {!val-count} does.
     - Bin [j] holds the coordinates from [ek.{j}] included to [ek.{j+1}]
       excluded; the last bin includes its right edge too. Coordinates compare as
       {!less} does, so [-0.] is [+0.].
@@ -4111,8 +4111,8 @@ val moments_ranges :
     structure's module: {!Ptree.place} and {!Ptree.cast} take one.
 
     A description is made where it is used. Every description but
-    {!Ptree.tensor}, {!Ptree.unit} and {!Rng.ptree} is a function's result, so
-    OCaml fixes its dtype and its set at its first use, and a set minted in a
+    {!Ptree.val-tensor}, {!Ptree.unit} and {!Rng.ptree} is a function's result,
+    so OCaml fixes its dtype and its set at its first use, and a set minted in a
     local scope has no description outside it. A library therefore exports a
     structure's module, or a walk such as {!Rng.walk}, and its users describe
     the structure at their dtype and set.
@@ -4838,8 +4838,8 @@ module Rng : sig
   val ptree : ('d key, 'd) Ptree.t
   (** [ptree] is a key, or a batch of keys, as a description: one fixed array
       at the root, walked by {!walk}, which rebuilds it as {!of_tensor} does.
-      It is at every set, as {!Ptree.tensor} is, so one binding describes keys
-      on the host and on any other set. *)
+      It is at every set, as {!Ptree.val-tensor} is, so one binding describes
+      keys on the host and on any other set. *)
 
   val split : ?n:int -> 'd key -> 'd key array
   (** [split ~n k] is [n] keys derived from [k] ([n] defaults to [2]),

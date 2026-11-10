@@ -12,7 +12,7 @@
     only. On Linux the program runs from a sealed memory file, which runs where
     the home directory is mounted noexec; elsewhere from a file named by the
     program's digest, written aside and renamed into place, in
-    {!Helpers.cache_dir}, or in {!Filename.get_temp_dir_name} if the cache
+    {!Helpers.cache_dir}, or in [Filename.get_temp_dir_name] if the cache
     cannot be written, other users can write it, or the system refuses to run a
     program from it. Such a file runs only if it is a regular file reached
     through no link, this user's, that no other user can write, without macOS's
@@ -48,7 +48,7 @@ val call : t -> string -> string -> (string, string) result
     calls with [w].
 
     [TEMP] is a directory of the worker's own in
-    {!Filename.get_temp_dir_name}, made its temporary directory. The worker
+    [Filename.get_temp_dir_name], made its temporary directory. The worker
     removes it, with all in it, when it ends as above, but for what a compile
     creates while the directory is being removed, when this process ends
     during that compile; this process removes it when it finds the worker

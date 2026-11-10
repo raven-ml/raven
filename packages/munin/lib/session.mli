@@ -16,7 +16,7 @@
     + {!start} creates a run and is its session, or {!resume} is a new
       session of a run whose writer is gone. {!within} brackets either
       with {!finish}.
-    + {!metric} declares the metrics the run logs and {!log} and
+    + {!val-metric} declares the metrics the run logs and {!log} and
       {!log_metrics} log their samples, and {!sample} samples readings of
       the machine and its devices on a schedule.
     + {!log_file}, {!set_summary}, {!log_artifact} and {!use_artifact}
@@ -151,7 +151,7 @@ val store : t -> Store.t
 (** {1:metrics Metrics and summary}
 
     A {e handle} logs the samples of one metric of its session's run.
-    {!metric} declares the metric and is its handle. *)
+    {!val-metric} declares the metric and is its handle. *)
 
 type metric
 (** The type for handles. *)
@@ -192,7 +192,7 @@ val set_summary : t -> (string * Value.t) list -> unit
 (** [set_summary s values] appends a [summary] record, in which each value
     replaces the run's earlier value of its key. A summary holds what the
     program states about the run, such as a test score. Readers compute
-    the statistics of metrics ({!History.stats}).
+    the statistics of metrics ({!History.val-stats}).
 
     Raises [Invalid_argument] if a key is not a text or repeats, or a
     string value is not UTF-8. *)

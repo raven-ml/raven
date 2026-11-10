@@ -49,8 +49,8 @@ val save :
   Quill.Doc.t ->
   (Quill_markdown.stamp, string) result
 (** [save ~stamp figures path doc] saves [doc] to [path] as the terminal
-    notebook does, where [stamp] is the {!Quill_markdown.stamp} of the file as
-    it was last loaded or saved. The result is [Error] and nothing is written if
-    the file's stamp is no longer [stamp]. *)
+    notebook does, where [stamp] is the {!Quill_markdown.val-stamp} of the file
+    as it was last loaded or saved. The result is [Error] and nothing is written
+    if the file's stamp is no longer [stamp]. *)
 
 (**/**)

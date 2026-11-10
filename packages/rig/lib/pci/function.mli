@@ -131,7 +131,7 @@ val release : t -> unit
     returns immediately.
 
     An exception that ends the give-back part-way, such as an asynchronous
-    one ({!Sys.Break}), passes to the release or the use that made it, and
+    one ([Sys.Break]), passes to the release or the use that made it, and
     leaves the rest to a use refused after it, to {!finish_releases}, or to
     the process's exit, which at worst leaves [f] as a killed process
     does. *)

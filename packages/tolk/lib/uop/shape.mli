@@ -867,7 +867,7 @@ val equals : Ops.t -> Dtype.value -> bool
     Raises [Invalid_argument] if [u] is neither a constant nor a cast of one. *)
 
 val const_v : Ops.t -> Dtype.value -> Ops.t
-(** [const_v u v] is [v] as a constant of [u]'s type ({!Ops.const_like}). *)
+(** [const_v u v] is [v] as a constant of [u]'s type ({!const_like}). *)
 
 val conj : Ops.t list -> Ops.t
 (** [conj us] is the conjunction of [us].
