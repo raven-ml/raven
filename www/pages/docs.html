@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Docs — raven</title>
+<meta name="description" content="Guides, examples and API references for every Raven library.">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="/raven.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/Geist-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/GeistMono-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/style.css">
+<link rel="alternate" type="application/rss+xml" title="raven blog" href="/blog/feed.xml">
+<script src="/site.js" defer></script>
+</head>
+<body>
+<a href="#content" class="skip">skip to content</a>
+<div class="frame">
+<header class="hdr">
+<a href="/" class="logo t"><svg viewBox="0 0 137.22 143.7" width="22" height="23" aria-hidden="true"><defs><mask id="eye-hdr"><rect width="100%" height="100%" fill="white"></rect><circle cx="103.44" cy="10.83" r="3.48" fill="black"></circle></mask></defs><g fill="#ecebe6" mask="url(#eye-hdr)"><path d="M109.74,15.86l4.76-6.91,12.97,1.18s9.76.43,9.76,10.2h-23.73l-3.76-4.48Z"></path><polygon points="0 136.29 32.74 118.7 37.3 101.43 7.98 114.3 0 136.29"></polygon><polygon points="18.14 89.38 9.12 109.09 38.93 96.71 45.94 84.33 18.14 89.38"></polygon><path d="M19.38,85.95l28.67-6.03,14.82-24.92-10.1-18.3s-23.51,17.81-33.39,49.25Z"></path><path d="M56.04,35.4l5.86-4.67,30.3,10.1,9.61-5.05s8.29,3.26,7.98,15.8c-.27,11.19-2.05,16.17-2.05,16.17l-13.05.02s4.13-12.39-3.37-21.41c0,0,4.36,10.79-.54,26.92-1.49,4.88-9.5,26.67-52.67,42.56c0,0,2.28-24.42,28.34-59.93l.73-1.08-11.16-19.44Z"></path><polygon points="47.08 116.74 55.55 127.33 59.62 122.04 60.27 109.09 47.08 116.74"></polygon><polygon points="65.97 115.11 78.35 107.78 78.35 120 73.96 125.05 65.97 115.11"></polygon><path d="M58.15,129.94l2.93-3.75,7.33,9.12h7.49l-1.97,4.56h-11.06s-5.21.65-7,2.93c0,0-1.22-3.58,5.62-6.52v-2.5l-3.34-3.86Z"></path><path d="M75.91,128.04l5.1-5.86,9.88,12.92,6.09.97s6.29.96,6.29,6.74c0,0-5.7-3.01-13.03-3.01s-13.11.57-14.33,3.91c0,0-.65-6.71,7.82-7.66l-.08-2.28-7.74-5.73Z"></path><path d="M64.18,106.64v6.52s35.84-18.24,43.17-42.84h-13.41s-1.41,19.38-29.76,36.33Z"></path><path d="M112.94,7.6s-5.43-7.6-18.24-7.6-18.9,6.73-18.9,6.73c0,0-8.36,4.89-11.62,20.96l27.91,9.99,9.34-4.83,10.43-10.89-5-5.89,6.08-8.47Z"></path></g></svg>raven</a>
+<nav aria-label="Primary">
+<a href="/docs/" aria-current="page">docs</a>
+<a href="/blog/">blog</a>
+<a href="/community/">community</a>
+<a href="/roadmap/">roadmap</a>
+<a href="/performance/">performance</a>
+<a href="/sponsor/">sponsor</a>
+<a href="/search/" class="find-link">search</a>
+</nav>
+<form role="search" aria-label="Site" action="/search/" method="get">
+<label class="find">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+<span class="sr">search docs and api</span>
+<input name="q" type="search" placeholder="search docs and api">
+</label>
+</form>
+<a href="https://github.com/raven-ml/raven" class="gh t">github ↗</a>
+</header>
+<main id="content">
+<section class="hero pad split">
+<div class="main eyebrow-gap">
+<p class="label">docs</p>
+<h1 class="h1">Learn raven.</h1>
+<p class="lead">Guides, examples and API references for every library. Each page is rendered from the repository, and its code is tested.</p>
+</div>
+<form role="search" aria-label="Docs" action="/search/" method="get" class="side stack" style="flex: 1 1 320px; min-width: 0; max-width: 480px; gap: 8px">
+<label for="dq" class="label">search docs and api</label>
+<div style="display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 8px 0 16px; background: #141413; border: 1px solid var(--field); border-radius: var(--r-sm)">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8f8c84" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+<input id="dq" name="q" type="search" placeholder="grad, dataframe join, ode…" style="flex: 1; min-width: 0; min-height: 40px; background: none; border: 0; color: var(--text-1); font-family: var(--mono); font-size: 15px">
+<button type="submit" class="btn btn-1" style="min-height: 38px; padding: 0 14px">search</button>
+</div>
+<a href="/search/" class="caption u" style="align-self: flex-start; color: var(--text-3)">or browse the index, A to Z →</a>
+</form>
+</section>
+<section class="pad stack" style="gap: 32px; padding-bottom: var(--section-y)">
+<div class="eyebrow-gap">
+<p class="label">01 — start here</p>
+<h2 class="h2">Pick a starting point.</h2></div>
+<div class="cells" style="grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr))"><a href="/docs/manual/quickstart/" class="stack" style="gap: 12px; min-height: 190px"><span class="caption" style="color: var(--amber)">new to raven · 5 min</span><span class="h3">Quickstart</span><span class="small">From an empty directory to arrays, gradients and a trained model.</span></a><a href="/docs/manual/installation/" class="stack" style="gap: 12px; min-height: 190px"><span class="caption" style="color: var(--dim)">set up</span><span class="h3">Installation</span><span class="small">Install all of raven or one library, and set up your editor.</span></a><a href="/docs/manual/coming-from-python/" class="stack" style="gap: 12px; min-height: 190px"><span class="caption" style="color: var(--dim)">know numpy or pytorch</span><span class="h3">Coming from Python</span><span class="small">Library by library mappings, then the differences: explicit types, array literals, slicing, functional transformations.</span></a><a href="/docs/manual/ecosystem-overview/" class="stack" style="gap: 12px; min-height: 190px"><span class="caption" style="color: var(--dim)">choosing libraries</span><span class="h3">Ecosystem overview</span><span class="small">How the libraries layer on each other, and which to reach for.</span></a><a href="/docs/manual/introduction/" class="stack" style="gap: 12px; min-height: 190px"><span class="caption" style="color: var(--dim)">the why</span><span class="h3">Introduction</span><span class="small">Why Raven exists, and what success looks like.</span></a><a href="/search/" class="stack" style="gap: 12px; min-height: 190px"><span class="caption" style="color: var(--dim)">look something up</span><span class="h3">Index, A to Z</span><span class="small">Every page, guide, example and public function, filtered as you type.</span></a></div>
+</section>
+<section class="section pad stack" style="gap: 48px">
+<div class="split">
+<div class="main eyebrow-gap">
+<p class="label">02 — libraries</p>
+<h2 class="h2">Pick the library for the job.</h2></div>
+<div class="side">
+<p class="lead">Each library's page opens with what it does and how to install it, then its guides in order, its examples and its API.</p></div></div>
+<!-- slot: libraries index -->
+</section>
+<section class="section pad" style="display: flex; flex-wrap: wrap; gap: 48px 64px">
+<div class="eyebrow-gap" style="flex: 1 1 360px">
+<p class="label">03 — help and contributing</p>
+<h2 class="h2">Stuck, or want to help?</h2></div>
+<ul class="rows" style="flex: 1.4 1 520px">
+<li><a href="https://github.com/raven-ml/raven/issues" class="row"><span style="color: var(--text-3)">Found a bug, or something unclear in these pages</span><span class="mono-ui">open an issue ↗</span></a></li>
+<li><a href="https://github.com/raven-ml/raven/blob/main/CONTRIBUTING.md" class="row"><span style="color: var(--text-3)">Build from source, run the tests, send a change</span><span class="mono-ui">contributing ↗</span></a></li>
+<li><a href="https://github.com/raven-ml/raven/labels/good%20first%20issue" class="row"><span style="color: var(--text-3)">Small, well-scoped places to start</span><span class="mono-ui">good first issues ↗</span></a></li></ul>
+</section>
+</main>
+<footer class="ftr">
+<div class="ftr-top">
+<div class="ftr-brand"><span class="mono">raven</span><span class="small">Modern scientific computing for OCaml.</span></div>
+<div class="cols">
+<div><span class="label">learn</span><a href="/docs/manual/quickstart/">Quickstart</a><a href="/docs/manual/installation/">Installation</a><a href="/docs/manual/coming-from-python/">Coming from Python</a><a href="/search/">Index, A to Z</a></div>
+<div><span class="label">project</span><a href="/roadmap/">Roadmap</a><a href="/performance/">Performance</a><a href="/blog/">Blog</a><a href="/sponsor/">Sponsor</a></div>
+<div><span class="label">community</span><a href="/community/">Projects</a><a href="https://github.com/raven-ml/raven">GitHub ↗</a><a href="https://github.com/raven-ml/raven/issues">Issues ↗</a><a href="/blog/feed.xml">RSS</a></div>
+</div>
+</div>
+<div class="base"><span>raven · ISC license</span><span class="ftr-glyphs" aria-hidden="true">ᛏᚱᚴᚹᚨᛄᚾᛃᛞᛈᛗ</span></div>
+</footer>
+</div>
+</body>
+</html>

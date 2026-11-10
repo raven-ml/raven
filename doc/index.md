@@ -4,9 +4,9 @@ Welcome to Raven's documentation. Raven is an ecosystem of OCaml libraries for n
 
 ## Start Here
 
-- **[Quickstart](quickstart.md)** — zero to gradient in 5 minutes
-- **[Coming from Python](coming-from-python.md)** — map NumPy, PyTorch, pandas concepts to Raven
-- **[Ecosystem Overview](ecosystem-overview.md)** — how the libraries relate and which to use
+- **[Quickstart](manual/quickstart.md)** — zero to gradient in 5 minutes
+- **[Coming from Python](manual/coming-from-python.md)** — map NumPy, PyTorch, pandas concepts to Raven
+- **[Ecosystem Overview](manual/ecosystem-overview.md)** — how the libraries relate and which to use
 
 ## Libraries
 
@@ -14,7 +14,7 @@ Welcome to Raven's documentation. Raven is an ecosystem of OCaml libraries for n
 |-|---------|------|-------------|
 | | [**nx**](../packages/nx/doc/index.md) | NumPy | N-dimensional arrays on the host and on devices |
 | ᚱ | [**rune**](../packages/rune/doc/index.md) | JAX | Automatic differentiation and functional transformations |
-| ᚲ | [**kaun**](../packages/kaun/doc/index.md) | PyTorch / Flax | Neural networks and training |
+| ᚴ | [**kaun**](../packages/kaun/doc/index.md) | PyTorch / Flax | Neural networks and training |
 | ᚹ | [**vega**](../packages/vega/doc/index.md) | Optax | Gradient-based optimizers and schedules |
 | ᛄ | [**jera**](../packages/jera/doc/index.md) | SciPy | Numerical methods: systems, minima, integrals, interpolation, differential equations |
 | ᚾ | [**norn**](../packages/norn/doc/index.md) | NumPyro / Stan | Probabilistic inference: models, samplers, diagnostics |
@@ -27,8 +27,8 @@ Packages that release on their own schedule, such as Fehu, Sowilo and Ymir, live
 
 ## Project
 
-- [Installation](installation.md) — system dependencies, opam setup, building from source
+- [Installation](manual/installation.md) — system dependencies, opam setup, building from source
 - [Roadmap](roadmap.md) — what works today and what's coming
-- [Updates](updates/index.md) — progress reports on Raven's development
-- [Introduction](introduction.md) — vision and philosophy
+- [Updates](blog/index.md) — progress reports on Raven's development
+- [Introduction](manual/introduction.md) — vision and philosophy
 - [Support Raven](support-raven.md) — sponsorship and contributing

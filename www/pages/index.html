@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>raven — scientific computing for OCaml</title>
+<meta name="description" content="Arrays, gradients, neural networks, numerical methods, probabilistic inference, dataframes and plots for OCaml.">
+<meta name="color-scheme" content="dark">
+<meta name="source" content="doc/performance.md cf73a5de7fff">
+<meta name="source" content="doc/roadmap.md 308199d49c34">
+<meta name="source" content="doc/support-raven.md 2b0b00e54d96">
+<link rel="icon" href="/raven.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/Geist-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/GeistMono-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/style.css">
+<link rel="alternate" type="application/rss+xml" title="raven blog" href="/blog/feed.xml">
+<script src="/site.js" defer></script>
+</head>
+<body>
+<a href="#content" class="skip">skip to content</a>
+<div class="frame">
+<header class="hdr">
+<a href="/" class="logo t"><svg viewBox="0 0 137.22 143.7" width="22" height="23" aria-hidden="true"><defs><mask id="eye-hdr"><rect width="100%" height="100%" fill="white"></rect><circle cx="103.44" cy="10.83" r="3.48" fill="black"></circle></mask></defs><g fill="#ecebe6" mask="url(#eye-hdr)"><path d="M109.74,15.86l4.76-6.91,12.97,1.18s9.76.43,9.76,10.2h-23.73l-3.76-4.48Z"></path><polygon points="0 136.29 32.74 118.7 37.3 101.43 7.98 114.3 0 136.29"></polygon><polygon points="18.14 89.38 9.12 109.09 38.93 96.71 45.94 84.33 18.14 89.38"></polygon><path d="M19.38,85.95l28.67-6.03,14.82-24.92-10.1-18.3s-23.51,17.81-33.39,49.25Z"></path><path d="M56.04,35.4l5.86-4.67,30.3,10.1,9.61-5.05s8.29,3.26,7.98,15.8c-.27,11.19-2.05,16.17-2.05,16.17l-13.05.02s4.13-12.39-3.37-21.41c0,0,4.36,10.79-.54,26.92-1.49,4.88-9.5,26.67-52.67,42.56c0,0,2.28-24.42,28.34-59.93l.73-1.08-11.16-19.44Z"></path><polygon points="47.08 116.74 55.55 127.33 59.62 122.04 60.27 109.09 47.08 116.74"></polygon><polygon points="65.97 115.11 78.35 107.78 78.35 120 73.96 125.05 65.97 115.11"></polygon><path d="M58.15,129.94l2.93-3.75,7.33,9.12h7.49l-1.97,4.56h-11.06s-5.21.65-7,2.93c0,0-1.22-3.58,5.62-6.52v-2.5l-3.34-3.86Z"></path><path d="M75.91,128.04l5.1-5.86,9.88,12.92,6.09.97s6.29.96,6.29,6.74c0,0-5.7-3.01-13.03-3.01s-13.11.57-14.33,3.91c0,0-.65-6.71,7.82-7.66l-.08-2.28-7.74-5.73Z"></path><path d="M64.18,106.64v6.52s35.84-18.24,43.17-42.84h-13.41s-1.41,19.38-29.76,36.33Z"></path><path d="M112.94,7.6s-5.43-7.6-18.24-7.6-18.9,6.73-18.9,6.73c0,0-8.36,4.89-11.62,20.96l27.91,9.99,9.34-4.83,10.43-10.89-5-5.89,6.08-8.47Z"></path></g></svg>raven</a>
+<nav aria-label="Primary">
+<a href="/docs/">docs</a>
+<a href="/blog/">blog</a>
+<a href="/community/">community</a>
+<a href="/roadmap/">roadmap</a>
+<a href="/performance/">performance</a>
+<a href="/sponsor/">sponsor</a>
+<a href="/search/" class="find-link">search</a>
+</nav>
+<form role="search" aria-label="Site" action="/search/" method="get">
+<label class="find">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+<span class="sr">search docs and api</span>
+<input name="q" type="search" placeholder="search docs and api">
+</label>
+</form>
+<a href="https://github.com/raven-ml/raven" class="gh t">github ↗</a>
+</header>
+<main id="content">
+<section class="hero pad hero-split">
+<div class="hero-text">
+<svg viewBox="0 0 137.22 143.7" width="48" height="50" aria-hidden="true"><defs><mask id="eye-hero"><rect width="100%" height="100%" fill="white"></rect><circle cx="103.44" cy="10.83" r="3.48" fill="black"></circle></mask></defs><g fill="#ecebe6" mask="url(#eye-hero)"><path d="M109.74,15.86l4.76-6.91,12.97,1.18s9.76.43,9.76,10.2h-23.73l-3.76-4.48Z"></path><polygon points="0 136.29 32.74 118.7 37.3 101.43 7.98 114.3 0 136.29"></polygon><polygon points="18.14 89.38 9.12 109.09 38.93 96.71 45.94 84.33 18.14 89.38"></polygon><path d="M19.38,85.95l28.67-6.03,14.82-24.92-10.1-18.3s-23.51,17.81-33.39,49.25Z"></path><path class="wing" d="M56.04,35.4l5.86-4.67,30.3,10.1,9.61-5.05s8.29,3.26,7.98,15.8c-.27,11.19-2.05,16.17-2.05,16.17l-13.05.02s4.13-12.39-3.37-21.41c0,0,4.36,10.79-.54,26.92-1.49,4.88-9.5,26.67-52.67,42.56c0,0,2.28-24.42,28.34-59.93l.73-1.08-11.16-19.44Z"></path><polygon points="47.08 116.74 55.55 127.33 59.62 122.04 60.27 109.09 47.08 116.74"></polygon><polygon points="65.97 115.11 78.35 107.78 78.35 120 73.96 125.05 65.97 115.11"></polygon><path d="M58.15,129.94l2.93-3.75,7.33,9.12h7.49l-1.97,4.56h-11.06s-5.21.65-7,2.93c0,0-1.22-3.58,5.62-6.52v-2.5l-3.34-3.86Z"></path><path d="M75.91,128.04l5.1-5.86,9.88,12.92,6.09.97s6.29.96,6.29,6.74c0,0-5.7-3.01-13.03-3.01s-13.11.57-14.33,3.91c0,0-.65-6.71,7.82-7.66l-.08-2.28-7.74-5.73Z"></path><path d="M64.18,106.64v6.52s35.84-18.24,43.17-42.84h-13.41s-1.41,19.38-29.76,36.33Z"></path><path d="M112.94,7.6s-5.43-7.6-18.24-7.6-18.9,6.73-18.9,6.73c0,0-8.36,4.89-11.62,20.96l27.91,9.99,9.34-4.83,10.43-10.89-5-5.89,6.08-8.47Z"></path></g></svg>
+<div class="stack" style="gap: 24px">
+<p class="label">raven · <!-- slot: release --></p>
+<h1 class="display">Scientific computing for OCaml, all the way down to the GPU.</h1>
+<p class="lead">Arrays, gradients, neural networks, numerical methods, probabilistic inference, dataframes and plots. Libraries that compose as ordinary OCaml code.</p>
+</div>
+<div class="stack" style="gap: 14px">
+<div class="install-row">
+<div class="install"><span class="dim" aria-hidden="true">$</span><code data-copy="opam install raven">opam install raven</code></div>
+<a href="/docs/manual/quickstart/" class="go t">five-minute quickstart →</a>
+</div>
+<a href="/docs/manual/installation/" class="caption u setup">new to OCaml? set up opam first →</a>
+</div>
+</div>
+<div class="tabs" role="group" aria-label="Code from each library's documentation">
+<div class="panels">
+<!-- slot: tabs -->
+</div>
+</div>
+</section>
+<div class="pad strip"><span class="dim">raven's counterparts to</span><a href="/docs/nx/" class="u" title="NumPy → nx">NumPy</a><a href="/docs/rune/" class="u" title="JAX → rune">JAX</a><a href="/docs/kaun/" class="u" title="PyTorch → kaun">PyTorch</a><a href="/docs/jera/" class="u" title="SciPy → jera">SciPy</a><a href="/docs/norn/" class="u" title="NumPyro → norn">NumPyro</a><a href="/docs/talon/" class="u" title="pandas → talon">pandas</a><a href="/docs/hugin/" class="u" title="Matplotlib → hugin">Matplotlib</a><a href="/docs/quill/" class="u" title="Jupyter → quill">Jupyter</a><a href="/docs/munin/" class="u" title="W&amp;B → munin">W&amp;B</a><a href="/docs/manual/coming-from-python/" class="go">coming from python →</a></div>
+<section class="section pad stack" style="gap: 64px">
+<div class="split">
+<div class="main eyebrow-gap">
+<p class="label">01 — one program, every layer</p>
+<h2 class="h2-landing">gpt-oss-20b runs on NVIDIA and AMD GPUs, with every layer in Raven.</h2></div>
+<div class="side">
+<p class="lead">Each layer of the model, attention and a mixture of experts, compiles into GPU kernels under <code class="icode">Rune.jit</code>. Six libraries carry a prompt to its answer without leaving the language.</p></div></div>
+<div class="pipeline-row">
+<ol class="rows pipeline">
+<li class="stage"><span class="glyph" style="color: #06b6d4; font-size: 22px" aria-hidden="true">ᚨ</span><a href="/docs/brot/" class="mono">brot</a><span>tokenizes the prompt</span></li>
+<li class="stage"><span class="glyph" style="color: #ef4444; font-size: 22px" aria-hidden="true">ᚴ</span><a href="/docs/kaun/" class="mono">kaun</a><span>defines the model</span></li>
+<li class="stage"><span class="glyph" style="; font-size: 22px" aria-hidden="true"></span><a href="/docs/nx/" class="mono">nx</a><span>holds the weights and the cache</span></li>
+<li class="stage"><span class="glyph" style="color: #f59e0b; font-size: 22px" aria-hidden="true">ᚱ</span><a href="/docs/rune/" class="mono">rune</a><span>compiles each layer</span></li>
+<li class="stage"><span class="glyph" style="color: #8b9bb4; font-size: 22px" aria-hidden="true">ᛏ</span><a href="/docs/tolk/" class="mono">tolk</a><span>turns it into GPU kernels</span></li>
+<li class="stage"><span class="glyph" style="; font-size: 22px" aria-hidden="true"></span><a href="/docs/rig/" class="mono">rig</a><span>runs them on the GPU</span></li></ol>
+<figure class="code step"><figcaption><span>kaun/examples/06-gpt-oss/gpt_oss.ml</span><a href="https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/06-gpt-oss" class="note u">full example ↗</a></figcaption>
+<pre tabindex="0" role="region" aria-label="gpt_oss.ml excerpt"><!-- slot: excerpt packages/kaun/examples/06-gpt-oss/gpt_oss.ml block --></pre></figure>
+</div>
+<div class="cells stats">
+<div class="stat">
+<p class="stat-big">10.2 ms</p>
+<p class="small">per gpt-oss-20b decode step on an RTX 5000 Ada, jitted. llama.cpp: 6.83 ms. The goal post on the road to 1.0: at least as fast as four baselines.</p>
+<p class="caption stat-foot"><span>2026-11</span><a href="/performance/" class="u">the goal post →</a></p></div>
+<div class="stat">
+<p class="stat-big">7.6 MiB</p>
+<p class="small">to install rig on NVIDIA through its own driver (115 MiB through CUDA). PyTorch: 5,458 MiB. Compiling kernels loads NVRTC.</p>
+<p class="caption stat-foot"><span>2026-10-11</span><a href="https://github.com/raven-ml/raven/blob/main/packages/rig/bench/compare/README.md" class="u">source ↗</a></p></div>
+<div class="stat">
+<p class="stat-big">70 ms</p>
+<p class="small">from starting a process to its first GPU result, through rig's own driver (134 ms through CUDA). PyTorch: 720 ms. JAX: 538 ms.</p>
+<p class="caption stat-foot"><span>2026-10-11</span><a href="https://github.com/raven-ml/raven/blob/main/packages/rig/bench/compare/README.md" class="u">source ↗</a></p></div></div>
+</section>
+<section id="ecosystem" class="section pad stack" style="gap: 64px">
+<div class="split">
+<div class="main eyebrow-gap">
+<p class="label">02 — the ecosystem</p>
+<h2 class="h2-landing"><!-- slot: library-count --> libraries. Each does one thing well.</h2></div>
+<div class="side">
+<p class="lead">Install the whole stack with <code class="icode">opam install raven</code>, or only what you need: <code class="icode">opam install nx</code> for arrays alone.</p></div></div>
+<!-- slot: libraries -->
+</section>
+<section class="section pad stack" style="gap: 64px">
+<div class="split">
+<div class="main eyebrow-gap">
+<p class="label">03 — why raven</p>
+<h2 class="h2-landing">Prototype like Python. Ship like OCaml.</h2></div></div>
+<div class="points">
+<div class="point prose">
+<p class="label">i.</p>
+<h3 class="h3">Dtype and device mistakes stop at the compiler.</h3>
+<p class="body">An array's type carries its dtype and the device set it lies on, so values from two device sets never meet by mistake. Shapes are checked when an operation runs. <a href="/docs/manual/introduction/">Why Raven →</a></p></div>
+<div class="point prose">
+<p class="label">ii.</p>
+<h3 class="h3">JAX's ergonomics, in a real functional language.</h3>
+<p class="body">Every Nx function issues a small set of primitive operations. <code class="icode">grad</code>, <code class="icode">vmap</code> and <code class="icode">jit</code> are OCaml 5 effect handlers that interpret them, so they nest like any other function.</p></div>
+<div class="point prose">
+<p class="label">iii.</p>
+<h3 class="h3">GPUs with no CUDA, no ROCm, not even a driver.</h3>
+<p class="body">rig drives NVIDIA and AMD GPUs through their kernel drivers, or, on Linux, with no driver at all: it boots the GPU itself from the vendor's firmware. Precompiled kernels run with nothing else installed; compiling them at run time loads NVRTC or comgr. On the road to 1.0: your whole application, model included, as one static binary. <a href="/docs/rig/">rig →</a></p></div></div>
+</section>
+<section class="section pad testimonials" aria-labelledby="testimonials">
+<h2 id="testimonials" class="sr">What people who use Raven say</h2>
+<figure class="testimonial">
+<p class="label">in use</p>
+<div class="testimonial-body">
+<blockquote cite="https://scholar.google.com/citations?user=-NkKYYcAAAAJ&amp;hl=en">
+<p class="quote-lead"><span class="open" aria-hidden="true">“</span>We picked OCaml for the language and put up with the numerical ecosystem for years. Raven finally gives us both: type-safe models, seamless GPU acceleration, and an effects-based design that’s a pleasure to use. Porting and unifying our previously disparate libraries was effortless. We have never been more productive.”</p>
+</blockquote>
+<figcaption><span class="dash" aria-hidden="true"></span><span class="who"><a href="https://scholar.google.com/citations?user=-NkKYYcAAAAJ&amp;hl=en" class="u">Guillaume Hennequin ↗</a><span class="caption">Professor of Computational Neuroscience, University of Cambridge</span></span></figcaption>
+<div class="inuse">
+<p class="caption">built on raven</p>
+<ul class="inuse-list">
+<li><a href="https://github.com/hennequin-lab/sofo-raven" class="mono-ui u">sofo-raven</a><span class="small">Second-order optimization with no backpropagation · NeurIPS 2024</span></li>
+<li><a href="https://github.com/hennequin-lab/symo-raven" class="mono-ui u">symo-raven</a><span class="small">Curvature from weight-space symmetries · ICML 2026</span></li>
+<li><a href="https://github.com/asara-io/ModelKit" class="mono-ui u">ModelKit</a><span class="small">Classical machine learning, like scikit-learn</span></li>
+<li><a href="https://github.com/hennequin-lab/geom" class="mono-ui u">geom</a><span class="small">Geometric algebra for robotics</span></li>
+<li><a href="https://github.com/gabyfle/SoundML" class="mono-ui u">SoundML</a><span class="small">Audio processing</span></li>
+</ul>
+<a href="/community/" class="go" style="align-self: flex-start">all community projects →</a>
+</div>
+</div>
+</figure>
+</section>
+<section id="learn" class="section pad stack" style="gap: 56px">
+<div class="split">
+<div class="main eyebrow-gap">
+<p class="label">04 — learn</p>
+<h2 class="h2-landing">Start from where you are.</h2></div>
+<div class="side"><a href="/docs/" class="go">all documentation →</a></div></div>
+<div class="cells learn-cells"><a href="/docs/manual/quickstart/" class="learn"><span class="caption amber">new to raven · 5 min</span><span class="h3">Quickstart</span><span class="small">From an empty directory to arrays, gradients and a trained model.</span></a><a href="/docs/manual/coming-from-python/" class="learn"><span class="caption">know numpy or pytorch</span><span class="h3">Coming from Python</span><span class="small">Library by library mappings, then the differences: explicit types, array literals, slicing, functional transformations.</span></a><a href="/docs/manual/ecosystem-overview/" class="learn"><span class="caption">choosing libraries</span><span class="h3">Ecosystem overview</span><span class="small">How the libraries layer on each other, and which to reach for.</span></a><a href="/docs/kaun/#examples" class="learn"><span class="caption">learn by reading code</span><span class="h3">Examples</span><span class="small">XOR and MNIST up to GPT-2, Llama with checkpoint import, gpt-oss and neural ODEs.</span></a><a href="/docs/quill/" class="learn"><span class="caption">explore interactively</span><span class="h3">Notebooks with Quill</span><span class="small">A REPL and notebooks that are plain markdown files, diffable and reviewable.</span></a><a href="/search/" class="learn"><span class="caption">look something up</span><span class="h3">Index, A to Z</span><span class="small">Every page, guide, example and public function, filtered as you type.</span></a></div>
+</section>
+<section id="roadmap" class="section pad stack" style="gap: 56px">
+<div class="split">
+<div class="main eyebrow-gap">
+<p class="label">05 — roadmap</p>
+<h2 class="h2-landing">The road to replacing a Python stack in production.</h2></div>
+<div class="side"><a href="/roadmap/" class="go">full roadmap →</a></div></div>
+<ol class="timeline">
+<li class="milestone past">
+<span class="dot" aria-hidden="true"></span>
+<p class="label">alpha · 2025-11</p>
+<h3 class="h3">The libraries, eager on the host.</h3>
+<p class="small">FFT and a full linear algebra suite in Nx, dataframes in Talon, and the decision to port tinygrad to OCaml.</p></li>
+<li class="milestone past">
+<span class="dot" aria-hidden="true"></span>
+<p class="label">beta 1 · done</p>
+<h3 class="h3">Compiled, on GPUs.</h3>
+<p class="small">A whole training step compiles into one GPU program, with every layer in Raven.</p></li>
+<li class="milestone now">
+<span class="dot" aria-hidden="true"></span>
+<p class="label">toward 1.0 · now</p>
+<h3 class="h3">gpt-oss, against the fastest.</h3>
+<p class="small">Jit-compiled gpt-oss-20b at least as fast as tinygrad, JAX, llama.cpp and vLLM, on NVIDIA and AMD.</p></li>
+<li class="milestone next">
+<span class="dot" aria-hidden="true"></span>
+<p class="label">1.0 · next</p>
+<h3 class="h3">Replace a Python stack in production.</h3>
+<p class="small">Training and deployment, each at 90% or better of the Python stack it replaces.</p></li></ol>
+</section>
+<section class="section pad blog-support">
+<div class="stack blog" style="gap: 28px">
+<div class="eyebrow-gap">
+<p class="label">06 — from the blog</p>
+<h2 class="h2">Notes from building Raven.</h2></div>
+<!-- slot: posts 2 -->
+<p class="links"><a href="/blog/" class="go">all posts →</a><a href="/blog/feed.xml" class="go">rss</a></p>
+</div>
+<div class="card support">
+<p class="label">support</p>
+<h3 class="h3">Raven is built in public, and funded by its sponsors.</h3>
+<p class="small">Sponsorship pays for distributed training, better tooling and static-binary deployment.</p>
+<div class="sponsors"><span class="caption">sponsored by</span>
+<p class="h4"><a href="https://ahrefs.com" class="u">Ahrefs</a></p><span class="caption">with thanks to our past sponsor</span>
+<p class="h4 past"><a href="https://tarides.com" class="u">Tarides</a></p></div>
+<div class="links"><a href="/sponsor/" class="btn btn-1">sponsor raven</a><a href="https://github.com/raven-ml/raven/labels/good%20first%20issue" class="btn btn-2">good first issues</a></div>
+</div>
+</section>
+</main>
+<footer class="ftr">
+<div class="ftr-top">
+<div class="ftr-brand"><span class="mono">raven</span><span class="small">Modern scientific computing for OCaml.</span></div>
+<div class="cols">
+<div><span class="label">learn</span><a href="/docs/manual/quickstart/">Quickstart</a><a href="/docs/manual/installation/">Installation</a><a href="/docs/manual/coming-from-python/">Coming from Python</a><a href="/search/">Index, A to Z</a></div>
+<div><span class="label">project</span><a href="/roadmap/">Roadmap</a><a href="/performance/">Performance</a><a href="/blog/">Blog</a><a href="/sponsor/">Sponsor</a></div>
+<div><span class="label">community</span><a href="/community/">Projects</a><a href="https://github.com/raven-ml/raven">GitHub ↗</a><a href="https://github.com/raven-ml/raven/issues">Issues ↗</a><a href="/blog/feed.xml">RSS</a></div>
+</div>
+</div>
+<div class="base"><span>raven · ISC license</span><span class="ftr-glyphs" aria-hidden="true">ᛏᚱᚴᚹᚨᛄᚾᛃᛞᛈᛗ</span></div>
+</footer>
+</div>
+</body>
+</html>

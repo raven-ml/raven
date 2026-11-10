@@ -8,7 +8,7 @@ Python's monopoly on scientific computing forces an impossible choice: ship ever
 
 **Raven brings that stack to OCaml:** Nx (NumPy), Rune (JAX with effects-based autodiff), Kaun (Flax), Brot (tokenization), Hugin (Matplotlib), and Quill (notebooks done right). Train models with automatic differentiation and JIT compilation, then deploy them as one static binary that needs nothing on the host beyond the GPU's kernel driver. We built Raven for teams that want both development speed and reliable systems.
 
-_Learn more: [Introduction](introduction.md)_
+_Learn more: [Introduction](manual/introduction.md)_
 
 _The full stack works end-to-end: a GPT-2 training step compiles into one GPU program and trains on an H100. Next milestone: 1.0, fine-tuning and serving open-weight LLMs at 90% or better of PyTorch's and vLLM's throughput._
 
@@ -51,11 +51,16 @@ We're grateful for the support of our sponsors:
 ### Corporate Sponsors
 
 - [**Ahrefs**](https://ahrefs.com) - Building tools to help you grow your search traffic
-- [**Tarides**](https://tarides.com) - Secure-by-design infrastructure and tooling for a better digital world
 
 ### Individual Sponsors
 
 Thank you to all our individual sponsors for their support!
+
+## Past Sponsors
+
+Raven wouldn't be here without those who sponsored it before:
+
+- [**Tarides**](https://tarides.com) - Secure-by-design infrastructure and tooling for a better digital world
 
 ## Get in Touch
 

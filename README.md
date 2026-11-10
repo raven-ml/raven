@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="www/site/raven.svg" width="80" alt="raven">
+  <img src="www/static/raven.svg" width="80" alt="raven">
 </p>
 
 <h3 align="center">modern scientific computing for OCaml</h3>
 
 <p align="center">
   <a href="https://raven-ml.dev/docs/">docs</a> &middot;
-  <a href="https://raven-ml.dev/docs/installation/">install</a> &middot;
+  <a href="https://raven-ml.dev/docs/manual/installation/">install</a> &middot;
   <a href="https://github.com/raven-ml/raven/issues">issues</a>
 </p>
 
@@ -54,7 +54,7 @@ let () = Hugin.(line ~x:(num x) ~y:(num y) () |> save "sine.png")
 |     | [**rig**](packages/rig/)       | CUDA driver API   | Devices such as GPUs, and the order of the work they run |
 | ᛏ   | [**tolk**](packages/tolk/)     | tinygrad          | Minimal ML compiler for GPU tensor computation           |
 | ᚱ   | [**rune**](packages/rune/)     | JAX               | Automatic differentiation and functional transformations |
-| ᚲ   | [**kaun**](packages/kaun/)     | Flax              | Neural networks and training                             |
+| ᚴ   | [**kaun**](packages/kaun/)     | Flax              | Neural networks and training                             |
 | ᚹ   | [**vega**](packages/vega/)     | Optax             | Composable gradient-based optimizers                     |
 | ᛄ   | [**jera**](packages/jera/)     | SciPy             | Systems, minima, integrals, interpolation, ODEs and SDEs |
 | ᚾ   | [**norn**](packages/norn/)     | NumPyro / Stan    | Probabilistic inference: models, samplers, diagnostics   |
@@ -90,7 +90,7 @@ Add to your `dune` file:
  (libraries raven))
 ```
 
-See the [installation guide](https://raven-ml.dev/docs/installation/) for system dependencies and editor setup.
+See the [installation guide](https://raven-ml.dev/docs/manual/installation/) for system dependencies and editor setup.
 
 ## Support
 
