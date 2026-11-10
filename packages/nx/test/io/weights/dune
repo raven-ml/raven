@@ -1,0 +1,11 @@
+; TESSERA's medium student (84 MB) against torch.load's reading of it. Outside
+; runtest: a test run cannot hold a real model's weights. Run it with
+;   NX_IO_PT_CKPT=student_medium.pt NX_IO_PT_REF=reference.npz \
+;   dune exec packages/nx/test/io/weights/test_pytorch_weights.exe
+; where reference.npz holds, for each tensor torch.load reads under a path of
+; string keys and indices, its bytes at uint8 with a last axis of its element's
+; bytes, named by the path, and its dtype's name under the path and ".dtype".
+
+(executable
+ (name test_pytorch_weights)
+ (libraries nx nx_io windtrap))
