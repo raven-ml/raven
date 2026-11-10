@@ -419,6 +419,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `scan` or `iterate` whose step makes storage of its own, as a
+  step that takes a gradient over a chunk of a batch does, shares it among
+  the step's values within each trip: 4 chunks of a remat'd 8-block
+  gradient hold 213,120 bytes, where they held 1,253,504, the sum of the
+  step's buffers.
 - **Breaking:** under `Rune.jit`, the backward pass of `Rune.remat s f`
   computes every value of `f` again, those it computes from the program's
   arguments, constants or a loop's captures included, and keeps of `f` its
@@ -1196,6 +1201,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Memory.memory_plan_rewrite` plans the buffers that only one loop's calls
+  take within a trip: such buffers share bytes where their lives in a trip
+  do not overlap, where every buffer a loop took lived for the whole loop.
 - `Tolk_engine.time` raises `Invalid_argument` for a schedule with a kernel
   on another machine's device, and `Failure` where a device recorded no work
   for a kernel's submission. It summed what it found, so `Rune.jit ~beam` on

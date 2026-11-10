@@ -1360,10 +1360,10 @@ encodes its own releases (D146).
   `Memory.memory_plan_rewrite`'s lifetimes (`call_bufs`, the events) and
   lanes (`key`);
   `Schedule.create_linear_with_vars`'s `held_bufs`.
-- **Differs:** an `END` of ranges around calls counts as one entry that takes
-  the buffers of each call it runs, and a call takes the buffers its
-  arguments view (`SHRINK`, `BITCAST`, `AFTER`) as well as those they are.
-  tinygrad takes an `END`'s sources after the first, its ranges, so a buffer
+- **Differs:** an `END` of ranges around calls takes the buffers of each
+  call it runs, each call at its place in one trip (D476), and a call takes
+  the buffers its arguments view (`SHRINK`, `BITCAST`, `AFTER`) as well as
+  those they are. tinygrad takes an `END`'s sources after the first, its ranges, so a buffer
   used inside a range lives only where it is used outside it; it leaves a
   buffer only views reach where it is, and a buffer reached both directly and
   through a view lives only where it is reached directly, so the plan can
@@ -9790,3 +9790,43 @@ kept in ordered sets, change no source and belong to D466.
   store runs`; the `Tolk_engine` suite's `calls of views › a value ordered
   after effects is the value` and `› a state over a view a loop moves,
   ordered after effects, is read each trip`.
+
+## D476. A buffer only one loop's calls take lives within a trip
+
+- **tinygrad:** `schedule/memory.py` (`memory_plan_rewrite` takes each
+  entry's buffers, an `END`'s from its sources after the first, so a
+  buffer used only inside a range is not planned there); tolk before this
+  entry counted a loop as one entry taking every buffer its calls take
+  (D41).
+- **tolk:** `Memory.steps` and `Memory.life`, which give
+  `Memory.memory_plan_rewrite`'s lifetimes.
+- **Differs:** the calls of a loop around calls take steps of their own,
+  in the order of one trip. A buffer that only the calls of one loop take,
+  as call-local storage of the loop's call is, lives from the first of them
+  that takes it to the last, so buffers of one trip whose lives do not
+  overlap share bytes, and the loop holds its trip's peak for its whole
+  run. A buffer that calls inside and outside a loop take, and a back
+  edge's flag, live for the whole loop. The plan relies on no trip reading
+  such a buffer that an earlier trip left, a precondition of
+  `Memory.memory_plan_rewrite` it does not check: rune passes a loop's
+  carries, rows and results as the call's arguments, stored before the
+  loop or read after it. tinygrad's planner sees no buffer used inside a
+  range at all (D41).
+- **Reason:** (b): rune's compiled scans whose step takes a gradient, as
+  gradient accumulation over chunks of a batch does, and remats inside
+  such steps. The gradient of 8 remat'd blocks per chunk, scanned over k
+  chunks of a batch of 256 (width 32, hidden 256, on the host), held
+  2,441,344 and 1,253,504 bytes for k = 2 and 4, the sum of a step's
+  buffers, and holds 360,576 and 213,120; without remats 2,408,576 and
+  1,237,120 against 1,278,080 and 671,872.
+- **Pinned by:** the Memory suite (`test/schedule/memory`):
+  `memory_plan_rewrite › loops › buffers only one loop's calls take share
+  bytes within a trip`, `› a buffer a loop's calls and a later call take
+  lives the whole loop`, `› a buffer of a nested loop shares bytes within
+  the outer trip` and `› a back edge's flag lives the whole loop`, and the
+  law over drawn schedules, whose calls run in loops nested two deep; the
+  Engine suite's `runs › a run holds its storage whole, no less than its
+  buffers live at once`; rune's `rune remat › memory › a step that takes a
+  gradient plans each trip`, and, for the precondition, rune's scan law
+  `compiled › carries through nested loops, branches and scatters`, which
+  compiles drawn loops against eager.

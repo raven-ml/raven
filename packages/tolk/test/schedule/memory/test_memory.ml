@@ -141,6 +141,66 @@ let taken =
             (List.map Shape.max_numel (arenas linear planned)));
     ]
 
+(* Loops *)
+
+let loops =
+  let call args = Ops.call (Ops.sink args) args in
+  let loop calls =
+    Ops.end_
+      (Ops.v Linear ~src:calls)
+      [ Ops.range ~axis_type:Loop (Int 4) [ Ops.unique_num () ] ]
+  in
+  let bytes linear held_bufs =
+    List.map Shape.max_numel
+      (arenas linear (Memory.memory_plan_rewrite ~held_bufs linear))
+  in
+  group "memory_plan_rewrite › loops"
+    [
+      test "buffers only one loop's calls take share bytes within a trip"
+        (fun () ->
+          let x = buf 256 and a = buf 256 and b = buf 256 in
+          let linear = Ops.v Linear ~src:[ loop [ call [ a; x ]; call [ b; x ] ] ] in
+          equal (list int) [ 256 ] (bytes linear [ x ]));
+      test "a buffer a loop's calls and a later call take lives the whole loop"
+        (fun () ->
+          let x = buf 256 and a = buf 256 and b = buf 256 in
+          let linear =
+            Ops.v Linear
+              ~src:[ loop [ call [ a; x ]; call [ b; x ] ]; call [ a; x ] ]
+          in
+          equal (list int) [ 512 ] (bytes linear [ x ]));
+      test "a buffer of a nested loop shares bytes within the outer trip"
+        (fun () ->
+          let x = buf 256 and a = buf 256 and b = buf 256 and c = buf 256 in
+          let linear =
+            Ops.v Linear
+              ~src:
+                [
+                  loop
+                    [
+                      call [ c; x ];
+                      loop [ call [ a; x ]; call [ b; x ] ];
+                      call [ c; x ];
+                    ];
+                ]
+          in
+          (* [c] lives across the inner loop, whose two buffers share. *)
+          equal (list int) [ 512 ] (bytes linear [ x ]));
+      test "a back edge's flag lives the whole loop" (fun () ->
+          let x = buf 256 and a = buf 256 and flag = buf 256 in
+          let r = Ops.range ~axis_type:Loop (Int 4) [ Ops.unique_num () ] in
+          let linear =
+            Ops.v Linear
+              ~src:
+                [
+                  Ops.backedge
+                    (Ops.v Linear ~src:[ call [ a; x ]; call [ flag; x ] ])
+                    ~loop:r ~cond:flag;
+                ]
+          in
+          equal (list int) [ 512 ] (bytes linear [ x ]));
+    ]
+
 (* Rules *)
 
 let rules =
@@ -209,6 +269,10 @@ let rules =
 type drawn = {
   sizes : (int * Dtype.t * int) list;
   calls : ((int * bool) list * bool) list;
+  depths : int list;
+      (** Each call's loop depth: consecutive calls of depth 1 or more run in
+          one loop, and among them consecutive calls of depth 2 in a loop
+          inside it. *)
   held : int list;
 }
 
@@ -221,7 +285,7 @@ let pp_drawn ppf d =
       (if copy then "copy" else "call")
       (String.concat ", " (List.map pp_arg bs))
   in
-  Format.fprintf ppf "sizes [%s], %a, held [%s]"
+  Format.fprintf ppf "sizes [%s], %a, depths [%s], held [%s]"
     (String.concat "; "
        (List.map
           (fun (n, dt, p) -> Format.asprintf "%d %a at %d" n Dtype.pp dt p)
@@ -230,6 +294,7 @@ let pp_drawn ppf d =
        ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ")
        pp_call)
     d.calls
+    (String.concat "; " (List.map string_of_int d.depths))
     (String.concat "; " (List.map string_of_int d.held))
 
 let drawn =
@@ -242,16 +307,22 @@ let drawn =
          (of_list [ 1; 16; 255; 256; 257; 1000; 4096; 70_000 ])
          (of_list [ Dtype.Int8; Float32; Float16 ])
          (of_list [ 0; 0; 4; 12 ]))
-  and+ calls =
-    list ~size:(int_range 1 12)
-      (let* bs = list ~size:(int_range 1 4) (pair buffer bool) in
-       let+ copy = bool in
-       let copy =
-         copy && List.length bs = 2 && fst (List.hd bs) <> fst (List.nth bs 1)
-       in
-       (bs, copy))
+  and+ calls, depths =
+    let* calls =
+      list ~size:(int_range 1 12)
+        (let* bs = list ~size:(int_range 1 4) (pair buffer bool) in
+         let+ copy = bool in
+         let copy =
+           copy && List.length bs = 2 && fst (List.hd bs) <> fst (List.nth bs 1)
+         in
+         (bs, copy))
+    in
+    let+ depths =
+      list ~size:(constant (List.length calls)) (of_list [ 0; 0; 1; 1; 2 ])
+    in
+    (calls, depths)
   and+ held = list ~size:(int_range 0 3) buffer in
-  { sizes; calls; held }
+  { sizes; calls; depths; held }
 
 let drawn = Gen.with_pp pp_drawn drawn
 
@@ -275,7 +346,35 @@ let build d =
           Ops.call (Ops.sink args) args)
       d.calls
   in
-  (buffers, Ops.v Linear ~src:calls, List.map (fun i -> buffers.(i)) d.held)
+  (* Consecutive calls at depth [k] or more run in one loop of trips around
+     those at depth [k + 1] or more. *)
+  let loop entries =
+    Ops.end_
+      (Ops.v Linear ~src:entries)
+      [ Ops.range ~axis_type:Loop (Int 3) [ Ops.unique_num () ] ]
+  in
+  let rec group k = function
+    | [] -> []
+    | (_, depth) :: _ as calls when depth > k ->
+        let inside, rest =
+          let rec span acc = function
+            | (c, dp) :: rest when dp > k -> span ((c, dp) :: acc) rest
+            | rest -> (List.rev acc, rest)
+          in
+          span [] calls
+        in
+        loop (group (k + 1) inside) :: group k rest
+    | (c, _) :: rest -> c :: group k rest
+  in
+  let entries = group 0 (List.combine calls d.depths) in
+  (buffers, Ops.v Linear ~src:entries, List.map (fun i -> buffers.(i)) d.held)
+
+(* The calls of [linear], those of its loops in their places. *)
+let rec calls_of linear =
+  List.concat_map
+    (fun e ->
+      if Ops.op e = End then calls_of (Ops.nth e 0) else [ e ])
+    (Ops.src linear)
 
 (* [placed linear planned] is each buffer a call of [linear] passes or views,
    with what the same call of [planned] passes or views in its place. *)
@@ -288,7 +387,7 @@ let placed linear planned =
        (fun c p ->
          List.map unview
            (List.combine (List.tl (Ops.src c)) (List.tl (Ops.src p))))
-       (Ops.src linear) (Ops.src planned))
+       (calls_of linear) (calls_of planned))
 
 let view u =
   let bytes = match Ops.op u with Bitcast -> Ops.nth u 0 | _ -> u in
@@ -298,20 +397,57 @@ let view u =
         (arena, Bigint.to_int (Shape.to_z offset), Bigint.to_int (Shape.to_z length))
   | _ -> None
 
+(* Each buffer's life, in calls: from the first call that takes it to the
+   last, where every call that takes it lies in one loop; otherwise each use
+   inside a loop that not all its uses lie in holds it across that loop's
+   calls, the outermost such loop. Each call's loops are named by the
+   number of the call that opens them. *)
 let lifetimes d =
-  let first = Hashtbl.create 8 and last = Hashtbl.create 8 in
-  let copies = Hashtbl.create 8 in
+  let depths = Array.of_list d.depths in
+  let n = Array.length depths in
+  (* The calls of the loop at depth [k] around call [i]: its first and last. *)
+  let span i k =
+    let lo = ref i and hi = ref i in
+    while !lo > 0 && depths.(!lo - 1) >= k do decr lo done;
+    while !hi < n - 1 && depths.(!hi + 1) >= k do incr hi done;
+    (!lo, !hi)
+  in
+  let uses = Hashtbl.create 8 and copies = Hashtbl.create 8 in
   List.iteri
     (fun i (bs, copy) ->
       List.iter
         (fun (b, _) ->
-          if not (Hashtbl.mem first b) then Hashtbl.replace first b i;
-          Hashtbl.replace last b i;
+          Hashtbl.replace uses b
+            (i :: Option.value ~default:[] (Hashtbl.find_opt uses b));
           if copy then Hashtbl.replace copies b ())
         bs)
     d.calls;
   fun b ->
-    (Hashtbl.find first b, Hashtbl.find last b + 1, Hashtbl.mem copies b)
+    let us = Hashtbl.find uses b in
+    (* The deepest loop every use lies in. *)
+    let common =
+      let rec deepest k =
+        if k > 2 then 2
+        else
+          let spans = List.map (fun i -> span i k) us in
+          if
+            List.for_all (fun i -> depths.(i) >= k) us
+            && List.for_all (fun s -> s = List.hd spans) spans
+          then deepest (k + 1)
+          else k - 1
+      in
+      deepest 1
+    in
+    let lo, hi =
+      List.fold_left
+        (fun (lo, hi) i ->
+          let a, b =
+            if depths.(i) > common then span i (common + 1) else (i, i)
+          in
+          (min lo a, max hi b))
+        (max_int, min_int) us
+    in
+    (lo, hi + 1, Hashtbl.mem copies b)
 
 let plans d =
   let buffers, linear, held_bufs = build d in
@@ -420,6 +556,7 @@ let plans d =
               (fun (b, view) -> view && List.mem_assoc b views)
               bs)
        d.calls);
+  cover "a loop of calls" (List.exists (fun k -> k > 0) d.depths);
   cover "a buffer off 16 bytes is planned"
     (List.exists
        (fun (b, _) -> snd (Shape.storage_phase buffers.(b)) <> 0)
@@ -430,4 +567,4 @@ let laws =
     [ prop "a plan places live buffers apart, each at its bytes" drawn plans ]
 
 let () =
-  exit (run "Tolk.Memory" [ recorded; printouts; taken; rules; laws ])
+  exit (run "Tolk.Memory" [ recorded; printouts; taken; loops; rules; laws ])

@@ -21,11 +21,18 @@ val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
     of its arguments, an argument passing itself if it is a buffer and the
     buffers it views if it is a view ({!Op.Shrink}, {!Op.Bitcast},
     {!Op.After}). A buffer lives from the first call that takes it to the
-    last, a loop around calls ({!Op.End} or {!Op.Backedge}) counting as one
-    call that takes the buffers of each of its calls and a back edge's flag.
-    A buffer's bytes are free from the call after its last: an arena is one
-    allocation, and the executor runs the work that writes an allocation after
-    every earlier use of it, a copy's included.
+    last, the calls of a loop around calls ({!Op.End} or {!Op.Backedge}) in
+    the order of one trip. A buffer that only the calls of one loop take, as
+    call-local storage of the loop's call is, lives within a trip, and the
+    loop holds its trip's peak for its whole run. That holds only where no
+    trip reads such a buffer that an earlier trip left, which [linear] must
+    ensure and the plan does not check: a loop's state passes between trips
+    in buffers its calls take beside a call outside the loop. A buffer that calls inside and outside
+    a loop take lives for the whole loop, as if the loop were one call that
+    takes it, and so does a back edge's flag. A buffer's bytes are free from
+    the call after its last: an arena is one allocation, and the executor
+    runs the work that writes an allocation after every earlier use of it, a
+    copy's included.
 
     Each device has one arena, which its copies' buffers, those of the calls
     whose body is an {!Op.Store}, share with its kernels': the executor runs a

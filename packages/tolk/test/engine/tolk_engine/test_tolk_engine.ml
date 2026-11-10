@@ -6306,27 +6306,58 @@ let system_loop y z y' z' (c : calls) =
 
 let input_values = Array.init per_run_size (fun i -> Float.of_int (i + 1))
 
-(* The most bytes live at one entry, and parameter 0's values. *)
+(* The most bytes live at one call, and parameter 0's values. Each call
+   takes a step of its own, a loop's in the order of one trip: a value only
+   one loop's calls take lives within a trip, from its first use there to
+   its last, and a use in a loop that not all of the value's uses lie in
+   holds it for the whole loop. *)
 let model_peak (m : uses) =
-  let calls = List.rev ([ (-1, m.count - 1, 0) ] :: m.reads) in
-  let first = Array.make m.count max_int and last = Array.make m.count (-1) in
+  let entries = List.rev ([ (-1, m.count - 1, 0) ] :: m.reads) in
+  let uses = Array.make m.count [] and spans = Hashtbl.create 8 in
+  let step = ref 0 in
   List.iteri
     (fun i entry ->
+      let loop = List.length entry > 1 and first = !step in
       List.iter
         (fun (x, y, z) ->
-          if x > 0 then first.(x) <- i;
-          List.iter (fun v -> if v > 0 then last.(v) <- i) [ x; y; z ])
-        entry)
-    calls;
-  let live i =
-    let n = ref 0 in
-    for v = 1 to m.count - 1 do
-      if first.(v) <= i && i <= last.(v) then incr n
-    done;
-    !n
+          List.iter
+            (fun v ->
+              if v > 0 then
+                uses.(v) <-
+                  (!step, if loop then Some i else None) :: uses.(v))
+            [ x; y; z ];
+          incr step)
+        entry;
+      if loop then Hashtbl.replace spans i (first, !step - 1))
+    entries;
+  let life v =
+    let within =
+      match uses.(v) with
+      | (_, Some l) :: rest -> List.for_all (fun (_, l') -> l' = Some l) rest
+      | _ -> false
+    in
+    List.fold_left
+      (fun (lo, hi) (s, l) ->
+        let a, b =
+          match l with
+          | Some l when not within -> Hashtbl.find spans l
+          | _ -> (s, s)
+        in
+        (min lo a, max hi b))
+      (max_int, -1) uses.(v)
+  in
+  let lives =
+    Array.init m.count (fun v -> if v = 0 then (max_int, -1) else life v)
+  in
+  let live s =
+    Array.fold_left
+      (fun n (lo, hi) -> if lo <= s && s <= hi then n + 1 else n)
+      0 lives
   in
   let peak = ref 0 in
-  List.iteri (fun i _ -> peak := max !peak (live i)) calls;
+  for s = 0 to !step - 1 do
+    peak := max !peak (live s)
+  done;
   let value = Array.make m.count input_values in
   List.iter
     (fun (x, y, z) -> value.(x) <- Array.map2 ( +. ) value.(y) value.(z))

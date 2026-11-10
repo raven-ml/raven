@@ -58,36 +58,88 @@ let taken si =
 
 type lane = { mutable peak : int; tlsf : Tlsf.t }
 
+(* Each call of the schedule [linear] at its place in the order calls run, a
+   loop's once, at the steps [first] to [last]: the arguments it takes, those
+   steps, and the loops around it, innermost first, by their number. A back
+   edge's flag is taken at every step of its loop, by the loop. Also the steps
+   of each loop. *)
+let steps linear =
+  let step = ref 0 and loops = ref 0 and taken = ref [] in
+  let spans = Hashtbl.create 8 in
+  let rec walk around si =
+    match op si with
+    | Op.End | Op.Backedge ->
+        let id = !loops and first = !step in
+        incr loops;
+        let body = nth si 0 in
+        let calls = if op body = Op.Linear then src body else [ body ] in
+        List.iter (walk (id :: around)) calls;
+        let last = !step - 1 in
+        Hashtbl.replace spans id (first, last);
+        if op si = Op.Backedge then
+          taken := ([ nth si 2 ], first, last, around) :: !taken
+    | _ ->
+        taken := (List.tl (src si), !step, !step, around) :: !taken;
+        incr step
+  in
+  List.iter (walk []) (src linear);
+  (List.rev !taken, Hashtbl.find spans)
+
+(* The steps a buffer taken at [uses] lives, each a use's steps and the loops
+   around it: within one trip where every use lies in one loop, from the first
+   use to the last, and otherwise across each loop a use lies in that not all
+   do, from its first step to its last, as if that loop were one call. *)
+let life spans uses =
+  let paths = List.map (fun (_, _, around) -> List.rev around) uses in
+  let rec common = function
+    | (l :: _) :: _ as ps
+      when List.for_all (function l' :: _ -> l' = l | [] -> false) ps ->
+        1 + common (List.map List.tl ps)
+    | _ -> 0
+  in
+  let depth = common paths in
+  let span (first, last, _) path =
+    match List.nth_opt path depth with
+    | Some loop -> spans loop
+    | None -> (first, last)
+  in
+  List.fold_left2
+    (fun (lo, hi) u path ->
+      let first, last = span u path in
+      (min lo first, max hi last))
+    (max_int, min_int) uses paths
+
 let memory_plan_rewrite ?(held_bufs = []) linear =
   if Setting.value Setting.no_memory_planner then linear
   else begin
     let held = Tbl.create 16 in
     List.iter (fun b -> Tbl.replace held b ()) held_bufs;
-    (* The lifetimes of the buffers that can be planned, in order of first
-       appearance. *)
-    let first = Tbl.create 64 and last = Tbl.create 64 in
-    let order = ref [] in
-    (* A call takes the buffers it passes and those it views: a store into a
-       run of a buffer passes a view of it. *)
-    List.iteri
-      (fun i si ->
+    (* The uses of the buffers that can be planned, in order of first
+       appearance. A call takes the buffers it passes and those it views: a
+       store into a run of a buffer passes a view of it. *)
+    let taken, spans = steps linear in
+    let used = Tbl.create 64 and order = ref [] in
+    List.iter
+      (fun ((args, _, _, _) as use) ->
         List.iter
-          (fun args ->
-            let call_bufs =
-              List.filter (can_plan held)
-                (List.concat_map (fun a -> collect_bufs a @ viewed a) args)
-            in
-            List.iter
-              (fun b ->
-                if not (Tbl.mem first b) then begin
-                  Tbl.replace first b i;
-                  order := b :: !order
-                end;
-                Tbl.replace last b i)
-              call_bufs)
-          (uses si))
-      (src linear);
+          (fun b ->
+            match Tbl.find_opt used b with
+            | Some us -> Tbl.replace used b (use :: us)
+            | None ->
+                Tbl.replace used b [ use ];
+                order := b :: !order)
+          (List.filter (can_plan held)
+             (List.concat_map (fun a -> collect_bufs a @ viewed a) args)))
+      taken;
     let bufs = List.rev !order in
+    let first = Tbl.create 64 and last = Tbl.create 64 in
+    List.iter
+      (fun b ->
+        let uses = List.map (fun (_, f, l, a) -> (f, l, a)) (Tbl.find used b) in
+        let f, l = life spans uses in
+        Tbl.replace first b f;
+        Tbl.replace last b l)
+      bufs;
     if List.is_empty bufs then linear
     else begin
       (* A device's copies and kernels plan in one lane: a lane of copies would

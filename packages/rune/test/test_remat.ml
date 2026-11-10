@@ -327,6 +327,48 @@ let test_scanned () =
     ~msg:(Printf.sprintf "%d bytes over views, %d over copies" strided copied)
     int ~than:(copied + 1) strided
 
+(* A scan over [k] chunks of the batch whose step is the gradient of the
+   remat'd chain at its chunk holds the stacked result and one step's
+   storage, which the step's values share within a trip: a chunk's part of
+   the whole batch's bound. *)
+let test_step_gradient () =
+  let loss = chain ~from:Nx.sin true in
+  let expected = Nx.to_array (Nx.flatten (Rune.grad' (loss ws) a)) in
+  List.iter
+    (fun k ->
+      let measure () =
+        let g =
+          Rune.jit
+            T.(pair tensor tensor @-> tensor @-> returns tensor)
+            (fun ws a ->
+              let chunks = Nx.reshape [| k; batch / k; dim |] a in
+              let (), gs =
+                Rune.scan T.unit T.tensor T.tensor
+                  (fun () x -> ((), Rune.grad' (loss ws) x))
+                  ~init:() chunks
+              in
+              Nx.reshape [| batch; dim |] gs)
+        in
+        let before = host_settled () and calls = Rune.evaluations () in
+        let r = g ws a in
+        let held = host_settled () - before in
+        equal ~msg:"evaluated calls" int 0 (Rune.evaluations () - calls);
+        equal ~msg:"the gradient"
+          (array (float_rel ~rel:1e-5 ~abs:1e-6))
+          expected
+          (Nx.to_array (Nx.flatten r));
+        ignore (Sys.opaque_identity (g, r));
+        held
+      in
+      ignore (measure ());
+      let held = measure () in
+      less
+        ~msg:(Printf.sprintf "%d chunks: %d bytes" k held)
+        int
+        ~than:(row + (bound layers / k))
+        held)
+    [ 1; 2; 4 ]
+
 (* Donation *)
 
 (* A result that takes a donated argument's memory is stored over it after the
@@ -458,6 +500,8 @@ let () =
                test_transformed;
              test "a scan's checkpointed step keeps its carry alone"
                test_scanned;
+             test "a step that takes a gradient plans each trip"
+               test_step_gradient;
              test "a result takes a donated argument after the backward pass"
                test_donated;
            ];
