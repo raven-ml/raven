@@ -202,6 +202,8 @@ let refusals =
             ~keys:(Nx.Rng.split_batch ~n:2 root)
             post_ln b))
 
+(* Distillation *)
+
 let net = Nx.Ptree.instantiate (module Model.Net)
 
 let remat =
@@ -225,6 +227,206 @@ let remat =
       in
       equal (list (array int32)) (leaves g) (leaves g'))
 
+let heads = Distil.heads ~key:(Nx.Rng.key 4) ~prefixes:post_ln.prefixes 8
+
+let cosines =
+  test "cosines are each head's cosine to its target" (fun () ->
+      let id k =
+        let w = Nx.eye Nx.float32 k in
+        (k, [ { Kaun.Linear.w; b = None } ])
+      in
+      let e = Nx.create Nx.float32 [| 3; 2 |] [| 1.; 0.; 3.; 4.; 0.; 0. |] in
+      let t = Nx.create Nx.float32 [| 3; 2 |] [| 2.; 0.; -4.; 3.; 1.; 1. |] in
+      let c =
+        Distil.cosines
+          [
+            ( 1,
+              [
+                {
+                  Kaun.Linear.w = Nx.create Nx.float32 [| 1; 2 |] [| 1.; 0. |];
+                  b = None;
+                };
+              ] );
+            id 2;
+          ]
+          e ~targets:t
+      in
+      (* Row 2 is a zero vector: its norm is taken as 1e-8, its cosine 0. *)
+      equal (array (float 1e-6)) [| 1.; 1.; -0.8; 0.; 0.; 0. |] (Nx.to_array c))
+
+(* The groups of [px]'s pixels, [n] a group, each place's target the row of its
+   pixel. *)
+let groups ~per px counts targets =
+  let shape = shape ~pixels:per ~rows:per ~slots:2 () in
+  let gs =
+    batches shape px counts (fun b ->
+        let t =
+          Nx.take ~axis:0 (Nx.maximum b.pixel (Nx.scalar Nx.int64 0L)) targets
+        in
+        { Distil.batch = b; keys = keys_of b; targets = t })
+  in
+  {
+    Distil.batch =
+      Batch.stack (List.map (fun (g : _ Distil.group) -> g.batch) gs);
+    keys =
+      Nx.Rng.of_tensor
+        (Nx.stack
+           (List.map (fun (g : _ Distil.group) -> Nx.Rng.to_tensor g.keys) gs));
+    targets = Nx.stack (List.map (fun (g : _ Distil.group) -> g.targets) gs);
+  }
+
+let step =
+  Distil.step ~compute:Nx.float32 ~dropout:half ~lr:(Vega.rate 1e-3)
+    ~weight_decay:(Vega.rate 1e-4) ~clip:1e6
+
+let targets n = Nx.Rng.normal ~key:(Nx.Rng.key 5) Nx.float32 [| n; 8 |]
+let start = Distil.init post_ln heads
+
+let leaves s st =
+  Nx.Ptree.fold s
+    (fun _ a acc -> Nx.to_array (Nx.cast Nx.float64 a) :: acc)
+    st []
+
+(* [a] and [b], arrays of one shape each, agree to [1e-5] of their largest
+   magnitude: to rounding at their scale. *)
+let close a b =
+  let worst = ref 0. and scale = ref 0. in
+  List.iter2
+    (fun a b ->
+      Array.iteri
+        (fun i x ->
+          worst := Float.max !worst (Float.abs (x -. b.(i)));
+          scale := Float.max !scale (Float.abs x))
+        a)
+    a b;
+  at_most float_exact ~than:(1e-5 *. !scale) !worst
+
+let grouping =
+  prop "a step's gradient does not depend on its groups" ~count:10
+    (Synth.spec ~pixels:6 ()) (fun spec ->
+      let px, counts = training spec in
+      let t = targets (Pixels.length px) in
+      let one = groups ~per:6 px counts t
+      and three = groups ~per:2 px counts t in
+      assume (Nx.dim 0 one.batch.pixel = 1);
+      cover "several groups" (Nx.dim 0 three.batch.pixel > 1);
+      assume
+        (Nx.to_array (Nx.greater_equal_s one.batch.pixel 0L)
+        |> Array.exists Fun.id);
+      let l1, s1 = step (one, start) and l3, s3 = step (three, start) in
+      let f64 x = [ Nx.to_array (Nx.cast Nx.float64 x) ] in
+      close (f64 l1) (f64 l3);
+      (* After one step AdamW's first moment is a tenth of the gradient. *)
+      let mu (s : (_, _) Distil.state) = s.opt.mu in
+      let p = Nx.Ptree.instantiate (module Distil.Params) in
+      close (leaves p (mu s1)) (leaves p (mu s3)))
+
+let resume =
+  test "a resumed run takes the steps the run takes" (fun () ->
+      let spec =
+        {
+          Synth.s2 = [ 5; 9; 0; 17; 3; 40 ];
+          s1 = [ 2; 0; 7; 8; 12; 1 ];
+          seed = 11;
+        }
+      in
+      let px, counts = training spec in
+      let t = targets (Pixels.length px) in
+      let data i = groups ~per:(2 + (i mod 3)) px counts t in
+      let run st from n =
+        let rec go st i acc =
+          if i = from + n then (st, List.rev acc)
+          else
+            let l, st = step (data i, st) in
+            go st (i + 1) (bits l :: acc)
+        in
+        go st from []
+      in
+      let s = Nx.Ptree.instantiate (module Distil.State) in
+      let straight, ls = run start 0 4 in
+      let half_way, ls1 = run start 0 2 in
+      let file = Filename.temp_file "tessera" ".safetensors" in
+      Fun.protect ~finally:(fun () -> Sys.remove file) @@ fun () ->
+      Checkpoint.save file
+        (module Distil.State)
+        half_way ~key:root ~position:2 ~run:"--steps 4";
+      let back, key, position, run' =
+        Checkpoint.load file (module Distil.State) ~like:start
+      in
+      equal int 2 position;
+      equal string "--steps 4" run';
+      equal (array int32)
+        (Nx.to_array (Nx.Rng.to_tensor root))
+        (Nx.to_array (Nx.Rng.to_tensor key));
+      let resumed, ls2 = run back 2 2 in
+      equal (list (array int32)) ls (ls1 @ ls2);
+      equal (list (array float_exact)) (leaves s straight) (leaves s resumed))
+
+let host_jit =
+  Nx.Ptree.(
+    pair (instantiate (module Distil.Group)) (instantiate (module Distil.State))
+    @-> returns (pair tensor (instantiate (module Distil.State))))
+
+let compiled =
+  test "a compiled step is the eager step" (fun () ->
+      let spec = { Synth.s2 = [ 5; 9; 17 ]; s1 = [ 2; 7; 1 ]; seed = 4 } in
+      let px, counts = training spec in
+      let g = groups ~per:2 px counts (targets (Pixels.length px)) in
+      let l, st = step (g, start) in
+      let l', st' = Rune.jit host_jit step (g, start) in
+      let f64 x = [ Nx.to_array (Nx.cast Nx.float64 x) ] in
+      close (f64 l) (f64 l');
+      let p = Nx.Ptree.instantiate (module Distil.Params) in
+      close (leaves p st.opt.mu) (leaves p st'.opt.mu))
+
+(* A norm's, a QK norm's or the fusion's fixed array, by its path. *)
+let fixed path =
+  List.exists
+    (fun s ->
+      let n = String.length s and m = String.length path in
+      let rec go i = i + n <= m && (String.sub path i n = s || go (i + 1)) in
+      go 0)
+    [ "norm"; ".qk."; "modality" ]
+
+let stepped =
+  test "a step changes the norms' and the fusion's fixed arrays" (fun () ->
+      List.iter
+        (fun pre ->
+          let m = model pre in
+          let hs = Distil.heads ~key:(Nx.Rng.key 6) ~prefixes:[ 16 ] 8 in
+          let st0 = Distil.init m hs in
+          let spec = { Synth.s2 = [ 5; 9; 17 ]; s1 = [ 2; 7; 1 ]; seed = 8 } in
+          let px, counts = training spec in
+          let g = groups ~per:3 px counts (targets (Pixels.length px)) in
+          (* No decay: what moves, the gradient moves. *)
+          let _, st =
+            Distil.step ~compute:Nx.float32 ~dropout:half ~lr:(Vega.rate 1e-3)
+              ~weight_decay:(Vega.rate 0.) ~clip:1e6 (g, st0)
+          in
+          let p = Nx.Ptree.instantiate (module Distil.Params) in
+          let by_path st =
+            Nx.Ptree.fold p
+              (fun path a acc ->
+                ( Nx.Ptree.Path.to_string path,
+                  Nx.to_array (Nx.cast Nx.float64 a) )
+                :: acc)
+              { Distil.net = st.Distil.model.net; heads = st.heads }
+              []
+          in
+          let moved =
+            List.filter_map
+              (fun ((path, a), (_, b)) ->
+                if fixed path then Some (path, a <> b) else None)
+              (List.combine (by_path st0) (by_path st))
+          in
+          if pre then mem string "net.modality" (List.map fst moved);
+          mem string "net.s2.layers.0.norm1.beta" (List.map fst moved);
+          equal
+            (list (pair string bool))
+            (List.map (fun (p, _) -> (p, true)) moved)
+            moved)
+        [ false; true ])
+
 let () =
   exit
     (run "tessera.train"
@@ -233,4 +435,5 @@ let () =
            [
              rate0; layout; masks_layout; kept; compiled_masks; refusals; remat;
            ];
+         group "distil" [ cosines; grouping; resume; compiled; stepped ];
        ])
