@@ -715,8 +715,9 @@ let count_launches linear =
 
 (* Process history: nodes are interned weakly, so a node that outlived an
    earlier build of a program keeps its id and one collected is made anew,
-   younger. Node ids order nodes by that history alone, and no schedule may
-   read it. *)
+   younger, and a node another program built first is reused, with what was
+   computed of it there. Node ids order nodes by that history alone, and no
+   schedule may read it. *)
 
 (* A schedule printed with the storage it made numbered by first use, above
    [slots], the program's own: a made slot is a process-wide counter's. The
@@ -767,14 +768,39 @@ let same_program_same_schedule seed =
   in
   let text, slots, kept, order = first () in
   Gc.full_major ();
+  (* Other programs scheduled in between, a drawn part of each and of its
+     schedule kept. *)
+  let others = List.init (Random.State.int r 3) (fun _ -> gen_program r) in
+  let keep q =
+    let big, _ = build q in
+    let scheduled =
+      match Schedule.create_linear_with_vars big with
+      | linear, _ -> Ops.toposort ~calls:Enter linear
+      | exception Invalid_argument m
+        when String.starts_with ~prefix:"UOp verification failed" m ->
+          []
+    in
+    List.filter (fun _ -> Random.State.bool r) (Ops.src big @ scheduled)
+  in
+  let others_kept = List.concat_map keep others in
+  cover "another program scheduled in between" (others <> []);
+  Gc.full_major ();
   let big, _ = build ~slots p in
   cover "a node older in one build, younger in the other"
     (id_order (Ops.src big) <> order);
   let second = schedule big in
   cover "a launch" (count_launches (fst second) > 0);
-  let msg = Format.asprintf "seed %d: %a" seed pp_program p in
+  let shared = Ops.Tbl.create 64 in
+  List.iter (fun u -> Ops.Tbl.replace shared u ()) others_kept;
+  cover "a node of the schedule kept from another program's"
+    (List.exists (Ops.Tbl.mem shared) (Ops.toposort ~calls:Enter (fst second)));
+  let msg =
+    Format.asprintf "seed %d: %a@.after: %a" seed pp_program p
+      (Format.pp_print_list pp_program)
+      others
+  in
   equal string ~msg text (schedule_text ~slots second);
-  ignore (Sys.opaque_identity kept)
+  ignore (Sys.opaque_identity (kept, others_kept))
 
 (* A store of one element and a store of many into other storage. The one
    element joins a launch of the many, and the many open none of its own: so
@@ -969,8 +995,7 @@ let () =
              order of their members"
             (Gen.int_range 1 1_000_000) order_independent;
           prop
-            "a schedule does not depend on which nodes outlived an earlier \
-             build"
+            "a schedule does not depend on what the process built before it"
             (Gen.int_range 1 1_000_000) same_program_same_schedule;
           test "the listing places a one-element store beside a store of many"
             listing_decides;
