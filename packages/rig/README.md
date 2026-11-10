@@ -54,12 +54,11 @@ installed wherever the program runs.
 
 We want raven to own the whole path from a model to the GPU, and to keep
 that path small enough to read. rig is its foundation. It does the work of
-AMD's runtime, about 300,000 lines, and of NVIDIA's closed `libcuda`, in
-about 37,000 lines of OCaml and C, and on Linux it boots their GPUs with no
-kernel driver at all. Its interfaces are written to read like a book. A
-reader who starts with `rig.mli` and follows one driver learns how a GPU
-runs their work, from the call that submits it to the moment its memory
-comes back.
+AMD's runtime and of NVIDIA's closed `libcuda` in OCaml and C, and on Linux
+it boots their GPUs with no kernel driver at all.
+Its interfaces are written to read like a book. A reader who starts with
+`rig.mli` and follows one driver learns how a GPU runs their work, from the
+call that submits it to the moment its memory comes back.
 
 ## What does it run on?
 
