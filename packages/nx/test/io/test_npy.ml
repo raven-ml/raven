@@ -166,6 +166,136 @@ let npy =
               Nx_io.save_npy (temp_file ()) (Nx.zeros Nx.bit [| 8 |])));
     ]
 
+(* npy from blocks *)
+
+(* Blocks of one dtype and cell, each [k] rows of drawn elements, flipped
+   along axis 0 or not. *)
+type blocks =
+  | Blocks : ('v, 's) D.t * int array * ('v array * int * bool) list -> blocks
+
+let blocks =
+  let open Gen in
+  (let* (D.Any dt) = of_list npy_dtypes in
+   let* cell = array ~size:(int_range 0 2) (int_range 0 3) in
+   let numel = Array.fold_left ( * ) 1 cell in
+   let* count =
+     frequency [ (1, constant 0); (1, constant 1); (3, int_range 2 5) ]
+   in
+   let+ bs =
+     list ~size:(constant count)
+       (let* k = int_range 0 4 in
+        let* vs = array ~size:(constant (k * numel)) (element dt) in
+        let+ flipped = bool in
+        (vs, k, flipped))
+   in
+   Blocks (dt, cell, bs))
+  |> with_pp (fun ppf (Blocks (dt, cell, bs)) ->
+      Format.fprintf ppf "%a, cell %a, extents [%s]" D.pp dt pp_shape cell
+        (String.concat "; " (List.map (fun (_, k, _) -> string_of_int k) bs)))
+
+let block dt cell (vs, k, flipped) =
+  let x = Nx.create dt (Array.append [| k |] cell) vs in
+  if flipped && k > 0 then Nx.flip ~axes:[ 0 ] x else x
+
+let joined dt cell xs =
+  match xs with
+  | [] -> Nx.P (Nx.zeros dt (Array.append [| 0 |] cell))
+  | xs -> Nx.P (Nx.concatenate ~axis:0 xs)
+
+let by = "Nx_io.save_npy_concat"
+
+let concat =
+  group "npy from blocks"
+    [
+      prop "blocks saved as one npy load as their concatenation, mapped"
+        blocks (fun (Blocks (dt, cell, bs)) ->
+          cover "no block" (bs = []);
+          cover "one block" (List.length bs = 1);
+          cover "several blocks" (List.length bs > 1);
+          cover "a block of no row" (List.exists (fun (_, k, _) -> k = 0) bs);
+          cover "a cell of no element" (Array.mem 0 cell);
+          let xs = List.map (block dt cell) bs in
+          let path = temp_file ~suffix:".npy" () in
+          Nx_io.save_npy_concat path dt cell (List.to_seq xs);
+          let loaded = Nx_io.load_npy path in
+          equal packed (joined dt cell xs) loaded;
+          equal memory Over_file (memory_of loaded));
+      test "mapped blocks join into one file" (fun () ->
+          let shard i =
+            let rows = Nx.arange Nx.int32 (6 * i) (6 * (i + 1)) 1 in
+            saved ".npy" save_npy (Nx.P (Nx.reshape [| 3; 2 |] rows))
+          in
+          let shards =
+            List.init 3 (fun i -> Nx.unpack Nx.int32 (Nx_io.load_npy (shard i)))
+          in
+          let path = temp_file ~suffix:".npy" () in
+          Nx_io.save_npy_concat path Nx.int32 [| 2 |] (List.to_seq shards);
+          equal packed
+            (Nx.P (Nx.reshape [| 9; 2 |] (Nx.arange Nx.int32 0 18 1)))
+            (Nx_io.load_npy path));
+      (* The file beside the path holds the header's width and every block
+         before the one being forced, so each block is written before the
+         next is forced. *)
+      test "a block is forced once the one before it is written" (fun () ->
+          let dir = temp_dir () in
+          let path = Filename.concat dir "x.npy" in
+          let written = ref [] in
+          let rec watched i () =
+            if i = 4 then Seq.Nil
+            else begin
+              let size =
+                match Array.to_list (Sys.readdir dir) with
+                | [ t ] -> (Unix.stat (Filename.concat dir t)).Unix.st_size
+                | _ -> -1
+              in
+              written := size :: !written;
+              Seq.Cons (Nx.full Nx.uint8 [| 1; 64 |] i, watched (i + 1))
+            end
+          in
+          Nx_io.save_npy_concat path Nx.uint8 [| 64 |] (watched 0);
+          let header = (Unix.stat path).Unix.st_size - (4 * 64) in
+          equal (list int)
+            (List.init 4 (fun i -> header + (64 * i)))
+            (List.rev !written));
+      test "a block of another cell is refused, and the path is left as it was"
+        (fun () ->
+          let dir = temp_dir () in
+          let path = Filename.concat dir "old" in
+          write path "old";
+          let zeros s = Nx.zeros Nx.float32 s in
+          let xs = [ zeros [| 2; 3 |]; zeros [| 2; 4 |] ] in
+          invalid ~by (fun () ->
+              Nx_io.save_npy_concat path Nx.float32 [| 3 |] (List.to_seq xs));
+          equal ~msg:"the file" string "old" (read path);
+          equal ~msg:"the directory" (array string) [| "old" |]
+            (Sys.readdir dir));
+      test "what forcing the blocks raises passes on, and the path is left as \
+            it was"
+        (fun () ->
+          let dir = temp_dir () in
+          let path = Filename.concat dir "old" in
+          write path "old";
+          let blocks () =
+            Seq.Cons (Nx.zeros Nx.int8 [| 1 |], fun () -> failwith "no block")
+          in
+          raises (Failure "no block") (fun () ->
+              Nx_io.save_npy_concat path Nx.int8 [||] blocks);
+          equal ~msg:"the file" string "old" (read path);
+          equal ~msg:"the directory" (array string) [| "old" |]
+            (Sys.readdir dir));
+      cases "a dtype or a cell npy cannot hold is refused" ~id:fst
+        [
+          ("bfloat16", fun () ->
+              Nx_io.save_npy_concat (temp_file ()) Nx.bfloat16 [||] Seq.empty);
+          ("a negative extent", fun () ->
+              Nx_io.save_npy_concat (temp_file ()) Nx.int8 [| -1 |] Seq.empty);
+          ("32 axes", fun () ->
+              Nx_io.save_npy_concat (temp_file ()) Nx.int8 (Array.make 32 1)
+                Seq.empty);
+        ]
+        (fun (_, save) -> invalid ~by save);
+    ]
+
 (* npz *)
 
 let save_npz path l = Nx_io.save_npz path (Archive.of_list l)
@@ -372,4 +502,4 @@ let npz =
           flips_load_or_fail Nx_io.load_npz whole);
     ]
 
-let () = exit (run "nx.io NumPy" [ npy; npz ])
+let () = exit (run "nx.io NumPy" [ npy; concat; npz ])

@@ -35,6 +35,8 @@ val copied : header -> Rig.Buffer.t -> Nx.host Nx.packed
 (** [copied h b] is {!value} over a copy of the array's bytes that the value
     owns ({!Storage.copied}). *)
 
-val encode : ('v, 's) Nx_array.Dtype.t -> int array -> string
+val encode : ?length:int -> ('v, 's) Nx_array.Dtype.t -> int array -> string
 (** [encode dt s] is the header of a C-order little-endian stream of [dt]
-    elements at shape [s]. [dt] must pass {!check}. *)
+    elements at shape [s]. [dt] must pass {!check}. With [~length] it is
+    padded to [length] bytes, which must be a multiple of 64 at least its
+    own padded length. *)

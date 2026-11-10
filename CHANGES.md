@@ -2744,6 +2744,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   `Nx_io.Pytorch.tensors` names them by their state dict's keys.
 - `Nx_io.load_npz` loads an entry whose stated CRC-32 is 0 unchecked, as
   writers told to compute no checksum state it, and refused it before.
+- `Nx_io.save_npy_concat path dt cell blocks` writes one npy file from a
+  sequence of blocks joined along axis 0, holding one block at a time, so a
+  file larger than memory is written from blocks that fit, mapped ones
+  included.
 - `Nx.Rng.permute ~n i` maps each position of `i` through a bijection of
   `[0, n)` the key selects, the swap-or-not shuffle, computed per element at
   any placement and under `Rune.jit`: the order of an epoch of `n` examples,

@@ -35,6 +35,47 @@ let npy_entry = function
   | Zip.Stored b -> Npy.value (npy_header b) b
   | Zip.Inflated b -> Npy.copied (npy_header b) b
 
+(* What forcing a block raised, carried out of [Fail.file], which would
+   rename a [Failure], to be raised again as it was. *)
+exception Forced of exn * Printexc.raw_backtrace
+
+(* The header goes in last, over a placeholder of the width the largest [k]
+   takes, since [k] is known once every block is written. *)
+let save_npy_concat path dt cell blocks =
+  let by = "Nx_io.save_npy_concat" in
+  Npy.check ~by dt;
+  if Array.exists (fun d -> d < 0) cell then
+    Fail.invalid_argf "%s: the cell %s has a negative extent" by
+      (Fail.pp_shape cell);
+  if Array.length cell >= L.max_rank then
+    Fail.invalid_argf "%s: the cell has %d axes; a block has at most %d" by
+      (Array.length cell) L.max_rank;
+  let shape k = Array.append [| k |] cell in
+  let length = String.length (Npy.encode dt (shape max_int)) in
+  let fits b =
+    let s = Nx.shape b in
+    Array.length s = Array.length cell + 1
+    && Array.for_all2 ( = ) cell (Array.sub s 1 (Array.length cell))
+  in
+  let rec write fd k blocks =
+    match blocks () with
+    | exception e -> raise (Forced (e, Printexc.get_raw_backtrace ()))
+    | Seq.Nil -> k
+    | Seq.Cons (b, rest) ->
+        if not (fits b) then
+          Fail.invalid_argf "%s: a block of shape %s, not [k] then %s" by
+            (Fail.pp_shape (Nx.shape b)) (Fail.pp_shape cell);
+        Storage.with_bytes ~by b (Save.bytes fd);
+        write fd (k + (Nx.shape b).(0)) rest
+  in
+  try
+    Save.write path @@ fun fd ->
+    Save.string fd (String.make length ' ');
+    let k = write fd 0 blocks in
+    ignore (Unix.lseek fd 0 Unix.SEEK_SET : int);
+    Save.string fd (Npy.encode ~length dt (shape k))
+  with Forced (e, bt) -> Printexc.raise_with_backtrace e bt
+
 let load_npz path =
   Fail.file path @@ fun () ->
   let zip = Zip.open_in (Storage.open_file path) in

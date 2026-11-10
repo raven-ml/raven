@@ -281,21 +281,24 @@ let shape_literal s =
   | ds -> String.concat ", " (List.map string_of_int ds)
 
 (* A header is written in version 1.0, whose 16-bit length holds the longest nx
-   writes: 32 extents of 16 digits at [<c16] take 630 bytes before padding. It
-   is padded with spaces so that the data starts on a multiple of 64 bytes, and
-   ends with a newline. *)
-let padded body =
+   writes: 32 extents of 16 digits at [<c16], the first of 19 as
+   [save_npy_concat] reserves, take 633 bytes before padding. It is padded
+   with spaces so that the data starts on a multiple of 64 bytes, at [length]
+   bytes where it is given, and ends with a newline. *)
+let padded ?length body =
   let used = 10 + String.length body + 1 in
-  body ^ String.make ((64 - (used mod 64)) mod 64) ' ' ^ "\n"
+  let least = used + ((64 - (used mod 64)) mod 64) in
+  let total = Option.value length ~default:least in
+  body ^ String.make (total - used) ' ' ^ "\n"
 
-let encode dt shape =
+let encode ?length dt shape =
   let body =
     Printf.sprintf "{'descr': '%c%s', 'fortran_order': False, 'shape': (%s), }"
       (if D.bits dt > 8 then '<' else '|')
       (Option.get (code dt))
       (shape_literal shape)
   in
-  let text = padded body in
+  let text = padded ?length body in
   let n = String.length text in
   magic ^ "\x01\x00"
   ^ String.init 2 (fun i -> Char.chr ((n lsr (8 * i)) land 0xff))

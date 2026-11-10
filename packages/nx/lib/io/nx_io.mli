@@ -226,6 +226,22 @@ val save_npy : string -> ('v, 's, 'd) Nx.t -> unit
     Raises [Invalid_argument] if npy does not store [x]'s dtype. For [bit], the
     message names [Nx.cast Nx.bool], which stores a byte per element. *)
 
+val save_npy_concat :
+  string -> ('v, 's) Nx.dtype -> int array -> ('v, 's, 'd) Nx.t Seq.t -> unit
+(** [save_npy_concat path dt cell blocks] writes to the npy file [path] the
+    array of dtype [dt] that is [blocks] joined along axis 0: of shape [k]
+    followed by [cell], [k] the sum of the blocks' extents along axis 0. It
+    forces a block and writes it before it forces the next, so it holds one
+    block at a time, and an array larger than memory is saved from blocks
+    that fit. A block may be a mapped value, so
+    [save_npy_concat path dt cell (List.to_seq shards)] joins the files of
+    [shards] into one, reading each page by page.
+
+    Raises [Invalid_argument] if npy does not store [dt], if [cell] has a
+    negative extent or 32 axes or more, or if a block's shape is not some
+    [k] followed by [cell]. What forcing [blocks] raises passes on as raised.
+    Each leaves [path] as it was and nothing beside it. *)
+
 val load_npz : string -> Nx.host Archive.t
 (** [load_npz path] is the entries of the npz file [path]. Each zip entry whose
     name ends in [.npy] holds one, named by the part before [.npy], which must
