@@ -2,6 +2,8 @@
 
 Tolk is a port of [tinygrad](https://github.com/tinygrad/tinygrad) in OCaml — a minimal compiler for GPU tensor computation. It takes tensor-level computation graphs, optimizes them, and emits kernels for the CPU (C, compiled with Clang), Metal, CUDA and NVIDIA's kernel driver (CUDA C, compiled with NVRTC), and AMD (HIP, compiled with comgr).
 
+Most programs never call tolk themselves: [`Rune.jit`](../../rune/doc/06-compilation.md) compiles through it. This page is for working on the compiler, or for driving it directly.
+
 ## Features
 
 - **Three-level IR** — tensor graphs, kernel DAGs, and linear programs with shared conventions (sub-axes, tagging, map\_children)

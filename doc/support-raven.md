@@ -40,9 +40,8 @@ We're also open to discussing custom sponsorship packages based on your needs.
 - **Sponsor development**: Email [thibaut.mattio@gmail.com](mailto:thibaut.mattio@gmail.com) for sponsorship packages
 
 ### For Individuals
-- **GitHub Sponsors**: [Support the project with monthly contributions](https://github.com/sponsors/tmattio)
-- **One-time donations**: Every contribution helps us reach the next milestone
-- **Write tutorials**: Help others learn Raven and grow the community
+- **GitHub Sponsors**: [Support the project monthly or once](https://github.com/sponsors/tmattio)
+- **Write tutorials**: Help others learn Raven, and [tell us](https://github.com/raven-ml/raven/issues/new?title=Tutorial%3A%20) so we can link to it
 
 ## Current Sponsors
 

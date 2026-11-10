@@ -25,7 +25,7 @@ Machine "fudge", under load. llama.cpp b12032, CUDA.
 | Measurement | Raven, CUDA | Raven, NV | llama.cpp, CUDA |
 | --- | --- | --- | --- |
 | Decode, position 512 of a 1,024 cache | 10.2 ms (8ef1902f3) | 10.7 ms of GPU time; bench median 12.0 ms (31aa4521b) | 6.83 ms at depth 512 |
-| Decode, with Q8_0 attention and head | 8.1–8.3 ms (f2af3251b) | 22.8 ms | |
+| Decode, with Q8_0 attention and head | 8.1–8.3 ms (f2af3251b) | not measured | |
 | Prefill, 512 tokens | 122 ms, least of 4 rounds under load (4e23903949) | not measured again | 56.0 ms |
 | First call, kernels cached | 0.37–0.39 s (c29acaee3) | 0.37–0.54 s, 12 tokens; 1.36 / 1.47 s at the first run (31aa4521b) | 75 ms (59 to 151 ms, no warmup) |
 
@@ -58,7 +58,7 @@ CUDA, in that order. On AMD, a Radeon AI PRO R9700, PyTorch is the only
 framework run. Kernels are precompiled: compiling them at run time loads
 NVRTC on NVIDIA or comgr on AMD.
 
-| Measurement | rig | PyTorch | JAX | tinygrad |
+| Measurement | rig: own driver / CUDA | PyTorch | JAX | tinygrad: own driver / CUDA |
 | --- | --- | --- | --- | --- |
 | Install size, NVIDIA | 7.6 / 115 MiB | 5,458 MiB | 5,774 MiB | 461 / 496 MiB |
 | Install size, AMD | 7.6 MiB | 15,045 MiB | | |

@@ -6,7 +6,7 @@
 <title>Performance — raven</title>
 <meta name="description" content="Every measurement with its date, machine, baseline and commit. The losses stay in.">
 <meta name="color-scheme" content="dark">
-<meta name="source" content="doc/performance.md cf73a5de7fff">
+<meta name="source" content="doc/performance.md 0f60ef4d1a2e">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preload" href="/fonts/Geist-Regular.woff2" as="font" type="font/woff2" crossorigin>
@@ -90,7 +90,7 @@
 <tr><th scope="col">measurement</th><th scope="col">raven · CUDA</th><th scope="col">raven · NV</th><th scope="col">llama.cpp · CUDA</th></tr></thead>
 <tbody>
 <tr><th scope="row">Decode, position 512 of a 1,024 cache</th><td class="hi">10.2 ms</td><td>12.0 ms (bench median; 10.7 ms GPU time)</td><td>6.83 ms</td></tr>
-<tr><th scope="row">Decode, Q8_0 attention and head</th><td class="hi">8.1–8.3 ms</td><td>22.8 ms</td><td>—</td></tr>
+<tr><th scope="row">Decode, Q8_0 attention and head</th><td class="hi">8.1–8.3 ms</td><td>not measured</td><td>—</td></tr>
 <tr><th scope="row">Prefill, 512 tokens</th><td class="hi">122 ms</td><td>not measured again</td><td>56.0 ms</td></tr>
 <tr><th scope="row">First call, kernels cached</th><td class="hi">0.37–0.39 s</td><td>0.37–0.54 s</td><td>75 ms</td></tr></tbody></table></div>
 <p class="caption note-line" style="margin: 0">Machine “fudge”, under load. raven at 8ef1902f3 (decode), f2af3251b (Q8_0), 4e23903949 (prefill, least of 4 rounds), c29acaee3 (first call); NV at 31aa4521b. llama.cpp's first call has no warmup (59–151 ms).</p></section>
@@ -125,17 +125,17 @@
 <div class="scroll" tabindex="0" role="region" aria-label="rig against PyTorch, JAX and tinygrad">
 <table class="tbl" style="min-width: 720px"><caption class="sr">rig against PyTorch, JAX and tinygrad</caption>
 <thead>
-<tr><th scope="col">measurement</th><th scope="col">rig</th><th scope="col">PyTorch</th><th scope="col">JAX</th><th scope="col">tinygrad</th></tr></thead>
+<tr><th scope="col">measurement</th><th scope="col">rig: own driver / CUDA</th><th scope="col">PyTorch</th><th scope="col">JAX</th><th scope="col">tinygrad: own driver / CUDA</th></tr></thead>
 <tbody>
-<tr><th scope="row">Install size, NVIDIA</th><td class="hi">7.6 · 115 MiB</td><td>5,458 MiB</td><td>5,774 MiB</td><td>461 · 496 MiB</td></tr>
+<tr><th scope="row">Install size, NVIDIA</th><td class="hi">7.6 / 115 MiB</td><td>5,458 MiB</td><td>5,774 MiB</td><td>461 / 496 MiB</td></tr>
 <tr><th scope="row">Install size, AMD</th><td class="hi">7.6 MiB</td><td>15,045 MiB</td><td>—</td><td>—</td></tr>
-<tr><th scope="row">Time to first result, NVIDIA</th><td class="hi">70 · 134 ms</td><td>720 ms</td><td>538 ms</td><td>336 · 279 ms</td></tr>
+<tr><th scope="row">Time to first result, NVIDIA</th><td class="hi">70 / 134 ms</td><td>720 ms</td><td>538 ms</td><td>336 / 279 ms</td></tr>
 <tr><th scope="row">Time to first result, AMD</th><td class="hi">53 ms</td><td>1,106 ms</td><td>—</td><td>—</td></tr>
-<tr><th scope="row">Time per launch, NVIDIA</th><td class="hi">2.1 · 3.2 µs</td><td>7.7 µs</td><td>28.9 µs</td><td>511 · 447 µs</td></tr>
+<tr><th scope="row">Time per launch, NVIDIA</th><td class="hi">2.1 / 3.2 µs</td><td>7.7 µs</td><td>28.9 µs</td><td>511 / 447 µs</td></tr>
 <tr><th scope="row">Time per launch, AMD</th><td class="hi">4.9 µs</td><td>8.1 µs</td><td>—</td><td>—</td></tr>
-<tr><th scope="row">Load a 256 MiB file, NVIDIA (a loss to PyTorch)</th><td class="hi">46.0 · 49.3 ms</td><td>32.9 ms</td><td>169.4 ms</td><td>62.0 · 99.9 ms</td></tr>
+<tr><th scope="row">Load a 256 MiB file, NVIDIA (a loss to PyTorch)</th><td class="hi">46.0 / 49.3 ms</td><td>32.9 ms</td><td>169.4 ms</td><td>62.0 / 99.9 ms</td></tr>
 <tr><th scope="row">Load a 256 MiB file, AMD</th><td class="hi">38.9 ms</td><td>215.9 ms</td><td>—</td><td>—</td></tr></tbody></table></div>
-<p class="caption note-line" style="margin: 0">Medians of release builds, 2026-10-11. NVIDIA: an RTX 5000 Ada, where rig and tinygrad run through their own driver · through CUDA. AMD: a Radeon AI PRO R9700, where PyTorch is the only framework run. Kernels precompiled: compiling them at run time loads NVRTC or comgr. “—”: not run on that machine.</p></section>
+<p class="caption note-line" style="margin: 0">Medians of release builds, 2026-10-11. NVIDIA: an RTX 5000 Ada, where rig and tinygrad run through their own driver and through CUDA. AMD: a Radeon AI PRO R9700, where PyTorch is the only framework run. Kernels precompiled: compiling them at run time loads NVRTC or comgr. “—”: not run on that machine.</p></section>
 <section id="brot" class="section stack" style="gap: 32px">
 <div class="eyebrow-gap">
 <p class="label">05 — measured · 2026-11-03</p>
