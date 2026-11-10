@@ -39,6 +39,14 @@ An item leaves when its library fixes it, or when a design decides it stays.
 - `Nx.split` returns a list, so taking a GRU's three gates needs a
   non-exhaustive match or slices.
 
+- `Nx.round` rounds halves away from zero; GeoTessera's int8 embedding codes
+  round ties to even (numpy's `np.round`), and 23 of the oracle fixtures'
+  15.7M codes differ. A rounding mode is a vocabulary question for nx
+  (found by the tessera-stack audit).
+- No dropout of attention probabilities: TESSERA's distillation recipe drops
+  them at 0.1 inside attention, which `Nx.attention` cannot express today
+  (nx and rune; found by the tessera-stack audit).
+
 ## vega
 
 - LARS's trust ratio is not eq. 6 of You, Gitman & Ginsburg, "Large Batch
@@ -74,9 +82,12 @@ An item leaves when its library fixes it, or when a design decides it stays.
 
 ## kaun
 
-- No GRU: v1.0's and v1.1's pooling is written by hand with `Rune.scan'`
-  (about 25 lines with its walk). Wanted: a GRU cell and its scan, with
-  PyTorch's gate layout so checkpoints map directly.
+- No GRU in kaun. TESSERA's v1.0 and v1.1 checkpoints hold tessera-util's
+  `CustomGRUCell` (Chung et al.'s form, reset gate applied before the
+  candidate's product), not PyTorch's `nn.GRU` layout (no `weight_ih_l0`
+  keys), so a kaun GRU with PyTorch's layout would not load them. v1.0 is an
+  oracle only in the stack's design, so this waits for v1.1 coming into
+  scope or another consumer.
 - `Layer_norm.apply` takes `?eps`, so it must be eta-expanded to pass to
   `Rune.jit`.
 
