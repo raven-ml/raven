@@ -123,15 +123,17 @@ let uniforms (type s) ~key ~p (c : (float, s) D.t) j n : (float, s) E.t array =
    equal programs, and either may stay. *)
 let programs () = Array.init (List.length D.all) (fun _ -> Atomic.make None)
 
-(* [table]'s program for [dt], made by [make] the first time. *)
-let cached table dt make =
-  let slot = table.(D.code dt) in
+(* The program of [slot], made by [make] the first time. *)
+let kept slot make =
   match Atomic.get slot with
   | Some p -> p
   | None ->
       let p = make () in
       Atomic.set slot (Some p);
       p
+
+(* [table]'s program for [dt], made by [make] the first time. *)
+let cached table dt make = kept table.(D.code dt) make
 
 (* A sampler program's operands: the element's key, its position in the
    draw, both uint64, then the sampler's parameters. *)
@@ -817,6 +819,62 @@ let randint ?key ?low high =
     | Some l -> [| Value.Any l; Value.Any high |]
   in
   draw ~by ~params (resolve ~by (Prim.placement high) key) dt s prog
+
+(* Permute *)
+
+(* Swap-or-not (Hoang, Morris and Rogaway, "An Enciphering Scheme Based on a
+   Card Shuffle", 2012), in the paper's [6 ⌈log2 n⌉] rounds. Round [j] pairs
+   [x] with [x' = (K - x) mod n] and moves [x] to [x'] where the bit of the
+   pair's larger element is 1. Both elements of a pair read that one bit, so
+   the round is an involution. [K] comes from the key's first split key and
+   the bits from its second, so that no bit reads a block [K] read. There is
+   a program per round count, [n] bound in at each call. [n] is below 2^62,
+   so [K + n] fits. *)
+let permute_programs = Array.init 64 (fun _ -> Atomic.make None)
+
+(* [6 ⌈log2 n⌉], [⌈log2 n⌉] being the bit length of [n - 1]. *)
+let rounds n =
+  let rec bits b v = if v = 0 then b else bits (b + 1) (v lsr 1) in
+  6 * bits 0 (n - 1)
+
+(* The program over the key, the element and [n], all uint64 but the
+   element, int64. *)
+let permute_prog r =
+  kept permute_programs.(r / 6) (fun () ->
+      let key = E.input 0 D.Uint64 in
+      let n = E.input 2 D.Uint64 in
+      let offsets = block ~key (u64 0L) and choices = block ~key (u64 1L) in
+      let x = ref (E.bitcast D.Uint64 (E.input 1 D.Int64)) in
+      for j = 0 to r - 1 do
+        let k = below_at ~key:offsets (uint j) n in
+        let x0 = !x in
+        let x' = E.(where (x0 <= k) (k - x0) (k + n - x0)) in
+        let chooser = E.threefry (counter (uint j)) choices in
+        let bit = E.(block ~key:chooser (maximum x0 x') land u64 1L) in
+        x := E.(where (bit = u64 1L) x' x0)
+      done;
+      let ins = D.[| Any Uint64; Any Int64; Any Uint64 |] in
+      P.of_exprs ~ins:(Iarray.of_array ins)
+        [| E.any (E.bitcast D.Int64 !x) |])
+
+let permute ?key ~n i =
+  let by = "Nx.Rng.permute" in
+  if n < 1 then invalid_argf "%s: n is %d, not at least 1" by n;
+  let i = Donate.read ~by i in
+  refuse ~by "i"
+    (Printf.sprintf "[0, %d)" n)
+    ~show:Int64.to_string i
+    (fun x -> E.(const D.Int64 0L <= x && x < const D.Int64 (Int64.of_int n)));
+  let prog = bind (permute_prog (rounds n)) 2 (E.any (uint n)) in
+  match resolve ~by (Prim.placement i) key with
+  | Words w ->
+      let prog = bind prog 0 (E.any (u64 w)) in
+      map dispatched ~by (Prim.shape i) prog D.Int64 [| Value.Any i |]
+  | Key k ->
+      let shape = Prim.broadcast_shape ~by (batch k) (Prim.shape i) in
+      let w = Eval.broadcast ~by shape (pack dispatched ~by k) in
+      let i = Eval.broadcast ~by shape i in
+      map dispatched ~by shape prog D.Int64 [| Value.Any w; Value.Any i |]
 
 (* Rejection *)
 

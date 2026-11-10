@@ -2538,6 +2538,13 @@ let scoped_samplers =
             (fun p ?key s ->
               of_ints (read (Rng.randint ?key (Nx.full_at p Nx.int32 s 9l))));
         } );
+      ( "permute",
+        {
+          draw =
+            (fun p ?key s ->
+              let i = Nx.full_at p Nx.int64 s 3L in
+              of_int64s (read (Rng.permute ?key ~n:7 i)));
+        } );
       ( "permutation",
         {
           draw =
@@ -2929,6 +2936,11 @@ let calls =
           let low = arg ~dead (host_of Nx.int64 [| 2 |] [| 0L; 1L |]) in
           let high = host_of Nx.int64 [| 2 |] [| 5L; 6L |] in
           fun key -> ignore (Rng.randint ?key ~low high) ) );
+    ( "permute",
+      ( 1,
+        fun ~dead ->
+          let i = arg ~dead (host_of Nx.int64 [| 2 |] [| 0L; 3L |]) in
+          fun key -> ignore (Rng.permute ?key ~n:4 i) ) );
     ("permutation", none (fun key -> ignore (Rng.permutation ?key 4)));
     ( "bernoulli",
       ( 1,
@@ -3182,6 +3194,251 @@ let goldens =
         permutation: 3 5 7 0 4 6 1 2
         |})
 
+(* Permute *)
+
+let rounds n =
+  let rec bits b v = if v = 0 then b else bits (b + 1) (v lsr 1) in
+  6 * bits 0 (n - 1)
+
+let pp_n = Format.pp_print_int
+
+(* Domains of 1 and 2 elements, powers of two, primes, and any up to 2000. *)
+let small_ns =
+  Gen.one_of
+    [
+      Gen.of_list ~pp:pp_n
+        [
+          1; 2; 3; 4; 5; 7; 8; 13; 16; 17; 64; 101; 128; 1009; 1024; 4093; 4096;
+        ];
+      Gen.int_range 1 2000;
+    ]
+  |> Gen.with_pp pp_n
+
+(* Domains past int32: [max_int], 2^62's neighbours, the Mersenne prime
+   2^61 - 1, the prime 10^12 + 39, TESSERA-sized ones, and any. *)
+let large_ns =
+  Gen.one_of
+    [
+      Gen.of_list ~pp:pp_n
+        [
+          max_int;
+          (1 lsl 61) - 1;
+          1 lsl 40;
+          (1 lsl 40) + 1;
+          1_000_000_000_039;
+          465_000_000;
+          14_000_000_000;
+        ];
+      Gen.int_range (1 lsl 31) max_int;
+    ]
+  |> Gen.with_pp pp_n
+
+let positions xs = host_of Nx.int64 [| Array.length xs |] xs
+let order k n = read (Rng.permute ~key:k ~n (Nx.arange Nx.int64 0 n 1))
+
+(* The swap-or-not shuffle as [Nx.Rng.permute] states it, from the key's
+   split keys through [randint], [fold_in] and [bits]: round [j]'s [K] is
+   draw [j] below [n] from the first, and its bit for the pair's larger
+   element [m] the low bit of block [m] of [fold_in] of the second by [j],
+   word [2m]. *)
+let swap_or_not k n =
+  let ks = Rng.split k in
+  let r = rounds n in
+  let below = host_of Nx.int64 [| r |] (Array.make r (Int64.of_int n)) in
+  let offsets = read (Rng.randint ~key:ks.(0) below) in
+  let x = Array.init n Fun.id in
+  for j = 0 to r - 1 do
+    let ws = read (Rng.bits ~key:(Rng.fold_in ks.(1) j) [| 2 * n |]) in
+    let offset = Int64.to_int offsets.(j) in
+    Array.iteri
+      (fun i v ->
+        let v' = (offset - v + n) mod n in
+        if Int32.logand ws.(2 * max v v') 1l = 1l then x.(i) <- v')
+      x
+  done;
+  Array.map Int64.of_int x
+
+(* The orders of [count] keys of [n] each, as rows: a batch of keys of shape
+   [[count; 1]] over the positions [0, n). *)
+let orders k ~count n =
+  let batch =
+    Rng.of_tensor
+      (Nx.reshape [| count; 1; 2 |]
+         (Rng.to_tensor (Rng.split_batch ~n:count k)))
+  in
+  let xs = read (Rng.permute ~key:batch ~n (Nx.arange Nx.int64 0 n 1)) in
+  Array.init count (fun c ->
+      Array.init n (fun j -> Int64.to_int xs.((c * n) + j)))
+
+(* The Pearson statistic of [counts] against [expected] each. *)
+let pearson counts expected =
+  Array.fold_left
+    (fun a c -> a +. (((Float.of_int c -. expected) ** 2.) /. expected))
+    0. counts
+
+let keys_per_test = 1 lsl 12
+
+let permute_group =
+  group "permute"
+    [
+      prop "permute is a bijection of [0, n)" (Gen.pair keys small_ns)
+        (fun (k, n) ->
+          cover "one element" (n = 1);
+          cover "two elements" (n = 2);
+          cover "a power of two" (n > 2 && n land (n - 1) = 0);
+          let xs = order k n in
+          let sorted = Array.copy xs in
+          Array.sort Int64.compare sorted;
+          equal (array int64) (Array.init n Int64.of_int) sorted);
+      prop "past int32, distinct elements have distinct images in [0, n)"
+        (Gen.triple keys large_ns
+           (Gen.array ~size:(Gen.int_range 1 64)
+              (Gen.int64_range 0L Int64.max_int)))
+        (fun (k, n, raw) ->
+          let n64 = Int64.of_int n in
+          let xs =
+            Array.append [| 0L; Int64.pred n64 |]
+              (Array.map (fun x -> Int64.rem x n64) raw)
+          in
+          let ys = read (Rng.permute ~key:k ~n (positions xs)) in
+          Array.iter
+            (fun y ->
+              if y < 0L || y >= n64 then failf "image %Ld outside [0, %d)" y n)
+            ys;
+          let pairs = Array.map2 (fun x y -> (x, y)) xs ys in
+          Array.iter
+            (fun (x, y) ->
+              Array.iter
+                (fun (x', y') ->
+                  if (x = x') <> (y = y') then
+                    failf "%Ld and %Ld have images %Ld and %Ld" x x' y y')
+                pairs)
+            pairs);
+      prop "an element's image is its image in the whole order"
+        (Gen.triple keys small_ns shapes)
+        (fun (k, n, s) ->
+          let all = order k n in
+          let at =
+            Array.init (numel s) (fun j -> Int64.of_int (j * 7919 mod n))
+          in
+          let i = host_of Nx.int64 s at in
+          equal (array int64)
+            (Array.map (fun x -> all.(Int64.to_int x)) at)
+            (read (Rng.permute ~key:k ~n i)));
+      prop "permute is the swap-or-not shuffle it states"
+        (Gen.pair keys (Gen.int_range 1 64))
+        (fun (k, n) -> equal (array int64) (swap_or_not k n) (order k n));
+      test "a batch of keys gives each key's order, broadcast with i"
+        (fun () ->
+          let ks = Rng.split ~n:2 (Rng.key 5) in
+          let batch =
+            Rng.of_tensor
+              (Nx.reshape [| 2; 1; 2 |]
+                 (Rng.to_tensor (Rng.split_batch ~n:2 (Rng.key 5))))
+          in
+          let i = positions [| 0L; 7L; 4L |] in
+          let y = Rng.permute ~key:batch ~n:9 i in
+          equal (array int) [| 2; 3 |] (Nx.shape y);
+          equal (array int64)
+            (Array.concat
+               (List.map (fun k -> read (Rng.permute ~key:k ~n:9 i))
+                  (Array.to_list ks)))
+            (read y));
+      prop "a placed permute lies where its elements lie and keeps its images"
+        (Gen.pair keys small_ns)
+        (fun (k, n) ->
+          let i = Nx.arange Nx.int64 0 n 1 in
+          let at = S2.split ~axis:0 in
+          let y = Rng.permute ~key:(Rng.place S2.on k) ~n (Nx.place at i) in
+          equal (placement ()) at (Nx.placement y);
+          equal (array int64) (order k n) (read y));
+      test "permute refuses an empty domain" (fun () ->
+          equal string "Nx.Rng.permute: n is 0, not at least 1"
+            (message (fun () ->
+                 Rng.permute ~key:(Rng.key 1) ~n:0 (positions [||]))));
+      prop "permute names its first element outside [0, n)" bad_params
+        (fun (s, on_s2, (i, j)) ->
+          cover "split" on_s2;
+          let xs =
+            Array.init (numel s) (fun x -> if x = i || x = j then 10L else 3L)
+          in
+          let x = host_of Nx.int64 s xs in
+          let want =
+            refusal "Nx.Rng.permute" "i" s (Int.min i j) "10" "[0, 10)"
+          in
+          equal string want (message (fun () -> Rng.permute ~n:10 x));
+          if on_s2 then begin
+            let y = Rng.permute ~n:10 (split x) in
+            equal string want (message (fun () -> Nx.sync y))
+          end);
+      (* Each key's whole order at n = 10: the count of position x holding y,
+         against [count / n] each. Its cells covary, so the statistic's mean
+         under uniform orders is n (n - 1), and its standard deviation about
+         √2 n. *)
+      prop ~count:few "permute: positions and images are independent" keys
+        (fun k ->
+          let n = 10 and count = keys_per_test in
+          let counts = Array.make (n * n) 0 in
+          let add x y = counts.((x * n) + y) <- counts.((x * n) + y) + 1 in
+          Array.iter (Array.iteri add) (orders k ~count n);
+          let e = Float.of_int count /. Float.of_int n in
+          let nf = Float.of_int n in
+          at_most float_exact
+            ~than:((nf *. (nf -. 1.)) +. (6. *. sqrt 2. *. nf))
+            (pearson counts e));
+      (* The images of positions 0 and 1, over the [n (n - 1)] ordered pairs
+         of distinct values: a multinomial whose statistic has [n (n - 1) - 1]
+         degrees of freedom. *)
+      prop ~count:few "permute: adjacent images are uniform pairs"
+        (Gen.pair keys (Gen.of_list ~pp:pp_n [ 10; 64 ]))
+        (fun (k, n) ->
+          let count = if n = 10 then keys_per_test else 16 * keys_per_test in
+          let batch =
+            Rng.of_tensor
+              (Nx.reshape [| count; 1; 2 |]
+                 (Rng.to_tensor (Rng.split_batch ~n:count k)))
+          in
+          let xs = read (Rng.permute ~key:batch ~n (positions [| 0L; 1L |])) in
+          let counts = Array.make (n * n) 0 in
+          for c = 0 to count - 1 do
+            let a = Int64.to_int xs.(2 * c) in
+            let b = Int64.to_int xs.((2 * c) + 1) in
+            if a = b then failf "positions 0 and 1 share the image %d" a;
+            counts.((a * n) + b) <- counts.((a * n) + b) + 1
+          done;
+          let cells = n * (n - 1) in
+          let off =
+            List.filteri (fun i _ -> i / n <> i mod n) (Array.to_list counts)
+            |> Array.of_list
+          in
+          let dof = Float.of_int (cells - 1) in
+          at_most float_exact ~than:(dof +. (6. *. sqrt (2. *. dof)))
+            (pearson off (Float.of_int count /. Float.of_int cells)));
+      (* Half the orderings of 16 are even. *)
+      prop ~count:few "permute: half the orders of 16 are even" keys (fun k ->
+          let count = keys_per_test in
+          let even =
+            Array.fold_left
+              (fun c o ->
+                let seen = Array.make 16 false and cycles = ref 0 in
+                for x = 0 to 15 do
+                  if not seen.(x) then begin
+                    incr cycles;
+                    let y = ref x in
+                    while not seen.(!y) do
+                      seen.(!y) <- true;
+                      y := o.(!y)
+                    done
+                  end
+                done;
+                if (16 - !cycles) mod 2 = 0 then c + 1 else c)
+              0 (orders k ~count 16)
+          in
+          let f = Float.of_int even /. Float.of_int count in
+          at_most float_exact ~than:(6. *. 0.5 /. sqrt (Float.of_int count))
+            (Float.abs (f -. 0.5)));
+    ]
+
 let () =
   exit
     (run "nx random"
@@ -3199,6 +3456,7 @@ let () =
          checks;
          scope;
          bare_keys;
+         permute_group;
          names;
          refusals;
          goldens;

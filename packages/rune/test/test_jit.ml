@@ -928,6 +928,29 @@ let law_key_argument (s, s') =
   equal ~msg:"a batch" bits_t (bits (draw batch)) (bits (g batch));
   equal ~msg:"a batch's own program" int 2 !traces
 
+(* [Nx.Rng.permute]'s epoch order, a key per position, compiled from a key
+   argument and positions that cross an epoch, gives eager's images; so does
+   one key over positions inside one epoch, below int32, where the program is
+   smaller and compiles faster. *)
+let law_permute n =
+  let k = Nx.Rng.key n and n' = Int64.of_int n in
+  let first = max 0 (n - 3) in
+  let p = Nx.arange Nx.int64 first (first + 16) 1 in
+  let example key p =
+    let epoch = Nx.Rng.fold_in_tensor key (Nx.div_s p n') in
+    Nx.Rng.permute ~key:epoch ~n (Nx.mod_s p n')
+  in
+  let one key p = Nx.Rng.permute ~key ~n (Nx.mod_s p n') in
+  let signature = T.(Nx.Rng.ptree @-> tensor @-> returns tensor) in
+  List.iter
+    (fun (msg, f) ->
+      let g = Rune.jit signature f in
+      equal ~msg (outcome_t (array int64))
+        (outcome (fun () -> Nx.to_array (f k p)))
+        (compiled (fun () -> Nx.to_array (g k p))))
+    (("epochs", example)
+    :: (if n < 1 lsl 31 then [ ("one key", one) ] else []))
+
 (* Captured values are read as they are when the program is traced: a later call
    of the same key does not see what the closure would read now. *)
 let test_captures () =
@@ -5600,6 +5623,9 @@ let () =
              test "a constant key draws the same each call" test_constant_key;
              prop "a key argument draws eager's values, one program per shape"
                (Gen.pair Gen.int Gen.int) law_key_argument;
+             Windtrap.cases "permute compiles to eager's images" ~id:string_of_int
+               [ 1; 2; 10; (1 lsl 31) + 11 ]
+               law_permute;
              test "captures are read as they were traced" test_captures;
              test "a stack compiles to eager's bits at any number of rows"
                test_stack;

@@ -2744,6 +2744,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   `Nx_io.Pytorch.tensors` names them by their state dict's keys.
 - `Nx_io.load_npz` loads an entry whose stated CRC-32 is 0 unchecked, as
   writers told to compute no checksum state it, and refused it before.
+- `Nx.Rng.permute ~n i` maps each position of `i` through a bijection of
+  `[0, n)` the key selects, the swap-or-not shuffle, computed per element at
+  any placement and under `Rune.jit`: the order of an epoch of `n` examples,
+  read a batch at a time without holding it.
 - **Breaking:** `Nx.Rng.randint ?low high` takes its bounds as arrays, one
   per element, of any integer dtype, and draws where they lie; `randint_at`
   goes. A draw is a 128-bit multiply-shift, within 2^-128 of uniform per

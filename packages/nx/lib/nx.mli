@@ -5206,6 +5206,42 @@ module Rng : sig
       axis whole, so where [p] cuts it each device of [p] draws and sorts
       all [n] words and keeps its window. *)
 
+  val permute : ?key:'d key -> n:int -> 'd int64_t -> 'd int64_t
+  (** [permute ~n i] is the image of each element of [i] under a bijection
+      of [\[0, n)] that the key selects, computed from that element alone:
+      [permute ~n (Nx.arange Nx.int64 0 n 1)] orders [\[0, n)], and a few
+      elements cost a few elements' work. A batch of keys gives a bijection
+      per key, broadcast with [i] as {!fold_in_tensor} broadcasts, and the
+      images lie where [key] and [i] lie together.
+
+      It is the swap-or-not shuffle of Hoang, Morris and Rogaway ("An
+      Enciphering Scheme Based on a Card Shuffle", CRYPTO 2012) in
+      [r = 6 ⌈log₂ n⌉] rounds. With [k] and [k'] the key's two {!split}
+      keys, round [j] maps [x] to [x' = (K - x) mod n], [K] draw [j] of
+      {!randint} below [n] from [k], where the low bit of block [max x x']
+      of [fold_in k' j] is 1, and to [x] otherwise. A round decides once for
+      each pair [{x, x'}], so it is a bijection. An element costs [4r + 2]
+      Threefry blocks.
+
+      The keys select at most [2{^64}] of the [n!] orderings, which
+      {!permutation} draws from. The paper bounds how well a reader of at
+      most [(1 - ε) n] images tells the ordering from a uniform one, and
+      proves nothing of all [n]. Tests of whole orderings at small [n]
+      (position against image, adjacent pairs, parity) find no departure
+      from uniform.
+
+      Epoch [e] of a stream of positions, positions [e n] to
+      [(e + 1) n - 1], visits [\[0, n)] in an ordering of its own:
+      {[
+      let example key n p =
+        let n' = Int64.of_int n in
+        let epoch = Nx.Rng.fold_in_tensor key (Nx.div_s p n') in
+        Nx.Rng.permute ~key:epoch ~n (Nx.mod_s p n')
+      ]}
+
+      Raises [Invalid_argument] if [n < 1], and if an element of [i] is
+      outside [\[0, n)]. *)
+
   (** {1:scope Scope} *)
 
   val with_key : 'd key -> (unit -> 'a) -> 'a
