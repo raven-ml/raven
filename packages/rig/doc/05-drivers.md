@@ -3,17 +3,17 @@
 This page traces one submission from `Rig.submit` through a driver to the
 hardware and back. What a driver must do, and what rig guarantees it, is in
 [`rig_edge.mli`](../lib/edge/rig_edge.mli): the facts a device declares, its
-timeline word and how the word advances, the three C functions `room`,
-`submit` and `commit` with the properties a driver keeps, and the counted
-calls that its stop never overlaps.
+timeline word and how the word advances, the five C functions `room`,
+`submit`, `commit`, `settle` and `measures` with the properties a driver
+keeps, and the counted calls that its stop never overlaps.
 
 ## The shape of a driver
 
 A driver is a library that links `rig.edge` and never `rig`, as the preamble of
 [`rig_edge.mli`](../lib/edge/rig_edge.mli) states. It allocates a device's
 memory, loads code on it, and places work on its queues. rig reads the
-device's facts once, when it opens, and calls three C functions of the
-driver to run work, with the OCaml runtime released. Below, `submit` alone
+device's facts once, when it opens, and calls five C functions of the
+driver to run work and read its times, with the OCaml runtime released. Below, `submit` alone
 names the driver's C function, and `Rig.submit` the OCaml call.
 
 The device reports progress in its timeline word, which only the driver writes.

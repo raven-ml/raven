@@ -17,10 +17,12 @@
 
     rig reads a device's {!type-facts} once, when the device opens. It then
     calls the driver's OCaml functions to allocate and map memory, to load
-    code and to grow its queues, and three C functions of the driver to run work
-    ({!section-calls}). [room] returns whether a submission's parts fit the
-    device's queues, [submit] places them on the queues as the work of the
-    next value of the device's timeline, and [commit] lets that work run.
+    code and to grow its queues, and five C functions of the driver to run work
+    and read its times ({!section-calls}). [room] returns whether a
+    submission's parts fit the device's queues, [submit] places them on the
+    queues as the work of the next value of the device's timeline, and
+    [commit] lets that work run. [settle] writes the times of work that ran
+    and [measures] its counters, and a driver may leave either [NULL].
 
     A device reports progress in its {e timeline word}, eight bytes of memory
     that hold a value of the device's timeline. [Rig]'s preamble and Timelines
