@@ -17,6 +17,10 @@ An item leaves when its library fixes it, or when a design decides it stays.
 
 ## rig
 
+- rig cannot report a device's total or free memory, so a training step
+  cannot check `Rune.footprint` against what the GPU holds; dev/tessera
+  takes `--memory` meanwhile. Found by the M4 training design.
+
 - Every suite and example maps "cuda", "nv", "amd", "metal" to
   `Rig.open_ (Rig_x.gpu 0)` and forks a child to ask whether a GPU opens
   (its driver must not start before thumper forks): kaun's GPT-2, rune's
@@ -121,6 +125,11 @@ An item leaves when its library fixes it, or when a design decides it stays.
   precision stated on the contraction, refused where no unit has it.
 
 ## kaun
+
+- `Kaun.Linear.apply` rounds twice at bfloat16: the product, then the bias
+  added to it, where a product rounding its sum plus bias once is what
+  PyTorch's autocast linear computes (`Nx.contract ~init` can). The fix
+  changes float32 bits slightly too. Found by the M4 training design.
 
 - No GRU in kaun. TESSERA's v1.0 and v1.1 checkpoints hold tessera-util's
   `CustomGRUCell` (Chung et al.'s form, reset gate applied before the
