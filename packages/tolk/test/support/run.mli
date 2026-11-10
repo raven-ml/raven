@@ -51,6 +51,5 @@ val values : Dtype.t -> Rig.Buffer.t -> Dtype.value array
 
 val devices : unit -> (string * Rig.t) list
 (** [devices ()] maps ["CPU"] to {!Rig.host}, and ["CPU:1"], ["CPU:2"] and
-    ["CPU:3"] to memory devices ({!Rig.memory_device}), whose memory the host
-    computes on as on its own. The memory devices are opened by the first call.
-*)
+    ["CPU:3"] to software devices ({!Rig.software}), which run the host's
+    code. The software devices are opened by the first call. *)

@@ -11,14 +11,14 @@
    host-to-gpu-16 places sixteen host elements: a placement that waited for
    its copy would add a round trip to the GPU, about 4 us on an RTX 5000 Ada.
    split-axis1-to-gpu-1024 gathers a 1024 x 1024 float32 value split by
-   columns over four memory devices: each device's window is 1024 rows of the
+   columns over four software devices: each device's window is 1024 rows of the
    destination, one copy of boxes, where a copy per row would add a round trip
    per row. *)
 
 module A = Nx_array
 module D = Nx_array.Dtype
 
-(* The GPU and a memory device are opened in the measuring worker: a device
+(* The GPU and a software device are opened in the measuring worker: a device
    opened before the fork is lost in it. *)
 let cuda () =
   let path =
@@ -29,7 +29,7 @@ let cuda () =
   | Ok [] -> failwith "no CUDA GPU"
   | Error why -> failwith why
 
-let memory k = Result.get_ok (Rig.memory_device (Printf.sprintf "bench-m%d" k))
+let memory k = Result.get_ok (Rig.software (Printf.sprintf "bench-m%d" k))
 
 let filled s =
   let n = Array.fold_left ( * ) 1 s in

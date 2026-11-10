@@ -12,7 +12,7 @@ let submit ?(buffers = [||]) ?waits s =
 
 let timeout = 60.
 let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal
-let memory name = Result.get_ok (Rig.memory_device name)
+let memory name = Result.get_ok (Rig.software name)
 
 let test_same_name () =
   let d = memory "open:same" in
@@ -75,7 +75,7 @@ let test_reach () =
 
 (* Where the host reaches a device's memory, every buffer of it has a host
    address, of each memory it has and in each of Polled's modes, and on a
-   memory device. It has no Pinned memory. *)
+   software device. It has no Pinned memory. *)
 let test_reach_addresses () =
   let n = ref 0 in
   let check ~msg d =
@@ -108,7 +108,7 @@ let test_reach_addresses () =
             bools)
         bools)
     bools;
-  check ~msg:"a memory device" (memory "open:reach-addresses-memory")
+  check ~msg:"a software device" (memory "open:reach-addresses-memory")
 
 (* An io library whose memory is bytes that nothing reads, as host pages. *)
 module Store = struct
@@ -466,7 +466,7 @@ let test_alignment_refused () =
       equal ~msg:"stopped" bool true (List.mem "stop" (P.log p)))
     [ 0; -16; 24; 48 ]
 
-(* A device states the last-level cache its driver states, a memory device
+(* A device states the last-level cache its driver states, a software device
    the host's, and an io device none. *)
 let test_cache_bytes () =
   let d = memory "open:cache-memory" in

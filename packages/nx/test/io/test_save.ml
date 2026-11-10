@@ -199,7 +199,7 @@ let saving =
       (let device = Nx_support.memory 3 in
        let module Mem = (val Nx.devices [ device ]) in
        (* Values in memory of their own: one made from OCaml data, and one
-          computed on a memory device, since a placement onto it from the host
+          computed on a software device, since a placement onto it from the host
           shares the host's memory. *)
        let n = 1 lsl 16 in
        let on_host () = Nx.create Nx.float32 [| n |] (Array.make n 1.) in
@@ -232,7 +232,7 @@ let saving =
            ("npz on the host", fun () -> donated Rig.host on_host npz);
            ( "safetensors on the host",
              fun () -> donated Rig.host on_host safetensors );
-           ("npy on a memory device", fun () -> donated device on_mem npy);
+           ("npy on a software device", fun () -> donated device on_mem npy);
          ]
          (fun (_, check) -> check ()));
     ]

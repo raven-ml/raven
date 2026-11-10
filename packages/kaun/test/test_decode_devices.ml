@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A tensor-parallel decode step over four memory devices of one set, which
+(* A tensor-parallel decode step over four software devices of one set, which
    nx.cpu computes: a Llama-shaped decoder whose projections are split by
    columns into the heads and by rows out of them, and whose caches are split on
    their kv-heads axis. It generates the tokens one device generates, and its
@@ -33,7 +33,7 @@ let caches () = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache))
 module Four =
   (val Nx.devices
          (List.init 4 (fun i ->
-              Result.get_ok (Rig.memory_device (Printf.sprintf "kaun-tp-%d" i)))))
+              Result.get_ok (Rig.software (Printf.sprintf "kaun-tp-%d" i)))))
 
 (* Four query heads and four kv-heads of two features: one of each per
    device. *)

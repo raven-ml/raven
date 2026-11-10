@@ -2311,7 +2311,7 @@ let[@inline] reach d (a : alloc) host =
     (* Before the host's answer: memory of no bytes has no host address. *)
     Empty
   else if Dev.is_host d then if host >= 0 then At_host else Cannot
-  else if d.memory_device && host >= 0 then Addressed
+  else if d.software && host >= 0 then Addressed
   else if host >= 0 && host mod page <> 0 && not (peer_memory d a) then
     (* [mapping] maps it as host memory, which a driver maps from a page
        ([map_host]). *)
@@ -2458,7 +2458,7 @@ let staging d m = kept_reach d m ~ladder:true
 
 (* Whether the host pages [a]'s memory: the host's own, and a memory
    device's, which it allocates from the host's. *)
-let paged (a : alloc) = Dev.is_host a.owner || a.owner.memory_device
+let paged (a : alloc) = Dev.is_host a.owner || a.owner.software
 
 (* Asks an io library to read ahead the bytes that a borrow on [d], a device
    other than the host, reaches through its pages. It is a hint, so its

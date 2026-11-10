@@ -259,9 +259,10 @@ let runs_its_level () =
   | -2 -> fail "the child could not be waited for"
   | status -> equal ~msg:"the child's status" int 0 status
 
-let memory_device () =
-  let d = Result.get_ok (Rig.memory_device "arch:memory") in
-  equal (pair string string) ("memory", "memory")
+let software () =
+  let d = Result.get_ok (Rig.software "arch:software") in
+  equal (pair string string)
+    (Rig.arch Rig.host, Rig.instruction_set Rig.host)
     (Rig.arch d, Rig.instruction_set d)
 
 let () =
@@ -277,6 +278,6 @@ let () =
              test "runs each instruction of its level" runs_its_level;
              test "states the half arithmetic macOS lists" half_arithmetic;
              test "runs the half arithmetic it states" runs_features;
-             test "a memory device's arch is its instruction set" memory_device;
+             test "a software device's arch is the host's" software;
            ];
        ])

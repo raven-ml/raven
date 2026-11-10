@@ -1382,18 +1382,17 @@ encodes its own releases (D146).
   lane in every schedule, where tinygrad keeps copies in a lane of their
   own. tinygrad's copy lane keeps reuse from ordering a copy against a
   kernel, which rig's device order makes moot on one device: on fudge's
-  RTX 5000 beside a memory device, a value moved into the GPU mid-chain is
+  RTX 5000 beside a software device, a value moved into the GPU mid-chain is
   a submission of the GPU's copy queue, ordered after its earlier products
-  with either lane count, and `run` returned in 12.2 ms with one lane
-  against 11.8 ms with two. Across devices rig orders by allocation, which
+  with either lane count. Across devices rig orders by allocation, which
   a lane avoids only in part, and two lanes add their peaks, past RFC
   0005's bound for a schedule linked per run (D173). Where a host-run
   device's work reuses bytes a GPU copy touched, the call waits for the
-  GPU: a memory device's sum placed over a value just moved into the GPU
-  waited for all eight products before it, `run` returning in 168-200 ms
-  against 13 ms where that order does not reuse the bytes. A copy lane
-  avoided that case (51 ms) but not host work that writes the lane after a
-  GPU copy used it; removing the wait is rig's to do.
+  GPU: a software device's sum placed over a value just moved into the GPU
+  waits for all eight products before it, where an order that does not
+  reuse the bytes waits for none. A copy lane avoids that case but not host
+  work that writes the lane after a GPU copy used it; removing the wait is
+  rig's to do.
 - **Reason:** (b) for ranges and views: `Rune.scan`'s staged loop (RFC 0012)
   schedules calls inside a range, whose arguments are views that move with
   it, of buffers the calls after it read whole; tinygrad's scheduler hands
@@ -5368,10 +5367,10 @@ instructions: it did not pay for the scan.
   the goldens carry this whatever tinygrad computes.
 - **Reason:** (b): rune's compiled programs over several devices
   (`Compile.make`, `Pieces.split`) lower each device's operations on that
-  device, so a program over `n` memory devices of one host makes `n` copies
+  device, so a program over `n` software devices of one host makes `n` copies
   of each kernel. With the devices in the key, a data-parallel step's first
-  call over 16 memory devices took 0.92 s on fudge, 52 ms per device past
-  the first; with one program per target, 0.24 s. A device kept in the
+  call over 16 software devices compiled each kernel 16 times; with one
+  program per target, it compiles each once. A device kept in the
   kernel and erased for the key held one fact in two places, kept equal by
   renaming each program to its call's devices.
 - **Pinned by:** `Tolk.Schedule › create_linear_with_vars › rules › one
@@ -5431,35 +5430,32 @@ the walk of `Rangeify.fix_store_hazard`.
   memory coming back once the work on it is done. A run is one program of
   rig's, which loads each image once per device. A run's submissions are
   those of the same schedule linked `Linked`: the order by storage
-  interleaves devices, 1411 `Submit` steps for a data-parallel step over 16
-  memory devices where tinygrad's order makes 84, and under rig's one point
-  per submission they are what cross-device overlap costs: grouping a
-  device's work into fewer submissions lengthens a GPU-faithful critical
-  path 8 to 11 times. Linked `Linked`, the default, its storage is the
-  program's, as tinygrad's. A run of either keeps none of the buffers it
-  was given once it returns. In a set of a GPU and a host-run device, where
-  the plan places host work over bytes a GPU copy touched, the run waits
-  for the GPU's earlier work before it returns (D41: 168-200 ms against
-  13 ms): the plan keeps the bound and gives up that call's asynchrony.
+  interleaves devices, 1018 `Submit` steps for a data-parallel step over 16
+  software devices, and under rig's one point per submission they are what
+  cross-device overlap costs: grouping a device's work into fewer
+  submissions lengthens a GPU-faithful critical path. Linked `Linked`, the
+  default, its storage is the program's, as tinygrad's. A run of either
+  keeps none of the buffers it was given once it returns. In a set of a GPU
+  and a host-run device, where the plan places host work over bytes a GPU
+  copy touched, the run waits for the GPU's earlier work before it returns
+  (D41): the plan keeps the bound and gives up that call's asynchrony.
 - **Reason:** (b): rune's compiled programs over several devices
   (`Compile.variant`, for a split program) promise that a device holds
   between calls only the values its caller keeps, and RFC 0005 bounds what a
   fully sharded step holds within a call. Linked `Linked`, the programs of
-  fully sharded training over two memory devices, its gathers compiled, held
+  fully sharded training over two software devices, its gathers compiled, held
   4.75 layers on each device beside its share after a step (`rune jit ›
   fully sharded`, d = 128): 3.75 of scratch, and one of the buffers the
   frames kept from their last runs. Each buffer made at its first call and
-  freed after its last, as tolk did before, met the bound on memory devices,
+  freed after its last, as tolk did before, met the bound on software devices,
   whose work is done when it is submitted, but not on a GPU, which reuses
   freed memory only once its work is done while a run returns before it
   is: on fudge's RTX 5000, eight chained products of 64 MiB, two live at
   once, held 640 MiB at the call's return, where planned into an arena they
   hold 320 MiB with the arguments and the result. That design was also one
   program of rig's per stretch between makes and frees: the data-parallel
-  step over 16 memory devices was 1168 programs, loaded 656 images where one
-  program loads 11, and made 1584 submissions a call, allocating 153 580
-  words where one program allocates 23 015 (rune's `Jit/devices/dp-step-16`
-  row). Planned
+  step over 16 software devices was 1168 programs, which linked 656 objects
+  where one program links 11. Planned
   per run, rune's five `fully sharded` cases held 2.128, 1.692, 1.473, 4.001
   and 2.626 layers against bounds of 2.188, 1.719, 1.484, 4.250 and 2.812,
   as each buffer of its own did; with copies in a lane of their own, 3.068,
@@ -5669,7 +5665,7 @@ its rule, its reason and its pins.
   (`Pieces.split`, `Compile.moving`) bind each device's window start, of a
   move or of a loop's coordinates, to a variable named by its bound, so that
   every device's kernel is one program (D170) and the data-parallel step
-  takes as many programs over 2 to 16 memory devices. A body's variables,
+  takes as many programs over 2 to 16 software devices. A body's variables,
   (b): rune's loops (`Loop.cut`) keep the variables their steps bind in the
   loop's body, such as the start of each piece of an assembly
   (`Compile.region`), which binds one name to each piece's start; named in
@@ -5832,7 +5828,7 @@ and an initial value is added after it (D260).
   which stores each device's piece into its run of the whole. With that
   assembly and kernels ordered as D183 says, fully sharded training's
   backward call of one layer at d = 512 held 2.062, 1.594 and
-  1.422 layers beside its arguments over 2, 4 and 8 memory devices with each
+  1.422 layers beside its arguments over 2, 4 and 8 software devices with each
   piece copied apart, and 1.812, 1.531 and 1.391 landing in place, against
   RFC 0005's bound of 1.875, 1.562 and 1.406 (`rune jit › fully sharded`).
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`): `copies into
@@ -5874,12 +5870,12 @@ and an initial value is added after it (D260).
 - **Reason:** (b): rune's compiled programs over several devices
   (`Compile.assembled`) hold an assembly as a buffer filled by a store per
   piece, each device's own piece at its device's offset. Indexed at the
-  offset, a data-parallel step over 2, 4, 8 and 16 memory devices made 19,
+  offset, a data-parallel step over 2, 4, 8 and 16 software devices made 19,
   31, 55 and 103 programs; through views, 11 each, and 11, 13, 13 and 13
   once rune reads a closing's own slot from storage of its own, against
   rune's promise that they do not grow with the devices (D170). A view at a
   constant start keeps that start's alignment, and a closing's parts lie
-  at starts of several: a sum over an axis cut across 2, 4, 8 and 16 memory
+  at starts of several: a sum over an axis cut across 2, 4, 8 and 16 software
   devices, its 2 + n wide result's parts stored at their starts, made 4, 7, 9
   and 9 programs, and 4, 7, 7 and 7 with each device's own part stored at a
   bound start. Indexing the whole buffer at that start instead held 3.02 MB
@@ -5952,7 +5948,7 @@ and an initial value is added after it (D260).
   whose split programs' storage is planned by each buffer's life (D173).
   With the split assembly as storage and copies landing in place (D182),
   the backward call of one layer at d = 512 held 2.625, 2.312 and 2.156
-  layers beside its arguments over 2, 4 and 8 memory devices in tinygrad's
+  layers beside its arguments over 2, 4 and 8 software devices in tinygrad's
   order, 3.625, 3.312 and 3.156 by number alone, and 1.812, 1.531 and
   1.391 in this order, as much as with each buffer of its own, against the
   bound of 1.875, 1.562 and 1.406 (`rune jit › fully sharded`). Ordering
@@ -5964,12 +5960,12 @@ and an initial value is added after it (D260).
   and 4 in tinygrad's order and hold 458,864, 491,632 and 557,168; their
   plain gradients 2,228,336 and 4,391,024 for k = 2 and 4, and 1,441,904
   and 2,031,728; 8 remat'd blocks 622,704 and 589,936. The order
-  interleaves devices, so a data-parallel step over 16 memory devices
-  makes 1411 `Submit` steps where tinygrad's makes 84; preferring, among
-  each kind of ready kernel, one on the last kernel's device made 1016, and
-  raised four of rune's five `fully sharded` cases over their bounds.
-  Grouping a device's work at link instead keeps the bounds but lengthens a
-  GPU-faithful critical path 8 times under rig's one point per submission.
+  interleaves devices, so a data-parallel step over 16 software devices
+  makes 1018 `Submit` steps; preferring, among each kind of ready kernel,
+  one on the last kernel's device raised four of rune's five `fully
+  sharded` cases over their bounds. Grouping a device's work at link instead
+  keeps the bounds but lengthens a GPU-faithful critical path under rig's
+  one point per submission.
   On a GPU, the launches of one device's work the order groups are
   unmeasured on fudge.
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`):
@@ -5999,7 +5995,7 @@ and an initial value is added after it (D260).
   is the last reader of the partial and makes the slot's storage; the sum of
   the piece before it only frees. Run first, the copy held three slots
   beside the partial: the backward call of one layer at d = 512 held 1.938,
-  1.594 and 1.422 layers over 2, 4 and 8 memory devices, and 1.812, 1.531
+  1.594 and 1.422 layers over 2, 4 and 8 software devices, and 1.812, 1.531
   and 1.391 in this order, against the bound of 1.875, 1.562 and 1.406.
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`):
   `create_schedule › order by storage › a kernel that only frees runs before
@@ -6543,7 +6539,7 @@ field (D12), and `of_program` and `Tiny_elf.t` went with it.
 - **Reason:** (b): rune's compiled programs over several devices
   (`Pieces.split`) put every device's kernels in one graph, where one device's
   scan of its tile numbered its ranges in the other order: a cumulative sum
-  over an axis cut across 2, 4, 8 and 16 memory devices made 5, 7, 8 and 7
+  over an axis cut across 2, 4, 8 and 16 software devices made 5, 7, 8 and 7
   programs, and makes 5, 7, 7 and 7, against rune's promise that they do not
   grow with the devices (D170).
 - **Pinned by:** the Codegen suite: `programs are kept › kernels share a
@@ -6686,7 +6682,7 @@ D199 fused independent calls of one domain into one kernel. A launch of bodies (
     by where their buffers lay; 128 and 256 MiB evicted every row;
   - the read costs about 0.25 ms a sample on fudge, 0.07-0.26 s a search.
 - **Pinned by:** the Tolk_engine suite's `timing › a time with a scrub
-  reads it before the run` (the host, a memory device, and CUDA, NV and AMD
+  reads it before the run` (the host, a software device, and CUDA, NV and AMD
   where present); rig's tests of `Rig.cache_bytes`. Whether the read leaves
   the cache cold is the timing above: on a GPU other processes share, a
   warm sample is not reliably warm, so no test times it. A bench row of a searched program would flap with the

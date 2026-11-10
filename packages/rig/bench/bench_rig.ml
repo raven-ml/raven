@@ -401,7 +401,7 @@ let large_bytes = 4 * mib
 
 let memory () =
   incr opened;
-  Result.get_ok (Rig.memory_device (strf "memory:%d" !opened))
+  Result.get_ok (Rig.software (strf "memory:%d" !opened))
 
 let host n = B.create Rig.host n
 
@@ -430,7 +430,7 @@ let written d n =
   Rig.Point.wait p;
   bs
 
-(* Host memory that two memory devices wrote through borrows, each write
+(* Host memory that two software devices wrote through borrows, each write
    reached. *)
 let written_twice () =
   let b = host 8 in
@@ -459,8 +459,8 @@ let buffer_rows =
             B.wait (Array.unsafe_get bs i) Rig.Read_write
           done);
       row "wait-written-2-devices" written_twice (fun b -> B.wait b Rig.Read);
-      (* A view of 64 MiB a memory device holds, read by the host directly: the
-         view paces no collection. *)
+      (* A view of 64 MiB a software device holds, read by the host directly:
+         the view paces no collection. *)
       Thumper.bench_with_setup
         ~metrics:Thumper.Metric.[ wall_time; alloc_words; major_collections ]
         ~setup:(fun () -> B.create (memory ()) (64 * mib))
@@ -679,14 +679,14 @@ let drain_rows =
       allocation "allocate-4K/closed-devices-1024" (closed_devices 1024);
     ]
 
-(* An open of a memory device, one submit, and its close: a closed device's
+(* An open of a software device, one submit, and its close: a closed device's
    slot goes to the next open, so a run makes as many opens as it likes at
    one cost. *)
 let device_rows =
   Thumper.group "device"
     [
       Thumper.bench "open-close-memory" (fun () ->
-          let d = Result.get_ok (Rig.memory_device "bench:open-close") in
+          let d = Result.get_ok (Rig.software "bench:open-close") in
           ignore (submit (Sub.take (Sub.make d [||])));
           Rig.close d);
     ]

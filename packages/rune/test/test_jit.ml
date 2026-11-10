@@ -1340,7 +1340,7 @@ let memory_t =
         (Rig.Buffer.offset b))
     ~equal:Rig.Buffer.overlaps
 
-(* A step on a memory device over a donated pool, a weight placed there, host
+(* A step on a software device over a donated pool, a weight placed there, host
    values placed for each call, which share their memory, and a host constant
    the step places itself: once a first call has compiled it and uploaded the
    constant, a call copies nothing onto the device, and the pool is written in
@@ -1400,7 +1400,7 @@ let test_placed_calls () =
     eager := e
   done
 
-(* A set of the host and a memory device: a program over it computes on the
+(* A set of the host and a software device: a program over it computes on the
    host. *)
 module Pair = (val Nx.devices [ Rig.host; Nx_support.memory 3 ])
 
@@ -1422,7 +1422,7 @@ let test_constant_result () =
   equal bits_t (bits (v [| 0.5; -2. |])) (bits d)
 
 (* A set no kernel library computes on, as a GPU set is outside a compiler:
-   a memory device and a device that does not run on the host. *)
+   a software device and a device that does not run on the host. *)
 let off = Nx_array_support.off_host ()
 
 module Bare = (val Nx.devices [ Nx_support.memory 3; off ])
@@ -1518,7 +1518,7 @@ let test_evaluated_memory () =
   let rigs =
     List.init 2 (fun k ->
         Result.get_ok
-          (Rig.memory_device (Printf.sprintf "rune-evaluated-%d" k)))
+          (Rig.software (Printf.sprintf "rune-evaluated-%d" k)))
   in
   let module S = (val Nx.devices rigs) in
   let n = 65536 in
@@ -1577,7 +1577,7 @@ let test_in_place ~checked () =
   let rigs =
     List.init 2 (fun k ->
         Result.get_ok
-          (Rig.memory_device (Printf.sprintf "rune-in-place-%d" k)))
+          (Rig.software (Printf.sprintf "rune-in-place-%d" k)))
   in
   let module S = (val Nx.devices rigs) in
   let n = 65536 in
@@ -1659,7 +1659,7 @@ module Cut2 =
   (val Nx.devices
          (List.init 2 (fun k ->
               Result.get_ok
-                (Rig.memory_device (Printf.sprintf "rune-donating-%d" k)))))
+                (Rig.software (Printf.sprintf "rune-donating-%d" k)))))
 
 let donating_case =
   let open Gen in
@@ -2026,7 +2026,7 @@ let law_first_lowering c =
   equal bits_t expected got;
   equal ~msg:"lowerings" int (if once then 1 else 2) lowered
 
-(* A memory device that counts the eager kernels it runs. *)
+(* A software device that counts the eager kernels it runs. *)
 
 module C = Nx_support.Counting
 module Count = (val Nx.devices ~kernels:(module C) [ Nx_support.memory 0 ])
@@ -5317,7 +5317,7 @@ let sharded ~n ~d ~layers ~batch =
   let ds =
     List.init n (fun k ->
         let name = Printf.sprintf "rune-sharded-%d-%d" !trainings k in
-        Result.get_ok (Rig.memory_device name))
+        Result.get_ok (Rig.software name))
   in
   let module S = (val Nx.devices ds) in
   let fill i k =

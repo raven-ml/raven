@@ -12,7 +12,7 @@
    as a device of its own machine.
 
    Here the program starts itself a second time as its agent, which serves a
-   memory device "M" on the loopback, so the job needs no second machine. *)
+   software device "M" on the loopback, so the job needs no second machine. *)
 
 open Rig
 
@@ -33,7 +33,7 @@ let int32s l = Bigarray.(Array1.of_array int32 c_layout (Array.of_list l))
 let agent () =
   let a = Result.get_ok (Rig_remote.listen ~key "127.0.0.1" 0) in
   Printf.printf "%d\n%!" (Rig_remote.port a);
-  let open_ () = Result.map (fun d -> [ d ]) (memory_device "M") in
+  let open_ () = Result.map (fun d -> [ d ]) (software "M") in
   match Rig_remote.serve a [ ("M", open_) ] with
   | Ok () -> ()
   | Error why ->

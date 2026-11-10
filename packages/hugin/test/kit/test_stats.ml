@@ -17,15 +17,15 @@ let ints = array int
 let host t = Nx.to_array t
 let f64 shape a = Nx.create Nx.float64 shape a
 
-(* A set of one memory device, computed by nx.cpu as the host is. *)
-module Memory = (val Nx.devices [ Result.get_ok (Rig.memory_device "m0") ])
+(* A set of one software device, computed by nx.cpu as the host is. *)
+module Memory = (val Nx.devices [ Result.get_ok (Rig.software "m0") ])
 
-(* Two memory devices, over which data is cut along its first axis. *)
+(* Two software devices, over which data is cut along its first axis. *)
 module Two =
   (val Nx.devices
          [
-           Result.get_ok (Rig.memory_device "m1");
-           Result.get_ok (Rig.memory_device "m2");
+           Result.get_ok (Rig.software "m1");
+           Result.get_ok (Rig.software "m2");
          ])
 
 let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal

@@ -57,7 +57,8 @@ let target d =
 let renderer d =
   match Device.renderer (target d) with Ok r -> r | Error why -> failwith why
 
-(* Whether [d] runs copy parts: a GPU with a copy engine, or a memory device. *)
+(* Whether [d] runs copy parts: a GPU with a copy engine, or a software
+   device. *)
 let copies d =
   match vendor d with
   | Some ("CUDA" | "AMD" | "NV") -> true
@@ -700,8 +701,7 @@ let note_start b (l : located) =
             (phase buf align) align p
       | Bound _ -> ())
 
-(* The launch of the compiled program [prg] that [call] makes on [d]. A host
-   program runs on its device's host. *)
+(* The launch of the compiled program [prg] that [call] makes on [d]. *)
 let launch b call prg d =
   let info = program_info prg and k = kernel_of prg in
   let kname = Ops.function_name k in
@@ -709,8 +709,7 @@ let launch b call prg d =
   if kind <> info.target.device then
     fail b.fn "%s runs no %s program" (Rig.name d) info.target.device;
   let host = kind = "CPU" in
-  let on = if host then Rig.host_of d else d in
-  let dev = device_index b on in
+  let dev = device_index b d in
   let image = image b dev (binary prg) in
   let slot_of p = match Ops.arg p with Ops.Param p -> p.slot | _ -> -1 in
   (* Its parameters, in slot order, the order the program takes them, as
@@ -783,7 +782,7 @@ let launch b call prg d =
     let e = Realize.estimate_uop call in
     { Ops.ops = passed e.ops; lds = passed e.lds; mem = passed e.mem }
   in
-  b.kernels <- { device = on; name = kname; call; estimates } :: b.kernels;
+  b.kernels <- { device = d; name = kname; call; estimates } :: b.kernels;
   add_part b p
     (Launch
        {

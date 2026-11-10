@@ -13,7 +13,7 @@
    thread a real SGD state through the step — the state is a structure over
    the model's ([Vega.sgd_ptree model]) whose leaves are copies like the
    parameters — and the split trajectory must match the single-device one.
-   Runs on two memory devices of one set, which nx.cpu computes; no pretrained
+   Runs on two software devices of one set, which nx.cpu computes; no pretrained
    weights involved. Every description is made where it is used, at the set
    its values lie on. *)
 
@@ -23,7 +23,7 @@ open Kaun
 module Two =
   (val Nx.devices
          (List.map
-            (fun n -> Result.get_ok (Rig.memory_device n))
+            (fun n -> Result.get_ok (Rig.software n))
             [ "kaun-dp-0"; "kaun-dp-1" ]))
 
 let batch = 8

@@ -102,7 +102,7 @@ module S4 = (val Nx.devices [ m 0; m 1; m 2; m 3 ])
 
 let mesh4 = Nx.Mesh.v S4.v [ ("a", 2); ("b", 2) ]
 
-(* Placements over four memory devices of a value of rank [rank]: a split, a
+(* Placements over four software devices of a value of rank [rank]: a split, a
    mesh cutting one or two axes, and a cut over the minor mesh axis, whose
    major axis holds copies. *)
 let placement_of rank =

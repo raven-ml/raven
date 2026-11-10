@@ -142,7 +142,7 @@ type device = {
   key : int;
       (** The uid of its driver's key, of rig's io key for an io device, and
           [-1] for the host. *)
-  memory_device : bool;  (** Whether it is a memory device. *)
+  software : bool;  (** Whether it is a software device. *)
   capability : Rig_edge.capability option;
       (** What compiled code needs of it. *)
   counters : (string * int) list;

@@ -31,3 +31,11 @@ let fixture ~dir f =
     else file machine
   in
   In_channel.with_open_bin path In_channel.input_all
+
+(* From 1: a fixture's padding is zero. *)
+let made = Atomic.make 1
+
+let fresh o =
+  let b = Bytes.of_string o in
+  Bytes.set_int32_le b 9 (Int32.of_int (Atomic.fetch_and_add made 1));
+  Bytes.unsafe_to_string b

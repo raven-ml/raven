@@ -8,14 +8,14 @@ times, and reads the point each submit returns.
 dune exec packages/rig/examples/04-timelines/main.exe
 ```
 
-It runs on a memory device, a device with a timeline of its own whose memory
+It runs on a software device, a device with a timeline of its own whose memory
 lies in the host's memory. Its work is done when `submit` returns, so every
 point is reached by then. A GPU's work runs after `submit` returns, with the
 same calls, as in [01-add](../01-add/).
 
 ## What You'll Learn
 
-- Memory devices: `Rig.memory_device`
+- Software devices: `Rig.software`
 - Submissions made once and submitted many times, each submit with a run:
   `Submission.make`, `Submission.take`, `submit`
 - Parts ordered by the memory they share
@@ -27,7 +27,7 @@ same calls, as in [01-add](../01-add/).
 
 | Function                  | Purpose                                         |
 | ------------------------- | ----------------------------------------------- |
-| `memory_device name`      | A device with a timeline, in host memory        |
+| `software name`           | A device with a timeline, in host memory        |
 | `Submission.make d parts` | Work for `d`, made once                         |
 | `Submission.take s`       | Storage of `s`'s parameters, a submit at a time |
 | `submit r ~buffers`       | Run `r`'s submission once and return its point  |

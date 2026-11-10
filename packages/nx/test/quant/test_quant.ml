@@ -7,7 +7,7 @@
    value at its dtype, as the format's reference decodes it from its bytes,
    apply is the product with the dequantised weight within the error of a
    float32 sum, take is the gather of the dequantised weight, and a weight
-   placed anywhere over memory devices gives the host's values, products
+   placed anywhere over software devices gives the host's values, products
    within their bound and the same on every run, lying where the interface
    says, or raises where a cut along k does not hold whole blocks. *)
 
@@ -1084,7 +1084,7 @@ let errors =
 
 (* Placement *)
 
-(* Four memory devices, computed by nx.cpu. *)
+(* Four software devices, computed by nx.cpu. *)
 module Mem = (val Nx.devices (List.init 4 Nx_support.memory))
 
 let mesh = Nx.Mesh.v Mem.v [ ("a", 2); ("b", 2) ]
@@ -1248,7 +1248,7 @@ let placement_law ((_, w), c) =
       equal ~msg:"apply's second run" (array int64) (product_bits y)
         (product_bits (run ()))
 
-(* Work. Kernels that count the positions their maps compute, over four memory
+(* Work. Kernels that count the positions their maps compute, over four software
    devices and over one, show where a weight decodes: each device all of [k], or
    its own blocks alone. *)
 

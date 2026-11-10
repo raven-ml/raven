@@ -267,7 +267,7 @@ let test_scan_raise () =
         got)
     [ ("eager", scan); ("jit", Rune.jit' scan) ]
 
-(* A memory device's set, where a check raises at a later wait. *)
+(* A software device's set, where a check raises at a later wait. *)
 module Away = (val Nx.devices [ Nx_support.memory 1 ])
 
 (* A failing iterate raises at the call on the host, which keeps the offers made

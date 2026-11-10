@@ -26,7 +26,7 @@ open Kaun
 module Two =
   (val Nx.devices
          (List.map
-            (fun n -> Result.get_ok (Rig.memory_device n))
+            (fun n -> Result.get_ok (Rig.software n))
             [ "kaun-jit-state-0"; "kaun-jit-state-1" ]))
 
 let batch = 8

@@ -698,11 +698,11 @@ let test_of_io () =
       equal bool false (Rig.Claim.exclusive c b))
 
 (* A closed io device makes no buffer of a region, also once a later device
-   took its slot and its record may be gone. A memory device's last value,
+   took its slot and its record may be gone. A software device's last value,
    which the io device's slot keeps and the Polled device after it starts
    from, shows that the slot passed from one to the next. *)
 let test_of_io_closed () =
-  let m = Result.get_ok (Rig.memory_device "io:before-closed") in
+  let m = Result.get_ok (Rig.software "io:before-closed") in
   let p =
     Rig.submit (Rig.Submission.take (Rig.Submission.make m [||]))
       ~buffers:[||]

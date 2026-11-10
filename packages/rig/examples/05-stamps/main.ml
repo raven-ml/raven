@@ -12,7 +12,7 @@
    point named, and the host's reads and writes ([Buffer.read],
    [Buffer.write]) are ordered the same way.
 
-   Two memory devices stand for two GPUs here. Their work is done when
+   Two software devices stand for two GPUs here. Their work is done when
    [submit] returns, so no wait ever blocks. The stamps and the order are
    those of devices whose work runs later. *)
 
@@ -30,8 +30,8 @@ let show name b =
         (ints a))
 
 let () =
-  let a = Result.get_ok (memory_device "A") in
-  let b = Result.get_ok (memory_device "B") in
+  let a = Result.get_ok (software "A") in
+  let b = Result.get_ok (software "B") in
   Printf.printf "A's work reaches B's memory once borrowed: %b\n" (reaches a b);
 
   (* The host writes [src] on A once every use of [src] is done, so that no

@@ -10,7 +10,7 @@
    device and one of its values, and it is reached once the work of every
    value up to it has completed.
 
-   A memory device has a timeline of its own and its memory lies in the
+   A software device has a timeline of its own and its memory lies in the
    host's memory. Its work runs before [submit] returns. A GPU's work runs
    after [submit] returns, and the calls are the same. *)
 
@@ -24,7 +24,7 @@ let ints a =
 (* A bigarray of [l]. *)
 let int32s l = Bigarray.(Array1.of_array int32 c_layout (Array.of_list l))
 
-(* The host reads a memory device's buffer, whose memory it addresses, once
+(* The host reads a software device's buffer, whose memory it addresses, once
    the work that wrote it is done. *)
 let show name b =
   Buffer.read b Bigarray.int32 (fun a ->
@@ -35,7 +35,7 @@ let timeline d =
     (signaled d)
 
 let () =
-  let d = Result.get_ok (memory_device "M") in
+  let d = Result.get_ok (software "M") in
   timeline d;
 
   (* Three buffers of the device. The host fills the first by a copy. *)

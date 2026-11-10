@@ -16,7 +16,7 @@ writes, so a program never names an event or a fence.
   that no other path reaches: GPUs with no vendor driver installed, RDMA
   NICs across machines, remote machines, CUDA graphs and Metal ICBs where
   launch cost bounds a step, counters and traces to see where time goes,
-  VF/XGMI, fork, the memory device. Removing one removes the users who
+  VF/XGMI, fork, the software device. Removing one removes the users who
   need it, and reach is rig's purpose, so it is never traded for lines.
   Callers on main say nothing about users outside the repository, and a
   path not yet run on hardware needs a run.

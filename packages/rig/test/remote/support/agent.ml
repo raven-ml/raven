@@ -28,7 +28,7 @@
    each, so the dials in flight at once can be counted. It exits once the
    relay has passed every byte both ways, the agent's close included.
 
-   It serves eleven kinds. "MEM" is two memory devices. "POLLED" is two Polled
+   It serves eleven kinds. "MEM" is two software devices. "POLLED" is two Polled
    devices, which launch Polled's host functions. "TIGHT" is a Polled device
    whose queue holds 3 parts. "DISK" is the io device of files. "HIDDEN" is a
    Polled device whose [Device] memory the host does not address. "MAPLESS"
@@ -89,7 +89,7 @@ let crowding () =
 let opened = ref []
 
 let mem () =
-  let open_ i = Result.get_ok (Rig.memory_device (Printf.sprintf "MEM:%d" i)) in
+  let open_ i = Result.get_ok (Rig.software (Printf.sprintf "MEM:%d" i)) in
   match (open_ 0, open_ 1) with
   | a, b ->
       opened := a :: b :: !opened;

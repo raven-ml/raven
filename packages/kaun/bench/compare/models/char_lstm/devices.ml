@@ -4,11 +4,12 @@
   ---------------------------------------------------------------------------*)
 
 (* The devices a command line names, as in ["cuda:0,metal,cpu"]: [cpu] (the
-   host), [cpu:k] (a memory device that stands for another device on the host),
-   and [metal], [cuda], [nv] or [amd] with an index, 0 when left out, in any
-   case. Metal and CUDA open through the vendor's runtime, NV and AMD through
-   the kernel driver. nx computes eagerly on the host and its memory devices; a
-   set of GPUs computes under [Rune.jit] alone. *)
+   host), [cpu:k] (a software device, which runs on the host's cores with a
+   timeline of its own), and [metal], [cuda], [nv] or [amd] with an index, 0
+   when left out, in any case. Metal and CUDA open through the vendor's
+   runtime, NV and AMD through the kernel driver. nx computes eagerly on the
+   host and its software devices; a set of GPUs computes under [Rune.jit]
+   alone. *)
 
 let gpu = function
   | "metal" -> Some (fun i -> Rig.open_ (Rig_metal.gpu i))
@@ -32,7 +33,7 @@ let device name =
   | [ "cpu" ] -> Ok Rig.host
   | [ "cpu"; k ] -> (
       match index k with
-      | Some k when k >= 1 -> Rig.memory_device (Printf.sprintf "CPU:%d" k)
+      | Some k when k >= 1 -> Rig.software (Printf.sprintf "CPU:%d" k)
       | _ -> unknown)
   | [ vendor ] -> ( match gpu vendor with Some get -> get 0 | None -> unknown)
   | [ vendor; i ] -> (

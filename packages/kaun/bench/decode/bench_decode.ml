@@ -422,7 +422,7 @@ let quant () =
   in
   (("host", host) :: metal ()) @ gpu
 
-(* A tensor-parallel feed-forward over four memory devices, compiled: the
+(* A tensor-parallel feed-forward over four software devices, compiled: the
    gate and up projections cut along their outputs, the down projection
    along its inputs and asked for the devices' terms, closed once after the
    residual add, at width 2880 and 720 hidden features for 8 tokens. Its
@@ -434,7 +434,7 @@ let parallel =
       (val Nx.devices
              (List.init 4 (fun k ->
                   get_ok
-                    (Rig.memory_device (Printf.sprintf "kaun-bench-tp-%d" k)))))
+                    (Rig.software (Printf.sprintf "kaun-bench-tp-%d" k)))))
     in
     let linear at inputs outputs =
       let w = own at (Nx.full Nx.float32 [| inputs; outputs |] (1. /. 64.)) in
@@ -456,7 +456,7 @@ let parallel =
   [ { name = "tensor-parallel feed-forward over 4 memory devices"; setup } ]
 
 (* A mixture-of-experts layer as gpt-oss's, top 2 of 4 experts at width 256
-   for 4 tokens, row parallel over four memory devices: each expert's first
+   for 4 tokens, row parallel over four software devices: each expert's first
    projection cut along its outputs and its second along its inputs, asked
    for the devices' terms, which the top-2 combine keeps and one closing
    after the residual add closes. Closing each expert's rows instead moves
@@ -471,7 +471,7 @@ let experts_layer =
       (val Nx.devices
              (List.init 4 (fun k ->
                   get_ok
-                    (Rig.memory_device (Printf.sprintf "kaun-bench-moe-%d" k)))))
+                    (Rig.software (Printf.sprintf "kaun-bench-moe-%d" k)))))
     in
     let weight at s = own at (Nx.full Nx.float32 s (1. /. 64.)) in
     let first = weight (D.split ~axis:2) [| experts; width; 2 * width |]

@@ -97,7 +97,7 @@ val raw : ('v, 's, 'd) Nx.t -> int array * string array
 (** {1:placements Placements} *)
 
 module Two : Nx.Devices
-(** [Two] is a set of the memory devices 0 and 1, computed by
+(** [Two] is a set of the software devices 0 and 1, computed by
     {!Nx_support.Counting}. *)
 
 (** The type for where an operand lies. *)

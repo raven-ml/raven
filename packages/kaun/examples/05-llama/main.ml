@@ -10,7 +10,7 @@
    key-value caches. Without [--devices] it decodes eagerly on the host.
    [--devices LIST] places the model on a device, tensor-parallel over several,
    and compiles the decode step for them with [Rune.jit], which is how a GPU
-   computes; [--temperature 0] decodes greedily. Over several devices, memory
+   computes; [--temperature 0] decodes greedily. Over several devices, software
    devices ([cpu:k]) among them, the step compiles as over one.
 
    [--gguf FILE] reads the configuration and the weights from a GGUF checkpoint

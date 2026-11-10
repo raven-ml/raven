@@ -476,7 +476,7 @@ let hosts () =
   is_error (Rig.Image.load h "code")
 
 let local_pair () =
-  let open_ n = Result.get_ok (Rig.memory_device n) in
+  let open_ n = Result.get_ok (Rig.software n) in
   (open_ "LOCAL-MEM:0", open_ "LOCAL-MEM:1")
 
 let devices () =
@@ -525,7 +525,7 @@ let reaches kinds =
         List.mapi
           (fun i _ ->
             let name = Printf.sprintf "REACH-%s:%d" kind i in
-            if kind = "MEM" then Result.get_ok (Rig.memory_device name)
+            if kind = "MEM" then Result.get_ok (Rig.software name)
             else fst (Rig_support.Polled.open_ name))
           ds
       in

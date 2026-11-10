@@ -11,7 +11,7 @@ open Nx_support
 module A = Nx_array
 module M = Nx_array.Move
 
-(* Three memory devices, whose memory is the host's, and a device whose
+(* Three software devices, whose memory is the host's, and a device whose
    memory the host does not address: its windows copy through
    Rig.Buffer.copy. *)
 let m d = if d = 3 then Nx_array_support.off_host () else Nx_support.memory d
@@ -436,7 +436,7 @@ let refusals =
           invalid ~by:"Nx.place" (fun () -> Nx.place (S4.split ~axis:1) x));
       test "a lost device raises when placed from, and its facts answer"
         (fun () ->
-          let d = Result.get_ok (Rig.memory_device "nx-place-lost") in
+          let d = Result.get_ok (Rig.software "nx-place-lost") in
           let module L = (val Nx.devices [ d ]) in
           let x = Nx.Repr.of_array L.v (A.create d A.Dtype.Float32 [| 4 |]) in
           Rig.close d;
@@ -448,8 +448,8 @@ let refusals =
             (Format.asprintf "%a" Nx.Placement.pp (Nx.placement x)));
       test "every kind of operation raises a lost device, and a live one answers"
         (fun () ->
-          let d = Result.get_ok (Rig.memory_device "nx-place-lost-ops") in
-          let e = Result.get_ok (Rig.memory_device "nx-place-live-ops") in
+          let d = Result.get_ok (Rig.software "nx-place-lost-ops") in
+          let e = Result.get_ok (Rig.software "nx-place-live-ops") in
           let module L = (val Nx.devices [ d ]) in
           let module E = (val Nx.devices [ e ]) in
           let square on =
@@ -593,7 +593,7 @@ let reshape_case =
 
 let reshape_case = Gen.with_pp pp_reshape reshape_case
 
-(* Four memory devices, computed by nx.cpu: a reshape of a strided window
+(* Four software devices, computed by nx.cpu: a reshape of a strided window
    copies it. *)
 module Mem = (val Nx.devices (List.init 4 Nx_support.memory))
 
@@ -739,7 +739,7 @@ let reshapes =
    whatever its extent: a batch of one lies, folds and raises where a batch
    of two does. *)
 
-(* Two memory devices, computed by nx.cpu. *)
+(* Two software devices, computed by nx.cpu. *)
 module Mem2 = (val Nx.devices (List.init 2 Nx_support.memory))
 
 (* The host value of [s] counting from [0] in C order. *)

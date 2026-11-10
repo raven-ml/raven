@@ -359,7 +359,7 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     whole on every device is read by a view of each device's window.
 
     On a set whose devices are of several architectures ({!Rig.arch}), such
-    as a GPU beside a memory device under a compiler, each step that computes
+    as a GPU beside a software device under a compiler, each step that computes
     windows held by several devices, an operation's results, a fold's
     partials or a part of its closing, computes each such window on the
     devices of the architecture of the first device in the placement's order
@@ -5407,7 +5407,7 @@ module Repr : sig
   val read : ('v, 's, 'd) t -> (('v, 's) Nx_array.t -> 'a) -> 'a
   (** [read x f] is [f a], [a] an array on the host of [x]'s elements for the
       extent of [f]: over [x]'s own memory where [x] lies on one device whose
-      memory the host addresses (the host, a memory device, Metal), and
+      memory the host addresses (the host, a software device, Metal), and
       otherwise a copy on the host, made for any placement, including a value
       cut across devices. It is a {{!section-reads}read}: it waits for [x]'s
       set and raises a failed check pending on it. [a] may be strided or

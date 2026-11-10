@@ -679,7 +679,7 @@ let test_footprint_donated () =
   equal ~msg:"its first call" int 0
     (first_call one f (fun () -> Nx.donate (x ())))
 
-(* Over two memory devices, a gather of each layer's weights inside each
+(* Over two software devices, a gather of each layer's weights inside each
    layer, under remats or not: a first call fits each device's budget at
    what it holds plus its footprint, and is refused a byte below it, on
    either device. Under remats each device holds less, the gathered layers
@@ -815,7 +815,7 @@ let test_capture () =
   equal bits_t (bits (g false)) (bits (g true))
 
 (* A set no kernel library computes on, as a GPU set is outside a compiler:
-   a memory device and a device that does not run on the host. *)
+   a software device and a device that does not run on the host. *)
 module Bare =
   (val Nx.devices [ Nx_support.memory 3; Nx_array_support.off_host () ])
 

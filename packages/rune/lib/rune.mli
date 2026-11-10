@@ -1443,7 +1443,7 @@ val jit :
     device what it computes there and returns it once that work is done. With
     [RUNE_JIT_DEBUG] set, the first call prints each move between devices, the
     function that makes it and its bytes. A set may hold devices of several
-    targets, such as a GPU beside a memory device ({!Rig.memory_device}): each
+    targets, such as a GPU beside a software device ({!Rig.software}): each
     device runs kernels compiled for its own target. Where devices of several
     architectures ({!Rig.arch}) hold one window of a value, as of one whole on
     each device, the devices of the architecture of the first device holding
@@ -1717,7 +1717,7 @@ val jit :
     rule applied to the computed columns. For [b]
     the dtype's bits of precision, [R] is the rounds of rotations: [S] sweeps of
     [k - 1] rounds for an even [k] or [k] for an odd one, at most [S] on this
-    process's host and its memory devices, and [0] for [k < 2], where
+    process's host and its software devices, and [0] for [k < 2], where
     [S = ⌈b ⌈log₂ k⌉ / 10⌉] for {!Nx.eigh} and
     [S = ⌈b (⌈log₂ k⌉ + 1) / 10⌉] for {!Nx.svd}:
 
@@ -1746,9 +1746,9 @@ val jit :
     factor is the transpose of [Lower]'s, bit for bit, and {!Nx.qr}'s [r] has a
     diagonal of either sign. A matrix that holds NaN or an infinity, or whose
     iteration does not converge, makes only its own results NaN. On this
-    process's host and its memory devices, {!Nx.eigh} and {!Nx.eigvalsh} stop
+    process's host and its software devices, {!Nx.eigh} and {!Nx.eigvalsh} stop
     a matrix's sweeps once the next would rotate nothing, and {!Nx.svd} and
-    {!Nx.svdvals} once a sweep has changed nothing; over several memory
+    {!Nx.svdvals} once a sweep has changed nothing; over several software
     devices one device's sweeps then run after another's. On any other
     device, a GPU or another machine's, every sweep runs, giving the same
     values, and the call does not wait for them.

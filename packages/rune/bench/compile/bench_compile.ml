@@ -394,14 +394,14 @@ let wide_sum () =
           (input ~n:1_000_000 0. 1.)))
 
 (* A data-parallel step of a two-layer perceptron, its batch of 64 cut across
-   16 memory devices of one set and its weights whole on each: the loss's
+   16 software devices of one set and its weights whole on each: the loss's
    gradient sums across the devices before the update. Each device computes
    its own kernels, which compile once, for the first device: the first
    call's cost past one device's is each device's share of the trace. *)
 let data_parallel () =
   let devices =
     List.init 16 (fun i ->
-        Result.get_ok (Rig.memory_device (Printf.sprintf "bench-dp-%d" i)))
+        Result.get_ok (Rig.software (Printf.sprintf "bench-dp-%d" i)))
   in
   let module S = (val Nx.devices devices) in
   let make shape seed =
@@ -428,7 +428,7 @@ let data_parallel () =
           step (x, w)))
 
 (* A fold, a running maximum's positions, a gather and an [Add] scatter over
-   an axis of 64 rows cut across 16 memory devices of one set. Each computes
+   an axis of 64 rows cut across 16 software devices of one set. Each computes
    by partials, each device over its tile, whose start each device's call
    binds, as it binds the start where a device stores its part of a closing:
    each device's kernels are the first device's programs. *)
@@ -436,7 +436,7 @@ let partials () =
   let devices =
     List.init 16 (fun i ->
         let name = Printf.sprintf "bench-partials-%d" i in
-        Result.get_ok (Rig.memory_device name))
+        Result.get_ok (Rig.software name))
   in
   let module S = (val Nx.devices devices) in
   let cut = Nx.Placement.split ~axis:0 S.v and on = Nx.Placement.on S.v in

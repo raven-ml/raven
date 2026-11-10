@@ -11,7 +11,7 @@
 open Windtrap
 module P = Nx.Ptree
 
-let device = Result.get_ok (Rig.memory_device "ppx_ptree")
+let device = Result.get_ok (Rig.software "ppx_ptree")
 
 module S = (val Nx.devices [ device ])
 

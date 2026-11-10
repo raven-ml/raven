@@ -27,14 +27,14 @@ The pages write a point as `A:1`, for value 1 of device *A*. The preamble of
 `rig.mli` defines timelines, values and points, and its Timelines section says
 when a driver commits the work it holds.
 
-The examples below use [memory devices](../lib/rig.mli) (`Rig.memory_device`),
+The examples below use [software devices](../lib/rig.mli) (`Rig.software`),
 whose memory is the host's and whose work runs before `Rig.submit` returns.
 They number their work as a GPU does, so the examples run on any machine and
 show the same stamps a GPU's work would leave.
 
 ## Correct ordering
 
-Two memory devices stand for two GPUs here. The helpers make a copy part and
+Two software devices stand for two GPUs here. The helpers make a copy part and
 submit it:
 
 ```ocaml
@@ -48,8 +48,8 @@ let submit_parts d parts =
 
 ```ocaml
 # let () =
-    let a = Result.get_ok (memory_device "A") in
-    let b = Result.get_ok (memory_device "B") in
+    let a = Result.get_ok (software "A") in
+    let b = Result.get_ok (software "B") in
     let src = Buffer.of_string "hello, world" in
     let x = Buffer.create a 12 and y = Buffer.create b 12 in
     ignore (submit_parts a [| copy (Option.get (Buffer.borrow a src)) x |]);
@@ -65,7 +65,7 @@ This program prints `hello, world` on any devices that run these copies.
 buffer on *B* over `x`'s allocation, so by the Order section's rule 3 it
 follows `A:1`. The host's read of `y` follows `y`'s last write, `B:1`, by
 rule 5, and so, since follows is transitive, `A:1`, though the program names
-no point. Memory devices borrow any host memory, so `Buffer.borrow` returns
+no point. Software devices borrow any host memory, so `Buffer.borrow` returns
 `Some` here.
 
 ## Incorrect ordering
@@ -81,7 +81,7 @@ let read_too_soon d src =
   a.{0}
 ```
 
-On a memory device this returns the copied integer, because the copy ran
+On a software device this returns the copied integer, because the copy ran
 before `submit` returned. On a GPU, nothing guarantees that the read sees the
 copy, which came after the export. `Buffer.read x Bigarray.int32 (fun a ->
 a.{0})` in its place is correct: it follows `x`'s last write.

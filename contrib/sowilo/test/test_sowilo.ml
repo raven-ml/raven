@@ -887,14 +887,14 @@ let test_pipeline () =
 
 (* ───── Device Sets ───── *)
 
-(* A set of one memory device, computed by nx.cpu as the host is: an operation
+(* A set of one software device, computed by nx.cpu as the host is: an operation
    on an image there computes there, its kernels and constants beside the image,
    and gives the host's elements. *)
-let memory n = Result.get_ok (Rig.memory_device n)
+let memory n = Result.get_ok (Rig.software n)
 
 module Memory = (val Nx.devices [ memory "m0" ])
 
-(* Two memory devices, over which a batch is cut: a kernel made at the image's
+(* Two software devices, over which a batch is cut: a kernel made at the image's
    placement itself, and not whole on each device, would be cut with it. *)
 module Two = (val Nx.devices [ memory "m1"; memory "m2" ])
 

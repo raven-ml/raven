@@ -762,12 +762,12 @@ let printing =
         |})
 
 (* Device sets: a model lies where its run's values do, and refuses a site or a
-   factor on another set. [elsewhere] lies on a set of two memory devices,
+   factor on another set. [elsewhere] lies on a set of two software devices,
    which compute on the host. *)
 module Pair =
   (val Nx.devices
          (List.init 2 (fun k ->
-              Result.get_ok (Rig.memory_device (Printf.sprintf "norn-m%d" k)))))
+              Result.get_ok (Rig.software (Printf.sprintf "norn-m%d" k)))))
 
 let elsewhere v = Nx.place Pair.on (f64 v)
 

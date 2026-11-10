@@ -62,11 +62,10 @@ All notable changes to this project will be documented in this file.
 - `Rig.Buffer.aligned` answers for memory named by a handle alone, such as
   another machine's, up to the alignment its allocation starts on, where it
   raised; `Tolk_engine.run` raised on every such buffer.
-- Dropped buffers of memory the host addresses (a memory device's, Metal's,
+- Dropped buffers of memory the host addresses (a software device's, Metal's,
   `Pinned`) bring a major cycle only after half the host's
   last-level cache (4 MiB at least), as host buffers do, unless their device
-  nears its budget. A small heap ran one every few calls: a data-parallel
-  step over 16 memory devices runs a quarter fewer instructions a call.
+  nears its budget. A small heap ran one every few calls.
 - Every Metal launch's parameters start on 256 bytes in the parameter
   arena; `setBytes`, whose copy Apple places at no stated alignment, is no
   longer used. tolk's packed kernels are no longer bound read-only or
@@ -429,6 +428,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` over software devices (`Rig.software`) runs each device's
+  kernels on that device, where they ran on the host: a profile records
+  them as the device's work.
 - `Rune.jit` compiles a `Nx.top_k` of many rows, with keys of at most 32 bits
   and a small `k`, to one reduction per entry kept where it ran the sorting
   network: gpt-oss's router at 512 tokens, 4 of 32 experts, takes 4 kernels
@@ -586,7 +588,7 @@ All notable changes to this project will be documented in this file.
   composition took 2.5 ms, and gpt-oss's decode attention 15 us where it
   took 315.
 - `Rune.jit ~beam` (and `BEAM`, `JITBEAM`) compiles a program over devices
-  of which none is named by its kind, such as memory devices or `CUDA:1`
+  of which none is named by its kind, such as software devices or `CUDA:1`
   alone. It evaluated such a program uncompiled, with the right values and
   no error. A search now times its candidates on a device of the kernel's
   target.
@@ -623,7 +625,7 @@ All notable changes to this project will be documented in this file.
   scatter reads (`Nx.sum`, `Nx.cumsum`, `Nx.take_along_axis`, `Nx.cummax`'s
   derivatives) compiles as many programs whatever the number of devices: each
   device stored its part of the closed result at its own offset, a program per
-  offset or alignment. `Nx.take_along_axis` over 8 memory devices made 22
+  offset or alignment. `Nx.take_along_axis` over 8 software devices made 22
   programs, and makes 10.
 - Compiled loops copy less: a nested loop's or switch's result is stored
   into its carry once, cycle or not, and a switch's branches share their
@@ -631,9 +633,8 @@ All notable changes to this project will be documented in this file.
 - A compiled call over several devices runs as one program, its storage
   planned into an arena per device made for the call: on a GPU it holds at
   most what the plan places at once, where it held every value it computed
-  until the GPU caught up. A data-parallel step over 16 memory devices loads
-  11 images where it loaded 656, and its warm call allocates 23 015 words
-  where it allocated 153 580.
+  until the GPU caught up. A data-parallel step over 16 software devices
+  links the code of 11 kernels where it linked 656.
 - A compiled scatter of few updates into a donated array on a GPU, such as
   a decode step's `Nx.set` of one row into its key cache, runs no more
   threads than its updates need: 8.2 µs a call on CUDA, from 12.2 µs.
@@ -711,14 +712,14 @@ All notable changes to this project will be documented in this file.
   moves of the step, with eager's placements and bits. Such programs were
   evaluated, trip by trip.
 - `Rune.jit` compiles programs over devices of several targets, such as a GPU
-  beside a memory device: each device runs kernels compiled for its own
+  beside a software device: each device runs kernels compiled for its own
   target. Such programs were evaluated, and on a set without kernels raised.
 - A compiled call over several devices given a donated argument lends each
   device's piece of it to the result's piece there, so an update of state cut
   across devices writes in place; such calls were evaluated. A program over
   several devices holds no memory between calls: what it computes on each
   device is made per call and returned once that work is done.
-- A compiled program over the memory devices of one set compiles kernels
+- A compiled program over the software devices of one set compiles kernels
   that do not grow with the number of devices, where the cut is even: each
   piece is stored into a view of its run of storage, wherever the run lies. A
   data-parallel step over 16 devices made 73 programs and makes 13.
@@ -1234,6 +1235,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Tolk_engine.link` launches a software device's kernels (`Rig.software`)
+  on that device, where it launched them on the host, so `Tolk_engine.time`
+  times them there.
 - A loop's calls run as one launch only where the trip then holds no more
   memory at its peak, so a remat in a compiled loop's step keeps its saving;
   a NUTS transition's loops run as many launches as before.
@@ -2804,6 +2808,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- A set of the host and software devices (`Rig.software`) is of one
+  architecture: a window several of them hold is computed on each, where the
+  first computed it and copied it to the others.
 - Add TIFF to `Nx_io`: `load_tiff` reads a file's IFDs, `Nx_io.Tiff.tags`
   each one's tags as `Nx_io.Tiff.value`s and `Nx_io.Tiff.samples` its
   raster, from classic TIFF or BigTIFF, strips or tiles, compressed with

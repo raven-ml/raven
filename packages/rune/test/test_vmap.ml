@@ -1228,7 +1228,7 @@ let batch_of_one =
   |> with_pp (fun ppf (l, f) -> Format.fprintf ppf "%a, f = %d" pp_lane l f)
 
 (* A set no kernel library computes on, as a GPU set is outside a compiler:
-   a memory device and a device that does not run on the host. *)
+   a software device and a device that does not run on the host. *)
 module Bare =
   (val Nx.devices [ Nx_support.memory 3; Nx_array_support.off_host () ])
 

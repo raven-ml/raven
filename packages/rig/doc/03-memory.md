@@ -53,7 +53,7 @@ allocate far more than its budget over its life:
 ```ocaml
 # open Rig;;
 # let () =
-    let d = Result.get_ok (memory_device "M") in
+    let d = Result.get_ok (software "M") in
     let kib = 1024 in
     set_budget d (1024 * kib);
     for _ = 1 to 100 do

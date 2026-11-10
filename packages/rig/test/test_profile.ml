@@ -18,7 +18,7 @@ let timeout = 60.
 (* Whether an exception is [d]'s loss. *)
 let lost_of d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 
-let memory name = Result.get_ok (Rig.memory_device name)
+let software name = Result.get_ok (Rig.software name)
 let empty d = Sub.make d [||]
 
 (* The spans of [events], as [(lane, name)]. *)
@@ -259,17 +259,31 @@ let test_empty_queue_name () =
 (* No span: of a submission with no part, of one submitted while no profile is
    taken, and of a device whose driver cannot time its work. *)
 let test_no_span () =
-  let d, _ = P.open_ "profile:none" and m = memory "profile:none-memory" in
+  let d, _ = P.open_ "profile:none"
+  and u, _ = P.open_ ~timed:false "profile:none-untimed" in
   let arg = B.create Rig.host (1 lsl 16) in
   let earlier = submit_parts ~buffers:[| arg |] d [| bump |] in
   let (), events =
     Prof.take (fun () ->
         Rig.Point.wait (submit (empty d));
         Rig.Point.wait earlier;
-        Rig.Point.wait (submit_parts ~buffers:[| arg |] m [| bump |]))
+        Rig.Point.wait (submit_parts ~buffers:[| arg |] u [| bump |]))
   in
   equal ~msg:"Polled" int 0 (List.length (device_spans d events));
-  equal ~msg:"the memory device" int 0 (List.length (device_spans m events))
+  equal ~msg:"untimed" int 0 (List.length (device_spans u events))
+
+(* A software device times its work. *)
+let test_software_span () =
+  let d = software "profile:software" in
+  let arg = B.create Rig.host (1 lsl 16) in
+  let (), events =
+    Prof.take (fun () ->
+        Rig.Point.wait (submit_parts ~buffers:[| arg |] d [| bump |]))
+  in
+  equal
+    (list (pair string string))
+    [ ("COMPUTE:0", "fills") ]
+    (List.map (fun (lane, name, _, _) -> (lane, name)) (device_spans d events))
 
 (* A submission's span goes to every profile taken when it was submitted. *)
 let test_span_profiles () =
@@ -623,7 +637,7 @@ let copy_points events =
   List.filter_map (function Prof.Copy c -> Some c.point | _ -> None) events
 
 let test_copy () =
-  let d = memory "profile:copy" in
+  let d = software "profile:copy" in
   let src = B.create Rig.host 100 and dst = B.create d 100 in
   let (), events = Prof.take (fun () -> B.copy ~src ~dst) in
   equal
@@ -728,22 +742,23 @@ let copy_times events =
 
 (* Each copy part records a copy between the devices its bytes' memory counts
    in, a borrow's naming the host, with their count and its submission's point.
-   On a device that times no work, it runs from the submit to the wait that saw
-   it done. *)
+   On a device that times no work, it runs from the submit to the take's read
+   of it done. *)
 let test_copy_parts () =
-  let m = memory "profile:copy-parts" in
+  let m, _ = P.open_ ~timed:false "profile:copy-parts" in
   let buffers =
     [| borrowed m 64; B.create m 64; B.create m 32; B.create m 32 |]
   in
   let before = Prof.now () in
-  let stop = ref 0 and submitted = ref None in
+  let asked = ref 0 and submitted = ref None in
   let (), events =
     Prof.take (fun () ->
         let p = submit ~buffers (Sub.make m copy_parts) in
+        asked := Prof.now ();
         submitted := Some p;
-        Rig.Point.wait p;
-        stop := Prof.now ())
+        Rig.Point.wait p)
   in
+  let after = Prof.now () in
   equal ~msg:"the submission's point"
     (list (option point))
     [ !submitted; !submitted ] (copy_points events);
@@ -755,10 +770,11 @@ let test_copy_parts () =
     ]
     (copies events);
   List.iter
-    (fun (start, stop') ->
+    (fun (start, stop) ->
       at_least ~msg:"the start" int ~than:before start;
-      at_least ~msg:"the stop" int ~than:start stop';
-      at_most ~msg:"the stop" int ~than:!stop stop')
+      at_most ~msg:"the start" int ~than:!asked start;
+      at_least ~msg:"the stop" int ~than:start stop;
+      at_most ~msg:"the stop" int ~than:after stop)
     (copy_times events)
 
 (* On a device that times its work, each copy part has its submission's span's
@@ -789,7 +805,7 @@ let test_timed_copy_parts () =
 
 (* No copy of a submission submitted while no profile is taken. *)
 let test_untaken_copy_parts () =
-  let m = memory "profile:untaken-copy-parts" in
+  let m = software "profile:untaken-copy-parts" in
   let buffers =
     [| borrowed m 64; B.create m 64; B.create m 32; B.create m 32 |]
   in
@@ -815,7 +831,7 @@ let test_untaken () =
    profile is taken, and one taken on another domain, each in time order
    among rig's own spans. *)
 let test_record () =
-  let d = memory "profile:record" in
+  let d = software "profile:record" in
   let counters start =
     Prof.Counters
       { device = d; name = "kernel"; start; stop = start + 1; counters = [] }
@@ -856,7 +872,7 @@ let test_record () =
 (* Chrome traces *)
 
 let test_chrome () =
-  let d = memory "profile:chrome" in
+  let d = software "profile:chrome" in
   let polled, _ = P.open_ "profile:chrome-code" in
   let image =
     require_ok ~pp:Format.pp_print_string (Rig.Image.load polled "code:8")
@@ -973,6 +989,7 @@ let tests =
           "no span of an empty submission, an untimed one or an untimeable \
            device"
           test_no_span;
+        test "a software device times its work" test_software_span;
         test "a span goes to the profiles taken at its submit"
           test_span_profiles;
         test "a take raises the loss of a device whose span it did not read"

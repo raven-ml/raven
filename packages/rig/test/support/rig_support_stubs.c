@@ -262,6 +262,7 @@ struct polled_run {
   intnat grows; /* the most parts the queue grows to hold; 0 for none */
   uint64_t most_rows; /* the most copy rows a submission holds; 0 for any */
   int may_block;     /* a full queue's submit waits instead of [room] */
+  int untimed;       /* its work leaves its time pairs [0] */
   int fail;          /* the next submit fails */
   int fail_commit;   /* the next commit of uncommitted values fails */
   int fail_settle;   /* the next settle fails */
@@ -477,6 +478,16 @@ value rig_test_polled_grows(value v_p, value v_most) {
   struct polled *p = Polled_val(v_p);
   lock(&p->mu);
   p->run->grows = Long_val(v_most);
+  unlock(&p->mu);
+  return Val_unit;
+}
+
+/* Makes the device's work leave its time pairs [0], as a driver's that cannot
+   time it. */
+value rig_test_polled_untimed(value v_p) {
+  struct polled *p = Polled_val(v_p);
+  lock(&p->mu);
+  p->run->untimed = 1;
   unlock(&p->mu);
   return Val_unit;
 }
@@ -1128,7 +1139,7 @@ static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
   s->waits = ws;
   s->parts = ps;
   s->blocks = bs;
-  s->times = times;
+  s->times = r->untimed ? NULL : times;
   if (nwaits > 0) memcpy(s->waits, waits, (size_t)nwaits * sizeof *waits);
   if (nparts > 0) memcpy(s->parts, parts, (size_t)nparts * sizeof *parts);
   r->held += nparts;

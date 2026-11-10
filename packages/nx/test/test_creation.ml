@@ -708,7 +708,7 @@ let like =
 (* Without kernels *)
 
 (* A set no kernel library computes on, as a GPU set is outside a compiler:
-   a memory device and a device that does not run on the host. *)
+   a software device and a device that does not run on the host. *)
 let off = Nx_array_support.off_host ()
 
 module Bare = (val Nx.devices [ m 3; off ])
@@ -719,7 +719,7 @@ let bare_placements =
   [
     ("on", Bare.on);
     ("split ~axis:0", Bare.split ~axis:0);
-    ("memory device", Nx.Placement.device Bare.v (m 3));
+    ("software device", Nx.Placement.device Bare.v (m 3));
     ("off the host", Nx.Placement.device Bare.v off);
   ]
 

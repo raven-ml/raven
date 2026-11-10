@@ -177,7 +177,7 @@ let escapes =
    runs once, at its close; a device already lost keeps its reason; the
    host's memory goes on; an open afterwards answers the reason without
    calling its opener, also of a name that was open, an io open too, and a
-   memory device's; and a second fail changes nothing. *)
+   software device's; and a second fail changes nothing. *)
 let test_fail =
   child_case
     [
@@ -221,8 +221,8 @@ let test_fail =
     | Ok _ -> "Ok"
     | Error why -> "Error " ^ why
   in
-  let memory_device name =
-    match Rig.memory_device name with
+  let software name =
+    match Rig.software name with
     | Ok _ -> "Ok"
     | Error why -> "Error " ^ why
   in
@@ -239,7 +239,7 @@ let test_fail =
     open_ "fail:new";
     open_ "fail:device";
     open_io "fail:io";
-    memory_device "fail:memory";
+    software "fail:memory";
     Printf.sprintf "opener calls: %d" !calls;
     failure ();
   ]

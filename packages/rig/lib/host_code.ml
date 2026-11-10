@@ -295,6 +295,54 @@ let link_exn obj =
   | 0 -> { Def.code; functions = functions o ~base }
   | e -> err_protect size (-e)
 
-let link obj = match link_exn obj with c -> Ok c | exception Refused e -> Error e
+(* Sharing
+
+   The links of objects, by object, while a link is reachable. Linked code
+   holds no variables, since [check] refuses writable sections, so one link
+   serves every image of its object, on any device. An object's entry goes
+   once its link is collected, and its next load links it again. It takes no
+   lock, so a driver call that reads or adds an entry holds none, and a
+   finaliser that runs inside [share] or [forget] only makes its exchange
+   fail and run again. *)
+module Objects = Map.Make (String)
+
+let links : Def.linked Weak.t Objects.t Atomic.t = Atomic.make Objects.empty
+let find obj m = Option.bind (Objects.find_opt obj m) (fun w -> Weak.get w 0)
+
+let rec forget obj w =
+  let m = Atomic.get links in
+  match Objects.find_opt obj m with
+  | Some w' when w' == w ->
+      if not (Atomic.compare_and_set links m (Objects.remove obj m)) then
+        forget obj w
+  | Some _ | None -> ()
+
+(* Called once, before the next exchange that adds a link: set only by rig's
+   tests. *)
+let exchanging : (int -> unit) option Atomic.t = Atomic.make None
+let on_exchange f = Atomic.set exchanging (Some f)
+
+(* [c], which [w] holds, or the link another load made of [obj] first. *)
+let rec share obj w (c : Def.linked) =
+  let m = Atomic.get links in
+  match find obj m with
+  | Some c' -> c'
+  | None ->
+      Option.iter (fun f -> f (base c.code)) (Atomic.exchange exchanging None);
+      if Atomic.compare_and_set links m (Objects.add obj w m) then c
+      else share obj w c
+
+let link obj =
+  match find obj (Atomic.get links) with
+  | Some c -> Ok c
+  | None -> (
+      match link_exn obj with
+      | exception Refused e -> Error e
+      | c ->
+          let w = Weak.create 1 in
+          Weak.set w 0 (Some c);
+          (* [forget] runs once [c] is collected and [w] emptied. *)
+          Gc.finalise_last (fun () -> forget obj w) c;
+          Ok (share obj w c))
 
 let entry (c : Def.linked) f = List.assoc_opt f c.functions

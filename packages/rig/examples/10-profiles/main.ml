@@ -30,7 +30,7 @@ let show = function
   | Load _ | Counters _ | Trace _ | Unmeasured _ -> ()
 
 let () =
-  let d = Result.get_ok (memory_device "M") in
+  let d = Result.get_ok (software "M") in
   let work () =
     let src = Buffer.create host (4 * mib) in
     let dst = Profile.span "allocate" (fun () -> Buffer.create d (4 * mib)) in

@@ -21,7 +21,7 @@ let value =
 let values = array value
 
 (* The recorded programs name tinygrad's devices: its CPU is also CPU:0, PYTHON
-   is a memory device, and its disk is named after a directory. *)
+   is a software device, and its disk is named after a directory. *)
 let named =
   ("CPU:0", host)
   :: ("PYTHON", List.assoc "CPU:3" (Run.devices ()))
@@ -67,7 +67,7 @@ let targets =
           equal target
             (host_target (isa ^ system) (cpu ^ ",tune=native"))
             (Engine.target host));
-      test "a memory device compiles as the host" (fun () ->
+      test "a software device compiles as the host" (fun () ->
           equal target (Engine.target host) (Engine.target (device "CPU:1")));
       test "the disk runs no program" (fun () ->
           raises_match Exn.invalid_arg (fun () -> Engine.target Rig_disk.device));
@@ -2401,7 +2401,8 @@ let custom_kernel_closes_in_loop ?(devices = devices) ~closure d () =
     (List.map (Run.values Float32) [ List.nth given 0; List.nth given 1 ])
 
 (* A copy of 16 floats of the host stored into rows 2 and 3 of an 8 by 8 grid
-   on a memory device writes those rows, and leaves the others as they were. *)
+   on a software device writes those rows, and leaves the others as they
+   were. *)
 let copies_into_rows () =
   let dst = Ops.new_buffer "CPU:1" 64 Float32 in
   let src = Ops.new_buffer "CPU" 16 Float32 in
@@ -3172,8 +3173,9 @@ let copies_in_order () =
   equal values (bytes 7) (Run.values Uint8 out_buffer)
 
 (* A loop whose trip [r] copies row [r] of a buffer of [src_device] into row
-   [r] of one of [dst_device], whose ends move with the trips: between memory devices a copy
-   part, and between a GPU and the host a move of the program. *)
+   [r] of one of [dst_device], whose ends move with the trips: between
+   software devices a copy part, and between a GPU and the host a move of the
+   program. *)
 let copies_moving_rows ?(devices = devices) src_device dst_device () =
   let n = 4 in
   let bytes k =
@@ -6238,7 +6240,7 @@ let storage_per_run () =
 (* Storage made per run, against a model of each buffer's first and last use
 
    A schedule of calls [x <- y + z] over values of [per_run_size] floats on a
-   memory device of its own, some of them two calls in a loop of two trips:
+   software device of its own, some of them two calls in a loop of two trips:
    value 0 is parameter 1, the others buffers the schedule plans per run
    ({!Memory.memory_plan_rewrite}), and a last call writes parameter 0 from
    the newest value and value 0. A run holds its storage whole: a budget below
@@ -6250,7 +6252,7 @@ let per_run_size = 64
 let per_run_bytes = 4 * per_run_size
 
 let per_run_device =
-  lazy (Result.get_ok (Rig.memory_device "per-run-model"))
+  lazy (Result.get_ok (Rig.software "per-run-model"))
 
 let per_run_add =
   lazy
@@ -6457,7 +6459,7 @@ let per_run_model =
 
 (* Per run and linked
 
-   A schedule of calls [x <- y + z] over two memory devices, each value on the
+   A schedule of calls [x <- y + z] over two software devices, each value on the
    device its step draws, an operand of the other device copied over first: a
    chain where each call reads the value before it, a diamond where it reads
    older ones. Planned per run, it gives the same work linked either way: the
@@ -6465,7 +6467,7 @@ let per_run_model =
    per device and binary. *)
 
 let per_run_other =
-  lazy (Result.get_ok (Rig.memory_device "per-run-other"))
+  lazy (Result.get_ok (Rig.software "per-run-other"))
 
 let two_devices name =
   if name = "PER_RUN" then Lazy.force per_run_device
@@ -6520,7 +6522,7 @@ let linked_and_run storage linear =
         | _ -> None)
       linking
   in
-  (* A kernel of a memory device runs on its host ({!Engine.link}). *)
+  (* The kernels each device ran. *)
   let work =
     List.filter_map
       (function
@@ -6742,18 +6744,18 @@ let runs =
           equal (list string) [] (run_of_fills 9));
       test "at DEBUG=2, a run prints a timed line per kernel of the host"
         (reports_each_kernel "CPU");
-      test "at DEBUG=2, a run prints a timed line per kernel of a memory device"
+      test
+        "at DEBUG=2, a run prints a timed line per kernel of a software device"
         (reports_each_kernel "CPU:1");
     ]
 
 (* Timing *)
 
-(* The devices a time runs on: the host, a memory device, whose kernels run on
-   the host, and each GPU. *)
+(* The devices a time runs on: the host, a software device and each GPU. *)
 let timed_on =
   [
     ("the host", "CPU");
-    ("a memory device", "CPU:1");
+    ("a software device", "CPU:1");
     ("Metal", "METAL");
     ("CUDA", "CUDA");
     ("NV", "NV");

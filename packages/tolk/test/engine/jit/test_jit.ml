@@ -292,8 +292,8 @@ let test_symbolic_jit =
 let cases = test_jit @ test_jit_cases @ test_jit_footguns @ test_symbolic_jit
 
 (* One case of each kind runs by default: kernels on the host, an input that a
-   kernel writes, held buffers without inputs, copies to a memory device, a held
-   constant of Python's data, and a variable. Compiling the others takes
+   kernel writes, held buffers without inputs, copies to a software device, a
+   held constant of Python's data, and a variable. Compiling the others takes
    seconds. *)
 let by_default =
   [ "add"; "assign"; "implicit_io"; "transfers"; "held_constant"; "plus1" ]
@@ -341,7 +341,7 @@ let recorded =
 
 (* Replays of recorded captures
 
-   A case replays on the host and memory devices, PYTHON being the host, with
+   A case replays on the host and software devices, PYTHON being the host, with
    each variable over the values tinygrad's tests replay it with, the capture's
    binding first. *)
 
@@ -396,7 +396,7 @@ let replays =
 (* Drawn captures
 
    A drawn capture is a schedule of calls over buffers of four or seventy
-   floats, each on the host or on the memory device CPU:1, with compiled
+   floats, each on the host or on the software device CPU:1, with compiled
    kernels. Its first buffers are inputs and the next constants, which the
    capture holds; no call writes either. Each call writes a buffer it does not
    read, new or written by an earlier call: a kernel on one device adds one to a

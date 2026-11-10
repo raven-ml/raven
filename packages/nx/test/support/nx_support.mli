@@ -6,9 +6,9 @@
 (** Devices, kernel libraries and the witnesses nx's suites share. *)
 
 val memory : int -> Rig.t
-(** [memory k] is the memory device [k], [0 <= k < 4], named ["m<k>"]: its
+(** [memory k] is the software device [k], [0 <= k < 4], named ["m<k>"]: its
     memory is the host's and its work runs in this process
-    ({!Rig.memory_device}). *)
+    ({!Rig.software}). *)
 
 (** nx.cpu, counting each call of its entries, named ["nx.test"]. *)
 module Counting : sig

@@ -351,7 +351,7 @@ let test_dropout_train_statistics () =
   is_true ~msg:"inverted scaling preserves the mean"
     (Float.abs (mean -. 1.0) < 0.05)
 
-(* A sum over four memory devices, a product over a cut axis asked for as
+(* A sum over four software devices, a product over a cut axis asked for as
    one: dropout scales each term by one mask, whole on each device, so it
    keeps the sum, which closes to dropout of the closed value under one
    key. The terms are integers and the mask scales by two, so the two agree
@@ -360,7 +360,7 @@ module Four =
   (val Nx.devices
          (List.init 4 (fun k ->
               Result.get_ok
-                (Rig.memory_device (Printf.sprintf "kaun-dropout-%d" k)))))
+                (Rig.software (Printf.sprintf "kaun-dropout-%d" k)))))
 
 let test_dropout_of_a_sum () =
   let a =
@@ -498,7 +498,7 @@ let test_dropout_scoped_jit_is_keyed () =
 (* Off the host, keyed dropout compiles: its sampler's check is the call's,
    which raises at a later wait, and its mask is eager's. *)
 module Away =
-  (val Nx.devices [ Result.get_ok (Rig.memory_device "kaun-dropout") ])
+  (val Nx.devices [ Result.get_ok (Rig.software "kaun-dropout") ])
 
 let test_dropout_jit_off_host () =
   let x = vec (Array.init 64 (fun i -> float_of_int (i + 1))) in

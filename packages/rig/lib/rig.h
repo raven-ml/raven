@@ -158,4 +158,12 @@ RIG_EXTERN void rig_buffers_release(int n, const value *buffers);
    caml_rig_counted, of type unit -> int. */
 RIG_EXTERN int rig_counted(void);
 
+/* caml_rig_software_new, of type nativeint -> nativeint, is a new software
+   device's C state over the word at its argument, as Rig.software makes it:
+   a struct whose first field points to the device's struct rig_driver
+   (rig_edge.h). caml_rig_software_drop, of type nativeint -> unit, frees
+   such a state, which no call of its driver may then use. */
+RIG_EXTERN value caml_rig_software_new(value word);
+RIG_EXTERN value caml_rig_software_drop(value state);
+
 #endif

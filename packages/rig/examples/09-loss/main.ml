@@ -11,7 +11,7 @@
    values, and other devices go on. Opening its name again makes a new
    device.
 
-   Here a fill that returns a failure ([fail.c]) loses a memory device, as a
+   Here a fill that returns a failure ([fail.c]) loses a software device, as a
    GPU is lost when its driver reports a fault. *)
 
 open Rig
@@ -24,8 +24,8 @@ let lost f =
   | exception (Lost _ as e) -> print_endline (Printexc.to_string e)
 
 let () =
-  let a = Result.get_ok (memory_device "A") in
-  let b = Result.get_ok (memory_device "B") in
+  let a = Result.get_ok (software "A") in
+  let b = Result.get_ok (software "B") in
 
   (* A writes [x], so [x]'s stamps name A. *)
   let src = Buffer.create a 16 and x = Buffer.create a 16 in
@@ -53,7 +53,7 @@ let () =
   Format.printf "B goes on: %a@." Point.pp p;
 
   (* The name opens again as a new device, with a timeline of its own. *)
-  let a' = Result.get_ok (memory_device "A") in
+  let a' = Result.get_ok (software "A") in
   Printf.printf "%s again: the same device: %b, submitted %d, lost: %b\n"
     (name a') (equal a a') (submitted a')
     (Option.is_some (Rig.lost a'))

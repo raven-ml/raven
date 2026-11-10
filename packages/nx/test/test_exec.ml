@@ -1318,7 +1318,7 @@ let test_every_placement () =
     (Nx.add
        (Nx.zeros D.Float32 [| 2; 2 |])
        (Nx.full D.Float32 [| 2; 2 |] (-1.5)));
-  every_function "one memory device" (Nx.place Count.on host);
+  every_function "one software device" (Nx.place Count.on host);
   every_function "two, whole on each" (Nx.place Count2.on host);
   every_function "two, split" (Nx.place (Count2.split ~axis:0) host);
   every_function "a creation at a split"

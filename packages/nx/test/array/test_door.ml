@@ -653,7 +653,7 @@ let test_wait_lost () =
    raises its loss, though the written operand, a host wrapper of the same
    bytes, has none. *)
 let test_identical_owners () =
-  let d = Result.get_ok (Rig.memory_device "array:identical-owners") in
+  let d = Result.get_ok (Rig.software "array:identical-owners") in
   let h = Option.get (B.borrow Rig.host (B.create d 12)) in
   let w = B.of_bigarray (B.read h Bigarray.char Fun.id) in
   Rig.close d;

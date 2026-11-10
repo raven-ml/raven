@@ -159,7 +159,7 @@ let no_waits = { Rig_edge.stores = false; hosts = false }
 
 let make_device ~index ~name ~machine ~kind ~c ~arch ~bus ~queues ~copy_engine
     ~completion ~waits ~hang_ms ~maps_host ~alignment ~cache_bytes
-    ~host_addresses ~mapped_memory ~word ~word_region ~key ~memory_device ~fault
+    ~host_addresses ~mapped_memory ~word ~word_region ~key ~software ~fault
     ~capability ~counters ~budget ~opened =
   let live =
     {
@@ -205,7 +205,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~bus ~queues ~copy_engine
     host_addresses;
     mapped_memory;
     key;
-    memory_device;
+    software;
     capability;
     counters;
     budget;
@@ -236,7 +236,7 @@ let host =
       ~cache_bytes:(host_cache_bytes ()) ~host_addresses:false
       ~mapped_memory:false ~word:(Nativeint.to_int (c_slot_word 0))
       ~word_region:None ~key:(-1)
-      ~memory_device:false
+      ~software:false
       ~fault:[%extension_constructor No_fault]
       ~capability:None ~counters:[] ~budget:max_int ~opened:0
   in
@@ -1195,7 +1195,7 @@ let publish d slot = c_publish d.live.c slot
    Every fact is read before the C record is published: a fault reading one
    leaves nothing made. *)
 let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
-    (h : a) ~index ~opened ~name ~machine ~memory_device =
+    (h : a) ~index ~opened ~name ~machine ~software =
   let m : (a, D.region, D.image) dm = (module D) in
   let rid : D.region Type.Id.t = Type.Id.make () in
   let f = D.facts h in
@@ -1259,7 +1259,7 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       ~alignment:f.alignment ~cache_bytes:f.cache_bytes
       ~host_addresses:f.host_addresses ~mapped_memory:f.mapped ~word
       ~word_region:(Some (Region { m; h; rid; r = Some f.word; mapped = Never }))
-      ~key:(Type.Id.uid D.key) ~memory_device
+      ~key:(Type.Id.uid D.key) ~software
       ~fault:[%extension_constructor D.Fault]
       ~capability:(Some f.capability) ~counters:f.counters ~budget:f.budget
       ~opened
@@ -1267,9 +1267,9 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
   register d;
   d
 
-let open_driver (type a) ?(memory_device = false)
+let open_driver (type a) ?(software = false)
     (module D : Rig_edge.Driver with type t = a) ~machine ~name make =
-  let fn = if memory_device then "memory_device" else "open_" in
+  let fn = if software then "software" else "open_" in
   open_named ~fn ~machine ~name ~key:(Type.Id.uid D.key)
   @@ fun ~index ~slot ~opened ~name:full ->
   (* Stops the handle once, marking it first: made before the handle, so that
@@ -1293,7 +1293,7 @@ let open_driver (type a) ?(memory_device = false)
          first. *)
       match
         driver_device (module D) h ~index ~opened ~name:full ~machine
-          ~memory_device
+          ~software
       with
       | d ->
           publish d slot;
@@ -1327,7 +1327,7 @@ let open_io ~machine name =
       ~waits:no_waits ~hang_ms:None ~maps_host:false ~alignment:1
       ~cache_bytes:None ~host_addresses:false ~mapped_memory:false ~word:0
       ~word_region:None
-      ~key:io_key ~memory_device:false ~fault:[%extension_constructor No_fault]
+      ~key:io_key ~software:false ~fault:[%extension_constructor No_fault]
       ~capability:None ~counters:[] ~budget:max_int ~opened
   in
   register d;
@@ -1426,4 +1426,4 @@ let reaches d d' =
      | Host, Host -> false
      | Host, Driver _ -> d'.host_addresses
      | Driver _, Host -> d.maps_host
-     | Driver _, Driver _ -> (d'.memory_device && d.maps_host) || peer d d'
+     | Driver _, Driver _ -> (d'.software && d.maps_host) || peer d d'

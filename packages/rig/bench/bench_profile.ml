@@ -11,13 +11,13 @@ let record n () =
         P.span "work" ignore
       done)
 
-(* [n] submits of a copy on a memory device while a profile is taken: each
+(* [n] submits of a copy on a software device while a profile is taken: each
    leaves the profile an entry, which [take] reads before it returns. The
    device opens in the process that measures, since a fork loses it. *)
 let submits n =
   let copy =
     lazy
-      (let d = Result.get_ok (Rig.memory_device "bench:profile") in
+      (let d = Result.get_ok (Rig.software "bench:profile") in
        let src = Rig.Buffer.create d 64 and dst = Rig.Buffer.create d 64 in
        Rig.Submission.(
          take (make d [| copy ~src:(Buffer src) ~dst:(Buffer dst) |])))

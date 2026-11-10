@@ -462,7 +462,7 @@ val staging : device -> memory -> memory option
 
 val paged : alloc -> bool
 (** [paged a] is whether the host pages [a]'s memory. It pages its own and a
-    memory device's. *)
+    software device's. *)
 
 val prefetch : device -> memory -> at:int -> len:int -> unit
 (** [prefetch d m ~at ~len] asks the io library of [m] to read [len] bytes of

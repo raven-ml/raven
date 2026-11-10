@@ -29,7 +29,7 @@
   (= %{system} macosx))
  (libraries kaun rune nx rig rig.metal windtrap))
 
-; Over four memory devices.
+; Over four software devices.
 
 (test
  (name test_decode_devices)

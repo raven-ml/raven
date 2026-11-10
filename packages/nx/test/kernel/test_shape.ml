@@ -974,13 +974,13 @@ let test_full_precision () =
 
 (* Libraries *)
 
-(* nx.cpu computes on the memory the host reaches: its own and a memory
+(* nx.cpu computes on the memory the host reaches: its own and a software
    device's, and not an io device's. *)
 let devices =
-  let memory = Result.get_ok (Rig.memory_device "nx-kernel-computes-on") in
+  let memory = Result.get_ok (Rig.software "nx-kernel-computes-on") in
   [
     ("the host", Rig.host, true);
-    ("a memory device", memory, true);
+    ("a software device", memory, true);
     ("an io device", Nx_array_support.io_device (), false);
   ]
 

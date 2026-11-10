@@ -37,14 +37,14 @@ a further library, such as `rig.amd.amdgpu` for AMD GPUs under Linux's
 `Point.wait` returns once the work up to that point has completed. The
 preamble of [`rig.mli`](../lib/rig.mli) defines timelines, values and points.
 
-This program copies one integer on a [memory device](../lib/rig.mli),
+This program copies one integer on a [software device](../lib/rig.mli),
 whose memory is the host's and whose work runs before `submit` returns. It
 runs on any machine.
 
 ```ocaml
 # open Rig;;
 # let () =
-    let device = Result.get_ok (memory_device "example") in
+    let device = Result.get_ok (software "example") in
     let src = Buffer.create device 4 in
     let dst = Buffer.create device 4 in
     Buffer.write src Bigarray.int32 (fun a -> a.{0} <- 42l);
@@ -61,11 +61,11 @@ copied 42
 
 Each call, in order:
 
-- `memory_device "example"` opens the memory device named `"example"`, or
+- `software "example"` opens the software device named `"example"`, or
   returns it if it is open already.
 - `Buffer.create device 4` allocates 4 bytes of the device's memory.
 - `Buffer.write src Bigarray.int32 f` calls `f` on `src`'s bytes as an array
-  the host writes, since the host addresses a memory device's memory, once
+  the host writes, since the host addresses a software device's memory, once
   the work that used them is done.
 - `copy ~src:(Buffer src) ~dst:(Buffer dst)` is one *part* of the work, a
   copy between two buffers that every submit uses. An end may instead be

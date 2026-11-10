@@ -5,7 +5,7 @@ which opens that machine's devices and runs the work the controller submits.
 The controller uses each such device through a proxy, a device of its own
 whose memory is that device's, with the same calls as a device of its own
 machine. This example starts itself again as an agent on the loopback, which
-serves a memory device, and sends bytes there and back.
+serves a software device, and sends bytes there and back.
 
 ```bash
 dune exec packages/rig/examples/14-machines/main.exe

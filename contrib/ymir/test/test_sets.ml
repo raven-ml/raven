@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Ymir off the host: values on a set of two memory devices, which compute on
+(* Ymir off the host: values on a set of two software devices, which compute on
    the host, whole on each device or split between them. A function's results
    and the constants it makes lie where its operands do. *)
 
@@ -13,7 +13,7 @@ open Ymir
 module Pair =
   (val Nx.devices
          (List.init 2 (fun k ->
-              Result.get_ok (Rig.memory_device (Printf.sprintf "ymir-s%d" k)))))
+              Result.get_ok (Rig.software (Printf.sprintf "ymir-s%d" k)))))
 
 let f64 = Nx.float64
 let pp p = Format.asprintf "%a" Nx.Placement.pp p

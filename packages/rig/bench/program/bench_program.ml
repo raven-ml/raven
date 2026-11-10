@@ -358,7 +358,7 @@ let stepping () =
         }
       in
       let share = Result.get_ok (G.load nothing [| host |]) in
-      let d = Result.get_ok (Rig.memory_device (strf "bench-step:%d" pid)) in
+      let d = Result.get_ok (Rig.software (strf "bench-step:%d" pid)) in
       let buffers = [| B.create d 8 |] in
       let fill =
         Sub.fill ~refs:[| Sub.write 0 ~at:0 |] Rig_support.bump ~params:8

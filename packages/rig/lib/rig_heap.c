@@ -236,7 +236,7 @@ static mlsize_t program_bound(mlsize_t live) {
    ([program_bound]) where the room's share is more, since a share of a
    large room could leave gigabytes of garbage in the host's memory. Its
    floor matters for a small heap: on fudge, a data-parallel step over 16
-   memory devices, which drops their results each call, ran a major cycle
+   software devices, which drops their results each call, ran a major cycle
    every three to six calls without it and 31% more instructions a call. It
    is at least a page, since a bound of 0 would mean the heap's, and at least
    the minor heap's bytes for a token the minor heap may hold, whose memory
@@ -603,7 +603,7 @@ static size_t sysctl_bytes(const char *name) {
    macOS, the L3 (hw.l3cachesize) where there is one, as on Intel Macs, else
    the performance cores' L2 (hw.perflevel0.l2cachesize): 12 MiB on the M1
    Max, whose 48 MB system cache macOS does not report. [Rig.cache_bytes]
-   of the host and of a memory device is this value. */
+   of the host and of a software device is this value. */
 static size_t host_cache_bytes(void) {
   size_t most = 0;
 #if defined(__APPLE__)

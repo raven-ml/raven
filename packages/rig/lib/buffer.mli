@@ -104,9 +104,9 @@ val length : t -> int
 
 val host_addresses : device -> bool
 (** [host_addresses d] is whether its machine's host addresses all of [d]'s
-    memory, and [d] has no [Pinned] memory: a machine's host, a memory device,
-    and a driver's device that declares [host_addresses] or that the host of
-    another machine reaches. *)
+    memory, and [d] has no [Pinned] memory: a machine's host, a software
+    device, and a driver's device that declares [host_addresses] or that
+    the host of another machine reaches. *)
 
 val is_borrowed : t -> bool
 (** [is_borrowed b] is {!Rig.Buffer.is_borrowed}[ b]. *)

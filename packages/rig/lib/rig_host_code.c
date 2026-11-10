@@ -3,11 +3,11 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The host's code: its memory, the process's symbols, and the host's
-   driver, which runs the launches of linked code. A failing system call
-   returns its error as a negative integer, -errno or -GetLastError (),
-   which error_message renders. Every stub holds the runtime: none of them
-   blocks. */
+/* The host's code: its memory, the process's symbols, and the two drivers
+   that run linked code, the host's and the software device's. A failing
+   system call returns its error as a negative integer, -errno or
+   -GetLastError (), which error_message renders. Every stub holds the
+   runtime: none of them blocks. */
 
 #define _GNU_SOURCE
 
@@ -39,6 +39,7 @@
 #include <pthread.h>
 #endif
 
+#include "rig.h"
 #include "rig_pool.h"
 #include "rig_stubs.h"
 
@@ -363,20 +364,23 @@ static const struct rig_block *block_of(const struct rig_part *p,
   return (const struct rig_block *)(const void *)(args + p->launch.args.block);
 }
 
-/* The host runs launches with no shared memory over a grid of threads that
-   fits threads_of. */
+/* Whether the launch [p] runs: it has no shared memory, over a grid of
+   threads that fits threads_of. */
+static int runs(const struct rig_part *p, const uint8_t *args) {
+  const struct rig_block *b = block_of(p, args);
+  uint64_t groups;
+  return b->shared == 0 && threads_of(b, &groups) != 0;
+}
+
+/* The host runs launches alone. */
 static int host_room(void *self, int nwaits, const struct rig_part *parts,
                      int n, void *scratch, const uint8_t *args) {
   (void)self;
   (void)nwaits;
   (void)scratch;
-  for (int i = 0; i < n; i++) {
-    const struct rig_part *p = &parts[i];
-    if (p->kind != RIG_LAUNCH) return RIG_NEVER;
-    const struct rig_block *b = block_of(p, args);
-    uint64_t groups;
-    if (b->shared != 0 || threads_of(b, &groups) == 0) return RIG_NEVER;
-  }
+  for (int i = 0; i < n; i++)
+    if (parts[i].kind != RIG_LAUNCH || !runs(&parts[i], args))
+      return RIG_NEVER;
   return RIG_FITS;
 }
 
@@ -420,8 +424,9 @@ static int host_submit(void *self, uint64_t v, const struct rig_wait *waits,
   return RIG_COMMITTED;
 }
 
-/* The work ran at its hand-over: nothing is left to commit. */
-static int host_commit(void *self, uint64_t v, const char **failure) {
+/* The work ran at its hand-over, on the host as on a software device:
+   nothing is left to commit. */
+static int ran_commit(void *self, uint64_t v, const char **failure) {
   (void)self;
   (void)v;
   (void)failure;
@@ -429,11 +434,136 @@ static int host_commit(void *self, uint64_t v, const char **failure) {
 }
 
 static const struct rig_driver host_driver = {host_room, host_submit,
-                                              host_commit, NULL, NULL};
+                                              ran_commit, NULL, NULL};
 
 void *rig_host_state(void) {
   host.driver = &host_driver;
   return &host;
+}
+
+/* The software device
+
+   A software device's memory is host memory from the C library's aligned
+   allocator, and the submitting thread runs its work: its fills, its
+   copies over host addresses and its launches, as the host runs them. Its
+   state is its driver and the address of its word, the word rig gave its
+   open. */
+
+struct software {
+  const struct rig_driver *driver;
+  _Atomic uint64_t *word;
+};
+
+static void *aligned(size_t align, size_t n) {
+#ifdef _WIN32
+  return _aligned_malloc(n, align);
+#else
+  void *p = NULL;
+  return posix_memalign(&p, align, n) == 0 ? p : NULL;
+#endif
+}
+
+static void aligned_free(void *p) {
+#ifdef _WIN32
+  _aligned_free(p);
+#else
+  free(p);
+#endif
+}
+
+/* [v_n] bytes of host memory, on a page from 64 KiB on, or 0. */
+value caml_rig_software_alloc(value v_n) {
+  size_t n = (size_t)Long_val(v_n);
+  void *p = aligned(n >= (1 << 16) ? rig_page_bytes() : 64, n);
+  return Val_long((intnat)p);
+}
+
+value caml_rig_software_free(value v_p) {
+  aligned_free((void *)Long_val(v_p));
+  return Val_unit;
+}
+
+/* A software device runs fills, copies, and the launches the host runs. */
+static int software_room(void *self, int nwaits, const struct rig_part *parts,
+                         int n, void *scratch, const uint8_t *args) {
+  (void)self;
+  (void)nwaits;
+  (void)scratch;
+  for (int i = 0; i < n; i++) {
+    const struct rig_part *p = &parts[i];
+    if (p->kind == RIG_LAUNCH ? !runs(p, args)
+                              : p->kind != RIG_FILL && p->kind != RIG_COPY)
+      return RIG_NEVER;
+  }
+  return RIG_FITS;
+}
+
+/* Runs the copy part [p] over host addresses: a fill sets its row, and a
+   box moves its rows, in one move where both sides' rows are contiguous. */
+static void copy(const struct rig_part *p) {
+  size_t width = (size_t)p->copy.width, rows = (size_t)p->copy.rows;
+  if (width == 0 || rows == 0) return;
+  char *dst = (char *)(uintptr_t)p->copy.dst + p->copy.dst_offset;
+  if (p->copy.fill) {
+    memset(dst, p->copy.byte, width);
+    return;
+  }
+  const char *src = (const char *)(uintptr_t)p->copy.src + p->copy.src_offset;
+  if (p->copy.src_pitch == width && p->copy.dst_pitch == width) {
+    memmove(dst, src, width * rows);
+    return;
+  }
+  for (size_t i = 0; i < rows; i++)
+    memmove(dst + i * p->copy.dst_pitch, src + i * p->copy.src_pitch, width);
+}
+
+/* Runs the parts in order, the fills with no queue context, then makes [v]
+   observable. Its handles are host addresses. A failed fill fails [v]. */
+static int software_submit(void *self, uint64_t v,
+                           const struct rig_wait *waits, int nwaits,
+                           const struct rig_part *parts, int nparts,
+                           void *scratch, uint8_t *args, const uint64_t *slots,
+                           int nslots, uint64_t *times, const char **failure) {
+  (void)waits;
+  (void)nwaits;
+  (void)scratch;
+  (void)nslots;
+  struct software *s = self;
+  int failed = 0;
+  if (times != NULL) times[0] = rig_now_ns();
+  for (int i = 0; i < nparts && !failed; i++) {
+    const struct rig_part *p = &parts[i];
+    if (p->kind == RIG_FILL) failed = rig_fill(NULL, p, args, slots, v) != 0;
+    else if (p->kind == RIG_COPY) copy(p);
+    else launch(p, args, slots);
+  }
+  if (times != NULL) times[1] = rig_now_ns();
+  if (failed) {
+    *failure = "a fill failed";
+    return RIG_FAILED;
+  }
+  atomic_store_explicit(s->word, v, memory_order_release);
+  return RIG_COMMITTED;
+}
+
+static const struct rig_driver software_driver = {software_room,
+                                                  software_submit, ran_commit,
+                                                  NULL, NULL};
+
+/* A new software device's state, whose word lies at [v_word]. */
+value caml_rig_software_new(value v_word) {
+  struct software *s = malloc(sizeof *s);
+  if (s == NULL) caml_raise_out_of_memory();
+  s->driver = &software_driver;
+  s->word = (_Atomic uint64_t *)Nativeint_val(v_word);
+  return caml_copy_nativeint((intnat)s);
+}
+
+/* Frees the state [v_s] at its device's stop, after which rig calls none of
+   its functions. */
+value caml_rig_software_drop(value v_s) {
+  free((void *)Nativeint_val(v_s));
+  return Val_unit;
 }
 
 /* Symbols */

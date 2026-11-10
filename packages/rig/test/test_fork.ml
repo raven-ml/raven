@@ -250,12 +250,12 @@ let test_io_owed () =
   ignore (Sys.opaque_identity !other)
 
 (* A device that takes the slot a closed io device left is a driver's device:
-   a forked child sees it lost. A memory device's last value, which the io
+   a forked child sees it lost. A software device's last value, which the io
    device's slot keeps and the Polled device starts from, shows that the slot
    passed from one to the next. *)
 let test_slot_of_io () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
-  let m = Result.get_ok (Rig.memory_device "fork:before-io") in
+  let m = Result.get_ok (Rig.software "fork:before-io") in
   let p = submit (empty m) in
   Rig.Point.wait p;
   Rig.close m;
@@ -563,7 +563,7 @@ let test_mapped_write () =
         let n = List.length calls in
         let since = List.filteri (fun i _ -> i >= n) (P.log p) in
         let counted = Support.counted () in
-        let own = Result.get_ok (Rig.memory_device "fork:mapped-own") in
+        let own = Result.get_ok (Rig.software "fork:mapped-own") in
         Rig.close own;
         [
           Printf.sprintf "driver calls since the fork: %s"
@@ -603,7 +603,7 @@ let test_counted_call () =
   let lines, ended =
     answer pipe !pid (fun () ->
         let counted = Support.counted () in
-        let own = Result.get_ok (Rig.memory_device "fork:counted-own") in
+        let own = Result.get_ok (Rig.software "fork:counted-own") in
         Rig.close own;
         [
           Printf.sprintf "counted calls: %d" counted;

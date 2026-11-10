@@ -38,7 +38,7 @@ let of_memory mem length =
   { mem; offset = 0; length; generation = generation mem.alloc }
 
 (* Whether its machine's host addresses all of [d]'s memory, which so has no
-   [Pinned] memory: the host's own, a memory device's, a driver's that
+   [Pinned] memory: the host's own, a software device's, a driver's that
    declares [host_addresses], and on another machine one its host reaches
    there, as that machine's agent accounts it. An io device's memory is its
    libraries' regions, of no kind. *)
@@ -395,7 +395,7 @@ let dma b ~fn =
   let e = a.entry in
   match e.backing with
   | Driver_memory { region = Region { m; h; r = Some r; _ }; _ }
-    when not a.owner.memory_device ->
+    when not a.owner.software ->
       let module D = (val m) in
       if not (Memory.mark_outside a) then
         invalid_argf "Rig.%s: the memory is held exclusive" name;

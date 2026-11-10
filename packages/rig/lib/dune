@@ -16,9 +16,9 @@
   image
   lock
   memory
-  memory_device
   point
   profile
+  software
   submission
   tbl)
  (install_c_headers rig)

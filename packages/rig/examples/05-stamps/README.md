@@ -10,7 +10,7 @@ ordered by the memory alone.
 dune exec packages/rig/examples/05-stamps/main.exe
 ```
 
-Two memory devices stand for two GPUs. Their work is done when `submit`
+Two software devices stand for two GPUs. Their work is done when `submit`
 returns, so no wait blocks here. A GPU keeps the same order.
 
 ## What You'll Learn

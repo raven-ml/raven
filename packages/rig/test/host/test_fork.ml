@@ -41,9 +41,10 @@ let in_child child =
       let _, status = Unix.waitpid [] pid in
       (lines, status)
 
-let load () =
-  Rig.Image.load Rig.host (S.fixture ~dir:"../fixtures" "affine")
-  |> Result.get_ok
+let obj = S.fixture ~dir:"../fixtures" "affine"
+let load o = Result.get_ok (Rig.Image.load Rig.host o)
+let entry image =
+  Rig.Image.entry (require_some (Rig.Image.resolve image "affine"))
 
 (* Whether a launch of affine.c over [n] words, in groups of 64 threads, writes
    [a * i + c] at each [i]: enough groups that the pool's workers run some. *)
@@ -73,18 +74,20 @@ let n = 1 lsl 16
 
 let test_child () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
-  let image = load () in
+  let image = load obj in
   equal ~msg:"the parent's launch" string "right" (affine image ~n ~a:3 ~c:1);
+  (* The child links an object of its own, which no image of its parent's
+     shares. *)
   let lines, ended =
     in_child (fun () ->
-        [
-          Option.value ~default:"not lost" (Rig.lost Rig.host);
-          affine image ~n ~a:5 ~c:2;
-          affine (load ()) ~n ~a:7 ~c:3;
-        ])
+        let lost = Option.value ~default:"not lost" (Rig.lost Rig.host) in
+        let parents = affine image ~n ~a:5 ~c:2 in
+        let own = load (S.fresh obj) in
+        let linked = if entry own = entry image then "shared" else "its own" in
+        [ lost; parents; linked; affine own ~n ~a:7 ~c:3 ])
   in
   equal string "exited 0" (status ended);
-  equal (list string) [ "not lost"; "right"; "right" ] lines;
+  equal (list string) [ "not lost"; "right"; "its own"; "right" ] lines;
   equal ~msg:"the parent's launch after the fork" string "right"
     (affine image ~n ~a:11 ~c:4)
 

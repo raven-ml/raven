@@ -13,7 +13,7 @@ let submit ?(buffers = [||]) ?waits s =
   Rig.submit ?waits (Sub.take s) ~buffers
 
 let timeout = 60.
-let memory name = Result.get_ok (Rig.memory_device name)
+let memory name = Result.get_ok (Rig.software name)
 let lost = function Rig.Lost _ -> true | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 
@@ -751,7 +751,7 @@ module Paged = struct
 end
 
 (* rig asks a driver to map host memory only from the start of a page: memory
-   of a memory device that starts elsewhere is none that a driver's device
+   of a software device that starts elsewhere is none that a driver's device
    borrows. *)
 let test_map_host_paged () =
   let d =
@@ -784,9 +784,10 @@ let test_maps_no_host () =
   equal ~msg:"an empty borrow" bool true
     (Option.is_some (B.borrow d (B.create Rig.host 0)))
 
-(* A device that maps no host memory reaches no memory device's memory, which a
-   borrow maps as host memory: [reaches] answers as the borrow does. *)
-let test_mapless_memory_device () =
+(* A device that maps no host memory reaches no software device's memory,
+   which a borrow maps as host memory: [reaches] answers as the borrow
+   does. *)
+let test_mapless_software () =
   let d, _ = P.open_ ~maps_host:false "buffer:mapless-memory" in
   let m = memory "buffer:mapless-memory-cpu" in
   let b = B.create m (64 * 1024) in
@@ -1014,10 +1015,10 @@ let test_overlaps () =
 
 (* Buffers share memory where they hold bytes of one word, the [Rig.word]
    bytes at a multiple of it: views of one allocation, a host buffer and a
-   memory device's, a borrow and the memory it maps, and bigarrays over one
+   software device's, a borrow and the memory it maps, and bigarrays over one
    word. A copy is refused only between buffers that share a byte. *)
 let test_overlaps_words () =
-  let d = Result.get_ok (Rig.memory_device "buffer:words") in
+  let d = Result.get_ok (Rig.software "buffer:words") in
   let check b =
     let view first length = B.view b ~first ~length in
     let pairs =
@@ -1949,7 +1950,7 @@ let test_host_empty () =
   let d, _ = P.open_ "buffer:host-empty" in
   let m = memory "buffer:host-empty-memory" in
   let empty =
-    ("a memory device's", B.create m 0)
+    ("a software device's", B.create m 0)
     :: ("a driver's device's", B.create d 0)
     :: List.map
          (fun (whose, b) -> (whose, B.view b ~first:4 ~length:0))
@@ -1965,7 +1966,7 @@ let test_host_empty () =
     (fun (whose, dev) ->
       equal ~msg:("a borrow of " ^ whose) bool true
         (Option.is_some (B.borrow Rig.host (B.create dev 0))))
-    [ ("a memory device's", m); ("a driver's device's", d) ]
+    [ ("a software device's", m); ("a driver's device's", d) ]
 
 (* The blits and a fill reach memory the host does not address. An io device's
    is test_io's: this one reads and writes nothing. *)
@@ -2184,7 +2185,7 @@ let dma_refusals =
   let polled name = fst (P.open_ name) in
   [
     ("the host's memory", fun () -> B.create Rig.host 64);
-    ("a memory device's", fun () -> B.create (memory "buffer:dma-memory") 64);
+    ("a software device's", fun () -> B.create (memory "buffer:dma-memory") 64);
     ( "an io device's",
       fun () -> Support.io_buffer (Support.io "buffer:dma-io") 64 );
     ("an empty buffer", fun () -> B.create (polled "buffer:dma-empty") 0);
@@ -2235,7 +2236,7 @@ let tests =
     group ~timeout "copies"
       [
         test "a copy between host buffers moves their bytes" test_copy_host;
-        test "a copy to and from a memory device moves the bytes"
+        test "a copy to and from a software device moves the bytes"
           test_copy_device;
         test "a copy returns once the device's work ran" test_copy_waits;
       ];
@@ -2275,8 +2276,8 @@ let tests =
         test "empty host memory borrows on a device with no mapping"
           test_empty_borrow;
         test "a device that maps no host memory borrows none" test_maps_no_host;
-        test "a device that maps no host memory reaches no memory device"
-          test_mapless_memory_device;
+        test "a device that maps no host memory reaches no software device"
+          test_mapless_software;
         test "a driver maps host memory only from the start of a page"
           test_map_host_paged;
         test

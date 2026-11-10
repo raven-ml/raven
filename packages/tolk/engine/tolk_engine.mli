@@ -27,10 +27,10 @@ val target : Rig.t -> Helpers.Target.t
     A Metal, CUDA, AMD or NV device, as its driver declares it
     ({!Rig.capability}), has its vendor's device kind and its {!Rig.arch}, and
     names no renderer: its programs are rendered by its kind's renderer
-    ({!Tolk.Device.renderer}). A host, of this machine
-    or another, and a device whose work is this process's code
-    ({!Rig.runs_on_host}), such as a {!Rig.memory_device}, run host programs:
-    device ["CPU"], renderer ["CLANG"], and architecture its host's
+    ({!Tolk.Device.renderer}). A host, of this machine or another, and a
+    device whose work is this process's code ({!Rig.runs_on_host}), such as
+    a {!Rig.software} device, run host programs: device ["CPU"], renderer
+    ["CLANG"], and architecture its host's
     {!Rig.instruction_set} with the processor its host's {!Rig.arch} names:
     an x86-64 level, as in ["x86_64,x86-64-v3"], and on arm64 [generic], the
     base architecture, with the features its arch names, as in
@@ -89,9 +89,9 @@ val link :
       ({!Rig.Claim.val-hold}) while it is reachable, so no call consumes it. A
       link that raises holds none of them.
     - A kernel is launched on the device of its first argument. A host program
-      is launched on its device's host, which splits its loop over its cores
-      where the program splits one ({!Tolk.Ops.kernel_info.split}), by the
-      operations and bytes of memory the program's estimates count
+      splits its loop over the host's cores where the program splits one
+      ({!Tolk.Ops.kernel_info.split}), by the operations and bytes of memory
+      the program's estimates count
       ({!Tolk.Ops.type-estimates}): a program of more operations than bytes
       into a block for each 2{^16} operations, any other into a block for
       each 2{^18} operations or for each 2{^18} bytes up to 8 blocks,

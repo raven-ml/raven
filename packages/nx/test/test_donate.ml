@@ -440,7 +440,7 @@ let test_creation_dies () =
   invalid ~sub:"Nx.add: float32 [2] was donated to Nx.add" (fun () ->
       Nx.add c c)
 
-(* A placement onto memory devices borrows the host's memory: the shards of a
+(* A placement onto software devices borrows the host's memory: the shards of a
    value placed there lie in one allocation, apart or interleaved, and a
    device whose window is empty holds none of it. *)
 module Two = (val Nx.devices [ Nx_support.memory 1; Nx_support.memory 2 ])
@@ -533,7 +533,7 @@ let test_given_back_twice () =
   apart ~msg:"Ptree.scale, a handle passed on" (w, Nx.reshape [| 2 |] v)
 
 (* Reuse: a consumer that writes its result into donated memory takes no
-   memory of the result's size, counted on a memory device of these tests'
+   memory of the result's size, counted on a software device of these tests'
    own. *)
 let device = Nx_support.memory 3
 

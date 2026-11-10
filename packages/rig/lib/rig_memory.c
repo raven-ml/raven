@@ -3,14 +3,12 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Memory devices, whose memory is the host's and whose work runs in the
-   submitting thread, and the readers of buffers rig.h declares. Nothing
-   here blocks but rig_buffer_wait, which runs Rig.Buffer.wait, and the end
-   of a with_'s claims, which waits out a consumption under way. */
+/* The readers of buffers rig.h declares. Nothing here blocks but
+   rig_buffer_wait, which runs Rig.Buffer.wait, and the end of a with_'s
+   claims, which waits out a consumption under way. */
 
 #define _GNU_SOURCE
 
-#include <stdlib.h>
 #include <string.h>
 
 #ifdef _WIN32
@@ -29,133 +27,6 @@
 
 #include "rig.h"
 #include "rig_stubs.h"
-
-/* Memory devices
-
-   A memory device's state is its driver and the address of its word, the
-   word rig gave its open. */
-
-struct memory_device {
-  const struct rig_driver *driver;
-  _Atomic uint64_t *word;
-};
-
-static void *aligned(size_t align, size_t n) {
-#ifdef _WIN32
-  return _aligned_malloc(n, align);
-#else
-  void *p = NULL;
-  return posix_memalign(&p, align, n) == 0 ? p : NULL;
-#endif
-}
-
-static void aligned_free(void *p) {
-#ifdef _WIN32
-  _aligned_free(p);
-#else
-  free(p);
-#endif
-}
-
-
-/* [v_n] bytes of host memory, on a page from 64 KiB on, or 0. */
-value caml_rig_memory_alloc(value v_n) {
-  size_t n = (size_t)Long_val(v_n);
-  void *p = aligned(n >= (1 << 16) ? rig_page_bytes() : 64, n);
-  return Val_long((intnat)p);
-}
-
-value caml_rig_memory_free(value v_p) {
-  aligned_free((void *)Long_val(v_p));
-  return Val_unit;
-}
-
-static int memory_room(void *self, int nwaits, const struct rig_part *parts,
-                       int n, void *scratch, const uint8_t *args) {
-  (void)nwaits;
-  (void)scratch;
-  (void)args;
-  (void)self;
-  for (int i = 0; i < n; i++) {
-    const struct rig_part *p = &parts[i];
-    if (p->kind != RIG_FILL && p->kind != RIG_COPY)
-      return RIG_NEVER;
-  }
-  return RIG_FITS;
-}
-
-/* Runs the copy part [p] over host addresses: a fill sets its row, and a
-   box moves its rows, in one move where both sides' rows are contiguous. */
-static void memory_copy(const struct rig_part *p) {
-  size_t width = (size_t)p->copy.width, rows = (size_t)p->copy.rows;
-  if (width == 0 || rows == 0) return;
-  char *dst = (char *)(uintptr_t)p->copy.dst + p->copy.dst_offset;
-  if (p->copy.fill) {
-    memset(dst, p->copy.byte, width);
-    return;
-  }
-  const char *src = (const char *)(uintptr_t)p->copy.src + p->copy.src_offset;
-  if (p->copy.src_pitch == width && p->copy.dst_pitch == width) {
-    memmove(dst, src, width * rows);
-    return;
-  }
-  for (size_t i = 0; i < rows; i++)
-    memmove(dst + i * p->copy.dst_pitch, src + i * p->copy.src_pitch, width);
-}
-
-/* Runs the parts in order, the fills with no queue context, then makes [v]
-   observable. Its handles are host addresses. */
-static int memory_submit(void *self, uint64_t v, const struct rig_wait *waits,
-                         int nwaits, const struct rig_part *parts, int nparts,
-                         void *scratch, uint8_t *args,
-                         const uint64_t *slots, int nslots, uint64_t *times,
-                         const char **failure) {
-  (void)scratch;
-  (void)times;
-  (void)nslots;
-  struct memory_device *m = self;
-  (void)waits;
-  (void)nwaits;
-  for (int i = 0; i < nparts; i++) {
-    const struct rig_part *p = &parts[i];
-    if (p->kind == RIG_FILL) {
-      if (rig_fill(NULL, p, args, slots, v) != 0) {
-        *failure = "a fill failed";
-        return RIG_FAILED;
-      }
-    } else
-      memory_copy(p);
-  }
-  atomic_store_explicit(m->word, v, memory_order_release);
-  return RIG_COMMITTED;
-}
-
-/* The work ran at its hand-over: nothing is left to commit. */
-static int memory_commit(void *self, uint64_t v, const char **failure) {
-  (void)self;
-  (void)v;
-  (void)failure;
-  return RIG_OK;
-}
-
-static const struct rig_driver memory_driver = {memory_room, memory_submit,
-                                                memory_commit, NULL, NULL};
-
-/* A new memory device's state, whose word lies at [v_word]. */
-value caml_rig_memory_new(value v_word) {
-  struct memory_device *m = malloc(sizeof *m);
-  if (m == NULL) caml_raise_out_of_memory();
-  m->driver = &memory_driver;
-  m->word = (_Atomic uint64_t *)Nativeint_val(v_word);
-  return caml_copy_nativeint((intnat)m);
-}
-
-/* Frees the state [v_m] at its device's stop, after which rig calls none of
-   its functions. */
-value caml_rig_memory_drop(value v_m) {
-  free((void *)Nativeint_val(v_m));
-  return Val_unit;
-}
 
 value caml_rig_load64(value v_addr) {
   return Val_long((intnat)atomic_load_explicit(

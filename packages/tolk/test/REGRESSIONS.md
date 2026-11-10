@@ -1758,7 +1758,7 @@ returns, and `calls.golden`, each call's reading by `get_call_*`,
 The suite is `Tolk_engine` (`engine/tolk_engine/`), written `EN`
 below. `EN › link and run › recorded` runs the Schedule suite's recorded
 programs end to end: each is scheduled, compiled for the devices it names
-(the host and memory devices, `Run.devices`), linked with its storage bound
+(the host and software devices, `Run.devices`), linked with its storage bound
 to buffers of small integers, and run, and its storage then holds what its
 tensors compute (Tensors), with each variable at the value it runs with. One
 program of each kind of call runs by default, the rest are slow. `EN › link
@@ -1766,8 +1766,8 @@ and run › a schedule runs on the buffers each run binds to its parameters`
 makes a program's buffers parameters of the compiled schedule and runs it on
 two sets of buffers. `EN › GPUs` runs recorded programs, loops, a gather and
 the `DEBUG` reports on Metal, CUDA, NV and AMD through rig, each skipping
-without its GPU. `EN › timing` times a program on the host, on a memory
-device, whose kernels the host runs, and on Metal.
+without its GPU. `EN › timing` times a program on the host, on a software
+device and on Metal.
 
 ### tinygrad
 
@@ -1817,7 +1817,7 @@ bound; that the storage the lowering reaches is
 the held storage of the capture that is no input, plus arenas the capture does
 not reach; and that lowering twice gives the same schedule up to the numbers
 of the storage and placeholders it makes. `J › replay › recorded` links the
-lowering on the host and memory devices and replays it as a jitted function
+lowering on the host and software devices and replays it as a jitted function
 is called: one to three runs, the first from contents drawn from a seed for
 each held buffer and input, each later one keeping what the runs before it
 left, with new inputs; each variable takes the values tinygrad's tests replay

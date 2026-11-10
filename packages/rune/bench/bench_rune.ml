@@ -408,56 +408,86 @@ let gaussian () =
         (Rune.value_and_grad params density))
     (fun g -> synced_all out (g p))
 
-(* [n] memory devices of one set, named apart from every other set's. *)
-let memory_set =
+(* [n] software devices of one set, named apart from every other set's. *)
+let software_set =
   let sets = ref 0 in
   fun n ->
     incr sets;
     let name i = Printf.sprintf "bench-jit-%d-%d" !sets i in
     Nx.devices
-      (List.init n (fun i -> Result.get_ok (Rig.memory_device (name i))))
+      (List.init n (fun i -> Result.get_ok (Rig.software (name i))))
 
 let sine shape seed =
   let n = Array.fold_left ( * ) 1 shape in
   Nx.create f32 shape
     (Array.init n (fun j -> 0.3 *. sin (Float.of_int ((seed * 7919) + j))))
 
-(* The compile bench's data-parallel step, warm: a two-layer perceptron, its
-   batch of 64 cut across 16 memory devices and its weights whole on each, the
-   gradient summed across them before the update. Its call is one program of
-   rig's, its storage made per call. *)
+(* A two-layer perceptron's training step: its weights less a tenth of the
+   gradient of its output's mean square. *)
+let perceptron_step (x, (w1, w2)) =
+  let loss (w1, w2) =
+    let y = Nx.matmul (Nx.tanh (Nx.matmul x w1)) w2 in
+    Nx.mean (Nx.mul y y)
+  in
+  let g1, g2 = Rune.grad Nx.Ptree.(pair tensor tensor) loss (w1, w2) in
+  (Nx.sub w1 (Nx.mul_s g1 0.1), Nx.sub w2 (Nx.mul_s g2 0.1))
+
+let perceptron_fn () =
+  Nx.Ptree.(pair tensor (pair tensor tensor) @-> returns (pair tensor tensor))
+
+(* The perceptron's step over a batch of 64 placed at [batch] and its weights
+   at [on], compiled, as a call. *)
+let perceptron_call ~on batch =
+  let x = Nx.place batch (sine [| 64; 64 |] 3) in
+  let w =
+    (Nx.place on (sine [| 64; 128 |] 1), Nx.place on (sine [| 128; 16 |] 2))
+  in
+  let f = Rune.jit (perceptron_fn ()) perceptron_step in
+  fun () -> ignore (synced2 (f (x, w)))
+
+(* The compile bench's data-parallel step, warm: the perceptron, its batch cut
+   across 16 software devices, the gradient summed across them before the
+   update. Its call is one program of rig's, its storage made per call. *)
 let data_parallel_step () =
   warm "devices/dp-step-16"
     (fun () ->
-      let (module S) = memory_set 16 in
-      let step (x, (w1, w2)) =
-        let loss (w1, w2) =
-          let y = Nx.matmul (Nx.tanh (Nx.matmul x w1)) w2 in
-          Nx.mean (Nx.mul y y)
-        in
-        let g1, g2 = Rune.grad Nx.Ptree.(pair tensor tensor) loss (w1, w2) in
-        (Nx.sub w1 (Nx.mul_s g1 0.1), Nx.sub w2 (Nx.mul_s g2 0.1))
-      in
-      let x = Nx.place (S.split ~axis:0) (sine [| 64; 64 |] 3) in
-      let w =
-        ( Nx.place S.on (sine [| 64; 128 |] 1),
-          Nx.place S.on (sine [| 128; 16 |] 2) )
-      in
-      let f =
-        Rune.jit
-          Nx.Ptree.(
-            pair tensor (pair tensor tensor) @-> returns (pair tensor tensor))
-          step
-      in
-      fun () -> ignore (synced2 (f (x, w))))
+      let (module S) = software_set 16 in
+      perceptron_call ~on:S.on (S.split ~axis:0))
     (fun call -> call ())
 
-(* A switch over a value cut across 4 memory devices, warm: each call reads
+(* The perceptron's step, warm, compiled on a software device of its own from
+   each of four domains: the measured domain's call runs while the other three
+   call theirs, every launch on the host's one pool. *)
+let stepping_domains = 4
+
+let domain_steps () =
+  Thumper.bench_with_setup "devices/step-4-domains"
+    ~setup:(fun () ->
+      let calls =
+        List.init stepping_domains (fun _ ->
+            let (module S) = software_set 1 in
+            perceptron_call ~on:S.on S.on)
+      in
+      List.iter (fun call -> call ()) calls;
+      let stop = Atomic.make false in
+      let rival call =
+        Domain.spawn (fun () ->
+            while not (Atomic.get stop) do
+              call ()
+            done)
+      in
+      (List.hd calls, stop, List.map rival (List.tl calls)))
+    ~teardown:(fun (_, stop, rivals) ->
+      Atomic.set stop true;
+      List.iter Domain.join rivals)
+    (fun (call, _, _) -> call ())
+
+(* A switch over a value cut across 4 software devices, warm: each call reads
    the index on the program's device and runs one branch's kernels. *)
 let sharded_switch () =
   warm "devices/switch-4"
     (fun () ->
-      let (module S) = memory_set 4 in
+      let (module S) = software_set 4 in
       let x = Nx.place (S.split ~axis:0) (sine [| 4096 |] 3) in
       let i = Nx.place S.on (Nx.scalar Nx.int32 1l) in
       let f i x =
@@ -468,12 +498,12 @@ let sharded_switch () =
       fun () -> ignore (synced (g i x)))
     (fun call -> call ())
 
-(* A check over a value cut across 4 memory devices, warm: each device checks
+(* A check over a value cut across 4 software devices, warm: each device checks
    its window, one flag per device reaching the program's device. *)
 let sharded_check () =
   warm "devices/check-4"
     (fun () ->
-      let (module S) = memory_set 4 in
+      let (module S) = software_set 4 in
       let x = Nx.place (S.split ~axis:0) (sine [| 4096 |] 3) in
       let f x =
         Nx.check Nx.Ptree.tensor (Nx.less_s (Nx.abs x) 2.) x (fun _ _ -> Exit);
@@ -485,11 +515,11 @@ let sharded_check () =
 
 (* The backward call of one layer [relu (h w)] of fully sharded training, warm:
    512 by 512 float32 weights and a batch of 64, both cut along axis 0 across
-   8 memory devices, the weights gathered whole on each. *)
+   8 software devices, the weights gathered whole on each. *)
 let sharded_backward () =
   warm "devices/fsdp-backward-8"
     (fun () ->
-      let (module S) = memory_set 8 in
+      let (module S) = software_set 8 in
       let d = 512 in
       let layer (w, h) =
         let y = Nx.matmul h (Nx.place S.on w) in
@@ -853,6 +883,7 @@ let jit_rows () =
           (fun xs -> Nx.mul_s (Nx.concatenate ~axis:0 xs) 2.))
       (fun f -> synced (f views));
     data_parallel_step ();
+    domain_steps ();
     sharded_backward ();
     sharded_switch ();
     sharded_check ();

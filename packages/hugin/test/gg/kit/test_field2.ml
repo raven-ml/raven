@@ -155,7 +155,7 @@ let constructing =
           equal near 0.5
             (Pgon2.area (Field2.isoband ~lo:1. ~hi:infinity (Field2.v h))));
       test "v reads a tensor of another set, cut over its devices" (fun () ->
-          let memory n = Result.get_ok (Rig.memory_device n) in
+          let memory n = Result.get_ok (Rig.software n) in
           let module M = (val Nx.devices [ memory "m0" ]) in
           let module Two = (val Nx.devices [ memory "m1"; memory "m2" ]) in
           let z = tensor [ [| 0.; 0. |]; [| 2.; 2. |] ] in

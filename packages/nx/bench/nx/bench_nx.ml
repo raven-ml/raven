@@ -15,9 +15,9 @@
 module A = Nx_array
 module D = Nx_array.Dtype
 
-(* A memory device, opened in the measuring worker: a device opened before the
+(* A software device, opened in the measuring worker: a device opened before the
    fork is lost in it. *)
-let memory k = Result.get_ok (Rig.memory_device (Printf.sprintf "bench-m%d" k))
+let memory k = Result.get_ok (Rig.software (Printf.sprintf "bench-m%d" k))
 
 let filled dt s v =
   let n = Array.fold_left ( * ) 1 s in
@@ -266,12 +266,12 @@ let constant_rows =
 (* A value on a set minted in the worker, of a brand the row does not name. *)
 type value = Value : (float, D.float32_elt, 'd) Nx.t -> value
 
-(* One element on each of two memory devices. *)
+(* One element on each of two software devices. *)
 let split_two () =
   let module Two = (val Nx.devices [ memory 0; memory 1 ]) in
   Value (Nx.place (Two.split ~axis:0) (host 2))
 
-(* Sixteen host elements, and a placement on a memory device. *)
+(* Sixteen host elements, and a placement on a software device. *)
 type borrow =
   | Borrow : 'd Nx.Placement.t * (float, D.float32_elt, Nx.host) Nx.t -> borrow
 
@@ -279,7 +279,7 @@ let borrow_16 () =
   let module Mem = (val Nx.devices [ memory 0 ]) in
   Borrow (Mem.on, host 16)
 
-(* A 1024 × 1024 float32 value, 4 MiB, and a split on axis 1 over four memory
+(* A 1024 × 1024 float32 value, 4 MiB, and a split on axis 1 over four software
    devices: from the host, and from a split on axis 0, where each device's
    column window meets every row window. *)
 type reshard =
@@ -297,7 +297,7 @@ let rows_to_columns () =
   in
   Reshard (Four.split ~axis:1, Nx.place (Four.split ~axis:0) (square ()))
 
-(* A 64 × 64 matmul's operands on two memory devices: the left split by rows,
+(* A 64 × 64 matmul's operands on two software devices: the left split by rows,
    the right whole on each, so each device computes its rows. *)
 type operands =
   | Operands :
@@ -309,13 +309,13 @@ let rows_two () =
   let x = host (64 * 64) |> Nx.reshape [| 64; 64 |] in
   Operands (Nx.place (Two.split ~axis:0) x, Nx.place Two.on x)
 
-(* Ones of shape [s] split along [axis] over [n] memory devices. *)
+(* Ones of shape [s] split along [axis] over [n] software devices. *)
 let split_over n ~axis s () =
   let module Set = (val Nx.devices (List.init n memory)) in
   Value (Nx.place (Set.split ~axis) (filled D.Float32 s 1.))
 
 (* A 256 × 4096 by 4096 × 256 matmul's operands split along k over four
-   memory devices: each device holds a quarter of the contracted terms. *)
+   software devices: each device holds a quarter of the contracted terms. *)
 let k_four () =
   let module Four = (val Nx.devices [ memory 0; memory 1; memory 2; memory 3 ])
   in
@@ -1580,7 +1580,7 @@ let experts () =
   let ws = mxfp4_weights ~copies:2 [| 32 |] 1024 4096 in
   (ids, filled D.Float32 [| 64; 1; 4096 |] 1., ws, ref 0)
 
-(* Sixteen weights of [4096; 4096] split along [axis] over four memory
+(* Sixteen weights of [4096; 4096] split along [axis] over four software
    devices, and an input whole on each: each device sums its own rows, or
    its own 32 blocks of each row, from the codes where they lie. *)
 type cut_weights =
@@ -1598,7 +1598,7 @@ let mxfp4_four ~axis () =
       Array.map (Nx_quant.place (Four.split ~axis)) ws,
       ref 0 )
 
-(* The mixture of experts' layer with each weight split over four memory
+(* The mixture of experts' layer with each weight split over four software
    devices, the ids whole on each: along its 32 experts, the tokens whole on
    each, each device summing the rows of its own 8 experts; or along its
    4096 inputs, the tokens cut alike, each device summing every row over its

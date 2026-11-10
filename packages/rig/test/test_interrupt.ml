@@ -534,7 +534,7 @@ let test_release_signaled ?budget ~cache release () =
 (* A lock a library counts through the edge refuses rig's calls on its
    thread until it is given back, and changes nothing meanwhile. *)
 let test_counted () =
-  let d = Result.get_ok (Rig.memory_device (fresh "counted")) in
+  let d = Result.get_ok (Rig.software (fresh "counted")) in
   let before = Rig_edge_primitive.holds () in
   let held, refused, allocated =
     S.inside_lock @@ fun () ->
@@ -573,8 +573,8 @@ let answer p =
 (* The probes, over devices and values made before the walk lands, and the
    state a refused call must leave as it was. *)
 let probes () =
-  let d = Result.get_ok (Rig.memory_device (fresh "reenter:probe")) in
-  let victim = Result.get_ok (Rig.memory_device (fresh "reenter:victim")) in
+  let d = Result.get_ok (Rig.software (fresh "reenter:probe")) in
+  let victim = Result.get_ok (Rig.software (fresh "reenter:victim")) in
   let polled_name = fresh "reenter:polled" in
   let polled, pp = P.open_ polled_name in
   let image = Result.get_ok (Rig.Image.load polled "functions") in
@@ -606,8 +606,8 @@ let probes () =
   in
   let probes =
     [
-      locks "memory_device" (fun () ->
-          ignore (Rig.memory_device (Rig.name d)));
+      locks "software" (fun () ->
+          ignore (Rig.software (Rig.name d)));
       locks "open_" (fun () -> ignore (Rig.open_ (P.opener polled_name pp)));
       locks "close" (fun () -> Rig.close victim);
       locks "set_budget" (fun () -> Rig.set_budget d (Rig.budget d));
@@ -697,12 +697,12 @@ let reenter f n =
       (reached, !held))
 
 (* An open, whose sections of rig's table of names allocate. *)
-let open_named () = ignore (Rig.memory_device (fresh "reenter"))
+let open_named () = ignore (Rig.software (fresh "reenter"))
 
 (* A drain that routes collected buffers into a device's cache, in sections
    of the device's lock that allocate. *)
 let drain_cache () =
-  let d = Result.get_ok (Rig.memory_device "reenter:cache") in
+  let d = Result.get_ok (Rig.software "reenter:cache") in
   let[@inline never] drop () =
     for k = 1 to 8 do
       ignore (Sys.opaque_identity (B.create d (k * 64)))
@@ -739,7 +739,7 @@ let fail_in n =
         Rig.fail "failed in a callback";
         stops := P.stops p
       in
-      let open_ () = ignore (Rig.memory_device (fresh "fail-in")) in
+      let open_ () = ignore (Rig.software (fresh "fail-in")) in
       let reached = S.interrupted ~landing:(Call call) n open_ in
       if reached then begin
         equal ~msg:"the failure" (option string) (Some "failed in a callback")
@@ -781,15 +781,15 @@ let reenter_own n =
       let name = fresh "reenter:own" in
       let refused = ref false and inner = ref None and outer = ref None in
       let call () =
-        match Rig.memory_device name with
+        match Rig.software name with
         | r -> inner := Some (Result.get_ok r)
         | exception Invalid_argument why when opening_here why ->
             refused := true
         | exception Invalid_argument _ -> ()
       in
-      let open_ () = outer := Some (Result.get_ok (Rig.memory_device name)) in
+      let open_ () = outer := Some (Result.get_ok (Rig.software name)) in
       let reached = S.interrupted ~landing:(Call call) n open_ in
-      let d = Result.get_ok (Rig.memory_device name) in
+      let d = Result.get_ok (Rig.software name) in
       List.iter
         (fun (what, opened) ->
           Option.iter

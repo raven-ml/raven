@@ -56,7 +56,7 @@ let test_reuse () =
   equal int 73 (word b 8)
 
 let test_synchronous () =
-  let d = Result.get_ok (Rig.memory_device "args:sync") in
+  let d = Result.get_ok (Rig.software "args:sync") in
   let s = Sub.make d [| fill Support.poke |] in
   let run = Sub.take s and block = Sub.block s 0 in
   let out = B.create d 16 in
@@ -114,8 +114,8 @@ let test_wide_fill () =
     let out = B.create d 16 in
     (out, submit run [| out |])
   in
-  let out, _ = wide (Result.get_ok (Rig.memory_device "args:wide-memory")) in
-  equal ~msg:"the memory device" int 59 (word out 8);
+  let out, _ = wide (Result.get_ok (Rig.software "args:wide-memory")) in
+  equal ~msg:"the software device" int 59 (word out 8);
   let d, p = P.open_ "args:wide-polled" in
   let out, _ = wide d in
   ignore (P.run p);

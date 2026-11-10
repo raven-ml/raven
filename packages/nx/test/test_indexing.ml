@@ -820,7 +820,7 @@ let test_donated_start () =
   equal (array float_exact) [| 0.; 1.; 1.; 0. |] (elements y)
 
 (* An update of [4; 4; 4] at two positions held in data along each axis, the
-   first entry's split over two memory devices and the others' at [cuts].
+   first entry's split over two software devices and the others' at [cuts].
    Each entry's positions, broadcast to the selection [2; 2; 2], are read
    beside the others' at the union of their cuts: an entry cut along its own
    axis of the selection beside the first is refused, named as the operand

@@ -1046,7 +1046,7 @@ let received p f =
   (x, List.rev !seen)
 
 (* A set no kernel library computes on, as a GPU set is outside a compiler:
-   a memory device and a device that does not run on the host. *)
+   a software device and a device that does not run on the host. *)
 let off = Nx_array_support.off_host ()
 
 module Bare = (val Nx.devices [ m 2; off ])
@@ -1057,7 +1057,7 @@ let bare_placements =
     [
       ("on", Bare.on);
       ("split ~axis:0", Bare.split ~axis:0);
-      ("memory device", Nx.Placement.device Bare.v (m 2));
+      ("software device", Nx.Placement.device Bare.v (m 2));
       ("off the host", Nx.Placement.device Bare.v off);
     ]
 

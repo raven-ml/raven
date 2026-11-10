@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The mixture of experts over four memory devices. At gpt-oss's
+(* The mixture of experts over four software devices. At gpt-oss's
    expert-parallel placement, experts split along their expert axis, each
    device computes its own experts' rows and [+0] in the others': the gate
    and up projection closes before the activation, adding exact zeros, and
@@ -15,7 +15,7 @@
 
 open Windtrap
 
-let memory k = Result.get_ok (Rig.memory_device (Printf.sprintf "m%d" k))
+let memory k = Result.get_ok (Rig.software (Printf.sprintf "m%d" k))
 
 module S = (val Nx.devices (List.init 4 memory))
 

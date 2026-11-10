@@ -1,7 +1,7 @@
 # `09-loss`
 
 A device whose work fails is lost, once and for good. This example loses a
-memory device with a fill that returns a failure (`fail.c`). The lost
+software device with a fill that returns a failure (`fail.c`). The lost
 device's properties and timeline still answer, another device goes on, and
 the name opens a new device.
 

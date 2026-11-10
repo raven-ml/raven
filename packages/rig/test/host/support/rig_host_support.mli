@@ -23,6 +23,12 @@ val fixture : dir:string -> string -> string
     the directory [dir]: [<f>_<machine>.o], or [<f>_x86_64_windows.o] on x86_64
     Windows when it exists. *)
 
+val fresh : string -> string
+(** [fresh o] is the object [o] made an object of its own, whose link no
+    other load shares: a count from 1 in the padding of its identification
+    ([EI_PAD], bytes 9 to 12), which an ELF reader ignores and a fixture
+    leaves zero. *)
+
 val executable : int -> bool
 (** [executable a] is [true] iff the page holding the address [a] is mapped
     executable in the process. *)

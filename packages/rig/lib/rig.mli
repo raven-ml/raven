@@ -162,14 +162,15 @@ val open_io : ?machine:t -> string -> (t, string) result
     if called on the thread that runs an open of that name, from a callback
     inside that open ({!section-domains}). *)
 
-val memory_device : string -> (t, string) result
-(** [memory_device name] is {!open_} of the {e memory device} named [name] on
-    this machine. A memory device's memory is its own, in host memory that
-    this process addresses. Its work is this process's, and it has a
-    timeline of its own. It runs fills and copies, which run before
-    {!submit} returns, loads no code and times no work. Tests use it to
-    stand for a GPU in code that orders work across devices. It is
-    [Error why] where {!open_} is.
+val software : string -> (t, string) result
+(** [software name] is {!open_} of the {e software device} named [name] on
+    this machine. A software device's memory is its own, in host memory that
+    this process addresses. Its work is this process's code, and it has a
+    timeline of its own. It runs fills, copies, and launches of the code it
+    links as {!host} does ({!section-host_code}), each before {!submit}
+    returns, and states their times to a profile ({!Profile}). It serves a
+    program that places work on several devices of a machine without a GPU.
+    It is [Error why] where {!open_} is.
 
     Raises as {!open_} does. *)
 
@@ -239,9 +240,9 @@ val arch : t -> string
     Advanced SIMD (FEAT_FP16), from macOS's [hw.optional.arm.FEAT_FP16]
     alone: ["arm64+fp16"] on an M1, and an arm64 host on another system is
     ["arm64"], with no features. An arm64 arch runs the code of each arm64
-    arch whose features are among its own. It is ["memory"] for a
-    {!memory_device}, [""] for an io device, and for a device of another
-    machine that machine's.
+    arch whose features are among its own. It is the host's for a
+    {!software} device, whose code is the host's, [""] for an io device,
+    and for a device of another machine that machine's.
 
     The x86-64 psABI,
     {{:https://gitlab.com/x86-psABIs/x86-64-ABI}System V Application Binary
@@ -259,7 +260,7 @@ val instruction_set : t -> string
 val bus : t -> string option
 (** [bus d] is the bus address of [d]'s PCI function on its machine, such as
     ["0000:03:00.0"], as its driver states it ({!Rig_edge.type-facts}), or
-    [None] for a device that has none: {!host}, a memory device, an io
+    [None] for a device that has none: {!host}, a software device, an io
     device, a Metal device and a device of another machine. *)
 
 val computes : t -> bool
@@ -268,7 +269,7 @@ val computes : t -> bool
 
 val runs_on_host : t -> bool
 (** [runs_on_host d] is [true] iff [d]'s work is this process's code, which
-    holds for {!host} and a {!memory_device}. The host computes on such a
+    holds for {!host} and a {!software} device. The host computes on such a
     device's memory as on its own. *)
 
 val offers : t -> Rig_edge.memory -> bool
@@ -279,7 +280,7 @@ val offers : t -> Rig_edge.memory -> bool
     {- [Device] memory: every device but an io device, which makes none
        ({!Buffer.of_io}).}
     {- [Pinned] memory: a device whose memory the host does not address,
-       which excludes {!host}, a {!memory_device}, a Metal device and a
+       which excludes {!host}, a {!software} device, a Metal device and a
        driver's device whose driver declares [host_addresses]
        ({!Rig_edge.type-facts}), and is not an io device.}
     {- [Mapped] memory: a device whose memory the host addresses, where it
@@ -294,7 +295,7 @@ val alignment : t -> int
     buffer {!Buffer.create} makes on [d] starts on, whatever its kind and
     size, as [d]'s driver states it from its allocator
     ({!Rig_edge.type-facts}): [16] for {!host} and [64] for a
-    {!memory_device}. {!Buffer.create} starts a host buffer of 128
+    {!software} device. {!Buffer.create} starts a host buffer of 128
     bytes or more on 128 bytes or a page, multiples of this alignment that
     hold for those sizes only. For a device of another machine, it is that
     machine's device's. *)
@@ -308,7 +309,7 @@ val cache_bytes : t -> int option
     is their sum. It is a fact of the physical part: two devices of one
     {!arch} may state different sizes, so it suits what runs, such as sizing
     a buffer whose reads evict the caches before a timed run. For {!host} and
-    a {!memory_device}, it is the largest cache of the host's processor as
+    a {!software} device, it is the largest cache of the host's processor as
     the system states it, [None] where it states none; for an io device,
     [None]; for a device of another machine, that machine's device's. A
     driver's module states what its devices give. *)
@@ -349,11 +350,11 @@ val reaches : t -> t -> bool
     compiler that places copies asks it before any buffer exists.
     {ul
     {- A device reaches its own memory.}
-    {- {!host} reaches the memory of a {!memory_device}, and of a driver's
+    {- {!host} reaches the memory of a {!software} device, and of a driver's
        device whose driver declares [host_addresses]
        ({!Rig_edge.type-facts}).}
-    {- Every other device whose driver declares [maps_host], as a memory
-       device's does, reaches {!host}'s memory and every memory device's
+    {- Every other device whose driver declares [maps_host], as a software
+       device's does, reaches {!host}'s memory and every software device's
        memory.}
     {- Every other device reaches the memory of another device of its own
        driver that it maps ({!Rig_edge.Driver.peer}).}
@@ -366,8 +367,8 @@ val reaches : t -> t -> bool
     device that reaches {!host}'s memory also maps other memory of its
     machine that the host addresses and that starts on a page, including an
     io device's memory through its pages ({!Rig_edge.Io.pages}). {!host} and
-    memory devices also map host memory that starts elsewhere, such as a host
-    buffer under 64 KiB. *)
+    software devices also map host memory that starts elsewhere, such as a
+    host buffer under 64 KiB. *)
 
 (** {1:timeline Timelines}
 
@@ -555,8 +556,8 @@ val word : int
        name run one at a time while opens of other names go on.}
     {- While a driver's [room], [submit] or [commit] blocks, where its
        driver declares [may_block], other submits and commits on that device
-       wait for it. On {!host} and a {!memory_device}, whose submit runs its
-       work before it returns, other submits on the device wait for that
+       wait for it. On {!host} and a {!software} device, whose submit runs
+       its work before it returns, other submits on the device wait for that
        work before they take a value. Waits for the device's earlier values
        return meanwhile.}}
 
@@ -922,7 +923,7 @@ val failure : unit -> string option
        floors included, beside the bytes live in the host's budget at the
        last cycle; or
        sooner, once the dropped bytes reach [custom_major_ratio] / 150 of the
-       host's room. The memory of a {!memory_device} and of a driver's
+       host's room. The memory of a {!software} device and of a driver's
        device whose driver declares [host_addresses]
        ({!Rig_edge.type-facts}) brings a cycle as host buffers do, floors
        included, with the device's {!allocated} bytes standing for the host
@@ -1075,7 +1076,7 @@ module Buffer : sig
             the device, which both the device's work and the host address,
             with no flush needed between them. Which {!budget} it counts in
             is stated in {!Rig.section-reclaim}. A device whose memory the
-            host addresses, such as {!Rig.host}, a {!Rig.memory_device} or a
+            host addresses, such as {!Rig.host}, a {!Rig.software} device or a
             Metal device, has none ({!create}). Host memory reaches a device
             through {!borrow}. *)
     | Mapped
@@ -1263,7 +1264,7 @@ module Buffer : sig
       The host reads and writes a buffer's bytes in place where it
       {e addresses} the buffer's memory: memory on {!host}, a borrow on
       {!host} included, and memory of a device of this machine that has a
-      host address, such as a {!memory_device}'s. {!write} also writes
+      host address, such as a {!software} device's. {!write} also writes
       [Mapped] memory of a device of this machine, through its window. {!read}
       and {!write} take a read claim on the memory, so that no donation
       writes it meanwhile ({!Rig.section-claims}), wait for the work the
@@ -1401,7 +1402,7 @@ module Buffer : sig
       memory returns, also where a borrow made it.
 
       Memory the host pages (the host's own, a bigarray's, an exported
-      array's and a memory device's) reaches the copy engine of a device of
+      array's and a software device's) reaches the copy engine of a device of
       this machine through a borrow on that device that the copy names
       ({!borrow}). A copy that names the memory itself passes through
       staging memory, also while a borrow of it lives.
@@ -1671,7 +1672,7 @@ module Buffer : sig
       caller's to close.
 
       Raises [Invalid_argument] if [b] is dead or empty, or is {!host}'s, a
-      memory device's or an io device's memory, or if a {!Claim.with_} holds
+      software device's or an io device's memory, or if a {!Claim.with_} holds
       it exclusive, and {!Lost} if the device whose memory it is is lost. *)
 
   val handle : t -> nativeint
@@ -1723,10 +1724,12 @@ module Image : sig
   val load : device -> string -> (t, string) result
   (** [load d binary] loads [binary] on [d], such as a code object for AMD, a
       cubin for NV, a CUDA module for CUDA, a metallib for Metal or a
-      relocatable ELF object for {!host} ({!section-host_linking}). Each call
-      loads [binary] again, so that each image's module variables are its
-      own. Where [d]'s memory holds the code, it counts in [d]'s {!budget},
-      and [load] places it there after the work submitted on [d] before it.
+      relocatable ELF object for {!host} or a {!software} device
+      ({!section-host_linking}). Each call loads [binary] again, so that
+      each image's module variables are its own; host code has none, and
+      the images of one object share its code ({!section-host_code}). Where
+      [d]'s memory holds the code, it counts in [d]'s {!budget}, and [load]
+      places it there after the work submitted on [d] before it.
       Where [d]'s copy engine copies it, [load] returns without waiting for
       that work or the copy, and work that runs the image follows the copy.
       The image stays loaded while it is reachable. A call on [d] that finds
@@ -1811,17 +1814,23 @@ end
 
 (** {2:host_code Host code}
 
-    {!host} runs code that the process links from relocatable ELF objects,
-    on its own cores. {!Image.load} on {!host} links an object into
-    executable memory once ({!section-host_linking}), and the image's
-    functions are the named symbols of its executable sections. The host's
-    queue runs only launches. *)
+    {!host} and a {!software} device run code that the process links from
+    relocatable ELF objects, on the host's cores. {!Image.load} on either
+    links an object into executable memory ({!section-host_linking}), and
+    the image's functions are the named symbols of its executable sections.
+    Linked code holds no variables, so the images of one object, on the host
+    and on every software device, share one link of it while any of them is
+    reachable: a load finds the link, their functions have the same
+    {!Image.entry}, and the memory is unmapped once none of them is
+    reachable. The host's queue runs only launches; a software device's
+    queues also run fills and copies. *)
 
 (** {3:host_launches Launches}
 
     A launch runs on the thread that submits it and on the workers of the
     host's pool, which the host's other parallel code, such as nx's CPU
-    kernels, shares, and it is done when {!submit} returns.
+    kernels, and the launches of every software device share, and it is
+    done when {!submit} returns.
 
     A host function's C type is
     {v void f(const void *params, int64_t first, int64_t end); v}
@@ -1883,8 +1892,8 @@ end
 
 (** {3:host_linking Linking}
 
-    {!Image.load} on {!host} links an object that meets these rules, and is
-    [Error] for any other:
+    {!Image.load} on {!host} or a {!software} device links an object that
+    meets these rules, and is [Error] for any other:
     {ul
     {- The host is x86_64 or arm64, and the object is a well-formed 64-bit,
        little-endian, relocatable ELF object ([ET_REL]) for the host's
@@ -1983,8 +1992,8 @@ end
     only with the [com.apple.security.cs.allow-jit] entitlement (arm64) or
     [com.apple.security.cs.allow-unsigned-executable-memory] (x86_64). Without
     it a load is an [Error]. With [com.apple.security.cs.single-jit], a
-    process maps executable memory once, so its loads after the first are
-    [Error]s.
+    process maps executable memory once, so its loads that link after the
+    first are [Error]s.
 
     With [com.apple.security.cs.jit-write-allowlist], the system writes code
     only through functions that the executable, or a library it loaded at
@@ -2378,8 +2387,8 @@ val submit :
     and, in a build without cross-module inlining, a [~waits] given as an
     array allocates its option. Once it has assigned [v], [d]'s driver
     receives [v]'s work or [d] is lost, and the stamps take [(d, v)] as
-    {!section-order} states. On {!host}, [v]'s work is done when [submit]
-    returns.
+    {!section-order} states. On {!host} and a {!software} device, [v]'s
+    work is done when [submit] returns.
 
     Raises [Invalid_argument] if another thread has taken [r], another
     submit of [r] is under way, or the submit would not be valid
@@ -2704,11 +2713,11 @@ module Profile : sig
             of the submission's [Work] where its device times the work.
             Otherwise the event starts when the copy was asked, at the
             submit. It ends when the copy ended where the submit runs it, as
-            for a copy the host, an io device or a {!memory_device} runs,
-            and otherwise when {!take} reads that it is done, so the event
-            then lasts at least as long as the copy. A copy through staging
-            memory records each piece into and out of it, with {!host} as
-            one side, and no event of its own. A fill
+            for a copy the host or an io device runs, and otherwise when
+            {!take} reads that it is done, so the event then lasts at least
+            as long as the copy. A copy through staging memory records each
+            piece into and out of it, with {!host} as one side, and no event
+            of its own. A fill
             ({!Buffer.submit_fill}) moves no bytes from memory and records
             none: where a device runs it, its submission's [Work] is named
             ["copies"]. *)
@@ -2760,6 +2769,13 @@ module Profile : sig
 end
 
 (**/**)
+
+val on_host_exchange : (int -> unit) -> unit
+(** [on_host_exchange f] makes the next load that links host code call [f a]
+    once, [a] being the new link's first address, after the load found no link
+    of its object to share ({!section-host_code}) and before it adds its own.
+    [f] is unset before it runs, so a load in [f] links without it. For rig's
+    tests, which link the same object in [f] so that the outer load loses. *)
 
 val x86_levels : string list
 (** [x86_levels] is the x86-64 psABI's levels, in order, as {!arch} names

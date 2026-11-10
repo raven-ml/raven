@@ -76,9 +76,9 @@ let test_host_allocated () =
 
 (* A buffer adds {!Rig.allocation}'s bytes to its device's allocated bytes,
    at sizes around a word, a line and the host's kept size, on the host and
-   on a memory device; a negative size raises. *)
+   on a software device; a negative size raises. *)
 let test_allocation () =
-  let memory = Result.get_ok (Rig.memory_device "allocation") in
+  let memory = Result.get_ok (Rig.software "allocation") in
   let settled d =
     for _ = 1 to 4 do
       Gc.full_major ();
@@ -885,11 +885,11 @@ let test_borrowed_reclaimed () =
       equal int n (B.length (B.create ~memory:Pinned d n)))
 
 (* A device whose memory the host addresses has no pinned memory: a create
-   of it raises, asking its driver nothing, on the host, a memory device and
+   of it raises, asking its driver nothing, on the host, a software device and
    a driver's device that declares [host_addresses], of no bytes too. *)
 let test_pinned_own () =
   let d, p = P.open_ "memory:pinned-own" in
-  let m = Result.get_ok (Rig.memory_device "memory:pinned-own-memory") in
+  let m = Result.get_ok (Rig.software "memory:pinned-own-memory") in
   let refused = Exn.invalid_arg ~sub:"Buffer.borrow" in
   List.iter
     (fun (msg, d, n) ->
@@ -897,7 +897,7 @@ let test_pinned_own () =
     [
       ("the host", Rig.host, 4 * kib);
       ("the host, no bytes", Rig.host, 0);
-      ("a memory device", m, 4 * kib);
+      ("a software device", m, 4 * kib);
       ("a driver's device the host addresses", d, 4 * kib);
       ("one of no bytes", d, 0);
     ];
@@ -924,11 +924,11 @@ let test_budget_words () =
 (* Mapped memory *)
 
 (* [Rig.offers d k] is whether [B.create ~memory:k d] makes memory, of one
-   word and of none, on the host, a memory device, an io device and Polled
+   word and of none, on the host, a software device, an io device and Polled
    devices whose memory the host addresses or not, with Mapped memory or
    without. Where it is [false], the create raises [Invalid_argument]. *)
 let test_offers () =
-  let m = Result.get_ok (Rig.memory_device "memory:offers-memory") in
+  let m = Result.get_ok (Rig.software "memory:offers-memory") in
   let io = Result.get_ok (Rig.open_io "memory:offers-io") in
   let polled ?transport ~host_visible ~mapped name =
     fst (P.open_ ?transport ~host_visible ~mapped ("memory:offers-" ^ name))
@@ -936,7 +936,7 @@ let test_offers () =
   let devices =
     [
       ("the host", Rig.host);
-      ("a memory device", m);
+      ("a software device", m);
       ("an io device", io);
       ("addressed", polled ~host_visible:true ~mapped:true "addressed");
       ("addressed, no Mapped", polled ~host_visible:true ~mapped:false "own");
@@ -1170,13 +1170,13 @@ let test_paced_host () =
   let rate = cycles_per_mib 256 in
   at_most ~msg:"cycles per MiB" float_exact ~than:(margin /. 4.) rate
 
-(* A memory device's memory is the host's: with a budget that leaves it
+(* A software device's memory is the host's: with a budget that leaves it
    room, its dropped buffers bring a major cycle at most once per half the
    host's last-level cache or 4 MiB, whichever is more, as host buffers do,
    whatever [custom_major_ratio] says of the heap. At a ratio of 1, the
    heap's and the device's share would bring a cycle per buffer. *)
-let test_paced_memory_device () =
-  let d = Result.get_ok (Rig.memory_device "memory:paced-floor") in
+let test_paced_software () =
+  let d = Result.get_ok (Rig.software "memory:paced-floor") in
   let cache = Option.value (Rig.cache_bytes Rig.host) ~default:0 in
   let floor = Int.max (cache / 2) (4 * kib * kib) in
   let was = (Gc.get ()).custom_major_ratio in
@@ -1191,13 +1191,13 @@ let test_paced_memory_device () =
     ~than:(margin *. Float.of_int (kib * kib) /. Float.of_int floor)
     rate
 
-(* A memory device nearing its budget still collects in time: dropped
+(* A software device nearing its budget still collects in time: dropped
    buffers of 20 budgets of 4 MiB, a budget no larger than the floor of host
    memory's pace, never force a collection. One uncounted run takes a fresh
    heap's start, as in [test_paced]. *)
 let test_paced_memory_budget () =
   let budget = 4 * kib * kib in
-  let d = Result.get_ok (Rig.memory_device "memory:paced-budget") in
+  let d = Result.get_ok (Rig.software "memory:paced-budget") in
   Rig.set_budget d budget;
   let run () =
     for _ = 1 to 20 * 16 do
@@ -1946,11 +1946,12 @@ let tests =
            most"
           test_paced_host;
         test
-          "a memory device's dropped buffers bring a cycle per half the \
+          "a software device's dropped buffers bring a cycle per half the \
            last-level cache at most"
-          test_paced_memory_device;
-        test "a memory device's dropped buffers of many budgets never force a \
-              collection"
+          test_paced_software;
+        test
+          "a software device's dropped buffers of many budgets never force a \
+           collection"
           test_paced_memory_budget;
         test "small dropped host buffers bring a cycle per 4 MiB at most"
           test_paced_host_small;

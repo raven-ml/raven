@@ -1676,7 +1676,7 @@ let test_decays_is_asked () =
 (* Two leaves each alone on its own device of one set: every per-leaf step
    reads its scalars beside both, and gives the host's values. *)
 let test_leaves_on_two_devices () =
-  let device name = Result.get_ok (Rig.memory_device name) in
+  let device name = Result.get_ok (Rig.software name) in
   let d0 = device "vega-test-0" and d1 = device "vega-test-1" in
   let module S = (val Nx.devices [ d0; d1 ]) in
   let host = (vec [| 1.0; -2.0 |], vec [| 3.0 |]) in

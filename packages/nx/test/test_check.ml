@@ -464,7 +464,7 @@ let others =
           raises (At ([| 1 |], 5., 0l, 0.)) (fun () -> Nx.sync negated);
           equal (array float_exact) [| -4.; -5.; -6. |] (Nx.to_array negated));
       test "a donation after a sync reuses the checked data's memory" (fun () ->
-          (* A copy owns its memory: a placement onto a memory device borrows
+          (* A copy owns its memory: a placement onto a software device borrows
              the host's, which no donation writes. *)
           let d = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
           let d = Nx.copy (Nx.place S.on d) in

@@ -5,12 +5,14 @@
 
 (* Loading and launching host code, each row beside the floors that bound it.
 
-   A load of affine.c, about 100 bytes of code, is bounded by mapping,
-   installing and unmapping a page and by reading the object; a load of
-   linked.c adds a lookup in the process, and a load of many.c, 2,000
-   relocations, its read. A launch is bounded by releasing and acquiring the
-   runtime, and a launch over many groups by the pool's empty job of the same
-   threads and chunks. A compute-bound kernel over 4 Mi floats, in 4 groups per
+   A load of affine.c, about 100 bytes of code, that no image holds is
+   bounded by mapping, installing and unmapping a page and by reading the
+   object; a load of linked.c adds a lookup in the process, and a load of
+   many.c, 2,000 relocations, its read. A load of affine.c while an image
+   holds it finds that image's link. A launch is bounded by releasing and
+   acquiring the runtime, and a launch over many groups by the pool's empty
+   job of the same threads and chunks, and a launch on a software device by
+   the host's. A compute-bound kernel over 4 Mi floats, in 4 groups per
    worker, is bounded by its run in one group divided by the workers. *)
 
 module B = Rig.Buffer
@@ -28,8 +30,12 @@ let obj f =
   | "affine" -> S.fixture ~dir:"../../test/fixtures" f
   | _ -> S.fixture ~dir:"../../test/host/fixtures" f
 
-let load o () =
+let load o =
   match Rig.Image.load Rig.host o with Ok i -> i | Error e -> failwith e
+
+(* A load of [o] as an object of its own at each call, so that no image's
+   link serves it. Its copy of [o] adds a fraction of the load. *)
+let fresh o () = load (S.fresh o)
 
 let read o () =
   match Rig_elf.of_string o with Ok o -> o | Error e -> failwith e
@@ -44,9 +50,12 @@ let load_rows =
   let affine_image = image_of affine and many_image = image_of many in
   Thumper.group "load"
     [
-      Thumper.bench "affine" (load affine);
-      Thumper.bench "linked" (load linked);
-      Thumper.bench "many-relocations" (load many);
+      Thumper.bench "affine" (fresh affine);
+      Thumper.bench "linked" (fresh linked);
+      Thumper.bench "many-relocations" (fresh many);
+      Thumper.bench_with_setup "affine-held"
+        ~setup:(fun () -> load affine)
+        (fun _ -> load affine);
       Thumper.bench "floor-map-install-unmap-affine" (fun () ->
           map_install_unmap affine_image);
       Thumper.bench "floor-map-install-unmap-many" (fun () ->
@@ -57,12 +66,13 @@ let load_rows =
       Thumper.bench "floor-lookup" lookup;
     ]
 
-(* A run of a submission of one launch of [image]'s [f] over [groups] groups
-   of [threads] threads, with [params] bytes that [set] stores. *)
-let launch ?(refs = [||]) ?(params = 0) ?(set = fun _ _ -> ()) image f
-    ~groups ~threads =
+(* A run of a submission of one launch of [image]'s [f] on [device] (defaults
+   to the host) over [groups] groups of [threads] threads, with [params] bytes
+   that [set] stores. *)
+let launch ?(device = Rig.host) ?(refs = [||]) ?(params = 0)
+    ?(set = fun _ _ -> ()) image f ~groups ~threads =
   let fn = Option.get (Rig.Image.resolve image f) in
-  let s = Sub.make Rig.host [| Sub.launch ~refs fn ~params |] in
+  let s = Sub.make device [| Sub.launch ~refs fn ~params |] in
   let run = Sub.take s and k = Sub.block s 0 in
   Sub.Run.groups run k groups 1 1;
   Sub.Run.threads run k threads 1 1;
@@ -72,13 +82,23 @@ let launch ?(refs = [||]) ?(params = 0) ?(set = fun _ _ -> ()) image f
 let submit run buffers () =
   ignore (Rig.submit run ~buffers : Rig.Point.t)
 
+(* A run of one launch of empty.c on a software device, opened in the
+   measuring worker: a device opened before the fork is lost in it. *)
+let software_empty () =
+  let d = Result.get_ok (Rig.software "bench-software") in
+  match Rig.Image.load d (obj "empty") with
+  | Ok image -> launch ~device:d image "empty" ~groups:1 ~threads:1
+  | Error e -> failwith e
+
 let launch_rows =
-  let empty = load (obj "empty") () in
+  let empty = load (obj "empty") in
   let one = launch empty "empty" ~groups:1 ~threads:1
   and all = launch empty "empty" ~groups:workers ~threads:1 in
   Thumper.group "launch"
     [
       Thumper.bench "empty" (submit one [||]);
+      Thumper.bench_with_setup "software-empty" ~setup:software_empty
+        (fun run -> submit run [||] ());
       Thumper.bench "workers-empty" (submit all [||]);
       Thumper.bench "floor-release-acquire" release_acquire;
       Thumper.bench "floor-pool-job" (fun () ->
@@ -87,7 +107,7 @@ let launch_rows =
 
 let scale_rows =
   let n = 4 * 1024 * 1024 in
-  let image = load (obj "scale") () in
+  let image = load (obj "scale") in
   let x = Bigarray.(Array1.create float32 c_layout n) in
   Bigarray.Array1.fill x 1.;
   let buffers = [| B.of_bigarray x |] in

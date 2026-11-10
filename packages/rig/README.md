@@ -12,14 +12,14 @@ never names an event or a fence. Another machine's GPUs open through
 
 ## A first program
 
-This program copies five bytes to a *memory device*, a device whose memory
+This program copies five bytes to a *software device*, a device whose memory
 is the host's and whose work runs before the call that submits it returns,
 and back again. It runs on any machine:
 
 ```ocaml
 # open Rig;;
 # let () =
-    let d = Result.get_ok (memory_device "M") in
+    let d = Result.get_ok (software "M") in
     let on_d = Buffer.create d 5 in
     Buffer.blit_from_string "hello" 0 on_d 0 5;
     let b = Bytes.create 5 in

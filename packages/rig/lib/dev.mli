@@ -94,7 +94,7 @@ val reaches : device -> device -> bool
 (** [reaches d d'] is {!Rig.reaches}[ d d']. *)
 
 val open_driver :
-  ?memory_device:bool ->
+  ?software:bool ->
   (module Rig_edge.Driver with type t = 'a) ->
   machine:machine ->
   name:string ->
@@ -106,9 +106,9 @@ val open_driver :
     wait for the first. It reads the device's facts before it puts the
     device in the table. A fault while reading them stops the handle and is
     [Error], and facts that break the driver's contract stop the handle and
-    raise [Invalid_argument]. With [memory_device] (defaults to [false]),
+    raise [Invalid_argument]. With [software] (defaults to [false]),
     {!Rig.runs_on_host} is [true] of the device, and misuse raises under
-    {!Rig.memory_device}'s name. *)
+    {!Rig.software}'s name. *)
 
 val open_io : machine:machine -> string -> (device, string) result
 (** [open_io ~machine name] is {!Rig.open_io} on [machine]. Concurrent opens

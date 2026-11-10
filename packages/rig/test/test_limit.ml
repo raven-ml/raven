@@ -16,7 +16,7 @@ module P = Rig_support.Polled
 let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal
 
 (* More opens than the process has slots, 65,535: [warm] cycles, then
-   [clean] cycles of memory devices that close, then [losses] cycles of
+   [clean] cycles of software devices that close, then [losses] cycles of
    Polled devices lost with work queued. *)
 let warm = 10_000
 let clean = 60_000
@@ -57,7 +57,7 @@ let lose name =
   (d, p)
 
 let close_one () =
-  let d = Result.get_ok (Rig.memory_device "limit:cycle") in
+  let d = Result.get_ok (Rig.software "limit:cycle") in
   let p = Rig.submit (Sub.take (Sub.make d [||])) ~buffers:[||] in
   Rig.close d;
   (d, p)

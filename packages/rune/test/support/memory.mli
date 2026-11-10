@@ -6,7 +6,7 @@
 (** The bytes a call leaves allocated on a device of its own. *)
 
 val device : Rig.t
-(** [device] is the memory device the counts read. Its bytes are counted as
+(** [device] is the software device the counts read. Its bytes are counted as
     differences across a call, so values other suites place there do not count.
 *)
 

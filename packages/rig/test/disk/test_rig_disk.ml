@@ -121,7 +121,7 @@ let read b =
 let write b s = B.copy ~src:(host_of_string s) ~dst:b
 
 (* A device whose memory is the host's, which maps any host memory. *)
-let memory_device = lazy (Result.get_ok (Rig.memory_device "DISK-TEST"))
+let software = lazy (Result.get_ok (Rig.software "DISK-TEST"))
 
 (* [borrowed d b] is the bytes of [d]'s borrow of [b], if [d] maps it, as the
    host reads them or [d]'s work copies them out. *)
@@ -424,7 +424,7 @@ let test_copy_in (seed, (at, len), tail, src) =
     match src with
     | From_host first -> host_of_string ~first bytes
     | From_device ->
-        let d = B.create (Lazy.force memory_device) len in
+        let d = B.create (Lazy.force software) len in
         write d bytes;
         d
     | From_file -> of_file (make_file ~path:source bytes)
@@ -491,7 +491,7 @@ let test_copy_out (from_end, range, (before, after), into) =
         B.copy ~src:v ~dst:h;
         string_of_host h
     | To_device ->
-        let d = B.create (Lazy.force memory_device) length in
+        let d = B.create (Lazy.force software) length in
         B.copy ~src:v ~dst:d;
         read d
   in
@@ -553,7 +553,7 @@ let test_copy_own_pages () =
           ("into the file", half pages 0, half file 1);
           ("out of the file", half file 0, half pages 1);
         ])
-    [ ("the host's", host); ("a device's", Lazy.force memory_device) ];
+    [ ("the host's", host); ("a device's", Lazy.force software) ];
   same ~msg:"the file" s (contents path)
 
 (* 20,000 copies of 64 bytes into a file, each from a fresh host buffer that
@@ -622,7 +622,7 @@ let test_borrow (kind, on_host, range) =
     match kind with Opened -> opened | Created -> Lazy.force created_viewed
   in
   let first, length = placed range in
-  let d = if on_host then host else Lazy.force memory_device in
+  let d = if on_host then host else Lazy.force software in
   cover "no bytes" (length = 0);
   cover "the last byte" (first + length = viewed_size && length > 0);
   equal (option octets)
@@ -650,7 +650,7 @@ let test_prefetch_unopened () =
   let first = 16383 and length = 16386 in
   equal (option octets)
     (Some (String.sub s first length))
-    (borrowed (Lazy.force memory_device) (B.view file ~first ~length))
+    (borrowed (Lazy.force software) (B.view file ~first ~length))
 
 (* A borrow whose file cannot be reopened for the moment raises, and borrowing
    comes back once the path names the file again. *)
@@ -1455,7 +1455,7 @@ let barriers =
           let path = new_path () in
           removing [ path ] @@ fun () ->
           let f = create_file path 0 in
-          let d = Result.get_ok (Rig.memory_device "DISK-TEST-CLOSED") in
+          let d = Result.get_ok (Rig.software "DISK-TEST-CLOSED") in
           ignore (require_some (B.borrow d (Rig_disk.buffer f)));
           Rig.close d;
           Rig_disk.barrier f);
@@ -1465,7 +1465,7 @@ let barriers =
           let f = create_file path 4 in
           let on_device =
             require_some
-              (B.borrow (Lazy.force memory_device) (Rig_disk.buffer f))
+              (B.borrow (Lazy.force software) (Rig_disk.buffer f))
           in
           write on_device "wxyz";
           Rig_disk.barrier f;

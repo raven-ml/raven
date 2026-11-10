@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Samplers off the host: positions on a set of two memory devices, which
+(* Samplers off the host: positions on a set of two software devices, which
    compute on the host, with the chains on both devices or split between
    them, and keys that lie on one device alone. A sampler's state and draws
    lie where its start does. *)
@@ -15,7 +15,7 @@ let t = Nx.Ptree.tensor
 module Pair =
   (val Nx.devices
          (List.init 2 (fun k ->
-              Result.get_ok (Rig.memory_device (Printf.sprintf "norn-s%d" k)))))
+              Result.get_ok (Rig.software (Printf.sprintf "norn-s%d" k)))))
 
 let first = Nx.Placement.device Pair.v (List.hd (Nx.Devices.to_list Pair.v))
 let placements = [ ("whole", Pair.on); ("split", Pair.split ~axis:0) ]

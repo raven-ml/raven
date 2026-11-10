@@ -12,7 +12,7 @@
 let () =
   let ds =
     List.init 2 (fun k ->
-        Result.get_ok (Rig.memory_device (Printf.sprintf "declines-%d" k)))
+        Result.get_ok (Rig.software (Printf.sprintf "declines-%d" k)))
   in
   let module S = (val Nx.devices ds) in
   let x () = Nx.place (S.split ~axis:0) (Nx.ones Nx.float32 [| 4 |]) in

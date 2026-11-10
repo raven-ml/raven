@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* Copy parts as rig_edge.h states them, on the drivers of rig's own suites:
-   the memory device's, whose memory is host memory, and Polled's, whose
+   the software device's, whose memory is host memory, and Polled's, whose
    Device memory the host does not address. Rig's interface makes no box yet,
    so each part goes to the driver's C functions directly
    (Rig_gpu_support.hand). *)
@@ -20,14 +20,11 @@ let timeout = Rig_support.time 60.
 let pattern n seed =
   String.init n (fun i -> Char.chr ((seed + (i * 7)) land 255))
 
-(* The memory device's C state over the word at [word], as rig.memory_device
-   makes it. These bind rig's private stubs, whose types the compiler cannot
-   check here, because nothing public hands the memory device a box or a
-   fill: the host copies and sets its memory. They go once a public call,
-   such as a copy of boxes in rig.mli, hands the memory device's copy engine
-   a box or a fill. *)
-external memory_device : nativeint -> nativeint = "caml_rig_memory_new"
-external drop_memory_device : nativeint -> unit = "caml_rig_memory_drop"
+(* The software device's C state over the word at [word], as Rig.software
+   makes it, and its free, as rig.h's section for rig's tests declares
+   them. *)
+external software : nativeint -> nativeint = "caml_rig_software_new"
+external drop_software : nativeint -> unit = "caml_rig_software_drop"
 
 (* A box of [rows] rows of [width] bytes, each side at its offset and with
    its pitch [width] plus its pad, its memory [slack] bytes past its last
@@ -116,13 +113,13 @@ let sizes c =
   in
   (n so ps + c.slack, n d_o pd + c.slack)
 
-(* The memory device copies each row of a box into place and fills a fill's
+(* The software device copies each row of a box into place and fills a fill's
    row, at its hand-over, and writes no other byte. *)
-let memory_device_law c =
+let software_law c =
   covers c;
   let word = H.word () in
-  let edge = memory_device word in
-  Fun.protect ~finally:(fun () -> drop_memory_device edge) @@ fun () ->
+  let edge = software word in
+  Fun.protect ~finally:(fun () -> drop_software edge) @@ fun () ->
   let ns, nd = sizes c in
   let src = H.pages (Int.max ns 1) and dst = H.pages (Int.max nd 1) in
   let from = pattern ns 1 and into = pattern nd 2 in
@@ -186,8 +183,8 @@ let () =
          group ~timeout "copy parts"
            [
              prop ~count:200
-               "the memory device runs boxes and fills as rig_edge.h states"
-               cases memory_device_law;
+               "the software device runs boxes and fills as rig_edge.h states"
+               cases software_law;
              prop ~count:200 "Polled runs boxes and fills as rig_edge.h states"
                (Gen.pair cases kinds) polled_law;
            ];

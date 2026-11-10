@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* rig's public API against a reference written from rig.mli, over every kind of
-   device the machine has: the host, memory devices, Polled devices in several
+   device the machine has: the host, software devices, Polled devices in several
    configurations, the disk and the GPUs present.
 
    The reference holds what rig.mli names: devices and whether they are lost,
@@ -657,8 +657,8 @@ let staged w r = if not w.two then r.halves <- 1
 
 type sdev = { d : Rig.t; skind : kind; p : P.t option; mutable spoiled : bool }
 
-(* Polled and memory devices go back to a pool when their program ends, unless a
-   fault or a failure was armed on them. *)
+(* Polled and software devices go back to a pool when their program ends,
+   unless a fault or a failure was armed on them. *)
 let pool_lock = Mutex.create ()
 let pool : sdev list ref = ref []
 let opened = Atomic.make 0
@@ -672,7 +672,7 @@ let fresh kind =
   | Host -> device Rig.host
   | Disk -> device Rig_disk.device
   | Gpu g -> device (gpu_device g)
-  | Memory -> device (Result.get_ok (Rig.memory_device (name ())))
+  | Memory -> device (Result.get_ok (Rig.software (name ())))
   | Polled c ->
       let d, p =
         P.open_ ~capacity:c.capacity ~copies:c.copies ~host_visible:c.visible

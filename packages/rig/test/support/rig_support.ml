@@ -8,6 +8,7 @@ type polled
 external polled_new : int -> bool -> int -> polled = "rig_test_polled_new"
 external polled_edge : polled -> nativeint = "rig_test_polled_edge"
 external polled_grows : polled -> int -> unit = "rig_test_polled_grows"
+external polled_untimed : polled -> unit = "rig_test_polled_untimed"
 
 external polled_limit_rows : polled -> int -> unit
   = "rig_test_polled_limit_rows"
@@ -615,8 +616,8 @@ module Polled = struct
       ?(counters = []) ?(budget = 1 lsl 30) ?(memory = max_int)
       ?(window = max_int)
       ?(may_block = false) ?(completion = `Host) ?(waits_on = [])
-      ?(answer = `Stopped) ?(runs = `When_slept) ?(lag = 1) ?hang_ms
-      ?(capability = Rig_edge.Capability (capability_key, ())) ?bus
+      ?(answer = `Stopped) ?(runs = `When_slept) ?(lag = 1) ?(timed = true)
+      ?hang_ms ?(capability = Rig_edge.Capability (capability_key, ())) ?bus
       ?(arch = "polled") () =
     if lag < 1 then invalid_arg "Polled.make: lag is below 1";
     let limits = function
@@ -679,6 +680,7 @@ module Polled = struct
     in
     if runs = `Itself then polled_start d.c;
     Option.iter (polled_grows d.c) grows;
+    if not timed then polled_untimed d.c;
     d
 
   let bind ?(start = 0) d ~word =
@@ -695,13 +697,13 @@ module Polled = struct
 
   let open_ ?capacity ?grows ?copies ?host_visible ?mapped ?addresses
       ?transport ?peers ?maps_host ?alignment ?cache_bytes ?budget ?memory
-      ?window ?may_block ?completion ?waits_on ?answer ?runs ?lag ?hang_ms ?bus
-      ?arch name =
+      ?window ?may_block ?completion ?waits_on ?answer ?runs ?lag ?timed
+      ?hang_ms ?bus ?arch name =
     let p =
       make ?capacity ?grows ?copies ?host_visible ?mapped ?addresses
         ?transport ?peers ?maps_host ?alignment ?cache_bytes ?budget ?memory
-        ?window ?may_block ?completion ?waits_on ?answer ?runs ?lag ?hang_ms
-        ?bus ?arch ()
+        ?window ?may_block ?completion ?waits_on ?answer ?runs ?lag ?timed
+        ?hang_ms ?bus ?arch ()
     in
     match Rig.open_ (opener name p) with
     | Ok d -> (d, p)

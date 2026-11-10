@@ -298,13 +298,13 @@ let routes =
      let f, _ = hidden ~peers:false "copy:box-peer-2" in
      let own name = P.open_ ~maps_host:false ~peers:false ~host_visible:false name in
      let g, _ = own "copy:box-own" and h, _ = own "copy:box-own-2" in
-     let m = Result.get_ok (Rig.memory_device "copy:box-memory") in
+     let m = Result.get_ok (Rig.software "copy:box-memory") in
      let io = Support.io "copy:box-io" in
      let on a b () = (B.create a side, B.create b side) in
      [
        { name = "host"; make = on Rig.host Rig.host };
        { name = "a device's copy engine"; make = on d d };
-       { name = "a memory device"; make = on m m };
+       { name = "a software device"; make = on m m };
        { name = "staged into a device"; make = on Rig.host d };
        { name = "staged out of a device"; make = on d Rig.host };
        { name = "staged between two devices"; make = on e f };

@@ -728,7 +728,7 @@ let test_parts_draw_as_one () =
    along either axis of the set: the draws are the same at every placement, so
    the stores are the host's. *)
 let test_placement () =
-  let device name = Result.get_ok (Rig.memory_device name) in
+  let device name = Result.get_ok (Rig.software name) in
   let d0 = device "vega-precision-0" and d1 = device "vega-precision-1" in
   let module S = (val Nx.devices [ d0; d1 ]) in
   let step x =

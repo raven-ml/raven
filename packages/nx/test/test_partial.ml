@@ -1684,7 +1684,7 @@ let law_summed (Sumcase (k, c, s, data, w, whole, a, us, p, u)) =
    logsumexp or moments combines partials that round ({!Partial}): each
    tile reduced into the carrier as one device reduces it, the partials
    stacked along a new leading axis in the tiles' order and reduced over it
-   by the kernels, bit for bit. The devices are memory devices that nx.cpu
+   by the kernels, bit for bit. The devices are software devices that nx.cpu
    computes on, so the host's reduction of the stack is theirs. *)
 
 let gamma u k =
@@ -2115,7 +2115,7 @@ let test_closing_peaks () =
   let ds =
     List.init 4 (fun k ->
         let name = Printf.sprintf "nx-partial-peak-%d" k in
-        Result.get_ok (Rig.memory_device name))
+        Result.get_ok (Rig.software name))
   in
   let module S = (val Nx.devices ds) in
   let rows = 512 and cols = 512 in
@@ -2738,7 +2738,7 @@ let contracted (type v s w q d) acc (out : (w, q) D.t) batch contracting
          sum = false;
        })
 
-(* One kernel library's sets of memory devices: one, three and four, and a
+(* One kernel library's sets of software devices: one, three and four, and a
    2 x 2 mesh of the four. *)
 module type Sets = sig
   module One : Nx.Devices
@@ -3521,8 +3521,8 @@ let law_shifted (c, n, w, seed) =
 
 (* Traffic *)
 
-(* nx.cpu, counting its loop positions and products, over three and four memory
-   devices. *)
+(* nx.cpu, counting its loop positions and products, over three and four
+   software devices. *)
 module Count3 = (val Nx.devices ~kernels:(module C) [ m 0; m 1; m 2 ])
 module Count4 = (val Nx.devices ~kernels:(module C) [ m 0; m 1; m 2; m 3 ])
 
@@ -3669,7 +3669,7 @@ let settled d =
   done;
   Rig.allocated d
 
-(* The bytes each of the four memory devices holds more after [f ()], read
+(* The bytes each of the four software devices holds more after [f ()], read
    settled before it. A value read by a device that lacks its window is
    gathered there into memory of the device's own. *)
 let grown f =

@@ -484,7 +484,7 @@ let stack (type v s d) eng ~by c (dt : (v, s) D.t) shape
 
 (* The most bytes of slots a piece gathers: a buffer of fixed size, so that
    a closing holds no more however large its result. A piece costs about
-   1,100 words and 12 us of calls on four memory devices, and reducing 256
+   1,100 words and 12 us of calls on four software devices, and reducing 256
    KiB of slots about 220 us, so its calls stay near a twentieth. *)
 let piece_bytes = 262144
 

@@ -4,7 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* The host's code: images linked from the fixtures' objects, whose sources
-   say what they do, and launches of their functions on Rig.host. *)
+   say what they do, and launches of their functions on Rig.host and on a
+   software device. *)
 
 open Windtrap
 module B = Rig.Buffer
@@ -31,12 +32,12 @@ type grid = { groups : int * int * int; threads : int * int * int }
 
 let one = { groups = (1, 1, 1); threads = (1, 1, 1) }
 
-(* The point of one launch of [image]'s [f] on the host over [buffers], with
-   [params] bytes of parameters that [set] stores. *)
-let launch ?(refs = [||]) ?(params = 0) ?(shared = 0) ?(set = fun _ _ -> ())
-    ?(grid = one) image f buffers =
+(* The point of one launch of [image]'s [f] on [device] (defaults to the host)
+   over [buffers], with [params] bytes of parameters that [set] stores. *)
+let launch ?(device = Rig.host) ?(refs = [||]) ?(params = 0) ?(shared = 0)
+    ?(set = fun _ _ -> ()) ?(grid = one) image f buffers =
   let fn = require_some (Rig.Image.resolve image f) in
-  let s = Sub.make Rig.host [| Sub.launch ~refs fn ~params |] in
+  let s = Sub.make device [| Sub.launch ~refs fn ~params |] in
   let run = Sub.take s and k = Sub.block s 0 in
   let gx, gy, gz = grid.groups and tx, ty, tz = grid.threads in
   Run.groups run k gx gy gz;
@@ -51,18 +52,23 @@ let words = Array.map B.of_bigarray
 
 let affine = lazy (load "affine")
 
-(* affine.c over [n] elements, in groups of [t] threads. *)
-let affine_launch ~n ~t ~a ~c out inb =
+(* affine.c of [image] over [n] elements of [inb] into [out], in groups of [t]
+   threads. *)
+let affine_on ?device image ~n ~t ~a ~c out inb =
   let set run k =
     Run.int64 run k 16 (Int64.of_int n);
     Run.int64 run k 24 (Int64.of_int a);
     Run.int64 run k 32 (Int64.of_int c)
   in
-  launch (Lazy.force affine) "affine"
+  launch ?device image "affine"
     ~refs:Sub.[| write 0 ~at:0; read 1 ~at:8 |]
     ~params:40 ~set
     ~grid:{ groups = ((n + t - 1) / t, 1, 1); threads = (t, 1, 1) }
-    (words [| out; inb |])
+    [| out; inb |]
+
+let affine_launch ~n ~t ~a ~c out inb =
+  affine_on (Lazy.force affine) ~n ~t ~a ~c (B.of_bigarray out)
+    (B.of_bigarray inb)
 
 let test_affine (n, t, a, c, input) =
   cover "one element" (n = 1);
@@ -285,7 +291,7 @@ let test_split g =
 
 let max_axis = (1 lsl 32) - 1
 
-let refusals =
+let grid_refusals =
   [
     ("shared memory", 1, { one with groups = (1, 1, 1) });
     ("an empty grid", 0, { one with groups = (1, 0, 1) });
@@ -317,7 +323,7 @@ let split_tests =
         test_split;
       cases "a launch never runs with"
         ~id:(fun (n, _, _) -> n)
-        refusals test_refused;
+        grid_refusals test_refused;
       test "the host runs no copy, fill or words" test_other_parts;
     ]
 
@@ -541,11 +547,12 @@ let domain_tests =
 
 (* Code memory *)
 
-(* Collects, then drains the host's releases as an allocation does. *)
-let collect () =
+(* Collects, then drains the releases of the devices [on] (defaults to the
+   host) as an allocation does. *)
+let collect ?(on = [ Rig.host ]) () =
   for _ = 1 to 3 do
     Gc.full_major ();
-    ignore (B.create Rig.host 8)
+    List.iter (fun d -> ignore (B.create d 8)) on
   done
 
 let test_unmapped () =
@@ -844,7 +851,284 @@ let refusal_tests =
         test_unmappable;
     ]
 
+(* Software devices *)
+
+let software = lazy (Result.get_ok (Rig.software "host:software"))
+
+let software_affine =
+  lazy
+    (require_ok ~pp:Format.pp_print_string
+       (Rig.Image.load (Lazy.force software) (obj "affine")))
+
+(* A buffer of [d] holding the words [xs]. *)
+let words_on d xs =
+  let bytes = Bytes.create (8 * Array.length xs) in
+  Array.iteri
+    (fun i x -> Bytes.set_int64_le bytes (8 * i) (Int64.of_int x))
+    xs;
+  let b = B.create d (Bytes.length bytes) in
+  B.blit_from_string (Bytes.to_string bytes) 0 b 0 (Bytes.length bytes);
+  b
+
+let read_words b =
+  let bytes = Bytes.create (B.length b) in
+  B.blit_to_bytes b 0 bytes 0 (B.length b);
+  Array.init (B.length b / 8) (fun i ->
+      Int64.to_int (Bytes.get_int64_le bytes (8 * i)))
+
+let test_software_affine (n, t, a, c, input) =
+  cover "one element" (n = 1);
+  cover "a last group in part past n" (n mod t <> 0);
+  let d = Lazy.force software in
+  let inb = words_on d input and out = words_on d (Array.make (n + 1) 7) in
+  let image = Lazy.force software_affine in
+  let p = affine_on ~device:d image ~n ~t ~a ~c out inb in
+  equal ~msg:"reached when submit returns" bool true (Rig.Point.reached p);
+  let expected = Array.map (fun x -> (a * x) + c) input in
+  equal (array int) (Array.append expected [| 7 |]) (read_words out)
+
+(* A submission's fill, copy and launch run in order: the copy reads what the
+   fill wrote, and the launch what the copy wrote. *)
+let test_software_parts () =
+  let d = Lazy.force software in
+  let affine =
+    require_some (Rig.Image.resolve (Lazy.force software_affine) "affine")
+  in
+  let s =
+    Sub.make d
+      Sub.
+        [|
+          fill ~refs:[| write 0 ~at:0 |] Rig_support.bump ~params:8;
+          copy ~src:(Slot 0) ~dst:(Slot 1);
+          launch ~refs:[| write 2 ~at:0; read 1 ~at:8 |] affine ~params:40;
+        |]
+  in
+  let run = Sub.take s and k = Sub.block s 2 in
+  Run.groups run k 1 1 1;
+  Run.threads run k 3 1 1;
+  Run.int64 run k 16 3L;
+  Run.int64 run k 24 10L;
+  Run.int64 run k 32 1L;
+  let src = words_on d [| 1; 2; 3 |] in
+  let tmp = words_on d [| 0; 0; 0 |] and out = words_on d [| 0; 0; 0 |] in
+  let p = Rig.submit run ~buffers:[| src; tmp; out |] in
+  equal ~msg:"reached when submit returns" bool true (Rig.Point.reached p);
+  equal (array int) [| 21; 21; 31 |] (read_words out)
+
+(* A profile records a launch's work on a software device, named after its
+   function. *)
+let test_software_profiled () =
+  let d = Lazy.force software in
+  let inb = words_on d [| 1; 2 |] and out = words_on d [| 0; 0 |] in
+  let _, events =
+    Rig.Profile.take (fun () ->
+        affine_on ~device:d (Lazy.force software_affine) ~n:2 ~t:2 ~a:1 ~c:0
+          out inb)
+  in
+  equal (list string) [ "affine" ]
+    (List.filter_map
+       (function
+         | Rig.Profile.Work s when Rig.equal s.device d -> Some s.name
+         | _ -> None)
+       events)
+
+(* A software device runs no words part and refuses the launches the host
+   refuses. *)
+let test_software_refused () =
+  let d = Lazy.force software in
+  let empty =
+    require_ok ~pp:Format.pp_print_string (Rig.Image.load d (obj "empty"))
+  in
+  raises_match ~msg:"words" Exn.invalid_arg (fun () ->
+      Sub.make d [| Sub.words (B.create d 8) |]);
+  List.iter
+    (fun (msg, shared, grid) ->
+      raises_match ~msg Exn.invalid_arg (fun () ->
+          launch ~device:d ~shared ~grid empty "empty" [||]))
+    grid_refusals
+
+let software_tests =
+  group ~timeout "software devices"
+    [
+      prop
+        "a software device's launch runs its function over every thread, \
+         done when its submit returns"
+        affine_case test_software_affine;
+      test "a software device runs a fill, a copy and a launch in order"
+        test_software_parts;
+      test "a profile records a software device's launch"
+        test_software_profiled;
+      test "a software device refuses words and the launches the host refuses"
+        test_software_refused;
+    ]
+
+(* Sharing
+
+   The images of one object, on the host and on software devices, share one
+   link of it while any of them is reachable. Each test loads objects no
+   other test loads. *)
+
+let fresh f = S.fresh (obj f)
+
+let load_on d o = require_ok ~pp:Format.pp_print_string (Rig.Image.load d o)
+let entry_of image f =
+  Rig.Image.entry (require_some (Rig.Image.resolve image f))
+
+(* Their functions have the same entry, and one image runs blocks.c once the
+   others are collected and a device of theirs closed. *)
+let test_shared () =
+  let d = Lazy.force software in
+  let e = require_ok ~pp:Format.pp_print_string (Rig.software "host:shared") in
+  let o = fresh "blocks" in
+  let kept = load_on d o in
+  let entry = entry_of kept "blocks" in
+  equal ~msg:"the host's entry" int entry
+    (entry_of (load_on Rig.host o) "blocks");
+  equal ~msg:"another software device's entry" int entry
+    (entry_of (load_on e o) "blocks");
+  collect ~on:[ Rig.host; d; e ] ();
+  Rig.close e;
+  let counts = words_on d [| 0; 0; 0 |] and log = words_on d [| 0; 4; 0; 0 |] in
+  ignore
+    (launch ~device:d kept "blocks"
+       ~refs:Sub.[| write 0 ~at:0; write 1 ~at:8 |]
+       ~params:16
+       ~grid:{ groups = (1, 1, 1); threads = (3, 1, 1) }
+       [| counts; log |]);
+  equal ~msg:"each thread's runs" (array int) [| 1; 1; 1 |] (read_words counts);
+  equal ~msg:"the log" (array int) [| 2; 4; 0; 3 |] (read_words log)
+
+(* The link stays mapped while the image on [keeper] is reachable, after the
+   others are collected, and is unmapped once it goes too. *)
+let test_last_unmaps (_, keeper) =
+  let on = [ Rig.host; Lazy.force software ] in
+  let o = fresh "empty" in
+  let address =
+    (fun () ->
+      let kept = load_on (keeper ()) o in
+      let address = entry_of kept "empty" in
+      List.iter
+        (fun d ->
+          equal ~msg:(Rig.name d) int address (entry_of (load_on d o) "empty"))
+        on;
+      collect ~on ();
+      equal ~msg:"mapped while one image is reachable" bool true
+        (S.executable address);
+      equal ~msg:"the kept image's entry" int address (entry_of kept "empty");
+      address)
+      ()
+  in
+  collect ~on ();
+  equal ~msg:"unmapped once the last image goes" bool false
+    (S.executable address)
+
+let keepers =
+  [
+    ("the host", fun () -> Rig.host);
+    ("a software device", fun () -> Lazy.force software);
+  ]
+
+(* Loads from two domains of three objects, on the host and on a software
+   device: each object's images share one link whichever domain links it. *)
+type loads = {
+  objects : string array;
+  device : Rig.t;
+  images : (int * Rig.Image.t) list Atomic.t;
+}
+
+let shared_fixtures = [| "empty"; "blocks"; "scale" |]
+let loads = abstract "l"
+
+let rec push a x =
+  let l = Atomic.get a in
+  if not (Atomic.compare_and_set a l (x :: l)) then push a x
+
+let load_commands =
+  let k = Gen.int_range 0 (Array.length shared_fixtures - 1) in
+  let made () =
+    {
+      objects = Array.map fresh shared_fixtures;
+      device = Lazy.force software;
+      images = Atomic.make [];
+    }
+  in
+  let load k host l =
+    let d = if host then Rig.host else l.device in
+    push l.images (k, load_on d l.objects.(k))
+  in
+  let links k l =
+    List.sort_uniq Int.compare
+      (List.filter_map
+         (fun (k', i) ->
+           if k' = k then Some (entry_of i shared_fixtures.(k)) else None)
+         (Atomic.get l.images))
+  in
+  let one_link _ () = function
+    | Ok entries ->
+        less ~msg:"the object's distinct entries" int (List.length entries)
+          ~than:2
+    | Error e -> raise e
+  in
+  [
+    command "objects" (Gen.unit @-> makes loads) (fun () -> ()) made;
+    command "load"
+      (k @-> Gen.bool @-> loads ^-> returns unit)
+      (fun _ _ () -> ())
+      load;
+    command "one link" (k @-> loads ^-> judges (list int)) one_link links;
+  ]
+
+(* A load whose exchange another link of its object beats takes that link.
+   The hook links the object on the host between a software device's load
+   reading the links and its exchange; it records no failure itself, since an
+   exception there loses the device. The loser's link is unmapped once
+   collected, and its collection leaves the winner's link to later loads. *)
+let test_lost_exchange () =
+  let d =
+    require_ok ~pp:Format.pp_print_string (Rig.software "host:exchange")
+  in
+  let o = fresh "empty" in
+  let lost = ref 0 and inner = ref None in
+  Rig.on_host_exchange (fun a ->
+      lost := a;
+      inner := Some (Rig.Image.load Rig.host o));
+  let outer = load_on d o in
+  let winner =
+    require_ok ~pp:Format.pp_print_string
+      (require_some ~msg:"the hook's load" !inner)
+  in
+  let entry = entry_of winner "empty" in
+  equal ~msg:"the outer image's entry" int entry (entry_of outer "empty");
+  collect ~on:[ Rig.host; d ] ();
+  equal ~msg:"the lost link, unmapped" bool false (S.executable !lost);
+  equal ~msg:"a third load's entry" int entry
+    (entry_of (load_on Rig.host o) "empty");
+  equal ~msg:"the winner's entry" int entry (entry_of winner "empty");
+  Rig.close d
+
+let sharing_tests =
+  group ~timeout "sharing"
+    [
+      test "images of one object on the host and two software devices share \
+            its link"
+        test_shared;
+      cases "a link is unmapped once its last image goes, kept on" ~id:fst
+        keepers test_last_unmaps;
+      stateful ~domains:2 ~count:30
+        "loads from two domains share one link per object" load_commands;
+      test "a load that loses its exchange takes the winner's link"
+        test_lost_exchange;
+    ]
+
 let () =
   exit
     (run "rig_host"
-       [ program_tests; split_tests; domain_tests; memory_tests; refusal_tests ])
+       [
+         program_tests;
+         split_tests;
+         domain_tests;
+         memory_tests;
+         refusal_tests;
+         software_tests;
+         sharing_tests;
+       ])

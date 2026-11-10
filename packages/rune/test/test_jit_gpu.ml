@@ -11,7 +11,7 @@
    an integer to a float at the ties of every exponent, a product of narrow
    floats or of MXFP4 weights holds its bound, a narrow float's fma rounds once, a call's check raises at the next wait, so the
    call returns while its work runs, a key split there has the host's words,
-   and a program over the GPU and a memory device, devices of two targets,
+   and a program over the GPU and a software device, devices of two targets,
    compiles to eager's values with replicas equal bit for bit, a running
    operation of a prefix is the prefix of its result, attention holds its
    bound against a float64 reference and gives +0 for a sum of zeros, a sum
@@ -941,7 +941,7 @@ let test_deferred () =
 (* Memory of a split program
 
    A chain of [chain] products of [chain_n] by [chain_n] float32 matrices on
-   the GPU, in a program split by an argument on a memory device. A product
+   the GPU, in a program split by an argument on a software device. A product
    reads the one before it, so at most two products live at once beside the
    arguments and the result, and the call holds no more: its plan places
    the products in that much memory. The call returns while its products
@@ -954,7 +954,7 @@ let chain_n = 2048
 
 let test_split_memory () =
   let gpu, _ = on_gpu () in
-  let mem = Result.get_ok (Rig.memory_device "rune-jit-gpu-chain") in
+  let mem = Result.get_ok (Rig.software "rune-jit-gpu-chain") in
   let (module S) = Nx.devices [ gpu; mem ] in
   let on_gpu = Nx.Placement.device S.v gpu
   and on_mem = Nx.Placement.device S.v mem in
@@ -1016,9 +1016,9 @@ let detour () =
 
 (* Several targets
 
-   A program over the GPU beside a memory device compiles, each device running
+   A program over the GPU beside a software device compiles, each device running
    kernels of its own target, and gives the placements the same function gives
-   eagerly over two memory devices, an exact function's bits and another's
+   eagerly over two software devices, an exact function's bits and another's
    values within rune.mli's classes. The devices of the first device's
    architecture compute a value whole on several devices and the others
    receive copies, so its replicas are equal bit for bit, whichever device
@@ -1321,10 +1321,10 @@ let check (type d e) (mixed : d set) (memory : e set) c =
       | _ -> ())
     ps
 
-let memory k = Result.get_ok (Rig.memory_device ("rune-jit-gpu-" ^ k))
+let memory k = Result.get_ok (Rig.software ("rune-jit-gpu-" ^ k))
 
-(* The sets the laws run over: the GPU and memory devices, in an order that
-   puts the GPU at [first], and as many memory devices. *)
+(* The sets the laws run over: the GPU and software devices, in an order that
+   puts the GPU at [first], and as many software devices. *)
 let sets =
   Hashtbl.create 4
 
@@ -1349,11 +1349,11 @@ let over ~devices ~first c () =
   let (module S : Nx.Devices) = mixed and (module M : Nx.Devices) = eager in
   check (set_of S.v) (set_of M.v) c
 
-(* A law over a set of a GPU beside a memory device, or over the set's memory
-   devices alone. *)
+(* A law over a set of a GPU beside a software device, or over the set's
+   software devices alone. *)
 type law = { law : 'd. 'd set -> unit }
 
-(* [l] over the GPU beside a memory device, the GPU first and second. *)
+(* [l] over the GPU beside a software device, the GPU first and second. *)
 let on_mixed { law } =
   List.iter
     (fun first ->
@@ -1368,7 +1368,7 @@ let no_call_evaluated f =
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   r
 
-(* An emission over a GPU beside a memory device compiles and is offered once,
+(* An emission over a GPU beside a software device compiles and is offered once,
    with eager's bits. *)
 let emission set =
   let x = value [| 4 |] in
@@ -1391,8 +1391,8 @@ let emission set =
       equal bits_t (bits (Nx.stack ~axis:0 [ Nx.mul x x ])) (bits (host o))
   | _ -> failf "%d offers" (List.length offers)
 
-(* Constructs compiled over a GPU beside memory devices give what the same
-   function gives eagerly over memory devices of the same number. *)
+(* Constructs compiled over a GPU beside software devices give what the same
+   function gives eagerly over software devices of the same number. *)
 
 type 'a agrees = { agree : 'd. 'd set -> jit:bool -> 'a }
 
@@ -1479,9 +1479,9 @@ let total set ~jit =
   in
   (codes_text a, codes_text e)
 
-(* A switch compiles over a GPU beside memory devices: its index on any
+(* A switch compiles over a GPU beside software devices: its index on any
    device or whole on each, its branch's value and placement as eagerly
-   over memory devices, an index out of range failing at a wait. *)
+   over software devices, an index out of range failing at a wait. *)
 let waited_any f =
   match f () with
   | y -> (
@@ -1528,7 +1528,7 @@ let switch_scan set ~jit =
   in
   (codes_text (compiled_or_eager ~jit f x xs), ())
 
-(* A declined program over a GPU beside a memory device raises at the call,
+(* A declined program over a GPU beside a software device raises at the call,
    naming the decline. *)
 let declined set =
   let xs = Nx.place (at set (Split 0)) (value [| 3; 2 |]) in
@@ -2376,19 +2376,19 @@ let () =
              test "additions to a total" (fun () ->
                  agreeing { agree = total } (Testable.pair bits_t bits_t));
            ];
-         group "a GPU beside a memory device"
+         group "a GPU beside a software device"
            (List.map
               (fun c -> test c.name (over ~devices:2 ~first:0 c))
               cases);
-         group "a memory device beside a GPU"
+         group "a software device beside a GPU"
            (List.map
               (fun c -> test c.name (over ~devices:2 ~first:1 c))
               cases);
-         group "a mesh of a GPU first and three memory devices"
+         group "a mesh of a GPU first and three software devices"
            (List.map
               (fun c -> test c.name (over ~devices:4 ~first:0 c))
               mesh_cases);
-         group "a mesh of a memory device, a GPU and two memory devices"
+         group "a mesh of a software device, a GPU and two software devices"
            (List.map
               (fun c -> test c.name (over ~devices:4 ~first:1 c))
               mesh_cases);

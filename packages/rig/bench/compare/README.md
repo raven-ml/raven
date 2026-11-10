@@ -161,7 +161,7 @@ eagerly, one dispatch per addition: PyTorch's operator, a `jax.jit` of one
 addition, a tinygrad `realize`. rig replays two prepared submissions. The
 host's share of a step is timed alone by the `step/remote-1900` row of the
 `program` suite (`../program/bench_program.ml`), which makes 1,880 submissions
-to a memory device, whose fills run on the host, and hands two runs to a
+to a software device, whose fills run on the host, and hands two runs to a
 `rig agent` over loopback.
 
 **vendor** times, through the vendor's toolkit alone, what rig's driver

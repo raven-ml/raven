@@ -6,12 +6,12 @@
 open Windtrap
 open Hugin_kit
 
-(* A set of one memory device, computed by nx.cpu as the host is. *)
-module Memory = (val Nx.devices [ Result.get_ok (Rig.memory_device "m0") ])
+(* A set of one software device, computed by nx.cpu as the host is. *)
+module Memory = (val Nx.devices [ Result.get_ok (Rig.software "m0") ])
 
 (* A set whose kernels run no loop, as a set with no kernel library, such as
    a GPU's, computes nothing eagerly: an operation there, a cast included,
-   raises. Its memory device's memory is the host's, so a read works. *)
+   raises. Its software device's memory is the host's, so a read works. *)
 module No_loops = struct
   include Nx_cpu
 
@@ -21,7 +21,7 @@ end
 
 module Inert =
   (val Nx.devices ~kernels:(module No_loops)
-         [ Result.get_ok (Rig.memory_device "m1") ])
+         [ Result.get_ok (Rig.software "m1") ])
 
 let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 

@@ -1555,7 +1555,7 @@ let test_transfer_refusals () =
       A.transfer ~src:(part 0) ~dst:(part 1))
 
 (* A bitcast is a view on any device: it keeps the buffer and moves no byte. *)
-let memory = lazy (Result.get_ok (Rig.memory_device "nx-test-memory"))
+let memory = lazy (Result.get_ok (Rig.software "nx-test-memory"))
 
 (* A borrow shares its source's memory, dtype and layout, on any device that
    maps it, and back. *)
@@ -1591,7 +1591,7 @@ let test_borrow_cases () =
   kill (A.buffer dead);
   raises_match ~msg:"dead" (Exn.invalid_arg ~sub:"dead") (fun () ->
       A.borrow (Lazy.force memory) dead);
-  let closed = Result.get_ok (Rig.memory_device "nx-test-borrow-closed") in
+  let closed = Result.get_ok (Rig.software "nx-test-borrow-closed") in
   let on_closed = A.to_device closed a in
   Rig.close closed;
   raises_match ~msg:"lost"
@@ -1613,7 +1613,7 @@ let test_bitcast_devices () =
     equal ~msg:"device" bool true (Rig.equal d (A.device u));
     u
   in
-  equal ~msg:"memory device" (array int) want
+  equal ~msg:"software device" (array int) want
     (A.to_array (bitcast (Lazy.force memory)));
   equal ~msg:"off the host" (array int) want
     (A.to_array (A.to_device Rig.host (bitcast (S.off_host ()))))
@@ -1631,7 +1631,7 @@ let test_to_device_io () =
 
 (* Views of an io device's array move through the host, to the host and to a
    device whose memory the host does not address, as does a sub-byte view off a
-   memory device. *)
+   software device. *)
 let test_to_device_io_views () =
   let off = S.off_host () in
   let m = S.on_io (iota f32 [| 6; 5 |]) in
@@ -1775,7 +1775,7 @@ let read_fails ?msg substring f =
     f
 
 (* [read] passes a bigarray of a C-contiguous array's shape holding its
-   elements, on the host and on a memory device, and refuses a strided one and
+   elements, on the host and on a software device, and refuses a strided one and
    a dtype Bigarray has no kind for. It leaves no claim. *)
 let law_read (Case (a, m)) =
   let check : type v s. (v, s) A.t -> unit =
@@ -2073,9 +2073,9 @@ let tests =
         test "to_device packs in stride order" test_to_device_layouts;
         test "to_device moves a sub-byte view of an io device to the host"
           test_to_device_io;
-        test "to_device packs views of io and memory devices on the host"
+        test "to_device packs views of io and software devices on the host"
           test_to_device_io_views;
-        test "bitcast is a view on a memory device and off the host"
+        test "bitcast is a view on a software device and off the host"
           test_bitcast_devices;
         prop "borrow shares memory and keeps the layout" case law_borrow;
         test "borrow is the array on its device, writes show, dead and lost \

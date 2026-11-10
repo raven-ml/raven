@@ -5,7 +5,7 @@
  (wrapped false)
  (libraries windtrap tolk unix))
 
-; Running kernels and schedules on rig's host and memory devices through the
+; Running kernels and schedules on rig's host and software devices through the
 ; engine, apart so that only the tests that run them link rig.
 
 (library

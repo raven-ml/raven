@@ -10,7 +10,7 @@ no longer keeps its value.
 dune exec packages/rig/examples/06-steps/main.exe
 ```
 
-A memory device calls the fill on the submitting thread. A GPU's driver
+A software device calls the fill on the submitting thread. A GPU's driver
 calls it from its `submit` with the queue's context, and the argument and
 the run's buffers work the same way. Fixed memory has an address known when
 the step is made, so compiled code writes it once into parameters or

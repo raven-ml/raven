@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* Placing onto this machine's first GPU: a placement from the host, or from
-   a split of columns over two memory devices, which gathers windows into the
+   a split of columns over two software devices, which gathers windows into the
    GPU's memory, keeps every byte. test_place states on held devices that a
    placement returns with its copies queued; a GPU may finish a copy before
    the test looks, so here only the bytes are stated. It skips without a

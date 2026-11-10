@@ -243,7 +243,7 @@ let auc_tests =
 (* Metrics compute on the host: a placed input is read once, and nothing is
    placed on its device. *)
 let placed_tests =
-  let device = Result.get_ok (Rig.memory_device "kaun-test-metric") in
+  let device = Result.get_ok (Rig.software "kaun-test-metric") in
   let module S = (val Nx.devices [ device ]) in
   let on_device x = Nx.place S.on x in
   let uploads f = received device f in

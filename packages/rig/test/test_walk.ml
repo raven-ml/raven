@@ -199,14 +199,14 @@ let test_open () =
         (List.init reps (fun _ -> open_attempt failure)))
     (Raise :: List.init k (fun i -> Fault (i + 1)))
 
-(* A memory device runs a submission's fills in its hand-over: the [n]-th of
+(* A software device runs a submission's fills in its hand-over: the [n]-th of
    three failing loses it, leaves the C heap as it was, and its name opens
    again. *)
 let fills = 3
 
 let memory_attempt n =
   let name = fresh "memory" in
-  let d = Result.get_ok (Rig.memory_device name) in
+  let d = Result.get_ok (Rig.software name) in
   let counter = B.create d 8 in
   S.store (S.Reader.host counter) 0;
   let fill =
@@ -233,7 +233,7 @@ let memory_attempt n =
   equal ~msg:("descriptors" ^ at) (option int) fds fds';
   equal ~msg:("signals blocked" ^ at) (list int) signals signals';
   s := None;
-  let d = Result.get_ok (Rig.memory_device name) in
+  let d = Result.get_ok (Rig.software name) in
   equal ~msg:("open again" ^ at) (option string) None (Rig.lost d);
   match (heap, heap') with Some h, Some h' -> h' - h | _ -> 0
 
@@ -245,10 +245,10 @@ let test_memory_fill () =
       (List.init reps (fun _ -> memory_attempt n))
   done
 
-(* A memory device whose allocation the host refuses raises Out_of_memory, and
+(* A software device whose allocation the host refuses raises Out_of_memory, and
    allocates the next buffer that fits. *)
 let test_memory_refused () =
-  let d = Result.get_ok (Rig.memory_device (fresh "memory")) in
+  let d = Result.get_ok (Rig.software (fresh "memory")) in
   ignore (B.create d 64);
   settle d;
   let heap, fds, signals = census () in
@@ -289,7 +289,7 @@ let () =
              test "every failing fact or opener leaves the name to open"
                test_open;
            ];
-         group ~timeout "memory devices"
+         group ~timeout "software devices"
            [
              test "every failing fill loses the device, which opens again"
                test_memory_fill;

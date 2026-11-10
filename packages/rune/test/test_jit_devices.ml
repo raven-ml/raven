@@ -3,13 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Rune.jit over the memory devices of one set: a compiled call over values cut
-   across two, three or four devices, a 2 x 2 mesh, or whole on each, gives
+(* Rune.jit over the software devices of one set: a compiled call over values
+   cut across two, three or four devices, a 2 x 2 mesh, or whole on each, gives
    eager's placements, exact functions' bits and the other functions' values
    within rune.mli's classes, for even, uneven and empty windows. It compiles
-   (no call is evaluated), each device runs its own kernels, and its gradient is
-   eager's. A map over an axis cut one row per device compiles as per-device
-   code. *)
+   (no call is evaluated), each device runs its own kernels, and its gradient
+   is eager's. A map over an axis cut one row per device compiles as
+   per-device code. *)
 
 open Windtrap
 open Rune_support
@@ -1365,11 +1365,11 @@ let integers ?(seed = 0) shape =
 
 let others =
   Array.init 2 (fun k ->
-      Result.get_ok (Rig.memory_device (Printf.sprintf "other-%d" k)))
+      Result.get_ok (Rig.software (Printf.sprintf "other-%d" k)))
 
 module Other = (val Nx.devices (Array.to_list others))
 
-(* A set no kernel library computes on: a memory device and a device that does
+(* A set no kernel library computes on: a software device and a device that does
    not run on the host. *)
 module Bare = (val Nx.devices [ m 3; Nx_array_support.off_host () ])
 
@@ -1497,7 +1497,7 @@ let scan_detour set =
    own. *)
 let held_rigs =
   List.init 2 (fun k ->
-      Result.get_ok (Rig.memory_device (Printf.sprintf "place-held-%d" k)))
+      Result.get_ok (Rig.software (Printf.sprintf "place-held-%d" k)))
 
 module Held = (val Nx.devices held_rigs)
 
@@ -1543,9 +1543,9 @@ let held set =
 (* Kernels
 
    Each device that holds elements of an operation's results runs a kernel of
-   its own for its window, and a device whose window is empty runs none. A
-   memory device's kernels run on its host, which profiles a submission's
-   kernels by name, joined by commas. *)
+   its own for its window, and a device whose window is empty runs none, nor
+   does the host. A profile names a submission's kernels, joined by commas, on
+   the device that ran them. The first windows of a cut hold its elements. *)
 
 let kernels set n rows =
   let x = Nx.place (at set (Split 0)) (value [| rows; 3 |]) in
@@ -1555,20 +1555,25 @@ let kernels set n rows =
   let _, events =
     Rig.Profile.take (fun () -> ignore (Nx.to_array (step x x)))
   in
-  let launched =
+  let ran =
     List.concat_map
       (function
-        | Rig.Profile.Work { name; _ } when name <> "copies" ->
-            String.split_on_char ',' name
+        | Rig.Profile.Work { device; name; _ }
+          when not (List.mem name [ "copies"; "fills"; "words" ]) ->
+            List.map (fun _ -> Rig.name device) (String.split_on_char ',' name)
         | _ -> [])
       events
   in
-  let holding = min n rows in
-  equal ~msg:"kernels" int holding (List.length launched)
+  let holding =
+    List.filteri (fun k _ -> k < min n rows) (Nx.Devices.to_list set.s)
+  in
+  equal ~msg:"the devices of the kernels" (list string)
+    (List.sort compare (List.map Rig.name holding))
+    (List.sort compare ran)
 
 (* Searches
 
-   A function searched at a width compiles over memory devices, its candidates
+   A function searched at a width compiles over software devices, its candidates
    timed on a device of the set: no call is evaluated, and it gives eager's
    bits. The search ignores its cache, so that it times candidates. *)
 
@@ -1668,7 +1673,7 @@ let key_placement set =
 (* Programs
 
    A program for one device serves every device of its target, so the
-   programs a data-parallel step over [n] memory devices takes do not grow
+   programs a data-parallel step over [n] software devices takes do not grow
    with [n]: each device's kernels, its stores of pieces into their runs of an
    assembly included, are another's. The count is the same over 4, 8 and 16
    devices, and over 2 at most that: a closing whose sum another device
@@ -1682,7 +1687,7 @@ let key_placement set =
 
 let sixteen =
   Array.init 16 (fun k ->
-      Result.get_ok (Rig.memory_device (Printf.sprintf "programs-%d" k)))
+      Result.get_ok (Rig.software (Printf.sprintf "programs-%d" k)))
 
 (* The number of program keys among the kernels [f ()] compiles, and the
    name and a digest of each key, for a failure to name them. *)
@@ -1871,7 +1876,7 @@ let partials set =
 (* A data-parallel step written as per-device code, each device's loss offset
    by its lane's index and gathered by a sum over the lanes, and one that
    accumulates stacked partial gradients, each take programs that do not grow
-   over 2, 4, 8 and 16 memory devices, as the data-parallel step above does.
+   over 2, 4, 8 and 16 software devices, as the data-parallel step above does.
    Their widths are that step's none, so that no program of one is the
    other's. *)
 let mapped_programs n =
@@ -1932,7 +1937,7 @@ let mapped_programs n =
    eager's placement and bits. Each device's positions in the whole axis are
    its tile's start, and each device stores its part of a closing into the
    whole at its part's start, both of which each device's call binds: every
-   such operation makes programs that do not grow over 2, 4 and 8 memory
+   such operation makes programs that do not grow over 2, 4 and 8 software
    devices ({!flat}). Each cut is even, so each device's tiles have one shape;
    the other axis's width depends on [n], so that no two counts share a
    program. A tile holds six rows: their bytes are a whole number of 16-byte
@@ -2062,7 +2067,7 @@ let emitted_scan set (c : loop_case) =
    Over a set without kernels, nothing evaluates a declined program: the call
    raises, naming the decline. *)
 
-(* An emission or a check in a branch stays declined: evaluated on memory
+(* An emission or a check in a branch stays declined: evaluated on software
    devices, named on a set without kernels. *)
 let declined_branches () =
   let x = Nx.place (Two.split ~axis:0) (value [| 4 |]) in
@@ -2419,7 +2424,7 @@ let no_value set =
   let g () = Nx.check T.unit ok () (fun _ () -> Failure "failed") in
   equal string (run g) (run (Rune.jit T.(unit @-> returns unit) g))
 
-(* A check in a loop's step keeps declining: evaluated on memory devices. *)
+(* A check in a loop's step keeps declining: evaluated on software devices. *)
 let in_loops set =
   let x = Nx.place (at set (Split 0)) (Nx.ones f32 [| 4 |]) in
   let xs = Nx.place (at set (Split 1)) (Nx.ones f32 [| 2; 4 |]) in
@@ -2926,7 +2931,7 @@ let () =
            ];
          group "searches"
            [
-             test "a value whole on one memory device" (fun () ->
+             test "a value whole on one software device" (fun () ->
                  over 2 { law = (fun s -> searched s (Device 0)) });
              test "a value cut across two" (fun () ->
                  over 2 { law = (fun s -> searched s (Split 0)) });

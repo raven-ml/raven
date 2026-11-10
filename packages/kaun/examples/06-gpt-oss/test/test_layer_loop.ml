@@ -34,7 +34,7 @@ let cfg =
     tied = false;
   }
 
-let cpu1_device = Result.get_ok (Rig.memory_device "CPU:1")
+let cpu1_device = Result.get_ok (Rig.software "CPU:1")
 
 module Cpu1 = (val Nx.devices [ cpu1_device ])
 

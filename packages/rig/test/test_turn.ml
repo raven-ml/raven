@@ -151,9 +151,9 @@ let test_loss_while_blocked () =
   Rig.close d;
   equal int 1 (count "stop" p)
 
-(* Runs on a memory device *)
+(* Runs on a software device *)
 
-let memory name = Result.get_ok (Rig.memory_device name)
+let memory name = Result.get_ok (Rig.software name)
 
 (* A buffer of two zeroed words on [m], and its host address. *)
 let two_words m =
@@ -199,7 +199,7 @@ let submitter f =
   Support.await "the submitter's thread" (fun () -> Atomic.get thread <> None);
   (d, Option.get (Atomic.get thread))
 
-(* While one domain's work runs on a memory device, another domain's submit
+(* While one domain's work runs on a software device, another domain's submit
    on it waits before it takes its value, and its work runs after the held
    work. *)
 let test_memory_run_holds_submits () =
@@ -225,7 +225,7 @@ let test_memory_run_holds_submits () =
   equal ~msg:"the other's value" int (base + 2) (Rig.Point.value p);
   equal ~msg:"the other's work" int 1 (Support.load c)
 
-(* While one domain's work runs on a memory device, another domain's waits
+(* While one domain's work runs on a software device, another domain's waits
    for the device's earlier work return, and so does a submit on another
    device that waits for it. *)
 let test_memory_waits_beside_run () =
@@ -490,7 +490,7 @@ let test_break_waiting_for_room () =
   equal bool false broke;
   still_works d p ~last:first
 
-(* A submit waiting for another domain's work on a memory device takes
+(* A submit waiting for another domain's work on a software device takes
    Sys.Break, and nothing is assigned to it. *)
 let test_break_waiting_for_run () =
   if not Support.sees_waits then
@@ -641,10 +641,10 @@ let tests =
         test "a loss during a blocked submit stops the device after it returns"
           test_loss_while_blocked;
         test
-          "a submit on a memory device waits for another domain's running \
+          "a submit on a software device waits for another domain's running \
            work before its value"
           test_memory_run_holds_submits;
-        test "waits on a memory device go on while its work runs"
+        test "waits on a software device go on while its work runs"
           test_memory_waits_beside_run;
       ];
     group ~timeout "interruptions"
@@ -674,7 +674,7 @@ let tests =
         test "Sys.Break while waiting for room assigns no value"
           test_break_waiting_for_room;
         test
-          "Sys.Break while waiting for a memory device's run assigns no value"
+          "Sys.Break while waiting for a software device's run assigns no value"
           test_break_waiting_for_run;
         test "a close Sys.Break interrupted finishes at the next close"
           test_break_in_close;
