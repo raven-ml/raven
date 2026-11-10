@@ -28,11 +28,13 @@ raven / llama.cpp b12048 Vulkan:
 
 ## tolk
 
-- AMD thread traces are not collected in a profile. Through KFD a trace is
-  unsafe until shown otherwise: an eviction may move its window and page
-  directory while the trace unit writes on, so rig's traced launch test runs
-  only over PCI. A probe deactivating a traced queue over a poisoned window
-  decides (_plans/todo-campaign/sqtt/adjudication.md)
+- AMD thread traces are not collected in a profile, and tracing through KFD
+  is parked: after a GPU fault KFD runs none of the process's queues, so
+  nothing can stop a running trace (one stayed on past its process's exit on
+  nonnormal), and an eviction may move its window while it writes. rig's
+  traced launch test runs only over PCI. The paths left are PCI and an
+  amdgpu DRM submission, which holds its VMID and memory for the job
+  (_plans/todo-campaign/sqtt/)
 - spawning any process stalls a rig AMD program's GPU work about 100 ms on
   Linux before 6.16 (nonnormal, 6.12): a child's close of its copy of the
   render node, at exec or exit, runs amdgpu_flush, which waits on KFD's
