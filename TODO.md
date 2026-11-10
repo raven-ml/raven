@@ -45,13 +45,6 @@ raven / llama.cpp b12048 Vulkan:
   first has run on Metal. The backward's CDNA 4 tile rule has run on no GPU:
   none here is a CDNA 4
 
-## rune, kaun, vega
-
-- attention's SIMT kernel before gfx12 (RDNA3, and CDNA where no core
-  takes it): D438's ungated read of a shared key load is off there and
-  untimed, since on gfx1100 it adds SGPR spills (146 to 160). Nothing here
-  is an RDNA3 or a CDNA
-
 ## talon, hugin, brot, munin, quill
 
 - talon needs a query optimizer, a large design campaign, and the other
