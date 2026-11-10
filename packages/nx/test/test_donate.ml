@@ -2482,7 +2482,7 @@ let rng =
       c "Rng.exponential" 1 (fun d ->
           show (Nx.Rng.exponential ~key:(key d 0) f32 [| 3 |]));
       c "Rng.randint" 1 (fun d ->
-          show (Nx.Rng.randint ~key:(key d 0) ~high:5 [| 3 |]));
+          show (Nx.Rng.randint ~key:(key d 0) (Nx.full Nx.int32 [| 3 |] 5l)));
       c "Rng.permutation" 1 (fun d ->
           show (Nx.Rng.permutation ~key:(key d 0) 4));
       c "Rng.bernoulli" 2 (fun d ->

@@ -2744,6 +2744,11 @@ word comes from its lock and from samples the dashboard saw arrive.
   `Nx_io.Pytorch.tensors` names them by their state dict's keys.
 - `Nx_io.load_npz` loads an entry whose stated CRC-32 is 0 unchecked, as
   writers told to compute no checksum state it, and refused it before.
+- **Breaking:** `Nx.Rng.randint ?low high` takes its bounds as arrays, one
+  per element, of any integer dtype, and draws where they lie; `randint_at`
+  goes. A draw is a 128-bit multiply-shift, within 2^-128 of uniform per
+  value, where the int32 draw's second block left a bias up to 2^-96. An
+  int32 draw keeps its value except in at most one draw in 2^31.
 - **Breaking:** `Nx.Rng.fold_in_tensor` takes its indices as `int64`, so a
   count of examples past 2^31 folds into a key. An index below 2^31 gives
   the key it gave as `int32`.

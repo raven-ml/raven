@@ -9,7 +9,8 @@
 
 let () =
   (* --- Dice simulation: roll 10 six-sided dice --- *)
-  let dice = Nx.Rng.randint ~low:1 ~high:7 [| 10 |] in
+  let face v = Nx.full Nx.int32 [| 10 |] v in
+  let dice = Nx.Rng.randint ~low:(face 1l) (face 7l) in
   Printf.printf "10 dice rolls: %s\n\n" (Nx.to_string dice);
 
   (* --- Uniform random floats in [0, 1) --- *)

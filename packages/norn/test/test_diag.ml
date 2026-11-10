@@ -272,8 +272,8 @@ let uniformity =
                    let ranks =
                      List.init 40 (fun i ->
                          Nx.cast Nx.float64
-                           (Nx.Rng.randint ~key:(Nx.Rng.fold_in k i) ~high:31
-                              [| 2000 |]))
+                           (Nx.Rng.randint ~key:(Nx.Rng.fold_in k i)
+                              (Nx.full Nx.int32 [| 2000 |] 31l)))
                    in
                    let stat =
                      Nx.to_array (Diag.rank_uniformity t ~draws:30 ranks)

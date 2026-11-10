@@ -880,7 +880,9 @@ let scoped_draws draws x =
     (fun x -> function
       | Added -> Nx.add x (Nx.Rng.uniform f32 s)
       | Scaling -> Nx.mul x (Nx.Rng.uniform f32 s)
-      | Integer -> Nx.add x (Nx.cast f32 (Nx.Rng.randint ~low:(-3) ~high:4 s))
+      | Integer ->
+          let low = Nx.full Nx.int32 s (-3l) and high = Nx.full Nx.int32 s 4l in
+          Nx.add x (Nx.cast f32 (Nx.Rng.randint ~low high))
       | Selected -> Nx.where (Nx.Rng.bernoulli (Nx.full f32 s 0.5)) x (Nx.neg x))
     x draws
 

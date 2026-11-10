@@ -160,7 +160,8 @@ let keys = Nx.Rng.split ~n:13 (Nx.Rng.key 22)
 let valid k p =
   Nx.greater_equal_s (Nx.Rng.uniform ~key:keys.(k) Nx.float64 [| n |]) p
 
-let ints k high = Nx.cast Nx.int64 (Nx.Rng.randint ~key:keys.(k) ~high [| n |])
+let ints k high =
+  Nx.Rng.randint ~key:keys.(k) (Nx.full Nx.int64 [| n |] (Int64.of_int high))
 let bools k = Nx.Rng.bernoulli ~key:keys.(k) (Nx.full Nx.float64 [| n |] 0.5)
 
 let nullable ?valid x =
@@ -197,7 +198,9 @@ let run q = Error.get_ok (Query.run q)
    [1, 5], drawn from a seeded key, as H2O's group-by table holds. *)
 let groups =
   let keys = Nx.Rng.split ~n:3 (Nx.Rng.key 25) in
-  let draw k high = Nx.Rng.randint ~key:keys.(k) ~high [| n |] in
+  let draw k high =
+    Nx.Rng.randint ~key:keys.(k) (Nx.full Nx.int32 [| n |] (Int32.of_int high))
+  in
   let text i = Some (Printf.sprintf "id%03ld" (Int32.succ i)) in
   Talon.v
     [
@@ -397,8 +400,7 @@ let below =
       [
         ( "g",
           nullable
-            (Nx.cast Nx.int64
-               (Nx.Rng.randint ~key:keys.(k) ~high:100 [| rows |])) );
+            (Nx.Rng.randint ~key:keys.(k) (Nx.full Nx.int64 [| rows |] 100L)) );
         (x, nullable (Nx.Rng.uniform ~key:keys.(k + 1) Nx.float64 [| rows |]));
       ]
   in
@@ -564,7 +566,9 @@ let csv_text =
   in
   let id =
     Nx.to_array
-      (Nx.Rng.randint ~key:keys.(0) ~low:(-1_000_000) ~high:1_000_000 [| n |])
+      (Nx.Rng.randint ~key:keys.(0)
+         ~low:(Nx.full Nx.int32 [| n |] (-1_000_000l))
+         (Nx.full Nx.int32 [| n |] 1_000_000l))
   in
   let price = uniform 1 and null = uniform 2 and quoted = uniform 3 in
   let b = Buffer.create (1 lsl 21) in
@@ -603,7 +607,9 @@ let json_text =
   in
   let id =
     Nx.to_array
-      (Nx.Rng.randint ~key:keys.(0) ~low:(-1_000_000) ~high:1_000_000 [| n |])
+      (Nx.Rng.randint ~key:keys.(0)
+         ~low:(Nx.full Nx.int32 [| n |] (-1_000_000l))
+         (Nx.full Nx.int32 [| n |] 1_000_000l))
   in
   let price = uniform 1 and null = uniform 2 in
   let b = Buffer.create (1 lsl 21) in
@@ -638,8 +644,8 @@ let asof =
          [
            ( "g",
              nullable
-               (Nx.cast Nx.int64
-                  (Nx.Rng.randint ~key:keys.(k) ~high:100 [| rows |])) );
+               (Nx.Rng.randint ~key:keys.(k) (Nx.full Nx.int64 [| rows |] 100L))
+           );
            (x, nullable (Nx.Rng.uniform ~key:keys.(k + 1) Nx.float64 [| rows |]));
          ])
   in
@@ -682,7 +688,7 @@ let lists =
   let keys = Nx.Rng.split ~n:3 (Nx.Rng.key 31) in
   let rows = 1 lsl 16 in
   let lengths =
-    Nx.cast Nx.int64 (Nx.Rng.randint ~key:keys.(0) ~high:65 [| rows |])
+    Nx.Rng.randint ~key:keys.(0) (Nx.full Nx.int64 [| rows |] 65L)
   in
   let offsets =
     Nx.concatenate ~axis:0 [ Nx.zeros Nx.int64 [| 1 |]; Nx.cumsum lengths ]

@@ -5045,28 +5045,19 @@ module Rng : sig
   (** [gumbel_at p dt shape] is {!gumbel}[ dt shape] at [p]. *)
 
   val randint :
-    ?key:host key ->
-    ?low:int ->
-    high:int ->
-    int array ->
-    host int32_t
-  (** [randint ~low ~high shape] is integers drawn uniformly from
-      [\[low, high)] ([low] defaults to [0]): a 64-bit draw times [high - low],
-      shifted down by 64 bits, whose biased low part, at most one draw in
-      [2{^32}], takes a second draw (Lemire's multiply-shift).
+    ?key:'d key -> ?low:('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+  (** [randint ~low high] is integers drawn uniformly from [\[low, high)],
+      elementwise over the broadcast shape of [low] and [high], in their
+      integer dtype ([low] defaults to [0]). Draw [j] in C order is [low]
+      plus [⌊w r / 2{^128}⌋], [r = high - low] and [w] the 128-bit integer
+      of blocks [2j] and [2j + 1], the first high: Lemire's multiply-shift
+      ("Fast Random Integer Generation in an Interval", 2019) without its
+      rejection. A value's probability is [1 / r] where [r] is a power of
+      two, and within [2{^-128}] of [1 / r] otherwise.
 
-      Raises [Invalid_argument] if [low >= high], a bound is outside int32, or
-      an extent is negative. *)
-
-  val randint_at :
-    'd Placement.t ->
-    ?key:'d key ->
-    ?low:int ->
-    high:int ->
-    int array ->
-    'd int32_t
-  (** [randint_at p ~low ~high shape] is {!randint}[ ~low ~high shape] at
-      [p]. *)
+      Raises [Invalid_argument] if [low] and [high] do not broadcast or
+      their dtype is not an integer's, and if an element of [high] is not
+      above [low]'s. *)
 
   val bernoulli :
     ?key:'d key -> (float, 's, 'd) t -> 'd bool_t

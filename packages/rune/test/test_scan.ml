@@ -371,7 +371,9 @@ let drawn draws c =
           Nx.add
             (Nx.mul c (Nx.Rng.uniform f32 [| 2 |]))
             (Nx.Rng.uniform f32 [| 2 |])
-      | Counted -> Nx.add c (Nx.cast f32 (Nx.Rng.randint ~high:5 [| 2 |])))
+      | Counted ->
+          Nx.add c
+            (Nx.cast f32 (Nx.Rng.randint (Nx.full Nx.int32 [| 2 |] 5l))))
     c draws
 
 (* [n] steps of [draws], step [i] in a scope at [fold_in_tensor k i], [i] a

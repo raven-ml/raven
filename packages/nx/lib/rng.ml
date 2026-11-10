@@ -642,56 +642,6 @@ let exponential ?key dt s =
 let exponential_at p ?key dt s =
   exponential_by ~by:"Nx.Rng.exponential_at" p key dt s
 
-let fits v = v >= -0x8000_0000 && v <= 0x7FFF_FFFF
-
-(* Lemire's multiply-shift: a 64-bit block [w] times the range [r] is [w r = hi
-   2^64 + lo], and [hi] is uniform over [\[0, r)] once the [2^64 mod r] values
-   of [lo] below it are rejected. A rejection, at most one in 2^32, takes the
-   next block: element [j] owns blocks [2j] and [2j + 1], and the second's [hi]
-   stands whatever its [lo]. [hi] comes from 32-bit halves, [r] being at most
-   2^32 - 1: [hi = (w_hi r + (w_lo r) / 2^32) / 2^32], each term below 2^64.
-   [low] is added in uint32, where the sum wraps into the int32 it names. The
-   range, [2^64 mod r] and [low] are operands, bound per call. *)
-let randint_programs = programs ()
-
-let randint_by ~by p key low high s =
-  if low >= high then invalid_argf "%s: low %d is not below high %d" by low high;
-  if not (fits low && fits high) then
-    invalid_argf "%s: [%d, %d) does not fit in int32" by low high;
-  let ins = D.[| Any Uint64; Any Uint64; Any Uint32 |] in
-  let prog =
-    lowered randint_programs D.Int32 ins (fun ~key ~j ->
-        let r = operand 0 D.Uint64 and threshold = operand 1 D.Uint64 in
-        let first = E.(j * u64 2L) in
-        let w = block ~key first in
-        let rejected = E.(w * r < threshold) in
-        let w = E.where rejected (block ~key E.(first + u64 1L)) w in
-        let hi = E.(((word1 w * r) + (word0 w * r / u64 two32)) / u64 two32) in
-        E.(bitcast D.Int32 (cast D.Uint32 hi + operand 2 D.Uint32)))
-  in
-  let range = Int64.of_int (high - low) in
-  let threshold = Int64.unsigned_rem (Int64.neg range) range in
-  let params =
-    [|
-      E.any (u64 range);
-      E.any (u64 threshold);
-      E.any (E.const D.Uint32 (Int32.of_int low));
-    |]
-  in
-  let bound : P.node -> E.any option = function
-    | In i when i >= first_param -> Some params.(i - first_param)
-    | _ -> None
-  in
-  let ins = Iarray.sub prog.ins ~pos:0 ~len:first_param in
-  let prog = P.subst ~ins bound prog in
-  draw ~by ~at:p (resolve ~by p key) D.Int32 s prog
-
-let randint ?key ?(low = 0) ~high s =
-  randint_by ~by:"Nx.Rng.randint" host key low high s
-
-let randint_at p ?key ?(low = 0) ~high s =
-  randint_by ~by:"Nx.Rng.randint_at" p key low high s
-
 (* Parameters *)
 
 (* Parameter [i] of a draw, of dtype [dt], at the compute dtype [c]. *)
@@ -772,6 +722,101 @@ let bernoulli ?key p =
   in
   let key = resolve ~by (Prim.placement p) key in
   draw ~by ~params:[| Value.Any p |] key D.Bool (Prim.shape p) prog
+
+(* Bounded integers *)
+
+(* The 128-bit product of the uint64 nodes [a] and [b], as its high and low
+   words, from their 32-bit halves: each partial product, and [mid], the sum
+   of the middle column's low halves and the low product's carry, stays
+   below 2^64. *)
+let wide_mul a b =
+  let low32 = u64 0xFFFF_FFFFL and w32 = u64 two32 in
+  let a0 = E.(a land low32) and a1 = E.(a / w32) in
+  let b0 = E.(b land low32) and b1 = E.(b / w32) in
+  let p01 = E.(a0 * b1) and p10 = E.(a1 * b0) in
+  let mid = E.((a0 * b0 / w32) + (p01 land low32) + (p10 land low32)) in
+  let hi = E.((a1 * b1) + (p01 / w32) + (p10 / w32) + (mid / w32)) in
+  (hi, E.(a * b))
+
+(* Lemire's multiply-shift over 128 bits: [⌊(w 2^64 + v) r / 2^128⌋] for the
+   uint64 nodes [w], [v] and [r]. With [w r = h 2^64 + l] and [v r = h' 2^64
+   + l'], it is [h] plus the carry out of [l + h']: [l'] below 2^64 cannot
+   carry into bit 128. Each value below [r] has [⌊2^128 / r⌋] or one more
+   [w 2^64 + v] (Lemire 2019, Lemma 4.1, without the rejection), so its
+   probability is within 2^-128 of [1 / r], and exact where [r] divides
+   2^128. *)
+let below ~w ~v r =
+  let h, l = wide_mul w r in
+  let sum = E.(l + fst (wide_mul v r)) in
+  E.(h + cast D.Uint64 (sum < l))
+
+(* [below] of blocks [2j] and [2j + 1] under [key]. *)
+let below_at ~key j r =
+  let first = E.(j * u64 2L) in
+  below ~w:(block ~key first) ~v:(block ~key E.(first + u64 1L)) r
+
+(* Draw [j] of [\[lo, hi)]: bounds of an integer dtype [dt], read at uint64
+   modulo 2^64, where [hi - lo] is the range and [lo] plus a draw below it
+   stores back into [dt] exactly. [~low] is [false] for a draw from 0. *)
+let randint_programs = programs ()
+let randint_from_zero = programs ()
+
+let randint_prog dt ~low =
+  let table = if low then randint_programs else randint_from_zero in
+  let ins = if low then [| D.Any dt; D.Any dt |] else [| D.Any dt |] in
+  lowered table dt ins (fun ~key ~j ->
+      let wide i = E.cast D.Uint64 (operand i dt) in
+      let lo, hi = if low then (wide 0, wide 1) else (u64 0L, wide 0) in
+      E.cast dt E.(lo + below_at ~key j (hi - lo)))
+
+(* Raises, at the check, naming the first element of the bounds' broadcast
+   shape [s] where [high] is not above [low], [0] where [low] is [None]. *)
+let require_range (type v r) ~by s (low : (v, r, 'd) Value.t option)
+    (high : (v, r, 'd) Value.t) =
+  let dt = Prim.dtype high in
+  let show = Format.asprintf "%a" (D.pp_value dt) in
+  let high = Eval.broadcast ~by s high in
+  let fail i lo hi =
+    Invalid_argument
+      (Format.asprintf "%s: high at %a is %s, not above low %s" by pp_shape i
+         (show hi) lo)
+  in
+  match low with
+  | None ->
+      let above = E.(const dt (D.zero dt) < input 0 dt) in
+      let prog = P.of_exprs ~ins:[| D.Any dt |] [| E.any above |] in
+      let ok = map dispatched ~by s prog D.Bool [| Value.Any high |] in
+      let fail i (hi, ()) = fail i (show (D.zero dt)) hi in
+      Eval.eval ~by (Value.Check { ok; data = [ high ]; fail })
+  | Some low ->
+      let low = Eval.broadcast ~by s low in
+      let above = E.(input 0 dt < input 1 dt) in
+      let prog = P.of_exprs ~ins:[| D.Any dt; D.Any dt |] [| E.any above |] in
+      let loads = [| Value.Any low; Value.Any high |] in
+      let ok = map dispatched ~by s prog D.Bool loads in
+      let fail i (lo, (hi, ())) = fail i (show lo) hi in
+      Eval.eval ~by (Value.Check { ok; data = [ low; high ]; fail })
+
+let randint ?key ?low high =
+  let by = "Nx.Rng.randint" in
+  let high = Donate.read ~by high in
+  let low = Option.map (Donate.read ~by) low in
+  let dt = Prim.dtype high in
+  if not (D.is D.Signed dt || D.is D.Unsigned dt) then
+    invalid_argf "%s: %s is not an integer dtype" by (D.name dt);
+  let s =
+    match low with
+    | None -> Prim.shape high
+    | Some l -> Prim.broadcast_shape ~by (Prim.shape l) (Prim.shape high)
+  in
+  require_range ~by s low high;
+  let prog = randint_prog dt ~low:(Option.is_some low) in
+  let params =
+    match low with
+    | None -> [| Value.Any high |]
+    | Some l -> [| Value.Any l; Value.Any high |]
+  in
+  draw ~by ~params (resolve ~by (Prim.placement high) key) dt s prog
 
 (* Rejection *)
 

@@ -514,7 +514,10 @@ let samplers =
       ("exponential", fun k s -> read (Rng.exponential ~key:k Nx.float64 s));
       ("gumbel", fun k s -> read (Rng.gumbel ~key:k Nx.float32 s));
       ( "randint",
-        fun k s -> of_ints (read (Rng.randint ~key:k ~low:(-9) ~high:1000 s)) );
+        fun k s ->
+          of_ints
+            (read (Rng.randint ~key:k ~low:(full Nx.int32 s (-9l))
+                     (full Nx.int32 s 1000l))) );
       ( "bernoulli",
         fun k s ->
           Array.map Bool.to_float
@@ -563,27 +566,37 @@ let bits53 ws i =
     (Int64.shift_left (Int64.logand (u32 ws.(2 * i)) 0x1F_FFFFL) 32)
     (u32 ws.((2 * i) + 1))
 
-(* Lemire's multiply-shift of the range [low, high) at element [j]: block
-   [2j]'s 64 bits times the range, shifted down by 64, unless its low 64 bits
-   fall below [2^64 mod range], where block [2j + 1] stands whatever its low
-   bits. The flag is whether element [j] took the second block. *)
-let lemire ws ~low ~high j =
-  let r = Int64.of_int (high - low) in
-  let t = Int64.unsigned_rem (Int64.neg r) r in
-  let pick i =
-    let w = block ws i in
-    let wh = Int64.shift_right_logical w 32 and wl = u32 (Int64.to_int32 w) in
-    let hi =
-      Int64.shift_right_logical
-        (Int64.add (Int64.mul wh r)
-           (Int64.shift_right_logical (Int64.mul wl r) 32))
-        32
-    in
-    (hi, Int64.unsigned_compare (Int64.mul w r) t < 0)
+(* [⌊w r / 2^128⌋] for the 128-bit [w] whose high and low halves are the
+   uint64 [hi] and [lo], and the uint64 [r]: schoolbook multiplication of
+   base-2^16 digits, its product's digits 8 to 11. *)
+let mul_shift ~hi ~lo r =
+  let digits x =
+    Array.init 4 (fun i ->
+        Int64.to_int
+          (Int64.logand (Int64.shift_right_logical x (16 * i)) 0xFFFFL))
   in
-  let hi, rejected = pick (2 * j) in
-  let hi = if rejected then fst (pick ((2 * j) + 1)) else hi in
-  (Int32.of_int (low + Int64.to_int hi), rejected)
+  let w = Array.append (digits lo) (digits hi) and r = digits r in
+  let p = Array.make 12 0 in
+  Array.iteri
+    (fun i a -> Array.iteri (fun j b -> p.(i + j) <- p.(i + j) + (a * b)) r)
+    w;
+  let carry = ref 0 in
+  for k = 0 to 11 do
+    let v = p.(k) + !carry in
+    p.(k) <- v land 0xFFFF;
+    carry := v lsr 16
+  done;
+  Array.fold_right
+    (fun d acc -> Int64.logor (Int64.shift_left acc 16) (Int64.of_int d))
+    (Array.sub p 8 4) 0L
+
+(* Draw [j] of [\[low, high)] from the blocks of [ws]: [low] plus the
+   multiply-shift of blocks [2j] and [2j + 1] by the range, all modulo
+   2^64. *)
+let below64 ws ~low ~high j =
+  let r = Int64.sub high low in
+  Int64.add low
+    (mul_shift ~hi:(block ws (2 * j)) ~lo:(block ws ((2 * j) + 1)) r)
 
 (* A range [low, high) inside int32: small ones, ones at its extremes, and the
    whole of it. *)
@@ -604,12 +617,57 @@ let ranges =
   |> such_that (fun (l, h) -> fits l && fits h && l < h)
   |> with_pp pp
 
-(* Block 0 of the key of words [(-1235405770, 2)], times [0xFFFF0001], falls
-   below [2^64 mod 0xFFFF0001]: its first round is rejected. *)
-let second_round =
-  ( host_of Nx.int32 [| 2 |] [| -1235405770l; 2l |],
-    (-0x8000_0000, 0x7FFF_0001),
-    1 )
+(* Each integer dtype, with the order of its values. *)
+type int_dtype = I : ('v, 's) A.Dtype.t * ('v -> 'v -> int) -> int_dtype
+
+let integer_dtypes =
+  Gen.of_list
+    ~pp:(fun ppf (I (dt, _)) -> Format.pp_print_string ppf (A.Dtype.name dt))
+    [
+      I (Nx.int64, Int64.compare);
+      I (Nx.uint64, Int64.unsigned_compare);
+      I (Nx.int32, Int32.compare);
+      I (Nx.uint32, Int32.unsigned_compare);
+      I (Nx.int16, Int.compare);
+      I (Nx.uint16, Int.compare);
+      I (Nx.int8, Int.compare);
+      I (Nx.uint8, Int.compare);
+      I (Nx.int4, Int.compare);
+      I (Nx.uint4, Int.compare);
+    ]
+
+(* A range [low, high) of int64: widths of 1, 2^k and 2^k + 1, int64's
+   extremes, and any. *)
+let ranges64 =
+  let open Gen in
+  let pp ppf (l, h) = Format.fprintf ppf "[%Ld, %Ld)" l h in
+  let from_low width =
+    let+ low = int64 in
+    let high = Int64.add low width in
+    if Int64.compare high low > 0 then (low, high)
+    else (Int64.sub Int64.max_int width, Int64.max_int)
+  in
+  one_of
+    [
+      from_low 1L;
+      (let* k = int_range 1 62 in
+       from_low (Int64.shift_left 1L k));
+      (let* k = int_range 1 62 in
+       from_low (Int64.succ (Int64.shift_left 1L k)));
+      of_list
+        [
+          (Int64.min_int, Int64.max_int);
+          (Int64.min_int, Int64.succ Int64.min_int);
+          (Int64.pred Int64.max_int, Int64.max_int);
+          (Int64.min_int, 0L);
+          (-1L, Int64.max_int);
+          (0L, Int64.shift_left 1L 62);
+        ];
+      (let+ a = int64 and+ b = int64 in
+       if a = b then (Int64.pred a, a) else (min a b, max a b));
+    ]
+  |> such_that (fun (l, h) -> Int64.compare l h < 0)
+  |> with_pp pp
 
 let probabilities =
   let open Gen in
@@ -711,18 +769,86 @@ let draws =
           in
           equal (array float_exact) want
             (read (Rng.uniform ~key:k Nx.float64 [| 64 |])));
-      prop "randint is Lemire's multiply-shift of each block"
-        ~examples:[ second_round ]
-        (Gen.triple
-           (Gen.map Rng.to_tensor keys)
-           ranges (Gen.int_range 0 64))
+      prop "randint is the 128-bit multiply-shift of blocks 2j and 2j + 1"
+        (Gen.triple keys ranges64 (Gen.int_range 0 64))
         (fun (k, (low, high), n) ->
-          let k = Rng.of_tensor k in
+          let r = Int64.sub high low in
+          cover "a width of 1" (r = 1L);
+          cover "a power of two" (r > 1L && Int64.logand r (Int64.pred r) = 0L);
+          cover "the whole of int64"
+            (low = Int64.min_int && high = Int64.max_int);
           let ws = words (Rng.split_batch ~n:(max 1 (2 * n)) k) in
-          let want = Array.init n (lemire ws ~low ~high) in
-          cover "a second round" (Array.exists snd want);
-          equal (array int32) (Array.map fst want)
-            (read (Rng.randint ~key:k ~low ~high [| n |])));
+          let want = Array.init n (below64 ws ~low ~high) in
+          let b v = host_of Nx.int64 [| n |] (Array.make n v) in
+          equal (array int64) want
+            (read (Rng.randint ~key:k ~low:(b low) (b high))));
+      prop "an int32 randint draws as int64 does"
+        (Gen.triple keys ranges (Gen.int_range 0 64))
+        (fun (k, (low, high), n) ->
+          let b dt v = host_of dt [| n |] (Array.make n v) in
+          let wide =
+            read
+              (Rng.randint ~key:k
+                 ~low:(b Nx.int64 (Int64.of_int low))
+                 (b Nx.int64 (Int64.of_int high)))
+          in
+          equal (array int32) (Array.map Int64.to_int32 wide)
+            (read
+               (Rng.randint ~key:k
+                  ~low:(b Nx.int32 (Int32.of_int low))
+                  (b Nx.int32 (Int32.of_int high)))));
+      prop "a range of 2^k is the top k bits of block 2j"
+        (Gen.pair keys (Gen.int_range 0 63))
+        (fun (k, bits) ->
+          let n = 16 in
+          let ws = words (Rng.split_batch ~n:(2 * n) k) in
+          let b v = host_of Nx.int64 [| n |] (Array.make n v) in
+          let low = Int64.min_int in
+          let high = Int64.add low (Int64.shift_left 1L bits) in
+          let want =
+            Array.init n (fun j ->
+                if bits = 0 then low
+                else
+                  Int64.add low
+                    (Int64.shift_right_logical (block ws (2 * j)) (64 - bits)))
+          in
+          equal (array int64) want
+            (read (Rng.randint ~key:k ~low:(b low) (b high))));
+      prop "each element draws from its own bounds"
+        (Gen.pair keys (Gen.array ~size:(Gen.int_range 0 16) ranges64))
+        (fun (k, rs) ->
+          let n = Array.length rs in
+          let lows = host_of Nx.int64 [| n |] (Array.map fst rs) in
+          let highs = host_of Nx.int64 [| n |] (Array.map snd rs) in
+          let each =
+            Array.mapi
+              (fun j (low, high) ->
+                let b v = host_of Nx.int64 [| n |] (Array.make n v) in
+                (read (Rng.randint ~key:k ~low:(b low) (b high))).(j))
+              rs
+          in
+          equal (array int64) each (read (Rng.randint ~key:k ~low:lows highs)));
+      prop "randint without low draws from 0"
+        (Gen.triple keys ranges (Gen.int_range 0 16))
+        (fun (k, (_, high), n) ->
+          let high = max 1 high in
+          let h = host_of Nx.int32 [| n |] (Array.make n (Int32.of_int high)) in
+          equal (array int32)
+            (read (Rng.randint ~key:k ~low:(Nx.zeros_like h) h))
+            (read (Rng.randint ~key:k h)));
+      prop "randint draws inside its bounds at every integer dtype"
+        (Gen.pair keys integer_dtypes)
+        (fun (k, I (dt, compare)) ->
+          let lo = A.Dtype.min_value dt and hi = A.Dtype.max_value dt in
+          let n = 64 in
+          let low = host_of dt [| n |] (Array.make n lo) in
+          let high = host_of dt [| n |] (Array.make n hi) in
+          let xs = read (Rng.randint ~key:k ~low high) in
+          Array.iter
+            (fun x ->
+              if compare x lo < 0 || compare x hi >= 0 then
+                failf "%s: a draw outside its bounds" (A.Dtype.name dt))
+            xs);
       prop "bernoulli is a 53-bit draw below p"
         (Gen.triple keys wide
            (Gen.array ~size:(Gen.int_range 0 64) probabilities))
@@ -792,15 +918,6 @@ let placed_samplers =
           host = (fun ?key s -> read (Rng.gumbel ?key Nx.float32 s));
           at =
             (fun p ?key s -> lies p (Rng.gumbel_at p ?key Nx.float32 s) Fun.id);
-        } );
-      ( "randint",
-        {
-          host =
-            (fun ?key s ->
-              of_ints (read (Rng.randint ?key ~low:(-9) ~high:1000 s)));
-          at =
-            (fun p ?key s ->
-              lies p (Rng.randint_at p ?key ~low:(-9) ~high:1000 s) of_ints);
         } );
       ( "permutation",
         {
@@ -1175,8 +1292,9 @@ let distributions =
       prop "randint draws every value of [low, high), uniformly"
         (Gen.pair keys ranges)
         (fun (k, (low, high)) ->
+          let b v = host_of Nx.int32 [| n |] (Array.make n (Int32.of_int v)) in
           let xs =
-            read (Rng.randint ~key:k ~low ~high [| n |])
+            read (Rng.randint ~key:k ~low:(b low) (b high))
             |> Array.map Int32.to_int
           in
           Array.iter
@@ -1207,10 +1325,10 @@ let distributions =
          mean 63 and standard deviation √126. *)
       prop "randint is uniform over a range wider than 2^24" keys (fun k ->
           let range = 3 lsl 28 and n = 1 lsl 16 in
-          let xs =
-            read (Rng.randint ~key:k ~high:range [| n |])
-            |> Array.map Int32.to_int
+          let high =
+            host_of Nx.int32 [| n |] (Array.make n (Int32.of_int range))
           in
+          let xs = read (Rng.randint ~key:k high) |> Array.map Int32.to_int in
           let chi2 bin =
             let counts = Array.make 64 0 in
             Array.iter (fun x -> counts.(bin x) <- counts.(bin x) + 1) xs;
@@ -1224,12 +1342,15 @@ let distributions =
           greater int ~than:(1 lsl 24) (Array.fold_left max 0 xs);
           at_most float_exact ~than:bound (chi2 (fun x -> x / (range / 64)));
           at_most float_exact ~than:bound (chi2 (fun x -> x land 63)));
-      test "randint refuses an empty range" (fun () ->
-          equal string "Nx.Rng.randint: low 3 is not below high 3"
-            (message (fun () -> Rng.randint ~low:3 ~high:3 [| 1 |])));
-      test "randint refuses a bound outside int32" (fun () ->
-          equal string "Nx.Rng.randint: [0, 4294967296) does not fit in int32"
-            (message (fun () -> Rng.randint ~high:0x1_0000_0000 [| 1 |])));
+      (* The whole of uint64 but its top value: the draws cover both halves,
+         which a signed reading of the range would fold. *)
+      prop "randint is uniform over a range wider than 2^63" keys (fun k ->
+          let high = host_of Nx.uint64 [| n |] (Array.make n (-1L)) in
+          let xs = read (Rng.randint ~key:k high) in
+          let top =
+            Array.fold_left (fun c x -> if x < 0L then c + 1 else c) 0 xs
+          in
+          near ~var:0.25 0.5 (Float.of_int top /. Float.of_int n));
       (* The rate's bound is a normal one, so [p] keeps [n p] and [n (1 - p)]
          above 16; "a 53-bit draw below p" pins the rarer events. *)
       prop "bernoulli: true at rate p"
@@ -2273,6 +2394,31 @@ let checks =
             let x = Rng.bernoulli (split p) in
             equal string want (message (fun () -> Nx.sync x))
           end);
+      prop "randint names its first high not above its low" bad_params
+        (fun (s, on_s2, (i, j)) ->
+          cover "split" on_s2;
+          let at k = if k = i || k = j then 3L else 9L in
+          let high = host_of Nx.int64 s (Array.init (numel s) at) in
+          let low = Nx.full Nx.int64 [||] 3L in
+          let want =
+            Format.asprintf "Nx.Rng.randint: high at %a is 3, not above low 3"
+              pp_shape (index s (Int.min i j))
+          in
+          equal string want (message (fun () -> Rng.randint ~low high));
+          let zero =
+            Format.asprintf "Nx.Rng.randint: high at %a is 0, not above low 0"
+              pp_shape (index s (Int.min i j))
+          in
+          equal ~msg:"no low" string zero
+            (message (fun () -> Rng.randint (Nx.sub_s high 3L)));
+          if on_s2 then begin
+            let low = split (Nx.full_like high 3L) in
+            let x = Rng.randint ~low (split high) in
+            equal string want (message (fun () -> Nx.sync x))
+          end);
+      test "randint refuses a float dtype" (fun () ->
+          equal string "Nx.Rng.randint: float32 is not an integer dtype"
+            (message (fun () -> Rng.randint (Nx.full Nx.float32 [| 1 |] 1.))));
       prop "binomial names its first negative n" bad_params
         (fun (s, on_s2, (i, j)) ->
           cover "split" on_s2;
@@ -2389,7 +2535,8 @@ let scoped_samplers =
       ( "randint",
         {
           draw =
-            (fun p ?key s -> of_ints (read (Rng.randint_at p ?key ~high:9 s)));
+            (fun p ?key s ->
+              of_ints (read (Rng.randint ?key (Nx.full_at p Nx.int32 s 9l))));
         } );
       ( "permutation",
         {
@@ -2776,7 +2923,12 @@ let calls =
     ( "exponential",
       none (fun key -> ignore (Rng.exponential ?key f64 [| 3 |])) );
     ("gumbel", none (fun key -> ignore (Rng.gumbel ?key f64 [| 3 |])));
-    ("randint", none (fun key -> ignore (Rng.randint ?key ~high:5 [| 3 |])));
+    ( "randint",
+      ( 2,
+        fun ~dead ->
+          let low = arg ~dead (host_of Nx.int64 [| 2 |] [| 0L; 1L |]) in
+          let high = host_of Nx.int64 [| 2 |] [| 5L; 6L |] in
+          fun key -> ignore (Rng.randint ?key ~low high) ) );
     ("permutation", none (fun key -> ignore (Rng.permutation ?key 4)));
     ( "bernoulli",
       ( 1,
@@ -2967,7 +3119,8 @@ let goldens =
       floats "normal f64" (read (Rng.normal ~key:k Nx.float64 s));
       floats "exponential f32" (read (Rng.exponential ~key:k Nx.float32 s));
       floats "exponential f64" (read (Rng.exponential ~key:k Nx.float64 s));
-      ints "randint" (read (Rng.randint ~key:k ~low:(-9) ~high:1000 s));
+      ints "randint"
+        (read (Rng.randint ~key:k ~low:(counts (-9l)) (counts 1000l)));
       Printf.printf "bernoulli:%s\n"
         (String.concat ""
            (Array.to_list

@@ -95,19 +95,10 @@ val gumbel_at :
   (float, 's, 'd) Value.t
 
 val randint :
-  ?key:Devices.host key ->
-  ?low:int ->
-  high:int ->
-  int array ->
-  (int32, Nx_array.Dtype.int32_elt, Devices.host) Value.t
-
-val randint_at :
-  'd Devices.placement ->
   ?key:'d key ->
-  ?low:int ->
-  high:int ->
-  int array ->
-  (int32, Nx_array.Dtype.int32_elt, 'd) Value.t
+  ?low:('v, 's, 'd) Value.t ->
+  ('v, 's, 'd) Value.t ->
+  ('v, 's, 'd) Value.t
 
 val bernoulli :
   ?key:'d key ->

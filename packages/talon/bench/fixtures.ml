@@ -22,7 +22,10 @@ let normal k n : float array =
 (* [ints k lo hi n] is [n] draws from [[lo, hi]] of [keys.(k)]. *)
 let ints k lo hi n : int array =
   Array.map Int32.to_int
-    (Nx.to_array (Nx.Rng.randint ~key:keys.(k) ~low:lo ~high:(hi + 1) [| n |]))
+    (Nx.to_array
+       (Nx.Rng.randint ~key:keys.(k)
+          ~low:(Nx.full Nx.int32 [| n |] (Int32.of_int lo))
+          (Nx.full Nx.int32 [| n |] (Int32.of_int (hi + 1)))))
 
 (* [pick names weights u] is the name of [names] whose share of [weights],
    which sum to 1, holds [u]. *)

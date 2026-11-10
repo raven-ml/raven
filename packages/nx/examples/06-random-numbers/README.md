@@ -30,7 +30,7 @@ Every sampler lives in `Nx.Rng` and takes an optional `?key`.
 | `Rng.split ~n k`                  | `n` independent keys derived from `k`          |
 | `Rng.uniform dtype shape`         | Uniform values in [0, 1)                       |
 | `Rng.normal dtype shape`          | Standard normal (mean 0, variance 1)           |
-| `Rng.randint ?low ~high shape`    | Uniform int32 values in [low, high)            |
+| `Rng.randint ?low high`           | Uniform integers in [low, high), per element   |
 | `Rng.permutation n`               | A random ordering of `0`, …, `n - 1`           |
 | `Rng.poisson rates`               | One Poisson count per element of `rates`       |
 

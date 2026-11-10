@@ -413,6 +413,12 @@ let move_rows =
    thousand nodes. *)
 
 let mib = 1 lsl 20
+
+(* [ints seed high s] is int32 draws below [high] of shape [s], from the
+   key of [seed]. *)
+let ints seed high s =
+  Nx.Rng.randint ~key:(Nx.Rng.key seed) (Nx.full D.Int32 s (Int32.of_int high))
+
 let key () = Nx.Rng.key 0
 let draw x = Nx.Repr.array (Nx.place Nx.Host.on x)
 
@@ -455,8 +461,9 @@ let rng_rows =
           draw (Nx.Rng.uniform ~key D.Float64 [| mib |]));
       Thumper.bench_with_setup "normal-f32-1M" ~setup:key (fun key ->
           draw (Nx.Rng.normal ~key D.Float32 [| mib |]));
-      Thumper.bench_with_setup "randint-1M" ~setup:key (fun key ->
-          draw (Nx.Rng.randint ~key ~high:1000 [| mib |]));
+      Thumper.bench_with_setup "randint-1M"
+        ~setup:(fun () -> (key (), filled D.Int32 [| mib |] 1000l))
+        (fun (key, high) -> draw (Nx.Rng.randint ~key high));
       Thumper.bench_with_setup "bernoulli-f32-1M"
         ~setup:(keyed [| mib |] 0.3)
         (fun (key, p) -> draw (Nx.Rng.bernoulli ~key p));
@@ -831,7 +838,7 @@ let take_1k () =
 (* 64K positions in 1024 targets, drawn once from a fixed key, their
    updates and the targets. *)
 let scatter_64k () =
-  let ids = Nx.Rng.randint ~key:(Nx.Rng.key 10) ~high:1024 [| 65536 |] in
+  let ids = ints 10 1024 [| 65536 |] in
   ( Nx.place Nx.Host.on (Nx.cast D.Int64 ids),
     host 65536,
     Nx.zeros D.Float32 [| 1024 |] )
@@ -839,7 +846,7 @@ let scatter_64k () =
 (* 1M int64 updates and their segments, of 100, drawn once from a fixed
    key: a group-by's sum, which threads fold into segments of their own. *)
 let segments_1m () =
-  let ids = Nx.Rng.randint ~key:(Nx.Rng.key 13) ~high:100 [| 1 lsl 20 |] in
+  let ids = ints 13 100 [| 1 lsl 20 |] in
   let ids = Nx.place Nx.Host.on (Nx.cast D.Int64 ids) in
   (ids, Nx.copy ids)
 
@@ -854,14 +861,14 @@ let segments_f64_1m () =
    ragged row's bytes are packed into a word. *)
 let windows_1m () =
   let n = 1 lsl 20 in
-  let at = Nx.Rng.randint ~key:(Nx.Rng.key 14) ~high:n [| n |] in
+  let at = ints 14 n [| n |] in
   let bytes = on_host (Nx.zeros D.Uint8 [| n + 7 |]) in
   (on_host (Nx.cast D.Int64 at), Nx.sliding_window ~window:8 bytes)
 
 (* 1M positions in a table of 4 booleans, drawn once from a fixed key, as a
    dictionary's codes read a result computed once for each of its words. *)
 let table_1m dt () =
-  let at = Nx.Rng.randint ~key:(Nx.Rng.key 16) ~high:4 [| 1 lsl 20 |] in
+  let at = ints 16 4 [| 1 lsl 20 |] in
   let table = A.of_array dt [| 4 |] [| true; false; false; true |] in
   (on_host (Nx.cast D.Int64 at), Nx.Repr.of_array Nx.Host.v table)
 
@@ -872,13 +879,13 @@ let table_1m dt () =
 let take_beside_heap () =
   let live = Array.init (4 lsl 20) (fun i -> (i, i)) in
   let rows = 1 lsl 20 in
-  let at = Nx.Rng.randint ~key:(Nx.Rng.key 19) ~high:rows [| rows |] in
+  let at = ints 19 rows [| rows |] in
   (live, on_host (Nx.cast D.Int64 at), filled D.Float64 [| rows |] 1.)
 
 (* 512K rows of 2 bits taken from a table of 1024, positions drawn once from
    a fixed key: rows too short to pack, moved element by element. *)
 let bit_rows_512k () =
-  let at = Nx.Rng.randint ~key:(Nx.Rng.key 17) ~high:1024 [| 1 lsl 19 |] in
+  let at = ints 17 1024 [| 1 lsl 19 |] in
   let table =
     A.of_array D.Bit [| 1024; 2 |] (Array.init 2048 (fun i -> i land 3 = 1))
   in
@@ -969,7 +976,7 @@ let embedding_rows =
    1M rows of 3, fewer, so that threads split each column's targets. *)
 let take_along_grad rows cols () =
   let s = [| rows; cols |] in
-  let p = Nx.Rng.randint ~key:(Nx.Rng.key 12) ~high:rows s in
+  let p = ints 12 rows s in
   let g = on_host (Nx.Rng.uniform ~key:(Nx.Rng.key 11) D.Bfloat16 s) in
   let table = Nx.copy (on_host (Nx.zeros D.Bfloat16 s)) in
   (on_host (Nx.cast D.Int64 p), g, ref table)
@@ -1383,7 +1390,7 @@ let sorted_64k () =
        (Nx.sort (Nx.Rng.uniform ~key:(Nx.Rng.key 8) D.Float32 [| 1 lsl 16 |])))
 
 let groups1m () =
-  on_host (Nx.Rng.randint ~key:(Nx.Rng.key 9) ~high:1000 [| n1m |])
+  on_host (ints 9 1000 [| n1m |])
 
 let runs1m () =
   on_host (Nx.init D.Int64 [| n1m |] (fun i -> Int64.of_int (i.(0) / 4 * 64)))
@@ -1393,7 +1400,7 @@ let quartiles = [| 0.25; 0.5; 0.75 |]
 (* 1M counts of 0 to 3 drawn once from a fixed key, as a join's matches of
    each row: runs of positions longer than one. *)
 let counts1m () =
-  let c = Nx.Rng.randint ~key:(Nx.Rng.key 18) ~high:4 [| n1m |] in
+  let c = ints 18 4 [| n1m |] in
   on_host (Nx.cast D.Int64 c)
 
 let order_rows =

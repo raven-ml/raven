@@ -103,7 +103,8 @@ module Discrete = struct
       v >= start && v < hi
     in
     let sample () =
-      let tensor = Nx.Rng.randint ~low:start ~high:hi [| 1 |] in
+      let bound v = Nx.full Nx.int32 [| 1 |] (Int32.of_int v) in
+      let tensor = Nx.Rng.randint ~low:(bound start) (bound hi) in
       let arr : Int32.t array = Nx.to_array tensor in
       Nx.scalar Nx.int32 arr.(0)
     in
@@ -253,7 +254,7 @@ module Multi_binary = struct
       let arr : Int32.t array = Nx.to_array tensor in
       Array.for_all (fun v -> v = Int32.zero || v = Int32.one) arr
     in
-    let sample () = Nx.Rng.randint ~high:2 [| n |] in
+    let sample () = Nx.Rng.randint (Nx.full Nx.int32 [| n |] 2l) in
     let pack tensor =
       let arr : Int32.t array = Nx.to_array tensor in
       Value.Bool_array
@@ -520,8 +521,9 @@ module Sequence = struct
         | Some max_len ->
             if max_len = min_length then min_length
             else
+              let bound v = Nx.full Nx.int32 [| 1 |] (Int32.of_int v) in
               let tensor =
-                Nx.Rng.randint ~low:min_length ~high:(max_len + 1) [| 1 |]
+                Nx.Rng.randint ~low:(bound min_length) (bound (max_len + 1))
               in
               let arr = Nx.to_array tensor in
               Int32.to_int arr.(0)
@@ -600,13 +602,15 @@ module Text = struct
       let length =
         if max_length = 1 then 1
         else
-          let tensor = Nx.Rng.randint ~low:1 ~high:(max_length + 1) [| 1 |] in
+          let high = Nx.full Nx.int32 [| 1 |] (Int32.of_int (max_length + 1)) in
+          let tensor = Nx.Rng.randint ~low:(Nx.ones_like high) high in
           let arr = Nx.to_array tensor in
           Int32.to_int arr.(0)
       in
       if length = 0 then ""
       else
-        let idxs = Nx.Rng.randint ~high:charset_len [| length |] in
+        let high = Nx.full Nx.int32 [| length |] (Int32.of_int charset_len) in
+        let idxs = Nx.Rng.randint high in
         let arr = Nx.to_array idxs in
         Bytes.init length (fun i -> charset.[Int32.to_int arr.(i)])
         |> Bytes.to_string
