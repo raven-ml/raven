@@ -335,8 +335,8 @@ val rate : float -> 'd Schedule.t
     own shape, so under [Rune.jit] its answers are constants of the program
     as [b1] is. A leaf it rejects leaves the term out of its direction, so
     it steps as it would with no decay. Under {!adamw_step} it steps as
-    {!adam_step} steps it, bit for bit. The state is the same whatever the
-    rule, so a checkpoint resumes under another rule.
+    {!adam_step} steps it, bit for bit. The state's structure does not
+    depend on the rule, so a checkpoint resumes under another rule.
 
     A layer's weights, its matrices and embeddings, are commonly decayed,
     and its shifts and scales are not. Which leaf is which is its role, and
@@ -355,11 +355,9 @@ val rate : float -> 'd Schedule.t
         ~params ~grads
     ]}
 
-    A rule on the leaf's rank, [Array.length shape >= 2], selects the same
-    leaves only while each layer's parameters are leaves of their own. A
-    model that stacks its blocks along a new first axis, to scan over them,
-    holds each bias and each normalisation scale as a matrix, which that
-    rule decays. Nothing checks a rule against the model, so a name the
+    A rule on the rank, [Array.length shape >= 2], also decays each bias and
+    normalisation scale of a model that stacks its blocks along a new axis to
+    scan over them. Nothing checks a rule against the model, so a name the
     model does not use matches no leaf, silently. *)
 
 (** {1:parts Settings that differ across parameters}
@@ -371,36 +369,22 @@ val rate : float -> 'd Schedule.t
     {!Nx.Ptree.Walk.structure} keeps each leaf's path from the root of the
     model, such as [trunk.fc.w], so the part's half-precision draws
     ({!section-half}) are those of an unsplit step at equal counters, and two
-    parts with equal paths inside them draw apart. The gradient is clipped
-    whole, before it is split, so that its norm spans every part:
+    parts with equal paths inside them draw apart:
 
     {[
     let part name p =
       Nx.Ptree.v (fun c x -> Nx.Ptree.Walk.(field c name (structure p)) x)
 
     let trunk = part "trunk" trunk_p and head = part "head" head_p
-    let state = Nx.Ptree.pair (Vega.adam_ptree trunk) (Vega.adam_ptree head)
-
-    let update (params, (st_t, st_h)) grads =
-      let grads = Vega.clip_by_global_norm model ~max_norm:1.0 grads in
-      let slow step = Nx.mul_s (sched step) 0.1 in
-      let trunk', st_t =
-        Vega.adamw_step trunk ~lr:slow st_t ~params:params.trunk
-          ~grads:grads.trunk
-      in
-      let head', st_h =
-        Vega.adamw_step head ~lr:sched st_h ~params:params.head
-          ~grads:grads.head
-      in
-      ({ trunk = trunk'; head = head' }, (st_t, st_h))
     ]}
 
-    The decay is scaled by the learning rate ({!section-decay}), so the trunk,
-    stepped at a tenth of the rate, also decays at a tenth. A frozen part is
-    left out of what is differentiated and stepped. The objective takes the
-    trainable part and reads the frozen one as a value it is given, as in
-    [Rune.grad head (fun h -> loss { params with head = h }) params.head]. A
-    setting that differs by the kind of leaf across every layer, such as
+    The gradient is clipped whole, before it is split, so that its norm spans
+    every part. The decay is scaled by the learning rate ({!section-decay}),
+    so a part stepped at a tenth of the rate also decays at a tenth. A frozen
+    part is left out of what is differentiated and stepped. The objective
+    takes the trainable part and reads the frozen one as a value it is given,
+    as in [Rune.grad head (fun h -> loss { params with head = h }) params.head].
+    A setting that differs by the kind of leaf across every layer, such as
     which leaves decay, is a rule on the leaf ({!section-decay}). *)
 
 (** {1:sgd Stochastic Gradient Descent} *)

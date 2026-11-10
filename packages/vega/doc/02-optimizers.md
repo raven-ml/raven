@@ -96,6 +96,39 @@ A leaf the rule rejects steps as the step without decay steps it. The Weight
 Decay section of [`vega.mli`](../lib/vega.mli) says why a rule on the leaf's
 rank fails for a model that stacks its blocks.
 
+## Parts of a model
+
+A part of the model with its own rate, its own optimizer or no step is a
+part of the value, stepped by a call of its own with its own description and
+state. Here a pretrained trunk takes a tenth of the head's rate. Each part's
+description keeps the model's paths, so its half-precision draws are those of
+one step over the whole model, as the parts section of
+[`vega.mli`](../lib/vega.mli) states:
+
+<!-- $MDX skip -->
+```ocaml
+let part name p =
+  Nx.Ptree.v (fun c x -> Nx.Ptree.Walk.(field c name (structure p)) x)
+
+let trunk = part "trunk" trunk_p and head = part "head" head_p
+let state = Nx.Ptree.pair (Vega.adam_ptree trunk) (Vega.adam_ptree head)
+
+let update (params, (st_t, st_h)) grads =
+  let grads = Vega.clip_by_global_norm model ~max_norm:1.0 grads in
+  let slow step = Nx.mul_s (sched step) 0.1 in
+  let trunk', st_t =
+    Vega.adamw_step trunk ~lr:slow st_t ~params:params.trunk
+      ~grads:grads.trunk
+  in
+  let head', st_h =
+    Vega.adamw_step head ~lr:sched st_h ~params:params.head ~grads:grads.head
+  in
+  ({ trunk = trunk'; head = head' }, (st_t, st_h))
+```
+
+The gradient is clipped before it is split, so the bound holds for the whole
+model. The trunk, stepped at a tenth of the rate, also decays at a tenth.
+
 ## States are structures
 
 An optimizer state is a record whose parameter-shaped fields have the
