@@ -9,11 +9,12 @@ no CHANGES entry). Its design is the eo-library adjudication of the tessera
 campaign.
 
 - The same rules as raven's libraries: `doc/dev/design.md`, AGENTS.md's code
-  style, raven's public interfaces only. The one dependency outside raven
-  is `jsont`, because `Jsont.json` is `Geojson.polygons`'s input, as it is
-  brot's and kaun.hf's. No Python, weights or data in the repository beyond
-  small test fixtures, each recording its source and the command that cut
-  it (`test/tm_coords.dat`).
+  style, raven's public interfaces only (`Geotiff`'s tags are nx.io's
+  `Tiff.value`). The one dependency outside raven is `jsont`, because
+  `Jsont.json` is `Geojson.polygons`'s input, as it is brot's and
+  kaun.hf's. No Python, weights or data in the repository beyond small
+  test fixtures, each recording its source and the command that cut it
+  (`test/tm_coords.dat`).
 - jord does no I/O. Readers take bytes or values (a shapefile's bytes, a
   `Jsont.json`, a `.prj`'s text, TIFF tags) and return `Error` for data
   that breaks their format; misuse raises `Invalid_argument`.
@@ -26,16 +27,16 @@ campaign.
 - `test/` holds the laws and the spec's values, with a cut of Karney's
   test set. `test/rasterio/parity.exe` compares the rules with rasterio on
   tessera-eval's Austria labels and GeoTessera's landmasks, which live
-  outside the repository, so no test runs it. `bench/` times each rule on
+  outside the repository, so no test runs it; `parity.exe landmask` reads
+  real landmasks through `Nx_io.load_tiff` and `Geotiff`. `bench/` times each rule on
   a tile (`dune build @dev/jord/bench/bench`).
 
 ## Boundaries
 
 - **nx.io** owns the TIFF container (directories, strips and tiles,
-  codecs, BigTIFF), on its own branch. Until it lands, `Geotiff.value`
-  keeps exactly the twelve TIFF 6.0 cases of nx.io's `Tiff.value`, NUL rule
-  included. Once it lands, `Geotiff` takes and gives `Nx_io.Tiff.value`
-  and its own type goes; nothing in jord parses a TIFF file.
+  codecs, BigTIFF). `Geotiff` reads and makes `Nx_io.Tiff.value` tags:
+  `Nx_io.load_tiff` gives them, `Nx_io.save_tiff ~tags` writes them, and
+  nothing in jord parses a TIFF file.
 - **ymir** is astronomy's; jord does not depend on it. Its `Region`
   computes exact cell-polygon areas, the candidate mechanism for overlap
   weights, which would be copied, not shared.

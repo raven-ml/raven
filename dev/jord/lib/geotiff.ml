@@ -3,19 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type value =
-  | Byte of int array
-  | Ascii of string
-  | Short of int array
-  | Long of int array
-  | Rational of (int * int) array
-  | Sbyte of int array
-  | Undefined of string
-  | Sshort of int array
-  | Slong of int array
-  | Srational of (int * int) array
-  | Float of float array
-  | Double of float array
+module T = Nx_io.Tiff
 
 exception Refused of string
 
@@ -71,11 +59,11 @@ let find tags t =
   | _ -> refuse "%s is given twice" (named t)
 
 let ints t = function
-  | Byte a | Short a | Long a -> a
+  | T.Byte a | T.Short a | T.Long a -> a
   | _ -> refuse "%s is not of an unsigned integer type" (named t)
 
 let floats t = function
-  | Float a | Double a -> a
+  | T.Float a | T.Double a -> a
   | _ -> refuse "%s is not of a floating-point type" (named t)
 
 let one t tags =
@@ -93,7 +81,7 @@ let geo_keys tags =
   let dir =
     match find tags geo_key_directory with
     | None -> refuse "%s is missing" (named geo_key_directory)
-    | Some (Short a) -> a
+    | Some (T.Short a) -> a
     | Some _ -> refuse "%s is not SHORT" (named geo_key_directory)
   in
   let what = named geo_key_directory in
@@ -286,7 +274,7 @@ let number text =
 let nodata tags =
   match find tags gdal_nodata with
   | None -> Ok None
-  | Some (Ascii text) -> (
+  | Some (T.Ascii text) -> (
       let text = String.trim (List.hd (String.split_on_char '\000' text)) in
       match number text with
       | Some x -> Ok (Some x)
@@ -313,13 +301,13 @@ let tags ?nodata (g : Grid.t) =
   let map =
     if rx = 0. && ry < 0. && cx > 0. && cy = 0. then
       [
-        (model_pixel_scale, Double [| cx; -.ry; 0. |]);
-        (model_tiepoint, Double [| 0.; 0.; 0.; ox; oy; 0. |]);
+        (model_pixel_scale, T.Double [| cx; -.ry; 0. |]);
+        (model_tiepoint, T.Double [| 0.; 0.; 0.; ox; oy; 0. |]);
       ]
     else
       [
         ( model_transformation,
-          Double
+          T.Double
             [| cx; rx; 0.; ox; cy; ry; 0.; oy; 0.; 0.; 0.; 0.; 0.; 0.; 0.; 1. |]
         );
       ]
@@ -350,6 +338,8 @@ let tags ?nodata (g : Grid.t) =
     |]
   in
   let nodata =
-    match nodata with None -> [] | Some x -> [ (gdal_nodata, Ascii (text x)) ]
+    match nodata with
+    | None -> []
+    | Some x -> [ (gdal_nodata, T.Ascii (text x)) ]
   in
-  map @ [ (geo_key_directory, Short dir) ] @ nodata
+  map @ [ (geo_key_directory, T.Short dir) ] @ nodata

@@ -7,5 +7,5 @@
   test_geojson
   test_shapefile
   test_geotiff)
- (libraries jord nx jsont jsont.bytesrw windtrap)
+ (libraries jord nx nx.io jsont jsont.bytesrw windtrap)
  (deps tm_coords.dat))

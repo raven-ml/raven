@@ -5,6 +5,7 @@
 
 open Windtrap
 open Jord
+open Nx_io.Tiff
 open Geotiff
 
 let grid_t =
@@ -165,6 +166,7 @@ let refusals =
         ( List.filter (fun (t, _) -> t <> 257) base,
           "ImageLength (257) is missing" ) );
       ("a float size", (replace 256 (Double [| 4. |]) base, "256"));
+      ("a LONG8 size", (replace 256 (Long8 [| 4L |]) base, "256"));
       ("a user-defined system", (with_key 3072 32767, "user-defined"));
       ("a system jord lacks", (with_key 3072 3857, "3857"));
       ("a geocentric model", (with_key 1024 3, "model type 3"));
@@ -291,6 +293,25 @@ let order =
       | Short dir -> equal int 1 dir.(11)
       | _ -> fail "GeoKeyDirectory")
 
+(* Through a TIFF file *)
+
+let file =
+  test "a saved TIFF's tags read back as its grid and nodata" (fun () ->
+      let g =
+        Grid.v utm33 ~rows:3 ~cols:5
+          ~origin:(596785.7115403633, 5328362.815087351)
+          ~row_step:(0., -10.) ~col_step:(10., 0.)
+      in
+      let path = Filename.concat (temp_dir ()) "grid.tif" in
+      Nx_io.save_tiff ~tags:(tags ~nodata:0. g) path
+        (Nx.zeros Nx.uint8 [| 3; 5; 1 |]);
+      let ifd = List.hd (Nx_io.load_tiff path) in
+      equal (result grid_t string) (Ok g) (grid (Nx_io.Tiff.tags ifd));
+      equal
+        (result (option float_exact) string)
+        (Ok (Some 0.))
+        (nodata (Nx_io.Tiff.tags ifd)))
+
 let () =
   exit
     (run "jord.geotiff"
@@ -305,5 +326,5 @@ let () =
              refusals;
            ];
          group "nodata" [ nodata_texts; nan_nodata ];
-         group "tags" [ round_trip; nodata_round_trip; order ];
+         group "tags" [ round_trip; nodata_round_trip; order; file ];
        ])
