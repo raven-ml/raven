@@ -58,8 +58,8 @@ let libraries ~root =
   in
   let group (title, entries) =
     sprintf {|
-<div class="group-row"><h3 class="label group-title">%s</h3><div class="grid-auto">%s</div></div>|}
-      title (concat_map card entries)
+<div class="group-row"><h3 class="label group-title">%s</h3><div class="grid-auto%s">%s</div></div>|}
+      title (if List.length entries = 4 then " four" else "") (concat_map card entries)
   in
   let contrib (p : Repo.package) =
     let g = match List.assoc_opt p.name Registry.contrib with Some g -> g | None -> Repo.fail "www/gen/registry.ml: no contrib entry for %s" p.name in

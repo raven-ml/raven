@@ -305,6 +305,20 @@ html:not(.js) .hero-split{align-items:flex-start}
 .group-title{flex:0 0 200px;padding-top:6px}
 .group-row .grid-auto{flex:1 1 600px;min-width:0}
 .card.lib{min-height:168px}
+.small-rune{transform:scale(1.6)}
+/* A group of four fills one row on wide screens and two below, so none is left alone on a row. */
+@media (min-width:1180px){.group-row .grid-auto.four{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (min-width:601px) and (max-width:1179px){.group-row .grid-auto.four{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* On phones the cards become rows: glyph, name, and what it is. */
+@media (max-width:600px){
+  .group-row{padding:24px 0}
+  .group-row .grid-auto{gap:8px}
+  .card.lib{min-height:0;flex-direction:row;align-items:flex-start;gap:14px;padding:14px 16px}
+  .card.lib .glyph-row{height:auto;flex:0 0 22px;justify-content:center;padding-top:2px}
+  .card.lib .glyph-row .caption{display:none}
+  .card.lib .lib-glyph{font-size:20px}
+  .card.lib .stack{gap:2px !important}
+}
 .lib-glyph{font-size:30px;line-height:1}
 .card.lib .h4{font-size:17px}
 .contrib{display:flex;align-items:baseline;gap:14px;padding:18px 22px;border:1px dashed var(--line-3);border-radius:var(--r-md)}

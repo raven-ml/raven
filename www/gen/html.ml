@@ -22,7 +22,10 @@ let esc s =
 let glyph ?size (e : Registry.entry) =
   let size = match size with Some s -> sprintf "; font-size: %s" s | None -> "" in
   match e.glyph with
-  | Some (rune, colour) -> sprintf {|<span class="glyph" style="color: %s%s" aria-hidden="true">%s</span>|} colour size rune
+  | Some (rune, colour) ->
+      (* Noto Sans Runic draws ᛃ at about half the size of the others. *)
+      let cls = if rune = "ᛃ" then "glyph small-rune" else "glyph" in
+      sprintf {|<span class="%s" style="color: %s%s" aria-hidden="true">%s</span>|} cls colour size rune
   | None -> sprintf {|<span class="glyph" style="%s" aria-hidden="true"></span>|} size
 
 let github = "https://github.com/raven-ml/raven"
