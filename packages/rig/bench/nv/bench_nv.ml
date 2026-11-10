@@ -195,6 +195,71 @@ let launch_rows =
       row "4096" (launch_parts 4096) (fun (_, s) -> run s);
     ]
 
+(* Uploads *)
+
+let launch_cubin =
+  lazy
+    (In_channel.with_open_bin "../../test/nv/fixtures/launch_sm89.cubin"
+       In_channel.input_all)
+
+(* Where a kernel reads the bytes the host wrote: in [Mapped] memory, through
+   its window; in [Device] memory, which a queued copy filled from [Pinned]
+   memory the host wrote; or in [Pinned] memory, over the bus. *)
+type source = Window | Copy | Bus
+
+(* One step of an upload of [n] bytes: the host writes them through
+   Buffer.write, then [count] launches of [twice] each read them and write
+   [n] bytes of Device memory, their end waited for. *)
+let uploading ?(count = 1) source n () =
+  let t = dev () in
+  let image = get (Rig.Image.load t.d (Lazy.force launch_cubin)) in
+  let fn = Option.get (Rig.Image.resolve image "twice") in
+  let memory = match source with Window -> B.Mapped | Copy | Bus -> Pinned in
+  let src = B.create ~memory t.d n and out = B.create t.d n in
+  let input = match source with Copy -> B.create t.d n | Window | Bus -> src in
+  let copy =
+    match source with
+    | Copy -> [| Sub.copy ~src:(Sub.Buffer src) ~dst:(Sub.Buffer input) |]
+    | Window | Bus -> [||]
+  in
+  let refs = Sub.[| write 0 ~at:0; read 1 ~at:8 |] in
+  let work = Sub.launch ~refs fn ~params:20 in
+  let s = submission t (Array.append copy (Array.make count work)) in
+  for i = Array.length copy to Array.length copy + count - 1 do
+    let b = Sub.block (Sub.Run.submission s) i in
+    Sub.Run.groups s b (n / 4 / 256) 1 1;
+    Sub.Run.threads s b 256 1 1;
+    Sub.Run.int64 s b 0 0L;
+    Sub.Run.int64 s b 8 0L;
+    Sub.Run.int32 s b 16 1
+  done;
+  (src, s, [| out; input |])
+
+let upload (src, s, buffers) =
+  B.write src Bigarray.int32 (fun a -> Bigarray.Array1.fill a 7l);
+  Rig.Point.wait (Rig.submit s ~buffers)
+
+(* [mapped-4K] catches a regression of a write through the window, its flush
+   or the launch that reads it. The [-64K-16] rows are 16 launches that read
+   the same 64 KiB, from each source. *)
+let upload_rows =
+  let up name ?count source n = row name (uploading ?count source n) upload in
+  Thumper.group "upload"
+    [
+      Thumper.group "nv"
+        [
+          up "mapped-4K" Window (4 * kib);
+          up "copy-4K" Copy (4 * kib);
+          up "pinned-4K" Bus (4 * kib);
+          up "mapped-64K" Window (64 * kib);
+          up "copy-64K" Copy (64 * kib);
+          up "pinned-64K" Bus (64 * kib);
+          up "mapped-64K-16" ~count:16 Window (64 * kib);
+          up "copy-64K-16" ~count:16 Copy (64 * kib);
+          up "pinned-64K-16" ~count:16 Bus (64 * kib);
+        ];
+    ]
+
 let copy_rows =
   let copying n (dst, src) () =
     let t = dev () in
@@ -262,6 +327,7 @@ let () =
          [
            release_rows;
            launch_rows;
+           upload_rows;
            copy_rows;
            alloc_rows;
            map_host_rows;
