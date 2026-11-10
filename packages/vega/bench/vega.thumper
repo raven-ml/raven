@@ -4,37 +4,38 @@
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
-# forced: blessed under load 76.3 on 14 cores
+# forced: blessed under load 38.1 on 14 cores
 
-Adafactor/Adafactor/1024	alloc_words	exact	4359
-Adafactor/Adafactor/256	alloc_words	exact	4359
-Adagrad/Adagrad/1024	alloc_words	exact	986
-Adagrad/Adagrad/256	alloc_words	exact	986
-Adam/Adam/1024	alloc_words	exact	3161
-Adam/Adam/256	alloc_words	exact	3161
-Adam/Adam/bfloat16/1024	alloc_words	exact	8010
-AdamW/AdamW/1024	alloc_words	exact	3306
-AdamW/AdamW/256	alloc_words	exact	3306
-Adan/Adan/1024	alloc_words	exact	2364
-Adan/Adan/256	alloc_words	exact	2364
-L-BFGS/1024	alloc_words	exact	30461
-L-BFGS/256	alloc_words	exact	30461
-L-BFGS/bfloat16/256	alloc_words	exact	35861
-LAMB/LAMB/1024	alloc_words	exact	4379
-LAMB/LAMB/256	alloc_words	exact	4379
-LARS/LARS/1024	alloc_words	exact	2020
-LARS/LARS/256	alloc_words	exact	2020
-Lion/Lion/1024	alloc_words	exact	1246
-Lion/Lion/256	alloc_words	exact	1246
-RAdam/RAdam/1024	alloc_words	exact	4997
-RAdam/RAdam/256	alloc_words	exact	4997
-RMSprop/RMSprop/1024	alloc_words	exact	1287
-RMSprop/RMSprop/256	alloc_words	exact	1287
-SGD-Momentum/SGD-Momentum/1024	alloc_words	exact	834
-SGD-Momentum/SGD-Momentum/256	alloc_words	exact	834
-SGD/SGD/1024	alloc_words	exact	623
-SGD/SGD/256	alloc_words	exact	623
-SGD/SGD/bfloat16/1024	alloc_words	exact	2846
+Adafactor/Adafactor/1024	alloc_words	exact	4384
+Adafactor/Adafactor/256	alloc_words	exact	4384
+Adagrad/Adagrad/1024	alloc_words	exact	952
+Adagrad/Adagrad/256	alloc_words	exact	952
+Adam/Adam/1024	alloc_words	exact	3160
+Adam/Adam/256	alloc_words	exact	3160
+Adam/Adam/bfloat16/1024	alloc_words	exact	7947
+AdamW/AdamW/1024	alloc_words	exact	3464
+AdamW/AdamW/256	alloc_words	exact	3464
+Adan/Adan/1024	alloc_words	exact	2541
+Adan/Adan/256	alloc_words	exact	2541
+L-BFGS/1024	alloc_words	exact	30433
+L-BFGS/256	alloc_words	exact	30433
+L-BFGS/bfloat16/256	alloc_words	exact	35769
+LAMB/LAMB/1024	alloc_words	exact	4553
+LAMB/LAMB/256	alloc_words	exact	4553
+LARS/LARS/1024	alloc_words	exact	2119
+LARS/LARS/256	alloc_words	exact	2119
+Lion/Lion/1024	alloc_words	exact	1214
+Lion/Lion/256	alloc_words	exact	1214
+Loss_scale/step/1024	alloc_words	exact	3116
+RAdam/RAdam/1024	alloc_words	exact	5024
+RAdam/RAdam/256	alloc_words	exact	5024
+RMSprop/RMSprop/1024	alloc_words	exact	1255
+RMSprop/RMSprop/256	alloc_words	exact	1255
+SGD-Momentum/SGD-Momentum/1024	alloc_words	exact	797
+SGD-Momentum/SGD-Momentum/256	alloc_words	exact	797
+SGD/SGD/1024	alloc_words	exact	584
+SGD/SGD/256	alloc_words	exact	584
+SGD/SGD/bfloat16/1024	alloc_words	exact	2798
 
 # machine: 943935ae6b4f79ac
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
