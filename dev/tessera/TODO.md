@@ -20,8 +20,8 @@ An item leaves when its library fixes it, or when a design decides it stays.
 - Every suite and example maps "cuda", "nv", "amd", "metal" to
   `Rig.open_ (Rig_x.gpu 0)` and forks a child to ask whether a GPU opens
   (its driver must not start before thumper forks): kaun's GPT-2, rune's
-  bench, gpt-oss's bench and `bench/`. Wanted: opening a device by name,
-  and asking whether it opens, in rig.
+  bench, gpt-oss's bench, `bench/` and `bin/main.exe`. Wanted: opening a
+  device by name, and asking whether it opens, in rig.
 
 ## nx
 
@@ -42,7 +42,15 @@ An item leaves when its library fixes it, or when a design decides it stays.
 - `Nx.round` rounds halves away from zero; GeoTessera's int8 embedding codes
   round ties to even (numpy's `np.round`), and 23 of the oracle fixtures'
   15.7M codes differ. A rounding mode is a vocabulary question for nx
-  (found by the tessera-stack audit).
+  (found by the tessera-stack audit). Until nx decides, `Embedding.quantize`
+  rounds a half as twice the rounding of its half, exact in binary.
+- Reading a host value's elements in a host loop, as packing a batch does,
+  takes `Nx.Repr.read`, then `Nx_array.read` with a contiguity check, and
+  handing a filled bigarray back takes `Nx_array.of_bigarray` and
+  `Nx.Repr.unsafe_of_array`, since `Nx.to_bigarray` and `Nx.of_bigarray`
+  copy. These are public interfaces, and `Nx.of_bigarray`'s doc gives the
+  composition. tessera holds it in a private `Flat`; the item records the
+  friction.
 
 ## vega
 
@@ -61,7 +69,9 @@ An item leaves when its library fixes it, or when a design decides it stays.
 - Running one body eagerly on the host and compiled on a GPU means writing
   `if jit then Rune.jit spec f else f` with an explicit signature at every
   call, even for `Nx.matmul`, and threading data the body uses (an
-  attention bias) through the signature.
+  attention bias) through the signature. tessera writes it three times for
+  `Model.apply` (the executable, its validation of blocks, the bench), and
+  `Embedding.encode` takes the forward function for that reason.
 - Under `Rune.jit`, a remat inside a scan step whose body contains a `grad`
   saves nothing (identical bytes with and without it), and a loop's storage
   is never reused within a trip (4 chunks hold 1.24 MB against 0.59 MB for
