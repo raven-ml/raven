@@ -2226,31 +2226,70 @@ and repeat ?(into = [||]) st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip
         carry ?into u)
       inits
   in
-  (* Each trip reads its row of each stacked input, from a copy whose rows are
-     16 bytes apart where the input's are not. *)
+  (* A view of storage is passed as that storage and the scalars it reads,
+     which the body views in place ({!Loop.viewed}): parameters of the
+     call. *)
+  let in_place u (s, scalars) =
+    let param u =
+      let slot = next () in
+      let p =
+        if Ops.addrspace u = Some Alu then
+          Tolk.Shape.param ~addrspace:Alu (unique ()) (Ops.dtype u)
+        else Tolk.Shape.param_like u (unique ())
+      in
+      pass slot u;
+      (u, hold slot p)
+    in
+    Ops.substitute ~calls:Skip ~pass:Once u (List.map param (s :: scalars))
+  in
+  (* The row at the trip's index of [v], which the call takes as a scalar; a
+     loop of one trip reads the first row. *)
+  let row_of v row =
+    let first, stop =
+      if n = 1 then (Ops.Int 0, Ops.Int 1)
+      else
+        let slot = next () in
+        let i =
+          hold slot (Tolk.Shape.param ~addrspace:Alu (unique ()) Int32)
+        in
+        pass slot row_at;
+        let i = Ops.cast i Weak_int in
+        (Ops.Sym i, Ops.Sym Ops.O.(i + int 1))
+    in
+    Shape.reshape
+      (Shape.shrink v (Some (first, stop) :: List.map (fun _ -> None) row))
+      row
+  in
+  (* Each trip reads its row of each stacked input: of storage as it lies, a
+     run the loop moves along; of a view of storage, the row of the view in
+     place; else a row of a copy whose rows are 16 bytes apart. *)
   let rows =
     Array.map
       (fun x ->
         let u = on_device x in
         let row = List.tl (Shape.shape u) in
         let m = Shape.max_numel u / n in
+        let k = stride u m in
         if m = 0 then blank (Shape.reshape u row)
         else
-          let k = stride u m in
-          let flat =
-            if k = m then Shape.reshape u [ Ops.Int (n * m) ]
-            else
-              Shape.reshape
-                (Shape.pad
-                   (Shape.reshape u (ints [ n; m ]))
-                   [ None; Some (Ops.Int 0, Ops.Int (k - m)) ])
-                [ Ops.Int (n * k) ]
-          in
-          let w = window (Ops.contiguous flat) Ops.O.(row_at * int k) m in
-          let slot = next () in
-          let p = hold slot (Tolk.Shape.param_like w (unique ())) in
-          pass slot w;
-          Shape.reshape p row)
+          match Loop.viewed u with
+          | Some ((s, _) as v) when not (k = m && unshaped u == s) ->
+              row_of (in_place u v) row
+          | _ ->
+              let flat =
+                if k = m then Shape.reshape u [ Ops.Int (n * m) ]
+                else
+                  Shape.reshape
+                    (Shape.pad
+                       (Shape.reshape u (ints [ n; m ]))
+                       [ None; Some (Ops.Int 0, Ops.Int (k - m)) ])
+                    [ Ops.Int (n * k) ]
+              in
+              let w = window (Ops.contiguous flat) Ops.O.(row_at * int k) m in
+              let slot = next () in
+              let p = hold slot (Tolk.Shape.param_like w (unique ())) in
+              pass slot w;
+              Shape.reshape p row)
       xs
   in
   let bound =
@@ -2259,13 +2298,17 @@ and repeat ?(into = [||]) st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip
         let u = on_device x in
         if empty u then blank u
         else
-          let flat =
-            Ops.contiguous (Shape.reshape u [ Ops.Int (Shape.max_numel u) ])
-          in
-          let slot = next () in
-          let p = hold slot (Tolk.Shape.param_like flat (unique ())) in
-          pass slot flat;
-          Shape.reshape p (Shape.shape u))
+          match Loop.viewed u with
+          | Some v -> in_place u v
+          | None ->
+              let flat =
+                Ops.contiguous
+                  (Shape.reshape u [ Ops.Int (Shape.max_numel u) ])
+              in
+              let slot = next () in
+              let p = hold slot (Tolk.Shape.param_like flat (unique ())) in
+              pass slot flat;
+              Shape.reshape p (Shape.shape u))
       bound
   in
   let rows = Array.append rows bound in

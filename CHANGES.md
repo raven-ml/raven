@@ -419,6 +419,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `scan` over a strided stack of rows, as layer weights stacked and
+  transposed, reads each row where it lies, and a switch branch reads a
+  strided capture in place: both copied the whole stack first (852,096
+  against 327,808 bytes for 8 layers of 32 by 256 weights).
 - `Rune.jit ~beam` raises `Invalid_argument` for a kernel on another
   machine's device before its search's first round: it searched on times of
   zero.

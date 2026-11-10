@@ -2227,6 +2227,76 @@ let test_residuals () =
   (* Held to the end, so that no measurement sees them collected. *)
   ignore (Sys.opaque_identity (x, w, xs))
 
+(* A compiled scan over a stack of weights that is a transposed view, an
+   argument of the program, reads each row where it lies: the program holds
+   its carry, its result and a step's hidden values, and no copy of the
+   stack. *)
+let test_strided_rows () =
+  let layers = 8 and dim = 32 and batch = 256 in
+  let hidden = 8 * dim in
+  let stack r c =
+    Nx.matrix_transpose
+      (Nx.mul_s (Nx.Rng.normal ~key:(Nx.Rng.key r) f32 [| layers; c; r |]) 0.05)
+  in
+  let ws = (stack dim hidden, stack hidden dim) in
+  let a = Nx.ones f32 [| batch; dim |] in
+  let step c (w1, w2) =
+    let h = Nx.matmul c w1 in
+    (Nx.add c (Nx.matmul (Nx.maximum h (Nx.zeros_like h)) w2), ())
+  in
+  let f (w1s, w2s) a =
+    fst (Rune.scan T.tensor T.(pair tensor tensor) T.unit step ~init:(Nx.sin a)
+           (w1s, w2s))
+  in
+  let settled () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      ignore (Rig.Buffer.create Rig.host 0);
+      Rig.free_cache Rig.host
+    done;
+    Rig.allocated Rig.host
+  in
+  let measure () =
+    let g = Rune.jit T.(pair tensor tensor @-> tensor @-> returns tensor) f in
+    let before = settled () and calls = Rune.evaluations () in
+    let r = g ws a in
+    let held = settled () - before in
+    equal ~msg:"evaluated calls" int 0 (Rune.evaluations () - calls);
+    equal ~msg:"the result"
+      (array (float_rel ~rel:1e-5 ~abs:1e-6))
+      (Nx.to_array (Nx.flatten (f ws a)))
+      (Nx.to_array (Nx.flatten r));
+    ignore (Sys.opaque_identity (g, r));
+    held
+  in
+  ignore (measure ());
+  let held = measure () in
+  let row = 4 * batch * dim and stacks = 2 * 4 * layers * dim * hidden in
+  less
+    ~msg:(Printf.sprintf "%d bytes, the stacks %d" held stacks)
+    int ~than:((4 * row) + (4 * batch * hidden)) held
+
+(* A step that reads its row of a strided stack, which it reads in place at
+   the trip's index, in a scan of its own over the row and through a view the
+   inner step captures: each inner call is passed the outer trip's index. *)
+let test_strided_row_nested () =
+  let xs =
+    Nx.matrix_transpose (Nx.create f32 [| 3; 2; 4 |] (Array.init 24 Float.of_int))
+  in
+  let f xs =
+    fst
+      (Rune.scan'
+         (fun c row ->
+           let c', _ =
+             Rune.scan'
+               (fun d q -> (Nx.add d (Nx.mul q (Nx.get [ 1 ] row)), d))
+               ~init:c row
+           in
+           (c', c))
+         ~init:(Nx.zeros f32 [| 2 |]) xs)
+  in
+  equal ~msg:"compiled" bits_t (bits (f xs)) (bits (Rune.jit' f xs))
+
 (* Two contributions of [-0.], through a capture and a carry, sum to [-0.]. *)
 let test_signs () =
   let w = vec [| -0.; 1. |] in
@@ -2322,5 +2392,10 @@ let () =
                test_constant_addition;
              test "leaves that swap devices of one set" test_swap;
            ];
-         group "memory" [ test "what reverse mode keeps" test_residuals ];
+         group "memory"
+           [
+             test "what reverse mode keeps" test_residuals;
+             test "a strided stack is read in place" test_strided_rows;
+             test "a strided row read in a nested scan" test_strided_row_nested;
+           ];
        ])

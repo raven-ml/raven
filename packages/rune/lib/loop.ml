@@ -5,11 +5,61 @@
 
 open Tolk
 
+(* Views of storage *)
+
+let is_storage u =
+  match Ops.op u with
+  | Op.Buffer | Op.After | Op.Alloc -> true
+  | Op.Param -> Ops.addrspace u = Some Tolk.Dtype.Global
+  | _ -> false
+
+(* Whether [u] is a function of constants alone: it reads no storage, no
+   parameter and no range. *)
+let fixed u =
+  not
+    (List.exists
+       (fun n ->
+         is_storage n
+         || match Ops.op n with Op.Param | Op.Range -> true | _ -> false)
+       (Ops.toposort ~calls:Skip u))
+
+(* A gather at positions that are functions of constants alone, as an
+   argument's strided layout is: a view of what it gathers from. *)
+let gathers u = Ops.op u = Op.Index && List.for_all fixed (List.tl (Ops.src u))
+
+let rec storage_of u =
+  let b = Ops.base u in
+  if is_storage b && Ops.has_buffer_identity ~after_ok:true b then Some b
+  else if gathers b || Ops.op b = Op.Bitcast then storage_of (Ops.nth b 0)
+  else None
+
+(* A view over its storage may read scalar parameters, such as an enclosing
+   loop's trip, which a call it moves into is passed too, and no range. *)
+let viewed u =
+  match storage_of u with
+  | None -> None
+  | Some s ->
+      let under = Ops.backward_slice_with_self ~calls:Skip s in
+      let scalar n =
+        Ops.op n = Op.Param
+        && Ops.addrspace n = Some Tolk.Dtype.Alu
+        && Shape.shape n = []
+      in
+      let rec walk acc = function
+        | [] -> Some (s, List.rev acc)
+        | n :: rest when Ops.Nodes.mem n under -> walk acc rest
+        | n :: rest when scalar n -> walk (n :: acc) rest
+        | n :: _ when Ops.op n = Op.Param || Ops.op n = Op.Range -> None
+        | _ :: rest -> walk acc rest
+      in
+      walk [] (Ops.toposort ~calls:Skip u)
+
 (* Loop-invariant parts
 
-   A movement of an invariant part stays in the body, and the part below it is
-   computed once: a view costs nothing where it is read, while computing it once
-   would store a transposed or broadcast copy that the loop then reads. *)
+   A view of an invariant part, a movement or a gather at positions that are
+   functions of constants alone, stays in the body, and the part below it is
+   computed once: a view costs nothing where it is read, while computing it
+   once would store a transposed or broadcast copy that the loop then reads. *)
 
 let cut ?(hoist = true) ~own next args body =
   let reading = Ops.Tbl.create 64
@@ -109,15 +159,31 @@ let cut ?(hoist = true) ~own next args body =
     | Op.Param -> Ops.addrspace u = Some Tolk.Dtype.Global
     | _ -> false
   in
+  (* A scalar parameter of the body around the loop, such as its trip's
+     index, which a view's bounds may read: the call is passed it. *)
+  let outer u =
+    Ops.op u = Op.Param
+    && Ops.addrspace u = Some Tolk.Dtype.Alu
+    && (not (Ops.Tbl.mem own u))
+    && match Ops.arg u with Ops.Param p -> p.name = None | _ -> false
+  in
+  let reads_outer = memo (Ops.Tbl.create 64) outer in
   let rec rebuild u =
     match Ops.Tbl.find_opt rebuilt u with
     | Some v -> v
     | None ->
         let v =
-          if
+          if outer u then begin
+            let slot = next () in
+            args := (slot, u) :: !args;
+            Shape.param ~addrspace:Tolk.Dtype.Alu slot (Ops.dtype u)
+          end
+          else if
             varies u
+            || (reads_outer u && not (reads_storage u))
             || reads_storage u
                && (Op.Set.mem (Ops.op u) Op.Set.movement
+                  || gathers u
                   || weak u
                   || Ops.op u = Op.Store
                   || ((not hoist) && not (stored u)))

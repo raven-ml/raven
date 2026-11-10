@@ -18,6 +18,16 @@
 
 open Tolk
 
+val viewed : Ops.t -> (Ops.t * Ops.t list) option
+(** [viewed u] is the storage [u] views where [u] reads no other: a buffer, a
+    parameter in global memory or a state of one, under movements, bitcasts
+    and gathers at positions that are functions of constants alone, as a
+    strided argument's are;
+    and the scalar parameters its bounds and positions read, such as an
+    enclosing loop's trip. A call passed that storage and those scalars
+    computes [u] over its parameters and copies nothing. [None] where [u]
+    computes, reads several storages, or moves with a range. *)
+
 val cut :
   ?hoist:bool ->
   own:unit Ops.Tbl.t ->
@@ -29,8 +39,11 @@ val cut :
     once, before the loop, where the part reaches none of the call's own
     parameters [own], runs inside no range that is open there, and reads
     storage. Each such part is replaced by a parameter of slot [next ()], which
-    the call binds to the part, added to [args]. A movement stays in the body,
-    and the part is what it moves. A range open at a part is one of the body's
+    the call binds to the part, added to [args]. A view stays in the body, a
+    movement or a gather at positions that are functions of constants alone,
+    and the part is what it views. A scalar parameter of the body around the
+    loop that a part left in the body reads, as a view's bound may read that
+    body's trip, is passed too. A range open at a part is one of the body's
     own loops, which the part moves with. Another call's parameter, such as an
     enclosing step's carry, is storage the call binds like any other. Storage
     that a call of the body that runs each trip writes varies as [own] does, so
