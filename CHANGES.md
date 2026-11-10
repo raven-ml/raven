@@ -426,6 +426,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Add `Rune.footprint s f x`: for each device and the host, the bytes the
+  first call of `Rune.jit s f` over `x` allocates there, its storage, loop
+  words, constants' copies and results, computed by tolk's engine without
+  linking or running; `x` may hold stand-ins of `Rune.eval_shape`.
 - A compiled `scan` or `iterate` whose step makes storage of its own, as a
   step that takes a gradient over a chunk of a batch does, shares it among
   the step's values within each trip: 4 chunks of a remat'd 8-block

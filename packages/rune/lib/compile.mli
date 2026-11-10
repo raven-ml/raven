@@ -97,6 +97,19 @@ val make :
     values may lie on devices of several targets: each device's kernels compile
     for its own. *)
 
+val footprint : t -> Program.value array -> (Rig.t * int) list
+(** [footprint t args] is, for each device of [t]'s program and the host, the
+    bytes a first call over [args] allocates there, at the variant it links:
+    [args]' arrays' layouts, a cut value's pieces' own, at phase [0], or
+    {!make}'s [first] over stand-ins: what a
+    link of the program's schedule makes ({!Tolk_engine.footprint}), its
+    results but those that take a donated argument's memory, and the copies
+    of constants of other devices its lowering made, each allocation as
+    {!Rig.allocation} counts it. It compiles the schedule as a link does, from
+    tolk's caches where they hold it, and links nothing.
+
+    Raises [Invalid_argument] if a call already ran [t]. *)
+
 val run : t -> Program.value array -> Program.value array
 (** [run t args] is the outputs of [t]'s program applied to [args], which must
     be untraced values of the forms [t] was made for. Each result is fresh

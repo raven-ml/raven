@@ -2875,6 +2875,46 @@ type variant = {
           then evaluates. *)
 }
 
+(* The storage of a lowering's [sink] that a run binds, in slot order, their
+   number, and the slot of each argument, output, check's buffers and flag,
+   [-1] for none. *)
+let slots l sink =
+  let present = Ops.Tbl.create 16 in
+  List.iter
+    (fun u -> if Ops.op u = Tolk.Op.Buffer then Ops.Tbl.replace present u ())
+    (Ops.toposort ~calls:Enter sink);
+  let order = ref [] and next = ref 0 in
+  let slot u =
+    order := u :: !order;
+    incr next;
+    !next - 1
+  in
+  let leaf_slots =
+    Array.map
+      (function
+        | Some b when Ops.Tbl.mem present b -> slot b | Some _ | None -> -1)
+      l.params
+  in
+  let out_slots =
+    Array.map
+      (function
+        | Stored o -> slot o | Lent _ | Taken _ | Copied _ | Empty -> -1)
+      l.outs
+  in
+  let checks =
+    List.map
+      (fun (c : check) ->
+        (c, slot c.first, List.map (fun (_, o) -> slot o) c.data))
+      l.checks
+  in
+  let ok = Option.map slot l.ok in
+  (List.rev !order, !next, leaf_slots, out_slots, checks, ok)
+
+(* The schedule of a lowering's [sink] that a link takes. *)
+let scheduled ~beam ~parallel rigs (l : lowered) sink inputs =
+  Engine.compile ?beam ~search:(search rigs ~parallel) ~devices:(named rigs)
+    ~held_bufs:(List.map fst l.bound) ~inputs sink
+
 let link ~beam ~parallel ~storage rigs l =
   match l.sink with
   | None ->
@@ -2888,47 +2928,14 @@ let link ~beam ~parallel ~storage rigs l =
         ok = None;
       }
   | Some sink ->
-      let present = Ops.Tbl.create 16 in
-      List.iter
-        (fun u ->
-          if Ops.op u = Tolk.Op.Buffer then Ops.Tbl.replace present u ())
-        (Ops.toposort ~calls:Enter sink);
-      let order = ref [] and next = ref 0 in
-      let slot u =
-        order := u :: !order;
-        incr next;
-        !next - 1
-      in
-      let leaf_slots =
-        Array.map
-          (function
-            | Some b when Ops.Tbl.mem present b -> slot b | Some _ | None -> -1)
-          l.params
-      in
-      let out_slots =
-        Array.map
-          (function
-            | Stored o -> slot o | Lent _ | Taken _ | Copied _ | Empty -> -1)
-          l.outs
-      in
-      let checks =
-        List.map
-          (fun (c : check) ->
-            (c, slot c.first, List.map (fun (_, o) -> slot o) c.data))
-          l.checks
-      in
-      let ok = Option.map slot l.ok in
-      let linear, vars =
-        Engine.compile ?beam ~search:(search rigs ~parallel)
-          ~devices:(named rigs)
-          ~held_bufs:(List.map fst l.bound) ~inputs:(List.rev !order) sink
-      in
+      let order, inputs, leaf_slots, out_slots, checks, ok = slots l sink in
+      let linear, vars = scheduled ~beam ~parallel rigs l sink order in
       let schedule =
         Engine.link ~devices:(named rigs) ~bound:l.bound ~storage linear
       in
       {
         schedule = Some (schedule, vars);
-        inputs = !next;
+        inputs;
         leaf_slots;
         out_slots;
         outs = l.outs;
@@ -3076,6 +3083,13 @@ let same_variant layouts phases donated settings v =
   && same_settings v.settings settings
   && Array.for_all2 L.equal v.layouts layouts
 
+(* A split program holds no memory between calls: each call makes its
+   devices' arenas before its first kernel and returns them after its last,
+   so a device holds between calls only the values its caller keeps, and
+   within one what its plan places at once. *)
+let storage t : Engine.storage =
+  if Option.is_some t.split then Per_run else Linked
+
 let variants_made = Domain.DLS.new_key (fun () -> ref 0)
 let variants () = !(Domain.DLS.get variants_made)
 
@@ -3108,16 +3122,9 @@ let variant t layouts phases donated settings =
           (* A declined variant is kept; another failure, as a compiler's or
              an interrupted search, keeps nothing and raises. *)
           let linked =
-            (* A split program holds no memory between calls: each call
-               makes its devices' arenas before its first kernel and returns
-               them after its last, so a device holds between calls only the
-               values its caller keeps, and within one what its plan places
-               at once. *)
-            let storage : Engine.storage =
-              if Option.is_some t.split then Per_run else Linked
-            in
             match
-              link ~beam:t.beam ~parallel:t.parallel ~storage t.rigs
+              link ~beam:t.beam ~parallel:t.parallel ~storage:(storage t)
+                t.rigs
                 (lowered ())
             with
             | l -> Ok l
@@ -3229,6 +3236,101 @@ let make ~name ?beam ?parallel ?first p forms =
   with
   | t -> Ok t
   | exception Declined why -> Error why
+
+(* Each leaf of a split program's arguments, an argument's piece: the
+   argument and the piece's position in its placement. Unsplit, leaf [k] is
+   argument [k], at position [0]. *)
+let owners t =
+  match t.split with
+  | None -> None
+  | Some s ->
+      Some
+        (Array.concat
+           (Array.to_list
+              (Array.mapi (fun k n -> Array.init n (fun j -> (k, j))) s.args)))
+
+(* Footprints *)
+
+(* The bytes each device of [t] and the host hold of a call over arguments
+   at the variant that call links ({!make}'s first): what a link of its
+   schedule makes there ({!Engine.footprint}), its results but those that
+   take an argument's memory, and the copies of constants of other devices
+   its lowering made. *)
+let footprint t args =
+  (* The variant a call over [args] links: their arrays' layouts, a cut
+     value's pieces' own, at phase [0]; over stand-ins, {!make}'s first. *)
+  let traced (V x) = Option.is_some (Nx.Prim.owner x) in
+  let first = t.first in
+  let wanted =
+    if Array.exists traced args then Option.map fst first
+    else
+      let layouts (V x) =
+        let f = Nx.Prim.form x in
+        Array.map (within f.dtype) (Iarray.to_array (Nx.Prim.layouts x))
+      in
+      let donated (V x) = Nx.Prim.donated x in
+      match owners t with
+      | None ->
+          Some
+            ( Array.map (fun a -> (layouts a).(0)) args,
+              Array.map (fun _ -> 0) args,
+              Array.map donated args )
+      | Some o ->
+          let pieces = Array.map layouts args in
+          Some
+            ( Array.map (fun (k, j) -> pieces.(k).(j)) o,
+              Array.map (fun _ -> 0) o,
+              Array.map (fun (k, _) -> donated args.(k)) o )
+  in
+  let lowered =
+    match (first, wanted) with
+    | Some ((l, ph, d), lowered), Some (l', ph', d')
+      when Array.for_all2 L.equal l l'
+           && Array.for_all2 Int.equal ph ph'
+           && Array.for_all2 Bool.equal d d' ->
+        lowered
+    | _, Some (layouts, phases, donated) ->
+        lower ~rigs:t.rigs ~split:(Option.is_some t.split) ~uploads:t.uploads
+          t.program t.forms ~layouts ~phases ~donated
+    | _, None -> invalid_arg (t.name ^ ": a program already linked")
+  in
+  let storage = storage t in
+  let linked =
+    match lowered.sink with
+    | None -> []
+    | Some sink ->
+        let inputs, _, _, _, _, _ = slots lowered sink in
+        let linear, _ =
+          scheduled ~beam:t.beam ~parallel:t.parallel t.rigs lowered
+            sink inputs
+        in
+        Engine.footprint ~devices:(named t.rigs) ~bound:lowered.bound ~storage
+          linear
+  in
+  let held = List.map (fun (r, n) -> (r, ref n)) linked in
+  let held =
+    List.fold_left
+      (fun held r ->
+        if List.exists (fun (r', _) -> Rig.equal r r') held then held
+        else held @ [ (r, ref 0) ])
+      held t.rigs
+  in
+  let add r n =
+    match List.find_opt (fun (r', _) -> Rig.equal r r') held with
+    | Some (_, total) -> total := !total + Rig.allocation r n
+    | None -> ()
+  in
+  Array.iteri
+    (fun j -> function
+      | Stored _ | Copied _ -> add t.results.(j).rig t.results.(j).bytes
+      | Lent _ | Taken _ | Empty -> ())
+    lowered.outs;
+  List.iter
+    (fun (_, A.Any a) ->
+      let b = A.buffer a in
+      add (Rig.Buffer.device b) (Rig.Buffer.length b))
+    !(t.uploads);
+  List.map (fun (r, n) -> (r, !n)) held
 
 (* Calls *)
 
@@ -3467,18 +3569,6 @@ let issue_checks t v slots s =
 
 (* A buffer for one element of [dt]. *)
 let one rig (type v s) (dt : (v, s) D.t) = Rig.Buffer.create rig (D.bytes dt 1)
-
-(* Each leaf of a split program's arguments, an argument's piece: the
-   argument and the piece's position in its placement. Unsplit, leaf [k] is
-   argument [k], at position [0]. *)
-let owners t =
-  match t.split with
-  | None -> None
-  | Some s ->
-      Some
-        (Array.concat
-           (Array.to_list
-              (Array.mapi (fun k n -> Array.init n (fun j -> (k, j))) s.args)))
 
 (* [c]'s memory of leaf [j]'s array [a] for a result, the piece of its
    argument [owners] names. *)

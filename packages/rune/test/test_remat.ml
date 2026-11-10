@@ -447,6 +447,248 @@ let test_donated () =
       (Nx.to_array r)
   done
 
+(* Footprints *)
+
+(* Small residual blocks from the argument or its sine, each under a remat
+   or not, applied or differentiated, over contiguous weights; a scan of
+   their gradient over chunks of the argument; and arguments laid out as
+   views, holding no element or donated: programs with and without arenas,
+   loops, results, recomputations and donations. *)
+type program = Chain of { blocks : int; sine : bool; remat : bool; grad : bool }
+| Chunks of { k : int; remat : bool }
+
+type argument = Plain | Transposed | Broadcast | Empty | Donated
+
+let pp_program ppf = function
+  | Chain c ->
+      Format.fprintf ppf "%d blocks%s%s%s" c.blocks
+        (if c.sine then " from the sine" else "")
+        (if c.remat then ", remats" else "")
+        (if c.grad then ", gradient" else "")
+  | Chunks c ->
+      Format.fprintf ppf "a scan of the gradient over %d chunks%s" c.k
+        (if c.remat then ", remats" else "")
+
+let pp_argument ppf a =
+  Format.pp_print_string ppf
+    (match a with
+    | Plain -> "a plain argument"
+    | Transposed -> "a transposed argument"
+    | Broadcast -> "a broadcast argument"
+    | Empty -> "an empty argument"
+    | Donated -> "a donated argument")
+
+let small_ws =
+  ( Nx.mul_s (Nx.Rng.normal ~key:(Nx.Rng.key 1) f32 [| 3; 8; 16 |]) 0.1,
+    Nx.mul_s (Nx.Rng.normal ~key:(Nx.Rng.key 2) f32 [| 3; 16; 8 |]) 0.1 )
+
+let small_chain ~blocks ~sine ~remat a =
+  List.fold_left
+    (fun a i ->
+      let b = block (layer small_ws i) in
+      if remat then rm b a else b a)
+    (if sine then Nx.sin a else a)
+    (List.init blocks Fun.id)
+
+let small_loss ~blocks ~sine ~remat a =
+  Nx.sum (small_chain ~blocks ~sine ~remat a)
+
+let small_f program a =
+  match program with
+  | Chain { blocks; sine; remat; grad = false } ->
+      small_chain ~blocks ~sine ~remat a
+  | Chain { blocks; sine; remat; grad = true } ->
+      Rune.grad' (small_loss ~blocks ~sine ~remat) a
+  | Chunks { k; remat } ->
+      let n = (Nx.shape a).(0) in
+      let chunks = Nx.reshape [| k; n / k; 8 |] a in
+      let (), gs =
+        Rune.scan T.unit T.tensor T.tensor
+          (fun () x ->
+            ((), Rune.grad' (small_loss ~blocks:2 ~sine:true ~remat) x))
+          ~init:() chunks
+      in
+      Nx.reshape [| n; 8 |] gs
+
+let argument kind () =
+  let normal shape = Nx.Rng.normal ~key:(Nx.Rng.key 4) f32 shape in
+  match kind with
+  | Plain -> normal [| 16; 8 |]
+  | Transposed -> Nx.matrix_transpose (normal [| 8; 16 |])
+  | Broadcast -> Nx.broadcast_to [| 16; 8 |] (normal [| 1; 8 |])
+  | Empty -> normal [| 0; 8 |]
+  | Donated -> Nx.donate (normal [| 16; 8 |])
+
+let one = T.(tensor @-> returns tensor)
+
+let on_host fp =
+  List.fold_left
+    (fun n (r, b) -> if Rig.equal r Rig.host then n + b else n)
+    0 fp
+
+(* The bytes the first call of a fresh compiled [f] at [x ()] allocates on
+   the host, its kernels compiled by an uncounted call of another; a donated
+   argument that no result takes is freed by the call, and is added back. *)
+let first_call s f x =
+  ignore (Rune.jit s f (x ()));
+  let g = Rune.jit s f in
+  let x = x () in
+  let donated = Nx.Prim.donated x in
+  let memory = Nx.Repr.read x Nx_array.buffer in
+  let before = host_settled () in
+  let r = g x in
+  let held = host_settled () - before in
+  let taken = Rig.Buffer.overlaps memory (Nx.Repr.read r Nx_array.buffer) in
+  let freed =
+    if donated && not taken then
+      Rig.allocation Rig.host (Rig.Buffer.length memory)
+    else 0
+  in
+  ignore (Sys.opaque_identity (g, r, x));
+  held + freed
+
+(* The law: on one device, what [footprint] counts is what the first call
+   allocates and holds; stand-ins of a C-ordered argument give the same. *)
+let law_footprint (program, kind) =
+  let f = small_f program in
+  let x = argument kind in
+  let want = on_host (Rune.footprint one f (x ())) in
+  equal ~msg:"footprint" int (first_call one f x) want;
+  if kind = Plain then
+    let stand_in = Rune.eval_shape T.tensor T.tensor Fun.id (x ()) in
+    equal ~msg:"over stand-ins" int want
+      (on_host (Rune.footprint one f stand_in))
+
+let footprint_cases =
+  let chains =
+    List.concat_map
+      (fun blocks ->
+        List.concat_map
+          (fun sine ->
+            List.concat_map
+              (fun remat ->
+                List.map
+                  (fun grad -> Chain { blocks; sine; remat; grad })
+                  [ false; true ])
+              [ false; true ])
+          [ false; true ])
+      [ 1; 2; 3 ]
+  in
+  let chunks =
+    List.concat_map
+      (fun k -> List.map (fun remat -> Chunks { k; remat }) [ false; true ])
+      [ 2; 4 ]
+  in
+  let views =
+    List.concat_map
+      (fun kind ->
+        List.map
+          (fun p -> (p, kind))
+          [
+            Chain { blocks = 2; sine = false; remat = false; grad = false };
+            Chain { blocks = 2; sine = true; remat = true; grad = true };
+            Chunks { k = 2; remat = true };
+          ])
+      [ Transposed; Broadcast; Empty; Donated ]
+  in
+  List.map (fun p -> (p, Plain)) (chains @ chunks) @ views
+
+(* A result that takes a donated argument's memory counts none. *)
+let test_footprint_donated () =
+  let x () = Nx.full f32 [| 64 |] 2. in
+  let f x = Nx.mul_s x 3. in
+  equal ~msg:"undonated" int (Rig.allocation Rig.host 256)
+    (on_host (Rune.footprint one f (x ())));
+  equal ~msg:"donated" int 0 (on_host (Rune.footprint one f (Nx.donate (x ()))));
+  equal ~msg:"its first call" int 0
+    (first_call one f (fun () -> Nx.donate (x ())))
+
+(* Over two memory devices, a gather of each layer's weights inside each
+   layer, under remats or not: a first call fits each device's budget at
+   what it holds plus its footprint, and is refused a byte below it, on
+   either device. Under remats each device holds less, the gathered layers
+   gathered again in the backward pass. *)
+let test_footprint_devices () =
+  let layers = 4 and d = 64 and batch = 32 in
+  let ds = [ Nx_support.memory 2; Nx_support.memory 3 ] in
+  let module S = (val Nx.devices ds) in
+  let ws =
+    Nx.place (S.split ~axis:1)
+      (Nx.mul_s (Nx.Rng.normal ~key:(Nx.Rng.key 7) f32 [| layers; d; d |]) 0.05)
+  in
+  let x = Nx.place (S.split ~axis:0) (Nx.ones f32 [| batch; d |]) in
+  let gathered w h =
+    let y = Nx.matmul h (Nx.place S.on w) in
+    Nx.maximum y (Nx.zeros_like y)
+  in
+  let s = T.(pair tensor tensor @-> returns tensor) in
+  let f remat (ws, x) =
+    let loss ws =
+      Nx.sum
+        (List.fold_left
+           (fun h i ->
+             let b = gathered (Nx.get [ i ] ws) in
+             if remat then rm b h else b h)
+           (Nx.sin x) (List.init layers Fun.id))
+    in
+    Rune.grad' loss ws
+  in
+  let settled d =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      ignore (Rig.Buffer.create d 0);
+      Rig.free_cache d
+    done;
+    Rig.allocated d
+  in
+  (* Whether a fresh first call fits each device's budget at what it holds
+     plus [extra d]. *)
+  let fits remat extra =
+    let g = Rune.jit s (f remat) in
+    let held = List.map settled ds in
+    List.iter2 (fun d h -> Rig.set_budget d (h + extra d)) ds held;
+    Fun.protect
+      ~finally:(fun () -> List.iter (fun d -> Rig.set_budget d max_int) ds)
+      (fun () ->
+        match g (ws, x) with
+        | r ->
+            ignore (Sys.opaque_identity r);
+            true
+        | exception Rig.Out_of_memory _ -> false)
+  in
+  let footprint remat =
+    List.filter
+      (fun (r, _) -> List.exists (Rig.equal r) ds)
+      (Rune.footprint s (f remat) (ws, x))
+  in
+  List.iter
+    (fun remat ->
+      let msg = if remat then "under remats" else "without remats" in
+      ignore (Rune.jit s (f remat) (ws, x));
+      let fp = footprint remat in
+      let at d = List.assq d fp in
+      equal ~msg:(msg ^ ": fits its footprint") bool true (fits remat at);
+      List.iter
+        (fun d ->
+          let below r = if r == d then at r - 1 else at r in
+          equal
+            ~msg:(Printf.sprintf "%s: refused a byte below on %s" msg (Rig.name d))
+            bool false (fits remat below))
+        ds)
+    [ false; true ];
+  List.iter2
+    (fun (r, p) (_, q) ->
+      less
+        ~msg:
+          (Printf.sprintf "%s: %d bytes under remats, %d without" (Rig.name r)
+             q p)
+        int ~than:p q)
+    (footprint false) (footprint true)
+
+let test_footprint_arguments () =
+  raises_match (Exn.invalid_arg ~sub:"more than one argument") (fun () ->
+      Rune.footprint T.(tensor @-> tensor @-> returns tensor) Nx.add a)
+
 (* Interface *)
 
 module Total = Rune.Total
@@ -541,6 +783,19 @@ let () =
                test_step_gradient;
              test "a result takes a donated argument after the backward pass"
                test_donated;
+           ];
+         group "footprint"
+           [
+             Windtrap.cases "footprint is what a first call allocates"
+               ~id:(fun (p, a) ->
+                 Format.asprintf "%a, %a" pp_program p pp_argument a)
+               footprint_cases law_footprint;
+             test "a result in a donated argument counts none"
+               test_footprint_donated;
+             test "over two devices a call fits its footprint, not a byte less"
+               test_footprint_devices;
+             test "a signature of several arguments raises"
+               test_footprint_arguments;
            ];
          group "interface"
            [

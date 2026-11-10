@@ -64,6 +64,18 @@ val stand_ins : 'd Nx.packed list -> Program.form array
 (** [stand_ins leaves] is the forms a call traces [leaves] at. Each has its
     leaf's dtype, shape and placement, laid out in C order. *)
 
+val footprint :
+  name:string ->
+  Program.t ->
+  Program.form array ->
+  Program.value array ->
+  (Rig.t * int) list
+(** [footprint ~name body forms args] is {!Compile.footprint} of [body] over
+    [args], of [forms], as a compiled function's first call over [args]
+    would make it, its emissions as outputs.
+
+    Raises [Invalid_argument] where the compiler declines the program. *)
+
 val find :
   ?totals:Program.addition array ->
   'y t ->

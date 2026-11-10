@@ -472,6 +472,16 @@ let rec compiled ~beam ~parallel name body forms =
     in
     delivered body ems out
 
+(* The bytes each device holds of a call of [body]'s program over [args], as
+   {!compiled} would make it at its first call. *)
+let footprint ~name body forms args =
+  let p = match offered name body forms with Some (p, _) -> p | None -> body in
+  match Compile.make ~name ~first:args p forms with
+  | Ok c -> Compile.footprint c args
+  | Error why ->
+      invalid_arg
+        (Printf.sprintf "%s: the compiler declines the program: %s" name why)
+
 let find ?(totals = [||]) t leaves skeleton ~paths trace =
   let key =
     {

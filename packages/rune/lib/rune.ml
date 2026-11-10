@@ -1222,6 +1222,19 @@ let jit_named ?beam ?parallel name s =
 
 let jit ?beam ?parallel s = jit_named ?beam ?parallel "Rune.jit" s
 
+let footprint (type a b d) (s : (a -> b, d) Ptree.fn) (f : a -> b) (x : a) =
+  let name = "Rune.footprint" in
+  match s with
+  | Returns _ -> invalid_argf "%s: the signature has no argument" name
+  | Arg (_, Arg _) ->
+      invalid_argf "%s: the signature has more than one argument" name
+  | Arg (a, Returns r) ->
+      let leaves, _ = Ptree.flatten a x in
+      let forms = Jit.stand_ins leaves in
+      let body, _, _ = traced name a r f x forms [||] in
+      Jit.footprint ~name body forms
+        (Array.of_list (List.map (fun (Nx.P y) -> V y) leaves))
+
 (* Callbacks *)
 
 let paths s x =

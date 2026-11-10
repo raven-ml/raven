@@ -1973,6 +1973,35 @@ val eval_shape :
 
     Raises what {!val-jit} raises at a call that traces. *)
 
+val footprint :
+  ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> (Rig.t * int) list
+(** [footprint s f x] is, for each device the program of [jit s f] at [x]
+    computes on and the host, the bytes the first call of [jit s f] over [x]
+    allocates there, each allocation as its device counts it
+    ({!Rig.allocation}): the storage its program makes, in which values whose
+    lives do not overlap share bytes ({!section-compiled}), the words a
+    program keeps for its loops' trips, the copies of constants of other
+    devices it reads, and its results, a result that takes a donated
+    argument's memory counting none. [s] has one argument, a structure that
+    may hold several arrays. [footprint] traces [f] as {!val-jit} does at
+    [x]'s key, lowers the variant a call over [x] links, at phase [0], and
+    schedules and compiles it as that call would, from tolk's caches where
+    they hold it; it links nothing, runs nothing, consumes no argument and
+    keeps no program. [x] may hold stand-ins of {!eval_shape}, read in C
+    order. Its lowering copies a constant of another device that the program
+    reads there, as a first call does.
+
+    On one device, the first call holds the storage from then on; over
+    several, each call makes it and returns it once its work is done, so a
+    device whose budget is what it holds plus its footprint runs the call.
+    A donated argument that the call lends to no result is freed by it
+    ({!section-donation}), so a budget check counts its memory once, as the
+    argument's. A loaded image's code is not counted.
+
+    Raises [Invalid_argument] if [s] has no argument or more than one, or
+    where the compiler declines the program ({!section-evaluated}), and what
+    {!val-jit} raises at a call that traces. *)
+
 (** {1:one Functions of one array} *)
 
 val jvp' :
