@@ -991,7 +991,8 @@ let chained ~key nodes sink =
 
 (* A loop outside a kernel runs one call each trip: an end of a call over
    loop ranges, an end of such an end, or a back edge of a call over a loop
-   range. An end of stores alone is a kernel's. *)
+   range. An end of a store, nested or not, is a kernel's; an end of a group
+   runs several effects, whatever they are. *)
 let check_loop e =
   let rec innermost u = if op u = Op.End then innermost (nth u 0) else u in
   let rec runs u =
@@ -999,7 +1000,7 @@ let check_loop e =
     | Op.Call | Op.Backedge | Op.Linear -> true
     | Op.End -> runs (innermost u)
     | Op.Sink -> List.exists runs (src u)
-    | _ -> is_group u && List.exists runs (List.tl (src u))
+    | _ -> is_group u
   in
   let x = nth e 0 in
   let ranges = if op e = Op.End then List.tl (src e) else [ nth e 1 ] in

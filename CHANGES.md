@@ -1223,6 +1223,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 - `Memory.memory_plan_rewrite` plans the buffers that only one loop's calls
   take within a trip: such buffers share bytes where their lives in a trip
   do not overlap, where every buffer a loop took lived for the whole loop.
+- An `Ops.end_` of an `Ops.group` of stores outside a kernel raises the
+  message of a loop that runs more than one call: it was refused as two
+  writes over one state, or raised "ranges leak out of the called body".
 - `Tolk_engine.time` raises `Invalid_argument` for a schedule with a kernel
   on another machine's device, and `Failure` where a device recorded no work
   for a kernel's submission. It summed what it found, so `Rune.jit ~beam` on

@@ -2080,6 +2080,11 @@ let refused_loops =
     ( "an end of a group of calls",
       (fun b -> Ops.end_ (Ops.group [ call b; call b ]) [ range Loop ]),
       runs "end runs a group of effects" );
+    ( "an end of a group of stores",
+      (fun b ->
+        let set lo v = Ops.store (run b lo) (Ops.float v) in
+        Ops.end_ (Ops.group [ set 0 1.; set 12 2. ]) [ range Loop ]),
+      runs "end runs a group of effects" );
     ( "an end of a linear of calls",
       (fun b -> Ops.end_ (linear b) [ range Loop ]),
       runs "end runs a linear of calls" );

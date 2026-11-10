@@ -825,10 +825,11 @@ val end_ : t -> t list -> t
     them, the first varying slowest, whether or not it is compiled on its own.
     An end of such an end is one loop over the outer end's ranges and the
     inner's, the outer's varying slowest. A loop runs one call: outside a
-    kernel, an end of a call over a range of another type, or an end around
-    calls or loops in any other form ({!group}, {!backedge}, {!Op.Linear}), is
-    refused when the graph is scheduled ({!Prepare.sequence}). Several calls,
-    or a loop, run in a loop as the call of a body that runs them. *)
+    kernel, an end of a call over a range of another type, an end of a
+    {!group}, of calls or of stores, or an end around calls or loops in any
+    other form ({!backedge}, {!Op.Linear}), is refused when the graph is
+    scheduled ({!Prepare.sequence}). Several calls or stores, or a loop, run in
+    a loop as the call of a body that runs them. *)
 
 val backedge : t -> loop:t -> cond:t -> t
 (** In a kernel, [backedge u ~loop ~cond] runs [u], then repeats [loop] while
