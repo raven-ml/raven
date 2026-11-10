@@ -366,8 +366,17 @@ let finish r =
   expect r "done"
 
 (* A trial makes a call to size its batches, up to 3 to warm up and 3 for its
-   samples, a process each. *)
+   samples, a process each, and one more to try a baseline's batch size.
+   Thumper's [--quick] and [--precise] ask for 11 and 40 samples, a process
+   each, each holding a model on the GPU: the case fails under them, and says
+   why. *)
 let ready_processes = 10
+
+let no_process_left =
+  Printf.sprintf
+    "bench_gpt_oss: first call 12 holds a process for each call, %d a trial, \
+     enough for its 3 samples: run it without --quick or --precise"
+    ready_processes
 
 let first_call =
   Thumper.bench_with_setup "first call 12"
@@ -385,7 +394,7 @@ let first_call =
       ignore (Sys.command ("rm -rf " ^ Filename.quote dir)))
     (fun (_, _, waiting) ->
       match Queue.take_opt waiting with
-      | None -> failwith "bench_gpt_oss: no process left ready"
+      | None -> failwith no_process_left
       | Some r -> finish r)
 
 let kinds =

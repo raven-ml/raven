@@ -753,12 +753,22 @@ let stop r =
   close_in_noerr r.said;
   remove r.dir
 
-(* A trial calls a case once to size its batches, at least 3 times to warm up
-   and 3 times for its samples: a process each. This holds while one call
-   passes the batch floor, so that every batch is one call: a first call of a
-   few milliseconds under the floor would double the batch and run out of
-   processes, which fails the case. *)
-let ready_processes = 8
+(* A trial calls a case once to size its batches, once more to try a
+   baseline's batch size, 3 times to warm up and 3 times for its samples: a
+   process each. This holds while one call passes the batch floor, so that
+   every batch is one call: a first call of a few milliseconds under the floor
+   would double the batch and run out of processes, which fails the case.
+   Thumper's [--quick] and [--precise] ask for 11 and 40 samples, more calls
+   than a trial's processes: a [first/] case fails under them too. Its failure
+   names both causes. *)
+let ready_processes = 10
+
+let no_process_left =
+  Printf.sprintf
+    "bench_compile: a first/ case holds a process for each call, %d a trial, \
+     enough for 3 samples of calls past the batch floor: run it without \
+     --quick or --precise"
+    ready_processes
 
 (* A [first/] case: its setup starts [ready_processes] processes and waits
    until each has prepared [id]'s call; a sample has the next one make it. *)
@@ -771,7 +781,7 @@ let first id =
     ~teardown:(fun (all, _) -> List.iter stop all)
     (fun (_, waiting) ->
       match Queue.take_opt waiting with
-      | None -> failwith "bench_compile: no process left ready"
+      | None -> failwith no_process_left
       | Some r ->
           output_string r.go "go\n";
           flush r.go;
