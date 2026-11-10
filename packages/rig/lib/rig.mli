@@ -1664,8 +1664,11 @@ module Buffer : sig
       {b Warning.} No stamp records [fn]'s reads and writes. The caller lets
       [fn] read the memory only once the work that last wrote it is reached,
       and lets work use bytes [fn] wrote only after [fn]'s writes are done,
-      submitting that work afterwards. A [Dmabuf] descriptor is the caller's
-      to close.
+      submitting that work afterwards. Whether the work of the device whose
+      memory it is then reads [fn]'s bytes, its driver states of its own
+      [dma]. Another device's work through a {!borrow} of the memory may
+      read bytes from before [fn]'s writes. A [Dmabuf] descriptor is the
+      caller's to close.
 
       Raises [Invalid_argument] if [b] is dead or empty, or is {!host}'s, a
       memory device's or an io device's memory, or if a {!Claim.with_} holds

@@ -165,12 +165,15 @@
     {!val-dma} is the path's answer ([dma] of {!type-path}), or [Error]
     where the path gives no register that flushes the GPU's host data path
     ([hdp] of {!type-path}), since another function's writes through the
-    memory BAR pass it as the host's do. Once a region is given, each
-    submission flushes that path before the GPU reads, for the device's
-    life, so the device's later work reads what the function wrote. The
-    function reads what a value's work wrote once the value is reached,
-    since its release writes the L2 back, and the host data path of the
-    GPUs this driver drives keeps no read cache to invalidate.
+    memory BAR pass it as the host's do. Once a region is given, each of the
+    device's submissions flushes that path before the GPU reads, for the
+    device's life, so the device's later work reads what the function
+    wrote. Another device's work through a view of the region
+    ({!val-map_peer}) is not ordered after the function's writes, and may
+    read bytes from before them. The function reads what a value's work
+    wrote once the value is reached, since its release writes the L2 back,
+    and the host data path of the GPUs this driver drives keeps no read
+    cache to invalidate.
 
     {!val-map_host} returns a region the GPU addresses, or [Never] if the
     path maps no host memory, and otherwise the path's refusal of the pages
