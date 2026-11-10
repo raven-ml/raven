@@ -163,6 +163,15 @@ An item leaves when its library fixes it, or when a design decides it stays.
 
 ## Repository
 
+- OCaml's arm64 backend contracts `a +. b *. c` (and the subtract forms)
+  into one fused multiply-add (`asmcomp/arm64/selection.ml:183-198` in OCaml
+  5.5.2); x86-64 does not. So OCaml float code can give different bits on
+  the M1 Max than on fudge, below any promise an `.mli` states in bits
+  across machines. jord states where it wants fusion with `Float.fma` and
+  keeps the rest unfused; raven's other OCaml float code (nx's host-side
+  arithmetic, rune's, jera's, ymir's) has not been checked. Found by the
+  jord review.
+
 - `bench/` cannot meet the 2-minute rule for a package's suite: its shapes
   are the point. Undecided: an exemption for `dev/`, a short default run
   with the full run behind an explicit command, or an alias of its own.
