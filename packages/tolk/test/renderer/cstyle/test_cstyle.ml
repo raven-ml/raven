@@ -1941,6 +1941,59 @@ let per_target =
 
 let target_name (name, _, _, dt, _) = name ^ ", " ^ Dtype.name dt
 
+(* [data0[0] = c ? x : z], or [c ? z : x], stored at [stored]: [x] the value
+   [data1[0]], loaded at [loaded] and converted to [selected], [c] a
+   comparison of it at [compared] with the zero [z]. rune compares a float16
+   in float32 and selects between the halves. *)
+let converted_select (loaded, compared, selected, stored) z ~zero_first
+    ~value_first =
+  let zero = Ops.int ~dtype:Int32 0 in
+  let at slot dt = Ops.index (Shape.param ~shape:[ Int 1 ] slot dt) [ zero ] in
+  let x = Ops.load (at 1 loaded) [] in
+  let at_type dt u =
+    if Dtype.equal dt (Ops.dtype u) then u else Ops.cast u dt
+  in
+  let cx = at_type compared x and cz = Ops.float ~dtype:compared z in
+  let c = if zero_first then Ops.lt cz cx else Ops.lt cx cz in
+  let sx = at_type selected x and sz = Ops.float ~dtype:selected z in
+  let s = if value_first then Ops.where c sx sz else Ops.where c sz sx in
+  let kernel =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"converted_select" ())
+      [ Ops.store (at 0 stored) (at_type stored s) ]
+  in
+  Linearizer.linearize
+    (Codegen.full_rewrite_to_sink ~optimize:false kernel (Lazy.force !host))
+
+(* Each conversion, as the types loaded, compared, selected and stored, each
+   zero, operand order and arm order. *)
+let converted_cases =
+  let product xs ys =
+    List.concat_map (fun x -> List.map (fun y -> (x, y)) ys) xs
+  in
+  let bools = [ true; false ] in
+  product
+    Dtype.
+      [
+        (Float16, Float32, Float16, Float32);
+        (Float16, Float64, Float16, Float64);
+        (Float16, Float32, Float64, Float64);
+        (Float32, Float64, Float32, Float64);
+        (Float32, Float32, Float64, Float64);
+        (Float64, Float64, Float32, Float32);
+        (Float32, Float32, Float32, Float64);
+      ]
+    (product [ 0.; -0. ] (product bools bools))
+
+let converted_name
+    ((loaded, compared, selected, stored), (z, (zero_first, value_first))) =
+  let cmp = if zero_first then "z < x" else "x < z" in
+  let arms = if value_first then "x : z" else "z : x" in
+  Printf.sprintf "%s, compared at %s, selected at %s, stored at %s, z = %h, \
+                  %s ? %s"
+    (Dtype.name loaded) (Dtype.name compared) (Dtype.name selected)
+    (Dtype.name stored) z cmp arms
+
 let zeros_compared =
   group "zeros a comparison reads"
     [
@@ -1966,6 +2019,22 @@ let zeros_compared =
           match List.assoc 0 (Run.on_host k [ (1, [| `Float (-0.) |]) ]) with
           | [| `Float z |] -> equal float_exact 0. z
           | _ -> failf "one float");
+      cases
+        "a select of a value and a zero, compared and selected at two types, \
+         picks as the select does, on the host"
+        ~id:converted_name converted_cases
+        (fun (types, (z, (zero_first, value_first))) ->
+          let uops = converted_select types z ~zero_first ~value_first in
+          let k = Run.program (Lazy.force !host) uops in
+          List.iter
+            (fun x ->
+              let c = if zero_first then z < x else x < z in
+              let want = if c = value_first then x else z in
+              match List.assoc 0 (Run.on_host k [ (1, [| `Float x |]) ]) with
+              | [| `Float y |] ->
+                  equal ~msg:(Printf.sprintf "at %h" x) float_exact want y
+              | _ -> failf "one float")
+            [ -0.; 0.; Float.nan; -1.; 1. ]);
     ]
 
 (* Selections of 16-bit floats *)

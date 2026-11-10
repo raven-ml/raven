@@ -1901,6 +1901,72 @@ let opaque_zeros ~reg zeros =
                 (List.assoc_opt (op x) ctx.lang.code_for_op));
       ])
 
+(* LLVM's InstCombine, on every target, reads a select whose arm converts its
+   compared value as a minimum or maximum, and rebuilds it to pick the zero at
+   a tie. In clang 19, [(0.0f < x) ? 0.0 : (double)x] becomes [(x >= 0.0f) ?
+   0.0f : x], widened: +0.0 at x = -0.0. rune compares a half in float32 and
+   selects between the halves, so its selections of a half meet it. Selects of
+   the compared value itself, and of vectors, keep their order. So a scalar
+   select between a zero and a conversion of its compared value [v] selects at
+   [v]'s type and converts after; one between a zero and the half or float32
+   [h] that [v] widens compares [h], where x86 hides a half's zero
+   ([opaque_zeros]). Both keep every value: converting either arm is exact,
+   and so is comparing before a widening. *)
+let pm_converted_selects =
+  let rec uncast u =
+    if is Op.Cast u && Dtype.is_float (dtype (nth u 0)) then uncast (nth u 0)
+    else u
+  in
+  let zero u =
+    let k = uncast u in
+    is Op.Const k && match value k with `Float v -> v = 0. | _ -> false
+  in
+  let zero_at dt z =
+    match value (uncast z) with
+    | `Float v -> Ops.float ~dtype:dt v
+    | _ -> invalid_arg "Cstyle: a zero that is not a float"
+  in
+  let widens u =
+    is Op.Cast u
+    && Dtype.mem (dtype (nth u 0)) Dtype.[ Float16; Float32 ]
+    && Dtype.itemsize (dtype (nth u 0)) < Dtype.itemsize (dtype u)
+  in
+  (* [w], selecting [t] or [f] by [c], a comparison of [v] and the zero [z]. *)
+  let select w c v z t f =
+    let h = if widens v then Some (nth v 0) else None in
+    let is_h u = match h with Some h -> u == h | None -> false in
+    let of_v u =
+      u != v && is Op.Cast u && (nth u 0 == v || is_h (nth u 0))
+    in
+    let at_v u =
+      if of_v u then Some v
+      else if zero u then Some (zero_at (dtype v) u)
+      else None
+    in
+    match (h, at_v t, at_v f) with
+    | Some h, _, _
+      when (is_h t || is_h f) && (is_h t || zero t) && (is_h f || zero f) ->
+        let narrowed u = if u == v then h else zero_at (dtype h) z in
+        let c = replace c ~src:(List.map narrowed (src c)) in
+        Some (replace w ~src:[ c; t; f ])
+    | _, Some t', Some f' when of_v t || of_v f ->
+        Some (cast (where c t' f') (dtype w))
+    | _ -> None
+  in
+  Pattern_matcher.v (fun () ->
+      [
+        rule (Upat.op ~name:"w" Op.Where) (fun m ->
+            let w = m "w" in
+            match src w with
+            | [ c; t; f ]
+              when max_numel w = 1 && Op.Set.mem (op c) Op.Set.comparison -> (
+                match List.partition zero (src c) with
+                | [ z ], [ v ] when Dtype.is_float (dtype v) ->
+                    select w c v z t f
+                | _ -> None)
+            | _ -> None);
+      ])
+
 (* Clang holds a [__fp16] as a storage format: C computes a selection between
    two of them, [c ? a : b], in float, and narrowing the result back quiets a
    signalling NaN, as x86's vcvtph2ps does, wherever LLVM's folds leave that
@@ -2131,7 +2197,12 @@ let clang_cut ~piece ~long (target : Helpers.Target.t) =
   Renderer.v ~name:"ClangRenderer"
     ~registers:(fun () -> Compiler_cpu.registers arch)
     ~vector_lanes:clang_lanes ~has_local:false ~global_max:[ 1; 0; 0 ]
-    ~extra_matcher:clang_extra_matcher ~packed_args:true
+    ~extra_matcher:
+      (if String.starts_with ~prefix:"x86" arch then
+         Pattern_matcher.concat
+           [ pm_converted_selects; clang_extra_matcher ]
+       else clang_extra_matcher)
+    ~packed_args:true
     ~code_for_op:lang.code_for_op ~native ~fma:once
     ~render:
       (if target.device = "CPU" then render_host ~piece ~long lang

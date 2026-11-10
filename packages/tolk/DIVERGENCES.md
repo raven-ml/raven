@@ -2404,16 +2404,20 @@ Withdrawn: multi-device is out of scope, see README.
 
 - **tinygrad:** `renderer/cstyle.py` (`ClangRenderer`, whose
   `string_rewrite` writes a float zero as a literal, `0.0f`).
-- **tolk:** `Cstyle.float_zero`, `Cstyle.opaque`, `Cstyle.opaque_zeros`
-  and `Cstyle.clang` (which adds it for each host target with its types).
+- **tolk:** `Cstyle.float_zero`, `Cstyle.opaque`, `Cstyle.opaque_zeros`,
+  `Cstyle.pm_converted_selects` and `Cstyle.clang` (which adds them for
+  each host target with its types).
 - **Differs:** a float zero constant that a comparison reads renders in the
   comparison as an empty `asm` statement over a register holding it,
   `({float z = 0.0f; __asm__("" : "+w"(z)); z;})`, in a float for a narrow
   type and cast back to it: on arm64 at float16, bfloat16, float32 and
   float64, on riscv64 at float16, float32 and float64, and on x86_64 at
-  float16. The register class is the target's for a float: `w` on arm64, `x`
-  on x86_64, `f` on riscv64. Every other use of the zero, and every other
-  zero, keeps the literal.
+  float16. On x86_64 a scalar selection between a zero and a conversion of
+  its compared value selects at that value's type and converts after, and
+  one between a zero and the float16 or float32 its compared value widens
+  compares that float16 or float32. The register class is the target's for
+  a float: `w` on arm64, `x` on x86_64, `f` on riscv64. Every other use of
+  the zero, and every other zero, keeps the literal.
 - **Reason:** (b): backends lower a select of a value and a zero, by a
   comparison of the two, to an instruction or a call that may keep the
   value's zero where the select returns the literal's: `(v < 0.0f) ? v :
@@ -2424,30 +2428,49 @@ Withdrawn: multi-device is out of scope, see README.
   library's, in clang 19. At float32 and float64 the x86 backend's `minss`
   and `maxss` pick as the select does. A maximum against a zero, rendered as
   such a select, meets it too, and an add of `+0.0` after it is then
-  dropped. Under `Rune.jit`, `Nx.where (Nx.less x z) x z` gave `-0.` on arm64
-  where eager gives `0.`, and a sum of a minimum against a folded zero gave
-  `-0.`, which a float sum never is. The lowering needs the select's
-  operands to be the comparison's, so a zero hidden in the comparison alone
-  avoids it. Hidden everywhere, the zero also kept the backend from making
-  `c ? v : 0.0f`, a select by any other condition, a mask: a routed MXFP4
-  product on the host, whose rows are selected by their validity before the
-  product, ran 1.17 times as long as the same product without the select,
-  and runs 1.05 times as long with the literal there (single-threaded
-  kernel, paired). `-ffp-exception-behavior=maytrap` or `-frounding-math`
-  also avoid the lowering, at 2.7× to 4.7× the time of a matmul or an
-  element-wise kernel.
+  dropped. Before any backend, LLVM's InstCombine, on every target, reads a
+  select whose arm converts its compared value as a minimum or maximum, and
+  rebuilds it to pick the zero at a tie. In clang 19, `(0.0f < x) ? 0.0 :
+  (double)x` becomes `(x >= 0.0f) ? 0.0f : x`, widened: `+0.0` at `x =
+  -0.0`. Selects of the compared value itself, and of vectors, keep their
+  order. rune compares a float16 in float32 and selects between the halves,
+  so its selections of a half meet it. Under `Rune.jit`, `Nx.where (Nx.less
+  x z) x z` gave `-0.` on arm64 where eager gives `0.`, a sum of a minimum
+  against a folded zero gave `-0.`, which a float sum never is, and on
+  x86_64 `Nx.where (Nx.less z x) z x` gave `0.` at a float16 `-0.`. The
+  lowering needs the select's operands to be the comparison's, so a zero
+  hidden in the comparison alone avoids it. On x86_64 a selection of the
+  compared value itself needs no hiding, so a maximum against a zero stays
+  one `maxps`; hidden in every comparison, the zero cost a maximum before a
+  64 × 64 matmul 1.10 times its time and a 4096-point FFT 1.15 times
+  (D166). Converting after the selection, or comparing before the widening,
+  keeps every value, and the half's comparison then reads a float16 zero,
+  which x86_64 hides. Hidden everywhere, the zero also kept the backend
+  from making `c ? v : 0.0f`, a select by any other condition, a mask: a
+  routed MXFP4 product on the host, whose rows are selected by their
+  validity before the product, ran 1.17 times as long as the same product
+  without the select, and runs 1.05 times as long with the literal there
+  (single-threaded kernel, paired). `-ffp-exception-behavior=maytrap` or
+  `-frounding-math` also avoid the lowering, at 2.7× to 4.7× the time of a
+  matmul or an element-wise kernel.
 - **Open:** the GPU renderers keep the literal, and NVRTC 13.4 lowers `(v <
   0.0f) ? v : 0.0f` to `min.f32` for sm_89: under `Rune.jit` on the RTX 5000,
   the selection gives `-0.` at `-0.`. NVRTC has no statement expressions, so
   CUDA needs a helper function around the `asm`; Metal has no inline `asm`.
-  HIP and Metal are untested.
+  HIP and Metal are untested. InstCombine's rewrite of a selection of a
+  converted value runs on every target, comgr's and NVRTC's included, so a
+  GPU's selection of a float16 against a zero may pick `+0.` at `-0.` too;
+  untested.
 - **Pinned by:** the Cstyle suite (`test/renderer/cstyle`): `zeros a
   comparison reads › a float zero a comparison reads is opaque to a backend
-  that lowers it to an extreme, and a literal elsewhere › *` and `› a select
-  of a value and a zero picks the zero at -0., on the host › *`; rune's `rune
-  jit` suite: `classes › a selection of a minimum against its constant is
-  exact`, a selection on `minimum c x < c` at `c = 0.`, whose inputs hold
-  `-0.`, in float16, float32 and float64.
+  that lowers it to an extreme, and a literal elsewhere › *`, `› a select
+  of a value and a zero picks the zero at -0., on the host › *` and `› a
+  select of a value and a zero, compared and selected at two types, picks as
+  the select does, on the host › *`; rune's `rune jit` suite: `classes › a
+  selection of a minimum against its constant is exact`, a selection on
+  `minimum c x < c` at `c = 0.`, whose inputs hold `-0.`, in float16,
+  float32 and float64, and `classes › a selection of a value and a zero is
+  exact › *`.
 
 ## D89. A contraction of little reuse streams its operand of least reuse
 

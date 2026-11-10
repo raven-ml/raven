@@ -755,6 +755,81 @@ let test_nested_minimum () =
       at f64 c)
     [ 0.; 1. ]
 
+(* [Nx.where (Nx.less a b) t f], [a] and [b] the operand [x] and a zero [c] in
+   either order and [t] and [f] the two in either order, is [t] where the
+   comparison holds and [f] elsewhere, a zero of each sign included: [x] at [x
+   = -0.] for [where (less 0. x) 0. x]. The selection is widened to float64,
+   or selects between [x] and [c] converted to float64, or to float32 from
+   float64, in a scalar kernel, over [odd] elements, which a kernel's loop
+   computes one at a time, and over [lanes], which it computes as vectors. *)
+type zero_selection = {
+  zero_first : bool;
+  value_first : bool;
+  converted_arms : bool;
+}
+
+let zero_selections =
+  let bools = [ true; false ] in
+  let forms =
+    List.concat_map
+      (fun zero_first ->
+        List.concat_map
+          (fun value_first ->
+            List.map
+              (fun converted_arms ->
+                { zero_first; value_first; converted_arms })
+              bools)
+          bools)
+      bools
+  in
+  let at dt c = List.map (fun f -> (dt, c, f)) forms in
+  List.concat_map
+    (fun dt -> at dt 0. @ at dt (-0.))
+    [ Nx.Dtype.Any Nx.float16; Any Nx.bfloat16; Any f32; Any f64 ]
+
+let pp_zero_selection ppf (Nx.Dtype.Any dt, c, f) =
+  let cmp = if f.zero_first then "c < x" else "x < c" in
+  let arms = if f.value_first then "x c" else "c x" in
+  let wide = if f.converted_arms then "arms converted" else "widened" in
+  Format.fprintf ppf "%a, c = %h, where (%s) %s, %s" Nx.pp_dtype dt c cmp arms
+    wide
+
+let odd = 67
+let lanes = 64
+
+let zero_selection (type s) (dt : (float, s) Nx.dtype) c f =
+  let select x c =
+    let holds = if f.zero_first then c < x else x < c in
+    if holds = f.value_first then x else c
+  in
+  let g x =
+    let c = Nx.scalar_like x c in
+    let holds = if f.zero_first then Nx.less c x else Nx.less x c in
+    let pick x c =
+      if f.value_first then Nx.where holds x c else Nx.where holds c x
+    in
+    if not f.converted_arms then Nx.cast f64 (pick x c)
+    else if Nx.Dtype.equal dt f64 then
+      Nx.cast f64 (pick (Nx.cast f32 x) (Nx.cast f32 c))
+    else pick (Nx.cast f64 x) (Nx.cast f64 c)
+  in
+  let jitted = Rune.jit' g in
+  List.iter
+    (fun x ->
+      List.iter
+        (fun s ->
+          let want = Nx.full f64 s (select x c) in
+          let y = compiled (fun () -> bits (jitted (Nx.full dt s x))) in
+          equal ~msg:(Printf.sprintf "at %h" x) (outcome_t bits_t)
+            (Value (bits want)) y)
+        [ [||]; [| odd |]; [| lanes |] ])
+    [ -0.; 0.; Float.nan; -1.; 1. ]
+
+let test_zero_selection (Nx.Dtype.Any dt, c, f) =
+  match Nx.Dtype.kind dt with
+  | Float -> zero_selection dt c f
+  | _ -> assert false
+
 (* A sum of [n] terms is within [γ(n - 1) Σ|x|] of the exact one, eagerly and
    compiled, so the two are within twice that of each other. A sum whose terms
    are not all finite is the same special value in both. *)
@@ -5596,6 +5671,9 @@ let () =
              test "special values are exact" test_specials;
              test "a selection of a minimum against its constant is exact"
                test_nested_minimum;
+             Windtrap.cases "a selection of a value and a zero is exact"
+               ~id:(Format.asprintf "%a" pp_zero_selection)
+               zero_selections test_zero_selection;
              test "integer constants keep their bits and wrap"
                test_int_constants;
              test "a square of a product whose constant squares to 0"

@@ -1212,6 +1212,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On x86_64 a selection against a zero, whose comparison or arm converts
+  the value, gives the arm it selects, a zero's sign included. LLVM rebuilt
+  it as a minimum or maximum: under `Rune.jit`, `Nx.where (Nx.less z x) z x`
+  gave `0.` at a float16 `-0.`.
 - Add `Tolk_engine.footprint`, the bytes a link of a compiled schedule and
   its runs make on each device, without linking.
 - **Breaking:** `Schedule.create_schedule`, `create_linear_with_vars` and
