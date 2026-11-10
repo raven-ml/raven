@@ -2692,18 +2692,23 @@ let padded w =
 
 (* Counts [counted] around one launch of [valu] over [groups] groups with [k],
    in one submission: [filter] storing this process's filter word, or, with
-   [vmid], the host storing [vmid]'s; then Counter.start, the launch and
-   Counter.stop. The values of each counter, one per place, and the filter
-   word. *)
+   [vmid], the host storing [vmid]'s; then Counter.start, the launch,
+   Counter.stop and, without [vmid], [filter] again. The counts are exact only
+   while the word holds the process's VMID (Counter's counting), which another
+   process's queue may move: a word that differs after the stop fails with
+   that cause, not as a short count. The values of each counter, one per
+   place, and the filter word. *)
 let count (t : gpu) p ?vmid ~groups ~k () =
   let c = A.capability t.g in
   let l = require_ok ~msg:"layout" (Counter.layout c.gpu counted) in
   let samples = buffer ~memory:Pinned t l.bytes
-  and word = buffer ~memory:Pinned t 4 in
+  and word = buffer ~memory:Pinned t 4
+  and after = buffer ~memory:Pinned t 4 in
   put samples (String.make l.bytes '\xee');
   put word
     (le32s
        [ (match vmid with Some v -> Counter.filter c.gpu ~vmid:v | None -> 0) ]);
+  put after (le32s [ 0 ]);
   let fn name = Option.get (Rig.Image.resolve p name) in
   let start = Rig.Buffer.create Rig.host words_room
   and stop = Rig.Buffer.create Rig.host words_room in
@@ -2714,23 +2719,32 @@ let count (t : gpu) p ?vmid ~groups ~k () =
   in
   let s =
     Sub.make
-      ~fixed:[ (samples, Rig.Read_write); (word, Rig.Read_write) ]
+      ~fixed:
+        [
+          (samples, Rig.Read_write);
+          (word, Rig.Read_write);
+          (after, Rig.Read_write);
+        ]
       t.d
       (Array.of_list
          (filter
          @ [ Sub.words start; Sub.launch (fn "valu") ~params:8; Sub.words stop ]
-         ))
+         @ filter))
   in
   let at = Sub.address s in
   let fill b w = Rig.Buffer.blit_from_string (padded w) 0 b 0 words_room in
   fill start (Counter.start c.gpu l ~filter_address:(at word));
   fill stop (Counter.stop c.gpu ~wgps:c.wgps l ~address:(at samples));
   let run = Sub.take s in
-  if filter <> [] then begin
-    let b = Sub.block s 0 in
+  let store i into =
+    let b = Sub.block s i in
     Sub.Run.groups run b 1 1 1;
     Sub.Run.threads run b 1 1 1;
-    Sub.Run.int64 run b 0 (Int64.of_int (at word))
+    Sub.Run.int64 run b 0 (Int64.of_int (at into))
+  in
+  if filter <> [] then begin
+    store 0 word;
+    store 4 after
   end;
   let b = Sub.block s (List.length filter + 1) in
   Sub.Run.groups run b groups 1 1;
@@ -2742,8 +2756,14 @@ let count (t : gpu) p ?vmid ~groups ~k () =
     List.init (c.engines * c.arrays * c.wgps) (fun i ->
         Int64.to_int (String.get_int64_le bytes (c.offset + (8 * i))))
   in
-  ( List.map values l.counters,
-    Int32.to_int (String.get_int32_le (get word) 0) land 0xffff_ffff )
+  let read b = Int32.to_int (String.get_int32_le (get b) 0) land 0xffff_ffff in
+  let before = read word in
+  if filter <> [] && read after <> before then
+    failf
+      "the process's VMID moved during the count: filter word %08x before \
+       Counter.start, %08x after Counter.stop"
+      before (read after);
+  (List.map values l.counters, before)
 
 let sizes = [ (1, 1); (7, 3); (64, 10); (1024, 100); (8192, 1000) ]
 let reps = 3
