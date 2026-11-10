@@ -199,6 +199,131 @@ let attention_jvp () =
     ~than:(1e-2 *. (1. +. Float.abs exact))
     (Float.abs (Nx.item [] (Nx.place Nx.Host.on compiled) -. exact))
 
+(* A program over [x] and a value [y], each [256 x 256] float32. *)
+type over = {
+  f :
+    'd.
+    (float, Nx.float32_elt, 'd) Nx.t ->
+    (float, Nx.float32_elt, 'd) Nx.t ->
+    (float, Nx.float32_elt, 'd) Nx.t;
+}
+
+let norm h =
+  let ms = Nx.mean ~axes:[ 1 ] ~keepdims:true (Nx.mul h h) in
+  Nx.div h (Nx.sqrt (Nx.add_s ms 1e-5))
+
+let close h = Nx.place (Nx.Placement.closed (Nx.placement h)) h
+
+(* Programs whose reductions read [y], with its readers: a weighted sum, a sum
+   of two maps of [y], a sum of its squares, a norm of a residual that the
+   program reads again, as a transformer's block does, closed or not, and a
+   softmax. *)
+let reading_programs =
+  [
+    ("a weighted sum", { f = (fun x y -> Nx.sum (Nx.mul x y)) });
+    ( "a sum of two maps",
+      { f = (fun _ y -> Nx.sum (Nx.add (Nx.mul_s y 2.) (Nx.mul_s y 3.))) } );
+    ("a sum of squares", { f = (fun _ y -> Nx.sum (Nx.mul y y)) });
+    ( "a norm of a residual",
+      { f = (fun x y -> let h = Nx.add x y in Nx.add (norm h) h) } );
+    ( "a norm of a closed residual",
+      { f = (fun x y -> let h = close (Nx.add x y) in Nx.add (norm h) h) } );
+    ( "a softmax",
+      {
+        f =
+          (fun _ y ->
+            let e = Nx.exp (Nx.sub y (Nx.max ~axes:[ 1 ] ~keepdims:true y)) in
+            Nx.div e (Nx.sum ~axes:[ 1 ] ~keepdims:true e));
+      } );
+  ]
+
+(* [y] as a reduction of at least [2{^21}] terms, more than a compiled
+   reduction runs inside the loop of another, from operands of these shapes:
+   a contraction of [256 x 64 x 256] products, or a sum of [256 x 256 x 64]
+   elements along the last axis. *)
+type reduction = {
+  operands : int array list;
+  reduce :
+    'd.
+    (float, Nx.float32_elt, 'd) Nx.t list -> (float, Nx.float32_elt, 'd) Nx.t;
+}
+
+let reductions =
+  [
+    ( "a contraction",
+      {
+        operands = [ [| 256; 64 |]; [| 64; 256 |] ];
+        reduce =
+          (function
+          | [ a; b ] ->
+              Nx.contract Nx.float32 (Nx.Pattern.v "i j, j k -> i k | j") a b
+          | _ -> invalid_arg "a contraction");
+      } );
+    ( "a sum",
+      {
+        operands = [ [| 256; 256; 64 |] ];
+        reduce =
+          (function
+          | [ z ] -> Nx.sum ~axes:[ 2 ] z | _ -> invalid_arg "a sum");
+      } );
+  ]
+
+(* A reduction that a program's reductions read adds one kernel to the
+   program, its own: the program compiles to the kernels it compiles over the
+   reduction's result passed as an argument, and one more. Fewer would run the
+   reduction's terms inside another's loop; more would store its result, or a
+   map of it, twice. *)
+let one_kernel { operands; reduce } { f } =
+  let _, (module S : Nx.Devices) = on_gpu () in
+  let draw i s =
+    Nx.place S.on (Nx.Rng.normal ~key:(Nx.Rng.key i) Nx.float32 s)
+  in
+  let x = draw 1 [| 256; 256 |] in
+  let zs = List.mapi (fun i s -> draw (i + 2) s) operands in
+  let zs_t = Nx.Ptree.(list tensor) in
+  let y = Rune.jit Nx.Ptree.(zs_t @-> returns tensor) reduce zs in
+  let kernels g =
+    List.length (snd (Tolk.Realize.kernels (fun () -> Nx.sync (g ()))))
+  in
+  let given =
+    kernels (fun () ->
+        Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f x y)
+  in
+  let reduced =
+    kernels (fun () ->
+        Rune.jit
+          Nx.Ptree.(tensor @-> zs_t @-> returns tensor)
+          (fun x zs -> f x (reduce zs))
+          x zs)
+  in
+  equal ~msg:"kernels" Testable.int (given + 1) reduced
+
+(* A reduction runs inside the one that reads it below [2{^21}] terms, or of
+   at most 32 terms an element, which cost little there: a weighted sum of the
+   last axis's sums of [z] compiles to the kernels of the weighted sum over
+   those sums passed as an argument. *)
+let inside shape () =
+  let _, (module S : Nx.Devices) = on_gpu () in
+  let draw i s =
+    Nx.place S.on (Nx.Rng.normal ~key:(Nx.Rng.key i) Nx.float32 s)
+  in
+  let z = draw 2 shape in
+  let x = draw 1 (Array.sub shape 0 2) in
+  let t2 = Nx.Ptree.(tensor @-> tensor @-> returns tensor) in
+  let weighted x y = Nx.sum (Nx.mul x y) in
+  let y =
+    Rune.jit Nx.Ptree.(tensor @-> returns tensor) (Nx.sum ~axes:[ 2 ]) z
+  in
+  let kernels g =
+    List.length (snd (Tolk.Realize.kernels (fun () -> Nx.sync (g ()))))
+  in
+  let given = kernels (fun () -> Rune.jit t2 weighted x y) in
+  let summed =
+    kernels (fun () ->
+        Rune.jit t2 (fun x z -> weighted x (Nx.sum ~axes:[ 2 ] z)) x z)
+  in
+  equal ~msg:"kernels" Testable.int given summed
+
 let attention_dtypes =
   Nx.Dtype.[ Any Nx.float16; Any Nx.bfloat16; Any Nx.float32; Any Nx.float64 ]
 
@@ -1837,10 +1962,20 @@ let () =
                (fun dt -> Attentions.zero_sums (snd (on_gpu ())) dt);
              test "forward mode of a summed loss holds its bound" attention_jvp;
            ];
-         group "a contraction a reduction reads"
+         group "a reduction another reads"
            [
              test "holds its bound" sum_of_contraction;
              test "over a broadcast stores no broadcast" sum_of_broadcast;
+             Windtrap.cases "read by a reduction adds one kernel, its own"
+               ~id:(fun ((r, _), (p, _)) -> r ^ ", " ^ p)
+               (List.concat_map
+                  (fun r -> List.map (fun p -> (r, p)) reading_programs)
+                  reductions)
+               (fun ((_, r), (_, p)) -> one_kernel r p);
+             test "of 128 x 128 x 64 terms stays inside the one that reads it"
+               (inside [| 128; 128; 64 |]);
+             test "of 32 terms an element stays inside the one that reads it"
+               (inside [| 256; 256; 32 |]);
            ];
          group "linear algebra"
            [

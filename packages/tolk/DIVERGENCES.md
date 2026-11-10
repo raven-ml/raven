@@ -9624,3 +9624,36 @@ kept in ordered sets, change no source and belong to D466.
   unroll and covers it; the Codegen suite's `tensor cores on each GPU › CUDA ›
   a product by 4-bit codes, the core on their bytes and a byte's two codes
   unrolled, is the exact result`; kaun's `GptOss/prefill-512`.
+
+## D472. A large reduction another reduces over is stored
+
+- **tinygrad:** `schedule/indexing.py` (`run_rangeify`: a reduction is
+  stored where a broadcast ends its ranges, "fusion decision: REDUCE before
+  the broadcast", or where its readers index it differently; otherwise it
+  takes its single reader's ranges, those of a reduction that reads it
+  included).
+- **tolk:** `Indexing.assign_ranges`, `Indexing.nested` and
+  `Indexing.long`.
+- **Differs:** a reduction of at least `2^21` terms (`nested_terms`, its
+  operand's elements, a symbolic size at its largest) and of more than 32
+  terms an element (`inline_terms`), whose readers index it by a range
+  that a reduction reduces, is stored with ranges of its own, where tinygrad
+  runs its terms inside the reading reduction's loop.
+- **Reason:** (d): the inlined reduction runs a loop inside one that no
+  thread split, tile or tensor core takes. On fudge's RTX 5000 Ada, rune's
+  `Cuda/sum-of-contraction-4096x512x4096` takes 46.8 ms inlined and 1.0
+  stored, `Cuda/attention/jit-jvp-bf16-8x2048x64-full` 25 and 2.0,
+  `Cuda/sum-of-row-sums-4096x4096` 5.4 and 0.12, a sum over 64 of the
+  squared sums of 4096 x 64 x 64 0.37 and 0.053. Below `2^21` terms the
+  inlined loop takes about a launch's 10 us. A short reduction costs little
+  inlined: Q8_0's sums of blocks of 32 codes, stored, took kaun's
+  `GptOss/prefill-512-Q8_0` from 86 ms to 250. On the host, whose few threads
+  lose less inside the loop, storing gained 4x on the row sums of 2048 x 2048
+  and lost 1.4x on the sum over 64; telling the host apart would take the
+  target into rangeify, which names devices without kinds.
+- **Pinned by:** rune's `Rune.jit on a GPU › a reduction another reads ›
+  read by a reduction adds one kernel, its own` (a contraction and a sum,
+  each under six readers), `› of 128 x 128 x 64 terms stays inside the one
+  that reads it`, `› of 32 terms an element stays inside the one that reads
+  it`, `› holds its bound`, `› over a broadcast stores no broadcast`; the rows
+  above and kaun's `GptOss/prefill-512-Q8_0`.

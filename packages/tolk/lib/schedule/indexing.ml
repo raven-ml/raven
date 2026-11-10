@@ -28,7 +28,8 @@ type ctx = {
   realize_map : unit Tbl.t;  (* The nodes stored whole. *)
   non_removable : unit Tbl.t;
   broadcast : unit Tbl.t;
-      (* The values stored because a broadcast reads them. *)
+      (* The values stored because a broadcast reads them, or a reduction
+         reduces over them ({!nested}): their stores are kept. *)
   range_map : (t list * t list) Tbl.t;
       (* Each node's ranges: those that index its sources, then its output. *)
   mutable range_idx : int;
@@ -38,7 +39,8 @@ type ctx = {
   loops : t list Tbl.t; (* A group's loops, by its first store. *)
   ends : t Tbl.t; (* A group's end, by its first store. *)
   mutable siblings : siblings list;
-      (* The reductions that share their loops, newest group first. *)
+      (* The reductions that share their loops, newest group first: every
+         reduction is in one, so their ranges are every range reduced. *)
 }
 
 and siblings = {
@@ -916,6 +918,49 @@ let reduce_loops rctx x sizes outer =
       rctx.siblings <- g :: rctx.siblings;
       reduced
 
+(* A reduction of [nested_terms] terms or more that another reduction reads
+   inside the ranges it reduces is stored. Inlined, its terms run inside the
+   enclosing reduction's loop, which no thread split, tile or tensor core
+   takes: on an RTX 5000 Ada the sum of a weighted 4096 x 512 x 4096 float32
+   contraction took 46.8 ms inlined and 1.0 stored, the sum of the squared row
+   sums of 4096 x 4096 5.4 and 0.12. Storing costs a kernel and a buffer of
+   the result's shape; [2{^21}] terms at the inlined rate take about a launch's
+   10 us. A reduction of at most [inline_terms] terms an element costs little
+   inside the other's loop and stays: Q8_0's sum of each block of 32 codes,
+   stored, took gpt-oss's 512-token prefill from 86 ms to 250. On a
+   host, whose few threads lose less inside the loop, storing gained 4x on the
+   row sums of 2048 x 2048 and lost 1.4x on a sum over 64 of 4096 x 64 x 64. *)
+let nested_terms = 1 lsl 21
+
+let inline_terms = 32
+
+(* Whether a reduction over axes of sizes [sizes] sums more than
+   [inline_terms] terms an element, a symbolic size counting as more. *)
+let long sizes =
+  let rec over n = function
+    | [] -> false
+    | Int k :: rest -> n * k > inline_terms || over (n * k) rest
+    | Sym _ :: _ -> true
+  in
+  over 1 sizes
+
+(* Whether [x], a reduction of at least [nested_terms] terms, a symbolic size
+   counting at its largest, and of more than [inline_terms] terms an element
+   ({!long}) is read inside a
+   range another reduction reduces ([rngs], its consumers' ranges). *)
+let nested rctx x rngs =
+  let reduced r =
+    List.exists (fun g -> List.exists (Ops.equal r) g.reduced) rctx.siblings
+  in
+  max_numel (nth x 0) >= nested_terms
+  && (match arg x with
+     | Reduce { num_axes; _ } -> long (List.take num_axes (shape (nth x 0)))
+     | _ -> false)
+  && Nodes.fold
+       (fun r found -> found || reduced r)
+       (ranges (Ops.sink rngs))
+       false
+
 (* Kernels are internal, and an after carries no ranges, as a sink does not. *)
 let no_ranges = ops Op.[ Call; After ]
 
@@ -962,6 +1007,10 @@ let assign_ranges rctx ~consumer_map ~ending_ranges x =
         | Some (rngs, _) -> [ broadcast_rngs c x rngs ])
       consumers
   in
+  (* The other fusion decision: a large reduction is stored before another
+     reduces over it. *)
+  if op x = Op.Reduce && nested rctx x (List.concat consumer_rngs) then
+    ending := true;
   let out_rngs =
     if Tbl.mem rctx.realize_map x then begin
       ending := false;

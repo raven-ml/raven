@@ -1804,8 +1804,9 @@ let gpu_rows g =
               fun () -> ignore (synced2 (f p x y)));
         };
       (* The sum of a weighted contraction's result: [w] of [4096 x 4096]
-         times [a × b] of [4096 x 512 x 4096] products, which a sum fused over
-         the products runs far slower than one reading them stored. *)
+         times [a × b] of [4096 x 512 x 4096] products, which a sum run over
+         the products inside its loop computes far slower than one reading
+         them stored. *)
       on_gpu g "sum-of-contraction-4096x512x4096"
         {
           at =
@@ -1819,6 +1820,26 @@ let gpu_rows g =
                   (fun w a b -> Nx.sum (Nx.mul w (Nx.contract f32 p a b)))
               in
               fun () -> ignore (synced (f w a b)));
+        };
+      (* The sum of the squares of a 4096 x 4096 matrix's row sums, which a
+         sum run over the row sums inside its loop computes far slower than
+         one reading them stored. *)
+      on_gpu g "sum-of-row-sums-4096x4096"
+        {
+          at =
+            (fun at ->
+              let x =
+                Nx.place at
+                  (Nx.Rng.normal ~key:(Nx.Rng.key 93) f32 [| 4096; 4096 |])
+              in
+              let f =
+                Rune.jit
+                  Nx.Ptree.(tensor @-> returns tensor)
+                  (fun x ->
+                    let r = Nx.sum ~axes:[ 1 ] x in
+                    Nx.sum (Nx.mul r r))
+              in
+              fun () -> ignore (synced (f x)));
         };
       (* A histogram: 2^20 updates added into 16 targets. *)
       on_gpu g "scatter-add-1048576-into-16"
