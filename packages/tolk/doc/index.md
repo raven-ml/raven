@@ -1,6 +1,6 @@
 # tolk
 
-Tolk is a port of [tinygrad](https://github.com/tinygrad/tinygrad) in OCaml — a minimal compiler for GPU tensor computation. It takes tensor-level computation graphs, optimizes them, and emits efficient kernels for CPU (via Clang), Metal, CUDA, and OpenCL backends.
+Tolk is a port of [tinygrad](https://github.com/tinygrad/tinygrad) in OCaml — a minimal compiler for GPU tensor computation. It takes tensor-level computation graphs, optimizes them, and emits kernels for the CPU (C, compiled with Clang), Metal, CUDA and NVIDIA's kernel driver (CUDA C, compiled with NVRTC), and AMD (HIP, compiled with comgr).
 
 ## Features
 
@@ -19,12 +19,10 @@ Tolk follows a layered compilation pipeline:
 2. **Schedule** — transforms tensor graphs into kernel graphs via rangeify and indexing
 3. **Codegen** — optimizes kernel structure (range simplification, GPU dims, beam search)
 4. **Lowering** — lowers to linear program IR (devectorization, expansion, decompositions)
-5. **Renderer** — emits backend-specific source code (C, Metal, CUDA, OpenCL)
+5. **Renderer** — emits backend-specific source code (C, Metal, CUDA, HIP)
 6. **Runtime** — compiles and dispatches kernels on target devices
 
 ## Libraries
 
-- `tolk` — codegen pipeline, renderer, device abstraction, and runtime
-- `tolk.ir` — IR definitions (tensor, kernel, program), symbolic simplification, decompositions
-- `tolk.cpu` — CPU backend (Clang compilation, ELF loading)
-- `tolk.metal` — Metal backend (macOS GPU)
+- `tolk` — the compiler: it takes a program and a target, and returns data (source, binaries, memory plans and schedules). It depends on no runtime.
+- `tolk.engine` — runs that output on [rig](../../rig/doc/index.md)'s devices.

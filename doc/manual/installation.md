@@ -46,7 +46,9 @@ dune build packages/kaun          # kaun + its dependencies
 
 ## System Dependencies
 
-Raven libraries have no system dependencies beyond OCaml.
+Raven builds and installs with no system dependencies beyond OCaml.
+
+Compiling kernels at run time, with `Rune.jit`, uses the platform's compiler: `clang` on the CPU, NVRTC (from the CUDA toolkit) on NVIDIA, and comgr (from ROCm) on AMD; macOS includes Metal's. Kernels already in the on-disk cache need none of them, and eager code on the host needs nothing.
 
 ## Using Raven in Your Project
 

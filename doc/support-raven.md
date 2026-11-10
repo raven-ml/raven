@@ -6,7 +6,7 @@ Python's monopoly on scientific computing forces an impossible choice: ship ever
 
 **We think there's a better way.** OCaml lets you prototype as quickly as Python and scale the same code to production. Same expressiveness, strong typing catches bugs before they crash your ML pipeline, while eager kernels and JIT compilation aim at NumPy/PyTorch performance. One language from research to production — it just needs a production-grade ML stack.
 
-**Raven brings that stack to OCaml:** Nx (NumPy), Rune (JAX with effects-based autodiff), Kaun (Flax), Brot (tokenization), Hugin (Matplotlib), and Quill (notebooks done right). Train models with automatic differentiation and JIT compilation, then deploy them as one static binary that needs nothing on the host beyond the GPU's kernel driver. We built Raven for teams that want both development speed and reliable systems.
+**Raven brings that stack to OCaml:** Nx (NumPy), Rune (JAX with effects-based autodiff), Kaun (Flax), Brot (tokenization), Hugin (Matplotlib), and Quill (notebooks done right). Train models with automatic differentiation and JIT compilation, and, at 1.0, deploy them as one static binary that needs nothing on the host beyond the GPU's kernel driver. We built Raven for teams that want both development speed and reliable systems.
 
 _Learn more: [Introduction](manual/introduction.md)_
 
