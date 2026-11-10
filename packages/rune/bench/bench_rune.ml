@@ -1472,6 +1472,51 @@ let kv_append ~donated =
           cache := synced (f c row pos));
   }
 
+(* The gradient of 2 chains of 4 residual blocks [a + relu (a w1) w2] at
+   [at], each block under a remat, a batch of 1024, width 64, hidden 256:
+   each block's backward pass is a call of its own, which joins no launch
+   of the program around it. *)
+let remat_chains =
+  {
+    at =
+      (fun at ->
+        let w seed r c =
+          Nx.place at
+            (Nx.mul_s (Nx.Rng.normal ~key:(Nx.Rng.key seed) f32 [| 8; r; c |])
+               0.05)
+        in
+        let ws = (w 1 64 256, w 2 256 64) in
+        let a = Nx.place at (Nx.ones f32 [| 1024; 64 |]) in
+        let block (w1, w2) x =
+          let h = Nx.matmul x w1 in
+          Nx.add x (Nx.matmul (Nx.maximum h (Nx.zeros_like h)) w2)
+        in
+        let loss (w1s, w2s) a =
+          List.fold_left
+            (fun s c ->
+              let x =
+                List.fold_left
+                  (fun x i ->
+                    let j = (4 * c) + i in
+                    Rune.remat
+                      Nx.Ptree.(tensor @-> returns tensor)
+                      (block (Nx.get [ j ] w1s, Nx.get [ j ] w2s))
+                      x)
+                  (Nx.sin (Nx.add_s a (float c)))
+                  (List.init 4 Fun.id)
+              in
+              Nx.add s (Nx.sum x))
+            (Nx.place at (Nx.scalar f32 0.))
+            [ 0; 1 ]
+        in
+        let g =
+          Rune.jit
+            Nx.Ptree.(pair tensor tensor @-> tensor @-> returns tensor)
+            (fun ws a -> Rune.grad' (loss ws) a)
+        in
+        fun () -> ignore (synced (g ws a)));
+  }
+
 (* 148 float16 gradients of 256 to 2048 values at [at], as many as GPT-2 124M's
    parameters, and whether every one is finite. *)
 let gradients at =
@@ -1918,6 +1963,13 @@ let gpu_rows g =
     | Amd -> [ on_gpu g "search/matmul-float32-1024" searched_matmul ]
     | Cuda -> []
 
+(* Rows on a GPU whose calls' allocated words are exact too: a compiled
+   remat's backward calls, whose launches a change of the lowering or of the
+   order regroups. *)
+let gpu_word_rows g =
+  if not (opens g) then []
+  else [ on_gpu g "remat-chains-2x4-grad-hit" remat_chains ]
+
 (* A trial's setup compiles its programs: a cold tolk cache takes seconds for
    the largest, which the default 10 s deadline would kill. *)
 let config = Thumper.Config.(default |> deadline 60.)
@@ -1953,6 +2005,7 @@ let () =
          Thumper.group "Probes" (probe_rows ());
          Thumper.group ~metrics:[ Thumper.Metric.wall_time ] "Cuda"
            (gpu_rows Cuda);
+         Thumper.group "CudaWords" (gpu_word_rows Cuda);
          Thumper.group ~metrics:[ Thumper.Metric.wall_time ] "Amd"
            (gpu_rows Amd);
        ])
