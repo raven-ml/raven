@@ -1,0 +1,10 @@
+; parity.exe compares the rasterizing rules with rasterio's on tessera-eval's
+; Austria labels and GeoTessera's landmask grids. It needs those files and
+; rasterio's rasters, which live outside the repository, so no test runs it:
+;   parity.exe project DIR   writes DIR/jord_*.npy, the labels in UTM 33N;
+;   (rasterio, outside the repository, writes DIR/<tile>.* from them);
+;   parity.exe compare DIR   prints the cells where the owners differ.
+
+(executable
+ (name parity)
+ (libraries jord nx nx.io jsont jsont.bytesrw))
