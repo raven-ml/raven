@@ -8,7 +8,7 @@
   test_firmware
   test_tables)
  (modules :standard \ test_function test_driver)
- (libraries rig_pci rig_pci_support rig_support unix windtrap))
+ (libraries rig_edge rig_pci rig_pci_support rig_support unix windtrap))
 
 ; test_function and test_driver take this machine's GPUs.
 
@@ -16,5 +16,6 @@
  (names test_function test_driver)
  (modules test_function test_driver)
  (locks %{workspace_root}/gpu)
- (libraries rig_pci rig_pci_support rig_support threads.posix unix windtrap))
+ (libraries rig_edge rig_pci rig_pci_support rig_support threads.posix unix
+  windtrap))
 

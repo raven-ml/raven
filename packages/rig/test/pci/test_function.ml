@@ -2130,7 +2130,7 @@ let test_release_inside () =
     List.iter (fun i -> ignore (map ~length:4096 f i : Window.t)) [ 0; 2; 5 ];
     let finished = ref None in
     let inside () =
-      let held = Rig_support.holds () <> 0 in
+      let held = Rig_edge_primitives.holds () <> 0 in
       Function.release f;
       finished :=
         Some
@@ -2566,11 +2566,6 @@ let test_interrupted_held () =
   equal ~msg:"the pin's refusal" bool true reached;
   releases root f
 
-(* The calling thread's signals blocked, as rig blocks them across a call
-   below its core ([rig_mask] in [rig_edge.h]). *)
-external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
-external unmask : unit -> unit = "caml_rig_edge_unmask"
-
 (* A finish of the releases with the thread's signals blocked takes a
    SIGINT while it waits for another domain's use of a released function:
    it raises [Sys.Break] while the use runs, and leaves the function taken
@@ -2593,12 +2588,12 @@ let test_finish_interrupted () =
   equal ~msg:"taken while the use runs" bool true (taken ());
   Sys.catch_break true;
   Rig_support.interrupt_after 0.05;
-  mask ();
+  Rig_edge_primitives.mask ();
   let finished =
     Fun.protect ~finally:(fun () ->
         (* A SIGINT the finish did not take lands here. *)
         (try
-           unmask ();
+           Rig_edge_primitives.unmask ();
            Rig_support.interrupt_join ()
          with Sys.Break -> ());
         Sys.catch_break false)

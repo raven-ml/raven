@@ -84,9 +84,6 @@ external countdown : unit -> nativeint = "rig_test_countdown"
 external ready : unit -> nativeint = "rig_test_ready"
 external interrupt : unit -> unit = "rig_test_interrupt" [@@noalloc]
 
-(* A wait's bracket: [rig_unblock] and [rig_block] of [rig_edge.h]. *)
-external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
-external block : unit -> unit = "caml_rig_edge_block"
 external interrupt_after_ms : int -> unit = "rig_test_interrupt_after"
 external interrupt_join : unit -> unit = "rig_test_interrupt_join"
 external park : unit -> unit = "rig_test_park"
@@ -125,12 +122,6 @@ let carry = carry ()
 let countdown = countdown ()
 let ready = ready ()
 
-(* The locks the calling thread holds, and a count of one more and one fewer
-   ([rig_holds], [rig_hold] and [rig_unhold] in [rig_edge.h]). *)
-external holds : unit -> int = "caml_rig_edge_holds_byte"
-external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
-external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
-
 (* The counted calls the calling thread is inside ([rig_counted] in
    [rig.h]). *)
 external counted : unit -> int = "caml_rig_counted"
@@ -153,11 +144,11 @@ module Driver = struct
      thread that holds [m], which only a call that skipped its check makes and
      which raises [Invalid_argument]. *)
   let take m =
-    hold ();
+    Rig_edge_primitives.hold ();
     match Mutex.lock m with
     | () -> ()
     | exception e -> (
-        unhold ();
+        Rig_edge_primitives.unhold ();
         match e with
         | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
             invalid_arg
@@ -169,7 +160,7 @@ module Driver = struct
      polls. *)
   let give m =
     Mutex.unlock m;
-    unhold ()
+    Rig_edge_primitives.unhold ()
 
   let protect m f =
     take m;
@@ -583,14 +574,14 @@ module Driver = struct
     | `Interrupt -> (
         (* The signal comes inside the sleep's wait, whose nap runs its
            handler, as a Ctrl-C does in a driver's wait. *)
-        unblock ();
+        Rig_edge_primitives.unblock ();
         match
           interrupt ();
           Thread.delay 0.
         with
-        | () -> block ()
+        | () -> Rig_edge_primitives.block ()
         | exception e ->
-            block ();
+            Rig_edge_primitives.block ();
             Atomic.incr d.broken_sleeps;
             raise e)
     | `Stall -> Thread.delay (float still_ms /. 1000.)
@@ -970,8 +961,8 @@ let interrupted ?(from = fun _ -> true) ?(landing = Raise) n f =
 (* Calls inside a lock *)
 
 let inside_lock f =
-  hold ();
-  Fun.protect ~finally:unhold f
+  Rig_edge_primitives.hold ();
+  Fun.protect ~finally:Rig_edge_primitives.unhold f
 
 type seen = { mutable inside : int; mutable between : int }
 
@@ -984,7 +975,7 @@ type landed = (bool * string * int) option ref
 let landing seen prefix call =
   let landed = ref None in
   let call () =
-    let before = holds () in
+    let before = Rig_edge_primitives.holds () in
     if before > 0 then seen.inside <- seen.inside + 1
     else seen.between <- seen.between + 1;
     let got =
@@ -994,7 +985,7 @@ let landing seen prefix call =
           "refused"
       | exception e -> Printexc.to_string e
     in
-    landed := Some (before > 0, got, holds () - before)
+    landed := Some (before > 0, got, Rig_edge_primitives.holds () - before)
   in
   (Call call, landed)
 

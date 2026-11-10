@@ -89,10 +89,10 @@ let take l =
    returns or raises. *)
 let test_lock () =
   let l = N.Lock.create () and other = N.Lock.create () in
-  let before = Rig_support.holds () in
+  let before = Rig_edge_primitives.holds () in
   let held, again, nested, tried, tried_other =
     N.Lock.protect l (fun () ->
-        let held = Rig_support.holds () - before in
+        let held = Rig_edge_primitives.holds () - before in
         let again = take l and nested = take other in
         let tried = N.Lock.try_protect l (fun () -> fail "ran") in
         let tried_other = N.Lock.try_protect other (fun () -> fail "ran") in
@@ -105,9 +105,10 @@ let test_lock () =
   equal ~msg:"the holder's try" bool false tried;
   equal ~msg:"the holder's try of another path's lock" bool false tried_other;
   equal ~msg:"the other lock outside" string "taken" (take other);
-  equal ~msg:"locks held after" int 0 (Rig_support.holds () - before);
+  equal ~msg:"locks held after" int 0 (Rig_edge_primitives.holds () - before);
   raises Exit (fun () -> N.Lock.protect l (fun () -> raise Exit));
-  equal ~msg:"locks held after a raise" int 0 (Rig_support.holds () - before);
+  equal ~msg:"locks held after a raise" int 0
+    (Rig_edge_primitives.holds () - before);
   equal ~msg:"a take after" string "taken" (take l);
   equal ~msg:"a try after" bool true (N.Lock.try_protect l ignore)
 

@@ -335,23 +335,18 @@ let job () =
   if j = 0n then invalid_arg "Rig_remote_proxy.Link.job: a job is open";
   j
 
-(* The calling thread's signals unblocked across a wait's blocking step
-   ([rig_unblock] and [rig_block] in [rig_edge.h]), so that a signal's
-   handler runs there. *)
-external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
-external block : unit -> unit = "caml_rig_edge_block"
 external reraise : exn -> 'a = "%reraise"
 
 (* [unblocked f x] is [f x], a call that waits, with the thread's signals
    unblocked. *)
 let unblocked f x =
-  unblock ();
+  Rig_edge_primitives.unblock ();
   match f x with
   | r ->
-      block ();
+      Rig_edge_primitives.block ();
       r
   | exception e ->
-      block ();
+      Rig_edge_primitives.block ();
       reraise e
 
 (* A close waits at most 200 ms at a time, then returns to OCaml, where a
@@ -416,20 +411,6 @@ external release_rail_c : nativeint -> int -> unit
    for a command before it takes [next_lock], and holds it only to dequeue
    one. *)
 
-(* The locks the calling thread holds, and a count of one more and one fewer
-   ([rig_holds], [rig_hold] and [rig_unhold] in [rig_edge.h]). *)
-external holds : unit -> (int[@untagged])
-  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
-[@@noalloc]
-
-external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
-external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
-
-(* The calling thread's signals blocked and given back ([rig_mask] and
-   [rig_unmask] in [rig_edge.h]). *)
-external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
-external unmask : unit -> unit = "caml_rig_edge_unmask"
-
 (* A function a caller outside rig makes, and that may take a lock, runs as
    [guarded fn f]: inside a lock it raises [Invalid_argument] naming [fn],
    having done nothing, since the call comes from a signal handler,
@@ -438,18 +419,18 @@ external unmask : unit -> unit = "caml_rig_edge_unmask"
    blocked ([rig_mask] and [rig_unmask] in [rig_edge.h]), which only the
    driver's waits unblock. *)
 let guarded fn f =
-  if holds () <> 0 then
+  if Rig_edge_primitives.holds () <> 0 then
     invalid_arg
       ("Rig_remote_proxy.Link." ^ fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
         inside a lock of the calling thread's");
-  mask ();
+  Rig_edge_primitives.mask ();
   match f () with
   | r ->
-      unmask ();
+      Rig_edge_primitives.unmask ();
       r
   | exception e ->
-      unmask ();
+      Rig_edge_primitives.unmask ();
       reraise e
 
 (* [take m] takes [m], counted from before the take, so that a signal handler
@@ -459,11 +440,11 @@ let guarded fn f =
    thread that holds [m], which only a call that skipped its check makes and
    which raises [Invalid_argument]. *)
 let take m =
-  hold ();
+  Rig_edge_primitives.hold ();
   match Mutex.lock m with
   | () -> ()
   | exception e -> (
-      unhold ();
+      Rig_edge_primitives.unhold ();
       match e with
       | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
           invalid_arg
@@ -475,7 +456,7 @@ let take m =
    polls. *)
 let give m =
   Mutex.unlock m;
-  unhold ()
+  Rig_edge_primitives.unhold ()
 
 (* [protect m f] is [f ()] holding [m], taken as the last step before the
    handler and given back as the first step of both exits, where nothing

@@ -155,22 +155,18 @@ external kfd_wait : int -> int array -> int -> int -> fault option
 external kfd_sleep : int -> int array -> int -> int -> int -> int
   = "caml_rig_amd_amdgpu_sleep"
 
-(* The calling thread's signals unblocked across a wait's blocking step
-   ([rig_unblock] and [rig_block] in [rig_edge.h]). *)
-external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
-external block : unit -> unit = "caml_rig_edge_block"
 external reraise : exn -> 'a = "%reraise"
 
 (* [kfd_sleep] with the thread's signals unblocked, so that a signal's
    handler runs in its wait. *)
 let kfd_nap fd events ms gpu after =
-  unblock ();
+  Rig_edge_primitives.unblock ();
   match kfd_sleep fd events ms gpu after with
   | age ->
-      block ();
+      Rig_edge_primitives.block ();
       age
   | exception e ->
-      block ();
+      Rig_edge_primitives.block ();
       reraise e
 
 (* The render node *)

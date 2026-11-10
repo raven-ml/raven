@@ -609,7 +609,7 @@ let test_lock_reentered () =
 (* An exception at any allocation of a section under a path's lock gives the
    lock back: the thread holds what it held before, and takes the lock again. *)
 let test_lock_interrupted () =
-  let before = Rig_support.holds () in
+  let before = Rig_edge_primitives.holds () in
   let l = A.Lock.create () in
   let rec from n =
     let section () =
@@ -620,7 +620,7 @@ let test_lock_interrupted () =
     let reached = Rig_support.interrupted n section in
     equal
       ~msg:(strf "locks held, interrupted at %d" n)
-      int before (Rig_support.holds ());
+      int before (Rig_edge_primitives.holds ());
     A.Lock.protect l ignore;
     if reached then from (n + 1)
   in

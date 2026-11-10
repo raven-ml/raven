@@ -116,7 +116,7 @@ let interrupt ?landing n =
       let reached =
         Rig_support.interrupted ?landing n (fun () -> B.copy ~src:first ~dst:h)
       in
-      equal ~msg:"locks held after" int 0 (Rig_support.holds ());
+      equal ~msg:"locks held after" int 0 (Rig_edge_primitives.holds ());
       List.iteri
         (fun i b -> equal ~msg:(strf "file %d" i) string (bytes i) (read b))
         files;
@@ -150,7 +150,7 @@ let interrupt_barrier n =
       B.copy ~src:(B.of_string "barriers") ~dst:b;
       ignore (read other);
       let reached = Rig_support.interrupted n (fun () -> Rig_disk.barrier b) in
-      equal ~msg:"locks held after" int 0 (Rig_support.holds ());
+      equal ~msg:"locks held after" int 0 (Rig_edge_primitives.holds ());
       Rig_disk.barrier b;
       equal ~msg:"the file's bytes" string "barriers"
         (In_channel.with_open_bin name In_channel.input_all);
@@ -181,7 +181,7 @@ let create_cut n =
         Rig_support.interrupted n (fun () ->
             made := Rig_disk.create_file name 8)
       in
-      equal ~msg:"locks held after" int 0 (Rig_support.holds ());
+      equal ~msg:"locks held after" int 0 (Rig_edge_primitives.holds ());
       let wrong =
         match !made with
         | Error why when !made != not_returned -> Some ("answered " ^ why)
@@ -264,7 +264,7 @@ let called n =
         ]
       in
       let call () =
-        held := Rig_support.holds () > 0;
+        held := Rig_edge_primitives.holds () > 0;
         answers := List.map answer calls
       in
       let opened = ref None in

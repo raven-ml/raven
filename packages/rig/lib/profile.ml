@@ -69,10 +69,7 @@ and pending = {
   drop : unit -> unit;
 }
 
-(* The host's clock, [rig_now_ns] of [rig_edge.h]. *)
-external now : unit -> (int[@untagged])
-  = "caml_rig_edge_now_byte" "caml_rig_edge_now"
-[@@noalloc]
+let now = Rig_edge_primitives.now
 
 let profiles : t list Atomic.t = Atomic.make []
 let numbers = Atomic.make 0
@@ -301,10 +298,10 @@ let span name f =
   | [] -> f ()
   | ps ->
       let lane = strf "domain %d" (Domain.self () :> int) in
-      let start = now () in
+      let start = Rig_edge_primitives.now () in
       let finish () =
-        add ps
-          (Span { device = Dev.host; lane; name; start; stop = now () })
+        let stop = Rig_edge_primitives.now () in
+        add ps (Span { device = Dev.host; lane; name; start; stop })
       in
       Fun.protect ~finally:finish f
 

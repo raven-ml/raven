@@ -2519,9 +2519,6 @@ let shared_after_stop () =
   A.free g' back;
   H.free_pages page n
 
-(* rig's array of timeline words: its address and its bytes. *)
-external words : unit -> int * int = "caml_rig_edge_words"
-
 (* Two devices of one GPU, both opened through rig, write their words in rig's
    array, which the GPU maps once for both. The other device's copy waits in
    its queue for a Polled device's point, which the test reaches last: a copy
@@ -2545,7 +2542,7 @@ let two_in_array () =
       (Rig.open_ { name = "AMD:second-in-array"; driver = (module A); make })
   in
   let t' = { d = d'; g = Option.get !raw } in
-  let start, bytes = words () in
+  let start, bytes = Rig_edge_primitives.words () in
   let in_array g =
     match (A.locate (A.facts g).word).host with
     | Some a -> a >= start && a + 8 <= start + bytes

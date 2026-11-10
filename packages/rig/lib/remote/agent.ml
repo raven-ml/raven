@@ -25,42 +25,37 @@ let join_s = 10.
    finalisers and exit handler take none, even in their waits
    ([rig_shield]). A thread it starts takes the mask its creator has inside
    [masked], all blocked, for its life. *)
-external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
-external unmask : unit -> unit = "caml_rig_edge_unmask"
-external shield : unit -> unit = "caml_rig_edge_shield" [@@noalloc]
-external unshield : unit -> unit = "caml_rig_edge_unshield"
-external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
-external block : unit -> unit = "caml_rig_edge_block"
+
 external reraise : exn -> 'a = "%reraise"
 
 let masked f =
-  mask ();
+  Rig_edge_primitives.mask ();
   match f () with
   | r ->
-      unmask ();
+      Rig_edge_primitives.unmask ();
       r
   | exception e ->
-      unmask ();
+      Rig_edge_primitives.unmask ();
       reraise e
 
 let shielded f =
-  shield ();
+  Rig_edge_primitives.shield ();
   match f () with
   | r ->
-      unshield ();
+      Rig_edge_primitives.unshield ();
       r
   | exception e ->
-      unshield ();
+      Rig_edge_primitives.unshield ();
       reraise e
 
 let unblocked f x =
-  unblock ();
+  Rig_edge_primitives.unblock ();
   match f x with
   | r ->
-      block ();
+      Rig_edge_primitives.block ();
       r
   | exception e ->
-      block ();
+      Rig_edge_primitives.block ();
       reraise e
 
 let spawn f x = masked (fun () -> Thread.create f x)
@@ -712,7 +707,7 @@ let join_acceptor h () = Thread.join h.acceptor
 let release a h =
   if not h.released then begin
     h.released <- true;
-    shield ();
+    Rig_edge_primitives.shield ();
     match
       let accepted = settled stop a () in
       if h.accepting then begin
@@ -727,10 +722,10 @@ let release a h =
       accepted
     with
     | accepted ->
-        unshield ();
+        Rig_edge_primitives.unshield ();
         Ids.iter (fun _ fd -> close_quietly fd) accepted
     | exception e ->
-        unshield ();
+        Rig_edge_primitives.unshield ();
         reraise e
   end
 
@@ -1206,13 +1201,13 @@ let job a =
    [serve]'s pair across [f] and takes it again after, where [unblocked]
    would open a window that the first wait inside [f] closes. *)
 let unmasked f x =
-  unmask ();
+  Rig_edge_primitives.unmask ();
   match f x with
   | r ->
-      mask ();
+      Rig_edge_primitives.mask ();
       r
   | exception e ->
-      mask ();
+      Rig_edge_primitives.mask ();
       reraise e
 
 (* Why a job fails when an exception ends [serve] other than its commands'. *)

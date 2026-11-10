@@ -263,12 +263,6 @@ let physical = Atomic.make []
 let hold t = update physical (List.cons (Unix.getpid (), t))
 let unhold t = update physical (List.filter (fun (_, t') -> t' != t))
 
-(* The thread's signals blocked, its waits included ([rig_shield] and
-   [rig_unshield] in [rig_edge.h]): the exit's release takes no signal,
-   whose exception would skip the exit handlers after this one. *)
-external shield : unit -> unit = "caml_rig_edge_shield" [@@noalloc]
-external unshield : unit -> unit = "caml_rig_edge_unshield"
-
 let release_all () =
   let pid = Unix.getpid () in
   let each f (owner, t) =
@@ -291,13 +285,16 @@ let release_all () =
     prerr_endline
       (strf "releasing system memory at exit: %s" (Printexc.to_string e))
 
+(* The thread's signals blocked, its waits included ([rig_shield] and
+   [rig_unshield] in [rig_edge.h]): the exit's release takes no signal,
+   whose exception would skip the exit handlers after this one. *)
 let () =
   at_exit (fun () ->
-      shield ();
+      Rig_edge_primitives.shield ();
       match release_all () with
-      | () -> unshield ()
+      | () -> Rig_edge_primitives.unshield ()
       | exception e ->
-          unshield ();
+          Rig_edge_primitives.unshield ();
           reraise e)
 
 (* mmap maps whole pages from an offset on a page: the pages that hold the [n]

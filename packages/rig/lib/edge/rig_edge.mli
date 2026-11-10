@@ -479,7 +479,8 @@ type grown =
     runs its handler on a thread of the program's. On Windows, where OCaml
     has no signal masks, none of these block a signal: its handler runs at
     any allocation or poll point of a driver's function, finaliser or exit
-    handler.
+    handler. A driver's OCaml code counts its locks and blocks signals
+    through {!Rig_edge_primitives}.
 
     rig guarantees these properties, so that a driver checks none of them:
     {ul

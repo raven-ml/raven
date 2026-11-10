@@ -2185,13 +2185,8 @@ let run_steps ~waits (p : here) (f : frame) =
    lock does not count among the thread's: a callback between them runs as
    any code does. *)
 
-(* The locks the calling thread holds ([rig_holds] in [rig_edge.h]). *)
-external holds : unit -> (int[@untagged])
-  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
-[@@noalloc]
-
 let check_held fn =
-  if holds () <> 0 then
+  if Rig_edge_primitives.holds () <> 0 then
     invalid_arg
       ("Rig_program." ^ fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \

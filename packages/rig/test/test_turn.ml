@@ -339,13 +339,6 @@ let test_break_in_call taker () =
   equal ~msg:"the call" bool true (breaks (fun () -> B.create d 8));
   ended_call d p ~finished:!finished ~last:first
 
-(* The edge's brackets ([rig_edge.h]'s Signals), as a driver's finaliser and
-   its waits use them. *)
-external shield : unit -> unit = "caml_rig_edge_shield" [@@noalloc]
-external unshield : unit -> unit = "caml_rig_edge_unshield"
-external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
-external block : unit -> unit = "caml_rig_edge_block"
-
 (* Outside Windows, a Ctrl-C during a wait of a driver's finaliser, which runs
    shielded inside the driver's allocation, takes nothing there: the
    allocation finishes, the device stays live, and Sys.Break raises as the
@@ -357,12 +350,12 @@ let test_break_in_shielded_wait () =
   equal int (base + 1) (Rig.Point.value first);
   let finished = ref false in
   P.before p "alloc" (fun () ->
-      shield ();
-      unblock ();
+      Rig_edge_primitives.shield ();
+      Rig_edge_primitives.unblock ();
       Support.interrupt ();
       Thread.delay 0.;
-      block ();
-      unshield ();
+      Rig_edge_primitives.block ();
+      Rig_edge_primitives.unshield ();
       finished := true);
   equal ~msg:"the call" bool true (breaks (fun () -> B.create d 8));
   ended_call d p ~finished:!finished ~last:first

@@ -34,23 +34,7 @@ exception Fault of string
 
 (* Locks *)
 
-(* The locks the calling thread holds, and a count of one more and one fewer
-   (rig_holds, rig_hold and rig_unhold in rig_edge.h). *)
-external holds : unit -> (int[@untagged])
-  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
-[@@noalloc]
-
-external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
-external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
-
-(* The calling thread's signals blocked and given back, and unblocked across
-   a wait's blocking step ([rig_mask], [rig_unmask], [rig_unblock] and
-   [rig_block] in [rig_edge.h]). *)
-external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
-external unmask : unit -> unit = "caml_rig_edge_unmask"
-external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
-external block : unit -> unit = "caml_rig_edge_block"
 
 (* [take m] takes [m], counted from before the take, so that a signal handler
    that runs inside a contended take sees it held. An exception that ends the
@@ -59,11 +43,11 @@ external block : unit -> unit = "caml_rig_edge_block"
    thread that holds [m], which only a call that skipped its check makes and
    which raises [Invalid_argument]. *)
 let take m =
-  hold ();
+  Rig_edge_primitives.hold ();
   match Mutex.lock m with
   | () -> ()
   | exception e -> (
-      unhold ();
+      Rig_edge_primitives.unhold ();
       match e with
       | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
           invalid_arg
@@ -75,7 +59,7 @@ let take m =
    polls. *)
 let give m =
   Mutex.unlock m;
-  unhold ()
+  Rig_edge_primitives.unhold ()
 
 (* [protect m f] is [f ()] holding [m], taken as the last step before the
    handler and given back as the first step of both exits, where nothing
@@ -99,18 +83,18 @@ let protect m f =
    blocked ([rig_mask] and [rig_unmask] in [rig_edge.h]), which only the
    driver's waits unblock. *)
 let guarded fn f =
-  if holds () <> 0 then
+  if Rig_edge_primitives.holds () <> 0 then
     invalid_arg
       (fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
         inside a lock of the calling thread's");
-  mask ();
+  Rig_edge_primitives.mask ();
   match f () with
   | r ->
-      unmask ();
+      Rig_edge_primitives.unmask ();
       r
   | exception e ->
-      unmask ();
+      Rig_edge_primitives.unmask ();
       reraise e
 
 (* The CUDA library. A stub with a numeric result returns it as a non-negative
@@ -589,7 +573,7 @@ let owed = Atomic.make false
    past the release of the lock. *)
 let rec end_owed () =
   if Atomic.get owed then begin
-    hold ();
+    Rig_edge_primitives.hold ();
     if Mutex.try_lock registry_lock then begin
       Atomic.set owed false;
       (match end_freed !registry with
@@ -599,7 +583,7 @@ let rec end_owed () =
           reraise e);
       end_owed ()
     end
-    else unhold ()
+    else Rig_edge_primitives.unhold ()
   end
 
 (* [protect registry_lock f], then [end_owed ()]. *)
@@ -612,14 +596,11 @@ let registered f =
       end_owed ();
       reraise e
 
-(* rig's array of timeline words: its address and its bytes. *)
-external words : unit -> int * int = "caml_rig_edge_words"
-
 (* Notes the registration of rig's array of words, which the first device
    that opened made and the process keeps: a range [map_host] maps inside it
    counts against it, and it is never given back. *)
 let note_words () =
-  let start, bytes = words () in
+  let start, bytes = Rig_edge_primitives.words () in
   registered @@ fun () ->
   if not (List.exists (fun e -> e.start = start) !registry) then
     registry :=
@@ -668,7 +649,7 @@ let open_ ~word i =
         | Error why -> Error why
         | Ok () -> (
             match
-              let start, bytes = words () in
+              let start, bytes = Rig_edge_primitives.words () in
               let w = Nativeint.to_int word in
               let own = registers = 0 || w < start || w + 8 > start + bytes in
               let self = open_device d word own in
@@ -1120,11 +1101,6 @@ external signaled : int -> int = "caml_rig_cuda_signaled" [@@noalloc]
 
 let signaled g = signaled g.self
 
-(* The host's clock, [rig_now_ns] of [rig_edge.h]. *)
-external now : unit -> (int[@untagged])
-  = "caml_rig_edge_now_byte" "caml_rig_edge_now"
-[@@noalloc]
-
 (* A sleep asks CUDA each [nap_s] whether a stream failed, and naps between the
    questions: a fault is found within a nap of CUDA's report, and the wake
    latency falls on waits rig has already spun on, which are long. *)
@@ -1133,19 +1109,20 @@ let nap_s = 0.001
 (* A nap with the thread's signals unblocked, so that a signal's handler runs
    there. *)
 let nap () =
-  unblock ();
+  Rig_edge_primitives.unblock ();
   match Unix.sleepf nap_s with
-  | () -> block ()
+  | () -> Rig_edge_primitives.block ()
   | exception e ->
-      block ();
+      Rig_edge_primitives.block ();
       reraise e
 
 let sleep g ~seen ~still_ms =
-  let until = now () + (still_ms * 1_000_000) in
+  let until = Rig_edge_primitives.now () + (still_ms * 1_000_000) in
   let status = ref 0 and more = ref true in
   while !more && signaled g = seen do
     status := failed g.self;
-    if !status <> 0 || now () >= until then more := false else nap ()
+    if !status <> 0 || Rig_edge_primitives.now () >= until then more := false
+    else nap ()
   done;
   if !status <> 0 then fault "the GPU's work failed" !status
 

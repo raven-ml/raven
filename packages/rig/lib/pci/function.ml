@@ -304,13 +304,11 @@ let give f = if Lock.try_take f.giving then give_locked f
    use. A use also counts among the locks its thread holds ([rig_hold] in
    [rig_edge.h]), so that a call of rig's or a driver's from a callback inside
    it is refused, and no finish waits for a use of its own thread. *)
-external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
-external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 
 (* Counts a use, and is whether it started: [false] once the release's bit
    is set, the use then to be left at once. *)
 let start f =
-  hold ();
+  Rig_edge_primitives.hold ();
   Atomic.fetch_and_add f.state 2 land 1 = 0
 
 (* The use that leaves the word at "released, no use" gives [f] back. A use
@@ -321,7 +319,7 @@ let start f =
    is defined before, so nothing polls before the count. *)
 let leave f =
   let s = Atomic.fetch_and_add f.state (-2) in
-  unhold ();
+  Rig_edge_primitives.unhold ();
   if s = 3 then give f
 
 let enter f fn =

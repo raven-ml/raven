@@ -283,8 +283,8 @@ static inline uint8_t *rig_place(const struct rig_args *a, uint8_t *args) {
 
 RIG_EDGE_EXTERN _Atomic uint64_t *rig_words(void);
 
-/* The OCaml primitive [caml_rig_edge_words : unit -> int * int] answers the
-   array's address and RIG_WORDS_BYTES, for OCaml code that maps it whole. */
+/* OCaml reads the array's address and RIG_WORDS_BYTES through
+   Rig_edge_primitives.words, for code that maps it whole. */
 
 /* rig_now_ns () is the host's clock: nanoseconds of the system's monotonic
    clock from an unspecified start (CLOCK_MONOTONIC on Linux,
@@ -292,8 +292,7 @@ RIG_EDGE_EXTERN _Atomic uint64_t *rig_words(void);
    (CLOCK_UPTIME_RAW), the time base of Metal's command buffer times. It is
    the clock of [Rig.Profile.now]. A driver writes a value's times and
    measures its waits on it (Rig_edge's calls section). OCaml reads it
-   through the noalloc external caml_rig_edge_now, which answers an
-   untagged int, and caml_rig_edge_now_byte. */
+   through Rig_edge_primitives.now. */
 RIG_EDGE_EXTERN uint64_t rig_now_ns(void);
 
 /* Locks
@@ -304,12 +303,7 @@ RIG_EDGE_EXTERN uint64_t rig_now_ns(void);
    from before its take, and answers the count before it; rig_unhold ()
    counts its give, after it. rig_edge.mli's Drivers section states which
    locks a driver counts and which of its functions must check the count
-   as they start. OCaml reads the count through the noalloc external
-   caml_rig_edge_holds, which answers an untagged int, and
-   caml_rig_edge_holds_byte, and counts a lock of its own through the
-   noalloc externals caml_rig_edge_hold and caml_rig_edge_unhold, of type
-   unit -> unit, which call rig_hold and rig_unhold. A library that links
-   rig.edge declares each external it uses itself. */
+   as they start. OCaml calls them through Rig_edge_primitives. */
 RIG_EDGE_EXTERN int rig_holds(void);
 RIG_EDGE_EXTERN int rig_hold(void);
 RIG_EDGE_EXTERN void rig_unhold(void);
@@ -334,22 +328,14 @@ RIG_EDGE_EXTERN void rig_unhold(void);
    for code that must take no signal even in its waits, such as a finaliser
    or an exit handler. Outside every pair rig_unblock () and rig_block ()
    change nothing. A signal that came while the thread blocked it runs its
-   OCaml handler at the thread's first poll point once the OCaml external
-   caml_rig_edge_unmask or caml_rig_edge_unshield has ended the outermost
-   pair, or inside the wait once rig_unblock () has given the mask back
-   (rig_edge.mli's Drivers section). Each is called from a thread that holds
-   the OCaml runtime. OCaml calls them through the externals
-   caml_rig_edge_mask, caml_rig_edge_shield and caml_rig_edge_unblock,
-   noalloc, of type unit -> unit, caml_rig_edge_unmask and
-   caml_rig_edge_unshield, of the same type, which release and take back the
-   runtime as the outermost pair ends, so that a signal the runtime recorded
-   while the thread blocked it is looked at again, and caml_rig_edge_block,
-   which first runs what a poll point runs (the handlers of the signals
-   pending, finalisers, Gc.Memprof callbacks, a switch to another thread), so
-   that a signal that came during the wait raises its exception there, then
-   blocks. The C functions rig_unmask () and rig_unshield () release nothing:
-   a C caller runs no poll point inside its pair. On Windows they block
-   nothing. */
+   OCaml handler at the thread's first poll point once the OCaml unmask or
+   unshield has ended the outermost pair, or inside the wait once
+   rig_unblock () has given the mask back (rig_edge.mli's Drivers section).
+   Each is called from a thread that holds the OCaml runtime. OCaml calls
+   them through Rig_edge_primitives, whose unmask, unshield and block also
+   re-arm the runtime or run what a poll point runs. The C functions
+   rig_unmask () and rig_unshield () release nothing: a C caller runs no
+   poll point inside its pair. On Windows they block nothing. */
 RIG_EDGE_EXTERN void rig_mask(void);
 RIG_EDGE_EXTERN void rig_unmask(void);
 RIG_EDGE_EXTERN void rig_shield(void);

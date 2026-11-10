@@ -53,23 +53,7 @@ exception Fault of string
 
 (* Locks *)
 
-(* The locks the calling thread holds, and a count of one more and one fewer
-   ([rig_holds], [rig_hold] and [rig_unhold] in [rig_edge.h]). *)
-external holds : unit -> (int[@untagged])
-  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
-[@@noalloc]
-
-external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
-external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
-
-(* The calling thread's signals blocked and given back, and unblocked across
-   a wait's blocking step ([rig_mask], [rig_unmask], [rig_unblock] and
-   [rig_block] in [rig_edge.h]). *)
-external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
-external unmask : unit -> unit = "caml_rig_edge_unmask"
-external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
-external block : unit -> unit = "caml_rig_edge_block"
 
 (* The rank of the last lock of the driver's the calling thread took, [-1]
    for none, and its change. *)
@@ -102,13 +86,13 @@ let refused () =
    raised, gives the count back first. *)
 let take_lock l =
   if held_rank () >= l.rank then refused ();
-  hold ();
+  Rig_edge_primitives.hold ();
   match Mutex.lock l.mutex with
   | () ->
       l.below <- held_rank ();
       set_rank l.rank
   | exception e ->
-      unhold ();
+      Rig_edge_primitives.unhold ();
       reraise e
 
 (* Gives [l] back, then its count, with nothing between that allocates or
@@ -116,7 +100,7 @@ let take_lock l =
 let give_lock l =
   set_rank l.below;
   Mutex.unlock l.mutex;
-  unhold ()
+  Rig_edge_primitives.unhold ()
 
 (* [l] is taken as the last step before the handler and given back as the
    first step of both exits, where nothing allocates or polls, so an
@@ -137,13 +121,13 @@ let protect l f =
 let try_protect l f =
   if held_rank () >= l.rank then false
   else begin
-    hold ();
+    Rig_edge_primitives.hold ();
     match Mutex.try_lock l.mutex with
     | false ->
-        unhold ();
+        Rig_edge_primitives.unhold ();
         false
     | exception e ->
-        unhold ();
+        Rig_edge_primitives.unhold ();
         reraise e
     | true -> (
         l.below <- held_rank ();
@@ -162,18 +146,18 @@ let try_protect l f =
    it runs [f] with the thread's signals blocked, which only the driver's
    waits unblock. *)
 let guarded fn f =
-  if holds () <> 0 then
+  if Rig_edge_primitives.holds () <> 0 then
     invalid_arg
       (fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
         inside a lock of the calling thread's");
-  mask ();
+  Rig_edge_primitives.mask ();
   match f () with
   | r ->
-      unmask ();
+      Rig_edge_primitives.unmask ();
       r
   | exception e ->
-      unmask ();
+      Rig_edge_primitives.unmask ();
       reraise e
 
 module Lock = struct
@@ -431,9 +415,6 @@ external flush_stopped : int -> bool = "caml_rig_nv_flush_stopped"
 external drop_flush : int -> unit = "caml_rig_nv_drop" [@@noalloc]
 external zero : int -> int -> unit = "caml_rig_nv_zero" [@@noalloc]
 external copy_word : int -> int -> unit = "caml_rig_nv_copy_word" [@@noalloc]
-
-(* rig's array of timeline words: its address and its bytes. *)
-external array_of_words : unit -> int * int = "caml_rig_edge_words"
 
 external exchange_local : int -> int -> int = "caml_rig_nv_exchange_local"
 [@@noalloc]
@@ -1179,7 +1160,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
      the device's own, started at the given word's value. *)
   let word = Nativeint.to_int word in
   let at = word land lnot (chunk - 1) in
-  let start, bytes = array_of_words () in
+  let start, bytes = Rig_edge_primitives.words () in
   let mapped =
     match p.map_host with
     | None -> None
@@ -1860,11 +1841,6 @@ let check_faults d =
   | [] -> ()
   | report -> raise (Fault (String.concat "\n" report))
 
-(* The host's clock, [rig_now_ns] of [rig_edge.h]. *)
-external now : unit -> (int[@untagged])
-  = "caml_rig_edge_now_byte" "caml_rig_edge_now"
-[@@noalloc]
-
 (* A sleep reads the word and the notifiers each [nap_s]: a fault is found
    within a nap of the RM's report, and the wake latency falls on waits rig has
    already spun on, which are long. *)
@@ -1873,11 +1849,11 @@ let nap_s = 0.001
 (* A nap with the thread's signals unblocked, so that a signal's handler runs
    there. *)
 let nap () =
-  unblock ();
+  Rig_edge_primitives.unblock ();
   match Unix.sleepf nap_s with
-  | () -> block ()
+  | () -> Rig_edge_primitives.block ()
   | exception e ->
-      block ();
+      Rig_edge_primitives.block ();
       reraise e
 
 (* The RM is asked only once a notifier holds an error: it answers under a
@@ -1886,10 +1862,10 @@ let nap () =
 let sleep (T d) ~seen ~still_ms =
   if read_word d.self = seen then begin
     (live d).path.check ();
-    let until = now () + (still_ms * 1_000_000) in
+    let until = Rig_edge_primitives.now () + (still_ms * 1_000_000) in
     let more = ref true in
     while !more && read_word d.self = seen && not (notified d) do
-      if now () >= until then more := false else nap ()
+      if Rig_edge_primitives.now () >= until then more := false else nap ()
     done;
     if notified d then check_faults d
   end

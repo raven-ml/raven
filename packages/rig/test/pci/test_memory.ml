@@ -1182,7 +1182,7 @@ let test_peer_owner_released kind =
          holds: the landings are where the map holds its use alone. *)
       let reached =
         Rig_support.interrupted
-          ~from:(fun _ -> Rig_support.holds () = 1)
+          ~from:(fun _ -> Rig_edge_primitives.holds () = 1)
           ~landing:(Call release) n
           (fun () -> got := Memory.map_peer x.t_memory r)
       in

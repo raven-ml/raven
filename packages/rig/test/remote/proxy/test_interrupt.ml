@@ -206,7 +206,7 @@ let next_and_answer_raise () =
         Rig_support.interrupted n (fun () -> ignore (Link.next a))
       in
       equal ~msg:(strf "from allocation %d, locks held after a next" n) int 0
-        (Rig_support.holds ());
+        (Rig_edge_primitives.holds ());
       Link.drop c 6;
       (* 5 if the interrupted next did not take it. *)
       let later = dropped (Link.next a) in
@@ -221,7 +221,7 @@ let next_and_answer_raise () =
             answered := true)
       in
       equal ~msg:(strf "from allocation %d, locks held after an answer" n) int
-        0 (Rig_support.holds ());
+        0 (Rig_edge_primitives.holds ());
       if not !answered then Link.answer a r (Ok []);
       (match asked () with
       | Ok [] -> ()

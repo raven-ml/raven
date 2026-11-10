@@ -31,11 +31,6 @@ external arm_stub : int -> int -> int -> int -> unit = "caml_rig_mlx5_arm"
 
 external acquire : unit -> unit = "caml_rig_mlx5_acquire" [@@noalloc]
 
-(* The host's clock, [rig_now_ns] of [rig_edge.h]. *)
-external now : unit -> (int[@untagged])
-  = "caml_rig_edge_now_byte" "caml_rig_edge_now"
-[@@noalloc]
-
 (* Types *)
 
 type memory = Path.memory =
@@ -200,18 +195,7 @@ and qp = {
    this library's, is refused as it starts and never waits for the lock its own
    thread holds. Its sections only read and change the NIC's lists. *)
 
-external holds : unit -> (int[@untagged])
-  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
-[@@noalloc]
-
-external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
-external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
-
-(* The calling thread's signals blocked and given back ([rig_mask] and
-   [rig_unmask] in [rig_edge.h]). *)
-external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
-external unmask : unit -> unit = "caml_rig_edge_unmask"
 
 (* [take m] takes [m], counted from before the take, so that a signal handler
    that runs inside a contended take sees it held. An exception that ends the
@@ -220,11 +204,11 @@ external unmask : unit -> unit = "caml_rig_edge_unmask"
    thread that holds [m], which only a call that skipped its check makes and
    which raises [Invalid_argument]. *)
 let take m =
-  hold ();
+  Rig_edge_primitives.hold ();
   match Mutex.lock m with
   | () -> ()
   | exception e -> (
-      unhold ();
+      Rig_edge_primitives.unhold ();
       match e with
       | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
           invalid_arg
@@ -236,7 +220,7 @@ let take m =
    polls. *)
 let give m =
   Mutex.unlock m;
-  unhold ()
+  Rig_edge_primitives.unhold ()
 
 (* [with_lock nic f] is [f ()] holding [nic]'s lock, taken as the last step
    before the handler and given back as the first step of both exits, where
@@ -260,18 +244,18 @@ let with_lock nic f =
    blocked ([rig_mask] and [rig_unmask] in [rig_edge.h]), which only the
    driver's waits unblock. *)
 let guarded fn f =
-  if holds () <> 0 then
+  if Rig_edge_primitives.holds () <> 0 then
     invalid_arg
       ("Rig_mlx5." ^ fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
         inside a lock of the calling thread's");
-  mask ();
+  Rig_edge_primitives.mask ();
   match f () with
   | r ->
-      unmask ();
+      Rig_edge_primitives.unmask ();
       r
   | exception e ->
-      unmask ();
+      Rig_edge_primitives.unmask ();
       reraise e
 
 let alive fn nic =
@@ -1040,9 +1024,11 @@ let wait nic ~ms =
      on until one of the NIC's, or the end of its time. The path keeps the
      events until [reported], the last step before the return, so an
      exception anywhere before leaves them to the next wait. *)
-  let deadline = now () + (ms * 1_000_000) in
+  let deadline = Rig_edge_primitives.now () + (ms * 1_000_000) in
   let rec go () =
-    let left = max 0 ((deadline - now () + 999_999) / 1_000_000) in
+    let left =
+      max 0 ((deadline - Rig_edge_primitives.now () + 999_999) / 1_000_000)
+    in
     match List.filter_map event (nic.path.wait left) with
     | [] when left > 0 ->
         nic.path.reported ();

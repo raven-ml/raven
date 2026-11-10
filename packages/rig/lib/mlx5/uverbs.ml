@@ -35,22 +35,18 @@ external page_size : unit -> int = "caml_rig_mlx5_uverbs_page_size"
 external poll : Unix.file_descr -> Unix.file_descr -> int -> int
   = "caml_rig_mlx5_uverbs_poll"
 
-(* The calling thread's signals unblocked across a wait's blocking step
-   ([rig_unblock] and [rig_block] in [rig_edge.h]). *)
-external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
-external block : unit -> unit = "caml_rig_edge_block"
 external reraise : exn -> 'a = "%reraise"
 
 (* [poll] with the thread's signals unblocked, so that a signal's handler
    runs in its wait. *)
 let poll_unblocked async channel ms =
-  unblock ();
+  Rig_edge_primitives.unblock ();
   match poll async channel ms with
   | r ->
-      block ();
+      Rig_edge_primitives.block ();
       r
   | exception e ->
-      block ();
+      Rig_edge_primitives.block ();
       reraise e
 
 external take : int -> Bytes.t -> int -> int -> int

@@ -4,4 +4,4 @@
 (library
  (name rig_program)
  (public_name rig.program)
- (libraries rig rig_remote_abi))
+ (libraries rig rig_edge rig_remote_abi))

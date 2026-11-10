@@ -306,14 +306,14 @@ let test_shared () =
    thread holds what it held before. The interrupted call may leave its ranges
    taken. *)
 let test_interrupted () =
-  let before = Rig_support.holds () in
+  let before = Rig_edge_primitives.holds () in
   let rec from n =
     let s = Space.create ~base:(1 lsl 40) (1 lsl 30) in
     let calls () = Option.iter Space.free (Space.alloc s holder 0x3000) in
     let raised = Rig_support.interrupted n calls in
     equal
       ~msg:(Printf.sprintf "locks held, interrupted at %d" n)
-      int before (Rig_support.holds ());
+      int before (Rig_edge_primitives.holds ());
     calls ();
     if raised then from (n + 1)
   in

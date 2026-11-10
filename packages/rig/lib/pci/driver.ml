@@ -281,17 +281,14 @@ let stop_held g =
 (* The thread's signals blocked, its waits included ([rig_shield] and
    [rig_unshield] in [rig_edge.h]): the stops at exit take no signal, whose
    exception would skip the exit handlers after this one. *)
-external shield : unit -> unit = "caml_rig_edge_shield" [@@noalloc]
-external unshield : unit -> unit = "caml_rig_edge_unshield"
-
 let register_exit g =
   if not g.exits then begin
     Stdlib.at_exit (fun () ->
-        shield ();
+        Rig_edge_primitives.shield ();
         match stop_held g with
-        | () -> unshield ()
+        | () -> Rig_edge_primitives.unshield ()
         | exception e ->
-            unshield ();
+            Rig_edge_primitives.unshield ();
             reraise e);
     g.exits <- true
   end

@@ -190,18 +190,15 @@ let fault d =
 (* The calling thread's signals unblocked across the sleep's wait
    ([rig_unblock] and [rig_block] in [rig_edge.h]), so that a signal's
    handler runs there. *)
-external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
-external block : unit -> unit = "caml_rig_edge_block"
-
 let sleep d ~seen ~still_ms =
-  unblock ();
+  Rig_edge_primitives.unblock ();
   let failed =
     match sleep_c d.c seen still_ms with
     | failed ->
-        block ();
+        Rig_edge_primitives.block ();
         failed
     | exception e ->
-        block ();
+        Rig_edge_primitives.block ();
         reraise e
   in
   if failed then raise (fault d)

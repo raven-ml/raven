@@ -1,12 +1,17 @@
 ; What a driver is to rig: the C structures and codes by which a caller
 ; hands work to a driver (rig_edge.h), the OCaml facts and signature a
-; driver matches (rig_edge.mli), and the host's clock, the count of the
-; locks a thread holds and its signal mask, which they share.
+; driver matches (rig_edge.mli), and the host's clock, the timeline
+; words, the count of the locks a thread holds and its signal mask, which
+; they share, with the OCaml primitives that reach them
+; (rig_edge_primitives.mli). The library is unwrapped, so that a call of a
+; primitive requires the unit that declares it and no other, whatever the
+; caller's compiler flags.
 
 (library
  (name rig_edge)
  (public_name rig.edge)
- (modules rig_edge)
+ (wrapped false)
+ (modules rig_edge rig_edge_primitives)
  (modules_without_implementation rig_edge)
  (install_c_headers rig_edge)
  (foreign_stubs

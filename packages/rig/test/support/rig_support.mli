@@ -630,10 +630,6 @@ val interrupted :
     Walking [n] from [1] until it is [false] lands at every
     allocation [f] makes. *)
 
-val holds : unit -> int
-(** [holds ()] is the number of locks the calling thread holds, rig's and the
-    drivers' ([rig_holds] in [rig_edge.h]). *)
-
 val counted : unit -> int
 (** [counted ()] is the number of counted calls the calling thread is inside
     ([rig_counted] in [rig.h]): calls of a driver that a device's stop never

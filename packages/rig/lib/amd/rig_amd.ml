@@ -42,18 +42,6 @@ external reraise : exn -> 'a = "%reraise"
    of rig's from a callback during one raises. *)
 
 module Lock = struct
-  external holds : unit -> (int[@untagged])
-    = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
-  [@@noalloc]
-
-  external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
-  external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
-
-  (* The calling thread's signals blocked and given back ([rig_mask] and
-     [rig_unmask] in [rig_edge.h]). *)
-  external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
-  external unmask : unit -> unit = "caml_rig_edge_unmask"
-
   type t = Mutex.t
 
   let create = Mutex.create
@@ -65,11 +53,11 @@ module Lock = struct
      thread that holds [m], which only a call that skipped its check makes and
      which raises [Invalid_argument]. *)
   let take m =
-    hold ();
+    Rig_edge_primitives.hold ();
     match Mutex.lock m with
     | () -> ()
     | exception e -> (
-        unhold ();
+        Rig_edge_primitives.unhold ();
         match e with
         | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
             invalid_arg
@@ -81,7 +69,7 @@ module Lock = struct
      polls. *)
   let give m =
     Mutex.unlock m;
-    unhold ()
+    Rig_edge_primitives.unhold ()
 
   (* [protect m f] is [f ()] holding [m], taken as the last step before the
      handler and given back as the first step of both exits, where nothing
@@ -103,18 +91,18 @@ module Lock = struct
      runs [f] with the thread's signals blocked, which only the driver's
      waits unblock. *)
   let guarded fn f =
-    if holds () <> 0 then
+    if Rig_edge_primitives.holds () <> 0 then
       invalid_arg
         (fn
        ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
           inside a lock of the calling thread's");
-    mask ();
+    Rig_edge_primitives.mask ();
     match f () with
     | x ->
-        unmask ();
+        Rig_edge_primitives.unmask ();
         x
     | exception e ->
-        unmask ();
+        Rig_edge_primitives.unmask ();
         reraise e
 end
 
@@ -1236,9 +1224,6 @@ let unload _ m =
 
 (* Opening *)
 
-(* rig's array of timeline words: its address and its bytes. *)
-external words : unit -> int * int = "caml_rig_edge_words"
-
 (* [m] from [at] bytes on, which lie at the host address [host]. *)
 let within (Mem c) at host =
   match c.memory with
@@ -1386,7 +1371,7 @@ let make (type m) ?measure ~word (p : m path) =
        own, started at the given word's value, which rig frees once no
        queue waits on it. *)
     let word = Nativeint.to_int word in
-    let start, bytes = words () in
+    let start, bytes = Rig_edge_primitives.words () in
     let in_array = word >= start && word + 8 <= start + bytes in
     let mapped =
       match ops.map_host with

@@ -104,18 +104,7 @@ let get s (off, n) =
    across a request to the firmware, which waits for its answer: the
    firmware's channel takes one request at a time. *)
 
-external holds : unit -> (int[@untagged])
-  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
-[@@noalloc]
-
-external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
-external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
-
-(* The calling thread's signals blocked and given back ([rig_mask] and
-   [rig_unmask] in [rig_edge.h]). *)
-external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
-external unmask : unit -> unit = "caml_rig_edge_unmask"
 
 (* [take m] takes [m], counted from before the take, so that a signal handler
    that runs inside a contended take sees it held. An exception that ends the
@@ -124,11 +113,11 @@ external unmask : unit -> unit = "caml_rig_edge_unmask"
    thread that holds [m], which only a call that skipped its check makes and
    which raises [Invalid_argument]. *)
 let take m =
-  hold ();
+  Rig_edge_primitives.hold ();
   match Mutex.lock m with
   | () -> ()
   | exception e -> (
-      unhold ();
+      Rig_edge_primitives.unhold ();
       match e with
       | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
           invalid_arg
@@ -140,7 +129,7 @@ let take m =
    polls. *)
 let give m =
   Mutex.unlock m;
-  unhold ()
+  Rig_edge_primitives.unhold ()
 
 (* [protect m f] is [f ()] holding [m], taken as the last step before the
    handler and given back as the first step of both exits, where nothing
@@ -164,18 +153,18 @@ let protect m f =
    blocked ([rig_mask] and [rig_unmask] in [rig_edge.h]), which only the
    driver's waits unblock. *)
 let guarded fn f =
-  if holds () <> 0 then
+  if Rig_edge_primitives.holds () <> 0 then
     invalid_arg
       ("Rig_bnxt." ^ fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
         inside a lock of the calling thread's");
-  mask ();
+  Rig_edge_primitives.mask ();
   match f () with
   | r ->
-      unmask ();
+      Rig_edge_primitives.unmask ();
       r
   | exception e ->
-      unmask ();
+      Rig_edge_primitives.unmask ();
       reraise e
 
 (* The firmware's channel *)

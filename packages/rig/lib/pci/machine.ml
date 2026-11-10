@@ -128,21 +128,14 @@ let take_locked m l =
   | Some files when files == Sysfs.files l -> Local.take l
   | _ -> invalid_arg "Machine.take_locked: the lock is of another machine's"
 
-(* The host's clock, [rig_now_ns] of [rig_edge.h]. *)
-external now : unit -> (int[@untagged])
-  = "caml_rig_edge_now_byte" "caml_rig_edge_now"
-[@@noalloc]
-
-external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
-external block : unit -> unit = "caml_rig_edge_block"
 external reraise : exn -> 'a = "%reraise"
 
 let nap s =
-  unblock ();
+  Rig_edge_primitives.unblock ();
   match Unix.sleepf s with
-  | () -> block ()
+  | () -> Rig_edge_primitives.block ()
   | exception e ->
-      block ();
+      Rig_edge_primitives.block ();
       reraise e
 
 (* A wait spins for [spin_ns], where devices mostly answer, then naps [nap_s]
@@ -152,13 +145,13 @@ let spin_ns = 1_000_000
 let nap_s = 0.0001
 
 let wait m ~us f =
-  let start = now () in
+  let start = Rig_edge_primitives.now () in
   let rec go () =
     let holds = f () in
     if Option.is_some (failed m) then false
     else if holds then true
     else
-      let elapsed = now () - start in
+      let elapsed = Rig_edge_primitives.now () - start in
       if elapsed / 1_000 >= us then false
       else begin
         if elapsed < spin_ns then Domain.cpu_relax () else nap nap_s;

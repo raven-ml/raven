@@ -13,19 +13,17 @@ type kernel = {
 
 type graph = { handle : nativeint; nodes : nativeint array }
 
+external reraise : exn -> 'a = "%reraise"
+
 (* A finaliser runs [collect ()] with the thread's signals blocked, its
    waits included ([rig_shield] and [rig_unshield] in [rig_edge.h]), so that
    no signal's exception escapes it into the code it interrupted. *)
-external shield : unit -> unit = "caml_rig_edge_shield" [@@noalloc]
-external unshield : unit -> unit = "caml_rig_edge_unshield"
-external reraise : exn -> 'a = "%reraise"
-
 let collected collect _ =
-  shield ();
+  Rig_edge_primitives.shield ();
   match collect () with
-  | () -> unshield ()
+  | () -> Rig_edge_primitives.unshield ()
   | exception e ->
-      unshield ();
+      Rig_edge_primitives.unshield ();
       reraise e
 
 let graph ~handle ~nodes ~collect =

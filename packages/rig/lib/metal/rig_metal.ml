@@ -76,23 +76,7 @@ let split = split ()
    stop releases what they hold; both run OCaml code and Metal's compiler. A
    call of rig's from a callback during one raises. *)
 
-(* The locks the calling thread holds, and a count of one more and one fewer
-   (rig_holds, rig_hold and rig_unhold in rig_edge.h). *)
-external holds : unit -> (int[@untagged])
-  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
-[@@noalloc]
-
-external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
-external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
-
-(* The calling thread's signals blocked and given back, and unblocked across
-   a wait's blocking step ([rig_mask], [rig_unmask], [rig_unblock] and
-   [rig_block] in [rig_edge.h]). *)
-external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
-external unmask : unit -> unit = "caml_rig_edge_unmask"
-external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
-external block : unit -> unit = "caml_rig_edge_block"
 
 (* [take m] takes [m], counted from before the take, so that a signal handler
    that runs inside a contended take sees it held. An exception that ends the
@@ -101,11 +85,11 @@ external block : unit -> unit = "caml_rig_edge_block"
    thread that holds [m], which only a call that skipped its check makes and
    which raises [Invalid_argument]. *)
 let take m =
-  hold ();
+  Rig_edge_primitives.hold ();
   match Mutex.lock m with
   | () -> ()
   | exception e -> (
-      unhold ();
+      Rig_edge_primitives.unhold ();
       match e with
       | Sys_error why when String.starts_with ~prefix:"Mutex.lock:" why ->
           invalid_arg
@@ -117,7 +101,7 @@ let take m =
    polls. *)
 let give m =
   Mutex.unlock m;
-  unhold ()
+  Rig_edge_primitives.unhold ()
 
 (* [locked m f r] is [f r] holding [m]. [m] is taken as the last step before
    the handler and given back as the first step of both exits, where nothing
@@ -142,18 +126,18 @@ let locked m f r =
    blocked ([rig_mask] and [rig_unmask] in [rig_edge.h]), which only the
    driver's waits unblock. *)
 let guarded fn f =
-  if holds () <> 0 then
+  if Rig_edge_primitives.holds () <> 0 then
     invalid_arg
       (fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
         inside a lock of the calling thread's");
-  mask ();
+  Rig_edge_primitives.mask ();
   match f () with
   | r ->
-      unmask ();
+      Rig_edge_primitives.unmask ();
       r
   | exception e ->
-      unmask ();
+      Rig_edge_primitives.unmask ();
       reraise e
 
 exception Fault of string
@@ -626,14 +610,14 @@ let signaled d = signaled_word d.self
    runtime check of pending signals, so a signal's handler runs as the
    sleep returns. *)
 let sleep d ~seen ~still_ms =
-  unblock ();
+  Rig_edge_primitives.unblock ();
   let r =
     match sleep_word d.self seen still_ms with
     | r ->
-        block ();
+        Rig_edge_primitives.block ();
         r
     | exception e ->
-        block ();
+        Rig_edge_primitives.block ();
         reraise e
   in
   if r <> 0 then raise (Fault (failure d.self))
