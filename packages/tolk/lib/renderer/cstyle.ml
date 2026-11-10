@@ -29,13 +29,6 @@ let cval u =
 
 let is_ptr = function Some (Dtype.Global | Dtype.Local) -> true | _ -> false
 
-(* [s], text a caller gave, which C cannot hold with a NUL: the renderer
-   refers to a text it sets aside with one ({!set_aside}). *)
-let user_text s =
-  if String.contains s '\000' then
-    invalid_arg (strf "%S: C source cannot hold a NUL byte" s);
-  s
-
 (* Python's str.format on positional arguments: {} and {i}, {{ and }}. *)
 let format fmt args =
   let b = Buffer.create 64 and next = ref 0 and n = String.length fmt in
@@ -99,9 +92,6 @@ type lang = {
   vector_names : (Dtype.t * string) list;
       (* the element names of vector types, where they are not type_map's *)
   code_for_op : (Op.t * (string list -> Dtype.t -> string)) list;
-      (* an operand's text may hold references to texts set aside
-         ({!set_aside}): a rule embeds it whole, or reads its first and last
-         characters and its parentheses, as strip_parens and joined do *)
   string_rewrite : (ctx, string) Pattern_matcher.t;
 }
 
@@ -433,13 +423,13 @@ let base_rewrite =
           match arg (m "f") with
           | Custom_function f when f.fmt ->
               Some
-                (format (user_text f.name) (List.map (fun y -> ctx.%{y}) args))
+                (format f.name (List.map (fun y -> ctx.%{y}) args))
           | Custom_function f ->
               Some
                 (strf "((%s(*)(%s))(%s))(%s)%s"
                    (render_scalar l (dtype x))
                    (String.concat ", " types)
-                   (user_text f.name)
+                   f.name
                    (String.concat ", " values)
                    (if Dtype.equal (dtype x) Dtype.Void then ";" else ""))
           | _ -> None);
@@ -927,7 +917,7 @@ let param_name u =
   | Param p ->
       let base =
         match p.name with
-        | Some n -> String.map (function ':' -> '_' | c -> c) (user_text n)
+        | Some n -> String.map (function ':' -> '_' | c -> c) n
         | None -> strf "data%d" p.slot
       in
       base ^ "_" ^ String.concat "_" (List.map string_of_int (max_shape u))
@@ -1004,134 +994,27 @@ let inline_code u =
    and the braces of the loops around it. *)
 let max_nesting = 64
 
-(* Texts set aside *)
+(* A value read once is written into its reader, so a chain of them, such as a
+   sum of many loads, is one expression that each step copies and scans, and
+   the chain costs the square of its length: a value whose expression is longer
+   than [max_inlined] characters is declared instead, which bounds each step's
+   cost. 4096 leaves whole the expressions of the kernels the tests render;
+   1024 would declare values in matmuls and attentions on the host and in fp8
+   conversions on HIP. *)
+let max_inlined = 4096
 
-(* A value read once is written into its reader, so a chain of them is one
-   expression, which would be copied and scanned whole at each step of the
-   chain. A long inlined value's text is instead set aside, and its reader
-   holds a reference to it, which the reader's statement writes out: the text
-   at [i] of [aside] is referred to as a NUL and [i] in [reference_digits]
-   digits. A text keeps its first and last characters outside the reference,
-   and only one whose parentheses balance is set aside, so that what a reader
-   reads of its operand's text, whether it starts with a minus or is wrapped
-   in parentheses ({!Helpers.strip_parens}), reads it as written out. *)
-type aside = {
-  expr : string; (* set aside but its first and last characters *)
-  deepest : int; (* the deepest nesting of brackets in it, written out *)
-  net : int; (* the brackets it leaves open *)
-  length : int; (* its length, written out *)
-}
-
-let reference_digits = 9
-
-(* A shorter text is copied into its reader: copying it costs about what
-   setting it aside does. *)
-let aside_length = 128
-
-(* The index of the reference at [i] in [s]. *)
-let reference s i =
-  let k = ref 0 in
-  for j = i + 1 to i + reference_digits do
-    k := (10 * !k) + Char.code (String.unsafe_get s j) - Char.code '0'
-  done;
-  !k
-
-(* The deepest nesting of brackets, ( [ and {, in [s] from [lo] to [hi]
-   exclusive, as written out, with the brackets it leaves open in [net]. *)
-let brackets aside ?net s lo hi =
-  let depth = ref 0 and deepest = ref 0 and i = ref lo in
-  while !i < hi do
-    (match String.unsafe_get s !i with
+(* The deepest nesting of brackets, ( [ and {, in [s]. *)
+let nesting s =
+  let depth = ref 0 and deepest = ref 0 in
+  for i = 0 to String.length s - 1 do
+    match String.unsafe_get s i with
     | '(' | '[' | '{' ->
         incr depth;
         if !depth > !deepest then deepest := !depth
     | ')' | ']' | '}' -> decr depth
-    | '\000' ->
-        let a = Dynarray.get aside (reference s !i) in
-        deepest := max !deepest (!depth + a.deepest);
-        depth := !depth + a.net;
-        i := !i + reference_digits
-    | _ -> ());
-    incr i
+    | _ -> ()
   done;
-  Option.iter (fun net -> net := !depth) net;
   !deepest
-
-let nesting aside s = brackets aside s 0 (String.length s)
-
-(* The length of [s] from [lo] to [hi] exclusive, written out. *)
-let written_length aside s lo hi =
-  let n = ref 0 and i = ref lo in
-  while !i < hi do
-    if String.unsafe_get s !i = '\000' then begin
-      n := !n + (Dynarray.get aside (reference s !i)).length;
-      i := !i + reference_digits
-    end
-    else incr n;
-    incr i
-  done;
-  !n
-
-(* Whether the parentheses of [s] balance from [lo] to [hi] exclusive. A text
-   set aside balances, and a reference holds no parenthesis. *)
-let balanced s lo hi =
-  let depth = ref 0 and i = ref lo in
-  while !i < hi && !depth >= 0 do
-    (match String.unsafe_get s !i with
-    | '(' -> incr depth
-    | ')' -> decr depth
-    | _ -> ());
-    incr i
-  done;
-  !depth = 0
-
-(* [s] with its middle set aside, when it is long enough. A text that starts
-   or ends with a reference, as an operand stripped of its parentheses does,
-   is kept whole: its first and last characters would not be its own. *)
-let set_aside aside s =
-  let n = String.length s in
-  if
-    n < aside_length
-    || s.[0] = '\000'
-    || s.[n - reference_digits - 1] = '\000'
-    || not (balanced s 1 (n - 1))
-  then s
-  else begin
-    let net = ref 0 in
-    let deepest = brackets aside ~net s 1 (n - 1) in
-    let length = written_length aside s 1 (n - 1) in
-    Dynarray.add_last aside { expr = s; deepest; net = !net; length };
-    strf "%c\000%0*d%c" s.[0] reference_digits
-      (Dynarray.length aside - 1)
-      s.[n - 1]
-  end
-
-(* [s] written out. *)
-let write_out aside s =
-  if not (String.contains s '\000') then s
-  else begin
-    let n = String.length s in
-    let b = Bytes.create (written_length aside s 0 n) in
-    (* Writes [s] from [lo] to [hi] exclusive at [at], and is where it ends. *)
-    let rec write s lo hi at =
-      let start = ref lo and at = ref at and i = ref lo in
-      while !i < hi do
-        if String.unsafe_get s !i = '\000' then begin
-          Bytes.blit_string s !start b !at (!i - !start);
-          at := !at + (!i - !start);
-          let a = Dynarray.get aside (reference s !i) in
-          at := write a.expr 1 (String.length a.expr - 1) !at;
-          i := !i + reference_digits + 1;
-          start := !i
-        end
-        else incr i
-      done;
-      Bytes.blit_string s !start b !at (hi - !start);
-      !at + (hi - !start)
-    in
-    ignore (write s 0 n 0);
-    Bytes.unsafe_to_string b
-  end
 
 let special_name u =
   match arg u with
@@ -1143,7 +1026,6 @@ let render_uops l uops =
   let user = Tbl.create 256 in
   let masks = mask_widths uops in
   let ctx = { lang = l; r; narrowed = Tbl.create 16; masks } in
-  let aside = Dynarray.create () in
   let children u = Option.value (Tbl.find_opt child_count u) ~default:0 in
   List.iter
     (fun u ->
@@ -1224,6 +1106,14 @@ let render_uops l uops =
       (Format.asprintf "failed to render %a %a [%s] %a" Op.pp (op u) Dtype.pp
          (dtype u) (String.concat ", " srcs) pp_arg (arg u))
   in
+  (* Whether [u], whose text is [line], is written into its reader. An
+     operation read once is while its text is short and shallow
+     ([max_inlined], [max_nesting]). A call of code written into its reader is
+     at any length, as its call asks ({!Ops.call}). An address (an index, a
+     shrink, a buffer passed by address, a pointer cast) is written at any
+     length: each wraps what it reads in a bracket, but for a vector's lane,
+     which no lane reads, so a chain of them is bounded by the brackets a
+     statement holds. *)
   let inlined u line =
     let o = op u in
     let cast = Op.equal o Op.Cast and casts = Op.Set.mem o casts in
@@ -1238,7 +1128,8 @@ let render_uops l uops =
        || (casts || Op.equal o Op.Stack || Op.Set.mem o alu_but_where)
           && children u = 1
           && not (Setting.value Setting.expand_ssa)
-          && nesting aside line <= max_nesting)
+          && String.length line <= max_inlined
+          && nesting line <= max_nesting)
   in
   let visit u =
     match op u with
@@ -1288,17 +1179,15 @@ let render_uops l uops =
           Tbl.replace inlined_ops u (ops_of u);
           if narrowed u then begin
             Tbl.replace ctx.narrowed u ();
-            Tbl.replace r u
-              (set_aside aside (strf "(%s)" (render_cast ctx u line)))
+            Tbl.replace r u (strf "(%s)" (render_cast ctx u line))
           end
-          else Tbl.replace r u (set_aside aside line)
+          else Tbl.replace r u line
         end
         else begin
           let declared =
             (not (Op.Set.mem o undeclared))
             && not (Dtype.equal (dtype u) Dtype.Void)
           in
-          let line = write_out aside line in
           let line =
             if declared then
               strf "%s %s = %s%s" (ty u) ctx.%{u} line
@@ -1368,7 +1257,7 @@ let program l uops =
   let outlined = outlined uops in
   let declare callee =
     match arg callee with
-    | Custom_function f -> strf "extern void %s();" (user_text f.name)
+    | Custom_function f -> strf "extern void %s();" f.name
     | _ ->
         let _, lines, bufs, _ = render_uops l (src callee) in
         let params =

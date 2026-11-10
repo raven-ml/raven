@@ -351,47 +351,31 @@ let sum n =
   Linearizer.linearize
     (Ops.sink ~kernel:(Ops.kernel_info ~name:"sum" ()) [ Ops.store out r ])
 
-(* The operands of the sum the kernel [src] stores, as written. *)
-let stored_sum src =
-  let prefix = "*(data0_1+0) = (" in
-  let line =
-    List.find (String.starts_with ~prefix)
-      (List.map String.trim (String.split_on_char '\n' src))
+(* An expression written into its reader is at most 4096 characters long. A
+   statement holds at most two of a sum's, its operands, and its own text. *)
+let max_statement = (2 * 4096) + 64
+
+let renderers_and_sums =
+  let pp ppf (r : Renderer.t) = Format.pp_print_string ppf r.name in
+  Gen.pair (Gen.of_list ~pp available) (Gen.int_range 2 2000)
+
+let writes_bounded_statements ((r : Renderer.t), n) =
+  cover "a sum longer than two inlined texts" (n > 1500);
+  let longest =
+    List.fold_left
+      (fun m line -> max m (String.length line))
+      0
+      (String.split_on_char '\n' (render r (sum n)))
   in
-  let start = String.length prefix in
-  let sum = String.sub line start (String.length line - start - 2) in
-  String.split_on_char '+' sum
-
-(* The element of [data1] each value of [src] loads, by its name, from the
-   statements that declare them: [float valK = ...] loading [data1_N] at
-   [+I]. *)
-let loads src =
-  List.filter_map
-    (fun line ->
-      match String.split_on_char ' ' (String.trim line) with
-      | [ "float"; name; "="; load ] when String.starts_with ~prefix:"val" name
-        -> (
-          match String.split_on_char '+' load with
-          | [ _; i ] ->
-              Some (name, int_of_string (List.hd (String.split_on_char ')' i)))
-          | _ -> None)
-      | _ -> None)
-    (String.split_on_char '\n' src)
-
-let writes_a_flat_sum n =
-  cover "a sum longer than the chains that nest" (n > 300);
-  let src = render clang (sum n) in
-  let element = loads src in
-  equal (list int) (List.init n Fun.id)
-    (List.map (fun o -> List.assoc o element) (stored_sum src))
+  at_most int ~than:max_statement longest
 
 let parentheses =
   group "parentheses"
     [
       prop "a chain of any length nests a bounded number of brackets"
         renderers_and_lengths nests_a_bounded_depth;
-      prop "a sum of any length is one flat expression of its loaded operands"
-        (Gen.int_range 2 1000) writes_a_flat_sum;
+      prop "a sum of any length writes statements of bounded length"
+        renderers_and_sums writes_bounded_statements;
       cases "an associative chain is written flat" ~id:fst
         [
           ("add", true);
@@ -540,22 +524,6 @@ let rendering =
       cases "refuses custom code str.format refuses, naming it" ~id:Fun.id
         [ "f({0"; "{0}}"; "{0} } {1}"; "{2}"; "{x}" ] (fun code ->
           raises_match (Exn.invalid_arg ~sub:code) (fun () -> custom code));
-      test "refuses custom code holding a NUL byte, which C cannot" (fun () ->
-          raises_match
-            (Exn.invalid_arg ~sub:"NUL")
-            (fun () -> custom "f({0}, \"\000\")"));
-      test "refuses a parameter named with a NUL byte" (fun () ->
-          let at =
-            Ops.index
-              (Shape.param ~shape:[ Int 1 ] ~name:"x\000" 0 Float32)
-              [ Ops.int ~dtype:Int32 0 ]
-          in
-          raises_match
-            (Exn.invalid_arg ~sub:"NUL")
-            (fun () ->
-              render clang
-                (Ops.toposort ~calls:Enter
-                   (Ops.sink [ Ops.store at (Ops.float ~dtype:Float32 1.) ]))));
       test "writes the same CUDA source for the CUDA and NV devices" cuda_on_nv;
       cases "raises Invalid_argument on an operation the target lacks"
         ~id:(fun (name, _) -> name)
@@ -966,6 +934,29 @@ let passes_variables_of_32_and_64_bits () =
       []
   in
   equal values (ints (Array.init 4 (fun i -> i + 2 + (1 lsl 40)))) (slot 0 out)
+
+(* [n] float32 values whose float32 sum depends on the order of its additions:
+   large values among small ones, whose low bits each addition rounds away. *)
+let summands n =
+  let f32 x = Int32.float_of_bits (Int32.bits_of_float x) in
+  Array.init n (fun i ->
+      f32 (if i mod 3 = 0 then 1e7 +. Float.of_int i else 0.37 *. Float.of_int i))
+
+(* A sum longer than one expression written into its reader: each addition of
+   [sum n] rounds to float32, in order, as the fold does in double precision
+   and rounds after, which rounds a sum of two float32 values correctly. *)
+let adds_a_long_sum_in_order () =
+  let n = 1500 in
+  let x = summands n in
+  let f32 v = Int32.float_of_bits (Int32.bits_of_float v) in
+  let expected = ref x.(0) in
+  for i = 1 to n - 1 do
+    expected := f32 (!expected +. x.(i))
+  done;
+  let k = Run.program (Lazy.force !host) (sum n) in
+  let floats a = Array.map (fun v -> `Float v) a in
+  let out = Run.on_host k [ (1, floats x) ] in
+  equal values (floats [| !expected |]) (slot 0 out)
 
 (* 300 steps of [chain], 600 brackets deep if written as one expression. The
    operands keep every step below 2^27, so int32's [<<] and [%] are OCaml's. *)
@@ -1590,6 +1581,8 @@ let execution =
       test "passes variables of 32 and 64 bits"
         passes_variables_of_32_and_64_bits;
       test "computes a chain too deep for one expression" computes_a_long_chain;
+      test "adds a sum too long for one expression in order"
+        adds_a_long_sum_in_order;
       test "runs custom code" runs_custom_code;
       test "accesses volatile buffers" accesses_volatile_buffers;
       test "stores each constant as its type holds it"

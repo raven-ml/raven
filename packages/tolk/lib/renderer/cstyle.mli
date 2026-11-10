@@ -18,16 +18,18 @@
     each value is a local variable, unless it is used once and cheap to
     repeat, in which case it is written into its user. That holds only while
     its expression nests at most 64 brackets, counting parentheses, square
-    brackets and braces; a deeper one is a local variable, so a chain of any
-    length stays below the 256 levels that Clang and Metal accept in a
-    statement.
+    brackets and braces, and is at most 4096 characters long; a deeper or
+    longer one is a local variable, so a chain of any length stays below the
+    256 levels that Clang and Metal accept in a statement, and renders in time
+    proportional to its length. A call of code written into its reader
+    ({!Ops.call}) is written there at any length and depth, so a chain of them
+    is one statement, which renders in time growing with the square of its
+    length.
 
     A renderer's {!Renderer.t.render} raises [Invalid_argument] on a kernel that
     holds a node its language cannot write, such as an operation the target
     lacks natively ({!Renderer.t.code_for_op}): code generation decomposes those
-    before rendering. It also raises [Invalid_argument] on a NUL byte in a text
-    the kernel gives it, the name or code of a function ({!Op.Custom_function})
-    or a parameter's name: C source cannot use one.
+    before rendering.
 
     A NaN constant is written from its bits, so a program stores its sign and
     payload, a signalling NaN staying one.

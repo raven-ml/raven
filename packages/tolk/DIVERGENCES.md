@@ -4354,31 +4354,69 @@ rule, its reason and its pins.
 A NaN constant was written from its bits; merged into D27, which holds its
 rule, its reason and its pins.
 
-## D157. A C-style expression nests at most 64 brackets
+## D157. A C-style value read once is written into its reader only while its text is short and shallow
 
 - **tinygrad:** `renderer/cstyle.py` (`_render`'s rule that writes a
-  value read once into its reader).
-- **tolk:** `Cstyle.max_nesting`, `Cstyle.nesting`, and `inlined` in
-  `Cstyle.render_uops`, with its call there.
+  value read once into its reader, `r[u] = l`, which the reader's rule copies
+  whole into its own).
+- **tolk:** `Cstyle.max_nesting`, `Cstyle.nesting`, `Cstyle.max_inlined`, and
+  `inlined` in `Cstyle.render_uops`, with its call there.
 - **Differs:** a value read once, which both write into its reader, is
   declared as a local variable when its expression nests more than 64
-  brackets, counting `(`, `[` and `{`. tinygrad bounds no depth, so a chain of
-  single-use values nests without limit, and Clang and Metal reject a statement
-  past 256 levels: "bracket nesting level exceeded maximum of 256". The limit
-  is Clang's `BracketDepth` (`LangOptions.def`, default 256); HIP compiles
-  through comgr, which is Clang, and its limit is unverified on hardware;
-  NVRTC 13 compiles 1000 levels. tinygrad met the error and removed
-  parentheses of associative chains instead, which a chain of `<<` and `%`
-  cannot use. No golden nests past 24 levels, so none changes.
-- **Reason:** (b). rune's float64 `fmod` (rune's `Lower_real.fmod`)
-  computes `r := (r << left) % my` 187 times, which written as one
-  expression nests about 374 levels, so its kernel did not compile on the
-  host: rune's `binary kinds, comparisons, where and fma give eager's bits`
-  (float64) and `binary › mod` failed.
-- **Pinned by:** the Cstyle suite: `parentheses › a chain of any length nests
-  a bounded number of brackets`, which renders chains of 1 to 300 steps with
-  each renderer, and `execution on the host › computes a chain too deep for
-  one expression`, which runs 300 steps on the host against a fold in OCaml.
+  brackets, counting `(`, `[` and `{`, or is longer than 4096 characters.
+  - Nesting: tinygrad bounds no depth, so a chain of
+    single-use values nests without limit, and Clang and Metal reject a
+    statement past 256 levels: "bracket nesting level exceeded maximum of 256".
+    The limit is Clang's `BracketDepth` (`LangOptions.def`, default 256); HIP
+    compiles through comgr, which is Clang, and its limit is unverified on
+    hardware; NVRTC 13 compiles 1000 levels. tinygrad met the error and removed
+    parentheses of associative chains instead, which a chain of `<<` and `%`
+    cannot use. No golden nests past 24 levels, so none changes.
+  - Length: tinygrad bounds no length either. A flat chain, such as a sum of
+    loads, which an associative operation writes without its operands'
+    parentheses, nests one level and is one expression that each term copies
+    whole, and that tolk also scans for its brackets, so rendering it costs the
+    square of its length. Each copy is now at most 4096 characters. A call of
+    code written into its reader (`Ops.call ~inline`) stays written there at any
+    length and depth, as in tinygrad, so a chain of them costs the square of its
+    length again, as it did before texts were held aside (8,000 calls of
+    `{0}+1.0f`: 89 to 125 ms and 101.6 M words, against 7.1 to 7.4 ms and
+    2.16 M held aside); no raven consumer builds one. An address (an index, a
+    shrink, a buffer passed by address, a pointer cast) stays written at any
+    length, as in tinygrad: each wraps what it reads in a bracket, so the
+    bracket limit bounds a chain of them. No golden changes; a bound of 1024
+    would change 11 (HIP's fp8 conversions, and the host's matmul, attention,
+    argmax, llama_ffn_gate and int8 stages).
+- **Reason:** nesting, (b). rune's float64 `fmod` (rune's `Lower_real.fmod`)
+  computes `r := (r << left) % my` 187 times, which written as one expression
+  nests about 374 levels, so its kernel did not compile on the host: rune's
+  `binary kinds, comparisons, where and fma give eager's bits` (float64) and
+  `binary › mod` failed. Length, (d): compile time. Fudge, a sum of loads
+  rendered for the host, unbounded against bounded: 25,000 loads 15.5 s against
+  0.34 to 0.37 s, 100,000 over 120 s against 1.5 to 1.6 s, three interleaved
+  pinned rounds under load. Holding long texts aside and writing them out once
+  rendered 25,000 in 0.18 to 0.21 s and 100,000 in 0.81 to 0.85 s, with 120 more
+  lines of code; the bound copies at most 4096 characters a step, so
+  `chains/render-sum`'s 8,000 loads allocate 48% more words than that did
+  (21.5 M against 14.5 M). Clang 19 then compiles their kernel in 2.25 to
+  2.49 s of user time against 3.26 to 3.49 s for the one long statement, eight
+  interleaved rounds. rune's cold compiles, unbounded against held texts, with
+  D468: `special/betaincinv-grad-f64` 23.21 G instructions against 21.49 G
+  (Clang excluded) and 244.9 M words against 196.3 M;
+  `special/betainccinv-grad-f32` 15.10 G against 14.60 G and 144.6 M against
+  127.4 M. Bounded, a cold first call allocates against held texts, in one
+  process: `special/betaincinv-grad-f64` 196.7 M words against 195.8 M
+  (+0.46%), `special/betainccinv-grad-f32` 127.4 M against 127.0 M (+0.30%),
+  `rng/normal-f64` 11.6 M against 11.8 M (-1.5%), `long/pendulum-200` the
+  same to 0.01%.
+- **Pinned by:** nesting, the Cstyle suite: `parentheses › a chain of any
+  length nests a bounded number of brackets`, which renders chains of 1 to 300
+  steps with each renderer, and `execution on the host › computes a chain too
+  deep for one expression`, which runs 300 steps on the host against a fold in
+  OCaml. Length, tolk's bench `chains/render-sum`, on fudge, and the Cstyle
+  suite's `parentheses › a sum of any length writes statements of bounded
+  length` and `execution on the host › adds a sum too long for one expression
+  in order`, which runs 1500 additions against a fold in OCaml.
 
 ## D158. A dead read of a staged value is 0
 
@@ -9435,43 +9473,23 @@ reason and its pins.
   1.1% more words. A kernel without long chains pays the numbering: tolk's
   linearize stage rows take 30% to 55% longer (3 µs to 1.6 ms a program, three
   interleaved pinned rounds under load) and allocate about 30% more words.
-  rune's small cold compiles, with D469: `rng/normal-f64` 1.36 G
-  instructions against 1.23 G, `linalg/solve-32` 0.903 G against 0.924 G,
-  each allocating 1.5% to 1.8% more words.
+  rune's small cold compiles, with long inlined texts then held aside:
+  `rng/normal-f64` 1.36 G instructions against 1.23 G, `linalg/solve-32`
+  0.903 G against 0.924 G, each allocating 1.5% to 1.8% more words.
 - **Pinned by:** tolk's bench `chains/linearize`, on fudge;
   `Tolk.Ops › compare_structure › structure_ranks numbers a graph's nodes in
   its order` and `› structure_ranks numbers NaNs of different bits alike`.
 
-## D469. A long expression written into its reader is set aside
+## D469. Withdrawn
 
-- **tinygrad:** `renderer/cstyle.py` (`CStyleLanguage._render`) writes a value
-  read once into its reader as a string, `r[u] = l`, which the reader's rule
-  copies whole into its own.
-- **tolk:** `Cstyle.render_uops`, `Cstyle.set_aside` and `Cstyle.write_out`.
-- **Differs:** the source is the same. An inlined value's text of 128
-  characters or more is held aside, and its reader's text holds a reference
-  to it, written out once in the statement that reads it. A flat chain, such
-  as a sum of loads, which an associative operation writes without its
-  operands' parentheses, stays one statement: tinygrad copies it whole at each
-  term, and tolk also scanned it for its brackets at each term (D157), so its
-  cost was the square of its length. A host kernel cut into functions (D466)
-  also found its frame's free slots by a scan of every live value, now kept
-  ordered. A NUL byte, which C cannot hold and a reference begins with, is
-  refused in a caller's text: a custom function's name or code, a
-  parameter's name.
-- **Reason:** (d): compile time. Fudge, a sum of loads rendered for the host:
-  1,000 loads 18 ms against 9 ms, 10,000 1.7 s against 0.09 s, 25,000 15.5 s
-  against 0.21 s, 100,000 over 120 s against 0.89 s, the same source. rune's
-  compile rows, cold, with D468: `special/betaincinv-grad-f64` 23.21 G
-  instructions against 21.49 G (Clang excluded) and 244.9 M words against
-  196.3 M; `special/betainccinv-grad-f32` 15.10 G against 14.60 G and
-  144.6 M against 127.4 M; `special/betainc-chain-f32` 115.4 M words
-  against 113.2 M. tolk's render rows allocate 1.8% less to 1.1% more.
-- **Pinned by:** tolk's bench `chains/render-sum`, on fudge; `Tolk.Cstyle ›
-  parentheses › a sum of any length is one flat expression of its loaded
-  operands` and `› a chain of any length nests a bounded number of brackets`;
-  `Tolk.Cstyle › rendering › refuses custom code holding a NUL byte, which C
-  cannot` and `› refuses a parameter named with a NUL byte`.
+A long expression written into its reader was held aside behind a NUL and an
+index, and written out once in the statement that read it, so that a flat chain
+stayed one statement and rendered in linear time. An expression longer than
+4096 characters is now declared instead (D157), which bounds what each reader
+copies with less code and no sentinel, and a NUL in a caller's text is no
+longer refused. A chain of calls of code written into their readers, which
+D157 leaves unbounded as tinygrad does, renders in quadratic time again. The frame slots of a host kernel cut into functions, which it
+kept in ordered sets, change no source and belong to D466.
 
 ## D438. A gated load in a loop whose address a workgroup shares reads ungated on HIP for gfx12
 

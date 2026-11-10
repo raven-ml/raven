@@ -602,8 +602,9 @@ let outputs =
 (* [chains] orders and renders kernels of one chain, each step read once by
    the next, for the host: [linearize] [chain_length] operations, a product
    and a sum a step, whose steps tie in the linear order all down the chain,
-   and [render-sum] a sum of [summed_loads] loads, one flat expression in a
-   kernel long enough to be written as several functions. *)
+   and [render-sum] a sum of [summed_loads] loads, flat expressions declared
+   as their text grows long, in a kernel long enough to be written as several
+   functions. *)
 let chain_length = 10_000
 let summed_loads = 8_000
 
