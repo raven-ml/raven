@@ -65,7 +65,14 @@
 <p class="proj-ref caption"><a href="https://arxiv.org/abs/2606.00442" class="u">Artemev, Xia, Boyd, Yu, Dangel, Hennequin and Bernacchia, ICML 2026 ↗</a></p>
 <div class="proj-foot"><!-- slot: uses nx rune hugin --><a href="https://github.com/hennequin-lab/murder/tree/main/packages/symo" class="caption u">code ↗</a></div>
 </article>
+<article class="proj">
+<div class="proj-head"><h3 class="h3 mono"><a href="https://github.com/hennequin-lab/murder/tree/main/packages/ilqr-vae" class="u">ilqr-vae</a></h3><span class="caption">hennequin-lab/murder</span></div>
+<p class="small">iLQR-VAE learns input-driven dynamics from neural recordings. Its encoder is an optimal-control solve: iLQR infers the inputs that best explain each trial, and the model is fit end to end by differentiating through that solve.</p>
+<p class="proj-ref caption"><a href="https://openreview.net/forum?id=wRODLDHaAiW" class="u">Schimel, Kao, Jensen and Hennequin, ICLR 2022 ↗</a></p>
+<div class="proj-foot"><!-- slot: uses nx rune --><a href="https://github.com/hennequin-lab/murder/tree/main/packages/ilqr-vae" class="caption u">code ↗</a></div>
+</article>
 </div>
+<p class="small" style="margin: 0; max-width: 36rem">The Hennequin lab also teaches Raven to its new members: its <a href="https://github.com/hennequin-lab/murder/tree/main/getting-started" class="u">getting-started course ↗</a> works through Nx, Rune and Vega with runnable examples and exercises, ending in a small model trained end to end.</p>
 </section>
 <section class="section pad stack" style="gap: 40px">
 <div class="eyebrow-gap">
@@ -81,6 +88,11 @@
 <div class="proj-head"><h3 class="h3 mono"><a href="https://github.com/hennequin-lab/murder/tree/main/packages/geom" class="u">geom</a></h3><span class="caption">hennequin-lab/murder</span></div>
 <p class="small">Batched geometric algebra for robotics: Euclidean, projective and conformal models of space, with forward and differential kinematics. Every multivector is an Nx tensor, so it broadcasts, differentiates with Rune and compiles.</p>
 <div class="proj-foot"><!-- slot: uses nx rune hugin --><a href="https://github.com/hennequin-lab/murder/tree/main/packages/geom" class="caption u">code ↗</a></div>
+</article>
+<article class="proj">
+<div class="proj-head"><h3 class="h3 mono"><a href="https://github.com/hennequin-lab/murder/tree/main/packages/dilqr" class="u">dilqr</a></h3><span class="caption">hennequin-lab/murder</span></div>
+<p class="small">Differentiable iterative LQR for discrete-time optimal control. Gradients come implicitly from the solution rather than by unrolling the iterations, in reverse or forward mode, and a fixed-iteration solve compiles with Rune into one program whose size does not grow with the horizon.</p>
+<div class="proj-foot"><!-- slot: uses nx rune --><a href="https://github.com/hennequin-lab/murder/tree/main/packages/dilqr" class="caption u">code ↗</a></div>
 </article>
 <article class="proj">
 <div class="proj-head"><h3 class="h3 mono"><a href="https://github.com/gabyfle/SoundML" class="u">SoundML</a></h3><span class="caption">gabyfle</span></div>
