@@ -2765,6 +2765,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 - `Nx.rms_norm` takes `?scale`, applied before its one rounding, and
   normalises a lane whose squares overflow or underflow at a power-of-two
   scale, where it gave zeros or infinities.
+- Add `Nx.Prim.layouts`, the layout of each of a value's arrays, a cut
+  value's pieces' own, reading no byte.
 - Add `nx.cuda` (`Nx_cuda`), kernels of `Nx_kernel.S` for NVIDIA `sm_89`
   GPUs. A set made by `Nx.devices ~kernels:(module Nx_cuda)` computes on
   the GPU without `Rune.jit`.

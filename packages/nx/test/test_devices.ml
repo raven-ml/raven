@@ -219,5 +219,26 @@ let witnesses =
           equal bool false (same (s2, Any S2.on) (twin, Any Twin.on)));
     ]
 
+(* A value's layouts: one per device, each piece's own, as the piece holds
+   it there; and a traced value has none. *)
+let layouts =
+  group "layouts"
+    [
+      test "a cut value's pieces" (fun () ->
+          let x = Nx.place (S2.split ~axis:1) (Nx.ones Nx.float32 [| 2; 4 |]) in
+          let shape l = Iarray.to_list (Nx_array.Layout.shape l) in
+          let shapes = Iarray.to_list (Iarray.map shape (Nx.Prim.layouts x)) in
+          equal (list (list int)) [ [ 2; 2 ]; [ 2; 2 ] ] shapes);
+      test "a value on one device" (fun () ->
+          let x = Nx.matrix_transpose (Nx.ones Nx.float32 [| 2; 3 |]) in
+          equal int 1 (Iarray.length (Nx.Prim.layouts x));
+          let strides l = Iarray.to_list (Nx_array.Layout.strides l) in
+          equal (list int)
+            (strides (Nx.Prim.form x).layout)
+            (strides (Iarray.get (Nx.Prim.layouts x) 0)));
+    ]
+
 let () =
-  exit (run "nx devices" [ sets; placements; meshes; coercions; witnesses ])
+  exit
+    (run "nx devices"
+       [ sets; placements; meshes; coercions; witnesses; layouts ])

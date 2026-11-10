@@ -7644,6 +7644,7 @@ module Prim = struct
   let iteri = Prim.iteri
   let map = Prim.map
   let form = Prim.form
+  let layouts x = Iarray.map Nx_array.layout (Prim.arrays x)
   let results = Prim.results
   let iter_results = Prim.iter_results
 

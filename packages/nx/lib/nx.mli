@@ -5923,6 +5923,15 @@ module Prim : sig
   val form : ('v, 's, 'd) nx -> ('v, 's, 'd) form
   (** [form x] is [x] without its bytes. *)
 
+  val layouts : ('v, 's, 'd) nx -> Nx_array.Layout.t iarray
+  (** [layouts x] is the layout of each of [x]'s arrays over its memory, one
+      per device of its placement, in order, as a compiler reads them to
+      know the variant a call over [x] runs; it reads no byte and claims
+      nothing. A value cut over devices has a piece's own layout there,
+      which {!form} does not give.
+
+      Raises [Invalid_argument] for a traced value. *)
+
   val results :
     by:string ->
     ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) nx) ->
