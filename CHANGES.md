@@ -2768,10 +2768,11 @@ word comes from its lock and from samples the dashboard saw arrive.
   sizes take 4 or 8 bytes each, whichever agrees with the central directory,
   and failed before with an error naming the descriptor on the 8-byte ones
   torch writes past 4 GiB and Java writes from 0xFFFFFFFF bytes on.
-- Add `Nx.layer_norm ?axes ?eps ?scale ?shift`: the biased variance, `eps`
-  inside the root, computed at float32 for narrow floats and rounded once,
-  the affine included. Its error follows the lane's spread, whatever its
-  mean, and a lane of equal elements is exactly `+0.` before the affine.
+- Add `Nx.standardize ?axes ?eps ?scale ?shift`, which standardises along
+  `axes` (layer normalisation): the biased variance, `eps` inside the root,
+  computed at float32 for narrow floats and rounded once, the affine
+  included. Its error follows the lane's spread, whatever its mean, and a
+  lane of equal elements is exactly `+0.` before the affine.
 - `Nx.rms_norm` takes `?scale`, applied before its one rounding, and
   normalises a lane whose squares overflow or underflow at a power-of-two
   scale, where it gave zeros or infinities.
@@ -3451,12 +3452,13 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
-- **Breaking:** `Layer_norm.apply` is `Nx.layer_norm` and `Rms_norm.apply` is
-  `Nx.rms_norm`, their affine applied before the one rounding to the input's
-  dtype. Results change at every dtype; a constant vector now maps to `beta`
-  whatever its float32 mean, and a NaN `eps` raises. `Batch_norm.apply`
-  trains through `Nx.layer_norm` over the batch's axes, and its eval mode
-  applies `gamma` and `beta` before its one rounding at a narrow dtype.
+- **Breaking:** `Layer_norm.apply` is `Nx.standardize` and `Rms_norm.apply`
+  is `Nx.rms_norm`, their affine applied before the one rounding to the
+  input's dtype. Results change at every dtype; a constant vector now maps
+  to `beta` whatever its float32 mean, and a NaN `eps` raises.
+  `Batch_norm.apply` trains through `Nx.standardize` over the batch's axes,
+  and its eval mode applies `gamma` and `beta` before its one rounding at a
+  narrow dtype.
 - `Kaun.Cache_index.window`'s size is a tensor of the index: windows of any
   size share one compiled program, so gpt-oss's cold first call takes 0.87 s
   against 1.25 s on an RTX 5000 Ada. Full layers, `window max_int`, pay a

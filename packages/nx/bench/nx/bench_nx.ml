@@ -1351,8 +1351,8 @@ let statistics_rows =
       Thumper.bench_with_setup "softmax-f32-64x128256" ~setup:vocab Nx.softmax;
       Thumper.bench_with_setup "rms_norm-f32-8192x4096" ~setup:m8192x4096
         Nx.rms_norm;
-      Thumper.bench_with_setup "layer_norm-f32-8192x4096" ~setup:m8192x4096
-        (fun x -> Nx.layer_norm x);
+      Thumper.bench_with_setup "standardize-f32-8192x4096" ~setup:m8192x4096
+        (fun x -> Nx.standardize x);
       Thumper.bench_with_setup "log_softmax-f32-8x64" ~setup:small_logits
         Nx.log_softmax;
       Thumper.bench_with_setup "ewma-f32-1M" ~setup:f1m (Nx.ewma ~alpha:0.1);

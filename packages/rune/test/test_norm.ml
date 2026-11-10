@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* {!Nx.layer_norm} and {!Nx.rms_norm} over rune: a compiled call is within
+(* {!Nx.standardize} and {!Nx.rms_norm} over rune: a compiled call is within
    the bound rune.mli's Numerics table states of a reference of twice
    float64's digits, at every float dtype, over strided views, with special
    values eager's; a lane of equal elements, [-0.] among them, is [+0.]
@@ -66,7 +66,7 @@ let unit_scale xs =
 
 (* A lane by its definition, [(x - μ) / sqrt (V + eps)], with the exact
    mean, variance, mean absolute deviation and mean magnitude. *)
-let lane_ln eps xs =
+let lane_z eps xs =
   let xs = if eps = 0. then unit_scale xs else xs in
   let n = (Float.of_int (Array.length xs), 0.) in
   let sum = Array.fold_left (fun a x -> dd_add a (x, 0.)) (0., 0.) xs in
@@ -88,9 +88,9 @@ let lane_rms eps xs =
   let root = dd_sqrt (dd_add (dd_div sq n) (eps, 0.)) in
   Array.map (fun x -> dd_div (x, 0.) root) xs
 
-(* rune.mli's row for [layer_norm], an element of value [y] of a lane of
+(* rune.mli's row for [standardize], an element of value [y] of a lane of
    [n] terms: [(F / 2s + 11u/2) |y| + n u A / √s], [F] [var]'s row. *)
-let ln_bound u n eps (v, dev, mag) y =
+let z_bound u n eps (v, dev, mag) y =
   let k = Float.of_int n in
   let b = (k +. 1.) *. u *. mag in
   let f =
@@ -209,8 +209,8 @@ let law_jit
     match (rms, affine) with
     | true, true -> Nx.rms_norm ~eps ~scale:(vec g) x
     | true, false -> Nx.rms_norm ~eps x
-    | false, true -> Nx.layer_norm ~eps ~scale:(vec g) ~shift:(vec b) x
-    | false, false -> Nx.layer_norm ~eps x
+    | false, true -> Nx.standardize ~eps ~scale:(vec g) ~shift:(vec b) x
+    | false, false -> Nx.standardize ~eps x
   in
   let read y = Nx.to_array (Nx.cast f64 y) in
   let eager = read (f x) and compiled = read (Rune.jit' f x) in
@@ -220,7 +220,7 @@ let law_jit
     let want =
       if special || rms then [||]
       else
-        let y, v, dev, mag = lane_ln eps lx in
+        let y, v, dev, mag = lane_z eps lx in
         Array.mapi
           (fun j y ->
             let gj = if affine then g.(j) else 1. in
@@ -257,13 +257,13 @@ let law_jit
         else
           let zh, zl = dd_add (dd_mul_float y gj) (bj, 0.) in
           let tol =
-            (Float.abs gj *. ln_bound u k eps (v, dev, mag) (fst y))
+            (Float.abs gj *. z_bound u k eps (v, dev, mag) (fst y))
             +. (u *. (Float.abs (gj *. fst y) +. Float.abs zh))
             +. (ud *. Float.abs c)
             +. ((Float.abs gj +. 1.) *. tiny)
           in
           if Float.abs (c -. zh -. zl) > tol then
-            failf "layer_norm at %d: compiled %h, by definition %h" i c zh
+            failf "standardize at %d: compiled %h, by definition %h" i c zh
     done
   done
 
@@ -275,7 +275,7 @@ let test_constant () =
       List.iter
         (fun eps ->
           let x = Nx.full Nx.float32 [| 2; n |] v in
-          let y = Nx.to_array (Rune.jit' (fun x -> Nx.layer_norm ~eps x) x) in
+          let y = Nx.to_array (Rune.jit' (fun x -> Nx.standardize ~eps x) x) in
           Array.iteri
             (fun i y ->
               if Int64.bits_of_float y <> 0L then
@@ -291,13 +291,13 @@ let test_constant () =
    normalised at a power of two, beside one that keeps its scale. *)
 let test_overflow () =
   let x = Nx.create Nx.float32 [| 2; 2 |] [| 1e20; -1e20; 3.; 5. |] in
-  let ln = Nx.to_array (Rune.jit' (fun x -> Nx.layer_norm x) x) in
+  let z = Nx.to_array (Rune.jit' (fun x -> Nx.standardize x) x) in
   let rms = Nx.to_array (Rune.jit' (fun x -> Nx.rms_norm x) x) in
   let y = 1. /. Float.sqrt (1. +. 1e-5) in
-  equal ~msg:"layer_norm" (array (float 1e-6)) [| 1.; -1.; -.y; y |] ln;
+  equal ~msg:"standardize" (array (float 1e-6)) [| 1.; -1.; -.y; y |] z;
   let tiny = Nx.create Nx.float32 [| 2 |] [| 0x1p-140; -0x1p-140 |] in
-  equal ~msg:"layer_norm of subnormals" (array float_exact) [| 1.; -1. |]
-    (Nx.to_array (Rune.jit' (fun x -> Nx.layer_norm ~eps:0. x) tiny));
+  equal ~msg:"standardize of subnormals" (array float_exact) [| 1.; -1. |]
+    (Nx.to_array (Rune.jit' (fun x -> Nx.standardize ~eps:0. x) tiny));
   equal ~msg:"rms_norm of subnormals" (array float_exact) [| 1.; -1. |]
     (Nx.to_array (Rune.jit' (fun x -> Nx.rms_norm ~eps:0. x) tiny));
   let r = Float.sqrt 17. in
@@ -314,8 +314,8 @@ let w0 =
 let g0 = Nx.create f64 [| 5 |] [| 1.5; -0.5; 2.; 1.; 0.25 |]
 let b0 = Nx.create f64 [| 5 |] [| 0.25; -1.; 0.; 3.; 1. |]
 
-let ln_loss ?axes x g b =
-  Nx.sum (Nx.mul w0 (Nx.layer_norm ?axes ~scale:g ~shift:b x))
+let z_loss ?axes x g b =
+  Nx.sum (Nx.mul w0 (Nx.standardize ?axes ~scale:g ~shift:b x))
 let rms_loss x g = Nx.sum (Nx.mul w0 (Nx.rms_norm ~scale:g x))
 
 let ok = result unit string
@@ -323,10 +323,10 @@ let t = Nx.Ptree.tensor
 
 let test_check_grads () =
   let check msg f p = equal ~msg ok (Ok ()) (Rune.check_grads t f p) in
-  check "layer_norm x" (fun x -> ln_loss x g0 b0) x0;
-  check "layer_norm along 0" (fun x -> ln_loss ~axes:[ 0 ] x g0 b0) x0;
-  check "layer_norm scale" (fun g -> ln_loss x0 g b0) g0;
-  check "layer_norm shift" (fun b -> ln_loss x0 g0 b) b0;
+  check "standardize x" (fun x -> z_loss x g0 b0) x0;
+  check "standardize along 0" (fun x -> z_loss ~axes:[ 0 ] x g0 b0) x0;
+  check "standardize scale" (fun g -> z_loss x0 g b0) g0;
+  check "standardize shift" (fun b -> z_loss x0 g0 b) b0;
   check "rms_norm x" (fun x -> rms_loss x g0) x0;
   check "rms_norm scale" (fun g -> rms_loss x0 g) g0
 
@@ -335,7 +335,7 @@ let test_check_grads () =
 let test_closed_form () =
   let eps = 1e-5 in
   let xs = Nx.to_array x0 and ws = Nx.to_array w0 and gs = Nx.to_array g0 in
-  let got = Nx.to_array (Rune.grad' (fun x -> ln_loss x g0 b0) x0) in
+  let got = Nx.to_array (Rune.grad' (fun x -> z_loss x g0 b0) x0) in
   for l = 0 to 2 do
     let lane = Array.sub xs (l * 5) 5 in
     let mu, v = stats lane in
@@ -361,8 +361,8 @@ let test_jit_grads () =
         (Nx.to_array (Rune.grad' loss x0))
         (Nx.to_array (Rune.grad' (Rune.jit' loss) x0)))
     [
-      ("layer_norm", fun x -> ln_loss x g0 b0);
-      ("layer_norm along 0", fun x -> ln_loss ~axes:[ 0 ] x g0 b0);
+      ("standardize", fun x -> z_loss x g0 b0);
+      ("standardize along 0", fun x -> z_loss ~axes:[ 0 ] x g0 b0);
       ("rms_norm", fun x -> rms_loss x g0);
     ]
 
@@ -375,6 +375,6 @@ let () =
          test "a lane of equal elements is zero compiled" test_constant;
          test "a lane whose squares overflow, compiled" test_overflow;
          test "gradients against finite differences" test_check_grads;
-         test "layer_norm's gradient in closed form" test_closed_form;
+         test "standardize's gradient in closed form" test_closed_form;
          test "compiled gradients are the eager ones" test_jit_grads;
        ])

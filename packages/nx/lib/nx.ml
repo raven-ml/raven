@@ -3168,9 +3168,9 @@ let rms_norm (type s d) ?(axes = [ -1 ]) ?(eps = 1e-6) ?scale
    equal elements has [d] equal to [c₂]. Where [d - c₂] is [±0] the result
    is [+0] before the affine, [r] taken as [0] where it is [∞], with the
    tangent of [(d - c₂) · r]. [normalised] runs the statistics. *)
-let layer_norm (type s d) ?(axes = [ -1 ]) ?(eps = 1e-5) ?scale ?shift
+let standardize (type s d) ?(axes = [ -1 ]) ?(eps = 1e-5) ?scale ?shift
     (x : (float, s, d) t) : (float, s, d) t =
-  let by = "Nx.layer_norm" in
+  let by = "Nx.standardize" in
   let x = Donate.read ~by x in
   let s = shape x and dt = dtype x in
   let axes = reduced_axes ~by x (Some axes) in

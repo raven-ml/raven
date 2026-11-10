@@ -332,7 +332,6 @@ statistics/cumsum-f32-1024x4096-axis0	alloc_words	exact	118
 statistics/cumsum-f32-48x1024-axis0	alloc_words	exact	118
 statistics/ewma-f32-1024x1024-rows	alloc_words	exact	26455
 statistics/ewma-f32-1M	alloc_words	exact	50075
-statistics/layer_norm-f32-8192x4096	alloc_words	exact	2922
 statistics/log_softmax-f32-1024x1024	alloc_words	exact	995
 statistics/log_softmax-f32-32x32000	alloc_words	exact	995
 statistics/log_softmax-f32-8x64	alloc_words	exact	995
@@ -347,6 +346,7 @@ statistics/softmax-f32-32x32000	alloc_words	exact	1466
 statistics/softmax-f32-64x128256	alloc_words	exact	1466
 statistics/softmax-f32-8x64	alloc_words	exact	1466
 statistics/softplus-f32-1M	alloc_words	exact	342
+statistics/standardize-f32-8192x4096	alloc_words	exact	2922
 statistics/std-f32-1024x1024-rows	alloc_words	exact	863
 statistics/std-f32-1024x1024-rows-constant	alloc_words	exact	1503
 statistics/std-f64-1M-tiny	alloc_words	exact	2472

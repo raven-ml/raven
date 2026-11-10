@@ -1193,7 +1193,7 @@ let test_rms_cases () =
   invalid ~by:"Nx.rms_norm" (fun () -> Nx.rms_norm ~eps:(-1.) (f32 [| 1. |]));
   invalid ~by:"Nx.rms_norm" (fun () -> Nx.rms_norm ~eps:nan (f32 [| 1. |]))
 
-(* Layer norm *)
+(* Standardize *)
 
 (* Pairs [hi + lo] of twice float64's digits: a sum and a product within
    about [2^-104] of the exact one, relatively, a quotient and a root a
@@ -1220,7 +1220,7 @@ let dd_sqrt (ah, al) =
    far within either format's tolerance, with the lane's exact mean [μ],
    variance [V], mean absolute deviation and mean magnitude, to the
    precision a bound needs. *)
-let lane_ln eps xs =
+let lane_z eps xs =
   let xs = if eps = 0. then unit_scale xs else xs in
   let n = (Float.of_int (Array.length xs), 0.) in
   let sum = Array.fold_left (fun a x -> dd_add a (x, 0.)) (0., 0.) xs in
@@ -1244,10 +1244,10 @@ let terms n =
   let rec depth b d = if b <= 1 then d else depth ((b + 1) / 2) (d + 1) in
   (Float.of_int l, Float.of_int (depth ((n + 1023) / 1024) 0))
 
-(* The bound [layer_norm]'s doc states for an element of exact value [y]
+(* The bound [standardize]'s doc states for an element of exact value [y]
    of a lane of [n] terms, before the narrow rounding and the affine:
    [(F / 2s + 11u/2) |y| + (L + D + 1) u A / √s]. *)
-let ln_bound u n eps (mu, v, dev, mag) y =
+let z_bound u n eps (mu, v, dev, mag) y =
   let l, d = terms n in
   let e = ((l +. d) *. u *. mag) +. (u *. Float.abs mu) in
   let f =
@@ -1261,7 +1261,7 @@ let ln_bound u n eps (mu, v, dev, mag) y =
 
 (* Lanes of a few to several blocks, drawn about a mean far from their
    spread or none, constant ones among them; an affine half the time. *)
-let ln_case =
+let z_case =
   let open Gen in
   let* s =
     frequency
@@ -1305,7 +1305,7 @@ let ln_case =
    rounding carried by [g]; a lane of no spread,
    [-0.] among its elements or not, is the affine of [+0.] exactly, at
    every [eps]. *)
-let law_ln (type s) (dt : (float, s) D.t) u tiny (s, xs, eps, g, b, small) =
+let law_z (type s) (dt : (float, s) D.t) u tiny (s, xs, eps, g, b, small) =
   let k = s.(Array.length s - 1) in
   cover "one term a lane" (k = 1);
   covers_blocks dt s k;
@@ -1315,7 +1315,7 @@ let law_ln (type s) (dt : (float, s) D.t) u tiny (s, xs, eps, g, b, small) =
   cover "a subnormal lane" (Array.exists (subnormal dt) xs);
   let y =
     Nx.to_array
-      (Nx.layer_norm ~eps ?scale:(affine_of dt g) ?shift:(affine_of dt b)
+      (Nx.standardize ~eps ?scale:(affine_of dt g) ?shift:(affine_of dt b)
          (value dt s xs))
   in
   let lane_g = Option.value g ~default:(Array.make k 1.) in
@@ -1323,7 +1323,7 @@ let law_ln (type s) (dt : (float, s) D.t) u tiny (s, xs, eps, g, b, small) =
   List.iter
     (fun lane ->
       let lx = Array.map (fun i -> xs.(i)) lane in
-      let want, mu, v, dev, mag = lane_ln eps lx in
+      let want, mu, v, dev, mag = lane_z eps lx in
       let constant = Array.for_all (fun x -> x = lx.(0)) lx in
       cover "a constant lane" constant;
       cover "a -0. in a constant lane"
@@ -1337,7 +1337,8 @@ let law_ln (type s) (dt : (float, s) D.t) u tiny (s, xs, eps, g, b, small) =
             let want = Option.fold ~none:0. ~some:(fun g -> 0. *. g.(j)) g in
             let want = Option.fold ~none:want ~some:(fun b -> want +. b.(j)) b in
             if not (same got want) then
-              failf "layer_norm at %d of a lane of no spread: %h, not %h, lane %a"
+              failf
+                "standardize at %d of a lane of no spread: %h, not %h, lane %a"
                 i got want
                 Format.(pp_print_array ~pp_sep:pp_print_space float_pp)
                 lx
@@ -1345,31 +1346,31 @@ let law_ln (type s) (dt : (float, s) D.t) u tiny (s, xs, eps, g, b, small) =
           else
             let zh, zl = dd_add (dd_mul_float (yr, yl) gj) (bj, 0.) in
             let tol =
-              (Float.abs gj *. ln_bound u k eps (mu, v, dev, mag) yr)
+              (Float.abs gj *. z_bound u k eps (mu, v, dev, mag) yr)
               +. (u *. (Float.abs (gj *. yr) +. Float.abs zh))
               +. ((Float.abs gj +. 1.) *. tiny)
             in
             let off = Float.abs (got -. zh -. zl) in
             if off > tol then
-              failf "layer_norm at %d: %h, by definition %h, %.2f bounds" i
+              failf "standardize at %d: %h, by definition %h, %.2f bounds" i
                 got zh (off /. tol))
         lane)
     (lanes s)
 
 (* At float32 and float64, the bits of the composition its doc names. *)
-let law_ln_composed (type s) (dt : (float, s) D.t) (s, xs, eps, g, b, small)
+let law_z_composed (type s) (dt : (float, s) D.t) (s, xs, eps, g, b, small)
     =
   let x = value dt s (drawn dt small xs) in
   let scale = affine_of dt g and shift = affine_of dt b in
-  let want = Nx.layer_norm ~eps x in
+  let want = Nx.standardize ~eps x in
   let want = match scale with None -> want | Some g -> Nx.mul want g in
   let want = match shift with None -> want | Some b -> Nx.add want b in
   equal same_bits (Nx.to_array want)
-    (Nx.to_array (Nx.layer_norm ~eps ?scale ?shift x))
+    (Nx.to_array (Nx.standardize ~eps ?scale ?shift x))
 
 (* A lane of equal elements is [+0.], whatever their mean's rounding, up to
    [2^17] of them at float32: the old composition gave [0.21] for [1000.1]. *)
-let test_ln_constant () =
+let test_z_constant () =
   let at (type s) (dt : (float, s) D.t) xs =
     let n = Array.length xs in
     List.iter
@@ -1380,7 +1381,7 @@ let test_ln_constant () =
             if not (same y 0.) then
               failf "%s, %d of %h, eps %g: %h at %d" (D.name dt) n xs.(0) eps
                 y i)
-          (Nx.to_array (Nx.layer_norm ~eps x)))
+          (Nx.to_array (Nx.standardize ~eps x)))
       [ 1e-5; 0. ]
   in
   List.iter
@@ -1396,50 +1397,51 @@ let test_ln_constant () =
       [| 1e30; 1e30 |];
     ]
 
-let test_ln_cases () =
+let test_z_cases () =
   let f32 xs = Nx.create Nx.float32 [| Array.length xs |] xs in
   let f16 xs = Nx.create Nx.float16 [| Array.length xs |] xs in
   equal same_bits [| nan; nan; nan |]
-    (Nx.to_array (Nx.layer_norm (f32 [| 1.; nan; 2. |])));
+    (Nx.to_array (Nx.standardize (f32 [| 1.; nan; 2. |])));
   equal same_bits [| nan; nan; nan |]
-    (Nx.to_array (Nx.layer_norm (f32 [| 1.; infinity; 2. |])));
+    (Nx.to_array (Nx.standardize (f32 [| 1.; infinity; 2. |])));
   equal same_bits [| nan; nan |]
-    (Nx.to_array (Nx.layer_norm (f32 [| neg_infinity; neg_infinity |])));
+    (Nx.to_array (Nx.standardize (f32 [| neg_infinity; neg_infinity |])));
   (* A float16 lane whose variance passes float16's greatest value. *)
   equal same_bits [| -1.; 1.; -1.; 1. |]
-    (Nx.to_array (Nx.layer_norm (f16 [| -300.; 300.; -300.; 300. |])));
+    (Nx.to_array (Nx.standardize (f16 [| -300.; 300.; -300.; 300. |])));
   equal same_bits [| -1.; 1. |]
-    (Nx.to_array (Nx.layer_norm ~eps:0. (f32 [| 3.; 5. |])));
+    (Nx.to_array (Nx.standardize ~eps:0. (f32 [| 3.; 5. |])));
   equal same_bits [| 0.; 0. |]
-    (Nx.to_array (Nx.layer_norm ~eps:0. (f32 [| 2.; 2. |])));
+    (Nx.to_array (Nx.standardize ~eps:0. (f32 [| 2.; 2. |])));
   (* Squares that underflow at [eps = 0.], beside a lane of zeros. *)
   equal same_bits [| 1.; -1.; 0.; 0. |]
     (Nx.to_array
-       (Nx.layer_norm ~eps:0.
+       (Nx.standardize ~eps:0.
           (Nx.create Nx.float32 [| 2; 2 |]
              [| 0x1p-140; -0x1p-140; 0.; -0. |])));
   equal same_bits [| 1.; -1. |]
     (Nx.to_array
-       (Nx.layer_norm ~eps:0.
+       (Nx.standardize ~eps:0.
           (Nx.create Nx.float64 [| 2 |] [| 0x1p-1060; -0x1p-1060 |])));
   equal same_bits [| 1.; -1. |]
     (Nx.to_array
-       (Nx.layer_norm ~eps:0.
+       (Nx.standardize ~eps:0.
           (Nx.create Nx.bfloat16 [| 2 |] [| 0x1p-130; -0x1p-130 |])));
   (* Squared deviations past the format's greatest value, beside a lane
      that keeps its own bits. *)
   let wide = Nx.create Nx.float32 [| 2; 2 |] [| -3e19; 3e19; 3.; 5. |] in
   equal same_bits
-    (Array.append [| -1.; 1. |] (Nx.to_array (Nx.layer_norm (f32 [| 3.; 5. |]))))
-    (Nx.to_array (Nx.layer_norm wide));
+    (Array.append [| -1.; 1. |]
+       (Nx.to_array (Nx.standardize (f32 [| 3.; 5. |]))))
+    (Nx.to_array (Nx.standardize wide));
   equal same_bits [| 1.; -1. |]
-    (Nx.to_array (Nx.layer_norm (f32 [| 1e38; -1e38 |])));
-  equal same_bits [| 1.; -1. |]
-    (Nx.to_array
-       (Nx.layer_norm (Nx.create Nx.float64 [| 2 |] [| 1e300; -1e300 |])));
+    (Nx.to_array (Nx.standardize (f32 [| 1e38; -1e38 |])));
   equal same_bits [| 1.; -1. |]
     (Nx.to_array
-       (Nx.layer_norm (Nx.create Nx.bfloat16 [| 2 |] [| 1e30; -1e30 |])));
+       (Nx.standardize (Nx.create Nx.float64 [| 2 |] [| 1e300; -1e300 |])));
+  equal same_bits [| 1.; -1. |]
+    (Nx.to_array
+       (Nx.standardize (Nx.create Nx.bfloat16 [| 2 |] [| 1e30; -1e30 |])));
   equal same_bits [| 1.; -1. |]
     (Nx.to_array (Nx.rms_norm (f32 [| 1e20; -1e20 |])));
   equal same_bits
@@ -1450,15 +1452,16 @@ let test_ln_cases () =
        0 2);
   (* [+0.] before the affine. *)
   equal same_bits [| -0.; 0. |]
-    (Nx.to_array (Nx.layer_norm ~scale:(f32 [| -1.; 1. |]) (f32 [| 4.; 4. |])));
+    (Nx.to_array
+       (Nx.standardize ~scale:(f32 [| -1.; 1. |]) (f32 [| 4.; 4. |])));
   equal same_bits [| 0.5; -1.5 |]
     (Nx.to_array
-       (Nx.layer_norm ~scale:(f32 [| 2.; -1. |]) ~shift:(f32 [| 0.5; -1.5 |])
+       (Nx.standardize ~scale:(f32 [| 2.; -1. |]) ~shift:(f32 [| 0.5; -1.5 |])
           (f32 [| 4.; 4. |])));
   equal (array int) [| 0; 3 |]
-    (Nx.shape (Nx.layer_norm (Nx.zeros Nx.float32 [| 0; 3 |])));
+    (Nx.shape (Nx.standardize (Nx.zeros Nx.float32 [| 0; 3 |])));
   equal (array int) [| 3; 0 |]
-    (Nx.shape (Nx.layer_norm (Nx.zeros Nx.float32 [| 3; 0 |])));
+    (Nx.shape (Nx.standardize (Nx.zeros Nx.float32 [| 3; 0 |])));
   let x =
     Nx.create Nx.float64 [| 2; 3; 2 |]
       (Array.init 12 (fun i -> Float.of_int ((i * 7) mod 5)))
@@ -1466,25 +1469,26 @@ let test_ln_cases () =
   let moved = Nx.reshape [| 3; 4 |] (Nx.transpose ~axes:[ 1; 0; 2 ] x) in
   let back y = Nx.transpose ~axes:[ 1; 0; 2 ] (Nx.reshape [| 3; 2; 2 |] y) in
   equal same_bits
-    (Nx.to_array (back (Nx.layer_norm moved)))
-    (Nx.to_array (Nx.layer_norm ~axes:[ 0; 2 ] x));
-  invalid ~by:"Nx.layer_norm" (fun () ->
-      Nx.layer_norm ~axes:[ 1 ] (f32 [| 1. |]));
-  invalid ~by:"Nx.layer_norm" (fun () ->
-      Nx.layer_norm ~axes:[ 0; 0 ] (f32 [| 1. |]));
-  invalid ~by:"Nx.layer_norm" (fun () ->
-      Nx.layer_norm ~eps:(-1.) (f32 [| 1. |]));
-  invalid ~by:"Nx.layer_norm" (fun () -> Nx.layer_norm ~eps:nan (f32 [| 1. |]));
-  invalid ~by:"Nx.layer_norm" (fun () ->
-      Nx.layer_norm ~scale:(f32 [| 1.; 2. |]) (f32 [| 1.; 2.; 3. |]));
-  invalid ~by:"Nx.layer_norm" (fun () ->
-      Nx.layer_norm ~shift:(f32 [| 1.; 2. |]) (f32 [| 1.; 2.; 3. |]));
+    (Nx.to_array (back (Nx.standardize moved)))
+    (Nx.to_array (Nx.standardize ~axes:[ 0; 2 ] x));
+  invalid ~by:"Nx.standardize" (fun () ->
+      Nx.standardize ~axes:[ 1 ] (f32 [| 1. |]));
+  invalid ~by:"Nx.standardize" (fun () ->
+      Nx.standardize ~axes:[ 0; 0 ] (f32 [| 1. |]));
+  invalid ~by:"Nx.standardize" (fun () ->
+      Nx.standardize ~eps:(-1.) (f32 [| 1. |]));
+  invalid ~by:"Nx.standardize" (fun () ->
+      Nx.standardize ~eps:nan (f32 [| 1. |]));
+  invalid ~by:"Nx.standardize" (fun () ->
+      Nx.standardize ~scale:(f32 [| 1.; 2. |]) (f32 [| 1.; 2.; 3. |]));
+  invalid ~by:"Nx.standardize" (fun () ->
+      Nx.standardize ~shift:(f32 [| 1.; 2. |]) (f32 [| 1.; 2.; 3. |]));
   invalid ~by:"Nx.rms_norm" (fun () ->
       Nx.rms_norm ~scale:(f32 [| 1.; 2. |]) (f32 [| 1.; 2.; 3. |]))
 
 (* Over a strided or broadcast view, and with a broadcast scale and shift,
    the bits of the same values contiguous. *)
-let test_ln_views () =
+let test_z_views () =
   let x =
     Nx.create Nx.float32 [| 4; 6 |]
       (Array.init 24 (fun i -> 100. +. Float.of_int ((i * 7) mod 11) /. 4.))
@@ -1495,14 +1499,14 @@ let test_ln_views () =
   let wide v = Nx.copy (Nx.broadcast_to [| 2; 3 |] v) in
   equal same_bits
     (Nx.to_array
-       (Nx.layer_norm ~scale:(wide g) ~shift:(wide b) (Nx.copy strided)))
-    (Nx.to_array (Nx.layer_norm ~scale:g ~shift:b strided));
+       (Nx.standardize ~scale:(wide g) ~shift:(wide b) (Nx.copy strided)))
+    (Nx.to_array (Nx.standardize ~scale:g ~shift:b strided));
   let row = Nx.slice [ R (1, 2) ] x in
   let rows = Nx.broadcast_to [| 3; 6 |] row in
-  let one = Nx.to_array (Nx.layer_norm row) in
+  let one = Nx.to_array (Nx.standardize row) in
   equal same_bits
     (Array.concat [ one; one; one ])
-    (Nx.to_array (Nx.layer_norm rows))
+    (Nx.to_array (Nx.standardize rows))
 
 (* Moving average *)
 
@@ -1634,23 +1638,23 @@ let () =
              narrow "rms_norm with a scale" (fun x ->
                  Nx.rms_norm ~scale:(row_of x gains) (in_rows x));
            ];
-         group "layer_norm"
+         group "standardize"
            [
-             prop "float64 within its bound" ln_case
-               (law_ln D.Float64 0x1p-53 0x1p-1074);
-             prop "float32 within its bound" ln_case
-               (law_ln D.Float32 0x1p-24 0x1p-149);
-             prop "float32's bits are its composition's" ln_case
-               (law_ln_composed D.Float32);
-             prop "float64's bits are its composition's" ln_case
-               (law_ln_composed D.Float64);
-             test "a lane of equal elements is zero" test_ln_constant;
-             test "cases" test_ln_cases;
-             test "views" test_ln_views;
-             narrow "layer_norm" (fun x -> Nx.layer_norm (in_rows x));
-             narrow "layer_norm with a scale and a shift" (fun x ->
-                 Nx.layer_norm ~scale:(row_of x gains) ~shift:(row_of x offsets)
-                   (in_rows x));
+             prop "float64 within its bound" z_case
+               (law_z D.Float64 0x1p-53 0x1p-1074);
+             prop "float32 within its bound" z_case
+               (law_z D.Float32 0x1p-24 0x1p-149);
+             prop "float32's bits are its composition's" z_case
+               (law_z_composed D.Float32);
+             prop "float64's bits are its composition's" z_case
+               (law_z_composed D.Float64);
+             test "a lane of equal elements is zero" test_z_constant;
+             test "cases" test_z_cases;
+             test "views" test_z_views;
+             narrow "standardize" (fun x -> Nx.standardize (in_rows x));
+             narrow "standardize with a scale and a shift" (fun x ->
+                 Nx.standardize ~scale:(row_of x gains)
+                   ~shift:(row_of x offsets) (in_rows x));
            ];
          group "ewma"
            [

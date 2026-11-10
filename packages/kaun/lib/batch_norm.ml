@@ -71,7 +71,7 @@ let apply ?(axis = -1) ?(momentum = 0.99) ?(eps = 1e-5) p (stats : _ Stats.t)
   let axes = List.filter (fun i -> i <> axis) (List.init ndim Fun.id) in
   let gamma = broadcast p.gamma and beta = broadcast p.beta in
   if training then
-    let y = Nx.layer_norm ~axes ~eps ~scale:gamma ~shift:beta x in
+    let y = Nx.standardize ~axes ~eps ~scale:gamma ~shift:beta x in
     let update old batch =
       let batch = Nx.reshape [| features |] batch in
       Nx.add (Nx.mul_s old momentum) (Nx.mul_s batch (1.0 -. momentum))

@@ -2443,26 +2443,29 @@ val rms_norm :
     or repeated, if [eps] is negative or NaN, or for a [scale] that does
     not broadcast to [x]'s shape. *)
 
-val layer_norm :
+val standardize :
   ?axes:int list ->
   ?eps:float ->
   ?scale:(float, 's, 'd) t ->
   ?shift:(float, 's, 'd) t ->
   (float, 's, 'd) t ->
   (float, 's, 'd) t
-(** [layer_norm ~axes ~eps ~scale ~shift x] is
-    [(x - m) / sqrt (v + eps) · scale + shift], [m] and [v] the mean and
-    the population variance of each lane along [axes], [[-1]] by default;
-    [eps] defaults to [1e-5]. [scale] and [shift], broadcast to [x]'s
-    shape, default to [1] and [0], which add no step. Along a batch's axes
-    it is batch normalisation.
+(** [standardize ~axes ~eps ~scale ~shift x] is
+    [(x - m) / sqrt (v + eps) · scale + shift] for each lane of [x] along
+    [axes], [[-1]] by default, where [m = Σ x / n] and
+    [v = Σ (x - m)² / n] over the lane's [n] elements: the lane centred on
+    its mean and divided by its standard deviation, [eps] added to the
+    variance under the root. [eps] defaults to [1e-5]. [scale] and [shift],
+    broadcast to [x]'s shape, default to [1] and [0], which add no step.
+    Neural networks call it layer normalisation along a sample's features,
+    and batch normalisation along a batch's axes.
 
     For a lane of [n] elements it takes [c = Σ x / n], then in one pass the
     sums [s₁] of [d = x - c] and [s₂] of [d²], each as {!sum} sums,
     [c₂ = s₁ / n] and [v = (s₂ - s₁ c₂) / n] as the kernels' moments do,
     and [((d - c₂) · (1 / sqrt (v + eps))) · scale + shift], each step
     rounded once. At [float32] and [float64] the affine has the bits of
-    [add (mul (layer_norm ~axes ~eps x) scale) shift]. Where [d = c₂] the
+    [add (mul (standardize ~axes ~eps x) scale) shift]. Where [d = c₂] the
     result is [+0.] before the affine, at every [eps]: so is every element
     of a lane of equal elements, up to [2{^17}] of them at [float32] and
     [2{^46}] at [float64].

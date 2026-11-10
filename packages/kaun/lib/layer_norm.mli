@@ -11,7 +11,7 @@
     independent of the batch: the same function at training and inference time.
     Construct parameters with {!init} or {!make} and normalize with {!apply};
     {!walk} makes it a structure. Normalization without learned parameters is
-    {!Nx.layer_norm} alone. *)
+    {!Nx.standardize} alone. *)
 
 (** {1:types Types} *)
 
@@ -51,11 +51,11 @@ val apply :
     for constant vectors and defaults to [1e-5]. The result has [x]'s shape.
     Differentiable through Rune.
 
-    It is [Nx.layer_norm ~eps ~scale:gamma ~shift:beta x], whose doc states its
-    algorithm and error bound: the affine transform is applied before the one
-    rounding to [x]'s dtype, so a narrow [x] (float16, bfloat16, float8, float4)
-    is normalized and rescaled at float32 and rounded once, and a constant
-    vector of up to [2{^17}] features maps to [beta].
+    It is [Nx.standardize ~eps ~scale:gamma ~shift:beta x], whose doc states
+    its algorithm and error bound: the affine transform is applied before the
+    one rounding to [x]'s dtype, so a narrow [x] (float16, bfloat16, float8,
+    float4) is normalized and rescaled at float32 and rounded once, and a
+    constant vector of up to [2{^17}] features maps to [beta].
 
     Raises [Invalid_argument] if [x] is a scalar, if [x]'s last axis does not
     have size [dim], or if [eps] is negative or NaN. *)

@@ -37,4 +37,4 @@ let apply ?(eps = 1e-5) { gamma; beta } x =
        features"
       shape.(rank - 1)
       dim;
-  Nx.layer_norm ~eps ~scale:gamma ~shift:beta x
+  Nx.standardize ~eps ~scale:gamma ~shift:beta x

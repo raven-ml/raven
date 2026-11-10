@@ -125,7 +125,7 @@ val apply :
 
     With [training = false], [mean] and [var] are [stats] and [stats' == stats].
 
-    In training, [y] is [Nx.layer_norm] over the other axes with [gamma] and
+    In training, [y] is [Nx.standardize] over the other axes with [gamma] and
     [beta] as its scale and shift, whose doc states its algorithm and error
     bound, and the batch statistics are [Nx.mean] and [Nx.var] at [x]'s dtype.
     In eval mode, a narrow [x] (float16, bfloat16, float8, float4) is
