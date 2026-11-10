@@ -1168,6 +1168,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A tensor core over a decoded 4-bit operand reads a byte's two codes in one
+  trip: the activations its fragment holds are adjacent, one load where two
+  trips read them apart. gpt-oss-20b's 512-token prefill on an RTX 5000 Ada
+  takes 78.5 ms, from 85.0.
 - On gfx12 GPUs, `Cstyle.hip` reads a gated scalar load in a loop, at an
   address a workgroup shares, ungated, and then selects the alternative: a
   trip's loads issue together, where each waited for memory in a branch of

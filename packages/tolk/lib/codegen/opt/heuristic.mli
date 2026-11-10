@@ -31,7 +31,8 @@
       read in several passes;
     - a {{!section-cores}tensor core}, when the setting {!Setting.use_tc} is
       positive, on any number of reduce axes: the core takes one of them, and
-      the others stay loops around it;
+      the others stay loops around it, unless an unstaged core's operand
+      reads one inside the core's [K] ({{!section-cores}below});
     - streaming, when the reuse is at most 32 or the streamed operand is
       decoded, whatever its reuse;
     - the {{!section-general}general rules}, preceded on the host by the
@@ -108,6 +109,15 @@
     which every target takes. With {!Setting.tc_min_globals}, [M] is upcast
     and [N] split locally whatever the workgroups, and [N] upcast only while
     that many workgroups remain.
+
+    After those splits, each other reduce axis of [n] values that an operand
+    reads at unit stride, and the core's own [K] at stride [n], is unrolled
+    whole where [n] of the operand's values fit a 16-byte load: the operand
+    reads the two axes as one run, so the values a thread's fragment holds
+    along [K] become adjacent. A decoded 4-bit operand splits the reduce into
+    bytes and a byte's two codes, which the other operand reads at [2b + c]:
+    the core takes the bytes, and the codes unrolled make one load where two
+    trips read the values two apart.
 
     A core whose operands are staged ({!Stage.tile}) takes the staged tile
     instead of those splits and floors. Where the operands read [M] only as

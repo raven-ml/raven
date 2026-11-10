@@ -74,6 +74,50 @@ let within_run k m rest u =
           (List.find_opt (fun v -> fits v && divides v) core_upcasts)
   | _ -> u
 
+(* The bytes of the widest load a GPU renderer merges a thread's adjacent
+   values into. *)
+let vector_bytes = 16
+
+(* Each reduce axis of [k] of [n] values that an operand reads at unit stride
+   and the range [own] a tensor core of [tk], [k] with the core applied,
+   takes at stride [n], [n] of its values fitting one load of [vector_bytes],
+   is unrolled whole in [tk]: the operand reads the two as one run, and the
+   values a thread's fragment holds along the core's range become adjacent.
+   A decoded 4-bit operand splits the reduce into bytes and a byte's two
+   codes, read by the other operand at [2 b + c]: the core takes the bytes,
+   and the codes unrolled make one load where two trips read the values two
+   apart. A refused split is skipped. *)
+let unroll_beside k tk own =
+  let beside core a r =
+    match known_size (Sym (nth r 0)) with
+    | Some n ->
+        let at r = stride r (idx a) in
+        let bytes = Bigint.(mul n (of_int (Dtype.itemsize (dtype a)))) in
+        axis_id r <> axis_id core
+        && Option.equal Bigint.equal (at r) (Some Bigint.one)
+        && Option.equal Bigint.equal (at core) (Some n)
+        && Bigint.(leq bytes (of_int vector_bytes))
+    | None -> false
+  in
+  let unroll r =
+    match List.find_opt (fun u -> axis_id u = axis_id r) (K.rngs tk) with
+    | Some u ->
+        let axis = index_of u (K.rngs tk) in
+        if List.mem axis (K.upcastable_dims ~reduce:true tk) then
+          ignore (try_split tk axis 0 Opt.Upcast)
+    | None -> ()
+  in
+  match List.find_opt (fun r -> axis_id r = axis_id own) (K.rngs k) with
+  | None -> ()
+  | Some core ->
+      let loads =
+        List.filter (fun u -> op u = Op.Index) (toposort ~calls:Skip (K.ast k))
+      in
+      let reduces = ranges_of ~reduce:true k [ Weak ] in
+      List.iter
+        (fun r -> if List.exists (fun a -> beside core a r) loads then unroll r)
+        reduces
+
 (* The staged core's splits ({!Stage.tile}), applied to [tk], [k] with the core
    applied, whose core made the axes [rngs] (N, M and K), if the core is
    staged: [split i size target] splits the axis [rngs.(i)]. Whether the kernel
@@ -196,6 +240,7 @@ let tensor_cores ~core_threads k =
               Option.iter
                 (fun size -> split 0 size Opt.Local)
                 (List.find_opt local [ 4; 2 ]);
+              unroll_beside k tk rngs.(2);
               false
             in
             if min_globals <> 0 then begin
@@ -206,6 +251,7 @@ let tensor_cores ~core_threads k =
               upcast
                 ~keep:(leaves ~default:false min_globals)
                 0 core_upcasts Opt.Upcast;
+              unroll_beside k tk rngs.(2);
               Some (tk, false)
             end
             else
@@ -269,10 +315,8 @@ let sector_lanes = 8
 let in_flight = 8
 let in_flight_held = 4
 
-(* The bytes of the widest load a GPU renderer merges a thread's adjacent
-   values into, and of a line of a GPU's first-level cache, which serves a
-   SIMD group's load a line at a time. *)
-let vector_bytes = 16
+(* The bytes of a line of a GPU's first-level cache, which serves a SIMD
+   group's load a line at a time. *)
 let line_bytes = 128
 
 (* The reuse at most that streams. Within one pass over the operand a streamed

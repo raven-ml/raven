@@ -9337,9 +9337,9 @@ reason and its pins.
 - **tolk:** `Heuristic.tensor_cores`.
 - **Differs:** `TC` positive tries the cores, whatever the kernel's reduce axes:
   the core takes one and the others stay loops around it (`use_wmma`'s extra
-  reduces). `TC_OPT` keeps only level 2's padding. A convolution of tinygrad's
-  shape moves onto a core: the `conv_half` and `conv` rows; rune's own `Nx.conv`
-  of float16, measured at two sizes on fudge's CUDA, compiles the same kernels
+  reduces), except those D471 unrolls. `TC_OPT` keeps only level 2's padding.
+  A convolution of tinygrad's shape moves onto a core: the `conv_half` and
+  `conv` rows; rune's own `Nx.conv` of float16, measured at two sizes on fudge's CUDA, compiles the same kernels
   at `TC_OPT` 0 and 1.
 - **Reason:** (d): attention's output with sinks, scaled per head and row,
   is read apart along head and head dimension, so the out projection's two
@@ -9568,3 +9568,41 @@ reason and its pins.
   of two types as one value`, and the same on each GPU; the law
   `Tolk.Launch_law › GPUs › on NV, a schedule's launches write what its graph
   states`, whose launches join members that read one name at two ranges.
+
+## D471. A tensor core's trip reads a reduce axis inside its own K unrolled
+
+- **tinygrad:** `codegen/opt/heuristic.py` (`hand_coded_optimizations`
+  returns after the core's upcasts and local split; its unroll of a small
+  last reduce axis runs only on the path without a core, under
+  `upcast_size() < 64`, which a core's upcasts exceed). `codegen/simplify.py`
+  (`merge_ranges`) keeps two ranges apart when merging leaves a quotient or a
+  remainder, as a 4-bit operand's bytes and a byte's two codes do.
+- **tolk:** `Heuristic.unroll_beside`, after an unstaged core's splits (both
+  branches of `Heuristic.tensor_cores`).
+- **Differs:** on a kernel whose core takes one of several reduce axes
+  (D450), each other reduce axis of `n` values that an operand reads at unit
+  stride, and the core's own range at stride `n`, is upcast whole where `n`
+  of the operand's values fit 16 bytes. A decoded MXFP4 operand splits the
+  reduce into bytes and a byte's two codes, which the activations read at
+  `2b + c`: the core takes the bytes, and its trip now takes both codes, so a
+  thread reads the four adjacent activations its fragment holds in one load
+  where two trips read them two apart. A kernel of one reduce axis,
+  tinygrad's, is unchanged; of the cases' kernels it reaches only the routed
+  MXFP4 products (`routed_*`), on every GPU.
+- **Reason:** (d): kaun's `GptOss/prefill-512` on fudge's RTX 5000 Ada, CUDA
+  (128-byte L2 fetches), 4 interleaved rounds under the timing and GPU
+  locks, load 1.4-10.8, medians: 85.00 ms (84.93-85.36) to 78.52
+  (78.34-78.87); `prefill-512-Q8_0` 92.12 to 85.50, `experts-at-prefill-512`
+  2.68 to 2.33; decode steps and `prefill-12` unchanged. kaun's decode bench
+  `Quant/cuda/mxfp4-product-of-16384-{64,128,256}-bfloat16-tokens` 705 to
+  516, 964 to 815, 1970 to 1665 us; tolk's `stream/*` rows unchanged.
+  Without 128-byte L2 fetches, which rig.nv does not request, the unrolled
+  gate and up product of gpt-oss's experts ran 7% slower in a standalone
+  harness (2 workgroups an SM at 174 registers, against 3). AMD and Metal
+  take the same unroll unmeasured.
+- **Pinned by:** the Heuristic suite's `routed_{tiles,shared,past_bound}`
+  and `routed_run_{16,32,64,128}` on `metal`, `cuda` and `amd` (the recorded
+  opts and kernels), and `the tensor core's floor`, whose model states the
+  unroll and covers it; the Codegen suite's `tensor cores on each GPU › CUDA ›
+  a product by 4-bit codes, the core on their bytes and a byte's two codes
+  unrolled, is the exact result`; kaun's `GptOss/prefill-512`.

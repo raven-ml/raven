@@ -2616,6 +2616,85 @@ let projection_on device dt =
     (on_a_core (device ()) k
        [ (1, of_ints a); (2, of_ints sc); (3, of_ints w) ])
 
+(* A product by a matrix of 4-bit codes, two to a byte, low code first:
+   [c[i, j] = Σ_b Σ_h a[i, 2b + h] · (w[j, b] >> 4h & 15 - 8)]. The codes
+   split the sum into bytes and a byte's two codes, which [a] reads at
+   [2b + h]: the core takes the bytes, and the heuristic unrolls the codes.
+   Integers from -2 to 2 times codes from -8 to 7: every sum is exact. *)
+let codes = (32, 32, 64)
+
+let codes_kernel ?opts_to_apply dt =
+  let m, bytes, n = codes in
+  let c = Shape.param ~shape:[ Ops.Int (m * n) ] 0 Float32
+  and a = Shape.param ~shape:[ Ops.Int (m * 2 * bytes) ] 1 dt
+  and w = Shape.param ~shape:[ Ops.Int (n * bytes) ] 2 Uint8 in
+  let row = 2 * bytes in
+  let open Ops.O in
+  let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ]
+  and b = Ops.range ~axis_type:Weak (Int bytes) [ 2 ]
+  and h = Ops.range ~axis_type:Weak (Int 2) [ 3 ] in
+  let byte = Ops.index w [ (j * int bytes) + b ] in
+  let code =
+    (byte lsr Ops.cast (h * int 4) Uint8) land Ops.int ~dtype:Uint8 15
+  in
+  let value =
+    Ops.cast
+      (Ops.cast (Ops.cast code Float32 - Ops.float ~dtype:Float32 8.) dt)
+      Float32
+  in
+  let x = Ops.cast (Ops.index a [ (i * int row) + (b * int 2) + h ]) Float32 in
+  let sum = Ops.reduce (x * value) Add [ b; h ] in
+  let store = Ops.store (Ops.index c [ (i * int n) + j ]) sum in
+  Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply ())
+    [ Ops.end_ store [ i; j ] ]
+
+let codes_on device dt =
+  let m, bytes, n = codes in
+  let a = small_integers 1 (m * 2 * bytes) in
+  let w =
+    let st = Random.State.make [| 3 |] in
+    Array.init (n * bytes) (fun _ -> Random.State.int st 256)
+  in
+  let exact =
+    Array.init (m * n) (fun q ->
+        let i = q / n and j = q mod n in
+        let t = ref 0 in
+        for b = 0 to bytes - 1 do
+          for h = 0 to 1 do
+            let code = (w.((j * bytes) + b) lsr (4 * h)) land 15 in
+            t := !t + (a.((i * 2 * bytes) + (2 * b) + h) * (code - 8))
+          done
+        done;
+        `Float (Float.of_int !t))
+  in
+  let ((_, r) as device) = device () in
+  let k ?opts_to_apply () = codes_kernel ?opts_to_apply dt in
+  (* The ranges each whole upcast of the heuristic's opts splits, replayed:
+     the codes, [h] of id 3. *)
+  let unrolled =
+    let module S = Postrange.Scheduler in
+    let s = S.v (k ()) r in
+    S.convert_loop_to_global s;
+    let opts = S.applied_opts (Heuristic.hand_coded_optimizations s) in
+    let s = S.copy s in
+    List.filter_map
+      (fun o ->
+        let id =
+          match o with
+          | Opt.Split { axis; amount = 0; target = Upcast; _ } ->
+              Some (Ops.axis_id (List.nth (S.rngs s) axis))
+          | _ -> None
+        in
+        ignore (S.apply_opt s o);
+        id)
+      opts
+  in
+  equal ~msg:"the codes unrolled" (list (list int)) [ [ 3 ] ] unrolled;
+  equal (array Dtypes.value) exact
+    (on_a_core device k
+       [ (1, of_ints a); (2, Array.map (fun v -> `Int (Bigint.of_int v)) w) ])
+
 (* Products of several reduce axes on each GPU present, whose core takes one
    of them. *)
 let cores_on kind =
@@ -2633,6 +2712,11 @@ let cores_on kind =
          exact result"
         ~id narrow
         (projection_on (fun () -> on_gpu kind));
+      cases
+        "a product by 4-bit codes, the core on their bytes and a byte's two \
+         codes unrolled, is the exact result"
+        ~id narrow
+        (codes_on (fun () -> on_gpu kind));
     ]
 
 let tensor_cores_on_cuda =

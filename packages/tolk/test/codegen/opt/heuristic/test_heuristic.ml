@@ -1701,16 +1701,59 @@ let core_threads_of s tc =
   | Ok _ -> threads_of s
   | Error e -> failf "the core does not apply: %s" e
 
+(* The reduce axes of [k] of [n] values beside the range of id [own] a core
+   takes, that an operand reads at unit stride and [own] at stride [n], [n]
+   of its values within one 16-byte load: their ids. *)
+let beside_core k own =
+  let loads =
+    List.filter
+      (fun u -> Ops.op u = Op.Index)
+      (Ops.toposort ~calls:Skip (K.ast k))
+  in
+  let rngs = K.rngs k in
+  match List.find_opt (fun r -> Ops.axis_id r = own) rngs with
+  | None -> []
+  | Some core ->
+      (* The terms of [a]'s index: [r] alone, or [r] times a constant. *)
+      let stride_in a r =
+        List.find_map
+          (fun t ->
+            if t == r then Some 1
+            else if Ops.op t = Op.Mul && Ops.nth t 0 == r then
+              match Ops.vmax (Ops.nth t 1) with
+              | `Int c -> Some (Bigint.to_int c)
+              | _ -> None
+            else None)
+          (Ops.split_uop (Ops.get_idx (Ops.nth a 1)) Op.Add)
+      in
+      let adjacent a r =
+        match Shape.known_size (Ops.Sym (Ops.nth r 0)) with
+        | Some n ->
+            let n = Bigint.to_int n in
+            stride_in a r = Some 1
+            && stride_in a core = Some n
+            && n * Dtype.itemsize (Ops.dtype a) <= 16
+        | None -> false
+      in
+      List.filter_map
+        (fun i ->
+          let r = List.nth rngs i in
+          if Ops.axis_id r <> own && List.exists (fun a -> adjacent a r) loads
+          then Some (Ops.axis_id r)
+          else None)
+        (K.axes_of ~reduce:true k [ Weak ])
+
 (* The splits the interface states after the core [tc] of [s]: upcasts of
    its M and N axes by the first of 5, 4, 3 and 2 that divides them, each
    applied only while it leaves at least [core_threads / t] workgroups, [t]
    the core's threads, or an unknown count; then a local split of N by the
    largest of 4 and 2 that divides it and leaves 256 workgroups, or an
-   unknown count. M's
+   unknown count; then an unroll of each reduce axis beside the core's own K
+   ({!beside_core}). M's
    upcast, where it applies, takes the amount the heuristic gives it in
    [opts], which keeps a warp within a run of rows. *)
-let stated ~core_threads s tc opts =
-  let s = K.copy s in
+let stated ~core_threads k tc opts =
+  let s = K.copy k in
   let rngs =
     match K.apply_opt s tc with
     | Ok r -> Array.of_list r
@@ -1750,6 +1793,20 @@ let stated ~core_threads s tc opts =
   step 1 [ 5; 4; 3; 2 ] Opt.Upcast;
   step 0 [ 5; 4; 3; 2 ] Opt.Upcast;
   step ~keep:(leaves local_workgroups) ~first:false 0 [ 4; 2 ] Opt.Local;
+  List.iter
+    (fun id ->
+      let rngs = K.rngs s in
+      match List.find_opt (fun r -> Ops.axis_id r = id) rngs with
+      | Some r -> (
+          let axis = index_of_range r rngs in
+          let split =
+            Opt.Split { axis; amount = 0; target = Opt.Upcast; top = false }
+          in
+          match K.apply_opt s split with
+          | Ok _ -> ()
+          | Error e -> failf "%a does not apply: %s" Opt.pp split e)
+      | None -> ())
+    (beside_core k (Ops.axis_id rngs.(2)));
   K.applied_opts s
 
 (* A floor of [2^e] to [2^(e+1) - 1] threads, [e] up to 20: every power of
@@ -1786,14 +1843,50 @@ let floored =
       let name, (s, tc) = core_kernels.(i) in
       let o = unstaged (fun () -> Heuristic.hand_coded_with ~core_threads s) in
       let expected = stated ~core_threads s tc (K.applied_opts o) in
-      cover "every split applies" (List.length expected = 4);
-      cover "no split applies" (List.length expected = 1);
-      cover "some splits apply"
-        (List.length expected = 2 || List.length expected = 3);
+      (* The unrolls beside the core split whole, the floor's splits by a
+         size. *)
+      let whole = function Opt.Split { amount = 0; _ } -> true | _ -> false in
+      let unrolls = List.length (List.filter whole expected) in
+      let floor = List.length expected - 1 - unrolls in
+      cover "every split applies" (floor = 3);
+      cover "no split applies" (floor = 0);
+      cover "some splits apply" (floor = 1 || floor = 2);
+      cover "a reduce beside the core unrolls" (unrolls > 0);
       cover "a count not known"
         (match workgroups s with Sym _ -> true | Int _ -> false);
       cover "a core of 64 threads" (core_threads_of s tc = 64);
       equal ~msg:name (list Kernel_opts.opt) expected (K.applied_opts o))
+
+(* The ids of the ranges that the whole upcasts of [opts] split, replayed on
+   a copy of [s]. *)
+let unrolled s opts =
+  let s = K.copy s in
+  List.filter_map
+    (fun o ->
+      let id =
+        match o with
+        | Opt.Split { axis; amount = 0; target = Opt.Upcast; _ } ->
+            Some (Ops.axis_id (List.nth (K.rngs s) axis))
+        | _ -> None
+      in
+      (match K.apply_opt s o with
+      | Ok _ -> ()
+      | Error e -> failf "%a does not apply: %s" Opt.pp o e);
+      id)
+    opts
+
+(* With [Setting.tc_min_globals], the splits after the core change, and a
+   byte's two codes, the range [0; 1] of routed_tiles, still unroll. *)
+let min_globals_unroll =
+  test "with tc_min_globals, a core unrolls a byte's two codes" (fun () ->
+      let s = K.v (kernel "routed_tiles") (renderer "cuda") in
+      K.convert_loop_to_global s;
+      let o =
+        Setting.context
+          [ Setting.B (Setting.tc_min_globals, 1); B (Setting.stage, false) ]
+          (fun () -> Heuristic.hand_coded_optimizations s)
+      in
+      equal (list (list int)) [ [ 0; 1 ] ] (unrolled s (K.applied_opts o)))
 
 (* Metal's renderer floors its cores at 32768 threads, where the others keep
    16384: each GPU kernel of the cases, on that renderer, takes the splits
@@ -2270,7 +2363,7 @@ let () =
              vectors_bounded;
            ];
          group "the tensor core's floor"
-           [ floored; metal_floor ];
+           [ floored; metal_floor; min_globals_unroll ];
          decode_bound;
          group "the host's decodes"
            [
