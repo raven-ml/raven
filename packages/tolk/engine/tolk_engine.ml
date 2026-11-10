@@ -1747,7 +1747,8 @@ let compile ?beam ?search ~devices ~held_bufs ~inputs sink =
   let targets name = target (devices name) in
   let make () =
     let linear, vars =
-      Schedule.create_linear_with_vars ~capturing:true sink
+      Schedule.create_linear_with_vars ~capturing:true
+        ~held:(held_bufs @ inputs) sink
     in
     ( Jit.jit_lower ?beam ?search ~targets ~held_bufs ~inputs ~input_vars:vars
         linear,

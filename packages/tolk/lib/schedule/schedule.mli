@@ -128,8 +128,8 @@ val numbered : Ops.t -> numbering
     left as it is. *)
 
 val create_linear_with_vars :
-  ?capturing:bool -> Ops.t -> Ops.t * (string * int) list
-(** [create_linear_with_vars ~capturing big_sink] is the schedule
+  ?capturing:bool -> ?held:Ops.t list -> Ops.t -> Ops.t * (string * int) list
+(** [create_linear_with_vars ~capturing ~held big_sink] is the schedule
     that realizes the values of [big_sink], whose results are stored into
     buffers ({!Op.Buffer}), with the value of each variable it reads, by name:
 
@@ -169,19 +169,28 @@ val create_linear_with_vars :
       whole. Only where its order lets them, kernels of one write whose
       regions no byte test shows apart, as an assembly's columns are, join
       when their write is marked disjoint ({!Ops.after_disjoint}), which
-      exempts them on the state they write, and only there. A call moves up
-      only where no storage's life grows: past the first use of each storage
-      it takes, unless the schedule is given it, it holds one element, or the
-      call is in a loop's body, where storage lives for the whole loop; at the
-      top level a call of many elements joins only a launch that writes
-      storage it writes. A member is a call of a kernel whose ranges have
-      constant sizes and whose storage lies on one device that is no disk.
+      exempts them on the state they write, and only there. At the top level a
+      call moves up only where no storage's life grows: past the first use of
+      each storage it takes, unless it is [held] or holds one element; and a
+      call of many elements joins only a launch that writes storage it
+      writes. In a loop's body a call joins the earliest launch at whose
+      start no step up to it would hold more bytes of the body's own storage
+      ({!Memory.bytes}), from each buffer's first use to its last, than the
+      body held at its peak before any call joined: storage that is [held]
+      or that entries outside the body take does not count. A member is a
+      call of a kernel whose ranges have constant sizes and whose storage
+      lies on one device that is no disk.
       Limits of the target ({!Realize.lower_and_compile}) split a launch
       after;
     + unless [capturing] (default [false]), the schedule's buffers are placed in
       arenas ({!Memory.memory_plan_rewrite}), except those the call's arguments
       name or view, whose contents outlive the schedule. A jit capturing the schedule
       plans it with the schedules it captures along with it.
+
+    [held] is the storage whose contents outlive the schedule, which the
+    launches leave out of what they weigh: by default the buffers the call's
+    arguments name, as the schedule's own plan holds them. A capturer that
+    plans other buffers itself passes those it holds.
 
     With the setting {!Setting.spec} at [1] or more, [big_sink] and each body
     are checked against {!Spec.tensor}. With {!Setting.debug} at [1] or more,

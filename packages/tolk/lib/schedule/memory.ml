@@ -30,6 +30,28 @@ let rec uses si =
       flag @ List.concat_map uses calls
   | _ -> [ List.tl (src si) ]
 
+(* The buffers a call's argument [a] takes: itself, and those it views. *)
+let reached a = collect_bufs a @ viewed a
+
+(* The buffers the entry [si] takes, as the plan counts them, once each, in
+   order. *)
+let buffers si =
+  let seen = Tbl.create 8 in
+  List.concat_map
+    (fun args ->
+      List.concat_map
+        (fun a ->
+          List.filter
+            (fun b ->
+              if Tbl.mem seen b then false
+              else begin
+                Tbl.replace seen b ();
+                true
+              end)
+            (reached a))
+        args)
+    (uses si)
+
 let can_plan held b =
   (not (Tbl.mem held b))
   && match device b with Some d -> not (is_disk_device d) | None -> true
@@ -106,6 +128,14 @@ let life spans uses =
       (min lo first, max hi last))
     (max_int, min_int) uses paths
 
+(* An arena's buffers start at multiples of this many bytes. A buffer whose
+   first byte lies [phase] bytes past a 16-byte boundary, which its kernels
+   read it at, lies as far past its place. *)
+let block_size = 256
+let phase b = match arg b with Param p -> p.phase | _ -> 0
+let size b = phase b + (max_numel b * element_size b)
+let bytes b = Helpers.round_up (size b) block_size
+
 let memory_plan_rewrite ?(held_bufs = []) linear =
   if Setting.value Setting.no_memory_planner then linear
   else begin
@@ -126,7 +156,7 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
                 Tbl.replace used b [ use ];
                 order := b :: !order)
           (List.filter (can_plan held)
-             (List.concat_map (fun a -> collect_bufs a @ viewed a) args)))
+             (List.concat_map reached args)))
       taken;
     let bufs = List.rev !order in
     let first = Tbl.create 64 and last = Tbl.create 64 in
@@ -147,12 +177,6 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
          allocation, and work that writes an allocation follows every earlier
          use of it. *)
       let key b = Option.get (device b) in
-      let block_size = 256 in
-      (* A buffer whose first byte lies [phase] bytes past a 16-byte boundary,
-         which its kernels read it at, lies as far past its place. *)
-      let phase b = match arg b with Param p -> p.phase | _ -> 0 in
-      let size b = phase b + (max_numel b * element_size b) in
-      let rounded b = Helpers.round_up (size b) block_size in
       (* A lane's buffers are placed largest first, each in the smallest gap
          that fits it between the buffers already placed whose lives meet its,
          else above the highest of them: placed so, a lane often needs no more
@@ -166,10 +190,10 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
       in
       let offsets = Tbl.create 64 in
       let place placed b =
-        let n = rounded b in
+        let n = bytes b in
         let around =
           List.filter_map
-            (fun (o, b') -> if meets b b' then Some (o, rounded b') else None)
+            (fun (o, b') -> if meets b b' then Some (o, bytes b') else None)
             placed
         in
         let fit (best, top) (o, m) =
@@ -206,7 +230,7 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
             let mine = List.filter (fun b -> String.equal (key b) k) bufs in
             let largest =
               List.stable_sort
-                (fun a b -> Int.compare (rounded b) (rounded a))
+                (fun a b -> Int.compare (bytes b) (bytes a))
                 mine
             in
             ignore (List.fold_left place [] largest);
@@ -234,7 +258,7 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
       in
       if Setting.value Setting.debug >= 1 then begin
         let mb n = float_of_int n /. 1e6 in
-        let omem = mb (List.fold_left (fun n b -> n + rounded b) 0 bufs)
+        let omem = mb (List.fold_left (fun n b -> n + bytes b) 0 bufs)
         and nmem =
           mb
             (List.fold_left

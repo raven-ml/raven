@@ -403,6 +403,82 @@ let test_step_gradient () =
         held)
     [ 1; 2; 4 ]
 
+(* A scan over [k] chunks of the batch whose step sums, in its carry, the
+   gradient of the chain at its chunk in each block's weights, separate
+   arrays: a step of gradient accumulation. Under remats each trip computes
+   its blocks again, its storage held within the trip, so the remats save
+   memory at every number of chunks, and a scan of more, smaller chunks holds
+   no more than one of the whole batch. On the host what the first call
+   holds is its footprint. *)
+let test_summed_step () =
+  let pd = T.(list (pair tensor tensor)) in
+  let s = T.(pair pd tensor @-> returns (pair tensor pd)) in
+  let apart =
+    List.init layers (fun i ->
+        let w1, w2 = layer ws i in
+        (Nx.copy w1, Nx.copy w2))
+  in
+  let loss remat ws x =
+    Nx.sum
+      (List.fold_left
+         (fun a w ->
+           let b = block w in
+           if remat then rm b a else b a)
+         (Nx.sin x) ws)
+  in
+  let f remat k (ws, a) =
+    let chunks = Nx.reshape [| k; batch / k; dim |] a in
+    let step (l, sums) x =
+      let v, gs = Rune.value_and_grad pd (fun ws -> loss remat ws x) ws in
+      let add (s1, s2) (g1, g2) = (Nx.add s1 g1, Nx.add s2 g2) in
+      ((Nx.add l v, List.map2 add sums gs), ())
+    in
+    let zeros (w1, w2) = (Nx.zeros_like w1, Nx.zeros_like w2) in
+    fst
+      (Rune.scan T.(pair tensor pd) T.tensor T.unit step
+         ~init:(Nx.scalar f32 0., List.map zeros ws)
+         chunks)
+  in
+  let flat (l, sums) =
+    let row x = Nx.to_array (Nx.flatten x) in
+    Array.concat
+      (row l :: List.concat_map (fun (s1, s2) -> [ row s1; row s2 ]) sums)
+  in
+  let expected = flat (f false 1 (apart, a)) in
+  let on_host (r, _) = Rig.equal r Rig.host in
+  let measure remat k =
+    ignore (Rune.jit s (f remat k) (apart, a));
+    let g = Rune.jit s (f remat k) in
+    let before = host_settled () and calls = Rune.evaluations () in
+    let r = g (apart, a) in
+    let held = host_settled () - before in
+    equal ~msg:"evaluated calls" int 0 (Rune.evaluations () - calls);
+    equal ~msg:"the loss and the sums"
+      (array (float_rel ~rel:1e-4 ~abs:1e-4))
+      expected (flat r);
+    ignore (Sys.opaque_identity (g, r));
+    equal
+      ~msg:(Printf.sprintf "%d chunks: the footprint" k)
+      int held
+      (snd (List.find on_host (Rune.footprint s (f remat k) (apart, a))));
+    held
+  in
+  let whole = measure true 1 in
+  List.iter
+    (fun k ->
+      let plain = measure false k and recomputed = measure true k in
+      less
+        ~msg:
+          (Printf.sprintf "%d chunks: %d bytes under remats, %d without" k
+             recomputed plain)
+        int ~than:plain recomputed;
+      less
+        ~msg:
+          (Printf.sprintf "%d chunks: %d bytes under remats, %d for one" k
+             recomputed whole)
+        int ~than:(whole + 1) recomputed)
+    [ 1; 2; 4 ]
+
 (* Donation *)
 
 (* A result that takes a donated argument's memory is stored over it after the
@@ -781,6 +857,8 @@ let () =
                test_scanned;
              test "a step that takes a gradient plans each trip"
                test_step_gradient;
+             test "a step that sums a gradient in its carry plans each trip"
+               test_summed_step;
              test "a result takes a donated argument after the backward pass"
                test_donated;
            ];

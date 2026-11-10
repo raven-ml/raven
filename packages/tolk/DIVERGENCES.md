@@ -8790,14 +8790,24 @@ reason and its pins.
   writes: a view's bytes are those of its run of storage, any other view its
   whole storage, a loop or a copy writes its storage whole, and on the state of
   one write marked disjoint (D405) two of its kernels do not interfere. A call
-  joins the earliest launch of its device that starts after the last position
-  it interferes with. It moves up only past calls it does not interfere with,
-  and only where no storage's life grows: past the first use of each storage
-  it takes, unless the storage is given to the schedule, holds one element, or
-  the call is in a loop's body, whose storage lives for the whole loop. At the
-  top level a call of many elements joins only a launch writing storage it
-  writes: the top level's order is chosen for what storage calls make, and the
-  stores of one state are what a launch of many elements is for. A member is a
+  joins only a launch of its device that starts after the last position it
+  interferes with, so it moves up only past calls it does not interfere with.
+  At the top level it moves up only where no storage's life grows: past the
+  first use of each storage it takes, unless the storage is given to the
+  schedule or holds one element; and a call of many elements joins only a
+  launch writing storage it writes. The top level is tinygrad's schedule, one
+  call a kernel, but for these launches of one state's stores and of calls of
+  one element: that is what the recorded linears hold. A loop's body (D60)
+  has no tinygrad schedule, and runs its calls every trip, its own storage
+  planned within a trip (D476): a call there joins the earliest launch at
+  whose start no step up to it would hold more of the body's own storage
+  (`Memory.bytes`, each buffer from its first use to its last) than the body's
+  peak before any call joined, storage that the schedule is given or that
+  entries outside the body take not counting. The check counts what the call
+  makes and leaves out what it frees by moving up. A capturer passes the
+  storage it holds (`create_linear_with_vars ~held`); without it the call's
+  arguments are held, which for `Tolk_engine.compile` would leave rune's loop
+  rows and carries out of what a trip holds. A member is a
   call of a kernel whose ranges have constant sizes and whose storage lies on
   one device that is no disk. The arguments of a launch are its members', each
   once, storage first; a variable a member's call binds in its slot is read
@@ -8848,7 +8858,26 @@ reason and its pins.
   the same bits. Pinned by the rows `launch/host/*`, `launch/cuda/*`,
   `launch/lower-256`, rune's `Cuda/cat-16-columns-of-exp-64x64`, and norn's
   `nuts/schools/4` and
-  `nuts/schools-density-cuda/4`.
+  `nuts/schools-density-cuda/4`. In a loop's body, (b) and (d): rune's
+  remat'd scan steps and NUTS. A remat's recompute reads only its step's
+  arguments, so a call that joins any earlier launch makes its values at the
+  trip's first launch, where the forward pass's live: four remat'd layers
+  under `value_and_grad` in a scan held 87,032,852 bytes at 2 to 4 trips
+  against 40,894,468 at one, and hold 41,944,084, the live bytes at the
+  trip's peak unchanged and the rest the placement's (D477). The first use
+  as the bound in loops too held 40,894,484 but ran NUTS's loop bodies as
+  105 dispatches a transition against 31, 1.6 ms a step against 1.03 on
+  fudge's RTX 5000 Ada; under the peak a transition's loop bodies are 31
+  dispatches and its top level 100, as before, 1.08 and 1.00 ms a step
+  against 1.23 and 0.99, interleaved at a load of 73. The cost: the loop
+  rule allows no byte above the trip's peak and counts a buffer of one
+  element as a block of 256 bytes, so a loop body of small storage loses
+  launches. Two chains of 1000 scalar additions in a loop's body stay 1000
+  dispatches where main ran 500 (the top level's one-element exception
+  keeps 500 there); jera's suites' loop bodies take 686 dispatches against
+  619 (test_ode), 48 against 41 (test_root) and 336 against 334
+  (test_sde). On the host a launch costs nothing at run time, so this
+  matters for jera on a GPU only, which no row measures.
 - **Pinned by:** `Tolk.Launch_law` (`test/schedule/schedule`,
   `test_launch_law.ml`): `launches › a schedule's launches write what its graph
   states, in either order of their members` and `› a write marked disjoint runs
@@ -8875,6 +8904,12 @@ reason and its pins.
   and the custom-kernel cases of two values of one name, on each GPU present;
   `Jit › variables › merged custom kernels of one value read each run's` and
   `› of two values keep each its own`; rune's `Jit › fully sharded › *`.
+  The loop body's rule: the Schedule suite's `create_linear_with_vars ›
+  launches › a call in a loop's body joins an earlier launch only where no
+  step holds more than the trip's peak` and `› a loop's independent calls run
+  as few launches`, the first failing with no bound and with the first use
+  as the bound, the second with the first use; rune's `rune remat › memory ›
+  a step that sums a gradient in its carry plans each trip`.
 
 ## D405. A write marked disjoint is exempt on its state
 

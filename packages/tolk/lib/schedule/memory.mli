@@ -60,6 +60,16 @@ val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
     planned. With {!Setting.debug} at [1] or more, the memory saved is printed
     on standard output. *)
 
+val buffers : Ops.t -> Ops.t list
+(** [buffers si] is the buffers ({!Op.Buffer}) that the entry [si] of a
+    schedule takes as {!memory_plan_rewrite} counts its uses: each that an
+    argument of its calls is or views, a loop's calls' and its back edge's
+    flag included, once each, in order. *)
+
+val bytes : Ops.t -> int
+(** [bytes b] is the bytes the buffer [b] takes of its arena once planned:
+    its size and phase, rounded up to 256. *)
+
 val taken : Ops.t -> Ops.t list
 (** [taken si] is the storage that the entry [si] of a schedule takes, each
     once, in the order its calls take it: the buffer, call-local storage or

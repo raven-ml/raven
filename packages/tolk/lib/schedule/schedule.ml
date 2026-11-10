@@ -1835,16 +1835,29 @@ let transform_to_call big_sink =
    counts only on the state, for a pair that both write it there: a kernel of
    the write that also touches other storage interferes there as any call.
 
-   One scan over the finished schedule decides. Calls are weighed in order; a
-   call joins the earliest group of its device that starts after every
-   position it interferes with, so it moves up only past calls it does not
-   interfere with, and only where no storage's life grows: past the first use
-   of each storage it takes, unless the storage is given to the schedule, holds
-   one element, or the group is in a loop's body, whose storage lives for the
-   whole loop. At the top level a call of many elements joins only a group
-   writing storage it writes: the schedule's order there is chosen for the
-   storage calls make, and the pieces of one state are what a launch of many
-   elements is for.
+   One scan over each scope of the finished schedule decides: the top level,
+   and each loop's body. Calls are weighed in order, and a call joins only a
+   group of its device that starts after every position it interferes with,
+   so it moves up only past calls it does not interfere with. A call moved
+   up makes its storage earlier, and the two scopes weigh that apart.
+
+   At the top level the schedule is the one each kernel is a call of, and it
+   stays that one but for launches of the stores of one state, which are
+   what a launch of many elements is for, and of calls of one element: a
+   call of many elements joins only a group
+   writing storage it writes, and no call moves past the first use of
+   storage it takes, unless the storage is given to the schedule or holds
+   one element.
+
+   A loop's body runs its calls every trip, so each launch it saves is saved
+   every trip, and the memory plan holds the body's own storage within a
+   trip, the most a step holds for the whole loop ({!Memory}). There a call
+   joins the earliest group at whose start no step up to the call would hold
+   more of the body's own storage than the trip's peak: a launch costs the
+   trip no byte. A buffer of one element counts as a block of the arena, so
+   a body of small storage at its peak runs its calls apart. Storage the
+   schedule gives, or that entries outside the body take, lives through
+   every trip and does not count.
 
    Target limits are no part of this: every subset of a launch is a launch, and
    {!Realize.lower_and_compile} splits one its target cannot run. *)
@@ -1961,12 +1974,127 @@ let at_or_after gs bound =
   in
   go 0 (Dynarray.length gs)
 
-(* The entries [entries] with the calls that can run as one launched. [held]
-   is the storage the schedule is given, which outlives it; [free] is whether
-   every storage lives for the whole scope, as in a loop's body; [facts] holds
-   the bodies met. *)
-let launched_entries ~facts ~held ~free entries =
+(* The bytes each step of a loop's body holds of the body's own storage on
+   one device, from each buffer's first use to its last, and the most a step
+   held before any call joined a launch. *)
+type lane = { live : int array; peak : int }
+
+(* The storage of a loop's body whose bytes grouping moves: a buffer the
+   memory plan places, which the schedule is not given and no entry outside
+   the body takes. Each one's uses, at the positions their entries run at,
+   and each device's lane. *)
+let own_storage ~fixed entries =
   let n = Array.length entries in
+  let taken = Array.map Memory.buffers entries in
+  let own b =
+    (not (Tbl.mem fixed b))
+    && match device b with Some d -> not (is_disk_device d) | None -> false
+  in
+  let uses = Tbl.create n in
+  Array.iteri
+    (fun i bs ->
+      List.iter
+        (fun b ->
+          if own b then
+            Tbl.replace uses b
+              (i :: Option.value (Tbl.find_opt uses b) ~default:[]))
+        bs)
+    taken;
+  let live = Hashtbl.create 4 in
+  let lane b =
+    let d = Option.get (device b) in
+    match Hashtbl.find_opt live d with
+    | Some l -> l
+    | None ->
+        let l = Array.make n 0 in
+        Hashtbl.replace live d l;
+        l
+  in
+  Tbl.iter
+    (fun b us ->
+      let l = lane b in
+      for s = List.fold_left min n us to List.fold_left max (-1) us do
+        l.(s) <- l.(s) + Memory.bytes b
+      done)
+    uses;
+  let lanes = Hashtbl.create 4 in
+  Hashtbl.iter
+    (fun d l ->
+      Hashtbl.replace lanes d { live = l; peak = Array.fold_left max 0 l })
+    live;
+  (taken, uses, lanes)
+
+(* The entries [entries] with the calls that can run as one launched. [held]
+   is the storage the schedule is given, which outlives it; [fixed], where
+   the entries are a loop's body, is that storage and the storage entries
+   outside the body take; [facts] holds the bodies met. *)
+let launched_entries ~facts ~held ?fixed entries =
+  let n = Array.length entries in
+  let body = Option.map (fun fixed -> own_storage ~fixed entries) fixed in
+  (* In a loop's body, the earliest of the device's groups [gs], back from its
+     last, that call [i] joins: one that starts after [conflict], the last
+     call [i] interferes with, at whose start every step up to [i] still
+     holds no more than its lane's peak with the buffers [i] makes. Only the
+     body's own storage counts: what the loop is given or shares outside its
+     body lives through every trip. A call that joins frees its last reads
+     earlier, which the check leaves out. *)
+  let in_loop (taken, uses, lanes) gs i conflict =
+    let made = Hashtbl.create 2 in
+    List.iter
+      (fun b ->
+        match Tbl.find_opt uses b with
+        | Some us when List.for_all (fun u -> u >= i) us ->
+            let d = Option.get (device b) in
+            let k = Option.value (Hashtbl.find_opt made d) ~default:0 in
+            Hashtbl.replace made d (k + Memory.bytes b)
+        | _ -> ())
+      taken.(i);
+    (* The most each lane holds from a step on, the scan's running maximum. *)
+    let most = Hashtbl.create 2 in
+    let holds s =
+      Hashtbl.fold
+        (fun d k ok ->
+          let l = Hashtbl.find lanes d in
+          let before = Option.value (Hashtbl.find_opt most d) ~default:0 in
+          let m = max l.live.(s) before in
+          Hashtbl.replace most d m;
+          ok && m + k <= l.peak)
+        made true
+    in
+    let rec back j from best =
+      if j < 0 then best
+      else
+        let g = Dynarray.get gs j in
+        let rec down s =
+          s < g.first || Hashtbl.length made = 0 || (holds s && down (s - 1))
+        in
+        if g.first <= conflict || not (down from) then best
+        else back (j - 1) (g.first - 1) (Some g)
+    in
+    back (Dynarray.length gs - 1) (i - 1) None
+  in
+  (* Call [i] runs at [p]: its own buffers' uses move with it. *)
+  let move (taken, uses, lanes) i p =
+    List.iter
+      (fun b ->
+        match Tbl.find_opt uses b with
+        | None -> ()
+        | Some us ->
+            let l = (Hashtbl.find lanes (Option.get (device b))).live in
+            let span us =
+              (List.fold_left min n us, List.fold_left max (-1) us)
+            in
+            let at = List.map (fun u -> if u = i then p else u) us in
+            let add (lo, hi) k =
+              for s = lo to min hi (n - 1) do
+                l.(s) <- l.(s) + k
+              done
+            in
+            add (span us) (-Memory.bytes b);
+            add (span at) (Memory.bytes b);
+            Tbl.replace uses b at)
+      taken.(i)
+  in
   let reads = Tbl.create n and writes = Tbl.create n in
   let first_use = Tbl.create n in
   let log tbl b x =
@@ -2031,7 +2159,7 @@ let launched_entries ~facts ~held ~free entries =
     let bound =
       List.fold_left
         (fun lo b ->
-          if free || Tbl.mem held b || Shape.max_numel b = 1 then lo
+          if Tbl.mem held b || Shape.max_numel b = 1 then lo
           else max lo (Option.value (Tbl.find_opt first_use b) ~default:i))
         (conflict + 1) taken
     in
@@ -2051,15 +2179,19 @@ let launched_entries ~facts ~held ~free entries =
                 gs
           in
           let picked =
-            if free || f.one_element then
-              let j = at_or_after gs bound in
-              if j < Dynarray.length gs then Some (Dynarray.get gs j) else None
-            else
-              (* Groups of other devices write other storage. *)
-              writing written bound
+            match body with
+            | Some b -> in_loop b gs i conflict
+            | None when f.one_element ->
+                let j = at_or_after gs bound in
+                if j < Dynarray.length gs then Some (Dynarray.get gs j)
+                else None
+            | None ->
+                (* Groups of other devices write other storage. *)
+                writing written bound
           in
           match picked with
           | Some g ->
+              Option.iter (fun b -> move b i g.first) body;
               join g e written;
               joined.(i) <- true;
               g.first
@@ -2090,33 +2222,49 @@ let launched_entries ~facts ~held ~free entries =
   in
   out
 
-(* [linear] with its calls launched, in its loops' bodies too. *)
-let rec launch_linear ~facts ~held ~free linear =
+(* [linear] with its calls launched, in its loops' bodies too. [fixed], in
+   a loop's body, is the storage whose life the body does not decide. *)
+let rec launch_linear ~facts ~held ?fixed linear =
+  let es = Array.of_list (src linear) in
+  let taken = Array.map Memory.buffers es in
+  let count = Tbl.create 16 in
+  Array.iter
+    (List.iter (fun b ->
+         let k = Option.value (Tbl.find_opt count b) ~default:0 in
+         Tbl.replace count b (k + 1)))
+    taken;
   let entries =
-    Array.of_list
-      (List.map
-         (fun e ->
-           match op e with
-           | (Op.End | Op.Backedge) when op (nth e 0) = Op.Linear ->
-               let inner = launch_linear ~facts ~held ~free:true (nth e 0) in
-               replace e ~src:(inner :: List.tl (src e))
-           | _ -> e)
-         (src linear))
+    Array.mapi
+      (fun j e ->
+        match op e with
+        | (Op.End | Op.Backedge) when op (nth e 0) = Op.Linear ->
+            (* What the scope gives the loop, and what its other entries
+               take, lives through the loop's trips. *)
+            let inner = Tbl.copy (Option.value fixed ~default:held) in
+            Tbl.iter
+              (fun b k ->
+                if k > (if List.memq b taken.(j) then 1 else 0) then
+                  Tbl.replace inner b ())
+              count;
+            let body = launch_linear ~facts ~held ~fixed:inner (nth e 0) in
+            replace e ~src:(body :: List.tl (src e))
+        | _ -> e)
+      es
   in
   let src =
     if Array.length entries < 2 then Array.to_list entries
-    else launched_entries ~facts ~held ~free entries
+    else launched_entries ~facts ~held ?fixed entries
   in
   replace linear ~src
 
 let launches ~held linear =
   let tbl = Tbl.create 16 in
   List.iter (fun b -> Tbl.replace tbl b ()) held;
-  launch_linear ~facts:(Tbl.create 16) ~held:tbl ~free:false linear
+  launch_linear ~facts:(Tbl.create 16) ~held:tbl linear
 
 (* Schedules *)
 
-let create_linear_with_vars ?(capturing = false) big_sink =
+let create_linear_with_vars ?(capturing = false) ?held big_sink =
   let several = bound_several big_sink in
   let big_sink = transform_to_call (Prepare.sequence big_sink) in
   (* The call's sources are the values to realize. *)
@@ -2141,7 +2289,9 @@ let create_linear_with_vars ?(capturing = false) big_sink =
         if op b = Op.Buffer then Some b else None)
       (List.tl (src linear_call))
   in
-  let linear = launches ~held:held_bufs linear in
+  let linear =
+    launches ~held:(Option.value held ~default:held_bufs) linear
+  in
   (* The entries of [linear], those of its loops' bodies among them. *)
   let rec entries linear =
     List.concat_map

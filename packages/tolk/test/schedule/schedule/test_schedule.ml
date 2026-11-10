@@ -2742,6 +2742,17 @@ let joins_keep_bindings steps =
     (names_bound_twice (unplanned big));
   computes big
 
+(* The entries of the loop's body [calls], in a loop of three trips, once
+   launched with [held] given to the schedule. *)
+let in_loop ~held calls =
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let linear =
+    Ops.v Op.Linear ~src:[ Ops.end_ (Ops.v Op.Linear ~src:calls) [ r ] ]
+  in
+  match Ops.src (Schedule.launches ~held linear) with
+  | [ e ] -> Ops.src (Ops.nth e 0)
+  | es -> failf "%d entries, not one loop" (List.length es)
+
 let merged_calls =
   group "create_linear_with_vars › launches"
     [
@@ -2925,6 +2936,46 @@ let merged_calls =
           equal int ~msg:"given storage of many elements" 1
             (calls big ~held:[ big ]);
           equal int ~msg:"storage of one element" 1 (calls (buf 1) ~held:[]));
+      (* [x0] to [t] makes [t] at step 1, which steps 1 and 2 hold; [y] to [u]
+         would make [u] there too. *)
+      test
+        "a call in a loop's body joins an earlier launch only where no step \
+         holds more than the trip's peak" (fun () ->
+          let buf n = Ops.new_buffer cpu n Float32 in
+          let x0 = buf 1 and x = buf 1 and y = buf 1 and o = buf 1 in
+          let t = buf 1024 and u = buf 64 and z = buf 2048 in
+          let calls ~later =
+            let body =
+              [
+                add_one ~read:x0 ~write:x;
+                add_one ~read:x ~write:t;
+                add_one ~read:t ~write:o;
+                add_one ~read:y ~write:u;
+                add_one ~read:u ~write:o;
+              ]
+              @
+              if later then
+                [ add_one ~read:x ~write:z; add_one ~read:z ~write:o ]
+              else []
+            in
+            List.length (in_loop ~held:[ x0; x; y; o ] body)
+          in
+          equal int ~msg:"the trip's peak where t lives" 5 (calls ~later:false);
+          (* A later, larger buffer raises the peak: [u] fits beside [t]. *)
+          equal int ~msg:"under a later, higher peak" 6 (calls ~later:true));
+      (* Independent calls of a loop's body, each making storage of several
+         elements that a later call reads, run as two launches: the trip's
+         peak is where all four live. *)
+      test "a loop's independent calls run as few launches" (fun () ->
+          let buf n = Ops.new_buffer cpu n Float32 in
+          let xs = List.init 4 (fun _ -> buf 1) in
+          let os = List.init 4 (fun _ -> buf 1) in
+          let ts = List.init 4 (fun _ -> buf 4) in
+          let body =
+            List.map2 (fun x t -> add_one ~read:x ~write:t) xs ts
+            @ List.map2 (fun t o -> add_one ~read:t ~write:o) ts os
+          in
+          equal int 2 (List.length (in_loop ~held:(xs @ os) body)));
       test "calls that read one buffer read one parameter of their launch"
         (fun () ->
           let x = element () and o = element () and o' = element () in

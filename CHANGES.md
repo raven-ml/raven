@@ -429,6 +429,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A `Rune.remat` in the step of a compiled `scan` or `iterate` of two trips
+  or more saves its memory, as at one trip: four remat'd layers under
+  `value_and_grad` in a scan held 87.0 MB at 2 and 4 trips, near the 92.3
+  MB without remats, and hold 41.9 MB.
 - A compiled loop's final carry that is a result is returned in the
   storage the loop carries it in, where it was copied into a result of its
   own: a scan summing a gradient in its carry holds one gradient, a 64 MB
@@ -1219,6 +1223,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A loop's calls run as one launch only where the trip then holds no more
+  memory at its peak, so a remat in a compiled loop's step keeps its saving;
+  a NUTS transition's loops run as many launches as before.
+  `Schedule.create_linear_with_vars` takes `?held`, the storage a capturer
+  holds, which the launches leave out of what a trip holds.
 - On x86_64 a selection against a zero, whose comparison or arm converts
   the value, gives the arm it selects, a zero's sign included. LLVM rebuilt
   it as a minimum or maximum: under `Rune.jit`, `Nx.where (Nx.less z x) z x`
