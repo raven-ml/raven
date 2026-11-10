@@ -3483,8 +3483,9 @@ let reads_after_run_at_offsets () =
     [| 17.; 19.; 21.; 23.; 17.; 19.; 21.; 23.; 17.; 19.; 21.; 23.; 24.; 26.;
        28.; 30. |]
 
+(* The loop's call is compiled on its own, or inlined unless [compiled]. *)
 let reads_after_run_backedge () =
-  let check lo want =
+  let check ~compiled lo want =
   let d = "CPU" and k = 4 in
   let p slot dt = Shape.param ~shape:[ Int k ] ~device:d slot dt in
   let index = Shape.param ~addrspace:Alu 3 Int32 in
@@ -3500,7 +3501,9 @@ let reads_after_run_backedge () =
   let b, b1 = doubled () in
   let f = Ops.new_buffer d 1 Bool in
   let r = loop3 () in
-  let call = Ops.call ~precompile:true body [ row4 b1 r; run_at lo b1; f; r ] in
+  let call =
+    Ops.call ~precompile:compiled body [ row4 b1 r; run_at lo b1; f; r ]
+  in
   let e = Ops.backedge call ~loop:r ~cond:f in
   let linear, vars =
     Schedule.create_linear_with_vars
@@ -3513,14 +3516,18 @@ let reads_after_run_backedge () =
     Engine.link ~devices ~bound:[ (b, buffer); (f_init, flag) ] (compile linear)
   in
   Engine.run ~vars s [||];
-  equal values (floats want) (Run.values Float32 buffer)
+  equal values ~msg:(if compiled then "compiled" else "inlined") (floats want)
+    (Run.values Float32 buffer)
   in
-  check 4
-    [| 9.; 11.; 13.; 15.; 9.; 11.; 13.; 15.; 10.; 12.; 14.; 16.; 24.; 26.;
-       28.; 30. |];
-  check 6
-    [| 13.; 15.; 17.; 19.; 13.; 15.; 17.; 19.; 18.; 20.; 17.; 19.; 24.; 26.;
-       28.; 30. |]
+  List.iter
+    (fun compiled ->
+      check ~compiled 4
+        [| 9.; 11.; 13.; 15.; 9.; 11.; 13.; 15.; 10.; 12.; 14.; 16.; 24.; 26.;
+           28.; 30. |];
+      check ~compiled 6
+        [| 13.; 15.; 17.; 19.; 13.; 15.; 17.; 19.; 18.; 20.; 17.; 19.; 24.;
+           26.; 28.; 30. |])
+    [ true; false ]
 
 (* The state read through a join, which waits for [x1] and holds [b1]. *)
 let reads_after_run_through_join () =
@@ -4407,27 +4414,91 @@ let loop_flip_of_written_storage () =
 (* A loop in the body of a call of [b], over the body's parameter [p]: four
    trips store [p]'s elements 4 to 7, as [read] gives them, plus one, into row
    [r]. Each trip reads them as it starts: trip 1 overwrites them, and trips 2
-   and 3 read what trip 1 wrote. *)
-let loop_in_body_reads ~precompile read =
+   and 3 read what trip 1 wrote. The loop's call is compiled on its own, or
+   inlined unless [compiled]. *)
+let loop_in_body_reads ~precompile ~compiled read =
   let p = Shape.param ~shape:[ Int 16 ] ~device:"CPU" 0 Float32 in
   let r = Ops.range ~axis_type:Loop (Int 4) [ 100 ] in
-  let c = Ops.call ~precompile:true add1_body [ row4 p r; read (run_at 4 p) ] in
+  let c =
+    Ops.call ~precompile:compiled add1_body [ row4 p r; read (run_at 4 p) ]
+  in
   let body = Ops.sink [ Ops.after p [ Ops.end_ c [ r ] ] ] in
   let b = Ops.new_buffer "CPU" 16 Float32 in
   leaves1 b (Ops.sink [ Ops.after b [ Ops.call ~precompile body [ b ] ] ])
 
 let loop_in_body_reads_each_trip () =
   let check read want =
-    equal values ~msg:"precompiled" (floats want)
-      (loop_in_body_reads ~precompile:true read);
-    equal values ~msg:"inlined" (floats want)
-      (loop_in_body_reads ~precompile:false read)
+    List.iter
+      (fun (msg, precompile, compiled) ->
+        equal values ~msg (floats want)
+          (loop_in_body_reads ~precompile ~compiled read))
+      [
+        ("precompiled", true, true);
+        ("inlined", false, true);
+        ("precompiled, its loop's call inlined", true, false);
+        ("inlined, its loop's call inlined", false, false);
+      ]
   in
   check Fun.id
     [| 5.; 6.; 7.; 8.; 5.; 6.; 7.; 8.; 6.; 7.; 8.; 9.; 6.; 7.; 8.; 9. |];
   check
     (fun v -> Shape.flip v [ 0 ])
     [| 8.; 7.; 6.; 5.; 8.; 7.; 6.; 5.; 6.; 7.; 8.; 9.; 6.; 7.; 8.; 9. |]
+
+(* The elements [Tensors], the reference interpreter, leaves in [b], given
+   [given16], once [sink] runs. *)
+let tensors1 b sink =
+  let slot = (Ops.param_arg_of b).slot in
+  let after = Array.map (fun x -> `Float x) given16 in
+  List.iter
+    (fun (s, i, v) -> if s = slot then after.(i) <- v)
+    (Tensors.writes ~buffers:[ (slot, Array.copy after) ] sink);
+  after
+
+(* Nested loops of a call over a buffer of 0 to 15: trip [(o, i)] stores into
+   row [2 o + i] the elements 4 to 7, reversed, plus one, as the trip starts.
+   The outer end's range varies slowest, at top level and in a body,
+   precompiled or inlined, the loop's call compiled on its own or inlined. *)
+let nested_loops_of_a_call () =
+  let o = Ops.range ~axis_type:Loop (Int 2) [ 100 ]
+  and i = Ops.range ~axis_type:Loop (Int 2) [ 101 ] in
+  let loop ~compiled outer inner u =
+    let row = row4 u Ops.O.((o * int 2) + i) in
+    let c =
+      Ops.call ~precompile:compiled add1_body
+        [ row; Shape.flip (run_at 4 u) [ 0 ] ]
+    in
+    Ops.end_ (Ops.end_ c [ inner ]) [ outer ]
+  in
+  let p = Shape.param ~shape:[ Int 16 ] ~device:"CPU" 0 Float32 in
+  let check outer inner want =
+    List.iter (fun compiled ->
+    let loop = loop ~compiled in
+    let top b = Ops.sink [ Ops.after b [ loop outer inner b ] ] in
+    let in_body precompile b =
+      let body = Ops.sink [ Ops.after p [ loop outer inner p ] ] in
+      Ops.sink [ Ops.after b [ Ops.call ~precompile body [ b ] ] ]
+    in
+    List.iter
+      (fun (msg, sink) ->
+        let msg = if compiled then msg else msg ^ ", its call inlined" in
+        let b = Ops.new_buffer "CPU" 16 Float32 in
+        let sink = sink b in
+        equal values ~msg:("Tensors, " ^ msg) (floats want) (tensors1 b sink);
+        equal values ~msg (floats want) (leaves1 b sink))
+      [
+        ("at top level", top);
+        ("in a precompiled body", in_body true);
+        ("in an inlined body", in_body false);
+      ])
+    [ true; false ]
+  in
+  (* Rows 0, 1, 2, 3 in turn: rows 2 and 3 read row 1 as written. *)
+  check o i
+    [| 8.; 7.; 6.; 5.; 8.; 7.; 6.; 5.; 6.; 7.; 8.; 9.; 6.; 7.; 8.; 9. |];
+  (* Rows 0, 2, 1, 3: row 2 reads row 1 as given. *)
+  check i o
+    [| 8.; 7.; 6.; 5.; 8.; 7.; 6.; 5.; 8.; 7.; 6.; 5.; 6.; 7.; 8.; 9. |]
 
 (* A loop on a state, reading the run of the first state its store goes
    through: the read holds the run as it was, the store still lands. *)
@@ -4555,8 +4626,9 @@ let gen_loop_program r =
 let no_flips st = List.map (fun _ -> false) st.reads
 
 (* The loop of [steps] over [storage], buffers or a body's parameters, each
-   read reversed where [flipped] says: a value of its run, no view. *)
-let loop_over ?(flipped = no_flips) d storage steps =
+   read reversed where [flipped] says: a value of its run, no view. Its call
+   is compiled on its own, or inlined unless [compiled]. *)
+let loop_over ?(flipped = no_flips) ?(compiled = true) d storage steps =
   let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
   let view b lo stride =
     Shape.shrink storage.(b)
@@ -4587,23 +4659,23 @@ let loop_over ?(flipped = no_flips) d storage steps =
         Ops.store target v)
       steps
   in
-  let call = Ops.call ~precompile:true (Ops.sink stores) (List.rev !args) in
+  let call = Ops.call ~precompile:compiled (Ops.sink stores) (List.rev !args) in
   Ops.end_ call [ r ]
 
 let afters storage e =
   Ops.sink (List.map (fun b -> Ops.after b [ e ]) (Array.to_list storage))
 
-let loop_of_program d sizes steps =
+let loop_of_program ~compiled d sizes steps =
   let bufs = Array.map (fun n -> Ops.new_buffer d n Float32) sizes in
-  (bufs, afters bufs (loop_over d bufs steps))
+  (bufs, afters bufs (loop_over ~compiled d bufs steps))
 
 (* The loop in the body of a call of the buffers, precompiled or inlined: the
    loop's storage is the body's parameters. *)
-let loop_in_body ~precompile ~flipped d sizes steps =
+let loop_in_body ~precompile ~compiled ~flipped d sizes steps =
   let params =
     Array.mapi (fun j n -> Shape.param ~shape:[ Int n ] ~device:d j Float32) sizes
   in
-  let body = afters params (loop_over ~flipped d params steps) in
+  let body = afters params (loop_over ~flipped ~compiled d params steps) in
   let bufs = Array.map (fun n -> Ops.new_buffer d n Float32) sizes in
   (bufs, afters bufs (Ops.call ~precompile body (Array.to_list bufs)))
 
@@ -4754,7 +4826,9 @@ let loop_reads_law ?(devices = devices) d =
       in
       cover "a fixed run read off 16 bytes" (List.exists off steps);
       cover "a run read of a buffer the step writes" (List.exists reads_own steps);
-      let bufs, sink = loop_of_program d sizes steps in
+      let compiled = Random.State.bool r in
+      cover "an inlined call in the loop" (not compiled);
+      let bufs, sink = loop_of_program ~compiled d sizes steps in
       let linear, vars = Schedule.create_linear_with_vars sink in
       let buffers =
         Array.map (fun xs -> Run.buffer (devices d) Float32 (floats xs)) init
@@ -4802,7 +4876,9 @@ let loop_in_body_law ?(devices = devices) d =
         (List.exists (reads_own false) steps);
       cover "a reversed run of the parameter the step writes"
         (List.exists (reads_own true) steps);
-      let bufs, sink = loop_in_body ~precompile ~flipped d sizes steps in
+      let compiled = Random.State.bool r in
+      cover "an inlined call in the loop" (not compiled);
+      let bufs, sink = loop_in_body ~precompile ~compiled ~flipped d sizes steps in
       let want = loop_spec ~flipped steps init in
       let slot b = (Ops.param_arg_of b).slot in
       let given = Array.map (fun xs -> Array.map (fun x -> `Float x) xs) init in
@@ -5324,6 +5400,8 @@ let calls_of_views =
       test "two loops in sequence read their runs" chained_loops_read_runs;
       test "a loop in a body reads its parameter's run each trip"
         loop_in_body_reads_each_trip;
+      test "nested loops of a call run the outer range slowest"
+        nested_loops_of_a_call;
       test "a loop's older run of storage leaves the state before it"
         loop_reads_older_plain_run;
       test "a loop reads a join of its own states each trip"

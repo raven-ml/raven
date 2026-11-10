@@ -37,8 +37,10 @@
     body with each parameter of slot [k] standing for the call's [k]th
     argument, reshaped to the parameter's shape; an argument it writes is
     memory as it is once every argument has run. An
-    {!Tolk.Op.End} of a call over a range runs the call once for each of the
-    range's values, each trip reading the storage the loop writes, that its
+    {!Tolk.Op.End} of a call over ranges runs the call once for each of their
+    values, the first range varying slowest, and an {!Tolk.Op.End} of such an
+    end runs it the same way over its ranges and the inner end's, its own
+    varying slowest, each trip reading the storage the loop writes, that its
     call writes ({!Tolk.Shape.written_params}) or, where its body does not
     show it, that of the {!Tolk.Op.After}s that list it, as the trips before
     left it, where the

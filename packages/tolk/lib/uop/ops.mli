@@ -813,7 +813,13 @@ val store : ?gate:t -> t -> t -> t
 
 val end_ : t -> t list -> t
 (** [end_ u rs] is the {!Op.End} of the ranges [rs] around [u], or [u] if [rs]
-    is empty. *)
+    is empty.
+
+    Around a call, outside a kernel, it is a loop: [rs] are
+    {!Axis_type.Loop} ranges, and the call runs whole once for each value of
+    them, the first varying slowest, whether or not it is compiled on its own.
+    An end of such an end is one loop over the outer end's ranges and the
+    inner's, the outer's varying slowest. *)
 
 val backedge : t -> loop:t -> cond:t -> t
 (** In a kernel, [backedge u ~loop ~cond] runs [u], then repeats [loop] while
@@ -823,7 +829,7 @@ val backedge : t -> loop:t -> cond:t -> t
     before each trip: [loop] is a {!Axis_type.Loop} range, or the [0] that a
     range of one trip simplifies to, [cond] is storage of one boolean, and the
     calls run in order once per trip of [loop] while [cond] holds, so they may
-    run no trip. *)
+    run no trip, each whole, whether or not it is compiled on its own. *)
 
 val after : t -> t list -> t
 (** [after u deps] is [u] ordered after [deps], or [u] if [deps] is empty.

@@ -258,6 +258,28 @@ let effects =
           equal write
             [ (1, 0, z 1); (1, 1, z 2); (1, 2, z 2); (1, 3, z 3); (1, 4, z 2); (1, 5, z 3) ]
             (writes (Ops.sink [ Ops.end_ call [ r ] ])));
+      test
+        "nested loops run as one, the first range listed and the outer end's \
+         varying slowest"
+        (fun () ->
+          let row = Shape.param ~shape:[ Int 2 ] 0 Int32
+          and first = Shape.param ~shape:[ Int 2 ] 1 Int32 in
+          let body = Ops.sink [ Ops.store row Ops.O.(first + int 1) ] in
+          let o = Ops.range ~axis_type:Loop (Int 2) [ 0 ]
+          and i = Ops.range ~axis_type:Loop (Int 2) [ 1 ] in
+          let y = p 1 8 in
+          (* Trip [o, i] stores into row [o + 2 i] row 1 plus one. *)
+          let at = Ops.O.(o + (i * int 2)) in
+          let rows = Shape.shrink y [ Some (Sym Ops.O.(at * int 2), Sym Ops.O.((at * int 2) + int 2)) ] in
+          let call = Ops.call body [ rows; Shape.shrink y [ Some (Int 2, Int 4) ] ] in
+          let writes e = Tensors.writes ~buffers:[ (1, iota 8) ] (Ops.sink [ e ]) in
+          let o_slowest = ints [ 3; 4; 3; 4; 3; 4; 4; 5 ]
+          and i_slowest = ints [ 3; 4; 3; 4; 4; 5; 4; 5 ] in
+          let in_y xs = List.mapi (fun j x -> (1, j, x)) xs in
+          equal write (in_y o_slowest) (writes (Ops.end_ call [ o; i ]));
+          equal write (in_y i_slowest) (writes (Ops.end_ call [ i; o ]));
+          equal write (in_y o_slowest)
+            (writes (Ops.end_ (Ops.end_ call [ i ]) [ o ])));
       test "a symbolic shape is refused" (fun () ->
           let n = Ops.variable "n" (z 1) (z 3) in
           rejects (fun () -> eval (Shape.shrink (p 1 6) [ Some (Int 0, Sym n) ])));

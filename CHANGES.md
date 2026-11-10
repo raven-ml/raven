@@ -1174,6 +1174,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 - `Ops.key`, `Graph` and the program, search and schedule cache keys tell every
   argument and target apart (`Helpers.Target.key`): graphs differing only in a
   NaN's bits, an `Argument` stage or a target's fields could share a schedule.
+- A loop of an inlined call, an `Ops.end_` or `Ops.backedge` around it, and an
+  end of an end of a call run the call once per trip: they raised a
+  verification failure.
 - A precompiled body that calls an inlined body writes what the inlined body
   writes: the write was dropped, or raised a verification failure.
 - Two writes over one state of storage, neither of which runs after the

@@ -1719,13 +1719,20 @@ kernel at NVRTC, Metal and the host compute it. `Spec.program` is
   of that kernel), `schedule/__init__.py` (`create_schedule`, which
   schedules the call of an end and drops the end), and `uop/spec.py`
   (`spec_kernel_graph`, which admits device ranges only, and no end).
-- **tolk:** `Rangeify.loop_range`, `Rangeify.pm_no_views` (which keeps a view
+- **tolk:** `Prepare.pm_loop_calls`, `Rangeify.loop_range`,
+  `Rangeify.pm_no_views` (which keeps a view
   that moves with a loop's range) and `Rangeify.split_store`;
   `Schedule.create_schedule` (`loops`, `argument` and the kept end);
   `Spec.loop`, `Spec.loop_bound` and `Spec.kernel_graph`.
 - **Differs:** an end of a precompiled call over loop ranges
   (`Axis_type.Loop`), `AFTER(buf, END(CALL(fn, args), r))`, is an effect of
-  the kernel graph and no kernel. The arguments that move with `r` stay
+  the kernel graph and no kernel. `Prepare.pm_loop_calls` makes every loop
+  of a call one: an inline call an end or a back edge runs is compiled on
+  its own, where tinygrad's `resolve_function` inlines it into stores its
+  `split_store` makes one kernel of, each store run once over all trips;
+  and an end of an end of a call is one end over the outer ranges, then
+  the inner, where tinygrad's `create_schedule` asserts that an end's
+  source is a call. The arguments that move with `r` stay
   views, `r` keeps its number, since `split_store` renumbers only the
   ranges of the kernel it makes, and `create_schedule` keeps the end around
   the call, ordered by the call's reads and writes.
@@ -1741,7 +1748,10 @@ kernel at NVRTC, Metal and the host compute it. `Spec.program` is
   its own, and its `create_schedule` drops the end.
 - **Reason:** (b). rune's `Rune.scan` compiles its body once and runs it
   once per trip, in place over its carry and over rows of its inputs and
-  outputs, as such a loop.
+  outputs, as such a loop. The inline call and the end of an end keep that
+  loop's meaning for every call a loop runs, however it is built: inlined,
+  as tinygrad would, its stores run once over all trips, and a trip no
+  longer reads what the trips before it wrote, a wrong value.
 - **Pinned by:** the `Rangeify` suite (`test/schedule/rangeify`):
   `get_kernel_graph › loops of calls › a loop of a precompiled call is no
   kernel` and `› a loop's call reads views that move with its range`; the
@@ -1754,7 +1764,11 @@ kernel at NVRTC, Metal and the host compute it. `Spec.program` is
   (`test/engine/tolk_engine`): `link and run › a scan runs its body once per
   trip, carrying in place`, against the unrolled loop on the host, and `› a
   scan's merged calls carry in place as its calls apart do` (D404), on the host
-  and each GPU present. The `Spec` suite (`test/uop/spec`): `kernel_graph ›
+  and each GPU present; `calls of views › nested loops of a call run the outer
+  range slowest`, `› a loop reads each run as its trip starts`, `› a loop in a
+  body reads its parameters as each trip starts` and `› an After state's fixed
+  run under a back edge`, with the loop's call inlined, the nested loops and
+  the loop in a body also against `Tensors`. The `Spec` suite (`test/uop/spec`): `kernel_graph ›
   loops of calls › accepts a loop of a call over a loop range`, `› refuses a
   loop of a call over a range of any other kind` and `› refuses a weak sum of a
   weak integer variable`; its `verdicts.tolk` records tolk's spec on ends and

@@ -669,6 +669,26 @@ let pm_inline_calls =
       rule (Upat.op Op.Call ~name:"c") (fun m -> resolve_function (m "c"));
     ])
 
+(* A loop runs its call once a trip, each trip reading what the trips before
+   wrote. Inlined, the call's stores would each run once over every trip, so
+   the call stays a call, compiled on its own. An end of an end of a call is
+   one end over both ranges, the outer end's first. *)
+let pm_loop_calls =
+  let loop = Upat.v ~op:(ops Op.[ End; Backedge ]) ~name:"e" () in
+  Pattern_matcher.v
+    (fun () -> [
+      rule loop (fun m ->
+          let e = m "e" in
+          let x = nth e 0 and rest = List.tl (src e) in
+          match (op e, op x, arg x) with
+          | Op.End, Op.End, _ when op (nth x 0) = Op.Call ->
+              Some (end_ (nth x 0) (rest @ List.tl (src x)))
+          | _, Op.Call, Call info when is_inline_call x ->
+              let x = replace x ~arg:(Call { info with precompile = true }) in
+              Some (replace e ~src:(x :: rest))
+          | _ -> None);
+    ])
+
 let pm_disk_copy =
   let movement =
     Upat.v
@@ -1304,9 +1324,13 @@ let prepare_rangeify sink =
   let tsink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
       (forward_call_outputs sink)
-      (After_sources
-         (Pattern_matcher.concat
-            [ pm_tensor_mops; pm_inline_calls; pm_disk_copy ]))
+      (Around_sources
+         {
+           before = pm_loop_calls;
+           after =
+             Pattern_matcher.concat
+               [ pm_tensor_mops; pm_inline_calls; pm_disk_copy ];
+         })
   in
   let tsink = sequence tsink in
   graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink

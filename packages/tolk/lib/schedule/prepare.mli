@@ -54,7 +54,11 @@ val prepare_rangeify : Ops.t -> Ops.t
         index by a value with axes ({!Indexing.is_gather}), is left whole; each
         call to a function without its own compilation ({!Ops.is_inline_call})
         is replaced by its body, its parameters bound to its arguments viewed as
-        flat storage and its local storage renamed; and the movements and
+        flat storage and its local storage renamed, except a call a loop runs
+        ({!Op.End}, {!Op.Backedge}), which is compiled on its own, since its
+        body's stores would otherwise each run once over all the trips; an
+        {!Op.End} of an {!Op.End} of a call is one end over the outer end's
+        ranges followed by the inner's; and the movements and
         bitcasts of a copy from a disk move to the copy's result;
      }
      {- the graph's effects are sequenced ({!sequence});

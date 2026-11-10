@@ -292,6 +292,18 @@ let reread m written t =
 (* The value of an effect, which nothing reads. *)
 let none = { shape = []; cells = [||] }
 
+(* The call a loop runs, under its ends, and its ranges, outermost first: an
+   end runs its ranges in the order listed, and an end of an end runs the
+   inner loop on each trip of the outer. *)
+let rec loop_call e =
+  match Ops.op e with
+  | Call -> Some e
+  | End -> loop_call (List.hd (Ops.src e))
+  | _ -> None
+
+let rec loop_ranges e =
+  if Ops.op e <> End then [] else List.tl (Ops.src e) @ loop_ranges (Ops.nth e 0)
+
 (* [run m params u] is the value of [u], each parameter of slot [k] standing for
    the value [params] gives [k], if any. *)
 let rec run m params u =
@@ -349,8 +361,8 @@ let rec run m params u =
     match Ops.op e with
     | Store -> same (Ops.storage_base (List.hd (Ops.src e))) s
     | Call -> call_writes e
-    | End when Ops.op (List.hd (Ops.src e)) = Call ->
-        call_writes (List.hd (Ops.src e))
+    | End -> (
+        match loop_call e with Some c -> call_writes c | None -> true)
     | _ -> true
   in
   (* The state an argument names: through movements and joins. *)
@@ -490,9 +502,10 @@ let rec run m params u =
     | End, _ -> (
         (* A loop calls its body once a trip, each trip reading what the
            previous ones stored into the storage the call writes; other
-           storage it reads in the state its argument names. *)
-        match src with
-        | [ c; r ] when Ops.op c = Call ->
+           storage it reads in the state its argument names. The trips of
+           nested loops are one sequence, the outer range varying slowest. *)
+        match loop_call u with
+        | Some c ->
             let args = Ops.src_without_body c in
             (* The storage the loop writes: its call's written arguments', or,
                where its body does not show them, that of the Afters listing
@@ -536,33 +549,38 @@ let rec run m params u =
             in
             List.iter states args;
             let saved = Ops.Tbl.copy !values in
-            for k = 0 to count r - 1 do
-              let c =
-                Ops.substitute ~calls:Skip ~pass:Fixed_point c
-                  [ (r, Ops.int k) ]
-              in
-              let trip = Ops.Tbl.copy saved in
-              let rec retrip n =
-                match Ops.op n with
-                | (After | Buffer | Param | Alloc) when live n ->
-                    let v =
-                      match Ops.Tbl.find_opt saved n with
-                      | Some v -> v
-                      | None -> value n
-                    in
-                    Ops.Tbl.replace trip n (reread m m.written v)
-                | After | Buffer | Param | Alloc | Const -> ()
-                | _ ->
-                    Ops.Tbl.remove trip n;
-                    List.iter retrip (Ops.src n)
-              in
-              List.iter retrip (Ops.src_without_body c);
-              values := trip;
-              call value c
-            done;
+            let rec trips at = function
+              | r :: rs ->
+                  let bound = Ops.substitute ~calls:Skip ~pass:Fixed_point r at in
+                  for k = 0 to count bound - 1 do
+                    trips ((r, Ops.int k) :: at) rs
+                  done
+              | [] ->
+                  let c = Ops.substitute ~calls:Skip ~pass:Fixed_point c at in
+                  let trip = Ops.Tbl.copy saved in
+                  let rec retrip n =
+                    match Ops.op n with
+                    | (After | Buffer | Param | Alloc) when live n ->
+                        let v =
+                          match Ops.Tbl.find_opt saved n with
+                          | Some v -> v
+                          | None -> value n
+                        in
+                        Ops.Tbl.replace trip n (reread m m.written v)
+                    | After | Buffer | Param | Alloc | Const -> ()
+                    | _ ->
+                        Ops.Tbl.remove trip n;
+                        List.iter retrip (Ops.src n)
+                  in
+                  List.iter retrip (Ops.src_without_body c);
+                  values := trip;
+                  call value c
+            in
+            trips [] (loop_ranges u);
             values := saved;
             none
-        | _ -> fail "cannot evaluate an end of %d sources" (List.length src))
+        | None ->
+            fail "cannot evaluate an end of a %a" Op.pp (Ops.op (List.hd src)))
     | Bitcast, _
       when Dtype.itemsize (Ops.dtype u)
            <> Dtype.itemsize (Ops.dtype (List.hd src)) ->
